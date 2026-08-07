@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "默认能力：主窗口 + 浏览子窗口可调桥命令",
+  "windows": ["main", "browser"],
+  "permissions": [
+    "core:default"
+  ]
+}

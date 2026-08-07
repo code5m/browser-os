@@ -1,0 +1,21 @@
+# 依赖
+node_modules/
+
+# 前端构建产物
+dist/
+
+# Rust / Tauri 构建产物
+src-tauri/target/
+src-tauri/gen/
+
+# 本地运行时数据（成果库 / 仓库配置 / 审计，含凭据引用）
+workspace/
+*.log
+derby.log
+
+# 系统 / 编辑器
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
