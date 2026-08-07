@@ -1,0 +1,1 @@
+{"$schema": "../gen/schemas/remote-schema.json", "identifier": "browser-remote", "description": "允许浏览器窗口(外部域)调用采集等自定义桥命令", "windows": ["browser"], "remote": {"urls": ["https://*", "http://*"]}, "permissions": ["core:default"]}

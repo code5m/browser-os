@@ -1,126 +1,168 @@
-// 注入到“浏览子窗口”的内容脚本：右键选区 → 保存到成果库
-// IPC 仅对 label="browser" 窗口经窗口能力（capabilities/default.json）放行
+// 初始化脚本（通过 initialization_script 注入，在页面 JS 之前执行）
+// 功能：禁用系统原生右键菜单 → 注入自定义采集菜单（选区/整页）
 (function () {
   if (window.__jzjd_injected) return;
   window.__jzjd_injected = true;
 
-  const Tauri = window.__TAURI__ || window.__tauri__;
+// ====== 1. 禁用 Tauri 原生右键菜单 + 显示自定义采集菜单（合并在 capture 阶段）======
+document.addEventListener("contextmenu", function (e) {
+  var t = e.target;
+  // 不抢占输入框/文本域内的右键（用户可能需要粘贴等）
+  if (t && (t.isContentEditable || t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+  // 阻止默认（系统原生菜单 + Tauri DevTools 菜单）
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+  e.preventDefault();
+  // 直接在此处显示自定义菜单（同一监听器，不存在事件被吞的问题）
+  showMenu(e.clientX, e.clientY);
+  return false;
+}, true); // capture 阶段，优先级最高
+
+  // ====== 统一拿 invoke（兼容多种全局注入形态）======
+  function getInvoke() {
+    try {
+      var T = window.__TAURI__;
+      if (T && T.core && typeof T.core.invoke === "function") return T.core.invoke.bind(T.core);
+      var I = window.__TAURI_INTERNALS__;
+      if (I && typeof I.invoke === "function") return I.invoke.bind(I);
+    } catch (e) { console.error("[JZJD] getInvoke error:", e); }
+    return null;
+  }
+
   let menu = null;
 
-  document.addEventListener("contextmenu", function (e) {
-    e.preventDefault();
-    const sel = window.getSelection();
-    const text = sel ? sel.toString() : "";
-    const html = serializeSelection(sel);
-    showMenu(e.clientX, e.clientY, text, html);
-  });
-
-  // 富文本保真：克隆选区 DOM → 绝对化链接/图片 → 内联关键计算样式 → 序列化
+  // 富文本保真：克隆选区 DOM → 绝对化链接/图片 → 内联样式 → 序列化
   function serializeSelection(sel) {
     if (!sel || sel.rangeCount === 0) return "";
-    const range = sel.getRangeAt(0);
-    const frag = range.cloneContents();
-    const wrapper = document.createElement("div");
+    var range = sel.getRangeAt(0);
+    var frag = range.cloneContents();
+    var wrapper = document.createElement("div");
     wrapper.appendChild(frag);
-
-    // 用原始选区节点的计算样式来内联（克隆后拿不到 live 样式，故按标签近似还原）
     inlineStyles(wrapper);
     absolutize(wrapper, "img", "src");
     absolutize(wrapper, "a", "href");
     absolutize(wrapper, "source", "src");
-
-    // 去掉 script/style/iframe 等不安全或无意义节点
-    wrapper.querySelectorAll("script,style,iframe,noscript").forEach((n) => n.remove());
+    inlineImages(wrapper);
+    wrapper.querySelectorAll("script,style,iframe,noscript").forEach(function (n) { n.remove(); });
     return wrapper.innerHTML;
   }
 
-  // 内联常见排版样式，保证脱离原页面后仍保有基本外观
-  const STYLE_PROPS = [
-    "font-weight", "font-style", "font-size", "color", "background-color",
-    "text-align", "text-decoration", "line-height", "list-style-type",
-    "border", "padding", "margin",
-  ];
   function inlineStyles(root) {
-    // 对克隆树里的每个元素，按标签给出保守的内联样式
-    root.querySelectorAll("*").forEach((el) => {
-      const tag = el.tagName.toLowerCase();
-      const s = el.style;
+    root.querySelectorAll("*").forEach(function (el) {
+      var tag = el.tagName.toLowerCase(), s = el.style;
       if (tag === "b" || tag === "strong") s.fontWeight = "bold";
       if (tag === "i" || tag === "em") s.fontStyle = "italic";
       if (tag === "u") s.textDecoration = "underline";
-      if (tag === "code" || tag === "pre") {
-        s.fontFamily = "monospace";
-        s.background = "#f4f4f4";
-        s.padding = "2px 4px";
-        s.borderRadius = "4px";
-      }
-      if (tag === "img") {
-        s.maxWidth = "100%";
-        s.height = "auto";
-      }
-      // 保留元素自带的关键 class 无意义（脱离页面 CSS），故清空 class 避免残留引用
+      if (tag === "code" || tag === "pre") { s.fontFamily = "monospace"; s.background = "#f4f4f4"; s.padding = "2px 4px"; s.borderRadius = "4px"; }
+      if (tag === "img") { s.maxWidth = "100%"; s.height = "auto"; }
       el.removeAttribute("class");
     });
-    void STYLE_PROPS; // 保留字段说明，未来可切换到 getComputedStyle 精确内联
   }
 
-  // 把相对 URL 绝对化，脱离原站点仍可访问
   function absolutize(root, selector, attr) {
-    root.querySelectorAll(selector + "[" + attr + "]").forEach((el) => {
+    root.querySelectorAll(selector + "[" + attr + "]").forEach(function (el) {
+      try { var v = el.getAttribute(attr); if (v) el.setAttribute(attr, new URL(v, location.href).href); } catch (_) {}
+    });
+  }
+
+  // 图片转 base64 内联（跨域图片会降级保留绝对 URL）
+  function inlineImages(root) {
+    Array.from(root.querySelectorAll("img[src]")).forEach(function (img) {
+      var src = img.getAttribute("src");
+      if (!src || src.startsWith("data:")) return;
       try {
-        const v = el.getAttribute(attr);
-        if (v) el.setAttribute(attr, new URL(v, location.href).href);
+        var abs = new URL(src, location.href).href;
+        if (abs.startsWith("http")) {
+          fetch(abs, { mode: "no-cors" })
+            .then(function (r) { return r.blob(); })
+            .then(function (b) {
+              var rd = new FileReader();
+              rd.onload = function () { img.setAttribute("src", rd.result); };
+              rd.readAsDataURL(b);
+            })
+            .catch(function () {});
+        }
       } catch (_) {}
     });
   }
 
-  function showMenu(x, y, text, html) {
+  function showMenu(x, y) {
     removeMenu();
-    if (!text) return;
     menu = document.createElement("div");
+    menu.id = "jzjd-menu";
     menu.style.cssText =
       "position:fixed;z-index:2147483647;left:" + x + "px;top:" + y +
-      "px;background:#fff;border:1px solid #ccc;box-shadow:0 2px 8px rgba(0,0,0,.2);" +
-      "border-radius:6px;padding:4px;font-size:13px;";
-    const btn = document.createElement("div");
-    btn.textContent = "保存到成果库";
-    btn.style.cssText = "padding:6px 12px;cursor:pointer;";
-    btn.onclick = function () {
-      if (!Tauri || !Tauri.core) {
-        toast("未检测到桥环境");
-        return removeMenu();
-      }
-      Tauri.core
-        .invoke("collect_selection", {
-          url: location.href,
-          title: document.title,
-          text: text,
-          html: html,
-        })
-        .then(() => toast("已保存到本地成果库（带溯源）"))
-        .catch((err) => toast("保存失败: " + err));
-      removeMenu();
-    };
-    menu.appendChild(btn);
+      "px;background:#fff;border:1px solid #ccc;box-shadow:0 2px 8px rgba(0,0,0,.25);" +
+      "border-radius:6px;padding:4px;font-size:13px;min-width:160px;";
+
+    var sel = window.getSelection();
+    var text = sel ? sel.toString().trim() : "";
+
+    if (text) {
+      addItem(menu, "📋 保存选区到成果库", function () {
+        var html = serializeSelection(sel);
+        collect(text, html, document.title);
+      });
+    }
+    addItem(menu, "📄 保存整页到成果库", function () {
+      var bodyHtml = document.body ? document.body.innerHTML : "";
+      collect(document.body ? document.body.innerText : "", bodyHtml, document.title);
+    });
+
     document.body.appendChild(menu);
+
+    // 菜单位置修正（不超出视口）
+    var rect = menu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) menu.style.left = (x - rect.width) + "px";
+    if (rect.bottom > window.innerHeight) menu.style.top = (y - rect.height) + "px";
+  }
+
+  function addItem(parent, label, onClick) {
+    var btn = document.createElement("div");
+    btn.textContent = label;
+    btn.style.cssText = "padding:7px 14px;cursor:pointer;white-space:nowrap;border-radius:3px;";
+    btn.onmouseenter = function () { btn.style.background = "#eef3ff"; };
+    btn.onmouseleave = function () { btn.style.background = "transparent"; };
+    btn.onclick = function () { onClick(); removeMenu(); };
+    parent.appendChild(btn);
+  }
+
+  function collect(text, html, title) {
+    var invoke = getInvoke();
+    if (!invoke) {
+      toast("⚠ 未检测到桥环境（请确认应用正常运行）");
+      console.error("[JZJD] __TAURI__ =", window.__TAURI__, "__TAURI_INTERNALS__ =", window.__TAURI_INTERNALS__);
+      return;
+    }
+    invoke("collect_selection", {
+      url: location.href,
+      title: title || document.title,
+      text: text,
+      html: html,
+    })
+      .then(function () { toast("✅ 已保存到本地成果库（带溯源）"); })
+      .catch(function (err) { toast("❌ 保存失败: " + err); console.error("[JZJD] invoke error:", err); });
   }
 
   function removeMenu() {
-    if (menu) {
-      menu.remove();
-      menu = null;
-    }
+    if (menu) { menu.remove(); menu = null; }
   }
-  document.addEventListener("click", removeMenu);
+  document.addEventListener("click", function (e) {
+    if (menu && !menu.contains(e.target)) removeMenu();
+  });
+  window.addEventListener("scroll", removeMenu, true);
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") removeMenu(); });
 
   function toast(msg) {
-    const t = document.createElement("div");
+    var t = document.createElement("div");
     t.textContent = msg;
     t.style.cssText =
-      "position:fixed;bottom:20px;left:50%;transform:translateX(-50%);" +
-      "background:rgba(0,0,0,.8);color:#fff;padding:8px 16px;border-radius:20px;" +
-      "z-index:2147483647;font-size:13px;";
+      "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);" +
+      "background:rgba(0,0,0,.85);color:#fff;padding:9px 18px;border-radius:20px;" +
+      "z-index:2147483647;font-size:13px;max-width:80vw;";
     document.body.appendChild(t);
-    setTimeout(() => t.remove(), 2000);
+    setTimeout(function () { t.remove(); }, 2500);
   }
+
+  console.log("[JZJD] 采集脚本已注入，右键即可保存。invoke 可用:", !!getInvoke());
 })();

@@ -52,3 +52,26 @@ export interface AuditEntry {
   action: string;
   detail: string;
 }
+
+// 工作区目录树
+export interface WorkspaceTree {
+  nodes: DomainNode[];
+}
+export interface DomainNode {
+  host: string;
+  items: DomainItem[];
+}
+export interface DomainItem {
+  id: string;
+  title: string;
+  created_at: string;
+  tags: string[];
+}
+
+// 本地文件浏览器
+export interface DirEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number;
+}

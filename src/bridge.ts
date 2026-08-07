@@ -6,6 +6,8 @@ import type {
   SyncPreview,
   SyncJob,
   AuditEntry,
+  WorkspaceTree,
+  DirEntry,
 } from "./types";
 
 // 类型化 IPC 封装：前端永远只传“意图”，不直接碰 OS / 凭据
@@ -39,4 +41,23 @@ export const bridge = {
     listen<SyncJob>("sync-completed", (e) => cb(e.payload)),
 
   auditLog: () => invoke<AuditEntry[]>("audit_log"),
+
+  // 产出端：读取/编辑/删除/目录树
+  readArtifact: (id: string) => invoke<Artifact>("read_artifact", { id }),
+
+  updateArtifact: (p: { id: string; title: string; text: string; tags: string[] }) =>
+    invoke<Artifact>("update_artifact", p),
+
+  deleteArtifact: (id: string) => invoke("delete_artifact", { id }),
+
+  browseWorkspace: () => invoke<WorkspaceTree>("browse_workspace"),
+
+  // 本地文件浏览器
+  listDir: (path: string) => invoke<DirEntry[]>("list_dir", { path }),
+
+  readFile: (path: string) => invoke<string>("read_file", { path }),
+
+  writeFile: (path: string, content: string) => invoke("write_file", { path, content }),
+
+  getStartDirs: () => invoke<DirEntry[]>("get_start_dirs"),
 };

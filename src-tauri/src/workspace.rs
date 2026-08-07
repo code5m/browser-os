@@ -48,6 +48,14 @@ pub fn load_artifacts(app: &AppHandle) -> Vec<Artifact> {
     out
 }
 
+pub fn delete_artifact(app: &AppHandle, id: &str) -> Result<(), String> {
+    let file = workspace_dir(app).join(format!("{}.json", id));
+    if file.exists() {
+        fs::remove_file(&file).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// 仓库配置（不含 token）持久化
 pub fn repos_file(app: &AppHandle) -> PathBuf {
     data_dir(app).join("repos.json")

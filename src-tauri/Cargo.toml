@@ -17,6 +17,7 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
 url = "2"
+urlencoding = "2"
 
 [profile.release]
 panic = "abort"
