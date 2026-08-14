@@ -1,10 +1,37 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "默认能力：主窗口 + 浏览器子窗口均可调桥命令",
-  "windows": ["main", "browser"],
+  "description": "默认能力：主窗口 + 浏览器子窗口均可调桥命令与终端",
+  "windows": [
+    "main",
+    "browser"
+  ],
   "permissions": [
     "core:default",
-    "core:window:allow-create"
+    "core:window:allow-create",
+    "browser-tabs:default",
+    "default-commands",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "bash",
+          "cmd": "bash",
+          "args": true
+        },
+        {
+          "name": "sh",
+          "cmd": "sh",
+          "args": true
+        },
+        {
+          "name": "powershell",
+          "cmd": "powershell",
+          "args": true
+        }
+      ]
+    },
+    "shell:allow-stdin-write",
+    "shell:allow-kill"
   ]
 }

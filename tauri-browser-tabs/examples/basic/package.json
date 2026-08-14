@@ -1,0 +1,23 @@
+{
+  "name": "@tauri-browser-tabs/example-basic",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-browser-tabs/core": "0.1.0",
+    "@tauri-browser-tabs/vue": "0.1.0",
+    "vue": "^3.4.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@vitejs/plugin-vue": "^5.0.0",
+    "typescript": "^5.5.0",
+    "vite": "^5.0.0"
+  }
+}

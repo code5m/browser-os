@@ -1,0 +1,22 @@
+{
+  "name": "tauri-browser-tabs",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "examples/basic"
+  ],
+  "scripts": {
+    "build": "npm run build -w packages/core -w packages/vue",
+    "test": "npm run test -w packages/core -w packages/vue",
+    "lint": "npm run lint -w packages/core -w packages/vue",
+    "example:dev": "npm run tauri dev -w examples/basic"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

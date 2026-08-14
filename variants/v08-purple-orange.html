@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>变体08 · 紫橙渐变年轻化</title>
+<style>
+  :root {
+    --blue:#7c3aed; --blue2:#f97316; --line:#ede9fe; --ink:#1e1b4b; --sub:#6b7280; --side:#f5f3ff;
+    --bg:#faf5ff; --activity-bg:#1e1b4b; --activity-fg:#c4b5fd; --activity-hover:#312e81; --accent:#f97316;
+    --pillbg:#ede9fe; --bannerbg:#f5f3ff; --bannertx:#6b7280;
+  }
+
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--ink); padding:24px; }
+  h1 { font-size:22px; } .sub { color:var(--sub); font-size:13px; margin:4px 0 18px; }
+  .pill { background:var(--pillbg); color:var(--blue); border-radius:10px; padding:2px 10px; font-size:11px; margin-left:8px; }
+  .banner { max-width:1180px; margin:0 auto 14px; background:var(--bannerbg); border:1px solid var(--line); border-radius:10px; padding:10px 14px; font-size:12px; color:var(--bannertx); display:flex; gap:10px; align-items:center; }
+  .banner b { color:var(--accent); }
+  .stage { max-width:1180px; margin:0 auto; background:#fff; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,.08); overflow:hidden; }
+  .titlebar { height:34px; background:linear-gradient(90deg,var(--blue),var(--blue2)); display:flex; align-items:center; padding:0 14px; color:#fff; font-size:13px; }
+  .titlebar .dots { display:flex; gap:6px; margin-right:12px; } .titlebar .dots i { width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,.7);display:inline-block; }
+  .body { display:flex; height:640px; }
+  /* 活动栏（默认左侧竖排；变体可通过 extra_css 改成顶/底/抽屉/分组/隐藏） */
+  .activity { width:56px; background:var(--activity-bg); display:flex; flex-direction:column; align-items:center; padding-top:10px; gap:6px; flex-shrink:0; }
+  .activity .ic { width:40px;height:40px;border-radius:8px; display:flex; align-items:center; justify-content:center; color:var(--activity-fg); font-size:18px; cursor:pointer; user-select:none; text-align:center; line-height:1.1; font-size:11px; flex-direction:column; }
+  .activity .ic span { font-size:9px; margin-top:2px; }
+  .activity .ic.active { background:var(--blue); color:#fff; }
+  .activity .ic:hover { background:var(--activity-hover); color:#fff; }
+  /* 侧栏 */
+  .sidebar { width:280px; background:var(--side); border-right:1px solid var(--line); display:flex; flex-direction:column; }
+  .sidebar .tabs { display:flex; border-bottom:1px solid var(--line); }
+  .sidebar .tabs div { flex:1; text-align:center; padding:10px 0; font-size:13px; cursor:pointer; color:#4e5969; }
+  .sidebar .tabs div.on { color:var(--blue); border-bottom:2px solid var(--blue); font-weight:600; }
+  .sidebar .content { flex:1; overflow:auto; padding:10px; font-size:13px; }
+  .file { padding:6px 8px; border-radius:6px; display:flex; align-items:center; gap:8px; cursor:pointer; }
+  .file:hover { background:#eef2f7; } .file .fi { color:#f5a623; }
+  .art { padding:8px; border:1px solid var(--line); border-radius:8px; margin-bottom:8px; cursor:pointer; }
+  .art .t { font-weight:600; font-size:13px; } .art .src { color:var(--sub); font-size:11px; margin-top:2px; }
+  .art.sel { border-color:var(--blue); background:#eef6ff; }
+  .sec-h { margin:12px 0 6px; color:var(--sub); font-size:11px; border-top:1px dashed var(--line); padding-top:8px; }
+  /* 主区 */
+  .main { flex:1; display:flex; flex-direction:column; min-width:0; }
+  .addrbar { height:42px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:8px; padding:0 10px; background:#fafbfc; }
+  .addrbar .nav { width:28px;height:28px;border-radius:6px; display:flex;align-items:center;justify-content:center;color:#4e5969;cursor:pointer; user-select:none; }
+  .addrbar .nav:hover { background:#eef2f7; }
+  .addrbar input { flex:1; height:30px; border:1px solid var(--line); border-radius:16px; padding:0 14px; font-size:13px; outline:none; }
+  .addrbar .go { background:var(--blue); color:#fff; border:none; border-radius:6px; padding:6px 14px; cursor:pointer; font-size:13px; }
+  .tabbar { height:38px; background:#eef1f5; display:flex; align-items:center; padding:0 6px; gap:2px; border-bottom:1px solid var(--line); }
+  .tab { display:flex; align-items:center; gap:6px; padding:6px 10px; background:#fff; border:1px solid #dfe3e8; border-radius:6px 6px 0 0; font-size:12px; cursor:pointer; max-width:160px; }
+  .tab.active { border-bottom:2px solid var(--blue); color:var(--ink); }
+  .tab .x { color:#b0b6bf; } .tab .x:hover { color:#f53f3f; }
+  .tab .fav { width:14px;height:14px;border-radius:3px;background:var(--blue2); }
+  .tabbar .plus { width:28px;height:28px;border-radius:6px; display:flex;align-items:center;justify-content:center;cursor:pointer;color:#4e5969; user-select:none; }
+  .tabbar .plus:hover { background:#dfe3e8; }
+  .viewport { flex:1; background:#fff; position:relative; overflow:hidden; }
+  .webpage { position:absolute; inset:12px; border:1px solid var(--line); border-radius:8px; background:linear-gradient(160deg,#e8f1ff,#f7fbff); display:flex; flex-direction:column; }
+  .webpage .wh { padding:18px; } .webpage .wh h2 { font-size:18px; color:var(--blue); }
+  .webpage .wh p { font-size:13px; color:#4e5969; margin-top:8px; line-height:1.7; }
+  .webpage .cards { display:flex; gap:10px; padding:0 18px 18px; } .webpage .card { flex:1; height:70px; background:#fff; border:1px solid var(--line); border-radius:8px; }
+  .floating { position:absolute; right:18px; bottom:18px; background:var(--blue); color:#fff; border:none; border-radius:20px; padding:10px 16px; font-size:13px; cursor:pointer; box-shadow:0 4px 12px rgba(43,108,176,.4); }
+  #collectHint { position:absolute; left:50%; top:14px; transform:translateX(-50%); background:#1f2733; color:#fff; font-size:12px; padding:6px 12px; border-radius:8px; display:none; }
+  .status { height:26px; background:#1f2733; color:#9aa4b2; font-size:11px; display:flex; align-items:center; padding:0 12px; gap:16px; }
+  .status .ok { color:#52c41a; }
+  .grid-overlay { position:absolute; inset:0; display:none; }
+  .grid-cell { position:absolute; border:1px solid #bcd; background:linear-gradient(160deg,#e8f1ff,#f7fbff); border-radius:6px; overflow:hidden; }
+  .grid-cell .gh { padding:8px; font-size:12px; color:var(--blue); border-bottom:1px solid #cde; background:#f0f6ff; display:flex; justify-content:space-between; }
+  .grid-cell .gh input { flex:1; border:1px solid #cde; border-radius:10px; padding:2px 8px; font-size:11px; margin-right:6px; }
+  .grid-cell iframe { width:100%; height:calc(100% - 36px); border:none; }
+  .term { position:absolute; inset:0; background:#1f2733; color:#9ae6b4; font-family:monospace; font-size:12.5px; padding:12px; overflow:auto; }
+  .term .line { white-space:pre-wrap; } .term .prompt { color:#63b3ed; }
+  .term input { background:transparent; border:none; color:#fff; font-family:monospace; font-size:12.5px; outline:none; flex:1; }
+  .term .row { display:flex; }
+  .term .sim { position:absolute; right:10px; bottom:8px; font-size:10px; color:#5a6b7a; }
+  .apps { display:flex; flex-wrap:wrap; gap:14px; padding:18px; align-content:flex-start; }
+  .app { width:88px; text-align:center; cursor:pointer; } .app .ai { width:56px;height:56px;border-radius:14px;background:linear-gradient(160deg,var(--blue2),var(--blue));margin:0 auto;display:flex;align-items:center;justify-content:center;font-size:26px;color:#fff; }
+  .app:hover .ai { box-shadow:0 4px 12px rgba(43,108,176,.4); } .app .an { font-size:11px; margin-top:6px; color:#4e5969; }
+  .repo { padding:14px; font-size:13px; } .repo .row { margin-bottom:10px; } .repo label { display:block; color:var(--sub); font-size:11px; margin-bottom:4px; }
+  .repo input { width:100%; height:30px; border:1px solid var(--line); border-radius:6px; padding:0 10px; font-size:13px; }
+  .repo .save { background:var(--blue); color:#fff; border:none; border-radius:6px; padding:8px 16px; cursor:pointer; }
+  .repo .log { margin-top:12px; font-size:12px; color:#4e5969; border-top:1px dashed var(--line); padding-top:10px; }
+  .gate { padding:16px; font-size:13px; } .gate h3 { margin-bottom:10px; } .gate .art { display:flex; align-items:center; gap:8px; }
+  .gate .btn { background:var(--blue); color:#fff; border:none; border-radius:6px; padding:8px 16px; cursor:pointer; margin-top:10px; }
+  .gate .btn.green { background:#52c41a; } .gate .preview { background:#f7f8fa; border:1px solid var(--line); border-radius:8px; padding:12px; margin-top:10px; display:none; }
+  .gate .done { margin-top:12px; color:#52c41a; font-size:13px; display:none; }
+  .audit { padding:12px; font-size:12.5px; } .audit .a { padding:8px; border-bottom:1px solid var(--line); } .audit .t { color:var(--sub); font-size:11px; }
+  .placeholder { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--sub); font-size:14px; flex-direction:column; gap:8px; }
+  .view { display:none; } .view.on { display:flex; }
+  .toast { position:fixed; bottom:30px; left:50%; transform:translateX(-50%); background:#1f2733; color:#fff; padding:10px 18px; border-radius:8px; font-size:13px; opacity:0; transition:opacity .3s; pointer-events:none; z-index:99; }
+  .toast.show { opacity:1; }
+  .fb { display:flex; flex-direction:column; height:100%; }
+  .pathbar { display:flex; gap:4px; padding:8px; border-bottom:1px solid var(--line); }
+  .pathbar button { padding:3px 8px; font-size:12px; }
+  .pathbar input { flex:1; min-width:0; padding:4px 8px; font-family:monospace; font-size:11px; border:1px solid var(--line); border-radius:6px; }
+  .quick { display:flex; flex-wrap:wrap; gap:6px; padding:8px; border-bottom:1px solid var(--line); }
+  .qdir { padding:5px 10px; background:#eef3ff; border-radius:4px; font-size:12px; cursor:pointer; color:var(--blue); }
+  .qdir:hover { background:#dbe7ff; }
+  .recent { padding:6px 8px; }
+  .recent select { width:100%; padding:5px 8px; border:1px solid var(--line); border-radius:6px; font-size:12px; }
+  .recent-head { font-size:11px; color:var(--sub); margin-bottom:4px; }
+  .flist { list-style:none; padding:0; margin:0; flex:1; overflow:auto; }
+  .flist li { display:flex; align-items:center; gap:8px; padding:6px 10px; border-bottom:1px solid #f6f6f6; cursor:pointer; font-size:13px; }
+  .flist li:hover { background:#f0f0f0; }
+  .flist li .fi { width:20px; text-align:center; }
+  .flist li .fn { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .flist li .fs { font-size:10px; color:#bbb; }
+  .flist li.is-md .fn { color:#8a5a00; }
+  .flist li.new { color:var(--blue); border-style:dashed; font-size:12px; }
+  .flist li.new:hover { background:#eafaf0; }
+  .feditor { position:absolute; inset:0; background:#fff; display:flex; flex-direction:column; z-index:5; }
+  .fe-head { display:flex; align-items:center; justify-content:space-between; padding:8px 10px; border-bottom:1px solid var(--line); font-weight:600; font-size:13px; }
+  .fe-acts button { font-size:11px; padding:3px 10px; }
+  .fe-body { flex:1; display:flex; flex-direction:column; min-height:0; padding:8px; }
+  .md { flex:1; overflow:auto; padding:14px 18px; border:1px solid var(--line); border-radius:6px; line-height:1.7; font-size:14px; }
+  .md h1,.md h2,.md h3 { margin:14px 0 8px; } .md h1 { font-size:22px; border-bottom:2px solid #eee; padding-bottom:6px; }
+  .md code { background:#f4f4f4; padding:1px 5px; border-radius:4px; font-family:monospace; }
+  .md pre { background:#f6f6f6; padding:12px; border-radius:6px; overflow:auto; }
+  .md a { color:var(--blue); }
+  .feta { flex:1; width:100%; font-family:monospace; font-size:12px; padding:8px; border:1px solid var(--line); border-radius:4px; resize:none; background:#f6f6f6; }
+  .ctxmenu { position:fixed; z-index:999; background:#fff; border:1px solid #ddd; box-shadow:0 2px 10px rgba(0,0,0,.2); border-radius:6px; padding:4px; min-width:160px; font-size:13px; }
+  .ctxmenu div { padding:7px 12px; cursor:pointer; border-radius:4px; }
+  .ctxmenu div:hover { background:#eef3ff; }
+  .ctxmenu div.danger { color:#c33; } .ctxmenu div.danger:hover { background:#ffeaea; }
+  .ctxmenu .sep { height:1px; background:#eee; margin:3px 0; padding:0; }
+  .clip-actions { display:flex; gap:8px; margin-bottom:8px; }
+  .clip-actions button { flex:1; }
+  .clip-area { flex:1; width:100%; min-height:90px; font-family:monospace; font-size:12px; padding:8px; border:1px solid var(--line); border-radius:6px; resize:vertical; background:#f6f6f6; }
+  .clip-tip { font-size:11px; color:var(--sub); margin:6px 0; }
+  .clip-history { border-top:1px solid var(--line); padding-top:8px; overflow:auto; flex:1; min-height:0; }
+  .clip-item { display:flex; align-items:center; gap:6px; padding:6px 8px; border-bottom:1px solid #f4f4f4; cursor:pointer; border-radius:4px; }
+  .clip-item:hover { background:#eef3ff; }
+  .clip-item .ct { flex:1; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#333; }
+  .clip-item .cc { border:none; background:transparent; color:#666; padding:2px 6px; border-radius:4px; }
+  .clip-item .cc:hover { background:#e0eaff; color:var(--blue); }
+  .clip-empty { font-size:12px; color:var(--sub); padding:14px; text-align:center; }
+  /* 命令面板 */
+  .cmd { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:flex-start; justify-content:center; padding-top:120px; z-index:200; }
+  .cmd.on { display:flex; }
+  .cmd-box { width:520px; background:#fff; border-radius:12px; box-shadow:0 8px 30px rgba(0,0,0,.3); overflow:hidden; }
+  .cmd-box input { width:100%; border:none; border-bottom:1px solid var(--line); padding:14px 16px; font-size:14px; outline:none; }
+  .cmd-list { max-height:300px; overflow:auto; }
+  .cmd-list div { padding:10px 16px; font-size:13px; cursor:pointer; }
+  .cmd-list div:hover, .cmd-list div.sel { background:#eef3ff; color:var(--blue); }
+
+
+  .titlebar { background:linear-gradient(90deg,#7c3aed,#f97316); }
+  .activity { backdrop-filter:blur(8px); background:rgba(30,27,75,.92); }
+  .floating { background:linear-gradient(90deg,#7c3aed,#f97316); }
+  .pill { background:linear-gradient(90deg,#7c3aed,#f97316); color:#fff; }
+  h1 .pill { color:#fff; }
+</style>
+</head>
+<body>
+  <h1>变体08 · 紫橙渐变年轻化 <span class="pill">方案 D：单窗口多 Webview</span></h1>
+  <div class="sub">紫主橙辅渐变标题栏 + 毛玻璃活动栏，强视觉冲击，年轻化品牌向。</div>
+  
+  <div class="stage">
+    <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span> 浏览器OS融合</div>
+    <div class="body">
+      
+      <div class="activity" id="activity">
+        <div class="ic active" data-view="browser">📁<span>浏览</span></div>
+        <div class="ic" data-view="files">📂<span>文件</span></div>
+        <div class="ic" data-view="clip">📋<span>剪贴板</span></div>
+        <div class="ic" data-view="arts">📚<span>成果</span></div>
+        <div class="ic" data-view="grid">🗂️<span>宫格</span></div>
+        <div class="ic" data-view="apps">🚀<span>应用</span></div>
+        <div class="ic" data-view="term">💻<span>终端</span></div>
+        <div class="ic" data-view="repo">🛰️<span>仓库</span></div>
+        <div class="ic" data-view="audit">🛡️<span>审计</span></div>
+      </div>
+      
+      <!-- 浏览器主视图 -->
+      <div class="main view" id="view-browser">
+        <div class="addrbar">
+          <div class="nav" id="navBack">←</div><div class="nav" id="navFwd">→</div><div class="nav" id="navReload">⟳</div>
+          <input id="addrInput" value="https://www.example.com" />
+          <button class="go" id="addrGo">前往</button>
+        </div>
+        <div class="tabbar" id="tabbar">
+          <div class="plus" id="tabPlus">＋</div>
+        </div>
+        <div class="viewport" id="viewport">
+          <div class="webpage" id="webpage">
+            <div class="wh"><h2 id="wpTitle">Example 站点</h2><p id="wpDesc">这是内嵌的真实网页（独立 Webview，方案 D 子窗口）。可正常滚动、点击、登录。选中文字 → 点右下角“采集选中内容”一键存入左侧成果库。</p></div>
+            <div class="cards"><div class="card"></div><div class="card"></div><div class="card"></div></div>
+          </div>
+          <div class="grid-overlay" id="gridOverlay"></div>
+          <div class="term" id="termView" style="display:none"></div>
+          <button class="floating" id="collectBtn">＋ 采集选中内容</button>
+          <div id="collectHint"></div>
+        </div>
+        <div class="status"><span class="ok">● 已连接</span> <span id="stTabs">页签 1</span> · 终端就绪 · 仓库已配置 · 审计 <span id="stAudit">12</span> 条</div>
+      </div>
+
+      <!-- 文件视图 -->
+      <div class="sidebar view" id="view-files" style="width:100%">
+        <div class="tabs"><div class="on">文件管理器</div></div>
+        <div class="content" style="padding:0">
+          <div class="fb">
+            <div class="pathbar">
+              <button id="fbUp">⬆</button>
+              <input id="fbPath" placeholder="输入路径回车跳转（如 /home/you/Documents）" />
+              <button id="fbGo">↵</button>
+              <button id="fbHome" title="回到起始目录">🏠</button>
+            </div>
+            <div class="quick" id="fbQuick"></div>
+            <div class="recent" id="fbRecent"></div>
+            <ul class="flist" id="fileList"></ul>
+          </div>
+          <div class="feditor" id="fbEditor" style="display:none">
+            <div class="fe-head">
+              <span id="feName">文件</span>
+              <span class="fe-acts">
+                <button id="fePreview" style="display:none">👁 预览</button>
+                <button id="feSource" style="display:none">✎ 源码</button>
+                <button class="primary" id="feSave">💾 保存</button>
+                <button id="feClose">✕ 关闭</button>
+              </span>
+            </div>
+            <div class="fe-body">
+              <div class="md" id="feMd"></div>
+              <textarea class="feta" id="feText"></textarea>
+            </div>
+          </div>
+        </div>
+        <div class="ctxmenu" id="fbCtx" style="display:none">
+          <div id="fbCtxNewFile">📄 新建文件</div>
+          <div id="fbCtxNewDir">📁 新建目录</div>
+          <div id="fbCtxSep" class="sep"></div>
+          <div id="fbCtxRename">✏ 重命名</div>
+          <div id="fbCtxDelete" class="danger">🗑 删除</div>
+        </div>
+      </div>
+
+      <!-- 剪贴板视图 -->
+      <div class="sidebar view" id="view-clip" style="width:100%">
+        <div class="tabs"><div class="on">📋 剪贴板</div></div>
+        <div class="content" style="padding:10px;display:flex;flex-direction:column">
+          <div class="clip-actions">
+            <button id="clipPaste">📥 刷新/粘贴</button>
+            <button id="clipCopy" class="primary">📤 复制当前</button>
+            <button id="clipClear" class="ghost">🗑 清空历史</button>
+          </div>
+          <textarea id="clipArea" class="clip-area" placeholder="在此编辑文本后点「复制当前」写入系统剪贴板；切回本应用或打开面板时自动同步"></textarea>
+          <div class="clip-tip" id="clipTip">切回本应用或打开面板时自动读取系统剪贴板，已保存 <b id="clipCount">0</b> 条历史</div>
+          <div class="clip-history" id="clipHistory"></div>
+        </div>
+      </div>
+
+      <!-- 成果视图 -->
+      <div class="sidebar view" id="view-arts" style="width:100%">
+        <div class="tabs"><div class="on">成果库</div></div>
+        <div class="content" id="artList"></div>
+      </div>
+
+      <!-- 宫格视图 -->
+      <div class="main view" id="view-grid">
+        <div class="addrbar">
+          <span style="font-size:13px;color:#4e5969">宫格数量：</span>
+          <button class="go" data-n="2">2</button>
+          <button class="go" data-n="4">4</button>
+          <button class="go" data-n="6">6</button>
+          <button class="go" data-n="9">9</button>
+          <button class="go" data-n="12">12</button>
+          <span style="font-size:12px;color:var(--sub);margin-left:8px">（各宫格独立导航，模拟对比浏览）</span>
+        </div>
+        <div class="viewport"><div class="grid-overlay" id="gridOverlay2" style="display:block"></div></div>
+      </div>
+
+      <!-- 应用启动器视图 -->
+      <div class="main view" id="view-apps">
+        <div class="viewport"><div class="apps" id="appList"></div></div>
+      </div>
+
+      <!-- 终端视图 -->
+      <div class="main view" id="view-term">
+        <div class="viewport"><div class="term" id="termFull"><span class="sim">（模拟终端 · 真实走 term_spawn + portable_pty）</span></div></div>
+      </div>
+
+      <!-- 仓库视图 -->
+      <div class="sidebar view" id="view-repo" style="width:100%">
+        <div class="tabs"><div class="on">Git 仓库</div></div>
+        <div class="content"><div class="repo" id="repoBody"></div></div>
+      </div>
+
+      <!-- 审计视图 -->
+      <div class="sidebar view" id="view-audit" style="width:100%">
+        <div class="tabs"><div class="on">审计日志</div></div>
+        <div class="content"><div class="audit" id="auditList"></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="sub" style="text-align:center;max-width:1180px;margin:14px auto 0">
+    提示：所有交互均为前端模拟，对应 bridge.rs 命令（tab_new / tab_open / create_grid / term_spawn / collect_selection / request_sync / confirm_sync / list_dir / read_file / write_file / clipboard_read / clipboard_write 等）。剪贴板历史存 localStorage（前 50 条）。
+  </div>
+
+  <div class="cmd" id="cmd"><div class="cmd-box"><input id="cmdInput" placeholder="⌘ 输入命令（如 grid 4 / open 文件 / collect）…" /><div class="cmd-list" id="cmdList"></div></div></div>
+  <div class="toast" id="toast"></div>
+<script>
+
+const state = {
+  tabs: [], activeTab: null, tabSeq: 0,
+  arts: [ { t:"某技术博客段落", src:"blog.example.com", hash:"a1b2" }, { t:"竞品功能清单", src:"site.example.com", hash:"c3d4" } ],
+  audit: [
+    { a:"confirm_sync SUCCESS", t:"2026-08-13 14:02" },
+    { a:"launch_app firefox", t:"2026-08-13 13:50" },
+    { a:"collect_selection", t:"2026-08-13 13:41" },
+    { a:"term_spawn bash", t:"2026-08-13 13:38" },
+  ],
+  apps: [ { n:"终端", i:"💻" },{ n:"Firefox", i:"🔥" },{ n:"VS Code", i:"📝" },{ n:"音乐", i:"🎵" },{ n:"文件", i:"📁" },{ n:"设置", i:"⚙️" },{ n:"日历", i:"📅" } ],
+  files: [],
+  termLines: [], termCmd: "",
+  repo: { url:"gitee.com/xxx/browser-os3", configured:true },
+};
+const $ = (s,r=document)=>r.querySelector(s);
+const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
+function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("show"),1600); }
+
+function setView(v){
+  $$("#activity .ic").forEach(x=>x.classList.toggle("active", x.dataset.view===v));
+  $$(".view").forEach(x=>x.classList.remove("on"));
+  const el=$("#view-"+v); if(el) el.classList.add("on");
+  if(v==="apps") renderApps();
+  if(v==="audit") renderAudit();
+  if(v==="repo") renderRepo();
+  if(v==="files") renderFiles();
+  if(v==="clip"){ renderClip(); clipReadSilent(); toast("clipboard_read · 已同步系统剪贴板"); }
+  if(v==="arts") renderArts();
+  if(v==="grid") renderGrid(4, "#gridOverlay2");
+}
+$$("#activity .ic").forEach(ic=>{ ic.addEventListener("click",()=>setView(ic.dataset.view)); });
+
+function hostOf(u){ try{ return new URL(u).hostname.replace(/^www\./,""); }catch(e){ return u.split("/")[0]||"新页签"; } }
+function addTab(url){
+  url = url && url.trim() ? url : "https://www.baidu.com";
+  const id = "tab-"+(++state.tabSeq);
+  const tab = { id, url, title: hostOf(url) };
+  state.tabs.push(tab); setActive(tab.id); renderTabs();
+}
+function setActive(id){
+  state.activeTab=id; const t=state.tabs.find(x=>x.id===id); if(!t) return;
+  $("#addrInput").value=t.url; $("#wpTitle").textContent=t.title;
+  $("#wpDesc").textContent="这是内嵌的真实网页（独立 Webview，方案 D 子窗口）。选中文字 → 点右下角“采集选中内容”一键存入成果库。";
+  $("#webpage").style.display="flex"; $("#gridOverlay").style.display="none";
+  $("#termView").style.display="none"; const cb=$("#collectBtn"); if(cb) cb.style.display="block";
+}
+function renderTabs(){
+  const bar=$("#tabbar"); if(!bar) return; $$(".tab",bar).forEach(t=>t.remove());
+  const plus=$("#tabPlus");
+  state.tabs.forEach(t=>{
+    const d=document.createElement("div"); d.className="tab"+(t.id===state.activeTab?" active":"");
+    d.innerHTML=`<span class="fav"></span> ${t.title} <span class="x">✕</span>`;
+    d.addEventListener("click",e=>{ if(e.target.classList.contains("x")){ closeTab(t.id); } else setActive(t.id); });
+    bar.insertBefore(d, plus);
+  });
+  const st=$("#stTabs"); if(st) st.textContent="页签 "+state.tabs.length;
+}
+function closeTab(id){
+  const i=state.tabs.findIndex(x=>x.id===id); if(i<0) return;
+  state.tabs.splice(i,1);
+  if(state.activeTab===id){ if(state.tabs.length){ setActive(state.tabs[Math.max(0,i-1)].id); } else { state.activeTab=null; const wp=$("#webpage"); if(wp) wp.innerHTML='<div class="placeholder">无打开的页签 · 点 ＋ 新建</div>'; } }
+  renderTabs();
+}
+function bindBrowser(){
+  const plus=$("#tabPlus"); if(plus) plus.addEventListener("click",()=>addTab(prompt("输入网址（留空=百度）：","https://")));
+  const nb=$("#navBack"); if(nb) nb.addEventListener("click",()=>toast("tab_go_back · 后退"));
+  const nf=$("#navFwd"); if(nf) nf.addEventListener("click",()=>toast("tab_go_forward · 前进"));
+  const nr=$("#navReload"); if(nr) nr.addEventListener("click",()=>toast("tab_reload · 刷新"));
+  const go=$("#addrGo"); if(go) go.addEventListener("click",()=>{ const u=$("#addrInput").value.trim(); if(!u) return; if(state.activeTab){ const t=state.tabs.find(x=>x.id===state.activeTab); t.url=u; t.title=hostOf(u); $("#wpTitle").textContent=t.title; renderTabs(); toast("tab_open · 导航到 "+t.title); } else addTab(u); });
+  const ai=$("#addrInput"); if(ai) ai.addEventListener("keydown",e=>{ if(e.key==="Enter"){ const g=$("#addrGo"); if(g) g.click(); } });
+  const cb=$("#collectBtn"); if(cb) cb.addEventListener("click",()=>{
+    const sel=window.getSelection().toString();
+    const txt = sel || ($("#wpDesc").textContent.slice(0,20)+"…");
+    const hash=Math.random().toString(16).slice(2,6);
+    const src=hostOf($("#addrInput").value);
+    state.arts.unshift({ t:txt.slice(0,18), src, hash });
+    state.audit.unshift({ a:"collect_selection", t:new Date().toISOString().slice(0,16).replace("T"," ") });
+    const st=$("#stAudit"); if(st) st.textContent=state.audit.length;
+    const h=$("#collectHint"); if(h){ h.textContent="已采集 → 成果库："+txt.slice(0,14); h.style.display="block"; setTimeout(()=>h.style.display="none",1800); }
+    toast("collect_selection · 已落库 ("+hash+")");
+  });
+}
+function renderGrid(n, sel){
+  const ov=$(sel); if(!ov) return; ov.innerHTML=""; ov.style.display="block";
+  const cols=Math.ceil(Math.sqrt(n)), rows=Math.ceil(n/cols);
+  const cw=100/cols, ch=100/rows;
+  for(let i=0;i<n;i++){
+    const r=Math.floor(i/cols), c=i%cols;
+    const cell=document.createElement("div"); cell.className="grid-cell";
+    cell.style.left=(c*cw)+"%"; cell.style.top=(r*ch)+"%"; cell.style.width=cw+"%"; cell.style.height=ch+"%";
+    const useIframe = window.__gridIframe;
+    cell.innerHTML=`<div class="gh"><input value="https://site${i+1}.com" /><span>↗</span></div>` + (useIframe ? `<iframe src="https://www.example.com"></iframe>` : `<div style="padding:10px;font-size:11px;color:#4e5969">内嵌网页 ${i+1}</div>`);
+    cell.querySelector("input").addEventListener("keydown",e=>{ if(e.key==="Enter") toast("grid_open · "+e.target.value); });
+    cell.querySelector("span").addEventListener("click",e=>{ const inp=e.target.previousElementSibling; toast("grid_open · "+inp.value); });
+    ov.appendChild(cell);
+  }
+}
+const _g2=$$("#view-grid .go"); _g2.forEach(b=>b.addEventListener("click",()=>renderGrid(+b.dataset.n,"#gridOverlay2")));
+function renderApps(){
+  const box=$("#appList"); if(!box) return; box.innerHTML="";
+  state.apps.forEach(a=>{
+    const d=document.createElement("div"); d.className="app";
+    d.innerHTML=`<div class="ai">${a.i}</div><div class="an">${a.n}</div>`;
+    d.addEventListener("click",()=>{ state.audit.unshift({a:"launch_app "+a.n,t:new Date().toISOString().slice(0,16).replace("T"," ")}); const st=$("#stAudit"); if(st) st.textContent=state.audit.length; toast("launch_app · 启动 "+a.n); });
+    box.appendChild(d);
+  });
+}
+const fileState = {
+  path:"/home/user/Documents",
+  entries:[
+    { is_dir:true, name:"项目", size:0, path:"/home/user/Documents/项目" },
+    { is_dir:true, name:"截图", size:0, path:"/home/user/Documents/截图" },
+    { is_dir:false, name:"需求文档.md", size:2048, path:"/home/user/Documents/需求文档.md" },
+    { is_dir:false, name:"方案决策.md", size:4096, path:"/home/user/Documents/方案决策.md" },
+    { is_dir:false, name:"流程图.png", size:88123, path:"/home/user/Documents/流程图.png" },
+    { is_dir:false, name:"会议纪要.txt", size:1024, path:"/home/user/Documents/会议纪要.txt" },
+    { is_dir:false, name:"预算表.xlsx", size:15360, path:"/home/user/Documents/预算表.xlsx" },
+  ],
+  startDirs:[
+    { name:"Home", path:"/home/user" },{ name:"桌面", path:"/home/user/Desktop" },
+    { name:"文档", path:"/home/user/Documents" },{ name:"下载", path:"/home/user/Downloads" },
+    { name:"成果工作区", path:"/home/user/.browser-os/workspace" },
+  ],
+  recents:[ { type:"url", title:"https://www.example.com", path:"https://www.example.com" }, { type:"file", title:"方案决策.md", path:"/home/user/Documents/方案决策.md" } ],
+  editing:null, ctxEntry:null,
+};
+function fmtSize(b){ if(b<1024) return b+" B"; if(b<1048576) return (b/1024).toFixed(1)+" KB"; return (b/1048576).toFixed(1)+" MB"; }
+function renderFiles(){
+  const q=$("#fbQuick"); if(!q) return; q.innerHTML="";
+  fileState.startDirs.forEach(d=>{ const e=document.createElement("div"); e.className="qdir"; e.textContent=d.name; e.onclick=()=>{ fileState.path=d.path; renderFiles(); }; q.appendChild(e); });
+  const r=$("#fbRecent"); r.innerHTML=`<div class="recent-head">🕒 最近访问</div><select id="fbRecSel"><option value="">— 选择最近访问 —</option>${fileState.recents.map(x=>`<option value="${x.type}|${x.path}">${x.type==='url'?'🌐':'📄'} ${x.title}</option>`).join("")}</select>`;
+  $("#fbRecSel").onchange=e=>{ const [t,p]=e.target.value.split("|"); if(t==="url"){ toast("openBrowser: "+p); } else { openFile({is_dir:false,name:p.split("/").pop(),path:p,size:0}); } e.target.value=""; };
+  $("#fbPath").value=fileState.path;
+  const box=$("#fileList"); box.innerHTML="";
+  const sorted=[...fileState.entries].sort((a,b)=> (b.is_dir?1:0)-(a.is_dir?1:0));
+  sorted.forEach(f=>{
+    const li=document.createElement("li"); const isMd=!f.is_dir && (f.name.endsWith(".md")||f.name.endsWith(".markdown"));
+    if(isMd) li.className="is-md";
+    li.innerHTML=`<span class="fi">${f.is_dir?"📁":(isMd?"📝":"📄")}</span><span class="fn">${f.name}</span><span class="fs">${f.is_dir?"":fmtSize(f.size)}</span>`;
+    li.onclick=()=>openFile(f); li.oncontextmenu=e=>{ e.preventDefault(); showFileCtx(e, f); };
+    box.appendChild(li);
+  });
+  const add=document.createElement("li"); add.className="new"; add.textContent="＋ 在此处新建…"; add.onclick=e=>showFileCtx(e); box.appendChild(add);
+  if(!sorted.length){ const e=document.createElement("li"); e.className="new"; e.textContent="空目录"; box.appendChild(e); }
+}
+function renderMd(src){
+  const esc=s=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  return src.replace(/\r\n/g,"\n").split("\n").map(raw=>{
+    if(raw.startsWith("```")) return ""; let l=esc(raw);
+    const h=l.match(/^(#{1,6})\s+(.*)$/); if(h) return `<h${h[1].length}>${h[2]}</h${h[1].length}>`;
+    const li=l.match(/^[-*]\s+(.*)$/); if(li) return `<li>${li[1]}</li>`;
+    if(!l.trim()) return "<br/>";
+    return "<p>"+l.replace(/`([^`]+)`/g,"<code>$1</code>").replace(/\*\*([^*]+)\*\*/g,"<b>$1</b>").replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,'<a href="$2" target="_blank">$1</a>')+"</p>";
+  }).join("");
+}
+function openFile(f){
+  if(f.is_dir){ fileState.path=f.path; renderFiles(); return; }
+  const ext=(f.name.split(".").pop()||"").toLowerCase();
+  const isMd=ext==="md"||ext==="markdown";
+  const textExts=["txt","json","js","ts","vue","rs","html","css","xml","yaml","yml","toml","csv","log","sh","py","java","go","c","cpp","h","sql","env","gitignore","md","markdown"];
+  if(!textExts.includes(ext)){ toast("非文本文件 ("+f.name+")，暂不支持预览"); return; }
+  fileState.editing={ name:f.name, path:f.path, isMd };
+  const ed=$("#fbEditor"); if(ed){ ed.style.display="flex"; $("#feName").textContent=f.name; }
+  const sample=isMd ? "# "+f.name.replace(/\.md$/,"")+"\n\n这是 **Markdown** 文件预览。\n\n- 支持列表\n- 支持 `代码`\n- [链接](https://example.com)" : "（模拟读取 "+f.name+" 的文本内容。）";
+  $("#feText").value=sample; $("#feMd").innerHTML=renderMd(sample);
+  const pv=$("#fePreview"); if(pv) pv.style.display=isMd?"inline-block":"none";
+  const so=$("#feSource"); if(so) so.style.display="none";
+  $("#feText").style.display=isMd?"none":"block"; $("#feMd").style.display=isMd?"block":"none";
+}
+const feClose=$("#feClose"); if(feClose) feClose.onclick=()=>{ const ed=$("#fbEditor"); if(ed) ed.style.display="none"; fileState.editing=null; };
+const feSave=$("#feSave"); if(feSave) feSave.onclick=()=>{ if(!fileState.editing) return; toast("write_file · 已保存 "+fileState.editing.name); };
+const fePrev=$("#fePreview"); if(fePrev) fePrev.onclick=()=>{ $("#feMd").innerHTML=renderMd($("#feText").value); $("#feMd").style.display="block"; $("#feText").style.display="none"; fePrev.style.display="none"; if($("#feSource")) $("#feSource").style.display="inline-block"; };
+const feSrc=$("#feSource"); if(feSrc) feSrc.onclick=()=>{ $("#feText").style.display="block"; $("#feMd").style.display="none"; feSrc.style.display="none"; if($("#fePreview")) $("#fePreview").style.display="inline-block"; };
+function showFileCtx(e, entry){
+  e.preventDefault(); fileState.ctxEntry=entry||null; const m=$("#fbCtx");
+  m.style.display="block"; m.style.left=e.clientX+"px"; m.style.top=e.clientY+"px";
+  $("#fbCtxSep").style.display=entry?"block":"none"; $("#fbCtxRename").style.display=entry?"block":"none"; $("#fbCtxDelete").style.display=entry?"block":"none";
+}
+function closeFileCtx(){ const m=$("#fbCtx"); if(m) m.style.display="none"; fileState.ctxEntry=null; }
+const fbCtx=$("#fbCtx"); if(fbCtx){ fbCtx.addEventListener("click",e=>e.stopPropagation());
+  $("#fbCtxNewFile").onclick=()=>{ const n=prompt("新文件名："); if(n){ fileState.entries.push({is_dir:false,name:n,size:0,path:fileState.path+"/"+n}); closeFileCtx(); renderFiles(); toast("create_file · "+n); } else closeFileCtx(); };
+  $("#fbCtxNewDir").onclick=()=>{ const n=prompt("新目录名："); if(n){ fileState.entries.push({is_dir:true,name:n,size:0,path:fileState.path+"/"+n}); closeFileCtx(); renderFiles(); toast("create_dir · "+n); } else closeFileCtx(); };
+  $("#fbCtxRename").onclick=()=>{ const e=fileState.ctxEntry; if(!e) return; const n=prompt("重命名为：",e.name); if(n&&n!==e.name){ e.name=n; e.path=e.path.split("/").slice(0,-1).join("/")+"/"+n; closeFileCtx(); renderFiles(); toast("rename_path · "+n); } else closeFileCtx(); };
+  $("#fbCtxDelete").onclick=()=>{ const e=fileState.ctxEntry; if(!e) return; if(confirm("删除「"+e.name+"」？")){ fileState.entries=fileState.entries.filter(x=>x!==e); closeFileCtx(); renderFiles(); toast("delete_path · "+e.name); } else closeFileCtx(); };
+}
+document.addEventListener("click",closeFileCtx);
+const fbUp=$("#fbUp"); if(fbUp) fbUp.onclick=()=>{ const p=fileState.path.split("/").slice(0,-1).join("/")||"/"; fileState.path=p; renderFiles(); };
+const fbGo=$("#fbGo"); if(fbGo) fbGo.onclick=()=>{ const p=$("#fbPath").value.trim(); if(p){ fileState.path=p; renderFiles(); } };
+const fbPath=$("#fbPath"); if(fbPath) fbPath.addEventListener("keydown",e=>{ if(e.key==="Enter"){ const g=$("#fbGo"); if(g) g.click(); } });
+const fbHome=$("#fbHome"); if(fbHome) fbHome.onclick=()=>{ const ws=fileState.startDirs.find(d=>d.name==="成果工作区"); fileState.path=(ws||fileState.startDirs[0]).path; renderFiles(); };
+
+const clipState = { text:"", history:[] };
+const CLIP_KEY="browser-os-clipboard";
+function loadClipHistory(){ try{ const raw=localStorage.getItem(CLIP_KEY); if(raw) clipState.history=JSON.parse(raw); }catch(e){} }
+function saveClipHistory(){ try{ localStorage.setItem(CLIP_KEY, JSON.stringify(clipState.history.slice(0,50))); }catch(e){} }
+function clipReadSilent(){
+  const samples=["https://developer.mozilla.org/zh-CN/docs/Web/API/Clipboard_API","会议结论：Q3 优先做宫格对比 + 剪贴板同步","SELECT * FROM orders WHERE status='PAID' LIMIT 10","https://www.figma.com/file/xxx/浏览器OS融合原型"];
+  const t=samples[clipState.history.length % samples.length];
+  if(!t || t===clipState.text) return; clipState.text=t; pushClipHistory(t); renderClip();
+}
+function pushClipHistory(text){
+  const idx=clipState.history.findIndex(c=>c.text===text); if(idx>=0) clipState.history.splice(idx,1);
+  clipState.history.unshift({text, at:Date.now()}); saveClipHistory();
+}
+function renderClip(){
+  const area=$("#clipArea"); if(area) area.value=clipState.text;
+  const cnt=$("#clipCount"); if(cnt) cnt.textContent=clipState.history.length;
+  const box=$("#clipHistory"); if(!box) return; box.innerHTML="";
+  if(!clipState.history.length){ box.innerHTML='<div class="clip-empty">暂无历史记录，复制内容后会自动收集</div>'; return; }
+  clipState.history.slice(0,30).forEach((it)=>{
+    const row=document.createElement("div"); row.className="clip-item";
+    row.innerHTML=`<span class="ct" title="${it.text.replace(/"/g,'&quot;')}">${it.text}</span><button class="cc" title="复制此项">📋</button>`;
+    row.querySelector(".ct").onclick=()=>{ clipState.text=it.text; renderClip(); toast("已填入编辑框"); };
+    row.querySelector(".cc").onclick=e=>{ e.stopPropagation(); clipState.text=it.text; renderClip(); copyClipCurrent(true); };
+    box.appendChild(row);
+  });
+}
+function copyClipCurrent(silent){
+  if(!clipState.text.trim()){ if(!silent) toast("没有可复制的内容"); return; }
+  pushClipHistory(clipState.text); renderClip(); toast("clipboard_write · 已写入系统剪贴板");
+}
+const cp=$("#clipPaste"); if(cp) cp.onclick=()=>{ clipReadSilent(); toast("clipboard_read · 已粘贴"); };
+const cc=$("#clipCopy"); if(cc) cc.onclick=()=>copyClipCurrent(false);
+const cl=$("#clipClear"); if(cl) cl.onclick=()=>{ clipState.history.splice(0); saveClipHistory(); renderClip(); toast("已清空历史"); };
+const ca=$("#clipArea"); if(ca) ca.addEventListener("input",e=>{ clipState.text=e.target.value; });
+loadClipHistory();
+function renderArts(){
+  const box=$("#artList"); if(!box) return; box.innerHTML="";
+  state.arts.forEach(a=>{ const d=document.createElement("div"); d.className="art"; d.innerHTML=`<div class="t">${a.t}</div><div class="src">来源：${a.src} · 哈希 ${a.hash}</div>`; d.addEventListener("click",()=>toast("read_artifact · "+a.t)); box.appendChild(d); });
+}
+function termInit(el){
+  if(!el) return;
+  el.innerHTML='<div class="line"><span class="prompt">user@os</span>:~$ <span id="tout"></span></div><div class="row"><span class="prompt">user@os</span>:~$ <input id="tinput" autofocus /></div><span class="sim">（模拟终端 · 真实走 term_spawn + portable_pty）</span>';
+  const inp=$("#tinput",el);
+  inp.addEventListener("keydown",e=>{ if(e.key==="Enter"){ const cmd=inp.value; inp.value=""; const out=el.querySelector("#tout");
+    const res = cmd.trim()==="ls" ? "documents/  downloads/  project/  需求文档.md" : cmd.trim()==="pwd" ? "/home/user" : cmd.trim()==="" ? "" : cmd+": command ok (模拟)";
+    el.insertBefore(document.createTextNode("\n"+cmd+"\n"+res+"\n"), el.lastElementChild); el.scrollTop=el.scrollHeight; } });
+}
+termInit($("#termView")); termInit($("#termFull"));
+function renderRepo(){
+  const b=$("#repoBody"); if(!b) return;
+  b.innerHTML=`
+    <div class="row"><label>远程仓库地址</label><input id="repoUrl" value="${state.repo.url}" /></div>
+    <div class="row"><label>访问令牌（仅存系统密钥库，不回前端）</label><input id="repoToken" placeholder="输入后存入 KeyringStore" type="password" /></div>
+    <button class="save" id="repoSave">配置仓库</button>
+    <div class="log" id="repoLog"></div>`;
+  $("#repoSave").addEventListener("click",()=>{ state.repo.url=$("#repoUrl").value; state.repo.configured=true; $("#repoLog").innerHTML="✓ configure_repo · 凭据已存入密钥库<br/>request_sync 可生成待确认任务"; state.audit.unshift({a:"configure_repo",t:new Date().toISOString().slice(0,16).replace("T"," ")}); toast("configure_repo · 已配置"); });
+}
+function renderGate(){
+  const b=$("#repoBody"); if(!b) return;
+  b.innerHTML+=`
+    <div class="gate" style="margin-top:16px;border-top:1px dashed var(--line);padding-top:14px">
+      <h3>Git 同步 · 两步闸门</h3>
+      <div id="gateArts"></div>
+      <button class="btn" id="gateReq">生成同步预览</button>
+      <div class="preview" id="gatePrev"></div>
+      <button class="btn green" id="gateConf" style="display:none">✓ 确认推送</button>
+      <div class="done" id="gateDone">✓ 已推送 ${state.arts.length} 个成果 · 审计已留痕</div>
+    </div>`;
+  const ga=$("#gateArts"); state.arts.forEach(()=>{ const d=document.createElement("div"); d.className="art sel"; d.innerHTML=`<div class="t">☑ 成果项</div>`; ga.appendChild(d); });
+  $("#gateReq").addEventListener("click",()=>{ $("#gatePrev").style.display="block"; $("#gatePrev").innerHTML=`仓库：${state.repo.url}<br/>将推送 <b>${state.arts.length}</b> 个成果<br/><span style="color:var(--sub);font-size:11px">token 由 confirm_sync 从密钥库取出，不回前端</span>`; $("#gateConf").style.display="inline-block"; toast("request_sync · 生成待确认任务"); });
+  $("#gateConf").addEventListener("click",()=>{ $("#gateDone").style.display="block"; $("#gateConf").style.display="none"; state.audit.unshift({a:"confirm_sync SUCCESS",t:new Date().toISOString().slice(0,16).replace("T"," ")}); const st=$("#stAudit"); if(st) st.textContent=state.audit.length; toast("confirm_sync · 已推送"); });
+}
+const _renderRepo=renderRepo; renderRepo=function(){ _renderRepo(); renderGate(); };
+function renderAudit(){ const b=$("#auditList"); if(!b) return; b.innerHTML=""; state.audit.forEach(a=>{ const d=document.createElement("div"); d.className="a"; d.innerHTML=`${a.a}<div class="t">${a.t}</div>`; b.appendChild(d); }); }
+
+// 命令面板（Ctrl/Cmd+K）—— 仅当页面存在 #cmd 时启用
+if($("#cmd")){
+  const CMD_ITEMS=[ {k:"浏览",v:"browser"},{k:"文件",v:"files"},{k:"剪贴板",v:"clip"},{k:"成果",v:"arts"},{k:"宫格",v:"grid"},{k:"应用",v:"apps"},{k:"终端",v:"term"},{k:"仓库",v:"repo"},{k:"审计",v:"audit"},{k:"新建页签",v:"__newtab"},{k:"宫格 4",v:"__grid4"},{k:"采集",v:"__collect"} ];
+  function openCmd(){ const c=$("#cmd"); c.classList.add("on"); const list=$("#cmdList"); list.innerHTML=""; CMD_ITEMS.forEach(it=>{ const d=document.createElement("div"); d.textContent="→ "+it.k; d.onclick=()=>runCmd(it.v); list.appendChild(d); }); $("#cmdInput").value=""; $("#cmdInput").focus(); }
+  function runCmd(v){ $("#cmd").classList.remove("on");
+    if(v==="__newtab"){ addTab(prompt("输入网址：","https://")); return; }
+    if(v==="__grid4"){ setView("grid"); renderGrid(4,"#gridOverlay2"); return; }
+    if(v==="__collect"){ const cb=$("#collectBtn"); if(cb) cb.click(); return; }
+    setView(v);
+  }
+  $("#cmdInput").addEventListener("keydown",e=>{ if(e.key==="Enter"){ const v=CMD_ITEMS.find(x=>x.k.includes($("#cmdInput").value))?.v; if(v) runCmd(v); } if(e.key==="Escape"){ $("#cmd").classList.remove("on"); } });
+  document.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="k"){ e.preventDefault(); openCmd(); } });
+  $("#cmd").addEventListener("click",e=>{ if(e.target.id==="cmd") $("#cmd").classList.remove("on"); });
+}
+bindBrowser();
+addTab("https://www.example.com"); addTab("https://www.baidu.com"); setActive(state.tabs[0].id); renderFiles();
+
+
+</script>
+</body>
+</html>

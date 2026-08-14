@@ -75,3 +75,30 @@ export interface DirEntry {
   is_dir: boolean;
   size: number;
 }
+
+// 网页资源项（js/css/svg 等）
+export interface ResourceItem {
+  res_type: string;
+  url: string;
+  absolute: string;
+}
+
+export interface BrowserResources {
+  page_url: string;
+  items: ResourceItem[];
+}
+
+// 浏览器页签
+export interface TabInfo {
+  id: string;
+  url: string;
+  title: string;
+}
+
+// 系统应用（含图标路径）
+export interface AppEntry {
+  name: string;
+  exec: string;
+  icon: string;
+  icon_path?: string;
+}

@@ -1,0 +1,12 @@
+"$schema" = "schemas/schema.json"
+
+[default]
+description = "This set of permissions describes the default grants for the browser-tabs plugin."
+permissions = [
+    "allow-create-tab",
+    "allow-update-rect",
+    "allow-set-visible",
+    "allow-close-tab",
+    "allow-navigate",
+    "allow-list-tabs",
+]

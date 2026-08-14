@@ -1,0 +1,46 @@
+{
+  "name": "@tauri-browser-tabs/core",
+  "version": "0.1.0",
+  "description": "Core TypeScript library for tauri-plugin-browser-tabs",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  },
+  "keywords": [
+    "tauri",
+    "webview",
+    "browser",
+    "tabs"
+  ],
+  "homepage": "https://github.com/your-org/tauri-browser-tabs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/tauri-browser-tabs.git",
+    "directory": "packages/core"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

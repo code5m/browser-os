@@ -17,6 +17,7 @@ impl KeyringStore {
         entry.get_password().map_err(|e| format!("凭据缺失: {e}（请重新配置仓库）"))
     }
 
+    #[allow(dead_code)]
     pub fn delete_token(repo_id: &str) -> Result<(), String> {
         let entry = Entry::new(SERVICE, repo_id).map_err(|e: Error| e.to_string())?;
         entry.delete_credential().map_err(|e| e.to_string())

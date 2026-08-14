@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-update-rect"
+description = "Enables the update_rect command without any pre-configured scope."
+commands.allow = ["update_rect"]
+
+[[permission]]
+identifier = "deny-update-rect"
+description = "Denies the update_rect command without any pre-configured scope."
+commands.deny = ["update_rect"]

@@ -8,11 +8,19 @@ import type {
   AuditEntry,
   WorkspaceTree,
   DirEntry,
+  BrowserResources,
+  TabInfo,
+  AppEntry,
 } from "./types";
 
 // 类型化 IPC 封装：前端永远只传“意图”，不直接碰 OS / 凭据
 export const bridge = {
   openBrowser: (url: string) => invoke("open_browser", { url }),
+
+  closeBrowser: () => invoke("close_browser"),
+
+  positionBrowser: (p: { x: number; y: number; width: number; height: number }) =>
+    invoke("position_browser", p),
 
   collectSelection: (p: {
     url: string;
@@ -40,6 +48,14 @@ export const bridge = {
   onSyncCompleted: (cb: (job: SyncJob) => void) =>
     listen<SyncJob>("sync-completed", (e) => cb(e.payload)),
 
+  // 订阅网页资源上报事件（浏览器面板展示 js/css/svg 等）
+  onBrowserResources: (cb: (r: BrowserResources) => void) =>
+    listen<BrowserResources>("browser-resources", (e) => cb(e.payload)),
+
+  // 订阅成果保存成功事件（浏览器子 webview 中保存后自动刷新列表）
+  onArtifactCollected: (cb: () => void) =>
+    listen("artifact-collected", () => cb()),
+
   auditLog: () => invoke<AuditEntry[]>("audit_log"),
 
   // 产出端：读取/编辑/删除/目录树
@@ -60,4 +76,90 @@ export const bridge = {
   writeFile: (path: string, content: string) => invoke("write_file", { path, content }),
 
   getStartDirs: () => invoke<DirEntry[]>("get_start_dirs"),
+
+  // 用系统文件管理器定位到成果所在目录
+  revealArtifact: (id: string) => invoke("reveal_artifact", { id }),
+
+  // 用系统默认浏览器打开成果来源 URL
+  openSource: (url: string) => invoke("open_source", { url }),
+
+  // ====== 文件管理：新建 / 删除 / 重命名 ======
+  createFile: (path: string, content?: string) =>
+    invoke("create_file", { path, content: content ?? null }),
+
+  createDir: (path: string) => invoke("create_dir", { path }),
+
+  deletePath: (path: string) => invoke("delete_path", { path }),
+
+  renamePath: (path: string, newName: string) =>
+    invoke("rename_path", { path, newName }),
+
+  // ====== 剪贴板 ======
+  clipboardRead: () => invoke<string>("clipboard_read"),
+
+  clipboardWrite: (text: string) => invoke("clipboard_write", { text }),
+
+  // ====== 宫格浏览器 ======
+  createGrid: (n: number) => invoke("create_grid", { n }),
+
+  closeGrid: () => invoke("close_grid"),
+
+  gridOpen: (index: number, url: string) =>
+    invoke("grid_open", { index, url }),
+
+  gridPosition: (
+    index: number,
+    p: { x: number; y: number; width: number; height: number }
+  ) => invoke("grid_position", { index, ...p }),
+
+  // ====== 系统应用 ======
+  listApps: () => invoke<AppEntry[]>("list_apps"),
+
+  launchApp: (exec: string) => invoke("launch_app", { exec }),
+
+  // ====== 浏览器页签 ======
+  tabNew: (url: string) => invoke<TabInfo>("tab_new", { url }),
+
+  tabClose: (id: string) => invoke("tab_close", { id }),
+
+  tabOpen: (id: string, url: string) => invoke("tab_open", { id, url }),
+
+  tabPosition: (
+    id: string,
+    p: { x: number; y: number; width: number; height: number }
+  ) => invoke("tab_position", { id, ...p }),
+
+  tabList: () => invoke<TabInfo[]>("tab_list"),
+
+  tabSetTitle: (id: string, title: string) =>
+    invoke("tab_set_title", { id, title }),
+
+  tabGoBack: (id: string) => invoke("tab_go_back", { id }),
+
+  tabGoForward: (id: string) => invoke("tab_go_forward", { id }),
+
+  tabReload: (id: string) => invoke("tab_reload", { id }),
+
+  // 订阅页签标题更新事件（后端在页面加载完成后回传真实标题）
+  onTabTitle: (cb: (t: TabInfo) => void) =>
+    listen<TabInfo>("tab-title", (e) => cb(e.payload)),
+
+  // 子 webview 里的 target="_blank" / window.open 被 Rust 拦截后，
+  // 通过此事件通知前端代开新页签（避免在事件回调里直接创建窗口死锁）。
+  onNewTabRequest: (cb: (u: { url: string }) => void) =>
+    listen<{ url: string }>("new-tab-request", (e) => cb(e.payload)),
+
+  // ====== 真实 PTY 终端 ======
+  termSpawn: () => invoke<{ id: string }>("term_spawn"),
+
+  termWrite: (id: string, data: string) => invoke("term_write", { id, data }),
+
+  termResize: (id: string, cols: number, rows: number) =>
+    invoke("term_resize", { id, cols, rows }),
+
+  termKill: (id: string) => invoke("term_kill", { id }),
+
+  // 订阅终端输出流
+  onTermData: (cb: (d: { id: string; data: string }) => void) =>
+    listen<{ id: string; data: string }>("term-data", (e) => cb(e.payload)),
 };

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>浏览器OS 原型变体画廊（15 版 + 原始）</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;background:#f0f2f5;color:#1f2329;padding:28px}
+h1{font-size:22px} .sub{color:#8a919f;font-size:13px;margin:6px 0 18px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px;max-width:1180px;margin:0 auto}
+.card{display:block;text-decoration:none;background:#fff;border:1px solid #e5e6eb;border-radius:12px;padding:16px;transition:.15s;box-shadow:0 2px 8px rgba(0,0,0,.05)}
+.card:hover{box-shadow:0 6px 20px rgba(43,108,176,.18);transform:translateY(-2px);border-color:#2b6cb0}
+.ct{font-weight:600;font-size:15px;color:#1f2329}
+.cf{display:inline-block;margin:8px 0;font-size:11px;background:#e8f3ff;color:#2b6cb0;border-radius:8px;padding:2px 8px}
+.cs{font-size:12px;color:#6b7280;line-height:1.6}
+.note{max-width:1180px;margin:0 auto 16px;background:#fff7e6;border:1px solid #ffe0a3;border-radius:10px;padding:12px 16px;font-size:12px;color:#8a5a00}
+a.orig{color:#2b6cb0;font-weight:600}
+.legend{max-width:1180px;margin:0 auto 16px;background:#fff;border:1px solid #e5e6eb;border-radius:10px;padding:12px 16px;font-size:12px;color:#4e5969;line-height:1.8}
+.legend b{color:#1f2329}
+</style></head>
+<body>
+<h1>浏览器OS 融合 · 产品原型比较画廊（15 版差异化）</h1>
+<div class="sub">共 16 个版本：原始综合版 + 15 个【骨架/布局/交互各不同】的变体。V2 重写：每个变体有独立信息架构与首屏交互，不再是换皮。</div>
+<div class="note">📌 原始综合版（方案 D 完整原型，9 模块齐全）在此：<a class="orig" href="../prototype.html" target="_blank">../prototype.html</a> —— 本任务中未改动。下方 15 个为差异化比较稿。</div>
+<div class="legend"><b>15 版差异速览：</b> ① 极简图标栏 ② 顶部Tab导航 ③ 分组侧栏 ④ 可折叠抽屉 ⑤ 暗色工作台(终端常驻底栏) ⑥ 极简卡片墙门户 ⑦ 薄荷绿消费级 ⑧ 紫橙渐变年轻化 ⑨ 宫格对比优先(2×2真实iframe) ⑩ 采集优先(右侧常驻面板) ⑪ 命令面板驱动(⌘K) ⑫ 极简4模块 ⑬ 全功能9模块+命令面板 ⑭ 移动端底栏 ⑮ 专家改进版(原型≠成品横幅)</div>
+<div class="grid">
+<a class="card" href="../prototype.html" target="_blank"><div class="ct">★ 原始综合版（基准）</div><div class="cf">基准-全功能</div><div class="cs">方案 D 完整原型，9 模块齐全，作为比较基准，本任务未改。</div></a>
+<a class="card" href="variants/v01-mini-icon-rail.html" target="_blank"><div class="ct">变体01 · 极简图标栏</div><div class="cf">布局-极简图标栏</div><div class="cs">左侧仅图标无文字，hover 浮出名称，最大化内容区，最克制的导航。</div></a><a class="card" href="variants/v02-top-tabs.html" target="_blank"><div class="ct">变体02 · 顶部 Tab 全局导航</div><div class="cf">布局-顶部导航</div><div class="cs">活动栏转为顶部横排 Tab，浏览器常驻主区，类 Chrome 全屏浏览体验，宽屏最优。</div></a><a class="card" href="variants/v03-grouped-nav.html" target="_blank"><div class="ct">变体03 · 分组导航侧栏</div><div class="cf">布局-分组侧栏</div><div class="cs">左侧导航带分组标题（浏览/创作/系统），信息层级清晰，便于功能归类发现。</div></a><a class="card" href="variants/v04-drawer.html" target="_blank"><div class="ct">变体04 · 可折叠抽屉侧栏</div><div class="cf">布局-抽屉侧栏</div><div class="cs">点标题收起仅留图标，hover 滑出完整侧栏，移动端/小屏常用形态。</div></a><a class="card" href="variants/v05-dark-workbench.html" target="_blank"><div class="ct">变体05 · 暗色工作台</div><div class="cf">配色-暗色工作台</div><div class="cs">整体暗色，左栏导航 + 底部常驻终端，偏开发者终端审美，沉浸工作。</div></a><a class="card" href="variants/v06-card-wall.html" target="_blank"><div class="ct">变体06 · 极简卡片墙</div><div class="cf">架构-卡片墙门户</div><div class="cs">去掉传统侧栏，首页即能力卡片墙，点卡片进入对应模块，轻量门户感。</div></a><a class="card" href="variants/v07-mint.html" target="_blank"><div class="ct">变体07 · 薄荷绿消费级</div><div class="cf">配色-薄荷绿</div><div class="cs">主色薄荷绿、圆角更大、图标圆润，偏消费级轻量产品观感。</div></a><a class="card" href="variants/v08-purple-orange.html" target="_blank"><div class="ct">变体08 · 紫橙渐变年轻化</div><div class="cf">配色-紫橙渐变</div><div class="cs">紫主橙辅渐变标题栏 + 毛玻璃活动栏，强视觉冲击，年轻化品牌向。</div></a><a class="card" href="variants/v09-grid-first.html" target="_blank"><div class="ct">变体09 · 宫格对比优先</div><div class="cf">交互-宫格优先</div><div class="cs">首屏即 2×2 真实网页对比（方案 D 核心卖点），活动栏改为顶部极简切换。</div></a><a class="card" href="variants/v10-collect-first.html" target="_blank"><div class="ct">变体10 · 采集优先</div><div class="cf">交互-采集优先</div><div class="cs">首屏网页 + 右侧常驻采集面板（含 hash 溯源流），强调“网页→成果库”闭环。</div></a><a class="card" href="variants/v11-command-palette.html" target="_blank"><div class="ct">变体11 · 命令面板驱动</div><div class="cf">交互-命令面板</div><div class="cs">界面极简，⌘K/Ctrl+K 唤起命令面板直达任意模块/动作，键盘流优先。</div></a><a class="card" href="variants/v12-minimal-4.html" target="_blank"><div class="ct">变体12 · 极简 4 模块</div><div class="cf">架构-极简4模块</div><div class="cs">信息架构瘦身：仅保留 浏览 / 文件 / 成果 / 仓库 四个核心模块，降低认知负荷。</div></a><a class="card" href="variants/v13-full-ia.html" target="_blank"><div class="ct">变体13 · 全功能 9 模块</div><div class="cf">架构-全功能9模块</div><div class="cs">完整 9 模块 + 分组侧栏 + ⌘K 命令面板入口，功能最全，重度用户向。</div></a><a class="card" href="variants/v14-mobile-tabbar.html" target="_blank"><div class="ct">变体14 · 移动端底栏</div><div class="cf">布局-移动底栏</div><div class="cs">手机 App 形态：底部 Tab 栏导航，内容区全屏，适配小窗/平板触屏。</div></a><a class="card" href="variants/v15-expert-fixes.html" target="_blank"><div class="ct">变体15 · 专家评审改进版</div><div class="cf">综合-专家改进</div><div class="cs">集成 11 位专家意见：宫格嵌真实 iframe + 终端标注“模拟” + “原型≠成品”横幅 + 采集含 hash 溯源。</div></a>
+</div>
+</body></html>
