@@ -149,6 +149,10 @@ export const bridge = {
   onNewTabRequest: (cb: (u: { url: string }) => void) =>
     listen<{ url: string }>("new-tab-request", (e) => cb(e.payload)),
 
+  // 子 webview 内导航完成（点链接/前进/后退/刷新后）同步地址栏与页签 URL。
+  onTabNavigated: (cb: (d: { id: string; url: string }) => void) =>
+    listen<{ id: string; url: string }>("tab-navigated", (e) => cb(e.payload)),
+
   // ====== 真实 PTY 终端 ======
   termSpawn: () => invoke<{ id: string }>("term_spawn"),
 

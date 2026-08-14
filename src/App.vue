@@ -64,6 +64,7 @@ onMounted(async () => {
     layout.showToast("✅ 已保存到成果库");
   });
   bridge.onTabTitle((t) => browser.setTitle(t));
+  bridge.onTabNavigated((d) => browser.setNavigated(d.id, d.url));
   bridge.onNewTabRequest((u) => {
     setTimeout(() => browser.tabNew(u.url), 0);
   });

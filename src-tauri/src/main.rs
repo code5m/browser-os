@@ -37,13 +37,26 @@ fn main() {
                     Ok(v) => v,
                     Err(_) => return,
                 };
-                if payload.get("type").and_then(|t| t.as_str()) == Some("newWindowRequested") {
-                    if let Some(url) = payload.get("url").and_then(|u| u.as_str()) {
+                match payload.get("type").and_then(|t| t.as_str()) {
+                    Some("newWindowRequested") => {
+                        if let Some(url) = payload.get("url").and_then(|u| u.as_str()) {
+                            eprintln!("[main] forward new-tab-request url={}", url);
+                            let _ = forward.emit(
+                                "new-tab-request",
+                                serde_json::json!({ "url": url }),
+                            );
+                        }
+                    }
+                    // 子 webview 内导航完成（点链接/前进/后退/刷新），转发给前端同步地址栏
+                    Some("navigationFinished") => {
+                        let id = payload.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                        let url = payload.get("url").and_then(|u| u.as_str()).unwrap_or("");
                         let _ = forward.emit(
-                            "new-tab-request",
-                            serde_json::json!({ "url": url }),
+                            "tab-navigated",
+                            serde_json::json!({ "id": id, "url": url }),
                         );
                     }
+                    _ => {}
                 }
             });
             // 标准 WebviewWindow：主 webview 作为窗口主内容，由 tao/wry 正常管理尺寸。

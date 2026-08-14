@@ -55,6 +55,7 @@ impl TabManager {
         let app = self.app.clone();
         let mut builder = WebviewBuilder::new(&options.id, WebviewUrl::External(url))
             .on_navigation(move |url| {
+                eprintln!("[browser-tabs] navigationFinished id={} url={}", id, url);
                 let _ = app.emit(
                     "browser-tabs://event",
                     BrowserTabEvent::NavigationFinished {
@@ -71,6 +72,7 @@ impl TabManager {
         let id_nw = options.id.clone();
         let app_nw = self.app.clone();
         builder = builder.on_new_window(move |url, _features| {
+            eprintln!("[browser-tabs] newWindowRequested id={} url={}", id_nw, url);
             let _ = app_nw.emit(
                 "browser-tabs://event",
                 BrowserTabEvent::NewWindowRequested {

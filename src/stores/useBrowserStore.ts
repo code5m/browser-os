@@ -53,6 +53,8 @@ export const useBrowserStore = defineStore("browser", () => {
 
   async function tabNew(target?: string) {
     const u = target ?? url.value.trim() ?? "";
+    // 网页内 target=_blank / window.open 触发的新页签：若当前不在浏览器视图则切过去
+    if (!layout.isBrowserView()) layout.mainView = "browser";
     const t = await bridge.tabNew(u);
     tabs.push(t);
     activeTabId.value = t.id;
@@ -123,6 +125,12 @@ export const useBrowserStore = defineStore("browser", () => {
     const existing = tabs.find((x) => x.id === t.id);
     if (existing && t.title) existing.title = t.title;
     if (t.id === activeTabId.value) nextTick(schedulePosition);
+  }
+  // 子 webview 内导航完成（点链接/前进/后退/刷新）：同步页签 URL 与地址栏
+  function setNavigated(id: string, navUrl: string) {
+    const t = tabs.find((x) => x.id === id);
+    if (t) t.url = navUrl;
+    if (id === activeTabId.value) url.value = navUrl;
   }
 
   // ===== 宫格 =====
@@ -224,6 +232,7 @@ export const useBrowserStore = defineStore("browser", () => {
     goForward,
     reloadActive,
     setTitle,
+    setNavigated,
     buildGrid,
     layoutGrid,
     gridSetUrl,
