@@ -28,7 +28,7 @@ manager.create_tab(CreateTabOptions {
     url: "https://baidu.com".into(),
     rect: LogicalRect::new(x, y, w, h),  // CSS 像素
     visible: false,
-    auto_resize: false,   // ★ 必须 false，见禁忌 1
+    auto_resize: true,   // ★ 必须 true，见禁忌 1
     transparent: false,
     initialization_script: Some(init_js),
 })?;
@@ -41,31 +41,36 @@ manager.create_tab(CreateTabOptions {
 
 | # | 禁忌 | 后果 |
 |---|---|---|
-| 1 | **子 webview 开启 `auto_resize: true`** | 主窗 resize 时子 webview 被拉到主窗全高，与前端精确矩形定位互相覆盖，尺寸抖动 |
-| 2 | **在 `force_allocation` 里调用 `set_size_request` + `queue_resize`** | 与父容器布局循环互相覆盖 → 无限 `force size_allocate` 死循环 → 拖死 GTK 主线程事件循环 → **网页不能点击 / 前进后退失效** |
+| 1 | **关闭子 webview 的 `auto_resize`**（误以为与前端定位冲突） | 主窗 resize 时子 webview 不再跟随，撑不满 / 位置错乱。**必须保持 `auto_resize: true`** |
+| 2 | **在 `force_allocation` 里删除 `set_size_request` 或 `queue_resize`**（误以为它们制造死循环） | GtkFixed 布局循环按 size_request 分配、WebKit 视口刷新依赖完整布局迭代，删任一 → 网页撑不满 / 显示区域错误 / 交互失效 |
 | 3 | **前端坐标乘 `devicePixelRatio`** | 子 webview 被定位到 2x 偏移处，跑出主窗可见区 |
 | 4 | **用 `display:none` 隐藏占位 div** | `getBoundingClientRect` 返回 0，子 webview 永远停在 (0,0,1,1) |
-| 5 | **误判"wry 不更新 size_request"去补 `set_size_request`** | wry 0.55 `set_size()` 已正确更新 `size_allocate`+`size_request`+触发 WebKit 视口，手工干预是多余且有害的 |
 
 ---
 
 ## 四、Linux 尺寸修复的正确姿势（platform/linux.rs）
 
-`force_allocation` 只做一件事：**当初始 allocation 仍是错的缓存态（≤1px 或 ≤400px）时，补一次 `size_allocate` + `queue_draw`，立刻返回**。
+`force_allocation` 必须**三件套齐全**（v0.3.0 正确实现，禁止删减）：
 
 ```rust
 fn force_allocation(gtk_webview: &webkit2gtk::WebView, w: i32, h: i32) {
+    // 1) 补 size_request：让 GtkFixed 布局循环与立即分配一致
+    if gtk_webview.width_request() != w || gtk_webview.height_request() != h {
+        gtk_webview.set_size_request(w, h);
+    }
     let a = gtk_webview.allocation();
-    let stuck = a.width() <= 1 || a.height() <= 1
-             || a.width() <= 400 || a.height() <= 400;
-    if (a.width() != w || a.height() != h) && stuck {
+    if a.width() != w || a.height() != h {
+        // 2) 立即分配 + 重绘
         let na = gtk::Allocation::new(a.x(), a.y(), w, h);
         gtk_webview.size_allocate(&na);
         gtk_webview.queue_draw();
+        // 3) 排队完整布局：触发 WebKit CSS 视口刷新
+        gtk_webview.queue_resize();
     }
-    // 注意：没有 set_size_request，没有 queue_resize
 }
 ```
+
+> ⚠️ **三件套缺一不可**。曾因误以为 `set_size_request`+`queue_resize` 制造死循环而删除，导致网页撑不满回退。详见 `PROJECT-RULES.md` 规则 1。
 
 ---
 
