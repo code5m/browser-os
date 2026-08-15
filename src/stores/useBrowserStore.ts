@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref, reactive, computed, nextTick } from "vue";
+import { ref, reactive, computed, nextTick, watch } from "vue";
 import { bridge } from "../bridge";
 import { useLayoutStore } from "./useLayoutStore";
 import { useWorkspaceStore } from "./useWorkspaceStore";
@@ -207,6 +207,37 @@ export const useBrowserStore = defineStore("browser", () => {
   function relocate() {
     schedulePosition();
   }
+
+  // ===== 子 webview 显隐同步 =====
+  // 子 webview 是独立置顶 GTK 窗口，不受前端 v-if / visibility 控制。
+  // 切到非浏览器视图（编辑器/文件/终端等）时，主 UI 的 addrbar/TabBar 会因
+  // v-if 不渲染，但子 webview 仍盖在屏幕上（遮住主区、看似"没有地址栏"）。
+  // 因此必须在视图切换时显式把子 webview 移出屏幕 / 移回。
+  function hideAllWebviews() {
+    for (const t of tabs) {
+      bridge
+        .tabPosition(t.id, { x: -100000, y: -100000, width: 1, height: 1 })
+        .catch(() => {});
+    }
+  }
+
+  // 按当前视图同步子 webview 显隐：browser/grid 视图重新定位显示，其它视图移出屏幕
+  function syncViewVisibility() {
+    if (layout.mainView === "browser" || layout.mainView === "grid") {
+      relocate();
+    } else {
+      hideAllWebviews();
+    }
+  }
+
+  // 监听视图切换，自动同步子 webview 显隐
+  watch(
+    () => layout.mainView,
+    () => {
+      // 等 Vue 完成 DOM 更新（v-if 切换）后再定位/隐藏
+      nextTick(syncViewVisibility);
+    }
+  );
 
   return {
     url,

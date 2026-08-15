@@ -164,5 +164,26 @@ document.addEventListener("contextmenu", function (e) {
     setTimeout(function () { t.remove(); }, 2500);
   }
 
+  // ====== target=_blank 链接点击拦截（修复"网页内链接不跳转"）======
+  // 背景：wry 0.55 在 WebKitGTK 下，<a target="_blank"> 走 decide_policy 的
+  // NewWindowAction 策略类型，但 wry 的 handler 只处理 NavigationAction（见
+  // wry/webkitgtk/mod.rs:549-553，`_ => return false` 忽略 NewWindowAction），
+  // 导致 target=_blank 链接被 WebKit 默认 deny、点了没反应（on_new_window 不触发）。
+  // 修复：在 capture 阶段拦截 target=_blank 的 <a> 点击，改为在当前页导航。
+  document.addEventListener("click", function (e) {
+    var a = e.target && e.target.closest ? e.target.closest("a") : null;
+    if (!a || !a.href) return;
+    // 只处理 target=_blank（新窗口）链接；普通链接让 WebKit 原生处理
+    if (a.target !== "_blank") return;
+    // 不拦截带下载/特殊协议的链接
+    if (a.hasAttribute("download")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    // 在当前页跳转（相当于 target=_self）
+    window.location.href = a.href;
+    return false;
+  }, true); // capture 阶段，在页面 JS 之前拦截
+
   console.log("[JZJD] 采集脚本已注入，右键即可保存。invoke 可用:", !!getInvoke());
 })();

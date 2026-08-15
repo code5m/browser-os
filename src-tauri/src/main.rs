@@ -51,6 +51,7 @@ fn main() {
                     Some("navigationFinished") => {
                         let id = payload.get("id").and_then(|i| i.as_str()).unwrap_or("");
                         let url = payload.get("url").and_then(|u| u.as_str()).unwrap_or("");
+                        eprintln!("[main] emit tab-navigated id={} url={}", id, url);
                         let _ = forward.emit(
                             "tab-navigated",
                             serde_json::json!({ "id": id, "url": url }),
