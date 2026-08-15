@@ -59,6 +59,17 @@
 
 ---
 
+## 规则 3.6【锁定】子 WebView 调用新 Tauri 命令：必须同步加进 remote-collect 权限集
+
+文件：`src-tauri/permissions/remote-collect.toml`
+
+- 子 webview（`tab-*` / `grid-*`，远程 http(s) 域）受 `capabilities/browser-remote.json` 约束，**只能调用 `remote-collect.toml` 的 `commands.allow` 里列出的命令**。
+- 新增任何要从网页注入脚本（`injected/collect.js`）里 `invoke` 的 Rust 命令，**必须同步把命令名加进 `commands.allow`**，并在 `main.rs` 的 `generate_handler!` 注册。
+- 漏加的症状（v0.6.0 实测）：右键菜单点了报 `xxx not allowed. Command not found`。
+- 权限/命令改动是**编译进二进制**的，改完必须重启应用，旧进程不会热更新 Rust。
+
+---
+
 ## 规则 4 修改"已验证正确"代码的流程（防止再次翻车）
 
 当要修改本文件中标注【锁定】的代码时，必须：
