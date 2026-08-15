@@ -69,6 +69,13 @@ onMounted(async () => {
     setTimeout(() => browser.tabNew(u.url), 0);
   });
   bridge.onTermData((d) => system.onTermData(d));
+  // 子 webview 右键"打开终端"：切到终端视图（TerminalPane 挂载后自动启动 shell）
+  bridge.onOpenTerminal(() => {
+    layout.setView("term");
+    layout.showToast("💻 已打开终端");
+  });
+  // 子 webview 右键"选区存 Markdown 笔记"保存成功
+  bridge.onNoteSaved((p) => layout.showToast("📝 笔记已保存: " + p));
 
   window.addEventListener("beforeunload", () => bridge.closeBrowser().catch(() => {}));
   window.addEventListener("click", ws.closeCtx);

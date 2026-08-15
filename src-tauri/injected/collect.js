@@ -103,10 +103,23 @@ document.addEventListener("contextmenu", function (e) {
         var html = serializeSelection(sel);
         collect(text, html, document.title);
       });
+      addItem(menu, "📝 选区存为 Markdown 笔记", function () {
+        saveNote(text);
+      });
     }
     addItem(menu, "📄 保存整页到成果库", function () {
       var bodyHtml = document.body ? document.body.innerHTML : "";
       collect(document.body ? document.body.innerText : "", bodyHtml, document.title);
+    });
+    addItem(menu, "💻 打开终端", function () {
+      var invoke = getInvoke();
+      if (!invoke) {
+        toast("⚠ 未检测到桥环境（请确认应用正常运行）");
+        return;
+      }
+      invoke("request_open_terminal")
+        .then(function () { toast("💻 已切换到终端视图"); })
+        .catch(function (err) { toast("❌ 打开终端失败: " + err); console.error("[JZJD] invoke error:", err); });
     });
 
     document.body.appendChild(menu);
@@ -141,6 +154,22 @@ document.addEventListener("contextmenu", function (e) {
       html: html,
     })
       .then(function () { toast("✅ 已保存到本地成果库（带溯源）"); })
+      .catch(function (err) { toast("❌ 保存失败: " + err); console.error("[JZJD] invoke error:", err); });
+  }
+
+  // 选区一键存为 Markdown 笔记（默认笔记目录，文件名=时间戳+选中内容摘要）
+  function saveNote(text) {
+    var invoke = getInvoke();
+    if (!invoke) {
+      toast("⚠ 未检测到桥环境（请确认应用正常运行）");
+      return;
+    }
+    invoke("save_note", {
+      url: location.href,
+      title: document.title,
+      text: text,
+    })
+      .then(function (path) { toast("✅ 笔记已保存: " + path); })
       .catch(function (err) { toast("❌ 保存失败: " + err); console.error("[JZJD] invoke error:", err); });
   }
 

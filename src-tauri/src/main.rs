@@ -88,6 +88,8 @@ fn main() {
             bridge::report_resources,
             bridge::report_title,
             bridge::collect_selection,
+            bridge::request_open_terminal,
+            bridge::save_note,
             bridge::list_artifacts,
             bridge::configure_repo,
             bridge::list_repos,

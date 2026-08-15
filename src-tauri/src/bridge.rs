@@ -533,6 +533,56 @@ pub fn collect_selection(
     Ok(art)
 }
 
+/// 网页右键"打开终端"：子 webview 渲染进程零特权，只能发意图；
+/// 由主窗口前端监听 "open-terminal" 事件切换到终端视图并启动 shell。
+#[tauri::command]
+pub fn request_open_terminal(app: AppHandle) -> Result<(), String> {
+    app.emit("open-terminal", ()).map_err(|e| e.to_string())
+}
+
+/// 网页选区一键存为 Markdown 笔记。
+/// 默认路径：应用数据目录 notes/；文件名 = 时间戳 + 选中内容摘要。
+/// 返回保存后的完整文件路径。
+#[tauri::command]
+pub fn save_note(app: AppHandle, url: String, title: String, text: String) -> Result<String, String> {
+    let dir = workspace::notes_dir(&app);
+
+    let now = chrono::Local::now();
+    let ts = now.format("%Y%m%d-%H%M%S").to_string();
+    // 文件名摘要：取选中内容首行前 20 个字符，过滤文件系统非法字符
+    let summary: String = text
+        .lines()
+        .next()
+        .unwrap_or("")
+        .chars()
+        .filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+        .take(20)
+        .collect::<String>()
+        .trim()
+        .to_string();
+    let base = if summary.is_empty() {
+        let t: String = title.trim().chars().take(20).collect();
+        if t.is_empty() { "note".to_string() } else { t }
+    } else {
+        summary
+    };
+    let file = dir.join(format!("{}-{}.md", ts, base));
+
+    let heading = if title.trim().is_empty() { base.as_str() } else { title.trim() };
+    let md = format!(
+        "# {}\n\n> 来源: {}\n> 时间: {}\n\n---\n\n{}\n",
+        heading,
+        url,
+        now.format("%Y-%m-%d %H:%M:%S"),
+        text.trim()
+    );
+    std::fs::write(&file, md).map_err(|e| e.to_string())?;
+    workspace::log_audit(&app, "note", format!("保存笔记 {}", file.display()));
+    let path = file.to_string_lossy().to_string();
+    let _ = app.emit("note-saved", path.clone());
+    Ok(path)
+}
+
 #[tauri::command]
 pub fn list_artifacts(app: AppHandle) -> Vec<Artifact> {
     workspace::load_artifacts(&app)
@@ -864,6 +914,8 @@ pub fn get_start_dirs(app: AppHandle) -> Vec<DirEntry> {
     // 应用工作区
     let ws = crate::workspace::workspace_dir(&app);
     add("💾 成果工作区", &ws);
+    let notes = crate::workspace::notes_dir(&app);
+    add("📝 笔记目录", &notes);
     dirs
 }
 

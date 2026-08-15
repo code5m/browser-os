@@ -29,6 +29,20 @@ export const bridge = {
     text: string;
   }) => invoke<Artifact>("collect_selection", p),
 
+  // 网页右键"选区存为 Markdown 笔记"：默认笔记目录，文件名=时间戳+选中内容
+  saveNote: (p: { url: string; title: string; text: string }) =>
+    invoke<string>("save_note", p),
+
+  // 网页右键"打开终端"：发意图给后端，后端广播事件，主窗前端切到终端视图
+  requestOpenTerminal: () => invoke("request_open_terminal"),
+
+  // 订阅"打开终端"请求（来自子 webview 右键菜单）
+  onOpenTerminal: (cb: () => void) => listen("open-terminal", () => cb()),
+
+  // 订阅笔记保存成功事件（payload 为完整文件路径）
+  onNoteSaved: (cb: (path: string) => void) =>
+    listen<string>("note-saved", (e) => cb(e.payload)),
+
   listArtifacts: () => invoke<Artifact[]>("list_artifacts"),
 
   // token 仅在此调用中传给后端，存入系统密钥库；不会被前端持久化/回显

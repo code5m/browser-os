@@ -24,6 +24,13 @@ pub fn workspace_dir(app: &AppHandle) -> PathBuf {
     d
 }
 
+/// 默认笔记目录（网页选区一键存 Markdown）
+pub fn notes_dir(app: &AppHandle) -> PathBuf {
+    let d = data_dir(app).join("notes");
+    ensure(&d);
+    d
+}
+
 pub fn save_artifact(app: &AppHandle, art: &Artifact) -> Result<PathBuf, String> {
     let dir = workspace_dir(app);
     let file = dir.join(format!("{}.json", art.id));
