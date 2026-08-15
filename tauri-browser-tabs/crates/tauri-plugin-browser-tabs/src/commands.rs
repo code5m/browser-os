@@ -83,8 +83,12 @@ impl TabManager {
             NewWindowResponse::Deny
         });
 
+        // auto_resize 会让子 webview 跟随主窗 resize 到主窗全高（如 800px），
+        // 与前端按精确 Container 矩形（如 665px）定位互相覆盖，造成尺寸抖动 /
+        // 事件循环被反复 force 拖死。尺寸完全由前端 ResizeObserver + tab_position
+        // 控制，这里关闭自动 resize。
         if options.auto_resize {
-            builder = builder.auto_resize();
+            // builder = builder.auto_resize();  // 故意关闭，见上方注释
         }
 
         if let Some(ua) = &options.user_agent {

@@ -50,22 +50,27 @@ pub fn ensure_physical_size<R: Runtime>(
 }
 
 /// Force the GTK allocation if it doesn't match the expected physical size.
+///
+/// 关键约束（血泪教训）：
+/// - **绝不调用 `set_size_request` / `queue_resize`**。GtkFixed 子控件的
+///   `size_request` 一旦被我们设成固定值，会与父容器布局循环互相覆盖，
+///   形成「(1200x800)->(1200x665)」的无限 force 死循环，拖死主线程事件循环，
+///   表现为网页「点了没反应 / 前进后退失效」。
+/// - wry 0.55 的 `set_size()` 已经正确同时更新物理 `size_allocate` 与
+///   `size_request`，WebKitGTK 的 CSS 视口会随之刷新，无需我们额外干预。
+/// - 这里只在「初始 allocation 仍是错的（如 1x1 / 400px）」这种极端情况下，
+///   补一次直接的 `size_allocate` + `queue_draw`，且立刻返回，绝不重入布局。
 fn force_allocation(gtk_webview: &webkit2gtk::WebView, expected_width: i32, expected_height: i32) {
     use gtk::prelude::*;
 
-    // 1) GtkFixed 的布局循环按子控件的 size_request 分配尺寸。wry 的
-    //    set_bounds 只直接 size_allocate、从不更新 size_request，导致窗口
-    //    resize / GTK 重跑布局时子 webview 被打回旧尺寸（如 1x1 或 400px）。
-    //    这里补上 size_request，让两条分配路径（立即 + 布局循环）结果一致。
-    if gtk_webview.width_request() != expected_width
-        || gtk_webview.height_request() != expected_height
-    {
-        gtk_webview.set_size_request(expected_width, expected_height);
-    }
-
     let allocation = gtk_webview.allocation();
 
-    if allocation.width() != expected_width || allocation.height() != expected_height {
+    // 只在明显错配（初始尺寸没生效）时补一次；之后由 wry.set_size 维持，不再打扰。
+    let mismatched = allocation.width() != expected_width
+        || allocation.height() != expected_height;
+    let is_initial_stuck = allocation.width() <= 1 || allocation.height() <= 1;
+
+    if mismatched && (is_initial_stuck || allocation.width() <= 400 || allocation.height() <= 400) {
         log::debug!(
             "browser-tabs: forcing size_allocate current=({}x{}) expected=({}x{})",
             allocation.width(),
@@ -85,10 +90,5 @@ fn force_allocation(gtk_webview: &webkit2gtk::WebView, expected_width: i32, expe
             gtk::Allocation::new(allocation.x(), allocation.y(), expected_width, expected_height);
         gtk_webview.size_allocate(&new_allocation);
         gtk_webview.queue_draw();
-
-        // 2) 排队一轮完整布局：直接 size_allocate 只改 widget allocation，
-        //    WebKitGTK 的 CSS 视口刷新依赖完整的 GTK 布局迭代
-        //    （size-allocate 信号链 → WebKitWebViewBase 更新 viewportSize）。
-        gtk_webview.queue_resize();
     }
 }

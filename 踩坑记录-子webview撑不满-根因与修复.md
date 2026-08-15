@@ -17,14 +17,17 @@
 
 ---
 
-## 二、最终根因（一句话版）
+## 二、首次修复（v0.2.0，部分有效但埋雷）
 
-wry 0.55.1 在 Linux/WebKitGTK 下，对 `GtkFixed` 容器里的子 webview 执行 `set_bounds` 时，**只直接调用 `gtk_widget_size_allocate()`，从不更新 `set_size_request()`**；而 `GtkFixed` 的布局循环是按 `size_request` 给子控件分配尺寸的，于是每次 GTK 重布局（窗口 resize / queue_resize / show 等）都会把子 webview **打回旧尺寸（400px）**。同时，仅直接 `size_allocate` 不足以让 WebKitGTK 刷新其 CSS 视口（viewportSize），视口刷新依赖**完整的 GTK 布局迭代**。
+> ⚠️ 本节是**初次诊断结论**，其根因描述有误、修复手段引入了二次 bug。正确结论见第四节「二次翻车与最终根因」。
 
-修复（`tauri-browser-tabs/crates/tauri-plugin-browser-tabs/src/platform/linux.rs` 的 `force_allocation`）：
+初次判断（**有误**）：wry 0.55.1 在 Linux/WebKitGTK 下对 `GtkFixed` 子 webview 执行 `set_bounds` 时只 `size_allocate` 不更新 `size_request`，导致被布局循环打回旧尺寸。
 
-1. force 前先 `set_size_request(期望宽, 期望高)`——让 GtkFixed 布局循环与立即分配两条路径结果一致；
-2. `size_allocate` 后调用 `queue_resize()`——强制 GTK 在下一轮主循环执行完整布局迭代，触发 `size-allocate` 信号链，WebKitWebViewBase 才会更新 CSS 视口。
+初次修复（`force_allocation` 里加了两行）：
+1. `set_size_request(期望宽, 期望高)`；
+2. `size_allocate` 后 `queue_resize()`。
+
+这个修复让初始撑满生效了，但**制造了更严重的死循环**（见第四节）。
 
 ---
 
@@ -145,15 +148,48 @@ WebKitGTK 子 webview 在未完成首次完整布局时的**默认/缓存分配�
 
 ---
 
+## 五、二次翻车与最终根因（v0.3.1，本轮回填）
+
+### 现象
+v0.2.0 修复后，用户实测反馈：**网页内链接不能点击、前进/后退按钮无效**（地址栏、页签栏这些前端 UI 本身可见）。日志出现持续刷屏：
+
+```
+[browser-tabs] force size_allocate: (1200x800) -> (1200x665)
+[apply_bounds] label=tab-1 logical=(0,109,1200,665)
+...（每帧重复几十次）...
+```
+
+### 真根因（推翻初次诊断）
+1. **初次诊断的"wry 从不更新 size_request"是误判**。wry 0.55 的 `set_size()` 实际上**正确同时更新了物理 `size_allocate` 和 `size_request`**，WebKitGTK 的 CSS 视口也随 `set_size` 正常刷新。撑满问题在 `set_size` 层面本已解决。
+2. **真正的元凶是我加的 `set_size_request` + `queue_resize`**：
+   - 我把子 webview 的 `size_request` 设为固定值（如物理 665×scale），而父容器（主窗内容区 / `GtkFixed`）实际只给它分配 665 高；
+   - 但 `auto_resize: true` 让子 webview 监听主窗 resize，把尺寸拉到主窗全高（日志里的 **800px**）；
+   - 于是 `allocation(800) ≠ size_request(665)` → 我的 `force_allocation` 又补 `size_allocate(665)` → 又 `queue_resize()` → GTK 重布局 → 又按 size_request 分配 → 又被 auto_resize 拉成 800 → **无限 force 死循环**。
+3. **"不能点击 / 前进后退失效"正是死循环的副作用**：每帧几十次 `queue_resize` + `size_allocate` 占满 GTK 主线程事件循环，输入事件（鼠标点击、按钮回调解）被严重延迟或饿死，表现为"点了没反应"。
+
+### 最终修复（删代码，而非加代码）
+| 位置 | 改动 |
+|---|---|
+| `platform/linux.rs` `force_allocation` | **删除** `set_size_request` 与 `queue_resize`。只在初始 allocation 仍是错的（≤1px 或 ≤400px，即 WebKit 初始缓存态）时补一次 `size_allocate` + `queue_draw`，且立刻返回，绝不重入布局。 |
+| `commands.rs` `create_tab` | **关闭 `auto_resize`**（注释掉 `builder.auto_resize()`）。尺寸完全由前端 `ResizeObserver` + `tab_position` 精确控制，不再与 wry 的自动跟随打架。 |
+
+### 验证预期
+- 日志里**不应再出现反复 force**（最多一次初始 1x1→目标尺寸）；
+- 主窗 resize 时子 webview 跟随前端重新 `tab_position`，无 800↔665 抖动；
+- 网页链接可点击、前进/后退恢复（事件循环不再被拖死）。
+
+---
+
 ## 六、经验总结（给后来者）
 
 1. **前端 rect 对了而视觉不对 → 直接怀疑原生层**，别在 CSS/Vue 上浪费时间。用日志对比"前端计算的 rect"与"GTK allocation"与"JS window.innerWidth/Height"三层数值，能迅速分层定位。
-2. **GTK 的 `size_allocate` ≠ `size_request`**：对容器托管的子控件，两者都要管，否则布局循环会撤销你的手动分配。
-3. **WebKitGTK 的视口刷新依赖完整布局迭代**：改尺寸后务必 `queue_resize()`。
-4. **加日志要看"第二次出现"**：第一次 force 的值（1x1）是初始态，第二次 force 的值（1200x400）才是暴露"被打回"的关键证据。
-5. **读源码比猜测高效**：wry 的 `add_to_container` / `set_bounds` 各管一半的缺口，只有读源码才能确证。
-6. **分层验证三段式**：前端 rect → GTK allocation → JS viewport，任何一段不一致都能立即锁定问题层。
-7. **修复后要删掉临时诊断代码**，只留正式修复 + 本文档。
+2. **（修正）不要盲目给 GTK 子控件设 `set_size_request` + `queue_resize`**。wry 0.55 的 `set_size()` 本已正确更新 `size_allocate` 与 `size_request` 并触发 WebKit 视口刷新。手工干预 `size_request` 反而会与父容器布局循环互相覆盖，造成无限 `force` 死循环。只在"初始 allocation 仍是错的（≤1px/≤400px 缓存态）"时补一次 `size_allocate` + `queue_draw` 即可。
+3. **（修正）`auto_resize` 与手动定位是天敌**：子 webview 一旦开 `auto_resize`，就会在主窗 resize 时拉到主窗全高，与前端按 Container 精确矩形定位互相覆盖。二选一——本项目选"前端精确控制，关闭 auto_resize"。
+4. **"不能点击 / 按钮失效"往往是事件循环被拖死，不是链路断了**：持续刷屏的 `force size_allocate` 每帧几十次 `queue_resize`，会饿死 GTK 主线程输入事件。先看日志有没有死循环，再怀疑 IPC。
+5. **加日志要看"重复频率"**：一次 force（1x1→目标）是正常初始化；每帧重复几十次才是死循环信号。
+6. **读源码要读全，别凭片段下结论**：初次误判源于只看到 `set_bounds` 的 `size_allocate` 片段，没确认它配套更新了 `size_request`。
+7. **分层验证三段式**：前端 rect → GTK allocation → JS viewport，任何一段不一致都能立即锁定问题层。
+8. **修复后要删掉临时诊断代码**，只留正式修复 + 本文档。
 
 ---
 
