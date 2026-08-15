@@ -2,8 +2,9 @@
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../stores/useBrowserStore";
 import { useSystemStore } from "../../stores/useSystemStore";
+import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
 
-  const layout = useLayoutStore();
+const layout = useLayoutStore();
 const browser = useBrowserStore();
 const system = useSystemStore();
 const ws = useWorkspaceStore();

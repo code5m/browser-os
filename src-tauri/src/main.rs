@@ -7,7 +7,7 @@ mod keyring_store;
 mod sync;
 
 use bridge::AppState;
-use tauri::{WebviewUrl, WebviewWindowBuilder};
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 fn main() {
     // Workaround：WebKitGTK 在 Wayland 下默认启用 DMA-BUF 渲染器会静默崩溃
@@ -72,6 +72,11 @@ fn main() {
                 .build()?;
             let _ = window.show();
             let _ = window.set_focus();
+            // 修正主 UI webview 的 GTK allocation / CSS 视口（WebKitGTK 偶发卡在小尺寸，
+            // 导致顶部 TitleBar/ActivityBar 等被挤出可视区）。scale=1 时等效无操作。
+            if let Some(main_wv) = app.get_webview("main") {
+                let _ = tauri_plugin_browser_tabs::ensure_native_layout(&main_wv);
+            }
             let _ = std::fs::write("/tmp/mvp-life.log", "main-window-created-and-shown\n");
             Ok(())
         })
