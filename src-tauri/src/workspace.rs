@@ -24,9 +24,14 @@ pub fn workspace_dir(app: &AppHandle) -> PathBuf {
     d
 }
 
-/// 默认笔记目录（网页选区一键存 Markdown）
+/// 默认笔记目录（网页选区一键存 Markdown）。
+/// 固定为 ~/Documents/极智笔记（用户可见的特定目录），取不到主目录时退回应用数据目录。
 pub fn notes_dir(app: &AppHandle) -> PathBuf {
-    let d = data_dir(app).join("notes");
+    let d = app
+        .path()
+        .home_dir()
+        .map(|h| h.join("Documents").join("极智笔记"))
+        .unwrap_or_else(|_| data_dir(app).join("notes"));
     ensure(&d);
     d
 }

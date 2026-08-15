@@ -34,11 +34,26 @@ const browser = useBrowserStore();
           @keyup.enter="browser.openBrowser"
         />
         <button class="go" @click="browser.openBrowser">前往</button>
+        <button class="nav" @click="layout.toggleBrowserDock('files')" title="边浏览边管理文件">🗂</button>
+        <button class="nav" @click="layout.toggleBrowserDock('term')" title="边浏览边开终端">💻</button>
       </div>
       <TabBar v-show="layout.mainView === 'browser'" />
       <GridToolbar />
-      <div class="viewport">
-        <BrowserHost v-show="layout.mainView === 'browser'" />
+      <div class="browser-body">
+        <div class="viewport">
+          <BrowserHost v-show="layout.mainView === 'browser'" />
+        </div>
+        <!-- 右侧 Dock：浏览网页的同时操作文件管理 / 终端 -->
+        <aside v-if="layout.browserDockOpen && layout.mainView === 'browser'" class="browser-dock">
+          <div class="tabs">
+            <button :class="{ active: layout.browserDockTab === 'files' }" @click="layout.browserDockTab = 'files'">📂 文件</button>
+            <button :class="{ active: layout.browserDockTab === 'term' }" @click="layout.browserDockTab = 'term'">💻 终端</button>
+            <button class="close" @click="layout.browserDockOpen = false" title="收起">✕</button>
+          </div>
+          <FilePanel v-if="layout.browserDockTab === 'files'" />
+          <!-- .terminal 是 absolute inset:0，需相对定位容器约束在 tab 栏之下 -->
+          <div v-else class="dock-term-wrap"><TerminalPane /></div>
+        </aside>
       </div>
     </template>
 

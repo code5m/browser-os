@@ -93,6 +93,14 @@ button.primary { background: #2b6; color: #fff; border-color: #2b6; }
 .addrbar .go { background: #2b6cb0; color: #fff; border: none; border-radius: 6px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
 /* 视口（对应 prototype .viewport） */
 .viewport { flex: 1; background: #fff; position: relative; overflow: hidden; min-height: 0; }
+/* 浏览器视图：视口 + 右侧 Dock 横排 */
+.browser-body { flex: 1; display: flex; min-height: 0; min-width: 0; }
+.browser-dock { width: 360px; flex-shrink: 0; border-left: 1px solid #e5e6eb; display: flex; flex-direction: column; background: #fff; min-height: 0; position: relative; }
+.browser-dock > .tabs { border-bottom: 1px solid #e5e6eb; flex-shrink: 0; }
+.browser-dock > .tabs button { border: none; border-bottom: 2px solid transparent; }
+.browser-dock > .tabs button.active { color: #2b6cb0; border-bottom-color: #2b6cb0; }
+.browser-dock > .tabs .close { margin-left: auto; }
+.dock-term-wrap { flex: 1; position: relative; min-height: 0; }
 .browser-host { position: absolute; inset: 0; background: #fff; overflow: hidden; }
 .host-hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #bbb; font-size: 13px; }
 .topbar .msg { font-size: 12px; color: #666; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }

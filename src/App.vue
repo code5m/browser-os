@@ -69,9 +69,13 @@ onMounted(async () => {
     setTimeout(() => browser.tabNew(u.url), 0);
   });
   bridge.onTermData((d) => system.onTermData(d));
-  // 子 webview 右键"打开终端"：切到终端视图（TerminalPane 挂载后自动启动 shell）
+  // 子 webview 右键"打开终端"：浏览器视图下优先开右侧 Dock（不离开网页），否则切全屏终端视图
   bridge.onOpenTerminal(() => {
-    layout.setView("term");
+    if (layout.mainView === "browser") {
+      layout.toggleBrowserDock("term");
+    } else {
+      layout.setView("term");
+    }
     layout.showToast("💻 已打开终端");
   });
   // 子 webview 右键"选区存 Markdown 笔记"保存成功

@@ -25,6 +25,9 @@ export const useLayoutStore = defineStore("layout", () => {
   const fileEditorOpen = ref(false); // 文件编辑器/Markdown 预览覆盖层
   const msg = ref("");
   const leftResizing = ref(false);
+  // 浏览器视图右侧 Dock：边浏览网页边操作文件/终端
+  const browserDockOpen = ref(false);
+  const browserDockTab = ref<"files" | "term">("files");
 
   let toastTimer: number | null = null;
   function showToast(text: string) {
@@ -67,6 +70,20 @@ export const useLayoutStore = defineStore("layout", () => {
     sidebarWidth.value = Math.min(560, Math.max(180, w));
   }
 
+  // 浏览器视图右侧 Dock：指定 tab 时做"切到该 tab/再点收起"语义
+  function toggleBrowserDock(tab?: "files" | "term") {
+    if (tab) {
+      if (browserDockOpen.value && browserDockTab.value === tab) {
+        browserDockOpen.value = false;
+        return;
+      }
+      browserDockTab.value = tab;
+      browserDockOpen.value = true;
+    } else {
+      browserDockOpen.value = !browserDockOpen.value;
+    }
+  }
+
   return {
     mainView,
     sidebarOpen,
@@ -78,6 +95,8 @@ export const useLayoutStore = defineStore("layout", () => {
     fileEditorOpen,
     msg,
     leftResizing,
+    browserDockOpen,
+    browserDockTab,
     showToast,
     isBrowserView,
     setView,
@@ -85,5 +104,6 @@ export const useLayoutStore = defineStore("layout", () => {
     toggleClipboard,
     toggleGridToolbar,
     setSidebarWidth,
+    toggleBrowserDock,
   };
 });
