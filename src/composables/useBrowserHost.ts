@@ -82,7 +82,7 @@ export function useBrowserHost() {
         // 宫格模式下把主浏览器页签移出可视区（保留状态）
         if (browser.activeTabId) {
           bridge
-            .tabPosition(browser.activeTabId, { x: -100000, y: -100000, width: 1, height: 1 })
+            .tabPosition(browser.activeTabId, { x: -30000, y: -30000, width: 1, height: 1 })
             .catch(() => {});
         }
       });

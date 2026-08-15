@@ -323,13 +323,21 @@ fn apply_bounds_sync(
 }
 
 /// 把子窗口移出可视区（隐藏态），用于非激活页签/宫格。
+/// 注意：不能用 manager.set_visible(false)（即 webview.hide()）——对正在渲染的
+/// WebKitGTK 子 webview 调 hide 会阻塞主线程事件循环导致死锁（实测新建第二个
+/// 页签时卡在 hide(tab-1)）。改为把子 webview 移到屏幕外（等价隐藏，不卡死）。
 fn hide_bounds(app: &AppHandle, id: &str) {
-    use tauri_plugin_browser_tabs::TabManagerState;
+    use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
     let manager = app.state::<TabManagerState>();
-    let _ = manager.set_visible(&id.to_string(), false);
-    // 仍然记住布局，便于再次激活时快速恢复
-    if let Some(r) = app.state::<AppState>().child_layouts.lock().unwrap().get(id).copied() {
-        remember_layout(app, id, r.0, r.1, r.2, r.3);
+    // 隐藏 = 只移到屏幕外，【保持原尺寸不变】。
+    // 关键教训：对正在渲染的 WebKitGTK 子 webview，把尺寸缩到 1x1 会触发 WebKit
+    // 视口重布局，与主线程死锁（实测卡死）。只移动位置（视口尺寸不变）则安全。
+    // 坐标用 -30000（X11 int16 安全范围 -32768~32767 内）。
+    let cur = app.state::<AppState>().child_layouts.lock().unwrap().get(id).copied();
+    if let Some((_x, y, w, h)) = cur {
+        let _ = manager.update_rect(&id.to_string(), LogicalRect::new(-30000.0, y, w, h));
+        // 记住布局，便于再次激活时快速恢复
+        remember_layout(app, id, _x, y, w, h);
     }
 }
 
@@ -383,6 +391,7 @@ fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
             }
         }
     });
+    eprintln!("[create_tab] run_on_main_thread 已排队 label={}", id);
 
     start_resource_scanner(app.clone());
     eprintln!("[create_tab] 页签已创建 label={} url={}", id, target);

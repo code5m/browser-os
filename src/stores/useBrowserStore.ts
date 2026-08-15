@@ -216,7 +216,7 @@ export const useBrowserStore = defineStore("browser", () => {
   function hideAllWebviews() {
     for (const t of tabs) {
       bridge
-        .tabPosition(t.id, { x: -100000, y: -100000, width: 1, height: 1 })
+        .tabPosition(t.id, { x: -30000, y: -30000, width: 1, height: 1 })
         .catch(() => {});
     }
   }
