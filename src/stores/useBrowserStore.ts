@@ -149,14 +149,21 @@ export const useBrowserStore = defineStore("browser", () => {
   }
   async function buildGrid() {
     const n = gridCount.value;
+    // createGrid 内部会先 close_grid 再重建，幂等，可安全重复调用
     await bridge.createGrid(n);
     gridOpen.value = true;
-    layout.mainView = "browser";
+    // 注意：不要在这里覆盖 mainView。由调用方（onItem/grid 工具条）决定切到 grid 视图，
+    // 避免 "grid"->"browser" 的二次覆盖打乱 watch 时序导致宫格不显示/页签残留。
+    if (layout.mainView !== "grid" && layout.mainView !== "browser") {
+      layout.mainView = "grid";
+    }
     for (let i = 0; i < n; i++) {
       const u = gridUrls[i] || url.value || "https://www.baidu.com";
       gridUrls[i] = u;
       await bridge.gridOpen(i, u);
     }
+    // 等 DOM/子 webview 就绪后重排（scheduleGrid 内部会把激活页签移出屏幕）
+    await nextTick();
     layoutGrid();
     layout.showToast(`已打开 ${n} 宫格对比`);
   }

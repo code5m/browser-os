@@ -27,9 +27,11 @@ function onItem(v: string) {
   if (v === "apps") system.loadApps();
   if (v === "grid") {
     layout.setView("grid");
-    // 打开宫格工具条（含布局切换：横向/纵向/四分/宫格/自由）
+    // 打开宫格工具条（含布局切换：宫格/四分/横向）
     layout.gridToolbarOpen = true;
-    if (!browser.gridOpen) browser.buildGrid();
+    // 总是重建宫格：buildGrid 内部 createGrid 会先 close_grid 再重建（幂等），
+    // 避免 gridOpen 标志与后端宫格 webview 实际状态脱节导致的"有工具条没宫格"。
+    browser.buildGrid();
     return;
   }
   layout.setView(v as any);

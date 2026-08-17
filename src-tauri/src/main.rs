@@ -119,6 +119,7 @@ fn main() {
             bridge::grid_set_zoom,
             bridge::grid_close_one,
             bridge::hide_all_webviews,
+            bridge::hide_webview,
             bridge::list_apps,
             bridge::launch_app,
             bridge::tab_new,

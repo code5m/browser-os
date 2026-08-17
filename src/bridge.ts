@@ -136,6 +136,9 @@ export const bridge = {
   // 后端用无去重的 hide_bounds，避免 grid_position 的 50ms 去重把隐藏请求丢弃。
   hideAllWebviews: () => invoke("hide_all_webviews"),
 
+  // 隐藏单个子 webview（无去重），宫格显示时移出激活页签用
+  hideWebview: (id: string) => invoke("hide_webview", { id }),
+
   // ====== 系统应用 ======
   listApps: () => invoke<AppEntry[]>("list_apps"),
 

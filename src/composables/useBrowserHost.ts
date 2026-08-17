@@ -130,11 +130,10 @@ export function useBrowserHost() {
             .gridSetZoom(i, Math.round(zoom * 100) / 100)
             .catch(() => {});
         }
-        // 宫格模式下把主浏览器页签移出可视区（保留状态）
+        // 宫格模式下把主浏览器页签移出可视区（保留状态）。
+        // 用无去重的 hideWebview，避免 tabPosition 的 50ms 去重把移出请求丢弃。
         if (browser.activeTabId) {
-          bridge
-            .tabPosition(browser.activeTabId, { x: -30000, y: -30000, width: 1, height: 1 })
-            .catch(() => {});
+          bridge.hideWebview(browser.activeTabId).catch(() => {});
         }
       });
     });
