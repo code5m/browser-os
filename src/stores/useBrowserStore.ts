@@ -20,8 +20,8 @@ export const useBrowserStore = defineStore("browser", () => {
   const gridCount = ref(2);
   const gridUrl = ref("");
   const gridUrls = reactive<string[]>(Array(12).fill(""));
-  // 宫格布局模式：horizontal 横向 / vertical 纵向 / quad 四分 / grid 宫格 / free 自由堆叠
-  const gridLayout = ref<"horizontal" | "vertical" | "quad" | "grid" | "free">("grid");
+  // 宫格布局模式：horizontal 横向 / quad 四分 / grid 宫格（精简后只留三种好用的）
+  const gridLayout = ref<"horizontal" | "quad" | "grid">("grid");
   // 每格相对 host 的 rect（供关闭按钮覆盖层定位），scheduleGrid 时填充
   const gridRects = reactive<{ x: number; y: number; w: number; h: number }[]>([]);
   const resources = ref<BrowserResources | null>(null);

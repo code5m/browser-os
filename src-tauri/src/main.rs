@@ -116,6 +116,7 @@ fn main() {
             bridge::close_grid,
             bridge::grid_open,
             bridge::grid_position,
+            bridge::grid_set_zoom,
             bridge::grid_close_one,
             bridge::list_apps,
             bridge::launch_app,

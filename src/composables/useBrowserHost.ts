@@ -69,11 +69,6 @@ export function useBrowserHost() {
       const cw = (W - gap * (n - 1)) / n;
       return { x: i * (cw + gap), y: 0, w: cw, h: H };
     }
-    if (mode === "vertical") {
-      // 纵向：一列竖排
-      const ch = (H - gap * (n - 1)) / n;
-      return { x: 0, y: i * (ch + gap), w: W, h: ch };
-    }
     if (mode === "quad") {
       // 四分：固定 2x2，取前 4 格，超出堆叠在第 4 格
       const cw = (W - gap) / 2;
@@ -82,13 +77,6 @@ export function useBrowserHost() {
       const c = idx % 2;
       const rw = Math.floor(idx / 2);
       return { x: c * (cw + gap), y: rw * (ch + gap), w: cw, h: ch };
-    }
-    if (mode === "free") {
-      // 自由：层叠错开（可拖拽基础，先做瀑布式偏移堆叠）
-      const cw = W * 0.7;
-      const ch = H * 0.7;
-      const off = Math.min(i, 8) * 28;
-      return { x: off, y: off, w: cw, h: ch };
     }
     // grid：自动宫格（默认）
     const cols = browser.gridCols(n);
@@ -109,30 +97,37 @@ export function useBrowserHost() {
         if (!host) return;
         const r = host.getBoundingClientRect();
         if (!r.width || !r.height) return;
-        const gap = 4;
+        const gap = 6;
         const mode = browser.gridLayout;
         // 自适应缩放：以"横向 2 格的宽度"为参考满宽（此时 zoom=1 最舒适），
         // 格子更窄则按比例缩小网页内容（zoom<1），更宽不放大（封顶 1）。
         const refWidth = (r.width - gap) / 2;
-        // 同步每格相对 host 的 rect，供关闭按钮覆盖层定位
+        // 同步每格相对 host 的 rect，供标题栏/关闭按钮覆盖层定位
         browser.gridRects.splice(0, browser.gridRects.length);
         // 宫格同样走 Logical(CSS) 坐标，不乘 devicePixelRatio
+        const BAR = 26; // 每格顶部标题栏高度
         for (let i = 0; i < n; i++) {
           const cell = gridCellRect(mode, i, n, r.width, r.height, gap);
+          // 标题栏占每格顶部 BAR 高度，网页内容区下移并减高
+          const contentY = cell.y + BAR;
+          const contentH = Math.max(40, cell.h - BAR);
           const x = Math.round(r.left + cell.x);
-          const y = Math.round(r.top + cell.y);
+          const y = Math.round(r.top + contentY);
           browser.gridRects.push({ x: cell.x, y: cell.y, w: cell.w, h: cell.h });
-          // 计算缩放因子：格子宽 / 参考宽，限制在 [0.3, 1]
-          let zoom = refWidth > 0 ? cell.w / refWidth : 1;
-          zoom = Math.max(0.3, Math.min(1, zoom));
+          // 1) 定位（不含 zoom，避免每次定位都触发整页重排卡顿）
           bridge
             .gridPosition(i, {
               x,
               y,
               width: Math.round(cell.w),
-              height: Math.round(cell.h),
-              zoom: Math.round(zoom * 100) / 100,
+              height: Math.round(contentH),
             })
+            .catch(() => {});
+          // 2) 缩放单独下发（后端按 label 去重，zoom 变化才真正应用）
+          let zoom = refWidth > 0 ? cell.w / refWidth : 1;
+          zoom = Math.max(0.3, Math.min(1, zoom));
+          bridge
+            .gridSetZoom(i, Math.round(zoom * 100) / 100)
             .catch(() => {});
         }
         // 宫格模式下把主浏览器页签移出可视区（保留状态）

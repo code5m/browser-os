@@ -157,6 +157,8 @@ pub struct AppState {
     pub child_layouts: Mutex<HashMap<String, (f64, f64, f64, f64)>>,
     /// 上次定位时间：id -> Instant，用于后端去重防抖
     pub last_position_at: Mutex<HashMap<String, std::time::Instant>>,
+    /// 宫格每格的缩放因子：label -> zoom（页面加载完成后应用，避免加载中设置被重置）
+    pub grid_zooms: Mutex<HashMap<String, f64>>,
     /// 终端会话（PTY）：id -> 会话
     pub terminals: Mutex<HashMap<String, TerminalSession>>,
 }
@@ -1044,31 +1046,88 @@ pub fn close_grid(app: AppHandle) -> Result<(), String> {
         let label = format!("grid-{i}");
         let _ = manager.close_tab(&label);
         app.state::<AppState>().child_layouts.lock().unwrap().remove(&label);
+        app.state::<AppState>().grid_zooms.lock().unwrap().remove(&label);
     }
     Ok(())
 }
 
 /// 在指定宫格(index)中打开网址。
+/// 导航后延迟应用存储的缩放（给页面加载留时间），确保新页面加载完成后自动缩放到位。
 #[tauri::command]
 pub fn grid_open(app: AppHandle, index: usize, url: String) -> Result<(), String> {
     let label = format!("grid-{index}");
     let target = normalize_url(&url);
     let _ = Url::parse(&target).map_err(|e| format!("无效网址: {e}"))?;
     let app2 = app.clone();
+    let label2 = label.clone();
     let _ = app.run_on_main_thread(move || {
-        if let Some(win) = app2.get_webview(&label) {
+        if let Some(win) = app2.get_webview(&label2) {
             let _ = win.eval(&format!(
                 "window.location.href = {url_js}",
                 url_js = serde_json::to_string(&target).unwrap()
             ));
         }
     });
+    // 页面加载完成后重新应用缩放（CSS zoom 会被新页面重置，需重新注入）
+    let stored = app.state::<AppState>().grid_zooms.lock().unwrap().get(&label).copied();
+    if let Some(z) = stored {
+        let app3 = app.clone();
+        let label3 = label.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(900));
+            apply_grid_zoom(&app3, &label3, z);
+        });
+    }
+    Ok(())
+}
+
+/// 真正给宫格 webview 应用缩放（CSS zoom + 原生 zoom_level 双管齐下）。
+/// 仅在页面加载完成后调用，避免加载中设置被重置导致卡顿。
+fn apply_grid_zoom(app: &AppHandle, label: &str, z: f64) {
+    if z <= 0.1 || (z - 1.0).abs() < 0.01 {
+        return;
+    }
+    let app2 = app.clone();
+    let label2 = label.to_string();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(win) = app2.get_webview(&label2) {
+            let js = format!(
+                "document.documentElement.style.zoom = '{z}'; \
+                 if (document.body) document.body.style.zoom = '{z}';",
+                z = z
+            );
+            let _ = win.eval(&js);
+        }
+    });
+    use tauri_plugin_browser_tabs::TabManagerState;
+    let manager = app.state::<TabManagerState>();
+    let _ = manager.set_zoom(&label.to_string(), z);
+}
+
+/// 设置宫格某格的缩放（存起来 + 若页面已加载则立即应用）。
+/// 前端在每次定位/布局变化后调用；应用时机做了防抖，避免反复 zoom 卡顿。
+#[tauri::command]
+pub fn grid_set_zoom(app: AppHandle, index: usize, zoom: f64) -> Result<(), String> {
+    let label = format!("grid-{index}");
+    // 与上次相同则跳过（去重，避免重复 zoom 触发重排卡顿）
+    {
+        let state = app.state::<AppState>();
+        let mut zooms = state.grid_zooms.lock().unwrap();
+        if let Some(&prev) = zooms.get(&label) {
+            if (prev - zoom).abs() < 0.02 {
+                return Ok(());
+            }
+        }
+        zooms.insert(label.clone(), zoom);
+    }
+    apply_grid_zoom(&app, &label, zoom);
     Ok(())
 }
 
 /// 批量定位所有宫格（前端按网格计算好每个格子的 x/y/w/h 后调用）。
 /// 坐标为主窗口内容区相对坐标（CSS），换算成屏幕物理坐标后 set_position/set_size。
-/// zoom 为可选内容缩放因子：宫格格子比全宽窄时按比例缩小网页内容实现自适应。
+/// 注意：本命令只负责定位，不再处理缩放 —— 缩放由 grid_set_zoom 单独管理，
+/// 避免每次定位都重复 zoom 引发整页重排导致卡顿/崩溃。
 #[tauri::command]
 pub fn grid_position(
     app: AppHandle,
@@ -1077,33 +1136,9 @@ pub fn grid_position(
     y: f64,
     width: f64,
     height: f64,
-    zoom: Option<f64>,
 ) -> Result<(), String> {
     let label = format!("grid-{index}");
-    apply_bounds(&app, &label, x, y, width, height)?;
-    // 自适应缩放：用 eval 注入 CSS zoom（documentElement.style.zoom），立即触发
-    // 页面重排，解决 set_zoom_level 在页面加载时机导致的"过一会才自适应"延迟。
-    // 同时调插件 set_zoom_level 作为 WebKitGTK 原生兜底。
-    if let Some(z) = zoom {
-        if z > 0.1 && (z - 1.0).abs() > 0.01 {
-            let label2 = label.clone();
-            let app2 = app.clone();
-            let _ = app.run_on_main_thread(move || {
-                if let Some(win) = app2.get_webview(&label2) {
-                    let js = format!(
-                        "document.documentElement.style.zoom = '{z}'; \
-                         document.body && (document.body.style.zoom = '{z}');",
-                        z = z
-                    );
-                    let _ = win.eval(&js);
-                }
-            });
-            use tauri_plugin_browser_tabs::TabManagerState;
-            let manager = app.state::<TabManagerState>();
-            let _ = manager.set_zoom(&label, z);
-        }
-    }
-    Ok(())
+    apply_bounds(&app, &label, x, y, width, height)
 }
 
 /// 关闭单个宫格（按 index），其余宫格保留。
@@ -1114,6 +1149,7 @@ pub fn grid_close_one(app: AppHandle, index: usize) -> Result<(), String> {
     let manager = app.state::<TabManagerState>();
     let _ = manager.close_tab(&label);
     app.state::<AppState>().child_layouts.lock().unwrap().remove(&label);
+    app.state::<AppState>().grid_zooms.lock().unwrap().remove(&label);
     Ok(())
 }
 

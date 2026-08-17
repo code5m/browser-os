@@ -123,8 +123,12 @@ export const bridge = {
 
   gridPosition: (
     index: number,
-    p: { x: number; y: number; width: number; height: number; zoom?: number }
+    p: { x: number; y: number; width: number; height: number }
   ) => invoke("grid_position", { index, ...p }),
+
+  // 宫格缩放单独管理（与定位解耦，避免每次定位都重复 zoom 卡顿）
+  gridSetZoom: (index: number, zoom: number) =>
+    invoke("grid_set_zoom", { index, zoom }),
 
   gridCloseOne: (index: number) => invoke("grid_close_one", { index }),
 

@@ -142,16 +142,22 @@ async function openDirFullscreen() {
       <div class="browser-body">
         <div class="viewport">
           <BrowserHost v-show="layout.mainView === 'browser'" />
-          <!-- 宫格每格关闭按钮覆盖层（相对 viewport 定位，与宫格坐标同步） -->
+          <!-- 宫格每格标题栏覆盖层（序号+网址+关闭，相对 viewport 定位，与宫格坐标同步） -->
           <div v-if="browser.gridOpen" class="grid-close-layer">
-            <button
+            <div
               v-for="(rect, i) in browser.gridRects"
               :key="i"
-              class="grid-cell-close"
-              :style="{ left: rect.x + rect.w - 26 + 'px', top: rect.y + 6 + 'px' }"
-              :title="`关闭宫格 ${i + 1}`"
-              @click="browser.closeGridOne(i)"
-            >✕</button>
+              class="grid-cell-bar"
+              :style="{ left: rect.x + 'px', top: rect.y + 'px', width: rect.w + 'px' }"
+            >
+              <span class="gcb-idx">{{ i + 1 }}</span>
+              <span class="gcb-url" :title="browser.gridUrls[i]">{{ browser.gridUrls[i] || "未设置" }}</span>
+              <button
+                class="gcb-close"
+                :title="`关闭宫格 ${i + 1}`"
+                @click="browser.closeGridOne(i)"
+              >✕</button>
+            </div>
           </div>
         </div>
         <!-- 右侧 Dock：浏览网页的同时操作文件管理 / 终端 -->
