@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, watch, nextTick } from "vue";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
 import { useBrowserStore } from "../../stores/useBrowserStore";
@@ -49,13 +49,34 @@ function onDirQuick(e: Event) {
   openDirInDock();
 }
 
-// 地址栏「前往/浏览」：按模式分发 —— 网址走浏览器，目录走文件浏览
+// 精简模式切换后，地址栏显隐导致 viewport 尺寸变化，需重新定位子 webview
+watch(
+  () => layout.compactMode,
+  () => nextTick(() => browser.relocate())
+);
+
+// 地址栏「前往/浏览」：按模式分发 —— 网址走浏览器，目录默认在中央主区展示（类网页）
 function onAddrGo() {
   if (layout.addrMode === "dir") {
-    openDirInDock();
+    openDirCenter();
   } else {
     browser.openBrowser();
   }
+}
+
+// 目录模式：默认在中央主区展示文件（与网页同一套展示区域）
+async function openDirCenter() {
+  const p = browser.url.trim();
+  if (!p) {
+    layout.showToast("请输入目录路径");
+    return;
+  }
+  layout.browserDockOpen = false;
+  layout.setView("files");
+  layout.leftTab = "files";
+  await ws.enterDir(p);
+  recordRecentDir(p);
+  layout.showToast("📁 " + p);
 }
 
 // 目录模式：默认在右侧 Dock 的文件面板显示（保持网页在左）
@@ -72,20 +93,6 @@ async function openDirInDock() {
   layout.showToast("📁 已在右侧打开目录: " + p);
 }
 
-// 目录模式：全屏文件视图打开该目录
-async function openDirFullscreen() {
-  const p = browser.url.trim();
-  if (!p) {
-    layout.showToast("请输入目录路径");
-    return;
-  }
-  layout.browserDockOpen = false;
-  layout.setView("files");
-  layout.leftTab = "files";
-  await ws.enterDir(p);
-  recordRecentDir(p);
-  layout.showToast("📁 全屏浏览目录: " + p);
-}
 </script>
 
 <template>
@@ -97,7 +104,7 @@ async function openDirFullscreen() {
 
     <!-- ===== 浏览器主视图（含地址栏+页签+视口，对应 prototype 浏览器视图） ===== -->
     <template v-else-if="layout.mainView === 'browser' || layout.mainView === 'grid'">
-      <div class="addrbar">
+      <div v-show="!layout.compactMode" class="addrbar">
         <button
           class="nav mode-btn"
           :class="{ active: layout.addrMode === 'dir' }"
@@ -131,14 +138,22 @@ async function openDirFullscreen() {
         <button
           v-if="layout.addrMode === 'dir'"
           class="nav"
-          @click="openDirFullscreen"
-          title="全屏文件视图打开该目录"
-        >⛶</button>
+          @click="openDirInDock"
+          title="在右侧 Dock 显示该目录（保持网页在左）"
+        >🗂</button>
         <button class="nav" @click="layout.toggleBrowserDock('files')" title="边浏览边管理文件">🗂</button>
         <button class="nav" @click="layout.toggleBrowserDock('term')" title="边浏览边开终端">💻</button>
+        <button class="nav" @click="layout.toggleCompact" title="精简模式：隐藏地址栏给网页更大空间">⛶</button>
       </div>
-      <TabBar v-show="layout.mainView === 'browser'" />
+      <TabBar v-show="layout.mainView === 'browser' && !layout.compactMode" />
       <GridToolbar />
+      <!-- 精简模式悬浮按钮：点击退出精简，恢复地址栏 -->
+      <button
+        v-if="layout.compactMode && layout.mainView === 'browser'"
+        class="compact-exit"
+        @click="layout.toggleCompact"
+        title="退出精简模式"
+      >☰</button>
       <div class="browser-body">
         <div class="viewport">
           <BrowserHost v-show="layout.mainView === 'browser'" />
