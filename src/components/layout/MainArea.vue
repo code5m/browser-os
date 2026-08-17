@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from "vue";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
 import { useBrowserStore } from "../../stores/useBrowserStore";
@@ -19,6 +20,34 @@ const layout = useLayoutStore();
 const ws = useWorkspaceStore();
 const browser = useBrowserStore();
 
+// 目录模式「最近访问」下拉数据：localStorage 持久化最近浏览的目录
+const RECENT_DIRS_KEY = "browser-os-recent-dirs";
+const recentDirs = ref<string[]>(loadRecentDirs());
+function loadRecentDirs(): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(RECENT_DIRS_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+function recordRecentDir(p: string) {
+  const i = recentDirs.value.indexOf(p);
+  if (i >= 0) recentDirs.value.splice(i, 1);
+  recentDirs.value.unshift(p);
+  recentDirs.value = recentDirs.value.slice(0, 12);
+  try {
+    localStorage.setItem(RECENT_DIRS_KEY, JSON.stringify(recentDirs.value));
+  } catch {}
+}
+function onDirQuick(e: Event) {
+  const sel = e.target as HTMLSelectElement;
+  const p = sel.value;
+  sel.value = "";
+  if (!p) return;
+  browser.url = p;
+  openDirInDock();
+}
+
 // 地址栏「前往/浏览」：按模式分发 —— 网址走浏览器，目录走文件浏览
 function onAddrGo() {
   if (layout.addrMode === "dir") {
@@ -38,6 +67,7 @@ async function openDirInDock() {
   layout.browserDockTab = "files";
   layout.browserDockOpen = true;
   await ws.enterDir(p);
+  recordRecentDir(p);
   layout.showToast("📁 已在右侧打开目录: " + p);
 }
 
@@ -52,6 +82,7 @@ async function openDirFullscreen() {
   layout.setView("files");
   layout.leftTab = "files";
   await ws.enterDir(p);
+  recordRecentDir(p);
   layout.showToast("📁 全屏浏览目录: " + p);
 }
 </script>
@@ -76,6 +107,21 @@ async function openDirFullscreen() {
           @keyup.enter="onAddrGo"
         />
         <button class="go" @click="onAddrGo">{{ layout.addrMode === "url" ? "前往" : "浏览" }}</button>
+        <!-- 目录模式：最近访问 / 常用目录快捷下拉 -->
+        <select
+          v-if="layout.addrMode === 'dir'"
+          class="dir-quick"
+          title="最近访问 / 常用目录"
+          @change="onDirQuick"
+        >
+          <option value="">🕒 最近/常用</option>
+          <optgroup label="最近访问" v-if="recentDirs.length">
+            <option v-for="d in recentDirs" :key="d" :value="d">📁 {{ d }}</option>
+          </optgroup>
+          <optgroup label="常用目录">
+            <option v-for="d in ws.startDirs" :key="d.path" :value="d.path">{{ d.name }}</option>
+          </optgroup>
+        </select>
         <button
           v-if="layout.addrMode === 'dir'"
           class="nav"

@@ -26,6 +26,8 @@ function onItem(v: string) {
   if (v === "apps") system.loadApps();
   if (v === "grid") {
     layout.setView("grid");
+    // 打开宫格工具条（含布局切换：横向/纵向/四分/宫格/自由）
+    layout.gridToolbarOpen = true;
     if (!browser.gridOpen) browser.buildGrid();
     return;
   }

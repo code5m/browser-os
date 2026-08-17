@@ -837,13 +837,21 @@ pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
     if !dir.is_dir() { return Err("不是目录".into()); }
     let mut entries = vec![];
     for e in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
-        let e = e.map_err(|e| e.to_string())?;
-        let meta = e.metadata().map_err(|e| e.to_string())?;
+        // 单个条目失败时跳过（continue），不中断整个列表 —— 修复根目录/系统目录下
+        // 因符号链接失效、无权限条目导致 metadata() 失败而丢失大量条目的问题。
+        let Ok(e) = e else { continue };
+        // 用 file_type 判断目录（不跟随符号链接、不会因目标无权限失败）；
+        // metadata 取不到则 size 记 0，仍保留条目。
+        let is_dir = e
+            .file_type()
+            .map(|t| t.is_dir())
+            .unwrap_or(false);
+        let size = e.metadata().map(|m| m.len()).unwrap_or(0);
         entries.push(DirEntry {
             name: e.file_name().to_string_lossy().to_string(),
             path: e.path().to_string_lossy().to_string(),
-            is_dir: meta.is_dir(),
-            size: meta.len(),
+            is_dir,
+            size,
         });
     }
     // 目录在前、按名字排序
