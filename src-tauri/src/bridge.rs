@@ -1081,9 +1081,23 @@ pub fn grid_position(
 ) -> Result<(), String> {
     let label = format!("grid-{index}");
     apply_bounds(&app, &label, x, y, width, height)?;
-    // 自适应缩放：仅当传入合法 zoom 且 ≠1 时设置（避免重复设置抖动）
+    // 自适应缩放：用 eval 注入 CSS zoom（documentElement.style.zoom），立即触发
+    // 页面重排，解决 set_zoom_level 在页面加载时机导致的"过一会才自适应"延迟。
+    // 同时调插件 set_zoom_level 作为 WebKitGTK 原生兜底。
     if let Some(z) = zoom {
         if z > 0.1 && (z - 1.0).abs() > 0.01 {
+            let label2 = label.clone();
+            let app2 = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                if let Some(win) = app2.get_webview(&label2) {
+                    let js = format!(
+                        "document.documentElement.style.zoom = '{z}'; \
+                         document.body && (document.body.style.zoom = '{z}');",
+                        z = z
+                    );
+                    let _ = win.eval(&js);
+                }
+            });
             use tauri_plugin_browser_tabs::TabManagerState;
             let manager = app.state::<TabManagerState>();
             let _ = manager.set_zoom(&label, z);

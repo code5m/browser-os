@@ -235,9 +235,16 @@ export const useBrowserStore = defineStore("browser", () => {
   // v-if 不渲染，但子 webview 仍盖在屏幕上（遮住主区、看似"没有地址栏"）。
   // 因此必须在视图切换时显式把子 webview 移出屏幕 / 移回。
   function hideAllWebviews() {
+    // 隐藏页签 webview
     for (const t of tabs) {
       bridge
         .tabPosition(t.id, { x: -30000, y: -30000, width: 1, height: 1 })
+        .catch(() => {});
+    }
+    // 隐藏宫格 webview（grid-0..11，宫格开着时切到其它视图也要移出屏幕）
+    for (let i = 0; i < 12; i++) {
+      bridge
+        .gridPosition(i, { x: -30000, y: -30000, width: 1, height: 1 })
         .catch(() => {});
     }
   }
