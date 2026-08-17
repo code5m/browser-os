@@ -18,6 +18,42 @@ import TerminalPane from "../system/TerminalPane.vue";
 const layout = useLayoutStore();
 const ws = useWorkspaceStore();
 const browser = useBrowserStore();
+
+// 地址栏「前往/浏览」：按模式分发 —— 网址走浏览器，目录走文件浏览
+function onAddrGo() {
+  if (layout.addrMode === "dir") {
+    openDirInDock();
+  } else {
+    browser.openBrowser();
+  }
+}
+
+// 目录模式：默认在右侧 Dock 的文件面板显示（保持网页在左）
+async function openDirInDock() {
+  const p = browser.url.trim();
+  if (!p) {
+    layout.showToast("请输入目录路径");
+    return;
+  }
+  layout.browserDockTab = "files";
+  layout.browserDockOpen = true;
+  await ws.enterDir(p);
+  layout.showToast("📁 已在右侧打开目录: " + p);
+}
+
+// 目录模式：全屏文件视图打开该目录
+async function openDirFullscreen() {
+  const p = browser.url.trim();
+  if (!p) {
+    layout.showToast("请输入目录路径");
+    return;
+  }
+  layout.browserDockOpen = false;
+  layout.setView("files");
+  layout.leftTab = "files";
+  await ws.enterDir(p);
+  layout.showToast("📁 全屏浏览目录: " + p);
+}
 </script>
 
 <template>
@@ -25,15 +61,27 @@ const browser = useBrowserStore();
     <!-- ===== 浏览器主视图（含地址栏+页签+视口，对应 prototype 浏览器视图） ===== -->
     <template v-if="layout.mainView === 'browser' || layout.mainView === 'grid'">
       <div class="addrbar">
+        <button
+          class="nav mode-btn"
+          :class="{ active: layout.addrMode === 'dir' }"
+          @click="layout.toggleAddrMode"
+          :title="layout.addrMode === 'url' ? '当前：网址模式，点击切到目录模式' : '当前：目录模式，点击切到网址模式'"
+        >{{ layout.addrMode === "url" ? "🌐" : "📁" }}</button>
         <button class="nav" @click="browser.goBack" title="后退">←</button>
         <button class="nav" @click="browser.goForward" title="前进">→</button>
         <button class="nav" @click="browser.reloadActive" title="刷新">⟳</button>
         <input
           v-model="browser.url"
-          placeholder="输入网址或搜索词（如 baidu.com、天气）"
-          @keyup.enter="browser.openBrowser"
+          :placeholder="layout.addrMode === 'url' ? '输入网址或搜索词（如 baidu.com、天气）' : '输入目录路径，回车浏览（如 /home/you/Documents）'"
+          @keyup.enter="onAddrGo"
         />
-        <button class="go" @click="browser.openBrowser">前往</button>
+        <button class="go" @click="onAddrGo">{{ layout.addrMode === "url" ? "前往" : "浏览" }}</button>
+        <button
+          v-if="layout.addrMode === 'dir'"
+          class="nav"
+          @click="openDirFullscreen"
+          title="全屏文件视图打开该目录"
+        >⛶</button>
         <button class="nav" @click="layout.toggleBrowserDock('files')" title="边浏览边管理文件">🗂</button>
         <button class="nav" @click="layout.toggleBrowserDock('term')" title="边浏览边开终端">💻</button>
       </div>

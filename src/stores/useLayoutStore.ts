@@ -28,6 +28,8 @@ export const useLayoutStore = defineStore("layout", () => {
   // 浏览器视图右侧 Dock：边浏览网页边操作文件/终端
   const browserDockOpen = ref(false);
   const browserDockTab = ref<"files" | "term">("files");
+  // 地址栏模式：🌐网址（默认）/ 📁目录（输入本地路径浏览目录）
+  const addrMode = ref<"url" | "dir">("url");
 
   let toastTimer: number | null = null;
   function showToast(text: string) {
@@ -70,6 +72,11 @@ export const useLayoutStore = defineStore("layout", () => {
     sidebarWidth.value = Math.min(560, Math.max(180, w));
   }
 
+  // 切换地址栏模式（🌐网址 / 📁目录）
+  function toggleAddrMode() {
+    addrMode.value = addrMode.value === "url" ? "dir" : "url";
+  }
+
   // 浏览器视图右侧 Dock：指定 tab 时做"切到该 tab/再点收起"语义
   function toggleBrowserDock(tab?: "files" | "term") {
     if (tab) {
@@ -97,6 +104,7 @@ export const useLayoutStore = defineStore("layout", () => {
     leftResizing,
     browserDockOpen,
     browserDockTab,
+    addrMode,
     showToast,
     isBrowserView,
     setView,
@@ -105,5 +113,6 @@ export const useLayoutStore = defineStore("layout", () => {
     toggleGridToolbar,
     setSidebarWidth,
     toggleBrowserDock,
+    toggleAddrMode,
   };
 });
