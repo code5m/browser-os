@@ -3,12 +3,37 @@ import { useBrowserStore } from "../../stores/useBrowserStore";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 const browser = useBrowserStore();
 const layout = useLayoutStore();
+
+const layouts = [
+  { key: "horizontal", label: "▭ 横向", title: "横向一排" },
+  { key: "vertical", label: "▯ 纵向", title: "纵向一列" },
+  { key: "quad", label: "⊞ 四分", title: "四分 2×2" },
+  { key: "grid", label: "▦ 宫格", title: "自动宫格" },
+  { key: "free", label: "❖ 自由", title: "自由层叠" },
+] as const;
+
+function setLayout(mode: (typeof layouts)[number]["key"]) {
+  browser.gridLayout = mode;
+  // 四分模式固定 4 格，更符合语义
+  if (mode === "quad") browser.gridCount = 4;
+  // 已打开宫格则按新布局重排
+  if (browser.gridOpen) browser.layoutGrid();
+}
 </script>
 
 <template>
   <div v-if="layout.gridToolbarOpen" class="grid-toolbar">
     <div class="grid-toolbar-row">
       <span class="gt-label">▦ 宫格对比</span>
+      <div class="layout-btns">
+        <button
+          v-for="l in layouts"
+          :key="l.key"
+          :class="{ active: browser.gridLayout === l.key }"
+          :title="l.title"
+          @click="setLayout(l.key)"
+        >{{ l.label }}</button>
+      </div>
       <div class="grid-btns">
         <button
           v-for="n in 11"

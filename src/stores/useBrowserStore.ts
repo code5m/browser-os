@@ -20,6 +20,8 @@ export const useBrowserStore = defineStore("browser", () => {
   const gridCount = ref(2);
   const gridUrl = ref("");
   const gridUrls = reactive<string[]>(Array(12).fill(""));
+  // 宫格布局模式：horizontal 横向 / vertical 纵向 / quad 四分 / grid 宫格 / free 自由堆叠
+  const gridLayout = ref<"horizontal" | "vertical" | "quad" | "grid" | "free">("grid");
   const resources = ref<BrowserResources | null>(null);
   const aiNavOpen = ref(false);
   const aiFilter = ref<"全部" | "国内" | "海外">("全部");
@@ -247,6 +249,7 @@ export const useBrowserStore = defineStore("browser", () => {
     gridCount,
     gridUrl,
     gridUrls,
+    gridLayout,
     resources,
     aiNavOpen,
     aiFilter,

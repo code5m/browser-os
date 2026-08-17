@@ -55,6 +55,51 @@ export function useBrowserHost() {
     });
   }
 
+  // 按布局模式计算第 i 格的 rect（相对 host 内容区，CSS 坐标）
+  function gridCellRect(
+    mode: string,
+    i: number,
+    n: number,
+    W: number,
+    H: number,
+    gap: number
+  ): { x: number; y: number; w: number; h: number } {
+    if (mode === "horizontal") {
+      // 横向：一排横排
+      const cw = (W - gap * (n - 1)) / n;
+      return { x: i * (cw + gap), y: 0, w: cw, h: H };
+    }
+    if (mode === "vertical") {
+      // 纵向：一列竖排
+      const ch = (H - gap * (n - 1)) / n;
+      return { x: 0, y: i * (ch + gap), w: W, h: ch };
+    }
+    if (mode === "quad") {
+      // 四分：固定 2x2，取前 4 格，超出堆叠在第 4 格
+      const cw = (W - gap) / 2;
+      const ch = (H - gap) / 2;
+      const idx = Math.min(i, 3);
+      const c = idx % 2;
+      const rw = Math.floor(idx / 2);
+      return { x: c * (cw + gap), y: rw * (ch + gap), w: cw, h: ch };
+    }
+    if (mode === "free") {
+      // 自由：层叠错开（可拖拽基础，先做瀑布式偏移堆叠）
+      const cw = W * 0.7;
+      const ch = H * 0.7;
+      const off = Math.min(i, 8) * 28;
+      return { x: off, y: off, w: cw, h: ch };
+    }
+    // grid：自动宫格（默认）
+    const cols = browser.gridCols(n);
+    const rows = Math.ceil(n / cols);
+    const cw = (W - gap * (cols - 1)) / cols;
+    const ch = (H - gap * (rows - 1)) / rows;
+    const c = i % cols;
+    const rw = Math.floor(i / cols);
+    return { x: c * (cw + gap), y: rw * (ch + gap), w: cw, h: ch };
+  }
+
   function scheduleGrid() {
     const n = browser.gridCount;
     if (!browser.gridOpen) return;
@@ -64,19 +109,15 @@ export function useBrowserHost() {
         if (!host) return;
         const r = host.getBoundingClientRect();
         if (!r.width || !r.height) return;
-        const cols = browser.gridCols(n);
-        const rows = Math.ceil(n / cols);
         const gap = 4;
-        const cw = (r.width - gap * (cols - 1)) / cols;
-        const ch = (r.height - gap * (rows - 1)) / rows;
+        const mode = browser.gridLayout;
         // 宫格同样走 Logical(CSS) 坐标，不乘 devicePixelRatio
         for (let i = 0; i < n; i++) {
-          const c = i % cols;
-          const rw = Math.floor(i / cols);
-          const x = Math.round(r.left + c * (cw + gap));
-          const y = Math.round(r.top + rw * (ch + gap));
+          const cell = gridCellRect(mode, i, n, r.width, r.height, gap);
+          const x = Math.round(r.left + cell.x);
+          const y = Math.round(r.top + cell.y);
           bridge
-            .gridPosition(i, { x, y, width: Math.round(cw), height: Math.round(ch) })
+            .gridPosition(i, { x, y, width: Math.round(cell.w), height: Math.round(cell.h) })
             .catch(() => {});
         }
         // 宫格模式下把主浏览器页签移出可视区（保留状态）
