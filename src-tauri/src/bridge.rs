@@ -1068,6 +1068,7 @@ pub fn grid_open(app: AppHandle, index: usize, url: String) -> Result<(), String
 
 /// 批量定位所有宫格（前端按网格计算好每个格子的 x/y/w/h 后调用）。
 /// 坐标为主窗口内容区相对坐标（CSS），换算成屏幕物理坐标后 set_position/set_size。
+/// zoom 为可选内容缩放因子：宫格格子比全宽窄时按比例缩小网页内容实现自适应。
 #[tauri::command]
 pub fn grid_position(
     app: AppHandle,
@@ -1076,9 +1077,30 @@ pub fn grid_position(
     y: f64,
     width: f64,
     height: f64,
+    zoom: Option<f64>,
 ) -> Result<(), String> {
     let label = format!("grid-{index}");
-    apply_bounds(&app, &label, x, y, width, height)
+    apply_bounds(&app, &label, x, y, width, height)?;
+    // 自适应缩放：仅当传入合法 zoom 且 ≠1 时设置（避免重复设置抖动）
+    if let Some(z) = zoom {
+        if z > 0.1 && (z - 1.0).abs() > 0.01 {
+            use tauri_plugin_browser_tabs::TabManagerState;
+            let manager = app.state::<TabManagerState>();
+            let _ = manager.set_zoom(&label, z);
+        }
+    }
+    Ok(())
+}
+
+/// 关闭单个宫格（按 index），其余宫格保留。
+#[tauri::command]
+pub fn grid_close_one(app: AppHandle, index: usize) -> Result<(), String> {
+    use tauri_plugin_browser_tabs::TabManagerState;
+    let label = format!("grid-{index}");
+    let manager = app.state::<TabManagerState>();
+    let _ = manager.close_tab(&label);
+    app.state::<AppState>().child_layouts.lock().unwrap().remove(&label);
+    Ok(())
 }
 
 // ====== 系统应用启动器（Linux .desktop） ======

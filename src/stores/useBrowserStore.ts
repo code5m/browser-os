@@ -22,6 +22,8 @@ export const useBrowserStore = defineStore("browser", () => {
   const gridUrls = reactive<string[]>(Array(12).fill(""));
   // 宫格布局模式：horizontal 横向 / vertical 纵向 / quad 四分 / grid 宫格 / free 自由堆叠
   const gridLayout = ref<"horizontal" | "vertical" | "quad" | "grid" | "free">("grid");
+  // 每格相对 host 的 rect（供关闭按钮覆盖层定位），scheduleGrid 时填充
+  const gridRects = reactive<{ x: number; y: number; w: number; h: number }[]>([]);
   const resources = ref<BrowserResources | null>(null);
   const aiNavOpen = ref(false);
   const aiFilter = ref<"全部" | "国内" | "海外">("全部");
@@ -171,7 +173,24 @@ export const useBrowserStore = defineStore("browser", () => {
     await bridge.closeGrid().catch(() => {});
     gridOpen.value = false;
     layout.gridToolbarOpen = false;
+    gridRects.splice(0, gridRects.length);
     layout.showToast("已关闭宫格");
+  }
+  // 关闭单个宫格：销毁对应子 webview，其余保留，并按剩余数量重排
+  async function closeGridOne(i: number) {
+    await bridge.gridCloseOne(i).catch(() => {});
+    // 从 gridUrls/gridRects 移除该格，gridCount 减 1 后重排
+    gridUrls.splice(i, 1);
+    gridUrls.push(""); // 保持数组长度
+    gridRects.splice(i, 1);
+    if (gridCount.value > 2) gridCount.value -= 1;
+    else if (gridCount.value === 2) {
+      // 只剩 1 格意义不大，整体关闭
+      await closeGridAll();
+      return;
+    }
+    layoutGrid();
+    layout.showToast(`已关闭宫格 ${i + 1}`);
   }
 
   // ===== 资源扫描（按 id 更新，不覆盖其他页签） =====
@@ -250,6 +269,7 @@ export const useBrowserStore = defineStore("browser", () => {
     gridUrl,
     gridUrls,
     gridLayout,
+    gridRects,
     resources,
     aiNavOpen,
     aiFilter,
@@ -271,6 +291,7 @@ export const useBrowserStore = defineStore("browser", () => {
     layoutGrid,
     gridSetUrl,
     closeGridAll,
+    closeGridOne,
     setResources,
     clearResources,
     gotoAI,

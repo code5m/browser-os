@@ -74,6 +74,7 @@ pub fn init_with_host(host_label: &str) -> TauriPlugin<Wry> {
             commands::close_tab,
             commands::navigate,
             commands::list_tabs,
+            commands::set_zoom,
         ])
         .setup(move |app, _api| {
             let manager: TabManagerState =

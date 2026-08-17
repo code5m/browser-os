@@ -136,6 +136,17 @@ impl TabManager {
         Ok(())
     }
 
+    /// 设置子 webview 内容缩放（WebKitGTK set_zoom_level）。
+    /// 用于宫格小格子按比例缩小网页内容，实现"自适应"展示。
+    pub fn set_zoom(&self, id: &TabId, scale_factor: f64) -> Result<()> {
+        let tabs = self.tabs.read();
+        let webview = tabs
+            .get(id)
+            .ok_or_else(|| BrowserTabError::TabNotFound(id.clone()))?;
+        webview.set_zoom(scale_factor)?;
+        Ok(())
+    }
+
     pub fn close_tab(&self, id: &TabId) -> Result<()> {
         let mut tabs = self.tabs.write();
         let webview = tabs
@@ -195,4 +206,9 @@ pub async fn navigate(state: State<'_, TabManagerState>, id: TabId, url: String)
 #[tauri::command]
 pub async fn list_tabs(state: State<'_, TabManagerState>) -> Result<Vec<TabId>> {
     Ok(state.get_tab_ids())
+}
+
+#[tauri::command]
+pub async fn set_zoom(state: State<'_, TabManagerState>, id: TabId, scale_factor: f64) -> Result<()> {
+    state.set_zoom(&id, scale_factor)
 }

@@ -123,8 +123,10 @@ export const bridge = {
 
   gridPosition: (
     index: number,
-    p: { x: number; y: number; width: number; height: number }
+    p: { x: number; y: number; width: number; height: number; zoom?: number }
   ) => invoke("grid_position", { index, ...p }),
+
+  gridCloseOne: (index: number) => invoke("grid_close_one", { index }),
 
   // ====== 系统应用 ======
   listApps: () => invoke<AppEntry[]>("list_apps"),

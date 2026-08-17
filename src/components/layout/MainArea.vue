@@ -15,6 +15,7 @@ import AuditPanel from "../workspace/AuditPanel.vue";
 import RepoPanel from "../workspace/RepoPanel.vue";
 import AppPanel from "../system/AppPanel.vue";
 import TerminalPane from "../system/TerminalPane.vue";
+import HomePanel from "../home/HomePanel.vue";
 
 const layout = useLayoutStore();
 const ws = useWorkspaceStore();
@@ -89,8 +90,13 @@ async function openDirFullscreen() {
 
 <template>
   <main class="main">
+    <!-- ===== 主页（快捷图标墙：网页/应用，可自定义编辑） ===== -->
+    <div v-if="layout.mainView === 'home'" class="modview">
+      <HomePanel />
+    </div>
+
     <!-- ===== 浏览器主视图（含地址栏+页签+视口，对应 prototype 浏览器视图） ===== -->
-    <template v-if="layout.mainView === 'browser' || layout.mainView === 'grid'">
+    <template v-else-if="layout.mainView === 'browser' || layout.mainView === 'grid'">
       <div class="addrbar">
         <button
           class="nav mode-btn"
@@ -136,6 +142,17 @@ async function openDirFullscreen() {
       <div class="browser-body">
         <div class="viewport">
           <BrowserHost v-show="layout.mainView === 'browser'" />
+          <!-- 宫格每格关闭按钮覆盖层（相对 viewport 定位，与宫格坐标同步） -->
+          <div v-if="browser.gridOpen" class="grid-close-layer">
+            <button
+              v-for="(rect, i) in browser.gridRects"
+              :key="i"
+              class="grid-cell-close"
+              :style="{ left: rect.x + rect.w - 26 + 'px', top: rect.y + 6 + 'px' }"
+              :title="`关闭宫格 ${i + 1}`"
+              @click="browser.closeGridOne(i)"
+            >✕</button>
+          </div>
         </div>
         <!-- 右侧 Dock：浏览网页的同时操作文件管理 / 终端 -->
         <aside v-if="layout.browserDockOpen && layout.mainView === 'browser'" class="browser-dock">

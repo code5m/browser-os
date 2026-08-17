@@ -11,6 +11,7 @@ const ws = useWorkspaceStore();
 
 // 对应 prototype.html 活动栏 9 模块
 const items = [
+  { view: "home", icon: "🏠", label: "主页" },
   { view: "browser", icon: "📁", label: "浏览" },
   { view: "files", icon: "📂", label: "文件" },
   { view: "clip", icon: "📋", label: "剪贴板" },

@@ -3,6 +3,7 @@ import { ref } from "vue";
 
 // 活动栏 9 个模块 + 浏览器/编辑器，对应 prototype.html 的 9 视图 + 浏览器主视图
 export type MainView =
+  | "home"
   | "browser"
   | "files"
   | "clip"

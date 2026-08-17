@@ -96,6 +96,38 @@ button.primary { background: #2b6; color: #fff; border-color: #2b6; }
 .addrbar .go { background: #2b6cb0; color: #fff; border: none; border-radius: 6px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
 /* 视口（对应 prototype .viewport） */
 .viewport { flex: 1; background: #fff; position: relative; overflow: hidden; min-height: 0; }
+/* 宫格每格关闭按钮覆盖层：不拦截网页点击（仅按钮本身可点） */
+.grid-close-layer { position: absolute; inset: 0; pointer-events: none; z-index: 20; }
+.grid-cell-close { position: absolute; width: 20px; height: 20px; border-radius: 50%; border: none; background: rgba(0,0,0,.55); color: #fff; font-size: 11px; line-height: 1; cursor: pointer; pointer-events: auto; display: flex; align-items: center; justify-content: center; }
+.grid-cell-close:hover { background: #e34d59; }
+
+/* ===== 主页（快捷图标墙） ===== */
+.home-panel { flex: 1; overflow-y: auto; padding: 18px; background: linear-gradient(180deg, #f7f9ff 0%, #fff 100%); }
+.home-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.home-title { font-size: 18px; font-weight: 700; color: #2b3a55; }
+.home-actions button { border: 1px solid #e5e6eb; background: #fff; border-radius: 6px; padding: 5px 12px; font-size: 13px; cursor: pointer; margin-left: 8px; color: #4e5969; }
+.home-actions button:hover { background: #eef2f7; }
+.home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 14px; }
+.home-card { position: relative; background: #fff; border: 1px solid #e8ebf0; border-radius: 12px; padding: 18px 10px 12px; text-align: center; cursor: pointer; transition: all .15s; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+.home-card:hover { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(43,108,176,.12); border-color: #c6d8ef; }
+.home-icon { font-size: 34px; line-height: 1; margin-bottom: 8px; }
+.home-name { font-size: 13px; font-weight: 600; color: #2b3a55; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-type { font-size: 11px; color: #9aa5b5; margin-top: 3px; }
+.home-ops { position: absolute; top: 6px; right: 6px; display: none; gap: 2px; }
+.home-card:hover .home-ops { display: flex; }
+.home-ops .op { border: none; background: rgba(0,0,0,.06); border-radius: 4px; width: 22px; height: 22px; font-size: 11px; cursor: pointer; }
+.home-ops .op:hover { background: rgba(0,0,0,.16); }
+.home-empty { color: #9aa5b5; text-align: center; padding: 60px 0; font-size: 14px; }
+/* 主页编辑弹窗 */
+.home-modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.home-modal { background: #fff; border-radius: 12px; padding: 20px; width: 360px; box-shadow: 0 8px 30px rgba(0,0,0,.2); }
+.hm-title { font-size: 15px; font-weight: 700; margin-bottom: 14px; color: #2b3a55; }
+.hm-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.hm-row label { width: 64px; font-size: 13px; color: #4e5969; flex-shrink: 0; }
+.hm-row input, .hm-row select { flex: 1; height: 30px; border: 1px solid #e5e6eb; border-radius: 6px; padding: 0 10px; font-size: 13px; outline: none; }
+.hm-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.hm-btns button { border: 1px solid #e5e6eb; background: #fff; border-radius: 6px; padding: 6px 16px; font-size: 13px; cursor: pointer; }
+.hm-btns button.primary { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
 /* 浏览器视图：视口 + 右侧 Dock 横排 */
 .browser-body { flex: 1; display: flex; min-height: 0; min-width: 0; }
 .browser-dock { width: 360px; flex-shrink: 0; border-left: 1px solid #e5e6eb; display: flex; flex-direction: column; background: #fff; min-height: 0; position: relative; }
