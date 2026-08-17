@@ -235,18 +235,10 @@ export const useBrowserStore = defineStore("browser", () => {
   // v-if 不渲染，但子 webview 仍盖在屏幕上（遮住主区、看似"没有地址栏"）。
   // 因此必须在视图切换时显式把子 webview 移出屏幕 / 移回。
   function hideAllWebviews() {
-    // 隐藏页签 webview
-    for (const t of tabs) {
-      bridge
-        .tabPosition(t.id, { x: -30000, y: -30000, width: 1, height: 1 })
-        .catch(() => {});
-    }
-    // 隐藏宫格 webview（grid-0..11，宫格开着时切到其它视图也要移出屏幕）
-    for (let i = 0; i < 12; i++) {
-      bridge
-        .gridPosition(i, { x: -30000, y: -30000, width: 1, height: 1 })
-        .catch(() => {});
-    }
+    // 统一走后端 hide_all_webviews：用无去重的 hide_bounds 强制移出屏幕。
+    // 之前逐个调 tabPosition/gridPosition 会被 apply_bounds 的 50ms 去重丢弃，
+    // 导致刚定位过的宫格/页签没被移出、切视图后仍残留显示。
+    bridge.hideAllWebviews().catch(() => {});
   }
 
   // 按当前视图同步子 webview 显隐：browser/grid 视图重新定位显示，其它视图移出屏幕

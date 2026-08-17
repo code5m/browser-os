@@ -343,6 +343,26 @@ fn hide_bounds(app: &AppHandle, id: &str) {
     }
 }
 
+/// 强制隐藏所有子 webview（页签 + 宫格）。
+/// 关键：【不能走 grid_position/apply_bounds】——它有 50ms 去重，宫格刚定位后
+/// 50ms 内的"移出屏幕"请求会被去重丢弃，导致宫格仍留在屏幕上（实测切主页仍看到
+/// 宫格内容）。hide_bounds 无去重、保持尺寸只移位置，是隐藏的正确入口。
+/// 对没记录在 child_layouts 的宫格（极端情况），也强制移出（直接给 1x1 临时尺寸）。
+#[tauri::command]
+pub fn hide_all_webviews(app: AppHandle) -> Result<(), String> {
+    // 页签
+    let tab_ids: Vec<String> = app.state::<AppState>().tabs.lock().unwrap().keys().cloned().collect();
+    for id in tab_ids {
+        hide_bounds(&app, &id);
+    }
+    // 宫格（0..MAX_GRID，无论是否开着都尝试隐藏，hide_bounds 对无记录的会跳过）
+    for i in 0..MAX_GRID {
+        let label = format!("grid-{i}");
+        hide_bounds(&app, &label);
+    }
+    Ok(())
+}
+
 /// 创建一个浏览器页签（独立子窗口，方案 B），返回其信息并设为激活页签。
 fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
     let target = normalize_url(url);

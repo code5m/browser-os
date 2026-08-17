@@ -132,6 +132,10 @@ export const bridge = {
 
   gridCloseOne: (index: number) => invoke("grid_close_one", { index }),
 
+  // 强制隐藏所有子 webview（页签+宫格），切到非浏览器视图时调用。
+  // 后端用无去重的 hide_bounds，避免 grid_position 的 50ms 去重把隐藏请求丢弃。
+  hideAllWebviews: () => invoke("hide_all_webviews"),
+
   // ====== 系统应用 ======
   listApps: () => invoke<AppEntry[]>("list_apps"),
 
