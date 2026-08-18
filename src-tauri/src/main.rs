@@ -65,11 +65,20 @@ fn main() {
             //   set_size_request 而不保证 allocation，导致主 webview CSS 视口卡在 ~400px。）
             // 浏览器页签/宫格仍通过 browser-tabs 插件 add_child 到该窗口——这不是
             // 多顶层 WebviewWindow，不会触发 X11 多窗口死锁。
-            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            // dev 下强制指向 vite 开发服务器：本项目窗口是 Rust 代码里 programmatic
+            // 创建的，config 的 devUrl 解析未生效（webview 一直加载旧 dist，前端改动
+            // 全部不生效）。release 仍走 App("index.html") 打包包内资源。
+            let main_url = if cfg!(debug_assertions) {
+                WebviewUrl::External("http://localhost:1421".parse().unwrap())
+            } else {
+                WebviewUrl::App("index.html".into())
+            };
+            let window = WebviewWindowBuilder::new(app, "main", main_url)
                 .title("浏览器OS融合")
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(900.0, 600.0)
                 .build()?;
+            eprintln!("[main] main window url={:?}", window.url());
             let _ = window.show();
             let _ = window.set_focus();
             // 修正主 UI webview 的 GTK allocation / CSS 视口（WebKitGTK 偶发卡在小尺寸，
@@ -78,6 +87,8 @@ fn main() {
                 let _ = tauri_plugin_browser_tabs::ensure_native_layout(&main_wv);
             }
             let _ = std::fs::write("/tmp/mvp-life.log", "main-window-created-and-shown\n");
+            // 启动布局守护线程：持续纠正 GTK 布局循环导致的子 webview 位置漂移
+            bridge::start_layout_enforcer(app.handle().clone());
             Ok(())
         })
         .manage(AppState::default())
@@ -120,6 +131,7 @@ fn main() {
             bridge::grid_close_one,
             bridge::hide_all_webviews,
             bridge::hide_webview,
+            bridge::debug_log,
             bridge::list_apps,
             bridge::launch_app,
             bridge::tab_new,

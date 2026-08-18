@@ -149,8 +149,10 @@ export const useBrowserStore = defineStore("browser", () => {
   }
   async function buildGrid() {
     const n = gridCount.value;
+    bridge.debugLog(`buildGrid start n=${n} mainView=${layout.mainView}`);
     // createGrid 内部会先 close_grid 再重建，幂等，可安全重复调用
     await bridge.createGrid(n);
+    bridge.debugLog("buildGrid createGrid done");
     gridOpen.value = true;
     // 注意：不要在这里覆盖 mainView。由调用方（onItem/grid 工具条）决定切到 grid 视图，
     // 避免 "grid"->"browser" 的二次覆盖打乱 watch 时序导致宫格不显示/页签残留。
@@ -164,7 +166,12 @@ export const useBrowserStore = defineStore("browser", () => {
     }
     // 等 DOM/子 webview 就绪后重排（scheduleGrid 内部会把激活页签移出屏幕）
     await nextTick();
+    bridge.debugLog("buildGrid 导航完成，触发 layoutGrid");
     layoutGrid();
+    // 保险：400ms 后再排一次（幂等），覆盖工具条展开/视图切换导致的首次布局时序窗口
+    window.setTimeout(() => {
+      if (gridOpen.value) layoutGrid();
+    }, 400);
     layout.showToast(`已打开 ${n} 宫格对比`);
   }
   function layoutGrid() {
@@ -250,6 +257,7 @@ export const useBrowserStore = defineStore("browser", () => {
 
   // 按当前视图同步子 webview 显隐：browser/grid 视图重新定位显示，其它视图移出屏幕
   function syncViewVisibility() {
+    bridge.debugLog(`syncViewVisibility view=${layout.mainView}`);
     if (layout.mainView === "browser" || layout.mainView === "grid") {
       relocate();
     } else {

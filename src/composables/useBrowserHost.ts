@@ -89,14 +89,32 @@ export function useBrowserHost() {
   }
 
   function scheduleGrid() {
-    const n = browser.gridCount;
+    bridge.debugLog(`scheduleGrid entry gridOpen=${browser.gridOpen}`);
     if (!browser.gridOpen) return;
     nextTick(() => {
-      requestAnimationFrame(() => {
-        const host = browserHost.value;
-        if (!host) return;
-        const r = host.getBoundingClientRect();
-        if (!r.width || !r.height) return;
+      requestAnimationFrame(() => layoutGridNow(0));
+    });
+  }
+
+  // 实际执行宫格布局。host 未就绪 / rect 为 0 时重试（最多 10 次，每次 100ms），
+  // 覆盖"工具条刚展开/视图刚切换，布局尚未稳定"的时序窗口——之前直接 return
+  // 导致宫格永不定位（灰底空白、无格子、无标题栏）。
+  function layoutGridNow(retry: number) {
+    if (!browser.gridOpen) return;
+    const host = browserHost.value;
+    const r = host?.getBoundingClientRect();
+    if (retry === 0) {
+      bridge.debugLog(
+        `layoutGridNow host=${!!host} rect=${r ? `${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.width)}x${Math.round(r.height)}` : "null"}`
+      );
+    }
+    if (!host || !r || !r.width || !r.height) {
+      if (retry < 10) window.setTimeout(() => layoutGridNow(retry + 1), 100);
+      else bridge.debugLog("layoutGridNow 重试 10 次仍无有效 host/rect，放弃");
+      return;
+    }
+    {
+        const n = browser.gridCount;
         const gap = 10; // 宫格间隙加大，配合灰底让分格边界清晰可见
         const mode = browser.gridLayout;
         // 自适应缩放：以"横向 2 格的宽度"为参考满宽（此时 zoom=1 最舒适），
@@ -115,6 +133,7 @@ export function useBrowserHost() {
           const y = Math.round(r.top + contentY);
           browser.gridRects.push({ x: cell.x, y: cell.y, w: cell.w, h: cell.h });
           // 1) 定位（不含 zoom，避免每次定位都触发整页重排卡顿）
+          bridge.debugLog(`gridPosition send i=${i} rect=${x},${y},${Math.round(cell.w)}x${Math.round(contentH)}`);
           bridge
             .gridPosition(i, {
               x,
@@ -122,7 +141,7 @@ export function useBrowserHost() {
               width: Math.round(cell.w),
               height: Math.round(contentH),
             })
-            .catch(() => {});
+            .catch((e) => bridge.debugLog(`gridPosition i=${i} 失败: ${e}`));
           // 2) 缩放单独下发（后端按 label 去重，zoom 变化才真正应用）
           let zoom = refWidth > 0 ? cell.w / refWidth : 1;
           zoom = Math.max(0.3, Math.min(1, zoom));
@@ -135,8 +154,7 @@ export function useBrowserHost() {
         if (browser.activeTabId) {
           bridge.hideWebview(browser.activeTabId).catch(() => {});
         }
-      });
-    });
+    }
   }
 
   function positionBrowserNow() {

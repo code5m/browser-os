@@ -6,10 +6,10 @@ body { margin: 0; font-family: system-ui, "PingFang SC", sans-serif; }
 button { cursor: pointer; border: 1px solid #ccc; background: #fafafa; border-radius: 6px; padding: 6px 12px; }
 button.primary { background: #2b6; color: #fff; border-color: #2b6; }
 /* 活动条（顶部横条：横向排列、图标+文字、深色 #1f2733，置于 TitleBar 下方） */
-.activity { height: 46px; background: #1f2733; display: flex; flex-direction: row; align-items: stretch; padding: 6px 10px; gap: 4px; flex-shrink: 0; }
-.activity button { position: relative; min-width: 58px; height: 100%; border: none; background: transparent; color: #cbd5e0; border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 2px 6px; transition: background .15s, color .15s; }
-.activity button .ic { font-size: 17px; line-height: 1; }
-.activity button .lab { font-size: 10px; line-height: 1; color: #9aa4b2; white-space: nowrap; }
+.activity { height: 32px; background: #1f2733; display: flex; flex-direction: row; align-items: stretch; padding: 2px 8px; gap: 3px; flex-shrink: 0; }
+.activity button { position: relative; min-width: 0; height: 100%; border: none; background: transparent; color: #cbd5e0; border-radius: 6px; cursor: pointer; display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 4px; padding: 2px 8px; transition: background .15s, color .15s; }
+.activity button .ic { font-size: 14px; line-height: 1; }
+.activity button .lab { font-size: 11px; line-height: 1; color: #9aa4b2; white-space: nowrap; }
 .activity button:hover { background: #2f3a47; color: #fff; }
 .activity button:hover .lab { color: #fff; }
 .activity button.active { background: #2b6cb0; color: #fff; }
@@ -86,8 +86,8 @@ button.primary { background: #2b6; color: #fff; border-color: #2b6; }
 .modview > .tabs button.active { color: #2b6cb0; border-bottom-color: #2b6cb0; }
 .modview.term-mod { background: #1e1e1e; }
 /* 地址栏（对应 prototype .addrbar） */
-.addrbar { height: 42px; border-bottom: 1px solid #e5e6eb; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: #fafbfc; flex-shrink: 0; }
-.addrbar .nav { width: 28px; height: 28px; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #4e5969; cursor: pointer; user-select: none; border: 1px solid #e5e6eb; background: #fff; }
+.addrbar { height: 34px; border-bottom: 1px solid #e5e6eb; display: flex; align-items: center; gap: 6px; padding: 0 8px; background: #fafbfc; flex-shrink: 0; }
+.addrbar .nav { width: 24px; height: 24px; border-radius: 5px; display: flex; align-items: center; justify-content: center; color: #4e5969; cursor: pointer; user-select: none; border: 1px solid #e5e6eb; background: #fff; }
 .addrbar .nav:hover { background: #eef2f7; }
 .addrbar .mode-btn { font-size: 15px; }
 .addrbar .mode-btn.active { background: #e3eefb; border-color: #2b6cb0; color: #2b6cb0; }
@@ -95,8 +95,8 @@ button.primary { background: #2b6; color: #fff; border-color: #2b6; }
 /* 精简模式悬浮退出按钮：半透明，悬停显现 */
 .compact-exit { position: absolute; top: 6px; right: 10px; z-index: 30; width: 34px; height: 28px; border-radius: 6px; border: 1px solid rgba(0,0,0,.12); background: rgba(255,255,255,.75); backdrop-filter: blur(4px); color: #4e5969; font-size: 15px; cursor: pointer; opacity: .35; transition: opacity .15s; }
 .compact-exit:hover { opacity: 1; background: #fff; }
-.addrbar input { flex: 1; height: 30px; border: 1px solid #e5e6eb; border-radius: 16px; padding: 0 14px; font-size: 13px; outline: none; min-width: 0; }
-.addrbar .go { background: #2b6cb0; color: #fff; border: none; border-radius: 6px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
+.addrbar input { flex: 1; height: 25px; border: 1px solid #e5e6eb; border-radius: 13px; padding: 0 12px; font-size: 12px; outline: none; min-width: 0; }
+.addrbar .go { background: #2b6cb0; color: #fff; border: none; border-radius: 5px; padding: 4px 12px; cursor: pointer; font-size: 12px; }
 /* 视口（对应 prototype .viewport） */
 .viewport { flex: 1; background: #fff; position: relative; overflow: hidden; min-height: 0; }
 /* 宫格模式：视口灰底，宫格间隙露出灰色，分格边界一目了然（避免全白误以为没分格） */
@@ -242,11 +242,11 @@ button.ghost { background: #fff; }
 .dir-new:hover { background: #eafaf0; }
 .file-list li.is-md .fname { color: #8a5a00; }
 /* 宫格工具条 */
-.grid-toolbar { background: #f8f9ff; border-bottom: 1px solid #e3e7f5; padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
-.grid-toolbar-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.gt-label { font-size: 13px; font-weight: 600; color: #555; }
+.grid-toolbar { background: #f8f9ff; border-bottom: 1px solid #e3e7f5; padding: 4px 8px; display: flex; flex-direction: column; gap: 4px; }
+.grid-toolbar-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.gt-label { font-size: 12px; font-weight: 600; color: #555; }
 .layout-btns { display: flex; gap: 3px; }
-.layout-btns button { padding: 3px 8px; font-size: 12px; white-space: nowrap; }
+.layout-btns button { padding: 2px 7px; font-size: 11px; white-space: nowrap; }
 .layout-btns button.active { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
 .grid-toolbar .grid-btns { display: flex; gap: 3px; }
 .grid-toolbar .grid-btns button { min-width: 28px; padding: 3px 0; font-size: 11px; }

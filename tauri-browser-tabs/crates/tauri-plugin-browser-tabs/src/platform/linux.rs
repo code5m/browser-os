@@ -24,30 +24,32 @@ pub fn ensure_size_allocated<R: Runtime>(webview: &Webview<R>, rect: LogicalRect
             let x = (rect.x * scale).round() as i32;
             let y = (rect.y * scale).round() as i32;
 
-            // 仅在 allocation 与目标错配时打印诊断（避免刷屏）
+            // 仅在 allocation 与目标错配时才纠正（move + size_allocate）。
+            // 关键：GTK 布局循环会在页面加载/容器重排后把子 webview 的 allocation
+            // 拉回"自然位置"（实测漂移到 (0,400,1200,400) 下半屏），因此 bridge 侧有
+            // 布局守护线程每 400ms 按记忆矩形重放本函数。错配才纠正让守护线程空转代价
+            // 趋近于零（不触发无谓的 size-allocate 信号与 WebKit 重排）。
             let a = gtk_webview.allocation();
             if a.x() != x || a.y() != y || a.width() != w || a.height() != h {
                 eprintln!(
-                    "[browser-tabs] layout target=({},{},{}x{}) alloc_before=({},{},{}x{})",
+                    "[browser-tabs] layout drift-correct target=({},{},{}x{}) alloc_before=({},{},{}x{})",
                     x, y, w, h, a.x(), a.y(), a.width(), a.height()
                 );
-            }
-
-            // 关键修复（血泪，详见 PROJECT-RULES.md）：
-            // GtkFixed 子控件必须【位置 + 尺寸一起定死】，且【绝不 queue_resize】。
-            // 1) gtk_fixed_move 固定位置 —— wry 的 set_bounds/set_position 对 GtkFixed
-            //    子控件只 size_allocate 不 move，位置会漂；且布局循环会把子控件越拉越大
-            //    （日志实测 alloc y 从 91→46→24→1、高 709→799 逐步沾满全窗口）。
-            // 2) size_allocate 固定尺寸 —— 触发 size-allocate 信号让 WebKit 刷新视口。
-            // 3) 不 set_size_request、不 queue_resize —— 二者都会触发 GtkFixed 重算，
-            //    按"剩余空间"把子控件拉满全窗口（即"沾满"的根因）。
-            if let Some(parent) = gtk_webview.parent() {
-                if let Ok(fixed) = parent.downcast::<gtk::Fixed>() {
-                    fixed.move_(&gtk_webview, x, y);
+                // 血泪教训（详见 PROJECT-RULES.md）：
+                // GtkFixed 子控件必须【位置 + 尺寸一起定死】，且【绝不 queue_resize】。
+                // 1) gtk_fixed_move 固定位置 —— wry 的 set_bounds/set_position 对 GtkFixed
+                //    子控件只 size_allocate 不 move，位置会漂。
+                // 2) size_allocate 固定尺寸 —— 触发 size-allocate 信号让 WebKit 刷新视口。
+                // 3) 不 set_size_request、不 queue_resize —— 二者都会触发 GtkFixed 重算，
+                //    按"剩余空间"把子控件拉满全窗口。
+                if let Some(parent) = gtk_webview.parent() {
+                    if let Ok(fixed) = parent.downcast::<gtk::Fixed>() {
+                        fixed.move_(&gtk_webview, x, y);
+                    }
                 }
+                gtk_webview.size_allocate(&gtk::Allocation::new(x, y, w, h));
+                gtk_webview.queue_draw();
             }
-            gtk_webview.size_allocate(&gtk::Allocation::new(x, y, w, h));
-            gtk_webview.queue_draw();
         })
         .map_err(|e| crate::models::BrowserTabError::Platform(e.to_string()))?;
 

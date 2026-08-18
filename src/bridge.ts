@@ -139,6 +139,11 @@ export const bridge = {
   // 隐藏单个子 webview（无去重），宫格显示时移出激活页签用
   hideWebview: (id: string) => invoke("hide_webview", { id }),
 
+  // 前端链路追踪：把关键步骤打到后端终端，定位"请求在哪一步丢失"（fire-and-forget）
+  debugLog: (msg: string) => {
+    invoke("debug_log", { msg }).catch(() => {});
+  },
+
   // ====== 系统应用 ======
   listApps: () => invoke<AppEntry[]>("list_apps"),
 

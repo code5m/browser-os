@@ -11,25 +11,25 @@
 
 <style scoped>
 .titlebar {
-  height: 34px;
+  height: 22px;
   background: linear-gradient(90deg, #2b6cb0, #4299e1);
   display: flex;
   align-items: center;
-  padding: 0 14px;
+  padding: 0 10px;
   color: #fff;
-  font-size: 13px;
+  font-size: 12px;
   -webkit-app-region: drag;
   user-select: none;
   flex-shrink: 0;
 }
 .dots {
   display: flex;
-  gap: 6px;
-  margin-right: 12px;
+  gap: 5px;
+  margin-right: 10px;
 }
 .dots i {
-  width: 11px;
-  height: 11px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.7);
   display: inline-block;

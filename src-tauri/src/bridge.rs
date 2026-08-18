@@ -284,13 +284,18 @@ fn apply_bounds_inner(
 ) -> Result<(), String> {
     use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
     let manager = app.state::<TabManagerState>();
-    manager
-        .update_rect(
-            &id.to_string(),
-            LogicalRect::new(x.round().max(0.0), y.round().max(0.0), width.round().max(1.0), height.round().max(1.0)),
-        )
-        .map_err(|e| format!("定位失败: {e}"))?;
-    let _ = manager.set_visible(&id.to_string(), true);
+    // 诊断：update_rect 失败（如 TabNotFound）时必须先留日志再返回，
+    // 否则前端 .catch 吞掉后宫格"静默不显示"，无法定位是前端没发还是后端没建。
+    if let Err(e) = manager.update_rect(
+        &id.to_string(),
+        LogicalRect::new(x.round().max(0.0), y.round().max(0.0), width.round().max(1.0), height.round().max(1.0)),
+    ) {
+        eprintln!("[apply_bounds] label={} update_rect 失败: {e}", id);
+        return Err(format!("定位失败: {e}"));
+    }
+    if let Err(e) = manager.set_visible(&id.to_string(), true) {
+        eprintln!("[apply_bounds] label={} set_visible 失败: {e}", id);
+    }
     eprintln!(
         "[apply_bounds] label={} logical=({},{},{},{})",
         id, x, y, width, height
@@ -337,9 +342,17 @@ fn hide_bounds(app: &AppHandle, id: &str) {
     // 坐标用 -30000（X11 int16 安全范围 -32768~32767 内）。
     let cur = app.state::<AppState>().child_layouts.lock().unwrap().get(id).copied();
     if let Some((_x, y, w, h)) = cur {
-        let _ = manager.update_rect(&id.to_string(), LogicalRect::new(-30000.0, y, w, h));
-        // 记住布局，便于再次激活时快速恢复
-        remember_layout(app, id, _x, y, w, h);
+        // 诊断：移出失败（TabNotFound 等）时留日志，排查"切视图后残留"问题
+        if let Err(e) = manager.update_rect(&id.to_string(), LogicalRect::new(-30000.0, y, w, h)) {
+            eprintln!("[hide_bounds] id={} 移出失败: {e}", id);
+        }
+        // 记住【隐藏态】坐标（-30000），不是原坐标：
+        // 布局守护线程每 400ms 按 child_layouts 重放纠偏，GTK 布局循环会把子 webview
+        // 漂回"自然位置"（实测 (0,400,1200,400) 下半屏）。若这里记原坐标，守护线程会
+        // 把已隐藏的 webview 拉回可视区造成残留。恢复显示由前端随后重新定位完成。
+        remember_layout(app, id, -30000.0, y, w, h);
+    } else {
+        eprintln!("[hide_bounds] id={} 无布局记录，跳过（可能从未定位过）", id);
     }
 }
 
@@ -360,7 +373,13 @@ pub fn hide_webview(app: AppHandle, id: String) -> Result<(), String> {
         hide_bounds(&app, &id);
     } else {
         let manager = app.state::<TabManagerState>();
-        let _ = manager.update_rect(&id, LogicalRect::new(-30000.0, -30000.0, 800.0, 600.0));
+        // 兜底移出成功时也记入 child_layouts（隐藏态），让守护线程持续压制漂移
+        if manager
+            .update_rect(&id, LogicalRect::new(-30000.0, -30000.0, 800.0, 600.0))
+            .is_ok()
+        {
+            remember_layout(&app, &id, -30000.0, -30000.0, 800.0, 600.0);
+        }
     }
     Ok(())
 }
@@ -383,10 +402,42 @@ pub fn hide_all_webviews(app: AppHandle) -> Result<(), String> {
         if has_layout {
             hide_bounds(&app, &id);
         } else {
-            let _ = manager.update_rect(&id, LogicalRect::new(-30000.0, -30000.0, 800.0, 600.0));
+            // 诊断：兜底移出失败时留日志（TabNotFound = 插件表里没有该 webview）。
+            // 成功时记入 child_layouts（隐藏态），让守护线程持续压制漂移。
+            match manager.update_rect(&id, LogicalRect::new(-30000.0, -30000.0, 800.0, 600.0)) {
+                Ok(_) => remember_layout(&app, &id, -30000.0, -30000.0, 800.0, 600.0),
+                Err(e) => eprintln!("[hide_all_webviews] id={} 兜底移出失败: {e}", id),
+            }
         }
     }
+    eprintln!("[hide_all_webviews] 已处理全部子 webview");
     Ok(())
+}
+
+/// 布局守护线程：每 400ms 按 child_layouts 重放所有子 webview 的目标矩形。
+/// 背景：WebKitGTK 的 GTK 布局循环会在页面加载/容器重排时把子 webview 的
+/// allocation 拉回"自然位置"（日志实测漂移到 (0,400,1200,400) 即下半屏），
+/// 导致"定位后被弹回下半屏/隐藏后重新浮现"的残留。linux.rs 的纠偏已改为
+/// 仅在 allocation 错配时才 move+size_allocate，守护线程空转代价趋近于零。
+pub fn start_layout_enforcer(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let layouts = app.state::<AppState>().child_layouts.lock().unwrap().clone();
+        if layouts.is_empty() {
+            continue;
+        }
+        use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
+        let manager = app.state::<TabManagerState>();
+        for (id, (x, y, w, h)) in layouts {
+            let _ = manager.update_rect(&id, LogicalRect::new(x, y, w.max(1.0), h.max(1.0)));
+        }
+    });
+}
+
+/// 前端链路追踪：把前端关键步骤打到后端终端，定位"请求在哪一步丢失"。
+#[tauri::command]
+pub fn debug_log(msg: String) {
+    eprintln!("[FE] {msg}");
 }
 
 /// 创建一个浏览器页签（独立子窗口，方案 B），返回其信息并设为激活页签。
@@ -1191,6 +1242,18 @@ pub fn grid_position(
     height: f64,
 ) -> Result<(), String> {
     let label = format!("grid-{index}");
+    // 诊断：记录定位请求到达后端时，插件 tabs 表里是否已有该宫格 webview。
+    // tab_exists=false 说明创建/定位时序脱节（create_grid 的 add_child 尚未完成），
+    // 本次定位会失败，需要前端重试兜底。
+    {
+        use tauri_plugin_browser_tabs::TabManagerState;
+        let manager = app.state::<TabManagerState>();
+        let has = manager.get_tab_ids().iter().any(|t| t == &label);
+        eprintln!(
+            "[grid_position] label={} rect=({},{},{},{}) tab_exists={}",
+            label, x, y, width, height, has
+        );
+    }
     apply_bounds(&app, &label, x, y, width, height)
 }
 
