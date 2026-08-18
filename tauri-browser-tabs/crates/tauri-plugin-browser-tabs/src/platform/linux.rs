@@ -31,10 +31,21 @@ pub fn ensure_size_allocated<R: Runtime>(webview: &Webview<R>, rect: LogicalRect
             // 趋近于零（不触发无谓的 size-allocate 信号与 WebKit 重排）。
             let a = gtk_webview.allocation();
             if a.x() != x || a.y() != y || a.width() != w || a.height() != h {
-                eprintln!(
-                    "[browser-tabs] layout drift-correct target=({},{},{}x{}) alloc_before=({},{},{}x{})",
-                    x, y, w, h, a.x(), a.y(), a.width(), a.height()
-                );
+                // 日志去重：守护线程每 400ms 重放，对"纠正后不回落"的隐藏 webview
+                // 同一签名会无限刷屏。只在签名变化时输出（新的漂移仍会看到）。
+                use std::sync::{Mutex, OnceLock};
+                static LAST_SIG: OnceLock<Mutex<Option<(i32, i32, i32, i32, i32, i32, i32, i32)>>> =
+                    OnceLock::new();
+                let sig = (x, y, w, h, a.x(), a.y(), a.width(), a.height());
+                let mut last = LAST_SIG.get_or_init(|| Mutex::new(None)).lock().unwrap();
+                if *last != Some(sig) {
+                    eprintln!(
+                        "[browser-tabs] layout drift-correct target=({},{},{}x{}) alloc_before=({},{},{}x{})",
+                        x, y, w, h, a.x(), a.y(), a.width(), a.height()
+                    );
+                    *last = Some(sig);
+                }
+                drop(last);
                 // 血泪教训（详见 PROJECT-RULES.md）：
                 // GtkFixed 子控件必须【位置 + 尺寸一起定死】，且【绝不 queue_resize】。
                 // 1) gtk_fixed_move 固定位置 —— wry 的 set_bounds/set_position 对 GtkFixed

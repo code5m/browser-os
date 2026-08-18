@@ -7,7 +7,6 @@ import { useWorkspaceStore } from "./stores/useWorkspaceStore";
 import { useSystemStore } from "./stores/useSystemStore";
 import { useLayoutStore } from "./stores/useLayoutStore";
 
-import TitleBar from "./components/layout/TitleBar.vue";
 import ActivityBar from "./components/layout/ActivityBar.vue";
 import MainArea from "./components/layout/MainArea.vue";
 import StatusBar from "./components/layout/StatusBar.vue";
@@ -89,8 +88,8 @@ onMounted(async () => {
 
 <template>
   <div class="app" :style="{ height: appHeight }">
-    <TitleBar />
-    <ActivityBar />
+    <!-- 精简模式：整行工具栏隐藏，网页占满（由 MainArea 的 ☰ 悬浮钮退出） -->
+    <ActivityBar v-show="!layout.compactMode" />
     <div class="body">
       <AINavPanel />
       <MainArea />

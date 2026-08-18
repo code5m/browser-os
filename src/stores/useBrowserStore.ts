@@ -17,6 +17,9 @@ export const useBrowserStore = defineStore("browser", () => {
   const tabs = reactive<TabInfo[]>([]);
   const activeTabId = ref("");
   const gridOpen = ref(false);
+  // 宫格会话号：buildGrid 每次重建 +1，供定位层识别"同一批 webview 已销毁重建，
+  // 上次发送缓存作废必须重发"（重建后 rect 可能与新 webview 的 1x1 初始态相同）
+  const gridSession = ref(0);
   const gridCount = ref(2);
   const gridUrl = ref("");
   const gridUrls = reactive<string[]>(Array(12).fill(""));
@@ -149,6 +152,7 @@ export const useBrowserStore = defineStore("browser", () => {
   }
   async function buildGrid() {
     const n = gridCount.value;
+    gridSession.value += 1;
     bridge.debugLog(`buildGrid start n=${n} mainView=${layout.mainView}`);
     // createGrid 内部会先 close_grid 再重建，幂等，可安全重复调用
     await bridge.createGrid(n);
@@ -184,8 +188,10 @@ export const useBrowserStore = defineStore("browser", () => {
     layout.showToast(`宫格 ${i + 1} → ${u}`);
   }
   async function closeGridAll() {
-    await bridge.closeGrid().catch(() => {});
+    // 先翻标志位：立刻阻断 scheduleGrid/schedulePosition 走宫格分支，
+    // 不等后端 IPC 往返（否则视图已切走、gridOpen 仍为 true 导致重试风暴）
     gridOpen.value = false;
+    await bridge.closeGrid().catch(() => {});
     layout.gridToolbarOpen = false;
     gridRects.splice(0, gridRects.length);
     layout.showToast("已关闭宫格");
@@ -243,6 +249,14 @@ export const useBrowserStore = defineStore("browser", () => {
     schedulePosition();
   }
 
+  // 强制重排宫格（绕过定位层的 rect 去重缓存）。
+  // 场景：下拉菜单打开时宫格 webview 被临时移出屏幕，关闭菜单后必须重发定位，
+  // 但 rect 没变、会被去重缓存跳过 —— 会话号 +1 即作废缓存触发重发。
+  function forceGridRelayout() {
+    gridSession.value += 1;
+    layoutGrid();
+  }
+
   // ===== 子 webview 显隐同步 =====
   // 子 webview 是独立置顶 GTK 窗口，不受前端 v-if / visibility 控制。
   // 切到非浏览器视图（编辑器/文件/终端等）时，主 UI 的 addrbar/TabBar 会因
@@ -279,6 +293,7 @@ export const useBrowserStore = defineStore("browser", () => {
     tabs,
     activeTabId,
     gridOpen,
+    gridSession,
     gridCount,
     gridUrl,
     gridUrls,
@@ -313,5 +328,6 @@ export const useBrowserStore = defineStore("browser", () => {
     bindPositionScheduler,
     bindGridScheduler,
     relocate,
+    forceGridRelayout,
   };
 });

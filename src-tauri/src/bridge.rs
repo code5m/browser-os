@@ -394,7 +394,14 @@ pub fn hide_all_webviews(app: AppHandle) -> Result<(), String> {
     for i in 0..MAX_GRID {
         ids.push(format!("grid-{i}"));
     }
+    // 只处理插件管理表里真实存在的 webview：grid-0..MAX_GRID 是无脑穷举的，
+    // 不存在的 id 走兜底必然 "tab not found"（纯噪音日志，实测刷屏 grid-2..grid-11）
+    let existing: std::collections::HashSet<String> =
+        manager.get_tab_ids().into_iter().collect();
     for id in ids {
+        if !existing.contains(&id) {
+            continue;
+        }
         // 优先用 hide_bounds（保持尺寸只移位置，安全不死锁）。
         // 但若 child_layouts 无记录（页签/宫格从未被定位过），hide_bounds 会跳过导致残留，
         // 此时兜底直接 update_rect 移到屏幕外（给一个安全的 800x600 尺寸，避免 1x1 触发重排死锁）。

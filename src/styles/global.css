@@ -5,7 +5,7 @@ body { margin: 0; font-family: system-ui, "PingFang SC", sans-serif; }
 /* 通用 button 放最前，让后续组件选择器覆盖 */
 button { cursor: pointer; border: 1px solid #ccc; background: #fafafa; border-radius: 6px; padding: 6px 12px; }
 button.primary { background: #2b6; color: #fff; border-color: #2b6; }
-/* 活动条（顶部横条：横向排列、图标+文字、深色 #1f2733，置于 TitleBar 下方） */
+/* 活动条（顶部横条：横向排列、图标+文字、深色 #1f2733，紧贴系统标题栏） */
 .activity { height: 32px; background: #1f2733; display: flex; flex-direction: row; align-items: stretch; padding: 2px 8px; gap: 3px; flex-shrink: 0; }
 .activity button { position: relative; min-width: 0; height: 100%; border: none; background: transparent; color: #cbd5e0; border-radius: 6px; cursor: pointer; display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 4px; padding: 2px 8px; transition: background .15s, color .15s; }
 .activity button .ic { font-size: 14px; line-height: 1; }
@@ -20,6 +20,12 @@ button.primary { background: #2b6; color: #fff; border-color: #2b6; }
 .activity .collect { background: #2b6cb0; color: #fff; }
 .activity .collect .lab { color: #fff; }
 .activity .collect:hover { background: #3182ce; }
+/* 模块页签条（菜单功能点一个开一个标签，浏览器式管理） */
+.mod-tabbar { display: flex; align-items: center; gap: 3px; padding: 3px 6px 0; background: #eef1f6; border-bottom: 1px solid #e5e6eb; flex-shrink: 0; overflow-x: auto; }
+.mod-tab { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #d5dbe7; border-bottom: none; background: #f7f8fa; color: #4e5969; border-radius: 7px 7px 0 0; padding: 4px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.mod-tab.active { background: #fff; color: #2b6cb0; font-weight: 600; }
+.mod-tab .x { color: #bbb; font-size: 10px; padding: 0 2px; border-radius: 3px; }
+.mod-tab .x:hover { color: #c33; background: #f0f0f0; }
 /* 侧栏（仅文件/成果共用 Tab 时仍用） */
 .sidebar { background: #f7f8fa; border-right: 1px solid #e5e6eb; display: flex; flex-direction: column; overflow: hidden; flex-shrink: 0; }
 .resizer { width: 4px; cursor: col-resize; background: transparent; }
@@ -99,8 +105,8 @@ button.primary { background: #2b6; color: #fff; border-color: #2b6; }
 .addrbar .go { background: #2b6cb0; color: #fff; border: none; border-radius: 5px; padding: 4px 12px; cursor: pointer; font-size: 12px; }
 /* 视口（对应 prototype .viewport） */
 .viewport { flex: 1; background: #fff; position: relative; overflow: hidden; min-height: 0; }
-/* 宫格模式：视口灰底，宫格间隙露出灰色，分格边界一目了然（避免全白误以为没分格） */
-.viewport.grid-mode { background: #d8dee9; }
+/* 宫格模式：白底（用户不要灰框），仅靠细间隙分隔 */
+.viewport.grid-mode { background: #fff; }
 /* 宫格每格标题栏覆盖层：默认不拦截网页点击（仅标题栏可点） */
 .grid-close-layer { position: absolute; inset: 0; pointer-events: none; z-index: 20; }
 .grid-cell-bar { position: absolute; height: 26px; display: flex; align-items: center; gap: 6px; padding: 0 6px; background: linear-gradient(180deg,#3a4a63,#2b3a55); color: #fff; border-radius: 6px 6px 0 0; box-shadow: 0 1px 4px rgba(0,0,0,.25); pointer-events: auto; box-sizing: border-box; }

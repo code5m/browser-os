@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
+import { ref, reactive } from "vue";
 
 // 活动栏 9 个模块 + 浏览器/编辑器，对应 prototype.html 的 9 视图 + 浏览器主视图
 export type MainView =
@@ -85,6 +85,62 @@ export const useLayoutStore = defineStore("layout", () => {
     compactMode.value = !compactMode.value;
   }
 
+  // ===== 模块页签：菜单功能与浏览器一致 —— 点一个就新建一个标签 =====
+  interface ModTab {
+    id: string;
+    view: MainView;
+    icon: string;
+    label: string;
+  }
+  const MOD_META: Record<string, { icon: string; label: string }> = {
+    files: { icon: "📂", label: "文件" },
+    clip: { icon: "📋", label: "剪贴板" },
+    arts: { icon: "📚", label: "成果" },
+    apps: { icon: "🚀", label: "应用" },
+    term: { icon: "💻", label: "终端" },
+    repo: { icon: "🛰️", label: "仓库" },
+    audit: { icon: "🛡️", label: "审计" },
+  };
+  const modTabs = reactive<ModTab[]>([]);
+  const activeModTab = ref("");
+  let modTabSeq = 0;
+
+  function isModView() {
+    return mainView.value in MOD_META;
+  }
+
+  // 每次点击都新建一个标签（与浏览器"点链接开新页签"一致）
+  function openModule(view: MainView) {
+    const meta = MOD_META[view] ?? { icon: "📄", label: view };
+    const id = `mod-${++modTabSeq}`;
+    modTabs.push({ id, view, ...meta });
+    activeModTab.value = id;
+    setView(view);
+  }
+
+  function activateModTab(id: string) {
+    const t = modTabs.find((x) => x.id === id);
+    if (!t) return;
+    activeModTab.value = id;
+    setView(t.view);
+  }
+
+  function closeModTab(id: string) {
+    const i = modTabs.findIndex((x) => x.id === id);
+    if (i < 0) return;
+    const wasActive = activeModTab.value === id;
+    modTabs.splice(i, 1);
+    if (!wasActive) return;
+    const next = modTabs[i] || modTabs[i - 1];
+    if (next) {
+      activeModTab.value = next.id;
+      setView(next.view);
+    } else {
+      activeModTab.value = "";
+      setView("home");
+    }
+  }
+
   // 浏览器视图右侧 Dock：指定 tab 时做"切到该 tab/再点收起"语义
   function toggleBrowserDock(tab?: "files" | "term") {
     if (tab) {
@@ -124,5 +180,11 @@ export const useLayoutStore = defineStore("layout", () => {
     toggleBrowserDock,
     toggleAddrMode,
     toggleCompact,
+    modTabs,
+    activeModTab,
+    isModView,
+    openModule,
+    activateModTab,
+    closeModTab,
   };
 });

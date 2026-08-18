@@ -7,6 +7,11 @@ import { useLayoutStore } from "../stores/useLayoutStore";
 let positionRaf: number | null = null;
 let lastKey = "";
 let lastAt = 0;
+// 宫格定位发送缓存：同一会话内相同 rect 不重复下发（RO/事件会反复触发 scheduleGrid），
+// buildGrid 重建（gridSession+1）后缓存作废必须重发——新 webview 初始是 1x1。
+let lastGridSession = -1;
+const lastGridSent = new Map<number, string>();
+let lastHiddenTab = "";
 
 export function useBrowserHost() {
   const browser = useBrowserStore();
@@ -114,16 +119,22 @@ export function useBrowserHost() {
       return;
     }
     {
+        // 会话切换（buildGrid 重建）时清空发送缓存
+        if (browser.gridSession !== lastGridSession) {
+          lastGridSession = browser.gridSession;
+          lastGridSent.clear();
+          lastHiddenTab = "";
+        }
         const n = browser.gridCount;
-        const gap = 10; // 宫格间隙加大，配合灰底让分格边界清晰可见
+        const gap = 4; // 宫格间隙（白底细分隔线即可，不再需要灰底大间隙）
         const mode = browser.gridLayout;
-        // 自适应缩放：以"横向 2 格的宽度"为参考满宽（此时 zoom=1 最舒适），
-        // 格子更窄则按比例缩小网页内容（zoom<1），更宽不放大（封顶 1）。
-        const refWidth = (r.width - gap) / 2;
-        // 同步每格相对 host 的 rect，供标题栏/关闭按钮覆盖层定位
+        // 自适应缩放：以 host 满宽为参考 —— 每格都按比例缩小，完整页面缩进格宽
+        // （原设计 2 格时 zoom=1 不缩放，用户反馈"宫格没有自动适应缩放"）
+        const refWidth = r.width;
+        // 同步每格相对 host 的 rect
         browser.gridRects.splice(0, browser.gridRects.length);
         // 宫格同样走 Logical(CSS) 坐标，不乘 devicePixelRatio
-        const BAR = 26; // 每格顶部标题栏高度
+        const BAR = 0; // 格子顶部标题栏已移除，网页占满整格
         for (let i = 0; i < n; i++) {
           const cell = gridCellRect(mode, i, n, r.width, r.height, gap);
           // 标题栏占每格顶部 BAR 高度，网页内容区下移并减高
@@ -132,16 +143,19 @@ export function useBrowserHost() {
           const x = Math.round(r.left + cell.x);
           const y = Math.round(r.top + contentY);
           browser.gridRects.push({ x: cell.x, y: cell.y, w: cell.w, h: cell.h });
-          // 1) 定位（不含 zoom，避免每次定位都触发整页重排卡顿）
-          bridge.debugLog(`gridPosition send i=${i} rect=${x},${y},${Math.round(cell.w)}x${Math.round(contentH)}`);
-          bridge
-            .gridPosition(i, {
-              x,
-              y,
-              width: Math.round(cell.w),
-              height: Math.round(contentH),
-            })
-            .catch((e) => bridge.debugLog(`gridPosition i=${i} 失败: ${e}`));
+          // 1) 定位（不含 zoom，避免每次定位都触发整页重排卡顿）。
+          //    同会话同 rect 去重，失败则清除缓存下轮重发。
+          const w = Math.round(cell.w);
+          const h = Math.round(contentH);
+          const sig = `${x},${y},${w}x${h}`;
+          if (lastGridSent.get(i) !== sig) {
+            lastGridSent.set(i, sig);
+            bridge.debugLog(`gridPosition send i=${i} rect=${x},${y},${w}x${h}`);
+            bridge.gridPosition(i, { x, y, width: w, height: h }).catch((e) => {
+              lastGridSent.delete(i);
+              bridge.debugLog(`gridPosition i=${i} 失败: ${e}`);
+            });
+          }
           // 2) 缩放单独下发（后端按 label 去重，zoom 变化才真正应用）
           let zoom = refWidth > 0 ? cell.w / refWidth : 1;
           zoom = Math.max(0.3, Math.min(1, zoom));
@@ -151,7 +165,9 @@ export function useBrowserHost() {
         }
         // 宫格模式下把主浏览器页签移出可视区（保留状态）。
         // 用无去重的 hideWebview，避免 tabPosition 的 50ms 去重把移出请求丢弃。
-        if (browser.activeTabId) {
+        // 同一会话同一页签只移一次（layoutGridNow 会被反复触发）。
+        if (browser.activeTabId && lastHiddenTab !== browser.activeTabId) {
+          lastHiddenTab = browser.activeTabId;
           bridge.hideWebview(browser.activeTabId).catch(() => {});
         }
     }
