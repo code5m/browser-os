@@ -1059,14 +1059,21 @@ const MAX_GRID: usize = 12;
 /// 创建 n 个宫格独立子窗口（2..=12），默认都打开引导页，位置由前端 grid_position 告知。
 #[tauri::command]
 pub fn create_grid(app: AppHandle, n: usize) -> Result<(), String> {
+    use tauri_plugin_browser_tabs::TabManagerState;
     let n = n.clamp(2, MAX_GRID);
-    // 先清理旧的宫格
+    // 先清理旧的宫格（插件 tabs 表同步 remove）
     close_grid(app.clone())?;
+    // 关键：判断宫格是否已存在要用【插件自己的 tabs 表】，不能用 app.get_webview ——
+    // tauri manager 的 webview 注册表在 close(异步 dispatcher)后可能仍残留，
+    // 用 get_webview 判断会误判"已存在"而 continue 跳过创建，导致二次打开宫格时
+    // 宫格 webview 根本没建、只剩激活页签（实测第二次点宫格只显示单个大页面）。
+    let manager = app.state::<TabManagerState>();
+    let existing: std::collections::HashSet<String> =
+        manager.get_tab_ids().into_iter().collect();
     // 初始用 1x1 隐藏尺寸，前端 grid_position 会精确放大定位
     for i in 0..n {
         let label = format!("grid-{i}");
-        // 已存在则跳过（spawn_child_window 内部也会销毁重建，这里直接 continue 更轻）
-        if app.get_webview(&label).is_some() {
+        if existing.contains(&label) {
             continue;
         }
         spawn_child_window(
