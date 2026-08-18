@@ -3,7 +3,7 @@ import { watch, nextTick } from "vue";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../stores/useBrowserStore";
 import BrowserHost from "../browser/BrowserHost.vue";
-import TabBar from "../browser/TabBar.vue";
+import UnifiedTabBar from "./UnifiedTabBar.vue";
 import FileEditor from "../workspace/FileEditor.vue";
 
 import FilePanel from "../workspace/FilePanel.vue";
@@ -28,28 +28,16 @@ watch(
 
 <template>
   <main class="main">
-    <!-- 模块页签条：菜单功能与浏览器一致 —— 点一个开一个标签 -->
-    <div v-if="layout.isModView()" class="mod-tabbar">
-      <button
-        v-for="t in layout.modTabs"
-        :key="t.id"
-        class="mod-tab"
-        :class="{ active: t.id === layout.activeModTab }"
-        @click="layout.activateModTab(t.id)"
-      >
-        <span>{{ t.icon }} {{ t.label }}</span>
-        <span class="x" title="关闭标签" @click.stop="layout.closeModTab(t.id)">✕</span>
-      </button>
-    </div>
+    <!-- 统一页签条：网页/目录/模块页签混排，所有视图常驻 -->
+    <UnifiedTabBar v-show="!layout.compactMode" />
 
     <!-- ===== 主页（快捷图标墙：网页/应用，可自定义编辑） ===== -->
     <div v-if="layout.mainView === 'home'" class="modview">
       <HomePanel />
     </div>
 
-    <!-- ===== 浏览器主视图（地址栏已合并进顶部全局工具栏，此处只剩页签+视口） ===== -->
+    <!-- ===== 浏览器主视图（地址栏已合并进顶部全局工具栏，页签走统一页签条） ===== -->
     <template v-else-if="layout.mainView === 'browser' || layout.mainView === 'grid'">
-      <TabBar v-show="layout.mainView === 'browser' && !layout.compactMode" />
       <!-- 精简模式悬浮按钮：点击退出精简，恢复工具栏 -->
       <button
         v-if="layout.compactMode && layout.mainView === 'browser'"

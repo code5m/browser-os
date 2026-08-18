@@ -42,7 +42,7 @@ button.primary { background: #2b6; color: #fff; border-color: #2b6; }
 .path-bar .path { font-size: 11px; color: #666; cursor: pointer; word-break: break-all; flex: 1; }
 .quick-dirs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .qdir { padding: 5px 10px; background: #eef3ff; border-radius: 4px; font-size: 12px; cursor: pointer; color: #2b6; }
-.file-list { list-style: none; padding: 0; margin: 0; flex: 1; overflow: auto; }
+.file-list { list-style: none; padding: 0; margin: 0; flex: 1; overflow: auto; background: #fff; border: 1px solid #eef0f3; border-radius: 6px; }
 .file-list li { display: flex; align-items: center; gap: 6px; padding: 5px 6px; border-bottom: 1px solid #f6f6f6; cursor: pointer; border-radius: 3px; }
 .file-list li:hover { background: #f0f0f0; }
 .icon { font-size: 14px; width: 20px; text-align: center; }
@@ -175,7 +175,9 @@ button.ghost { background: #fff; }
 .repo .title { font-size: 13px; }
 .repo .meta { font-size: 11px; color: #999; word-break: break-all; }
 /* 终端（填充模块视图） */
-.terminal { position: absolute; inset: 0; background: #1e1e1e; color: #ddd; display: flex; flex-direction: column; z-index: 50; }
+/* 终端改为流式布局：与其他模块视图一致填充内容区（不再 absolute 全屏覆盖页签条）。
+   flex:1 适配模块视图 flex 列容器；height:100% 适配浏览视图右侧 Dock 的相对定位容器。 */
+.terminal { position: relative; flex: 1; min-height: 0; height: 100%; background: #1e1e1e; color: #ddd; display: flex; flex-direction: column; }
 .term-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; background: #2a2a2a; font-size: 12px; flex-shrink: 0; }
 .term-head button { font-size: 11px; padding: 2px 8px; background: #3a3a3a; color: #ddd; border: none; }
 .term-out { flex: 1; overflow: auto; padding: 8px; font-family: monospace; font-size: 12px; white-space: pre-wrap; }

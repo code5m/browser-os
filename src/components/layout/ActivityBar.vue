@@ -147,7 +147,7 @@ async function openDirCenter() {
   }
   if (browser.gridOpen) await browser.closeGridAll();
   layout.browserDockOpen = false;
-  layout.openModule("files");
+  layout.openDirTab(p);
   layout.leftTab = "files";
   await ws.enterDir(p);
   recordRecentDir(p);

@@ -91,6 +91,7 @@ export const useLayoutStore = defineStore("layout", () => {
     view: MainView;
     icon: string;
     label: string;
+    path?: string; // 目录页签：记录的目录路径，激活时重新 enterDir
   }
   const MOD_META: Record<string, { icon: string; label: string }> = {
     files: { icon: "📂", label: "文件" },
@@ -116,6 +117,21 @@ export const useLayoutStore = defineStore("layout", () => {
     modTabs.push({ id, view, ...meta });
     activeModTab.value = id;
     setView(view);
+  }
+
+  // 目录页签：同路径去重复用（避免一排完全相同的目录标签），新路径新建
+  function openDirTab(path: string) {
+    const existing = modTabs.find((t) => t.path === path);
+    if (existing) {
+      activeModTab.value = existing.id;
+      setView(existing.view);
+      return;
+    }
+    const name = path.replace(/\/+$/, "").split("/").pop() || path;
+    const id = `dir-${++modTabSeq}`;
+    modTabs.push({ id, view: "files", icon: "📁", label: name, path });
+    activeModTab.value = id;
+    setView("files");
   }
 
   function activateModTab(id: string) {
@@ -184,6 +200,7 @@ export const useLayoutStore = defineStore("layout", () => {
     activeModTab,
     isModView,
     openModule,
+    openDirTab,
     activateModTab,
     closeModTab,
   };
