@@ -97,7 +97,7 @@ export function useBrowserHost() {
         if (!host) return;
         const r = host.getBoundingClientRect();
         if (!r.width || !r.height) return;
-        const gap = 6;
+        const gap = 10; // 宫格间隙加大，配合灰底让分格边界清晰可见
         const mode = browser.gridLayout;
         // 自适应缩放：以"横向 2 格的宽度"为参考满宽（此时 zoom=1 最舒适），
         // 格子更窄则按比例缩小网页内容（zoom<1），更宽不放大（封顶 1）。

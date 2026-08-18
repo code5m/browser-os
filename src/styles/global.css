@@ -99,6 +99,8 @@ button.primary { background: #2b6; color: #fff; border-color: #2b6; }
 .addrbar .go { background: #2b6cb0; color: #fff; border: none; border-radius: 6px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
 /* 视口（对应 prototype .viewport） */
 .viewport { flex: 1; background: #fff; position: relative; overflow: hidden; min-height: 0; }
+/* 宫格模式：视口灰底，宫格间隙露出灰色，分格边界一目了然（避免全白误以为没分格） */
+.viewport.grid-mode { background: #d8dee9; }
 /* 宫格每格标题栏覆盖层：默认不拦截网页点击（仅标题栏可点） */
 .grid-close-layer { position: absolute; inset: 0; pointer-events: none; z-index: 20; }
 .grid-cell-bar { position: absolute; height: 26px; display: flex; align-items: center; gap: 6px; padding: 0 6px; background: linear-gradient(180deg,#3a4a63,#2b3a55); color: #fff; border-radius: 6px 6px 0 0; box-shadow: 0 1px 4px rgba(0,0,0,.25); pointer-events: auto; box-sizing: border-box; }
