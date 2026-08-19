@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { watch, nextTick } from "vue";
+import { ref, watch, nextTick } from "vue";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../stores/useBrowserStore";
 import BrowserHost from "../browser/BrowserHost.vue";
@@ -18,6 +18,16 @@ import SettingsPanel from "../system/SettingsPanel.vue";
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
+
+// 终端只挂载一次：首次进入后保持存活，避免切视图销毁 xterm 导致内容丢失
+const termMounted = ref(false);
+watch(
+  () => layout.mainView,
+  (v) => {
+    if (v === "term") termMounted.value = true;
+  },
+  { immediate: true }
+);
 
 // 精简模式切换后，工具栏显隐导致 viewport 尺寸变化，需重新定位子 webview
 watch(
@@ -46,12 +56,21 @@ watch(
         @click="layout.toggleCompact"
         title="退出精简模式"
       >☰</button>
-      <div class="browser-body">
+      <div class="browser-body" :class="{ 'grid-ai-mode': layout.mainView === 'grid' && browser.gridMode === 'ai' }">
         <div class="viewport" :class="{ 'grid-mode': browser.gridOpen }">
           <!-- BrowserHost 在 browser/grid 视图都要参与布局（有 rect 供宫格定位），
                其内部用 visibility 控制显隐（isBrowserVisible），不能用 v-show=display:none，
                否则 grid 视图 rect=0 导致宫格定位全跳过、激活页签不移出。 -->
           <BrowserHost v-show="layout.mainView === 'browser' || layout.mainView === 'grid'" />
+        </div>
+        <!-- AI 模式统一输入框：向所有宫格中的 AI 同时发送问题 -->
+        <div v-if="layout.mainView === 'grid' && browser.gridMode === 'ai'" class="grid-ai-bar">
+          <input
+            v-model="browser.gridAiInput"
+            placeholder="输入问题，同时发送给所有宫格中的 AI..."
+            @keyup.enter="browser.gridSendAi"
+          />
+          <button class="primary" @click="browser.gridSendAi">发送</button>
         </div>
         <!-- 右侧 Dock：浏览网页的同时操作文件管理 / 终端 -->
         <aside v-if="layout.browserDockOpen && layout.mainView === 'browser'" class="browser-dock">
@@ -102,12 +121,12 @@ watch(
       <SettingsPanel />
     </div>
 
-    <!-- ===== 终端（全屏模块视图） ===== -->
-    <div v-else-if="layout.mainView === 'term'" class="modview term-mod">
-      <TerminalPane />
+    <!-- ===== 终端（全屏模块视图，首次打开后保持挂载） ===== -->
+    <div v-show="layout.mainView === 'term'" class="modview term-mod">
+      <TerminalPane v-if="termMounted" />
     </div>
 
     <!-- ===== 文件编辑器 / Markdown 预览（覆盖层） ===== -->
-    <FileEditor v-else-if="layout.mainView === 'editor'" />
+    <FileEditor v-if="layout.mainView === 'editor'" />
   </main>
 </template>

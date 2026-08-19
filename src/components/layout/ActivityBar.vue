@@ -10,10 +10,13 @@ const browser = useBrowserStore();
 const system = useSystemStore();
 const ws = useWorkspaceStore();
 
-// 一级入口：最高频的两个视图直达
+// 一级入口：高频视图直达（主页/浏览/终端/剪贴板/知识库）
 const topItems = [
   { view: "home", icon: "🏠", label: "主页" },
   { view: "browser", icon: "📁", label: "浏览" },
+  { view: "term", icon: "💻", label: "终端" },
+  { view: "clip", icon: "📋", label: "剪贴板" },
+  { view: "arts", icon: "📚", label: "知识库" },
 ] as const;
 
 // ☰ 菜单扩展行的分节内容
@@ -22,15 +25,12 @@ const menuSections = [
     title: "工作区",
     items: [
       { view: "files", icon: "📂", label: "文件" },
-      { view: "clip", icon: "📋", label: "剪贴板" },
-      { view: "arts", icon: "📚", label: "知识库" },
     ],
   },
   {
     title: "工具",
     items: [
       { view: "apps", icon: "🚀", label: "应用" },
-      { view: "term", icon: "💻", label: "终端" },
     ],
   },
   {
@@ -243,6 +243,10 @@ async function openDirCenter() {
 
     <!-- 宫格设置扩展行 -->
     <div v-if="expanded === 'grid'" class="expand-row">
+      <span class="er-label">模式</span>
+      <button :class="{ active: browser.gridMode === 'browse' }" @click="browser.gridMode = 'browse'">🌐 浏览</button>
+      <button :class="{ active: browser.gridMode === 'ai' }" @click="browser.gridMode = 'ai'">🤖 AI</button>
+      <span class="er-sep"></span>
       <span class="er-label">布局</span>
       <button
         v-for="l in gridLayouts"

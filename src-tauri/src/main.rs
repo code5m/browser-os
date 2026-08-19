@@ -77,6 +77,7 @@ fn main() {
                 .title("浏览器OS融合")
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(900.0, 600.0)
+                .maximized(true)
                 .build()?;
             eprintln!("[main] main window url={:?}", window.url());
             let _ = window.show();
@@ -144,6 +145,7 @@ fn main() {
             bridge::tab_go_back,
             bridge::tab_go_forward,
             bridge::tab_reload,
+            bridge::eval_in_tab,
             bridge::term_spawn,
             bridge::term_write,
             bridge::term_resize,

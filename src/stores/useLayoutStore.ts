@@ -16,7 +16,7 @@ export type MainView =
   | "editor";
 
 export const useLayoutStore = defineStore("layout", () => {
-  const mainView = ref<MainView>("browser");
+  const mainView = ref<MainView>("home");
   const sidebarOpen = ref(true);
   const sidebarWidth = ref(300);
   const leftTab = ref<"files" | "artifacts">("files");

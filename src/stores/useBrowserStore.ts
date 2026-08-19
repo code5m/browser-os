@@ -32,6 +32,10 @@ export const useBrowserStore = defineStore("browser", () => {
   ]);
   // 宫格布局模式：horizontal 横向 / quad 四分 / grid 宫格（精简后只留三种好用的）
   const gridLayout = ref<"horizontal" | "quad" | "grid">("quad");
+  // 宫格使用模式：browse 对比浏览 / ai 多 AI 同时提问
+  const gridMode = ref<"browse" | "ai">("browse");
+  // AI 模式统一输入框内容
+  const gridAiInput = ref("");
   // 每格相对 host 的 rect（供关闭按钮覆盖层定位），scheduleGrid 时填充
   const gridRects = reactive<{ x: number; y: number; w: number; h: number }[]>([]);
   const resources = ref<BrowserResources | null>(null);
@@ -193,6 +197,53 @@ export const useBrowserStore = defineStore("browser", () => {
     gridUrls[i] = u;
     await bridge.gridOpen(i, u);
     layout.showToast(`宫格 ${i + 1} → ${u}`);
+  }
+  // AI 模式：向所有宫格 webview 注入问题并提交
+  async function gridSendAi() {
+    const q = gridAiInput.value.trim();
+    if (!q) {
+      layout.showToast("请输入问题");
+      return;
+    }
+    const n = gridCount.value;
+    for (let i = 0; i < n; i++) {
+      const label = `grid-${i}`;
+      const js = `
+        (function(){
+          const q = ${JSON.stringify(q)};
+          // 通用 AI 输入框查找：优先 textarea，其次 contenteditable，最后 input
+          const el = document.querySelector('textarea') ||
+                     document.querySelector('[contenteditable="true"]') ||
+                     document.querySelector('input[type="text"]');
+          if (!el) return 'no-input';
+          el.focus();
+          if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
+            el.value = q;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          } else {
+            el.textContent = q;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          // 尝试提交：优先发送按钮，其次回车
+          setTimeout(() => {
+            const btn = document.querySelector('button[type="submit"]') ||
+                        document.querySelector('button.send') ||
+                        document.querySelector('button[class*="send"]') ||
+                        document.querySelector('button[class*="submit"]') ||
+                        document.querySelector('button[aria-label*="发送"]') ||
+                        document.querySelector('button[aria-label*="Send"]');
+            if (btn) { btn.click(); return; }
+            const enter = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
+            el.dispatchEvent(enter);
+          }, 100);
+          return 'ok';
+        })();
+      `;
+      await bridge.evalInTab(label, js).catch(() => {});
+    }
+    layout.showToast(`已向 ${n} 个 AI 发送问题`);
+    gridAiInput.value = "";
   }
   async function closeGridAll() {
     // 先翻标志位：立刻阻断 scheduleGrid/schedulePosition 走宫格分支，

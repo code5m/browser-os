@@ -144,6 +144,12 @@ button.primary { background: #2b6; color: #fff; border-color: #2b6; }
 .hm-btns button.primary { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
 /* 浏览器视图：视口 + 右侧 Dock 横排 */
 .browser-body { flex: 1; display: flex; min-height: 0; min-width: 0; }
+.browser-body.grid-ai-mode { flex-direction: column; }
+.browser-body.grid-ai-mode .viewport { flex: 1; min-height: 0; }
+.grid-ai-bar { display: flex; gap: 8px; padding: 8px 12px; background: #f7f8fa; border-top: 1px solid #e5e6eb; flex-shrink: 0; }
+.grid-ai-bar input { flex: 1; height: 34px; border: 1px solid #e5e6eb; border-radius: 6px; padding: 0 12px; font-size: 13px; outline: none; }
+.grid-ai-bar input:focus { border-color: #2b6cb0; }
+.grid-ai-bar button.primary { background: #2b6cb0; color: #fff; border: none; border-radius: 6px; padding: 0 18px; font-size: 13px; cursor: pointer; }
 .browser-dock { width: 360px; flex-shrink: 0; border-left: 1px solid #e5e6eb; display: flex; flex-direction: column; background: #fff; min-height: 0; position: relative; }
 .browser-dock > .tabs { border-bottom: 1px solid #e5e6eb; flex-shrink: 0; }
 .browser-dock > .tabs button { border: none; border-bottom: 2px solid transparent; }
@@ -299,7 +305,7 @@ button.ghost { background: #fff; }
 .tab-close:hover { color: #c33; }
 .tab-new { border: none; background: transparent; color: #2b6; cursor: pointer; font-size: 16px; padding: 0 8px; }
 /* 系统应用图标网格 */
-.app-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 8px; flex: 1; overflow: auto; padding: 4px; }
+.app-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 8px; flex: 1; overflow: auto; padding: 4px; align-content: start; grid-auto-rows: min-content; }
 .app-cell { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 4px; border-radius: 8px; cursor: pointer; text-align: center; }
 .app-cell:hover { background: #eef3ff; }
 .app-img { width: 36px; height: 36px; object-fit: contain; border-radius: 6px; }

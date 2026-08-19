@@ -124,6 +124,9 @@ export const useSystemStore = defineStore("system", () => {
   const termId = ref("");
   const termLines = ref<string[]>([]); // 兼容保留，不再用于渲染
   let termWriter: ((data: string) => void) | null = null;
+  // termId 设置前的 PTY 输出缓存：termSpawn 异步返回前 shell 已开始输出，
+  // 若直接丢弃会导致终端空白/无提示符。缓存后 termId 就绪时一次性写入。
+  const termBuffer: string[] = [];
 
   function bindTermWriter(fn: ((data: string) => void) | null) {
     termWriter = fn;
@@ -137,6 +140,9 @@ export const useSystemStore = defineStore("system", () => {
       termId.value = r.id;
       termLines.value = [];
       termWriter?.("$ 终端已就绪（xterm.js + PTY）\r\n");
+      // 写入缓存的早期输出（shell 欢迎信息/提示符）
+      for (const data of termBuffer) termWriter?.(data);
+      termBuffer.length = 0;
     } catch (e: any) {
       termWriter?.("❌ 终端启动失败: " + (e?.message ?? e) + "\r\n");
     }
@@ -179,7 +185,12 @@ export const useSystemStore = defineStore("system", () => {
   }
 
   function onTermData(d: { id: string; data: string }) {
-    if (d.id === termId.value) termWriter?.(d.data);
+    if (d.id === termId.value) {
+      termWriter?.(d.data);
+    } else if (!termId.value) {
+      // termId 还没设置（termSpawn 异步返回前），缓存输出待启动后写入
+      termBuffer.push(d.data);
+    }
   }
 
   return {

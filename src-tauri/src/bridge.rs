@@ -1525,6 +1525,18 @@ pub fn tab_reload(app: AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 在指定子 webview 中执行 JavaScript（用于 AI 模式向宫格注入问题）。
+#[tauri::command]
+pub fn eval_in_tab(app: AppHandle, id: String, js: String) -> Result<String, String> {
+    let app2 = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(win) = app2.get_webview(&id) {
+            let _ = win.eval(&js);
+        }
+    });
+    Ok("ok".to_string())
+}
+
 /// 设置激活页签：只更新 active_tab，并把其它页签隐藏。
 /// 目标页签的精确位置由前端随后调用 tab_position 给出，避免后端与前端争夺坐标。
 #[tauri::command]

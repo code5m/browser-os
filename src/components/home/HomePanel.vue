@@ -72,3 +72,43 @@ function onOpen(s: HomeShortcut) {
     </div>
   </div>
 </template>
+
+<style scoped>
+.home-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px;
+  background: linear-gradient(135deg, #eef2fb 0%, #f7f9ff 45%, #f0f4fa 100%);
+}
+.home-grid {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)) !important;
+  gap: 14px;
+}
+.home-card {
+  position: relative;
+  background: #fff;
+  border: 1px solid #e8ebf0;
+  border-radius: 12px;
+  padding: 18px 10px 12px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+.home-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 14px rgba(43, 108, 176, 0.12);
+  border-color: #c6d8ef;
+}
+.home-ops {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: none !important;
+  gap: 2px;
+}
+.home-card:hover .home-ops {
+  display: flex !important;
+}
+</style>

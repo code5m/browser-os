@@ -175,6 +175,9 @@ export const bridge = {
 
   tabReload: (id: string) => invoke("tab_reload", { id }),
 
+  // 在指定子 webview 中执行 JavaScript（用于 AI 模式向宫格注入问题）
+  evalInTab: (id: string, js: string) => invoke<string>("eval_in_tab", { id, js }),
+
   // 订阅页签标题更新事件（后端在页面加载完成后回传真实标题）
   onTabTitle: (cb: (t: TabInfo) => void) =>
     listen<TabInfo>("tab-title", (e) => cb(e.payload)),
