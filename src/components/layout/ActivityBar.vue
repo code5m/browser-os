@@ -23,7 +23,7 @@ const menuSections = [
     items: [
       { view: "files", icon: "📂", label: "文件" },
       { view: "clip", icon: "📋", label: "剪贴板" },
-      { view: "arts", icon: "📚", label: "成果" },
+      { view: "arts", icon: "📚", label: "知识库" },
     ],
   },
   {
@@ -236,7 +236,7 @@ async function openDirCenter() {
         <span class="ic">📥</span>
         <span class="lab">采集</span>
       </button>
-      <button class="sys" :title="'设置'">
+      <button class="sys" title="系统设置" @click="onItem('settings')">
         <span class="ic">⚙️</span>
       </button>
     </nav>

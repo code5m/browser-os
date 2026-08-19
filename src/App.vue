@@ -6,6 +6,7 @@ import { useBrowserStore } from "./stores/useBrowserStore";
 import { useWorkspaceStore } from "./stores/useWorkspaceStore";
 import { useSystemStore } from "./stores/useSystemStore";
 import { useLayoutStore } from "./stores/useLayoutStore";
+import { useSettingsStore } from "./stores/useSettingsStore";
 
 import ActivityBar from "./components/layout/ActivityBar.vue";
 import MainArea from "./components/layout/MainArea.vue";
@@ -17,6 +18,7 @@ const browser = useBrowserStore();
 const ws = useWorkspaceStore();
 const system = useSystemStore();
 const layout = useLayoutStore();
+const settings = useSettingsStore();
 
 const appHeight = ref<string>("100vh");
 
@@ -79,6 +81,71 @@ onMounted(async () => {
   });
   // 子 webview 右键"选区存 Markdown 笔记"保存成功
   bridge.onNoteSaved((p) => layout.showToast("📝 笔记已保存: " + p));
+
+  // ===== 全局快捷键（按当前方案匹配） =====
+  function matchKey(e: KeyboardEvent, combo: string): boolean {
+    const parts = combo.toLowerCase().split("+");
+    const key = parts[parts.length - 1];
+    const needCtrl = parts.includes("ctrl");
+    const needShift = parts.includes("shift");
+    const needAlt = parts.includes("alt");
+    if (e.ctrlKey !== needCtrl || e.shiftKey !== needShift || e.altKey !== needAlt)
+      return false;
+    const ek = e.key.toLowerCase();
+    if (key === "tab") return ek === "tab";
+    if (key === "`") return ek === "`" || ek === "~";
+    if (key.startsWith("f") && key.length <= 3) return ek === key;
+    if (key === "pagedown") return ek === "pagedown";
+    if (key === "pageup") return ek === "pageup";
+    if (key === "right") return ek === "arrowright";
+    if (key === "left") return ek === "arrowleft";
+    return ek === key;
+  }
+
+  function onGlobalKeydown(e: KeyboardEvent) {
+    // 输入框/文本域内不触发全局快捷键
+    const t = e.target as HTMLElement;
+    if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)
+      return;
+    const km = settings.currentKeymap;
+    if (matchKey(e, km.newTab)) {
+      e.preventDefault();
+      browser.tabNew();
+    } else if (matchKey(e, km.closeTab)) {
+      e.preventDefault();
+      if (browser.activeTabId) browser.tabClose(browser.activeTabId);
+    } else if (matchKey(e, km.nextTab)) {
+      e.preventDefault();
+      const idx = browser.tabs.findIndex((x) => x.id === browser.activeTabId);
+      const next = browser.tabs[idx + 1] || browser.tabs[0];
+      if (next) browser.tabSwitch(next.id);
+    } else if (matchKey(e, km.prevTab)) {
+      e.preventDefault();
+      const idx = browser.tabs.findIndex((x) => x.id === browser.activeTabId);
+      const prev = browser.tabs[idx - 1] || browser.tabs[browser.tabs.length - 1];
+      if (prev) browser.tabSwitch(prev.id);
+    } else if (matchKey(e, km.terminal)) {
+      e.preventDefault();
+      if (layout.mainView === "browser") layout.toggleBrowserDock("term");
+      else layout.setView("term");
+    } else if (matchKey(e, km.grid)) {
+      e.preventDefault();
+      layout.openModule("grid");
+      browser.buildGrid();
+    } else if (matchKey(e, km.home)) {
+      e.preventDefault();
+      layout.openModule("home");
+    } else if (matchKey(e, km.reload)) {
+      e.preventDefault();
+      browser.reloadActive();
+    } else if (matchKey(e, km.focusAddr)) {
+      e.preventDefault();
+      const inp = document.querySelector(".omni-wrap input") as HTMLInputElement;
+      inp?.focus();
+      inp?.select();
+    }
+  }
+  window.addEventListener("keydown", onGlobalKeydown);
 
   window.addEventListener("beforeunload", () => bridge.closeBrowser().catch(() => {}));
   window.addEventListener("click", ws.closeCtx);

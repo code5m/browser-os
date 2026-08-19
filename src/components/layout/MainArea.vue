@@ -14,6 +14,7 @@ import RepoPanel from "../workspace/RepoPanel.vue";
 import AppPanel from "../system/AppPanel.vue";
 import TerminalPane from "../system/TerminalPane.vue";
 import HomePanel from "../home/HomePanel.vue";
+import SettingsPanel from "../system/SettingsPanel.vue";
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
@@ -66,38 +67,39 @@ watch(
       </div>
     </template>
 
-    <!-- ===== 文件 / 成果（共用带 Tab 的模块视图） ===== -->
-    <div v-else-if="layout.mainView === 'files' || layout.mainView === 'arts'" class="modview">
-      <div class="tabs">
-        <button :class="{ active: layout.leftTab === 'files' }" @click="layout.leftTab = 'files'">📂 文件</button>
-        <button :class="{ active: layout.leftTab === 'artifacts' }" @click="layout.leftTab = 'artifacts'">📦 成果</button>
-      </div>
-      <FilePanel v-if="layout.leftTab === 'files'" />
-      <ArtifactPanel v-else />
+    <!-- ===== 文件 ===== -->
+    <div v-else-if="layout.mainView === 'files'" class="modview">
+      <FilePanel />
+    </div>
+
+    <!-- ===== 知识库（原成果） ===== -->
+    <div v-else-if="layout.mainView === 'arts'" class="modview">
+      <ArtifactPanel />
     </div>
 
     <!-- ===== 剪贴板 ===== -->
     <div v-else-if="layout.mainView === 'clip'" class="modview">
-      <div class="tabs"><button class="active">📋 剪贴板</button></div>
       <ClipboardPanel />
     </div>
 
     <!-- ===== 自有仓库（含 Git 两步闸门） ===== -->
     <div v-else-if="layout.mainView === 'repo'" class="modview">
-      <div class="tabs"><button class="active">🛰️ 自有仓库</button></div>
       <RepoPanel />
     </div>
 
     <!-- ===== 系统应用 ===== -->
     <div v-else-if="layout.mainView === 'apps'" class="modview">
-      <div class="tabs"><button class="active">🚀 系统应用</button></div>
       <AppPanel />
     </div>
 
     <!-- ===== 审计日志 ===== -->
     <div v-else-if="layout.mainView === 'audit'" class="modview">
-      <div class="tabs"><button class="active">🛡️ 审计日志</button></div>
       <AuditPanel />
+    </div>
+
+    <!-- ===== 系统设置 ===== -->
+    <div v-else-if="layout.mainView === 'settings'" class="modview">
+      <SettingsPanel />
     </div>
 
     <!-- ===== 终端（全屏模块视图） ===== -->

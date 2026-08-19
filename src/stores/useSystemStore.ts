@@ -119,10 +119,16 @@ export const useSystemStore = defineStore("system", () => {
     brokenIcons.value.add(exec);
   }
 
-  // ===== 终端（真实 PTY） =====
+  // ===== 终端（真实 PTY + xterm.js） =====
   const terminalOpen = ref(false);
   const termId = ref("");
-  const termLines = ref<string[]>([]);
+  const termLines = ref<string[]>([]); // 兼容保留，不再用于渲染
+  let termWriter: ((data: string) => void) | null = null;
+
+  function bindTermWriter(fn: ((data: string) => void) | null) {
+    termWriter = fn;
+  }
+
   async function startShell(force = false) {
     if (termId.value && !force) return;
     if (termId.value) await bridge.termKill(termId.value);
@@ -130,19 +136,12 @@ export const useSystemStore = defineStore("system", () => {
       const r = await bridge.termSpawn();
       termId.value = r.id;
       termLines.value = [];
-      pushTerm("$ 终端已就绪（PTY，支持 Tab 补全 / ↑↓ 历史）\r\n");
+      termWriter?.("$ 终端已就绪（xterm.js + PTY）\r\n");
     } catch (e: any) {
-      pushTerm("❌ 终端启动失败: " + (e?.message ?? e) + "\r\n");
+      termWriter?.("❌ 终端启动失败: " + (e?.message ?? e) + "\r\n");
     }
   }
-  function pushTerm(s: string) {
-    termLines.value.push(s);
-    if (termLines.value.length > 500) termLines.value.splice(0, termLines.value.length - 500);
-    nextTick(() => {
-      const el = document.getElementById("termOut");
-      if (el) el.scrollTop = el.scrollHeight;
-    });
-  }
+
   async function termKeydown(e: KeyboardEvent) {
     if (!termId.value) return;
     let data = "";
@@ -164,19 +163,23 @@ export const useSystemStore = defineStore("system", () => {
     e.preventDefault();
     await bridge.termWrite(termId.value, data);
   }
+
   async function termWrite(data: string) {
     if (termId.value) await bridge.termWrite(termId.value, data);
   }
+
   async function killShell() {
     if (termId.value) await bridge.termKill(termId.value);
     termId.value = "";
   }
+
   function toggleTerminal() {
     terminalOpen.value = !terminalOpen.value;
     if (terminalOpen.value) nextTick(() => startShell());
   }
+
   function onTermData(d: { id: string; data: string }) {
-    if (d.id === termId.value) pushTerm(d.data);
+    if (d.id === termId.value) termWriter?.(d.data);
   }
 
   return {
@@ -206,5 +209,6 @@ export const useSystemStore = defineStore("system", () => {
     killShell,
     toggleTerminal,
     onTermData,
+    bindTermWriter,
   };
 });

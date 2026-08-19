@@ -1598,10 +1598,9 @@ pub fn term_spawn(app: AppHandle) -> Result<TermInfo, String> {
 
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
     let mut cmd = portable_pty::CommandBuilder::new(shell);
-    // TERM=dumb 让大多数程序不输出 ANSI 颜色；后端再过滤一次兜底
-    cmd.env("TERM", "dumb");
-    cmd.env("COLORTERM", "");
-    cmd.env("NO_COLOR", "1");
+    // xterm.js 是完整终端模拟器，需要正常 TERM 与 ANSI 序列，不能过滤
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
 
     let child = pair
         .slave
@@ -1627,9 +1626,8 @@ pub fn term_spawn(app: AppHandle) -> Result<TermInfo, String> {
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
-                    // 过滤 ANSI 转义序列，避免前端纯文本 div 显示乱码
-                    let stripped = strip_ansi_escapes::strip(&buf[..n]);
-                    let data = String::from_utf8_lossy(&stripped).to_string();
+                    // xterm.js 自己解析 ANSI 序列，不再过滤
+                    let data = String::from_utf8_lossy(&buf[..n]).to_string();
                     if !data.is_empty() {
                         let _ = app2.emit(
                             "term-data",

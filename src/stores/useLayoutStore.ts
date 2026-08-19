@@ -98,11 +98,12 @@ export const useLayoutStore = defineStore("layout", () => {
     grid: { icon: "🗂️", label: "宫格" },
     files: { icon: "📂", label: "文件" },
     clip: { icon: "📋", label: "剪贴板" },
-    arts: { icon: "📚", label: "成果" },
+    arts: { icon: "📚", label: "知识库" },
     apps: { icon: "🚀", label: "应用" },
     term: { icon: "💻", label: "终端" },
     repo: { icon: "🛰️", label: "仓库" },
     audit: { icon: "🛡️", label: "审计" },
+    settings: { icon: "⚙️", label: "设置" },
   };
   const modTabs = reactive<ModTab[]>([]);
   const activeModTab = ref("");
