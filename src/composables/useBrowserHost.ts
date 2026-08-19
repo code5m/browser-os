@@ -150,7 +150,6 @@ export function useBrowserHost() {
           const sig = `${x},${y},${w}x${h}`;
           if (lastGridSent.get(i) !== sig) {
             lastGridSent.set(i, sig);
-            bridge.debugLog(`gridPosition send i=${i} rect=${x},${y},${w}x${h}`);
             bridge.gridPosition(i, { x, y, width: w, height: h }).catch((e) => {
               lastGridSent.delete(i);
               bridge.debugLog(`gridPosition i=${i} 失败: ${e}`);

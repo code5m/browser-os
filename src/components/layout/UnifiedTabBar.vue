@@ -29,6 +29,8 @@ function activateMod(t: { id: string; view: string; path?: string }) {
   layout.activateModTab(t.id);
   if (t.view === "apps") system.loadApps();
   if (t.path) ws.enterDir(t.path);
+  // 宫格页签被关闭后重新激活时，必须重建宫格 webview 内容
+  if (t.view === "grid") browser.buildGrid();
 }
 </script>
 

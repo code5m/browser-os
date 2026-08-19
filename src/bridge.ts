@@ -154,6 +154,9 @@ export const bridge = {
 
   tabClose: (id: string) => invoke("tab_close", { id }),
 
+  // 激活页签：后端隐藏其它页签的子 webview 并恢复目标页签显示
+  tabActivate: (id: string) => invoke("tab_activate", { id }),
+
   tabOpen: (id: string, url: string) => invoke("tab_open", { id, url }),
 
   tabPosition: (

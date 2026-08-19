@@ -94,6 +94,8 @@ export const useLayoutStore = defineStore("layout", () => {
     path?: string; // 目录页签：记录的目录路径，激活时重新 enterDir
   }
   const MOD_META: Record<string, { icon: string; label: string }> = {
+    home: { icon: "🏠", label: "主页" },
+    grid: { icon: "🗂️", label: "宫格" },
     files: { icon: "📂", label: "文件" },
     clip: { icon: "📋", label: "剪贴板" },
     arts: { icon: "📚", label: "成果" },
@@ -110,9 +112,15 @@ export const useLayoutStore = defineStore("layout", () => {
     return mainView.value in MOD_META;
   }
 
-  // 每次点击都新建一个标签（与浏览器"点链接开新页签"一致）
+  // 同视图去重复用：已存在则激活，否则新建（避免主页/文件等同一模块被反复点开成一排）
   function openModule(view: MainView) {
     const meta = MOD_META[view] ?? { icon: "📄", label: view };
+    const existing = modTabs.find((t) => t.view === view);
+    if (existing) {
+      activeModTab.value = existing.id;
+      setView(existing.view);
+      return;
+    }
     const id = `mod-${++modTabSeq}`;
     modTabs.push({ id, view, ...meta });
     activeModTab.value = id;

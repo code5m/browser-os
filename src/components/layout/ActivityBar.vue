@@ -75,6 +75,10 @@ function setGridLayout(mode: (typeof gridLayouts)[number]["key"]) {
 function setGridCount(n: number) {
   if (browser.gridCount === n) return;
   browser.gridCount = n;
+  // 四分模式固定 4 格：选 2/3/6/9 格时自动切回自适应宫格，避免"2 格内容按 2×2 摆只显示上半"
+  if (n !== 4 && browser.gridLayout === "quad") {
+    browser.gridLayout = "grid";
+  }
   if (browser.gridOpen) browser.buildGrid();
 }
 
@@ -85,13 +89,19 @@ async function onItem(v: string) {
   if (v !== "grid" && browser.gridOpen) await browser.closeGridAll();
   if (v === "apps") system.loadApps();
   if (v === "grid") {
-    layout.setView("grid");
+    // 宫格也走模块页签（去重复用），同时重建宫格内容
+    layout.openModule("grid");
     // 总是重建宫格：buildGrid 内部 createGrid 会先 close_grid 再重建（幂等），
     // 避免 gridOpen 标志与后端宫格 webview 实际状态脱节导致的"有工具条没宫格"。
     browser.buildGrid();
     return;
   }
-  // 菜单功能与浏览器一致：点一个就新建一个标签
+  // 浏览器主视图不是模块页签，直接切视图即可
+  if (v === "browser") {
+    layout.setView("browser");
+    return;
+  }
+  // 菜单功能与浏览器一致：点一个就新建/复用一个标签
   layout.openModule(v as any);
 }
 

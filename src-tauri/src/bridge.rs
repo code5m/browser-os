@@ -306,6 +306,9 @@ fn apply_bounds_inner(
 
 /// apply_bounds 的同步版：仅在已经处于主线程上下文（如 run_on_main_thread 闭包内）
 /// 时调用，避免重复排队。直接执行窗口操作。
+/// 当前无调用方（tab_activate 已改用无去重的 apply_bounds_inner，防止切页签时
+/// "恢复显示"被 50ms 去重丢弃），保留备用。
+#[allow(dead_code)]
 fn apply_bounds_sync(
     app: &AppHandle,
     id: &str,
@@ -1198,18 +1201,8 @@ fn apply_grid_zoom(app: &AppHandle, label: &str, z: f64) {
     if z <= 0.1 || (z - 1.0).abs() < 0.01 {
         return;
     }
-    let app2 = app.clone();
-    let label2 = label.to_string();
-    let _ = app.run_on_main_thread(move || {
-        if let Some(win) = app2.get_webview(&label2) {
-            let js = format!(
-                "document.documentElement.style.zoom = '{z}'; \
-                 if (document.body) document.body.style.zoom = '{z}';",
-                z = z
-            );
-            let _ = win.eval(&js);
-        }
-    });
+    // 只用 WebKitGTK 原生 set_zoom_level，不再叠加 JS style.zoom。
+    // 之前两者叠加导致宫格内容被双重缩放（越缩越小）。
     use tauri_plugin_browser_tabs::TabManagerState;
     let manager = app.state::<TabManagerState>();
     let _ = manager.set_zoom(&label.to_string(), z);
@@ -1545,6 +1538,11 @@ pub fn tab_activate(app: AppHandle, id: String) -> Result<(), String> {
     let _ = app.run_on_main_thread(move || {
         let st = app_act.state::<AppState>();
         let ids: Vec<String> = st.tabs.lock().unwrap().keys().cloned().collect();
+        eprintln!(
+            "[tab_activate] active={} others={:?}",
+            active_id,
+            ids.iter().filter(|k| **k != active_id).collect::<Vec<_>>()
+        );
         for k in ids {
             if k != active_id {
                 hide_bounds(&app_act, &k);
@@ -1552,9 +1550,25 @@ pub fn tab_activate(app: AppHandle, id: String) -> Result<(), String> {
         }
         let layout = st.child_layouts.lock().unwrap().get(&active_id).copied();
         drop(st);
+        // 仅当记忆的布局是"显示态"时才立即恢复；隐藏态(-30000)时跳过，
+        // 等前端随后的 tab_position 给出精确坐标，避免把激活页签恢复到屏幕外。
         if let Some(r) = layout {
-            let _ = apply_bounds_sync(&app_act, &active_id, r.0, r.1, r.2, r.3);
+            if r.0 > -1000.0 {
+                // 用无去重的 apply_bounds_inner：切页签是低频用户操作，
+                // 去重可能把这次"恢复显示"整个丢掉（实测切回前页签仍显示后一个）。
+                let _ = apply_bounds_inner(&app_act, &active_id, r.0, r.1, r.2, r.3);
+            } else {
+                eprintln!("[tab_activate] active={} 记忆布局为隐藏态，跳过立即恢复", active_id);
+            }
         }
+        // 清除激活页签的去重时间戳：保证前端随后的 tab_position 精确坐标
+        // 不会落在 apply_bounds 的 50ms 去重窗口内被丢弃。
+        app_act
+            .state::<AppState>()
+            .last_position_at
+            .lock()
+            .unwrap()
+            .remove(&active_id);
     });
     Ok(())
 }

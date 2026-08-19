@@ -13,6 +13,7 @@ use tauri::{Runtime, Webview};
 /// Works around child webviews getting "stuck" at an initial size
 /// (e.g. 400px) and ignoring subsequent `set_size` calls.
 pub fn ensure_size_allocated<R: Runtime>(webview: &Webview<R>, rect: LogicalRect) -> Result<()> {
+    let label = webview.label().to_string();
     webview
         .with_webview(move |platform_webview| {
             use gtk::prelude::*;
@@ -32,18 +33,21 @@ pub fn ensure_size_allocated<R: Runtime>(webview: &Webview<R>, rect: LogicalRect
             let a = gtk_webview.allocation();
             if a.x() != x || a.y() != y || a.width() != w || a.height() != h {
                 // 日志去重：守护线程每 400ms 重放，对"纠正后不回落"的隐藏 webview
-                // 同一签名会无限刷屏。只在签名变化时输出（新的漂移仍会看到）。
+                // 同一签名会无限刷屏。按 label 分别记录签名，只在签名变化时输出
+                // （全局单槽去重会让两个页签交替纠正时刷屏/或互相吞掉，无法定案）。
+                use std::collections::HashMap;
                 use std::sync::{Mutex, OnceLock};
-                static LAST_SIG: OnceLock<Mutex<Option<(i32, i32, i32, i32, i32, i32, i32, i32)>>> =
-                    OnceLock::new();
+                static LAST_SIG: OnceLock<
+                    Mutex<HashMap<String, (i32, i32, i32, i32, i32, i32, i32, i32)>>,
+                > = OnceLock::new();
                 let sig = (x, y, w, h, a.x(), a.y(), a.width(), a.height());
-                let mut last = LAST_SIG.get_or_init(|| Mutex::new(None)).lock().unwrap();
-                if *last != Some(sig) {
+                let mut last = LAST_SIG.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
+                if last.get(&label) != Some(&sig) {
                     eprintln!(
-                        "[browser-tabs] layout drift-correct target=({},{},{}x{}) alloc_before=({},{},{}x{})",
-                        x, y, w, h, a.x(), a.y(), a.width(), a.height()
+                        "[browser-tabs] drift-correct label={} target=({},{},{}x{}) alloc_before=({},{},{}x{})",
+                        label, x, y, w, h, a.x(), a.y(), a.width(), a.height()
                     );
-                    *last = Some(sig);
+                    last.insert(label.clone(), sig);
                 }
                 drop(last);
                 // 血泪教训（详见 PROJECT-RULES.md）：
@@ -53,6 +57,25 @@ pub fn ensure_size_allocated<R: Runtime>(webview: &Webview<R>, rect: LogicalRect
                 // 2) size_allocate 固定尺寸 —— 触发 size-allocate 信号让 WebKit 刷新视口。
                 // 3) 不 set_size_request、不 queue_resize —— 二者都会触发 GtkFixed 重算，
                 //    按"剩余空间"把子控件拉满全窗口。
+                //
+                // 额外修复：被移到屏幕外的隐藏页签必须真正隐藏 GTK widget。否则多个
+                // webview 同时"可见"时，GtkFixed 会按子控件数量做三等分/堆叠布局，
+                // 把本应收起的页签拉回屏幕（实测 alloc_before=(0,200/400/600,...））；
+                // 同时切换回主页等视图时，webview 会盖在主页上方造成"主页被遮挡"。
+                //
+                // 统一隐藏策略：屏幕外同时 set_child_visible(false) + gtk_widget_hide()。
+                // 只 set_child_visible(false) 时宫格仍会遮挡主页（widget 自身仍 visible，
+                // GTK 绘制时可能穿透到上层）；只 gtk_widget_hide() 时宫格恢复显示异常。
+                // 两者结合：脱离 GtkFixed 布局避免三等分，同时真正隐藏避免遮挡主页。
+                // 显示时 show() + set_child_visible(true) 恢复，配合 size_allocate + queue_draw
+                // 强制 WebKit 重绘，保证宫格内容正常展示。
+                if x >= -1000 {
+                    gtk_webview.show();
+                    gtk_webview.set_child_visible(true);
+                } else {
+                    gtk_webview.set_child_visible(false);
+                    gtk_webview.hide();
+                }
                 if let Some(parent) = gtk_webview.parent() {
                     if let Ok(fixed) = parent.downcast::<gtk::Fixed>() {
                         fixed.move_(&gtk_webview, x, y);

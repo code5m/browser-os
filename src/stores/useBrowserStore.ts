@@ -20,11 +20,18 @@ export const useBrowserStore = defineStore("browser", () => {
   // 宫格会话号：buildGrid 每次重建 +1，供定位层识别"同一批 webview 已销毁重建，
   // 上次发送缓存作废必须重发"（重建后 rect 可能与新 webview 的 1x1 初始态相同）
   const gridSession = ref(0);
-  const gridCount = ref(2);
+  const gridCount = ref(4);
   const gridUrl = ref("");
-  const gridUrls = reactive<string[]>(Array(12).fill(""));
+  // 默认四分展示国内四大 AI 站点：豆包 / Kimi / 通义千问 / DeepSeek
+  const gridUrls = reactive<string[]>([
+    "https://www.doubao.com",
+    "https://kimi.moonshot.cn",
+    "https://tongyi.aliyun.com",
+    "https://chat.deepseek.com",
+    ...Array(8).fill(""),
+  ]);
   // 宫格布局模式：horizontal 横向 / quad 四分 / grid 宫格（精简后只留三种好用的）
-  const gridLayout = ref<"horizontal" | "quad" | "grid">("grid");
+  const gridLayout = ref<"horizontal" | "quad" | "grid">("quad");
   // 每格相对 host 的 rect（供关闭按钮覆盖层定位），scheduleGrid 时填充
   const gridRects = reactive<{ x: number; y: number; w: number; h: number }[]>([]);
   const resources = ref<BrowserResources | null>(null);
@@ -321,6 +328,7 @@ export const useBrowserStore = defineStore("browser", () => {
     gridSetUrl,
     closeGridAll,
     closeGridOne,
+    gridCols,
     setResources,
     clearResources,
     gotoAI,
