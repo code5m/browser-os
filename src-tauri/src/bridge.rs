@@ -59,6 +59,20 @@ fn spawn_child_window(
     Ok(())
 }
 
+/// 在插件管理的子 webview 中执行 JS。
+/// 子 webview（页签 tab-N / 宫格 grid-N）全部由 browser-tabs 插件创建并持有，
+/// app.get_webview 在 Tauri 注册表里找不到它们（曾经用 get_webview 导致
+/// eval 静默空转：AI 群发无反应、前进/后退/刷新全失效）。必须走插件 TabManager。
+/// 直接在当前线程调用（Tauri v2 的 Webview::eval 内部走 dispatcher，跨线程安全，
+/// 与 apply_bounds_inner 同一模式），错误经返回值上报前端，不再静默。
+fn plugin_eval(app: &AppHandle, id: &str, js: &str) -> Result<(), String> {
+    use tauri_plugin_browser_tabs::TabManagerState;
+    let manager = app.state::<TabManagerState>();
+    manager
+        .eval(&id.to_string(), js)
+        .map_err(|e| format!("webview {id} 执行 JS 失败: {e}"))
+}
+
 /// 注册主窗 move/resize 监听（仅一次），触发时把内容区坐标重新换算并应用到所有子窗口。
 /// 子窗口的定位信息存在 AppState.child_layouts（id -> 内容区 CSS 矩形）。
 /// 注意：改用 add_child 后，子 webview 自动跟随主窗口移动，这里仅用于窗口 Resized 时
@@ -155,8 +169,10 @@ pub struct AppState {
     pub tab_counter: Arc<Mutex<u32>>,
     /// 子窗口布局：id -> 内容区 CSS 矩形 (x, y, w, h)，供主窗 move/resize 重定位
     pub child_layouts: Mutex<HashMap<String, (f64, f64, f64, f64)>>,
-    /// 上次定位时间：id -> Instant，用于后端去重防抖
-    pub last_position_at: Mutex<HashMap<String, std::time::Instant>>,
+    /// 上次定位：id -> (Instant, x, y, w, h)。去重防抖只在"rect 相同且 <50ms"时丢弃，
+    /// rect 不同的新定位必须应用（否则旧 rect 先到时，50ms 窗口内的新 rect 被静默吞掉，
+    /// 子 webview 永远停在旧位置——AI 模式输入框被宫格盖住就是这个 bug）
+    pub last_position_at: Mutex<HashMap<String, (std::time::Instant, f64, f64, f64, f64)>>,
     /// 宫格每格的缩放因子：label -> zoom（页面加载完成后应用，避免加载中设置被重置）
     pub grid_zooms: Mutex<HashMap<String, f64>>,
     /// 终端会话（PTY）：id -> 会话
@@ -257,17 +273,21 @@ fn apply_bounds(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
-    // 后端去重：50ms 内同一 label 不重复提交定位，避免 IPC 洪泛
+    // 后端去重：仅"rect 相同且 <50ms"才丢弃（防 IPC 洪泛），rect 变了必须应用
     {
         let state = app.state::<AppState>();
         let mut last = state.last_position_at.lock().unwrap();
         let now = std::time::Instant::now();
-        if let Some(t) = last.get(id) {
-            if now.duration_since(*t).as_millis() < 50 {
+        if let Some((t, lx, ly, lw, lh)) = last.get(id) {
+            let same_rect = (lx - x).abs() < 0.5
+                && (ly - y).abs() < 0.5
+                && (lw - width).abs() < 0.5
+                && (lh - height).abs() < 0.5;
+            if same_rect && now.duration_since(*t).as_millis() < 50 {
                 return Ok(());
             }
         }
-        last.insert(id.to_string(), now);
+        last.insert(id.to_string(), (now, x, y, width, height));
     }
     apply_bounds_inner(app, id, x, y, width, height)
 }
@@ -317,17 +337,21 @@ fn apply_bounds_sync(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
-    // 后端去重：50ms 内同一 label 不重复定位
+    // 后端去重：仅"rect 相同且 <50ms"才丢弃，rect 变了必须应用
     {
         let state = app.state::<AppState>();
         let mut last = state.last_position_at.lock().unwrap();
         let now = std::time::Instant::now();
-        if let Some(t) = last.get(id) {
-            if now.duration_since(*t).as_millis() < 50 {
+        if let Some((t, lx, ly, lw, lh)) = last.get(id) {
+            let same_rect = (lx - x).abs() < 0.5
+                && (ly - y).abs() < 0.5
+                && (lw - width).abs() < 0.5
+                && (lh - height).abs() < 0.5;
+            if same_rect && now.duration_since(*t).as_millis() < 50 {
                 return Ok(());
             }
         }
-        last.insert(id.to_string(), now);
+        last.insert(id.to_string(), (now, x, y, width, height));
     }
     apply_bounds_inner(app, id, x, y, width, height)
 }
@@ -1492,48 +1516,25 @@ pub fn tab_set_title(app: AppHandle, id: String, title: String) -> Result<(), St
 /// 历史栈为空时由浏览器内核自动忽略，无副作用。
 #[tauri::command]
 pub fn tab_go_back(app: AppHandle, id: String) -> Result<(), String> {
-    let app2 = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if let Some(win) = app2.get_webview(&id) {
-            let _ = win.eval("if (history.length > 1) { history.back(); }");
-        }
-    });
-    Ok(())
+    plugin_eval(&app, &id, "if (history.length > 1) { history.back(); }")
 }
 
 /// 在当前激活页签的 webview 内执行 history.forward()（页面内前进）。
 #[tauri::command]
 pub fn tab_go_forward(app: AppHandle, id: String) -> Result<(), String> {
-    let app2 = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if let Some(win) = app2.get_webview(&id) {
-            let _ = win.eval("history.forward();");
-        }
-    });
-    Ok(())
+    plugin_eval(&app, &id, "history.forward();")
 }
 
 /// 刷新当前激活页签的 webview（location.reload）。
 #[tauri::command]
 pub fn tab_reload(app: AppHandle, id: String) -> Result<(), String> {
-    let app2 = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if let Some(win) = app2.get_webview(&id) {
-            let _ = win.eval("location.reload();");
-        }
-    });
-    Ok(())
+    plugin_eval(&app, &id, "location.reload();")
 }
 
 /// 在指定子 webview 中执行 JavaScript（用于 AI 模式向宫格注入问题）。
 #[tauri::command]
 pub fn eval_in_tab(app: AppHandle, id: String, js: String) -> Result<String, String> {
-    let app2 = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if let Some(win) = app2.get_webview(&id) {
-            let _ = win.eval(&js);
-        }
-    });
+    plugin_eval(&app, &id, &js)?;
     Ok("ok".to_string())
 }
 

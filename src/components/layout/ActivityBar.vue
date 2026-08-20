@@ -89,6 +89,9 @@ async function onItem(v: string) {
   if (v !== "grid" && browser.gridOpen) await browser.closeGridAll();
   if (v === "apps") system.loadApps();
   if (v === "grid") {
+    // 默认 AI 模式：点宫格直接出底部统一输入框（在 buildGrid 前设置，
+    // 让输入框先于宫格定位渲染，首次布局即按"已缩矮"的 viewport 计算）
+    browser.gridMode = "ai";
     // 宫格也走模块页签（去重复用），同时重建宫格内容
     layout.openModule("grid");
     // 总是重建宫格：buildGrid 内部 createGrid 会先 close_grid 再重建（幂等），
@@ -240,6 +243,21 @@ async function openDirCenter() {
         <span class="ic">⚙️</span>
       </button>
     </nav>
+
+    <!-- AI 群发输入行：宫格打开且 AI 模式时常驻。
+         走"内联扩展行撑高工具栏"的可靠模式（与宫格设置行同机制），
+         宫格原生窗口随 viewport 下移，从机制上零遮挡——
+         不要做成 viewport 底部栏，会被宫格 webview 盖住 -->
+    <div v-if="browser.gridOpen && browser.gridMode === 'ai'" class="expand-row ai-send-row">
+      <span class="er-label">🤖 群发</span>
+      <input
+        v-model="browser.gridAiInput"
+        class="ai-send-input"
+        placeholder="输入问题，同时发送给所有宫格中的 AI..."
+        @keyup.enter="browser.gridSendAi"
+      />
+      <button class="er-primary" @click="browser.gridSendAi">发送</button>
+    </div>
 
     <!-- 宫格设置扩展行 -->
     <div v-if="expanded === 'grid'" class="expand-row">

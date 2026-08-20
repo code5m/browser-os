@@ -40,7 +40,7 @@ export const useLayoutStore = defineStore("layout", () => {
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = window.setTimeout(() => {
       if (msg.value === text) msg.value = "";
-    }, 2000);
+    }, 4000);
   }
 
   // 当前是否浏览器类视图（显示地址栏 + 页签 + 视口）
@@ -148,6 +148,13 @@ export const useLayoutStore = defineStore("layout", () => {
     if (!t) return;
     activeModTab.value = id;
     setView(t.view);
+    // 目录页签：地址栏同步显示目录路径（动态引入避免 layout↔browser 循环依赖）
+    if (t.path) {
+      const p = t.path;
+      import("./useBrowserStore").then(({ useBrowserStore }) => {
+        useBrowserStore().url = p;
+      });
+    }
   }
 
   function closeModTab(id: string) {

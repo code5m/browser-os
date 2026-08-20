@@ -1,12 +1,31 @@
 <script setup lang="ts">
+import { onMounted } from "vue";
 import { useHomeStore } from "../../stores/useHomeStore";
 import type { HomeShortcut } from "../../stores/useHomeStore";
 
 const home = useHomeStore();
 
+onMounted(() => home.seedDirShortcuts());
+
 function onOpen(s: HomeShortcut) {
   home.open(s);
 }
+
+const TYPE_LABELS: Record<HomeShortcut["type"], string> = {
+  url: "🌐 网页",
+  app: "🚀 应用",
+  dir: "📁 目录",
+};
+const TARGET_LABELS: Record<HomeShortcut["type"], string> = {
+  url: "网址",
+  app: "启动命令",
+  dir: "目录路径",
+};
+const TARGET_PLACEHOLDERS: Record<HomeShortcut["type"], string> = {
+  url: "https://kimi.moonshot.cn",
+  app: "如 firefox / 应用 exec",
+  dir: "/home/you/Documents",
+};
 </script>
 
 <template>
@@ -29,7 +48,7 @@ function onOpen(s: HomeShortcut) {
       >
         <div class="home-icon">{{ s.icon }}</div>
         <div class="home-name">{{ s.name }}</div>
-        <div class="home-type">{{ s.type === "url" ? "🌐 网页" : "🚀 应用" }}</div>
+        <div class="home-type">{{ TYPE_LABELS[s.type] }}</div>
         <div class="home-ops" @click.stop>
           <button class="op" @click="home.startEdit(s)" title="编辑">✏️</button>
           <button class="op" @click="home.remove(s.id)" title="删除">🗑</button>
@@ -47,6 +66,7 @@ function onOpen(s: HomeShortcut) {
           <select v-model="home.editing.type">
             <option value="url">🌐 网页</option>
             <option value="app">🚀 应用</option>
+            <option value="dir">📁 目录</option>
           </select>
         </div>
         <div class="hm-row">
@@ -54,10 +74,10 @@ function onOpen(s: HomeShortcut) {
           <input v-model="home.editing.name" placeholder="如：Kimi" />
         </div>
         <div class="hm-row">
-          <label>{{ home.editing.type === "url" ? "网址" : "启动命令" }}</label>
+          <label>{{ TARGET_LABELS[home.editing.type] }}</label>
           <input
             v-model="home.editing.target"
-            :placeholder="home.editing.type === 'url' ? 'https://kimi.moonshot.cn' : '如 firefox / 应用 exec'"
+            :placeholder="TARGET_PLACEHOLDERS[home.editing.type]"
           />
         </div>
         <div class="hm-row">

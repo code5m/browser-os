@@ -173,6 +173,18 @@ impl TabManager {
     pub fn get_tab_ids(&self) -> Vec<TabId> {
         self.tabs.read().keys().cloned().collect()
     }
+
+    /// 在指定子 webview 中执行 JavaScript（fire-and-forget）。
+    /// 注意：子 webview 由本插件持有，app.get_webview 找不到它们，
+    /// 宿主应用必须走这个方法（否则 eval 静默空转，AI 群发/前进后退全失效）。
+    pub fn eval(&self, id: &TabId, js: &str) -> Result<()> {
+        let tabs = self.tabs.read();
+        let webview = tabs
+            .get(id)
+            .ok_or_else(|| BrowserTabError::TabNotFound(id.clone()))?;
+        webview.eval(js)?;
+        Ok(())
+    }
 }
 
 /// Shared state type for Tauri commands and host-app integration.

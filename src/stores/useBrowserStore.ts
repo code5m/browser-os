@@ -26,14 +26,14 @@ export const useBrowserStore = defineStore("browser", () => {
   const gridUrls = reactive<string[]>([
     "https://www.doubao.com",
     "https://kimi.moonshot.cn",
-    "https://tongyi.aliyun.com",
+    "https://tongyi.aliyun.com/qianwen/",
     "https://chat.deepseek.com",
     ...Array(8).fill(""),
   ]);
   // 宫格布局模式：horizontal 横向 / quad 四分 / grid 宫格（精简后只留三种好用的）
   const gridLayout = ref<"horizontal" | "quad" | "grid">("quad");
-  // 宫格使用模式：browse 对比浏览 / ai 多 AI 同时提问
-  const gridMode = ref<"browse" | "ai">("browse");
+  // 宫格使用模式：browse 对比浏览 / ai 多 AI 同时提问（默认 AI：打开宫格即可底部群发）
+  const gridMode = ref<"browse" | "ai">("ai");
   // AI 模式统一输入框内容
   const gridAiInput = ref("");
   // 每格相对 host 的 rect（供关闭按钮覆盖层定位），scheduleGrid 时填充
@@ -46,7 +46,7 @@ export const useBrowserStore = defineStore("browser", () => {
     { name: "豆包", url: "https://www.doubao.com", region: "国内" },
     { name: "Kimi", url: "https://kimi.moonshot.cn", region: "国内" },
     { name: "DeepSeek", url: "https://chat.deepseek.com", region: "国内" },
-    { name: "通义千问", url: "https://tongyi.aliyun.com", region: "国内" },
+    { name: "通义千问", url: "https://tongyi.aliyun.com/qianwen/", region: "国内" },
     { name: "文心一言", url: "https://yiyan.baidu.com", region: "国内" },
     { name: "智谱清言", url: "https://chatglm.cn", region: "国内" },
     { name: "讯飞星火", url: "https://xinghuo.xfyun.cn", region: "国内" },
@@ -58,6 +58,88 @@ export const useBrowserStore = defineStore("browser", () => {
     { name: "Grok", url: "https://grok.x.com", region: "海外" },
     { name: "Poe", url: "https://poe.com", region: "海外" },
   ];
+
+  // ===== 各 AI 站点输入框/发送按钮适配表（按 hostname 匹配，数组内按优先级尝试） =====
+  // 未命中的站点走通用兜底：textarea → contenteditable → input[type=text]，Enter 提交
+  const AI_SITE_ADAPTERS: Record<string, { inputs: string[]; sends: string[] }> = {
+    "www.doubao.com": {
+      inputs: ["textarea[data-testid='chat_input_input']", "textarea"],
+      sends: ["button[data-testid='chat_input_send_button']"],
+    },
+    "kimi.moonshot.cn": {
+      inputs: ["div.chat-input-editor[contenteditable='true']", "div[contenteditable='true']"],
+      sends: [], // 回车即发送
+    },
+    "www.kimi.com": {
+      inputs: ["div.chat-input-editor[contenteditable='true']", "div[contenteditable='true']"],
+      sends: [],
+    },
+    "chat.deepseek.com": {
+      inputs: ["#chat-input", "textarea"],
+      sends: [], // 回车即发送
+    },
+    "tongyi.aliyun.com": {
+      inputs: ["textarea"],
+      sends: ["button[class*='send']", "button[class*='Send']"],
+    },
+    "www.tongyi.com": {
+      inputs: ["textarea", "div[contenteditable='true']"],
+      sends: ["button[class*='send']", "button[class*='Send']"],
+    },
+    "yiyan.baidu.com": {
+      inputs: ["div[contenteditable='true']", "textarea"],
+      sends: [],
+    },
+    "chatglm.cn": {
+      inputs: ["textarea"],
+      sends: [],
+    },
+    "xinghuo.xfyun.cn": {
+      inputs: ["textarea"],
+      sends: [],
+    },
+    "chatgpt.com": {
+      inputs: ["#prompt-textarea", "div[contenteditable='true']"],
+      sends: ["button[data-testid='send-button']", "button[aria-label*='Send']"],
+    },
+    "claude.ai": {
+      inputs: ["div.ProseMirror[contenteditable='true']", "div[contenteditable='true']"],
+      sends: ["button[aria-label*='Send']"],
+    },
+    "gemini.google.com": {
+      inputs: ["div.ql-editor[contenteditable='true']", "div[contenteditable='true']"],
+      sends: ["button.send-button", "button[aria-label*='Send']", "button[aria-label*='发送']"],
+    },
+    "copilot.microsoft.com": {
+      inputs: ["textarea#userInput", "div[contenteditable='true']", "textarea"],
+      sends: ["button[aria-label*='提交']", "button[aria-label*='Submit']"],
+    },
+    "www.perplexity.ai": {
+      inputs: ["textarea"],
+      sends: ["button[aria-label*='Submit']"],
+    },
+    "grok.x.com": {
+      inputs: ["textarea", "div[contenteditable='true']"],
+      sends: ["button[type='submit']"],
+    },
+    "poe.com": {
+      inputs: ["textarea"],
+      sends: ["button[class*='ChatMessageSendButton']", "button[class*='send']"],
+    },
+  };
+  function aiAdapterFor(u: string): { inputs: string[]; sends: string[] } {
+    try {
+      const host = new URL(u).hostname;
+      if (AI_SITE_ADAPTERS[host]) return AI_SITE_ADAPTERS[host];
+      // 子域名兜底：如 kimi.com / m.doubao.com
+      for (const k of Object.keys(AI_SITE_ADAPTERS)) {
+        if (host === k || host.endsWith("." + k) || k.endsWith("." + host)) {
+          return AI_SITE_ADAPTERS[k];
+        }
+      }
+    } catch {}
+    return { inputs: [], sends: [] };
+  }
 
   const activeTab = computed(() => tabs.find((t) => t.id === activeTabId.value));
   const isBrowserVisible = computed(
@@ -80,6 +162,7 @@ export const useBrowserStore = defineStore("browser", () => {
     layout.showToast("已新建页签: " + t.title);
     await nextTick();
     schedulePosition();
+    syncFreeze();
   }
   async function tabSwitch(id: string) {
     activeTabId.value = id;
@@ -88,6 +171,7 @@ export const useBrowserStore = defineStore("browser", () => {
     await bridge.tabActivate(id);
     await nextTick();
     schedulePosition();
+    syncFreeze();
   }
   async function tabClose(id: string) {
     const idx = tabs.findIndex((t) => t.id === id);
@@ -105,6 +189,7 @@ export const useBrowserStore = defineStore("browser", () => {
     if (!tabs.length) layout.mainView = "browser";
     await nextTick();
     schedulePosition();
+    syncFreeze();
   }
   async function tabReload(id: string) {
     const t = tabs.find((x) => x.id === id);
@@ -187,6 +272,8 @@ export const useBrowserStore = defineStore("browser", () => {
     window.setTimeout(() => {
       if (gridOpen.value) layoutGrid();
     }, 400);
+    // 宫格打开后激活页签被移出屏幕 → 冻结；格子可见 → 保持运行
+    syncFreeze();
     layout.showToast(`已打开 ${n} 宫格对比`);
   }
   function layoutGrid() {
@@ -199,6 +286,9 @@ export const useBrowserStore = defineStore("browser", () => {
     layout.showToast(`宫格 ${i + 1} → ${u}`);
   }
   // AI 模式：向所有宫格 webview 注入问题并提交
+  // 按各格网址匹配站点适配 selector；注入脚本带重试（AI 页面输入框常懒加载），
+  // textarea/input 用原生 value setter 触发 React 受控更新，contenteditable 用
+  // execCommand('insertText')（ProseMirror/Lexical 均兼容）
   async function gridSendAi() {
     const q = gridAiInput.value.trim();
     if (!q) {
@@ -206,43 +296,110 @@ export const useBrowserStore = defineStore("browser", () => {
       return;
     }
     const n = gridCount.value;
+    layout.showToast(`正在向 ${n} 个宫格注入…`);
+    const fails: string[] = [];
     for (let i = 0; i < n; i++) {
       const label = `grid-${i}`;
+      const cfg = aiAdapterFor(gridUrls[i] || "");
       const js = `
         (function(){
-          const q = ${JSON.stringify(q)};
-          // 通用 AI 输入框查找：优先 textarea，其次 contenteditable，最后 input
-          const el = document.querySelector('textarea') ||
-                     document.querySelector('[contenteditable="true"]') ||
-                     document.querySelector('input[type="text"]');
-          if (!el) return 'no-input';
-          el.focus();
-          if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
-            el.value = q;
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-          } else {
-            el.textContent = q;
-            el.dispatchEvent(new Event('input', { bubbles: true }));
+          try {
+          var q = ${JSON.stringify(q)};
+          var cfg = ${JSON.stringify(cfg)};
+          var GENERIC_INPUTS = ['textarea', '[contenteditable="true"]', 'input[type="text"]'];
+          var GENERIC_SENDS = ['button[type="submit"]', 'button[class*="send"]', 'button[class*="Send"]',
+                               'button[class*="submit"]', 'button[aria-label*="发送"]', 'button[aria-label*="Send"]'];
+          function visible(el){ return el && el.getClientRects().length > 0; }
+          function findEl(sels){
+            for (var i = 0; i < sels.length; i++) {
+              var list = document.querySelectorAll(sels[i]);
+              for (var j = 0; j < list.length; j++) { if (visible(list[j])) return list[j]; }
+            }
+            return null;
           }
-          // 尝试提交：优先发送按钮，其次回车
-          setTimeout(() => {
-            const btn = document.querySelector('button[type="submit"]') ||
-                        document.querySelector('button.send') ||
-                        document.querySelector('button[class*="send"]') ||
-                        document.querySelector('button[class*="submit"]') ||
-                        document.querySelector('button[aria-label*="发送"]') ||
-                        document.querySelector('button[aria-label*="Send"]');
-            if (btn) { btn.click(); return; }
-            const enter = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
-            el.dispatchEvent(enter);
-          }, 100);
-          return 'ok';
+          // 页内可视反馈：win.eval 无返回值，用徽标把结果画在格子网页顶部
+          function badge(msg, ok){
+            if (!document.body) return;
+            var d = document.createElement('div');
+            d.textContent = msg;
+            d.style.cssText = 'position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:2147483647;'
+              + 'padding:6px 14px;border-radius:6px;font-size:13px;color:#fff;font-family:sans-serif;'
+              + 'background:' + (ok ? '#2b8a3e' : '#c0392b') + ';box-shadow:0 2px 8px rgba(0,0,0,.3);pointer-events:none;';
+            document.body.appendChild(d);
+            setTimeout(function(){ d.remove(); }, 5000);
+          }
+          function setValue(el, text){
+            el.focus();
+            if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
+              var proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+              var desc = Object.getOwnPropertyDescriptor(proto, 'value');
+              if (desc && desc.set) desc.set.call(el, text); else el.value = text;
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            } else {
+              // 全选后插入：触发框架受控更新并清空旧内容
+              var sel = window.getSelection();
+              var range = document.createRange();
+              range.selectNodeContents(el);
+              sel.removeAllRanges();
+              sel.addRange(range);
+              document.execCommand('insertText', false, text);
+            }
+          }
+          function trySubmit(el){
+            var btn = findEl(cfg.sends.concat(GENERIC_SENDS));
+            if (btn && !btn.disabled) { btn.click(); badge('✓ 已点击发送', true); return; }
+            ['keydown', 'keypress', 'keyup'].forEach(function(type){
+              el.dispatchEvent(new KeyboardEvent(type, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+            });
+            badge('✓ 已填入并回车', true);
+          }
+          var attempts = 0;
+          function attempt(){
+            attempts++;
+            if (!document.body) {
+              if (attempts < 15) setTimeout(attempt, 600); // 页面还没加载出来
+              return;
+            }
+            var el = findEl(cfg.inputs) || findEl(GENERIC_INPUTS);
+            if (!el) {
+              if (attempts < 15) { setTimeout(attempt, 600); return; } // 输入框懒加载，最多等 9 秒
+              badge('✗ 未找到输入框（需登录或站点改版）', false);
+              return;
+            }
+            try {
+              setValue(el, q);
+              setTimeout(function(){
+                try { trySubmit(el); } catch(e) { badge('✗ 提交失败: ' + e.message, false); }
+              }, 200);
+            } catch(e) {
+              badge('✗ 填入失败: ' + e.message, false);
+            }
+          }
+          attempt();
+          } catch(e) {
+            // 注入脚本自身异常：尽量画徽标，页面加载极早期 document 不可用时静默
+            try {
+              var d = document.createElement('div');
+              d.textContent = '✗ 脚本异常: ' + e.message;
+              d.style.cssText = 'position:fixed;top:8px;left:8px;z-index:2147483647;padding:6px 10px;background:#c0392b;color:#fff;font-size:12px;border-radius:6px;';
+              (document.body || document.documentElement).appendChild(d);
+              setTimeout(function(){ d.remove(); }, 8000);
+            } catch(_) {}
+          }
         })();
       `;
-      await bridge.evalInTab(label, js).catch(() => {});
+      try {
+        await bridge.evalInTab(label, js);
+      } catch (e: any) {
+        fails.push(`${i + 1}格(${String(e).slice(0, 40)})`);
+      }
     }
-    layout.showToast(`已向 ${n} 个 AI 发送问题`);
+    if (fails.length) {
+      layout.showToast(`⚠️ ${fails.length}/${n} 格注入失败: ${fails[0]}`);
+    } else {
+      layout.showToast(`已注入 ${n} 格，看各格网页顶部的绿/红徽标`);
+    }
     gridAiInput.value = "";
   }
   async function closeGridAll() {
@@ -252,6 +409,8 @@ export const useBrowserStore = defineStore("browser", () => {
     await bridge.closeGrid().catch(() => {});
     layout.gridToolbarOpen = false;
     gridRects.splice(0, gridRects.length);
+    // 宫格关闭后激活页签重新可见 → 解冻
+    syncFreeze();
     layout.showToast("已关闭宫格");
   }
   // 关闭单个宫格：销毁对应子 webview，其余保留，并按剩余数量重排
@@ -315,6 +474,67 @@ export const useBrowserStore = defineStore("browser", () => {
     layoutGrid();
   }
 
+  // ===== 隐藏/非激活 webview 冻结（防后台网页吃 CPU 拖垮终端等主界面） =====
+  // 子 webview 是独立进程，不会直接让主 webview 的终端崩溃，但隐藏中的网页
+  // 仍在跑 JS 定时器/动画/视频，持续消耗 CPU/GPU。冻结=暂停媒体 + 暂停 CSS 动画
+  // + requestAnimationFrame 节流至 1fps（页面脚本误以为仍在正常渲染，恢复时无缝续跑）
+  const FREEZE_JS = `
+    (function(){
+      if (window.__vibeFrozen) return;
+      window.__vibeFrozen = true;
+      try {
+        document.querySelectorAll('video,audio').forEach(function(m){
+          if (!m.paused) m.setAttribute('data-vibe-resume', '1');
+          m.pause();
+        });
+        if (!document.getElementById('__vibe-freeze-style')) {
+          var st = document.createElement('style');
+          st.id = '__vibe-freeze-style';
+          st.textContent = '*,*::before,*::after{animation-play-state:paused!important}';
+          (document.head || document.documentElement).appendChild(st);
+        }
+        if (!window.__vibeOrigRAF) {
+          window.__vibeOrigRAF = window.requestAnimationFrame.bind(window);
+          window.requestAnimationFrame = function(cb){
+            return setTimeout(function(){ try { cb(performance.now()); } catch(e){} }, 1000);
+          };
+        }
+      } catch(e) {}
+    })();
+  `;
+  const UNFREEZE_JS = `
+    (function(){
+      if (!window.__vibeFrozen) return;
+      window.__vibeFrozen = false;
+      try {
+        var st = document.getElementById('__vibe-freeze-style');
+        if (st) st.remove();
+        if (window.__vibeOrigRAF) {
+          window.requestAnimationFrame = window.__vibeOrigRAF;
+          window.__vibeOrigRAF = null;
+        }
+        document.querySelectorAll('video[data-vibe-resume],audio[data-vibe-resume]').forEach(function(m){
+          m.removeAttribute('data-vibe-resume');
+          m.play().catch(function(){});
+        });
+      } catch(e) {}
+    })();
+  `;
+  // 按当前视图/激活状态同步冻结：只有"看得见的" webview 保持运行
+  function syncFreeze() {
+    const inBrowserView = layout.mainView === "browser" || layout.mainView === "grid";
+    for (const t of tabs) {
+      const visible = inBrowserView && !gridOpen.value && t.id === activeTabId.value;
+      bridge.evalInTab(t.id, visible ? UNFREEZE_JS : FREEZE_JS).catch(() => {});
+    }
+    if (gridOpen.value) {
+      // 宫格打开时所有格子都可见
+      for (let i = 0; i < gridCount.value; i++) {
+        bridge.evalInTab(`grid-${i}`, inBrowserView ? UNFREEZE_JS : FREEZE_JS).catch(() => {});
+      }
+    }
+  }
+
   // ===== 子 webview 显隐同步 =====
   // 子 webview 是独立置顶 GTK 窗口，不受前端 v-if / visibility 控制。
   // 切到非浏览器视图（编辑器/文件/终端等）时，主 UI 的 addrbar/TabBar 会因
@@ -335,6 +555,7 @@ export const useBrowserStore = defineStore("browser", () => {
     } else {
       hideAllWebviews();
     }
+    syncFreeze();
   }
 
   // 监听视图切换，自动同步子 webview 显隐
@@ -356,6 +577,8 @@ export const useBrowserStore = defineStore("browser", () => {
     gridUrl,
     gridUrls,
     gridLayout,
+    gridMode,
+    gridAiInput,
     gridRects,
     resources,
     aiNavOpen,
@@ -377,6 +600,7 @@ export const useBrowserStore = defineStore("browser", () => {
     buildGrid,
     layoutGrid,
     gridSetUrl,
+    gridSendAi,
     closeGridAll,
     closeGridOne,
     gridCols,

@@ -2064,6 +2064,7 @@ dependencies = [
  "git2",
  "gtk",
  "keyring",
+ "libc",
  "open",
  "portable-pty",
  "serde",

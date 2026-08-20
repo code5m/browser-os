@@ -33,6 +33,8 @@ arboard = "3"
 portable-pty = "0.8"
 freedesktop-icons = "0.4"
 strip-ansi-escapes = "0.2"
+# crashlog：stderr fd 镜像 + 致命信号捕获
+libc = "0.2"
 
 [profile.release]
 panic = "abort"

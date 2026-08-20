@@ -25,6 +25,9 @@ const repoReady = computed(() => ws.repos.length > 0);
     <span>· 审计 {{ auditCount }} 条</span>
     <span v-if="layout.msg" class="msg">{{ layout.msg }}</span>
   </footer>
+  <!-- 全局醒目 toast：固定在工具栏下方右上（此区域永不被宫格/页签原生窗口覆盖），
+       之前只在状态栏角落显示 11px 小字 2 秒即消失，用户完全看不到 -->
+  <div v-if="layout.msg" class="toast-pop">{{ layout.msg }}</div>
 </template>
 
 <style scoped>
@@ -46,5 +49,19 @@ const repoReady = computed(() => ws.repos.length > 0);
 .status .msg {
   margin-left: auto;
   color: #cbd5e0;
+}
+.toast-pop {
+  position: fixed;
+  top: 46px;
+  right: 14px;
+  z-index: 99999;
+  background: rgba(15, 23, 42, 0.92);
+  color: #fff;
+  font-size: 14px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  max-width: 60vw;
+  pointer-events: none;
 }
 </style>

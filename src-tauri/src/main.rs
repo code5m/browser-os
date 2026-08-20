@@ -5,11 +5,14 @@ mod bridge;
 mod workspace;
 mod keyring_store;
 mod sync;
+mod crashlog;
 
 use bridge::AppState;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 fn main() {
+    // 日志/崩溃捕获必须最先初始化（stderr 镜像 + panic 钩子 + 致命信号捕获）
+    crashlog::init();
     // Workaround：WebKitGTK 在 Wayland 下默认启用 DMA-BUF 渲染器会静默崩溃
     // （进程启动数秒后退出、窗口白屏）。禁用后可稳定运行。
     if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {

@@ -150,6 +150,15 @@ onMounted(async () => {
   window.addEventListener("beforeunload", () => bridge.closeBrowser().catch(() => {}));
   window.addEventListener("click", ws.closeCtx);
   window.addEventListener("scroll", ws.closeCtx, true);
+  // 文件树右键菜单同样需要点空白/滚动时关闭
+  window.addEventListener("click", ws.closeFileCtx);
+  window.addEventListener("scroll", ws.closeFileCtx, true);
+
+  // TEMP-REPRO 崩溃复现：启动 4 秒后自动打开宫格（gdb 抓栈用，调试完成后删除）
+  window.setTimeout(() => {
+    layout.openModule("grid");
+    browser.buildGrid();
+  }, 4000);
 });
 </script>
 

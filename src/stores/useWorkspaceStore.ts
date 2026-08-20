@@ -87,8 +87,18 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     fileCtx.entry = null;
     fileCtx.making = "";
   }
+  // 新建的基准目录：优先右键目标（目录本身 / 文件的父目录），兜底当前目录
+  function ctxBaseDir(): string {
+    const e = fileCtx.entry;
+    if (e) {
+      if (e.is_dir) return e.path;
+      const i = e.path.lastIndexOf("/");
+      return i > 0 ? e.path.slice(0, i) : "/";
+    }
+    return filePath.value || "/";
+  }
   async function ctxNewFile() {
-    const base = filePath.value || "/";
+    const base = ctxBaseDir();
     const name = (fileCtx.making === "file" ? fileCtx.newName : prompt("新文件名："))?.trim();
     if (!name) {
       closeFileCtx();
@@ -97,14 +107,15 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     try {
       await bridge.createFile(base.replace(/\/$/, "") + "/" + name, "");
       layout.showToast("已新建文件: " + name);
-      await enterDir(filePath.value);
+      treeExpanded.add(base); // 展开目标目录让新文件可见
+      await refreshTree();
     } catch (e: any) {
       layout.showToast("新建失败: " + (e?.message ?? e));
     }
     closeFileCtx();
   }
   async function ctxNewDir() {
-    const base = filePath.value || "/";
+    const base = ctxBaseDir();
     const name = (fileCtx.making === "dir" ? fileCtx.newName : prompt("新目录名："))?.trim();
     if (!name) {
       closeFileCtx();
@@ -113,7 +124,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     try {
       await bridge.createDir(base.replace(/\/$/, "") + "/" + name);
       layout.showToast("已新建目录: " + name);
-      await enterDir(filePath.value);
+      treeExpanded.add(base);
+      await refreshTree();
     } catch (e: any) {
       layout.showToast("新建失败: " + (e?.message ?? e));
     }
@@ -127,7 +139,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     try {
       await bridge.deletePath(entry.path);
       layout.showToast("已删除: " + entry.name);
-      await enterDir(filePath.value);
+      if (inlineFile.value === entry.path) closeInline();
+      await refreshTree();
     } catch (e: any) {
       layout.showToast("删除失败: " + (e?.message ?? e));
     }
@@ -142,7 +155,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     try {
       await bridge.renamePath(entry.path, name);
       layout.showToast("已重命名 → " + name);
-      await enterDir(filePath.value);
+      await refreshTree();
     } catch (e: any) {
       layout.showToast("重命名失败: " + (e?.message ?? e));
     }
@@ -246,6 +259,96 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     else selected.add(id);
   }
 
+  // ===== IDE 文件树（左树右编辑） =====
+  const treeRoots = ref<DirEntry[]>([]);
+  const treeChildren = reactive<Map<string, DirEntry[]>>(new Map());
+  const treeExpanded = reactive<Set<string>>(new Set());
+  const treeLoading = reactive<Set<string>>(new Set());
+
+  async function ensureTreeChildren(path: string) {
+    if (treeChildren.has(path) || treeLoading.has(path)) return;
+    treeLoading.add(path);
+    try {
+      treeChildren.set(path, await bridge.listDir(path));
+    } catch {
+      treeChildren.set(path, []);
+    }
+    treeLoading.delete(path);
+  }
+  // 树根：已进入某目录则以它为根（自动展开），否则展示起始目录集合
+  async function loadTree() {
+    if (filePath.value) {
+      const name = filePath.value.split("/").filter(Boolean).pop() || "/";
+      treeRoots.value = [{ name, path: filePath.value, is_dir: true, size: 0 }];
+      treeExpanded.add(filePath.value);
+      await ensureTreeChildren(filePath.value);
+    } else {
+      treeRoots.value = await bridge.getStartDirs();
+    }
+  }
+  async function toggleTreeDir(path: string) {
+    if (treeExpanded.has(path)) treeExpanded.delete(path);
+    else {
+      treeExpanded.add(path);
+      await ensureTreeChildren(path);
+    }
+  }
+  // 刷新：保留展开状态，重新拉取所有已展开目录
+  async function refreshTree() {
+    treeChildren.clear();
+    if (filePath.value) {
+      const name = filePath.value.split("/").filter(Boolean).pop() || "/";
+      treeRoots.value = [{ name, path: filePath.value, is_dir: true, size: 0 }];
+    } else {
+      treeRoots.value = await bridge.getStartDirs();
+    }
+    for (const p of [...treeExpanded]) await ensureTreeChildren(p);
+  }
+
+  // ===== 行内文件预览/编辑（IDE 右栏；与 overlay 编辑器的 filePath/fileContent 完全隔离） =====
+  const inlineFile = ref("");
+  const inlineText = ref("");
+  const inlineIsMd = ref(false);
+  const inlineEdit = ref(false);
+  const inlineHtml = ref("");
+
+  async function openFileInline(entry: DirEntry) {
+    if (entry.is_dir) {
+      toggleTreeDir(entry.path);
+      return;
+    }
+    const ext = entry.name.split(".").pop()?.toLowerCase() || "";
+    const isMd = ext === "md" || ext === "markdown";
+    if (!isMd && !TEXT_EXTS.includes(ext)) {
+      layout.showToast(`非文本文件 (${entry.name})，暂不支持预览`);
+      return;
+    }
+    try {
+      const text = await bridge.readFile(entry.path);
+      inlineFile.value = entry.path;
+      inlineText.value = text;
+      inlineIsMd.value = isMd;
+      inlineEdit.value = !isMd; // md 默认预览，其它文本直接编辑
+      inlineHtml.value = isMd ? renderMd(text) : "";
+      addRecentFile(entry.path, entry.name);
+    } catch (e: any) {
+      layout.showToast("读取失败: " + (e?.message ?? e));
+    }
+  }
+  function inlineToggleEdit() {
+    inlineEdit.value = !inlineEdit.value;
+    if (!inlineEdit.value && inlineIsMd.value) inlineHtml.value = renderMd(inlineText.value);
+  }
+  async function saveInline() {
+    if (!inlineFile.value) return;
+    await bridge.writeFile(inlineFile.value, inlineText.value);
+    if (inlineIsMd.value && !inlineEdit.value) inlineHtml.value = renderMd(inlineText.value);
+    layout.showToast("已保存: " + inlineFile.value.split("/").pop());
+  }
+  function closeInline() {
+    inlineFile.value = "";
+  }
+
   // ===== 文件浏览器 =====
   async function loadStartDirs() {
     startDirs.value = await bridge.getStartDirs();
@@ -260,6 +363,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       layout.showToast("无法读取目录: " + (e ?? e));
       fileEntries.value = [];
     }
+    // 地址栏打开目录时同步树：以该目录为根
+    await loadTree();
   }
   function goUp() {
     const p = filePath.value;
@@ -443,6 +548,22 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     ctxRemove,
     loadStartDirs,
     enterDir,
+    treeRoots,
+    treeChildren,
+    treeExpanded,
+    treeLoading,
+    loadTree,
+    toggleTreeDir,
+    refreshTree,
+    inlineFile,
+    inlineText,
+    inlineIsMd,
+    inlineEdit,
+    inlineHtml,
+    openFileInline,
+    inlineToggleEdit,
+    saveInline,
+    closeInline,
     onFileContext,
     closeFileCtx,
     ctxNewFile,
