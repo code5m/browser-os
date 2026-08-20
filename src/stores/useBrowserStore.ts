@@ -297,7 +297,11 @@ export const useBrowserStore = defineStore("browser", () => {
     }
     const n = gridCount.value;
     layout.showToast(`正在向 ${n} 个宫格注入…`);
+    bridge.debugLog(`gridSendAi start n=${n} q=${q}`);
     const fails: string[] = [];
+    // 串行错峰提交：每格提交后延迟 GRID_STAGGER_MS 再发下一格，让各 AI 的流式响应
+    // 错峰启动，避免 4 个子 webview 同时进入高强度流式渲染导致 WebKitGTK 并发崩溃
+    const GRID_STAGGER_MS = 1500;
     for (let i = 0; i < n; i++) {
       const label = `grid-${i}`;
       const cfg = aiAdapterFor(gridUrls[i] || "");
@@ -390,11 +394,20 @@ export const useBrowserStore = defineStore("browser", () => {
         })();
       `;
       try {
+        bridge.debugLog(`gridSendAi evalInTab[${label}] begin`);
         await bridge.evalInTab(label, js);
+        bridge.debugLog(`gridSendAi evalInTab[${label}] done`);
       } catch (e: any) {
+        bridge.debugLog(`gridSendAi evalInTab[${label}] fail: ${String(e).slice(0, 60)}`);
         fails.push(`${i + 1}格(${String(e).slice(0, 40)})`);
       }
+      // 串行错峰：最后一格无需再等；前面的格子提交后错峰，让流式响应错开启动
+      if (i < n - 1) {
+        bridge.debugLog(`gridSendAi stagger wait ${GRID_STAGGER_MS}ms before grid-${i + 1}`);
+        await new Promise((r) => setTimeout(r, GRID_STAGGER_MS));
+      }
     }
+    bridge.debugLog(`gridSendAi loop end fails=${fails.length}`);
     if (fails.length) {
       layout.showToast(`⚠️ ${fails.length}/${n} 格注入失败: ${fails[0]}`);
     } else {

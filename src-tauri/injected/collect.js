@@ -214,5 +214,69 @@ document.addEventListener("contextmenu", function (e) {
     return false;
   }, true); // capture 阶段，在页面 JS 之前拦截
 
+  // ====== 3. 渲染降压：禁动效 + 平滑滚动 + rAF 节流 ======
+  // 背景：宫格 AI 群发后，多个子 webview 同时进入流式生成（SSE/WebSocket 流 +
+  // 高频 DOM 更新 + CSS 动效/动画），WebKitGTK 在单 UI 进程内并发处理这些页面时
+  // 内部空指针崩溃（gdb 栈：libwebkit2gtk + libjavascriptcoregtk 内 SIGSEGV）。
+  // 这里在每个子 webview 加载前注入降压措施，降低单格渲染压力：
+  //  (a) CSS：禁用 animation/transition/平滑滚动（动效是高频重排重绘的主因）
+  //  (b) rAF 节流：把 requestAnimationFrame 限制到 ~15fps，砍 JS 驱动的渲染频率
+  //  (c) 对 <video>/<audio> 静音+禁自动播放（媒体管线是 WebKitGTK 崩溃高发区）
+  try {
+    // (a) 注入禁动效 CSS（initialization_script 在页面 JS 之前执行，documentElement 已在）
+    var calmCss =
+      "*,*::before,*::after{" +
+      "animation-duration:0.001s !important;animation-delay:0s !important;" +
+      "transition-duration:0.001s !important;transition-delay:0s !important;" +
+      "scroll-behavior:auto !important;" +
+      "caret-color:auto !important;" +
+      "}";
+    function injectCalmCss() {
+      if (document.getElementById("jzjd-calm")) return;
+      var st = document.createElement("style");
+      st.id = "jzjd-calm";
+      st.textContent = calmCss;
+      (document.head || document.documentElement).appendChild(st);
+    }
+    injectCalmCss();
+    // head 可能尚未存在，DOMContentLoaded 兜底
+    document.addEventListener("DOMContentLoaded", injectCalmCss);
+
+    // (b) rAF 节流：保留原生引用，包装为 ~15fps（66ms 间隔）。AI 流式渲染对
+    //     帧率不敏感（文字逐字出现），降帧对可读性几乎无影响，但大幅降低渲染线程压力。
+    var __jzjd_raf = window.requestAnimationFrame.bind(window);
+    var __jzjd_last = 0;
+    window.requestAnimationFrame = function (cb) {
+      var now = Date.now();
+      var wait = Math.max(0, 66 - (now - __jzjd_last));
+      __jzjd_last = now + wait;
+      return __jzjd_raf(function (ts) { cb(ts); });
+    };
+
+    // (c) 静音 + 禁自动播放（在元素插入时处理）
+    function calmMedia(root) {
+      (root.querySelectorAll ? root.querySelectorAll("video,audio") : []).forEach(function (m) {
+        try { m.muted = true; m.autoplay = false; m.pause && m.pause(); } catch (_) {}
+      });
+    }
+    document.addEventListener("DOMContentLoaded", function () { calmMedia(document); });
+    // 监听动态插入的媒体元素
+    if (window.MutationObserver) {
+      var mo = new MutationObserver(function (muts) {
+        muts.forEach(function (mu) {
+          mu.addedNodes && mu.addedNodes.forEach(function (nd) {
+            if (nd && nd.tagName === "VIDEO" || nd && nd.tagName === "AUDIO") {
+              try { nd.muted = true; nd.autoplay = false; } catch (_) {}
+            }
+            if (nd && nd.querySelectorAll) calmMedia(nd);
+          });
+        });
+      });
+      document.addEventListener("DOMContentLoaded", function () {
+        try { mo.observe(document.documentElement, { childList: true, subtree: true }); } catch (_) {}
+      });
+    }
+  } catch (e) { console.error("[JZJD] 渲染降压注入失败:", e); }
+
   console.log("[JZJD] 采集脚本已注入，右键即可保存。invoke 可用:", !!getInvoke());
 })();
