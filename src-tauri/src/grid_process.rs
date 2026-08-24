@@ -62,6 +62,15 @@ impl ChildComms {
     }
 }
 
+/// 崩溃重启时跨 spawn 保留的状态。
+#[derive(Default, Clone)]
+struct SavedChildState {
+    last_url: Option<String>,
+    last_rect: Option<(f64, f64, f64, f64)>,
+    hidden: bool,
+    blur_hidden: bool,
+}
+
 /// 单个宫格子进程句柄。
 pub struct GridChildHandle {
     pub index: u32,
@@ -217,6 +226,12 @@ impl GridProcessManager {
 
     /// spawn 一个新的宫格子进程（不检查是否已存在，调用方需先确保没有重复）。
     fn spawn(&self, index: u32) -> Result<(), String> {
+        self.spawn_with_state(index, None)
+    }
+
+    /// spawn 并可携带崩溃前保存的状态（崩溃重启时保留 last_url/last_rect，
+    /// 否则 replay 读不到历史 url 会跳过重放）。
+    fn spawn_with_state(&self, index: u32, saved: Option<SavedChildState>) -> Result<(), String> {
         let comms = self.ensure_listener(index)?;
         let exe = std::env::current_exe().map_err(|e| format!("获取当前可执行文件失败: {e}"))?;
         let child = Command::new(exe)
@@ -234,16 +249,17 @@ impl GridProcessManager {
             .spawn()
             .map_err(|e| format!("spawn 宫格子进程 grid-{index} 失败: {e}"))?;
         let pid = child.id();
+        let saved = saved.unwrap_or_default();
         self.children.lock().unwrap().insert(
             index,
             GridChildHandle {
                 index,
                 child,
                 comms,
-                last_url: None,
-                last_rect: None,
-                hidden: false,
-                blur_hidden: false,
+                last_url: saved.last_url,
+                last_rect: saved.last_rect,
+                hidden: saved.hidden,
+                blur_hidden: saved.blur_hidden,
             },
         );
         eprintln!("[grid-manager] spawned grid-child-{} pid={}", index, pid);
@@ -480,7 +496,7 @@ impl GridProcessManager {
             let Some(app) = app.as_ref() else { continue };
             let state = app.state::<crate::bridge::AppState>();
             let manager = &state.grid_manager;
-            let mut exited: Vec<(u32, i32)> = Vec::new();
+            let mut exited: Vec<(u32, i32, SavedChildState)> = Vec::new();
             {
                 let mut children = manager.children.lock().unwrap();
                 let indices: Vec<u32> = children.keys().cloned().collect();
@@ -489,8 +505,15 @@ impl GridProcessManager {
                         match h.child.try_wait() {
                             Ok(Some(status)) => {
                                 let code = exit_code_of(&status);
-                                children.remove(&index);
-                                exited.push((index, code));
+                                let h = children.remove(&index).unwrap();
+                                // 保留崩溃前状态供重放（新句柄默认 last_url=None
+                                // 会导致 replay 跳过，实测踩过）
+                                exited.push((index, code, SavedChildState {
+                                    last_url: h.last_url,
+                                    last_rect: h.last_rect,
+                                    hidden: h.hidden,
+                                    blur_hidden: h.blur_hidden,
+                                }));
                             }
                             Ok(None) => {}
                             Err(e) => {
@@ -500,12 +523,12 @@ impl GridProcessManager {
                     }
                 }
             }
-            for (index, code) in exited {
+            for (index, code, saved) in exited {
                 eprintln!(
                     "[grid-manager] grid-child-{} 异常退出 code={}，自动重启",
                     index, code
                 );
-                if let Err(e) = manager.spawn(index) {
+                if let Err(e) = manager.spawn_with_state(index, Some(saved)) {
                     eprintln!("[grid-manager] grid-child-{} 重启失败: {e}", index);
                     continue;
                 }

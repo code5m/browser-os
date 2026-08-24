@@ -270,8 +270,10 @@ fn dispatch_grid_cmd(
             }
         }
         GridCmd::UpdateRect { rect, .. } => {
+            // 注意用 get_window 而非 get_webview_window：后者在本场景返回 None
+            // （实测），插件 host_window() 同样走 get_window。窗口操作 Window 都有。
             let win = app
-                .get_webview_window(host_label)
+                .get_window(host_label)
                 .ok_or_else(|| "子进程壳窗口不存在".to_string())?;
             win.set_position(tauri::PhysicalPosition::new(rect.x as i32, rect.y as i32))
                 .map_err(|e| format!("set_position 失败: {e}"))?;
@@ -285,7 +287,7 @@ fn dispatch_grid_cmd(
         }
         GridCmd::HideWindow { .. } => {
             let win = app
-                .get_webview_window(host_label)
+                .get_window(host_label)
                 .ok_or_else(|| "子进程壳窗口不存在".to_string())?;
             win.hide().map_err(|e| format!("hide 失败: {e}"))?;
             Ok(())
