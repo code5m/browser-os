@@ -6,6 +6,7 @@ mod workspace;
 mod keyring_store;
 mod sync;
 mod crashlog;
+mod grid_process;
 
 use bridge::AppState;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};

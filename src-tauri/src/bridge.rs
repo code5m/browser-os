@@ -177,6 +177,8 @@ pub struct AppState {
     pub grid_zooms: Mutex<HashMap<String, f64>>,
     /// 终端会话（PTY）：id -> 会话
     pub terminals: Mutex<HashMap<String, TerminalSession>>,
+    /// 宫格子进程管理器（Phase 1：每宫格独立子进程，崩溃隔离 + 自愈）
+    pub grid_manager: crate::grid_process::GridProcessManager,
 }
 
 /// 终端会话：持有 PTY 写入端与子进程，读取在后台线程进行。
