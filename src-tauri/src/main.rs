@@ -10,7 +10,72 @@ mod crashlog;
 use bridge::AppState;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
+/// Phase 0 最小验证原型：解析 `--grid-child N`，有则以"宫格子进程"身份启动。
+/// 返回 Some(N) 表示应走子进程分支；None 表示主进程。
+fn parse_grid_child_arg() -> Option<u32> {
+    let args: Vec<String> = std::env::args().collect();
+    for (i, a) in args.iter().enumerate() {
+        if a == "--grid-child" {
+            if let Some(v) = args.get(i + 1) {
+                if let Ok(n) = v.parse::<u32>() {
+                    return Some(n);
+                }
+            }
+        } else if let Some(rest) = a.strip_prefix("--grid-child=") {
+            if let Ok(n) = rest.parse::<u32>() {
+                return Some(n);
+            }
+        }
+    }
+    None
+}
+
+/// 宫格子进程入口（Phase 0 最小原型）：只起一个极简窗口，验证 Tauri 多实例共存。
+/// 不接 IPC、不注册主进程 bridge 命令、不启动 layout enforcer。
+fn run_grid_child(index: u32) {
+    eprintln!("[grid-child-{}] starting (pid={})", index, std::process::id());
+    crashlog::init();
+    if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+    std::env::set_var("GDK_BACKEND", "x11");
+    if std::env::var("GTK_USE_PORTAL").is_err() {
+        std::env::set_var("GTK_USE_PORTAL", "0");
+    }
+
+    let label = format!("grid-child-{}", index);
+    tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_browser_tabs::init())
+        .setup(move |app| {
+            let url = if cfg!(debug_assertions) {
+                // 复用主进程同一 vite dev server，验证多实例共享前端资源可行性
+                WebviewUrl::External("http://localhost:1421".parse().unwrap())
+            } else {
+                WebviewUrl::App("index.html".into())
+            };
+            let window = WebviewWindowBuilder::new(app, &label, url)
+                .title(format!("宫格子进程 grid-{}", index))
+                .inner_size(600.0, 400.0)
+                .build()?;
+            eprintln!("[grid-child-{}] window created url={:?}", index, window.url());
+            let _ = window.show();
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .unwrap_or_else(|e| {
+            eprintln!("[grid-child-{}] RUN_ERROR: {e}", index);
+            std::process::exit(1);
+        });
+}
+
 fn main() {
+    // Phase 0：宫格子进程分支（在最前判断，避免初始化主进程逻辑）
+    if let Some(index) = parse_grid_child_arg() {
+        run_grid_child(index);
+        return;
+    }
+
     // 日志/崩溃捕获必须最先初始化（stderr 镜像 + panic 钩子 + 致命信号捕获）
     crashlog::init();
     // Workaround：WebKitGTK 在 Wayland 下默认启用 DMA-BUF 渲染器会静默崩溃
