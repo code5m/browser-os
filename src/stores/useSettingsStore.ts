@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
+import { bridge } from "../bridge";
 
 export type KeymapScheme = "vscode" | "idea" | "eclipse";
 export type Theme = "light" | "dark";
@@ -57,6 +58,9 @@ const STORAGE_KEY = "browser-os-settings";
 export const useSettingsStore = defineStore("settings", () => {
   const theme = ref<Theme>("light");
   const keymapScheme = ref<KeymapScheme>("vscode");
+  // 页签休眠：默认关。开启后非激活超 10 分钟的页签销毁 webview 仅留 URL（省内存），
+  // 激活时按 URL 重建（滚动位置/表单不保留，登录态由 WebKit 持久会话保留）
+  const tabHibernation = ref(false);
   const actionLabels = ACTION_LABELS;
 
   const currentKeymap = computed(() => KEYMAP_SCHEMES[keymapScheme.value]);
@@ -68,6 +72,7 @@ export const useSettingsStore = defineStore("settings", () => {
         const j = JSON.parse(raw);
         if (j.theme) theme.value = j.theme;
         if (j.keymapScheme) keymapScheme.value = j.keymapScheme;
+        if (typeof j.tabHibernation === "boolean") tabHibernation.value = j.tabHibernation;
       }
     } catch {}
   }
@@ -76,9 +81,19 @@ export const useSettingsStore = defineStore("settings", () => {
     try {
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ theme: theme.value, keymapScheme: keymapScheme.value })
+        JSON.stringify({
+          theme: theme.value,
+          keymapScheme: keymapScheme.value,
+          tabHibernation: tabHibernation.value,
+        })
       );
     } catch {}
+  }
+
+  function setTabHibernation(v: boolean) {
+    tabHibernation.value = v;
+    save();
+    bridge.setTabHibernation(v).catch(() => {});
   }
 
   function applyTheme() {
@@ -98,13 +113,17 @@ export const useSettingsStore = defineStore("settings", () => {
 
   load();
   applyTheme();
+  // 启动时把持久化的休眠开关同步给后端（后端默认关）
+  if (tabHibernation.value) bridge.setTabHibernation(true).catch(() => {});
 
   return {
     theme,
     keymapScheme,
+    tabHibernation,
     actionLabels,
     currentKeymap,
     setTheme,
     setKeymapScheme,
+    setTabHibernation,
   };
 });

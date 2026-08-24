@@ -36,6 +36,22 @@ const settings = useSettingsStore();
     </div>
 
     <div class="settings-section">
+      <div class="section-title">性能</div>
+      <div class="setting-item">
+        <label>页签休眠</label>
+        <input
+          type="checkbox"
+          :checked="settings.tabHibernation"
+          @change="settings.setTabHibernation(($event.target as HTMLInputElement).checked)"
+        />
+        <span class="setting-desc">
+          默认关闭。开启后，非激活超过 10 分钟的页签会销毁 webview 仅留网址（每个约省 300MB 内存），
+          重新点击该页签时按网址重建（滚动位置/表单不保留，网站登录态保留）
+        </span>
+      </div>
+    </div>
+
+    <div class="settings-section">
       <div class="section-title">关于</div>
       <div class="setting-item">
         <label>版本</label>
@@ -74,6 +90,11 @@ const settings = useSettingsStore();
   width: 80px;
   color: #4e5969;
   flex-shrink: 0;
+}
+.setting-desc {
+  font-size: 12px;
+  color: #86909c;
+  line-height: 1.5;
 }
 .setting-item select {
   height: 28px;

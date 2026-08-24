@@ -102,6 +102,12 @@ pub struct AppState {
     pub terminals: Mutex<HashMap<String, TerminalSession>>,
     /// 宫格子进程管理器（Phase 1：每宫格独立子进程，崩溃隔离 + 自愈）
     pub grid_manager: crate::grid_process::GridProcessManager,
+    /// 页签休眠开关（默认关；设置面板开启后，非激活页签超时销毁 webview 仅留 URL）
+    pub hibernation_enabled: AtomicBool,
+    /// 页签转为非激活的时刻（休眠计时起点）
+    pub tab_idle_since: Mutex<HashMap<String, std::time::Instant>>,
+    /// 已休眠页签（webview 已销毁，URL 保留在 tabs 表，激活时重建）
+    pub hibernated_tabs: Mutex<std::collections::HashSet<String>>,
 }
 
 /// 终端会话：持有 PTY 写入端与子进程，读取在后台线程进行。
@@ -323,8 +329,19 @@ pub fn hide_all_webviews(app: AppHandle) -> Result<(), String> {
             .grid_manager
             .send(index, GridCmd::HideWindow { id: format!("grid-{index}") });
     }
-    // 页签 id（宫格已不在主进程插件表里，无需穷举 grid-N）
-    let ids: Vec<String> = state.tabs.lock().unwrap().keys().cloned().collect();
+    // 页签 id（宫格已不在主进程插件表里，无需穷举 grid-N；
+    // 已休眠页签 webview 已销毁，跳过避免 TabNotFound 噪音）
+    let ids: Vec<String> = {
+        let hibernated = state.hibernated_tabs.lock().unwrap();
+        state
+            .tabs
+            .lock()
+            .unwrap()
+            .keys()
+            .filter(|id| !hibernated.contains(*id))
+            .cloned()
+            .collect()
+    };
     // 只处理插件管理表里真实存在的 webview
     let existing: std::collections::HashSet<String> =
         manager.get_tab_ids().into_iter().collect();
@@ -413,6 +430,18 @@ fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
         .unwrap()
         .insert(id.clone(), info.clone());
     *app.state::<AppState>().active_tab.lock().unwrap() = Some(id.clone());
+    // 休眠计时：新页签激活，旧页签从 now 起算 idle
+    {
+        let state = app.state::<AppState>();
+        let mut idle = state.tab_idle_since.lock().unwrap();
+        idle.remove(&id);
+        let now = std::time::Instant::now();
+        for k in state.tabs.lock().unwrap().keys() {
+            if *k != id {
+                idle.entry(k.clone()).or_insert(now);
+            }
+        }
+    }
 
     // 非激活页签异步隐藏（必须走主线程，且不能在当前 command 同步等待，否则与
     // 队列里的 webview build 互相等待死锁）。这里用 run_on_main_thread 排队执行。
@@ -445,6 +474,8 @@ fn close_tab(app: &AppHandle, id: &str) {
         let _ = manager.close_tab(&id.to_string());
     }
     app.state::<AppState>().child_layouts.lock().unwrap().remove(id);
+    state.tab_idle_since.lock().unwrap().remove(id);
+    state.hibernated_tabs.lock().unwrap().remove(id);
     state.tabs.lock().unwrap().remove(id);
     let mut active = state.active_tab.lock().unwrap();
     if active.as_deref() == Some(id) {
@@ -1046,13 +1077,49 @@ pub fn clipboard_write(text: String) -> Result<(), String> {
 
 const MAX_GRID: usize = 12;
 
-/// 创建 n 个宫格（2..=12）：每格 spawn 一个子进程并经 UDS 建 webview，默认打开引导页，
+/// 每宫格子进程（Tauri + WebKitWebProcess + AI 站点）的实测内存估算（MB）。
+/// 实测 WebKitWebProcess 约 330~365MB/格，加子进程本体取 450。
+const GRID_MEM_MB: u64 = 450;
+/// 创建宫格后系统至少保留的可用内存（MB）：低于此值宁降级格数也不把系统打穿
+/// （14G 机器 swap 吃满后开 9 宫格会全系统卡死）。
+const MEM_RESERVE_MB: u64 = 700;
+
+/// 读取 /proc/meminfo 的 MemAvailable（MB）。
+fn mem_available_mb() -> Option<u64> {
+    let s = std::fs::read_to_string("/proc/meminfo").ok()?;
+    for line in s.lines() {
+        if let Some(rest) = line.strip_prefix("MemAvailable:") {
+            let kb: u64 = rest.trim().trim_end_matches("kB").trim().parse().ok()?;
+            return Some(kb / 1024);
+        }
+    }
+    None
+}
+
+/// 创建宫格（2..=12）：每格 spawn 一个子进程并经 UDS 建 webview，默认打开引导页，
 /// 位置由前端 grid_position 告知（子进程窗口初始隐藏，定位后 show）。
+/// 返回实际创建的格数：内存预算守卫会在可用内存不足时自动降级（保底 2 格），
+/// 前端据此调整 gridCount 并提示用户。
 #[tauri::command]
-pub fn create_grid(app: AppHandle, n: usize) -> Result<(), String> {
+pub fn create_grid(app: AppHandle, n: usize) -> Result<usize, String> {
     let n = n.clamp(2, MAX_GRID);
     // 先清理旧的宫格子进程（幂等，可安全重复调用）
     close_grid(app.clone())?;
+    // 内存预算守卫：可用内存不足以支撑请求格数时自动降级
+    let n = match mem_available_mb() {
+        Some(avail) => {
+            let affordable = (avail.saturating_sub(MEM_RESERVE_MB) / GRID_MEM_MB) as usize;
+            let budgeted = affordable.clamp(2, MAX_GRID).min(n);
+            if budgeted < n {
+                eprintln!(
+                    "[create_grid] 内存预算守卫: 可用 {}MB，请求 {} 格 → 降级 {} 格",
+                    avail, n, budgeted
+                );
+            }
+            budgeted
+        }
+        None => n,
+    };
     let state = app.state::<AppState>();
     let mgr = &state.grid_manager;
     for i in 0..n {
@@ -1070,8 +1137,12 @@ pub fn create_grid(app: AppHandle, n: usize) -> Result<(), String> {
         )?;
         mgr.record_url(index, "https://www.baidu.com");
         eprintln!("[create_grid] grid-{} 子进程就绪", i);
+        // 错峰启动：间隔 300ms，削掉多个 WebKit 同时冷启动的瞬时 CPU/IO 峰值
+        if i + 1 < n {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
     }
-    Ok(())
+    Ok(n)
 }
 
 /// 关闭所有宫格（销毁对应子进程）。
@@ -1412,6 +1483,191 @@ pub fn tab_position(
     apply_bounds(&app, &id, x, y, width, height)
 }
 
+// ====== 资源监控（宫格设置行"资源"按钮） =====
+
+#[derive(serde::Serialize)]
+pub struct ProcStat {
+    pub pid: u32,
+    pub name: String,
+    /// 进程树合计 RSS（MB，含 WebKit 子进程）
+    pub rss_mb: f64,
+}
+
+#[derive(serde::Serialize)]
+pub struct ResourceStats {
+    pub mem_total_mb: u64,
+    pub mem_available_mb: u64,
+    /// 应用全部进程合计（主进程 + 全部宫格子进程树）
+    pub app_total_mb: f64,
+    /// 主进程树（不含宫格子进程树）
+    pub main: ProcStat,
+    /// 每宫格子进程树（index 即 grid-N 的 N）
+    pub grids: Vec<ProcStat>,
+}
+
+/// 读取 /proc 全量进程表：pid -> (ppid, comm, rss_kb)。
+fn read_proc_table() -> HashMap<u32, (u32, String, u64)> {
+    let mut procs = HashMap::new();
+    let Ok(rd) = std::fs::read_dir("/proc") else { return procs };
+    for e in rd.flatten() {
+        let name = e.file_name();
+        let Some(pid) = name.to_str().and_then(|s| s.parse::<u32>().ok()) else { continue };
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else { continue };
+        // comm 在括号内（可含空格），ppid 是右括号后的第 2 个字段
+        let Some(lp) = stat.find('(') else { continue };
+        let Some(rp) = stat.rfind(')') else { continue };
+        let comm = stat[lp + 1..rp].to_string();
+        let ppid: u32 = stat[rp + 2..]
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let rss_kb = std::fs::read_to_string(format!("/proc/{pid}/status"))
+            .ok()
+            .and_then(|s| {
+                s.lines()
+                    .find_map(|l| l.strip_prefix("VmRSS:"))
+                    .and_then(|r| r.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+            })
+            .unwrap_or(0);
+        procs.insert(pid, (ppid, comm, rss_kb));
+    }
+    procs
+}
+
+/// 进程树合计 RSS（kB）：root 及其全部子孙。
+fn subtree_rss_kb(procs: &HashMap<u32, (u32, String, u64)>, root: u32) -> u64 {
+    let mut sum = 0;
+    let mut stack = vec![root];
+    while let Some(p) = stack.pop() {
+        if let Some((_, _, rss)) = procs.get(&p) {
+            sum += rss;
+        }
+        for (pid, (ppid, _, _)) in procs {
+            if *ppid == p {
+                stack.push(*pid);
+            }
+        }
+    }
+    sum
+}
+
+/// 资源占用统计：主进程树 + 每宫格子进程树的 RSS（含 WebKit 子进程）。
+#[tauri::command]
+pub fn resource_stats(app: AppHandle) -> ResourceStats {
+    let procs = read_proc_table();
+    let main_pid = std::process::id();
+    let grid_pids = app.state::<AppState>().grid_manager.pids();
+    let grid_total_kb: u64 = grid_pids
+        .iter()
+        .map(|(_, pid)| subtree_rss_kb(&procs, *pid))
+        .sum();
+    let app_total_kb = subtree_rss_kb(&procs, main_pid); // 宫格子进程是主进程的子进程，已含
+    let main_only_kb = app_total_kb.saturating_sub(grid_total_kb);
+    let main_name = procs
+        .get(&main_pid)
+        .map(|(_, c, _)| c.clone())
+        .unwrap_or_else(|| "main".to_string());
+    let grids = grid_pids
+        .iter()
+        .map(|(index, pid)| ProcStat {
+            pid: *pid,
+            name: format!("grid-{index}"),
+            rss_mb: subtree_rss_kb(&procs, *pid) as f64 / 1024.0,
+        })
+        .collect();
+    ResourceStats {
+        mem_total_mb: std::fs::read_to_string("/proc/meminfo")
+            .ok()
+            .and_then(|s| {
+                s.lines()
+                    .find_map(|l| l.strip_prefix("MemTotal:"))
+                    .and_then(|r| r.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+            })
+            .unwrap_or(0)
+            / 1024,
+        mem_available_mb: mem_available_mb().unwrap_or(0),
+        app_total_mb: app_total_kb as f64 / 1024.0,
+        main: ProcStat {
+            pid: main_pid,
+            name: main_name,
+            rss_mb: main_only_kb as f64 / 1024.0,
+        },
+        grids,
+    }
+}
+
+// ====== 页签休眠（设置面板开关，默认关） =====
+//
+// 背景：14G 内存机器上每个页签 WebKitWebProcess 占 300+MB，长期不用的页签
+// 白吃内存。冻结（FREEZE_JS）只省 CPU 不省内存；休眠 = 销毁 webview 仅留 URL，
+// 激活时按 URL 重建（页面状态如滚动位置/表单不保留，登录态由 WebKit 持久会话保留）。
+
+/// 非激活超过该时长的页签才休眠（秒）。
+const TAB_HIBERNATE_IDLE_SECS: u64 = 600;
+
+/// 设置页签休眠开关（前端设置面板调用；开启后清扫线程生效）。
+#[tauri::command]
+pub fn set_tab_hibernation(app: AppHandle, enabled: bool) -> Result<(), String> {
+    app.state::<AppState>()
+        .hibernation_enabled
+        .store(enabled, Ordering::Relaxed);
+    eprintln!("[hibernation] 页签休眠开关 = {}", enabled);
+    Ok(())
+}
+
+/// 休眠单个页签：销毁 webview，URL 保留在 tabs 表（激活时重建）。激活页签不休眠。
+fn hibernate_tab(app: &AppHandle, id: &str) {
+    let state = app.state::<AppState>();
+    if state.active_tab.lock().unwrap().as_deref() == Some(id) {
+        return;
+    }
+    use tauri_plugin_browser_tabs::TabManagerState;
+    let manager = app.state::<TabManagerState>();
+    if manager.close_tab(&id.to_string()).is_ok() {
+        state.child_layouts.lock().unwrap().remove(id);
+        state.last_position_at.lock().unwrap().remove(id);
+        state.tab_idle_since.lock().unwrap().remove(id);
+        state
+            .hibernated_tabs
+            .lock()
+            .unwrap()
+            .insert(id.to_string());
+        eprintln!("[hibernation] 页签 {} 已休眠（webview 销毁，URL 保留）", id);
+    }
+}
+
+/// 休眠清扫线程（主进程 setup 启动一次）：每 60s 检查，开关开启时把
+/// 非激活超 TAB_HIBERNATE_IDLE_SECS 的页签休眠。
+pub fn start_hibernation_sweeper(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        let state = app.state::<AppState>();
+        if !state.hibernation_enabled.load(Ordering::Relaxed) {
+            continue;
+        }
+        let active = state.active_tab.lock().unwrap().clone();
+        let now = std::time::Instant::now();
+        let victims: Vec<String> = {
+            let idle = state.tab_idle_since.lock().unwrap();
+            let hibernated = state.hibernated_tabs.lock().unwrap();
+            let tabs = state.tabs.lock().unwrap();
+            idle.iter()
+                .filter(|(id, since)| {
+                    Some(*id) != active.as_ref()
+                        && !hibernated.contains(*id)
+                        && tabs.contains_key(*id)
+                        && now.duration_since(**since).as_secs() > TAB_HIBERNATE_IDLE_SECS
+                })
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        for id in victims {
+            hibernate_tab(&app, &id);
+        }
+    });
+}
+
 /// 列出当前所有页签。
 #[tauri::command]
 pub fn tab_list(app: AppHandle) -> Vec<TabInfo> {
@@ -1466,8 +1722,40 @@ pub fn eval_in_tab(app: AppHandle, id: String, js: String) -> Result<String, Str
 /// 目标页签的精确位置由前端随后调用 tab_position 给出，避免后端与前端争夺坐标。
 #[tauri::command]
 pub fn tab_activate(app: AppHandle, id: String) -> Result<(), String> {
+    // 休眠重建：webview 已销毁的页签先按原 URL 重建（1x1 隐藏，前端 tab_position 放大）
+    if app
+        .state::<AppState>()
+        .hibernated_tabs
+        .lock()
+        .unwrap()
+        .remove(&id)
+    {
+        let url = app
+            .state::<AppState>()
+            .tabs
+            .lock()
+            .unwrap()
+            .get(&id)
+            .map(|t| t.url.clone());
+        if let Some(url) = url {
+            spawn_child_window(&app, &id, &url, 0.0, 0.0, 1.0, 1.0)?;
+            eprintln!("[hibernation] 页签 {} 已从休眠重建 url={}", id, url);
+        }
+    }
     // 暂存激活页签，前端会随后调用 tab_position 精确布局
     *app.state::<AppState>().active_tab.lock().unwrap() = Some(id.clone());
+    // 休眠计时：目标页签移出 idle 表；其它页签从首次失活时刻起算（已有记录不刷新）
+    {
+        let state = app.state::<AppState>();
+        let mut idle = state.tab_idle_since.lock().unwrap();
+        idle.remove(&id);
+        let now = std::time::Instant::now();
+        for k in state.tabs.lock().unwrap().keys() {
+            if *k != id {
+                idle.entry(k.clone()).or_insert(now);
+            }
+        }
+    }
     // 把其它页签隐藏（子窗口 hide），目标页签若有记住布局则立即重定位显示。
     // 这些 GTK 操作必须整体走 run_on_main_thread，避免 command 同步上下文死锁。
     let app_act = app.clone();

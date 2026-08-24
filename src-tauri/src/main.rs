@@ -350,7 +350,7 @@ fn run_grid_selftest(app: tauri::AppHandle) {
             }
         };
         // 1) 创建 2 宫格（spawn 2 子进程 + UDS CreateTab）
-        step("create_grid(2)", bridge::create_grid(app.clone(), 2));
+        step("create_grid(2)", bridge::create_grid(app.clone(), 2).map(|_| ()));
         // 2) 导航 + 定位 + eval
         step(
             "grid_open(0)",
@@ -552,6 +552,8 @@ fn main() {
             // 启动布局守护线程：持续纠正 GTK 布局循环导致的子 webview 位置漂移
             // （页签 tab-N 仍在主进程 add_child；宫格已迁子进程不在 child_layouts）
             bridge::start_layout_enforcer(app.handle().clone());
+            // 页签休眠清扫线程（开关默认关，设置面板开启后生效）
+            bridge::start_hibernation_sweeper(app.handle().clone());
             // GRID_SELFTEST=1：宫格多进程端到端自检（Phase 2 UDS 转发 + Phase 3 崩溃自愈）。
             // 跑完写 /tmp/grid-selftest-result.txt 并退出。日常运行不设该变量即可。
             if std::env::var("GRID_SELFTEST").is_ok() {
@@ -613,6 +615,8 @@ fn main() {
             bridge::tab_go_forward,
             bridge::tab_reload,
             bridge::eval_in_tab,
+            bridge::set_tab_hibernation,
+            bridge::resource_stats,
             bridge::term_spawn,
             bridge::term_write,
             bridge::term_resize,

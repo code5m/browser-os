@@ -250,8 +250,13 @@ export const useBrowserStore = defineStore("browser", () => {
     const n = gridCount.value;
     gridSession.value += 1;
     bridge.debugLog(`buildGrid start n=${n} mainView=${layout.mainView}`);
-    // createGrid 内部会先 close_grid 再重建，幂等，可安全重复调用
-    await bridge.createGrid(n);
+    // createGrid 内部会先 close_grid 再重建，幂等，可安全重复调用。
+    // 返回实际创建格数：内存预算守卫在可用内存不足时自动降级（保底 2 格）
+    const created = await bridge.createGrid(n);
+    if (created < n) {
+      gridCount.value = created;
+      layout.showToast(`⚠️ 可用内存不足，已降级为 ${created} 格（每格约需 450MB）`);
+    }
     bridge.debugLog("buildGrid createGrid done");
     gridOpen.value = true;
     // 注意：不要在这里覆盖 mainView。由调用方（onItem/grid 工具条）决定切到 grid 视图，
@@ -259,7 +264,7 @@ export const useBrowserStore = defineStore("browser", () => {
     if (layout.mainView !== "grid" && layout.mainView !== "browser") {
       layout.mainView = "grid";
     }
-    for (let i = 0; i < n; i++) {
+    for (let i = 0; i < created; i++) {
       const u = gridUrls[i] || url.value || "https://www.baidu.com";
       gridUrls[i] = u;
       await bridge.gridOpen(i, u);

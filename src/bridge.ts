@@ -11,6 +11,7 @@ import type {
   BrowserResources,
   TabInfo,
   AppEntry,
+  ResourceStats,
 } from "./types";
 
 // 类型化 IPC 封装：前端永远只传“意图”，不直接碰 OS / 凭据
@@ -114,7 +115,8 @@ export const bridge = {
   clipboardWrite: (text: string) => invoke("clipboard_write", { text }),
 
   // ====== 宫格浏览器 ======
-  createGrid: (n: number) => invoke("create_grid", { n }),
+  // 返回实际创建的格数：内存预算守卫在可用内存不足时会自动降级（保底 2）
+  createGrid: (n: number) => invoke<number>("create_grid", { n }),
 
   closeGrid: () => invoke("close_grid"),
 
@@ -177,6 +179,13 @@ export const bridge = {
 
   // 在指定子 webview 中执行 JavaScript（用于 AI 模式向宫格注入问题）
   evalInTab: (id: string, js: string) => invoke<string>("eval_in_tab", { id, js }),
+
+  // 页签休眠开关（默认关；开启后非激活超 10 分钟的页签销毁 webview 仅留 URL，激活时重建）
+  setTabHibernation: (enabled: boolean) =>
+    invoke("set_tab_hibernation", { enabled }),
+
+  // 资源占用统计（主进程树 + 每宫格子进程树 RSS）
+  resourceStats: () => invoke<ResourceStats>("resource_stats"),
 
   // 订阅页签标题更新事件（后端在页面加载完成后回传真实标题）
   onTabTitle: (cb: (t: TabInfo) => void) =>

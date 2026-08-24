@@ -54,6 +54,8 @@ commands.allow = [
     "tab_go_forward",
     "tab_reload",
     "eval_in_tab",
+    "set_tab_hibernation",
+    "resource_stats",
     "term_spawn",
     "term_write",
     "term_resize",

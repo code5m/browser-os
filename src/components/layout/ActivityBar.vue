@@ -51,6 +51,35 @@ const gridLayouts = [
 const gridCounts = [2, 3, 4, 6, 9];
 const urlsOpen = ref(false);
 
+// ===== 资源监控（D）：宫格设置行"资源"按钮，2s 轮询 =====
+import type { ResourceStats } from "../../types";
+import { bridge } from "../../bridge";
+import { onBeforeUnmount } from "vue";
+const resOpen = ref(false);
+const resStats = ref<ResourceStats | null>(null);
+let resTimer: number | null = null;
+async function resRefresh() {
+  try {
+    resStats.value = await bridge.resourceStats();
+  } catch {}
+}
+function toggleRes() {
+  resOpen.value = !resOpen.value;
+  if (resOpen.value) {
+    resRefresh();
+    resTimer = window.setInterval(resRefresh, 2000);
+  } else if (resTimer) {
+    clearInterval(resTimer);
+    resTimer = null;
+  }
+}
+onBeforeUnmount(() => {
+  if (resTimer) clearInterval(resTimer);
+});
+function fmtMb(mb: number) {
+  return mb >= 1024 ? (mb / 1024).toFixed(1) + "G" : Math.round(mb) + "M";
+}
+
 // 扩展行：grid=宫格设置 / more=功能菜单 / omni=最近+常用。
 // 关键设计：面板【不悬浮】——页签/宫格是原生 GTK 子窗口，永远压在 HTML 之上，
 // 悬浮下拉必然被网页盖住。内联扩展行把工具栏撑高、网页随 viewport 整体下移
@@ -286,8 +315,24 @@ async function openDirCenter() {
         {{ browser.gridOpen ? "重排" : "打开" }}
       </button>
       <button :class="{ active: urlsOpen }" title="编辑各格网址" @click="urlsOpen = !urlsOpen">网址</button>
+      <button :class="{ active: resOpen }" title="查看内存占用" @click="toggleRes">资源</button>
       <button class="er-danger" @click="expanded = ''; browser.closeGridAll()">关闭宫格</button>
       <button class="er-close" @click="expanded = ''" title="收起">✕</button>
+    </div>
+    <!-- 资源监控行：主进程 + 每宫格子进程树 RSS（2s 自动刷新） -->
+    <div v-if="expanded === 'grid' && resOpen && resStats" class="expand-row">
+      <span class="er-label">
+        系统可用 {{ fmtMb(resStats.mem_available_mb) }} / {{ fmtMb(resStats.mem_total_mb) }}
+      </span>
+      <span class="er-sep"></span>
+      <span class="er-label">应用共 {{ fmtMb(resStats.app_total_mb) }}</span>
+      <span class="er-label">主进程 {{ fmtMb(resStats.main.rss_mb) }}</span>
+      <span v-for="g in resStats.grids" :key="g.pid" class="er-label">
+        {{ g.name }} {{ fmtMb(g.rss_mb) }}
+      </span>
+      <span v-if="resStats.mem_available_mb < 1500" class="er-warn">
+        ⚠️ 可用内存偏低，建议减少格数或关闭其它应用
+      </span>
     </div>
     <div v-if="expanded === 'grid' && urlsOpen" class="expand-row">
       <span v-for="i in browser.gridCount" :key="i" class="er-url">
@@ -390,6 +435,11 @@ async function openDirCenter() {
 .er-label {
   font-size: 11px;
   color: #86909c;
+  user-select: none;
+}
+.er-warn {
+  font-size: 11px;
+  color: #c0392b;
   user-select: none;
 }
 .er-sep {

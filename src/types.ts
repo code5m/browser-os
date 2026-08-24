@@ -102,3 +102,19 @@ export interface AppEntry {
   icon: string;
   icon_path?: string;
 }
+
+// 进程资源占用（RSS 进程树合计，MB）
+export interface ProcStat {
+  pid: number;
+  name: string;
+  rss_mb: number;
+}
+
+// 应用资源统计（主进程树 + 每宫格子进程树）
+export interface ResourceStats {
+  mem_total_mb: number;
+  mem_available_mb: number;
+  app_total_mb: number;
+  main: ProcStat;
+  grids: ProcStat[];
+}

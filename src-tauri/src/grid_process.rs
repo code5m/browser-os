@@ -648,6 +648,16 @@ impl GridProcessManager {
         self.children.lock().unwrap().get(&index).map(|h| h.child.id())
     }
 
+    /// 所有存活宫格子进程的 (index, pid) 列表（资源统计用）。
+    pub fn pids(&self) -> Vec<(u32, u32)> {
+        self.children
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(i, h)| (*i, h.child.id()))
+            .collect()
+    }
+
     /// 关闭所有宫格子进程（主进程退出前/close_grid 调用）。
     pub fn shutdown_all(&self) {
         let mut children = self.children.lock().unwrap();
