@@ -25,12 +25,26 @@ fn log_dir() -> PathBuf {
     base.join("com.jizhijiandan.mvp").join("logs")
 }
 
+/// 进程角色：主进程 "main"，宫格子进程 "grid{N}"（读 GRID_CHILD_INDEX 环境变量）。
+/// 用于 session 日志命名（多子进程同秒启动撞名修复）与日志行内标记。
+fn role_tag() -> String {
+    match std::env::var("GRID_CHILD_INDEX") {
+        Ok(i) => format!("grid{i}"),
+        Err(_) => "main".to_string(),
+    }
+}
+
 /// 在 main() 第一行调用。
 pub fn init() {
     let dir = log_dir();
     let _ = fs::create_dir_all(&dir);
     let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
-    let session_path = dir.join(format!("session-{ts}.log"));
+    // 文件名带角色 + pid：多宫格子进程同秒启动时不再共用同一 session 文件。
+    let session_path = dir.join(format!(
+        "session-{ts}-{}-pid{}.log",
+        role_tag(),
+        std::process::id()
+    ));
 
     // ===== stderr 镜像：pipe + 转发线程（原始终端与日志文件各一份） =====
     unsafe {
@@ -56,7 +70,12 @@ pub fn init() {
         }
     }
 
-    eprintln!("[crashlog] 会话日志: {}", session_path.display());
+    eprintln!(
+        "[crashlog] 会话日志: {} (role={} pid={})",
+        session_path.display(),
+        role_tag(),
+        std::process::id()
+    );
 
     // ===== Rust panic 钩子 =====
     let crash_dir = dir.clone();

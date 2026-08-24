@@ -3,12 +3,12 @@
 # 应用会从当前 Wayland/X11 桌面会话弹出窗口。
 #
 # 用法：
-#   bash /home/ainfinit/Documents/极智简单/V3/mvp-browser-os/run-gui.sh
+#   bash /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3/run-gui.sh
 #
 # 如需观察日志（排查白屏/崩溃），末尾加 2>&1 | tee /tmp/mvp-gui.log
 
 set -e
-APP_DIR="/home/ainfinit/Documents/极智简单/V3/mvp-browser-os"
+APP_DIR="/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3"
 BIN="$APP_DIR/src-tauri/target/debug/mvp-browser-os"
 
 if [ ! -x "$BIN" ]; then

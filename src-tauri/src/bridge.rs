@@ -1,23 +1,19 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use tauri::{AppHandle, Emitter, Listener, Manager, Webview};
+use tauri::{AppHandle, Emitter, Manager, Webview};
 use url::Url;
 
 use crate::domain::*;
+use crate::grid_ipc::GridCmd;
 use crate::keyring_store::KeyringStore;
 use crate::sync;
 use crate::workspace;
 
-// 方案 B：每个浏览器页签/宫格都是一个独立的 Tauri WebviewWindow（无装饰、透明、置顶、
-// 作为主窗口子窗口），靠屏幕坐标定位到主窗内容区的指定矩形。相比方案 C3 的
-// gtk::Overlay + gtk::Fixed 内嵌，子窗口是 WebKit 原生顶级窗口，渲染稳定、不再白屏。
-// WebviewWindow 是 Send+Sync，可直接放在 AppState 的 Mutex 里，无需线程本地存储。
-thread_local! {
-    // 防止重复注册主窗 move/resize 监听
-    static MOVE_LISTENED: RefCell<bool> = RefCell::new(false);
+/// 宫格 label（grid-N）→ 子进程 index；页签 tab-N 返回 None（页签仍在主进程）。
+fn grid_index_of(label: &str) -> Option<u32> {
+    label.strip_prefix("grid-")?.parse().ok()
 }
 
 /// 在主窗口内创建一个子 Webview（方案 D：同窗口多 webview）。
@@ -71,79 +67,6 @@ fn plugin_eval(app: &AppHandle, id: &str, js: &str) -> Result<(), String> {
     manager
         .eval(&id.to_string(), js)
         .map_err(|e| format!("webview {id} 执行 JS 失败: {e}"))
-}
-
-/// 注册主窗 move/resize 监听（仅一次），触发时把内容区坐标重新换算并应用到所有子窗口。
-/// 子窗口的定位信息存在 AppState.child_layouts（id -> 内容区 CSS 矩形）。
-/// 注意：改用 add_child 后，子 webview 自动跟随主窗口移动，这里仅用于窗口 Resized 时
-/// 重新计算子 webview 尺寸（前端也会在 resize 时重新调用 tab_position，这里是兜底）。
-#[allow(dead_code)]
-fn ensure_reposition_listener(app: &AppHandle) {
-    if MOVE_LISTENED.with(|m| *m.borrow()) {
-        return;
-    }
-    MOVE_LISTENED.with(|m| *m.borrow_mut() = true);
-    let app_clone = app.clone();
-    // 用 main 窗口的 on_window_event 捕获 Moved/Resized，重定位全部子窗口
-    if let Some(main) = app.get_window("main") {
-        let app_ev = app_clone.clone();
-        main.on_window_event(move |event| {
-            use tauri::WindowEvent;
-            if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
-                // on_window_event 本身在主线程事件循环中，直接调用即可，
-                // 不要再 run_on_main_thread，避免嵌套调度死锁。
-                reposition_all(&app_ev);
-            }
-        });
-    }
-    // 主窗失焦时隐藏子窗口（避免"幽灵浮层"），重新聚焦时恢复定位
-    let app_blur = app.clone();
-    let _ = {
-        let captured = app_blur.clone();
-        app_blur.listen("tauri://blur", move |_| {
-            // listen 回调也在主线程，直接执行
-            hide_all_children(&captured);
-        })
-    };
-    let app_focus = app.clone();
-    let _ = {
-        let captured = app_focus.clone();
-        app_focus.listen("tauri://focus", move |_| {
-            // listen 回调也在主线程，直接执行
-            reposition_all(&captured);
-        })
-    };
-}
-
-/// 按当前主窗内容区坐标重定位所有子 webview（add_child 的子 webview 自动跟随父窗口移动，
-/// 这里只在主窗 Resized 时更新尺寸；position 用相对主窗口内容区的逻辑坐标）。
-#[allow(dead_code)]
-fn reposition_all(app: &AppHandle) {
-    use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
-    let layouts = app.state::<AppState>().child_layouts.lock().unwrap().clone();
-    let manager = app.state::<TabManagerState>();
-    for (id, r) in layouts {
-        // child_layouts 存的是相对主窗内容区的 CSS 逻辑坐标
-        let _ = manager.update_rect(&id, LogicalRect::new(r.0, r.1, r.2.max(1.0), r.3.max(1.0)));
-    }
-}
-
-/// 隐藏全部子窗口（主窗失焦时调用），避免浮在主窗之外的幽灵窗口。
-#[allow(dead_code)]
-fn hide_all_children(app: &AppHandle) {
-    use tauri_plugin_browser_tabs::TabManagerState;
-    let ids: Vec<String> = app
-        .state::<AppState>()
-        .child_layouts
-        .lock()
-        .unwrap()
-        .keys()
-        .cloned()
-        .collect();
-    let manager = app.state::<TabManagerState>();
-    for id in ids {
-        let _ = manager.set_visible(&id, false);
-    }
 }
 
 /// 记住某个子窗口的内容区布局矩形（CSS 坐标），供 move/resize 时重定位。
@@ -326,38 +249,6 @@ fn apply_bounds_inner(
     Ok(())
 }
 
-/// apply_bounds 的同步版：仅在已经处于主线程上下文（如 run_on_main_thread 闭包内）
-/// 时调用，避免重复排队。直接执行窗口操作。
-/// 当前无调用方（tab_activate 已改用无去重的 apply_bounds_inner，防止切页签时
-/// "恢复显示"被 50ms 去重丢弃），保留备用。
-#[allow(dead_code)]
-fn apply_bounds_sync(
-    app: &AppHandle,
-    id: &str,
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-) -> Result<(), String> {
-    // 后端去重：仅"rect 相同且 <50ms"才丢弃，rect 变了必须应用
-    {
-        let state = app.state::<AppState>();
-        let mut last = state.last_position_at.lock().unwrap();
-        let now = std::time::Instant::now();
-        if let Some((t, lx, ly, lw, lh)) = last.get(id) {
-            let same_rect = (lx - x).abs() < 0.5
-                && (ly - y).abs() < 0.5
-                && (lw - width).abs() < 0.5
-                && (lh - height).abs() < 0.5;
-            if same_rect && now.duration_since(*t).as_millis() < 50 {
-                return Ok(());
-            }
-        }
-        last.insert(id.to_string(), (now, x, y, width, height));
-    }
-    apply_bounds_inner(app, id, x, y, width, height)
-}
-
 /// 把子窗口移出可视区（隐藏态），用于非激活页签/宫格。
 /// 注意：不能用 manager.set_visible(false)（即 webview.hide()）——对正在渲染的
 /// WebKitGTK 子 webview 调 hide 会阻塞主线程事件循环导致死锁（实测新建第二个
@@ -396,6 +287,13 @@ fn hide_bounds(app: &AppHandle, id: &str) {
 #[tauri::command]
 pub fn hide_webview(app: AppHandle, id: String) -> Result<(), String> {
     use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
+    // 宫格已迁子进程：隐藏 = 子进程整个窗口 hide（等价旧方案的移出屏幕）
+    if let Some(index) = grid_index_of(&id) {
+        let mgr = &app.state::<AppState>().grid_manager;
+        mgr.record_hidden(index);
+        mgr.send(index, GridCmd::HideWindow { id });
+        return Ok(());
+    }
     let state = app.state::<AppState>();
     let has_layout = state.child_layouts.lock().unwrap().contains_key(&id);
     if has_layout {
@@ -418,13 +316,16 @@ pub fn hide_all_webviews(app: AppHandle) -> Result<(), String> {
     use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
     let manager = app.state::<TabManagerState>();
     let state = app.state::<AppState>();
-    // 收集页签 + 宫格 id
-    let mut ids: Vec<String> = state.tabs.lock().unwrap().keys().cloned().collect();
-    for i in 0..MAX_GRID {
-        ids.push(format!("grid-{i}"));
+    // 宫格已迁子进程：逐格下发 HideWindow（子进程整个窗口 hide）
+    for index in state.grid_manager.indices() {
+        state.grid_manager.record_hidden(index);
+        state
+            .grid_manager
+            .send(index, GridCmd::HideWindow { id: format!("grid-{index}") });
     }
-    // 只处理插件管理表里真实存在的 webview：grid-0..MAX_GRID 是无脑穷举的，
-    // 不存在的 id 走兜底必然 "tab not found"（纯噪音日志，实测刷屏 grid-2..grid-11）
+    // 页签 id（宫格已不在主进程插件表里，无需穷举 grid-N）
+    let ids: Vec<String> = state.tabs.lock().unwrap().keys().cloned().collect();
+    // 只处理插件管理表里真实存在的 webview
     let existing: std::collections::HashSet<String> =
         manager.get_tab_ids().into_iter().collect();
     for id in ids {
@@ -1136,80 +1037,81 @@ pub fn clipboard_write(text: String) -> Result<(), String> {
     cb.set_text(text).map_err(|e| format!("写入失败: {e}"))
 }
 
-// ====== 宫格浏览器：多网页并排对比 ======
+// ====== 宫格浏览器：多网页并排对比 =====
 //
-// 思路：创建一组独立子窗口（label = "grid-{i}"），由前端按网格计算每个格子的
-// 主窗内容区坐标后调用 grid_position 定位。create_grid 仅负责创建窗口并打开默认页。
+// 多进程架构（Phase 2 起）：每个宫格 grid-N 由独立子进程承载（崩溃隔离），
+// 本组命令不再走本地 TabManagerState（add_child），而是经 GridProcessManager
+// 转发 UDS 命令到对应子进程。页签 tab-N 不受影响（仍主进程本地）。
+// 前端契约不变：create_grid/grid_open/grid_position/grid_set_zoom/close_grid/grid_close_one。
 
 const MAX_GRID: usize = 12;
 
-/// 创建 n 个宫格独立子窗口（2..=12），默认都打开引导页，位置由前端 grid_position 告知。
+/// 创建 n 个宫格（2..=12）：每格 spawn 一个子进程并经 UDS 建 webview，默认打开引导页，
+/// 位置由前端 grid_position 告知（子进程窗口初始隐藏，定位后 show）。
 #[tauri::command]
 pub fn create_grid(app: AppHandle, n: usize) -> Result<(), String> {
-    use tauri_plugin_browser_tabs::TabManagerState;
     let n = n.clamp(2, MAX_GRID);
-    // 先清理旧的宫格（插件 tabs 表同步 remove）
+    // 先清理旧的宫格子进程（幂等，可安全重复调用）
     close_grid(app.clone())?;
-    // 关键：判断宫格是否已存在要用【插件自己的 tabs 表】，不能用 app.get_webview ——
-    // tauri manager 的 webview 注册表在 close(异步 dispatcher)后可能仍残留，
-    // 用 get_webview 判断会误判"已存在"而 continue 跳过创建，导致二次打开宫格时
-    // 宫格 webview 根本没建、只剩激活页签（实测第二次点宫格只显示单个大页面）。
-    let manager = app.state::<TabManagerState>();
-    let existing: std::collections::HashSet<String> =
-        manager.get_tab_ids().into_iter().collect();
-    // 初始用 1x1 隐藏尺寸，前端 grid_position 会精确放大定位
+    let state = app.state::<AppState>();
+    let mgr = &state.grid_manager;
     for i in 0..n {
+        let index = i as u32;
         let label = format!("grid-{i}");
-        if existing.contains(&label) {
-            continue;
-        }
-        spawn_child_window(
-            &app,
-            &label,
-            "https://www.baidu.com",
-            0.0,
-            0.0,
-            1.0,
-            1.0,
+        mgr.get_or_spawn(index)?;
+        // 等子进程 UDS 连接 + webview 创建完成（子进程冷启动 1~3 秒）
+        mgr.request(
+            index,
+            GridCmd::CreateTab {
+                id: label,
+                url: "https://www.baidu.com".to_string(),
+            },
+            20000,
         )?;
-        // 窗口已在 builder 中 visible(false)，异步建好后由前端 grid_position 放大
+        mgr.record_url(index, "https://www.baidu.com");
+        eprintln!("[create_grid] grid-{} 子进程就绪", i);
     }
     Ok(())
 }
 
-/// 关闭所有宫格（销毁对应子 webview）。
+/// 关闭所有宫格（销毁对应子进程）。
 #[tauri::command]
 pub fn close_grid(app: AppHandle) -> Result<(), String> {
-    use tauri_plugin_browser_tabs::TabManagerState;
-    let manager = app.state::<TabManagerState>();
+    let state = app.state::<AppState>();
+    let mgr = &state.grid_manager;
+    for index in mgr.indices() {
+        mgr.send(index, GridCmd::CloseTab { id: format!("grid-{index}") });
+    }
+    mgr.shutdown_all();
     for i in 0..MAX_GRID {
         let label = format!("grid-{i}");
-        let _ = manager.close_tab(&label);
-        app.state::<AppState>().child_layouts.lock().unwrap().remove(&label);
-        app.state::<AppState>().grid_zooms.lock().unwrap().remove(&label);
+        state.child_layouts.lock().unwrap().remove(&label);
+        state.grid_zooms.lock().unwrap().remove(&label);
+        state.last_position_at.lock().unwrap().remove(&label);
     }
     Ok(())
 }
 
-/// 在指定宫格(index)中打开网址。
+/// 在指定宫格(index)中打开网址（经 UDS Navigate 到子进程）。
 /// 导航后延迟应用存储的缩放（给页面加载留时间），确保新页面加载完成后自动缩放到位。
 #[tauri::command]
 pub fn grid_open(app: AppHandle, index: usize, url: String) -> Result<(), String> {
     let label = format!("grid-{index}");
     let target = normalize_url(&url);
     let _ = Url::parse(&target).map_err(|e| format!("无效网址: {e}"))?;
-    let app2 = app.clone();
-    let label2 = label.clone();
-    let _ = app.run_on_main_thread(move || {
-        if let Some(win) = app2.get_webview(&label2) {
-            let _ = win.eval(&format!(
-                "window.location.href = {url_js}",
-                url_js = serde_json::to_string(&target).unwrap()
-            ));
-        }
-    });
+    let state = app.state::<AppState>();
+    let mgr = &state.grid_manager;
+    mgr.request(
+        index as u32,
+        GridCmd::Navigate {
+            id: label.clone(),
+            url: target.clone(),
+        },
+        10000,
+    )?;
+    mgr.record_url(index as u32, &target);
     // 页面加载完成后重新应用缩放（CSS zoom 会被新页面重置，需重新注入）
-    let stored = app.state::<AppState>().grid_zooms.lock().unwrap().get(&label).copied();
+    let stored = state.grid_zooms.lock().unwrap().get(&label).copied();
     if let Some(z) = stored {
         let app3 = app.clone();
         let label3 = label.clone();
@@ -1221,17 +1123,17 @@ pub fn grid_open(app: AppHandle, index: usize, url: String) -> Result<(), String
     Ok(())
 }
 
-/// 真正给宫格 webview 应用缩放（CSS zoom + 原生 zoom_level 双管齐下）。
+/// 真正给宫格 webview 应用缩放（WebKitGTK 原生 zoom_level，经 UDS 到子进程）。
 /// 仅在页面加载完成后调用，避免加载中设置被重置导致卡顿。
 fn apply_grid_zoom(app: &AppHandle, label: &str, z: f64) {
     if z <= 0.1 || (z - 1.0).abs() < 0.01 {
         return;
     }
-    // 只用 WebKitGTK 原生 set_zoom_level，不再叠加 JS style.zoom。
-    // 之前两者叠加导致宫格内容被双重缩放（越缩越小）。
-    use tauri_plugin_browser_tabs::TabManagerState;
-    let manager = app.state::<TabManagerState>();
-    let _ = manager.set_zoom(&label.to_string(), z);
+    if let Some(index) = grid_index_of(label) {
+        app.state::<AppState>()
+            .grid_manager
+            .send(index, GridCmd::SetZoom { id: label.to_string(), zoom: z });
+    }
 }
 
 /// 设置宫格某格的缩放（存起来 + 若页面已加载则立即应用）。
@@ -1255,9 +1157,10 @@ pub fn grid_set_zoom(app: AppHandle, index: usize, zoom: f64) -> Result<(), Stri
 }
 
 /// 批量定位所有宫格（前端按网格计算好每个格子的 x/y/w/h 后调用）。
-/// 坐标为主窗口内容区相对坐标（CSS），换算成屏幕物理坐标后 set_position/set_size。
-/// 注意：本命令只负责定位，不再处理缩放 —— 缩放由 grid_set_zoom 单独管理，
-/// 避免每次定位都重复 zoom 引发整页重排导致卡顿/崩溃。
+/// 前端传相对主窗内容区的 CSS 坐标；子进程窗口是独立顶层窗口，这里换算成
+/// 绝对屏幕物理坐标（主窗 inner_position + scale_factor）后经 UDS 下发，
+/// 子进程 set_position/set_size + show。
+/// 注意：本命令只负责定位，不再处理缩放 —— 缩放由 grid_set_zoom 单独管理。
 #[tauri::command]
 pub fn grid_position(
     app: AppHandle,
@@ -1268,30 +1171,42 @@ pub fn grid_position(
     height: f64,
 ) -> Result<(), String> {
     let label = format!("grid-{index}");
-    // 诊断：记录定位请求到达后端时，插件 tabs 表里是否已有该宫格 webview。
-    // tab_exists=false 说明创建/定位时序脱节（create_grid 的 add_child 尚未完成），
-    // 本次定位会失败，需要前端重试兜底。
+    // 后端去重：仅"rect 相同且 <50ms"才丢弃（防 IPC 洪泛），rect 变了必须应用
     {
-        use tauri_plugin_browser_tabs::TabManagerState;
-        let manager = app.state::<TabManagerState>();
-        let has = manager.get_tab_ids().iter().any(|t| t == &label);
-        eprintln!(
-            "[grid_position] label={} rect=({},{},{},{}) tab_exists={}",
-            label, x, y, width, height, has
-        );
+        let state = app.state::<AppState>();
+        let mut last = state.last_position_at.lock().unwrap();
+        let now = std::time::Instant::now();
+        if let Some((t, lx, ly, lw, lh)) = last.get(&label) {
+            let same_rect = (lx - x).abs() < 0.5
+                && (ly - y).abs() < 0.5
+                && (lw - width).abs() < 0.5
+                && (lh - height).abs() < 0.5;
+            if same_rect && now.duration_since(*t).as_millis() < 50 {
+                return Ok(());
+            }
+        }
+        last.insert(label.clone(), (now, x, y, width, height));
     }
-    apply_bounds(&app, &label, x, y, width, height)
+    let state = app.state::<AppState>();
+    let mgr = &state.grid_manager;
+    let rect = mgr
+        .abs_rect((x, y, width, height))
+        .ok_or_else(|| "主窗不可用，无法换算屏幕坐标".to_string())?;
+    mgr.record_rect(index as u32, (x, y, width, height));
+    mgr.request(index as u32, GridCmd::UpdateRect { id: label, rect }, 3000)
 }
 
-/// 关闭单个宫格（按 index），其余宫格保留。
+/// 关闭单个宫格（按 index）：销毁对应子进程，其余宫格保留。
 #[tauri::command]
 pub fn grid_close_one(app: AppHandle, index: usize) -> Result<(), String> {
-    use tauri_plugin_browser_tabs::TabManagerState;
     let label = format!("grid-{index}");
-    let manager = app.state::<TabManagerState>();
-    let _ = manager.close_tab(&label);
-    app.state::<AppState>().child_layouts.lock().unwrap().remove(&label);
-    app.state::<AppState>().grid_zooms.lock().unwrap().remove(&label);
+    let state = app.state::<AppState>();
+    let mgr = &state.grid_manager;
+    mgr.send(index as u32, GridCmd::CloseTab { id: label.clone() });
+    mgr.kill_child(index as u32);
+    state.child_layouts.lock().unwrap().remove(&label);
+    state.grid_zooms.lock().unwrap().remove(&label);
+    state.last_position_at.lock().unwrap().remove(&label);
     Ok(())
 }
 
@@ -1534,8 +1449,15 @@ pub fn tab_reload(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 /// 在指定子 webview 中执行 JavaScript（用于 AI 模式向宫格注入问题）。
+/// 宫格 grid-N 经 UDS 转发到子进程，页签 tab-N 仍走本地插件。
 #[tauri::command]
 pub fn eval_in_tab(app: AppHandle, id: String, js: String) -> Result<String, String> {
+    if let Some(index) = grid_index_of(&id) {
+        app.state::<AppState>()
+            .grid_manager
+            .request(index, GridCmd::Eval { id, js }, 10000)?;
+        return Ok("ok".to_string());
+    }
     plugin_eval(&app, &id, &js)?;
     Ok("ok".to_string())
 }
