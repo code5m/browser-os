@@ -117,4 +117,10 @@ export interface ResourceStats {
   app_total_mb: number;
   main: ProcStat;
   grids: ProcStat[];
+  // 页签休眠开关状态
+  hibernation_enabled: boolean;
+  // 当前已休眠页签数
+  hibernated_count: number;
+  // 内存预算守卫：当前可用内存最多支撑几格
+  grid_budget: number;
 }

@@ -153,19 +153,6 @@ onMounted(async () => {
   // 文件树右键菜单同样需要点空白/滚动时关闭
   window.addEventListener("click", ws.closeFileCtx);
   window.addEventListener("scroll", ws.closeFileCtx, true);
-
-  // TEMP-REPRO 崩溃复现：完整复现「开宫格 → 等 AI 页面加载 → 群发 1+1=? 回车」链路
-  // （闪崩发生在回车触发 gridSendAi → evalInTab 注入执行之后，gdb 抓栈用，调试完成后删除）
-  window.setTimeout(async () => {
-    browser.gridMode = "ai";
-    layout.openModule("grid");
-    await browser.buildGrid();
-    // 等 4 个 AI 页面加载出输入框（豆包/通义/Kimi/DeepSeek 首屏+懒加载，给足 12s）
-    window.setTimeout(async () => {
-      browser.gridAiInput = "1+1=?";
-      await browser.gridSendAi(); // 真正的崩溃触发点：回车 → evalInTab 注入
-    }, 12000);
-  }, 4000);
 });
 </script>
 

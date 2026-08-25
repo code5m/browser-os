@@ -253,10 +253,9 @@ export const useBrowserStore = defineStore("browser", () => {
     // createGrid 内部会先 close_grid 再重建，幂等，可安全重复调用。
     // 返回实际创建格数：内存预算守卫在可用内存不足时自动降级（保底 2 格）
     const created = await bridge.createGrid(n);
-    if (created < n) {
-      gridCount.value = created;
-      layout.showToast(`⚠️ 可用内存不足，已降级为 ${created} 格（每格约需 450MB）`);
-    }
+    // 降级提示存起来，最后用一条 toast 展示（showToast 单条覆盖，先发的会被吞掉）
+    const degraded = created < n;
+    if (degraded) gridCount.value = created;
     bridge.debugLog("buildGrid createGrid done");
     gridOpen.value = true;
     // 注意：不要在这里覆盖 mainView。由调用方（onItem/grid 工具条）决定切到 grid 视图，
@@ -279,7 +278,13 @@ export const useBrowserStore = defineStore("browser", () => {
     }, 400);
     // 宫格打开后激活页签被移出屏幕 → 冻结；格子可见 → 保持运行
     syncFreeze();
-    layout.showToast(`已打开 ${n} 宫格对比`);
+    if (degraded) {
+      layout.showToast(
+        `⚠️ 可用内存不足，已降级为 ${created} 格（每格约需 450MB；可关闭其它应用后重试）`
+      );
+    } else {
+      layout.showToast(`已打开 ${created} 宫格对比`);
+    }
   }
   function layoutGrid() {
     scheduleGrid();

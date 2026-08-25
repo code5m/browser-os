@@ -491,7 +491,8 @@ fn main() {
             // dev 下强制指向 vite 开发服务器：本项目窗口是 Rust 代码里 programmatic
             // 创建的，config 的 devUrl 解析未生效（webview 一直加载旧 dist，前端改动
             // 全部不生效）。release 仍走 App("index.html") 打包包内资源。
-            let main_url = if cfg!(debug_assertions) {
+            // MVP_FORCE_DIST=1：强制加载内嵌 dist（白屏二分诊断用，绕开 vite）
+            let main_url = if cfg!(debug_assertions) && std::env::var("MVP_FORCE_DIST").is_err() {
                 WebviewUrl::External("http://localhost:1421".parse().unwrap())
             } else {
                 WebviewUrl::App("index.html".into())

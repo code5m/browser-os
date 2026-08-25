@@ -1503,6 +1503,12 @@ pub struct ResourceStats {
     pub main: ProcStat,
     /// 每宫格子进程树（index 即 grid-N 的 N）
     pub grids: Vec<ProcStat>,
+    /// 页签休眠开关状态
+    pub hibernation_enabled: bool,
+    /// 当前已休眠页签数
+    pub hibernated_count: usize,
+    /// 内存预算守卫：当前可用内存最多支撑几格（创建宫格时的降级上限）
+    pub grid_budget: usize,
 }
 
 /// 读取 /proc 全量进程表：pid -> (ppid, comm, rss_kb)。
@@ -1576,6 +1582,17 @@ pub fn resource_stats(app: AppHandle) -> ResourceStats {
             rss_mb: subtree_rss_kb(&procs, *pid) as f64 / 1024.0,
         })
         .collect();
+    let avail = mem_available_mb().unwrap_or(0);
+    let hibernation_enabled = app
+        .state::<AppState>()
+        .hibernation_enabled
+        .load(Ordering::Relaxed);
+    let hibernated_count = app
+        .state::<AppState>()
+        .hibernated_tabs
+        .lock()
+        .unwrap()
+        .len();
     ResourceStats {
         mem_total_mb: std::fs::read_to_string("/proc/meminfo")
             .ok()
@@ -1586,7 +1603,7 @@ pub fn resource_stats(app: AppHandle) -> ResourceStats {
             })
             .unwrap_or(0)
             / 1024,
-        mem_available_mb: mem_available_mb().unwrap_or(0),
+        mem_available_mb: avail,
         app_total_mb: app_total_kb as f64 / 1024.0,
         main: ProcStat {
             pid: main_pid,
@@ -1594,6 +1611,11 @@ pub fn resource_stats(app: AppHandle) -> ResourceStats {
             rss_mb: main_only_kb as f64 / 1024.0,
         },
         grids,
+        hibernation_enabled,
+        hibernated_count,
+        // 真实预算（可为 0/1，创建时才会保底 2）：前端据此提示"最多还能开 N 格"
+        grid_budget: (avail.saturating_sub(MEM_RESERVE_MB) / GRID_MEM_MB)
+            .min(MAX_GRID as u64) as usize,
     }
 }
 
