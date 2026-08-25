@@ -62,6 +62,7 @@ fn run_grid_child(index: u32) {
             bridge::collect_selection,
             bridge::save_note,
             bridge::request_open_terminal,
+            bridge::report_grid_load_failed,
             bridge::debug_log,
         ])
         .setup(move |app| {
@@ -95,6 +96,9 @@ fn run_grid_child(index: u32) {
                 }
             });
             start_grid_child_ipc(app.handle().clone(), index, label.clone(), sock_path.clone());
+            // 子进程 layout enforcer：每 400ms 按 child_layouts 重放 update_rect，
+            // 纠正 GTK 布局循环导致的宫格 webview 漂移（与主进程页签同款机制）
+            bridge::start_layout_enforcer(app.handle().clone());
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -186,12 +190,29 @@ fn start_grid_child_ipc(
                             },
                         );
                     }
+                    // 原生 load-failed（TLS/网络错误页，JS 无法感知）→ 主进程自动重试
+                    Some("loadFailed") => {
+                        let url = payload.get("url").and_then(|u| u.as_str()).unwrap_or("");
+                        let err = payload.get("error").and_then(|e| e.as_str()).unwrap_or("");
+                        eprintln!("[grid-child-{}] loadFailed 转发 url={} err={}", index, url, err);
+                        let _ = grid_ipc::write_wire(
+                            &mut *w.lock().unwrap(),
+                            &grid_ipc::Wire::Event {
+                                name: "grid-load-failed".to_string(),
+                                payload: serde_json::json!({
+                                    "index": index.to_string(),
+                                    "url": url,
+                                    "error": err,
+                                }),
+                            },
+                        );
+                    }
                     _ => {}
                 }
             });
         }
-        // 桥命令在子进程内 emit 的事件（采集完成/笔记保存/打开终端）→ 主进程 → 前端。
-        for name in ["open-terminal", "note-saved", "artifact-collected"] {
+        // 桥命令在子进程内 emit 的事件（采集完成/笔记保存/打开终端/加载失败上报）→ 主进程 → 前端。
+        for name in ["open-terminal", "note-saved", "artifact-collected", "grid-load-failed"] {
             let w = writer.clone();
             let name_owned = name.to_string();
             app.listen(name, move |event| {
@@ -269,7 +290,7 @@ fn dispatch_grid_cmd(
                 Err(e) => Err(format!("CreateTab {id} 失败: {e}")),
             }
         }
-        GridCmd::UpdateRect { rect, .. } => {
+        GridCmd::UpdateRect { id, rect } => {
             // 注意用 get_window 而非 get_webview_window：后者在本场景返回 None
             // （实测），插件 host_window() 同样走 get_window。窗口操作 Window 都有。
             let win = app
@@ -282,6 +303,25 @@ fn dispatch_grid_cmd(
                 (rect.h as u32).max(1),
             ))
             .map_err(|e| format!("set_size 失败: {e}"))?;
+            // 关键：显式把宫格 webview 铺满壳窗口。创建时是 1x1 + auto_resize，
+            // 但 GDK_BACKEND=x11 下 auto_resize 不可靠（WebKitGTK size_allocate
+            // 老问题），webview 会保持小尺寸/漂移（实测"大白壳+小内容"）。
+            // rect 是屏幕绝对物理坐标，webview 用相对壳窗口的逻辑坐标 (0,0,w,h)。
+            let scale = win.scale_factor().unwrap_or(1.0);
+            let lw = (rect.w / scale).max(1.0);
+            let lh = (rect.h / scale).max(1.0);
+            {
+                use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
+                let manager = app.state::<TabManagerState>();
+                let _ = manager.update_rect(&id, LogicalRect::new(0.0, 0.0, lw, lh));
+            }
+            // 记录到 child_layouts：子进程的 layout enforcer 每 400ms 重放纠偏
+            // （GTK 布局循环会把子 webview 拉回"自然位置"，与主进程页签同款问题）
+            app.state::<AppState>()
+                .child_layouts
+                .lock()
+                .unwrap()
+                .insert(id, (0.0, 0.0, lw, lh));
             win.show().map_err(|e| format!("show 失败: {e}"))?;
             Ok(())
         }
@@ -309,6 +349,11 @@ fn dispatch_grid_cmd(
                 .map_err(|e| format!("set_zoom {id} 失败: {e}"))
         }
         GridCmd::CloseTab { id } => {
+            app.state::<AppState>()
+                .child_layouts
+                .lock()
+                .unwrap()
+                .remove(&id);
             let manager = app.state::<TabManagerState>();
             match manager.close_tab(&id) {
                 Ok(()) => Ok(()),
@@ -555,6 +600,8 @@ fn main() {
             bridge::start_layout_enforcer(app.handle().clone());
             // 页签休眠清扫线程（开关默认关，设置面板开启后生效）
             bridge::start_hibernation_sweeper(app.handle().clone());
+            // 宫格加载失败自动重试（collect.js 上报错误页 → 重新导航）
+            bridge::start_grid_load_retry(app.handle().clone());
             // GRID_SELFTEST=1：宫格多进程端到端自检（Phase 2 UDS 转发 + Phase 3 崩溃自愈）。
             // 跑完写 /tmp/grid-selftest-result.txt 并退出。日常运行不设该变量即可。
             if std::env::var("GRID_SELFTEST").is_ok() {
@@ -568,6 +615,7 @@ fn main() {
             bridge::close_browser,
             bridge::position_browser,
             bridge::report_resources,
+            bridge::report_grid_load_failed,
             bridge::report_title,
             bridge::collect_selection,
             bridge::request_open_terminal,

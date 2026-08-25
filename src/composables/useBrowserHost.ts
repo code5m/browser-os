@@ -74,8 +74,8 @@ export function useBrowserHost() {
       const cw = (W - gap * (n - 1)) / n;
       return { x: i * (cw + gap), y: 0, w: cw, h: H };
     }
-    if (mode === "quad") {
-      // 四分：固定 2x2，取前 4 格，超出堆叠在第 4 格
+    if (mode === "quad" && n === 4) {
+      // 四分：固定 2x2（仅 n=4 时；n<4 走下方通用算法避免"只占上排、下半空白"）
       const cw = (W - gap) / 2;
       const ch = (H - gap) / 2;
       const idx = Math.min(i, 3);

@@ -491,11 +491,29 @@ impl GridProcessManager {
         }
         let app = self.app();
         // 监控需要访问 manager 自身——AppState 持有 manager，经 app handle 取回。
-        std::thread::spawn(move || loop {
+        std::thread::spawn(move || {
+            // 主窗最小化状态（GNOME/Wayland 下最小化不一定触发 Focused(false)，
+            // 必须轮询 is_minimized，否则宫格残留浮在其它应用上）
+            let mut was_minimized = false;
+            loop {
             std::thread::sleep(std::time::Duration::from_millis(500));
             let Some(app) = app.as_ref() else { continue };
             let state = app.state::<crate::bridge::AppState>();
             let manager = &state.grid_manager;
+            // 主窗最小化 → 隐藏全部宫格；恢复 → 还原 blur 隐藏的格子
+            if let Some(win) = app.get_window("main") {
+                let minimized = win.is_minimized().unwrap_or(false);
+                if minimized != was_minimized {
+                    was_minimized = minimized;
+                    if minimized {
+                        eprintln!("[grid-manager] 主窗最小化，隐藏全部宫格");
+                        manager.hide_for_blur();
+                    } else {
+                        eprintln!("[grid-manager] 主窗恢复，还原宫格");
+                        manager.show_for_focus();
+                    }
+                }
+            }
             let mut exited: Vec<(u32, i32, SavedChildState)> = Vec::new();
             {
                 let mut children = manager.children.lock().unwrap();
@@ -533,6 +551,7 @@ impl GridProcessManager {
                     continue;
                 }
                 manager.replay(index);
+            }
             }
         });
     }

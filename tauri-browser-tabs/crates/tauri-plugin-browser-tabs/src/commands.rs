@@ -101,6 +101,46 @@ impl TabManager {
         let host = self.host_window()?;
         let webview = platform::create_child_webview(&host, builder, options.rect)?;
 
+        // 加载失败上报（Linux）：WebKit 内部错误页不注入用户脚本，前端无法感知
+        // TLS/网络失败，必须连原生 load-failed / load-failed-with-tls-errors 信号。
+        #[cfg(target_os = "linux")]
+        {
+            let id_lf = options.id.clone();
+            let app_lf = self.app.clone();
+            webview.with_webview(move |pwv| {
+                use webkit2gtk::WebViewExt;
+                let gtk_wv = pwv.inner();
+                let id1 = id_lf.clone();
+                let app1 = app_lf.clone();
+                gtk_wv.connect_load_failed(move |_wv, _event, uri, error| {
+                    eprintln!("[browser-tabs] loadFailed id={} uri={} err={}", id1, uri, error);
+                    let _ = app1.emit(
+                        "browser-tabs://event",
+                        BrowserTabEvent::LoadFailed {
+                            id: id1.clone(),
+                            url: uri.to_string(),
+                            error: error.to_string(),
+                        },
+                    );
+                    false // 保留 WebKit 默认错误页（用户可见错误原因）
+                });
+                let id2 = id_lf.clone();
+                let app2 = app_lf.clone();
+                gtk_wv.connect_load_failed_with_tls_errors(move |_wv, uri, _cert, _errors| {
+                    eprintln!("[browser-tabs] loadFailedTLS id={} uri={}", id2, uri);
+                    let _ = app2.emit(
+                        "browser-tabs://event",
+                        BrowserTabEvent::LoadFailed {
+                            id: id2.clone(),
+                            url: uri.to_string(),
+                            error: "tls-handshake".to_string(),
+                        },
+                    );
+                    false
+                });
+            });
+        }
+
         if !options.visible {
             webview.hide()?;
         }

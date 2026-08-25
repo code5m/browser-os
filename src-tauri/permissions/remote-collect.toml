@@ -1,4 +1,4 @@
 [[permission]]
 identifier = "remote-collect"
 description = "允许远程浏览窗口调用 collect_selection 与 report_resources"
-commands.allow = ["collect_selection", "report_resources", "report_title", "save_note", "request_open_terminal"]
+commands.allow = ["collect_selection", "report_resources", "report_title", "save_note", "request_open_terminal", "report_grid_load_failed"]

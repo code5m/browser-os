@@ -278,5 +278,35 @@ document.addEventListener("contextmenu", function (e) {
     }
   } catch (e) { console.error("[JZJD] 渲染降压注入失败:", e); }
 
+  // ====== 加载失败检测（TLS/网络错误页 → 上报主进程自动重试导航）======
+  // 背景：内存压力下 WebKit 网络进程 TLS 握手会失败（错误页文案如
+  // "Peer failed to perform TLS handshake"），但插件层只发 navigationFinished，
+  // 无法区分成功/失败。错误页特征：文本很短（<800 字）且含错误关键词。
+  function __jzjd_checkLoadFailed() {
+    try {
+      // 只对 http(s) 页面检测（about:blank 等跳过）
+      if (!/^https?:/.test(location.href)) return;
+      var txt = (document.body && document.body.innerText) || "";
+      txt = txt.slice(0, 800);
+      if (txt.length > 700) return; // 正常页面文本多，不是错误页
+      var fail =
+        /TLS handshake|not properly terminated|Load failed|无法加载|无法访问|无法连接|连接失败|连接已重置|重新加载|重试|Try again|took too long|timed out|ERR_CONNECTION|ERR_TLS|ERR_SSL/i.test(
+          txt
+        );
+      if (fail) {
+        var inv = getInvoke();
+        if (inv) {
+          inv("report_grid_load_failed", {
+            url: location.href,
+            snippet: txt.slice(0, 120),
+          });
+        }
+      }
+    } catch (e) {}
+  }
+  window.addEventListener("load", function () {
+    setTimeout(__jzjd_checkLoadFailed, 2500);
+  });
+
   console.log("[JZJD] 采集脚本已注入，右键即可保存。invoke 可用:", !!getInvoke());
 })();

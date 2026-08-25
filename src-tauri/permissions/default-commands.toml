@@ -6,6 +6,7 @@ commands.allow = [
     "close_browser",
     "position_browser",
     "report_resources",
+    "report_grid_load_failed",
     "report_title",
     "collect_selection",
     "request_open_terminal",

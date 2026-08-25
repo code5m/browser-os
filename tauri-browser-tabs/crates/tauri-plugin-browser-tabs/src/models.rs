@@ -62,6 +62,9 @@ pub enum BrowserTabEvent {
     /// denies the new window and emits this event instead, so the host app
     /// can decide to open a new tab.
     NewWindowRequested { id: TabId, url: String },
+    /// 页面加载失败（网络/TLS 错误）。WebKit 内部错误页不注入用户脚本，
+    /// 前端/注入脚本无法感知，必须由原生 load-failed 信号上报。
+    LoadFailed { id: TabId, url: String, error: String },
     Closed { id: TabId },
 }
 

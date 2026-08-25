@@ -1083,6 +1083,9 @@ const GRID_MEM_MB: u64 = 450;
 /// 创建宫格后系统至少保留的可用内存（MB）：低于此值宁降级格数也不把系统打穿
 /// （14G 机器 swap 吃满后开 9 宫格会全系统卡死）。
 const MEM_RESERVE_MB: u64 = 700;
+/// 宫格下限：用户明确要求"最低保持 4 宫格"（2 格太少不可用）。
+/// 预算不足 4 格时仍强制 4 格并警告（用户接受卡顿风险）。
+const MIN_GRID: usize = 4;
 
 /// 读取 /proc/meminfo 的 MemAvailable（MB）。
 fn mem_available_mb() -> Option<u64> {
@@ -1105,11 +1108,12 @@ pub fn create_grid(app: AppHandle, n: usize) -> Result<usize, String> {
     let n = n.clamp(2, MAX_GRID);
     // 先清理旧的宫格子进程（幂等，可安全重复调用）
     close_grid(app.clone())?;
-    // 内存预算守卫：可用内存不足以支撑请求格数时自动降级
+    // 内存预算守卫：可用内存不足以支撑请求格数时自动降级（保底 MIN_GRID=4，
+    // 用户明确要求"最低保持 4 宫格"；预算 <4 时强制 4 格，风险由警告提示）
     let n = match mem_available_mb() {
         Some(avail) => {
             let affordable = (avail.saturating_sub(MEM_RESERVE_MB) / GRID_MEM_MB) as usize;
-            let budgeted = affordable.clamp(2, MAX_GRID).min(n);
+            let budgeted = affordable.clamp(MIN_GRID, MAX_GRID).min(n);
             if budgeted < n {
                 eprintln!(
                     "[create_grid] 内存预算守卫: 可用 {}MB，请求 {} 格 → 降级 {} 格",
@@ -1146,10 +1150,17 @@ pub fn create_grid(app: AppHandle, n: usize) -> Result<usize, String> {
 }
 
 /// 关闭所有宫格（销毁对应子进程）。
+/// 顺序：先 HideWindow（窗口立即从屏幕消失，消除"幽灵窗口残留几秒"的视觉问题），
+/// 再 CloseTab + kill（进程销毁与 X 窗口清理有延迟，藏在 hide 之后用户无感）。
 #[tauri::command]
 pub fn close_grid(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let mgr = &state.grid_manager;
+    for index in mgr.indices() {
+        mgr.send(index, GridCmd::HideWindow { id: format!("grid-{index}") });
+    }
+    // 给 hide 一个生效窗口期（UDS 是异步 send，100ms 足够子进程执行 hide）
+    std::thread::sleep(std::time::Duration::from_millis(100));
     for index in mgr.indices() {
         mgr.send(index, GridCmd::CloseTab { id: format!("grid-{index}") });
     }
@@ -1268,11 +1279,14 @@ pub fn grid_position(
 }
 
 /// 关闭单个宫格（按 index）：销毁对应子进程，其余宫格保留。
+/// 同样先 HideWindow 再 kill（消除幽灵窗口）。
 #[tauri::command]
 pub fn grid_close_one(app: AppHandle, index: usize) -> Result<(), String> {
     let label = format!("grid-{index}");
     let state = app.state::<AppState>();
     let mgr = &state.grid_manager;
+    mgr.send(index as u32, GridCmd::HideWindow { id: label.clone() });
+    std::thread::sleep(std::time::Duration::from_millis(100));
     mgr.send(index as u32, GridCmd::CloseTab { id: label.clone() });
     mgr.kill_child(index as u32);
     state.child_layouts.lock().unwrap().remove(&label);
@@ -1481,6 +1495,86 @@ pub fn tab_position(
     height: f64,
 ) -> Result<(), String> {
     apply_bounds(&app, &id, x, y, width, height)
+}
+
+// ====== 宫格加载失败自动重试 =====
+//
+// 内存压力下宫格 webview 可能 TLS 握手失败（错误页），插件只有 navigationFinished
+// 无法区分成败。collect.js 检测错误页特征 → invoke report_grid_load_failed
+// （子进程内）→ emit 事件 → 子进程 UDS 转发主进程 → 主进程自动重试导航。
+
+/// 宫格 webview 内 collect.js 上报加载失败（子进程内执行）。
+#[tauri::command]
+pub fn report_grid_load_failed(
+    app: AppHandle,
+    url: String,
+    snippet: Option<String>,
+) -> Result<(), String> {
+    let index = std::env::var("GRID_CHILD_INDEX").unwrap_or_default();
+    eprintln!(
+        "[grid] 加载失败上报 grid-{} url={} snippet={:?}",
+        index, url, snippet
+    );
+    let _ = app.emit(
+        "grid-load-failed",
+        serde_json::json!({ "index": index, "url": url }),
+    );
+    Ok(())
+}
+
+/// 主进程启动宫格加载失败自动重试：收到 grid-load-failed 事件后延迟 3s 重新导航。
+/// 每格 60s 内最多重试 2 次（防循环），成功页不会触发上报故不影响正常浏览。
+pub fn start_grid_load_retry(app: AppHandle) {
+    use tauri::Listener;
+    let retries: std::sync::Arc<Mutex<HashMap<u32, (std::time::Instant, u8)>>> =
+        std::sync::Arc::new(Mutex::new(HashMap::new()));
+    let app2 = app.clone();
+    app.listen("grid-load-failed", move |event| {
+        let payload: serde_json::Value =
+            serde_json::from_str(event.payload()).unwrap_or_default();
+        let index: u32 = match payload["index"].as_str().and_then(|s| s.parse().ok()) {
+            Some(i) => i,
+            None => return,
+        };
+        let url = payload["url"].as_str().unwrap_or("").to_string();
+        if url.is_empty() {
+            return;
+        }
+        // 重试配额：60s 窗口内最多 2 次
+        {
+            let mut map = retries.lock().unwrap();
+            let now = std::time::Instant::now();
+            let entry = map.entry(index).or_insert((now, 0));
+            if now.duration_since(entry.0).as_secs() > 60 {
+                *entry = (now, 0);
+            }
+            if entry.1 >= 2 {
+                eprintln!("[grid] grid-{index} 自动重试次数用尽，放弃");
+                return;
+            }
+            entry.1 += 1;
+        }
+        eprintln!("[grid] grid-{index} 加载失败，3s 后自动重试导航 {url}");
+        let app3 = app2.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            let state = app3.state::<AppState>();
+            let mgr = &state.grid_manager;
+            if let Err(e) = mgr.request(
+                index,
+                GridCmd::Navigate {
+                    id: format!("grid-{index}"),
+                    url: url.clone(),
+                },
+                10000,
+            ) {
+                eprintln!("[grid] grid-{index} 自动重试导航失败: {e}");
+            } else {
+                mgr.record_url(index, &url);
+                eprintln!("[grid] grid-{index} 自动重试导航已下发");
+            }
+        });
+    });
 }
 
 // ====== 资源监控（宫格设置行"资源"按钮） =====
