@@ -1,11 +1,11 @@
 # AI 模型切换与接手清单
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
-> 文档版本：V1.5。
-> 更新时间：2026-08-29 14:40 CST。
+> 文档版本：V1.6。
+> 更新时间：2026-08-29 15:40 CST。
 > 当前状态：`CODEX_RUNNING`。
 > 当前分支：`feature-M0-baseline`。
-> 当前执行器：CodeBuddy（Codex 主机，已按 §6 审查并完成 M0-1.b）；后续执行器先按 §6 审查新增提交，再从 M0-1.c 续做。
+> 当前执行器：CodeBuddy（Codex 主机，已按 §6 审查并完成 M0-1.b、M0-1.c）；后续执行器先按 §6 审查新增提交，再从 M0-0.b 续做。
 > 冲突裁决：WBS/验收以 `详细设计与实施计划.md` 为准，指标语义以冻结契约为准，本文只维护跨模型执行指针和交接证据。
 
 ---
@@ -14,13 +14,13 @@
 
 | 项目 | 当前值 |
 |------|--------|
-| 已完成检查点 | `M0-0.a = PASS`、`M0-1.a = PASS`、`M0-1.b = PASS` |
-| 下一检查点 | `M0-1.c = NEXT` |
-| 下一任务路由 | `AI:BALANCED / R:high` |
+| 已完成检查点 | `M0-0.a = PASS`、`M0-1.a = PASS`、`M0-1.b = PASS`、`M0-1.c = PASS` |
+| 下一检查点 | `M0-0.b = NEXT` |
+| 下一任务路由 | `AI:BALANCED / R:medium` |
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
 | 禁止启动 | M1~M5；当前检查点未提交前禁止夹带下一检查点 |
-| 最近实现提交 | `506193b feat(M0-1.b): add resource verification driver` |
+| 最近实现提交 | `2b476d3 feat(M0-1.c): unify gate contract and pre-merge hook` |
 | 路线文档提交 | `c16ed27 docs(plan): route milestones by priority and model` |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
@@ -41,6 +41,11 @@
   覆盖 release 启动、进程树 RSS/FD 采样、tab/grid/terminal 资源循环、终端吞吐与孤儿进程检测驱动；
   正式模式在 ready/终端钩子缺失时输出完整 BLOCKED 证据并退出 1（不伪造 PASS）；
   `--self-test` 8 用例 ALL_PASS（统计计算/进程树/孤儿/BLOCKED 语义/SHA256SUMS）。
+- 完成 M0-1.c（commit `2b476d3`）：固定 M0-1 两脚本的参数、退出码（0/1/2）、JSON schema
+  （`scripts/schema/m0-summary.schema.json` + 共享校验器 `scripts/validate-summary.py`）、
+  完整性哈希（SHA256SUMS）和日志格式（`scripts/GATE-CONTRACT.md`），并接入本地 pre-merge
+  流程（`scripts/pre-merge.sh` + `.githooks/pre-merge-commit` 可选 hook，不代改 git 配置）；
+  baseline `--self-test` 增至 7 用例、verify 增至 9 用例（各含 schema 校验用例），全部 ALL_PASS。
 
 ## 2. 模型映射
 
@@ -267,6 +272,36 @@ NEXT=M0-1.c
 - 正式 BLOCKED run 证据：`logs/m0-baseline/20260829T143410+0800_506193b_release_x11/`（已入库）。
 - 未实现 M0-1.c（参数/退出码/schema/哈希/日志格式统一与 pre-merge 接入）；未修改冻结契约与产品代码。
 
+### M0-1.c 回写记录（2026-08-29，CodeBuddy / Codex 主机，commit `2b476d3`）
+
+```text
+CHECKPOINT=M0-1.c
+STATUS=PASS（参数/退出码/schema/哈希/日志格式已固定并接入 pre-merge；产品 ready/终端钩子未落地，正式基线归 M0-0.b）
+EXECUTOR=CodeBuddy（Codex 主机）
+MODEL=界面未显示完整模型名；按 Codex 映射 AI:BALANCED 对应 gpt-5.6-terra
+ROUTE=AI:BALANCED
+MODEL_DEVIATION=UI 未显示完整模型名，推理档位未能精确记录
+COMMIT=2b476d3
+VERIFY=bash -n(0×3); --help(0×3); --self-test(0, baseline 7 用例 / verify 9 用例 ALL_PASS); --definitely-invalid(2×3); validate-summary.py --self-test(0); pre-merge.sh(0, PRE_MERGE_RESULT=ALL_PASS); git diff --check(0)
+NEXT=M0-0.b
+```
+
+实现要点（对应 §7 提示词）：
+- 新增 `scripts/schema/m0-summary.schema.json`（draft-07）与 `scripts/validate-summary.py`
+  （python3 标准库共享校验器，支持 `--self-test` 与 `<schema> <summary>` 双模式）；
+  两脚本 `--self-test` 各加 schema 校验用例（baseline 6→7、verify 8→9），脚本版本升至
+  `M0-1.a-3` / `M0-1.b-2`；既有 BLOCKED run 的 summary.json 经校验 VALID。
+- 新增 `scripts/GATE-CONTRACT.md`：固定参数面（`--help/-h`、`--self-test`、`--`、未知选项/多余
+  参数）、退出码（0=PASS / 1=FAIL|BLOCKED / 2=用法错误）、schema、SHA256SUMS 与日志格式
+  （正式 `[<tag>] ` 前缀、self-test `PASS:/FAIL:` + `SELF_TEST_RESULT=` 尾行）。
+- 新增 `scripts/pre-merge.sh`：合并前门禁入口（bash -n ×2、--help ×2、--self-test ×2、
+  非法参数 ×2、schema 自检、git diff --check），输出 `PRE_MERGE_RESULT=ALL_PASS`；
+  支持 `--help` / `--self-test` / 非法参数 2。`.githooks/pre-merge-commit` 为可选 hook
+  模板（cp 到 .git/hooks 或由用户自行 core.hooksPath，本流程不代改 git 配置）。
+- 主仓库正式 run 证据：`logs/m0-baseline/20260829T153210+0800_2b476d3_release_x11/`
+  （status=BLOCKED，11 项 blocked，driver=PASS，schema VALID，SHA256SUMS 通过）。
+- 未实现 M0-0.b（产品 ready/终端钩子与正式基线采集）；未修改冻结契约与产品代码。
+
 ## 6. 跨模型接手审查协议（Codex 已按本协议完成 M0-1.a）
 
 Codex 已于 2026-08-29 按本协议审查并完成 `M0-1.a`。Trae 或后续执行器领取 `M0-1.b` 前，仍需先做审查、不直接继续写代码：
@@ -293,7 +328,7 @@ git log --reverse --oneline --decorate 504fcd7..HEAD
 
 先阅读 AI-模型切换与接手清单.md、详细设计与实施计划.md §2.2、logs/m0-baseline-contract-v1.md。每轮只从文档领取唯一 NEXT，按 AI:* 路由选择 Trae 模型，完成实现、全部验收、四处回写和独立提交。提交后确认工作树干净；未命中硬停止条件时，不用等待用户回复，立即领取下一个 NEXT。
 
-第一轮是 M0-1.c：先审查并复跑 M0-1.a/fix1/M0-1.b 证据，再固定 M0-1 两个脚本（baseline-check.sh、verify-resources.sh）的参数、退出码、JSON schema、完整性哈希和日志格式，并接入本地 pre-merge 流程。该轮不实现 M0-0.b（产品测量钩子与正式基线），不修改冻结契约，不采集或宣称正式基线。验收全通过后新增 logs/checkpoints/M0-1.c-<时间>.md，记录界面显示的完整 Trae 模型名和结果，并独立提交 feat(M0-1.c): unify gate contract and pre-merge hook。
+第一轮是 M0-0.b：先审查并复跑 M0-1.a/fix1/M0-1.b/M0-1.c 证据，再按契约 §6.1/§6.3 补产品 ready 钩子（主前端 mount + 2×rAF + 1 次 IPC 往返后写带 run_id 的 ready 信号）与终端 begin/end 测量钩子，然后用 M0-1 脚本采集契约中全部 REQUIRED_NOW release 指标（含 idle/资源循环/终端吞吐正式样本），生成完整证据目录。该轮不实现 M0-0.c（3 批采集归档）、不修改冻结契约。验收以契约 §9 M0-0.b 为准（任一必需指标 BLOCKED、缺原始日志或工作树非干净即 FAIL）。验收全通过后新增 logs/checkpoints/M0-0.b-<时间>.md，记录界面显示的完整 Trae 模型名和结果，并独立提交 feat(M0-0.b): collect REQUIRED_NOW release baseline。
 
 同一检查点连续两次失败、缺少 DEEP 等效模型、缺少 GUI/权限/环境、需要改冻结契约或人工裁决、发现不明改动、额度耗尽或到达 M0-7.c 时必须停止，回写 BLOCKED 和证据；不得伪造 PASS。
 ```
