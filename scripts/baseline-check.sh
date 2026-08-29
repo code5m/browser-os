@@ -181,7 +181,7 @@ run_fmt_plugin() {
     echo "fixture: fmt plugin ok" >"$RAW/fmt_plugin_r01.stdout.log"
     return
   fi
-  run_capture fmt_plugin r01 -- timeout "$T_FMT" cargo fmt --manifest-path "$ROOT/tauri-browser-tabs/Cargo.toml" --check
+  run_capture fmt_plugin r01 -- timeout "$T_FMT" cargo fmt --manifest-path "$ROOT/tauri-browser-tabs/Cargo.toml" --all --check
   FMT_PLUGIN_EXIT=$LAST_RC
 }
 
@@ -580,7 +580,11 @@ data = {
         "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --message-format=json",
         "timeout_s": int(os.environ.get("T_CLIPPY", "900")),
     },
-    "fmt": {"command": "cargo fmt --manifest-path <crate>/Cargo.toml --check", "timeout_s": int(os.environ.get("T_FMT", "300"))},
+    "fmt": {
+        "main_command": "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
+        "plugin_command": "cargo fmt --manifest-path tauri-browser-tabs/Cargo.toml --all --check",
+        "timeout_s": int(os.environ.get("T_FMT", "300")),
+    },
     "release_build": {
         "command": "cargo build --manifest-path src-tauri/Cargo.toml --release --locked",
         "timeout_s": int(os.environ.get("T_RELEASE", "5400")),
@@ -749,7 +753,7 @@ write_commands_txt() {
     echo ""
     echo "# 质量"
     echo "cargo fmt --manifest-path $ROOT/src-tauri/Cargo.toml --check"
-    echo "cargo fmt --manifest-path $ROOT/tauri-browser-tabs/Cargo.toml --check"
+    echo "cargo fmt --manifest-path $ROOT/tauri-browser-tabs/Cargo.toml --all --check"
     echo "cargo clippy --manifest-path $ROOT/src-tauri/Cargo.toml --message-format=json"
     echo "# 构建"
     echo "rm -rf $ROOT/dist && (cd $ROOT && npm run build)  # warmup + $FRONTEND_SAMPLES formal"

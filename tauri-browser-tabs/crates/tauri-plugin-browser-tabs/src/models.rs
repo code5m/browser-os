@@ -54,18 +54,39 @@ fn default_visible() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum BrowserTabEvent {
-    NavigationStarted { id: TabId, url: String },
-    NavigationFinished { id: TabId, url: String },
-    TitleChanged { id: TabId, title: String },
-    FaviconChanged { id: TabId, favicon: String },
+    NavigationStarted {
+        id: TabId,
+        url: String,
+    },
+    NavigationFinished {
+        id: TabId,
+        url: String,
+    },
+    TitleChanged {
+        id: TabId,
+        title: String,
+    },
+    FaviconChanged {
+        id: TabId,
+        favicon: String,
+    },
     /// A page requested `window.open` / `target="_blank"`. The plugin always
     /// denies the new window and emits this event instead, so the host app
     /// can decide to open a new tab.
-    NewWindowRequested { id: TabId, url: String },
+    NewWindowRequested {
+        id: TabId,
+        url: String,
+    },
     /// 页面加载失败（网络/TLS 错误）。WebKit 内部错误页不注入用户脚本，
     /// 前端/注入脚本无法感知，必须由原生 load-failed 信号上报。
-    LoadFailed { id: TabId, url: String, error: String },
-    Closed { id: TabId },
+    LoadFailed {
+        id: TabId,
+        url: String,
+        error: String,
+    },
+    Closed {
+        id: TabId,
+    },
 }
 
 /// Error types for the plugin.

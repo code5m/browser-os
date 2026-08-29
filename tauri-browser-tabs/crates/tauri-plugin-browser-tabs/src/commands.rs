@@ -1,4 +1,6 @@
-use crate::models::{BrowserTabError, BrowserTabEvent, CreateTabOptions, LogicalRect, Result, TabId};
+use crate::models::{
+    BrowserTabError, BrowserTabEvent, CreateTabOptions, LogicalRect, Result, TabId,
+};
 use crate::platform;
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -113,7 +115,10 @@ impl TabManager {
                 let id1 = id_lf.clone();
                 let app1 = app_lf.clone();
                 gtk_wv.connect_load_failed(move |_wv, _event, uri, error| {
-                    eprintln!("[browser-tabs] loadFailed id={} uri={} err={}", id1, uri, error);
+                    eprintln!(
+                        "[browser-tabs] loadFailed id={} uri={} err={}",
+                        id1, uri, error
+                    );
                     let _ = app1.emit(
                         "browser-tabs://event",
                         BrowserTabEvent::LoadFailed {
@@ -231,17 +236,28 @@ impl TabManager {
 pub type TabManagerState = Arc<TabManager>;
 
 #[tauri::command]
-pub async fn create_tab(state: State<'_, TabManagerState>, options: CreateTabOptions) -> Result<()> {
+pub async fn create_tab(
+    state: State<'_, TabManagerState>,
+    options: CreateTabOptions,
+) -> Result<()> {
     state.create_tab(options)
 }
 
 #[tauri::command]
-pub async fn update_rect(state: State<'_, TabManagerState>, id: TabId, rect: LogicalRect) -> Result<()> {
+pub async fn update_rect(
+    state: State<'_, TabManagerState>,
+    id: TabId,
+    rect: LogicalRect,
+) -> Result<()> {
     state.update_rect(&id, rect)
 }
 
 #[tauri::command]
-pub async fn set_visible(state: State<'_, TabManagerState>, id: TabId, visible: bool) -> Result<()> {
+pub async fn set_visible(
+    state: State<'_, TabManagerState>,
+    id: TabId,
+    visible: bool,
+) -> Result<()> {
     state.set_visible(&id, visible)
 }
 
@@ -261,6 +277,10 @@ pub async fn list_tabs(state: State<'_, TabManagerState>) -> Result<Vec<TabId>> 
 }
 
 #[tauri::command]
-pub async fn set_zoom(state: State<'_, TabManagerState>, id: TabId, scale_factor: f64) -> Result<()> {
+pub async fn set_zoom(
+    state: State<'_, TabManagerState>,
+    id: TabId,
+    scale_factor: f64,
+) -> Result<()> {
     state.set_zoom(&id, scale_factor)
 }

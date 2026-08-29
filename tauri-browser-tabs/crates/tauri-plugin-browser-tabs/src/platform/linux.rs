@@ -107,7 +107,12 @@ pub fn ensure_physical_size<R: Runtime>(
             let gtk_webview = platform_webview.inner();
             let a = gtk_webview.allocation();
             if a.width() != width as i32 || a.height() != height as i32 {
-                gtk_webview.size_allocate(&gtk::Allocation::new(a.x(), a.y(), width as i32, height as i32));
+                gtk_webview.size_allocate(&gtk::Allocation::new(
+                    a.x(),
+                    a.y(),
+                    width as i32,
+                    height as i32,
+                ));
                 gtk_webview.queue_draw();
             }
         })
