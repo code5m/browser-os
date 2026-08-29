@@ -264,6 +264,14 @@ async function openDirCenter() {
         <button class="tbtn" @click="layout.toggleCompact" title="精简模式：隐藏工具栏给网页更大空间">⛶</button>
       </template>
       <span class="sep"></span>
+      <button
+        class="sys"
+        :class="{ active: browser.aiNavOpen }"
+        title="AI 导航"
+        @click="browser.aiNavOpen = !browser.aiNavOpen"
+      >
+        <span class="ic">🤖</span>
+      </button>
       <button class="collect" :title="'采集选中内容'" @click="ws.collectSelection">
         <span class="ic">📥</span>
         <span class="lab">采集</span>
