@@ -1,11 +1,11 @@
 # AI 模型切换与接手清单
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
-> 文档版本：V1.0。
-> 更新时间：2026-08-29 08:03 CST。
-> 当前状态：`HANDOFF_READY`。
+> 文档版本：V1.2。
+> 更新时间：2026-08-29 08:45 CST。
+> 当前状态：`CODEX_RUNNING`。
 > 当前分支：`feature-M0-baseline`。
-> 当前执行器：Trae（额度窗口期间）；Codex 额度恢复后先审查再续做。
+> 当前执行器：Codex（CodeBuddy 主机，已接手并完成 M0-1.a）；Trae 后续按 §6 审查全部新增提交后再续做。
 > 冲突裁决：WBS/验收以 `详细设计与实施计划.md` 为准，指标语义以冻结契约为准，本文只维护跨模型执行指针和交接证据。
 
 ---
@@ -14,13 +14,16 @@
 
 | 项目 | 当前值 |
 |------|--------|
-| 已完成检查点 | `M0-0.a = PASS` |
-| 下一检查点 | `M0-1.a = NEXT` |
+| 已完成检查点 | `M0-0.a = PASS`、`M0-1.a = PASS` |
+| 下一检查点 | `M0-1.b = NEXT` |
 | 下一任务路由 | `AI:BALANCED / R:high` |
-| 禁止启动 | `M0-1.b` 及其后所有检查点 |
-| 最近实现提交 | `7bad65c feat(M0-0.a): freeze baseline measurement contract` |
+| 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
+| 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
+| 禁止启动 | M1~M5；当前检查点未提交前禁止夹带下一检查点 |
+| 最近实现提交 | `1bd56b1 feat(M0-1.a): add baseline quality gate` |
 | 路线文档提交 | `c16ed27 docs(plan): route milestones by priority and model` |
-| 工作树要求 | Trae 开工前、交付后都必须干净 |
+| 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
+| 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
 
 已经完成：
 
@@ -30,7 +33,10 @@
 - 冻结 `logs/m0-baseline-contract-v1.md`：21 个 `REQUIRED_NOW` 指标、2 个延迟指标、环境指纹、固定场景、统计公式和证据目录。
 - 将旧 `logs/baseline-2026-08-27.md` 降级为 `EXPLORATORY`，禁止当作正式性能基线。
 - 修复原计划中的循环依赖，关键路径现为：
-  `M0-0.a(PASS) -> M0-1.a(NEXT) -> M0-1.b -> M0-1.c -> M0-0.b -> M0-0.c -> M0-2...`。
+  `M0-0.a(PASS) -> M0-1.a(PASS) -> M0-1.b(NEXT) -> M0-1.c -> M0-0.b -> M0-0.c -> M0-2...`。
+- 完成 M0-1.a（commit `1bd56b1`）：新增 `scripts/baseline-check.sh` 与 `scripts/fixtures/clippy-sample.json`；
+  验收命令全过、`--self-test` 输出 `SELF_TEST_RESULT=ALL_PASS`；`.gitignore` 对 `logs/m0-baseline/` 开例外，
+  原始 `.log` 证据随 run 目录入库可追溯（见 §5 证据保留说明）。
 
 ## 2. 模型映射
 
@@ -51,7 +57,36 @@ Trae 选模规则：
 3. M0-2、M0-3、安全、进程树和并发任务必须使用 `TRAE_DEEP`；没有强模型时暂停，不能用轻量模型硬做。
 4. 每个检查点在证据中记录 UI 显示的完整模型名、平台、推理档位和 `MODEL_DEVIATION`。全局映射缺失不妨碍记录实际执行模型。
 
-## 3. Trae 当前唯一任务：M0-1.a
+## 3. Trae 在 M0 内连续自动执行
+
+「一次只领取一个检查点」是变更和提交边界，不是要求每做完一点都停下等用户确认。Trae 可以在同一次会话中尽可能推进 M0，但不得一次领取、实现或提交多个检查点。
+
+### 连续执行循环
+
+1. 从本文顶部和 `详细设计与实施计划.md` §2.2 读取唯一 `NEXT`，本轮只领取该检查点。
+2. 按 `AI:*` 路由选择 Trae 模型；开始后不在该检查点中途换模型。
+3. 只修改当前检查点需要的文件，运行该点全部验收和 `git diff --check`。
+4. PASS 后回写 §5 规定的状态、模型、命令、证据和 `NEXT`；FAIL 不得移动指针。
+5. 使用 `<type>(<WBS.checkpoint>): <单一结果>` 独立提交。功能实现用 `feat`，重构用 `refactor`，缺陷修复用 `fix`，不得合并多个检查点。
+6. 提交后运行 `git status --short`。工作树干净且未命中硬停止条件时，无需等待用户回复，立即回到第 1 步领取新 `NEXT`。
+
+### 硬停止条件
+
+命中任一条即停止写代码，保留当前指针并回写 `BLOCKED`、已试命令、证据与推荐下一步：
+
+1. 同一检查点连续两次验收失败，或根因仍不明。
+2. 检查点要求 `AI:DEEP`，但 Trae 没有等效强模型；不得用轻量模型硬做安全、生命周期、并发或 IPC。
+3. 缺少 GUI/登录态、必要权限、外部环境或人工验收条件，且无法用固定夹具替代。
+4. 需要修改冻结契约、扩大安全权限、删除用户数据，或需要产品/项目负责人裁决。
+5. 检查点边界的工作树不干净，或发现来源不明、可能属于用户的并行改动。
+6. 当前平台额度或时间耗尽。
+7. 到达 `M0-7.c` 项目负责人确认门禁，或下一指针属于 M1~M5。Trae 可以准备 M0-7.c 材料，但不得代替负责人签字。
+
+## 4. 自动执行起点：M0-1.a
+
+> 状态：**已完成**（2026-08-29，commit `1bd56b1`；验收命令全过 + `--self-test` ALL_PASS）。以下为执行时的边界与要求，保留作记录。
+
+本节的允许/禁止范围只约束 `M0-1.a` 这一轮。该检查点 PASS、证据回写、独立提交且工作树干净后，执行器应立即领取 `M0-1.b`，不再受本节「不实现 M0-1.b」的单点边界限制。
 
 ### 目标
 
@@ -78,7 +113,7 @@ git log -3 --oneline
 
 - 新增 `scripts/baseline-check.sh`。
 - 可新增只服务该脚本的固定夹具或自测文件，放在 `scripts/fixtures/` 或 `scripts/tests/`。
-- 完成验证后，按 §4 回写状态文档和检查点证据。
+- 完成验证后，按 §5 回写状态文档和检查点证据。
 
 ### 禁止改动
 
@@ -113,15 +148,15 @@ git diff --check
 
 ### 提交
 
-只提交 M0-1.a：
+本轮只提交 M0-1.a：
 
 ```text
 feat(M0-1.a): add baseline quality gate
 ```
 
-检查点未通过时不得勾选。修复提交使用 `fix(M0-1.a-fix1): ...`，不得伪装成下一检查点。
+检查点未通过时不得勾选。修复提交使用 `fix(M0-1.a-fix1): ...`，不得伪装成下一检查点。PASS 并完成上述提交后，按 §3 继续自动执行。
 
-## 4. 每个模型做完后必须回写什么
+## 5. 每个检查点做完后必须回写什么
 
 ### 必改文档
 
@@ -159,27 +194,44 @@ VERIFY=<命令及退出码>
 NEXT=M0-1.b|M0-1.a-fix1
 ```
 
-## 5. Codex 五小时后接手协议
+### M0-1.a 回写记录（2026-08-29，Codex / CodeBuddy 主机）
 
-Codex 恢复额度后先做审查，不直接继续写代码：
+```text
+CHECKPOINT=M0-1.a
+STATUS=PASS
+EXECUTOR=CodeBuddy（Codex 主机）
+MODEL=界面未显示完整模型名；按 Codex 映射 AI:BALANCED 对应 gpt-5.6-terra
+ROUTE=AI:BALANCED
+MODEL_DEVIATION=UI 未显示完整模型名，推理档位未能精确记录
+COMMIT=1bd56b1
+VERIFY=bash -n(0); --help(0); --self-test(0, ALL_PASS); --definitely-invalid(2); git diff --check(0)
+NEXT=M0-1.b
+```
+
+证据保留策略（M0-1.a 落地，对应实现要求「明确证据保留策略」）：`.gitignore` 已对 `logs/m0-baseline/` 开例外，
+`raw/` 原始命令输出（含 `*.log`）随 run 目录入库可追溯；`summary/environment/scenario/measurements/SHA256SUMS`
+全部提交；若未来需要调整原始 `.log` 入库口径，先提契约版本变更。
+
+## 6. 跨模型接手审查协议（Codex 已按本协议完成 M0-1.a）
+
+Codex 已于 2026-08-29 按本协议审查并完成 `M0-1.a`。Trae 或后续执行器领取 `M0-1.b` 前，仍需先做审查、不直接继续写代码：
 
 ```bash
 git status --short --branch
-git log -5 --oneline --decorate
-git show --stat --oneline HEAD
+git log --reverse --oneline --decorate 504fcd7..HEAD
 ```
 
 然后按顺序：
 
 1. 阅读本文顶部当前指针与最新 `logs/checkpoints/` 证据。
-2. 审查 Trae 提交是否只覆盖一个检查点，是否夹带 M0-1.b 或产品代码。
-3. 复跑其验收命令，确认工作树干净、文档状态与证据一致。
-4. M0-1.a PASS 才领取 M0-1.b；否则继续 `M0-1.a-fixN`。
-5. 下一检查点重新按路由选模。M0-1.b/c 仍为 BALANCED；M0-2 开始切 DEEP。
+2. 从 `504fcd7` 之后按提交顺序逐个运行 `git show --stat --oneline <sha>`，确认每个提交只覆盖一个检查点。
+3. 按各自证据复跑验收命令，确认工作树干净、文档状态、提交顺序和 `NEXT` 一致。
+4. 若最新检查点 PASS，从文档当前 `NEXT` 续做；若 FAIL/BLOCKED，留在同一检查点修复或先解除阻塞。
+5. 下一检查点重新按路由选模；检查执行器是否用轻量模型越权执行了 `AI:DEEP` 任务。
 
 任何模型都不得因为“额度快没了”提前勾选、压缩检查点或把多个 WBS 合进一个提交。
 
-## 6. 可直接交给 Trae 的提示词
+## 7. 可直接交给 Trae 的连续执行提示词
 
 ```text
 你正在 feature-M0-baseline 分支接手 mvp-browser-os-v3。只执行 M0-1.a，不得开始 M0-1.b。
