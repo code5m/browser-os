@@ -16,8 +16,13 @@ createApp(App).use(createPinia()).mount("#app");
 // 采集脚本据此记录 startup_ready_ms。非 Tauri 环境/非测量运行均静默跳过。
 try {
   requestAnimationFrame(() => {
+    bridge.debugLog("[M0] rAF1 fired");
     requestAnimationFrame(() => {
-      bridge.m0Ready().catch(() => {});
+      bridge.debugLog("[M0] rAF2 fired, invoking m0_ready");
+      bridge
+        .m0Ready()
+        .then((rid) => bridge.debugLog("[M0] m0_ready ok run_id=" + rid))
+        .catch((e) => bridge.debugLog("[M0] m0_ready err: " + (e ?? "unknown")));
     });
   });
 } catch {

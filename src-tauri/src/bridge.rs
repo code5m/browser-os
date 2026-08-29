@@ -2155,6 +2155,10 @@ fn m0_atomic_write(path: &str, content: &str) -> Result<(), String> {
 #[tauri::command]
 pub fn m0_ready(app: AppHandle) -> Result<String, String> {
     let cfg = m0_config_of(&app);
+    eprintln!(
+        "[m0] m0_ready called run_id={:?} ready_file={:?}",
+        cfg.run_id, cfg.ready_file
+    );
     if cfg.run_id.is_empty() {
         return Ok(String::new());
     }

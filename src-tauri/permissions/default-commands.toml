@@ -60,5 +60,8 @@ commands.allow = [
     "term_spawn",
     "term_write",
     "term_resize",
-    "term_kill"
+    "term_kill",
+    "m0_ready",
+    "m0_term_report",
+    "m0_config"
 ]
