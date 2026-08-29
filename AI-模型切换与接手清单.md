@@ -1,11 +1,11 @@
 # AI 模型切换与接手清单
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
-> 文档版本：V1.3。
-> 更新时间：2026-08-29 08:55 CST。
-> 当前状态：`CODEX_RUNNING`。
+> 文档版本：V1.4。
+> 更新时间：2026-08-29 13:45 CST。
+> 当前状态：`TRAE_AUTORUN_READY`。
 > 当前分支：`feature-M0-baseline`。
-> 当前执行器：Codex（CodeBuddy 主机，已接手并完成 M0-1.a）；Trae 后续按 §6 审查全部新增提交后再续做。
+> 当前执行器：Trae（M0 范围内连续自动执行）；Codex / CodeBuddy 已完成 M0-1.a 及 fix1，Trae 先按 §6 审查新增提交，再从 M0-1.b 续做。
 > 冲突裁决：WBS/验收以 `详细设计与实施计划.md` 为准，指标语义以冻结契约为准，本文只维护跨模型执行指针和交接证据。
 
 ---
@@ -52,7 +52,7 @@ WBS 只使用供应商无关的路由标签。切换平台时只改本表，不�
 
 Trae 选模规则：
 
-1. `M0-1.a` 选 Trae 中具备仓库读写、Shell 执行和多文件理解能力的日常编码模型，映射到 `TRAE_BALANCED`。
+1. `M0-1.b/c` 选 Trae 中具备仓库读写、Shell 执行和多文件理解能力的日常编码模型，映射到 `TRAE_BALANCED`。
 2. 如果免费模型无法运行 Shell 或稳定处理多文件，只允许调研，不得勾选检查点或提交 PASS。
 3. M0-2、M0-3、安全、进程树和并发任务必须使用 `TRAE_DEEP`；没有强模型时暂停，不能用轻量模型硬做。
 4. 每个检查点在证据中记录 UI 显示的完整模型名、平台、推理档位和 `MODEL_DEVIATION`。全局映射缺失不妨碍记录实际执行模型。
@@ -82,7 +82,7 @@ Trae 选模规则：
 6. 当前平台额度或时间耗尽。
 7. 到达 `M0-7.c` 项目负责人确认门禁，或下一指针属于 M1~M5。Trae 可以准备 M0-7.c 材料，但不得代替负责人签字。
 
-## 4. 自动执行起点：M0-1.a
+## 4. 已完成检查点记录：M0-1.a
 
 > 状态：**已完成**（2026-08-29，commit `1bd56b1`；验收命令全过 + `--self-test` ALL_PASS）。以下为执行时的边界与要求，保留作记录。
 
@@ -258,9 +258,11 @@ git log --reverse --oneline --decorate 504fcd7..HEAD
 ## 7. 可直接交给 Trae 的连续执行提示词
 
 ```text
-你正在 feature-M0-baseline 分支接手 mvp-browser-os-v3。只执行 M0-1.a，不得开始 M0-1.b。
+你正在 feature-M0-baseline 分支接手 mvp-browser-os-v3。目标是在额度和环境允许时尽可能完成 M0，但必须严格按检查点顺序逐个执行；不得开始 M1~M5，不得把多个检查点合成一个提交。
 
-先阅读 AI-模型切换与接手清单.md、详细设计与实施计划.md §2.2、logs/m0-baseline-contract-v1.md。实现 scripts/baseline-check.sh：仓库根目录必须动态解析；支持 --help、--self-test、正式模式和非法参数非零退出；覆盖质量、构建、来源/环境指纹及证据目录初始化。不要修改 Rust/Vue 产品代码，不要采集或宣称正式性能基线。
+先阅读 AI-模型切换与接手清单.md、详细设计与实施计划.md §2.2、logs/m0-baseline-contract-v1.md。每轮只从文档领取唯一 NEXT，按 AI:* 路由选择 Trae 模型，完成实现、全部验收、四处回写和独立提交。提交后确认工作树干净；未命中硬停止条件时，不用等待用户回复，立即领取下一个 NEXT。
 
-执行文档规定的全部验收命令。全部通过后，回写详细计划、TODO、交接清单，并新增 logs/checkpoints/M0-1.a-<时间>.md，记录实际 Trae 模型名和验证结果。提交信息必须是：feat(M0-1.a): add baseline quality gate。若失败，保持 M0-1.a 未完成并记录阻塞。
+第一轮是 M0-1.b：先审查并复跑 M0-1.a 及 fix1 证据，再新增 scripts/verify-resources.sh，覆盖 release 启动、进程树 RSS/FD、tab/grid/terminal 资源循环和终端测量驱动。仓库根目录必须动态解析，脚本必须支持 --help、--self-test、非法参数非零退出，并为缺少的 ready/终端钩子输出明确 BLOCKED，不得伪造 PASS。该轮不实现 M0-1.c，不修改冻结契约，不采集或宣称 M0-0.b/c 正式基线。验收全通过后新增 logs/checkpoints/M0-1.b-<时间>.md，记录界面显示的完整 Trae 模型名和结果，并独立提交 feat(M0-1.b): add resource verification driver。
+
+同一检查点连续两次失败、缺少 DEEP 等效模型、缺少 GUI/权限/环境、需要改冻结契约或人工裁决、发现不明改动、额度耗尽或到达 M0-7.c 时必须停止，回写 BLOCKED 和证据；不得伪造 PASS。
 ```
