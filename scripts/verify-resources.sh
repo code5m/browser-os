@@ -943,7 +943,13 @@ spawn_m0_app() {
     WEBKIT_DISABLE_DMABUF_RENDERER=1 GDK_BACKEND=x11
   )
   if [ -n "$driver" ]; then
-    env_args+=(M0_DRIVER="$driver" M0_CYCLES="$((DEFAULT_WARMUP_SAMPLES + ${VR_CYCLE_SAMPLES:-$DEFAULT_CYCLE_SAMPLES}))")
+    # term-throughput 由脚本逐样本独立 spawn（每次启动前端只驱动一轮 10 MiB 负载），
+    # 驱动必须只跑 1 轮；否则第 2 轮会删除报告文件空等，与脚本 wait_file 形成竞态。
+    local cycles="$((DEFAULT_WARMUP_SAMPLES + ${VR_CYCLE_SAMPLES:-$DEFAULT_CYCLE_SAMPLES}))"
+    if [ "$driver" = "term-throughput" ]; then
+      cycles=1
+    fi
+    env_args+=(M0_DRIVER="$driver" M0_CYCLES="$cycles")
   fi
   env "${env_args[@]}" "$BIN_PATH" >"$report_dir/app.log" 2>&1 &
   echo $!

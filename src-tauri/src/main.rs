@@ -626,13 +626,21 @@ fn run_m0_driver(app: tauri::AppHandle, cfg: bridge::M0Config) {
                     }
                 }
                 "terminal" => {
+                    log(&format!("cycle {n}: term_spawn..."));
                     let id = bridge::term_spawn(app.clone()).map(|t| t.id);
                     match id {
                         Ok(id) => {
+                            log(&format!("cycle {n}: term_spawn ok id={id}"));
                             std::thread::sleep(std::time::Duration::from_secs(2));
-                            bridge::term_kill(app.clone(), id)
+                            log(&format!("cycle {n}: term_kill..."));
+                            let r = bridge::term_kill(app.clone(), id);
+                            log(&format!("cycle {n}: term_kill -> {r:?}"));
+                            r
                         }
-                        Err(e) => Err(e),
+                        Err(e) => {
+                            log(&format!("cycle {n}: term_spawn FAIL: {e}"));
+                            Err(e)
+                        }
                     }
                 }
                 other => Err(format!("unknown M0_DRIVER: {other}")),
