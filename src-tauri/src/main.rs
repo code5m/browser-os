@@ -593,77 +593,96 @@ fn run_m0_driver(app: tauri::AppHandle, cfg: bridge::M0Config) {
             }
         }
 
-        // 3) 资源循环类（tab|grid|terminal，契约 §6.2）
+        // 3) 资源循环类（tab|grid|terminal，契约 §6.2）。每轮通过
+        // prepare/opened/done/sampled 四阶段握手，保证脚本能分别取得创建前、关闭前、
+        // 关闭后的进程树，且最后一轮采样完成前应用不会退出。
+        enum OpenedResource {
+            Tab(String),
+            Grid,
+            Terminal(String),
+        }
+        let wait_marker = |path: &str, timeout_s: u64| {
+            for _ in 0..timeout_s * 2 {
+                if std::fs::metadata(path).is_ok() {
+                    return true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            false
+        };
         let cycles: usize = std::env::var("M0_CYCLES")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(1);
         let mut fails: Vec<String> = Vec::new();
         for n in 1..=cycles {
-            let r = match cfg.driver.as_str() {
-                "tab" => {
-                    let id = bridge::tab_new(app.clone(), "about:blank".into()).map(|t| t.id);
-                    match id {
-                        Ok(id) => {
-                            std::thread::sleep(std::time::Duration::from_secs(2));
-                            bridge::tab_close(app.clone(), id)
-                        }
-                        Err(e) => Err(e),
+            let prefix = format!("{report_dir}/{}.cycle-{n:02}", cfg.driver);
+            let prepare = format!("{prefix}.prepare");
+            let prepare_ack = format!("{prefix}.prepare.ack");
+            let opened = format!("{prefix}.opened");
+            let opened_ack = format!("{prefix}.opened.ack");
+            let done = format!("{prefix}.done");
+            let sampled = format!("{prefix}.sampled");
+            for path in [&prepare_ack, &opened_ack, &done, &sampled] {
+                let _ = std::fs::remove_file(path);
+            }
+            let _ = std::fs::write(&prepare, "ready\n");
+            if !wait_marker(&prepare_ack, 90) {
+                fails.push(format!("cycle {n}: prepare ack timeout"));
+                break;
+            }
+
+            let opened_resource = match cfg.driver.as_str() {
+                "tab" => bridge::tab_new(app.clone(), "about:blank".into())
+                    .map(|tab| OpenedResource::Tab(tab.id)),
+                "grid" => match bridge::create_grid(app.clone(), 4) {
+                    Ok(4) => Ok(OpenedResource::Grid),
+                    Ok(created) => {
+                        let _ = bridge::close_grid(app.clone());
+                        Err(format!("grid degraded to {created} (need 4)"))
                     }
-                }
-                "grid" => {
-                    let n_created = bridge::create_grid(app.clone(), 4);
-                    match n_created {
-                        Ok(4) => {
-                            std::thread::sleep(std::time::Duration::from_secs(4));
-                            bridge::close_grid(app.clone())
-                        }
-                        Ok(n) => {
-                            let _ = bridge::close_grid(app.clone());
-                            Err(format!("grid degraded to {n} (need 4)"))
-                        }
-                        Err(e) => Err(e),
-                    }
-                }
-                "terminal" => {
-                    log(&format!("cycle {n}: term_spawn..."));
-                    let id = bridge::term_spawn(app.clone()).map(|t| t.id);
-                    match id {
-                        Ok(id) => {
-                            log(&format!("cycle {n}: term_spawn ok id={id}"));
-                            std::thread::sleep(std::time::Duration::from_secs(2));
-                            log(&format!("cycle {n}: term_kill..."));
-                            let r = bridge::term_kill(app.clone(), id);
-                            log(&format!("cycle {n}: term_kill -> {r:?}"));
-                            r
-                        }
-                        Err(e) => {
-                            log(&format!("cycle {n}: term_spawn FAIL: {e}"));
-                            Err(e)
-                        }
-                    }
-                }
+                    Err(error) => Err(error),
+                },
+                "terminal" => bridge::term_spawn(app.clone()).map(|term| {
+                    log(&format!("cycle {n}: term_spawn ok id={}", term.id));
+                    OpenedResource::Terminal(term.id)
+                }),
                 other => Err(format!("unknown M0_DRIVER: {other}")),
             };
-            match r {
+            let settle_s = if cfg.driver == "grid" { 4 } else { 2 };
+            if opened_resource.is_ok() {
+                std::thread::sleep(std::time::Duration::from_secs(settle_s));
+                let _ = std::fs::write(&opened, "ok\n");
+            } else {
+                let error = opened_resource.as_ref().err().unwrap();
+                let _ = std::fs::write(&opened, format!("FAIL {error}\n"));
+            }
+            if !wait_marker(&opened_ack, 90) {
+                fails.push(format!("cycle {n}: opened ack timeout"));
+                break;
+            }
+
+            let close_result = match opened_resource {
+                Ok(OpenedResource::Tab(id)) => bridge::tab_close(app.clone(), id),
+                Ok(OpenedResource::Grid) => bridge::close_grid(app.clone()),
+                Ok(OpenedResource::Terminal(id)) => bridge::term_kill(app.clone(), id),
+                Err(error) => Err(error),
+            };
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            match close_result {
                 Ok(()) => {
-                    // 关闭后稳定 2 秒再通知脚本采样（契约 §6.2：关闭后等待 2 秒采样）
-                    std::thread::sleep(std::time::Duration::from_secs(2));
-                    let _ = std::fs::write(
-                        format!("{report_dir}/{}.cycle-{:02}.done", cfg.driver, n),
-                        "ok\n",
-                    );
+                    let _ = std::fs::write(&done, "ok\n");
                     log(&format!("cycle {n} done"));
                 }
-                Err(e) => {
-                    fails.push(format!("cycle {n}: {e}"));
-                    log(&format!("cycle {n} FAIL: {e}"));
-                    // 失败也写 done 标记（内容 FAIL），避免脚本空等 90 秒超时
-                    let _ = std::fs::write(
-                        format!("{report_dir}/{}.cycle-{:02}.done", cfg.driver, n),
-                        format!("FAIL {e}\n"),
-                    );
+                Err(error) => {
+                    fails.push(format!("cycle {n}: {error}"));
+                    let _ = std::fs::write(&done, format!("FAIL {error}\n"));
+                    log(&format!("cycle {n} FAIL: {error}"));
                 }
+            }
+            if !wait_marker(&sampled, 90) {
+                fails.push(format!("cycle {n}: sampled ack timeout"));
+                break;
             }
         }
         if fails.is_empty() {

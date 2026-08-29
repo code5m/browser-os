@@ -431,65 +431,116 @@ PY
 }
 
 # ---------------------------------------------------------------------------
-# 驱动能力：孤儿进程检测（契约 §5 orphan_process_count）
+# 驱动能力：资源进程差分 / 孤儿检测（契约 §5 orphan_process_count）
 # ---------------------------------------------------------------------------
-# detect_orphans.py <root_pid> <wait_s>：快照后代 (pid,starttime)，等待 wait_s 秒后
-# 复核仍存活的个数。PPID 变化不影响判定（只看 pid+starttime 是否仍存在）。
-detect_orphans() {
-  local root_pid="$1" wait_s="$2"
-  python3 - "$root_pid" "$wait_s" <<'PY'
-import json, os, sys, time
-root = int(sys.argv[1])
-wait_s = float(sys.argv[2])
+# compare_cycle_snapshots <baseline> <opened> <closed> [closed-fixture]：
+#   candidates = opened - baseline（按 pid+starttime，排除应用根进程）
+#   orphans    = 关闭后仍可从 /proc 读到相同 starttime 的 candidates（PPID 变化不影响）
+# closed 快照由产品驱动在资源关闭并稳定 ORPHAN_WAIT_S 秒后才允许采集。
+compare_cycle_snapshots() {
+  local baseline_file="$1" opened_file="$2" closed_file="$3" mode="${4:-proc}"
+  python3 - "$baseline_file" "$opened_file" "$closed_file" "$mode" <<'PY'
+import json, sys
 
-def snapshot():
-    # 返回 {pid: starttime} 的根进程后代快照（BFS 自根）
-    children = {}
-    for entry in os.listdir("/proc"):
-        if not entry.isdigit():
-            continue
-        pid = int(entry)
-        try:
-            with open("/proc/%d/stat" % pid, "r", encoding="utf-8", errors="replace") as f:
-                data = f.read()
-            name_end = data.rfind(")")
-            rest = data[name_end + 2:].split()
-            ppid = int(rest[1])
-            starttime = int(rest[19])
-        except (OSError, ValueError, IndexError):
-            continue
-        children.setdefault(ppid, []).append((pid, starttime))
-    desc = {}
-    stack = [root]
-    seen = set()
-    while stack:
-        pid = stack.pop()
-        if pid in seen:
-            continue
-        seen.add(pid)
-        for child, st in children.get(pid, []):
-            stack.append(child)
-            desc[child] = st
-    # root 自身
+with open(sys.argv[1], encoding="utf-8") as f:
+    baseline = json.load(f)
+with open(sys.argv[2], encoding="utf-8") as f:
+    opened = json.load(f)
+with open(sys.argv[3], encoding="utf-8") as f:
+    closed = json.load(f)
+mode = sys.argv[4]
+
+root = baseline.get("root_pid")
+if opened.get("root_pid") != root or closed.get("root_pid") != root:
+    raise SystemExit("snapshot root_pid mismatch")
+
+def identities(snapshot):
+    return {
+        (member.get("pid"), member.get("starttime"))
+        for member in snapshot.get("members", [])
+        if member.get("pid") != root and member.get("starttime") is not None
+    }
+
+baseline_ids = identities(baseline)
+opened_ids = identities(opened)
+closed_ids = identities(closed)
+candidates = sorted(opened_ids - baseline_ids)
+
+def proc_starttime(pid):
     try:
-        with open("/proc/%d/stat" % root, "r", encoding="utf-8", errors="replace") as f:
+        with open("/proc/%d/stat" % pid, encoding="utf-8", errors="replace") as f:
             data = f.read()
-        name_end = data.rfind(")")
-        rest = data[name_end + 2:].split()
-        desc[root] = int(rest[19])
+        return int(data[data.rfind(")") + 2:].split()[19])
     except (OSError, ValueError, IndexError):
-        pass
-    return desc
+        return None
 
-before = snapshot()
-time.sleep(wait_s)
-after = snapshot()
-orphans = []
-for pid, st in before.items():
-    if pid in after and after[pid] == st:
-        orphans.append(pid)
-print(json.dumps({"before_count": len(before), "after_count": len(after),
-                  "orphan_count": len(orphans), "orphan_pids": sorted(orphans)}))
+if mode == "closed-fixture":
+    orphans = sorted(set(candidates) & closed_ids)
+else:
+    orphans = sorted((pid, starttime) for pid, starttime in candidates if proc_starttime(pid) == starttime)
+root_alive = any(
+    member.get("pid") == root and member.get("starttime") is not None
+    for member in closed.get("members", [])
+)
+
+print(json.dumps({
+    "baseline_count": len(baseline.get("members", [])),
+    "opened_count": len(opened.get("members", [])),
+    "closed_count": len(closed.get("members", [])),
+    "candidate_count": len(candidates),
+    "candidate_pids": [pid for pid, _ in candidates],
+    "orphan_count": len(orphans),
+    "orphan_pids": [pid for pid, _ in orphans],
+    "orphan_detection": "closed-fixture" if mode == "closed-fixture" else "/proc/<pid>/stat starttime",
+    "root_alive": root_alive,
+    "closed_total_rss_kib": closed.get("total_rss_kib", 0),
+    "closed_total_fd_count": closed.get("total_fd_count", 0),
+    "unreadable": {
+        "baseline": baseline.get("unreadable", []),
+        "opened": opened.get("unreadable", []),
+        "closed": closed.get("unreadable", []),
+    },
+}))
+PY
+}
+
+# validate_terminal_report <report.json> <run_id>：后端报告与当前批次契约必须完全一致。
+# stdout 始终输出结构化校验结果；有效返回 0，无效返回 1。
+validate_terminal_report() {
+  local report_file="$1" expected_run_id="$2"
+  python3 - "$report_file" "$expected_run_id" <<'PY'
+import json, sys
+
+path, expected_run_id = sys.argv[1:]
+errors = []
+try:
+    with open(path, encoding="utf-8") as f:
+        report = json.load(f)
+except (OSError, json.JSONDecodeError) as exc:
+    report = {}
+    errors.append("invalid JSON: %s" % exc)
+
+expected_bytes = 10 * 1024 * 1024
+checks = {
+    "run_id": report.get("run_id") == expected_run_id,
+    "backend_valid": report.get("valid") is True,
+    "backend_errors_empty": report.get("errors") == [],
+    "begin_seen_once": report.get("begin_seen") == 1,
+    "end_seen_once": report.get("end_seen") == 1,
+    "consumed_exactly_10mib": report.get("consumed_bytes") == expected_bytes,
+    "expected_bytes_exactly_10mib": report.get("expected_bytes") == expected_bytes,
+    "elapsed_positive": isinstance(report.get("elapsed_ms"), (int, float)) and report.get("elapsed_ms", 0) > 0,
+    "timestamps_ordered": isinstance(report.get("start_ts_ms"), (int, float))
+        and isinstance(report.get("end_ts_ms"), (int, float))
+        and report.get("end_ts_ms", 0) >= report.get("start_ts_ms", 0) > 0,
+    "frame_gaps_nonempty": isinstance(report.get("frame_gaps_ms"), list)
+        and len(report.get("frame_gaps_ms", [])) > 0,
+    "frame_gaps_numeric": isinstance(report.get("frame_gaps_ms"), list)
+        and all(isinstance(value, (int, float)) and value >= 0 for value in report.get("frame_gaps_ms", [])),
+}
+errors.extend(name for name, passed in checks.items() if not passed)
+print(json.dumps({"valid": not errors, "checks": checks, "errors": errors}, ensure_ascii=False))
+raise SystemExit(0 if not errors else 1)
 PY
 }
 
@@ -1056,13 +1107,14 @@ run_startup_ready() {
 }
 
 # 契约 §6.2：单类资源循环（kind ∈ tab|grid|terminal）。独立启动应用（M0_DRIVER 驱动），
-# 5 预热 + VR_CYCLE_SAMPLES 正式；每次循环等驱动写 done 标记后采样进程树并做孤儿检测。
+# 5 预热 + VR_CYCLE_SAMPLES 正式；每轮与产品驱动做四阶段握手：
+# prepare（创建前快照）-> opened（打开态快照）-> done（关闭态快照）-> sampled（放行）。
 run_resource_cycle_real() {
   local kind="$1"
   local warmup="$DEFAULT_WARMUP_SAMPLES" formal="${VR_CYCLE_SAMPLES:-$DEFAULT_CYCLE_SAMPLES}"
   local total=$((warmup + formal))
   local xdg="$XDG_BASE/cycle-$kind" rd="$REPORT_DIR/cycle-$kind"
-  local ready pid n
+  local ready pid n cycle_ok=1
   mkdir -p "$xdg" "$rd"
   ready="$rd/ready.signal"
   rm -f "$ready"
@@ -1071,63 +1123,122 @@ run_resource_cycle_real() {
     echo "[M0-0.b] cycle-$kind: driver start timeout" >&2
     MEASUREMENTS_OK="FAIL"
     kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    cp "$rd/app.log" "$RUN_DIR/raw/${kind}_cycle_app.log" 2>/dev/null || true
     return 1
   fi
-  local -a rss_vals=() fd_vals=()
+  local -a rss_vals=() fd_vals=() orphan_vals=()
   local formal_json='[]'
   for n in $(seq 1 "$total"); do
-    local tag
+    local tag prefix baseline_file opened_file closed_file
     tag="$(printf '%02d' "$n")"
-    if ! wait_file "$rd/$kind.cycle-$tag.done" 90; then
+    prefix="$rd/$kind.cycle-$tag"
+    baseline_file="$prefix.baseline.json"
+    opened_file="$prefix.opened.json"
+    closed_file="$prefix.closed.json"
+
+    if ! wait_file "$prefix.prepare" 90; then
+      echo "[M0-0.b] cycle-$kind: #$n prepare timeout" >&2
+      MEASUREMENTS_OK="FAIL"
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      cp "$rd/app.log" "$RUN_DIR/raw/${kind}_cycle_app.log" 2>/dev/null || true
+      return 1
+    fi
+    snapshot_process_tree "$pid" >"$baseline_file"
+    printf 'ok\n' >"$prefix.prepare.ack"
+
+    if ! wait_file "$prefix.opened" 90; then
+      echo "[M0-0.b] cycle-$kind: #$n opened timeout" >&2
+      MEASUREMENTS_OK="FAIL"
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      cp "$rd/app.log" "$RUN_DIR/raw/${kind}_cycle_app.log" 2>/dev/null || true
+      return 1
+    fi
+    snapshot_process_tree "$pid" >"$opened_file"
+    printf 'ok\n' >"$prefix.opened.ack"
+
+    if ! wait_file "$prefix.done" 90; then
       echo "[M0-0.b] cycle-$kind: #$n done timeout" >&2
       MEASUREMENTS_OK="FAIL"
       kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      cp "$rd/app.log" "$RUN_DIR/raw/${kind}_cycle_app.log" 2>/dev/null || true
       return 1
     fi
-    if [ "$(head -1 "$rd/$kind.cycle-$tag.done" 2>/dev/null)" != "ok" ]; then
-      echo "[M0-0.b] cycle-$kind: #$n driver FAIL: $(head -1 "$rd/$kind.cycle-$tag.done" 2>/dev/null)" >&2
+    snapshot_process_tree "$pid" >"$closed_file"
+    local comparison opened_status done_status root_alive
+    comparison="$(compare_cycle_snapshots "$baseline_file" "$opened_file" "$closed_file")"
+    printf 'ok\n' >"$prefix.sampled"
+    opened_status="$(head -1 "$prefix.opened" 2>/dev/null || true)"
+    done_status="$(head -1 "$prefix.done" 2>/dev/null || true)"
+    root_alive="$(printf '%s' "$comparison" | python3 -c 'import json,sys; print("1" if json.load(sys.stdin)["root_alive"] else "0")')"
+    if [ "$opened_status" != "ok" ] || [ "$done_status" != "ok" ] || [ "$root_alive" != "1" ]; then
+      echo "[M0-0.b] cycle-$kind: #$n invalid state: opened=$opened_status done=$done_status root_alive=$root_alive" >&2
       MEASUREMENTS_OK="FAIL"
       kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      cp "$rd/app.log" "$RUN_DIR/raw/${kind}_cycle_app.log" 2>/dev/null || true
       return 1
     fi
+
     if [ "$n" -gt "$warmup" ]; then
-      local snap rss fd cno rec orph
-      snap="$(snapshot_process_tree "$pid")"
-      rss="$(printf '%s' "$snap" | python3 -c 'import json,sys; print(json.load(sys.stdin)["total_rss_kib"])')"
-      fd="$(printf '%s' "$snap" | python3 -c 'import json,sys; print(json.load(sys.stdin)["total_fd_count"])')"
+      local rss fd cno rec orphan_count
+      cno=$((n - warmup))
+      cp "$baseline_file" "$RUN_DIR/raw/${kind}_cycle_c$(printf '%02d' "$cno")_baseline.json"
+      cp "$opened_file" "$RUN_DIR/raw/${kind}_cycle_c$(printf '%02d' "$cno")_opened.json"
+      cp "$closed_file" "$RUN_DIR/raw/${kind}_cycle_c$(printf '%02d' "$cno")_closed.json"
+      rss="$(printf '%s' "$comparison" | python3 -c 'import json,sys; print(json.load(sys.stdin)["closed_total_rss_kib"])')"
+      fd="$(printf '%s' "$comparison" | python3 -c 'import json,sys; print(json.load(sys.stdin)["closed_total_fd_count"])')"
+      orphan_count="$(printf '%s' "$comparison" | python3 -c 'import json,sys; print(json.load(sys.stdin)["orphan_count"])')"
       rss_vals+=("$rss")
       fd_vals+=("$fd")
-      cno=$((n - warmup))
-      rec="$(python3 -c 'import json,sys; print(json.dumps({"cycle": int(sys.argv[1]), "rss_kib": int(sys.argv[2]), "fd_count": int(sys.argv[3])}))' "$cno" "$rss" "$fd")"
+      orphan_vals+=("$orphan_count")
+      rec="$(python3 -c 'import json,sys; d=json.loads(sys.argv[4]); print(json.dumps({"cycle": int(sys.argv[1]), "rss_kib": int(sys.argv[2]), "fd_count": int(sys.argv[3]), "candidate_count": d["candidate_count"], "orphan_count": d["orphan_count"]}))' "$cno" "$rss" "$fd" "$comparison")"
       formal_json="$(python3 -c 'import json,sys; a=json.loads(sys.argv[1]); a.append(json.loads(sys.argv[2])); print(json.dumps(a))' "$formal_json" "$rec")"
-      # 孤儿进程检测（契约 §5）：场景关闭后快照后代，等待 2 秒复核仍存活数量
-      orph="$(detect_orphans "$pid" "$ORPHAN_WAIT_S")"
       printf '{"metric":"orphan_process_count","run_id":"%s","kind":"%s","cycle":%d,"data":%s}\n' \
-        "$RUN_ID" "$kind" "$cno" "$orph" \
+        "$RUN_ID" "$kind" "$cno" "$comparison" \
         >"$RUN_DIR/measurements/orphan_${kind}_c$(printf '%02d' "$cno").json"
+      if [ "$rss" -le 0 ] || [ "$fd" -le 0 ] || [ "$orphan_count" -ne 0 ]; then
+        echo "[M0-0.b] cycle-$kind: formal #$cno invalid measurement: rss=$rss fd=$fd orphan_count=$orphan_count" >&2
+        cycle_ok=0
+      fi
     fi
   done
   if ! wait_file "$rd/$kind.driver.result" 60; then
     echo "[M0-0.b] cycle-$kind: driver result timeout" >&2
     MEASUREMENTS_OK="FAIL"
+    cycle_ok=0
   else
     local result
     result="$(head -1 "$rd/$kind.driver.result")"
     if [ "$result" != "PASS" ]; then
       echo "[M0-0.b] cycle-$kind: driver result=$result" >&2
       MEASUREMENTS_OK="FAIL"
+      cycle_ok=0
     fi
   fi
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  local stats fd_stats fd_first fd_last
+  cp "$rd/app.log" "$RUN_DIR/raw/${kind}_cycle_app.log" 2>/dev/null || true
+  if [ "${#rss_vals[@]}" -ne "$formal" ] || [ "${#fd_vals[@]}" -ne "$formal" ]; then
+    echo "[M0-0.b] cycle-$kind: expected $formal formal samples, got rss=${#rss_vals[@]} fd=${#fd_vals[@]}" >&2
+    cycle_ok=0
+  fi
+  local stats fd_stats orphan_stats fd_first fd_last
   stats="$(compute_stats "${rss_vals[@]}")"
   fd_stats="$(compute_stats "${fd_vals[@]}")"
+  orphan_stats="$(compute_stats "${orphan_vals[@]}")"
   fd_first="${fd_vals[0]:-0}"
   fd_last="${fd_vals[${#fd_vals[@]}-1]:-0}"
-  printf '{"metric":"%s_cycle_rss_slope_kib","run_id":"%s","kind":"%s","warmup":%d,"formal":%d,"stats":%s,"fd_delta":%d,"fd_stats":%s,"samples":%s}\n' \
-    "$kind" "$RUN_ID" "$kind" "$warmup" "$formal" "$stats" "$((fd_last - fd_first))" "$fd_stats" "$formal_json" \
+  printf '{"metric":"%s_cycle_rss_slope_kib","run_id":"%s","kind":"%s","warmup":%d,"formal":%d,"orphan_wait_s":%d,"stats":%s,"fd_delta":%d,"fd_stats":%s,"orphan_stats":%s,"samples":%s}\n' \
+    "$kind" "$RUN_ID" "$kind" "$warmup" "$formal" "$ORPHAN_WAIT_S" "$stats" "$((fd_last - fd_first))" "$fd_stats" "$orphan_stats" "$formal_json" \
     >"$RUN_DIR/measurements/${kind}_cycle.json"
+  if [ "$cycle_ok" != "1" ]; then
+    MEASUREMENTS_OK="FAIL"
+    return 1
+  fi
 }
 
 # 契约 §6.3：终端吞吐（1 预热 + DEFAULT_TERM_SAMPLES 正式）。前端自动挂载终端并驱动
@@ -1147,6 +1258,8 @@ run_terminal_throughput_real() {
       echo "[M0-0.b] term-$n: driver start timeout" >&2
       MEASUREMENTS_OK="FAIL"
       kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      cp "$rd/app.log" "$RUN_DIR/raw/terminal_throughput_r$(printf '%02d' "$n")_app.log" 2>/dev/null || true
       continue
     fi
     local rfile="$rd/term-throughput-report.json"
@@ -1154,6 +1267,8 @@ run_terminal_throughput_real() {
       echo "[M0-0.b] term-$n: report timeout" >&2
       MEASUREMENTS_OK="FAIL"
       kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      cp "$rd/app.log" "$RUN_DIR/raw/terminal_throughput_r$(printf '%02d' "$n")_app.log" 2>/dev/null || true
       continue
     fi
     wait_file "$rd/term-throughput.driver.result" 60 || true
@@ -1163,8 +1278,16 @@ run_terminal_throughput_real() {
       echo "[M0-0.b] term-$n: driver result=$dresult" >&2
       MEASUREMENTS_OK="FAIL"
     fi
-    cp "$rfile" "$RUN_DIR/raw/terminal_throughput_r$(printf '%02d' "$n").json"
-    if [ "$n" -gt "$warmup" ]; then
+    local raw_report="$RUN_DIR/raw/terminal_throughput_r$(printf '%02d' "$n").json"
+    local validation="$RUN_DIR/raw/terminal_throughput_r$(printf '%02d' "$n")_validation.json"
+    cp "$rfile" "$raw_report"
+    local report_ok=1
+    if ! validate_terminal_report "$rfile" "$RUN_ID" >"$validation"; then
+      report_ok=0
+      MEASUREMENTS_OK="FAIL"
+      echo "[M0-0.b] term-$n: invalid throughput report: $(cat "$validation")" >&2
+    fi
+    if [ "$n" -gt "$warmup" ] && [ "$report_ok" = "1" ]; then
       local elapsed gaps
       elapsed="$(python3 -c 'import json; print(json.load(open("'$rfile'"))["elapsed_ms"])')"
       elapsed_vals+=("$elapsed")
@@ -1173,7 +1296,12 @@ run_terminal_throughput_real() {
     fi
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
+    cp "$rd/app.log" "$RUN_DIR/raw/terminal_throughput_r$(printf '%02d' "$n")_app.log" 2>/dev/null || true
   done
+  if [ "${#elapsed_vals[@]}" -ne "$formal" ]; then
+    echo "[M0-0.b] terminal throughput: expected $formal valid formal samples, got ${#elapsed_vals[@]}" >&2
+    MEASUREMENTS_OK="FAIL"
+  fi
   local estats fstats fgap_p95 fgap_max
   estats="$(compute_stats "${elapsed_vals[@]}")"
   fstats="$(printf '%s' "$all_gaps" | python3 -c 'import json,sys; a=json.load(sys.stdin); n=len(a); s=sorted(a); print(json.dumps({"count": n, "p95": (s[int(0.95*(n-1))] if n >= 20 else None), "max": (s[-1] if n else None)}))')"
@@ -1344,23 +1472,38 @@ run_self_test() {
     echo "FAIL: process tree snapshot"; rc=1
   fi
 
-  # 用例 5：孤儿进程检测 fixture
+  # 用例 5：三阶段快照差分；根进程不计孤儿，只有 opened 新增且 closed 仍存活才计数
   local orph_ok=1
-  local orphan1 orphan2
-  sleep 3 &
-  local o1=$!
-  orphan1="$(detect_orphans "$o1" 0.5)"
-  [ "$(printf '%s' "$orphan1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["orphan_count"])')" -ge 1 ] || orph_ok=0
-  wait "$o1" 2>/dev/null || true
-  orphan2="$(detect_orphans "$o1" 0.2)"
+  local orphan1 orphan2 ob="$tmp/orphan-baseline.json" oo="$tmp/orphan-opened.json" oc="$tmp/orphan-closed.json"
+  printf '%s\n' '{"root_pid":100,"members":[{"pid":100,"starttime":10}],"unreadable":[],"total_rss_kib":10,"total_fd_count":2}' >"$ob"
+  printf '%s\n' '{"root_pid":100,"members":[{"pid":100,"starttime":10},{"pid":200,"starttime":20}],"unreadable":[],"total_rss_kib":20,"total_fd_count":4}' >"$oo"
+  printf '%s\n' '{"root_pid":100,"members":[{"pid":100,"starttime":10},{"pid":200,"starttime":20}],"unreadable":[],"total_rss_kib":20,"total_fd_count":4}' >"$oc"
+  orphan1="$(compare_cycle_snapshots "$ob" "$oo" "$oc" closed-fixture)"
+  [ "$(printf '%s' "$orphan1" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("1" if d["candidate_count"] == 1 and d["orphan_count"] == 1 and d["root_alive"] else "0")')" = "1" ] || orph_ok=0
+  printf '%s\n' '{"root_pid":100,"members":[{"pid":100,"starttime":10}],"unreadable":[],"total_rss_kib":10,"total_fd_count":2}' >"$oc"
+  orphan2="$(compare_cycle_snapshots "$ob" "$oo" "$oc" closed-fixture)"
   [ "$(printf '%s' "$orphan2" | python3 -c 'import json,sys; print(json.load(sys.stdin)["orphan_count"])')" = "0" ] || orph_ok=0
   if [ "$orph_ok" = "1" ]; then
-    echo "PASS: orphan detection (alive counted, exited not counted)"
+    echo "PASS: orphan detection (root excluded, opened candidate tracked by pid+starttime)"
   else
     echo "FAIL: orphan detection"; rc=1
   fi
 
-  # 用例 6：干净 fixture 仓库正式流程 -> BLOCKED（钩子缺失）+ 证据完整 + 退出非 0
+  # 用例 6：终端报告必须精确匹配 run_id、10 MiB、唯一标记与非空帧样本
+  local term_ok=1 term_report="$tmp/term-report.json"
+  printf '%s\n' '{"run_id":"fixture-run","start_ts_ms":1000,"end_ts_ms":1100,"elapsed_ms":100,"begin_seen":1,"end_seen":1,"consumed_bytes":10485760,"expected_bytes":10485760,"frame_gaps_ms":[16.0],"valid":true,"errors":[]}' >"$term_report"
+  validate_terminal_report "$term_report" fixture-run >/dev/null || term_ok=0
+  printf '%s\n' '{"run_id":"fixture-run","start_ts_ms":1000,"end_ts_ms":1100,"elapsed_ms":100,"begin_seen":1,"end_seen":1,"consumed_bytes":1,"expected_bytes":10485760,"frame_gaps_ms":[16.0],"valid":true,"errors":[]}' >"$term_report"
+  if validate_terminal_report "$term_report" fixture-run >/dev/null; then
+    term_ok=0
+  fi
+  if [ "$term_ok" = "1" ]; then
+    echo "PASS: terminal report validation (exact payload and provenance enforced)"
+  else
+    echo "FAIL: terminal report validation"; rc=1
+  fi
+
+  # 用例 7：干净 fixture 仓库正式流程 -> BLOCKED（钩子缺失）+ 证据完整 + 退出非 0
   local repo="$tmp/repo-clean"
   mkdir -p "$repo"
   git -C "$repo" init -q
@@ -1394,7 +1537,7 @@ run_self_test() {
     fi
   fi
 
-  # 用例 7：脏工作树正式模式 -> 非零退出
+  # 用例 8：脏工作树正式模式 -> 非零退出
   local repo2="$tmp/repo-dirty"
   mkdir -p "$repo2"
   git -C "$repo2" init -q
@@ -1410,7 +1553,7 @@ run_self_test() {
     echo "PASS: dirty worktree rejected (nonzero exit)"
   fi
 
-  # 用例 8：SHA256SUMS 与 run 目录完整性
+  # 用例 9：SHA256SUMS 与 run 目录完整性
   local runid2
   runid2="$(ls "$tmp/repo-clean/logs/m0-baseline" | tail -1)"
   if (cd "$tmp/repo-clean/logs/m0-baseline/$runid2" && sha256sum -c SHA256SUMS >/dev/null 2>&1); then
@@ -1419,7 +1562,7 @@ run_self_test() {
     echo "FAIL: SHA256SUMS verification"; rc=1
   fi
 
-  # 用例 9：summary.json 满足固定 schema（M0-1.c）
+  # 用例 10：summary.json 满足固定 schema（M0-1.c）
   if [ ! -f "$SCHEMA_FILE" ]; then
     echo "FAIL: schema file missing: $SCHEMA_FILE"; rc=1
   elif [ ! -f "$VALIDATE_SUMMARY" ]; then
