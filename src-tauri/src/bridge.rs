@@ -2182,6 +2182,9 @@ pub fn m0_term_report(app: AppHandle, report: serde_json::Value) -> Result<(), S
     let Some(dir) = &cfg.report_dir else {
         return Ok(());
     };
+    if cfg.run_id.is_empty() || cfg.driver != "term-throughput" {
+        return Err("terminal report outside term-throughput measurement".into());
+    }
     let end_ms = report
         .get("end_ts_ms")
         .and_then(|v| v.as_u64())
@@ -2190,24 +2193,60 @@ pub fn m0_term_report(app: AppHandle, report: serde_json::Value) -> Result<(), S
         .get("start_ts_ms")
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as u128;
-    let mut out = serde_json::Map::new();
-    out.insert("run_id".into(), serde_json::Value::String(cfg.run_id));
-    out.insert("start_ts_ms".into(), serde_json::json!(start_ms));
-    out.insert("end_ts_ms".into(), serde_json::json!(end_ms));
-    out.insert(
-        "elapsed_ms".into(),
-        serde_json::json!(end_ms.saturating_sub(start_ms)),
-    );
-    if let Some(obj) = report.as_object() {
-        for (k, v) in obj {
-            if k != "end_ts_ms" && k != "start_ts_ms" {
-                out.insert(k.clone(), v.clone());
-            }
-        }
+    let begin_seen = report
+        .get("begin_seen")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let end_seen = report.get("end_seen").and_then(|v| v.as_u64()).unwrap_or(0);
+    let consumed_bytes = report
+        .get("consumed_bytes")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let frame_gaps = report
+        .get("frame_gaps_ms")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut errors = Vec::new();
+    if begin_seen != 1 {
+        errors.push(format!("begin_seen={begin_seen}, expected 1"));
     }
-    let json = serde_json::to_string_pretty(&serde_json::Value::Object(out))
-        .map_err(|e| format!("serialize report: {e}"))?;
-    m0_atomic_write(&format!("{dir}/term-throughput-report.json"), &json)
+    if end_seen != 1 {
+        errors.push(format!("end_seen={end_seen}, expected 1"));
+    }
+    if consumed_bytes != 10 * 1024 * 1024 {
+        errors.push(format!(
+            "consumed_bytes={consumed_bytes}, expected {}",
+            10 * 1024 * 1024
+        ));
+    }
+    if start_ms == 0 || end_ms < start_ms {
+        errors.push(format!("invalid timestamps start={start_ms} end={end_ms}"));
+    }
+    if frame_gaps.is_empty() {
+        errors.push("frame_gaps_ms is empty".into());
+    }
+    let valid = errors.is_empty();
+    let out = serde_json::json!({
+        "run_id": cfg.run_id,
+        "start_ts_ms": start_ms,
+        "end_ts_ms": end_ms,
+        "elapsed_ms": end_ms.saturating_sub(start_ms),
+        "begin_seen": begin_seen,
+        "end_seen": end_seen,
+        "consumed_bytes": consumed_bytes,
+        "expected_bytes": 10 * 1024 * 1024,
+        "frame_gaps_ms": frame_gaps,
+        "valid": valid,
+        "errors": errors,
+    });
+    let json = serde_json::to_string_pretty(&out).map_err(|e| format!("serialize report: {e}"))?;
+    m0_atomic_write(&format!("{dir}/term-throughput-report.json"), &json)?;
+    if valid {
+        Ok(())
+    } else {
+        Err("terminal throughput report failed validation".into())
+    }
 }
 
 /// 查询当前 M0 测量配置（非测量运行返回 null）。前端据此在 term-throughput 模式下

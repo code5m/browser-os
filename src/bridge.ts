@@ -229,7 +229,6 @@ export const bridge = {
   m0Config: () => invoke<M0Config | null>("m0_config"),
   // 终端吞吐报告：前端检测 __M0_TERM_END__ 并完成下一次 animation frame 后上报
   m0TermReport: (report: {
-    run_id: string;
     begin_seen: number;
     end_seen: number;
     consumed_bytes: number;

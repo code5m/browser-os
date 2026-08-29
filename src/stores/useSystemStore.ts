@@ -128,6 +128,7 @@ export const useSystemStore = defineStore("system", () => {
   const m0Cfg = ref<M0Config | null>(null);
   // 前端发送吞吐负载的时刻（epoch ms），随 m0_term_report 上报用于计算 elapsed
   const m0StartTs = ref(0);
+  let m0ThroughputStart: (() => void) | null = null;
   async function loadM0Config() {
     try {
       m0Cfg.value = await bridge.m0Config();
@@ -141,6 +142,10 @@ export const useSystemStore = defineStore("system", () => {
 
   function bindTermWriter(fn: ((data: string) => void) | null) {
     termWriter = fn;
+  }
+
+  function bindM0ThroughputStart(fn: (() => void) | null) {
+    m0ThroughputStart = fn;
   }
 
   async function startShell(force = false) {
@@ -165,12 +170,13 @@ export const useSystemStore = defineStore("system", () => {
   function maybeRunM0Throughput() {
     if (m0Cfg.value?.driver !== "term-throughput" || !termId.value) return;
     setTimeout(() => {
-      if (!termId.value) return;
+      if (!termId.value || !m0ThroughputStart) return;
+      m0ThroughputStart();
       m0StartTs.value = Date.now();
       bridge
         .termWrite(
           termId.value,
-          "printf '__M0_TERM_BEGIN__\\n'; head -c 10485760 /dev/zero | tr '\\0' 'x'; printf '\\n__M0_TERM_END__\\n'\n"
+          "stty -echo; p='__M0_TERM_'; printf '%s' \"${p}BEGIN__\"; head -c 10485760 /dev/zero | tr '\\0' 'x'; printf '%s' \"${p}END__\"; stty echo\n"
         )
         .catch(() => {});
     }, 1500);
@@ -234,6 +240,7 @@ export const useSystemStore = defineStore("system", () => {
     m0Cfg,
     m0StartTs,
     loadM0Config,
+    bindM0ThroughputStart,
     loadClipHistory,
     clipReadSilent,
     clipCopy,
