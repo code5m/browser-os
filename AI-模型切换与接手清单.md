@@ -1,8 +1,8 @@
 # AI 模型切换与接手清单
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
-> 文档版本：V1.2。
-> 更新时间：2026-08-29 08:45 CST。
+> 文档版本：V1.3。
+> 更新时间：2026-08-29 08:55 CST。
 > 当前状态：`CODEX_RUNNING`。
 > 当前分支：`feature-M0-baseline`。
 > 当前执行器：Codex（CodeBuddy 主机，已接手并完成 M0-1.a）；Trae 后续按 §6 审查全部新增提交后再续做。
@@ -20,7 +20,7 @@
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
 | 禁止启动 | M1~M5；当前检查点未提交前禁止夹带下一检查点 |
-| 最近实现提交 | `1bd56b1 feat(M0-1.a): add baseline quality gate` |
+| 最近实现提交 | `3a7bbac fix(M0-1.a-fix1): harden frontend-fail path and add regression case`（前序实现 `1bd56b1`） |
 | 路线文档提交 | `c16ed27 docs(plan): route milestones by priority and model` |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
@@ -211,6 +211,30 @@ NEXT=M0-1.b
 证据保留策略（M0-1.a 落地，对应实现要求「明确证据保留策略」）：`.gitignore` 已对 `logs/m0-baseline/` 开例外，
 `raw/` 原始命令输出（含 `*.log`）随 run 目录入库可追溯；`summary/environment/scenario/measurements/SHA256SUMS`
 全部提交；若未来需要调整原始 `.log` 入库口径，先提契约版本变更。
+
+### M0-1.a-fix1 修复记录（2026-08-29，Codex / CodeBuddy 主机，commit `3a7bbac`）
+
+发现并修复正式模式缺陷：前端构建失败（如依赖未装、超时）时 `run_frontend_build` 不设置
+`DIST_TOTAL_BYTES/LARGEST_JS_*`，`write_measurements_frontend` 在 `set -u` 下 unbound 崩溃，
+无法生成完整 FAIL 证据（违反「门禁失败返回非 0 且输出完整证据」语义，M0-0.b 会踩坑）。
+
+修复内容：
+1. `run_frontend_build` 开头初始化 dist 指标默认值，任何失败路径均不 unbound。
+2. `summary.json` 中 dist_total_bytes / largest_js_* 状态与 `FRONTEND_STATUS` 联动（缺原始证据即 FAIL）。
+3. `--self-test` 新增用例 6（`BS_SELF_TEST_FRONTEND_FAIL=1` fixture）：断言前端失败时退出非 0、
+   summary status=FAIL、证据完整、不崩溃；用例 3 的退出码捕获改为 `|| code=$?` 防御 errexit。
+4. 脚本版本 `M0-1.a-1` → `M0-1.a-2`。
+
+回写模板（不移动指针，NEXT 仍为 M0-1.b）：
+```text
+CHECKPOINT=M0-1.a-fix1
+STATUS=PASS（原 M0-1.a 维持 PASS，未改变检查点结论）
+EXECUTOR=CodeBuddy（Codex 主机）
+MODEL=界面未显示完整模型名；按 Codex 映射 AI:BALANCED 对应 gpt-5.6-terra
+COMMIT=3a7bbac
+VERIFY=bash -n(0); --help(0); --self-test(0, ALL_PASS, 6 用例); --definitely-invalid(2); git diff --check(0)
+NEXT=M0-1.b
+```
 
 ## 6. 跨模型接手审查协议（Codex 已按本协议完成 M0-1.a）
 
