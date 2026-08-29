@@ -50,7 +50,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # 常量
 # ---------------------------------------------------------------------------
-SCRIPT_VERSION="M0-1.a-1"
+SCRIPT_VERSION="M0-1.a-2"
 CONTRACT_VERSION="V1.0"
 SCENARIO_VERSION="M0-1.a-v1"
 DEFAULT_FRONTEND_SAMPLES=3
@@ -255,8 +255,21 @@ run_frontend_build() {
   local samples="${BS_FRONTEND_SAMPLES:-$DEFAULT_FRONTEND_SAMPLES}"
   local t0 t1 rc i
   FRONTEND_FORMAL_MS=()
+  # 失败路径也必须有确定值：write_measurements_frontend/write_summary_md 在 set -u 下引用这些
+  # 变量。前端构建失败（依赖未装、超时等）时必须如实 FAIL 并生成完整证据，不得 unbound 崩溃。
+  DIST_TOTAL_BYTES=0
+  LARGEST_JS_REL=""
+  LARGEST_JS_BYTES=0
+  LARGEST_JS_GZIP=0
 
   if [ "${BS_SELF_TEST:-0}" = "1" ]; then
+    if [ "${BS_SELF_TEST_FRONTEND_FAIL:-0}" = "1" ]; then
+      # 仅用于 self-test 回归：模拟前端构建失败，验证失败路径不崩溃且生成完整 FAIL 证据
+      FRONTEND_STATUS="FAIL"
+      FRONTEND_WARMUP_MS=0
+      FRONTEND_FORMAL_MS=()
+      return
+    fi
     FRONTEND_STATUS="PASS"
     FRONTEND_WARMUP_MS=123
     FRONTEND_FORMAL_MS=(456 457 456)
@@ -623,9 +636,9 @@ results["frontend_build_ms"] = {
     "max_ms": int(g("FRONTEND_MAX", "0")),
     "volatility": g("FRONTEND_VOLATILITY", "n/a"),
 }
-results["dist_total_bytes"] = {"status": "PASS", "bytes": int(g("DIST_TOTAL_BYTES", "0"))}
-results["largest_js_bytes"] = {"status": "PASS", "path": g("LARGEST_JS_REL"), "bytes": int(g("LARGEST_JS_BYTES", "0"))}
-results["largest_js_gzip_bytes"] = {"status": "PASS", "path": g("LARGEST_JS_REL"), "bytes": int(g("LARGEST_JS_GZIP", "0"))}
+results["dist_total_bytes"] = {"status": g("FRONTEND_STATUS", "FAIL"), "bytes": int(g("DIST_TOTAL_BYTES", "0"))}
+results["largest_js_bytes"] = {"status": g("FRONTEND_STATUS", "FAIL"), "path": g("LARGEST_JS_REL"), "bytes": int(g("LARGEST_JS_BYTES", "0"))}
+results["largest_js_gzip_bytes"] = {"status": g("FRONTEND_STATUS", "FAIL"), "path": g("LARGEST_JS_REL"), "bytes": int(g("LARGEST_JS_GZIP", "0"))}
 results["release_binary_bytes"] = {
     "status": "PASS" if (g("RELEASE_BUILD_RC", "1") == "0" and int(g("RELEASE_BIN_BYTES", "0")) > 0) else "FAIL",
     "bytes": int(g("RELEASE_BIN_BYTES", "0")),
@@ -871,9 +884,8 @@ run_self_test() {
   echo "fixture" >"$repo/README.md"
   git -C "$repo" add -A
   git -C "$repo" commit -qm "fixture baseline"
-  local out
-  out="$(cd "$repo" && BS_SELF_TEST=1 BS_FRONTEND_SAMPLES=1 bash "$SCRIPT_PATH" 2>&1)"
-  local code=$?
+  local out code=0
+  out="$(cd "$repo" && BS_SELF_TEST=1 BS_FRONTEND_SAMPLES=1 bash "$SCRIPT_PATH" 2>&1)" || code=$?
   echo "$out" | sed 's/^/    [fixture] /'
   if [ $code -ne 0 ]; then
     echo "FAIL: clean fixture run should exit 0 (got $code)"; rc=1
@@ -920,6 +932,35 @@ run_self_test() {
     echo "PASS: SHA256SUMS verifies all evidence files"
   else
     echo "FAIL: SHA256SUMS verification"; rc=1
+  fi
+
+  # 用例 6：前端构建失败（fixture 模拟）→ 非零退出 + summary status=FAIL + 完整证据，不崩溃
+  local repo3="$tmp/repo-frontend-fail"
+  mkdir -p "$repo3"
+  git -C "$repo3" init -q
+  git -C "$repo3" config user.name fixture
+  git -C "$repo3" config user.email fixture@example.invalid
+  echo "fixture" >"$repo3/README.md"
+  git -C "$repo3" add -A
+  git -C "$repo3" commit -qm "fixture frontend fail"
+  local out3 code3=0
+  out3="$(cd "$repo3" && BS_SELF_TEST=1 BS_SELF_TEST_FRONTEND_FAIL=1 bash "$SCRIPT_PATH" 2>&1)" || code3=$?
+  if [ $code3 -ne 0 ]; then
+    local runid3 summary3 status3
+    runid3="$(cd "$repo3" && ls logs/m0-baseline | tail -1)"
+    summary3="$repo3/logs/m0-baseline/$runid3/summary.json"
+    if [ -f "$summary3" ]; then
+      status3="$(python3 -c 'import json;print(json.load(open("'$summary3'"))["status"])')"
+      if [ "$status3" = "FAIL" ] && [ -f "$repo3/logs/m0-baseline/$runid3/summary.md" ] && [ -f "$repo3/logs/m0-baseline/$runid3/measurements/dist_size.json" ]; then
+        echo "PASS: frontend-fail fixture -> exit nonzero, summary=FAIL, evidence complete"
+      else
+        echo "FAIL: frontend-fail fixture evidence incomplete (status=$status3)"; rc=1
+      fi
+    else
+      echo "FAIL: frontend-fail fixture summary.json not generated"; rc=1
+    fi
+  else
+    echo "FAIL: frontend-fail fixture should exit nonzero when frontend FAILs"; rc=1
   fi
 
   if [ $rc -eq 0 ]; then
