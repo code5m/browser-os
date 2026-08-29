@@ -857,11 +857,19 @@ write_summary_md() {
     echo ""
     echo "| 指标 | 状态 | 说明 |"
     echo "|------|------|------|"
-    echo "| startup_ready_ms | BLOCKED | 需 ready 钩子（M0-0.b 补齐） |"
-    echo "| idle_process_tree_rss_kib / fd_count | BLOCKED | 需 ready 钩子（M0-0.b 补齐） |"
-    echo "| tab/grid/terminal_cycle_rss_slope_kib | BLOCKED | 需 ready 钩子（M0-0.b 补齐） |"
-    echo "| resource_cycle_fd_delta / orphan_process_count | BLOCKED | 需 ready 钩子（M0-0.b 补齐） |"
-    echo "| terminal_10mib_elapsed_ms / frame_gap_* | BLOCKED | 需终端 begin/end 标记（M0-0.b 补齐） |"
+    if [ "$READY_HOOK" = "READY" ] && [ "$TERM_HOOK" = "READY" ] && [ "${MEASUREMENTS_OK:-}" = "PASS" ]; then
+      echo "| startup_ready_ms | MEASURED | measurements/startup_ready.json |"
+      echo "| idle_process_tree_rss_kib / fd_count | MEASURED | measurements/idle_process_tree_r01.json |"
+      echo "| tab/grid/terminal_cycle_rss_slope_kib | MEASURED | measurements/{tab,grid,terminal}_cycle.json |"
+      echo "| resource_cycle_fd_delta / orphan_process_count | MEASURED | measurements/*_cycle.json + orphan_*.json |"
+      echo "| terminal_10mib_elapsed_ms / frame_gap_* | MEASURED | measurements/terminal_throughput.json |"
+    else
+      echo "| startup_ready_ms | BLOCKED | 需 ready 钩子（M0-0.b 补齐） |"
+      echo "| idle_process_tree_rss_kib / fd_count | BLOCKED | 需 ready 钩子（M0-0.b 补齐） |"
+      echo "| tab/grid/terminal_cycle_rss_slope_kib | BLOCKED | 需 ready 钩子（M0-0.b 补齐） |"
+      echo "| resource_cycle_fd_delta / orphan_process_count | BLOCKED | 需 ready 钩子（M0-0.b 补齐） |"
+      echo "| terminal_10mib_elapsed_ms / frame_gap_* | BLOCKED | 需终端 begin/end 标记（M0-0.b 补齐） |"
+    fi
     echo ""
     echo "## 证据"
     echo ""
@@ -1156,8 +1164,8 @@ run_terminal_throughput_real() {
   local estats fstats fgap_p95 fgap_max
   estats="$(compute_stats "${elapsed_vals[@]}")"
   fstats="$(printf '%s' "$all_gaps" | python3 -c 'import json,sys; a=json.load(sys.stdin); n=len(a); s=sorted(a); print(json.dumps({"count": n, "p95": (s[int(0.95*(n-1))] if n >= 20 else None), "max": (s[-1] if n else None)}))')"
-  fgap_p95="$(printf '%s' "$fstats" | python3 -c 'import json,sys; print(json.load(sys.stdin)["p95"])')"
-  fgap_max="$(printf '%s' "$fstats" | python3 -c 'import json,sys; print(json.load(sys.stdin)["max"])')"
+  fgap_p95="$(printf '%s' "$fstats" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["p95"]))')"
+  fgap_max="$(printf '%s' "$fstats" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["max"]))')"
   printf '{"metric":"terminal_10mib_elapsed_ms","run_id":"%s","load_mib":%d,"begin_marker":"__M0_TERM_BEGIN__","end_marker":"__M0_TERM_END__","warmup":%d,"formal":%d,"stats":%s,"frame_gap_p95_ms":%s,"frame_gap_max_ms":%s}\n' \
     "$RUN_ID" "$TERM_LOAD_MIB" "$warmup" "$formal" "$estats" "$fgap_p95" "$fgap_max" \
     >"$RUN_DIR/measurements/terminal_throughput.json"
