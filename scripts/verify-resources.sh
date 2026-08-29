@@ -945,7 +945,7 @@ spawn_m0_app() {
   if [ -n "$driver" ]; then
     env_args+=(M0_DRIVER="$driver" M0_CYCLES="$((DEFAULT_WARMUP_SAMPLES + ${VR_CYCLE_SAMPLES:-$DEFAULT_CYCLE_SAMPLES}))")
   fi
-  env "${env_args[@]}" "$BIN_PATH" >/dev/null 2>&1 &
+  env "${env_args[@]}" "$BIN_PATH" >"$report_dir/app.log" 2>&1 &
   echo $!
 }
 
@@ -1100,7 +1100,8 @@ run_resource_cycle_real() {
 # 契约 §6.3：终端吞吐（1 预热 + DEFAULT_TERM_SAMPLES 正式）。前端自动挂载终端并驱动
 # 10 MiB 负载，计时终点为前端收到 end 标记并完成下一次 animation frame。
 run_terminal_throughput_real() {
-  local warmup=1 formal="${DEFAULT_TERM_SAMPLES:-3}" total=$((warmup + formal))
+  local warmup=1 formal="${DEFAULT_TERM_SAMPLES:-3}"
+  local total=$((warmup + formal))
   local -a elapsed_vals=()
   local all_gaps='[]'
   for n in $(seq 1 "$total"); do
