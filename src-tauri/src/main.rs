@@ -650,6 +650,11 @@ fn run_m0_driver(app: tauri::AppHandle, cfg: bridge::M0Config) {
                 Err(e) => {
                     fails.push(format!("cycle {n}: {e}"));
                     log(&format!("cycle {n} FAIL: {e}"));
+                    // 失败也写 done 标记（内容 FAIL），避免脚本空等 90 秒超时
+                    let _ = std::fs::write(
+                        format!("{report_dir}/{}.cycle-{:02}.done", cfg.driver, n),
+                        format!("FAIL {e}\n"),
+                    );
                 }
             }
         }

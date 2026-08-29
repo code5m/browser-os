@@ -1057,6 +1057,12 @@ run_resource_cycle_real() {
       kill "$pid" 2>/dev/null || true
       return 1
     fi
+    if [ "$(head -1 "$rd/$kind.cycle-$tag.done" 2>/dev/null)" != "ok" ]; then
+      echo "[M0-0.b] cycle-$kind: #$n driver FAIL: $(head -1 "$rd/$kind.cycle-$tag.done" 2>/dev/null)" >&2
+      MEASUREMENTS_OK="FAIL"
+      kill "$pid" 2>/dev/null || true
+      return 1
+    fi
     if [ "$n" -gt "$warmup" ]; then
       local snap rss fd cno rec orph
       snap="$(snapshot_process_tree "$pid")"
@@ -1154,7 +1160,9 @@ run_terminal_throughput_real() {
 # M0-0.b 编排：产品钩子 READY 时执行全部 REQUIRED_NOW 真实采集。
 run_formal_measurements() {
   MEASUREMENTS_OK="PASS"
-  XDG_BASE="/tmp/mvp-browser-os-m0/$RUN_ID"
+  # XDG_BASE 必须短：grid 的 Unix socket 路径受 SUN_LEN(~108) 限制，
+  # 长 RUN_ID 会撑爆 UDS 路径（path must be shorter than SUN_LEN）。用 hash 截断。
+  XDG_BASE="/tmp/m0m/$(printf '%s' "$RUN_ID" | sha256sum | cut -c1-12)"
   REPORT_DIR="$XDG_BASE/reports"
   mkdir -p "$XDG_BASE" "$REPORT_DIR"
   run_startup_ready || MEASUREMENTS_OK="FAIL"
