@@ -1,11 +1,11 @@
 # AI 模型切换与接手清单
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
-> 文档版本：V1.4。
-> 更新时间：2026-08-29 13:45 CST。
-> 当前状态：`TRAE_AUTORUN_READY`。
+> 文档版本：V1.5。
+> 更新时间：2026-08-29 14:40 CST。
+> 当前状态：`CODEX_RUNNING`。
 > 当前分支：`feature-M0-baseline`。
-> 当前执行器：Trae（M0 范围内连续自动执行）；Codex / CodeBuddy 已完成 M0-1.a 及 fix1，Trae 先按 §6 审查新增提交，再从 M0-1.b 续做。
+> 当前执行器：CodeBuddy（Codex 主机，已按 §6 审查并完成 M0-1.b）；后续执行器先按 §6 审查新增提交，再从 M0-1.c 续做。
 > 冲突裁决：WBS/验收以 `详细设计与实施计划.md` 为准，指标语义以冻结契约为准，本文只维护跨模型执行指针和交接证据。
 
 ---
@@ -14,13 +14,13 @@
 
 | 项目 | 当前值 |
 |------|--------|
-| 已完成检查点 | `M0-0.a = PASS`、`M0-1.a = PASS` |
-| 下一检查点 | `M0-1.b = NEXT` |
+| 已完成检查点 | `M0-0.a = PASS`、`M0-1.a = PASS`、`M0-1.b = PASS` |
+| 下一检查点 | `M0-1.c = NEXT` |
 | 下一任务路由 | `AI:BALANCED / R:high` |
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
 | 禁止启动 | M1~M5；当前检查点未提交前禁止夹带下一检查点 |
-| 最近实现提交 | `3a7bbac fix(M0-1.a-fix1): harden frontend-fail path and add regression case`（前序实现 `1bd56b1`） |
+| 最近实现提交 | `506193b feat(M0-1.b): add resource verification driver` |
 | 路线文档提交 | `c16ed27 docs(plan): route milestones by priority and model` |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
@@ -37,6 +37,10 @@
 - 完成 M0-1.a（commit `1bd56b1`）：新增 `scripts/baseline-check.sh` 与 `scripts/fixtures/clippy-sample.json`；
   验收命令全过、`--self-test` 输出 `SELF_TEST_RESULT=ALL_PASS`；`.gitignore` 对 `logs/m0-baseline/` 开例外，
   原始 `.log` 证据随 run 目录入库可追溯（见 §5 证据保留说明）。
+- 完成 M0-1.b（commit `506193b`）：新增 `scripts/verify-resources.sh`（资源验证驱动），
+  覆盖 release 启动、进程树 RSS/FD 采样、tab/grid/terminal 资源循环、终端吞吐与孤儿进程检测驱动；
+  正式模式在 ready/终端钩子缺失时输出完整 BLOCKED 证据并退出 1（不伪造 PASS）；
+  `--self-test` 8 用例 ALL_PASS（统计计算/进程树/孤儿/BLOCKED 语义/SHA256SUMS）。
 
 ## 2. 模型映射
 
@@ -236,6 +240,33 @@ VERIFY=bash -n(0); --help(0); --self-test(0, ALL_PASS, 6 用例); --definitely-i
 NEXT=M0-1.b
 ```
 
+### M0-1.b 回写记录（2026-08-29，CodeBuddy / Codex 主机，commit `506193b`）
+
+```text
+CHECKPOINT=M0-1.b
+STATUS=PASS（驱动能力与 BLOCKED 语义验收通过；产品 ready/终端钩子未落地，正式基线归 M0-0.b）
+EXECUTOR=CodeBuddy（Codex 主机）
+MODEL=界面未显示完整模型名；按 Codex 映射 AI:BALANCED 对应 gpt-5.6-terra
+ROUTE=AI:BALANCED
+MODEL_DEVIATION=UI 未显示完整模型名，推理档位未能精确记录
+COMMIT=506193b
+VERIFY=bash -n(0); --help(0); --self-test(0, ALL_PASS, 8 用例); --definitely-invalid(2); git diff --check(0)
+NEXT=M0-1.c
+```
+
+实现要点（对应 §7 提示词）：
+- 新增 `scripts/verify-resources.sh`（1139 行）：`set -euo pipefail`、根目录 `git rev-parse --show-toplevel` 动态解析；
+  `--help` / `--self-test` / 非法参数非零退出（2）/ 正式模式要求 clean commit。
+- 覆盖契约 §5/§6 资源指标驱动：release 启动（§6.1）、进程树枚举（`/proc/<pid>/stat` starttime 防 PID 复用）、
+  RSS（VmRSS）与 FD（`/proc/<pid>/fd` 可访问条目）采样、idle 采样编排（每 5 秒 × 60 秒）、
+  tab/grid/terminal 循环（5 预热 + 20 正式，OLS 斜率/FD delta/孤儿进程检测）、终端吞吐（10 MiB begin/end 标记）。
+- 统计与契约 §7 一致：median/min/max/波动率、p95 nearest-rank（<20 样本不伪报）、OLS 斜率。
+- 正式模式钩子缺失：`driver_smoke`（真实 /proc 冒烟）后输出完整 BLOCKED 证据
+  （environment/scenario/summary.json|md/SHA256SUMS/measurements，`summary status=BLOCKED`）并退出 1；
+  10 个资源指标 owner=M0-0.b（补钩子的 WBS），DEFERRED(M2-4/M4-3) 不计入判定。
+- 正式 BLOCKED run 证据：`logs/m0-baseline/20260829T143410+0800_506193b_release_x11/`（已入库）。
+- 未实现 M0-1.c（参数/退出码/schema/哈希/日志格式统一与 pre-merge 接入）；未修改冻结契约与产品代码。
+
 ## 6. 跨模型接手审查协议（Codex 已按本协议完成 M0-1.a）
 
 Codex 已于 2026-08-29 按本协议审查并完成 `M0-1.a`。Trae 或后续执行器领取 `M0-1.b` 前，仍需先做审查、不直接继续写代码：
@@ -262,7 +293,7 @@ git log --reverse --oneline --decorate 504fcd7..HEAD
 
 先阅读 AI-模型切换与接手清单.md、详细设计与实施计划.md §2.2、logs/m0-baseline-contract-v1.md。每轮只从文档领取唯一 NEXT，按 AI:* 路由选择 Trae 模型，完成实现、全部验收、四处回写和独立提交。提交后确认工作树干净；未命中硬停止条件时，不用等待用户回复，立即领取下一个 NEXT。
 
-第一轮是 M0-1.b：先审查并复跑 M0-1.a 及 fix1 证据，再新增 scripts/verify-resources.sh，覆盖 release 启动、进程树 RSS/FD、tab/grid/terminal 资源循环和终端测量驱动。仓库根目录必须动态解析，脚本必须支持 --help、--self-test、非法参数非零退出，并为缺少的 ready/终端钩子输出明确 BLOCKED，不得伪造 PASS。该轮不实现 M0-1.c，不修改冻结契约，不采集或宣称 M0-0.b/c 正式基线。验收全通过后新增 logs/checkpoints/M0-1.b-<时间>.md，记录界面显示的完整 Trae 模型名和结果，并独立提交 feat(M0-1.b): add resource verification driver。
+第一轮是 M0-1.c：先审查并复跑 M0-1.a/fix1/M0-1.b 证据，再固定 M0-1 两个脚本（baseline-check.sh、verify-resources.sh）的参数、退出码、JSON schema、完整性哈希和日志格式，并接入本地 pre-merge 流程。该轮不实现 M0-0.b（产品测量钩子与正式基线），不修改冻结契约，不采集或宣称正式基线。验收全通过后新增 logs/checkpoints/M0-1.c-<时间>.md，记录界面显示的完整 Trae 模型名和结果，并独立提交 feat(M0-1.c): unify gate contract and pre-merge hook。
 
 同一检查点连续两次失败、缺少 DEEP 等效模型、缺少 GUI/权限/环境、需要改冻结契约或人工裁决、发现不明改动、额度耗尽或到达 M0-7.c 时必须停止，回写 BLOCKED 和证据；不得伪造 PASS。
 ```
