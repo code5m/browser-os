@@ -899,10 +899,23 @@ write_commands_txt() {
 
 write_measurements() {
   # 驱动能力自检结果归档（正式模式 BLOCKED 时亦保留，证明驱动初始化完成）
-  printf '{"metric":"driver_selfcheck","status":"%s","detail":"%s","run_id":"%s"}\n' \
-    "$DRIVER_SELFCHECK" "$DRIVER_SELFCHECK_DETAIL" "$RUN_ID" >"$RUN_DIR/measurements/driver_selfcheck.json"
-  printf '{"metric":"product_hooks","ready_hook":"%s","term_hook":"%s","run_id":"%s"}\n' \
-    "$READY_HOOK" "$TERM_HOOK" "$RUN_ID" >"$RUN_DIR/measurements/product_hooks.json"
+  # 用 python json.dump 写：detail 内含未转义双引号，printf 拼会产生非法 JSON。
+  DRIVER_SELFCHECK="$DRIVER_SELFCHECK" DRIVER_SELFCHECK_DETAIL="$DRIVER_SELFCHECK_DETAIL" \
+  READY_HOOK="$READY_HOOK" TERM_HOOK="$TERM_HOOK" RUN_ID="$RUN_ID" \
+  OUT_DIR="$RUN_DIR/measurements" python3 - <<'PY'
+import json, os
+d = os.environ["OUT_DIR"]
+with open(os.path.join(d, "driver_selfcheck.json"), "w", encoding="utf-8") as f:
+    json.dump({"metric": "driver_selfcheck", "status": os.environ["DRIVER_SELFCHECK"],
+               "detail": os.environ["DRIVER_SELFCHECK_DETAIL"],
+               "run_id": os.environ["RUN_ID"]}, f, ensure_ascii=False)
+    f.write("\n")
+with open(os.path.join(d, "product_hooks.json"), "w", encoding="utf-8") as f:
+    json.dump({"metric": "product_hooks", "ready_hook": os.environ["READY_HOOK"],
+               "term_hook": os.environ["TERM_HOOK"],
+               "run_id": os.environ["RUN_ID"]}, f, ensure_ascii=False)
+    f.write("\n")
+PY
 }
 
 write_sha256sums() {
