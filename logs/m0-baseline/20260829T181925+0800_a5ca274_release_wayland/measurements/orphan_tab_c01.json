@@ -1,0 +1,1 @@
+{"metric":"orphan_process_count","run_id":"20260829T181925+0800_a5ca274_release_wayland","kind":"tab","cycle":1,"data":{"before_count": 4, "after_count": 3, "orphan_count": 3, "orphan_pids": [715210, 715222, 715226]}}

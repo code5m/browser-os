@@ -1,0 +1,12 @@
+{
+  "begin_seen": 1,
+  "consumed_bytes": 6799379,
+  "elapsed_ms": 192,
+  "end_seen": 1,
+  "end_ts_ms": 1787998934347,
+  "frame_gaps_ms": [
+    4
+  ],
+  "run_id": "",
+  "start_ts_ms": 1787998934155
+}
