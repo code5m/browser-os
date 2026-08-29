@@ -14,6 +14,14 @@ import type {
   ResourceStats,
 } from "./types";
 
+// M0-0.b 测量配置（契约 logs/m0-baseline-contract-v1.md；非测量运行后端返回 null）
+export interface M0Config {
+  run_id: string;
+  driver: string;
+  ready_file: string | null;
+  report_dir: string | null;
+}
+
 // 类型化 IPC 封装：前端永远只传“意图”，不直接碰 OS / 凭据
 export const bridge = {
   openBrowser: (url: string) => invoke("open_browser", { url }),
@@ -213,4 +221,20 @@ export const bridge = {
   // 订阅终端输出流
   onTermData: (cb: (d: { id: string; data: string }) => void) =>
     listen<{ id: string; data: string }>("term-data", (e) => cb(e.payload)),
+
+  // ====== M0-0.b 测量钩子（契约 logs/m0-baseline-contract-v1.md §6.1/§6.3） ======
+  // ready 信号：前端 mount + 2×rAF 后调用；后端写带 run_id 的 ready 信号（轻量 IPC 往返）
+  m0Ready: () => invoke<string>("m0_ready"),
+  // 查询当前 M0 测量配置（非测量运行返回 null）
+  m0Config: () => invoke<M0Config | null>("m0_config"),
+  // 终端吞吐报告：前端检测 __M0_TERM_END__ 并完成下一次 animation frame 后上报
+  m0TermReport: (report: {
+    run_id: string;
+    begin_seen: number;
+    end_seen: number;
+    consumed_bytes: number;
+    start_ts_ms: number;
+    end_ts_ms: number;
+    frame_gaps_ms: number[];
+  }) => invoke("m0_term_report", { report }),
 };

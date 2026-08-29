@@ -20,19 +20,38 @@ pub struct IpcRect {
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum GridCmd {
     /// 在子进程主窗内 add_child 创建宫格 webview（id 即 label，如 "grid-0"）。
-    CreateTab { id: String, url: String },
+    CreateTab {
+        id: String,
+        url: String,
+    },
     /// 移动/缩放子进程窗口到绝对屏幕矩形（收到后若窗口隐藏则 show）。
-    UpdateRect { id: String, rect: IpcRect },
+    UpdateRect {
+        id: String,
+        rect: IpcRect,
+    },
     /// 隐藏子进程整个窗口（切视图/失焦，等价旧方案的移出屏幕）。
-    HideWindow { id: String },
+    HideWindow {
+        id: String,
+    },
     /// 在宫格 webview 内执行 JS。
-    Eval { id: String, js: String },
+    Eval {
+        id: String,
+        js: String,
+    },
     /// 宫格 webview 导航到 url。
-    Navigate { id: String, url: String },
+    Navigate {
+        id: String,
+        url: String,
+    },
     /// 设置宫格缩放（WebKitGTK zoom_level）。
-    SetZoom { id: String, zoom: f64 },
+    SetZoom {
+        id: String,
+        zoom: f64,
+    },
     /// 销毁宫格 webview（子进程随后通常被 kill）。
-    CloseTab { id: String },
+    CloseTab {
+        id: String,
+    },
     Ping,
 }
 
@@ -40,18 +59,36 @@ pub enum GridCmd {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Wire {
-    Request { seq: u64, cmd: GridCmd },
-    Response { seq: u64, ok: bool, err: Option<String> },
+    Request {
+        seq: u64,
+        cmd: GridCmd,
+    },
+    Response {
+        seq: u64,
+        ok: bool,
+        err: Option<String>,
+    },
     /// 子进程 → 主进程 异步事件（导航完成/新窗口请求/桥命令事件转发）。
-    Event { name: String, payload: serde_json::Value },
+    Event {
+        name: String,
+        payload: serde_json::Value,
+    },
 }
 
 impl Wire {
     pub fn ok(seq: u64) -> Self {
-        Wire::Response { seq, ok: true, err: None }
+        Wire::Response {
+            seq,
+            ok: true,
+            err: None,
+        }
     }
     pub fn err(seq: u64, e: impl Into<String>) -> Self {
-        Wire::Response { seq, ok: false, err: Some(e.into()) }
+        Wire::Response {
+            seq,
+            ok: false,
+            err: Some(e.into()),
+        }
     }
 }
 

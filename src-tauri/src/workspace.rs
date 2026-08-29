@@ -39,8 +39,11 @@ pub fn notes_dir(app: &AppHandle) -> PathBuf {
 pub fn save_artifact(app: &AppHandle, art: &Artifact) -> Result<PathBuf, String> {
     let dir = workspace_dir(app);
     let file = dir.join(format!("{}.json", art.id));
-    fs::write(&file, serde_json::to_string_pretty(art).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    fs::write(
+        &file,
+        serde_json::to_string_pretty(art).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
     Ok(file)
 }
 
@@ -100,7 +103,10 @@ pub fn log_audit(app: &AppHandle, action: &str, detail: String) {
     if list.len() > 1000 {
         list.drain(0..list.len() - 1000);
     }
-    let _ = fs::write(audit_file(app), serde_json::to_string_pretty(&list).unwrap_or_default());
+    let _ = fs::write(
+        audit_file(app),
+        serde_json::to_string_pretty(&list).unwrap_or_default(),
+    );
 }
 pub fn load_audit(app: &AppHandle) -> Vec<AuditEntry> {
     fs::read_to_string(audit_file(app))

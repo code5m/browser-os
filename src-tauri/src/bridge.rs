@@ -78,10 +78,26 @@ fn remember_layout(app: &AppHandle, id: &str, x: f64, y: f64, w: f64, h: f64) {
         .insert(id.to_string(), (x, y, w, h));
 }
 
+/// M0-0.b 测量钩子配置：由 M0 采集脚本经环境变量注入（日常运行全 None，零影响）。
+/// 契约 `logs/m0-baseline-contract-v1.md` §6.1/§6.3。
+#[derive(Default, Clone)]
+pub struct M0Config {
+    /// M0 测量 run_id（契约 §8 命名），前端/后端在信号文件中回带
+    pub run_id: String,
+    /// ready 信号文件路径：前端 mount + 2×rAF + IPC 往返后写入 startup_ready 信号
+    pub ready_file: Option<String>,
+    /// 测量报告目录：终端吞吐报告 / 资源循环标记文件写入处
+    pub report_dir: Option<String>,
+    /// M0_DRIVER 驱动模式：tab|grid|terminal|term-throughput（无则非测量运行）
+    pub driver: String,
+}
+
 /// 桥的进程级状态：仅保存待确认任务（凭据/审计都在磁盘，避免内存泄漏）
 #[derive(Default)]
 pub struct AppState {
     pub pending_jobs: Mutex<HashMap<String, SyncJob>>,
+    /// M0-0.b 测量钩子配置（环境变量注入；见 `M0Config`）
+    pub m0_config: Mutex<M0Config>,
     /// 控制资源扫描后台线程的生命周期
     pub browser_scanning: Arc<AtomicBool>,
     /// 当前所有浏览器页签（id -> 信息）
@@ -144,8 +160,10 @@ fn normalize_url(input: &str) -> String {
         return s.to_string();
     }
     // 像搜索词（含空格、中文、或不是 域名.后缀 形态）-> 搜索引擎
-    let looks_like_domain =
-        s.contains('.') && !s.contains(' ') && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_');
+    let looks_like_domain = s.contains('.')
+        && !s.contains(' ')
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_');
     if !looks_like_domain {
         // 百度搜索
         return format!("https://www.baidu.com/s?wd={}", urlencoding::encode(s));
@@ -239,7 +257,12 @@ fn apply_bounds_inner(
     // 否则前端 .catch 吞掉后宫格"静默不显示"，无法定位是前端没发还是后端没建。
     if let Err(e) = manager.update_rect(
         &id.to_string(),
-        LogicalRect::new(x.round().max(0.0), y.round().max(0.0), width.round().max(1.0), height.round().max(1.0)),
+        LogicalRect::new(
+            x.round().max(0.0),
+            y.round().max(0.0),
+            width.round().max(1.0),
+            height.round().max(1.0),
+        ),
     ) {
         eprintln!("[apply_bounds] label={} update_rect 失败: {e}", id);
         return Err(format!("定位失败: {e}"));
@@ -266,7 +289,13 @@ fn hide_bounds(app: &AppHandle, id: &str) {
     // 关键教训：对正在渲染的 WebKitGTK 子 webview，把尺寸缩到 1x1 会触发 WebKit
     // 视口重布局，与主线程死锁（实测卡死）。只移动位置（视口尺寸不变）则安全。
     // 坐标用 -30000（X11 int16 安全范围 -32768~32767 内）。
-    let cur = app.state::<AppState>().child_layouts.lock().unwrap().get(id).copied();
+    let cur = app
+        .state::<AppState>()
+        .child_layouts
+        .lock()
+        .unwrap()
+        .get(id)
+        .copied();
     if let Some((_x, y, w, h)) = cur {
         // 诊断：移出失败（TabNotFound 等）时留日志，排查"切视图后残留"问题
         if let Err(e) = manager.update_rect(&id.to_string(), LogicalRect::new(-30000.0, y, w, h)) {
@@ -325,9 +354,12 @@ pub fn hide_all_webviews(app: AppHandle) -> Result<(), String> {
     // 宫格已迁子进程：逐格下发 HideWindow（子进程整个窗口 hide）
     for index in state.grid_manager.indices() {
         state.grid_manager.record_hidden(index);
-        state
-            .grid_manager
-            .send(index, GridCmd::HideWindow { id: format!("grid-{index}") });
+        state.grid_manager.send(
+            index,
+            GridCmd::HideWindow {
+                id: format!("grid-{index}"),
+            },
+        );
     }
     // 页签 id（宫格已不在主进程插件表里，无需穷举 grid-N；
     // 已休眠页签 webview 已销毁，跳过避免 TabNotFound 噪音）
@@ -343,8 +375,7 @@ pub fn hide_all_webviews(app: AppHandle) -> Result<(), String> {
             .collect()
     };
     // 只处理插件管理表里真实存在的 webview
-    let existing: std::collections::HashSet<String> =
-        manager.get_tab_ids().into_iter().collect();
+    let existing: std::collections::HashSet<String> = manager.get_tab_ids().into_iter().collect();
     for id in ids {
         if !existing.contains(&id) {
             continue;
@@ -376,7 +407,12 @@ pub fn hide_all_webviews(app: AppHandle) -> Result<(), String> {
 pub fn start_layout_enforcer(app: AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_millis(400));
-        let layouts = app.state::<AppState>().child_layouts.lock().unwrap().clone();
+        let layouts = app
+            .state::<AppState>()
+            .child_layouts
+            .lock()
+            .unwrap()
+            .clone();
         if layouts.is_empty() {
             continue;
         }
@@ -407,7 +443,9 @@ fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
     drop(counter);
 
     // 停止旧的资源扫描线程
-    app.state::<AppState>().browser_scanning.store(false, Ordering::Relaxed);
+    app.state::<AppState>()
+        .browser_scanning
+        .store(false, Ordering::Relaxed);
 
     let title0 = match Url::parse(&target) {
         Ok(u) => u.host_str().unwrap_or(&target).to_string(),
@@ -417,7 +455,10 @@ fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
     // 方案 B：异步创建独立子窗口（提交到主线程事件循环，避开同步创建第二个
     // webview 卡死主线程）。窗口真正建好后由前端 tab_position 放大显示。
     spawn_child_window(&app, &id, &target, 0.0, 0.0, 1.0, 1.0)?;
-    eprintln!("[create_tab] 子窗口已提交创建 label={} init=(1x1) visible=false", id);
+    eprintln!(
+        "[create_tab] 子窗口已提交创建 label={} init=(1x1) visible=false",
+        id
+    );
 
     let info = TabInfo {
         id: id.clone(),
@@ -473,7 +514,11 @@ fn close_tab(app: &AppHandle, id: &str) {
         let manager = app.state::<TabManagerState>();
         let _ = manager.close_tab(&id.to_string());
     }
-    app.state::<AppState>().child_layouts.lock().unwrap().remove(id);
+    app.state::<AppState>()
+        .child_layouts
+        .lock()
+        .unwrap()
+        .remove(id);
     state.tab_idle_since.lock().unwrap().remove(id);
     state.hibernated_tabs.lock().unwrap().remove(id);
     state.tabs.lock().unwrap().remove(id);
@@ -508,23 +553,18 @@ pub fn report_resources(app: AppHandle, page_url: String, items: Vec<ResourceIte
 /// 由子窗口内 JS 经 invoke 回传的真实页面标题，转成 tab-title 事件推给前端。
 #[tauri::command]
 pub fn report_title(app: AppHandle, title: String) {
-  let t = title.trim().to_string();
-  if t.is_empty() {
-    return;
-  }
-  // 找到当前激活页签（标题回传只针对激活页）
-  let id = app
-    .state::<AppState>()
-    .active_tab
-    .lock()
-    .unwrap()
-    .clone();
-  if let Some(id) = id {
-    let _ = app.emit(
-      "tab-title",
-      serde_json::json!({ "id": id, "url": "", "title": t }),
-    );
-  }
+    let t = title.trim().to_string();
+    if t.is_empty() {
+        return;
+    }
+    // 找到当前激活页签（标题回传只针对激活页）
+    let id = app.state::<AppState>().active_tab.lock().unwrap().clone();
+    if let Some(id) = id {
+        let _ = app.emit(
+            "tab-title",
+            serde_json::json!({ "id": id, "url": "", "title": t }),
+        );
+    }
 }
 
 /// 对指定子窗口执行 JS 资源扫描，并回传真实标题，通过事件推送给前端。
@@ -551,36 +591,34 @@ fn start_resource_scanner(app: AppHandle) {
     let state = app.state::<AppState>();
     state.browser_scanning.store(true, Ordering::Relaxed);
     let app_thread = app.clone();
-    std::thread::spawn(move || {
-        loop {
-            if !app_thread
-                .state::<AppState>()
-                .browser_scanning
-                .load(Ordering::Relaxed)
-            {
-                break;
-            }
-            let active = app_thread
-                .state::<AppState>()
-                .active_tab
-                .lock()
-                .unwrap()
-                .clone();
-            if let Some(id) = active {
-                let a = app_thread.clone();
-                let a2 = a.clone();
-                let _ = a.run_on_main_thread(move || {
-                    if let Some(win) = a2.get_webview(&id) {
-                        scan_resources(a2.clone(), &id, &win);
-                    } else {
-                        a2.state::<AppState>()
-                            .browser_scanning
-                            .store(false, Ordering::Relaxed);
-                    }
-                });
-            }
-            std::thread::sleep(std::time::Duration::from_secs(2));
+    std::thread::spawn(move || loop {
+        if !app_thread
+            .state::<AppState>()
+            .browser_scanning
+            .load(Ordering::Relaxed)
+        {
+            break;
         }
+        let active = app_thread
+            .state::<AppState>()
+            .active_tab
+            .lock()
+            .unwrap()
+            .clone();
+        if let Some(id) = active {
+            let a = app_thread.clone();
+            let a2 = a.clone();
+            let _ = a.run_on_main_thread(move || {
+                if let Some(win) = a2.get_webview(&id) {
+                    scan_resources(a2.clone(), &id, &win);
+                } else {
+                    a2.state::<AppState>()
+                        .browser_scanning
+                        .store(false, Ordering::Relaxed);
+                }
+            });
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
     });
 }
 
@@ -611,7 +649,12 @@ pub fn request_open_terminal(app: AppHandle) -> Result<(), String> {
 /// 默认路径：应用数据目录 notes/；文件名 = 时间戳 + 选中内容摘要。
 /// 返回保存后的完整文件路径。
 #[tauri::command]
-pub fn save_note(app: AppHandle, url: String, title: String, text: String) -> Result<String, String> {
+pub fn save_note(
+    app: AppHandle,
+    url: String,
+    title: String,
+    text: String,
+) -> Result<String, String> {
     let dir = workspace::notes_dir(&app);
 
     let now = chrono::Local::now();
@@ -629,13 +672,21 @@ pub fn save_note(app: AppHandle, url: String, title: String, text: String) -> Re
         .to_string();
     let base = if summary.is_empty() {
         let t: String = title.trim().chars().take(20).collect();
-        if t.is_empty() { "note".to_string() } else { t }
+        if t.is_empty() {
+            "note".to_string()
+        } else {
+            t
+        }
     } else {
         summary
     };
     let file = dir.join(format!("{}-{}.md", ts, base));
 
-    let heading = if title.trim().is_empty() { base.as_str() } else { title.trim() };
+    let heading = if title.trim().is_empty() {
+        base.as_str()
+    } else {
+        title.trim()
+    };
     let md = format!(
         "# {}\n\n> 来源: {}\n> 时间: {}\n\n---\n\n{}\n",
         heading,
@@ -657,11 +708,7 @@ pub fn list_artifacts(app: AppHandle) -> Vec<Artifact> {
 
 /// 配置仓库：token 仅写入系统密钥库，绝不回传前端。
 #[tauri::command]
-pub fn configure_repo(
-    app: AppHandle,
-    config: RepoConfig,
-    token: String,
-) -> Result<(), String> {
+pub fn configure_repo(app: AppHandle, config: RepoConfig, token: String) -> Result<(), String> {
     if token.trim().is_empty() {
         return Err("token 不能为空".into());
     }
@@ -673,7 +720,11 @@ pub fn configure_repo(
     workspace::log_audit(
         &app,
         "configure_repo",
-        format!("{} ({:?})", repos.last().unwrap().name, repos.last().unwrap().provider),
+        format!(
+            "{} ({:?})",
+            repos.last().unwrap().name,
+            repos.last().unwrap().provider
+        ),
     );
     Ok(())
 }
@@ -841,7 +892,8 @@ pub fn delete_artifact(app: AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn browse_workspace(app: AppHandle) -> WorkspaceTree {
     let arts = workspace::load_artifacts(&app);
-    let mut domains: std::collections::BTreeMap<String, Vec<Artifact>> = std::collections::BTreeMap::new();
+    let mut domains: std::collections::BTreeMap<String, Vec<Artifact>> =
+        std::collections::BTreeMap::new();
     for a in arts {
         let host = url::Url::parse(&a.source_url)
             .ok()
@@ -900,8 +952,12 @@ pub struct DirEntry {
 #[tauri::command]
 pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
     let dir = std::path::PathBuf::from(&path);
-    if !dir.exists() { return Err("路径不存在".into()); }
-    if !dir.is_dir() { return Err("不是目录".into()); }
+    if !dir.exists() {
+        return Err("路径不存在".into());
+    }
+    if !dir.is_dir() {
+        return Err("不是目录".into());
+    }
     let mut entries = vec![];
     for e in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
         // 单个条目失败时跳过（continue），不中断整个列表 —— 修复根目录/系统目录下
@@ -909,10 +965,7 @@ pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
         let Ok(e) = e else { continue };
         // 用 file_type 判断目录（不跟随符号链接、不会因目标无权限失败）；
         // metadata 取不到则 size 记 0，仍保留条目。
-        let is_dir = e
-            .file_type()
-            .map(|t| t.is_dir())
-            .unwrap_or(false);
+        let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
         let size = e.metadata().map(|m| m.len()).unwrap_or(0);
         entries.push(DirEntry {
             name: e.file_name().to_string_lossy().to_string(),
@@ -922,12 +975,10 @@ pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
         });
     }
     // 目录在前、按名字排序
-    entries.sort_by(|a, b| {
-        match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.cmp(&b.name),
-        }
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.cmp(&b.name),
     });
     Ok(entries)
 }
@@ -1157,12 +1208,22 @@ pub fn close_grid(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let mgr = &state.grid_manager;
     for index in mgr.indices() {
-        mgr.send(index, GridCmd::HideWindow { id: format!("grid-{index}") });
+        mgr.send(
+            index,
+            GridCmd::HideWindow {
+                id: format!("grid-{index}"),
+            },
+        );
     }
     // 给 hide 一个生效窗口期（UDS 是异步 send，100ms 足够子进程执行 hide）
     std::thread::sleep(std::time::Duration::from_millis(100));
     for index in mgr.indices() {
-        mgr.send(index, GridCmd::CloseTab { id: format!("grid-{index}") });
+        mgr.send(
+            index,
+            GridCmd::CloseTab {
+                id: format!("grid-{index}"),
+            },
+        );
     }
     mgr.shutdown_all();
     for i in 0..MAX_GRID {
@@ -1212,9 +1273,13 @@ fn apply_grid_zoom(app: &AppHandle, label: &str, z: f64) {
         return;
     }
     if let Some(index) = grid_index_of(label) {
-        app.state::<AppState>()
-            .grid_manager
-            .send(index, GridCmd::SetZoom { id: label.to_string(), zoom: z });
+        app.state::<AppState>().grid_manager.send(
+            index,
+            GridCmd::SetZoom {
+                id: label.to_string(),
+                zoom: z,
+            },
+        );
     }
 }
 
@@ -1318,7 +1383,9 @@ fn parse_desktop_file(path: &std::path::Path) -> Option<AppEntry> {
             in_entry = t == "[Desktop Entry]";
             continue;
         }
-        if !in_entry || !t.contains('=') { continue; }
+        if !in_entry || !t.contains('=') {
+            continue;
+        }
         let (k, v) = t.split_once('=')?;
         match k.trim() {
             "Name" => name = v.to_string(),
@@ -1328,20 +1395,30 @@ fn parse_desktop_file(path: &std::path::Path) -> Option<AppEntry> {
             _ => {}
         }
     }
-    if name.is_empty() || exec.is_empty() || no_display { return None; }
+    if name.is_empty() || exec.is_empty() || no_display {
+        return None;
+    }
     // 去掉 Exec 中的字段码 (%U/%F 等)
-    let exec_clean = exec.split_whitespace()
+    let exec_clean = exec
+        .split_whitespace()
         .filter(|s| !s.starts_with('%'))
         .collect::<Vec<_>>()
         .join(" ");
     let icon_path = resolve_icon(&icon);
-    Some(AppEntry { name, exec: exec_clean, icon, icon_path })
+    Some(AppEntry {
+        name,
+        exec: exec_clean,
+        icon,
+        icon_path,
+    })
 }
 
 /// 解析 .desktop 的 Icon 字段为真实图标文件路径。
 /// Icon 可能是：绝对路径 / 主题图标名（如 firefox）/ 空。
 fn resolve_icon(icon: &str) -> Option<String> {
-    if icon.is_empty() { return None; }
+    if icon.is_empty() {
+        return None;
+    }
     // 1) 已是绝对路径：文件必须真实存在才返回，否则前端会尝试加载不存在的 file:// 而破图
     if icon.starts_with('/') {
         if std::path::Path::new(icon).exists() {
@@ -1372,7 +1449,9 @@ fn resolve_icon(icon: &str) -> Option<String> {
     for root in roots {
         for ext in exts {
             let p = format!("{}/{}.{}", root, icon, ext);
-            if std::path::Path::new(&p).exists() { return Some(p); }
+            if std::path::Path::new(&p).exists() {
+                return Some(p);
+            }
         }
         if let Some(found) = find_icon_recursive(std::path::Path::new(root), icon, &exts, 0) {
             return Some(found);
@@ -1381,8 +1460,15 @@ fn resolve_icon(icon: &str) -> Option<String> {
     None
 }
 
-fn find_icon_recursive(dir: &std::path::Path, icon: &str, exts: &[&str], depth: u32) -> Option<String> {
-    if depth > 4 { return None; }
+fn find_icon_recursive(
+    dir: &std::path::Path,
+    icon: &str,
+    exts: &[&str],
+    depth: u32,
+) -> Option<String> {
+    if depth > 4 {
+        return None;
+    }
     let entries = std::fs::read_dir(dir).ok()?;
     for e in entries.flatten() {
         let path = e.path();
@@ -1390,7 +1476,11 @@ fn find_icon_recursive(dir: &std::path::Path, icon: &str, exts: &[&str], depth: 
             if let Some(f) = find_icon_recursive(&path, icon, exts, depth + 1) {
                 return Some(f);
             }
-        } else if path.extension().map(|x| x == "png" || x == "svg" || x == "xpm").unwrap_or(false) {
+        } else if path
+            .extension()
+            .map(|x| x == "png" || x == "svg" || x == "xpm")
+            .unwrap_or(false)
+        {
             if path.file_stem().map(|s| s == icon).unwrap_or(false) {
                 return Some(path.to_string_lossy().to_string());
             }
@@ -1404,11 +1494,16 @@ pub fn list_apps() -> Vec<AppEntry> {
     let mut apps = vec![];
     let mut seen = std::collections::HashSet::new();
     let mut scan = |dir: &std::path::Path| {
-        if !dir.exists() { return; }
+        if !dir.exists() {
+            return;
+        }
         for e in std::fs::read_dir(dir).ok().into_iter().flatten() {
-            let e = e.ok(); let path = e.as_ref().map(|e| e.path());
+            let e = e.ok();
+            let path = e.as_ref().map(|e| e.path());
             let Some(path) = path else { continue };
-            if !path.to_string_lossy().ends_with(".desktop") { continue; }
+            if !path.to_string_lossy().ends_with(".desktop") {
+                continue;
+            }
             if let Some(app) = parse_desktop_file(&path) {
                 if seen.insert(app.name.clone()) {
                     apps.push(app);
@@ -1419,7 +1514,11 @@ pub fn list_apps() -> Vec<AppEntry> {
     scan(std::path::Path::new("/usr/share/applications"));
     scan(std::path::Path::new("/usr/local/share/applications"));
     if let Ok(home) = std::env::var("HOME") {
-        scan(std::path::Path::new(&home).join(".local/share/applications").as_path());
+        scan(
+            std::path::Path::new(&home)
+                .join(".local/share/applications")
+                .as_path(),
+        );
     }
     apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     apps
@@ -1530,8 +1629,7 @@ pub fn start_grid_load_retry(app: AppHandle) {
         std::sync::Arc::new(Mutex::new(HashMap::new()));
     let app2 = app.clone();
     app.listen("grid-load-failed", move |event| {
-        let payload: serde_json::Value =
-            serde_json::from_str(event.payload()).unwrap_or_default();
+        let payload: serde_json::Value = serde_json::from_str(event.payload()).unwrap_or_default();
         let index: u32 = match payload["index"].as_str().and_then(|s| s.parse().ok()) {
             Some(i) => i,
             None => return,
@@ -1608,11 +1706,17 @@ pub struct ResourceStats {
 /// 读取 /proc 全量进程表：pid -> (ppid, comm, rss_kb)。
 fn read_proc_table() -> HashMap<u32, (u32, String, u64)> {
     let mut procs = HashMap::new();
-    let Ok(rd) = std::fs::read_dir("/proc") else { return procs };
+    let Ok(rd) = std::fs::read_dir("/proc") else {
+        return procs;
+    };
     for e in rd.flatten() {
         let name = e.file_name();
-        let Some(pid) = name.to_str().and_then(|s| s.parse::<u32>().ok()) else { continue };
-        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else { continue };
+        let Some(pid) = name.to_str().and_then(|s| s.parse::<u32>().ok()) else {
+            continue;
+        };
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            continue;
+        };
         // comm 在括号内（可含空格），ppid 是右括号后的第 2 个字段
         let Some(lp) = stat.find('(') else { continue };
         let Some(rp) = stat.rfind(')') else { continue };
@@ -1708,8 +1812,8 @@ pub fn resource_stats(app: AppHandle) -> ResourceStats {
         hibernation_enabled,
         hibernated_count,
         // 真实预算（可为 0/1，创建时才会保底 2）：前端据此提示"最多还能开 N 格"
-        grid_budget: (avail.saturating_sub(MEM_RESERVE_MB) / GRID_MEM_MB)
-            .min(MAX_GRID as u64) as usize,
+        grid_budget: (avail.saturating_sub(MEM_RESERVE_MB) / GRID_MEM_MB).min(MAX_GRID as u64)
+            as usize,
     }
 }
 
@@ -1744,11 +1848,7 @@ fn hibernate_tab(app: &AppHandle, id: &str) {
         state.child_layouts.lock().unwrap().remove(id);
         state.last_position_at.lock().unwrap().remove(id);
         state.tab_idle_since.lock().unwrap().remove(id);
-        state
-            .hibernated_tabs
-            .lock()
-            .unwrap()
-            .insert(id.to_string());
+        state.hibernated_tabs.lock().unwrap().insert(id.to_string());
         eprintln!("[hibernation] 页签 {} 已休眠（webview 销毁，URL 保留）", id);
     }
 }
@@ -1899,7 +1999,10 @@ pub fn tab_activate(app: AppHandle, id: String) -> Result<(), String> {
                 // 去重可能把这次"恢复显示"整个丢掉（实测切回前页签仍显示后一个）。
                 let _ = apply_bounds_inner(&app_act, &active_id, r.0, r.1, r.2, r.3);
             } else {
-                eprintln!("[tab_activate] active={} 记忆布局为隐藏态，跳过立即恢复", active_id);
+                eprintln!(
+                    "[tab_activate] active={} 记忆布局为隐藏态，跳过立即恢复",
+                    active_id
+                );
             }
         }
         // 清除激活页签的去重时间戳：保证前端随后的 tab_position 精确坐标
@@ -1949,7 +2052,10 @@ pub fn term_spawn(app: AppHandle) -> Result<TermInfo, String> {
         .map_err(|e| format!("无法启动 shell: {e}"))?;
     drop(pair.slave);
 
-    let mut writer = pair.master.take_writer().map_err(|e| format!("writer: {e}"))?;
+    let mut writer = pair
+        .master
+        .take_writer()
+        .map_err(|e| format!("writer: {e}"))?;
     // 触发初始提示符
     let _ = writer.write_all(b"\n");
 
@@ -1970,16 +2076,17 @@ pub fn term_spawn(app: AppHandle) -> Result<TermInfo, String> {
                     // xterm.js 自己解析 ANSI 序列，不再过滤
                     let data = String::from_utf8_lossy(&buf[..n]).to_string();
                     if !data.is_empty() {
-                        let _ = app2.emit(
-                            "term-data",
-                            serde_json::json!({ "id": tid, "data": data }),
-                        );
+                        let _ =
+                            app2.emit("term-data", serde_json::json!({ "id": tid, "data": data }));
                     }
                 }
                 Err(_) => break,
             }
         }
-        let _ = app2.emit("term-data", serde_json::json!({ "id": tid, "data": "\r\n[终端已退出]\r\n" }));
+        let _ = app2.emit(
+            "term-data",
+            serde_json::json!({ "id": tid, "data": "\r\n[终端已退出]\r\n" }),
+        );
     });
 
     let session = TerminalSession {
@@ -2026,4 +2133,91 @@ pub fn term_kill(app: AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 
+// ====== M0-0.b 测量钩子（契约 logs/m0-baseline-contract-v1.md §6.1/§6.3） ======
+// 日常运行（无 M0_RUN_ID）全部零影响：命令存在但直接返回，不写任何文件。
 
+/// 读取当前 M0 测量配置（无测量运行时为空配置）。
+fn m0_config_of(app: &AppHandle) -> M0Config {
+    app.state::<AppState>().m0_config.lock().unwrap().clone()
+}
+
+/// 原子写文件：先写临时文件再 rename，避免采集脚本读到半截内容。
+fn m0_atomic_write(path: &str, content: &str) -> Result<(), String> {
+    let tmp = format!("{path}.tmp");
+    std::fs::write(&tmp, content).map_err(|e| format!("write {tmp}: {e}"))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("rename -> {path}: {e}"))?;
+    Ok(())
+}
+
+/// ready 信号（契约 §6.1）：主前端完成 mount + 2×rAF 后调用本命令，作为
+/// 「一次轻量 IPC 往返」的终点；后端校验 run_id 后将带 run_id 的 ready 信号
+/// 原子写入 ready_file。返回 run_id（非测量运行返回空串）。
+#[tauri::command]
+pub fn m0_ready(app: AppHandle) -> Result<String, String> {
+    let cfg = m0_config_of(&app);
+    if cfg.run_id.is_empty() {
+        return Ok(String::new());
+    }
+    if let Some(path) = &cfg.ready_file {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        m0_atomic_write(path, &format!("{}\n{}\n", cfg.run_id, now_ms))?;
+    }
+    Ok(cfg.run_id)
+}
+
+/// 终端吞吐报告（契约 §6.3）：前端检测到 `__M0_TERM_END__` 并完成下一次 animation
+/// frame 后上报。计时起点为前端发送负载命令的时刻（report.start_ts_ms），终点为
+/// end 标记被消费并完成下一次 rAF（report.end_ts_ms）；elapsed = end - start。
+/// 报告原子写入 report_dir/term-throughput-report.json（驱动据此判定完成并写 done 标记）。
+#[tauri::command]
+pub fn m0_term_report(app: AppHandle, report: serde_json::Value) -> Result<(), String> {
+    let cfg = m0_config_of(&app);
+    let Some(dir) = &cfg.report_dir else {
+        return Ok(());
+    };
+    let end_ms = report
+        .get("end_ts_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u128;
+    let start_ms = report
+        .get("start_ts_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u128;
+    let mut out = serde_json::Map::new();
+    out.insert("run_id".into(), serde_json::Value::String(cfg.run_id));
+    out.insert("start_ts_ms".into(), serde_json::json!(start_ms));
+    out.insert("end_ts_ms".into(), serde_json::json!(end_ms));
+    out.insert(
+        "elapsed_ms".into(),
+        serde_json::json!(end_ms.saturating_sub(start_ms)),
+    );
+    if let Some(obj) = report.as_object() {
+        for (k, v) in obj {
+            if k != "end_ts_ms" && k != "start_ts_ms" {
+                out.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    let json = serde_json::to_string_pretty(&serde_json::Value::Object(out))
+        .map_err(|e| format!("serialize report: {e}"))?;
+    m0_atomic_write(&format!("{dir}/term-throughput-report.json"), &json)
+}
+
+/// 查询当前 M0 测量配置（非测量运行返回 null）。前端据此在 term-throughput 模式下
+/// 自动挂载终端面板并驱动 10 MiB 负载（契约 §6.3）。
+#[tauri::command]
+pub fn m0_config(app: AppHandle) -> Option<serde_json::Value> {
+    let cfg = m0_config_of(&app);
+    if cfg.run_id.is_empty() {
+        return None;
+    }
+    Some(serde_json::json!({
+        "run_id": cfg.run_id,
+        "driver": cfg.driver,
+        "ready_file": cfg.ready_file,
+        "report_dir": cfg.report_dir,
+    }))
+}

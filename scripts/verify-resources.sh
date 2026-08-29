@@ -794,13 +794,17 @@ deferred = [
     {"metric": "database_first_row_ms", "status": "DEFERRED(M4-3)"},
 ]
 
-# M0-1.b 检查点判定：驱动能力自检必须 PASS；若钩子缺失则 status=BLOCKED（门禁未通过，
-# 正式模式退出 1，符合「明确返回 BLOCKED 而非伪造成功」）。
+# M0-1.b/M0-0.b 检查点判定：驱动能力自检必须 PASS；若钩子缺失则 status=BLOCKED
+# （门禁未通过，正式模式退出 1，符合「明确返回 BLOCKED 而非伪造成功」）；
+# 钩子就绪但正式测量不完整（MEASUREMENTS_OK=FAIL）则整批 FAIL（契约 §9 M0-0.b）。
 driver_ok = (g("DRIVER_SELFCHECK", "FAIL") == "PASS")
+measurements_ok = (g("MEASUREMENTS_OK", "FAIL") == "PASS")
 if not driver_ok:
     overall = "FAIL"
 elif ready_blocked or term_blocked:
     overall = "BLOCKED"
+elif not measurements_ok:
+    overall = "FAIL"
 else:
     overall = "PASS"
 
@@ -816,6 +820,7 @@ data = {
     "git": {"commit_sha": g("GIT_FULL_SHA"), "short_sha": g("GIT_SHORT_SHA"), "branch": g("GIT_BRANCH")},
     "status": overall,
     "driver_selfcheck": {"status": g("DRIVER_SELFCHECK", "FAIL"), "detail": g("DRIVER_SELFCHECK_DETAIL")},
+    "measurements": {"ok": measurements_ok},
     "blocked": blocked,
     "deferred": deferred,
     "evidence": {
@@ -919,6 +924,247 @@ driver_smoke() {
 }
 
 # ---------------------------------------------------------------------------
+# M0-0.b 正式测量：产品 ready/终端钩子落地后接通契约 §6.1/§6.2/§6.3 真实采集。
+# 与产品钩子的标记文件协议（M0_DRIVER 驱动，见 src-tauri/src/main.rs run_m0_driver）：
+#   - ready 信号：<report_dir>/startup-*/ready.signal（前端 mount+2×rAF+IPC 后写入）
+#   - 循环完成标记：<report_dir>/cycle-<kind>/<kind>.cycle-<NN>.done
+#   - 驱动结果：<report_dir>/cycle-<kind>/<kind>.driver.result = PASS|FAIL
+#   - 吞吐报告：<report_dir>/term-<n>/term-throughput-report.json
+# ---------------------------------------------------------------------------
+
+# 用隔离 XDG + M0 环境变量 spawn release 应用；输出 root_pid。
+# <driver> 可为空（startup/idle 场景不驱动）。输出 pid 到 stdout。
+spawn_m0_app() {
+  local driver="$1" run_id="$2" ready_file="$3" report_dir="$4" xdg="$5"
+  mkdir -p "$xdg"/data "$xdg"/cache "$xdg"/config
+  local env_args=(
+    XDG_DATA_HOME="$xdg/data" XDG_CACHE_HOME="$xdg/cache" XDG_CONFIG_HOME="$xdg/config"
+    M0_RUN_ID="$run_id" M0_READY_FILE="$ready_file" M0_REPORT_DIR="$report_dir"
+    WEBKIT_DISABLE_DMABUF_RENDERER=1 GDK_BACKEND=x11
+  )
+  if [ -n "$driver" ]; then
+    env_args+=(M0_DRIVER="$driver" M0_CYCLES="$((DEFAULT_WARMUP_SAMPLES + ${VR_CYCLE_SAMPLES:-$DEFAULT_CYCLE_SAMPLES}))")
+  fi
+  env "${env_args[@]}" "$BIN_PATH" >/dev/null 2>&1 &
+  echo $!
+}
+
+# 轮询 ready 信号：首行 == run_id 即成功。
+wait_ready_signal() {
+  local file="$1" run_id="$2" max_s="$3"
+  local i=0
+  while [ "$i" -lt "$((max_s * 2))" ]; do
+    if [ -f "$file" ] && [ "$(head -1 "$file" 2>/dev/null)" = "$run_id" ]; then
+      return 0
+    fi
+    sleep 0.5
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# 轮询文件出现（最多 max_s 秒）。返回 0=出现。
+wait_file() {
+  local file="$1" max_s="$2"
+  local i=0
+  while [ "$i" -lt "$((max_s * 2))" ]; do
+    [ -f "$file" ] && return 0
+    sleep 0.5
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# 契约 §6.1：startup_ready_ms（1 预热 + 3 正式独立进程）+ idle 采样（第 3 个正式进程
+# ready 后不操作 30 秒，再按 VR_IDLE_SECONDS 采 60 秒进程树 RSS/FD）。
+run_startup_ready() {
+  local i xdg rd ready pid start_ms ready_ms elapsed
+  local -a vals=()
+  for i in 1 2 3 4; do
+    xdg="$XDG_BASE/startup-$i"
+    rd="$REPORT_DIR/startup-$i"
+    mkdir -p "$xdg" "$rd"
+    ready="$rd/ready.signal"
+    rm -f "$ready"
+    start_ms="$(date +%s%3N)"
+    pid="$(spawn_m0_app "" "$RUN_ID" "$ready" "$rd" "$xdg")"
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "[M0-0.b] startup-$i: app failed to spawn" >&2
+      MEASUREMENTS_OK="FAIL"
+      return 1
+    fi
+    if ! wait_ready_signal "$ready" "$RUN_ID" "$T_READY"; then
+      echo "[M0-0.b] startup-$i: ready timeout" >&2
+      MEASUREMENTS_OK="FAIL"
+      kill "$pid" 2>/dev/null || true
+      return 1
+    fi
+    ready_ms="$(sed -n 2p "$ready" 2>/dev/null)"
+    [ -z "$ready_ms" ] && ready_ms="$(date +%s%3N)"
+    elapsed=$((ready_ms - start_ms))
+    if [ "$i" -gt 1 ]; then
+      vals+=("$elapsed")
+      printf '{"metric":"startup_ready_ms","run_id":"%s","sample":%d,"elapsed_ms":%d,"pid":%d}\n' \
+        "$RUN_ID" "$((i - 1))" "$elapsed" "$pid" \
+        >"$RUN_DIR/measurements/startup_ready_r$(printf '%02d' "$((i - 1))").json"
+    fi
+    if [ "$i" -lt 4 ]; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+    else
+      # ready 后不操作 30 秒，再按 5 秒间隔采样 60 秒（契约 §6.1 第 5 条）
+      sleep 30
+      run_idle_sampling "$pid" "$VR_IDLE_SECONDS"
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+    fi
+  done
+  if [ "${#vals[@]}" -gt 0 ]; then
+    local stats samples
+    samples="$(python3 -c 'import json,sys; print(json.dumps([int(x) for x in sys.argv[1:]]))' "${vals[@]}")"
+    stats="$(compute_stats "${vals[@]}")"
+    printf '{"metric":"startup_ready_ms","run_id":"%s","warmup":1,"formal":3,"samples":%s,"stats":%s}\n' \
+      "$RUN_ID" "$samples" "$stats" >"$RUN_DIR/measurements/startup_ready.json"
+  fi
+}
+
+# 契约 §6.2：单类资源循环（kind ∈ tab|grid|terminal）。独立启动应用（M0_DRIVER 驱动），
+# 5 预热 + VR_CYCLE_SAMPLES 正式；每次循环等驱动写 done 标记后采样进程树并做孤儿检测。
+run_resource_cycle_real() {
+  local kind="$1"
+  local warmup="$DEFAULT_WARMUP_SAMPLES" formal="${VR_CYCLE_SAMPLES:-$DEFAULT_CYCLE_SAMPLES}"
+  local total=$((warmup + formal))
+  local xdg="$XDG_BASE/cycle-$kind" rd="$REPORT_DIR/cycle-$kind"
+  local ready pid n
+  mkdir -p "$xdg" "$rd"
+  ready="$rd/ready.signal"
+  rm -f "$ready"
+  pid="$(spawn_m0_app "$kind" "$RUN_ID" "$ready" "$rd" "$xdg")"
+  if ! wait_file "$rd/$kind.driver.start" "$T_READY"; then
+    echo "[M0-0.b] cycle-$kind: driver start timeout" >&2
+    MEASUREMENTS_OK="FAIL"
+    kill "$pid" 2>/dev/null || true
+    return 1
+  fi
+  local -a rss_vals=() fd_vals=()
+  local formal_json='[]'
+  for n in $(seq 1 "$total"); do
+    local tag
+    tag="$(printf '%02d' "$n")"
+    if ! wait_file "$rd/$kind.cycle-$tag.done" 90; then
+      echo "[M0-0.b] cycle-$kind: #$n done timeout" >&2
+      MEASUREMENTS_OK="FAIL"
+      kill "$pid" 2>/dev/null || true
+      return 1
+    fi
+    if [ "$n" -gt "$warmup" ]; then
+      local snap rss fd cno rec orph
+      snap="$(snapshot_process_tree "$pid")"
+      rss="$(printf '%s' "$snap" | python3 -c 'import json,sys; print(json.load(sys.stdin)["total_rss_kib"])')"
+      fd="$(printf '%s' "$snap" | python3 -c 'import json,sys; print(json.load(sys.stdin)["total_fd_count"])')"
+      rss_vals+=("$rss")
+      fd_vals+=("$fd")
+      cno=$((n - warmup))
+      rec="$(python3 -c 'import json,sys; print(json.dumps({"cycle": int(sys.argv[1]), "rss_kib": int(sys.argv[2]), "fd_count": int(sys.argv[3])}))' "$cno" "$rss" "$fd")"
+      formal_json="$(python3 -c 'import json,sys; a=json.loads(sys.argv[1]); a.append(json.loads(sys.argv[2])); print(json.dumps(a))' "$formal_json" "$rec")"
+      # 孤儿进程检测（契约 §5）：场景关闭后快照后代，等待 2 秒复核仍存活数量
+      orph="$(detect_orphans "$pid" "$ORPHAN_WAIT_S")"
+      printf '{"metric":"orphan_process_count","run_id":"%s","kind":"%s","cycle":%d,"data":%s}\n' \
+        "$RUN_ID" "$kind" "$cno" "$orph" \
+        >"$RUN_DIR/measurements/orphan_${kind}_c$(printf '%02d' "$cno").json"
+    fi
+  done
+  if ! wait_file "$rd/$kind.driver.result" 60; then
+    echo "[M0-0.b] cycle-$kind: driver result timeout" >&2
+    MEASUREMENTS_OK="FAIL"
+  else
+    local result
+    result="$(head -1 "$rd/$kind.driver.result")"
+    if [ "$result" != "PASS" ]; then
+      echo "[M0-0.b] cycle-$kind: driver result=$result" >&2
+      MEASUREMENTS_OK="FAIL"
+    fi
+  fi
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  local stats fd_stats fd_first fd_last
+  stats="$(compute_stats "${rss_vals[@]}")"
+  fd_stats="$(compute_stats "${fd_vals[@]}")"
+  fd_first="${fd_vals[0]:-0}"
+  fd_last="${fd_vals[${#fd_vals[@]}-1]:-0}"
+  printf '{"metric":"%s_cycle_rss_slope_kib","run_id":"%s","kind":"%s","warmup":%d,"formal":%d,"stats":%s,"fd_delta":%d,"fd_stats":%s,"samples":%s}\n' \
+    "$kind" "$RUN_ID" "$kind" "$warmup" "$formal" "$stats" "$((fd_last - fd_first))" "$fd_stats" "$formal_json" \
+    >"$RUN_DIR/measurements/${kind}_cycle.json"
+}
+
+# 契约 §6.3：终端吞吐（1 预热 + DEFAULT_TERM_SAMPLES 正式）。前端自动挂载终端并驱动
+# 10 MiB 负载，计时终点为前端收到 end 标记并完成下一次 animation frame。
+run_terminal_throughput_real() {
+  local warmup=1 formal="${DEFAULT_TERM_SAMPLES:-3}" total=$((warmup + formal))
+  local -a elapsed_vals=()
+  local all_gaps='[]'
+  for n in $(seq 1 "$total"); do
+    local xdg="$XDG_BASE/term-$n" rd="$REPORT_DIR/term-$n" ready pid
+    mkdir -p "$xdg" "$rd"
+    ready="$rd/ready.signal"
+    rm -f "$ready"
+    pid="$(spawn_m0_app "term-throughput" "$RUN_ID" "$ready" "$rd" "$xdg")"
+    if ! wait_file "$rd/term-throughput.driver.start" "$T_READY"; then
+      echo "[M0-0.b] term-$n: driver start timeout" >&2
+      MEASUREMENTS_OK="FAIL"
+      kill "$pid" 2>/dev/null || true
+      continue
+    fi
+    local rfile="$rd/term-throughput-report.json"
+    if ! wait_file "$rfile" "$T_TERM"; then
+      echo "[M0-0.b] term-$n: report timeout" >&2
+      MEASUREMENTS_OK="FAIL"
+      kill "$pid" 2>/dev/null || true
+      continue
+    fi
+    wait_file "$rd/term-throughput.driver.result" 60 || true
+    local dresult
+    dresult="$(head -1 "$rd/term-throughput.driver.result" 2>/dev/null || echo unknown)"
+    if [ "$dresult" != "PASS" ]; then
+      echo "[M0-0.b] term-$n: driver result=$dresult" >&2
+      MEASUREMENTS_OK="FAIL"
+    fi
+    cp "$rfile" "$RUN_DIR/raw/terminal_throughput_r$(printf '%02d' "$n").json"
+    if [ "$n" -gt "$warmup" ]; then
+      local elapsed gaps
+      elapsed="$(python3 -c 'import json; print(json.load(open("'$rfile'"))["elapsed_ms"])')"
+      elapsed_vals+=("$elapsed")
+      gaps="$(python3 -c 'import json; d=json.load(open("'$rfile'")); print(json.dumps(d.get("frame_gaps_ms", [])))')"
+      all_gaps="$(python3 -c 'import json,sys; a=json.loads(sys.argv[1]); a += json.loads(sys.argv[2]); print(json.dumps(a))' "$all_gaps" "$gaps")"
+    fi
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  done
+  local estats fstats fgap_p95 fgap_max
+  estats="$(compute_stats "${elapsed_vals[@]}")"
+  fstats="$(printf '%s' "$all_gaps" | python3 -c 'import json,sys; a=json.load(sys.stdin); n=len(a); s=sorted(a); print(json.dumps({"count": n, "p95": (s[int(0.95*(n-1))] if n >= 20 else None), "max": (s[-1] if n else None)}))')"
+  fgap_p95="$(printf '%s' "$fstats" | python3 -c 'import json,sys; print(json.load(sys.stdin)["p95"])')"
+  fgap_max="$(printf '%s' "$fstats" | python3 -c 'import json,sys; print(json.load(sys.stdin)["max"])')"
+  printf '{"metric":"terminal_10mib_elapsed_ms","run_id":"%s","load_mib":%d,"begin_marker":"__M0_TERM_BEGIN__","end_marker":"__M0_TERM_END__","warmup":%d,"formal":%d,"stats":%s,"frame_gap_p95_ms":%s,"frame_gap_max_ms":%s}\n' \
+    "$RUN_ID" "$TERM_LOAD_MIB" "$warmup" "$formal" "$estats" "$fgap_p95" "$fgap_max" \
+    >"$RUN_DIR/measurements/terminal_throughput.json"
+}
+
+# M0-0.b 编排：产品钩子 READY 时执行全部 REQUIRED_NOW 真实采集。
+run_formal_measurements() {
+  MEASUREMENTS_OK="PASS"
+  XDG_BASE="/tmp/mvp-browser-os-m0/$RUN_ID"
+  REPORT_DIR="$XDG_BASE/reports"
+  mkdir -p "$XDG_BASE" "$REPORT_DIR"
+  run_startup_ready || MEASUREMENTS_OK="FAIL"
+  for kind in tab grid terminal; do
+    run_resource_cycle_real "$kind" || MEASUREMENTS_OK="FAIL"
+  done
+  run_terminal_throughput_real || MEASUREMENTS_OK="FAIL"
+  echo "[M0-0.b] measurements ok=$MEASUREMENTS_OK"
+}
+
+# ---------------------------------------------------------------------------
 # 正式模式
 # ---------------------------------------------------------------------------
 run_formal() {
@@ -949,6 +1195,7 @@ run_formal() {
   VR_CYCLE_SAMPLES="${VR_CYCLE_SAMPLES:-$DEFAULT_CYCLE_SAMPLES}"
   DRIVER_SELFCHECK="FAIL"
   DRIVER_SELFCHECK_DETAIL="not-run"
+  MEASUREMENTS_OK="FAIL"
 
   echo "[M0-1.b] run_id=$RUN_ID"
   echo "[M0-1.b] repo=$ROOT branch=$GIT_BRANCH commit=$GIT_SHORT_SHA"
@@ -963,12 +1210,20 @@ run_formal() {
   driver_smoke
   echo "[M0-1.b] driver selfcheck: $DRIVER_SELFCHECK"
 
+  # M0-0.b：产品钩子落地后执行正式测量（契约 §6.1/§6.2/§6.3）
+  if [ "$READY_HOOK" = "READY" ] && [ "$TERM_HOOK" = "READY" ]; then
+    echo "[M0-0.b] product hooks ready, running formal measurements..."
+    run_formal_measurements
+  else
+    echo "[M0-1.b] product hooks missing (ready=$READY_HOOK term=$TERM_HOOK), emitting BLOCKED evidence"
+  fi
+
   echo "[M0-1.b] writing evidence..."
   export_for_python \
     RUN_ID RUN_TS CONTRACT_VERSION SCRIPT_VERSION SCENARIO_VERSION \
     ROOT GIT_FULL_SHA GIT_SHORT_SHA GIT_BRANCH GIT_PORCELAIN BIN_PATH RELEASE_BIN_SHA256 \
     T_READY T_TERM IDLE_INTERVAL_S VR_IDLE_SECONDS VR_CYCLE_SAMPLES DEFAULT_WARMUP_SAMPLES \
-    DEFAULT_TERM_SAMPLES TERM_LOAD_MIB \
+    DEFAULT_TERM_SAMPLES TERM_LOAD_MIB MEASUREMENTS_OK \
     ENV_OS ENV_KERNEL ENV_ARCH ENV_CPU_MODEL ENV_NPROC ENV_MEM_BYTES \
     ENV_XDG_SESSION ENV_DISPLAY ENV_WAYLAND ENV_RESOLUTION ENV_SCALE ENV_GDK_BACKEND ENV_WEBKIT_DMABUF \
     ENV_WEBKITGTK ENV_GTK ENV_RUSTC ENV_CARGO ENV_NODE ENV_NPM \

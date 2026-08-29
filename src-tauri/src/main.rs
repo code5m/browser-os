@@ -1,13 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod domain;
 mod bridge;
-mod workspace;
-mod keyring_store;
-mod sync;
 mod crashlog;
+mod domain;
 mod grid_ipc;
 mod grid_process;
+mod keyring_store;
+mod sync;
+mod workspace;
 
 use bridge::AppState;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
@@ -41,7 +41,11 @@ fn parse_grid_child_arg() -> Option<u32> {
 /// - UDS client：connect 主进程 → 命令循环（GridCmd → 本地 TabManagerState）；
 ///   插件事件与桥命令事件经 UDS Event 回传主进程。主进程断开 → 自行退出（防孤儿窗口）。
 fn run_grid_child(index: u32) {
-    eprintln!("[grid-child-{}] starting (pid={})", index, std::process::id());
+    eprintln!(
+        "[grid-child-{}] starting (pid={})",
+        index,
+        std::process::id()
+    );
     crashlog::init();
     if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
@@ -95,7 +99,12 @@ fn run_grid_child(index: u32) {
                     grid_child_send_event(name, serde_json::json!({ "index": index }));
                 }
             });
-            start_grid_child_ipc(app.handle().clone(), index, label.clone(), sock_path.clone());
+            start_grid_child_ipc(
+                app.handle().clone(),
+                index,
+                label.clone(),
+                sock_path.clone(),
+            );
             // 子进程 layout enforcer：每 400ms 按 child_layouts 重放 update_rect，
             // 纠正 GTK 布局循环导致的宫格 webview 漂移（与主进程页签同款机制）
             bridge::start_layout_enforcer(app.handle().clone());
@@ -109,8 +118,9 @@ fn run_grid_child(index: u32) {
 }
 
 /// 子进程全局 UDS 写端（connect 成功后设置；窗口事件回调里取用）。
-static CHILD_WRITER: std::sync::OnceLock<std::sync::Arc<std::sync::Mutex<std::os::unix::net::UnixStream>>> =
-    std::sync::OnceLock::new();
+static CHILD_WRITER: std::sync::OnceLock<
+    std::sync::Arc<std::sync::Mutex<std::os::unix::net::UnixStream>>,
+> = std::sync::OnceLock::new();
 
 /// 子进程 → 主进程 发异步事件（焦点上报 / 导航 / 新窗口 / 桥命令事件转发）。
 fn grid_child_send_event(name: &str, payload: serde_json::Value) {
@@ -127,12 +137,7 @@ fn grid_child_send_event(name: &str, payload: serde_json::Value) {
 }
 
 /// 子进程 UDS client：连接主进程 socket（重试至 15s）→ 注册事件转发 → 命令循环。
-fn start_grid_child_ipc(
-    app: tauri::AppHandle,
-    index: u32,
-    host_label: String,
-    sock_path: String,
-) {
+fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, sock_path: String) {
     use tauri::Listener;
     std::thread::spawn(move || {
         use std::os::unix::net::UnixStream;
@@ -142,7 +147,10 @@ fn start_grid_child_ipc(
                 Ok(s) => break s,
                 Err(e) => {
                     if start.elapsed().as_secs() > 15 {
-                        eprintln!("[grid-child-{}] connect {} 失败: {e}，退出", index, sock_path);
+                        eprintln!(
+                            "[grid-child-{}] connect {} 失败: {e}，退出",
+                            index, sock_path
+                        );
                         std::process::exit(1);
                     }
                     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -194,7 +202,10 @@ fn start_grid_child_ipc(
                     Some("loadFailed") => {
                         let url = payload.get("url").and_then(|u| u.as_str()).unwrap_or("");
                         let err = payload.get("error").and_then(|e| e.as_str()).unwrap_or("");
-                        eprintln!("[grid-child-{}] loadFailed 转发 url={} err={}", index, url, err);
+                        eprintln!(
+                            "[grid-child-{}] loadFailed 转发 url={} err={}",
+                            index, url, err
+                        );
                         let _ = grid_ipc::write_wire(
                             &mut *w.lock().unwrap(),
                             &grid_ipc::Wire::Event {
@@ -212,7 +223,12 @@ fn start_grid_child_ipc(
             });
         }
         // 桥命令在子进程内 emit 的事件（采集完成/笔记保存/打开终端/加载失败上报）→ 主进程 → 前端。
-        for name in ["open-terminal", "note-saved", "artifact-collected", "grid-load-failed"] {
+        for name in [
+            "open-terminal",
+            "note-saved",
+            "artifact-collected",
+            "grid-load-failed",
+        ] {
             let w = writer.clone();
             let name_owned = name.to_string();
             app.listen(name, move |event| {
@@ -334,7 +350,9 @@ fn dispatch_grid_cmd(
         }
         GridCmd::Eval { id, js } => {
             let manager = app.state::<TabManagerState>();
-            manager.eval(&id, &js).map_err(|e| format!("eval {id} 失败: {e}"))
+            manager
+                .eval(&id, &js)
+                .map_err(|e| format!("eval {id} 失败: {e}"))
         }
         GridCmd::Navigate { id, url } => {
             let manager = app.state::<TabManagerState>();
@@ -385,17 +403,18 @@ fn run_grid_selftest(app: tauri::AppHandle) {
         // 等主窗起来
         std::thread::sleep(std::time::Duration::from_secs(3));
         let fails = std::cell::RefCell::new(Vec::<String>::new());
-        let step = |name: &str, r: Result<(), String>| {
-            match r {
-                Ok(()) => log(&format!("PASS {name}")),
-                Err(e) => {
-                    fails.borrow_mut().push(format!("{name}: {e}"));
-                    log(&format!("FAIL {name}: {e}"));
-                }
+        let step = |name: &str, r: Result<(), String>| match r {
+            Ok(()) => log(&format!("PASS {name}")),
+            Err(e) => {
+                fails.borrow_mut().push(format!("{name}: {e}"));
+                log(&format!("FAIL {name}: {e}"));
             }
         };
         // 1) 创建 2 宫格（spawn 2 子进程 + UDS CreateTab）
-        step("create_grid(2)", bridge::create_grid(app.clone(), 2).map(|_| ()));
+        step(
+            "create_grid(2)",
+            bridge::create_grid(app.clone(), 2).map(|_| ()),
+        );
         // 2) 导航 + 定位 + eval
         step(
             "grid_open(0)",
@@ -430,12 +449,17 @@ fn run_grid_selftest(app: tauri::AppHandle) {
         std::thread::sleep(std::time::Duration::from_secs(12));
         let pid0_new = app.state::<AppState>().grid_manager.pid_of(0);
         match (pid0, pid0_new) {
-            (Some(old), Some(new)) if new != old => {
-                log(&format!("PASS crash-restart grid-0 重启 pid {old} -> {new}"))
-            }
+            (Some(old), Some(new)) if new != old => log(&format!(
+                "PASS crash-restart grid-0 重启 pid {old} -> {new}"
+            )),
             _ => {
-                fails.borrow_mut().push(format!("grid-0 未重启: old={:?} new={:?}", pid0, pid0_new));
-                log(&format!("FAIL crash-restart old={:?} new={:?}", pid0, pid0_new));
+                fails
+                    .borrow_mut()
+                    .push(format!("grid-0 未重启: old={:?} new={:?}", pid0, pid0_new));
+                log(&format!(
+                    "FAIL crash-restart old={:?} new={:?}",
+                    pid0, pid0_new
+                ));
             }
         }
         step(
@@ -456,16 +480,184 @@ fn run_grid_selftest(app: tauri::AppHandle) {
         if count == 0 {
             log("PASS shutdown count=0");
         } else {
-            fails.borrow_mut().push(format!("shutdown 后 count={count}"));
+            fails
+                .borrow_mut()
+                .push(format!("shutdown 后 count={count}"));
             log(&format!("FAIL shutdown count={count}"));
         }
         if fails.borrow().is_empty() {
             log("SELFTEST_RESULT=ALL_PASS");
         } else {
-            log(&format!("SELFTEST_RESULT=FAIL ({})", fails.borrow().join(" | ")));
+            log(&format!(
+                "SELFTEST_RESULT=FAIL ({})",
+                fails.borrow().join(" | ")
+            ));
         }
         std::thread::sleep(std::time::Duration::from_secs(1));
         std::process::exit(if fails.borrow().is_empty() { 0 } else { 1 });
+    });
+}
+
+/// M0-0.b 资源循环/终端吞吐驱动（契约 logs/m0-baseline-contract-v1.md §6.2/§6.3）。
+/// 由 M0 采集脚本经 `M0_DRIVER` 环境变量启动，仿 GRID_SELFTEST 范式在应用内驱动真实
+/// 场景，与脚本侧轮询同步（标记文件协议）：
+/// - 循环类（tab|grid|terminal）：每次循环「创建场景 -> 稳定 2s -> 关闭 -> 稳定 2s」
+///   -> 写 `<report_dir>/<kind>.cycle-<NN>.done`；全部结束后写 `<kind>.driver.result`。
+/// - `term-throughput`：spawn PTY -> 发固定 10 MiB 负载命令 -> 前端检测 begin/end 标记
+///   并上报 `m0_term_report` -> 驱动轮询报告文件后写 done。
+/// 每类场景独立启动应用、独立统计（契约 §6.2 第 1 条），循环总数由 `M0_CYCLES` 传入。
+fn run_m0_driver(app: tauri::AppHandle, cfg: bridge::M0Config) {
+    std::thread::spawn(move || {
+        let log = |m: &str| eprintln!("[m0-driver {}] {}", cfg.driver, m);
+        let report_dir = cfg
+            .report_dir
+            .clone()
+            .unwrap_or_else(|| "/tmp/mvp-browser-os-m0".to_string());
+        let _ = std::fs::create_dir_all(&report_dir);
+        let result_file = format!("{report_dir}/{}.driver.result", cfg.driver);
+        let start_file = format!("{report_dir}/{}.driver.start", cfg.driver);
+        let _ = std::fs::remove_file(&result_file);
+        let _ = std::fs::write(&start_file, format!("{}\n", cfg.run_id));
+
+        // 1) 等 ready 信号（前端 mount + 2×rAF + IPC 往返写出），最多 90 秒
+        let ready_ok = match &cfg.ready_file {
+            Some(p) => {
+                let mut ok = false;
+                for _ in 0..180 {
+                    if let Ok(content) = std::fs::read_to_string(p) {
+                        if content
+                            .lines()
+                            .next()
+                            .map(|l| l.trim() == cfg.run_id)
+                            .unwrap_or(false)
+                        {
+                            ok = true;
+                            break;
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+                ok
+            }
+            None => true,
+        };
+        if !ready_ok {
+            let _ = std::fs::write(&result_file, "FAIL ready-signal-timeout\n");
+            log("FAIL ready signal timeout");
+            std::process::exit(1);
+        }
+        log("ready ok");
+
+        let finish = |code: i32, result: String| {
+            let _ = std::fs::write(&result_file, format!("{result}\n"));
+            log(&format!("driver result={result}"));
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            std::process::exit(code);
+        };
+
+        // 2) 终端吞吐（契约 §6.3）：与循环类不同，独立启动、独立统计。
+        //    终端由前端自动挂载并驱动 10 MiB 负载（前端持有 termId），
+        //    本驱动只轮询前端上报的 term-throughput-report.json 并写完成标记。
+        if cfg.driver == "term-throughput" {
+            let cycles: usize = std::env::var("M0_CYCLES")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(1);
+            let mut fails: Vec<String> = Vec::new();
+            for n in 1..=cycles {
+                let report_file = format!("{report_dir}/term-throughput-report.json");
+                let _ = std::fs::remove_file(&report_file);
+                let mut got = false;
+                for _ in 0..600 {
+                    if std::fs::metadata(&report_file).is_ok() {
+                        got = true;
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+                if got {
+                    let _ = std::fs::write(
+                        format!("{report_dir}/term-throughput.cycle-{n:02}.done"),
+                        "ok\n",
+                    );
+                    log(&format!("cycle {n} report ok"));
+                } else {
+                    fails.push(format!("cycle {n}: report timeout"));
+                    log(&format!("cycle {n} FAIL: report timeout"));
+                }
+            }
+            if fails.is_empty() {
+                finish(0, "PASS".to_string());
+            } else {
+                finish(1, format!("FAIL {}", fails.join(" | ")));
+            }
+        }
+
+        // 3) 资源循环类（tab|grid|terminal，契约 §6.2）
+        let cycles: usize = std::env::var("M0_CYCLES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1);
+        let mut fails: Vec<String> = Vec::new();
+        for n in 1..=cycles {
+            let r = match cfg.driver.as_str() {
+                "tab" => {
+                    let id = bridge::tab_new(app.clone(), "about:blank".into()).map(|t| t.id);
+                    match id {
+                        Ok(id) => {
+                            std::thread::sleep(std::time::Duration::from_secs(2));
+                            bridge::tab_close(app.clone(), id)
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+                "grid" => {
+                    let n_created = bridge::create_grid(app.clone(), 4);
+                    match n_created {
+                        Ok(4) => {
+                            std::thread::sleep(std::time::Duration::from_secs(4));
+                            bridge::close_grid(app.clone())
+                        }
+                        Ok(n) => {
+                            let _ = bridge::close_grid(app.clone());
+                            Err(format!("grid degraded to {n} (need 4)"))
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+                "terminal" => {
+                    let id = bridge::term_spawn(app.clone()).map(|t| t.id);
+                    match id {
+                        Ok(id) => {
+                            std::thread::sleep(std::time::Duration::from_secs(2));
+                            bridge::term_kill(app.clone(), id)
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+                other => Err(format!("unknown M0_DRIVER: {other}")),
+            };
+            match r {
+                Ok(()) => {
+                    // 关闭后稳定 2 秒再通知脚本采样（契约 §6.2：关闭后等待 2 秒采样）
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    let _ = std::fs::write(
+                        format!("{report_dir}/{}.cycle-{:02}.done", cfg.driver, n),
+                        "ok\n",
+                    );
+                    log(&format!("cycle {n} done"));
+                }
+                Err(e) => {
+                    fails.push(format!("cycle {n}: {e}"));
+                    log(&format!("cycle {n} FAIL: {e}"));
+                }
+            }
+        }
+        if fails.is_empty() {
+            finish(0, "PASS".to_string());
+        } else {
+            finish(1, format!("FAIL {}", fails.join(" | ")));
+        }
     });
 }
 
@@ -509,10 +701,8 @@ fn main() {
                     Some("newWindowRequested") => {
                         if let Some(url) = payload.get("url").and_then(|u| u.as_str()) {
                             eprintln!("[main] forward new-tab-request url={}", url);
-                            let _ = forward.emit(
-                                "new-tab-request",
-                                serde_json::json!({ "url": url }),
-                            );
+                            let _ =
+                                forward.emit("new-tab-request", serde_json::json!({ "url": url }));
                         }
                     }
                     // 子 webview 内导航完成（点链接/前进/后退/刷新），转发给前端同步地址栏
@@ -520,10 +710,8 @@ fn main() {
                         let id = payload.get("id").and_then(|i| i.as_str()).unwrap_or("");
                         let url = payload.get("url").and_then(|u| u.as_str()).unwrap_or("");
                         eprintln!("[main] emit tab-navigated id={} url={}", id, url);
-                        let _ = forward.emit(
-                            "tab-navigated",
-                            serde_json::json!({ "id": id, "url": url }),
-                        );
+                        let _ = forward
+                            .emit("tab-navigated", serde_json::json!({ "id": id, "url": url }));
                     }
                     _ => {}
                 }
@@ -607,6 +795,21 @@ fn main() {
             if std::env::var("GRID_SELFTEST").is_ok() {
                 run_grid_selftest(app.handle().clone());
             }
+            // M0-0.b 测量钩子：M0_RUN_ID 非空时注入测量配置（日常运行全空，零影响），
+            // 并按 M0_DRIVER 启动资源循环/终端吞吐驱动（契约 §6.2/§6.3）。
+            let m0_run_id = std::env::var("M0_RUN_ID").unwrap_or_default();
+            if !m0_run_id.is_empty() {
+                let m0_cfg = bridge::M0Config {
+                    run_id: m0_run_id,
+                    ready_file: std::env::var("M0_READY_FILE").ok(),
+                    report_dir: std::env::var("M0_REPORT_DIR").ok(),
+                    driver: std::env::var("M0_DRIVER").unwrap_or_default(),
+                };
+                *app.state::<AppState>().m0_config.lock().unwrap() = m0_cfg.clone();
+                if !m0_cfg.driver.is_empty() {
+                    run_m0_driver(app.handle().clone(), m0_cfg);
+                }
+            }
             Ok(())
         })
         .manage(AppState::default())
@@ -670,6 +873,9 @@ fn main() {
             bridge::term_write,
             bridge::term_resize,
             bridge::term_kill,
+            bridge::m0_ready,
+            bridge::m0_term_report,
+            bridge::m0_config,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, reactive, computed } from "vue";
-import { bridge } from "../bridge";
+import { bridge, type M0Config } from "../bridge";
 import { useLayoutStore } from "./useLayoutStore";
 
 export interface ClipItem {
@@ -124,6 +124,17 @@ export const useSystemStore = defineStore("system", () => {
   const termId = ref("");
   const termLines = ref<string[]>([]); // 兼容保留，不再用于渲染
   let termWriter: ((data: string) => void) | null = null;
+  // M0-0.b 测量配置（契约 §6.3）：term-throughput 模式下 startShell 后自动驱动 10 MiB 负载
+  const m0Cfg = ref<M0Config | null>(null);
+  // 前端发送吞吐负载的时刻（epoch ms），随 m0_term_report 上报用于计算 elapsed
+  const m0StartTs = ref(0);
+  async function loadM0Config() {
+    try {
+      m0Cfg.value = await bridge.m0Config();
+    } catch {
+      m0Cfg.value = null;
+    }
+  }
   // termId 设置前的 PTY 输出缓存：termSpawn 异步返回前 shell 已开始输出，
   // 若直接丢弃会导致终端空白/无提示符。缓存后 termId 就绪时一次性写入。
   const termBuffer: string[] = [];
@@ -143,9 +154,26 @@ export const useSystemStore = defineStore("system", () => {
       // 写入缓存的早期输出（shell 欢迎信息/提示符）
       for (const data of termBuffer) termWriter?.(data);
       termBuffer.length = 0;
+      maybeRunM0Throughput();
     } catch (e: any) {
       termWriter?.("❌ 终端启动失败: " + (e?.message ?? e) + "\r\n");
     }
+  }
+
+  // M0-0.b 终端吞吐（契约 §6.3）：term-throughput 模式下 shell 就绪后提交固定
+  // 10 MiB ASCII 负载（含唯一 begin/end 标记）；计时起点为命令发送时刻。
+  function maybeRunM0Throughput() {
+    if (m0Cfg.value?.driver !== "term-throughput" || !termId.value) return;
+    setTimeout(() => {
+      if (!termId.value) return;
+      m0StartTs.value = Date.now();
+      bridge
+        .termWrite(
+          termId.value,
+          "printf '__M0_TERM_BEGIN__\\n'; head -c 10485760 /dev/zero | tr '\\0' 'x'; printf '\\n__M0_TERM_END__\\n'\n"
+        )
+        .catch(() => {});
+    }, 1500);
   }
 
   async function termKeydown(e: KeyboardEvent) {
@@ -203,6 +231,9 @@ export const useSystemStore = defineStore("system", () => {
     terminalOpen,
     termId,
     termLines,
+    m0Cfg,
+    m0StartTs,
+    loadM0Config,
     loadClipHistory,
     clipReadSilent,
     clipCopy,

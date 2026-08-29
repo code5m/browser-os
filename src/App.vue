@@ -48,6 +48,12 @@ onMounted(async () => {
   await syncWindowSize();
   const unlisten = await getCurrentWindow().onResized(syncWindowSize);
   window.addEventListener("beforeunload", unlisten);
+  // M0-0.b 终端吞吐（契约 §6.3）：测量模式下自动挂载终端面板（前端驱动 10 MiB 负载）
+  system.loadM0Config().then(() => {
+    if (system.m0Cfg?.driver === "term-throughput") {
+      layout.setView("term");
+    }
+  });
   ws.loadRecents();
   system.loadClipHistory();
   system.startClipWatch();

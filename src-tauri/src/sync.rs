@@ -59,7 +59,10 @@ pub fn push_artifacts(app: &AppHandle, job: &SyncJob) -> Result<(), String> {
         }
     }
 
-    commit(&repository, &format!("sync {} artifact(s) via 极智简单", arts.len()))?;
+    commit(
+        &repository,
+        &format!("sync {} artifact(s) via 极智简单", arts.len()),
+    )?;
     push(&repository, &repo.branch, &repo.username, &token)?;
     Ok(())
 }
@@ -67,9 +70,7 @@ pub fn push_artifacts(app: &AppHandle, job: &SyncJob) -> Result<(), String> {
 /// 凭据回调：复用同一 (username, token)。token 作为密码用于 HTTPS。
 fn cred_cb(username: String, token: String) -> RemoteCallbacks<'static> {
     let mut cb = RemoteCallbacks::new();
-    cb.credentials(move |_url, _user, _allowed| {
-        Cred::userpass_plaintext(&username, &token)
-    });
+    cb.credentials(move |_url, _user, _allowed| Cred::userpass_plaintext(&username, &token));
     cb
 }
 
