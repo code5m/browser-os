@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://example.invalid/mvp-browser-os/m0-summary.schema.json",
+  "title": "M0 summary.json 固定 schema",
+  "description": "M0-1.c 固定：baseline-check.sh 与 verify-resources.sh 输出的 summary.json（机器判定源）必须满足本 schema。契约 §8：summary.json 是机器判定源，summary.md 仅人类阅读，两者不一致时整批 FAIL。",
+  "type": "object",
+  "required": [
+    "run_id",
+    "timestamp",
+    "checkpoint",
+    "contract_version",
+    "script_version",
+    "status",
+    "evidence",
+    "blocked",
+    "deferred",
+    "git",
+    "repo_root",
+    "worktree_clean_at_start"
+  ],
+  "properties": {
+    "run_id": { "type": "string", "pattern": "^[0-9]{8}T[0-9]{6}\\+[0-9]{4}_[0-9a-f]{7}_release_[a-z0-9]+$" },
+    "timestamp": { "type": "string" },
+    "checkpoint": { "type": "string", "pattern": "^M0-[0-9]\\.[a-z]$" },
+    "contract_version": { "type": "string" },
+    "scenario_version": { "type": "string" },
+    "script_version": { "type": "string" },
+    "repo_root": { "type": "string" },
+    "worktree_clean_at_start": { "type": "boolean" },
+    "status": { "type": "string", "enum": ["PASS", "FAIL", "BLOCKED"] },
+    "driver_selfcheck": {
+      "type": "object",
+      "required": ["status", "detail"],
+      "properties": {
+        "status": { "type": "string", "enum": ["PASS", "FAIL"] },
+        "detail": { "type": "string" }
+      }
+    },
+    "git": {
+      "type": "object",
+      "required": ["commit_sha", "short_sha", "branch"],
+      "properties": {
+        "commit_sha": { "type": "string" },
+        "short_sha": { "type": "string" },
+        "branch": { "type": "string" }
+      }
+    },
+    "blocked": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["metric", "status"],
+        "properties": {
+          "metric": { "type": "string" },
+          "status": { "type": "string", "enum": ["BLOCKED"] },
+          "owner": { "type": "string" },
+          "unblock": { "type": "string" }
+        }
+      }
+    },
+    "deferred": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["metric", "status"],
+        "properties": {
+          "metric": { "type": "string" },
+          "status": { "type": "string", "pattern": "^DEFERRED\\(M[0-9]-[0-9]\\)$" }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["run_dir", "environment", "scenario", "summary_json", "summary_md", "sha256sums"],
+      "properties": {
+        "run_dir": { "type": "string" },
+        "environment": { "type": "string" },
+        "scenario": { "type": "string" },
+        "summary_json": { "type": "string" },
+        "summary_md": { "type": "string" },
+        "sha256sums": { "type": "string" }
+      }
+    },
+    "results": {
+      "type": "object",
+      "description": "baseline-check.sh 特有：各 REQUIRED_NOW 质量/构建指标的判定结果。"
+    }
+  },
+  "additionalProperties": true
+}

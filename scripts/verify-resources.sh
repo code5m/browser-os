@@ -55,7 +55,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # 常量
 # ---------------------------------------------------------------------------
-SCRIPT_VERSION="M0-1.b-1"
+SCRIPT_VERSION="M0-1.b-2"
 CONTRACT_VERSION="V1.0"
 SCENARIO_VERSION="M0-1.b-v1"
 DEFAULT_CYCLE_SAMPLES=20
@@ -73,6 +73,9 @@ T_TERM=300
 SCRIPT_SRC="${BASH_SOURCE[0]}"
 SCRIPT_PATH="$(readlink -f "$SCRIPT_SRC")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+# M0-1.c：summary.json 固定 schema 与共享校验器（见 scripts/GATE-CONTRACT.md）
+SCHEMA_FILE="$SCRIPT_DIR/schema/m0-summary.schema.json"
+VALIDATE_SUMMARY="$SCRIPT_DIR/validate-summary.py"
 
 # ---------------------------------------------------------------------------
 # 工具与根目录解析
@@ -119,6 +122,12 @@ verify-resources.sh — M0-1.b 资源验证驱动
 可选环境变量:
   VR_CYCLE_SAMPLES=N  每类资源循环正式样本数（默认 20；另加 5 次预热）
   VR_IDLE_SECONDS=N   idle 采样总时长（默认 60，每 5 秒 1 点）
+
+输出契约（M0-1.c）:
+  summary.json 满足 scripts/schema/m0-summary.schema.json（机器判定源）
+  SHA256SUMS 覆盖本 run 内除自身外全部证据文件
+  日志行前缀 [M0-1.b]，见 scripts/GATE-CONTRACT.md
+  合并前门禁: scripts/pre-merge.sh（M0-1 脚本集合检查入口）
 
 退出码: 0 = 驱动自检/无 BLOCKED 阻断；1 = BLOCKED（钩子缺失）或驱动 FAIL；2 = 非法参数
 EOF
@@ -1117,6 +1126,22 @@ run_self_test() {
     echo "PASS: SHA256SUMS verifies all evidence files"
   else
     echo "FAIL: SHA256SUMS verification"; rc=1
+  fi
+
+  # 用例 9：summary.json 满足固定 schema（M0-1.c）
+  if [ ! -f "$SCHEMA_FILE" ]; then
+    echo "FAIL: schema file missing: $SCHEMA_FILE"; rc=1
+  elif [ ! -f "$VALIDATE_SUMMARY" ]; then
+    echo "FAIL: validate-summary.py missing: $VALIDATE_SUMMARY"; rc=1
+  else
+    local runid9 summary9
+    runid9="$(ls "$tmp/repo-clean/logs/m0-baseline" | tail -1)"
+    summary9="$tmp/repo-clean/logs/m0-baseline/$runid9/summary.json"
+    if python3 "$VALIDATE_SUMMARY" "$SCHEMA_FILE" "$summary9" >/dev/null 2>&1; then
+      echo "PASS: summary.json conforms to m0-summary.schema.json"
+    else
+      echo "FAIL: summary.json schema validation"; rc=1
+    fi
   fi
 
   if [ $rc -eq 0 ]; then

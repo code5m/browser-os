@@ -50,7 +50,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # 常量
 # ---------------------------------------------------------------------------
-SCRIPT_VERSION="M0-1.a-2"
+SCRIPT_VERSION="M0-1.a-3"
 CONTRACT_VERSION="V1.0"
 SCENARIO_VERSION="M0-1.a-v1"
 DEFAULT_FRONTEND_SAMPLES=3
@@ -64,6 +64,9 @@ T_RELEASE=5400
 SCRIPT_SRC="${BASH_SOURCE[0]}"
 SCRIPT_PATH="$(readlink -f "$SCRIPT_SRC")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+# M0-1.c：summary.json 固定 schema 与共享校验器（见 scripts/GATE-CONTRACT.md）
+SCHEMA_FILE="$SCRIPT_DIR/schema/m0-summary.schema.json"
+VALIDATE_SUMMARY="$SCRIPT_DIR/validate-summary.py"
 
 # ---------------------------------------------------------------------------
 # 工具与根目录解析
@@ -101,6 +104,12 @@ baseline-check.sh — M0-1.a 质量/构建/指纹/证据目录门禁
 
 可选环境变量:
   BS_FRONTEND_SAMPLES=N  frontend_build_ms 正式样本数（默认 3；另加 1 次预热）
+
+输出契约（M0-1.c）:
+  summary.json 满足 scripts/schema/m0-summary.schema.json（机器判定源）
+  SHA256SUMS 覆盖本 run 内除自身外全部证据文件
+  日志行前缀 [M0-1.a]，见 scripts/GATE-CONTRACT.md
+  合并前门禁: scripts/pre-merge.sh（M0-1 脚本集合检查入口）
 
 退出码: 0 = 本检查点覆盖指标全部 PASS；1 = 任一 FAIL / 工作树非干净拒绝；2 = 非法参数
 EOF
@@ -961,6 +970,22 @@ run_self_test() {
     fi
   else
     echo "FAIL: frontend-fail fixture should exit nonzero when frontend FAILs"; rc=1
+  fi
+
+  # 用例 7：summary.json 满足固定 schema（M0-1.c）
+  if [ ! -f "$SCHEMA_FILE" ]; then
+    echo "FAIL: schema file missing: $SCHEMA_FILE"; rc=1
+  elif [ ! -f "$VALIDATE_SUMMARY" ]; then
+    echo "FAIL: validate-summary.py missing: $VALIDATE_SUMMARY"; rc=1
+  else
+    local runid7 summary7
+    runid7="$(ls "$tmp/repo-clean/logs/m0-baseline" | tail -1)"
+    summary7="$tmp/repo-clean/logs/m0-baseline/$runid7/summary.json"
+    if python3 "$VALIDATE_SUMMARY" "$SCHEMA_FILE" "$summary7" >/dev/null 2>&1; then
+      echo "PASS: summary.json conforms to m0-summary.schema.json"
+    else
+      echo "FAIL: summary.json schema validation"; rc=1
+    fi
   fi
 
   if [ $rc -eq 0 ]; then
