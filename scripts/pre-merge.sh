@@ -13,6 +13,9 @@
 #   8. Rust fmt、前端 production build、Rust cargo check
 #   9. 正式证据 schema/SHA256 完整性
 #  10. M0-2 生命周期契约夹具（--self-test + --expect-current-gaps + 默认门禁；
+#      M0-2.c 后默认模式必须 PASS）
+#  11. M0-3.a 安全边界夹具（--self-test + --expect-current-gaps；
+#      默认模式按设计 EXIT=1，属现状缺口，不并入本门禁）
 #      M0-2.c 后默认模式必须 PASS，防止退出路径回归）
 #  11. 工作树、暂存区、当前分支相对基线的 git diff --check
 #
@@ -54,6 +57,8 @@ pre-merge.sh — M0-1.c 本地 pre-merge 门禁（M0-1 脚本合并前检查入�
   production build / check      npm run build + cargo check --locked
   evidence integrity            正式 run schema + 全部 SHA256SUMS
   lifecycle fixture             check-lifecycle-contract.py --self-test / --expect-current-gaps / 默认门禁
+  security fixture              check-security-policy.py --self-test / --expect-current-gaps
+                                （默认模式按设计 EXIT=1，见 logs/m0-security-threat-matrix-v1.md）
   git diff --check              工作树 + 暂存区 + 当前分支相对基线（机器证据除外）
 
 退出码: 0 = 全部通过；1 = 任一失败；2 = 非法参数
@@ -165,6 +170,15 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/check-lifecycle-contract.py" >/dev/null 2>&1 \
     || pm_fail "check-lifecycle-contract.py 默认生命周期门禁"
 
+  pm_log "M0-3.a 安全边界夹具（现状缺口，默认模式按设计 EXIT=1，不入门禁）…"
+  python3 "$SCRIPT_DIR/check-security-policy.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-security-policy.py --self-test"
+  if python3 "$SCRIPT_DIR/check-security-policy.py" --expect-current-gaps >/dev/null 2>&1; then
+    pm_log "security gap 集合与 logs/m0-security-threat-matrix-v1.md 一致"
+  else
+    pm_fail "security gap 集合已变化：M0-3.b/c/d 收口或新增缺口后需同步 EXPECTED_GAPS 与威胁矩阵"
+  fi
+
   pm_log "git diff --check（工作树 + 暂存区，机器证据除外）…"
   # Raw evidence is immutable third-party output; SHA256SUMS, not whitespace rewriting, protects it.
   git -C "$ROOT" diff --check -- . ':(exclude)logs/m0-baseline/**' || pm_fail "git diff --check (worktree)"
@@ -213,6 +227,10 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/aggregate-m0-baseline.py" ] || { echo "FAIL: aggregate-m0-baseline.py missing"; rc=1; }
   [ -f "$SCRIPT_DIR/check-plan-routing.py" ] || { echo "FAIL: check-plan-routing.py missing"; rc=1; }
   [ -f "$SCRIPT_DIR/check-lifecycle-contract.py" ] || { echo "FAIL: check-lifecycle-contract.py missing"; rc=1; }
+  [ -f "$SCRIPT_DIR/check-security-policy.py" ] || { echo "FAIL: check-security-policy.py missing"; rc=1; }
+  if ! python3 "$SCRIPT_DIR/check-security-policy.py" --self-test >/dev/null 2>&1; then
+    echo "FAIL: check-security-policy.py --self-test"; rc=1
+  fi
   if ! python3 "$SCRIPT_DIR/check-lifecycle-contract.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-lifecycle-contract.py --self-test"; rc=1
   fi

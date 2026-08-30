@@ -6,6 +6,7 @@ mod domain;
 mod grid_ipc;
 mod grid_process;
 mod keyring_store;
+mod security_policy;
 mod shutdown;
 mod sync;
 mod workspace;
@@ -798,6 +799,12 @@ fn main() {
                 .grid_manager
                 .set_app(app.handle().clone());
             bridge::register_shutdown_tasks(app.handle()).map_err(std::io::Error::other)?;
+            // M0-3.a：打印安全策略指纹，确认运行中的二进制对应哪版策略契约。
+            // 本检查点只定义契约，不收口任何调用方（M0-3.b/c/d）。
+            eprintln!(
+                "[main] security policy: {}",
+                security_policy::policy_fingerprint()
+            );
             // 主窗 Moved/Resized → 宫格子进程窗口跟随（子窗口是独立顶层窗口，
             // 不像 add_child 自动跟随）；Focused → 失焦隐藏/聚焦恢复（防幽灵浮层）；
             // CloseRequested → 杀掉全部子进程（防孤儿置顶窗口）。

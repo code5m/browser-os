@@ -393,7 +393,6 @@ mod shutdown_tests {
 mod m0_2d_lifecycle_tests {
     use super::*;
     use std::collections::HashMap;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     /// 记录任务执行次数与顺序的探针，行为贴近真实清理任务（可被外部注入失败/panic）。

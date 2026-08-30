@@ -19,8 +19,8 @@
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | tab RSS 三批持续正增长，必须由 M0-5 关闭；不属于 M0-0 PASS 伪装项 |
-| 下一检查点 | `M0-3.a = NEXT`（建立 `SecurityPolicy` 或等价模块及威胁矩阵） |
-| 下一任务路由 | `AI:DEEP / R:xhigh`（安全收口；最终 PASS 裁决需强模型复核威胁矩阵与拒绝用例） |
+| 下一检查点 | `M0-3.b = NEXT`（收口 capability 与远程 IPC 来源/用户意图） |
+| 下一任务路由 | `AI:DEEP / R:xhigh`（安全收口；最终 PASS 裁决需强模型复核拒绝用例与误放行风险） |
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
 | 禁止启动 | M1~M5；当前检查点未提交前禁止夹带下一检查点 |
@@ -39,7 +39,7 @@
 - 冻结 `logs/m0-baseline-contract-v1.md`：21 个 `REQUIRED_NOW` 指标、2 个延迟指标、环境指纹、固定场景、统计公式和证据目录。
 - 将旧 `logs/baseline-2026-08-27.md` 降级为 `EXPLORATORY`，禁止当作正式性能基线。
 - 修复原计划中的循环依赖，关键路径现为：
-  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2.a(PASS) -> M0-2.b(PASS) -> M0-2.c(PASS) -> M0-2.d(NEXT) -> ...`。
+  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3.a(NEXT) -> ...`。
 - 完成 M0-1.a（commit `1bd56b1`）：新增 `scripts/baseline-check.sh` 与 `scripts/fixtures/clippy-sample.json`；
   验收命令全过、`--self-test` 输出 `SELF_TEST_RESULT=ALL_PASS`；`.gitignore` 对 `logs/m0-baseline/` 开例外，
   原始 `.log` 证据随 run 目录入库可追溯（见 §5 证据保留说明）。
@@ -110,23 +110,23 @@ NEXT=<PASS 后唯一下一检查点；FAIL 时保持原 NEXT>
 - 同一失败最多让低模型修两轮；第二次仍失败即停止，回写 `BLOCKED`，交给更强模型。
 - 文档回写只更新顶部状态、当前 WBS、最近 checkpoint 和 NEXT；不重排无关章节，避免无意义 diff。
 
-### 当前可复制任务卡：M0-2.a
+### 当前可复制任务卡：M0-3.a
 
 ```text
-TASK_ID=M0-2.a
+TASK_ID=M0-3.a
 ROUTE=AI:DEEP
 MODEL=可用低模型先执行草稿；最终由强模型复核
-REASONING=low 用于脚本/文档草稿；high 用于 PASS 裁决
-GOAL=冻结当前生命周期资源所有权缺口，产出所有权表和可复跑失败夹具；不实现 ShutdownCoordinator。
-READ=详细设计与实施计划.md, 后续需求TODO.md, AI-模型切换与接手清单.md, logs/m0-baseline-contract-v1.md, src-tauri/src/main.rs, src-tauri/src/bridge.rs, src-tauri/src/grid_process.rs, src/components/system/TerminalPane.vue
-WRITE=scripts/check-lifecycle-contract.py, logs/m0-resource-ownership-v1.md, logs/checkpoints/M0-2.a-<YYYYMMDD-HHMM>.md, 详细设计与实施计划.md, 后续需求TODO.md, AI-模型切换与接手清单.md, scripts/pre-merge.sh
-FORBID=不得实现 ShutdownCoordinator；不得迁移关闭调用方；不得改冻结基线证据；不得解锁 M1/M2；不得把 M0-2 整项勾选完成；不得合并 M0-2.b。
-COMMANDS=python3 scripts/check-lifecycle-contract.py --self-test; python3 scripts/check-lifecycle-contract.py --expect-current-gaps; python3 scripts/check-lifecycle-contract.py; bash -n scripts/pre-merge.sh; scripts/pre-merge.sh; git diff --check
-PASS_CRITERIA=--self-test EXIT=0；--expect-current-gaps EXIT=0；默认脚本 EXIT=1 且列出 7 个已知 GAP；pre-merge EXIT=0；文档记录默认失败是现状夹具预期结果；工作树提交后干净。
-FAIL_ACTION=不移动 NEXT；同一命令失败两轮后写 BLOCKED，保留命令输出尾部 120 行和推荐强模型接手点。
-DOC_BACKWRITE=三份主文档顶部状态、M0-2.a 勾选、最近 checkpoint、实际模型、VERIFY、COMMIT；checkpoint 记录默认脚本预期 FAIL。
-COMMIT=test(M0-2.a): freeze lifecycle ownership gaps
-NEXT=M0-2.b
+REASONING=xhigh 用于安全边界；low 只做文档/夹具草稿
+GOAL=建立 SecurityPolicy 或等价模块及威胁矩阵；不收口任何调用方。
+READ=AI-模型切换与接手清单.md, 详细设计与实施计划.md, 后续需求TODO.md, logs/m0-security-threat-matrix-v1.md, src-tauri/src/bridge.rs, src-tauri/src/main.rs, src-tauri/capabilities/*.json
+WRITE=src-tauri/src/security_policy.rs, logs/m0-security-threat-matrix-v1.md, scripts/check-security-policy.py, logs/checkpoints/M0-3.a-<YYYYMMDD-HHMM>.md, 三份主文档, scripts/pre-merge.sh
+FORBID=不启动 M1/M2；不改 M0-0 冻结基线证据；不宣称 M0 完成；不合并 M0-3.b/c/d；不做无关 UI/功能开发；不扩大权限、不删除用户数据
+COMMANDS=python3 scripts/check-security-policy.py --self-test; python3 scripts/check-security-policy.py --expect-current-gaps; python3 scripts/check-security-policy.py; cargo test --manifest-path src-tauri/Cargo.toml; bash -n scripts/pre-merge.sh; scripts/pre-merge.sh; git diff --check
+PASS_CRITERIA=--self-test EXIT=0；--expect-current-gaps EXIT=0；默认脚本 EXIT=1 且列出 5 个已知 GAP；pre-merge EXIT=0；cargo check warning 不超过既有 2 条；工作树提交后干净
+FAIL_ACTION=不移动 NEXT；同一命令失败两轮后写 BLOCKED，保留命令输出尾部 120 行和推荐强模型接手点
+DOC_BACKWRITE=三份主文档顶部状态、M0-3.a 勾选、最近 checkpoint、实际模型、VERIFY、COMMIT；checkpoint 记录默认脚本预期 FAIL
+COMMIT=docs/test(M0-3.a): define security policy threat matrix
+NEXT=M0-3.b
 ```
 
 强模型复核 M0-2.a 时只需读取本任务卡、`git show --stat --oneline HEAD`、`git diff HEAD~1..HEAD`、本轮 checkpoint 和验收摘要；确认未越界实现 M0-2.b 后，才能把 `NEXT` 移到 `M0-2.b`。
@@ -518,6 +518,30 @@ NEXT=M0-3.a
 - 过程中修正：单缺口用例初版传空 `main` 源码导致 `NO_UNIFIED_SHUTDOWN_CORE`/`SYSTEM_EXIT_HOOK_MISSING` 连带触发误报。
 - **M0-2 整项关闭，但不宣称 M0 完成**：M0-3~M0-7 未关闭，M1/M2 仍锁定。
 - 强模型复核点：M0-3 是 `AI:DEEP/R:xhigh` 安全收口，建议复核本检查点是否遗留「形态合规但语义错误」类问题（M0-2.b 曾出现此类缺陷，只有行为测试能抓到）。
+
+### M0-3.a 回写记录（2026-08-31，CodeBuddy / Codex 主机）
+
+```text
+CHECKPOINT=M0-3.a
+STATUS=PASS
+EXECUTOR=CodeBuddy（Codex 主机）
+MODEL=界面未显示完整模型名
+ROUTE=AI:DEEP
+MODEL_DEVIATION=UI 未显示完整模型名，推理档位未能精确记录
+COMMIT=提交信息 docs/test(M0-3.a): define security policy threat matrix
+VERIFY=pre-merge.sh(0, PRE_MERGE_RESULT=ALL_PASS); cargo test(0, 28 passed); check-security-policy.py --self-test(0); --expect-current-gaps(0); 默认(1, 5 GAP); cargo check(0, 既有 2 warnings); git diff --check(0)
+NEXT=M0-3.b
+```
+
+实现要点：
+
+- 新增 `src-tauri/src/security_policy.rs`：纯函数契约（`check_webview_label` / `check_path_within_roots` / `check_shell_command` / `check_html` / `policy_fingerprint`）+ 13 项拒绝用例；**只拒绝不清洗**（清洗会制造安全假象，收口按已解析应用条目执行，属 M0-3.d）。
+- 新增 `logs/m0-security-threat-matrix-v1.md`：信任边界 + 7 项威胁（SEC-01~07，逐条源码行号）+ M0-3 验收对照表。
+- 新增 `scripts/check-security-policy.py`：5 个现状缺口可机器复跑，三种模式；默认模式按设计 `EXIT=1`，只把 `--self-test`/`--expect-current-gaps` 接入 pre-merge。
+- `main.rs` 只加 `mod security_policy;` 与启动指纹日志一行（使模块有真实消费方，避免新增 warning）。
+- **收口未开始**：M0-3.b（capability/远程 IPC 来源与用户意图）、M0-3.c（canonical path/允许根目录/符号链接）、M0-3.d（`launch_app` 已解析应用条目 + 审计）均未做。
+- 顺带清理：删除 M0-2.d 遗留的未使用导入（1 条 warning）；同步 4 处仍写 `M0-2.d = NEXT` 的旧文字与过期任务卡模板（原为 M0-2.a 卡）。
+- 强模型复核点：`check_shell_command` 只是字符级最小契约，**不足以对抗所有注入**；M0-3.d 必须以应用条目白名单为准，不得把它当成充分防护。
 
 ## 6. 跨模型接手审查协议
 
