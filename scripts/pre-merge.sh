@@ -151,9 +151,10 @@ run_pre_merge() {
     esac
   done < <(find "$ROOT/logs/m0-baseline" -mindepth 2 -maxdepth 2 -type f -name summary.json -print | sort)
 
-  pm_log "git diff --check（工作树 + 暂存区）…"
-  git -C "$ROOT" diff --check || pm_fail "git diff --check (worktree)"
-  git -C "$ROOT" diff --cached --check || pm_fail "git diff --check (staged)"
+  pm_log "git diff --check（工作树 + 暂存区，机器证据除外）…"
+  # Raw evidence is immutable third-party output; SHA256SUMS, not whitespace rewriting, protects it.
+  git -C "$ROOT" diff --check -- . ':(exclude)logs/m0-baseline/**' || pm_fail "git diff --check (worktree)"
+  git -C "$ROOT" diff --cached --check -- . ':(exclude)logs/m0-baseline/**' || pm_fail "git diff --check (staged)"
 
   local base_ref="${M0_BASE_REF:-}" merge_base=""
   if [ -z "$base_ref" ]; then
