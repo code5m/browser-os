@@ -1,8 +1,8 @@
 # AI 模型切换与接手清单
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
-> 文档版本：V1.7。
-> 更新时间：2026-08-30 14:27 CST。
+> 文档版本：V1.8。
+> 更新时间：2026-08-30 14:52 CST。
 > 当前状态：`CODEX_RUNNING`。
 > 当前分支：`feature-M0-baseline`。
 > 当前执行器：Codex 主任务；机械文档审计与独立脚本任务已委派 `gpt-5.6-luna / low`，最终裁决仍由主任务负责。
@@ -14,10 +14,11 @@
 
 | 项目 | 当前值 |
 |------|--------|
-| 已完成检查点 | `M0-0.a = PASS`、`M0-1.a = PASS`、`M0-1.b = PASS`、`M0-1.c = PASS` |
+| 已完成检查点 | `M0-0.a/b = PASS`、`M0-1.a/b/c = PASS` |
 | 已拒证据 | `ac0ecac` 三批候选：场景错误 + aggregate `UNSTABLE`，结论 `REJECTED`，不得复用 |
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
-| 下一检查点 | `M0-0.b = RE-RUN/NEXT`；通过后才可领取 `M0-0.c` |
+| 修复后正式单批 | 源提交 `b82eb55`；质量/资源/aggregate 全 PASS；manifest `20260830T145117+0800_b82eb55_M0-0.b` |
+| 下一检查点 | `M0-0.c = NEXT`（三批稳定性采集） |
 | 下一任务路由 | `AI:BALANCED / R:medium` |
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
@@ -25,6 +26,7 @@
 | 最近实现提交 | `e8975d6 fix(M0-0.b): close tab lifecycle leaks` |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
+| 最新状态证据 | `logs/checkpoints/M0-0.b-20260830-1452.md` |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
 
@@ -36,7 +38,7 @@
 - 冻结 `logs/m0-baseline-contract-v1.md`：21 个 `REQUIRED_NOW` 指标、2 个延迟指标、环境指纹、固定场景、统计公式和证据目录。
 - 将旧 `logs/baseline-2026-08-27.md` 降级为 `EXPLORATORY`，禁止当作正式性能基线。
 - 修复原计划中的循环依赖，关键路径现为：
-  `M0-0.a(PASS) -> M0-1.a/b/c(PASS) -> M0-0.b(RE-RUN/NEXT) -> M0-0.c(WAITING) -> M0-2...`。
+  `M0-0.a(PASS) -> M0-1.a/b/c(PASS) -> M0-0.b(PASS) -> M0-0.c(NEXT) -> M0-2...`。
 - 完成 M0-1.a（commit `1bd56b1`）：新增 `scripts/baseline-check.sh` 与 `scripts/fixtures/clippy-sample.json`；
   验收命令全过、`--self-test` 输出 `SELF_TEST_RESULT=ALL_PASS`；`.gitignore` 对 `logs/m0-baseline/` 开例外，
   原始 `.log` 证据随 run 目录入库可追溯（见 §5 证据保留说明）。
@@ -52,6 +54,7 @@
 - 完成正式总控与后续门禁修复：`ac0ecac` 保证多批采集原子归档，`73e9dfb` 对全部证据校验 SHA 并按 V1.0/V1.1 选择 schema；最新完整 pre-merge 为 `ALL_PASS`。
 - 拒绝 `ac0ecac` 的三批候选证据：tab 驱动把 `about:blank` 当搜索词打开百度，六项 aggregate 指标为 `UNSTABLE`；裁决见 `logs/checkpoints/M0-0.c-20260830-0913.md`。
 - `e8975d6` 已修复上述 URL 和页签生命周期缺陷；短样本 smoke 显示 root/process FD 稳定，但 smoke 不能替代 M0-0.b/c 正式重跑。
+- 修复后源提交 `b82eb55` 已完成 M0-0.b 单批正式采样：质量、资源与 aggregate 均 PASS；证据与结果见 `logs/checkpoints/M0-0.b-20260830-1452.md`。
 
 ## 2. 模型映射
 
@@ -332,6 +335,21 @@ NEXT=M0-0.b RE-RUN
 
 被拒原始证据保留在 `logs/m0-baseline/` 与 `logs/m0-baseline/manifests/`，只用于诊断；裁决见 `logs/checkpoints/M0-0.c-20260830-0913.md`。`e8975d6` 后的短样本 smoke 只证明 URL/FD/线程修复方向正确，不能替代契约规定的一批正式 M0-0.b 和三批正式 M0-0.c。
 
+### M0-0.b 修复后正式 PASS（2026-08-30，源提交 `b82eb55`）
+
+```text
+CHECKPOINT=M0-0.b
+STATUS=PASS
+EXECUTOR=Codex 主任务；采样由既有脚本无人值守执行
+ROUTE=AI:BALANCED
+SOURCE_COMMIT=b82eb55a0fd5d11f572753b9c17e929c47c787d0
+VERIFY=scripts/collect-m0-baseline.sh(0, quality PASS, resources PASS, aggregate PASS)
+MANIFEST=logs/m0-baseline/manifests/20260830T145117+0800_b82eb55_M0-0.b/
+NEXT=M0-0.c
+```
+
+完整指标、run ID、二进制哈希和证据路径见 `logs/checkpoints/M0-0.b-20260830-1452.md`。
+
 ## 6. 跨模型接手审查协议
 
 Codex 已于 2026-08-29 按本协议审查并完成 `M0-1.a`。Trae 或后续执行器领取 `M0-1.b` 前，仍需先做审查、不直接继续写代码：
@@ -358,9 +376,7 @@ git log --reverse --oneline --decorate 504fcd7..HEAD
 
 先阅读 AI-模型切换与接手清单.md、详细设计与实施计划.md §2.2、logs/m0-baseline-contract-v1.md。每轮只从文档领取唯一 NEXT，按 AI:* 路由选择 Trae 模型，完成实现、全部验收、四处回写和独立提交。提交后确认工作树干净；未命中硬停止条件时，不用等待用户回复，立即领取下一个 NEXT。
 
-第一轮是 M0-0.b 重跑：先确认工作树干净且 HEAD 包含 e8975d6、b9077d9、73e9dfb，运行 scripts/pre-merge.sh；随后只运行 scripts/collect-m0-baseline.sh 一次正式批次。不得复用 ac0ecac 的被拒证据，也不要再次实现已存在的 ready/终端钩子。质量与资源 summary 同时 PASS、schema/SHA 有效且场景 URL 为 about:blank 后，新增 logs/checkpoints/M0-0.b-<时间>.md 并独立提交 docs(M0-0.b): accept repaired release baseline。若单批失败，留在 M0-0.b 修复，禁止运行三批。
-
-M0-0.b 提交并恢复干净工作树后，第二轮才运行 scripts/collect-m0-baseline.sh --batches 3。三批必须同 commit/契约/环境且全部 PASS；aggregate PASS 才可完成 M0-0.c。aggregate UNSTABLE 时保留证据、逐指标归因并维持 M0-0.c 未完成，不得为省额度重复盲跑。
+第一轮是 M0-0.c：确认 M0-0.b 的证据/文档提交已落库且工作树干净，运行 scripts/pre-merge.sh，再运行 scripts/collect-m0-baseline.sh --batches 3。三批必须同 commit、契约和环境，质量/资源门禁逐批 PASS，schema/SHA 与二进制哈希一致；aggregate PASS 才可完成 M0-0.c。aggregate UNSTABLE 时保留证据、逐指标归因并维持 M0-0.c 未完成，不得为省额度重复盲跑。
 
 同一检查点连续两次失败、缺少 DEEP 等效模型、缺少 GUI/权限/环境、需要改冻结契约或人工裁决、发现不明改动、额度耗尽或到达 M0-7.c 时必须停止，回写 BLOCKED 和证据；不得伪造 PASS。
 ```

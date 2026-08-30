@@ -1,0 +1,24 @@
+   Compiling mvp-browser-os v0.1.0 (/home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3/src-tauri)
+warning: fields `index` and `comms` are never read
+  --> src/grid_process.rs:76:9
+   |
+75 | pub struct GridChildHandle {
+   |            --------------- fields in this struct
+76 |     pub index: u32,
+   |         ^^^^^
+77 |     pub child: Child,
+78 |     pub comms: Arc<ChildComms>,
+   |         ^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: associated function `new` is never used
+   --> src/grid_process.rs:103:12
+    |
+102 | impl GridProcessManager {
+    | ----------------------- associated function in this implementation
+103 |     pub fn new() -> Self {
+    |            ^^^
+
+warning: `mvp-browser-os` (bin "mvp-browser-os") generated 2 warnings
+    Finished `release` profile [optimized] target(s) in 1m 40s

@@ -1,0 +1,16 @@
+[M0-1.b] run_id=20260830T144026+0800_b82eb55_release_x11
+[M0-1.b] mode=formal evidence_root=/tmp/m0-baseline-stage.jHz5LC/batch-01/resources
+[M0-1.b] repo=/home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3 branch=feature-M0-baseline commit=b82eb55
+[M0-1.b] hooks: ready=READY term=READY
+[M0-1.b] collecting environment fingerprint...
+[M0-1.b] driver smoke (proc snapshot + stats, no product baseline)...
+[M0-1.b] driver selfcheck: PASS
+[M0-0.b] product hooks and artifact ready, running formal measurements...
+[M0-0.b] measurements ok=PASS
+[M0-1.b] writing evidence...
+environment.json written
+scenario.json written
+summary.json written with status=PASS
+
+=== M0-1.b summary: status=PASS ===
+evidence dir: /tmp/m0-baseline-stage.jHz5LC/batch-01/resources/20260830T144026+0800_b82eb55_release_x11
