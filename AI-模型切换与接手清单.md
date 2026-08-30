@@ -14,13 +14,13 @@
 
 | 项目 | 当前值 |
 |------|--------|
-| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2.a/b/c = PASS` |
+| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`（a/b/c/d 全关闭；未宣称 M0 整体完成） |
 | 已拒证据 | `ac0ecac` 三批候选：场景错误 + aggregate `UNSTABLE`，结论 `REJECTED`，不得复用 |
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | tab RSS 三批持续正增长，必须由 M0-5 关闭；不属于 M0-0 PASS 伪装项 |
-| 下一检查点 | `M0-2.d = NEXT`（补重复退出、半初始化退出和失败降级测试） |
-| 下一任务路由 | `AI:DEEP / R:high`（最终 PASS 裁决需强模型复核 diff 与失败路径） |
+| 下一检查点 | `M0-3.a = NEXT`（建立 `SecurityPolicy` 或等价模块及威胁矩阵） |
+| 下一任务路由 | `AI:DEEP / R:xhigh`（安全收口；最终 PASS 裁决需强模型复核威胁矩阵与拒绝用例） |
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
 | 禁止启动 | M1~M5；当前检查点未提交前禁止夹带下一检查点 |
@@ -494,6 +494,30 @@ NEXT=M0-2.d
 未做项：
 
 - M0-2.d 仍需补重复退出、半初始化退出和失败降级测试；M0-2.c 只完成迁移与机器 gap 清零。
+
+### M0-2.d 回写记录（2026-08-31，CodeBuddy / Codex 主机）
+
+```text
+CHECKPOINT=M0-2.d
+STATUS=PASS
+EXECUTOR=CodeBuddy（Codex 主机）
+MODEL=界面未显示完整模型名
+ROUTE=AI:DEEP
+MODEL_DEVIATION=UI 未显示完整模型名，推理档位未能精确记录
+COMMIT=提交信息 test(M0-2.d): cover shutdown lifecycle regressions
+VERIFY=cargo test shutdown(0, 15 passed); check-lifecycle-contract.py --self-test(0); --expect-current-gaps(0); 默认(0, PASS); pre-merge.sh(0, PRE_MERGE_RESULT=ALL_PASS); cargo check(0, 既有 2 warnings); git diff --check(0)
+NEXT=M0-3.a
+```
+
+实现要点：
+
+- `shutdown.rs` 新增测试模块 `m0_2d_lifecycle_tests`（9 项），任务名与顺序刻意对齐 `bridge::register_shutdown_tasks` 的真实顺序（`stop-background-workers → close-tabs → kill-terminals → shutdown-grid`），失败归因可直接对应生产路径。
+- 三组覆盖：重复退出（顺序/并发入口各只执行一次、失败后不重试）、半初始化退出（零任务、部分注册两种）、失败降级（Err 隔离、panic 隔离、全失败仍跑完、报告顺序 = 注册顺序）。
+- 静态夹具补 6 个**单缺口**防回归用例：此前只在组合 fixture 中一次性命中 6 个 GAP，任一检测器失效会被其他告警掩盖；现改为「干净基线 + 只注入一个缺口」。
+- 所有权表升 V1.3，新增 §5 测试覆盖矩阵（15 项 Rust 测试 ↔ 6 个历史 GAP）。
+- 过程中修正：单缺口用例初版传空 `main` 源码导致 `NO_UNIFIED_SHUTDOWN_CORE`/`SYSTEM_EXIT_HOOK_MISSING` 连带触发误报。
+- **M0-2 整项关闭，但不宣称 M0 完成**：M0-3~M0-7 未关闭，M1/M2 仍锁定。
+- 强模型复核点：M0-3 是 `AI:DEEP/R:xhigh` 安全收口，建议复核本检查点是否遗留「形态合规但语义错误」类问题（M0-2.b 曾出现此类缺陷，只有行为测试能抓到）。
 
 ## 6. 跨模型接手审查协议
 

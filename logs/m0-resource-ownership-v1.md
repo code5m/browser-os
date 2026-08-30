@@ -8,6 +8,10 @@
 > `NO_UNIFIED_SHUTDOWN_CORE` 已关闭并从夹具 `EXPECTED_GAPS` 移除，机器可检缺口 7 → **6**。
 > R16 行状态更新为「核心已存在、尚无调用方」。其余缺口待 M0-2.c 迁移后复检。
 >
+> **V1.3（M0-2.d）**：M0-2.c 迁移完成后机器可检缺口 6 → **0**（默认模式 `PASS`）。
+> 本版新增 §5「测试覆盖矩阵」，把 15 项 Rust 生命周期测试与历史 GAP 一一对应；
+> 静态夹具补 6 个单缺口防回归用例（此前只在组合 fixture 中一起检出，检测器失效会被掩盖）。
+>
 > **V1.2（M0-2.c）**：主窗口关闭与 `RunEvent::ExitRequested` 已迁移到 `ShutdownCoordinator`；
 > 已注册 stop-background-workers、close-tabs、kill-terminals、shutdown-grid 四类真实清理任务；
 > tab 关闭失败后仍清理元数据，PTY kill 后 wait，grid 创建失败回滚已创建子进程。
@@ -57,4 +61,19 @@
 
 - `scripts/check-lifecycle-contract.py` 默认模式在 M0-2.c 后必须 `EXIT=0`，输出 `LIFECYCLE_CONTRACT_RESULT=PASS`。
 - `--expect-current-gaps` 仍用于 CI/pre-merge：当前 `EXPECTED_GAPS=()`，若新增或复发机器可检 gap，本模式转 `EXIT=1`。
-- M0-2.c 关闭的是机器可检生命周期缺口；M0-2.d 仍需补重复退出、半初始化退出和失败降级的更完整回归测试。
+- M0-2.c 关闭的是机器可检生命周期缺口；M0-2.d 已补重复退出、半初始化退出和失败降级的回归测试（见 §5）。
+
+## 5. 测试覆盖矩阵（M0-2.d）
+
+| 历史 GAP | 静态夹具 | Rust 测试 |
+|---------|---------|----------|
+| `NO_UNIFIED_SHUTDOWN_CORE` | `ShutdownCoordinator` 存在性 | 全部 15 项（核心为被测对象） |
+| `WINDOW_CLOSE_BYPASSES_UNIFIED_CORE` | 单缺口用例 | `dual_exit_paths_run_cleanup_only_once`、`concurrent_exit_paths_run_cleanup_only_once` |
+| `SYSTEM_EXIT_HOOK_MISSING` | 单缺口用例 | 同上（第二条入口） |
+| `GRID_PARTIAL_CREATE_ROLLBACK_MISSING` | 源码模式（回滚分支存在性） | `shutdown_during_partial_registration_runs_only_registered_tasks`（半初始化语义等价） |
+| `TAB_CLOSE_FAILURE_SHORT_CIRCUITS_CLEANUP` | 源码模式 | `grid_cleanup_failure_does_not_block_terminals_and_tabs` |
+| `TERMINAL_KILL_NOT_WAITED` | 源码模式（`kill`+`wait` 成对） | `all_cleanups_failing_still_reports_every_task` |
+| `BACKGROUND_WORKERS_NOT_CANCELLABLE` | 源码模式（取消信号） | `panicking_cleanup_does_not_block_remaining_tasks` |
+
+> 说明：静态夹具只能证源码形态，行为语义（重复退出只执行一次、失败不重试、panic 隔离）由 Rust 测试保证。
+> 二者互补，缺一不可——M0-2.b 曾出现「形态合规但语义错误」的 bug，只有行为测试能抓到。

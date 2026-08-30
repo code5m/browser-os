@@ -137,6 +137,62 @@ fn start_hibernation_sweeper() { std::thread::spawn(move || loop {}); }
         print(f"self-test: legacy mismatch: {detected}", file=sys.stderr)
         return 1
 
+    # M0-2.d 防回归矩阵：每个历史缺口都必须能被**单独**检出，
+    # 否则某个检测器失效时会被其他检测器的告警掩盖，回归定位会失真。
+    # 干净基线：核心存在、两条退出入口都走核心，bridge 无缺陷。
+    clean_main = """
+struct ShutdownCoordinator;
+fn main() {
+    if let RunEvent::ExitRequested { .. } = event { coordinator.shutdown(); }
+    if let WindowEvent::CloseRequested { .. } = event { coordinator.shutdown(); }
+}
+"""
+    bypass_main = """
+struct ShutdownCoordinator;
+fn main() {
+    if let RunEvent::ExitRequested { .. } = event { coordinator.shutdown(); }
+    if let WindowEvent::CloseRequested { .. } = event { state.grid_manager.shutdown_all(); }
+}
+"""
+    no_exit_main = """
+struct ShutdownCoordinator;
+fn main() {
+    if let WindowEvent::CloseRequested { .. } = event { coordinator.shutdown(); }
+}
+"""
+    single_gap_cases = (
+        ("WINDOW_CLOSE_BYPASSES_UNIFIED_CORE", bypass_main, ""),
+        ("SYSTEM_EXIT_HOOK_MISSING", no_exit_main, ""),
+        ("GRID_PARTIAL_CREATE_ROLLBACK_MISSING", clean_main, """
+fn create_grid() {
+    for i in 0..n {
+        let index = i as u32;
+        mgr.get_or_spawn(index)?;
+        mgr.request(index, command)?;
+    }
+}
+"""),
+        ("TAB_CLOSE_FAILURE_SHORT_CIRCUITS_CLEANUP", clean_main, """
+fn close_tab() {
+    manager.close_tab(&id).map_err(convert)?;
+    state.child_layouts.remove(id);
+}
+"""),
+        ("TERMINAL_KILL_NOT_WAITED", clean_main, """
+fn term_kill() { let _ = session.child.kill(); }
+"""),
+        ("BACKGROUND_WORKERS_NOT_CANCELLABLE", clean_main, """
+fn start_layout_enforcer() { std::thread::spawn(move || loop {}); }
+fn start_resource_scanner() { std::thread::spawn(move || loop {}); }
+fn start_hibernation_sweeper() { std::thread::spawn(move || loop {}); }
+"""),
+    )
+    for gap, gap_main, gap_bridge in single_gap_cases:
+        found = detect_gaps(gap_main, gap_bridge, "")
+        if found != [gap]:
+            print(f"self-test: single-gap fixture mismatch for {gap}: {found}", file=sys.stderr)
+            return 1
+
     resolved_main = """
 struct ShutdownCoordinator;
 fn main() {
