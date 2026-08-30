@@ -23,4 +23,3 @@
 - run 目录：`logs/m0-baseline/20260829T153210+0800_2b476d3_release_x11/`
 - environment.json / scenario.json / summary.json / summary.md / SHA256SUMS
 - raw/：命令原始 stdout/stderr；measurements/：结构化测量；commands/：完整命令行
-

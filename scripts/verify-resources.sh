@@ -46,6 +46,10 @@
 #   scripts/verify-resources.sh --self-test   # fixture 验证脚本自身，不生成正式证据
 #
 # 环境变量（可选）：
+#   M0_RUN_MODE          formal（默认，固定完整样本）或 smoke（仅探索，不得 PASS）
+#   M0_EVIDENCE_ROOT     证据暂存根目录；默认 <repo>/logs/m0-baseline
+#   M0_EVIDENCE_LABEL_ROOT  summary 中记录的最终逻辑根；默认跟随物理根
+#   M0_EXPECTED_BINARY_SHA256  baseline-check.sh 生成的 release 二进制哈希
 #   VR_CYCLE_SAMPLES     每类资源循环正式样本数，默认 20（另加 5 次预热）
 #   VR_IDLE_SECONDS      idle 采样总时长，默认 60（每 5 秒 1 点）
 #   VR_SELF_TEST         内部使用：1 = fixture 模式（--self-test 自动设置）
@@ -55,9 +59,9 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # 常量
 # ---------------------------------------------------------------------------
-SCRIPT_VERSION="M0-1.b-2"
-CONTRACT_VERSION="V1.0"
-SCENARIO_VERSION="M0-1.b-v1"
+SCRIPT_VERSION="M0-1.b-3"
+CONTRACT_VERSION="V1.1"
+SCENARIO_VERSION="M0-1.b-v2"
 DEFAULT_CYCLE_SAMPLES=20
 DEFAULT_WARMUP_SAMPLES=5
 DEFAULT_IDLE_SECONDS=60
@@ -120,6 +124,10 @@ verify-resources.sh — M0-1.b 资源验证驱动
   （DEFERRED: script_first_response_ms=M2-4, database_first_row_ms=M4-3）
 
 可选环境变量:
+  M0_RUN_MODE=formal|smoke  默认 formal；smoke 结果固定为 EXPLORATORY
+  M0_EVIDENCE_ROOT=PATH     证据根目录（多批次采集应指向仓库外暂存目录）
+  M0_EVIDENCE_LABEL_ROOT=PATH summary 中记录的最终逻辑根（总控归档时使用）
+  M0_EXPECTED_BINARY_SHA256 baseline-check.sh 生成的 release 二进制 SHA-256；formal 必填
   VR_CYCLE_SAMPLES=N  每类资源循环正式样本数（默认 20；另加 5 次预热）
   VR_IDLE_SECONDS=N   idle 采样总时长（默认 60，每 5 秒 1 点）
 
@@ -178,6 +186,10 @@ run_capture() {
 
 json_get() { # python 单值转义，供 bash 拼 JSON
   python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"
+}
+
+monotonic_ms() {
+  python3 -c 'import time; print(time.monotonic_ns() // 1_000_000)'
 }
 
 median_of() { # stdin 每行一个数字
@@ -242,8 +254,10 @@ collect_environment() {
   ENV_RESOLUTION="${val:-UNAVAILABLE:xdpyinfo}"
   val="$(gsettings get org.gnome.desktop.interface text-scaling-factor 2>/dev/null || true)"
   ENV_SCALE="${val:-UNAVAILABLE:gsettings}"
-  ENV_GDK_BACKEND="${GDK_BACKEND:-}"
-  ENV_WEBKIT_DMABUF="${WEBKIT_DISABLE_DMABUF_RENDERER:-}"
+  ENV_HOST_GDK_BACKEND="${GDK_BACKEND:-}"
+  ENV_HOST_WEBKIT_DMABUF="${WEBKIT_DISABLE_DMABUF_RENDERER:-}"
+  ENV_GDK_BACKEND="x11"
+  ENV_WEBKIT_DMABUF="1"
 
   # --- WebKit / GTK ---
   val="$(pkg-config --modversion webkit2gtk-4.1 2>/dev/null || pkg-config --modversion webkit2gtk-4.0 2>/dev/null || true)"
@@ -269,9 +283,9 @@ collect_environment() {
   ENV_CARGO_LOCK_SHA="$(sha256sum "$ROOT/src-tauri/Cargo.lock" 2>/dev/null | awk '{print $1}' || echo UNAVAILABLE:Cargo.lock)"
   ENV_NPM_LOCK_SHA="$(sha256sum "$ROOT/package-lock.json" 2>/dev/null | awk '{print $1}' || echo UNAVAILABLE:package-lock.json)"
 
-  ENV_ISOLATED_XDG_DATA="/tmp/mvp-browser-os-m0/$RUN_ID/xdg-data"
-  ENV_ISOLATED_XDG_CACHE="/tmp/mvp-browser-os-m0/$RUN_ID/xdg-cache"
-  ENV_ISOLATED_XDG_CONFIG="/tmp/mvp-browser-os-m0/$RUN_ID/xdg-config"
+  ENV_ISOLATED_XDG_DATA="$XDG_BASE/<scenario>/data"
+  ENV_ISOLATED_XDG_CACHE="$XDG_BASE/<scenario>/cache"
+  ENV_ISOLATED_XDG_CONFIG="$XDG_BASE/<scenario>/config"
 }
 
 # ---------------------------------------------------------------------------
@@ -555,17 +569,33 @@ run_idle_sampling() {
   local root_pid="$1" seconds="$2" points
   points=$((seconds / IDLE_INTERVAL_S))
   [ "$points" -ge 1 ] || points=1
-  local i=0 now
+  local i=0 now snap rss fd
+  local -a rss_vals=() fd_vals=()
   while [ $i -lt "$points" ]; do
-    now="$(date +%s%3N)"
-    local snap
+    sleep "$IDLE_INTERVAL_S"
+    now="$(monotonic_ms)"
     snap="$(snapshot_process_tree "$root_pid")"
-    printf '{"metric":"idle_process_tree","run_id":"%s","sample":%d,"ts_ms":%s,"data":%s}\n' \
+    rss="$(printf '%s' "$snap" | python3 -c 'import json,sys; print(json.load(sys.stdin)["total_rss_kib"])')"
+    fd="$(printf '%s' "$snap" | python3 -c 'import json,sys; print(json.load(sys.stdin)["total_fd_count"])')"
+    rss_vals+=("$rss")
+    fd_vals+=("$fd")
+    printf '{"metric":"idle_process_tree","run_id":"%s","sample":%d,"clock":"CLOCK_MONOTONIC","ts_ms":%s,"data":%s}\n' \
       "$RUN_ID" "$((i + 1))" "$now" "$snap" \
       >"$RUN_DIR/measurements/idle_process_tree_r$(printf '%02d' "$((i + 1))").json"
+    if [ "$rss" -le 0 ] || [ "$fd" -le 0 ]; then
+      echo "[M0-0.b] idle sample $((i + 1)) invalid: rss=$rss fd=$fd" >&2
+      MEASUREMENTS_OK="FAIL"
+    fi
     i=$((i + 1))
-    [ $i -lt "$points" ] && sleep "$IDLE_INTERVAL_S"
   done
+  local rss_stats fd_stats rss_samples fd_samples
+  rss_stats="$(compute_stats "${rss_vals[@]}")"
+  fd_stats="$(compute_stats "${fd_vals[@]}")"
+  rss_samples="$(python3 -c 'import json,sys; print(json.dumps([int(value) for value in sys.argv[1:]]))' "${rss_vals[@]}")"
+  fd_samples="$(python3 -c 'import json,sys; print(json.dumps([int(value) for value in sys.argv[1:]]))' "${fd_vals[@]}")"
+  printf '{"metric":"idle_process_tree","run_id":"%s","interval_s":%d,"duration_s":%d,"sample_count":%d,"rss_kib":{"samples":%s,"stats":%s},"fd_count":{"samples":%s,"stats":%s}}\n' \
+    "$RUN_ID" "$IDLE_INTERVAL_S" "$seconds" "${#rss_vals[@]}" "$rss_samples" "$rss_stats" "$fd_samples" "$fd_stats" \
+    >"$RUN_DIR/measurements/idle_process_tree.json"
 }
 
 # ---------------------------------------------------------------------------
@@ -667,6 +697,7 @@ data = {
     "timestamp": g("RUN_TS"),
     "contract_version": g("CONTRACT_VERSION"),
     "script_version": g("SCRIPT_VERSION"),
+    "run_mode": g("M0_RUN_MODE", "formal"),
     "git": {
         "commit_sha": g("GIT_FULL_SHA"),
         "short_sha": g("GIT_SHORT_SHA"),
@@ -678,6 +709,9 @@ data = {
         "profile": "release",
         "binary_path": g("BIN_PATH"),
         "binary_sha256": g("RELEASE_BIN_SHA256"),
+        "binary_bytes": int(g("RELEASE_BIN_BYTES", "0")),
+        "expected_binary_sha256": g("M0_EXPECTED_BINARY_SHA256"),
+        "matches_expected": g("BINARY_MATCH", "false") == "true",
         "build_cmd": "cargo build --manifest-path {root}/src-tauri/Cargo.toml --release --locked".format(root=g("ROOT")),
         "start_cmd": "WEBKIT_DISABLE_DMABUF_RENDERER=1 GDK_BACKEND=x11 {bin}".format(bin=g("BIN_PATH")),
     },
@@ -700,9 +734,11 @@ data = {
         "resolution": g("ENV_RESOLUTION"),
         "scale": g("ENV_SCALE"),
         "gdk_backend": g("ENV_GDK_BACKEND"),
+        "host_gdk_backend": g("ENV_HOST_GDK_BACKEND"),
     },
     "webkit": {
         "webkit_disable_dmabuf_renderer": g("ENV_WEBKIT_DMABUF"),
+        "host_webkit_disable_dmabuf_renderer": g("ENV_HOST_WEBKIT_DMABUF"),
         "webkitgtk_version": g("ENV_WEBKITGTK"),
         "gtk_version": g("ENV_GTK"),
     },
@@ -739,7 +775,9 @@ data = {
         "resolution": g("ENV_RESOLUTION"),
         "scale": g("ENV_SCALE"),
         "gdk_backend": g("ENV_GDK_BACKEND"),
+        "host_gdk_backend": g("ENV_HOST_GDK_BACKEND"),
         "webkit_disable_dmabuf_renderer": g("ENV_WEBKIT_DMABUF"),
+        "host_webkit_disable_dmabuf_renderer": g("ENV_HOST_WEBKIT_DMABUF"),
         "webkitgtk_version": g("ENV_WEBKITGTK"),
         "gtk_version": g("ENV_GTK"),
         "rustc": g("ENV_RUSTC"),
@@ -768,6 +806,7 @@ data = {
     "contract_version": g("CONTRACT_VERSION"),
     "scenario_version": g("SCENARIO_VERSION"),
     "checkpoint": "M0-1.b",
+    "run_mode": g("M0_RUN_MODE", "formal"),
     "startup": {
         "spawn": "WEBKIT_DISABLE_DMABUF_RENDERER=1 GDK_BACKEND=x11 {bin}".format(bin=g("BIN_PATH")),
         "ready_signal": "带 run_id 的 ready 信号（契约 §6.1：mount + 2x rAF + 1x IPC 往返）",
@@ -783,6 +822,8 @@ data = {
         "warmup_samples": int(g("DEFAULT_WARMUP_SAMPLES", "5")),
         "formal_samples": int(g("VR_CYCLE_SAMPLES", "20")),
         "settle_s": 2,
+        "sampling_handshake": ["prepare", "opened", "done", "sampled"],
+        "orphan_detection": "opened-baseline candidates rechecked by /proc/<pid>/stat starttime after close",
         "metrics": ["<kind>_cycle_rss_slope_kib", "resource_cycle_fd_delta", "orphan_process_count"],
     },
     "terminal_throughput": {
@@ -814,8 +855,9 @@ PY
 write_summary_json() {
   export_for_python \
     READY_HOOK TERM_HOOK RUN_ID RUN_TS CONTRACT_VERSION SCRIPT_VERSION SCENARIO_VERSION \
-    ROOT GIT_FULL_SHA GIT_SHORT_SHA GIT_BRANCH GIT_PORCELAIN BIN_PATH RELEASE_BIN_SHA256 \
-    DRIVER_SELFCHECK DRIVER_SELFCHECK_DETAIL
+    ROOT GIT_FULL_SHA GIT_SHORT_SHA GIT_BRANCH GIT_PORCELAIN BIN_PATH RELEASE_BIN_SHA256 RELEASE_BIN_BYTES \
+    M0_EXPECTED_BINARY_SHA256 BINARY_MATCH M0_RUN_MODE WORKTREE_CLEAN_AT_START EVIDENCE_RUN_DIR_LABEL \
+    VR_IDLE_SECONDS VR_CYCLE_SAMPLES DEFAULT_TERM_SAMPLES DRIVER_SELFCHECK DRIVER_SELFCHECK_DETAIL
   python3 - "$RUN_DIR/summary.json" <<'PY'
 import json, os, sys
 out = sys.argv[1]
@@ -856,6 +898,8 @@ elif ready_blocked or term_blocked:
     overall = "BLOCKED"
 elif not measurements_ok:
     overall = "FAIL"
+elif g("M0_RUN_MODE", "formal") == "smoke":
+    overall = "EXPLORATORY"
 else:
     overall = "PASS"
 
@@ -866,8 +910,22 @@ data = {
     "contract_version": g("CONTRACT_VERSION"),
     "script_version": g("SCRIPT_VERSION"),
     "scenario_version": g("SCENARIO_VERSION"),
+    "run_mode": g("M0_RUN_MODE", "formal"),
+    "sample_profile": {
+        "frontend_formal_samples": 0,
+        "idle_seconds": int(g("VR_IDLE_SECONDS", "0")),
+        "resource_cycle_formal_samples": int(g("VR_CYCLE_SAMPLES", "0")),
+        "terminal_formal_samples": int(g("DEFAULT_TERM_SAMPLES", "0")),
+    },
+    "artifact": {
+        "profile": "release",
+        "binary_sha256": g("RELEASE_BIN_SHA256"),
+        "binary_bytes": int(g("RELEASE_BIN_BYTES", "0")),
+        "expected_binary_sha256": g("M0_EXPECTED_BINARY_SHA256"),
+        "matches_expected": g("BINARY_MATCH", "false") == "true",
+    },
     "repo_root": g("ROOT"),
-    "worktree_clean_at_start": True,
+    "worktree_clean_at_start": g("WORKTREE_CLEAN_AT_START", "false") == "true",
     "git": {"commit_sha": g("GIT_FULL_SHA"), "short_sha": g("GIT_SHORT_SHA"), "branch": g("GIT_BRANCH")},
     "status": overall,
     "driver_selfcheck": {"status": g("DRIVER_SELFCHECK", "FAIL"), "detail": g("DRIVER_SELFCHECK_DETAIL")},
@@ -875,7 +933,7 @@ data = {
     "blocked": blocked,
     "deferred": deferred,
     "evidence": {
-        "run_dir": "logs/m0-baseline/" + g("RUN_ID"),
+        "run_dir": g("EVIDENCE_RUN_DIR_LABEL"),
         "environment": "environment.json",
         "scenario": "scenario.json",
         "summary_json": "summary.json",
@@ -898,6 +956,7 @@ write_summary_md() {
     echo ""
     echo "> 检查点：M0-1.b；契约：$CONTRACT_VERSION；脚本：$SCRIPT_VERSION；场景：$SCENARIO_VERSION"
     echo "> 生成时间：$(date '+%Y-%m-%d %H:%M:%S %z')"
+    echo "> 运行模式：$M0_RUN_MODE（smoke 只能生成 EXPLORATORY）"
     echo "> 机器判定源：summary.json（本文件仅人类阅读；两者不一致时整批 FAIL）"
     echo ""
     echo "## 总体状态：**$SUMMARY_STATUS**"
@@ -914,17 +973,19 @@ write_summary_md() {
       echo "| tab/grid/terminal_cycle_rss_slope_kib | MEASURED | measurements/{tab,grid,terminal}_cycle.json |"
       echo "| resource_cycle_fd_delta / orphan_process_count | MEASURED | measurements/*_cycle.json + orphan_*.json |"
       echo "| terminal_10mib_elapsed_ms / frame_gap_* | MEASURED | measurements/terminal_throughput.json |"
-    else
+    elif [ "$READY_HOOK" = "BLOCKED" ] || [ "$TERM_HOOK" = "BLOCKED" ]; then
       echo "| startup_ready_ms | BLOCKED | 需 ready 钩子（M0-0.b 补齐） |"
       echo "| idle_process_tree_rss_kib / fd_count | BLOCKED | 需 ready 钩子（M0-0.b 补齐） |"
       echo "| tab/grid/terminal_cycle_rss_slope_kib | BLOCKED | 需 ready 钩子（M0-0.b 补齐） |"
       echo "| resource_cycle_fd_delta / orphan_process_count | BLOCKED | 需 ready 钩子（M0-0.b 补齐） |"
       echo "| terminal_10mib_elapsed_ms / frame_gap_* | BLOCKED | 需终端 begin/end 标记（M0-0.b 补齐） |"
+    else
+      echo "| startup/idle/resource/terminal metrics | FAIL | 详见 raw/ 与 measurements/；任一无效样本整批失败 |"
     fi
     echo ""
     echo "## 证据"
     echo ""
-    echo "- run 目录：\`logs/m0-baseline/$RUN_ID/\`"
+    echo "- run 目录：\`$EVIDENCE_RUN_DIR_LABEL\`"
     echo "- environment.json / scenario.json / summary.json / summary.md / SHA256SUMS"
     echo "- raw/：命令原始 stdout/stderr；measurements/：结构化测量；commands/：完整命令行"
     echo ""
@@ -1064,25 +1125,27 @@ run_startup_ready() {
     mkdir -p "$xdg" "$rd"
     ready="$rd/ready.signal"
     rm -f "$ready"
-    start_ms="$(date +%s%3N)"
+    start_ms="$(monotonic_ms)"
     pid="$(spawn_m0_app "" "$RUN_ID" "$ready" "$rd" "$xdg")"
     if ! kill -0 "$pid" 2>/dev/null; then
       echo "[M0-0.b] startup-$i: app failed to spawn" >&2
       MEASUREMENTS_OK="FAIL"
+      cp "$rd/app.log" "$RUN_DIR/raw/startup_ready_r$(printf '%02d' "$i")_app.log" 2>/dev/null || true
       return 1
     fi
     if ! wait_ready_signal "$ready" "$RUN_ID" "$T_READY"; then
       echo "[M0-0.b] startup-$i: ready timeout" >&2
       MEASUREMENTS_OK="FAIL"
       kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      cp "$rd/app.log" "$RUN_DIR/raw/startup_ready_r$(printf '%02d' "$i")_app.log" 2>/dev/null || true
       return 1
     fi
-    ready_ms="$(sed -n 2p "$ready" 2>/dev/null)"
-    [ -z "$ready_ms" ] && ready_ms="$(date +%s%3N)"
+    ready_ms="$(monotonic_ms)"
     elapsed=$((ready_ms - start_ms))
     if [ "$i" -gt 1 ]; then
       vals+=("$elapsed")
-      printf '{"metric":"startup_ready_ms","run_id":"%s","sample":%d,"elapsed_ms":%d,"pid":%d}\n' \
+      printf '{"metric":"startup_ready_ms","run_id":"%s","sample":%d,"clock":"CLOCK_MONOTONIC","elapsed_ms":%d,"pid":%d}\n' \
         "$RUN_ID" "$((i - 1))" "$elapsed" "$pid" \
         >"$RUN_DIR/measurements/startup_ready_r$(printf '%02d' "$((i - 1))").json"
     fi
@@ -1096,12 +1159,13 @@ run_startup_ready() {
       kill "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
     fi
+    cp "$rd/app.log" "$RUN_DIR/raw/startup_ready_r$(printf '%02d' "$i")_app.log" 2>/dev/null || true
   done
   if [ "${#vals[@]}" -gt 0 ]; then
     local stats samples
     samples="$(python3 -c 'import json,sys; print(json.dumps([int(x) for x in sys.argv[1:]]))' "${vals[@]}")"
     stats="$(compute_stats "${vals[@]}")"
-    printf '{"metric":"startup_ready_ms","run_id":"%s","warmup":1,"formal":3,"samples":%s,"stats":%s}\n' \
+    printf '{"metric":"startup_ready_ms","run_id":"%s","clock":"CLOCK_MONOTONIC","warmup":1,"formal":3,"samples":%s,"stats":%s}\n' \
       "$RUN_ID" "$samples" "$stats" >"$RUN_DIR/measurements/startup_ready.json"
   fi
 }
@@ -1315,10 +1379,6 @@ run_terminal_throughput_real() {
 # M0-0.b 编排：产品钩子 READY 时执行全部 REQUIRED_NOW 真实采集。
 run_formal_measurements() {
   MEASUREMENTS_OK="PASS"
-  # XDG_BASE 必须短：grid 的 Unix socket 路径受 SUN_LEN(~108) 限制，
-  # 长 RUN_ID 会撑爆 UDS 路径（path must be shorter than SUN_LEN）。用 hash 截断。
-  XDG_BASE="/tmp/m0m/$(printf '%s' "$RUN_ID" | sha256sum | cut -c1-12)"
-  REPORT_DIR="$XDG_BASE/reports"
   mkdir -p "$XDG_BASE" "$REPORT_DIR"
   run_startup_ready || MEASUREMENTS_OK="FAIL"
   for kind in tab grid terminal; do
@@ -1333,8 +1393,31 @@ run_formal_measurements() {
 # ---------------------------------------------------------------------------
 run_formal() {
   ROOT="$(resolve_root)"
+  M0_RUN_MODE="${M0_RUN_MODE:-formal}"
+  VR_IDLE_SECONDS="${VR_IDLE_SECONDS:-$DEFAULT_IDLE_SECONDS}"
+  VR_CYCLE_SAMPLES="${VR_CYCLE_SAMPLES:-$DEFAULT_CYCLE_SAMPLES}"
+  case "$M0_RUN_MODE" in
+    formal|smoke) ;;
+    *) echo "error: M0_RUN_MODE must be formal or smoke" >&2; exit 2 ;;
+  esac
+  case "$VR_IDLE_SECONDS:$VR_CYCLE_SAMPLES" in
+    *[!0-9:]*|:*|*:) echo "error: VR_IDLE_SECONDS and VR_CYCLE_SAMPLES must be positive integers" >&2; exit 2 ;;
+  esac
+  if [ "$VR_IDLE_SECONDS" -lt "$IDLE_INTERVAL_S" ] || [ $((VR_IDLE_SECONDS % IDLE_INTERVAL_S)) -ne 0 ] || [ "$VR_CYCLE_SAMPLES" -lt 1 ]; then
+    echo "error: VR_IDLE_SECONDS must be >= $IDLE_INTERVAL_S and divisible by it; VR_CYCLE_SAMPLES must be >= 1" >&2
+    exit 2
+  fi
+  if [ "$M0_RUN_MODE" = "formal" ] && { [ "$VR_IDLE_SECONDS" -ne "$DEFAULT_IDLE_SECONDS" ] || [ "$VR_CYCLE_SAMPLES" -ne "$DEFAULT_CYCLE_SAMPLES" ]; }; then
+    echo "error: formal mode requires VR_IDLE_SECONDS=$DEFAULT_IDLE_SECONDS and VR_CYCLE_SAMPLES=$DEFAULT_CYCLE_SAMPLES; use M0_RUN_MODE=smoke for shortened runs" >&2
+    exit 2
+  fi
+
   GIT_PORCELAIN="$(git -C "$ROOT" status --porcelain=v1)"
+  WORKTREE_CLEAN_AT_START="true"
   if [ -n "$GIT_PORCELAIN" ]; then
+    WORKTREE_CLEAN_AT_START="false"
+  fi
+  if [ "$WORKTREE_CLEAN_AT_START" != "true" ] && [ "$M0_RUN_MODE" = "formal" ]; then
     echo "error: worktree not clean; formal run requires a clean commit" >&2
     echo "git status --porcelain=v1:" >&2
     echo "$GIT_PORCELAIN" >&2
@@ -1346,22 +1429,43 @@ run_formal() {
   GIT_SHORT_SHA="$(git -C "$ROOT" rev-parse --short=7 HEAD)"
   GIT_BRANCH="$(git -C "$ROOT" symbolic-ref -q --short HEAD || echo "detached:$(git -C "$ROOT" rev-parse --short HEAD)")"
   RUN_TS="$(date +%Y%m%dT%H%M%S%z)"
-  BACKEND="${GDK_BACKEND:-x11}"
+  BACKEND="x11"
   RUN_ID="${RUN_TS}_${GIT_SHORT_SHA}_release_${BACKEND}"
-  RUN_DIR="$ROOT/logs/m0-baseline/$RUN_ID"
+  EVIDENCE_ROOT="${M0_EVIDENCE_ROOT:-$ROOT/logs/m0-baseline}"
+  RUN_DIR="$EVIDENCE_ROOT/$RUN_ID"
+  if [ -n "${M0_EVIDENCE_LABEL_ROOT:-}" ]; then
+    EVIDENCE_RUN_DIR_LABEL="${M0_EVIDENCE_LABEL_ROOT%/}/$RUN_ID"
+  elif [ "$EVIDENCE_ROOT" = "$ROOT/logs/m0-baseline" ]; then
+    EVIDENCE_RUN_DIR_LABEL="logs/m0-baseline/$RUN_ID"
+  else
+    EVIDENCE_RUN_DIR_LABEL="$RUN_DIR"
+  fi
+  # XDG_BASE 必须短：grid 的 Unix socket 路径受 SUN_LEN(~108) 限制。
+  XDG_BASE="/tmp/m0m/$(printf '%s' "$RUN_ID" | sha256sum | cut -c1-12)"
+  REPORT_DIR="$XDG_BASE/reports"
 
   mkdir -p "$RUN_DIR"/{commands,raw,measurements,screenshots}
-  mkdir -p "/tmp/mvp-browser-os-m0/$RUN_ID"/xdg-{data,cache,config}
+  mkdir -p "$XDG_BASE" "$REPORT_DIR"
   RAW="$RUN_DIR/raw"
 
   BIN_PATH="$ROOT/src-tauri/target/release/mvp-browser-os"
-  VR_IDLE_SECONDS="${VR_IDLE_SECONDS:-$DEFAULT_IDLE_SECONDS}"
-  VR_CYCLE_SAMPLES="${VR_CYCLE_SAMPLES:-$DEFAULT_CYCLE_SAMPLES}"
+  RELEASE_BIN_BYTES=0
+  RELEASE_BIN_SHA256=""
+  if [ -f "$BIN_PATH" ]; then
+    RELEASE_BIN_BYTES="$(stat -c %s "$BIN_PATH")"
+    RELEASE_BIN_SHA256="$(sha256sum "$BIN_PATH" | awk '{print $1}')"
+  fi
+  M0_EXPECTED_BINARY_SHA256="${M0_EXPECTED_BINARY_SHA256:-}"
+  BINARY_MATCH="false"
+  if [ -n "$M0_EXPECTED_BINARY_SHA256" ] && [ "$RELEASE_BIN_SHA256" = "$M0_EXPECTED_BINARY_SHA256" ]; then
+    BINARY_MATCH="true"
+  fi
   DRIVER_SELFCHECK="FAIL"
   DRIVER_SELFCHECK_DETAIL="not-run"
   MEASUREMENTS_OK="FAIL"
 
   echo "[M0-1.b] run_id=$RUN_ID"
+  echo "[M0-1.b] mode=$M0_RUN_MODE evidence_root=$EVIDENCE_ROOT"
   echo "[M0-1.b] repo=$ROOT branch=$GIT_BRANCH commit=$GIT_SHORT_SHA"
 
   detect_product_hooks
@@ -1376,20 +1480,37 @@ run_formal() {
 
   # M0-0.b：产品钩子落地后执行正式测量（契约 §6.1/§6.2/§6.3）
   if [ "$READY_HOOK" = "READY" ] && [ "$TERM_HOOK" = "READY" ]; then
-    echo "[M0-0.b] product hooks ready, running formal measurements..."
-    run_formal_measurements
+    local artifact_ready="true"
+    if [ "$RELEASE_BIN_BYTES" -le 0 ] || [ -z "$RELEASE_BIN_SHA256" ]; then
+      echo "[M0-0.b] release binary missing: $BIN_PATH" >&2
+      artifact_ready="false"
+    elif [ -n "$M0_EXPECTED_BINARY_SHA256" ] && [ "$BINARY_MATCH" != "true" ]; then
+      echo "[M0-0.b] release binary hash mismatch: expected=$M0_EXPECTED_BINARY_SHA256 actual=$RELEASE_BIN_SHA256" >&2
+      artifact_ready="false"
+    elif [ "$M0_RUN_MODE" = "formal" ] && [ -z "$M0_EXPECTED_BINARY_SHA256" ]; then
+      echo "[M0-0.b] formal mode requires M0_EXPECTED_BINARY_SHA256 from baseline-check.sh" >&2
+      artifact_ready="false"
+    fi
+    if [ "$artifact_ready" = "true" ]; then
+      echo "[M0-0.b] product hooks and artifact ready, running $M0_RUN_MODE measurements..."
+      run_formal_measurements
+    else
+      MEASUREMENTS_OK="FAIL"
+    fi
   else
     echo "[M0-1.b] product hooks missing (ready=$READY_HOOK term=$TERM_HOOK), emitting BLOCKED evidence"
   fi
 
   echo "[M0-1.b] writing evidence..."
   export_for_python \
-    RUN_ID RUN_TS CONTRACT_VERSION SCRIPT_VERSION SCENARIO_VERSION \
-    ROOT GIT_FULL_SHA GIT_SHORT_SHA GIT_BRANCH GIT_PORCELAIN BIN_PATH RELEASE_BIN_SHA256 \
+    RUN_ID RUN_TS CONTRACT_VERSION SCRIPT_VERSION SCENARIO_VERSION M0_RUN_MODE \
+    ROOT GIT_FULL_SHA GIT_SHORT_SHA GIT_BRANCH GIT_PORCELAIN BIN_PATH RELEASE_BIN_SHA256 RELEASE_BIN_BYTES \
+    M0_EXPECTED_BINARY_SHA256 BINARY_MATCH WORKTREE_CLEAN_AT_START EVIDENCE_RUN_DIR_LABEL \
     T_READY T_TERM IDLE_INTERVAL_S VR_IDLE_SECONDS VR_CYCLE_SAMPLES DEFAULT_WARMUP_SAMPLES \
     DEFAULT_TERM_SAMPLES TERM_LOAD_MIB MEASUREMENTS_OK \
     ENV_OS ENV_KERNEL ENV_ARCH ENV_CPU_MODEL ENV_NPROC ENV_MEM_BYTES \
     ENV_XDG_SESSION ENV_DISPLAY ENV_WAYLAND ENV_RESOLUTION ENV_SCALE ENV_GDK_BACKEND ENV_WEBKIT_DMABUF \
+    ENV_HOST_GDK_BACKEND ENV_HOST_WEBKIT_DMABUF \
     ENV_WEBKITGTK ENV_GTK ENV_RUSTC ENV_CARGO ENV_NODE ENV_NPM \
     ENV_LOCALE ENV_TIMEZONE ENV_LOADAVG ENV_MEMAVAIL ENV_POWER \
     ENV_CARGO_LOCK_SHA ENV_NPM_LOCK_SHA ENV_ISOLATED_XDG_DATA ENV_ISOLATED_XDG_CACHE ENV_ISOLATED_XDG_CONFIG
@@ -1404,7 +1525,7 @@ run_formal() {
   echo ""
   echo "=== M0-1.b summary: status=$SUMMARY_STATUS ==="
   echo "evidence dir: $RUN_DIR"
-  if [ "$SUMMARY_STATUS" = "PASS" ]; then
+  if [ "$SUMMARY_STATUS" = "PASS" ] || [ "$SUMMARY_STATUS" = "EXPLORATORY" ]; then
     exit 0
   else
     echo "one or more metrics BLOCKED/FAILED: product hooks ready=$READY_HOOK term=$TERM_HOOK" >&2

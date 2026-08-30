@@ -16,6 +16,7 @@
 """
 import json
 import os
+import re
 import sys
 
 ROOT_HINT = os.environ.get("GATE_SCHEMA_ROOT", "")
@@ -69,7 +70,6 @@ def check_value(value, spec, path, errors):
         errors.append(f"{path}: value {value!r} not in enum {enums}")
     pat = spec.get("pattern")
     if pat and isinstance(value, str):
-        import re
         if re.search(pat, value) is None:
             errors.append(f"{path}: value {value!r} does not match pattern {pat!r}")
     if "required" in spec:
@@ -81,20 +81,94 @@ def check_value(value, spec, path, errors):
                 errors.append(f"{path}: missing required field {key!r}")
 
 
+def check_semantics(data, errors):
+    """校验 JSON Schema 难以表达的检查点交叉约束。"""
+    if not isinstance(data, dict):
+        return
+    status = data.get("status")
+    mode = data.get("run_mode")
+    checkpoint = data.get("checkpoint")
+    profile = data.get("sample_profile", {})
+    artifact = data.get("artifact", {})
+    profile = profile if isinstance(profile, dict) else {}
+    artifact = artifact if isinstance(artifact, dict) else {}
+
+    if status == "PASS":
+        if mode != "formal":
+            errors.append("status: PASS requires run_mode='formal'")
+        if data.get("worktree_clean_at_start") is not True:
+            errors.append("status: PASS requires a clean worktree")
+        if artifact.get("profile") != "release":
+            errors.append("status: PASS requires a release artifact")
+        if re.fullmatch(r"[0-9a-f]{64}", artifact.get("binary_sha256", "")) is None:
+            errors.append("artifact.binary_sha256: PASS requires a 64-digit lowercase SHA-256")
+        binary_bytes = artifact.get("binary_bytes", 0)
+        if not isinstance(binary_bytes, int) or isinstance(binary_bytes, bool) or binary_bytes <= 0:
+            errors.append("artifact.binary_bytes: PASS requires a non-empty binary")
+    if status == "EXPLORATORY" and mode != "smoke":
+        errors.append("status: EXPLORATORY requires run_mode='smoke'")
+    if mode == "smoke" and status == "PASS":
+        errors.append("run_mode: smoke evidence must never be PASS")
+
+    if checkpoint == "M0-1.a" and status == "PASS":
+        if profile.get("frontend_formal_samples") != 3:
+            errors.append("sample_profile.frontend_formal_samples: M0-1.a PASS requires 3")
+        results = data.get("results")
+        if not isinstance(results, dict) or not results:
+            errors.append("results: M0-1.a PASS requires non-empty results")
+        else:
+            failed = [name for name, result in results.items()
+                      if not isinstance(result, dict) or result.get("status") != "PASS"]
+            if failed:
+                errors.append("results: M0-1.a PASS contains non-PASS metrics: " + ", ".join(failed))
+            frontend = results.get("frontend_build_ms", {})
+            frontend = frontend if isinstance(frontend, dict) else {}
+            if len(frontend.get("samples_ms", [])) != 3:
+                errors.append("results.frontend_build_ms.samples_ms: M0-1.a PASS requires 3 samples")
+
+    if checkpoint == "M0-1.b" and status == "PASS":
+        expected = {
+            "frontend_formal_samples": 0,
+            "idle_seconds": 60,
+            "resource_cycle_formal_samples": 20,
+            "terminal_formal_samples": 3,
+        }
+        for key, value in expected.items():
+            if profile.get(key) != value:
+                errors.append(f"sample_profile.{key}: M0-1.b PASS requires {value}")
+        if data.get("blocked"):
+            errors.append("blocked: M0-1.b PASS requires no blocked metrics")
+        driver = data.get("driver_selfcheck", {})
+        driver = driver if isinstance(driver, dict) else {}
+        measurements = data.get("measurements", {})
+        measurements = measurements if isinstance(measurements, dict) else {}
+        if driver.get("status") != "PASS":
+            errors.append("driver_selfcheck.status: M0-1.b PASS requires PASS")
+        if measurements.get("ok") is not True:
+            errors.append("measurements.ok: M0-1.b PASS requires true")
+        if artifact.get("matches_expected") is not True:
+            errors.append("artifact.matches_expected: M0-1.b PASS requires baseline artifact match")
+
+
 def validate(schema_path, summary_path):
     with open(schema_path, encoding="utf-8") as f:
         schema = json.load(f)
     with open(summary_path, encoding="utf-8") as f:
         data = json.load(f)
     errors = []
-    for key in schema.get("required", []):
+    required = schema.get("required", [])
+    properties = schema.get("properties", {})
+    for key in required:
         if key not in data:
             errors.append(f"missing required field: {key}")
-            continue
-        check_value(data[key], schema.get("properties", {}).get(key, {}), key, errors)
+    if isinstance(data, dict):
+        for key, spec in properties.items():
+            if key in data:
+                check_value(data[key], spec, key, errors)
     # 顶层 type 约束
     if schema.get("type") == "object" and not isinstance(data, dict):
         errors.append("root: expected object")
+    check_semantics(data, errors)
     return errors
 
 
@@ -114,8 +188,22 @@ def self_test():
         "run_id": "20260829T000000+0800_abcdef0_release_x11",
         "timestamp": "2026-08-29T00:00:00+0800",
         "checkpoint": "M0-1.b",
-        "contract_version": "V1.0",
-        "script_version": "M0-1.b-2",
+        "contract_version": "V1.1",
+        "script_version": "M0-1.b-3",
+        "run_mode": "formal",
+        "sample_profile": {
+            "frontend_formal_samples": 0,
+            "idle_seconds": 60,
+            "resource_cycle_formal_samples": 20,
+            "terminal_formal_samples": 3,
+        },
+        "artifact": {
+            "profile": "release",
+            "binary_sha256": "",
+            "binary_bytes": 0,
+            "expected_binary_sha256": "",
+            "matches_expected": False,
+        },
         "status": "BLOCKED",
         "repo_root": "/tmp/fixture",
         "worktree_clean_at_start": True,
@@ -136,6 +224,7 @@ def self_test():
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
         json.dump(good, f)
         good_path = f.name
+    bad_path = None
     try:
         errs = validate(schema, good_path)
         if errs:
@@ -161,11 +250,36 @@ def self_test():
             print("FAIL: bad fixture errors wrong shape: " + repr(errs))
             return 1
         print("PASS: bad fixture rejected (missing evidence + bad status enum)")
+        # 4. 可选字段也必须校验；smoke 证据不得伪装成 PASS
+        semantic_bad = dict(good)
+        semantic_bad["run_mode"] = "smoke"
+        semantic_bad["status"] = "PASS"
+        semantic_bad["artifact"] = {
+            "profile": "release",
+            "binary_sha256": "a" * 64,
+            "binary_bytes": 1,
+            "matches_expected": True,
+        }
+        semantic_bad["driver_selfcheck"] = {"status": "PASS", "detail": "fixture"}
+        semantic_bad["measurements"] = {"ok": True}
+        semantic_bad["blocked"] = []
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(semantic_bad, f)
+            semantic_bad_path = f.name
+        try:
+            errs = validate(schema, semantic_bad_path)
+            if not any("smoke" in error and "PASS" in error for error in errs):
+                print("FAIL: smoke PASS fixture should be rejected: " + repr(errs))
+                return 1
+            print("PASS: semantic gate rejects smoke evidence labeled PASS")
+        finally:
+            os.unlink(semantic_bad_path)
         print("SELF_TEST_RESULT=ALL_PASS")
         return 0
     finally:
         os.unlink(good_path)
-        os.unlink(bad_path)
+        if bad_path is not None:
+            os.unlink(bad_path)
 
 
 def main(argv):

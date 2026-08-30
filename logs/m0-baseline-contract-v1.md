@@ -1,10 +1,10 @@
 # M0 基线采样契约
 
 > 文档角色：M0-0.a 的冻结契约，是 M0-1 自动化脚本、M0-0.b/c 基线采集和 M0-5 资源验收的共同输入。
-> 契约版本：V1.0。
-> 冻结时间：2026-08-29 07:50 CST。
+> 契约版本：V1.1。
+> 冻结时间：V1.0 于 2026-08-29 07:50 CST；V1.1 于 2026-08-30 完成可执行性修订。
 > 编写模型：Codex 主任务；独立审阅模型：`gpt-5.6-terra`，reasoning `medium`。
-> 状态：FROZEN。修改本契约必须升级版本；旧结果不得静默套用新口径。
+> 状态：FROZEN。旧 V1.0 结果保持原版本，不得静默套用 V1.1 口径。
 
 ---
 
@@ -46,6 +46,8 @@
 8. 采样期间接交流电，关闭系统更新和高负载任务；开始前记录 1/5/15 分钟 load average、可用内存和电源模式。无法读取的字段写 `UNAVAILABLE:<原因>`，不得留空。
 9. 浏览器和宫格场景只使用 `about:blank` 或仓库内固定夹具，不依赖公网响应速度。
 10. 同一台机器一次只运行一个被测应用实例；记录根 PID，并用 PID + `/proc/<pid>/stat` starttime 标识进程，避免 PID 复用误判。上一轮退出后确认已记录进程全部消失再开始下一轮。
+11. `M0_RUN_MODE=formal` 必须使用本节冻结的完整样本数；任何缩短样本必须显式使用 `M0_RUN_MODE=smoke`，结果只能是 `EXPLORATORY`，不得为 `PASS`。
+12. 质量门禁构建 release 后，把二进制 SHA-256 作为 `M0_EXPECTED_BINARY_SHA256` 交给资源门禁；资源门禁只在实际哈希完全一致时允许正式测量。
 
 ## 4. 环境与来源指纹
 
@@ -90,7 +92,7 @@
 | `grid_cycle_rss_slope_kib` | `REQUIRED_NOW` | 4 宫格固定场景关闭后的同口径斜率 | 5 次预热 + 20 次正式 | M0-5 裁决持续增长 |
 | `terminal_cycle_rss_slope_kib` | `REQUIRED_NOW` | 单 PTY 创建/关闭后的同口径斜率 | 5 次预热 + 20 次正式 | M0-5 裁决持续增长 |
 | `resource_cycle_fd_delta` | `REQUIRED_NOW` | 每类循环正式样本末值减初值 | 每类场景分别记录 | 持续增长必须归因 |
-| `orphan_process_count` | `REQUIRED_NOW` | 关闭前快照的后代 PID + starttime 中，等待 2 秒后仍存活的数量，即使其 PPID 已变化也计入 | 每个正式循环记录 | M0-5 必须为 0 |
+| `orphan_process_count` | `REQUIRED_NOW` | `opened - baseline` 得到资源打开后新增的后代 PID + starttime；关闭并等待 2 秒后直接复核 `/proc/<pid>/stat`，即使 PPID 已变化也计入 | 每个正式循环记录，应用根进程永不计入 | M0-5 必须为 0 |
 | `terminal_10mib_elapsed_ms` | `REQUIRED_NOW` | 提交固定 10 MiB 输出命令到前端消费并绘制结束标记的耗时 | 1 次预热 + 3 次正式 | 缺结束标记为 FAIL |
 | `terminal_frame_gap_p95_ms` | `REQUIRED_NOW` | 终端吞吐期间主前端 `requestAnimationFrame` 间隔 p95 | 与吞吐样本同步 | 用于后续回退比较 |
 | `terminal_frame_gap_max_ms` | `REQUIRED_NOW` | 同场景最大帧间隔 | 与吞吐样本同步 | 大于 100ms 标记风险并归因 |
@@ -163,6 +165,8 @@ logs/m0-baseline/<run_id>/
 - `summary.json` 是机器判定源；`summary.md` 只做人类阅读，两者不一致时整批 FAIL。
 - `SHA256SUMS` 覆盖本 run 内除自身外的全部证据文件；截图必须标明对应场景和样本号。
 - 原始输出可以清理 ANSI 控制字符，但必须同时保留未修改原件；任何脱敏都记录规则。
+- 多批次采集必须先使用 `M0_EVIDENCE_ROOT` 写入仓库外暂存区，并通过 schema、SHA256SUMS、commit、环境指纹和二进制哈希校验；全部批次完成后才一次性复制到本目录。禁止第一批证据先写入仓库导致后续批次工作树变脏。
+- 正式入口固定为 `scripts/collect-m0-baseline.sh`：默认 1 批对应 M0-0.b，`--batches 3` 对应 M0-0.c；`--smoke` 只保留仓库外探索证据。
 
 ## 9. 检查点验收
 
@@ -181,11 +185,23 @@ logs/m0-baseline/<run_id>/
 
 所有 `REQUIRED_NOW` 指标必须有 release 数据、原始输出、环境/来源指纹和足量样本；未实现的 ready/终端测量钩子必须先补齐。任一必需指标为 `BLOCKED`、缺原始日志或工作树非干净，结论均为 FAIL。
 
+执行与验收：
+
+```bash
+scripts/collect-m0-baseline.sh
+```
+
+总控必须确认质量与资源 summary 均为 `PASS`、二进制哈希一致、每个 run 的 `SHA256SUMS` 有效，才可归档并判定 M0-0.b。
+
 ### M0-0.c
 
 在同一 commit、同一契约和同一环境完成共 3 批完整采集。三批 median 的波动率超过 10% 时标记 `UNSTABLE` 并裁决；没有裁决不得建立正式比较基线。
 
-## 10. 冻结时参考环境（非正式基线）
+```bash
+scripts/collect-m0-baseline.sh --batches 3
+```
+
+## 10. V1.0 冻结时参考环境（非正式基线）
 
 以下信息只证明契约在当前桌面环境接受过可执行性审阅，不是 M0-0.b 数值证据：
 
@@ -202,4 +218,13 @@ logs/m0-baseline/<run_id>/
 | Locale / timezone | `zh_CN.UTF-8` / CST |
 | 未取得字段 | 分辨率与电源模式在当前沙箱不可读；正式桌面采集必须补值或写明 `UNAVAILABLE` 原因 |
 
-已知采集前置缺口：现有启动/停止脚本硬编码主检出路径且只启动 debug；当前只有后端 show 标记，没有可交互 ready 信号；旧日志没有原始输出目录。分别由 M0-1 和 M0-0.b 按本契约补齐。
+V1.0 冻结时的已知缺口包括硬编码 debug 启动、缺少可交互 ready 信号和缺少原始证据目录；这些缺口已在 V1.1 的产品钩子、门禁和总控脚本中补齐，不再作为当前阻塞项。
+
+## 11. V1.1 修订记录
+
+- 正式与 smoke 模式分离，短样本不再可能输出 `PASS`。
+- release 二进制哈希由质量门禁传给资源门禁并强制匹配。
+- 资源循环增加 `prepare/opened/done/sampled` 四阶段握手，消除最后一轮退出竞态。
+- 孤儿进程改为资源新增候选集并直接按 `/proc` starttime 复核，排除应用根进程且覆盖 PPID 变化。
+- idle 在第 5 至 60 秒采满 12 点并输出聚合统计；启动耗时使用单调时钟。
+- 新增仓库外暂存、单批/三批聚合和一次性归档，修复多批次工作树自污染。

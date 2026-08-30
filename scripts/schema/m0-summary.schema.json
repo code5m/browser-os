@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://example.invalid/mvp-browser-os/m0-summary.schema.json",
-  "title": "M0 summary.json 固定 schema",
-  "description": "M0-1.c 固定：baseline-check.sh 与 verify-resources.sh 输出的 summary.json（机器判定源）必须满足本 schema。契约 §8：summary.json 是机器判定源，summary.md 仅人类阅读，两者不一致时整批 FAIL。",
+  "title": "M0 summary.json 固定 schema V2",
+  "description": "M0-1.c V2：baseline-check.sh 与 verify-resources.sh 输出的 summary.json（机器判定源）必须满足本 schema，并执行 formal/smoke、样本剖面和产物哈希语义门禁。",
   "type": "object",
   "required": [
     "run_id",
@@ -10,6 +10,9 @@
     "checkpoint",
     "contract_version",
     "script_version",
+    "run_mode",
+    "sample_profile",
+    "artifact",
     "status",
     "evidence",
     "blocked",
@@ -25,9 +28,31 @@
     "contract_version": { "type": "string" },
     "scenario_version": { "type": "string" },
     "script_version": { "type": "string" },
+    "run_mode": { "type": "string", "enum": ["formal", "smoke"] },
     "repo_root": { "type": "string" },
     "worktree_clean_at_start": { "type": "boolean" },
-    "status": { "type": "string", "enum": ["PASS", "FAIL", "BLOCKED"] },
+    "status": { "type": "string", "enum": ["PASS", "FAIL", "BLOCKED", "EXPLORATORY", "UNSTABLE", "INCOMPARABLE"] },
+    "sample_profile": {
+      "type": "object",
+      "required": ["frontend_formal_samples", "idle_seconds", "resource_cycle_formal_samples", "terminal_formal_samples"],
+      "properties": {
+        "frontend_formal_samples": { "type": "integer" },
+        "idle_seconds": { "type": "integer" },
+        "resource_cycle_formal_samples": { "type": "integer" },
+        "terminal_formal_samples": { "type": "integer" }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["profile", "binary_sha256", "binary_bytes"],
+      "properties": {
+        "profile": { "type": "string", "enum": ["release"] },
+        "binary_sha256": { "type": "string" },
+        "binary_bytes": { "type": "integer" },
+        "expected_binary_sha256": { "type": "string" },
+        "matches_expected": { "type": "boolean" }
+      }
+    },
     "driver_selfcheck": {
       "type": "object",
       "required": ["status", "detail"],
@@ -84,6 +109,13 @@
     "results": {
       "type": "object",
       "description": "baseline-check.sh 特有：各 REQUIRED_NOW 质量/构建指标的判定结果。"
+    },
+    "measurements": {
+      "type": "object",
+      "required": ["ok"],
+      "properties": {
+        "ok": { "type": "boolean" }
+      }
     }
   },
   "additionalProperties": true

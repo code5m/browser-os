@@ -42,6 +42,9 @@
 #   scripts/baseline-check.sh --self-test   # fixture 验证脚本自身，不生成正式证据
 #
 # 环境变量（可选）：
+#   M0_RUN_MODE          formal（默认，固定完整样本）或 smoke（仅探索，不得 PASS）
+#   M0_EVIDENCE_ROOT     证据暂存根目录；默认 <repo>/logs/m0-baseline
+#   M0_EVIDENCE_LABEL_ROOT  summary 中记录的最终逻辑根；默认跟随物理根
 #   BS_FRONTEND_SAMPLES   frontend_build_ms 正式样本数，默认 3（另加 1 次预热）
 #   BS_SELF_TEST          内部使用：1 = fixture 模式（--self-test 自动设置）
 #
@@ -50,9 +53,9 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # 常量
 # ---------------------------------------------------------------------------
-SCRIPT_VERSION="M0-1.a-3"
-CONTRACT_VERSION="V1.0"
-SCENARIO_VERSION="M0-1.a-v1"
+SCRIPT_VERSION="M0-1.a-4"
+CONTRACT_VERSION="V1.1"
+SCENARIO_VERSION="M0-1.a-v2"
 DEFAULT_FRONTEND_SAMPLES=3
 
 # 命令超时（秒），scenario.json 会记录
@@ -103,6 +106,9 @@ baseline-check.sh — M0-1.a 质量/构建/指纹/证据目录门禁
   scripts/baseline-check.sh --self-test 用固定夹具验证脚本自身逻辑（fixture，不生成正式证据）
 
 可选环境变量:
+  M0_RUN_MODE=formal|smoke  默认 formal；smoke 结果固定为 EXPLORATORY
+  M0_EVIDENCE_ROOT=PATH     证据根目录（多批次采集应指向仓库外暂存目录）
+  M0_EVIDENCE_LABEL_ROOT=PATH summary 中记录的最终逻辑根（总控归档时使用）
   BS_FRONTEND_SAMPLES=N  frontend_build_ms 正式样本数（默认 3；另加 1 次预热）
 
 输出契约（M0-1.c）:
@@ -413,8 +419,10 @@ collect_environment() {
   ENV_RESOLUTION="${val:-UNAVAILABLE:xdpyinfo}"
   val="$(gsettings get org.gnome.desktop.interface text-scaling-factor 2>/dev/null || true)"
   ENV_SCALE="${val:-UNAVAILABLE:gsettings}"
-  ENV_GDK_BACKEND="${GDK_BACKEND:-}"
-  ENV_WEBKIT_DMABUF="${WEBKIT_DISABLE_DMABUF_RENDERER:-}"
+  ENV_HOST_GDK_BACKEND="${GDK_BACKEND:-}"
+  ENV_HOST_WEBKIT_DMABUF="${WEBKIT_DISABLE_DMABUF_RENDERER:-}"
+  ENV_GDK_BACKEND="x11"
+  ENV_WEBKIT_DMABUF="1"
 
   # --- WebKit / GTK ---
   val="$(pkg-config --modversion webkit2gtk-4.1 2>/dev/null || pkg-config --modversion webkit2gtk-4.0 2>/dev/null || true)"
@@ -440,9 +448,9 @@ collect_environment() {
   ENV_CARGO_LOCK_SHA="$(sha256sum "$ROOT/src-tauri/Cargo.lock" 2>/dev/null | awk '{print $1}' || echo UNAVAILABLE:Cargo.lock)"
   ENV_NPM_LOCK_SHA="$(sha256sum "$ROOT/package-lock.json" 2>/dev/null | awk '{print $1}' || echo UNAVAILABLE:package-lock.json)"
 
-  ENV_ISOLATED_XDG_DATA="/tmp/mvp-browser-os-m0/$RUN_ID/xdg-data"
-  ENV_ISOLATED_XDG_CACHE="/tmp/mvp-browser-os-m0/$RUN_ID/xdg-cache"
-  ENV_ISOLATED_XDG_CONFIG="/tmp/mvp-browser-os-m0/$RUN_ID/xdg-config"
+  ENV_ISOLATED_XDG_DATA="$XDG_BASE/<scenario>/data"
+  ENV_ISOLATED_XDG_CACHE="$XDG_BASE/<scenario>/cache"
+  ENV_ISOLATED_XDG_CONFIG="$XDG_BASE/<scenario>/config"
 }
 
 # ---------------------------------------------------------------------------
@@ -470,6 +478,7 @@ data = {
     "timestamp": g("RUN_TS"),
     "contract_version": g("CONTRACT_VERSION"),
     "script_version": g("SCRIPT_VERSION"),
+    "run_mode": g("M0_RUN_MODE", "formal"),
     "git": {
         "commit_sha": g("GIT_FULL_SHA"),
         "short_sha": g("GIT_SHORT_SHA"),
@@ -503,9 +512,11 @@ data = {
         "resolution": g("ENV_RESOLUTION"),
         "scale": g("ENV_SCALE"),
         "gdk_backend": g("ENV_GDK_BACKEND"),
+        "host_gdk_backend": g("ENV_HOST_GDK_BACKEND"),
     },
     "webkit": {
         "webkit_disable_dmabuf_renderer": g("ENV_WEBKIT_DMABUF"),
+        "host_webkit_disable_dmabuf_renderer": g("ENV_HOST_WEBKIT_DMABUF"),
         "webkitgtk_version": g("ENV_WEBKITGTK"),
         "gtk_version": g("ENV_GTK"),
     },
@@ -542,7 +553,9 @@ data = {
         "resolution": g("ENV_RESOLUTION"),
         "scale": g("ENV_SCALE"),
         "gdk_backend": g("ENV_GDK_BACKEND"),
+        "host_gdk_backend": g("ENV_HOST_GDK_BACKEND"),
         "webkit_disable_dmabuf_renderer": g("ENV_WEBKIT_DMABUF"),
+        "host_webkit_disable_dmabuf_renderer": g("ENV_HOST_WEBKIT_DMABUF"),
         "webkitgtk_version": g("ENV_WEBKITGTK"),
         "gtk_version": g("ENV_GTK"),
         "rustc": g("ENV_RUSTC"),
@@ -570,6 +583,7 @@ data = {
     "contract_version": os.environ.get("CONTRACT_VERSION", ""),
     "scenario_version": os.environ.get("SCENARIO_VERSION", ""),
     "checkpoint": "M0-1.a",
+    "run_mode": os.environ.get("M0_RUN_MODE", "formal"),
     "frontend_build": {
         "warmup_samples": 1,
         "formal_samples": samples,
@@ -603,7 +617,7 @@ PY
 compute_frontend_stats() {
   # FRONTEND_FORMAL_MS 数组 -> FRONTEND_MEDIAN / _MIN / _MAX / _VOLATILITY
   if [ "${#FRONTEND_FORMAL_MS[@]}" -eq 0 ]; then
-    FRONTEND_MEDIAN=0; FRONTEND_MIN=0; FRONTEND_MAX=0; FRONTEND_VOLATILITY="n/a"
+    FRONTEND_MEDIAN=0; FRONTEND_MIN=0; FRONTEND_MAX=0; FRONTEND_VOLATILITY="n/a"; FRONTEND_GATE_STATUS="$FRONTEND_STATUS"
     return
   fi
   local list
@@ -613,8 +627,15 @@ compute_frontend_stats() {
   FRONTEND_MAX="$(printf '%s\n' "$list" | sort -n | tail -1)"
   if [ "$FRONTEND_MEDIAN" = "0" ]; then
     FRONTEND_VOLATILITY="abs-diff:$((FRONTEND_MAX - FRONTEND_MIN))ms"
+    FRONTEND_GATE_STATUS="$FRONTEND_STATUS"
   else
-    FRONTEND_VOLATILITY="$(python3 -c "print('%.1f' % (($FRONTEND_MAX - $FRONTEND_MIN) / $FRONTEND_MEDIAN * 100.0))")%"
+    local volatility_pct
+    volatility_pct="$(python3 -c "print('%.1f' % (($FRONTEND_MAX - $FRONTEND_MIN) / $FRONTEND_MEDIAN * 100.0))")"
+    FRONTEND_VOLATILITY="${volatility_pct}%"
+    FRONTEND_GATE_STATUS="$FRONTEND_STATUS"
+    if [ "$FRONTEND_STATUS" = "PASS" ] && python3 -c 'import sys; raise SystemExit(0 if float(sys.argv[1]) > 10.0 else 1)' "$volatility_pct"; then
+      FRONTEND_GATE_STATUS="UNSTABLE"
+    fi
   fi
 }
 
@@ -622,10 +643,11 @@ write_summary_json() {
   compute_frontend_stats
   export_for_python \
     FMT_MAIN_EXIT FMT_PLUGIN_EXIT CLIPPY_STATUS CLIPPY_MAIN_COUNT CLIPPY_PLUGIN_COUNT \
-    FRONTEND_STATUS FRONTEND_WARMUP_MS FRONTEND_FORMAL_MS_CSV FRONTEND_MEDIAN FRONTEND_MIN FRONTEND_MAX FRONTEND_VOLATILITY \
+    FRONTEND_STATUS FRONTEND_GATE_STATUS FRONTEND_WARMUP_MS FRONTEND_FORMAL_MS_CSV FRONTEND_MEDIAN FRONTEND_MIN FRONTEND_MAX FRONTEND_VOLATILITY \
     DIST_TOTAL_BYTES LARGEST_JS_REL LARGEST_JS_BYTES LARGEST_JS_GZIP \
     RELEASE_BUILD_RC RELEASE_BIN_BYTES RELEASE_BIN_SHA256 READY_HOOK TERM_HOOK \
-    RUN_ID RUN_TS CONTRACT_VERSION SCRIPT_VERSION ROOT GIT_FULL_SHA GIT_SHORT_SHA GIT_BRANCH
+    RUN_ID RUN_TS CONTRACT_VERSION SCRIPT_VERSION ROOT GIT_FULL_SHA GIT_SHORT_SHA GIT_BRANCH \
+    M0_RUN_MODE FRONTEND_SAMPLES WORKTREE_CLEAN_AT_START EVIDENCE_RUN_DIR_LABEL
   python3 - "$RUN_DIR/summary.json" <<'PY'
 import json, os, sys
 out = sys.argv[1]
@@ -641,7 +663,7 @@ results["rust_fmt_plugin_exit"] = {"status": "PASS" if fmt_plugin_ok else "FAIL"
 results["clippy_main_unique_warnings"] = {"status": g("CLIPPY_STATUS", "FAIL"), "count": int(g("CLIPPY_MAIN_COUNT", "0"))}
 results["clippy_plugin_unique_warnings"] = {"status": g("CLIPPY_STATUS", "FAIL"), "count": int(g("CLIPPY_PLUGIN_COUNT", "0"))}
 results["frontend_build_ms"] = {
-    "status": g("FRONTEND_STATUS", "FAIL"),
+    "status": g("FRONTEND_GATE_STATUS", "FAIL"),
     "warmup_ms": int(g("FRONTEND_WARMUP_MS", "0")),
     "samples_ms": [int(x) for x in g("FRONTEND_FORMAL_MS_CSV", "").split(",") if x != ""],
     "median_ms": int(g("FRONTEND_MEDIAN", "0")),
@@ -674,10 +696,17 @@ deferred = [
 ]
 
 overall = "PASS"
+unstable = False
 for k, v in results.items():
     if v["status"] == "FAIL":
         overall = "FAIL"
         break
+    if v["status"] == "UNSTABLE":
+        unstable = True
+if overall == "PASS" and g("M0_RUN_MODE", "formal") == "smoke":
+    overall = "EXPLORATORY"
+elif overall == "PASS" and unstable:
+    overall = "UNSTABLE"
 
 data = {
     "run_id": g("RUN_ID"),
@@ -685,15 +714,27 @@ data = {
     "checkpoint": "M0-1.a",
     "contract_version": g("CONTRACT_VERSION"),
     "script_version": g("SCRIPT_VERSION"),
+    "run_mode": g("M0_RUN_MODE", "formal"),
+    "sample_profile": {
+        "frontend_formal_samples": int(g("FRONTEND_SAMPLES", "0")),
+        "idle_seconds": 0,
+        "resource_cycle_formal_samples": 0,
+        "terminal_formal_samples": 0,
+    },
+    "artifact": {
+        "profile": "release",
+        "binary_sha256": g("RELEASE_BIN_SHA256"),
+        "binary_bytes": int(g("RELEASE_BIN_BYTES", "0")),
+    },
     "repo_root": g("ROOT"),
-    "worktree_clean_at_start": True,
+    "worktree_clean_at_start": g("WORKTREE_CLEAN_AT_START", "false") == "true",
     "git": {"commit_sha": g("GIT_FULL_SHA"), "short_sha": g("GIT_SHORT_SHA"), "branch": g("GIT_BRANCH")},
     "status": overall,
     "results": results,
     "blocked": blocked,
     "deferred": deferred,
     "evidence": {
-        "run_dir": "logs/m0-baseline/" + g("RUN_ID"),
+        "run_dir": g("EVIDENCE_RUN_DIR_LABEL"),
         "environment": "environment.json",
         "scenario": "scenario.json",
         "summary_json": "summary.json",
@@ -716,6 +757,7 @@ write_summary_md() {
     echo ""
     echo "> 检查点：M0-1.a；契约：$CONTRACT_VERSION；脚本：$SCRIPT_VERSION；场景：$SCENARIO_VERSION"
     echo "> 生成时间：$(date '+%Y-%m-%d %H:%M:%S %z')"
+    echo "> 运行模式：$M0_RUN_MODE（smoke 只能生成 EXPLORATORY）"
     echo "> 机器判定源：summary.json（本文件仅人类阅读；两者不一致时整批 FAIL）"
     echo ""
     echo "## 总体状态：**$SUMMARY_STATUS**"
@@ -726,7 +768,7 @@ write_summary_md() {
     echo "| rust_fmt_plugin_exit | ${FMT_PLUGIN_EXIT:-?} == 0 ? PASS : FAIL | exit=$FMT_PLUGIN_EXIT |"
     echo "| clippy_main_unique_warnings | $CLIPPY_STATUS | $CLIPPY_MAIN_COUNT |"
     echo "| clippy_plugin_unique_warnings | $CLIPPY_STATUS | $CLIPPY_PLUGIN_COUNT |"
-    echo "| frontend_build_ms | $FRONTEND_STATUS | warmup=${FRONTEND_WARMUP_MS:-0}ms; samples=${#FRONTEND_FORMAL_MS[@]}; median=${FRONTEND_MEDIAN:-0}ms; min=${FRONTEND_MIN:-0}; max=${FRONTEND_MAX:-0}; vol=${FRONTEND_VOLATILITY:-n/a} |"
+    echo "| frontend_build_ms | $FRONTEND_GATE_STATUS | warmup=${FRONTEND_WARMUP_MS:-0}ms; samples=${#FRONTEND_FORMAL_MS[@]}; median=${FRONTEND_MEDIAN:-0}ms; min=${FRONTEND_MIN:-0}; max=${FRONTEND_MAX:-0}; vol=${FRONTEND_VOLATILITY:-n/a} |"
     echo "| dist_total_bytes | PASS | $DIST_TOTAL_BYTES |"
     echo "| largest_js_bytes | PASS | $LARGEST_JS_BYTES ($LARGEST_JS_REL) |"
     echo "| largest_js_gzip_bytes | PASS | $LARGEST_JS_GZIP |"
@@ -738,7 +780,7 @@ write_summary_md() {
     echo ""
     echo "## 证据"
     echo ""
-    echo "- run 目录：\`logs/m0-baseline/$RUN_ID/\`"
+    echo "- run 目录：\`$EVIDENCE_RUN_DIR_LABEL\`"
     echo "- environment.json / scenario.json / summary.json / summary.md / SHA256SUMS"
     echo "- raw/：各指标命令原始 stdout/stderr；measurements/：结构化测量；commands/：完整命令行"
     echo ""
@@ -787,8 +829,30 @@ write_measurements_frontend() {
 # ---------------------------------------------------------------------------
 run_formal() {
   ROOT="$(resolve_root)"
+  M0_RUN_MODE="${M0_RUN_MODE:-formal}"
+  FRONTEND_SAMPLES="${BS_FRONTEND_SAMPLES:-$DEFAULT_FRONTEND_SAMPLES}"
+  case "$M0_RUN_MODE" in
+    formal|smoke) ;;
+    *) echo "error: M0_RUN_MODE must be formal or smoke" >&2; exit 2 ;;
+  esac
+  case "$FRONTEND_SAMPLES" in
+    ''|*[!0-9]*) echo "error: BS_FRONTEND_SAMPLES must be a positive integer" >&2; exit 2 ;;
+  esac
+  if [ "$FRONTEND_SAMPLES" -lt 1 ]; then
+    echo "error: BS_FRONTEND_SAMPLES must be at least 1" >&2
+    exit 2
+  fi
+  if [ "$M0_RUN_MODE" = "formal" ] && [ "$FRONTEND_SAMPLES" -ne "$DEFAULT_FRONTEND_SAMPLES" ]; then
+    echo "error: formal mode requires BS_FRONTEND_SAMPLES=$DEFAULT_FRONTEND_SAMPLES; use M0_RUN_MODE=smoke for shortened runs" >&2
+    exit 2
+  fi
+
   GIT_PORCELAIN="$(git -C "$ROOT" status --porcelain=v1)"
+  WORKTREE_CLEAN_AT_START="true"
   if [ -n "$GIT_PORCELAIN" ]; then
+    WORKTREE_CLEAN_AT_START="false"
+  fi
+  if [ "$WORKTREE_CLEAN_AT_START" != "true" ] && [ "$M0_RUN_MODE" = "formal" ]; then
     echo "error: worktree not clean; formal baseline requires a clean commit" >&2
     echo "git status --porcelain=v1:" >&2
     echo "$GIT_PORCELAIN" >&2
@@ -800,18 +864,27 @@ run_formal() {
   GIT_SHORT_SHA="$(git -C "$ROOT" rev-parse --short=7 HEAD)"
   GIT_BRANCH="$(git -C "$ROOT" symbolic-ref -q --short HEAD || echo "detached:$(git -C "$ROOT" rev-parse --short HEAD)")"
   RUN_TS="$(date +%Y%m%dT%H%M%S%z)"
-  BACKEND="${GDK_BACKEND:-x11}"
+  BACKEND="x11"
   RUN_ID="${RUN_TS}_${GIT_SHORT_SHA}_release_${BACKEND}"
-  RUN_DIR="$ROOT/logs/m0-baseline/$RUN_ID"
+  EVIDENCE_ROOT="${M0_EVIDENCE_ROOT:-$ROOT/logs/m0-baseline}"
+  RUN_DIR="$EVIDENCE_ROOT/$RUN_ID"
+  if [ -n "${M0_EVIDENCE_LABEL_ROOT:-}" ]; then
+    EVIDENCE_RUN_DIR_LABEL="${M0_EVIDENCE_LABEL_ROOT%/}/$RUN_ID"
+  elif [ "$EVIDENCE_ROOT" = "$ROOT/logs/m0-baseline" ]; then
+    EVIDENCE_RUN_DIR_LABEL="logs/m0-baseline/$RUN_ID"
+  else
+    EVIDENCE_RUN_DIR_LABEL="$RUN_DIR"
+  fi
+  XDG_BASE="/tmp/m0m/$(printf '%s' "$RUN_ID" | sha256sum | cut -c1-12)"
 
   mkdir -p "$RUN_DIR"/{commands,raw,measurements,screenshots}
-  mkdir -p "/tmp/mvp-browser-os-m0/$RUN_ID"/xdg-{data,cache,config}
+  mkdir -p "$XDG_BASE"
   RAW="$RUN_DIR/raw"
 
-  FRONTEND_SAMPLES="${BS_FRONTEND_SAMPLES:-$DEFAULT_FRONTEND_SAMPLES}"
   BIN_PATH="$ROOT/src-tauri/target/release/mvp-browser-os"
 
   echo "[M0-1.a] run_id=$RUN_ID"
+  echo "[M0-1.a] mode=$M0_RUN_MODE evidence_root=$EVIDENCE_ROOT"
   echo "[M0-1.a] repo=$ROOT branch=$GIT_BRANCH commit=$GIT_SHORT_SHA"
 
   detect_product_hooks
@@ -837,11 +910,12 @@ run_formal() {
   echo "[M0-1.a] writing evidence..."
   FRONTEND_FORMAL_MS_CSV="$(IFS=,; echo "${FRONTEND_FORMAL_MS[*]:-}")"
   export_for_python \
-    RUN_ID RUN_TS CONTRACT_VERSION SCRIPT_VERSION SCENARIO_VERSION \
+    RUN_ID RUN_TS CONTRACT_VERSION SCRIPT_VERSION SCENARIO_VERSION M0_RUN_MODE \
     ROOT GIT_FULL_SHA GIT_SHORT_SHA GIT_BRANCH GIT_PORCELAIN BIN_PATH RELEASE_BIN_SHA256 \
     FRONTEND_SAMPLES T_FRONTEND T_CLIPPY T_FMT T_RELEASE \
     ENV_OS ENV_KERNEL ENV_ARCH ENV_CPU_MODEL ENV_NPROC ENV_MEM_BYTES \
     ENV_XDG_SESSION ENV_DISPLAY ENV_WAYLAND ENV_RESOLUTION ENV_SCALE ENV_GDK_BACKEND ENV_WEBKIT_DMABUF \
+    ENV_HOST_GDK_BACKEND ENV_HOST_WEBKIT_DMABUF \
     ENV_WEBKITGTK ENV_GTK ENV_RUSTC ENV_CARGO ENV_NODE ENV_NPM \
     ENV_LOCALE ENV_TIMEZONE ENV_LOADAVG ENV_MEMAVAIL ENV_POWER \
     ENV_CARGO_LOCK_SHA ENV_NPM_LOCK_SHA ENV_ISOLATED_XDG_DATA ENV_ISOLATED_XDG_CACHE ENV_ISOLATED_XDG_CONFIG
@@ -856,7 +930,7 @@ run_formal() {
   echo ""
   echo "=== M0-1.a summary: status=$SUMMARY_STATUS ==="
   echo "evidence dir: $RUN_DIR"
-  if [ "$SUMMARY_STATUS" = "PASS" ]; then
+  if [ "$SUMMARY_STATUS" = "PASS" ] || [ "$SUMMARY_STATUS" = "EXPLORATORY" ]; then
     exit 0
   else
     echo "one or more M0-1.a metrics FAILED" >&2
@@ -898,7 +972,7 @@ run_self_test() {
   git -C "$repo" add -A
   git -C "$repo" commit -qm "fixture baseline"
   local out code=0
-  out="$(cd "$repo" && BS_SELF_TEST=1 BS_FRONTEND_SAMPLES=1 bash "$SCRIPT_PATH" 2>&1)" || code=$?
+  out="$(cd "$repo" && BS_SELF_TEST=1 BS_FRONTEND_SAMPLES=3 bash "$SCRIPT_PATH" 2>&1)" || code=$?
   echo "$out" | sed 's/^/    [fixture] /'
   if [ $code -ne 0 ]; then
     echo "FAIL: clean fixture run should exit 0 (got $code)"; rc=1
@@ -922,7 +996,18 @@ run_self_test() {
     fi
   fi
 
-  # 用例 4：脏工作树正式模式 → 非零退出
+  # 用例 4：缩短样本只能用 smoke，且成功结果必须是 EXPLORATORY
+  local smoke_root="$tmp/smoke-evidence" smoke_out smoke_code=0 smoke_summary smoke_status
+  smoke_out="$(cd "$repo" && BS_SELF_TEST=1 M0_RUN_MODE=smoke M0_EVIDENCE_ROOT="$smoke_root" BS_FRONTEND_SAMPLES=1 bash "$SCRIPT_PATH" 2>&1)" || smoke_code=$?
+  smoke_summary="$(find "$smoke_root" -name summary.json -type f | head -1)"
+  smoke_status="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$smoke_summary" 2>/dev/null || echo missing)"
+  if [ "$smoke_code" -eq 0 ] && [ "$smoke_status" = "EXPLORATORY" ]; then
+    echo "PASS: shortened smoke run -> status=EXPLORATORY"
+  else
+    echo "FAIL: shortened smoke run mismatch exit=$smoke_code status=$smoke_status"; rc=1
+  fi
+
+  # 用例 5：脏工作树正式模式 → 非零退出
   local repo2="$tmp/repo-dirty"
   mkdir -p "$repo2"
   git -C "$repo2" init -q
@@ -938,7 +1023,7 @@ run_self_test() {
     echo "PASS: dirty worktree rejected (nonzero exit)"
   fi
 
-  # 用例 5：SHA256SUMS 与 run 目录完整性
+  # 用例 6：SHA256SUMS 与 run 目录完整性
   local runid2
   runid2="$(ls "$tmp/repo-clean/logs/m0-baseline" | tail -1)"
   if (cd "$tmp/repo-clean/logs/m0-baseline/$runid2" && sha256sum -c SHA256SUMS >/dev/null 2>&1); then
@@ -947,7 +1032,7 @@ run_self_test() {
     echo "FAIL: SHA256SUMS verification"; rc=1
   fi
 
-  # 用例 6：前端构建失败（fixture 模拟）→ 非零退出 + summary status=FAIL + 完整证据，不崩溃
+  # 用例 7：前端构建失败（fixture 模拟）→ 非零退出 + summary status=FAIL + 完整证据，不崩溃
   local repo3="$tmp/repo-frontend-fail"
   mkdir -p "$repo3"
   git -C "$repo3" init -q
@@ -976,7 +1061,7 @@ run_self_test() {
     echo "FAIL: frontend-fail fixture should exit nonzero when frontend FAILs"; rc=1
   fi
 
-  # 用例 7：summary.json 满足固定 schema（M0-1.c）
+  # 用例 8：summary.json 满足固定 schema（M0-1.c）
   if [ ! -f "$SCHEMA_FILE" ]; then
     echo "FAIL: schema file missing: $SCHEMA_FILE"; rc=1
   elif [ ! -f "$VALIDATE_SUMMARY" ]; then

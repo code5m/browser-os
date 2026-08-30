@@ -23,4 +23,3 @@
 - run 目录：`logs/m0-baseline/20260829T181925+0800_a5ca274_release_wayland/`
 - environment.json / scenario.json / summary.json / summary.md / SHA256SUMS
 - raw/：命令原始 stdout/stderr；measurements/：结构化测量；commands/：完整命令行
-
