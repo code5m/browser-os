@@ -10,7 +10,8 @@
 #   5. summary.json schema 校验器自检（validate-summary.py --self-test）
 #   6. M0 总控/聚合器自检
 #   7. Rust fmt、前端 production build、Rust cargo check
-#   8. 工作树、暂存区、当前分支相对基线的 git diff --check
+#   8. 正式证据 schema/SHA256 完整性
+#   9. 工作树、暂存区、当前分支相对基线的 git diff --check
 #
 # 用法:
 #   scripts/pre-merge.sh            正式门禁（所有检查必须通过）
@@ -47,7 +48,8 @@ pre-merge.sh — M0-1.c 本地 pre-merge 门禁（M0-1 脚本合并前检查入�
   M0 总控/聚合自检              collect-m0-baseline.sh / aggregate-m0-baseline.py
   Rust fmt                      主工程 + browser-tabs workspace
   production build / check      npm run build + cargo check --locked
-  git diff --check              工作树 + 暂存区 + 当前分支相对基线
+  evidence integrity            正式 run schema + 全部 SHA256SUMS
+  git diff --check              工作树 + 暂存区 + 当前分支相对基线（机器证据除外）
 
 退出码: 0 = 全部通过；1 = 任一失败；2 = 非法参数
 EOF
@@ -115,6 +117,34 @@ run_pre_merge() {
   pm_log "Rust cargo check --locked…"
   cargo check --manifest-path "$ROOT/src-tauri/Cargo.toml" --locked || pm_fail "cargo check --locked"
 
+  pm_log "正式证据 schema / SHA256SUMS…"
+  local evidence_file evidence_dir summary_file contract_version
+  while IFS= read -r evidence_file; do
+    evidence_dir="$(dirname "$evidence_file")"
+    if ! (cd "$evidence_dir" && sha256sum -c SHA256SUMS >/dev/null 2>&1); then
+      pm_fail "evidence checksum: ${evidence_dir#"$ROOT/"}"
+    fi
+  done < <(find "$ROOT/logs/m0-baseline" -type f -name SHA256SUMS -print | sort)
+  while IFS= read -r summary_file; do
+    if ! contract_version="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("contract_version", ""))' "$summary_file")"; then
+      pm_fail "evidence summary JSON: ${summary_file#"$ROOT/"}"
+      continue
+    fi
+    case "$contract_version" in
+      V1.1)
+        if ! python3 "$SCRIPT_DIR/validate-summary.py" "$SCRIPT_DIR/schema/m0-summary.schema.json" "$summary_file" >/dev/null 2>&1; then
+          pm_fail "evidence schema: ${summary_file#"$ROOT/"}"
+        fi
+        ;;
+      V1.0)
+        pm_log "skip legacy V1.0 schema: ${summary_file#"$ROOT/"}"
+        ;;
+      *)
+        pm_fail "unsupported evidence contract '$contract_version': ${summary_file#"$ROOT/"}"
+        ;;
+    esac
+  done < <(find "$ROOT/logs/m0-baseline" -mindepth 2 -maxdepth 2 -type f -name summary.json -print | sort)
+
   pm_log "git diff --check（工作树 + 暂存区）…"
   git -C "$ROOT" diff --check || pm_fail "git diff --check (worktree)"
   git -C "$ROOT" diff --cached --check || pm_fail "git diff --check (staged)"
@@ -133,7 +163,8 @@ run_pre_merge() {
   fi
   if [ -n "$merge_base" ]; then
     pm_log "git diff --check（$base_ref merge-base..HEAD）…"
-    git -C "$ROOT" diff --check "$merge_base..HEAD" || pm_fail "git diff --check (branch range)"
+    # raw evidence preserves third-party command output byte-for-byte and is governed by SHA256SUMS.
+    git -C "$ROOT" diff --check "$merge_base..HEAD" -- . ':(exclude)logs/m0-baseline/**' || pm_fail "git diff --check (branch range)"
   else
     pm_fail "cannot resolve base ref for branch-range diff check (set M0_BASE_REF)"
   fi
