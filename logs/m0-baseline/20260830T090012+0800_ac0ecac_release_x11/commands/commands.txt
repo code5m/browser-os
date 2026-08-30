@@ -1,0 +1,12 @@
+M0-1.a commands — run_id=20260830T090012+0800_ac0ecac_release_x11
+generated=2026-08-30 09:02:04 +0800
+
+# 质量
+cargo fmt --manifest-path /home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3/src-tauri/Cargo.toml --check
+cargo fmt --manifest-path /home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3/tauri-browser-tabs/Cargo.toml --all --check
+cargo clippy --manifest-path /home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3/src-tauri/Cargo.toml --message-format=json
+# 构建
+rm -rf /home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3/dist && (cd /home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3 && npm run build)  # warmup + 3 formal
+cargo build --manifest-path /home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3/src-tauri/Cargo.toml --release --locked
+# 指纹
+environment.json / scenario.json（本 run）

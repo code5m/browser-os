@@ -1,0 +1,54 @@
+warning: unused `std::result::Result` that must be used
+   --> /home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3/tauri-browser-tabs/crates/tauri-plugin-browser-tabs/src/commands.rs:112:13
+    |
+112 | /             webview.with_webview(move |pwv| {
+113 | |                 use webkit2gtk::WebViewExt;
+114 | |                 let gtk_wv = pwv.inner();
+115 | |                 let id1 = id_lf.clone();
+...   |
+145 | |                 });
+146 | |             });
+    | |______________^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+    = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+112 |             let _ = webview.with_webview(move |pwv| {
+    |             +++++++
+
+warning: `tauri-plugin-browser-tabs` (lib) generated 1 warning
+   Compiling mvp-browser-os v0.1.0 (/home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3/src-tauri)
+warning: variable does not need to be mutable
+   --> src/main.rs:394:13
+    |
+394 |         let mut log = |m: &str| {
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: fields `index` and `comms` are never read
+  --> src/grid_process.rs:76:9
+   |
+75 | pub struct GridChildHandle {
+   |            --------------- fields in this struct
+76 |     pub index: u32,
+   |         ^^^^^
+77 |     pub child: Child,
+78 |     pub comms: Arc<ChildComms>,
+   |         ^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: associated function `new` is never used
+   --> src/grid_process.rs:103:12
+    |
+102 | impl GridProcessManager {
+    | ----------------------- associated function in this implementation
+103 |     pub fn new() -> Self {
+    |            ^^^
+
+warning: `mvp-browser-os` (bin "mvp-browser-os") generated 3 warnings (run `cargo fix --bin "mvp-browser-os" -p mvp-browser-os` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 1m 38s

@@ -1,0 +1,437 @@
+{
+  "checkpoint": "M0-0.c",
+  "status": "UNSTABLE",
+  "run_mode": "formal",
+  "batches_expected": 3,
+  "batches_completed": 3,
+  "commit_sha": "ac0ecac17aac9903d33812584df8be67bc336106",
+  "source_fingerprint": {
+    "commit_sha": "ac0ecac17aac9903d33812584df8be67bc336106",
+    "cargo_lock_sha256": "52e6cc4fe8589d699c30c2a24c2e0b2c4281a3327daa31e46e59ca70fbed9971",
+    "npm_lock_sha256": "024f51edd0f1de2047a55f09ac20b54c059baa9072ae88f01325129582d67ee6",
+    "release_binary_sha256": "73358f0322c797a14b3626eaeefebf9697c3f36c8a871ac938af0f287b28313b"
+  },
+  "environment_fingerprint": {
+    "os": "Ubuntu 24.04.4 LTS",
+    "kernel": "7.0.0-30-generic",
+    "arch": "x86_64",
+    "cpu_model": "AMD Ryzen 7 5700U with Radeon Graphics",
+    "logical_cpus": "16",
+    "mem_bytes": "16059621376",
+    "xdg_session_type": "wayland",
+    "resolution": "  dimensions:    1920x1080 pixels (508x285 millimeters)",
+    "scale": "1.0",
+    "gdk_backend": "x11",
+    "host_gdk_backend": "x11",
+    "webkit_disable_dmabuf_renderer": "1",
+    "host_webkit_disable_dmabuf_renderer": "",
+    "webkitgtk_version": "2.52.3",
+    "gtk_version": "3.24.41",
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+    "node": "v26.7.0",
+    "npm": "11.19.0",
+    "locale": "zh_CN.UTF-8",
+    "timezone": "Asia/Shanghai",
+    "power_mode": "ACAD"
+  },
+  "records": [
+    {
+      "batch": 1,
+      "quality_run_id": "20260830T083438+0800_ac0ecac_release_x11",
+      "resource_run_id": "20260830T083630+0800_ac0ecac_release_x11",
+      "commit_sha": "ac0ecac17aac9903d33812584df8be67bc336106",
+      "binary_sha256": "73358f0322c797a14b3626eaeefebf9697c3f36c8a871ac938af0f287b28313b",
+      "quality_summary_sha256": "364968611b59c6091413e65f75bc1cff1965007c491b5c6b82d9f9138c10d1bc",
+      "resource_summary_sha256": "299c6c924389ec952fd0cda4000c449a6164acbd7ed9106ce8a111a271cf625f",
+      "metrics": {
+        "clippy_main_unique_warnings": 15,
+        "clippy_plugin_unique_warnings": 0,
+        "frontend_build_ms": 2149,
+        "dist_total_bytes": 544870,
+        "largest_js_bytes": 507980,
+        "largest_js_gzip_bytes": 146078,
+        "release_binary_bytes": 9134528,
+        "startup_ready_ms": 1028.0,
+        "idle_process_tree_rss_kib": 416522.0,
+        "idle_process_tree_fd_count": 103.0,
+        "terminal_10mib_elapsed_ms": 963.0,
+        "terminal_frame_gap_p95_ms": 47,
+        "terminal_frame_gap_max_ms": 103,
+        "tab_cycle_rss_slope_kib": 428.5954887218045,
+        "tab_resource_cycle_fd_delta": 21,
+        "tab_orphan_process_count_max": 0,
+        "grid_cycle_rss_slope_kib": -33.26015037593985,
+        "grid_resource_cycle_fd_delta": 0,
+        "grid_orphan_process_count_max": 0,
+        "terminal_cycle_rss_slope_kib": -198.68571428571428,
+        "terminal_resource_cycle_fd_delta": 0,
+        "terminal_orphan_process_count_max": 0
+      }
+    },
+    {
+      "batch": 2,
+      "quality_run_id": "20260830T084726+0800_ac0ecac_release_x11",
+      "resource_run_id": "20260830T084918+0800_ac0ecac_release_x11",
+      "commit_sha": "ac0ecac17aac9903d33812584df8be67bc336106",
+      "binary_sha256": "73358f0322c797a14b3626eaeefebf9697c3f36c8a871ac938af0f287b28313b",
+      "quality_summary_sha256": "9a5d149a8a0232689c4ec9eda14f77cade50999a4c858d61f7c07b2a6806c011",
+      "resource_summary_sha256": "90370d8a2aad08707757a5fe608506d685289da99dc96342d2d489cf9334c240",
+      "metrics": {
+        "clippy_main_unique_warnings": 15,
+        "clippy_plugin_unique_warnings": 0,
+        "frontend_build_ms": 2172,
+        "dist_total_bytes": 544870,
+        "largest_js_bytes": 507980,
+        "largest_js_gzip_bytes": 146078,
+        "release_binary_bytes": 9134528,
+        "startup_ready_ms": 1028.0,
+        "idle_process_tree_rss_kib": 408912.0,
+        "idle_process_tree_fd_count": 103.0,
+        "terminal_10mib_elapsed_ms": 942.0,
+        "terminal_frame_gap_p95_ms": 47,
+        "terminal_frame_gap_max_ms": 114,
+        "tab_cycle_rss_slope_kib": 460.68872180451126,
+        "tab_resource_cycle_fd_delta": -4,
+        "tab_orphan_process_count_max": 0,
+        "grid_cycle_rss_slope_kib": -22.282706766917293,
+        "grid_resource_cycle_fd_delta": 0,
+        "grid_orphan_process_count_max": 0,
+        "terminal_cycle_rss_slope_kib": 8.82406015037594,
+        "terminal_resource_cycle_fd_delta": 0,
+        "terminal_orphan_process_count_max": 0
+      }
+    },
+    {
+      "batch": 3,
+      "quality_run_id": "20260830T090012+0800_ac0ecac_release_x11",
+      "resource_run_id": "20260830T090204+0800_ac0ecac_release_x11",
+      "commit_sha": "ac0ecac17aac9903d33812584df8be67bc336106",
+      "binary_sha256": "73358f0322c797a14b3626eaeefebf9697c3f36c8a871ac938af0f287b28313b",
+      "quality_summary_sha256": "81fc1336ff689352674ec4488c150418de9e1ac936b7af45cbe3558d1c14a129",
+      "resource_summary_sha256": "242b752664a41738ac15189aab0622c1d719a922c9ddbe221578d83f7711432d",
+      "metrics": {
+        "clippy_main_unique_warnings": 15,
+        "clippy_plugin_unique_warnings": 0,
+        "frontend_build_ms": 2160,
+        "dist_total_bytes": 544870,
+        "largest_js_bytes": 507980,
+        "largest_js_gzip_bytes": 146078,
+        "release_binary_bytes": 9134528,
+        "startup_ready_ms": 1028.0,
+        "idle_process_tree_rss_kib": 408910.0,
+        "idle_process_tree_fd_count": 102.0,
+        "terminal_10mib_elapsed_ms": 904.0,
+        "terminal_frame_gap_p95_ms": 68,
+        "terminal_frame_gap_max_ms": 96.99999999999976,
+        "tab_cycle_rss_slope_kib": 481.17293233082705,
+        "tab_resource_cycle_fd_delta": 0,
+        "tab_orphan_process_count_max": 0,
+        "grid_cycle_rss_slope_kib": -31.434586466165413,
+        "grid_resource_cycle_fd_delta": 0,
+        "grid_orphan_process_count_max": 0,
+        "terminal_cycle_rss_slope_kib": 13.40451127819549,
+        "terminal_resource_cycle_fd_delta": 0,
+        "terminal_orphan_process_count_max": 0
+      }
+    }
+  ],
+  "metrics": {
+    "clippy_main_unique_warnings": {
+      "values": [
+        15,
+        15,
+        15
+      ],
+      "median": 15,
+      "min": 15,
+      "max": 15,
+      "volatility_pct": 0.0,
+      "absolute_range_when_median_zero": null,
+      "status": "PASS"
+    },
+    "clippy_plugin_unique_warnings": {
+      "values": [
+        0,
+        0,
+        0
+      ],
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "volatility_pct": null,
+      "absolute_range_when_median_zero": 0,
+      "status": "PASS"
+    },
+    "dist_total_bytes": {
+      "values": [
+        544870,
+        544870,
+        544870
+      ],
+      "median": 544870,
+      "min": 544870,
+      "max": 544870,
+      "volatility_pct": 0.0,
+      "absolute_range_when_median_zero": null,
+      "status": "PASS"
+    },
+    "frontend_build_ms": {
+      "values": [
+        2149,
+        2172,
+        2160
+      ],
+      "median": 2160,
+      "min": 2149,
+      "max": 2172,
+      "volatility_pct": 1.0648148148148149,
+      "absolute_range_when_median_zero": null,
+      "status": "PASS"
+    },
+    "grid_cycle_rss_slope_kib": {
+      "values": [
+        -33.26015037593985,
+        -22.282706766917293,
+        -31.434586466165413
+      ],
+      "median": -31.434586466165413,
+      "min": -33.26015037593985,
+      "max": -22.282706766917293,
+      "volatility_pct": 34.92154611557597,
+      "absolute_range_when_median_zero": null,
+      "status": "UNSTABLE"
+    },
+    "grid_orphan_process_count_max": {
+      "values": [
+        0,
+        0,
+        0
+      ],
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "volatility_pct": null,
+      "absolute_range_when_median_zero": 0,
+      "status": "PASS"
+    },
+    "grid_resource_cycle_fd_delta": {
+      "values": [
+        0,
+        0,
+        0
+      ],
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "volatility_pct": null,
+      "absolute_range_when_median_zero": 0,
+      "status": "PASS"
+    },
+    "idle_process_tree_fd_count": {
+      "values": [
+        103.0,
+        103.0,
+        102.0
+      ],
+      "median": 103.0,
+      "min": 102.0,
+      "max": 103.0,
+      "volatility_pct": 0.9708737864077669,
+      "absolute_range_when_median_zero": null,
+      "status": "PASS"
+    },
+    "idle_process_tree_rss_kib": {
+      "values": [
+        416522.0,
+        408912.0,
+        408910.0
+      ],
+      "median": 408912.0,
+      "min": 408910.0,
+      "max": 416522.0,
+      "volatility_pct": 1.8615252181398443,
+      "absolute_range_when_median_zero": null,
+      "status": "PASS"
+    },
+    "largest_js_bytes": {
+      "values": [
+        507980,
+        507980,
+        507980
+      ],
+      "median": 507980,
+      "min": 507980,
+      "max": 507980,
+      "volatility_pct": 0.0,
+      "absolute_range_when_median_zero": null,
+      "status": "PASS"
+    },
+    "largest_js_gzip_bytes": {
+      "values": [
+        146078,
+        146078,
+        146078
+      ],
+      "median": 146078,
+      "min": 146078,
+      "max": 146078,
+      "volatility_pct": 0.0,
+      "absolute_range_when_median_zero": null,
+      "status": "PASS"
+    },
+    "release_binary_bytes": {
+      "values": [
+        9134528,
+        9134528,
+        9134528
+      ],
+      "median": 9134528,
+      "min": 9134528,
+      "max": 9134528,
+      "volatility_pct": 0.0,
+      "absolute_range_when_median_zero": null,
+      "status": "PASS"
+    },
+    "startup_ready_ms": {
+      "values": [
+        1028.0,
+        1028.0,
+        1028.0
+      ],
+      "median": 1028.0,
+      "min": 1028.0,
+      "max": 1028.0,
+      "volatility_pct": 0.0,
+      "absolute_range_when_median_zero": null,
+      "status": "PASS"
+    },
+    "tab_cycle_rss_slope_kib": {
+      "values": [
+        428.5954887218045,
+        460.68872180451126,
+        481.17293233082705
+      ],
+      "median": 460.68872180451126,
+      "min": 428.5954887218045,
+      "max": 481.17293233082705,
+      "volatility_pct": 11.41279157064611,
+      "absolute_range_when_median_zero": null,
+      "status": "UNSTABLE"
+    },
+    "tab_orphan_process_count_max": {
+      "values": [
+        0,
+        0,
+        0
+      ],
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "volatility_pct": null,
+      "absolute_range_when_median_zero": 0,
+      "status": "PASS"
+    },
+    "tab_resource_cycle_fd_delta": {
+      "values": [
+        21,
+        -4,
+        0
+      ],
+      "median": 0,
+      "min": -4,
+      "max": 21,
+      "volatility_pct": null,
+      "absolute_range_when_median_zero": 25,
+      "status": "UNSTABLE"
+    },
+    "terminal_10mib_elapsed_ms": {
+      "values": [
+        963.0,
+        942.0,
+        904.0
+      ],
+      "median": 942.0,
+      "min": 904.0,
+      "max": 963.0,
+      "volatility_pct": 6.263269639065817,
+      "absolute_range_when_median_zero": null,
+      "status": "PASS"
+    },
+    "terminal_cycle_rss_slope_kib": {
+      "values": [
+        -198.68571428571428,
+        8.82406015037594,
+        13.40451127819549
+      ],
+      "median": 8.82406015037594,
+      "min": -198.68571428571428,
+      "max": 13.40451127819549,
+      "volatility_pct": 2403.5446489434216,
+      "absolute_range_when_median_zero": null,
+      "status": "UNSTABLE"
+    },
+    "terminal_frame_gap_max_ms": {
+      "values": [
+        103,
+        114,
+        96.99999999999976
+      ],
+      "median": 103,
+      "min": 96.99999999999976,
+      "max": 114,
+      "volatility_pct": 16.50485436893227,
+      "absolute_range_when_median_zero": null,
+      "status": "UNSTABLE"
+    },
+    "terminal_frame_gap_p95_ms": {
+      "values": [
+        47,
+        47,
+        68
+      ],
+      "median": 47,
+      "min": 47,
+      "max": 68,
+      "volatility_pct": 44.680851063829785,
+      "absolute_range_when_median_zero": null,
+      "status": "UNSTABLE"
+    },
+    "terminal_orphan_process_count_max": {
+      "values": [
+        0,
+        0,
+        0
+      ],
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "volatility_pct": null,
+      "absolute_range_when_median_zero": 0,
+      "status": "PASS"
+    },
+    "terminal_resource_cycle_fd_delta": {
+      "values": [
+        0,
+        0,
+        0
+      ],
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "volatility_pct": null,
+      "absolute_range_when_median_zero": 0,
+      "status": "PASS"
+    }
+  },
+  "unstable_metrics": [
+    "grid_cycle_rss_slope_kib",
+    "tab_cycle_rss_slope_kib",
+    "tab_resource_cycle_fd_delta",
+    "terminal_cycle_rss_slope_kib",
+    "terminal_frame_gap_max_ms",
+    "terminal_frame_gap_p95_ms"
+  ],
+  "incomparable_reasons": [],
+  "errors": []
+}

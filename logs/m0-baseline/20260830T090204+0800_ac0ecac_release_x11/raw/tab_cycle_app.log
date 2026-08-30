@@ -1,0 +1,239 @@
+[crashlog] 会话日志: /tmp/m0m/139e82402d43/cycle-tab/data/com.jizhijiandan.mvp/logs/session-20260830-090343-main-pid844985.log (role=main pid=844985)
+[main] main window url=Ok(Url { scheme: "tauri", cannot_be_a_base: false, username: "", password: None, host: Some(Domain("localhost")), port: None, path: "", query: None, fragment: None })
+[FE] FE alive marker=2026-08-18-r2
+[FE] [M0] rAF1 fired
+[FE] [M0] rAF2 fired, invoking m0_ready
+[m0] m0_ready called run_id="20260830T090204+0800_ac0ecac_release_x11" ready_file=Some("/tmp/m0m/139e82402d43/reports/cycle-tab/ready.signal")
+[FE] [M0] m0_ready ok run_id=20260830T090204+0800_ac0ecac_release_x11
+[m0-driver tab] ready ok
+[spawn_child_window] 子 webview 已创建 label=tab-1
+[create_tab] 子窗口已提交创建 label=tab-1 init=(1x1) visible=false
+[browser-tabs] drift-correct label=tab-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] run_on_main_thread 已排队 label=tab-1
+[create_tab] 页签已创建 label=tab-1 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-1 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-1 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-1 url=https://wappass.baidu.com/static/captcha/tuxing_v2.html?&logid=9817636182412061521&ak=c27bbc89afca0463650ac9bde68ebe06&backurl=https%3A%2F%2Fwww.baidu.com%2Fs%3Fwd%3Dabout%253Ablank&ext=x9G9QDmMXq%2FNo87gjGO0P9rk8Rl2S96WlY0uWgjS0b8mQTcmpWyo3%2FdfvHZy90eGg1T9i%2F9aWxTqDk%2BHyX%2BPs9byRAJa1xKjVKgv6G%2FemV6t52rlpnPbf9iBw4H6WThmu4VvGFPlp15wo%2BE5UdUXTw%3D%3D&signature=a2e52360f0d2d1a39085c42632c900aa&timestamp=1788051824
+[main] emit tab-navigated id=tab-1 url=https://wappass.baidu.com/static/captcha/tuxing_v2.html?&logid=9817636182412061521&ak=c27bbc89afca0463650ac9bde68ebe06&backurl=https%3A%2F%2Fwww.baidu.com%2Fs%3Fwd%3Dabout%253Ablank&ext=x9G9QDmMXq%2FNo87gjGO0P9rk8Rl2S96WlY0uWgjS0b8mQTcmpWyo3%2FdfvHZy90eGg1T9i%2F9aWxTqDk%2BHyX%2BPs9byRAJa1xKjVKgv6G%2FemV6t52rlpnPbf9iBw4H6WThmu4VvGFPlp15wo%2BE5UdUXTw%3D%3D&signature=a2e52360f0d2d1a39085c42632c900aa&timestamp=1788051824
+[browser-tabs] navigationFinished id=tab-1 url=about:blank
+[main] emit tab-navigated id=tab-1 url=about:blank
+[browser-tabs] navigationFinished id=tab-1 url=about:blank
+[main] emit tab-navigated id=tab-1 url=about:blank
+[m0-driver tab] cycle 1 done
+[spawn_child_window] 子 webview 已创建 label=tab-2
+[create_tab] 子窗口已提交创建 label=tab-2 init=(1x1) visible=false
+[browser-tabs] drift-correct label=tab-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] run_on_main_thread 已排队 label=tab-2
+[create_tab] 页签已创建 label=tab-2 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-2 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-2 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-2 url=https://wappass.baidu.com/static/captcha/tuxing_v2.html?&logid=9673711433092199282&ak=c27bbc89afca0463650ac9bde68ebe06&backurl=https%3A%2F%2Fwww.baidu.com%2Fs%3Fwd%3Dabout%253Ablank&ext=x9G9QDmMXq%2FNo87gjGO0P1CeKs5FAOwqA1tC6IZracosr0rrDszYO2sAbAnT1vLIg1T9i%2F9aWxTqDk%2BHyX%2BPs9byRAJa1xKjVKgv6G%2FemV6t52rlpnPbf9iBw4H6WThmu4VvGFPlp15wo%2BE5UdUXTw%3D%3D&signature=f765712e4a3c2225a1616b0fdf483463&timestamp=1788051830
+[main] emit tab-navigated id=tab-2 url=https://wappass.baidu.com/static/captcha/tuxing_v2.html?&logid=9673711433092199282&ak=c27bbc89afca0463650ac9bde68ebe06&backurl=https%3A%2F%2Fwww.baidu.com%2Fs%3Fwd%3Dabout%253Ablank&ext=x9G9QDmMXq%2FNo87gjGO0P1CeKs5FAOwqA1tC6IZracosr0rrDszYO2sAbAnT1vLIg1T9i%2F9aWxTqDk%2BHyX%2BPs9byRAJa1xKjVKgv6G%2FemV6t52rlpnPbf9iBw4H6WThmu4VvGFPlp15wo%2BE5UdUXTw%3D%3D&signature=f765712e4a3c2225a1616b0fdf483463&timestamp=1788051830
+[browser-tabs] navigationFinished id=tab-2 url=about:blank
+[main] emit tab-navigated id=tab-2 url=about:blank
+[browser-tabs] navigationFinished id=tab-2 url=about:blank
+[main] emit tab-navigated id=tab-2 url=about:blank
+[m0-driver tab] cycle 2 done
+[spawn_child_window] 子 webview 已创建 label=tab-3
+[create_tab] 子窗口已提交创建 label=tab-3 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-3
+[create_tab] 页签已创建 label=tab-3 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] drift-correct label=tab-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=tab-3 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-3 url=https://www.baidu.com/s?wd=about%3Ablank
+[m0-driver tab] cycle 3 done
+[spawn_child_window] 子 webview 已创建 label=tab-4
+[create_tab] 子窗口已提交创建 label=tab-4 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-4
+[browser-tabs] drift-correct label=tab-4 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] 页签已创建 label=tab-4 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-4 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-4 url=https://www.baidu.com/s?wd=about%3Ablank
+[m0-driver tab] cycle 4 done
+[spawn_child_window] 子 webview 已创建 label=tab-5
+[create_tab] 子窗口已提交创建 label=tab-5 init=(1x1) visible=false
+[browser-tabs] drift-correct label=tab-5 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] run_on_main_thread 已排队 label=tab-5
+[create_tab] 页签已创建 label=tab-5 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-5 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-5 url=https://www.baidu.com/s?wd=about%3Ablank
+[m0-driver tab] cycle 5 done
+[browser-tabs] drift-correct label=tab-6 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[spawn_child_window] 子 webview 已创建 label=tab-6
+[create_tab] 子窗口已提交创建 label=tab-6 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-6
+[create_tab] 页签已创建 label=tab-6 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-6 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-6 url=https://www.baidu.com/s?wd=about%3Ablank
+[m0-driver tab] cycle 6 done
+[spawn_child_window] 子 webview 已创建 label=tab-7
+[create_tab] 子窗口已提交创建 label=tab-7 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-7
+[browser-tabs] drift-correct label=tab-7 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] 页签已创建 label=tab-7 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-7 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-7 url=https://www.baidu.com/s?wd=about%3Ablank
+[m0-driver tab] cycle 7 done
+[spawn_child_window] 子 webview 已创建 label=tab-8
+[create_tab] 子窗口已提交创建 label=tab-8 init=(1x1) visible=false
+[browser-tabs] drift-correct label=tab-8 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] run_on_main_thread 已排队 label=tab-8
+[create_tab] 页签已创建 label=tab-8 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-8 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-8 url=https://www.baidu.com/s?wd=about%3Ablank
+[m0-driver tab] cycle 8 done
+[spawn_child_window] 子 webview 已创建 label=tab-9
+[create_tab] 子窗口已提交创建 label=tab-9 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-9
+[browser-tabs] drift-correct label=tab-9 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] 页签已创建 label=tab-9 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-9 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-9 url=https://www.baidu.com/s?wd=about%3Ablank
+[m0-driver tab] cycle 9 done
+[spawn_child_window] 子 webview 已创建 label=tab-10
+[browser-tabs] drift-correct label=tab-10 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] 子窗口已提交创建 label=tab-10 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-10
+[create_tab] 页签已创建 label=tab-10 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-10 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-10 url=https://www.baidu.com/s?wd=about%3Ablank
+[m0-driver tab] cycle 10 done
+[spawn_child_window] 子 webview 已创建 label=tab-11
+[create_tab] 子窗口已提交创建 label=tab-11 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-11
+[browser-tabs] drift-correct label=tab-11 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] 页签已创建 label=tab-11 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-11 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-11 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-11 url=https://wappass.baidu.com/static/captcha/tuxing_v2.html?&logid=9946670679372915255&ak=c27bbc89afca0463650ac9bde68ebe06&backurl=https%3A%2F%2Fwww.baidu.com%2Fs%3Fwd%3Dabout%253Ablank&ext=x9G9QDmMXq%2FNo87gjGO0Pz%2BFgNiOpzWD6kp55G10joMsr0rrDszYO2sAbAnT1vLIg1T9i%2F9aWxTqDk%2BHyX%2BPs7tuYrD5QpMP0klhPMWQVevzL6dS3iY5AGGgy06XWdK3u4VvGFPlp15wo%2BE5UdUXTw%3D%3D&signature=acc3eafccdccaee6b6159e3c1a621437&timestamp=1788051880
+[main] emit tab-navigated id=tab-11 url=https://wappass.baidu.com/static/captcha/tuxing_v2.html?&logid=9946670679372915255&ak=c27bbc89afca0463650ac9bde68ebe06&backurl=https%3A%2F%2Fwww.baidu.com%2Fs%3Fwd%3Dabout%253Ablank&ext=x9G9QDmMXq%2FNo87gjGO0Pz%2BFgNiOpzWD6kp55G10joMsr0rrDszYO2sAbAnT1vLIg1T9i%2F9aWxTqDk%2BHyX%2BPs7tuYrD5QpMP0klhPMWQVevzL6dS3iY5AGGgy06XWdK3u4VvGFPlp15wo%2BE5UdUXTw%3D%3D&signature=acc3eafccdccaee6b6159e3c1a621437&timestamp=1788051880
+[browser-tabs] navigationFinished id=tab-11 url=about:blank
+[main] emit tab-navigated id=tab-11 url=about:blank
+[browser-tabs] navigationFinished id=tab-11 url=about:blank
+[main] emit tab-navigated id=tab-11 url=about:blank
+[m0-driver tab] cycle 11 done
+[spawn_child_window] 子 webview 已创建 label=tab-12
+[create_tab] 子窗口已提交创建 label=tab-12 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-12
+[browser-tabs] drift-correct label=tab-12 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] 页签已创建 label=tab-12 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-12 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-12 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-12 url=https://wappass.baidu.com/static/captcha/tuxing_v2.html?&logid=9904158500368175139&ak=c27bbc89afca0463650ac9bde68ebe06&backurl=https%3A%2F%2Fwww.baidu.com%2Fs%3Fwd%3Dabout%253Ablank&ext=x9G9QDmMXq%2FNo87gjGO0Pz%2BFgNiOpzWD6kp55G10joM9qxHzv8tRxodBg5SciE9xg1T9i%2F9aWxTqDk%2BHyX%2BPs7tuYrD5QpMP0klhPMWQVevzL6dS3iY5AGGgy06XWdK3u4VvGFPlp15wo%2BE5UdUXTw%3D%3D&signature=d767c8ff69664e3a8df6ff60df0d1847&timestamp=1788051886
+[main] emit tab-navigated id=tab-12 url=https://wappass.baidu.com/static/captcha/tuxing_v2.html?&logid=9904158500368175139&ak=c27bbc89afca0463650ac9bde68ebe06&backurl=https%3A%2F%2Fwww.baidu.com%2Fs%3Fwd%3Dabout%253Ablank&ext=x9G9QDmMXq%2FNo87gjGO0Pz%2BFgNiOpzWD6kp55G10joM9qxHzv8tRxodBg5SciE9xg1T9i%2F9aWxTqDk%2BHyX%2BPs7tuYrD5QpMP0klhPMWQVevzL6dS3iY5AGGgy06XWdK3u4VvGFPlp15wo%2BE5UdUXTw%3D%3D&signature=d767c8ff69664e3a8df6ff60df0d1847&timestamp=1788051886
+[browser-tabs] navigationFinished id=tab-12 url=about:blank
+[main] emit tab-navigated id=tab-12 url=about:blank
+[browser-tabs] navigationFinished id=tab-12 url=about:blank
+[main] emit tab-navigated id=tab-12 url=about:blank
+[m0-driver tab] cycle 12 done
+[spawn_child_window] 子 webview 已创建 label=tab-13
+[create_tab] 子窗口已提交创建 label=tab-13 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-13
+[browser-tabs] drift-correct label=tab-13 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] 页签已创建 label=tab-13 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-13 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-13 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-13 url=https://wappass.baidu.com/static/captcha/tuxing_v2.html?&logid=9506005965293706788&ak=c27bbc89afca0463650ac9bde68ebe06&backurl=https%3A%2F%2Fwww.baidu.com%2Fs%3Fwd%3Dabout%253Ablank&ext=x9G9QDmMXq%2FNo87gjGO0P%2Bg27Skt7hEeUOKYPH1IWq8aaeyhUvJM%2FH2FbXwC2V2ug1T9i%2F9aWxTqDk%2BHyX%2BPs7tuYrD5QpMP0klhPMWQVevzL6dS3iY5AGGgy06XWdK3u4VvGFPlp15wo%2BE5UdUXTw%3D%3D&signature=579b0f74165f49f49f2910836d4e3264&timestamp=1788051891
+[main] emit tab-navigated id=tab-13 url=https://wappass.baidu.com/static/captcha/tuxing_v2.html?&logid=9506005965293706788&ak=c27bbc89afca0463650ac9bde68ebe06&backurl=https%3A%2F%2Fwww.baidu.com%2Fs%3Fwd%3Dabout%253Ablank&ext=x9G9QDmMXq%2FNo87gjGO0P%2Bg27Skt7hEeUOKYPH1IWq8aaeyhUvJM%2FH2FbXwC2V2ug1T9i%2F9aWxTqDk%2BHyX%2BPs7tuYrD5QpMP0klhPMWQVevzL6dS3iY5AGGgy06XWdK3u4VvGFPlp15wo%2BE5UdUXTw%3D%3D&signature=579b0f74165f49f49f2910836d4e3264&timestamp=1788051891
+[browser-tabs] navigationFinished id=tab-13 url=about:blank
+[main] emit tab-navigated id=tab-13 url=about:blank
+[browser-tabs] navigationFinished id=tab-13 url=about:blank
+[main] emit tab-navigated id=tab-13 url=about:blank
+[m0-driver tab] cycle 13 done
+[spawn_child_window] 子 webview 已创建 label=tab-14
+[create_tab] 子窗口已提交创建 label=tab-14 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-14
+[browser-tabs] drift-correct label=tab-14 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] 页签已创建 label=tab-14 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-14 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-14 url=https://www.baidu.com/s?wd=about%3Ablank
+[m0-driver tab] cycle 14 done
+[spawn_child_window] 子 webview 已创建 label=tab-15
+[create_tab] 子窗口已提交创建 label=tab-15 init=(1x1) visible=false
+[browser-tabs] drift-correct label=tab-15 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] run_on_main_thread 已排队 label=tab-15
+[create_tab] 页签已创建 label=tab-15 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-15 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-15 url=https://www.baidu.com/s?wd=about%3Ablank
+[m0-driver tab] cycle 15 done
+[spawn_child_window] 子 webview 已创建 label=tab-16
+[create_tab] 子窗口已提交创建 label=tab-16 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-16
+[browser-tabs] drift-correct label=tab-16 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] 页签已创建 label=tab-16 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-16 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-16 url=https://www.baidu.com/s?wd=about%3Ablank
+[m0-driver tab] cycle 16 done
+[spawn_child_window] 子 webview 已创建 label=tab-17
+[create_tab] 子窗口已提交创建 label=tab-17 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-17
+[browser-tabs] drift-correct label=tab-17 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] 页签已创建 label=tab-17 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-17 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-17 url=https://www.baidu.com/s?wd=about%3Ablank
+[m0-driver tab] cycle 17 done
+[spawn_child_window] 子 webview 已创建 label=tab-18
+[create_tab] 子窗口已提交创建 label=tab-18 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-18
+[browser-tabs] drift-correct label=tab-18 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] 页签已创建 label=tab-18 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-18 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-18 url=https://www.baidu.com/s?wd=about%3Ablank
+[m0-driver tab] cycle 18 done
+[spawn_child_window] 子 webview 已创建 label=tab-19
+[create_tab] 子窗口已提交创建 label=tab-19 init=(1x1) visible=false
+[browser-tabs] drift-correct label=tab-19 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] run_on_main_thread 已排队 label=tab-19
+[create_tab] 页签已创建 label=tab-19 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-19 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-19 url=https://www.baidu.com/s?wd=about%3Ablank
+[m0-driver tab] cycle 19 done
+[spawn_child_window] 子 webview 已创建 label=tab-20
+[create_tab] 子窗口已提交创建 label=tab-20 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-20
+[browser-tabs] drift-correct label=tab-20 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] 页签已创建 label=tab-20 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-20 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-20 url=https://www.baidu.com/s?wd=about%3Ablank
+[m0-driver tab] cycle 20 done
+[spawn_child_window] 子 webview 已创建 label=tab-21
+[create_tab] 子窗口已提交创建 label=tab-21 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-21
+[browser-tabs] drift-correct label=tab-21 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] 页签已创建 label=tab-21 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-21 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-21 url=https://www.baidu.com/s?wd=about%3Ablank
+[m0-driver tab] cycle 21 done
+[spawn_child_window] 子 webview 已创建 label=tab-22
+[create_tab] 子窗口已提交创建 label=tab-22 init=(1x1) visible=false
+[browser-tabs] drift-correct label=tab-22 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] run_on_main_thread 已排队 label=tab-22
+[create_tab] 页签已创建 label=tab-22 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-22 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-22 url=https://www.baidu.com/s?wd=about%3Ablank
+[m0-driver tab] cycle 22 done
+[spawn_child_window] 子 webview 已创建 label=tab-23
+[create_tab] 子窗口已提交创建 label=tab-23 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-23
+[browser-tabs] drift-correct label=tab-23 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] 页签已创建 label=tab-23 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-23 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-23 url=https://www.baidu.com/s?wd=about%3Ablank
+[m0-driver tab] cycle 23 done
+[spawn_child_window] 子 webview 已创建 label=tab-24
+[create_tab] 子窗口已提交创建 label=tab-24 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-24
+[browser-tabs] drift-correct label=tab-24 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] 页签已创建 label=tab-24 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] navigationFinished id=tab-24 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-24 url=https://www.baidu.com/s?wd=about%3Ablank
+[m0-driver tab] cycle 24 done
+[spawn_child_window] 子 webview 已创建 label=tab-25
+[create_tab] 子窗口已提交创建 label=tab-25 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-25
+[create_tab] 页签已创建 label=tab-25 url=https://www.baidu.com/s?wd=about%3Ablank
+[browser-tabs] drift-correct label=tab-25 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=tab-25 url=https://www.baidu.com/s?wd=about%3Ablank
+[main] emit tab-navigated id=tab-25 url=https://www.baidu.com/s?wd=about%3Ablank
+[m0-driver tab] cycle 25 done
+[m0-driver tab] driver result=PASS
