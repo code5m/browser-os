@@ -10,8 +10,9 @@ import tempfile
 from pathlib import Path
 
 
+# M0-2.b 已落地 ShutdownCoordinator（src-tauri/src/shutdown.rs），NO_UNIFIED_SHUTDOWN_CORE
+# 已关闭并移出本集合；窗口关闭/系统退出等调用方迁移属 M0-2.c，其余缺口保留。
 EXPECTED_GAPS = (
-    "NO_UNIFIED_SHUTDOWN_CORE",
     "WINDOW_CLOSE_BYPASSES_UNIFIED_CORE",
     "SYSTEM_EXIT_HOOK_MISSING",
     "GRID_PARTIAL_CREATE_ROLLBACK_MISSING",
@@ -102,7 +103,9 @@ def print_gaps(gaps: list[str]) -> None:
 
 
 def run_self_test() -> int:
+    # M0-2.b 之后：核心已存在，但调用方未迁移（窗口关闭仍是旁路、无系统退出钩子）。
     legacy_main = """
+struct ShutdownCoordinator;
 fn main() {
     match event {
         WindowEvent::CloseRequested { .. } => { state.grid_manager.shutdown_all(); }

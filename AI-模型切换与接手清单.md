@@ -19,7 +19,7 @@
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | tab RSS 三批持续正增长，必须由 M0-5 关闭；不属于 M0-0 PASS 伪装项 |
-| 下一检查点 | `M0-2.b = NEXT`（新增幂等 `ShutdownCoordinator` 或等价内部核心） |
+| 下一检查点 | `M0-2.c = NEXT`（迁移主窗关闭、菜单退出、系统退出及 grid/PTY/tab/线程调用方到统一核心） |
 | 下一任务路由 | `AI:DEEP / R:high`（最终 PASS 裁决需强模型复核 diff 与失败路径） |
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
@@ -445,6 +445,29 @@ NEXT=M0-2.b
 - `scripts/pre-merge.sh` 接入 `--self-test` 与 `--expect-current-gaps` 两模式；默认模式按设计 `EXIT=1`，明确不入门禁，避免把现状缺口误当回归。
 - **未越界**：未实现 `ShutdownCoordinator`（M0-2.b）、未迁移关闭调用方（M0-2.c）、未改冻结证据、未解锁 M1/M2、未勾选 M0-2 整项。
 - 复核提醒（强模型）：检测为正则 / brace 平衡提取，对格式化敏感；前端缺口 FE-1（rAF 采样循环卸载未停）、FE-2（`term.dispose()` 不通知 Rust `term_kill`，所有权跨层分裂）因 PASS_CRITERIA 固定 7 个 GAP 而未进夹具，已在所有权表 §3 冻结并归 M0-2.c。
+
+### M0-2.b 回写记录（2026-08-30，CodeBuddy / Codex 主机）
+
+```text
+CHECKPOINT=M0-2.b
+STATUS=PASS
+EXECUTOR=CodeBuddy（Codex 主机）
+MODEL=界面未显示完整模型名
+ROUTE=AI:DEEP
+MODEL_DEVIATION=UI 未显示完整模型名，推理档位未能精确记录
+COMMIT=提交信息 feat(M0-2.b): add idempotent shutdown coordinator
+VERIFY=cargo test shutdown(0, 6 passed); check-lifecycle-contract.py --self-test(0); --expect-current-gaps(0); 默认(1, 6 GAP); bash -n pre-merge.sh(0); pre-merge.sh(0, PRE_MERGE_RESULT=ALL_PASS); git diff --check(0)
+NEXT=M0-2.c
+```
+
+实现要点：
+
+- 新增 `src-tauri/src/shutdown.rs`：`ShutdownCoordinator` 提供 `register/shutdown/last_report/is_shutdown/pending_tasks`；`shutdown()` 幂等、失败与 panic 双向隔离（`catch_unwind`）、关闭后拒绝注册。6 项测试覆盖重复调用、8 线程并发、Err/panic 隔离、关闭后注册拒绝、任务内重入不死锁（5 秒超时守护）、空核心闭环。
+- **语义约定（M0-2.c 必须对齐）**：清理进行中再次调用（并发或重入）立即返回「进行中」报告且**不阻塞**——清理任务持有 `terminals`/`child_layouts` 等业务锁，阻塞等待极易死锁。需要「关闭已完成」语义请在退出流程层处理。
+- `main.rs` 仅加 `mod shutdown;` 与 `.manage(ShutdownCoordinator::new())` 两行，**未改任何退出路径**；`main.rs:811` 的 `CloseRequested -> grid_manager.shutdown_all()` 旁路原样保留，待 M0-2.c 迁移。
+- 夹具同步：`EXPECTED_GAPS` 移除已关闭的 `NO_UNIFIED_SHUTDOWN_CORE`（7→6），legacy fixture 补 `ShutdownCoordinator`；所有权表升 V1.1。
+- 过程中修复一个真实语义 bug：缓存报告被原样返回，使重复/并发调用误报 `already_shutdown=false`；已改为「本次未执行则返回空报告 + 标记」，并补 `last_report()` 保留历史。
+- 技术债（明确登记）：`shutdown.rs` 顶部 `#![allow(dead_code)]` 是为满足 M0-1.a「warning 只减不增」的临时豁免，**M0-2.c 接入消费方后必须删除并重新核对警告数**。
 
 ## 6. 跨模型接手审查协议
 

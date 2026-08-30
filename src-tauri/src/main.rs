@@ -6,6 +6,7 @@ mod domain;
 mod grid_ipc;
 mod grid_process;
 mod keyring_store;
+mod shutdown;
 mod sync;
 mod workspace;
 
@@ -845,6 +846,9 @@ fn main() {
             Ok(())
         })
         .manage(AppState::default())
+        // M0-2.b：注入统一生命周期核心。本检查点只提供核心，不迁移任何退出路径
+        // （M0-2.c 负责把窗口关闭/菜单退出/系统退出与 grid/PTY/tab/线程调用方切到它）。
+        .manage(shutdown::ShutdownCoordinator::new())
         .invoke_handler(tauri::generate_handler![
             bridge::open_browser,
             bridge::close_browser,
