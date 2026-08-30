@@ -9,9 +9,10 @@
 #   4. 非法参数非零退出（退出码 2）
 #   5. summary.json schema 校验器自检（validate-summary.py --self-test）
 #   6. M0 总控/聚合器自检
-#   7. Rust fmt、前端 production build、Rust cargo check
-#   8. 正式证据 schema/SHA256 完整性
-#   9. 工作树、暂存区、当前分支相对基线的 git diff --check
+#   7. WBS 模型路由标签自检与 50 项完整性检查
+#   8. Rust fmt、前端 production build、Rust cargo check
+#   9. 正式证据 schema/SHA256 完整性
+#  10. 工作树、暂存区、当前分支相对基线的 git diff --check
 #
 # 用法:
 #   scripts/pre-merge.sh            正式门禁（所有检查必须通过）
@@ -46,6 +47,7 @@ pre-merge.sh — M0-1.c 本地 pre-merge 门禁（M0-1 脚本合并前检查入�
   非法参数退出 2                 两脚本各一次（--definitely-invalid）
   schema 自检                   scripts/validate-summary.py --self-test
   M0 总控/聚合自检              collect-m0-baseline.sh / aggregate-m0-baseline.py
+  plan routing                  50 个 WBS 的优先级/复杂度/模型标签
   Rust fmt                      主工程 + browser-tabs workspace
   production build / check      npm run build + cargo check --locked
   evidence integrity            正式 run schema + 全部 SHA256SUMS
@@ -106,6 +108,10 @@ run_pre_merge() {
   pm_log "M0 总控/聚合器自检…"
   bash "$SCRIPT_DIR/collect-m0-baseline.sh" --self-test >/dev/null 2>&1 || pm_fail "collect-m0-baseline.sh --self-test"
   python3 "$SCRIPT_DIR/aggregate-m0-baseline.py" --self-test >/dev/null 2>&1 || pm_fail "aggregate-m0-baseline.py --self-test"
+
+  pm_log "WBS 模型路由标签…"
+  python3 "$SCRIPT_DIR/check-plan-routing.py" --self-test >/dev/null 2>&1 || pm_fail "check-plan-routing.py --self-test"
+  python3 "$SCRIPT_DIR/check-plan-routing.py" || pm_fail "check-plan-routing.py"
 
   pm_log "Rust fmt（主工程 + browser-tabs workspace）…"
   cargo fmt --manifest-path "$ROOT/src-tauri/Cargo.toml" --all --check || pm_fail "cargo fmt main"
@@ -190,10 +196,14 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/verify-resources.sh" ] || { echo "FAIL: verify-resources.sh missing"; rc=1; }
   [ -f "$SCRIPT_DIR/validate-summary.py" ] || { echo "FAIL: validate-summary.py missing"; rc=1; }
   [ -f "$SCRIPT_DIR/aggregate-m0-baseline.py" ] || { echo "FAIL: aggregate-m0-baseline.py missing"; rc=1; }
+  [ -f "$SCRIPT_DIR/check-plan-routing.py" ] || { echo "FAIL: check-plan-routing.py missing"; rc=1; }
   [ -f "$SCRIPT_DIR/collect-m0-baseline.sh" ] || { echo "FAIL: collect-m0-baseline.sh missing"; rc=1; }
   [ -f "$SCRIPT_DIR/schema/m0-summary.schema.json" ] || { echo "FAIL: schema missing"; rc=1; }
   if ! python3 "$SCRIPT_DIR/validate-summary.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: validate-summary.py --self-test"; rc=1
+  fi
+  if ! python3 "$SCRIPT_DIR/check-plan-routing.py" --self-test >/dev/null 2>&1; then
+    echo "FAIL: check-plan-routing.py --self-test"; rc=1
   fi
   if [ "$rc" -eq 0 ]; then
     echo ""
