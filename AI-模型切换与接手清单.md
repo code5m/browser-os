@@ -24,7 +24,7 @@
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
 | 禁止启动 | M1~M5；当前检查点未提交前禁止夹带下一检查点 |
-| 最近实现提交 | `待提交 feat(M0-2.c): migrate shutdown callers` |
+| 最近实现提交 | `a2cbe79 feat(M0-2.c): migrate shutdown callers` |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
 | 最新状态证据 | `logs/checkpoints/M0-0.c-20260830-1538.md` |
@@ -477,7 +477,7 @@ STATUS=PASS
 EXECUTOR=Codex 主任务
 MODEL=GPT-5 Codex
 ROUTE=AI:DEEP
-COMMIT=待提交 feat(M0-2.c): migrate shutdown callers
+COMMIT=a2cbe79
 VERIFY=check-lifecycle-contract.py --self-test(0); --expect-current-gaps(0); 默认(0, LIFECYCLE_CONTRACT_RESULT=PASS); cargo test shutdown(0, 6 passed); cargo check --locked(0, baseline 2 warnings); npm run build(0, existing warnings); git diff --check(0)
 NEXT=M0-2.d
 ```
