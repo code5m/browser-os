@@ -14,13 +14,13 @@
 
 | 项目 | 当前值 |
 |------|--------|
-| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS` |
+| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2.a = PASS` |
 | 已拒证据 | `ac0ecac` 三批候选：场景错误 + aggregate `UNSTABLE`，结论 `REJECTED`，不得复用 |
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | tab RSS 三批持续正增长，必须由 M0-5 关闭；不属于 M0-0 PASS 伪装项 |
-| 下一检查点 | `M0-2.a = NEXT`（资源所有权表 + 现状失败测试） |
-| 下一任务路由 | `AI:DEEP / R:high` |
+| 下一检查点 | `M0-2.b = NEXT`（新增幂等 `ShutdownCoordinator` 或等价内部核心） |
+| 下一任务路由 | `AI:DEEP / R:high`（最终 PASS 裁决需强模型复核 diff 与失败路径） |
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
 | 禁止启动 | M1~M5；当前检查点未提交前禁止夹带下一检查点 |
@@ -75,6 +75,61 @@ WBS 只使用供应商无关的路由标签。切换平台时只改本表，不�
 3. 低成本模型只提交候选 diff/报告，不能单独移动 `NEXT` 或宣称检查点 PASS；主执行器只审关键 diff、失败路径和脚本结果。
 4. `AI:BALANCED` 负责边界明确的实现与集成；`AI:DEEP` 仅用于安全、生命周期、并发、IPC、未知根因、连续失败和最终放行。
 5. 长时间 GUI/性能采样由脚本一次性无人值守执行；参数、commit 或环境未冻结前禁止反复试跑。smoke 只用于排错，不写入正式 PASS 分母。
+
+### 低模型可执行任务卡协议
+
+低模型不得领取“完成 M0”这种开放任务，只能领取一张任务卡。任务卡必须完整包含以下字段，缺一项即只允许只读审计，不允许写代码或移动指针：
+
+```text
+TASK_ID=<WBS.checkpoint>
+ROUTE=<AI:FAST|AI:BALANCED|AI:DEEP>
+MODEL=<界面完整模型名>
+REASONING=<low|medium|high|xhigh>
+GOAL=<一句话结果>
+READ=<允许读取的文件或目录>
+WRITE=<允许修改的文件；只读任务写 NONE>
+FORBID=<禁止事项，至少包含不得跨检查点、不得改冻结证据、不得提前勾选>
+COMMANDS=<必须执行的命令；每条记录 EXIT>
+PASS_CRITERIA=<可机器判断的通过标准>
+FAIL_ACTION=<失败时保留 NEXT、写 BLOCKED 或交还强模型>
+DOC_BACKWRITE=<需要回写的文档/日志/checkpoint>
+COMMIT=<提交信息；只读任务写 NONE>
+NEXT=<PASS 后唯一下一检查点；FAIL 时保持原 NEXT>
+```
+
+低模型执行顺序固定为：`读取任务卡 -> git status --short --branch -> 读取 READ -> 修改 WRITE -> 运行 COMMANDS -> git diff --check -> 回写 DOC_BACKWRITE -> 独立提交 COMMIT -> git status --short --branch`。`ROUTE=AI:DEEP` 的任务允许低模型先做只读盘点、脚本夹具和文档草稿，但最终 PASS 裁决必须由强模型复核 diff、失败路径和验收输出。
+
+用户只负责手动切换 Trae/Codex、粘贴任务卡或提示接手；不得要求用户手动执行 `COMMANDS`。每个 AI 执行器必须自行运行命令、记录退出码和关键输出，并把结果写入 checkpoint。若当前平台不能执行 Shell，只能做只读审计或草稿，不能标记 PASS、不能提交、不能移动 `NEXT`。
+
+### Token 节省执行规则
+
+- 每轮只把任务卡、最新 checkpoint、`git diff --stat`、失败命令尾部 120 行交给下一模型；不得整份粘贴所有长文档。
+- 文件检索优先用 `rg`、专用脚本和固定行号；禁止让模型“梳理全项目”后再判断一个检查点。
+- 强模型复核只看 `git diff HEAD~1..HEAD`、本轮 checkpoint、验收命令输出摘要和未解决风险；不重复读取完整仓库。
+- 能用脚本输出 `PASS/FAIL/BLOCKED` 的验收，不让模型人工判断；脚本没有覆盖时才补固定夹具。
+- 同一失败最多让低模型修两轮；第二次仍失败即停止，回写 `BLOCKED`，交给更强模型。
+- 文档回写只更新顶部状态、当前 WBS、最近 checkpoint 和 NEXT；不重排无关章节，避免无意义 diff。
+
+### 当前可复制任务卡：M0-2.a
+
+```text
+TASK_ID=M0-2.a
+ROUTE=AI:DEEP
+MODEL=可用低模型先执行草稿；最终由强模型复核
+REASONING=low 用于脚本/文档草稿；high 用于 PASS 裁决
+GOAL=冻结当前生命周期资源所有权缺口，产出所有权表和可复跑失败夹具；不实现 ShutdownCoordinator。
+READ=详细设计与实施计划.md, 后续需求TODO.md, AI-模型切换与接手清单.md, logs/m0-baseline-contract-v1.md, src-tauri/src/main.rs, src-tauri/src/bridge.rs, src-tauri/src/grid_process.rs, src/components/system/TerminalPane.vue
+WRITE=scripts/check-lifecycle-contract.py, logs/m0-resource-ownership-v1.md, logs/checkpoints/M0-2.a-<YYYYMMDD-HHMM>.md, 详细设计与实施计划.md, 后续需求TODO.md, AI-模型切换与接手清单.md, scripts/pre-merge.sh
+FORBID=不得实现 ShutdownCoordinator；不得迁移关闭调用方；不得改冻结基线证据；不得解锁 M1/M2；不得把 M0-2 整项勾选完成；不得合并 M0-2.b。
+COMMANDS=python3 scripts/check-lifecycle-contract.py --self-test; python3 scripts/check-lifecycle-contract.py --expect-current-gaps; python3 scripts/check-lifecycle-contract.py; bash -n scripts/pre-merge.sh; scripts/pre-merge.sh; git diff --check
+PASS_CRITERIA=--self-test EXIT=0；--expect-current-gaps EXIT=0；默认脚本 EXIT=1 且列出 7 个已知 GAP；pre-merge EXIT=0；文档记录默认失败是现状夹具预期结果；工作树提交后干净。
+FAIL_ACTION=不移动 NEXT；同一命令失败两轮后写 BLOCKED，保留命令输出尾部 120 行和推荐强模型接手点。
+DOC_BACKWRITE=三份主文档顶部状态、M0-2.a 勾选、最近 checkpoint、实际模型、VERIFY、COMMIT；checkpoint 记录默认脚本预期 FAIL。
+COMMIT=test(M0-2.a): freeze lifecycle ownership gaps
+NEXT=M0-2.b
+```
+
+强模型复核 M0-2.a 时只需读取本任务卡、`git show --stat --oneline HEAD`、`git diff HEAD~1..HEAD`、本轮 checkpoint 和验收摘要；确认未越界实现 M0-2.b 后，才能把 `NEXT` 移到 `M0-2.b`。
 
 用户提供的微信临时图片在读取时已不存在，因此本文件不猜测 Trae 模型名称。重新附图或直接写出模型列表后，只填写上表三个 Trae 单元格并升级本文版本；任务上的 `AI:*` 标签不变。
 
@@ -368,6 +423,28 @@ NEXT=M0-2.a
 ```
 
 六项指标仍使用 UNSTABLE 区间，不使用伪精确 median；逐项证据、比较规则和 owner 见 `logs/checkpoints/M0-0.c-20260830-1538.md`。
+
+### M0-2.a 回写记录（2026-08-30，CodeBuddy / Codex 主机）
+
+```text
+CHECKPOINT=M0-2.a
+STATUS=PASS（冻结性检查点：默认脚本 EXIT=1 是预期结果）
+EXECUTOR=CodeBuddy（Codex 主机）
+MODEL=界面未显示完整模型名
+ROUTE=AI:DEEP
+MODEL_DEVIATION=UI 未显示完整模型名，推理档位未能精确记录
+COMMIT=提交信息 test(M0-2.a): freeze lifecycle ownership gaps
+VERIFY=check-lifecycle-contract.py --self-test(0); --expect-current-gaps(0); 默认(1, 7 GAP); bash -n pre-merge.sh(0); pre-merge.sh(0, PRE_MERGE_RESULT=ALL_PASS); git diff --check(0)
+NEXT=M0-2.b
+```
+
+实现要点：
+
+- 按任务卡 `READ` 逐文件核实后产出所有权表 `logs/m0-resource-ownership-v1.md`：16 项资源（主窗口 / tab webview / tab 元数据 6 项 / grid 子进程与部分创建残留 / PTY 会话与 reader 线程 / 3 个后台线程 / 前端 xterm、ResizeObserver、rAF 循环、store 绑定），逐项标注所有者、清理路径、窗口关闭与系统退出覆盖度、失败降级与对应 GAP。
+- 夹具 `scripts/check-lifecycle-contract.py` 冻结 7 个机器可检 GAP，每条均有源码行号证据；自检覆盖 legacy fixture（命中 7 GAP）、resolved fixture（零 GAP）和临时仓库端到端扫描三重校验。
+- `scripts/pre-merge.sh` 接入 `--self-test` 与 `--expect-current-gaps` 两模式；默认模式按设计 `EXIT=1`，明确不入门禁，避免把现状缺口误当回归。
+- **未越界**：未实现 `ShutdownCoordinator`（M0-2.b）、未迁移关闭调用方（M0-2.c）、未改冻结证据、未解锁 M1/M2、未勾选 M0-2 整项。
+- 复核提醒（强模型）：检测为正则 / brace 平衡提取，对格式化敏感；前端缺口 FE-1（rAF 采样循环卸载未停）、FE-2（`term.dispose()` 不通知 Rust `term_kill`，所有权跨层分裂）因 PASS_CRITERIA 固定 7 个 GAP 而未进夹具，已在所有权表 §3 冻结并归 M0-2.c。
 
 ## 6. 跨模型接手审查协议
 

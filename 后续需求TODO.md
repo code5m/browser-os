@@ -28,7 +28,7 @@ M0 当前收口面共 8 项：完整基线、自动门禁、统一生命周期�
 
 AI 必须按 `详细设计与实施计划.md` §2.2 的**检查点关键路径**领取任务，不能只扫描最靠上的未完成 WBS。排序先看阻塞性和降低后续复杂度的收益，再看依赖，最后才在同级里把简单任务排前；模型标签及自动升级规则见详细计划的“AI 执行排序、模型路由与提交协议”。
 
-当前关键路径：`M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2.a(NEXT) -> ...`。正式三批 manifest 是 `20260830T153538+0800_93a1ba6_M0-0.c`；raw aggregate 保持 `UNSTABLE`，tab RSS 持续增长是 M0-5 硬阻塞项。下一个可领取任务是 `M0-2.a` 资源所有权表与现状失败测试，路由 `AI:DEEP/R:high`。
+当前关键路径：`M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2.a(PASS) -> M0-2.b(NEXT) -> ...`。正式三批 manifest 是 `20260830T153538+0800_93a1ba6_M0-0.c`；raw aggregate 保持 `UNSTABLE`，tab RSS 持续增长是 M0-5 硬阻塞项。M0-2.a 已冻结资源所有权表（`logs/m0-resource-ownership-v1.md`，16 项资源 / 7 个可机器复验 GAP / 2 项前端缺口）与失败夹具 `scripts/check-lifecycle-contract.py`（默认模式按设计 `EXIT=1`，M0-2.b/c 关闭缺口后转 0）。下一个可领取任务是 `M0-2.b` 幂等 `ShutdownCoordinator`，路由 `AI:DEEP/R:high`。
 
 当前执行器：Codex 主任务（`CODEX_RUNNING`）；机械审计与独立脚本任务优先委派 `gpt-5.6-luna / low`。仅在 M0 内按关键路径连续执行；每个检查点必须先验收、回写证据、独立提交并确认工作树干净，再自动领取下一点。硬停止条件和跨模型回归步骤统一见 `AI-模型切换与接手清单.md`。
 
