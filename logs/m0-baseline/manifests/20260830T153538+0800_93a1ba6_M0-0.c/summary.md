@@ -1,0 +1,9 @@
+# M0-0.c baseline aggregate
+
+- Status: **UNSTABLE**
+- Mode: `formal`
+- Commit: `93a1ba63983fba0e5e62ec623c225aa4c13f0bdd`
+- Batches: 3/3
+- Unstable metrics: grid_cycle_rss_slope_kib, tab_cycle_rss_slope_kib, tab_resource_cycle_fd_delta, terminal_cycle_rss_slope_kib, terminal_frame_gap_max_ms, terminal_frame_gap_p95_ms
+- Incomparable reasons: none
+- Errors: none

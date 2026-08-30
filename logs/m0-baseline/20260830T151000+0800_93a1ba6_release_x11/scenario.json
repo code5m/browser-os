@@ -1,0 +1,25 @@
+{
+  "contract_version": "V1.1",
+  "scenario_version": "M0-1.a-v2",
+  "checkpoint": "M0-1.a",
+  "run_mode": "formal",
+  "frontend_build": {
+    "warmup_samples": 1,
+    "formal_samples": 3,
+    "command": "rm -rf dist && npm run build",
+    "timeout_s": 600
+  },
+  "clippy": {
+    "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --message-format=json",
+    "timeout_s": 900
+  },
+  "fmt": {
+    "main_command": "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
+    "plugin_command": "cargo fmt --manifest-path tauri-browser-tabs/Cargo.toml --all --check",
+    "timeout_s": 300
+  },
+  "release_build": {
+    "command": "cargo build --manifest-path src-tauri/Cargo.toml --release --locked",
+    "timeout_s": 5400
+  }
+}

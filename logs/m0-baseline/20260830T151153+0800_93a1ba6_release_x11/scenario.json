@@ -1,0 +1,60 @@
+{
+  "contract_version": "V1.1",
+  "scenario_version": "M0-1.b-v2",
+  "checkpoint": "M0-1.b",
+  "run_mode": "formal",
+  "startup": {
+    "spawn": "WEBKIT_DISABLE_DMABUF_RENDERER=1 GDK_BACKEND=x11 /home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3/src-tauri/target/release/mvp-browser-os",
+    "ready_signal": "带 run_id 的 ready 信号（契约 §6.1：mount + 2x rAF + 1x IPC 往返）",
+    "ready_timeout_s": 120
+  },
+  "idle": {
+    "interval_s": 5,
+    "duration_s": 60,
+    "metrics": [
+      "idle_process_tree_rss_kib",
+      "idle_process_tree_fd_count"
+    ]
+  },
+  "resource_cycle": {
+    "kinds": [
+      "tab",
+      "grid",
+      "terminal"
+    ],
+    "warmup_samples": 5,
+    "formal_samples": 20,
+    "settle_s": 2,
+    "sampling_handshake": [
+      "prepare",
+      "opened",
+      "done",
+      "sampled"
+    ],
+    "orphan_detection": "opened-baseline candidates rechecked by /proc/<pid>/stat starttime after close",
+    "metrics": [
+      "<kind>_cycle_rss_slope_kib",
+      "resource_cycle_fd_delta",
+      "orphan_process_count"
+    ]
+  },
+  "terminal_throughput": {
+    "load_mib": 10,
+    "warmup_samples": 1,
+    "formal_samples": 3,
+    "begin_marker": "__M0_TERM_BEGIN__",
+    "end_marker": "__M0_TERM_END__",
+    "metrics": [
+      "terminal_10mib_elapsed_ms",
+      "terminal_frame_gap_p95_ms",
+      "terminal_frame_gap_max_ms"
+    ],
+    "timeout_s": 300
+  },
+  "stats": {
+    "median": "sorted median",
+    "volatility": "(max-min)/median*100% (median=0 -> abs-diff)",
+    "p95": "nearest-rank, 仅 >=20 样本",
+    "slope": "OLS, 单位 KiB/cycle; 同时报告 last-first 与末/初百分比"
+  }
+}
