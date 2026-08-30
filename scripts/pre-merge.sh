@@ -12,8 +12,8 @@
 #   7. WBS 模型路由标签自检与 50 项完整性检查
 #   8. Rust fmt、前端 production build、Rust cargo check
 #   9. 正式证据 schema/SHA256 完整性
-#  10. M0-2.a 生命周期契约夹具（--self-test + --expect-current-gaps；
-#      默认模式按设计 EXIT=1，属于现状缺口夹具，不并入本门禁）
+#  10. M0-2 生命周期契约夹具（--self-test + --expect-current-gaps + 默认门禁；
+#      M0-2.c 后默认模式必须 PASS，防止退出路径回归）
 #  11. 工作树、暂存区、当前分支相对基线的 git diff --check
 #
 # 用法:
@@ -53,8 +53,7 @@ pre-merge.sh — M0-1.c 本地 pre-merge 门禁（M0-1 脚本合并前检查入�
   Rust fmt                      主工程 + browser-tabs workspace
   production build / check      npm run build + cargo check --locked
   evidence integrity            正式 run schema + 全部 SHA256SUMS
-  lifecycle fixture             check-lifecycle-contract.py --self-test / --expect-current-gaps
-                                （默认模式按设计 EXIT=1，见 logs/m0-resource-ownership-v1.md）
+  lifecycle fixture             check-lifecycle-contract.py --self-test / --expect-current-gaps / 默认门禁
   git diff --check              工作树 + 暂存区 + 当前分支相对基线（机器证据除外）
 
 退出码: 0 = 全部通过；1 = 任一失败；2 = 非法参数
@@ -155,14 +154,16 @@ run_pre_merge() {
     esac
   done < <(find "$ROOT/logs/m0-baseline" -mindepth 2 -maxdepth 2 -type f -name summary.json -print | sort)
 
-  pm_log "M0-2.a 生命周期契约夹具（现状缺口，默认模式按设计 EXIT=1，不入门禁）…"
+  pm_log "M0-2 生命周期契约夹具…"
   python3 "$SCRIPT_DIR/check-lifecycle-contract.py" --self-test >/dev/null 2>&1 \
     || pm_fail "check-lifecycle-contract.py --self-test"
   if python3 "$SCRIPT_DIR/check-lifecycle-contract.py" --expect-current-gaps >/dev/null 2>&1; then
     pm_log "lifecycle gap 集合与 logs/m0-resource-ownership-v1.md 一致"
   else
-    pm_fail "lifecycle gap 集合已变化：M0-2.b/c 关闭缺口或新增缺口后需同步 EXPECTED_GAPS 与所有权表"
+    pm_fail "lifecycle gap 集合已变化：关闭缺口或新增缺口后需同步 EXPECTED_GAPS 与所有权表"
   fi
+  python3 "$SCRIPT_DIR/check-lifecycle-contract.py" >/dev/null 2>&1 \
+    || pm_fail "check-lifecycle-contract.py 默认生命周期门禁"
 
   pm_log "git diff --check（工作树 + 暂存区，机器证据除外）…"
   # Raw evidence is immutable third-party output; SHA256SUMS, not whitespace rewriting, protects it.

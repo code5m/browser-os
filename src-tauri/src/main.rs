@@ -13,6 +13,21 @@ mod workspace;
 use bridge::AppState;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
+fn log_shutdown_report(report: &shutdown::ShutdownReport) {
+    eprintln!(
+        "[shutdown] completed ok={} already_shutdown={} executed={}",
+        report.ok(),
+        report.already_shutdown,
+        report.executed()
+    );
+    for failure in report.failures() {
+        eprintln!(
+            "[shutdown] task {} failed: {:?}",
+            failure.name, failure.outcome
+        );
+    }
+}
+
 /// Phase 0 最小验证原型：解析 `--grid-child N`，有则以"宫格子进程"身份启动。
 /// 返回 Some(N) 表示应走子进程分支；None 表示主进程。
 fn parse_grid_child_arg() -> Option<u32> {
@@ -782,6 +797,7 @@ fn main() {
             app.state::<AppState>()
                 .grid_manager
                 .set_app(app.handle().clone());
+            bridge::register_shutdown_tasks(app.handle()).map_err(std::io::Error::other)?;
             // 主窗 Moved/Resized → 宫格子进程窗口跟随（子窗口是独立顶层窗口，
             // 不像 add_child 自动跟随）；Focused → 失焦隐藏/聚焦恢复（防幽灵浮层）；
             // CloseRequested → 杀掉全部子进程（防孤儿置顶窗口）。
@@ -810,7 +826,8 @@ fn main() {
                             state.grid_manager.show_for_focus();
                         }
                         WindowEvent::CloseRequested { .. } => {
-                            state.grid_manager.shutdown_all();
+                            let report = handle.state::<shutdown::ShutdownCoordinator>().shutdown();
+                            log_shutdown_report(&report);
                         }
                         _ => {}
                     }
@@ -913,9 +930,15 @@ fn main() {
             bridge::m0_term_report,
             bridge::m0_config,
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
             let _ = std::fs::write("/tmp/mvp-life.log", format!("RUN_ERROR: {e}\n"));
             std::process::exit(1);
+        })
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                let report = app.state::<shutdown::ShutdownCoordinator>().shutdown();
+                log_shutdown_report(&report);
+            }
         });
 }

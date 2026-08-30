@@ -164,6 +164,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  m0FrameSampling = false;
   resizeObserver?.disconnect();
   term?.dispose();
   system.bindTermWriter(null);

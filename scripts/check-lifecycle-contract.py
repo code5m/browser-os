@@ -10,9 +10,7 @@ import tempfile
 from pathlib import Path
 
 
-# M0-2.b 已落地 ShutdownCoordinator（src-tauri/src/shutdown.rs），NO_UNIFIED_SHUTDOWN_CORE
-# 已关闭并移出本集合；窗口关闭/系统退出等调用方迁移属 M0-2.c，其余缺口保留。
-EXPECTED_GAPS = (
+LEGACY_GAPS = (
     "WINDOW_CLOSE_BYPASSES_UNIFIED_CORE",
     "SYSTEM_EXIT_HOOK_MISSING",
     "GRID_PARTIAL_CREATE_ROLLBACK_MISSING",
@@ -20,6 +18,10 @@ EXPECTED_GAPS = (
     "TERMINAL_KILL_NOT_WAITED",
     "BACKGROUND_WORKERS_NOT_CANCELLABLE",
 )
+
+# M0-2.c 迁移统一退出调用方、后台线程取消、tab/PTY 清理与 grid 半初始化回滚后，
+# 机器可检生命周期缺口应为 0；后续新增 gap 必须同步本文档与所有权表。
+EXPECTED_GAPS = ()
 
 
 def function_body(source: str, name: str) -> str:
@@ -103,7 +105,7 @@ def print_gaps(gaps: list[str]) -> None:
 
 
 def run_self_test() -> int:
-    # M0-2.b 之后：核心已存在，但调用方未迁移（窗口关闭仍是旁路、无系统退出钩子）。
+    # Legacy fixture: core exists, but callers and cleanup paths are not migrated.
     legacy_main = """
 struct ShutdownCoordinator;
 fn main() {
@@ -131,7 +133,7 @@ fn start_resource_scanner() { std::thread::spawn(move || loop {}); }
 fn start_hibernation_sweeper() { std::thread::spawn(move || loop {}); }
 """
     detected = detect_gaps(legacy_main, legacy_bridge, "")
-    if tuple(detected) != EXPECTED_GAPS:
+    if tuple(detected) != LEGACY_GAPS:
         print(f"self-test: legacy mismatch: {detected}", file=sys.stderr)
         return 1
 
@@ -160,7 +162,7 @@ fn start_hibernation_sweeper() { while !shutdown_requested {} }
         (root / "main.rs").write_text(legacy_main, encoding="utf-8")
         (root / "bridge.rs").write_text(legacy_bridge, encoding="utf-8")
         (root / "grid_process.rs").write_text("", encoding="utf-8")
-        if tuple(scan_repository(root.parents[1])) != EXPECTED_GAPS:
+        if tuple(scan_repository(root.parents[1])) != LEGACY_GAPS:
             print("self-test: repository scan mismatch", file=sys.stderr)
             return 1
 
@@ -177,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument(
         "--expect-current-gaps",
         action="store_true",
-        help="pass only while the M0-2.a documented gap set remains reproducible",
+        help="pass only while the documented current gap set remains reproducible",
     )
     parser.add_argument(
         "--root",

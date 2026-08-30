@@ -100,6 +100,8 @@ pub struct AppState {
     pub m0_config: Mutex<M0Config>,
     /// 资源扫描线程只允许启动一次；线程按当前 active_tab 工作，空闲时休眠。
     pub browser_scanner_started: AtomicBool,
+    /// 统一生命周期关闭信号：M0-2.c 迁移后台线程后，循环应尽快自然退出。
+    pub shutdown_requested: Arc<AtomicBool>,
     /// 当前所有浏览器页签（id -> 信息）
     pub tabs: Mutex<HashMap<String, TabInfo>>,
     /// 当前激活的页签 id
@@ -423,12 +425,11 @@ pub fn hide_all_webviews(app: AppHandle) -> Result<(), String> {
 pub fn start_layout_enforcer(app: AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_millis(400));
-        let layouts = app
-            .state::<AppState>()
-            .child_layouts
-            .lock()
-            .unwrap()
-            .clone();
+        let state = app.state::<AppState>();
+        if state.shutdown_requested.load(Ordering::SeqCst) {
+            break;
+        }
+        let layouts = state.child_layouts.lock().unwrap().clone();
         if layouts.is_empty() {
             continue;
         }
@@ -519,13 +520,13 @@ fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
 fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
     let state = app.state::<AppState>();
     // 销毁对应子 webview（插件内部走 dispatcher，跨线程安全）
-    {
+    let close_result = {
         use tauri_plugin_browser_tabs::TabManagerState;
         let manager = app.state::<TabManagerState>();
         manager
             .close_tab(&id.to_string())
-            .map_err(|e| format!("关闭子 webview {id} 失败: {e}"))?;
-    }
+            .map_err(|e| format!("关闭子 webview {id} 失败: {e}"))
+    };
     app.state::<AppState>()
         .child_layouts
         .lock()
@@ -539,6 +540,96 @@ fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
     if active.as_deref() == Some(id) {
         *active = state.tabs.lock().unwrap().keys().next().cloned();
     }
+    close_result
+}
+
+/// 注册主进程统一退出清理任务（M0-2.c）。
+///
+/// 这里只登记真正跨资源的清理：停止后台循环、关闭 tab webview、回收 PTY、
+/// 关闭 grid 子进程并清理相关元数据。各任务由 ShutdownCoordinator 隔离执行，
+/// 单项失败不会阻断后续资源回收。
+pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
+    let coordinator = app.state::<crate::shutdown::ShutdownCoordinator>();
+
+    {
+        let app = app.clone();
+        coordinator.register("stop-background-workers", move || {
+            app.state::<AppState>()
+                .shutdown_requested
+                .store(true, Ordering::SeqCst);
+            Ok(())
+        })?;
+    }
+
+    {
+        let app = app.clone();
+        coordinator.register("close-tabs", move || {
+            use tauri_plugin_browser_tabs::TabManagerState;
+            let state = app.state::<AppState>();
+            let manager = app.state::<TabManagerState>();
+            let ids: Vec<String> = state.tabs.lock().unwrap().keys().cloned().collect();
+            let mut errors = Vec::new();
+            for id in &ids {
+                if let Err(error) = manager.close_tab(&id.to_string()) {
+                    errors.push(format!("{id}: {error}"));
+                }
+            }
+            state.child_layouts.lock().unwrap().clear();
+            state.last_position_at.lock().unwrap().clear();
+            state.tab_idle_since.lock().unwrap().clear();
+            state.hibernated_tabs.lock().unwrap().clear();
+            state.tabs.lock().unwrap().clear();
+            *state.active_tab.lock().unwrap() = None;
+            if errors.is_empty() {
+                Ok(())
+            } else {
+                Err(format!("tab close errors: {}", errors.join("; ")))
+            }
+        })?;
+    }
+
+    {
+        let app = app.clone();
+        coordinator.register("kill-terminals", move || {
+            let sessions: Vec<(String, TerminalSession)> = app
+                .state::<AppState>()
+                .terminals
+                .lock()
+                .unwrap()
+                .drain()
+                .collect();
+            let mut errors = Vec::new();
+            for (id, mut session) in sessions {
+                if let Err(error) = session.child.kill() {
+                    errors.push(format!("{id} kill: {error}"));
+                }
+                if let Err(error) = session.child.wait() {
+                    errors.push(format!("{id} wait: {error}"));
+                }
+            }
+            if errors.is_empty() {
+                Ok(())
+            } else {
+                Err(format!("terminal cleanup errors: {}", errors.join("; ")))
+            }
+        })?;
+    }
+
+    {
+        let app = app.clone();
+        coordinator.register("shutdown-grid", move || {
+            let state = app.state::<AppState>();
+            state.grid_manager.shutdown_all();
+            for i in 0..MAX_GRID {
+                let label = format!("grid-{i}");
+                state.child_layouts.lock().unwrap().remove(&label);
+                state.grid_zooms.lock().unwrap().remove(&label);
+                state.last_position_at.lock().unwrap().remove(&label);
+            }
+            Ok(())
+        })?;
+    }
+
     Ok(())
 }
 
@@ -606,12 +697,11 @@ fn start_resource_scanner(app: AppHandle) {
     }
     let app_thread = app.clone();
     std::thread::spawn(move || loop {
-        let active = app_thread
-            .state::<AppState>()
-            .active_tab
-            .lock()
-            .unwrap()
-            .clone();
+        let state = app_thread.state::<AppState>();
+        if state.shutdown_requested.load(Ordering::SeqCst) {
+            break;
+        }
+        let active = state.active_tab.lock().unwrap().clone();
         if let Some(id) = active {
             if let Err(error) = scan_resources(&app_thread, &id) {
                 eprintln!("[scan_resources] id={id} eval failed: {error}");
@@ -1176,19 +1266,31 @@ pub fn create_grid(app: AppHandle, n: usize) -> Result<usize, String> {
     };
     let state = app.state::<AppState>();
     let mgr = &state.grid_manager;
+    let mut created = Vec::new();
     for i in 0..n {
         let index = i as u32;
         let label = format!("grid-{i}");
-        mgr.get_or_spawn(index)?;
+        if let Err(error) = mgr.get_or_spawn(index) {
+            for created_index in created.iter().rev() {
+                mgr.kill_child(*created_index);
+            }
+            return Err(error);
+        }
+        created.push(index);
         // 等子进程 UDS 连接 + webview 创建完成（子进程冷启动 1~3 秒）
-        mgr.request(
+        if let Err(error) = mgr.request(
             index,
             GridCmd::CreateTab {
                 id: label,
                 url: "https://www.baidu.com".to_string(),
             },
             20000,
-        )?;
+        ) {
+            for created_index in created.iter().rev() {
+                mgr.kill_child(*created_index);
+            }
+            return Err(error);
+        }
         mgr.record_url(index, "https://www.baidu.com");
         eprintln!("[create_grid] grid-{} 子进程就绪", i);
         // 错峰启动：间隔 300ms，削掉多个 WebKit 同时冷启动的瞬时 CPU/IO 峰值
@@ -1655,6 +1757,9 @@ pub fn start_grid_load_retry(app: AppHandle) {
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_secs(3));
             let state = app3.state::<AppState>();
+            if state.shutdown_requested.load(Ordering::SeqCst) {
+                return;
+            }
             let mgr = &state.grid_manager;
             if let Err(e) = mgr.request(
                 index,
@@ -1857,6 +1962,9 @@ pub fn start_hibernation_sweeper(app: AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(60));
         let state = app.state::<AppState>();
+        if state.shutdown_requested.load(Ordering::SeqCst) {
+            break;
+        }
         if !state.hibernation_enabled.load(Ordering::Relaxed) {
             continue;
         }
@@ -2044,23 +2152,31 @@ pub fn term_spawn(app: AppHandle) -> Result<TermInfo, String> {
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
 
-    let child = pair
+    let mut child = pair
         .slave
         .spawn_command(cmd)
         .map_err(|e| format!("无法启动 shell: {e}"))?;
     drop(pair.slave);
 
-    let mut writer = pair
-        .master
-        .take_writer()
-        .map_err(|e| format!("writer: {e}"))?;
+    let mut writer = match pair.master.take_writer() {
+        Ok(writer) => writer,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("writer: {error}"));
+        }
+    };
     // 触发初始提示符
     let _ = writer.write_all(b"\n");
 
-    let reader = pair
-        .master
-        .try_clone_reader()
-        .map_err(|e| format!("reader: {e}"))?;
+    let reader = match pair.master.try_clone_reader() {
+        Ok(reader) => reader,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("reader: {error}"));
+        }
+    };
     let app2 = app.clone();
     let tid = id.clone();
     std::thread::spawn(move || {
@@ -2126,7 +2242,8 @@ pub fn term_kill(app: AppHandle, id: String) -> Result<(), String> {
     let state = app.state::<AppState>();
     let mut terms = state.terminals.lock().unwrap();
     if let Some(mut s) = terms.remove(&id) {
-        let _ = s.child.kill();
+        s.child.kill().map_err(|e| format!("终端关闭失败: {e}"))?;
+        s.child.wait().map_err(|e| format!("终端等待失败: {e}"))?;
     }
     Ok(())
 }

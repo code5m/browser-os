@@ -1,8 +1,8 @@
 # AI 模型切换与接手清单
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
-> 文档版本：V1.9。
-> 更新时间：2026-08-30 15:38 CST。
+> 文档版本：V2.0。
+> 更新时间：2026-08-30 21:39 CST。
 > 当前状态：`CODEX_RUNNING`。
 > 当前分支：`feature-M0-baseline`。
 > 当前执行器：Codex 主任务；机械文档审计与独立脚本任务已委派 `gpt-5.6-luna / low`，最终裁决仍由主任务负责。
@@ -14,17 +14,17 @@
 
 | 项目 | 当前值 |
 |------|--------|
-| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2.a = PASS` |
+| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2.a/b/c = PASS` |
 | 已拒证据 | `ac0ecac` 三批候选：场景错误 + aggregate `UNSTABLE`，结论 `REJECTED`，不得复用 |
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | tab RSS 三批持续正增长，必须由 M0-5 关闭；不属于 M0-0 PASS 伪装项 |
-| 下一检查点 | `M0-2.c = NEXT`（迁移主窗关闭、菜单退出、系统退出及 grid/PTY/tab/线程调用方到统一核心） |
+| 下一检查点 | `M0-2.d = NEXT`（补重复退出、半初始化退出和失败降级测试） |
 | 下一任务路由 | `AI:DEEP / R:high`（最终 PASS 裁决需强模型复核 diff 与失败路径） |
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
 | 禁止启动 | M1~M5；当前检查点未提交前禁止夹带下一检查点 |
-| 最近实现提交 | `ecf42f4 test(M0-2.a): freeze lifecycle ownership gaps` |
+| 最近实现提交 | `待提交 feat(M0-2.c): migrate shutdown callers` |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
 | 最新状态证据 | `logs/checkpoints/M0-0.c-20260830-1538.md` |
@@ -39,7 +39,7 @@
 - 冻结 `logs/m0-baseline-contract-v1.md`：21 个 `REQUIRED_NOW` 指标、2 个延迟指标、环境指纹、固定场景、统计公式和证据目录。
 - 将旧 `logs/baseline-2026-08-27.md` 降级为 `EXPLORATORY`，禁止当作正式性能基线。
 - 修复原计划中的循环依赖，关键路径现为：
-  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2.a(PASS) -> M0-2.b(PASS) -> M0-2.c(NEXT) -> ...`。
+  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2.a(PASS) -> M0-2.b(PASS) -> M0-2.c(PASS) -> M0-2.d(NEXT) -> ...`。
 - 完成 M0-1.a（commit `1bd56b1`）：新增 `scripts/baseline-check.sh` 与 `scripts/fixtures/clippy-sample.json`；
   验收命令全过、`--self-test` 输出 `SELF_TEST_RESULT=ALL_PASS`；`.gitignore` 对 `logs/m0-baseline/` 开例外，
   原始 `.log` 证据随 run 目录入库可追溯（见 §5 证据保留说明）。
@@ -468,6 +468,32 @@ NEXT=M0-2.c
 - 夹具同步：`EXPECTED_GAPS` 移除已关闭的 `NO_UNIFIED_SHUTDOWN_CORE`（7→6），legacy fixture 补 `ShutdownCoordinator`；所有权表升 V1.1。
 - 过程中修复一个真实语义 bug：缓存报告被原样返回，使重复/并发调用误报 `already_shutdown=false`；已改为「本次未执行则返回空报告 + 标记」，并补 `last_report()` 保留历史。
 - 技术债（明确登记）：`shutdown.rs` 顶部 `#![allow(dead_code)]` 是为满足 M0-1.a「warning 只减不增」的临时豁免，**M0-2.c 接入消费方后必须删除并重新核对警告数**。
+
+### M0-2.c 回写记录（2026-08-30，Codex 主任务）
+
+```text
+CHECKPOINT=M0-2.c
+STATUS=PASS
+EXECUTOR=Codex 主任务
+MODEL=GPT-5 Codex
+ROUTE=AI:DEEP
+COMMIT=待提交 feat(M0-2.c): migrate shutdown callers
+VERIFY=check-lifecycle-contract.py --self-test(0); --expect-current-gaps(0); 默认(0, LIFECYCLE_CONTRACT_RESULT=PASS); cargo test shutdown(0, 6 passed); cargo check --locked(0, baseline 2 warnings); npm run build(0, existing warnings); git diff --check(0)
+NEXT=M0-2.d
+```
+
+实现要点：
+
+- 主窗口 `CloseRequested` 与主进程 `RunEvent::ExitRequested` 均调用 `ShutdownCoordinator::shutdown()`，不再直连 `grid_manager.shutdown_all()`。
+- setup 注册四类真实清理任务：`stop-background-workers`、`close-tabs`、`kill-terminals`、`shutdown-grid`。
+- `AppState.shutdown_requested` 接入 layout enforcer、resource scanner、hibernation sweeper 和 grid load retry 延迟线程。
+- `close_tab` 改为先尝试关闭 webview、再无条件清理元数据，最后返回关闭错误；`term_kill` 增加 `wait()`；`create_grid` 失败时反向 kill 已创建子进程。
+- M0-2.b 的模块级 `#![allow(dead_code)]` 已删除，warning 数回到基线 2 条。
+- 前端 `TerminalPane.vue` 卸载时停止 M0 rAF 采样；`term.dispose()` 不强杀 Rust PTY，隐藏终端仍保留 shell，应用退出由统一核心兜底回收。
+
+未做项：
+
+- M0-2.d 仍需补重复退出、半初始化退出和失败降级测试；M0-2.c 只完成迁移与机器 gap 清零。
 
 ## 6. 跨模型接手审查协议
 
