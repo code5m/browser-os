@@ -24,7 +24,7 @@
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
 | 禁止启动 | M1~M5；当前检查点未提交前禁止夹带下一检查点 |
-| 最近实现提交 | `e8975d6 fix(M0-0.b): close tab lifecycle leaks` |
+| 最近实现提交 | `ecf42f4 test(M0-2.a): freeze lifecycle ownership gaps` |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
 | 最新状态证据 | `logs/checkpoints/M0-0.c-20260830-1538.md` |
