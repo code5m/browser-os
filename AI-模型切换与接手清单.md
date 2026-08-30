@@ -1,11 +1,11 @@
 # AI 模型切换与接手清单
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
-> 文档版本：V1.6。
-> 更新时间：2026-08-29 15:40 CST。
+> 文档版本：V1.7。
+> 更新时间：2026-08-30 14:27 CST。
 > 当前状态：`CODEX_RUNNING`。
 > 当前分支：`feature-M0-baseline`。
-> 当前执行器：CodeBuddy（Codex 主机，已按 §6 审查并完成 M0-1.b、M0-1.c）；后续执行器先按 §6 审查新增提交，再从 M0-0.b 续做。
+> 当前执行器：Codex 主任务；机械文档审计与独立脚本任务已委派 `gpt-5.6-luna / low`，最终裁决仍由主任务负责。
 > 冲突裁决：WBS/验收以 `详细设计与实施计划.md` 为准，指标语义以冻结契约为准，本文只维护跨模型执行指针和交接证据。
 
 ---
@@ -15,13 +15,16 @@
 | 项目 | 当前值 |
 |------|--------|
 | 已完成检查点 | `M0-0.a = PASS`、`M0-1.a = PASS`、`M0-1.b = PASS`、`M0-1.c = PASS` |
-| 下一检查点 | `M0-0.b = NEXT` |
+| 已拒证据 | `ac0ecac` 三批候选：场景错误 + aggregate `UNSTABLE`，结论 `REJECTED`，不得复用 |
+| 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
+| 下一检查点 | `M0-0.b = RE-RUN/NEXT`；通过后才可领取 `M0-0.c` |
 | 下一任务路由 | `AI:BALANCED / R:medium` |
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
 | 禁止启动 | M1~M5；当前检查点未提交前禁止夹带下一检查点 |
-| 最近实现提交 | `2b476d3 feat(M0-1.c): unify gate contract and pre-merge hook` |
-| 路线文档提交 | `c16ed27 docs(plan): route milestones by priority and model` |
+| 最近实现提交 | `e8975d6 fix(M0-0.b): close tab lifecycle leaks` |
+| 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
+| 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
 
@@ -33,7 +36,7 @@
 - 冻结 `logs/m0-baseline-contract-v1.md`：21 个 `REQUIRED_NOW` 指标、2 个延迟指标、环境指纹、固定场景、统计公式和证据目录。
 - 将旧 `logs/baseline-2026-08-27.md` 降级为 `EXPLORATORY`，禁止当作正式性能基线。
 - 修复原计划中的循环依赖，关键路径现为：
-  `M0-0.a(PASS) -> M0-1.a(PASS) -> M0-1.b(NEXT) -> M0-1.c -> M0-0.b -> M0-0.c -> M0-2...`。
+  `M0-0.a(PASS) -> M0-1.a/b/c(PASS) -> M0-0.b(RE-RUN/NEXT) -> M0-0.c(WAITING) -> M0-2...`。
 - 完成 M0-1.a（commit `1bd56b1`）：新增 `scripts/baseline-check.sh` 与 `scripts/fixtures/clippy-sample.json`；
   验收命令全过、`--self-test` 输出 `SELF_TEST_RESULT=ALL_PASS`；`.gitignore` 对 `logs/m0-baseline/` 开例外，
   原始 `.log` 证据随 run 目录入库可追溯（见 §5 证据保留说明）。
@@ -46,6 +49,9 @@
   完整性哈希（SHA256SUMS）和日志格式（`scripts/GATE-CONTRACT.md`），并接入本地 pre-merge
   流程（`scripts/pre-merge.sh` + `.githooks/pre-merge-commit` 可选 hook，不代改 git 配置）；
   baseline `--self-test` 增至 7 用例、verify 增至 9 用例（各含 schema 校验用例），全部 ALL_PASS。
+- 完成正式总控与后续门禁修复：`ac0ecac` 保证多批采集原子归档，`73e9dfb` 对全部证据校验 SHA 并按 V1.0/V1.1 选择 schema；最新完整 pre-merge 为 `ALL_PASS`。
+- 拒绝 `ac0ecac` 的三批候选证据：tab 驱动把 `about:blank` 当搜索词打开百度，六项 aggregate 指标为 `UNSTABLE`；裁决见 `logs/checkpoints/M0-0.c-20260830-0913.md`。
+- `e8975d6` 已修复上述 URL 和页签生命周期缺陷；短样本 smoke 显示 root/process FD 稳定，但 smoke 不能替代 M0-0.b/c 正式重跑。
 
 ## 2. 模型映射
 
@@ -57,11 +63,19 @@ WBS 只使用供应商无关的路由标签。切换平台时只改本表，不�
 | `AI:BALANCED` | 边界清晰的多文件功能、测试工具、普通重构 | `gpt-5.6-terra` | `TRAE_BALANCED`：待补精确模型名 |
 | `AI:DEEP` | 架构、安全、生命周期、并发、IPC、疑难故障 | `gpt-5.6-sol` | `TRAE_DEEP`：待补精确模型名 |
 
+### 最低额度执行法
+
+1. 先运行仓库脚本；格式、schema、哈希、固定夹具、构建和可枚举文档扫描以脚本结果为准，不让模型逐文件重复判断。
+2. 能写成“输入、输出、允许文件、验收命令”的独立任务，优先交给 `gpt-5.6-luna / low` 或 Trae 免费模型；默认只读，写任务必须使用互不重叠的文件范围。
+3. 低成本模型只提交候选 diff/报告，不能单独移动 `NEXT` 或宣称检查点 PASS；主执行器只审关键 diff、失败路径和脚本结果。
+4. `AI:BALANCED` 负责边界明确的实现与集成；`AI:DEEP` 仅用于安全、生命周期、并发、IPC、未知根因、连续失败和最终放行。
+5. 长时间 GUI/性能采样由脚本一次性无人值守执行；参数、commit 或环境未冻结前禁止反复试跑。smoke 只用于排错，不写入正式 PASS 分母。
+
 用户提供的微信临时图片在读取时已不存在，因此本文件不猜测 Trae 模型名称。重新附图或直接写出模型列表后，只填写上表三个 Trae 单元格并升级本文版本；任务上的 `AI:*` 标签不变。
 
 Trae 选模规则：
 
-1. `M0-1.b/c` 选 Trae 中具备仓库读写、Shell 执行和多文件理解能力的日常编码模型，映射到 `TRAE_BALANCED`。
+1. `M0-0.b/c` 选 Trae 中具备仓库读写、Shell 执行和多文件理解能力的日常编码模型，映射到 `TRAE_BALANCED`；正式 GUI 采样由既有脚本驱动。
 2. 如果免费模型无法运行 Shell 或稳定处理多文件，只允许调研，不得勾选检查点或提交 PASS。
 3. M0-2、M0-3、安全、进程树和并发任务必须使用 `TRAE_DEEP`；没有强模型时暂停，不能用轻量模型硬做。
 4. 每个检查点在证据中记录 UI 显示的完整模型名、平台、推理档位和 `MODEL_DEVIATION`。全局映射缺失不妨碍记录实际执行模型。
@@ -302,7 +316,23 @@ NEXT=M0-0.b
   （status=BLOCKED，11 项 blocked，driver=PASS，schema VALID，SHA256SUMS 通过）。
 - 未实现 M0-0.b（产品 ready/终端钩子与正式基线采集）；未修改冻结契约与产品代码。
 
-## 6. 跨模型接手审查协议（Codex 已按本协议完成 M0-1.a）
+### M0-0.b/c 被拒候选与修复记录（2026-08-30）
+
+```text
+CHECKPOINT=M0-0.b/M0-0.c candidate
+STATUS=REJECTED（不得移动指针）
+SOURCE_COMMIT=ac0ecac
+REASON=about:blank 被改写为百度搜索；aggregate 六项指标 UNSTABLE
+FIX_COMMIT=e8975d6
+DECISION_COMMIT=b9077d9
+LATEST_GATE_COMMIT=73e9dfb
+VERIFY=scripts/pre-merge.sh(0, PRE_MERGE_RESULT=ALL_PASS)
+NEXT=M0-0.b RE-RUN
+```
+
+被拒原始证据保留在 `logs/m0-baseline/` 与 `logs/m0-baseline/manifests/`，只用于诊断；裁决见 `logs/checkpoints/M0-0.c-20260830-0913.md`。`e8975d6` 后的短样本 smoke 只证明 URL/FD/线程修复方向正确，不能替代契约规定的一批正式 M0-0.b 和三批正式 M0-0.c。
+
+## 6. 跨模型接手审查协议
 
 Codex 已于 2026-08-29 按本协议审查并完成 `M0-1.a`。Trae 或后续执行器领取 `M0-1.b` 前，仍需先做审查、不直接继续写代码：
 
@@ -328,7 +358,9 @@ git log --reverse --oneline --decorate 504fcd7..HEAD
 
 先阅读 AI-模型切换与接手清单.md、详细设计与实施计划.md §2.2、logs/m0-baseline-contract-v1.md。每轮只从文档领取唯一 NEXT，按 AI:* 路由选择 Trae 模型，完成实现、全部验收、四处回写和独立提交。提交后确认工作树干净；未命中硬停止条件时，不用等待用户回复，立即领取下一个 NEXT。
 
-第一轮是 M0-0.b：先审查并复跑 M0-1.a/fix1/M0-1.b/M0-1.c 证据，再按契约 §6.1/§6.3 补产品 ready 钩子（主前端 mount + 2×rAF + 1 次 IPC 往返后写带 run_id 的 ready 信号）与终端 begin/end 测量钩子，然后用 M0-1 脚本采集契约中全部 REQUIRED_NOW release 指标（含 idle/资源循环/终端吞吐正式样本），生成完整证据目录。该轮不实现 M0-0.c（3 批采集归档）、不修改冻结契约。验收以契约 §9 M0-0.b 为准（任一必需指标 BLOCKED、缺原始日志或工作树非干净即 FAIL）。验收全通过后新增 logs/checkpoints/M0-0.b-<时间>.md，记录界面显示的完整 Trae 模型名和结果，并独立提交 feat(M0-0.b): collect REQUIRED_NOW release baseline。
+第一轮是 M0-0.b 重跑：先确认工作树干净且 HEAD 包含 e8975d6、b9077d9、73e9dfb，运行 scripts/pre-merge.sh；随后只运行 scripts/collect-m0-baseline.sh 一次正式批次。不得复用 ac0ecac 的被拒证据，也不要再次实现已存在的 ready/终端钩子。质量与资源 summary 同时 PASS、schema/SHA 有效且场景 URL 为 about:blank 后，新增 logs/checkpoints/M0-0.b-<时间>.md 并独立提交 docs(M0-0.b): accept repaired release baseline。若单批失败，留在 M0-0.b 修复，禁止运行三批。
+
+M0-0.b 提交并恢复干净工作树后，第二轮才运行 scripts/collect-m0-baseline.sh --batches 3。三批必须同 commit/契约/环境且全部 PASS；aggregate PASS 才可完成 M0-0.c。aggregate UNSTABLE 时保留证据、逐指标归因并维持 M0-0.c 未完成，不得为省额度重复盲跑。
 
 同一检查点连续两次失败、缺少 DEEP 等效模型、缺少 GUI/权限/环境、需要改冻结契约或人工裁决、发现不明改动、额度耗尽或到达 M0-7.c 时必须停止，回写 BLOCKED 和证据；不得伪造 PASS。
 ```
