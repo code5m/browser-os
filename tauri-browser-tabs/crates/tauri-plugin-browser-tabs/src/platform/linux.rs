@@ -5,7 +5,19 @@
 //! `WebKitWebView` widget. This module forces the allocation.
 
 use crate::models::{LogicalRect, Result};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 use tauri::{Runtime, Webview};
+
+type LayoutSignature = (i32, i32, i32, i32, i32, i32, i32, i32);
+static LAST_SIG: OnceLock<Mutex<HashMap<String, LayoutSignature>>> = OnceLock::new();
+
+/// Remove log-dedup state when a child webview is destroyed.
+pub fn forget_size_allocation(label: &str) {
+    if let Some(last) = LAST_SIG.get() {
+        last.lock().unwrap().remove(label);
+    }
+}
 
 /// Ensure the underlying WebKitGTK widget is properly size-allocated,
 /// given a rect in logical (CSS) pixels.
@@ -35,11 +47,6 @@ pub fn ensure_size_allocated<R: Runtime>(webview: &Webview<R>, rect: LogicalRect
                 // 日志去重：守护线程每 400ms 重放，对"纠正后不回落"的隐藏 webview
                 // 同一签名会无限刷屏。按 label 分别记录签名，只在签名变化时输出
                 // （全局单槽去重会让两个页签交替纠正时刷屏/或互相吞掉，无法定案）。
-                use std::collections::HashMap;
-                use std::sync::{Mutex, OnceLock};
-                static LAST_SIG: OnceLock<
-                    Mutex<HashMap<String, (i32, i32, i32, i32, i32, i32, i32, i32)>>,
-                > = OnceLock::new();
                 let sig = (x, y, w, h, a.x(), a.y(), a.width(), a.height());
                 let mut last = LAST_SIG.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
                 if last.get(&label) != Some(&sig) {

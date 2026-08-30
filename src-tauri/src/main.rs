@@ -391,7 +391,7 @@ fn dispatch_grid_cmd(
 /// 结果写 /tmp/grid-selftest-result.txt（PASS/FAIL + 各步明细），随后退出进程。
 fn run_grid_selftest(app: tauri::AppHandle) {
     std::thread::spawn(move || {
-        let mut log = |m: &str| {
+        let log = |m: &str| {
             eprintln!("[grid-selftest] {}", m);
             let _ = std::fs::OpenOptions::new()
                 .create(true)

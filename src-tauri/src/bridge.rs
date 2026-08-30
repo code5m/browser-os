@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use tauri::{AppHandle, Emitter, Manager, Webview};
+use tauri::{AppHandle, Emitter, Manager};
 use url::Url;
 
 use crate::domain::*;
@@ -98,8 +98,8 @@ pub struct AppState {
     pub pending_jobs: Mutex<HashMap<String, SyncJob>>,
     /// M0-0.b 测量钩子配置（环境变量注入；见 `M0Config`）
     pub m0_config: Mutex<M0Config>,
-    /// 控制资源扫描后台线程的生命周期
-    pub browser_scanning: Arc<AtomicBool>,
+    /// 资源扫描线程只允许启动一次；线程按当前 active_tab 工作，空闲时休眠。
+    pub browser_scanner_started: AtomicBool,
     /// 当前所有浏览器页签（id -> 信息）
     pub tabs: Mutex<HashMap<String, TabInfo>>,
     /// 当前激活的页签 id
@@ -155,8 +155,8 @@ fn normalize_url(input: &str) -> String {
     if s.starts_with("http://") || s.starts_with("https://") || s.starts_with("file://") {
         return s.to_string();
     }
-    // 含协议分隔但非 http（ftp 等）原样
-    if s.contains("://") {
+    // 含协议分隔但非 http（ftp 等），以及不含 :// 的 about: URL 原样。
+    if s.contains("://") || s.starts_with("about:") {
         return s.to_string();
     }
     // 像搜索词（含空格、中文、或不是 域名.后缀 形态）-> 搜索引擎
@@ -172,6 +172,22 @@ fn normalize_url(input: &str) -> String {
     format!("https://{}", s)
 }
 
+#[cfg(test)]
+mod normalize_url_tests {
+    use super::normalize_url;
+
+    #[test]
+    fn preserves_about_blank_for_offline_browser_scenarios() {
+        assert_eq!(normalize_url("about:blank"), "about:blank");
+    }
+
+    #[test]
+    fn keeps_domain_and_search_input_behavior() {
+        assert_eq!(normalize_url("example.com"), "https://example.com");
+        assert!(normalize_url("search words").starts_with("https://www.baidu.com/s?wd="));
+    }
+}
+
 /// 打开浏览器（内嵌为 main 窗口的子 webview）。
 /// 内部等价于「新建一个页签」并设为激活页签。前端优先使用 tab_new 多开页签。
 #[tauri::command]
@@ -184,7 +200,7 @@ pub fn open_browser(app: AppHandle, url: String) -> Result<(), String> {
 #[tauri::command]
 pub fn close_browser(app: AppHandle) -> Result<(), String> {
     if let Some(id) = app.state::<AppState>().active_tab.lock().unwrap().clone() {
-        close_tab(&app, &id);
+        close_tab(&app, &id)?;
     }
     Ok(())
 }
@@ -442,11 +458,6 @@ fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
     let id = format!("tab-{}", *counter);
     drop(counter);
 
-    // 停止旧的资源扫描线程
-    app.state::<AppState>()
-        .browser_scanning
-        .store(false, Ordering::Relaxed);
-
     let title0 = match Url::parse(&target) {
         Ok(u) => u.host_str().unwrap_or(&target).to_string(),
         Err(_) => target.clone(),
@@ -505,20 +516,22 @@ fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
 }
 
 /// 关闭指定页签，并清理状态。
-fn close_tab(app: &AppHandle, id: &str) {
+fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
     let state = app.state::<AppState>();
-    state.browser_scanning.store(false, Ordering::Relaxed);
     // 销毁对应子 webview（插件内部走 dispatcher，跨线程安全）
     {
         use tauri_plugin_browser_tabs::TabManagerState;
         let manager = app.state::<TabManagerState>();
-        let _ = manager.close_tab(&id.to_string());
+        manager
+            .close_tab(&id.to_string())
+            .map_err(|e| format!("关闭子 webview {id} 失败: {e}"))?;
     }
     app.state::<AppState>()
         .child_layouts
         .lock()
         .unwrap()
         .remove(id);
+    state.last_position_at.lock().unwrap().remove(id);
     state.tab_idle_since.lock().unwrap().remove(id);
     state.hibernated_tabs.lock().unwrap().remove(id);
     state.tabs.lock().unwrap().remove(id);
@@ -526,6 +539,7 @@ fn close_tab(app: &AppHandle, id: &str) {
     if active.as_deref() == Some(id) {
         *active = state.tabs.lock().unwrap().keys().next().cloned();
     }
+    Ok(())
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -570,35 +584,28 @@ pub fn report_title(app: AppHandle, title: String) {
 /// 对指定子窗口执行 JS 资源扫描，并回传真实标题，通过事件推送给前端。
 /// 注意：WebviewWindow 的 eval 在 Tauri 2 主线程执行即可；资源/标题的回传目前通过
 /// webview 内已注入的 `window.ipc.postMessage` 通道（见 resources_eval.js 改造）由前端监听，
-/// 这里仅负责触发执行。扫描线程通过 run_on_main_thread 调度到此，保证在主线程。
-fn scan_resources(_app: AppHandle, _id: &str, win: &Webview) {
+/// 这里仅负责触发执行。插件的 Webview dispatcher 支持从扫描线程调用。
+fn scan_resources(app: &AppHandle, id: &str) -> Result<(), String> {
     // 执行资源扫描脚本（脚本内部会把结果经 ipc 回传，由前端 onBrowserResources 接收）
     let js = include_str!("../injected/resources_eval.js");
-    if let Err(e) = win.eval(js) {
-        eprintln!("[scan_resources] eval 失败: {e}");
-    }
+    plugin_eval(app, id, js)?;
     // 标题回传：执行一段脚本把 document.title 经 invoke 回传（见 report_title command）
-    if let Err(e) = win.eval(
+    plugin_eval(
+        app,
+        id,
         "window.__TAURI__ && window.__TAURI__.core.invoke('report_title', { title: document.title })",
-    ) {
-        eprintln!("[scan_resources] 标题回传失败: {e}");
-    }
+    )?;
+    Ok(())
 }
 
-/// 启动后台轮询线程：每 2 秒扫描一次当前激活页签的资源，直到浏览器关闭。
-/// 线程仅作定时器，真正的 webview 操作通过 run_on_main_thread 调度到主线程执行。
+/// 启动进程级唯一后台线程：每 2 秒扫描一次当前激活页签的资源。
 fn start_resource_scanner(app: AppHandle) {
     let state = app.state::<AppState>();
-    state.browser_scanning.store(true, Ordering::Relaxed);
+    if state.browser_scanner_started.swap(true, Ordering::SeqCst) {
+        return;
+    }
     let app_thread = app.clone();
     std::thread::spawn(move || loop {
-        if !app_thread
-            .state::<AppState>()
-            .browser_scanning
-            .load(Ordering::Relaxed)
-        {
-            break;
-        }
         let active = app_thread
             .state::<AppState>()
             .active_tab
@@ -606,17 +613,9 @@ fn start_resource_scanner(app: AppHandle) {
             .unwrap()
             .clone();
         if let Some(id) = active {
-            let a = app_thread.clone();
-            let a2 = a.clone();
-            let _ = a.run_on_main_thread(move || {
-                if let Some(win) = a2.get_webview(&id) {
-                    scan_resources(a2.clone(), &id, &win);
-                } else {
-                    a2.state::<AppState>()
-                        .browser_scanning
-                        .store(false, Ordering::Relaxed);
-                }
-            });
+            if let Err(error) = scan_resources(&app_thread, &id) {
+                eprintln!("[scan_resources] id={id} eval failed: {error}");
+            }
         }
         std::thread::sleep(std::time::Duration::from_secs(2));
     });
@@ -1555,8 +1554,7 @@ pub fn tab_new(app: AppHandle, url: String) -> Result<TabInfo, String> {
 /// 关闭指定页签。
 #[tauri::command]
 pub fn tab_close(app: AppHandle, id: String) -> Result<(), String> {
-    close_tab(&app, &id);
-    Ok(())
+    close_tab(&app, &id)
 }
 
 /// 在指定页签中打开网址（导航）。

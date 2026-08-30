@@ -109,7 +109,7 @@ impl TabManager {
         {
             let id_lf = options.id.clone();
             let app_lf = self.app.clone();
-            webview.with_webview(move |pwv| {
+            let _ = webview.with_webview(move |pwv| {
                 use webkit2gtk::WebViewExt;
                 let gtk_wv = pwv.inner();
                 let id1 = id_lf.clone();
@@ -195,10 +195,12 @@ impl TabManager {
     pub fn close_tab(&self, id: &TabId) -> Result<()> {
         let mut tabs = self.tabs.write();
         let webview = tabs
-            .remove(id)
+            .get(id)
             .ok_or_else(|| BrowserTabError::TabNotFound(id.clone()))?;
 
         webview.close()?;
+        tabs.remove(id);
+        platform::forget_native_layout(id);
         Ok(())
     }
 
