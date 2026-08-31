@@ -19,7 +19,7 @@
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | tab RSS 三批持续正增长，必须由 M0-5 关闭；不属于 M0-0 PASS 伪装项 |
-| 下一检查点 | `M0-4.a = NEXT`（删除零 API 引用的 `gtk`/`wry` 直接依赖和过时 C3 注释） |
+| 下一检查点 | `M0-4.b = NEXT`（修复 `useBrowserStore` 静态/动态 import 混用并配置 `manualChunks`） |
 | 下一任务路由 | `AI:BALANCED / R:medium` |
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
@@ -589,6 +589,27 @@ NEXT=M0-4.a
 - 审计：`log_audit(action="launch")` 记录 program 与 args。
 - 修正：`str::as_str()` 在当前工具链不稳定 → 改为直接模式匹配。
 - 强模型复核点：可执行性校验依赖 PATH，若攻击者可写 PATH 覆盖目录仍可能诱导启动；后续可考虑锁定绝对路径白名单。
+
+### M0-4.a 回写记录（2026-08-31，CodeBuddy / Codex 主机）
+
+```text
+CHECKPOINT=M0-4.a
+STATUS=PASS
+EXECUTOR=CodeBuddy（Codex 主机）
+MODEL=界面未显示完整模型名
+ROUTE=AI:BALANCED
+MODEL_DEVIATION=UI 未显示完整模型名，推理档位未能精确记录
+COMMIT=提交信息 chore(M0-4.a): drop unused gtk and wry dependencies
+VERIFY=pre-merge.sh(0, PRE_MERGE_RESULT=ALL_PASS); rg "gtk::|wry::" src-tauri/src(无匹配); cargo check --locked(0, 既有 2 warnings); cargo fmt --all --check(0); cargo test(0, 44 passed); git diff --check(0)
+NEXT=M0-4.b
+```
+
+实现要点：
+
+- 删除 `gtk = "0.18"` 与 `wry = "0.55"` 直接依赖，以及其上「方案 C3（gtk::Overlay + gtk::Fixed 内嵌子 webview）」的过时注释；原位置留下说明，避免后人按 C3 假设做修复。
+- 背景：审核报告早已记录「决策文档称 C3，实际实现是方案 D（Window::add_child）」，该依赖为 C3 准备但代码零引用。
+- lockfile 仅减 2 行（依赖包本身仍被 tauri-runtime-wry / 插件使用）。
+- **未动** `tauri-browser-tabs` 插件 crate 的 `gtk`/`webkit2gtk`：那是插件做原生布局的真实依赖，不属零引用。
 
 ### M0-3.c 回写记录（2026-08-31，CodeBuddy / Codex 主机）
 

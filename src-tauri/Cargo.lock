@@ -2062,7 +2062,6 @@ dependencies = [
  "chrono",
  "freedesktop-icons",
  "git2",
- "gtk",
  "keyring",
  "libc",
  "open",
@@ -2078,7 +2077,6 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
- "wry",
 ]
 
 [[package]]
