@@ -14,10 +14,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# M0-3.b 已收口：capability 删除了残留的 `browser` label，远程权限集不再向外部页面
+# 开放写盘/开终端类副作用命令，且上报类命令带来源校验与载荷边界。
+# 剩余缺口归 M0-3.c（路径策略）与 M0-3.d（launch_app 应用条目白名单）。
 EXPECTED_GAPS = (
     "LAUNCH_APP_ARBITRARY_SHELL",
     "FILE_COMMANDS_WITHOUT_PATH_POLICY",
-    "CAPABILITY_STALE_BROWSER_LABEL",
     "REMOTE_WILDCARD_IPC",
     "EVAL_WITHOUT_SOURCE_CHECK",
 )
@@ -44,9 +46,24 @@ def detect_gaps(bridge_source: str, capability_sources: str) -> list[str]:
     if has_file_commands and not has_path_policy:
         gaps.append("FILE_COMMANDS_WITHOUT_PATH_POLICY")
 
-    # SEC-03：capability 里残留已不存在的 browser label。
+    # SEC-03（M0-3.b 已收口）：capability 里不得再残留已不存在的 browser label。
     if re.search(r'"(windows|webviews)"\s*:\s*\[[^\]]*"browser"', capability_sources):
         gaps.append("CAPABILITY_STALE_BROWSER_LABEL")
+
+    # SEC-08：远程权限集（remote-collect）不得向外部页面开放有副作用的命令。
+    remote_block = re.search(
+        r'identifier\s*=\s*"remote-collect"[\s\S]{0,400}?commands\.allow\s*=\s*\[([^\]]*)\]',
+        capability_sources,
+    )
+    if remote_block:
+        remote_allow = remote_block.group(1)
+        leaked = [
+            c
+            for c in ("save_note", "request_open_terminal", "collect_selection")
+            if f'"{c}"' in remote_allow
+        ]
+        if leaked:
+            gaps.append("REMOTE_SIDE_EFFECT_COMMANDS_EXPOSED")
 
     # SEC-04：remote urls 全通配。
     if re.search(r'"remote"\s*:\s*\{[\s\S]{0,200}?"https?://\*"', capability_sources):
@@ -62,12 +79,20 @@ def detect_gaps(bridge_source: str, capability_sources: str) -> list[str]:
 
 
 def load_capability_sources(root: Path) -> str:
-    capability_dir = root / "src-tauri" / "capabilities"
-    if not capability_dir.is_dir():
-        return ""
+    """capabilities/*.json + permissions/*.toml。
+
+    远程权限集（remote-collect）的实际命令清单定义在 permissions/*.toml，
+    只扫 capabilities 会漏掉真正的放行面，因此两类配置一起纳入。
+    """
     parts = []
-    for path in sorted(capability_dir.glob("*.json")):
-        parts.append(path.read_text(encoding="utf-8"))
+    for directory, pattern in (
+        (root / "src-tauri" / "capabilities", "*.json"),
+        (root / "src-tauri" / "permissions", "*.toml"),
+    ):
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.glob(pattern)):
+            parts.append(path.read_text(encoding="utf-8"))
     return "\n".join(parts)
 
 
@@ -102,8 +127,18 @@ pub fn eval_in_tab(id: String, js: String) {
   "remote": {"urls": ["https://*", "http://*"]}
 }
 """
-    detected = detect_gaps(legacy_bridge, legacy_capabilities)
-    if tuple(detected) != EXPECTED_GAPS:
+    # M0-3.b 之前的真实配置：远程集放行写盘与开终端命令。
+    legacy_permissions = """
+[[permission]]
+identifier = "remote-collect"
+commands.allow = ["collect_selection", "save_note", "request_open_terminal", "report_resources"]
+"""
+    legacy_gaps = list(EXPECTED_GAPS) + [
+        "CAPABILITY_STALE_BROWSER_LABEL",
+        "REMOTE_SIDE_EFFECT_COMMANDS_EXPOSED",
+    ]
+    detected = detect_gaps(legacy_bridge, legacy_capabilities + "\n" + legacy_permissions)
+    if sorted(detected) != sorted(legacy_gaps):
         print(f"self-test: legacy mismatch: {detected}", file=sys.stderr)
         return 1
 
@@ -130,7 +165,12 @@ pub fn eval_in_tab(id: String, js: String) {
   "remote": {"urls": ["https://trusted.example"]}
 }
 """
-    if detect_gaps(resolved_bridge, resolved_capabilities):
+    resolved_permissions = """
+[[permission]]
+identifier = "remote-collect"
+commands.allow = ["report_resources", "report_title", "report_grid_load_failed"]
+"""
+    if detect_gaps(resolved_bridge, resolved_capabilities + "\n" + resolved_permissions):
         print("self-test: resolved fixture still reports gaps", file=sys.stderr)
         return 1
 
@@ -143,7 +183,11 @@ pub fn eval_in_tab(id: String, js: String) {
         (root / "src-tauri" / "capabilities" / "default.json").write_text(
             legacy_capabilities, encoding="utf-8"
         )
-        if tuple(scan_repository(root)) != EXPECTED_GAPS:
+        (root / "src-tauri" / "permissions").mkdir(parents=True)
+        (root / "src-tauri" / "permissions" / "remote-collect.toml").write_text(
+            legacy_permissions, encoding="utf-8"
+        )
+        if sorted(scan_repository(root)) != sorted(legacy_gaps):
             print("self-test: repository scan mismatch", file=sys.stderr)
             return 1
 

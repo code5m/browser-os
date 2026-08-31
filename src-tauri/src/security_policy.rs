@@ -14,7 +14,9 @@
 // M0-3.b/c/d 接入生产调用方后必须删除本豁免并重新核对 warning 基线。
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 /// 安全策略拒绝原因。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +37,14 @@ pub enum PolicyError {
     HtmlTooLarge { bytes: usize, limit: usize },
     /// HTML 含危险片段。
     DangerousHtml(&'static str),
+    /// 文本字段超长。
+    PayloadTooLarge { bytes: usize, limit: usize },
+    /// 集合类载荷条目过多。
+    TooManyItems { count: usize, limit: usize },
+    /// 缺少用户意图令牌（外部页面发起的有副作用调用）。
+    MissingUserIntent { scope: String },
+    /// 用户意图令牌已过期。
+    ExpiredUserIntent { scope: String },
 }
 
 impl std::fmt::Display for PolicyError {
@@ -56,6 +66,18 @@ impl std::fmt::Display for PolicyError {
                 write!(f, "HTML 超长：{bytes} > {limit} 字节")
             }
             PolicyError::DangerousHtml(fragment) => write!(f, "HTML 含危险片段：{fragment}"),
+            PolicyError::PayloadTooLarge { bytes, limit } => {
+                write!(f, "载荷超长：{bytes} > {limit} 字节")
+            }
+            PolicyError::TooManyItems { count, limit } => {
+                write!(f, "条目过多：{count} > {limit}")
+            }
+            PolicyError::MissingUserIntent { scope } => {
+                write!(f, "缺少用户意图令牌（作用域 {scope}）")
+            }
+            PolicyError::ExpiredUserIntent { scope } => {
+                write!(f, "用户意图令牌已过期（作用域 {scope}）")
+            }
         }
     }
 }
@@ -168,7 +190,119 @@ pub fn check_html(html: &str) -> Result<(), PolicyError> {
 
 /// 策略指纹：启动日志与诊断用，便于确认运行中的二进制对应哪版策略契约。
 pub fn policy_fingerprint() -> &'static str {
-    "security-policy-v1/max_html=1MiB/labels=main,tab-*,grid-*"
+    "security-policy-v2/max_html=1MiB/labels=main,tab-*,grid-*/intents=one-shot"
+}
+
+// ===========================================================================
+// M0-3.b：来源校验 + 用户意图令牌 + 载荷边界
+// ===========================================================================
+
+/// 单条上报文本字段的默认上限（防止外部页面用超大字符串拖垮主进程内存）。
+pub const MAX_TEXT_FIELD_BYTES: usize = 64 * 1024; // 64 KiB
+/// `report_resources` 单次上报的条目上限（防止事件洪水）。
+pub const MAX_RESOURCE_ITEMS: usize = 500;
+/// 意图令牌默认有效期。
+pub const INTENT_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// 意图作用域：必须与命令一一对应，避免一个令牌串到别的副作用上。
+pub const INTENT_SAVE_NOTE: &str = "save_note";
+pub const INTENT_COLLECT_SELECTION: &str = "collect_selection";
+pub const INTENT_OPEN_TERMINAL: &str = "request_open_terminal";
+
+/// 校验文本字段长度（同时拒绝超长，避免后续处理被放大）。
+pub fn check_text_field(_name: &str, value: &str, max_bytes: usize) -> Result<(), PolicyError> {
+    if value.len() > max_bytes {
+        return Err(PolicyError::PayloadTooLarge {
+            bytes: value.len(),
+            limit: max_bytes,
+        });
+    }
+    Ok(())
+}
+
+/// 校验集合类载荷的条目数量。
+pub fn check_items_count(count: usize, max: usize) -> Result<(), PolicyError> {
+    if count > max {
+        return Err(PolicyError::TooManyItems { count, limit: max });
+    }
+    Ok(())
+}
+
+/// 来源校验 + 用户意图校验（M0-3.b 收口核心）。
+///
+/// 规则：
+///   - 调用方 label 必须已登记（`main` / `tab-*` / `grid-*`），未登记（如残留的
+///     `browser` 或伪造 label）一律拒绝；
+///   - `main` 是受信任的主窗口 UI，其调用本身即用户手势的结果，无需令牌；
+///   - 来自 `tab-*` / `grid-*`（外部页面）的**有副作用**调用必须出示一次性意图令牌。
+pub fn check_remote_invocation(
+    label: &str,
+    scope: &str,
+    token: Option<&str>,
+    registry: &IntentRegistry,
+) -> Result<(), PolicyError> {
+    check_webview_label(label)?;
+    if label == "main" {
+        return Ok(());
+    }
+    let token = token.ok_or(PolicyError::MissingUserIntent {
+        scope: scope.to_string(),
+    })?;
+    registry.consume(scope, token)
+}
+
+/// 一次性用户意图令牌登记表：签发 → 单次消费，过期或重放均拒绝。
+#[derive(Default)]
+pub struct IntentRegistry {
+    tokens: Mutex<HashMap<String, (String, std::time::Instant)>>,
+}
+
+impl IntentRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 签发一个作用域绑定的意图令牌（只能由受信任的主窗口调用）。
+    pub fn issue(&self, scope: &str, ttl: std::time::Duration) -> String {
+        let token = format!(
+            "{}-{}",
+            scope,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        );
+        self.tokens.lock().unwrap().insert(
+            token.clone(),
+            (scope.to_string(), std::time::Instant::now() + ttl),
+        );
+        token
+    }
+
+    /// 消费令牌：作用域必须匹配、未过期，且消费后立即失效（防重放）。
+    pub fn consume(&self, scope: &str, token: &str) -> Result<(), PolicyError> {
+        let mut guard = self.tokens.lock().unwrap();
+        let entry = guard.remove(token).ok_or(PolicyError::MissingUserIntent {
+            scope: scope.to_string(),
+        })?;
+        let (issued_scope, expires_at) = entry;
+        if issued_scope != scope {
+            return Err(PolicyError::MissingUserIntent {
+                scope: scope.to_string(),
+            });
+        }
+        if std::time::Instant::now() > expires_at {
+            return Err(PolicyError::ExpiredUserIntent {
+                scope: scope.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    /// 当前未消费的令牌数量（诊断用）。
+    pub fn pending(&self) -> usize {
+        self.tokens.lock().unwrap().len()
+    }
 }
 
 /// 便捷入口：把「路径 + 用户意图」合成一次判定（M0-3.b 收口远程 IPC 时使用）。
@@ -346,6 +480,95 @@ mod security_policy_tests {
         assert!(check_html("<div>安全内容</div>").is_ok());
     }
 
+    // ---------- M0-3.b：来源 / 用户意图 / 载荷边界 ----------
+
+    #[test]
+    fn main_window_invocation_needs_no_intent_token() {
+        let registry = IntentRegistry::new();
+        // 主窗口 UI 的点击本身就是用户手势的结果，不需要令牌。
+        assert!(check_remote_invocation("main", INTENT_SAVE_NOTE, None, &registry).is_ok());
+    }
+
+    #[test]
+    fn remote_invocation_without_token_is_rejected() {
+        let registry = IntentRegistry::new();
+        let err = check_remote_invocation("tab-1", INTENT_SAVE_NOTE, None, &registry)
+            .expect_err("外部页面无令牌写入必须被拒绝");
+        assert_eq!(
+            err,
+            PolicyError::MissingUserIntent {
+                scope: INTENT_SAVE_NOTE.to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn stale_browser_label_invocation_is_rejected() {
+        let registry = IntentRegistry::new();
+        let token = registry.issue(INTENT_SAVE_NOTE, INTENT_TTL);
+        // 即使带了合法令牌，未登记 label 也要被拒绝（SEC-03）。
+        assert!(
+            check_remote_invocation("browser", INTENT_SAVE_NOTE, Some(&token), &registry).is_err()
+        );
+    }
+
+    #[test]
+    fn intent_token_is_one_shot_and_scope_bound() {
+        let registry = IntentRegistry::new();
+        let token = registry.issue(INTENT_SAVE_NOTE, INTENT_TTL);
+        assert!(
+            check_remote_invocation("tab-1", INTENT_SAVE_NOTE, Some(&token), &registry).is_ok()
+        );
+        // 重放：第二次必须失败。
+        assert!(
+            check_remote_invocation("tab-1", INTENT_SAVE_NOTE, Some(&token), &registry).is_err(),
+            "令牌必须一次性"
+        );
+        // 串作用域：save_note 的令牌不能用来开终端，且必须被消费掉（不得残留）。
+        let other = registry.issue(INTENT_SAVE_NOTE, INTENT_TTL);
+        assert!(
+            check_remote_invocation("tab-1", INTENT_OPEN_TERMINAL, Some(&other), &registry)
+                .is_err(),
+            "作用域不匹配的令牌必须被拒绝"
+        );
+        assert_eq!(
+            registry.pending(),
+            0,
+            "被拒绝的令牌也必须出表，避免无效令牌堆积"
+        );
+    }
+
+    #[test]
+    fn expired_intent_token_is_rejected() {
+        let registry = IntentRegistry::new();
+        let token = registry.issue(
+            INTENT_COLLECT_SELECTION,
+            std::time::Duration::from_millis(0),
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert_eq!(
+            registry.consume(INTENT_COLLECT_SELECTION, &token),
+            Err(PolicyError::ExpiredUserIntent {
+                scope: INTENT_COLLECT_SELECTION.to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn oversized_and_bulk_payloads_are_rejected() {
+        let huge = "x".repeat(MAX_TEXT_FIELD_BYTES + 1);
+        assert!(matches!(
+            check_text_field("text", &huge, MAX_TEXT_FIELD_BYTES),
+            Err(PolicyError::PayloadTooLarge { .. })
+        ));
+        assert!(check_text_field("text", "正常长度", MAX_TEXT_FIELD_BYTES).is_ok());
+        assert!(matches!(
+            check_items_count(MAX_RESOURCE_ITEMS + 1, MAX_RESOURCE_ITEMS),
+            Err(PolicyError::TooManyItems { .. })
+        ));
+        assert!(check_items_count(MAX_RESOURCE_ITEMS, MAX_RESOURCE_ITEMS).is_ok());
+    }
+
     #[test]
     fn decision_helpers_carry_reason() {
         let allow = Decision::allow();
@@ -353,6 +576,6 @@ mod security_policy_tests {
         let deny = Decision::deny(PolicyError::EmptyCommand);
         assert!(!deny.allowed);
         assert_eq!(deny.reason, Some(PolicyError::EmptyCommand));
-        assert!(policy_fingerprint().contains("security-policy-v1"));
+        assert!(policy_fingerprint().contains("security-policy-v2"));
     }
 }

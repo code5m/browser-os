@@ -1,4 +1,8 @@
 [[permission]]
 identifier = "remote-collect"
-description = "允许远程浏览窗口调用 collect_selection 与 report_resources"
-commands.allow = ["collect_selection", "report_resources", "report_title", "save_note", "request_open_terminal", "report_grid_load_failed"]
+description = "仅允许远程浏览窗口调用无副作用的回传类命令；写盘/开终端等副作用命令不向远程开放（M0-3.b）"
+# M0-3.b：外部页面（tab-*/grid-*）只能调用「回传类」命令。
+# collect_selection / save_note（写盘）与 request_open_terminal（授予 shell 能力）
+# 已从远程集移除：它们仍是主窗口可用命令（见 default-commands），且即使被调用
+# 也要求一次性用户意图令牌（见 security_policy::check_remote_invocation）。
+commands.allow = ["report_resources", "report_title", "report_grid_load_failed"]

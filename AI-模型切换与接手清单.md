@@ -19,7 +19,7 @@
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | tab RSS 三批持续正增长，必须由 M0-5 关闭；不属于 M0-0 PASS 伪装项 |
-| 下一检查点 | `M0-3.b = NEXT`（收口 capability 与远程 IPC 来源/用户意图） |
+| 下一检查点 | `M0-3.c = NEXT`（收口 canonical path、允许根目录和符号链接防逃逸） |
 | 下一任务路由 | `AI:DEEP / R:xhigh`（安全收口；最终 PASS 裁决需强模型复核拒绝用例与误放行风险） |
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
@@ -542,6 +542,30 @@ NEXT=M0-3.b
 - **收口未开始**：M0-3.b（capability/远程 IPC 来源与用户意图）、M0-3.c（canonical path/允许根目录/符号链接）、M0-3.d（`launch_app` 已解析应用条目 + 审计）均未做。
 - 顺带清理：删除 M0-2.d 遗留的未使用导入（1 条 warning）；同步 4 处仍写 `M0-2.d = NEXT` 的旧文字与过期任务卡模板（原为 M0-2.a 卡）。
 - 强模型复核点：`check_shell_command` 只是字符级最小契约，**不足以对抗所有注入**；M0-3.d 必须以应用条目白名单为准，不得把它当成充分防护。
+
+### M0-3.b 回写记录（2026-08-31，CodeBuddy / Codex 主机）
+
+```text
+CHECKPOINT=M0-3.b
+STATUS=PASS
+EXECUTOR=CodeBuddy（Codex 主机）
+MODEL=界面未显示完整模型名
+ROUTE=AI:DEEP
+MODEL_DEVIATION=UI 未显示完整模型名，推理档位未能精确记录
+COMMIT=提交信息 fix(M0-3.b): close capability and remote IPC boundary
+VERIFY=pre-merge.sh(0, PRE_MERGE_RESULT=ALL_PASS); cargo test(0, 34 passed); check-security-policy.py --self-test(0); --expect-current-gaps(0); 默认(1, 4 GAP); cargo check(0, 既有 2 warnings); git diff --check(0)
+NEXT=M0-3.c
+```
+
+实现要点：
+
+- **关键修复（SEC-08）**：远程权限集 `remote-collect` 名实不符——文件自述「只允许 collect_selection 与 report_resources」，实际放行 6 个命令，其中 `save_note`（写盘）与 `request_open_terminal`（授予 shell 能力）可被任意外部页面调用。已收紧为仅回传类 3 个。
+- capability 收口：`default.json` windows 与 `browser-remote.json` webviews 删除残留 `browser` label（SEC-03 关闭），远程 webviews 收紧为 `tab-*`/`grid-*`。
+- 三层校验落地：**来源**（命令加 `tauri::Webview`，label 必须登记）、**意图**（`IntentRegistry` 一次性令牌，30s TTL、作用域绑定、`main` 免令牌）、**载荷**（≤500 条目 / ≤64 KiB 文本 / html 走 1 MiB）。
+- 不影响功能已核查：`save_note`、`request_open_terminal` 零前端调用点；`collect_selection` 仅主窗口 `ActivityBar` 按钮调用（走 `main` 免令牌路径）。
+- 静态夹具：扫描范围补 `src-tauri/permissions/*.toml`（此前只扫 capabilities，SEC-08 检测器形同虚设）；`EXPECTED_GAPS` 5→4。
+- 残余风险登记：远程 URL 全通配（`https://*`/`http://*`）是浏览器固有属性，无法收窄，改以三层校验作为补偿控制并接受残余风险；`eval_in_tab` 调用点尚未接来源校验。
+- 强模型复核点：`issue_intent` 只校验 label == `main`，依赖 Tauri capability 保证「只有 main 能调用」；若 capability 配置被改宽，`main` 的来源判定可能被绕过，建议 M0-3.d 复核权限集与 label 假设的一致性。
 
 ## 6. 跨模型接手审查协议
 

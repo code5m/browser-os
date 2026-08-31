@@ -647,20 +647,52 @@ struct ResourceScanResult {
     items: Vec<ResourceItem>,
 }
 
+/// M0-3.b：远程上报入口的统一来源校验。未登记/伪造 label（含残留的 `browser`）一律拒绝。
+fn check_invocation_source(
+    webview: &tauri::Webview,
+    scope: &str,
+    intent: Option<&str>,
+    app: &AppHandle,
+) -> Result<(), String> {
+    use crate::security_policy as sp;
+    let registry = app.state::<sp::IntentRegistry>();
+    sp::check_remote_invocation(webview.label(), scope, intent, &registry)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
-pub fn report_resources(app: AppHandle, page_url: String, items: Vec<ResourceItem>) {
+pub fn report_resources(
+    app: AppHandle,
+    webview: tauri::Webview,
+    page_url: String,
+    items: Vec<ResourceItem>,
+) -> Result<(), String> {
+    use crate::security_policy as sp;
+    // 上报类命令无副作用，只做来源校验与载荷边界（防事件洪水与内存放大）。
+    check_invocation_source(&webview, "report_resources", None, &app)?;
+    sp::check_text_field("page_url", &page_url, sp::MAX_TEXT_FIELD_BYTES)
+        .map_err(|e| e.to_string())?;
+    sp::check_items_count(items.len(), sp::MAX_RESOURCE_ITEMS).map_err(|e| e.to_string())?;
     let _ = app.emit(
         "browser-resources",
         serde_json::json!({ "page_url": page_url, "items": items }),
     );
+    Ok(())
 }
 
 /// 由子窗口内 JS 经 invoke 回传的真实页面标题，转成 tab-title 事件推给前端。
 #[tauri::command]
-pub fn report_title(app: AppHandle, title: String) {
+pub fn report_title(app: AppHandle, webview: tauri::Webview, title: String) -> Result<(), String> {
+    use crate::security_policy as sp;
+    check_invocation_source(&webview, "report_title", None, &app)?;
+    sp::check_text_field("title", &title, sp::MAX_TEXT_FIELD_BYTES).map_err(|e| e.to_string())?;
+    report_title_inner(app, title)
+}
+
+fn report_title_inner(app: AppHandle, title: String) -> Result<(), String> {
     let t = title.trim().to_string();
     if t.is_empty() {
-        return;
+        return Ok(());
     }
     // 找到当前激活页签（标题回传只针对激活页）
     let id = app.state::<AppState>().active_tab.lock().unwrap().clone();
@@ -670,6 +702,7 @@ pub fn report_title(app: AppHandle, title: String) {
             serde_json::json!({ "id": id, "url": "", "title": t }),
         );
     }
+    Ok(())
 }
 
 /// 对指定子窗口执行 JS 资源扫描，并回传真实标题，通过事件推送给前端。
@@ -715,11 +748,23 @@ fn start_resource_scanner(app: AppHandle) {
 #[tauri::command]
 pub fn collect_selection(
     app: AppHandle,
+    webview: tauri::Webview,
     url: String,
     title: String,
     text: String,
     html: String,
+    intent: Option<String>,
 ) -> Result<Artifact, String> {
+    use crate::security_policy as sp;
+    // 写盘类副作用：来自外部页面（tab-*/grid-*）必须出示一次性用户意图令牌。
+    check_invocation_source(
+        &webview,
+        sp::INTENT_COLLECT_SELECTION,
+        intent.as_deref(),
+        &app,
+    )?;
+    sp::check_text_field("text", &text, sp::MAX_TEXT_FIELD_BYTES).map_err(|e| e.to_string())?;
+    sp::check_text_field("html", &html, sp::MAX_HTML_BYTES).map_err(|e| e.to_string())?;
     let art = Artifact::new(title, url.clone(), text, html);
     workspace::save_artifact(&app, &art)?;
     workspace::log_audit(&app, "collect", format!("{} <- {}", art.title, url));
@@ -730,8 +775,40 @@ pub fn collect_selection(
 /// 网页右键"打开终端"：子 webview 渲染进程零特权，只能发意图；
 /// 由主窗口前端监听 "open-terminal" 事件切换到终端视图并启动 shell。
 #[tauri::command]
-pub fn request_open_terminal(app: AppHandle) -> Result<(), String> {
+pub fn request_open_terminal(
+    app: AppHandle,
+    webview: tauri::Webview,
+    intent: Option<String>,
+) -> Result<(), String> {
+    use crate::security_policy as sp;
+    // 开终端等同授予 shell 能力：外部页面必须出示一次性用户意图令牌。
+    check_invocation_source(&webview, sp::INTENT_OPEN_TERMINAL, intent.as_deref(), &app)?;
     app.emit("open-terminal", ()).map_err(|e| e.to_string())
+}
+
+/// 受信任的主窗口签发给子 webview 的一次性用户意图令牌（M0-3.b）。
+/// 只有 `main` 能签发；外部页面拿到令牌后只能使用一次，且绑定具体作用域。
+#[tauri::command]
+pub fn issue_intent(
+    app: AppHandle,
+    webview: tauri::Webview,
+    scope: String,
+) -> Result<String, String> {
+    use crate::security_policy as sp;
+    if webview.label() != "main" {
+        return Err(format!("只有主窗口可以签发意图令牌：{}", webview.label()));
+    }
+    let allowed = [
+        sp::INTENT_SAVE_NOTE,
+        sp::INTENT_COLLECT_SELECTION,
+        sp::INTENT_OPEN_TERMINAL,
+    ];
+    if !allowed.contains(&scope.as_str()) {
+        return Err(format!("未知意图作用域：{scope}"));
+    }
+    Ok(app
+        .state::<sp::IntentRegistry>()
+        .issue(&scope, sp::INTENT_TTL))
 }
 
 /// 网页选区一键存为 Markdown 笔记。
@@ -740,10 +817,16 @@ pub fn request_open_terminal(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn save_note(
     app: AppHandle,
+    webview: tauri::Webview,
     url: String,
     title: String,
     text: String,
+    intent: Option<String>,
 ) -> Result<String, String> {
+    use crate::security_policy as sp;
+    // 写文件属副作用：外部页面必须出示一次性用户意图令牌（对应验收项「无用户意图写入」）。
+    check_invocation_source(&webview, sp::INTENT_SAVE_NOTE, intent.as_deref(), &app)?;
+    sp::check_text_field("text", &text, sp::MAX_TEXT_FIELD_BYTES).map_err(|e| e.to_string())?;
     let dir = workspace::notes_dir(&app);
 
     let now = chrono::Local::now();

@@ -873,6 +873,8 @@ fn main() {
         // M0-2.b：注入统一生命周期核心。本检查点只提供核心，不迁移任何退出路径
         // （M0-2.c 负责把窗口关闭/菜单退出/系统退出与 grid/PTY/tab/线程调用方切到它）。
         .manage(shutdown::ShutdownCoordinator::new())
+        // M0-3.b：一次性用户意图令牌登记表（外部页面发起副作用调用时校验）。
+        .manage(security_policy::IntentRegistry::new())
         .invoke_handler(tauri::generate_handler![
             bridge::open_browser,
             bridge::close_browser,
@@ -936,6 +938,7 @@ fn main() {
             bridge::m0_ready,
             bridge::m0_term_report,
             bridge::m0_config,
+            bridge::issue_intent,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {

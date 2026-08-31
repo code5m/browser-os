@@ -3,8 +3,7 @@
   "identifier": "default",
   "description": "默认能力：主窗口 + 浏览器子窗口均可调桥命令与终端",
   "windows": [
-    "main",
-    "browser"
+    "main"
   ],
   "permissions": [
     "core:default",
