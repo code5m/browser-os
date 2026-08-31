@@ -576,7 +576,7 @@ EXECUTOR=CodeBuddy（Codex 主机）
 MODEL=界面未显示完整模型名
 ROUTE=AI:DEEP
 MODEL_DEVIATION=UI 未显示完整模型名，推理档位未能精确记录
-COMMIT=提交信息 fix(M0-3.c): enforce canonical path policy on writes
+COMMIT=3661fb3
 VERIFY=pre-merge.sh(0, PRE_MERGE_RESULT=ALL_PASS); cargo test(0, 38 passed); check-security-policy.py --self-test(0); --expect-current-gaps(0); 默认(1, 4 GAP); cargo check(0, 既有 2 warnings); git diff --check(0)
 NEXT=M0-3.d
 ```
