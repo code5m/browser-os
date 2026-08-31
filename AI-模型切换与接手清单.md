@@ -1,8 +1,8 @@
 # AI 模型切换与接手清单
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
-> 文档版本：V2.6。
-> 更新时间：2026-08-31 22:01 CST。
+> 文档版本：V2.7。
+> 更新时间：2026-09-01 00:45 CST。
 > 当前状态：`CODEX_BLOCKED`。
 > 当前分支：`feature-M0-baseline`。
 > 当前执行器：Codex gpt-5.5 high；机械文档审计与独立脚本任务已委派 `gpt-5.6-luna / low`，最终裁决仍由主任务负责。
@@ -18,7 +18,7 @@
 | 已拒证据 | `ac0ecac` 三批候选：场景错误 + aggregate `UNSTABLE`，结论 `REJECTED`，不得复用 |
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
-| 当前硬风险 | M0-6.c 9 项 GUI 回归缺少可替代人工的输入/观察能力和 AI 站点登录态；M0-7 最终放行未完成 |
+| 当前硬风险 | M0-6.c 9 项 GUI 回归仍缺 AI 站点登录态、普通模式持久宫格触发手段和可用截图/录屏证据；M0-7 最终放行未完成 |
 | 下一检查点 | `M0-6.c = BLOCKED/NEXT`（手工完成宫格专项 9 场景并逐项留证） |
 | 下一任务路由 | `AI:DEEP / R:high`（真实 GUI 场景、窗口焦点/跟随、登录态和跨模块回归） |
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
@@ -27,7 +27,7 @@
 | 最近实现提交 | `b3331a0 feat(M0-6.b): add bounded tab webview recovery` |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
-| 最新状态证据 | `logs/checkpoints/M0-6.c-20260831-2201.md`；M0-6.b selftest 日志 `logs/m0-grid-selftest/M0-6.b-20260831-selftest.log` |
+| 最新状态证据 | `logs/checkpoints/M0-6.c-20260901-0037.md`；证据目录 `logs/m0-6c-gui-evidence/20260901-0037/` |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
 
@@ -62,7 +62,8 @@
 - `ebc49f7` 已完成 M0-5.c 正式资源归档：run `logs/m0-baseline/20260831T164058+0800_6534963_release_x11/` 为 formal `PASS`，release SHA `5c41d4abb22a5f5ba4c8d85b443f890f43db8ff8d316ac4a6dae707b29312162` 匹配，orphan max 均 0，tab FD delta 为 0；grid/terminal 的正增长均为 WebKit 子进程 `anon_inode:timerfd` 平台计时器裁决。M0-5 整项 PASS，下一步转 M0-6.a。
 - `57a31ea` 已完成 M0-6.a 当前提交宫格崩溃恢复自检：`GRID_SELFTEST=1 ./run-gui.sh` 退出 0，日志 `logs/m0-grid-selftest/M0-6.a-20260831-selftest.log` 输出 `SELFTEST_RESULT=ALL_PASS`，覆盖 create_grid、grid_open、grid_position、eval、kill -11 崩溃重启、重启后 eval、另一格存活、close_grid、shutdown count=0。下一步转 M0-6.b。
 - `b3331a0` 已完成 M0-6.b：主进程 `tab-*` WebView 新增 60 秒内最多 2 次的有限恢复预算；`tab_open` 收口到插件 `navigate`；`eval/navigate/position` 失败触发重建并重试；`loadFailed` 只观测不自动重建；`tab-recovery` 事件可见。`cargo test` 47 passed，`npm run build` 通过，`GRID_SELFTEST=1 ./run-gui.sh` 输出 `SELFTEST_RESULT=ALL_PASS`。下一步转 M0-6.c。
-- `e7ad997` 已尝试 M0-6.c：当前会话可运行 `GRID_SELFTEST`，但缺少 `xdotool`/`wmctrl`/截图工具/人工输入能力和 AI 站点登录态，无法真实签署 9 项 GUI 手工回归；`STATUS=BLOCKED`，NEXT 保持 M0-6.c，不得移动到 M0-7.a。
+- `e7ad997` 已首次尝试 M0-6.c：当前会话可运行 `GRID_SELFTEST`，但缺少 `xdotool`/`wmctrl`/截图工具/人工输入能力和 AI 站点登录态，无法真实签署 9 项 GUI 手工回归；`STATUS=BLOCKED`，NEXT 保持 M0-6.c，不得移动到 M0-7.a。
+- `65ba0ec` 已按正式 `M0-6.c` 任务卡再次尝试：`xdotool/wmctrl/scrot` 后续已可用，release GUI 可启动，`GRID_SELFTEST` 再次 `ALL_PASS`，并归档 `windows_probe.txt` / `grid-selftest-result.txt` / `last_app.log`；但仍缺 AI 站点登录态，普通模式无法触发持久宫格会话，且 Wayland/Xwayland 下 `scrot` 全黑、`xwd` BadMatch，无法生成截图/录屏证据。`STATUS=BLOCKED`，NEXT 继续保持 M0-6.c。
 
 ## 2. 模型映射
 
