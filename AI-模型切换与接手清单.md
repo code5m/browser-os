@@ -1,8 +1,8 @@
 # AI 模型切换与接手清单
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
-> 文档版本：V2.3。
-> 更新时间：2026-08-31 16:52 CST。
+> 文档版本：V2.4。
+> 更新时间：2026-08-31 21:40 CST。
 > 当前状态：`CODEX_RUNNING`。
 > 当前分支：`feature-M0-baseline`。
 > 当前执行器：Codex 主任务；机械文档审计与独立脚本任务已委派 `gpt-5.6-luna / low`，最终裁决仍由主任务负责。
@@ -14,20 +14,20 @@
 
 | 项目 | 当前值 |
 |------|--------|
-| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`、`M0-5 = PASS`（未宣称 M0 整体完成） |
+| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`、`M0-5 = PASS`、`M0-6.a = PASS`（未宣称 M0/M0-6 整体完成） |
 | 已拒证据 | `ac0ecac` 三批候选：场景错误 + aggregate `UNSTABLE`，结论 `REJECTED`，不得复用 |
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
-| 当前硬风险 | M0-6 当前提交崩溃恢复与 GUI 回归未验证；M0-7 最终放行未完成 |
-| 下一检查点 | `M0-6.a = NEXT`（当前提交重跑 `GRID_SELFTEST=1 ./run-gui.sh`） |
-| 下一任务路由 | `AI:DEEP / R:high`（需 GUI/selftest 输出裁决和崩溃恢复上下文判断） |
+| 当前硬风险 | 主进程 `tab-*` WebView 崩溃恢复策略尚未实现；M0-6.c 9 项 GUI 回归、M0-7 最终放行未完成 |
+| 下一检查点 | `M0-6.b = NEXT`（为主进程 `tab-*` WebView 增加有预算、可观测、不会无限循环的恢复策略） |
+| 下一任务路由 | `AI:DEEP / R:high`（涉及 WebView 生命周期、崩溃恢复预算和跨模块回归） |
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
 | 禁止启动 | M1~M5；当前检查点未提交前禁止夹带下一检查点 |
-| 最近实现提交 | `ebc49f7 test(M0-5.c): archive formal resource baseline` |
+| 最近实现提交 | `57a31ea test(M0-6.a): rerun grid crash selftest` |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
-| 最新状态证据 | `logs/checkpoints/M0-5.c-20260831-1652.md`；正式资源 run `logs/m0-baseline/20260831T164058+0800_6534963_release_x11/`；运行矩阵 `logs/m0-resource-runtime-matrix-v1.md` |
+| 最新状态证据 | `logs/checkpoints/M0-6.a-20260831-2140.md`；selftest 日志 `logs/m0-grid-selftest/M0-6.a-20260831-selftest.log` |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
 
@@ -39,7 +39,7 @@
 - 冻结 `logs/m0-baseline-contract-v1.md`：21 个 `REQUIRED_NOW` 指标、2 个延迟指标、环境指纹、固定场景、统计公式和证据目录。
 - 将旧 `logs/baseline-2026-08-27.md` 降级为 `EXPLORATORY`，禁止当作正式性能基线。
 - 修复原计划中的循环依赖，关键路径现为：
-  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6.a(NEXT) -> ...`。
+  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6.a(PASS) -> M0-6.b(NEXT) -> ...`。
 - 完成 M0-1.a（commit `1bd56b1`）：新增 `scripts/baseline-check.sh` 与 `scripts/fixtures/clippy-sample.json`；
   验收命令全过、`--self-test` 输出 `SELF_TEST_RESULT=ALL_PASS`；`.gitignore` 对 `logs/m0-baseline/` 开例外，
   原始 `.log` 证据随 run 目录入库可追溯（见 §5 证据保留说明）。
@@ -60,6 +60,7 @@
 - `68c78d7` 已完成 M0-5.a 诊断工具提交；40-cycle GUI 资源诊断 run `logs/m0-baseline/20260831T105149+0800_68c78d7_release_x11/` 为 `EXPLORATORY` 但 `measurements.ok=true`，证明当前环境可真实采样。运行时矩阵见 `logs/m0-resource-runtime-matrix-v1.md`：orphan max 均 0，RSS 首末未超过 10% 增长，FD `+1/+1/+2` 转交 M0-5.b。
 - `e998bbd`/`2271e75` 已完成 M0-5.b：资源采样补 FD target 差分，M0 driver 隔离全局快捷键/活动栏/页签栏误触发，并在 tab driver 收尾显式关闭 grid 旁路。40-cycle GUI 复测 run `logs/m0-baseline/20260831T160738+0800_e998bbd_release_x11/` 为 `EXPLORATORY` 且 `measurements.ok=true`；orphan max 均 0，grid/terminal FD delta 为 0，tab FD `+1` 定位为 WebKitNetwork `anon_inode:timerfd` 一次性平台计时器，tab RSS 总增长 `+3.49%`，未超过 10%。下一步转 M0-5.c 正式 profile 归档。
 - `ebc49f7` 已完成 M0-5.c 正式资源归档：run `logs/m0-baseline/20260831T164058+0800_6534963_release_x11/` 为 formal `PASS`，release SHA `5c41d4abb22a5f5ba4c8d85b443f890f43db8ff8d316ac4a6dae707b29312162` 匹配，orphan max 均 0，tab FD delta 为 0；grid/terminal 的正增长均为 WebKit 子进程 `anon_inode:timerfd` 平台计时器裁决。M0-5 整项 PASS，下一步转 M0-6.a。
+- `57a31ea` 已完成 M0-6.a 当前提交宫格崩溃恢复自检：`GRID_SELFTEST=1 ./run-gui.sh` 退出 0，日志 `logs/m0-grid-selftest/M0-6.a-20260831-selftest.log` 输出 `SELFTEST_RESULT=ALL_PASS`，覆盖 create_grid、grid_open、grid_position、eval、kill -11 崩溃重启、重启后 eval、另一格存活、close_grid、shutdown count=0。下一步转 M0-6.b。
 
 ## 2. 模型映射
 
@@ -113,26 +114,26 @@ NEXT=<PASS 后唯一下一检查点；FAIL 时保持原 NEXT>
 - 同一失败最多让低模型修两轮；第二次仍失败即停止，回写 `BLOCKED`，交给更强模型。
 - 文档回写只更新顶部状态、当前 WBS、最近 checkpoint 和 NEXT；不重排无关章节，避免无意义 diff。
 
-### 当前可复制任务卡：M0-6.a
+### 当前可复制任务卡：M0-6.b
 
 ```text
-TASK_ID=M0-6.a
+TASK_ID=M0-6.b
 ROUTE=AI:DEEP
-MODEL=需要强模型；低模型只允许整理 selftest 输出和日志摘要
+MODEL=需要强模型；低模型只允许只读盘点 tab WebView 创建/关闭/事件入口
 REASONING=high 或 xhigh
-GOAL=在当前提交重跑宫格崩溃恢复自检，确认 `GRID_SELFTEST=1 ./run-gui.sh` 是否为 `ALL_PASS`，并归档当前提交的 GUI/selftest 证据。
-READ=AI-模型切换与接手清单.md, 详细设计与实施计划.md §2.2 的 M0-6, PROJECT-RULES.md, src-tauri/src/grid_process.rs, src-tauri/src/main.rs, run-gui.sh, logs/checkpoints/M0-5.c-20260831-1652.md, logs/m0-resource-runtime-matrix-v1.md
-WRITE=logs/checkpoints/M0-6.a-<YYYYMMDD-HHMM>.md；三份主文档；必要时新增 logs/m0-grid-selftest/ 或引用已有 run log
-FORBID=不启动 M1/M2；不改 M0-0/M0-5 冻结证据；不合并 M0-6.b/c；不伪造 GUI/selftest 输出；不删除用户数据；不把历史 2026-08-25 selftest 当当前提交 PASS
-COMMANDS=git status --short --branch; bash -n run-gui.sh; GRID_SELFTEST=1 ./run-gui.sh; cargo test --manifest-path src-tauri/Cargo.toml; bash scripts/pre-merge.sh; git diff --check
-PASS_CRITERIA=当前提交 selftest 输出明确 `SELFTEST_RESULT=ALL_PASS` 或等价 PASS 标记；失败/崩溃日志归档；不修改产品逻辑或仅做当前检查点必要修复；cargo/pre-merge 通过；文档/checkpoint 已提交且工作树干净
-FAIL_ACTION=不移动 NEXT；若 GUI/应用无法运行，必须 STATUS=BLOCKED 且 NEXT 保持 M0-6.a；若 selftest FAIL，保留失败日志尾部 120 行并决定是否在 M0-6.a 内修复或 BLOCKED
-DOC_BACKWRITE=三份主文档顶部状态、M0-6.a 勾选或 BLOCKED、最近 checkpoint、实际模型、VERIFY、COMMIT
-COMMIT=test(M0-6.a): rerun grid crash selftest
-NEXT=M0-6.b
+GOAL=为主进程 `tab-*` WebView 增加有预算、可观测、不会无限循环的恢复策略，并用测试或可复跑证据证明策略边界。
+READ=AI-模型切换与接手清单.md, 详细设计与实施计划.md §2.2 的 M0-6, PROJECT-RULES.md, logs/checkpoints/M0-6.a-20260831-2140.md, logs/m0-grid-selftest/M0-6.a-20260831-selftest.log, src-tauri/src/bridge.rs, src-tauri/src/main.rs, src-tauri/src/grid_process.rs, src/stores/useBrowserStore.ts, src/components/browser/BrowserHost.vue, capabilities/browser-remote.json, permissions/remote-collect.toml
+WRITE=仅当前检查点必要文件：src-tauri/src/* 中 tab WebView 恢复策略相关代码、必要的前端状态/提示文件、必要测试、logs/checkpoints/M0-6.b-<YYYYMMDD-HHMM>.md、三份主文档
+FORBID=不启动 M1/M2；不改 M0-0/M0-5 冻结证据；不合并 M0-6.c 9 项手工回归；不影响 grid 子进程已 PASS 的崩溃自愈；不做无限重启；不扩大远程 webview 权限；不删除用户数据
+COMMANDS=git status --short --branch; rg -n \"tab-|WebView|crash|navigation|spawn_child_window|close_tab\" src-tauri/src src; cargo test --manifest-path src-tauri/Cargo.toml; npm run build; GRID_SELFTEST=1 ./run-gui.sh; bash scripts/pre-merge.sh; git diff --check
+PASS_CRITERIA=tab WebView 恢复策略有明确预算/冷却/停止条件和可观测日志或事件；达到预算后不再无限重启并能提示/记录；不回归 M0-6.a 的 grid selftest；cargo/npm/pre-merge 通过；文档/checkpoint 已提交且工作树干净
+FAIL_ACTION=不移动 NEXT；若 Tauri/WebKit 没有可捕获 tab crash 事件且无法构造可靠恢复入口，必须 STATUS=BLOCKED 且 NEXT 保持 M0-6.b，写清缺失 API/证据；连续两次修复失败停止交给强模型复核
+DOC_BACKWRITE=三份主文档顶部状态、M0-6.b 勾选或 BLOCKED、最近 checkpoint、实际模型、VERIFY、COMMIT
+COMMIT=feat(M0-6.b): add bounded tab webview recovery
+NEXT=M0-6.c
 ```
 
-强模型复核 M0-6.a 时只需读取本任务卡、当前 selftest 输出、`run-gui.sh`、grid 相关源码和最新 checkpoint；不要重复读取全部历史长文档。
+强模型复核 M0-6.b 时只需读取本任务卡、tab WebView 相关 diff、M0-6.a selftest 日志、测试输出和最新 checkpoint；不要重复读取全部历史长文档。
 
 用户提供的微信临时图片在读取时已不存在，因此本文件不猜测 Trae 模型名称。重新附图或直接写出模型列表后，只填写上表三个 Trae 单元格并升级本文版本；任务上的 `AI:*` 标签不变。
 
@@ -748,6 +749,26 @@ NEXT=M0-6.a
 - 资源裁决：tab FD delta 为 0；grid FD `+1` 和 terminal FD `+2` 均为 WebKit 子进程 `anon_inode:timerfd`，不是 root/PTY 所有权泄漏。terminal 总 RSS 增长 `+7.46%`，未超过 10%；root 局部 RSS 跳升已按 GTK/WebKit/allocator 缓存裁决并留给后续基线对照。
 - M0-5 三个检查点 a/b/c 全部 PASS，M0-5 整项关闭；M0 尚未完成，下一步必须进入 M0-6.a。
 
+### M0-6.a 回写记录（2026-08-31，Codex 当前会话）
+
+```text
+CHECKPOINT=M0-6.a
+STATUS=PASS
+EXECUTOR=Codex 当前会话
+MODEL=用户已切换 5.5 高模型；界面完整模型名工具不可见
+ROUTE=AI:DEEP
+MODEL_DEVIATION=UI 未暴露完整模型名，按用户说明记录为强模型接手
+COMMIT=57a31ea + DOC_COMMIT_PENDING
+VERIFY=bash -n run-gui.sh(0); GRID_SELFTEST=1 ./run-gui.sh(0, SELFTEST_RESULT=ALL_PASS); cargo test --manifest-path src-tauri/Cargo.toml(0, 44 passed, 既有 2 warnings); bash scripts/pre-merge.sh(0, PRE_MERGE_RESULT=ALL_PASS); git diff --check(0)
+NEXT=M0-6.b
+```
+
+实现要点：
+
+- 当前提交 `ec64f63` 上复跑 `GRID_SELFTEST=1 ./run-gui.sh`，输出归档到 `logs/m0-grid-selftest/M0-6.a-20260831-selftest.log`。
+- selftest 覆盖：`create_grid(2)`、`grid_open(0/1)`、`grid_position(0/1)`、`eval_in_tab(grid-0)`、`kill -11 grid-child-0`、自动重启、重启后 eval、`grid-1-survived`、`close_grid`、`shutdown count=0`。
+- 结论：宫格子进程崩溃自愈主链路在当前提交仍为 `ALL_PASS`；M0-6 尚未整体关闭，下一步必须实现主进程 `tab-*` WebView 的有预算恢复策略。
+
 ## 6. 跨模型接手审查协议
 
 Trae 或后续执行器领取当前 `NEXT` 前，必须先做审查，不直接继续写代码：
@@ -774,7 +795,7 @@ git log --reverse --oneline --decorate 504fcd7..HEAD
 
 先阅读 AI-模型切换与接手清单.md、详细设计与实施计划.md §2.2、logs/m0-baseline-contract-v1.md。每轮只从文档领取唯一 NEXT，按 AI:* 路由选择 Trae 模型，完成实现、全部验收、四处回写和独立提交。提交后确认工作树干净；未命中硬停止条件时，不用等待用户回复，立即领取下一个 NEXT。
 
-第一轮是 M0-6.a，必须使用 TRAE_DEEP 等效强模型：先确认 M0-5.c 的 checkpoint、formal run、运行时矩阵和分析文件均已提交且工作树干净；然后在当前提交重跑 `GRID_SELFTEST=1 ./run-gui.sh` 并归档输出。低模型可整理 selftest 日志和 checkpoint 草稿，但 PASS 裁决必须由强模型复核当前提交、GUI 输出和失败路径。不得启动 M1/M2，不得合并 M0-6.b/c，不得把 2026-08-25 历史 selftest 当当前提交 PASS。selftest 要求输出 `SELFTEST_RESULT=ALL_PASS` 或等价 PASS 标记；新增 checkpoint、回写三份主文档，独立提交 test(M0-6.a)。
+第一轮是 M0-6.b，必须使用 TRAE_DEEP 等效强模型：先确认 M0-6.a 的 checkpoint、selftest 日志和文档指针均已提交且工作树干净；然后为主进程 `tab-*` WebView 增加有预算、可观测、不会无限循环的恢复策略。低模型只允许做 tab WebView 创建/关闭/事件入口的只读盘点，PASS 裁决必须由强模型复核恢复预算、停止条件、日志/事件和回归输出。不得启动 M1/M2，不得合并 M0-6.c 9 项手工回归，不得影响 grid selftest。实现后需跑 cargo/npm、`GRID_SELFTEST=1 ./run-gui.sh` 和 pre-merge，新增 checkpoint、回写三份主文档，独立提交 feat(M0-6.b)。
 
 同一检查点连续两次失败、缺少 DEEP 等效模型、缺少 GUI/权限/环境、需要改冻结契约或人工裁决、发现不明改动、额度耗尽或到达 M0-7.c 时必须停止，回写 BLOCKED 和证据；不得伪造 PASS。若 GUI/应用无法运行，必须 STATUS=BLOCKED，NEXT 保持当前检查点。
 ```
