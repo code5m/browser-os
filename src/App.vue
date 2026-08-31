@@ -72,6 +72,7 @@ onMounted(async () => {
   });
   bridge.onTabTitle((t) => browser.setTitle(t));
   bridge.onTabNavigated((d) => browser.setNavigated(d.id, d.url));
+  bridge.onTabRecovery((d) => browser.handleTabRecovery(d));
   bridge.onNewTabRequest((u) => {
     setTimeout(() => browser.tabNew(u.url), 0);
   });

@@ -95,6 +95,24 @@ export interface TabInfo {
   title: string;
 }
 
+export type TabRecoveryStatus =
+  | "attempting"
+  | "recovered"
+  | "failed"
+  | "budget-exhausted"
+  | "load-failed";
+
+export interface TabRecoveryEvent {
+  id: string;
+  url: string;
+  reason: string;
+  status: TabRecoveryStatus;
+  attempt: number;
+  max_attempts: number;
+  window_secs: number;
+  message: string;
+}
+
 // 系统应用（含图标路径）
 export interface AppEntry {
   name: string;

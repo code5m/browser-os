@@ -10,6 +10,7 @@ import type {
   DirEntry,
   BrowserResources,
   TabInfo,
+  TabRecoveryEvent,
   AppEntry,
   ResourceStats,
 } from "./types";
@@ -207,6 +208,10 @@ export const bridge = {
   // 子 webview 内导航完成（点链接/前进/后退/刷新后）同步地址栏与页签 URL。
   onTabNavigated: (cb: (d: { id: string; url: string }) => void) =>
     listen<{ id: string; url: string }>("tab-navigated", (e) => cb(e.payload)),
+
+  // tab-N 主进程 WebView 恢复状态（有限预算；失败/耗尽可被前端提示和日志观测）。
+  onTabRecovery: (cb: (d: TabRecoveryEvent) => void) =>
+    listen<TabRecoveryEvent>("tab-recovery", (e) => cb(e.payload)),
 
   // ====== 真实 PTY 终端 ======
   termSpawn: () => invoke<{ id: string }>("term_spawn"),

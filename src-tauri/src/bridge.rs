@@ -16,6 +16,81 @@ fn grid_index_of(label: &str) -> Option<u32> {
     label.strip_prefix("grid-")?.parse().ok()
 }
 
+fn is_tab_label(label: &str) -> bool {
+    label
+        .strip_prefix("tab-")
+        .and_then(|n| n.parse::<u32>().ok())
+        .is_some()
+}
+
+/// tab-N 主进程 WebView 恢复预算：只响应真实操作失败，不启动后台无限重启。
+#[derive(Default)]
+pub struct TabRecoveryBudget {
+    window_started: Option<std::time::Instant>,
+    attempts: u8,
+}
+
+const TAB_RECOVERY_WINDOW_SECS: u64 = 60;
+const TAB_RECOVERY_MAX_ATTEMPTS: u8 = 2;
+
+fn reserve_tab_recovery_attempt(
+    budget: &mut TabRecoveryBudget,
+    now: std::time::Instant,
+) -> Option<u8> {
+    match budget.window_started {
+        Some(start)
+            if now.duration_since(start).as_secs() <= TAB_RECOVERY_WINDOW_SECS
+                && budget.attempts >= TAB_RECOVERY_MAX_ATTEMPTS =>
+        {
+            None
+        }
+        Some(start) if now.duration_since(start).as_secs() <= TAB_RECOVERY_WINDOW_SECS => {
+            budget.attempts += 1;
+            Some(budget.attempts)
+        }
+        _ => {
+            budget.window_started = Some(now);
+            budget.attempts = 1;
+            Some(1)
+        }
+    }
+}
+
+fn emit_tab_recovery_event(
+    app: &AppHandle,
+    id: &str,
+    url: &str,
+    reason: &str,
+    status: &str,
+    attempt: u8,
+    message: &str,
+) {
+    eprintln!(
+        "[tab-recovery] id={} status={} attempt={}/{} reason={} message={}",
+        id, status, attempt, TAB_RECOVERY_MAX_ATTEMPTS, reason, message
+    );
+    let _ = app.emit(
+        "tab-recovery",
+        serde_json::json!({
+            "id": id,
+            "url": url,
+            "reason": reason,
+            "status": status,
+            "attempt": attempt,
+            "max_attempts": TAB_RECOVERY_MAX_ATTEMPTS,
+            "window_secs": TAB_RECOVERY_WINDOW_SECS,
+            "message": message,
+        }),
+    );
+}
+
+pub fn report_tab_load_failed(app: &AppHandle, id: &str, url: &str, message: &str) {
+    if !is_tab_label(id) {
+        return;
+    }
+    emit_tab_recovery_event(app, id, url, "loadFailed", "load-failed", 0, message);
+}
+
 /// 在主窗口内创建一个子 Webview（方案 D：同窗口多 webview）。
 /// 底层已迁移到 tauri-plugin-browser-tabs：全链路 Logical(CSS) 坐标，
 /// Linux 下由插件强制触发 WebKitGTK size_allocate，修复子 webview 卡初始尺寸问题。
@@ -64,9 +139,88 @@ fn spawn_child_window(
 fn plugin_eval(app: &AppHandle, id: &str, js: &str) -> Result<(), String> {
     use tauri_plugin_browser_tabs::TabManagerState;
     let manager = app.state::<TabManagerState>();
-    manager
-        .eval(&id.to_string(), js)
-        .map_err(|e| format!("webview {id} 执行 JS 失败: {e}"))
+    if let Err(e) = manager.eval(&id.to_string(), js) {
+        let initial_error = format!("webview {id} 执行 JS 失败: {e}");
+        recover_tab_webview(app, id, "eval", &initial_error)?;
+        app.state::<TabManagerState>()
+            .eval(&id.to_string(), js)
+            .map_err(|retry| format!("{initial_error}; 恢复后重试 JS 失败: {retry}"))?;
+    }
+    Ok(())
+}
+
+fn navigate_tab_webview(app: &AppHandle, id: &str, url: &str) -> Result<(), String> {
+    use tauri_plugin_browser_tabs::TabManagerState;
+    app.state::<TabManagerState>()
+        .navigate(&id.to_string(), url)
+        .map_err(|e| format!("webview {id} 导航失败: {e}"))
+}
+
+fn recover_tab_webview(
+    app: &AppHandle,
+    id: &str,
+    reason: &str,
+    source_error: &str,
+) -> Result<(), String> {
+    if !is_tab_label(id) {
+        return Err(source_error.to_string());
+    }
+    let state = app.state::<AppState>();
+    if state.hibernated_tabs.lock().unwrap().contains(id) {
+        return Err(format!("{source_error}; 页签已休眠，等待激活时重建"));
+    }
+    let url = state
+        .tabs
+        .lock()
+        .unwrap()
+        .get(id)
+        .map(|t| t.url.clone())
+        .ok_or_else(|| format!("{source_error}; 页签元数据不存在"))?;
+    let layout = state.child_layouts.lock().unwrap().get(id).copied();
+    let attempt = {
+        let mut budgets = state.tab_recovery.lock().unwrap();
+        let budget = budgets.entry(id.to_string()).or_default();
+        reserve_tab_recovery_attempt(budget, std::time::Instant::now())
+    };
+    let Some(attempt) = attempt else {
+        emit_tab_recovery_event(
+            app,
+            id,
+            &url,
+            reason,
+            "budget-exhausted",
+            TAB_RECOVERY_MAX_ATTEMPTS,
+            source_error,
+        );
+        return Err(format!("{source_error}; tab 恢复预算已耗尽"));
+    };
+    emit_tab_recovery_event(app, id, &url, reason, "attempting", attempt, source_error);
+    use tauri_plugin_browser_tabs::TabManagerState;
+    let manager = app.state::<TabManagerState>();
+    let _ = manager.close_tab(&id.to_string());
+    let (x, y, w, h) = layout.unwrap_or((0.0, 0.0, 1.0, 1.0));
+    if let Err(e) = spawn_child_window(app, id, &url, x, y, w, h) {
+        emit_tab_recovery_event(app, id, &url, reason, "failed", attempt, &e);
+        return Err(format!("{source_error}; tab 恢复失败: {e}"));
+    }
+    if let Some((lx, ly, lw, lh)) = layout {
+        if lx > -1000.0 {
+            if let Err(e) = apply_bounds_inner(app, id, lx, ly, lw, lh) {
+                emit_tab_recovery_event(app, id, &url, reason, "failed", attempt, &e);
+                return Err(format!("{source_error}; tab 恢复后定位失败: {e}"));
+            }
+        }
+    }
+    emit_tab_recovery_event(
+        app,
+        id,
+        &url,
+        reason,
+        "recovered",
+        attempt,
+        "recreated webview",
+    );
+    Ok(())
 }
 
 /// 记住某个子窗口的内容区布局矩形（CSS 坐标），供 move/resize 时重定位。
@@ -126,6 +280,8 @@ pub struct AppState {
     pub tab_idle_since: Mutex<HashMap<String, std::time::Instant>>,
     /// 已休眠页签（webview 已销毁，URL 保留在 tabs 表，激活时重建）
     pub hibernated_tabs: Mutex<std::collections::HashSet<String>>,
+    /// tab-N 主进程 WebView 恢复预算，防止失败路径进入无限重建。
+    pub tab_recovery: Mutex<HashMap<String, TabRecoveryBudget>>,
 }
 
 /// 终端会话：持有 PTY 写入端与子进程，读取在后台线程进行。
@@ -176,7 +332,10 @@ fn normalize_url(input: &str) -> String {
 
 #[cfg(test)]
 mod normalize_url_tests {
-    use super::normalize_url;
+    use super::{
+        is_tab_label, normalize_url, reserve_tab_recovery_attempt, TabRecoveryBudget,
+        TAB_RECOVERY_WINDOW_SECS,
+    };
 
     #[test]
     fn preserves_about_blank_for_offline_browser_scenarios() {
@@ -187,6 +346,42 @@ mod normalize_url_tests {
     fn keeps_domain_and_search_input_behavior() {
         assert_eq!(normalize_url("example.com"), "https://example.com");
         assert!(normalize_url("search words").starts_with("https://www.baidu.com/s?wd="));
+    }
+
+    #[test]
+    fn identifies_only_numbered_tab_labels() {
+        assert!(is_tab_label("tab-1"));
+        assert!(!is_tab_label("tab-main"));
+        assert!(!is_tab_label("grid-1"));
+    }
+
+    #[test]
+    fn tab_recovery_budget_stops_after_two_attempts_per_window() {
+        let now = std::time::Instant::now();
+        let mut budget = TabRecoveryBudget::default();
+        assert_eq!(reserve_tab_recovery_attempt(&mut budget, now), Some(1));
+        assert_eq!(
+            reserve_tab_recovery_attempt(&mut budget, now + std::time::Duration::from_secs(1)),
+            Some(2)
+        );
+        assert_eq!(
+            reserve_tab_recovery_attempt(&mut budget, now + std::time::Duration::from_secs(2)),
+            None
+        );
+    }
+
+    #[test]
+    fn tab_recovery_budget_resets_after_window() {
+        let now = std::time::Instant::now();
+        let mut budget = TabRecoveryBudget::default();
+        assert_eq!(reserve_tab_recovery_attempt(&mut budget, now), Some(1));
+        assert_eq!(
+            reserve_tab_recovery_attempt(
+                &mut budget,
+                now + std::time::Duration::from_secs(TAB_RECOVERY_WINDOW_SECS + 1)
+            ),
+            Some(1)
+        );
     }
 }
 
@@ -224,7 +419,12 @@ pub fn position_browser(
         .unwrap()
         .clone()
         .ok_or_else(|| "没有打开的页签".to_string())?;
-    apply_bounds(&app, &id, x, y, width, height)
+    if let Err(e) = apply_bounds(&app, &id, x, y, width, height) {
+        recover_tab_webview(&app, &id, "position", &e)?;
+        apply_bounds_inner(&app, &id, x, y, width, height)
+            .map_err(|retry| format!("{e}; 恢复后重试定位失败: {retry}"))?;
+    }
+    Ok(())
 }
 
 /// 把子窗口（页签 / 宫格）定位到主窗内容区指定矩形（CSS 逻辑坐标）。
@@ -535,6 +735,7 @@ fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
     state.last_position_at.lock().unwrap().remove(id);
     state.tab_idle_since.lock().unwrap().remove(id);
     state.hibernated_tabs.lock().unwrap().remove(id);
+    state.tab_recovery.lock().unwrap().remove(id);
     state.tabs.lock().unwrap().remove(id);
     let mut active = state.active_tab.lock().unwrap();
     if active.as_deref() == Some(id) {
@@ -1823,17 +2024,11 @@ pub fn tab_close(app: AppHandle, id: String) -> Result<(), String> {
 pub fn tab_open(app: AppHandle, id: String, url: String) -> Result<(), String> {
     let target = normalize_url(&url);
     let _ = Url::parse(&target).map_err(|e| format!("无效网址: {e}"))?;
-    let app2 = app.clone();
-    let id_for_closure = id.clone();
-    let target_for_closure = target.clone();
-    let _ = app.run_on_main_thread(move || {
-        if let Some(win) = app2.get_webview(&id_for_closure) {
-            let _ = win.eval(&format!(
-                "window.location.href = {url_js}",
-                url_js = serde_json::to_string(&target_for_closure).unwrap()
-            ));
-        }
-    });
+    if let Err(e) = navigate_tab_webview(&app, &id, &target) {
+        recover_tab_webview(&app, &id, "navigate", &e)?;
+        navigate_tab_webview(&app, &id, &target)
+            .map_err(|retry| format!("{e}; 恢复后重试导航失败: {retry}"))?;
+    }
     // 更新存储的 url
     if let Some(t) = app.state::<AppState>().tabs.lock().unwrap().get_mut(&id) {
         t.url = target;
@@ -1852,7 +2047,12 @@ pub fn tab_position(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
-    apply_bounds(&app, &id, x, y, width, height)
+    if let Err(e) = apply_bounds(&app, &id, x, y, width, height) {
+        recover_tab_webview(&app, &id, "position", &e)?;
+        apply_bounds_inner(&app, &id, x, y, width, height)
+            .map_err(|retry| format!("{e}; 恢复后重试定位失败: {retry}"))?;
+    }
+    Ok(())
 }
 
 // ====== 宫格加载失败自动重试 =====
@@ -2111,6 +2311,7 @@ fn hibernate_tab(app: &AppHandle, id: &str) {
         state.last_position_at.lock().unwrap().remove(id);
         state.tab_idle_since.lock().unwrap().remove(id);
         state.hibernated_tabs.lock().unwrap().insert(id.to_string());
+        state.tab_recovery.lock().unwrap().remove(id);
         eprintln!("[hibernation] 页签 {} 已休眠（webview 销毁，URL 保留）", id);
     }
 }

@@ -770,6 +770,14 @@ fn main() {
                         let _ = forward
                             .emit("tab-navigated", serde_json::json!({ "id": id, "url": url }));
                     }
+                    // 插件只暴露 loadFailed（网络/TLS/站点加载失败），不等价于渲染进程崩溃。
+                    // 这里仅转为可观察事件，不自动重建，避免坏 URL 进入恢复循环。
+                    Some("loadFailed") => {
+                        let id = payload.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                        let url = payload.get("url").and_then(|u| u.as_str()).unwrap_or("");
+                        let error = payload.get("error").and_then(|e| e.as_str()).unwrap_or("");
+                        bridge::report_tab_load_failed(&forward, id, url, error);
+                    }
                     _ => {}
                 }
             });

@@ -3,6 +3,7 @@ import { ref, reactive, computed, nextTick, watch } from "vue";
 import { bridge } from "../bridge";
 import { useLayoutStore } from "./useLayoutStore";
 import { useWorkspaceStore } from "./useWorkspaceStore";
+import type { TabRecoveryEvent } from "../types";
 
 export interface AISite {
   name: string;
@@ -234,6 +235,21 @@ export const useBrowserStore = defineStore("browser", () => {
     const t = tabs.find((x) => x.id === id);
     if (t) t.url = navUrl;
     if (id === activeTabId.value) url.value = navUrl;
+  }
+  function handleTabRecovery(event: TabRecoveryEvent) {
+    bridge.debugLog(
+      `tabRecovery id=${event.id} status=${event.status} attempt=${event.attempt}/${event.max_attempts} reason=${event.reason}`
+    );
+    if (event.status === "recovered") {
+      if (event.id === activeTabId.value) nextTick(schedulePosition);
+      layout.showToast(`页签已自动恢复: ${event.id}`);
+    } else if (event.status === "budget-exhausted") {
+      layout.showToast(`页签恢复次数已用尽: ${event.id}`);
+    } else if (event.status === "failed") {
+      layout.showToast(`页签恢复失败: ${event.id}`);
+    } else if (event.status === "load-failed" && event.id === activeTabId.value) {
+      layout.showToast(`页面加载失败: ${event.url || event.id}`);
+    }
   }
 
   // ===== 宫格 =====
@@ -620,6 +636,7 @@ export const useBrowserStore = defineStore("browser", () => {
     reloadActive,
     setTitle,
     setNavigated,
+    handleTabRecovery,
     buildGrid,
     layoutGrid,
     gridSetUrl,
