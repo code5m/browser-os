@@ -263,7 +263,7 @@ def fmt_num(value: Any, digits: int = 2) -> str:
 
 def write_markdown(summary: dict[str, Any], output: Path) -> None:
     lines = [
-        f"# M0-5.a Resource Cycle Diagnosis - {summary['run_id']}",
+        f"# M0 Resource Cycle Diagnosis - {summary['run_id']}",
         "",
         f"> Run dir: `{summary['run_dir']}`",
         f"> Commit: `{summary.get('commit', 'unknown')}`; mode: `{summary.get('run_mode', 'unknown')}`",
