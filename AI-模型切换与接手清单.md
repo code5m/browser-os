@@ -711,7 +711,7 @@ EXECUTOR=Codex 当前会话
 MODEL=用户已切换强模型；界面完整模型名工具不可见
 ROUTE=AI:DEEP
 MODEL_DEVIATION=UI 未暴露完整模型名，按用户说明记录为强模型接手
-COMMIT=e998bbd + 2271e75 + DOC_COMMIT_PENDING
+COMMIT=e998bbd + 2271e75 + e2c25db
 VERIFY=verify-resources.sh --self-test(0, ALL_PASS); analyze-resource-cycles.py --self-test(0, ALL_PASS); npm run build(0, 仅既有 useBrowserStore 静/动态混用 warning); cargo test --manifest-path src-tauri/Cargo.toml(0, 44 passed, 既有 2 warnings); cargo build --manifest-path src-tauri/Cargo.toml --release --locked(0, 既有 2 warnings); verify-resources.sh smoke 40-cycle(0, measurements.ok=true); validate-summary(0, VALID); sha256sum -c(0); pre-merge(0 after docs/rustfmt); git diff --check(0)
 NEXT=M0-5.c
 ```
