@@ -10,6 +10,10 @@
 > M0-5.b 源提交：`e998bbd`；证据提交：`2271e75`
 > M0-5.b 证据目录：`logs/m0-baseline/20260831T160738+0800_e998bbd_release_x11/`
 > M0-5.b 分析文件：`logs/checkpoints/M0-5.b-analysis-20260831-160738.json`、`logs/checkpoints/M0-5.b-analysis-20260831-160738.md`
+> M0-5.c 更新时间：2026-08-31 16:52 CST
+> M0-5.c 源提交：`6534963`；证据提交：`ebc49f7`
+> M0-5.c 证据目录：`logs/m0-baseline/20260831T164058+0800_6534963_release_x11/`
+> M0-5.c 分析文件：`logs/checkpoints/M0-5.c-analysis-20260831-164058.json`、`logs/checkpoints/M0-5.c-analysis-20260831-164058.md`
 
 ## 1. 结论
 
@@ -18,6 +22,8 @@
 `M0-5.b = PASS`：资源采样已补 FD target 级证据，M0 driver 已隔离全局快捷键、活动栏和页签栏误触发入口，并在 tab driver 收尾显式关闭 grid 旁路。新的 40-cycle 复测显示：orphan max 全部为 0；grid/terminal FD delta 为 0；tab FD `+1` 来自 `child:WebKitNetworkPr anon_inode:timerfd 0->1`，第 6 个样本后稳定，裁决为 WebKitNetwork 一次性平台计时器，不是 tab/grid/PTY 所有权泄漏。tab RSS 总增长 `+3.49%`，低于 10%，late-window owner 为 root 进程，裁决为 GTK/WebKit/allocator 缓存平台噪声。
 
 本结论仍不是 `M0-5.c` 正式验收。M0-5.a/M0-5.b run 均使用 `M0_RUN_MODE=smoke`、`VR_CYCLE_SAMPLES=40`、`VR_IDLE_SECONDS=5`，用于诊断、修复验证和裁决；M0-5.c 仍必须回到正式 profile 的 5 次预热 + 20 次测量并归档。
+
+`M0-5.c = PASS`：正式 profile 已完成归档，summary 为 `PASS`，release 二进制 SHA 与期望值匹配，orphan max 全部为 0，tab FD delta 为 0。grid/terminal 出现的 FD 正增长均定位为 WebKit 子进程 `anon_inode:timerfd`，按平台计时器裁决；terminal 总 RSS 增长 `+7.46%`，未超过 10% 门禁。M0-5 整项关闭，下一步进入 M0-6。
 
 ## 2. 源码资源矩阵
 
@@ -109,3 +115,31 @@ M0-5.b 关闭项：
 - tab RSS 后窗仍上行，但总增长 `+3.49%` 未超过 M0-5 验收阈值；owner 为 root 进程，当前裁决为 GTK/WebKit/allocator 缓存平台噪声。
 
 M0-5.c 接手口径：使用正式 profile 重新归档，若 tab `timerfd +1` 或 RSS 后窗上行再次出现，复用本节 target/owner 口径裁决；若出现新的 FD target 或 RSS 末值较初值超过 10%，不得直接 PASS，必须新增 owner 与裁决。
+
+## 7. M0-5.c 正式归档
+
+正式命令：
+
+```bash
+cargo build --manifest-path src-tauri/Cargo.toml --release --locked
+M0_EXPECTED_BINARY_SHA256=5c41d4abb22a5f5ba4c8d85b443f890f43db8ff8d316ac4a6dae707b29312162 bash scripts/verify-resources.sh
+python3 scripts/analyze-resource-cycles.py logs/m0-baseline/20260831T164058+0800_6534963_release_x11 --output-json logs/checkpoints/M0-5.c-analysis-20260831-164058.json --output-md logs/checkpoints/M0-5.c-analysis-20260831-164058.md
+```
+
+正式矩阵：
+
+| 场景 | 正式样本 | RSS 首末 | RSS 斜率 | FD 首末 | FD delta | orphan max | M0-5.c 裁决 |
+|---|---:|---:|---:|---:|---:|---:|---|
+| tab | 20 | `372768 -> 368448 KiB`（`-1.16%`） | `-34.10 KiB/cycle` | `103 -> 103` | `0` | `0` | PASS |
+| grid | 20 | `374308 -> 372728 KiB`（`-0.42%`） | `-196.88 KiB/cycle` | `108 -> 109` | `+1` | `0` | WebKitNetwork `anon_inode:timerfd` 平台计时器 |
+| terminal | 20 | `433524 -> 465864 KiB`（`+7.46%`） | `+903.65 KiB/cycle` | `104 -> 106` | `+2` | `0` | WebKit 子进程 `timerfd` 平台计时器；RSS 未超过 10% |
+
+FD target 归因：
+
+| 场景 | 角色 | FD target | delta | 裁决 |
+|---|---|---|---:|---|
+| grid | `child:WebKitNetworkPr` | `anon_inode:timerfd` | `+1` | 平台计时器；root FD `50 -> 50` |
+| terminal | `child:WebKitNetworkPr` | `anon_inode:timerfd` | `+1` | 平台计时器；root FD `46 -> 46` |
+| terminal | `child:WebKitWebProces` | `anon_inode:timerfd` | `+1` | 平台计时器；root FD `46 -> 46` |
+
+M0-5.c 结论：正式资源 profile 归档 PASS。M0-5 验收项“关闭后孤儿子进程为 0、FD 无持续增长或有 target 裁决、RSS 末值较初值高于 10% 必须归因”已满足；M0-5 整项关闭。

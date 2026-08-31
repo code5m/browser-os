@@ -1,8 +1,8 @@
 # AI 模型切换与接手清单
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
-> 文档版本：V2.2。
-> 更新时间：2026-08-31 16:31 CST。
+> 文档版本：V2.3。
+> 更新时间：2026-08-31 16:52 CST。
 > 当前状态：`CODEX_RUNNING`。
 > 当前分支：`feature-M0-baseline`。
 > 当前执行器：Codex 主任务；机械文档审计与独立脚本任务已委派 `gpt-5.6-luna / low`，最终裁决仍由主任务负责。
@@ -14,20 +14,20 @@
 
 | 项目 | 当前值 |
 |------|--------|
-| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`、`M0-5.a/b = PASS`（未宣称 M0/M0-5 整体完成） |
+| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`、`M0-5 = PASS`（未宣称 M0 整体完成） |
 | 已拒证据 | `ac0ecac` 三批候选：场景错误 + aggregate `UNSTABLE`，结论 `REJECTED`，不得复用 |
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
-| 当前硬风险 | M0-5.c 正式资源 profile 未归档；M0-6 GUI 回归、M0-7 放行未完成；tab `timerfd +1` 与 RSS 缓存裁决需在正式 profile 复核 |
-| 下一检查点 | `M0-5.c = NEXT`（release 构建完成 5 次预热 + 20 次正式测量并归档） |
-| 下一任务路由 | `AI:DEEP / R:high`（需 GUI 采样、资源指标裁决和正式证据归档） |
+| 当前硬风险 | M0-6 当前提交崩溃恢复与 GUI 回归未验证；M0-7 最终放行未完成 |
+| 下一检查点 | `M0-6.a = NEXT`（当前提交重跑 `GRID_SELFTEST=1 ./run-gui.sh`） |
+| 下一任务路由 | `AI:DEEP / R:high`（需 GUI/selftest 输出裁决和崩溃恢复上下文判断） |
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
 | 禁止启动 | M1~M5；当前检查点未提交前禁止夹带下一检查点 |
-| 最近实现提交 | `e998bbd fix(M0-5.b): isolate resource cycle diagnostics` |
+| 最近实现提交 | `ebc49f7 test(M0-5.c): archive formal resource baseline` |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
-| 最新状态证据 | `logs/checkpoints/M0-5.b-20260831-1631.md`；运行矩阵 `logs/m0-resource-runtime-matrix-v1.md` |
+| 最新状态证据 | `logs/checkpoints/M0-5.c-20260831-1652.md`；正式资源 run `logs/m0-baseline/20260831T164058+0800_6534963_release_x11/`；运行矩阵 `logs/m0-resource-runtime-matrix-v1.md` |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
 
@@ -39,7 +39,7 @@
 - 冻结 `logs/m0-baseline-contract-v1.md`：21 个 `REQUIRED_NOW` 指标、2 个延迟指标、环境指纹、固定场景、统计公式和证据目录。
 - 将旧 `logs/baseline-2026-08-27.md` 降级为 `EXPLORATORY`，禁止当作正式性能基线。
 - 修复原计划中的循环依赖，关键路径现为：
-  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5.a(PASS) -> M0-5.b(PASS) -> M0-5.c(NEXT) -> ...`。
+  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6.a(NEXT) -> ...`。
 - 完成 M0-1.a（commit `1bd56b1`）：新增 `scripts/baseline-check.sh` 与 `scripts/fixtures/clippy-sample.json`；
   验收命令全过、`--self-test` 输出 `SELF_TEST_RESULT=ALL_PASS`；`.gitignore` 对 `logs/m0-baseline/` 开例外，
   原始 `.log` 证据随 run 目录入库可追溯（见 §5 证据保留说明）。
@@ -59,6 +59,7 @@
 - 源提交 `93a1ba6` 已完成 M0-0.c 三批正式采样：质量/资源门禁逐批 PASS，raw aggregate 的六项 UNSTABLE 已逐项归因并转交 M0-5/M3；证据与比较规则见 `logs/checkpoints/M0-0.c-20260830-1538.md`。
 - `68c78d7` 已完成 M0-5.a 诊断工具提交；40-cycle GUI 资源诊断 run `logs/m0-baseline/20260831T105149+0800_68c78d7_release_x11/` 为 `EXPLORATORY` 但 `measurements.ok=true`，证明当前环境可真实采样。运行时矩阵见 `logs/m0-resource-runtime-matrix-v1.md`：orphan max 均 0，RSS 首末未超过 10% 增长，FD `+1/+1/+2` 转交 M0-5.b。
 - `e998bbd`/`2271e75` 已完成 M0-5.b：资源采样补 FD target 差分，M0 driver 隔离全局快捷键/活动栏/页签栏误触发，并在 tab driver 收尾显式关闭 grid 旁路。40-cycle GUI 复测 run `logs/m0-baseline/20260831T160738+0800_e998bbd_release_x11/` 为 `EXPLORATORY` 且 `measurements.ok=true`；orphan max 均 0，grid/terminal FD delta 为 0，tab FD `+1` 定位为 WebKitNetwork `anon_inode:timerfd` 一次性平台计时器，tab RSS 总增长 `+3.49%`，未超过 10%。下一步转 M0-5.c 正式 profile 归档。
+- `ebc49f7` 已完成 M0-5.c 正式资源归档：run `logs/m0-baseline/20260831T164058+0800_6534963_release_x11/` 为 formal `PASS`，release SHA `5c41d4abb22a5f5ba4c8d85b443f890f43db8ff8d316ac4a6dae707b29312162` 匹配，orphan max 均 0，tab FD delta 为 0；grid/terminal 的正增长均为 WebKit 子进程 `anon_inode:timerfd` 平台计时器裁决。M0-5 整项 PASS，下一步转 M0-6.a。
 
 ## 2. 模型映射
 
@@ -112,26 +113,26 @@ NEXT=<PASS 后唯一下一检查点；FAIL 时保持原 NEXT>
 - 同一失败最多让低模型修两轮；第二次仍失败即停止，回写 `BLOCKED`，交给更强模型。
 - 文档回写只更新顶部状态、当前 WBS、最近 checkpoint 和 NEXT；不重排无关章节，避免无意义 diff。
 
-### 当前可复制任务卡：M0-5.c
+### 当前可复制任务卡：M0-6.a
 
 ```text
-TASK_ID=M0-5.c
+TASK_ID=M0-6.a
 ROUTE=AI:DEEP
-MODEL=需要强模型；低模型只允许整理命令输出和证据草稿
+MODEL=需要强模型；低模型只允许整理 selftest 输出和日志摘要
 REASONING=high 或 xhigh
-GOAL=在当前提交完成 release formal profile 资源归档：默认 5 次预热 + 20 次正式测量，确认 M0-5 是否可整体关闭或保留明确裁决。
-READ=AI-模型切换与接手清单.md, 详细设计与实施计划.md §2.2, logs/checkpoints/M0-5.b-20260831-1631.md, logs/m0-resource-runtime-matrix-v1.md, logs/checkpoints/M0-5.b-analysis-20260831-160738.json, logs/m0-baseline/20260831T160738+0800_e998bbd_release_x11/, scripts/verify-resources.sh, scripts/analyze-resource-cycles.py, scripts/validate-summary.py, scripts/schema/m0-summary.schema.json
-WRITE=logs/checkpoints/M0-5.c-<YYYYMMDD-HHMM>.md；三份主文档；必要时更新 logs/m0-resource-runtime-matrix-v1.md；新增正式 run 证据目录 logs/m0-baseline/<run-id>/
-FORBID=不启动 M1/M2；不改 M0-0 冻结正式证据；不宣称 M0 完成；不跳过 M0-6；不伪改脚本阈值换 PASS；不删除用户数据；不把 smoke 诊断当正式验收
-COMMANDS=git status --short --branch; npm run build; cargo test --manifest-path src-tauri/Cargo.toml; cargo build --manifest-path src-tauri/Cargo.toml --release --locked; export M0_EXPECTED_BINARY_SHA256=<sha256 of src-tauri/target/release/mvp-browser-os>; bash scripts/verify-resources.sh; python3 scripts/analyze-resource-cycles.py <new-run>; python3 scripts/validate-summary.py scripts/schema/m0-summary.schema.json <new-run>/summary.json; (cd <new-run> && sha256sum -c SHA256SUMS); bash scripts/pre-merge.sh; git diff --check
-PASS_CRITERIA=正式 run EXIT=0 且 summary.status=PASS、measurements.ok=true、worktree_clean_at_start=true；tab/grid/terminal orphan_max 全为 0；无持续 FD 增长，若有正增长必须复用 FD target 级证据并写明平台/环境裁决；RSS 末值较初值高于 10% 必须给出 owner 与裁决；terminal throughput 有效；pre-merge ALL_PASS；文档/checkpoint 已提交且工作树干净
-FAIL_ACTION=不移动 NEXT；若 GUI/应用无法运行，必须 STATUS=BLOCKED 且 NEXT 保持 M0-5.c；若正式资源指标失败，保留 raw 证据和失败命令尾部 120 行，交给强模型裁决
-DOC_BACKWRITE=三份主文档顶部状态、M0-5.c 勾选或 BLOCKED、最近 checkpoint、实际模型、VERIFY、COMMIT；运行矩阵补正式 profile 结论
-COMMIT=test(M0-5.c): archive formal resource baseline
-NEXT=M0-6.a
+GOAL=在当前提交重跑宫格崩溃恢复自检，确认 `GRID_SELFTEST=1 ./run-gui.sh` 是否为 `ALL_PASS`，并归档当前提交的 GUI/selftest 证据。
+READ=AI-模型切换与接手清单.md, 详细设计与实施计划.md §2.2 的 M0-6, PROJECT-RULES.md, src-tauri/src/grid_process.rs, src-tauri/src/main.rs, run-gui.sh, logs/checkpoints/M0-5.c-20260831-1652.md, logs/m0-resource-runtime-matrix-v1.md
+WRITE=logs/checkpoints/M0-6.a-<YYYYMMDD-HHMM>.md；三份主文档；必要时新增 logs/m0-grid-selftest/ 或引用已有 run log
+FORBID=不启动 M1/M2；不改 M0-0/M0-5 冻结证据；不合并 M0-6.b/c；不伪造 GUI/selftest 输出；不删除用户数据；不把历史 2026-08-25 selftest 当当前提交 PASS
+COMMANDS=git status --short --branch; bash -n run-gui.sh; GRID_SELFTEST=1 ./run-gui.sh; cargo test --manifest-path src-tauri/Cargo.toml; bash scripts/pre-merge.sh; git diff --check
+PASS_CRITERIA=当前提交 selftest 输出明确 `SELFTEST_RESULT=ALL_PASS` 或等价 PASS 标记；失败/崩溃日志归档；不修改产品逻辑或仅做当前检查点必要修复；cargo/pre-merge 通过；文档/checkpoint 已提交且工作树干净
+FAIL_ACTION=不移动 NEXT；若 GUI/应用无法运行，必须 STATUS=BLOCKED 且 NEXT 保持 M0-6.a；若 selftest FAIL，保留失败日志尾部 120 行并决定是否在 M0-6.a 内修复或 BLOCKED
+DOC_BACKWRITE=三份主文档顶部状态、M0-6.a 勾选或 BLOCKED、最近 checkpoint、实际模型、VERIFY、COMMIT
+COMMIT=test(M0-6.a): rerun grid crash selftest
+NEXT=M0-6.b
 ```
 
-强模型复核 M0-5.c 时只需读取本任务卡、`logs/checkpoints/M0-5.b-20260831-1631.md`、`logs/m0-resource-runtime-matrix-v1.md`、正式 run 的 `summary.json` 与分析摘要；不要重复读取全部历史长文档。
+强模型复核 M0-6.a 时只需读取本任务卡、当前 selftest 输出、`run-gui.sh`、grid 相关源码和最新 checkpoint；不要重复读取全部历史长文档。
 
 用户提供的微信临时图片在读取时已不存在，因此本文件不猜测 Trae 模型名称。重新附图或直接写出模型列表后，只填写上表三个 Trae 单元格并升级本文版本；任务上的 `AI:*` 标签不变。
 
@@ -724,6 +725,29 @@ NEXT=M0-5.c
 - 40-cycle 复测证据：`logs/m0-baseline/20260831T160738+0800_e998bbd_release_x11/`；分析摘要：`logs/checkpoints/M0-5.b-analysis-20260831-160738.md`。
 - 复测结论：orphan max 全部为 0；grid/terminal FD delta 为 0；tab FD `+1` 来自 `child:WebKitNetworkPr anon_inode:timerfd 0->1`，第 6 个样本后稳定，裁决为 WebKitNetwork 一次性平台计时器；tab RSS 总增长 `+3.49%`，未超过 10%，M0-5.c 正式 profile 继续复核。
 
+### M0-5.c 回写记录（2026-08-31，Codex 当前会话）
+
+```text
+CHECKPOINT=M0-5.c
+STATUS=PASS
+EXECUTOR=Codex 当前会话
+MODEL=用户已切换强模型；界面完整模型名工具不可见
+ROUTE=AI:DEEP
+MODEL_DEVIATION=UI 未暴露完整模型名，按用户说明记录为强模型接手
+COMMIT=ebc49f7 + DOC_COMMIT_PENDING
+VERIFY=cargo build --manifest-path src-tauri/Cargo.toml --release --locked(0, 既有 2 warnings); verify-resources.sh formal(0, summary.status=PASS, measurements.ok=true); analyze-resource-cycles.py(0); validate-summary(0, VALID); sha256sum -c(0); analyze-resource-cycles.py --self-test(0, ALL_PASS); pre-merge(待文档提交前重跑); git diff --check(待文档提交前重跑)
+NEXT=M0-6.a
+```
+
+实现要点：
+
+- 正式资源 run：`logs/m0-baseline/20260831T164058+0800_6534963_release_x11/`，commit `6534963`，`run_mode=formal`。
+- release 二进制 SHA：`5c41d4abb22a5f5ba4c8d85b443f890f43db8ff8d316ac4a6dae707b29312162`，与 `M0_EXPECTED_BINARY_SHA256` 完全匹配。
+- 样本 profile：idle 60 秒；资源循环每类 5 次预热 + 20 次正式样本；terminal throughput 3 次正式样本。
+- 正式结果：summary `PASS`，`worktree_clean_at_start=true`，`measurements.ok=true`，orphan max 全部为 0。
+- 资源裁决：tab FD delta 为 0；grid FD `+1` 和 terminal FD `+2` 均为 WebKit 子进程 `anon_inode:timerfd`，不是 root/PTY 所有权泄漏。terminal 总 RSS 增长 `+7.46%`，未超过 10%；root 局部 RSS 跳升已按 GTK/WebKit/allocator 缓存裁决并留给后续基线对照。
+- M0-5 三个检查点 a/b/c 全部 PASS，M0-5 整项关闭；M0 尚未完成，下一步必须进入 M0-6.a。
+
 ## 6. 跨模型接手审查协议
 
 Trae 或后续执行器领取当前 `NEXT` 前，必须先做审查，不直接继续写代码：
@@ -750,7 +774,7 @@ git log --reverse --oneline --decorate 504fcd7..HEAD
 
 先阅读 AI-模型切换与接手清单.md、详细设计与实施计划.md §2.2、logs/m0-baseline-contract-v1.md。每轮只从文档领取唯一 NEXT，按 AI:* 路由选择 Trae 模型，完成实现、全部验收、四处回写和独立提交。提交后确认工作树干净；未命中硬停止条件时，不用等待用户回复，立即领取下一个 NEXT。
 
-第一轮是 M0-5.c，必须使用 TRAE_DEEP 等效强模型：先确认 M0-5.b 的 checkpoint、40-cycle run、运行时矩阵和分析文件均已提交且工作树干净；然后用 release 构建完成默认 5 次预热 + 20 次正式测量并归档。低模型可整理命令输出和 checkpoint 草稿，但 PASS 裁决必须由强模型复核 summary、FD target、RSS owner 和 raw 证据。不得启动 M1/M2，不得跳过 M0-6，不得把 smoke 诊断当正式验收。正式 run 要求 summary.status=PASS、measurements.ok=true、orphan max 全部 0、无持续 FD 增长或有 FD target 级裁决；新增 checkpoint、回写三份主文档和运行矩阵，独立提交 test(M0-5.c)。
+第一轮是 M0-6.a，必须使用 TRAE_DEEP 等效强模型：先确认 M0-5.c 的 checkpoint、formal run、运行时矩阵和分析文件均已提交且工作树干净；然后在当前提交重跑 `GRID_SELFTEST=1 ./run-gui.sh` 并归档输出。低模型可整理 selftest 日志和 checkpoint 草稿，但 PASS 裁决必须由强模型复核当前提交、GUI 输出和失败路径。不得启动 M1/M2，不得合并 M0-6.b/c，不得把 2026-08-25 历史 selftest 当当前提交 PASS。selftest 要求输出 `SELFTEST_RESULT=ALL_PASS` 或等价 PASS 标记；新增 checkpoint、回写三份主文档，独立提交 test(M0-6.a)。
 
 同一检查点连续两次失败、缺少 DEEP 等效模型、缺少 GUI/权限/环境、需要改冻结契约或人工裁决、发现不明改动、额度耗尽或到达 M0-7.c 时必须停止，回写 BLOCKED 和证据；不得伪造 PASS。若 GUI/应用无法运行，必须 STATUS=BLOCKED，NEXT 保持当前检查点。
 ```
