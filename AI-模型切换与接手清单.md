@@ -688,7 +688,7 @@ EXECUTOR=Codex 当前会话
 MODEL=用户已切换强模型；界面完整模型名工具不可见
 ROUTE=AI:DEEP
 MODEL_DEVIATION=UI 未暴露完整模型名，按用户说明记录为强模型接手
-COMMIT=68c78d7 + DOC_COMMIT=PENDING
+COMMIT=68c78d7 + f8a58b5
 VERIFY=verify-resources.sh --self-test(0, ALL_PASS); analyze-resource-cycles.py --self-test(0, ALL_PASS); collect-m0-baseline.sh --smoke(0, GUI 可采样); cargo build --release --locked(0, 既有 2 warnings); verify-resources.sh smoke 40-cycle(0, measurements.ok=true); validate-summary(0, VALID); sha256sum -c(0)
 NEXT=M0-5.b
 ```
