@@ -620,7 +620,7 @@ EXECUTOR=CodeBuddy（Codex 主机）
 MODEL=界面未显示完整模型名
 ROUTE=AI:BALANCED
 MODEL_DEVIATION=UI 未显示完整模型名，推理档位未能精确记录
-COMMIT=提交信息 feat(M0-4.c): record build metrics and compare gate
+COMMIT=e216f03
 VERIFY=pre-merge.sh(0, PRE_MERGE_RESULT=ALL_PASS); measure-build-metrics.py --self-test(0); 采集 EXIT=0; --compare(0, 无回归); cargo test(0, 44 passed); git diff --check(0)
 NEXT=M0-5.a
 ```
