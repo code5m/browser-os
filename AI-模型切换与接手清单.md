@@ -734,7 +734,7 @@ EXECUTOR=Codex 当前会话
 MODEL=用户已切换强模型；界面完整模型名工具不可见
 ROUTE=AI:DEEP
 MODEL_DEVIATION=UI 未暴露完整模型名，按用户说明记录为强模型接手
-COMMIT=ebc49f7 + DOC_COMMIT_PENDING
+COMMIT=ebc49f7 + 316d570
 VERIFY=cargo build --manifest-path src-tauri/Cargo.toml --release --locked(0, 既有 2 warnings); verify-resources.sh formal(0, summary.status=PASS, measurements.ok=true); analyze-resource-cycles.py(0); validate-summary(0, VALID); sha256sum -c(0); analyze-resource-cycles.py --self-test(0, ALL_PASS); pre-merge(待文档提交前重跑); git diff --check(待文档提交前重跑)
 NEXT=M0-6.a
 ```
