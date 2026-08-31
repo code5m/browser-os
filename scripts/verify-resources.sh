@@ -292,7 +292,7 @@ collect_environment() {
 # 驱动能力：进程树 / RSS / FD 采样（直接读 /proc）
 # ---------------------------------------------------------------------------
 # snapshot_process_tree.py <root_pid>：枚举 root 的全部后代（含 root），输出 JSON：
-#   {"pid":..., "starttime":..., "rss_kib":..., "fd_count":..., "fd_accessible":..., "unreadable": [pid,...]}
+#   {"pid":..., "ppid":..., "starttime":..., "comm":..., "cmdline":..., "rss_kib":..., "fd_count":..., "unreadable": [pid,...]}
 # 契约要求：读取失败的 PID 单列，不得默认为 0；starttime 用于防 PID 复用。
 snapshot_process_tree() {
   local root_pid="$1"
@@ -312,6 +312,24 @@ def read_proc(pid, field):
         return ppid, starttime
     except (OSError, ValueError, IndexError):
         return None, None
+
+def proc_comm(pid):
+    try:
+        with open("/proc/%d/comm" % pid, "r", encoding="utf-8", errors="replace") as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+def proc_cmdline(pid):
+    try:
+        with open("/proc/%d/cmdline" % pid, "rb") as f:
+            raw = f.read()
+        if not raw:
+            return ""
+        text = raw.replace(b"\0", b" ").decode("utf-8", errors="replace").strip()
+        return text[:512]
+    except OSError:
+        return None
 
 def rss_kib(pid):
     try:
@@ -334,6 +352,7 @@ def fd_count(pid):
 
 # 先收集所有 /proc 下的 (pid, ppid, starttime)，避免依赖 ps 的输出解析
 children = {}
+ppids = {}
 all_pids = []
 for entry in os.listdir("/proc"):
     if not entry.isdigit():
@@ -343,6 +362,7 @@ for entry in os.listdir("/proc"):
     if ppid is None:
         continue
     all_pids.append(pid)
+    ppids[pid] = ppid
     children.setdefault(ppid, []).append((pid, starttime))
 
 # BFS 从 root 出发，得到后代集合（含 root）
@@ -364,13 +384,17 @@ desc[root] = root_st
 out = {"root_pid": root, "members": [], "unreadable": []}
 for pid in sorted(desc):
     starttime = desc[pid]
+    ppid = ppids.get(pid)
     rss = rss_kib(pid)
     fd = fd_count(pid)
     if starttime is None or rss is None or fd is None:
         out["unreadable"].append(pid)
     out["members"].append({
         "pid": pid,
+        "ppid": ppid,
         "starttime": starttime,
+        "comm": proc_comm(pid),
+        "cmdline": proc_cmdline(pid),
         "rss_kib": rss,
         "fd_count": fd,
     })
