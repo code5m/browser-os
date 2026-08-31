@@ -59,6 +59,8 @@ pre-merge.sh — M0-1.c 本地 pre-merge 门禁（M0-1 脚本合并前检查入�
   lifecycle fixture             check-lifecycle-contract.py --self-test / --expect-current-gaps / 默认门禁
   security fixture              check-security-policy.py --self-test / --expect-current-gaps
                                 （默认模式按设计 EXIT=1，见 logs/m0-security-threat-matrix-v1.md）
+  build metrics                 measure-build-metrics.py --self-test / --compare（总体积 ≤15%、
+                                warning 不增加；指标存 logs/m0-build-metrics/）
   git diff --check              工作树 + 暂存区 + 当前分支相对基线（机器证据除外）
 
 退出码: 0 = 全部通过；1 = 任一失败；2 = 非法参数
@@ -170,6 +172,21 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/check-lifecycle-contract.py" >/dev/null 2>&1 \
     || pm_fail "check-lifecycle-contract.py 默认生命周期门禁"
 
+  pm_log "M0-4.c 构建指标对比（总体积 ≤15% 增长、cargo warning 不增加）…"
+  local baseline_file
+  baseline_file="$(ls -1 "$ROOT"/logs/m0-build-metrics/build-metrics-*.json 2>/dev/null | sort | head -1 || true)"
+  if [ -n "$baseline_file" ]; then
+    # 复用上一步 npm run build 的产物，不重复构建。
+    if python3 "$SCRIPT_DIR/measure-build-metrics.py" --compare "$baseline_file" --skip-build \
+      >/dev/null 2>&1; then
+      pm_log "build metrics 未回归（基线 ${baseline_file#"$ROOT/"}）"
+    else
+      pm_fail "build metrics regression vs ${baseline_file#"$ROOT/"}"
+    fi
+  else
+    pm_log "无构建指标基线，跳过对比"
+  fi
+
   pm_log "M0-3.a 安全边界夹具（现状缺口，默认模式按设计 EXIT=1，不入门禁）…"
   python3 "$SCRIPT_DIR/check-security-policy.py" --self-test >/dev/null 2>&1 \
     || pm_fail "check-security-policy.py --self-test"
@@ -228,6 +245,10 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/check-plan-routing.py" ] || { echo "FAIL: check-plan-routing.py missing"; rc=1; }
   [ -f "$SCRIPT_DIR/check-lifecycle-contract.py" ] || { echo "FAIL: check-lifecycle-contract.py missing"; rc=1; }
   [ -f "$SCRIPT_DIR/check-security-policy.py" ] || { echo "FAIL: check-security-policy.py missing"; rc=1; }
+  [ -f "$SCRIPT_DIR/measure-build-metrics.py" ] || { echo "FAIL: measure-build-metrics.py missing"; rc=1; }
+  if ! python3 "$SCRIPT_DIR/measure-build-metrics.py" --self-test >/dev/null 2>&1; then
+    echo "FAIL: measure-build-metrics.py --self-test"; rc=1
+  fi
   if ! python3 "$SCRIPT_DIR/check-security-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-security-policy.py --self-test"; rc=1
   fi

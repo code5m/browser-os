@@ -14,13 +14,13 @@
 
 | 项目 | 当前值 |
 |------|--------|
-| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`（a/b/c/d 全关闭；未宣称 M0 整体完成） |
+| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`（a/b/c 全关闭；未宣称 M0 整体完成） |
 | 已拒证据 | `ac0ecac` 三批候选：场景错误 + aggregate `UNSTABLE`，结论 `REJECTED`，不得复用 |
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | tab RSS 三批持续正增长，必须由 M0-5 关闭；不属于 M0-0 PASS 伪装项 |
-| 下一检查点 | `M0-4.c = NEXT`（记录构建时间、产物体积和 warning 对比） |
-| 下一任务路由 | `AI:BALANCED / R:medium` |
+| 下一检查点 | `M0-5.a = NEXT`（tab/grid/PTY/FD/线程资源矩阵与失败复现） |
+| 下一任务路由 | `AI:DEEP / R:high`（需运行应用做诊断采样，建议强模型接手） |
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
 | 禁止启动 | M1~M5；当前检查点未提交前禁止夹带下一检查点 |
@@ -610,6 +610,28 @@ NEXT=M0-4.c
 - `useHomeStore` 对 `useWorkspaceStore` 的动态 import 改静态（该 store 已被十余处静态引入，动态既不分包也不破环）。
 - `useLayoutStore` 对 `useBrowserStore` 的动态 import **刻意保留**：`useBrowserStore` 多处使用 `useLayoutStore`（mainView/showToast/isBrowserView），改静态即成环。已在代码注释与 checkpoint 登记。
 - **强模型复核点**：剩余 1 条 mix 告警是已知取舍，若后续要彻底消除，需把 `showToast` 与视图状态抽成独立模块以反转依赖方向，属重构级改动，勿在未验证 GUI 的情况下直接改静态。
+
+### M0-4.c 回写记录（2026-08-31，CodeBuddy / Codex 主机）
+
+```text
+CHECKPOINT=M0-4.c
+STATUS=PASS
+EXECUTOR=CodeBuddy（Codex 主机）
+MODEL=界面未显示完整模型名
+ROUTE=AI:BALANCED
+MODEL_DEVIATION=UI 未显示完整模型名，推理档位未能精确记录
+COMMIT=提交信息 feat(M0-4.c): record build metrics and compare gate
+VERIFY=pre-merge.sh(0, PRE_MERGE_RESULT=ALL_PASS); measure-build-metrics.py --self-test(0); 采集 EXIT=0; --compare(0, 无回归); cargo test(0, 44 passed); git diff --check(0)
+NEXT=M0-5.a
+```
+
+实现要点：
+
+- 新增 `scripts/measure-build-metrics.py`：采集 npm build 墙钟、chunk 明细（含 500 kB 告警识别）、dist 总字节、最大 JS 原始/gzip 体积、cargo check 耗时与 warning 数、fmt 状态；支持 `--compare` 与 `--self-test`。
+- 基线入库：`logs/m0-build-metrics/build-metrics-6f4e554.json`（总 544,093 B、最大 chunk 334,208 B、warning 2、无 500 kB 告警）。
+- 门禁：pre-merge 在既有 `npm run build` 之后用 `--compare --skip-build` 复用产物对比，**总体积增长 >15% 或 warning 增加即 FAIL**（对应 M0-4 验收与 M0-1.a「warning 只减不增」）。
+- **M0-4 整项 PASS**。
+- 强模型复核点：基线取 `logs/m0-build-metrics/` 字典序最早文件；若将来需要「滚动基线」而非固定首份，应显式更换策略并更新本文档。
 
 ### M0-4.a 回写记录（2026-08-31，CodeBuddy / Codex 主机）
 
