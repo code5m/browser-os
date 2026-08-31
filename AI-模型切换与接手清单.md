@@ -24,7 +24,7 @@
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
 | 禁止启动 | M1~M5；当前检查点未提交前禁止夹带下一检查点 |
-| 最近实现提交 | `待回填 feat(M0-6.b): add bounded tab webview recovery` |
+| 最近实现提交 | `b3331a0 feat(M0-6.b): add bounded tab webview recovery` |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
 | 最新状态证据 | `logs/checkpoints/M0-6.b-20260831-2155.md`；selftest 日志 `logs/m0-grid-selftest/M0-6.b-20260831-selftest.log` |
@@ -61,7 +61,7 @@
 - `e998bbd`/`2271e75` 已完成 M0-5.b：资源采样补 FD target 差分，M0 driver 隔离全局快捷键/活动栏/页签栏误触发，并在 tab driver 收尾显式关闭 grid 旁路。40-cycle GUI 复测 run `logs/m0-baseline/20260831T160738+0800_e998bbd_release_x11/` 为 `EXPLORATORY` 且 `measurements.ok=true`；orphan max 均 0，grid/terminal FD delta 为 0，tab FD `+1` 定位为 WebKitNetwork `anon_inode:timerfd` 一次性平台计时器，tab RSS 总增长 `+3.49%`，未超过 10%。下一步转 M0-5.c 正式 profile 归档。
 - `ebc49f7` 已完成 M0-5.c 正式资源归档：run `logs/m0-baseline/20260831T164058+0800_6534963_release_x11/` 为 formal `PASS`，release SHA `5c41d4abb22a5f5ba4c8d85b443f890f43db8ff8d316ac4a6dae707b29312162` 匹配，orphan max 均 0，tab FD delta 为 0；grid/terminal 的正增长均为 WebKit 子进程 `anon_inode:timerfd` 平台计时器裁决。M0-5 整项 PASS，下一步转 M0-6.a。
 - `57a31ea` 已完成 M0-6.a 当前提交宫格崩溃恢复自检：`GRID_SELFTEST=1 ./run-gui.sh` 退出 0，日志 `logs/m0-grid-selftest/M0-6.a-20260831-selftest.log` 输出 `SELFTEST_RESULT=ALL_PASS`，覆盖 create_grid、grid_open、grid_position、eval、kill -11 崩溃重启、重启后 eval、另一格存活、close_grid、shutdown count=0。下一步转 M0-6.b。
-- `待回填` 已完成 M0-6.b：主进程 `tab-*` WebView 新增 60 秒内最多 2 次的有限恢复预算；`tab_open` 收口到插件 `navigate`；`eval/navigate/position` 失败触发重建并重试；`loadFailed` 只观测不自动重建；`tab-recovery` 事件可见。`cargo test` 47 passed，`npm run build` 通过，`GRID_SELFTEST=1 ./run-gui.sh` 输出 `SELFTEST_RESULT=ALL_PASS`。下一步转 M0-6.c。
+- `b3331a0` 已完成 M0-6.b：主进程 `tab-*` WebView 新增 60 秒内最多 2 次的有限恢复预算；`tab_open` 收口到插件 `navigate`；`eval/navigate/position` 失败触发重建并重试；`loadFailed` 只观测不自动重建；`tab-recovery` 事件可见。`cargo test` 47 passed，`npm run build` 通过，`GRID_SELFTEST=1 ./run-gui.sh` 输出 `SELFTEST_RESULT=ALL_PASS`。下一步转 M0-6.c。
 
 ## 2. 模型映射
 
