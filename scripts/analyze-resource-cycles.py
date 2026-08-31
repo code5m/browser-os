@@ -7,7 +7,7 @@ import argparse
 import json
 import math
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from statistics import median
 from typing import Any
@@ -84,11 +84,65 @@ def process_role(member: dict[str, Any], root_pid: int) -> str:
     return "child:unknown"
 
 
+def normalize_fd_target(target: Any) -> str:
+    text = str(target or "unknown")
+    if re.fullmatch(r"socket:\[\d+\]", text):
+        return "socket"
+    if re.fullmatch(r"pipe:\[\d+\]", text):
+        return "pipe"
+    match = re.fullmatch(r"anon_inode:\[(.+)\]", text)
+    if match:
+        return f"anon_inode:{match.group(1)}"
+    if text.startswith("/memfd:"):
+        return "memfd:" + text.split(" ", 1)[0].removeprefix("/memfd:")
+    if text.endswith(" (deleted)"):
+        return text.removesuffix(" (deleted)") + " (deleted)"
+    return text
+
+
+def fd_target_counter(member: dict[str, Any], *, normalized: bool) -> Counter[str]:
+    raw_targets = member.get("fd_targets")
+    if not isinstance(raw_targets, list):
+        return Counter()
+    counter: Counter[str] = Counter()
+    for item in raw_targets:
+        if isinstance(item, dict):
+            target = item.get("target")
+        else:
+            target = item
+        counter[normalize_fd_target(target) if normalized else str(target or "unknown")] += 1
+    return counter
+
+
+def target_deltas(counters: list[Counter[str]]) -> list[dict[str, Any]]:
+    if not counters:
+        return []
+    first = counters[0]
+    last = counters[-1]
+    rows = []
+    for target in sorted(set(first) | set(last)):
+        first_count = first.get(target, 0)
+        last_count = last.get(target, 0)
+        delta = last_count - first_count
+        if delta:
+            rows.append(
+                {
+                    "target": target,
+                    "first": first_count,
+                    "last": last_count,
+                    "delta": delta,
+                }
+            )
+    return sorted(rows, key=lambda row: (-row["delta"], row["target"]))
+
+
 def summarize_members(raw_dir: Path, kind: str) -> dict[str, Any]:
     closed_paths = sorted(raw_dir.glob(f"{kind}_cycle_c*_closed.json"), key=cycle_no)
     opened_paths = sorted(raw_dir.glob(f"{kind}_cycle_c*_opened.json"), key=cycle_no)
     baseline_paths = sorted(raw_dir.glob(f"{kind}_cycle_c*_baseline.json"), key=cycle_no)
     by_role: dict[str, dict[str, list[float]]] = defaultdict(lambda: {"rss_kib": [], "fd_count": [], "present": []})
+    fd_targets_by_role: dict[str, list[Counter[str]]] = defaultdict(list)
+    fd_targets_exact_by_role: dict[str, list[Counter[str]]] = defaultdict(list)
     closed_member_counts: list[float] = []
     opened_extra_counts: list[float] = []
 
@@ -97,16 +151,22 @@ def summarize_members(raw_dir: Path, kind: str) -> dict[str, Any]:
         root_pid = int(snap["root_pid"])
         closed_member_counts.append(float(len(snap.get("members", []))))
         per_role: dict[str, dict[str, float]] = defaultdict(lambda: {"rss_kib": 0.0, "fd_count": 0.0})
+        per_role_targets: dict[str, Counter[str]] = defaultdict(Counter)
+        per_role_targets_exact: dict[str, Counter[str]] = defaultdict(Counter)
         for member in snap.get("members", []):
             role = process_role(member, root_pid)
             if member.get("rss_kib") is not None:
                 per_role[role]["rss_kib"] += float(member["rss_kib"])
             if member.get("fd_count") is not None:
                 per_role[role]["fd_count"] += float(member["fd_count"])
+            per_role_targets[role].update(fd_target_counter(member, normalized=True))
+            per_role_targets_exact[role].update(fd_target_counter(member, normalized=False))
         for role, values in per_role.items():
             by_role[role]["rss_kib"].append(values["rss_kib"])
             by_role[role]["fd_count"].append(values["fd_count"])
             by_role[role]["present"].append(1.0)
+            fd_targets_by_role[role].append(per_role_targets[role])
+            fd_targets_exact_by_role[role].append(per_role_targets_exact[role])
 
     for baseline_path, opened_path in zip(baseline_paths, opened_paths):
         baseline = load_json(baseline_path)
@@ -119,6 +179,9 @@ def summarize_members(raw_dir: Path, kind: str) -> dict[str, Any]:
             "presence_cycles": int(sum(values["present"])),
             "rss_kib": stats(values["rss_kib"]),
             "fd_count": stats(values["fd_count"]),
+            "fd_targets_available": any(fd_targets_by_role.get(role, [])),
+            "fd_target_deltas": target_deltas(fd_targets_by_role.get(role, [])),
+            "fd_target_deltas_exact": target_deltas(fd_targets_exact_by_role.get(role, [])),
         }
 
     return {
@@ -255,12 +318,33 @@ def write_markdown(summary: dict[str, Any], output: Path) -> None:
                 )
             )
         lines.append("")
+        fd_delta_lines: list[str] = []
+        for role, role_stats in roles.items():
+            for row in role_stats.get("fd_target_deltas", []):
+                fd_delta_lines.append(
+                    "| {role} | `{target}` | {first}->{last} | {delta:+d} |".format(
+                        role=role,
+                        target=str(row["target"]).replace("`", "'"),
+                        first=row["first"],
+                        last=row["last"],
+                        delta=row["delta"],
+                    )
+                )
+        if fd_delta_lines:
+            lines += [
+                "FD target deltas (normalized, first closed sample -> last closed sample):",
+                "",
+                "| role | target | count | delta |",
+                "|---|---|---:|---:|",
+                *fd_delta_lines,
+                "",
+            ]
     output.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("run_dir", type=Path)
+    parser.add_argument("run_dir", type=Path, nargs="?")
     parser.add_argument("--output-json", type=Path)
     parser.add_argument("--output-md", type=Path)
     parser.add_argument("--self-test", action="store_true")
@@ -270,8 +354,18 @@ def main() -> int:
         values = [10, 20, 30]
         assert stats(values)["median"] == 20
         assert round(ols_slope(values) or 0, 2) == 10.0
+        assert normalize_fd_target("socket:[123]") == "socket"
+        assert normalize_fd_target("anon_inode:[eventfd]") == "anon_inode:eventfd"
+        deltas = target_deltas([Counter({"socket": 1}), Counter({"socket": 3, "pipe": 1})])
+        assert deltas == [
+            {"target": "socket", "first": 1, "last": 3, "delta": 2},
+            {"target": "pipe", "first": 0, "last": 1, "delta": 1},
+        ]
         print("SELF_TEST_RESULT=ALL_PASS")
         return 0
+
+    if args.run_dir is None:
+        parser.error("run_dir is required unless --self-test is used")
 
     run_dir = args.run_dir.resolve()
     summary_path = run_dir / "summary.json"

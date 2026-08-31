@@ -112,6 +112,10 @@ function setGridCount(n: number) {
 }
 
 async function onItem(v: string) {
+  if (system.m0Cfg?.driver) {
+    bridge.debugLog(`[M0] ignore activity item ${v} while driver=${system.m0Cfg.driver}`);
+    return;
+  }
   expanded.value = "";
   // 离开宫格视图时自动关闭宫格：gridOpen 悬挂为 true 会让浏览视图的定位
   // 走错分支（tab 不复位、宫格被拉回可视区），且在非浏览器视图空转重试

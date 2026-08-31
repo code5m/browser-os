@@ -341,14 +341,22 @@ def rss_kib(pid):
         pass
     return None
 
-def fd_count(pid):
+def fd_targets(pid):
     try:
-        n = 0
-        for entry in os.listdir("/proc/%d/fd" % pid):
-            n += 1
-        return n
+        entries = sorted(
+            os.listdir("/proc/%d/fd" % pid),
+            key=lambda value: int(value) if value.isdigit() else value,
+        )
     except OSError:
         return None
+    targets = []
+    for entry in entries:
+        try:
+            target = os.readlink("/proc/%d/fd/%s" % (pid, entry))
+        except OSError as exc:
+            target = "UNREADABLE:%s" % exc.__class__.__name__
+        targets.append({"fd": entry, "target": target})
+    return targets
 
 # 先收集所有 /proc 下的 (pid, ppid, starttime)，避免依赖 ps 的输出解析
 children = {}
@@ -386,7 +394,8 @@ for pid in sorted(desc):
     starttime = desc[pid]
     ppid = ppids.get(pid)
     rss = rss_kib(pid)
-    fd = fd_count(pid)
+    fds = fd_targets(pid)
+    fd = len(fds) if fds is not None else None
     if starttime is None or rss is None or fd is None:
         out["unreadable"].append(pid)
     out["members"].append({
@@ -397,6 +406,7 @@ for pid in sorted(desc):
         "cmdline": proc_cmdline(pid),
         "rss_kib": rss,
         "fd_count": fd,
+        "fd_targets": fds,
     })
 out["total_rss_kib"] = sum(m["rss_kib"] for m in out["members"] if m["rss_kib"] is not None)
 out["total_fd_count"] = sum(m["fd_count"] for m in out["members"] if m["fd_count"] is not None)

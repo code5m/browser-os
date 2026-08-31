@@ -109,6 +109,7 @@ onMounted(async () => {
   }
 
   function onGlobalKeydown(e: KeyboardEvent) {
+    if (system.m0Cfg?.driver) return;
     // 输入框/文本域内不触发全局快捷键
     const t = e.target as HTMLElement;
     if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)
