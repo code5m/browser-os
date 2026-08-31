@@ -599,7 +599,7 @@ EXECUTOR=CodeBuddy（Codex 主机）
 MODEL=界面未显示完整模型名
 ROUTE=AI:BALANCED
 MODEL_DEVIATION=UI 未显示完整模型名，推理档位未能精确记录
-COMMIT=提交信息 refactor(M0-4.b): split vendor chunks and fix store imports
+COMMIT=b3a81b9
 VERIFY=pre-merge.sh(0, PRE_MERGE_RESULT=ALL_PASS); npm run build(0, 无 500kB 告警); cargo test(0, 44 passed); cargo check --locked(0, 既有 2 warnings); git diff --check(0)
 NEXT=M0-4.c
 ```
