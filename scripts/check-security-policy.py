@@ -17,8 +17,9 @@ from pathlib import Path
 # M0-3.b 已收口：capability 删除了残留的 `browser` label，远程权限集不再向外部页面
 # 开放写盘/开终端类副作用命令，且上报类命令带来源校验与载荷边界。
 # 剩余缺口归 M0-3.c（路径策略）与 M0-3.d（launch_app 应用条目白名单）。
+# M0-3.d 已收口 launch_app：不再 `sh -c` 执行任意字符串，改为解析成 (程序, 参数)
+# 直接 spawn，并禁 shell 解释器、要求目标可解析为可执行文件、补审计日志。
 EXPECTED_GAPS = (
-    "LAUNCH_APP_ARBITRARY_SHELL",
     "REMOTE_WILDCARD_IPC",
     "EVAL_WITHOUT_SOURCE_CHECK",
     "READ_ONLY_BROWSE_WITHOUT_PATH_POLICY",
@@ -78,9 +79,11 @@ def write_commands_use_path_policy(bridge_source: str) -> bool:
 def detect_gaps(bridge_source: str, capability_sources: str) -> list[str]:
     gaps: list[str] = []
 
-    # SEC-01/SEC-07：launch_app 用 sh -c 执行任意命令。
+    # SEC-01/SEC-07（M0-3.d 已收口）：launch_app 不得再用 sh -c，且必须过启动目标校验。
     if re.search(r'Command::new\(\s*"sh"\s*\)\s*[\s\S]{0,120}?\.arg\(\s*"-c"\s*\)', bridge_source):
         gaps.append("LAUNCH_APP_ARBITRARY_SHELL")
+    elif "check_launch_target" not in function_body(bridge_source, "launch_app"):
+        gaps.append("LAUNCH_APP_WITHOUT_TARGET_POLICY")
 
     # SEC-02（M0-3.c 已收口）：写/删类命令必须经 check_path_within_roots。
     # 判定方式：找到写/删命令的函数体，确认其中调用了路径策略。
@@ -159,6 +162,10 @@ pub fn launch_app(exec: String) -> Result<(), String> {
         .spawn()?;
     Ok(())
 }
+pub fn launch_app_plain(exec: String) -> Result<(), String> {
+    std::process::Command::new(&exec).spawn()?;
+    Ok(())
+}
 pub fn write_file(path: String, content: String) -> Result<(), String> {
     std::fs::write(&path, &content).map_err(|e| e.to_string())
 }
@@ -188,6 +195,7 @@ commands.allow = ["collect_selection", "save_note", "request_open_terminal", "re
 """
     # M0-3.a 时的真实状态：写命令无路径策略、capability 残留 browser、远程集放行副作用命令。
     legacy_gaps = list(EXPECTED_GAPS) + [
+        "LAUNCH_APP_ARBITRARY_SHELL",
         "FILE_COMMANDS_WITHOUT_PATH_POLICY",
         "CAPABILITY_STALE_BROWSER_LABEL",
         "REMOTE_SIDE_EFFECT_COMMANDS_EXPOSED",
@@ -199,7 +207,8 @@ commands.allow = ["collect_selection", "save_note", "request_open_terminal", "re
 
     resolved_bridge = """
 pub fn launch_app(entry: AppEntry) -> Result<(), String> {
-    std::process::Command::new(entry.program).args(entry.args).spawn()?;
+    let (program, args) = security_policy::check_launch_target(&entry.exec)?;
+    std::process::Command::new(program).args(args).spawn()?;
     Ok(())
 }
 pub fn write_file(path: String, content: String) -> Result<(), String> {

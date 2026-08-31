@@ -14,13 +14,13 @@
 
 | 项目 | 当前值 |
 |------|--------|
-| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`（a/b/c/d 全关闭；未宣称 M0 整体完成） |
+| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`（a/b/c/d 全关闭；未宣称 M0 整体完成） |
 | 已拒证据 | `ac0ecac` 三批候选：场景错误 + aggregate `UNSTABLE`，结论 `REJECTED`，不得复用 |
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | tab RSS 三批持续正增长，必须由 M0-5 关闭；不属于 M0-0 PASS 伪装项 |
-| 下一检查点 | `M0-3.d = NEXT`（`launch_app` 从任意 `sh -c` 改为已解析应用条目并补审计） |
-| 下一任务路由 | `AI:DEEP / R:xhigh`（安全收口；最终 PASS 裁决需强模型复核拒绝用例与误放行风险） |
+| 下一检查点 | `M0-4.a = NEXT`（删除零 API 引用的 `gtk`/`wry` 直接依赖和过时 C3 注释） |
+| 下一任务路由 | `AI:BALANCED / R:medium` |
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
 | 禁止启动 | M1~M5；当前检查点未提交前禁止夹带下一检查点 |
@@ -566,6 +566,29 @@ NEXT=M0-3.c
 - 静态夹具：扫描范围补 `src-tauri/permissions/*.toml`（此前只扫 capabilities，SEC-08 检测器形同虚设）；`EXPECTED_GAPS` 5→4。
 - 残余风险登记：远程 URL 全通配（`https://*`/`http://*`）是浏览器固有属性，无法收窄，改以三层校验作为补偿控制并接受残余风险；`eval_in_tab` 调用点尚未接来源校验。
 - 强模型复核点：`issue_intent` 只校验 label == `main`，依赖 Tauri capability 保证「只有 main 能调用」；若 capability 配置被改宽，`main` 的来源判定可能被绕过，建议 M0-3.d 复核权限集与 label 假设的一致性。
+
+### M0-3.d 回写记录（2026-08-31，CodeBuddy / Codex 主机）
+
+```text
+CHECKPOINT=M0-3.d
+STATUS=PASS
+EXECUTOR=CodeBuddy（Codex 主机）
+MODEL=界面未显示完整模型名
+ROUTE=AI:DEEP
+MODEL_DEVIATION=UI 未显示完整模型名，推理档位未能精确记录
+COMMIT=提交信息 fix(M0-3.d): resolve launch targets without shell
+VERIFY=pre-merge.sh(0, PRE_MERGE_RESULT=ALL_PASS); cargo test(0, 44 passed); check-security-policy.py --self-test(0); --expect-current-gaps(0); 默认(1, 3 GAP); cargo check(0, 既有 2 warnings); git diff --check(0)
+NEXT=M0-4.a
+```
+
+实现要点：
+
+- 去掉 `sh -c`：`launch_app` 改为 `parse_command_line` → (程序, 参数) 直接 spawn，消除二次解释。
+- 三重校验：拒元字符 → 禁 shell 解释器（sh/bash/zsh/fish/powershell/cmd，否则等于换个壳绕过收口）→ 要求目标可解析为可执行文件。
+- 兼容 .desktop：剔除 %f/%F/%u/%U/%i/%c/%k 字段码，支持双引号包裹路径；命令签名不变，两个前端调用点无需改动。
+- 审计：`log_audit(action="launch")` 记录 program 与 args。
+- 修正：`str::as_str()` 在当前工具链不稳定 → 改为直接模式匹配。
+- 强模型复核点：可执行性校验依赖 PATH，若攻击者可写 PATH 覆盖目录仍可能诱导启动；后续可考虑锁定绝对路径白名单。
 
 ### M0-3.c 回写记录（2026-08-31，CodeBuddy / Codex 主机）
 

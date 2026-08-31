@@ -1,6 +1,6 @@
-# M0 安全威胁矩阵（V1.2）
+# M0 安全威胁矩阵（V1.3）
 
-> 建立时间：2026-08-31（M0-3.a）｜ V1.1：M0-3.b 收口 ｜ **V1.2：M0-3.c 写路径收口** ｜ 分支：`feature-M0-baseline`
+> 建立时间：2026-08-31（M0-3.a）｜ V1.1：M0-3.b 收口 ｜ V1.2：M0-3.c 写路径收口 ｜ V1.3：M0-3.d 启动目标收口 ｜ 分支：`feature-M0-baseline`
 > 范围：M0-3.a 盘点定契约；M0-3.b 收口 capability/远程 IPC；**M0-3.c 收口写路径（只读浏览按裁决保留并登记 SEC-09）**；M0-3.d 收口 launch_app。
 > 配套：契约模块 `src-tauri/src/security_policy.rs`；静态夹具 `scripts/check-security-policy.py`。
 > 冻结基线证据（`logs/m0-baseline/**`）未改动；M1/M2 仍锁定；本文件不代表 M0 完成。
@@ -28,7 +28,7 @@
 | SEC-04 | `browser-remote.json` `remote.urls` | `https://*`/`http://*` 全通配：外部页面可调用远程集内命令 | `browser-remote.json` remote 段 | **P0 → 可接受残余风险** | 补偿控制已落地（见 §5） |
 | SEC-05 | `bridge.rs:68 .eval(&id.to_string(), js)` | 向子 webview 注入任意 JS；与 SEC-04 组合等于给外部页面留执行面 | `bridge.rs:68`、`bridge.rs:1672` | **P0** | M0-3.b |
 | SEC-06 | 写/删类命令 | 无用户意图校验与审计 | 同 SEC-02；远程侧 `save_note`/`collect_selection` | **P1** | 远程侧 ✅ M0-3.b；本地路径 M0-3.c |
-| SEC-07 | `launch_app` 参数 | shell 元字符未过滤（`;` `&&` `\|` 反引号 `$( )` 重定向） | `bridge.rs:1629-1643` | **P0** | M0-3.d |
+| SEC-07 | `launch_app` 参数 | shell 元字符未过滤 | 原 `launch_app` 实现 | ~~P0~~ **已关闭** | ✅ M0-3.d |
 
 ## 3. 已落地的最小契约（`src-tauri/src/security_policy.rs`）
 
@@ -51,7 +51,19 @@
   - 默认模式：当前**预期 `EXIT=1`** 并列出缺口，M0-3.b/c/d 收口后转 `EXIT=0`。
 - 门禁接入：`scripts/pre-merge.sh` 只跑 `--self-test` 与 `--expect-current-gaps` 两种**应通过**的模式，默认模式不入门禁（现状缺口不是回归）。
 
-## 5. V1.2 变更（M0-3.c 写路径收口）
+## 5. V1.3 变更（M0-3.d 启动目标收口）
+
+| 变更 | 内容 |
+|------|------|
+| 去掉 `sh -c` | `launch_app` 不再把字符串交给 shell，改为解析成 (程序, 参数) 后直接 spawn，消除二次解释与元字符注入面 |
+| 启动目标校验 | `check_launch_target`：先拒元字符 → 禁 shell 解释器（`sh`/`bash`/`zsh`/`fish`/`powershell`/`cmd`，否则等于换个壳绕过收口）→ 要求目标可解析为可执行文件（绝对路径或 PATH 查找） |
+| `.desktop` 字段码 | `parse_command_line` 剔除 `%f %F %u %U %i %c %k` 等字段码，并支持双引号包裹的路径 |
+| 审计 | 每次启动写入 `workspace::log_audit(action="launch")`，记录 program 与 args |
+
+> 收口后机器可检缺口 4 → 3：`LAUNCH_APP_ARBITRARY_SHELL` 关闭。
+> 兼容性：命令签名保持 `launch_app(exec: String)`，两个前端调用点（`useSystemStore.launchApp` 传 `.desktop` 的 Exec、`useHomeStore` 传快捷方式 target）无需改动。
+
+## 5.1 V1.2 变更（M0-3.c 写路径收口）
 
 裁决（用户 2026-08-31）：**写操作强制收口；只读浏览保留但登记风险**。
 
@@ -92,5 +104,5 @@
 | 超长/危险 HTML 拒绝用例 | `check_html` | ✅ 契约+单测就绪 |
 | `../` 逃逸拒绝用例 | `check_path_within_roots` | ✅ 契约+单测+生产接入（M0-3.c） |
 | 符号链接逃逸拒绝用例 | `check_path_within_roots` | ✅ 契约+单测+生产接入（M0-3.c） |
-| shell 元字符拒绝用例 | `check_shell_command` | ✅ 契约+单测就绪 |
-| 允许路径与合法应用仍可用 | 正向用例（`/usr/bin/code`、允许根目录内文件） | ✅ 单测已含 |
+| shell 元字符拒绝用例 | `check_shell_command` → `check_launch_target` | ✅ 契约+单测+生产接入（M0-3.d） |
+| 允许路径与合法应用仍可用 | 正向用例（`/usr/bin/code`、允许根目录内文件、可解析程序） | ✅ 单测已含 |

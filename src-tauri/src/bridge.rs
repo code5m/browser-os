@@ -1779,16 +1779,22 @@ pub fn list_apps() -> Vec<AppEntry> {
 }
 
 #[tauri::command]
-pub fn launch_app(exec: String) -> Result<(), String> {
+pub fn launch_app(app: AppHandle, exec: String) -> Result<(), String> {
+    use crate::security_policy as sp;
     let cmd = exec.trim();
     if cmd.is_empty() {
         return Err("没有可执行命令".into());
     }
-    // 使用 sh -c 启动，并把子进程 stdio 重定向到 null，
-    // 避免外部应用占用当前终端/stdout 导致主窗口渲染异常。
-    std::process::Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
+    // M0-3.d：不再用 `sh -c` 执行任意字符串。改为解析成 (程序, 参数) 直接 spawn：
+    // 元字符一律拒绝、shell 解释器禁为启动目标、程序必须能解析到可执行文件。
+    let (program, args) = sp::check_launch_target(cmd).map_err(|e| e.to_string())?;
+    crate::workspace::log_audit(
+        &app,
+        "launch",
+        format!("{program} {}", args.join(" ")).trim().to_string(),
+    );
+    std::process::Command::new(&program)
+        .args(&args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

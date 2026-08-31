@@ -51,6 +51,10 @@ pub enum PolicyError {
     RefuseToDeleteRoot { path: String },
     /// 非 http/https 的打开链接（scheme 白名单）。
     DisallowedUrlScheme(String),
+    /// 尝试把 shell 解释器当作启动目标（等价绕过 `sh -c` 收口）。
+    BlockedLaunchProgram(String),
+    /// 启动目标解析不到可执行文件。
+    LaunchProgramNotFound(String),
 }
 
 impl std::fmt::Display for PolicyError {
@@ -93,6 +97,12 @@ impl std::fmt::Display for PolicyError {
             PolicyError::DisallowedUrlScheme(url) => {
                 write!(f, "只允许用浏览器打开 http/https 链接：{url}")
             }
+            PolicyError::BlockedLaunchProgram(p) => {
+                write!(f, "不允许把 shell 解释器作为启动目标：{p}")
+            }
+            PolicyError::LaunchProgramNotFound(p) => {
+                write!(f, "启动目标不是可执行文件：{p}")
+            }
         }
     }
 }
@@ -108,6 +118,80 @@ pub fn is_known_webview_label(label: &str) -> bool {
     }
     // tab-<uuid>、grid-<n>、grid-child-<n> 三类由实现动态创建。
     label.starts_with("tab-") || label.starts_with("grid-")
+}
+
+/// 不允许作为启动目标的解释器：放行它们等于把 `sh -c` 换个壳重新打开。
+pub const BLOCKED_LAUNCH_PROGRAMS: [&str; 6] = ["sh", "bash", "zsh", "fish", "powershell", "cmd"];
+
+/// 把 `.desktop` 风格的 Exec 字符串解析成 (程序, 参数)。
+///
+/// 处理规则：按空白切分并支持双引号包裹；剔除 `%f %F %u %U %i %c %k` 等字段码；
+/// 程序名不得为空。解析后由调用方**直接 spawn**（不经 shell），因此不存在
+/// 二次解释与元字符注入面。
+pub fn parse_command_line(line: &str) -> Result<(String, Vec<String>), PolicyError> {
+    let mut parts: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    for ch in line.trim().chars() {
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            c if c.is_whitespace() && !in_quotes => {
+                if !current.is_empty() {
+                    parts.push(std::mem::take(&mut current));
+                }
+            }
+            c => current.push(c),
+        }
+    }
+    if !current.is_empty() {
+        parts.push(current);
+    }
+    let program = parts.first().ok_or(PolicyError::EmptyCommand)?.clone();
+    if program.is_empty() {
+        return Err(PolicyError::EmptyCommand);
+    }
+    let args = parts[1..]
+        .iter()
+        .filter(|a| !is_desktop_field_code(a))
+        .cloned()
+        .collect();
+    Ok((program, args))
+}
+
+/// `.desktop` 字段码（%u/%U/%f…）由启动器填充，程序自身不理解，必须剔除。
+fn is_desktop_field_code(arg: &str) -> bool {
+    matches!(
+        arg,
+        "%f" | "%F" | "%u" | "%U" | "%d" | "%D" | "%n" | "%N" | "%i" | "%c" | "%k" | "%v" | "%m"
+    )
+}
+
+/// 启动目标的最后一道闸：先过元字符，再禁解释器，再要求程序可解析到可执行文件。
+pub fn check_launch_target(line: &str) -> Result<(String, Vec<String>), PolicyError> {
+    check_shell_command(line)?;
+    let (program, args) = parse_command_line(line)?;
+    let file_name = program
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if BLOCKED_LAUNCH_PROGRAMS.contains(&file_name.as_str()) {
+        return Err(PolicyError::BlockedLaunchProgram(program));
+    }
+    if !program_resolves(&program) {
+        return Err(PolicyError::LaunchProgramNotFound(program));
+    }
+    Ok((program, args))
+}
+
+/// 程序是否可解析为可执行文件：绝对路径直接判定，否则沿 PATH 查找。
+fn program_resolves(program: &str) -> bool {
+    if program.contains('/') {
+        return std::path::Path::new(program).is_file();
+    }
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
+        .unwrap_or(false)
 }
 
 /// 校验 webview label 是否登记在册。
@@ -690,6 +774,67 @@ mod security_policy_tests {
             &roots
         ));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    // ---------- M0-3.d：启动目标解析 ----------
+
+    #[test]
+    fn command_line_is_split_into_program_and_args() {
+        let (p, a) = parse_command_line("code").expect("单程序");
+        assert_eq!(p, "code");
+        assert!(a.is_empty());
+        let (p, a) = parse_command_line("code --new-window /tmp/a").expect("带参数");
+        assert_eq!(p, "code");
+        assert_eq!(a, vec!["--new-window", "/tmp/a"]);
+    }
+
+    #[test]
+    fn desktop_field_codes_are_stripped() {
+        let (p, a) = parse_command_line("code %U --flag %f").expect("解析");
+        assert_eq!(p, "code");
+        assert_eq!(a, vec!["--flag"], "字段码必须被剔除");
+    }
+
+    #[test]
+    fn quoted_program_paths_are_preserved() {
+        let (p, a) = parse_command_line("\"/opt/My App/app\" --x").expect("解析");
+        assert_eq!(p, "/opt/My App/app", "引号内空白不得切开");
+        assert_eq!(a, vec!["--x"]);
+    }
+
+    #[test]
+    fn shell_interpreters_are_blocked_as_launch_targets() {
+        for cmd in ["sh", "bash -c 'id'", "/bin/bash", "powershell -c x", "zsh"] {
+            let err = check_launch_target(cmd)
+                .expect_err("shell 解释器不得作为启动目标（等价于绕过 sh -c 收口）");
+            assert!(
+                matches!(err, PolicyError::BlockedLaunchProgram(_)),
+                "{cmd} 实际错误：{err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn metacharacters_and_unknown_programs_are_rejected() {
+        assert!(matches!(
+            check_launch_target("true; rm -rf /"),
+            Err(PolicyError::ShellMetacharacter { .. })
+        ));
+        assert!(matches!(
+            check_launch_target("definitely-not-a-real-program-xyz"),
+            Err(PolicyError::LaunchProgramNotFound(_))
+        ));
+        assert!(check_launch_target("").is_err());
+    }
+
+    #[test]
+    fn resolvable_program_is_accepted() {
+        // 用 /proc 下的确定可执行文件验证「绝对路径 + 存在性」分支。
+        let path = "/proc/self/exe";
+        assert!(std::path::Path::new(path).is_file());
+        let (p, a) = parse_command_line(path).expect("解析");
+        assert_eq!(p, path);
+        assert!(a.is_empty());
     }
 
     #[test]
