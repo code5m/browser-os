@@ -1,0 +1,7 @@
+PASS create_grid(2)
+PASS grid_open(0)
+PASS grid_open(1)
+PASS grid_position(0)
+PASS grid_position(1)
+PASS eval_in_tab(grid-0)
+kill -11 grid-child-0 pid=2296995

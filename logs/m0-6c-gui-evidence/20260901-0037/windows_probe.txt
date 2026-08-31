@@ -1,0 +1,36 @@
+--- WID=35651585 ---
+xwininfo: Window id: 0x2200001 "mvp-browser-os"
+  Absolute upper-left X:  10
+  Absolute upper-left Y:  10
+  Width: 10
+  Height: 10
+  Visual Class: TrueColor
+  Class: InputOnly
+  Override Redirect State: no
+--- WID=50331649 ---
+xwininfo: Window id: 0x3000001 "mvp-browser-os"
+  Absolute upper-left X:  10
+  Absolute upper-left Y:  10
+  Width: 10
+  Height: 10
+  Visual Class: TrueColor
+  Class: InputOnly
+  Override Redirect State: no
+--- WID=50331651 ---
+xwininfo: Window id: 0x3000003 "grid-child-1"
+  Absolute upper-left X:  706
+  Absolute upper-left Y:  189
+  Width: 560
+  Height: 420
+  Visual Class: TrueColor
+  Class: InputOutput
+  Override Redirect State: no
+--- WID=35651587 ---
+xwininfo: Window id: 0x2200003 "浏览器OS融合"
+  Absolute upper-left X:  66
+  Absolute upper-left Y:  69
+  Width: 1854
+  Height: 1011
+  Visual Class: TrueColor
+  Class: InputOutput
+  Override Redirect State: no
