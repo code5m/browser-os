@@ -1,0 +1,2216 @@
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105647-main-pid1524831.log (role=main pid=1524831)
+[main] main window url=Ok(Url { scheme: "tauri", cannot_be_a_base: false, username: "", password: None, host: Some(Domain("localhost")), port: None, path: "", query: None, fragment: None })
+[main] security policy: security-policy-v2/max_html=1MiB/labels=main,tab-*,grid-*/intents=one-shot
+[FE] FE alive marker=2026-08-18-r2
+[FE] [M0] rAF1 fired
+[FE] [M0] rAF2 fired, invoking m0_ready
+[m0] m0_ready called run_id="20260831T105149+0800_68c78d7_release_x11" ready_file=Some("/tmp/m0m/ce2e70368730/reports/cycle-grid/ready.signal")
+[FE] [M0] m0_ready ok run_id=20260831T105149+0800_68c78d7_release_x11
+[m0-driver grid] ready ok
+[grid-manager] spawned grid-child-0 pid=1524938
+[grid-child-0] starting (pid=1524938)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105648-grid0-pid1524938.log (role=grid0 pid=1524938)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1525064
+[grid-child-1] starting (pid=1525064)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105649-grid1-pid1525064.log (role=grid1 pid=1525064)
+[grid-child-1] shell window created
+[grid-manager] grid-child-[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1525170
+[grid-child-2] starting (pid=1525170)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105649-grid2-pid1525170.log (role=grid2 pid=1525170)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1525348
+[grid-child-3] starting (pid=1525348)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105650-grid3-pid1525348.log (role=grid3 pid=1525348)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 1 done
+[grid-manager] spawned grid-child-0 pid=1525632
+[grid-child-0] starting (pid=1525632)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105659-grid0-pid1525632.log (role=grid0 pid=1525632)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[create_grid] grid-0 子进程就绪
+[grid-child] CreateTab grid-0 完成
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1525703
+[grid-child-1] starting (pid=1525703)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105659-grid1-pid1525703.log (role=grid1 pid=1525703)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1525786
+[grid-child-2] starting (pid=1525786)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105700-grid2-pid1525786.log (role=grid2 pid=1525786)
+[grid-child-2] shell window created
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1525863
+[grid-child-3] starting (pid=1525863)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105701-grid3-pid1525863.log (role=grid3 pid=1525863)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 2 done
+[grid-manager] spawned grid-child-0 pid=1526043
+[grid-child-0] starting (pid=1526043)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105709-grid0-pid1526043.log (role=grid0 pid=1526043)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1526114
+[grid-child-1] starting (pid=1526114)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105710-grid1-pid1526114.log (role=grid1 pid=1526114)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] 主窗最小化，隐藏全部宫格
+[grid-manager] spawned grid-child-2 pid=1526203
+[grid-child-2] starting (pid=1526203)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105711-grid2-pid1526203.log (role=grid2 pid=1526203)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_grid] grid-2 子进程就绪
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1526282
+[grid-child-3] starting (pid=1526282)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105711-grid3-pid1526282.log (role=grid3 pid=1526282)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 3 done
+[grid-manager] spawned grid-child-0 pid=1526452
+[grid-child-0] starting (pid=1526452)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105720-grid0-pid1526452.log (role=grid0 pid=1526452)
+[grid-child-0] shell window created
+[grid-manager] grid-child-[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1526521
+[grid-child-1] starting (pid=1526521)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105720-grid1-pid1526521.log (role=grid1 pid=1526521)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1526592
+[grid-child-2] starting (pid=1526592)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105721-grid2-pid1526592.log (role=grid2 pid=1526592)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1526685
+[grid-child-3] starting (pid=1526685)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105722-grid3-pid1526685.log (role=grid3 pid=1526685)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 4 done
+[grid-manager] spawned grid-child-0 pid=1526882
+[grid-child-0] starting (pid=1526882)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105730-grid0-pid1526882.log (role=grid0 pid=1526882)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1526950
+[grid-child-1] starting (pid=1526950)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105731-grid1-pid1526950.log (role=grid1 pid=1526950)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1527033
+[grid-child-2] starting (pid=1527033)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105731-grid2-pid1527033.log (role=grid2 pid=1527033)
+[grid-child-2] shell window created
+[grid-manager] grid-child-[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1527120
+[grid-child-3] starting (pid=1527120)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105732-grid3-pid1527120.log (role=grid3 pid=1527120)
+[grid-child-3] shell window created
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 5 done
+[grid-manager] spawned grid-child-0 pid=1527299
+[grid-child-0] starting (pid=1527299)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105741-grid0-pid1527299.log (role=grid0 pid=1527299)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1527367
+[grid-child-1] starting (pid=1527367)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105741-grid1-pid1527367.log (role=grid1 pid=1527367)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1527498
+[grid-child-2] starting (pid=1527498)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105742-grid2-pid1527498.log (role=grid2 pid=1527498)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1527601
+[grid-child-3] starting (pid=1527601)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105743-grid3-pid1527601.log (role=grid3 pid=1527601)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 6 done
+[grid-manager] spawned grid-child-0 pid=1527788
+[grid-child-0] starting (pid=1527788)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105752-grid0-pid1527788.log (role=grid0 pid=1527788)
+[grid-child-0] shell window created
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1527860
+[grid-child-1] starting (pid=1527860)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105752-grid1-pid1527860.log (role=grid1 pid=1527860)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1527961
+[grid-child-2] starting (pid=1527961)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105753-grid2-pid1527961.log (role=grid2 pid=1527961)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1528045
+[grid-child-3] starting (pid=1528045)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105754-grid3-pid1528045.log (role=grid3 pid=1528045)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 7 done
+[grid-manager] spawned grid-child-0 pid=1528233
+[grid-child-0] starting (pid=1528233)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105802-grid0-pid1528233.log (role=grid0 pid=1528233)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1528305
+[grid-child-1] starting (pid=1528305)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105803-grid1-pid1528305.log (role=grid1 pid=1528305)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1528388
+[grid-child-2] starting (pid=1528388)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105804-grid2-pid1528388.log (role=grid2 pid=1528388)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1528469
+[grid-child-3] starting (pid=1528469)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105804-grid3-pid1528469.log (role=grid3 pid=1528469)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 8 done
+[grid-manager] spawned grid-child-0 pid=1528675
+[grid-child-0] starting (pid=1528675)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105813-grid0-pid1528675.log (role=grid0 pid=1528675)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_grid] grid-0 子进程就绪
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1528745
+[grid-child-1] starting (pid=1528745)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105814-grid1-pid1528745.log (role=grid1 pid=1528745)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1528818
+[grid-child-2] starting (pid=1528818)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105814-grid2-pid1528818.log (role=grid2 pid=1528818)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1528916
+[grid-child-3] starting (pid=1528916)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105815-grid3-pid1528916.log (role=grid3 pid=1528916)
+[grid-child-3] shell window created
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 9 done
+[grid-manager] spawned grid-child-0 pid=1529118
+[grid-child-0] starting (pid=1529118)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105823-grid0-pid1529118.log (role=grid0 pid=1529118)
+[grid-child-0] shell window created
+[grid-manager] grid-child-[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1529189
+[grid-child-1] starting (pid=1529189)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105824-grid1-pid1529189.log (role=grid1 pid=1529189)
+[grid-child-1] shell window created
+[grid-manager] grid-child-[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1529276
+[grid-child-2] starting (pid=1529276)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105825-grid2-pid1529276.log (role=grid2 pid=1529276)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_grid] grid-2 子进程就绪
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1529356
+[grid-child-3] starting (pid=1529356)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105825-grid3-pid1529356.log (role=grid3 pid=1529356)
+[grid-child-3] shell window created
+[grid-manager] grid-child-[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 10 done
+[grid-manager] spawned grid-child-0 pid=1529551
+[grid-child-0] starting (pid=1529551)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105834-grid0-pid1529551.log (role=grid0 pid=1529551)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_grid] grid-0 子进程就绪
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1529651
+[grid-child-1] starting (pid=1529651)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105834-grid1-pid1529651.log (role=grid1 pid=1529651)
+[grid-child-1] shell window created
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1529756
+[grid-child-2] starting (pid=1529756)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105835-grid2-pid1529756.log (role=grid2 pid=1529756)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1529838
+[grid-child-3] starting (pid=1529838)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105836-grid3-pid1529838.log (role=grid3 pid=1529838)
+[grid-child-3] shell window created
+[grid-manager] grid-child-[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 11 done
+[grid-manager] spawned grid-child-0 pid=1530050
+[grid-child-0] starting (pid=1530050)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105844-grid0-pid1530050.log (role=grid0 pid=1530050)
+[grid-child-0] shell window created
+[grid-manager] grid-child-[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1530117
+[grid-child-1] starting (pid=1530117)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105845-grid1-pid1530117.log (role=grid1 pid=1530117)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1530203
+[grid-child-2] starting (pid=1530203)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105845-grid2-pid1530203.log (role=grid2 pid=1530203)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1530288
+[grid-child-3] starting (pid=1530288)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105846-grid3-pid1530288.log (role=grid3 pid=1530288)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 12 done
+[grid-manager] spawned grid-child-0 pid=1530483
+[grid-child-0] starting (pid=1530483)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105854-grid0-pid1530483.log (role=grid0 pid=1530483)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1530554
+[grid-child-1] starting (pid=1530554)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105855-grid1-pid1530554.log (role=grid1 pid=1530554)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1530644
+[grid-child-2] starting (pid=1530644)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105856-grid2-pid1530644.log (role=grid2 pid=1530644)
+[grid-child-2] shell window created
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1530725
+[grid-child-3] starting (pid=1530725)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105857-grid3-pid1530725.log (role=grid3 pid=1530725)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 13 done
+[grid-manager] spawned grid-child-0 pid=1530909
+[grid-child-0] starting (pid=1530909)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105905-grid0-pid1530909.log (role=grid0 pid=1530909)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1530975
+[grid-child-1] starting (pid=1530975)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105905-grid1-pid1530975.log (role=grid1 pid=1530975)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1531055
+[grid-child-2] starting (pid=1531055)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105906-grid2-pid1531055.log (role=grid2 pid=1531055)
+[grid-child-2] shell window created
+[grid-manager] grid-child-[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1531145
+[grid-child-3] starting (pid=1531145)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105907-grid3-pid1531145.log (role=grid3 pid=1531145)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 14 done
+[grid-manager] spawned grid-child-0 pid=1531358
+[grid-child-0] starting (pid=1531358)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105915-grid0-pid1531358.log (role=grid0 pid=1531358)
+[grid-child-0] shell window created
+[grid-manager] grid-child-[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1531426
+[grid-child-1] starting (pid=1531426)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105916-grid1-pid1531426.log (role=grid1 pid=1531426)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1531512
+[grid-child-2] starting (pid=1531512)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105916-grid2-pid1531512.log (role=grid2 pid=1531512)
+[grid-child-2] shell window created
+[grid-manager] grid-child-[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1531592
+[grid-child-3] starting (pid=1531592)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105917-grid3-pid1531592.log (role=grid3 pid=1531592)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 15 done
+[grid-manager] spawned grid-child-0 pid=1531918
+[grid-child-0] starting (pid=1531918)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105925-grid0-pid1531918.log (role=grid0 pid=1531918)
+[grid-child-0] shell window created
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1531999
+[grid-child-1] starting (pid=1531999)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105926-grid1-pid1531999.log (role=grid1 pid=1531999)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1532095
+[grid-child-2] starting (pid=1532095)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105927-grid2-pid1532095.log (role=grid2 pid=1532095)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1532187
+[grid-child-3] starting (pid=1532187)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105928-grid3-pid1532187.log (role=grid3 pid=1532187)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 16 done
+[grid-manager] spawned grid-child-0 pid=1532461
+[grid-child-0] starting (pid=1532461)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105936-grid0-pid1532461.log (role=grid0 pid=1532461)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1532531
+[grid-child-1] starting (pid=1532531)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105936-grid1-pid1532531.log (role=grid1 pid=1532531)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1532617
+[grid-child-2] starting (pid=1532617)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105937-grid2-pid1532617.log (role=grid2 pid=1532617)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1532697
+[grid-child-3] starting (pid=1532697)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105938-grid3-pid1532697.log (role=grid3 pid=1532697)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 17 done
+[grid-manager] spawned grid-child-0 pid=1532895
+[grid-child-0] starting (pid=1532895)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105946-grid0-pid1532895.log (role=grid0 pid=1532895)
+[grid-child-0] shell window created
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-child] CreateTab grid-0 完成
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_grid] grid-0 子进程就绪
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1532975
+[grid-child-1] starting (pid=1532975)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105947-grid1-pid1532975.log (role=grid1 pid=1532975)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1533071
+[grid-child-2] starting (pid=1533071)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105948-grid2-pid1533071.log (role=grid2 pid=1533071)
+[grid-child-2] shell window created
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1533170
+[grid-child-3] starting (pid=1533170)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105948-grid3-pid1533170.log (role=grid3 pid=1533170)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 18 done
+[grid-manager] spawned grid-child-0 pid=1533379
+[grid-child-0] starting (pid=1533379)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105957-grid0-pid1533379.log (role=grid0 pid=1533379)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_grid] grid-0 子进程就绪
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1533452
+[grid-child-1] starting (pid=1533452)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105958-grid1-pid1533452.log (role=grid1 pid=1533452)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1533532
+[grid-child-2] starting (pid=1533532)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105959-grid2-pid1533532.log (role=grid2 pid=1533532)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1533622
+[grid-child-3] starting (pid=1533622)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-105959-grid3-pid1533622.log (role=grid3 pid=1533622)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 19 done
+[grid-manager] spawned grid-child-0 pid=1533871
+[grid-child-0] starting (pid=1533871)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110008-grid0-pid1533871.log (role=grid0 pid=1533871)
+[grid-child-0] shell window created
+[grid-manager] grid-child-[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1533938
+[grid-child-1] starting (pid=1533938)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110009-grid1-pid1533938.log (role=grid1 pid=1533938)
+[grid-child-1] shell window created
+[grid-manager] grid-child-[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1534026
+[grid-child-2] starting (pid=1534026)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110009-grid2-pid1534026.log (role=grid2 pid=1534026)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1534114
+[grid-child-3] starting (pid=1534114)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110010-grid3-pid1534114.log (role=grid3 pid=1534114)
+[grid-child-3] shell window created
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 20 done
+[grid-manager] spawned grid-child-0 pid=1534322
+[grid-child-0] starting (pid=1534322)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110019-grid0-pid1534322.log (role=grid0 pid=1534322)
+[grid-child-0] shell window created
+[grid-manager] grid-child-[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1534388
+[grid-child-1] starting (pid=1534388)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110019-grid1-pid1534388.log (role=grid1 pid=1534388)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1534461
+[grid-child-2] starting (pid=1534461)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110020-grid2-pid1534461.log (role=grid2 pid=1534461)
+[grid-child-2] shell window created
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1534563
+[grid-child-3] starting (pid=1534563)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110021-grid3-pid1534563.log (role=grid3 pid=1534563)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 读错误: Connection reset by peer (os error 104)
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 21 done
+[grid-manager] spawned grid-child-0 pid=1534747
+[grid-child-0] starting (pid=1534747)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110029-grid0-pid1534747.log (role=grid0 pid=1534747)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1534819
+[grid-child-1] starting (pid=1534819)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110030-grid1-pid1534819.log (role=grid1 pid=1534819)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_grid] grid-1 子进程就绪
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1534900
+[grid-child-2] starting (pid=1534900)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110031-grid2-pid1534900.log (role=grid2 pid=1534900)
+[grid-child-2] shell window created
+[grid-manager] grid-child-[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1534984
+[grid-child-3] starting (pid=1534984)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110031-grid3-pid1534984.log (role=grid3 pid=1534984)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 22 done
+[grid-manager] spawned grid-child-0 pid=1535179
+[grid-child-0] starting (pid=1535179)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110040-grid0-pid1535179.log (role=grid0 pid=1535179)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1535247
+[grid-child-1] starting (pid=1535247)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110041-grid1-pid1535247.log (role=grid1 pid=1535247)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1535329
+[grid-child-2] starting (pid=1535329)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110041-grid2-pid1535329.log (role=grid2 pid=1535329)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1535404
+[grid-child-3] starting (pid=1535404)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110042-grid3-pid1535404.log (role=grid3 pid=1535404)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 23 done
+[grid-manager] spawned grid-child-0 pid=1535621
+[grid-child-0] starting (pid=1535621)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110050-grid0-pid1535621.log (role=grid0 pid=1535621)
+[grid-child-0] shell window created
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1535701
+[grid-child-1] starting (pid=1535701)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110051-grid1-pid1535701.log (role=grid1 pid=1535701)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1535782
+[grid-child-2] starting (pid=1535782)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110052-grid2-pid1535782.log (role=grid2 pid=1535782)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1535867
+[grid-child-3] starting (pid=1535867)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110052-grid3-pid1535867.log (role=grid3 pid=1535867)
+[grid-child-3] shell window created
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 24 done
+[grid-manager] spawned grid-child-0 pid=1536065
+[grid-child-0] starting (pid=1536065)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110101-grid0-pid1536065.log (role=grid0 pid=1536065)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1536137
+[grid-child-1] starting (pid=1536137)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110101-grid1-pid1536137.log (role=grid1 pid=1536137)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1536220
+[grid-child-2] starting (pid=1536220)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110102-grid2-pid1536220.log (role=grid2 pid=1536220)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1536306
+[grid-child-3] starting (pid=1536306)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110103-grid3-pid1536306.log (role=grid3 pid=1536306)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 25 done
+[grid-manager] spawned grid-child-0 pid=1536506
+[grid-child-0] starting (pid=1536506)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110111-grid0-pid1536506.log (role=grid0 pid=1536506)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1536574
+[grid-child-1] starting (pid=1536574)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110112-grid1-pid1536574.log (role=grid1 pid=1536574)
+[grid-child-[grid-manager] grid-child-1 UDS 已连接
+1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1536662
+[grid-child-2] starting (pid=1536662)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110112-grid2-pid1536662.log (role=grid2 pid=1536662)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1536746
+[grid-child-3] starting (pid=1536746)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110113-grid3-pid1536746.log (role=grid3 pid=1536746)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 26 done
+[grid-manager] spawned grid-child-0 pid=1536947
+[grid-child-0] starting (pid=1536947)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110122-grid0-pid1536947.log (role=grid0 pid=1536947)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1537016
+[grid-child-1] starting (pid=1537016)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110122-grid1-pid1537016.log (role=grid1 pid=1537016)
+[grid-child-1] shell window created
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1537102
+[grid-child-2] starting (pid=1537102)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110123-grid2-pid1537102.log (role=grid2 pid=1537102)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1537185
+[grid-child-3] starting (pid=1537185)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110124-grid3-pid1537185.log (role=grid3 pid=1537185)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 27 done
+[grid-manager] spawned grid-child-0 pid=1537407
+[grid-child-0] starting (pid=1537407)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110133-grid0-pid1537407.log (role=grid0 pid=1537407)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1537479
+[grid-child-1] starting (pid=1537479)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110133-grid1-pid1537479.log (role=grid1 pid=1537479)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1537564
+[grid-child-2] starting (pid=1537564)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110134-grid2-pid1537564.log (role=grid2 pid=1537564)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_grid] grid-2 子进程就绪
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1537704
+[grid-child-3] starting (pid=1537704)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110135-grid3-pid1537704.log (role=grid3 pid=1537704)
+[grid-child-3] shell window created
+[grid-manager] grid-child-[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 28 done
+[grid-manager] spawned grid-child-0 pid=1537914
+[grid-child-0] starting (pid=1537914)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110144-grid0-pid1537914.log (role=grid0 pid=1537914)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_grid] grid-0 子进程就绪
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1537986
+[grid-child-1] starting (pid=1537986)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110144-grid1-pid1537986.log (role=grid1 pid=1537986)
+[grid-child-1] shell window created
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1538074
+[grid-child-2] starting (pid=1538074)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110145-grid2-pid1538074.log (role=grid2 pid=1538074)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1538161
+[grid-child-3] starting (pid=1538161)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110146-grid3-pid1538161.log (role=grid3 pid=1538161)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_grid] grid-3 子进程就绪
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 29 done
+[grid-manager] spawned grid-child-0 pid=1538370
+[grid-child-0] starting (pid=1538370)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110154-grid0-pid1538370.log (role=grid0 pid=1538370)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1538442
+[grid-child-1] starting (pid=1538442)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110155-grid1-pid1538442.log (role=grid1 pid=1538442)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1538523
+[grid-child-2] starting (pid=1538523)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110156-grid2-pid1538523.log (role=grid2 pid=1538523)
+[grid-child-2] shell window created
+[grid-manager] grid-child-[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1538609
+[grid-child-3] starting (pid=1538609)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110156-grid3-pid1538609.log (role=grid3 pid=1538609)
+[grid-child-3] shell window created
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 30 done
+[grid-manager] spawned grid-child-0 pid=1538808
+[grid-child-0] starting (pid=1538808)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110205-grid0-pid1538808.log (role=grid0 pid=1538808)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1538880
+[grid-child-1] starting (pid=1538880)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110206-grid1-pid1538880.log (role=grid1 pid=1538880)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1538964
+[grid-child-2] starting (pid=1538964)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110207-grid2-pid1538964.log (role=grid2 pid=1538964)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1539040
+[grid-child-3] starting (pid=1539040)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110207-grid3-pid1539040.log (role=grid3 pid=1539040)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_grid] grid-3 子进程就绪
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 31 done
+[grid-manager] spawned grid-child-0 pid=1539267
+[grid-child-0] starting (pid=1539267)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110216-grid0-pid1539267.log (role=grid0 pid=1539267)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1539339
+[grid-child-1] starting (pid=1539339)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110216-grid1-pid1539339.log (role=grid1 pid=1539339)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1539426
+[grid-child-2] starting (pid=1539426)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110217-grid2-pid1539426.log (role=grid2 pid=1539426)
+[grid-child-2] shell window created
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1539511
+[grid-child-3] starting (pid=1539511)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110218-grid3-pid1539511.log (role=grid3 pid=1539511)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 32 done
+[grid-manager] spawned grid-child-0 pid=1539700
+[grid-child-0] starting (pid=1539700)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110226-grid0-pid1539700.log (role=grid0 pid=1539700)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1539768
+[grid-child-1] starting (pid=1539768)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110227-grid1-pid1539768.log (role=grid1 pid=1539768)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1539856
+[grid-child-2] starting (pid=1539856)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110227-grid2-pid1539856.log (role=grid2 pid=1539856)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1539939
+[grid-child-3] starting (pid=1539939)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110228-grid3-pid1539939.log (role=grid3 pid=1539939)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 33 done
+[grid-manager] spawned grid-child-0 pid=1540124
+[grid-child-0] starting (pid=1540124)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110236-grid0-pid1540124.log (role=grid0 pid=1540124)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_grid] grid-0 子进程就绪
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1540203
+[grid-child-1] starting (pid=1540203)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110237-grid1-pid1540203.log (role=grid1 pid=1540203)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1540288
+[grid-child-2] starting (pid=1540288)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110238-grid2-pid1540288.log (role=grid2 pid=1540288)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1540363
+[grid-child-3] starting (pid=1540363)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110238-grid3-pid1540363.log (role=grid3 pid=1540363)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 34 done
+[grid-manager] spawned grid-child-0 pid=1540565
+[grid-child-0] starting (pid=1540565)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110247-grid0-pid1540565.log (role=grid0 pid=1540565)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1540637
+[grid-child-1] starting (pid=1540637)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110247-grid1-pid1540637.log (role=grid1 pid=1540637)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1540722
+[grid-child-2] starting (pid=1540722)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110248-grid2-pid1540722.log (role=grid2 pid=1540722)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1540807
+[grid-child-3] starting (pid=1540807)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110249-grid3-pid1540807.log (role=grid3 pid=1540807)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_grid] grid-3 子进程就绪
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 35 done
+[grid-manager] spawned grid-child-0 pid=1541027
+[grid-child-0] starting (pid=1541027)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110258-grid0-pid1541027.log (role=grid0 pid=1541027)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1541153
+[grid-child-1] starting (pid=1541153)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110258-grid1-pid1541153.log (role=grid1 pid=1541153)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_grid] grid-1 子进程就绪
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1541239
+[grid-child-2] starting (pid=1541239)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110259-grid2-pid1541239.log (role=grid2 pid=1541239)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1541325
+[grid-child-3] starting (pid=1541325)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110300-grid3-pid1541325.log (role=grid3 pid=1541325)
+[grid-child-3] shell window created
+[grid-child-[grid-manager] grid-child-3] UDS 已连接 3/tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock UDS 已连接
+
+[create_grid] grid-3 子进程就绪
+[grid-child] CreateTab grid-3 完成
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 36 done
+[grid-manager] spawned grid-child-0 pid=1541565
+[grid-child-0] starting (pid=1541565)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110308-grid0-pid1541565.log (role=grid0 pid=1541565)
+[grid-child-0] shell window created
+[grid-manager] grid-child-[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1541637
+[grid-child-1] starting (pid=1541637)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110309-grid1-pid1541637.log (role=grid1 pid=1541637)
+[grid-child-1] shell window created
+[grid-manager] grid-child-[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1541717
+[grid-child-2] starting (pid=1541717)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110310-grid2-pid1541717.log (role=grid2 pid=1541717)
+[grid-child-2] shell window created
+[grid-manager] grid-child-[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1541804
+[grid-child-3] starting (pid=1541804)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110310-grid3-pid1541804.log (role=grid3 pid=1541804)
+[grid-child-3] shell window created
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 37 done
+[grid-manager] spawned grid-child-0 pid=1541995
+[grid-child-0] starting (pid=1541995)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110318-grid0-pid1541995.log (role=grid0 pid=1541995)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1542065
+[grid-child-1] starting (pid=1542065)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110319-grid1-pid1542065.log (role=grid1 pid=1542065)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1542143
+[grid-child-2] starting (pid=1542143)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110320-grid2-pid1542143.log (role=grid2 pid=1542143)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1542232
+[grid-child-3] starting (pid=1542232)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110321-grid3-pid1542232.log (role=grid3 pid=1542232)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 38 done
+[grid-manager] spawned grid-child-0 pid=1542432
+[grid-child-0] starting (pid=1542432)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110329-grid0-pid1542432.log (role=grid0 pid=1542432)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1542498
+[grid-child-1] starting (pid=1542498)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110330-grid1-pid1542498.log (role=grid1 pid=1542498)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1542587
+[grid-child-2] starting (pid=1542587)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110330-grid2-pid1542587.log (role=grid2 pid=1542587)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1542670
+[grid-child-3] starting (pid=1542670)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110331-grid3-pid1542670.log (role=grid3 pid=1542670)
+[grid-child-3] shell window created
+[grid-manager] grid-child-[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 39 done
+[grid-manager] spawned grid-child-0 pid=1542887
+[grid-child-0] starting (pid=1542887)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110339-grid0-pid1542887.log (role=grid0 pid=1542887)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1542958
+[grid-child-1] starting (pid=1542958)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110340-grid1-pid1542958.log (role=grid1 pid=1542958)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1543047
+[grid-child-2] starting (pid=1543047)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110341-grid2-pid1543047.log (role=grid2 pid=1543047)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1543130
+[grid-child-3] starting (pid=1543130)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110341-grid3-pid1543130.log (role=grid3 pid=1543130)
+[grid-child-3] shell window created
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 40 done
+[grid-manager] spawned grid-child-0 pid=1543340
+[grid-child-0] starting (pid=1543340)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110350-grid0-pid1543340.log (role=grid0 pid=1543340)
+[grid-child-0] shell window created
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1543410
+[grid-child-1] starting (pid=1543410)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110351-grid1-pid1543410.log (role=grid1 pid=1543410)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1543493
+[grid-child-2] starting (pid=1543493)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110352-grid2-pid1543493.log (role=grid2 pid=1543493)
+[grid-child-2] shell window created
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1543578
+[grid-child-3] starting (pid=1543578)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110352-grid3-pid1543578.log (role=grid3 pid=1543578)
+[grid-child-3] shell window created
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 41 done
+[grid-manager] spawned grid-child-0 pid=1543773
+[grid-child-0] starting (pid=1543773)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110401-grid0-pid1543773.log (role=grid0 pid=1543773)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1543843
+[grid-child-1] starting (pid=1543843)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110402-grid1-pid1543843.log (role=grid1 pid=1543843)
+[grid-child-1] shell window created
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1543910
+[grid-child-2] starting (pid=1543910)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110402-grid2-pid1543910.log (role=grid2 pid=1543910)
+[grid-child-2] shell window created
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1543998
+[grid-child-3] starting (pid=1543998)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110403-grid3-pid1543998.log (role=grid3 pid=1543998)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 42 done
+[grid-manager] spawned grid-child-0 pid=1544210
+[grid-child-0] starting (pid=1544210)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110412-grid0-pid1544210.log (role=grid0 pid=1544210)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1544284
+[grid-child-1] starting (pid=1544284)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110413-grid1-pid1544284.log (role=grid1 pid=1544284)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1544382
+[grid-child-2] starting (pid=1544382)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110413-grid2-pid1544382.log (role=grid2 pid=1544382)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1544468
+[grid-child-3] starting (pid=1544468)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110414-grid3-pid1544468.log (role=grid3 pid=1544468)
+[grid-child-3] shell window created
+[grid-manager] grid-child-[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 43 done
+[grid-manager] spawned grid-child-0 pid=1544671
+[grid-child-0] starting (pid=1544671)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110422-grid0-pid1544671.log (role=grid0 pid=1544671)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1544742
+[grid-child-1] starting (pid=1544742)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110423-grid1-pid1544742.log (role=grid1 pid=1544742)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1544827
+[grid-child-2] starting (pid=1544827)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110424-grid2-pid1544827.log (role=grid2 pid=1544827)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1544909
+[grid-child-3] starting (pid=1544909)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110425-grid3-pid1544909.log (role=grid3 pid=1544909)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 44 done
+[grid-manager] spawned grid-child-0 pid=1545100
+[grid-child-0] starting (pid=1545100)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110433-grid0-pid1545100.log (role=grid0 pid=1545100)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=1545173
+[grid-child-1] starting (pid=1545173)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110434-grid1-pid1545173.log (role=grid1 pid=1545173)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=1545264
+[grid-child-2] starting (pid=1545264)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110435-grid2-pid1545264.log (role=grid2 pid=1545264)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=1545346
+[grid-child-3] starting (pid=1545346)
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/logs/session-20260831-110436-grid3-pid1545346.log (role=grid3 pid=1545346)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0m/ce2e70368730/cycle-grid/data/com.jizhijiandan.mvp/sock/grid-1524831-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[m0-driver grid] cycle 45 done
+[m0-driver grid] driver result=PASS

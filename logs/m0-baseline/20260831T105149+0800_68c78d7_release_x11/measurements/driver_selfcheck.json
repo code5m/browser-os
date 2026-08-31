@@ -1,0 +1,1 @@
+{"metric": "driver_selfcheck", "status": "PASS", "detail": "proc-snapshot(root_pid=1520624,members=1,rss/fd readable=1); stats(10,20,30)->{\"median\": 20.0, \"min\": 10.0, \"max\": 30.0, \"volatility\": \"100.0%\", \"p95\": null, \"ols_slope\": 10.0, \"last_minus_first\": 20.0, \"pct\": 200.0}", "run_id": "20260831T105149+0800_68c78d7_release_x11"}

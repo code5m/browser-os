@@ -1,0 +1,483 @@
+{
+  "run_id": "20260831T105149+0800_68c78d7_release_x11",
+  "run_dir": "/home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3/logs/m0-baseline/20260831T105149+0800_68c78d7_release_x11",
+  "commit": "68c78d7",
+  "run_mode": "smoke",
+  "source_status": "EXPLORATORY",
+  "kinds": {
+    "tab": {
+      "kind": "tab",
+      "formal_samples": 40,
+      "warmup_samples": 5,
+      "rss_kib": {
+        "count": 40,
+        "first": 412304.0,
+        "last": 410976.0,
+        "min": 405432.0,
+        "max": 414152.0,
+        "median": 408690.0,
+        "last_minus_first": -1328.0,
+        "pct": -0.32209243664868636,
+        "ols_slope": 10.061538461538461
+      },
+      "rss_early_window_slope_kib_per_cycle": -329.0706766917293,
+      "rss_late_window_slope_kib_per_cycle": 167.18796992481202,
+      "fd_delta": 1,
+      "fd_count": {
+        "count": 40,
+        "first": 102.0,
+        "last": 103.0,
+        "min": 102.0,
+        "max": 103.0,
+        "median": 103.0,
+        "last_minus_first": 1.0,
+        "pct": 0.9803921568627451,
+        "ols_slope": 0.018386491557223265
+      },
+      "orphan_count": {
+        "count": 40,
+        "first": 0.0,
+        "last": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "median": 0.0,
+        "last_minus_first": 0.0,
+        "pct": 0.0,
+        "ols_slope": 0.0
+      },
+      "orphan_max": 0,
+      "candidate_count": {
+        "count": 40,
+        "first": 0.0,
+        "last": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "median": 0.0,
+        "last_minus_first": 0.0,
+        "pct": 0.0,
+        "ols_slope": 0.0
+      },
+      "plateau_threshold_kib_per_cycle": 50.0,
+      "plateau": false,
+      "verdict": "LEAK_SUSPECT_FD_GROWTH",
+      "process_members": {
+        "closed_cycles": 40,
+        "closed_member_count": {
+          "count": 40,
+          "first": 3.0,
+          "last": 3.0,
+          "min": 3.0,
+          "max": 3.0,
+          "median": 3.0,
+          "last_minus_first": 0.0,
+          "pct": 0.0,
+          "ols_slope": 0.0
+        },
+        "opened_minus_baseline_member_count": {
+          "count": 40,
+          "first": 0.0,
+          "last": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "median": 0.0,
+          "last_minus_first": 0.0,
+          "pct": 0.0,
+          "ols_slope": 0.0
+        },
+        "roles": {
+          "child:WebKitNetworkPr": {
+            "presence_cycles": 40,
+            "rss_kib": {
+              "count": 40,
+              "first": 48484.0,
+              "last": 48492.0,
+              "min": 48472.0,
+              "max": 48492.0,
+              "median": 48484.0,
+              "last_minus_first": 8.0,
+              "pct": 0.016500288755053213,
+              "ols_slope": 0.2577861163227017
+            },
+            "fd_count": {
+              "count": 40,
+              "first": 29.0,
+              "last": 29.0,
+              "min": 29.0,
+              "max": 29.0,
+              "median": 29.0,
+              "last_minus_first": 0.0,
+              "pct": 0.0,
+              "ols_slope": 0.0
+            }
+          },
+          "child:WebKitWebProces": {
+            "presence_cycles": 40,
+            "rss_kib": {
+              "count": 40,
+              "first": 178200.0,
+              "last": 179292.0,
+              "min": 178108.0,
+              "max": 179292.0,
+              "median": 179018.0,
+              "last_minus_first": 1092.0,
+              "pct": 0.6127946127946128,
+              "ols_slope": 23.84652908067542
+            },
+            "fd_count": {
+              "count": 40,
+              "first": 29.0,
+              "last": 29.0,
+              "min": 29.0,
+              "max": 29.0,
+              "median": 29.0,
+              "last_minus_first": 0.0,
+              "pct": 0.0,
+              "ols_slope": 0.0
+            }
+          },
+          "root:mvp-browser-os": {
+            "presence_cycles": 40,
+            "rss_kib": {
+              "count": 40,
+              "first": 185620.0,
+              "last": 183192.0,
+              "min": 178664.0,
+              "max": 187036.0,
+              "median": 181188.0,
+              "last_minus_first": -2428.0,
+              "pct": -1.3080487016485292,
+              "ols_slope": -14.042776735459663
+            },
+            "fd_count": {
+              "count": 40,
+              "first": 44.0,
+              "last": 45.0,
+              "min": 44.0,
+              "max": 45.0,
+              "median": 45.0,
+              "last_minus_first": 1.0,
+              "pct": 2.272727272727273,
+              "ols_slope": 0.018386491557223265
+            }
+          }
+        }
+      }
+    },
+    "grid": {
+      "kind": "grid",
+      "formal_samples": 40,
+      "warmup_samples": 5,
+      "rss_kib": {
+        "count": 40,
+        "first": 404880.0,
+        "last": 405484.0,
+        "min": 404880.0,
+        "max": 406340.0,
+        "median": 405454.0,
+        "last_minus_first": 604.0,
+        "pct": 0.14918000395178818,
+        "ols_slope": -1.3377110694183865
+      },
+      "rss_early_window_slope_kib_per_cycle": 5.864661654135339,
+      "rss_late_window_slope_kib_per_cycle": -0.16541353383458646,
+      "fd_delta": 1,
+      "fd_count": {
+        "count": 40,
+        "first": 108.0,
+        "last": 109.0,
+        "min": 108.0,
+        "max": 110.0,
+        "median": 108.0,
+        "last_minus_first": 1.0,
+        "pct": 0.9259259259259258,
+        "ols_slope": 0.010694183864915573
+      },
+      "orphan_count": {
+        "count": 40,
+        "first": 0.0,
+        "last": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "median": 0.0,
+        "last_minus_first": 0.0,
+        "pct": 0.0,
+        "ols_slope": 0.0
+      },
+      "orphan_max": 0,
+      "candidate_count": {
+        "count": 40,
+        "first": 12.0,
+        "last": 12.0,
+        "min": 12.0,
+        "max": 12.0,
+        "median": 12.0,
+        "last_minus_first": 0.0,
+        "pct": 0.0,
+        "ols_slope": 0.0
+      },
+      "plateau_threshold_kib_per_cycle": 50.0,
+      "plateau": false,
+      "verdict": "LEAK_SUSPECT_FD_GROWTH",
+      "process_members": {
+        "closed_cycles": 40,
+        "closed_member_count": {
+          "count": 40,
+          "first": 3.0,
+          "last": 3.0,
+          "min": 3.0,
+          "max": 3.0,
+          "median": 3.0,
+          "last_minus_first": 0.0,
+          "pct": 0.0,
+          "ols_slope": 0.0
+        },
+        "opened_minus_baseline_member_count": {
+          "count": 40,
+          "first": 12.0,
+          "last": 12.0,
+          "min": 12.0,
+          "max": 12.0,
+          "median": 12.0,
+          "last_minus_first": 0.0,
+          "pct": 0.0,
+          "ols_slope": 0.0
+        },
+        "roles": {
+          "child:WebKitNetworkPr": {
+            "presence_cycles": 40,
+            "rss_kib": {
+              "count": 40,
+              "first": 48500.0,
+              "last": 48500.0,
+              "min": 48500.0,
+              "max": 48500.0,
+              "median": 48500.0,
+              "last_minus_first": 0.0,
+              "pct": 0.0,
+              "ols_slope": 0.0
+            },
+            "fd_count": {
+              "count": 40,
+              "first": 29.0,
+              "last": 30.0,
+              "min": 29.0,
+              "max": 30.0,
+              "median": 29.0,
+              "last_minus_first": 1.0,
+              "pct": 3.4482758620689653,
+              "ols_slope": 0.007129455909943715
+            }
+          },
+          "child:WebKitWebProces": {
+            "presence_cycles": 40,
+            "rss_kib": {
+              "count": 40,
+              "first": 178412.0,
+              "last": 178836.0,
+              "min": 178412.0,
+              "max": 179700.0,
+              "median": 178816.0,
+              "last_minus_first": 424.0,
+              "pct": 0.23765217586261014,
+              "ols_slope": -3.8885553470919323
+            },
+            "fd_count": {
+              "count": 40,
+              "first": 29.0,
+              "last": 29.0,
+              "min": 29.0,
+              "max": 29.0,
+              "median": 29.0,
+              "last_minus_first": 0.0,
+              "pct": 0.0,
+              "ols_slope": 0.0
+            }
+          },
+          "root:mvp-browser-os": {
+            "presence_cycles": 40,
+            "rss_kib": {
+              "count": 40,
+              "first": 177968.0,
+              "last": 178148.0,
+              "min": 177964.0,
+              "max": 178416.0,
+              "median": 178134.0,
+              "last_minus_first": 180.0,
+              "pct": 0.10114177829722197,
+              "ols_slope": 2.550844277673546
+            },
+            "fd_count": {
+              "count": 40,
+              "first": 50.0,
+              "last": 50.0,
+              "min": 50.0,
+              "max": 52.0,
+              "median": 50.0,
+              "last_minus_first": 0.0,
+              "pct": 0.0,
+              "ols_slope": 0.0035647279549718574
+            }
+          }
+        }
+      }
+    },
+    "terminal": {
+      "kind": "terminal",
+      "formal_samples": 40,
+      "warmup_samples": 5,
+      "rss_kib": {
+        "count": 40,
+        "first": 482084.0,
+        "last": 453432.0,
+        "min": 451768.0,
+        "max": 484324.0,
+        "median": 453176.0,
+        "last_minus_first": -28652.0,
+        "pct": -5.943362567519354,
+        "ols_slope": -871.0949343339587
+      },
+      "rss_early_window_slope_kib_per_cycle": -1111.3413533834587,
+      "rss_late_window_slope_kib_per_cycle": 24.58045112781955,
+      "fd_delta": 2,
+      "fd_count": {
+        "count": 40,
+        "first": 104.0,
+        "last": 106.0,
+        "min": 104.0,
+        "max": 106.0,
+        "median": 105.0,
+        "last_minus_first": 2.0,
+        "pct": 1.9230769230769231,
+        "ols_slope": 0.04953095684803002
+      },
+      "orphan_count": {
+        "count": 40,
+        "first": 0.0,
+        "last": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "median": 0.0,
+        "last_minus_first": 0.0,
+        "pct": 0.0,
+        "ols_slope": 0.0
+      },
+      "orphan_max": 0,
+      "candidate_count": {
+        "count": 40,
+        "first": 1.0,
+        "last": 1.0,
+        "min": 1.0,
+        "max": 1.0,
+        "median": 1.0,
+        "last_minus_first": 0.0,
+        "pct": 0.0,
+        "ols_slope": 0.0
+      },
+      "plateau_threshold_kib_per_cycle": 50.0,
+      "plateau": false,
+      "verdict": "LEAK_SUSPECT_FD_GROWTH",
+      "process_members": {
+        "closed_cycles": 40,
+        "closed_member_count": {
+          "count": 40,
+          "first": 3.0,
+          "last": 3.0,
+          "min": 3.0,
+          "max": 3.0,
+          "median": 3.0,
+          "last_minus_first": 0.0,
+          "pct": 0.0,
+          "ols_slope": 0.0
+        },
+        "opened_minus_baseline_member_count": {
+          "count": 40,
+          "first": 1.0,
+          "last": 1.0,
+          "min": 1.0,
+          "max": 1.0,
+          "median": 1.0,
+          "last_minus_first": 0.0,
+          "pct": 0.0,
+          "ols_slope": 0.0
+        },
+        "roles": {
+          "child:WebKitNetworkPr": {
+            "presence_cycles": 40,
+            "rss_kib": {
+              "count": 40,
+              "first": 48524.0,
+              "last": 48512.0,
+              "min": 48512.0,
+              "max": 48524.0,
+              "median": 48512.0,
+              "last_minus_first": -12.0,
+              "pct": -0.02473003050037095,
+              "ols_slope": -0.3951219512195122
+            },
+            "fd_count": {
+              "count": 40,
+              "first": 29.0,
+              "last": 30.0,
+              "min": 29.0,
+              "max": 30.0,
+              "median": 29.0,
+              "last_minus_first": 1.0,
+              "pct": 3.4482758620689653,
+              "ols_slope": 0.01350844277673546
+            }
+          },
+          "child:WebKitWebProces": {
+            "presence_cycles": 40,
+            "rss_kib": {
+              "count": 40,
+              "first": 178940.0,
+              "last": 180808.0,
+              "min": 178940.0,
+              "max": 181004.0,
+              "median": 180208.0,
+              "last_minus_first": 1868.0,
+              "pct": 1.0439253381021572,
+              "ols_slope": 25.508818011257034
+            },
+            "fd_count": {
+              "count": 40,
+              "first": 29.0,
+              "last": 29.0,
+              "min": 29.0,
+              "max": 29.0,
+              "median": 29.0,
+              "last_minus_first": 0.0,
+              "pct": 0.0,
+              "ols_slope": 0.0
+            }
+          },
+          "root:mvp-browser-os": {
+            "presence_cycles": 40,
+            "rss_kib": {
+              "count": 40,
+              "first": 254620.0,
+              "last": 224112.0,
+              "min": 223796.0,
+              "max": 254812.0,
+              "median": 224112.0,
+              "last_minus_first": -30508.0,
+              "pct": -11.981776765375853,
+              "ols_slope": -896.2086303939963
+            },
+            "fd_count": {
+              "count": 40,
+              "first": 46.0,
+              "last": 47.0,
+              "min": 46.0,
+              "max": 47.0,
+              "median": 47.0,
+              "last_minus_first": 1.0,
+              "pct": 2.1739130434782608,
+              "ols_slope": 0.03602251407129456
+            }
+          }
+        }
+      }
+    }
+  }
+}
