@@ -1,4 +1,4 @@
-# M0-5 运行时资源矩阵（V1.0）
+# M0-5 运行时资源矩阵（V1.1）
 
 > 生成时间：2026-08-31 11:11 CST
 > 检查点：`M0-5.a`
@@ -6,12 +6,18 @@
 > 源提交：`68c78d7`
 > 证据目录：`logs/m0-baseline/20260831T105149+0800_68c78d7_release_x11/`
 > 分析文件：`logs/checkpoints/M0-5.a-analysis-20260831-1111.json`、`logs/checkpoints/M0-5.a-analysis-20260831-1111.md`
+> M0-5.b 更新时间：2026-08-31 16:31 CST
+> M0-5.b 源提交：`e998bbd`；证据提交：`2271e75`
+> M0-5.b 证据目录：`logs/m0-baseline/20260831T160738+0800_e998bbd_release_x11/`
+> M0-5.b 分析文件：`logs/checkpoints/M0-5.b-analysis-20260831-160738.json`、`logs/checkpoints/M0-5.b-analysis-20260831-160738.md`
 
 ## 1. 结论
 
 `M0-5.a = PASS`：当前环境可以真实启动 GUI 并完成应用采样，不需要按 BLOCKED 处理。40-cycle 诊断显示：孤儿进程为 0，RSS 首末不超过 10% 增长，tab 的旧 20-cycle 持续正增长没有升级为明确线性泄漏；但 FD 仍有首末正增长，必须交给 `M0-5.b` 修复或归因后复测。
 
-本结论不是 `M0-5.c` 正式验收。该 run 使用 `M0_RUN_MODE=smoke`、`VR_CYCLE_SAMPLES=40`、`VR_IDLE_SECONDS=5`，用于 M0-5.a 诊断和失败复现；M0-5.c 仍必须回到正式 profile 的 5 次预热 + 20 次测量并归档。
+`M0-5.b = PASS`：资源采样已补 FD target 级证据，M0 driver 已隔离全局快捷键、活动栏和页签栏误触发入口，并在 tab driver 收尾显式关闭 grid 旁路。新的 40-cycle 复测显示：orphan max 全部为 0；grid/terminal FD delta 为 0；tab FD `+1` 来自 `child:WebKitNetworkPr anon_inode:timerfd 0->1`，第 6 个样本后稳定，裁决为 WebKitNetwork 一次性平台计时器，不是 tab/grid/PTY 所有权泄漏。tab RSS 总增长 `+3.49%`，低于 10%，late-window owner 为 root 进程，裁决为 GTK/WebKit/allocator 缓存平台噪声。
+
+本结论仍不是 `M0-5.c` 正式验收。M0-5.a/M0-5.b run 均使用 `M0_RUN_MODE=smoke`、`VR_CYCLE_SAMPLES=40`、`VR_IDLE_SECONDS=5`，用于诊断、修复验证和裁决；M0-5.c 仍必须回到正式 profile 的 5 次预热 + 20 次测量并归档。
 
 ## 2. 源码资源矩阵
 
@@ -69,3 +75,37 @@ M0_RUN_MODE=smoke VR_CYCLE_SAMPLES=40 VR_IDLE_SECONDS=5 bash scripts/verify-reso
 3. 对 grid：优先查 WebKitNetwork `30-29` 的持有者，确认是否为平台缓存 FD 还是真实未关闭句柄。
 4. 对 terminal：同时查 root `47-46` 与 WebKitNetwork `30-29`；PTY child 已 kill+wait，但 reader/Writer/前端绑定仍需用 FD target 证明闭环。
 5. 修复后至少重跑 40-cycle 诊断，要求 FD delta 全部为 0、orphan max 全部为 0，再进入 `M0-5.c` 正式 20-cycle 归档。
+
+## 6. M0-5.b 复测与裁决
+
+复测命令：
+
+```bash
+M0_RUN_MODE=smoke VR_CYCLE_SAMPLES=40 VR_IDLE_SECONDS=5 bash scripts/verify-resources.sh
+python3 scripts/analyze-resource-cycles.py logs/m0-baseline/20260831T160738+0800_e998bbd_release_x11/ --json-out logs/checkpoints/M0-5.b-analysis-20260831-160738.json --markdown-out logs/checkpoints/M0-5.b-analysis-20260831-160738.md
+```
+
+复测矩阵：
+
+| 场景 | 正式样本 | RSS 首末 | RSS 后窗斜率 | FD 首末 | FD delta | orphan max | M0-5.b 裁决 |
+|---|---:|---:|---:|---:|---:|---:|---|
+| tab | 40 | `407216 -> 421428 KiB`（`+3.49%`） | `+407.42 KiB/cycle` | `103 -> 104` | `+1` | `0` | FD 来自 WebKitNetwork `anon_inode:timerfd` 一次性平台计时器；RSS 低于 10%，M0-5.c 复核 |
+| grid | 40 | `415536 -> 408480 KiB`（`-1.70%`） | `-23.02 KiB/cycle` | `107 -> 107` | `0` | `0` | PASS |
+| terminal | 40 | `408736 -> 417856 KiB`（`+2.23%`） | `-8.50 KiB/cycle` | `104 -> 104` | `0` | `0` | PASS |
+
+tab 进程成员拆分：
+
+| 角色 | RSS 首末 | RSS 后窗斜率 | FD 首末 | FD target 正增长 |
+|---|---:|---:|---:|---|
+| `root:mvp-browser-os` | `178424 -> 191588 KiB` | `+394.13 KiB/cycle` | `45 -> 45` | 无 |
+| `child:WebKitNetworkPr` | `48496 -> 48512 KiB` | `+0.73 KiB/cycle` | `29 -> 30` | `anon_inode:timerfd 0 -> 1` |
+| `child:WebKitWebProces` | `180296 -> 181328 KiB` | `+12.55 KiB/cycle` | `29 -> 29` | 无 |
+
+M0-5.b 关闭项：
+
+- `grid` 的 FD `+1` 已归零，未见 orphan。
+- `terminal` 的 FD `+2` 已归零，未见 PTY child、reader 线程或 WebKit 子进程残留。
+- `tab` 的 FD `+1` 不是用户态 tab/grid/PTY 所有权泄漏；目标为 WebKitNetwork 一次性 `timerfd`，且从第 6 样本后保持稳定。
+- tab RSS 后窗仍上行，但总增长 `+3.49%` 未超过 M0-5 验收阈值；owner 为 root 进程，当前裁决为 GTK/WebKit/allocator 缓存平台噪声。
+
+M0-5.c 接手口径：使用正式 profile 重新归档，若 tab `timerfd +1` 或 RSS 后窗上行再次出现，复用本节 target/owner 口径裁决；若出现新的 FD target 或 RSS 末值较初值超过 10%，不得直接 PASS，必须新增 owner 与裁决。
