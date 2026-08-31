@@ -178,6 +178,9 @@ def summarize_members(raw_dir: Path, kind: str) -> dict[str, Any]:
         roles[role] = {
             "presence_cycles": int(sum(values["present"])),
             "rss_kib": stats(values["rss_kib"]),
+            "rss_late_window_slope_kib_per_cycle": ols_slope(values["rss_kib"][-LATE_WINDOW:])
+            if len(values["rss_kib"]) >= LATE_WINDOW
+            else None,
             "fd_count": stats(values["fd_count"]),
             "fd_targets_available": any(fd_targets_by_role.get(role, [])),
             "fd_target_deltas": target_deltas(fd_targets_by_role.get(role, [])),
@@ -298,20 +301,21 @@ def write_markdown(summary: dict[str, Any], output: Path) -> None:
         lines += [
             f"### {kind}",
             "",
-            "| role | presence | rss first->last KiB | rss slope | fd first->last | fd slope |",
-            "|---|---:|---:|---:|---:|---:|",
+            "| role | presence | rss first->last KiB | rss slope | rss late slope | fd first->last | fd slope |",
+            "|---|---:|---:|---:|---:|---:|---:|",
         ]
         roles = item["process_members"]["roles"]
         for role, role_stats in roles.items():
             rr = role_stats["rss_kib"]
             ff = role_stats["fd_count"]
             lines.append(
-                "| {role} | {presence} | {rf}->{rl} | {rs} | {ff}->{fl} | {fs} |".format(
+                "| {role} | {presence} | {rf}->{rl} | {rs} | {rls} | {ff}->{fl} | {fs} |".format(
                     role=role,
                     presence=role_stats["presence_cycles"],
                     rf=fmt_num(rr["first"], 0),
                     rl=fmt_num(rr["last"], 0),
                     rs=fmt_num(rr["ols_slope"]),
+                    rls=fmt_num(role_stats["rss_late_window_slope_kib_per_cycle"]),
                     ff=fmt_num(ff["first"], 0),
                     fl=fmt_num(ff["last"], 0),
                     fs=fmt_num(ff["ols_slope"]),

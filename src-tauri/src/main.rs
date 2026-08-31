@@ -688,7 +688,9 @@ fn run_m0_driver(app: tauri::AppHandle, cfg: bridge::M0Config) {
             if cfg.driver == "tab" && close_result.is_ok() {
                 if let Err(error) = bridge::close_grid(app.clone()) {
                     fails.push(format!("cycle {n}: tab isolation close_grid: {error}"));
-                    log(&format!("cycle {n} FAIL: tab isolation close_grid: {error}"));
+                    log(&format!(
+                        "cycle {n} FAIL: tab isolation close_grid: {error}"
+                    ));
                 }
             }
             std::thread::sleep(std::time::Duration::from_secs(2));
