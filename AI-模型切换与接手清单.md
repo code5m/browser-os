@@ -19,7 +19,7 @@
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | tab RSS 三批持续正增长，必须由 M0-5 关闭；不属于 M0-0 PASS 伪装项 |
-| 下一检查点 | `M0-3.c = NEXT`（收口 canonical path、允许根目录和符号链接防逃逸） |
+| 下一检查点 | `M0-3.d = NEXT`（`launch_app` 从任意 `sh -c` 改为已解析应用条目并补审计） |
 | 下一任务路由 | `AI:DEEP / R:xhigh`（安全收口；最终 PASS 裁决需强模型复核拒绝用例与误放行风险） |
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
@@ -566,6 +566,30 @@ NEXT=M0-3.c
 - 静态夹具：扫描范围补 `src-tauri/permissions/*.toml`（此前只扫 capabilities，SEC-08 检测器形同虚设）；`EXPECTED_GAPS` 5→4。
 - 残余风险登记：远程 URL 全通配（`https://*`/`http://*`）是浏览器固有属性，无法收窄，改以三层校验作为补偿控制并接受残余风险；`eval_in_tab` 调用点尚未接来源校验。
 - 强模型复核点：`issue_intent` 只校验 label == `main`，依赖 Tauri capability 保证「只有 main 能调用」；若 capability 配置被改宽，`main` 的来源判定可能被绕过，建议 M0-3.d 复核权限集与 label 假设的一致性。
+
+### M0-3.c 回写记录（2026-08-31，CodeBuddy / Codex 主机）
+
+```text
+CHECKPOINT=M0-3.c
+STATUS=PASS
+EXECUTOR=CodeBuddy（Codex 主机）
+MODEL=界面未显示完整模型名
+ROUTE=AI:DEEP
+MODEL_DEVIATION=UI 未显示完整模型名，推理档位未能精确记录
+COMMIT=提交信息 fix(M0-3.c): enforce canonical path policy on writes
+VERIFY=pre-merge.sh(0, PRE_MERGE_RESULT=ALL_PASS); cargo test(0, 38 passed); check-security-policy.py --self-test(0); --expect-current-gaps(0); 默认(1, 4 GAP); cargo check(0, 既有 2 warnings); git diff --check(0)
+NEXT=M0-3.d
+```
+
+实现要点：
+
+- 裁决落地：写操作强制收口，只读浏览保留并登记 SEC-09。
+- `allowed_roots()` = 主目录 / Desktop / Documents / Downloads / 工作区 / 笔记目录——与 `get_start_dirs` 对外承诺一致，避免「能列出却写不进」。
+- 收口命令：`write_file`/`create_file`/`create_dir`/`delete_path`/`rename_path`；新增 `check_delete_target`（禁删根目录本身）、`check_path_component`（拒绝 `..`/分隔符/NUL）、`check_openable_url`（仅 http/https）。
+- **修掉真实逃逸**：`rename_path` 原为 `parent.join(new_name)`，`new_name=../../etc/x` 即跨目录移动写入。
+- 新建类命令先校验已存在祖先、创建后再校验真实落点，防中途被符号链接替换。
+- 夹具改进：写命令接入判定从「全文匹配」改为「逐函数体匹配」（原方式会被「引用但未使用」骗过）；`delete_path` 经 `check_delete_target` 间接接入需一并认可。
+- 强模型复核点：允许根目录含整个主目录，等于「主目录内可写」——这是为不破坏文件管理器做的取舍，若后续要求更严需引入「用户显式授权目录」机制并重审 SEC-09。
 
 ## 6. 跨模型接手审查协议
 

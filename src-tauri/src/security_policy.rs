@@ -45,6 +45,12 @@ pub enum PolicyError {
     MissingUserIntent { scope: String },
     /// 用户意图令牌已过期。
     ExpiredUserIntent { scope: String },
+    /// 路径分量含 `.`/`..`/分隔符/NUL（重命名逃逸）。
+    DangerousPathComponent(String),
+    /// 拒绝删除允许根目录本身。
+    RefuseToDeleteRoot { path: String },
+    /// 非 http/https 的打开链接（scheme 白名单）。
+    DisallowedUrlScheme(String),
 }
 
 impl std::fmt::Display for PolicyError {
@@ -77,6 +83,15 @@ impl std::fmt::Display for PolicyError {
             }
             PolicyError::ExpiredUserIntent { scope } => {
                 write!(f, "用户意图令牌已过期（作用域 {scope}）")
+            }
+            PolicyError::DangerousPathComponent(name) => {
+                write!(f, "路径分量非法（含 .. 或分隔符）：{name}")
+            }
+            PolicyError::RefuseToDeleteRoot { path } => {
+                write!(f, "拒绝删除允许根目录本身：{path}")
+            }
+            PolicyError::DisallowedUrlScheme(url) => {
+                write!(f, "只允许用浏览器打开 http/https 链接：{url}")
             }
         }
     }
@@ -145,6 +160,52 @@ pub fn check_path_within_roots(path: &str, roots: &[PathBuf]) -> Result<PathBuf,
             path: path.to_string(),
             roots: roots.iter().map(|r| r.display().to_string()).collect(),
         })
+    }
+}
+
+/// 判断规范化后的路径是否落在允许根目录内（供调用方在已有 canonical 路径时复用）。
+pub fn is_within_roots(canonical: &std::path::Path, roots: &[PathBuf]) -> bool {
+    roots.iter().any(|root| canonical.starts_with(root))
+}
+
+/// 校验单个路径分量（文件名/新名称）：拒绝 `.`/`..`、分隔符与 NUL。
+///
+/// 典型场景：`rename_path(path, new_name)` 直接用 `parent.join(new_name)` 拼接，
+/// 若 new_name 为 `../../etc/passwd`，重命名即变成跨目录移动——必须拦住。
+pub fn check_path_component(name: &str) -> Result<(), PolicyError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(PolicyError::EmptyCommand);
+    }
+    if trimmed == "." || trimmed == ".." {
+        return Err(PolicyError::DangerousPathComponent(trimmed.to_string()));
+    }
+    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains('\0') {
+        return Err(PolicyError::DangerousPathComponent(trimmed.to_string()));
+    }
+    Ok(())
+}
+
+/// 删除前的额外校验：除「必须在允许根目录内」外，还禁止删除**允许根目录本身**，
+/// 避免一次 `delete_path` 把整个工作区或主目录递归删空。
+pub fn check_delete_target(path: &str, roots: &[PathBuf]) -> Result<PathBuf, PolicyError> {
+    let canonical = check_path_within_roots(path, roots)?;
+    if roots.iter().any(|root| canonical == *root) {
+        return Err(PolicyError::RefuseToDeleteRoot {
+            path: canonical.display().to_string(),
+        });
+    }
+    Ok(canonical)
+}
+
+/// 只用系统默认浏览器打开 http/https 链接：拒绝 `file:`、`smb:`、自定义 scheme 等
+/// 会被 `open::that` 直接交给桌面环境执行的输入。
+pub fn check_openable_url(url: &str) -> Result<(), PolicyError> {
+    let lower = url.trim().to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        Ok(())
+    } else {
+        Err(PolicyError::DisallowedUrlScheme(url.to_string()))
     }
 }
 
@@ -567,6 +628,68 @@ mod security_policy_tests {
             Err(PolicyError::TooManyItems { .. })
         ));
         assert!(check_items_count(MAX_RESOURCE_ITEMS, MAX_RESOURCE_ITEMS).is_ok());
+    }
+
+    // ---------- M0-3.c：写路径收口 ----------
+
+    #[test]
+    fn path_components_with_traversal_are_rejected() {
+        for bad in ["..", ".", "../../etc/passwd", "a/b", "a\\b", "a\0b", "  "] {
+            assert!(
+                check_path_component(bad).is_err(),
+                "路径分量 {bad:?} 必须被拒绝"
+            );
+        }
+        assert!(check_path_component("正常文件名.md").is_ok());
+    }
+
+    #[test]
+    fn deleting_an_allowed_root_itself_is_refused() {
+        let root = temp_root("root-guard");
+        let file = root.join("a.txt");
+        fs::write(&file, "x").expect("写入");
+        let roots = vec![root.clone()];
+        // 根目录本身不允许删（防一次调用清空工作区/主目录）。
+        assert!(matches!(
+            check_delete_target(root.to_str().unwrap(), &roots),
+            Err(PolicyError::RefuseToDeleteRoot { .. })
+        ));
+        // 根目录内的普通文件允许删。
+        assert!(check_delete_target(file.to_str().unwrap(), &roots).is_ok());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn only_http_and_https_urls_can_be_opened() {
+        for ok in ["https://example.com/a", "http://example.com"] {
+            assert!(check_openable_url(ok).is_ok(), "{ok} 应放行");
+        }
+        for bad in [
+            "file:///etc/passwd",
+            "smb://evil/share",
+            "/bin/sh",
+            "ftp://x",
+        ] {
+            assert!(check_openable_url(bad).is_err(), "{bad} 必须被拒绝");
+        }
+    }
+
+    #[test]
+    fn root_membership_helper_matches_path_check() {
+        let root = temp_root("membership");
+        let nested = root.join("sub");
+        fs::create_dir_all(&nested).expect("创建");
+        let file = nested.join("a.txt");
+        fs::write(&file, "x").expect("写入");
+        let roots = vec![root.clone()];
+        let canonical =
+            check_path_within_roots(file.to_str().unwrap(), &roots).expect("根目录内应放行");
+        assert!(is_within_roots(&canonical, &roots));
+        assert!(!is_within_roots(
+            std::path::Path::new("/etc/passwd"),
+            &roots
+        ));
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

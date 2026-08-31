@@ -1,7 +1,7 @@
-# M0 安全威胁矩阵（V1.1）
+# M0 安全威胁矩阵（V1.2）
 
-> 建立时间：2026-08-31（M0-3.a）｜ **V1.1：2026-08-31（M0-3.b 收口）** ｜ 分支：`feature-M0-baseline`
-> 范围：只**盘点与定契约**，不收口任何调用方（收口分属 M0-3.b/c/d）。
+> 建立时间：2026-08-31（M0-3.a）｜ V1.1：M0-3.b 收口 ｜ **V1.2：M0-3.c 写路径收口** ｜ 分支：`feature-M0-baseline`
+> 范围：M0-3.a 盘点定契约；M0-3.b 收口 capability/远程 IPC；**M0-3.c 收口写路径（只读浏览按裁决保留并登记 SEC-09）**；M0-3.d 收口 launch_app。
 > 配套：契约模块 `src-tauri/src/security_policy.rs`；静态夹具 `scripts/check-security-policy.py`。
 > 冻结基线证据（`logs/m0-baseline/**`）未改动；M1/M2 仍锁定；本文件不代表 M0 完成。
 
@@ -23,7 +23,7 @@
 | ID | 入口 | 威胁 | 现状证据 | 严重度 | 收口检查点 |
 |----|------|------|---------|--------|-----------|
 | SEC-01 | `bridge.rs:1629 launch_app(exec)` | 任意命令执行：`Command::new("sh").arg("-c").arg(cmd)`，无 allowlist、无审计 | `bridge.rs:1636-1637`；`default.json` 授予 `shell:allow-spawn`（bash/sh/powershell，`args: true`） | **P0** | M0-3.d |
-| SEC-02 | `read_file` / `write_file` / `create_file` / `create_dir` / `delete_path` | 任意路径读写删：`std::fs::*` 直接使用传入路径，**无 canonicalize、无允许根目录、无符号链接检查**；`delete_path` 可 `remove_dir_all` 递归删 | `bridge.rs:1078/1084/1141/1157/1169` | **P0** | M0-3.c |
+| SEC-02 | 写/删类文件命令（`write_file`/`create_file`/`create_dir`/`delete_path`/`rename_path`） | 任意路径写删、递归删、`rename` 新名称可带 `../` 跨目录移动 | 原 `bridge.rs` 文件命令区 | ~~P0~~ **已关闭** | ✅ M0-3.c |
 | SEC-03 | `capabilities/*.json` | 残留已不存在的 `browser` label | 原 `default.json` windows、`browser-remote.json` webviews | ~~P1~~ **已关闭** | ✅ M0-3.b |
 | SEC-04 | `browser-remote.json` `remote.urls` | `https://*`/`http://*` 全通配：外部页面可调用远程集内命令 | `browser-remote.json` remote 段 | **P0 → 可接受残余风险** | 补偿控制已落地（见 §5） |
 | SEC-05 | `bridge.rs:68 .eval(&id.to_string(), js)` | 向子 webview 注入任意 JS；与 SEC-04 组合等于给外部页面留执行面 | `bridge.rs:68`、`bridge.rs:1672` | **P0** | M0-3.b |
@@ -51,7 +51,24 @@
   - 默认模式：当前**预期 `EXIT=1`** 并列出缺口，M0-3.b/c/d 收口后转 `EXIT=0`。
 - 门禁接入：`scripts/pre-merge.sh` 只跑 `--self-test` 与 `--expect-current-gaps` 两种**应通过**的模式，默认模式不入门禁（现状缺口不是回归）。
 
-## 5. V1.1 变更（M0-3.b 收口）
+## 5. V1.2 变更（M0-3.c 写路径收口）
+
+裁决（用户 2026-08-31）：**写操作强制收口；只读浏览保留但登记风险**。
+
+| 变更 | 内容 |
+|------|------|
+| 允许根目录 | `allowed_roots()` = 主目录 / Desktop / Documents / Downloads / 成果工作区 / 笔记目录。取值与 `get_start_dirs` 对外承诺一致，避免「能列出却写不进」 |
+| 写/删收口 | `write_file`/`create_file`/`create_dir`/`delete_path`/`rename_path` 全部经 `check_path_within_roots`（canonicalize + 根目录前缀 + 祖先符号链接目标校验） |
+| 删根保护 | `check_delete_target` 禁止删除允许根目录本身，防一次调用清空工作区/主目录 |
+| 重命名逃逸修复 | `rename_path` 原为 `parent.join(new_name)`，`new_name=../../etc/x` 即跨目录移动；新增 `check_path_component` 拒绝 `..`/分隔符/NUL |
+| 新建目录写后复核 | `create_file`/`create_dir` 先校验已存在祖先、创建后再校验真实落点，防中途被符号链接替换 |
+| open_source scheme 白名单 | 只允许 http/https；`file:`/`smb:` 等会被 `open::that` 交桌面环境执行的 scheme 全部拒绝 |
+| SEC-09 登记（未收口） | `list_dir`/`read_file`/`browse_workspace`/`get_start_dirs` 等只读浏览仍可读取任意路径（信息泄露面），按裁决暂不收口以免破坏文件管理器，留待后续裁决 |
+
+> 收口后机器可检缺口 5 → 4：`FILE_COMMANDS_WITHOUT_PATH_POLICY` 关闭，`READ_ONLY_BROWSE_WITHOUT_PATH_POLICY` 新增并登记为已知风险。
+> 夹具改进：写命令是否接入策略改为**逐函数体**判定（此前全文匹配会被「引用但未使用」骗过）。
+
+## 5.1 V1.1 变更（M0-3.b 收口）
 
 | 变更 | 内容 |
 |------|------|
@@ -73,7 +90,7 @@
 | 伪造 webview label 拒绝用例 | `check_webview_label` | ✅ 契约+单测就绪 |
 | 无用户意图写入拒绝用例（远程侧） | SEC-06/08 | ✅ `remote_invocation_without_token_is_rejected` 等 4 项 |
 | 超长/危险 HTML 拒绝用例 | `check_html` | ✅ 契约+单测就绪 |
-| `../` 逃逸拒绝用例 | `check_path_within_roots` | ✅ 契约+单测就绪 |
-| 符号链接逃逸拒绝用例 | `check_path_within_roots` | ✅ 契约+单测就绪 |
+| `../` 逃逸拒绝用例 | `check_path_within_roots` | ✅ 契约+单测+生产接入（M0-3.c） |
+| 符号链接逃逸拒绝用例 | `check_path_within_roots` | ✅ 契约+单测+生产接入（M0-3.c） |
 | shell 元字符拒绝用例 | `check_shell_command` | ✅ 契约+单测就绪 |
 | 允许路径与合法应用仍可用 | 正向用例（`/usr/bin/code`、允许根目录内文件） | ✅ 单测已含 |

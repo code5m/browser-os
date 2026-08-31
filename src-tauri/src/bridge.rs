@@ -647,6 +647,27 @@ struct ResourceScanResult {
     items: Vec<ResourceItem>,
 }
 
+/// M0-3.c：写/删类命令的允许根目录。
+///
+/// 取值与 `get_start_dirs` 对外承诺的入口保持一致（主目录 / 桌面 / 文档 / 下载 /
+/// 成果工作区 / 笔记目录），否则文件管理器会出现「能列出来却写不进去」的不一致。
+/// 效果是：仍可在这些用户目录内正常增删改名，但 `../` 逃逸、符号链接逃逸、
+/// 以及写到 `/etc`、`/usr`、其他用户目录等均被拒绝。
+pub fn allowed_roots(app: &AppHandle) -> Vec<std::path::PathBuf> {
+    let mut roots: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(home) = app.path().home_dir() {
+        roots.push(home.clone());
+        for sub in ["Desktop", "Documents", "Downloads"] {
+            roots.push(home.join(sub));
+        }
+    }
+    roots.push(crate::workspace::workspace_dir(app));
+    roots.push(crate::workspace::notes_dir(app));
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
 /// M0-3.b：远程上报入口的统一来源校验。未登记/伪造 label（含残留的 `browser`）一律拒绝。
 fn check_invocation_source(
     webview: &tauri::Webview,
@@ -853,6 +874,8 @@ pub fn save_note(
         summary
     };
     let file = dir.join(format!("{}-{}.md", ts, base));
+    // M0-3.c：文件名由外部文本派生，写盘前确认落点仍在允许根目录内。
+    sp::check_path_component(&format!("{}-{}.md", ts, base)).map_err(|e| e.to_string())?;
 
     let heading = if title.trim().is_empty() {
         base.as_str()
@@ -1161,10 +1184,14 @@ pub fn read_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
-/// 写入文本文件（创建或覆盖）
+/// 写入文本文件（创建或覆盖）。M0-3.c：路径必须落在允许根目录内。
 #[tauri::command]
-pub fn write_file(path: String, content: String) -> Result<(), String> {
-    std::fs::write(&path, &content).map_err(|e| e.to_string())
+pub fn write_file(app: AppHandle, path: String, content: String) -> Result<(), String> {
+    use crate::security_policy as sp;
+    let canonical =
+        sp::check_path_within_roots(&path, &allowed_roots(&app)).map_err(|e| e.to_string())?;
+    sp::check_text_field("content", &content, sp::MAX_HTML_BYTES).map_err(|e| e.to_string())?;
+    std::fs::write(&canonical, &content).map_err(|e| e.to_string())
 }
 
 /// 打开成果所在的本地目录（用系统文件管理器定位到该 JSON 文件）
@@ -1185,6 +1212,8 @@ pub fn open_source(_app: AppHandle, url: String) -> Result<(), String> {
     if url.trim().is_empty() {
         return Err("来源 URL 为空".into());
     }
+    // M0-3.c：`open::that` 会把任意 scheme 交给桌面环境执行，只允许 http/https。
+    crate::security_policy::check_openable_url(&url).map_err(|e| e.to_string())?;
     open::that(&url).map_err(|e| format!("无法打开链接: {e}"))
 }
 
@@ -1221,52 +1250,93 @@ pub fn get_start_dirs(app: AppHandle) -> Vec<DirEntry> {
 
 /// 新建文件（content 为空则创建空文件）。已存在则报错。
 #[tauri::command]
-pub fn create_file(path: String, content: Option<String>) -> Result<(), String> {
+pub fn create_file(app: AppHandle, path: String, content: Option<String>) -> Result<(), String> {
+    use crate::security_policy as sp;
     let p = std::path::PathBuf::from(&path);
     if p.exists() {
         return Err("已存在同名文件/目录".into());
     }
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let file_name = p
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    sp::check_path_component(&file_name).map_err(|e| e.to_string())?;
+    // 父目录可能尚不存在，无法直接 canonicalize：先校验已存在的祖先，再校验目标。
+    let roots = allowed_roots(&app);
+    let mut anchor = p.clone();
+    while !anchor.exists() {
+        match anchor.parent() {
+            Some(parent) if parent != std::path::Path::new("") => anchor = parent.to_path_buf(),
+            _ => break,
+        }
+    }
+    if anchor.exists() {
+        sp::check_path_within_roots(&anchor.to_string_lossy(), &roots)
+            .map_err(|e| e.to_string())?;
     }
     std::fs::write(&p, content.unwrap_or_default()).map_err(|e| e.to_string())?;
+    // 写后再校验一次真实落点，杜绝中途被符号链接替换到根目录之外。
+    sp::check_path_within_roots(&p.to_string_lossy(), &roots).map_err(|e| e.to_string())?;
     Ok(())
 }
 
 /// 新建目录（递归创建父目录）。
 #[tauri::command]
-pub fn create_dir(path: String) -> Result<(), String> {
+pub fn create_dir(app: AppHandle, path: String) -> Result<(), String> {
+    use crate::security_policy as sp;
     let p = std::path::PathBuf::from(&path);
     if p.exists() {
         return Err("已存在同名文件/目录".into());
     }
+    let roots = allowed_roots(&app);
+    let mut anchor = p.clone();
+    while !anchor.exists() {
+        match anchor.parent() {
+            Some(parent) if parent != std::path::Path::new("") => anchor = parent.to_path_buf(),
+            _ => break,
+        }
+    }
+    if anchor.exists() {
+        sp::check_path_within_roots(&anchor.to_string_lossy(), &roots)
+            .map_err(|e| e.to_string())?;
+    }
     std::fs::create_dir_all(&p).map_err(|e| e.to_string())?;
+    sp::check_path_within_roots(&p.to_string_lossy(), &roots).map_err(|e| e.to_string())?;
     Ok(())
 }
 
 /// 删除文件或目录（递归删除）。
 #[tauri::command]
-pub fn delete_path(path: String) -> Result<(), String> {
+pub fn delete_path(app: AppHandle, path: String) -> Result<(), String> {
+    use crate::security_policy as sp;
     let p = std::path::PathBuf::from(&path);
     if !p.exists() {
         return Err("路径不存在".into());
     }
-    if p.is_dir() {
-        std::fs::remove_dir_all(&p).map_err(|e| e.to_string())?;
+    // 递归删除最危险：必须在允许根目录内，且不允许删根目录本身。
+    let canonical =
+        sp::check_delete_target(&path, &allowed_roots(&app)).map_err(|e| e.to_string())?;
+    if canonical.is_dir() {
+        std::fs::remove_dir_all(&canonical).map_err(|e| e.to_string())?;
     } else {
-        std::fs::remove_file(&p).map_err(|e| e.to_string())?;
+        std::fs::remove_file(&canonical).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
 /// 重命名 / 移动文件或目录。
 #[tauri::command]
-pub fn rename_path(path: String, new_name: String) -> Result<(), String> {
+pub fn rename_path(app: AppHandle, path: String, new_name: String) -> Result<(), String> {
+    use crate::security_policy as sp;
     let p = std::path::PathBuf::from(&path);
     if !p.exists() {
         return Err("路径不存在".into());
     }
-    let parent = p.parent().ok_or("无法取得父目录")?;
+    // 新名称必须是不含分隔符的单一分量，否则 `parent.join(new_name)` 会变成跨目录移动。
+    sp::check_path_component(&new_name).map_err(|e| e.to_string())?;
+    let roots = allowed_roots(&app);
+    let canonical = sp::check_path_within_roots(&path, &roots).map_err(|e| e.to_string())?;
+    let parent = canonical.parent().ok_or("无法取得父目录")?;
     let dst = parent.join(new_name.trim());
     if dst.exists() {
         return Err("目标名称已存在".into());

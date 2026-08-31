@@ -19,9 +19,9 @@ from pathlib import Path
 # 剩余缺口归 M0-3.c（路径策略）与 M0-3.d（launch_app 应用条目白名单）。
 EXPECTED_GAPS = (
     "LAUNCH_APP_ARBITRARY_SHELL",
-    "FILE_COMMANDS_WITHOUT_PATH_POLICY",
     "REMOTE_WILDCARD_IPC",
     "EVAL_WITHOUT_SOURCE_CHECK",
+    "READ_ONLY_BROWSE_WITHOUT_PATH_POLICY",
 )
 
 # 路径类命令：这些函数直接把调用方传入的 path 交给 std::fs，没有策略层。
@@ -33,6 +33,48 @@ FILE_COMMAND_MARKERS = (
 )
 
 
+def function_body(source: str, name: str) -> str:
+    """Return a Rust function body using a small brace-balanced extractor."""
+    match = re.search(rf"\bfn\s+{re.escape(name)}\s*\(", source)
+    if not match:
+        return ""
+    start = source.find("{", match.end())
+    if start < 0:
+        return ""
+    depth = 0
+    for index in range(start, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start + 1 : index]
+    return ""
+
+
+WRITE_COMMANDS = ("write_file", "create_file", "create_dir", "delete_path", "rename_path")
+
+
+def write_commands_use_path_policy(bridge_source: str) -> bool:
+    """写/删类命令的函数体里必须出现路径策略调用。
+
+    只看全文是否出现 `check_path_within_roots` 会被「某处引用但没用上」骗过去，
+    因此逐个命令取函数体判定。
+    """
+    checked = 0
+    for name in WRITE_COMMANDS:
+        body = function_body(bridge_source, name)
+        if not body:
+            continue
+        checked += 1
+        # delete_path 走 check_delete_target（内部再调 check_path_within_roots），两者都算接入。
+        if not (
+            "check_path_within_roots" in body or "check_delete_target" in body
+        ):
+            return False
+    return checked > 0
+
+
 def detect_gaps(bridge_source: str, capability_sources: str) -> list[str]:
     gaps: list[str] = []
 
@@ -40,11 +82,18 @@ def detect_gaps(bridge_source: str, capability_sources: str) -> list[str]:
     if re.search(r'Command::new\(\s*"sh"\s*\)\s*[\s\S]{0,120}?\.arg\(\s*"-c"\s*\)', bridge_source):
         gaps.append("LAUNCH_APP_ARBITRARY_SHELL")
 
-    # SEC-02：文件命令存在，且没有 canonicalize / 允许根目录校验参与。
-    has_file_commands = any(marker in bridge_source for marker in FILE_COMMAND_MARKERS)
-    has_path_policy = "canonicalize(" in bridge_source and "check_path_within_roots" in bridge_source
-    if has_file_commands and not has_path_policy:
+    # SEC-02（M0-3.c 已收口）：写/删类命令必须经 check_path_within_roots。
+    # 判定方式：找到写/删命令的函数体，确认其中调用了路径策略。
+    if not write_commands_use_path_policy(bridge_source):
         gaps.append("FILE_COMMANDS_WITHOUT_PATH_POLICY")
+
+    # SEC-09（M0-3.c 登记，留待后续裁决）：只读浏览类命令仍可读取任意路径。
+    read_commands = ("pub fn list_dir(", "pub fn read_file(", "pub fn browse_workspace(")
+    if any(cmd in bridge_source for cmd in read_commands) and not all(
+        "check_path_within_roots" in function_body(bridge_source, name)
+        for name in ("list_dir", "read_file")
+    ):
+        gaps.append("READ_ONLY_BROWSE_WITHOUT_PATH_POLICY")
 
     # SEC-03（M0-3.b 已收口）：capability 里不得再残留已不存在的 browser label。
     if re.search(r'"(windows|webviews)"\s*:\s*\[[^\]]*"browser"', capability_sources):
@@ -119,6 +168,10 @@ pub fn delete_path(path: String) -> Result<(), String> {
 pub fn eval_in_tab(id: String, js: String) {
     let _ = win.eval(&format!("{}", js));
 }
+pub fn list_dir(path: String) -> Result<Vec<String>, String> { Ok(vec![]) }
+pub fn read_file(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
 """
     legacy_capabilities = """
 {
@@ -133,7 +186,9 @@ pub fn eval_in_tab(id: String, js: String) {
 identifier = "remote-collect"
 commands.allow = ["collect_selection", "save_note", "request_open_terminal", "report_resources"]
 """
+    # M0-3.a 时的真实状态：写命令无路径策略、capability 残留 browser、远程集放行副作用命令。
     legacy_gaps = list(EXPECTED_GAPS) + [
+        "FILE_COMMANDS_WITHOUT_PATH_POLICY",
         "CAPABILITY_STALE_BROWSER_LABEL",
         "REMOTE_SIDE_EFFECT_COMMANDS_EXPOSED",
     ]
@@ -156,6 +211,15 @@ pub fn eval_in_tab(id: String, js: String) {
     if !user_intent_confirmed() { return; }
     security_policy::check_webview_label(&id)?;
     let _ = win.eval(&format!("{}", js));
+}
+pub fn list_dir(path: String) -> Result<Vec<String>, String> {
+    security_policy::check_path_within_roots(&path, roots())?;
+    Ok(vec![])
+}
+pub fn read_file(path: String) -> Result<String, String> {
+    let canonical = std::fs::canonicalize(&path)?;
+    security_policy::check_path_within_roots(&canonical, roots())?;
+    std::fs::read_to_string(&canonical).map_err(|e| e.to_string())
 }
 """
     resolved_capabilities = """
