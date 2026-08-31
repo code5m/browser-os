@@ -758,7 +758,7 @@ EXECUTOR=Codex 当前会话
 MODEL=用户已切换 5.5 高模型；界面完整模型名工具不可见
 ROUTE=AI:DEEP
 MODEL_DEVIATION=UI 未暴露完整模型名，按用户说明记录为强模型接手
-COMMIT=57a31ea + DOC_COMMIT_PENDING
+COMMIT=57a31ea + 7189451
 VERIFY=bash -n run-gui.sh(0); GRID_SELFTEST=1 ./run-gui.sh(0, SELFTEST_RESULT=ALL_PASS); cargo test --manifest-path src-tauri/Cargo.toml(0, 44 passed, 既有 2 warnings); bash scripts/pre-merge.sh(0, PRE_MERGE_RESULT=ALL_PASS); git diff --check(0)
 NEXT=M0-6.b
 ```
