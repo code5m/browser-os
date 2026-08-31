@@ -148,7 +148,11 @@ export const useLayoutStore = defineStore("layout", () => {
     if (!t) return;
     activeModTab.value = id;
     setView(t.view);
-    // 目录页签：地址栏同步显示目录路径（动态引入避免 layout↔browser 循环依赖）
+    // 目录页签：地址栏同步显示目录路径。
+    // M0-4.b：此处**必须**保持动态引入——useBrowserStore 深度依赖本 store
+    // （mainView / showToast / isBrowserView 等多处），改为静态会形成
+    // layout ↔ browser 循环依赖。Vite 的 mix 告警属已知且必要的取舍，
+    // 已在 checkpoint `M0-4.b` 记录，不要为了消除告警把它改成静态引入。
     if (t.path) {
       const p = t.path;
       import("./useBrowserStore").then(({ useBrowserStore }) => {

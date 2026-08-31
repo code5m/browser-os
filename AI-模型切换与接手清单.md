@@ -19,7 +19,7 @@
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | tab RSS 三批持续正增长，必须由 M0-5 关闭；不属于 M0-0 PASS 伪装项 |
-| 下一检查点 | `M0-4.b = NEXT`（修复 `useBrowserStore` 静态/动态 import 混用并配置 `manualChunks`） |
+| 下一检查点 | `M0-4.c = NEXT`（记录构建时间、产物体积和 warning 对比） |
 | 下一任务路由 | `AI:BALANCED / R:medium` |
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
@@ -589,6 +589,27 @@ NEXT=M0-4.a
 - 审计：`log_audit(action="launch")` 记录 program 与 args。
 - 修正：`str::as_str()` 在当前工具链不稳定 → 改为直接模式匹配。
 - 强模型复核点：可执行性校验依赖 PATH，若攻击者可写 PATH 覆盖目录仍可能诱导启动；后续可考虑锁定绝对路径白名单。
+
+### M0-4.b 回写记录（2026-08-31，CodeBuddy / Codex 主机）
+
+```text
+CHECKPOINT=M0-4.b
+STATUS=PASS
+EXECUTOR=CodeBuddy（Codex 主机）
+MODEL=界面未显示完整模型名
+ROUTE=AI:BALANCED
+MODEL_DEVIATION=UI 未显示完整模型名，推理档位未能精确记录
+COMMIT=提交信息 refactor(M0-4.b): split vendor chunks and fix store imports
+VERIFY=pre-merge.sh(0, PRE_MERGE_RESULT=ALL_PASS); npm run build(0, 无 500kB 告警); cargo test(0, 44 passed); cargo check --locked(0, 既有 2 warnings); git diff --check(0)
+NEXT=M0-4.c
+```
+
+实现要点：
+
+- `vite.config.ts` 新增 `manualChunks`：xterm / vue-vendor / tauri-vendor / vendor 四分；入口 chunk 503.80 → 83.16 kB（-84%），最大 chunk 334.02 kB < 500 kB，**Vite 500 kB 告警消除**；总体积 544,875 → 544,093（-0.14%）。
+- `useHomeStore` 对 `useWorkspaceStore` 的动态 import 改静态（该 store 已被十余处静态引入，动态既不分包也不破环）。
+- `useLayoutStore` 对 `useBrowserStore` 的动态 import **刻意保留**：`useBrowserStore` 多处使用 `useLayoutStore`（mainView/showToast/isBrowserView），改静态即成环。已在代码注释与 checkpoint 登记。
+- **强模型复核点**：剩余 1 条 mix 告警是已知取舍，若后续要彻底消除，需把 `showToast` 与视图状态抽成独立模块以反转依赖方向，属重构级改动，勿在未验证 GUI 的情况下直接改静态。
 
 ### M0-4.a 回写记录（2026-08-31，CodeBuddy / Codex 主机）
 

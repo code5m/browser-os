@@ -3,6 +3,7 @@ import { reactive, computed } from "vue";
 import { bridge } from "../bridge";
 import { useBrowserStore } from "./useBrowserStore";
 import { useLayoutStore } from "./useLayoutStore";
+import { useWorkspaceStore } from "./useWorkspaceStore";
 
 // 主页快捷方式：网页（url）、系统应用（app）或本地目录（dir）
 export interface HomeShortcut {
@@ -90,7 +91,8 @@ export const useHomeStore = defineStore("home", () => {
       layout.setView("browser");
       await browser.openBrowser();
     } else if (s.type === "dir") {
-      const { useWorkspaceStore } = await import("./useWorkspaceStore");
+      // M0-4.b：改为静态引入。useWorkspaceStore 已被 App.vue 等十余处静态引入，
+      // 这里的动态 import 既不会分包（Vite 会报 mix 告警），也不构成循环依赖。
       const ws = useWorkspaceStore();
       browser.url = s.target; // 地址栏同步显示目录路径
       layout.openDirTab(s.target);
