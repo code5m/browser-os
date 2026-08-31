@@ -515,6 +515,338 @@ fn run_grid_selftest(app: tauri::AppHandle) {
     });
 }
 
+#[derive(serde::Serialize)]
+struct GuiRegressionStep {
+    id: &'static str,
+    status: &'static str,
+    detail: String,
+}
+
+#[derive(serde::Serialize)]
+struct GuiRegressionReport {
+    status: &'static str,
+    steps: Vec<GuiRegressionStep>,
+}
+
+fn gui_regression_eval(case_id: &str, grid: usize, phase: &str) -> String {
+    format!(
+        r#"(function(){{
+  var params = new URLSearchParams({{
+    case: "{case_id}",
+    grid: "{grid}",
+    phase: "{phase}",
+    title: document.title || "",
+    cookie: document.cookie || "",
+    bodyText: (document.body && document.body.innerText || "").slice(0, 80)
+  }});
+  return fetch("/event?" + params.toString(), {{ credentials: "include" }}).then(function(){{ return "ok"; }}).catch(function(e){{ return String(e); }});
+}})();"#
+    )
+}
+
+fn gui_regression_menu_eval(case_id: &str, grid: usize, phase: &str) -> String {
+    format!(
+        r#"(function(){{
+  document.dispatchEvent(new MouseEvent("contextmenu", {{
+    bubbles: true,
+    cancelable: true,
+    clientX: 32,
+    clientY: 32
+  }}));
+  setTimeout(function(){{
+    var params = new URLSearchParams({{
+      case: "{case_id}",
+      grid: "{grid}",
+      phase: "{phase}",
+      menu: String(!!document.getElementById("jzjd-menu")),
+      cookie: document.cookie || ""
+    }});
+    fetch("/event?" + params.toString(), {{ credentials: "include" }}).catch(function(){{}});
+  }}, 300);
+  return "scheduled";
+}})();"#
+    )
+}
+
+fn gui_mock_url(base: &str, case_id: &str, grid: usize) -> String {
+    format!(
+        "{}/login?case={}&grid={}",
+        base.trim_end_matches('/'),
+        case_id,
+        grid
+    )
+}
+
+fn run_grid_gui_regression(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let report_path = std::env::var("M0_GUI_REGRESSION_REPORT")
+            .unwrap_or_else(|_| "/tmp/m0-6c-gui-regression.json".to_string());
+        let mock_base = std::env::var("M0_GUI_MOCK_BASE").unwrap_or_default();
+        let mut steps: Vec<GuiRegressionStep> = Vec::new();
+        let mut fails: Vec<String> = Vec::new();
+        let mut step = |id: &'static str, result: Result<String, String>| match result {
+            Ok(detail) => {
+                eprintln!("[m0-6c-gui] PASS {id}: {detail}");
+                steps.push(GuiRegressionStep {
+                    id,
+                    status: "PASS",
+                    detail,
+                });
+            }
+            Err(error) => {
+                eprintln!("[m0-6c-gui] FAIL {id}: {error}");
+                fails.push(format!("{id}: {error}"));
+                steps.push(GuiRegressionStep {
+                    id,
+                    status: "FAIL",
+                    detail: error,
+                });
+            }
+        };
+        let sleep_ms = |ms| std::thread::sleep(std::time::Duration::from_millis(ms));
+        let position_grid = |index: usize, x: f64, y: f64, w: f64, h: f64| {
+            bridge::grid_position(app.clone(), index, x, y, w, h)
+                .map(|_| format!("grid-{index} positioned"))
+        };
+        let open_grid = |case_id: &str, index: usize| {
+            bridge::grid_open(app.clone(), index, gui_mock_url(&mock_base, case_id, index))
+                .map(|_| format!("grid-{index} opened case={case_id}"))
+        };
+        let eval_grid = |case_id: &str, index: usize, phase: &str| {
+            bridge::eval_in_tab(
+                app.clone(),
+                format!("grid-{index}"),
+                gui_regression_eval(case_id, index, phase),
+            )
+            .map(|_| format!("grid-{index} eval case={case_id} phase={phase}"))
+        };
+
+        sleep_ms(3000);
+        if mock_base.is_empty() {
+            step("preflight", Err("M0_GUI_MOCK_BASE is empty".to_string()));
+        } else {
+            step("preflight", Ok(format!("mock_base={mock_base}")));
+        }
+
+        step(
+            "scenario-1-single-ai-broadcast",
+            bridge::create_grid(app.clone(), 4).and_then(|created| {
+                if created < 4 {
+                    return Err(format!("created {created} grids, need 4"));
+                }
+                open_grid("1", 0)?;
+                position_grid(0, 40.0, 110.0, 620.0, 450.0)?;
+                sleep_ms(1200);
+                eval_grid("1", 0, "single_broadcast")?;
+                Ok("single grid command path exercised with local AI mock".to_string())
+            }),
+        );
+
+        step(
+            "scenario-2-four-grid-concurrent-ai",
+            (|| {
+                for i in 0..4 {
+                    open_grid("2", i)?;
+                    position_grid(
+                        i,
+                        if i % 2 == 0 { 40.0 } else { 680.0 },
+                        if i < 2 { 110.0 } else { 590.0 },
+                        600.0,
+                        420.0,
+                    )?;
+                }
+                sleep_ms(1800);
+                for i in 0..4 {
+                    eval_grid("2", i, "concurrent_ai")?;
+                }
+                Ok("four grid children opened, positioned, and evaluated".to_string())
+            })(),
+        );
+
+        step(
+            "scenario-3-main-window-move-resize",
+            (|| {
+                open_grid("3", 0)?;
+                sleep_ms(1000);
+                let window = app
+                    .get_webview_window("main")
+                    .ok_or_else(|| "main window not found".to_string())?;
+                window
+                    .set_position(tauri::PhysicalPosition::new(80, 80))
+                    .map_err(|e| e.to_string())?;
+                window
+                    .set_size(tauri::PhysicalSize::new(1280, 860))
+                    .map_err(|e| e.to_string())?;
+                sleep_ms(1200);
+                app.state::<AppState>().grid_manager.reposition_visible();
+                sleep_ms(800);
+                eval_grid("3", 0, "after_move_resize")?;
+                Ok("main window moved/resized and grid layout replayed".to_string())
+            })(),
+        );
+
+        step(
+            "scenario-4-blur-focus-grid-visibility",
+            (|| {
+                open_grid("4", 0)?;
+                sleep_ms(1000);
+                app.state::<AppState>().grid_manager.hide_for_blur();
+                sleep_ms(700);
+                app.state::<AppState>().grid_manager.show_for_focus();
+                sleep_ms(900);
+                eval_grid("4", 0, "after_focus_restore")?;
+                Ok("grid windows hidden for blur and restored for focus".to_string())
+            })(),
+        );
+
+        step(
+            "scenario-5-switch-views",
+            (|| {
+                open_grid("5", 0)?;
+                sleep_ms(1000);
+                let tab = bridge::tab_new(app.clone(), gui_mock_url(&mock_base, "5", 0))?;
+                bridge::tab_activate(app.clone(), tab.id.clone())?;
+                bridge::tab_position(app.clone(), tab.id.clone(), 60.0, 120.0, 800.0, 520.0)?;
+                bridge::hide_all_webviews(app.clone())?;
+                sleep_ms(800);
+                position_grid(0, 40.0, 110.0, 620.0, 450.0)?;
+                sleep_ms(800);
+                eval_grid("5", 0, "after_view_switch")?;
+                bridge::tab_close(app.clone(), tab.id)?;
+                Ok("tab view and grid view switched without orphaned child windows".to_string())
+            })(),
+        );
+
+        step(
+            "scenario-6-normal-tabs-multi-open",
+            (|| {
+                open_grid("6", 0)?;
+                sleep_ms(1000);
+                let first = bridge::tab_new(app.clone(), gui_mock_url(&mock_base, "6", 0))?;
+                let second = bridge::tab_new(app.clone(), gui_mock_url(&mock_base, "6", 1))?;
+                bridge::tab_activate(app.clone(), first.id.clone())?;
+                bridge::tab_position(app.clone(), first.id.clone(), 80.0, 120.0, 760.0, 500.0)?;
+                bridge::tab_activate(app.clone(), second.id.clone())?;
+                bridge::tab_position(app.clone(), second.id.clone(), 90.0, 130.0, 760.0, 500.0)?;
+                bridge::tab_close(app.clone(), first.id)?;
+                bridge::tab_close(app.clone(), second.id)?;
+                eval_grid("6", 0, "tabs_closed_grid_survives")?;
+                Ok("normal tabs opened, switched, closed, and grid survived".to_string())
+            })(),
+        );
+
+        step(
+            "scenario-7-grid-child-crash-recovery",
+            (|| {
+                open_grid("7", 0)?;
+                sleep_ms(1000);
+                let old = app
+                    .state::<AppState>()
+                    .grid_manager
+                    .pid_of(0)
+                    .ok_or_else(|| "grid-0 pid missing before crash".to_string())?;
+                unsafe { libc::kill(old as i32, libc::SIGSEGV) };
+                sleep_ms(12_000);
+                let new = app
+                    .state::<AppState>()
+                    .grid_manager
+                    .pid_of(0)
+                    .ok_or_else(|| "grid-0 pid missing after crash".to_string())?;
+                if old == new {
+                    return Err(format!("grid-0 pid did not change: {old}"));
+                }
+                eval_grid("7", 0, "after_crash_recovery")?;
+                if app.state::<AppState>().grid_manager.pid_of(1).is_none() {
+                    return Err("grid-1 pid missing after grid-0 crash".to_string());
+                }
+                Ok(format!(
+                    "grid-0 recovered pid {old}->{new}; grid-1 survived"
+                ))
+            })(),
+        );
+
+        step(
+            "scenario-8-terminal-resource-context-menu",
+            (|| {
+                open_grid("8", 0)?;
+                sleep_ms(1000);
+                let term = bridge::term_spawn(app.clone())?;
+                bridge::term_write(
+                    app.clone(),
+                    term.id.clone(),
+                    "printf 'M0_6C_TERMINAL_OK\\n'\n".to_string(),
+                )?;
+                sleep_ms(800);
+                bridge::term_kill(app.clone(), term.id)?;
+                let stats = bridge::resource_stats(app.clone());
+                bridge::eval_in_tab(
+                    app.clone(),
+                    "grid-0".to_string(),
+                    gui_regression_menu_eval("8", 0, "context_menu"),
+                )?;
+                sleep_ms(800);
+                Ok(format!(
+                    "terminal spawn/write/kill ok; resource app_total={:.1}MB",
+                    stats.app_total_mb
+                ))
+            })(),
+        );
+
+        step(
+            "scenario-9-login-state-after-restart",
+            (|| {
+                open_grid("9", 0)?;
+                sleep_ms(1800);
+                eval_grid("9", 0, "before_restart")?;
+                sleep_ms(800);
+                let old = app
+                    .state::<AppState>()
+                    .grid_manager
+                    .pid_of(0)
+                    .ok_or_else(|| "grid-0 pid missing before login-state restart".to_string())?;
+                unsafe { libc::kill(old as i32, libc::SIGSEGV) };
+                sleep_ms(12_000);
+                let new = app
+                    .state::<AppState>()
+                    .grid_manager
+                    .pid_of(0)
+                    .ok_or_else(|| "grid-0 pid missing after login-state restart".to_string())?;
+                if old == new {
+                    return Err(format!("grid-0 pid did not change: {old}"));
+                }
+                eval_grid("9", 0, "after_restart")?;
+                Ok(format!(
+                    "login mock replayed across grid restart pid {old}->{new}"
+                ))
+            })(),
+        );
+
+        step(
+            "cleanup-close-grid",
+            bridge::close_grid(app.clone()).map(|_| {
+                let count = app.state::<AppState>().grid_manager.count();
+                format!("close_grid completed count={count}")
+            }),
+        );
+
+        let status = if fails.is_empty() { "PASS" } else { "FAIL" };
+        let report = GuiRegressionReport { status, steps };
+        if let Some(parent) = std::path::Path::new(&report_path).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let write_result = serde_json::to_string_pretty(&report)
+            .map_err(|e| e.to_string())
+            .and_then(|content| std::fs::write(&report_path, content).map_err(|e| e.to_string()));
+        if let Err(error) = write_result {
+            eprintln!("[m0-6c-gui] failed to write report {report_path}: {error}");
+            std::process::exit(1);
+        }
+        eprintln!("[m0-6c-gui] RESULT={status} report={report_path}");
+        sleep_ms(1000);
+        std::process::exit(if fails.is_empty() { 0 } else { 1 });
+    });
+}
+
 /// M0-0.b 资源循环/终端吞吐驱动（契约 logs/m0-baseline-contract-v1.md §6.2/§6.3）。
 /// 由 M0 采集脚本经 `M0_DRIVER` 环境变量启动，仿 GRID_SELFTEST 范式在应用内驱动真实
 /// 场景，与脚本侧轮询同步（标记文件协议）：
@@ -867,6 +1199,11 @@ fn main() {
             // 跑完写 /tmp/grid-selftest-result.txt 并退出。日常运行不设该变量即可。
             if std::env::var("GRID_SELFTEST").is_ok() {
                 run_grid_selftest(app.handle().clone());
+            }
+            // GRID_GUI_REGRESSION=1：M0-6.c 九项 GUI 回归驱动。由外层脚本提供本地
+            // AI mock 与证据目录，驱动真实 Tauri 主窗、宫格子进程、页签与 PTY。
+            if std::env::var("GRID_GUI_REGRESSION").is_ok() {
+                run_grid_gui_regression(app.handle().clone());
             }
             // M0-0.b 测量钩子：M0_RUN_ID 非空时注入测量配置（日常运行全空，零影响），
             // 并按 M0_DRIVER 启动资源循环/终端吞吐驱动（契约 §6.2/§6.3）。

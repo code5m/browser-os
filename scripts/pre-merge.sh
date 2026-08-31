@@ -17,7 +17,8 @@
 #  11. M0-3.a 安全边界夹具（--self-test + --expect-current-gaps；
 #      默认模式按设计 EXIT=1，属现状缺口，不并入本门禁）
 #      M0-2.c 后默认模式必须 PASS，防止退出路径回归）
-#  11. 工作树、暂存区、当前分支相对基线的 git diff --check
+#  12. M0-6.c GUI 回归汇总脚本自检（不启动 GUI）
+#  13. 工作树、暂存区、当前分支相对基线的 git diff --check
 #
 # 用法:
 #   scripts/pre-merge.sh            正式门禁（所有检查必须通过）
@@ -61,6 +62,7 @@ pre-merge.sh — M0-1.c 本地 pre-merge 门禁（M0-1 脚本合并前检查入�
                                 （默认模式按设计 EXIT=1，见 logs/m0-security-threat-matrix-v1.md）
   build metrics                 measure-build-metrics.py --self-test / --compare（总体积 ≤15%、
                                 warning 不增加；指标存 logs/m0-build-metrics/）
+  GUI regression harness        m0-6c-gui-regression.py --self-test（不启动 GUI）
   git diff --check              工作树 + 暂存区 + 当前分支相对基线（机器证据除外）
 
 退出码: 0 = 全部通过；1 = 任一失败；2 = 非法参数
@@ -195,6 +197,10 @@ run_pre_merge() {
   else
     pm_fail "security gap 集合已变化：M0-3.b/c/d 收口或新增缺口后需同步 EXPECTED_GAPS 与威胁矩阵"
   fi
+
+  pm_log "M0-6.c GUI 回归汇总脚本自检（不启动 GUI）…"
+  python3 "$SCRIPT_DIR/m0-6c-gui-regression.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "m0-6c-gui-regression.py --self-test"
 
   pm_log "git diff --check（工作树 + 暂存区，机器证据除外）…"
   # Raw evidence is immutable third-party output; SHA256SUMS, not whitespace rewriting, protects it.
