@@ -24,7 +24,7 @@
 | 自动执行范围 | M0 已结束；M1 起必须先展开检查点，再逐点验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；进入 M1/M2/M3 后仍不得跨检查点合并 |
 | 禁止启动 | M4~M5；M1~M3 可评估启动但不得未展开检查点就写功能代码 |
-| 最近实现提交 | `feat(M1-3): addressbar star + bookmark sidebar`（收藏 UI；前一个是 `bb13617 fix(M1-2-fix1)`） |
+| 最近实现提交 | `a06f23c feat(M1-3): addressbar star + bookmark sidebar`（收藏 UI；前一个是 `bb13617 fix(M1-2-fix1)`） |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
 | 最新状态证据 | `logs/checkpoints/M1-3-20260901-1123.md`；`logs/checkpoints/M1-2-fix1-20260901-1050.md`；`logs/checkpoints/M1-2-20260901-1037.md`；`logs/checkpoints/M1-1-20260901-1011.md`；`logs/checkpoints/M1-0-20260901-0915.md` |
