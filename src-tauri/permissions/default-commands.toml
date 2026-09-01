@@ -67,5 +67,8 @@ commands.allow = [
     "term_kill",
     "m0_ready",
     "m0_term_report",
-    "m0_config"
+    "m0_config",
+    "take_pending_open_urls",
+    "get_default_browser",
+    "set_default_browser"
 ]

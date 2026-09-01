@@ -220,6 +220,21 @@ export const bridge = {
   onTabRecovery: (cb: (d: TabRecoveryEvent) => void) =>
     listen<TabRecoveryEvent>("tab-recovery", (e) => cb(e.payload)),
 
+  // ====== M1-4 默认浏览器接入（外部打开 URL 路由） ======
+  // 拉取并清空后端 pending 队列（冷启动 argv / 单实例转发 / RunEvent::Opened
+  // 统一进队；拉取即清空，天然去重）。
+  takePendingOpenUrls: () => invoke<string[]>("take_pending_open_urls"),
+  // 后端在就绪后收到新外部 URL 时发的轻提示（URL 本体须用 takePendingOpenUrls 拉取）
+  onOpenUrlPending: (cb: () => void) =>
+    listen("app://open-url-pending", () => cb()),
+  // 非 http/https 的外部打开请求被后端拒绝（安全策略）——前端据此 toast
+  onOpenUrlRejected: (cb: (u: { url: string }) => void) =>
+    listen<{ url: string }>("app://open-url-rejected", (e) => cb(e.payload)),
+  // 查询当前系统默认浏览器（xdg-settings get）
+  getDefaultBrowser: () => invoke<string>("get_default_browser"),
+  // 把本应用设为系统默认浏览器。硬约束：只能由设置页按钮经用户显式确认后调用
+  setDefaultBrowser: () => invoke<string>("set_default_browser"),
+
   // ====== 真实 PTY 终端 ======
   termSpawn: () => invoke<{ id: string }>("term_spawn"),
 

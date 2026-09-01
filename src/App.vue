@@ -76,6 +76,26 @@ onMounted(async () => {
   bridge.onNewTabRequest((u) => {
     setTimeout(() => browser.tabNew(u.url), 0);
   });
+  // M1-4：外部打开 URL（xdg-open / 默认浏览器路由）。后端统一进 pending 队列，
+  // 前端拉取即清空（天然去重）；就绪后新到的 URL 经 pending 提示触发立即拉取。
+  async function drainPendingOpenUrls() {
+    try {
+      const urls = await bridge.takePendingOpenUrls();
+      for (const url of urls) {
+        layout.showToast("🌐 外部链接已打开");
+        browser.tabNew(url);
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn("[open-url] drain pending failed", e);
+    }
+  }
+  bridge.onOpenUrlPending(() => {
+    drainPendingOpenUrls();
+  });
+  bridge.onOpenUrlRejected(() => {
+    layout.showToast("⚠️ 已拒绝非 http/https 链接");
+  });
   bridge.onTermData((d) => system.onTermData(d));
   // 子 webview 右键"打开终端"：浏览器视图下优先开右侧 Dock（不离开网页），否则切全屏终端视图
   bridge.onOpenTerminal(() => {
@@ -161,6 +181,9 @@ onMounted(async () => {
   // 文件树右键菜单同样需要点空白/滚动时关闭
   window.addEventListener("click", ws.closeFileCtx);
   window.addEventListener("scroll", ws.closeFileCtx, true);
+  // M1-4 冷启动兜底：进程启动时 argv 带入的 URL 已在后端队列，
+  // 挂载完成后首次拉取（此后经 onOpenUrlPending 提示增量拉取）。
+  drainPendingOpenUrls();
 });
 </script>
 

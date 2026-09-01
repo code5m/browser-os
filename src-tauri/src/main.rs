@@ -1075,7 +1075,26 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         // 浏览器页签/宫格子 webview 统一由 browser-tabs 插件创建与定位
         .plugin(tauri_plugin_browser_tabs::init())
+        // M1-4：单实例——应用已运行时再次 xdg-open（第二实例）把 argv 中的
+        // http(s) URL 路由给首个实例的内嵌页签，而不是另起一个主窗口。
+        // grid 子进程走 run_grid_child 的独立 Builder（无本插件），不受影响。
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            for u in bridge::extract_open_urls(&argv) {
+                bridge::handle_open_url(app, &u);
+            }
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .setup(|app| {
+            // M1-4 冷启动：应用未运行时 xdg-open 经 desktop 文件 %u 把 URL 放进
+            // 本进程 argv。此时前端未就绪，统一进 pending 队列（handle_open_url
+            // 内部就绪前不发提示），待 m0_ready 后由前端拉取打开，保证不丢。
+            let argv: Vec<String> = std::env::args().collect();
+            for u in bridge::extract_open_urls(&argv) {
+                bridge::handle_open_url(app.handle(), &u);
+            }
             // 插件把 window.open / target="_blank" 统一拦截为 browser-tabs://event
             // (newWindowRequested)。这里转发为前端既有的 new-tab-request 事件，
             // 保持前端零改动。
@@ -1295,6 +1314,9 @@ fn main() {
             bridge::m0_term_report,
             bridge::m0_config,
             bridge::issue_intent,
+            bridge::take_pending_open_urls,
+            bridge::get_default_browser,
+            bridge::set_default_browser,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
@@ -1302,9 +1324,20 @@ fn main() {
             std::process::exit(1);
         })
         .run(|app, event| {
-            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
-                let report = app.state::<shutdown::ShutdownCoordinator>().shutdown();
-                log_shutdown_report(&report);
+            match &event {
+                // M1-4：macOS/iOS/Android 经 RunEvent::Opened 投递打开请求
+                // （该变体仅在这些平台编译；Linux 主走 argv + 单实例插件）。
+                #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+                tauri::RunEvent::Opened { urls } => {
+                    for u in urls {
+                        bridge::handle_open_url(app, u.as_str());
+                    }
+                }
+                tauri::RunEvent::ExitRequested { .. } => {
+                    let report = app.state::<shutdown::ShutdownCoordinator>().shutdown();
+                    log_shutdown_report(&report);
+                }
+                _ => {}
             }
         });
 }
