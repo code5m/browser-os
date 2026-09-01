@@ -1293,11 +1293,7 @@ pub fn add_bookmark(
     category: String,
 ) -> Result<Bookmark, String> {
     let bm = workspace::add_bookmark(&app, url.clone(), title.clone(), category.clone())?;
-    workspace::log_audit(
-        &app,
-        "bookmark.add",
-        format!("{} -> {}", url, bm.title),
-    );
+    workspace::log_audit(&app, "bookmark.add", format!("{} -> {}", url, bm.title));
     Ok(bm)
 }
 
