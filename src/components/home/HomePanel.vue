@@ -33,6 +33,8 @@ const TARGET_PLACEHOLDERS: Record<HomeShortcut["type"], string> = {
     <div class="home-head">
       <span class="home-title">🏠 主页</span>
       <div class="home-actions">
+        <button @click="home.favoriteCurrentPage" title="把当前浏览器页签保存到主页">☆ 网页</button>
+        <button @click="home.favoriteCurrentDir" title="把当前目录保存到主页">📁 目录</button>
         <button @click="home.startAdd" title="新增快捷方式">＋ 新增</button>
         <button @click="home.resetDefault" title="恢复默认">↺ 默认</button>
       </div>
@@ -55,7 +57,7 @@ const TARGET_PLACEHOLDERS: Record<HomeShortcut["type"], string> = {
         </div>
       </div>
     </div>
-    <div v-else class="home-empty">暂无快捷方式，点「＋ 新增」添加常用网页或应用</div>
+    <div v-else class="home-empty">暂无快捷方式，点「＋ 新增」添加常用网页、应用或目录</div>
 
     <!-- 编辑弹窗 -->
     <div v-if="home.editing.open" class="home-modal-mask" @click.self="home.cancelEdit">
