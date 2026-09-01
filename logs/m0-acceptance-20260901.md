@@ -1,14 +1,14 @@
 # M0 Acceptance Evidence Draft
 
-STATUS=REVIEWED_PENDING_OWNER
-CHECKPOINT=M0-7.b
+STATUS=OWNER_APPROVED
+CHECKPOINT=M0-7.c
 MODEL=Codex gpt-5.5 high
-DATE=2026-09-01 08:41 CST
-NEXT=M0-7.c
+DATE=2026-09-01 09:05 CST
+NEXT=M1-0
 
 ## Conclusion
 
-M0-7.a 已汇总 M0-0~M0-6 证据；M0-7.b 已由强模型独立复核安全、生命周期、性能与 GUI 结论，结论为可进入 `M0-7.c`。本报告仍不签署 M0 总体验收 PASS；`M0-7.c` 需项目负责人最终确认后才允许解锁 M1/M2/M3。
+M0-7.a 已汇总 M0-0~M0-6 证据；M0-7.b 已由强模型独立复核安全、生命周期、性能与 GUI 结论；M0-7.c 已获得负责人/用户明确确认：“验收通过”。本报告状态升为 `OWNER_APPROVED`，M0 安全与稳定性基线正式 PASS。M1~M3 解锁为可按 WBS 领取，M4/M5 仍需等待前置里程碑。
 
 ## Closed WBS Evidence
 
@@ -51,8 +51,8 @@ M0-7.a 已汇总 M0-0~M0-6 证据；M0-7.b 已由强模型独立复核安全、�
 | M0-5 resource platform noise | grid/terminal FD 正增长归因为 WebKit `anon_inode:timerfd` 平台计时器；terminal RSS `+7.46%` 未越过 10% | 复核 formal run 与分析是否支持不阻塞 M0 |
 | M0-6.c login-state evidence | 使用本地 AI mock 持久 cookie，验证壳层恢复与会话持久化 | 明确不等同第三方真实账号人工验收；决定是否需要放到 M1/M2 冒烟补测 |
 | Xwayland screenshot limitation | 截图/录屏可能黑屏，正式证据改用事件、pid、app.log | 确认证据类型是否满足 M0 工程基线 |
-| M0-7.c owner confirmation | 未完成 | 项目负责人确认后才能把后续里程碑改为可启动 |
+| M0-7.c owner confirmation | 已完成 | 2026-09-01 09:05 CST 用户/负责人确认“验收通过”；M1~M3 改为可启动但尚未开始 |
 
 ## Go / No-Go Draft
 
-当前 M0-0~M0-6 已有可追溯证据，M0-7.b 强模型复核通过，建议进入 `M0-7.c` 项目负责人确认。M0 仍是 `REVIEWED_PENDING_OWNER`，不得启动 M1/M2/M3 功能开发，直到 `M0-7.c` 完成。
+当前 M0-0~M0-7 已有可追溯证据，M0-7.b 强模型复核通过，M0-7.c 负责人确认完成。M0 结论为 `OWNER_APPROVED` / PASS；NEXT=`M1-0`，先展开 M1 检查点后再启动具体功能。

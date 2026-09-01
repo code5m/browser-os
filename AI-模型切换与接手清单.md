@@ -1,8 +1,8 @@
 # AI 模型切换与接手清单
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
-> 文档版本：V3.0。
-> 更新时间：2026-09-01 08:47 CST。
+> 文档版本：V3.1。
+> 更新时间：2026-09-01 09:05 CST。
 > 当前状态：`CODEX_READY`。
 > 当前分支：`feature-M0-baseline`。
 > 当前执行器：Codex gpt-5.5 high；机械文档审计与独立脚本任务已委派 `gpt-5.6-luna / low`，最终裁决仍由主任务负责。
@@ -14,20 +14,20 @@
 
 | 项目 | 当前值 |
 |------|--------|
-| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`、`M0-5 = PASS`、`M0-6 = PASS`、`M0-7.a/b = PASS` |
+| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`、`M0-5 = PASS`、`M0-6 = PASS`、`M0-7.a/b/c = PASS`；M0 总体验收 `OWNER_APPROVED` |
 | 已拒证据 | `ac0ecac` 三批候选：场景错误 + aggregate `UNSTABLE`，结论 `REJECTED`，不得复用 |
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
-| 当前硬风险 | M0-7.c 项目负责人确认未完成；M0-6.c 的登录态证据来自本地 AI mock 持久 cookie，不代表第三方真实账号人工验收 |
-| 下一检查点 | `M0-7.c = NEXT`（项目负责人确认并更新 M1~M3 状态） |
-| 下一任务路由 | `HUMAN_OWNER / R:signoff` |
-| 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
-| 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
-| 禁止启动 | M1~M5；当前检查点未提交前禁止夹带下一检查点 |
+| 当前硬风险 | M0-6.c 的登录态证据来自本地 AI mock 持久 cookie，不代表第三方真实账号人工验收；M1~M3 尚未展开检查点 |
+| 下一检查点 | `M1-0 = NEXT`（展开 M1 检查点和首批任务卡，不直接编码） |
+| 下一任务路由 | `AI:BALANCED / R:medium` |
+| 自动执行范围 | M0 已结束；M1 起必须先展开检查点，再逐点验收和提交 |
+| 必停门禁 | 见 §3「硬停止条件」；进入 M1/M2/M3 后仍不得跨检查点合并 |
+| 禁止启动 | M4~M5；M1~M3 可评估启动但不得未展开检查点就写功能代码 |
 | 最近实现提交 | `b3331a0 feat(M0-6.b): add bounded tab webview recovery` |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
-| 最新状态证据 | `logs/m0-acceptance-20260901.md`；`logs/checkpoints/M0-7.b-20260901-0847.md`；`logs/checkpoints/M0-7.a-20260901-0841.md` |
+| 最新状态证据 | `logs/m0-acceptance-20260901.md`；`logs/checkpoints/M0-7.c-20260901-0905.md`；`logs/checkpoints/M0-7.b-20260901-0847.md`；`logs/checkpoints/M0-7.a-20260901-0841.md` |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
 
@@ -39,7 +39,7 @@
 - 冻结 `logs/m0-baseline-contract-v1.md`：21 个 `REQUIRED_NOW` 指标、2 个延迟指标、环境指纹、固定场景、统计公式和证据目录。
 - 将旧 `logs/baseline-2026-08-27.md` 降级为 `EXPLORATORY`，禁止当作正式性能基线。
 - 修复原计划中的循环依赖，关键路径现为：
-  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(NEXT)`。
+  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(NEXT)`。
 - 完成 M0-1.a（commit `1bd56b1`）：新增 `scripts/baseline-check.sh` 与 `scripts/fixtures/clippy-sample.json`；
   验收命令全过、`--self-test` 输出 `SELF_TEST_RESULT=ALL_PASS`；`.gitignore` 对 `logs/m0-baseline/` 开例外，
   原始 `.log` 证据随 run 目录入库可追溯（见 §5 证据保留说明）。
@@ -67,6 +67,7 @@
 - `5056fbc` 已新增 `GRID_GUI_REGRESSION=1` 应用内驱动和 `scripts/m0-6c-gui-regression.py` 本地 AI mock；release GUI 9 项自动化回归 `M0_6C_GUI_REGRESSION_RESULT=PASS`，证据目录 `logs/m0-6c-gui-evidence/20260901-0726/`。M0-6 整项关闭，NEXT 移至 M0-7.a。
 - `0e8c869` 已完成 `M0-7.a`：新增 `logs/m0-acceptance-20260901.md` 和 `logs/checkpoints/M0-7.a-20260901-0841.md`，只汇总 M0-0~M0-6 证据和 M0-7.b 待复核风险，不签 M0 总 PASS。NEXT 移至 M0-7.b。
 - `6cce225` 已完成 `M0-7.b` 强模型独立复核，新增 `logs/checkpoints/M0-7.b-20260901-0847.md`，验收草案状态升为 `REVIEWED_PENDING_OWNER`。NEXT 移至 M0-7.c，等待项目负责人确认。
+- 用户/负责人已在 2026-09-01 09:05 CST 明确确认“验收通过”，据此完成 `M0-7.c` 放行：验收报告状态 `OWNER_APPROVED`，M0 总体验收 PASS，NEXT 移至 `M1-0`。
 
 ## 2. 模型映射
 
@@ -120,26 +121,26 @@ NEXT=<PASS 后唯一下一检查点；FAIL 时保持原 NEXT>
 - 同一失败最多让低模型修两轮；第二次仍失败即停止，回写 `BLOCKED`，交给更强模型。
 - 文档回写只更新顶部状态、当前 WBS、最近 checkpoint 和 NEXT；不重排无关章节，避免无意义 diff。
 
-### 当前可复制任务卡：M0-7.c
+### 当前可复制任务卡：M1-0
 
 ```text
-TASK_ID=M0-7.c
-ROUTE=HUMAN_OWNER
-MODEL=项目负责人/用户确认
-REASONING=signoff
-GOAL=项目负责人确认 M0 验收草案与 M0-7.b 复核结论，决定是否把 M1~M3 状态改为可启动。
-READ=logs/m0-acceptance-20260901.md, logs/checkpoints/M0-7.b-20260901-0847.md, 详细设计与实施计划.md 顶部当前状态
-WRITE=logs/checkpoints/M0-7.c-<YYYYMMDD-HHMM>.md, logs/m0-acceptance-20260901.md, 三份主文档顶部状态
-FORBID=AI 不得代签负责人确认；负责人未确认前不得启动 M1/M2/M3；不得删除残余风险；不得把本地 AI mock 描述成第三方真实账号验收
-COMMANDS=负责人确认文本；可选复跑 bash scripts/pre-merge.sh; git status --short --branch; git diff --check
-PASS_CRITERIA=负责人明确确认 M0 可放行；验收报告状态改为 OWNER_APPROVED；M1~M3 解锁口径由负责人裁决；工作树干净
-FAIL_ACTION=负责人未确认或提出整改，则 STATUS=BLOCKED，NEXT 保持 M0-7.c 或回退到指定 WBS
-DOC_BACKWRITE=验收报告最终结论、三份主文档顶部状态、M0-7.c checkpoint、负责人确认原文/时间
-COMMIT=docs(M0-7.c): approve M0 acceptance
-NEXT=M1-0 或负责人指定
+TASK_ID=M1-0
+ROUTE=AI:BALANCED
+MODEL=<界面完整模型名>
+REASONING=medium
+GOAL=基于 M0 已验收状态，展开 M1 浏览器与版本控制的 a/b/c 检查点、验收标准和首个可执行任务卡；不写功能代码。
+READ=详细设计与实施计划.md §3.2/§3.3/§3.4, 后续需求TODO.md #5/#8/#14, logs/m0-acceptance-20260901.md
+WRITE=详细设计与实施计划.md, 后续需求TODO.md, AI-模型切换与接手清单.md, logs/checkpoints/M1-0-<YYYYMMDD-HHMM>.md
+FORBID=不得实现功能代码；不得把 M1-1~M1-9 标为 PASS；不得删除 M0 残余风险；不得启动 M4/M5
+COMMANDS=rg 检索 #5/#8/#14 与 M1；git diff --check；可选 bash scripts/pre-merge.sh
+PASS_CRITERIA=M1-1~M1-9 均有可执行检查点和验收口径；NEXT 指向 M1-1 或负责人指定的 M1 首点；工作树干净
+FAIL_ACTION=信息不足则 STATUS=BLOCKED，NEXT 保持 M1-0
+DOC_BACKWRITE=M1 展开计划、M1-0 checkpoint、三份主文档顶部状态
+COMMIT=docs(M1-0): expand M1 execution checkpoints
+NEXT=M1-1 或负责人指定
 ```
 
-M0-7.c 需要负责人/用户明确确认；AI 只能根据确认文本回写文档和提交，不能代签。
+M0 已放行；下一步先展开 M1 检查点，不要直接写收藏、默认浏览器或 Git 面板功能代码。
 
 用户提供的微信临时图片在读取时已不存在，因此本文件不猜测 Trae 模型名称。重新附图或直接写出模型列表后，只填写上表三个 Trae 单元格并升级本文版本；任务上的 `AI:*` 标签不变。
 
@@ -173,7 +174,7 @@ Trae 选模规则：
 4. 需要修改冻结契约、扩大安全权限、删除用户数据，或需要产品/项目负责人裁决。
 5. 检查点边界的工作树不干净，或发现来源不明、可能属于用户的并行改动。
 6. 当前平台额度或时间耗尽。
-7. 到达 `M0-7.c` 项目负责人确认门禁，或下一指针属于 M1~M5。Trae 可以准备 M0-7.c 材料，但不得代替负责人签字。
+7. 到达需要项目负责人/用户签字的放行门禁，或下一指针未在本文展开成可执行任务卡。历史上的 `M0-7.c` 门禁已于 2026-09-01 09:05 CST 完成。
 
 ## 4. 已完成检查点记录：M0-1.a
 
@@ -794,7 +795,7 @@ git log --reverse --oneline --decorate 504fcd7..HEAD
 
 任何模型都不得因为“额度快没了”提前勾选、压缩检查点或把多个 WBS 合进一个提交。
 
-## 7. 可直接交给 Trae 的连续执行提示词
+## 7. 历史 Trae 连续执行提示词（M0 已完成，不再作为当前指令）
 
 ```text
 你正在 feature-M0-baseline 分支接手 mvp-browser-os-v3。目标是在额度和环境允许时尽可能完成 M0，但必须严格按检查点顺序逐个执行；不得开始 M1~M5，不得把多个检查点合成一个提交。
@@ -805,3 +806,5 @@ git log --reverse --oneline --decorate 504fcd7..HEAD
 
 同一检查点连续两次失败、缺少 DEEP 等效模型、缺少 GUI/权限/环境、需要改冻结契约或人工裁决、发现不明改动、额度耗尽或到达 M0-7.c 时必须停止，回写 BLOCKED 和证据；不得伪造 PASS。若 GUI/应用无法运行，必须 STATUS=BLOCKED，NEXT 保持当前检查点。
 ```
+
+当前应复制 §1 的 `M1-0` 任务卡，而不是继续使用上面的 M0 连续执行提示词。
