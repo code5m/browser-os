@@ -1,8 +1,8 @@
 # AI 模型切换与接手清单
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
-> 文档版本：V3.2。
-> 更新时间：2026-09-01 10:11 CST。
+> 文档版本：V3.3。
+> 更新时间：2026-09-01 10:37 CST。
 > 当前状态：`CODEX_READY`。
 > 当前分支：`feature-M0-baseline`。
 > 当前执行器：Codex gpt-5.5 high；机械文档审计与独立脚本任务已委派 `gpt-5.6-luna / low`，最终裁决仍由主任务负责。
@@ -14,20 +14,20 @@
 
 | 项目 | 当前值 |
 |------|--------|
-| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`、`M0-5 = PASS`、`M0-6 = PASS`、`M0-7.a/b/c = PASS`；M0 总体验收 `OWNER_APPROVED`；`M1-0 = PASS`、`M1-1 = PASS`（执行器：CodeBuddy 会话，非登记的 Codex） |
+| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`、`M0-5 = PASS`、`M0-6 = PASS`、`M0-7.a/b/c = PASS`；M0 总体验收 `OWNER_APPROVED`；`M1-0 = PASS`、`M1-1 = PASS`、`M1-2 = PASS`（执行器：CodeBuddy 会话，非登记的 Codex） |
 | 已拒证据 | `ac0ecac` 三批候选：场景错误 + aggregate `UNSTABLE`，结论 `REJECTED`，不得复用 |
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
-| 当前硬风险 | M0-6.c 的登录态证据来自本地 AI mock 持久 cookie，不代表第三方真实账号人工验收；正式书签系统仍未实现 |
-| 下一检查点 | `M1-2 = NEXT`（收藏领域与命令：`Bookmark` + `add/list/remove_bookmark` + ACL + 重启不丢） |
+| 当前硬风险 | M0-6.c 的登录态证据来自本地 AI mock 持久 cookie，不代表第三方真实账号人工验收；正式书签 UI 未实现（M1-3） |
+| 下一检查点 | `M1-3 = NEXT`（收藏 UI：地址栏 ⭐ 收藏按钮 + 收藏夹侧栏；消费 `bookmarkAdd/List/Remove` 契约） |
 | 下一任务路由 | `AI:BALANCED / R:medium` |
 | 自动执行范围 | M0 已结束；M1 起必须先展开检查点，再逐点验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；进入 M1/M2/M3 后仍不得跨检查点合并 |
 | 禁止启动 | M4~M5；M1~M3 可评估启动但不得未展开检查点就写功能代码 |
-| 最近实现提交 | `bda9cd8 feat(M1-1): 生成全套平台图标并修复桌面/菜单快捷方式资源` |
+| 最近实现提交 | `2cd9d60 feat(M1-2): bookmark domain + add/list/remove_bookmark commands` |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
-| 最新状态证据 | `logs/checkpoints/M1-1-20260901-1011.md`；`logs/checkpoints/M1-0-20260901-0915.md`；`logs/m0-acceptance-20260901.md`；`logs/checkpoints/M0-7.c-20260901-0905.md` |
+| 最新状态证据 | `logs/checkpoints/M1-2-20260901-1037.md`；`logs/checkpoints/M1-1-20260901-1011.md`；`logs/checkpoints/M1-0-20260901-0915.md` |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
 
@@ -39,7 +39,7 @@
 - 冻结 `logs/m0-baseline-contract-v1.md`：21 个 `REQUIRED_NOW` 指标、2 个延迟指标、环境指纹、固定场景、统计公式和证据目录。
 - 将旧 `logs/baseline-2026-08-27.md` 降级为 `EXPLORATORY`，禁止当作正式性能基线。
 - 修复原计划中的循环依赖，关键路径现为：
-  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(NEXT)`。
+  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-3(NEXT)`。
 - 完成 M0-1.a（commit `1bd56b1`）：新增 `scripts/baseline-check.sh` 与 `scripts/fixtures/clippy-sample.json`；
   验收命令全过、`--self-test` 输出 `SELF_TEST_RESULT=ALL_PASS`；`.gitignore` 对 `logs/m0-baseline/` 开例外，
   原始 `.log` 证据随 run 目录入库可追溯（见 §5 证据保留说明）。
@@ -72,6 +72,7 @@
 - （交接事项，2026-09-01 10:11）master 分支上的人工品牌图标提交 `7e76658` 已 cherry-pick 为本分支 `90ff941`，并在 `M1-1` 中被 `tauri icon` 标准产物取代（原 `icon-{32,64,128,256,512}.png` 已删）。master 仍领先 `origin/master` 1 个提交，尚未决定是否重置回 `origin/master`。
 - （交接事项，2026-09-01 10:11）master 分支 `stash@{0}` 保存了超出 M1-0 验收范围的主页快捷方式扩展（v2/v3/v4 增量播种、开源项目与 CLI 工具快捷方式、CLI 启动目录弹窗、地址栏⭐收藏目录、第二大脑目录、`launch_app` 加 `cwd`），**未评审、未合入**，需单开检查点评审后再落地；另有 worktree 异版图标备份 `/tmp/worktree-icon-variant.png`（点在字下，未采用）。
 - `M1-1` 已完成图标与桌面资源（commit `bda9cd8`）：`tauri icon` 产出 Windows/macOS/Android/iOS 全套并落位 `src-tauri/icons/`；`bundle.icon` 改为多档声明，deb 图标由 1 档（512x512）增至 5 档（32/64/128/256@2/512）；补 `category/shortDescription/longDescription` 修复 `.desktop` 空 `Categories`；`desktop-file-validate` EXIT=0。验证采用解包检查，**未真实 `dpkg -i` 安装，菜单中图标渲染未人工目视确认**，列为遗留观察项。NEXT 移至 `M1-2`。
+- `M1-2` 已完成收藏领域与命令（commit `2cd9d60`）：新增 `Bookmark` 结构体 + 2 个 `#[cfg(test)]` 单测；`workspace.rs` 加 `bookmarks_file/load/save/add/remove` 5 个函数；`bridge.rs` 加 `add/list/remove_bookmark` 3 个 `#[tauri::command]`，全部 `log_audit`；`main.rs` `invoke_handler!` 注册；`src/types.ts` `Bookmark` 接口；`src/bridge.ts` 暴露 `bookmarkAdd/List/Remove` 包装；ACL `default-commands` 3 条 allow。设计要点：同 URL 视为更新（保留 id/created_at），按 id 删除幂等，落盘 `data_dir/bookmarks.json`（与 audit/repos 同模式）。验证：`cargo test bookmark` 2/2 PASS，`cargo build --release` 0，`npm run build` 0，`git diff --check` 0。**未做端到端 IPC e2e**（依赖 M1-3 UI 启动后实测），UI 触发（地址栏⭐ / `tab-navigated` 自动收藏）属 M1-3。NEXT 移至 `M1-3`。
 
 ## 2. 模型映射
 
