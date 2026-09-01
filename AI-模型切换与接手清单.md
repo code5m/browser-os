@@ -19,15 +19,15 @@
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | M0-6.c 的登录态证据来自本地 AI mock 持久 cookie，不代表第三方真实账号人工验收；**M1-3 收藏 UI 的功能目视验收未完成**（环境可用但本会话无法读图，无法做 GUI 点击验收），见 `logs/checkpoints/M1-3-20260901-1123.md` |
-| 下一检查点 | `M1-4 = NEXT`（默认浏览器接入：desktop MIME 注册、`xdg-settings`、`on_open_url` 路由）；**任务卡已展开**，见 §2「当前可复制任务卡：M1-4」 |
-| 下一任务路由 | `AI:DEEP / R:high`（无 DEEP 等效强模型时按硬停止条件 2 停下，不得用轻量模型硬做） |
+| 下一检查点 | `M1-5 = NEXT`（Git 只读能力：`status/diff/branch_list` 命令、契约测试、大 diff 截断）；**任务卡未展开**，实现前须先按 §2 格式展开 |
+| 下一任务路由 | `AI:BALANCED / R:high`（M1-5 Git 只读；M1-5.a-assist 已有前置契约材料 `logs/assist/M1-5.a-assist-20260901-1617.md` 可作输入） |
 | 自动执行范围 | M0 已结束；M1 起必须先展开检查点，再逐点验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；进入 M1/M2/M3 后仍不得跨检查点合并 |
 | 禁止启动 | M4~M5；M1~M3 可评估启动但不得未展开检查点就写功能代码 |
-| 最近实现提交 | `a06f23c feat(M1-3): addressbar star + bookmark sidebar`（收藏 UI；前一个是 `bb13617 fix(M1-2-fix1)`） |
+| 最近实现提交 | `7889073 feat(M1-4): register default browser + on_open_url routing`（默认浏览器接入；前一个是 `a06f23c feat(M1-3)`） |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
-| 最新状态证据 | `logs/assist/low-model-batch-tasks-20260901-1614.md`；`logs/assist/M1-4-assist-20260901-1145.md`；`logs/checkpoints/M1-3-20260901-1123.md`；`logs/checkpoints/M1-2-fix1-20260901-1050.md`；`logs/checkpoints/M1-2-20260901-1037.md`；`logs/checkpoints/M1-1-20260901-1011.md`；`logs/checkpoints/M1-0-20260901-0915.md` |
+| 最新状态证据 | `logs/checkpoints/M1-4-20260901-1805.md`；`logs/checkpoints/M1-3-20260901-1123.md`；`logs/checkpoints/M1-2-fix1-20260901-1050.md`；`logs/checkpoints/M1-2-20260901-1037.md`；`logs/checkpoints/M1-1-20260901-1011.md`；`logs/checkpoints/M1-0-20260901-0915.md` |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
 
@@ -39,7 +39,7 @@
 - 冻结 `logs/m0-baseline-contract-v1.md`：21 个 `REQUIRED_NOW` 指标、2 个延迟指标、环境指纹、固定场景、统计公式和证据目录。
 - 将旧 `logs/baseline-2026-08-27.md` 降级为 `EXPLORATORY`，禁止当作正式性能基线。
 - 修复原计划中的循环依赖，关键路径现为：
-  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-2-fix1(PASS) -> M1-3(PASS) -> M1-4(NEXT)`。
+  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-2-fix1(PASS) -> M1-3(PASS) -> M1-4(PASS) -> M1-5(NEXT)`。
 - 完成 M0-1.a（commit `1bd56b1`）：新增 `scripts/baseline-check.sh` 与 `scripts/fixtures/clippy-sample.json`；
   验收命令全过、`--self-test` 输出 `SELF_TEST_RESULT=ALL_PASS`；`.gitignore` 对 `logs/m0-baseline/` 开例外，
   原始 `.log` 证据随 run 目录入库可追溯（见 §5 证据保留说明）。
@@ -149,11 +149,12 @@ NEXT=<PASS 后唯一下一检查点；FAIL 时保持原 NEXT>
 - 同一失败最多让低模型修两轮；第二次仍失败即停止，回写 `BLOCKED`，交给更强模型。
 - 文档回写只更新顶部状态、当前 WBS、最近 checkpoint 和 NEXT；不重排无关章节，避免无意义 diff。
 
-### 当前可复制任务卡：M1-4（NEXT，未开工）
+### 历史任务卡：M1-4（已 PASS，2026-09-01）
 
-> **路由 `AI:DEEP / R:high`，本卡只做展开，不得由 FAST/BALANCED 档模型实现。**
-> 当前会话为 `AI:FAST` 档，按硬停止条件 2 停在 M1-4，仅完成本卡的展开与文档回写；
-> 实现与 PASS 裁决须由强模型（Codex `gpt-5.6-sol` 或 Trae `TRAE_DEEP`）领取。
+> **M1-4 已由 `AI:DEEP / R:high` 强模型实现并实测 PASS**，证据
+> `logs/checkpoints/M1-4-20260901-1805.md`；NEXT 已移至 `M1-5`（Git 只读能力，
+> `AI:BALANCED / R:high`，**任务卡未展开**，实现前须先按本格式展开）。
+> 下方 M1-4 任务卡保留存档，供格式参考。
 
 ```text
 TASK_ID=M1-4
