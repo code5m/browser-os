@@ -4,6 +4,7 @@ import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../stores/useBrowserStore";
 import { useSystemStore } from "../../stores/useSystemStore";
 import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
+import BookmarkStar from "../browser/BookmarkStar.vue";
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
@@ -257,6 +258,8 @@ async function openDirCenter() {
             @keyup.enter="onAddrGo"
             @focus="expanded = 'omni'"
           />
+          <!-- M1-3：⭐ 收藏当前网页 + 📑 展开收藏夹侧栏 -->
+          <BookmarkStar v-if="layout.mainView === 'browser'" />
         </div>
         <button class="go" @click="onAddrGo">前往</button>
       </div>

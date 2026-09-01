@@ -29,7 +29,7 @@ M0 当前收口面共 8 项：完整基线、自动门禁、统一生命周期�
 
 AI 必须按 `详细设计与实施计划.md` §2.2 的**检查点关键路径**领取任务，不能只扫描最靠上的未完成 WBS。排序先看阻塞性和降低后续复杂度的收益，再看依赖，最后才在同级里把简单任务排前；模型标签及自动升级规则见详细计划的“AI 执行排序、模型路由与提交协议”。
 
-当前关键路径：`M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(NEXT)`。正式三批 manifest 是 `20260830T153538+0800_93a1ba6_M0-0.c`；M0-7.a/b/c 验收草案、复核与负责人确认为 `logs/m0-acceptance-20260901.md`、`logs/checkpoints/M0-7.a-20260901-0841.md`、`logs/checkpoints/M0-7.b-20260901-0847.md`、`logs/checkpoints/M0-7.c-20260901-0905.md`；M1-0 见 `logs/checkpoints/M1-0-20260901-0915.md`。NEXT=`M1-1`。
+当前关键路径：`M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-2-fix1(PASS) -> M1-3(PASS) -> M1-4(NEXT)`。正式三批 manifest 是 `20260830T153538+0800_93a1ba6_M0-0.c`；M0-7.a/b/c 验收草案、复核与负责人确认为 `logs/m0-acceptance-20260901.md`、`logs/checkpoints/M0-7.a-20260901-0841.md`、`logs/checkpoints/M0-7.b-20260901-0847.md`、`logs/checkpoints/M0-7.c-20260901-0905.md`；M1-0 见 `logs/checkpoints/M1-0-20260901-0915.md`。M1-2-fix1（修复 M1-2 遗留的 `cargo fmt` 门禁回归）见 `logs/checkpoints/M1-2-fix1-20260901-1050.md`；M1-3 收藏 UI 见 `logs/checkpoints/M1-3-20260901-1123.md`。NEXT=`M1-4`（默认浏览器接入，`AI:DEEP / R:high`；无强模型时按硬停止条件 2 停下）。**遗留观察项**：M1-3 的 ⭐ 收藏/侧栏跳转删除/重启不丢三项仅通过静态审查，尚未做 GUI 目视验收。
 
 当前执行器：Codex 主任务（`CODEX_READY`）；机械审计与独立脚本任务优先委派 `gpt-5.6-luna / low`。仅在 M0 内按关键路径连续执行；每个检查点必须先验收、回写证据、独立提交并确认工作树干净，再自动领取下一点。硬停止条件和跨模型回归步骤统一见 `AI-模型切换与接手清单.md`。
 
