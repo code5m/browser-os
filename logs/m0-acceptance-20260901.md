@@ -1,0 +1,48 @@
+# M0 Acceptance Evidence Draft
+
+STATUS=DRAFT
+CHECKPOINT=M0-7.a
+MODEL=Codex gpt-5.5 high
+DATE=2026-09-01 08:41 CST
+NEXT=M0-7.b
+
+## Conclusion
+
+M0-7.a 只汇总 M0-0~M0-6 证据，不签署 M0 总体验收 PASS。当前可进入 `M0-7.b`：由强模型独立复核安全、生命周期、性能与 GUI 结论；`M0-7.c` 仍需项目负责人最终确认后才允许解锁 M1/M2/M3。
+
+## Closed WBS Evidence
+
+| WBS | 状态 | 关键提交 | 证据 |
+|---|---|---|---|
+| M0-0 完整基线 | PASS with adjudicated UNSTABLE ranges | `93a1ba6`, `5872bc5` | `logs/checkpoints/M0-0.c-20260830-1538.md`; manifest `logs/m0-baseline/manifests/20260830T153538+0800_93a1ba6_M0-0.c/` |
+| M0-1 自动门禁 | PASS | `2b476d3`, `73e9dfb` | `logs/checkpoints/M0-1.c-20260829-1530.md`; `scripts/pre-merge.sh`; `scripts/GATE-CONTRACT.md` |
+| M0-2 生命周期重构 | PASS | `aaed1c7`, `a2cbe79`, `15a0087` | `logs/checkpoints/M0-2.d-20260831-0725.md`; `logs/m0-resource-ownership-v1.md`; `scripts/check-lifecycle-contract.py` |
+| M0-3 安全边界重构 | PASS with accepted residual gaps | `30b9cc9`, `3661fb3`, `16e99b5` | `logs/checkpoints/M0-3.d-20260831-0929.md`; `logs/m0-security-threat-matrix-v1.md`; `scripts/check-security-policy.py` |
+| M0-4 构建/依赖清理 | PASS | `c74ce34`, `b3a81b9`, `e216f03` | `logs/checkpoints/M0-4.c-20260831-1019.md`; `logs/m0-build-metrics/build-metrics-6f4e554.json`; `scripts/measure-build-metrics.py` |
+| M0-5 资源生命周期闭环 | PASS | `68c78d7`, `e998bbd`, `ebc49f7` | `logs/checkpoints/M0-5.c-20260831-1652.md`; formal run `logs/m0-baseline/20260831T164058+0800_6534963_release_x11/`; analysis `logs/checkpoints/M0-5.c-analysis-20260831-164058.md` |
+| M0-6 崩溃恢复与 GUI 回归 | PASS | `57a31ea`, `b3331a0`, `5056fbc`, `f1612d7` | `logs/checkpoints/M0-6.c-20260901-0726.md`; GUI evidence `logs/m0-6c-gui-evidence/20260901-0726/`; selftest `logs/m0-grid-selftest/M0-6.c-20260901-selftest.log` |
+
+## Verification Summary
+
+| Gate | Result |
+|---|---|
+| `python3 scripts/m0-6c-gui-regression.py --self-test` | EXIT=0，`M0_6C_GUI_REGRESSION_SELF_TEST=PASS` |
+| `cargo test --manifest-path src-tauri/Cargo.toml` | EXIT=0，47 passed / 0 failed，warning 仍为既有 2 条 |
+| `npm run build` | EXIT=0，Vite build 通过；保留既有 `useBrowserStore` 静态/动态 import 混用告警 |
+| `bash scripts/pre-merge.sh` | EXIT=0，`PRE_MERGE_RESULT=ALL_PASS` |
+| `git diff --check` | EXIT=0 |
+
+## Residual Risks For M0-7.b
+
+| Risk | Current Decision | Required Review |
+|---|---|---|
+| M0-0 aggregate raw status is `UNSTABLE` | 已在 `M0-0.c` 裁决为正式基线：15 项用 median，6 项只能用区间和风险说明 | 确认 M0-5/M3 owner 是否足够，不能把 raw aggregate 改写成 PASS |
+| M0-3 security residual gaps | `REMOTE_WILDCARD_IPC`、`EVAL_WITHOUT_SOURCE_CHECK`、`READ_ONLY_BROWSE_WITHOUT_PATH_POLICY` 保留在威胁矩阵 | 确认补偿控制、功能取舍和后续 owner 是否可接受 |
+| M0-5 resource platform noise | grid/terminal FD 正增长归因为 WebKit `anon_inode:timerfd` 平台计时器；terminal RSS `+7.46%` 未越过 10% | 复核 formal run 与分析是否支持不阻塞 M0 |
+| M0-6.c login-state evidence | 使用本地 AI mock 持久 cookie，验证壳层恢复与会话持久化 | 明确不等同第三方真实账号人工验收；决定是否需要放到 M1/M2 冒烟补测 |
+| Xwayland screenshot limitation | 截图/录屏可能黑屏，正式证据改用事件、pid、app.log | 确认证据类型是否满足 M0 工程基线 |
+| M0-7.c owner confirmation | 未完成 | 项目负责人确认后才能把后续里程碑改为可启动 |
+
+## Go / No-Go Draft
+
+当前 M0-0~M0-6 已有可追溯证据，建议进入 `M0-7.b` 强模型复核。M0 仍是 `DRAFT`，不得启动 M1/M2/M3 功能开发，直到 `M0-7.b` 与 `M0-7.c` 完成。
