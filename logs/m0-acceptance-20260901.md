@@ -1,14 +1,14 @@
 # M0 Acceptance Evidence Draft
 
-STATUS=DRAFT
-CHECKPOINT=M0-7.a
+STATUS=REVIEWED_PENDING_OWNER
+CHECKPOINT=M0-7.b
 MODEL=Codex gpt-5.5 high
 DATE=2026-09-01 08:41 CST
-NEXT=M0-7.b
+NEXT=M0-7.c
 
 ## Conclusion
 
-M0-7.a 只汇总 M0-0~M0-6 证据，不签署 M0 总体验收 PASS。当前可进入 `M0-7.b`：由强模型独立复核安全、生命周期、性能与 GUI 结论；`M0-7.c` 仍需项目负责人最终确认后才允许解锁 M1/M2/M3。
+M0-7.a 已汇总 M0-0~M0-6 证据；M0-7.b 已由强模型独立复核安全、生命周期、性能与 GUI 结论，结论为可进入 `M0-7.c`。本报告仍不签署 M0 总体验收 PASS；`M0-7.c` 需项目负责人最终确认后才允许解锁 M1/M2/M3。
 
 ## Closed WBS Evidence
 
@@ -32,6 +32,16 @@ M0-7.a 只汇总 M0-0~M0-6 证据，不签署 M0 总体验收 PASS。当前可�
 | `bash scripts/pre-merge.sh` | EXIT=0，`PRE_MERGE_RESULT=ALL_PASS` |
 | `git diff --check` | EXIT=0 |
 
+## M0-7.b Review
+
+| Area | Result | Notes |
+|---|---|---|
+| Lifecycle | PASS | `check-lifecycle-contract.py --self-test / --expect-current-gaps / 默认` 均 EXIT=0；机器可检 lifecycle gap 为 0 |
+| Security | PASS with residual accepted risks | `check-security-policy.py --self-test / --expect-current-gaps` 均 EXIT=0；3 个残余 gap 与威胁矩阵一致 |
+| Resources | PASS | M0-5 formal run PASS；orphan max 为 0；`timerfd` 与 RSS 残余解释可接受，后续 owner 保留 |
+| GUI/crash | PASS | M0-6.c 自动化 GUI 回归 PASS；`GRID_SELFTEST` PASS；本地 AI mock 限制已明示 |
+| Build/test gates | PASS | `cargo test` 47 passed；`npm run build` 通过；`pre-merge` ALL_PASS；`git diff --check` 通过 |
+
 ## Residual Risks For M0-7.b
 
 | Risk | Current Decision | Required Review |
@@ -45,4 +55,4 @@ M0-7.a 只汇总 M0-0~M0-6 证据，不签署 M0 总体验收 PASS。当前可�
 
 ## Go / No-Go Draft
 
-当前 M0-0~M0-6 已有可追溯证据，建议进入 `M0-7.b` 强模型复核。M0 仍是 `DRAFT`，不得启动 M1/M2/M3 功能开发，直到 `M0-7.b` 与 `M0-7.c` 完成。
+当前 M0-0~M0-6 已有可追溯证据，M0-7.b 强模型复核通过，建议进入 `M0-7.c` 项目负责人确认。M0 仍是 `REVIEWED_PENDING_OWNER`，不得启动 M1/M2/M3 功能开发，直到 `M0-7.c` 完成。
