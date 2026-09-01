@@ -66,7 +66,7 @@
 - `65ba0ec` 已按正式 `M0-6.c` 任务卡再次尝试：`xdotool/wmctrl/scrot` 后续已可用，release GUI 可启动，`GRID_SELFTEST` 再次 `ALL_PASS`，并归档 `windows_probe.txt` / `grid-selftest-result.txt` / `last_app.log`；但仍缺 AI 站点登录态，普通模式无法触发持久宫格会话，且 Wayland/Xwayland 下 `scrot` 全黑、`xwd` BadMatch，无法生成截图/录屏证据。`STATUS=BLOCKED`，NEXT 继续保持 M0-6.c。
 - `5056fbc` 已新增 `GRID_GUI_REGRESSION=1` 应用内驱动和 `scripts/m0-6c-gui-regression.py` 本地 AI mock；release GUI 9 项自动化回归 `M0_6C_GUI_REGRESSION_RESULT=PASS`，证据目录 `logs/m0-6c-gui-evidence/20260901-0726/`。M0-6 整项关闭，NEXT 移至 M0-7.a。
 - `0e8c869` 已完成 `M0-7.a`：新增 `logs/m0-acceptance-20260901.md` 和 `logs/checkpoints/M0-7.a-20260901-0841.md`，只汇总 M0-0~M0-6 证据和 M0-7.b 待复核风险，不签 M0 总 PASS。NEXT 移至 M0-7.b。
-- 待提交：`M0-7.b` 已完成强模型独立复核，新增 `logs/checkpoints/M0-7.b-20260901-0847.md`，验收草案状态升为 `REVIEWED_PENDING_OWNER`。NEXT 移至 M0-7.c，等待项目负责人确认。
+- `6cce225` 已完成 `M0-7.b` 强模型独立复核，新增 `logs/checkpoints/M0-7.b-20260901-0847.md`，验收草案状态升为 `REVIEWED_PENDING_OWNER`。NEXT 移至 M0-7.c，等待项目负责人确认。
 
 ## 2. 模型映射
 
