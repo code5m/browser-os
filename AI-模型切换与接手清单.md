@@ -19,7 +19,7 @@
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | M0-6.c 的登录态证据来自本地 AI mock 持久 cookie，不代表第三方真实账号人工验收；**M1-3 收藏 UI 的功能目视验收未完成**（环境可用但本会话无法读图，无法做 GUI 点击验收），见 `logs/checkpoints/M1-3-20260901-1123.md` |
-| 下一检查点 | `M1-4 = NEXT`（默认浏览器接入：desktop MIME 注册、`xdg-settings`、`on_open_url` 路由） |
+| 下一检查点 | `M1-4 = NEXT`（默认浏览器接入：desktop MIME 注册、`xdg-settings`、`on_open_url` 路由）；**任务卡已展开**，见 §2「当前可复制任务卡：M1-4」 |
 | 下一任务路由 | `AI:DEEP / R:high`（无 DEEP 等效强模型时按硬停止条件 2 停下，不得用轻量模型硬做） |
 | 自动执行范围 | M0 已结束；M1 起必须先展开检查点，再逐点验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；进入 M1/M2/M3 后仍不得跨检查点合并 |
@@ -142,7 +142,73 @@ NEXT=<PASS 后唯一下一检查点；FAIL 时保持原 NEXT>
 - 同一失败最多让低模型修两轮；第二次仍失败即停止，回写 `BLOCKED`，交给更强模型。
 - 文档回写只更新顶部状态、当前 WBS、最近 checkpoint 和 NEXT；不重排无关章节，避免无意义 diff。
 
-### 当前可复制任务卡：M1-1
+### 当前可复制任务卡：M1-4（NEXT，未开工）
+
+> **路由 `AI:DEEP / R:high`，本卡只做展开，不得由 FAST/BALANCED 档模型实现。**
+> 当前会话为 `AI:FAST` 档，按硬停止条件 2 停在 M1-4，仅完成本卡的展开与文档回写；
+> 实现与 PASS 裁决须由强模型（Codex `gpt-5.6-sol` 或 Trae `TRAE_DEEP`）领取。
+
+```text
+TASK_ID=M1-4
+ROUTE=AI:DEEP
+MODEL=<界面完整模型名>
+REASONING=high
+GOAL=把应用注册为 Linux 默认浏览器，外部 http(s) 链接路由到内嵌页签打开。
+READ=src-tauri/src/main.rs（Builder 在 1074，RunEvent 分支在 ~1305），
+     src-tauri/tauri.conf.json（productName=mvp-browser-os，identifier=com.jizhijiandan.mvp），
+     setup-linux.sh（当前无任何 xdg/MIME 相关逻辑），
+     src/bridge.ts + src/stores/useBrowserStore.ts（tabNew / openBrowser），
+     src/App.vue（onMounted 末尾 m0Ready() 是前端就绪信号，可作冷启动重放锚点），
+     详细设计与实施计划.md §3.2，logs/checkpoints/M1-3-20260901-1123.md
+WRITE=src-tauri/src/main.rs（RunEvent::Opened 分支），
+      setup-linux.sh（MIME 注册 + xdg-settings，必须用户显式触发），
+      src-tauri/tauri.conf.json（如需自定义 .desktop 模板），
+      新增 settings 开关与对应 IPC（如需），
+      详细设计与实施计划.md, 后续需求TODO.md, AI-模型切换与接手清单.md,
+      logs/checkpoints/M1-4-<YYYYMMDD-HHMM>.md
+FORBID=不得在 deb 安装/首次启动时静默改写用户默认浏览器（必须用户显式确认）；
+      不得接受 http/https 以外的 scheme（file://、javascript: 一律拒绝）；
+      不得删除或改动 M0/M1-2/M1-3 的证据与 checkpoints；
+      不得与 M1-3 合并提交，不得提前勾选 M1-4；
+      不得修改已冻结的 M0 基线脚本与契约
+COMMANDS=git switch feature-M0-baseline（或对应 worktree）
+      git status --short --branch
+      grep -rn "on_open_url\|RunEvent::Opened" src-tauri/src/main.rs   # 开工前应为空
+      cargo build --release
+      npm run build
+      bash scripts/pre-merge.sh        # 必须 PRE_MERGE_RESULT=ALL_PASS
+      git diff --check
+PASS_CRITERIA=1. xdg-settings get default-web-browser 显示本应用，且该变更只在用户
+      显式点击「设为默认浏览器」后发生；
+      2. xdg-open https://example.com 能在应用内嵌页签打开该 URL，不另开系统浏览器；
+      3. 冷启动场景（应用未运行时 xdg-open）不丢 URL（需有就绪后重放机制并留证据）；
+      4. 非 http/https 的 URL 被拒绝且有日志/提示，不崩溃；
+      5. npm run build 0；scripts/pre-merge.sh ALL_PASS；git diff --check 0；工作树干净
+FAIL_ACTION=实现遇阻或契约不对 → 回写 STATUS=BLOCKED 到
+      logs/checkpoints/M1-4-<ts>.md，NEXT 保持 M1-4；连续两次失败即停止并交还更强模型
+DOC_BACKWRITE=详细设计与实施计划.md §3.2 顶部 + M1-4 勾选；
+      AI-模型切换与接手清单.md §1 顶层表 + WBS 关键路径加 M1-4 → M1-5；
+      后续需求TODO.md 当前关键路径；logs/checkpoints/M1-4-<ts>.md
+COMMIT=feat(M1-4): register default browser + on_open_url routing
+NEXT=M1-5
+```
+
+#### 实现要点（基于 2026-09-01 代码现状盘点，供强模型复核）
+
+- **现状**：`main.rs` 目前**没有** `RunEvent::Opened` 分支，只有 ~1305 行的
+  `RunEvent::ExitRequested`；`setup-linux.sh` **没有**任何 `xdg-settings` / MIME 逻辑；
+  `tauri.conf.json` 未配置自定义 `.desktop` 模板，桌面文件由 bundler 生成，
+  **实际文件名需实测确认**（`mvp-browser-os.desktop` 还是 `com.jizhijiandan.mvp.desktop`），
+  不得凭猜测写入 `xdg-settings set default-web-browser`。
+- **冷启动是主要风险**：进程未运行时 `xdg-open` 传来的 URL 会早于前端 `onMounted` 到达，
+  直接 `tab_new` 大概率落空。需要「先缓存、待前端就绪后重放」；
+  `App.vue` 的 `bridge.m0Ready()`（mount + 2×rAF 后调用）是现成的就绪信号锚点。
+- **安全边界**：只放行 `http` / `https`，其余 scheme 一律拒绝并 `log_audit`，
+  与既有 `security-policy-v2` 保持一致；不得把任意字符串拼进导航。
+- **不得静默改系统设置**：设默认浏览器是用户可见的系统级变更，
+  必须做成设置项里的显式按钮 + 确认，禁止在安装脚本或首次启动时自动执行。
+
+### 历史任务卡示例：M1-1（已 PASS，仅作格式参考）
 
 ```text
 TASK_ID=M1-1
