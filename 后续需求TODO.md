@@ -2,10 +2,10 @@
 
 > 文档角色：#1~#15 需求池、优先级与里程碑映射；不作为“已经做到哪里”的单独证明。
 > 进度与验收 SSOT：`详细设计与实施计划.md`。
-> 文档版本：V4.0。
-> 更新时间：2026-09-01 00:45 CST。
+> 文档版本：V4.1。
+> 更新时间：2026-09-01 07:27 CST。
 > 编写/裁决模型：Codex gpt-5.5 high；机械文档审计：`gpt-5.6-luna / low`。
-> 本版变更：CodeBuddy 已按 `M0-6.c` 正式任务卡再次尝试真实 GUI 回归并提交 `65ba0ec`；release GUI 可启动且 `GRID_SELFTEST` 仍为 `ALL_PASS`，但 9 项 GUI 手工回归仍因登录态、持久宫格触发和 Xwayland 截图证据问题保持 `STATUS=BLOCKED`。NEXT 保持 `M0-6.c`，不是启动 M1/M2。
+> 本版变更：Codex 新增 `GRID_GUI_REGRESSION=1` 应用内驱动与 `scripts/m0-6c-gui-regression.py` 本地 AI mock，真实启动 release GUI 后完成 M0-6.c 9 项 GUI 回归，证据目录 `logs/m0-6c-gui-evidence/20260901-0726/`，结果 `PASS`。NEXT 移至 `M0-7.a`，不是启动 M1/M2。
 
 ---
 
@@ -15,7 +15,7 @@
 
 | 里程碑 | 状态 | 当前口径 |
 |--------|------|----------|
-| **M0 安全与稳定性基线** | **进行中** | 6/8 个 WBS 已关闭（M0-0~M0-5）；M0-6.a/b 已 PASS；M0-6.c BLOCKED 且仍为 NEXT，GUI 回归和最终放行仍未完成 |
+| **M0 安全与稳定性基线** | **进行中** | 7/8 个 WBS 已关闭（M0-0~M0-6）；M0-7 最终验收未完成，NEXT=`M0-7.a` |
 | M1 浏览器与版本控制 | 未开始 | #5/#8 虽为 P0，也必须等待 M0 PASS |
 | M2 本地资产与执行 | 未开始 | 5 个 HTML 工具只代表素材落盘，不代表工具框架已实现 |
 | M3~M5 | 未开始 | 仅保留需求与设计，不形成当前开发承诺 |
@@ -28,9 +28,9 @@ M0 当前收口面共 8 项：完整基线、自动门禁、统一生命周期�
 
 AI 必须按 `详细设计与实施计划.md` §2.2 的**检查点关键路径**领取任务，不能只扫描最靠上的未完成 WBS。排序先看阻塞性和降低后续复杂度的收益，再看依赖，最后才在同级里把简单任务排前；模型标签及自动升级规则见详细计划的“AI 执行排序、模型路由与提交协议”。
 
-当前关键路径：`M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6.a(PASS) -> M0-6.b(PASS) -> M0-6.c(BLOCKED/NEXT) -> ...`。正式三批 manifest 是 `20260830T153538+0800_93a1ba6_M0-0.c`；M0-6.b 当前提交 GUI selftest 日志为 `logs/m0-grid-selftest/M0-6.b-20260831-selftest.log`，输出 `SELFTEST_RESULT=ALL_PASS`，并已为主进程 `tab-*` WebView 建立 60 秒内最多 2 次的有限恢复策略。M0-6.c 最新 checkpoint 为 `logs/checkpoints/M0-6.c-20260901-0037.md`，证据目录 `logs/m0-6c-gui-evidence/20260901-0037/`；本轮确认 release GUI 与自动崩溃自愈仍可用，但无法真实完成 9 项 GUI 手工回归，仍为 BLOCKED；NEXT 保持 `M0-6.c`。
+当前关键路径：`M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(NEXT) -> ...`。正式三批 manifest 是 `20260830T153538+0800_93a1ba6_M0-0.c`；M0-6.b 当前提交 GUI selftest 日志为 `logs/m0-grid-selftest/M0-6.b-20260831-selftest.log`，输出 `SELFTEST_RESULT=ALL_PASS`，并已为主进程 `tab-*` WebView 建立 60 秒内最多 2 次的有限恢复策略。M0-6.c 最新 checkpoint 为 `logs/checkpoints/M0-6.c-20260901-0726.md`，证据目录 `logs/m0-6c-gui-evidence/20260901-0726/`；release GUI 自动化 9 项回归 PASS，NEXT 移至 `M0-7.a`。
 
-当前执行器：Codex 主任务（`CODEX_BLOCKED`）；机械审计与独立脚本任务优先委派 `gpt-5.6-luna / low`。仅在 M0 内按关键路径连续执行；每个检查点必须先验收、回写证据、独立提交并确认工作树干净，再自动领取下一点。硬停止条件和跨模型回归步骤统一见 `AI-模型切换与接手清单.md`。
+当前执行器：Codex 主任务（`CODEX_READY`）；机械审计与独立脚本任务优先委派 `gpt-5.6-luna / low`。仅在 M0 内按关键路径连续执行；每个检查点必须先验收、回写证据、独立提交并确认工作树干净，再自动领取下一点。硬停止条件和跨模型回归步骤统一见 `AI-模型切换与接手清单.md`。
 
 | 顺序 | WBS | 为什么排在这里 | 模型路由 | 最少提交 | 状态 |
 |------|-----|----------------|----------|----------|------|
@@ -40,7 +40,7 @@ AI 必须按 `详细设计与实施计划.md` §2.2 的**检查点关键路径**
 | 4 | M0-3 安全边界重构 | 先统一来源、路径和执行策略，避免 M1~M5 重复且不一致 | `AI:DEEP/R:xhigh` | 4 | 已关闭 |
 | 5 | M0-4 构建/依赖清理 | 上游边界明确后的快速、低风险清理 | `AI:BALANCED/R:medium` | 3 | 已关闭 |
 | 6 | M0-5 资源闭环 | 基于统一生命周期做真实 release 压测 | `AI:DEEP/R:high` | 3 | 已关闭 |
-| 7 | M0-6 崩溃与 GUI 回归 | 复杂、耗时，必须在前置结构稳定后验证 | `AI:DEEP/R:high` | 3 | 部分基础 |
+| 7 | M0-6 崩溃与 GUI 回归 | 复杂、耗时，必须在前置结构稳定后验证 | `AI:DEEP/R:high` | 3 | 已关闭 |
 | 8 | M0-7 验收放行 | 小模型汇总证据，强模型独立复核后才能放行 | `AI:FAST/R:medium; ESCALATE:DEEP` | 3 | 待开始 |
 
 执行单位必须是 `WBS.checkpoint`，例如 `M0-2.b`，不能是“完成 M0”。`SIMPLE/MEDIUM/COMPLEX` 分别至少拆成 2/3/4 个独立、可编译、可回滚提交；上一检查点 FAIL 时禁止进入下一检查点。「逐点执行」不等于「逐点停机」：PASS 且提交边界干净后可立即继续。检索、格式、schema、哈希和固定夹具先交给脚本或 `AI:FAST/R:low`，主模型只做关键 diff 复核；安全、生命周期、并发、IPC 和最终放行不得降级。

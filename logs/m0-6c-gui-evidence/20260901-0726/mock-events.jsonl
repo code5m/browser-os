@@ -1,0 +1,58 @@
+{"case": "1", "cookie_header": "", "grid": "0", "phase": "server_load", "ts": "1788218790.364"}
+{"case": "1", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "loaded", "ts": "1788218790.655"}
+{"case": "1", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "stream_done", "text": "AI mock ready\nstream chunk 1\nstream chunk 2\nDONE", "ts": "1788218791.226"}
+{"bodyText": "M0 GUI Regression Mock\n\ncase=1 grid=0\n\nAI mock ready\nstream chunk 1\nstream chunk", "case": "1", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "single_broadcast", "title": "M0 mock case 1 grid 0", "ts": "1788218791.467"}
+{"case": "2", "cookie_header": "m0_session=ok", "grid": "0", "phase": "server_load", "ts": "1788218791.472"}
+{"case": "2", "cookie_header": "", "grid": "3", "phase": "server_load", "ts": "1788218791.547"}
+{"case": "2", "cookie_header": "", "grid": "1", "phase": "server_load", "ts": "1788218791.559"}
+{"case": "2", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "loaded", "ts": "1788218791.567"}
+{"case": "2", "cookie_header": "", "grid": "2", "phase": "server_load", "ts": "1788218791.585"}
+{"case": "2", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "1", "phase": "loaded", "ts": "1788218791.760"}
+{"case": "2", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "3", "phase": "loaded", "ts": "1788218791.760"}
+{"case": "2", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "2", "phase": "loaded", "ts": "1788218791.767"}
+{"case": "2", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "stream_done", "text": "AI mock ready\nstream chunk 1\nstream chunk 2\nDONE", "ts": "1788218792.205"}
+{"case": "2", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "1", "phase": "stream_done", "text": "AI mock ready\nstream chunk 1\nstream chunk 2\nDONE", "ts": "1788218792.338"}
+{"case": "2", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "3", "phase": "stream_done", "text": "AI mock ready\nstream chunk 1\nstream chunk 2\nDONE", "ts": "1788218792.345"}
+{"case": "2", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "2", "phase": "stream_done", "text": "AI mock ready\nstream chunk 1\nstream chunk 2\nDONE", "ts": "1788218792.349"}
+{"bodyText": "M0 GUI Regression Mock\n\ncase=2 grid=0\n\nAI mock ready\nstream chunk 1\nstream chunk", "case": "2", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "concurrent_ai", "title": "M0 mock case 2 grid 0", "ts": "1788218793.271"}
+{"bodyText": "M0 GUI Regression Mock\n\ncase=2 grid=1\n\nAI mock ready\nstream chunk 1\nstream chunk", "case": "2", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "1", "phase": "concurrent_ai", "title": "M0 mock case 2 grid 1", "ts": "1788218793.272"}
+{"bodyText": "M0 GUI Regression Mock\n\ncase=2 grid=2\n\nAI mock ready\nstream chunk 1\nstream chunk", "case": "2", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "2", "phase": "concurrent_ai", "title": "M0 mock case 2 grid 2", "ts": "1788218793.273"}
+{"case": "3", "cookie_header": "m0_session=ok", "grid": "0", "phase": "server_load", "ts": "1788218793.273"}
+{"bodyText": "M0 GUI Regression Mock\n\ncase=2 grid=3\n\nAI mock ready\nstream chunk 1\nstream chunk", "case": "2", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "3", "phase": "concurrent_ai", "title": "M0 mock case 2 grid 3", "ts": "1788218793.274"}
+{"case": "3", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "loaded", "ts": "1788218793.363"}
+{"case": "3", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "stream_done", "text": "AI mock ready\nstream chunk 1\nstream chunk 2\nDONE", "ts": "1788218794.004"}
+{"bodyText": "M0 GUI Regression Mock\n\ncase=3 grid=0\n\nAI mock ready\nstream chunk 1\nstream chunk", "case": "3", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "after_move_resize", "title": "M0 mock case 3 grid 0", "ts": "1788218796.273"}
+{"case": "4", "cookie_header": "m0_session=ok", "grid": "0", "phase": "server_load", "ts": "1788218796.274"}
+{"case": "4", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "loaded", "ts": "1788218796.363"}
+{"case": "4", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "stream_done", "text": "AI mock ready\nstream chunk 1\nstream chunk 2\nDONE", "ts": "1788218797.003"}
+{"bodyText": "M0 GUI Regression Mock\n\ncase=4 grid=0\n\nAI mock ready\nstream chunk 1\nstream chunk", "case": "4", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "after_focus_restore", "title": "M0 mock case 4 grid 0", "ts": "1788218798.873"}
+{"case": "5", "cookie_header": "m0_session=ok", "grid": "0", "phase": "server_load", "ts": "1788218798.874"}
+{"case": "5", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "loaded", "ts": "1788218798.963"}
+{"case": "5", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "stream_done", "text": "AI mock ready\nstream chunk 1\nstream chunk 2\nDONE", "ts": "1788218799.604"}
+{"case": "5", "cookie_header": "", "grid": "0", "phase": "server_load", "ts": "1788218799.995"}
+{"case": "5", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "loaded", "ts": "1788218800.134"}
+{"case": "5", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "stream_done", "text": "AI mock ready\nstream chunk 1\nstream chunk 2\nDONE", "ts": "1788218800.730"}
+{"bodyText": "M0 GUI Regression Mock\n\ncase=5 grid=0\n\nAI mock ready\nstream chunk 1\nstream chunk", "case": "5", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "after_view_switch", "title": "M0 mock case 5 grid 0", "ts": "1788218801.480"}
+{"case": "6", "cookie_header": "m0_session=ok", "grid": "0", "phase": "server_load", "ts": "1788218801.481"}
+{"case": "6", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "loaded", "ts": "1788218801.570"}
+{"case": "6", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "stream_done", "text": "AI mock ready\nstream chunk 1\nstream chunk 2\nDONE", "ts": "1788218802.209"}
+{"bodyText": "M0 GUI Regression Mock\n\ncase=6 grid=0\n\nAI mock ready\nstream chunk 1\nstream chunk", "case": "6", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "tabs_closed_grid_survives", "title": "M0 mock case 6 grid 0", "ts": "1788218802.486"}
+{"case": "7", "cookie_header": "m0_session=ok", "grid": "0", "phase": "server_load", "ts": "1788218802.487"}
+{"case": "7", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "loaded", "ts": "1788218802.576"}
+{"case": "7", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "stream_done", "text": "AI mock ready\nstream chunk 1\nstream chunk 2\nDONE", "ts": "1788218803.216"}
+{"case": "7", "cookie_header": "m0_session=ok", "grid": "0", "phase": "server_load", "ts": "1788218804.122"}
+{"case": "7", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "loaded", "ts": "1788218804.269"}
+{"case": "7", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "stream_done", "text": "AI mock ready\nstream chunk 1\nstream chunk 2\nDONE", "ts": "1788218804.860"}
+{"bodyText": "M0 GUI Regression Mock\n\ncase=7 grid=0\n\nAI mock ready\nstream chunk 1\nstream chunk", "case": "7", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "after_crash_recovery", "title": "M0 mock case 7 grid 0", "ts": "1788218815.486"}
+{"case": "8", "cookie_header": "m0_session=ok", "grid": "0", "phase": "server_load", "ts": "1788218815.487"}
+{"case": "8", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "loaded", "ts": "1788218815.576"}
+{"case": "8", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "stream_done", "text": "AI mock ready\nstream chunk 1\nstream chunk 2\nDONE", "ts": "1788218816.216"}
+{"case": "8", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "menu": "true", "phase": "context_menu", "ts": "1788218817.691"}
+{"case": "9", "cookie_header": "m0_session=ok", "grid": "0", "phase": "server_load", "ts": "1788218818.165"}
+{"case": "9", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "loaded", "ts": "1788218818.254"}
+{"case": "9", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "stream_done", "text": "AI mock ready\nstream chunk 1\nstream chunk 2\nDONE", "ts": "1788218818.894"}
+{"bodyText": "M0 GUI Regression Mock\n\ncase=9 grid=0\n\nAI mock ready\nstream chunk 1\nstream chunk", "case": "9", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "before_restart", "title": "M0 mock case 9 grid 0", "ts": "1788218819.965"}
+{"case": "9", "cookie_header": "m0_session=ok", "grid": "0", "phase": "server_load", "ts": "1788218821.644"}
+{"case": "9", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "loaded", "ts": "1788218821.794"}
+{"case": "9", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "stream_done", "text": "AI mock ready\nstream chunk 1\nstream chunk 2\nDONE", "ts": "1788218822.385"}
+{"bodyText": "M0 GUI Regression Mock\n\ncase=9 grid=0\n\nAI mock ready\nstream chunk 1\nstream chunk", "case": "9", "cookie": "m0_session=ok", "cookie_header": "m0_session=ok", "grid": "0", "phase": "after_restart", "title": "M0 mock case 9 grid 0", "ts": "1788218832.767"}

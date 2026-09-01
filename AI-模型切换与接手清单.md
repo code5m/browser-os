@@ -1,9 +1,9 @@
 # AI 模型切换与接手清单
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
-> 文档版本：V2.7。
-> 更新时间：2026-09-01 00:45 CST。
-> 当前状态：`CODEX_BLOCKED`。
+> 文档版本：V2.8。
+> 更新时间：2026-09-01 07:27 CST。
+> 当前状态：`CODEX_READY`。
 > 当前分支：`feature-M0-baseline`。
 > 当前执行器：Codex gpt-5.5 high；机械文档审计与独立脚本任务已委派 `gpt-5.6-luna / low`，最终裁决仍由主任务负责。
 > 冲突裁决：WBS/验收以 `详细设计与实施计划.md` 为准，指标语义以冻结契约为准，本文只维护跨模型执行指针和交接证据。
@@ -14,20 +14,20 @@
 
 | 项目 | 当前值 |
 |------|--------|
-| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`、`M0-5 = PASS`、`M0-6.a/b = PASS`（未宣称 M0/M0-6 整体完成） |
+| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`、`M0-5 = PASS`、`M0-6 = PASS` |
 | 已拒证据 | `ac0ecac` 三批候选：场景错误 + aggregate `UNSTABLE`，结论 `REJECTED`，不得复用 |
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
-| 当前硬风险 | M0-6.c 9 项 GUI 回归仍缺 AI 站点登录态、普通模式持久宫格触发手段和可用截图/录屏证据；M0-7 最终放行未完成 |
-| 下一检查点 | `M0-6.c = BLOCKED/NEXT`（手工完成宫格专项 9 场景并逐项留证） |
-| 下一任务路由 | `AI:DEEP / R:high`（真实 GUI 场景、窗口焦点/跟随、登录态和跨模块回归） |
+| 当前硬风险 | M0-7 最终放行未完成；M0-6.c 的登录态证据来自本地 AI mock 持久 cookie，不代表第三方真实账号人工验收 |
+| 下一检查点 | `M0-7.a = NEXT`（汇总证据和未决项） |
+| 下一任务路由 | `AI:FAST / R:medium`（证据汇总；最终裁决升级 `AI:DEEP`） |
 | 自动执行范围 | 仅 M0；按唯一关键路径逐点推进，每点独立验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；`M0-7.c` 必须等项目负责人确认 |
 | 禁止启动 | M1~M5；当前检查点未提交前禁止夹带下一检查点 |
 | 最近实现提交 | `b3331a0 feat(M0-6.b): add bounded tab webview recovery` |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
-| 最新状态证据 | `logs/checkpoints/M0-6.c-20260901-0037.md`；证据目录 `logs/m0-6c-gui-evidence/20260901-0037/` |
+| 最新状态证据 | `logs/checkpoints/M0-6.c-20260901-0726.md`；证据目录 `logs/m0-6c-gui-evidence/20260901-0726/` |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
 
@@ -39,7 +39,7 @@
 - 冻结 `logs/m0-baseline-contract-v1.md`：21 个 `REQUIRED_NOW` 指标、2 个延迟指标、环境指纹、固定场景、统计公式和证据目录。
 - 将旧 `logs/baseline-2026-08-27.md` 降级为 `EXPLORATORY`，禁止当作正式性能基线。
 - 修复原计划中的循环依赖，关键路径现为：
-  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6.a(PASS) -> M0-6.b(PASS) -> M0-6.c(BLOCKED/NEXT) -> ...`。
+  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(NEXT) -> ...`。
 - 完成 M0-1.a（commit `1bd56b1`）：新增 `scripts/baseline-check.sh` 与 `scripts/fixtures/clippy-sample.json`；
   验收命令全过、`--self-test` 输出 `SELF_TEST_RESULT=ALL_PASS`；`.gitignore` 对 `logs/m0-baseline/` 开例外，
   原始 `.log` 证据随 run 目录入库可追溯（见 §5 证据保留说明）。
@@ -64,6 +64,7 @@
 - `b3331a0` 已完成 M0-6.b：主进程 `tab-*` WebView 新增 60 秒内最多 2 次的有限恢复预算；`tab_open` 收口到插件 `navigate`；`eval/navigate/position` 失败触发重建并重试；`loadFailed` 只观测不自动重建；`tab-recovery` 事件可见。`cargo test` 47 passed，`npm run build` 通过，`GRID_SELFTEST=1 ./run-gui.sh` 输出 `SELFTEST_RESULT=ALL_PASS`。下一步转 M0-6.c。
 - `e7ad997` 已首次尝试 M0-6.c：当前会话可运行 `GRID_SELFTEST`，但缺少 `xdotool`/`wmctrl`/截图工具/人工输入能力和 AI 站点登录态，无法真实签署 9 项 GUI 手工回归；`STATUS=BLOCKED`，NEXT 保持 M0-6.c，不得移动到 M0-7.a。
 - `65ba0ec` 已按正式 `M0-6.c` 任务卡再次尝试：`xdotool/wmctrl/scrot` 后续已可用，release GUI 可启动，`GRID_SELFTEST` 再次 `ALL_PASS`，并归档 `windows_probe.txt` / `grid-selftest-result.txt` / `last_app.log`；但仍缺 AI 站点登录态，普通模式无法触发持久宫格会话，且 Wayland/Xwayland 下 `scrot` 全黑、`xwd` BadMatch，无法生成截图/录屏证据。`STATUS=BLOCKED`，NEXT 继续保持 M0-6.c。
+- `5056fbc` 已新增 `GRID_GUI_REGRESSION=1` 应用内驱动和 `scripts/m0-6c-gui-regression.py` 本地 AI mock；release GUI 9 项自动化回归 `M0_6C_GUI_REGRESSION_RESULT=PASS`，证据目录 `logs/m0-6c-gui-evidence/20260901-0726/`。M0-6 整项关闭，NEXT 移至 M0-7.a。
 
 ## 2. 模型映射
 
@@ -117,26 +118,26 @@ NEXT=<PASS 后唯一下一检查点；FAIL 时保持原 NEXT>
 - 同一失败最多让低模型修两轮；第二次仍失败即停止，回写 `BLOCKED`，交给更强模型。
 - 文档回写只更新顶部状态、当前 WBS、最近 checkpoint 和 NEXT；不重排无关章节，避免无意义 diff。
 
-### 当前可复制任务卡：M0-6.c
+### 当前可复制任务卡：M0-7.a
 
 ```text
-TASK_ID=M0-6.c
-ROUTE=AI:DEEP
-MODEL=需要强模型；低模型只允许整理 9 场景记录模板和日志摘要
-REASONING=high 或 xhigh
-GOAL=真实运行 GUI，按宫格专项 9 场景逐项手工回归并留证，确认 M0-6 整项是否可关闭。
-READ=AI-模型切换与接手清单.md, 详细设计与实施计划.md §2.2 的 M0-6, 宫格崩溃多进程改造-超详细设计与实施计划.md 第 6 章, logs/checkpoints/M0-6.b-20260831-2155.md, logs/m0-grid-selftest/M0-6.b-20260831-selftest.log, src-tauri/src/bridge.rs, src-tauri/src/grid_process.rs, src/stores/useBrowserStore.ts, src/components/browser/BrowserHost.vue
-WRITE=仅当前检查点必要文件：logs/checkpoints/M0-6.c-<YYYYMMDD-HHMM>.md、必要截图或 GUI 回归证据目录、三份主文档；若只整理证据模板，不改产品代码
-FORBID=不启动 M1/M2；不改 M0-0/M0-5 冻结证据；不把 GRID_SELFTEST 等同 9 项手工回归；不伪造登录态/焦点/拖拽/右键菜单结果；不扩大远程 webview 权限；不删除用户数据
-COMMANDS=git status --short --branch; GRID_SELFTEST=1 ./run-gui.sh; 手工执行 9 场景并在 checkpoint 写 PASS/FAIL/证据; cargo test --manifest-path src-tauri/Cargo.toml; npm run build; bash scripts/pre-merge.sh; git diff --check
-PASS_CRITERIA=9 个 GUI 场景全部有真实观察证据且 PASS；GRID_SELFTEST 为 ALL_PASS；cargo/npm/pre-merge 通过；文档/checkpoint 已提交且工作树干净
-FAIL_ACTION=若无法运行 GUI、无法人工确认 9 场景、缺少登录态或任一场景失败且本轮无法修复，必须 STATUS=BLOCKED，NEXT 保持 M0-6.c，并写清需人工/环境补齐项
-DOC_BACKWRITE=三份主文档顶部状态、M0-6.c 勾选或 BLOCKED、最近 checkpoint、实际模型、VERIFY、COMMIT
-COMMIT=test(M0-6.c): record grid gui regression
-NEXT=M0-6.c（当前 BLOCKED；解除阻塞且 9 项全部 PASS 后，回写为 M0-7.a）
+TASK_ID=M0-7.a
+ROUTE=AI:FAST
+MODEL=低模型可做证据汇总；强模型在 M0-7.b 复核
+REASONING=medium
+GOAL=汇总 M0-0~M0-6 的提交、证据目录、剩余风险和放行前未决项，不签 M0 总 PASS。
+READ=AI-模型切换与接手清单.md, 详细设计与实施计划.md §2.2 的 M0-0~M0-7, logs/checkpoints/, logs/m0-baseline/, logs/m0-grid-selftest/, logs/m0-6c-gui-evidence/20260901-0726/
+WRITE=logs/m0-acceptance-<YYYYMMDD>.md, logs/checkpoints/M0-7.a-<YYYYMMDD-HHMM>.md, 三份主文档顶部状态
+FORBID=不启动 M1/M2；不宣称 M0 PASS；不删除/改写冻结证据；不把本地 AI mock 说成第三方真实账号验收；不跳过 M0-7.b/c
+COMMANDS=git status --short --branch; python3 scripts/m0-6c-gui-regression.py --self-test; cargo test --manifest-path src-tauri/Cargo.toml; npm run build; bash scripts/pre-merge.sh; git diff --check
+PASS_CRITERIA=验收报告完整链接 M0-0~M0-6 证据；列清豁免/残余风险/负责人确认项；命令通过；NEXT=M0-7.b；工作树干净
+FAIL_ACTION=若证据缺失或命令失败，STATUS=BLOCKED，NEXT 保持 M0-7.a，并列缺口
+DOC_BACKWRITE=三份主文档顶部状态、M0-7.a checkpoint、VERIFY、COMMIT
+COMMIT=docs(M0-7.a): draft M0 acceptance evidence
+NEXT=M0-7.b
 ```
 
-强模型复核 M0-6.c 时只需读取本任务卡、9 场景回归证据、M0-6.b checkpoint/selftest 日志、测试输出和最新 checkpoint；不要重复读取全部历史长文档。
+M0-7.a 只做证据汇总，不做最终放行；M0-7.b 必须由强模型独立复核安全、生命周期、性能和 GUI 结论。
 
 用户提供的微信临时图片在读取时已不存在，因此本文件不猜测 Trae 模型名称。重新附图或直接写出模型列表后，只填写上表三个 Trae 单元格并升级本文版本；任务上的 `AI:*` 标签不变。
 
@@ -798,7 +799,7 @@ git log --reverse --oneline --decorate 504fcd7..HEAD
 
 先阅读 AI-模型切换与接手清单.md、详细设计与实施计划.md §2.2、logs/m0-baseline-contract-v1.md。每轮只从文档领取唯一 NEXT，按 AI:* 路由选择 Trae 模型，完成实现、全部验收、四处回写和独立提交。提交后确认工作树干净；未命中硬停止条件时，不用等待用户回复，立即领取下一个 NEXT。
 
-第一轮是 M0-6.c，必须使用 TRAE_DEEP 等效强模型：先确认 M0-6.b 的 checkpoint、selftest 日志和文档指针均已提交且工作树干净；然后真实运行 GUI，按宫格专项 9 场景逐项手工回归并留证。低模型只允许整理记录模板和日志摘要，PASS 裁决必须由强模型复核真实观察证据。不得启动 M1/M2，不得把 `GRID_SELFTEST=1` 等同于 9 项手工回归，不得伪造登录态/焦点/拖拽/右键菜单结果。若 GUI/应用无法运行、缺登录态或任一场景无法确认，必须 STATUS=BLOCKED，NEXT 保持 M0-6.c。通过后需跑 cargo/npm、`GRID_SELFTEST=1 ./run-gui.sh` 和 pre-merge，新增 checkpoint、回写三份主文档，独立提交 test(M0-6.c)。
+第一轮是 M0-7.a，可使用 TRAE_FAST/低模型：先确认 M0-6.c checkpoint `logs/checkpoints/M0-6.c-20260901-0726.md`、证据目录 `logs/m0-6c-gui-evidence/20260901-0726/` 和三份主文档指针均已提交且工作树干净；然后汇总 M0-0~M0-6 的提交、证据目录、验收命令和未决风险，生成 `logs/m0-acceptance-<YYYYMMDD>.md` 与 `logs/checkpoints/M0-7.a-<YYYYMMDD-HHMM>.md`。不得启动 M1/M2，不得宣称 M0 总 PASS，不得把本地 AI mock 说成第三方真实账号人工验收。通过后需跑 cargo/npm、`scripts/m0-6c-gui-regression.py --self-test` 和 pre-merge，回写三份主文档，独立提交 docs(M0-7.a)，NEXT 移至 M0-7.b。
 
 同一检查点连续两次失败、缺少 DEEP 等效模型、缺少 GUI/权限/环境、需要改冻结契约或人工裁决、发现不明改动、额度耗尽或到达 M0-7.c 时必须停止，回写 BLOCKED 和证据；不得伪造 PASS。若 GUI/应用无法运行，必须 STATUS=BLOCKED，NEXT 保持当前检查点。
 ```

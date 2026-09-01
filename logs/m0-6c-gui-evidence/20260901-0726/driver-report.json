@@ -1,0 +1,60 @@
+{
+  "status": "PASS",
+  "steps": [
+    {
+      "id": "preflight",
+      "status": "PASS",
+      "detail": "mock_base=http://127.0.0.1:44825"
+    },
+    {
+      "id": "scenario-1-single-ai-broadcast",
+      "status": "PASS",
+      "detail": "single grid command path exercised with local AI mock"
+    },
+    {
+      "id": "scenario-2-four-grid-concurrent-ai",
+      "status": "PASS",
+      "detail": "four grid children opened, positioned, and evaluated"
+    },
+    {
+      "id": "scenario-3-main-window-move-resize",
+      "status": "PASS",
+      "detail": "main window moved/resized and grid layout replayed"
+    },
+    {
+      "id": "scenario-4-blur-focus-grid-visibility",
+      "status": "PASS",
+      "detail": "grid windows hidden for blur and restored for focus"
+    },
+    {
+      "id": "scenario-5-switch-views",
+      "status": "PASS",
+      "detail": "tab view and grid view switched without orphaned child windows"
+    },
+    {
+      "id": "scenario-6-normal-tabs-multi-open",
+      "status": "PASS",
+      "detail": "normal tabs opened, switched, closed, and grid survived"
+    },
+    {
+      "id": "scenario-7-grid-child-crash-recovery",
+      "status": "PASS",
+      "detail": "grid-0 recovered pid 53702->54391; grid-1 survived"
+    },
+    {
+      "id": "scenario-8-terminal-resource-context-menu",
+      "status": "PASS",
+      "detail": "terminal spawn/write/kill ok; resource app_total=2311.6MB"
+    },
+    {
+      "id": "scenario-9-login-state-after-restart",
+      "status": "PASS",
+      "detail": "login mock replayed across grid restart pid 54391->54565"
+    },
+    {
+      "id": "cleanup-close-grid",
+      "status": "PASS",
+      "detail": "close_grid completed count=0"
+    }
+  ]
+}
