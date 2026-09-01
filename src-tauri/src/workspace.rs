@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use chrono::Utc;
 use tauri::{AppHandle, Manager};
 
-use crate::domain::{Artifact, AuditEntry, RepoConfig};
+use crate::domain::{Artifact, AuditEntry, Bookmark, RepoConfig};
 
 fn data_dir(app: &AppHandle) -> PathBuf {
     app.path()
@@ -113,4 +113,55 @@ pub fn load_audit(app: &AppHandle) -> Vec<AuditEntry> {
         .ok()
         .and_then(|c| serde_json::from_str(&c).ok())
         .unwrap_or_default()
+}
+
+/// 收藏持久化文件
+pub fn bookmarks_file(app: &AppHandle) -> PathBuf {
+    data_dir(app).join("bookmarks.json")
+}
+pub fn load_bookmarks(app: &AppHandle) -> Vec<Bookmark> {
+    fs::read_to_string(bookmarks_file(app))
+        .ok()
+        .and_then(|c| serde_json::from_str(&c).ok())
+        .unwrap_or_default()
+}
+pub fn save_bookmarks(app: &AppHandle, list: &[Bookmark]) -> Result<(), String> {
+    fs::write(
+        bookmarks_file(app),
+        serde_json::to_string_pretty(list).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// 新增收藏：若 url 已存在则视为更新（保留原 id/created_at，仅覆盖 title/category）。
+pub fn add_bookmark(
+    app: &AppHandle,
+    url: String,
+    title: String,
+    category: String,
+) -> Result<Bookmark, String> {
+    let mut list = load_bookmarks(app);
+    if let Some(existing) = list.iter_mut().find(|b| b.url == url) {
+        existing.title = title;
+        existing.category = category;
+        let bm = existing.clone();
+        save_bookmarks(app, &list)?;
+        Ok(bm)
+    } else {
+        let bm = Bookmark::new(url, title, category);
+        list.push(bm.clone());
+        save_bookmarks(app, &list)?;
+        Ok(bm)
+    }
+}
+
+/// 按 id 删除收藏；不存在不报错（幂等）。
+pub fn remove_bookmark(app: &AppHandle, id: &str) -> Result<(), String> {
+    let mut list = load_bookmarks(app);
+    let before = list.len();
+    list.retain(|b| b.id != id);
+    if list.len() != before {
+        save_bookmarks(app, &list)?;
+    }
+    Ok(())
 }

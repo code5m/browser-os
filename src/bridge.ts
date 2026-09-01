@@ -7,6 +7,7 @@ import type {
   SyncJob,
   AuditEntry,
   WorkspaceTree,
+  Bookmark,
   DirEntry,
   BrowserResources,
   TabInfo,
@@ -91,6 +92,12 @@ export const bridge = {
   deleteArtifact: (id: string) => invoke("delete_artifact", { id }),
 
   browseWorkspace: () => invoke<WorkspaceTree>("browse_workspace"),
+
+  // M1-2 收藏领域
+  bookmarkAdd: (p: { url: string; title: string; category: string }) =>
+    invoke<Bookmark>("add_bookmark", p),
+  bookmarkList: () => invoke<Bookmark[]>("list_bookmarks"),
+  bookmarkRemove: (id: string) => invoke("remove_bookmark", { id }),
 
   // 本地文件浏览器
   listDir: (path: string) => invoke<DirEntry[]>("list_dir", { path }),

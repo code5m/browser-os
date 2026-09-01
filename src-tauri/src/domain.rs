@@ -90,3 +90,55 @@ pub struct AuditEntry {
     pub action: String,
     pub detail: String,
 }
+
+/// 收藏项（M1-2）。一条记录 = 一个 URL + 标题 + 分类。
+/// 持久化为 data_dir/bookmarks.json，重启不丢。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Bookmark {
+    pub id: String,
+    pub url: String,
+    pub title: String,
+    pub category: String,
+    pub created_at: DateTime<Utc>,
+}
+
+impl Bookmark {
+    pub fn new(url: String, title: String, category: String) -> Self {
+        Bookmark {
+            id: uuid::Uuid::new_v4().to_string(),
+            url,
+            title,
+            category,
+            created_at: Utc::now(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bookmark_roundtrip_serde() {
+        let bm = Bookmark::new(
+            "https://example.com/a".into(),
+            "Example".into(),
+            "tech".into(),
+        );
+        let json = serde_json::to_string(&bm).expect("serialize");
+        let back: Bookmark = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.id, bm.id);
+        assert_eq!(back.url, "https://example.com/a");
+        assert_eq!(back.title, "Example");
+        assert_eq!(back.category, "tech");
+        // created_at 应可被 serde 反序列化
+        assert!(back.created_at.timestamp() > 0);
+    }
+
+    #[test]
+    fn bookmark_id_is_uuid_v4() {
+        let bm = Bookmark::new("u".into(), "t".into(), "c".into());
+        let parsed = uuid::Uuid::parse_str(&bm.id).expect("uuid parse");
+        assert_eq!(parsed.get_version_num(), 4);
+    }
+}

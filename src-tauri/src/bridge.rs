@@ -1284,6 +1284,39 @@ pub fn delete_artifact(app: AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// M1-2: 新增或更新一条收藏。同 URL 视为更新。
+#[tauri::command]
+pub fn add_bookmark(
+    app: AppHandle,
+    url: String,
+    title: String,
+    category: String,
+) -> Result<Bookmark, String> {
+    let bm = workspace::add_bookmark(&app, url.clone(), title.clone(), category.clone())?;
+    workspace::log_audit(
+        &app,
+        "bookmark.add",
+        format!("{} -> {}", url, bm.title),
+    );
+    Ok(bm)
+}
+
+/// M1-2: 列出全部收藏，按 created_at 倒序。
+#[tauri::command]
+pub fn list_bookmarks(app: AppHandle) -> Vec<Bookmark> {
+    let mut list = workspace::load_bookmarks(&app);
+    list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    list
+}
+
+/// M1-2: 按 id 删除收藏（幂等）。
+#[tauri::command]
+pub fn remove_bookmark(app: AppHandle, id: String) -> Result<(), String> {
+    workspace::remove_bookmark(&app, &id)?;
+    workspace::log_audit(&app, "bookmark.remove", format!("id={}", id));
+    Ok(())
+}
+
 /// 工作区目录树：按来源域名聚合成果，便于在本地成果浏览器里浏览
 #[tauri::command]
 pub fn browse_workspace(app: AppHandle) -> WorkspaceTree {

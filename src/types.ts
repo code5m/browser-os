@@ -53,6 +53,15 @@ export interface AuditEntry {
   detail: string;
 }
 
+// 收藏项（M1-2：与 Rust domain.rs::Bookmark 对齐）
+export interface Bookmark {
+  id: string;
+  url: string;
+  title: string;
+  category: string;
+  created_at: string;
+}
+
 // 工作区目录树
 export interface WorkspaceTree {
   nodes: DomainNode[];
