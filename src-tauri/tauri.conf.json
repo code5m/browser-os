@@ -27,8 +27,17 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "Utility",
+    "shortDescription": "极智简单 · 浏览器OS融合 MVP",
+    "longDescription": "极智简单出品的浏览器与本地工作台融合客户端：多页签浏览、宫格同屏对比、终端、成果库与本地工具箱。",
     "icon": [
-      "icons/icon.png"
+      "icons/32x32.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
     ]
   }
 }
