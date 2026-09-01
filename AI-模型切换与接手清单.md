@@ -27,7 +27,7 @@
 | 最近实现提交 | `a06f23c feat(M1-3): addressbar star + bookmark sidebar`（收藏 UI；前一个是 `bb13617 fix(M1-2-fix1)`） |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
-| 最新状态证据 | `logs/assist/M1-4-assist-20260901-1145.md`；`logs/checkpoints/M1-3-20260901-1123.md`；`logs/checkpoints/M1-2-fix1-20260901-1050.md`；`logs/checkpoints/M1-2-20260901-1037.md`；`logs/checkpoints/M1-1-20260901-1011.md`；`logs/checkpoints/M1-0-20260901-0915.md` |
+| 最新状态证据 | `logs/assist/low-model-batch-tasks-20260901-1614.md`；`logs/assist/M1-4-assist-20260901-1145.md`；`logs/checkpoints/M1-3-20260901-1123.md`；`logs/checkpoints/M1-2-fix1-20260901-1050.md`；`logs/checkpoints/M1-2-20260901-1037.md`；`logs/checkpoints/M1-1-20260901-1011.md`；`logs/checkpoints/M1-0-20260901-0915.md` |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
 
@@ -91,6 +91,10 @@ NEXT 保持 `M1-3`。
 - `05666ce` 已完成 `M1-4-assist` 低风险前置盘点：只新增 `logs/assist/M1-4-assist-20260901-1145.md`，
 记录 `RunEvent::Opened`/deep-link/xdg/MIME 现状、冷启动 URL 缓存契约、6 项风险与 M1-4-a..d 建议拆点。
 该提交未改实现代码、未移动 NEXT、未宣称 M1-4 PASS，可作为强模型实现 M1-4 的输入材料。
+- `logs/assist/low-model-batch-tasks-20260901-1614.md` 已整理低模型批量任务卡：`M1-3-gui-check`、
+`M1-5.a-assist`、`M1-7.a-assist`、`M2-1-assist`、`M2-2.a-assist`、`M2-3-assist`、
+`M2-5.a-assist`、`M2-7-assist`、`M2-9-assist`、`M3-4.a-assist` 和最终汇总。低模型按该文件执行时
+不得移动主线 NEXT，仍保持 `M1-4`。
 - `M1-2` 已完成收藏领域与命令（commit `2cd9d60`）：新增 `Bookmark` 结构体 + 2 个 `#[cfg(test)]` 单测；`workspace.rs` 加 `bookmarks_file/load/save/add/remove` 5 个函数；`bridge.rs` 加 `add/list/remove_bookmark` 3 个 `#[tauri::command]`，全部 `log_audit`；`main.rs` `invoke_handler!` 注册；`src/types.ts` `Bookmark` 接口；`src/bridge.ts` 暴露 `bookmarkAdd/List/Remove` 包装；ACL `default-commands` 3 条 allow。设计要点：同 URL 视为更新（保留 id/created_at），按 id 删除幂等，落盘 `data_dir/bookmarks.json`（与 audit/repos 同模式）。验证：`cargo test bookmark` 2/2 PASS，`cargo build --release` 0，`npm run build` 0，`git diff --check` 0。**未做端到端 IPC e2e**（依赖 M1-3 UI 启动后实测），UI 触发（地址栏⭐ / `tab-navigated` 自动收藏）属 M1-3。NEXT 移至 `M1-3`。
 
 ## 2. 模型映射
