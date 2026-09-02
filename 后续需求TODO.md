@@ -2,21 +2,21 @@
 
 > 文档角色：#1~#15 需求池、优先级与里程碑映射；不作为“已经做到哪里”的单独证明。
 > 进度与验收 SSOT：`详细设计与实施计划.md`。
-> 文档版本：V4.8。
-> 更新时间：2026-09-01 15:42 CST。
+> 文档版本：V4.9。
+> 更新时间：2026-09-02 09:55 CST。
 > 编写/裁决模型：Codex gpt-5.5 high；机械文档审计：`gpt-5.6-luna / low`。
-> 本版变更：同步 M1 当前状态：M1-0/M1-1/M1-2/M1-2-fix1/M1-3/M1-4/M1-5 已 PASS，NEXT=`M1-6`。
+> 本版变更：同步 M1 当前状态：M1-0/M1-1/M1-2/M1-2-fix1/M1-3/M1-4/M1-5 已 PASS，M1-6.a（Git 写能力契约冻结+任务卡展开）已 PASS，NEXT=`M1-6.b`。
 
 ---
 
 ## 当前执行结论（截至 2026-09-01）
 
-**M0 已通过负责人验收；M1 进行中，当前 NEXT=`M1-6`。**
+**M0 已通过负责人验收；M1 进行中，当前 NEXT=`M1-6.b`。**
 
 | 里程碑 | 状态 | 当前口径 |
 |--------|------|----------|
 | **M0 安全与稳定性基线** | **PASS，已验收** | M0-0~M0-7 全部关闭；验收报告 `OWNER_APPROVED` |
-| M1 浏览器与版本控制 | 进行中 | `M1-0` 首页快捷入口、`M1-1` 图标、`M1-2` 收藏领域、`M1-3` 收藏 UI、`M1-4` 默认浏览器接入、`M1-5` Git 只读能力已完成；NEXT=`M1-6` |
+| M1 浏览器与版本控制 | 进行中 | `M1-0` 首页快捷入口、`M1-1` 图标、`M1-2` 收藏领域、`M1-3` 收藏 UI、`M1-4` 默认浏览器接入、`M1-5` Git 只读能力已完成；`M1-6.a`（Git 写能力契约冻结+任务卡展开）已 PASS，NEXT=`M1-6.b` |
 | M2 本地资产与执行 | 未开始、可启动但默认排在 M1 后 | 5 个 HTML 工具只代表素材落盘，不代表工具框架已实现 |
 | M3 | 未开始、可并行评估 | 至少 M0 前置已满足，是否并行需看资源安排 |
 | M4~M5 | 未开始、仍锁定 | M4 等 M2 前置；M5 等 M1~M4 稳定 |
@@ -29,7 +29,7 @@ M0 当前收口面共 8 项：完整基线、自动门禁、统一生命周期�
 
 AI 必须按 `详细设计与实施计划.md` §2.2 的**检查点关键路径**领取任务，不能只扫描最靠上的未完成 WBS。排序先看阻塞性和降低后续复杂度的收益，再看依赖，最后才在同级里把简单任务排前；模型标签及自动升级规则见详细计划的“AI 执行排序、模型路由与提交协议”。
 
-当前关键路径：`M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-2-fix1(PASS) -> M1-3(PASS) -> M1-4(PASS) -> M1-5(PASS) -> M1-6(NEXT)`。正式三批 manifest 是 `20260830T153538+0800_93a1ba6_M0-0.c`；M0-7.a/b/c 验收草案、复核与负责人确认为 `logs/m0-acceptance-20260901.md`、`logs/checkpoints/M0-7.a-20260901-0841.md`、`logs/checkpoints/M0-7.b-20260901-0847.md`、`logs/checkpoints/M0-7.c-20260901-0905.md`；M1-0 见 `logs/checkpoints/M1-0-20260901-0915.md`。M1-2-fix1（修复 M1-2 遗留的 `cargo fmt` 门禁回归）见 `logs/checkpoints/M1-2-fix1-20260901-1050.md`；M1-3 收藏 UI 见 `logs/checkpoints/M1-3-20260901-1123.md`；M1-4 默认浏览器接入见 `logs/checkpoints/M1-4-20260901-1805.md`；M1-5 Git 只读能力见 `logs/checkpoints/M1-5-20260902-1130.md`。NEXT=`M1-6`（Git 写能力，`AI:DEEP / R:xhigh`，任务卡未展开）。**遗留观察项**：M1-3 的 ⭐ 收藏/侧栏跳转删除/重启不丢三项仅通过静态审查，尚未做 GUI 目视验收。
+当前关键路径：`M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-2-fix1(PASS) -> M1-3(PASS) -> M1-4(PASS) -> M1-5(PASS) -> M1-6.a(PASS, 契约冻结) -> M1-6.b(NEXT)`。正式三批 manifest 是 `20260830T153538+0800_93a1ba6_M0-0.c`；M0-7.a/b/c 验收草案、复核与负责人确认为 `logs/m0-acceptance-20260901.md`、`logs/checkpoints/M0-7.a-20260901-0841.md`、`logs/checkpoints/M0-7.b-20260901-0847.md`、`logs/checkpoints/M0-7.c-20260901-0905.md`；M1-0 见 `logs/checkpoints/M1-0-20260901-0915.md`。M1-2-fix1（修复 M1-2 遗留的 `cargo fmt` 门禁回归）见 `logs/checkpoints/M1-2-fix1-20260901-1050.md`；M1-3 收藏 UI 见 `logs/checkpoints/M1-3-20260901-1123.md`；M1-4 默认浏览器接入见 `logs/checkpoints/M1-4-20260901-1805.md`；M1-5 Git 只读能力见 `logs/checkpoints/M1-5-20260902-1130.md`；M1-6.a（Git 写能力契约冻结+任务卡展开）见 `logs/checkpoints/M1-6.a-20260902-0955.md`。NEXT=`M1-6.b`（Git 写闸门内核 + `git_commit`，`AI:DEEP / R:high`；M1-6 整体 PASS 须待 b/c/d 三卡全绿）。**遗留观察项**：M1-3 的 ⭐ 收藏/侧栏跳转删除/重启不丢三项仅通过静态审查，尚未做 GUI 目视验收。
 
 当前执行器：Codex 主任务（`CODEX_READY`）；机械审计与独立脚本任务优先委派 `gpt-5.6-luna / low`。M0 已关闭，M1 起继续按关键路径逐点推进；每个检查点必须先验收、回写证据、独立提交并确认工作树干净，再领取下一点。硬停止条件和跨模型回归步骤统一见 `AI-模型切换与接手清单.md`。
 
