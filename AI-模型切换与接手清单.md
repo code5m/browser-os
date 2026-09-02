@@ -1,8 +1,8 @@
 # AI 模型切换与接手清单
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
-> 文档版本：V3.8。
-> 更新时间：2026-09-02 15:25 CST。
+> 文档版本：V3.9。
+> 更新时间：2026-09-02 18:30 CST。
 > 当前状态：`CODEX_READY`。
 > 当前分支：`feature-M0-baseline`。
 > 当前执行器：Codex gpt-5.5 high；机械文档审计与独立脚本任务已委派 `gpt-5.6-luna / low`，最终裁决仍由主任务负责。
@@ -14,20 +14,20 @@
 
 | 项目 | 当前值 |
 |------|--------|
-| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`、`M0-5 = PASS`、`M0-6 = PASS`、`M0-7.a/b/c = PASS`；M0 总体验收 `OWNER_APPROVED`；`M1-0 = PASS`、`M1-1 = PASS`、`M1-2 = PASS`、`M1-2-fix1 = PASS`、`M1-3 = PASS`（执行器：CodeBuddy 会话，非登记的 Codex）、`M1-4 = PASS`、`M1-5 = PASS`、`M1-6 = PASS`（a/b/c/d 全绿，整体裁定 PASS） |
+| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`、`M0-5 = PASS`、`M0-6 = PASS`、`M0-7.a/b/c = PASS`；M0 总体验收 `OWNER_APPROVED`；`M1-0 = PASS`、`M1-1 = PASS`、`M1-2 = PASS`、`M1-2-fix1 = PASS`、`M1-3 = PASS`（执行器：CodeBuddy 会话，非登记的 Codex）、`M1-4 = PASS`、`M1-5 = PASS`、`M1-6 = PASS`（a/b/c/d 全绿，整体裁定 PASS）、`M1-7 = PASS`（Git UI；**GUI 目视验收未完成**，见 checkpoint §6） |
 | 已拒证据 | `ac0ecac` 三批候选：场景错误 + aggregate `UNSTABLE`，结论 `REJECTED`，不得复用 |
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
-| 当前硬风险 | M0-6.c 的登录态证据来自本地 AI mock 持久 cookie，不代表第三方真实账号人工验收；**M1-3 收藏 UI 的功能目视验收未完成**（环境可用但本会话无法读图，无法做 GUI 点击验收），见 `logs/checkpoints/M1-3-20260901-1123.md` |
-| 下一检查点 | `M1-7 = NEXT`（Git UI：diff 预览、多仓库切换、写操作确认流程）。**M1-6 Git 写能力整体 PASS**（b/c/d 三卡全绿，证据链 `logs/checkpoints/M1-6.b-20260902-1327.md` / `M1-6.c-20260902-1430.md` / `M1-6.d-20260902-1525.md`） |
-| 下一任务路由 | `AI:BALANCED / R:medium`（M1-7 Git UI，按 `详细设计与实施计划.md` WBS 标签 `[S2|LEVERAGE:1|MEDIUM|AI:BALANCED|R:medium]`；消费 `request_git_write`/`confirm_git_write`/`git-write-completed` 与 M1-5 只读能力，写操作确认弹窗必须带 dangerous 二次确认勾选项） |
+| 当前硬风险 | M0-6.c 的登录态证据来自本地 AI mock 持久 cookie，不代表第三方真实账号人工验收；**M1-3 收藏 UI 与 M1-7 Git UI 的 GUI 目视验收均未完成**（环境可用但本会话无法读图、`scrot` 截屏不可信，无法做 GUI 点击验收），见 `logs/checkpoints/M1-3-20260901-1123.md`、`logs/checkpoints/M1-7-20260902-1830.md` §6；M1-7 已改为「UI 逻辑层真实自动化测试（53 断言）+ 静态安全夹具（19 自检）」取证，**未伪造 GUI 证据** |
+| 下一检查点 | `M1-8 = NEXT`（请求拦截与瀑布）。**M1-7 Git UI 已 PASS**（消费 M1-5 只读 + M1-6 双阶段闸门；七类写操作全部走 request→confirm，dangerous 前端二次确认；证据链 `logs/checkpoints/M1-7-20260902-1830.md`） |
+| 下一任务路由 | `AI:DEEP / R:high`（M1-8 请求拦截与瀑布，按 `详细设计与实施计划.md` WBS 标签 `[S2|LEVERAGE:3|COMPLEX|AI:DEEP|R:high]`：`on_web_resource_response_received`、`ResourceReceived` 事件、筛选与容量上限） |
 | 自动执行范围 | M0 已结束；M1 起必须先展开检查点，再逐点验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；进入 M1/M2/M3 后仍不得跨检查点合并 |
 | 禁止启动 | M4~M5；M1~M3 可评估启动但不得未展开检查点就写功能代码 |
-| 最近实现提交 | `7849dd5 feat(M1-6.d): add guarded git push operation`（Git push 接入双阶段闸门 + bare remote 端到端；前一个是 `243d4ae fix(M1-6.c)`） |
+| 最近实现提交 | `feat(M1-7): add git workspace UI`（Git UI：仓库切换 / 状态列表 / diff 预览 / 分支信息 / 七个写操作入口 + 双阶段确认闸门弹窗；配套 `scripts/check-git-ui-policy.py` 与 `scripts/check-git-ui-logic.mjs`；前一个是 `7849dd5 feat(M1-6.d)`） |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
-| 最新状态证据 | `logs/checkpoints/M1-6.d-20260902-1525.md`；`logs/checkpoints/M1-6.c-20260902-1430.md`；`logs/checkpoints/M1-6.b-20260902-1327.md`；`logs/checkpoints/M1-6.a-20260902-0955.md`；`logs/checkpoints/M1-5-20260902-1130.md`；`logs/checkpoints/M1-4-20260901-1805.md`；`logs/checkpoints/M1-3-20260901-1123.md`；`logs/checkpoints/M1-2-fix1-20260901-1050.md`；`logs/checkpoints/M1-2-20260901-1037.md`；`logs/checkpoints/M1-1-20260901-1011.md`；`logs/checkpoints/M1-0-20260901-0915.md` |
+| 最新状态证据 | `logs/checkpoints/M1-7-20260902-1830.md`；`logs/checkpoints/M1-6.d-20260902-1525.md`；`logs/checkpoints/M1-6.c-20260902-1430.md`；`logs/checkpoints/M1-6.b-20260902-1327.md`；`logs/checkpoints/M1-6.a-20260902-0955.md`；`logs/checkpoints/M1-5-20260902-1130.md`；`logs/checkpoints/M1-4-20260901-1805.md`；`logs/checkpoints/M1-3-20260901-1123.md`；`logs/checkpoints/M1-2-fix1-20260901-1050.md`；`logs/checkpoints/M1-2-20260901-1037.md`；`logs/checkpoints/M1-1-20260901-1011.md`；`logs/checkpoints/M1-0-20260901-0915.md` |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
 
@@ -39,7 +39,7 @@
 - 冻结 `logs/m0-baseline-contract-v1.md`：21 个 `REQUIRED_NOW` 指标、2 个延迟指标、环境指纹、固定场景、统计公式和证据目录。
 - 将旧 `logs/baseline-2026-08-27.md` 降级为 `EXPLORATORY`，禁止当作正式性能基线。
 - 修复原计划中的循环依赖，关键路径现为：
-  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-2-fix1(PASS) -> M1-3(PASS) -> M1-4(PASS) -> M1-5(PASS) -> M1-6.a(PASS, 契约冻结) -> M1-6.b(PASS, 写后端核心) -> M1-6.c(PASS, 复核) -> M1-6.d(PASS, push) -> M1-7(NEXT)`。
+  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-2-fix1(PASS) -> M1-3(PASS) -> M1-4(PASS) -> M1-5(PASS) -> M1-6.a(PASS, 契约冻结) -> M1-6.b(PASS, 写后端核心) -> M1-6.c(PASS, 复核) -> M1-6.d(PASS, push) -> M1-7(PASS, Git UI；GUI 目视验收挂账) -> M1-8(NEXT)`。
 - 完成 M0-1.a（commit `1bd56b1`）：新增 `scripts/baseline-check.sh` 与 `scripts/fixtures/clippy-sample.json`；
   验收命令全过、`--self-test` 输出 `SELF_TEST_RESULT=ALL_PASS`；`.gitignore` 对 `logs/m0-baseline/` 开例外，
   原始 `.log` 证据随 run 目录入库可追溯（见 §5 证据保留说明）。
@@ -100,6 +100,7 @@ NEXT 保持 `M1-3`。
 - `M1-6.b` 已完成 Git 写能力后端核心（commit `2578c9c`，checkpoint `logs/checkpoints/M1-6.b-20260902-1327.md`，执行器：CodeBuddy 会话 Kimi K3，`AI:DEEP/R:high`）：按任务书扩权落地六个白名单写操作 `stage/unstage/discard/commit/create_branch/checkout_branch`（任务书对 M1-6.a 冻结白名单的扩权已在 checkpoint §0 显式记录，安全口径未削弱）——`domain.rs` 新增 `GitWriteOp/GitWriteStatus/GitWriteJob/GitWritePreview`（独立状态机，不复用 `SyncJob`）；`sync.rs` 新增三重校验器（paths/commit message/branch name）+ 六个写原语（全部 git2 本地 API，先校验后执行、失败零部分写）；`bridge.rs` 新增 `pending_git_jobs` + `request_git_write`/`confirm_git_write` 双阶段闸门（一次性任务、5 分钟过期、discard 需 `confirmed_dangerous` 二次确认、后台线程 + `git-write-completed` 事件）+ 审计四态（detail 只含 op/repo_id/job_id/path_count/confirmed，构造器签名杜绝凭据/路径清单/diff）；`main.rs` 注册 + ACL +2；`types.ts`/`bridge.ts` 类型与六个便捷封装（无 UI，UI 归 M1-7）。验证：`cargo test git_write` 19/19、`cargo test` 78/78、`cargo build --release` 0、`npm run build` 0、pre-merge ALL_PASS、`git diff --check` 0。同卡修复了 M1-6.a 引入的既有门禁回归（`详细设计与实施计划.md` 293 行 WBS 路由标签丢失导致 check-plan-routing FAIL，HEAD `8656092` 可复现，非本卡引入）。**未实现 push、未做端到端 IPC 联调（归 M1-7）、未签 M1-6 整体 PASS**。NEXT 移至 `M1-6.c`。
 - `M1-6.c` 已完成 Git 写后端核心复核（commit `243d4ae`，checkpoint `logs/checkpoints/M1-6.c-20260902-1430.md`，执行器：CodeBuddy 会话 腾讯 Hy4，`AI:BALANCED/R:high`）：静态审计闸门两阶段命令、六个写原语、三个校验器、审计脱敏与注册完整性（凭据仅存在于成果推送段 1–244 行，写段 17 项黑名单 API 扫描为空）；用临时探针实测 libgit2 三种 checkout 语义后删除探针。**修 1 项缺陷**：切分支后旧分支独有文件与索引条目残留（旧实现先 `set_head` 再 `checkout_head`，后者以新 HEAD 为基线）→ 改为先 `checkout_tree(目标树, safe)` 再 `set_head`，并对 `set_head` 极端失败做工作区回滚，同时消除未跟踪目录场景的误拦截；**2 项小修**：全量 commit 审计 `path_count` 恒 0（改为返回执行前脏文件数）、过期待确认任务无清理（新增 `purge_expired_git_jobs`）；**补 7 项测试**（`cargo test git_write` 26/26、`cargo test` 85/85）；**新增 `scripts/check-git-write-policy.py`**（19 个违规码，好样本零违规 + 14 个坏样本命中对应码的双向自检，已接入 `pre-merge.sh` 第 13 项）。验证：`cargo build --release` 0、`npm run build` 0、pre-merge ALL_PASS、`git diff --check` 0。**裁定 M1-6.d 保留 push**（契约 W3 已冻结、`push_artifacts` 不覆盖用户自选提交、风险由非 force+二次确认+凭据隔离收口），五条硬约束写入 checkpoint §6。**未触发 HARD_RULE**（无需大改核心，未 BLOCKED）。**遗留待裁决**：全量 commit 的 TOCTOU、同仓库并发写无互斥、仓库内符号链接边界、端到端 IPC 联调（归 M1-7）。NEXT 移至 `M1-6.d`。
 - `M1-6.d` 已完成 Git push 能力（commit `7849dd5`，checkpoint `logs/checkpoints/M1-6.d-20260902-1525.md`，执行器：CodeBuddy 会话 Kimi K3，`AI:DEEP/R:xhigh`）：`GitWriteOp::Push` 接入既有 `request_git_write`/`confirm_git_write` 双阶段闸门（不另建旁路、不新增命令、ACL 不变），白名单扩至七项且 `Push` 标记 dangerous（必须 `confirmed_dangerous=true` 二次确认）；`sync.rs` 新增 `build_push_refspec`（纯函数，只产出 `refs/heads/X:refs/heads/X` 同名映射，结构上无法注入 force/前导冒号删除/任意 refspec）、`write_push`（仅非 force 推当前检出分支到 origin 同名分支；detached HEAD/未配置远端拒绝；凭据仅由调用方在推送瞬间传入，复用 `cred_cb` 思路）、`push_ahead`（只读预览领先提交数）、`scrub_sensitive_error`（token 精确替换 + URL userinfo 掩码）；bridge 审计构造器加 `branch`/`remote_name`（签名仍不接收 paths/diff/凭据/远端 URL），request 预检只读不读 Keyring，execute 在推送瞬间 `KeyringStore::get_token` 且错误串脱敏；`scripts/check-git-write-policy.py` 扩至 24 个违规码（push 敏感 API 位置、force/删除 refspec 字面量、refspec 注入、仅 origin、push dangerous、闸门 push 映射、审计 push 字段、`push_artifacts` 行为锚点），自检 1 好 + 22 坏样本双向通过。测试：`cargo test git_write` 35/35（含 bare remote 端到端：远端收到提交 OID 相等、up-to-date 不变、非 fast-forward 拒绝且本地与远端均不变、无 origin/detached HEAD 拒绝、refspec 安全性、脱敏、二次确认、push 审计字段）、`cargo test` 94/94、`cargo build --release` 0、`npm run build` 0、pre-merge ALL_PASS、`git diff --check` 0。**边界声明**：真实 HTTPS 远端 push 未实测（无测试账号，不伪造；凭据回调与线上已验证的 `push_artifacts` 同一 `cred_cb`），M1-7 联调时配真实仓库回归。**b/c/d 三卡全绿，M1-6 Git 写能力整体 PASS**。NEXT 移至 `M1-7`（Git UI）。
+- `M1-7` 已完成 Git UI（commit `feat(M1-7): add git workspace UI` + `docs(M1-7): record git ui checkpoint`，checkpoint `logs/checkpoints/M1-7-20260902-1830.md`，执行器：CodeBuddy 会话 Hy4，`AI:BALANCED/R:medium`）：新增 `src/stores/useGitStore.ts`（仓库选择、status/diff/branch 加载、勾选集、写操作双阶段闸门、`git-write-completed` 回落刷新）、`GitPanel.vue`（复用 `useWorkspaceStore.repos`；分支条 + 状态列表 + 七个写操作入口）、`GitDiffViewer.vue`（全量/单文件 diff + `more`/`truncated`/`binary` 提示）、`GitWriteConfirmDialog.vue`（展示后端 preview + 前端派生风险等级 + dangerous 二次确认勾选框 + push/discard 约束提示）；`RepoPanel.vue` 加「状态/配置」Tab；`App.vue` 全局订阅完成事件并全局挂载确认弹窗；新增 `src/utils/redact.ts`（前端二次脱敏：URL userinfo / 凭据查询参数 / 已知 token 前缀 / Bearer-Basic / 疑似随机串 + 300 字截断，刻意不误伤纯小写十六进制 OID）。**`src-tauri/**` 零改动、未新增任何后端命令、ACL 未变**；所有写操作唯一入口是 `requestWrite/confirmWrite`，前端侧另有两道锁：dangerous 未勾选时 confirm 命令根本不发、预校验（commit 非空/分支名非空/路径非空）失败时连 request 都不发。新增两个门禁：`scripts/check-git-ui-policy.py`（静态夹具，19 项自检：1 好 + 18 坏样本；守闸门不可绕过、校验在 request 之前、错误必须脱敏、Git UI 内禁 token/localStorage、弹窗勾选框与按钮禁用、黑名单与 force 字面量、事件订阅与弹窗挂载）与 `scripts/check-git-ui-logic.mjs`（Node headless，直接加载真实 store、只 mock bridge 的 Git 方法，**53 条断言全过**），两者均已接入 `pre-merge.sh`。验证：`npm run build` 0、`cargo test git_write` 35/35、`cargo test` 94/94、`cargo build --release` 0（2 warning 为既有 `grid_process.rs` 死代码）、pre-merge ALL_PASS、`git diff --check` 0。**GUI 目视验收未完成**（本会话模型不支持读图，`scrot` 多次截屏返回完全相同的 36KB PNG 不可信；release 二进制可启动、窗口可见、日志无 panic，但未做 GUI 点击验收），已在 checkpoint §6 如实声明并给出 §8 可复现的人工验收清单与种子数据；验收期间植入的一次性测试仓已完整清理。`push` 真实 HTTPS 远端仍未实测（沿用 M1-6.d 边界）。NEXT 移至 `M1-8`。
 
 ## 2. 模型映射
 
