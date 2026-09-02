@@ -161,7 +161,7 @@ pub struct GitDiffResult {
 // 结构体只承载操作语义与计数，绝不包含 token/凭据/完整 diff。
 // ---------------------------------------------------------------------------
 
-/// Git 写操作白名单（任务书 M1-6.b ALLOW_IMPLEMENT 冻结六项）。
+/// Git 写操作白名单（M1-6.b 冻结六项 + M1-6.d 增加 push，共七项）。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GitWriteOp {
@@ -171,6 +171,7 @@ pub enum GitWriteOp {
     Commit,
     CreateBranch,
     CheckoutBranch,
+    Push,
 }
 
 impl GitWriteOp {
@@ -182,6 +183,7 @@ impl GitWriteOp {
             GitWriteOp::Commit => "commit",
             GitWriteOp::CreateBranch => "create_branch",
             GitWriteOp::CheckoutBranch => "checkout_branch",
+            GitWriteOp::Push => "push",
         }
     }
 
@@ -194,13 +196,15 @@ impl GitWriteOp {
             "commit" => Some(GitWriteOp::Commit),
             "create_branch" => Some(GitWriteOp::CreateBranch),
             "checkout_branch" => Some(GitWriteOp::CheckoutBranch),
+            "push" => Some(GitWriteOp::Push),
             _ => None,
         }
     }
 
-    /// 危险操作需二次确认：discard 不可逆地用索引内容覆盖工作区文件。
+    /// 危险操作需二次确认：discard 不可逆地用索引内容覆盖工作区文件；
+    /// push 影响远端仓库（共享状态），同样需要二次确认。
     pub fn is_dangerous(&self) -> bool {
-        matches!(self, GitWriteOp::Discard)
+        matches!(self, GitWriteOp::Discard | GitWriteOp::Push)
     }
 }
 
@@ -279,10 +283,10 @@ mod tests {
         assert_eq!(parsed.get_version_num(), 4);
     }
 
-    // T-gw-1（b 卡）：白名单外操作（reset/push/merge/rebase/stash/clean 等任意形式）
+    // T-gw-1（b/d 卡）：白名单外操作（reset/merge/rebase/stash/clean 等任意形式）
     // 必须在 request 阶段即被判定为 None → Err("操作禁止")，零写入。
     #[test]
-    fn git_write_op_whitelist_only_six_ops() {
+    fn git_write_op_whitelist_only_seven_ops() {
         for ok in [
             "stage",
             "unstage",
@@ -290,14 +294,18 @@ mod tests {
             "commit",
             "create_branch",
             "checkout_branch",
+            "push",
         ] {
             assert!(GitWriteOp::from_op_str(ok).is_some(), "{ok} 应在白名单内");
         }
         for bad in [
             "reset",
             "reset --hard",
-            "push",
             "push --force",
+            "push --force-with-lease",
+            "push --mirror",
+            "push --delete",
+            "force push",
             "pull",
             "fetch",
             "merge",
@@ -310,15 +318,18 @@ mod tests {
             "checkout .",
             "",
             "STAGE",
+            "PUSH",
             " stage",
+            " push",
         ] {
             assert!(
                 GitWriteOp::from_op_str(bad).is_none(),
                 "白名单外操作必须被拒绝: {bad:?}"
             );
         }
-        // 危险标记：仅 discard 需要二次确认
+        // 危险标记：discard（本地不可逆）与 push（影响远端）需二次确认
         assert!(GitWriteOp::Discard.is_dangerous());
+        assert!(GitWriteOp::Push.is_dangerous());
         assert!(!GitWriteOp::Commit.is_dangerous());
         assert!(!GitWriteOp::CheckoutBranch.is_dangerous());
     }

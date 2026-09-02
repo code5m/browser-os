@@ -67,7 +67,8 @@ export type GitWriteOp =
   | "discard"
   | "commit"
   | "create_branch"
-  | "checkout_branch";
+  | "checkout_branch"
+  | "push";
 
 export type GitWriteStatus = "pending" | "running" | "success" | "failed";
 

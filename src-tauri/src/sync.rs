@@ -904,6 +904,116 @@ pub fn write_checkout_branch(repo: &Repository, name: &str) -> Result<String, St
     Ok(name.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// M1-6.d 安全 push（非 force，双阶段闸门的执行原语）
+//
+// 安全边界（与 M1-6.a W3 / M1-6.c §6 五条硬约束一致）：
+// - refspec 由本模块内部构造（refs/heads/<当前分支>:refs/heads/<当前分支>），
+//   调用方无法注入任意 refspec、前导冒号（删除远端分支）或 `+`（force）；
+// - 只允许推「当前检出的本地分支」到 origin 同名远端分支；detached HEAD 拒绝；
+// - 凭据仅在推送瞬间由调用方传入（本函数不读 KeyringStore）；
+// - 非 fast-forward / 远端拒绝 / 网络失败均原样报错，不改本地工作树与索引。
+// ---------------------------------------------------------------------------
+
+/// push 唯一允许的远端名（保守实现：不开放任意 remote）。
+pub const GIT_PUSH_REMOTE: &str = "origin";
+
+/// 构造安全 refspec（纯函数）：仅允许 `refs/heads/X:refs/heads/X` 的同名映射，
+/// 绝不产生前导冒号（删除远端分支）或 `+` 前缀（force）。
+pub(crate) fn build_push_refspec(branch: &str) -> Result<String, String> {
+    validate_branch_name(branch)?;
+    Ok(format!("refs/heads/{branch}:refs/heads/{branch}"))
+}
+
+/// 安全推送当前分支到 origin。返回实际推送的分支名。
+///
+/// 凭据回调复用既有 `cred_cb`（与 `push_artifacts` 同一思路：token 作为
+/// HTTPS 密码），但 token 本身由调用方在推送瞬间传入，本函数不接触密钥库。
+pub fn write_push(repo: &Repository, username: &str, token: &str) -> Result<String, String> {
+    let head = repo.head().map_err(|e| e.to_string())?;
+    if !head.is_branch() {
+        return Err("当前为 detached HEAD，禁止推送".to_string());
+    }
+    let branch = head
+        .shorthand()
+        .ok_or_else(|| "无法解析当前分支名".to_string())?
+        .to_string();
+    let refspec = build_push_refspec(&branch)?;
+    let mut remote = repo
+        .find_remote(GIT_PUSH_REMOTE)
+        .map_err(|_| format!("远端未配置: {GIT_PUSH_REMOTE}"))?;
+    let mut po = PushOptions::new();
+    po.remote_callbacks(cred_cb(username.to_string(), token.to_string()));
+    // 非 force：refspec 无 `+` 前缀，远端对非 fast-forward 会直接拒绝（fail-closed）
+    remote
+        .push(&[refspec.as_str()], Some(&mut po))
+        .map_err(|e| format!("push 失败: {e}（检查 token 权限/分支保护）"))?;
+    Ok(branch)
+}
+
+/// 推送预览（只读）：当前分支相对 `origin/<branch>` 领先的提交数；
+/// None = 远端尚无该分支（首次推送）或无法确定。
+pub fn push_ahead(repo: &Repository, branch: &str) -> Result<Option<usize>, String> {
+    let tracking = format!("refs/remotes/{GIT_PUSH_REMOTE}/{branch}");
+    let remote_ref = match repo.find_reference(&tracking) {
+        Ok(r) => r,
+        Err(_) => return Ok(None),
+    };
+    let local_oid = repo
+        .head()
+        .and_then(|h| h.peel_to_commit())
+        .map_err(|e| e.to_string())?
+        .id();
+    let remote_oid = remote_ref.peel_to_commit().map_err(|e| e.to_string())?.id();
+    let (ahead, _behind) = repo
+        .graph_ahead_behind(local_oid, remote_oid)
+        .map_err(|e| e.to_string())?;
+    Ok(Some(ahead))
+}
+
+/// 错误串脱敏（纯函数）：token 精确替换 + URL userinfo 掩码。
+/// 用于把 push 失败信息安全地落审计/回前端：
+/// - libgit2 的错误文本可能回显远端 URL，若 URL 内嵌 userinfo（user:pass@）
+///   或包含 token 片段，必须先剥离；
+/// - token 做精确串替换（最强保证），URL userinfo 统一掩码为 `***`。
+pub fn scrub_sensitive_error(err: &str, token: &str) -> String {
+    let mut out = err.to_string();
+    if !token.is_empty() {
+        out = out.replace(token, "***");
+    }
+    mask_url_userinfo(&out)
+}
+
+/// 把 `scheme://userinfo@host` 形式的 userinfo 掩码为 `***`。
+/// 只处理 `://` 之后、`@` 在下一个 `/` 或空白之前出现的片段（标准 userinfo 形态）。
+fn mask_url_userinfo(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(pos) = rest.find("://") {
+        let (before, after) = rest.split_at(pos + 3);
+        result.push_str(before);
+        // 在 after 中找第一个分隔符（/ 或空白）与第一个 @
+        let boundary = after
+            .find(|c: char| c == '/' || c.is_whitespace())
+            .unwrap_or(after.len());
+        let segment = &after[..boundary];
+        match segment.find('@') {
+            Some(at) => {
+                result.push_str("***");
+                result.push_str(&segment[at..]);
+                result.push_str(&after[boundary..]);
+                rest = "";
+            }
+            None => {
+                result.push_str(segment);
+                rest = &after[boundary..];
+            }
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
 #[cfg(test)]
 mod readonly_tests {
     use super::*;
@@ -1623,5 +1733,210 @@ mod git_write_tests {
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(head_b, None, "工作区删除应进入提交（HEAD 树不再含 b.txt）");
         assert_eq!(head_c.as_deref(), Some("c\n"), "新增文件应进入提交");
+    }
+
+    // ------------------------------------------------------------------
+    // M1-6.d push 测试（临时 bare repo 模拟 remote，不联网）
+    // ------------------------------------------------------------------
+
+    fn temp_bare_remote(tag: &str) -> std::path::PathBuf {
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("mvp-git-remote-{tag}-{}-{n}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        Repository::init_bare(&dir).expect("init bare");
+        dir
+    }
+
+    fn head_oid(repo: &Repository) -> Option<git2::Oid> {
+        repo.head().ok().and_then(|h| h.target())
+    }
+
+    fn remote_branch_oid(remote_dir: &std::path::Path, branch: &str) -> Option<git2::Oid> {
+        let bare = Repository::open_bare(remote_dir).ok()?;
+        bare.find_reference(&format!("refs/heads/{branch}"))
+            .ok()
+            .and_then(|r| r.target())
+    }
+
+    // T-gw-d-1：refspec 构造器只允许同名映射，绝不产生 force(+)/删除(前导冒号)
+    #[test]
+    fn git_write_push_refspec_builder_safe() {
+        let spec = build_push_refspec("master").expect("valid");
+        assert_eq!(spec, "refs/heads/master:refs/heads/master");
+        assert!(!spec.starts_with('+'), "不得含 force 前缀");
+        assert!(!spec.starts_with(':'), "不得为删除 refspec");
+        for bad in ["", "HEAD", "../x", "a b", ":refs/heads/x"] {
+            assert!(
+                build_push_refspec(bad).is_err(),
+                "非法分支名不得产生 refspec: {bad:?}"
+            );
+        }
+        // 即使分支名本身以 + 开头（git 规则允许），refspec 也是内部拼装的
+        // `refs/heads/+x:refs/heads/+x`，力前缀位置永远被 `refs/heads/` 占据，
+        // 结构上无法注入 force/删除语义
+        let plus = build_push_refspec("+plus-branch");
+        assert!(
+            plus.is_ok() && !plus.as_ref().unwrap().starts_with('+'),
+            "refspec 结构上不可能以 + 开头: {plus:?}"
+        );
+    }
+
+    // T-gw-d-2（无 upstream）：未配置 origin → 拒绝，本地不变
+    #[test]
+    fn git_write_push_no_remote_rejected() {
+        let (dir, repo) = temp_repo("push-noremote");
+        fs::write(dir.join("a.txt"), "a\n").expect("write");
+        commit_all(&repo, "init");
+        let before = head_oid(&repo);
+        let err = write_push(&repo, "mvp-test", "dummy-token").expect_err("未配置远端必须拒绝");
+        let after = head_oid(&repo);
+        let _ = fs::remove_dir_all(&dir);
+        assert!(err.contains("远端未配置"), "实际错误: {err}");
+        assert_eq!(before, after, "拒绝时本地 HEAD 不得变化");
+    }
+
+    // T-gw-d-3：detached HEAD → 拒绝，本地不变
+    #[test]
+    fn git_write_push_detached_head_rejected() {
+        let (dir, repo) = temp_repo("push-detached");
+        fs::write(dir.join("a.txt"), "a\n").expect("write");
+        commit_all(&repo, "init");
+        let oid = head_oid(&repo).expect("oid");
+        repo.set_head_detached(oid).expect("detach");
+        let err = write_push(&repo, "mvp-test", "dummy-token").expect_err("detached HEAD 必须拒绝");
+        let after = head_oid(&repo);
+        let _ = fs::remove_dir_all(&dir);
+        assert!(err.contains("detached"), "实际错误: {err}");
+        assert_eq!(after, Some(oid), "拒绝时 HEAD 不得变化");
+    }
+
+    // T-gw-d-4（端到端）：confirm 后本地 bare remote 收到提交（正向）
+    #[test]
+    fn git_write_push_end_to_end_bare_remote() {
+        let (dir, repo) = temp_repo("push-e2e");
+        fs::write(dir.join("a.txt"), "a\n").expect("write");
+        commit_all(&repo, "init");
+        let branch = head_shorthand(&repo);
+        let remote_dir = temp_bare_remote("push-e2e");
+        repo.remote("origin", remote_dir.to_str().expect("utf8"))
+            .expect("add origin");
+        // 首次推送：远端无分支
+        assert_eq!(push_ahead(&repo, &branch).expect("ahead"), None);
+        let pushed = write_push(&repo, "mvp-test", "dummy-token").expect("push");
+        let local_head = head_oid(&repo);
+        let remote_head = remote_branch_oid(&remote_dir, &branch);
+        assert_eq!(pushed, branch, "应返回实际推送的分支名");
+        assert_eq!(remote_head, local_head, "bare remote 必须收到提交");
+        // 再推一次（无新提交）：up-to-date，应成功且远端不变
+        write_push(&repo, "mvp-test", "dummy-token").expect("up-to-date push");
+        let remote_head2 = remote_branch_oid(&remote_dir, &branch);
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&remote_dir);
+        assert_eq!(remote_head2, local_head, "up-to-date 推送不得改变远端");
+    }
+
+    // T-gw-d-5：非 fast-forward → 拒绝且本地与远端均不变
+    #[test]
+    fn git_write_push_non_fast_forward_rejected_local_unchanged() {
+        // seed 仓库先把 A 推到 bare remote，再推 B（远端领先）
+        let (seed_dir, seed_repo) = temp_repo("push-nff-seed");
+        fs::write(seed_dir.join("a.txt"), "a\n").expect("write");
+        commit_all(&seed_repo, "A");
+        let remote_dir = temp_bare_remote("push-nff");
+        seed_repo
+            .remote("origin", remote_dir.to_str().expect("utf8"))
+            .expect("add origin");
+        write_push(&seed_repo, "mvp-test", "dummy-token").expect("seed push A");
+        // local 克隆到 A 状态
+        let local_dir =
+            std::env::temp_dir().join(format!("mvp-git-local-nff-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&local_dir);
+        let local_repo = Repository::clone(remote_dir.to_str().expect("utf8"), &local_dir)
+            .expect("clone from bare");
+        {
+            let mut cfg = local_repo.config().expect("config");
+            cfg.set_str("user.name", "mvp-test").expect("user.name");
+            cfg.set_str("user.email", "mvp@test.local")
+                .expect("user.email");
+        }
+        // seed 推 B（远端领先 local 一个提交）
+        fs::write(seed_dir.join("b.txt"), "b\n").expect("write");
+        commit_all(&seed_repo, "B");
+        write_push(&seed_repo, "mvp-test", "dummy-token").expect("seed push B");
+        // local 基于 A 做 C → 与远端 B 分叉（非 fast-forward）
+        fs::write(local_dir.join("c.txt"), "c\n").expect("write");
+        commit_all(&local_repo, "C");
+        let local_head_before = head_oid(&local_repo);
+        let branch = head_shorthand(&local_repo);
+        let remote_head_before = remote_branch_oid(&remote_dir, &branch);
+        let err = write_push(&local_repo, "mvp-test", "dummy-token")
+            .expect_err("非 fast-forward 必须拒绝");
+        let local_head_after = head_oid(&local_repo);
+        let remote_head_after = remote_branch_oid(&remote_dir, &branch);
+        let _ = fs::remove_dir_all(&seed_dir);
+        let _ = fs::remove_dir_all(&local_dir);
+        let _ = fs::remove_dir_all(&remote_dir);
+        assert!(err.contains("push 失败"), "实际错误: {err}");
+        assert_eq!(local_head_after, local_head_before, "本地 HEAD 不得变化");
+        assert_eq!(remote_head_after, remote_head_before, "远端分支不得变化");
+    }
+
+    // T-gw-d-6：推送预览 ahead 计数（跟踪引用存在时）
+    #[test]
+    fn git_write_push_ahead_preview() {
+        let (dir, repo) = temp_repo("push-ahead");
+        fs::write(dir.join("a.txt"), "a\n").expect("write");
+        commit_all(&repo, "init");
+        let branch = head_shorthand(&repo);
+        let remote_dir = temp_bare_remote("push-ahead");
+        repo.remote("origin", remote_dir.to_str().expect("utf8"))
+            .expect("add origin");
+        // 远端无跟踪分支：None（首次推送）
+        assert_eq!(push_ahead(&repo, &branch).expect("ahead"), None);
+        // 模拟已完成一次推送：写入跟踪引用
+        let oid = head_oid(&repo).expect("oid");
+        repo.reference(
+            &format!("refs/remotes/origin/{branch}"),
+            oid,
+            true,
+            "test tracking",
+        )
+        .expect("tracking ref");
+        assert_eq!(push_ahead(&repo, &branch).expect("ahead"), Some(0));
+        // 本地再提交 2 次：ahead=2
+        fs::write(dir.join("b.txt"), "b\n").expect("write");
+        commit_all(&repo, "B1");
+        fs::write(dir.join("c.txt"), "c\n").expect("write");
+        commit_all(&repo, "B2");
+        let ahead = push_ahead(&repo, &branch).expect("ahead");
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&remote_dir);
+        assert_eq!(ahead, Some(2));
+    }
+
+    // T-gw-d-7：错误串脱敏 —— token 精确替换 + URL userinfo 掩码
+    #[test]
+    fn git_write_scrub_sensitive_error_removes_token_and_userinfo() {
+        let err = "push 失败: cannot push to 'https://user:secret-token@example.com/r.git'（auth failed for secret-token）";
+        let out = scrub_sensitive_error(err, "secret-token");
+        assert!(!out.contains("secret-token"), "token 必须被剥离: {out}");
+        assert!(
+            out.contains("https://***@example.com/r.git"),
+            "userinfo 必须掩码: {out}"
+        );
+        // 无凭据 URL 不受影响
+        let plain = scrub_sensitive_error(
+            "push 失败: connection to 'https://example.com/r.git' refused",
+            "",
+        );
+        assert!(
+            plain.contains("https://example.com/r.git"),
+            "普通 URL 不得改动: {plain}"
+        );
+        // 空 token 不产生误替换
+        let untouched = scrub_sensitive_error("push 失败: *** already here", "");
+        assert!(untouched.contains("*** already here"));
     }
 }

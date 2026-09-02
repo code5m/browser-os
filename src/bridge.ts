@@ -135,6 +135,11 @@ export const bridge = {
       branch: name,
     }),
 
+  // push 是 dangerous 操作（影响远端）：confirm 时必须带
+  // confirmedDangerous=true 二次确认；仅非 force 推当前分支到 origin 同名分支
+  gitPush: (repoId: string) =>
+    invoke<GitWritePreview>("request_git_write", { repoId, op: "push" }),
+
   // 第一步：生成“待确认”SyncJob（不真正推送）
   requestSync: (p: { artifactIds: string[]; repoId: string }) =>
     invoke<SyncPreview>("request_sync", p),

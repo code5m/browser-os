@@ -1253,13 +1253,16 @@ pub(crate) fn purge_expired_git_jobs(
 }
 
 /// 审计 detail 构造（纯函数）：只含操作语义与计数。
-/// 刻意不接收 paths/diff/凭据，从签名上杜绝敏感内容落审计。
+/// 刻意不接收 paths/diff/凭据/远端 URL，从签名上杜绝敏感内容落审计。
+/// `branch`/`remote_name` 仅 push/分支类操作使用（分支名与远端名非凭据）。
 pub(crate) fn git_write_audit_detail(
     op: GitWriteOp,
     repo_id: &str,
     job_id: &str,
     path_count: usize,
     confirmed: bool,
+    branch: Option<&str>,
+    remote_name: Option<&str>,
     extra: &str,
 ) -> String {
     serde_json::json!({
@@ -1268,6 +1271,8 @@ pub(crate) fn git_write_audit_detail(
         "job_id": job_id,
         "path_count": path_count,
         "confirmed": confirmed,
+        "branch": branch,
+        "remote_name": remote_name,
         "extra": extra,
     })
     .to_string()
@@ -1287,8 +1292,9 @@ pub(crate) fn sanitize_audit_text(s: &str) -> String {
     format!("{}…", &s[..end])
 }
 
-/// 阶段一预检（只读）：参数校验 + 必然失败情形提前暴露，返回 (摘要, 影响路径)。
-/// 任何一步失败都直接 Err——此函数不做任何写。
+/// 阶段一预检（只读）：参数校验 + 必然失败情形提前暴露，
+/// 返回 (摘要, 影响路径, 推导出的分支名)。任何一步失败都直接 Err——
+/// 此函数不做任何写，push 分支也绝不接触远端。
 fn precheck_git_write(
     repo: &git2::Repository,
     op: GitWriteOp,
@@ -1296,17 +1302,21 @@ fn precheck_git_write(
     message: Option<&str>,
     branch: Option<&str>,
     checkout: bool,
-) -> Result<(String, Vec<String>), String> {
+) -> Result<(String, Vec<String>, Option<String>), String> {
     match op {
         GitWriteOp::Stage => {
             sync::validate_repo_paths(paths)?;
             sync::precheck_stageable(repo, paths)?;
-            Ok((format!("暂存 {} 个路径", paths.len()), paths.to_vec()))
+            Ok((format!("暂存 {} 个路径", paths.len()), paths.to_vec(), None))
         }
         GitWriteOp::Unstage => {
             sync::validate_repo_paths(paths)?;
             sync::precheck_tracked(repo, paths)?;
-            Ok((format!("取消暂存 {} 个路径", paths.len()), paths.to_vec()))
+            Ok((
+                format!("取消暂存 {} 个路径", paths.len()),
+                paths.to_vec(),
+                None,
+            ))
         }
         GitWriteOp::Discard => {
             sync::validate_repo_paths(paths)?;
@@ -1314,6 +1324,7 @@ fn precheck_git_write(
             Ok((
                 format!("丢弃 {} 个路径的工作区改动（不可恢复）", paths.len()),
                 paths.to_vec(),
+                None,
             ))
         }
         GitWriteOp::Commit => {
@@ -1324,11 +1335,19 @@ fn precheck_git_write(
                     return Err("没有可提交的变更".to_string());
                 }
                 let affected: Vec<String> = dirty.into_iter().map(|s| s.path).collect();
-                Ok((format!("提交全部 {} 个变更文件", affected.len()), affected))
+                Ok((
+                    format!("提交全部 {} 个变更文件", affected.len()),
+                    affected,
+                    None,
+                ))
             } else {
                 sync::validate_repo_paths(paths)?;
                 sync::precheck_stageable(repo, paths)?;
-                Ok((format!("提交 {} 个指定路径", paths.len()), paths.to_vec()))
+                Ok((
+                    format!("提交 {} 个指定路径", paths.len()),
+                    paths.to_vec(),
+                    None,
+                ))
             }
         }
         GitWriteOp::CreateBranch => {
@@ -1342,7 +1361,7 @@ fn precheck_git_write(
             } else {
                 format!("基于当前 HEAD 创建新分支 {name}")
             };
-            Ok((summary, vec![]))
+            Ok((summary, vec![], Some(name.to_string())))
         }
         GitWriteOp::CheckoutBranch => {
             let name = branch.unwrap_or_default();
@@ -1351,8 +1370,38 @@ fn precheck_git_write(
                 Some(conflict) => Err(format!(
                     "工作区有未提交改动且与目标分支冲突，禁止切换: {conflict}"
                 )),
-                None => Ok((format!("切换到本地分支 {name}"), vec![])),
+                None => Ok((
+                    format!("切换到本地分支 {name}"),
+                    vec![],
+                    Some(name.to_string()),
+                )),
             }
+        }
+        GitWriteOp::Push => {
+            // 只读预检：分支合法、非 detached HEAD、远端已配置、预览领先提交数。
+            // 不读 KeyringStore、不构造任何网络调用。
+            let head = repo.head().map_err(|e| e.to_string())?;
+            if !head.is_branch() {
+                return Err("当前为 detached HEAD，禁止推送".to_string());
+            }
+            let name = head
+                .shorthand()
+                .ok_or_else(|| "无法解析当前分支名".to_string())?
+                .to_string();
+            sync::validate_branch_name(&name)?;
+            if repo.find_remote(sync::GIT_PUSH_REMOTE).is_err() {
+                return Err(format!("远端未配置: {}", sync::GIT_PUSH_REMOTE));
+            }
+            let summary = match sync::push_ahead(repo, &name)? {
+                Some(0) => {
+                    format!("推送当前分支 {name} 到 origin（远端已是最新，非 force）")
+                }
+                Some(n) => {
+                    format!("推送当前分支 {name} 到 origin（领先 {n} 个提交，非 force）")
+                }
+                None => format!("首次推送当前分支 {name} 到 origin（远端尚无此分支，非 force）"),
+            };
+            Ok((summary, vec![], Some(name)))
         }
     }
 }
@@ -1386,7 +1435,7 @@ pub fn request_git_write(
     // 3) 参数校验 + 只读预检（任何失败都零写入，且落 git_write_rejected 审计）
     let paths = paths.unwrap_or_default();
     let checkout = checkout.unwrap_or(false);
-    let (summary, affected) = match precheck_git_write(
+    let (summary, affected, derived_branch) = match precheck_git_write(
         &repo,
         op,
         &paths,
@@ -1405,6 +1454,8 @@ pub fn request_git_write(
                     "",
                     paths.len(),
                     false,
+                    None,
+                    None,
                     &sanitize_audit_text(&e),
                 ),
             );
@@ -1419,7 +1470,8 @@ pub fn request_git_write(
         op,
         paths,
         message: message.filter(|m| !m.is_empty()),
-        branch: branch.filter(|b| !b.is_empty()),
+        // 分支名：优先预检推导值（push 从 HEAD 推导），否则取调用方参数
+        branch: derived_branch.or_else(|| branch.filter(|b| !b.is_empty())),
         checkout,
         status: GitWriteStatus::Pending,
         dangerous: op.is_dangerous(),
@@ -1436,10 +1488,20 @@ pub fn request_git_write(
         purge_expired_git_jobs(&mut jobs, now);
         jobs.insert(job.id.clone(), job.clone());
     }
+    let audit_remote = matches!(op, GitWriteOp::Push).then_some(sync::GIT_PUSH_REMOTE);
     workspace::log_audit(
         &app,
         "git_write_request",
-        git_write_audit_detail(op, &repo_id, &job.id, path_count, false, &summary),
+        git_write_audit_detail(
+            op,
+            &repo_id,
+            &job.id,
+            path_count,
+            false,
+            job.branch.as_deref(),
+            audit_remote,
+            &summary,
+        ),
     );
     Ok(GitWritePreview {
         job_id: job.id,
@@ -1493,6 +1555,8 @@ pub fn confirm_git_write(
         let result = execute_git_write(&app_thread, &job_clone);
         let mut finished = job_clone.clone();
         finished.finished_at = Some(chrono::Utc::now());
+        let audit_remote =
+            matches!(job_clone.op, GitWriteOp::Push).then_some(sync::GIT_PUSH_REMOTE);
         match result {
             Ok(path_count) => {
                 finished.status = GitWriteStatus::Success;
@@ -1505,6 +1569,8 @@ pub fn confirm_git_write(
                         &job_clone.id,
                         path_count,
                         true,
+                        job_clone.branch.as_deref(),
+                        audit_remote,
                         "ok",
                     ),
                 );
@@ -1522,6 +1588,8 @@ pub fn confirm_git_write(
                         &job_clone.id,
                         job_clone.paths.len(),
                         true,
+                        job_clone.branch.as_deref(),
+                        audit_remote,
                         &clean,
                     ),
                 );
@@ -1566,6 +1634,19 @@ fn execute_git_write(app: &AppHandle, job: &GitWriteJob) -> Result<usize, String
         GitWriteOp::CheckoutBranch => {
             let name = job.branch.clone().unwrap_or_default();
             sync::write_checkout_branch(&repo, &name).map(|_| 0)
+        }
+        GitWriteOp::Push => {
+            // 凭据仅在推送瞬间从系统密钥库读取（与 push_artifacts 同一思路），
+            // 不持久化、不复制到任务结构；错误串先脱敏再向上传递。
+            let repos = workspace::load_repos(app);
+            let cfg = repos
+                .iter()
+                .find(|r| r.id == job.repo_id)
+                .ok_or_else(|| "仓库未配置".to_string())?;
+            let token = KeyringStore::get_token(&cfg.id)?;
+            sync::write_push(&repo, &cfg.username, &token)
+                .map(|_| 0)
+                .map_err(|e| sync::scrub_sensitive_error(&e, &token))
         }
     }
 }
@@ -3455,10 +3536,29 @@ mod git_write_gate_tests {
         assert_eq!(jobs.len(), 1);
     }
 
+    // T-gw-d-8：push（dangerous）未带二次确认必须拒绝，确认后一次性取出
+    #[test]
+    fn git_write_gate_push_requires_double_confirm() {
+        let mut jobs = HashMap::new();
+        let mut job = make_job(GitWriteOp::Push, Utc::now(), 300);
+        job.branch = Some("master".into());
+        let id = job.id.clone();
+        assert!(job.dangerous, "push 必须标记为 dangerous");
+        jobs.insert(id.clone(), job);
+        let err = take_confirmable_git_job(&mut jobs, &id, Utc::now(), false)
+            .expect_err("缺二次确认必须拒绝");
+        assert_eq!(err, "需二次确认");
+        assert!(jobs.contains_key(&id), "未确认的 push 任务不得被执行/取出");
+        let taken =
+            take_confirmable_git_job(&mut jobs, &id, Utc::now(), true).expect("二次确认后应放行");
+        assert_eq!(taken.status, GitWriteStatus::Running);
+        assert!(jobs.is_empty(), "确认后任务必须一次性移除");
+    }
+
     // T-gw-b-12：审计 detail 只含操作语义与计数，绝无凭据/路径清单/diff 全量
     #[test]
     fn git_write_audit_detail_contains_no_credentials_or_path_lists() {
-        let d = git_write_audit_detail(GitWriteOp::Commit, "r1", "j1", 3, true, "ok");
+        let d = git_write_audit_detail(GitWriteOp::Commit, "r1", "j1", 3, true, None, None, "ok");
         assert!(d.contains("\"op\":\"commit\""), "detail: {d}");
         assert!(d.contains("\"repo_id\":\"r1\""), "detail: {d}");
         assert!(d.contains("\"path_count\":3"), "detail: {d}");
@@ -3479,5 +3579,61 @@ mod git_write_gate_tests {
         );
         let short = "短错误";
         assert_eq!(sanitize_audit_text(short), short, "短文本不应被改动");
+    }
+
+    // T-gw-d-9：push 审计必须含 branch/remote_name，且不得含 token/远端 URL 凭据
+    #[test]
+    fn git_write_push_audit_fields_present_and_sanitized() {
+        let d = git_write_audit_detail(
+            GitWriteOp::Push,
+            "r1",
+            "j1",
+            0,
+            true,
+            Some("master"),
+            Some("origin"),
+            "ok",
+        );
+        assert!(d.contains("\"op\":\"push\""), "detail: {d}");
+        assert!(d.contains("\"branch\":\"master\""), "detail: {d}");
+        assert!(d.contains("\"remote_name\":\"origin\""), "detail: {d}");
+        assert!(d.contains("\"confirmed\":true"), "detail: {d}");
+        for forbidden in [
+            "userpass", "token", "secret", "password", "https://", "://", "@",
+        ] {
+            assert!(
+                !d.contains(forbidden),
+                "push 审计不得含凭据/远端 URL: {forbidden} in {d}"
+            );
+        }
+        // 失败路径：错误串经 scrub + 截断后落审计，token 与 URL userinfo 不出现
+        // （URL host 保留用于排障，userinfo 统一掩码为 ***，审计另有 remote_name 字段）
+        let raw = "push 失败: cannot push to 'https://u:tok-123@example.com/r.git'（auth failed for tok-123）";
+        let clean = sanitize_audit_text(&sync::scrub_sensitive_error(raw, "tok-123"));
+        assert!(!clean.contains("tok-123"), "错误串必须脱敏: {clean}");
+        assert!(!clean.contains("u:tok"), "URL userinfo 必须掩码: {clean}");
+        assert!(
+            clean.contains("https://***@example.com"),
+            "userinfo 应为 ***: {clean}"
+        );
+        let failed = git_write_audit_detail(
+            GitWriteOp::Push,
+            "r1",
+            "j1",
+            0,
+            true,
+            Some("master"),
+            Some("origin"),
+            &clean,
+        );
+        assert!(!failed.contains("tok-123"), "失败审计必须脱敏: {failed}");
+        assert!(
+            !failed.contains("u:tok"),
+            "失败审计不得含带凭据的 URL: {failed}"
+        );
+        assert!(
+            !failed.contains("\"branch\":null"),
+            "失败审计必须带分支名: {failed}"
+        );
     }
 }
