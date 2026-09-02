@@ -1,17 +1,24 @@
 <script setup lang="ts">
+import { ref } from "vue";
 import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
 import { useLayoutStore } from "../../stores/useLayoutStore";
+import GitPanel from "./GitPanel.vue";
+
 const ws = useWorkspaceStore();
 const layout = useLayoutStore();
+// M1-7：默认进「状态」Tab（Git UI）；「配置」仍是既有仓库配置表单（含 token 录入）。
+const tab = ref<"git" | "config">("git");
 </script>
 
 <template>
   <div class="side-inner">
     <div class="tabs">
-      <span>☁ 自有仓库</span>
+      <button :class="{ active: tab === 'git' }" @click="tab = 'git'">🔀 状态</button>
+      <button :class="{ active: tab === 'config' }" @click="tab = 'config'">⚙️ 配置</button>
       <button class="close" @click="layout.sidebarOpen = false">✕</button>
     </div>
-    <div class="repo-panel">
+    <GitPanel v-if="tab === 'git'" />
+    <div v-else class="repo-panel">
       <div class="form">
         <input v-model="ws.form.name" placeholder="仓库名" />
         <select v-model="ws.form.provider">

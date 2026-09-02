@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { bridge } from "./bridge";
 import { useBrowserStore } from "./stores/useBrowserStore";
 import { useWorkspaceStore } from "./stores/useWorkspaceStore";
+import { useGitStore } from "./stores/useGitStore";
 import { useSystemStore } from "./stores/useSystemStore";
 import { useLayoutStore } from "./stores/useLayoutStore";
 import { useSettingsStore } from "./stores/useSettingsStore";
@@ -12,10 +13,12 @@ import ActivityBar from "./components/layout/ActivityBar.vue";
 import MainArea from "./components/layout/MainArea.vue";
 import StatusBar from "./components/layout/StatusBar.vue";
 import ConfirmModal from "./components/shared/ConfirmModal.vue";
+import GitWriteConfirmDialog from "./components/workspace/GitWriteConfirmDialog.vue";
 import AINavPanel from "./components/browser/AINavPanel.vue";
 
 const browser = useBrowserStore();
 const ws = useWorkspaceStore();
+const git = useGitStore();
 const system = useSystemStore();
 const layout = useLayoutStore();
 const settings = useSettingsStore();
@@ -65,6 +68,9 @@ onMounted(async () => {
   }
 
   bridge.onSyncCompleted((j) => ws.onSyncCompleted(j));
+  // M1-7：Git 写任务完成（成功/失败）→ 刷新 status/diff/branch；
+  // 订阅放全局，保证切换视图/面板卸载后仍能收到完成事件并刷新状态。
+  bridge.onGitWriteCompleted((j) => git.onWriteCompleted(j));
   bridge.onBrowserResources((r) => browser.setResources(r));
   bridge.onArtifactCollected(() => {
     ws.refresh();
@@ -197,6 +203,8 @@ onMounted(async () => {
     </div>
     <StatusBar />
     <ConfirmModal />
+    <!-- M1-7 Git 写确认闸门：全局挂载，保证任何视图下待确认任务都能被看到/处理 -->
+    <GitWriteConfirmDialog />
   </div>
 </template>
 

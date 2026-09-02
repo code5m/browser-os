@@ -99,6 +99,12 @@ export interface GitWritePreview {
   expires_at: string;
 }
 
+// ====== M1-7 Git UI 派生字段 ======
+// 后端 `GitWritePreview`（domain.rs）**没有** risk 字段，只有 `dangerous` 布尔。
+// UI 展示的「风险等级」由前端按 op 白名单 + dangerous 派生（useGitStore.gitWriteRisk），
+// 属纯展示派生值，不参与后端任何安全判定（判定只看 dangerous）。
+export type GitWriteRisk = "low" | "medium" | "high";
+
 export interface SyncPreview {
   job_id: string;
   repo_id: string;
