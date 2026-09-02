@@ -1,8 +1,8 @@
 # AI 模型切换与接手清单
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
-> 文档版本：V3.5。
-> 更新时间：2026-09-02 09:55 CST。
+> 文档版本：V3.6。
+> 更新时间：2026-09-02 13:27 CST。
 > 当前状态：`CODEX_READY`。
 > 当前分支：`feature-M0-baseline`。
 > 当前执行器：Codex gpt-5.5 high；机械文档审计与独立脚本任务已委派 `gpt-5.6-luna / low`，最终裁决仍由主任务负责。
@@ -14,20 +14,20 @@
 
 | 项目 | 当前值 |
 |------|--------|
-| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`、`M0-5 = PASS`、`M0-6 = PASS`、`M0-7.a/b/c = PASS`；M0 总体验收 `OWNER_APPROVED`；`M1-0 = PASS`、`M1-1 = PASS`、`M1-2 = PASS`、`M1-2-fix1 = PASS`、`M1-3 = PASS`（执行器：CodeBuddy 会话，非登记的 Codex） |
+| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`、`M0-5 = PASS`、`M0-6 = PASS`、`M0-7.a/b/c = PASS`；M0 总体验收 `OWNER_APPROVED`；`M1-0 = PASS`、`M1-1 = PASS`、`M1-2 = PASS`、`M1-2-fix1 = PASS`、`M1-3 = PASS`（执行器：CodeBuddy 会话，非登记的 Codex）、`M1-4 = PASS`、`M1-5 = PASS`、`M1-6.a = PASS`、`M1-6.b = PASS` |
 | 已拒证据 | `ac0ecac` 三批候选：场景错误 + aggregate `UNSTABLE`，结论 `REJECTED`，不得复用 |
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | M0-6.c 的登录态证据来自本地 AI mock 持久 cookie，不代表第三方真实账号人工验收；**M1-3 收藏 UI 的功能目视验收未完成**（环境可用但本会话无法读图，无法做 GUI 点击验收），见 `logs/checkpoints/M1-3-20260901-1123.md` |
-| 下一检查点 | `M1-6.b = NEXT`（Git 写闸门内核 + `git_commit`；`AI:DEEP / R:high`）。`M1-6.a`（契约冻结+任务卡展开）已 PASS，见 `logs/checkpoints/M1-6.a-20260902-0955.md`；M1-6 整体 PASS 须待 `M1-6.b/c/d` 三卡全绿后由强模型裁定 |
-| 下一任务路由 | `AI:DEEP / R:high`（M1-6.b 闸门内核 + git_commit；`logs/assist/M1-6-assist-20260901-1629.md` 与 `M1-6-minicard-20260901-1643.md` 已备好风险盘点与最小输入卡） |
+| 下一检查点 | `M1-6.c = NEXT`（范围由下一任务书裁定：原 W2 `git_checkout` 已由 M1-6.b 任务书并入实现，预计收缩为回归验收 + 剩余项）。`M1-6.b`（Git 写后端核心）已 PASS，见 `logs/checkpoints/M1-6.b-20260902-1327.md`；M1-6 整体 PASS 须待 `M1-6.b/c/d` 三卡全绿后由强模型裁定 |
+| 下一任务路由 | `AI:DEEP / R:high`（M1-6.c；`logs/checkpoints/M1-6.b-20260902-1327.md` §0 记录了任务书对 M1-6.a 冻结白名单的扩权口径，c/d 卡范围以新任务书为准） |
 | 自动执行范围 | M0 已结束；M1 起必须先展开检查点，再逐点验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；进入 M1/M2/M3 后仍不得跨检查点合并 |
 | 禁止启动 | M4~M5；M1~M3 可评估启动但不得未展开检查点就写功能代码 |
-| 最近实现提交 | `97563bb feat(M1-5): add git readonly commands`（Git 只读 status/diff/branch_list；前一个是 `7889073 feat(M1-4)`）。M1-6.a 为纯文档冻结（checkpoint 已落 `logs/checkpoints/M1-6.a-20260902-0955.md`），无产品代码提交 |
+| 最近实现提交 | `2578c9c feat(M1-6.b): add guarded git write commands`（Git 写双阶段闸门 + 六个白名单写操作；前一个是 `97563bb feat(M1-5)`） |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
-| 最新状态证据 | `logs/checkpoints/M1-5-20260902-1130.md`；`logs/checkpoints/M1-4-20260901-1805.md`；`logs/checkpoints/M1-3-20260901-1123.md`；`logs/checkpoints/M1-2-fix1-20260901-1050.md`；`logs/checkpoints/M1-2-20260901-1037.md`；`logs/checkpoints/M1-1-20260901-1011.md`；`logs/checkpoints/M1-0-20260901-0915.md` |
+| 最新状态证据 | `logs/checkpoints/M1-6.b-20260902-1327.md`；`logs/checkpoints/M1-6.a-20260902-0955.md`；`logs/checkpoints/M1-5-20260902-1130.md`；`logs/checkpoints/M1-4-20260901-1805.md`；`logs/checkpoints/M1-3-20260901-1123.md`；`logs/checkpoints/M1-2-fix1-20260901-1050.md`；`logs/checkpoints/M1-2-20260901-1037.md`；`logs/checkpoints/M1-1-20260901-1011.md`；`logs/checkpoints/M1-0-20260901-0915.md` |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
 
@@ -39,7 +39,7 @@
 - 冻结 `logs/m0-baseline-contract-v1.md`：21 个 `REQUIRED_NOW` 指标、2 个延迟指标、环境指纹、固定场景、统计公式和证据目录。
 - 将旧 `logs/baseline-2026-08-27.md` 降级为 `EXPLORATORY`，禁止当作正式性能基线。
 - 修复原计划中的循环依赖，关键路径现为：
-  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-2-fix1(PASS) -> M1-3(PASS) -> M1-4(PASS) -> M1-5(PASS) -> M1-6.a(PASS, 契约冻结) -> M1-6.b(NEXT)`。
+  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-2-fix1(PASS) -> M1-3(PASS) -> M1-4(PASS) -> M1-5(PASS) -> M1-6.a(PASS, 契约冻结) -> M1-6.b(PASS, 写后端核心) -> M1-6.c(NEXT)`。
 - 完成 M0-1.a（commit `1bd56b1`）：新增 `scripts/baseline-check.sh` 与 `scripts/fixtures/clippy-sample.json`；
   验收命令全过、`--self-test` 输出 `SELF_TEST_RESULT=ALL_PASS`；`.gitignore` 对 `logs/m0-baseline/` 开例外，
   原始 `.log` 证据随 run 目录入库可追溯（见 §5 证据保留说明）。
@@ -97,6 +97,7 @@ NEXT 保持 `M1-3`。
 不得移动主线 NEXT，仍保持 `M1-4`。
 - `M1-2` 已完成收藏领域与命令（commit `2cd9d60`）：新增 `Bookmark` 结构体 + 2 个 `#[cfg(test)]` 单测；`workspace.rs` 加 `bookmarks_file/load/save/add/remove` 5 个函数；`bridge.rs` 加 `add/list/remove_bookmark` 3 个 `#[tauri::command]`，全部 `log_audit`；`main.rs` `invoke_handler!` 注册；`src/types.ts` `Bookmark` 接口；`src/bridge.ts` 暴露 `bookmarkAdd/List/Remove` 包装；ACL `default-commands` 3 条 allow。设计要点：同 URL 视为更新（保留 id/created_at），按 id 删除幂等，落盘 `data_dir/bookmarks.json`（与 audit/repos 同模式）。验证：`cargo test bookmark` 2/2 PASS，`cargo build --release` 0，`npm run build` 0，`git diff --check` 0。**未做端到端 IPC e2e**（依赖 M1-3 UI 启动后实测），UI 触发（地址栏⭐ / `tab-navigated` 自动收藏）属 M1-3。NEXT 移至 `M1-3`。
 - `M1-6.a` 已完成 Git 写能力契约冻结与任务卡展开（checkpoint `logs/checkpoints/M1-6.a-20260902-0955.md`，纯文档冻结）：冻结白名单 W1/W2/W3（commit/checkout/push）、黑名单（reset/clean/force/cherry-pick/branch 删除/merge/rebase/stash 等全部禁止）、三级确认闸门（独立 `GitWriteJob`/`pending_git_jobs`，不复用 `SyncJob` 以免污染成果推送流程）、审计字段脱敏（detail 不得含 token/凭据）、路径锁定复用 M1-5 `repo_dir`；并拆出 `M1-6.b`（闸门内核 + `git_commit`，`AI:DEEP/R:high`）、`M1-6.c`（`git_checkout` 仅本地分支，`AI:DEEP`）、`M1-6.d`（`git_push` 非 force + 二次确认，`AI:DEEP/R:xhigh`）三张子卡，含测试矩阵 T-gw-1~13。**未实现任何 Git 写操作、未改产品代码、未签 M1-6 整体 PASS**；M1-6 整体 PASS 须待 b/c/d 三卡全绿后由强模型裁定。NEXT 移至 `M1-6.b`。
+- `M1-6.b` 已完成 Git 写能力后端核心（commit `2578c9c`，checkpoint `logs/checkpoints/M1-6.b-20260902-1327.md`，执行器：CodeBuddy 会话 Kimi K3，`AI:DEEP/R:high`）：按任务书扩权落地六个白名单写操作 `stage/unstage/discard/commit/create_branch/checkout_branch`（任务书对 M1-6.a 冻结白名单的扩权已在 checkpoint §0 显式记录，安全口径未削弱）——`domain.rs` 新增 `GitWriteOp/GitWriteStatus/GitWriteJob/GitWritePreview`（独立状态机，不复用 `SyncJob`）；`sync.rs` 新增三重校验器（paths/commit message/branch name）+ 六个写原语（全部 git2 本地 API，先校验后执行、失败零部分写）；`bridge.rs` 新增 `pending_git_jobs` + `request_git_write`/`confirm_git_write` 双阶段闸门（一次性任务、5 分钟过期、discard 需 `confirmed_dangerous` 二次确认、后台线程 + `git-write-completed` 事件）+ 审计四态（detail 只含 op/repo_id/job_id/path_count/confirmed，构造器签名杜绝凭据/路径清单/diff）；`main.rs` 注册 + ACL +2；`types.ts`/`bridge.ts` 类型与六个便捷封装（无 UI，UI 归 M1-7）。验证：`cargo test git_write` 19/19、`cargo test` 78/78、`cargo build --release` 0、`npm run build` 0、pre-merge ALL_PASS、`git diff --check` 0。同卡修复了 M1-6.a 引入的既有门禁回归（`详细设计与实施计划.md` 293 行 WBS 路由标签丢失导致 check-plan-routing FAIL，HEAD `8656092` 可复现，非本卡引入）。**未实现 push、未做端到端 IPC 联调（归 M1-7）、未签 M1-6 整体 PASS**。NEXT 移至 `M1-6.c`。
 
 ## 2. 模型映射
 
@@ -155,7 +156,8 @@ NEXT=<PASS 后唯一下一检查点；FAIL 时保持原 NEXT>
 > **M1-4 已由 `AI:DEEP / R:high` 强模型实现并实测 PASS**，证据
 > `logs/checkpoints/M1-4-20260901-1805.md`；**M1-5 已由 `AI:BALANCED / R:high`
 > 实现并 PASS**，证据 `logs/checkpoints/M1-5-20260902-1130.md`；**M1-6.a（Git 写能力契约冻结+任务卡展开）已由 `AI:BALANCED / R:high` PASS**，证据
-> `logs/checkpoints/M1-6.a-20260902-0955.md`；NEXT 已移至 `M1-6.b`（Git 写闸门内核 + `git_commit`，`AI:DEEP / R:high`）。
+> `logs/checkpoints/M1-6.a-20260902-0955.md`；**M1-6.b（Git 写后端核心：双阶段闸门 + 六个白名单写操作）已由 `AI:DEEP / R:high`（Kimi K3）PASS**，证据
+> `logs/checkpoints/M1-6.b-20260902-1327.md`；NEXT 已移至 `M1-6.c`（范围由下一任务书裁定，原 W2 checkout 已并入 b 卡）。
 > 下方 M1-4 任务卡保留存档，供格式参考。
 
 ```text
