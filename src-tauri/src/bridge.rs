@@ -1240,6 +1240,18 @@ pub(crate) fn take_confirmable_git_job(
     Ok(job)
 }
 
+/// 清理已过期的待确认任务（纯函数）：request 阶段插入新任务前调用，
+/// 防止未被 confirm 的任务在表里无限累积。只清理「即使 confirm 也会被拒」的
+/// 过期任务，不影响任何有效期内任务。
+pub(crate) fn purge_expired_git_jobs(
+    jobs: &mut HashMap<String, GitWriteJob>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> usize {
+    let before = jobs.len();
+    jobs.retain(|_, job| now < job.expires_at);
+    before - jobs.len()
+}
+
 /// 审计 detail 构造（纯函数）：只含操作语义与计数。
 /// 刻意不接收 paths/diff/凭据，从签名上杜绝敏感内容落审计。
 pub(crate) fn git_write_audit_detail(
@@ -1417,11 +1429,13 @@ pub fn request_git_write(
         error: None,
     };
     let path_count = affected.len();
-    app.state::<AppState>()
-        .pending_git_jobs
-        .lock()
-        .unwrap()
-        .insert(job.id.clone(), job.clone());
+    {
+        let state = app.state::<AppState>();
+        let mut jobs = state.pending_git_jobs.lock().unwrap();
+        // 顺带清理过期任务（否则未被 confirm 的任务会一直在表里累积）
+        purge_expired_git_jobs(&mut jobs, now);
+        jobs.insert(job.id.clone(), job.clone());
+    }
     workspace::log_audit(
         &app,
         "git_write_request",
@@ -1480,7 +1494,7 @@ pub fn confirm_git_write(
         let mut finished = job_clone.clone();
         finished.finished_at = Some(chrono::Utc::now());
         match result {
-            Ok(_) => {
+            Ok(path_count) => {
                 finished.status = GitWriteStatus::Success;
                 workspace::log_audit(
                     &app_thread,
@@ -1489,7 +1503,7 @@ pub fn confirm_git_write(
                         job_clone.op,
                         &job_clone.repo_id,
                         &job_clone.id,
-                        job_clone.paths.len(),
+                        path_count,
                         true,
                         "ok",
                     ),
@@ -1520,12 +1534,16 @@ pub fn confirm_git_write(
 }
 
 /// 阶段二执行体：重新做路径锁定与参数校验后才执行写（fail-closed 双保险）。
-fn execute_git_write(app: &AppHandle, job: &GitWriteJob) -> Result<(), String> {
+/// 返回实际影响路径数（供审计 `path_count` 字段使用）；分支类操作恒为 0。
+///
+/// 注意：`sync::open_readonly` 只是「打开已锁定路径下的仓库」的既有命名
+/// （内部复用 M1-5 的 `repo_dir` 路径锁定），写操作同样经它进入。
+fn execute_git_write(app: &AppHandle, job: &GitWriteJob) -> Result<usize, String> {
     let repo = sync::open_readonly(app, &job.repo_id)?;
     match job.op {
-        GitWriteOp::Stage => sync::write_stage(&repo, &job.paths).map(|_| ()),
-        GitWriteOp::Unstage => sync::write_unstage(&repo, &job.paths).map(|_| ()),
-        GitWriteOp::Discard => sync::write_discard(&repo, &job.paths).map(|_| ()),
+        GitWriteOp::Stage => sync::write_stage(&repo, &job.paths),
+        GitWriteOp::Unstage => sync::write_unstage(&repo, &job.paths),
+        GitWriteOp::Discard => sync::write_discard(&repo, &job.paths),
         GitWriteOp::Commit => {
             let msg = job.message.clone().unwrap_or_default();
             let paths = if job.paths.is_empty() {
@@ -1533,15 +1551,21 @@ fn execute_git_write(app: &AppHandle, job: &GitWriteJob) -> Result<(), String> {
             } else {
                 Some(job.paths.as_slice())
             };
-            sync::write_commit(&repo, &msg, paths).map(|_| ())
+            // 全量提交（paths=None）用执行前的脏文件数作口径：
+            // job.paths 此时为空，若直接取 len() 会让审计永远记为 0。
+            let count = match paths {
+                None => sync::read_status(&repo)?.len(),
+                Some(ps) => ps.len(),
+            };
+            sync::write_commit(&repo, &msg, paths).map(|_| count)
         }
         GitWriteOp::CreateBranch => {
             let name = job.branch.clone().unwrap_or_default();
-            sync::write_create_branch(&repo, &name, job.checkout).map(|_| ())
+            sync::write_create_branch(&repo, &name, job.checkout).map(|_| 0)
         }
         GitWriteOp::CheckoutBranch => {
             let name = job.branch.clone().unwrap_or_default();
-            sync::write_checkout_branch(&repo, &name).map(|_| ())
+            sync::write_checkout_branch(&repo, &name).map(|_| 0)
         }
     }
 }
@@ -3413,6 +3437,22 @@ mod git_write_gate_tests {
             .expect_err("非 Pending 状态必须拒绝");
         assert_eq!(err2, "任务状态异常");
         assert!(jobs2.is_empty(), "异常状态任务应被清除");
+    }
+
+    // T-gw-c-7：过期任务清理只清过期项，有效期内任务必须保留
+    #[test]
+    fn git_write_gate_purge_expired_jobs() {
+        let mut jobs = HashMap::new();
+        let now = Utc::now();
+        let fresh = make_job(GitWriteOp::Stage, now, 300);
+        let fresh_id = fresh.id.clone();
+        let stale = make_job(GitWriteOp::Discard, now - Duration::seconds(600), 300);
+        jobs.insert(fresh.id.clone(), fresh);
+        jobs.insert(stale.id.clone(), stale);
+        let removed = purge_expired_git_jobs(&mut jobs, now);
+        assert_eq!(removed, 1, "只应清理已过期任务");
+        assert!(jobs.contains_key(&fresh_id), "有效期内任务必须保留");
+        assert_eq!(jobs.len(), 1);
     }
 
     // T-gw-b-12：审计 detail 只含操作语义与计数，绝无凭据/路径清单/diff 全量

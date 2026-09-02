@@ -868,6 +868,16 @@ pub fn checkout_conflict(repo: &Repository, name: &str) -> Result<Option<String>
 
 /// 切换到已存在的本地分支。脏工作区与目标分支有文件级冲突时在移动
 /// HEAD 之前整体拒绝（失败零部分动作）；拒绝 detached HEAD/路径/checkout --force。
+///
+/// 顺序刻意是**先检出目标树、再移动 HEAD**（M1-6.c 复核修复）：
+/// - 旧实现「先 `set_head` 再 `checkout_head`」有两个缺陷：
+///   ① `checkout_head` 以新 HEAD 为基线，旧分支独有的文件既不会被移除、
+///      索引条目也会残留，切回后 `git status` 凭空出现「已添加」条目，
+///      后续全量 commit 会把别的分支的文件一起提交；
+///   ② checkout 失败时 HEAD 已经移动，构成部分动作。
+/// - 先 `checkout_tree`（以索引为基线，safe 策略）再 `set_head`：clean 切换
+///   与 git CLI 一致（移除旧分支独有文件并同步索引），冲突时直接返回错误且
+///   HEAD 与工作区均不变；若 `set_head` 极端失败，尽力把工作区滚回原树。
 pub fn write_checkout_branch(repo: &Repository, name: &str) -> Result<String, String> {
     validate_branch_name(name)?;
     if let Some(conflict) = checkout_conflict(repo, name)? {
@@ -875,10 +885,22 @@ pub fn write_checkout_branch(repo: &Repository, name: &str) -> Result<String, St
             "工作区有未提交改动且与目标分支冲突，禁止切换: {conflict}"
         ));
     }
-    let refname = format!("refs/heads/{name}");
-    repo.set_head(&refname).map_err(|e| e.to_string())?;
-    repo.checkout_head(Some(CheckoutBuilder::new().safe()))
+    let branch = repo
+        .find_branch(name, git2::BranchType::Local)
+        .map_err(|_| format!("分支不存在: {name}"))?;
+    let target = branch.get().peel_to_tree().map_err(|e| e.to_string())?;
+    let previous_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
+    repo.checkout_tree(&target.into_object(), Some(CheckoutBuilder::new().safe()))
         .map_err(|e| format!("切换分支失败: {e}"))?;
+    let refname = format!("refs/heads/{name}");
+    if let Err(e) = repo.set_head(&refname) {
+        // 极端情形：工作区已切到目标树但 HEAD 未移动 —— 尽力回滚，
+        // 避免「工作区是 A 分支、HEAD 指向 B 分支」的不一致状态。
+        if let Some(prev) = previous_tree {
+            let _ = repo.checkout_tree(&prev.into_object(), Some(CheckoutBuilder::new().safe()));
+        }
+        return Err(format!("切换分支失败（HEAD 未移动，已回滚工作区）: {e}"));
+    }
     Ok(name.to_string())
 }
 
@@ -1470,5 +1492,136 @@ mod git_write_tests {
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(head, "other");
         assert_eq!(head_back, default_branch);
+    }
+
+    // T-gw-c-1（M1-6.c 复核）：切换分支后工作区与索引必须与目标树一致
+    // ——旧实现会残留旧分支独有文件与索引条目（status 凭空「已添加」）
+    #[test]
+    fn git_write_checkout_syncs_workdir_and_index() {
+        let (dir, repo) = temp_repo("cksync");
+        fs::write(dir.join("a.txt"), "a\n").expect("write");
+        commit_all(&repo, "init");
+        let base = head_shorthand(&repo);
+        write_create_branch(&repo, "other", false).expect("create");
+        write_checkout_branch(&repo, "other").expect("to other");
+        fs::write(dir.join("other.txt"), "o\n").expect("write");
+        commit_all(&repo, "add other");
+        write_checkout_branch(&repo, &base).expect("back to base");
+        let file_gone = !dir.join("other.txt").exists();
+        let status = read_status(&repo).expect("status");
+        let index_has_other = repo
+            .index()
+            .expect("index")
+            .get_path(std::path::Path::new("other.txt"), 0)
+            .is_some();
+        let head = head_shorthand(&repo);
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(head, base, "应回到原分支");
+        assert!(file_gone, "旧分支独有文件应随切换移除");
+        assert!(status.is_empty(), "切换后状态应干净: {status:?}");
+        assert!(!index_has_other, "索引不得残留旧分支条目");
+    }
+
+    // T-gw-c-2：目标分支存在的同名未跟踪文件 → 拒绝且不覆盖本地文件
+    #[test]
+    fn git_write_checkout_untracked_conflict_rejected() {
+        let (dir, repo) = temp_repo("ckunt");
+        fs::write(dir.join("a.txt"), "a\n").expect("write");
+        commit_all(&repo, "init");
+        let base = head_shorthand(&repo);
+        write_create_branch(&repo, "other", false).expect("create");
+        write_checkout_branch(&repo, "other").expect("to other");
+        fs::write(dir.join("u.txt"), "in-branch\n").expect("write");
+        commit_all(&repo, "add u");
+        write_checkout_branch(&repo, &base).expect("back");
+        // 未跟踪文件与目标分支同名 → 必须拒绝（不得覆盖/删除本地文件）
+        fs::write(dir.join("u.txt"), "local\n").expect("write");
+        let err = write_checkout_branch(&repo, "other").expect_err("未跟踪冲突必须拒绝");
+        let head = head_shorthand(&repo);
+        let content = fs::read_to_string(dir.join("u.txt")).expect("read");
+        let _ = fs::remove_dir_all(&dir);
+        assert!(err.contains("冲突"), "实际错误: {err}");
+        assert_eq!(head, base, "HEAD 不得移动");
+        assert_eq!(content, "local\n", "未跟踪文件不得被覆盖");
+    }
+
+    // T-gw-c-3：未跟踪目录与目标分支文件共存时应允许切换（不得误拦截、不得删未跟踪文件）
+    #[test]
+    fn git_write_checkout_allows_untracked_dir_coexist() {
+        let (dir, repo) = temp_repo("ckcoexist");
+        fs::write(dir.join("a.txt"), "a\n").expect("write");
+        commit_all(&repo, "init");
+        let base = head_shorthand(&repo);
+        write_create_branch(&repo, "other", false).expect("create");
+        write_checkout_branch(&repo, "other").expect("to other");
+        fs::create_dir_all(dir.join("newdir")).expect("mkdir");
+        fs::write(dir.join("newdir").join("x.txt"), "x\n").expect("write");
+        commit_all(&repo, "add newdir/x");
+        write_checkout_branch(&repo, &base).expect("back");
+        // 工作区有未跟踪目录 newdir/（含 y.txt），与目标分支 newdir/x.txt 不冲突
+        fs::create_dir_all(dir.join("newdir")).expect("mkdir");
+        fs::write(dir.join("newdir").join("y.txt"), "y\n").expect("write");
+        let r = write_checkout_branch(&repo, "other");
+        let head = head_shorthand(&repo);
+        let x_exists = dir.join("newdir").join("x.txt").exists();
+        let y_exists = dir.join("newdir").join("y.txt").exists();
+        let _ = fs::remove_dir_all(&dir);
+        assert!(r.is_ok(), "非冲突场景应允许切换: {r:?}");
+        assert_eq!(head, "other");
+        assert!(x_exists, "目标分支文件应被检出");
+        assert!(y_exists, "未跟踪文件不得被删除");
+    }
+
+    // T-gw-c-4：unstage 新建文件不得删除工作区文件（防数据丢失）
+    #[test]
+    fn git_write_unstage_new_file_keeps_workdir_file() {
+        let (dir, repo) = temp_repo("unsnew");
+        fs::write(dir.join("a.txt"), "a\n").expect("write");
+        commit_all(&repo, "init");
+        fs::write(dir.join("new.txt"), "new\n").expect("write");
+        write_stage(&repo, &["new.txt".to_string()]).expect("stage");
+        write_unstage(&repo, &["new.txt".to_string()]).expect("unstage");
+        let exists = dir.join("new.txt").exists();
+        let content = fs::read_to_string(dir.join("new.txt")).ok();
+        let status = read_status(&repo).expect("status");
+        let _ = fs::remove_dir_all(&dir);
+        assert!(exists, "取消暂存不得删除工作区文件");
+        assert_eq!(content.as_deref(), Some("new\n"));
+        assert!(
+            status
+                .iter()
+                .any(|s| s.path == "new.txt" && s.status == "untracked"),
+            "应回到未跟踪状态: {status:?}"
+        );
+    }
+
+    // T-gw-c-5：discard 工作区已删除的跟踪文件 → 按索引内容恢复（不丢数据）
+    #[test]
+    fn git_write_discard_restores_deleted_tracked_file() {
+        let (dir, repo) = temp_repo("discdel");
+        fs::write(dir.join("a.txt"), "a\n").expect("write");
+        commit_all(&repo, "init");
+        fs::remove_file(dir.join("a.txt")).expect("delete");
+        write_discard(&repo, &["a.txt".to_string()]).expect("discard");
+        let content = fs::read_to_string(dir.join("a.txt")).ok();
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(content.as_deref(), Some("a\n"), "已删除的跟踪文件应被恢复");
+    }
+
+    // T-gw-c-6：全量 commit（paths=None）必须记录工作区删除（删除不静默丢失）
+    #[test]
+    fn git_write_full_commit_records_workdir_deletion() {
+        let (dir, repo) = temp_repo("fulldel");
+        fs::write(dir.join("a.txt"), "a\n").expect("write");
+        fs::write(dir.join("b.txt"), "b\n").expect("write");
+        commit_all(&repo, "init");
+        fs::remove_file(dir.join("b.txt")).expect("delete");
+        fs::write(dir.join("c.txt"), "c\n").expect("write");
+        write_commit(&repo, "full", None).expect("commit");
+        let head_b = head_file_content(&repo, "b.txt");
+        let head_c = head_file_content(&repo, "c.txt");
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(head_b, None, "工作区删除应进入提交（HEAD 树不再含 b.txt）");
+        assert_eq!(head_c.as_deref(), Some("c\n"), "新增文件应进入提交");
     }
 }

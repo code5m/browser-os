@@ -18,7 +18,8 @@
 #      默认模式按设计 EXIT=1，属现状缺口，不并入本门禁）
 #      M0-2.c 后默认模式必须 PASS，防止退出路径回归）
 #  12. M0-6.c GUI 回归汇总脚本自检（不启动 GUI）
-#  13. 工作树、暂存区、当前分支相对基线的 git diff --check
+#  13. M1-6 Git 写安全不变量夹具（白名单/写原语校验/闸门/审计脱敏/ACL）
+#  14. 工作树、暂存区、当前分支相对基线的 git diff --check
 #
 # 用法:
 #   scripts/pre-merge.sh            正式门禁（所有检查必须通过）
@@ -63,6 +64,7 @@ pre-merge.sh — M0-1.c 本地 pre-merge 门禁（M0-1 脚本合并前检查入�
   build metrics                 measure-build-metrics.py --self-test / --compare（总体积 ≤15%、
                                 warning 不增加；指标存 logs/m0-build-metrics/）
   GUI regression harness        m0-6c-gui-regression.py --self-test（不启动 GUI）
+  git write policy fixture      check-git-write-policy.py --self-test / 默认门禁
   git diff --check              工作树 + 暂存区 + 当前分支相对基线（机器证据除外）
 
 退出码: 0 = 全部通过；1 = 任一失败；2 = 非法参数
@@ -202,6 +204,12 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/m0-6c-gui-regression.py" --self-test >/dev/null 2>&1 \
     || pm_fail "m0-6c-gui-regression.py --self-test"
 
+  pm_log "M1-6 Git 写安全不变量夹具…"
+  python3 "$SCRIPT_DIR/check-git-write-policy.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-git-write-policy.py --self-test"
+  python3 "$SCRIPT_DIR/check-git-write-policy.py" >/dev/null 2>&1 \
+    || pm_fail "check-git-write-policy.py（Git 写安全不变量被破坏）"
+
   pm_log "git diff --check（工作树 + 暂存区，机器证据除外）…"
   # Raw evidence is immutable third-party output; SHA256SUMS, not whitespace rewriting, protects it.
   git -C "$ROOT" diff --check -- . ':(exclude)logs/m0-baseline/**' || pm_fail "git diff --check (worktree)"
@@ -251,7 +259,11 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/check-plan-routing.py" ] || { echo "FAIL: check-plan-routing.py missing"; rc=1; }
   [ -f "$SCRIPT_DIR/check-lifecycle-contract.py" ] || { echo "FAIL: check-lifecycle-contract.py missing"; rc=1; }
   [ -f "$SCRIPT_DIR/check-security-policy.py" ] || { echo "FAIL: check-security-policy.py missing"; rc=1; }
+  [ -f "$SCRIPT_DIR/check-git-write-policy.py" ] || { echo "FAIL: check-git-write-policy.py missing"; rc=1; }
   [ -f "$SCRIPT_DIR/measure-build-metrics.py" ] || { echo "FAIL: measure-build-metrics.py missing"; rc=1; }
+  if ! python3 "$SCRIPT_DIR/check-git-write-policy.py" --self-test >/dev/null 2>&1; then
+    echo "FAIL: check-git-write-policy.py --self-test"; rc=1
+  fi
   if ! python3 "$SCRIPT_DIR/measure-build-metrics.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: measure-build-metrics.py --self-test"; rc=1
   fi
