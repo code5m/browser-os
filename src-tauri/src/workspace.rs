@@ -119,6 +119,14 @@ pub fn load_audit(app: &AppHandle) -> Vec<AuditEntry> {
 pub fn bookmarks_file(app: &AppHandle) -> PathBuf {
     data_dir(app).join("bookmarks.json")
 }
+
+/// M1-9：浏览器会话存档目录（`data_dir/sessions/<id>.json`，原子写）。
+/// 与成果库/收藏分开：会话是「浏览痕迹」，生命周期与隐私边界都不同。
+pub fn sessions_dir(app: &AppHandle) -> PathBuf {
+    let d = data_dir(app).join("sessions");
+    ensure(&d);
+    d
+}
 pub fn load_bookmarks(app: &AppHandle) -> Vec<Bookmark> {
     fs::read_to_string(bookmarks_file(app))
         .ok()

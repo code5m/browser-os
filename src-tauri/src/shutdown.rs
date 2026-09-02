@@ -386,8 +386,10 @@ mod shutdown_tests {
 // M0-2.d：重复退出 / 半初始化退出 / 失败降级 回归矩阵
 //
 // 任务名与顺序刻意对齐 `bridge::register_shutdown_tasks` 的真实注册顺序
-// （stop-background-workers → close-tabs → kill-terminals → shutdown-grid），
-// 这样失败归因可以直接对应到生产路径，而不是只为测试造的假名。
+// （stop-background-workers → flush-sessions → close-tabs → kill-terminals →
+// shutdown-grid；M1-9 在 close-tabs 前插入 flush-sessions——先确定会话数据的
+// 落盘/释放，再销毁子 webview），这样失败归因可以直接对应到生产路径，
+// 而不是只为测试造的假名。
 // ===========================================================================
 #[cfg(test)]
 mod m0_2d_lifecycle_tests {

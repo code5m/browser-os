@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { bridge } from "./bridge";
 import { useBrowserStore } from "./stores/useBrowserStore";
 import { useResourceStore } from "./stores/useResourceStore";
+import { useSessionStore } from "./stores/useSessionStore";
 import { useWorkspaceStore } from "./stores/useWorkspaceStore";
 import { useGitStore } from "./stores/useGitStore";
 import { useSystemStore } from "./stores/useSystemStore";
@@ -15,10 +16,12 @@ import MainArea from "./components/layout/MainArea.vue";
 import StatusBar from "./components/layout/StatusBar.vue";
 import ConfirmModal from "./components/shared/ConfirmModal.vue";
 import GitWriteConfirmDialog from "./components/workspace/GitWriteConfirmDialog.vue";
+import SessionCloseDialog from "./components/browser/SessionCloseDialog.vue";
 import AINavPanel from "./components/browser/AINavPanel.vue";
 
 const browser = useBrowserStore();
 const resources = useResourceStore();
+const session = useSessionStore();
 const ws = useWorkspaceStore();
 const git = useGitStore();
 const system = useSystemStore();
@@ -83,6 +86,9 @@ onMounted(async () => {
   // M1-8：资源瀑布实时事件（payload 已是后端脱敏 DTO）。订阅放全局，
   // 保证 Dock 面板未挂载时记录也不丢。
   bridge.onResourceReceived((r) => resources.applyReceived(r));
+  // M1-9 关闭协议：tabClose 统一走拦截器（弹「保存/删除/取消」），
+  // 用户决定后由 useSessionStore.resolveClose 调 browser.closeTabNow 真正关闭。
+  browser.bindCloseInterceptor((id) => session.requestClose(id));
   bridge.onTabRecovery((d) => browser.handleTabRecovery(d));
   bridge.onNewTabRequest((u) => {
     setTimeout(() => browser.tabNew(u.url), 0);
@@ -187,6 +193,8 @@ onMounted(async () => {
   window.addEventListener("keydown", onGlobalKeydown);
 
   window.addEventListener("beforeunload", () => bridge.closeBrowser().catch(() => {}));
+  // M1-9：前端卸载前 flush（与后端 ShutdownCoordinator 的 flush-sessions 双保险）
+  window.addEventListener("beforeunload", () => bridge.flushSessions().catch(() => {}));
   window.addEventListener("click", ws.closeCtx);
   window.addEventListener("scroll", ws.closeCtx, true);
   // 文件树右键菜单同样需要点空白/滚动时关闭
@@ -210,6 +218,8 @@ onMounted(async () => {
     <ConfirmModal />
     <!-- M1-7 Git 写确认闸门：全局挂载，保证任何视图下待确认任务都能被看到/处理 -->
     <GitWriteConfirmDialog />
+    <!-- M1-9 关闭协议弹窗：关闭页签时全局可见（保存/删除/取消） -->
+    <SessionCloseDialog />
   </div>
 </template>
 

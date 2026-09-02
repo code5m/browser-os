@@ -23,6 +23,10 @@ import type {
   ResourceReceived,
   ResourceCaptureSettings,
   TabResourceList,
+  BrowserSession,
+  SessionSummary,
+  SessionPolicy,
+  SessionFlushReport,
 } from "./types";
 
 // M0-0.b 测量配置（契约 logs/m0-baseline-contract-v1.md；非测量运行后端返回 null）
@@ -354,6 +358,44 @@ export const bridge = {
   // 订阅资源事件（payload 为脱敏后的 ResourceReceived DTO）
   onResourceReceived: (cb: (r: ResourceReceived) => void) =>
     listen<ResourceReceived>("resource-received", (e) => cb(e.payload)),
+
+  // ====== M1-9 会话存档与关闭协议 ======
+  // 落盘数据全部为后端脱敏形态（URL 敏感参数值为 ***，无 headers/body）；
+  // 未显式保存的草稿不落盘（auto_save_on_exit 默认关）。
+
+  // 保存当前页签为会话（立即落盘）。preview 为最小文本预览（可空，后端截断 512B）
+  sessionSave: (tabId: string, preview?: string) =>
+    invoke<SessionSummary>("session_save", { tabId, preview: preview ?? null }),
+
+  // 明确丢弃草稿（关闭弹窗选「删除」）：不落盘
+  sessionDiscard: (tabId: string) => invoke("session_discard", { tabId }),
+
+  // 列出本地会话存档（按 updated_at 倒序）
+  sessionList: () => invoke<SessionSummary[]>("session_list"),
+
+  // 读取会话详情（含已脱敏资源列表）
+  sessionGet: (id: string) => invoke<BrowserSession>("session_get", { id }),
+
+  // 删除会话存档（幂等；删除存档不影响仍打开的同名页签）
+  sessionDelete: (id: string) => invoke<boolean>("session_delete", { id }),
+
+  // 导出会话为脱敏 JSON 文本（不写磁盘，由前端决定保存位置）
+  sessionExport: (id: string) => invoke<string>("session_export", { id }),
+
+  // 用会话中已脱敏的 URL 新建页签（登录态/一次性 token 不会恢复）
+  sessionRestore: (id: string) => invoke<TabInfo>("session_restore", { id }),
+
+  // 关闭路径 flush：按策略落盘/释放草稿 + 清理 tmp + 容量裁剪
+  flushSessions: () => invoke<SessionFlushReport>("flush_sessions"),
+
+  // 会话策略：关闭弹窗 / 退出自动保存
+  getSessionPolicy: () => invoke<SessionPolicy>("get_session_policy"),
+
+  setSessionPolicy: (closePrompt?: boolean, autoSaveOnExit?: boolean) =>
+    invoke<SessionPolicy>("set_session_policy", {
+      closePrompt: closePrompt ?? null,
+      autoSaveOnExit: autoSaveOnExit ?? null,
+    }),
 
   // ====== M0-0.b 测量钩子（契约 logs/m0-baseline-contract-v1.md §6.1/§6.3） ======
   // ready 信号：前端 mount + 2×rAF 后调用；后端写带 run_id 的 ready 信号（轻量 IPC 往返）

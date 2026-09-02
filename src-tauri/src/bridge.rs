@@ -295,6 +295,12 @@ pub struct AppState {
     pub resource_buffer: Mutex<ResourceBuffer>,
     /// M1-8：资源采集开关与容量设置（会话内生效，不持久化）。
     pub resource_capture: Mutex<ResourceCaptureSettings>,
+    /// M1-9：会话草稿（tab_id -> 草稿）。打开 tab 时建立，仅内存，绝不自动落盘。
+    pub session_drafts: Mutex<HashMap<String, SessionDraft>>,
+    /// M1-9：关闭 tab 时是否弹「保存 / 删除」（默认开，见 `main.rs` setup 置位）。
+    pub session_close_prompt: AtomicBool,
+    /// M1-9：退出前是否自动保存仍打开的 tab（默认关：不静默保存）。
+    pub session_auto_save_on_exit: AtomicBool,
 }
 
 /// 终端会话：持有 PTY 写入端与子进程，读取在后台线程进行。
@@ -724,6 +730,8 @@ fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
     });
     eprintln!("[create_tab] run_on_main_thread 已排队 label={}", id);
 
+    // M1-9：建立会话草稿（仅内存，落盘需用户显式选择）
+    upsert_session_draft(&app, &id, &target, &title0);
     start_resource_scanner(app.clone());
     eprintln!("[create_tab] 页签已创建 label={} url={}", id, target);
     Ok(info)
@@ -751,6 +759,8 @@ fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
     state.tab_recovery.lock().unwrap().remove(id);
     // M1-8：tab 关闭即清理该 tab 的资源瀑布记录（生命周期红线）
     state.resource_buffer.lock().unwrap().remove_tab(id);
+    // M1-9：释放会话草稿（未显式保存的不落盘，符合「不静默保存」）
+    state.session_drafts.lock().unwrap().remove(id);
     state.tabs.lock().unwrap().remove(id);
     let mut active = state.active_tab.lock().unwrap();
     if active.as_deref() == Some(id) {
@@ -773,6 +783,20 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
             app.state::<AppState>()
                 .shutdown_requested
                 .store(true, Ordering::SeqCst);
+            Ok(())
+        })?;
+    }
+
+    {
+        // M1-9：会话 flush 必须**先于** close-tabs——先确定会话数据的落盘/释放，
+        // 再销毁子 webview，避免清理过程中的失败/中断导致会话状态不确定。
+        let app = app.clone();
+        coordinator.register("flush-sessions", move || {
+            let report = flush_sessions_inner(&app);
+            eprintln!(
+                "[shutdown] flush-sessions persisted={} drafts_dropped={} tmp_removed={} capacity_removed={}",
+                report.persisted, report.drafts_dropped, report.tmp_removed, report.capacity_removed
+            );
             Ok(())
         })?;
     }
@@ -1244,6 +1268,315 @@ pub fn set_resource_capture_settings(
         format!("enabled={enabled} max_per_tab={:?}", snapshot.max_per_tab),
     );
     Ok(snapshot)
+}
+
+// ---------------------------------------------------------------------------
+// M1-9 会话存档与关闭协议（#14：请求/资源可见 + 关闭保存删除）
+//
+// 落盘白名单见 `domain.rs`；命令层额外保证：
+//   - 全部过 `check_invocation_source`（远程页面/伪造 label 一律拒绝）
+//   - 审计只记 tab_id / 会话 id / 计数，绝不记 URL 与预览内容
+//   - 容量：`SESSION_MAX_RESOURCES`（单会话资源）+ `SESSION_MAX_COUNT`（会话总数）
+//   - 关闭协议：未经用户同意的草稿不落盘（`auto_save_on_exit` 默认关）
+// ---------------------------------------------------------------------------
+
+/// 建立/刷新某 tab 的会话草稿（打开 tab 与导航时调用；仅内存）。
+fn upsert_session_draft(app: &AppHandle, tab_id: &str, url: &str, title: &str) {
+    let state = app.state::<AppState>();
+    let mut drafts = state.session_drafts.lock().unwrap();
+    let safe_url = crate::security_policy::redact_sensitive_url(url);
+    if let Some(d) = drafts.get_mut(tab_id) {
+        d.url = safe_url;
+        if !title.is_empty() {
+            d.title = title.to_string();
+        }
+    } else {
+        drafts.insert(
+            tab_id.to_string(),
+            SessionDraft {
+                tab_id: tab_id.to_string(),
+                url: safe_url,
+                title: title.to_string(),
+            },
+        );
+    }
+}
+
+fn drop_session_draft(app: &AppHandle, tab_id: &str) {
+    app.state::<AppState>()
+        .session_drafts
+        .lock()
+        .unwrap()
+        .remove(tab_id);
+}
+
+/// 从当前 tab 状态构建会话（URL 已脱敏，资源取自 M1-8 缓冲）。
+fn build_session_for_tab(
+    app: &AppHandle,
+    tab_id: &str,
+    preview: &str,
+    reason: &str,
+) -> Option<BrowserSession> {
+    let state = app.state::<AppState>();
+    // 优先取草稿（url 已脱敏、标题为最近一次上报），回退 tabs 表。
+    let (url, title) = {
+        let drafts = state.session_drafts.lock().unwrap();
+        match drafts.get(tab_id) {
+            Some(d) if !d.url.is_empty() => (d.url.clone(), d.title.clone()),
+            _ => {
+                let tabs = state.tabs.lock().unwrap();
+                match tabs.get(tab_id) {
+                    Some(t) => (t.url.clone(), t.title.clone()),
+                    None => return None,
+                }
+            }
+        }
+    };
+    let records = state.resource_buffer.lock().unwrap().records(tab_id);
+    Some(crate::session::build_session(
+        tab_id, &url, &title, preview, &records, reason,
+    ))
+}
+
+/// 会话落盘 + 容量守卫（超出 `SESSION_MAX_COUNT` 删最旧）。
+fn persist_session(app: &AppHandle, session: &BrowserSession) -> Result<(), String> {
+    let dir = workspace::sessions_dir(app);
+    crate::session::save_session(&dir, session)?;
+    crate::session::prune_sessions(&dir, SESSION_MAX_COUNT);
+    Ok(())
+}
+
+/// 保存当前 tab 为会话（立即落盘）。`preview` 为前端采集的最小文本预览
+/// （可为空），落盘前由 `build_session` 做 URL 脱敏与 512B 截断。
+#[tauri::command]
+pub fn session_save(
+    app: AppHandle,
+    webview: tauri::Webview,
+    tab_id: String,
+    preview: Option<String>,
+) -> Result<SessionSummary, String> {
+    check_invocation_source(&webview, "session_save", None, &app)?;
+    check_tab_id(&tab_id)?;
+    let text = preview.unwrap_or_default();
+    let session = build_session_for_tab(&app, &tab_id, &text, CLOSE_REASON_SAVED)
+        .ok_or_else(|| "页签不存在".to_string())?;
+    persist_session(&app, &session)?;
+    drop_session_draft(&app, &tab_id);
+    workspace::log_audit(
+        &app,
+        "session_save",
+        format!(
+            "tab_id={} resources={} preview_bytes={}",
+            tab_id,
+            session.resource_count,
+            session.preview.len()
+        ),
+    );
+    Ok(crate::session::summarize(&session))
+}
+
+/// 明确丢弃某 tab 的会话草稿（关闭弹窗选「删除」）：不落盘，仅审计。
+#[tauri::command]
+pub fn session_discard(
+    app: AppHandle,
+    webview: tauri::Webview,
+    tab_id: String,
+) -> Result<(), String> {
+    check_invocation_source(&webview, "session_discard", None, &app)?;
+    check_tab_id(&tab_id)?;
+    let existed = app
+        .state::<AppState>()
+        .session_drafts
+        .lock()
+        .unwrap()
+        .remove(&tab_id)
+        .is_some();
+    workspace::log_audit(
+        &app,
+        "session_discard",
+        format!("tab_id={tab_id} draft_existed={existed}"),
+    );
+    Ok(())
+}
+
+/// 列出本地会话存档（按 updated_at 倒序；损坏文件跳过）。
+#[tauri::command]
+pub fn session_list(
+    app: AppHandle,
+    webview: tauri::Webview,
+) -> Result<Vec<SessionSummary>, String> {
+    check_invocation_source(&webview, "session_list", None, &app)?;
+    Ok(crate::session::list_sessions(&workspace::sessions_dir(
+        &app,
+    )))
+}
+
+/// 读取单个会话详情（含已脱敏资源列表）。
+#[tauri::command]
+pub fn session_get(
+    app: AppHandle,
+    webview: tauri::Webview,
+    id: String,
+) -> Result<BrowserSession, String> {
+    check_invocation_source(&webview, "session_get", None, &app)?;
+    crate::session::load_session(&workspace::sessions_dir(&app), &id)
+}
+
+/// 删除会话存档（幂等）。删除的是存档，不影响仍打开的同名页签。
+#[tauri::command]
+pub fn session_delete(app: AppHandle, webview: tauri::Webview, id: String) -> Result<bool, String> {
+    check_invocation_source(&webview, "session_delete", None, &app)?;
+    let removed = crate::session::delete_session(&workspace::sessions_dir(&app), &id)?;
+    workspace::log_audit(&app, "session_delete", format!("id={id} removed={removed}"));
+    Ok(removed)
+}
+
+/// 导出会话为脱敏 JSON 文本（**不写磁盘**：不引入新的路径写入面，
+/// 由前端自行决定保存位置）。
+#[tauri::command]
+pub fn session_export(
+    app: AppHandle,
+    webview: tauri::Webview,
+    id: String,
+) -> Result<String, String> {
+    check_invocation_source(&webview, "session_export", None, &app)?;
+    let session = crate::session::load_session(&workspace::sessions_dir(&app), &id)?;
+    let json = serde_json::to_string_pretty(&session).map_err(|e| e.to_string())?;
+    workspace::log_audit(
+        &app,
+        "session_export",
+        format!("id={id} bytes={}", json.len()),
+    );
+    Ok(json)
+}
+
+/// 用会话中**已脱敏**的 URL 新建页签（重启/回看场景）。
+/// 边界：URL 在落盘时已脱敏，一次性 token / 登录态参数不会恢复，
+/// 因此还原出的页面可能需要重新登录——这是隐私红线的必然代价，不伪造原 URL。
+#[tauri::command]
+pub fn session_restore(
+    app: AppHandle,
+    webview: tauri::Webview,
+    id: String,
+) -> Result<TabInfo, String> {
+    check_invocation_source(&webview, "session_restore", None, &app)?;
+    let session = crate::session::load_session(&workspace::sessions_dir(&app), &id)?;
+    let tab = create_tab(app.clone(), &session.url)?;
+    workspace::log_audit(
+        &app,
+        "session_restore",
+        format!(
+            "id={id} tab_id={} resources={}",
+            tab.id, session.resource_count
+        ),
+    );
+    Ok(tab)
+}
+
+/// 关闭路径 flush（ShutdownCoordinator 任务 + 前端 beforeunload 双保险）：
+/// ① `auto_save_on_exit` 打开时落盘仍打开 tab 的会话；否则仅释放草稿（不静默保存）；
+/// ② 清理异常退出残留 `.tmp`；③ 容量裁剪。行为确定、可审计。
+#[tauri::command]
+pub fn flush_sessions(
+    app: AppHandle,
+    webview: tauri::Webview,
+) -> Result<SessionFlushReport, String> {
+    check_invocation_source(&webview, "flush_sessions", None, &app)?;
+    Ok(flush_sessions_inner(&app))
+}
+
+/// flush 的实际执行体（命令与 ShutdownCoordinator 任务共用，保证两路径行为一致）。
+pub fn flush_sessions_inner(app: &AppHandle) -> SessionFlushReport {
+    let state = app.state::<AppState>();
+    let auto_save = state.session_auto_save_on_exit.load(Ordering::SeqCst);
+    let dir = workspace::sessions_dir(app);
+
+    let mut persisted = 0usize;
+    if auto_save {
+        let drafts: Vec<SessionDraft> = state
+            .session_drafts
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect();
+        for draft in drafts {
+            if let Some(session) =
+                build_session_for_tab(app, &draft.tab_id, "", CLOSE_REASON_SHUTDOWN)
+            {
+                if persist_session(app, &session).is_ok() {
+                    persisted += 1;
+                }
+            }
+        }
+    }
+    let drafts_dropped = {
+        let mut drafts = state.session_drafts.lock().unwrap();
+        let n = drafts.len();
+        drafts.clear();
+        n
+    };
+    let tmp_removed = crate::session::prune_tmp_files(&dir);
+    let capacity_removed = crate::session::prune_sessions(&dir, SESSION_MAX_COUNT);
+
+    workspace::log_audit(
+        app,
+        "session_flush",
+        format!(
+            "auto_save={auto_save} persisted={persisted} drafts_dropped={drafts_dropped} tmp_removed={tmp_removed}"
+        ),
+    );
+    SessionFlushReport {
+        persisted,
+        drafts_dropped,
+        tmp_removed,
+        capacity_removed,
+    }
+}
+
+/// 查询会话策略（关闭弹窗 / 退出自动保存）。
+#[tauri::command]
+pub fn get_session_policy(
+    app: AppHandle,
+    webview: tauri::Webview,
+) -> Result<SessionPolicy, String> {
+    check_invocation_source(&webview, "get_session_policy", None, &app)?;
+    let state = app.state::<AppState>();
+    Ok(SessionPolicy {
+        close_prompt: state.session_close_prompt.load(Ordering::SeqCst),
+        auto_save_on_exit: state.session_auto_save_on_exit.load(Ordering::SeqCst),
+    })
+}
+
+/// 设置会话策略（审计记录开关变化，不含任何 URL/预览内容）。
+#[tauri::command]
+pub fn set_session_policy(
+    app: AppHandle,
+    webview: tauri::Webview,
+    close_prompt: Option<bool>,
+    auto_save_on_exit: Option<bool>,
+) -> Result<SessionPolicy, String> {
+    check_invocation_source(&webview, "set_session_policy", None, &app)?;
+    let state = app.state::<AppState>();
+    if let Some(v) = close_prompt {
+        state.session_close_prompt.store(v, Ordering::SeqCst);
+    }
+    if let Some(v) = auto_save_on_exit {
+        state.session_auto_save_on_exit.store(v, Ordering::SeqCst);
+    }
+    let policy = SessionPolicy {
+        close_prompt: state.session_close_prompt.load(Ordering::SeqCst),
+        auto_save_on_exit: state.session_auto_save_on_exit.load(Ordering::SeqCst),
+    };
+    workspace::log_audit(
+        &app,
+        "session_policy",
+        format!(
+            "close_prompt={} auto_save_on_exit={}",
+            policy.close_prompt, policy.auto_save_on_exit
+        ),
+    );
+    Ok(policy)
 }
 
 /// 由子窗口内 JS 经 invoke 回传的真实页面标题，转成 tab-title 事件推给前端。
@@ -2916,8 +3249,10 @@ pub fn tab_open(app: AppHandle, id: String, url: String) -> Result<(), String> {
     }
     // 更新存储的 url
     if let Some(t) = app.state::<AppState>().tabs.lock().unwrap().get_mut(&id) {
-        t.url = target;
+        t.url = target.clone();
     }
+    // M1-9：草稿 URL 跟随导航（脱敏由 upsert 内部完成）
+    upsert_session_draft(&app, &id, &target, "");
     Ok(())
 }
 
@@ -4302,5 +4637,134 @@ mod resource_capture_tests {
             out2.url.len() <= crate::security_policy::MAX_RESOURCE_URL_BYTES + 4,
             "settings 调高不得突破策略硬上限"
         );
+    }
+}
+
+#[cfg(test)]
+mod session_gate_tests {
+    use super::*;
+
+    const SESSION_SCOPES: [&str; 10] = [
+        "session_save",
+        "session_discard",
+        "session_list",
+        "session_get",
+        "session_delete",
+        "session_export",
+        "session_restore",
+        "flush_sessions",
+        "get_session_policy",
+        "set_session_policy",
+    ];
+
+    // T-sg-1：来源校验——远程页面（tab-*/grid-*）无令牌调用会话命令一律拒绝；
+    // 主窗口（用户手势）放行。会话存档含浏览痕迹，绝不允许远程页面读写。
+    #[test]
+    fn remote_invocation_to_session_commands_is_rejected() {
+        let registry = crate::security_policy::IntentRegistry::new();
+        for scope in SESSION_SCOPES {
+            assert!(
+                crate::security_policy::check_remote_invocation("tab-3", scope, None, &registry)
+                    .is_err(),
+                "远程页面调用 {scope} 必须被拒绝"
+            );
+            assert!(
+                crate::security_policy::check_remote_invocation("main", scope, None, &registry)
+                    .is_ok(),
+                "主窗口调用 {scope} 应放行"
+            );
+        }
+    }
+
+    // T-sg-2：策略默认值——关闭弹窗默认开（关闭不可静默丢弃），
+    // 退出自动保存默认关（不静默保存浏览痕迹）。
+    #[test]
+    fn session_policy_defaults_favor_no_silent_persist() {
+        let p = SessionPolicy::default();
+        assert!(p.close_prompt, "默认应弹关闭选择（不可静默丢弃）");
+        assert!(!p.auto_save_on_exit, "默认不得自动保存（不静默落盘）");
+    }
+
+    // T-sg-3：会话 DTO 序列化不含敏感字段（结构性红线，与落盘口径一致）
+    #[test]
+    fn session_dto_has_no_sensitive_fields() {
+        // 草稿 URL 必须已是脱敏形态（upsert 内部完成脱敏）
+        let draft = SessionDraft {
+            tab_id: "tab-1".to_string(),
+            url: crate::security_policy::redact_sensitive_url("https://ex.com/a?token=raw-1"),
+            title: "t".to_string(),
+        };
+        assert!(
+            !draft.url.contains("raw-1"),
+            "草稿 URL 必须脱敏: {}",
+            draft.url
+        );
+
+        let session = crate::session::build_session(
+            "tab-1",
+            "https://ex.com/a?token=raw-1",
+            "t",
+            "预览",
+            &[],
+            CLOSE_REASON_SAVED,
+        );
+        let json = serde_json::to_string(&session).expect("serialize");
+        for bad in [
+            "cookie",
+            "authorization",
+            "set-cookie",
+            "headers",
+            "body",
+            "raw-1",
+        ] {
+            assert!(
+                !json.to_ascii_lowercase().contains(bad),
+                "SessionDraft 不得含 {bad}: {json}"
+            );
+        }
+        let report = SessionFlushReport {
+            persisted: 0,
+            drafts_dropped: 1,
+            tmp_removed: 2,
+            capacity_removed: 3,
+        };
+        let rj = serde_json::to_string(&report).expect("serialize");
+        for key in [
+            "persisted",
+            "drafts_dropped",
+            "tmp_removed",
+            "capacity_removed",
+        ] {
+            assert!(rj.contains(key), "flush 报告缺字段 {key}");
+        }
+        assert!(!rj.contains("url"), "flush 报告不得含 URL 字段");
+    }
+
+    // T-sg-4：审计脱敏——会话审计格式串只含 id/计数，不含 URL、预览或凭据
+    #[test]
+    fn session_audit_format_strings_carry_no_url() {
+        // 与生产代码中的审计格式串保持一致（改动这里必须同步 bridge.rs）
+        let samples = [
+            "tab_id={} resources={} preview_bytes={}",
+            "tab_id={tab_id} draft_existed={existed}",
+            "id={id} removed={removed}",
+            "id={id} bytes={}",
+            "id={id} tab_id={} resources={}",
+            "auto_save={auto_save} persisted={persisted} drafts_dropped={drafts_dropped} tmp_removed={tmp_removed}",
+            "close_prompt={} auto_save_on_exit={}",
+        ];
+        for s in samples {
+            let lower = s.to_ascii_lowercase();
+            for bad in [
+                "url",
+                "token",
+                "cookie",
+                "authorization",
+                "preview=",
+                "secret",
+            ] {
+                assert!(!lower.contains(bad), "审计格式串不得含 {bad}: {s}");
+            }
+        }
     }
 }

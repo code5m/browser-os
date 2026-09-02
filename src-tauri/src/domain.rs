@@ -338,6 +338,118 @@ pub struct TabResourceList {
     pub enabled: bool,
 }
 
+// ---------------------------------------------------------------------------
+// M1-9 浏览器会话存档（#14：请求/资源可见 + 关闭保存删除）
+//
+// 持久化白名单（落盘 `data_dir/sessions/<id>.json`，原子写 tempfile+rename）：
+//   id / tab_id / url(**已脱敏**) / title / preview(**已脱敏+截断**) /
+//   preview_truncated / resource_count / resources(**M1-8 脱敏 DTO，≤50 条**) /
+//   saved / close_reason / created_at / updated_at
+// 持久化黑名单（结构上不存在，policy 脚本守）：
+//   token / cookie / Authorization / Set-Cookie / 任何 headers /
+//   request body / response body / 插件原始资源事件（含未脱敏 URL）/ 任何凭据
+//
+// 关闭协议：未显式保存的会话**不落盘**。「不可静默丢」由关闭弹窗保证——
+// 用户必须显式选「保存」或「删除」；异常退出时草稿随进程消失，
+// 磁盘上只留下用户明确保存过的会话。
+// ---------------------------------------------------------------------------
+
+/// 会话最小文本预览上限（字节；超长截断并置 `preview_truncated`）。
+pub const SESSION_PREVIEW_MAX_BYTES: usize = 512;
+/// 单个会话最多存档的资源条数（超出保留最新 N 条，`resource_count` 记真实总数）。
+pub const SESSION_MAX_RESOURCES: usize = 50;
+/// 本地会话存档数量上限（超出按 updated_at 从旧到新删除）。
+pub const SESSION_MAX_COUNT: usize = 50;
+/// 会话标题上限（字节）。
+pub const SESSION_TITLE_MAX_BYTES: usize = 200;
+
+/// 关闭原因（审计与展示用，不含任何 URL）。
+/// 注意：没有 `discarded` 常量——丢弃路径**不落盘**，自然没有落盘原因。
+pub const CLOSE_REASON_SAVED: &str = "user_saved";
+pub const CLOSE_REASON_SHUTDOWN: &str = "app_shutdown_flush";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowserSession {
+    pub id: String,
+    /// 来源页签 id（仅标识；页签关闭后会话仍可回看）
+    pub tab_id: String,
+    /// 已脱敏 + 限长的页面 URL（敏感查询参数值为 `***`）
+    pub url: String,
+    pub title: String,
+    /// 最小文本预览（已脱敏 + 截断；空串表示未提供）
+    pub preview: String,
+    pub preview_truncated: bool,
+    /// 该会话实际采集到的资源总数（可能大于 `resources.len()`）
+    pub resource_count: usize,
+    /// 已脱敏的资源记录（最新 `SESSION_MAX_RESOURCES` 条）
+    pub resources: Vec<ResourceReceived>,
+    /// 是否用户显式保存（落盘项恒为 true；草稿为 false 且不落盘）
+    pub saved: bool,
+    pub close_reason: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 列表项（不含 resources 全量，避免列表接口 payload 膨胀）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSummary {
+    pub id: String,
+    pub tab_id: String,
+    pub url: String,
+    pub title: String,
+    pub preview: String,
+    pub preview_truncated: bool,
+    pub resource_count: usize,
+    pub saved: bool,
+    pub close_reason: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 内存草稿：打开 tab 即建立，**落盘前绝不写磁盘**。
+/// 只有两条路径会落盘：① 用户显式 `session_save`（关闭弹窗选「保存」或面板保存）；
+/// ② 退出路径且用户开启了 `auto_save_on_exit`。除此之外草稿随进程消失——
+/// 这是「不静默保存」红线的实现方式：未经用户同意的浏览痕迹一律不落盘。
+#[derive(Debug, Clone)]
+pub struct SessionDraft {
+    pub tab_id: String,
+    /// 已脱敏的页面 URL（导航时更新；会话构建优先取这里）
+    pub url: String,
+    /// 页面标题（会话构建优先取这里）
+    pub title: String,
+}
+
+/// M1-9 会话策略（会话内生效，不持久化）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionPolicy {
+    /// 关闭 tab 时是否弹「保存 / 删除」选择（默认开：关闭不可静默丢弃）
+    pub close_prompt: bool,
+    /// 退出应用前是否自动保存所有仍打开的 tab（默认关：默认不静默保存）
+    pub auto_save_on_exit: bool,
+}
+
+impl Default for SessionPolicy {
+    fn default() -> Self {
+        SessionPolicy {
+            close_prompt: true,
+            auto_save_on_exit: false,
+        }
+    }
+}
+
+/// `flush_sessions` 的结果（关闭路径的确定性行为报告）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionFlushReport {
+    /// 本次落盘的会话数
+    pub persisted: usize,
+    /// 未保存即随关闭释放的草稿数（不静默保存，仅计数）
+    pub drafts_dropped: usize,
+    /// 清理的异常退出残留 .tmp 数
+    pub tmp_removed: usize,
+    /// 因容量上限删除的旧会话数
+    pub capacity_removed: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

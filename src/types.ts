@@ -230,6 +230,62 @@ export interface TabResourceList {
   enabled: boolean;
 }
 
+// ====== M1-9 会话存档与关闭协议 ======
+// 与后端 domain.rs 一一对应。落盘白名单：id/tab_id/url(已脱敏)/title/
+// preview(已脱敏+截断)/preview_truncated/resource_count/resources(脱敏 DTO)/
+// saved/close_reason/created_at/updated_at。
+// 落盘黑名单（结构上不存在）：token/cookie/Authorization/Set-Cookie/headers/
+// request body/response body/插件原始资源事件/任何凭据。
+
+export interface BrowserSession {
+  id: string;
+  tab_id: string;
+  url: string;
+  title: string;
+  preview: string;
+  preview_truncated: boolean;
+  resource_count: number;
+  resources: ResourceReceived[];
+  saved: boolean;
+  close_reason: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// 列表项（不含 resources 全量）
+export interface SessionSummary {
+  id: string;
+  tab_id: string;
+  url: string;
+  title: string;
+  preview: string;
+  preview_truncated: boolean;
+  resource_count: number;
+  saved: boolean;
+  close_reason: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// 会话策略（会话内生效，不持久化）
+export interface SessionPolicy {
+  // 关闭 tab 时是否弹「保存 / 删除」（默认开：关闭不可静默丢弃）
+  close_prompt: boolean;
+  // 退出应用前是否自动保存仍打开的 tab（默认关：不静默保存）
+  auto_save_on_exit: boolean;
+}
+
+// flush 结果（关闭路径的确定性行为报告）
+export interface SessionFlushReport {
+  persisted: number;
+  drafts_dropped: number;
+  tmp_removed: number;
+  capacity_removed: number;
+}
+
+// 关闭 tab 时用户的选择（关闭协议）
+export type SessionCloseChoice = "save" | "discard" | "cancel";
+
 export type TabRecoveryStatus =
   | "attempting"
   | "recovered"

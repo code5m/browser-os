@@ -79,5 +79,15 @@ commands.allow = [
     "list_tab_resources",
     "clear_tab_resources",
     "get_resource_capture_settings",
-    "set_resource_capture_settings"
+    "set_resource_capture_settings",
+    "session_save",
+    "session_discard",
+    "session_list",
+    "session_get",
+    "session_delete",
+    "session_export",
+    "session_restore",
+    "flush_sessions",
+    "get_session_policy",
+    "set_session_policy"
 ]

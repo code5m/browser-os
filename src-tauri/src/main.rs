@@ -7,6 +7,7 @@ mod grid_ipc;
 mod grid_process;
 mod keyring_store;
 mod security_policy;
+mod session;
 mod shutdown;
 mod sync;
 mod workspace;
@@ -1181,6 +1182,22 @@ fn main() {
                 .grid_manager
                 .set_app(app.handle().clone());
             bridge::register_shutdown_tasks(app.handle()).map_err(std::io::Error::other)?;
+            // M1-9：会话策略默认值（关闭弹窗默认开 = 关闭不可静默丢弃；
+            // 退出自动保存默认关 = 不静默保存浏览痕迹）。
+            app.state::<AppState>()
+                .session_close_prompt
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            // M1-9：异常退出后的恢复边界——原子写保证没有半截 JSON，这里只清理
+            // 残留 .tmp 并按容量裁剪；会话本身保持「用户已保存才存在」的语义。
+            {
+                let dir = workspace::sessions_dir(app.handle());
+                let tmp = crate::session::prune_tmp_files(&dir);
+                let pruned = crate::session::prune_sessions(&dir, domain::SESSION_MAX_COUNT);
+                let total = crate::session::count_sessions(&dir);
+                eprintln!(
+                    "[main] sessions restored total={total} tmp_cleaned={tmp} capacity_pruned={pruned}"
+                );
+            }
             // M0-3.a：打印安全策略指纹，确认运行中的二进制对应哪版策略契约。
             // 本检查点只定义契约，不收口任何调用方（M0-3.b/c/d）。
             eprintln!(
@@ -1341,6 +1358,16 @@ fn main() {
             bridge::clear_tab_resources,
             bridge::get_resource_capture_settings,
             bridge::set_resource_capture_settings,
+            bridge::session_save,
+            bridge::session_discard,
+            bridge::session_list,
+            bridge::session_get,
+            bridge::session_delete,
+            bridge::session_export,
+            bridge::session_restore,
+            bridge::flush_sessions,
+            bridge::get_session_policy,
+            bridge::set_session_policy,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
