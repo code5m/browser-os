@@ -20,6 +20,9 @@ import type {
   GitWriteOp,
   GitWriteJob,
   GitWritePreview,
+  ResourceReceived,
+  ResourceCaptureSettings,
+  TabResourceList,
 } from "./types";
 
 // M0-0.b 测量配置（契约 logs/m0-baseline-contract-v1.md；非测量运行后端返回 null）
@@ -326,6 +329,31 @@ export const bridge = {
   // 订阅终端输出流
   onTermData: (cb: (d: { id: string; data: string }) => void) =>
     listen<{ id: string; data: string }>("term-data", (e) => cb(e.payload)),
+
+  // ====== M1-8 资源瀑布（请求拦截与瀑布） ======
+  // 所有数据均已由后端脱敏（敏感查询参数值为 ***），不含任何 headers/body。
+  // 查询某 tab 的资源瀑布记录（含容量驱逐计数）
+  listTabResources: (tabId: string) =>
+    invoke<TabResourceList>("list_tab_resources", { tabId }),
+
+  // 清空某 tab 的资源瀑布记录（后端写审计，仅 tab_id + 计数，不含 URL）
+  clearTabResources: (tabId: string) =>
+    invoke("clear_tab_resources", { tabId }),
+
+  // 查询资源采集设置（开关 + 容量上限）
+  getResourceCaptureSettings: () =>
+    invoke<ResourceCaptureSettings>("get_resource_capture_settings"),
+
+  // 设置采集开关与每 tab 容量（会话内生效，不持久化）
+  setResourceCaptureSettings: (enabled: boolean, maxPerTab?: number) =>
+    invoke<ResourceCaptureSettings>("set_resource_capture_settings", {
+      enabled,
+      maxPerTab: maxPerTab ?? null,
+    }),
+
+  // 订阅资源事件（payload 为脱敏后的 ResourceReceived DTO）
+  onResourceReceived: (cb: (r: ResourceReceived) => void) =>
+    listen<ResourceReceived>("resource-received", (e) => cb(e.payload)),
 
   // ====== M0-0.b 测量钩子（契约 logs/m0-baseline-contract-v1.md §6.1/§6.3） ======
   // ready 信号：前端 mount + 2×rAF 后调用；后端写带 run_id 的 ready 信号（轻量 IPC 往返）

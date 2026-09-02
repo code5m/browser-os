@@ -339,6 +339,110 @@ pub fn policy_fingerprint() -> &'static str {
 }
 
 // ===========================================================================
+// M1-8：资源瀑布隐私过滤（URL 敏感查询参数 / userinfo / fragment 脱敏 + 限长）
+// ===========================================================================
+
+/// 资源瀑布单条 URL 的硬上限（超长截断，防内存放大与日志膨胀）。
+pub const MAX_RESOURCE_URL_BYTES: usize = 2048;
+
+/// URL 查询参数 / fragment 参数中视为敏感、值必须脱敏为 `***` 的键。
+/// 精确匹配（大小写不敏感），刻意保守宽列：宁可多脱敏，不漏凭据。
+pub const SENSITIVE_QUERY_KEYS: [&str; 21] = [
+    "token",
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "auth",
+    "authorization",
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "client_secret",
+    "signature",
+    "sig",
+    "session",
+    "sessionid",
+    "session_id",
+    "cookie",
+    "apikey",
+    "api_key",
+    "credential",
+    "jwt",
+];
+
+/// 查询参数键是否敏感（精确匹配，大小写不敏感）。
+pub fn is_sensitive_query_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    SENSITIVE_QUERY_KEYS.contains(&lower.as_str())
+}
+
+/// 对一段 `k=v&k=v` 形式的参数串做敏感值脱敏（不含前导 `?`/`#`）。
+fn redact_param_pairs(pairs: &str) -> String {
+    let redacted: Vec<(String, String)> = url::form_urlencoded::parse(pairs.as_bytes())
+        .map(|(k, v)| {
+            if is_sensitive_query_key(&k) {
+                (k.into_owned(), "***".to_string())
+            } else {
+                (k.into_owned(), v.into_owned())
+            }
+        })
+        .collect();
+    let mut ser = url::form_urlencoded::Serializer::new(String::new());
+    for (k, v) in redacted {
+        ser.append_pair(&k, &v);
+    }
+    ser.finish()
+}
+
+/// 截断到 `MAX_RESOURCE_URL_BYTES`（回退 UTF-8 字符边界，追加省略标记）。
+fn truncate_url(s: &str) -> String {
+    if s.len() <= MAX_RESOURCE_URL_BYTES {
+        return s.to_string();
+    }
+    let mut end = MAX_RESOURCE_URL_BYTES;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &s[..end])
+}
+
+/// 资源瀑布 URL 脱敏（唯一的 URL 出口，所有入库/上报前必须经过）：
+/// 1. userinfo（`user:pass@`）移除；
+/// 2. query 中敏感键的值替换为 `***`；
+/// 3. fragment 若为 `k=v` 形态（OAuth implicit 等场景），同样脱敏；
+/// 4. 整体限长 `MAX_RESOURCE_URL_BYTES`。
+/// 解析失败（相对 URL / 非标准串）时保守处理：仅限长，不做原样保留之外的推断。
+pub fn redact_sensitive_url(raw: &str) -> String {
+    match url::Url::parse(raw) {
+        Ok(mut u) => {
+            if u.password().is_some() {
+                let _ = u.set_password(None);
+            }
+            if !u.username().is_empty() {
+                let _ = u.set_username("");
+            }
+            if let Some(q) = u.query() {
+                let redacted = redact_param_pairs(q);
+                if redacted.is_empty() {
+                    u.set_query(None);
+                } else {
+                    u.set_query(Some(&redacted));
+                }
+            }
+            if let Some(f) = u.fragment() {
+                if f.contains('=') {
+                    let redacted = redact_param_pairs(f);
+                    u.set_fragment(Some(&redacted));
+                }
+            }
+            truncate_url(u.as_str())
+        }
+        Err(_) => truncate_url(raw),
+    }
+}
+
+// ===========================================================================
 // M0-3.b：来源校验 + 用户意图令牌 + 载荷边界
 // ===========================================================================
 
@@ -835,6 +939,59 @@ mod security_policy_tests {
         let (p, a) = parse_command_line(path).expect("解析");
         assert_eq!(p, path);
         assert!(a.is_empty());
+    }
+
+    // ---------- M1-8：资源瀑布 URL 脱敏 ----------
+
+    #[test]
+    fn sensitive_query_params_are_redacted() {
+        let out = redact_sensitive_url(
+            "https://api.example.com/cb?token=abc123&ok=1&password=hunter2&Signature=SIG",
+        );
+        assert!(out.contains("token=%2A%2A%2A") || out.contains("token=***"));
+        assert!(out.contains("ok=1"), "非敏感参数必须保留: {out}");
+        assert!(!out.contains("abc123"), "token 原值不得出现: {out}");
+        assert!(!out.contains("hunter2"), "password 原值不得出现: {out}");
+        assert!(!out.contains("SIG"), "signature 原值不得出现: {out}");
+        for key in [
+            "access_token",
+            "refresh_token",
+            "id_token",
+            "secret",
+            "session",
+            "cookie",
+            "jwt",
+            "api_key",
+        ] {
+            assert!(is_sensitive_query_key(key), "{key} 应判定为敏感");
+        }
+        assert!(!is_sensitive_query_key("page"));
+    }
+
+    #[test]
+    fn userinfo_and_fragment_credentials_are_redacted() {
+        let out = redact_sensitive_url("https://user:passw0rd@example.com/a#access_token=zzz&x=1");
+        assert!(!out.contains("passw0rd"), "userinfo 密码不得出现: {out}");
+        assert!(!out.contains("user@"), "userinfo 用户名不得出现: {out}");
+        assert!(!out.contains("zzz"), "fragment 中的 token 不得出现: {out}");
+        assert!(out.contains("x=1"), "fragment 非敏感参数保留: {out}");
+    }
+
+    #[test]
+    fn oversized_url_is_truncated() {
+        let long = format!(
+            "https://example.com/{}",
+            "a".repeat(MAX_RESOURCE_URL_BYTES + 100)
+        );
+        let out = redact_sensitive_url(&long);
+        assert!(out.len() <= MAX_RESOURCE_URL_BYTES + 4, "截断后仍超限");
+        assert!(out.ends_with('…'));
+    }
+
+    #[test]
+    fn non_absolute_url_falls_back_to_truncation_only() {
+        let out = redact_sensitive_url("not a url at all");
+        assert_eq!(out, "not a url at all");
     }
 
     #[test]

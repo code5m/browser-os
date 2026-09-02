@@ -75,5 +75,9 @@ commands.allow = [
     "git_diff",
     "git_branch_list",
     "request_git_write",
-    "confirm_git_write"
+    "confirm_git_write",
+    "list_tab_resources",
+    "clear_tab_resources",
+    "get_resource_capture_settings",
+    "set_resource_capture_settings"
 ]

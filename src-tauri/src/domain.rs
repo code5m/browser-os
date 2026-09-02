@@ -255,9 +255,162 @@ pub struct GitWritePreview {
     pub expires_at: DateTime<Utc>,
 }
 
+// ---------------------------------------------------------------------------
+// M1-8 资源瀑布 DTO（请求拦截与瀑布）
+//
+// 字段全部来自 WebKitGTK 原生信号（resource-load-started / finished / failed），
+// 平台拿不到的字段用 Option 并置 None，绝不伪造：
+//   - status / mime / size_bytes 仅在有真实响应时存在（加载失败为 None）；
+//   - size_bytes 为 None 表示「未知」（WebKit content_length=0 即未知）；
+//   - resource_type 由 mime + URL 后缀推断（信号不提供 initiator 类型），
+//     xhr_fetch 为启发式归类（json/xml/text 数据响应），可能含误判。
+// 隐私红线：本 DTO 不承载任何 headers / Cookie / Authorization / Set-Cookie /
+// request body / response body；url 必须已经过
+// `security_policy::redact_sensitive_url` 脱敏与限长。
+// ---------------------------------------------------------------------------
+
+/// 资源类型（前端筛选维度与之一一对应）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceKind {
+    Document,
+    Script,
+    Stylesheet,
+    Image,
+    XhrFetch,
+    Font,
+    Media,
+    Other,
+}
+
+/// 单条资源请求记录（脱敏后的最终形态，入库/上报前端唯一使用本结构）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceReceived {
+    pub id: String,
+    pub tab_id: String,
+    /// 已脱敏 + 限长的 URL（敏感查询参数值为 `***`）
+    pub url: String,
+    /// HTTP 方法（来自 URIRequest；信号缺省时回退 "GET"）
+    pub method: String,
+    /// 真实响应状态码；加载失败/无响应为 None
+    pub status: Option<u32>,
+    /// 真实响应 MIME；未知为 None
+    pub mime: Option<String>,
+    /// 真实响应声明长度；未知为 None
+    pub size_bytes: Option<u64>,
+    /// epoch 毫秒（resource-load-started 信号时刻）
+    pub started_at: i64,
+    /// epoch 毫秒（finished/failed 信号时刻）
+    pub finished_at: Option<i64>,
+    pub duration_ms: Option<u64>,
+    pub resource_type: ResourceKind,
+}
+
+/// 资源采集开关与容量上限（会话内生效，不持久化；重启回默认）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceCaptureSettings {
+    pub enabled: bool,
+    /// 每 tab 最多保留条数（超出按 FIFO 丢弃最旧）
+    pub max_per_tab: usize,
+    /// 全局最多保留条数（超出按 FIFO 丢弃最旧）
+    pub max_total: usize,
+    /// 单条 URL 长度上限（与 security_policy::MAX_RESOURCE_URL_BYTES 对齐）
+    pub max_url_bytes: usize,
+}
+
+impl Default for ResourceCaptureSettings {
+    fn default() -> Self {
+        ResourceCaptureSettings {
+            enabled: true,
+            max_per_tab: 200,
+            max_total: 2000,
+            max_url_bytes: 2048,
+        }
+    }
+}
+
+/// `list_tab_resources` 的返回：记录 + 因容量上限被丢弃的条数（前端超限提示用）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TabResourceList {
+    pub records: Vec<ResourceReceived>,
+    /// 该 tab 历史上因容量上限被 FIFO 丢弃的条数
+    pub evicted: u64,
+    pub enabled: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resource_received_serde_has_no_sensitive_fields() {
+        // 隐私红线（结构性保障）：DTO 序列化结果不得出现
+        // cookie / authorization / set-cookie / body / headers 任何字段。
+        let rec = ResourceReceived {
+            id: "r1".into(),
+            tab_id: "tab-1".into(),
+            url: "https://example.com/a?token=***".into(),
+            method: "GET".into(),
+            status: Some(200),
+            mime: Some("text/html".into()),
+            size_bytes: Some(1024),
+            started_at: 1,
+            finished_at: Some(2),
+            duration_ms: Some(1),
+            resource_type: ResourceKind::Document,
+        };
+        let json = serde_json::to_string(&rec).expect("serialize");
+        for bad in [
+            "cookie",
+            "Cookie",
+            "authorization",
+            "Authorization",
+            "set-cookie",
+            "Set-Cookie",
+            "body",
+            "headers",
+        ] {
+            assert!(
+                !json.contains(bad),
+                "ResourceReceived 序列化不得包含敏感字段 {bad}: {json}"
+            );
+        }
+        // 前后端类型对齐：字段名必须与 src/types.ts 一致
+        for key in [
+            "\"id\"",
+            "\"tab_id\"",
+            "\"url\"",
+            "\"method\"",
+            "\"status\"",
+            "\"mime\"",
+            "\"size_bytes\"",
+            "\"started_at\"",
+            "\"finished_at\"",
+            "\"duration_ms\"",
+            "\"resource_type\"",
+        ] {
+            assert!(json.contains(key), "缺少字段 {key}: {json}");
+        }
+        // Option 字段允许为 null（降级不伪造）
+        let mut degraded = rec.clone();
+        degraded.status = None;
+        degraded.mime = None;
+        degraded.size_bytes = None;
+        let j2 = serde_json::to_string(&degraded).expect("serialize");
+        assert!(j2.contains("\"status\":null"));
+        assert!(j2.contains("\"mime\":null"));
+        assert!(j2.contains("\"size_bytes\":null"));
+    }
+
+    #[test]
+    fn resource_capture_settings_defaults_are_capped() {
+        let s = ResourceCaptureSettings::default();
+        assert!(s.enabled);
+        assert_eq!(s.max_per_tab, 200);
+        assert_eq!(s.max_total, 2000);
+        assert_eq!(s.max_url_bytes, 2048);
+        assert!(s.max_per_tab <= s.max_total);
+    }
 
     #[test]
     fn bookmark_roundtrip_serde() {

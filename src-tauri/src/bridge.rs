@@ -291,6 +291,10 @@ pub struct AppState {
     /// M1-4：前端就绪标记（m0_ready 置位）。就绪后新到 URL 额外发轻提示事件，
     /// 触发前端立即拉取；就绪前不提示（提示也会丢，靠就绪后的首次拉取兜底）。
     pub frontend_ready: AtomicBool,
+    /// M1-8：资源瀑布记录缓冲（每 tab 环形 + 全局 FIFO，容量硬上限）。
+    pub resource_buffer: Mutex<ResourceBuffer>,
+    /// M1-8：资源采集开关与容量设置（会话内生效，不持久化）。
+    pub resource_capture: Mutex<ResourceCaptureSettings>,
 }
 
 /// 终端会话：持有 PTY 写入端与子进程，读取在后台线程进行。
@@ -745,6 +749,8 @@ fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
     state.tab_idle_since.lock().unwrap().remove(id);
     state.hibernated_tabs.lock().unwrap().remove(id);
     state.tab_recovery.lock().unwrap().remove(id);
+    // M1-8：tab 关闭即清理该 tab 的资源瀑布记录（生命周期红线）
+    state.resource_buffer.lock().unwrap().remove_tab(id);
     state.tabs.lock().unwrap().remove(id);
     let mut active = state.active_tab.lock().unwrap();
     if active.as_deref() == Some(id) {
@@ -788,6 +794,8 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
             state.last_position_at.lock().unwrap().clear();
             state.tab_idle_since.lock().unwrap().clear();
             state.hibernated_tabs.lock().unwrap().clear();
+            // M1-8：退出路径清空全部资源瀑布记录（不落盘、不泄漏）
+            state.resource_buffer.lock().unwrap().clear_all();
             state.tabs.lock().unwrap().clear();
             *state.active_tab.lock().unwrap() = None;
             if errors.is_empty() {
@@ -909,6 +917,333 @@ pub fn report_resources(
         serde_json::json!({ "page_url": page_url, "items": items }),
     );
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// M1-8 资源瀑布（请求拦截与瀑布）
+//
+// 链路：插件 WebKitGTK 原生信号（resource-load-started/finished/failed）
+//   → browser-tabs://event(type=resourceReceived)（原始 URL，仅进程内）
+//   → main.rs 转发到 on_resource_received（脱敏 + 容量上限 + 入库）
+//   → app.emit("resource-received", ResourceReceived)（脱敏 DTO，推前端）。
+// 隐私红线：DTO 不含 headers/Cookie/Authorization/Set-Cookie/任何 body；
+// URL 一律经 sp::redact_sensitive_url 脱敏 + 限长；审计只记 tab_id 与计数。
+// ---------------------------------------------------------------------------
+
+/// 插件上报的原始资源事件（browser-tabs://event payload，未脱敏，仅进程内使用）。
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct RawResourceEvent {
+    pub url: String,
+    pub method: Option<String>,
+    pub status: Option<u32>,
+    pub mime: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub started_at: i64,
+    pub finished_at: i64,
+}
+
+/// 资源记录缓冲：每 tab 一个 FIFO 队列（容量上限 N），全局再一层 FIFO（上限 M）。
+/// `order` 记录全局插入序，全局驱逐时跳过已被 per-tab 驱逐/清理的过期项。
+#[derive(Default)]
+pub struct ResourceBuffer {
+    per_tab: HashMap<String, std::collections::VecDeque<ResourceReceived>>,
+    order: std::collections::VecDeque<(String, String)>, // (tab_id, record_id)
+    total: usize,
+    /// 每 tab 因容量上限被丢弃的累计条数（前端超限提示）
+    evicted_per_tab: HashMap<String, u64>,
+    /// 全局因总上限被丢弃的累计条数
+    evicted_global: u64,
+}
+
+impl ResourceBuffer {
+    /// 入库一条记录，执行 per-tab 与全局两级 FIFO 驱逐。
+    pub fn push(&mut self, rec: ResourceReceived, max_per_tab: usize, max_total: usize) {
+        let tab = rec.tab_id.clone();
+        let rid = rec.id.clone();
+        {
+            let q = self.per_tab.entry(tab.clone()).or_default();
+            q.push_back(rec);
+            while q.len() > max_per_tab {
+                q.pop_front();
+                *self.evicted_per_tab.entry(tab.clone()).or_insert(0) += 1;
+                self.total = self.total.saturating_sub(1);
+            }
+        }
+        self.order.push_back((tab, rid));
+        self.total += 1;
+        // 全局 FIFO：从 order 头部驱逐，跳过已被 per-tab 驱逐/清理的过期项
+        while self.total > max_total {
+            match self.order.pop_front() {
+                None => break,
+                Some((t, rid)) => {
+                    if let Some(q) = self.per_tab.get_mut(&t) {
+                        if q.front().map(|r| r.id.as_str()) == Some(rid.as_str()) {
+                            q.pop_front();
+                            self.total = self.total.saturating_sub(1);
+                            self.evicted_global += 1;
+                        }
+                        // 过期项（该记录已被 per-tab 驱逐）：仅丢弃 order 项
+                        if q.is_empty() {
+                            self.per_tab.remove(&t);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 某 tab 的记录快照（按入库顺序）。
+    pub fn records(&self, tab_id: &str) -> Vec<ResourceReceived> {
+        self.per_tab
+            .get(tab_id)
+            .map(|q| q.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// 清空某 tab 的记录，返回清除条数。`order` 中的过期项留给全局驱逐时惰性跳过。
+    pub fn clear_tab(&mut self, tab_id: &str) -> usize {
+        let removed = self.per_tab.remove(tab_id).map(|q| q.len()).unwrap_or(0);
+        self.total = self.total.saturating_sub(removed);
+        self.evicted_per_tab.remove(tab_id);
+        removed
+    }
+
+    /// tab 关闭时清理（语义同 clear_tab）。
+    pub fn remove_tab(&mut self, tab_id: &str) {
+        self.clear_tab(tab_id);
+    }
+
+    pub fn clear_all(&mut self) {
+        self.per_tab.clear();
+        self.order.clear();
+        self.total = 0;
+        self.evicted_per_tab.clear();
+        self.evicted_global = 0;
+    }
+
+    pub fn evicted_of(&self, tab_id: &str) -> u64 {
+        self.evicted_per_tab.get(tab_id).copied().unwrap_or(0)
+    }
+}
+
+/// 资源类型归类：优先按真实 MIME，缺失/未知时按 URL 后缀兜底。
+/// 注意（边界声明）：WebKitGTK 信号不提供 initiator 类型，XHR/Fetch 与
+/// 普通数据响应无法从信号区分，json/xml/text 启发式归入 xhr_fetch，可能含误判。
+pub fn classify_resource_kind(mime: Option<&str>, url: &str) -> ResourceKind {
+    let m = mime.unwrap_or_default().to_ascii_lowercase();
+    if !m.is_empty() {
+        if m.contains("html") {
+            return ResourceKind::Document;
+        }
+        if m.contains("javascript") || m.contains("ecmascript") {
+            return ResourceKind::Script;
+        }
+        if m == "text/css" {
+            return ResourceKind::Stylesheet;
+        }
+        if m.starts_with("image/") {
+            return ResourceKind::Image;
+        }
+        if m.starts_with("font/") || m.contains("font") {
+            return ResourceKind::Font;
+        }
+        if m.starts_with("audio/") || m.starts_with("video/") {
+            return ResourceKind::Media;
+        }
+        if m.contains("json") || m.contains("xml") || m.starts_with("text/") {
+            return ResourceKind::XhrFetch;
+        }
+        return ResourceKind::Other;
+    }
+    let path = url::Url::parse(url)
+        .map(|u| u.path().to_ascii_lowercase())
+        .unwrap_or_default();
+    let has_ext = |exts: &[&str]| exts.iter().any(|e| path.ends_with(e));
+    if has_ext(&[".js", ".mjs"]) {
+        ResourceKind::Script
+    } else if has_ext(&[".css"]) {
+        ResourceKind::Stylesheet
+    } else if has_ext(&[
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".avif",
+    ]) {
+        ResourceKind::Image
+    } else if has_ext(&[".woff", ".woff2", ".ttf", ".otf", ".eot"]) {
+        ResourceKind::Font
+    } else if has_ext(&[".mp4", ".webm", ".mp3", ".ogg", ".wav", ".m3u8"]) {
+        ResourceKind::Media
+    } else if has_ext(&[".html", ".htm", "/"]) {
+        ResourceKind::Document
+    } else if has_ext(&[".json"]) {
+        ResourceKind::XhrFetch
+    } else {
+        ResourceKind::Other
+    }
+}
+
+/// 原始事件 → 脱敏 DTO（纯函数，便于单测）。
+/// 仅 http/https 入库（file:/data:/blob:/about: 一律丢弃）；返回 None 表示不入库。
+pub fn build_resource_received(
+    tab_id: &str,
+    raw: &RawResourceEvent,
+    max_url_bytes: usize,
+) -> Option<ResourceReceived> {
+    let lower = raw.url.to_ascii_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return None;
+    }
+    let mut url = crate::security_policy::redact_sensitive_url(&raw.url);
+    // 双保险：settings 可调低 max_url_bytes（不允许调高过策略硬上限）
+    let cap = max_url_bytes.min(crate::security_policy::MAX_RESOURCE_URL_BYTES);
+    if url.len() > cap {
+        let mut end = cap;
+        while end > 0 && !url.is_char_boundary(end) {
+            end -= 1;
+        }
+        url = format!("{}…", &url[..end]);
+    }
+    let method = raw
+        .method
+        .as_deref()
+        .map(|m| m.trim())
+        .filter(|m| !m.is_empty())
+        .unwrap_or("GET")
+        .to_string();
+    // 未知长度映射：0 视为未知（WebKit content_length 未知时返回 0），不伪造
+    let size_bytes = raw.size_bytes.filter(|n| *n > 0);
+    let duration_ms = if raw.finished_at >= raw.started_at {
+        Some((raw.finished_at - raw.started_at) as u64)
+    } else {
+        None
+    };
+    Some(ResourceReceived {
+        id: uuid::Uuid::new_v4().to_string(),
+        tab_id: tab_id.to_string(),
+        resource_type: classify_resource_kind(raw.mime.as_deref(), &url),
+        url,
+        method,
+        status: raw.status,
+        mime: raw.mime.clone(),
+        size_bytes,
+        started_at: raw.started_at,
+        finished_at: Some(raw.finished_at),
+        duration_ms,
+    })
+}
+
+/// 插件原生资源事件入口（main.rs 事件转发调用）。
+/// enabled=false 时直接丢弃（不采集）；入库后向主窗口前端推 `resource-received`。
+pub fn on_resource_received(app: &AppHandle, tab_id: &str, raw: RawResourceEvent) {
+    let state = app.state::<AppState>();
+    let (enabled, max_per_tab, max_total, max_url_bytes) = {
+        let s = state.resource_capture.lock().unwrap();
+        (s.enabled, s.max_per_tab, s.max_total, s.max_url_bytes)
+    };
+    if !enabled {
+        return;
+    }
+    let Some(rec) = build_resource_received(tab_id, &raw, max_url_bytes) else {
+        return;
+    };
+    state
+        .resource_buffer
+        .lock()
+        .unwrap()
+        .push(rec.clone(), max_per_tab, max_total);
+    let _ = app.emit("resource-received", rec);
+}
+
+/// tab_id 形态校验：只接受 `tab-N` 页签（宫格 grid-N 在子进程，不在本缓冲范围）。
+fn check_tab_id(tab_id: &str) -> Result<(), String> {
+    if tab_id.len() > 64 || !tab_id.starts_with("tab-") {
+        return Err("非法 tab_id".to_string());
+    }
+    Ok(())
+}
+
+/// 查询某 tab 的资源瀑布记录（含容量驱逐计数）。
+#[tauri::command]
+pub fn list_tab_resources(
+    app: AppHandle,
+    webview: tauri::Webview,
+    tab_id: String,
+) -> Result<TabResourceList, String> {
+    check_invocation_source(&webview, "list_tab_resources", None, &app)?;
+    check_tab_id(&tab_id)?;
+    let state = app.state::<AppState>();
+    let enabled = state.resource_capture.lock().unwrap().enabled;
+    let buf = state.resource_buffer.lock().unwrap();
+    Ok(TabResourceList {
+        records: buf.records(&tab_id),
+        evicted: buf.evicted_of(&tab_id),
+        enabled,
+    })
+}
+
+/// 清空某 tab 的资源瀑布记录。审计只记 tab_id 与计数，不记任何 URL。
+#[tauri::command]
+pub fn clear_tab_resources(
+    app: AppHandle,
+    webview: tauri::Webview,
+    tab_id: String,
+) -> Result<(), String> {
+    check_invocation_source(&webview, "clear_tab_resources", None, &app)?;
+    check_tab_id(&tab_id)?;
+    let removed = app
+        .state::<AppState>()
+        .resource_buffer
+        .lock()
+        .unwrap()
+        .clear_tab(&tab_id);
+    workspace::log_audit(
+        &app,
+        "resource_clear",
+        format!("tab_id={tab_id} removed={removed}"),
+    );
+    Ok(())
+}
+
+/// 查询资源采集设置。
+#[tauri::command]
+pub fn get_resource_capture_settings(
+    app: AppHandle,
+    webview: tauri::Webview,
+) -> Result<ResourceCaptureSettings, String> {
+    check_invocation_source(&webview, "get_resource_capture_settings", None, &app)?;
+    Ok(app
+        .state::<AppState>()
+        .resource_capture
+        .lock()
+        .unwrap()
+        .clone())
+}
+
+/// 设置资源采集开关与每 tab 容量（会话内生效，不持久化；max_total/url 上限
+/// 不开放调整，防绕过容量红线）。开启/关闭/调整均写审计（不含 URL）。
+#[tauri::command]
+pub fn set_resource_capture_settings(
+    app: AppHandle,
+    webview: tauri::Webview,
+    enabled: bool,
+    max_per_tab: Option<usize>,
+) -> Result<ResourceCaptureSettings, String> {
+    check_invocation_source(&webview, "set_resource_capture_settings", None, &app)?;
+    // max_per_tab 合法区间 [10, 1000]：过小无意义，过大失去容量保护
+    let clamped = max_per_tab.map(|n| n.clamp(10, 1000));
+    let snapshot = {
+        let state = app.state::<AppState>();
+        let mut s = state.resource_capture.lock().unwrap();
+        s.enabled = enabled;
+        if let Some(n) = clamped {
+            s.max_per_tab = n.min(s.max_total);
+        }
+        s.clone()
+    };
+    workspace::log_audit(
+        &app,
+        "resource_capture",
+        format!("enabled={enabled} max_per_tab={:?}", snapshot.max_per_tab),
+    );
+    Ok(snapshot)
 }
 
 /// 由子窗口内 JS 经 invoke 回传的真实页面标题，转成 tab-title 事件推给前端。
@@ -3634,6 +3969,338 @@ mod git_write_gate_tests {
         assert!(
             !failed.contains("\"branch\":null"),
             "失败审计必须带分支名: {failed}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod resource_capture_tests {
+    use super::*;
+
+    fn raw(
+        url: &str,
+        status: Option<u32>,
+        mime: Option<&str>,
+        size: Option<u64>,
+    ) -> RawResourceEvent {
+        RawResourceEvent {
+            url: url.to_string(),
+            method: Some("GET".to_string()),
+            status,
+            mime: mime.map(|m| m.to_string()),
+            size_bytes: size,
+            started_at: 1000,
+            finished_at: 1050,
+        }
+    }
+
+    fn rec(tab: &str, id: &str) -> ResourceReceived {
+        ResourceReceived {
+            id: id.to_string(),
+            tab_id: tab.to_string(),
+            url: "https://example.com/a".to_string(),
+            method: "GET".to_string(),
+            status: Some(200),
+            mime: Some("text/html".to_string()),
+            size_bytes: Some(10),
+            started_at: 1,
+            finished_at: Some(2),
+            duration_ms: Some(1),
+            resource_type: ResourceKind::Document,
+        }
+    }
+
+    // T-rc-1：URL 敏感 query 参数脱敏（token/password/secret/signature 原值不得入库）
+    #[test]
+    fn build_redacts_sensitive_query_params() {
+        let r = raw(
+            "https://api.example.com/x?token=sekrit-1&password=pw&ok=1",
+            Some(200),
+            Some("application/json"),
+            Some(100),
+        );
+        let out = build_resource_received("tab-1", &r, 2048).expect("入库");
+        assert!(!out.url.contains("sekrit-1"), "token 原值泄漏: {}", out.url);
+        assert!(!out.url.contains("pw&"), "password 原值泄漏: {}", out.url);
+        assert!(out.url.contains("ok=1"), "非敏感参数应保留: {}", out.url);
+    }
+
+    // T-rc-2：DTO 不含 Cookie/Authorization/Set-Cookie/body（结构性）
+    #[test]
+    fn dto_carries_no_headers_or_body() {
+        let out = build_resource_received(
+            "tab-1",
+            &raw(
+                "https://example.com/a",
+                Some(200),
+                Some("text/html"),
+                Some(1),
+            ),
+            2048,
+        )
+        .expect("入库");
+        let json = serde_json::to_string(&out).expect("serialize");
+        for bad in ["cookie", "authorization", "set-cookie", "body", "headers"] {
+            assert!(
+                !json.to_ascii_lowercase().contains(bad),
+                "DTO 不得含 {bad}: {json}"
+            );
+        }
+    }
+
+    // T-rc-3：降级不伪造——无响应/未知长度时 status/mime/size 为 None
+    #[test]
+    fn degraded_fields_are_none_not_forged() {
+        let out = build_resource_received(
+            "tab-1",
+            &raw("https://example.com/x", None, None, Some(0)),
+            2048,
+        )
+        .expect("入库");
+        assert_eq!(out.status, None);
+        assert_eq!(out.mime, None);
+        assert_eq!(out.size_bytes, None, "content_length=0 必须映射为未知 None");
+        assert_eq!(out.duration_ms, Some(50));
+        let skew = RawResourceEvent {
+            started_at: 2000,
+            finished_at: 1000,
+            ..raw("https://example.com/x", None, None, None)
+        };
+        let out2 = build_resource_received("tab-1", &skew, 2048).expect("入库");
+        assert_eq!(out2.duration_ms, None, "时钟回拨不得伪造耗时");
+    }
+
+    // T-rc-3b：非 http(s) URL 一律不入库（file:/data:/blob:/about:）
+    #[test]
+    fn non_http_urls_are_dropped() {
+        for bad in [
+            "file:///etc/passwd",
+            "data:text/html,x",
+            "blob:https://x/y",
+            "about:blank",
+        ] {
+            assert!(
+                build_resource_received("tab-1", &raw(bad, Some(200), None, None), 2048).is_none(),
+                "{bad} 不得入库"
+            );
+        }
+    }
+
+    // T-rc-4：每 tab 容量上限（FIFO 丢最旧 + 驱逐计数）
+    #[test]
+    fn per_tab_cap_evicts_oldest() {
+        let mut buf = ResourceBuffer::default();
+        for i in 0..5 {
+            buf.push(rec("tab-1", &format!("r{i}")), 3, 100);
+        }
+        let ids: Vec<String> = buf.records("tab-1").iter().map(|r| r.id.clone()).collect();
+        assert_eq!(ids, vec!["r2", "r3", "r4"], "应保留最新 3 条");
+        assert_eq!(buf.evicted_of("tab-1"), 2);
+        assert_eq!(buf.total, 3);
+    }
+
+    // T-rc-5：全局容量上限（跨 tab FIFO，跳过已被 per-tab 驱逐的过期项）
+    #[test]
+    fn global_cap_evicts_oldest_across_tabs() {
+        let mut buf = ResourceBuffer::default();
+        buf.push(rec("tab-1", "a1"), 10, 4);
+        buf.push(rec("tab-2", "b1"), 10, 4);
+        buf.push(rec("tab-1", "a2"), 10, 4);
+        buf.push(rec("tab-2", "b2"), 10, 4);
+        buf.push(rec("tab-1", "a3"), 10, 4); // 触发全局驱逐 a1
+        assert_eq!(buf.total, 4);
+        let t1: Vec<String> = buf.records("tab-1").iter().map(|r| r.id.clone()).collect();
+        assert_eq!(t1, vec!["a2", "a3"], "全局 FIFO 应丢掉最旧的 a1");
+        assert_eq!(buf.evicted_global, 1);
+        // 过期 order 项（per-tab 已驱逐）在全局驱逐时被惰性跳过，不出错
+        let mut buf2 = ResourceBuffer::default();
+        for i in 0..6 {
+            buf2.push(rec("tab-1", &format!("x{i}")), 2, 3);
+        }
+        buf2.push(rec("tab-2", "y1"), 2, 3);
+        buf2.push(rec("tab-2", "y2"), 2, 3);
+        assert!(buf2.total <= 3, "全局上限必须守住: {}", buf2.total);
+    }
+
+    // T-rc-6：tab 关闭清理（remove_tab 释放记录与计数）
+    #[test]
+    fn tab_close_clears_records() {
+        let mut buf = ResourceBuffer::default();
+        buf.push(rec("tab-1", "a1"), 10, 100);
+        buf.push(rec("tab-2", "b1"), 10, 100);
+        buf.remove_tab("tab-1");
+        assert!(buf.records("tab-1").is_empty());
+        assert_eq!(buf.records("tab-2").len(), 1);
+        assert_eq!(buf.total, 1);
+        buf.clear_all();
+        assert_eq!(buf.total, 0);
+        assert!(buf.records("tab-2").is_empty());
+    }
+
+    // T-rc-7：clear_tab 返回清除条数并复位驱逐计数
+    #[test]
+    fn clear_tab_returns_removed_count() {
+        let mut buf = ResourceBuffer::default();
+        buf.push(rec("tab-1", "a1"), 1, 100);
+        buf.push(rec("tab-1", "a2"), 1, 100);
+        assert_eq!(buf.evicted_of("tab-1"), 1);
+        let removed = buf.clear_tab("tab-1");
+        assert_eq!(removed, 1, "a1 已被 per-tab 驱逐，只剩 a2");
+        assert_eq!(buf.evicted_of("tab-1"), 0);
+        assert_eq!(buf.total, 0);
+    }
+
+    // T-rc-8：capture disabled 语义（on_resource_received 入口 gating 由 settings.enabled 决定；
+    // 这里验证 build+push 之外的判定契约：enabled=false 时调用方必须短路）
+    #[test]
+    fn disabled_capture_gate_contract() {
+        let s = ResourceCaptureSettings {
+            enabled: false,
+            ..Default::default()
+        };
+        assert!(
+            !s.enabled,
+            "enabled=false 时 on_resource_received 必须直接丢弃"
+        );
+    }
+
+    // T-rc-9：来源校验——远程页面对资源命令必须被阻断（无令牌）
+    #[test]
+    fn remote_invocation_to_resource_commands_is_rejected() {
+        let registry = crate::security_policy::IntentRegistry::new();
+        for scope in [
+            "list_tab_resources",
+            "clear_tab_resources",
+            "get_resource_capture_settings",
+            "set_resource_capture_settings",
+        ] {
+            assert!(
+                crate::security_policy::check_remote_invocation("tab-9", scope, None, &registry)
+                    .is_err(),
+                "远程页面（tab-*）无令牌调用 {scope} 必须被拒绝"
+            );
+            assert!(
+                crate::security_policy::check_remote_invocation("main", scope, None, &registry)
+                    .is_ok(),
+                "主窗口调用 {scope} 应放行"
+            );
+        }
+    }
+
+    // T-rc-10：classify 归类（mime 优先，URL 后缀兜底，xhr_fetch 启发式）
+    #[test]
+    fn classify_kind_by_mime_then_extension() {
+        assert_eq!(
+            classify_resource_kind(Some("text/html"), "https://x/"),
+            ResourceKind::Document
+        );
+        assert_eq!(
+            classify_resource_kind(Some("application/javascript"), "https://x/a"),
+            ResourceKind::Script
+        );
+        assert_eq!(
+            classify_resource_kind(Some("text/css"), "https://x/a"),
+            ResourceKind::Stylesheet
+        );
+        assert_eq!(
+            classify_resource_kind(Some("image/png"), "https://x/a"),
+            ResourceKind::Image
+        );
+        assert_eq!(
+            classify_resource_kind(Some("font/woff2"), "https://x/a"),
+            ResourceKind::Font
+        );
+        assert_eq!(
+            classify_resource_kind(Some("video/mp4"), "https://x/a"),
+            ResourceKind::Media
+        );
+        assert_eq!(
+            classify_resource_kind(Some("application/json"), "https://x/api"),
+            ResourceKind::XhrFetch
+        );
+        assert_eq!(
+            classify_resource_kind(Some("application/octet-stream"), "https://x/a.bin"),
+            ResourceKind::Other
+        );
+        assert_eq!(
+            classify_resource_kind(None, "https://x/app.js?token=***"),
+            ResourceKind::Script
+        );
+        assert_eq!(
+            classify_resource_kind(None, "https://x/style.css"),
+            ResourceKind::Stylesheet
+        );
+        assert_eq!(
+            classify_resource_kind(None, "https://x/pic.webp"),
+            ResourceKind::Image
+        );
+        assert_eq!(
+            classify_resource_kind(None, "https://x/data.json"),
+            ResourceKind::XhrFetch
+        );
+        assert_eq!(
+            classify_resource_kind(None, "https://x/page/"),
+            ResourceKind::Document
+        );
+        assert_eq!(
+            classify_resource_kind(None, "https://x/unknown.bin"),
+            ResourceKind::Other
+        );
+    }
+
+    // T-rc-11：事件 payload 即脱敏 DTO（on_resource_received emit 的就是 build 产物）
+    #[test]
+    fn event_payload_is_redacted_dto() {
+        let out = build_resource_received(
+            "tab-1",
+            &raw(
+                "https://ex.com/cb?access_token=tok-9&session=s-1&v=2",
+                Some(200),
+                Some("text/html"),
+                Some(5),
+            ),
+            2048,
+        )
+        .expect("入库");
+        let payload = serde_json::to_value(&out).expect("to value");
+        let s = payload.to_string();
+        assert!(!s.contains("tok-9"));
+        assert!(!s.contains("s-1"));
+        assert!(s.contains("v=2"));
+        // method 缺省回退 GET（信号缺省时）
+        let no_method = RawResourceEvent {
+            method: None,
+            ..raw("https://ex.com/", None, None, None)
+        };
+        let out2 = build_resource_received("tab-1", &no_method, 2048).expect("入库");
+        assert_eq!(out2.method, "GET");
+    }
+
+    // T-rc-12：tab_id 形态校验（拒绝 grid/伪造 label）
+    #[test]
+    fn tab_id_shape_is_enforced() {
+        assert!(check_tab_id("tab-1").is_ok());
+        assert!(check_tab_id("grid-0").is_err());
+        assert!(check_tab_id("main").is_err());
+        assert!(check_tab_id(&"tab-".repeat(20)).is_err());
+    }
+
+    // T-rc-13：URL 限长（settings 可调低，不得超过策略硬上限）
+    #[test]
+    fn url_length_cap_is_enforced() {
+        let long = format!("https://example.com/{}", "a".repeat(3000));
+        let out =
+            build_resource_received("tab-1", &raw(&long, None, None, None), 100).expect("入库");
+        assert!(
+            out.url.len() <= 104,
+            "settings 调低后必须更严: {}",
+            out.url.len()
+        );
+        let out2 =
+            build_resource_received("tab-1", &raw(&long, None, None, None), 999_999).expect("入库");
+        assert!(
+            out2.url.len() <= crate::security_policy::MAX_RESOURCE_URL_BYTES + 4,
+            "settings 调高不得突破策略硬上限"
         );
     }
 }

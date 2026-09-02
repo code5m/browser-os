@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { bridge } from "./bridge";
 import { useBrowserStore } from "./stores/useBrowserStore";
+import { useResourceStore } from "./stores/useResourceStore";
 import { useWorkspaceStore } from "./stores/useWorkspaceStore";
 import { useGitStore } from "./stores/useGitStore";
 import { useSystemStore } from "./stores/useSystemStore";
@@ -17,6 +18,7 @@ import GitWriteConfirmDialog from "./components/workspace/GitWriteConfirmDialog.
 import AINavPanel from "./components/browser/AINavPanel.vue";
 
 const browser = useBrowserStore();
+const resources = useResourceStore();
 const ws = useWorkspaceStore();
 const git = useGitStore();
 const system = useSystemStore();
@@ -78,6 +80,9 @@ onMounted(async () => {
   });
   bridge.onTabTitle((t) => browser.setTitle(t));
   bridge.onTabNavigated((d) => browser.setNavigated(d.id, d.url));
+  // M1-8：资源瀑布实时事件（payload 已是后端脱敏 DTO）。订阅放全局，
+  // 保证 Dock 面板未挂载时记录也不丢。
+  bridge.onResourceReceived((r) => resources.applyReceived(r));
   bridge.onTabRecovery((d) => browser.handleTabRecovery(d));
   bridge.onNewTabRequest((u) => {
     setTimeout(() => browser.tabNew(u.url), 0);

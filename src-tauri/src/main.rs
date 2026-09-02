@@ -1129,6 +1129,21 @@ fn main() {
                         let error = payload.get("error").and_then(|e| e.as_str()).unwrap_or("");
                         bridge::report_tab_load_failed(&forward, id, url, error);
                     }
+                    // M1-8：插件原生资源事件（含原始 URL，仅进程内）→ 脱敏 + 容量上限
+                    // + 入库 + resource-received 推前端。绝不直接转发原始 payload。
+                    Some("resourceReceived") => {
+                        let id = payload.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                        if !id.is_empty() {
+                            match serde_json::from_value::<bridge::RawResourceEvent>(
+                                payload.clone(),
+                            ) {
+                                Ok(raw) => bridge::on_resource_received(&forward, id, raw),
+                                Err(e) => {
+                                    eprintln!("[main] resourceReceived payload 解析失败: {e}")
+                                }
+                            }
+                        }
+                    }
                     _ => {}
                 }
             });
@@ -1322,6 +1337,10 @@ fn main() {
             bridge::git_branch_list,
             bridge::request_git_write,
             bridge::confirm_git_write,
+            bridge::list_tab_resources,
+            bridge::clear_tab_resources,
+            bridge::get_resource_capture_settings,
+            bridge::set_resource_capture_settings,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {

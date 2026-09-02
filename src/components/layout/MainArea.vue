@@ -5,6 +5,7 @@ import { useBrowserStore } from "../../stores/useBrowserStore";
 import { useBookmarkStore } from "../../stores/useBookmarkStore";
 import BrowserHost from "../browser/BrowserHost.vue";
 import BookmarkPanel from "../browser/BookmarkPanel.vue";
+import ResourceWaterfall from "../browser/ResourceWaterfall.vue";
 import UnifiedTabBar from "./UnifiedTabBar.vue";
 import FileEditor from "../workspace/FileEditor.vue";
 
@@ -84,9 +85,12 @@ watch(
           <div class="tabs">
             <button :class="{ active: layout.browserDockTab === 'files' }" @click="layout.browserDockTab = 'files'">📂 文件</button>
             <button :class="{ active: layout.browserDockTab === 'term' }" @click="layout.browserDockTab = 'term'">💻 终端</button>
+            <button :class="{ active: layout.browserDockTab === 'net' }" @click="layout.browserDockTab = 'net'">🌊 资源</button>
             <button class="close" @click="layout.browserDockOpen = false" title="收起">✕</button>
           </div>
           <FilePanel v-if="layout.browserDockTab === 'files'" />
+          <!-- M1-8 资源瀑布：请求/响应列表（脱敏 DTO），挂 Dock 第三 Tab -->
+          <ResourceWaterfall v-else-if="layout.browserDockTab === 'net'" />
           <!-- .terminal 是 absolute inset:0，需相对定位容器约束在 tab 栏之下 -->
           <div v-else class="dock-term-wrap"><TerminalPane /></div>
         </aside>

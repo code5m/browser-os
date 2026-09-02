@@ -28,7 +28,7 @@ export const useLayoutStore = defineStore("layout", () => {
   const leftResizing = ref(false);
   // 浏览器视图右侧 Dock：边浏览网页边操作文件/终端
   const browserDockOpen = ref(false);
-  const browserDockTab = ref<"files" | "term">("files");
+  const browserDockTab = ref<"files" | "term" | "net">("files");
   // 地址栏模式：🌐网址（默认）/ 📁目录（输入本地路径浏览目录）
   const addrMode = ref<"url" | "dir">("url");
   // 浏览器精简模式：隐藏地址栏+页签栏，给网页更大空间（类谷歌沉浸式）
@@ -178,7 +178,7 @@ export const useLayoutStore = defineStore("layout", () => {
   }
 
   // 浏览器视图右侧 Dock：指定 tab 时做"切到该 tab/再点收起"语义
-  function toggleBrowserDock(tab?: "files" | "term") {
+  function toggleBrowserDock(tab?: "files" | "term" | "net") {
     if (tab) {
       if (browserDockOpen.value && browserDockTab.value === tab) {
         browserDockOpen.value = false;

@@ -10,6 +10,15 @@ use tauri::{
     WebviewUrl, Window, Wry,
 };
 
+/// M1-8：资源事件时间戳（epoch 毫秒）。
+#[cfg(target_os = "linux")]
+fn epoch_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or_default()
+}
+
 /// Internal state for managing tabs.
 ///
 /// The host window is resolved lazily on every operation, so the plugin works
@@ -142,6 +151,75 @@ impl TabManager {
                         },
                     );
                     false
+                });
+            });
+        }
+
+        // M1-8 资源瀑布采集（Linux WebKitGTK 原生信号）：
+        // resource-load-started 记录方法与开始时刻，finished/failed 时取真实
+        // URIResponse（status/mime/content_length）后上报。字段全部来自原生信号，
+        // 无响应时 status/mime/size_bytes 为 None，绝不伪造；错误信息不上报
+        // （GError 文本可能含原始 URL，隐私红线）。
+        // 隐私注意：此处**不打印、不落盘**任何资源 URL（含 query 的原始 URL
+        // 可能带 token）；脱敏与容量上限由主进程 bridge 统一负责。
+        #[cfg(target_os = "linux")]
+        {
+            let id_rs = options.id.clone();
+            let app_rs = self.app.clone();
+            let _ = webview.with_webview(move |pwv| {
+                use webkit2gtk::{URIRequestExt, URIResponseExt, WebResourceExt, WebViewExt};
+                let gtk_wv = pwv.inner();
+                gtk_wv.connect_resource_load_started(move |_wv, resource, request| {
+                    let started = std::time::Instant::now();
+                    let started_at = epoch_millis();
+                    let url = request.uri().map(|u| u.to_string()).unwrap_or_default();
+                    if url.is_empty() {
+                        return;
+                    }
+                    let method = request.http_method().map(|m| m.to_string());
+                    let emit = {
+                        let id = id_rs.clone();
+                        let app = app_rs.clone();
+                        let url = url.clone();
+                        let method = method.clone();
+                        move |status: Option<u32>, mime: Option<String>, size: Option<u64>| {
+                            let _ = app.emit(
+                                "browser-tabs://event",
+                                BrowserTabEvent::ResourceReceived {
+                                    id: id.clone(),
+                                    url: url.clone(),
+                                    method: method.clone(),
+                                    status,
+                                    mime,
+                                    size_bytes: size,
+                                    started_at,
+                                    finished_at: epoch_millis(),
+                                },
+                            );
+                        }
+                    };
+                    let emit_finished = emit.clone();
+                    resource.connect_finished(move |r| {
+                        let _elapsed = started.elapsed();
+                        match r.response() {
+                            Some(resp) => {
+                                let size = match resp.content_length() {
+                                    0 => None, // WebKit 未知长度返回 0，映射为 None（不伪造）
+                                    n => Some(n),
+                                };
+                                emit_finished(
+                                    Some(resp.status_code()),
+                                    resp.mime_type().map(|m| m.to_string()),
+                                    size,
+                                );
+                            }
+                            None => emit_finished(None, None, None),
+                        }
+                    });
+                    resource.connect_failed(move |_r, _error| {
+                        // 加载失败：只上报能确定的真实字段，status/mime/size 为 None
+                        emit(None, None, None);
+                    });
                 });
             });
         }

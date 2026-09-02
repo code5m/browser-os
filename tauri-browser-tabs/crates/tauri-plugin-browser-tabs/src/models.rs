@@ -84,6 +84,21 @@ pub enum BrowserTabEvent {
         url: String,
         error: String,
     },
+    /// 子资源加载完成或失败（M1-8，Linux WebKitGTK 原生信号
+    /// resource-load-started + finished/failed）。字段只来自原生信号：
+    /// status/mime/size_bytes 在无真实响应时为 None，绝不伪造。
+    /// 注意：url 为页面上报的原始 URL，**未经脱敏**；主进程必须先经
+    /// `redact_sensitive_url` 过滤再入库/转发前端，本事件不外泄到前端。
+    ResourceReceived {
+        id: TabId,
+        url: String,
+        method: Option<String>,
+        status: Option<u32>,
+        mime: Option<String>,
+        size_bytes: Option<u64>,
+        started_at: i64,
+        finished_at: i64,
+    },
     Closed {
         id: TabId,
     },

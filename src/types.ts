@@ -188,6 +188,48 @@ export interface TabInfo {
   title: string;
 }
 
+// ====== M1-8 资源瀑布（与后端 domain.rs 一一对应） ======
+// 隐私红线：DTO 不含 headers/Cookie/Authorization/Set-Cookie/任何 body；
+// url 已由后端脱敏（敏感查询参数值为 ***）。Option 字段为 null 表示平台
+// 拿不到（降级采集，不伪造）。
+export type ResourceKind =
+  | "document"
+  | "script"
+  | "stylesheet"
+  | "image"
+  | "xhr_fetch"
+  | "font"
+  | "media"
+  | "other";
+
+export interface ResourceReceived {
+  id: string;
+  tab_id: string;
+  url: string;
+  method: string;
+  status: number | null;
+  mime: string | null;
+  size_bytes: number | null;
+  started_at: number;
+  finished_at: number | null;
+  duration_ms: number | null;
+  resource_type: ResourceKind;
+}
+
+export interface ResourceCaptureSettings {
+  enabled: boolean;
+  max_per_tab: number;
+  max_total: number;
+  max_url_bytes: number;
+}
+
+// list_tab_resources 返回：记录 + 因容量上限被 FIFO 丢弃的累计条数
+export interface TabResourceList {
+  records: ResourceReceived[];
+  evicted: number;
+  enabled: boolean;
+}
+
 export type TabRecoveryStatus =
   | "attempting"
   | "recovered"
