@@ -250,6 +250,9 @@ pub struct M0Config {
 #[derive(Default)]
 pub struct AppState {
     pub pending_jobs: Mutex<HashMap<String, SyncJob>>,
+    /// M1-6.b：Git 写待确认任务（与成果推送 SyncJob 完全隔离，互不干扰；
+    /// 一次性：confirm 取出即从表移除，需重新 request 才能再执行）
+    pub pending_git_jobs: Mutex<HashMap<String, GitWriteJob>>,
     /// M0-0.b 测量钩子配置（环境变量注入；见 `M0Config`）
     pub m0_config: Mutex<M0Config>,
     /// 资源扫描线程只允许启动一次；线程按当前 active_tab 工作，空闲时休眠。
@@ -1186,6 +1189,361 @@ pub fn git_branch_list(
     check_invocation_source(&webview, "git_branch_list", None, &app)?;
     let repo = sync::open_readonly(&app, &repo_id)?;
     sync::read_branches(&repo)
+}
+
+// ---------------------------------------------------------------------------
+// M1-6.b Git 写能力：双阶段确认闸门（request_git_write / confirm_git_write）
+//
+// 对齐 request_sync/confirm_sync 的双阶段范式，但使用独立的
+// GitWriteJob/pending_git_jobs（SyncJob 语义属成果推送，混用会污染既有流程）。
+//
+// 安全边界（fail-closed，任一环节失败零写入）：
+// - 操作白名单仅六项（GitWriteOp），其余一律 Err("操作禁止")；
+// - repo_id 必须命中 repos.json 且锁定在 app_data_dir/mvp-browser-os/repos/<id>
+//   （复用 M1-5 sync::repo_dir/open_readonly）；
+// - paths 仅允许仓库内显式相对路径，禁止 .git 内部/绝对路径/空路径；
+// - commit message 非空限长禁控制字符；branch name 禁 HEAD/空名/逃逸/控制字符；
+// - discard 为 dangerous：confirm 必须带 confirmed_dangerous=true 二次确认；
+// - 任务一次性、5 分钟过期；确认后后台线程执行，完成发 git-write-completed；
+// - 审计 git_write_request / git_write / git_write_failed / git_write_rejected，
+//   detail 只含操作语义与计数，绝无 token/凭据/完整路径清单/diff。
+// ---------------------------------------------------------------------------
+
+/// Git 写任务确认有效期（冻结：5 分钟）。
+pub const GIT_WRITE_JOB_TTL_SECS: i64 = 300;
+/// 预览返回给前端的路径列表截断条数（完整列表不落前端，防大仓刷屏）。
+pub const GIT_WRITE_PREVIEW_MAX_PATHS: usize = 20;
+
+/// 闸门纯函数：校验并取出一个待确认任务（一次性；任何失败都不产生写）。
+pub(crate) fn take_confirmable_git_job(
+    jobs: &mut HashMap<String, GitWriteJob>,
+    job_id: &str,
+    now: chrono::DateTime<chrono::Utc>,
+    confirmed_dangerous: bool,
+) -> Result<GitWriteJob, String> {
+    let job = jobs.get(job_id).cloned().ok_or("未知任务")?;
+    if job.status != GitWriteStatus::Pending {
+        jobs.remove(job_id);
+        return Err("任务状态异常".to_string());
+    }
+    if now >= job.expires_at {
+        jobs.remove(job_id);
+        return Err("任务已过期".to_string());
+    }
+    if job.dangerous && !confirmed_dangerous {
+        // 保留任务：用户可在前端补二次确认后在有效期内重试；绝不执行
+        return Err("需二次确认".to_string());
+    }
+    jobs.remove(job_id);
+    let mut job = job;
+    job.status = GitWriteStatus::Running;
+    Ok(job)
+}
+
+/// 审计 detail 构造（纯函数）：只含操作语义与计数。
+/// 刻意不接收 paths/diff/凭据，从签名上杜绝敏感内容落审计。
+pub(crate) fn git_write_audit_detail(
+    op: GitWriteOp,
+    repo_id: &str,
+    job_id: &str,
+    path_count: usize,
+    confirmed: bool,
+    extra: &str,
+) -> String {
+    serde_json::json!({
+        "op": op.as_str(),
+        "repo_id": repo_id,
+        "job_id": job_id,
+        "path_count": path_count,
+        "confirmed": confirmed,
+        "extra": extra,
+    })
+    .to_string()
+}
+
+/// 审计/错误串兜底截断（300 字节，回退 UTF-8 边界）：
+/// 写链不接触 token，这里防止冗长错误（如整段 diff 文本）落审计。
+pub(crate) fn sanitize_audit_text(s: &str) -> String {
+    const MAX: usize = 300;
+    if s.len() <= MAX {
+        return s.to_string();
+    }
+    let mut end = MAX;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &s[..end])
+}
+
+/// 阶段一预检（只读）：参数校验 + 必然失败情形提前暴露，返回 (摘要, 影响路径)。
+/// 任何一步失败都直接 Err——此函数不做任何写。
+fn precheck_git_write(
+    repo: &git2::Repository,
+    op: GitWriteOp,
+    paths: &[String],
+    message: Option<&str>,
+    branch: Option<&str>,
+    checkout: bool,
+) -> Result<(String, Vec<String>), String> {
+    match op {
+        GitWriteOp::Stage => {
+            sync::validate_repo_paths(paths)?;
+            sync::precheck_stageable(repo, paths)?;
+            Ok((format!("暂存 {} 个路径", paths.len()), paths.to_vec()))
+        }
+        GitWriteOp::Unstage => {
+            sync::validate_repo_paths(paths)?;
+            sync::precheck_tracked(repo, paths)?;
+            Ok((format!("取消暂存 {} 个路径", paths.len()), paths.to_vec()))
+        }
+        GitWriteOp::Discard => {
+            sync::validate_repo_paths(paths)?;
+            sync::precheck_tracked(repo, paths)?;
+            Ok((
+                format!("丢弃 {} 个路径的工作区改动（不可恢复）", paths.len()),
+                paths.to_vec(),
+            ))
+        }
+        GitWriteOp::Commit => {
+            sync::validate_commit_message(message.unwrap_or_default())?;
+            if paths.is_empty() {
+                let dirty = sync::read_status(repo)?;
+                if dirty.is_empty() {
+                    return Err("没有可提交的变更".to_string());
+                }
+                let affected: Vec<String> = dirty.into_iter().map(|s| s.path).collect();
+                Ok((format!("提交全部 {} 个变更文件", affected.len()), affected))
+            } else {
+                sync::validate_repo_paths(paths)?;
+                sync::precheck_stageable(repo, paths)?;
+                Ok((format!("提交 {} 个指定路径", paths.len()), paths.to_vec()))
+            }
+        }
+        GitWriteOp::CreateBranch => {
+            let name = branch.unwrap_or_default();
+            sync::validate_branch_name(name)?;
+            if repo.find_branch(name, git2::BranchType::Local).is_ok() {
+                return Err(format!("分支已存在: {name}"));
+            }
+            let summary = if checkout {
+                format!("基于当前 HEAD 创建并切换到新分支 {name}")
+            } else {
+                format!("基于当前 HEAD 创建新分支 {name}")
+            };
+            Ok((summary, vec![]))
+        }
+        GitWriteOp::CheckoutBranch => {
+            let name = branch.unwrap_or_default();
+            sync::validate_branch_name(name)?;
+            match sync::checkout_conflict(repo, name)? {
+                Some(conflict) => Err(format!(
+                    "工作区有未提交改动且与目标分支冲突，禁止切换: {conflict}"
+                )),
+                None => Ok((format!("切换到本地分支 {name}"), vec![])),
+            }
+        }
+    }
+}
+
+/// Git 写 阶段一：生成待确认 GitWriteJob 与预览（不执行任何写）。
+#[tauri::command]
+pub fn request_git_write(
+    app: AppHandle,
+    webview: tauri::Webview,
+    repo_id: String,
+    op: String,
+    paths: Option<Vec<String>>,
+    message: Option<String>,
+    branch: Option<String>,
+    checkout: Option<bool>,
+) -> Result<GitWritePreview, String> {
+    check_invocation_source(&webview, "request_git_write", None, &app)?;
+    // 1) 操作白名单：非白名单（reset/push/merge/rebase/stash/clean…）立即拒绝
+    let op = match GitWriteOp::from_op_str(&op) {
+        Some(op) => op,
+        None => {
+            workspace::log_audit(&app, "git_write_rejected", format!("操作禁止: {op}"));
+            return Err("操作禁止".to_string());
+        }
+    };
+    // 2) 路径锁定：repo_id 必须命中 repos.json 且禁止逃逸（复用 M1-5）
+    let repo = sync::open_readonly(&app, &repo_id).map_err(|e| {
+        workspace::log_audit(&app, "git_write_rejected", format!("仓库校验失败: {e}"));
+        e
+    })?;
+    // 3) 参数校验 + 只读预检（任何失败都零写入，且落 git_write_rejected 审计）
+    let paths = paths.unwrap_or_default();
+    let checkout = checkout.unwrap_or(false);
+    let (summary, affected) = match precheck_git_write(
+        &repo,
+        op,
+        &paths,
+        message.as_deref(),
+        branch.as_deref(),
+        checkout,
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            workspace::log_audit(
+                &app,
+                "git_write_rejected",
+                git_write_audit_detail(
+                    op,
+                    &repo_id,
+                    "",
+                    paths.len(),
+                    false,
+                    &sanitize_audit_text(&e),
+                ),
+            );
+            return Err(e);
+        }
+    };
+    // 4) 生成一次性待确认任务（5 分钟有效），不执行任何写
+    let now = chrono::Utc::now();
+    let job = GitWriteJob {
+        id: uuid::Uuid::new_v4().to_string(),
+        repo_id: repo_id.clone(),
+        op,
+        paths,
+        message: message.filter(|m| !m.is_empty()),
+        branch: branch.filter(|b| !b.is_empty()),
+        checkout,
+        status: GitWriteStatus::Pending,
+        dangerous: op.is_dangerous(),
+        created_at: now,
+        expires_at: now + chrono::Duration::seconds(GIT_WRITE_JOB_TTL_SECS),
+        finished_at: None,
+        error: None,
+    };
+    let path_count = affected.len();
+    app.state::<AppState>()
+        .pending_git_jobs
+        .lock()
+        .unwrap()
+        .insert(job.id.clone(), job.clone());
+    workspace::log_audit(
+        &app,
+        "git_write_request",
+        git_write_audit_detail(op, &repo_id, &job.id, path_count, false, &summary),
+    );
+    Ok(GitWritePreview {
+        job_id: job.id,
+        repo_id,
+        op,
+        summary,
+        affected_paths: affected
+            .into_iter()
+            .take(GIT_WRITE_PREVIEW_MAX_PATHS)
+            .collect(),
+        path_count,
+        dangerous: job.dangerous,
+        expires_at: job.expires_at,
+    })
+}
+
+/// Git 写 阶段二（闸门）：用户确认后才执行。dangerous 操作必须二次确认。
+/// 后台线程执行，完成（成功/失败）通过 `git-write-completed` 事件通知前端。
+#[tauri::command]
+pub fn confirm_git_write(
+    app: AppHandle,
+    webview: tauri::Webview,
+    job_id: String,
+    confirmed_dangerous: Option<bool>,
+) -> Result<GitWriteJob, String> {
+    check_invocation_source(&webview, "confirm_git_write", None, &app)?;
+    let running = {
+        let state = app.state::<AppState>();
+        let mut jobs = state.pending_git_jobs.lock().unwrap();
+        match take_confirmable_git_job(
+            &mut jobs,
+            &job_id,
+            chrono::Utc::now(),
+            confirmed_dangerous.unwrap_or(false),
+        ) {
+            Ok(job) => job,
+            Err(e) => {
+                workspace::log_audit(
+                    &app,
+                    "git_write_rejected",
+                    format!("确认闸门拒绝 job={job_id}: {e}"),
+                );
+                return Err(e);
+            }
+        }
+    };
+
+    let app_thread = app.clone();
+    let job_clone = running.clone();
+    std::thread::spawn(move || {
+        let result = execute_git_write(&app_thread, &job_clone);
+        let mut finished = job_clone.clone();
+        finished.finished_at = Some(chrono::Utc::now());
+        match result {
+            Ok(_) => {
+                finished.status = GitWriteStatus::Success;
+                workspace::log_audit(
+                    &app_thread,
+                    "git_write",
+                    git_write_audit_detail(
+                        job_clone.op,
+                        &job_clone.repo_id,
+                        &job_clone.id,
+                        job_clone.paths.len(),
+                        true,
+                        "ok",
+                    ),
+                );
+            }
+            Err(e) => {
+                let clean = sanitize_audit_text(&e);
+                finished.status = GitWriteStatus::Failed;
+                finished.error = Some(clean.clone());
+                workspace::log_audit(
+                    &app_thread,
+                    "git_write_failed",
+                    git_write_audit_detail(
+                        job_clone.op,
+                        &job_clone.repo_id,
+                        &job_clone.id,
+                        job_clone.paths.len(),
+                        true,
+                        &clean,
+                    ),
+                );
+            }
+        }
+        let _ = app_thread.emit("git-write-completed", finished);
+    });
+
+    Ok(running)
+}
+
+/// 阶段二执行体：重新做路径锁定与参数校验后才执行写（fail-closed 双保险）。
+fn execute_git_write(app: &AppHandle, job: &GitWriteJob) -> Result<(), String> {
+    let repo = sync::open_readonly(app, &job.repo_id)?;
+    match job.op {
+        GitWriteOp::Stage => sync::write_stage(&repo, &job.paths).map(|_| ()),
+        GitWriteOp::Unstage => sync::write_unstage(&repo, &job.paths).map(|_| ()),
+        GitWriteOp::Discard => sync::write_discard(&repo, &job.paths).map(|_| ()),
+        GitWriteOp::Commit => {
+            let msg = job.message.clone().unwrap_or_default();
+            let paths = if job.paths.is_empty() {
+                None
+            } else {
+                Some(job.paths.as_slice())
+            };
+            sync::write_commit(&repo, &msg, paths).map(|_| ())
+        }
+        GitWriteOp::CreateBranch => {
+            let name = job.branch.clone().unwrap_or_default();
+            sync::write_create_branch(&repo, &name, job.checkout).map(|_| ())
+        }
+        GitWriteOp::CheckoutBranch => {
+            let name = job.branch.clone().unwrap_or_default();
+            sync::write_checkout_branch(&repo, &name).map(|_| ())
+        }
+    }
 }
 
 /// 第一步：生成"待确认"SyncJob（不真正推送）。校验仓库与凭据存在。
@@ -2966,4 +3324,120 @@ pub fn m0_config(app: AppHandle) -> Option<serde_json::Value> {
         "ready_file": cfg.ready_file,
         "report_dir": cfg.report_dir,
     }))
+}
+
+#[cfg(test)]
+mod git_write_gate_tests {
+    use super::*;
+    use chrono::{Duration, Utc};
+
+    fn make_job(op: GitWriteOp, created: chrono::DateTime<Utc>, ttl_secs: i64) -> GitWriteJob {
+        GitWriteJob {
+            id: uuid::Uuid::new_v4().to_string(),
+            repo_id: "r1".into(),
+            op,
+            paths: vec!["a.txt".into()],
+            message: None,
+            branch: None,
+            checkout: false,
+            status: GitWriteStatus::Pending,
+            dangerous: op.is_dangerous(),
+            created_at: created,
+            expires_at: created + Duration::seconds(ttl_secs),
+            finished_at: None,
+            error: None,
+        }
+    }
+
+    // T-gw-2（b 卡）：未确认执行 → confirm 不存在的 job 必须 Err("未知任务")，零写入
+    #[test]
+    fn git_write_gate_unknown_job_rejected() {
+        let mut jobs = HashMap::new();
+        let err = take_confirmable_git_job(&mut jobs, "nope", Utc::now(), false)
+            .expect_err("未知任务必须拒绝");
+        assert_eq!(err, "未知任务");
+    }
+
+    // T-gw-3（b 卡）：过期 job 被拒且清除，零写入
+    #[test]
+    fn git_write_gate_expired_job_rejected_and_removed() {
+        let mut jobs = HashMap::new();
+        let job = make_job(GitWriteOp::Stage, Utc::now() - Duration::seconds(600), 300);
+        let id = job.id.clone();
+        jobs.insert(id.clone(), job);
+        let err = take_confirmable_git_job(&mut jobs, &id, Utc::now(), false)
+            .expect_err("过期任务必须拒绝");
+        assert_eq!(err, "任务已过期");
+        assert!(jobs.is_empty(), "过期任务应被清除");
+    }
+
+    // T-gw-b-3：discard（dangerous）未带二次确认必须拒绝，且任务不被执行/不取出
+    #[test]
+    fn git_write_gate_discard_requires_double_confirm() {
+        let mut jobs = HashMap::new();
+        let job = make_job(GitWriteOp::Discard, Utc::now(), 300);
+        let id = job.id.clone();
+        jobs.insert(id.clone(), job);
+        let err = take_confirmable_git_job(&mut jobs, &id, Utc::now(), false)
+            .expect_err("缺二次确认必须拒绝");
+        assert_eq!(err, "需二次确认");
+        assert!(
+            jobs.contains_key(&id),
+            "未确认的 dangerous 任务应保留在表内（未执行，用户可补确认）"
+        );
+        // 带上二次确认：放行并一次性取出（Running）
+        let taken =
+            take_confirmable_git_job(&mut jobs, &id, Utc::now(), true).expect("二次确认后应放行");
+        assert_eq!(taken.status, GitWriteStatus::Running);
+        assert!(jobs.is_empty(), "确认后任务必须一次性移除");
+    }
+
+    // T-gw-2b：任务一次性（confirm 后再次 confirm 必须 Err）+ 非 Pending 状态拒绝
+    #[test]
+    fn git_write_gate_one_shot_and_pending_only() {
+        let mut jobs = HashMap::new();
+        let job = make_job(GitWriteOp::Commit, Utc::now(), 300);
+        let id = job.id.clone();
+        jobs.insert(id.clone(), job);
+        take_confirmable_git_job(&mut jobs, &id, Utc::now(), false).expect("首次确认");
+        let err = take_confirmable_git_job(&mut jobs, &id, Utc::now(), false)
+            .expect_err("重复确认必须拒绝");
+        assert_eq!(err, "未知任务");
+
+        let mut jobs2 = HashMap::new();
+        let mut running_job = make_job(GitWriteOp::Stage, Utc::now(), 300);
+        running_job.status = GitWriteStatus::Running;
+        let id2 = running_job.id.clone();
+        jobs2.insert(id2.clone(), running_job);
+        let err2 = take_confirmable_git_job(&mut jobs2, &id2, Utc::now(), false)
+            .expect_err("非 Pending 状态必须拒绝");
+        assert_eq!(err2, "任务状态异常");
+        assert!(jobs2.is_empty(), "异常状态任务应被清除");
+    }
+
+    // T-gw-b-12：审计 detail 只含操作语义与计数，绝无凭据/路径清单/diff 全量
+    #[test]
+    fn git_write_audit_detail_contains_no_credentials_or_path_lists() {
+        let d = git_write_audit_detail(GitWriteOp::Commit, "r1", "j1", 3, true, "ok");
+        assert!(d.contains("\"op\":\"commit\""), "detail: {d}");
+        assert!(d.contains("\"repo_id\":\"r1\""), "detail: {d}");
+        assert!(d.contains("\"path_count\":3"), "detail: {d}");
+        assert!(d.contains("\"confirmed\":true"), "detail: {d}");
+        for forbidden in ["userpass", "token", "secret", "password", "a.txt", ".git/"] {
+            assert!(
+                !d.contains(forbidden),
+                "审计 detail 不得含 {forbidden}: {d}"
+            );
+        }
+        // 长错误串必须被截断（防整段 diff/冗长文本落审计），且不切 UTF-8 字符
+        let long = "你".repeat(500); // 每字 3 字节，共 1500 字节
+        let s = sanitize_audit_text(&long);
+        assert!(s.len() <= 300 + "…".len(), "截断后长度应受限: {}", s.len());
+        assert!(
+            std::str::from_utf8(s.as_bytes()).is_ok(),
+            "必须是合法 UTF-8"
+        );
+        let short = "短错误";
+        assert_eq!(sanitize_audit_text(short), short, "短文本不应被改动");
+    }
 }

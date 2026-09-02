@@ -153,6 +153,104 @@ pub struct GitDiffResult {
     pub more: bool,
 }
 
+// ---------------------------------------------------------------------------
+// M1-6.b Git 写能力（双阶段确认闸门）
+//
+// 白名单只有六个操作；任何其他操作串（reset/push/merge/rebase/stash/clean…）
+// 在 request 阶段即被拒绝（fail-closed，零写入）。
+// 结构体只承载操作语义与计数，绝不包含 token/凭据/完整 diff。
+// ---------------------------------------------------------------------------
+
+/// Git 写操作白名单（任务书 M1-6.b ALLOW_IMPLEMENT 冻结六项）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GitWriteOp {
+    Stage,
+    Unstage,
+    Discard,
+    Commit,
+    CreateBranch,
+    CheckoutBranch,
+}
+
+impl GitWriteOp {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            GitWriteOp::Stage => "stage",
+            GitWriteOp::Unstage => "unstage",
+            GitWriteOp::Discard => "discard",
+            GitWriteOp::Commit => "commit",
+            GitWriteOp::CreateBranch => "create_branch",
+            GitWriteOp::CheckoutBranch => "checkout_branch",
+        }
+    }
+
+    /// 白名单解析：非白名单操作一律 None（调用方据此返回「操作禁止」）。
+    pub fn from_op_str(s: &str) -> Option<GitWriteOp> {
+        match s {
+            "stage" => Some(GitWriteOp::Stage),
+            "unstage" => Some(GitWriteOp::Unstage),
+            "discard" => Some(GitWriteOp::Discard),
+            "commit" => Some(GitWriteOp::Commit),
+            "create_branch" => Some(GitWriteOp::CreateBranch),
+            "checkout_branch" => Some(GitWriteOp::CheckoutBranch),
+            _ => None,
+        }
+    }
+
+    /// 危险操作需二次确认：discard 不可逆地用索引内容覆盖工作区文件。
+    pub fn is_dangerous(&self) -> bool {
+        matches!(self, GitWriteOp::Discard)
+    }
+}
+
+/// Git 写任务状态机：Pending → Running → Success/Failed。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GitWriteStatus {
+    Pending,
+    Running,
+    Success,
+    Failed,
+}
+
+/// Git 写任务。与 `SyncJob` 完全独立：SyncJob 语义属成果推送，
+/// 混用会污染既有 request_sync/confirm_sync 流程，因此单独建模。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitWriteJob {
+    pub id: String,
+    pub repo_id: String,
+    pub op: GitWriteOp,
+    /// 已校验的仓库内相对路径（stage/unstage/discard 必填；commit 空 = 全量）
+    pub paths: Vec<String>,
+    /// commit 的提交信息（已通过校验：非空/限长/无控制字符）
+    pub message: Option<String>,
+    /// create_branch / checkout_branch 的目标分支名（已通过校验）
+    pub branch: Option<String>,
+    /// create_branch 是否同时检出
+    pub checkout: bool,
+    pub status: GitWriteStatus,
+    pub dangerous: bool,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub error: Option<String>,
+}
+
+/// 阶段一返回给前端的预览：只含摘要、计数与截断后的路径列表（≤20 条），
+/// 不含 diff 内容、不含任何凭据。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitWritePreview {
+    pub job_id: String,
+    pub repo_id: String,
+    pub op: GitWriteOp,
+    pub summary: String,
+    pub affected_paths: Vec<String>,
+    pub path_count: usize,
+    pub dangerous: bool,
+    pub expires_at: DateTime<Utc>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,5 +277,49 @@ mod tests {
         let bm = Bookmark::new("u".into(), "t".into(), "c".into());
         let parsed = uuid::Uuid::parse_str(&bm.id).expect("uuid parse");
         assert_eq!(parsed.get_version_num(), 4);
+    }
+
+    // T-gw-1（b 卡）：白名单外操作（reset/push/merge/rebase/stash/clean 等任意形式）
+    // 必须在 request 阶段即被判定为 None → Err("操作禁止")，零写入。
+    #[test]
+    fn git_write_op_whitelist_only_six_ops() {
+        for ok in [
+            "stage",
+            "unstage",
+            "discard",
+            "commit",
+            "create_branch",
+            "checkout_branch",
+        ] {
+            assert!(GitWriteOp::from_op_str(ok).is_some(), "{ok} 应在白名单内");
+        }
+        for bad in [
+            "reset",
+            "reset --hard",
+            "push",
+            "push --force",
+            "pull",
+            "fetch",
+            "merge",
+            "rebase",
+            "stash",
+            "clean",
+            "revert",
+            "cherry-pick",
+            "branch -D",
+            "checkout .",
+            "",
+            "STAGE",
+            " stage",
+        ] {
+            assert!(
+                GitWriteOp::from_op_str(bad).is_none(),
+                "白名单外操作必须被拒绝: {bad:?}"
+            );
+        }
+        // 危险标记：仅 discard 需要二次确认
+        assert!(GitWriteOp::Discard.is_dangerous());
+        assert!(!GitWriteOp::Commit.is_dangerous());
+        assert!(!GitWriteOp::CheckoutBranch.is_dangerous());
     }
 }

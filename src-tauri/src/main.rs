@@ -1320,6 +1320,8 @@ fn main() {
             bridge::git_status,
             bridge::git_diff,
             bridge::git_branch_list,
+            bridge::request_git_write,
+            bridge::confirm_git_write,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {

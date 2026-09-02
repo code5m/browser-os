@@ -56,6 +56,48 @@ export interface GitDiffResult {
   more: boolean;
 }
 
+// ====== M1-6.b Git 写能力（双阶段确认闸门） ======
+// 与后端 domain.rs 的 DTO 一一对应：只承载操作语义与计数，
+// 不含 token/凭据/完整 diff。写操作必须先 request（生成预览+待确认任务），
+// 再 confirm（dangerous 操作需 confirmedDangerous=true 二次确认）才执行。
+
+export type GitWriteOp =
+  | "stage"
+  | "unstage"
+  | "discard"
+  | "commit"
+  | "create_branch"
+  | "checkout_branch";
+
+export type GitWriteStatus = "pending" | "running" | "success" | "failed";
+
+export interface GitWriteJob {
+  id: string;
+  repo_id: string;
+  op: GitWriteOp;
+  paths: string[];
+  message?: string | null;
+  branch?: string | null;
+  checkout: boolean;
+  status: GitWriteStatus;
+  dangerous: boolean;
+  created_at: string;
+  expires_at: string;
+  finished_at?: string | null;
+  error?: string | null;
+}
+
+export interface GitWritePreview {
+  job_id: string;
+  repo_id: string;
+  op: GitWriteOp;
+  summary: string;
+  affected_paths: string[];
+  path_count: number;
+  dangerous: boolean;
+  expires_at: string;
+}
+
 export interface SyncPreview {
   job_id: string;
   repo_id: string;

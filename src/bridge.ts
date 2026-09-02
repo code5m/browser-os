@@ -17,6 +17,9 @@ import type {
   GitFileStatus,
   GitDiffResult,
   GitBranch,
+  GitWriteOp,
+  GitWriteJob,
+  GitWritePreview,
 } from "./types";
 
 // M0-0.b 测量配置（契约 logs/m0-baseline-contract-v1.md；非测量运行后端返回 null）
@@ -75,6 +78,62 @@ export const bridge = {
 
   gitBranchList: (p: { repoId: string }) =>
     invoke<GitBranch[]>("git_branch_list", p),
+
+  // ====== M1-6.b Git 写能力（双阶段确认闸门；本期无 UI，UI 归 M1-7） ======
+  // 所有写操作都必须先 request（生成预览 + 待确认任务，不执行任何写），
+  // 再 confirm 才真正执行；discard 等 dangerous 操作 confirm 时必须带
+  // confirmedDangerous=true 二次确认。任务一次性、5 分钟过期。
+
+  // 阶段一：生成待确认 GitWriteJob 与预览
+  requestGitWrite: (p: {
+    repoId: string;
+    op: GitWriteOp;
+    paths?: string[];
+    message?: string;
+    branch?: string;
+    checkout?: boolean;
+  }) => invoke<GitWritePreview>("request_git_write", p),
+
+  // 阶段二：确认执行（后台线程执行，立即返回 Running 任务）
+  confirmGitWrite: (p: { jobId: string; confirmedDangerous?: boolean }) =>
+    invoke<GitWriteJob>("confirm_git_write", p),
+
+  // 订阅后台写任务完成事件（成功/失败都会触发，payload 为最终 GitWriteJob）
+  onGitWriteCompleted: (cb: (job: GitWriteJob) => void) =>
+    listen<GitWriteJob>("git-write-completed", (e) => cb(e.payload)),
+
+  // 六个白名单操作的便捷封装（只生成待确认任务，仍需 confirmGitWrite 才执行）
+  gitStage: (repoId: string, paths: string[]) =>
+    invoke<GitWritePreview>("request_git_write", { repoId, op: "stage", paths }),
+
+  gitUnstage: (repoId: string, paths: string[]) =>
+    invoke<GitWritePreview>("request_git_write", { repoId, op: "unstage", paths }),
+
+  gitDiscard: (repoId: string, paths: string[]) =>
+    invoke<GitWritePreview>("request_git_write", { repoId, op: "discard", paths }),
+
+  gitCommit: (repoId: string, message: string, paths?: string[]) =>
+    invoke<GitWritePreview>("request_git_write", {
+      repoId,
+      op: "commit",
+      message,
+      paths,
+    }),
+
+  gitCreateBranch: (repoId: string, name: string, checkout?: boolean) =>
+    invoke<GitWritePreview>("request_git_write", {
+      repoId,
+      op: "create_branch",
+      branch: name,
+      checkout,
+    }),
+
+  gitCheckoutBranch: (repoId: string, name: string) =>
+    invoke<GitWritePreview>("request_git_write", {
+      repoId,
+      op: "checkout_branch",
+      branch: name,
+    }),
 
   // 第一步：生成“待确认”SyncJob（不真正推送）
   requestSync: (p: { artifactIds: string[]; repoId: string }) =>

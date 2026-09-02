@@ -304,18 +304,22 @@ pub const GIT_DIFF_HARD_CAP: usize = 256 * 1024;
 /// 安全边界：repo_id 必须命中 `repos.json` 里已配置的仓库，且不得含路径
 /// 分隔符、绝对路径或 `..` 逃逸；最终落点严格在
 /// `app_data_dir/mvp-browser-os/repos/<id>` 内。
+/// repo_id 合法性纯判定：拒绝空值/路径分隔符/`..`/绝对路径（供 repo_dir 与测试复用）。
+pub(crate) fn is_valid_repo_id(id: &str) -> bool {
+    !(id.is_empty()
+        || id.contains('/')
+        || id.contains('\\')
+        || id.contains("..")
+        || std::path::Path::new(id).is_absolute())
+}
+
 pub fn repo_dir(app: &AppHandle, repo_id: &str) -> Result<std::path::PathBuf, String> {
     let cfg = workspace::load_repos(app)
         .into_iter()
         .find(|r| r.id == repo_id)
         .ok_or_else(|| "仓库未配置".to_string())?;
     let id = &cfg.id;
-    if id.is_empty()
-        || id.contains('/')
-        || id.contains('\\')
-        || id.contains("..")
-        || std::path::Path::new(id).is_absolute()
-    {
+    if !is_valid_repo_id(id) {
         return Err("非法仓库 id".to_string());
     }
     let base = app
@@ -516,6 +520,366 @@ pub fn read_branches(repo: &Repository) -> Result<Vec<GitBranch>, String> {
         });
     }
     Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// M1-6.b Git 写原语（stage / unstage / discard / commit / create_branch /
+// checkout_branch）
+//
+// 硬约束：
+// - 只操作调用方显式给出的、经 `validate_repo_paths` 校验的仓库内相对路径；
+//   禁止 .git 内部路径、绝对路径、`..`/`.` 分量、反斜杠、空路径、控制字符。
+// - 全部「先校验后执行」：任何一条路径非法即整体拒绝，索引不落盘 = 零部分写。
+// - 纯本地写：不联网、不读 Keyring、不接触 token/凭据；本段严禁出现
+//   cred_cb / push / fetch / clone / pull。
+// - 失败 fail-closed：返回 Err 时仓库不得发生部分后续写动作。
+// ---------------------------------------------------------------------------
+
+/// 单次写操作的路径数上限（防载荷放大）。
+pub const GIT_WRITE_MAX_PATHS: usize = 200;
+/// commit message 字节上限。
+pub const GIT_COMMIT_MSG_MAX_BYTES: usize = 500;
+/// 分支名字节上限。
+pub const GIT_BRANCH_NAME_MAX_BYTES: usize = 100;
+
+/// 校验写操作路径列表：只接受仓库根内的显式相对路径，拒绝整仓隐式操作。
+pub fn validate_repo_paths(paths: &[String]) -> Result<(), String> {
+    if paths.is_empty() {
+        return Err("路径列表不能为空（拒绝整仓隐式操作）".to_string());
+    }
+    if paths.len() > GIT_WRITE_MAX_PATHS {
+        return Err(format!("路径过多：{} > {GIT_WRITE_MAX_PATHS}", paths.len()));
+    }
+    for p in paths {
+        if p.trim().is_empty() {
+            return Err("存在空路径".to_string());
+        }
+        if p.chars().any(|c| c.is_control()) {
+            return Err("路径含控制字符".to_string());
+        }
+        if std::path::Path::new(p).is_absolute() {
+            return Err(format!("禁止绝对路径: {p}"));
+        }
+        if p.contains('\\') {
+            return Err(format!("禁止反斜杠路径: {p}"));
+        }
+        // Path::components() 会归一化跳过中间的 `.`，因此先用字符串级检查
+        // 显式拒绝 `.`/`..`/空分量（含 `a/./b`、`a//b`、`a/`、`./a`）
+        if p.split('/')
+            .any(|seg| seg.is_empty() || seg == "." || seg == "..")
+        {
+            return Err(format!("路径含非法分量（. / .. / 空分量）: {p}"));
+        }
+        let mut saw_normal = false;
+        for comp in std::path::Path::new(p).components() {
+            match comp {
+                std::path::Component::Normal(seg) => {
+                    if seg == ".git" {
+                        return Err(format!("禁止 .git 内部路径: {p}"));
+                    }
+                    saw_normal = true;
+                }
+                // RootDir 已被 is_absolute 拦截；CurDir/ParentDir/Prefix 一律拒绝
+                _ => return Err(format!("路径含非法分量（. 或 ..）: {p}")),
+            }
+        }
+        if !saw_normal {
+            return Err(format!("路径无效: {p}"));
+        }
+    }
+    Ok(())
+}
+
+/// 校验 commit message：非空、限长、禁止控制字符（含换行）。
+pub fn validate_commit_message(message: &str) -> Result<(), String> {
+    if message.trim().is_empty() {
+        return Err("提交信息不能为空".to_string());
+    }
+    if message.len() > GIT_COMMIT_MSG_MAX_BYTES {
+        return Err(format!(
+            "提交信息超长：{} > {GIT_COMMIT_MSG_MAX_BYTES} 字节",
+            message.len()
+        ));
+    }
+    if message.chars().any(|c| c.is_control()) {
+        return Err("提交信息含控制字符".to_string());
+    }
+    Ok(())
+}
+
+/// 校验分支名：禁止 HEAD/空名/路径逃逸/控制字符/git 保留序列，
+/// 兜底交给 libgit2 的 refname 合法性校验。
+pub fn validate_branch_name(name: &str) -> Result<(), String> {
+    if name.trim().is_empty() {
+        return Err("分支名不能为空".to_string());
+    }
+    if name.len() > GIT_BRANCH_NAME_MAX_BYTES {
+        return Err(format!(
+            "分支名超长：{} > {GIT_BRANCH_NAME_MAX_BYTES} 字节",
+            name.len()
+        ));
+    }
+    if name == "HEAD" || name == "@" {
+        return Err("禁止以 HEAD/@ 作为分支名".to_string());
+    }
+    if name.chars().any(|c| c.is_control()) {
+        return Err("分支名含控制字符".to_string());
+    }
+    if name.contains("..") || name.contains("@{") {
+        return Err("分支名含非法序列（.. 或 @{）".to_string());
+    }
+    if name.contains('\\') {
+        return Err("分支名禁止反斜杠".to_string());
+    }
+    if name.starts_with('/') || name.ends_with('/') || name.contains("//") {
+        return Err("分支名路径逃逸".to_string());
+    }
+    if name.starts_with('-') {
+        return Err("分支名禁止以 - 开头".to_string());
+    }
+    if name.ends_with(".lock") || name.ends_with('.') {
+        return Err("分支名后缀非法".to_string());
+    }
+    // git check-ref-format 禁用字符：空格 ~ ^ : ? * [
+    if name
+        .chars()
+        .any(|c| matches!(c, ' ' | '~' | '^' | ':' | '?' | '*' | '['))
+    {
+        return Err("分支名含 git 禁用字符".to_string());
+    }
+    // 每个路径分量不得以 . 开头（如 a/.b）
+    if name
+        .split('/')
+        .any(|seg| seg.is_empty() || seg.starts_with('.'))
+    {
+        return Err("分支名分量非法".to_string());
+    }
+    let refname = format!("refs/heads/{name}");
+    if !git2::Reference::is_valid_name(&refname) {
+        return Err("分支名不合法（refname 校验未过）".to_string());
+    }
+    Ok(())
+}
+
+/// 预检：所有路径必须存在于工作区或索引（stage/commit 用）。
+pub fn precheck_stageable(repo: &Repository, paths: &[String]) -> Result<(), String> {
+    let workdir = repo.workdir().ok_or("裸仓库不支持写操作")?;
+    let index = repo.index().map_err(|e| e.to_string())?;
+    for p in paths {
+        let rel = std::path::Path::new(p);
+        if !workdir.join(rel).exists() && index.get_path(rel, 0).is_none() {
+            return Err(format!("路径不存在（工作区与索引均无）: {p}"));
+        }
+    }
+    Ok(())
+}
+
+/// 预检：所有路径必须已在索引中（unstage/discard 用）。
+pub fn precheck_tracked(repo: &Repository, paths: &[String]) -> Result<(), String> {
+    let index = repo.index().map_err(|e| e.to_string())?;
+    for p in paths {
+        if index.get_path(std::path::Path::new(p), 0).is_none() {
+            return Err(format!("路径未被跟踪: {p}"));
+        }
+    }
+    Ok(())
+}
+
+/// 显式暂存：只把给定路径加入索引；工作区已删除的路径记为删除。
+pub fn write_stage(repo: &Repository, paths: &[String]) -> Result<usize, String> {
+    validate_repo_paths(paths)?;
+    precheck_stageable(repo, paths)?;
+    let workdir = repo.workdir().ok_or("裸仓库不支持写操作")?;
+    let mut index = repo.index().map_err(|e| e.to_string())?;
+    // 任一失败即返回：index.write() 未执行 = 磁盘索引零变化
+    for p in paths {
+        let rel = std::path::Path::new(p);
+        if workdir.join(rel).exists() {
+            index
+                .add_path(rel)
+                .map_err(|e| format!("暂存失败 {p}: {e}"))?;
+        } else {
+            index
+                .remove_path(rel)
+                .map_err(|e| format!("暂存删除失败 {p}: {e}"))?;
+        }
+    }
+    index.write().map_err(|e| e.to_string())?;
+    Ok(paths.len())
+}
+
+/// 显式取消暂存：把给定路径的索引条目重置回 HEAD（不动工作区）。
+pub fn write_unstage(repo: &Repository, paths: &[String]) -> Result<usize, String> {
+    validate_repo_paths(paths)?;
+    precheck_tracked(repo, paths)?;
+    match repo
+        .head()
+        .ok()
+        .and_then(|h| h.peel(git2::ObjectType::Any).ok())
+    {
+        Some(target) => {
+            repo.reset_default(Some(&target), paths.iter())
+                .map_err(|e| format!("取消暂存失败: {e}"))?;
+        }
+        None => {
+            // 无 HEAD（尚无提交）：直接从索引移除
+            let mut index = repo.index().map_err(|e| e.to_string())?;
+            for p in paths {
+                index
+                    .remove_path(std::path::Path::new(p))
+                    .map_err(|e| e.to_string())?;
+            }
+            index.write().map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(paths.len())
+}
+
+/// 显式丢弃工作区改动：用索引内容覆盖给定路径的工作区文件（不可恢复）。
+/// 只允许显式路径；未跟踪文件一律整体拒绝（防误删新文件）。
+pub fn write_discard(repo: &Repository, paths: &[String]) -> Result<usize, String> {
+    validate_repo_paths(paths)?;
+    precheck_tracked(repo, paths)?;
+    let mut index = repo.index().map_err(|e| e.to_string())?;
+    let mut cb = CheckoutBuilder::new();
+    cb.force();
+    for p in paths {
+        cb.path(p);
+    }
+    repo.checkout_index(Some(&mut index), Some(&mut cb))
+        .map_err(|e| format!("丢弃改动失败: {e}"))?;
+    Ok(paths.len())
+}
+
+/// 提交：paths=None 时全量 add_all（对齐既有成果推送 commit 语义）；
+/// paths=Some 时只提交显式路径（其余改动保持原状，绝不顺带提交）。
+pub fn write_commit(
+    repo: &Repository,
+    message: &str,
+    paths: Option<&[String]>,
+) -> Result<String, String> {
+    validate_commit_message(message)?;
+    if let Some(ps) = paths {
+        validate_repo_paths(ps)?;
+        precheck_stageable(repo, ps)?;
+    }
+    let mut index = repo.index().map_err(|e| e.to_string())?;
+    match paths {
+        Some(ps) => {
+            let workdir = repo.workdir().ok_or("裸仓库不支持写操作")?;
+            for p in ps {
+                let rel = std::path::Path::new(p);
+                if workdir.join(rel).exists() {
+                    index
+                        .add_path(rel)
+                        .map_err(|e| format!("暂存失败 {p}: {e}"))?;
+                } else {
+                    index
+                        .remove_path(rel)
+                        .map_err(|e| format!("暂存删除失败 {p}: {e}"))?;
+                }
+            }
+        }
+        None => {
+            index
+                .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    index.write().map_err(|e| e.to_string())?;
+    let tree_id = index.write_tree().map_err(|e| e.to_string())?;
+    // 无可提交变更（索引树 == HEAD 树）：拒绝创建空提交（对齐 git CLI 行为）。
+    if let Ok(head_tree) = repo.head().and_then(|h| h.peel_to_tree()) {
+        if head_tree.id() == tree_id {
+            return Err("没有可提交的变更".to_string());
+        }
+    }
+    let tree = repo.find_tree(tree_id).map_err(|e| e.to_string())?;
+    let sig = Signature::now("极智简单", "mvp@jizhijiandan.local").map_err(|e| e.to_string())?;
+    let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+    let parents: Vec<&git2::Commit> = parent.iter().collect();
+    let oid = repo
+        .commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)
+        .map_err(|e| format!("提交失败: {e}"))?;
+    Ok(oid.to_string())
+}
+
+/// 建本地分支（基于当前 HEAD），可选同时检出。禁止覆盖已存在分支。
+pub fn write_create_branch(
+    repo: &Repository,
+    name: &str,
+    checkout: bool,
+) -> Result<String, String> {
+    validate_branch_name(name)?;
+    if repo.find_branch(name, git2::BranchType::Local).is_ok() {
+        return Err(format!("分支已存在: {name}"));
+    }
+    let head = repo
+        .head()
+        .and_then(|h| h.peel_to_commit())
+        .map_err(|_| "仓库尚无提交，无法创建分支".to_string())?;
+    repo.branch(name, &head, false)
+        .map_err(|e| format!("创建分支失败: {e}"))?;
+    if checkout {
+        let refname = format!("refs/heads/{name}");
+        repo.set_head(&refname).map_err(|e| e.to_string())?;
+        // 新分支与 HEAD 同 commit，safe checkout 不会覆盖任何本地改动
+        repo.checkout_head(Some(CheckoutBuilder::new().safe()))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(name.to_string())
+}
+
+/// 切换分支前的冲突预检（只读）：返回第一个与脏工作区冲突的路径，
+/// None = 可安全切换。分支不存在/非本地分支直接 Err。
+pub fn checkout_conflict(repo: &Repository, name: &str) -> Result<Option<String>, String> {
+    let branch = repo
+        .find_branch(name, git2::BranchType::Local)
+        .map_err(|_| format!("分支不存在: {name}"))?;
+    if branch.is_head() {
+        return Ok(None);
+    }
+    let dirty: std::collections::HashSet<String> =
+        read_status(repo)?.into_iter().map(|s| s.path).collect();
+    if dirty.is_empty() {
+        return Ok(None);
+    }
+    let head_tree = repo
+        .head()
+        .and_then(|h| h.peel_to_tree())
+        .map_err(|e| e.to_string())?;
+    let target_tree = branch.get().peel_to_tree().map_err(|e| e.to_string())?;
+    let diff = repo
+        .diff_tree_to_tree(Some(&head_tree), Some(&target_tree), None)
+        .map_err(|e| e.to_string())?;
+    for d in diff.deltas() {
+        let p = d
+            .new_file()
+            .path()
+            .or_else(|| d.old_file().path())
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if dirty.contains(&p) {
+            return Ok(Some(p));
+        }
+    }
+    Ok(None)
+}
+
+/// 切换到已存在的本地分支。脏工作区与目标分支有文件级冲突时在移动
+/// HEAD 之前整体拒绝（失败零部分动作）；拒绝 detached HEAD/路径/checkout --force。
+pub fn write_checkout_branch(repo: &Repository, name: &str) -> Result<String, String> {
+    validate_branch_name(name)?;
+    if let Some(conflict) = checkout_conflict(repo, name)? {
+        return Err(format!(
+            "工作区有未提交改动且与目标分支冲突，禁止切换: {conflict}"
+        ));
+    }
+    let refname = format!("refs/heads/{name}");
+    repo.set_head(&refname).map_err(|e| e.to_string())?;
+    repo.checkout_head(Some(CheckoutBuilder::new().safe()))
+        .map_err(|e| format!("切换分支失败: {e}"))?;
+    Ok(name.to_string())
 }
 
 #[cfg(test)]
@@ -732,5 +1096,379 @@ mod readonly_tests {
         assert_eq!(before_status.len(), after_status.len(), "status 不应变化");
         assert_eq!(before_head, after_head, "HEAD 不应移动");
         assert_eq!(content, "a2\n", "工作区文件不应被修改");
+    }
+}
+
+#[cfg(test)]
+mod git_write_tests {
+    use super::*;
+    use std::fs;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// 建一个本地临时 git 仓库（不联网、不依赖 AppHandle）。
+    fn temp_repo(tag: &str) -> (std::path::PathBuf, Repository) {
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("mvp-git-gw-{tag}-{}-{n}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("mkdir");
+        let repo = Repository::init(&dir).expect("init");
+        let mut cfg = repo.config().expect("config");
+        cfg.set_str("user.name", "mvp-test").expect("user.name");
+        cfg.set_str("user.email", "mvp@test.local")
+            .expect("user.email");
+        (dir, repo)
+    }
+
+    fn commit_all(repo: &Repository, msg: &str) {
+        let mut index = repo.index().expect("index");
+        index
+            .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+            .expect("add all");
+        index.write().expect("write index");
+        let tree_id = index.write_tree().expect("tree");
+        let tree = repo.find_tree(tree_id).expect("find tree");
+        let sig = Signature::now("mvp-test", "mvp@test.local").expect("sig");
+        match repo.head().ok().and_then(|h| h.target()) {
+            Some(parent) => {
+                let parent_commit = repo.find_commit(parent).expect("parent");
+                repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &[&parent_commit])
+                    .expect("commit");
+            }
+            None => {
+                repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &[])
+                    .expect("initial commit");
+            }
+        };
+    }
+
+    /// 取指定路径的原始 status flags（可区分已暂存/未暂存）。
+    fn status_flags(repo: &Repository, path: &str) -> git2::Status {
+        let mut opts = git2::StatusOptions::new();
+        opts.include_untracked(true);
+        let st = repo.statuses(Some(&mut opts)).expect("statuses");
+        for e in st.iter() {
+            if e.path() == Some(path) {
+                return e.status();
+            }
+        }
+        git2::Status::empty()
+    }
+
+    fn head_shorthand(repo: &Repository) -> String {
+        repo.head()
+            .ok()
+            .and_then(|h| h.shorthand().map(|s| s.to_string()))
+            .expect("head shorthand")
+    }
+
+    fn head_file_content(repo: &Repository, path: &str) -> Option<String> {
+        let tree = repo.head().ok()?.peel_to_tree().ok()?;
+        let entry = tree.get_name(path)?;
+        let blob = repo.find_blob(entry.id()).ok()?;
+        Some(String::from_utf8_lossy(blob.content()).to_string())
+    }
+
+    // T-gw-b-1：stage 只接受 repo 内显式路径（其余改动保持未暂存）
+    #[test]
+    fn git_write_stage_only_explicit_paths() {
+        let (dir, repo) = temp_repo("stage");
+        fs::write(dir.join("a.txt"), "a\n").expect("write");
+        fs::write(dir.join("b.txt"), "b\n").expect("write");
+        fs::write(dir.join("c.txt"), "c\n").expect("write");
+        commit_all(&repo, "init");
+        fs::write(dir.join("a.txt"), "a2\n").expect("modify a");
+        fs::write(dir.join("b.txt"), "b2\n").expect("modify b");
+        fs::remove_file(dir.join("c.txt")).expect("delete c");
+        write_stage(&repo, &["a.txt".to_string(), "c.txt".to_string()]).expect("stage");
+        let a = status_flags(&repo, "a.txt");
+        let b = status_flags(&repo, "b.txt");
+        let c = status_flags(&repo, "c.txt");
+        let _ = fs::remove_dir_all(&dir);
+        assert!(
+            a.contains(git2::Status::INDEX_MODIFIED) && !a.contains(git2::Status::WT_MODIFIED),
+            "a.txt 应已暂存: {a:?}"
+        );
+        assert!(
+            b.contains(git2::Status::WT_MODIFIED) && !b.contains(git2::Status::INDEX_MODIFIED),
+            "b.txt 不应被顺带暂存: {b:?}"
+        );
+        assert!(
+            c.contains(git2::Status::INDEX_DELETED),
+            "c.txt 的删除应被显式暂存: {c:?}"
+        );
+    }
+
+    // T-gw-b-2：unstage 只接受 repo 内显式路径
+    #[test]
+    fn git_write_unstage_only_explicit_paths() {
+        let (dir, repo) = temp_repo("unstage");
+        fs::write(dir.join("a.txt"), "a\n").expect("write");
+        fs::write(dir.join("b.txt"), "b\n").expect("write");
+        commit_all(&repo, "init");
+        fs::write(dir.join("a.txt"), "a2\n").expect("modify a");
+        fs::write(dir.join("b.txt"), "b2\n").expect("modify b");
+        write_stage(&repo, &["a.txt".to_string(), "b.txt".to_string()]).expect("stage both");
+        write_unstage(&repo, &["a.txt".to_string()]).expect("unstage a");
+        let a = status_flags(&repo, "a.txt");
+        let b = status_flags(&repo, "b.txt");
+        let _ = fs::remove_dir_all(&dir);
+        assert!(
+            a.contains(git2::Status::WT_MODIFIED) && !a.contains(git2::Status::INDEX_MODIFIED),
+            "a.txt 应回到未暂存: {a:?}"
+        );
+        assert!(
+            b.contains(git2::Status::INDEX_MODIFIED),
+            "b.txt 应保持已暂存: {b:?}"
+        );
+    }
+
+    // T-gw-b-4：discard 只对显式路径生效；未跟踪文件整体拒绝（防误删新文件）
+    #[test]
+    fn git_write_discard_explicit_paths_only() {
+        let (dir, repo) = temp_repo("discard");
+        fs::write(dir.join("a.txt"), "a\n").expect("write");
+        fs::write(dir.join("b.txt"), "b\n").expect("write");
+        commit_all(&repo, "init");
+        fs::write(dir.join("a.txt"), "a2\n").expect("modify a");
+        fs::write(dir.join("b.txt"), "b2\n").expect("modify b");
+        fs::write(dir.join("new.txt"), "new\n").expect("untracked");
+        // 未跟踪文件：整体拒绝，文件保持原样
+        let err = write_discard(&repo, &["new.txt".to_string()]).expect_err("未跟踪必须拒绝");
+        assert!(err.contains("未被跟踪"), "实际错误: {err}");
+        assert_eq!(
+            fs::read_to_string(dir.join("new.txt")).expect("read"),
+            "new\n",
+            "未跟踪文件不得被删除"
+        );
+        // 显式已跟踪路径：工作区内容被索引内容覆盖；b.txt 不受影响
+        write_discard(&repo, &["a.txt".to_string()]).expect("discard a");
+        let a_content = fs::read_to_string(dir.join("a.txt")).expect("read a");
+        let b_content = fs::read_to_string(dir.join("b.txt")).expect("read b");
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(a_content, "a\n", "a.txt 应恢复为索引内容");
+        assert_eq!(b_content, "b2\n", "b.txt 不应被顺带丢弃");
+    }
+
+    // T-gw-b-5：commit message 空/控制字符/超长拒绝；拒绝时 HEAD 不动
+    #[test]
+    fn git_write_commit_message_validation() {
+        for bad in ["", "   ", "含\n换行", "控\u{7}制", "回\r车"] {
+            assert!(
+                validate_commit_message(bad).is_err(),
+                "非法提交信息必须拒绝: {bad:?}"
+            );
+        }
+        let too_long = "x".repeat(GIT_COMMIT_MSG_MAX_BYTES + 1);
+        assert!(validate_commit_message(&too_long).is_err(), "超长必须拒绝");
+        assert!(validate_commit_message("正常提交信息").is_ok());
+
+        let (dir, repo) = temp_repo("commitmsg");
+        fs::write(dir.join("a.txt"), "a\n").expect("write");
+        commit_all(&repo, "init");
+        fs::write(dir.join("a.txt"), "a2\n").expect("modify");
+        let before = repo.head().ok().and_then(|h| h.target());
+        let err = write_commit(&repo, "", None).expect_err("空 message 必须拒绝");
+        let after = repo.head().ok().and_then(|h| h.target());
+        let _ = fs::remove_dir_all(&dir);
+        assert!(err.contains("不能为空"), "实际错误: {err}");
+        assert_eq!(before, after, "拒绝时 HEAD 不得移动");
+    }
+
+    // T-gw-b-6：commit 不包含未授权路径（显式 paths 之外的改动绝不进提交）
+    #[test]
+    fn git_write_commit_scoped_paths_only() {
+        let (dir, repo) = temp_repo("commitscope");
+        fs::write(dir.join("a.txt"), "a\n").expect("write");
+        fs::write(dir.join("b.txt"), "b\n").expect("write");
+        commit_all(&repo, "init");
+        fs::write(dir.join("a.txt"), "a2\n").expect("modify a");
+        fs::write(dir.join("b.txt"), "b2\n").expect("modify b");
+        write_commit(&repo, "only a", Some(&["a.txt".to_string()])).expect("commit");
+        let head_a = head_file_content(&repo, "a.txt");
+        let head_b = head_file_content(&repo, "b.txt");
+        let b = status_flags(&repo, "b.txt");
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(head_a.as_deref(), Some("a2\n"), "a.txt 应进入提交");
+        assert_eq!(head_b.as_deref(), Some("b\n"), "b.txt 的改动不得进入提交");
+        assert!(
+            b.contains(git2::Status::WT_MODIFIED),
+            "b.txt 应保持未暂存脏状态: {b:?}"
+        );
+    }
+
+    // T-gw-b-7：branch name 非法拒绝（HEAD/空名/路径逃逸/控制字符/保留序列）
+    #[test]
+    fn git_write_branch_name_validation() {
+        for bad in [
+            "",
+            "   ",
+            "HEAD",
+            "@",
+            "../evil",
+            "a..b",
+            "a b",
+            "-x",
+            "a/.b",
+            ".hidden",
+            "a.lock",
+            "a\\b",
+            "ctrl\u{3}x",
+            "a//b",
+            "/abs",
+            "a/",
+            "a@{b",
+            "a:b",
+            "a?b",
+            "a*b",
+        ] {
+            assert!(
+                validate_branch_name(bad).is_err(),
+                "非法分支名必须拒绝: {bad:?}"
+            );
+        }
+        for ok in ["feature/x", "fix-123", "M1-6.b", "hotfix_2"] {
+            assert!(validate_branch_name(ok).is_ok(), "合法分支名应放行: {ok:?}");
+        }
+    }
+
+    // T-gw-b-7b：create_branch 正常路径 + 重名拒绝 + HEAD 校验
+    #[test]
+    fn git_write_create_branch_happy_and_duplicate() {
+        let (dir, repo) = temp_repo("mkbranch");
+        fs::write(dir.join("a.txt"), "a\n").expect("write");
+        commit_all(&repo, "init");
+        write_create_branch(&repo, "feat/x", true).expect("create+checkout");
+        let head = head_shorthand(&repo);
+        let dup = write_create_branch(&repo, "feat/x", false).expect_err("重名必须拒绝");
+        let illegal = write_create_branch(&repo, "HEAD", false).expect_err("HEAD 必须拒绝");
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(head, "feat/x", "checkout=true 应同时切换");
+        assert!(dup.contains("已存在"), "实际错误: {dup}");
+        assert!(illegal.contains("HEAD"), "实际错误: {illegal}");
+    }
+
+    // T-gw-b-8：checkout 非法分支拒绝（不存在/非法名），HEAD 与工作区不变
+    #[test]
+    fn git_write_checkout_invalid_branch_rejected() {
+        let (dir, repo) = temp_repo("ckinvalid");
+        fs::write(dir.join("a.txt"), "a\n").expect("write");
+        commit_all(&repo, "init");
+        let default_branch = head_shorthand(&repo);
+        let err = write_checkout_branch(&repo, "nope").expect_err("不存在分支必须拒绝");
+        assert!(err.contains("分支不存在"), "实际错误: {err}");
+        let err2 = write_checkout_branch(&repo, "../evil").expect_err("非法名必须拒绝");
+        let head_after = head_shorthand(&repo);
+        let content = fs::read_to_string(dir.join("a.txt")).expect("read");
+        let _ = fs::remove_dir_all(&dir);
+        assert!(!err2.is_empty());
+        assert_eq!(head_after, default_branch, "HEAD 不得移动");
+        assert_eq!(content, "a\n", "工作区不得变化");
+    }
+
+    // T-gw-b-9：repo_id 路径逃逸拒绝（纯判定，repo_dir 复用同一谓词）
+    #[test]
+    fn git_write_repo_id_escape_rejected() {
+        for bad in ["..", "../../etc", "/etc", "a/b", "a\\b", ""] {
+            assert!(!is_valid_repo_id(bad), "非法 repo_id 必须拒绝: {bad:?}");
+        }
+        for ok in ["r1", "repo-2", "我的仓库"] {
+            assert!(is_valid_repo_id(ok), "合法 repo_id 应放行: {ok:?}");
+        }
+    }
+
+    // T-gw-b-10：禁止 .git 内部路径（含逃逸/绝对路径/反斜杠组合）
+    #[test]
+    fn git_write_git_dir_paths_rejected() {
+        for bad in [
+            ".git",
+            ".git/config",
+            "a/.git/config",
+            ".git/hooks/x.sh",
+            "./a",
+            "a/../b",
+            "a/./b",
+            "/etc/passwd",
+            "a\\b",
+            "",
+            "  ",
+        ] {
+            assert!(
+                validate_repo_paths(&[bad.to_string()]).is_err(),
+                "非法路径必须拒绝: {bad:?}"
+            );
+        }
+        assert!(validate_repo_paths(&["a.txt".to_string(), "src/b.rs".to_string()]).is_ok());
+        // 端到端：带 .git 路径的 stage 整体拒绝，索引零变化
+        let (dir, repo) = temp_repo("gitdir");
+        fs::write(dir.join("a.txt"), "a\n").expect("write");
+        commit_all(&repo, "init");
+        fs::write(dir.join("a.txt"), "a2\n").expect("modify");
+        let err = write_stage(&repo, &[".git/config".to_string()]).expect_err(".git 必须拒绝");
+        let a = status_flags(&repo, "a.txt");
+        let _ = fs::remove_dir_all(&dir);
+        assert!(err.contains(".git"), "实际错误: {err}");
+        assert!(
+            a.contains(git2::Status::WT_MODIFIED) && !a.contains(git2::Status::INDEX_MODIFIED),
+            "索引不得被部分写入: {a:?}"
+        );
+    }
+
+    // T-gw-b-11a：写操作失败不产生部分后续动作（stage 混合合法+非法路径 → 整体拒绝）
+    #[test]
+    fn git_write_stage_failure_no_partial_action() {
+        let (dir, repo) = temp_repo("nopartial");
+        fs::write(dir.join("a.txt"), "a\n").expect("write");
+        commit_all(&repo, "init");
+        fs::write(dir.join("a.txt"), "a2\n").expect("modify");
+        let err = write_stage(&repo, &["a.txt".to_string(), "../evil".to_string()])
+            .expect_err("含非法路径必须整体拒绝");
+        let a = status_flags(&repo, "a.txt");
+        let _ = fs::remove_dir_all(&dir);
+        assert!(err.contains(".."), "实际错误: {err}");
+        assert!(
+            !a.contains(git2::Status::INDEX_MODIFIED),
+            "失败时合法路径也不得被部分暂存: {a:?}"
+        );
+    }
+
+    // T-gw-b-11b：checkout 脏工作区冲突 → HEAD 不动、工作区不变（零部分动作）
+    #[test]
+    fn git_write_checkout_dirty_conflict_no_partial_action() {
+        let (dir, repo) = temp_repo("ckdirty");
+        fs::write(dir.join("a.txt"), "base\n").expect("write");
+        commit_all(&repo, "init");
+        let default_branch = head_shorthand(&repo);
+        write_create_branch(&repo, "other", false).expect("create other");
+        write_checkout_branch(&repo, "other").expect("switch to other");
+        fs::write(dir.join("a.txt"), "other\n").expect("modify on other");
+        commit_all(&repo, "on other");
+        write_checkout_branch(&repo, &default_branch).expect("switch back");
+        // 在默认分支上制造与 other 冲突的脏改动
+        fs::write(dir.join("a.txt"), "dirty\n").expect("dirty modify");
+        let err = write_checkout_branch(&repo, "other").expect_err("脏冲突必须拒绝");
+        let head_after = head_shorthand(&repo);
+        let content = fs::read_to_string(dir.join("a.txt")).expect("read");
+        let _ = fs::remove_dir_all(&dir);
+        assert!(err.contains("冲突"), "实际错误: {err}");
+        assert_eq!(head_after, default_branch, "拒绝时 HEAD 不得移动");
+        assert_eq!(content, "dirty\n", "拒绝时工作区不得被覆盖");
+    }
+
+    // T-gw-b-11c：checkout 干净工作区正常切换（正向用例）
+    #[test]
+    fn git_write_checkout_clean_switch_ok() {
+        let (dir, repo) = temp_repo("ckclean");
+        fs::write(dir.join("a.txt"), "base\n").expect("write");
+        commit_all(&repo, "init");
+        let default_branch = head_shorthand(&repo);
+        write_create_branch(&repo, "other", false).expect("create");
+        write_checkout_branch(&repo, "other").expect("switch");
+        let head = head_shorthand(&repo);
+        write_checkout_branch(&repo, &default_branch).expect("switch back");
+        let head_back = head_shorthand(&repo);
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(head, "other");
+        assert_eq!(head_back, default_branch);
     }
 }

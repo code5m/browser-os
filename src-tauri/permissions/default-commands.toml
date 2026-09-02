@@ -73,5 +73,7 @@ commands.allow = [
     "set_default_browser",
     "git_status",
     "git_diff",
-    "git_branch_list"
+    "git_branch_list",
+    "request_git_write",
+    "confirm_git_write"
 ]
