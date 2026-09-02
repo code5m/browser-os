@@ -1317,6 +1317,9 @@ fn main() {
             bridge::take_pending_open_urls,
             bridge::get_default_browser,
             bridge::set_default_browser,
+            bridge::git_status,
+            bridge::git_diff,
+            bridge::git_branch_list,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {

@@ -70,5 +70,8 @@ commands.allow = [
     "m0_config",
     "take_pending_open_urls",
     "get_default_browser",
-    "set_default_browser"
+    "set_default_browser",
+    "git_status",
+    "git_diff",
+    "git_branch_list"
 ]

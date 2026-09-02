@@ -114,6 +114,45 @@ impl Bookmark {
     }
 }
 
+// ---------------------------------------------------------------------------
+// M1-5 Git 只读能力 DTO（status / diff / branch_list）
+// 全部字段只描述「仓库当前状态」，不含任何凭据，也不承载任何写操作语义。
+// ---------------------------------------------------------------------------
+
+/// 单文件状态。`status` 取值：
+/// `modified` / `added` / `deleted` / `renamed` / `untracked` / `conflicted`。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitFileStatus {
+    pub path: String,
+    pub status: String,
+}
+
+/// 单文件 diff。内容超限时 `truncated=true`，`new_content` 为截断后的片段；
+/// 二进制文件无法生成文本补丁时 `binary=true` 且两侧内容为 None。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitDiffHunk {
+    pub file: String,
+    pub old_content: Option<String>,
+    pub new_content: Option<String>,
+    pub truncated: bool,
+    pub binary: bool,
+}
+
+/// 分支信息（本地 + 远程跟踪），`is_head` 标当前检出分支。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitBranch {
+    pub name: String,
+    pub is_remote: bool,
+    pub is_head: bool,
+}
+
+/// diff 结果：`more=true` 表示因总大小触顶提前停止收集（还有未返回的文件）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitDiffResult {
+    pub hunks: Vec<GitDiffHunk>,
+    pub more: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

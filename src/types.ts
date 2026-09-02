@@ -21,6 +21,41 @@ export interface RepoConfig {
   username: string;
 }
 
+// ====== M1-5 Git 只读能力 ======
+// 与后端 domain.rs 的 DTO 一一对应（只描述仓库状态，不含任何凭据）。
+
+export type GitFileStatusKind =
+  | "modified"
+  | "added"
+  | "deleted"
+  | "renamed"
+  | "untracked"
+  | "conflicted";
+
+export interface GitFileStatus {
+  path: string;
+  status: GitFileStatusKind;
+}
+
+export interface GitDiffHunk {
+  file: string;
+  old_content: string | null;
+  new_content: string | null;
+  truncated: boolean;
+  binary: boolean;
+}
+
+export interface GitBranch {
+  name: string;
+  is_remote: boolean;
+  is_head: boolean;
+}
+
+export interface GitDiffResult {
+  hunks: GitDiffHunk[];
+  more: boolean;
+}
+
 export interface SyncPreview {
   job_id: string;
   repo_id: string;

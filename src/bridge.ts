@@ -14,6 +14,9 @@ import type {
   TabRecoveryEvent,
   AppEntry,
   ResourceStats,
+  GitFileStatus,
+  GitDiffResult,
+  GitBranch,
 } from "./types";
 
 // M0-0.b 测量配置（契约 logs/m0-baseline-contract-v1.md；非测量运行后端返回 null）
@@ -61,6 +64,17 @@ export const bridge = {
     invoke("configure_repo", p),
 
   listRepos: () => invoke<RepoConfig[]>("list_repos"),
+
+  // ====== M1-5 Git 只读能力（status / diff / branch_list） ======
+  // 只读取仓库状态：不可写、不联网、不回传凭据；diff 超限时由后端截断。
+  gitStatus: (p: { repoId: string }) =>
+    invoke<GitFileStatus[]>("git_status", p),
+
+  gitDiff: (p: { repoId: string; path?: string; maxBytes?: number }) =>
+    invoke<GitDiffResult>("git_diff", p),
+
+  gitBranchList: (p: { repoId: string }) =>
+    invoke<GitBranch[]>("git_branch_list", p),
 
   // 第一步：生成“待确认”SyncJob（不真正推送）
   requestSync: (p: { artifactIds: string[]; repoId: string }) =>

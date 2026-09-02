@@ -1136,6 +1136,58 @@ pub fn list_repos(app: AppHandle) -> Vec<RepoConfig> {
     workspace::load_repos(&app)
 }
 
+// ---------------------------------------------------------------------------
+// M1-5 Git 只读命令（status / diff / branch_list）
+//
+// 硬约束：只允许读仓库状态，不得实现 commit / checkout / push / pull /
+// merge / rebase / 分支删除等任何写操作或联网调用；不读 Keyring、不回传凭据。
+// 三个命令均做调用来源校验（子 webview / 远程页面不得调用），仓库路径锁定在
+// app_data_dir/mvp-browser-os/repos/<id>（见 sync::repo_dir）。
+// ---------------------------------------------------------------------------
+
+/// 只读：工作区/索引脏文件清单（git status 等价）。
+#[tauri::command]
+pub fn git_status(
+    app: AppHandle,
+    webview: tauri::Webview,
+    repo_id: String,
+) -> Result<Vec<GitFileStatus>, String> {
+    check_invocation_source(&webview, "git_status", None, &app)?;
+    let repo = sync::open_readonly(&app, &repo_id)?;
+    sync::read_status(&repo)
+}
+
+/// 只读：HEAD → 工作区的改动（git diff 等价）。
+/// `path` 为可选路径过滤；`max_bytes` 为单文件补丁上限（缺省 64KB，
+/// 服务端硬上限 256KB），超限截断并标 `truncated`，总量触顶标 `more`。
+#[tauri::command]
+pub fn git_diff(
+    app: AppHandle,
+    webview: tauri::Webview,
+    repo_id: String,
+    path: Option<String>,
+    max_bytes: Option<u32>,
+) -> Result<GitDiffResult, String> {
+    check_invocation_source(&webview, "git_diff", None, &app)?;
+    let repo = sync::open_readonly(&app, &repo_id)?;
+    let cap = max_bytes
+        .map(|v| v as usize)
+        .unwrap_or(sync::GIT_DIFF_DEFAULT_MAX_BYTES);
+    sync::read_diff(&repo, path.as_deref(), cap)
+}
+
+/// 只读：本地 + 远程跟踪分支清单（git branch -a 等价）。
+#[tauri::command]
+pub fn git_branch_list(
+    app: AppHandle,
+    webview: tauri::Webview,
+    repo_id: String,
+) -> Result<Vec<GitBranch>, String> {
+    check_invocation_source(&webview, "git_branch_list", None, &app)?;
+    let repo = sync::open_readonly(&app, &repo_id)?;
+    sync::read_branches(&repo)
+}
+
 /// 第一步：生成"待确认"SyncJob（不真正推送）。校验仓库与凭据存在。
 #[tauri::command]
 pub fn request_sync(
