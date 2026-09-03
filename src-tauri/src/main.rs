@@ -1371,6 +1371,7 @@ fn main() {
             bridge::set_session_policy,
             bridge::save_image,
             bridge::list_artifact_images,
+            bridge::workspace_images_dir,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {

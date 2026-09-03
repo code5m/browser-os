@@ -17,6 +17,7 @@ import StatusBar from "./components/layout/StatusBar.vue";
 import ConfirmModal from "./components/shared/ConfirmModal.vue";
 import GitWriteConfirmDialog from "./components/workspace/GitWriteConfirmDialog.vue";
 import SessionCloseDialog from "./components/browser/SessionCloseDialog.vue";
+import ImageLightbox from "./components/shared/ImageLightbox.vue";
 import AINavPanel from "./components/browser/AINavPanel.vue";
 
 const browser = useBrowserStore();
@@ -220,6 +221,8 @@ onMounted(async () => {
     <GitWriteConfirmDialog />
     <!-- M1-9 关闭协议弹窗：关闭页签时全局可见（保存/删除/取消） -->
     <SessionCloseDialog />
+    <!-- M2-2.b 图片灯箱：全局挂载，任何视图点开画廊都能放大预览 -->
+    <ImageLightbox />
   </div>
 </template>
 

@@ -91,5 +91,6 @@ commands.allow = [
     "get_session_policy",
     "set_session_policy",
     "save_image",
+    "workspace_images_dir",
     "list_artifact_images"
 ]

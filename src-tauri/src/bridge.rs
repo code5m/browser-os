@@ -2567,6 +2567,24 @@ pub fn list_artifact_images(
     Ok(images)
 }
 
+/// M2-2.b：图片目录基准（只读，供前端 `convertFileSrc` 拼 `asset://`）。
+///
+/// 只返回目录基准本身，**不含任何图片相对路径**，也不读取字节：
+/// 字节通道由前端 `convertFileSrc` 走 `asset://`，图片目录在既有
+/// `assetProtocol.scope` 的 `$HOME/.local/share/**` 之内，不扩张 scope。
+/// 路径拼接仍复用后端白名单（`images::join_image_path`），前端不得自行推导。
+#[tauri::command]
+pub fn workspace_images_dir(app: AppHandle, webview: tauri::Webview) -> Result<String, String> {
+    check_invocation_source(&webview, "workspace_images_dir", None, &app)?;
+    let dir = workspace::images_dir(&app);
+    workspace::log_audit(
+        &app,
+        "image.dir_read",
+        "op=workspace_images_dir".to_string(),
+    );
+    Ok(dir.to_string_lossy().to_string())
+}
+
 /// M1-2: 新增或更新一条收藏。同 URL 视为更新。
 #[tauri::command]
 pub fn add_bookmark(
@@ -4945,5 +4963,61 @@ mod image_gate_tests {
         for bad in ["cookie", "authorization", "set-cookie", "headers"] {
             assert!(!json.to_ascii_lowercase().contains(bad), "DTO 不得含 {bad}");
         }
+    }
+}
+
+#[cfg(test)]
+mod image_preview_gate_tests {
+    use super::*;
+
+    // T-ip-1（M2-2.b）：预览通道命令同样过来源校验——远程页面不得探测本机图片目录。
+    // 该命令虽是只读，但返回值是真实文件系统路径，属环境信息，不对远程页面开放。
+    #[test]
+    fn remote_invocation_to_images_dir_is_rejected() {
+        let registry = crate::security_policy::IntentRegistry::new();
+        assert!(
+            crate::security_policy::check_remote_invocation(
+                "tab-3",
+                "workspace_images_dir",
+                None,
+                &registry
+            )
+            .is_err(),
+            "远程页面调用 workspace_images_dir 必须被拒绝"
+        );
+        assert!(
+            crate::security_policy::check_remote_invocation(
+                "main",
+                "workspace_images_dir",
+                None,
+                &registry
+            )
+            .is_ok(),
+            "主窗口调用 workspace_images_dir 应放行"
+        );
+    }
+
+    // T-ip-2（M2-2.b）：目录基准与相对路径的拼接必须由后端白名单承担，
+    // 前端只做「基准 + rel_path」的传入，不得拼出图片目录之外的路径。
+    #[test]
+    fn preview_path_join_is_fail_closed() {
+        let dir = "/data/ws/images";
+        assert_eq!(
+            crate::images::join_image_path(dir, "images/a1/b2.png"),
+            Ok("/data/ws/images/images/a1/b2.png".to_string())
+        );
+        for bad in ["../x.png", "/etc/passwd", "images/../../x.png", ""] {
+            assert!(
+                crate::images::join_image_path(dir, bad).is_err(),
+                "越界相对路径必须被拒绝: {bad}"
+            );
+        }
+    }
+
+    // T-ip-3（M2-2.b）：预览通道不使用新的安全边界——目录名常量与落盘 rel 前缀同源，
+    // 防止前后端各拼一套导致 asset:// 指向错误目录。
+    #[test]
+    fn images_dir_constant_matches_rel_prefix() {
+        assert_eq!(crate::images::IMAGES_DIR_NAME, "images");
     }
 }

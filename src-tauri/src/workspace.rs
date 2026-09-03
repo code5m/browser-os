@@ -24,6 +24,17 @@ pub fn workspace_dir(app: &AppHandle) -> PathBuf {
     d
 }
 
+/// 图片目录基准（M2-2.b 预览通道）。
+///
+/// 与 `images::write_image_file` 写出的相对路径 `images/<artifact_id>/<image_id>.<ext>`
+/// 同源：前端拿本函数的返回值与 `ImageRef.rel_path` 拼接，再经 `convertFileSrc`
+/// 转成 `asset://`。与落盘同一处推导，避免前后端各拼一套导致路径漂移。
+pub fn images_dir(app: &AppHandle) -> PathBuf {
+    let d = workspace_dir(app).join(crate::images::IMAGES_DIR_NAME);
+    ensure(&d);
+    d
+}
+
 /// 默认笔记目录（网页选区一键存 Markdown）。
 /// 固定为 ~/Documents/极智笔记（用户可见的特定目录），取不到主目录时退回应用数据目录。
 pub fn notes_dir(app: &AppHandle) -> PathBuf {

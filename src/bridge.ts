@@ -191,6 +191,10 @@ export const bridge = {
   listArtifactImages: (artifactId: string) =>
     invoke<ImageRef[]>("list_artifact_images", { artifactId }),
 
+  // M2-2.b 预览通道：只回目录基准（不含任何图片相对路径），
+  // 前端用它 + ImageRef.rel_path 拼绝对路径后交给 convertFileSrc 转 asset://。
+  workspaceImagesDir: () => invoke<string>("workspace_images_dir"),
+
   // M1-2 收藏领域
   bookmarkAdd: (p: { url: string; title: string; category: string }) =>
     invoke<Bookmark>("add_bookmark", p),

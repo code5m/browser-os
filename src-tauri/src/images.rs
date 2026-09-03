@@ -278,6 +278,37 @@ pub fn validate_rel_path(rel: &str) -> Result<(), ImageError> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// M2-2.b 预览通道（只做「路径拼接」，不读字节）
+//
+// 字节读取由前端 `convertFileSrc` + `asset://` 承担（图片目录已在既有
+// `assetProtocol.scope` 的 `$HOME/.local/share/**` 之内，不扩 scope）。
+// 后端只提供目录基准与「基准 + 相对路径」的安全拼接，避免前端自行推导
+// data_dir 或拼出可越界的绝对路径。
+// ---------------------------------------------------------------------------
+
+/// 图片子目录名（与 `write_image_file` 拼出的 rel 前缀 `images/...` 一致）。
+pub const IMAGES_DIR_NAME: &str = "images";
+
+/// 把「目录基准 + 相对路径」拼成绝对路径字符串（纯函数，有单测）。
+///
+/// - `rel` 必须过 `validate_rel_path`（`..`、绝对路径、反斜杠、空段一律拒绝）
+/// - `dir` 为空视为不可用（宁可不显示，也不退化成相对路径读取）
+///
+/// 契约锚点：前端 `src/utils/imagePreview.ts` 的 `buildAssetSrc` 是本函数的同构
+/// 实现（同一套白名单）。生产路径暂时只由前端调用（后端不读字节），这里保留
+/// 后端实现 + 单测，确保两侧白名单不会各自漂移；与 `InlineTooLarge` 同为契约
+/// 预留，故标注 `allow(dead_code)`。
+#[allow(dead_code)]
+pub fn join_image_path(dir: &str, rel: &str) -> Result<String, ImageError> {
+    validate_rel_path(rel)?;
+    let base = dir.trim_end_matches('/');
+    if base.is_empty() {
+        return Err(ImageError::PathEscape);
+    }
+    Ok(format!("{base}/{rel}"))
+}
+
 /// 溯源 URL 脱敏（复用 M1-8 既有策略：`?token=` 等敏感查询值 → `***`）。
 /// 这是图片路径上唯一的 URL 出入点，禁止绕过。
 pub fn redact_source_url(url: Option<&str>) -> Option<String> {
@@ -942,5 +973,49 @@ mod image_contract_tests {
             "IMAGE_BUDGET_EXCEEDED"
         );
         assert_eq!(ImageError::InlineTooLarge.code(), "INLINE_TOO_LARGE");
+    }
+
+    // T-img-14（M2-2.b）：预览路径拼接只允许「基准 + 白名单相对路径」。
+    // 前端拿到的是绝对路径字符串，一旦这里放行 `..` 或绝对路径，
+    // `asset://` 就会读到图片目录之外的文件。
+    #[test]
+    fn join_image_path_only_allows_whitelisted_rel() {
+        let dir = "/home/u/.local/share/com.jizhijiandan.mvp/mvp-browser-os/workspace/images";
+        assert_eq!(
+            join_image_path(dir, "images/a1/b2.png"),
+            Ok(format!("{dir}/images/a1/b2.png"))
+        );
+        // 目录基准尾部斜杠不产生双斜杠
+        assert_eq!(
+            join_image_path(&format!("{dir}/"), "images/a1/b2.png"),
+            Ok(format!("{dir}/images/a1/b2.png"))
+        );
+        for bad in [
+            "../secret.png",
+            "/etc/passwd",
+            "images/../../escape.png",
+            "images//double.png",
+            "images\\win.png",
+            "",
+        ] {
+            assert_eq!(
+                join_image_path(dir, bad),
+                Err(ImageError::PathEscape),
+                "越界相对路径必须被拒绝: {bad}"
+            );
+        }
+    }
+
+    // T-img-15（M2-2.b）：目录基准缺失时不得退化成相对路径（fail-closed）。
+    #[test]
+    fn join_image_path_requires_dir_base() {
+        assert_eq!(
+            join_image_path("", "images/a1/b2.png"),
+            Err(ImageError::PathEscape)
+        );
+        assert_eq!(
+            join_image_path("/", "images/a1/b2.png"),
+            Err(ImageError::PathEscape)
+        );
     }
 }

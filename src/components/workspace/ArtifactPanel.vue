@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
+import ImageGallery from "../shared/ImageGallery.vue";
 
 const ws = useWorkspaceStore();
 </script>
@@ -45,6 +46,8 @@ const ws = useWorkspaceStore();
       <input v-model="ws.editTitle" placeholder="标题" />
       <input v-model="ws.editTags" placeholder="标签（逗号分隔）" />
       <textarea v-model="ws.editText" placeholder="正文"></textarea>
+      <!-- M2-2.b 图片画廊挂点：只预览已落盘的图片附件（inline 图不在本卡范围） -->
+      <ImageGallery :images="ws.current.images ?? []" />
       <div class="src">来源：<a :href="ws.current.source_url" target="_blank">{{ ws.current.source_url }}</a></div>
       <div class="src">溯源哈希：{{ ws.current.hash.slice(0, 16) }}</div>
       <button class="primary" @click="ws.saveEdit">保存编辑</button>
