@@ -2,22 +2,22 @@
 
 > 文档角色：#1~#15 需求池、优先级与里程碑映射；不作为“已经做到哪里”的单独证明。
 > 进度与验收 SSOT：`详细设计与实施计划.md`。
-> 文档版本：V5.6。
-> 更新时间：2026-09-03 13:40 CST。
+> 文档版本：V5.7。
+> 更新时间：2026-09-03 13:52 CST。
 > 编写/裁决模型：Codex gpt-5.5 high；机械文档审计：`gpt-5.6-luna / low`。
-> 本版变更：**M2-2 任务卡已展开为 M2-2.a（字节通道决策与契约冻结，纯文档）+ M2-2.b（画廊/灯箱/缩放 UI 实现）**（CodeBuddy Kimi K3，纯文档冻结未改产品代码）；静态判断 workspace 图片目录已在现有 `assetProtocol.scope` 的 `$HOME/.local/share/**` 内，无需扩 scope；任务卡见 `AI-模型切换与接手清单.md` §2，证据 `logs/checkpoints/M2-2-20260903-1340.md`。NEXT=`M2-2.a`。上一版：M2-1 图片领域与持久化已 PASS（`ImageRef`/`Artifact.images`/`save_image`，MIME 白名单 fail-closed + magic bytes 比对 + 10MB/50张/50MB/8000px 上限 + sha256 去重 + 原子写 + 删除联动，cargo test 151/151、pre-merge ALL_PASS，顺带修复 M1-ACCEPT 会话 id 校验挂账；运行时端到端联调挂账，证据 `logs/checkpoints/M2-1-20260903-0927.md`）。
+> 本版变更：**M2-2.a 冻结裁定书已 PASS**（`logs/checkpoints/M2-2.a-20260903-1352.md`）：七项冻结契约逐项结论，M2-2.b 按裁定书施工。上一版：M2-2 任务卡已展开为 a（冻结）/b（实现）两张子卡，静态判断 workspace 图片目录已在现有 `assetProtocol.scope` 的 `$HOME/.local/share/**` 内无需扩 scope；证据 `logs/checkpoints/M2-2-20260903-1340.md`。NEXT=`M2-2.b`。再上一版：M2-1 图片领域与持久化已 PASS（`ImageRef`/`Artifact.images`/`save_image`，MIME 白名单 fail-closed + magic bytes 比对 + 10MB/50张/50MB/8000px 上限 + sha256 去重 + 原子写 + 删除联动，cargo test 151/151、pre-merge ALL_PASS，顺带修复 M1-ACCEPT 会话 id 校验挂账；运行时端到端联调挂账，证据 `logs/checkpoints/M2-1-20260903-0927.md`）。
 
 ---
 
 ## 当前执行结论（截至 2026-09-01）
 
-**M0 已通过负责人验收；M1-0~M1-9 全部 PASS 且 M1-ACCEPT 里程碑验收 PASS（PASS_WITH_DEBT；D1~D9 保留），M1 关闭；M2-1 图片领域与持久化已 PASS（运行时端到端联调挂账）；M2-2 图片预览 UI 任务卡已展开为 a（冻结）/b（实现）两张子卡，当前 NEXT=`M2-2.a`。**
+**M0 已通过负责人验收；M1-0~M1-9 全部 PASS 且 M1-ACCEPT 里程碑验收 PASS（PASS_WITH_DEBT；D1~D9 保留），M1 关闭；M2-1 图片领域与持久化已 PASS（运行时端到端联调挂账）；M2-2.a 冻结裁定书已 PASS，M2-2.b（画廊/灯箱/缩放 UI 实现）当前 NEXT=`M2-2.b`。**
 
 | 里程碑 | 状态 | 当前口径 |
 |--------|------|----------|
 | **M0 安全与稳定性基线** | **PASS，已验收** | M0-0~M0-7 全部关闭；验收报告 `OWNER_APPROVED` |
 | M1 浏览器与版本控制 | **PASS，里程碑已验收（PASS_WITH_DEBT）** | `M1-0`~`M1-9` 全部 PASS；`M1-ACCEPT` 收口验收通过（无 BLOCKER；GUI/E2E 挂账 D1~D9 保留，汇总见 `logs/checkpoints/M1-ACCEPT-20260903-0843.md` §7） |
-| M2 本地资产与执行 | 进行中，NEXT=`M2-2.a` | `M2-1` 图片领域与持久化 PASS（挂账见 `logs/checkpoints/M2-1-20260903-0927.md` §6）；5 个 HTML 工具只代表素材落盘，不代表工具框架已实现 |
+| M2 本地资产与执行 | 进行中，NEXT=`M2-2.b` | `M2-1` 图片领域与持久化 PASS（挂账见 `logs/checkpoints/M2-1-20260903-0927.md` §6）；5 个 HTML 工具只代表素材落盘，不代表工具框架已实现 |
 | M3 | 未开始、可并行评估 | 至少 M0 前置已满足，是否并行需看资源安排 |
 | M4~M5 | 未开始、仍锁定 | M4 等 M2 前置；M5 等 M1~M4 稳定 |
 

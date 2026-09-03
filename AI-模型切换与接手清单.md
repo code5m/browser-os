@@ -1,8 +1,8 @@
 # AI 模型切换与接手清单
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
-> 文档版本：V4.2。
-> 更新时间：2026-09-03 13:40 CST。
+> 文档版本：V4.3。
+> 更新时间：2026-09-03 13:52 CST。
 > 当前状态：`CODEX_READY`。
 > 当前分支：`feature-M0-baseline`。
 > 当前执行器：Codex gpt-5.5 high；机械文档审计与独立脚本任务已委派 `gpt-5.6-luna / low`，最终裁决仍由主任务负责。
@@ -19,15 +19,15 @@
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | M0-6.c 的登录态证据来自本地 AI mock 持久 cookie，不代表第三方真实账号人工验收；**M1-3/M1-7 GUI 目视验收与 M1-5/M1-6/M1-7/M1-8/M1-9/M2-1 运行时端到端联调全部挂账**（D1~D9 汇总见 `logs/checkpoints/M1-ACCEPT-20260903-0843.md` §7，M2-1 挂账见 `logs/checkpoints/M2-1-20260903-0927.md` §6，均未伪造 GUI/E2E 证据）；M1-ACCEPT 的会话 id 校验加固项**已在 M2-1 修复**（`check_id` 接入 session_get/delete/export/restore）；残留 NON-BLOCKER：flush 双路径理论重复存档窗口、M1-7 未勾选=全量提交误点风险 |
-| 下一检查点 | `M2-2.a = NEXT`（字节通道决策与契约冻结，纯文档）。**M2-2 任务卡已展开为 a/b 两张子卡**（2026-09-03，CodeBuddy Kimi K3，`AI:DEEP / R:high`，纯文档冻结未改产品代码），完整任务卡见 §2「当前任务卡：M2-2.a / M2-2.b」，证据 `logs/checkpoints/M2-2-20260903-1340.md`。**M2-1 图片领域与持久化已 PASS**（`ImageRef`/`Artifact.images`/`save_image`；MIME 白名单 4 项 fail-closed + magic bytes 比对 + 10MB/50张/50MB/8000px 上限 + sha256 去重 + canonicalize 前缀校验原子写 + 删除联动；cargo test 151/151、pre-merge ALL_PASS；证据链 `logs/checkpoints/M2-1-20260903-0927.md`） |
-| 下一任务路由 | M2-2.a：`AI:DEEP / R:high`（纯文档冻结，**静态判断 workspace 图片目录已在现有 `assetProtocol.scope` 的 `$HOME/.local/share/**` 内，无需扩 scope**，运行验证留 b 卡冒烟）；M2-2.b：`AI:BALANCED / R:medium`（画廊/灯箱/缩放 UI 实现；前置草案 `logs/assist/M2-2.a-assist-20260901-1621.md`、`logs/assist/M2-2.b-prework-20260902-1055.md`，过时口径已修正，见 M2-2 checkpoint §3） |
+| 下一检查点 | `M2-2.b = NEXT`（画廊/灯箱/缩放 UI 实现，按 M2-2.a 冻结契约施工）。**M2-2.a 冻结裁定书已落盘 PASS**（`logs/checkpoints/M2-2.a-20260903-1352.md`：七项冻结契约逐项结论，scope 不扩、通道=convertFileSrc+asset://、InlineDataUrl 排除、零新依赖、测试矩阵 T-prev-1~12 + 12 违规码静态夹具）。**M2-2 任务卡已展开为 a/b 两张子卡**，完整任务卡见 §2「当前任务卡：M2-2.a / M2-2.b」。**M2-1 图片领域与持久化已 PASS**（`ImageRef`/`Artifact.images`/`save_image`；MIME 白名单 4 项 fail-closed + magic bytes 比对 + 10MB/50张/50MB/8000px 上限 + sha256 去重 + canonicalize 前缀校验原子写 + 删除联动；cargo test 151/151、pre-merge ALL_PASS；证据链 `logs/checkpoints/M2-1-20260903-0927.md`） |
+| 下一任务路由 | M2-2.a：`AI:DEEP / R:high`（**已 PASS**，冻结裁定书 `logs/checkpoints/M2-2.a-20260903-1352.md`）；M2-2.b：`AI:BALANCED / R:medium`（画廊/灯箱/缩放 UI 实现；按 a 卡冻结契约施工；前置草案 `logs/assist/M2-2.a-assist-20260901-1621.md`、`logs/assist/M2-2.b-prework-20260902-1055.md`，过时口径已修正，见 M2-2 checkpoint §3） |
 | 自动执行范围 | M0 已结束；M1 起必须先展开检查点，再逐点验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；进入 M1/M2/M3 后仍不得跨检查点合并 |
 | 禁止启动 | M4~M5；M1~M3 可评估启动但不得未展开检查点就写功能代码 |
 | 最近实现提交 | `feat(M2-1): add image domain and persistence`（图片领域与持久化：ImageRef/Artifact.images/save_image + 两命令 + 会话 id 加固；前一个是 `7003f99 feat(M1-9)`） |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
-| 最新状态证据 | `logs/checkpoints/M2-2-20260903-1340.md`；`logs/checkpoints/M2-1-20260903-0927.md`；`logs/checkpoints/M1-ACCEPT-20260903-0843.md`；`logs/checkpoints/M1-9-20260903-0727.md`；`logs/checkpoints/M1-8-20260902-2058.md`；`logs/checkpoints/M1-7-20260902-1830.md`；`logs/checkpoints/M1-6.d-20260902-1525.md`；`logs/checkpoints/M1-6.c-20260902-1430.md`；`logs/checkpoints/M1-6.b-20260902-1327.md`；`logs/checkpoints/M1-6.a-20260902-0955.md`；`logs/checkpoints/M1-5-20260902-1130.md`；`logs/checkpoints/M1-4-20260901-1805.md`；`logs/checkpoints/M1-3-20260901-1123.md`；`logs/checkpoints/M1-2-fix1-20260901-1050.md`；`logs/checkpoints/M1-2-20260901-1037.md`；`logs/checkpoints/M1-1-20260901-1011.md`；`logs/checkpoints/M1-0-20260901-0915.md` |
+| 最新状态证据 | `logs/checkpoints/M2-2.a-20260903-1352.md`；`logs/checkpoints/M2-2-20260903-1340.md`；`logs/checkpoints/M2-1-20260903-0927.md`；`logs/checkpoints/M1-ACCEPT-20260903-0843.md`；`logs/checkpoints/M1-9-20260903-0727.md`；`logs/checkpoints/M1-8-20260902-2058.md`；`logs/checkpoints/M1-7-20260902-1830.md`；`logs/checkpoints/M1-6.d-20260902-1525.md`；`logs/checkpoints/M1-6.c-20260902-1430.md`；`logs/checkpoints/M1-6.b-20260902-1327.md`；`logs/checkpoints/M1-6.a-20260902-0955.md`；`logs/checkpoints/M1-5-20260902-1130.md`；`logs/checkpoints/M1-4-20260901-1805.md`；`logs/checkpoints/M1-3-20260901-1123.md`；`logs/checkpoints/M1-2-fix1-20260901-1050.md`；`logs/checkpoints/M1-2-20260901-1037.md`；`logs/checkpoints/M1-1-20260901-1011.md`；`logs/checkpoints/M1-0-20260901-0915.md` |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
 
@@ -39,7 +39,7 @@
 - 冻结 `logs/m0-baseline-contract-v1.md`：21 个 `REQUIRED_NOW` 指标、2 个延迟指标、环境指纹、固定场景、统计公式和证据目录。
 - 将旧 `logs/baseline-2026-08-27.md` 降级为 `EXPLORATORY`，禁止当作正式性能基线。
 - 修复原计划中的循环依赖，关键路径现为：
-  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-2-fix1(PASS) -> M1-3(PASS) -> M1-4(PASS) -> M1-5(PASS) -> M1-6.a(PASS, 契约冻结) -> M1-6.b(PASS, 写后端核心) -> M1-6.c(PASS, 复核) -> M1-6.d(PASS, push) -> M1-7(PASS, Git UI；GUI 目视验收挂账) -> M1-8(PASS, 请求拦截与瀑布；运行时端到端联调挂账) -> M1-9(PASS, 会话持久化与关闭协议；运行时端到端联调挂账) -> M1-ACCEPT(PASS_WITH_DEBT, M1 里程碑收口) -> M2-1(PASS, 图片领域与持久化；运行时端到端联调挂账) -> M2-2.a(NEXT, 任务卡已展开为 a/b)`。
+  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-2-fix1(PASS) -> M1-3(PASS) -> M1-4(PASS) -> M1-5(PASS) -> M1-6.a(PASS, 契约冻结) -> M1-6.b(PASS, 写后端核心) -> M1-6.c(PASS, 复核) -> M1-6.d(PASS, push) -> M1-7(PASS, Git UI；GUI 目视验收挂账) -> M1-8(PASS, 请求拦截与瀑布；运行时端到端联调挂账) -> M1-9(PASS, 会话持久化与关闭协议；运行时端到端联调挂账) -> M1-ACCEPT(PASS_WITH_DEBT, M1 里程碑收口) -> M2-1(PASS, 图片领域与持久化；运行时端到端联调挂账) -> M2-2.a(PASS, 字节通道决策与契约冻结) -> M2-2.b(NEXT, 画廊/灯箱/缩放 UI 实现)`。
 - 完成 M0-1.a（commit `1bd56b1`）：新增 `scripts/baseline-check.sh` 与 `scripts/fixtures/clippy-sample.json`；
   验收命令全过、`--self-test` 输出 `SELF_TEST_RESULT=ALL_PASS`；`.gitignore` 对 `logs/m0-baseline/` 开例外，
   原始 `.log` 证据随 run 目录入库可追溯（见 §5 证据保留说明）。
