@@ -1,8 +1,8 @@
 # AI 模型切换与接手清单
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
-> 文档版本：V4.1。
-> 更新时间：2026-09-03 09:27 CST。
+> 文档版本：V4.2。
+> 更新时间：2026-09-03 13:40 CST。
 > 当前状态：`CODEX_READY`。
 > 当前分支：`feature-M0-baseline`。
 > 当前执行器：Codex gpt-5.5 high；机械文档审计与独立脚本任务已委派 `gpt-5.6-luna / low`，最终裁决仍由主任务负责。
@@ -19,15 +19,15 @@
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | M0-6.c 的登录态证据来自本地 AI mock 持久 cookie，不代表第三方真实账号人工验收；**M1-3/M1-7 GUI 目视验收与 M1-5/M1-6/M1-7/M1-8/M1-9/M2-1 运行时端到端联调全部挂账**（D1~D9 汇总见 `logs/checkpoints/M1-ACCEPT-20260903-0843.md` §7，M2-1 挂账见 `logs/checkpoints/M2-1-20260903-0927.md` §6，均未伪造 GUI/E2E 证据）；M1-ACCEPT 的会话 id 校验加固项**已在 M2-1 修复**（`check_id` 接入 session_get/delete/export/restore）；残留 NON-BLOCKER：flush 双路径理论重复存档窗口、M1-7 未勾选=全量提交误点风险 |
-| 下一检查点 | `M2-2 = NEXT`（图片预览 UI：画廊/灯箱/缩放 + 字节通道决策）。**M2-1 图片领域与持久化已 PASS**（`ImageRef`/`Artifact.images`/`save_image`；MIME 白名单 4 项 fail-closed + magic bytes 比对 + 10MB/50张/50MB/8000px 上限 + sha256 去重 + canonicalize 前缀校验原子写 + 删除联动；cargo test 151/151、pre-merge ALL_PASS；证据链 `logs/checkpoints/M2-1-20260903-0927.md`） |
-| 下一任务路由 | `AI:DEEP / R:high`（M2-2 图片预览 UI；前置草案 `logs/assist/M2-2.b-prework-20260902-1055.md` 已存在，**注意**：asset:// scope 扩张（M2-1.a §5 R1 高风险）须与消费方同 PR 评审） |
+| 下一检查点 | `M2-2.a = NEXT`（字节通道决策与契约冻结，纯文档）。**M2-2 任务卡已展开为 a/b 两张子卡**（2026-09-03，CodeBuddy Kimi K3，`AI:DEEP / R:high`，纯文档冻结未改产品代码），完整任务卡见 §2「当前任务卡：M2-2.a / M2-2.b」，证据 `logs/checkpoints/M2-2-20260903-1340.md`。**M2-1 图片领域与持久化已 PASS**（`ImageRef`/`Artifact.images`/`save_image`；MIME 白名单 4 项 fail-closed + magic bytes 比对 + 10MB/50张/50MB/8000px 上限 + sha256 去重 + canonicalize 前缀校验原子写 + 删除联动；cargo test 151/151、pre-merge ALL_PASS；证据链 `logs/checkpoints/M2-1-20260903-0927.md`） |
+| 下一任务路由 | M2-2.a：`AI:DEEP / R:high`（纯文档冻结，**静态判断 workspace 图片目录已在现有 `assetProtocol.scope` 的 `$HOME/.local/share/**` 内，无需扩 scope**，运行验证留 b 卡冒烟）；M2-2.b：`AI:BALANCED / R:medium`（画廊/灯箱/缩放 UI 实现；前置草案 `logs/assist/M2-2.a-assist-20260901-1621.md`、`logs/assist/M2-2.b-prework-20260902-1055.md`，过时口径已修正，见 M2-2 checkpoint §3） |
 | 自动执行范围 | M0 已结束；M1 起必须先展开检查点，再逐点验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；进入 M1/M2/M3 后仍不得跨检查点合并 |
 | 禁止启动 | M4~M5；M1~M3 可评估启动但不得未展开检查点就写功能代码 |
 | 最近实现提交 | `feat(M2-1): add image domain and persistence`（图片领域与持久化：ImageRef/Artifact.images/save_image + 两命令 + 会话 id 加固；前一个是 `7003f99 feat(M1-9)`） |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
-| 最新状态证据 | `logs/checkpoints/M2-1-20260903-0927.md`；`logs/checkpoints/M1-ACCEPT-20260903-0843.md`；`logs/checkpoints/M1-9-20260903-0727.md`；`logs/checkpoints/M1-8-20260902-2058.md`；`logs/checkpoints/M1-7-20260902-1830.md`；`logs/checkpoints/M1-6.d-20260902-1525.md`；`logs/checkpoints/M1-6.c-20260902-1430.md`；`logs/checkpoints/M1-6.b-20260902-1327.md`；`logs/checkpoints/M1-6.a-20260902-0955.md`；`logs/checkpoints/M1-5-20260902-1130.md`；`logs/checkpoints/M1-4-20260901-1805.md`；`logs/checkpoints/M1-3-20260901-1123.md`；`logs/checkpoints/M1-2-fix1-20260901-1050.md`；`logs/checkpoints/M1-2-20260901-1037.md`；`logs/checkpoints/M1-1-20260901-1011.md`；`logs/checkpoints/M1-0-20260901-0915.md` |
+| 最新状态证据 | `logs/checkpoints/M2-2-20260903-1340.md`；`logs/checkpoints/M2-1-20260903-0927.md`；`logs/checkpoints/M1-ACCEPT-20260903-0843.md`；`logs/checkpoints/M1-9-20260903-0727.md`；`logs/checkpoints/M1-8-20260902-2058.md`；`logs/checkpoints/M1-7-20260902-1830.md`；`logs/checkpoints/M1-6.d-20260902-1525.md`；`logs/checkpoints/M1-6.c-20260902-1430.md`；`logs/checkpoints/M1-6.b-20260902-1327.md`；`logs/checkpoints/M1-6.a-20260902-0955.md`；`logs/checkpoints/M1-5-20260902-1130.md`；`logs/checkpoints/M1-4-20260901-1805.md`；`logs/checkpoints/M1-3-20260901-1123.md`；`logs/checkpoints/M1-2-fix1-20260901-1050.md`；`logs/checkpoints/M1-2-20260901-1037.md`；`logs/checkpoints/M1-1-20260901-1011.md`；`logs/checkpoints/M1-0-20260901-0915.md` |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
 
@@ -39,7 +39,7 @@
 - 冻结 `logs/m0-baseline-contract-v1.md`：21 个 `REQUIRED_NOW` 指标、2 个延迟指标、环境指纹、固定场景、统计公式和证据目录。
 - 将旧 `logs/baseline-2026-08-27.md` 降级为 `EXPLORATORY`，禁止当作正式性能基线。
 - 修复原计划中的循环依赖，关键路径现为：
-  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-2-fix1(PASS) -> M1-3(PASS) -> M1-4(PASS) -> M1-5(PASS) -> M1-6.a(PASS, 契约冻结) -> M1-6.b(PASS, 写后端核心) -> M1-6.c(PASS, 复核) -> M1-6.d(PASS, push) -> M1-7(PASS, Git UI；GUI 目视验收挂账) -> M1-8(PASS, 请求拦截与瀑布；运行时端到端联调挂账) -> M1-9(PASS, 会话持久化与关闭协议；运行时端到端联调挂账) -> M1-ACCEPT(PASS_WITH_DEBT, M1 里程碑收口) -> M2-1(PASS, 图片领域与持久化；运行时端到端联调挂账) -> M2-2(NEXT)`。
+  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-2-fix1(PASS) -> M1-3(PASS) -> M1-4(PASS) -> M1-5(PASS) -> M1-6.a(PASS, 契约冻结) -> M1-6.b(PASS, 写后端核心) -> M1-6.c(PASS, 复核) -> M1-6.d(PASS, push) -> M1-7(PASS, Git UI；GUI 目视验收挂账) -> M1-8(PASS, 请求拦截与瀑布；运行时端到端联调挂账) -> M1-9(PASS, 会话持久化与关闭协议；运行时端到端联调挂账) -> M1-ACCEPT(PASS_WITH_DEBT, M1 里程碑收口) -> M2-1(PASS, 图片领域与持久化；运行时端到端联调挂账) -> M2-2.a(NEXT, 任务卡已展开为 a/b)`。
 - 完成 M0-1.a（commit `1bd56b1`）：新增 `scripts/baseline-check.sh` 与 `scripts/fixtures/clippy-sample.json`；
   验收命令全过、`--self-test` 输出 `SELF_TEST_RESULT=ALL_PASS`；`.gitignore` 对 `logs/m0-baseline/` 开例外，
   原始 `.log` 证据随 run 目录入库可追溯（见 §5 证据保留说明）。
@@ -155,6 +155,117 @@ NEXT=<PASS 后唯一下一检查点；FAIL 时保持原 NEXT>
 - 能用脚本输出 `PASS/FAIL/BLOCKED` 的验收，不让模型人工判断；脚本没有覆盖时才补固定夹具。
 - 同一失败最多让低模型修两轮；第二次仍失败即停止，回写 `BLOCKED`，交给更强模型。
 - 文档回写只更新顶部状态、当前 WBS、最近 checkpoint 和 NEXT；不重排无关章节，避免无意义 diff。
+
+### 当前任务卡：M2-2.a / M2-2.b（2026-09-03 展开，未执行）
+
+> M2-2（图片预览 UI）已拆为两张子卡，冻结依据见 `logs/checkpoints/M2-2-20260903-1340.md`。
+> M2-2 整体 PASS 须待 a/b 两卡全绿后由强模型裁定，裁定前 NEXT 不得越到 M2-3。
+
+```text
+TASK_ID=M2-2.a
+ROUTE=AI:DEEP
+MODEL=<界面完整模型名>
+REASONING=high
+GOAL=冻结字节读取通道决策与 M2-2.b 实现契约（纯文档，不改产品代码）：
+     convertFileSrc + asset:// 通道（scope 不扩）、workspace_images_dir 只读命令契约、
+     共用预览组件契约（shared/ + ArtifactPanel 挂点 + App.vue 全局灯箱）、
+     交互契约（缩放 [0.25,4] 步长 1.2、双击复位、不循环切换、错误态不关灯箱、
+     键盘监听 open 才绑定）、隐私红线（溯源只出 host、source_url 原文不上屏）、
+     测试契约（imagePreview.ts 纯逻辑 + headless 断言 + 静态夹具违规码）。
+READ=logs/checkpoints/M2-2-20260903-1340.md（拆分结论/事实修正/冻结契约/测试矩阵/违规码），
+     logs/checkpoints/M2-1-20260903-0927.md（ImageRef 契约与 §9 遗留），
+     src-tauri/src/workspace.rs（workspace_dir 路径推导），
+     src-tauri/tauri.conf.json（assetProtocol.scope 现状），
+     src/types.ts / src/utils/image.ts（前端 ImageRef 与展示逻辑），
+     logs/assist/M2-2.a-assist-20260901-1621.md、logs/assist/M2-2.b-prework-20260902-1055.md
+     （前置草案；过时口径以 M2-2 checkpoint §3 修正为准）
+WRITE=logs/checkpoints/M2-2.a-<YYYYMMDD-HHMM>.md（冻结裁定书），
+      详细设计与实施计划.md, 后续需求TODO.md, AI-模型切换与接手清单.md
+FORBID=不得改任何产品代码（src/ src-tauri/ scripts/ 一律只读，纯文档冻结）；
+      不得修改 tauri.conf.json 的 assetProtocol.scope（静态判断已覆盖，
+      扩张属安全边界决策须另行裁决且与消费方同 PR 评审）；
+      不得放宽 save_image 来源范围、不得改 remote-collect.toml / injected/collect.js
+      （InlineDataUrl 消费留后续检查点另行裁决）；
+      不得删除/改动 M0/M1/M2-1 证据与 checkpoints；不得提前勾选 M2-2；
+      不得与 M2-2.b 合并提交
+COMMANDS=git status --short --branch（开工前必须 clean）
+      python3 scripts/check-plan-routing.py
+      bash scripts/pre-merge.sh            # 必须 PRE_MERGE_RESULT=ALL_PASS
+      git diff --check
+      git diff --stat                      # 必须只有 docs/logs 变更
+PASS_CRITERIA=1. M2-2.a 冻结裁定书落盘，且 §4 七项冻结契约逐条给出结论（不得留白）；
+      2. 三份主文档回写 NEXT=M2-2.b；pre-merge ALL_PASS；git diff --check 0；
+      3. git diff --stat 证明 src/ src-tauri/ scripts/ 零改动；工作树干净
+FAIL_ACTION=发现冻结契约无法自洽（如通道证据不足、契约与 M2-1 冲突）→ STATUS=BLOCKED
+      回写 logs/checkpoints/M2-2.a-<ts>.md，NEXT 保持 M2-2.a，交还强模型
+DOC_BACKWRITE=详细设计与实施计划.md 顶部状态；后续需求TODO.md 关键路径；
+      AI-模型切换与接手清单.md §1 顶层表 + 关键路径；
+      logs/checkpoints/M2-2.a-<ts>.md
+COMMIT=docs(M2-2.a): freeze image preview channel contract
+NEXT=M2-2.b
+```
+
+```text
+TASK_ID=M2-2.b
+ROUTE=AI:BALANCED
+MODEL=<界面完整模型名>
+REASONING=medium
+GOAL=按 M2-2.a 冻结契约实现图片预览 UI：画廊网格/灯箱/缩放/错误态/空态，
+     共用预览组件落 shared/，成果库挂点 ArtifactPanel，灯箱全局挂 App.vue；
+     新增 workspace_images_dir 只读命令；字节通道 convertFileSrc + asset://；
+     落地 imagePreview.ts 纯逻辑层 + check-image-preview-logic.mjs headless 断言 +
+     check-image-preview-policy.py 静态夹具，并接入 pre-merge.sh。
+READ=logs/checkpoints/M2-2.a-<ts>.md（冻结裁定书，唯一契约依据），
+     logs/checkpoints/M2-2-20260903-1340.md §4~§6（契约/测试矩阵/违规码），
+     src/types.ts（ImageRef）、src/utils/image.ts（展示逻辑复用）、src/bridge.ts、
+     src/components/workspace/ArtifactPanel.vue（挂点）、src/App.vue（全局弹窗范式）、
+     src/components/shared/ConfirmModal.vue（modal-mask 层级范式）、
+     src/stores/useWorkspaceStore.ts（current/openArtifact），
+     src-tauri/src/bridge.rs（save_image/list_artifact_images 邻近实现）、
+     src-tauri/permissions/default-commands.toml、src-tauri/src/main.rs（invoke_handler）
+WRITE=src/components/shared/ImageGallery.vue, src/components/shared/ImageLightbox.vue,
+      src/utils/imagePreview.ts, src/stores/（如确需新 store；优先并入现有 store 需说明）,
+      src/App.vue（全局挂载灯箱）, src/components/workspace/ArtifactPanel.vue（挂点）,
+      src/bridge.ts（workspaceImagesDir 封装）, src/types.ts（如需补类型）,
+      src-tauri/src/bridge.rs（workspace_images_dir 命令）, src-tauri/src/main.rs（注册）,
+      src-tauri/permissions/default-commands.toml（ACL）,
+      scripts/check-image-preview-policy.py, scripts/check-image-preview-logic.mjs,
+      scripts/pre-merge.sh（接入两项新门禁）,
+      详细设计与实施计划.md, 后续需求TODO.md, AI-模型切换与接手清单.md,
+      logs/checkpoints/M2-2.b-<YYYYMMDD-HHMM>.md
+FORBID=不得修改 tauri.conf.json 的 assetProtocol.scope（含 add/remove/reorder）；
+      不得新增 npm 依赖（package.json / package-lock.json 零变化）；不得引入 UI 组件库；
+      不得放宽 save_image 来源范围、不得改 remote-collect.toml / injected/collect.js；
+      不得修改 markdown.ts 解析图片语法（v-html 内既有 <img> 点击用事件委托接管）；
+      不得把 source_url 原文渲染上屏（溯源只出 host，复用 imageSourceHost）；
+      组件（除 bridge.ts 外）不得直接 invoke；不得跨检查点合 M2-3；
+      不得提前勾选 M2-2 整体 PASS；不得删除/改动既有证据与 checkpoints
+COMMANDS=git status --short --branch
+      cargo test --manifest-path src-tauri/Cargo.toml   # 151 基线 + 新命令单测，全过
+      cargo build --manifest-path src-tauri/Cargo.toml --release --locked
+      npm run build                                      # 0 error
+      python3 scripts/check-image-preview-policy.py --self-test && \
+      python3 scripts/check-image-preview-policy.py
+      node scripts/check-image-preview-logic.mjs         # 断言全过
+      bash scripts/pre-merge.sh                          # PRE_MERGE_RESULT=ALL_PASS
+      git diff --check
+      # release 冒烟：启动 release 二进制，成果含真实落盘图片，asset:// 经
+      # convertFileSrc 加载成功（留日志/截图证据；做不到则如实挂账，不伪造）
+PASS_CRITERIA=1. cargo test 全过（含新命令单测）、cargo build --release 0、warning 不增加；
+      2. npm run build 0 且 measure-build-metrics --compare 未回归（总体积 ≤15%）；
+      3. 两新门禁 self-test + 正式 PASS 且已接入 pre-merge；pre-merge ALL_PASS；
+      4. T-prev-1~12 逻辑断言全过；git diff --check 0；工作树干净；
+      5. release 冒烟 asset:// 加载证据（或如实记录运行时/GUI 挂账，PASS_WITH_DEBT 需强模型裁定）；
+      6. GUI 目视验收未完成则如实声明（同 M1/M2-1 口径），附人工验收清单
+FAIL_ACTION=asset:// 冒烟证明 scope 不覆盖 → 不得自行扩 scope，STATUS=BLOCKED 回写
+      logs/checkpoints/M2-2.b-<ts>.md（含冒烟证据），NEXT 保持 M2-2.b，交还强模型裁决；
+      其余失败保留 NEXT，连续两次失败即停止
+DOC_BACKWRITE=详细设计与实施计划.md §4.4 M2-2 勾选（仅整体裁定后）+ 顶部状态；
+      后续需求TODO.md 关键路径；AI-模型切换与接手清单.md §1 顶层表 + 关键路径；
+      logs/checkpoints/M2-2.b-<ts>.md
+COMMIT=feat(M2-2.b): add image gallery lightbox preview UI
+NEXT=M2-2 整体裁定（a/b 全绿后由强模型签 M2-2 PASS，再移 M2-3）
+```
 
 ### 历史任务卡：M1-4（已 PASS，2026-09-01）
 
