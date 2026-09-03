@@ -1184,6 +1184,16 @@ fn check_tab_id(tab_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// id 形态校验：只允许 `[A-Za-z0-9_-]`，长度 ≤ `IMAGE_ID_MAX_LEN`。
+///
+/// 背景（M1-ACCEPT 审计挂账项）：`session_get/delete/export/restore` 的 id 会被直接
+/// 拼进文件名（`dir.join(format!("{id}.json"))`），缺形态校验时理论上可借 `../` 逃逸出
+/// 会话目录。主窗口本就在信任边界内（持有全部 invoke 能力），但纵深防御要求
+/// 所有「拿 id 拼路径」的入口先过这里——会话/成果/图片一律适用。
+fn check_id(id: &str, what: &str) -> Result<(), String> {
+    crate::images::validate_id(id).map_err(|_| format!("非法 {what}"))
+}
+
 /// 查询某 tab 的资源瀑布记录（含容量驱逐计数）。
 #[tauri::command]
 pub fn list_tab_resources(
@@ -1419,6 +1429,7 @@ pub fn session_get(
     id: String,
 ) -> Result<BrowserSession, String> {
     check_invocation_source(&webview, "session_get", None, &app)?;
+    check_id(&id, "会话 id")?;
     crate::session::load_session(&workspace::sessions_dir(&app), &id)
 }
 
@@ -1426,6 +1437,7 @@ pub fn session_get(
 #[tauri::command]
 pub fn session_delete(app: AppHandle, webview: tauri::Webview, id: String) -> Result<bool, String> {
     check_invocation_source(&webview, "session_delete", None, &app)?;
+    check_id(&id, "会话 id")?;
     let removed = crate::session::delete_session(&workspace::sessions_dir(&app), &id)?;
     workspace::log_audit(&app, "session_delete", format!("id={id} removed={removed}"));
     Ok(removed)
@@ -1440,6 +1452,7 @@ pub fn session_export(
     id: String,
 ) -> Result<String, String> {
     check_invocation_source(&webview, "session_export", None, &app)?;
+    check_id(&id, "会话 id")?;
     let session = crate::session::load_session(&workspace::sessions_dir(&app), &id)?;
     let json = serde_json::to_string_pretty(&session).map_err(|e| e.to_string())?;
     workspace::log_audit(
@@ -1460,6 +1473,7 @@ pub fn session_restore(
     id: String,
 ) -> Result<TabInfo, String> {
     check_invocation_source(&webview, "session_restore", None, &app)?;
+    check_id(&id, "会话 id")?;
     let session = crate::session::load_session(&workspace::sessions_dir(&app), &id)?;
     let tab = create_tab(app.clone(), &session.url)?;
     workspace::log_audit(
@@ -2471,6 +2485,86 @@ pub fn delete_artifact(app: AppHandle, id: String) -> Result<(), String> {
     workspace::delete_artifact(&app, &id)?;
     workspace::log_audit(&app, "delete", format!("删除成果 {}", id));
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// M2-1 图片领域与持久化（契约见 logs/assist/M2-1.a-prework-20260902-1055.md）
+//
+// 范围：只做「领域 + 持久化」。画廊/灯箱/缩放属 M2-2，字节读取与渲染通道
+// （asset:// scope 或后端直读）随 M2-2 一起落地，本卡不提前扩张安全边界。
+//
+// 红线：
+//   - 两条命令均过 `check_invocation_source`；artifact_id 先过形态校验再拼路径
+//   - MIME 白名单 fail-closed（SVG 拒绝），扩展名由 MIME 反查，魔法字节比对
+//   - 超限在写盘前拒绝（不留临时文件）；落盘原子写；去重按 sha256
+//   - 审计只记 id/字节数/MIME，**绝不记 URL 与图片内容**
+// ---------------------------------------------------------------------------
+
+/// 保存图片到指定成果（校验顺序见 `workspace::save_image`）。
+#[tauri::command]
+pub fn save_image(
+    app: AppHandle,
+    webview: tauri::Webview,
+    artifact_id: String,
+    data: Vec<u8>,
+    mime: String,
+    source_url: Option<String>,
+    caption: Option<String>,
+) -> Result<ImageRef, String> {
+    check_invocation_source(&webview, "save_image", None, &app)?;
+    check_id(&artifact_id, "成果 id")?;
+
+    // IPC 载荷入口先卡一次上限，避免把超大内容带进内存后才判超限
+    if data.is_empty() {
+        return Err(crate::images::ImageError::ImageEmpty.to_string());
+    }
+    if data.len() > IMAGE_MAX_BYTES {
+        return Err(crate::images::ImageError::ImageTooLarge.to_string());
+    }
+
+    // 说明文案走既有文本边界校验（M0-3 口径），空串视为不填
+    let cap = caption.as_deref().map(str::trim).filter(|c| !c.is_empty());
+    if let Some(c) = cap {
+        crate::security_policy::check_text_field(
+            "caption",
+            c,
+            crate::security_policy::MAX_TEXT_FIELD_BYTES,
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    let reference =
+        workspace::save_image(&app, &artifact_id, &data, &mime, source_url.as_deref(), cap)?;
+    workspace::log_audit(
+        &app,
+        "image.save",
+        format!(
+            "artifact_id={artifact_id} image_id={} bytes={} mime={}",
+            reference.id, reference.bytes, reference.mime
+        ),
+    );
+    Ok(reference)
+}
+
+/// 列出某成果的图片引用（出参 source_url 二次脱敏兜底）。
+#[tauri::command]
+pub fn list_artifact_images(
+    app: AppHandle,
+    webview: tauri::Webview,
+    artifact_id: String,
+) -> Result<Vec<ImageRef>, String> {
+    check_invocation_source(&webview, "list_artifact_images", None, &app)?;
+    check_id(&artifact_id, "成果 id")?;
+    let art = workspace::load_artifacts(&app)
+        .into_iter()
+        .find(|a| a.id == artifact_id)
+        .ok_or_else(|| "成果不存在".to_string())?;
+    let mut images = art.images;
+    for r in images.iter_mut() {
+        // 落库时已脱敏，这里对历史/手改数据再兜一层
+        r.source_url = crate::images::redact_source_url(r.source_url.as_deref());
+    }
+    Ok(images)
 }
 
 /// M1-2: 新增或更新一条收藏。同 URL 视为更新。
@@ -4765,6 +4859,91 @@ mod session_gate_tests {
             ] {
                 assert!(!lower.contains(bad), "审计格式串不得含 {bad}: {s}");
             }
+        }
+    }
+
+    // T-sg-5（M2-1 顺带加固）：会话 id 形态校验——拼路径前必须挡住 `../` 与绝对路径。
+    // 来源：M1-ACCEPT 审计挂账项（NON-BLOCKER 1）。
+    #[test]
+    fn session_id_must_be_path_safe() {
+        let uuid = uuid::Uuid::new_v4().to_string();
+        assert!(check_id(&uuid, "会话 id").is_ok());
+        for bad in ["../../etc/passwd", "/etc/passwd", "..", "", "a/b", "a\\b"] {
+            assert!(
+                check_id(bad, "会话 id").is_err(),
+                "必须拒绝非法会话 id: {bad:?}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod image_gate_tests {
+    use super::*;
+
+    const IMAGE_SCOPES: [&str; 2] = ["save_image", "list_artifact_images"];
+
+    // T-ig-1：来源校验——远程页面（tab-*/grid-*）无令牌调用图片命令一律拒绝；
+    // 主窗口放行。图片落盘属于写副作用，绝不允许远程页面触发。
+    #[test]
+    fn remote_invocation_to_image_commands_is_rejected() {
+        let registry = crate::security_policy::IntentRegistry::new();
+        for scope in IMAGE_SCOPES {
+            assert!(
+                crate::security_policy::check_remote_invocation("tab-3", scope, None, &registry)
+                    .is_err(),
+                "远程页面调用 {scope} 必须被拒绝"
+            );
+            assert!(
+                crate::security_policy::check_remote_invocation("main", scope, None, &registry)
+                    .is_ok(),
+                "主窗口调用 {scope} 应放行"
+            );
+        }
+    }
+
+    // T-ig-2：成果 id 形态校验（拼路径前拦截）
+    #[test]
+    fn artifact_id_must_be_path_safe() {
+        let uuid = uuid::Uuid::new_v4().to_string();
+        assert!(check_id(&uuid, "成果 id").is_ok());
+        for bad in ["../../etc/passwd", "/etc", "..", "", "a/b"] {
+            assert!(check_id(bad, "成果 id").is_err(), "必须拒绝: {bad:?}");
+        }
+    }
+
+    // T-ig-3：图片审计格式串只含 id/字节数/MIME，不含 URL 与图片内容
+    #[test]
+    fn image_audit_format_strings_carry_no_url() {
+        let samples = [
+            "artifact_id={artifact_id} image_id={} bytes={} mime={}",
+            "artifact_id={id} removed={n}",
+            "artifact_id={id} error={e}",
+        ];
+        for s in samples {
+            let lower = s.to_ascii_lowercase();
+            for bad in ["url", "token", "cookie", "authorization", "secret"] {
+                assert!(!lower.contains(bad), "审计格式串不得含 {bad}: {s}");
+            }
+        }
+    }
+
+    // T-ig-4：成果 DTO 带 images 字段且结构上不含凭据（与 M1 口径一致）
+    #[test]
+    fn artifact_dto_carries_images_without_credentials() {
+        let art = Artifact::new(
+            "标题".into(),
+            "https://ex.com/p?token=zz".into(),
+            "t".into(),
+            "h".into(),
+        );
+        let json = serde_json::to_string(&art).expect("serialize");
+        assert!(
+            json.contains("\"images\":[]"),
+            "新成果应带空 images: {json}"
+        );
+        for bad in ["cookie", "authorization", "set-cookie", "headers"] {
+            assert!(!json.to_ascii_lowercase().contains(bad), "DTO 不得含 {bad}");
         }
     }
 }

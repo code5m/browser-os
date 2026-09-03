@@ -5,6 +5,7 @@ mod crashlog;
 mod domain;
 mod grid_ipc;
 mod grid_process;
+mod images;
 mod keyring_store;
 mod security_policy;
 mod session;
@@ -1368,6 +1369,8 @@ fn main() {
             bridge::flush_sessions,
             bridge::get_session_policy,
             bridge::set_session_policy,
+            bridge::save_image,
+            bridge::list_artifact_images,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {

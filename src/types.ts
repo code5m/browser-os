@@ -7,6 +7,31 @@ export interface Artifact {
   hash: string;
   created_at: string;
   tags: string[];
+  /** M2-1 图片附件（只存引用，不存字节）；旧数据无该字段时按空数组处理 */
+  images: ImageRef[];
+}
+
+// ====== M2-1 图片领域 ======
+// 与后端 domain.rs 的 ImageSource / ImageRef 一一对应。
+// 结构上不含 headers / Cookie / Authorization / body（与 M1-8/M1-9 同口径）。
+
+export type ImageSource = "file" | "inline_data_url";
+
+export interface ImageRef {
+  id: string;
+  source: ImageSource;
+  /** 仅 source=file 时有值：相对 workspace 目录的路径 */
+  rel_path: string | null;
+  mime: string;
+  bytes: number;
+  /** 解析失败时为 null（后端不伪造尺寸） */
+  width: number | null;
+  height: number | null;
+  sha256: string;
+  /** 溯源 URL，后端落库前已脱敏（敏感查询值为 ***） */
+  source_url: string | null;
+  caption: string | null;
+  created_at: string;
 }
 
 export type RepoProvider = "git" | "gitee";

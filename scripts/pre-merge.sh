@@ -21,7 +21,8 @@
 #  13. M1-6 Git 写安全不变量夹具（白名单/写原语校验/闸门/审计脱敏/ACL）
 #  14. M1-8 资源瀑布隐私/容量不变量夹具 + 前端逻辑层测试
 #  15. M1-9 会话持久化/关闭协议不变量夹具 + 前端逻辑层测试
-#  16. 工作树、暂存区、当前分支相对基线的 git diff --check
+#  16. M2-1 图片领域与持久化不变量夹具 + 前端展示逻辑层测试
+#  17. 工作树、暂存区、当前分支相对基线的 git diff --check
 #
 # 用法:
 #   scripts/pre-merge.sh            正式门禁（所有检查必须通过）
@@ -73,6 +74,8 @@ pre-merge.sh — M0-1.c 本地 pre-merge 门禁（M0-1 脚本合并前检查入�
   resource UI logic tests       check-resource-ui-logic.mjs（Node，headless）
   session persistence fixture   check-session-persistence-policy.py --self-test / 默认门禁
   session logic tests           check-session-logic.mjs（Node，headless）
+  image policy fixture          check-image-policy.py --self-test / 默认门禁
+  image UI logic tests          check-image-ui-logic.mjs（Node，headless）
   git diff --check              工作树 + 暂存区 + 当前分支相对基线（机器证据除外）
 
 退出码: 0 = 全部通过；1 = 任一失败；2 = 非法参数
@@ -248,6 +251,16 @@ run_pre_merge() {
   (cd "$ROOT" && node "$SCRIPT_DIR/check-session-logic.mjs") >/dev/null 2>&1 \
     || pm_fail "check-session-logic.mjs（会话关闭协议前端逻辑回归）"
 
+  pm_log "M2-1 图片领域与持久化不变量夹具…"
+  python3 "$SCRIPT_DIR/check-image-policy.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-image-policy.py --self-test"
+  python3 "$SCRIPT_DIR/check-image-policy.py" >/dev/null 2>&1 \
+    || pm_fail "check-image-policy.py（图片领域/持久化不变量被破坏）"
+
+  pm_log "M2-1 图片展示逻辑前端自动化测试（headless，加载真实 src/utils/image.ts）…"
+  (cd "$ROOT" && node "$SCRIPT_DIR/check-image-ui-logic.mjs") >/dev/null 2>&1 \
+    || pm_fail "check-image-ui-logic.mjs（图片展示/降级逻辑回归）"
+
   pm_log "git diff --check（工作树 + 暂存区，机器证据除外）…"
   # Raw evidence is immutable third-party output; SHA256SUMS, not whitespace rewriting, protects it.
   git -C "$ROOT" diff --check -- . ':(exclude)logs/m0-baseline/**' || pm_fail "git diff --check (worktree)"
@@ -304,6 +317,11 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/check-resource-ui-logic.mjs" ] || { echo "FAIL: check-resource-ui-logic.mjs missing"; rc=1; }
   [ -f "$SCRIPT_DIR/check-session-persistence-policy.py" ] || { echo "FAIL: check-session-persistence-policy.py missing"; rc=1; }
   [ -f "$SCRIPT_DIR/check-session-logic.mjs" ] || { echo "FAIL: check-session-logic.mjs missing"; rc=1; }
+  [ -f "$SCRIPT_DIR/check-image-policy.py" ] || { echo "FAIL: check-image-policy.py missing"; rc=1; }
+  [ -f "$SCRIPT_DIR/check-image-ui-logic.mjs" ] || { echo "FAIL: check-image-ui-logic.mjs missing"; rc=1; }
+  if ! python3 "$SCRIPT_DIR/check-image-policy.py" --self-test >/dev/null 2>&1; then
+    echo "FAIL: check-image-policy.py --self-test"; rc=1
+  fi
   if ! python3 "$SCRIPT_DIR/check-session-persistence-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-session-persistence-policy.py --self-test"; rc=1
   fi

@@ -13,6 +13,11 @@ pub struct Artifact {
     pub hash: String,
     pub created_at: DateTime<Utc>,
     pub tags: Vec<String>,
+    /// M2-1 图片附件（只存**引用**，不存字节）。
+    /// `#[serde(default)]` 是硬要求：历史 `workspace/*.json` 均无该字段，
+    /// 缺它会让 `load_artifacts` 静默丢弃全部历史成果（解析失败被 if let Ok 吞掉）。
+    #[serde(default)]
+    pub images: Vec<ImageRef>,
 }
 
 impl Artifact {
@@ -30,9 +35,71 @@ impl Artifact {
             hash,
             created_at: Utc::now(),
             tags: vec![],
+            images: vec![],
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// M2-1 图片领域（契约冻结自 `logs/assist/M2-1.a-prework-20260902-1055.md`）
+//
+// 边界：这里只定义「结构 + 常量」。所有校验（MIME 白名单/魔法字节/尺寸/路径/容量）
+// 集中在 `images.rs` 的纯函数里，便于无 AppHandle 单测。
+// ---------------------------------------------------------------------------
+
+/// 图片来源：区分「落盘文件」与「采集时已内联 dataURL」，决定读取方式。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageSource {
+    /// 落盘文件：`rel_path` 相对 `workspace_dir()`，形如 `images/<artifact_id>/<image_id>.<ext>`
+    File,
+    /// 采集时已内联为 dataURL，只存在于 `Artifact.html` 中，**无独立文件**
+    InlineDataUrl,
+}
+
+/// 图片附件引用。Artifact 只存引用，不存字节；
+/// 结构上不承载任何 headers / Cookie / Authorization / body（与 M1-8/M1-9 同口径）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageRef {
+    pub id: String,
+    pub source: ImageSource,
+    /// 仅 `source = File` 时有值：相对 `workspace_dir()` 的路径。禁止绝对路径、禁止 `..`。
+    pub rel_path: Option<String>,
+    /// 必须是 `IMAGE_MIME_EXT` 白名单之一（扩展名由 MIME 反查，不接受外部传入）
+    pub mime: String,
+    pub bytes: u64,
+    /// 解析失败时为 `None`（不阻塞保存，不伪造尺寸）
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    /// 内容寻址，用于去重（同 sha256 复用已有引用，不重复写盘）
+    pub sha256: String,
+    /// 溯源：原始图片 URL，**落库前经脱敏**
+    pub source_url: Option<String>,
+    pub caption: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// MIME 白名单 → 扩展名（常量表：扩展名一律由 MIME 反查，杜绝 `a.png.html`）。
+/// SVG 明确不进白名单（可携带 `<script>`，XSS 面）；其余 `image/*` fail-closed 拒绝。
+pub const IMAGE_MIME_EXT: [(&str, &str); 4] = [
+    ("image/png", "png"),
+    ("image/jpeg", "jpg"),
+    ("image/webp", "webp"),
+    ("image/gif", "gif"),
+];
+
+/// 单张图片字节上限（超限 `IMAGE_TOO_LARGE`）
+pub const IMAGE_MAX_BYTES: usize = 10 * 1024 * 1024;
+/// 单个成果的图片数量上限（超限 `IMAGE_COUNT_EXCEEDED`）
+pub const IMAGE_MAX_COUNT: usize = 50;
+/// 单个成果的图片总字节上限（超限 `IMAGE_BUDGET_EXCEEDED`）
+pub const IMAGE_MAX_TOTAL_BYTES: u64 = 50 * 1024 * 1024;
+/// 单图最长边上限（防解码 OOM；超限 `IMAGE_DIMENSION_EXCEEDED`）
+pub const IMAGE_MAX_DIMENSION: u32 = 8000;
+/// 允许内联为 dataURL 的上限（超出必须落盘；超限 `INLINE_TOO_LARGE`）
+pub const IMAGE_INLINE_MAX_BYTES: usize = 2 * 1024 * 1024;
+/// id（image/artifact/session）形态长度上限：UUID v4 为 36 字符，留足余量
+pub const IMAGE_ID_MAX_LEN: usize = 64;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

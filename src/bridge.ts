@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
   Artifact,
+  ImageRef,
   RepoConfig,
   SyncPreview,
   SyncJob,
@@ -177,6 +178,18 @@ export const bridge = {
   deleteArtifact: (id: string) => invoke("delete_artifact", { id }),
 
   browseWorkspace: () => invoke<WorkspaceTree>("browse_workspace"),
+
+  // M2-1 图片领域与持久化（画廊/灯箱/缩放属 M2-2，本卡不实现）
+  saveImage: (p: {
+    artifactId: string;
+    data: number[];
+    mime: string;
+    sourceUrl?: string | null;
+    caption?: string | null;
+  }) => invoke<ImageRef>("save_image", p),
+
+  listArtifactImages: (artifactId: string) =>
+    invoke<ImageRef[]>("list_artifact_images", { artifactId }),
 
   // M1-2 收藏领域
   bookmarkAdd: (p: { url: string; title: string; category: string }) =>
