@@ -358,3 +358,48 @@ export interface ResourceStats {
   // 内存预算守卫：当前可用内存最多支撑几格
   grid_budget: number;
 }
+
+// ====== M2-3 脚本领域 ======
+// 与后端 domain.rs 的 ParamType / ScriptInterpreter / ScriptParam / ScriptMeta
+// 一一对应（serde rename_all = "snake_case"，故嵌套字段一律 snake_case：
+// Tauri 只对**顶层命令参数名**做 camel→snake 转换，嵌套结构体不做转换）。
+//
+// 只描述「脚本是什么」，**无执行能力**：run_script / 取消 / 超时 / 运行记录
+// 属 M2-4，前端面板属 M2-5。
+
+export type ParamType = "string" | "int" | "bool" | "enum" | "path";
+
+/** 解释器白名单：后端是枚举，前端不得提供白名单之外的取值 */
+export type ScriptInterpreter = "bash" | "sh" | "python3" | "node" | "shebang";
+
+export interface ScriptParam {
+  /** 占位符名，对应脚本正文里的 `${name}` */
+  name: string;
+  label: string;
+  param_type: ParamType;
+  required: boolean;
+  default: string | null;
+  /** 仅 enum 使用 */
+  options: string[];
+  /** 跳过单引号包裹；仅 path / enum 允许 true */
+  raw: boolean;
+  /** 敏感参数：UI 用密码框，审计值一律 *** */
+  secret: boolean;
+}
+
+export interface ScriptMeta {
+  id: string;
+  name: string;
+  category: string;
+  /** 正文文件相对 scripts 目录的文件名（非绝对路径） */
+  path: string;
+  interpreter: ScriptInterpreter;
+  params: ScriptParam[];
+  description: string;
+  builtin: boolean;
+  enabled: boolean;
+  /** 0 = 使用全局默认（300） */
+  timeout_secs: number;
+  created_at: string;
+  updated_at: string;
+}

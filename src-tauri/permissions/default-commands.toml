@@ -92,5 +92,9 @@ commands.allow = [
     "set_session_policy",
     "save_image",
     "workspace_images_dir",
+    "script_list",
+    "script_add",
+    "script_update",
+    "script_remove",
     "list_artifact_images"
 ]

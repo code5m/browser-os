@@ -3,6 +3,9 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   Artifact,
   ImageRef,
+  ScriptMeta,
+  ScriptParam,
+  ScriptInterpreter,
   RepoConfig,
   SyncPreview,
   SyncJob,
@@ -194,6 +197,32 @@ export const bridge = {
   // M2-2.b 预览通道：只回目录基准（不含任何图片相对路径），
   // 前端用它 + ImageRef.rel_path 拼绝对路径后交给 convertFileSrc 转 asset://。
   workspaceImagesDir: () => invoke<string>("workspace_images_dir"),
+
+  // M2-3 脚本领域与持久化（**无执行能力**，run_script 归 M2-4）
+  scriptList: () => invoke<ScriptMeta[]>("script_list"),
+
+  scriptAdd: (p: {
+    name: string;
+    category: string;
+    interpreter: ScriptInterpreter;
+    body: string;
+    params: ScriptParam[];
+    description?: string | null;
+    timeoutSecs?: number | null;
+  }) => invoke<ScriptMeta>("script_add", p),
+
+  scriptUpdate: (p: {
+    id: string;
+    name: string;
+    category: string;
+    description?: string | null;
+    params: ScriptParam[];
+    timeoutSecs?: number | null;
+    enabled?: boolean | null;
+    body?: string | null;
+  }) => invoke<ScriptMeta>("script_update", p),
+
+  scriptRemove: (id: string) => invoke("script_remove", { id }),
 
   // M1-2 收藏领域
   bookmarkAdd: (p: { url: string; title: string; category: string }) =>

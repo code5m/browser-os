@@ -23,7 +23,8 @@
 #  15. M1-9 会话持久化/关闭协议不变量夹具 + 前端逻辑层测试
 #  16. M2-1 图片领域与持久化不变量夹具 + 前端展示逻辑层测试
 #  17. M2-2.b 图片预览不变量夹具 + 预览逻辑层测试
-#  18. 工作树、暂存区、当前分支相对基线的 git diff --check
+#  18. M2-3.b 脚本领域与持久化不变量夹具（前端逻辑测试随 M2-5 UI 落地）
+#  19. 工作树、暂存区、当前分支相对基线的 git diff --check
 #
 # 用法:
 #   scripts/pre-merge.sh            正式门禁（所有检查必须通过）
@@ -79,6 +80,7 @@ pre-merge.sh — M0-1.c 本地 pre-merge 门禁（M0-1 脚本合并前检查入�
   image UI logic tests          check-image-ui-logic.mjs（Node，headless）
   image preview fixture         check-image-preview-policy.py --self-test / 默认门禁
   image preview logic tests     check-image-preview-logic.mjs（Node，headless）
+  script domain fixture         check-script-domain-policy.py --self-test / 默认门禁
   git diff --check              工作树 + 暂存区 + 当前分支相对基线（机器证据除外）
 
 退出码: 0 = 全部通过；1 = 任一失败；2 = 非法参数
@@ -274,6 +276,12 @@ run_pre_merge() {
   (cd "$ROOT" && node "$SCRIPT_DIR/check-image-preview-logic.mjs") >/dev/null 2>&1 \
     || pm_fail "check-image-preview-logic.mjs（画廊/灯箱/缩放逻辑回归）"
 
+  pm_log "M2-3.b 脚本领域与持久化不变量夹具（边界/路径/命令三处同步/审计脱敏）…"
+  python3 "$SCRIPT_DIR/check-script-domain-policy.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-script-domain-policy.py --self-test"
+  python3 "$SCRIPT_DIR/check-script-domain-policy.py" >/dev/null 2>&1 \
+    || pm_fail "check-script-domain-policy.py（脚本领域安全边界被破坏）"
+
   pm_log "git diff --check（工作树 + 暂存区，机器证据除外）…"
   # Raw evidence is immutable third-party output; SHA256SUMS, not whitespace rewriting, protects it.
   git -C "$ROOT" diff --check -- . ':(exclude)logs/m0-baseline/**' || pm_fail "git diff --check (worktree)"
@@ -334,11 +342,15 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/check-image-ui-logic.mjs" ] || { echo "FAIL: check-image-ui-logic.mjs missing"; rc=1; }
   [ -f "$SCRIPT_DIR/check-image-preview-policy.py" ] || { echo "FAIL: check-image-preview-policy.py missing"; rc=1; }
   [ -f "$SCRIPT_DIR/check-image-preview-logic.mjs" ] || { echo "FAIL: check-image-preview-logic.mjs missing"; rc=1; }
+  [ -f "$SCRIPT_DIR/check-script-domain-policy.py" ] || { echo "FAIL: check-script-domain-policy.py missing"; rc=1; }
   if ! python3 "$SCRIPT_DIR/check-image-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-image-policy.py --self-test"; rc=1
   fi
   if ! python3 "$SCRIPT_DIR/check-image-preview-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-image-preview-policy.py --self-test"; rc=1
+  fi
+  if ! python3 "$SCRIPT_DIR/check-script-domain-policy.py" --self-test >/dev/null 2>&1; then
+    echo "FAIL: check-script-domain-policy.py --self-test"; rc=1
   fi
   if ! python3 "$SCRIPT_DIR/check-session-persistence-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-session-persistence-policy.py --self-test"; rc=1

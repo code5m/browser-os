@@ -2585,6 +2585,178 @@ pub fn workspace_images_dir(app: AppHandle, webview: tauri::Webview) -> Result<S
     Ok(dir.to_string_lossy().to_string())
 }
 
+// ---------------------------------------------------------------------------
+// M2-3 脚本领域与持久化（契约见 logs/checkpoints/M2-3.a-20260903-1604.md）
+//
+// 范围：**只做元数据的增删改查**，不做执行。`run_script` / 取消 / 超时 /
+// 输出上限 / 进程组 kill / 运行记录一律归 M2-4，前端面板归 M2-5。
+//
+// 红线：
+//   - 四条命令均过 `check_invocation_source`
+//   - 落盘前先过 `scripts::validate_meta` / `validate_body`（先验收后写）
+//   - 审计 detail 只含 id/name/interpreter/param_count/builtin，
+//     **绝不写脚本正文、参数默认值或参数值**
+//   - 正文读写一律经 `workspace::script_body_path`（canonicalize + 前缀校验）
+// ---------------------------------------------------------------------------
+
+/// 列出全部脚本元数据（只读，不审计：避免刷满 audit 的 1000 条上限）。
+#[tauri::command]
+pub fn script_list(app: AppHandle, webview: tauri::Webview) -> Result<Vec<ScriptMeta>, String> {
+    check_invocation_source(&webview, "script_list", None, &app)?;
+    Ok(workspace::load_scripts(&app))
+}
+
+/// 新增脚本：先校验后落盘；元数据保存失败时回滚已写的正文，不留孤儿文件。
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn script_add(
+    app: AppHandle,
+    webview: tauri::Webview,
+    name: String,
+    category: String,
+    interpreter: ScriptInterpreter,
+    body: String,
+    params: Vec<ScriptParam>,
+    description: Option<String>,
+    timeout_secs: Option<u32>,
+) -> Result<ScriptMeta, String> {
+    check_invocation_source(&webview, "script_add", None, &app)?;
+
+    let mut list = workspace::load_scripts(&app);
+    if list.len() >= crate::scripts::MAX_SCRIPTS {
+        return Err(crate::scripts::ScriptError::TooManyScripts.to_string());
+    }
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now();
+    let meta = ScriptMeta {
+        id: id.clone(),
+        name,
+        category,
+        path: format!("{}.{}", id, interpreter.ext()),
+        interpreter,
+        params,
+        description: description.unwrap_or_default(),
+        builtin: false,
+        enabled: true,
+        timeout_secs: timeout_secs.unwrap_or(0),
+        created_at: now,
+        updated_at: now,
+    };
+
+    crate::scripts::validate_meta(&meta).map_err(|e| e.to_string())?;
+    crate::scripts::validate_body(&body).map_err(|e| e.to_string())?;
+
+    // 先写正文（可失败、无副作用残留），再改元数据；元数据保存失败则回滚正文
+    workspace::write_script_body(&app, &meta.path, &body)?;
+    list.push(meta.clone());
+    if let Err(e) = workspace::save_scripts(&app, &list) {
+        let _ = workspace::delete_script_body(&app, &meta.path);
+        return Err(e);
+    }
+
+    workspace::log_audit(
+        &app,
+        "script.add",
+        format!(
+            "id={id} name={} interpreter={:?} param_count={}",
+            meta.name,
+            meta.interpreter,
+            meta.params.len()
+        ),
+    );
+    Ok(meta)
+}
+
+/// 更新脚本元数据（**解释器不可更改**：改解释器要换扩展名与文件名，
+/// 语义超出本卡范围）。
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn script_update(
+    app: AppHandle,
+    webview: tauri::Webview,
+    id: String,
+    name: String,
+    category: String,
+    description: Option<String>,
+    params: Vec<ScriptParam>,
+    timeout_secs: Option<u32>,
+    enabled: Option<bool>,
+    body: Option<String>,
+) -> Result<ScriptMeta, String> {
+    check_invocation_source(&webview, "script_update", None, &app)?;
+    check_id(&id, "脚本 id")?;
+
+    let mut list = workspace::load_scripts(&app);
+    let existing = list
+        .iter()
+        .find(|s| s.id == id)
+        .ok_or_else(|| "脚本不存在".to_string())?;
+
+    let mut meta = existing.clone();
+    meta.name = name;
+    meta.category = category;
+    meta.description = description.unwrap_or_default();
+    meta.params = params;
+    meta.timeout_secs = timeout_secs.unwrap_or(0);
+    if let Some(en) = enabled {
+        meta.enabled = en;
+    }
+    meta.updated_at = chrono::Utc::now();
+
+    crate::scripts::validate_meta(&meta).map_err(|e| e.to_string())?;
+
+    // 正文可选更新：传了才校验并落盘
+    if let Some(b) = &body {
+        crate::scripts::validate_body(b).map_err(|e| e.to_string())?;
+        workspace::write_script_body(&app, &meta.path, b)?;
+    }
+
+    let updated = meta.clone();
+    for s in list.iter_mut() {
+        if s.id == id {
+            *s = meta.clone();
+        }
+    }
+    workspace::save_scripts(&app, &list)?;
+
+    workspace::log_audit(
+        &app,
+        "script.update",
+        format!(
+            "id={id} name={} param_count={} builtin={}",
+            updated.name,
+            updated.params.len(),
+            updated.builtin
+        ),
+    );
+    Ok(updated)
+}
+
+/// 删除脚本（内置脚本拒绝删除；正文删除幂等）。
+#[tauri::command]
+pub fn script_remove(app: AppHandle, webview: tauri::Webview, id: String) -> Result<(), String> {
+    check_invocation_source(&webview, "script_remove", None, &app)?;
+    check_id(&id, "脚本 id")?;
+
+    let mut list = workspace::load_scripts(&app);
+    let existing = list
+        .iter()
+        .find(|s| s.id == id)
+        .ok_or_else(|| "脚本不存在".to_string())?;
+    // 删除前置判定复用纯函数，避免「能否删除」的规则在两处各写一遍
+    crate::scripts::can_delete(existing).map_err(|e| e.to_string())?;
+    let file_name = existing.path.clone();
+
+    list.retain(|s| s.id != id);
+    workspace::save_scripts(&app, &list)?;
+    // 元数据已移除，正文删不掉也只是残留文件，不影响功能（幂等）
+    let _ = workspace::delete_script_body(&app, &file_name);
+
+    workspace::log_audit(&app, "script.remove", format!("id={id} builtin=false"));
+    Ok(())
+}
+
 /// M1-2: 新增或更新一条收藏。同 URL 视为更新。
 #[tauri::command]
 pub fn add_bookmark(

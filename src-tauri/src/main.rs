@@ -7,6 +7,7 @@ mod grid_ipc;
 mod grid_process;
 mod images;
 mod keyring_store;
+mod scripts;
 mod security_policy;
 mod session;
 mod shutdown;
@@ -1372,6 +1373,10 @@ fn main() {
             bridge::save_image,
             bridge::list_artifact_images,
             bridge::workspace_images_dir,
+            bridge::script_list,
+            bridge::script_add,
+            bridge::script_update,
+            bridge::script_remove,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {

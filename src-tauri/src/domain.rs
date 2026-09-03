@@ -517,6 +517,119 @@ pub struct SessionFlushReport {
     pub capacity_removed: usize,
 }
 
+// ===========================================================================
+// M2-3 脚本领域（契约冻结：logs/checkpoints/M2-3.a-20260903-1604.md §1）
+//
+// 只描述「脚本是什么」，**不含任何执行能力**：`run_script`、进程组 kill、
+// 超时、输出上限、并发互斥与运行记录一律归 M2-4，前端面板归 M2-5。
+//
+// 安全口径：
+//   - `interpreter` 是枚举白名单，不开放任意程序执行
+//     （与 security_policy::BLOCKED_LAUNCH_PROGRAMS 同口径）
+//   - `path` 只存相对文件名，不存绝对路径
+//   - 新增字段一律 `#[serde(default)]`，否则历史 scripts.json 会被静默丢弃
+// ===========================================================================
+
+/// 参数类型（决定前端控件与校验规则）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ParamType {
+    /// 自由文本，危险字符校验最严
+    String,
+    /// 整数（i64 可解析）
+    Int,
+    /// 布尔，仅接受 "true" / "false"
+    Bool,
+    /// 枚举：`options` 必须非空，值必须在 options 内
+    Enum,
+    /// 本地路径：必须过 `security_policy::check_path_within_roots`
+    Path,
+}
+
+/// 解释器白名单。
+///
+/// 刻意设为枚举而非 `String`：脚本库是「执行脚本」的**受控例外**，
+/// 若解释器可由用户自由填写，就等于在另一个入口重新开放任意程序执行，
+/// 与 `security_policy::BLOCKED_LAUNCH_PROGRAMS` 的既有口径冲突。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScriptInterpreter {
+    Bash,
+    Sh,
+    Python3,
+    Node,
+    /// 不指定解释器：直接执行脚本文件（依赖 shebang 与可执行位）
+    Shebang,
+}
+
+impl ScriptInterpreter {
+    /// 正文文件扩展名（不含点）。
+    pub fn ext(&self) -> &'static str {
+        match self {
+            ScriptInterpreter::Bash => "sh",
+            ScriptInterpreter::Sh => "sh",
+            ScriptInterpreter::Python3 => "py",
+            ScriptInterpreter::Node => "js",
+            ScriptInterpreter::Shebang => "sh",
+        }
+    }
+}
+
+/// 脚本参数定义。占位符名对应脚本正文里的 `${name}`。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScriptParam {
+    /// 占位符名：字符集 `[A-Za-z0-9_]`，非空，≤ 32 字符
+    pub name: String,
+    /// 前端展示名
+    pub label: String,
+    pub param_type: ParamType,
+    pub required: bool,
+    pub default: Option<String>,
+    /// 仅 `Enum` 使用；`Enum` 时必须非空
+    #[serde(default)]
+    pub options: Vec<String>,
+    /// 是否允许不加单引号包裹直接入命令行。**仅 `Path` / `Enum` 允许 true**，
+    /// 定义期即校验（见 `scripts::validate_meta`）。
+    #[serde(default)]
+    pub raw: bool,
+    /// 敏感参数：前端用密码框，审计值一律 `***`
+    #[serde(default)]
+    pub secret: bool,
+}
+
+/// 脚本元数据（**不含正文**；正文存独立文件 `scripts/<id>.<ext>`）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScriptMeta {
+    /// uuid v4，同时是正文文件名主干
+    pub id: String,
+    /// 展示名
+    pub name: String,
+    /// 分类 / 标签
+    pub category: String,
+    /// 正文文件**相对 scripts 目录**的文件名，形如 `<id>.sh`。
+    /// 不存绝对路径：会泄露环境且迁移即失效（与 `ImageRef::rel_path` 同口径）。
+    pub path: String,
+    pub interpreter: ScriptInterpreter,
+    #[serde(default)]
+    pub params: Vec<ScriptParam>,
+    #[serde(default)]
+    pub description: String,
+    /// 内置模板：不可删除
+    #[serde(default)]
+    pub builtin: bool,
+    #[serde(default = "default_script_enabled")]
+    pub enabled: bool,
+    /// 超时秒数；0 = 使用全局默认（300）。**字段本卡落，语义由 M2-4 实现**
+    #[serde(default)]
+    pub timeout_secs: u32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+fn default_script_enabled() -> bool {
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
