@@ -19,15 +19,15 @@
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | M0-6.c 的登录态证据来自本地 AI mock 持久 cookie，不代表第三方真实账号人工验收；**M1-3/M1-7 GUI 目视验收与 M1-5/M1-6/M1-7/M1-8/M1-9/M2-1 运行时端到端联调全部挂账**（D1~D9 汇总见 `logs/checkpoints/M1-ACCEPT-20260903-0843.md` §7，M2-1 挂账见 `logs/checkpoints/M2-1-20260903-0927.md` §6，均未伪造 GUI/E2E 证据）；M1-ACCEPT 的会话 id 校验加固项**已在 M2-1 修复**（`check_id` 接入 session_get/delete/export/restore）；残留 NON-BLOCKER：flush 双路径理论重复存档窗口、M1-7 未勾选=全量提交误点风险 |
-| 下一检查点 | **`M2-4 = NEXT`**（安全执行通道：`run_script` → 后台线程 + Channel，复用 M0-2 取消/退出协议与 M0-3 执行策略；**注意** `shell:allow-spawn` 的 `args: true` 不兜底，参数校验必须在 `run_script` 内部调用 `validate_param_value`/`validate_enum_value`/`check_required`；退出收口用 `ShutdownCoordinator` 注册 `kill-running-scripts`）。**M2-3 整体裁定已 PASS_WITH_DEBT**（2026-09-03 16:45，`AI:DEEP / R:high` Kimi K3：五组冻结契约逐项裁定成立；两处「冻结裁定书微调」经独立重审接受；D12/D13 挂账，`can_delete` 返回 `InvalidId` 记 NON-BLOCKER；三个门禁冲突修复均未降级既有门禁，新增变异防呆为正向改动；**独立性如实标注：同模型裁定**，弱于 M2-2 跨模型复核，用户明确指示，可被 Hy4/Codex 复核推翻或确认；证据 `logs/checkpoints/M2-3-ACCEPT-20260903-1645.md`）。附：**M2-3.a 冻结裁定书已落盘**（`logs/checkpoints/M2-3.a-20260903-1604.md`，`AI:DEEP / R:high`）：五组分歧逐组裁定——①字段口径取 prework 版骨架并入 `secret`，`params`（非 `args`）+ `ParamType` 五类型，`interpreter` **收紧为枚举**（自由字符串等于重新开放任意程序执行，与既有 `BLOCKED_LAUNCH_PROGRAMS` 口径冲突），`path` 存相对文件名，新增字段一律 `#[serde(default)]`；②存储 `scripts.json` + `scripts/<id>.<ext>`，原子写（`save_repos`/`save_bookmarks` 的非原子写属既有技术债，**本卡不倒改**），`ScriptRunRecord`/`RunStatus` **推迟到 M2-4**（避免无写入者的空结构）；③危险参数 9 条 fail-closed 规则由 M2-3 落地为纯函数 `validate_param_value` + **不复用/不修改** `check_shell_command`（语义不同且影响既有 `.desktop` 启动链路），元字符集合以其为下界扩展，`raw=true` 仅允许 `Path`/`Enum`；④审计三条写命令各一条、detail 只含摘要且不含正文/默认值/参数值，脱敏三重保险（`secret` 标记 + 既有 `is_sensitive_query_key` 21 键 + 名字正则兜底）；⑤M2-4/M2-5 边界清单。**M2-3 不做脚本执行**。测试矩阵细化到 T-scr-1~17，违规码增至 14 条（新增 `SCR_INTERPRETER_NOT_WHITELISTED`、`SCR_RUN_RECORD_PRESENT`） |
-| 下一任务路由 | M2-2.a/b/整体裁定、M2-3.a/b/整体裁定均已关闭；**M2-4：`AI:DEEP / R:xhigh`**（安全执行通道：含 `std::process::Command`/进程组 kill/超时/输出上限/并发互斥，属项目最高风险面；任务卡展开前必须先读 `详细设计与实施计划.md` §4.4 的 M2-4 WBS 行与 `logs/assist/M2-3.a-prework-20260902-1055.md` §4.5 取消与超时契约，未展开检查点不得写功能代码） |
+| 下一检查点 | **`M2-4.a = NEXT`**（脚本执行安全契约冻结，纯文档）。M2-4（安全执行通道，COMPLEX）已展开为 a~e 五张子卡，依据 `logs/checkpoints/M2-4-20260903-1659.md`：a 契约冻结 / b 进程组与生命周期内核 / c 执行命令与校验接入 / d 输出背压·事件流·退出收口 / e（可选）移除 `shell:allow-spawn`。**本次只展开 a 卡**（七组分歧会改变 b/c/d 细节）。实测要点：进程组能力（`setsid`/`killpg`）全仓为零需新建，但 `libc` 已在依赖中；`ShutdownCoordinator` 已注册 5 个任务，草案「被阻塞」的说法已解除；**`shell:allow-spawn` 实测零调用点**（开着但没人用的开放能力）；M2-3 已交付的参数校验函数可直接调用。a 卡须裁决七组分歧：输出上限（4MB vs 256KB）、超时默认值（60s vs 300s）、并发上限（8 vs 10）、平台范围（unix-only？）、env 策略、`shell:allow-spawn` 处置、RunStatus 命名与落盘 |
+| 下一任务路由 | M2-2/M2-3 各子卡均已关闭；**M2-4.a：`AI:DEEP / R:xhigh`**（执行安全契约冻结，纯文档）；M2-4.b/c/d/e 在 a 卡冻结后逐张展开。完整任务卡见 §2「当前任务卡：M2-4.a」；未展开检查点不得写功能代码 |
 | 自动执行范围 | M0 已结束；M1 起必须先展开检查点，再逐点验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；进入 M1/M2/M3 后仍不得跨检查点合并 |
 | 禁止启动 | M4~M5；M1~M3 可评估启动但不得未展开检查点就写功能代码 |
 | 最近实现提交 | `feat(M2-2.b): add image gallery lightbox preview UI`（画廊/灯箱/缩放：`workspace_images_dir` 命令 + `imagePreview.ts` 纯逻辑层 + `useImagePreviewStore` + `shared/ImageGallery.vue`/`shared/ImageLightbox.vue` + 两挂点 + 两项新门禁；前一个是 `00948f8 docs(M2-2.a)`） |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
-| 最新状态证据 | `logs/checkpoints/M2-3-ACCEPT-20260903-1645.md`（**M2-3 整体裁定 PASS_WITH_DEBT**）；`logs/checkpoints/M2-3.b-20260903-1633.md`（M2-3.b 实现）；`logs/checkpoints/M2-3.a-20260903-1604.md`（M2-3.a 冻结裁定书）；`logs/checkpoints/M2-3-20260903-1556.md`（M2-3 任务卡展开）；`logs/checkpoints/M2-2-ACCEPT-20260903-1540.md`（**M2-2 整体裁定 PASS_WITH_DEBT**）；`logs/checkpoints/M2-2-verdict-input-20260903-1502.md`；`logs/checkpoints/M2-2.b-20260903-1454.md`；`logs/checkpoints/M2-2.a-20260903-1352.md`；`logs/checkpoints/M2-2-20260903-1340.md`；`logs/checkpoints/M2-1-20260903-0927.md`；`logs/checkpoints/M1-ACCEPT-20260903-0843.md`；`logs/checkpoints/M1-9-20260903-0727.md`；`logs/checkpoints/M1-8-20260902-2058.md`；`logs/checkpoints/M1-7-20260902-1830.md`；`logs/checkpoints/M1-6.d-20260902-1525.md`；`logs/checkpoints/M1-6.c-20260902-1430.md`；`logs/checkpoints/M1-6.b-20260902-1327.md`；`logs/checkpoints/M1-6.a-20260902-0955.md`；`logs/checkpoints/M1-5-20260902-1130.md`；`logs/checkpoints/M1-4-20260901-1805.md`；`logs/checkpoints/M1-3-20260901-1123.md`；`logs/checkpoints/M1-2-fix1-20260901-1050.md`；`logs/checkpoints/M1-2-20260901-1037.md`；`logs/checkpoints/M1-1-20260901-1011.md`；`logs/checkpoints/M1-0-20260901-0915.md` |
+| 最新状态证据 | `logs/checkpoints/M2-4-20260903-1659.md`（**M2-4 任务卡展开，NEXT=M2-4.a**）；`logs/checkpoints/M2-3-ACCEPT-20260903-1645.md`（**M2-3 整体裁定 PASS_WITH_DEBT**）；`logs/checkpoints/M2-3.b-20260903-1633.md`（M2-3.b 实现）；`logs/checkpoints/M2-3.a-20260903-1604.md`（M2-3.a 冻结裁定书）；`logs/checkpoints/M2-3-20260903-1556.md`（M2-3 任务卡展开）；`logs/checkpoints/M2-2-ACCEPT-20260903-1540.md`（**M2-2 整体裁定 PASS_WITH_DEBT**）；`logs/checkpoints/M2-2-verdict-input-20260903-1502.md`；`logs/checkpoints/M2-2.b-20260903-1454.md`；`logs/checkpoints/M2-2.a-20260903-1352.md`；`logs/checkpoints/M2-2-20260903-1340.md`；`logs/checkpoints/M2-1-20260903-0927.md`；`logs/checkpoints/M1-ACCEPT-20260903-0843.md`；`logs/checkpoints/M1-9-20260903-0727.md`；`logs/checkpoints/M1-8-20260902-2058.md`；`logs/checkpoints/M1-7-20260902-1830.md`；`logs/checkpoints/M1-6.d-20260902-1525.md`；`logs/checkpoints/M1-6.c-20260902-1430.md`；`logs/checkpoints/M1-6.b-20260902-1327.md`；`logs/checkpoints/M1-6.a-20260902-0955.md`；`logs/checkpoints/M1-5-20260902-1130.md`；`logs/checkpoints/M1-4-20260901-1805.md`；`logs/checkpoints/M1-3-20260901-1123.md`；`logs/checkpoints/M1-2-fix1-20260901-1050.md`；`logs/checkpoints/M1-2-20260901-1037.md`；`logs/checkpoints/M1-1-20260901-1011.md`；`logs/checkpoints/M1-0-20260901-0915.md` |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
 
@@ -39,7 +39,7 @@
 - 冻结 `logs/m0-baseline-contract-v1.md`：21 个 `REQUIRED_NOW` 指标、2 个延迟指标、环境指纹、固定场景、统计公式和证据目录。
 - 将旧 `logs/baseline-2026-08-27.md` 降级为 `EXPLORATORY`，禁止当作正式性能基线。
 - 修复原计划中的循环依赖，关键路径现为：
-  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-2-fix1(PASS) -> M1-3(PASS) -> M1-4(PASS) -> M1-5(PASS) -> M1-6.a(PASS, 契约冻结) -> M1-6.b(PASS, 写后端核心) -> M1-6.c(PASS, 复核) -> M1-6.d(PASS, push) -> M1-7(PASS, Git UI；GUI 目视验收挂账) -> M1-8(PASS, 请求拦截与瀑布；运行时端到端联调挂账) -> M1-9(PASS, 会话持久化与关闭协议；运行时端到端联调挂账) -> M1-ACCEPT(PASS_WITH_DEBT, M1 里程碑收口) -> M2-1(PASS, 图片领域与持久化；运行时端到端联调挂账) -> M2-2.a(PASS, 字节通道决策与契约冻结) -> M2-2.b(PASS_WITH_DEBT, 画廊/灯箱/缩放 UI 已实现) -> M2-2(PASS_WITH_DEBT, 整体裁定：D10/D11 挂账) -> M2-3.a(PASS, 脚本领域契约冻结) -> M2-3.b(PASS_WITH_DEBT, 领域与持久化已实现) -> M2-3(PASS_WITH_DEBT, 整体裁定：D12/D13 挂账) -> M2-4(NEXT, 安全执行通道)`。
+  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-2-fix1(PASS) -> M1-3(PASS) -> M1-4(PASS) -> M1-5(PASS) -> M1-6.a(PASS, 契约冻结) -> M1-6.b(PASS, 写后端核心) -> M1-6.c(PASS, 复核) -> M1-6.d(PASS, push) -> M1-7(PASS, Git UI；GUI 目视验收挂账) -> M1-8(PASS, 请求拦截与瀑布；运行时端到端联调挂账) -> M1-9(PASS, 会话持久化与关闭协议；运行时端到端联调挂账) -> M1-ACCEPT(PASS_WITH_DEBT, M1 里程碑收口) -> M2-1(PASS, 图片领域与持久化；运行时端到端联调挂账) -> M2-2.a(PASS, 字节通道决策与契约冻结) -> M2-2.b(PASS_WITH_DEBT, 画廊/灯箱/缩放 UI 已实现) -> M2-2(PASS_WITH_DEBT, 整体裁定：D10/D11 挂账) -> M2-3.a(PASS, 脚本领域契约冻结) -> M2-3.b(PASS_WITH_DEBT, 领域与持久化已实现) -> M2-3(PASS_WITH_DEBT, 整体裁定：D12/D13 挂账) -> M2-4.a(NEXT, 执行安全契约冻结；M2-4 已展开为 a~e)`。
 - 完成 M0-1.a（commit `1bd56b1`）：新增 `scripts/baseline-check.sh` 与 `scripts/fixtures/clippy-sample.json`；
   验收命令全过、`--self-test` 输出 `SELF_TEST_RESULT=ALL_PASS`；`.gitignore` 对 `logs/m0-baseline/` 开例外，
   原始 `.log` 证据随 run 目录入库可追溯（见 §5 证据保留说明）。
@@ -159,6 +159,66 @@ NEXT=<PASS 后唯一下一检查点；FAIL 时保持原 NEXT>
 - 能用脚本输出 `PASS/FAIL/BLOCKED` 的验收，不让模型人工判断；脚本没有覆盖时才补固定夹具。
 - 同一失败最多让低模型修两轮；第二次仍失败即停止，回写 `BLOCKED`，交给更强模型。
 - 文档回写只更新顶部状态、当前 WBS、最近 checkpoint 和 NEXT；不重排无关章节，避免无意义 diff。
+
+### 当前任务卡：M2-4.a（2026-09-03 展开，未执行）
+
+> M2-4（安全执行通道，COMPLEX）已展开为 M2-4.a~e 五张子卡，展开依据见
+> `logs/checkpoints/M2-4-20260903-1659.md`（含现状实测、对两份前置草案的事实修正、
+> 七组待裁决分歧、R1~R15 测试矩阵、15 类违规码）。
+> **本次只展开 a 卡**：七组分歧会实质改变 b/c/d 的实现细节，
+> b/c/d 在 a 卡冻结后再逐张展开，避免契约漂移。
+> **贯穿 M2-4 全部子卡的禁止事项**：任何 `sh -c`/`bash -c` 拼接（P0）、
+> 只 kill 直接子进程、依赖 `shell:allow-spawn` 的 ACL 做参数校验、输出无上限、
+> 审计含参数明文或输出正文。
+
+```text
+TASK_ID=M2-4.a
+ROUTE=AI:DEEP
+MODEL=<界面完整模型名>
+REASONING=xhigh
+GOAL=冻结脚本执行通道的安全契约（纯文档，不改产品代码）：
+     裁决七组分歧——①输出上限（taskcard 4MB/5000行 vs prework 256KB）；
+     ②超时默认值（taskcard 60s vs prework 300s，须与已落库 ScriptMeta.timeout_secs 一致）；
+     ③并发上限（prework 8 vs taskcard R14 的 10）；
+     ④平台范围（setsid/killpg 为 unix-only，是否只做 Linux + 非 unix 显式降级）；
+     ⑤env 策略（env_clear + 固定最小集 vs 允许 ScriptMeta 声明额外白名单）；
+     ⑥shell:allow-spawn 处置（实测零调用点，是否单开 M2-4.e 移除；
+        若同步移除 npm 依赖须一并裁决如何更新 M2-2/M2-3 夹具锚定的 package*.json 哈希）；
+     ⑦RunStatus 命名与运行记录落盘（prework Succeeded vs taskcard Success，是否落盘及上限）。
+     并冻结：命令构造（Command + .arg/.args 数组）、cwd 锁定、stdin 策略、
+     超时分层（soft/hard）、进程组回收语义、输出背压参数、审计字段与脱敏、
+     以及 b/c/d 三卡的范围边界
+READ=logs/checkpoints/M2-4-20260903-1659.md（现状实测/事实修正/七组分歧/矩阵/违规码），
+     logs/assist/script-execution-safety-taskcard-20260902-1146.md（执行安全主卡 §4 契约），
+     logs/assist/M2-3.a-prework-20260902-1055.md §4.2/§4.5（RunStatus 与取消超时），
+     logs/checkpoints/M2-3.a-20260903-1604.md（M2-3 冻结裁定，含 M2-4 边界与三条提示），
+     src-tauri/src/scripts.rs（M2-3 已交付的参数校验，当前无调用者），
+     src-tauri/src/shutdown.rs + bridge.rs register_shutdown_tasks（退出收口现状），
+     src-tauri/capabilities/default.json（shell 权限现状），
+     src-tauri/Cargo.toml（libc 已就绪）
+WRITE=logs/checkpoints/M2-4.a-<YYYYMMDD-HHMM>.md（冻结裁定书），
+      详细设计与实施计划.md, 后续需求TODO.md, AI-模型切换与接手清单.md
+FORBID=不得改任何产品代码（src/ src-tauri/ scripts/ 一律只读，纯文档冻结）；
+      不得实现 run_script / 进程组 / 任何 std::process::Command（实现归 M2-4.b/c）；
+      不得改 capabilities/default.json（属安全边界变更，须 M2-4.e 单开检查点）；
+      不得新增 npm 依赖；不得删除/改动 M0~M2-3 证据与 checkpoints；
+      不得提前勾选 M2-4；不得与 M2-4.b 合并提交
+COMMANDS=git status --short --branch（开工前必须 clean）
+      python3 scripts/check-plan-routing.py
+      bash scripts/pre-merge.sh            # 必须 PRE_MERGE_RESULT=ALL_PASS
+      git diff --check
+      git diff --stat                      # 必须只有 docs/logs 变更
+PASS_CRITERIA=1. M2-4.a 冻结裁定书落盘，§4 七组分歧逐组给出结论（不得留白）；
+      2. 三份主文档回写 NEXT=M2-4.b；pre-merge ALL_PASS；git diff --check 0；
+      3. git diff --stat 证明 src/ src-tauri/ scripts/ 零改动；工作树干净
+FAIL_ACTION=发现分歧无法自洽（如并发上限与 R14 用例冲突无解）→ STATUS=BLOCKED
+      回写 logs/checkpoints/M2-4.a-<ts>.md，NEXT 保持 M2-4.a，交还强模型
+DOC_BACKWRITE=详细设计与实施计划.md 顶部状态；后续需求TODO.md 关键路径；
+      AI-模型切换与接手清单.md §1 顶层表 + 关键路径；
+      logs/checkpoints/M2-4.a-<ts>.md
+COMMIT=docs(M2-4.a): freeze script execution safety contract
+NEXT=M2-4.b（展开 b 卡任务卡后再实现）
+```
 
 ### 历史任务卡：M2-3.a / M2-3.b（均已执行，2026-09-03）
 
