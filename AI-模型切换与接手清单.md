@@ -1,8 +1,8 @@
 # AI 模型切换与接手清单
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
-> 文档版本：V4.0。
-> 更新时间：2026-09-03 08:43 CST。
+> 文档版本：V4.1。
+> 更新时间：2026-09-03 09:27 CST。
 > 当前状态：`CODEX_READY`。
 > 当前分支：`feature-M0-baseline`。
 > 当前执行器：Codex gpt-5.5 high；机械文档审计与独立脚本任务已委派 `gpt-5.6-luna / low`，最终裁决仍由主任务负责。
@@ -14,20 +14,20 @@
 
 | 项目 | 当前值 |
 |------|--------|
-| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`、`M0-5 = PASS`、`M0-6 = PASS`、`M0-7.a/b/c = PASS`；M0 总体验收 `OWNER_APPROVED`；`M1-0 = PASS`、`M1-1 = PASS`、`M1-2 = PASS`、`M1-2-fix1 = PASS`、`M1-3 = PASS`（执行器：CodeBuddy 会话，非登记的 Codex）、`M1-4 = PASS`、`M1-5 = PASS`、`M1-6 = PASS`（a/b/c/d 全绿，整体裁定 PASS）、`M1-7 = PASS`（Git UI；GUI 目视验收挂账）、`M1-8 = PASS`（请求拦截与瀑布；运行时端到端联调挂账）、`M1-9 = PASS`（会话持久化与关闭协议；运行时端到端联调挂账）、**`M1-ACCEPT = PASS（PASS_WITH_DEBT）`，M1 里程碑收口完成** |
+| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`、`M0-5 = PASS`、`M0-6 = PASS`、`M0-7.a/b/c = PASS`；M0 总体验收 `OWNER_APPROVED`；`M1-0 = PASS`、`M1-1 = PASS`、`M1-2 = PASS`、`M1-2-fix1 = PASS`、`M1-3 = PASS`（执行器：CodeBuddy 会话，非登记的 Codex）、`M1-4 = PASS`、`M1-5 = PASS`、`M1-6 = PASS`（a/b/c/d 全绿，整体裁定 PASS）、`M1-7 = PASS`（Git UI；GUI 目视验收挂账）、`M1-8 = PASS`（请求拦截与瀑布；运行时端到端联调挂账）、`M1-9 = PASS`（会话持久化与关闭协议；运行时端到端联调挂账）、**`M1-ACCEPT = PASS（PASS_WITH_DEBT）`，M1 里程碑收口完成**、`M2-1 = PASS`（图片领域与持久化；运行时端到端联调挂账） |
 | 已拒证据 | `ac0ecac` 三批候选：场景错误 + aggregate `UNSTABLE`，结论 `REJECTED`，不得复用 |
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
-| 当前硬风险 | M0-6.c 的登录态证据来自本地 AI mock 持久 cookie，不代表第三方真实账号人工验收；**M1-3/M1-7 GUI 目视验收与 M1-5/M1-6/M1-7/M1-8/M1-9 运行时端到端联调全部挂账**（D1~D9 汇总见 `logs/checkpoints/M1-ACCEPT-20260903-0843.md` §7，均未伪造 GUI/E2E 证据）；M1-ACCEPT 遗留 NON-BLOCKER 加固项：会话 `id` 参数无格式校验、flush 双路径理论重复存档窗口、M1-7 未勾选=全量提交误点风险 |
-| 下一检查点 | `M2-1 = NEXT`（M2 图片预览）。**M1-ACCEPT 已 PASS（PASS_WITH_DEBT，2026-09-03）**：M1-1~M1-9 逐项核对真实实现证据，cargo test 128/128、release build、npm build、pre-merge ALL_PASS；无 BLOCKER；安全/隐私与生命周期审计无缺口；GUI/E2E 挂账 D1~D9 分类保留；证据链 `logs/checkpoints/M1-ACCEPT-20260903-0843.md` |
-| 下一任务路由 | `AI:DEEP / R:high`（M2-1 图片预览；前置草案 `M2-1.a` 图片领域契约已冻结、`M2-2.b` UI mock 已存在，启动前按 `详细设计与实施计划.md` 展开检查点） |
+| 当前硬风险 | M0-6.c 的登录态证据来自本地 AI mock 持久 cookie，不代表第三方真实账号人工验收；**M1-3/M1-7 GUI 目视验收与 M1-5/M1-6/M1-7/M1-8/M1-9/M2-1 运行时端到端联调全部挂账**（D1~D9 汇总见 `logs/checkpoints/M1-ACCEPT-20260903-0843.md` §7，M2-1 挂账见 `logs/checkpoints/M2-1-20260903-0927.md` §6，均未伪造 GUI/E2E 证据）；M1-ACCEPT 的会话 id 校验加固项**已在 M2-1 修复**（`check_id` 接入 session_get/delete/export/restore）；残留 NON-BLOCKER：flush 双路径理论重复存档窗口、M1-7 未勾选=全量提交误点风险 |
+| 下一检查点 | `M2-2 = NEXT`（图片预览 UI：画廊/灯箱/缩放 + 字节通道决策）。**M2-1 图片领域与持久化已 PASS**（`ImageRef`/`Artifact.images`/`save_image`；MIME 白名单 4 项 fail-closed + magic bytes 比对 + 10MB/50张/50MB/8000px 上限 + sha256 去重 + canonicalize 前缀校验原子写 + 删除联动；cargo test 151/151、pre-merge ALL_PASS；证据链 `logs/checkpoints/M2-1-20260903-0927.md`） |
+| 下一任务路由 | `AI:DEEP / R:high`（M2-2 图片预览 UI；前置草案 `logs/assist/M2-2.b-prework-20260902-1055.md` 已存在，**注意**：asset:// scope 扩张（M2-1.a §5 R1 高风险）须与消费方同 PR 评审） |
 | 自动执行范围 | M0 已结束；M1 起必须先展开检查点，再逐点验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；进入 M1/M2/M3 后仍不得跨检查点合并 |
 | 禁止启动 | M4~M5；M1~M3 可评估启动但不得未展开检查点就写功能代码 |
-| 最近实现提交 | `feat(M1-9): add session persistence and close protocol`（会话持久化与关闭协议；前一个是 `3e9b037 feat(M1-8)`；M1-ACCEPT 仅文档/验收记录，无新功能代码） |
+| 最近实现提交 | `feat(M2-1): add image domain and persistence`（图片领域与持久化：ImageRef/Artifact.images/save_image + 两命令 + 会话 id 加固；前一个是 `7003f99 feat(M1-9)`） |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
-| 最新状态证据 | `logs/checkpoints/M1-ACCEPT-20260903-0843.md`；`logs/checkpoints/M1-9-20260903-0727.md`；`logs/checkpoints/M1-8-20260902-2058.md`；`logs/checkpoints/M1-7-20260902-1830.md`；`logs/checkpoints/M1-6.d-20260902-1525.md`；`logs/checkpoints/M1-6.c-20260902-1430.md`；`logs/checkpoints/M1-6.b-20260902-1327.md`；`logs/checkpoints/M1-6.a-20260902-0955.md`；`logs/checkpoints/M1-5-20260902-1130.md`；`logs/checkpoints/M1-4-20260901-1805.md`；`logs/checkpoints/M1-3-20260901-1123.md`；`logs/checkpoints/M1-2-fix1-20260901-1050.md`；`logs/checkpoints/M1-2-20260901-1037.md`；`logs/checkpoints/M1-1-20260901-1011.md`；`logs/checkpoints/M1-0-20260901-0915.md` |
+| 最新状态证据 | `logs/checkpoints/M2-1-20260903-0927.md`；`logs/checkpoints/M1-ACCEPT-20260903-0843.md`；`logs/checkpoints/M1-9-20260903-0727.md`；`logs/checkpoints/M1-8-20260902-2058.md`；`logs/checkpoints/M1-7-20260902-1830.md`；`logs/checkpoints/M1-6.d-20260902-1525.md`；`logs/checkpoints/M1-6.c-20260902-1430.md`；`logs/checkpoints/M1-6.b-20260902-1327.md`；`logs/checkpoints/M1-6.a-20260902-0955.md`；`logs/checkpoints/M1-5-20260902-1130.md`；`logs/checkpoints/M1-4-20260901-1805.md`；`logs/checkpoints/M1-3-20260901-1123.md`；`logs/checkpoints/M1-2-fix1-20260901-1050.md`；`logs/checkpoints/M1-2-20260901-1037.md`；`logs/checkpoints/M1-1-20260901-1011.md`；`logs/checkpoints/M1-0-20260901-0915.md` |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
 
@@ -39,7 +39,7 @@
 - 冻结 `logs/m0-baseline-contract-v1.md`：21 个 `REQUIRED_NOW` 指标、2 个延迟指标、环境指纹、固定场景、统计公式和证据目录。
 - 将旧 `logs/baseline-2026-08-27.md` 降级为 `EXPLORATORY`，禁止当作正式性能基线。
 - 修复原计划中的循环依赖，关键路径现为：
-  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-2-fix1(PASS) -> M1-3(PASS) -> M1-4(PASS) -> M1-5(PASS) -> M1-6.a(PASS, 契约冻结) -> M1-6.b(PASS, 写后端核心) -> M1-6.c(PASS, 复核) -> M1-6.d(PASS, push) -> M1-7(PASS, Git UI；GUI 目视验收挂账) -> M1-8(PASS, 请求拦截与瀑布；运行时端到端联调挂账) -> M1-9(PASS, 会话持久化与关闭协议；运行时端到端联调挂账) -> M1-ACCEPT(PASS_WITH_DEBT, M1 里程碑收口) -> M2-1(NEXT)`。
+  `M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-2-fix1(PASS) -> M1-3(PASS) -> M1-4(PASS) -> M1-5(PASS) -> M1-6.a(PASS, 契约冻结) -> M1-6.b(PASS, 写后端核心) -> M1-6.c(PASS, 复核) -> M1-6.d(PASS, push) -> M1-7(PASS, Git UI；GUI 目视验收挂账) -> M1-8(PASS, 请求拦截与瀑布；运行时端到端联调挂账) -> M1-9(PASS, 会话持久化与关闭协议；运行时端到端联调挂账) -> M1-ACCEPT(PASS_WITH_DEBT, M1 里程碑收口) -> M2-1(PASS, 图片领域与持久化；运行时端到端联调挂账) -> M2-2(NEXT)`。
 - 完成 M0-1.a（commit `1bd56b1`）：新增 `scripts/baseline-check.sh` 与 `scripts/fixtures/clippy-sample.json`；
   验收命令全过、`--self-test` 输出 `SELF_TEST_RESULT=ALL_PASS`；`.gitignore` 对 `logs/m0-baseline/` 开例外，
   原始 `.log` 证据随 run 目录入库可追溯（见 §5 证据保留说明）。
