@@ -14,13 +14,13 @@
 
 | 项目 | 当前值 |
 |------|--------|
-| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`、`M0-5 = PASS`、`M0-6 = PASS`、`M0-7.a/b/c = PASS`；M0 总体验收 `OWNER_APPROVED`；`M1-0 = PASS`、`M1-1 = PASS`、`M1-2 = PASS`、`M1-2-fix1 = PASS`、`M1-3 = PASS`（执行器：CodeBuddy 会话，非登记的 Codex）、`M1-4 = PASS`、`M1-5 = PASS`、`M1-6 = PASS`（a/b/c/d 全绿，整体裁定 PASS）、`M1-7 = PASS`（Git UI；GUI 目视验收挂账）、`M1-8 = PASS`（请求拦截与瀑布；运行时端到端联调挂账）、`M1-9 = PASS`（会话持久化与关闭协议；运行时端到端联调挂账）、**`M1-ACCEPT = PASS（PASS_WITH_DEBT）`，M1 里程碑收口完成**、`M2-1 = PASS`（图片领域与持久化；运行时端到端联调挂账）、**`M2-2 = PASS_WITH_DEBT`（图片预览 UI 整体裁定 PASS：a 冻结 + b 实现，D10/D11 挂账；裁定者 Kimi K3 独立于实现者腾讯 Hy4）**、**`M2-3 = PASS_WITH_DEBT`（脚本领域与持久化整体裁定 PASS，D12/D13 挂账；**同模型裁定**，裁定者与实现者均为 Kimi K3，独立性如实标注）** |
+| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`、`M0-5 = PASS`、`M0-6 = PASS`、`M0-7.a/b/c = PASS`；M0 总体验收 `OWNER_APPROVED`；`M1-0 = PASS`、`M1-1 = PASS`、`M1-2 = PASS`、`M1-2-fix1 = PASS`、`M1-3 = PASS`（执行器：CodeBuddy 会话，非登记的 Codex）、`M1-4 = PASS`、`M1-5 = PASS`、`M1-6 = PASS`（a/b/c/d 全绿，整体裁定 PASS）、`M1-7 = PASS`（Git UI；GUI 目视验收挂账）、`M1-8 = PASS`（请求拦截与瀑布；运行时端到端联调挂账）、`M1-9 = PASS`（会话持久化与关闭协议；运行时端到端联调挂账）、**`M1-ACCEPT = PASS（PASS_WITH_DEBT）`，M1 里程碑收口完成**、`M2-1 = PASS`（图片领域与持久化；运行时端到端联调挂账）、**`M2-2 = PASS_WITH_DEBT`（图片预览 UI 整体裁定 PASS：a 冻结 + b 实现，D10/D11 挂账；裁定者 Kimi K3 独立于实现者腾讯 Hy4）**、**`M2-3 = PASS_WITH_DEBT`（脚本领域与持久化整体裁定 PASS，D12/D13 挂账；**同模型裁定**，裁定者与实现者均为 Kimi K3，独立性如实标注）**、`M2-4.a = PASS（执行安全契约冻结，七组分歧逐组裁定，纯文档；NEXT=M2-4.b）` |
 | 已拒证据 | `ac0ecac` 三批候选：场景错误 + aggregate `UNSTABLE`，结论 `REJECTED`，不得复用 |
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | M0-6.c 的登录态证据来自本地 AI mock 持久 cookie，不代表第三方真实账号人工验收；**M1-3/M1-7 GUI 目视验收与 M1-5/M1-6/M1-7/M1-8/M1-9/M2-1 运行时端到端联调全部挂账**（D1~D9 汇总见 `logs/checkpoints/M1-ACCEPT-20260903-0843.md` §7，M2-1 挂账见 `logs/checkpoints/M2-1-20260903-0927.md` §6，均未伪造 GUI/E2E 证据）；M1-ACCEPT 的会话 id 校验加固项**已在 M2-1 修复**（`check_id` 接入 session_get/delete/export/restore）；残留 NON-BLOCKER：flush 双路径理论重复存档窗口、M1-7 未勾选=全量提交误点风险 |
-| 下一检查点 | **`M2-4.a = NEXT`**（脚本执行安全契约冻结，纯文档）。M2-4（安全执行通道，COMPLEX）已展开为 a~e 五张子卡，依据 `logs/checkpoints/M2-4-20260903-1659.md`：a 契约冻结 / b 进程组与生命周期内核 / c 执行命令与校验接入 / d 输出背压·事件流·退出收口 / e（可选）移除 `shell:allow-spawn`。**本次只展开 a 卡**（七组分歧会改变 b/c/d 细节）。实测要点：进程组能力（`setsid`/`killpg`）全仓为零需新建，但 `libc` 已在依赖中；`ShutdownCoordinator` 已注册 5 个任务，草案「被阻塞」的说法已解除；**`shell:allow-spawn` 实测零调用点**（开着但没人用的开放能力）；M2-3 已交付的参数校验函数可直接调用。a 卡须裁决七组分歧：输出上限（4MB vs 256KB）、超时默认值（60s vs 300s）、并发上限（8 vs 10）、平台范围（unix-only？）、env 策略、`shell:allow-spawn` 处置、RunStatus 命名与落盘 |
-| 下一任务路由 | M2-2/M2-3 各子卡均已关闭；**M2-4.a：`AI:DEEP / R:xhigh`**（执行安全契约冻结，纯文档）；M2-4.b/c/d/e 在 a 卡冻结后逐张展开。完整任务卡见 §2「当前任务卡：M2-4.a」；未展开检查点不得写功能代码 |
+| 下一检查点 | **`M2-4.b = NEXT`**（进程组与生命周期内核，`AI:DEEP/R:xhigh`）。M2-4.a 执行安全契约冻结裁定书已落盘（`logs/checkpoints/M2-4.a-20260903-2233.md`，七组分歧逐组裁定：双层输出上限 4MB/256KB、全局默认超时 60s、并发同 id 禁+全局 8、只做 Unix、env 固定最小集、shell 权限归 e 卡、RunStatus=Succeeded+落盘 200 条；冻结执行通道核心契约）。M2-4（安全执行通道，COMPLEX）已展开为 a~e 五张子卡，依据 `logs/checkpoints/M2-4-20260903-1659.md`：a 契约冻结（已 PASS）/ b 进程组与生命周期内核 / c 执行命令与校验接入 / d 输出背压·事件流·退出收口 / e（可选）移除 `shell:allow-spawn`。**a 卡冻结后 b/c/d 逐张展开**。实测要点：进程组能力（`setsid`/`killpg`）全仓为零需新建，但 `libc` 已在依赖中；`ShutdownCoordinator` 已注册 5 个任务，草案「被阻塞」的说法已解除；**`shell:allow-spawn` 实测零调用点**（开着但没人用的开放能力）；M2-3 已交付的参数校验函数可直接调用。 |
+| 下一任务路由 | M2-2/M2-3 各子卡均已关闭；**M2-4.a：`AI:DEEP / R:xhigh`（执行安全契约冻结，已 PASS，纯文档）**；**M2-4.b：`AI:DEEP / R:xhigh`**（进程组与生命周期内核，NEXT）。M2-4.c/d/e 在 b 卡冻结后逐张展开。完整任务卡见 §2「当前任务卡：M2-4.a」；未展开检查点不得写功能代码 |
 | 自动执行范围 | M0 已结束；M1 起必须先展开检查点，再逐点验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；进入 M1/M2/M3 后仍不得跨检查点合并 |
 | 禁止启动 | M4~M5；M1~M3 可评估启动但不得未展开检查点就写功能代码 |
@@ -160,8 +160,10 @@ NEXT=<PASS 后唯一下一检查点；FAIL 时保持原 NEXT>
 - 同一失败最多让低模型修两轮；第二次仍失败即停止，回写 `BLOCKED`，交给更强模型。
 - 文档回写只更新顶部状态、当前 WBS、最近 checkpoint 和 NEXT；不重排无关章节，避免无意义 diff。
 
-### 当前任务卡：M2-4.a（2026-09-03 展开，未执行）
+### 当前任务卡：M2-4.a（2026-09-03 展开，2026-09-03 冻结 PASS）
 
+> **M2-4.a 已冻结裁定书 PASS**（`logs/checkpoints/M2-4.a-20260903-2233.md`，纯文档，七组分歧逐组裁定，未改产品代码）；NEXT 已移至 `M2-4.b`。本任务卡转为存档，执行指针以 §1 顶层表为准；M2-4.b 待展开为独立任务卡后再实现。
+>
 > M2-4（安全执行通道，COMPLEX）已展开为 M2-4.a~e 五张子卡，展开依据见
 > `logs/checkpoints/M2-4-20260903-1659.md`（含现状实测、对两份前置草案的事实修正、
 > 七组待裁决分歧、R1~R15 测试矩阵、15 类违规码）。
