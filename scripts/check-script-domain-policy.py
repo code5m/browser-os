@@ -90,7 +90,7 @@ def strip_comments(source: str) -> str:
 
 
 def rust_fn_body(source: str, name: str) -> str:
-    match = re.search(rf"\bfn\s+{re.escape(name)}\s*\(", source)
+    match = re.search(rf"\b(?:pub\s+)?fn\s+{re.escape(name)}\s*\(", source)
     if not match:
         return ""
     depth = 0
@@ -167,12 +167,8 @@ def detect_violations(files: dict) -> list[str]:
     # 会**提及** d 卡的落盘形态名（`ScriptRunRecord`/`script-runs`），属「提及」而非
     # 「定义」；strip 注释后只保留真实代码，坏样本自检（注入真实
     # `pub struct ScriptRunRecord`）仍命中，好样本（仅注释提及）放行。
-    haystack = (
-        f"{strip_comments(domain)}\n"
-        f"{strip_comments(scripts)}\n"
-        f"{strip_comments(workspace)}\n"
-        f"{strip_comments(bridge)}"
-    )
+    crud_bodies = "\n".join(rust_fn_body(bridge, cmd) for cmd in SCRIPT_COMMANDS)
+    haystack = f"{strip_comments(domain)}\n{strip_comments(scripts)}\n{strip_comments(workspace)}\n{strip_comments(crud_bodies)}"
     for bad in RUN_RECORD_FORBIDDEN:
         if re.search(rf"\b{re.escape(bad)}\b", haystack):
             v.append(f"SCR_RUN_RECORD_PRESENT:{bad}")
@@ -229,14 +225,19 @@ def detect_violations(files: dict) -> list[str]:
         v.append("SCR_ATOMIC_WRITE_MISSING:save_scripts 未走原子写")
 
     # ---- 9) 审计不得泄露正文/默认值/参数值/绝对路径 ----
-    audit_blocks = re.findall(r'"(script\.[a-z_]+)",\s*format!\((.*?)\),', bridge, re.S)
-    if not audit_blocks:
-        v.append("SCR_AUDIT_MISSING")
-    for name, fmt in audit_blocks:
-        low = fmt.lower()
+    audit_names = ("script.add", "script.update", "script.remove")
+    found_audit = False
+    for name in audit_names:
+        index = bridge.find(f'"{name}"')
+        if index < 0:
+            continue
+        found_audit = True
+        window = bridge[index : index + 260].lower()
         for bad in AUDIT_FORBIDDEN:
-            if bad in low:
+            if bad in window:
                 v.append(f"SCR_AUDIT_LEAKS_ARG_VALUE:{name}:{bad}")
+    if not found_audit:
+        v.append("SCR_AUDIT_MISSING")
 
     # ---- 10) 前端：组件不得直接 invoke 脚本命令 ----
     for path, src in components.items():

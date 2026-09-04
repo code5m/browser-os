@@ -8,6 +8,7 @@ use url::Url;
 use crate::domain::*;
 use crate::grid_ipc::GridCmd;
 use crate::keyring_store::KeyringStore;
+use crate::script_runner::{RunError, RunSnapshot, ScriptProcessTable};
 use crate::sync;
 use crate::workspace;
 
@@ -301,6 +302,8 @@ pub struct AppState {
     pub session_close_prompt: AtomicBool,
     /// M1-9：退出前是否自动保存仍打开的 tab（默认关：不静默保存）。
     pub session_auto_save_on_exit: AtomicBool,
+    /// M2-4.c：脚本执行运行表（命令层只接入 b 卡内核；输出/落盘归 M2-4.d）。
+    pub script_runs: Arc<ScriptProcessTable>,
 }
 
 /// 终端会话：持有 PTY 写入端与子进程，读取在后台线程进行。
@@ -2757,6 +2760,102 @@ pub fn script_remove(app: AppHandle, webview: tauri::Webview, id: String) -> Res
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// M2-4.c 脚本执行命令接入（契约见 logs/checkpoints/M2-4.a-20260903-2233.md §8.8）
+//
+// 范围：只把 `run_script` / `cancel_script` / `script_status` 接到 M2-4.b 的
+// `script_runner` 内核，并补齐来源校验、参数校验、审计、ACL 与 handler。
+// 输出环形缓冲、事件流、运行记录落盘与 shutdown 注册仍归 M2-4.d。
+// 审计 detail 只含 id/run_id/状态/计数，不含参数值、脚本正文、URL 或任何凭据。
+// ---------------------------------------------------------------------------
+
+fn map_run_error(e: RunError) -> String {
+    e.to_string()
+}
+
+fn get_enabled_script(app: &AppHandle, id: &str) -> Result<ScriptMeta, String> {
+    check_id(id, "脚本 id")?;
+    let script = workspace::load_scripts(app)
+        .into_iter()
+        .find(|s| s.id == id)
+        .ok_or_else(|| "SCRIPT_NOT_FOUND".to_string())?;
+    if !script.enabled {
+        return Err("SCRIPT_DISABLED".to_string());
+    }
+    crate::scripts::validate_meta(&script).map_err(|e| e.to_string())?;
+    Ok(script)
+}
+
+/// 启动脚本：命令层只传参数 map，真正 argv 构造和 fail-closed 校验在 `script_runner`。
+#[tauri::command]
+pub fn run_script(
+    app: AppHandle,
+    webview: tauri::Webview,
+    id: String,
+    values: HashMap<String, String>,
+) -> Result<RunSnapshot, String> {
+    check_invocation_source(&webview, "run_script", None, &app)?;
+    let script = get_enabled_script(&app, &id)?;
+    let script_path = workspace::script_body_path(&app, &script.path)?;
+    let roots = allowed_roots(&app);
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let table = Arc::clone(&app.state::<AppState>().script_runs);
+    let run_id =
+        crate::script_runner::start_run(&table, &script, &script_path, &values, &roots, &home)
+            .map_err(map_run_error)?;
+    let snapshot = table
+        .snapshot(&run_id)
+        .ok_or_else(|| "UNKNOWN_RUN".to_string())?;
+    workspace::log_audit(
+        &app,
+        "script.run.start",
+        format!(
+            "id={} run_id={} param_count={}",
+            script.id,
+            run_id,
+            script.params.len()
+        ),
+    );
+    Ok(snapshot)
+}
+
+/// 请求取消脚本：只置取消位并立即返回；进程组回收由 supervisor 完成。
+#[tauri::command]
+pub fn cancel_script(
+    app: AppHandle,
+    webview: tauri::Webview,
+    run_id: String,
+) -> Result<(), String> {
+    check_invocation_source(&webview, "cancel_script", None, &app)?;
+    check_id(&run_id, "运行 id")?;
+    let table = Arc::clone(&app.state::<AppState>().script_runs);
+    table.cancel(&run_id).map_err(map_run_error)?;
+    workspace::log_audit(&app, "script.run.cancel", format!("run_id={run_id}"));
+    Ok(())
+}
+
+/// 查询脚本运行状态。M2-4.c 只返回内存快照，不含输出正文。
+#[tauri::command]
+pub fn script_status(
+    app: AppHandle,
+    webview: tauri::Webview,
+    run_id: String,
+) -> Result<RunSnapshot, String> {
+    check_invocation_source(&webview, "script_status", None, &app)?;
+    check_id(&run_id, "运行 id")?;
+    let snapshot = app
+        .state::<AppState>()
+        .script_runs
+        .snapshot(&run_id)
+        .ok_or_else(|| "UNKNOWN_RUN".to_string())?;
+    workspace::log_audit(
+        &app,
+        "script.run.status",
+        format!("run_id={} status={:?}", snapshot.run_id, snapshot.status),
+    );
+    Ok(snapshot)
+}
+
 /// M1-2: 新增或更新一条收藏。同 URL 视为更新。
 #[tauri::command]
 pub fn add_bookmark(
@@ -5191,5 +5290,62 @@ mod image_preview_gate_tests {
     #[test]
     fn images_dir_constant_matches_rel_prefix() {
         assert_eq!(crate::images::IMAGES_DIR_NAME, "images");
+    }
+}
+
+#[cfg(test)]
+mod script_execution_gate_tests {
+    use super::*;
+
+    #[test]
+    fn run_snapshot_serializes_without_output_or_body() {
+        let snap = crate::script_runner::RunSnapshot {
+            run_id: "run-1".to_string(),
+            script_id: "script-1".to_string(),
+            status: RunStatus::Running,
+            started_at: chrono::Utc::now(),
+            finished_at: None,
+            exit_code: None,
+            error: None,
+        };
+        let json = serde_json::to_string(&snap).expect("snapshot serializes");
+        let lower = json.to_ascii_lowercase();
+        for forbidden in [
+            "stdout",
+            "stderr",
+            "body",
+            "authorization",
+            "cookie",
+            "token",
+        ] {
+            assert!(
+                !lower.contains(forbidden),
+                "RunSnapshot must not expose {forbidden}"
+            );
+        }
+    }
+
+    #[test]
+    fn script_run_audit_format_strings_do_not_include_values_or_body() {
+        let source = include_str!("bridge.rs");
+        let start = source.find("script.run.start").expect("start audit exists");
+        let cancel = source
+            .find("script.run.cancel")
+            .expect("cancel audit exists");
+        let status = source
+            .find("script.run.status")
+            .expect("status audit exists");
+        for window_start in [start, cancel, status] {
+            let end = (window_start + 260).min(source.len());
+            let window = &source[window_start..end];
+            assert!(
+                !window.contains("values"),
+                "script run audit must not log argument values"
+            );
+            assert!(
+                !window.contains("body"),
+                "script run audit must not log script body"
+            );
+        }
     }
 }

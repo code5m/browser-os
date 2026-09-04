@@ -1378,6 +1378,9 @@ fn main() {
             bridge::script_add,
             bridge::script_update,
             bridge::script_remove,
+            bridge::run_script,
+            bridge::cancel_script,
+            bridge::script_status,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {

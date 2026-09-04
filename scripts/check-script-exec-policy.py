@@ -14,16 +14,18 @@
   3. 不加引号（裁定书 §3.1）：argv 模式下给值加 `'...'` 会把单引号作字面量传进脚本。
 
 模式：
-  默认            判定 ACTIVE 码（b 卡职责内 + P0 红线）；零命中 → EXIT 0
-  --expect-pending 验证 PENDING 码（c/d 卡职责）确实仍处于未实现状态；
+  默认            判定 ACTIVE 码（b/c 卡职责内 + P0 红线）；零命中 → EXIT 0
+  --expect-pending 验证 PENDING 码（d 卡职责）确实仍处于未实现状态；
                    若有 pending 码已实现，提示应转入默认判定 → EXIT 1
   --self-test     好坏样本双向自检（含**变异防呆**：坏样本必须真的改动内容）
 
 关于「一次性定义码位」：沿用 M0-3.a 模式，18 个码位一次定义，
-默认门禁只判本卡职责内的 11 个，避免 c/d 未实现的码把 pre-merge 染红。
+默认门禁判定已落地的 b/c 卡职责，避免 d 卡未实现的码把 pre-merge 染红。
 实现期**重新分类**：`EXEC_ENV_NOT_CLEARED` / `EXEC_CWD_NOT_LOCKED` /
-`EXEC_INTERPRETER_NOT_WHITELISTED` 三项 b 卡已落地，故从 pending 转入默认判定
-（相对展开卡 §6 的「6 默认 + 12 pending」为加强，非削弱）。
+`EXEC_INTERPRETER_NOT_WHITELISTED` 三项 b 卡已落地，故从 pending 转入默认判定；
+M2-4.c 落地后 `EXEC_ACL_MISSING` / `EXEC_HANDLER_NOT_REGISTERED` /
+`EXEC_NO_SOURCE_CHECK` / `EXEC_VALIDATION_BYPASSED` / `EXEC_AUDIT_LEAKS_VALUE`
+转入默认判定。
 """
 
 from __future__ import annotations
@@ -57,19 +59,23 @@ B_CARD_CODES = (
     "EXEC_INTERPRETER_NOT_WHITELISTED",
 )
 
-ACTIVE_CODES = P0_CODES + B_CARD_CODES
-
-# c/d 卡职责：默认模式不判定，用 --expect-pending 验证「仍未实现」
-PENDING_CODES = (
+# c 卡职责内（命令层、参数校验接入、审计、ACL 与 handler）
+C_CARD_CODES = (
     "EXEC_ACL_MISSING",
     "EXEC_HANDLER_NOT_REGISTERED",
     "EXEC_NO_SOURCE_CHECK",
+    "EXEC_VALIDATION_BYPASSED",
+    "EXEC_AUDIT_LEAKS_VALUE",
+)
+
+ACTIVE_CODES = P0_CODES + B_CARD_CODES + C_CARD_CODES
+
+# d 卡职责：默认模式不判定，用 --expect-pending 验证「仍未实现」
+PENDING_CODES = (
     "EXEC_SHUTDOWN_NOT_REGISTERED",
     "EXEC_RUN_RECORD_MISSING",
     "EXEC_NO_RING_CAP",
     "EXEC_NO_OUTPUT_CAP",
-    "EXEC_VALIDATION_BYPASSED",
-    "EXEC_AUDIT_LEAKS_VALUE",
 )
 
 # ----------------------------- 检测规则 -----------------------------
@@ -104,7 +110,7 @@ def rust_fn_body(source: str, name: str) -> str:
     只做花括号配平，不解析 Rust 语法；字符串里的花括号可能导致截断，
     但本夹具关注的函数体（spawn/kill）不含字符串花括号。
     """
-    match = re.search(rf"\bfn\s+{re.escape(name)}\s*\(", source)
+    match = re.search(rf"\b(?:pub\s+)?fn\s+{re.escape(name)}\s*\(", source)
     if not match:
         return ""
     paren = source.find("(", match.end() - 1)
@@ -191,14 +197,15 @@ def detect(ctx: dict[str, str]) -> set[str]:
 
     # --- PENDING：c / d 卡职责 ---
     exec_commands = ("run_script", "cancel_script", "script_status")
-    if not any(cmd in acl for cmd in exec_commands):
+    if not all(cmd in acl for cmd in exec_commands):
         hits.add("EXEC_ACL_MISSING")
-    if not any(cmd in main for cmd in exec_commands):
+    if not all(f"bridge::{cmd}" in main for cmd in exec_commands):
         hits.add("EXEC_HANDLER_NOT_REGISTERED")
-    # 只看 script_runner：bridge 早有 check_invocation_source（M0-3 引入），
-    # 查它会永远不命中，掩盖「c 卡命令层尚未接入来源校验」这一事实。
-    if "check_invocation_source" not in runner:
-        hits.add("EXEC_NO_SOURCE_CHECK")
+    for cmd in exec_commands:
+        body = rust_fn_body(bridge, cmd)
+        if "check_invocation_source" not in body:
+            hits.add("EXEC_NO_SOURCE_CHECK")
+            break
     if "kill-running-scripts" not in bridge:
         hits.add("EXEC_SHUTDOWN_NOT_REGISTERED")
     if "ScriptRunRecord" not in (runner + main + bridge):
@@ -207,10 +214,18 @@ def detect(ctx: dict[str, str]) -> set[str]:
         hits.add("EXEC_NO_RING_CAP")
     if "SCRIPT_RUN_TAIL_BYTES" not in runner:
         hits.add("EXEC_NO_OUTPUT_CAP")
-    if "validate_param_value" not in bridge:
+    run_body = rust_fn_body(bridge, "run_script")
+    helper_body = rust_fn_body(bridge, "get_enabled_script")
+    if "start_run(" not in run_body or "validate_meta" not in helper_body:
         hits.add("EXEC_VALIDATION_BYPASSED")
-    if "script.run.start" not in bridge:
+    if not all(marker in bridge for marker in ("script.run.start", "script.run.cancel", "script.run.status")):
         hits.add("EXEC_AUDIT_LEAKS_VALUE")
+    for marker in ("script.run.start", "script.run.cancel", "script.run.status"):
+        index = bridge.find(marker)
+        window = bridge[index : index + 320] if index >= 0 else ""
+        if "values" in window or "body" in window:
+            hits.add("EXEC_AUDIT_LEAKS_VALUE")
+            break
 
     return hits
 
@@ -236,7 +251,9 @@ def read_ctx() -> dict[str, str]:
     return {
         "runner": strip_tests(strip_comments(read(RUNNER))),
         "main": strip_comments(read(MAIN_RS)),
-        "bridge": strip_comments(read(BRIDGE_RS)),
+        # bridge.rs contains large embedded JS/CSS strings where naive block-comment stripping
+        # can eat real Rust that follows. For c-card command checks, raw source is safer.
+        "bridge": read(BRIDGE_RS),
         "acl": read(ACL_TOML),
     }
 
@@ -262,6 +279,14 @@ MUTATIONS: tuple[tuple[str, str, str, int], ...] = (
     ("EXEC_ENV_NOT_CLEARED", "        .env_clear()", "        // cleared", 1),
     ("EXEC_CWD_NOT_LOCKED", "        .current_dir(&cwd)", "        // cwd", 1),
     ("EXEC_INTERPRETER_NOT_WHITELISTED", "    if let Some(bin) = interpreter.binary() {", '    if let Some(bin) = Some("bash") {', 1),
+)
+
+BRIDGE_MUTATIONS: tuple[tuple[str, str, str, int], ...] = (
+    ("EXEC_ACL_MISSING", '"run_script",', '', 1),
+    ("EXEC_HANDLER_NOT_REGISTERED", "            bridge::run_script,", "", 1),
+    ("EXEC_NO_SOURCE_CHECK", '    check_invocation_source(&webview, "run_script", None, &app)?;', '', 1),
+    ("EXEC_VALIDATION_BYPASSED", "    crate::scripts::validate_meta(&script).map_err(|e| e.to_string())?;", "", 1),
+    ("EXEC_AUDIT_LEAKS_VALUE", '"script.run.start",', '"script.run.start values",', 1),
 )
 
 
@@ -291,6 +316,20 @@ def self_test() -> int:
         if code not in hits:
             failures.append(f"[{code}] 坏样本未被检出（实际命中：{sorted(hits & set(ACTIVE_CODES))}）")
 
+    for code, old, new, count in BRIDGE_MUTATIONS:
+        target_key = "acl" if code == "EXEC_ACL_MISSING" else "main" if code == "EXEC_HANDLER_NOT_REGISTERED" else "bridge"
+        if old not in ctx[target_key]:
+            failures.append(f"[{code}] 变异原文片段不存在，夹具已失效：{old!r}")
+            continue
+        mutated = dict(ctx)
+        mutated[target_key] = ctx[target_key].replace(old, new, count)
+        if mutated[target_key] == ctx[target_key]:
+            failures.append(f"[{code}] 变异未改变内容，按漏检测计")
+            continue
+        hits = detect(mutated)
+        if code not in hits:
+            failures.append(f"[{code}] 坏样本未被检出（实际命中：{sorted(hits & set(ACTIVE_CODES))}）")
+
     # 3) pending 码位完整性：默认模式不得误判 pending 为 active
     overlap = set(ACTIVE_CODES) & set(PENDING_CODES)
     if overlap:
@@ -301,7 +340,7 @@ def self_test() -> int:
         for f in failures:
             print(f"FAIL: {f}")
         return 1
-    print(f"SELF_TEST_RESULT=ALL_PASS（{len(MUTATIONS)} 个坏样本 + 1 个好样本 + 码位完整性）")
+    print(f"SELF_TEST_RESULT=ALL_PASS（{len(MUTATIONS) + len(BRIDGE_MUTATIONS)} 个坏样本 + 1 个好样本 + 码位完整性）")
     return 0
 
 

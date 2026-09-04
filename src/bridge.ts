@@ -6,6 +6,7 @@ import type {
   ScriptMeta,
   ScriptParam,
   ScriptInterpreter,
+  RunSnapshot,
   RepoConfig,
   SyncPreview,
   SyncJob,
@@ -223,6 +224,15 @@ export const bridge = {
   }) => invoke<ScriptMeta>("script_update", p),
 
   scriptRemove: (id: string) => invoke("script_remove", { id }),
+
+  // M2-4.c 脚本执行命令层：输出流/运行记录落盘归 M2-4.d
+  runScript: (id: string, values: Record<string, string>) =>
+    invoke<RunSnapshot>("run_script", { id, values }),
+
+  cancelScript: (runId: string) => invoke("cancel_script", { runId }),
+
+  scriptStatus: (runId: string) =>
+    invoke<RunSnapshot>("script_status", { runId }),
 
   // M1-2 收藏领域
   bookmarkAdd: (p: { url: string; title: string; category: string }) =>

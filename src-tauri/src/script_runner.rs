@@ -117,7 +117,7 @@ impl From<ScriptError> for RunError {
 /// 消费者 = **M2-4.c**（`script_status` 返回）+ **M2-4.d**（`script-runs.json` 落盘）。
 /// b 卡只写入、不外露命令层，故字段级标注 `#[allow(dead_code)]`（同 M2-3 口径）。
 #[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct RunSnapshot {
     pub run_id: String,
     pub script_id: String,

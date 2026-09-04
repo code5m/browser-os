@@ -1,9 +1,10 @@
 # AI 模型切换与接手清单
+> 本版变更：**M2-4.c 执行命令与校验接入已实现（`AI:DEEP / R:xhigh`，Codex 接手收口），NEXT=`M2-4.d`**。基于 M2-4.b 已落地的 `script_runner` 内核，新增三条命令 `run_script` / `cancel_script` / `script_status`：全部过 `check_invocation_source`，`id/run_id` 形态校验，`run_script` 读取已启用 `ScriptMeta` 并复用 `validate_meta` + `start_run` 内部 fail-closed 参数校验，返回内存 `RunSnapshot`（结构性不含 stdout/stderr/body/headers/token）；审计只记 id/run_id/status/param_count，不记参数值、脚本正文、路径正文或凭据。命令已进 `invoke_handler` 与 `default-commands.toml` ACL；前端 `types.ts`/`bridge.ts` 增加 `RunStatus`、`RunSnapshot` 与三条封装。`scripts/check-script-exec-policy.py` 从 b 卡 11 默认码扩为 b+c 16 默认码，d 卡 4 码保持 pending；同步修正 `check-script-domain-policy.py`，避免 M2-4 合法运行表/命令层误触发 M2-3 历史边界。验证：`cargo test` 194/194 PASS；`cargo build --release --locked` 0 error、2 warning 仍为既有 `grid_process.rs` 死代码；`npm run build` 0 error；两套 script policy 自检/正式均 PASS；M2-4 pending 4 码按预期仍 pending。运行时 IPC/GUI 未实测，如实挂账。
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
 > 文档版本：V4.7。
 > 更新时间：2026-09-03 16:45 CST。
-> 当前状态：`CODEX_READY`（M2-2 整体裁定已由 Kimi K3 签 PASS_WITH_DEBT，NEXT=`M2-3`）。
+> 当前状态：`CODEX_READY`（M2-4.c 执行命令与校验接入已完成，NEXT=`M2-4.d`）。
 > 当前分支：`feature-M0-baseline`。
 > 当前执行器：Codex gpt-5.5 high；机械文档审计与独立脚本任务已委派 `gpt-5.6-luna / low`，最终裁决仍由主任务负责。
 > 冲突裁决：WBS/验收以 `详细设计与实施计划.md` 为准，指标语义以冻结契约为准，本文只维护跨模型执行指针和交接证据。
@@ -19,15 +20,15 @@
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | M0-6.c 的登录态证据来自本地 AI mock 持久 cookie，不代表第三方真实账号人工验收；**M1-3/M1-7 GUI 目视验收与 M1-5/M1-6/M1-7/M1-8/M1-9/M2-1 运行时端到端联调全部挂账**（D1~D9 汇总见 `logs/checkpoints/M1-ACCEPT-20260903-0843.md` §7，M2-1 挂账见 `logs/checkpoints/M2-1-20260903-0927.md` §6，均未伪造 GUI/E2E 证据）；M1-ACCEPT 的会话 id 校验加固项**已在 M2-1 修复**（`check_id` 接入 session_get/delete/export/restore）；残留 NON-BLOCKER：flush 双路径理论重复存档窗口、M1-7 未勾选=全量提交误点风险 |
-| 下一检查点 | **`M2-4.b = NEXT`（任务卡已于 2026-09-04 00:00 展开：现状实测 16 项 + 5 处契约澄清/微调 + B1~B13 测试矩阵，见 `logs/checkpoints/M2-4.b-20260904-0000.md`；**独立裁定已完成**（`logs/checkpoints/M2-4.b-VERDICT-20260904-0705.md`，ADJUDICATED_WITH_REVISION：§3.1 走路线 A 且 `M2-4.a §8.1` 末条作废，§3.2 推翻实现者倾向改走 piped+drain；**实现前须先按裁定书 §6 修订展开卡**）**（进程组与生命周期内核，`AI:DEEP/R:xhigh`）。M2-4.a 执行安全契约冻结裁定书已落盘（`logs/checkpoints/M2-4.a-20260903-2233.md`，七组分歧逐组裁定：双层输出上限 4MB/256KB、全局默认超时 60s、并发同 id 禁+全局 8、只做 Unix、env 固定最小集、shell 权限归 e 卡、RunStatus=Succeeded+落盘 200 条；冻结执行通道核心契约）。M2-4（安全执行通道，COMPLEX）已展开为 a~e 五张子卡，依据 `logs/checkpoints/M2-4-20260903-1659.md`：a 契约冻结（已 PASS）/ b 进程组与生命周期内核 / c 执行命令与校验接入 / d 输出背压·事件流·退出收口 / e（可选）移除 `shell:allow-spawn`。**a 卡冻结后 b/c/d 逐张展开**。实测要点：进程组能力（`setsid`/`killpg`）全仓为零需新建，但 `libc` 已在依赖中；`ShutdownCoordinator` 已注册 5 个任务，草案「被阻塞」的说法已解除；**`shell:allow-spawn` 实测零调用点**（开着但没人用的开放能力）；M2-3 已交付的参数校验函数可直接调用。 |
-| 下一任务路由 | M2-2/M2-3 各子卡均已关闭；**M2-4.a：`AI:DEEP / R:xhigh`（执行安全契约冻结，已 PASS，纯文档）**；**M2-4.b：`AI:DEEP / R:xhigh`**（进程组与生命周期内核，NEXT）。M2-4.c/d/e 在 b 卡冻结后逐张展开。完整任务卡见 §2「当前任务卡：M2-4.b」（已展开，含实测与测试矩阵；a 卡已转存档）；未展开检查点不得写功能代码 |
+| 下一检查点 | **`M2-4.d = NEXT`**（输出背压、事件流、运行记录落盘与退出收口）。前置：`M2-4.b` 进程组与生命周期内核已提交，`M2-4.c` 三命令接入已提交并通过 pre-merge；d 卡不得重做命令/ACL，只替换 drain sink 为环形缓冲 + 事件流，并接入 `kill-running-scripts` shutdown 任务。 |
+| 下一任务路由 | **M2-4.d：`AI:DEEP / R:xhigh`**。M2-4.a/b/c 已完成；d 卡负责输出背压、`script-output`/`script-finished` 事件、`script-runs.json` 尾存落盘与退出收口。e 卡仍为可选移除 `shell:allow-spawn`。 |
 | 自动执行范围 | M0 已结束；M1 起必须先展开检查点，再逐点验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；进入 M1/M2/M3 后仍不得跨检查点合并 |
 | 禁止启动 | M4~M5；M1~M3 可评估启动但不得未展开检查点就写功能代码 |
 | 最近实现提交 | `feat(M2-2.b): add image gallery lightbox preview UI`（画廊/灯箱/缩放：`workspace_images_dir` 命令 + `imagePreview.ts` 纯逻辑层 + `useImagePreviewStore` + `shared/ImageGallery.vue`/`shared/ImageLightbox.vue` + 两挂点 + 两项新门禁；前一个是 `00948f8 docs(M2-2.a)`） |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
-| 最新状态证据 | `logs/checkpoints/M2-4.b-20260904-0000.md`（**M2-4.b 任务卡展开：现状实测 16 项 + 5 处对冻结裁定书的澄清/微调 + B1~B13 测试矩阵（含 5 项真实进程测试），NEXT=M2-4.b 可直接实现**）；`logs/checkpoints/M2-4-20260903-1659.md`（M2-4 整卡展开为 a~e）；`logs/checkpoints/M2-3-ACCEPT-20260903-1645.md`（**M2-3 整体裁定 PASS_WITH_DEBT**）；`logs/checkpoints/M2-3.b-20260903-1633.md`（M2-3.b 实现）；`logs/checkpoints/M2-3.a-20260903-1604.md`（M2-3.a 冻结裁定书）；`logs/checkpoints/M2-3-20260903-1556.md`（M2-3 任务卡展开）；`logs/checkpoints/M2-2-ACCEPT-20260903-1540.md`（**M2-2 整体裁定 PASS_WITH_DEBT**）；`logs/checkpoints/M2-2-verdict-input-20260903-1502.md`；`logs/checkpoints/M2-2.b-20260903-1454.md`；`logs/checkpoints/M2-2.a-20260903-1352.md`；`logs/checkpoints/M2-2-20260903-1340.md`；`logs/checkpoints/M2-1-20260903-0927.md`；`logs/checkpoints/M1-ACCEPT-20260903-0843.md`；`logs/checkpoints/M1-9-20260903-0727.md`；`logs/checkpoints/M1-8-20260902-2058.md`；`logs/checkpoints/M1-7-20260902-1830.md`；`logs/checkpoints/M1-6.d-20260902-1525.md`；`logs/checkpoints/M1-6.c-20260902-1430.md`；`logs/checkpoints/M1-6.b-20260902-1327.md`；`logs/checkpoints/M1-6.a-20260902-0955.md`；`logs/checkpoints/M1-5-20260902-1130.md`；`logs/checkpoints/M1-4-20260901-1805.md`；`logs/checkpoints/M1-3-20260901-1123.md`；`logs/checkpoints/M1-2-fix1-20260901-1050.md`；`logs/checkpoints/M1-2-20260901-1037.md`；`logs/checkpoints/M1-1-20260901-1011.md`；`logs/checkpoints/M1-0-20260901-0915.md` |
+| 最新状态证据 | `logs/checkpoints/M2-4.c-20260904-1317.md`（M2-4.c 实现收口，NEXT=M2-4.d）；`5903c46 feat(M2-4.c): wire script execution commands`；`bd9f41b feat(M2-4.b): process group kernel with verdict §3.1 A + §3.2 B`；`logs/checkpoints/M2-4.b-20260904-0000.md`；`logs/checkpoints/M2-4.b-VERDICT-20260904-0705.md`；`logs/checkpoints/M2-4.a-20260903-2233.md`；`logs/checkpoints/M2-4-20260903-1659.md`。 |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
 

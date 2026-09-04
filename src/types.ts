@@ -381,7 +381,7 @@ export interface ScriptParam {
   default: string | null;
   /** 仅 enum 使用 */
   options: string[];
-  /** 跳过单引号包裹；仅 path / enum 允许 true */
+  /** argv 模式下无效果；仅保留兼容字段 */
   raw: boolean;
   /** 敏感参数：UI 用密码框，审计值一律 *** */
   secret: boolean;
@@ -398,8 +398,20 @@ export interface ScriptMeta {
   description: string;
   builtin: boolean;
   enabled: boolean;
-  /** 0 = 使用全局默认（300） */
+  /** 0 = 使用全局默认（60） */
   timeout_secs: number;
   created_at: string;
   updated_at: string;
+}
+
+export type RunStatus = "running" | "succeeded" | "failed" | "cancelled" | "timeout";
+
+export interface RunSnapshot {
+  run_id: string;
+  script_id: string;
+  status: RunStatus;
+  started_at: string;
+  finished_at: string | null;
+  exit_code: number | null;
+  error: string | null;
 }

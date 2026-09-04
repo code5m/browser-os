@@ -96,5 +96,8 @@ commands.allow = [
     "script_add",
     "script_update",
     "script_remove",
+    "run_script",
+    "cancel_script",
+    "script_status",
     "list_artifact_images"
 ]
