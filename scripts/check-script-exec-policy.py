@@ -15,17 +15,13 @@
 
 模式：
   默认            判定 ACTIVE 码（b/c 卡职责内 + P0 红线）；零命中 → EXIT 0
-  --expect-pending 验证 PENDING 码（d 卡职责）确实仍处于未实现状态；
-                   若有 pending 码已实现，提示应转入默认判定 → EXIT 1
+  --expect-pending 验证 PENDING 码位集合；M2-4.d 后应为空 → EXIT 0
   --self-test     好坏样本双向自检（含**变异防呆**：坏样本必须真的改动内容）
 
 关于「一次性定义码位」：沿用 M0-3.a 模式，18 个码位一次定义，
-默认门禁判定已落地的 b/c 卡职责，避免 d 卡未实现的码把 pre-merge 染红。
-实现期**重新分类**：`EXEC_ENV_NOT_CLEARED` / `EXEC_CWD_NOT_LOCKED` /
-`EXEC_INTERPRETER_NOT_WHITELISTED` 三项 b 卡已落地，故从 pending 转入默认判定；
-M2-4.c 落地后 `EXEC_ACL_MISSING` / `EXEC_HANDLER_NOT_REGISTERED` /
-`EXEC_NO_SOURCE_CHECK` / `EXEC_VALIDATION_BYPASSED` / `EXEC_AUDIT_LEAKS_VALUE`
-转入默认判定。
+默认门禁判定已落地的 b/c/d 卡职责。M2-4.d 后 pending 码位为空：
+`EXEC_SHUTDOWN_NOT_REGISTERED` / `EXEC_RUN_RECORD_MISSING` / `EXEC_NO_RING_CAP` /
+`EXEC_NO_OUTPUT_CAP` 已转入默认判定。
 """
 
 from __future__ import annotations
@@ -68,15 +64,17 @@ C_CARD_CODES = (
     "EXEC_AUDIT_LEAKS_VALUE",
 )
 
-ACTIVE_CODES = P0_CODES + B_CARD_CODES + C_CARD_CODES
-
-# d 卡职责：默认模式不判定，用 --expect-pending 验证「仍未实现」
-PENDING_CODES = (
+# d 卡职责内（输出背压、事件流、运行记录落盘与退出收口）
+D_CARD_CODES = (
     "EXEC_SHUTDOWN_NOT_REGISTERED",
     "EXEC_RUN_RECORD_MISSING",
     "EXEC_NO_RING_CAP",
     "EXEC_NO_OUTPUT_CAP",
 )
+
+ACTIVE_CODES = P0_CODES + B_CARD_CODES + C_CARD_CODES + D_CARD_CODES
+
+PENDING_CODES: tuple[str, ...] = ()
 
 # ----------------------------- 检测规则 -----------------------------
 
@@ -206,13 +204,17 @@ def detect(ctx: dict[str, str]) -> set[str]:
         if "check_invocation_source" not in body:
             hits.add("EXEC_NO_SOURCE_CHECK")
             break
-    if "kill-running-scripts" not in bridge:
+    shutdown_body = rust_fn_body(bridge, "register_shutdown_tasks")
+    if 'coordinator.register("kill-running-scripts"' not in shutdown_body or "kill_all_running" not in shutdown_body:
         hits.add("EXEC_SHUTDOWN_NOT_REGISTERED")
-    if "ScriptRunRecord" not in (runner + main + bridge):
+    if not re.search(r"pub\s+struct\s+ScriptRunRecord\b", runner):
         hits.add("EXEC_RUN_RECORD_MISSING")
-    if not any(k in runner for k in ("RING_MAX_BYTES", "RING_MAX_LINES")):
+    if not (
+        re.search(r"pub\s+const\s+RING_MAX_BYTES\s*:", runner)
+        and re.search(r"pub\s+const\s+RING_MAX_LINES\s*:", runner)
+    ):
         hits.add("EXEC_NO_RING_CAP")
-    if "SCRIPT_RUN_TAIL_BYTES" not in runner:
+    if not re.search(r"pub\s+const\s+SCRIPT_RUN_TAIL_BYTES\s*:", runner):
         hits.add("EXEC_NO_OUTPUT_CAP")
     run_body = rust_fn_body(bridge, "run_script")
     helper_body = rust_fn_body(bridge, "get_enabled_script")
@@ -287,6 +289,13 @@ BRIDGE_MUTATIONS: tuple[tuple[str, str, str, int], ...] = (
     ("EXEC_NO_SOURCE_CHECK", '    check_invocation_source(&webview, "run_script", None, &app)?;', '', 1),
     ("EXEC_VALIDATION_BYPASSED", "    crate::scripts::validate_meta(&script).map_err(|e| e.to_string())?;", "", 1),
     ("EXEC_AUDIT_LEAKS_VALUE", '"script.run.start",', '"script.run.start values",', 1),
+    ("EXEC_SHUTDOWN_NOT_REGISTERED", 'coordinator.register("kill-running-scripts"', 'coordinator.register("kill-scripts-missing"', 1),
+)
+
+D_MUTATIONS: tuple[tuple[str, str, str, int], ...] = (
+    ("EXEC_RUN_RECORD_MISSING", "pub struct ScriptRunRecord", "pub struct ScriptRunGone", 1),
+    ("EXEC_NO_RING_CAP", "pub const RING_MAX_BYTES", "pub const RING_BYTES_DISABLED", 1),
+    ("EXEC_NO_OUTPUT_CAP", "pub const SCRIPT_RUN_TAIL_BYTES", "pub const SCRIPT_RUN_TAIL_DISABLED", 1),
 )
 
 
@@ -330,6 +339,19 @@ def self_test() -> int:
         if code not in hits:
             failures.append(f"[{code}] 坏样本未被检出（实际命中：{sorted(hits & set(ACTIVE_CODES))}）")
 
+    for code, old, new, count in D_MUTATIONS:
+        if old not in ctx["runner"]:
+            failures.append(f"[{code}] 变异原文片段不存在，夹具已失效：{old!r}")
+            continue
+        mutated = dict(ctx)
+        mutated["runner"] = ctx["runner"].replace(old, new, count)
+        if mutated["runner"] == ctx["runner"]:
+            failures.append(f"[{code}] 变异未改变内容，按漏检测计")
+            continue
+        hits = detect(mutated)
+        if code not in hits:
+            failures.append(f"[{code}] 坏样本未被检出（实际命中：{sorted(hits & set(ACTIVE_CODES))}）")
+
     # 3) pending 码位完整性：默认模式不得误判 pending 为 active
     overlap = set(ACTIVE_CODES) & set(PENDING_CODES)
     if overlap:
@@ -340,7 +362,7 @@ def self_test() -> int:
         for f in failures:
             print(f"FAIL: {f}")
         return 1
-    print(f"SELF_TEST_RESULT=ALL_PASS（{len(MUTATIONS) + len(BRIDGE_MUTATIONS)} 个坏样本 + 1 个好样本 + 码位完整性）")
+    print(f"SELF_TEST_RESULT=ALL_PASS（{len(MUTATIONS) + len(BRIDGE_MUTATIONS) + len(D_MUTATIONS)} 个坏样本 + 1 个好样本 + 码位完整性）")
     return 0
 
 
@@ -363,13 +385,13 @@ def main() -> int:
     hits = detect(ctx)
 
     if args.expect_pending:
-        missing = [c for c in PENDING_CODES if c not in hits]
-        if missing:
-            print("PENDING_RESULT=IMPLEMENTED（以下码位已实现，应转入默认判定）")
-            for code in missing:
+        pending_hits = [c for c in PENDING_CODES if c in hits]
+        if pending_hits:
+            print("PENDING_RESULT=FAIL")
+            for code in pending_hits:
                 print(f"  {code}")
             return 1
-        print(f"PENDING_RESULT=ALL_PENDING（{len(PENDING_CODES)} 个码位均仍未实现，符合预期）")
+        print(f"PENDING_RESULT=NONE（{len(PENDING_CODES)} 个 pending 码位）")
         return 0
 
     active_hits = sorted(c for c in hits if c in ACTIVE_CODES)

@@ -3,8 +3,8 @@
 //! 契约依据（唯一）：`logs/checkpoints/M2-4.a-20260903-2233.md`（冻结裁定书）
 //! + `logs/checkpoints/M2-4.b-VERDICT-20260904-0705.md`（独立裁定书，与 a 卡冲突时以裁定为追加记录）。
 //!
-//! 本模块**只做进程/生命周期**，不含任何 `#[tauri::command]`（命令层归 M2-4.c），
-//! 不含输出保留/背压/事件流/落盘（归 M2-4.d）。
+//! 本模块**只做进程/生命周期**，不含任何 `#[tauri::command]`（命令层归 M2-4.c）；
+//! M2-4.d 在此补齐输出环形缓冲、事件流与运行记录尾存落盘。
 //!
 //! ## 三条不可动摇的红线
 //! 1. **命令构造**：`Command::new(interpreter_bin).arg(path).args(values)` —— argv 数组，
@@ -15,12 +15,14 @@
 //!    （裁定书 §3.1，实测 `printf` 收到 `'/tmp/x'`）。
 //!
 //! ## 线程模型
-//! 每个 run 起 3 个线程：supervisor（轮询 wait + 超时/取消）与 2 个 drain（只读丢弃，
-//! 防管道写满阻塞子进程）。**进程表不持有 `Child`**——`Child` 在 spawn 后立即移入
+//! 每个 run 起 3 个线程：supervisor（轮询 wait + 超时/取消）与 2 个输出 reader
+//! （有界环形缓冲 + 事件流）。**进程表不持有 `Child`**——`Child` 在 spawn 后立即移入
 //! supervisor 线程，否则任何 `wait` 都得在锁内进行，会阻塞状态查询与并发判定
 //! （同 M0-2.b「清理任务持业务锁」的死锁教训）。
 
 use std::collections::HashMap;
+use std::collections::VecDeque;
+use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -34,6 +36,7 @@ use chrono::Utc;
 use crate::domain::{ParamType, RunStatus, ScriptInterpreter, ScriptMeta, ScriptParam};
 use crate::scripts::{check_required, validate_enum_value, validate_param_value, ScriptError};
 use crate::security_policy::check_path_within_roots;
+use tauri::{AppHandle, Emitter};
 
 // ----------------------------- 常量（a 卡冻结值） -----------------------------
 
@@ -51,6 +54,16 @@ pub const MAX_CONCURRENT_RUNS: usize = 8;
 pub const MAX_TABLE_ENTRIES: usize = 200;
 /// supervisor 轮询间隔。50 ms 对秒级超时（≥2 s）精度足够，且无需跨线程同步 wait 结果。
 pub const POLL_INTERVAL_MS: u64 = 50;
+/// 内存输出环形缓冲：最多 4 MiB。
+pub const RING_MAX_BYTES: usize = 4 * 1024 * 1024;
+/// 内存输出环形缓冲：最多 5000 行。
+pub const RING_MAX_LINES: usize = 5000;
+/// 单片输出事件最大 8 KiB。
+pub const CHUNK_MAX_BYTES: usize = 8 * 1024;
+/// 落盘运行记录只保留尾部 256 KiB。
+pub const SCRIPT_RUN_TAIL_BYTES: usize = 256 * 1024;
+/// 运行历史落盘上限。
+pub const MAX_RUN_RECORDS: usize = 200;
 
 /// env 固定最小集（a 卡 §5：`env_clear()` + 闭集，防 `LD_PRELOAD`/`SSH_AUTH_SOCK` 泄露）。
 pub const MINIMAL_ENV_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
@@ -117,7 +130,7 @@ impl From<ScriptError> for RunError {
 /// 消费者 = **M2-4.c**（`script_status` 返回）+ **M2-4.d**（`script-runs.json` 落盘）。
 /// b 卡只写入、不外露命令层，故字段级标注 `#[allow(dead_code)]`（同 M2-3 口径）。
 #[allow(dead_code)]
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RunSnapshot {
     pub run_id: String,
     pub script_id: String,
@@ -126,6 +139,70 @@ pub struct RunSnapshot {
     pub finished_at: Option<chrono::DateTime<Utc>>,
     pub exit_code: Option<i32>,
     pub error: Option<String>,
+    #[serde(default)]
+    pub output_tail: String,
+    #[serde(default)]
+    pub truncated: bool,
+    #[serde(default)]
+    pub output_seq: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ScriptRunRecord {
+    pub run_id: String,
+    pub script_id: String,
+    pub status: RunStatus,
+    pub started_at: chrono::DateTime<Utc>,
+    pub finished_at: chrono::DateTime<Utc>,
+    pub exit_code: Option<i32>,
+    pub error: Option<String>,
+    pub output_tail: String,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ScriptOutputEvent {
+    pub run_id: String,
+    pub chunk: String,
+    pub seq: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ScriptFinishedEvent {
+    pub snapshot: RunSnapshot,
+}
+
+#[derive(Default)]
+struct OutputRing {
+    lines: VecDeque<String>,
+    bytes: usize,
+    truncated: bool,
+    seq: u64,
+}
+
+impl OutputRing {
+    fn push(&mut self, text: &str) -> u64 {
+        self.seq += 1;
+        for part in text.split_inclusive('\n') {
+            let line = part.to_string();
+            self.bytes += line.len();
+            self.lines.push_back(line);
+        }
+        while self.bytes > RING_MAX_BYTES || self.lines.len() > RING_MAX_LINES {
+            if let Some(old) = self.lines.pop_front() {
+                self.bytes = self.bytes.saturating_sub(old.len());
+                self.truncated = true;
+            } else {
+                break;
+            }
+        }
+        self.seq
+    }
+
+    fn tail(&self) -> (String, bool) {
+        let joined: String = self.lines.iter().cloned().collect();
+        tail_bytes(&joined, SCRIPT_RUN_TAIL_BYTES, self.truncated)
+    }
 }
 
 struct RunEntry {
@@ -136,6 +213,7 @@ struct RunEntry {
     /// 取消信号。**cancel 只置位、不阻塞**（ShutdownCoordinator 契约：清理任务不得阻塞）。
     cancel: Arc<AtomicBool>,
     state: Arc<Mutex<RunSnapshot>>,
+    output: Arc<Mutex<OutputRing>>,
 }
 
 /// 脚本进程表：`run_id -> RunEntry`。终态 entry **保留**（供状态查询），超容量只淘汰终态。
@@ -374,17 +452,57 @@ pub fn process_group_id_of(pid: u32) -> Option<i32> {
 
 // ----------------------------- 线程：drain / supervisor -----------------------------
 
-/// 只读丢弃管道内容（§2.2 路线 B）。
+/// 读取管道内容并写入有界环形缓冲，同时发送有限大小的前端事件。
 ///
-/// 目的**不是**实现输出功能，而是防止「piped 而无人读」导致子进程阻塞在 `write`
-/// （Linux 默认管道容量 64 KiB，实测父进程不读时子进程无法退出）。
-/// **不保留字节、不置 truncated、不节流、不 emit 事件**——那些归 M2-4.d。
-fn spawn_drain<R: Read + Send + 'static>(mut pipe: R) {
+/// 目的有两层：防止「piped 而无人读」导致子进程阻塞在 `write`，并落实 M2-4.d
+/// 的输出背压/尾存/事件流边界。
+fn spawn_output_reader<R: Read + Send + 'static>(
+    mut pipe: R,
+    run_id: String,
+    output: Arc<Mutex<OutputRing>>,
+    state: Arc<Mutex<RunSnapshot>>,
+    app: Option<AppHandle>,
+) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let mut sink = std::io::sink();
-        // 错误只可能是 EPIPE 之类，无碍；丢弃流本来就不关心结果。
-        let _ = std::io::copy(&mut pipe, &mut sink);
-    });
+        let mut buf = [0u8; CHUNK_MAX_BYTES];
+        loop {
+            match pipe.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let (seq, tail, truncated) = {
+                        let mut ring = output.lock().unwrap_or_else(|p| p.into_inner());
+                        let seq = ring.push(&chunk);
+                        let (tail, truncated) = ring.tail();
+                        (seq, tail, truncated)
+                    };
+                    {
+                        let mut st = state.lock().unwrap_or_else(|p| p.into_inner());
+                        st.output_tail = tail;
+                        st.truncated = truncated;
+                        st.output_seq = seq;
+                    }
+                    if let Some(app) = &app {
+                        let _ = app.emit(
+                            "script-output",
+                            ScriptOutputEvent {
+                                run_id: run_id.clone(),
+                                chunk: tail_bytes(&chunk, CHUNK_MAX_BYTES, false).0,
+                                seq,
+                            },
+                        );
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    })
+}
+
+fn join_output_readers(readers: Vec<thread::JoinHandle<()>>) {
+    for reader in readers {
+        let _ = reader.join();
+    }
 }
 
 /// 终止整个进程组：SIGTERM → 轮询等待 → 超时未死则 SIGKILL。
@@ -412,8 +530,13 @@ fn supervise(
     timeout_secs: u32,
     cancel: Arc<AtomicBool>,
     state: Arc<Mutex<RunSnapshot>>,
+    output: Arc<Mutex<OutputRing>>,
+    readers: Vec<thread::JoinHandle<()>>,
+    app: Option<AppHandle>,
+    records_file: Option<PathBuf>,
 ) {
     let started = Instant::now();
+    let mut readers = Some(readers);
 
     let finish = |status: RunStatus, exit_code: Option<i32>, error: Option<String>| {
         let mut st = state.lock().unwrap_or_else(|p| p.into_inner());
@@ -425,6 +548,17 @@ fn supervise(
         st.exit_code = exit_code;
         st.error = error;
         st.finished_at = Some(Utc::now());
+        let (tail, truncated) = output.lock().unwrap_or_else(|p| p.into_inner()).tail();
+        st.output_tail = tail;
+        st.truncated = truncated;
+        let snapshot = st.clone();
+        drop(st);
+        if let Some(path) = &records_file {
+            persist_run_record(path, &snapshot);
+        }
+        if let Some(app) = &app {
+            let _ = app.emit("script-finished", ScriptFinishedEvent { snapshot });
+        }
     };
 
     loop {
@@ -437,6 +571,7 @@ fn supervise(
                 } else {
                     RunStatus::Failed
                 };
+                join_output_readers(readers.take().unwrap_or_default());
                 finish(status, code, None);
                 return;
             }
@@ -444,18 +579,21 @@ fn supervise(
                 if cancel.load(Ordering::SeqCst) {
                     terminate_group(pgid, CANCEL_GRACE_SECS);
                     let code = child.wait().ok().and_then(|s| s.code());
+                    join_output_readers(readers.take().unwrap_or_default());
                     finish(RunStatus::Cancelled, code, None);
                     return;
                 }
                 if started.elapsed().as_secs() >= timeout_secs as u64 {
                     terminate_group(pgid, HARD_GRACE_SECS);
                     let code = child.wait().ok().and_then(|s| s.code());
+                    join_output_readers(readers.take().unwrap_or_default());
                     finish(RunStatus::Timeout, code, None);
                     return;
                 }
                 thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
             }
             Err(e) => {
+                join_output_readers(readers.take().unwrap_or_default());
                 finish(
                     RunStatus::Failed,
                     None,
@@ -484,6 +622,8 @@ pub fn start_run(
     values: &HashMap<String, String>,
     roots: &[PathBuf],
     home_dir: &Path,
+    app: Option<AppHandle>,
+    records_file: Option<PathBuf>,
 ) -> Result<String, RunError> {
     let timeout = effective_timeout(meta.timeout_secs)?;
 
@@ -498,7 +638,11 @@ pub fn start_run(
         finished_at: None,
         exit_code: None,
         error: None,
+        output_tail: String::new(),
+        truncated: false,
+        output_seq: 0,
     }));
+    let output = Arc::new(Mutex::new(OutputRing::default()));
 
     {
         let mut runs = table.lock_runs();
@@ -523,6 +667,7 @@ pub fn start_run(
                 pgid: None,
                 cancel: Arc::clone(&cancel),
                 state: Arc::clone(&state),
+                output: Arc::clone(&output),
             },
         );
     }
@@ -567,8 +712,7 @@ pub fn start_run(
         .env("LANG", "C.UTF-8")
         .env("TERM", "dumb")
         .stdin(Stdio::null())
-        // §2.2 路线 B：piped + 只读丢弃 drain（防管道写满阻塞）。
-        // TODO(M2-4.d): 把 drain sink 换成环形缓冲 + 事件流（背压/尾存/落盘归 d 卡）。
+        // M2-4.d：piped + reader 线程，输出进入有界环形缓冲并发送有限大小事件。
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -587,21 +731,45 @@ pub fn start_run(
 
     let pgid = child.id() as i32;
 
-    // --- 4) drain 线程（必须在 supervisor 之前，否则管道无人读） ---
+    // --- 4) 输出 reader 线程（必须在 supervisor 之前，否则管道无人读） ---
+    let mut readers = Vec::new();
     if let Some(out) = child.stdout.take() {
-        spawn_drain(out);
+        readers.push(spawn_output_reader(
+            out,
+            run_id.clone(),
+            Arc::clone(&output),
+            Arc::clone(&state),
+            app.clone(),
+        ));
     }
     if let Some(err) = child.stderr.take() {
-        spawn_drain(err);
+        readers.push(spawn_output_reader(
+            err,
+            run_id.clone(),
+            Arc::clone(&output),
+            Arc::clone(&state),
+            app.clone(),
+        ));
     }
 
     // --- 5) 回填 pgid 并交给 supervisor ---
     if let Some(entry) = table.lock_runs().get_mut(&run_id) {
         entry.pgid = Some(pgid);
+        entry.output = Arc::clone(&output);
     }
     let st = Arc::clone(&state);
     thread::spawn(move || {
-        supervise(child, Some(pgid), timeout, cancel, st);
+        supervise(
+            child,
+            Some(pgid),
+            timeout,
+            cancel,
+            st,
+            output,
+            readers,
+            app,
+            records_file,
+        );
     });
 
     Ok(run_id)
@@ -643,6 +811,54 @@ fn is_terminal_entry(entry: &RunEntry) -> bool {
         .unwrap_or_else(|p| p.into_inner())
         .status
         .is_terminal()
+}
+
+fn tail_bytes(input: &str, limit: usize, already_truncated: bool) -> (String, bool) {
+    if input.len() <= limit {
+        return (input.to_string(), already_truncated);
+    }
+    let mut start = input.len() - limit;
+    while start < input.len() && !input.is_char_boundary(start) {
+        start += 1;
+    }
+    (input[start..].to_string(), true)
+}
+
+pub fn load_run_records(path: &Path) -> Vec<ScriptRunRecord> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|c| serde_json::from_str(&c).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_run_records(path: &Path, records: &[ScriptRunRecord]) -> Result<(), String> {
+    let mut list = records.to_vec();
+    if list.len() > MAX_RUN_RECORDS {
+        let keep_from = list.len() - MAX_RUN_RECORDS;
+        list = list.split_off(keep_from);
+    }
+    let content = serde_json::to_string_pretty(&list).map_err(|e| e.to_string())?;
+    crate::session::atomic_write(path, &content)
+}
+
+fn persist_run_record(path: &Path, snapshot: &RunSnapshot) {
+    let Some(finished_at) = snapshot.finished_at else {
+        return;
+    };
+    let mut records = load_run_records(path);
+    records.retain(|r| r.run_id != snapshot.run_id);
+    records.push(ScriptRunRecord {
+        run_id: snapshot.run_id.clone(),
+        script_id: snapshot.script_id.clone(),
+        status: snapshot.status,
+        started_at: snapshot.started_at,
+        finished_at,
+        exit_code: snapshot.exit_code,
+        error: snapshot.error.clone(),
+        output_tail: snapshot.output_tail.clone(),
+        truncated: snapshot.truncated,
+    });
+    let _ = save_run_records(path, &records);
 }
 
 // ----------------------------- 测试（B1~B14） -----------------------------
@@ -871,8 +1087,17 @@ mod script_runner_tests {
         let roots = vec![dir.clone()];
         let meta = meta_with(ScriptInterpreter::Bash, vec![]);
 
-        let run_id =
-            start_run(&table, &meta, &script, &HashMap::new(), &roots, &dir).expect("启动成功");
+        let run_id = start_run(
+            &table,
+            &meta,
+            &script,
+            &HashMap::new(),
+            &roots,
+            &dir,
+            None,
+            None,
+        )
+        .expect("启动成功");
         let pgid = table
             .lock_runs()
             .get(&run_id)
@@ -902,8 +1127,17 @@ mod script_runner_tests {
         meta.timeout_secs = 2; // 缩短以便测试
 
         let started = Instant::now();
-        let run_id =
-            start_run(&table, &meta, &script, &HashMap::new(), &roots, &dir).expect("启动成功");
+        let run_id = start_run(
+            &table,
+            &meta,
+            &script,
+            &HashMap::new(),
+            &roots,
+            &dir,
+            None,
+            None,
+        )
+        .expect("启动成功");
         let pgid = table
             .lock_runs()
             .get(&run_id)
@@ -932,8 +1166,17 @@ mod script_runner_tests {
         let roots = vec![dir.clone()];
         let meta = meta_with(ScriptInterpreter::Bash, vec![]);
 
-        let run_id =
-            start_run(&table, &meta, &script, &HashMap::new(), &roots, &dir).expect("启动成功");
+        let run_id = start_run(
+            &table,
+            &meta,
+            &script,
+            &HashMap::new(),
+            &roots,
+            &dir,
+            None,
+            None,
+        )
+        .expect("启动成功");
         let pgid = table
             .lock_runs()
             .get(&run_id)
@@ -960,8 +1203,17 @@ mod script_runner_tests {
         let roots = vec![dir.clone()];
         let meta = meta_with(ScriptInterpreter::Bash, vec![]);
 
-        let run_id =
-            start_run(&table, &meta, &script, &HashMap::new(), &roots, &dir).expect("启动成功");
+        let run_id = start_run(
+            &table,
+            &meta,
+            &script,
+            &HashMap::new(),
+            &roots,
+            &dir,
+            None,
+            None,
+        )
+        .expect("启动成功");
         let snap = wait_terminal(&table, &run_id, 8_000);
         assert_eq!(snap.status, RunStatus::Succeeded);
 
@@ -993,8 +1245,17 @@ mod script_runner_tests {
         for i in 0..MAX_CONCURRENT_RUNS {
             let script = write_script(&dir, "sleep 30\n");
             let meta = meta_with(ScriptInterpreter::Bash, vec![]);
-            let id = start_run(&table, &meta, &script, &HashMap::new(), &roots, &dir)
-                .unwrap_or_else(|e| panic!("第 {i} 个应能启动：{e:?}"));
+            let id = start_run(
+                &table,
+                &meta,
+                &script,
+                &HashMap::new(),
+                &roots,
+                &dir,
+                None,
+                None,
+            )
+            .unwrap_or_else(|e| panic!("第 {i} 个应能启动：{e:?}"));
             run_ids.push(id);
         }
         assert_eq!(table.running_count(), MAX_CONCURRENT_RUNS);
@@ -1002,17 +1263,45 @@ mod script_runner_tests {
         // 第 9 个不同脚本：拒绝
         let script9 = write_script(&dir, "sleep 30\n");
         let meta9 = meta_with(ScriptInterpreter::Bash, vec![]);
-        let err = start_run(&table, &meta9, &script9, &HashMap::new(), &roots, &dir)
-            .expect_err("第 9 个必须被拒");
+        let err = start_run(
+            &table,
+            &meta9,
+            &script9,
+            &HashMap::new(),
+            &roots,
+            &dir,
+            None,
+            None,
+        )
+        .expect_err("第 9 个必须被拒");
         assert_eq!(err.code(), "TOO_MANY_RUNS");
 
         // 同 script_id 第二次：拒绝（即使未达并发上限）
         let table2 = Arc::new(ScriptProcessTable::new());
         let s = write_script(&dir, "sleep 30\n");
         let meta = meta_with(ScriptInterpreter::Bash, vec![]);
-        start_run(&table2, &meta, &s, &HashMap::new(), &roots, &dir).expect("首次应成功");
-        let err = start_run(&table2, &meta, &s, &HashMap::new(), &roots, &dir)
-            .expect_err("同 script_id 二次启动必须被拒");
+        start_run(
+            &table2,
+            &meta,
+            &s,
+            &HashMap::new(),
+            &roots,
+            &dir,
+            None,
+            None,
+        )
+        .expect("首次应成功");
+        let err = start_run(
+            &table2,
+            &meta,
+            &s,
+            &HashMap::new(),
+            &roots,
+            &dir,
+            None,
+            None,
+        )
+        .expect_err("同 script_id 二次启动必须被拒");
         assert_eq!(err.code(), "SCRIPT_ALREADY_RUNNING");
 
         // 清理：全部取消，避免留下 sleep 孤儿
@@ -1043,8 +1332,17 @@ mod script_runner_tests {
         let roots = vec![dir.clone()];
         let meta = meta_with(ScriptInterpreter::Bash, vec![]);
 
-        let run_id =
-            start_run(&table, &meta, &script, &HashMap::new(), &roots, &dir).expect("启动成功");
+        let run_id = start_run(
+            &table,
+            &meta,
+            &script,
+            &HashMap::new(),
+            &roots,
+            &dir,
+            None,
+            None,
+        )
+        .expect("启动成功");
         let entry = table.lock_runs();
         let e = entry.get(&run_id).expect("entry");
         let pgid = e.pgid.expect("pgid");
@@ -1061,6 +1359,90 @@ mod script_runner_tests {
 
         table.cancel(&run_id).expect("取消");
         wait_terminal(&table, &run_id, 8_000);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ---------- D1：输出尾存按 256 KiB 截断且保持 UTF-8 边界 ----------
+    #[test]
+    fn d1_tail_bytes_caps_at_char_boundary() {
+        let input = format!("{}{}", "a".repeat(SCRIPT_RUN_TAIL_BYTES + 10), "中文");
+        let (tail, truncated) = tail_bytes(&input, SCRIPT_RUN_TAIL_BYTES, false);
+        assert!(truncated);
+        assert!(tail.len() <= SCRIPT_RUN_TAIL_BYTES);
+        assert!(tail.ends_with("中文"));
+    }
+
+    // ---------- D2：内存环形缓冲同时受 bytes 与 lines 上限约束 ----------
+    #[test]
+    fn d2_output_ring_caps_bytes_and_lines() {
+        let mut ring = OutputRing::default();
+        for i in 0..(RING_MAX_LINES + 20) {
+            ring.push(&format!("line-{i}\n"));
+        }
+        assert!(ring.lines.len() <= RING_MAX_LINES);
+        assert!(ring.truncated);
+
+        let mut ring = OutputRing::default();
+        ring.push(&"x".repeat(RING_MAX_BYTES + CHUNK_MAX_BYTES));
+        assert!(ring.bytes <= RING_MAX_BYTES);
+        assert!(ring.truncated);
+    }
+
+    // ---------- D3：运行记录落盘上限 200，FIFO 丢最旧 ----------
+    #[test]
+    fn d3_run_records_are_capped() {
+        let dir = temp_dir("d3");
+        let file = dir.join("script-runs.json");
+        let now = Utc::now();
+        let records: Vec<ScriptRunRecord> = (0..250)
+            .map(|i| ScriptRunRecord {
+                run_id: format!("run-{i}"),
+                script_id: "s".to_string(),
+                status: RunStatus::Succeeded,
+                started_at: now,
+                finished_at: now,
+                exit_code: Some(0),
+                error: None,
+                output_tail: format!("out-{i}"),
+                truncated: false,
+            })
+            .collect();
+        save_run_records(&file, &records).expect("save capped records");
+        let loaded = load_run_records(&file);
+        assert_eq!(loaded.len(), MAX_RUN_RECORDS);
+        assert_eq!(loaded.first().unwrap().run_id, "run-50");
+        assert_eq!(loaded.last().unwrap().run_id, "run-249");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ---------- D4：真实脚本输出进入快照尾存并落盘 ----------
+    #[test]
+    fn d4_real_output_is_captured_and_persisted() {
+        let dir = temp_dir("d4");
+        let script = write_script(&dir, "printf 'hello-out'; printf 'hello-err' >&2\n");
+        let records = dir.join("script-runs.json");
+        let roots = vec![dir.clone()];
+        let table = Arc::new(ScriptProcessTable::new());
+        let meta = meta_with(ScriptInterpreter::Bash, vec![]);
+        let run_id = start_run(
+            &table,
+            &meta,
+            &script,
+            &HashMap::new(),
+            &roots,
+            &dir,
+            None,
+            Some(records.clone()),
+        )
+        .expect("启动成功");
+        let snap = wait_terminal(&table, &run_id, 3000);
+        assert_eq!(snap.status, RunStatus::Succeeded);
+        assert!(snap.output_tail.contains("hello-out"));
+        assert!(snap.output_tail.contains("hello-err"));
+        let loaded = load_run_records(&records);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].run_id, run_id);
+        assert!(loaded[0].output_tail.contains("hello-out"));
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1081,12 +1463,16 @@ mod script_runner_tests {
                 finished_at: if finished { Some(Utc::now()) } else { None },
                 exit_code: None,
                 error: None,
+                output_tail: String::new(),
+                truncated: false,
+                output_seq: 0,
             }));
             RunEntry {
                 script_id: "s".to_string(),
                 pgid: None,
                 cancel: Arc::new(AtomicBool::new(false)),
                 state,
+                output: Arc::new(Mutex::new(OutputRing::default())),
             }
         };
 
@@ -1123,8 +1509,17 @@ mod script_runner_tests {
         let meta = meta_with(ScriptInterpreter::Bash, vec![]);
 
         let started = Instant::now();
-        let run_id =
-            start_run(&table, &meta, &script, &HashMap::new(), &roots, &dir).expect("启动成功");
+        let run_id = start_run(
+            &table,
+            &meta,
+            &script,
+            &HashMap::new(),
+            &roots,
+            &dir,
+            None,
+            None,
+        )
+        .expect("启动成功");
         let snap = wait_terminal(&table, &run_id, 30_000);
 
         assert_eq!(

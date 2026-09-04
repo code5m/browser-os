@@ -414,4 +414,29 @@ export interface RunSnapshot {
   finished_at: string | null;
   exit_code: number | null;
   error: string | null;
+  output_tail: string;
+  truncated: boolean;
+  output_seq: number;
+}
+
+export interface ScriptRunRecord {
+  run_id: string;
+  script_id: string;
+  status: RunStatus;
+  started_at: string;
+  finished_at: string;
+  exit_code: number | null;
+  error: string | null;
+  output_tail: string;
+  truncated: boolean;
+}
+
+export interface ScriptOutputEvent {
+  run_id: string;
+  chunk: string;
+  seq: number;
+}
+
+export interface ScriptFinishedEvent {
+  snapshot: RunSnapshot;
 }

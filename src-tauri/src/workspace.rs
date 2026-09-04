@@ -192,6 +192,11 @@ pub fn scripts_file(app: &AppHandle) -> PathBuf {
     data_dir(app).join("scripts.json")
 }
 
+/// 脚本运行历史文件（M2-4.d）：只存已截断尾存，不存完整输出。
+pub fn script_runs_file(app: &AppHandle) -> PathBuf {
+    data_dir(app).join("script-runs.json")
+}
+
 /// 元数据落盘（原子写：tmp + rename）
 pub fn save_scripts_at(path: &Path, list: &[ScriptMeta]) -> Result<(), String> {
     let content =

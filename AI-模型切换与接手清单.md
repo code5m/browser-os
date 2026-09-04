@@ -1,10 +1,10 @@
 # AI 模型切换与接手清单
-> 本版变更：**M2-4.c 执行命令与校验接入已实现（`AI:DEEP / R:xhigh`，Codex 接手收口），NEXT=`M2-4.d`**。基于 M2-4.b 已落地的 `script_runner` 内核，新增三条命令 `run_script` / `cancel_script` / `script_status`：全部过 `check_invocation_source`，`id/run_id` 形态校验，`run_script` 读取已启用 `ScriptMeta` 并复用 `validate_meta` + `start_run` 内部 fail-closed 参数校验，返回内存 `RunSnapshot`（结构性不含 stdout/stderr/body/headers/token）；审计只记 id/run_id/status/param_count，不记参数值、脚本正文、路径正文或凭据。命令已进 `invoke_handler` 与 `default-commands.toml` ACL；前端 `types.ts`/`bridge.ts` 增加 `RunStatus`、`RunSnapshot` 与三条封装。`scripts/check-script-exec-policy.py` 从 b 卡 11 默认码扩为 b+c 16 默认码，d 卡 4 码保持 pending；同步修正 `check-script-domain-policy.py`，避免 M2-4 合法运行表/命令层误触发 M2-3 历史边界。验证：`cargo test` 194/194 PASS；`cargo build --release --locked` 0 error、2 warning 仍为既有 `grid_process.rs` 死代码；`npm run build` 0 error；两套 script policy 自检/正式均 PASS；M2-4 pending 4 码按预期仍 pending。运行时 IPC/GUI 未实测，如实挂账。
+> 本版变更：**M2-4.d 输出背压、事件流、运行记录落盘与退出收口已实现（`AI:DEEP / R:high`，Codex gpt-5.5），NEXT=`M2-4.e`**。`script_runner` 将 stdout/stderr drain 升级为有界 reader：内存环形 4 MiB/5000 行、单片事件 8 KiB、落盘尾存 256 KiB、历史记录 200 条；`RunSnapshot` 增加 `output_tail`/`truncated`/`output_seq`，新增 `ScriptRunRecord`、`script-output`、`script-finished`，supervisor 终态落盘前等待 reader 结束，避免输出尾存竞态。`run_script` 接入 `AppHandle` 与 `script-runs.json`；ShutdownCoordinator 注册 `kill-running-scripts`；前端类型同步。`check-script-exec-policy.py` d 卡 4 码转入默认门禁且 pending 清零；`check-script-domain-policy.py` 仅排除合法 `script_runs_file` 函数，避免误报。验证：`cargo test` 198/198 PASS；`cargo build --release --locked` 0 error、2 warning 仍为既有 `grid_process.rs` 死代码；`npm run build` 0 error；两套 script policy 自检/正式均 PASS；运行时事件 GUI 目视验收未完成，如实挂账。
 
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
-> 文档版本：V4.7。
-> 更新时间：2026-09-03 16:45 CST。
-> 当前状态：`CODEX_READY`（M2-4.c 执行命令与校验接入已完成，NEXT=`M2-4.d`）。
+> 文档版本：V4.8。
+> 更新时间：2026-09-04 20:07 CST。
+> 当前状态：`CODEX_READY`（M2-4.d 输出背压、事件流、运行记录落盘与退出收口已完成，NEXT=`M2-4.e`）。
 > 当前分支：`feature-M0-baseline`。
 > 当前执行器：Codex gpt-5.5 high；机械文档审计与独立脚本任务已委派 `gpt-5.6-luna / low`，最终裁决仍由主任务负责。
 > 冲突裁决：WBS/验收以 `详细设计与实施计划.md` 为准，指标语义以冻结契约为准，本文只维护跨模型执行指针和交接证据。
@@ -15,20 +15,20 @@
 
 | 项目 | 当前值 |
 |------|--------|
-| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`、`M0-5 = PASS`、`M0-6 = PASS`、`M0-7.a/b/c = PASS`；M0 总体验收 `OWNER_APPROVED`；`M1-0 = PASS`、`M1-1 = PASS`、`M1-2 = PASS`、`M1-2-fix1 = PASS`、`M1-3 = PASS`（执行器：CodeBuddy 会话，非登记的 Codex）、`M1-4 = PASS`、`M1-5 = PASS`、`M1-6 = PASS`（a/b/c/d 全绿，整体裁定 PASS）、`M1-7 = PASS`（Git UI；GUI 目视验收挂账）、`M1-8 = PASS`（请求拦截与瀑布；运行时端到端联调挂账）、`M1-9 = PASS`（会话持久化与关闭协议；运行时端到端联调挂账）、**`M1-ACCEPT = PASS（PASS_WITH_DEBT）`，M1 里程碑收口完成**、`M2-1 = PASS`（图片领域与持久化；运行时端到端联调挂账）、**`M2-2 = PASS_WITH_DEBT`（图片预览 UI 整体裁定 PASS：a 冻结 + b 实现，D10/D11 挂账；裁定者 Kimi K3 独立于实现者腾讯 Hy4）**、**`M2-3 = PASS_WITH_DEBT`（脚本领域与持久化整体裁定 PASS，D12/D13 挂账；**同模型裁定**，裁定者与实现者均为 Kimi K3，独立性如实标注）**、`M2-4.a = PASS（执行安全契约冻结，七组分歧逐组裁定，纯文档；NEXT=M2-4.b）` |
+| 已完成 WBS | `M0-0`（6 项 UNSTABLE 已裁决）、`M0-1 = PASS`、`M0-2 = PASS`、`M0-3 = PASS`、`M0-4 = PASS`、`M0-5 = PASS`、`M0-6 = PASS`、`M0-7.a/b/c = PASS`；M0 总体验收 `OWNER_APPROVED`；`M1-0 = PASS`、`M1-1 = PASS`、`M1-2 = PASS`、`M1-2-fix1 = PASS`、`M1-3 = PASS`（执行器：CodeBuddy 会话，非登记的 Codex）、`M1-4 = PASS`、`M1-5 = PASS`、`M1-6 = PASS`（a/b/c/d 全绿，整体裁定 PASS）、`M1-7 = PASS`（Git UI；GUI 目视验收挂账）、`M1-8 = PASS`（请求拦截与瀑布；运行时端到端联调挂账）、`M1-9 = PASS`（会话持久化与关闭协议；运行时端到端联调挂账）、**`M1-ACCEPT = PASS（PASS_WITH_DEBT）`，M1 里程碑收口完成**、`M2-1 = PASS`（图片领域与持久化；运行时端到端联调挂账）、**`M2-2 = PASS_WITH_DEBT`（图片预览 UI 整体裁定 PASS：a 冻结 + b 实现，D10/D11 挂账；裁定者 Kimi K3 独立于实现者腾讯 Hy4）**、**`M2-3 = PASS_WITH_DEBT`（脚本领域与持久化整体裁定 PASS，D12/D13 挂账；**同模型裁定**，裁定者与实现者均为 Kimi K3，独立性如实标注）**、`M2-4.a/b/c/d = PASS_WITH_DEBT`（执行通道已具备安全执行、命令接入、输出背压、事件流、尾存落盘与退出收口；GUI 事件联调挂账） |
 | 已拒证据 | `ac0ecac` 三批候选：场景错误 + aggregate `UNSTABLE`，结论 `REJECTED`，不得复用 |
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | M0-6.c 的登录态证据来自本地 AI mock 持久 cookie，不代表第三方真实账号人工验收；**M1-3/M1-7 GUI 目视验收与 M1-5/M1-6/M1-7/M1-8/M1-9/M2-1 运行时端到端联调全部挂账**（D1~D9 汇总见 `logs/checkpoints/M1-ACCEPT-20260903-0843.md` §7，M2-1 挂账见 `logs/checkpoints/M2-1-20260903-0927.md` §6，均未伪造 GUI/E2E 证据）；M1-ACCEPT 的会话 id 校验加固项**已在 M2-1 修复**（`check_id` 接入 session_get/delete/export/restore）；残留 NON-BLOCKER：flush 双路径理论重复存档窗口、M1-7 未勾选=全量提交误点风险 |
-| 下一检查点 | **`M2-4.d = NEXT`**（输出背压、事件流、运行记录落盘与退出收口）。前置：`M2-4.b` 进程组与生命周期内核已提交，`M2-4.c` 三命令接入已提交并通过 pre-merge；d 卡不得重做命令/ACL，只替换 drain sink 为环形缓冲 + 事件流，并接入 `kill-running-scripts` shutdown 任务。 |
-| 下一任务路由 | **M2-4.d：`AI:DEEP / R:xhigh`**。M2-4.a/b/c 已完成；d 卡负责输出背压、`script-output`/`script-finished` 事件、`script-runs.json` 尾存落盘与退出收口。e 卡仍为可选移除 `shell:allow-spawn`。 |
+| 下一检查点 | **`M2-4.e = NEXT`**（可选移除 `shell:allow-spawn`）。前置：`M2-4.a/b/c/d` 已完成；e 卡只处理 shell 插件开放权限与相关依赖/门禁哈希，不得重做脚本执行内核。 |
+| 下一任务路由 | **M2-4.e：`AI:DEEP / R:high`**。先确认 `shell:allow-spawn` 仍为零调用点，再裁决是否移除 capability / npm 依赖 / 门禁基线。 |
 | 自动执行范围 | M0 已结束；M1 起必须先展开检查点，再逐点验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；进入 M1/M2/M3 后仍不得跨检查点合并 |
 | 禁止启动 | M4~M5；M1~M3 可评估启动但不得未展开检查点就写功能代码 |
 | 最近实现提交 | `feat(M2-2.b): add image gallery lightbox preview UI`（画廊/灯箱/缩放：`workspace_images_dir` 命令 + `imagePreview.ts` 纯逻辑层 + `useImagePreviewStore` + `shared/ImageGallery.vue`/`shared/ImageLightbox.vue` + 两挂点 + 两项新门禁；前一个是 `00948f8 docs(M2-2.a)`） |
 | 最近门禁提交 | `73e9dfb fix(M0-1.c): validate versioned evidence safely` |
 | 最近裁决提交 | `b9077d9 docs(M0-0.c): retain rejected formal baseline evidence` |
-| 最新状态证据 | `logs/checkpoints/M2-4.c-20260904-1317.md`（M2-4.c 实现收口，NEXT=M2-4.d）；`5903c46 feat(M2-4.c): wire script execution commands`；`bd9f41b feat(M2-4.b): process group kernel with verdict §3.1 A + §3.2 B`；`logs/checkpoints/M2-4.b-20260904-0000.md`；`logs/checkpoints/M2-4.b-VERDICT-20260904-0705.md`；`logs/checkpoints/M2-4.a-20260903-2233.md`；`logs/checkpoints/M2-4-20260903-1659.md`。 |
+| 最新状态证据 | `logs/checkpoints/M2-4.d-20260904-2007.md`（M2-4.d 实现收口，NEXT=M2-4.e）；`logs/checkpoints/M2-4.c-20260904-1317.md`（M2-4.c 实现收口，NEXT=M2-4.d）；`4d0ac59 feat(M2-4.c): wire script execution commands`；`bd9f41b feat(M2-4.b): process group kernel with verdict §3.1 A + §3.2 B`；`logs/checkpoints/M2-4.b-20260904-0000.md`；`logs/checkpoints/M2-4.b-VERDICT-20260904-0705.md`；`logs/checkpoints/M2-4.a-20260903-2233.md`；`logs/checkpoints/M2-4-20260903-1659.md`。 |
 | 交接基线提交 | `504fcd7 docs(handoff): prepare Trae quota-window transfer` |
 | 工作树要求 | 执行器开工前、每个提交后和交付时都必须干净 |
 

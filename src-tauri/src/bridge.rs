@@ -875,6 +875,16 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
         })?;
     }
 
+    {
+        let app = app.clone();
+        coordinator.register("kill-running-scripts", move || {
+            let killed =
+                crate::script_runner::kill_all_running(&app.state::<AppState>().script_runs);
+            eprintln!("[shutdown] kill-running-scripts killed={killed}");
+            Ok(())
+        })?;
+    }
+
     Ok(())
 }
 
@@ -2800,9 +2810,17 @@ pub fn run_script(
     let roots = allowed_roots(&app);
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     let table = Arc::clone(&app.state::<AppState>().script_runs);
-    let run_id =
-        crate::script_runner::start_run(&table, &script, &script_path, &values, &roots, &home)
-            .map_err(map_run_error)?;
+    let run_id = crate::script_runner::start_run(
+        &table,
+        &script,
+        &script_path,
+        &values,
+        &roots,
+        &home,
+        Some(app.clone()),
+        Some(workspace::script_runs_file(&app)),
+    )
+    .map_err(map_run_error)?;
     let snapshot = table
         .snapshot(&run_id)
         .ok_or_else(|| "UNKNOWN_RUN".to_string())?;
@@ -5239,8 +5257,6 @@ mod image_gate_tests {
 
 #[cfg(test)]
 mod image_preview_gate_tests {
-    use super::*;
-
     // T-ip-1（M2-2.b）：预览通道命令同样过来源校验——远程页面不得探测本机图片目录。
     // 该命令虽是只读，但返回值是真实文件系统路径，属环境信息，不对远程页面开放。
     #[test]
@@ -5295,7 +5311,7 @@ mod image_preview_gate_tests {
 
 #[cfg(test)]
 mod script_execution_gate_tests {
-    use super::*;
+    use crate::domain::RunStatus;
 
     #[test]
     fn run_snapshot_serializes_without_output_or_body() {
@@ -5307,6 +5323,9 @@ mod script_execution_gate_tests {
             finished_at: None,
             exit_code: None,
             error: None,
+            output_tail: String::new(),
+            truncated: false,
+            output_seq: 0,
         };
         let json = serde_json::to_string(&snap).expect("snapshot serializes");
         let lower = json.to_ascii_lowercase();
@@ -5336,8 +5355,7 @@ mod script_execution_gate_tests {
             .find("script.run.status")
             .expect("status audit exists");
         for window_start in [start, cancel, status] {
-            let end = (window_start + 260).min(source.len());
-            let window = &source[window_start..end];
+            let window: String = source[window_start..].chars().take(260).collect();
             assert!(
                 !window.contains("values"),
                 "script run audit must not log argument values"

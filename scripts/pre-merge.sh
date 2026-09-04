@@ -24,7 +24,8 @@
 #  16. M2-1 图片领域与持久化不变量夹具 + 前端展示逻辑层测试
 #  17. M2-2.b 图片预览不变量夹具 + 预览逻辑层测试
 #  18. M2-3.b 脚本领域与持久化不变量夹具（前端逻辑测试随 M2-5 UI 落地）
-#  19. 工作树、暂存区、当前分支相对基线的 git diff --check
+#  19. M2-4.d 脚本执行通道不变量夹具（进程组/输出上限/尾存/退出收口）
+#  20. 工作树、暂存区、当前分支相对基线的 git diff --check
 #
 # 用法:
 #   scripts/pre-merge.sh            正式门禁（所有检查必须通过）
@@ -282,7 +283,7 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/check-script-domain-policy.py" >/dev/null 2>&1 \
     || pm_fail "check-script-domain-policy.py（脚本领域安全边界被破坏）"
 
-  pm_log "M2-4.b 脚本执行通道不变量夹具（进程组/超时分层/回收/引号/平台桩）…"
+  pm_log "M2-4.d 脚本执行通道不变量夹具（进程组/输出上限/尾存/退出收口）…"
   python3 "$SCRIPT_DIR/check-script-exec-policy.py" --self-test >/dev/null 2>&1 \
     || pm_fail "check-script-exec-policy.py --self-test"
   python3 "$SCRIPT_DIR/check-script-exec-policy.py" >/dev/null 2>&1 \

@@ -168,7 +168,10 @@ def detect_violations(files: dict) -> list[str]:
     # 「定义」；strip 注释后只保留真实代码，坏样本自检（注入真实
     # `pub struct ScriptRunRecord`）仍命中，好样本（仅注释提及）放行。
     crud_bodies = "\n".join(rust_fn_body(bridge, cmd) for cmd in SCRIPT_COMMANDS)
-    haystack = f"{strip_comments(domain)}\n{strip_comments(scripts)}\n{strip_comments(workspace)}\n{strip_comments(crud_bodies)}"
+    # M2-4.d 合法新增 `workspace::script_runs_file`（运行历史路径）；M2-3 夹具仍扫描
+    # workspace 的其他内容，避免放松正文路径/原子写等持久化门禁。
+    workspace_without_m2_4_runs = workspace.replace(rust_fn_body(workspace, "script_runs_file"), "")
+    haystack = f"{strip_comments(domain)}\n{strip_comments(scripts)}\n{strip_comments(workspace_without_m2_4_runs)}\n{strip_comments(crud_bodies)}"
     for bad in RUN_RECORD_FORBIDDEN:
         if re.search(rf"\b{re.escape(bad)}\b", haystack):
             v.append(f"SCR_RUN_RECORD_PRESENT:{bad}")
