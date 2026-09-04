@@ -7,6 +7,7 @@ mod grid_ipc;
 mod grid_process;
 mod images;
 mod keyring_store;
+mod script_runner;
 mod scripts;
 mod security_policy;
 mod session;

@@ -573,6 +573,25 @@ impl ScriptInterpreter {
             ScriptInterpreter::Shebang => "sh",
         }
     }
+
+    /// 解释器可执行程序名（交给 `Command::new`，**永不来自用户输入**）。
+    ///
+    /// 与 `ext()` 用途不同：`ext()` 决定正文文件扩展名，`binary()` 决定 exec 哪个程序。
+    /// 例如 `Bash` 的正文扩展名沿用 M2-3 定义为 `sh`，但执行程序是 `bash`。
+    /// `Shebang` 返回 `None`——不指定解释器，直接 exec 脚本文件本身
+    /// （依赖可执行位与 shebang 行）。
+    ///
+    /// 落位说明（`M2-4.b-VERDICT §3.4` 裁定）：与 `ext()` 同处 `impl ScriptInterpreter`，
+    /// 保持解释器白名单**单一来源**，避免映射表散落到调用方。
+    pub fn binary(&self) -> Option<&'static str> {
+        match self {
+            ScriptInterpreter::Bash => Some("bash"),
+            ScriptInterpreter::Sh => Some("sh"),
+            ScriptInterpreter::Python3 => Some("python3"),
+            ScriptInterpreter::Node => Some("node"),
+            ScriptInterpreter::Shebang => None,
+        }
+    }
 }
 
 /// 脚本参数定义。占位符名对应脚本正文里的 `${name}`。
@@ -588,8 +607,15 @@ pub struct ScriptParam {
     /// 仅 `Enum` 使用；`Enum` 时必须非空
     #[serde(default)]
     pub options: Vec<String>,
-    /// 是否允许不加单引号包裹直接入命令行。**仅 `Path` / `Enum` 允许 true**，
-    /// 定义期即校验（见 `scripts::validate_meta`）。
+    /// **argv 模式下无效果**（`M2-4.b-VERDICT §3.1` 裁定）。
+    ///
+    /// 原始语义是「跳过单引号包裹」，但**单引号是 shell 语法**：M2-4 走
+    /// `Command::arg()` 的 argv 数组（经 `execve`，shell 不参与解析），
+    /// 给值加 `'...'` 会把单引号作为**字面量**传进脚本（实测 `printf` 收到 `'/tmp/x'`），
+    /// 从「防护」变成「功能 bug」。故本字段在 argv 模式下无语义，仅为未来若引入
+    /// 受控 shell 拼接模式时预留；「评估废弃本字段」已登记为后续检查点。
+    ///
+    /// 定义期仍校验「仅 `Path` / `Enum` 可为 true」（见 `scripts::validate_meta`）。
     #[serde(default)]
     pub raw: bool,
     /// 敏感参数：前端用密码框，审计值一律 `***`
@@ -619,11 +645,38 @@ pub struct ScriptMeta {
     pub builtin: bool,
     #[serde(default = "default_script_enabled")]
     pub enabled: bool,
-    /// 超时秒数；0 = 使用全局默认（300）。**字段本卡落，语义由 M2-4 实现**
+    /// 超时秒数；0 = 使用全局默认（**60**）。脚本级上限 600。
+    ///
+    /// 语义由 M2-4 实现。**注释更正（M2-4.b）**：M2-3 初版注释误写「默认 300」，
+    /// 与 `M2-4.a §2` 裁定的全局默认 60s 冲突，已按 a 卡裁定更正为 60（仅注释，不改语义）。
     #[serde(default)]
     pub timeout_secs: u32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// 脚本运行状态（`M2-4.a §7` 冻结命名：用 `Succeeded` 而非 `Success`）。
+///
+/// **终态不可互转**（`M2-4.a §2`）：`Succeeded`/`Failed`/`Cancelled`/`Timeout` 一旦落定，
+/// 后续到达的取消请求或超时信号都不得改写状态。
+///
+/// 落盘形态（`script-runs.json` 的 `ScriptRunRecord`）与输出尾存归 **M2-4.d**，
+/// 本卡只定义状态枚举本身（`M2-4.a §9` 边界）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RunStatus {
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled,
+    Timeout,
+}
+
+impl RunStatus {
+    /// 是否已进入终态（终态不再接受取消/超时改写，见 `M2-4.a §2`）。
+    pub fn is_terminal(&self) -> bool {
+        !matches!(self, RunStatus::Running)
+    }
 }
 
 fn default_script_enabled() -> bool {

@@ -70,7 +70,14 @@ RUN_FORBIDDEN = (
 
 SHELL_FORBIDDEN = ('sh -c', 'bash -c', "sh\", \"-c", "bash\", \"-c", "spawn(")
 
-RUN_RECORD_FORBIDDEN = ("ScriptRunRecord", "RunStatus", "script-runs", "script_runs")
+# 「运行记录落盘」的越界关键词。
+#
+# **配套修订（M2-4.b，2026-09-04）**：原列表含 `RunStatus`，但 `M2-4.b-VERDICT §3.5`
+# 裁定 `RunStatus` 只是**状态枚举**（非落盘形态），归属 b 卡、合法落 `domain.rs`；
+# 真正的落盘形态是 `ScriptRunRecord`（落盘记录结构）与 `script-runs[.json]`
+# （落盘文件），归 **M2-4.d**。故从本列表移除 `RunStatus`，保留真正的落盘关键词，
+# 以放行 b 卡的合法状态枚举、同时保持对 d 卡落盘的监管。
+RUN_RECORD_FORBIDDEN = ("ScriptRunRecord", "script-runs", "script_runs")
 
 
 def sha256_text(text: str) -> str:
@@ -155,7 +162,17 @@ def detect_violations(files: dict) -> list[str]:
         v.append("SCR_INTERPRETER_NOT_WHITELISTED:interpreter 退化为 String")
 
     # ---- 3) 不得越界定义运行记录（M2-4 专属） ----
-    haystack = f"{domain}\n{scripts}\n{workspace}\n{bridge}"
+    # 配套修订（M2-4.b，2026-09-04）：haystack 改为 strip_comments 后文本。
+    # 理由：本检测判定「是否**定义**运行记录」，但 `domain.rs` 的 `RunStatus` 注释
+    # 会**提及** d 卡的落盘形态名（`ScriptRunRecord`/`script-runs`），属「提及」而非
+    # 「定义」；strip 注释后只保留真实代码，坏样本自检（注入真实
+    # `pub struct ScriptRunRecord`）仍命中，好样本（仅注释提及）放行。
+    haystack = (
+        f"{strip_comments(domain)}\n"
+        f"{strip_comments(scripts)}\n"
+        f"{strip_comments(workspace)}\n"
+        f"{strip_comments(bridge)}"
+    )
     for bad in RUN_RECORD_FORBIDDEN:
         if re.search(rf"\b{re.escape(bad)}\b", haystack):
             v.append(f"SCR_RUN_RECORD_PRESENT:{bad}")

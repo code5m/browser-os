@@ -1,0 +1,347 @@
+#!/usr/bin/env python3
+"""Expose the M2-4 script execution invariants as a reproducible fixture.
+
+契约来源：
+- `logs/checkpoints/M2-4.a-20260903-2233.md`（执行安全契约冻结裁定书）
+- `logs/checkpoints/M2-4.b-20260904-0000.md` §5/§6（B1~B14 测试矩阵与违规码）
+- `logs/checkpoints/M2-4.b-VERDICT-20260904-0705.md`（独立裁定书）
+
+本夹具守住「进程组与生命周期内核」的三条红线：
+
+  1. 命令构造（P0）：禁 `sh -c` / `bash -c` / 字符串拼接，必须 argv 数组。
+  2. 进程回收：必须 `setsid` + `killpg` 杀**进程组**；
+     禁止沿用 `grid_process.rs` 的 `child.kill()`（只杀直接子进程，留孤儿）。
+  3. 不加引号（裁定书 §3.1）：argv 模式下给值加 `'...'` 会把单引号作字面量传进脚本。
+
+模式：
+  默认            判定 ACTIVE 码（b 卡职责内 + P0 红线）；零命中 → EXIT 0
+  --expect-pending 验证 PENDING 码（c/d 卡职责）确实仍处于未实现状态；
+                   若有 pending 码已实现，提示应转入默认判定 → EXIT 1
+  --self-test     好坏样本双向自检（含**变异防呆**：坏样本必须真的改动内容）
+
+关于「一次性定义码位」：沿用 M0-3.a 模式，18 个码位一次定义，
+默认门禁只判本卡职责内的 11 个，避免 c/d 未实现的码把 pre-merge 染红。
+实现期**重新分类**：`EXEC_ENV_NOT_CLEARED` / `EXEC_CWD_NOT_LOCKED` /
+`EXEC_INTERPRETER_NOT_WHITELISTED` 三项 b 卡已落地，故从 pending 转入默认判定
+（相对展开卡 §6 的「6 默认 + 12 pending」为加强，非削弱）。
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+RUNNER = ROOT / "src-tauri" / "src" / "script_runner.rs"
+MAIN_RS = ROOT / "src-tauri" / "src" / "main.rs"
+BRIDGE_RS = ROOT / "src-tauri" / "src" / "bridge.rs"
+ACL_TOML = ROOT / "src-tauri" / "permissions" / "default-commands.toml"
+
+# ----------------------------- 码位定义 -----------------------------
+
+# P0：贯穿 M2-4 全部子卡的命令注入红线
+P0_CODES = ("EXEC_SH_C_PRESENT", "EXEC_STRING_INTERPOLATION")
+
+# b 卡职责内（进程组与生命周期内核）
+B_CARD_CODES = (
+    "EXEC_NO_SETSID",
+    "EXEC_NO_KILLPG",
+    "EXEC_TIMEOUT_NOT_LAYERED",
+    "EXEC_NO_WAIT_REAP",
+    "EXEC_ARG_QUOTED",
+    "EXEC_PLATFORM_STUB_MISSING",
+    "EXEC_ENV_NOT_CLEARED",
+    "EXEC_CWD_NOT_LOCKED",
+    "EXEC_INTERPRETER_NOT_WHITELISTED",
+)
+
+ACTIVE_CODES = P0_CODES + B_CARD_CODES
+
+# c/d 卡职责：默认模式不判定，用 --expect-pending 验证「仍未实现」
+PENDING_CODES = (
+    "EXEC_ACL_MISSING",
+    "EXEC_HANDLER_NOT_REGISTERED",
+    "EXEC_NO_SOURCE_CHECK",
+    "EXEC_SHUTDOWN_NOT_REGISTERED",
+    "EXEC_RUN_RECORD_MISSING",
+    "EXEC_NO_RING_CAP",
+    "EXEC_NO_OUTPUT_CAP",
+    "EXEC_VALIDATION_BYPASSED",
+    "EXEC_AUDIT_LEAKS_VALUE",
+)
+
+# ----------------------------- 检测规则 -----------------------------
+
+# `sh -c` / `bash -c` 形态（含 argv 数组写法 `"sh", "-c"`）
+SH_C_PATTERN = re.compile(
+    r"""(?:"(?:sh|bash|zsh|fish)"\s*,\s*"-c")"""
+    r"""|(?:'(?:sh|bash|zsh|fish)'\s*,\s*'-c')"""
+    r"""|(?:\b(?:sh|bash|zsh|fish)\s+-c\b)"""
+)
+
+# argv 元素被单引号包裹：`format!("'{}'"...)` 或 `' + x + '`
+ARG_QUOTED_PATTERN = re.compile(
+    r"""(?:format!\(\s*"')"""
+    r"""|(?:format!\(\s*r#\s*"')"""
+    r"""|(?:'\s*\+\s*&?\w+\s*\+\s*')"""
+)
+
+# 只杀直接子进程（留孤儿的范式，来自 grid_process.rs:677/743）
+DIRECT_CHILD_KILL_PATTERN = re.compile(r"\bchild\.kill\s*\(\s*\)")
+
+
+def strip_comments(source: str) -> str:
+    """去掉 Rust 注释，避免注释里提到的反例被误判为真实代码。"""
+    without_blocks = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    return "\n".join(line.split("//", 1)[0] for line in without_blocks.splitlines())
+
+
+def rust_fn_body(source: str, name: str) -> str:
+    """提取同名函数的**第一个**实现体（用于区分 `#[cfg(unix)]` / `#[cfg(not(unix))]` 两版）。
+
+    只做花括号配平，不解析 Rust 语法；字符串里的花括号可能导致截断，
+    但本夹具关注的函数体（spawn/kill）不含字符串花括号。
+    """
+    match = re.search(rf"\bfn\s+{re.escape(name)}\s*\(", source)
+    if not match:
+        return ""
+    paren = source.find("(", match.end() - 1)
+    depth = 0
+    index = paren
+    while index < len(source):
+        if source[index] == "(":
+            depth += 1
+        elif source[index] == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        index += 1
+    body_start = source.find("{", index)
+    if body_start < 0:
+        return ""
+    depth = 0
+    i = body_start
+    while i < len(source):
+        if source[i] == "{":
+            depth += 1
+        elif source[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[body_start : i + 1]
+        i += 1
+    return source[body_start:]
+
+
+def detect(ctx: dict[str, str]) -> set[str]:
+    """返回命中的违规码集合（ACTIVE 与 PENDING 一并检测，由调用方按模式过滤）。"""
+    hits: set[str] = set()
+    runner = ctx["runner"]
+    main = ctx["main"]
+    bridge = ctx["bridge"]
+    acl = ctx["acl"]
+
+    # --- P0：命令注入红线 ---
+    if SH_C_PATTERN.search(runner):
+        hits.add("EXEC_SH_C_PRESENT")
+
+    # Command 构造窗口内出现 format! → 字符串拼接命令行
+    for match in re.finditer(r"Command::new\(", runner):
+        window = runner[match.end() : match.end() + 600]
+        if "format!(" in window:
+            hits.add("EXEC_STRING_INTERPOLATION")
+            break
+
+    # --- 进程组与回收（取 cfg(unix) 版函数体，避免被 non-unix 桩误导） ---
+    spawn_body = rust_fn_body(runner, "spawn_in_new_group")
+    if not ("pre_exec" in spawn_body and "setsid" in spawn_body):
+        hits.add("EXEC_NO_SETSID")
+
+    kill_body = rust_fn_body(runner, "kill_group")
+    if "killpg" not in kill_body or DIRECT_CHILD_KILL_PATTERN.search(runner):
+        hits.add("EXEC_NO_KILLPG")
+
+    # 必须存在 soft/hard 分层的**常量定义**：只查定义不查使用处，
+    # 否则把常量改名后，使用处残留的字符串会让检测蒙混过关。
+    if not (
+        re.search(r"pub const HARD_GRACE_SECS\s*:", runner)
+        and re.search(r"pub const CANCEL_GRACE_SECS\s*:", runner)
+    ):
+        hits.add("EXEC_TIMEOUT_NOT_LAYERED")
+
+    # 回收必须发生在 supervisor 内，且必须是**非阻塞轮询** `try_wait`
+    # （`child.wait()` 只是 cancel/timeout 分支的收尾，只查它会蒙混过关）。
+    if "try_wait" not in rust_fn_body(runner, "supervise"):
+        hits.add("EXEC_NO_WAIT_REAP")
+
+    if ARG_QUOTED_PATTERN.search(runner):
+        hits.add("EXEC_ARG_QUOTED")
+
+    if "#[cfg(not(unix))]" not in runner:
+        hits.add("EXEC_PLATFORM_STUB_MISSING")
+
+    # --- env / cwd / 解释器白名单 ---
+    if "env_clear()" not in runner:
+        hits.add("EXEC_ENV_NOT_CLEARED")
+    if "current_dir(" not in runner:
+        hits.add("EXEC_CWD_NOT_LOCKED")
+    if ".binary()" not in runner:
+        hits.add("EXEC_INTERPRETER_NOT_WHITELISTED")
+
+    # --- PENDING：c / d 卡职责 ---
+    exec_commands = ("run_script", "cancel_script", "script_status")
+    if not any(cmd in acl for cmd in exec_commands):
+        hits.add("EXEC_ACL_MISSING")
+    if not any(cmd in main for cmd in exec_commands):
+        hits.add("EXEC_HANDLER_NOT_REGISTERED")
+    # 只看 script_runner：bridge 早有 check_invocation_source（M0-3 引入），
+    # 查它会永远不命中，掩盖「c 卡命令层尚未接入来源校验」这一事实。
+    if "check_invocation_source" not in runner:
+        hits.add("EXEC_NO_SOURCE_CHECK")
+    if "kill-running-scripts" not in bridge:
+        hits.add("EXEC_SHUTDOWN_NOT_REGISTERED")
+    if "ScriptRunRecord" not in (runner + main + bridge):
+        hits.add("EXEC_RUN_RECORD_MISSING")
+    if not any(k in runner for k in ("RING_MAX_BYTES", "RING_MAX_LINES")):
+        hits.add("EXEC_NO_RING_CAP")
+    if "SCRIPT_RUN_TAIL_BYTES" not in runner:
+        hits.add("EXEC_NO_OUTPUT_CAP")
+    if "validate_param_value" not in bridge:
+        hits.add("EXEC_VALIDATION_BYPASSED")
+    if "script.run.start" not in bridge:
+        hits.add("EXEC_AUDIT_LEAKS_VALUE")
+
+    return hits
+
+
+def strip_tests(source: str) -> str:
+    """切掉 `#[cfg(test)]` 之后的内容：策略夹具只检测生产代码。
+
+    必须这么做：测试里的**断言消息字符串**会提到反例
+    （如 B9 的「child.kill() 做不到这点」），不切掉会被误判为真实代码。
+    """
+    # 只匹配「测试模块」`#[cfg(test)] mod ...`：**不能**用 `find("#[cfg(test)]")`，
+    # 因为单个函数也可能带该属性（如本文件的 `process_group_id_of`），
+    # 那样会把其后的生产代码一并切掉。
+    match = re.search(r"#\[cfg\(test\)\]\s*\n\s*mod\s", source)
+    index = match.start() if match else -1
+    return source if index < 0 else source[:index]
+
+
+def read_ctx() -> dict[str, str]:
+    def read(path: Path) -> str:
+        return path.read_text(encoding="utf-8") if path.is_file() else ""
+
+    return {
+        "runner": strip_tests(strip_comments(read(RUNNER))),
+        "main": strip_comments(read(MAIN_RS)),
+        "bridge": strip_comments(read(BRIDGE_RS)),
+        "acl": read(ACL_TOML),
+    }
+
+
+# ----------------------------- 自检（含变异防呆） -----------------------------
+
+# (期望命中的码, 原文片段, 替换为, 替换次数)。
+#
+# **两条硬约束**（都是本次实测踩出来的坑）：
+# 1. 原文片段必须存在，否则按**漏检测**计（M2-3.b 教训）。
+# 2. 替换后的文本**不得残留被检测的关键字**——否则变异自废、坏样本永远检不出
+#    （如把 `libc::setsid();` 替换成 `// setsid removed`，"setsid" 仍在，检测照样通过）。
+# 3. count=-1 表示全替换（用于 `#[cfg(not(unix))]` 这类多处出现的锚点）。
+MUTATIONS: tuple[tuple[str, str, str, int], ...] = (
+    ("EXEC_SH_C_PRESENT", "Command::new(program)", 'Command::new(program).args(["sh", "-c"])', 1),
+    ("EXEC_STRING_INTERPOLATION", "Command::new(program)", 'Command::new(format!("{}", program))', 1),
+    ("EXEC_NO_SETSID", "            libc::setsid();", "            // removed", 1),
+    ("EXEC_NO_KILLPG", "        libc::killpg(pgid, sig);", "        let _ = sig;", 1),
+    ("EXEC_TIMEOUT_NOT_LAYERED", "pub const HARD_GRACE_SECS: u32 = 5;", "pub const HARD_GRACE_UNUSED: u32 = 0;", 1),
+    ("EXEC_NO_WAIT_REAP", "        match child.try_wait() {", "        match child.id() {", 1),
+    ("EXEC_ARG_QUOTED", "argv.push(value.to_string());", 'argv.push(format!("\'{}\'", value));', 1),
+    ("EXEC_PLATFORM_STUB_MISSING", "#[cfg(not(unix))]", "#[cfg(unix)]", -1),
+    ("EXEC_ENV_NOT_CLEARED", "        .env_clear()", "        // cleared", 1),
+    ("EXEC_CWD_NOT_LOCKED", "        .current_dir(&cwd)", "        // cwd", 1),
+    ("EXEC_INTERPRETER_NOT_WHITELISTED", "    if let Some(bin) = interpreter.binary() {", '    if let Some(bin) = Some("bash") {', 1),
+)
+
+
+def self_test() -> int:
+    ctx = read_ctx()
+    failures: list[str] = []
+
+    # 1) 好样本：真实源码在默认模式下必须零命中
+    good_hits = {c for c in detect(ctx) if c in ACTIVE_CODES}
+    if good_hits:
+        failures.append(f"好样本本应零命中，实际命中：{sorted(good_hits)}")
+
+    # 2) 坏样本：每个变异必须命中对应码
+    for code, old, new, count in MUTATIONS:
+        # 防呆：变异若未真正改动内容（原文片段不存在），按漏检测计
+        if old not in ctx["runner"]:
+            failures.append(
+                f"[{code}] 变异原文片段不存在，夹具已失效（必须同步更新 MUTATIONS）：{old!r}"
+            )
+            continue
+        mutated = dict(ctx)
+        mutated["runner"] = ctx["runner"].replace(old, new, count)
+        if mutated["runner"] == ctx["runner"]:
+            failures.append(f"[{code}] 变异未改变内容（str.replace 空转），按漏检测计")
+            continue
+        hits = detect(mutated)
+        if code not in hits:
+            failures.append(f"[{code}] 坏样本未被检出（实际命中：{sorted(hits & set(ACTIVE_CODES))}）")
+
+    # 3) pending 码位完整性：默认模式不得误判 pending 为 active
+    overlap = set(ACTIVE_CODES) & set(PENDING_CODES)
+    if overlap:
+        failures.append(f"码位重复定义：{sorted(overlap)}")
+
+    if failures:
+        print("SELF_TEST_RESULT=FAIL")
+        for f in failures:
+            print(f"FAIL: {f}")
+        return 1
+    print(f"SELF_TEST_RESULT=ALL_PASS（{len(MUTATIONS)} 个坏样本 + 1 个好样本 + 码位完整性）")
+    return 0
+
+
+# ----------------------------- 主流程 -----------------------------
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="M2-4 执行通道安全不变量夹具")
+    parser.add_argument("--self-test", action="store_true", help="好坏样本双向自检")
+    parser.add_argument(
+        "--expect-pending",
+        action="store_true",
+        help="验证 pending 码（c/d 卡职责）确实仍未实现",
+    )
+    args = parser.parse_args()
+
+    if args.self_test:
+        return self_test()
+
+    ctx = read_ctx()
+    hits = detect(ctx)
+
+    if args.expect_pending:
+        missing = [c for c in PENDING_CODES if c not in hits]
+        if missing:
+            print("PENDING_RESULT=IMPLEMENTED（以下码位已实现，应转入默认判定）")
+            for code in missing:
+                print(f"  {code}")
+            return 1
+        print(f"PENDING_RESULT=ALL_PENDING（{len(PENDING_CODES)} 个码位均仍未实现，符合预期）")
+        return 0
+
+    active_hits = sorted(c for c in hits if c in ACTIVE_CODES)
+    if active_hits:
+        print("EXEC_POLICY_RESULT=FAIL")
+        for code in active_hits:
+            print(f"  {code}")
+        return 1
+    print(f"EXEC_POLICY_RESULT=PASS（{len(ACTIVE_CODES)} 个默认码位零命中）")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

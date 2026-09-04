@@ -282,6 +282,14 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/check-script-domain-policy.py" >/dev/null 2>&1 \
     || pm_fail "check-script-domain-policy.py（脚本领域安全边界被破坏）"
 
+  pm_log "M2-4.b 脚本执行通道不变量夹具（进程组/超时分层/回收/引号/平台桩）…"
+  python3 "$SCRIPT_DIR/check-script-exec-policy.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-script-exec-policy.py --self-test"
+  python3 "$SCRIPT_DIR/check-script-exec-policy.py" >/dev/null 2>&1 \
+    || pm_fail "check-script-exec-policy.py（执行通道安全边界被破坏）"
+  python3 "$SCRIPT_DIR/check-script-exec-policy.py" --expect-pending >/dev/null 2>&1 \
+    || pm_fail "check-script-exec-policy.py --expect-pending（有 pending 码位已实现，应转入默认判定）"
+
   pm_log "git diff --check（工作树 + 暂存区，机器证据除外）…"
   # Raw evidence is immutable third-party output; SHA256SUMS, not whitespace rewriting, protects it.
   git -C "$ROOT" diff --check -- . ':(exclude)logs/m0-baseline/**' || pm_fail "git diff --check (worktree)"
@@ -343,6 +351,7 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/check-image-preview-policy.py" ] || { echo "FAIL: check-image-preview-policy.py missing"; rc=1; }
   [ -f "$SCRIPT_DIR/check-image-preview-logic.mjs" ] || { echo "FAIL: check-image-preview-logic.mjs missing"; rc=1; }
   [ -f "$SCRIPT_DIR/check-script-domain-policy.py" ] || { echo "FAIL: check-script-domain-policy.py missing"; rc=1; }
+  [ -f "$SCRIPT_DIR/check-script-exec-policy.py" ] || { echo "FAIL: check-script-exec-policy.py missing"; rc=1; }
   if ! python3 "$SCRIPT_DIR/check-image-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-image-policy.py --self-test"; rc=1
   fi
@@ -351,6 +360,9 @@ run_self_test() {
   fi
   if ! python3 "$SCRIPT_DIR/check-script-domain-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-script-domain-policy.py --self-test"; rc=1
+  fi
+  if ! python3 "$SCRIPT_DIR/check-script-exec-policy.py" --self-test >/dev/null 2>&1; then
+    echo "FAIL: check-script-exec-policy.py --self-test"; rc=1
   fi
   if ! python3 "$SCRIPT_DIR/check-session-persistence-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-session-persistence-policy.py --self-test"; rc=1
