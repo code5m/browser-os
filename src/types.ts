@@ -474,3 +474,19 @@ export interface ToolMeta {
   source: ToolSource;
   entry: string;
 }
+
+// ====== M3.a 终端输出契约 ======
+// 与后端 `terminal.rs::TermMessage::to_value` 一一对应：{ id, kind, ... }。
+// - data：PTY 原始输出（直接喂 xterm）
+// - flow：丢弃统计（仅告知，不进终端字节流，避免污染 ANSI 语义）
+// - exit：会话结束（eof 正常 / channel_dead 输出通道不可恢复）
+export type TermExitReason = "eof" | "channel_dead";
+
+export interface TermMessage {
+  id: string;
+  kind: "data" | "flow" | "exit";
+  data?: string;
+  reason?: TermExitReason;
+  dropped_chunks?: number;
+  dropped_bytes?: number;
+}

@@ -10,6 +10,7 @@ use crate::grid_ipc::GridCmd;
 use crate::keyring_store::KeyringStore;
 use crate::script_runner::{RunError, RunSnapshot, ScriptProcessTable, ScriptRunRecord};
 use crate::sync;
+use crate::terminal::{self, ChannelSink, EventSink};
 use crate::workspace;
 
 /// 宫格 label（grid-N）→ 子进程 index；页签 tab-N 返回 None（页签仍在主进程）。
@@ -306,11 +307,8 @@ pub struct AppState {
     pub script_runs: Arc<ScriptProcessTable>,
 }
 
-/// 终端会话：持有 PTY 写入端与子进程，读取在后台线程进行。
-pub struct TerminalSession {
-    pub writer: Box<dyn std::io::Write + Send>,
-    pub child: Box<dyn portable_pty::Child + Send + Sync>,
-}
+/// 终端会话与输出内核（M3.a：mpsc+pump 管道、进程组回收、Channel 单播）。
+pub use crate::terminal::{TermInfo, TerminalSession};
 
 /// 浏览器页签信息（id 即子 webview 的 label）。
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -845,11 +843,9 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
                 .collect();
             let mut errors = Vec::new();
             for (id, mut session) in sessions {
-                if let Err(error) = session.child.kill() {
+                // M3.a：统一走进程组回收 + 线程回收（F6/F7），不再只杀直接子进程。
+                if let Err(error) = terminal::terminate_session(&mut session) {
                     errors.push(format!("{id} kill: {error}"));
-                }
-                if let Err(error) = session.child.wait() {
-                    errors.push(format!("{id} wait: {error}"));
                 }
             }
             if errors.is_empty() {
@@ -4382,95 +4378,45 @@ pub fn tab_activate(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 // ====== 真实 PTY 终端（与系统终端一致：tab 补全 / 历史 / 提示符） ======
+//
+// M3.a：输出管道与生命周期内核收敛到 `terminal.rs`（mpsc+pump+退避+进程组回收），
+// 本文件只保留命令壳：sink 选择（F4）、ACL、state 登记。
 
-#[derive(serde::Serialize)]
-pub struct TermInfo {
-    pub id: String,
+/// 判断当前是否处于 M0 终端吞吐测量驱动（`driver=term-throughput`）。
+/// 测量模式走直通：不合并、不丢帧，保证 `__M0_TERM_BEGIN__/__M0_TERM_END__` 计数可比（F2/F3）。
+fn term_measure_mode(app: &AppHandle) -> bool {
+    m0_config_of(app).driver == "term-throughput"
 }
 
-/// 创建并启动一个 PTY 终端（bash），后台线程读取输出并通过 `term-data` 事件推给前端。
+/// 创建并启动一个 PTY 终端，输出走 `term-data` **全局事件**（F4 Event sink）。
+/// 仅 M0 内部回归驱动（`main.rs` scenario-8 / `M0_DRIVER` 资源循环）使用；前端一律走
+/// `term_spawn_channel`（夹具锚定前端不得调用本命令）。
 #[tauri::command]
 pub fn term_spawn(app: AppHandle) -> Result<TermInfo, String> {
-    use portable_pty::{native_pty_system, PtySize};
-
-    let id = format!("term-{}", uuid::Uuid::new_v4());
-    let pty_system = native_pty_system();
-    let pair = pty_system
-        .openpty(PtySize {
-            rows: 24,
-            cols: 100,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(|e| format!("无法创建 PTY: {e}"))?;
-
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-    let mut cmd = portable_pty::CommandBuilder::new(shell);
-    // xterm.js 是完整终端模拟器，需要正常 TERM 与 ANSI 序列，不能过滤
-    cmd.env("TERM", "xterm-256color");
-    cmd.env("COLORTERM", "truecolor");
-
-    let mut child = pair
-        .slave
-        .spawn_command(cmd)
-        .map_err(|e| format!("无法启动 shell: {e}"))?;
-    drop(pair.slave);
-
-    let mut writer = match pair.master.take_writer() {
-        Ok(writer) => writer,
-        Err(error) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!("writer: {error}"));
-        }
-    };
-    // 触发初始提示符
-    let _ = writer.write_all(b"\n");
-
-    let reader = match pair.master.try_clone_reader() {
-        Ok(reader) => reader,
-        Err(error) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!("reader: {error}"));
-        }
-    };
-    let app2 = app.clone();
-    let tid = id.clone();
-    std::thread::spawn(move || {
-        use std::io::Read;
-        let mut buf = [0u8; 4096];
-        let mut reader = reader;
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    // xterm.js 自己解析 ANSI 序列，不再过滤
-                    let data = String::from_utf8_lossy(&buf[..n]).to_string();
-                    if !data.is_empty() {
-                        let _ =
-                            app2.emit("term-data", serde_json::json!({ "id": tid, "data": data }));
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-        let _ = app2.emit(
-            "term-data",
-            serde_json::json!({ "id": tid, "data": "\r\n[终端已退出]\r\n" }),
-        );
-    });
-
-    let session = TerminalSession {
-        writer: Box::new(writer),
-        child: child,
-    };
+    let measure = term_measure_mode(&app);
+    let (info, session) = terminal::spawn_terminal(Arc::new(EventSink(app.clone())), measure)?;
     app.state::<AppState>()
         .terminals
         .lock()
         .unwrap()
-        .insert(id.clone(), session);
-    Ok(TermInfo { id })
+        .insert(info.id.clone(), session);
+    Ok(info)
+}
+
+/// 创建并启动一个 PTY 终端，输出走**每终端独立 Channel 单播**（F4 Channel sink，前端唯一入口）。
+#[tauri::command]
+pub fn term_spawn_channel(
+    app: AppHandle,
+    channel: tauri::ipc::Channel<serde_json::Value>,
+) -> Result<TermInfo, String> {
+    let measure = term_measure_mode(&app);
+    let (info, session) = terminal::spawn_terminal(Arc::new(ChannelSink(channel)), measure)?;
+    app.state::<AppState>()
+        .terminals
+        .lock()
+        .unwrap()
+        .insert(info.id.clone(), session);
+    Ok(info)
 }
 
 /// 向终端写入数据（按键/命令/回车/Tab 补全都由真实 shell 处理）。
@@ -4487,21 +4433,22 @@ pub fn term_write(app: AppHandle, id: String, data: String) -> Result<(), String
     Ok(())
 }
 
-/// 调整终端大小（列/行）。
+/// 调整终端大小（列/行）——M3.a 起真实生效（F5）。
 #[tauri::command]
 pub fn term_resize(app: AppHandle, id: String, cols: u16, rows: u16) -> Result<(), String> {
-    let _ = (app, id, cols, rows);
-    Ok(())
+    let state = app.state::<AppState>();
+    let mut terms = state.terminals.lock().unwrap();
+    let session = terms.get_mut(&id).ok_or("终端不存在")?;
+    terminal::resize(session, cols, rows)
 }
 
-/// 关闭终端。
+/// 关闭终端：置 stop → 回收进程组 → 回收 worker/pump 线程（F6/F7）。
 #[tauri::command]
 pub fn term_kill(app: AppHandle, id: String) -> Result<(), String> {
     let state = app.state::<AppState>();
     let mut terms = state.terminals.lock().unwrap();
-    if let Some(mut s) = terms.remove(&id) {
-        s.child.kill().map_err(|e| format!("终端关闭失败: {e}"))?;
-        s.child.wait().map_err(|e| format!("终端等待失败: {e}"))?;
+    if let Some(mut session) = terms.remove(&id) {
+        terminal::terminate_session(&mut session)?;
     }
     Ok(())
 }

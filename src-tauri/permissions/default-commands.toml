@@ -62,6 +62,7 @@ commands.allow = [
     "set_tab_hibernation",
     "resource_stats",
     "term_spawn",
+    "term_spawn_channel",
     "term_write",
     "term_resize",
     "term_kill",

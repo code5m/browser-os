@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ref, reactive, computed } from "vue";
 import { bridge, type M0Config } from "../bridge";
+import type { TermMessage } from "../types";
 import { useLayoutStore } from "./useLayoutStore";
 
 export interface ClipItem {
@@ -136,9 +137,16 @@ export const useSystemStore = defineStore("system", () => {
       m0Cfg.value = null;
     }
   }
-  // termId 设置前的 PTY 输出缓存：termSpawn 异步返回前 shell 已开始输出，
+  // termId 设置前的 PTY 输出缓存：termSpawnChannel 异步返回前 shell 已开始输出，
   // 若直接丢弃会导致终端空白/无提示符。缓存后 termId 就绪时一次性写入。
   const termBuffer: string[] = [];
+  // M3.a 丢弃统计（F2）：队列满时后端丢弃的字节数，仅展示不阻断。
+  const droppedChunks = ref(0);
+  const droppedBytes = ref(0);
+  function resetDroppedStats() {
+    droppedChunks.value = 0;
+    droppedBytes.value = 0;
+  }
 
   function bindTermWriter(fn: ((data: string) => void) | null) {
     termWriter = fn;
@@ -152,10 +160,13 @@ export const useSystemStore = defineStore("system", () => {
     if (termId.value && !force) return;
     if (termId.value) await bridge.termKill(termId.value);
     try {
-      const r = await bridge.termSpawn();
+      // M3.a：每终端独立 Channel 单播（F4），替代全局 `term-data` 事件广播。
+      const ch = bridge.createTermChannel((msg) => onTermChannelMsg(msg));
+      const r = await bridge.termSpawnChannel(ch);
       termId.value = r.id;
       termLines.value = [];
-      termWriter?.("$ 终端已就绪（xterm.js + PTY）\r\n");
+      resetDroppedStats();
+      termWriter?.("$ 终端已就绪（xterm.js + PTY · Channel）\r\n");
       // 写入缓存的早期输出（shell 欢迎信息/提示符）
       for (const data of termBuffer) termWriter?.(data);
       termBuffer.length = 0;
@@ -222,8 +233,29 @@ export const useSystemStore = defineStore("system", () => {
     if (d.id === termId.value) {
       termWriter?.(d.data);
     } else if (!termId.value) {
-      // termId 还没设置（termSpawn 异步返回前），缓存输出待启动后写入
+      // termId 还没设置（异步返回前），缓存输出待启动后写入
       termBuffer.push(d.data);
+    }
+  }
+
+  // M3.a Channel 回调：按 `kind` 分发（data → xterm；flow → 丢弃统计；exit → 结束提示）。
+  // 兼容：Event sink（`term_spawn`，仅 M0 内部驱动）不带 `kind`，按 data 处理。
+  function onTermChannelMsg(msg: TermMessage) {
+    const data = msg.data ?? "";
+    if (msg.kind === "flow") {
+      droppedChunks.value += msg.dropped_chunks ?? 0;
+      droppedBytes.value += msg.dropped_bytes ?? 0;
+      return;
+    }
+    if (msg.kind === "exit") {
+      if (msg.id === termId.value || !termId.value) termWriter?.(data);
+      return;
+    }
+    if (msg.id === termId.value) {
+      termWriter?.(data);
+    } else if (!termId.value) {
+      // termId 还没设置（termSpawnChannel 异步返回前），缓存输出待启动后写入
+      termBuffer.push(data);
     }
   }
 
@@ -237,6 +269,9 @@ export const useSystemStore = defineStore("system", () => {
     terminalOpen,
     termId,
     termLines,
+    droppedChunks,
+    droppedBytes,
+    resetDroppedStats,
     m0Cfg,
     m0StartTs,
     loadM0Config,
@@ -258,6 +293,7 @@ export const useSystemStore = defineStore("system", () => {
     killShell,
     toggleTerminal,
     onTermData,
+    onTermChannelMsg,
     bindTermWriter,
   };
 });

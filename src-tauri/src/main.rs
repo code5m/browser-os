@@ -14,6 +14,7 @@ mod session;
 mod shutdown;
 mod snippets;
 mod sync;
+mod terminal;
 mod tools;
 mod workspace;
 
@@ -1355,6 +1356,7 @@ fn main() {
             bridge::set_tab_hibernation,
             bridge::resource_stats,
             bridge::term_spawn,
+            bridge::term_spawn_channel,
             bridge::term_write,
             bridge::term_resize,
             bridge::term_kill,

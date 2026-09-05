@@ -26,7 +26,8 @@
 #  18. M2-3.b 脚本领域与持久化不变量夹具（前端逻辑测试已随 M2-5 UI 落地）
 #  19. M2-4.e 脚本执行通道不变量夹具（进程组/输出上限/尾存/退出收口/shell spawn 移除）
 #  20. M2-6.d 命令片段库 UI 逻辑层测试
-#  21. 工作树、暂存区、当前分支相对基线的 git diff --check
+#  21. M3.a 终端输出管道不变量夹具 + 前端 Channel/防抖接入
+#  22. 工作树、暂存区、当前分支相对基线的 git diff --check
 #
 # 用法:
 #   scripts/pre-merge.sh            正式门禁（所有检查必须通过）
@@ -82,6 +83,7 @@ pre-merge.sh — M0-1.c 本地 pre-merge 门禁（M0-1 脚本合并前检查入�
   image UI logic tests          check-image-ui-logic.mjs（Node，headless）
   image preview fixture         check-image-preview-policy.py --self-test / 默认门禁
   image preview logic tests     check-image-preview-logic.mjs（Node，headless）
+  terminal pipeline fixture     check-terminal-policy.py --self-test / 默认门禁
   script domain fixture         check-script-domain-policy.py --self-test / 默认门禁
   command UI logic tests        check-command-ui-logic.mjs（Node，headless）
   git diff --check              工作树 + 暂存区 + 当前分支相对基线（机器证据除外）
@@ -325,6 +327,12 @@ run_pre_merge() {
   (cd "$ROOT" && node "$SCRIPT_DIR/check-script-ui-logic.mjs") >/dev/null 2>&1 \
     || pm_fail "check-script-ui-logic.mjs（脚本库 CRUD 前端逻辑回归）"
 
+  pm_log "M3.a 终端输出管道不变量夹具（mpsc+pump/丢弃/退避/resize/进程组/零新依赖）…"
+  python3 "$SCRIPT_DIR/check-terminal-policy.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-terminal-policy.py --self-test"
+  python3 "$SCRIPT_DIR/check-terminal-policy.py" >/dev/null 2>&1 \
+    || pm_fail "check-terminal-policy.py（终端输出管道不变量被破坏）"
+
   pm_log "M2-6.d 命令片段库 UI 逻辑层自动化测试（headless，加载真实 snippetUi.ts）…"
   (cd "$ROOT" && node "$SCRIPT_DIR/check-command-ui-logic.mjs") >/dev/null 2>&1 \
     || pm_fail "check-command-ui-logic.mjs（命令片段库前端逻辑回归）"
@@ -413,6 +421,10 @@ run_self_test() {
     echo "FAIL: check-command-ui-logic.mjs"; rc=1
   fi
   [ -f "$SCRIPT_DIR/check-tools-policy.py" ] || { echo "FAIL: check-tools-policy.py missing"; rc=1; }
+  [ -f "$SCRIPT_DIR/check-terminal-policy.py" ] || { echo "FAIL: check-terminal-policy.py missing"; rc=1; }
+  if ! python3 "$SCRIPT_DIR/check-terminal-policy.py" --self-test >/dev/null 2>&1; then
+    echo "FAIL: check-terminal-policy.py --self-test"; rc=1
+  fi
   if ! python3 "$SCRIPT_DIR/check-tools-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-tools-policy.py --self-test"; rc=1
   fi

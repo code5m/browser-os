@@ -11,6 +11,20 @@ const termEl = ref<HTMLElement | null>(null);
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
 let resizeObserver: ResizeObserver | null = null;
+// M3.a（F5/F10）：fit 后防抖 140ms 再上报真实行列给后端 PTY，
+// 避免拉伸过程中每帧都 invoke（参照 fileterm TERMINAL_RESIZE_SETTLE_MS=140）。
+const TERM_RESIZE_DEBOUNCE_MS = 140;
+let resizeTimer: number | null = null;
+function scheduleResize() {
+  if (resizeTimer) clearTimeout(resizeTimer);
+  resizeTimer = window.setTimeout(() => {
+    resizeTimer = null;
+    if (!term || !fit) return;
+    fit.fit();
+    if (!system.termId) return;
+    bridge.termResize(system.termId, term.cols, term.rows).catch(() => {});
+  }, TERM_RESIZE_DEBOUNCE_MS);
+}
 
 // ====== M0-0.b 终端吞吐测量钩子（契约 logs/m0-baseline-contract-v1.md §6.3） ======
 // 发送负载前启动 rAF 采样；xterm 完成 write 回调后再解析 begin/end 标记与有效载荷，
@@ -148,10 +162,8 @@ onMounted(() => {
     });
     system.bindM0ThroughputStart(m0Prepare);
 
-    // 容器尺寸变化时自动 fit
-    resizeObserver = new ResizeObserver(() => {
-      fit?.fit();
-    });
+    // 容器尺寸变化时防抖 fit + 上报真实行列（M3.a F5）
+    resizeObserver = new ResizeObserver(() => scheduleResize());
     resizeObserver.observe(termEl.value);
 
     // 启动 shell
@@ -165,6 +177,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   m0FrameSampling = false;
+  if (resizeTimer) clearTimeout(resizeTimer);
+  resizeTimer = null;
   resizeObserver?.disconnect();
   term?.dispose();
   system.bindTermWriter(null);
@@ -177,6 +191,9 @@ onBeforeUnmount(() => {
     <div class="term-head">
       <span>终端</span>
       <div>
+        <span v-if="system.droppedBytes > 0" class="term-drop" title="输出过快，已丢弃的字节数">
+          已丢弃 {{ system.droppedBytes }} B
+        </span>
         <button @click="system.startShell(true)" title="重启">↻</button>
         <button @click="system.killShell" title="关闭进程">⏹</button>
         <button @click="system.terminalOpen = false" title="隐藏">✕</button>
@@ -203,6 +220,11 @@ onBeforeUnmount(() => {
   color: #ccc;
   font-size: 12px;
   flex-shrink: 0;
+}
+.term-drop {
+  color: #d19a66;
+  font-size: 11px;
+  margin-right: 6px;
 }
 .term-head button {
   border: none;

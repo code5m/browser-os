@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
   Artifact,
@@ -37,6 +37,7 @@ import type {
   SessionPolicy,
   SessionFlushReport,
   ToolMeta,
+  TermMessage,
 } from "./types";
 
 // M0-0.b 测量配置（契约 logs/m0-baseline-contract-v1.md；非测量运行后端返回 null）
@@ -433,8 +434,20 @@ export const bridge = {
   // 把本应用设为系统默认浏览器。硬约束：只能由设置页按钮经用户显式确认后调用
   setDefaultBrowser: () => invoke<string>("set_default_browser"),
 
-  // ====== 真实 PTY 终端 ======
-  termSpawn: () => invoke<{ id: string }>("term_spawn"),
+  // ====== 真实 PTY 终端（M3.a：输出走每终端独立 Channel 单播）======
+  // Tauri v2 的 Channel 只能从 `@tauri-apps/api/core` 子路径导入（非顶层）。
+  createTermChannel: (
+    cb: (msg: TermMessage) => void
+  ): Channel<TermMessage> => {
+    const ch = new Channel<TermMessage>();
+    ch.onmessage = (msg) => cb(msg);
+    return ch;
+  },
+
+  // 注意：invoke 的 key 必须与 Rust 命令参数名一致（snake_case = "channel"），
+  // 否则 Tauri 反射不到参数。Channel 由 Tauri 序列化为 IPC 句柄自动传参。
+  termSpawnChannel: (channel: Channel<TermMessage>) =>
+    invoke<{ id: string }>("term_spawn_channel", { channel }),
 
   termWrite: (id: string, data: string) => invoke("term_write", { id, data }),
 
