@@ -1,10 +1,10 @@
 # Parallel Command Board
 
-> Updated: 2026-09-06 00:20 CST
+> Updated: 2026-09-06 07:55 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` at `a75ba24` locally, remote may lag if A0 has not pushed
-> Current NEXT: batch implementation mode for M4 database + scheduler lanes
+> Current mainline: `master` at `a1a2061` locally and on `origin/master`
+> Current NEXT: M5 task-card expansion and architecture prework; M5 product code remains locked until A0 signs the first M5 implementation card
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
@@ -13,7 +13,7 @@ This file is the coordination board for 11 parallel agents plus A0 integration. 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 Integration Fix Wave 修复自己的阻塞项并按 Batch Implementation Dispatch 做完整代码包，自行 rebase/整理补丁，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5 Dispatch Now 完成自己的整包交付，自行 rebase/整理补丁，不 push。
 ```
 
 Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
@@ -126,6 +126,42 @@ No lane may force-push, reset, or overwrite another lane's changes.
 | A9 | **START READ/WRITE DOCS ONLY** | Prepare M5 split after M4: knowledge graph, protocol, agent/plugin lanes, dependency blockers. | `logs/assist/`, future task-card docs only | No M5 product code before M4 PASS. |
 | A10 | **START** | Review A2/A3/A4/A6/A7 security-sensitive changes as they land. May add failing policy samples, but product-code fixes require A0 assignment. | `logs/assist/`, policy gap docs; if A0 assigns, policy scripts only | Do not edit product code by default. |
 | A11 | **START** | Maintain verification matrix and manual/GUI checklist; update after each implementation lane output. | `logs/assist/`, `logs/checkpoints/` verification docs | Do not edit product code. |
+
+
+## M5 Dispatch Now
+
+> Added 2026-09-06 07:55 CST by A0 after pushing `a1a2061`.
+> M4 database + scheduler code is integrated and pushed; machine gates are green (`cargo test` 329/329, `npm run build`, `pre-merge` ALL_PASS).
+> This wave is **M5 expansion/prework first**. Do not write M5 product code until A1 has produced the M5 task cards and A0 has signed the first implementation dispatch.
+
+### One-Line Prompt For All Lanes
+
+```text
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5 Dispatch Now 完成自己的整包交付，自行 rebase/整理补丁，不 push。
+```
+
+### M5 Wave 0 Assignments
+
+| Lane | Status | Task | Allowed Scope | Must Deliver |
+|---|---|---|---|---|
+| A1 | **START** | Expand M5 into implementation cards. Split M5-1~M5-12 into safe subcards, dependency graph, red lines, test matrix, and merge order. | `AI-模型切换与接手清单.md`, `详细设计与实施计划.md`, `后续需求TODO.md`, `logs/checkpoints/M5-*.md` | M5 task-card checkpoint; NEXT should become `M5-1.a` only if cards are complete. |
+| A2 | **START DOCS ONLY** | M5-1 core workspace extraction prework: map current Rust modules, propose crate boundaries, dependency direction checks, and minimal migration order. | `logs/assist/A2-M5-core-*.md` only | No product code; produce risks, file map, and first safe extraction slice. |
+| A3 | **START DOCS ONLY** | M5-2 MCP/rmcp prework: inspect Rust MCP feasibility, command registry shape, global policy surface, and no-npm rule. | `logs/assist/A3-M5-mcp-*.md` only | Contract proposal + blockers; no dependency changes. |
+| A4 | **START DOCS ONLY** | M5-3 A2A/agent memory prework: define agent dialect abstraction, `agent_kv` boundaries, retention/capacity/privacy rules. | `logs/assist/A4-M5-a2a-memory-*.md` only | Contract proposal + tests to require later. |
+| A5 | **START DOCS ONLY** | M5-4/M5-5 Agent/Skill runtime and command prework: model `AgentDef`/`SkillDef`, execution reuse via M2-4, permission gates. | `logs/assist/A5-M5-agent-skill-*.md` only | Runtime/command split and security red lines. |
+| A6 | **START DOCS ONLY** | M5-6 Agent/Skill UI prework: panel map, state model, streaming display, permission preview, failure recovery. | `logs/assist/A6-M5-agent-ui-*.md` only | UI task split and logic-test plan; no UI code. |
+| A7 | **START DOCS ONLY** | M5-7/M5-8 knowledge graph model/storage prework: node/edge schema, derived-index rules, rebuild/export/query contracts, SQLite reuse. | `logs/assist/A7-M5-graph-core-*.md` only | Graph contract proposal + storage/query tests. |
+| A8 | **START DOCS ONLY** | M5-9 graph UI and Agent consumption prework: force graph, search, node details, capacity, accessibility, subgraph injection. | `logs/assist/A8-M5-graph-ui-*.md` only | UI split + data contract needs; no UI code. |
+| A9 | **START DOCS ONLY** | M5-10/M5-11/M5-12 plugin system prework: manifest, lifecycle, install/enable/disable/uninstall, permission UI, cleanup. | `logs/assist/A9-M5-plugin-*.md` only | Plugin task split + security blockers. |
+| A10 | **START REVIEW** | Review M5 Wave 0 proposals for bypasses: duplicate execution paths, command exposure without ACL, credential leakage, unsafe plugin/skill installs. | `logs/assist/A10-M5-security-review-*.md` only | Security review after A1-A9 notes exist; do not edit product code. |
+| A11 | **START VERIFICATION PLAN** | Create M5 verification matrix: required commands, policy scripts, UI logic tests, manual/GUI checklist, debt ledger numbers starting after M4. | `logs/assist/`, `logs/checkpoints/M5-A11-*.md` only | Verification matrix; no product code. |
+
+### M5 Wave 0 Hard Stops
+
+- No lane except A1 may change the three main planning docs in this wave.
+- No M5 product code, Cargo dependency, npm dependency, command registration, ACL entry, or frontend panel may be added in Wave 0.
+- If a lane finds product code is required, it writes an assist note with the exact future file list and stops.
+- All proposals must preserve: no second execution path, source check + ACL for every future command, Keyring for credentials, audit redaction, capacity limits, and `pre-merge.sh` coverage.
 
 ## Batch Implementation Dispatch
 
