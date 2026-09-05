@@ -19,6 +19,7 @@ import AppPanel from "../system/AppPanel.vue";
 import TerminalPane from "../system/TerminalPane.vue";
 import HomePanel from "../home/HomePanel.vue";
 import SettingsPanel from "../system/SettingsPanel.vue";
+import ScriptPanel from "../workspace/ScriptPanel.vue";
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
@@ -129,6 +130,11 @@ watch(
     <!-- ===== 审计日志 ===== -->
     <div v-else-if="layout.mainView === 'audit'" class="modview">
       <AuditPanel />
+    </div>
+
+    <!-- ===== 脚本库（M2-5.a） ===== -->
+    <div v-else-if="layout.mainView === 'scripts'" class="modview">
+      <ScriptPanel />
     </div>
 
     <!-- ===== 系统设置 ===== -->

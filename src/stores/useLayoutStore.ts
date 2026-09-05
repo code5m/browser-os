@@ -13,6 +13,7 @@ export type MainView =
   | "term"
   | "repo"
   | "audit"
+  | "scripts"
   | "editor";
 
 export const useLayoutStore = defineStore("layout", () => {
@@ -103,6 +104,7 @@ export const useLayoutStore = defineStore("layout", () => {
     term: { icon: "💻", label: "终端" },
     repo: { icon: "🛰️", label: "仓库" },
     audit: { icon: "🛡️", label: "审计" },
+    scripts: { icon: "📜", label: "脚本库" },
     settings: { icon: "⚙️", label: "设置" },
   };
   const modTabs = reactive<ModTab[]>([]);

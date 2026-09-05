@@ -4,6 +4,15 @@ import { bridge } from "../bridge";
 import { useLayoutStore } from "./useLayoutStore";
 import { renderMd } from "../utils/markdown";
 import { withToast } from "../utils/error";
+import {
+  emptyScriptForm,
+  loadFormFromMeta,
+  validateScriptForm,
+  serializeScriptForm,
+  canDeleteScript,
+  type ScriptForm,
+} from "../utils/scriptUi";
+import type { ScriptMeta } from "../types";
 
 const TEXT_EXTS = [
   "txt","json","js","ts","vue","rs","html","css","xml","yaml","yml","toml",
@@ -50,6 +59,73 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const job = ref<SyncJob | null>(null);
 
   const audit = ref<AuditEntry[]>([]);
+
+  // ===== 脚本库 CRUD（M2-5.a，纯前端，复用 M2-3 四条命令） =====
+  const scripts = ref<ScriptMeta[]>([]);
+  const scriptForm = reactive<ScriptForm>(emptyScriptForm());
+
+  async function loadScripts() {
+    try {
+      scripts.value = await bridge.scriptList();
+    } catch (e: any) {
+      layout.showToast("加载脚本失败：" + (e?.message ?? e));
+    }
+  }
+  function openScriptForm(m?: ScriptMeta | null) {
+    Object.assign(scriptForm, m ? loadFormFromMeta(m) : emptyScriptForm());
+  }
+  async function saveScript() {
+    const issues = validateScriptForm(scriptForm);
+    if (issues.length) {
+      layout.showToast("表单校验未通过：" + issues[0].message);
+      return;
+    }
+    const ser = serializeScriptForm(scriptForm);
+    try {
+      if (scriptForm.id) {
+        await bridge.scriptUpdate({
+          id: scriptForm.id,
+          name: ser.name,
+          category: ser.category,
+          interpreter: ser.interpreter,
+          body: ser.body,
+          params: ser.params,
+          description: ser.description,
+          timeoutSecs: ser.timeoutSecs,
+          enabled: ser.enabled,
+        });
+        layout.showToast("已保存：" + ser.name);
+      } else {
+        await bridge.scriptAdd({
+          name: ser.name,
+          category: ser.category,
+          interpreter: ser.interpreter,
+          body: ser.body,
+          params: ser.params,
+          description: ser.description,
+          timeoutSecs: ser.timeoutSecs,
+        });
+        layout.showToast("已新建：" + ser.name);
+      }
+      await loadScripts();
+    } catch (e: any) {
+      layout.showToast("保存失败：" + (e?.message ?? e));
+    }
+  }
+  async function removeScript(m: ScriptMeta) {
+    if (!canDeleteScript(m)) {
+      layout.showToast("内置脚本不可删除");
+      return;
+    }
+    try {
+      await bridge.scriptRemove(m.id);
+      layout.showToast("已删除：" + m.name);
+      await loadScripts();
+    } catch (e: any) {
+      layout.showToast("删除失败：" + (e?.message ?? e));
+    }
+  }
+
   const recents = reactive<RecentItem[]>([]);
 
   // 文件右键菜单状态（集中在 store，组件只渲染）
@@ -532,6 +608,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     busy,
     job,
     audit,
+    scripts,
+    scriptForm,
+    loadScripts,
+    openScriptForm,
+    saveScript,
+    removeScript,
     recents,
     fileCtx,
     ctxMenu,
