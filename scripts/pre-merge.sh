@@ -299,6 +299,14 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/check-script-ui-policy.py" --expect-pending >/dev/null 2>&1 \
     || pm_fail "check-script-ui-policy.py --expect-pending（pending 码位集合应与 PENDING_CODES 一致）"
 
+  pm_log "M2-6.a 命令片段领域不变量夹具（argv 模型 / 无正文文件 / 危险标记 / 超时口径）…"
+  python3 "$SCRIPT_DIR/check-command-domain-policy.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-command-domain-policy.py --self-test"
+  python3 "$SCRIPT_DIR/check-command-domain-policy.py" >/dev/null 2>&1 \
+    || pm_fail "check-command-domain-policy.py（命令片段契约被破坏）"
+  python3 "$SCRIPT_DIR/check-command-domain-policy.py" --expect-pending >/dev/null 2>&1 \
+    || pm_fail "check-command-domain-policy.py --expect-pending（pending 码位集合应与 PENDING_CODES 一致）"
+
   pm_log "M2-5 脚本库 UI 逻辑层自动化测试（headless，加载真实 scriptUi.ts）…"
   (cd "$ROOT" && node "$SCRIPT_DIR/check-script-ui-logic.mjs") >/dev/null 2>&1 \
     || pm_fail "check-script-ui-logic.mjs（脚本库 CRUD 前端逻辑回归）"

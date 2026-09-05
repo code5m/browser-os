@@ -683,6 +683,90 @@ fn default_script_enabled() -> bool {
     true
 }
 
+/// 命令片段内置分类（需求 #4：系统 / 网络 / 磁盘 / 进程 / 文本处理）。
+///
+/// 冻结裁定 `M2-6.a §7 F5`：`category` 为**自由字符串**（与 `ScriptMeta.category`
+/// 同口径），本常量仅供内置片段与 UI 分组使用，**不做取值白名单约束**。
+// 消费者：`M2-6.b` 内置片段种子、`M2-6.d` 前端分类分组。本卡只冻结取值，不接线。
+#[allow(dead_code)]
+pub const SNIPPET_BUILTIN_CATEGORIES: [&str; 5] = ["system", "network", "disk", "process", "text"];
+
+/// 命令片段超时上限（秒）——与 `ScriptMeta.timeout_secs` 同口径（`M2-4.a §2`）。
+// 消费者：`M2-6.b` 定义期上限校验、`M2-6.c` 执行超时钳制。本卡只冻结口径，不接线。
+#[allow(dead_code)]
+pub const SNIPPET_MAX_TIMEOUT_SECS: u32 = 600;
+
+/// 命令片段（`M2-6.a` 冻结；持久化归 `M2-6.b`，执行接入归 `M2-6.c`，
+/// 前端归 `M2-6.d`）。契约源 `logs/checkpoints/M2-6-20260905-1700.md §7`。
+///
+/// 与 `ScriptMeta` 的三处**结构性差异**（不得抹平，见展开卡 §7 F10）：
+///
+/// 1. **无正文文件**：命令以 `argv` 数组直接存于 `snippets.json`，故**没有** `path`
+///    字段（脚本库才有 `<id>.sh` 正文）；
+/// 2. **argv 而非 line**：不存单行 shell 字符串（`line: String`）。字符串行需要自实现
+///    shell 词法解析（引号 / 转义 / 空格），既易错又逼近
+///    `M2-4.a §8.1` 的 P0 红线（禁止 shell 拼接）；
+/// 3. **整元素占位**：`argv` 中**严格等于** `{NAME}` 的元素整体替换为该参数值
+///    （一个元素 ⇄ 一个值）。**不支持** `grep -r {PATTERN}` 这类字符串内插值——
+///    否则一个参数值可能被词法切成多个 argv 元素，重新开放注入面。
+///    需要 `--dir=/x` 时应拆成 `["--dir", "{DIR}"]` 两个元素。
+///
+/// `interpreter` 复用 `ScriptInterpreter` 白名单；其中 `Shebang` 对命令片段无意义
+/// （无正文文件可依赖 shebang 与可执行位），**执行层须显式拒绝**（归 `M2-6.c`）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandSnippet {
+    /// uuid v4
+    pub id: String,
+    /// 展示名
+    pub name: String,
+    /// 分类 / 标签（内置取值见 `SNIPPET_BUILTIN_CATEGORIES`，不做白名单约束）
+    pub category: String,
+    /// 执行 `argv` 的程序（枚举白名单；`Shebang` 不适用）
+    pub interpreter: ScriptInterpreter,
+    /// 命令 argv 模板。元素严格等于 `{NAME}` 时整体替换为该参数值。
+    /// **不得为空**，且不得出现「含占位但不等」的部分插值形态（`M2-6.a §7 F2`）。
+    pub argv: Vec<String>,
+    #[serde(default)]
+    pub params: Vec<ScriptParam>,
+    #[serde(default)]
+    pub description: String,
+    /// 危险标记：触发前端二次确认（确认 UI 归 `M2-6.d`，**字段**在本卡冻结）。
+    ///
+    /// 采用**显式字段**而非 argv[0] 黑名单推断：黑名单易被绕过（别名、绝对路径、
+    /// `env` 间接调用），显式字段 + 内置片段预置更可审计（`M2-6.a §7 F4`）。
+    #[serde(default)]
+    pub dangerous: bool,
+    /// 内置片段：不可删除
+    #[serde(default)]
+    pub builtin: bool,
+    #[serde(default = "default_script_enabled")]
+    pub enabled: bool,
+    /// 超时秒数；0 = 全局默认（**60**）。上限 `SNIPPET_MAX_TIMEOUT_SECS`（600）。
+    #[serde(default)]
+    pub timeout_secs: u32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl CommandSnippet {
+    /// 取 argv 元素的占位符名；**非整元素占位**返回 `None`。
+    ///
+    /// 仅当整个元素形如 `{NAME}`（`NAME` 为 `[A-Za-z0-9_]`，1~32 字符）时视为占位，
+    /// 见类型文档的「整元素占位」裁定（`M2-6.a §7 F2`）。
+    // 消费者：`M2-6.c` 执行接入（argv 整元素替换）。本卡只冻结语义，不接线。
+    #[allow(dead_code)]
+    pub fn placeholder_of(element: &str) -> Option<&str> {
+        let inner = element.strip_prefix('{')?.strip_suffix('}')?;
+        if inner.is_empty()
+            || inner.len() > 32
+            || !inner.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return None;
+        }
+        Some(inner)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
