@@ -94,6 +94,20 @@ done
 
 期望：全部 `OK`。命令名以 lane 最终命名为准（A2/A6 契约冻结后由 A0 统一替换本列表）。
 
+**2026-09-05 23:xx 更新（来自 A2 `M4-1.b` §3、A6 §6）**：
+
+- 数据库命令实测为 **4 条候选**：`db_connect` / `db_query` / `db_disconnect` + **`db_forget_connection`（凭据吊销入口，A2 建议新增，A0 未裁决 → 债务 `D28`）**。
+  - 若 A0 批准：循环列表追加 `db_forget_connection`，并同时校验 `keyring_store.rs` 的 `delete_token` 已移除 `#[allow(dead_code)]` 且有删除路径测试（A10 G-1）。
+  - 若 A0 不批准：维持 3 条，A10 G-1 的「断开即吊销」要求降级为 `D28` 挂账，须显式记录。
+- 调度命令实测为 **5 条**（A6 §6）：`task_list` / `task_add` / `task_update` / `task_remove` / `task_run_now`；**取消复用 `ScriptProcessTable::cancel`，不新增 `task_cancel`**（A6 §5.4）——若实现里出现 `task_cancel`，视为偏离契约，须回写 BLOCKED。
+- ACL 插入位置：A1 F-5 / A2 `DB_ACL_ORDER` 要求 `db_*` / `task_*` 插在 **`list_artifact_images` 之前**（当前 ACL 末条）；核查命令：
+
+```bash
+grep -n "list_artifact_images\|\"db_\|\"task_" src-tauri/permissions/default-commands.toml
+```
+
+期望：`db_*` / `task_*` 的行号 **小于** `list_artifact_images` 的行号。
+
 ### T2 · GUI / 人工（**无真机取证一律记 `NOT_RUN`，不得代签 PASS**）
 
 | # | 命令 | 用途 |
