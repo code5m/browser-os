@@ -1,12 +1,22 @@
 # Parallel Command Board
 
-> Updated: 2026-09-05 23:00 CST
+> Updated: 2026-09-05 23:35 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` at `f376346`
-> Current NEXT: `M4-1 数据库驱动与生成契约`
+> Current mainline: `master` at `47fce60`
+> Current NEXT: `M4-1.c` + `M4-2.s` + `M4-5.d` parallel unblock, then M4 implementation lanes
 
 This file is the coordination board for 12 parallel agents. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
+
+## One-Line Resume Prompt
+
+Use this when assigning a Trae/WorkBuddy agent:
+
+```text
+继续 Lane AX，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
+```
+
+Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
 
 ## Startup Gate
 
@@ -72,6 +82,48 @@ No lane may force-push, reset, or overwrite another lane's changes.
 7. A9 may research M5, but must not implement M5 product code before M4 is PASS.
 8. A10 reviews security-sensitive M4 lanes after their output exists.
 9. A11 prepares verification evidence and manual acceptance checklists before final A0 integration.
+
+## Code Dispatch Now
+
+> A0 integrated and pushed `6d73ce1`, `d6457fe`, and `47fce60`.
+> Current facts:
+> - A1 M4 expansion is integrated.
+> - A2 `M4-1.a` and `M4-1.b` are integrated.
+> - A2 `M4-1.d` policy notes are integrated, but `M4-1.c` remains STOPPED and must be completed.
+> - A6 M4-5 scheduler contract is integrated.
+> - A3/A4/A5/A7/A8 may now write code only where the unblock condition below says `START`.
+
+| Lane | Status | Code Task To Execute Now | Allowed Extra Scope For This Dispatch | Stop / Wait Condition |
+|---|---|---|---|---|
+| A2 | **START** | Complete `M4-1.c`: database result row/byte/field limits, cancellation, timeout, truncation contract. Prefer docs + constants/type proposal in `domain.rs` only if needed by A3/A4. | `logs/checkpoints/M4-1.c-*.md`, `src-tauri/src/domain.rs` type/constants only | Stop if touching DB implementation, commands, frontend, or scripts is required. |
+| A3 | **START AFTER A2 M4-1.c, otherwise LIMITED START** | Implement M4-2 PoolKind foundation: add database module skeleton, pool enum/trait boundary, SQLite path validation hooks, credential-key helper `db:<conn_id>`, no command exposure yet. | `src-tauri/src/database.rs` or `src-tauri/src/database/`, `src-tauri/src/domain.rs`, focused Rust tests | If M4-1.c is still STOPPED, only implement pieces independent of limits/cancel; do not expose commands. |
+| A4 | **START** | Implement M4-2.s safety gate first: SQL risk classifier, production verdict, fail-closed write gate pure functions in `security_policy.rs`, plus `check-database-policy.py` and pre-merge hook. Do **not** implement bridge commands until A3 pool boundary exists. | `src-tauri/src/security_policy.rs`, `scripts/check-database-policy.py`, `scripts/pre-merge.sh`, focused tests | Stop before `bridge.rs/main.rs/ACL` command work unless A3 has landed pool/safety interfaces. |
+| A5 | **LIMITED START** | Implement database UI pure logic only: connection form validation helpers, result-grid formatting, filter/export helper tests, and component skeleton hidden behind no command calls if DTOs are missing. | `src/components/**`, `src/stores/**`, `src/types.ts`, `scripts/check-database-ui-logic.mjs` | Stop before wiring live `db_*` bridge calls until A4 command DTOs exist. |
+| A6 | **START** | Complete `M4-5.d`: scheduler policy script and pre-merge integration for TaskDef/scheduler invariants. No scheduler runtime implementation. | `scripts/check-scheduler-policy.py`, `scripts/pre-merge.sh`, `logs/checkpoints/M4-5.d-*.md` | Stop if product scheduler code is needed. |
+| A7 | **START** | Implement M4-6 scheduler backend foundation: `TaskDef`/`TaskRunRecord` concrete types if absent, `tasks.json` atomic persistence, validation, `task_list/add/update/remove/run_now` command shell with source check/ACL. Then M4-7 shutdown hook using existing coordinator. | `src-tauri/src/scheduler.rs` or `src-tauri/src/scheduler/`, `src-tauri/src/domain.rs`, `src-tauri/src/bridge.rs`, `src-tauri/src/main.rs`, `src-tauri/permissions/default-commands.toml`, tests | Must reuse M2-4 `script_runner`; no second execution path. If A6 policy script conflicts, stop and report. |
+| A8 | **LIMITED START** | Implement scheduler UI pure logic and component skeleton: trigger editor, missed-run/retry controls, next-run/history display helpers, UI tests. | `src/components/**`, `src/stores/**`, `src/types.ts`, `scripts/check-scheduler-ui-logic.mjs` | Stop before wiring live `task_*` bridge calls until A7 command DTOs exist. |
+| A9 | **START READ/WRITE DOCS ONLY** | Prepare M5 split after M4: knowledge graph, protocol, agent/plugin lanes, dependency blockers. | `logs/assist/`, future task-card docs only | No M5 product code before M4 PASS. |
+| A10 | **START** | Review A2/A3/A4/A6/A7 security-sensitive changes as they land. May add failing policy samples, but product-code fixes require A0 assignment. | `logs/assist/`, policy gap docs; if A0 assigns, policy scripts only | Do not edit product code by default. |
+| A11 | **START** | Maintain verification matrix and manual/GUI checklist; update after each implementation lane output. | `logs/assist/`, `logs/checkpoints/` verification docs | Do not edit product code. |
+| A12 | **START** | Cross-lane conflict scan: stale NEXT, empty files, lane ownership drift, duplicate command names, doc/code mismatch. | `logs/assist/A12-*.md` | Do not edit product code. |
+
+## Lane-Specific Minimal Prompts
+
+Use exactly one line per agent:
+
+```text
+继续 Lane A2，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
+继续 Lane A3，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
+继续 Lane A4，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
+继续 Lane A5，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
+继续 Lane A6，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
+继续 Lane A7，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
+继续 Lane A8，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
+继续 Lane A9，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
+继续 Lane A10，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
+继续 Lane A11，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
+继续 Lane A12，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
+```
 
 ## Dispatch Waves
 

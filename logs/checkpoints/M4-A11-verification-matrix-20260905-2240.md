@@ -1,13 +1,15 @@
 # M4-A11 验证证据包 · 定向命令矩阵
 
 > Lane：**A11（M4 verification evidence）** ｜ 路由 `AI:BALANCED / R:medium`
-> 日期：2026-09-05 22:40 CST ｜ 作者：CodeBuddy Hy4
+> 初版：2026-09-05 22:40 CST ｜ **本次更新：2026-09-05 23:xx CST（并入 A2 的 M4-1.a/b/d 与 M4-1.c STOPPED、A6 的 M4-5 契约现状）** ｜ 作者：CodeBuddy Hy4
 > 范围声明：本包**只产出验证日志 / 清单 / 台账，零产品代码改动**；`git push` 归 A0，本车道不提交、不推送。
-> 状态：`BASE=e6e09cf`（启动门禁取样点）→ 观察期间 HEAD 漂移到 `f376346` → `3544c09`（**均为 `PARALLEL_COMMAND_BOARD.md` / `后续需求TODO.md` 文档提交，无产品代码**，故不影响本包结论）。
+> 状态：`BASE=e6e09cf`（初版取样点）→ 并行期间 HEAD 漂移 `f376346` → `3544c09` → **本次更新基线 `47fce60`**（A0 已把 A1 / A2（M4-1.b 的 `domain.rs` +346）/ A6 / A10 / A11 文档集成入 `master`；`git pull --ff-only` → 已是最新，工作树干净）。
 
 **姊妹交付物（本包与之对齐，不重复发明）**
 
 - A1：`logs/checkpoints/M4-20260905-2225.md` —— M4 卡展开与依赖图；**§5 测试矩阵 ID 段**（`T-db-c1~c8` / `N-sql-1~16` / `T-db-p1~p12` / `T-db-cmd-1~14` / `T-db-ui-1~N` / `T-sched-c1~c14` / `T-task-1~12` / `T-trig-1~10` / `T-sched-ui-1~N`）与 **§6 违规码位前缀**（`DB_*` / `DBUI_*` / `SCHED_*` / `SCHEDUI_*`）为冻结口径，本矩阵直接引用。
+- A2：`logs/checkpoints/M4-1.a-20260905-2245.md`、`M4-1.b-20260905-2250.md`、`M4-1.c-20260905-2255.md`、`M4-1.d-20260905-2300.md` —— 数据库契约四卡，现状见 **§3.5 契约现状看板**。
+- A6：`logs/checkpoints/A6-M4-5-scheduler-contract-20260905-2330.md` —— 调度核心契约（M4-5.a/b/c）冻结，现状见 **§3.5 契约现状看板**。
 - A10：`logs/assist/A10-M4-security-review-20260905-2240.md` —— 发现 G-1~G-12、§5 门禁增量要求、§6 与既有债务交互；本矩阵 §4 的护栏行给出 G 编号映射。
 
 ---
@@ -29,16 +31,21 @@ git log --oneline -12              # HEAD 侧为并行车道文档提交  ✅
 
 | 项 | 命令 | 实测结果 | 取样点 |
 |---|---|---|---|
-| Rust 全量单测 | `cargo test --manifest-path src-tauri/Cargo.toml` | `test result: ok. 232 passed; 0 failed; 0 ignored`（7.09 s） | `3544c09` |
+| Rust 全量单测 | `cargo test --manifest-path src-tauri/Cargo.toml` | `test result: ok. 237 passed; 0 failed; 0 ignored`（7.04 s） | **`47fce60`**（本次更新复跑） |
+| Rust 全量单测（更新前） | 同上 | `232 passed; 0 failed` | `3544c09`（初版基线） |
 | WBS 路由标签 | `python3 scripts/check-plan-routing.py` | `check-plan-routing: ok (50 WBS rows)`，EXIT=0 | `f376346` |
 | 门禁自检 | `bash scripts/pre-merge.sh --self-test` | `SELF_TEST_RESULT=ALL_PASS` | `e6e09cf` |
+| 同步远端 | `git pull --ff-only` | `已经是最新的。`（与 `origin/master` 同步） | `47fce60` |
 | 工作树 | `git status --short --branch` | 干净，`master` | 全程 |
 
-待 A0 集成时补齐的两项（耗时较长，本车道在 BASE 阶段不重复烧机器）：
+> **232 → 237 的来源**：A2 的 M4-1.b 类型提案（`d6457fe`，`src-tauri/src/domain.rs` +353/+346 行）新增 `T-db-c1~c5` 五个单测。因此 **T0-3 的下限由 232 上调为 237**（见 §3 T0-3）。
 
-- `npm run build` → 0 error，主 JS 约 161.36 kB（M3.c 终态值）
+引用 A2 / A6 已复跑的证据（同 HEAD 附近，本车道不重复烧机器，A0 集成时复跑）：
+
+- `cargo test m4_1_db_contract` → `5 passed; 0 failed`（A2 `M4-1.d` §9）
+- `cargo check --locked` → warning 仍为既有 2 类（`grid_process.rs` 死代码）
+- `npm run build` → EXIT=0，主 JS 161.36 kB（未变）
 - `bash scripts/pre-merge.sh` → `PRE_MERGE_RESULT=ALL_PASS`
-- `cargo check --locked` → warning 仍为既有 2 类（均在 `grid_process.rs`）
 
 ---
 
@@ -50,7 +57,7 @@ git log --oneline -12              # HEAD 侧为并行车道文档提交  ✅
 |---|---|---|---|
 | T0-1 | `cargo fmt --manifest-path src-tauri/Cargo.toml --all --check` | EXIT 0，无 diff | 阻塞 |
 | T0-2 | `cargo fmt --manifest-path tauri-browser-tabs/Cargo.toml --all --check` | EXIT 0 | 阻塞 |
-| T0-3 | `cargo test --manifest-path src-tauri/Cargo.toml` | `passed ≥ 232`，`failed = 0` | 阻塞（**计数只增不减**） |
+| T0-3 | `cargo test --manifest-path src-tauri/Cargo.toml` | `passed ≥ 237`，`failed = 0`（**2026-09-05 23:xx 上调**：M4-1.b 新增 `T-db-c1~c5`） | 阻塞（**计数只增不减**） |
 | T0-4 | `cargo check --manifest-path src-tauri/Cargo.toml --locked` | error 0；warning 不增（现状 2 类） | 阻塞 |
 | T0-5 | `npm run build` | 0 error；主 JS 无异常增长 | 阻塞 |
 | T0-6 | `python3 scripts/measure-build-metrics.py --compare logs/m0-build-metrics/build-metrics-<最早>.json --skip-build` | 总体积增长 ≤15%、cargo warning 不增 | 阻塞 |
@@ -64,12 +71,12 @@ git log --oneline -12              # HEAD 侧为并行车道文档提交  ✅
 | Lane | 定向命令 | 期望 | 现状 |
 |---|---|---|---|
 | A1（卡展开） | `python3 scripts/check-plan-routing.py`；`git diff --stat -- 详细设计与实施计划.md 后续需求TODO.md` | 新卡带 `[S3\|LEVERAGE:n\|COMPLEX\|AI:*\|R:*]` 标签，路由脚本仍 `ok` | 未交付 |
-| A2（M4-1 契约） | 文档为主：`python3 scripts/check-plan-routing.py`；引入依赖时 `cargo check --locked` 仍 0；一次性核查 `grep -rni "jdbc" src-tauri/src src-tauri/Cargo.toml` | 无 JDBC 侧车；`Cargo.lock` 同步入库 | 未交付 |
+| A2（M4-1 契约） | 文档为主：`python3 scripts/check-plan-routing.py`；`cargo test m4_1_db_contract`（`T-db-c1~c5`）；一次性核查 `grep -rni "jdbc" src-tauri/src src-tauri/Cargo.toml`；A3 引入依赖后 `cargo check --locked` 仍 0 + `git diff Cargo.lock` 人工复核 | 无 JDBC 侧车；`Cargo.lock` 同步入库；`DB_UNDECLARED_RUNTIME` 禁 `tokio/sqlx/diesel` **直接**依赖 | **a/b/d 已交付（契约冻结，b 落 `domain.rs`）；c 处于 STOPPED 且文件状态矛盾，见 §3.5** |
 | A3（M4-2/3 后端） | `cargo test database`（覆盖 A1 的 `T-db-p1~p12` / `T-db-cmd-1~14`）；`python3 scripts/check-database-policy.py --self-test` + 默认 + `--expect-pending`；`python3 scripts/check-script-exec-policy.py`（证明未新增第二执行路径） | 全部 EXIT 0；`DB_*` pending 集合与 `PENDING_CODES` 双向一致；`db_*` 三处同步 | 未交付 |
 | A4（M4-2.s / M4-3 安全闸门） | `python3 scripts/check-security-policy.py --self-test` + `--expect-current-gaps` + 默认；`python3 scripts/check-database-policy.py --self-test`（`N-sql-1~16` 失败用例为主）；`cargo test security_policy` | gap 集合与威胁矩阵一致（A10 §5-3 要求增 db/task 缺口码）；写操作默认拒绝 | 未交付 |
 | A5（M4-4 DB UI） | `node scripts/check-database-ui-logic.mjs`；`python3 scripts/check-database-ui-policy.py --self-test` + 默认；`npm run build` | 断言全过（口径同 `check-terminal-ui-logic.mjs`：加载真实 `.ts`、只 mock bridge）；口令不进持久化 store（A10 G-12） | 未交付 |
-| A6（M4-5 契约） | 同 A2（文档 + 路由） | `TaskDef` 语义冻结，时钟/错过执行/取消有书面口径 | 未交付 |
-| A7（M4-6/7 后端） | `cargo test scheduler`（覆盖 `T-task-1~12` / `T-trig-1~10`，含真实进程取证）；`python3 scripts/check-scheduler-policy.py --self-test` + 默认 + `--expect-pending`；`python3 scripts/check-lifecycle-contract.py --self-test --expect-current-gaps + 默认`；`python3 scripts/check-script-exec-policy.py` | 复用 M2-4 通道；`tasks.yaml` 原子写 + 损坏 fail-closed（A10 G-8）；scheduler 停止为首个关机任务（A10 G-9）；退出后无 timer / 进程残留 | 未交付 |
+| A6（M4-5 契约） | 纯契约：`python3 scripts/check-plan-routing.py`；`bash scripts/pre-merge.sh`；**零产品代码自证** `git diff --stat -- src src-tauri scripts package.json package-lock.json`（应为空）；M4-5.d 若授权则 `python3 scripts/check-scheduler-policy.py --self-test` + 默认 + `--expect-pending` | `TaskDef` / 时钟 / 错过执行 / 取消语义有书面口径；`SCHED_*` pending 集合与 `PENDING_CODES` 双向一致 | **已交付（M4-5.a/b/c = `CONTRACT_FROZEN`，零产品代码；M4-5.d 夹具骨架待 A0 授权，见 §3.5）** |
+| A7（M4-6/7 后端） | `cargo test scheduler`（覆盖 `T-task-1~12` / `T-trig-1~10`，含真实进程取证；先落 A6 的 `T-sched-c1~c14` 假时钟单测）；`python3 scripts/check-scheduler-policy.py --self-test` + 默认 + `--expect-pending`；`python3 scripts/check-lifecycle-contract.py --self-test --expect-current-gaps + 默认`；`python3 scripts/check-script-exec-policy.py` | 复用 M2-4 通道；`tasks.json` 原子写 + 损坏 fail-closed（A10 G-8 与 A6 §3.4 统一取 `tasks.json`）；`stop-scheduler` 注册在 `stop-background-workers` 之后、`flush-sessions` 之前（A6 §5.5）；退出后无 timer / 进程残留 | 未交付（**A6 §14 已声明 A7 十项解锁条件全部满足，可放行**） |
 | A8（M4-8 调度 UI） | `node scripts/check-scheduler-ui-logic.mjs`；`python3 scripts/check-scheduler-ui-policy.py --self-test` + 默认；`npm run build` | 断言全过（`T-sched-ui-1~N`）；历史排序 / 重试态 / 下次执行时间格式化 | 未交付 |
 | A10（安全复核） | **复跑** A2/A3/A4/A7 的全部门禁命令 + 读其检查点 | 与 lane 自报结果一致，偏差需书面说明 | 未交付 |
 
