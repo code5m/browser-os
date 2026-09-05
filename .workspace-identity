@@ -1,0 +1,6 @@
+WORKSPACE_ID=BACKV3_MAIN
+ROLE=canonical-main-working-copy
+PATH=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
+EXPECTED_BRANCH=master
+POLICY=This is the canonical V3 main directory. Use it for final integration, verification, commits, and pushes. Do not confuse it with Codex disposable worktrees.
+STARTUP_CHECK=cat .workspace-identity && pwd && git status --short --branch
