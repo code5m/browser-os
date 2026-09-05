@@ -2952,7 +2952,72 @@ fn get_enabled_script(app: &AppHandle, id: &str) -> Result<ScriptMeta, String> {
     Ok(script)
 }
 
-/// 启动脚本：命令层只传参数 map，真正 argv 构造和 fail-closed 校验在 `script_runner`。
+fn get_enabled_snippet(app: &AppHandle, id: &str) -> Result<CommandSnippet, String> {
+    check_id(id, "命令片段 id")?;
+    let snippet = workspace::load_snippets(app)
+        .into_iter()
+        .find(|s| s.id == id)
+        .ok_or_else(|| "SNIPPET_NOT_FOUND".to_string())?;
+    if !snippet.enabled {
+        return Err("SNIPPET_DISABLED".to_string());
+    }
+    crate::snippets::validate_snippet(&snippet).map_err(|e| e.to_string())?;
+    Ok(snippet)
+}
+
+/// 启动命令片段：命令层只传参数 map，真正 argv 整元素替换和 fail-closed 校验在
+/// `script_runner::start_command`，并复用脚本运行的进程表/事件/取消/落盘链路。
+#[tauri::command]
+pub fn run_command(
+    app: AppHandle,
+    webview: tauri::Webview,
+    id: String,
+    values: HashMap<String, String>,
+) -> Result<RunSnapshot, String> {
+    check_invocation_source(&webview, "run_command", None, &app)?;
+    check_id(&id, "命令片段 id")?;
+    let snippet = get_enabled_snippet(&app, &id)?;
+    let count = snippet.params.len();
+    let roots = allowed_roots(&app);
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let table = Arc::clone(&app.state::<AppState>().script_runs);
+    let start = crate::script_runner::start_command(
+        &table,
+        &snippet,
+        &values,
+        &roots,
+        &home,
+        Some(app.clone()),
+        Some(workspace::script_runs_file(&app)),
+    );
+    let run_id = match start {
+        Ok(rid) => rid,
+        Err(e) => {
+            if let RunError::InvalidParam(ref inner) = e {
+                workspace::log_audit(
+                    &app,
+                    "cmd.validate.reject",
+                    format!("id={} error_code={}", snippet.id, inner.code()),
+                );
+            }
+            return Err(map_run_error(e));
+        }
+    };
+    let snapshot = table
+        .snapshot(&run_id)
+        .ok_or_else(|| "UNKNOWN_RUN".to_string())?;
+    workspace::log_audit(
+        &app,
+        "cmd.run.start",
+        format!(
+            "id={} run_id={} count={} dangerous={}",
+            snippet.id, run_id, count, snippet.dangerous
+        ),
+    );
+    Ok(snapshot)
+}
+
+/// 启动脚本：命令层只传输入 map，真正展开和 fail-closed 校验在 `script_runner`。
 #[tauri::command]
 pub fn run_script(
     app: AppHandle,

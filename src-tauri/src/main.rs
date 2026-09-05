@@ -1381,6 +1381,7 @@ fn main() {
             bridge::snippet_add,
             bridge::snippet_update,
             bridge::snippet_remove,
+            bridge::run_command,
             bridge::run_script,
             bridge::cancel_script,
             bridge::script_status,

@@ -33,7 +33,9 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 
-use crate::domain::{ParamType, RunStatus, ScriptInterpreter, ScriptMeta, ScriptParam};
+use crate::domain::{
+    CommandSnippet, ParamType, RunStatus, ScriptInterpreter, ScriptMeta, ScriptParam,
+};
 use crate::scripts::{check_required, validate_enum_value, validate_param_value, ScriptError};
 use crate::security_policy::check_path_within_roots;
 use tauri::{AppHandle, Emitter};
@@ -394,6 +396,70 @@ pub fn build_argv(
     Ok(argv)
 }
 
+/// 构造命令片段 argv（M2-6.c）。
+///
+/// 命令片段没有正文文件，故 `snippet.argv` 本身就是完整 argv：
+/// - `interpreter` 是沿用契约字段，执行期不把它转成 `bash -c` 或脚本包裹；
+/// - `Shebang` 显式拒绝（无正文文件可依赖 shebang 与可执行位）；
+/// - 仅当 argv 元素严格等于 `{NAME}` 时替换为一个参数值；
+/// - 普通字面量原样传入，不经 shell、不拼接、不加引号。
+pub fn build_command_argv(
+    snippet: &CommandSnippet,
+    values: &HashMap<String, String>,
+    roots: &[PathBuf],
+) -> Result<Vec<String>, RunError> {
+    if matches!(snippet.interpreter, ScriptInterpreter::Shebang) {
+        return Err(RunError::ScriptPathRejected(
+            "命令片段不支持 shebang".to_string(),
+        ));
+    }
+    crate::snippets::validate_snippet(snippet)
+        .map_err(|e| RunError::ScriptPathRejected(e.to_string()))?;
+
+    let mut argv: Vec<String> = Vec::with_capacity(snippet.argv.len());
+
+    for element in &snippet.argv {
+        if let Some(name) = CommandSnippet::placeholder_of(element) {
+            let param = snippet
+                .params
+                .iter()
+                .find(|p| p.name == name)
+                .ok_or_else(|| RunError::ScriptPathRejected("UNKNOWN_PLACEHOLDER".to_string()))?;
+            let value: Option<&String> = values.get(&param.name).or(param.default.as_ref());
+            let value: &str = match value {
+                Some(v) => v,
+                None => {
+                    check_required(param, None).map_err(RunError::InvalidParam)?;
+                    continue;
+                }
+            };
+
+            check_required(param, Some(value)).map_err(RunError::InvalidParam)?;
+            validate_param_value(value, param.param_type).map_err(RunError::InvalidParam)?;
+
+            match param.param_type {
+                ParamType::Enum => {
+                    validate_enum_value(value, &param.options).map_err(RunError::InvalidParam)?;
+                }
+                ParamType::Path => {
+                    check_path_within_roots(value, roots)
+                        .map_err(|_| RunError::InvalidParam(ScriptError::PathEscape))?;
+                }
+                ParamType::String | ParamType::Int | ParamType::Bool => {}
+            }
+            argv.push(value.to_string());
+        } else if element.contains('{') || element.contains('}') {
+            return Err(RunError::ScriptPathRejected(
+                "PARTIAL_INTERPOLATION".to_string(),
+            ));
+        } else {
+            argv.push(element.clone());
+        }
+    }
+
+    Ok(argv)
+}
+
 // ----------------------------- 平台分支（进程组） -----------------------------
 
 /// 在新进程组（新会话）中 spawn，使后续可以整组 kill（a 卡 §8.4）。
@@ -634,32 +700,24 @@ fn supervise(
 
 // ----------------------------- 入口 -----------------------------
 
-/// 启动一次脚本运行，返回 `run_id`。
-///
-/// 并发判定与注册在同一把锁内完成（避免 TOCTOU）：先占位为 `Running`，
-/// spawn 失败再移除占位。
-///
-/// 消费者 = **M2-4.c**（`run_script` 命令）。b 卡只提供内核、不接命令层
-/// （a 卡 §9 边界），故标注 `#[allow(dead_code)]`（同 M2-3 `join_image_path` 口径）。
-#[allow(dead_code)]
-pub fn start_run(
+fn start_argv_run(
     table: &Arc<ScriptProcessTable>,
-    meta: &ScriptMeta,
-    script_abs_path: &Path,
-    values: &HashMap<String, String>,
-    roots: &[PathBuf],
+    script_id: &str,
+    timeout_secs: u32,
+    argv: Vec<String>,
+    cwd: PathBuf,
     home_dir: &Path,
     app: Option<AppHandle>,
     records_file: Option<PathBuf>,
 ) -> Result<String, RunError> {
-    let timeout = effective_timeout(meta.timeout_secs)?;
+    let timeout = effective_timeout(timeout_secs)?;
 
     // --- 1) 并发检查 + 占位注册（同一锁内，原子） ---
     let run_id = format!("run-{}", uuid::Uuid::new_v4());
     let cancel = Arc::new(AtomicBool::new(false));
     let state = Arc::new(Mutex::new(RunSnapshot {
         run_id: run_id.clone(),
-        script_id: meta.id.clone(),
+        script_id: script_id.to_string(),
         status: RunStatus::Running,
         started_at: Utc::now(),
         finished_at: None,
@@ -675,10 +733,10 @@ pub fn start_run(
         let mut runs = table.lock_runs();
         if runs
             .values()
-            .any(|e| e.script_id == meta.id && !is_terminal_entry(e))
+            .any(|e| e.script_id == script_id && !is_terminal_entry(e))
         {
             return Err(RunError::AlreadyRunning {
-                script_id: meta.id.clone(),
+                script_id: script_id.to_string(),
             });
         }
         let running = runs.values().filter(|e| !is_terminal_entry(e)).count();
@@ -690,7 +748,7 @@ pub fn start_run(
         runs.insert(
             run_id.clone(),
             RunEntry {
-                script_id: meta.id.clone(),
+                script_id: script_id.to_string(),
                 pgid: None,
                 cancel: Arc::clone(&cancel),
                 state: Arc::clone(&state),
@@ -700,35 +758,10 @@ pub fn start_run(
     }
     table.evict_if_needed();
 
-    // --- 2) 构造 argv 与命令（P0：argv 数组，无 shell 拼接） ---
-    let argv = match build_argv(
-        meta.interpreter,
-        script_abs_path,
-        &meta.params,
-        values,
-        roots,
-    ) {
-        Ok(a) => a,
-        Err(e) => {
-            table.lock_runs().remove(&run_id);
-            return Err(e);
-        }
-    };
     let (program, rest) = argv.split_first().ok_or_else(|| {
         table.lock_runs().remove(&run_id);
         RunError::ScriptPathRejected("argv 为空".to_string())
     })?;
-
-    // cwd 锁定为脚本所在目录，且必须在允许根目录内（a 卡 §8.2，用户不可控）。
-    let cwd = match script_abs_path.parent() {
-        Some(p) if check_path_within_roots(&p.to_string_lossy(), roots).is_ok() => p.to_path_buf(),
-        _ => {
-            table.lock_runs().remove(&run_id);
-            return Err(RunError::CwdRejected(
-                "脚本所在目录不在允许根目录内".to_string(),
-            ));
-        }
-    };
 
     let mut cmd = Command::new(program);
     cmd.args(rest)
@@ -800,6 +833,72 @@ pub fn start_run(
     });
 
     Ok(run_id)
+}
+
+/// 启动一次脚本运行，返回 `run_id`。
+///
+/// 并发判定与注册在同一把锁内完成（避免 TOCTOU）：先占位为 `Running`，
+/// spawn 失败再移除占位。
+#[allow(dead_code)]
+pub fn start_run(
+    table: &Arc<ScriptProcessTable>,
+    meta: &ScriptMeta,
+    script_abs_path: &Path,
+    values: &HashMap<String, String>,
+    roots: &[PathBuf],
+    home_dir: &Path,
+    app: Option<AppHandle>,
+    records_file: Option<PathBuf>,
+) -> Result<String, RunError> {
+    let argv = build_argv(
+        meta.interpreter,
+        script_abs_path,
+        &meta.params,
+        values,
+        roots,
+    )?;
+    let cwd = match script_abs_path.parent() {
+        Some(p) if check_path_within_roots(&p.to_string_lossy(), roots).is_ok() => p.to_path_buf(),
+        _ => {
+            return Err(RunError::CwdRejected(
+                "脚本所在目录不在允许根目录内".to_string(),
+            ));
+        }
+    };
+    start_argv_run(
+        table,
+        &meta.id,
+        meta.timeout_secs,
+        argv,
+        cwd,
+        home_dir,
+        app,
+        records_file,
+    )
+}
+
+/// 启动一次命令片段运行（M2-6.c），复用同一进程表、supervisor、输出 reader、
+/// 取消/超时与运行记录落盘链路。
+pub fn start_command(
+    table: &Arc<ScriptProcessTable>,
+    snippet: &CommandSnippet,
+    values: &HashMap<String, String>,
+    roots: &[PathBuf],
+    home_dir: &Path,
+    app: Option<AppHandle>,
+    records_file: Option<PathBuf>,
+) -> Result<String, RunError> {
+    let argv = build_command_argv(snippet, values, roots)?;
+    start_argv_run(
+        table,
+        &snippet.id,
+        snippet.timeout_secs,
+        argv,
+        home_dir.to_path_buf(),
+        home_dir,
+        app,
+        records_file,
+    )
 }
 
 /// 退出收口：**遍历 Running → 置取消位 → kill 进程组 → 标记 Cancelled**。
@@ -937,6 +1036,25 @@ mod script_runner_tests {
         }
     }
 
+    fn snippet_with(argv: Vec<&str>, params: Vec<ScriptParam>) -> CommandSnippet {
+        let now = Utc::now();
+        CommandSnippet {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "snippet".to_string(),
+            category: "text".to_string(),
+            interpreter: ScriptInterpreter::Bash,
+            argv: argv.into_iter().map(|s| s.to_string()).collect(),
+            params,
+            description: String::new(),
+            dangerous: false,
+            builtin: false,
+            enabled: true,
+            timeout_secs: 0,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
     /// 轮询等待进入终态（避免测试 flaky）。
     fn wait_terminal(table: &ScriptProcessTable, run_id: &str, millis: u64) -> RunSnapshot {
         let deadline = Instant::now() + Duration::from_millis(millis);
@@ -999,6 +1117,67 @@ mod script_runner_tests {
             "顺序必须按声明顺序（second 先于 first）"
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn c1_build_command_argv_uses_full_argv_without_shell_wrapper() {
+        let dir = temp_dir("c1");
+        let roots = vec![dir];
+        let mut values = HashMap::new();
+        values.insert("PATTERN".to_string(), "needle".to_string());
+        let snippet = snippet_with(
+            vec!["grep", "-r", "{PATTERN}", "/tmp/logs"],
+            vec![param("PATTERN", ParamType::String, true)],
+        );
+
+        let argv = build_command_argv(&snippet, &values, &roots).expect("command argv");
+
+        assert_eq!(argv, vec!["grep", "-r", "needle", "/tmp/logs"]);
+        assert!(!argv.iter().any(|v| v == "bash" || v == "sh" || v == "-c"));
+    }
+
+    #[test]
+    fn c2_build_command_argv_rejects_partial_interpolation() {
+        let dir = temp_dir("c2");
+        let roots = vec![dir];
+        let mut values = HashMap::new();
+        values.insert("PATTERN".to_string(), "needle".to_string());
+        let snippet = snippet_with(
+            vec!["grep", "-r{PATTERN}"],
+            vec![param("PATTERN", ParamType::String, true)],
+        );
+
+        let err = build_command_argv(&snippet, &values, &roots).unwrap_err();
+        assert_eq!(err.code(), "SCRIPT_PATH_REJECTED");
+    }
+
+    #[test]
+    fn c3_start_command_reuses_runner_and_persists_record() {
+        let dir = temp_dir("c3");
+        let records = dir.join("runs.json");
+        let roots = vec![dir.clone()];
+        let table = Arc::new(ScriptProcessTable::default());
+        let snippet = snippet_with(vec!["printf", "cmd-ok"], vec![]);
+
+        let run_id = start_command(
+            &table,
+            &snippet,
+            &HashMap::new(),
+            &roots,
+            &dir,
+            None,
+            Some(records.clone()),
+        )
+        .expect("start command");
+        let snap = wait_terminal(&table, &run_id, 3000);
+
+        assert_eq!(snap.status, RunStatus::Succeeded);
+        assert_eq!(snap.script_id, snippet.id);
+        assert_eq!(snap.output_tail, "cmd-ok");
+        let persisted = load_run_records(&records);
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].script_id, snippet.id);
+        assert_eq!(persisted[0].output_tail, "cmd-ok");
     }
 
     // ---------- B2：危险值拒绝 ----------

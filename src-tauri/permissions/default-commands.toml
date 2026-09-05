@@ -104,5 +104,6 @@ commands.allow = [
     "snippet_add",
     "snippet_update",
     "snippet_remove",
+    "run_command",
     "list_artifact_images"
 ]

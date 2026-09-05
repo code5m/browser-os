@@ -271,6 +271,10 @@ export const bridge = {
 
   snippetRemove: (id: string) => invoke("snippet_remove", { id }),
 
+  // M2-6.c 命令片段执行：复用脚本执行态事件和运行历史。
+  runCommand: (id: string, values: Record<string, string>) =>
+    invoke<RunSnapshot>("run_command", { id, values }),
+
   // 订阅脚本输出流（payload 为 ScriptOutputEvent；前端用 rAF 合并，避免高频打满渲染）
   onScriptOutput: (cb: (e: ScriptOutputEvent) => void) =>
     listen<ScriptOutputEvent>("script-output", (e) => cb(e.payload)),
