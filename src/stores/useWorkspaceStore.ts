@@ -12,7 +12,15 @@ import {
   canDeleteScript,
   type ScriptForm,
 } from "../utils/scriptUi";
-import type { ScriptMeta } from "../types";
+import {
+  emptySnippetForm,
+  loadSnippetForm,
+  validateSnippetForm,
+  serializeSnippetForm,
+  canDeleteSnippet,
+  type SnippetForm,
+} from "../utils/snippetUi";
+import type { CommandSnippet, ScriptMeta } from "../types";
 
 const TEXT_EXTS = [
   "txt","json","js","ts","vue","rs","html","css","xml","yaml","yml","toml",
@@ -63,6 +71,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   // ===== 脚本库 CRUD（M2-5.a，纯前端，复用 M2-3 四条命令） =====
   const scripts = ref<ScriptMeta[]>([]);
   const scriptForm = reactive<ScriptForm>(emptyScriptForm());
+  const snippets = ref<CommandSnippet[]>([]);
+  const snippetForm = reactive<SnippetForm>(emptySnippetForm());
 
   async function loadScripts() {
     try {
@@ -121,6 +131,71 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       await bridge.scriptRemove(m.id);
       layout.showToast("已删除：" + m.name);
       await loadScripts();
+    } catch (e: any) {
+      layout.showToast("删除失败：" + (e?.message ?? e));
+    }
+  }
+
+  // ===== 命令片段库 CRUD（M2-6.d，执行通过 run_command 复用脚本运行态） =====
+  async function loadSnippets() {
+    try {
+      snippets.value = await bridge.snippetList();
+    } catch (e: any) {
+      layout.showToast("加载命令片段失败：" + (e?.message ?? e));
+    }
+  }
+  function openSnippetForm(m?: CommandSnippet | null) {
+    Object.assign(snippetForm, m ? loadSnippetForm(m) : emptySnippetForm());
+  }
+  async function saveSnippet() {
+    const issues = validateSnippetForm(snippetForm);
+    if (issues.length) {
+      layout.showToast("表单校验未通过：" + issues[0].message);
+      return;
+    }
+    const ser = serializeSnippetForm(snippetForm);
+    try {
+      if (snippetForm.id) {
+        await bridge.snippetUpdate({
+          id: snippetForm.id,
+          name: ser.name,
+          category: ser.category,
+          interpreter: ser.interpreter,
+          argv: ser.argv,
+          params: ser.params,
+          description: ser.description,
+          dangerous: ser.dangerous,
+          enabled: ser.enabled,
+          timeoutSecs: ser.timeoutSecs,
+        });
+        layout.showToast("已保存：" + ser.name);
+      } else {
+        await bridge.snippetAdd({
+          name: ser.name,
+          category: ser.category,
+          interpreter: ser.interpreter,
+          argv: ser.argv,
+          params: ser.params,
+          description: ser.description,
+          dangerous: ser.dangerous,
+          timeoutSecs: ser.timeoutSecs,
+        });
+        layout.showToast("已新建：" + ser.name);
+      }
+      await loadSnippets();
+    } catch (e: any) {
+      layout.showToast("保存失败：" + (e?.message ?? e));
+    }
+  }
+  async function removeSnippet(m: CommandSnippet) {
+    if (!canDeleteSnippet(m)) {
+      layout.showToast("内置命令不可删除");
+      return;
+    }
+    try {
+      await bridge.snippetRemove(m.id);
+      layout.showToast("已删除：" + m.name);
+      await loadSnippets();
     } catch (e: any) {
       layout.showToast("删除失败：" + (e?.message ?? e));
     }
@@ -610,10 +685,16 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     audit,
     scripts,
     scriptForm,
+    snippets,
+    snippetForm,
     loadScripts,
     openScriptForm,
     saveScript,
     removeScript,
+    loadSnippets,
+    openSnippetForm,
+    saveSnippet,
+    removeSnippet,
     recents,
     fileCtx,
     ctxMenu,

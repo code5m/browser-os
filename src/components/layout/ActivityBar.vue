@@ -33,6 +33,7 @@ const menuSections = [
     items: [
       { view: "apps", icon: "🚀", label: "应用" },
       { view: "scripts", icon: "📜", label: "脚本库" },
+      { view: "commands", icon: "⚡", label: "命令库" },
     ],
   },
   {

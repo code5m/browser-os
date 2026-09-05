@@ -20,6 +20,7 @@ import TerminalPane from "../system/TerminalPane.vue";
 import HomePanel from "../home/HomePanel.vue";
 import SettingsPanel from "../system/SettingsPanel.vue";
 import ScriptPanel from "../workspace/ScriptPanel.vue";
+import CommandSnippetPanel from "../workspace/CommandSnippetPanel.vue";
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
@@ -135,6 +136,11 @@ watch(
     <!-- ===== 脚本库（M2-5.a） ===== -->
     <div v-else-if="layout.mainView === 'scripts'" class="modview">
       <ScriptPanel />
+    </div>
+
+    <!-- ===== 命令库（M2-6.d） ===== -->
+    <div v-else-if="layout.mainView === 'commands'" class="modview">
+      <CommandSnippetPanel />
     </div>
 
     <!-- ===== 系统设置 ===== -->

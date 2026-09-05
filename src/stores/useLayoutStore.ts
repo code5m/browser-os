@@ -14,6 +14,7 @@ export type MainView =
   | "repo"
   | "audit"
   | "scripts"
+  | "commands"
   | "editor";
 
 export const useLayoutStore = defineStore("layout", () => {
@@ -105,6 +106,7 @@ export const useLayoutStore = defineStore("layout", () => {
     repo: { icon: "🛰️", label: "仓库" },
     audit: { icon: "🛡️", label: "审计" },
     scripts: { icon: "📜", label: "脚本库" },
+    commands: { icon: "⚡", label: "命令库" },
     settings: { icon: "⚙️", label: "设置" },
   };
   const modTabs = reactive<ModTab[]>([]);

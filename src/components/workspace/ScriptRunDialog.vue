@@ -2,13 +2,16 @@
 import { ref, reactive, computed, onMounted, onUnmounted } from "vue";
 import { bridge } from "../../bridge";
 import type {
+  CommandSnippet,
   ScriptMeta,
   RunStatus,
   ScriptOutputEvent,
   ScriptFinishedEvent,
 } from "../../types";
 
-const props = defineProps<{ script: ScriptMeta }>();
+const props = withDefaults(defineProps<{ script: ScriptMeta | CommandSnippet; kind?: "script" | "command" }>(), {
+  kind: "script",
+});
 const emit = defineEmits<{ close: [] }>();
 
 // 参数值收集（统一字符串形态；bool 用 "true"/"false"）
@@ -82,7 +85,9 @@ async function run() {
   errorMsg.value = null;
   pendingChunks.value = [];
   try {
-    const snap = await bridge.runScript(props.script.id, { ...values });
+    const snap = props.kind === "command"
+      ? await bridge.runCommand(props.script.id, { ...values })
+      : await bridge.runScript(props.script.id, { ...values });
     runId.value = snap.run_id;
     running.value = true;
     status.value = snap.status;
