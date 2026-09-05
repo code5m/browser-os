@@ -1,0 +1,368 @@
+diff --git a/src-tauri/src/domain.rs b/src-tauri/src/domain.rs
+index 941fbfb..f795e60 100644
+--- a/src-tauri/src/domain.rs
++++ b/src-tauri/src/domain.rs
+@@ -810,6 +810,194 @@ pub enum ToolSource {
+     User,
+ }
+ 
++// ---------------------------------------------------------------------------
++// M4-1 数据库领域类型（契约冻结见 `logs/checkpoints/M4-1.b-20260905-2250.md`）
++//
++// 本段**只有类型提案**：枚举 / 结构 / 常量，无任何连接、查询、IO、spawn。
++// 无调用者标 `#[allow(dead_code)]`，消费者 = M4-2（连接池与内省）/ M4-3（命令层）。
++//
++// 三条硬约束（由 `check-database-policy.py` 与本文件单测双向守住）：
++//   1. `DbConnectionConfig` **结构性不含 password 字段**（F2）——不是「写前清空」，
++//      是类型上不存在该字段；凭据只经 `KeyringStore`，键格式 `db:<conn_id>`
++//      （与 git 侧 `repo_id` 命名空间隔离，防互相覆盖）；
++//   2. `allow_write` 缺省 `false` = **写默认拒绝**（F1），缺字段即无写权限；
++//   3. 错误码是**闭合枚举 + 稳定字符串码**，前端与夹具按码分支。
++// ---------------------------------------------------------------------------
++
++/// 支持的数据库驱动（snake_case 序列化：`sqlite` / `mysql` / `postgres`）。
++///
++/// **唯一「驱动身份」定义点**：新增驱动在此加变体。其余扩展点由 `match` 穷尽性
++/// （编译期强制）与 M4-1.a §5「加库清单」（夹具 + 测试矩阵）共同兜住；
++/// 契约**不宣称**「加库只改一处」——那是不可兑现的。
++#[allow(dead_code)] // 消费者：M4-2 `database.rs` / M4-3 命令层
++#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum SupportedDb {
++    Sqlite,
++    /// 显式 `rename`：`snake_case` 会把 `MySql` 变成 `my_sql`，
++    /// 与前端/落盘/CLI 惯用的 `mysql` 不一致（单测 T-db-c1 守）。
++    #[serde(rename = "mysql")]
++    MySql,
++    Postgres,
++}
++
++#[allow(dead_code)] // 消费者：M4-2 / M4-3 / M4-4 表单默认值
++impl SupportedDb {
++    pub fn as_str(self) -> &'static str {
++        match self {
++            SupportedDb::Sqlite => "sqlite",
++            SupportedDb::MySql => "mysql",
++            SupportedDb::Postgres => "postgres",
++        }
++    }
++
++    /// 反解驱动标识。**fail-closed**：只接受精确 snake_case，
++    /// 未知 / 大小写变形 / 前后空格一律 `None`（与 `GitWriteOp::from_op_str` 同口径）。
++    pub fn from_kind_str(raw: &str) -> Option<Self> {
++        match raw {
++            "sqlite" => Some(SupportedDb::Sqlite),
++            "mysql" => Some(SupportedDb::MySql),
++            "postgres" => Some(SupportedDb::Postgres),
++            _ => None,
++        }
++    }
++
++    /// 默认端口。`Sqlite` 无网络端口 → `None`（前端据此隐藏端口输入框）。
++    pub fn default_port(self) -> Option<u16> {
++        match self {
++            SupportedDb::Sqlite => None,
++            SupportedDb::MySql => Some(3306),
++            SupportedDb::Postgres => Some(5432),
++        }
++    }
++
++    /// 是否网络库（决定 TLS 与「生产判定」的主机类信号是否适用）。
++    pub fn is_remote(self) -> bool {
++        !matches!(self, SupportedDb::Sqlite)
++    }
++
++    /// 是否支持传输层加密（SQLite 为本地文件，无传输层）。
++    pub fn supports_ssl(self) -> bool {
++        self.is_remote()
++    }
++}
++
++/// TLS 模式（snake_case：`disable` / `prefer` / `require`）。
++///
++/// 缺省 `Prefer`（fail-closed 取严一档）。连上后由 M4-2 记录**实际**是否加密；
++/// 「非回环地址 + 实际未加密」⇒ 写操作拒绝（见 M4-1.b §3 与 M4-1.d 信号表 S6）。
++#[allow(dead_code)] // 消费者：M4-2 连接参数
++#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum DbSslMode {
++    Disable,
++    Prefer,
++    Require,
++}
++
++#[allow(dead_code)] // 消费者：M4-3 `db_connect` 反序列化默认值
++impl Default for DbSslMode {
++    fn default() -> Self {
++        DbSslMode::Prefer
++    }
++}
++
++/// 连接配置（落盘形态：`data_dir/db_connections.json`，原子写 tempfile+rename）。
++///
++/// 结构性不含凭据字段（F2）：`password` / `dsn` / `connection_string` 一律不存在，
++/// 连接串**永不**由本结构序列化。凭据只经 `KeyringStore`（键 `db:<conn_id>`）。
++#[allow(dead_code)] // 消费者：M4-2 持久化 / M4-3 命令层
++#[derive(Debug, Clone, Serialize, Deserialize)]
++pub struct DbConnectionConfig {
++    /// UUID v4，与 Keyring 键 `db:<id>` 一一对应
++    pub id: String,
++    /// 展示名
++    pub name: String,
++    pub kind: SupportedDb,
++    /// SQLite 为 `None`
++    #[serde(default)]
++    pub host: Option<String>,
++    /// `None` → 用 `kind.default_port()`；SQLite 忽略
++    #[serde(default)]
++    pub port: Option<u16>,
++    /// SQLite = 文件路径（**必须**过 `security_policy::check_path_within_roots`）；
++    /// 其余 = 库名。空串是「生产判定 → Unknown」的信号之一（M4-1.d S5）。
++    pub database: String,
++    /// SQLite 为 `None`
++    #[serde(default)]
++    pub username: Option<String>,
++    #[serde(default)]
++    pub ssl_mode: DbSslMode,
++    /// 写权限显式开关，缺省 `false` = **写默认拒绝**（F1）
++    #[serde(default)]
++    pub allow_write: bool,
++    /// 用户显式生产标记（信号 S1）。`None` = 未标记（既不放行也不拒绝）
++    #[serde(default)]
++    pub production_hint: Option<bool>,
++    #[serde(default = "db_enabled_default")]
++    pub enabled: bool,
++    pub created_at: DateTime<Utc>,
++    pub updated_at: DateTime<Utc>,
++}
++
++#[allow(dead_code)] // 消费者：M4-2 持久化 / M4-3 命令层
++fn db_enabled_default() -> bool {
++    true
++}
++
++/// 数据库错误码（**闭合枚举** + 稳定字符串码，沿用 `scripts.rs` 20 码范式）。
++///
++/// 增删码必须同步三处：本文件末尾单测的计数断言、M4-3 的 TS 镜像、
++/// `check-database-policy.py` 的码位表（M4-1.d 交付的 policy notes）。
++#[allow(dead_code)] // 消费者：M4-2 / M4-3 错误出口
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum DbErrorCode {
++    UnsupportedKind,
++    InvalidConfig,
++    PathOutsideRoots,
++    CredentialMissing,
++    ConnectFailed,
++    NotConnected,
++    PoolExhausted,
++    SqlEmpty,
++    SqlTooLarge,
++    SqlParseFailed,
++    MultipleStatements,
++    WriteDenied,
++    ProductionUnknown,
++    QueryFailed,
++    Timeout,
++    Cancelled,
++    LimitExceeded,
++    NotSupported,
++}
++
++#[allow(dead_code)] // 消费者：M4-2 / M4-3 错误出口
++impl DbErrorCode {
++    pub fn as_str(self) -> &'static str {
++        match self {
++            DbErrorCode::UnsupportedKind => "DB_UNSUPPORTED_KIND",
++            DbErrorCode::InvalidConfig => "DB_INVALID_CONFIG",
++            DbErrorCode::PathOutsideRoots => "DB_PATH_OUTSIDE_ROOTS",
++            DbErrorCode::CredentialMissing => "DB_CREDENTIAL_MISSING",
++            DbErrorCode::ConnectFailed => "DB_CONNECT_FAILED",
++            DbErrorCode::NotConnected => "DB_NOT_CONNECTED",
++            DbErrorCode::PoolExhausted => "DB_POOL_EXHAUSTED",
++            DbErrorCode::SqlEmpty => "DB_SQL_EMPTY",
++            DbErrorCode::SqlTooLarge => "DB_SQL_TOO_LARGE",
++            DbErrorCode::SqlParseFailed => "DB_SQL_PARSE_FAILED",
++            DbErrorCode::MultipleStatements => "DB_MULTIPLE_STATEMENTS",
++            DbErrorCode::WriteDenied => "DB_WRITE_DENIED",
++            DbErrorCode::ProductionUnknown => "DB_PRODUCTION_UNKNOWN",
++            DbErrorCode::QueryFailed => "DB_QUERY_FAILED",
++            DbErrorCode::Timeout => "DB_TIMEOUT",
++            DbErrorCode::Cancelled => "DB_CANCELLED",
++            DbErrorCode::LimitExceeded => "DB_LIMIT_EXCEEDED",
++            DbErrorCode::NotSupported => "DB_NOT_SUPPORTED",
++        }
++    }
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+@@ -959,3 +1147,168 @@ mod tests {
+         assert!(!GitWriteOp::CheckoutBranch.is_dangerous());
+     }
+ }
++
++// ---------------------------------------------------------------------------
++// M4-1 契约单测（ID 段 `T-db-c1~c5`，由 A1 展开卡 §5 分配）
++// 目的不是覆盖实现（实现归 M4-2/M4-3），而是把**契约本身**钉死：
++// 驱动身份串、能力表、凭据字段结构性缺失、缺省值 fail-closed、错误码闭合。
++// ---------------------------------------------------------------------------
++#[cfg(test)]
++mod m4_1_db_contract_tests {
++    use super::*;
++    use serde_json::json;
++    use std::collections::BTreeSet;
++
++    const ALL_KINDS: [SupportedDb; 3] = [
++        SupportedDb::Sqlite,
++        SupportedDb::MySql,
++        SupportedDb::Postgres,
++    ];
++
++    fn sample_config() -> DbConnectionConfig {
++        let now = Utc::now();
++        DbConnectionConfig {
++            id: "b3f1c2d4-0000-4000-8000-000000000001".into(),
++            name: "local-sqlite".into(),
++            kind: SupportedDb::Sqlite,
++            host: None,
++            port: None,
++            database: "workspace/app.db".into(),
++            username: None,
++            ssl_mode: DbSslMode::Disable,
++            allow_write: false,
++            production_hint: None,
++            enabled: true,
++            created_at: now,
++            updated_at: now,
++        }
++    }
++
++    /// T-db-c1：驱动身份串往返一致，且 `from_kind_str` fail-closed。
++    #[test]
++    fn t_db_c1_supported_db_roundtrip_is_fail_closed() {
++        for kind in ALL_KINDS {
++            assert_eq!(SupportedDb::from_kind_str(kind.as_str()), Some(kind));
++            // 落盘/前端串与 as_str 必须同源，杜绝「枚举叫 sqlite、JSON 写 SQLite」
++            assert_eq!(serde_json::to_value(kind).unwrap(), json!(kind.as_str()));
++        }
++        for bad in [
++            "",
++            " ",
++            "Sqlite",
++            "SQLITE",
++            " sqlite",
++            "sqlite ",
++            "mysql2",
++            "mssql",
++            "oracle",
++            "postgresql",
++            "postgres-",
++            "jdbc",
++        ] {
++            assert!(
++                SupportedDb::from_kind_str(bad).is_none(),
++                "未知/变形驱动标识必须拒绝: {bad:?}"
++            );
++        }
++    }
++
++    /// T-db-c2：驱动能力表（默认端口 / 是否远程 / 是否支持 TLS）。
++    #[test]
++    fn t_db_c2_driver_capability_table() {
++        assert_eq!(
++            SupportedDb::Sqlite.default_port(),
++            None,
++            "SQLite 无网络端口"
++        );
++        assert_eq!(SupportedDb::MySql.default_port(), Some(3306));
++        assert_eq!(SupportedDb::Postgres.default_port(), Some(5432));
++        assert!(!SupportedDb::Sqlite.is_remote());
++        assert!(SupportedDb::MySql.is_remote() && SupportedDb::Postgres.is_remote());
++        assert!(!SupportedDb::Sqlite.supports_ssl());
++        assert!(SupportedDb::MySql.supports_ssl() && SupportedDb::Postgres.supports_ssl());
++    }
++
++    /// T-db-c3（F2 结构性红线）：连接配置序列化结果不得出现任何凭据承载字段。
++    #[test]
++    fn t_db_c3_connection_config_has_no_credential_field() {
++        let value = serde_json::to_value(sample_config()).unwrap();
++        let keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
++        for forbidden in [
++            "password",
++            "passwd",
++            "pwd",
++            "secret",
++            "token",
++            "dsn",
++            "conn_str",
++            "connection_string",
++            "uri",
++            "url",
++        ] {
++            assert!(
++                !keys.iter().any(|k| k.contains(forbidden)),
++                "连接配置结构性不得承载凭据字段: {forbidden}（实际键: {keys:?}）"
++            );
++        }
++    }
++
++    /// T-db-c4（F1 fail-closed）：历史 JSON 缺新字段时，缺省值必须落在更严一侧。
++    #[test]
++    fn t_db_c4_missing_fields_default_to_fail_closed() {
++        let raw = r#"{
++            "id":"b3f1c2d4-0000-4000-8000-000000000002",
++            "name":"legacy","kind":"postgres","database":"app",
++            "created_at":"2026-09-05T00:00:00Z","updated_at":"2026-09-05T00:00:00Z"
++        }"#;
++        let cfg: DbConnectionConfig = serde_json::from_str(raw).unwrap();
++        assert!(!cfg.allow_write, "缺 allow_write 必须 = 拒绝写");
++        assert_eq!(cfg.ssl_mode, DbSslMode::Prefer, "缺 ssl_mode 必须取严一档");
++        assert_eq!(cfg.production_hint, None, "未标记不得被推断为「非生产」");
++        assert!(cfg.enabled, "缺 enabled 视为启用（与 M2-3 既有口径一致）");
++        assert_eq!(cfg.port, None);
++        assert_eq!(cfg.username, None);
++    }
++
++    /// T-db-c5：错误码闭合 + 稳定 + 唯一（增删枚举必须同步改本断言的计数）。
++    #[test]
++    fn t_db_c5_error_codes_are_closed_and_stable() {
++        const ALL_CODES: [DbErrorCode; 18] = [
++            DbErrorCode::UnsupportedKind,
++            DbErrorCode::InvalidConfig,
++            DbErrorCode::PathOutsideRoots,
++            DbErrorCode::CredentialMissing,
++            DbErrorCode::ConnectFailed,
++            DbErrorCode::NotConnected,
++            DbErrorCode::PoolExhausted,
++            DbErrorCode::SqlEmpty,
++            DbErrorCode::SqlTooLarge,
++            DbErrorCode::SqlParseFailed,
++            DbErrorCode::MultipleStatements,
++            DbErrorCode::WriteDenied,
++            DbErrorCode::ProductionUnknown,
++            DbErrorCode::QueryFailed,
++            DbErrorCode::Timeout,
++            DbErrorCode::Cancelled,
++            DbErrorCode::LimitExceeded,
++            DbErrorCode::NotSupported,
++        ];
++        let mut seen: BTreeSet<&str> = BTreeSet::new();
++        for code in ALL_CODES {
++            let s = code.as_str();
++            assert!(s.starts_with("DB_"), "错误码必须 DB_ 前缀: {s}");
++            assert_eq!(s, s.to_ascii_uppercase(), "错误码形态必须稳定: {s}");
++            assert!(
++                s.chars()
++                    .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()),
++                "错误码只含大写/下划线/数字: {s}"
++            );
++            assert!(seen.insert(s), "错误码重复: {s}");
++        }
++        assert_eq!(
++            ALL_CODES.len(),
++            18,
++            "错误码枚举闭合：增删必须同步改本断言与夹具码位表"
++        );
++    }
++}
