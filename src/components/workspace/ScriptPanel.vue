@@ -5,12 +5,14 @@ import { useLayoutStore } from "../../stores/useLayoutStore";
 import { buildCategoryTree, validateScriptForm, canDeleteScript } from "../../utils/scriptUi";
 import type { ScriptMeta } from "../../types";
 import ScriptParamForm from "./ScriptParamForm.vue";
+import ScriptRunDialog from "./ScriptRunDialog.vue";
 
 const ws = useWorkspaceStore();
 const layout = useLayoutStore();
 
 const selectedId = ref<string | null>(null);
 const editing = ref(false);
+const running = ref<ScriptMeta | null>(null);
 
 const tree = computed(() => buildCategoryTree(ws.scripts));
 const issues = computed(() => validateScriptForm(ws.scriptForm));
@@ -51,6 +53,9 @@ async function remove(m: ScriptMeta) {
   if (!confirm(`删除脚本「${m.name}」？此操作不可恢复`)) return;
   await ws.removeScript(m);
 }
+function openRun(m: ScriptMeta) {
+  running.value = m;
+}
 </script>
 
 <template>
@@ -72,7 +77,8 @@ async function remove(m: ScriptMeta) {
               <span class="name">{{ s.name }}</span>
               <span class="meta">{{ s.interpreter }}{{ s.builtin ? " · 内置" : "" }}{{ s.enabled ? "" : " · 已禁用" }}</span>
             </button>
-            <button v-if="canDeleteScript(s)" class="del" title="删除" @click="remove(s)">🗑</button>
+            <button class="run" title="运行" @click.stop="openRun(s)">▶</button>
+            <button v-if="canDeleteScript(s)" class="del" title="删除" @click.stop="remove(s)">🗑</button>
             <span v-else class="lock" title="内置脚本不可删除">🔒</span>
           </li>
         </ul>
@@ -115,6 +121,8 @@ async function remove(m: ScriptMeta) {
         </div>
       </form>
     </div>
+
+    <ScriptRunDialog v-if="running" :script="running" @close="running = null" />
   </div>
 </template>
 
@@ -132,6 +140,7 @@ async function remove(m: ScriptMeta) {
 .name { font-size: 13px; color: #1f2329; }
 .meta { font-size: 11px; color: #86909c; }
 .del { border: none; background: transparent; cursor: pointer; font-size: 14px; }
+.run { border: none; background: transparent; cursor: pointer; font-size: 14px; color: #2b6cb0; }
 .lock { font-size: 12px; opacity: 0.5; }
 .empty { color: #86909c; font-size: 12px; padding: 16px; text-align: center; }
 .edit-pane { overflow: auto; flex: 1; padding: 8px; }

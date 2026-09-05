@@ -54,6 +54,8 @@ pub const MAX_CONCURRENT_RUNS: usize = 8;
 pub const MAX_TABLE_ENTRIES: usize = 200;
 /// supervisor 轮询间隔。50 ms 对秒级超时（≥2 s）精度足够，且无需跨线程同步 wait 结果。
 pub const POLL_INTERVAL_MS: u64 = 50;
+/// D14 后端输出节流：同 run_id 的 `script-output` 发射最小间隔（ms）。前端仍有 rAF 合并。
+pub const OUTPUT_THROTTLE_MS: u64 = 30;
 /// 内存输出环形缓冲：最多 4 MiB。
 pub const RING_MAX_BYTES: usize = 4 * 1024 * 1024;
 /// 内存输出环形缓冲：最多 5000 行。
@@ -465,6 +467,11 @@ fn spawn_output_reader<R: Read + Send + 'static>(
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut buf = [0u8; CHUNK_MAX_BYTES];
+        // D14 后端节流：同一 run_id 的 script-output 至少间隔 OUTPUT_THROTTLE_MS 才发射一次，
+        // 高频小量输出合并到 pending，避免 IPC 被打满（前端仍有 rAF 合并）。
+        let mut last_emit = Instant::now() - Duration::from_millis(OUTPUT_THROTTLE_MS + 1);
+        let mut pending = String::new();
+        let mut last_seq = 0u64;
         loop {
             match pipe.read(&mut buf) {
                 Ok(0) => break,
@@ -476,24 +483,44 @@ fn spawn_output_reader<R: Read + Send + 'static>(
                         let (tail, truncated) = ring.tail();
                         (seq, tail, truncated)
                     };
+                    last_seq = seq;
                     {
                         let mut st = state.lock().unwrap_or_else(|p| p.into_inner());
                         st.output_tail = tail;
                         st.truncated = truncated;
                         st.output_seq = seq;
                     }
-                    if let Some(app) = &app {
-                        let _ = app.emit(
-                            "script-output",
-                            ScriptOutputEvent {
-                                run_id: run_id.clone(),
-                                chunk: tail_bytes(&chunk, CHUNK_MAX_BYTES, false).0,
-                                seq,
-                            },
-                        );
+                    pending.push_str(&chunk);
+                    let now = Instant::now();
+                    if now.duration_since(last_emit) >= Duration::from_millis(OUTPUT_THROTTLE_MS) {
+                        if let Some(app) = &app {
+                            let _ = app.emit(
+                                "script-output",
+                                ScriptOutputEvent {
+                                    run_id: run_id.clone(),
+                                    chunk: tail_bytes(&pending, CHUNK_MAX_BYTES, false).0,
+                                    seq,
+                                },
+                            );
+                        }
+                        pending.clear();
+                        last_emit = now;
                     }
                 }
                 Err(_) => break,
+            }
+        }
+        // 收尾：把最后一段未达节流阈值的 pending 也发出来，避免尾部丢数据。
+        if !pending.is_empty() {
+            if let Some(app) = &app {
+                let _ = app.emit(
+                    "script-output",
+                    ScriptOutputEvent {
+                        run_id: run_id.clone(),
+                        chunk: tail_bytes(&pending, CHUNK_MAX_BYTES, false).0,
+                        seq: last_seq,
+                    },
+                );
             }
         }
     })

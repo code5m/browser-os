@@ -7,6 +7,8 @@ import type {
   ScriptParam,
   ScriptInterpreter,
   RunSnapshot,
+  ScriptOutputEvent,
+  ScriptFinishedEvent,
   RepoConfig,
   SyncPreview,
   SyncJob,
@@ -233,6 +235,14 @@ export const bridge = {
 
   scriptStatus: (runId: string) =>
     invoke<RunSnapshot>("script_status", { runId }),
+
+  // 订阅脚本输出流（payload 为 ScriptOutputEvent；前端用 rAF 合并，避免高频打满渲染）
+  onScriptOutput: (cb: (e: ScriptOutputEvent) => void) =>
+    listen<ScriptOutputEvent>("script-output", (e) => cb(e.payload)),
+
+  // 订阅脚本运行结束事件（payload 为 ScriptFinishedEvent，含最终 RunSnapshot）
+  onScriptFinished: (cb: (e: ScriptFinishedEvent) => void) =>
+    listen<ScriptFinishedEvent>("script-finished", (e) => cb(e.payload)),
 
   // M1-2 收藏领域
   bookmarkAdd: (p: { url: string; title: string; category: string }) =>

@@ -2810,7 +2810,7 @@ pub fn run_script(
     let roots = allowed_roots(&app);
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     let table = Arc::clone(&app.state::<AppState>().script_runs);
-    let run_id = crate::script_runner::start_run(
+    let start = crate::script_runner::start_run(
         &table,
         &script,
         &script_path,
@@ -2819,8 +2819,22 @@ pub fn run_script(
         &home,
         Some(app.clone()),
         Some(workspace::script_runs_file(&app)),
-    )
-    .map_err(map_run_error)?;
+    );
+    let run_id = match start {
+        Ok(rid) => rid,
+        Err(e) => {
+            // D15：参数校验失败（fail-closed）落审计，detail 只含 script id 与稳定错误码，
+            // 不含任何参数值明文（脱敏三重保险），保证攻击尝试可观测。
+            if let RunError::InvalidParam(ref inner) = e {
+                workspace::log_audit(
+                    &app,
+                    "script.validate.reject",
+                    format!("id={} error_code={}", script.id, inner.code()),
+                );
+            }
+            return Err(map_run_error(e));
+        }
+    };
     let snapshot = table
         .snapshot(&run_id)
         .ok_or_else(|| "UNKNOWN_RUN".to_string())?;

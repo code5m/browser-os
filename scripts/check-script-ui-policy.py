@@ -6,8 +6,9 @@
 - `logs/checkpoints/M2-3.a-20260903-1604.md`（ScriptMeta / ScriptParam 口径）
 - `logs/checkpoints/M2-4.a-20260903-2233.md`（RunStatus / 事件 / 审计）
 
-本夹具守住「纯前端 CRUD UI」的七条红线（a 卡职责）：
+本夹具守住脚本库 UI 的不变量（a 卡 + b 卡职责合并）：
 
+  a 卡（纯前端 CRUD UI）七条红线：
   1. 输出/正文渲染禁用 `v-html`（XSS）
   2. 组件不得绕过 `bridge.ts` 直接 `invoke`
   3. 前端不得参与脚本正文路径构造
@@ -16,14 +17,21 @@
   6. 不得新增 npm 依赖
   7. `mainView='scripts'` 必须注册进 `MainView` 枚举 + `MOD_META` + ActivityBar 入口
 
+  b 卡（执行面板）五条不变量：
+  8. 运行取消入口必须调用 `bridge.cancelScript`
+  9. 事件订阅必须在组件卸载时 `unlisten`
+  10. 输出流必须用 `requestAnimationFrame` 合并（D14 前端层）
+  11. 输出渲染禁止 HTML 注入（XSS / sandbox escape）
+  12. 后端须 emit `script.validate.reject` 审计（D15）
+
 模式：
   默认            判定 ACTIVE 码（a 卡职责）；零命中 → EXIT 0
   --expect-pending 验证 PENDING 码位集合（b/c 职责）确实仍未实现 → EXIT 0
   --self-test     好坏样本双向自检（含**变异防呆**：坏样本必须真的改动内容）
 
-关于「一次性定义码位」：沿用 M0-3.a 模式，13 个码位一次定义，
-默认只判 a 卡职责的 7 个 ACTIVE 码；b/c 卡职责的 6 个 PENDING 码位默认不判，
-待 b/c 卡收口后转 active 或单独裁定（避免 b/c 未实现就把 pre-merge 染红）。
+关于「一次性定义码位」：沿用 M0-3.a 模式，12 个码位一次定义，
+a/b 卡职责的 11 个 ACTIVE 码默认判定；c 卡职责的 `SCRIPTUI_RUNS_LIST_MISSING`
+仍为 PENDING（归 M2-5.c，待 script_runs_list 落地后转 active）。
 """
 
 from __future__ import annotations
@@ -43,6 +51,8 @@ ACTIVITY_BAR = ROOT / "src" / "components" / "layout" / "ActivityBar.vue"
 BRIDGE_TS = ROOT / "src" / "bridge.ts"
 PACKAGE_JSON = ROOT / "package.json"
 PACKAGE_LOCK = ROOT / "package-lock.json"
+SCRIPT_RUN_DIALOG = SCRIPTS_DIR / "ScriptRunDialog.vue"
+BRIDGE_RS = ROOT / "src-tauri" / "src" / "bridge.rs"
 
 # ----------------------------- 码位定义 -----------------------------
 
@@ -55,16 +65,17 @@ ACTIVE_CODES = (
     "SCRIPTUI_NO_CONFIRM_DELETE",
     "SCRIPTUI_NEW_NPM_DEP",
     "SCRIPTUI_MAINVIEW_UNREGISTERED",
+    # b 卡职责（执行面板，已落地）
+    "SCRIPTUI_NO_CANCEL_BUTTON",
+    "SCRIPTUI_NO_EVENT_UNSUBSCRIBE",
+    "SCRIPTUI_OUTPUT_NO_THROTTLE",
+    "SCRIPTUI_SANDBOX_ESCAPE",
+    "SCRIPTUI_AUDIT_REJECT_MISSING",
 )
 
 # b/c 卡职责（默认不判，pending）
 PENDING_CODES = (
-    "SCRIPTUI_OUTPUT_NO_THROTTLE",
-    "SCRIPTUI_NO_EVENT_UNSUBSCRIBE",
-    "SCRIPTUI_NO_CANCEL_BUTTON",
     "SCRIPTUI_RUNS_LIST_MISSING",
-    "SCRIPTUI_AUDIT_REJECT_MISSING",
-    "SCRIPTUI_SANDBOX_ESCAPE",
 )
 
 # ----------------------------- 检测规则 -----------------------------
@@ -81,6 +92,16 @@ CONFIRM_PRESENT_PATTERN = re.compile(r"\bconfirm\s*\(|\.modal-mask\b")
 # mainView 注册：枚举分支 `| "scripts"`（非 MOD_META / ActivityBar 的值字符串）
 MAINVIEW_ENUM_PATTERN = re.compile(r'\|\s*"scripts"')
 MAINVIEW_META_PATTERN = re.compile(r"scripts\s*:\s*\{")
+
+# ---- b 卡职责（已落地，默认判定）----
+# 运行取消入口：必须调用 bridge.cancelScript
+CANCEL_PATTERN = re.compile(r"cancelScript")
+# 事件订阅卸载清理：必须 unlisten（否则并发泄漏）
+UNLISTEN_PATTERN = re.compile(r"\bunlisten\b")
+# 输出流 rAF 合并（D14 前端层）
+RAF_PATTERN = re.compile(r"requestAnimationFrame")
+# 输出渲染安全：禁止 HTML 注入（XSS / sandbox escape）
+SANDBOX_PATTERN = re.compile(r"v-html|innerHTML|outerHTML|insertAdjacentHTML")
 
 
 def read(path: Path) -> str:
@@ -111,7 +132,9 @@ def detect(ctx: dict[str, str]) -> set[str]:
     hits: set[str] = set()
     panel = ctx["panel"]
     paramform = ctx["paramform"]
-    ui_sources = panel + "\n" + paramform
+    rundialog = ctx["rundialog"]
+    ui_sources = panel + "\n" + paramform + "\n" + rundialog
+    bridge_rs = ctx["bridge_rs"]
 
     # 1) v-html 禁用（XSS 红线）
     if VHTML_PATTERN.search(ui_sources):
@@ -151,6 +174,26 @@ def detect(ctx: dict[str, str]) -> set[str]:
     if not (enum_ok and meta_ok and activity_ok):
         hits.add("SCRIPTUI_MAINVIEW_UNREGISTERED")
 
+    # 8) 运行取消入口：必须有 bridge.cancelScript（SCRIPTUI_NO_CANCEL_BUTTON）
+    if not CANCEL_PATTERN.search(ui_sources):
+        hits.add("SCRIPTUI_NO_CANCEL_BUTTON")
+
+    # 9) 事件订阅卸载清理：必须 unlisten（SCRIPTUI_NO_EVENT_UNSUBSCRIBE）
+    if not UNLISTEN_PATTERN.search(ui_sources):
+        hits.add("SCRIPTUI_NO_EVENT_UNSUBSCRIBE")
+
+    # 10) 输出流 rAF 合并（D14 前端层，SCRIPTUI_OUTPUT_NO_THROTTLE）
+    if not RAF_PATTERN.search(ui_sources):
+        hits.add("SCRIPTUI_OUTPUT_NO_THROTTLE")
+
+    # 11) 输出渲染安全：禁止 HTML 注入（SCRIPTUI_SANDBOX_ESCAPE）
+    if SANDBOX_PATTERN.search(ui_sources):
+        hits.add("SCRIPTUI_SANDBOX_ESCAPE")
+
+    # 12) D15 审计：后端须 emit script.validate.reject（SCRIPTUI_AUDIT_REJECT_MISSING）
+    if "script.validate.reject" not in bridge_rs:
+        hits.add("SCRIPTUI_AUDIT_REJECT_MISSING")
+
     return hits
 
 
@@ -160,8 +203,10 @@ def read_ctx() -> dict[str, str]:
     return {
         "panel": read(SCRIPT_PANEL),
         "paramform": read(SCRIPT_PARAM_FORM),
+        "rundialog": read(SCRIPT_RUN_DIALOG),
         "layout": read(LAYOUT_STORE),
         "activity": read(ACTIVITY_BAR),
+        "bridge_rs": read(BRIDGE_RS),
         "package_json": pkg,
         "package_lock": lock,
         "base_deps": count_deps(pkg, lock),
@@ -179,6 +224,12 @@ MUTATIONS: tuple[tuple[str, str, str, int, str], ...] = (
     ("SCRIPTUI_NO_CONFIRM_DELETE", "if (!confirm(", "if (false)", 1, "panel"),
     ("SCRIPTUI_NEW_NPM_DEP", '"dependencies": {', '"dependencies": {\n    "left-pad": "^1.3.0",', 1, "package_json"),
     ("SCRIPTUI_MAINVIEW_UNREGISTERED", '  | "scripts"\n', "", 1, "layout"),
+    # ---- b 卡职责坏样本（5 个转 active 的码）----
+    ("SCRIPTUI_NO_CANCEL_BUTTON", "await bridge.cancelScript(runId.value)", "/* cancel removed */", 1, "rundialog"),
+    ("SCRIPTUI_NO_EVENT_UNSUBSCRIBE", "// 在组件卸载时 unlisten 这两个订阅，否则多次运行会泄漏监听器", "", 1, "rundialog"),
+    ("SCRIPTUI_OUTPUT_NO_THROTTLE", "rafId = requestAnimationFrame(flushOutput);", "flushOutput();", 1, "rundialog"),
+    ("SCRIPTUI_AUDIT_REJECT_MISSING", '"script.validate.reject"', '"script.run.start"', 1, "bridge_rs"),
+    ("SCRIPTUI_SANDBOX_ESCAPE", '<pre class="out">{{ output }}</pre>', '<pre class="out" v-html="output"></pre>', 1, "rundialog"),
 )
 
 
@@ -223,7 +274,7 @@ def self_test() -> int:
 # ----------------------------- 主流程 -----------------------------
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="M2-5.a 脚本库 CRUD UI 安全不变量夹具")
+    parser = argparse.ArgumentParser(description="M2-5 脚本库 UI 安全不变量夹具（a/b 卡合并）")
     parser.add_argument("--self-test", action="store_true", help="好坏样本双向自检")
     parser.add_argument(
         "--expect-pending",
