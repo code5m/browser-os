@@ -4,6 +4,8 @@
 
 本仓库多智能体并行时必须先确认自己在哪个 checkout。不要只相信聊天提示词；以仓库内身份文件和当前 `pwd` 为准。
 
+并行开发指挥板：`PARALLEL_COMMAND_BOARD.md`。所有智能体领取 M4/M5 任务前必须先读该文件，按 Lane 范围、合并顺序和硬停止规则执行；只有 A0 集成总控可以向 `master` 提交并推送。
+
 - 权威主目录：`/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
 - 主目录身份文件：`.workspace-identity`、`WORKSPACE_IDENTITY.md`
 - Codex 临时 worktree 示例：`/home/ainfinit/.codex/worktrees/*/mvp-browser-os-v3`
