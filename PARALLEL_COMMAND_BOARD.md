@@ -1,9 +1,9 @@
 # Parallel Command Board
 
-> Updated: 2026-09-05 22:35 CST
+> Updated: 2026-09-05 22:45 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` at `c83fde2`
+> Current mainline: `master` at `e6e09cf`
 > Current NEXT: `M4-1 数据库驱动与生成契约`
 
 This file is the coordination board for 12 parallel agents. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
@@ -26,6 +26,9 @@ Hard stop if:
 - The worktree is dirty with changes from another lane.
 - The task would require changing files outside the lane's allowed scope.
 - The lane depends on a contract that is not yet frozen.
+- The instruction names one lane but says to follow another lane's scope.
+
+If an instruction says `You are Lane A3` but later says `follow Lane A1`, treat it as a prompt typo. Do not blend scopes. Stop and report the conflict unless the controller has already corrected the lane in `PARALLEL_COMMAND_BOARD.md`.
 
 ## Merge Rule
 
@@ -46,8 +49,8 @@ No lane may force-push, reset, or overwrite another lane's changes.
 | A0 | Integration controller | AI:DEEP / R:xhigh | All files, only for merge/verification | merge log, final verification, push | Always last |
 | A1 | M4 task-card expansion | AI:DEEP / R:high | `AI-模型切换与接手清单.md`, `详细设计与实施计划.md`, `后续需求TODO.md`, `logs/checkpoints/` | M4-1~M4-8 expanded cards, dependency graph | 1 |
 | A2 | M4-1 database contract | AI:DEEP / R:high | docs, `src-tauri/src/domain.rs` type proposal only, policy notes | `SupportedDb`, config schema, dependency decision, checkpoint | 2 |
-| A3 | M4-2 database backend core | AI:DEEP / R:xhigh | `src-tauri/src/database*`, `src-tauri/src/domain.rs`, `Cargo.toml`, tests | pool/session skeleton, introspection/query core, tests | 4 |
-| A4 | M4-3 database safety gate | AI:DEEP / R:xhigh | `src-tauri/src/security_policy.rs`, db policy script, Rust tests, ACL review | SQL risk classifier, fail-closed rules, privacy/audit tests | 3 |
+| A3 | M4-2 PoolKind and production safety policy | AI:DEEP / R:xhigh | `src-tauri/src/database*`, `src-tauri/src/domain.rs`, `src-tauri/src/security_policy.rs`, db policy script, Rust tests | connection-pool abstraction, SQL risk classifier, fail-closed write policy, privacy/audit tests | 3 |
+| A4 | M4-3 database command layer | AI:DEEP / R:xhigh | `src-tauri/src/database*`, `src-tauri/src/bridge.rs`, `src-tauri/src/main.rs`, `src-tauri/permissions/default-commands.toml`, `src-tauri/src/domain.rs`, `src/bridge.ts`, `src/types.ts`, tests | `connect/query/disconnect`, ACL, source check, Keyring, audit, result limits | 4 |
 | A5 | M4-4 database UI | AI:BALANCED / R:high | `src/components/**`, `src/stores/**`, `src/bridge.ts`, `src/types.ts`, UI logic tests | connection form, editor, result grid, dangerous confirmation | 6 |
 | A6 | M4-5 scheduler contract | AI:DEEP / R:high | docs, pure domain type proposal, policy notes | `TaskDef` contract, clock/missed-run/cancel semantics | 2 |
 | A7 | M4-6/M4-7 scheduler backend | AI:DEEP / R:xhigh | `src-tauri/src/scheduler*`, `bridge.rs`, `domain.rs`, ACL, tests | task CRUD, atomic persistence, scheduler shutdown, audit | 5 |
@@ -60,8 +63,8 @@ No lane may force-push, reset, or overwrite another lane's changes.
 
 1. A1 expands M4 cards and freezes the execution order.
 2. A2 and A6 freeze contracts in parallel.
-3. A4 starts safety policy from A2 draft and existing M0/M1/M2 gates.
-4. A3 starts only after A2 names the database crate/schema.
+3. A3 starts only after A2 freezes `SupportedDb`, config schema, and dependency choice.
+4. A4 starts only after A2 freezes command DTOs and A3 freezes pool/safety interfaces.
 5. A7 starts only after A6 freezes `TaskDef` and trigger semantics.
 6. A5 and A8 start after their command names and DTOs are stable.
 7. A9 may research M5, but must not implement M5 product code before M4 is PASS.
