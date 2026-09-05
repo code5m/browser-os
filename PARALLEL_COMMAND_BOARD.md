@@ -1,10 +1,10 @@
 # Parallel Command Board
 
-> Updated: 2026-09-05 23:35 CST
+> Updated: 2026-09-05 23:55 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` at `47fce60`
-> Current NEXT: `M4-1.c` + `M4-2.s` + `M4-5.d` parallel unblock, then M4 implementation lanes
+> Current mainline: `master` at `a75ba24` locally, remote may lag if A0 has not pushed
+> Current NEXT: batch implementation mode for M4 database + scheduler lanes
 
 This file is the coordination board for 12 parallel agents. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
@@ -13,10 +13,30 @@ This file is the coordination board for 12 parallel agents. Do not rely on chat 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-继续 Lane AX，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
+继续 Lane AX，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 Batch Implementation Dispatch 做完整代码包，自行 rebase/整理补丁，不 push。
 ```
 
 Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
+
+## Batch Implementation Rule
+
+To save A0 integration time and avoid tiny partial drops, every coding lane must work in **batch mode**:
+
+1. Start with `git fetch origin` and `git pull --ff-only` when possible.
+2. If local changes already exist, inspect them first; keep your own lane changes, do not overwrite another lane.
+3. If `pull --ff-only` fails because your lane has local work, finish your lane package, then create a patch with:
+
+```bash
+git diff --binary > logs/checkpoints/Lane-AX-<task>-<YYYYMMDD-HHMM>.patch
+```
+
+4. A product-code lane must not stop after only a note unless blocked by a hard dependency. It should deliver a coherent code package with tests, policy updates, and a checkpoint.
+5. Do not create empty files. If a file is intentionally a placeholder, it must contain `STATUS=BLOCKED` and the exact unblock condition.
+6. Do not ask A0 to merge after every small file. Continue until the lane's Must Deliver is complete or a hard blocker is proven.
+7. At finish, the lane must leave either:
+   - a clean lane branch/commit series, or
+   - a single patch file plus checkpoint, with all verification results copied into the checkpoint.
+8. Only A0 pushes to remote. Other lanes may rebase/pull/commit locally inside their own lane worktree, but must not push.
 
 ## Startup Gate
 
@@ -106,6 +126,210 @@ No lane may force-push, reset, or overwrite another lane's changes.
 | A10 | **START** | Review A2/A3/A4/A6/A7 security-sensitive changes as they land. May add failing policy samples, but product-code fixes require A0 assignment. | `logs/assist/`, policy gap docs; if A0 assigns, policy scripts only | Do not edit product code by default. |
 | A11 | **START** | Maintain verification matrix and manual/GUI checklist; update after each implementation lane output. | `logs/assist/`, `logs/checkpoints/` verification docs | Do not edit product code. |
 | A12 | **START** | Cross-lane conflict scan: stale NEXT, empty files, lane ownership drift, duplicate command names, doc/code mismatch. | `logs/assist/A12-*.md` | Do not edit product code. |
+
+## Batch Implementation Dispatch
+
+This section supersedes the short `Code Dispatch Now` table for the next parallel wave. Agents should execute the largest safe chunk in their lane, verify it, and leave one coherent deliverable.
+
+### Lane A2: Finish M4-1 Contract Closure
+
+**Goal:** close the remaining M4-1 contract gap so A3/A4/A5 no longer guess result-limit/cancel semantics.
+
+**Read first:** `logs/checkpoints/M4-1.a-20260905-2245.md`, `logs/checkpoints/M4-1.b-20260905-2250.md`, `logs/checkpoints/M4-1.d-20260905-2300.md`, `src-tauri/src/domain.rs`.
+
+**Implement/write:**
+
+- Replace the STOPPED `logs/checkpoints/M4-1.c-20260905-2255.md` with a complete M4-1.c checkpoint.
+- Add domain constants/types only if they are needed by implementation lanes: result row limit, result byte limit, field byte limit, SQL byte limit, default timeout, max timeout, truncation marker shape, cancellation state names.
+- Do not implement DB drivers, commands, UI, or scripts.
+
+**Must verify:** `cargo test --manifest-path src-tauri/Cargo.toml domain`, `git diff --check`.
+
+**Finish only when:** M4-1.a/b/c/d can be read together without contradictions; explicitly state whether A3/A4 are unblocked.
+
+### Lane A3: Database Pool + Driver Foundation Package
+
+**Goal:** implement the M4-2 database runtime foundation far enough that A4 can expose commands without inventing internals.
+
+**Read first:** all M4-1 checkpoints, A10 security notes, `src-tauri/src/workspace.rs`, `src-tauri/src/keyring_store.rs`, `src-tauri/src/security_policy.rs`, `src-tauri/src/script_runner.rs` for cancellation style.
+
+**Implement/write:**
+
+- Add the selected sync dependencies from M4-1.a: `rusqlite` with bundled SQLite, `mysql`, and `postgres`; do not add `tokio`, `sqlx`, `diesel`, JDBC, YAML, or codegen.
+- Add `src-tauri/src/database.rs` or `src-tauri/src/database/` with a small, testable boundary:
+  - connection config validation,
+  - credential key helper exactly `db:<conn_id>`,
+  - `DbPool` enum or equivalent per-driver holder,
+  - connect/disconnect lifecycle primitives,
+  - SQLite path root validation through existing path policy,
+  - query result DTO construction with row/byte/field limits from M4-1.c,
+  - cancellation and timeout hooks that do not forge unsupported fields.
+- Do not expose Tauri commands directly unless A4's command layer is already present in the same rebased base and can be cleanly consumed.
+- Add Rust tests for config validation, credential key namespace, SQLite happy path, path rejection, limit/truncation, timeout/cancel boundary where practical.
+- Update `scripts/check-database-policy.py` pending/default codes only if A4 has not already done it and the edit is needed to make your package self-verifying; otherwise leave a checkpoint note for A4.
+
+**Must verify:** `cargo test --manifest-path src-tauri/Cargo.toml database`, `cargo test --manifest-path src-tauri/Cargo.toml domain`, `cargo check --manifest-path src-tauri/Cargo.toml --locked`, `git diff --check`.
+
+**Finish only when:** A4 can call a stable internal API without changing your module design.
+
+### Lane A4: Database Safety Gate + Command Layer Package
+
+**Goal:** implement the full backend IPC surface after A3 provides or while you provide a compatible internal API, without weakening source check or privacy.
+
+**Read first:** all M4-1 checkpoints, A3 output if present, A10 notes, `src-tauri/src/bridge.rs`, `src-tauri/src/main.rs`, `src-tauri/permissions/default-commands.toml`, `src/bridge.ts`, `src/types.ts`.
+
+**Implement/write:**
+
+- First implement `M4-2.s` in `src-tauri/src/security_policy.rs`: SQL risk classifier, production verdict, fail-closed write gate, tests.
+- Add or complete `scripts/check-database-policy.py` with self-test, default scan, pending handling, and pre-merge integration.
+- Add backend commands only after an internal database API exists:
+  - `db_connect`
+  - `db_query`
+  - `db_disconnect`
+  - `db_forget_connection` only if A0/D28 is explicitly resolved in docs; otherwise leave it out and document D28.
+- All commands must pass `check_invocation_source`, validate `tab-`/source expectations where applicable, redact audit details, never log SQL bodies with credentials, never serialize password/DSN/body.
+- Register commands in `main.rs` and ACL before `list_artifact_images`.
+- Mirror stable DTOs in `src/types.ts` and wrappers in `src/bridge.ts`.
+
+**Must verify:** `cargo test --manifest-path src-tauri/Cargo.toml security_policy`, `cargo test --manifest-path src-tauri/Cargo.toml database`, `python3 scripts/check-database-policy.py --self-test`, `python3 scripts/check-database-policy.py`, `bash scripts/pre-merge.sh`, `git diff --check`.
+
+**Finish only when:** backend command names/DTOs are stable enough for A5 to wire UI live.
+
+### Lane A5: Database UI Full Package
+
+**Goal:** deliver M4-4 UI as a usable database panel once A4 DTOs exist; before that, build pure logic and component shell but keep live calls guarded.
+
+**Read first:** A4 command DTOs if present, `src/types.ts`, `src/bridge.ts`, existing browser/workspace panels, M2-5/M2-6 UI patterns.
+
+**Implement/write:**
+
+- Add a database panel in the existing workspace/browser UI location without marketing layout or broad restyle.
+- Include connection list/form, driver-specific fields, password entered only as component-local transient state, write toggle, production warning, SQL editor, result grid, truncation indicators, copy/export controls, disconnect/clear affordances.
+- Wire live `db_*` bridge calls only when A4 has landed wrappers; otherwise expose disabled states with clear internal TODO in checkpoint, not visible feature-explainer text.
+- Add UI logic helpers for formatting rows, bytes, durations, truncation, risk labels, and connection form validation.
+- Add `scripts/check-database-ui-logic.mjs`; add policy checks if in scope and low conflict.
+
+**Must verify:** `node scripts/check-database-ui-logic.mjs`, `npm run build`, `git diff --check`.
+
+**Finish only when:** a user can exercise the UI with real A4 commands or the checkpoint precisely lists the single missing backend unblock.
+
+### Lane A6: Scheduler Policy Fixture Package
+
+**Goal:** complete M4-5.d so A7 has machine-checkable scheduler invariants.
+
+**Read first:** `logs/checkpoints/A6-M4-5-scheduler-contract-20260905-2330.md`, A10 scheduler security notes, `scripts/pre-merge.sh`.
+
+**Implement/write:**
+
+- Add `scripts/check-scheduler-policy.py`.
+- Include self-test good/bad fixtures, pending codes, mutation-proof checks, and default scan.
+- Enforce at least: no second execution path, clock injectable, missed policy field exists, tasks persistence atomic, no secret params persisted, scheduler shutdown order expected, no `tokio_cron_scheduler`, no direct `tokio` promotion unless a later A0 decision says otherwise.
+- Connect it to `scripts/pre-merge.sh`.
+- Add `logs/checkpoints/M4-5.d-<timestamp>.md`.
+
+**Must verify:** `python3 scripts/check-scheduler-policy.py --self-test`, `python3 scripts/check-scheduler-policy.py`, `python3 scripts/check-scheduler-policy.py --expect-pending` if implemented, `bash scripts/pre-merge.sh`, `git diff --check`.
+
+**Finish only when:** A7 can turn pending codes into default codes during implementation.
+
+### Lane A7: Scheduler Backend Full Package
+
+**Goal:** implement M4-6/M4-7 backend in one coherent package using A6's contract and existing script runner.
+
+**Read first:** A6 contract, A6 policy fixture if present, A10 notes, `src-tauri/src/script_runner.rs`, `src-tauri/src/scripts.rs`, `src-tauri/src/snippets.rs`, `src-tauri/src/workspace.rs`, `src-tauri/src/shutdown.rs`, `bridge.rs`, `main.rs`, ACL.
+
+**Implement/write:**
+
+- Add scheduler/domain types if A6 did not already place concrete types in `domain.rs`: `TaskDef`, `TaskTrigger`, `TaskKind`, `MissedRunPolicy`, `RetryPolicy`, `TaskRunRecord`, status/trigger enums.
+- Add `src-tauri/src/scheduler.rs` or module folder with:
+  - `tasks.json` atomic persistence,
+  - validation for target existence and non-secret params,
+  - cron 5-field and interval validation,
+  - next-run calculation with injectable clock,
+  - missed-run policy handling,
+  - same-task non-overlap,
+  - history cap,
+  - corrupt-file recovery behavior documented and tested.
+- Add commands `task_list`, `task_add`, `task_update`, `task_remove`, `task_run_now` with source check, ACL, audit, DTOs, and `main.rs` registration.
+- `task_run_now` and scheduler firing must reuse `script_runner::start_run` / `start_command`; no `std::process::Command`, no shell plugin, no second process path.
+- Register `stop-scheduler` in `ShutdownCoordinator` before `kill-running-scripts` and add a test for the order.
+- Update `scripts/check-scheduler-policy.py` pending/default codes as implementation lands.
+
+**Must verify:** `cargo test --manifest-path src-tauri/Cargo.toml scheduler`, `cargo test --manifest-path src-tauri/Cargo.toml task`, `cargo test --manifest-path src-tauri/Cargo.toml`, `python3 scripts/check-scheduler-policy.py --self-test`, `python3 scripts/check-scheduler-policy.py`, `bash scripts/pre-merge.sh`, `git diff --check`.
+
+**Finish only when:** A8 has stable task command wrappers/DTOs to wire UI live.
+
+### Lane A8: Scheduler UI Full Package
+
+**Goal:** deliver M4-8 UI as a usable task scheduler panel once A7 command DTOs exist; before that, build tested pure logic and component shell.
+
+**Read first:** A6 contract, A7 command DTOs if present, `src/types.ts`, `src/bridge.ts`, existing script/command execution UI.
+
+**Implement/write:**
+
+- Add scheduler UI in existing workspace style:
+  - task list,
+  - add/edit form,
+  - script/command target picker,
+  - params editor,
+  - cron 5-field or interval trigger controls,
+  - missed-run policy,
+  - retry controls,
+  - enable switch defaulting to disabled if backend says so,
+  - next run and last run display,
+  - run-now action,
+  - remove confirmation,
+  - history/status panel.
+- Wire live `task_*` calls only after A7 wrappers exist; otherwise keep disabled shell and document the backend unblock.
+- Add `src/utils/taskUi.ts` or equivalent pure logic and `scripts/check-scheduler-ui-logic.mjs`.
+- Add scheduler UI policy script only if it does not conflict with A6/A7, otherwise leave a precise checkpoint.
+
+**Must verify:** `node scripts/check-scheduler-ui-logic.mjs`, `npm run build`, `git diff --check`.
+
+**Finish only when:** the panel is either live against A7 commands or has exactly one documented backend unblock.
+
+### Lane A9: M5 Future Split, No Product Code
+
+**Goal:** prepare the next acceleration wave after M4 without polluting M4 code.
+
+**Write:** one or more `logs/assist/A9-M5-*.md` docs covering database-backed knowledge graph, scheduled jobs feeding graph updates, protocol/agent/plugin split, dependencies on M4 commands, and suggested lanes A13+.
+
+**Do not write:** `src/`, `src-tauri/`, `scripts/pre-merge.sh`, product code.
+
+### Lane A10: Batch Security Review
+
+**Goal:** review completed lane packages in batches, not per tiny file.
+
+**Review batches:**
+
+- Batch DB-1: A2+A3+A4 together.
+- Batch DB-UI: A5 after live wiring.
+- Batch SCHED-1: A6+A7 together.
+- Batch SCHED-UI: A8 after live wiring.
+
+**Write:** `logs/assist/A10-M4-security-review-batch-<name>-<timestamp>.md`.
+
+**May edit policy scripts only if A0 explicitly assigns a fix.** Otherwise no product-code edits.
+
+### Lane A11: Batch Verification Evidence
+
+**Goal:** stop updating verification files for every tiny movement. Update after a complete batch only.
+
+**Update after:**
+
+- DB backend batch A2/A3/A4 completes.
+- DB UI batch A5 completes.
+- Scheduler backend batch A6/A7 completes.
+- Scheduler UI batch A8 completes.
+
+**Write:** verification matrix, manual checklist, debt ledger. Do not edit product code.
+
+### Lane A12: Batch Conflict Scan
+
+**Goal:** run conflict scans before A0 merge, not continuously.
+
+**Check:** dirty files, empty files, stale NEXT, duplicate command names, ACL order, bridge/main/type mismatch, policy scripts in pre-merge, docs claiming PASS without evidence.
+
+**Write:** `logs/assist/A12-M4-conflict-scan-<timestamp>.md`.
 
 ## Lane-Specific Minimal Prompts
 
