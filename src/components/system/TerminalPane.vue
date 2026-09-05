@@ -1,29 +1,35 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from "vue";
+import { ref, onMounted, onBeforeUnmount, watch } from "vue";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { bridge } from "../../bridge";
 import { useSystemStore } from "../../stores/useSystemStore";
+import { useTerminalResize } from "../../composables/useTerminalResize";
 
 const system = useSystemStore();
 const termEl = ref<HTMLElement | null>(null);
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
 let resizeObserver: ResizeObserver | null = null;
-// M3.a（F5/F10）：fit 后防抖 140ms 再上报真实行列给后端 PTY，
-// 避免拉伸过程中每帧都 invoke（参照 fileterm TERMINAL_RESIZE_SETTLE_MS=140）。
-const TERM_RESIZE_DEBOUNCE_MS = 140;
-let resizeTimer: number | null = null;
-function scheduleResize() {
-  if (resizeTimer) clearTimeout(resizeTimer);
-  resizeTimer = window.setTimeout(() => {
-    resizeTimer = null;
-    if (!term || !fit) return;
-    fit.fit();
-    if (!system.termId) return;
-    bridge.termResize(system.termId, term.cols, term.rows).catch(() => {});
-  }, TERM_RESIZE_DEBOUNCE_MS);
+
+// M3.c（WBS M3-4 · E2，沿用 M3.a F5 的真实行列上报）：
+// - 前端 `fit()` **每次都调**，渲染实时跟随容器；
+// - 后端 `term_resize` 走静默窗口：尺寸去重 + 140 ms 静默 + 500 ms 硬上界，
+//   拖动窗口不再每帧 invoke，也不会"持续慢拖时终端一直不重排"；
+// - 失败一律 `.catch(() => {})`，高频路径不产生任何用户可见噪声。
+const resize = useTerminalResize((cols, rows) => {
+  if (!term || !system.termId) return;
+  bridge.termResize(system.termId, cols, rows).catch(() => {});
+});
+
+function onContainerResize() {
+  if (!term || !fit) return;
+  const dims = fit.proposeDimensions();
+  // 容器过渡态（面板折叠/隐藏时宽或高为 0）：不上报也不 fit，避免 0 值打到 PTY。
+  if (!dims || dims.cols <= 0 || dims.rows <= 0) return;
+  if (term.cols !== dims.cols || term.rows !== dims.rows) fit.fit();
+  resize.notify(dims.cols, dims.rows);
 }
 
 // ====== M0-0.b 终端吞吐测量钩子（契约 logs/m0-baseline-contract-v1.md §6.3） ======
@@ -161,10 +167,23 @@ onMounted(() => {
       term?.write(data, () => m0TrackRendered(data));
     });
     system.bindM0ThroughputStart(m0Prepare);
+    // M3.c（WBS M3-4 · E1）：面板重建（切 Dock / 切回）时回放最近 40 条输出，
+    // 避免会话还活着但终端一片空白。历史仅会话内内存持有，不落盘。
+    system.replayTermHistory();
 
-    // 容器尺寸变化时防抖 fit + 上报真实行列（M3.a F5）
-    resizeObserver = new ResizeObserver(() => scheduleResize());
+    // 容器尺寸变化时 fit + 静默上报真实行列（M3.a F5 / M3.c E2）
+    resizeObserver = new ResizeObserver(() => onContainerResize());
     resizeObserver.observe(termEl.value);
+
+    // 新会话（首次启动 / ↻ 重启）：清去重态并立刻把当前真实行列报给新 PTY。
+    // 新 PTY 默认 100×24，不补报会让 vim/top/less 一直按错误尺寸重排。
+    watch(
+      () => system.termId,
+      (id) => {
+        resize.reset();
+        if (id) onContainerResize();
+      }
+    );
 
     // 启动 shell
     bridge.debugLog("[TerminalPane] calling startShell");
@@ -177,8 +196,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   m0FrameSampling = false;
-  if (resizeTimer) clearTimeout(resizeTimer);
-  resizeTimer = null;
+  // 清掉在途的 resize 静默定时器，不留回调（用例 N5）。
+  resize.dispose();
   resizeObserver?.disconnect();
   term?.dispose();
   system.bindTermWriter(null);

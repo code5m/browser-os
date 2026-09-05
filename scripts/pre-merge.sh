@@ -84,6 +84,7 @@ pre-merge.sh — M0-1.c 本地 pre-merge 门禁（M0-1 脚本合并前检查入�
   image preview fixture         check-image-preview-policy.py --self-test / 默认门禁
   image preview logic tests     check-image-preview-logic.mjs（Node，headless）
   terminal pipeline fixture     check-terminal-policy.py --self-test / 默认门禁
+  terminal UI logic tests       check-terminal-ui-logic.mjs（Node，headless）
   script domain fixture         check-script-domain-policy.py --self-test / 默认门禁
   command UI logic tests        check-command-ui-logic.mjs（Node，headless）
   git diff --check              工作树 + 暂存区 + 当前分支相对基线（机器证据除外）
@@ -333,6 +334,10 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/check-terminal-policy.py" >/dev/null 2>&1 \
     || pm_fail "check-terminal-policy.py（终端输出管道不变量被破坏）"
 
+  pm_log "M3.c 终端体验项 UI 逻辑层自动化测试（headless，加载真实 useSystemStore.ts / useTerminalResize.ts）…"
+  (cd "$ROOT" && node "$SCRIPT_DIR/check-terminal-ui-logic.mjs") >/dev/null 2>&1 \
+    || pm_fail "check-terminal-ui-logic.mjs（临时历史 40 条 / resize 静默窗口回归）"
+
   pm_log "M2-6.d 命令片段库 UI 逻辑层自动化测试（headless，加载真实 snippetUi.ts）…"
   (cd "$ROOT" && node "$SCRIPT_DIR/check-command-ui-logic.mjs") >/dev/null 2>&1 \
     || pm_fail "check-command-ui-logic.mjs（命令片段库前端逻辑回归）"
@@ -424,6 +429,10 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/check-terminal-policy.py" ] || { echo "FAIL: check-terminal-policy.py missing"; rc=1; }
   if ! python3 "$SCRIPT_DIR/check-terminal-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-terminal-policy.py --self-test"; rc=1
+  fi
+  [ -f "$SCRIPT_DIR/check-terminal-ui-logic.mjs" ] || { echo "FAIL: check-terminal-ui-logic.mjs missing"; rc=1; }
+  if ! (cd "$ROOT" && node "$SCRIPT_DIR/check-terminal-ui-logic.mjs") >/dev/null 2>&1; then
+    echo "FAIL: check-terminal-ui-logic.mjs"; rc=1
   fi
   if ! python3 "$SCRIPT_DIR/check-tools-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-tools-policy.py --self-test"; rc=1

@@ -140,6 +140,32 @@ export const useSystemStore = defineStore("system", () => {
   // termId 设置前的 PTY 输出缓存：termSpawnChannel 异步返回前 shell 已开始输出，
   // 若直接丢弃会导致终端空白/无提示符。缓存后 termId 就绪时一次性写入。
   const termBuffer: string[] = [];
+  // ===== M3.c（WBS M3-4 · E1）终端临时历史 =====
+  // 语义：最近 N 条**输出块**的内存快照，供终端面板**重建**时回放（切 Dock 到文件再
+  // 切回、切模块视图——面板卸载即丢，但后端 PTY 会话还活着，不回放就是一片空白）。
+  // 与 xterm `scrollback` 是两件事：scrollback 管"能往上翻多少行"，这里管"重建时能补
+  // 回多少块"（fileterm `TEMPORARY_HISTORY_LIMIT=40` 的同名概念）。
+  //
+  // 红线：仅会话内内存持有——不落盘、不进 `audit.json`、不写 debug 日志正文，
+  // 会话结束（killShell / 重启）即清空，进程退出随内存一起消亡。
+  const TERM_TEMP_HISTORY_LIMIT = 40;
+  const termHistory: string[] = [];
+  function pushTermHistory(data: string) {
+    if (!data) return;
+    termHistory.push(data);
+    // 超出上限丢最旧的：数组长度恒定 ≤ 40，不会随输出量无限增长。
+    if (termHistory.length > TERM_TEMP_HISTORY_LIMIT) {
+      termHistory.splice(0, termHistory.length - TERM_TEMP_HISTORY_LIMIT);
+    }
+  }
+  function clearTermHistory() {
+    termHistory.length = 0;
+  }
+  /** 面板重建后把历史补写给新的 xterm。回放本身不写回历史（避免自喂导致翻倍）。 */
+  function replayTermHistory() {
+    if (!termWriter) return;
+    for (const data of termHistory) termWriter(data);
+  }
   // M3.a 丢弃统计（F2）：队列满时后端丢弃的字节数，仅展示不阻断。
   const droppedChunks = ref(0);
   const droppedBytes = ref(0);
@@ -159,6 +185,8 @@ export const useSystemStore = defineStore("system", () => {
   async function startShell(force = false) {
     if (termId.value && !force) return;
     if (termId.value) await bridge.termKill(termId.value);
+    // 新会话：旧会话的输出不得回放到新终端（否则会看到上一段会话的残影）。
+    clearTermHistory();
     try {
       // M3.a：每终端独立 Channel 单播（F4），替代全局 `term-data` 事件广播。
       const ch = bridge.createTermChannel((msg) => onTermChannelMsg(msg));
@@ -222,6 +250,8 @@ export const useSystemStore = defineStore("system", () => {
   async function killShell() {
     if (termId.value) await bridge.termKill(termId.value);
     termId.value = "";
+    // 会话结束，临时历史随之消亡（不保留到下一个会话）。
+    clearTermHistory();
   }
 
   function toggleTerminal() {
@@ -231,9 +261,11 @@ export const useSystemStore = defineStore("system", () => {
 
   function onTermData(d: { id: string; data: string }) {
     if (d.id === termId.value) {
+      pushTermHistory(d.data);
       termWriter?.(d.data);
     } else if (!termId.value) {
       // termId 还没设置（异步返回前），缓存输出待启动后写入
+      pushTermHistory(d.data);
       termBuffer.push(d.data);
     }
   }
@@ -252,9 +284,11 @@ export const useSystemStore = defineStore("system", () => {
       return;
     }
     if (msg.id === termId.value) {
+      pushTermHistory(data);
       termWriter?.(data);
     } else if (!termId.value) {
       // termId 还没设置（termSpawnChannel 异步返回前），缓存输出待启动后写入
+      pushTermHistory(data);
       termBuffer.push(data);
     }
   }
@@ -269,9 +303,12 @@ export const useSystemStore = defineStore("system", () => {
     terminalOpen,
     termId,
     termLines,
+    termHistory,
     droppedChunks,
     droppedBytes,
     resetDroppedStats,
+    replayTermHistory,
+    clearTermHistory,
     m0Cfg,
     m0StartTs,
     loadM0Config,

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Expose the M3.a terminal output-pipeline invariants as a reproducible fixture.
+"""Expose the M3.a/M3.c terminal invariants as a reproducible fixture.
 
-契约来源：logs/checkpoints/M3-20260905-2030.md（F1~F10）。
+契约来源：logs/checkpoints/M3-20260905-2030.md（F1~F10）+ M3.c（WBS M3-4：
+终端临时历史 40 条、resize 静默窗口）。
 
 M3.a 是 #9（fileterm 借鉴）的**内核收口**：PTY 输出不能再是「读 4 KiB 就
 emit 一次全局事件」，必须是 worker → sync_channel → pump → sink 的三段式管道，
@@ -29,6 +30,7 @@ def detect_violations(files: dict) -> list[str]:
     ts_bridge = files.get("bridge_ts", "")
     store = files.get("system_store_ts", "")
     pane = files.get("terminal_pane_vue", "")
+    resize_ts = files.get("terminal_resize_ts", "")
 
     # ---- F1：mpsc 队列 + worker 非阻塞（sync_channel / try_send）----
     if "sync_channel" not in term or "try_send" not in term:
@@ -131,11 +133,42 @@ def detect_violations(files: dict) -> list[str]:
     if "bridge::term_spawn_channel," not in main:
         v.append("TERM_HANDLER_MISSING:main.rs 未注册 term_spawn_channel")
 
-    # ---- F10：前端 resize 防抖上报（真实行列到后端）----
+    # ---- F10：前端 resize 静默窗口（M3.c 由防抖升级为「去重 + 静默 + 硬上界」）----
     if "termResize" not in pane:
         v.append("TERM_PANE_RESIZE_MISSING:TerminalPane 未调用 termResize（F5 前端侧）")
-    if not re.search(r"TERM_RESIZE_DEBOUNCE_MS\s*=\s*\d+", pane):
-        v.append("TERM_PANE_DEBOUNCE_MISSING:TerminalPane 缺 resize 防抖常量")
+    if "useTerminalResize" not in pane:
+        v.append("TERM_RESIZE_QUIET_WIRING:TerminalPane 未接线 useTerminalResize（静默窗口不可绕过）")
+    if "resize.dispose()" not in pane:
+        v.append("TERM_RESIZE_DISPOSE_MISSING:TerminalPane 卸载未清静默定时器（用例 N5）")
+    # 静默窗口常量（fileterm TERMINAL_RESIZE_OUTPUT_QUIET_MS 同族）
+    if not re.search(r"TERM_RESIZE_QUIET_MS\s*=\s*\d+", resize_ts):
+        v.append("TERM_RESIZE_QUIET_MISSING:useTerminalResize 缺静默窗口常量 TERM_RESIZE_QUIET_MS")
+    # 硬上界：纯静默窗口会导致「持续慢拖时终端一直不重排」，必须有兜底下发
+    if not re.search(r"TERM_RESIZE_MAX_WAIT_MS\s*=\s*\d+", resize_ts):
+        v.append("TERM_RESIZE_MAXWAIT_MISSING:useTerminalResize 缺硬上界 TERM_RESIZE_MAX_WAIT_MS")
+    # 去重：尺寸未变零下发（ResizeObserver 抖动不得变成 IPC）
+    if "lastCols" not in resize_ts or "lastRows" not in resize_ts:
+        v.append("TERM_RESIZE_DEDUP_MISSING:useTerminalResize 缺尺寸去重（同尺寸重复 invoke）")
+
+    # ---- M3.c（WBS M3-4 E1）：终端临时历史 40 条 ----
+    if not re.search(r"TERM_TEMP_HISTORY_LIMIT\s*=\s*40", store):
+        v.append("TERM_HISTORY_LIMIT_MISSING:useSystemStore 缺临时历史上限 TERM_TEMP_HISTORY_LIMIT=40")
+    if "pushTermHistory" not in store:
+        v.append("TERM_HISTORY_RECORD_MISSING:useSystemStore 未登记输出进临时历史（历史上限形同虚设）")
+    if "replayTermHistory" not in pane:
+        v.append("TERM_HISTORY_REPLAY_MISSING:TerminalPane 未回放临时历史（面板重建后一片空白）")
+    # 会话结束必须清空，否则旧会话输出会作为残影回放到新终端
+    if store.count("clearTermHistory()") < 3:
+        v.append("TERM_HISTORY_CLEAR_MISSING:临时历史未在会话结束/重启时清空（跨会话残影）")
+    # 隐私红线：仅内存，不落盘、不进审计、后端不留存
+    for line in store.splitlines():
+        if "localStorage" in line and "termHistory" in line:
+            v.append("TERM_HISTORY_PERSIST:临时历史被写入 localStorage（红线：仅会话内内存，不落盘）")
+    for line in bridge.splitlines():
+        if "log_audit" in line and re.search(r"term", line, re.I):
+            v.append("TERM_HISTORY_AUDIT:终端输出/历史进入审计日志（红线：高频会刷爆 audit 上限）")
+    if re.search(r"term_history|TermHistory|termHistory|TERM_TEMP_HISTORY", term):
+        v.append("TERM_HISTORY_BACKEND:terminal.rs 留存输出历史（契约：后端零状态，历史只在前端会话内）")
 
     return v
 
@@ -157,6 +190,7 @@ def read_repo(root: Path) -> dict:
         "bridge_ts": read("src/bridge.ts"),
         "system_store_ts": read("src/stores/useSystemStore.ts"),
         "terminal_pane_vue": read("src/components/system/TerminalPane.vue"),
+        "terminal_resize_ts": read("src/composables/useTerminalResize.ts"),
     }
 
 
@@ -357,16 +391,145 @@ def run_self_test(root: Path) -> int:
         "TERM_KILL_LOCK_HELD",
     )
 
-    # 17. 前端 resize 防抖被移除
+    # 17. 前端 resize 上报被移除
     add(
-        "TerminalPane 移除 resize 防抖上报",
+        "TerminalPane 移除 resize 上报",
         mutate(
-            terminal_pane_vue=good["terminal_pane_vue"]
-            .replace("TERM_RESIZE_DEBOUNCE_MS = 140", "TERM_RESIZE_DEBOUNCE_MS = zz_zz")
-            .replace("bridge.termResize", "zz_termresize_zz")
+            terminal_pane_vue=good["terminal_pane_vue"].replace(
+                "bridge.termResize", "zz_termresize_zz"
+            )
         ),
         "terminal_pane_vue",
         "TERM_PANE_RESIZE_MISSING",
+    )
+
+    # 18. 静默窗口常量被移除（拖动时每帧 invoke）
+    add(
+        "移除 resize 静默窗口常量",
+        mutate(
+            terminal_resize_ts=good["terminal_resize_ts"].replace(
+                "TERM_RESIZE_QUIET_MS", "ZZ_QUIET_ZZ"
+            )
+        ),
+        "terminal_resize_ts",
+        "TERM_RESIZE_QUIET_MISSING",
+    )
+
+    # 19. 硬上界被移除（持续慢拖时终端一直不重排）
+    add(
+        "移除 resize 硬上界常量",
+        mutate(
+            terminal_resize_ts=good["terminal_resize_ts"].replace(
+                "TERM_RESIZE_MAX_WAIT_MS", "ZZ_MAXWAIT_ZZ"
+            )
+        ),
+        "terminal_resize_ts",
+        "TERM_RESIZE_MAXWAIT_MISSING",
+    )
+
+    # 20. 尺寸去重被移除（同尺寸重复下发 IPC）
+    add(
+        "移除 resize 尺寸去重",
+        mutate(terminal_resize_ts=good["terminal_resize_ts"].replace("lastCols", "zz_lcols_zz")),
+        "terminal_resize_ts",
+        "TERM_RESIZE_DEDUP_MISSING",
+    )
+
+    # 21. 静默窗口未接线（TerminalPane 直接防抖而非走 composable）
+    add(
+        "TerminalPane 未接线 useTerminalResize",
+        mutate(
+            terminal_pane_vue=good["terminal_pane_vue"].replace(
+                "useTerminalResize", "zz_use_resize_zz"
+            )
+        ),
+        "terminal_pane_vue",
+        "TERM_RESIZE_QUIET_WIRING",
+    )
+
+    # 22. 卸载未清静默定时器（残留回调）
+    add(
+        "TerminalPane 卸载未 dispose 静默定时器",
+        mutate(
+            terminal_pane_vue=good["terminal_pane_vue"].replace(
+                "resize.dispose()", "zz_no_dispose_zz"
+            )
+        ),
+        "terminal_pane_vue",
+        "TERM_RESIZE_DISPOSE_MISSING",
+    )
+
+    # 23. 历史上限被放宽/移除（数组无限增长）
+    add(
+        "移除终端临时历史上限常量",
+        mutate(
+            system_store_ts=good["system_store_ts"].replace(
+                "TERM_TEMP_HISTORY_LIMIT", "ZZ_HISTLIM_ZZ"
+            )
+        ),
+        "system_store_ts",
+        "TERM_HISTORY_LIMIT_MISSING",
+    )
+
+    # 24. 输出未登记进历史（上限形同虚设）
+    add(
+        "输出未登记进临时历史",
+        mutate(
+            system_store_ts=good["system_store_ts"].replace("pushTermHistory", "zz_push_hist_zz")
+        ),
+        "system_store_ts",
+        "TERM_HISTORY_RECORD_MISSING",
+    )
+
+    # 25. 面板重建未回放（切回终端一片空白）
+    add(
+        "TerminalPane 未回放临时历史",
+        mutate(
+            terminal_pane_vue=good["terminal_pane_vue"].replace(
+                "replayTermHistory", "zz_replay_hist_zz"
+            )
+        ),
+        "terminal_pane_vue",
+        "TERM_HISTORY_REPLAY_MISSING",
+    )
+
+    # 26. 会话结束未清历史（旧会话输出成为新终端残影）
+    add(
+        "会话结束未清空临时历史",
+        mutate(
+            system_store_ts=good["system_store_ts"].replace("    clearTermHistory();\n", "", 1)
+        ),
+        "system_store_ts",
+        "TERM_HISTORY_CLEAR_MISSING",
+    )
+
+    # 27. 历史被落盘（隐私红线）
+    add(
+        "临时历史被写入 localStorage",
+        mutate(
+            system_store_ts=good["system_store_ts"]
+            + '\nlocalStorage.setItem("termHistory", JSON.stringify(termHistory));\n'
+        ),
+        "system_store_ts",
+        "TERM_HISTORY_PERSIST",
+    )
+
+    # 28. 终端输出进审计（高频会刷爆 audit 上限）
+    add(
+        "终端输出写入审计日志",
+        mutate(
+            bridge_rs=good["bridge_rs"] + '\n// mutant\nlet _ = log_audit(&app, "terminal.data", "x");\n'
+        ),
+        "bridge_rs",
+        "TERM_HISTORY_AUDIT",
+    )
+
+    # 29. 后端留存输出历史（违背后端零状态契约）
+    add(
+        "后端 terminal.rs 留存输出历史",
+        mutate(terminal_rs=good["terminal_rs"] + "\n// mutant\nlet term_history: Vec<String> = Vec::new();\n"),
+        "terminal_rs",
+        "TERM_HISTORY_BACKEND",
     )
 
     failures = 0
