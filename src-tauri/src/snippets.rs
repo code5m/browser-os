@@ -71,6 +71,14 @@ pub enum SnippetError {
     },
     /// `interpreter` 为 `Shebang`——命令片段**无正文文件**，shebang 与可执行位无从谈起
     ShebangNotSupported,
+    /// **argv[0] 是占位符**（M2-6-fix1 / 复核 P1-2 最小收敛）。
+    ///
+    /// 程序名若来自运行期参数值，等于把「本次执行哪个程序」交给一次运行输入：
+    /// 片段定义期静态可审计性归零，参数值绕过 `validate_param_value` 之后的
+    /// 唯一残余影响面（选程序）也被放大。故 **argv[0] 必须是字面量**。
+    /// 注意：这不是程序名白名单——`env`/`python3 -c`/`find -exec` 等仍可绕过任何
+    /// 名字黑名单，本规则只关闭「程序名由运行期值决定」这一条路径。
+    ArgvProgramPlaceholder,
     /// 超时超过 `SNIPPET_MAX_TIMEOUT_SECS`
     TimeoutTooLarge {
         limit: u32,
@@ -98,6 +106,7 @@ impl SnippetError {
             SnippetError::PartialInterpolation { .. } => "PARTIAL_INTERPOLATION",
             SnippetError::UnknownPlaceholder { .. } => "UNKNOWN_PLACEHOLDER",
             SnippetError::ShebangNotSupported => "SHEBANG_NOT_SUPPORTED",
+            SnippetError::ArgvProgramPlaceholder => "ARGV_PROGRAM_PLACEHOLDER",
             SnippetError::TimeoutTooLarge { .. } => "TIMEOUT_TOO_LARGE",
             SnippetError::BuiltinImmutable => "BUILTIN_IMMUTABLE",
         }
@@ -177,6 +186,12 @@ pub fn validate_snippet(s: &CommandSnippet) -> Result<(), SnippetError> {
     // ---- argv（F1 数组模型 + F2 整元素占位）----
     if s.argv.is_empty() {
         return Err(SnippetError::ArgvEmpty);
+    }
+    // argv[0] 必须是字面量程序名（M2-6-fix1 / 复核 P1-2 最小收敛）。
+    // 允许 `["{PROG}", "--version"]` 等于让「执行哪个程序」由一次运行的输入决定，
+    // 片段定义期将彻底失去静态可审计性；故在定义期 fail-closed 拒绝。
+    if CommandSnippet::placeholder_of(&s.argv[0]).is_some() {
+        return Err(SnippetError::ArgvProgramPlaceholder);
     }
     if s.argv.len() > MAX_ARGV_ELEMENTS {
         return Err(SnippetError::TooManyArgvElements);
@@ -355,6 +370,31 @@ mod tests {
     #[test]
     fn s11_plain_literals_pass() {
         let s = snippet(vec!["df", "-h", "--output=size"], vec![]);
+        assert_eq!(validate_snippet(&s), Ok(()));
+    }
+
+    // ---- s13：argv[0] 为占位符 → ArgvProgramPlaceholder（M2-6-fix1 / P1-2）----
+    // 程序名若来自运行期参数值，片段定义期的静态可审计性归零。
+    #[test]
+    fn s13_argv0_placeholder_rejected() {
+        let s = snippet(vec!["{PROG}", "--version"], vec![param("PROG")]);
+        assert_eq!(
+            validate_snippet(&s),
+            Err(SnippetError::ArgvProgramPlaceholder)
+        );
+        assert_eq!(
+            SnippetError::ArgvProgramPlaceholder.code(),
+            "ARGV_PROGRAM_PLACEHOLDER"
+        );
+    }
+
+    // ---- s14：argv[0] 为字面量、后续元素为占位 → 放行（不误伤）----
+    #[test]
+    fn s14_literal_argv0_with_placeholder_args_passes() {
+        let s = snippet(
+            vec!["grep", "-r", "{PATTERN}", "{DIR}"],
+            vec![param("PATTERN"), param("DIR")],
+        );
         assert_eq!(validate_snippet(&s), Ok(()));
     }
 

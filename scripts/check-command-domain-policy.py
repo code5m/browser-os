@@ -72,6 +72,12 @@ RUN_FORBIDDEN = (
 
 SHELL_FORBIDDEN = ('sh -c', 'bash -c', "sh\", \"-c", "bash\", \"-c", "spawn(")
 
+# 执行层（`script_runner.rs`）专用的 shell 形态黑名单（M2-6-fix1 / 复核 P1-3）。
+# 与 `SHELL_FORBIDDEN` 的差别：**不含 `spawn(`**——该文件的职责就是起进程，
+# `spawn_in_new_group` / `cmd.spawn()` 是合法且必需的；把 `spawn(` 纳入只会得到
+# 恒真告警，反而稀释真正的 shell 拼接信号。
+SHELL_FORBIDDEN_RUNTIME = ('sh -c', 'bash -c', "sh\", \"-c", "bash\", \"-c")
+
 # argv 值被单引号包裹的典型形态（M2-4.b-VERDICT §3.1）
 QUOTE_WRAP_SUBSTRINGS = (
     "\"'{}'\"",    # 字面量 "'{}'" —— 单引号包裹占位
@@ -144,6 +150,10 @@ def detect_violations(files: dict) -> list[str]:
     acl = files.get("acl", "")
     bridge_ts = files.get("bridge_ts", "")
     components = files.get("components", {})
+    # M2-6-fix1（复核 P1-3）：执行层纳入扫描。此前本夹具只读 domain/snippets/bridge，
+    # 焦点 4「复用 script_runner」与焦点 5「整元素替换」的核心不变量**没有任何静态门禁**。
+    runner = files.get("script_runner", "")
+    runner_code = strip_comments(runner)
 
     domain_code = strip_comments(domain)
     snippets_code = strip_comments(snippets)
@@ -245,6 +255,40 @@ def detect_violations(files: dict) -> list[str]:
         if f"bridge::{cmd}" not in main_rs:
             v.append(f"CMD_HANDLER_NOT_REGISTERED:{cmd}")
 
+    # ---- 12.8) 执行层不变量（M2-6-fix1 / 复核 P1-3）----
+    # 说明：在此之前本夹具只扫 domain/snippets/bridge，执行层 `script_runner.rs`
+    # 完全不在扫描范围内——「是否复用 script_runner」「是否仍走整元素替换」
+    # 这两个核心不变量只有单测兜底，无静态门禁（与 M2-3/M2-4 的双轨口径不一致）。
+
+    # 12.8.1 焦点 4：run_command 必须把 argv 构造与进程启动交给
+    #        `script_runner::start_command`；在命令层另起 `Command::new` 即新建执行旁路。
+    run_cmd_body = rust_fn_body(bridge, "run_command")
+    if run_cmd_body and "script_runner::start_command" not in run_cmd_body:
+        v.append(
+            "CMD_RUN_COMMAND_NOT_REUSING_RUNNER:run_command 未调用 script_runner::start_command"
+        )
+
+    # 12.8.2 焦点 6：执行层全文禁 shell 拼接形态（黑名单不含 `spawn(`，见常量注释）
+    if runner_code.strip():
+        for bad in SHELL_FORBIDDEN_RUNTIME:
+            if bad in runner_code:
+                v.append(f"CMD_SHELL_CONCAT_PRESENT:script_runner.rs:{bad}")
+
+    # 12.8.3 焦点 5：build_command_argv 必须走整元素占位解析
+    build_argv_body = rust_fn_body(runner, "build_command_argv")
+    if not build_argv_body:
+        v.append("CMD_BUILD_ARGV_MISSING:script_runner.rs 缺 build_command_argv")
+    elif "placeholder_of" not in build_argv_body:
+        v.append(
+            "CMD_BUILD_ARGV_NO_PLACEHOLDER:build_command_argv 未使用整元素占位解析"
+        )
+
+    # 12.8.4 P1-2 最小收敛的防回归：定义期必须拒绝 argv[0] 为占位符
+    if "placeholder_of(&s.argv[0])" not in snippets:
+        v.append(
+            "CMD_ARGV0_PLACEHOLDER_RULE_MISSING:snippets.rs 未拒绝 argv[0] 占位符"
+        )
+
     # ---- 12.5) 持久化必须原子写（b 卡后生效）----
     ws_code = strip_comments(files.get("workspace", ""))
     save_body = rust_fn_body(ws_code, "save_snippets_at")
@@ -298,6 +342,8 @@ def read_repo(root: Path) -> dict:
         "src-tauri/src/domain.rs",
         "src-tauri/src/snippets.rs",
         "src-tauri/src/bridge.rs",
+        # M2-6-fix1（复核 P1-3）：执行层纳入扫描
+        "src-tauri/src/script_runner.rs",
         "src-tauri/src/workspace.rs",
         "src-tauri/src/main.rs",
         "src-tauri/permissions/default-commands.toml",
@@ -317,6 +363,7 @@ def read_repo(root: Path) -> dict:
         "domain": out["src-tauri/src/domain.rs"],
         "snippets": out["src-tauri/src/snippets.rs"],
         "bridge": out["src-tauri/src/bridge.rs"],
+        "script_runner": out["src-tauri/src/script_runner.rs"],
         "workspace": out["src-tauri/src/workspace.rs"],
         "main_rs": out["src-tauri/src/main.rs"],
         "acl": out["src-tauri/permissions/default-commands.toml"],
@@ -426,6 +473,31 @@ def run_self_test(root: Path) -> int:
     add("argv 值被单引号包裹",
         mutate(domain=good["domain"] + "\nfn q(v: &str) -> String { format!(\"'{}'\", v) }\n"),
         "domain", "CMD_QUOTE_WRAP_PRESENT")
+
+    # 12. 命令层另起执行旁路（M2-6-fix1 / 复核 P1-3）
+    add("run_command 不再复用 script_runner::start_command",
+        mutate(bridge=good["bridge"].replace(
+            "crate::script_runner::start_command(",
+            "crate::script_runner::start_argv_run(", 1)),
+        "bridge", "CMD_RUN_COMMAND_NOT_REUSING_RUNNER")
+
+    # 13. 执行层出现 shell 拼接
+    add("script_runner.rs 出现 sh -c",
+        mutate(script_runner=good["script_runner"]
+               + "\nfn smuggle(p: &str) { let _ = format!(\"sh -c {}\", p); }\n"),
+        "script_runner", "CMD_SHELL_CONCAT_PRESENT")
+
+    # 14. build_command_argv 绕过整元素占位解析
+    add("build_command_argv 绕过整元素占位",
+        mutate(script_runner=good["script_runner"].replace(
+            "CommandSnippet::placeholder_of(element)", "placeholder_never(element)", 1)),
+        "script_runner", "CMD_BUILD_ARGV_NO_PLACEHOLDER")
+
+    # 15. 回退 P1-2 最小收敛：argv[0] 占位拒绝被摘掉
+    add("去掉 argv[0] 占位拒绝",
+        mutate(snippets=good["snippets"].replace(
+            "if CommandSnippet::placeholder_of(&s.argv[0]).is_some() {", "if false {", 1)),
+        "snippets", "CMD_ARGV0_PLACEHOLDER_RULE_MISSING")
 
     failures = 0
     for desc, mutated, expect in samples:

@@ -53,6 +53,11 @@ PACKAGE_JSON = ROOT / "package.json"
 PACKAGE_LOCK = ROOT / "package-lock.json"
 SCRIPT_RUN_DIALOG = SCRIPTS_DIR / "ScriptRunDialog.vue"
 BRIDGE_RS = ROOT / "src-tauri" / "src" / "bridge.rs"
+# M2-6-fix1（复核 F-2）：命令片段库前端此前**完全不在扫描范围**——
+# CommandSnippetPanel.vue（188 行）与 src/utils/snippetUi.ts（179 行）对
+# v-html / 直接 invoke / secret 回显 / 删除确认等 13 个码位零覆盖。
+COMMAND_PANEL = SCRIPTS_DIR / "CommandSnippetPanel.vue"
+SNIPPET_UI = ROOT / "src" / "utils" / "snippetUi.ts"
 
 # ----------------------------- 码位定义 -----------------------------
 
@@ -73,6 +78,10 @@ ACTIVE_CODES = (
     "SCRIPTUI_AUDIT_REJECT_MISSING",
     # c 卡职责（运行历史，已落地：script_runs_list 命令 + UI）
     "SCRIPTUI_RUNS_LIST_MISSING",
+    # M2-6.d 命令片段库前端（fix1 补齐扫描范围，见 F-2）
+    "SCRIPTUI_CMD_DANGEROUS_NO_CONFIRM",
+    "SCRIPTUI_CMD_ARGV_SHELL_PARSE",
+    "SCRIPTUI_CMD_MAINVIEW_UNREGISTERED",
 )
 
 # 当前无 pending 码位（a/b/c 全 active）；保留元组结构便于后续 M2-6 等回归
@@ -102,6 +111,17 @@ UNLISTEN_PATTERN = re.compile(r"\bunlisten\b")
 RAF_PATTERN = re.compile(r"requestAnimationFrame")
 # 输出渲染安全：禁止 HTML 注入（XSS / sandbox escape）
 SANDBOX_PATTERN = re.compile(r"v-html|innerHTML|outerHTML|insertAdjacentHTML")
+
+# ---- M2-6.d 命令片段库前端（fix1 新增）----
+# dangerous 片段运行前必须二次确认：`m.dangerous && !confirm(` 同窗口内出现
+DANGEROUS_CONFIRM_PATTERN = re.compile(r"dangerous[\s\S]{0,120}confirm\(")
+# argv 编辑不得引入 shell 词法解析：禁 eval / new Function / 按空格切分
+ARGV_SHELL_PARSE_PATTERN = re.compile(r"\beval\s*\(|new\s+Function\s*\(|split\(\s*[\"']\s[\"']\s*\)")
+# argv 必须按「一行一个元素」解析（与后端 argv 数组一一对应）
+ARGV_LINE_SPLIT_PATTERN = re.compile(r"split\(/\\r\?\\n/\)")
+# commands 模块入口注册：枚举 + MOD_META + ActivityBar
+CMD_MAINVIEW_ENUM_PATTERN = re.compile(r'\|\s*"commands"')
+CMD_MAINVIEW_META_PATTERN = re.compile(r"commands\s*:\s*\{")
 
 
 def read(path: Path) -> str:
@@ -133,7 +153,10 @@ def detect(ctx: dict[str, str]) -> set[str]:
     panel = ctx["panel"]
     paramform = ctx["paramform"]
     rundialog = ctx["rundialog"]
-    ui_sources = panel + "\n" + paramform + "\n" + rundialog
+    cmdsnippet = ctx["cmdsnippet"]
+    snippetui = ctx["snippetui"]
+    # 命令片段库前端纳入共享红线（v-html / 直接 invoke / secret 回显 / sandbox escape 等）
+    ui_sources = panel + "\n" + paramform + "\n" + rundialog + "\n" + cmdsnippet + "\n" + snippetui
     bridge_rs = ctx["bridge_rs"]
 
     # 1) v-html 禁用（XSS 红线）
@@ -202,6 +225,23 @@ def detect(ctx: dict[str, str]) -> set[str]:
     ):
         hits.add("SCRIPTUI_RUNS_LIST_MISSING")
 
+    # 14) 命令片段库：dangerous 运行前必须二次确认（SCRIPTUI_CMD_DANGEROUS_NO_CONFIRM）
+    if cmdsnippet and not DANGEROUS_CONFIRM_PATTERN.search(cmdsnippet):
+        hits.add("SCRIPTUI_CMD_DANGEROUS_NO_CONFIRM")
+
+    # 15) 命令片段库：argv 必须按行解析，不得引入 shell 词法解析（SCRIPTUI_CMD_ARGV_SHELL_PARSE）
+    if snippetui:
+        if ARGV_SHELL_PARSE_PATTERN.search(snippetui) or not ARGV_LINE_SPLIT_PATTERN.search(snippetui):
+            hits.add("SCRIPTUI_CMD_ARGV_SHELL_PARSE")
+
+    # 16) 命令片段库：mainView='commands' 注册完整性（SCRIPTUI_CMD_MAINVIEW_UNREGISTERED）
+    if cmdsnippet:
+        cmd_enum_ok = bool(CMD_MAINVIEW_ENUM_PATTERN.search(layout))
+        cmd_meta_ok = bool(CMD_MAINVIEW_META_PATTERN.search(layout))
+        cmd_activity_ok = '"commands"' in activity
+        if not (cmd_enum_ok and cmd_meta_ok and cmd_activity_ok):
+            hits.add("SCRIPTUI_CMD_MAINVIEW_UNREGISTERED")
+
     return hits
 
 
@@ -212,6 +252,8 @@ def read_ctx() -> dict[str, str]:
         "panel": read(SCRIPT_PANEL),
         "paramform": read(SCRIPT_PARAM_FORM),
         "rundialog": read(SCRIPT_RUN_DIALOG),
+        "cmdsnippet": read(COMMAND_PANEL),
+        "snippetui": read(SNIPPET_UI),
         "layout": read(LAYOUT_STORE),
         "activity": read(ACTIVITY_BAR),
         "bridge_rs": read(BRIDGE_RS),
@@ -249,6 +291,31 @@ MUTATIONS: tuple[tuple[str, str, str, int, str], ...] = (
         "dummy_history_removed",
         2,
         "bridge_rs",
+    ),
+    # ---- M2-6.d 命令片段库坏样本（fix1 新增扫描范围）----
+    # 摘掉 dangerous 前置判定 → 高风险命令可一键直跑
+    (
+        "SCRIPTUI_CMD_DANGEROUS_NO_CONFIRM",
+        "if (m.dangerous && !confirm(",
+        "if (!confirm(",
+        1,
+        "cmdsnippet",
+    ),
+    # 把「一行一个元素」改成按空格切分 → 重新引入 shell 词法解析
+    (
+        "SCRIPTUI_CMD_ARGV_SHELL_PARSE",
+        ".split(/\\r?\\n/)",
+        '.split(" ")',
+        1,
+        "snippetui",
+    ),
+    # 从 MainView 枚举里删掉 commands → 模块入口注册残缺
+    (
+        "SCRIPTUI_CMD_MAINVIEW_UNREGISTERED",
+        '  | "commands"\n',
+        "",
+        1,
+        "layout",
     ),
 )
 

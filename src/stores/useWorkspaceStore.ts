@@ -178,6 +178,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
           params: ser.params,
           description: ser.description,
           dangerous: ser.dangerous,
+          // M2-6-fix1（复核 F-1）：新建态也要传 enabled，否则表单勾选被丢弃
+          enabled: ser.enabled,
           timeoutSecs: ser.timeoutSecs,
         });
         layout.showToast("已新建：" + ser.name);

@@ -253,6 +253,9 @@ export const bridge = {
     params: ScriptParam[];
     description?: string | null;
     dangerous?: boolean | null;
+    // M2-6-fix1（复核 F-1）：新建态同样传 enabled，否则用户在新建表单取消
+    // 「启用」勾选会被后端硬编码的 true 静默覆盖。
+    enabled?: boolean | null;
     timeoutSecs?: number | null;
   }) => invoke<CommandSnippet>("snippet_add", p),
 

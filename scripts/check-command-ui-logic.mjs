@@ -53,6 +53,7 @@ const {
   buildSnippetCategoryTree,
   canDeleteSnippet,
   isFavoriteSnippet,
+  loadSnippetFavorites,
   toggleSnippetFavorite,
 } = await import(`${ROOT}src/utils/snippetUi.ts`);
 
@@ -94,7 +95,15 @@ eq(ser.timeoutSecs, 30, "序列化保留正超时");
 eq(ser.dangerous, true, "序列化保留 dangerous");
 ok(!("path" in ser) && !("body" in ser), "命令片段序列化不含 path/body");
 
+// M2-6-fix1（复核 F-1 / T-1）：enabled 必须贯通序列化，否则新建态的启用勾选被后端丢弃
+eq(ser.enabled, true, "序列化保留 enabled=true");
+eq(serializeSnippetForm({ ...valid, enabled: false }).enabled, false, "序列化保留 enabled=false（F-1 回归）");
+eq(serializeSnippetForm({ ...valid, timeout_secs: 0 }).timeoutSecs, null, "超时 0 序列化为 null（走全局默认）");
+eq(serializeSnippetForm({ ...valid, description: "" }).description, null, "空描述序列化为 null");
+
 ok(validateSnippetForm({ ...valid, argvText: "" }).some((i) => i.field === "argv"), "空 argv 应报错");
+ok(validateSnippetForm({ ...valid, name: "bad/name;rm" }).some((i) => i.field === "name"), "非法命令名应报错");
+eq(parseArgvText("df\r\n-h\r\n"), ["df", "-h"], "CRLF 换行按一行一个元素解析");
 ok(validateSnippetForm({ ...valid, interpreter: "shebang" }).some((i) => i.field === "interpreter"), "shebang 应报错");
 ok(validateSnippetForm({ ...valid, argvText: "grep\n--include={EXT}" }).some((i) => i.field === "argv[1]"), "局部插值应报错");
 ok(validateSnippetForm({ ...valid, argvText: "df\n{MISS}" }).some((i) => i.field === "argv[1]"), "未知占位符应报错");
@@ -117,6 +126,9 @@ const meta = {
 };
 const loaded = loadSnippetForm(meta);
 eq(loaded.argvText, "df\n-h", "加载时 argv 数组转为一行一个元素");
+const roundtrip = serializeSnippetForm(loadSnippetForm({ ...meta, enabled: false, builtin: true }));
+eq(roundtrip.enabled, false, "load→serialize 往返保留 enabled=false");
+eq(roundtrip.argv, ["df", "-h"], "load→serialize 往返保留 argv 数组");
 
 const snippets = [
   { ...meta, id: "b", name: "zeta", category: "z" },
@@ -137,6 +149,12 @@ eq(isFavoriteSnippet("a"), false, "再次 toggle 取消收藏");
 
 eq(canDeleteSnippet({ ...meta, builtin: true }), false, "内置命令不可删");
 eq(canDeleteSnippet(meta), true, "普通命令可删");
+
+// 收藏存储损坏时须回退为空数组，不得把异常抛给面板
+globalThis.localStorage.data.set("browser-os-command-snippet-favorites", "{not json");
+eq(loadSnippetFavorites().length, 0, "收藏数据损坏时回退为空数组");
+globalThis.localStorage.data.delete("browser-os-command-snippet-favorites");
+eq(loadSnippetFavorites().length, 0, "收藏数据缺失时回退为空数组");
 
 if (failures.length === 0) {
   console.log(`check-command-ui-logic: ${passed} 断言全部通过`);

@@ -2804,6 +2804,10 @@ pub fn snippet_add(
     params: Vec<ScriptParam>,
     description: Option<String>,
     dangerous: Option<bool>,
+    // M2-6-fix1（复核 F-1）：新建态也接受 `enabled`。此前后端硬编码 `true`，
+    // 导致前端新建表单的「启用」勾选被静默丢弃（UI 承诺与后端行为不一致）。
+    // 缺省仍为 `true`，不改变既有调用方行为。
+    enabled: Option<bool>,
     timeout_secs: Option<u32>,
 ) -> Result<CommandSnippet, String> {
     check_invocation_source(&webview, "snippet_add", None, &app)?;
@@ -2824,7 +2828,7 @@ pub fn snippet_add(
         description: description.unwrap_or_default(),
         dangerous: dangerous.unwrap_or(false),
         builtin: false,
-        enabled: true,
+        enabled: enabled.unwrap_or(true),
         timeout_secs: timeout_secs.unwrap_or(0),
         created_at: now,
         updated_at: now,
@@ -5632,5 +5636,108 @@ mod script_execution_gate_tests {
                 "script run audit must not log script body"
             );
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// M2-6-fix1（复核 P1-1）：命令片段域的**运行时**来源校验取证。
+//
+// 背景：`snippet_*` / `run_command` 的 `check_invocation_source` 此前只有
+// `scripts/check-command-domain-policy.py` 的**函数体内文本存在性**门禁——
+// 把 `check_invocation_source` 换成同名空函数即可骗过静态门禁，而 `run_command`
+// 是全仓唯一「新增的起真实子进程」入口，必须有运行时单测兜底。
+// 范式照搬 image / session / resource / image-preview 四域的
+// `remote_invocation_to_*_is_rejected`。
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod snippet_execution_gate_tests {
+    // 命令片段域全部 IPC 作用域：四条 CRUD + 一条执行
+    const SNIPPET_SCOPES: [&str; 5] = [
+        "snippet_list",
+        "snippet_add",
+        "snippet_update",
+        "snippet_remove",
+        "run_command",
+    ];
+
+    // T-sn-1（P1-1）：远程 webview（tab-* / grid-*）调用命令片段命令一律拒绝；
+    // 主窗口放行。`run_command` 会 spawn 真实子进程，是命令片段域风险最高的入口，
+    // 运行期来源校验是实效上的**唯一**闸门（capabilities 未限定 webviews）。
+    #[test]
+    fn remote_invocation_to_snippet_commands_is_rejected() {
+        let registry = crate::security_policy::IntentRegistry::new();
+        for scope in SNIPPET_SCOPES {
+            for remote in ["tab-3", "grid-1", "tab-remote-9"] {
+                assert!(
+                    crate::security_policy::check_remote_invocation(remote, scope, None, &registry)
+                        .is_err(),
+                    "远程 webview {remote} 调用 {scope} 必须被拒绝"
+                );
+            }
+            assert!(
+                crate::security_policy::check_remote_invocation("main", scope, None, &registry)
+                    .is_ok(),
+                "主窗口调用 {scope} 应放行"
+            );
+        }
+    }
+
+    // T-sn-2（P1-1 配套）：命令片段审计格式串不得含 values / argv / 命令行明文。
+    // 与静态门禁（check-command-domain-policy.py 的 AUDIT_FORBIDDEN）构成双轨。
+    #[test]
+    fn snippet_audit_format_strings_do_not_include_values_or_argv() {
+        let source = include_str!("bridge.rs");
+        for name in [
+            "cmd.run.start",
+            "cmd.validate.reject",
+            "cmd.add",
+            "cmd.update",
+            "cmd.remove",
+        ] {
+            let index = source
+                .find(name)
+                .unwrap_or_else(|| panic!("审计事件 {name} 必须存在"));
+            let window: String = source[index..].chars().take(260).collect();
+            for bad in ["values", "argv", "{PATTERN}"] {
+                assert!(!window.contains(bad), "{name} 审计格式串不得含 {bad}");
+            }
+        }
+    }
+
+    // T-sn-3（P1-2 最小收敛）：argv[0] 为占位符的片段在定义期即被拒绝，
+    // 程序名不得由运行期参数值决定。
+    #[test]
+    fn snippet_argv0_placeholder_is_rejected_at_definition() {
+        let mut s = crate::domain::CommandSnippet {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "任意程序".to_string(),
+            category: "system".to_string(),
+            interpreter: crate::domain::ScriptInterpreter::Bash,
+            argv: vec!["{PROG}".to_string(), "--version".to_string()],
+            params: vec![crate::domain::ScriptParam {
+                name: "PROG".to_string(),
+                label: "程序".to_string(),
+                param_type: crate::domain::ParamType::String,
+                required: true,
+                default: None,
+                options: vec![],
+                raw: false,
+                secret: false,
+            }],
+            description: String::new(),
+            dangerous: false,
+            builtin: false,
+            enabled: true,
+            timeout_secs: 0,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        assert_eq!(
+            crate::snippets::validate_snippet(&s),
+            Err(crate::snippets::SnippetError::ArgvProgramPlaceholder)
+        );
+        // 反例：argv[0] 为字面量时放行（不误伤 grep -r {PATTERN} 这类常规片段）
+        s.argv = vec!["grep".to_string(), "-r".to_string(), "{PROG}".to_string()];
+        assert_eq!(crate::snippets::validate_snippet(&s), Ok(()));
     }
 }
