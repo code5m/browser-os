@@ -13,15 +13,15 @@
 
 ---
 
-## 当前执行结论（截至 2026-09-01）
+## 当前执行结论（截至 2026-09-05 20:40）
 
-**M0 已通过负责人验收；M1-0~M1-9 全部 PASS 且 M1-ACCEPT 里程碑验收 PASS（PASS_WITH_DEBT；D1~D9 保留），M1 关闭；M2-1 图片领域与持久化已 PASS；M2-2 图片预览 UI 已整体 PASS_WITH_DEBT；M2-3 已整体 PASS_WITH_DEBT；M2-4.a/b/c/d/e 已完成；M2-5 整体 PASS；M2-6.a/b/c/d 已完成。当前 NEXT=`M2-6 整体裁定`。**
+**M0 已通过负责人验收；M1-0~M1-9 全部 PASS 且 M1-ACCEPT 里程碑验收 PASS（PASS_WITH_DEBT；D1~D9 保留），M1 关闭；M2 本地资产与执行全部完成——M2-1~M2-6.d 逐卡 PASS_WITH_DEBT，M2-7 工具清单/打包、M2-8 工具箱打开+Web 隔离、M2-9 五个种子验收 均 PASS，M2-6.e 内置片段种子已交付（关闭 D19）；M2 里程碑可标记 PASS。M3 终端增强尚未领取（下一步：展开 M3 任务卡）。**
 
 | 里程碑 | 状态 | 当前口径 |
 |--------|------|----------|
 | **M0 安全与稳定性基线** | **PASS，已验收** | M0-0~M0-7 全部关闭；验收报告 `OWNER_APPROVED` |
 | M1 浏览器与版本控制 | **PASS，里程碑已验收（PASS_WITH_DEBT）** | `M1-0`~`M1-9` 全部 PASS；`M1-ACCEPT` 收口验收通过（无 BLOCKER；GUI/E2E 挂账 D1~D9 保留，汇总见 `logs/checkpoints/M1-ACCEPT-20260903-0843.md` §7） |
-| M2 本地资产与执行 | 进行中，NEXT=`M2-6 整体裁定` | M2-1~M2-5 已完成；M2-6.a/b/c/d 已完成，下一步做 M2-6 整体裁定 |
+| M2 本地资产与执行 | **PASS（含 M2-6.e 内置片段种子）** | M2-1~M2-6.d 逐卡 PASS_WITH_DEBT；M2-7/8/9 均 PASS；M2-6.e 关闭 D19 |
 | M3 | 未开始、可并行评估 | 至少 M0 前置已满足，是否并行需看资源安排 |
 | M4~M5 | 未开始、仍锁定 | M4 等 M2 前置；M5 等 M1~M4 稳定 |
 
@@ -33,7 +33,7 @@ M0 当前收口面共 8 项：完整基线、自动门禁、统一生命周期�
 
 AI 必须按 `详细设计与实施计划.md` §2.2 的**检查点关键路径**领取任务，不能只扫描最靠上的未完成 WBS。排序先看阻塞性和降低后续复杂度的收益，再看依赖，最后才在同级里把简单任务排前；模型标签及自动升级规则见详细计划的“AI 执行排序、模型路由与提交协议”。
 
-当前关键路径：`M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-2-fix1(PASS) -> M1-3(PASS) -> M1-4(PASS) -> M1-5(PASS) -> M1-6.a(PASS, 契约冻结) -> M1-6.b(PASS, 写后端核心) -> M1-6.c(PASS, 复核) -> M1-6.d(PASS, push) -> M1-7(PASS, Git UI；GUI 目视验收挂账) -> M1-8(PASS, 请求拦截与瀑布；运行时端到端联调挂账) -> M1-9(PASS, 会话持久化与关闭协议；运行时端到端联调挂账) -> M1-ACCEPT(PASS_WITH_DEBT, M1 里程碑收口) -> M2-1(PASS, 图片领域与持久化；运行时端到端联调挂账) -> M2-2.a(PASS, 字节通道决策与契约冻结) -> M2-2.b(PASS_WITH_DEBT, 画廊/灯箱/缩放 UI 已实现) -> M2-2(PASS_WITH_DEBT, 整体裁定：D10 asset:// 运行时加载未实测 / D11 GUI 目视验收) -> M2-3.a(PASS, 脚本领域契约冻结) -> M2-3.b(PASS_WITH_DEBT, 领域与持久化已实现) -> M2-3(PASS_WITH_DEBT, 整体裁定：D12/D13 挂账) -> M2-4.a(PASS, 执行安全契约冻结；M2-4 已展开为 a~e) -> M2-4.b(PASS, 进程组与生命周期内核) -> M2-4.c(PASS_WITH_DEBT, 执行命令与校验接入) -> M2-4.d(PASS_WITH_DEBT, 输出背压·事件流·退出收口) -> M2-4.e(PASS, 移除 shell spawn 开放面) -> M2-4(PASS_WITH_DEBT, 整体裁定：D14~D17 挂账) -> M2-5.a(PASS, 脚本库 CRUD UI) -> M2-5.b(PASS, 执行面板：真实执行+输出流+取消+补 D15 审计与 D14 节流) -> M2-5.c(PASS, 运行历史 script_runs_list) -> M2-5(PASS, 整体裁定) -> M2-6.a(PASS, 命令片段契约冻结) -> M2-6.b(PASS_WITH_DEBT, snippets.json 持久化与 snippet_* 四命令) -> M2-6.c(PASS, run_command 复用 script_runner 内核) -> M2-6.d(PASS_WITH_DEBT, 命令片段库前端面板) -> M2-6(PASS_WITH_DEBT, 整体裁定：D18/D19/D20 挂账) -> M2-6-fix1(PASS, 复核整改：P1-1/P1-2/P1-3/F-1/F-2) -> M2-7(NEXT, 工具清单与打包；须先展开任务卡)`。M2-4.e 证据见 `logs/checkpoints/M2-4.e-20260905-0008.md`；M2-6 整体裁定证据见 `logs/checkpoints/M2-6-ACCEPT-20260905-1625.md`，复核整改证据见 `logs/checkpoints/M2-6-REVIEW-VERDICT-20260905-1648.md`。
+当前关键路径：`M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-2-fix1(PASS) -> M1-3(PASS) -> M1-4(PASS) -> M1-5(PASS) -> M1-6.a(PASS, 契约冻结) -> M1-6.b(PASS, 写后端核心) -> M1-6.c(PASS, 复核) -> M1-6.d(PASS, push) -> M1-7(PASS, Git UI；GUI 目视验收挂账) -> M1-8(PASS, 请求拦截与瀑布；运行时端到端联调挂账) -> M1-9(PASS, 会话持久化与关闭协议；运行时端到端联调挂账) -> M1-ACCEPT(PASS_WITH_DEBT, M1 里程碑收口) -> M2-1(PASS, 图片领域与持久化；运行时端到端联调挂账) -> M2-2.a(PASS, 字节通道决策与契约冻结) -> M2-2.b(PASS_WITH_DEBT, 画廊/灯箱/缩放 UI 已实现) -> M2-2(PASS_WITH_DEBT, 整体裁定：D10 asset:// 运行时加载未实测 / D11 GUI 目视验收) -> M2-3.a(PASS, 脚本领域契约冻结) -> M2-3.b(PASS_WITH_DEBT, 领域与持久化已实现) -> M2-3(PASS_WITH_DEBT, 整体裁定：D12/D13 挂账) -> M2-4.a(PASS, 执行安全契约冻结；M2-4 已展开为 a~e) -> M2-4.b(PASS, 进程组与生命周期内核) -> M2-4.c(PASS_WITH_DEBT, 执行命令与校验接入) -> M2-4.d(PASS_WITH_DEBT, 输出背压·事件流·退出收口) -> M2-4.e(PASS, 移除 shell spawn 开放面) -> M2-4(PASS_WITH_DEBT, 整体裁定：D14~D17 挂账) -> M2-5.a(PASS, 脚本库 CRUD UI) -> M2-5.b(PASS, 执行面板：真实执行+输出流+取消+补 D15 审计与 D14 节流) -> M2-5.c(PASS, 运行历史 script_runs_list) -> M2-5(PASS, 整体裁定) -> M2-6.a(PASS, 命令片段契约冻结) -> M2-6.b(PASS_WITH_DEBT, snippets.json 持久化与 snippet_* 四命令) -> M2-6.c(PASS, run_command 复用 script_runner 内核) -> M2-6.d(PASS_WITH_DEBT, 命令片段库前端面板) -> M2-6(PASS_WITH_DEBT, 整体裁定：D18/D19/D20 挂账) -> M2-6-fix1(PASS, 复核整改：P1-1/P1-2/P1-3/F-1/F-2) -> M2-7(PASS, 工具清单与打包；BUILTIN_TOOLS + include_str! 嵌入) -> M2-8(PASS, 工具箱 UI + 子 webview 打开 + Web 隔离) -> M2-9(PASS, 五个种子验收；Rust 单测 + check-seed-tools.py) -> M2-6.e(PASS, 内置片段种子，关闭 D19)；NEXT=M3 展开卡（须先展开任务卡）`。M2-4.e 证据见 `logs/checkpoints/M2-4.e-20260905-0008.md`；M2-6 整体裁定证据见 `logs/checkpoints/M2-6-ACCEPT-20260905-1625.md`，复核整改证据见 `logs/checkpoints/M2-6-REVIEW-VERDICT-20260905-1648.md`。
 
 当前执行器：Codex 主任务（`CODEX_READY`）；机械审计与独立脚本任务优先委派 `gpt-5.6-luna / low`。M0 已关闭，M1 起继续按关键路径逐点推进；每个检查点必须先验收、回写证据、独立提交并确认工作树干净，再领取下一点。硬停止条件和跨模型回归步骤统一见 `AI-模型切换与接手清单.md`。
 
@@ -445,7 +445,7 @@ AI 必须按 `详细设计与实施计划.md` §2.2 的**检查点关键路径**
 |--------|------|------|----------|----------|----------|
 | **M0 安全与稳定性基线** | **PASS，已验收** | #3 + 基线/安全收口 | 8（M0-0~7） | 0 | 自动验证、资源闭环、9 项 GUI 回归、安全红线清零、验收报告 PASS |
 | M1 浏览器与版本控制 | **PASS，里程碑已验收（PASS_WITH_DEBT）** | #8、#14、#5 | 9 | 2.3 周 | M0 PASS；M1-0~M1-9 全部完成且 M1-ACCEPT 验收通过（M1-7 GUI 目视验收挂账、M1-8/M1-9 运行时端到端联调挂账等 D1~D9 保留）；M2-1 已完成，NEXT=M2-2 |
-| M2 本地资产与执行 | 可启动、默认排在 M1 后 | #1、#4、#2、#10 | 9 | 3 周 | M0 PASS 后具备资格；单人默认排在 M1 后 |
+| M2 本地资产与执行 | **PASS（含 M2-6.e 内置片段种子）** | #1、#4、#2、#10 | 9 + M2-6.e | 3 周 | M0 PASS 后具备资格；M2-7/8/9 + M2-6.e 已补齐工具与种子域 |
 | M3 终端增强 | 可并行评估、未开始 | #9 | 4 | 1 周 | 至少 M0 PASS；并行需资源数据支持 |
 | M4 数据与调度 | 锁定 | #6、#11 | 8 | 2 周 | M2 PASS 后启动 |
 | M5 协议与智能生态 | 锁定 | #7、#12、#13、#15 | 12 | 3 周 | M1~M4 PASS 后启动 |

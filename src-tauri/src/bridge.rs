@@ -2789,7 +2789,9 @@ pub fn snippet_list(
     webview: tauri::Webview,
 ) -> Result<Vec<CommandSnippet>, String> {
     check_invocation_source(&webview, "snippet_list", None, &app)?;
-    Ok(workspace::load_snippets(&app))
+    Ok(crate::snippets::merge_builtin_snippets(
+        workspace::load_snippets(&app),
+    ))
 }
 
 /// 新增命令片段。
@@ -2870,6 +2872,10 @@ pub fn snippet_update(
 ) -> Result<CommandSnippet, String> {
     check_invocation_source(&webview, "snippet_update", None, &app)?;
     check_id(&id, "命令片段 id")?;
+    // M2-6.e：内置片段（id 带 `builtin:` 前缀）不可经用户接口修改，防命名空间冲突。
+    if id.starts_with(crate::snippets::BUILTIN_SNIPPET_ID_PREFIX) {
+        return Err("内置片段不可修改".to_string());
+    }
 
     let mut list = workspace::load_snippets(&app);
     let pos = list

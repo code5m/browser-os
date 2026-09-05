@@ -17,7 +17,9 @@
 //!   3. **无正文文件**（F6）：命令片段没有 `path` 字段，故不存在路径校验分支，
 //!      与 `scripts.rs` 的 `PathMismatch` / `BodyEmpty` 等分支无对应项。
 
-use crate::domain::{CommandSnippet, ParamType, ScriptInterpreter, SNIPPET_MAX_TIMEOUT_SECS};
+use crate::domain::{
+    CommandSnippet, ParamType, ScriptInterpreter, ScriptParam, SNIPPET_MAX_TIMEOUT_SECS,
+};
 use crate::scripts::{
     validate_param_name, validate_script_id, MAX_CATEGORY_BYTES, MAX_DESCRIPTION_BYTES,
     MAX_LABEL_BYTES, MAX_NAME_BYTES, MAX_OPTIONS, MAX_PARAMS,
@@ -237,10 +239,183 @@ pub fn can_delete(s: &CommandSnippet) -> Result<(), SnippetError> {
     Ok(())
 }
 
+// ----------------------------- M2-6.e 内置片段种子 -----------------------------
+//
+// 需求 #4「内置常用命令分类」的种子数据（D19 / M2-6-ACCEPT §5 D19）。设计口径：
+//  - 单一真源：种子以代码常量函数内嵌（类比 `tools.rs::BUILTIN_TOOLS`），**不写入**
+//    `snippets.json`；用户删除/编辑不会污染内置集合，天然幂等、零迁移成本；
+//  - 内置片段 `builtin=true` 且 id 带 `BUILTIN_SNIPPET_ID_PREFIX` 前缀，
+//    `can_delete` 已拒删，`snippet_update` 亦拒绝修改（防命名空间冲突）；
+//  - 全部为**只读**诊断命令（无写盘 / 无删除 / 无网络写入），故 `dangerous` 一律 false；
+//  - `argv[0]` 必为字面量程序名，绝对禁止经 shell 包装的拼接
+//    （命令行不得交给 sh/bash 解释，与 M2-6.a §7 F1/F2、M2-6-fix1 P1-2 口径一致）；
+//  - 五个分类（SNIPPET_BUILTIN_CATEGORIES）均至少覆盖一条。
+
+/// 内置片段 id 前缀；用户片段不得使用此前缀（合并时按此前缀丢弃，防命名空间污染）。
+pub const BUILTIN_SNIPPET_ID_PREFIX: &str = "builtin:";
+
+fn builtin_param(name: &str, label: &str) -> ScriptParam {
+    ScriptParam {
+        name: name.to_string(),
+        label: label.to_string(),
+        param_type: ParamType::String,
+        required: true,
+        default: None,
+        options: vec![],
+        raw: false,
+        secret: false,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn builtin_snippet(
+    id: &str,
+    name: &str,
+    category: &str,
+    argv: Vec<&str>,
+    params: Vec<ScriptParam>,
+) -> CommandSnippet {
+    let now = chrono::Utc::now();
+    CommandSnippet {
+        id: format!("{BUILTIN_SNIPPET_ID_PREFIX}{id}"),
+        name: name.to_string(),
+        category: category.to_string(),
+        interpreter: ScriptInterpreter::Bash,
+        argv: argv.into_iter().map(|s| s.to_string()).collect(),
+        params,
+        description: String::new(),
+        dangerous: false,
+        builtin: true,
+        enabled: true,
+        timeout_secs: 0,
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+/// M2-6.e 预置内置片段种子。返回顺序即展示顺序（前端再按分类/名称排序）。
+///
+/// 全部只读诊断命令；含占位符的内置（PATTERN/FILE）为整元素占位且 `params` 有对应项。
+pub fn builtin_snippets() -> Vec<CommandSnippet> {
+    vec![
+        // ---- system ----
+        builtin_snippet(
+            "system:uname",
+            "查看内核与系统信息",
+            "system",
+            vec!["uname", "-a"],
+            vec![],
+        ),
+        builtin_snippet(
+            "system:uptime",
+            "系统运行时长与负载",
+            "system",
+            vec!["uptime"],
+            vec![],
+        ),
+        builtin_snippet(
+            "system:hostname",
+            "主机名",
+            "system",
+            vec!["hostname"],
+            vec![],
+        ),
+        // ---- network ----
+        builtin_snippet(
+            "network:ss",
+            "监听端口与连接",
+            "network",
+            vec!["ss", "-tulnp"],
+            vec![],
+        ),
+        builtin_snippet(
+            "network:ipaddr",
+            "网络接口地址",
+            "network",
+            vec!["ip", "addr", "show"],
+            vec![],
+        ),
+        builtin_snippet(
+            "network:ping",
+            "连通性探测(4次)",
+            "network",
+            vec!["ping", "-c", "4", "8.8.8.8"],
+            vec![],
+        ),
+        // ---- disk ----
+        builtin_snippet("disk:df", "磁盘空间使用", "disk", vec!["df", "-h"], vec![]),
+        builtin_snippet(
+            "disk:du",
+            "当前目录大小",
+            "disk",
+            vec!["du", "-sh", "."],
+            vec![],
+        ),
+        builtin_snippet("disk:ls", "列出当前目录", "disk", vec!["ls", "-la"], vec![]),
+        // ---- process ----
+        builtin_snippet(
+            "process:ps",
+            "进程快照",
+            "process",
+            vec!["ps", "aux"],
+            vec![],
+        ),
+        builtin_snippet(
+            "process:free",
+            "内存使用",
+            "process",
+            vec!["free", "-h"],
+            vec![],
+        ),
+        builtin_snippet(
+            "process:top",
+            "批处理进程概览",
+            "process",
+            vec!["top", "-b", "-n", "1"],
+            vec![],
+        ),
+        // ---- text（含占位符，演示参数化内置片段；整元素占位 + params 对应）----
+        builtin_snippet(
+            "text:grep",
+            "递归搜索文本",
+            "text",
+            vec!["grep", "-rn", "{PATTERN}", "."],
+            vec![builtin_param("PATTERN", "搜索文本")],
+        ),
+        builtin_snippet(
+            "text:wc",
+            "统计文件行数",
+            "text",
+            vec!["wc", "-l", "{FILE}"],
+            vec![builtin_param("FILE", "文件路径")],
+        ),
+        builtin_snippet(
+            "text:cat",
+            "查看文件内容",
+            "text",
+            vec!["cat", "{FILE}"],
+            vec![builtin_param("FILE", "文件路径")],
+        ),
+    ]
+}
+
+/// 合并内置种子与用户片段：内置恒在、用户片段保留；
+/// 用户片段若误用内置 id 前缀则被丢弃（防命名空间污染）。不写盘，幂等。
+pub fn merge_builtin_snippets(user: Vec<CommandSnippet>) -> Vec<CommandSnippet> {
+    let mut list = builtin_snippets();
+    for s in user {
+        if !s.id.starts_with(BUILTIN_SNIPPET_ID_PREFIX) {
+            list.push(s);
+        }
+    }
+    list
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::ScriptParam;
+    use crate::domain::SNIPPET_BUILTIN_CATEGORIES;
 
     fn param(name: &str) -> ScriptParam {
         ScriptParam {
@@ -406,5 +581,74 @@ mod tests {
         assert_eq!(CommandSnippet::placeholder_of("{A-B}"), None); // 字符集越界
         assert_eq!(CommandSnippet::placeholder_of("x{DIR}"), None); // 部分插值
         assert_eq!(CommandSnippet::placeholder_of("grep"), None);
+    }
+
+    // ---- M2-6.e：内置片段种子存在、只读、零 shell 拼接、合并不覆盖用户 ----
+    #[test]
+    fn m2_6_e_builtin_snippets_present_readonly_and_merge_safe() {
+        let b = builtin_snippets();
+        assert!(!b.is_empty(), "M2-6.e: 必须预置内置片段种子");
+
+        let mut cats: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for s in &b {
+            assert!(s.builtin, "内置片段 builtin 必须为 true");
+            assert!(!s.argv.is_empty(), "argv 不可空");
+            // argv[0] 必须是字面量（无 shell 拼接、程序名非运行期占位）
+            // argv[0] 必须是字面量程序名（非 {NAME} 占位符）；shell 解释器已在下方 banned 列表排除
+            let a0 = &s.argv[0];
+            assert!(
+                !(a0.starts_with('{') && a0.ends_with('}')),
+                "内置片段 argv[0] 不得为占位符: {} -> {}",
+                s.id,
+                a0
+            );
+            // argv[0] 必为字面量程序名，禁止把整条命令交给 shell 解释器包装
+            let banned_programs = ["sh", "bash", "/bin/sh", "/bin/bash", "cmd", "powershell"];
+            assert!(
+                !banned_programs.contains(&s.argv[0].as_str()),
+                "内置片段 argv[0] 不得为 shell 解释器: {} -> {}",
+                s.id,
+                s.argv[0]
+            );
+            for el in &s.argv {
+                assert!(!el.is_empty(), "内置片段 argv 元素不可空: {}", s.id);
+            }
+            assert!(
+                s.id.starts_with(BUILTIN_SNIPPET_ID_PREFIX),
+                "内置片段 id 须带前缀: {}",
+                s.id
+            );
+            // 全部只读诊断命令 → dangerous 一律 false
+            assert!(
+                !s.dangerous,
+                "内置片段均为只读，dangerous 须为 false: {}",
+                s.id
+            );
+            cats.insert(s.category.clone());
+        }
+        // 五分类全覆盖
+        for c in SNIPPET_BUILTIN_CATEGORIES {
+            assert!(cats.contains(c), "内置片段缺分类 {c}");
+        }
+
+        // merge：保留用户片段，计数 = 内置 + 用户
+        let user = snippet(vec!["echo", "hi"], vec![]);
+        let merged = merge_builtin_snippets(vec![user.clone()]);
+        assert!(
+            merged.iter().any(|s| s.id == user.id),
+            "merge 须保留用户片段"
+        );
+        assert_eq!(merged.len(), b.len() + 1, "merge 计数须为 内置+用户");
+
+        // merge：误用内置前缀的用户片段被丢弃（防命名空间污染）
+        let mut collide = snippet(vec!["ls"], vec![]);
+        collide.id = format!("{BUILTIN_SNIPPET_ID_PREFIX}system:hack");
+        let merged2 = merge_builtin_snippets(vec![collide]);
+        assert!(
+            merged2
+                .iter()
+                .all(|s| s.id != format!("{BUILTIN_SNIPPET_ID_PREFIX}system:hack")),
+            "merge 须丢弃误用内置前缀的用户片段"
+        );
     }
 }
