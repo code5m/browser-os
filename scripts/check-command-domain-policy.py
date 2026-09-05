@@ -208,12 +208,15 @@ def detect_violations(files: dict) -> list[str]:
                 v.append(f"CMD_QUOTE_WRAP_PRESENT:{label}")
                 break
 
-    # ---- 12) 命令层（b/c 卡）：存在才判 ----
+    # ---- 12) 命令层 ----
+    # `snippet_*` 四命令在 M2-6.b 已交付，此后**必须长期存在**（防回归漏检）；
+    # `run_command` 仍归 c 卡，保持「存在才判」。
     all_cmds = list(SNIPPET_COMMANDS) + list(RUN_COMMANDS)
-    for cmd in all_cmds:
+    for cmd in SNIPPET_COMMANDS:
         cmd_body = rust_fn_body(bridge, cmd)
         if not cmd_body:
-            continue  # 尚未实现（归 b/c 卡），跳过
+            v.append(f"CMD_COMMAND_MISSING:{cmd}")
+            continue
         for bad in SHELL_FORBIDDEN:
             if bad in cmd_body:
                 v.append(f"CMD_SHELL_CONCAT_PRESENT:{cmd}:{bad}")
@@ -225,6 +228,30 @@ def detect_violations(files: dict) -> list[str]:
             v.append(f"CMD_ACL_MISSING:{cmd}")
         if f"bridge::{cmd}" not in main_rs:
             v.append(f"CMD_HANDLER_NOT_REGISTERED:{cmd}")
+
+    for cmd in RUN_COMMANDS:
+        cmd_body = rust_fn_body(bridge, cmd)
+        if not cmd_body:
+            continue  # 尚未实现（归 c 卡），存在才判
+        for bad in SHELL_FORBIDDEN:
+            if bad in cmd_body:
+                v.append(f"CMD_SHELL_CONCAT_PRESENT:{cmd}:{bad}")
+        if "check_invocation_source" not in cmd_body:
+            v.append(f"CMD_SOURCE_CHECK_MISSING:{cmd}")
+        if "check_id(" not in cmd_body:
+            v.append(f"CMD_ID_VALIDATION_MISSING:{cmd}")
+        if f'"{cmd}"' not in acl:
+            v.append(f"CMD_ACL_MISSING:{cmd}")
+        if f"bridge::{cmd}" not in main_rs:
+            v.append(f"CMD_HANDLER_NOT_REGISTERED:{cmd}")
+
+    # ---- 12.5) 持久化必须原子写（b 卡后生效）----
+    ws_code = strip_comments(files.get("workspace", ""))
+    save_body = rust_fn_body(ws_code, "save_snippets_at")
+    if not save_body:
+        v.append("CMD_SNIPPETS_PERSIST_MISSING:workspace.rs 缺 save_snippets_at")
+    elif "atomic_write" not in save_body:
+        v.append("CMD_ATOMIC_WRITE_MISSING:save_snippets_at 未走原子写")
 
     # ---- 13) cmd.* 审计不得泄露 argv / 参数值（存在才判）----
     for name in ("cmd.run.start", "cmd.validate.reject", "cmd.run.cancel"):
@@ -271,6 +298,7 @@ def read_repo(root: Path) -> dict:
         "src-tauri/src/domain.rs",
         "src-tauri/src/snippets.rs",
         "src-tauri/src/bridge.rs",
+        "src-tauri/src/workspace.rs",
         "src-tauri/src/main.rs",
         "src-tauri/permissions/default-commands.toml",
         "src/bridge.ts",
@@ -289,6 +317,7 @@ def read_repo(root: Path) -> dict:
         "domain": out["src-tauri/src/domain.rs"],
         "snippets": out["src-tauri/src/snippets.rs"],
         "bridge": out["src-tauri/src/bridge.rs"],
+        "workspace": out["src-tauri/src/workspace.rs"],
         "main_rs": out["src-tauri/src/main.rs"],
         "acl": out["src-tauri/permissions/default-commands.toml"],
         "bridge_ts": out["src/bridge.ts"],

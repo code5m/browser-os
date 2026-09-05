@@ -12,6 +12,7 @@ mod scripts;
 mod security_policy;
 mod session;
 mod shutdown;
+mod snippets;
 mod sync;
 mod workspace;
 
@@ -1376,6 +1377,10 @@ fn main() {
             bridge::script_add,
             bridge::script_update,
             bridge::script_remove,
+            bridge::snippet_list,
+            bridge::snippet_add,
+            bridge::snippet_update,
+            bridge::snippet_remove,
             bridge::run_script,
             bridge::cancel_script,
             bridge::script_status,

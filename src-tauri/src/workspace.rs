@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use chrono::Utc;
 use tauri::{AppHandle, Manager};
 
-use crate::domain::{Artifact, AuditEntry, Bookmark, ImageRef, RepoConfig, ScriptMeta};
+use crate::domain::{
+    Artifact, AuditEntry, Bookmark, CommandSnippet, ImageRef, RepoConfig, ScriptMeta,
+};
 
 fn data_dir(app: &AppHandle) -> PathBuf {
     app.path()
@@ -219,6 +221,41 @@ pub fn load_scripts(app: &AppHandle) -> Vec<ScriptMeta> {
     load_scripts_at(&scripts_file(app))
 }
 
+// ---------------------------------------------------------------------------
+// M2-6.b 命令片段持久化
+//
+// 与脚本库同目录、同原子写范式，但**没有正文文件**——命令以 `argv` 数组直接存在
+// `snippets.json` 内（`CommandSnippet` 无 `path` 字段，见 M2-6.a 冻结条款 F6）。
+// 因此不存在「先写正文、失败回滚」的两阶段，保存是单阶段原子写。
+// ---------------------------------------------------------------------------
+
+/// 命令片段库文件（M2-6.b）。
+pub fn snippets_file(app: &AppHandle) -> PathBuf {
+    data_dir(app).join("snippets.json")
+}
+
+/// 命令片段落盘（原子写：tmp + rename）
+pub fn save_snippets_at(path: &Path, list: &[CommandSnippet]) -> Result<(), String> {
+    let content =
+        serde_json::to_string_pretty(list).map_err(|e| format!("序列化命令片段库失败: {e}"))?;
+    crate::session::atomic_write(path, &content)
+}
+
+pub fn load_snippets_at(path: &Path) -> Vec<CommandSnippet> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|c| serde_json::from_str(&c).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_snippets(app: &AppHandle, list: &[CommandSnippet]) -> Result<(), String> {
+    save_snippets_at(&snippets_file(app), list)
+}
+
+pub fn load_snippets(app: &AppHandle) -> Vec<CommandSnippet> {
+    load_snippets_at(&snippets_file(app))
+}
+
 /// 正文文件名形态：`<id>.<ext>`，不含任何路径分隔符。
 fn validate_script_file_name(name: &str) -> Result<(), String> {
     if name.is_empty() || name.len() > 128 {
@@ -420,4 +457,78 @@ pub fn remove_bookmark(app: &AppHandle, id: &str) -> Result<(), String> {
         save_bookmarks(app, &list)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod snippet_persistence_tests {
+    use super::*;
+    use crate::domain::{ParamType, ScriptInterpreter, ScriptParam};
+
+    fn temp_path(name: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "mvp-browser-os-{name}-{}-{}.json",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        path
+    }
+
+    fn snippet() -> CommandSnippet {
+        let now = Utc::now();
+        CommandSnippet {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "List logs".to_string(),
+            category: "text".to_string(),
+            interpreter: ScriptInterpreter::Bash,
+            argv: vec![
+                "grep".to_string(),
+                "-r".to_string(),
+                "{PATTERN}".to_string(),
+            ],
+            params: vec![ScriptParam {
+                name: "PATTERN".to_string(),
+                label: "Pattern".to_string(),
+                param_type: ParamType::String,
+                required: true,
+                default: None,
+                options: vec![],
+                raw: false,
+                secret: false,
+            }],
+            description: "Search text".to_string(),
+            dangerous: false,
+            builtin: false,
+            enabled: true,
+            timeout_secs: 0,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn snippets_round_trip_without_body_file() {
+        let path = temp_path("snippets-round-trip");
+        let list = vec![snippet()];
+
+        save_snippets_at(&path, &list).expect("save snippets");
+        let loaded = load_snippets_at(&path);
+
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].argv, vec!["grep", "-r", "{PATTERN}"]);
+        assert_eq!(loaded[0].params[0].name, "PATTERN");
+        assert!(!path.with_extension("sh").exists());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn corrupt_or_missing_snippets_file_is_empty() {
+        let missing = temp_path("snippets-missing");
+        assert!(load_snippets_at(&missing).is_empty());
+
+        let corrupt = temp_path("snippets-corrupt");
+        fs::write(&corrupt, "{not json").expect("write corrupt snippets");
+        assert!(load_snippets_at(&corrupt).is_empty());
+        let _ = fs::remove_file(corrupt);
+    }
 }

@@ -100,5 +100,9 @@ commands.allow = [
     "cancel_script",
     "script_status",
     "script_runs_list",
+    "snippet_list",
+    "snippet_add",
+    "snippet_update",
+    "snippet_remove",
     "list_artifact_images"
 ]

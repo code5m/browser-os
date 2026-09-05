@@ -2771,6 +2771,162 @@ pub fn script_remove(app: AppHandle, webview: tauri::Webview, id: String) -> Res
 }
 
 // ---------------------------------------------------------------------------
+// M2-6.b 命令片段持久化与 CRUD
+//
+// 契约见 `logs/checkpoints/M2-6-20260905-1700.md` §7（M2-6.a 冻结）与
+// `logs/checkpoints/B-M2-6.a-command-snippet-contract-20260905-1710.md`。
+// 范围：只做 `snippets.json` 的增删改查，**不接执行**（执行接入归 M2-6.c）。
+// 与脚本库的差异：命令片段**无正文文件**，故保存是单阶段原子写，
+// 不存在「先写正文、失败回滚」的两阶段提交。
+// 审计 detail 只含 id/name/dangerous，**不含 argv 与参数值**（命令行可能含
+// secret 参数，写盘即等于泄露；F7）。
+// ---------------------------------------------------------------------------
+
+/// 列出全部命令片段。
+#[tauri::command]
+pub fn snippet_list(
+    app: AppHandle,
+    webview: tauri::Webview,
+) -> Result<Vec<CommandSnippet>, String> {
+    check_invocation_source(&webview, "snippet_list", None, &app)?;
+    Ok(workspace::load_snippets(&app))
+}
+
+/// 新增命令片段。
+#[tauri::command]
+pub fn snippet_add(
+    app: AppHandle,
+    webview: tauri::Webview,
+    name: String,
+    category: String,
+    interpreter: ScriptInterpreter,
+    argv: Vec<String>,
+    params: Vec<ScriptParam>,
+    description: Option<String>,
+    dangerous: Option<bool>,
+    timeout_secs: Option<u32>,
+) -> Result<CommandSnippet, String> {
+    check_invocation_source(&webview, "snippet_add", None, &app)?;
+
+    let mut list = workspace::load_snippets(&app);
+    if list.len() >= crate::snippets::MAX_SNIPPETS {
+        return Err(crate::snippets::SnippetError::TooManySnippets.to_string());
+    }
+
+    let now = chrono::Utc::now();
+    let snippet = CommandSnippet {
+        id: uuid::Uuid::new_v4().to_string(),
+        name,
+        category,
+        interpreter,
+        argv,
+        params,
+        description: description.unwrap_or_default(),
+        dangerous: dangerous.unwrap_or(false),
+        builtin: false,
+        enabled: true,
+        timeout_secs: timeout_secs.unwrap_or(0),
+        created_at: now,
+        updated_at: now,
+    };
+
+    crate::snippets::validate_snippet(&snippet).map_err(|e| e.to_string())?;
+
+    list.push(snippet.clone());
+    workspace::save_snippets(&app, &list)?;
+
+    workspace::log_audit(
+        &app,
+        "cmd.add",
+        format!(
+            "id={} name={} dangerous={}",
+            snippet.id, snippet.name, snippet.dangerous
+        ),
+    );
+    Ok(snippet)
+}
+
+/// 更新命令片段（整字段覆盖；`enabled` 不传则保持原值）。
+///
+/// 内置片段允许改名/改参数，但**不可删除**（`snippets::can_delete`）。
+#[tauri::command]
+pub fn snippet_update(
+    app: AppHandle,
+    webview: tauri::Webview,
+    id: String,
+    name: String,
+    category: String,
+    interpreter: ScriptInterpreter,
+    argv: Vec<String>,
+    params: Vec<ScriptParam>,
+    description: Option<String>,
+    dangerous: Option<bool>,
+    enabled: Option<bool>,
+    timeout_secs: Option<u32>,
+) -> Result<CommandSnippet, String> {
+    check_invocation_source(&webview, "snippet_update", None, &app)?;
+    check_id(&id, "命令片段 id")?;
+
+    let mut list = workspace::load_snippets(&app);
+    let pos = list
+        .iter()
+        .position(|s| s.id == id)
+        .ok_or_else(|| "命令片段不存在".to_string())?;
+
+    let mut snip = list[pos].clone();
+    snip.name = name;
+    snip.category = category;
+    snip.interpreter = interpreter;
+    snip.argv = argv;
+    snip.params = params;
+    snip.description = description.unwrap_or_default();
+    if let Some(d) = dangerous {
+        snip.dangerous = d;
+    }
+    if let Some(en) = enabled {
+        snip.enabled = en;
+    }
+    snip.timeout_secs = timeout_secs.unwrap_or(0);
+    snip.updated_at = chrono::Utc::now();
+
+    crate::snippets::validate_snippet(&snip).map_err(|e| e.to_string())?;
+
+    list[pos] = snip.clone();
+    workspace::save_snippets(&app, &list)?;
+
+    workspace::log_audit(
+        &app,
+        "cmd.update",
+        format!(
+            "id={} name={} dangerous={}",
+            snip.id, snip.name, snip.dangerous
+        ),
+    );
+    Ok(snip)
+}
+
+/// 删除命令片段（内置片段拒绝）。
+#[tauri::command]
+pub fn snippet_remove(app: AppHandle, webview: tauri::Webview, id: String) -> Result<(), String> {
+    check_invocation_source(&webview, "snippet_remove", None, &app)?;
+    check_id(&id, "命令片段 id")?;
+
+    let mut list = workspace::load_snippets(&app);
+    let existing = list
+        .iter()
+        .find(|s| s.id == id)
+        .ok_or_else(|| "命令片段不存在".to_string())?;
+    // 删除前置判定复用纯函数，避免「能否删除」的规则在两处各写一遍
+    crate::snippets::can_delete(existing).map_err(|e| e.to_string())?;
+
+    list.retain(|s| s.id != id);
+    workspace::save_snippets(&app, &list)?;
+
+    workspace::log_audit(&app, "cmd.remove", format!("id={id} builtin=false"));
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // M2-4.c 脚本执行命令接入（契约见 logs/checkpoints/M2-4.a-20260903-2233.md §8.8）
 //
 // 范围：只把 `run_script` / `cancel_script` / `script_status` 接到 M2-4.b 的

@@ -404,6 +404,26 @@ export interface ScriptMeta {
   updated_at: string;
 }
 
+// ====== M2-6 命令片段领域 ======
+// 与后端 domain.rs 的 CommandSnippet 一一对应。命令以 argv 数组存储；
+// 无 path/正文文件，不含 token/cookie/authorization/body。
+export interface CommandSnippet {
+  id: string;
+  name: string;
+  category: string;
+  interpreter: ScriptInterpreter;
+  argv: string[];
+  params: ScriptParam[];
+  description: string;
+  dangerous: boolean;
+  builtin: boolean;
+  enabled: boolean;
+  /** 0 = 使用全局默认（60），上限由后端校验为 600 */
+  timeout_secs: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export type RunStatus = "running" | "succeeded" | "failed" | "cancelled" | "timeout";
 
 export interface RunSnapshot {

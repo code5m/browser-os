@@ -6,7 +6,9 @@ import type {
   ScriptMeta,
   ScriptParam,
   ScriptInterpreter,
+  CommandSnippet,
   RunSnapshot,
+  ScriptRunRecord,
   ScriptOutputEvent,
   ScriptFinishedEvent,
   RepoConfig,
@@ -239,6 +241,35 @@ export const bridge = {
   // M2-5.c 运行历史：读 script-runs.json 全量或按 script_id 过滤
   scriptRunsList: (scriptId?: string) =>
     invoke<ScriptRunRecord[]>("script_runs_list", { scriptId: scriptId ?? null }),
+
+  // M2-6.b 命令片段持久化与 CRUD（不接执行；run_command 归 M2-6.c）
+  snippetList: () => invoke<CommandSnippet[]>("snippet_list"),
+
+  snippetAdd: (p: {
+    name: string;
+    category: string;
+    interpreter: ScriptInterpreter;
+    argv: string[];
+    params: ScriptParam[];
+    description?: string | null;
+    dangerous?: boolean | null;
+    timeoutSecs?: number | null;
+  }) => invoke<CommandSnippet>("snippet_add", p),
+
+  snippetUpdate: (p: {
+    id: string;
+    name: string;
+    category: string;
+    interpreter: ScriptInterpreter;
+    argv: string[];
+    params: ScriptParam[];
+    description?: string | null;
+    dangerous?: boolean | null;
+    enabled?: boolean | null;
+    timeoutSecs?: number | null;
+  }) => invoke<CommandSnippet>("snippet_update", p),
+
+  snippetRemove: (id: string) => invoke("snippet_remove", { id }),
 
   // 订阅脚本输出流（payload 为 ScriptOutputEvent；前端用 rAF 合并，避免高频打满渲染）
   onScriptOutput: (cb: (e: ScriptOutputEvent) => void) =>
