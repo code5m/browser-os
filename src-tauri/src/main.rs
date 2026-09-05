@@ -14,6 +14,7 @@ mod session;
 mod shutdown;
 mod snippets;
 mod sync;
+mod tools;
 mod workspace;
 
 use bridge::AppState;
@@ -1090,6 +1091,19 @@ fn main() {
                 let _ = w.set_focus();
             }
         }))
+        // M2-8：注册自定义 `tool://` 协议，供工具箱打开离线 HTML 小工具。
+        // 在 Builder 上注册（App 版 register_uri_scheme_protocol 为 mut self，无法在
+        // setup 的 &mut App 上调用）。协议为 app 级全局注册；工具窗口不授予任何 bridge
+        // 能力（见 F4 隔离）。handler 内经 UriSchemeContext.app_handle() 读取 workspace。
+        .register_uri_scheme_protocol("tool", |ctx, request| {
+            let handle = ctx.app_handle().clone();
+            let id = request.uri().path().trim_start_matches('/');
+            let html = crate::tools::tool_html(&handle, id);
+            tauri::http::Response::builder()
+                .header("Content-Type", "text/html; charset=utf-8")
+                .body(html.into_bytes())
+                .unwrap()
+        })
         .setup(|app| {
             // M1-4 冷启动：应用未运行时 xdg-open 经 desktop 文件 %u 把 URL 放进
             // 本进程 argv。此时前端未就绪，统一进 pending 队列（handle_open_url
@@ -1382,6 +1396,8 @@ fn main() {
             bridge::snippet_update,
             bridge::snippet_remove,
             bridge::run_command,
+            tools::list_tools,
+            tools::open_tool,
             bridge::run_script,
             bridge::cancel_script,
             bridge::script_status,

@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Base64 编解码</title>
+  <style>
+    :root {
+      --bg: #f5f7fa;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --primary: #4f46e5;
+      --primary-light: #eef2ff;
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --border: #e5e7eb;
+      --radius: 12px;
+      --shadow: 0 2px 8px rgba(0,0,0,0.06);
+      --code-bg: #f3f4f6;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f172a;
+        --card: #1e293b;
+        --text: #f1f5f9;
+        --muted: #94a3b8;
+        --primary: #818cf8;
+        --primary-light: rgba(129,140,248,0.12);
+        --success: #34d399;
+        --danger: #f87171;
+        --warning: #fbbf24;
+        --border: #334155;
+        --shadow: 0 2px 8px rgba(0,0,0,0.25);
+        --code-bg: #0f172a;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      -webkit-tap-highlight-color: transparent;
+      padding-bottom: 80px;
+    }
+    .container { max-width: 720px; margin: 0 auto; padding: 16px; }
+    header { text-align: center; padding: 24px 0 16px; }
+    header h1 { margin: 0 0 6px; font-size: 1.6rem; color: var(--primary); }
+    header p { margin: 0; color: var(--muted); font-size: 0.9rem; }
+    .card {
+      background: var(--card);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .card h2 { margin: 0 0 14px; font-size: 1.1rem; }
+    label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 6px; font-weight: 500; }
+    input, select, textarea {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 1rem;
+      color: var(--text);
+      background: var(--card);
+      transition: border-color .15s, box-shadow .15s;
+      -webkit-appearance: none;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-light);
+    }
+    textarea {
+      resize: vertical;
+      min-height: 140px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+    textarea[readonly] { background: var(--code-bg); }
+    .seg { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+    .seg label {
+      flex: 1; min-width: 120px; margin: 0;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      padding: 10px; border: 1px solid var(--border); border-radius: 8px;
+      cursor: pointer; font-size: 0.9rem; transition: all .15s;
+    }
+    .seg label.active { border-color: var(--primary); background: var(--primary-light); color: var(--primary); font-weight: 600; }
+    .seg input { width: auto; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      padding: 10px 14px; border: none; border-radius: 8px;
+      font-size: 0.9rem; font-weight: 600; cursor: pointer;
+      transition: transform .05s, opacity .15s; -webkit-tap-highlight-color: transparent;
+      background: var(--primary); color: #fff;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-outline { background: transparent; color: var(--primary); border: 1px solid var(--primary); }
+    .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+    .btn-block { width: 100%; }
+    .actions { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+    .actions .btn { flex: 1; min-width: 96px; }
+    .result-title { font-size: 0.8rem; color: var(--muted); margin-bottom: 4px; }
+    .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; }
+    .badge-success { background: rgba(16,185,129,0.15); color: var(--success); }
+    .badge-danger { background: rgba(239,68,68,0.15); color: var(--danger); }
+    .badge-warning { background: rgba(245,158,11,0.15); color: var(--warning); }
+    .desc-box { margin-top: 12px; padding: 12px; background: var(--code-bg); border-radius: 8px; border-left: 4px solid var(--muted); font-size: 0.9rem; }
+    .desc-box.error { border-left-color: var(--danger); background: rgba(239,68,68,0.08); }
+    .desc-box.success { border-left-color: var(--success); background: rgba(16,185,129,0.08); }
+    .hint { font-size: 0.75rem; color: var(--muted); margin-top: 8px; }
+    .copy-toast {
+      position: fixed; top: 16px; left: 50%;
+      transform: translateX(-50%) translateY(-20px);
+      background: var(--text); color: var(--bg);
+      padding: 8px 16px; border-radius: 999px;
+      font-size: 0.85rem; opacity: 0; pointer-events: none;
+      transition: opacity .2s, transform .2s; z-index: 200;
+    }
+    .copy-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    footer { text-align: center; color: var(--muted); font-size: 0.8rem; padding: 20px 0 30px; }
+    @media (max-width: 480px) {
+      header h1 { font-size: 1.4rem; }
+      .actions .btn { flex-basis: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Base64 编解码</h1>
+      <p>文本 ↔ Base64 · 支持 UTF-8 中文 · URL-Safe 变体</p>
+    </header>
+
+    <section class="card">
+      <h2>输入</h2>
+      <div class="seg" id="modeSeg">
+        <label class="active"><input type="radio" name="mode" value="encode" checked> 编码（文本 → Base64）</label>
+        <label><input type="radio" name="mode" value="decode"> 解码（Base64 → 文本）</label>
+      </div>
+      <textarea id="input" placeholder="输入要编码的文本，或粘贴待解码的 Base64..." spellcheck="false"></textarea>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:12px;">
+        <input type="checkbox" id="urlSafe" style="width:auto;">
+        使用 URL-Safe 变体（<code>-_</code> 替换 <code>+/</code>，编码时去除填充）
+      </label>
+      <div class="actions">
+        <button class="btn btn-primary btn-block" id="convBtn">转换</button>
+        <button class="btn btn-ghost btn-block" id="clearBtn">清空</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>结果</h2>
+      <div id="msg" class="desc-box" style="display:none;"></div>
+      <div class="result-title" style="margin-top:12px;">输出</div>
+      <textarea id="output" readonly placeholder="转换结果将显示在这里"></textarea>
+      <div class="actions">
+        <button class="btn btn-outline btn-block" id="copyBtn">复制结果</button>
+      </div>
+      <div class="hint">编码使用 UTF-8 字节，中文不会乱码；解码失败会提示非法 Base64。</div>
+    </section>
+
+    <footer>单文件 HTML，纯离线，保存后随时带走使用</footer>
+  </div>
+
+  <div class="copy-toast" id="copyToast">已复制</div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    const input = $('input'), output = $('output'), msg = $('msg');
+    const urlSafe = $('urlSafe'), copyToast = $('copyToast');
+
+    function showMsg(type, html) {
+      msg.style.display = 'block';
+      msg.className = 'desc-box ' + (type === 'error' ? 'error' : type === 'success' ? 'success' : '');
+      msg.innerHTML = html;
+    }
+    function clearMsg() { msg.style.display = 'none'; msg.innerHTML = ''; }
+
+    function copyText(text) {
+      navigator.clipboard.writeText(text).then(() => toast()).catch(() => {
+        const ta = document.createElement('textarea');
+        ta.value = text; document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); document.body.removeChild(ta); toast();
+      });
+    }
+    function toast() {
+      copyToast.classList.add('show');
+      setTimeout(() => copyToast.classList.remove('show'), 1500);
+    }
+
+    function bytesToB64(bytes) {
+      let bin = '';
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+      }
+      return btoa(bin);
+    }
+    function b64ToBytes(b64) {
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return bytes;
+    }
+
+    function convert() {
+      clearMsg();
+      const mode = document.querySelector('input[name="mode"]:checked').value;
+      const text = input.value;
+      if (!text) { output.value = ''; showMsg('warn', '<span class="badge badge-warning">空</span> 请输入内容'); return; }
+      const useUrlSafe = urlSafe.checked;
+
+      try {
+        if (mode === 'encode') {
+          const bytes = new TextEncoder().encode(text);
+          let b64 = bytesToB64(bytes);
+          if (useUrlSafe) b64 = b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+          output.value = b64;
+          showMsg('success', '<span class="badge badge-success">编码完成</span>');
+        } else {
+          let s = text.trim();
+          if (useUrlSafe) s = s.replace(/-/g, '+').replace(/_/g, '/');
+          while (s.length % 4 !== 0) s += '=';
+          const bytes = b64ToBytes(s);
+          output.value = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+          showMsg('success', '<span class="badge badge-success">解码完成</span>');
+        }
+      } catch (e) {
+        showMsg('error', `<span class="badge badge-danger">失败</span> ${e.message}`);
+      }
+    }
+
+    document.querySelectorAll('#modeSeg input').forEach(r => {
+      r.addEventListener('change', () => {
+        document.querySelectorAll('#modeSeg label').forEach(l => l.classList.remove('active'));
+        r.closest('label').classList.add('active');
+      });
+    });
+    $('convBtn').onclick = convert;
+    $('clearBtn').onclick = () => { input.value = ''; output.value = ''; clearMsg(); };
+    $('copyBtn').onclick = () => { if (output.value) copyText(output.value); };
+
+    try { input.value = localStorage.getItem('b64ToolInput') || ''; } catch (e) {}
+    input.addEventListener('input', () => { try { localStorage.setItem('b64ToolInput', input.value); } catch (e) {} });
+  </script>
+</body>
+</html>

@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>JSON 格式化</title>
+  <style>
+    :root {
+      --bg: #f5f7fa;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --primary: #4f46e5;
+      --primary-light: #eef2ff;
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --border: #e5e7eb;
+      --radius: 12px;
+      --shadow: 0 2px 8px rgba(0,0,0,0.06);
+      --code-bg: #f3f4f6;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f172a;
+        --card: #1e293b;
+        --text: #f1f5f9;
+        --muted: #94a3b8;
+        --primary: #818cf8;
+        --primary-light: rgba(129,140,248,0.12);
+        --success: #34d399;
+        --danger: #f87171;
+        --warning: #fbbf24;
+        --border: #334155;
+        --shadow: 0 2px 8px rgba(0,0,0,0.25);
+        --code-bg: #0f172a;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      -webkit-tap-highlight-color: transparent;
+      padding-bottom: 80px;
+    }
+    .container { max-width: 720px; margin: 0 auto; padding: 16px; }
+    header { text-align: center; padding: 24px 0 16px; }
+    header h1 { margin: 0 0 6px; font-size: 1.6rem; color: var(--primary); }
+    header p { margin: 0; color: var(--muted); font-size: 0.9rem; }
+    .card {
+      background: var(--card);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .card h2 { margin: 0 0 14px; font-size: 1.1rem; }
+    label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 6px; font-weight: 500; }
+    input, select, textarea {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 1rem;
+      color: var(--text);
+      background: var(--card);
+      transition: border-color .15s, box-shadow .15s;
+      -webkit-appearance: none;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-light);
+    }
+    textarea {
+      resize: vertical;
+      min-height: 160px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+    textarea[readonly] { background: var(--code-bg); }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+    .row .field { flex: 1; min-width: 140px; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 10px 14px;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform .05s, opacity .15s;
+      -webkit-tap-highlight-color: transparent;
+      background: var(--primary);
+      color: #fff;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-outline { background: transparent; color: var(--primary); border: 1px solid var(--primary); }
+    .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+    .btn-sm { padding: 6px 10px; font-size: 0.8rem; }
+    .btn-block { width: 100%; }
+    .actions { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+    .actions .btn { flex: 1; min-width: 96px; }
+    .result-title { font-size: 0.8rem; color: var(--muted); margin-bottom: 4px; }
+    .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; }
+    .badge-success { background: rgba(16,185,129,0.15); color: var(--success); }
+    .badge-danger { background: rgba(239,68,68,0.15); color: var(--danger); }
+    .badge-warning { background: rgba(245,158,11,0.15); color: var(--warning); }
+    .desc-box { margin-top: 12px; padding: 12px; background: var(--code-bg); border-radius: 8px; border-left: 4px solid var(--muted); font-size: 0.9rem; }
+    .desc-box.error { border-left-color: var(--danger); background: rgba(239,68,68,0.08); }
+    .desc-box.success { border-left-color: var(--success); background: rgba(16,185,129,0.08); }
+    .hint { font-size: 0.75rem; color: var(--muted); margin-top: 4px; }
+    .copy-toast {
+      position: fixed; top: 16px; left: 50%;
+      transform: translateX(-50%) translateY(-20px);
+      background: var(--text); color: var(--bg);
+      padding: 8px 16px; border-radius: 999px;
+      font-size: 0.85rem; opacity: 0; pointer-events: none;
+      transition: opacity .2s, transform .2s; z-index: 200;
+    }
+    .copy-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    footer { text-align: center; color: var(--muted); font-size: 0.8rem; padding: 20px 0 30px; }
+    @media (max-width: 480px) {
+      header h1 { font-size: 1.4rem; }
+      .actions .btn { flex-basis: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>JSON 格式化</h1>
+      <p>格式化 · 压缩 · 校验 · 键排序 · Unicode 转义</p>
+    </header>
+
+    <section class="card">
+      <h2>输入</h2>
+      <textarea id="input" placeholder="在此粘贴 JSON..." spellcheck="false"></textarea>
+      <div class="row" style="margin-top:12px;">
+        <div class="field">
+          <label for="indent">缩进</label>
+          <select id="indent">
+            <option value="2">2 空格</option>
+            <option value="4">4 空格</option>
+            <option value="tab">Tab</option>
+          </select>
+        </div>
+        <div class="field">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+            <input type="checkbox" id="sortKeys" style="width:auto;">
+            排序键
+          </label>
+          <div class="hint">递归按字母序重排对象键</div>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" id="fmtBtn">格式化</button>
+        <button class="btn btn-outline" id="minBtn">压缩</button>
+        <button class="btn btn-ghost" id="valBtn">校验</button>
+      </div>
+      <div class="actions">
+        <button class="btn btn-ghost" id="escBtn">Unicode 转义</button>
+        <button class="btn btn-ghost" id="unescBtn">Unicode 反转义</button>
+        <button class="btn btn-ghost" id="clearBtn">清空</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>输出</h2>
+      <div id="msg" class="desc-box" style="display:none;"></div>
+      <div class="result-title" style="margin-top:12px;">结果</div>
+      <textarea id="output" readonly placeholder="处理后的结果将显示在这里"></textarea>
+      <div class="actions">
+        <button class="btn btn-outline btn-block" id="copyBtn">复制结果</button>
+      </div>
+    </section>
+
+    <footer>单文件 HTML，纯离线，保存后随时带走使用</footer>
+  </div>
+
+  <div class="copy-toast" id="copyToast">已复制</div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    const input = $('input'), output = $('output'), msg = $('msg');
+    const indentSel = $('indent'), sortKeys = $('sortKeys');
+    const copyToast = $('copyToast');
+
+    function showMsg(type, html) {
+      msg.style.display = 'block';
+      msg.className = 'desc-box ' + (type === 'error' ? 'error' : type === 'success' ? 'success' : '');
+      msg.innerHTML = html;
+    }
+    function clearMsg() { msg.style.display = 'none'; msg.innerHTML = ''; }
+
+    function copyText(text) {
+      navigator.clipboard.writeText(text).then(() => toast()).catch(() => {
+        const ta = document.createElement('textarea');
+        ta.value = text; document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); document.body.removeChild(ta); toast();
+      });
+    }
+    function toast() {
+      copyToast.classList.add('show');
+      setTimeout(() => copyToast.classList.remove('show'), 1500);
+    }
+
+    function sortDeep(obj) {
+      if (Array.isArray(obj)) return obj.map(sortDeep);
+      if (obj && typeof obj === 'object') {
+        const sorted = {};
+        Object.keys(obj).sort().forEach(k => sorted[k] = sortDeep(obj[k]));
+        return sorted;
+      }
+      return obj;
+    }
+
+    function getLineCol(err) {
+      const pm = err.message.match(/position (\d+)/);
+      if (pm) {
+        const pos = parseInt(pm[1], 10);
+        const lines = input.value.slice(0, pos).split('\n');
+        return { line: lines.length, col: lines[lines.length - 1].length + 1 };
+      }
+      const lm = err.message.match(/line (\d+) column (\d+)/);
+      if (lm) return { line: parseInt(lm[1], 10), col: parseInt(lm[2], 10) };
+      return null;
+    }
+
+    function doFormat() {
+      clearMsg();
+      const text = input.value;
+      if (!text.trim()) { output.value = ''; showMsg('warn', '<span class="badge badge-warning">空</span> 请输入 JSON'); return; }
+      try {
+        let obj = JSON.parse(text);
+        if (sortKeys.checked) obj = sortDeep(obj);
+        const indent = indentSel.value === 'tab' ? '\t' : parseInt(indentSel.value, 10);
+        output.value = JSON.stringify(obj, null, indent);
+        showMsg('success', '<span class="badge badge-success">成功</span> 已格式化');
+      } catch (e) {
+        const lc = getLineCol(e);
+        const where = lc ? `（约第 ${lc.line} 行第 ${lc.col} 列）` : '';
+        showMsg('error', `<span class="badge badge-danger">JSON 错误</span> ${e.message} ${where}`);
+      }
+    }
+
+    function doMinify() {
+      clearMsg();
+      const text = input.value;
+      if (!text.trim()) { output.value = ''; showMsg('warn', '<span class="badge badge-warning">空</span> 请输入 JSON'); return; }
+      try {
+        const obj = JSON.parse(text);
+        output.value = JSON.stringify(obj);
+        showMsg('success', '<span class="badge badge-success">成功</span> 已压缩为单行');
+      } catch (e) {
+        const lc = getLineCol(e);
+        const where = lc ? `（约第 ${lc.line} 行第 ${lc.col} 列）` : '';
+        showMsg('error', `<span class="badge badge-danger">JSON 错误</span> ${e.message} ${where}`);
+      }
+    }
+
+    function doValidate() {
+      clearMsg();
+      const text = input.value;
+      if (!text.trim()) { showMsg('warn', '<span class="badge badge-warning">空</span> 请输入 JSON'); return; }
+      try {
+        JSON.parse(text);
+        showMsg('success', '<span class="badge badge-success">有效</span> JSON 语法正确');
+      } catch (e) {
+        const lc = getLineCol(e);
+        const where = lc ? `（约第 ${lc.line} 行第 ${lc.col} 列）` : '';
+        showMsg('error', `<span class="badge badge-danger">无效</span> ${e.message} ${where}`);
+      }
+    }
+
+    function doEscape() {
+      clearMsg();
+      const text = input.value;
+      if (!text) { output.value = ''; return; }
+      output.value = text.replace(/[^\x20-\x7E]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+      showMsg('success', '<span class="badge badge-success">完成</span> 非 ASCII 字符已转义为 \\uXXXX');
+    }
+
+    function doUnescape() {
+      clearMsg();
+      const text = input.value;
+      if (!text) { output.value = ''; return; }
+      try {
+        output.value = text.replace(/\\u([0-9a-fA-F]{4})/g, (m, h) => String.fromCharCode(parseInt(h, 16)));
+        showMsg('success', '<span class="badge badge-success">完成</span> \\uXXXX 已还原');
+      } catch (e) {
+        showMsg('error', `<span class="badge badge-danger">失败</span> ${e.message}`);
+      }
+    }
+
+    $('fmtBtn').onclick = doFormat;
+    $('minBtn').onclick = doMinify;
+    $('valBtn').onclick = doValidate;
+    $('escBtn').onclick = doEscape;
+    $('unescBtn').onclick = doUnescape;
+    $('clearBtn').onclick = () => { input.value = ''; output.value = ''; clearMsg(); };
+    $('copyBtn').onclick = () => { if (output.value) copyText(output.value); };
+
+    try { input.value = localStorage.getItem('jsonToolInput') || ''; } catch (e) {}
+    input.addEventListener('input', () => { try { localStorage.setItem('jsonToolInput', input.value); } catch (e) {} });
+  </script>
+</body>
+</html>

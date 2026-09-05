@@ -767,6 +767,49 @@ impl CommandSnippet {
     }
 }
 
+// ===== M2-7 工具（离线 HTML 小工具）领域类型 =====
+//
+// 契约冻结见 `logs/checkpoints/B-M2-7.a-tool-manifest-contract-20260905-1800.md`
+// （F1~F9）。与 `#1 脚本`/`#4 命令` 的本质差异：工具是**静态 HTML**，
+// 不 spawn 进程、不拼 shell，执行风险几乎为零——本结构只描述「清单是什么」，
+// 不含任何执行能力（打开/渲染归 M2-8，前端子 webview 隔离）。
+//
+// 安全口径（沿用 M2-4 P0 红线 + M2-6 字段复用惯例）：
+//   - 工具是静态 HTML，无 argv、无执行风险，不引入 `dangerous` 字段
+//     （风险面在 M2-8 Web 上下文隔离，不在清单）
+//   - `entry` 只存文件名/相对键，不存绝对路径
+//   - 新增字段一律 `#[serde(default)]`，兼容历史数据
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolMeta {
+    /// 唯一 id。
+    /// 内置为固定短名（json / base64 / timestamp / regex / cron）；
+    /// 用户工具为 `user-<文件名>`（与内置 id 命名空间隔离，避免碰撞）。
+    pub id: String,
+    /// 展示名
+    pub name: String,
+    /// 可选描述（内置为 None；未来可由 HTML <title>/<meta> 抽取，本期不做）
+    #[serde(default)]
+    pub description: Option<String>,
+    /// 分类 / 标签（自由字符串，与 `ScriptMeta.category` 同口径，不做白名单约束）
+    pub category: String,
+    /// 来源：内置（编译期嵌入）或用户（workspace/tools 运行时扫描）
+    pub source: ToolSource,
+    /// 入口：内置 = 嵌入键名/相对文件名（`tools/<id>-tool.html`），供 M2-8 经
+    ///   `tools::builtin_tool_html` 取嵌入字节；用户 = 文件名。
+    /// 一律只存文件名，**不存绝对路径**。
+    pub entry: String,
+}
+
+/// 工具来源（snake_case 序列化：`builtin` / `user`）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolSource {
+    /// 编译期 `include_str!` 嵌入的固定种子
+    Builtin,
+    /// 用户放入 `workspace/tools/` 的自定义 HTML
+    User,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

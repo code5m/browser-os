@@ -309,6 +309,18 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/check-command-domain-policy.py" --expect-pending >/dev/null 2>&1 \
     || pm_fail "check-command-domain-policy.py --expect-pending（pending 码位集合应与 PENDING_CODES 一致）"
 
+  pm_log "M2-7 工具清单与打包不变量夹具（契约冻结 + include_str! 嵌入 + 只读 list_tools + ACL）…"
+  python3 "$SCRIPT_DIR/check-tools-policy.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-tools-policy.py --self-test"
+  python3 "$SCRIPT_DIR/check-tools-policy.py" >/dev/null 2>&1 \
+    || pm_fail "check-tools-policy.py（工具清单契约被破坏）"
+
+  pm_log "M2-9 种子工具验收不变量夹具（离线/零外链/零 bridge 写原语 + 零能力隔离 + 路径防御）…"
+  python3 "$SCRIPT_DIR/check-seed-tools.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-seed-tools.py --self-test"
+  python3 "$SCRIPT_DIR/check-seed-tools.py" >/dev/null 2>&1 \
+    || pm_fail "check-seed-tools.py（种子工具验收不变量被破坏）"
+
   pm_log "M2-5 脚本库 UI 逻辑层自动化测试（headless，加载真实 scriptUi.ts）…"
   (cd "$ROOT" && node "$SCRIPT_DIR/check-script-ui-logic.mjs") >/dev/null 2>&1 \
     || pm_fail "check-script-ui-logic.mjs（脚本库 CRUD 前端逻辑回归）"
@@ -399,6 +411,10 @@ run_self_test() {
   fi
   if ! (cd "$ROOT" && node "$SCRIPT_DIR/check-command-ui-logic.mjs") >/dev/null 2>&1; then
     echo "FAIL: check-command-ui-logic.mjs"; rc=1
+  fi
+  [ -f "$SCRIPT_DIR/check-tools-policy.py" ] || { echo "FAIL: check-tools-policy.py missing"; rc=1; }
+  if ! python3 "$SCRIPT_DIR/check-tools-policy.py" --self-test >/dev/null 2>&1; then
+    echo "FAIL: check-tools-policy.py --self-test"; rc=1
   fi
   if ! python3 "$SCRIPT_DIR/check-session-persistence-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-session-persistence-policy.py --self-test"; rc=1

@@ -460,3 +460,17 @@ export interface ScriptOutputEvent {
 export interface ScriptFinishedEvent {
   snapshot: RunSnapshot;
 }
+
+// ====== M2-7 / M2-8 工具领域 ======
+// 与后端 domain.rs 的 ToolMeta / ToolSource 一一对应（serde rename_all = "snake_case"）。
+// 工具是静态离线 HTML，无执行能力；打开/隔离在 M2-8（tool:// 协议 + 零能力子 webview）。
+export type ToolSource = "builtin" | "user";
+
+export interface ToolMeta {
+  id: string;
+  name: string;
+  description: string | null;
+  category: string;
+  source: ToolSource;
+  entry: string;
+}

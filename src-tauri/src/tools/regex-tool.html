@@ -1,0 +1,1195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Regex Forge · 正则表达式工坊</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --bg-elevated: #161920;
+      --bg-card: #1b1f27;
+      --border: #2a2f3a;
+      --text: #e8ecf1;
+      --text-muted: #8b94a5;
+      --accent: #4f8cff;
+      --accent-glow: rgba(79, 140, 255, 0.25);
+      --warn: #ff9f43;
+      --warn-glow: rgba(255, 159, 67, 0.25);
+      --danger: #ff5e5e;
+      --success: #2ecc71;
+      --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --font-body: 'Noto Sans SC', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --radius: 6px;
+      --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-body);
+      font-size: 15px;
+      line-height: 1.55;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      background-image:
+        radial-gradient(circle at 10% 0%, rgba(79, 140, 255, 0.08) 0%, transparent 35%),
+        radial-gradient(circle at 90% 100%, rgba(255, 159, 67, 0.06) 0%, transparent 35%),
+        linear-gradient(180deg, var(--bg) 0%, #0c0d10 100%);
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px 16px 100px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 24px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--border);
+      opacity: 0;
+      transform: translateY(-12px);
+      animation: fadeInDown 0.6s ease forwards;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      width: 42px;
+      height: 42px;
+      border: 2px solid var(--accent);
+      color: var(--accent);
+      display: grid;
+      place-items: center;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 18px;
+      border-radius: var(--radius);
+      box-shadow: 0 0 18px var(--accent-glow);
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+
+    .brand p {
+      margin: 2px 0 0;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .btn {
+      appearance: none;
+      border: 2px solid var(--border);
+      background: var(--bg-card);
+      color: var(--text);
+      padding: 8px 14px;
+      font-family: var(--font-body);
+      font-size: 13px;
+      font-weight: 500;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: all 0.18s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    .btn:hover {
+      border-color: var(--accent);
+      background: rgba(79, 140, 255, 0.08);
+      box-shadow: 0 0 14px var(--accent-glow);
+    }
+
+    .btn-primary {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .btn-primary:hover {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .btn-icon {
+      padding: 8px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 18px;
+    }
+
+    @media (min-width: 900px) {
+      .layout {
+        grid-template-columns: 1.05fr 0.95fr;
+      }
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+      box-shadow: var(--shadow);
+      opacity: 0;
+      transform: translateY(14px);
+      animation: fadeInUp 0.55s ease forwards;
+    }
+
+    .card:nth-child(1) { animation-delay: 80ms; }
+    .card:nth-child(2) { animation-delay: 160ms; }
+    .card:nth-child(3) { animation-delay: 240ms; }
+    .card:nth-child(4) { animation-delay: 320ms; }
+    .card:nth-child(5) { animation-delay: 400ms; }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .card-title {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-title .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 10px var(--accent-glow);
+    }
+
+    .label-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .source-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--warn);
+      border: 1px solid rgba(255, 159, 67, 0.35);
+      background: rgba(255, 159, 67, 0.08);
+      opacity: 0;
+      transform: translateX(10px);
+      transition: all 0.3s ease;
+    }
+
+    .source-tag.visible {
+      opacity: 1;
+      transform: translateX(0);
+    }
+
+    textarea, input[type="text"], .code-output {
+      width: 100%;
+      background: var(--bg-elevated);
+      border: 2px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 14px;
+      line-height: 1.6;
+      padding: 12px;
+      outline: none;
+      resize: vertical;
+      transition: border-color 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    textarea:focus, input[type="text"]:focus, .code-output:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    textarea.error, input[type="text"].error {
+      border-color: var(--danger);
+      animation: shake 0.35s ease;
+    }
+
+    textarea {
+      min-height: 120px;
+    }
+
+    #patternInput {
+      min-height: 54px;
+      resize: vertical;
+    }
+
+    .flags-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .flag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg-elevated);
+      font-size: 12px;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.15s ease;
+    }
+
+    .flag.active {
+      border-color: var(--accent);
+      background: rgba(79, 140, 255, 0.12);
+      color: var(--accent);
+    }
+
+    .flag input {
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border: 2px solid var(--text-muted);
+      border-radius: 3px;
+      margin: 0;
+      position: relative;
+      transition: all 0.15s ease;
+    }
+
+    .flag.active input {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .flag.active input::after {
+      content: '';
+      position: absolute;
+      left: 3px;
+      top: 0;
+      width: 4px;
+      height: 8px;
+      border: solid #fff;
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
+    }
+
+    .highlight-panel {
+      background: var(--bg-elevated);
+      border: 2px solid var(--border);
+      border-radius: var(--radius);
+      min-height: 120px;
+      max-height: 260px;
+      overflow: auto;
+      padding: 12px;
+      font-family: var(--font-mono);
+      font-size: 14px;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .match-mark {
+      background: rgba(255, 159, 67, 0.22);
+      border-bottom: 2px solid var(--warn);
+      border-radius: 3px;
+      padding: 1px 2px;
+      margin: 0 1px;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+
+    .match-mark:hover {
+      background: rgba(255, 159, 67, 0.42);
+    }
+
+    .match-group {
+      background: rgba(79, 140, 255, 0.18);
+      border-bottom: 2px solid var(--accent);
+      border-radius: 3px;
+      padding: 1px 2px;
+      margin: 0 1px;
+    }
+
+    .stats-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 12px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .stat {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      padding: 6px 10px;
+      border-radius: var(--radius);
+    }
+
+    .stat b {
+      color: var(--text);
+      margin-right: 4px;
+    }
+
+    .results-list {
+      max-height: 220px;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .result-item {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      font-size: 13px;
+    }
+
+    .result-item .idx {
+      color: var(--accent);
+      font-weight: 700;
+      font-family: var(--font-mono);
+      margin-right: 8px;
+    }
+
+    .result-item .txt {
+      color: var(--warn);
+      font-family: var(--font-mono);
+      word-break: break-all;
+    }
+
+    .result-item .meta {
+      margin-top: 6px;
+      color: var(--text-muted);
+      font-size: 11px;
+      font-family: var(--font-mono);
+    }
+
+    .result-item .group-list {
+      margin-top: 6px;
+      padding-left: 16px;
+      color: var(--text-muted);
+      font-size: 11px;
+      font-family: var(--font-mono);
+    }
+
+    .output-tabs {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      margin-bottom: 12px;
+      scrollbar-width: thin;
+    }
+
+    .output-tabs::-webkit-scrollbar { height: 4px; }
+    .output-tabs::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .tab {
+      flex: 0 0 auto;
+      padding: 7px 12px;
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .tab.active {
+      border-color: var(--accent);
+      background: rgba(79, 140, 255, 0.12);
+      color: var(--accent);
+    }
+
+    .code-output {
+      min-height: 84px;
+      background: #111318;
+      position: relative;
+      padding-right: 44px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .copy-btn {
+      position: absolute;
+      right: 10px;
+      top: 10px;
+      padding: 6px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .copy-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .preset-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+      gap: 8px;
+    }
+
+    .preset-btn {
+      padding: 8px 10px;
+      font-size: 12px;
+      text-align: center;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .preset-btn:hover {
+      border-color: var(--warn);
+      color: var(--warn);
+      background: rgba(255, 159, 67, 0.08);
+    }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%) translateY(20px);
+      background: var(--bg-card);
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      padding: 10px 18px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: 0 6px 24px rgba(0,0,0,0.4), 0 0 18px var(--accent-glow);
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.3s ease;
+      z-index: 1000;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .empty-state {
+      color: var(--text-muted);
+      font-style: italic;
+      font-size: 13px;
+      padding: 12px 0;
+    }
+
+    .error-msg {
+      color: var(--danger);
+      font-size: 12px;
+      margin-top: 8px;
+      min-height: 18px;
+      font-family: var(--font-mono);
+    }
+
+    @keyframes fadeInDown {
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes fadeInUp {
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-4px); }
+      75% { transform: translateX(4px); }
+    }
+
+    @media (max-width: 480px) {
+      .container { padding: 14px 12px 90px; }
+      header { flex-direction: column; align-items: flex-start; }
+      .brand h1 { font-size: 17px; }
+      .btn { font-size: 12px; padding: 7px 10px; }
+      .preset-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="brand">
+        <div class="brand-icon">/·/</div>
+        <div>
+          <h1>Regex Forge · 正则表达式工坊</h1>
+          <p>生成 · 检测 · 自动识别 · 多语言转换</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-primary" id="copyAllBtn" title="复制当前转换结果">复制结果</button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title"><span class="dot"></span>正则表达式</h2>
+          <span class="source-tag" id="sourceTag">自动识别：—</span>
+        </div>
+        <div class="label-row">
+          <span>输入或粘贴任意语言/IDE 格式的正则</span>
+          <span id="normalizedHint" style="opacity:0;transition:opacity .3s">已还原为通用正则</span>
+        </div>
+        <textarea id="patternInput" placeholder="例如：\\d{3}-\\d{4}-\\d{4} 或 Java 的 \"\\\\d{3}-\\\\d{4}-\\\\d{4}\"" spellcheck="false"></textarea>
+        <div class="error-msg" id="errorMsg"></div>
+
+        <div class="flags-bar" id="flagsBar">
+          <label class="flag active" data-flag="g"><input type="checkbox" checked><span>全局 g</span></label>
+          <label class="flag" data-flag="m"><input type="checkbox"><span>多行 m</span></label>
+          <label class="flag" data-flag="i"><input type="checkbox"><span>忽略 i</span></label>
+          <label class="flag active" data-flag="s"><input type="checkbox" checked><span>点号 s</span></label>
+          <label class="flag" data-flag="u"><input type="checkbox"><span>Unicode u</span></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title"><span class="dot" style="background:var(--warn);box-shadow:0 0 10px var(--warn-glow)"></span>匹配结果</h2>
+        </div>
+        <div class="highlight-panel" id="highlightPanel"><span class="empty-state">输入测试文本后将在此处高亮匹配项</span></div>
+        <div class="stats-row">
+          <div class="stat"><b id="matchCount">0</b>匹配</div>
+          <div class="stat"><b id="groupCount">0</b>分组</div>
+          <div class="stat"><b id="testLength">0</b>字符</div>
+        </div>
+        <div class="results-list" id="resultsList" style="margin-top:14px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title"><span class="dot"></span>测试文本</h2>
+        </div>
+        <textarea id="testInput" placeholder="在此粘贴需要匹配的文本..." spellcheck="false"></textarea>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title"><span class="dot" style="background:var(--success);box-shadow:0 0 10px rgba(46,204,113,.25)"></span>转换为</h2>
+        </div>
+        <div class="output-tabs" id="outputTabs">
+          <button class="tab active" data-target="java">Java</button>
+          <button class="tab" data-target="python">Python</button>
+          <button class="tab" data-target="rust">Rust</button>
+          <button class="tab" data-target="nodejs">Node.js</button>
+          <button class="tab" data-target="idea">IntelliJ IDEA</button>
+          <button class="tab" data-target="vscode">VSCode</button>
+        </div>
+        <div style="position:relative">
+          <pre class="code-output" id="codeOutput" tabindex="0"></pre>
+          <button class="copy-btn" id="copyOutputBtn" title="复制" aria-label="复制">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="card" style="grid-column:1/-1">
+        <div class="card-header">
+          <h2 class="card-title"><span class="dot" style="background:var(--warn);box-shadow:0 0 10px var(--warn-glow)"></span>常用正则库</h2>
+        </div>
+        <div class="preset-grid" id="presetGrid"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast">已复制到剪贴板</div>
+
+  <script>
+    // ===== 常量与模板 =====
+    const PRESETS = [
+      { name: '手机号', pattern: '^1[3-9]\\d{9}$', flags: '', desc: '中国大陆手机号' },
+      { name: '邮箱', pattern: '^[\\w.-]+@[\\w.-]+\\.\\w+$', flags: '', desc: '电子邮箱' },
+      { name: 'IPv4', pattern: '\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b', flags: 'g', desc: 'IPv4 地址' },
+      { name: 'URL', pattern: 'https?://[^\\s]+', flags: 'gi', desc: 'HTTP/HTTPS URL' },
+      { name: 'Cron', pattern: '^([\\*\\d\\-,/]+\\s){4}[\\*\\d\\-,/]+$', flags: 'gm', desc: 'Cron 表达式（5 字段）' },
+      { name: '身份证号', pattern: '^\\d{17}[\\dXx]$', flags: '', desc: '18 位身份证号' },
+      { name: '日期', pattern: '\\d{4}-\\d{2}-\\d{2}', flags: 'g', desc: 'YYYY-MM-DD' },
+      { name: '中文字符', pattern: '[\\u4e00-\\u9fa5]+', flags: 'g', desc: '连续中文' },
+      { name: '数字', pattern: '\\d+', flags: 'g', desc: '整数数字' },
+      { name: '单词', pattern: '\\b\\w+\\b', flags: 'g', desc: '单词边界' }
+    ];
+
+    const SOURCE_LABELS = {
+      java: 'Java',
+      python: 'Python',
+      rust: 'Rust',
+      nodejs: 'Node.js',
+      idea: 'IntelliJ IDEA',
+      vscode: 'VSCode',
+      unknown: '未知格式'
+    };
+
+    // ===== 状态 =====
+    const state = {
+      rawPattern: '',
+      normalizedPattern: '',
+      flags: { g: true, m: false, i: false, s: true, u: false },
+      testText: '',
+      detectedSource: null,
+      selectedOutput: 'java',
+      matches: []
+    };
+
+    // ===== DOM 元素 =====
+    const els = {
+      patternInput: document.getElementById('patternInput'),
+      testInput: document.getElementById('testInput'),
+      errorMsg: document.getElementById('errorMsg'),
+      sourceTag: document.getElementById('sourceTag'),
+      normalizedHint: document.getElementById('normalizedHint'),
+      highlightPanel: document.getElementById('highlightPanel'),
+      resultsList: document.getElementById('resultsList'),
+      matchCount: document.getElementById('matchCount'),
+      groupCount: document.getElementById('groupCount'),
+      testLength: document.getElementById('testLength'),
+      codeOutput: document.getElementById('codeOutput'),
+      outputTabs: document.getElementById('outputTabs'),
+      presetGrid: document.getElementById('presetGrid'),
+      copyOutputBtn: document.getElementById('copyOutputBtn'),
+      copyAllBtn: document.getElementById('copyAllBtn'),
+      toast: document.getElementById('toast'),
+      flagsBar: document.getElementById('flagsBar')
+    };
+
+    // ===== 工具函数 =====
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function debounce(fn, ms) {
+      let t;
+      return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...args), ms);
+      };
+    }
+
+    function showToast(msg) {
+      els.toast.textContent = msg;
+      els.toast.classList.add('show');
+      setTimeout(() => els.toast.classList.remove('show'), 2000);
+    }
+
+    async function copyToClipboard(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast('已复制到剪贴板');
+      } catch (e) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        showToast('已复制到剪贴板');
+      }
+    }
+
+    // ===== 自动识别模块 =====
+    function detectSource(input) {
+      const trimmed = input.trim();
+      if (!trimmed) return { source: null, normalized: '' };
+
+      // Node.js /regex/flags
+      const nodeSlash = trimmed.match(/^\/([\s\S]*)\/([gimsuy]*)$/);
+      if (nodeSlash) {
+        return { source: 'nodejs', normalized: nodeSlash[1], flags: nodeSlash[2] };
+      }
+
+      // new RegExp("...", "flags")
+      const newRegExp = trimmed.match(/^new\s+RegExp\s*\(\s*["']([\s\S]*?)["']\s*(?:,\s*["']([gimsuy]*)["'])?\s*\)$/);
+      if (newRegExp) {
+        return { source: 'nodejs', normalized: unescapeJsString(newRegExp[1]), flags: newRegExp[2] || '' };
+      }
+
+      // Python re.compile(r"...", flags)
+      const pyCompile = trimmed.match(/^re\.compile\s*\(\s*r(["'])([\s\S]*?)\1\s*(?:,\s*re\.(\w+))?\s*\)$/);
+      if (pyCompile) {
+        return { source: 'python', normalized: pyCompile[2], flags: parsePythonFlags(pyCompile[3] || '') };
+      }
+
+      // Rust Regex::new(r"...")
+      const rustNew = trimmed.match(/^Regex::new\s*\(\s*r(#*)"([\s\S]*?)"\1\s*\)$/);
+      if (rustNew) {
+        return { source: 'rust', normalized: rustNew[2], flags: '' };
+      }
+
+      // Java Pattern.compile("...", flags)
+      const javaCompile = trimmed.match(/^Pattern\.compile\s*\(\s*"([\s\S]*?)"\s*(?:,\s*(\w+(?:\s*\|\s*\w+)*))?\s*\)$/);
+      if (javaCompile) {
+        return { source: 'java', normalized: unescapeJavaString(javaCompile[1]), flags: parseJavaFlags(javaCompile[2] || '') };
+      }
+
+      // Python raw r"..."
+      const pyRaw = trimmed.match(/^r(["'])([\s\S]*?)\1$/);
+      if (pyRaw) {
+        return { source: 'python', normalized: pyRaw[2], flags: '' };
+      }
+
+      // Rust raw r"..." / r#"..."#
+      const rustRaw = trimmed.match(/^r(#*)"([\s\S]*?)"\1$/);
+      if (rustRaw) {
+        return { source: 'rust', normalized: rustRaw[2], flags: '' };
+      }
+
+      // Java string "..."
+      const javaStr = trimmed.match(/^"([\s\S]*)"$/);
+      if (javaStr && /\\/.test(javaStr[1])) {
+        return { source: 'java', normalized: unescapeJavaString(javaStr[1]), flags: '' };
+      }
+
+      // 通用字符串 "..." / '...'
+      const genericStr = trimmed.match(/^["']([\s\S]*)["']$/);
+      if (genericStr) {
+        return { source: 'unknown', normalized: unescapeJsString(genericStr[1]), flags: '' };
+      }
+
+      return { source: null, normalized: trimmed, flags: '' };
+    }
+
+    function unescapeJavaString(str) {
+      return str
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, '\\')
+        .replace(/\\n/g, '\n')
+        .replace(/\\t/g, '\t')
+        .replace(/\\r/g, '\r');
+    }
+
+    function unescapeJsString(str) {
+      return str
+        .replace(/\\'/g, "'")
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, '\\')
+        .replace(/\\n/g, '\n')
+        .replace(/\\t/g, '\t')
+        .replace(/\\r/g, '\r');
+    }
+
+    function parseJavaFlags(flagsExpr) {
+      const map = { CASE_INSENSITIVE: 'i', MULTILINE: 'm', DOTALL: 's', UNICODE_CHARACTER_CLASS: 'u', UNICODE_CASE: 'u', COMMENTS: '', LITERAL: '' };
+      const set = new Set();
+      flagsExpr.split(/\s*\|\s*/).forEach(f => {
+        const key = f.trim();
+        if (map[key]) set.add(map[key]);
+      });
+      return Array.from(set).join('');
+    }
+
+    function parsePythonFlags(flagExpr) {
+      const map = { I: 'i', IGNORECASE: 'i', M: 'm', MULTILINE: 'm', S: 's', DOTALL: 's', U: 'u', UNICODE: 'u' };
+      const set = new Set();
+      flagExpr.split(/\s*\|\s*/).forEach(f => {
+        const key = f.trim();
+        if (map[key]) set.add(map[key]);
+      });
+      return Array.from(set).join('');
+    }
+
+    // ===== 多语言转换模块 =====
+    function getFlagString() {
+      return ['g', 'm', 'i', 's', 'u'].filter(f => state.flags[f]).join('');
+    }
+
+    function applyDetectedFlags(detectedFlags) {
+      if (!detectedFlags) return;
+      ['g', 'm', 'i', 's', 'u'].forEach(f => {
+        state.flags[f] = detectedFlags.includes(f);
+      });
+      updateFlagUI();
+    }
+
+    function convertToJava(pattern) {
+      const escaped = pattern
+        .replace(/\\/g, '\\\\')
+        .replace(/"/g, '\\"')
+        .replace(/\n/g, '\\n')
+        .replace(/\t/g, '\\t')
+        .replace(/\r/g, '\\r');
+      const flagStr = getFlagString();
+      const flags = [];
+      if (state.flags.i) flags.push('Pattern.CASE_INSENSITIVE');
+      if (state.flags.m) flags.push('Pattern.MULTILINE');
+      if (state.flags.s) flags.push('Pattern.DOTALL');
+      if (state.flags.u) flags.push('Pattern.UNICODE_CHARACTER_CLASS');
+      if (flags.length) {
+        return `Pattern.compile("${escaped}", ${flags.join(' | ')})`;
+      }
+      return `"${escaped}"`;
+    }
+
+    function convertToPython(pattern) {
+      const needsRaw = /\\/.test(pattern);
+      const quote = pattern.includes('"') && !pattern.includes("'") ? "'" : '"';
+      let body;
+      if (needsRaw) {
+        // raw 字符串中反斜杠不转义，只需转义引号
+        body = pattern.replace(new RegExp(quote, 'g'), '\\' + quote);
+      } else {
+        body = pattern
+          .replace(/\\/g, '\\\\')
+          .replace(new RegExp(quote, 'g'), '\\' + quote);
+      }
+      const prefix = needsRaw ? 'r' : '';
+      const flagStr = getFlagString();
+      const pyFlags = [];
+      if (state.flags.i) pyFlags.push('re.I');
+      if (state.flags.m) pyFlags.push('re.M');
+      if (state.flags.s) pyFlags.push('re.S');
+      if (state.flags.u) pyFlags.push('re.U');
+      if (pyFlags.length) {
+        return `re.compile(${prefix}${quote}${body}${quote}, ${pyFlags.join(' | ')})`;
+      }
+      return `${prefix}${quote}${body}${quote}`;
+    }
+
+    function convertToRust(pattern) {
+      const needsHash = pattern.includes('"');
+      const hash = needsHash ? '##' : '#';
+      const flagStr = getFlagString();
+      const rustFlags = [];
+      if (state.flags.i) rustFlags.push('(?i)');
+      if (state.flags.m) rustFlags.push('(?m)');
+      if (state.flags.s) rustFlags.push('(?s)');
+      if (state.flags.u) rustFlags.push('(?u)');
+      const prefix = rustFlags.join('');
+      return `Regex::new(r${hash}"${prefix}${pattern}"${hash}).unwrap()`;
+    }
+
+    function convertToNodejs(pattern) {
+      const flagStr = getFlagString();
+      const escaped = pattern
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/\n/g, '\\n')
+        .replace(/\t/g, '\\t')
+        .replace(/\r/g, '\\r');
+      if (/[\n\t\r]/.test(pattern) || !isValidRegexLiteral(pattern, flagStr)) {
+        return `new RegExp('${escaped}', '${flagStr || ''}')`;
+      }
+      return `/${pattern}/${flagStr}`;
+    }
+
+    function convertToIdea(pattern) {
+      // IDEA 搜索框通常直接写正则，只需转义 $ 在替换时的情况，这里保持原样
+      return pattern;
+    }
+
+    function convertToVscode(pattern) {
+      // VSCode 搜索框中反斜杠需要双写
+      return pattern.replace(/\\/g, '\\\\');
+    }
+
+    function isValidRegexLiteral(pattern, flags) {
+      try { new RegExp(pattern, flags); return true; } catch (e) { return false; }
+    }
+
+    function renderOutput() {
+      const pattern = state.normalizedPattern;
+      let out = '';
+      switch (state.selectedOutput) {
+        case 'java': out = convertToJava(pattern); break;
+        case 'python': out = convertToPython(pattern); break;
+        case 'rust': out = convertToRust(pattern); break;
+        case 'nodejs': out = convertToNodejs(pattern); break;
+        case 'idea': out = convertToIdea(pattern); break;
+        case 'vscode': out = convertToVscode(pattern); break;
+      }
+      els.codeOutput.textContent = out;
+    }
+
+    // ===== 匹配引擎 =====
+    function runMatch() {
+      const pattern = state.normalizedPattern;
+      const text = state.testText;
+      els.errorMsg.textContent = '';
+      els.patternInput.classList.remove('error');
+      state.matches = [];
+
+      if (!pattern) {
+        renderHighlight();
+        renderResults();
+        return;
+      }
+
+      const flagStr = getFlagString().replace('g', '') + (state.flags.g ? 'g' : '');
+      let regex;
+      try {
+        regex = new RegExp(pattern, flagStr);
+      } catch (e) {
+        els.errorMsg.textContent = '正则语法错误：' + e.message;
+        els.patternInput.classList.add('error');
+        renderHighlight();
+        renderResults();
+        return;
+      }
+
+      if (!text) {
+        renderHighlight();
+        renderResults();
+        return;
+      }
+
+      const matches = [];
+      let match;
+      const maxIter = 10000;
+      let iter = 0;
+      if (state.flags.g) {
+        while ((match = regex.exec(text)) !== null && iter++ < maxIter) {
+          if (match[0] === '' && match.index === regex.lastIndex) regex.lastIndex++;
+          matches.push(buildMatch(match));
+          if (match[0] === '') break;
+        }
+      } else {
+        match = regex.exec(text);
+        if (match) matches.push(buildMatch(match));
+      }
+      state.matches = matches;
+      renderHighlight();
+      renderResults();
+    }
+
+    function buildMatch(match) {
+      const groups = [];
+      for (let i = 1; i < match.length; i++) {
+        groups.push(match[i]);
+      }
+      return {
+        index: match.index,
+        length: match[0].length,
+        text: match[0],
+        groups,
+        namedGroups: match.groups || {}
+      };
+    }
+
+    function renderHighlight() {
+      const text = state.testText;
+      if (!text) {
+        els.highlightPanel.innerHTML = '<span class="empty-state">输入测试文本后将在此处高亮匹配项</span>';
+        els.matchCount.textContent = '0';
+        els.groupCount.textContent = '0';
+        els.testLength.textContent = '0';
+        return;
+      }
+
+      if (!state.matches.length) {
+        els.highlightPanel.innerHTML = escapeHtml(text);
+        els.matchCount.textContent = '0';
+        els.groupCount.textContent = '0';
+        els.testLength.textContent = text.length.toLocaleString();
+        return;
+      }
+
+      let html = '';
+      let last = 0;
+      let groupCount = 0;
+      state.matches.forEach((m, idx) => {
+        html += escapeHtml(text.slice(last, m.index));
+        const matchText = text.slice(m.index, m.index + m.length);
+        // 简单高亮整个匹配；分组高亮需要更复杂的解析，这里用整体标记
+        html += `<span class="match-mark" title="匹配 #${idx + 1} @${m.index}-${m.index + m.length}">${escapeHtml(matchText)}</span>`;
+        groupCount += m.groups.filter(g => g !== undefined).length;
+        last = m.index + m.length;
+      });
+      html += escapeHtml(text.slice(last));
+      els.highlightPanel.innerHTML = html;
+      els.matchCount.textContent = state.matches.length.toLocaleString();
+      els.groupCount.textContent = groupCount.toLocaleString();
+      els.testLength.textContent = text.length.toLocaleString();
+    }
+
+    function renderResults() {
+      if (!state.matches.length) {
+        els.resultsList.innerHTML = '';
+        return;
+      }
+      els.resultsList.innerHTML = state.matches.map((m, idx) => {
+        const groupItems = m.groups.map((g, i) => {
+          if (g === undefined) return '';
+          return `<li>组 ${i + 1}: <span class="txt">${escapeHtml(g)}</span></li>`;
+        }).filter(Boolean).join('');
+        const namedItems = Object.entries(m.namedGroups).map(([k, v]) => {
+          return `<li>组 &lt;${k}&gt;: <span class="txt">${escapeHtml(v)}</span></li>`;
+        }).join('');
+        return `
+          <div class="result-item">
+            <span class="idx">#${idx + 1}</span>
+            <span class="txt">${escapeHtml(m.text)}</span>
+            <div class="meta">位置 ${m.index}–${m.index + m.length} · 长度 ${m.length}</div>
+            ${groupItems || namedItems ? `<ul class="group-list">${groupItems}${namedItems}</ul>` : ''}
+          </div>
+        `;
+      }).join('');
+    }
+
+    // ===== UI 更新 =====
+    function updateFlagUI() {
+      els.flagsBar.querySelectorAll('.flag').forEach(el => {
+        const f = el.dataset.flag;
+        el.classList.toggle('active', state.flags[f]);
+        el.querySelector('input').checked = state.flags[f];
+      });
+    }
+
+    function updateSourceTag() {
+      if (state.detectedSource) {
+        els.sourceTag.textContent = '自动识别：' + SOURCE_LABELS[state.detectedSource];
+        els.sourceTag.classList.add('visible');
+        els.normalizedHint.style.opacity = '1';
+      } else {
+        els.sourceTag.textContent = '自动识别：—';
+        els.sourceTag.classList.remove('visible');
+        els.normalizedHint.style.opacity = '0';
+      }
+    }
+
+    function updateTabUI() {
+      els.outputTabs.querySelectorAll('.tab').forEach(tab => {
+        tab.classList.toggle('active', tab.dataset.target === state.selectedOutput);
+      });
+    }
+
+    function onPatternChange() {
+      const raw = els.patternInput.value;
+      state.rawPattern = raw;
+      const detected = detectSource(raw);
+      state.detectedSource = detected.source;
+      state.normalizedPattern = detected.normalized;
+      if (detected.flags) applyDetectedFlags(detected.flags);
+      updateSourceTag();
+      renderOutput();
+      runMatch();
+    }
+
+    function onTestChange() {
+      state.testText = els.testInput.value;
+      els.testLength.textContent = state.testText.length.toLocaleString();
+      runMatch();
+    }
+
+    function initPresets() {
+      els.presetGrid.innerHTML = PRESETS.map(p => `
+        <button class="preset-btn" data-pattern="${escapeHtml(p.pattern)}" data-flags="${escapeHtml(p.flags)}" title="${escapeHtml(p.desc)}">
+          ${escapeHtml(p.name)}
+        </button>
+      `).join('');
+      els.presetGrid.querySelectorAll('.preset-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          els.patternInput.value = btn.dataset.pattern;
+          const flags = btn.dataset.flags;
+          ['g', 'm', 'i', 's', 'u'].forEach(f => {
+            state.flags[f] = flags.includes(f);
+          });
+          updateFlagUI();
+          onPatternChange();
+          showToast(`已加载「${btn.textContent.trim()}」模板`);
+        });
+      });
+    }
+
+    function initEvents() {
+      els.patternInput.addEventListener('input', debounce(onPatternChange, 180));
+      els.testInput.addEventListener('input', debounce(onTestChange, 180));
+
+      els.flagsBar.querySelectorAll('.flag').forEach(el => {
+        el.addEventListener('click', (e) => {
+          if (e.target.tagName === 'INPUT') return;
+          const f = el.dataset.flag;
+          state.flags[f] = !state.flags[f];
+          updateFlagUI();
+          renderOutput();
+          runMatch();
+        });
+        const cb = el.querySelector('input');
+        cb.addEventListener('change', () => {
+          state.flags[el.dataset.flag] = cb.checked;
+          renderOutput();
+          runMatch();
+        });
+      });
+
+      els.outputTabs.querySelectorAll('.tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+          state.selectedOutput = tab.dataset.target;
+          updateTabUI();
+          renderOutput();
+        });
+      });
+
+      els.copyOutputBtn.addEventListener('click', () => {
+        copyToClipboard(els.codeOutput.textContent);
+      });
+
+      els.copyAllBtn.addEventListener('click', () => {
+        copyToClipboard(els.codeOutput.textContent);
+      });
+    }
+
+    // ===== 初始化 =====
+    initPresets();
+    initEvents();
+    onPatternChange();
+    renderOutput();
+  </script>
+</body>
+</html>

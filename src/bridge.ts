@@ -36,6 +36,7 @@ import type {
   SessionSummary,
   SessionPolicy,
   SessionFlushReport,
+  ToolMeta,
 } from "./types";
 
 // M0-0.b 测量配置（契约 logs/m0-baseline-contract-v1.md；非测量运行后端返回 null）
@@ -77,6 +78,10 @@ export const bridge = {
     listen<string>("note-saved", (e) => cb(e.payload)),
 
   listArtifacts: () => invoke<Artifact[]>("list_artifacts"),
+  // M2-7/M2-8 工具：list_tools 只读枚举；open_tool 在独立子 webview 打开
+  // （协议加载 + 零能力隔离在后端 tools.rs / main.rs）
+  listTools: () => invoke<ToolMeta[]>("list_tools"),
+  openTool: (id: string) => invoke<void>("open_tool", { id }),
 
   // token 仅在此调用中传给后端，存入系统密钥库；不会被前端持久化/回显
   configureRepo: (p: { config: RepoConfig; token: string }) =>
