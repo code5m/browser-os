@@ -6,7 +6,7 @@
 > 文档角色：跨 Codex / Trae 的唯一接手入口；只记录当前执行指针、模型映射、交付证据和回写规则。
 > 文档版本：V4.17。
 > 更新时间：2026-09-05 16:48 CST。
-> 当前状态：`CODEX_READY`（**M2-6 整体裁定已签 `PASS_WITH_DEBT` + 复核整改 `M2-6-fix1` 已落地（P1-1/P1-2/P1-3/F-1/F-2/D-1 全闭环）；两份独立复核报告均判 PASS_WITH_DEBT，与 ACCEPT 结论相互印证**。裁定者 CodeBuddy Hy4 / 腾讯混元，独立于 a 卡实现者 MiniMax-M3 与 d 卡实现者 Codex gpt-5.5；b/c 卡未标实现模型，独立性不可判。M2-5 整体已 PASS，M2-4 整体已签 PASS_WITH_DEBT；NEXT=`M2-7 工具清单与打包（须先展开任务卡）`）**。
+> 当前状态：`CODEX_READY`（**M2-6 整体裁定已签 `PASS_WITH_DEBT` + 复核整改 `M2-6-fix1` 已落地（P1-1/P1-2/P1-3/F-1/F-2/D-1 全闭环）；两份独立复核报告均判 PASS_WITH_DEBT，与 ACCEPT 结论相互印证**。裁定者 CodeBuddy Hy4 / 腾讯混元，独立于 a 卡实现者 MiniMax-M3 与 d 卡实现者 Codex gpt-5.5；b/c 卡未标实现模型，独立性不可判。M2-5 整体已 PASS，M2-4 整体已签 PASS_WITH_DEBT；NEXT=`M2-7.a 工具清单契约冻结（待认领）`）**。
 > 当前分支：`master`。
 > 当前执行器：CodeBuddy（Hy4 / 腾讯混元）—— 本卡为 M2-6 整体裁定与最终收口。前序：M2-6 展开者与 a 卡实现者均为 CodeBuddy MiniMax-M3（自裁，独立性最弱），d 卡由 Codex gpt-5.5 实现，b/c 卡实现模型未标注。**M2-7 起须在检查点内显式标注 `IMPLEMENTER_MODEL`，并维持展开者 / 实现者 / 裁定者三者不同模型**。
 > 冲突裁决：WBS/验收以 `详细设计与实施计划.md` 为准，指标语义以冻结契约为准，本文只维护跨模型执行指针和交接证据。
@@ -22,7 +22,7 @@
 | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
 | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
 | 当前硬风险 | M0-6.c 的登录态证据来自本地 AI mock 持久 cookie，不代表第三方真实账号人工验收；**M1-3/M1-7 GUI 目视验收与 M1-5/M1-6/M1-7/M1-8/M1-9/M2-1 运行时端到端联调全部挂账**（D1~D9 汇总见 `logs/checkpoints/M1-ACCEPT-20260903-0843.md` §7，M2-1 挂账见 `logs/checkpoints/M2-1-20260903-0927.md` §6，均未伪造 GUI/E2E 证据）；M1-ACCEPT 的会话 id 校验加固项**已在 M2-1 修复**（`check_id` 接入 session_get/delete/export/restore）；残留 NON-BLOCKER：flush 双路径理论重复存档窗口、M1-7 未勾选=全量提交误点风险 |
-| 下一检查点 | **`M2-7 工具清单与打包 = NEXT`（须先展开任务卡再写功能代码）**。前置：`M2-6 整体裁定` 已签 `PASS_WITH_DEBT`。范围（WBS 原文）：`ToolMeta/list_tools`、内置资源嵌入、用户目录扫描和 ACL（需求 #2 小工具框架，`[S2|LEVERAGE:3|MEDIUM|AI:BALANCED|R:high]`）。**开工须先展开检查点**，并携带 M2-6 的挂账债务：①**D18** 命令片段 `argv[0]` 是否补齐 `check_launch_target` 一致性校验（或显式豁免并写入契约注释 / UI 文案）——**`M2-6-fix1` 已做最小收敛（禁 `argv[0]` 占位符），剩余部分为「作者可显式写 `bash -c`」，属授信作者模型**；②**D19** `M2-6.e` 内置片段种子（需求 #4「内置常用命令」只交付了分类框架）；③**D20** M2-6 全链路 GUI 实点验收（属 D17 延伸，无 GUI 自动化通道时如实挂账，**不得伪造**）；④**D21** 运行记录无 `kind` 判别（命令片段运行以裸 UUID 出现在历史面板）；⑤**D22** 缺 `cmd.run.cancel` 与 `cmd.run.finish`（与 D15 合并考虑）。 |
+| 下一检查点 | **`M2-7.a 工具清单契约冻结 = NEXT`（已展开，`logs/checkpoints/M2-7-20260905-1701.md`，a 卡正文待认领）**。前置：`M2-6 整体裁定` 已签 `PASS_WITH_DEBT` + 复核整改 `M2-6-fix1` 已闭环。**范围（WBS 原文 + 展开）**：`ToolMeta` 字段 + `list_tools` 语义 + 内置/用户来源模型 + 内置资源嵌入（`include_str!`）+ 用户 `workspace/tools/` 扫描 + ACL（需求 #2 小工具框架，`[S2|LEVERAGE:3|MEDIUM|AI:BALANCED|R:high]`）。**开工须先认领 a 卡并展开 b 卡**；**自 M2-7 起强制 `IMPLEMENTER_MODEL`**（落实 M2-6 复核观察项 O1：b/c 卡未标实现模型则独立性不可判，复核不予采信）**。携带 M2-6 挂账债务：①**D18** `M2-6-fix1` 已做最小收敛（禁 `argv[0]` 占位符），剩余「作者可显式写 `bash -c`」属授信作者模型；②**D19** `M2-6.e` 内置片段种子；③**D20** M2-6 GUI 实点验收（D17 延伸，不得伪造）；④**D21** 运行记录无 `kind`；⑤**D22** 缺 `cmd.run.cancel`/`cmd.run.finish`；**⑥D23（M2-7 移交）** 用户工具打开需扩展 `assetProtocol.scope`（当前不含 `workspace/tools`），归 M2-8。⚠️ **范围扩大点**：需求 #2 称「5 个种子 HTML 已物理落盘」实测不成立（`src-tauri/src/tools/` 与文件均不存在），M2-7.b 须先创建 5+ 个种子 HTML。 |
 | 下一任务路由 | **M2-7：`AI:BALANCED / R:high`（WBS 标注；若涉及内置资源嵌入与本地协议隔离，展开卡须复核是否升级为 `AI:DEEP / R:xhigh`）**。展开卡内**必须显式标注 `IMPLEMENTER_MODEL`**（回应 M2-6 观察项 O1：b/c 两卡 checkpoint 未标实现模型，导致无法判定整体裁定是否构成跨模型复核）；建议展开者 / 实现者 / 裁定者三者取不同模型。工具清单涉及**用户目录扫描**与资源嵌入，须沿用以 `check_invocation_source` + ACL + 原子写 + `check-*-policy.py` 夹具（含 `--self-test` 与变异防呆）并接入 pre-merge 的既有范式；零新增 npm 依赖（基线哈希见 `check-command-domain-policy.py`）。 |
 | 自动执行范围 | M0 已结束；M1 起必须先展开检查点，再逐点验收和提交 |
 | 必停门禁 | 见 §3「硬停止条件」；进入 M1/M2/M3 后仍不得跨检查点合并 |
