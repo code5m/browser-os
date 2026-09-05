@@ -8,7 +8,12 @@ use crate::domain::{
     Artifact, AuditEntry, Bookmark, CommandSnippet, ImageRef, RepoConfig, ScriptMeta,
 };
 
-fn data_dir(app: &AppHandle) -> PathBuf {
+/// 应用数据根目录（`.../<app_data_dir>/mvp-browser-os`）。
+///
+/// M4-6 起对 `tasks.rs` 开放：任务持久化 `tasks.json` / `task-runs.json` 与既有
+/// `scripts.json` / `snippets.json` 必须落在**同一**数据目录（A1 实测项 11：全仓
+/// 持久化均为该目录下的 JSON，不得另起第二条路径）。
+pub fn data_dir(app: &AppHandle) -> PathBuf {
     app.path()
         .app_data_dir()
         .expect("app data dir")

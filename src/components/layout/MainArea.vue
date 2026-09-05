@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, nextTick } from "vue";
+import { computed, ref, watch, nextTick, defineAsyncComponent } from "vue";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../stores/useBrowserStore";
 import { useBookmarkStore } from "../../stores/useBookmarkStore";
@@ -22,6 +22,12 @@ import SettingsPanel from "../system/SettingsPanel.vue";
 import ScriptPanel from "../workspace/ScriptPanel.vue";
 import ToolBox from "../workspace/ToolBox.vue";
 import CommandSnippetPanel from "../workspace/CommandSnippetPanel.vue";
+// M4-4 数据库面板：懒加载（defineAsyncComponent），将其 15KB+ 纯逻辑(dbUi.ts)、
+// store(useDatabaseStore.ts) 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
+// 仅在 mainView==='db' 首次渲染时才拉取该 chunk，不破坏其它视图。
+// M4-8 定时任务面板同样懒加载：其纯逻辑(taskUi.ts)、store(useTaskStore.ts) 一并拆出主 chunk。
+const TaskPanel = defineAsyncComponent(() => import("../workspace/TaskPanel.vue"));
+const DatabasePanel = defineAsyncComponent(() => import("../workspace/DatabasePanel.vue"));
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
@@ -147,6 +153,16 @@ watch(
     <!-- ===== 工具箱（M2-8） ===== -->
     <div v-else-if="layout.mainView === 'tools'" class="modview">
       <ToolBox />
+    </div>
+
+    <!-- ===== 数据库（M4-4） ===== -->
+    <div v-else-if="layout.mainView === 'db'" class="modview">
+      <DatabasePanel />
+    </div>
+
+    <!-- ===== 定时任务（M4-8） ===== -->
+    <div v-else-if="layout.mainView === 'tasks'" class="modview">
+      <TaskPanel />
     </div>
 
     <!-- ===== 系统设置 ===== -->

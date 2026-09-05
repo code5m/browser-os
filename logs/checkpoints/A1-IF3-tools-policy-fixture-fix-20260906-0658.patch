@@ -1,0 +1,32 @@
+diff --git a/scripts/check-tools-policy.py b/scripts/check-tools-policy.py
+index 2a1d39c..89bb118 100644
+--- a/scripts/check-tools-policy.py
++++ b/scripts/check-tools-policy.py
+@@ -366,15 +366,20 @@ def run_self_test(root: Path) -> int:
+     )
+
+     # 10. ACL 顺序错误（list_tools 在 list_artifact_images 之后）
++    # 变异必须**位置无关**：不得假设 list_tools 与 list_artifact_images 相邻。
++    # 项目规则要求新命令插在 list_artifact_images 之前（M4 的 task_* / db_* 即如此），
++    # 相邻字面量会在任何一次合规插入后失配，导致自检误报「既有缺陷」。
++    bad_acl = good["acl"]
++    if '    "list_tools",\n' in bad_acl and '    "list_artifact_images"' in bad_acl:
++        bad_acl = bad_acl.replace('    "list_tools",\n', "", 1)
++        bad_acl = bad_acl.replace(
++            '    "list_artifact_images"',
++            '    "list_artifact_images",\n    "list_tools"',
++            1,
++        )
+     add(
+         "ACL 顺序错误：list_tools 晚于 list_artifact_images",
+-        mutate(
+-            acl=good["acl"].replace(
+-                '    "list_tools",\n    "list_artifact_images"',
+-                '    "list_artifact_images",\n    "list_tools"',
+-                1,
+-            )
+-        ),
++        mutate(acl=bad_acl),
+         "acl",
+         "TOOL_ACL_ORDER_WRONG",
+     )

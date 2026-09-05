@@ -422,7 +422,7 @@ delay(Fixed)       = min(base_delay_secs, max_delay_secs)
 | `task_add` | `TaskDef`（不含 id/时间戳，服务端生成） | `TaskDef` | 同上，`task.add`（`id` / `kind` / `trigger` 摘要，**不含参数值**） |
 | `task_update` | `TaskDef`（按 id 全量替换） | `TaskDef` | 同上，`task.update` |
 | `task_remove` | `id: String` | `bool`（幂等） | 同上，`task.remove` |
-| `task_run_now` | `id: String` | `RunSnapshot`（复用既有类型） | 同上，`task.run.start`（`task_id` / `run_id` / `trigger=manual`） |
+| `task_run_now` | `id: String` | `RunSnapshot`（复用既有类型） | 同上，**`task.run.manual`**（`task_id` / `run_id` / `trigger=manual`；修订 A-1：不得用 `task.run.start`，见 §7） |
 
 **约束（沿用 F5 / M2-4.c 口径）**
 
@@ -438,7 +438,8 @@ delay(Fixed)       = min(base_delay_secs, max_delay_secs)
 
 | 项 | 冻结值 |
 |---|---|
-| 事件名（低频、动作级，进 `audit.json`） | `task.add` / `task.update` / `task.remove` / `task.enable` / `task.run.start` / `task.run.finish` / `task.run.skipped` / `task.run.missed` / `task.run.reject` / `task.auto_disabled` / `task.clock.rewind` / `task.runs.list` |
+| 事件名（低频、动作级，进 `audit.json`） | `task.add` / `task.update` / `task.remove` / `task.enable` / **`task.run.manual`** / `task.run.skipped` / `task.run.missed` / `task.run.reject` / `task.auto_disabled` / `task.clock.rewind` / `task.runs.list` |
+| **修订 A-1（A10 R-1，已生效）** | `task.run.start` / `task.run.finish` **移出** `audit.json`：最小间隔 60s 的任务单任务即 **1440 次/天**，会把 cap 1000 的审计环形缓冲整体冲掉（A10 回查 `workspace.rs:388` 实证）。执行明细一律落 `task-runs.json`；手工触发改记低频的 `task.run.manual`。守护码位 `SCHED_AUDIT_PER_RUN_EVENT`（ACTIVE，见 `M4-5.d` 检查点 §2.1） |
 | **每次 tick** | ❌ **禁止** `log_audit`。实测 `log_audit` 上限 1000 条 FIFO；每秒 1 条会在 ~17 分钟内把全部审计冲掉（旧草案已识别同款风险 K5） |
 | 执行明细 | 复用既有 `script-runs.json`（`script_runner` 自动落盘，cap 200，输出尾存 256 KiB）；调度侧 `task-runs.json`（cap 500）**仅 UI 历史与排障，不参与判重** |
 | 脱敏 | `detail` 不含参数值 / 命令正文 / 输出 / 任何凭据；`ScriptParam.secret` 参数值**根本不落盘**（§3.3 R-3） |
@@ -447,27 +448,28 @@ delay(Fixed)       = min(base_delay_secs, max_delay_secs)
 
 ---
 
-## 8. M4-5.d 夹具码位**提案**（policy notes，**未落脚本**）
+## 8. M4-5.d 夹具码位（**已落地，见 `M4-5.d` 检查点**）
 
-> board 对 A6 的 Allowed Scope 未列 `scripts/`，故本卡**只冻结设计**，不创建 `scripts/check-scheduler-policy.py`、不改 `scripts/pre-merge.sh`（见 §0.1 第 2 条）。落地授权见 §8.3。
+> **本节的码位清单已被下游检查点取代**：`logs/checkpoints/M4-5.d-20260905-2355.md` §2.1 是
+> **唯一权威集合**（ACTIVE 14 / PENDING 6），脚本 `scripts/check-scheduler-policy.py` 与之逐字一致。
+> 取代原因有三，均记录在该检查点：
+> ① board 23:55 的 `Batch Implementation Dispatch` 要求强制「无 `tokio_cron_scheduler`、无 `tokio`
+> 直接提升、退出顺序可检」三项，原 9 码不含；
+> ② 退出收口两项（`SCHED_SHUTDOWN_NOT_REGISTERED` / `SCHED_SHUTDOWN_ORDER`）由 pending 转 ACTIVE；
+> ③ A10 `R-1` 触发契约 §7 修订，新增 `SCHED_AUDIT_PER_RUN_EVENT`。
+> 本节保留为**历史提案痕迹**，不再作为施工依据。
 
-### 8.1 默认码（建立即生效，9 条）
+### 8.1 初版提案（9 条，已被取代）
 
-| 码位 | 检测内容 |
-|---|---|
-| `SCHED_ENABLED_DEFAULT_TRUE` | `default_task_enabled()` 返回 `true`，或 `TaskDef.enabled` 缺 `#[serde(default)]` 导致缺字段被解析为 true（裁定 R-A6-1，§3.5） |
-| `SCHED_SECOND_EXEC_PATH` | `scheduler.rs` / `tasks.rs` 出现 `std::process::Command` / `Command::new` / `sh -c` / `bash -c`（F6） |
-| `SCHED_CLOCK_NOT_INJECTABLE` | 判定函数体内出现 `Utc::now()` / `Local::now()` / `Instant::now()` / `SystemTime::now()`（F8） |
-| `SCHED_MISSED_POLICY_FIELD` | `TaskDef` 中不存在 `MissedRunPolicy` 字段（F9，防退化为常量） |
-| `SCHED_PERSIST_NOT_ATOMIC` | 任务落盘路径未出现 `atomic_write` / `rename`（F10） |
-| `SCHED_AUDIT_IN_TICK` | tick / 主循环函数体内出现 `log_audit`（§7） |
-| `SCHED_CRON_MACRO_SUPPORT` | 出现 `@reboot` / `@daily` / `@yearly` 等宏支持（§4.4 方言防漂移） |
-| `SCHED_TASK_DEF_NO_DEFAULT` | `TaskDef` 字段缺 `#[serde(default)]`（§3.4） |
-| `SCHED_SECRET_PARAM_PERSISTED` | 任务参数持久化路径允许 `secret` 参数值（§3.3 R-3） |
+~~`SCHED_ENABLED_DEFAULT_TRUE`、`SCHED_SECOND_EXEC_PATH`、`SCHED_CLOCK_NOT_INJECTABLE`、
+`SCHED_MISSED_POLICY_FIELD`、`SCHED_PERSIST_NOT_ATOMIC`、`SCHED_AUDIT_IN_TICK`、
+`SCHED_CRON_MACRO_SUPPORT`、`SCHED_TASK_DEF_NO_DEFAULT`、`SCHED_SECRET_PARAM_PERSISTED`。~~
 
-### 8.2 pending 码位（M4-6 / M4-7 完成后转默认，8 条）
+### 8.2 初版 pending（8 条，已被取代）
 
-`SCHED_CMD_NOT_REGISTERED`、`SCHED_ACL_ORDER`、`SCHED_AUDIT_LEAKS_PARAMS`、`SCHED_SHUTDOWN_NOT_REGISTERED`、`SCHED_SHUTDOWN_ORDER`、`SCHED_RETRY_UNBOUNDED`、`SCHED_CATCHUP_UNBOUNDED`、`SCHED_HISTORY_AS_IDEMPOTENCY`（守护「历史不得参与判重」，见 F-A6-4）。
+~~`SCHED_CMD_NOT_REGISTERED`、`SCHED_ACL_ORDER`、`SCHED_AUDIT_LEAKS_PARAMS`、
+`SCHED_SHUTDOWN_NOT_REGISTERED`、`SCHED_SHUTDOWN_ORDER`、`SCHED_RETRY_UNBOUNDED`、
+`SCHED_CATCHUP_UNBOUNDED`、`SCHED_HISTORY_AS_IDEMPOTENCY`。~~
 
 ### 8.3 落地要求（无论授权给谁）
 

@@ -16,6 +16,8 @@ export type MainView =
   | "scripts"
   | "commands"
   | "tools"
+  | "db"
+  | "tasks"
   | "editor";
 
 export const useLayoutStore = defineStore("layout", () => {
@@ -109,6 +111,7 @@ export const useLayoutStore = defineStore("layout", () => {
     scripts: { icon: "📜", label: "脚本库" },
     commands: { icon: "⚡", label: "命令库" },
     tools: { icon: "🧰", label: "工具箱" },
+    tasks: { icon: "⏰", label: "定时任务" },
     settings: { icon: "⚙️", label: "设置" },
   };
   const modTabs = reactive<ModTab[]>([]);

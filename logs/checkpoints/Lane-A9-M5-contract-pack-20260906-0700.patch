@@ -1,0 +1,768 @@
+diff --git a/logs/assist/A9-M5-A13plus-cards-20260906-0010.md b/logs/assist/A9-M5-A13plus-cards-20260906-0010.md
+new file mode 100644
+index 0000000..ff3afbd
+--- /dev/null
++++ b/logs/assist/A9-M5-A13plus-cards-20260906-0010.md
+@@ -0,0 +1,94 @@
++# A9 M5 候选 Lane 卡草稿（A13~A20，prework 草案）
++
++> 生成：2026-09-06 00:10 CST · Lane A9（M5 prework only · docs only）
++> 性质：**候选任务卡草稿**，非主线卡。零产品代码。等待 A0 在 M4 PASS 后正式开 M5、分配真实 Lane 号与合并顺序。
++> 配套：`logs/assist/A9-M5-split-20260905-2359.md` §7。
++> 红线沿用：`详细设计与实施计划.md` K1(ACL)/K3(凭证)/K5(审计)/禁 npm 分包/禁第二执行路径。
++
++---
++
++## 使用说明
++
++- 每张卡给出：目标 / Allowed Scope / Must Deliver / 前置依赖 / 建议 Verify / 备注红线。
++- 命名 `A13~A20` 仅为占位，最终以 A0 签发为准。
++- Wave 标注：Wave 0=现在即可做文档层；Wave R=需 M4 PASS（或某卡落盘）后。
++
++---
++
++## A13 — M5-1 workspace 下沉评估（Wave R，实施前需 A0 裁边界）
++
++- 目标：把现有单体 `src/` 拆为 `core / web / mcp / cli`，论证拆分后主应用（web）始终可独立构建。
++- Allowed Scope：`src/` 结构评估、构建脚本 (`package.json`/`tauri.conf.json`/`Cargo.toml`) 只读分析、`logs/assist/`、`logs/checkpoints/`。
++- Must Deliver：下沉边界清单 + 主应用可构建性论证 + 不可下沉项清单（首卡）。
++- 依赖：M4 PASS。
++- Verify：`npm run build` 仍过；`cargo build` 仍过；列出 `withGlobalTauri` 影响面。
++- 备注：是 M5-2/4/10 的前提，须最先裁定。
++
++## A14 — M5-2 内嵌 rmcp + McpGlobalPolicy + 首组 MCP 工具（Wave R+1）
++
++- 目标：内嵌纯 Rust `rmcp`；实现 `McpGlobalPolicy{read_only, allow_dangerous_sql, allowed_connection_ids}`；暴露首组 MCP 工具（含 db 工具）。
++- Allowed Scope：`src-tauri/src/mcp*.rs`、`src-tauri/src/domain.rs`、`src-tauri/permissions/default-commands.toml`（插 `list_artifact_images` 前）、`src/bridge.ts`、`src/types.ts`、新增 `scripts/check-mcp-policy.py`。
++- Must Deliver：`McpGlobalPolicy` 类型 + 解析、`rmcp` server 骨架、db 工具（复用 A4 内部 API + `security_policy.rs` 分类器）、policy 脚本与 pre-merge 挂载、单测。
++- 依赖：A3 DB API + A4 `db_*` 命令 + A13 能力层基础。
++- Verify：`cargo test mcp`、`python3 scripts/check-mcp-policy.py --self-test`、`bash scripts/pre-merge.sh`。
++- 备注：禁 npm 分包（风险表）；危险 SQL 策略复用 A4，不重造。
++
++## A15 — M5-3 A2A 双向 + agent_kv（Wave R+2）
++
++- 目标：多 Agent 方言归一；跨 Agent 键值 `agent_kv`（本地优先，不上云）；A2A 协议兼容层。
++- Allowed Scope：`src-tauri/src/agent*.rs`、`domain.rs`、ACL、types/bridge。
++- Must Deliver：A2A 消息 schema、方言适配、`agent_kv` 持久化与 TTL、命令与测试。
++- 依赖：A14 能力层。
++- Verify：`cargo test agent`、`python3 <policy> --self-test`（若新增脚本）。
++- 备注：`agent_kv` 不得含密钥/凭据。
++
++## A16 — M5-4~5 Agent/Skill runtime + 命令 + capability.rs 共用（Wave R+1，与 A14 并行需划模块边界）
++
++- 目标：`AgentDef/SkillDef`、流式 runtime（`Channel<Token>` 借鉴 fileterm/mpsc 范式）；`SkillImpl` 禁 `Inline{code}`，只 `Script{script_id}`/`Builtin{handler}`；安装默认 `enabled=false`；明细写 `skill-runs.json`。
++- Allowed Scope：`src-tauri/src/agent*.rs`/`skill*.rs`、`domain.rs`、`scripts.rs`、`session.rs`、ACL、types/bridge。
++- Must Deliver：runtime、流式通道、命令（`skill_list/add/update/remove/enable` 等）、`capability.rs` 共用白名单（与 A14 同一份防漂移）。
++- 依赖：A13/A14 + M2-4 `run_script`。
++- Verify：`cargo test agent skill`、`npm run build`。
++- 备注：执行体复用 `script_runner`，禁 `std::process::Command` 第二路径；`Inline` 红线。
++
++## A17 — M5-7~8 图谱存储/抽取/命令（Wave R+1）
++
++- 目标：邻接表 `graph_node/edge/event/meta` 独立迁移文件挂同一 SQLite；两阶段抽取（确定 + 语义预留）；隐私/容量红线；命令 `graph_build/query/neighbors/stats/rebuild/prune`。
++- Allowed Scope：`src-tauri/src/graph*.rs`、`domain.rs`、DB 迁移、`scripts/check-graph-policy.py`、ACL、types/bridge。
++- Must Deliver：存储 schema、增量消费 `GraphEvent`、查询约束（depth≤2/limit/隐私/截断）、命令与测试。
++- 依赖：A3/A4 DB API + M4 数据层 + A7 事件。
++- Verify：`cargo test graph`、`python3 scripts/check-graph-policy.py --self-test`。
++- 备注：稳定 id 幂等；K3 凭据不进图谱；K5 审计低频；容量上限执行。
++
++## A18 — 插件形态决策 + M5-10 manifest/生命周期（Wave 0 文档 / 实施在 A16 后）
++
++- 目标：先文档判定 `withGlobalTauri=true` 是否可按 webview 粒度关闭全局 Tauri → 形态①(独立进程/stdio) vs ②(webview 内)；裁定后做 manifest 签名/来源、load/unload/reload、install/enable/disable/uninstall。
++- Allowed Scope：`logs/assist/`（现即可做可行性）、`src-tauri/src/plugin*.rs`（裁定后）、`tauri.conf.json` 只读、ACL。
++- Must Deliver：形态判定文档（含否决理由）；裁定后 manifest schema + 生命周期 + 卸载清理 + 测试。
++- 依赖：A0 裁定形态；A16 隔离基础。
++- Verify：`cargo test plugin`、`npm run build`；卸载后无残留进程/全局命令。
++- 备注：形态②不可行则弃；安装默认 `enabled=false`；取消防线（插件携码绕过 M2-4）。
++
++## A19 — M5-6/9/12 统一 UI 面（Wave R+3）
++
++- 目标：Agent 对话、Skill 管理、图谱可视化、插件管理统一进现有 workspace 风格 UI；复用 M4 数据库/调度面板模式。
++- Allowed Scope：`src/components/**`、`src/stores/**`、`src/bridge.ts`、`src/types.ts`、`scripts/check-*-ui-logic.mjs`。
++- Must Deliver：四个面板（可先 skeleton + 纯逻辑，后端 DTO 稳定后再 live）。
++- 依赖：A14/A16/A17 后端命令 DTO 稳定。
++- Verify：`node scripts/check-*-ui-logic.mjs`、`npm run build`。
++- 备注：live 调用须等后端；否则留文档化内部 TODO。
++
++## A20 — M5 批次安全审查 + 验收证据（Wave 滚动）
++
++- 目标：对齐 A10/A11 批次范式，对 M5 各实现批做安全审查与验收矩阵/债务账。
++- Allowed Scope：`logs/assist/`、`logs/checkpoints/`、验证文档。
++- Must Deliver：M5 批次安全评审 + 验收矩阵 + 债务账。
++- 依赖：各实现批产出。
++- Verify：复用现有 `pre-merge.sh` 与对应 policy 脚本；不写产品代码。
++
++---
++
++## 合并顺序建议（草案）
++
++`A13`（边界）→ `A14`/`A16`（并行，需先划模块边界）/`A17` → `A15`/`A18`(裁定后) → `A19` → `A20` 滚动。
++A9 在 M4 PASS 后转为正式 M5 任务卡展开辅助（仅 docs）。
+diff --git a/logs/assist/A9-M5-graph-scheduler-feed-20260906-0700.md b/logs/assist/A9-M5-graph-scheduler-feed-20260906-0700.md
+new file mode 100644
+index 0000000..edc37af
+--- /dev/null
++++ b/logs/assist/A9-M5-graph-scheduler-feed-20260906-0700.md
+@@ -0,0 +1,155 @@
++# A9 M5 定时任务驱动图谱更新接缝（Batch Implementation Dispatch 交付）
++
++> 生成：2026-09-06 07:00 CST · Lane A9（M5 prework only · docs only）
++> 性质：M4-7/A7 调度器 → M5 图谱维护任务的**接缝契约草案**。零产品代码。
++> 锚定事实：来自对当前工作树 A7 已落地代码的只读核对（§0）。
++> 配套：`A9-M5-graph-store-contract-20260906-0700.md`（§3 实时增量/周期/补采三层）· `A9-M5-A13plus-cards-20260906-0010.md`（A17 卡）。
++
++---
++
++## 0. 事实基线（2026-09-06 07:00 实测，只读核对）
++
++| 项 | 已落地事实（文件:行） | 对图谱维护接缝的意义 |
++|---|---|---|
++| 注册序 | `src-tauri/src/bridge.rs:778` `register_shutdown_tasks`；`:797` `stop-scheduler` 紧随 `stop-background-workers` 之后注册（索引 1），**早于** `kill-running-scripts`（注释明述 F7） | 图谱维护任务随 `stop-scheduler` 收口；图谱自身 flush 注册位见 §6 G-D6 |
++| 触发执行 | `src-tauri/src/scheduler.rs:600` `fire()` 经 `script_runner::start_run` / `start_command`（`:660`/`:689`）；**无** `std::process::Command` 第二路径 | 图谱维护任务**只能**是 Script/Command 执行体（见 §2 硬约束） |
++| 非重叠 | `scheduler.rs:456` `is_occupied` + InFlight 表（`:217`）；同任务单实例，下一 tick 按 reentrant 跳过 | 超长 rebuild 不被下一 tick 顶掉 |
++| 手动触发 | `scheduler.rs:717` `fire_now(app, id)`（`trigger=Manual`，**不推进** `last_fired_at`/`next_run_at`） | 运维手动 `graph_rebuild` 不影响计划 |
++| 取消在飞 | `scheduler.rs:737` `cancel_in_flight(app, id) -> usize` | rebuild 中途停 |
++| 任务类型 | `domain.rs:1317` `TaskKind{Script, Command}`（**仅**二者；F5 明确不做 Tool） | 图谱维护必须落成 Script/Command 片段，**不得**新增 `TaskKind::Builtin`（§2 硬约束） |
++| 触发定义 | `domain.rs:1306` `TaskTrigger::Cron{expr}`（5 段）/ `Interval{every_secs}`；`:1299` `TASK_INTERVAL_MIN_SECS=60`；`:1301` 上界 2592000 | 图谱任务 interval 下界 60s |
++| 错过策略 | `domain.rs:1335` `MissedRunPolicy{Skip(默认),RunOnce,CatchUp}`；`:1462` `misfire_grace_secs` 默认 60 | 维护任务默认 `Skip` |
++| 重试 | `domain.rs:1399` `RetryPolicy` 默认 `max_attempts=1`（不重试）；`:1288` `SCHED_MAX_ATTEMPTS=5`；`:1292` `SCHED_MAX_DELAY_SECS=600` | 维护任务默认不重试 |
++| 默认启用 | `domain.rs:1451` `enabled` 默认 **false**（裁定 R-A6-1） | 图谱维护任务默认 `enabled=false`，须显式开启 |
++| 判重真相源 | `domain.rs:1471` `last_fired_at`（计划触发时刻，非完成）；`task-runs.json` 仅历史不参与判重 | 维护任务判重同 A6 口径 |
++| 容量 | `domain.rs:1282` `SCHED_MAX_TASKS=200`；`:1284` `SCHED_MAX_HISTORY=500`；`:1286` `SCHED_MAX_SLOT_SCAN=512` | 维护任务计入总任务上限 |
++| 参数 | `domain.rs:1297` `TASK_MAX_PARAMS=20`；`:1449` `params` 不得含 `secret=true` 参数（定义期拒绝 `TASK_SECRET_PARAM_FORBIDDEN`） | 维护任务参数须非 secret |
++| 运行记录 | `domain.rs:1497` `TaskRunRecord{run_id, trigger, scheduled_at, attempt, status, exit_code, error_code}` | join `script-runs.json` 同 `run_id` |
++| 自动禁用 | `scheduler.rs:800` `record_auto_disabled(app, task_id, error_code)` | 维护任务连续失败→自动 disable，不阻塞主功能 |
++| 时钟 | `scheduler.rs:48` `Clock` trait（injectable `now_utc`/`sleep_until_or_stop`）；`:37` `TICK_SECS=1` | 测试可注入时钟验证周期 |
++| 审计 | `src-tauri/src/workspace.rs:386` `log_audit(app, action, detail)`；tick 内禁写审计（坑位⑤） | 维护任务审计低频 |
++
++---
++
++## 1. 三层触发模型（与 M5-8 §3 对齐）
++
++| 触发 | 机制 | 依赖的 M4 产物 |
++|---|---|---|
++| 实时增量 | 上游写后发 `GraphEvent`（app 内事件，不经 scheduler） | A4 写路径钩子（图模块自行消费 `graph_event`） |
++| 周期校验/重建 | 注册内部维护任务（interval≥60s），周期执行 `graph_rebuild`/`graph_verify`/`graph_prune` | A7 `task_add` + `script_runner`（复用，无第二执行路径） |
++| 溯源补采 | `task-runs.json` 历史 → `Task→Script/Artifact` 边 | A7 运行记录 |
++
++---
++
++## 2. 硬约束（A7 契约不可漂移）
++
++1. **执行体只能是 Script/Command**：`TaskKind` 仅有 `Script|Command`（`domain.rs:1317`）。图谱维护必须落地为 `workspace/scripts/` 维护脚本或 `snippets` 命令片段；**严禁**为图谱新增 `TaskKind::Builtin` 或 `TaskKind::GraphOp`（会破坏 A6 冻结的枚举穷尽）。
++2. **无第二执行路径**：`fire()` 已复用 `script_runner::start_run/start_command`，图谱维护任务**天然**走同通道，不新开进程/线程执行。
++3. **参数非 secret**：维护任务 `params` 不得含 `secret=true` 值（定义期拒绝 `TASK_SECRET_PARAM_FORBIDDEN`）。
++4. **默认 `enabled=false`**：新建维护任务 `enabled` 缺省 false（R-A6-1），需用户显式开启。
++
++---
++
++## 3. 内部维护任务注册参数草案
++
++> 以下为 M5-8 实施期调用 `task_add` 的参数建议（非命令，是图模块的"自举"任务）。
++
++### 3.1 `graph-verify`（周期校验一致性）
++
++```json
++{
++  "name": "graph-consistency-verify",
++  "kind": "command",
++  "target_id": "<snippet:graph_verify>",
++  "params": {},
++  "enabled": false,
++  "trigger": { "interval": { "every_secs": 3600 } },
++  "missed_run_policy": "skip",
++  "retry": { "max_attempts": 1 },
++  "timeout_secs": 120
++}
++```
++
++### 3.2 `graph-rebuild`（周期重建/重放事件）
++
++```json
++{
++  "name": "graph-rebuild",
++  "kind": "command",
++  "target_id": "<snippet:graph_rebuild>",
++  "params": {},
++  "enabled": false,
++  "trigger": { "cron": { "expr": "17 3 * * *" } },  // 每日 03:17，避开整点
++  "missed_run_policy": "skip",
++  "retry": { "max_attempts": 1 },
++  "timeout_secs": 300
++}
++```
++
++### 3.3 `graph-prune`（周期裁剪过期事件）
++
++```json
++{
++  "name": "graph-prune",
++  "kind": "command",
++  "target_id": "<snippet:graph_prune>",
++  "params": {},
++  "enabled": false,
++  "trigger": { "interval": { "every_secs": 86400 } },
++  "missed_run_policy": "skip",
++  "retry": { "max_attempts": 1 },
++  "timeout_secs": 120
++}
++```
++
++> `target_id` 指向的内置 snippet 由 A17 在 `snippets.rs` 种子（或图模块自带维护脚本）；其 `enabled` 须 false（与任务口径一致）。**不**写任何凭据到 params（K3）。
++
++---
++
++## 4. 复用规则（与 A6 冻结口径一致）
++
++- 判重/触发以 `tasks.json` 为准；图谱任务同样 `enabled=false` 默认 + `last_fired_at` 判重。
++- 非重叠：单任务单实例（超长 rebuild 不能被下一 tick 顶掉），复用 InFlight（`scheduler.rs:217`）。
++- 审计低频：rebuild 开始/结束、prune 记 `audit.json`；**tick 内禁写审计**（坑位⑤）；单次 `graph_query` 不记审计（见 contract 文档 §9）。
++- 退出：scheduler 停 → 图谱维护任务随 `stop-scheduler` 收口（`stop-scheduler` 索引 1，先于 `kill-running-scripts`）。
++
++---
++
++## 5. 失败/降级
++
++- 维护任务执行失败：经 `RunError::SpawnFailed`/`UnsupportedPlatform` → `Retryable`，但默认 `max_attempts=1` 不重试；连续失败由 `record_auto_disabled` 自动禁用，**不阻塞**主应用与图谱查询（只读路径独立）。
++- rebuild 中应用退出：随 `stop-scheduler` 收口；重启后 `graph_meta.last_event_seq` 游标保证增量重放幂等（contract 文档 §5）。
++
++---
++
++## 6. 图谱自身关闭序（G-D6，交 A0 裁定）
++
++`scheduler.rs` 的 `stop-scheduler`（索引 1）只置停止位 + 通知条件变量，**不 join 线程、不取消在飞**（M0-2.b）。在飞维护任务由 `kill-running-scripts` 收口。
++
++图谱模块自身的 flush（待写 `graph.db` 脏页）须注册在 `ShutdownCoordinator`：
++- **建议**：注册在 `flush-sessions` 之后、`close-tabs` 之前（沿用 M1-9 顺序口吻——先确定数据落盘，再销毁 webview）；命名为 `flush-graph`。
++- **理由**：图谱维护任务是被 `stop-scheduler` 起的子进程脚本，已随 `kill-running-scripts` 收口；图谱自身的索引写盘应在 webview 销毁前完成。
++- **边界**：若图谱在上一 tick 的 rebuild 写出尚未 flush，需在 `flush-graph` 显式 `conn.close()`（rusqlite Drop 已关闭，但应在审计里记 `graph_flush`）。
++
++G-D6 交 A0 在 M5-8 实施期与 A7 协调注册序，并补 single test 断言 `flush-graph` 在 `kill-running-scripts` 之后（仿 `stop-scheduler` 索引断言）。
++
++---
++
++## 7. 测试清单（供 A17 实施期）
++
++- `T-graph-feed1`：`task_add` 维护任务 `enabled=false` 默认（与 R-A6-1 一致）。
++- `T-graph-feed2`：维护任务 interval=60 边界合法，interval<60 拒绝 `TASK_INTERVAL_OUT_OF_RANGE`。
++- `T-graph-feed3`：维护任务 params 含 `secret=true` → 定义期拒绝 `TASK_SECRET_PARAM_FORBIDDEN`。
++- `T-graph-feed4`：超长 rebuild 运行期间，下一 tick 同任务 `reentrant` 跳过（非重叠）。
++- `T-graph-feed5`：`stop-scheduler` 触发后，在飞维护任务随 `kill-running-scripts` 收口（不残留进程）。
++- `T-graph-feed6`：`flush-graph` 注册序在 `kill-running-scripts` 之后（G-D6）。
++- `T-graph-feed7`：维护任务连续失败 → 自动 `disabled`，主应用与 `graph_query` 仍可服务。
++
++---
++
++## 8. FORBID 遵守记录
++
++- 未写产品代码；未触 `src/`、`src-tauri/`、`scripts/pre-merge.sh` 及三份主文档。
++- 未移动 `NEXT`。
++- 未提交、未 push；与工作树中 A7/A3/A6 未提交产物无交集。
++- 「已冻结」陈述以 file:line 标注；「提案/开放项」明确区分。
+diff --git a/logs/assist/A9-M5-graph-store-contract-20260906-0700.md b/logs/assist/A9-M5-graph-store-contract-20260906-0700.md
+new file mode 100644
+index 0000000..b9ce138
+--- /dev/null
++++ b/logs/assist/A9-M5-graph-store-contract-20260906-0700.md
+@@ -0,0 +1,231 @@
++# A9 M5-8 图谱存储与查询契约草案（Batch Implementation Dispatch 交付）
++
++> 生成：2026-09-06 07:00 CST · Lane A9（M5 prework only · docs only）
++> 性质：可照着实现的**契约草案**。零产品代码（未触 `src/`、`src-tauri/`、`scripts/pre-merge.sh`）。
++> 锚定事实：本文件所有「已冻结」陈述均来自对当前工作树 M4 落盘代码的只读核对（见 §0 事实基线），非推断。
++> 配套：`logs/assist/A9-M5-split-20260905-2359.md`（§7 指向本批）· `A9-M5-A13plus-cards-20260906-0010.md`（A17 卡细化）· `A9-M5-graph-scheduler-feed-20260906-0700.md`（维护任务接缝）。
++
++---
++
++## 0. 事实基线（2026-09-06 07:00 实测，只读核对）
++
++| 项 | 已落地事实（文件:行） | 对 M5-8 的意义 |
++|---|---|---|
++| 取数边界 | `src-tauri/src/database.rs:477` `DbPool::query(&mut self, sql, &QueryCancel, timeout_secs: Option<u64>, query_id: &str) -> Result<DbQueryResult, DbError>` | 图查询若走用户连接池，可**直接复用**此边界 + 单语句约束 |
++| 结果 DTO | `database.rs:151` `DbQueryResult{columns, rows, row_count, truncated, field_truncated, elapsed_ms, query_id}`；`database.rs:123` `DbValue{Null,Bool,I64,F64,Text,Binary{bytes}}` | 图查询 DTO 须与其字段语义一致，便于复用前端序列化 |
++| 限制常量 | `database.rs:41` `DB_MAX_ROWS=1000`；`:43` `DB_MAX_RESULT_BYTES=4MiB`；`:45` `DB_MAX_TEXT_FIELD_BYTES=65536`；`:39` `DB_MAX_SQL_BYTES=65536`；`:47` `DB_DEFAULT_QUERY_TIMEOUT_SECS=30`；`:49` `DB_MAX_QUERY_TIMEOUT_SECS=600` | 图查询硬约束直接复用这些常量 |
++| 取消 | `database.rs:172` `QueryCancel`（pub，L1 原子标志）；`database.rs:54` `DB_CANCEL_CHECK_EVERY_ROWS=64` | 图大查询可复用 `QueryCancel` |
++| 限流实现 | `database.rs:579` `struct QueryLimiter`（**私有，非 pub**）；`database.rs:635` `query_sqlite_with_deadline`（**pub(crate)**） | **关键缺口**：M5 图存储若要复用 A3 的行/字节截断，必须让 A3 提升该 API（见 §7 G-D2） |
++| 凭据命名空间 | `database.rs:66` `DB_CRED_PREFIX="db:"`；`:69` `credential_key(conn_id)` | 图库为 app 自有派生数据，**不应**占用用户 Keyring 命名空间（见 §2 决策） |
++| 配置结构 | `domain.rs:853` `DbConnectionConfig`（结构性**不含** password/dsn 字段，凭据只经 Keyring） | 图库**不**经 `DbConnectionConfig` 持久化（绕开用户连接体系） |
++| 凭据红线 | F2/F3 同上；审计 `src-tauri/src/workspace.rs:386` `log_audit(app, action, detail)`，审计 detail 不得含凭证/DSN/SQL 正文 | 图审计复用同一函数，detail 仅记稳定标签 |
++| 原子写 | `src-tauri/src/session.rs:30` `atomic_write(path, content)`（temp+rename） | 图 schema 版本/迁移标记文件复用此原语 |
++| 路径策略 | `database.rs:328` `validate_sqlite_path(database, roots)` | 图库路径由 app 自定（data_dir 下），不经用户 roots 校验 |
++| ACL 末条 | `src-tauri/permissions/default-commands.toml` 尾条恒为 `list_artifact_images`；`graph_*` 命中 0 | 图命令一律插 `list_artifact_images` 之前（坑位②） |
++| 迁移机制 | `database.rs` 内**无** CREATE TABLE 迁移框架；`execute_batch` 仅出现在测试夹具 | 图 schema 迁移须自建轻量版本文件，不依赖 A3 |
++
++> 上述事实以 `85d2d7b` 为基准（本地 `master` 领先 `origin/master` 2）；M4 代码当前在工作树未提交、但与 A9 无文件交集（A9 仅写 `logs/assist/`）。
++
++---
++
++## 1. 总目标与边界（M5-8 / M5-7）
++
++把 `Artifact`/`ScriptMeta`/`Bookmark`/`TaskDef`/`SkillDef`/`RepoConfig` 等散落资产抽取为「实体—关系—属性」图谱，作为**派生索引层**（主数据不复制，实体 `ref_id` 回指既有领域对象）。赋能 M5-9 Agent 问答上下文注入、影响分析、关联浏览。
++
++**不引重依赖**：首期 SQLite + 邻接表，禁 Neo4j 等（沿用 `详细设计与实施计划.md` §7.2 红线）。
++
++---
++
++## 2. 存储位置决策（G-D1，交 A0 裁定）
++
++| 方案 | 描述 | 取舍 |
++|---|---|---|
++| A（推荐） | 独立 SQLite 文件 `data_dir/graph/graph.db`，由 M5 `graph.rs` 模块**直接** `rusqlite::Connection::open` 打开；不经 `DbPool`、不经 `DbConnectionConfig`、不经 Keyring | 图是 app 自有派生数据，无凭据、无需用户连接体系；但需自建取数限流/取消（复用 `QueryCancel` + 提升 `QueryLimiter`，§7 G-D2） |
++| B | 复用用户 `db_connect` 连接池（把同一 SQLite 注册为一条 `conn_id`，走 `db_query`） | 自动获得 A3 限流/截断/审计；但**污染用户连接命名空间**、图库与用户库耦合、且 `DbPool::query` 当前 SQLite 实现已就绪但用户写闸门逻辑会套到图查询上（不合理） |
++
++**建议**：A。理由：图查询是只读派生索引，不应进入"用户数据库连接 + fail-closed 写闸门"体系；但取数限流/取消**必须**与 A3 同源，避免口径漂移。G-D1 交 A0 在 M4 PASS 后裁定 A/B。
++
++---
++
++## 3. Schema 草案（DDL，挂同一 SQLite 实例，独立迁移文件）
++
++> 文件命名建议 `src-tauri/src/graph/migrations/0001_graph.sql`（M5 实施期，A9 仅定契约）。
++> 全部以 `ref_id` 回指既有领域对象；`ON DELETE CASCADE` 由**应用层**而非外键保证（既有 `ScriptMeta` 等无对应父表在此库）。
++
++```sql
++-- 节点
++CREATE TABLE graph_node (
++  id          TEXT PRIMARY KEY,         -- 稳定 id（§4）
++  kind        TEXT NOT NULL,            -- artifact|script|bookmark|task|skill|repo|command|tag|person|url
++  ref_id      TEXT,                      -- 回指既有领域对象 id（如 Artifact.id / ScriptMeta.id / TaskDef.id）
++  label       TEXT NOT NULL,
++  props       TEXT NOT NULL,            -- JSON，属性键值；隐私字段脱敏后入
++  sources     TEXT NOT NULL DEFAULT '[]',-- JSON array，抽取来源集合，≤20（容量红线）
++  degree      INTEGER NOT NULL DEFAULT 0,
++  updated_at  TEXT NOT NULL
++);
++CREATE INDEX idx_node_kind ON graph_node(kind);
++CREATE INDEX idx_node_ref ON graph_node(ref_id);
++
++-- 边
++CREATE TABLE graph_edge (
++  id          TEXT PRIMARY KEY,         -- 稳定 id（§4）
++  src         TEXT NOT NULL REFERENCES graph_node(id) ON DELETE CASCADE,
++  dst         TEXT NOT NULL REFERENCES graph_node(id) ON DELETE CASCADE,
++  relation    TEXT NOT NULL,            -- links_to|references|triggers|imports|mentions|depends_on|owned_by
++  weight      REAL NOT NULL DEFAULT 1.0,
++  source      TEXT NOT NULL,            -- rule | ai（阶段二语义抽取来源标记）
++  created_at  TEXT NOT NULL
++);
++CREATE INDEX idx_edge_src ON graph_edge(src);
++CREATE INDEX idx_edge_dst ON graph_edge(dst);
++CREATE INDEX idx_edge_relation ON graph_edge(relation, src);
++
++-- 事件（增量抽取队列）
++CREATE TABLE graph_event (
++  seq         INTEGER PRIMARY KEY AUTOINCREMENT,
++  kind        TEXT NOT NULL,            -- node_upsert | edge_upsert | node_delete | edge_delete
++  payload     TEXT NOT NULL,            -- JSON，待消费事件体
++  created_at  TEXT NOT NULL
++);
++
++-- 元数据（schema 版本 + 抽取游标）
++CREATE TABLE graph_meta (
++  key         TEXT PRIMARY KEY,
++  value       TEXT NOT NULL
++);
++-- 初始：schema_version=1；last_event_seq=0
++```
++
++**容量红线（硬约束，实施期断言）：**
++
++| 维度 | 上限 | 超限行为 |
++|---|---|---|
++| 节点 | 50,000 | `graph_build` 拒绝继续 upsert，记 `over_cap` 且 catalog 标记 `degraded` |
++| 边 | 200,000 | 同上 |
++| 单节点度 | 500 | 超限边丢弃并记 `degree_cap` |
++| `sources` 集合 | 20 | 截断并记 `too_many_sources` |
++| 事件表 | 100,000 行 或 90 天 | 滚动裁剪最旧（FIFO） |
++
++> 上限常量建议在 M5 落地时定在 `domain.rs` 图专有段（仿 `SCHED_MAX_*`/`DB_MAX_*`），避免散落（口径漂移红线）。
++
++---
++
++## 4. 稳定 id 规则（幂等，禁随机 uuid）
++
++```
++id = "{kind}:{sha256(natural_key)[:16]}"
++natural_key:
++  artifact  = artifact.id            (或 source_url 归一)
++  script    = script.id
++  bookmark  = bookmark.url
++  task      = task.id
++  skill     = skill.id
++  repo      = repo.id
++  command   = snippet.id
++  tag       = "#" + tag_text
++  person    = "@" + handle
++  url       = url 归一（去尾斜杠/scheme 小写）
++```
++
++- 重抽/增量依赖稳定 id 做 upsert（同 id → 覆盖 props，追加 source 到 `sources`）。
++- 边 id = `sha256(src|dst|relation)[:16]`（同关系去重）。
++
++---
++
++## 5. 事件与两阶段抽取
++
++```
++上游变更（Artifact/Repo/Script/Task/Skill 落库）→ 应用发 GraphEvent（app 内事件，不经 scheduler）
++  → 阶段一(确定性 rule)：规则/正则抽取 URL/路径/#tag/@person/code-ref/front-matter → upsert 节点/边(source=rule)
++  → 阶段二(语义 ai)：仅预留 trait SemanticExtractor，结果标 source=ai 可人工校正；触发 LLM 出网必须走 audit+确认闸门+Keyring（§7 红线）
++```
++
++- 阶段二触发 LLM 调用：属"出网"动作，必须经 `security_policy::check_invocation_source` 同款确认闸门 + `log_audit`（action=`graph_ai_extract`）；审计 detail 仅记 task/模型稳定标签，禁记抽取文本正文（隐私）。
++- 增量消费：读取 `graph_event` 未消费行（`seq > last_event_seq`），逐条 upsert，更新 `graph_meta.last_event_seq`。**失败幂等**：同一 seq 可重放。
++
++---
++
++## 6. 查询契约（GraphQuery → GraphQueryResult）
++
++复用 A3 `DbQueryResult` 字段语义（§0），新增图谱专属字段。
++
++```rust
++// 提案（M5 定在 domain.rs 图段；非现有类型）
++pub struct GraphQuery {
++    pub start: Vec<String>,     // 起始节点 id（1..N）
++    pub relations: Vec<String>, // 空 = 任意 relation
++    pub kinds: Vec<String>,     // 空 = 任意 kind
++    pub max_depth: u8,          // 拒绝 >2（硬约束）
++    pub limit: usize,           // 拒绝 >1000，默认 200
++    pub privacy: String,        // 查询层隐私过滤层；Agent 默认 "public"
++    pub cancel: QueryCancel,    // 复用 A3 公开取消句柄
++}
++
++pub struct GraphQueryResult {
++    pub nodes: Vec<GraphNodeView>,
++    pub edges: Vec<GraphEdgeView>,
++    pub truncated: bool,        // 行/字节上限命中（复用 DB_MAX_ROWS/DB_MAX_RESULT_BYTES 口径）
++    pub field_truncated: bool,
++    pub elapsed_ms: u64,
++    pub query_id: String,
++}
++```
++
++**查询约束（硬）：**
++- `max_depth > 2` → 拒绝（`GRAPH_DEPTH_EXCEEDED`），避免 N² 爆炸。
++- `limit > 1000` → 拒绝（`GRAPH_LIMIT_EXCEEDED`）。
++- 隐私过滤在**查询层**：`privacy` 低于节点 props 标记的最严格级别时剔除该节点；Agent 默认 `public`，凭据/私密配置节点永不进入 `public` 结果（K3）。
++- `truncated` 标志沿用 M4-1.c §2 语义：超限**不是错误**，但禁止静默截断，UI 须显式提示。
++
++---
++
++## 7. 关键缺口与开放项（交 A0 / 实施期）
++
++| ID | 缺口 | 依赖方 | 处置 |
++|---|---|---|---|
++| G-D1 | 图库存储位置 A vs B（§2） | A0 裁定 | M4 PASS 后裁定；A9 建议 A |
++| G-D2 | `QueryLimiter`（`database.rs:579`）与 `query_sqlite_with_deadline`（`:635`）当前为私有/pub(crate)，M5 图存储要复用行/字节截断须 A3 提升为 `pub` 或提供 `pub fn limit_rows(rows) -> DbQueryResult` | A3 | 提 A0 指派 A3 在 M5-8 前做最小 API 暴露 |
++| G-D3 | 图查询审计低频：仅 `graph_rebuild`/`graph_prune`/`restricted 越权访问` 记 `audit.json`；每次查询/事件消费**不记**（K5 1000 上限） | A17 | 实施期写 `log_audit` 调用，detail 不含 props 全文 |
++| G-D4 | 图 schema 迁移框架：当前 A3 无迁移机制，图库需自建 `graph_meta.schema_version` + 版本文件（§3） | A17 | 实施期用 `atomic_write` 写迁移标记 |
++| G-D5 | `check-graph-policy.py` 政策脚本（仿 `check-database-policy.py`/`check-scheduler-policy.py`）挂 `pre-merge.sh` 同位置 | A9 不写脚本，交 A0 指派 | 仅定义检查点：depth≤2 拒绝、limit≤1000、稳定 id 无 uuid、凭据不进图谱 |
++
++---
++
++## 8. 命令草案（均插 `list_artifact_images` 之前，进入 ACL）
++
++| 命令 | 用途 | 备注红线 |
++|---|---|---|
++| `graph_build()` | 触发全量重建（增量扫描上游） | 低频审计；可超时（复用 `DB_MAX_QUERY_TIMEOUT_SECS`） |
++| `graph_query(q: GraphQuery) -> GraphQueryResult` | 子图查询 | depth≤2/limit≤1000 硬拒 |
++| `graph_neighbors(id) -> GraphQueryResult` | 一跳邻居（含 relation 过滤） | 限流复用 |
++| `graph_stats() -> GraphStats` | 节点/边计数、容量状态、degraded 标记 | 只读 |
++| `graph_rebuild()` | 重放 `graph_event` 重建 | 低频审计；超长 rebuild 不得被下一 tick 顶掉（§ scheduler feed 文档） |
++| `graph_prune()` | 裁剪过期事件/超限降级恢复 | 低频审计；tick 内禁写审计 |
++
++前端：`src/types.ts` 镜像 `GraphQuery`/`GraphQueryResult`/`GraphNodeView`/`GraphEdgeView`（逐字对齐 `serde rename_all="snake_case"`）；`src/bridge.ts` 包装；面板见 M5-9（A19 卡）。
++
++---
++
++## 9. 测试清单（契约测试点，供 A17 实施期落地）
++
++- `T-graph-id1`：稳定 id 幂等（同 natural_key 两次生成 id 一致，非 uuid）。
++- `T-graph-id2`：`sources` 超 20 截断并记 `too_many_sources`。
++- `T-graph-cap1`：节点达 50,000 后 upsert 拒绝并标记 `degraded`。
++- `T-graph-cap2`：单节点度 >500 边丢弃。
++- `T-graph-q1`：`max_depth=3` 拒绝 `GRAPH_DEPTH_EXCEEDED`。
++- `T-graph-q2`：`limit=1001` 拒绝 `GRAPH_LIMIT_EXCEEDED`。
++- `T-graph-q3`：大结果 `truncated=true` 且 `row_count ≤ DB_MAX_ROWS(1000)`。
++- `T-graph-priv1`：Agent(`privacy=public`) 查询不返回私密配置节点。
++- `T-graph-audit1`：单次 `graph_query` **不**新增 `audit.json` 条目；`graph_rebuild` 新增且仅 1 条。
++- `T-graph-cancel1`：复用 `QueryCancel`，取消命中返回 `Cancelled`。
++- `T-graph-event1`：同 `seq` 重放幂等（upsert 覆盖不新增重复节点）。
++
++---
++
++## 10. FORBID 遵守记录
++
++- 未写产品代码；未触 `src/`、`src-tauri/`、`scripts/pre-merge.sh` 及三份主文档。
++- 未移动 `NEXT`（现 M4 batch implementation mode）。
++- 未提交、未 push；本文件为新增独立文档，与工作树中 A3/A4/A6/A7/A10/A11 未提交产物无交集。
++- 所有「已冻结」陈述均以来源 file:line 标注；「提案/开放项」明确区分。
+diff --git a/logs/assist/A9-M5-plugin-form-feasibility-20260906-0700.md b/logs/assist/A9-M5-plugin-form-feasibility-20260906-0700.md
+new file mode 100644
+index 0000000..dd39d87
+--- /dev/null
++++ b/logs/assist/A9-M5-plugin-form-feasibility-20260906-0700.md
+@@ -0,0 +1,96 @@
++# A9 M5-10 插件形态 Wave-0 可行性判定（Batch Implementation Dispatch 交付）
++
++> 生成：2026-09-06 07:00 CST · Lane A9（M5 prework only · docs only）
++> 性质：**Wave-0 文档层判定**（Board "现即可做文档层"）。零产品代码。
++> 目的：在 M4 PASS 前用实测事实把"插件形态①/②/③"判清楚，给 A0 一个可裁定的结论，而非让 A16/A18 在 M4 PASS 后盲目开工。
++> 锚定事实：来自对当前工作树权限/配置/ACL 的只读核对（§0）。
++> 配套：`A9-M5-A13plus-cards-20260906-0010.md`（A18 卡细化）· `详细设计与实施计划.md` §7.3（#15 插件系统）· `AI-模型切换与接手清单.md`（capabilities 残留标签）。
++
++---
++
++## 0. 事实基线（2026-09-06 07:00 实测，只读核对）
++
++| 项 | 已落地事实（文件:行） | 对插件形态的意义 |
++|---|---|---|
++| 全局 Tauri | `src-tauri/tauri.conf.json:12` `"withGlobalTauri": true` | 每个 webview（含远程）都能拿到 `window.__TAURI__` 全局对象 |
++| 全局 Tauri 引用点 | `src/stores/useSystemStore.ts:84` 仅 **1 处** `__TAURI__.event.listen("tauri://focus", ...)` | 主应用对全局 Tauri 依赖极薄，**可封**为显式注入（A13 评估项） |
++| 权限集划分 | `src-tauri/capabilities/default.json`（windows=["main"]，含 `default-commands`）· `browser-remote.json`（webviews=["tab-*","grid-*"]，remote urls，含 `remote-collect`） | 权限按 **webview label 通配 + remote url** 静态绑定 |
++| 远程命令集 | `src-tauri/permissions/remote-collect.toml` 仅 `report_resources`/`report_title`/`report_grid_load_failed` | 远程 webview 默认**只能**回传类命令；写盘/开终端已移除 |
++| ACL 末条 | `default-commands.toml` 尾条恒为 `list_artifact_images` | 插件命令插其前（坑位②） |
++| 命令数量 | 当前 `default-commands.toml` 已含 `db_*`/`task_*` 等 100+ 命令 | 插件 webview 若共享 `default-commands` 即拿到全部能力 |
++| CSP | `tauri.conf.json:15` `"csp": null` | 远程页面可跑任意 JS（但 invoke 受 capability 限制） |
++| 执行通道 | `src-tauri/src/script_runner.rs:843` `start_run` / `:882` `start_command`（M2-4 单执行路径） | 插件执行体若复用此通道即无第二执行路径 |
++
++---
++
++## 1. 三种形态定义
++
++| 形态 | 描述 | 关键依赖 |
++|---|---|---|
++| ① 独立进程（stdio） | 插件以独立子进程运行，经 stdio JSON-RPC 与主进程通信；主进程按插件 manifest 代理白名单命令 | 需新增长生命周期 stdio 通道（**第二执行路径风险**） |
++| ② webview 内插件 | 插件以 webview（`plugin-*` label）加载，直接调 `window.__TAURI__.core.invoke` | 依赖 capability 静态降权 + 运行时二次校验 |
++| ③ 声明式插件（无第三方代码加载） | 插件 = manifest 声明 `kind=script\|tool\|skill\|session-handler` + 指向已有 `ScriptMeta`/`ToolMeta`/`SkillDef` id + 静态 `acl_level`；不加载外部代码、不开新进程 | 复用 M2-4/M2-9 执行通道与既有确认闸门 |
++
++---
++
++## 2. 各形态可行性判定（实测事实驱动）
++
++### 2.1 形态②（webview 内插件）——**条件可行，但有硬约束**
++
++- `withGlobalTauri=true`（`tauri.conf.json:12`）使 `window.__TAURI__` 在**所有** webview（含远程 `tab-*`/`grid-*`）可见。因此**不能**靠"插件 webview 拿不到 Tauri 全局"做隔离 → 隔离必须靠两层：
++  1. **静态 capability**：在 `capabilities/` 新增 `plugin.json`，`webviews=["plugin-*"]`，`permissions=[core:default, plugin-runtime]`（`plugin-runtime.toml` 仅含插件所需最小命令集，**不能**含 `write_file`/`run_script`/`db_*` 等副作用命令）。Tauri v2 capability 支持 label 通配，故**静态声明可行**。
++  2. **运行时二次校验**：capability 是静态、无法按插件动态授予（插件 A 可读文件、插件 B 不可）。命令处理层须按 `plugin_id` 查 manifest `acl_level` 做二次校验（复用 `security_policy::check_invocation_source` 风格，非新机制）。
++- **硬约束**：Tauri capability 在编译期声明，无法运行时动态增删权限；若需要"按插件动态权限"，必须走运行时二次校验（见上 2）。
++- **结论**：形态② 可行，但权限粒度受 capability 静态性限制，需运行时校验兜底。**不引入第二执行路径**（执行仍走 M2-4）。
++
++### 2.2 形态①（独立进程 stdio）——**与红线冲突，不推荐**
++
++- 本质是新增长生命周期子进程通道（stdio over `run_command` 是一次性执行，不适用长连接）。这**违反**「禁第二执行路径」红线（M4 护栏/`详细设计` K 系列：`scheduler must reuse M2-4 execution channels; no second shell/process execution path`）。
++- 若要保留，唯一合规做法是挂在 M2-4 执行通道上 → 但 stdio 长连接 ≠ `start_run` 一次性模型，**仍是第二路径**。
++- **结论**：形态① 与现有红线冲突；除非 A0 显式放宽"允许插件独立进程并归入新 `PluginProcessTable` + 协调器 `kill-plugins`"，否则**否决**。若放行，需补：进程回收归入 `ShutdownCoordinator`（`kill-plugins` 序在 `kill-running-scripts` 之后）、独立审计、崩溃隔离测试。
++
++### 2.3 形态③（声明式插件）——**推荐，默认形态**
++
++- 插件**不加载任何第三方代码**：`PluginManifest{kind, entry_ref(指向已有 ScriptMeta/ToolMeta/SkillDef id), acl_level, config_schema}`；`plugin_enable/disable/uninstall` 只切换 manifest 状态 + 注册/注销能力到 MCP 工具集与 Skill 列表。
++- 执行体 100% 复用 M2-4 `run_script`/`run_command` 与 M2-9 工具箱 → **零第二执行路径**、零新进程、继承既有确认闸门/审计/路径沙箱。
++- 第三方代码能力由既有「脚本库/工具箱」承担（脚本库本身就是"用户自己加的可执行代码"，已有确认/审计/路径沙箱红线）。
++- **结论**：形态③ 与现有红线完全一致，是 M5-10 的**首选落地形态**。
++
++---
++
++## 3. 裁定建议（交 A0）
++
++| ID | 问题 | 建议 |
++|---|---|---|
++| P-D1 | 插件形态选 ①/②/③？ | **默认③**（声明式），② 作 Web UI 承载壳（插件管理面板用 webview，但执行仍走 M2-4）；① 否决除非显式放宽红线 |
++| P-D2 | capability 静态性导致的"按插件动态权限"如何兜底？ | 选②承载 UI 时，命令处理层按 `plugin_id`+manifest `acl_level` 做运行时二次校验（复用 `check_invocation_source` 风格） |
++| P-D3 | 插件能否加载远程/本地任意代码？ | **否**（形态③）。远程拉取仅作 manifest 引用，执行体必须是已存在的 Script/Tool/Skill（复用既有红线） |
++| P-D4 | 插件卸载清理范围？ | 删 `workspace/plugins/*.json` + 注销能力 + 清运行记录；**不删**被引用的 Script/Tool/Skill（共享资产）；审计 `plugin_uninstall` |
++
++---
++
++## 4. 每种形态对 M5-10/11/12 的影响面
++
++| 模块 | 形态③（推荐）影响 | 备注 |
++|---|---|---|
++| M5-10 manifest/生命周期 | `PluginManifest` 仅声明 + 静态 `acl_level`；load/unload/reload = manifest 读写 + 能力注册/注销 | 无进程管理 |
++| M5-11 命令与隔离 | `plugin_list/install/enable/disable/uninstall`；install=写 manifest+校验签名/来源+默认 `enabled=false`；隔离靠 M2-4 + 运行时 `acl_level` 二次校验 | 无独立沙箱进程 |
++| M5-12 管理 UI | 复用 M4 数据库/调度面板模式（M2-9 工具箱风格）；权限清单来自 manifest `acl_level` | 复用 `check-*-ui-logic.mjs` 范式 |
++
++> 若 A0 裁定形态①（否决情形除外）：M5-11 需新增 `PluginProcessTable` + `kill-plugins` 协调器序（`kill-running-scripts` 之后）+ 独立 clippy/审计/崩溃测试；A9 不在此文档展开，交 A18 实施期。
++
++---
++
++## 5. 与既有 Open Item 的关系
++
++- `AI-模型切换与接手清单.md` 记载「capabilities 残留 `browser` label（致命2/中危26，未修）」：形态③ 不新增 capability label，但**若选②需新增 `plugin-runtime`**，应一并清理 `browser` 残留 label（避免能力漂移，K1）。
++- `withGlobalTauri` 全局暴露（§0）：形态③ 不依赖全局 Tauri（插件 webview 用显式 `invoke` 注入），但建议 A13 在 workspace 下沉评估时**封死** `src/stores/useSystemStore.ts:84` 的全局引用，统一走桥封装（降低攻击面）。
++
++---
++
++## 6. FORBID 遵守记录
++
++- 未写产品代码；未触 `src/`、`src-tauri/`、`scripts/pre-merge.sh` 及三份主文档。
++- 未移动 `NEXT`（现 M4 batch implementation mode）。
++- 未提交、未 push；与工作树中 A18 相关未提交产物无交集（A18 尚未开工）。
++- 「已冻结」陈述以 file:line 标注；「判定/建议」明确区分并交 A0 裁定。
+diff --git a/logs/assist/A9-M5-split-20260905-2359.md b/logs/assist/A9-M5-split-20260905-2359.md
+new file mode 100644
+index 0000000..2b0948d
+--- /dev/null
++++ b/logs/assist/A9-M5-split-20260905-2359.md
+@@ -0,0 +1,162 @@
++# A9 M5 Future Split（Batch Implementation Dispatch 交付）
++
++> 生成：2026-09-05 23:59 CST · Lane A9（M5 prework only · docs only）
++> BASE：`85d2d7b`（`master`，领先 `origin/master` 2 个 A0 本地提交）
++> 性质：**只读/只写 docs**。零产品代码（未触 `src/`、`src-tauri/`、`scripts/pre-merge.sh`）、不移动 NEXT、不提交不 push。
++> 依据：`PARALLEL_COMMAND_BOARD.md`（2026-09-05 23:55 版）→ Batch Implementation Dispatch · **Lane A9: M5 Future Split, No Product Code**。
++> 前置材料：`logs/assist/A9-M5-prework-20260905-2235.md`（已由 A0 并入 `6d73ce1`）· 2026-09-02 批次 M5 任务卡四张（graph-model / agent-skill-contract / plugin-permission / plugin-runtime / A2P-A2A-protocol）· `详细设计与实施计划.md` §7 M5 WBS。
++
++---
++
++## 1. 本交付覆盖（对应 Dispatch Goal）
++
++| Dispatch 要求 | 本文位置 |
++|---|---|
++| database-backed knowledge graph | §3 |
++| scheduled jobs feeding graph updates | §4 |
++| protocol/agent/plugin split | §5 |
++| dependencies on M4 commands | §6 |
++| suggested lanes A13+ | §7 |
++
++---
++
++## 2. 现状基线（2026-09-05 23:55 实测，只读）
++
++| 项 | 事实 | 对 M5 的意义 |
++|---|---|---|
++| 主线 | `master` HEAD=`85d2d7b`（A0 已并 `6d73ce1`/`d6457fe`/`47fce60`/`a75ba24`/`85d2d7b` 等） | M4 契约已开始冻结并入主线 |
++| `domain.rs` | 已含 M4-1.b 类型：`SupportedDb{Sqlite,MySql,Postgres}`/`DbSslMode`/`DbConnectionConfig`/`DbErrorCode` + 单测 | M5-8 图存储、M5-2 MCP db 工具的**配置/错误契约上游已冻结** |
++| `src-tauri/src/` | 无 `database*`/`scheduler*` 模块（A3/A4/A7 尚未落盘） | M5 依赖这些模块的稳定内部 API，见 §6 |
++| ACL | 尾条恒为 `list_artifact_images`；`db_*/task_*/graph_*/skill_*/plugin_*/mcp_*/a2a_*` 命中 0 | M5 新命令一律插 `list_artifact_images` 之前（坑位②） |
++| 执行通道 | M2-1~9 全 PASS（`run_script`/`script_runner.rs` 就绪） | Skill 执行体、调度触发复用点已就绪（无第二执行路径红线） |
++| 生命周期 | `shutdown.rs` 已有协调器；A7 将注册 `stop-scheduler`（先于 `kill-running-scripts`） | M5 各 `*Shutdown` 挂同一协调器，索引依赖需单测断言 |
++| M4 展开卡 | A1 卡 + F1~F12 已并主线 | M5 卡引用 M4 编号须用 A0 最终裁决版（`O-A1-7`） |
++
++---
++
++## 3. 数据库化知识图谱（M5-7~9，数据库支持）
++
++**存储 = 随 M4 数据层，不再自建存储。**
++`database-schema-taskcard` 的 D1 决策点与 M4-1 同源，A2 冻结 `SupportedDb` + rusqlite(bundled) 后**该决策已实质关闭**：`graph_node/graph_edge/graph_event/graph_meta` 作为独立迁移文件（如 `00N_graph.sql`）挂在同一 SQLite 实例，邻接表 + `ON DELETE CASCADE`，不引任何图数据库/重服务（沿用红线）。
++
++**数据流：**
++
++```
++上游变更（Artifact/Repo/Script/Task/Skill 落库）→ GraphEvent(seq 自增) → 抽取器消费
++  → 阶段一(确定性: URL/路径/#tag/@person/code-ref/front-matter) upsert 节点/边
++  → 阶段二(语义, AI) 仅预留 trait SemanticExtractor 接口，标 source=ai 可校正
++```
++
++- 稳定 id：`{kind}:{natural_key sha256[:8]}`（幂等，禁随机 uuid——重抽/增量依赖）。
++- 查询硬约束：`depth ≤ 2` 拒绝、limit≤1000、`truncated` 标志、隐私过滤在**查询层**（`max_privacy`，Agent 默认 `public`），凭据绝不进图谱。
++- 容量：节点 5 万 / 边 20 万 / 度 500 / `sources≤20` / 事件表 90 天或 10 万条。
++- 审计：`graph_rebuild`/`graph_prune`/restricted 越权访问记 `audit.json`；每次查询/事件消费**不记**（K5）。
++
++**关键缺口已随 M4 收窄：** 旧卡"上游模型未落地只能 Artifact-only 建图"将在 M4 后解除（Script/Task 数据由 M4-7/A7、M4 数据层落地）；重画"Artifact-only 起步"边界即可。
++
++---
++
++## 4. 定时任务驱动图谱更新（M4-6/7 → M5 联结点）
++
++M4-7/A7 交付 scheduler 后，M5 可把图谱维护做成**派生索引 + 调度**两层：
++
++| 触发 | 机制 | 依赖的 M4 产物 |
++|---|---|---|
++| 实时增量 | 上游写后发 `GraphEvent`（app 内事件，不经 scheduler） | M4 数据层落库钩子（A3/A4 写路径） |
++| 周期校验/重建 | `task_*` 注册一条内部维护任务（interval ≥60s / cron 5 段），周期执行 `graph_rebuild`/`graph_verify`/`graph_prune` | A7 `task_add` 命令 + `script_runner`（复用，无第二执行路径） |
++| 溯源补采 | `task-runs.json` 历史 → `Task→Script/Artifact` 边 | A7 运行记录 |
++
++**复用规则（与 A6 冻结口径一致）：**
++- 判重/触发以 `tasks.json` 为准；图谱任务同样 `enabled=false` 默认 + `last_fired_at` 判重。
++- 非重叠：单任务单实例（超长 rebuild 不能被下一 tick 顶掉）。
++- 审计低频：rebuild 开始/结束、prune 记 `audit.json`；tick 内禁写审计（坑位⑤）。
++- 退出：scheduler 停 → 图谱维护任务随 `stop-scheduler` 收口；图谱自身 `GraphShutdown`（flush 待写 + 关连接）注册在协调器尾部。
++
++---
++
++## 5. 协议 / Agent / 插件拆分（M5-1~3、M5-4~6、M5-10~12）
++
++沿用既有四张任务卡的分层，给出与 M4 的接缝：
++
++| 领域 | WBS | 拆分要点 | 接缝 |
++|---|---|---|---|
++| A2P/A2A | M5-1~3 | M5-1 workspace 下沉（core/web/mcp/cli，主应用须始终可构建）→ M5-2 内嵌纯 Rust `rmcp` + `McpGlobalPolicy{read_only/allow_dangerous_sql/allowed_connection_ids}` → M5-3 多 Agent 方言归一 + `agent_kv` | MCP 数据库工具**复用** A4 的 connect/query 内部 API + SQL 分类器（`security_policy.rs`），结果限制同 M4-1.c |
++| Agent/Skill | M5-4~6 | `AgentDef/SkillDef`、流式 runtime（`Channel<Token>` 借鉴 fileterm/mpsc 范式）；`SkillImpl` 禁 `Inline{code}`，只 `Script{script_id}`/`Builtin{handler}`；安装默认 `enabled=false`；运行明细写独立 `skill-runs.json` | 执行体复用 M2-4 `run_script`；`capability.rs` 能力白名单与 A2P/A2A **共用一份**（防漂移） |
++| 插件系统 | M5-10~12 | **形态决策前置**：`withGlobalTauri=true`（tauri.conf.json:12）是否可按 webview 粒度关闭全局 Tauri → 不能则形态②(webview 内)放弃改形态①(独立进程/stdio)；manifest 签名/来源 → load/unload/reload → install/enable/disable/uninstall | 站在 M2-7/8/9 工具箱隔离成果上评估；`src/` 仍 1 处 `__TAURI__` 引用需先清/封 |
++
++**插件形态可行性判定（开放项，A9 无权下结论）：** 见 `plugin-permission-taskcard` §1 第一优先级 + 本批次 §7 A18 建议。此判定不依赖 M4 产物，可提前在文档层推进，但**结论须 A0 裁定**后再实施。
++
++---
++
++## 6. 对 M4 命令的精确依赖（M5 开工前提）
++
++| M4 产物 | 产出 Lane | M5 消费方 | M5 开工条件 |
++|---|---|---|---|
++| `SupportedDb`/`DbConnectionConfig`/`DbErrorCode` + rusqlite(bundled) 选型 | A2（已并主线） | M5-8 图存储、M5-2 MCP db 工具 | ✅ 已满足 |
++| DB 内部 API（pool/connect/query/disconnect/limits/truncation） | A3 | M5-2、M5-8 | A3 落盘后 |
++| `security_policy.rs` SQL 分类/写闸门 | A4 | MCP db 工具 read-only/危险策略复用 | A4 落盘后 |
++| `db_connect/db_query/db_disconnect` 命令 + ACL | A4 | 图/Agent 的 DB 能力经 MCP 暴露 | A4 命令 DTO 稳定 |
++| `task_list/add/update/remove/run_now` + scheduler + `stop-scheduler` 注册序 | A7 | §4 图谱维护任务、Agent/Skill 周期触发 | A7 落盘后 |
++| `check-database-policy.py`/`check-scheduler-policy.py` 进 pre-merge | A4/A6 | M5 各政策脚本沿用同一挂载位（A9 不写） | — |
++| M4 编号最终裁决（`M4-2.s` vs `M4-3`，O-A1-7） | A0 | 本 §6 表后续同步 | A0 裁决 |
++
++**总前提（沿用 Priority #7）**：M4 整体 PASS 前 A9 只深化预研，M5 产品代码一律不写；M4 PASS 后由 A0 签发 M5 领取顺序（先 M5-1 workspace 下沉评估）。
++
++---
++
++## 7. 建议未来 Lane A13+（M5 加速波候选，A0 可增删改）
++
++> 建议命名与 Wave 依据：文档类 Wave 0（现即可做）、实现类依赖 M4 PASS / A0 逐卡签发。
++
++| 建议 Lane | 目标 | 依赖 | 建议 Wave |
++|---|---|---|---|
++| A13 | M5-1 workspace 下沉**评估**（core/web/mcp/cli 边界 + 主应用可构建性验证） | M4 PASS | M4 PASS 后第一批（实现前需 A0 裁边界） |
++| A14 | M5-2 内嵌 `rmcp` + `McpGlobalPolicy` + 首组 MCP 工具（含 db 工具） | A3/A4 DB API + A13 | 第二批 |
++| A15 | M5-3 A2A 双向 + `agent_kv`（方言归一、协议兼容） | A14 能力层 | 第三批 |
++| A16 | M5-4~5 Agent/Skill runtime + 命令 + `capability.rs` 共用白名单 | A13/A14 + M2-4 | 第二批（与 A14 并行需先划模块边界） |
++| A17 | M5-7~8 图谱存储/抽取/命令（邻接表挂同一 SQLite；两阶段抽取；隐私/容量红线） | A3/A4 DB API + M4 数据层 + A7 事件 | 第二批 |
++| A18 | 插件**形态决策**（①/②）→ M5-10 manifest/生命周期；此 Lane 现即可做文档层可行性 | A0 裁定形态 | Wave 0 文档 / 实施在 A16 后 |
++| A19 | M5-6/9/12 统一 UI 面（Agent 对话、Skill 管理、图谱可视化、插件管理） | 后端命令 DTO 稳定 | 第四批 |
++| A20 | M5 批次安全审查 + 验收证据（对齐 A10/A11 批次范式） | 各实现批产出 | 滚动 |
++
++合并顺序建议：A14/A16/A17（实现批）→ A15/A19 → A20，A9 在 M4 PASS 后转为正式 M5 任务卡展开辅助（仅 docs）。
++
++---
++
++## 8. 风险与红线（A9 预研视角汇总，非新决策）
++
++1. 插件形态②可行性未证：`withGlobalTauri=true` 全局命令暴露——A18 文档判定、A0 裁定，未裁前不得开工插件实施。
++2. 能力白名单两份漂移（Skill vs A2A）→ 必须共用 `capability.rs`（设计已定，实施须执行）。
++3. Skill/插件携带可执行代码绕过 M2-4 防线 → `SkillImpl` 禁 `Inline`、插件卸载清理、签名/来源校验（卡已定红线）。
++4. M5-2 误引 Node/重依赖 → 内嵌纯 Rust `rmcp`、禁 npm 分包（沿用风险表）。
++5. 图谱审计刷爆 `audit.json`(1000 上限)/凭据进图谱或日志 → K5/K3 原样执行。
++6. 文档层工作树冲突：本批 A6/A10/A11 文件已占用 `scripts/` 与 `logs/` 部分路径；A9 仅新写 `logs/assist/A9-M5-*.md`，不与任何现文件重叠。
++
++---
++
++## 9. FORBID 遵守记录与交付
++
++- 未写产品代码；未触 `src/`、`src-tauri/`、`scripts/pre-merge.sh` 及三份主文档（A1/A6 高冲突位）。
++- 未移动 `NEXT`（现为 M4 batch implementation mode，属 A2~A8/A0 链）。
++- 未提交、未 push；本文件为新增独立文档，与工作树中 A6/A10/A11 未提交产物无交集。
++- 依据 Merge Rule 以"review/checkpoint 文档（无产品代码改动）"交付，交由 A0 拣入。
++
++---
++
++## 本批(2026-09-06 07:00)新增契约文档索引
++
++> 随 M4 代码在工作树落地（database.rs / scheduler.rs / tasks.rs / domain.rs / ACL / 权限集已就位），
++> A9 由"卡草案"深化为**可照着实现的契约草案**，锚定上述已落地 API 的 file:line 事实：
++
++- `logs/assist/A9-M5-graph-store-contract-20260906-0700.md` —— M5-8 图谱存储/查询契约：
++  - 锚定 A3 `DbPool::query`/`DbQueryResult`/`QueryCancel` 与 `database.rs` 限制常量；
++  - DDL（graph_node/edge/event/meta）、稳定 id 规则、容量/隐私红线、GraphQuery/Result DTO、命令草案、测试清单；
++  - 关键缺口 G-D1..D5（图库位置 A/B、QueryLimiter 需提升为 pub、审计低频、迁移框架、policy 脚本）。
++- `logs/assist/A9-M5-graph-scheduler-feed-20260906-0700.md` —— 定时任务驱动图谱更新接缝：
++  - 锚定 A7 `fire()`（经 script_runner::start_run/start_command）、`stop-scheduler` 注册序（索引 1）、`TaskDef`/`TaskKind`（仅 Script|Command）、默认 enabled=false；
++  - 三层触发 + 内部维护任务注册参数草案 + 复用规则 + G-D6（图谱 flush 注册序）。
++- `logs/assist/A9-M5-plugin-form-feasibility-20260906-0700.md` —— M5-10 插件形态 Wave-0 判定：
++  - 锚定 `withGlobalTauri=true`（tauri.conf.json:12）、`__TAURI__` 仅 1 处、capability 静态按 label 绑定、`remote-collect` 仅回传命令；
++  - 形态①（独立进程）/②（webview 内）/③（声明式）判定：**推荐③、条件可行②、否决①（与禁第二执行路径红线冲突）**，P-D1..D4 交 A0 裁定。
++
++三份文档均零产品代码、未移动 NEXT、未提交未 push，与工作树中 A3/A4/A6/A7/A10/A11 未提交产物无交集。

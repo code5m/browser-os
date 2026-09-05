@@ -1,0 +1,2438 @@
+diff --git a/src/types.ts b/src/types.ts
+index 925106e..94bc045 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -490,3 +490,75 @@ export interface TermMessage {
+   dropped_chunks?: number;
+   dropped_bytes?: number;
+ }
++
++// ====== M4-5 / M4-8 定时任务领域 ======
++// 与后端 domain.rs 的 TaskDef / TaskRunRecord 一一对应（serde rename_all = "snake_case"）。
++// 契约源：`logs/checkpoints/A6-M4-5-scheduler-contract-20260905-2330.md` §3.1 / §6。
++// 命令名沿用 A1 展开卡已冻结的 5 条（task_list/add/update/remove/run_now），本文件不改名。
++export type TaskKind = "script" | "command";
++
++export type MissedRunPolicy = "skip" | "run_once" | "catch_up";
++
++export type RetryBackoff = "fixed" | "exponential";
++
++export type TaskRunTrigger = "scheduled" | "manual" | "catch_up" | "retry";
++
++/// 触发方式：外部标签枚举，序列化为 { cron: { expr } } 或 { interval: { every_secs } }。
++/// 后端只接受标准 5 段 cron（分 时 日 月 周）；间隔下界 60 秒（A6 F-A6-6 保守收窄）。
++export type TaskTrigger =
++  | { cron: { expr: string } }
++  | { interval: { every_secs: number } };
++
++export interface RetryPolicy {
++  /// 含首次；1 = 不重试（默认），硬上限 5
++  max_attempts: number;
++  backoff: RetryBackoff;
++  base_delay_secs: number;
++  max_delay_secs: number;
++}
++
++export interface TaskDef {
++  id: string;
++  name: string;
++  kind: TaskKind;
++  /// 目标 id：ScriptMeta.id（script）或 CommandSnippet.id（command）
++  target_id: string;
++  /// 非 secret 参数值；secret 参数值不落盘（A6 §3.3 R-3）
++  params: Record<string, string>;
++  /// 默认 false（A6 裁定 R-A6-1：自动执行默认关闭）
++  enabled: boolean;
++  trigger: TaskTrigger;
++  missed_run_policy: MissedRunPolicy;
++  /// 仅 catch_up 生效；默认 3，硬上限 10
++  catch_up_limit: number;
++  /// 迟到超过该秒数才判定为「错过」；默认 60
++  misfire_grace_secs: number;
++  retry: RetryPolicy;
++  /// 0 = 沿用 script_runner 默认 60；上限 600
++  timeout_secs: number;
++  /// 判重真相源：上一次「已触发」的计划时刻（不是完成时刻）
++  last_fired_at: string | null;
++  /// 下一次计划触发时刻（永远指向未来）
++  next_run_at: string | null;
++  created_at: string;
++  updated_at: string;
++}
++
++export interface TaskRunRecord {
++  task_id: string;
++  /// 与 ScriptRunRecord.run_id 同值（join key）
++  run_id: string;
++  trigger: TaskRunTrigger;
++  /// 计划触发时刻；重试沿用同一值，只递增 attempt
++  scheduled_at: string;
++  attempt: number;
++  started_at: string;
++  finished_at: string | null;
++  status: RunStatus;
++  exit_code: number | null;
++  /// 稳定错误码（如 SCRIPT_ALREADY_RUNNING / TASK_TARGET_NOT_FOUND）
++  error_code: string | null;
++}
++
++/// 跳过原因（A6 §5.2）。UI 必须能展示（O-A6-9），否则用户只看到「没跑」。
++export type TaskSkipReason = "reentrant" | "target_busy" | "global_limit";
++
+diff --git a/src/bridge.ts b/src/bridge.ts
+index e940a6c..7fb04a4 100644
+--- a/src/bridge.ts
++++ b/src/bridge.ts
+@@ -38,8 +38,17 @@ import type {
+   SessionFlushReport,
+   ToolMeta,
+   TermMessage,
++  TaskDef,
++  TaskRunRecord,
+ } from "./types";
+
++/// M4-8 可用性开关：后端 `task_list / task_add / task_update / task_remove / task_run_now`
++/// 五条命令（A1 冻结命名 + A6 契约 §6）尚未落地（A7 / M4-6.b 未交付）。
++/// 为 `false` 时 `useTaskStore` 不发出任何 invoke，面板呈现禁用壳；
++/// A7 落地命令并进 ACL + `main.rs` 注册后，将其改为 `true` 即切换为实时面板。
++/// 这是 board「LIMITED START」的落地方式：**不假借未实现的命令名假装可用**。
++export const TASK_COMMANDS_AVAILABLE = false;
++
+ // M0-0.b 测量配置（契约 logs/m0-baseline-contract-v1.md；非测量运行后端返回 null）
+ export interface M0Config {
+   run_id: string;
+@@ -284,6 +293,24 @@ export const bridge = {
+   runCommand: (id: string, values: Record<string, string>) =>
+     invoke<RunSnapshot>("run_command", { id, values }),
+
++  // ====== M4-8 定时任务（命令名沿用 A1 冻结的 5 条，A6 契约 §6 定义 DTO）======
++  // 后端实现归 A7（M4-6.b）；前端只在 TASK_COMMANDS_AVAILABLE 为 true 时调用。
++  taskList: () => invoke<TaskDef[]>("task_list"),
++
++  taskAdd: (
++    p: Omit<TaskDef, "id" | "created_at" | "updated_at" | "last_fired_at" | "next_run_at">,
++  ) => invoke<TaskDef>("task_add", p),
++
++  taskUpdate: (p: TaskDef) => invoke<TaskDef>("task_update", p),
++
++  taskRemove: (id: string) => invoke<boolean>("task_remove", { id }),
++
++  taskRunNow: (id: string) => invoke<RunSnapshot>("task_run_now", { id }),
++
++  // 说明：A6 §6 / F-A6-7 明确**没有** task_history / task_cancel 两条命令——
++  // 历史由 task_list 附带返回，取消复用既有 cancel_script(run_id)。
++  // 因此本文件不登记任何 A1/A6 之外的命令名。
++
+   // 订阅脚本输出流（payload 为 ScriptOutputEvent；前端用 rAF 合并，避免高频打满渲染）
+   onScriptOutput: (cb: (e: ScriptOutputEvent) => void) =>
+     listen<ScriptOutputEvent>("script-output", (e) => cb(e.payload)),
++
++// ====== 以下为仅属于 Lane A8（M4-8）的 hunk，已剥离其它 Lane（如 A5 db 视图）的改动，
++// 面向「A5 已落地」的树。Apply order：A5 → ... → A8。 =====
+diff --git a/src/stores/useLayoutStore.ts b/src/stores/useLayoutStore.ts
+index 516ca53..cc68fd9 100644
+--- a/src/stores/useLayoutStore.ts
++++ b/src/stores/useLayoutStore.ts
+@@ -16,7 +16,8 @@ export type MainView =
+   | "scripts"
+   | "commands"
+   | "tools"
+   | "db"
++  | "tasks"
+   | "editor";
+
+ export const useLayoutStore = defineStore("layout", () => {
+@@ -109,6 +110,7 @@ export const useLayoutStore = defineStore("layout", () => {
+     scripts: { icon: "📜", label: "脚本库" },
+     commands: { icon: "⚡", label: "命令库" },
+     tools: { icon: "🧰", label: "工具箱" },
++    tasks: { icon: "⏰", label: "定时任务" },
+     settings: { icon: "⚙️", label: "设置" },
+   };
+
+diff --git a/src/components/layout/ActivityBar.vue b/src/components/layout/ActivityBar.vue
+index cd9daa4..a4f3a0e 100644
+--- a/src/components/layout/ActivityBar.vue
++++ b/src/components/layout/ActivityBar.vue
+@@ -35,6 +35,7 @@ const menuSections = [
+       { view: "scripts", icon: "📜", label: "脚本库" },
+       { view: "commands", icon: "⚡", label: "命令库" },
+       { view: "tools", icon: "🧰", label: "工具箱" },
+       { view: "db", icon: "🗄️", label: "数据库" },
++      { view: "tasks", icon: "⏰", label: "定时任务" },
+     ],
+   },
+
+diff --git a/src/components/layout/MainArea.vue b/src/components/layout/MainArea.vue
+index 0ab1de1..161b9e8 100644
+--- a/src/components/layout/MainArea.vue
++++ b/src/components/layout/MainArea.vue
+@@ -22,6 +22,7 @@ import SettingsPanel from "../system/SettingsPanel.vue";
+ import ScriptPanel from "../workspace/ScriptPanel.vue";
+ import ToolBox from "../workspace/ToolBox.vue";
+ import CommandSnippetPanel from "../workspace/CommandSnippetPanel.vue";
+ import DatabasePanel from "../workspace/DatabasePanel.vue";
++import TaskPanel from "../workspace/TaskPanel.vue";
+
+ const layout = useLayoutStore();
+ const browser = useBrowserStore();
+@@ -149,6 +150,10 @@ watch(
+       <ToolBox />
+     </div>
+
+     <!-- ===== 数据库（M4-4） ===== -->
+     <div v-else-if="layout.mainView === 'db'" class="modview">
+       <DatabasePanel />
+     </div>
++
++    <!-- ===== 定时任务（M4-8） ===== -->
++    <div v-else-if="layout.mainView === 'tasks'" class="modview">
++      <TaskPanel />
++    </div>
++
+     <!-- ===== 系统设置 ===== -->
+     <div v-else-if="layout.mainView === 'settings'" class="modview">
+       <SettingsPanel />
+diff --git a/scripts/check-scheduler-ui-logic.mjs b/scripts/check-scheduler-ui-logic.mjs
+new file mode 100644
+index 0000000..73c3243
+--- /dev/null
++++ b/scripts/check-scheduler-ui-logic.mjs
+@@ -0,0 +1,584 @@
++#!/usr/bin/env node
++// ---------------------------------------------------------------------------
++// M4-8（定时任务 UI）前端逻辑层自动化测试（headless，无 GUI 依赖）
++//
++// 直接加载**真实的** `src/utils/taskUi.ts` 与 `src/stores/useTaskStore.ts`，
++// 只把 `src/bridge.ts` 的 task_* / script* / snippet* 方法替换为记录型 mock
++// （不 mock 逻辑层与 store 自身）：每条断言反映的都是**产品代码**的行为。
++//
++// 契约源：`logs/checkpoints/A6-M4-5-scheduler-contract-20260905-2330.md`
++//   - §3.1 TaskDef / TaskTrigger / RetryPolicy / TaskRunRecord
++//   - §3.2 catch_up_limit 仅 CatchUp 生效
++//   - §3.3 R-1~R-6 定义期校验（稳定错误码）
++//   - §3.5 R-A6-1 新建任务默认 enabled = false
++//   - §4.4 cron 仅 5 段；6 段（含秒）、宏一律拒绝（O-A6-4）
++//   - §5.2 跳过原因必须可展示（O-A6-9）
++//   - §5.3 重试 delay 必须 clamp 到 max_delay_secs
++//
++// 用法: node scripts/check-scheduler-ui-logic.mjs
++// 退出码: 0 = 全部通过；1 = 有断言失败
++// ---------------------------------------------------------------------------
++
++import * as nodeModule from "node:module";
++
++function resolveWithExt(specifier, context, next) {
++  try {
++    return next(specifier, context);
++  } catch (err) {
++    if (specifier.startsWith(".") || specifier.startsWith("/")) {
++      for (const ext of [".ts", "/index.ts", ".mjs", ".js"]) {
++        try {
++          return next(specifier + ext, context);
++        } catch {}
++      }
++    }
++    throw err;
++  }
++}
++
++if (typeof nodeModule.registerHooks === "function") {
++  nodeModule.registerHooks({ resolve: resolveWithExt });
++} else {
++  nodeModule.register(
++    "data:text/javascript," +
++      encodeURIComponent(
++        `export async function resolve(specifier, context, next) {
++  return globalThis.__m48Resolve(specifier, context, next);
++}`
++      )
++  );
++  globalThis.__m48Resolve = resolveWithExt;
++}
++
++// ---------- 最小浏览器桩 ----------
++globalThis.window = {
++  setTimeout: (fn, ms) => setTimeout(fn, ms),
++  clearTimeout: (h) => clearTimeout(h),
++  setInterval: () => 0,
++  clearInterval: () => {},
++};
++globalThis.localStorage = {
++  getItem: () => null,
++  setItem: () => {},
++  removeItem: () => {},
++};
++
++const ROOT = new URL("..", import.meta.url).pathname;
++
++const { bridge } = await import(`${ROOT}src/bridge.ts`);
++const taskUi = await import(`${ROOT}src/utils/taskUi.ts`);
++const { useTaskStore } = await import(`${ROOT}src/stores/useTaskStore.ts`);
++const { createPinia, setActivePinia } = await import(`${ROOT}node_modules/pinia/dist/pinia.mjs`);
++
++const {
++  CRON_FIELD_COUNT,
++  DEFAULT_TASK_ENABLED,
++  MIN_INTERVAL_SECS,
++  MAX_INTERVAL_SECS,
++  MAX_CATCH_UP_LIMIT,
++  MAX_ATTEMPTS,
++  MAX_TASK_NAME_BYTES,
++  MAX_TASKS,
++  DEFAULT_CATCH_UP_LIMIT,
++  emptyTaskDraft,
++  loadTaskDraft,
++  serializeTaskDraft,
++  validateCron,
++  validateIntervalSecs,
++  validateTaskDraft,
++  isCatchUpLimitEditable,
++  retryDelaySeconds,
++  retrySummary,
++  nextRunState,
++  lastRunLabel,
++  formatRelative,
++  formatTrigger,
++  sortRuns,
++  runsByTask,
++  latestRun,
++  skipReasonLabel,
++  triggerLabelOf,
++} = taskUi;
++
++// ---------- mock bridge（只替换被调用的方法，并记录调用） ----------
++let calls = [];
++function resetCalls() {
++  calls = [];
++}
++bridge.taskList = async () => {
++  calls.push(["task_list"]);
++  return [];
++};
++bridge.taskAdd = async (p) => {
++  calls.push(["task_add", p]);
++  return { id: "new-id", ...p, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" };
++};
++bridge.taskUpdate = async (p) => {
++  calls.push(["task_update", p]);
++  return p;
++};
++bridge.taskRemove = async (id) => {
++  calls.push(["task_remove", id]);
++  return true;
++};
++bridge.taskRunNow = async (id) => {
++  calls.push(["task_run_now", id]);
++  return { run_id: "run-1", script_id: id, status: "running" };
++};
++bridge.scriptList = async () => {
++  calls.push(["script_list"]);
++  return [
++    {
++      id: "scr-1",
++      name: "清理日志",
++      category: "ops",
++      path: "clean.sh",
++      interpreter: "bash",
++      params: [
++        { name: "DAYS", label: "天数", param_type: "number", required: true, default: null, options: [], raw: false, secret: false },
++        { name: "TOKEN", label: "令牌", param_type: "string", required: true, default: null, options: [], raw: false, secret: true },
++      ],
++      description: "",
++      builtin: false,
++      enabled: true,
++      timeout_secs: 0,
++      created_at: "2026-01-01T00:00:00Z",
++      updated_at: "2026-01-01T00:00:00Z",
++    },
++  ];
++};
++bridge.snippetList = async () => {
++  calls.push(["snippet_list"]);
++  return [
++    {
++      id: "cmd-1",
++      name: "磁盘占用",
++      category: "disk",
++      interpreter: "bash",
++      argv: ["df", "-h"],
++      params: [],
++      description: "",
++      dangerous: true,
++      builtin: false,
++      enabled: true,
++      timeout_secs: 0,
++      created_at: "2026-01-01T00:00:00Z",
++      updated_at: "2026-01-01T00:00:00Z",
++    },
++  ];
++};
++
++let passed = 0;
++const failures = [];
++function assert(cond, label) {
++  if (cond) {
++    passed += 1;
++  } else {
++    failures.push(label);
++    console.error(`  ✗ ${label}`);
++  }
++}
++
++setActivePinia(createPinia());
++const store = useTaskStore();
++
++// ===========================================================================
++// 1. cron 方言（A6 §4.4 / O-A6-4）
++// ===========================================================================
++
++assert(validateCron("*/15 * * * *") === null, "C-1 合法：*/15 * * * *");
++assert(validateCron("0 9 * * 1-5") === null, "C-2 合法：0 9 * * 1-5");
++assert(validateCron("0 0 1,15 * *") === null, "C-3 合法：0 0 1,15 * *");
++assert(validateCron("0 0 * * 0") === null, "C-4 合法：周日 0");
++assert(validateCron("0 0 * * 7") === null, "C-5 合法：周日 7");
++
++const sixField = validateCron("*/15 * * * * *");
++assert(typeof sixField === "string" && sixField !== null, "C-6 拒绝 6 段（含秒）");
++assert(
++  typeof sixField === "string" && sixField.includes(String(CRON_FIELD_COUNT)),
++  "C-7 6 段拒绝信息点明需要 5 段（O-A6-4：cron 工具的 6 位模式不兼容）"
++);
++assert(validateCron("@daily") !== null, "C-8 拒绝宏 @daily");
++assert(validateCron("@reboot") !== null, "C-9 拒绝宏 @reboot");
++assert(validateCron("") !== null, "C-10 拒绝空表达式");
++assert(validateCron("60 * * * *") !== null, "C-11 拒绝分 = 60");
++assert(validateCron("0 0 0 * *") !== null, "C-12 拒绝日 = 0");
++assert(validateCron("*/0 * * * *") !== null, "C-13 拒绝步长 0");
++assert(validateCron("1-10/2 * * * *") !== null, "C-14 拒绝范围步长");
++assert(validateCron("a * * * *") !== null, "C-15 拒绝非数字");
++
++// ===========================================================================
++// 2. 间隔边界（A6 F-A6-6）
++// ===========================================================================
++
++assert(validateIntervalSecs(MIN_INTERVAL_SECS - 1) !== null, "I-1 拒绝 59 秒（下界 60）");
++assert(validateIntervalSecs(MIN_INTERVAL_SECS) === null, "I-2 接受 60 秒");
++assert(validateIntervalSecs(MAX_INTERVAL_SECS) === null, "I-3 接受 30 天");
++assert(validateIntervalSecs(MAX_INTERVAL_SECS + 1) !== null, "I-4 拒绝超过 30 天");
++assert(validateIntervalSecs(30.5) !== null, "I-5 拒绝非整数秒");
++
++// ===========================================================================
++// 3. 表单态与默认值（R-A6-1）
++// ===========================================================================
++
++const draft = emptyTaskDraft();
++assert(draft.enabled === false, "D-1 新建任务默认 enabled = false（R-A6-1）");
++assert(DEFAULT_TASK_ENABLED === false, "D-2 DEFAULT_TASK_ENABLED 常量为 false");
++assert(draft.missed_run_policy === "skip", "D-3 默认错过策略 = skip");
++assert(draft.catch_up_limit === DEFAULT_CATCH_UP_LIMIT, `D-4 默认补跑上限 = ${DEFAULT_CATCH_UP_LIMIT}`);
++assert(draft.retry_max_attempts === 1, "D-5 默认不重试（max_attempts = 1）");
++
++// ===========================================================================
++// 4. 定义期校验（A6 §3.3 R-1~R-6）
++// ===========================================================================
++
++const targets = [
++  {
++    id: "scr-1",
++    name: "清理日志",
++    kind: "script",
++    dangerous: false,
++    params: [
++      { name: "DAYS", label: "天数", param_type: "number", required: true, default: null, options: [], raw: false, secret: false },
++      { name: "TOKEN", label: "令牌", param_type: "string", required: true, default: null, options: [], raw: false, secret: true },
++    ],
++  },
++  { id: "cmd-1", name: "磁盘占用", kind: "command", dangerous: true, params: [] },
++];
++
++function draftWith(over = {}) {
++  const d = emptyTaskDraft();
++  d.name = "每晚清理";
++  d.kind = "script";
++  d.target_id = "scr-1";
++  d.params = { DAYS: "7" };
++  return Object.assign(d, over);
++}
++
++function codesOf(issues) {
++  return issues.map((i) => i.code);
++}
++
++const okIssues = validateTaskDraft(draftWith(), { targets, taskCount: 0 });
++assert(okIssues.length === 0, `V-1 合法草稿零问题（实得 ${JSON.stringify(codesOf(okIssues))}）`);
++
++assert(
++  codesOf(validateTaskDraft(draftWith({ name: "  " }), { targets, taskCount: 0 })).includes("TASK_PARAM_INVALID"),
++  "V-2 空名称 → TASK_PARAM_INVALID"
++);
++assert(
++  codesOf(
++    validateTaskDraft(draftWith({ name: "x".repeat(MAX_TASK_NAME_BYTES + 1) }), { targets, taskCount: 0 })
++  ).includes("TASK_NAME_TOO_LONG"),
++  "V-3 超长名称 → TASK_NAME_TOO_LONG（按 UTF-8 字节计）"
++);
++assert(
++  codesOf(validateTaskDraft(draftWith({ target_id: "" }), { targets, taskCount: 0 })).includes(
++    "TASK_TARGET_NOT_FOUND"
++  ),
++  "V-4 未选目标 → TASK_TARGET_NOT_FOUND"
++);
++assert(
++  codesOf(validateTaskDraft(draftWith({ target_id: "nope" }), { targets, taskCount: 0 })).includes(
++    "TASK_TARGET_NOT_FOUND"
++  ),
++  "V-5 目标不存在 → TASK_TARGET_NOT_FOUND"
++);
++assert(
++  codesOf(validateTaskDraft(draftWith({ kind: "command" }), { targets, taskCount: 0 })).includes(
++    "TASK_TARGET_NOT_FOUND"
++  ),
++  "V-6 目标类型不匹配（command 指向脚本 id）→ TASK_TARGET_NOT_FOUND"
++);
++assert(
++  codesOf(
++    validateTaskDraft(draftWith({ params: { DAYS: "7", TOKEN: "abc" } }), { targets, taskCount: 0 })
++  ).includes("TASK_SECRET_PARAM_FORBIDDEN"),
++  "V-7 secret 参数值 → TASK_SECRET_PARAM_FORBIDDEN（R-3：不落 tasks.json）"
++);
++assert(
++  codesOf(validateTaskDraft(draftWith({ params: {} }), { targets, taskCount: 0 })).includes(
++    "TASK_PARAM_INVALID"
++  ),
++  "V-8 缺必填参数 → TASK_PARAM_INVALID"
++);
++assert(
++  codesOf(
++    validateTaskDraft(draftWith({ params: { DAYS: "7", NOPE: "1" } }), { targets, taskCount: 0 })
++  ).includes("TASK_PARAM_INVALID"),
++  "V-9 未知参数键 → TASK_PARAM_INVALID"
++);
++assert(
++  codesOf(validateTaskDraft(draftWith({ cron_expr: "*/1 * * * * *" }), { targets, taskCount: 0 })).includes(
++    "TASK_INVALID_CRON"
++  ),
++  "V-10 非法 cron → TASK_INVALID_CRON"
++);
++assert(
++  codesOf(
++    validateTaskDraft(draftWith({ trigger_kind: "interval", interval_secs: 10 }), { targets, taskCount: 0 })
++  ).includes("TASK_INTERVAL_OUT_OF_RANGE"),
++  "V-11 间隔越界 → TASK_INTERVAL_OUT_OF_RANGE"
++);
++for (const bad of [0, MAX_CATCH_UP_LIMIT + 1]) {
++  assert(
++    codesOf(validateTaskDraft(draftWith({ catch_up_limit: bad }), { targets, taskCount: 0 })).includes(
++      "TASK_PARAM_INVALID"
++    ),
++    `V-12 补跑上限 ${bad} 越界 → TASK_PARAM_INVALID`
++  );
++}
++assert(
++  codesOf(validateTaskDraft(draftWith({ timeout_secs: 601 }), { targets, taskCount: 0 })).includes(
++    "TASK_PARAM_INVALID"
++  ),
++  "V-13 超时 601 → TASK_PARAM_INVALID"
++);
++assert(
++  codesOf(validateTaskDraft(draftWith({ retry_max_attempts: MAX_ATTEMPTS + 1 }), { targets, taskCount: 0 })).includes(
++    "TASK_PARAM_INVALID"
++  ),
++  "V-14 重试次数越界 → TASK_PARAM_INVALID"
++);
++assert(
++  codesOf(validateTaskDraft(draftWith(), { targets, taskCount: MAX_TASKS })).includes("TASK_LIMIT_REACHED"),
++  "V-15 新建且已达上限 → TASK_LIMIT_REACHED"
++);
++assert(
++  !codesOf(validateTaskDraft(draftWith({ id: "t-1" }), { targets, taskCount: MAX_TASKS })).includes(
++    "TASK_LIMIT_REACHED"
++  ),
++  "V-16 编辑已有任务不受总数上限约束"
++);
++
++// ===========================================================================
++// 5. catch_up_limit 生效范围（A6 §3.2）
++// ===========================================================================
++
++assert(isCatchUpLimitEditable("catch_up") === true, "M-1 CatchUp 策略下补跑上限可编辑");
++assert(isCatchUpLimitEditable("skip") === false, "M-2 Skip 策略下置灰");
++assert(isCatchUpLimitEditable("run_once") === false, "M-3 RunOnce 策略下置灰");
++
++// ===========================================================================
++// 6. 序列化（存储态）
++// ===========================================================================
++
++const serCron = serializeTaskDraft(draftWith({ cron_expr: "*/15 * * * *" }));
++assert(
++  JSON.stringify(serCron.trigger) === JSON.stringify({ cron: { expr: "*/15 * * * *" } }),
++  "S-1 cron 序列化为 { cron: { expr } }"
++);
++const serInterval = serializeTaskDraft(
++  draftWith({ trigger_kind: "interval", interval_secs: 3600 })
++);
++assert(
++  JSON.stringify(serInterval.trigger) === JSON.stringify({ interval: { every_secs: 3600 } }),
++  "S-2 interval 序列化为 { interval: { every_secs } }"
++);
++assert(serCron.retry.max_attempts === 1, "S-3 默认重试 1 次");
++assert(
++  Object.prototype.hasOwnProperty.call(serCron, "id") === false &&
++    Object.prototype.hasOwnProperty.call(serCron, "next_run_at") === false,
++  "S-4 提交载荷不含 id / 时间戳（由服务端生成与维护）"
++);
++const src = draftWith();
++const copied = serializeTaskDraft(src);
++src.params.DAYS = "999";
++assert(copied.params.DAYS === "7", "S-5 序列化对 params 做拷贝（后续改动不污染已提交载荷）");
++
++const roundTripDef = {
++  id: "t-1",
++  name: "每晚清理",
++  kind: "script",
++  target_id: "scr-1",
++  params: { DAYS: "7" },
++  enabled: true,
++  trigger: { interval: { every_secs: 3600 } },
++  missed_run_policy: "catch_up",
++  catch_up_limit: 5,
++  misfire_grace_secs: 120,
++  retry: { max_attempts: 3, backoff: "exponential", base_delay_secs: 30, max_delay_secs: 300 },
++  timeout_secs: 120,
++  last_fired_at: "2026-01-01T00:00:00Z",
++  next_run_at: "2026-01-01T01:00:00Z",
++  created_at: "2025-12-31T00:00:00Z",
++  updated_at: "2025-12-31T00:00:00Z",
++};
++const rt = serializeTaskDraft(loadTaskDraft(roundTripDef));
++assert(
++  rt.kind === roundTripDef.kind &&
++    rt.target_id === roundTripDef.target_id &&
++    rt.missed_run_policy === "catch_up" &&
++    rt.catch_up_limit === 5 &&
++    rt.misfire_grace_secs === 120 &&
++    rt.timeout_secs === 120 &&
++    rt.enabled === true &&
++    JSON.stringify(rt.trigger) === JSON.stringify({ interval: { every_secs: 3600 } }),
++  "S-6 TaskDef → 表单态 → 提交态 往返无损"
++);
++
++// ===========================================================================
++// 7. 重试（A6 §5.3）
++// ===========================================================================
++
++const expo = { max_attempts: 5, backoff: "exponential", base_delay_secs: 30, max_delay_secs: 300 };
++assert(retryDelaySeconds(expo, 1) === 0, "R-1 首次执行无延迟");
++assert(retryDelaySeconds(expo, 2) === 30, "R-2 第 2 次 = base");
++assert(retryDelaySeconds(expo, 3) === 60, "R-3 第 3 次 = base * 2");
++assert(retryDelaySeconds(expo, 4) === 120, "R-4 第 4 次 = base * 4");
++// 30 * 2^4 = 480 > max 300 → 必须 clamp（A6 §5.3）
++assert(retryDelaySeconds(expo, 6) === 300, "R-5 指数退避必须 clamp 到 max_delay_secs");
++const fixed = { max_attempts: 3, backoff: "fixed", base_delay_secs: 45, max_delay_secs: 20 };
++assert(retryDelaySeconds(fixed, 2) === 20, "R-6 固定间隔同样 clamp 到 max_delay_secs");
++assert(retrySummary({ ...expo, max_attempts: 1 }).includes("不重试"), "R-7 1 次 = 不重试");
++assert(
++  retrySummary({ ...expo, max_attempts: 3 }).includes("3") &&
++    retrySummary({ ...expo, max_attempts: 3 }).includes("指数退避"),
++  "R-8 重试摘要含次数与退避方式"
++);
++
++// ===========================================================================
++// 8. 时间展示
++// ===========================================================================
++
++const NOW = Date.parse("2026-01-01T00:00:00Z");
++assert(
++  nextRunState({ enabled: false, next_run_at: "2026-01-01T01:00:00Z" }, NOW).kind === "disabled",
++  "T-1 未启用 → disabled（不展示下次执行）"
++);
++assert(nextRunState({ enabled: true, next_run_at: null }, NOW).kind === "none", "T-2 无计划 → none");
++assert(
++  nextRunState({ enabled: true, next_run_at: "2025-12-31T23:00:00Z" }, NOW).kind === "stale",
++  "T-3 计划已过期 → stale（等后端重算，前端不自造时间）"
++);
++const future = nextRunState({ enabled: true, next_run_at: "2026-01-01T01:00:00Z" }, NOW);
++assert(future.kind === "scheduled" && future.label.includes("后"), "T-4 未来计划 → 相对时间");
++assert(lastRunLabel({ last_fired_at: null }, NOW) === "从未执行", "T-5 从未执行");
++assert(lastRunLabel({ last_fired_at: "2025-12-31T23:00:00Z" }, NOW).includes("前"), "T-6 上次执行用过去时");
++assert(formatRelative(null, NOW) === "—", "T-7 空时间 → —");
++assert(formatRelative("not-a-date", NOW) === "—", "T-8 非法时间 → —（不抛错、不显示 NaN）");
++assert(formatTrigger({ cron: { expr: "*/15 * * * *" } }).includes("*/15"), "T-9 cron 展示含原表达式");
++assert(formatTrigger({ interval: { every_secs: 3600 } }).includes("小时"), "T-10 间隔按小时归并展示");
++
++// ===========================================================================
++// 9. 历史与跳过原因（O-A6-9）
++// ===========================================================================
++
++const runs = [
++  { task_id: "t1", run_id: "r1", trigger: "scheduled", scheduled_at: "2026-01-01T00:00:00Z", attempt: 1, started_at: "2026-01-01T00:00:00Z", finished_at: "2026-01-01T00:00:10Z", status: "failed", exit_code: 1, error_code: null },
++  { task_id: "t2", run_id: "r2", trigger: "manual", scheduled_at: "2026-01-01T00:05:00Z", attempt: 1, started_at: "2026-01-01T00:05:00Z", finished_at: "2026-01-01T00:05:05Z", status: "succeeded", exit_code: 0, error_code: null },
++  { task_id: "t1", run_id: "r3", trigger: "retry", scheduled_at: "2026-01-01T00:00:00Z", attempt: 2, started_at: "2026-01-01T00:10:00Z", finished_at: null, status: "running", exit_code: null, error_code: null },
++];
++const sorted = sortRuns(runs);
++assert(sorted[0].run_id === "r3" && sorted[2].run_id === "r1", "H-1 历史按开始时间倒序");
++assert(runs.length === 3 && sorted.length === 3, "H-2 排序不修改入参");
++assert(runsByTask(runs)["t1"].length === 2, "H-3 按任务分组");
++assert((latestRun(runs, "t1") || {}).run_id === "r3", "H-4 latestRun 取最新一条");
++assert(latestRun(runs, "nope") === null, "H-5 无记录 → null");
++assert(skipReasonLabel("reentrant").length > 0, "H-6 跳过原因 reentrant 有文案");
++assert(skipReasonLabel("target_busy").includes("占用"), "H-7 跳过原因 target_busy 有文案（O-A6-9）");
++assert(skipReasonLabel("global_limit").length > 0, "H-8 跳过原因 global_limit 有文案");
++assert(skipReasonLabel(null).length > 0, "H-9 未知原因也有兜底文案");
++assert(
++  triggerLabelOf("scheduled") === "定时" &&
++    triggerLabelOf("manual") === "手工" &&
++    triggerLabelOf("catch_up") === "补跑" &&
++    triggerLabelOf("retry") === "重试",
++  "H-10 四种触发来源均有中文标签"
++);
++
++// ===========================================================================
++// 10. store：后端未就绪时零 invoke（LIMITED START 口径）
++// ===========================================================================
++
++assert(store.backendReady === false, "B-1 初始 backendReady = false（A7 未交付）");
++resetCalls();
++await store.loadAll();
++assert(calls.length === 0, `B-2 未就绪时 loadAll 零 invoke（实得 ${calls.length}）`);
++assert(typeof store.error === "string" && store.error.length > 0, "B-3 未就绪时给出明确错误文案");
++
++await store.openCreate();
++store.draft.name = "未就绪保存";
++store.draft.target_id = "scr-1";
++await store.saveDraft();
++assert(calls.length === 0, "B-4 未就绪时 saveDraft 零 invoke");
++
++await store.setEnabled({ id: "t-1", name: "x" }, true);
++await store.removeTask("t-1");
++await store.runNow("t-1");
++assert(calls.length === 0, "B-5 未就绪时 setEnabled / removeTask / runNow 全部零 invoke");
++store.closeEditor();
++
++// ===========================================================================
++// 11. store：后端就绪后的接线（mock bridge）
++// ===========================================================================
++
++store.backendReady = true;
++resetCalls();
++await store.loadAll();
++assert(calls.some(([n]) => n === "task_list"), "L-1 就绪后 loadAll 调 task_list");
++assert(calls.some(([n]) => n === "script_list") && calls.some(([n]) => n === "snippet_list"), "L-2 一并加载脚本与命令片段作目标候选");
++assert(store.targets.length === 2, "L-3 目标候选含脚本与命令片段");
++assert(store.targets.some((t) => t.dangerous === true), "L-4 高风险目标被标记（供二次确认）");
++
++// 复合返回形态：{ tasks, runs }
++resetCalls();
++bridge.taskList = async () => ({ tasks: [roundTripDef], runs });
++await store.loadAll();
++assert(store.tasks.length === 1 && store.runs.length === 3, "L-5 支持 { tasks, runs } 复合返回");
++resetCalls();
++bridge.taskList = async () => [roundTripDef];
++await store.loadAll();
++assert(store.tasks.length === 1, "L-6 支持纯数组返回");
++
++// 新建：默认关闭、secret 不入参
++resetCalls();
++store.openCreate();
++store.draft.name = "每晚清理";
++store.draft.kind = "script";
++store.draft.target_id = "scr-1";
++store.draft.params = { DAYS: "7" };
++const saved = await store.saveDraft();
++assert(saved === true, "L-7 合法草稿保存成功");
++const addCall = calls.find(([n]) => n === "task_add");
++assert(Boolean(addCall), "L-8 新建走 task_add");
++assert(addCall && addCall[1].enabled === false, "L-9 新建任务提交时 enabled = false（R-A6-1 端到端）");
++assert(addCall && !Object.prototype.hasOwnProperty.call(addCall[1].params, "TOKEN"), "L-10 secret 参数不出现在提交载荷");
++
++// 校验失败时不得发出 task_add
++resetCalls();
++store.openCreate();
++store.draft.name = "";
++store.draft.target_id = "scr-1";
++const blocked = await store.saveDraft();
++assert(blocked === false, "L-11 校验失败 → 保存被拒");
++assert(calls.length === 0, "L-12 校验失败时零 invoke（前端前置校验生效）");
++store.closeEditor();
++
++// 启停 / 立即执行 / 删除
++resetCalls();
++await store.setEnabled(roundTripDef, false);
++const updCall = calls.find(([n]) => n === "task_update");
++assert(updCall && updCall[1].enabled === false, "L-13 停用走 task_update 且传 enabled=false");
++
++resetCalls();
++await store.runNow("t-1");
++assert(calls.some(([n]) => n === "task_run_now"), "L-14 立即执行走 task_run_now（不自建执行通道）");
++
++resetCalls();
++store.tasks = [roundTripDef];
++await store.removeTask("t-1");
++assert(calls.some(([n]) => n === "task_remove"), "L-15 删除走 task_remove");
++assert(store.tasks.length === 0, "L-16 删除后本地列表同步剔除");
++
++await store.loadTargets();
++assert(store.isDangerous({ ...roundTripDef, kind: "command", target_id: "cmd-1" }) === true, "L-17 高风险命令片段可被识别");
++assert(store.isDangerous(roundTripDef) === false, "L-18 普通脚本不误判为高风险");
++
++// ---------------- 汇总 ----------------
++console.log(`\ncheck-scheduler-ui-logic: ${passed} assertions passed, ${failures.length} failed`);
++if (failures.length > 0) {
++  for (const f of failures) console.error(`  - ${f}`);
++  process.exit(1);
++}
++process.exit(0);
+diff --git a/scripts/check-scheduler-ui-policy.py b/scripts/check-scheduler-ui-policy.py
+new file mode 100644
+index 0000000..716f9ae
+--- /dev/null
++++ b/scripts/check-scheduler-ui-policy.py
+@@ -0,0 +1,344 @@
++#!/usr/bin/env python3
++"""M4-8 定时任务 UI 静态不变量夹具（SCHEDUI_* 码位）。
++
++守护的是「前端不许绕过 A6 契约」这一类**结构上**可判的红线，与
++`scripts/check-scheduler-policy.py`（A6/A7 的 SCHED_* 后端码位）互不重叠：
++
++- SCHEDUI_DIRECT_INVOKE      组件直接 invoke（必须经 bridge.ts）
++- SCHEDUI_ENABLED_DEFAULT_TRUE 新建任务默认不是「未启用」（A6 裁定 R-A6-1）
++- SCHEDUI_ENABLED_MUTATED    store 在新建/加载后偷偷把 enabled 置 true
++- SCHEDUI_CRON_FIELD_COUNT   cron 段数常量不是 5，或段数判定未用该常量（A6 §4.4 / O-A6-4）
++- SCHEDUI_CRON_SIX_FIELD_MSG 6 段拒绝信息未点明需要 5 段（用户复制 6 位表达式需可自查）
++- SCHEDUI_INTERVAL_BOUND     间隔下界/上界常量缺失或未被校验使用（A6 F-A6-6）
++- SCHEDUI_RETRY_UNCLAMPED    重试延迟未 clamp 到 max_delay_secs（A6 §5.3）
++- SCHEDUI_STORE_UNGUARDED    store 调 bridge.task* 前没有 backendReady/guard 拦截
++                             （后端命令未落地时不得发出 invoke）
++- SCHEDUI_SECRET_EDITABLE    表单允许编辑/保存 secret 参数值（A6 §3.3 R-3）
++- SCHEDUI_CATCHUP_NOT_GRAYED 补跑上限未按策略置灰（A6 §3.2，防 no-op 字段）
++- SCHEDUI_NO_SKIP_REASON     历史面板不展示跳过原因（A6 O-A6-9）
++- SCHEDUI_CRED_PERSISTED     定时任务参数/凭据落前端存储（M4 红线）
++- SCHEDUI_UNKNOWN_COMMAND    bridge.ts 出现 A1/A6 未冻结的 task_* 命令名
++- SCHEDUI_NO_DISABLED_SHELL  面板未对「后端未就绪」呈现禁用壳
++
++沿用既有夹具三约定：
++1. `--self-test` **双向自检**：1 个好样本零违规 + N 个坏样本各自命中对应码；
++2. 坏样本**变异防呆**：变异字符串若未真正改动内容，按**漏检**计；
++3. `PENDING_CODES` 与 `--expect-pending` 双向一致（本卡无 pending 码位，集合为空）。
++
++用法:
++    python3 scripts/check-scheduler-policy-ui.py --self-test
++    python3 scripts/check-scheduler-policy-ui.py
++    python3 scripts/check-scheduler-policy-ui.py --expect-pending
++"""
++
++from __future__ import annotations
++
++import os
++import sys
++
++ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++
++TASK_UI = "src/utils/taskUi.ts"
++TASK_STORE = "src/stores/useTaskStore.ts"
++TASK_PANEL = "src/components/workspace/TaskPanel.vue"
++TASK_DIALOG = "src/components/workspace/TaskEditDialog.vue"
++BRIDGE = "src/bridge.ts"
++
++# A1 展开卡 + A6 §6 冻结的 5 条命令，前端不得自行发明第 6 条。
++FROZEN_COMMANDS = {
++    "task_list",
++    "task_add",
++    "task_update",
++    "task_remove",
++    "task_run_now",
++}
++
++# 本卡无 pending 码位（M4-8.a/b/c 一次交付），保留集合以便后续卡转默认。
++PENDING_CODES: set[str] = set()
++
++
++def read_repo() -> dict[str, str]:
++    files = [TASK_UI, TASK_STORE, TASK_PANEL, TASK_DIALOG, BRIDGE]
++    out: dict[str, str] = {}
++    for rel in files:
++        path = os.path.join(ROOT, rel)
++        try:
++            with open(path, "r", encoding="utf-8") as fh:
++                out[rel] = fh.read()
++        except FileNotFoundError:
++            out[rel] = ""
++    return out
++
++
++def check(files: dict[str, str]) -> list[str]:
++    """返回违规码列表（默认模式只判默认码；pending 码位不参与）。"""
++    violations: list[str] = []
++
++    ui = files.get(TASK_UI, "")
++    store = files.get(TASK_STORE, "")
++    panel = files.get(TASK_PANEL, "")
++    dialog = files.get(TASK_DIALOG, "")
++    bridge = files.get(BRIDGE, "")
++
++    # --- SCHEDUI_DIRECT_INVOKE：组件不得直接 invoke ---
++    for name, text in ((TASK_PANEL, panel), (TASK_DIALOG, dialog)):
++        if "invoke(" in text or "@tauri-apps/api" in text:
++            violations.append("SCHEDUI_DIRECT_INVOKE")
++            _ = name
++            break
++
++    # --- SCHEDUI_ENABLED_DEFAULT_TRUE（R-A6-1）---
++    if "export const DEFAULT_TASK_ENABLED = false;" not in ui:
++        violations.append("SCHEDUI_ENABLED_DEFAULT_TRUE")
++    if "enabled: DEFAULT_TASK_ENABLED," not in ui:
++        violations.append("SCHEDUI_ENABLED_DEFAULT_TRUE")
++
++    # --- SCHEDUI_ENABLED_MUTATED：store 不得偷偷启用 ---
++    if "draft.value.enabled = true" in store or "enabled: true" in store:
++        violations.append("SCHEDUI_ENABLED_MUTATED")
++
++    # --- SCHEDUI_CRON_FIELD_COUNT（A6 §4.4 / O-A6-4）---
++    if "export const CRON_FIELD_COUNT = 5;" not in ui:
++        violations.append("SCHEDUI_CRON_FIELD_COUNT")
++    if "parts.length !== CRON_FIELD_COUNT" not in ui:
++        violations.append("SCHEDUI_CRON_FIELD_COUNT")
++
++    # --- SCHEDUI_CRON_SIX_FIELD_MSG：6 段拒绝信息必须点明「含秒不被支持」（O-A6-4）---
++    if "含秒的 6 位表达式不被支持" not in ui:
++        violations.append("SCHEDUI_CRON_SIX_FIELD_MSG")
++
++    # --- SCHEDUI_INTERVAL_BOUND（F-A6-6）---
++    if "export const MIN_INTERVAL_SECS = 60;" not in ui:
++        violations.append("SCHEDUI_INTERVAL_BOUND")
++    if "export const MAX_INTERVAL_SECS = 2592000;" not in ui:
++        violations.append("SCHEDUI_INTERVAL_BOUND")
++    if "secs < MIN_INTERVAL_SECS" not in ui or "secs > MAX_INTERVAL_SECS" not in ui:
++        violations.append("SCHEDUI_INTERVAL_BOUND")
++
++    # --- SCHEDUI_RETRY_UNCLAMPED（§5.3）---
++    if "return Math.min(Math.trunc(raw), max);" not in ui:
++        violations.append("SCHEDUI_RETRY_UNCLAMPED")
++
++    # --- SCHEDUI_STORE_UNGUARDED：含 bridge.task* 调用的函数必须有 guard/backendReady 拦截 ---
++    # 按函数块切分（避免固定窗口长度带来的漏判与误判）。
++    import re
++
++    for segment in re.split(r"\n(?=  (?:async )?function )", store):
++        if "bridge.task" in segment and "guard(" not in segment and "backendReady" not in segment:
++            violations.append("SCHEDUI_STORE_UNGUARDED")
++            break
++
++    # --- SCHEDUI_SECRET_EDITABLE（R-3）---
++    if 'v-if="!p.secret"' not in dialog:
++        violations.append("SCHEDUI_SECRET_EDITABLE")
++
++    # --- SCHEDUI_CATCHUP_NOT_GRAYED（§3.2）---
++    if ':disabled="!catchUpEditable"' not in dialog or "isCatchUpLimitEditable" not in dialog:
++        violations.append("SCHEDUI_CATCHUP_NOT_GRAYED")
++
++    # --- SCHEDUI_NO_SKIP_REASON（O-A6-9）：历史必须渲染跳过原因，不能只导入不用 ---
++    if "skipReasonLabel(r." not in panel:
++        violations.append("SCHEDUI_NO_SKIP_REASON")
++
++    # --- SCHEDUI_CRED_PERSISTED ---
++    for text in (ui, store, panel, dialog):
++        if "localStorage.setItem" in text or "sessionStorage.setItem" in text:
++            violations.append("SCHEDUI_CRED_PERSISTED")
++            break
++
++    # --- SCHEDUI_UNKNOWN_COMMAND：命令名必须来自冻结集合 ---
++    import re
++
++    for name in re.findall(r'"(task_[a-z_]+)"', bridge):
++        if name not in FROZEN_COMMANDS:
++            violations.append("SCHEDUI_UNKNOWN_COMMAND")
++            break
++
++    # --- SCHEDUI_NO_DISABLED_SHELL：未就绪时必须显式呈现禁用壳（不是静默不可用）---
++    if 'v-if="!tasks.backendReady"' not in panel:
++        violations.append("SCHEDUI_NO_DISABLED_SHELL")
++
++    # 去重并保持顺序稳定，便于断言
++    seen: set[str] = set()
++    ordered = []
++    for code in violations:
++        if code not in seen:
++            seen.add(code)
++            ordered.append(code)
++    return ordered
++
++
++# ---------------------------------------------------------------------------
++# self-test：1 好 + N 坏（变异防呆）
++# ---------------------------------------------------------------------------
++
++BAD_SAMPLES: list[tuple[str, str, str, str]] = [
++    # (码位, 文件, 原文, 变异文)
++    (
++        "SCHEDUI_DIRECT_INVOKE",
++        TASK_PANEL,
++        "const tasks = useTaskStore();",
++        "const tasks = useTaskStore();\nimport { invoke } from '@tauri-apps/api/core';\nvoid invoke;",
++    ),
++    (
++        "SCHEDUI_ENABLED_DEFAULT_TRUE",
++        TASK_UI,
++        "export const DEFAULT_TASK_ENABLED = false;",
++        "export const DEFAULT_TASK_ENABLED = true;",
++    ),
++    (
++        "SCHEDUI_ENABLED_MUTATED",
++        TASK_STORE,
++        "    draft.value = emptyTaskDraft();",
++        "    draft.value = emptyTaskDraft();\n    draft.value.enabled = true;",
++    ),
++    (
++        "SCHEDUI_CRON_FIELD_COUNT",
++        TASK_UI,
++        "export const CRON_FIELD_COUNT = 5;",
++        "export const CRON_FIELD_COUNT = 6;",
++    ),
++    (
++        "SCHEDUI_CRON_SIX_FIELD_MSG",
++        TASK_UI,
++        "含秒的 6 位表达式不被支持",
++        "表达式不合法",
++    ),
++    (
++        "SCHEDUI_INTERVAL_BOUND",
++        TASK_UI,
++        "export const MIN_INTERVAL_SECS = 60;",
++        "export const MIN_INTERVAL_SECS = 1;",
++    ),
++    (
++        "SCHEDUI_RETRY_UNCLAMPED",
++        TASK_UI,
++        "return Math.min(Math.trunc(raw), max);",
++        "return Math.trunc(raw);",
++    ),
++    (
++        "SCHEDUI_STORE_UNGUARDED",
++        TASK_STORE,
++        "    if (!guard()) return false;\n    if (!validate()) return false;",
++        "    if (!validate()) return false;",
++    ),
++    (
++        "SCHEDUI_SECRET_EDITABLE",
++        TASK_DIALOG,
++        'v-if="!p.secret"',
++        'v-if="true"',
++    ),
++    (
++        "SCHEDUI_CATCHUP_NOT_GRAYED",
++        TASK_DIALOG,
++        ':disabled="!catchUpEditable"',
++        ':disabled="false"',
++    ),
++    (
++        "SCHEDUI_NO_SKIP_REASON",
++        TASK_PANEL,
++        "skipReasonLabel(r.error_code)",
++        "r.error_code",
++    ),
++    (
++        "SCHEDUI_CRED_PERSISTED",
++        TASK_DIALOG,
++        "const tasks = useTaskStore();",
++        "const tasks = useTaskStore();\nlocalStorage.setItem('task-token', 'x');",
++    ),
++    (
++        "SCHEDUI_UNKNOWN_COMMAND",
++        BRIDGE,
++        'invoke<TaskDef[]>("task_list")',
++        'invoke<TaskDef[]>("task_history")',
++    ),
++    (
++        "SCHEDUI_NO_DISABLED_SHELL",
++        TASK_PANEL,
++        'v-if="!tasks.backendReady"',
++        'v-if="false"',
++    ),
++]
++
++
++def run_self_test() -> int:
++    failures: list[str] = []
++
++    def expect(cond: bool, label: str) -> None:
++        if not cond:
++            failures.append(label)
++            print(f"  ✗ {label}")
++
++    good = read_repo()
++    missing = [name for name, text in good.items() if text == ""]
++    if missing:
++        print(f"FAIL: 缺少被扫描文件 {missing}")
++        return 1
++
++    good_violations = check(good)
++    if good_violations:
++        expect(False, f"好样本应零违规，实得 {good_violations}")
++    else:
++        print("  ✓ 好样本零违规")
++
++    for code, rel, old, new in BAD_SAMPLES:
++        files = dict(good)
++        original = files[rel]
++        if old not in original:
++            expect(False, f"{code}: 变异锚点在 {rel} 中不存在（夹具已过时）")
++            continue
++        mutated = original.replace(old, new, 1)
++        # 变异防呆：替换未真正改动内容时按漏检计。
++        if mutated == original:
++            expect(False, f"{code}: 变异未改动内容（锚点失效）")
++            continue
++        files[rel] = mutated
++        found = check(files)
++        if code not in found:
++            expect(False, f"{code}: 坏样本未命中（实得 {found}）")
++        else:
++            print(f"  ✓ {code} 坏样本命中")
++
++    # pending 集合与 --expect-pending 双向一致
++    declared = sorted(PENDING_CODES)
++    print(f"  · PENDING_CODES={declared}")
++
++    if failures:
++        print(f"\nSELF_TEST_RESULT=FAIL ({len(failures)} 项)")
++        return 1
++    print(f"\nSELF_TEST_RESULT=ALL_PASS（1 好样本 + {len(BAD_SAMPLES)} 坏样本）")
++    return 0
++
++
++def run_default() -> int:
++    files = read_repo()
++    violations = check(files)
++    if violations:
++        for code in violations:
++            print(f"FAIL: {code}")
++        print(f"\nCHECK_SCHEDULER_UI_POLICY_RESULT=FAIL ({len(violations)} 项)")
++        return 1
++    print(f"CHECK_SCHEDULER_UI_POLICY_RESULT=PASS（0 违规，{len(BAD_SAMPLES)} 个码位守护中）")
++    return 0
++
++
++def run_expect_pending() -> int:
++    print(f"PENDING_CODES={','.join(sorted(PENDING_CODES))}")
++    print("EXPECT_PENDING_RESULT=PASS")
++    return 0
++
++
++def main() -> int:
++    args = sys.argv[1:]
++    if "--self-test" in args:
++        return run_self_test()
++    if "--expect-pending" in args:
++        return run_expect_pending()
++    if args:
++        print(f"error: unknown argument {args}", file=sys.stderr)
++        return 2
++    return run_default()
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/src/components/workspace/TaskEditDialog.vue b/src/components/workspace/TaskEditDialog.vue
+new file mode 100644
+index 0000000..4cba9c5
+--- /dev/null
++++ b/src/components/workspace/TaskEditDialog.vue
+@@ -0,0 +1,260 @@
++<script setup lang="ts">
++// src/components/workspace/TaskEditDialog.vue
++// M4-8 定时任务新增/编辑表单（纯前端态，保存走 store → bridge）。
++//
++// 契约落点：
++//   - 默认「未启用」（A6 裁定 R-A6-1），启用是显式动作；
++//   - cron 只接受 5 段；6 段（含秒）在**此处就显式拒绝并说明**，
++//     避免用户从 cron 种子工具复制 6 位表达式后到后端才被拒（A6 O-A6-4）；
++//   - 敏感参数输入框禁用：secret 参数值不落 tasks.json（A6 §3.3 R-3）；
++//   - catch_up_limit 仅 CatchUp 策略下可编辑（A6 §3.2，防「看似可配实则 no-op」）。
++import { computed } from "vue";
++import { useTaskStore } from "../../stores/useTaskStore";
++import {
++  CRON_FIELD_COUNT,
++  MAX_ATTEMPTS,
++  MAX_CATCH_UP_LIMIT,
++  MAX_INTERVAL_SECS,
++  MAX_TIMEOUT_SECS,
++  MIN_INTERVAL_SECS,
++  isCatchUpLimitEditable,
++  missedPolicyLabel,
++} from "../../utils/taskUi";
++
++const tasks = useTaskStore();
++
++const targetsOfKind = computed(() => tasks.targets.filter((t) => t.kind === tasks.draft.kind));
++
++const selectedTarget = computed(
++  () => targetsOfKind.value.find((t) => t.id === tasks.draft.target_id) ?? null,
++);
++
++// 6 段（含秒）显式提示：与 cron 种子工具（M2-7）的 6 位模式不兼容。
++const cronParts = computed(() => tasks.draft.cron_expr.trim().split(/\s+/).filter(Boolean));
++const cronHasWrongFieldCount = computed(
++  () => tasks.draft.trigger_kind === "cron" && cronParts.value.length !== CRON_FIELD_COUNT,
++);
++
++const catchUpEditable = computed(() => isCatchUpLimitEditable(tasks.draft.missed_run_policy));
++
++function onKindChange() {
++  // 换类型后原目标 id 对新类型无意义，必须清空，避免提交一个类型不匹配的目标。
++  tasks.draft.target_id = "";
++  tasks.draft.params = {};
++}
++
++function onTargetChange() {
++  tasks.draft.params = {};
++}
++</script>
++
++<template>
++  <div v-if="tasks.editorOpen" class="modal-mask" @click.self="tasks.closeEditor()">
++    <div class="modal task-editor">
++      <h3>{{ tasks.draft.id ? "编辑定时任务" : "新建定时任务" }}</h3>
++
++      <label class="field">
++        <span>任务名</span>
++        <input v-model="tasks.draft.name" placeholder="例如：每晚清理日志" />
++        <em v-if="tasks.issueFor('name')" class="err">{{ tasks.issueFor("name") }}</em>
++      </label>
++
++      <div class="row">
++        <label class="field">
++          <span>类型</span>
++          <select v-model="tasks.draft.kind" @change="onKindChange">
++            <option value="script">脚本</option>
++            <option value="command">命令片段</option>
++          </select>
++        </label>
++        <label class="field grow">
++          <span>执行目标</span>
++          <select v-model="tasks.draft.target_id" @change="onTargetChange">
++            <option value="">— 请选择 —</option>
++            <option v-for="t in targetsOfKind" :key="t.id" :value="t.id">
++              {{ t.name }}{{ t.dangerous ? "（高风险）" : "" }}
++            </option>
++          </select>
++          <em v-if="tasks.issueFor('target_id')" class="err">{{ tasks.issueFor("target_id") }}</em>
++        </label>
++      </div>
++
++      <div v-if="selectedTarget && selectedTarget.params.length > 0" class="params">
++        <div class="params-title">参数值（敏感参数不接受保存）</div>
++        <label v-for="p in selectedTarget.params" :key="p.name" class="field inline">
++          <span>{{ p.label || p.name }}{{ p.required ? " *" : "" }}</span>
++          <input
++            v-if="!p.secret"
++            v-model="tasks.draft.params[p.name]"
++            :placeholder="p.default ?? ''"
++          />
++          <input v-else disabled value="（敏感参数，不在任务中保存）" />
++        </label>
++        <em v-if="tasks.issueFor('params')" class="err">{{ tasks.issueFor("params") }}</em>
++      </div>
++
++      <div class="row">
++        <label class="field">
++          <span>触发方式</span>
++          <select v-model="tasks.draft.trigger_kind">
++            <option value="cron">Cron 表达式</option>
++            <option value="interval">固定间隔</option>
++          </select>
++        </label>
++        <label v-if="tasks.draft.trigger_kind === 'cron'" class="field grow">
++          <span>Cron（{{ CRON_FIELD_COUNT }} 段：分 时 日 月 周）</span>
++          <input v-model="tasks.draft.cron_expr" placeholder="*/15 * * * *" />
++          <em v-if="cronHasWrongFieldCount" class="warn">
++            需要 {{ CRON_FIELD_COUNT }} 段，当前 {{ cronParts.length }} 段；含秒的 6 位表达式不被支持
++          </em>
++          <em v-if="tasks.issueFor('cron_expr')" class="err">{{ tasks.issueFor("cron_expr") }}</em>
++        </label>
++        <label v-else class="field grow">
++          <span>间隔秒数（{{ MIN_INTERVAL_SECS }} ~ {{ MAX_INTERVAL_SECS }}）</span>
++          <input v-model.number="tasks.draft.interval_secs" type="number" :min="MIN_INTERVAL_SECS" :max="MAX_INTERVAL_SECS" />
++          <em v-if="tasks.issueFor('interval_secs')" class="err">{{ tasks.issueFor("interval_secs") }}</em>
++        </label>
++      </div>
++
++      <div class="row">
++        <label class="field">
++          <span>错过执行策略</span>
++          <select v-model="tasks.draft.missed_run_policy">
++            <option value="skip">{{ missedPolicyLabel("skip") }}</option>
++            <option value="run_once">{{ missedPolicyLabel("run_once") }}</option>
++            <option value="catch_up">{{ missedPolicyLabel("catch_up") }}</option>
++          </select>
++        </label>
++        <label class="field">
++          <span>补跑上限（1~{{ MAX_CATCH_UP_LIMIT }}）</span>
++          <input
++            v-model.number="tasks.draft.catch_up_limit"
++            type="number"
++            :min="1"
++            :max="MAX_CATCH_UP_LIMIT"
++            :disabled="!catchUpEditable"
++          />
++          <em v-if="!catchUpEditable" class="hint">仅「按上限补跑」策略生效</em>
++        </label>
++      </div>
++
++      <div class="row">
++        <label class="field">
++          <span>重试次数（1~{{ MAX_ATTEMPTS }}，1 = 不重试）</span>
++          <input v-model.number="tasks.draft.retry_max_attempts" type="number" :min="1" :max="MAX_ATTEMPTS" />
++        </label>
++        <label class="field">
++          <span>退避</span>
++          <select v-model="tasks.draft.retry_backoff">
++            <option value="fixed">固定间隔</option>
++            <option value="exponential">指数退避</option>
++          </select>
++        </label>
++        <label class="field">
++          <span>基准延迟（秒）</span>
++          <input v-model.number="tasks.draft.retry_base_delay_secs" type="number" :min="0" />
++        </label>
++        <label class="field">
++          <span>最大延迟（秒）</span>
++          <input v-model.number="tasks.draft.retry_max_delay_secs" type="number" :min="0" :max="MAX_TIMEOUT_SECS" />
++        </label>
++      </div>
++
++      <div class="row">
++        <label class="field">
++          <span>超时（秒，0 = 后端默认 60，上限 {{ MAX_TIMEOUT_SECS }}）</span>
++          <input v-model.number="tasks.draft.timeout_secs" type="number" :min="0" :max="MAX_TIMEOUT_SECS" />
++        </label>
++        <label class="field">
++          <span>迟到宽限（秒）</span>
++          <input v-model.number="tasks.draft.misfire_grace_secs" type="number" :min="0" />
++        </label>
++      </div>
++
++      <label class="switch">
++        <input v-model="tasks.draft.enabled" type="checkbox" />
++        <span>启用（默认关闭：启用后才会无人值守自动执行）</span>
++      </label>
++
++      <div v-if="tasks.issues.length > 0" class="issues">
++        <div v-for="(i, idx) in tasks.issues" :key="idx" class="err">· {{ i.message }}</div>
++      </div>
++      <div v-if="tasks.error" class="err">{{ tasks.error }}</div>
++
++      <div class="actions">
++        <button :disabled="tasks.loading" @click="tasks.closeEditor()">取消</button>
++        <button class="primary" :disabled="tasks.loading" @click="tasks.saveDraft()">保存</button>
++      </div>
++    </div>
++  </div>
++</template>
++
++<style scoped>
++.task-editor {
++  width: 720px;
++  max-width: 92vw;
++  max-height: 86vh;
++  overflow: auto;
++}
++.field {
++  display: flex;
++  flex-direction: column;
++  gap: 4px;
++  margin: 8px 0;
++}
++.field.inline {
++  flex-direction: row;
++  align-items: center;
++  gap: 8px;
++}
++.field.inline span {
++  min-width: 120px;
++}
++.row {
++  display: flex;
++  gap: 12px;
++  flex-wrap: wrap;
++}
++.grow {
++  flex: 1;
++  min-width: 220px;
++}
++.params {
++  border: 1px solid var(--line, #2a2f3a);
++  border-radius: 6px;
++  padding: 8px 10px;
++  margin: 8px 0;
++}
++.params-title {
++  font-size: 12px;
++  opacity: 0.75;
++  margin-bottom: 6px;
++}
++.err {
++  color: #ff6b6b;
++  font-size: 12px;
++}
++.warn {
++  color: #ffb454;
++  font-size: 12px;
++}
++.hint {
++  opacity: 0.6;
++  font-size: 12px;
++}
++.switch {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  margin: 10px 0;
++}
++.issues {
++  margin: 8px 0;
++}
++.actions {
++  display: flex;
++  justify-content: flex-end;
++  gap: 8px;
++  margin-top: 12px;
++}
++</style>
+diff --git a/src/components/workspace/TaskPanel.vue b/src/components/workspace/TaskPanel.vue
+new file mode 100644
+index 0000000..47ce132
+--- /dev/null
++++ b/src/components/workspace/TaskPanel.vue
+@@ -0,0 +1,291 @@
++<script setup lang="ts">
++// src/components/workspace/TaskPanel.vue
++// M4-8 定时任务面板：列表 + 启用开关 + 下次/上次执行 + 立即执行 + 编辑 + 删除确认 + 历史。
++//
++// 边界：本组件**不做任何调度与计时决策**——所有时间由后端 `next_run_at` / `last_fired_at`
++// 提供，前端只做相对时间展示；「立即执行」只是下发 `task_run_now` 命令，
++// 真正跑起来的是后端既有的 script_runner（A6 F6：不另起执行路径）。
++// 下文的 30s 定时器仅用于刷新相对时间文案，**从不触发任何执行**。
++import { computed, onMounted, onUnmounted, ref } from "vue";
++import { useTaskStore } from "../../stores/useTaskStore";
++import type { TaskDef } from "../../types";
++import {
++  formatRelative,
++  formatTrigger,
++  kindLabel,
++  lastRunLabel,
++  nextRunState,
++  skipReasonLabel,
++  triggerLabelOf,
++  statusLabel,
++} from "../../utils/taskUi";
++import { runStatusClass } from "../../utils/scriptUi";
++import TaskEditDialog from "./TaskEditDialog.vue";
++
++const tasks = useTaskStore();
++
++const now = ref(Date.now());
++let timer: number | null = null;
++onMounted(() => {
++  timer = window.setInterval(() => {
++    now.value = Date.now();
++  }, 30_000);
++});
++onUnmounted(() => {
++  if (timer !== null) window.clearInterval(timer);
++});
++
++// 行内二次确认：删除与「立即执行高风险任务」都必须显式确认，不用原生 confirm，
++// 避免不可测的浏览器对话框（M2-6 观察项同口径）。
++const pendingRemove = ref<string | null>(null);
++const pendingRun = ref<string | null>(null);
++
++function targetName(def: TaskDef): string {
++  return tasks.targets.find((t) => t.id === def.target_id && t.kind === def.kind)?.name ?? def.target_id;
++}
++
++function nextLabel(def: TaskDef): string {
++  const s = nextRunState(def, now.value);
++  if (s.kind === "disabled") return "未启用";
++  if (s.kind === "stale") return "待重算（已过期）";
++  if (s.kind === "none") return "—";
++  return s.label;
++}
++
++function lastLabel(def: TaskDef): string {
++  return lastRunLabel(def, now.value);
++}
++
++async function onToggle(def: TaskDef, checked: boolean) {
++  pendingRemove.value = null;
++  await tasks.setEnabled(def, checked);
++}
++
++async function onRemove(def: TaskDef) {
++  await tasks.removeTask(def.id);
++  pendingRemove.value = null;
++}
++
++async function onRunNow(def: TaskDef) {
++  await tasks.runNow(def.id);
++  pendingRun.value = null;
++}
++
++const recentRuns = computed(() => tasks.sortedRuns.slice(0, 50));
++const dangerousHint = computed(() => (def: TaskDef) => tasks.isDangerous(def));
++</script>
++
++<template>
++  <div class="task-panel">
++    <div class="head">
++      <div>
++        <strong>定时任务</strong>
++        <span class="muted">（{{ tasks.tasks.length }} 个，启用 {{ tasks.enabledCount }} 个）</span>
++      </div>
++      <div class="ops">
++        <button :disabled="tasks.loading" @click="tasks.loadAll()">刷新</button>
++        <button class="primary" :disabled="tasks.loading || !tasks.backendReady" @click="tasks.openCreate()">
++          新建任务
++        </button>
++      </div>
++    </div>
++
++    <div v-if="!tasks.backendReady" class="banner">
++      后端定时任务命令（`task_list` / `task_add` / `task_update` / `task_remove` / `task_run_now`）尚未落地，
++      当前为只读壳：不发送任何命令。解锁条件见检查点 `M4-8`（待 A7 / M4-6.b 交付）。
++    </div>
++    <div v-if="tasks.error" class="banner err-banner">{{ tasks.error }}</div>
++
++    <div v-if="tasks.tasks.length === 0" class="empty">
++      暂无定时任务。{{ tasks.backendReady ? "点击「新建任务」创建。" : "" }}
++    </div>
++
++    <ul v-else class="task-list">
++      <li v-for="def in tasks.tasks" :key="def.id" class="task-row">
++        <div class="main">
++          <div class="title">
++            <span class="name">{{ def.name }}</span>
++            <span class="tag">{{ kindLabel(def.kind) }}</span>
++            <span v-if="dangerousHint(def)" class="tag danger">高风险</span>
++          </div>
++          <div class="muted line">
++            目标：{{ targetName(def) }} ｜ 触发：{{ formatTrigger(def.trigger) }}
++          </div>
++          <div class="muted line">
++            下次：{{ nextLabel(def) }} ｜ 上次：{{ lastLabel(def) }} ｜
++            重试：{{ def.retry?.max_attempts ?? 1 }} 次 ｜ 超时：{{ def.timeout_secs || 60 }}s
++          </div>
++        </div>
++
++        <div class="side">
++          <label class="switch" :title="def.enabled ? '点击停用' : '点击启用（启用后才会自动执行）'">
++            <input
++              type="checkbox"
++              :checked="def.enabled"
++              :disabled="tasks.loading || !tasks.backendReady"
++              @change="onToggle(def, ($event.target as HTMLInputElement).checked)"
++            />
++            <span>{{ def.enabled ? "已启用" : "未启用" }}</span>
++          </label>
++
++          <div class="ops">
++            <template v-if="pendingRun === def.id && dangerousHint(def)">
++              <button class="danger" @click="onRunNow(def)">确认立即执行</button>
++              <button @click="pendingRun = null">取消</button>
++            </template>
++            <button v-else :disabled="!tasks.backendReady" @click="pendingRun = def.id; if (!dangerousHint(def)) onRunNow(def)">
++              立即执行
++            </button>
++
++            <button :disabled="!tasks.backendReady" @click="tasks.openEdit(def)">编辑</button>
++
++            <template v-if="pendingRemove === def.id">
++              <button class="danger" @click="onRemove(def)">确认删除</button>
++              <button @click="pendingRemove = null">取消</button>
++            </template>
++            <button v-else :disabled="!tasks.backendReady" @click="pendingRemove = def.id">删除</button>
++          </div>
++        </div>
++      </li>
++    </ul>
++
++    <div class="history">
++      <div class="hist-head">
++        <strong>运行历史</strong>
++        <span class="muted">（最近 {{ recentRuns.length }} 条）</span>
++      </div>
++      <div v-if="recentRuns.length === 0" class="muted">暂无运行记录。</div>
++      <ul v-else class="run-list">
++        <li v-for="r in recentRuns" :key="`${r.task_id}:${r.run_id}:${r.attempt}`" class="run-row">
++          <span class="tag" :class="runStatusClass(r.status)">{{ statusLabel(r.status) }}</span>
++          <span class="tag trigger">{{ triggerLabelOf(r.trigger) }}</span>
++          <span class="muted">第 {{ r.attempt }} 次 ｜ {{ formatRelative(r.started_at, now) }}</span>
++          <span v-if="r.error_code" class="muted">｜ {{ skipReasonLabel(r.error_code) }}</span>
++        </li>
++      </ul>
++    </div>
++
++    <TaskEditDialog />
++  </div>
++</template>
++
++<style scoped>
++.task-panel {
++  display: flex;
++  flex-direction: column;
++  gap: 10px;
++  padding: 12px;
++  height: 100%;
++  overflow: auto;
++}
++.head {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++}
++.ops {
++  display: flex;
++  gap: 6px;
++  align-items: center;
++  flex-wrap: wrap;
++}
++.banner {
++  border: 1px solid #ffb454;
++  color: #ffb454;
++  border-radius: 6px;
++  padding: 8px 10px;
++  font-size: 12px;
++}
++.err-banner {
++  border-color: #ff6b6b;
++  color: #ff6b6b;
++}
++.empty {
++  opacity: 0.7;
++  padding: 16px 0;
++}
++.task-list {
++  list-style: none;
++  margin: 0;
++  padding: 0;
++  display: flex;
++  flex-direction: column;
++  gap: 8px;
++}
++.task-row {
++  border: 1px solid var(--line, #2a2f3a);
++  border-radius: 8px;
++  padding: 10px 12px;
++  display: flex;
++  justify-content: space-between;
++  gap: 12px;
++  flex-wrap: wrap;
++}
++.title {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++}
++.name {
++  font-weight: 600;
++}
++.tag {
++  font-size: 12px;
++  padding: 1px 6px;
++  border-radius: 4px;
++  border: 1px solid var(--line, #2a2f3a);
++}
++.tag.danger {
++  border-color: #ff6b6b;
++  color: #ff6b6b;
++}
++.trigger {
++  opacity: 0.85;
++}
++.muted {
++  opacity: 0.7;
++  font-size: 12px;
++}
++.line {
++  margin-top: 2px;
++}
++.side {
++  display: flex;
++  flex-direction: column;
++  gap: 6px;
++  align-items: flex-end;
++}
++.switch {
++  display: flex;
++  align-items: center;
++  gap: 6px;
++  font-size: 12px;
++}
++.history {
++  margin-top: 8px;
++}
++.hist-head {
++  display: flex;
++  align-items: baseline;
++  gap: 6px;
++  margin-bottom: 6px;
++}
++.run-list {
++  list-style: none;
++  margin: 0;
++  padding: 0;
++  display: flex;
++  flex-direction: column;
++  gap: 4px;
++}
++.run-row {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  flex-wrap: wrap;
++}
++.danger {
++  border-color: #ff6b6b;
++  color: #ff6b6b;
++}
++</style>
+diff --git a/src/stores/useTaskStore.ts b/src/stores/useTaskStore.ts
+new file mode 100644
+index 0000000..e6f790d
+--- /dev/null
++++ b/src/stores/useTaskStore.ts
+@@ -0,0 +1,225 @@
++// src/stores/useTaskStore.ts
++// M4-8 定时任务面板状态机。
++//
++// 约束（board + A6 契约）：
++//   - 组件不得直接 invoke，一切经 `bridge.ts`；
++//   - 后端 5 条命令（task_list/add/update/remove/run_now）由 A7（M4-6.b）落地；
++//     未落地前 `backendReady=false`，**所有动作 no-op 且零 invoke**（LIMITED START 口径）；
++//   - 新建任务默认 `enabled=false`（A6 裁定 R-A6-1），store 不得偷偷置 true；
++//   - 参数值里的 secret 一律不保存（A6 §3.3 R-3），凭据不进前端持久化。
++
++import { defineStore } from "pinia";
++import { computed, ref } from "vue";
++import { TASK_COMMANDS_AVAILABLE, bridge } from "../bridge";
++import type { RunSnapshot, TaskDef, TaskRunRecord } from "../types";
++import {
++  emptyTaskDraft,
++  loadTaskDraft,
++  runsByTask,
++  serializeTaskDraft,
++  sortRuns,
++  validateTaskDraft,
++  type TaskDraft,
++  type TaskIssue,
++  type TaskTargetOption,
++} from "../utils/taskUi";
++import { useWorkspaceStore } from "./useWorkspaceStore";
++
++export const useTaskStore = defineStore("tasks", () => {
++  const tasks = ref<TaskDef[]>([]);
++  const runs = ref<TaskRunRecord[]>([]);
++  const targets = ref<TaskTargetOption[]>([]);
++  const loading = ref(false);
++  const error = ref<string | null>(null);
++  /// 后端命令可用性。A7 落地后置 true（见 `bridge.TASK_COMMANDS_AVAILABLE`）。
++  const backendReady = ref<boolean>(TASK_COMMANDS_AVAILABLE);
++
++  const draft = ref<TaskDraft>(emptyTaskDraft());
++  const issues = ref<TaskIssue[]>([]);
++  const editorOpen = ref(false);
++
++  const sortedRuns = computed(() => sortRuns(runs.value));
++  const enabledCount = computed(() => tasks.value.filter((t) => t.enabled).length);
++  const runsFor = (taskId: string) => runsByTask(runs.value)[taskId] ?? [];
++  const issueFor = (field: string) => issues.value.find((i) => i.field === field)?.message ?? null;
++
++  /// 后端未就绪时统一拦截：**一条 invoke 都不发**，避免对不存在的命令反复报错。
++  function guard(): boolean {
++    if (backendReady.value) return true;
++    error.value = "后端定时任务命令尚未就绪（A7 / M4-6.b 未交付），面板为只读壳";
++    return false;
++  }
++
++  function fail(e: unknown): void {
++    error.value = e instanceof Error ? e.message : String(e ?? "未知错误");
++  }
++
++  /// 目标候选：脚本库（script）+ 命令片段库（command）。
++  /// 二者都来自既有 store，不新增读取通道。
++  async function loadTargets(): Promise<void> {
++    const ws = useWorkspaceStore();
++    if (ws.scripts.length === 0) await ws.loadScripts();
++    if (ws.snippets.length === 0) await ws.loadSnippets();
++    targets.value = [
++      ...ws.scripts.map((s) => ({
++        id: s.id,
++        name: s.name,
++        kind: "script" as const,
++        params: s.params ?? [],
++        dangerous: false,
++      })),
++      ...ws.snippets.map((s) => ({
++        id: s.id,
++        name: s.name,
++        kind: "command" as const,
++        params: s.params ?? [],
++        dangerous: Boolean(s.dangerous),
++      })),
++    ];
++  }
++
++  /// A6 §6：`task_list` 返回任务列表，历史可附带返回。
++  /// 两种形态都接受（纯数组 / { tasks, runs }），A7 定型后只需改本函数一处。
++  function applyTaskList(payload: unknown): void {
++    if (Array.isArray(payload)) {
++      tasks.value = payload as TaskDef[];
++      return;
++    }
++    const composite = payload as { tasks?: TaskDef[]; runs?: TaskRunRecord[] } | null;
++    tasks.value = composite?.tasks ?? [];
++    if (Array.isArray(composite?.runs)) runs.value = composite?.runs ?? [];
++  }
++
++  async function loadAll(): Promise<void> {
++    if (!guard()) return;
++    loading.value = true;
++    error.value = null;
++    try {
++      applyTaskList(await bridge.taskList());
++      await loadTargets();
++    } catch (e) {
++      fail(e);
++    } finally {
++      loading.value = false;
++    }
++  }
++
++  function openCreate(): void {
++    draft.value = emptyTaskDraft();
++    issues.value = [];
++    editorOpen.value = true;
++  }
++
++  function openEdit(def: TaskDef): void {
++    draft.value = loadTaskDraft(def);
++    issues.value = [];
++    editorOpen.value = true;
++  }
++
++  function closeEditor(): void {
++    editorOpen.value = false;
++    issues.value = [];
++  }
++
++  /// 前端前置校验（后端仍会再判一次，此处只为即时反馈与减少无效往返）。
++  function validate(): boolean {
++    issues.value = validateTaskDraft(draft.value, {
++      targets: targets.value,
++      taskCount: tasks.value.length,
++    });
++    return issues.value.length === 0;
++  }
++
++  async function saveDraft(): Promise<boolean> {
++    if (!guard()) return false;
++    if (!validate()) return false;
++    loading.value = true;
++    error.value = null;
++    try {
++      const payload = serializeTaskDraft(draft.value);
++      if (draft.value.id) {
++        await bridge.taskUpdate({ ...payload, id: draft.value.id } as TaskDef);
++      } else {
++        await bridge.taskAdd(payload);
++      }
++      editorOpen.value = false;
++      await loadAll();
++      return true;
++    } catch (e) {
++      fail(e);
++      return false;
++    } finally {
++      loading.value = false;
++    }
++  }
++
++  async function setEnabled(def: TaskDef, enabled: boolean): Promise<void> {
++    if (!guard()) return;
++    loading.value = true;
++    error.value = null;
++    try {
++      await bridge.taskUpdate({ ...def, enabled });
++      await loadAll();
++    } catch (e) {
++      fail(e);
++    } finally {
++      loading.value = false;
++    }
++  }
++
++  async function removeTask(id: string): Promise<void> {
++    if (!guard()) return;
++    loading.value = true;
++    error.value = null;
++    try {
++      await bridge.taskRemove(id);
++      tasks.value = tasks.value.filter((t) => t.id !== id);
++    } catch (e) {
++      fail(e);
++    } finally {
++      loading.value = false;
++    }
++  }
++
++  async function runNow(id: string): Promise<RunSnapshot | null> {
++    if (!guard()) return null;
++    error.value = null;
++    try {
++      return await bridge.taskRunNow(id);
++    } catch (e) {
++      fail(e);
++      return null;
++    }
++  }
++
++  function isDangerous(def: TaskDef): boolean {
++    return targets.value.some((t) => t.id === def.target_id && t.kind === def.kind && t.dangerous);
++  }
++
++  return {
++    tasks,
++    runs,
++    targets,
++    loading,
++    error,
++    backendReady,
++    draft,
++    issues,
++    editorOpen,
++    sortedRuns,
++    enabledCount,
++    runsFor,
++    issueFor,
++    loadAll,
++    loadTargets,
++    openCreate,
++    openEdit,
++    closeEditor,
++    validate,
++    saveDraft,
++    setEnabled,
++    removeTask,
++    runNow,
++    isDangerous,
++  };
++});
+diff --git a/src/utils/taskUi.ts b/src/utils/taskUi.ts
+new file mode 100644
+index 0000000..f0133cf
+--- /dev/null
++++ b/src/utils/taskUi.ts
+@@ -0,0 +1,503 @@
++// src/utils/taskUi.ts
++// M4-8 定时任务 UI **纯逻辑层**：无 invoke、无 DOM、无 store 依赖，可被 node 直接 import 断言。
++//
++// 契约源：`logs/checkpoints/A6-M4-5-scheduler-contract-20260905-2330.md`
++//   - §3.1 TaskDef / TaskTrigger / TaskKind / MissedRunPolicy / RetryPolicy / TaskRunRecord
++//   - §3.3 定义期校验 R-1~R-7（错误码为稳定字符串）
++//   - §3.5 裁定 R-A6-1：新建任务默认 enabled = false
++//   - §4.4 cron 方言：仅 5 段（分 时 日 月 周），不支持秒/年/宏
++//   - §5.2 跳过原因必须可展示（O-A6-9）
++//   - §5.3 重试 delay 必须 clamp 到 max_delay_secs
++//
++// 本层只做**前端前置校验与展示**，后端仍为唯一裁决者（同样的规则后端会再判一次）。
++
++import type {
++  MissedRunPolicy,
++  RetryBackoff,
++  RetryPolicy,
++  RunStatus,
++  ScriptParam,
++  TaskDef,
++  TaskKind,
++  TaskRunRecord,
++  TaskRunTrigger,
++  TaskSkipReason,
++  TaskTrigger,
++} from "../types";
++import { runStatusLabel } from "./scriptUi";
++
++// ====== 常量（与后端冻结值对齐，前端不得自行放宽）======
++
++/// A6 §4.4：后端只接受 5 段 cron（分 时 日 月 周）。6 段（含秒）一律拒绝。
++export const CRON_FIELD_COUNT = 5;
++
++export const CRON_FIELD_RANGES: ReadonlyArray<{ name: string; min: number; max: number }> = [
++  { name: "分", min: 0, max: 59 },
++  { name: "时", min: 0, max: 23 },
++  { name: "日", min: 1, max: 31 },
++  { name: "月", min: 1, max: 12 },
++  { name: "周", min: 0, max: 7 }, // 0 与 7 均为周日
++];
++
++export const MAX_TASK_NAME_BYTES = 128; // 对齐 scripts::MAX_NAME_BYTES
++export const MIN_INTERVAL_SECS = 60; // A6 F-A6-6：无约束秒级周期会造成补跑风暴
++export const MAX_INTERVAL_SECS = 2592000; // 30 天
++export const DEFAULT_CATCH_UP_LIMIT = 3;
++export const MAX_CATCH_UP_LIMIT = 10;
++export const DEFAULT_MISFIRE_GRACE_SECS = 60;
++export const MAX_ATTEMPTS = 5;
++export const MAX_TIMEOUT_SECS = 600;
++export const MAX_TASKS = 200; // 对齐 MAX_SCRIPTS / MAX_SNIPPETS
++export const MAX_PARAMS = 20;
++/// A6 裁定 R-A6-1：定时任务是「无人值守自动执行」，默认必须关闭。
++export const DEFAULT_TASK_ENABLED = false;
++/// UI 默认重试间隔（后端未冻结默认值，取保守值；可被后端拒绝并回显错误码）。
++export const DEFAULT_RETRY_BASE_DELAY_SECS = 30;
++export const DEFAULT_RETRY_MAX_DELAY_SECS = 300;
++
++// ====== 类型 ======
++
++export interface TaskTargetOption {
++  id: string;
++  name: string;
++  kind: TaskKind;
++  params: ScriptParam[];
++  dangerous: boolean;
++}
++
++/// 表单态（与 TaskDef 的 snake_case 存储态解耦，序列化时再转换）。
++export interface TaskDraft {
++  id: string | null; // null = 新建
++  name: string;
++  kind: TaskKind;
++  target_id: string;
++  params: Record<string, string>;
++  enabled: boolean;
++  trigger_kind: "cron" | "interval";
++  cron_expr: string;
++  interval_secs: number;
++  missed_run_policy: MissedRunPolicy;
++  catch_up_limit: number;
++  misfire_grace_secs: number;
++  retry_max_attempts: number;
++  retry_backoff: RetryBackoff;
++  retry_base_delay_secs: number;
++  retry_max_delay_secs: number;
++  timeout_secs: number;
++}
++
++export interface TaskIssue {
++  field: string;
++  code: string;
++  message: string;
++}
++
++export interface TaskValidateContext {
++  targets: TaskTargetOption[];
++  taskCount: number;
++}
++
++// ====== 工具 ======
++
++export function byteLength(s: string): number {
++  // TextEncoder 在浏览器与 node 均可用；按 UTF-8 字节计（与后端 MAX_NAME_BYTES 同口径）。
++  return new TextEncoder().encode(s ?? "").length;
++}
++
++function isIntToken(s: string): boolean {
++  return /^\d+$/.test(s);
++}
++
++// ====== cron（仅 5 段，A6 §4.4）======
++
++// 校验 5 段 cron。支持「通配」「通配加步长」「范围 a-b」「列表 a,b」「字面量」五种写法；
++// 不支持秒/年字段、`@reboot` / `@daily` 等宏、范围步长（如 `1-10/2`）。
++// 返回 null 表示合法；否则返回可直接展示的原因（供 UI 直接呈现）。
++export function validateCron(expr: string): string | null {
++  const raw = (expr ?? "").trim();
++  if (raw.length === 0) return "cron 表达式不可为空";
++  if (raw.startsWith("@")) return "不支持 @reboot / @daily 等宏，请使用 5 段标准表达式";
++
++  const parts = raw.split(/\s+/);
++  if (parts.length !== CRON_FIELD_COUNT) {
++    return `cron 必须是 ${CRON_FIELD_COUNT} 段（分 时 日 月 周），实得 ${parts.length} 段；含秒的 6 位表达式不被支持`;
++  }
++
++  for (let i = 0; i < CRON_FIELD_COUNT; i += 1) {
++    const spec = CRON_FIELD_RANGES[i];
++    const field = parts[i];
++    const items = field.split(",");
++    for (const item of items) {
++      const problem = validateCronItem(item, spec.name, spec.min, spec.max);
++      if (problem) return problem;
++    }
++  }
++  return null;
++}
++
++function validateCronItem(item: string, name: string, min: number, max: number): string | null {
++  if (item === "*") return null;
++  if (item.startsWith("*/")) {
++    const step = item.slice(2);
++    if (!isIntToken(step)) return `${name}字段步长必须是正整数（${item}）`;
++    const n = Number(step);
++    if (n < 1 || n > max) return `${name}字段步长必须在 1~${max}（${item}）`;
++    return null;
++  }
++  if (item.includes("/")) return `${name}字段不支持范围步长写法（${item}），仅支持 */n`;
++  if (item.includes("-")) {
++    const [a, b] = item.split("-");
++    if (!isIntToken(a) || !isIntToken(b)) return `${name}字段范围必须是整数（${item}）`;
++    const lo = Number(a);
++    const hi = Number(b);
++    if (lo < min || hi > max) return `${name}字段范围越界（${item}），合法区间 ${min}~${max}`;
++    if (lo > hi) return `${name}字段范围起止颠倒（${item}）`;
++    return null;
++  }
++  if (!isIntToken(item)) return `${name}字段含非法字符（${item}）`;
++  const v = Number(item);
++  if (v < min || v > max) return `${name}字段越界（${item}），合法区间 ${min}~${max}`;
++  return null;
++}
++
++/// 展示用简述；无法简化时原样返回表达式。
++export function describeCron(expr: string): string {
++  if (validateCron(expr) !== null) return "—";
++  const [minute, hour, dom, month, dow] = expr.trim().split(/\s+/);
++  if (minute.startsWith("*/")) return `每 ${minute.slice(2)} 分钟`;
++  if (/^\d+$/.test(minute) && hour === "*" && dom === "*" && month === "*" && dow === "*") {
++    return `每小时第 ${minute} 分`;
++  }
++  if (/^\d+$/.test(minute) && /^\d+$/.test(hour) && dom === "*" && month === "*" && dow === "*") {
++    return `每天 ${hour}:${String(minute).padStart(2, "0")}`;
++  }
++  return expr.trim();
++}
++
++export function validateIntervalSecs(secs: number): string | null {
++  if (!Number.isFinite(secs) || Math.trunc(secs) !== secs) return "间隔必须是整数秒";
++  if (secs < MIN_INTERVAL_SECS) return `间隔下界 ${MIN_INTERVAL_SECS} 秒（秒级周期会造成错过补偿风暴）`;
++  if (secs > MAX_INTERVAL_SECS) return `间隔上界 ${MAX_INTERVAL_SECS} 秒（30 天）`;
++  return null;
++}
++
++export function formatTrigger(trigger: TaskTrigger | null | undefined): string {
++  if (!trigger) return "—";
++  if ("cron" in trigger) {
++    const expr = trigger.cron?.expr ?? "";
++    return describeCron(expr) === "—" ? expr || "—" : `${describeCron(expr)}（${expr}）`;
++  }
++  if ("interval" in trigger) {
++    const s = Number(trigger.interval?.every_secs ?? 0);
++    if (s >= 3600 && s % 3600 === 0) return `每 ${s / 3600} 小时`;
++    if (s >= 60 && s % 60 === 0) return `每 ${s / 60} 分钟`;
++    return `每 ${s} 秒`;
++  }
++  return "—";
++}
++
++// ====== 表单态 ⇄ 存储态 ======
++
++export function emptyTaskDraft(): TaskDraft {
++  return {
++    id: null,
++    name: "",
++    kind: "script",
++    target_id: "",
++    params: {},
++    // A6 裁定 R-A6-1：默认关闭；创建即静默启用属违约。
++    enabled: DEFAULT_TASK_ENABLED,
++    trigger_kind: "cron",
++    cron_expr: "0 * * * *",
++    interval_secs: MIN_INTERVAL_SECS,
++    missed_run_policy: "skip",
++    catch_up_limit: DEFAULT_CATCH_UP_LIMIT,
++    misfire_grace_secs: DEFAULT_MISFIRE_GRACE_SECS,
++    retry_max_attempts: 1,
++    retry_backoff: "fixed",
++    retry_base_delay_secs: DEFAULT_RETRY_BASE_DELAY_SECS,
++    retry_max_delay_secs: DEFAULT_RETRY_MAX_DELAY_SECS,
++    timeout_secs: 0,
++  };
++}
++
++export function loadTaskDraft(def: TaskDef): TaskDraft {
++  const draft = emptyTaskDraft();
++  draft.id = def.id;
++  draft.name = def.name ?? "";
++  draft.kind = def.kind;
++  draft.target_id = def.target_id ?? "";
++  draft.params = { ...(def.params ?? {}) };
++  draft.enabled = Boolean(def.enabled);
++  draft.missed_run_policy = def.missed_run_policy ?? "skip";
++  draft.catch_up_limit = def.catch_up_limit ?? DEFAULT_CATCH_UP_LIMIT;
++  draft.misfire_grace_secs = def.misfire_grace_secs ?? DEFAULT_MISFIRE_GRACE_SECS;
++  draft.retry_max_attempts = def.retry?.max_attempts ?? 1;
++  draft.retry_backoff = def.retry?.backoff ?? "fixed";
++  draft.retry_base_delay_secs = def.retry?.base_delay_secs ?? DEFAULT_RETRY_BASE_DELAY_SECS;
++  draft.retry_max_delay_secs = def.retry?.max_delay_secs ?? DEFAULT_RETRY_MAX_DELAY_SECS;
++  draft.timeout_secs = def.timeout_secs ?? 0;
++
++  const trigger = def.trigger as TaskTrigger | undefined;
++  if (trigger && "cron" in trigger) {
++    draft.trigger_kind = "cron";
++    draft.cron_expr = trigger.cron?.expr ?? "";
++  } else if (trigger && "interval" in trigger) {
++    draft.trigger_kind = "interval";
++    draft.interval_secs = Number(trigger.interval?.every_secs ?? MIN_INTERVAL_SECS);
++  }
++  return draft;
++}
++
++export function triggerFromDraft(draft: TaskDraft): TaskTrigger {
++  if (draft.trigger_kind === "interval") {
++    return { interval: { every_secs: Math.trunc(draft.interval_secs) } };
++  }
++  return { cron: { expr: draft.cron_expr.trim() } };
++}
++
++export function retryPolicyFromDraft(draft: TaskDraft): RetryPolicy {
++  return {
++    max_attempts: Math.trunc(draft.retry_max_attempts),
++    backoff: draft.retry_backoff,
++    base_delay_secs: Math.trunc(draft.retry_base_delay_secs),
++    max_delay_secs: Math.trunc(draft.retry_max_delay_secs),
++  };
++}
++
++/// 提交给 `task_add` / `task_update` 的载荷（id 与时间戳由服务端生成/维护）。
++export function serializeTaskDraft(draft: TaskDraft): Omit<
++  TaskDef,
++  "id" | "created_at" | "updated_at" | "last_fired_at" | "next_run_at"
++> {
++  return {
++    name: draft.name.trim(),
++    kind: draft.kind,
++    target_id: draft.target_id,
++    params: { ...draft.params },
++    enabled: draft.enabled,
++    trigger: triggerFromDraft(draft),
++    missed_run_policy: draft.missed_run_policy,
++    catch_up_limit: Math.trunc(draft.catch_up_limit),
++    misfire_grace_secs: Math.trunc(draft.misfire_grace_secs),
++    retry: retryPolicyFromDraft(draft),
++    timeout_secs: Math.trunc(draft.timeout_secs),
++  };
++}
++
++// ====== 校验（前端前置，错误码沿用 A6 §3.3 稳定码）======
++
++export function validateTaskDraft(draft: TaskDraft, ctx: TaskValidateContext): TaskIssue[] {
++  const issues: TaskIssue[] = [];
++  const push = (field: string, code: string, message: string) => issues.push({ field, code, message });
++
++  // R-1 名称
++  if (draft.name.trim().length === 0) {
++    push("name", "TASK_PARAM_INVALID", "任务名不可为空");
++  } else if (byteLength(draft.name.trim()) > MAX_TASK_NAME_BYTES) {
++    push("name", "TASK_NAME_TOO_LONG", `任务名不得超过 ${MAX_TASK_NAME_BYTES} 字节（当前 ${byteLength(draft.name.trim())}）`);
++  }
++
++  // R-1 目标存在性（含类型匹配）
++  const target = ctx.targets.find((t) => t.id === draft.target_id && t.kind === draft.kind);
++  if (!draft.target_id) {
++    push("target_id", "TASK_TARGET_NOT_FOUND", "必须选择执行目标");
++  } else if (!target) {
++    push("target_id", "TASK_TARGET_NOT_FOUND", "目标不存在或类型不匹配");
++  }
++
++  // R-2 触发表达式
++  if (draft.trigger_kind === "cron") {
++    const problem = validateCron(draft.cron_expr);
++    if (problem) push("cron_expr", "TASK_INVALID_CRON", problem);
++  } else {
++    const problem = validateIntervalSecs(draft.interval_secs);
++    if (problem) push("interval_secs", "TASK_INTERVAL_OUT_OF_RANGE", problem);
++  }
++
++  // R-3 / R-4 参数：secret 参数值不落盘；键集必须与目标参数一致
++  if (target) {
++    const names = new Set(target.params.map((p) => p.name));
++    for (const p of target.params) {
++      if (p.secret && Object.prototype.hasOwnProperty.call(draft.params, p.name)) {
++        push("params", "TASK_SECRET_PARAM_FORBIDDEN", `敏感参数「${p.name}」的值不得保存在任务里（定时任务无人值守，凭据只走 Keyring）`);
++      }
++      if (p.required && !p.secret) {
++        const v = draft.params[p.name];
++        if (v === undefined || String(v).length === 0) {
++          push("params", "TASK_PARAM_INVALID", `必填参数「${p.name}」未填`);
++        }
++      }
++    }
++    for (const key of Object.keys(draft.params)) {
++      if (!names.has(key)) push("params", "TASK_PARAM_INVALID", `未知参数「${key}」（目标不存在该参数）`);
++    }
++    if (Object.keys(draft.params).length > MAX_PARAMS) {
++      push("params", "TASK_PARAM_INVALID", `参数条目不得超过 ${MAX_PARAMS}`);
++    }
++  }
++
++  // R-5 数值边界
++  if (draft.catch_up_limit < 1 || draft.catch_up_limit > MAX_CATCH_UP_LIMIT) {
++    push("catch_up_limit", "TASK_PARAM_INVALID", `补跑上限必须在 1~${MAX_CATCH_UP_LIMIT}`);
++  }
++  if (draft.timeout_secs < 0 || draft.timeout_secs > MAX_TIMEOUT_SECS) {
++    push("timeout_secs", "TASK_PARAM_INVALID", `超时必须在 0~${MAX_TIMEOUT_SECS}（0 = 后端默认 60）`);
++  }
++  if (draft.retry_max_attempts < 1 || draft.retry_max_attempts > MAX_ATTEMPTS) {
++    push("retry_max_attempts", "TASK_PARAM_INVALID", `重试次数必须在 1~${MAX_ATTEMPTS}（1 = 不重试）`);
++  }
++  if (draft.retry_max_delay_secs < 0 || draft.retry_max_delay_secs > MAX_TIMEOUT_SECS) {
++    push("retry_max_delay_secs", "TASK_PARAM_INVALID", `重试最大间隔不得超过 ${MAX_TIMEOUT_SECS} 秒`);
++  }
++  if (draft.misfire_grace_secs < 0 || draft.misfire_grace_secs > MAX_INTERVAL_SECS) {
++    push("misfire_grace_secs", "TASK_PARAM_INVALID", "迟到宽限秒数不合法");
++  }
++
++  // R-6 容量（仅新建时判定）
++  if (!draft.id && ctx.taskCount >= MAX_TASKS) {
++    push("name", "TASK_LIMIT_REACHED", `任务总数已达上限 ${MAX_TASKS}`);
++  }
++
++  return issues;
++}
++
++/// A6 §3.2：catch_up_limit 仅在 CatchUp 策略下生效，其余策略 UI 必须置灰。
++export function isCatchUpLimitEditable(policy: MissedRunPolicy): boolean {
++  return policy === "catch_up";
++}
++
++// ====== 展示 ======
++
++export function triggerLabelOf(trigger: TaskRunTrigger): string {
++  switch (trigger) {
++    case "scheduled":
++      return "定时";
++    case "manual":
++      return "手工";
++    case "catch_up":
++      return "补跑";
++    case "retry":
++      return "重试";
++    default:
++      return String(trigger);
++  }
++}
++
++/// O-A6-9：跳过原因必须能展示，否则用户只看到「没跑」却不知为何。
++export function skipReasonLabel(reason: TaskSkipReason | string | null | undefined): string {
++  switch (reason) {
++    case "reentrant":
++      return "同任务并发，已跳过";
++    case "target_busy":
++      return "目标正被占用（手工或其它任务在执行）";
++    case "global_limit":
++      return "已达全局并发上限";
++    default:
++      return reason ? `已跳过（${reason}）` : "已跳过";
++  }
++}
++
++export function statusLabel(status: RunStatus): string {
++  return runStatusLabel(status);
++}
++
++/// A6 §5.3：delay 必须 clamp 到 max_delay_secs（指数退避 base * 2^(n-1)）。
++export function retryDelaySeconds(policy: RetryPolicy, attempt: number): number {
++  const max = Math.max(0, Math.trunc(policy.max_delay_secs || 0));
++  const base = Math.max(0, Math.trunc(policy.base_delay_secs || 0));
++  if (attempt <= 1) return 0;
++  const n = attempt - 1;
++  const raw = policy.backoff === "exponential" ? base * Math.pow(2, n - 1) : base;
++  return Math.min(Math.trunc(raw), max);
++}
++
++export function retrySummary(policy: RetryPolicy): string {
++  const attempts = Math.trunc(policy.max_attempts || 1);
++  if (attempts <= 1) return "不重试";
++  const kind = policy.backoff === "exponential" ? "指数退避" : "固定间隔";
++  const last = retryDelaySeconds(policy, attempts);
++  return `最多 ${attempts} 次（${kind}，末次延迟 ${last}s）`;
++}
++
++export function missedPolicyLabel(policy: MissedRunPolicy): string {
++  switch (policy) {
++    case "skip":
++      return "跳过（默认）";
++    case "run_once":
++      return "补跑一次";
++    case "catch_up":
++      return "按上限补跑";
++    default:
++      return String(policy);
++  }
++}
++
++export function kindLabel(kind: TaskKind): string {
++  return kind === "script" ? "脚本" : "命令片段";
++}
++
++function pad(n: number): string {
++  return String(n).padStart(2, "0");
++}
++
++/// 相对时间。未来 → “x 后”；过去 → “x 前”。非法时间返回 "—"。
++export function formatRelative(iso: string | null | undefined, nowMs: number): string {
++  if (!iso) return "—";
++  const t = Date.parse(iso);
++  if (!Number.isFinite(t)) return "—";
++  const diff = Math.trunc((t - nowMs) / 1000);
++  const abs = Math.abs(diff);
++  const suffix = diff >= 0 ? "后" : "前";
++  if (abs < 60) return `${abs} 秒${suffix}`;
++  if (abs < 3600) return `${Math.floor(abs / 60)} 分${pad(abs % 60)} 秒${suffix}`;
++  if (abs < 86400) return `${Math.floor(abs / 3600)} 小时${pad(Math.floor((abs % 3600) / 60))} 分${suffix}`;
++  return `${Math.floor(abs / 86400)} 天${pad(Math.floor((abs % 86400) / 3600))} 小时${suffix}`;
++}
++
++export type NextRunState =
++  | { kind: "disabled" }
++  | { kind: "none" }
++  | { kind: "stale" }
++  | { kind: "scheduled"; at: string; label: string };
++
++/// 下次执行展示态：未启用 → disabled；无计划 → none；计划已过期（待后端重算）→ stale。
++export function nextRunState(def: TaskDef, nowMs: number): NextRunState {
++  if (!def.enabled) return { kind: "disabled" };
++  if (!def.next_run_at) return { kind: "none" };
++  const t = Date.parse(def.next_run_at);
++  if (!Number.isFinite(t)) return { kind: "none" };
++  if (t <= nowMs) return { kind: "stale" };
++  return { kind: "scheduled", at: def.next_run_at, label: formatRelative(def.next_run_at, nowMs) };
++}
++
++export function lastRunLabel(def: TaskDef, nowMs: number): string {
++  if (!def.last_fired_at) return "从未执行";
++  return formatRelative(def.last_fired_at, nowMs);
++}
++
++/// 历史按开始时间倒序（最新在前）；不修改入参。
++export function sortRuns(runs: TaskRunRecord[]): TaskRunRecord[] {
++  return [...runs].sort((a, b) => {
++    const ta = Date.parse(a.started_at);
++    const tb = Date.parse(b.started_at);
++    const va = Number.isFinite(ta) ? ta : 0;
++    const vb = Number.isFinite(tb) ? tb : 0;
++    return vb - va;
++  });
++}
++
++/// 按任务分组（值为倒序后的数组）。
++export function runsByTask(runs: TaskRunRecord[]): Record<string, TaskRunRecord[]> {
++  const out: Record<string, TaskRunRecord[]> = {};
++  for (const r of sortRuns(runs)) {
++    (out[r.task_id] ||= []).push(r);
++  }
++  return out;
++}
++
++/// 最近一次运行（倒序第一条）。
++export function latestRun(runs: TaskRunRecord[], taskId: string): TaskRunRecord | null {
++  const list = runsByTask(runs)[taskId];
++  return list && list.length > 0 ? list[0] : null;
++}

@@ -2,11 +2,13 @@
 
 mod bridge;
 mod crashlog;
+mod database;
 mod domain;
 mod grid_ipc;
 mod grid_process;
 mod images;
 mod keyring_store;
+mod scheduler;
 mod script_runner;
 mod scripts;
 mod security_policy;
@@ -14,6 +16,7 @@ mod session;
 mod shutdown;
 mod snippets;
 mod sync;
+mod tasks;
 mod terminal;
 mod tools;
 mod workspace;
@@ -1199,6 +1202,10 @@ fn main() {
                 .grid_manager
                 .set_app(app.handle().clone());
             bridge::register_shutdown_tasks(app.handle()).map_err(std::io::Error::other)?;
+            // M4-7：启动调度线程（全进程仅一次，`SchedulerHandle` 由 OnceLock 保证）。
+            // 退出收口走 `stop-scheduler` 关机任务（已注册在 `kill-running-scripts`
+            // 之前，见 F7）；本线程只做触发，执行唯一入口是 `script_runner`（F6）。
+            crate::scheduler::start(app.handle().clone());
             // M1-9：会话策略默认值（关闭弹窗默认开 = 关闭不可静默丢弃；
             // 退出自动保存默认关 = 不静默保存浏览痕迹）。
             app.state::<AppState>()
@@ -1296,6 +1303,8 @@ fn main() {
         .manage(shutdown::ShutdownCoordinator::new())
         // M0-3.b：一次性用户意图令牌登记表（外部页面发起副作用调用时校验）。
         .manage(security_policy::IntentRegistry::new())
+        // M4-3（Lane A4）：数据库连接配置登记簿（不含非 Send 的池句柄，按需重连）。
+        .manage(bridge::DbConnectionRegistry::default())
         .invoke_handler(tauri::generate_handler![
             bridge::open_browser,
             bridge::close_browser,
@@ -1404,6 +1413,14 @@ fn main() {
             bridge::cancel_script,
             bridge::script_status,
             bridge::script_runs_list,
+            bridge::task_list,
+            bridge::task_add,
+            bridge::task_update,
+            bridge::task_remove,
+            bridge::task_run_now,
+            bridge::db_connect,
+            bridge::db_query,
+            bridge::db_disconnect,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {

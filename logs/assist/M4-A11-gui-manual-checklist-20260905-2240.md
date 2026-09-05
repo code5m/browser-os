@@ -94,6 +94,39 @@ git status --short                                    # 期望无意外落盘文
 
 ---
 
+## F. 调度批次新增用例（2026-09-05 23:15 追加，来源：A10 增量复核 R-1~R-5 / O-A6-4）
+
+> 这些是**契约层已暴露、实现落地后必须实测**的风险；在 A7/A8 落地前一律记 `NOT_RUN`。
+
+| # | 用例 | 步骤 | 通过判据 | 来源 |
+|---|---|---|---|---|
+| F-1 | **审计冲刷**（高） | 建一个 60s 间隔任务，连跑 ≥30 次；中途手工做若干次 git 写 / 脚本执行（产生非 task 审计） | 跑完后 `audit.json` 中**非 task 类**历史条目仍可查（未被 FIFO 挤出）；若被挤出即 FAIL | R-1 |
+| F-2 | **运行记录挤出** | 同上高频任务跑 ≥3.3 小时（或以注入时长加速）后，检查 `script-runs.json` | 手工执行记录未被完全替换；可区分定时/手工（若不可区分 → 记 D21/D31 挂账，不得判 PASS） | R-2 |
+| F-3 | **危险片段被定时引用** | 建一个引用 `dangerous=true` 片段的定时任务并触发 | 按 A0 对 R-3 的裁决执行：① 禁止 → 创建即拒；② 允许 → 每次执行有 `task.run.dangerous` 审计且需显式 `acknowledge_dangerous`。**未裁决前记 `NOT_RUN`** | R-3 |
+| F-4 | **secret 参数事后改标** | 先建任务（参数非 secret），再编辑脚本把该参数改标 `secret=true`，重启应用 / `task_update` | 命中即 `enabled=false` + 审计，**不得**继续按明文值执行 | R-4 |
+| F-5 | **参数明文落盘提示** | 在任务参数里填疑似敏感值（token 形态） | UI 给出「疑似敏感值」软提示（不硬拦截）；`tasks.json` 中该值仍为明文属**已接受残余风险**（D33），不得记为 PASS | R-5 |
+| F-6 | **cron 位数** | 打开定时任务编辑器，检查 cron 输入控件 | 仅 5 段；**6 位模式显式禁用**（`cron-tool.html` 种子支持 6 位而后端只收 5 位） | O-A6-4 |
+| F-7 | **新建任务默认关闭** | 新建任务后不勾选启用 | 默认 `enabled=false`（R-A6-1）；UI 默认值与后端一致 | A6 §3.5 |
+| F-8 | **跳过原因可见** | 两个任务引用同一脚本，同时触发 | 第二个记 `skipped(reentrant)` 且 UI **能展示跳过原因**；不消耗重试配额 | O-A6-9 |
+
+---
+
+## G. 集成门禁批次（2026-09-06 追加，来源：pre-merge.sh 实测 FAIL 5 项）
+
+> 这些是 `pre-merge.sh` 在 M4 四批次落地后的红灯项；A11 不修，只登记验收判据与归属。
+
+| # | 用例 | 步骤 | 通过判据 | 来源 |
+|---|---|---|---|---|
+| G-1 | **多语句被拒（安全红线）** | 经 `db_query` 发 `select 1; drop table t` 之类多语句 | 整批拒绝；不得执行第二条；`check-database-policy.py --self-test` 转 PASS | **D37（最高优先）** |
+| G-2 | **cargo fmt 通过** | 跑 `cargo fmt --check -- src-tauri` | 0 格式 diff；`pre-merge.sh` 的 `cargo fmt main` 转 ALL_PASS | D39 |
+| G-3 | **二进制体积门禁** | `npm run build` 后比对 `measure-build-metrics.py` | 增幅回落门禁内（或 A0 已书面抬阈）；`pre-merge.sh` build metrics 转 ALL_PASS | D40 |
+| G-4 | **tools 策略自检** | `python3 scripts/check-tools-policy.py --self-test` | ALL_PASS（或 A0 临时豁免该项）；`pre-merge.sh` 该项转 ALL_PASS | D41 |
+| G-5 | **DB 策略 pending 收敛** | `python3 scripts/check-database-policy.py --expect-pending` | `DB_PENDING_RESULT=NONE`（D37 修复后） | D38 |
+
+> B-3（生产判定四类输入）/ B-4（上限截断）/ B-5（取消连接复用）/ F-1~F-8 仍为 A7/A8 落地后**真机/目视**项，环境不具备时记 `NOT_RUN`；G-1~G-5 为**门禁自动化项**，可在 CI 直接复跑。
+
+---
+
 ## 验收记录（执行者填写）
 
 | 时间 | 机器指纹（`uname -a`） | HEAD SHA | 执行者 | A 组 | B 组 | C 组 | D 组 | E 组 | 结论 |

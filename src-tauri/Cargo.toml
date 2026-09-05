@@ -35,6 +35,9 @@ freedesktop-icons = "0.4"
 strip-ansi-escapes = "0.2"
 # crashlog：stderr fd 镜像 + 致命信号捕获
 libc = "0.2"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+mysql = "28.0.2"
+postgres = "0.19.14"
 
 [profile.release]
 panic = "abort"

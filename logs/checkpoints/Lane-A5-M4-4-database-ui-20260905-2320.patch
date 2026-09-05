@@ -1,0 +1,1343 @@
+diff --git a/logs/checkpoints/A5-M4-4-database-ui-20260905-2320.md b/logs/checkpoints/A5-M4-4-database-ui-20260905-2320.md
+new file mode 100644
+index 0000000..0b7a610
+--- /dev/null
++++ b/logs/checkpoints/A5-M4-4-database-ui-20260905-2320.md
+@@ -0,0 +1,152 @@
++# M4-4 数据库 UI 完整代码包（Lane A5）
++
++> LANE=**A5**（M4-4 数据库 UI / `AI:BALANCED / R:high` / Merge Order 6）
++> 派工依据：`PARALLEL_COMMAND_BOARD.md` §Batch Implementation Dispatch「Lane A5: Database UI Full Package」
++> 开工时间：2026-09-05 23:20 CST；本更新时间：2026-09-06（完成 live wiring + pre-merge 接线）
++> 基线提交：`85d2d7b`（分支 `master`，本地领先 `origin/master`；A0 尚未推送）
++> IMPLEMENTER_MODEL=CodeBuddy（Hy4 / 腾讯混元）
++> 交付形态：工作树内代码包 + 本检查点 + `logs/checkpoints/Lane-A5-M4-4-database-ui-20260905-2320.patch`（**未提交、未 push**）
++
++---
++
++## 1. 启动门禁（实测）
++
++| 项 | 结果 |
++|---|---|
++| `pwd` | `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3` ✓ |
++| `.workspace-identity` | `WORKSPACE_ID=BACKV3_MAIN / EXPECTED_BRANCH=master` ✓ |
++| 分支 | `master` ✓ |
++| 工作树 | 不干净：脏文件跨越 A1/A3/A4/A6/A7/A8/A9/A10/A11；A5 只写自己归属的路径，未回退/覆盖他人 |
++
++---
++
++## 2. 契约对齐（已落代码，非草案）
++
++| 契约 | 位置 | 前端对齐动作 |
++|---|---|---|
++| `DbConnectionConfig`（结构性**无** password） | `src-tauri/src/domain.rs` | `buildConnectPayload()` 输出**不存在** password/dsn/connection_string 键（F2） |
++| `SupportedDb` / `DbSslMode` / `DbValue`（带标签枚举） | `domain.rs` | `decodeDbValue()` 解码；`buildResultView()` 镜像结果 |
++| `DbQueryResult`（query_id/columns/rows/row_count/truncated/field_truncated/limit_hit/elapsed_ms/state） | `domain.rs` | `DbResultSet` 镜像 + `buildResultView()` |
++| `SqlRiskClass`（Read/Write/Ddl/**Admin**/Unknown） | `security_policy.rs` | `DbRiskLevel` 含 `admin`；前端**只着色不分类**（F4） |
++| `ProductionVerdict`（Production/NonProduction/Unknown⇒拒写） | `security_policy.rs` | `writeBlockedReason()` fail-closed |
++| 上限表 1000 行 / 4 MiB / 64 KiB / SQL 64 KiB | `M4-1.c-20260905-2255.md` §1 | `DB_LIMITS` 常量仅用于提示文案 |
++
++**A4 的 `db_*` 命令现已落地**（本更新已复核）：
++- `src-tauri/src/bridge.rs:1421-1423`：`db_connect` / `db_query` / `db_disconnect` 已注册进 `generate_handler!`。
++- `src-tauri/permissions/default-commands.toml:115-117`：三条命令已进 ACL（位于末条 `list_artifact_images:118` **之前**，符合坑位备忘②）。
++- 命令签名（已与 `bridge.rs` 比对）：`db_connect(app, webview, cfg: DbConnectionConfig, password: Option<String>)`、`db_query(app, webview, conn_id: String, sql: String, timeout_secs: Option<u64>, confirm_write: bool)`、`db_disconnect(conn_id: String)`。
++
++---
++
++## 3. 交付物（本更新后）
++
++| 文件 | 类型 | A5 改动 |
++|---|---|---|
++| `src/utils/dbUi.ts` | 新增→修改 | 纯逻辑层；**本更新**：`buildConnectPayload(form, opts?)` 补 `id`/`created_at`/`updated_at`（对齐 `DbConnectionConfig`），新增 `newConnectionId()`；顶部注释更正为「A4 已落地」 |
++| `scripts/check-database-ui-logic.mjs` | 新增 | headless 断言夹具，直接 import **真实** `dbUi.ts`（119 断言全绿） |
++| `src/stores/useDatabaseStore.ts` | 新增→修改 | **本更新（P-A5-2 live wiring）**：移除「可选成员探测」hack，直接消费 `bridge.dbConnect/dbQuery/dbDisconnect`；`connect` 取 `res.conn_id`；`execute(text, confirmed)` 发 `{conn_id, sql, timeout_secs:null, confirm_write:confirmed}`；`disconnect` 发 `conn_id`；`requiresConfirm` 仅按写权限；`refreshConnections` 无 live 列表命令→空实现 |
++| `src/components/workspace/DatabasePanel.vue` | 新增 | 连接列表 + 驱动自适应表单 + SQL 编辑器 + 结果网格 + 截断/状态指示 + 复制 CSV + 危险操作二次确认（本更新未改） |
++| `src/components/layout/MainArea.vue` | 修改 | 懒加载 `DatabasePanel`（`defineAsyncComponent`），将其纯逻辑/dbUi 与 store 拆出主 chunk（IF-2 体积闸门） |
++| `src/stores/useLayoutStore.ts` / `src/components/layout/ActivityBar.vue` / `src/components/layout/MainArea.vue` | 修改 | 新增 `db` 视图（类型/入口/分支各 1 处，与 A8 `tasks` 入口并存未互覆盖） |
++| `src/bridge.ts` | **本更新新增改动**（原「未触碰」→ 现 A5 授权内） | 类型导入补 `DbConnectionConfig/DbConnectResult/DbQueryResult`；新增 3 个 typed wrapper（见 §4.1） |
++| `src/types.ts` | **本更新新增改动**（同上） | 新增 M4-4 数据库 DTO 段（见 §4.1） |
++| `scripts/pre-merge.sh` | **本更新新增改动**（P-A5-1） | 接入 `check-database-ui-logic.mjs`（运行段 + self-test 缺失文件检查 + self-test 运行段，共 3 处） |
++
++> 授权依据：A4 检查点（数据库安全闸门）明确「前端 wiring 归 A5」；指挥板 Lane A5 范围含 `src/bridge.ts`/`src/types.ts` 的 DB 封装/DTO。故 `src/bridge.ts`/`src/types.ts` 现已属 A5 授权范围（§7 第 2 条旧结论作废）。
++
++---
++
++## 4. 关键设计决策
++
++### 4.1 Live wiring（P-A5-2，本次完成）
++
++`src/bridge.ts` 新增（命令名沿用 A1 冻结，未改名）：
++
++```ts
++// 类型导入补：DbConnectionConfig, DbConnectResult, DbQueryResult
++
++dbConnect: (cfg: DbConnectionConfig, password: string) =>
++  invoke<DbConnectResult>("db_connect", { cfg, password: password || null }),
++dbQuery: (p: { conn_id: string; sql: string; timeout_secs?: number | null; confirm_write: boolean }) =>
++  invoke<DbQueryResult>("db_query", p),
++dbDisconnect: (conn_id: string) => invoke<null>("db_disconnect", { conn_id }),
++```
++
++`src/types.ts` 新增 DTO（镜像 `domain.rs`，snake_case 嵌套，Tauri 仅转换顶层 camelCase）：
++`DbKind / DbSslMode / DbLimitKind / DbQueryState / DbValue`（带标签枚举）/`DbConnectionConfig`/`DbConnectResult`/`DbQueryResult`。
++
++`src/stores/useDatabaseStore.ts`：
++- 移除 `DbBridgeApi` 探测接口，直接 `import { bridge }` 调 typed wrapper；`backendReady` 改为探测 `bridge.dbConnect/dbQuery/dbDisconnect` 是否为函数（命令缺失仍 fail-closed 禁用）。
++- `connect`：`cfg = buildConnectPayload(form)`（含 `id/created_at/updated_at`），`bridge.dbConnect(cfg, password)` → `activeId = res.conn_id`；密码只作瞬时参数，**不进** payload/store/表单。
++- `execute(text, confirmed)`：`bridge.dbQuery({ conn_id, sql: text, timeout_secs: null, confirm_write: confirmed })`；`timeout_secs:null` 沿用后端默认（`DB_DEFAULT_QUERY_TIMEOUT_SECS`）。
++- `disconnect`：`bridge.dbDisconnect(activeId)`。
++- `requiresConfirm = form.allowWrite`（写权限连接需二次确认；只读连接直接发 IPC，后端仍逐条闸门）。前端不自行分类（F4）。
++- `refreshConnections`：A4 未提供连接列表命令（M4-4 聚焦「即连即查」），保留空实现，待将来 `db_list_connections` 接入时无需改调用点。
++
++### 4.2 其余沿用设计
++
++1. **密码零落地**（F2）：密码仅作 `connect(password)` 瞬时入参。
++2. **确认前不发 IPC**：`requiresConfirm` 时先挂起 `pendingSql`，用户点「确认执行」才 `invoke`。
++3. **不造第二套分类器**：风险等级只消费后端回带值，缺失即 `unknown`（按最严）。
++4. **截断非静默**：`truncated/field_truncated/limit_hit/state` 任一异常均有明确告警行；DOM 仅渲染前 200 行并注明「另有 N 行未渲染（数据未丢失）」。
++5. **不接成果库导出**：M4-1.c §1 的 `DB_MAX_EXPORT_BYTES=16 MiB` 仍无消费方（见 P-A5-3）。
++
++---
++
++## 5. 验证结果（本更新后实测）
++
++| 命令 | 结果 |
++|---|---|
++| `node scripts/check-database-ui-logic.mjs` | **119 断言全部通过**（headless 加载真实 `dbUi.ts`） |
++| `npm run build` | **0 error**，`dist/assets/index-*.js` = **162.50 kB**（gzip 58.28 kB） |
++| `node scripts/check-database-ui-logic.mjs`（接入 pre-merge 后） | 通过（见 P-A5-1） |
++| `bash -n scripts/pre-merge.sh` | 语法 OK |
++| `git diff --check` | **0**（无空白/冲突标记） |
++
++**体积红线复核（红线：增长 >15% 需阻断或书面豁免）**
++
++| 指标 | 本构建 | 基线 | 增长 | 闸门 |
++|---|---|---|---|---|
++| 主 JS（`index-*.js`） | 162.50 kB | 161.36 kB（M3.c 终端里程碑主 JS 基线） | **+0.7%** | ✓ <15% |
++| dist 总体积（全部 assets 求和） | 695,830 B（≈679.5 kB） | 612,943 B（Sep-4 参考基线 `4f0e8ab`） | **+13.52%** | ✓ <15% |
++
++> 说明：① 当前仓库 `logs/build-metrics/` 下**无**基线 JSON，故 `pre-merge.sh` 的「M0-4.c 构建指标对比」段会走到「无构建指标基线，跳过对比」分支——A0 在 M4 里程碑层应刷新该基线后再做机器判定。② 早前检查点记录的 197.04 kB 为**懒加载生效前**的过时值；本更新实构建确认主 JS 已压回 162.50 kB（A5 数据库面板 14.49 kB 已被 `defineAsyncComponent` 拆为独立 chunk，不在主 chunk）。③ 即便按最严口径，两项指标均在 15% 红线内，**IF-2 判定 GREEN**。
++
++---
++
++## 6. 待办 / 债务（供 A0 与后继 Lane）
++
++- **P-A5-1（pre-merge 接线）— 已完成**：`scripts/pre-merge.sh` 已挂 `check-database-ui-logic.mjs`（运行段 + self-test 缺失文件检查 + self-test 运行段）。原「不越权」顾虑因 A5 已获 `bridge.ts`/`types.ts`/`pre-merge.sh` 授权而解除。
++- **P-A5-2（live wiring）— 已完成**：见 §4.1。payload 键名口径已与 A4 `bridge.rs` 签名逐一对齐（snake_case：`allow_write`/`production_hint`/`ssl_mode`/`created_at`/`updated_at`/`id`；`db_query` 参数 `conn_id`/`sql`/`timeout_secs`/`confirm_write`；`db_disconnect` 参数 `conn_id`；`db_connect` 参数 `cfg`/`password`）。
++- **P-A5-3（未做成果库导出）**：F-6「导出成果库」仍未裁决；未裁决前 `DB_MAX_EXPORT_BYTES` 无消费方，A4 夹具按 pending 处理。
++- **P-A5-4（GUI 实点验收未做）**：与 M1-7/M2-2.b/M3.c 同口径，**未目视不代签**。人工清单：
++  1. 活动栏「数据库」入口可进入面板；
++  2. 切换 SQLite/MySQL/PostgreSQL 时网络字段显隐正确；
++  3. 表单非法值（空名、越界端口、空主机）实时报错且不发 IPC；
++  4. 密码框提交后清空，且 store/localStorage 不残留；
++  5. 未开写权限时执行写语句被后端拒绝且提示可懂；
++  6. 结果超 1000 行时显示截断告警且原因正确（行数/字节/字段）；
++  7. 复制 CSV 后粘贴内容转义正确；
++  8. 断连后结果清空、运行按钮回到禁用态。
++- **连接列表**：A4 未提供 `db_list_connections` 命令，当前面板「已存连接」列表为空实现（M4-4 聚焦即连即查）。若后续需要，由 A4 补命令后 A5 仅需实现 `refreshConnections` 映射。
++- **ID 冲突规避**：本卡未占用 D27+ 债务编号，统一由 A0 编号。
++
++---
++
++## 7. 合并注意事项
++
++1. 与 **A8** 共用三个高冲突文件（`useLayoutStore.ts` / `ActivityBar.vue` / `MainArea.vue`）：`db` 与 `tasks` 两视图各自独立，改动并存未互相覆盖；合并顺序 A5(6) 先于 A8(7)。
++2. 与 **A4** 在 `src/bridge.ts` / `src/types.ts` 的重叠授权：**本更新已落地 A5 的 db 封装/DTO**（§3、§4.1），与 A4 的 Rust 命令/`domain.rs` 改动互补、无冲突（A5 只动前端 `bridge.ts`/`types.ts` 的 TS 层，A4 动 `src-tauri/**`）。
++3. 与 **A6** 在 `scripts/pre-merge.sh`：本更新新增的 M4-4.a 段插入在 `check-command-ui-logic.mjs` 段之后，与 A6 的 M4-5.d 调度段、A4 的 M4-2.s 数据库策略段互不重叠。
++4. 补丁范围：本 `.patch` 仅覆盖 A5 **独占**文件（`dbUi.ts`/`useDatabaseStore.ts`/`DatabasePanel.vue`/`check-database-ui-logic.mjs` + 本检查点），以避免混入其它 Lane 在共享文件（bridge/types/pre-merge/布局三件套）中的在途改动。**共享文件中的 A5 hunks 已在 §3/§4.1 内联给出，由 A0 在集成时套用**（符合「后手 lane 回写文案交 A0 套用」）。
++5. 本卡未提交、未 push、未 reset、未 force-push。
++
++---
++
++## 8. 状态
++
++**STATUS=PASS_WITH_DEBT**
++- 已完成：纯逻辑层（119 断言全绿）、组件外壳、live wiring（P-A5-2）、pre-merge 接线（P-A5-1）、构建 0 error、IF-2 体积闸门 GREEN（主 JS +0.7% / dist +13.52%，均 <15%）。
++- 债务：P-A5-3（成果库导出未裁决）、P-A5-4（GUI 实点验收未做）、连接列表无 live 命令。
++
++**NEXT**：交 A10（Batch DB-UI 安全复核）与 A11（DB UI 批次验证证据）；A0 集成时套用共享文件 A5 hunks 并刷新构建指标基线。
+diff --git a/scripts/check-database-ui-logic.mjs b/scripts/check-database-ui-logic.mjs
+new file mode 100644
+index 0000000..619fd58
+--- /dev/null
++++ b/scripts/check-database-ui-logic.mjs
+@@ -0,0 +1,272 @@
++#!/usr/bin/env node
++// M4-4 数据库面板 UI 逻辑层自动化测试（headless，无 GUI 依赖）。
++// 加载**真实** src/utils/dbUi.ts（与 check-command-ui-logic.mjs 同一范式），不重实现逻辑。
++
++import * as nodeModule from "node:module";
++
++function resolveWithExt(specifier, context, next) {
++  try {
++    return next(specifier, context);
++  } catch (err) {
++    if (specifier.startsWith(".") || specifier.startsWith("/")) {
++      for (const ext of [".ts", "/index.ts", ".mjs", ".js"]) {
++        try {
++          return next(specifier + ext, context);
++        } catch {}
++      }
++    }
++    throw err;
++  }
++}
++
++if (typeof nodeModule.registerHooks === "function") {
++  nodeModule.registerHooks({ resolve: resolveWithExt });
++} else {
++  nodeModule.register(
++    "data:text/javascript," +
++      encodeURIComponent(
++        `export async function resolve(specifier, context, next) {
++  return globalThis.__dbUiResolve(specifier, context, next);
++}`,
++      ),
++  );
++  globalThis.__dbUiResolve = resolveWithExt;
++}
++
++const ROOT = new URL("..", import.meta.url).pathname;
++const {
++  DB_LIMITS,
++  buildConnectPayload,
++  buildResultView,
++  canRunQuery,
++  connectionLabel,
++  databaseFieldLabel,
++  decodeDbValue,
++  defaultPortFor,
++  emptyConnectionForm,
++  formatBytes,
++  formatCellValue,
++  formatDuration,
++  kindLabel,
++  kindNeedsCredentials,
++  limitKindLabel,
++  looksLikeMultipleStatements,
++  needsWriteConfirm,
++  productionLabel,
++  riskLabel,
++  sqlIssues,
++  toCsv,
++  truncateText,
++  utf8Bytes,
++  validateConnectionForm,
++  visibleFields,
++  writeBlockedReason,
++} = await import(`${ROOT}src/utils/dbUi.ts`);
++
++let passed = 0;
++const failures = [];
++
++function eq(actual, expected, label) {
++  if (JSON.stringify(actual) === JSON.stringify(expected)) passed += 1;
++  else failures.push(`${label}\n    期望: ${JSON.stringify(expected)}\n    实际: ${JSON.stringify(actual)}`);
++}
++
++function ok(cond, label) {
++  if (cond) passed += 1;
++  else failures.push(label);
++}
++
++// ===== 1. 表单缺省值（F1：写默认拒绝） =====
++const empty = emptyConnectionForm();
++eq(empty.allowWrite, false, "新建连接默认关闭写权限（F1 写默认拒绝）");
++eq(empty.sslMode, "prefer", "SSL 缺省 prefer（与 DbSslMode::default 一致）");
++eq(empty.productionHint, "", "生产标记缺省未标记（production_hint=null）");
++eq(empty.enabled, true, "新建连接默认启用");
++eq(empty.kind, "sqlite", "默认驱动 sqlite");
++ok(!("password" in empty), "连接表单结构性无 password 字段（F2）");
++
++// ===== 2. 驱动差异 =====
++eq(kindLabel("mysql"), "MySQL", "驱动展示名映射");
++eq(defaultPortFor("mysql"), 3306, "MySQL 默认端口");
++eq(defaultPortFor("postgres"), 5432, "PostgreSQL 默认端口");
++eq(defaultPortFor("sqlite"), null, "SQLite 无默认端口");
++eq(kindNeedsCredentials("sqlite"), false, "SQLite 不需要网络凭据");
++eq(kindNeedsCredentials("postgres"), true, "PostgreSQL 需要网络凭据");
++eq(databaseFieldLabel("sqlite"), "文件路径", "SQLite 字段标注为文件路径");
++eq(databaseFieldLabel("mysql"), "数据库名", "MySQL 字段标注为数据库名");
++eq(visibleFields("sqlite"), { host: false, port: false, username: false, ssl: false }, "SQLite 隐藏网络字段");
++eq(visibleFields("mysql"), { host: true, port: true, username: true, ssl: true }, "MySQL 展示网络字段");
++
++// ===== 3. 连接表单校验 =====
++const validSqlite = { ...empty, name: "local", database: "/data/app.db" };
++eq(validateConnectionForm(validSqlite).length, 0, "合法 SQLite 连接零校验问题");
++const validMysql = {
++  ...empty,
++  name: "prod-ro",
++  kind: "mysql",
++  host: "127.0.0.1",
++  portText: "3306",
++  database: "app",
++  username: "reader",
++};
++eq(validateConnectionForm(validMysql).length, 0, "合法 MySQL 连接零校验问题");
++
++ok(validateConnectionForm({ ...validSqlite, name: "" }).some((i) => i.field === "name"), "空连接名应报错");
++ok(validateConnectionForm({ ...validSqlite, database: "  " }).some((i) => i.field === "database"), "空文件路径应报错");
++ok(validateConnectionForm({ ...validMysql, host: "" }).some((i) => i.field === "host"), "空主机应报错");
++ok(validateConnectionForm({ ...validMysql, username: "" }).some((i) => i.field === "username"), "空用户名应报错");
++ok(validateConnectionForm({ ...validMysql, portText: "70000" }).some((i) => i.field === "portText"), "越界端口应报错");
++ok(validateConnectionForm({ ...validMysql, portText: "abc" }).some((i) => i.field === "portText"), "非数字端口应报错");
++eq(validateConnectionForm({ ...validMysql, portText: "" }).length, 0, "端口留空走默认端口");
++
++// ===== 4. payload 构造（F2：凭据零落地） =====
++const payloadSqlite = buildConnectPayload(validSqlite);
++eq(payloadSqlite.allow_write, false, "payload 默认 allow_write=false");
++eq(payloadSqlite.host, null, "SQLite payload 的 host 为 null");
++eq(payloadSqlite.username, null, "SQLite payload 的 username 为 null");
++eq(payloadSqlite.ssl_mode, "disable", "SQLite payload 的 ssl_mode 为 disable");
++eq(payloadSqlite.production_hint, null, "未标记生产时 production_hint 为 null");
++ok(!Object.keys(payloadSqlite).some((k) => /pass|dsn|connection_string|credential/i.test(k)), "payload 不得出现密码/DSN 类键（F2）");
++
++const payloadMysql = buildConnectPayload({ ...validMysql, allowWrite: true, productionHint: "yes" });
++eq(payloadMysql.allow_write, true, "payload 保留 allow_write=true");
++eq(payloadMysql.production_hint, true, "productionHint=yes 映射为 true");
++eq(buildConnectPayload({ ...validMysql, productionHint: "no" }).production_hint, false, "productionHint=no 映射为 false");
++eq(payloadMysql.port, 3306, "payload 保留数值端口");
++eq(payloadMysql.ssl_mode, "prefer", "payload 保留 ssl_mode");
++ok(!Object.keys(payloadMysql).some((k) => /pass|dsn|connection_string|credential/i.test(k)), "MySQL payload 同样无凭据键（F2）");
++
++const passwordArg = "p@ss/secret";
++const withTransient = { ...buildConnectPayload(validMysql), password: passwordArg };
++ok(!("password" in buildConnectPayload(validMysql)), "buildConnectPayload 本身不接受/不落地密码");
++ok("password" in withTransient, "密码只作为调用方瞬时附加参数存在，不进表单与 payload 构造");
++
++// ===== 5. 展示文案脱敏 =====
++const label = connectionLabel({ kind: "mysql", host: "db.internal", port: 3306, database: "app" });
++ok(label.includes("db.internal") && label.includes("app"), "连接标签含主机与库名");
++ok(!label.includes("@"), "连接标签不含 user:pass@ 形态");
++ok(connectionLabel({ kind: "sqlite", database: "/data/a.db" }).includes("/data/a.db"), "SQLite 标签含文件路径");
++
++// ===== 6. 格式化 =====
++eq(utf8Bytes("a"), 1, "ASCII 字节长度");
++eq(utf8Bytes("中"), 3, "中文按 UTF-8 计 3 字节");
++eq(formatBytes(512), "512 B", "字节格式化 B");
++eq(formatBytes(2048), "2.0 KiB", "字节格式化 KiB");
++eq(formatBytes(4 * 1024 * 1024), "4.00 MiB", "字节格式化 MiB");
++eq(formatDuration(120), "120 ms", "毫秒格式化");
++eq(formatDuration(1500), "1.50 s", "秒格式化");
++eq(truncateText("abcdef", 3), "abc…", "长文本截断并带省略号");
++eq(truncateText("abc", 3), "abc", "未超长不截断");
++eq(formatCellValue(null), "NULL", "null 展示为 NULL");
++eq(formatCellValue(true), "true", "布尔展示");
++eq(formatCellValue(12.5), "12.5", "数值展示");
++eq(formatCellValue("x".repeat(300)).endsWith("…"), true, "超长单元格展示截断");
++
++// ===== 7. 结果视图与截断（M4-1.c §1 规则 2：禁止静默截断） =====
++const full = buildResultView({
++  columns: ["id", "name"],
++  rows: [[1, "a"], [2, null]],
++  row_count: 2,
++  truncated: false,
++  field_truncated: false,
++  elapsed_ms: 12,
++  query_id: "q1",
++});
++eq(full.columns, ["id", "name"], "结果视图保留列名");
++eq(full.rows[1][1], "NULL", "结果视图 null 单元格展示为 NULL");
++eq(full.rowCount, 2, "结果视图行数");
++eq(full.elapsedLabel, "12 ms", "结果视图耗时展示");
++eq(full.warnings.length, 0, "未截断时无告警");
++eq(full.rowLabel, "2 行", "未截断行数文案");
++
++const cut = buildResultView({
++  columns: ["id"],
++  rows: [[1]],
++  row_count: DB_LIMITS.maxRows,
++  truncated: true,
++  field_truncated: true,
++  elapsed_ms: 0,
++  query_id: null,
++});
++ok(cut.warnings.length >= 2, "截断 + 字段截断都要有告警");
++ok(cut.rowLabel.includes("已截断"), "行数文案显式标注已截断");
++ok(cut.warnings.some((w) => w.includes("不是完整结果集")), "截断告警说明结果不完整");
++eq(buildResultView(null).warnings.length, 0, "空结果不抛异常");
++eq(buildResultView(null).rowCount, 0, "空结果行数为 0");
++
++// ===== 7b. 后端 DbValue 带标签解码（domain.rs rename_all="snake_case"） =====
++eq(decodeDbValue("Null"), null, "字符串 Null 解码为 null");
++eq(decodeDbValue({ Bool: true }), true, "Bool 标签解码为布尔");
++eq(decodeDbValue({ Int: 7 }), 7, "Int 标签解码为数值");
++eq(decodeDbValue({ Float: 1.5 }), 1.5, "Float 标签解码为数值");
++eq(decodeDbValue({ Text: "abc" }), "abc", "Text 标签解码为字符串");
++eq(formatCellValue({ Text: "abc" }), "abc", "Text 单元格原文展示");
++eq(formatCellValue({ Int: 42 }), "42", "Int 单元格展示");
++eq(formatCellValue({ Bool: false }), "false", "Bool 单元格展示");
++eq(formatCellValue("Null"), "NULL", "Null 单元格展示为 NULL");
++eq(formatCellValue({ BlobLen: 1024 }), "<binary 1.0 KiB>", "二进制列只展示长度不回字节");
++eq(formatCellValue({ Weird: 1 }), JSON.stringify({ Weird: 1 }), "未知形态安全降级为 JSON 文本");
++
++// ===== 7c. 状态与上限命中（非静默） =====
++eq(limitKindLabel("rows"), "行数上限", "行数上限文案");
++eq(limitKindLabel("bytes"), "字节上限", "字节上限文案");
++eq(limitKindLabel("field"), "单字段上限", "单字段上限文案");
++eq(limitKindLabel(null), "未命中上限", "未命中上限文案");
++const cancelled = buildResultView({ columns: ["a"], rows: [], row_count: 0, truncated: false, field_truncated: false, elapsed_ms: 0, state: "cancelled", query_id: "q" });
++eq(cancelled.stateLabel, "已取消", "取消状态文案");
++ok(cancelled.warnings.some((w) => w.includes("取消") && w.includes("不完整")), "取消必须给出结果不完整告警");
++const timedOut = buildResultView({ columns: ["a"], rows: [], row_count: 0, truncated: false, field_truncated: false, elapsed_ms: 0, state: "timeout", query_id: "q" });
++ok(timedOut.warnings.some((w) => w.includes("超时")), "超时必须给出结果不完整告警");
++const failed = buildResultView({ columns: ["a"], rows: [], row_count: 0, truncated: false, field_truncated: false, elapsed_ms: 0, state: "failed", query_id: "q" });
++ok(failed.warnings.some((w) => w.includes("失败")), "失败必须给出结果不完整告警");
++const limitRows = buildResultView({ columns: ["a"], rows: [[{ Int: 1 }]], row_count: 1000, truncated: true, field_truncated: false, limit_hit: "rows", elapsed_ms: 5, state: "completed", query_id: "q" });
++eq(limitRows.rows[0][0], "1", "带标签值在结果视图中解码展示");
++ok(limitRows.warnings.some((w) => w.includes("行数上限")), "命中行数上限时告警要明确原因");
++eq(buildResultView({ columns: [], rows: [], row_count: 0, truncated: false, field_truncated: false, elapsed_ms: 0, state: "completed", query_id: "q", risk: "read", production_verdict: "NonProduction" }).verdict, "NonProduction", "结果视图回带后端生产判定");
++eq(buildResultView({ columns: [], rows: [], row_count: 0, truncated: false, field_truncated: false, elapsed_ms: 0, state: "completed", query_id: "q" }).risk, "unknown", "后端未回带风险时按 unknown 处理");
++
++// ===== 8. CSV 复制 =====
++eq(toCsv(["a", "b"], [[1, "x,y"]]), "a,b\n1,\"x,y\"", "含逗号的单元格加引号");
++eq(toCsv(["a"], [["he said \"hi\""]]), "a\n\"he said \"\"hi\"\"\"", "引号转义为双引号");
++eq(toCsv(["a"], [["l1\nl2"]]), "a\n\"l1\nl2\"", "含换行的单元格加引号");
++eq(toCsv(["a"], [[null]]), "a\n", "null 导出为空");
++eq(toCsv([], []), "", "空结果导出空串");
++eq(toCsv(["a"], [[{ Text: "x,y" }]]), "a\n\"x,y\"", "带标签值同样按 CSV 转义");
++eq(toCsv(["a"], [["Null"], [null]]), "a\n\n", "字符串 Null 与 JS null 都导出为空");
++eq(toCsv(["a"], [[{ BlobLen: 128 }]]), "a\n<binary 128 B>", "二进制列导出为长度占位而非字节");
++
++// ===== 9. SQL 前置校验与提示 =====
++eq(sqlIssues("select 1").length, 0, "正常 SQL 无问题");
++ok(sqlIssues("   ").some((i) => i.field === "sql"), "空 SQL 应报错");
++ok(sqlIssues("x".repeat(DB_LIMITS.maxSqlBytes + 1)).some((i) => i.message.includes("上限")), "超长 SQL 应报错");
++eq(looksLikeMultipleStatements("select 1; select 2"), true, "多语句提示为真");
++eq(looksLikeMultipleStatements("select 1;"), false, "仅结尾分号不算多语句");
++
++// ===== 10. 风险与写闸门（fail-closed） =====
++eq(riskLabel("read"), "只读", "只读风险文案");
++eq(riskLabel("ddl"), "结构变更", "DDL 风险文案");
++eq(riskLabel("admin"), "权限/运维", "Admin 风险文案（对应 SqlRiskClass::Admin）");
++eq(riskLabel("unknown"), "未知（按最严处理）", "未知风险按最严展示");
++eq(productionLabel("Unknown"), "生产判定未知（按生产处理）", "Unknown 生产判定文案");
++eq(needsWriteConfirm("read"), false, "只读无需二次确认");
++eq(needsWriteConfirm("write"), true, "写操作需二次确认");
++eq(needsWriteConfirm("unknown"), true, "未知风险需二次确认");
++eq(writeBlockedReason("read", false, "Unknown"), null, "只读不受写闸门约束");
++ok(writeBlockedReason("write", false, "NonProduction") !== null, "未开写权限时写被拒");
++ok(writeBlockedReason("write", true, "Unknown") !== null, "生产判定 Unknown 时写被拒（fail-closed）");
++ok(writeBlockedReason("write", true, "Production") !== null, "生产库写被拒");
++eq(writeBlockedReason("write", true, "NonProduction"), null, "非生产 + 已开写权限可放行");
++
++// ===== 11. 运行门禁（未就绪不发 IPC） =====
++eq(canRunQuery({ backendReady: false, connected: true, sql: "select 1" }).ok, false, "后端未就绪不得运行");
++eq(canRunQuery({ backendReady: true, connected: false, sql: "select 1" }).ok, false, "未连接不得运行");
++eq(canRunQuery({ backendReady: true, connected: true, sql: "  " }).ok, false, "空 SQL 不得运行");
++eq(canRunQuery({ backendReady: true, connected: true, sql: "select 1" }).ok, true, "就绪且已连接可运行");
++
++if (failures.length === 0) {
++  console.log(`check-database-ui-logic: ${passed} 断言全部通过`);
++  process.exit(0);
++}
++console.error(`check-database-ui-logic: ${failures.length} 项失败（通过 ${passed}）`);
++for (const f of failures) console.error(`  x ${f}`);
++process.exit(1);
+diff --git a/src/components/workspace/DatabasePanel.vue b/src/components/workspace/DatabasePanel.vue
+new file mode 100644
+index 0000000..5b7fe67
+--- /dev/null
++++ b/src/components/workspace/DatabasePanel.vue
+@@ -0,0 +1,231 @@
++<script setup lang="ts">
++import { computed, onMounted, ref } from "vue";
++import { useDatabaseStore } from "../../stores/useDatabaseStore";
++import { useLayoutStore } from "../../stores/useLayoutStore";
++import {
++  databaseFieldLabel,
++  defaultPortFor,
++  kindLabel,
++  looksLikeMultipleStatements,
++  productionLabel,
++  riskLabel,
++  toCsv,
++  truncateText,
++  visibleFields,
++  type DbKind,
++} from "../../utils/dbUi";
++
++const db = useDatabaseStore();
++const layout = useLayoutStore();
++
++// 密码只作**组件本地瞬时态**：不进 store、不进表单模型、不持久化（F2）。
++const password = ref("");
++const copied = ref(false);
++/** 仅限制 DOM 渲染行数（首期无虚拟滚动）；与后端取数上限 DB_MAX_ROWS=1000 是两回事，UI 须说清。 */
++const DISPLAY_ROW_CAP = 200;
++
++const fields = computed(() => visibleFields(db.form.kind));
++const issues = computed(() => db.formIssues);
++const portPlaceholder = computed(() => {
++  const p = defaultPortFor(db.form.kind);
++  return p ? String(p) : "默认端口";
++});
++const displayRows = computed(() => (db.result?.rows ?? []).slice(0, DISPLAY_ROW_CAP));
++const hiddenRows = computed(() => Math.max(0, (db.result?.rowCount ?? 0) - displayRows.value.length));
++const multiStatementHint = computed(() => looksLikeMultipleStatements(db.sql));
++
++onMounted(() => {
++  db.refreshConnections();
++});
++
++async function doConnect() {
++  const okConnected = await db.connect(password.value);
++  // 无论成败都立即清空本地密码，避免密码在内存中多停留一轮渲染
++  password.value = "";
++  if (okConnected) layout.showToast("已连接");
++}
++
++async function copyCsv() {
++  if (!db.result) return;
++  const text = toCsv(db.result.columns, db.result.rows);
++  try {
++    await navigator.clipboard.writeText(text);
++    copied.value = true;
++    setTimeout(() => (copied.value = false), 1500);
++  } catch {
++    layout.showToast("复制失败，请手动选择结果");
++  }
++}
++</script>
++
++<template>
++  <div class="side-inner db-panel">
++    <div class="tabs">
++      <span>🗄️ 数据库</span>
++      <button class="close" @click="layout.sidebarOpen = false">✕</button>
++    </div>
++
++    <div v-if="!db.backendReady" class="gate">后端数据库命令未就绪，连接与查询暂不可用</div>
++
++    <section class="conn">
++      <div class="conn-head">
++        <span class="sec-title">连接</span>
++        <span v-if="db.connected" class="badge on">已连接 · {{ db.activeId }}</span>
++        <span v-else class="badge">未连接</span>
++      </div>
++
++      <ul v-if="db.connections.length" class="conn-list">
++        <li v-for="c in db.connections" :key="c.id" :class="{ active: c.id === db.form.id, disabled: !c.enabled }">
++          <button class="row" @click="db.selectConnection(c)">
++            <span class="name">{{ c.name }}</span>
++            <span class="meta">{{ c.label }}{{ c.allowWrite ? " · 允许写" : "" }}{{ c.enabled ? "" : " · 已禁用" }}</span>
++          </button>
++        </li>
++      </ul>
++
++      <div class="form">
++        <label>名称<input v-model="db.form.name" placeholder="如 local-sqlite" /></label>
++        <label>驱动
++          <select :value="db.form.kind" @change="(e) => db.setKind(((e.target as HTMLSelectElement).value) as DbKind)">
++            <option v-for="k in (['sqlite', 'mysql', 'postgres'] as DbKind[])" :key="k" :value="k">{{ kindLabel(k) }}</option>
++          </select>
++        </label>
++        <label v-if="fields.host">主机<input v-model="db.form.host" placeholder="127.0.0.1" /></label>
++        <label v-if="fields.port">端口<input v-model="db.form.portText" :placeholder="portPlaceholder" /></label>
++        <label>{{ databaseFieldLabel(db.form.kind) }}<input v-model="db.form.database" placeholder="/data/app.db 或 app" /></label>
++        <label v-if="fields.username">用户名<input v-model="db.form.username" placeholder="reader" /></label>
++        <label v-if="fields.username">密码（仅本次提交，不保存）<input v-model="password" type="password" autocomplete="off" /></label>
++        <label v-if="fields.ssl">SSL
++          <select v-model="db.form.sslMode">
++            <option value="disable">disable</option>
++            <option value="prefer">prefer</option>
++            <option value="require">require</option>
++          </select>
++        </label>
++        <label>生产标记
++          <select v-model="db.form.productionHint">
++            <option value="">未标记</option>
++            <option value="yes">是生产</option>
++            <option value="no">非生产</option>
++          </select>
++        </label>
++
++        <div class="checks">
++          <label><input type="checkbox" v-model="db.form.allowWrite" /> 允许写操作（默认关闭，后端仍会再判一次）</label>
++          <label><input type="checkbox" v-model="db.form.enabled" /> 启用该连接</label>
++        </div>
++
++        <ul v-if="issues.length" class="errors">
++          <li v-for="(it, i) in issues" :key="i">⚠ {{ it.message }}</li>
++        </ul>
++
++        <div class="form-actions">
++          <button class="primary" :disabled="db.busy || !db.backendReady" @click="doConnect">连接</button>
++          <button :disabled="db.busy || !db.connected" @click="db.disconnect()">断开</button>
++          <button :disabled="db.busy" @click="db.resetForm()">重置</button>
++        </div>
++      </div>
++    </section>
++
++    <section class="query">
++      <div class="query-head">
++        <span class="sec-title">查询</span>
++        <span class="tag" :class="db.risk">{{ riskLabel(db.risk) }}</span>
++        <span class="tag warn" v-if="db.verdict !== 'NonProduction'">{{ productionLabel(db.verdict) }}</span>
++      </div>
++
++      <textarea v-model="db.sql" rows="5" class="sql" placeholder="SELECT * FROM table LIMIT 10" spellcheck="false"></textarea>
++      <p v-if="multiStatementHint" class="hint">检测到多条语句，后端会拒绝执行</p>
++
++      <div class="form-actions">
++        <button class="primary" :disabled="db.busy || !db.runGate.ok" @click="db.requestRun()">运行</button>
++        <button :disabled="!db.result" @click="copyCsv">复制 CSV</button>
++        <button :disabled="!db.result && !db.error" @click="db.clearResult()">清空结果</button>
++      </div>
++
++      <div v-if="db.confirmOpen" class="confirm">
++        <div class="confirm-text">
++          确认执行以下语句？<code>{{ truncateText(db.pendingSql ?? "", 120) }}</code>
++        </div>
++        <div class="form-actions">
++          <button class="danger" @click="db.confirmRun()">确认执行</button>
++          <button @click="db.cancelConfirm()">取消</button>
++        </div>
++      </div>
++
++      <p v-if="db.error" class="errors">⚠ {{ db.error }}</p>
++
++      <div v-if="db.result" class="result">
++        <div class="result-head">
++          <span>{{ db.result.rowLabel }}</span>
++          <span>耗时 {{ db.result.elapsedLabel }}</span>
++          <span v-if="db.result.state !== 'completed'" class="tag warn">{{ db.result.stateLabel }}</span>
++        </div>
++        <ul v-if="db.result.warnings.length" class="warn-list">
++          <li v-for="(w, i) in db.result.warnings" :key="i">⚠ {{ w }}</li>
++        </ul>
++        <div class="grid-wrap">
++          <table v-if="db.result.columns.length">
++            <thead>
++              <tr>
++                <th v-for="(c, i) in db.result.columns" :key="i">{{ c }}</th>
++              </tr>
++            </thead>
++            <tbody>
++              <tr v-for="(row, ri) in displayRows" :key="ri">
++                <td v-for="(cell, ci) in row" :key="ci">{{ cell }}</td>
++              </tr>
++            </tbody>
++          </table>
++          <div v-else class="empty">无列信息</div>
++        </div>
++        <p v-if="hiddenRows > 0" class="hint">为控制渲染开销仅显示前 {{ DISPLAY_ROW_CAP }} 行，另有 {{ hiddenRows }} 行未渲染（数据未丢失）</p>
++        <p v-if="copied" class="hint">已复制</p>
++      </div>
++    </section>
++  </div>
++</template>
++
++<style scoped>
++.db-panel { display: flex; flex-direction: column; height: 100%; overflow: auto; }
++.gate { margin: 6px 8px; padding: 6px 8px; border-radius: 5px; background: #fff7e6; color: #b7791f; font-size: 12px; }
++.conn, .query { padding: 8px; border-bottom: 1px solid #e5e6eb; }
++.conn-head, .query-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
++.sec-title { font-size: 12px; color: #4e5969; }
++.badge { font-size: 11px; color: #86909c; border: 1px solid #e5e6eb; border-radius: 10px; padding: 1px 8px; }
++.badge.on { color: #2b6cb0; border-color: #2b6cb0; }
++.conn-list { list-style: none; margin: 0 0 6px; padding: 0; max-height: 120px; overflow: auto; }
++.conn-list li { border-radius: 5px; }
++.conn-list li.active { background: #eef2fb; }
++.conn-list li.disabled { opacity: 0.55; }
++.conn-list .row { width: 100%; display: flex; flex-direction: column; align-items: flex-start; text-align: left; background: transparent; border: none; cursor: pointer; padding: 4px 6px; border-radius: 5px; }
++.conn-list .name { font-size: 13px; color: #1f2329; }
++.conn-list .meta { font-size: 11px; color: #86909c; }
++.form label { display: block; font-size: 12px; color: #4e5969; margin: 6px 0 2px; }
++.form input, .form select { width: 100%; box-sizing: border-box; border: 1px solid #d5dbe7; border-radius: 5px; padding: 5px 7px; font-size: 12px; }
++.checks { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
++.checks label { display: flex; align-items: center; gap: 6px; margin: 0; }
++.checks input { width: auto; }
++.errors { color: #c0392b; font-size: 12px; margin: 6px 0 0; }
++.form-actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
++.form-actions button { padding: 6px 14px; border-radius: 5px; border: 1px solid #d5dbe7; background: #fff; cursor: pointer; font-size: 12px; }
++.form-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
++.form-actions .primary { background: #2b6cb0; border-color: #2b6cb0; color: #fff; }
++.form-actions .danger { background: #c0392b; border-color: #c0392b; color: #fff; }
++.tag { font-size: 11px; color: #4e5969; border: 1px solid #e5e6eb; border-radius: 10px; padding: 1px 8px; }
++.tag.warn { color: #b7791f; border-color: #b7791f; }
++.sql { width: 100%; box-sizing: border-box; border: 1px solid #d5dbe7; border-radius: 5px; padding: 6px 8px; font-size: 12px; font-family: monospace; }
++.hint { font-size: 11px; color: #86909c; margin: 4px 0 0; }
++.confirm { margin-top: 8px; padding: 8px; border: 1px solid #f0c36d; border-radius: 5px; background: #fffaf0; }
++.confirm-text { font-size: 12px; color: #7a5c00; }
++.confirm-text code { display: block; margin-top: 4px; font-size: 11px; word-break: break-all; color: #4e5969; }
++.result { margin-top: 8px; }
++.result-head { display: flex; gap: 12px; font-size: 12px; color: #4e5969; }
++.warn-list { margin: 6px 0; padding-left: 16px; }
++.warn-list li { font-size: 11px; color: #b7791f; }
++.grid-wrap { max-height: 320px; overflow: auto; border: 1px solid #e5e6eb; border-radius: 5px; }
++table { border-collapse: collapse; width: 100%; font-size: 12px; }
++th, td { border-bottom: 1px solid #f0f1f3; padding: 4px 6px; text-align: left; white-space: nowrap; }
++th { position: sticky; top: 0; background: #f7f8fa; color: #4e5969; font-weight: 600; }
++.empty { color: #86909c; font-size: 12px; padding: 12px; text-align: center; }
++</style>
+diff --git a/src/stores/useDatabaseStore.ts b/src/stores/useDatabaseStore.ts
+new file mode 100644
+index 0000000..eb30139
+--- /dev/null
++++ b/src/stores/useDatabaseStore.ts
+@@ -0,0 +1,218 @@
++import { defineStore } from "pinia";
++import { computed, ref } from "vue";
++import { bridge } from "../bridge";
++import type { DbConnectionConfig } from "../types";
++import {
++  buildConnectPayload,
++  buildResultView,
++  canRunQuery,
++  emptyConnectionForm,
++  validateConnectionForm,
++  type DbConnectionForm,
++  type DbConnectionSummary,
++  type DbKind,
++  type DbResultView,
++  type DbRiskLevel,
++  type ProductionVerdict,
++} from "../utils/dbUi";
++
++// M4-4 live wiring：A4 已在 bridge.rs / main.rs / ACL 落地 db_connect / db_query / db_disconnect，
++// 且 A4 检查点明确「前端 wiring 归 A5」，故此处直接调用 src/bridge.ts 的类型化封装，
++// 不再做「可选成员探测」。命令缺失时 Tauri invoke 会抛错，store 已按 fail-closed 兜底。
++
++function describeError(e: unknown): string {
++  const text = e instanceof Error ? e.message : typeof e === "string" ? e : JSON.stringify(e);
++  return text ? text.slice(0, 300) : "未知错误";
++}
++
++export const useDatabaseStore = defineStore("database", () => {
++  const form = ref<DbConnectionForm>(emptyConnectionForm());
++  const connections = ref<DbConnectionSummary[]>([]);
++  const activeId = ref<string | null>(null);
++  const sql = ref("");
++  const result = ref<DbResultView | null>(null);
++  const busy = ref(false);
++  const error = ref("");
++  /** 风险等级由后端分类器给出（F4），前端只展示；未返回按 unknown 处理。 */
++  const risk = ref<DbRiskLevel>("unknown");
++  const verdict = ref<ProductionVerdict>("Unknown");
++  /** 待确认的 SQL：非空表示「已拦截、尚未发 IPC」 */
++  const pendingSql = ref<string | null>(null);
++
++  const backendReady = computed(
++    () =>
++      typeof bridge.dbConnect === "function" &&
++      typeof bridge.dbQuery === "function" &&
++      typeof bridge.dbDisconnect === "function",
++  );
++  const connected = computed(() => !!activeId.value);
++  const formIssues = computed(() => validateConnectionForm(form.value));
++  const runGate = computed(() =>
++    canRunQuery({ backendReady: backendReady.value, connected: connected.value, sql: sql.value }),
++  );
++  // 写权限开启的连接一律需二次确认（fail-closed 提示）；后端仍对每条语句重新分类与闸门。
++  // 前端不自行分类（F4），故按连接能力而非语句风险触发确认，只读连接直接放行、由后端兜底。
++  const requiresConfirm = computed(() => form.value.allowWrite);
++  const confirmOpen = computed(() => pendingSql.value !== null);
++
++  function resetForm() {
++    form.value = emptyConnectionForm();
++  }
++
++  function setKind(kind: DbKind) {
++    form.value.kind = kind;
++  }
++
++  function selectConnection(c: DbConnectionSummary) {
++    form.value = {
++      ...emptyConnectionForm(),
++      id: c.id,
++      name: c.name,
++      kind: c.kind,
++      allowWrite: c.allowWrite,
++      enabled: c.enabled,
++    };
++  }
++
++  function refreshConnections() {
++    // A4 未提供连接列表命令（M4-4 聚焦「即连即查」），当前无 live 列表可拉取。
++    // 保留空实现以便将来接入 db_list_connections 时无需改动调用点。
++  }
++
++  /**
++   * 建立连接。`password` 只作为**瞬时参数**传入后端（后端落 Keyring，键 `db:<conn_id>`），
++   * 绝不写入 form / store / localStorage（F2）。
++   */
++  async function connect(password: string) {
++    error.value = "";
++    if (formIssues.value.length) {
++      error.value = `表单校验未通过：${formIssues.value[0].message}`;
++      return false;
++    }
++    if (!backendReady.value) {
++      error.value = "后端数据库命令未就绪";
++      return false;
++    }
++    busy.value = true;
++    try {
++      // buildConnectPayload 已含 id/created_at/updated_at（与 DbConnectionConfig 对齐），
++      // 且结构性不含 password（F2）。密码只作为瞬时参数传入封装，不进 payload/store/表单。
++      const cfg = buildConnectPayload(form.value) as unknown as DbConnectionConfig;
++      const res = await bridge.dbConnect(cfg, password);
++      activeId.value = res.conn_id;
++      risk.value = "unknown";
++      verdict.value = "Unknown";
++      result.value = null;
++      refreshConnections();
++      return !!activeId.value;
++    } catch (e) {
++      error.value = describeError(e);
++      return false;
++    } finally {
++      busy.value = false;
++    }
++  }
++
++  async function disconnect() {
++    if (!activeId.value) return;
++    error.value = "";
++    const id = activeId.value;
++    activeId.value = null;
++    result.value = null;
++    risk.value = "unknown";
++    verdict.value = "Unknown";
++    pendingSql.value = null;
++    if (!backendReady.value) return;
++    try {
++      await bridge.dbDisconnect(id);
++    } catch (e) {
++      error.value = describeError(e);
++    } finally {
++      refreshConnections();
++    }
++  }
++
++  function requestRun() {
++    const gate = runGate.value;
++    if (!gate.ok) {
++      error.value = gate.reason;
++      return;
++    }
++    // 确认前不发 IPC：仅挂起待确认 SQL
++    if (requiresConfirm.value) {
++      pendingSql.value = sql.value;
++      return;
++    }
++    void execute(sql.value, false);
++  }
++
++  function cancelConfirm() {
++    pendingSql.value = null;
++  }
++
++  function confirmRun() {
++    const text = pendingSql.value;
++    pendingSql.value = null;
++    if (text) void execute(text, true);
++  }
++
++  async function execute(text: string, confirmed: boolean) {
++    if (!backendReady.value || !activeId.value) return;
++    busy.value = true;
++    error.value = "";
++    try {
++      // 仅当本次执行来自二次确认对话框时视为用户显式确认写操作（fail-closed）；
++      // timeout_secs 传 null 表示沿用后端默认（domain.rs DB_DEFAULT_QUERY_TIMEOUT_SECS）。
++      const res = await bridge.dbQuery({
++        conn_id: activeId.value,
++        sql: text,
++        timeout_secs: null,
++        confirm_write: confirmed,
++      });
++      // 风险等级与生产判定以后端回带为准；未回带时 buildResultView 已按 unknown / Unknown 兜底（fail-closed）
++      const view = buildResultView(res);
++      result.value = view;
++      risk.value = view.risk;
++      verdict.value = view.verdict;
++    } catch (e) {
++      error.value = describeError(e);
++    } finally {
++      busy.value = false;
++    }
++  }
++
++  function clearResult() {
++    result.value = null;
++    error.value = "";
++    pendingSql.value = null;
++  }
++
++  return {
++    form,
++    connections,
++    activeId,
++    sql,
++    result,
++    busy,
++    error,
++    risk,
++    verdict,
++    pendingSql,
++    backendReady,
++    connected,
++    formIssues,
++    runGate,
++    requiresConfirm,
++    confirmOpen,
++    resetForm,
++    setKind,
++    selectConnection,
++    refreshConnections,
++    connect,
++    disconnect,
++    requestRun,
++    confirmRun,
++    cancelConfirm,
++    clearResult,
++  };
++});
+diff --git a/src/utils/dbUi.ts b/src/utils/dbUi.ts
+new file mode 100644
+index 0000000..555d3d1
+--- /dev/null
++++ b/src/utils/dbUi.ts
+@@ -0,0 +1,440 @@
++// M4-4 数据库面板 UI 纯逻辑层（无 Vue / bridge 运行时依赖）。
++//
++// 契约依据（均已冻结/已落地，禁止自行发明口径）：
++//   - `src-tauri/src/domain.rs`：`SupportedDb` / `DbConnectionConfig`（**结构性无 password 字段**，F2）
++//     / `DbSslMode` / `DbValue`（`#[serde(rename_all="snake_case")]` 带标签枚举）
++//     / `DbQueryResult`（`query_id` `columns` `rows` `row_count` `truncated` `field_truncated`
++//     `limit_hit` `elapsed_ms` `state`）/ `DbLimitKind` / `DbQueryState`。
++//   - `src-tauri/src/security_policy.rs`：`SqlRiskClass`（Read/Write/Ddl/Admin/Unknown）、
++//     `ProductionVerdict`（Production/NonProduction/Unknown，`Unknown` ⇒ 拒绝写）。
++//   - `logs/checkpoints/M4-1.c-20260905-2255.md`：上限数值表与「禁止静默截断」规则。
++//
++// 命令层（A4 已落地）：`db_connect` / `db_query` / `db_disconnect` 已注册到 `bridge.rs` 与 ACL
++// （命令名沿用 A1 冻结）；`src/stores/useDatabaseStore.ts` 直接调用 `bridge.ts` 的类型化封装，
++// 并以「命令是否存在」兜底（后端未就绪时不发 IPC）。
++
++export type DbKind = "sqlite" | "mysql" | "postgres";
++export type DbSslMode = "disable" | "prefer" | "require";
++export type ProductionVerdict = "Production" | "NonProduction" | "Unknown";
++export type ProductionHint = "" | "yes" | "no";
++/** 后端 `SqlRiskClass` 的镜像（含 Admin 档）；前端只做着色与文案，不自行分类（F4）。 */
++export type DbRiskLevel = "read" | "write" | "ddl" | "admin" | "unknown";
++/** 后端 `DbLimitKind`（snake_case 序列化） */
++export type DbLimitKind = "rows" | "bytes" | "field";
++/** 后端 `DbQueryState`（snake_case 序列化） */
++export type DbQueryState = "completed" | "cancelled" | "timeout" | "failed";
++export type DbScalar = null | boolean | number | string;
++
++/** M4-1.c §1 上限数值表（冻结、前端不可调；此处仅用于「超限提示」文案，不作服务端判定）。 */
++export const DB_LIMITS = {
++  maxRows: 1000,
++  maxResultBytes: 4 * 1024 * 1024,
++  maxTextFieldBytes: 64 * 1024,
++  maxSqlBytes: 64 * 1024,
++  defaultTimeoutSecs: 30,
++  maxTimeoutSecs: 600,
++} as const;
++
++export interface DbConnectionForm {
++  id: string | null;
++  name: string;
++  kind: DbKind;
++  /** SQLite 忽略 */
++  host: string;
++  /** 文本态（空 = 用 `kind` 默认端口），避免 number NaN 污染表单 */
++  portText: string;
++  /** SQLite = 文件路径；其余 = 库名 */
++  database: string;
++  /** SQLite 忽略 */
++  username: string;
++  sslMode: DbSslMode;
++  /** 写权限显式开关，缺省 false = 写默认拒绝（F1） */
++  allowWrite: boolean;
++  productionHint: ProductionHint;
++  enabled: boolean;
++}
++
++export interface DbIssue {
++  field: string;
++  message: string;
++}
++
++export interface DbConnectionSummary {
++  id: string;
++  name: string;
++  kind: DbKind;
++  /** 展示用；**永不**含凭据或完整 DSN */
++  label: string;
++  allowWrite: boolean;
++  enabled: boolean;
++}
++
++/** `DbQueryResult` 的 TS 镜像（字段名与后端一致，snake_case） */
++export interface DbResultSet {
++  query_id: string;
++  columns: string[];
++  rows: unknown[][];
++  row_count: number;
++  truncated: boolean;
++  field_truncated: boolean;
++  limit_hit?: DbLimitKind | null;
++  elapsed_ms: number;
++  state: DbQueryState;
++  /** 后端如随结果回带风险等级（非冻结项），前端按 unknown 兜底 */
++  risk?: DbRiskLevel | null;
++  production_verdict?: ProductionVerdict | null;
++}
++
++export interface DbResultView {
++  columns: string[];
++  /** 已解码并格式化为展示字符串的单元格 */
++  rows: string[][];
++  rowCount: number;
++  truncated: boolean;
++  fieldTruncated: boolean;
++  limitHit: DbLimitKind | null;
++  state: DbQueryState;
++  elapsedLabel: string;
++  rowLabel: string;
++  stateLabel: string;
++  risk: DbRiskLevel;
++  verdict: ProductionVerdict;
++  /** 非静默截断：任何不完整都必须在 UI 上显式呈现（M4-1.c §1 规则 2） */
++  warnings: string[];
++}
++
++export function emptyConnectionForm(): DbConnectionForm {
++  return {
++    id: null,
++    name: "",
++    kind: "sqlite",
++    host: "",
++    portText: "",
++    database: "",
++    username: "",
++    sslMode: "prefer",
++    allowWrite: false,
++    productionHint: "",
++    enabled: true,
++  };
++}
++
++export function kindLabel(kind: DbKind): string {
++  if (kind === "sqlite") return "SQLite";
++  if (kind === "mysql") return "MySQL";
++  return "PostgreSQL";
++}
++
++export function defaultPortFor(kind: DbKind): number | null {
++  if (kind === "mysql") return 3306;
++  if (kind === "postgres") return 5432;
++  return null;
++}
++
++export function kindNeedsCredentials(kind: DbKind): boolean {
++  return kind !== "sqlite";
++}
++
++export function databaseFieldLabel(kind: DbKind): string {
++  return kind === "sqlite" ? "文件路径" : "数据库名";
++}
++
++export interface DbFormFields {
++  host: boolean;
++  port: boolean;
++  username: boolean;
++  ssl: boolean;
++}
++
++export function visibleFields(kind: DbKind): DbFormFields {
++  const net = kindNeedsCredentials(kind);
++  return { host: net, port: net, username: net, ssl: net };
++}
++
++export function validateConnectionForm(form: DbConnectionForm): DbIssue[] {
++  const issues: DbIssue[] = [];
++  const name = form.name.trim();
++  const net = kindNeedsCredentials(form.kind);
++
++  if (!name) issues.push({ field: "name", message: "连接名不能为空" });
++  else if (utf8Bytes(name) > 128) issues.push({ field: "name", message: "连接名过长（上限 128 字节）" });
++
++  if (!form.database.trim()) {
++    issues.push({ field: "database", message: `${databaseFieldLabel(form.kind)}不能为空` });
++  }
++
++  if (net) {
++    if (!form.host.trim()) issues.push({ field: "host", message: "主机不能为空" });
++    if (!form.username.trim()) issues.push({ field: "username", message: "用户名不能为空" });
++    const port = form.portText.trim();
++    if (port) {
++      const n = Number(port);
++      if (!Number.isInteger(n) || n < 1 || n > 65535) {
++        issues.push({ field: "portText", message: "端口必须是 1~65535 的整数" });
++      }
++    }
++  }
++
++  return issues;
++}
++
++/**
++ * 生成新的连接 ID（仅客户端标识，用于 Keyring 键 `db:<conn_id>`，非安全敏感值；
++ * 安全性由后端对每条语句的重新分类/闸门决定，与前端的 id 不可预测性无关）。
++ * 优先用 crypto.randomUUID，老环境退化为 v4 形态随机数（仅保证唯一性）。
++ */
++export function newConnectionId(): string {
++  const g = globalThis as { crypto?: { randomUUID?: () => string } };
++  if (g.crypto && typeof g.crypto.randomUUID === "function") return g.crypto.randomUUID();
++  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (ch) => {
++    const r = (Math.random() * 16) | 0;
++    const v = ch === "x" ? r : (r & 0x3) | 0x8;
++    return v.toString(16);
++  });
++}
++
++/**
++ * 构造连接配置 payload（字段名与 `domain.rs::DbConnectionConfig` 一致，snake_case）。
++ * 含 A4 后端要求的结构字段 `id` / `created_at` / `updated_at`（由 form.id / now 解析，
++ * 缺省自动生成，使重连可复用既有 id 以对齐 Keyring 键）。
++ * **结构性不含 password / dsn / connection_string**（F2）——不是「写前清空」，而是根本不存在这些键；
++ * 密码由调用方以独立参数瞬时传入后端（落 Keyring，键 `db:<conn_id>`），不进本 payload、不进表单、不进 store。
++ */
++export function buildConnectPayload(
++  form: DbConnectionForm,
++  opts: { id?: string; now?: Date } = {},
++): Record<string, unknown> {
++  const net = kindNeedsCredentials(form.kind);
++  const port = form.portText.trim();
++  const parsedPort = port ? Number(port) : null;
++  const nowIso = (opts.now ?? new Date()).toISOString();
++  return {
++    id: form.id ?? opts.id ?? newConnectionId(),
++    name: form.name.trim(),
++    kind: form.kind,
++    host: net ? form.host.trim() || null : null,
++    port: net && Number.isInteger(parsedPort) ? parsedPort : null,
++    database: form.database.trim(),
++    username: net ? form.username.trim() || null : null,
++    ssl_mode: net ? form.sslMode : "disable",
++    allow_write: form.allowWrite,
++    production_hint:
++      form.productionHint === "yes" ? true : form.productionHint === "no" ? false : null,
++    enabled: form.enabled,
++    created_at: nowIso,
++    updated_at: nowIso,
++  };
++}
++
++/** 连接列表展示文案：只拼 kind / 主机 / 库名，**永不**拼凭据或完整 DSN。 */
++export function connectionLabel(cfg: {
++  kind: DbKind;
++  host?: string | null;
++  port?: number | null;
++  database: string;
++}): string {
++  if (cfg.kind === "sqlite") return `SQLite · ${cfg.database}`;
++  const host = (cfg.host || "").trim();
++  const port = cfg.port ? `:${cfg.port}` : "";
++  return `${kindLabel(cfg.kind)} · ${host}${port} · ${cfg.database}`;
++}
++
++export function utf8Bytes(text: string): number {
++  return new TextEncoder().encode(text).length;
++}
++
++export function formatBytes(n: number): string {
++  if (!Number.isFinite(n) || n < 0) return "-";
++  if (n < 1024) return `${n} B`;
++  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
++  return `${(n / (1024 * 1024)).toFixed(2)} MiB`;
++}
++
++export function formatDuration(ms: number): string {
++  if (!Number.isFinite(ms) || ms < 0) return "-";
++  if (ms < 1000) return `${Math.round(ms)} ms`;
++  return `${(ms / 1000).toFixed(2)} s`;
++}
++
++export function truncateText(text: string, max: number): string {
++  if (max <= 0) return "";
++  return text.length > max ? `${text.slice(0, max)}…` : text;
++}
++
++/**
++ * 解码后端 `DbValue`（`rename_all="snake_case"` 带标签枚举）：
++ * `"Null"` / `{Bool}` / `{Int}` / `{Float}` / `{Text}` / `{BlobLen}`。
++ * 二进制**只回长度不回字节**，统一展示为 `<binary N B>`。
++ * 同时兜底「后端改为无标签标量」的情况，避免 IPC 形态变化时前端白屏。
++ */
++export function decodeDbValue(value: unknown): DbScalar {
++  if (value === null || value === undefined) return null;
++  if (value === "Null") return null;
++  if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") return value;
++  if (typeof value === "object") {
++    const rec = value as Record<string, unknown>;
++    if (typeof rec.Text === "string") return rec.Text;
++    if (typeof rec.Int === "number") return rec.Int;
++    if (typeof rec.Float === "number") return rec.Float;
++    if (typeof rec.Bool === "boolean") return rec.Bool;
++    if (typeof rec.BlobLen === "number") return `<binary ${formatBytes(rec.BlobLen)}>`;
++  }
++  return JSON.stringify(value);
++}
++
++/** 单元格展示：null 显式为 NULL，字符串按展示宽度截断（截断只影响显示，不改数据）。 */
++export function formatCellValue(value: unknown, max = 200): string {
++  const scalar = decodeDbValue(value);
++  if (scalar === null) return "NULL";
++  if (typeof scalar === "boolean") return scalar ? "true" : "false";
++  if (typeof scalar === "number") return String(scalar);
++  return truncateText(scalar, max);
++}
++
++export function limitKindLabel(kind: DbLimitKind | null | undefined): string {
++  if (kind === "rows") return "行数上限";
++  if (kind === "bytes") return "字节上限";
++  if (kind === "field") return "单字段上限";
++  return "未命中上限";
++}
++
++export function stateLabel(state: DbQueryState): string {
++  switch (state) {
++    case "completed":
++      return "已完成";
++    case "cancelled":
++      return "已取消";
++    case "timeout":
++      return "超时";
++    case "failed":
++      return "执行失败";
++    default:
++      return "状态未知";
++  }
++}
++
++export function buildResultView(result: Partial<DbResultSet> | null | undefined): DbResultView {
++  const columns = Array.isArray(result?.columns) ? result!.columns : [];
++  const rawRows = Array.isArray(result?.rows) ? result!.rows : [];
++  const rows = rawRows.map((row) => (Array.isArray(row) ? row : []).map((cell) => formatCellValue(cell)));
++  const rowCount = Number.isFinite(result?.row_count) ? Number(result!.row_count) : rows.length;
++  const truncated = !!result?.truncated;
++  const fieldTruncated = !!result?.field_truncated;
++  const limitHit = (result?.limit_hit ?? null) as DbLimitKind | null;
++  const state = (result?.state ?? "completed") as DbQueryState;
++
++  const warnings: string[] = [];
++  if (truncated) {
++    warnings.push(
++      `结果已被截断（命中${limitKindLabel(limitHit)}：${DB_LIMITS.maxRows} 行 / ${formatBytes(
++        DB_LIMITS.maxResultBytes,
++      )}），展示的不是完整结果集`,
++    );
++  }
++  if (fieldTruncated) {
++    warnings.push(`存在超过 ${formatBytes(DB_LIMITS.maxTextFieldBytes)} 的长字段被截断`);
++  }
++  if (state === "cancelled") warnings.push("查询已被取消，结果不完整");
++  if (state === "timeout") warnings.push("查询超时被终止，结果不完整");
++  if (state === "failed") warnings.push("查询执行失败，结果不完整");
++
++  return {
++    columns,
++    rows,
++    rowCount,
++    truncated,
++    fieldTruncated,
++    limitHit,
++    state,
++    elapsedLabel: formatDuration(Number(result?.elapsed_ms) || 0),
++    rowLabel: `${rowCount} 行${truncated ? "（已截断）" : ""}`,
++    stateLabel: stateLabel(state),
++    risk: (result?.risk ?? "unknown") as DbRiskLevel,
++    verdict: (result?.production_verdict ?? "Unknown") as ProductionVerdict,
++    warnings,
++  };
++}
++
++/** CSV 复制（仅复制到剪贴板/本地文本；**不写成果库**，M4-1.c 的 16 MiB 导出上限暂无消费方）。 */
++export function toCsv(columns: string[], rows: unknown[][]): string {
++  const esc = (v: unknown): string => {
++    const scalar = decodeDbValue(v);
++    if (scalar === null) return "";
++    const s = typeof scalar === "boolean" ? (scalar ? "true" : "false") : typeof scalar === "number" ? String(scalar) : scalar;
++    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
++  };
++  const head = columns.map((c) => esc(c)).join(",");
++  const body = rows.map((r) => (Array.isArray(r) ? r : []).map((c) => esc(c)).join(","));
++  return [head, ...body].join("\n");
++}
++
++export function sqlIssues(sql: string): DbIssue[] {
++  const issues: DbIssue[] = [];
++  if (!sql.trim()) issues.push({ field: "sql", message: "SQL 不能为空" });
++  if (utf8Bytes(sql) > DB_LIMITS.maxSqlBytes) {
++    issues.push({ field: "sql", message: `SQL 超过 ${formatBytes(DB_LIMITS.maxSqlBytes)} 上限` });
++  }
++  return issues;
++}
++
++/**
++ * 多语句**提示**（仅本地提示，不作判定）：后端 `classify_sql_risk` 才是唯一判定位（F4），
++ * 前端不得据此放行或拒绝，只用于提醒用户后端会拒多语句。
++ */
++export function looksLikeMultipleStatements(sql: string): boolean {
++  const body = sql.trim().replace(/;\s*$/, "");
++  return body.includes(";");
++}
++
++export function riskLabel(level: DbRiskLevel): string {
++  switch (level) {
++    case "read":
++      return "只读";
++    case "write":
++      return "写操作";
++    case "ddl":
++      return "结构变更";
++    case "admin":
++      return "权限/运维";
++    default:
++      return "未知（按最严处理）";
++  }
++}
++
++export function productionLabel(verdict: ProductionVerdict): string {
++  if (verdict === "Production") return "生产环境";
++  if (verdict === "NonProduction") return "非生产环境";
++  return "生产判定未知（按生产处理）";
++}
++
++/** 非只读语句一律需二次确认（M4-1.d §3：写放行必须过确认）。 */
++export function needsWriteConfirm(risk: DbRiskLevel): boolean {
++  return risk !== "read";
++}
++
++/** 写被拒原因（null = 后端可放行；写操作后端还会再判一次，前端不做分类决策）。 */
++export function writeBlockedReason(
++  risk: DbRiskLevel,
++  allowWrite: boolean,
++  verdict: ProductionVerdict,
++): string | null {
++  if (risk === "read") return null;
++  if (!allowWrite) return "连接未开启写权限（写默认拒绝，F1）";
++  if (verdict !== "NonProduction") return `生产判定为${productionLabel(verdict)}，拒绝写（Unknown 按生产处理）`;
++  return null;
++}
++
++export interface RunGate {
++  backendReady: boolean;
++  connected: boolean;
++  sql: string;
++}
++
++/** 运行前置门禁：任一不满足即不发 IPC。 */
++export function canRunQuery(gate: RunGate): { ok: boolean; reason: string } {
++  if (!gate.backendReady) return { ok: false, reason: "后端数据库命令未就绪" };
++  if (!gate.connected) return { ok: false, reason: "尚未连接到数据库" };
++  const issues = sqlIssues(gate.sql);
++  if (issues.length) return { ok: false, reason: issues[0].message };
++  return { ok: true, reason: "" };
++}

@@ -1,0 +1,168 @@
+diff --git a/AI-模型切换与接手清单.md b/AI-模型切换与接手清单.md
+index 365949a..1e2bbdb 100644
+--- a/AI-模型切换与接手清单.md
++++ b/AI-模型切换与接手清单.md
+@@ -24,8 +24,8 @@
+ | 已落地修复 | `e8975d6`：保留 `about:` URL、关闭失败显式返回、单例扫描线程与插件状态清理 |
+ | 正式三批 | 源提交 `93a1ba6`；六批门禁逐批 PASS；raw aggregate `UNSTABLE`；manifest `20260830T153538+0800_93a1ba6_M0-0.c` |
+ | 当前硬风险 | M0-6.c 的登录态证据来自本地 AI mock 持久 cookie，不代表第三方真实账号人工验收；**M1-3/M1-7 GUI 目视验收与 M1-5/M1-6/M1-7/M1-8/M1-9/M2-1 运行时端到端联调全部挂账**（D1~D9 汇总见 `logs/checkpoints/M1-ACCEPT-20260903-0843.md` §7，M2-1 挂账见 `logs/checkpoints/M2-1-20260903-0927.md` §6，均未伪造 GUI/E2E 证据）；M1-ACCEPT 的会话 id 校验加固项**已在 M2-1 修复**（`check_id` 接入 session_get/delete/export/restore）；残留 NON-BLOCKER：flush 双路径理论重复存档窗口、M1-7 未勾选=全量提交误点风险 |
+-| 下一检查点 | **`M4-1.a 数据库驱动与生成契约·依赖与驱动选型冻结 = NEXT`（已展开，`logs/checkpoints/M4-20260905-2225.md`，Lane **A2** 认领；`M4-5.a` 由 Lane **A6** 并行认领）**。**并行指挥板**：`PARALLEL_COMMAND_BOARD.md`（10 Lane；只有 A0 可向 `master` 提交并推送，其余 Lane 交付分支/补丁/审查文档，**禁止 push/reset/force-push**）。**M4 子卡全景（30 张）**：`M4-1.a~d`（A2，merge 2）→ `M4-2.s`（A4，merge 3，SQL 风险分类 + 生产判定，落 `security_policy.rs`、**零 db 依赖**）→ `M4-2.a~d` + `M4-3.a~d`（A3，merge 4）→ `M4-4.a~c`（A5，merge 6）；`M4-5.a~d`（A6，merge 2）→ `M4-6.a~c` + `M4-7.a~d`（A7，merge 5）→ `M4-8.a~c`（A8，merge 7）。**两条链互不阻塞，可完全并行**。前置：M2 里程碑 PASS（执行通道稳定）+ M0 安全规则持续通过 + M3 WBS 全关闭，**均已满足**。**开工前必读的三条硬约束**：①**F-1**：`tokio` 当前只是 tauri 的传递依赖（`Cargo.lock` 1.53.1，`Cargo.toml` 无），「`tokio::spawn` 启动调度器」**当前不可编译**，须由 M4-1.a 显式裁决（提升为直接依赖 vs `std::thread` + `Condvar` 可中断 sleep，倾向后者）；②**F-5**：`TaskKind` 首期只做 `Script`/`Command`，「调用 HTML 工具」**不做**（`list_tools` 是只读清单，工具无 headless 执行入口，强加即死代码）；③**F-7**：db 凭据键必须用 `db:<conn_id>` 命名空间（`KeyringStore` 按精确字符串取键，与 git `repo_id` 碰撞会静默取回错误凭据）。**携带挂账债务**：D18（片段 `argv[0]` 未过启动目标校验，判非阻塞）/ D21（运行记录无 `kind`）/ D22（缺 `cmd.run.cancel`/`cmd.run.finish`）/ D23（GUI 实点验收）/ D24（M0-0.b 吞吐基线未重采）/ D25（`on_channel_dead` 未 wait）/ D26（临时历史未按字符封顶）—— **M4 不得顺手关闭，新增债务从 D27 起编号**。⚠️ **O-A1-3 需 A0/负责人裁定**：M4 验收门禁第 2 条要求「SQLite/MySQL/PostgreSQL 各有连接、只读查询、断开与失败用例」，若无真实 MySQL/PG 实例则只能 `SKIPPED`，须决定「接受 SQLite 全覆盖 + 另两库 SKIPPED」还是「补真实实例」。 |
+-| 下一任务路由 | **M4-1：`AI:DEEP / R:high`；M4-2：M4-2.s `AI:DEEP / R:xhigh`、M4-2.a~d `AI:DEEP / R:xhigh`；M4-3：`AI:DEEP / R:xhigh`；M4-4：`AI:BALANCED / R:high`；M4-5：`AI:DEEP / R:high`；M4-6：`AI:BALANCED / R:high`；M4-7：`AI:DEEP / R:xhigh`；M4-8：`AI:BALANCED / R:medium`（均为 WBS 既有标签）**。每张子卡**必须显式标注 `IMPLEMENTER_MODEL`**（回应 M2-6 观察项 O1）；建议展开者 / 实现者 / 裁定者三者取不同模型。数据库与调度涉及**凭据、网络、进程生命周期、并发**，须沿用以 `check_invocation_source` + ACL（**新条目插在 `list_artifact_images` 之前**）+ 原子写 + `log_audit` 脱敏 + `ShutdownCoordinator` 注册 + `check-*-policy.py`（含 `--self-test` 双向自检与**变异防呆**）+ `check-*-logic.mjs` 的既有范式并接入 pre-merge；**零新增 npm 依赖**（基线哈希见 `check-command-domain-policy.py`）。**执行纪律**：一次只领一张子卡；子卡 PASS、回写证据、独立提交（`<type>(M4-x.y): <单一结果>`）、工作树干净后才领下一张。 |
++| 下一检查点 | **`M4-1.a 数据库驱动与生成契约·依赖与驱动选型冻结 = NEXT`（已展开，`logs/checkpoints/M4-20260905-2225.md`，Lane **A2** 认领；`M4-5.a` 由 Lane **A6** 并行认领）**。**并行指挥板**：`PARALLEL_COMMAND_BOARD.md`（**12 Lane**：A0~A12，新增 A10 安全复核 / A11 验收证据 / A12 跨 Lane 冲突扫描；只有 A0 可向 `master` 提交并推送，其余 Lane 交付分支/补丁/审查文档，**禁止 push/reset/force-push**）。**M4 子卡全景（30 张）**：`M4-1.a~d`（A2，merge 2）→ **`M4-2`（A3，merge 3：连接池/查询核心 + SQL 风险分类器 + 生产判定，落 `security_policy.rs`；原 `M4-2.s` 编号已由 A0 覆盖裁决作废）** → **`M4-3.a~d`（A4，merge 4：`db_*` 命令层/ACL/source check/Keyring/审计/DTO 镜像）** → `M4-4.a~c`（A5，merge 6）；`M4-5.a~d`（A6，merge 2）→ `M4-6.a~c` + `M4-7.a~d`（A7，merge 5）→ `M4-8.a~c`（A8，merge 7）。**两条链互不阻塞，可完全并行**；库链内部 A3 先于 A4（A4 依赖 A3 的池与安全接口）。前置：M2 里程碑 PASS（执行通道稳定）+ M0 安全规则持续通过 + M3 WBS 全关闭，**均已满足**。**开工前必读的三条硬约束**：①**F-1**：`tokio` 当前只是 tauri 的传递依赖（`Cargo.lock` 1.53.1，`Cargo.toml` 无），「`tokio::spawn` 启动调度器」**当前不可编译**，须由 M4-1.a 显式裁决（提升为直接依赖 vs `std::thread` + `Condvar` 可中断 sleep，倾向后者）；②**F-5**：`TaskKind` 首期只做 `Script`/`Command`，「调用 HTML 工具」**不做**（`list_tools` 是只读清单，工具无 headless 执行入口，强加即死代码）；③**F-7**：db 凭据键必须用 `db:<conn_id>` 命名空间（`KeyringStore` 按精确字符串取键，与 git `repo_id` 碰撞会静默取回错误凭据）。**携带挂账债务**：D18（片段 `argv[0]` 未过启动目标校验，判非阻塞）/ D21（运行记录无 `kind`）/ D22（缺 `cmd.run.cancel`/`cmd.run.finish`）/ D23（GUI 实点验收）/ D24（M0-0.b 吞吐基线未重采）/ D25（`on_channel_dead` 未 wait）/ D26（临时历史未按字符封顶）—— **M4 不得顺手关闭，新增债务从 D27 起编号**。⚠️ **O-A1-3 需 A0/负责人裁定**：M4 验收门禁第 2 条要求「SQLite/MySQL/PostgreSQL 各有连接、只读查询、断开与失败用例」，若无真实 MySQL/PG 实例则只能 `SKIPPED`，须决定「接受 SQLite 全覆盖 + 另两库 SKIPPED」还是「补真实实例」。 |
++| 下一任务路由 | **M4-1：`AI:DEEP / R:high`；M4-2：`AI:DEEP / R:xhigh`（**A3 全卡**，含连接池 + SQL 分类器 + 生产判定；已作废的 `M4-2.s` 切片不再单列路由）；M4-3：`AI:DEEP / R:xhigh`（A4 命令层）；M4-4：`AI:BALANCED / R:high`；M4-5：`AI:DEEP / R:high`；M4-6：`AI:BALANCED / R:high`；M4-7：`AI:DEEP / R:xhigh`；M4-8：`AI:BALANCED / R:medium`（均为 WBS 既有标签）**。每张子卡**必须显式标注 `IMPLEMENTER_MODEL`**（回应 M2-6 观察项 O1）；建议展开者 / 实现者 / 裁定者三者取不同模型。数据库与调度涉及**凭据、网络、进程生命周期、并发**，须沿用以 `check_invocation_source` + ACL（**新条目插在 `list_artifact_images` 之前**）+ 原子写 + `log_audit` 脱敏 + `ShutdownCoordinator` 注册 + `check-*-policy.py`（含 `--self-test` 双向自检与**变异防呆**）+ `check-*-logic.mjs` 的既有范式并接入 pre-merge；**零新增 npm 依赖**（基线哈希见 `check-command-domain-policy.py`）。**执行纪律**：一次只领一张子卡；子卡 PASS、回写证据、独立提交（`<type>(M4-x.y): <单一结果>`）、工作树干净后才领下一张。 |
+ | 自动执行范围 | M0 已结束；M1 起必须先展开检查点，再逐点验收和提交 |
+ | 必停门禁 | 见 §3「硬停止条件」；进入 M1/M2/M3 后仍不得跨检查点合并 |
+ | 禁止启动 | ~~M4~~ **M4 已解锁**（前置 M2 PASS + M0 安全规则持续通过 + M3 WBS 全关闭，均已满足；任务卡已于 2026-09-05 展开）；**M5 仍禁止**（等 M1~M4 全部稳定）。任何 WBS 未展开检查点就写功能代码一律禁止。M4 并行施工另须遵守 `PARALLEL_COMMAND_BOARD.md` 的 Lane 范围与合并顺序，**只有 A0 可 push**。 |
+diff --git a/后续需求TODO.md b/后续需求TODO.md
+index f438bc2..6918b98 100644
+--- a/后续需求TODO.md
++++ b/后续需求TODO.md
+@@ -33,7 +33,7 @@ git log --oneline -12
+
+ 自救流程：先读当前目录的 `WORKSPACE_IDENTITY.md`，再对照任务里的 `WORKDIR`、分支、NEXT 值；不一致时只做状态报告，不继续写代码。
+
+-> 本版变更：**M4 任务卡已展开（Lane A1，`AI:DEEP / R:high`，CodeBuddy 会话 Hy4 / 腾讯混元；纯文档展开，产品代码零改动，基线 `c9c7576`），NEXT=`M4-1.a`（Lane A2 认领；`M4-5.a` 由 Lane A6 并行认领）**。展开卡 `logs/checkpoints/M4-20260905-2225.md`：①**现状实测 14 项**——`sqlx`/`rusqlite`/`mysql`/`postgres`/`serde_yaml`/`tokio-cron-scheduler` 在 `Cargo.toml` 与 `Cargo.lock` 均为零；`tokio 1.53.1` 只是 tauri 的传递依赖（`use tokio::...` 当前不可编译）；`build.rs` 无代码生成；命令 105 / ACL 108 且末条仍是 `list_artifact_images`；`ShutdownCoordinator` 已注册 6 任务；持久化全部 JSON 原子写。②**对 #6/#11 需求原文的 7 处事实修正**——F-1 #11 切入点写「`tokio::spawn` 启动」但 tokio 非直接依赖，须 M4-1.a 裁决；F-2 `详细设计 §6` 的「YAML 扩库 + build.rs 生成 `SupportedDb`」建立在 dbx 五成员 workspace 之上、本项目单 crate，须 M4-1.b 重新裁决；F-3 `db_connect/db_query/db_disconnect` 只作占位登记；F-4 `tasks.yaml` 统一为 `tasks.json`；F-5 `TaskKind` 首期只做 `Script`/`Command`，「调用 HTML 工具」**不做**（`list_tools` 是只读清单、工具无 headless 执行入口，强加即死代码，同 M2-3 拒绝空结构口径）；F-6「导出成果库」列 M4-4 显式范围项；F-7 db 凭据键须用 `db:<conn_id>` 命名空间（`KeyringStore` 按精确字符串取键，与 git `repo_id` 碰撞会静默取回错误凭据）。③**依赖图**：库链 `M4-1(A2) → M4-2.s(A4) → M4-2.a~d(A3) → M4-3.a~d(A3) → M4-4(A5)`；调度链 `M4-5(A6) → M4-6(A7) → M4-7(A7) → M4-8(A8)`；**两链互不阻塞**。④**裁决 R-A1-1**：指挥板 A4 行「M4-3 database safety gate」与 WBS 编号冲突，A1 裁决该前置切片编号 **`M4-2.s`**（落 `security_policy.rs`、零 db 依赖，故可先于 A3 合入）。⑤**冻结条款 F1~F12** 与 **30 张子卡**、测试矩阵 ID 段、6 个新夹具码位（`DB_*`/`DBUI_*`/`SCHED_*`/`SCHEDUI_*` + 两个 `.mjs`）已一次性预留。⑥挂账 O-A1-1~O-A1-7，其中 **O-A1-3 需 A0/负责人裁定**：M4 验收门禁第 2 条要求三库各有连接/只读查询/断开/失败用例，若无真实 MySQL/PG 实例则只能 `SKIPPED`；**不得伪造 PASS**。**A1 未提交、未 push**（只有 A0 向 `master` 提交并推送）。
++> 本版变更：**M4 任务卡已展开（Lane A1，`AI:DEEP / R:high`，CodeBuddy 会话 Hy4 / 腾讯混元；纯文档展开，产品代码零改动，基线 `c9c7576`），NEXT=`M4-1.a`（Lane A2 认领；`M4-5.a` 由 Lane A6 并行认领）**。展开卡 `logs/checkpoints/M4-20260905-2225.md`：①**现状实测 14 项**——`sqlx`/`rusqlite`/`mysql`/`postgres`/`serde_yaml`/`tokio-cron-scheduler` 在 `Cargo.toml` 与 `Cargo.lock` 均为零；`tokio 1.53.1` 只是 tauri 的传递依赖（`use tokio::...` 当前不可编译）；`build.rs` 无代码生成；命令 105 / ACL 108 且末条仍是 `list_artifact_images`；`ShutdownCoordinator` 已注册 6 任务；持久化全部 JSON 原子写。②**对 #6/#11 需求原文的 7 处事实修正**——F-1 #11 切入点写「`tokio::spawn` 启动」但 tokio 非直接依赖，须 M4-1.a 裁决；F-2 `详细设计 §6` 的「YAML 扩库 + build.rs 生成 `SupportedDb`」建立在 dbx 五成员 workspace 之上、本项目单 crate，须 M4-1.b 重新裁决；F-3 `db_connect/db_query/db_disconnect` 只作占位登记；F-4 `tasks.yaml` 统一为 `tasks.json`；F-5 `TaskKind` 首期只做 `Script`/`Command`，「调用 HTML 工具」**不做**（`list_tools` 是只读清单、工具无 headless 执行入口，强加即死代码，同 M2-3 拒绝空结构口径）；F-6「导出成果库」列 M4-4 显式范围项；F-7 db 凭据键须用 `db:<conn_id>` 命名空间（`KeyringStore` 按精确字符串取键，与 git `repo_id` 碰撞会静默取回错误凭据）。③**依赖图（已按 A0 覆盖裁决更新）**：库链 `M4-1(A2) → M4-2(A3，含连接池/查询核心 + SQL 分类器 + 生产判定，落 security_policy.rs) → M4-3(A4，db_* 命令层) → M4-4(A5)`；调度链 `M4-5(A6) → M4-6+M4-7(A7) → M4-8(A8)`；**两链互不阻塞**。④**~~裁决 R-A1-1~~ 已被 A0 覆盖裁决（2026-09-05 23:30）推翻**：A1 曾把 SQL 风险分类切片拆为 `M4-2.s` 划归 A4；**A0 裁定：A3 = M4-2 全卡（含分类器、生产判定、`security_policy.rs`、连接池/查询核心），A4 = M4-3 命令层，`M4-2.s` 编号作废**。归属与顺序一律以最新 `PARALLEL_COMMAND_BOARD.md` 为准。⑤**冻结条款 F1~F12** 与 **30 张子卡**、测试矩阵 ID 段、6 个新夹具码位（`DB_*`/`DBUI_*`/`SCHED_*`/`SCHEDUI_*` + 两个 `.mjs`）已一次性预留。⑥挂账 O-A1-1~O-A1-7，其中 **O-A1-3 需 A0/负责人裁定**：M4 验收门禁第 2 条要求三库各有连接/只读查询/断开/失败用例，若无真实 MySQL/PG 实例则只能 `SKIPPED`；**不得伪造 PASS**。**A1 未提交、未 push**（只有 A0 向 `master` 提交并推送）。
+ > 上一版（保留）：**M2-6 整体裁定已签（`PASS_WITH_DEBT`，`AI:DEEP / R:high`，裁定者 CodeBuddy Hy4 / 腾讯混元）；两份独立复核报告的 Must Fix 已单开 `M2-6-fix1` 落地，NEXT=`M2-7.a 工具清单契约冻结（待认领）`**。整改（`logs/checkpoints/M2-6-REVIEW-VERDICT-20260905-1648.md`）：**P1-1** 补命令片段域运行时来源校验单测（远程 webview 调 `snippet_*` + `run_command` 全拒）；**P1-2 书面裁定不上程序名黑名单**（`/bin/bash`/`env`/`python3 -c` 均可绕过），最小收敛为定义期拒绝 `argv[0]` 占位符（`ARGV_PROGRAM_PLACEHOLDER`）；**P1-3** 执行层 `script_runner.rs` 纳入命令领域夹具扫描 + 4 条不变量（坏样本 11→15）；**F-1** 新建态 `enabled` 贯通，修掉启用勾选被静默覆盖；**F-2** 命令库面板与 `snippetUi.ts` 纳入 UI 夹具（13→16 码位）；**D-1** 关键路径串追平至 M2-7。UI 断言 26→36。复跑：`cargo test` 220/220、release 0 error、两套夹具自检全过、pre-merge ALL_PASS。**新增债务 D21**（运行记录无 `kind` 判别，命令片段运行以裸 UUID 出现在历史面板）/ **D22**（缺 `cmd.run.cancel` 与 `cmd.run.finish`）。命令片段库 a/b/c/d 四卡全交付，`CommandSnippet` 保持 `argv: Vec<String>` + 整元素 `{NAME}` 占位 + `dangerous` 显式字段；`snippet_*` 四命令与 `run_command` 复用 `script_runner` 内核（**不另建执行旁路**）；`cmd.*` 审计脱敏；前端分类/搜索/收藏/CRUD/启用/二次确认齐备。九项核查全成立、四条 P0 红线无一突破。复跑：`cargo test` 215/215、`npm run build` 0 error、release 构建 0 error、命令领域 policy 自检 11 坏样本全检出、UI 逻辑 26 断言、pre-merge ALL_PASS。**新增债务 D18**（片段 `argv[0]` 未过 `check_launch_target`，判非阻塞：与脚本库允许用户自写 bash 脚本同授信、红线针对应用侧拼接、名字黑名单可被绝对路径绕过；但属对 `M2-4.a §8.1` 的未申明偏离，须单开检查点裁定）/ **D19**（**本需求 #4 的「内置常用命令分类」只交付分类框架、未交付内置片段种子**，首次使用命令库为空；b 卡范围未含种子故非漏交付，登记后续卡 `M2-6.e`）/ **D20**（GUI 实点验收挂账，未伪造）。证据 `logs/checkpoints/M2-6-ACCEPT-20260905-1625.md`。
+ > 上一版（保留，M2-6.d 交付详情）：**M2-6.d 命令片段库前端面板已实现（`AI:DEEP / R:high`，Codex gpt-5.5），NEXT=`M2-6 整体裁定`**。新增 `snippetUi.ts`、`CommandSnippetPanel.vue`、`commands` 模块入口与 store 动作；支持分类/搜索/收藏、新增/编辑/删除、参数表单复用、dangerous 二次确认、启用开关，并通过 `ScriptRunDialog kind=\"command\"` 调用 `bridge.runCommand` 复用执行态。新增 `check-command-ui-logic.mjs` 26 断言并接入 pre-merge。GUI 实点验收挂账。证据 `logs/checkpoints/M2-6.d-20260905-1552.md`。
+ > 再上一版（保留）：M2-5 任务卡已展开为 a/b/c 三张子卡（`logs/checkpoints/M2-5-20260905-1301.md`，纯文档展开，未改产品代码），NEXT=`M2-5.c`（b 已交付：执行面板=真实运行+取消+输出流rAF合并+补 D15 审计+D14 节流；c 待裁定：script_runs_list 运行历史）**。拆卡：a 脚本库 CRUD UI（纯前端不接执行）/ b 执行面板（真实执行+输出流+取消+补 D15 审计与 D14 后端 30ms 节流）/ c 运行历史（新增后端 `script_runs_list`）。现状实测：前端零 Script 组件，但 `bridge.ts` 7 条命令与 `types.ts` 类型镜像已由 M2-3/M2-4 交付就位；缺口仅 UI 组件与两项未交付物（**事件监听封装缺失 / 运行历史读取命令缺失**）。对两份 mock 草案做 6 处事实修正（草案写于 M2-4 落地前，「不接执行用 mock」前提已失效）；四组分歧留 b 卡裁定。新增 `check-script-ui-policy.py`（7 默认码+6 pending 码位+变异防呆）。上一版：M2-4 整体裁定已签（`PASS_WITH_DEBT`，`AI:DEEP / R:high`，裁定者 CodeBuddy Hy4 / 腾讯混元），NEXT=`M2-5`。本裁定为**跨模型复核**（与 a/b 卡裁定者 Kimi K3、c/d/e 实现者 Codex gpt-5.5 均不同模型），同时完成 `M2-4.b-VERDICT §6` 遗留要求：`§3.1 路线 A`（argv 一律不加引号）与 `§3.2 路线 B`（piped + 只丢弃 drain，drain≠背压）均**确认维持**。`M2-4.a §8` 八组契约六组完全成立、两组部分成立，**四条 P0 红线无一突破**。新增债务 **D14**（`script-output` 未按 §8.5 做 30 ms 时间节流）/ **D15**（§8.7 审计缺 `script.run.finish` 与 `script.validate.reject`，`cancel` 缺 `cancelledBy`，属未申明的契约偏离）/ **D16**（R15 脚本文件被替换/删除未显式预检）/ **D17**（GUI 事件联调、R9 100 MB、R12 运行时链路无取证）。**新增后续检查点（与「评估废弃 `ScriptParam.raw`」同级）：`script.validate.reject` 审计须在 M2-5 前端执行面板上线前补齐**——一旦有 UI，用户可控参数即可触达 `build_argv`，缺失审计等于失去攻击尝试的可观测性。上一版：M2-4.e 移除 shell spawn 开放面已完成（`AI:DEEP / R:high`，Codex gpt-5.5），NEXT=`M2-4 整体裁定`。按 M2-4.a 裁定，移除 `src-tauri/capabilities/default.json` 中 `shell:allow-spawn args:true` 以及 `shell:allow-stdin-write`/`shell:allow-kill`，移除主进程与 grid child 两处 `tauri_plugin_shell::init()`，裁掉 Rust `tauri-plugin-shell` 与前端 `@tauri-apps/plugin-shell` 依赖；刷新 M2-2/M2-3 对 `package*.json` 的哈希基线。`check-script-exec-policy.py` 追加 e 卡三类默认违规码（capability / npm / Rust 插件回流），23 坏样本自检通过。验证：`cargo test` 198/198 PASS；`cargo build --release --locked` 0 error、2 warning 仍为既有 `grid_process.rs` 死代码；`npm run build` 0 error；三套相关 policy 全过；运行时 GUI 目视验收仍挂账。
+@@ -63,7 +63,7 @@ git log --oneline -12
+ | M1 浏览器与版本控制 | **PASS，里程碑已验收（PASS_WITH_DEBT）** | `M1-0`~`M1-9` 全部 PASS；`M1-ACCEPT` 收口验收通过（无 BLOCKER；GUI/E2E 挂账 D1~D9 保留，汇总见 `logs/checkpoints/M1-ACCEPT-20260903-0843.md` §7） |
+ | M2 本地资产与执行 | **PASS（含 M2-6.e 内置片段种子）** | M2-1~M2-6.d 逐卡 PASS_WITH_DEBT；M2-7/8/9 均 PASS；M2-6.e 关闭 D19 |
+ | M3 终端增强 | **PASS_WITH_DEBT，整体裁定已签；M3.c 已交付（WBS M3-1~M3-4 全关闭）** | M3-1/2/3 已落地并通过裁定（证据 `logs/checkpoints/M3-REVIEW-VERDICT-20260905-2101.md` + `B-M3.a-terminal-pipeline-20260905-2035.md`）；M3.c = 临时历史 40 条 + resize 静默窗口（证据 `logs/checkpoints/M3.c-20260905-2202.md`，后端 `src-tauri/**` 零改动）；挂账 D23（GUI 实点）/ D24（M0-0.b 吞吐基线未重采）/ D25（`on_channel_dead` 未 wait）/ **D26**（历史按块计数，上界 40 × ≤64 KiB ≈ 2.5 MB，未按字符封顶） |
+-| **M4 数据与调度** | **任务卡已展开（CARD_EXPANDED），NEXT=`M4-1.a`** | 前置已满足，M4 已解锁。展开卡 `logs/checkpoints/M4-20260905-2225.md`：M4-1~M4-8 → 30 张子卡 + 依赖图 + 冻结条款 F1~F12 + 测试矩阵 ID 段 + 6 个新夹具码位。库链 `M4-1(A2)→M4-2.s(A4)→M4-2.a~d(A3)→M4-3.a~d(A3)→M4-4(A5)`；调度链 `M4-5(A6)→M4-6(A7)→M4-7(A7)→M4-8(A8)`；两链互不阻塞。并行施工按 `PARALLEL_COMMAND_BOARD.md`，**只有 A0 可 push** |
++| **M4 数据与调度** | **任务卡已展开（CARD_EXPANDED），NEXT=`M4-1.a`** | 前置已满足，M4 已解锁。展开卡 `logs/checkpoints/M4-20260905-2225.md`：M4-1~M4-8 → 30 张子卡 + 依赖图 + 冻结条款 F1~F12 + 测试矩阵 ID 段 + 6 个新夹具码位。库链 `M4-1(A2)→M4-2(A3)→M4-3(A4)→M4-4(A5)`；调度链 `M4-5(A6)→M4-6+M4-7(A7)→M4-8(A8)`；两链互不阻塞，库链内部 A3 先于 A4。并行施工按 `PARALLEL_COMMAND_BOARD.md`，**只有 A0 可 push** |
+ | M5 协议与智能生态 | 未开始、仍锁定 | 等 M1~M4 全部稳定 |
+
+ 判定规则：`P0/P1/P2` 表示业务与风险优先级，`M0~M5` 表示执行顺序。M0 已放行后，后续需求仍必须按 `详细设计与实施计划.md` 展开检查点、逐点验收、独立提交。
+diff --git a/详细设计与实施计划.md b/详细设计与实施计划.md
+index efe8d08..b60f79b 100644
+--- a/详细设计与实施计划.md
++++ b/详细设计与实施计划.md
+@@ -1,5 +1,5 @@
+ # mvp-browser-os-v3 详细设计与实施计划
+-> 本版变更：**M4 任务卡已展开（Lane A1，`AI:DEEP / R:high`，CodeBuddy 会话 Hy4 / 腾讯混元；纯文档展开，产品代码零改动），NEXT=`M4-1.a`（WBS M4-1 首张子卡，Lane A2 认领）**。展开依据 `logs/checkpoints/M4-20260905-2225.md`：①**现状实测 14 项**——`sqlx`/`rusqlite`/`mysql`/`postgres`/`serde_yaml`/`tokio-cron-scheduler` 在 `Cargo.toml` 与 `Cargo.lock` 中**均为零**；`tokio 1.53.1` 仅在锁文件（tauri **传递**依赖，当前 `use tokio::...` 不可编译）；`build.rs` 仍只有 `tauri_build::build()` 无代码生成；命令 105 个 / ACL 108 条且末条锚点仍是 `list_artifact_images`；`ShutdownCoordinator` 已注册 6 任务；持久化**全部为 JSON**。②**对需求 #6/#11 与 WBS 原文的 7 处事实修正**——F-1 需求 #11 写「`tokio::spawn` 启动」但 tokio 非直接依赖，须由 M4-1.a 显式裁决；F-2「YAML 扩库 + build.rs 生成 `SupportedDb`」建立在 dbx 五成员 workspace 之上，本项目单 crate，须由 M4-1.b 裁决是否退化为手写枚举白名单；F-3 三个 db 命令名只作占位登记，以 M4-3.a 为准；F-4 `tasks.yaml` 统一为 `tasks.json`（既有持久化全为 JSON，不引入第二套形态）；F-5 `TaskKind` 首期只做 `Script`/`Command`，`Tool` 无 headless 执行入口不做（同 M2-3 拒绝空结构口径）；F-6「导出成果库」列 M4-4 显式范围项；F-7 db 凭据键须用 `db:<conn_id>` 命名空间（`KeyringStore` 按精确字符串取键，与 git `repo_id` 碰撞会静默取回错误凭据）。③**依赖图**：库链 `M4-1 → M4-2.s(A4) → M4-2.a~d(A3) → M4-3.a~d(A3) → M4-4(A5)` 与调度链 `M4-5(A6) → M4-6(A7) → M4-7(A7) → M4-8(A8)` **两链互不阻塞可并行**，合流点为 M4 里程碑裁定。④**裁决 R-A1-1**：指挥板把 A4 标为「M4-3 database safety gate」，与 WBS（M4-2=生产安全策略 / M4-3=命令层）编号冲突；**以内容为据、编号沿用 WBS**，该前置切片编号 **`M4-2.s`**（落 `security_policy.rs`、零 db 依赖，故可先于 A3 合入）。⑤**冻结 F1~F12**（写默认拒绝 fail-closed / 凭据零落地 / 结果上限必带截断标记 / 分类器零 db 依赖 / ACL 插在 `list_artifact_images` 之前 / 调度只做触发禁第二套执行路径 / `stop-scheduler` 索引必须小于 `kill-running-scripts` / 时钟可注入 / 同任务不并发且错过执行策略落为字段 / 统一 JSON 原子写 / 零新增 npm 依赖 / M4 不代关 D23~D26 且新债务从 D27 起）。⑥子卡总数 30（M4-1:4 / M4-2:5 / M4-3:4 / M4-4:3 / M4-5:4 / M4-6:3 / M4-7:4 / M4-8:3），测试矩阵 ID 段与四个新夹具脚本（`check-database-policy.py` / `check-database-ui-logic.mjs` / `check-database-ui-policy.py` / `check-scheduler-policy.py` / `check-scheduler-ui-logic.mjs` / `check-scheduler-ui-policy.py`）码位已一次性预留。**未选驱动、未定字段、未写任何产品代码**；选型与字段冻结权归 A2/A6。
++> 本版变更：**M4 任务卡已展开（Lane A1，`AI:DEEP / R:high`，CodeBuddy 会话 Hy4 / 腾讯混元；纯文档展开，产品代码零改动），NEXT=`M4-1.a`（WBS M4-1 首张子卡，Lane A2 认领）**。展开依据 `logs/checkpoints/M4-20260905-2225.md`：①**现状实测 14 项**——`sqlx`/`rusqlite`/`mysql`/`postgres`/`serde_yaml`/`tokio-cron-scheduler` 在 `Cargo.toml` 与 `Cargo.lock` 中**均为零**；`tokio 1.53.1` 仅在锁文件（tauri **传递**依赖，当前 `use tokio::...` 不可编译）；`build.rs` 仍只有 `tauri_build::build()` 无代码生成；命令 105 个 / ACL 108 条且末条锚点仍是 `list_artifact_images`；`ShutdownCoordinator` 已注册 6 任务；持久化**全部为 JSON**。②**对需求 #6/#11 与 WBS 原文的 7 处事实修正**——F-1 需求 #11 写「`tokio::spawn` 启动」但 tokio 非直接依赖，须由 M4-1.a 显式裁决；F-2「YAML 扩库 + build.rs 生成 `SupportedDb`」建立在 dbx 五成员 workspace 之上，本项目单 crate，须由 M4-1.b 裁决是否退化为手写枚举白名单；F-3 三个 db 命令名只作占位登记，以 M4-3.a 为准；F-4 `tasks.yaml` 统一为 `tasks.json`（既有持久化全为 JSON，不引入第二套形态）；F-5 `TaskKind` 首期只做 `Script`/`Command`，`Tool` 无 headless 执行入口不做（同 M2-3 拒绝空结构口径）；F-6「导出成果库」列 M4-4 显式范围项；F-7 db 凭据键须用 `db:<conn_id>` 命名空间（`KeyringStore` 按精确字符串取键，与 git `repo_id` 碰撞会静默取回错误凭据）。③**依赖图（已按 A0 覆盖裁决更新）**：库链 `M4-1(A2) → M4-2(A3，含连接池/查询核心 + SQL 风险分类器 + 生产判定，落 `security_policy.rs`) → M4-3(A4，db_* 命令层/ACL/审计/Keyring) → M4-4(A5)` 与调度链 `M4-5(A6) → M4-6+M4-7(A7) → M4-8(A8)` **两链互不阻塞可并行**，合流点为 M4 里程碑裁定。④**~~裁决 R-A1-1~~ 已被 A0 覆盖裁决（2026-09-05 23:30）推翻**：A1 曾把 SQL 风险分类切片拆为 `M4-2.s` 并划归 A4、排在 A3 之前；**A0 裁定改为「A3 = M4-2 全卡（含分类器、生产判定、`security_policy.rs`、连接池/查询核心，merge 3）；A4 = M4-3 命令层（merge 4）」**。`M4-2.s` 编号**即日作废**；本文其余位置的 Lane 归属若与最新 `PARALLEL_COMMAND_BOARD.md` 冲突，一律以指挥板为准。⑤**冻结 F1~F12**（写默认拒绝 fail-closed / 凭据零落地 / 结果上限必带截断标记 / 分类器零 db 依赖 / ACL 插在 `list_artifact_images` 之前 / 调度只做触发禁第二套执行路径 / `stop-scheduler` 索引必须小于 `kill-running-scripts` / 时钟可注入 / 同任务不并发且错过执行策略落为字段 / 统一 JSON 原子写 / 零新增 npm 依赖 / M4 不代关 D23~D26 且新债务从 D27 起）。⑥子卡总数 30（M4-1:4 / M4-2:5 / M4-3:4 / M4-4:3 / M4-5:4 / M4-6:3 / M4-7:4 / M4-8:3），测试矩阵 ID 段与四个新夹具脚本（`check-database-policy.py` / `check-database-ui-logic.mjs` / `check-database-ui-policy.py` / `check-scheduler-policy.py` / `check-scheduler-ui-logic.mjs` / `check-scheduler-ui-policy.py`）码位已一次性预留。**未选驱动、未定字段、未写任何产品代码**；选型与字段冻结权归 A2/A6。
+ > 上一版（保留）：**M3.c 已交付（`AI:DEEP / R:high`，CodeBuddy Hy4），WBS M3-4 勾选、M3 WBS（M3-1~M3-4）全部关闭，NEXT=`M4-1 数据库驱动与生成契约`（WBS 既有编号，领取前需先展开任务卡）**。M3.c = **E1 临时历史 40 条**（`useSystemStore.ts` 内存环形数组上限 40 + `TerminalPane` 重建回放；草案「无重连场景暂不采纳」的前提在 M3.a 后已不成立：`MainArea.vue:102` Dock 终端为 `v-if` 互斥分支，切 Tab 即卸载 xterm，PTY 会话仍活）+ **E2 resize 静默窗口**（新增 `src/composables/useTerminalResize.ts`：尺寸去重 + 140 ms 静默 + 500 ms 硬上界 + 卸载 `dispose()` + 新会话 `reset()` 补报首帧；`fit()` 仍每次都调，静默只作用于后端上报，失败静默不弹窗）。新增 `scripts/check-terminal-ui-logic.mjs`（25 断言，加载真实 store/composable + 假时钟）并接入 pre-merge；`check-terminal-policy.py` 新增 10 条不变量（含 3 条隐私红线：历史不落盘 / 不进审计 / 后端不留存）+ 12 个变异坏样本（17→29）。**后端 `src-tauri/**` 零改动**，无新增命令（ACL / capabilities / `main.rs` 注册均不变），零新增依赖。验证：`cargo test` 232/232、`npm run build` 0 error、`check-terminal-policy.py --self-test` 29/29、`check-terminal-ui-logic.mjs` 25 断言、pre-merge ALL_PASS、`git diff --check` 0。新增债务 **D26**（历史按块计数，上界 40 × ≤64 KiB ≈ 2.5 MB）；**D23** 继续挂账（本卡真机手感类用例未目视验收，不代签）。证据 `logs/checkpoints/M3.c-20260905-2202.md`。
+ > 上一版（保留，M3 裁定）：**M2-6 整体裁定已签（`PASS_WITH_DEBT`，`AI:DEEP / R:high`，裁定者 CodeBuddy Hy4 / 腾讯混元）；两份独立复核报告的 Must Fix 已单开 `M2-6-fix1` 落地，NEXT=`M2-7.a 工具清单契约冻结（待认领）`**。整改（`logs/checkpoints/M2-6-REVIEW-VERDICT-20260905-1648.md`）：**P1-1** 补 `snippet_execution_gate_tests`（远程 webview 调 5 个命令片段作用域全拒、主窗口放行）；**P1-2 书面裁定不上程序名黑名单**（`/bin/bash`/`env`/`python3 -c` 均可绕过），最小收敛为 `validate_snippet` 拒绝 `argv[0]` 占位符（`ARGV_PROGRAM_PLACEHOLDER`），程序名回到定义期字面量以恢复静态可审计性，**D18 结论不变**；**P1-3** `script_runner.rs` 纳入命令领域夹具 + 4 条不变量（复用 `start_command` / 执行层禁 shell 拼接 / 整元素占位 / argv[0] 拒绝），坏样本 11→15；**F-1** 新建态 `enabled` 贯通（`snippet_add` 收 `Option<bool>`），修掉启用勾选被静默覆盖；**F-2** `CommandSnippetPanel.vue` + `snippetUi.ts` 纳入 `check-script-ui-policy.py`（13→16 码位）；**D-1** 关键路径串追平。UI 断言 26→36。复跑：`cargo test` **220/220**、`cargo fmt --check` 干净、release 0 error、两套命令/脚本 UI 夹具自检全过、pre-merge **ALL_PASS**。a `218ed03` / b `af07e51` / c `80725f8` / d `9756af1` 四卡全交付，**九项核查清单全部成立**：argv 契约未退化；`snippet_*` 四命令 source check + `check_id` + ACL（在 `list_artifact_images` 之前）+ handler 同步；`run_command` 经 `script_runner::start_command` 复用 `start_argv_run`（**同一进程表/输出/取消/落盘，无第二套旁路**）；无 `sh -c`/`bash -c`、无 shell 权限回流；`cmd.*` 审计 detail 无 argv/参数名/参数值/命令行/正文；前端分类/搜索/收藏/CRUD/启用/dangerous 二次确认齐备；`ScriptRunDialog kind="command"` 复用执行态；headless 26 断言 + pre-merge 已覆盖 d 卡。F1~F10 十条冻结条款逐条有实现对应。复跑：`cargo test` **215/215**、`npm run build` 0 error、`cargo build --release --locked` 0 error（2 warning 仍为既有死代码）、命令领域 policy 自检 11 坏样本全检出 + 默认零违规 + pending NONE、`check-command-ui-logic.mjs` 26 断言、pre-merge **ALL_PASS**、`git diff --check` 0。**新增债务 D18**（命令片段 `argv[0]` 未过 `check_launch_target`，`["bash","-c","{X}"]` 可由作者构造；**判非 BLOCKER**：同脚本库「用户自写 bash 脚本」授信模型、红线针对应用侧拼接、名字黑名单可被绝对路径绕过；但属对 `M2-4.a §8.1` 的**未申明偏离**，须单开检查点裁定补齐或显式豁免）、**D19**（需求 #4「内置常用命令分类」只交付分类框架、无内置片段种子，首次使用为空；登记后续卡 `M2-6.e`）、**D20**（M2-6 全链路 GUI 实点验收未完成，D17 延伸，**未伪造**）。观察项 O1~O5（b/c 卡未标实现模型 / 运行历史不区分来源 / 二次确认用原生 `confirm` / `interpreter` 下拉执行期无效且缺说明文案 / 占位名首字符口径微差但不可达）。证据 `logs/checkpoints/M2-6-ACCEPT-20260905-1625.md`。**纯裁定，未改产品代码**。
+ > 上一版（保留，M2-6.d 交付详情）：**M2-6.d 命令片段库前端面板已实现（`AI:DEEP / R:high`，Codex gpt-5.5），NEXT=`M2-6 整体裁定`**。新增 `snippetUi.ts` 纯逻辑层、`CommandSnippetPanel.vue` 面板、`commands` 模块入口与 `useWorkspaceStore` snippets 动作；分类/搜索/收藏、新增/编辑/删除、参数表单复用、dangerous 二次确认、启用开关已接入；`ScriptRunDialog` 扩展命令模式调用 `bridge.runCommand`，执行态复用脚本输出/完成事件与取消入口。新增 `check-command-ui-logic.mjs`（26 断言）并接入 pre-merge。GUI 实点验收挂账。证据 `logs/checkpoints/M2-6.d-20260905-1552.md`。
+@@ -42,7 +42,7 @@
+ | M1 浏览器与版本控制 | **PASS，里程碑已验收（PASS_WITH_DEBT）** | `M1-0`~`M1-9` 全部 PASS；`M1-ACCEPT` 收口验收通过（无 BLOCKER，GUI/E2E 挂账 D1~D9 保留，见 `logs/checkpoints/M1-ACCEPT-20260903-0843.md`） |
+ | M2 本地资产与执行 | **PASS（含 M2-6.e 内置片段种子）** | `M2-1`~`M2-6.d` 逐卡 PASS_WITH_DEBT；`M2-7`/`M2-8`/`M2-9` 均 PASS；`M2-6.e` 关闭 D19；**M2 里程碑已收口，M4 启动前置已满足** |
+ | M3 终端增强 | **PASS_WITH_DEBT（M3.a + M3.c 均已交付，WBS M3-1~M3-4 全关闭）** | M3-1/2/3 已落地（mpsc+pump、进程组回收、Channel 退避），证据 `logs/checkpoints/M3-REVIEW-VERDICT-20260905-2101.md`；M3-4 体验项（临时历史 40 条 + resize 静默窗口）已交付，证据 `logs/checkpoints/M3.c-20260905-2202.md`；挂账 D23/D24/D25/D26；NEXT=`M4-1`（WBS 既有编号，领取前需先展开任务卡） |
+-| M4 数据与调度 | **任务卡已展开（CARD_EXPANDED），NEXT=`M4-1.a`** | 前置（M2 执行通道 + M0 安全规则）已满足。展开卡 `logs/checkpoints/M4-20260905-2225.md`：M4-1~M4-8 拆为 30 张子卡、依赖图、冻结条款 F1~F12、测试矩阵 ID 段、6 个新夹具码位预留。Lane A2=M4-1 / A4=M4-2.s / A3=M4-2,M4-3 / A5=M4-4 / A6=M4-5 / A7=M4-6,M4-7 / A8=M4-8 |
++| M4 数据与调度 | **任务卡已展开（CARD_EXPANDED），NEXT=`M4-1.a`** | 前置（M2 执行通道 + M0 安全规则）已满足。展开卡 `logs/checkpoints/M4-20260905-2225.md`：M4-1~M4-8 拆为 30 张子卡、依赖图、冻结条款 F1~F12、测试矩阵 ID 段、6 个新夹具码位预留。Lane 归属（**A0 覆盖裁决后**）：A2=M4-1 / **A3=M4-2（PoolKind + 生产安全 + SQL 分类器，merge 3）** / **A4=M4-3（db_* 命令层，merge 4）** / A5=M4-4 / A6=M4-5 / A7=M4-6,M4-7 / A8=M4-8；另有 A9(M5 预研) / A10(安全复核) / A11(验收证据) / A12(冲突扫描)，共 12 Lane |
+ | M5 协议与智能生态 | 未开始、已锁定 | 等 M1~M4 稳定后再启动 |
+
+ 执行纪律：M0 已放行后，后续仍必须按 WBS 检查点展开、逐点验收、独立提交；不得以 P0/P1 优先级为由跳过检查点、合并多个里程碑或省略证据。
+@@ -453,8 +453,8 @@ pub images: Vec<ImageRef>,  // ImageRef { path: String, caption: Option<String>
+
+ - **#6 数据库功能**
+   - [ ] **M4-1 数据库驱动与生成契约** `[S3|LEVERAGE:3|COMPLEX|AI:DEEP|R:high]`：选定依赖、YAML schema 和 `SupportedDb` 生成；禁 JDBC 侧车。**子卡 M4-1.a/b/c/d（Lane A2，merge 2）**；须裁决 F-1（tokio 非直接依赖）与 F-2（build.rs 代码生成 vs 手写枚举）。
+-  - [ ] **M4-2 PoolKind 与生产安全策略** `[S3|LEVERAGE:3|COMPLEX|AI:DEEP|R:xhigh]`：连接池抽象、SQL 风险分类和 fail-closed 写权限。**子卡 M4-2.s（Lane A4，merge 3，落 `security_policy.rs` 且零 db 依赖）+ M4-2.a/b/c/d（Lane A3，merge 4）**；编号口径见裁决 R-A1-1。
+-  - [ ] **M4-3 数据库命令层** `[S3|LEVERAGE:3|COMPLEX|AI:DEEP|R:xhigh]`：`connect/query/disconnect`、ACL、审计、Keyring 和结果上限。**子卡 M4-3.a/b/c/d（Lane A3，merge 4）**；命令名以 M4-1.b 冻结为准，ACL 新条目须插在 `list_artifact_images` 之前。
++  - [ ] **M4-2 PoolKind 与生产安全策略** `[S3|LEVERAGE:3|COMPLEX|AI:DEEP|R:xhigh]`：连接池抽象、SQL 风险分类和 fail-closed 写权限。**子卡 M4-2.s 已作废**（A1 原拆给 A4 的安全前置切片）。**现行口径（A0 覆盖裁决 2026-09-05 23:30）：M4-2.a/b/c/d 全部归 Lane A3（merge 3），含连接池抽象、SQL 风险分类（落 `security_policy.rs`）、生产判定与 fail-closed 写权限**；A4 不再参与 M4-2。
++  - [ ] **M4-3 数据库命令层** `[S3|LEVERAGE:3|COMPLEX|AI:DEEP|R:xhigh]`：`connect/query/disconnect`、ACL、审计、Keyring 和结果上限。**子卡 M4-3.a/b/c/d（Lane **A4**，merge 4）**；命令名以 M4-1.b 冻结为准，ACL 新条目须插在 `list_artifact_images` 之前。
+   - [ ] **M4-4 数据库 UI** `[S3|LEVERAGE:1|MEDIUM|AI:BALANCED|R:high]`：连接表单、编辑器、结果表、导出和危险操作确认。**子卡 M4-4.a/b/c（Lane A5，merge 6）**；「导出成果库」为显式范围项（F-6），不确定则首期不做。
+ - **#11 定时任务调度**
+   - [ ] **M4-5 调度核心** `[S3|LEVERAGE:2|COMPLEX|AI:DEEP|R:high]`：`TaskDef`、时钟语义、错过执行策略和可取消 Scheduler。**子卡 M4-5.a/b/c/d（Lane A6，merge 2）**；`TaskKind` 首期仅 `Script`/`Command`（F-5），持久化 `tasks.json`（F-4），时钟可注入（F8）。
+diff --git a/logs/checkpoints/M4-A1-lane-ownership-reconciliation-20260905-2308.md b/logs/checkpoints/M4-A1-lane-ownership-reconciliation-20260905-2308.md
+new file mode 100644
+index 0000000..b3da5ec
+--- /dev/null
++++ b/logs/checkpoints/M4-A1-lane-ownership-reconciliation-20260905-2308.md
+@@ -0,0 +1,94 @@
++# M4 Lane 归属漂移清理（Lane A1 · 第二批）
++
++> 执行者：Lane A1（CodeBuddy 会话，Hy4 / 腾讯混元），`IMPLEMENTER_MODEL=CodeBuddy Hy4`
++> 时间：2026-09-05 23:08 CST　基线：`85d2d7b`
++> 触发：重读 `WORKSPACE_IDENTITY.md` + `PARALLEL_COMMAND_BOARD.md`（23:55 版）后按 Batch Implementation Dispatch 领取任务
++> 性质：**纯文档，产品代码零改动**（`src/` `src-tauri/` `scripts/` `package*.json` 一律未触碰）
++> 状态：`PASS_WITH_DEBT`（本卡范围内的漂移已清；残留 3 项需 A0/A2 处置，见 §5）
++
++---
++
++## 1. 为什么 A1 这一批**没有**做「完整代码包」
++
++用户提示词为指挥板 §One-Line Resume Prompt 的通用模板（「按 Batch Implementation Dispatch 做完整代码包」）。逐条比对最新指挥板后，**A1 无法按字面执行**，依据是指挥板自身的硬停规则：
++
++| 硬停依据 | 指挥板原文位置 | 实测事实 |
++|---|---|---|
++| 任务要求改 Allowed Scope 外的文件 | Startup Gate 硬停第 57 行「The task would require changing files outside the lane's allowed scope」 | A1 Allowed Scope = `AI-模型切换与接手清单.md` / `详细设计与实施计划.md` / `后续需求TODO.md` / `logs/checkpoints/`。「完整代码包」= `src/`+`src-tauri/`+`scripts/`，**全部越界** |
++| 工作树被其他 Lane 占用 | Startup Gate 硬停第 56 行「The worktree is dirty with changes from another lane」 | 开工时工作树含 **A6**（`scripts/pre-merge.sh`、`scripts/check-scheduler-policy.py`、`logs/checkpoints/A6-M4-5.d-20260905-2350.md`）、**A11**（`logs/assist/M4-A11-debt-ledger-*`、`logs/checkpoints/M4-A11-verification-matrix-*`）、**A10**（`logs/assist/A10-M4-security-recheck-A1A2A6-*`）。A1 若动这些文件即为覆盖他人改动 |
++| Batch Implementation Dispatch **无 A1 条目** | §Batch Implementation Dispatch 仅覆盖 A2~A12 | 指挥板第 110 行明确：**「A1 M4 expansion is integrated.」** |
++| 不得混 Lane 范围 | 第 61 行「Do not blend scopes. Stop and report the conflict unless the controller has already corrected the lane」 | A1 的 Must Deliver（M4-1~M4-8 展开卡 + 依赖图）已由 A0 于 `6d73ce1` 集成完毕 |
++| 不是产品代码 Lane | §Batch Implementation Rule 第 33 行「A **product-code lane** must not stop after only a note」 | A1 的 Purpose = 「M4 task-card expansion」，非产品代码 Lane，第 33 行不适用 |
++
++**结论：A1 不写代码、不越界。改为执行「A1 职责内剩余且当前唯一有价值的工作」——清理 A0 覆盖裁决后残留在三份主文档里的 Lane 归属漂移。**
++
++---
++
++## 2. A0 覆盖裁决（2026-09-05 23:30）与 A1 原裁决的冲突
++
++A0 在 `logs/checkpoints/M4-20260905-2225.md` 顶部追加了覆盖裁决，**推翻 A1 上一批的 R-A1-1**：
++
++| 项 | A1 原裁决（22:25） | **A0 覆盖裁决（23:30，现行）** |
++|---|---|---|
++| SQL 风险分类器 / 生产判定 | 拆为 `M4-2.s`，归 **A4**，merge 3，先于 A3 | 归 **A3**，作为 M4-2 全卡的一部分，merge 3 |
++| `M4-2` 连接池 / 查询核心 | 归 A3（`M4-2.a~d`），merge 4 | 仍归 **A3**，合并为 M4-2 全卡，merge 3 |
++| `M4-3` 命令层 | 归 A3（与 M4-2 同 Lane） | 归 **A4**，merge 4 |
++| `M4-2.s` 编号 | 新建 | **作废** |
++
++**A1 接受该覆盖裁决，不再争 R-A1-1。** 与最新指挥板 Lane 表（A3 行含 `src-tauri/src/security_policy.rs`、A4 行为命令层）及 §Code Dispatch Now（A4 行「First implement M4-2.s safety gate first」）逐条比对，A0 口径自洽。
++
++---
++
++## 3. 本次清理的漂移（8 处，全部在 A1 允许范围内）
++
++A0 的覆盖裁决只改了两处：`logs/checkpoints/M4-20260905-2225.md` 顶部加注、`后续需求TODO.md` 第 9 行加注。**A1 上一批写进三份主文档的归属表述未同步**，会导致 A3/A4 按相反指引施工。本次逐处修正：
++
++| # | 文件 | 位置 | 修正前（陈旧） | 修正后 |
++|---|---|---|---|---|
++| 1 | `详细设计与实施计划.md` | L2 本版变更 ③ | 库链 `M4-1 → M4-2.s(A4) → M4-2.a~d(A3) → M4-3.a~d(A3) → M4-4(A5)` | 库链 `M4-1(A2) → M4-2(A3) → M4-3(A4) → M4-4(A5)`，并注明 A3 含分类器/生产判定 |
++| 2 | `详细设计与实施计划.md` | L2 本版变更 ④ | 「裁决 R-A1-1…以内容为据、编号沿用 WBS，前置切片编号 `M4-2.s`」 | `~~裁决 R-A1-1~~ 已被 A0 覆盖裁决推翻`；`M4-2.s` 编号即日作废 |
++| 3 | `详细设计与实施计划.md` | L45 里程碑表 | `A4=M4-2.s / A3=M4-2,M4-3` | `A3=M4-2（merge 3）/ A4=M4-3（merge 4）`，并补 A9~A12 共 12 Lane |
++| 4 | `详细设计与实施计划.md` | L456 M4-2 主卡 | 「子卡 M4-2.s（Lane A4…）+ M4-2.a/b/c/d（Lane A3，merge 4）」 | `M4-2.s 已作废`；`M4-2.a/b/c/d 全部归 A3，merge 3` |
++| 5 | `详细设计与实施计划.md` | L457 M4-3 主卡 | **「子卡 M4-3.a/b/c/d（Lane A3，merge 4）」** ← 高危 | **「子卡 M4-3.a/b/c/d（Lane A4，merge 4）」** |
++| 6 | `AI-模型切换与接手清单.md` | L27 下一检查点 | `M4-2.s(A4，merge 3) → M4-2.a~d + M4-3.a~d(A3，merge 4)`；「10 Lane」 | `M4-2(A3，merge 3) → M4-3.a~d(A4，merge 4)`；「12 Lane（含 A10/A11/A12）」 |
++| 7 | `AI-模型切换与接手清单.md` | L28 下一任务路由 | 「M4-2：M4-2.s `AI:DEEP / R:xhigh`、M4-2.a~d…」 | 「M4-2：`AI:DEEP / R:xhigh`（A3 全卡…`M4-2.s` 不再单列路由）」 |
++| 8 | `后续需求TODO.md` | L36 ③ / L66 库链 | `M4-1(A2) → M4-2.s(A4) → M4-2.a~d(A3) → M4-3.a~d(A3) → M4-4(A5)` | `M4-1(A2) → M4-2(A3) → M4-3(A4) → M4-4(A5)` |
++
++**第 5 处是本次最高危项**：原文把 M4-3 命令层判给 A3，与 A0 覆盖裁决（A4=命令层）**正好相反**。A3 与 A4 若各自照主文档施工，会在 `bridge.rs` / `main.rs` / ACL 三个高冲突文件上直接撞车。
++
++---
++
++## 4. 自验证
++
++```text
++git status --short --branch          → ## master...origin/master [领先 2]；仅 A1 的 3 份主文档被改
++python3 scripts/check-plan-routing.py → EXIT=0，ok (50 WBS rows)
++git diff --check                      → EXIT=0
++grep "A4=M4-2|A4 先于 A3|A3 依赖 A4"   → 三份主文档零命中
++grep "M4-2.s"                         → 仅剩 7 处「作废 / 覆盖裁决」说明性引用，无施工性指向
++产品代码零改动                          → git status 过滤 src/ src-tauri/ scripts/ package* → 空
++未提交、未 push                        → git log -1 仍为 85d2d7b
++```
++
++`bash scripts/pre-merge.sh` **本轮未跑**：当前工作树含 A6 对 `scripts/pre-merge.sh` 与 `scripts/check-scheduler-policy.py` 的未提交改动，跑门禁会把 A6 的中间态计入结果，也会与 A6 争用同一文件；A1 的改动是纯 Markdown 文档，不影响门禁所校验的任何脚本/代码产物。**建议 A0 在 A6 落地 pre-merge 改动后统一复跑**（见 §5）。
++
++---
++
++## 5. 残留风险与移交
++
++| 编号 | 事项 | 归属 |
++|---|---|---|
++| **O-A1-8** | **M4-1.c 仍是 `STOPPED_EMPTY_ARTIFACT`**（`logs/checkpoints/M4-1.c-20260905-2255.md` L126/L134）。该文件体量 8.5 KB、含完整裁定书正文，但结论段标 STOPPED——属 A2 的活（指挥板 §Code Dispatch Now A2 行），**A1 不得代写**。A3「LIMITED START」与 A4「START」都被它卡着 | **A2 → A3/A4** |
++| **O-A1-9** | 指挥板 §Code Dispatch Now A4 行仍写「First implement **M4-2.s** safety gate first」，用的是**已作废的编号**，与同板 Lane 表（A3=安全策略）自相矛盾。建议 A0 把该行改为「M4-2 safety gate 归 A3；A4 仅做 M4-3 命令层」 | **A0** |
++| **O-A1-10** | A3 与 A4 的 Allowed Scope 都含 `src-tauri/src/database*`（A3 行 84、A4 行 85），且 A3 含 `security_policy.rs`。若两侧同时新建/改 `database.rs`，会直接冲突。建议 A0 明确「A3 先建 `database.rs` 并冻结内部 API，A4 只消费不创建」 | **A0 → A3/A4** |
++| **O-A1-3（沿用，未决）** | M4 验收门禁要求三库各有连接/只读查询/断开/失败用例；无真实 MySQL/PG 实例时只能 `SKIPPED`，需 A0/负责人裁定接受还是补实例。**不得伪造 PASS** | **A0 / 负责人** |
++
++---
++
++## 6. 交付形态
++
++按 §Batch Implementation Rule 第 7 条，A1 留下**单一补丁 + 检查点**：
++
++- 检查点：本文件 `logs/checkpoints/M4-A1-lane-ownership-reconciliation-20260905-2308.md`
++- 补丁：`logs/checkpoints/Lane-A1-lane-ownership-reconciliation-20260905-2308.patch`
++- 未提交、未 push；不跨 Lane 改文件

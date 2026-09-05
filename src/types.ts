@@ -490,3 +490,153 @@ export interface TermMessage {
   dropped_chunks?: number;
   dropped_bytes?: number;
 }
+
+// ====== M4-5 / M4-8 定时任务领域 ======
+// 与后端 domain.rs 的 TaskDef / TaskRunRecord 一一对应（serde rename_all = "snake_case"）。
+// 契约源：`logs/checkpoints/A6-M4-5-scheduler-contract-20260905-2330.md` §3.1 / §6。
+// 命令名沿用 A1 展开卡已冻结的 5 条（task_list/add/update/remove/run_now），本文件不改名。
+export type TaskKind = "script" | "command";
+
+export type MissedRunPolicy = "skip" | "run_once" | "catch_up";
+
+export type RetryBackoff = "fixed" | "exponential";
+
+export type TaskRunTrigger = "scheduled" | "manual" | "catch_up" | "retry";
+
+/// 触发方式：外部标签枚举，序列化为 { cron: { expr } } 或 { interval: { every_secs } }。
+/// 后端只接受标准 5 段 cron（分 时 日 月 周）；间隔下界 60 秒（A6 F-A6-6 保守收窄）。
+export type TaskTrigger =
+  | { cron: { expr: string } }
+  | { interval: { every_secs: number } };
+
+export interface RetryPolicy {
+  /// 含首次；1 = 不重试（默认），硬上限 5
+  max_attempts: number;
+  backoff: RetryBackoff;
+  base_delay_secs: number;
+  max_delay_secs: number;
+}
+
+export interface TaskDef {
+  id: string;
+  name: string;
+  kind: TaskKind;
+  /// 目标 id：ScriptMeta.id（script）或 CommandSnippet.id（command）
+  target_id: string;
+  /// 非 secret 参数值；secret 参数值不落盘（A6 §3.3 R-3）
+  params: Record<string, string>;
+  /// 默认 false（A6 裁定 R-A6-1：自动执行默认关闭）
+  enabled: boolean;
+  trigger: TaskTrigger;
+  missed_run_policy: MissedRunPolicy;
+  /// 仅 catch_up 生效；默认 3，硬上限 10
+  catch_up_limit: number;
+  /// 迟到超过该秒数才判定为「错过」；默认 60
+  misfire_grace_secs: number;
+  retry: RetryPolicy;
+  /// 0 = 沿用 script_runner 默认 60；上限 600
+  timeout_secs: number;
+  /// 判重真相源：上一次「已触发」的计划时刻（不是完成时刻）
+  last_fired_at: string | null;
+  /// 下一次计划触发时刻（永远指向未来）
+  next_run_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// M4-8（A8 接线）：`task_add` 命令的入参形态。
+// 后端 `task_add` 是**平铺命名参数**（不是 TaskDef 结构体）：`name, kind, target_id,
+// trigger, params, missed_run_policy, catch_up_limit, misfire_grace_secs, retry,
+// timeout_secs, enabled`。Tauri 默认把 Rust 命令参数从 snake_case 转成 camelCase，
+// 因此前端调用时多词键必须写成 camelCase（targetId / catchUpLimit / misfireGraceSecs /
+// timeoutSecs）。该结构体即此契约的类型落地，由 `utils/taskUi.ts::serializeTaskAddArgs` 生成。
+export interface TaskAddArgs {
+  name: string;
+  kind: TaskKind;
+  targetId: string;
+  trigger: TaskTrigger;
+  params?: Record<string, string>;
+  missedRunPolicy?: MissedRunPolicy;
+  catchUpLimit?: number;
+  misfireGraceSecs?: number;
+  retry?: RetryPolicy;
+  timeoutSecs?: number;
+  enabled?: boolean;
+}
+
+export interface TaskRunRecord {
+  task_id: string;
+  /// 与 ScriptRunRecord.run_id 同值（join key）
+  run_id: string;
+  trigger: TaskRunTrigger;
+  /// 计划触发时刻；重试沿用同一值，只递增 attempt
+  scheduled_at: string;
+  attempt: number;
+  started_at: string;
+  finished_at: string | null;
+  status: RunStatus;
+  exit_code: number | null;
+  /// 稳定错误码（如 SCRIPT_ALREADY_RUNNING / TASK_TARGET_NOT_FOUND）
+  error_code: string | null;
+}
+
+/// 跳过原因（A6 §5.2）。UI 必须能展示（O-A6-9），否则用户只看到「没跑」。
+export type TaskSkipReason = "reentrant" | "target_busy" | "global_limit";
+
+// ====== M4-4 数据库领域 ======
+// 与后端 domain.rs 的 DbConnectionConfig / DbConnectResult / DbQueryResult 一一对应
+// （serde rename_all = "snake_case"，故嵌套字段一律 snake_case：Tauri 只对顶层命令参数名
+// 做 camel→snake 转换，嵌套结构体不做转换）。
+// 命令名沿用 A1 展开卡已冻结的 3 条（db_connect / db_query / db_disconnect），本文件不改名。
+// 后端实现归 A4（M4-2.s / M4-3）；前端封装归 A5（M4-4），A4 检查点已明确「前端 wiring 归 A5」。
+export type DbKind = "sqlite" | "mysql" | "postgres";
+
+export type DbSslMode = "disable" | "prefer" | "require";
+
+export type DbLimitKind = "rows" | "bytes" | "field";
+
+export type DbQueryState = "completed" | "cancelled" | "timeout" | "failed";
+
+// 与 domain.rs::DbValue 一致（带标签枚举：Null/Bool/Int/Float/Text/BlobLen）。
+export type DbValue =
+  | "Null"
+  | { Bool: boolean }
+  | { Int: number }
+  | { Float: number }
+  | { Text: string }
+  | { BlobLen: number };
+
+// db_connect 入参（结构性无 password 字段，F2：凭据只走瞬时参数，绝不进本 DTO）。
+export interface DbConnectionConfig {
+  id: string;
+  name: string;
+  kind: DbKind;
+  host: string | null;
+  port: number | null;
+  database: string;
+  username: string | null;
+  ssl_mode: DbSslMode;
+  allow_write: boolean;
+  production_hint: boolean | null;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbConnectResult {
+  conn_id: string;
+  kind: DbKind;
+}
+
+// db_query 返回（与 domain.rs::DbQueryResult 一致；rows 内为带标签 DbValue）。
+export interface DbQueryResult {
+  query_id: string;
+  columns: string[];
+  rows: DbValue[][];
+  row_count: number;
+  truncated: boolean;
+  field_truncated: boolean;
+  limit_hit: DbLimitKind | null;
+  elapsed_ms: number;
+  state: DbQueryState;
+}

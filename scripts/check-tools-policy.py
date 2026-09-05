@@ -366,15 +366,23 @@ def run_self_test(root: Path) -> int:
     )
 
     # 10. ACL 顺序错误（list_tools 在 list_artifact_images 之后）
+    #
+    # 变异写法**必须与两者之间的内容无关**：M4 已把 task_* ×5 与 db_* ×3 插在
+    # `list_tools` 与 `list_artifact_images` 之间，原「交换相邻两行」的 replace
+    # 因此失配为空操作，被变异防呆按漏检判 FAIL（2026-09-06 实测红灯 IF-3）。
+    # 改为「摘出 list_tools 条目 → 追加到锚点之后」，中间插多少条命令都不影响。
+    anchor = "list_artifact_images"
+    acl_reordered = good["acl"]
+    tools_entry = '    "list_tools",\n'
+    if tools_entry in acl_reordered and anchor in acl_reordered:
+        acl_reordered = acl_reordered.replace(tools_entry, "", 1).replace(
+            f'    "{anchor}"',
+            f'    "{anchor}",\n    "list_tools"',
+            1,
+        )
     add(
         "ACL 顺序错误：list_tools 晚于 list_artifact_images",
-        mutate(
-            acl=good["acl"].replace(
-                '    "list_tools",\n    "list_artifact_images"',
-                '    "list_artifact_images",\n    "list_tools"',
-                1,
-            )
-        ),
+        mutate(acl=acl_reordered),
         "acl",
         "TOOL_ACL_ORDER_WRONG",
     )

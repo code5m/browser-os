@@ -998,6 +998,125 @@ impl DbErrorCode {
     }
 }
 
+// ---------------------------------------------------------------------------
+// M4-1.c 结果上限 / 取消 / 截断常量与结构（契约冻结见 `logs/checkpoints/M4-1.c-20260905-2255.md`）
+//
+// 放进 `domain.rs` 的理由（指挥板 Batch Implementation Dispatch · Lane A2）：
+// 这些是 **A3（取数循环必须逐行判定）与 A4（审计/夹具要断言）共同消费** 的跨模块契约，
+// 若各实现侧自行定义常量，就会出现「A3 按 1000 行截断、A4 按 500 行审计」的口径漂移。
+// 因此这里冻结**数值与字段名**，实现侧只消费、不重新定义。
+//
+// 全部 `#[allow(dead_code)]`，消费者 = M4-2 / M4-3；不引任何 db 依赖。
+// ---------------------------------------------------------------------------
+
+/// 单条 SQL 文本字节上限。与 `security_policy::MAX_TEXT_FIELD_BYTES` 同量级（单测 T-db-c6 守）。
+#[allow(dead_code)] // 消费者：M4-3 命令层入参校验
+pub const DB_MAX_SQL_BYTES: usize = 64 * 1024;
+
+/// 结果行数上限。**在取数循环内**生效：超第 1000 行即停止取数并丢弃剩余，
+/// 不是「物化完再截断」（A10 G-6）。
+#[allow(dead_code)] // 消费者：M4-2 取数循环
+pub const DB_MAX_ROWS: usize = 1_000;
+
+/// 结果累计字节上限（4 MiB）。与行数上限**任一**命中即停止取数。
+#[allow(dead_code)] // 消费者：M4-2 取数循环
+pub const DB_MAX_RESULT_BYTES: usize = 4 * 1024 * 1024;
+
+/// 单字段字节上限，与 `security_policy::MAX_TEXT_FIELD_BYTES` **必须相等**（单测 T-db-c6 守）。
+#[allow(dead_code)] // 消费者：M4-2 字段截断
+pub const DB_MAX_TEXT_FIELD_BYTES: usize = 64 * 1024;
+
+/// 默认查询超时（秒）。`timeout_secs = 0` 时取本值。
+#[allow(dead_code)] // 消费者：M4-2 / M4-3
+pub const DB_DEFAULT_QUERY_TIMEOUT_SECS: u32 = 30;
+
+/// 查询超时上限（秒），与 `script_runner::MAX_TIMEOUT_SECS` **必须相等**（单测 T-db-c6 守）。
+#[allow(dead_code)] // 消费者：M4-3 入参校验
+pub const DB_MAX_QUERY_TIMEOUT_SECS: u32 = 600;
+
+/// soft（驱动级取消）→ hard（放弃连接）宽限（秒），与 `script_runner::HARD_GRACE_SECS` 对齐。
+#[allow(dead_code)] // 消费者：M4-2 超时分层
+pub const DB_SOFT_TO_HARD_GRACE_SECS: u32 = 5;
+
+/// 取数循环每多少行检查一次取消标志。
+#[allow(dead_code)] // 消费者：M4-2 取数循环
+pub const DB_CANCEL_CHECK_EVERY_ROWS: usize = 64;
+
+/// 导出/落盘字节上限（**仅在 A5 确认做导出后才有消费方**，否则该常量无消费者）。
+#[allow(dead_code)] // 消费者：M4-4 导出（待 F-6 确认）
+pub const DB_MAX_EXPORT_BYTES: usize = 16 * 1024 * 1024;
+
+/// 上限命中原因（审计 `limit_hit` 与前端提示用）。
+#[allow(dead_code)] // 消费者：M4-2 / M4-4
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DbLimitKind {
+    /// 行数达 `DB_MAX_ROWS`
+    Rows,
+    /// 累计字节达 `DB_MAX_RESULT_BYTES`
+    Bytes,
+    /// 单字段达 `DB_MAX_TEXT_FIELD_BYTES`
+    Field,
+}
+
+/// 取数终止状态（即 M4-1.c 冻结的「取消状态名」集合）。
+///
+/// 注意：截断**不是**状态——截断由 `truncated` / `field_truncated` / `limit_hit` 表达，
+/// 状态只描述「为什么停下来」，避免同一事实两处表达。
+#[allow(dead_code)] // 消费者：M4-2 / M4-3 / M4-4
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DbQueryState {
+    /// 正常跑完（可能带截断标记）
+    Completed,
+    /// 前端取消（L1 标志 → L2 循环检查命中）
+    Cancelled,
+    /// 超时（soft 未果 → hard 放弃连接）
+    Timeout,
+    /// 执行失败（错误码见 `DbErrorCode`）
+    Failed,
+}
+
+/// 结果单元格值。**只承载可序列化标量**：二进制列只回长度、不回字节，
+/// 避免二进制经 JSON 打到 webview。
+#[allow(dead_code)] // 消费者：M4-2 结果组装
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DbValue {
+    Null,
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    Text(String),
+    /// 二进制列：只回长度
+    BlobLen(u64),
+}
+
+/// 查询结果（A3 组装；字段名与语义由 M4-1.c 冻结）。
+///
+/// **禁止静默截断**：行/字节/字段任一超限，`truncated` / `field_truncated` / `limit_hit`
+/// 必须被置位，前端据此明示「结果不完整」。
+#[allow(dead_code)] // 消费者：M4-2 / M4-3 / M4-4
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbQueryResult {
+    /// 取消句柄
+    pub query_id: String,
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<DbValue>>,
+    /// 实际返回行数（≤ `DB_MAX_ROWS`）
+    pub row_count: usize,
+    /// 行/字节任一超限即 `true`
+    pub truncated: bool,
+    /// 任一单字段被 `DB_MAX_TEXT_FIELD_BYTES` 截断即 `true`
+    pub field_truncated: bool,
+    /// 命中上限的原因；未命中为 `None`
+    #[serde(default)]
+    pub limit_hit: Option<DbLimitKind>,
+    /// 取数耗时（毫秒）
+    pub elapsed_ms: u64,
+    pub state: DbQueryState,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1149,6 +1268,253 @@ mod tests {
 }
 
 // ---------------------------------------------------------------------------
+// M4-6 / M4-7 定时任务调度领域类型
+//
+// 契约源：`logs/checkpoints/A6-M4-5-scheduler-contract-20260905-2330.md` §3（Lane A6 冻结）。
+// 类型归本文件；校验与持久化归 `tasks.rs`；触发与退出收口归 `scheduler.rs`（均 Lane A7）。
+//
+// **同名不同险提醒**：`ScriptMeta.enabled` / `CommandSnippet.enabled` 默认 **true**
+// （只决定列表可见性，仍需人工点击才执行）；`TaskDef.enabled` 默认 **false**
+// （决定是否**无人值守自动执行**，裁定 R-A6-1）。二者不得互相照搬。
+// ---------------------------------------------------------------------------
+
+/// 任务总数上限（对齐 `scripts::MAX_SCRIPTS` / `snippets::MAX_SNIPPETS`；超出拒绝新增，不静默裁剪）。
+pub const SCHED_MAX_TASKS: usize = 200;
+/// 运行历史落盘上限（`task-runs.json`，环形 FIFO；**不参与判重**，见契约 F-A6-4）。
+pub const SCHED_MAX_HISTORY: usize = 500;
+/// 单次 tick 的触发点扫描上限（时钟前跳时防雪崩）。
+pub const SCHED_MAX_SLOT_SCAN: usize = 512;
+/// 重试次数硬上界（`TaskDef.retry.max_attempts` ≤ 该值）。
+pub const SCHED_MAX_ATTEMPTS: u32 = 5;
+/// CatchUp 补跑硬上界（`TaskDef.catch_up_limit` ≤ 该值）。
+pub const SCHED_MAX_CATCH_UP: u32 = 10;
+/// 重试退避延迟硬上界（秒）。
+pub const SCHED_MAX_DELAY_SECS: u64 = 600;
+
+/// R-11：单条失败执行的**重试总时长硬上界**（秒，自最初触发点 `scheduled_at` 起算）。
+/// 重试窗口（含退避延迟与执行耗时）累计超过此值即停止重试，避免无人值守任务无限拖延重试。
+pub const SCHED_RETRY_TOTAL_BUDGET_SECS: u64 = 5400;
+
+/// 任务名上限（字节，对齐 `scripts::MAX_NAME_BYTES`）。
+pub const TASK_MAX_NAME_BYTES: usize = 128;
+/// 单个任务的参数条目上限（对齐 `scripts::MAX_PARAMS`）。
+pub const TASK_MAX_PARAMS: usize = 20;
+/// `Interval` 合法下界（秒）。对需求 #11 原文「every Ns」的**保守收窄**；放宽须单开卡（O-A6-5）。
+pub const TASK_INTERVAL_MIN_SECS: u64 = 60;
+/// `Interval` 合法上界（秒）：30 天。
+pub const TASK_INTERVAL_MAX_SECS: u64 = 30 * 24 * 3600;
+
+/// 触发方式（首期两种，均 ≥ 1 分钟粒度）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskTrigger {
+    /// 标准 5 段 cron：`分 时 日 月 周`。方言见契约 §4.4 —— **不支持**秒字段、年字段、
+    /// `@reboot` / `@daily` 等宏，以及 `L` / `W` / `#` / `?`。
+    Cron { expr: String },
+    /// 固定间隔（秒）。合法区间 `[60, 2592000]`。
+    Interval { every_secs: u64 },
+}
+
+/// 执行体类型。契约 F-5：首期仅 Script / Command，**不做 Tool**（HTML 工具无 headless 执行入口）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskKind {
+    Script,
+    Command,
+}
+
+impl TaskKind {
+    /// 稳定字符串（审计与 UI 展示用；审计 detail 不得含命令正文/参数值）。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TaskKind::Script => "script",
+            TaskKind::Command => "command",
+        }
+    }
+}
+
+/// 错过执行策略。F9 硬性要求：**必须是 `TaskDef` 字段**，不得退化为运行时常量。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MissedRunPolicy {
+    /// 默认：错过的触发点不补跑，`next_run_at` 直接推到当前之后的第一个未来触发点。
+    #[default]
+    Skip,
+    /// 补跑一次（用**最新**那个错过的触发点），不论错过了多少个。
+    RunOnce,
+    /// 按 `catch_up_limit` 上限补跑，超出部分记 `over_limit` 后丢弃。
+    CatchUp,
+}
+
+#[cfg(test)]
+mod missed_run_policy_label_tests {
+    use super::*;
+    #[test]
+    fn labels_are_stable() {
+        // 错过执行策略的稳定字符串用于审计 detail 与持久化；此处仅校验展示语义。
+        let cases = [
+            MissedRunPolicy::Skip,
+            MissedRunPolicy::RunOnce,
+            MissedRunPolicy::CatchUp,
+        ];
+        let labels = ["skip", "run_once", "catch_up"];
+        for (p, want) in cases.iter().zip(labels.iter()) {
+            let s = match p {
+                MissedRunPolicy::Skip => "skip",
+                MissedRunPolicy::RunOnce => "run_once",
+                MissedRunPolicy::CatchUp => "catch_up",
+            };
+            assert_eq!(s, *want);
+        }
+    }
+}
+
+/// 触发来源（写 `task-runs.json`，供 UI 区分「定时 / 手工 / 补跑 / 重试」）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskRunTrigger {
+    Scheduled,
+    Manual,
+    CatchUp,
+    Retry,
+}
+
+impl TaskRunTrigger {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TaskRunTrigger::Scheduled => "scheduled",
+            TaskRunTrigger::Manual => "manual",
+            TaskRunTrigger::CatchUp => "catch_up",
+            TaskRunTrigger::Retry => "retry",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RetryBackoff {
+    #[default]
+    Fixed,
+    Exponential,
+}
+
+/// 重试策略。默认 **不重试**（`max_attempts = 1`）—— 定时任务的默认行为必须是「跑一次就完」。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RetryPolicy {
+    /// 含首次；1 = 不重试（默认）。硬上限 `SCHED_MAX_ATTEMPTS`（5）。
+    pub max_attempts: u32,
+    pub backoff: RetryBackoff,
+    pub base_delay_secs: u64,
+    pub max_delay_secs: u64,
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self {
+            max_attempts: 1,
+            backoff: RetryBackoff::Fixed,
+            base_delay_secs: 0,
+            max_delay_secs: 0,
+        }
+    }
+}
+
+impl RetryPolicy {
+    /// 第 `attempt` 次（从 1 开始）失败后的退避秒数，**已 clamp 到 `max_delay_secs`**。
+    /// 抖动（±10%）由 `tasks::jitter_secs` 施加，且抖动后仍不得超过 `max_delay_secs`。
+    pub fn delay_secs(&self, attempt: u32) -> u64 {
+        let raw = match self.backoff {
+            RetryBackoff::Fixed => self.base_delay_secs,
+            RetryBackoff::Exponential => {
+                let shift = attempt.saturating_sub(1).min(6);
+                self.base_delay_secs.saturating_mul(1u64 << shift)
+            }
+        };
+        raw.min(self.max_delay_secs).min(SCHED_MAX_DELAY_SECS)
+    }
+}
+
+/// 定时任务定义（持久化 `data_dir/tasks.json`，`Vec<TaskDef>`）。
+///
+/// 判重真相源是 `last_fired_at`（**已触发的计划时刻**，不是完成时刻），
+/// 不是运行历史 —— 历史是环形 FIFO，裁剪后会丢键导致重复执行（契约 §3.2 / F-A6-4）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct TaskDef {
+    /// uuid v4
+    pub id: String,
+    /// 显示名，≤ `TASK_MAX_NAME_BYTES` 字节（对齐 `scripts::MAX_NAME_BYTES`）
+    pub name: String,
+    pub kind: TaskKind,
+    /// 目标 id：`ScriptMeta.id`（Script）或 `CommandSnippet.id`（Command）。创建时校验存在性。
+    pub target_id: String,
+    /// 参数值。**不得包含** `ScriptParam.secret == true` 的参数值（定义期拒绝，契约 §3.3 R-3）。
+    #[serde(default)]
+    pub params: std::collections::HashMap<String, String>,
+    /// 默认 **false**（裁定 R-A6-1，契约 §3.5）；存量文件缺该字段时同样按 false 处理
+    #[serde(default = "default_task_enabled")]
+    pub enabled: bool,
+    pub trigger: TaskTrigger,
+    /// 错过执行策略，默认 `Skip`
+    #[serde(default)]
+    pub missed_run_policy: MissedRunPolicy,
+    /// `CatchUp` 补跑上限，默认 3，硬上限 `SCHED_MAX_CATCH_UP`
+    #[serde(default = "default_catch_up_limit")]
+    pub catch_up_limit: u32,
+    /// 迟到超过该秒数才判定为「错过」，默认 60
+    #[serde(default = "default_misfire_grace_secs")]
+    pub misfire_grace_secs: u64,
+    /// 重试策略，默认「不重试」
+    #[serde(default)]
+    pub retry: RetryPolicy,
+    /// 0 = 沿用 `script_runner::DEFAULT_TIMEOUT_SECS`(60)；上限 600
+    #[serde(default)]
+    pub timeout_secs: u32,
+    /// **判重真相源**：上一次「已触发」的计划触发时刻（不是完成时刻）
+    #[serde(default)]
+    pub last_fired_at: Option<DateTime<Utc>>,
+    /// 下一次计划触发时刻（永远指向未来）；由调度器计算并落盘
+    #[serde(default)]
+    pub next_run_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 自动执行默认关闭（裁定 R-A6-1）：无人值守执行必须是一次显式动作。
+fn default_task_enabled() -> bool {
+    false
+}
+
+fn default_catch_up_limit() -> u32 {
+    3
+}
+
+fn default_misfire_grace_secs() -> u64 {
+    60
+}
+
+/// 定时任务运行记录（持久化 `data_dir/task-runs.json`）。
+///
+/// **仅历史与排障，不参与判重**（判重真相源是 `TaskDef.last_fired_at`）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct TaskRunRecord {
+    pub task_id: String,
+    /// 与 `ScriptRunRecord.run_id` 同值（join key；输出尾存仍在 `script-runs.json`）
+    pub run_id: String,
+    pub trigger: TaskRunTrigger,
+    /// 计划触发时刻；重试沿用同一值，只递增 `attempt`
+    pub scheduled_at: DateTime<Utc>,
+    pub attempt: u32,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub status: RunStatus,
+    pub exit_code: Option<i32>,
+    /// 稳定错误码（如 `SCRIPT_ALREADY_RUNNING`、`TASK_TARGET_NOT_FOUND`）
+    pub error_code: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
 // M4-1 契约单测（ID 段 `T-db-c1~c5`，由 A1 展开卡 §5 分配）
 // 目的不是覆盖实现（实现归 M4-2/M4-3），而是把**契约本身**钉死：
 // 驱动身份串、能力表、凭据字段结构性缺失、缺省值 fail-closed、错误码闭合。
@@ -1156,6 +1522,8 @@ mod tests {
 #[cfg(test)]
 mod m4_1_db_contract_tests {
     use super::*;
+    use crate::script_runner::{HARD_GRACE_SECS, MAX_TIMEOUT_SECS};
+    use crate::security_policy::MAX_TEXT_FIELD_BYTES;
     use serde_json::json;
     use std::collections::BTreeSet;
 
@@ -1309,6 +1677,128 @@ mod m4_1_db_contract_tests {
             ALL_CODES.len(),
             18,
             "错误码枚举闭合：增删必须同步改本断言与夹具码位表"
+        );
+    }
+
+    /// T-db-c6：上限与超时常量的**跨模块对齐**（防 A3/A4 各写一份导致口径漂移）。
+    #[test]
+    fn t_db_c6_limit_and_timeout_constants_are_aligned() {
+        assert_eq!(
+            DB_MAX_TEXT_FIELD_BYTES, MAX_TEXT_FIELD_BYTES,
+            "单字段上限必须与 security_policy::MAX_TEXT_FIELD_BYTES 同值"
+        );
+        assert_eq!(
+            DB_MAX_SQL_BYTES, MAX_TEXT_FIELD_BYTES,
+            "SQL 文本上限复用既有文本字段量级"
+        );
+        assert_eq!(
+            DB_MAX_QUERY_TIMEOUT_SECS, MAX_TIMEOUT_SECS,
+            "查询超时上限必须与 script_runner::MAX_TIMEOUT_SECS 一致"
+        );
+        assert_eq!(
+            DB_SOFT_TO_HARD_GRACE_SECS, HARD_GRACE_SECS,
+            "soft→hard 宽限必须与 script_runner::HARD_GRACE_SECS 一致"
+        );
+        assert_eq!(DB_MAX_ROWS, 1_000);
+        assert_eq!(DB_MAX_RESULT_BYTES, 4 * 1024 * 1024);
+        assert_eq!(DB_DEFAULT_QUERY_TIMEOUT_SECS, 30);
+        assert!(DB_DEFAULT_QUERY_TIMEOUT_SECS <= DB_MAX_QUERY_TIMEOUT_SECS);
+        assert!(
+            DB_MAX_TEXT_FIELD_BYTES < DB_MAX_RESULT_BYTES,
+            "单字段上限必须小于整结果上限，否则字段截断永远不会先命中"
+        );
+        assert!(DB_CANCEL_CHECK_EVERY_ROWS > 0);
+        assert!(
+            DB_CANCEL_CHECK_EVERY_ROWS < DB_MAX_ROWS,
+            "取消检查间隔必须小于行数上限，否则第一批就取满了才检查"
+        );
+        assert!(DB_MAX_EXPORT_BYTES > DB_MAX_RESULT_BYTES);
+    }
+
+    /// T-db-c7（F3）：结果结构必须**显式**承载截断标记，且不得夹带 SQL 原文/凭据。
+    #[test]
+    fn t_db_c7_query_result_marks_truncation_explicitly() {
+        let res = DbQueryResult {
+            query_id: "q1".into(),
+            columns: vec!["id".into()],
+            rows: vec![vec![DbValue::Int(1)]],
+            row_count: 1,
+            truncated: true,
+            field_truncated: true,
+            limit_hit: Some(DbLimitKind::Bytes),
+            elapsed_ms: 12,
+            state: DbQueryState::Completed,
+        };
+        let value = serde_json::to_value(&res).unwrap();
+        assert_eq!(value["truncated"], json!(true), "截断必须显式标记");
+        assert_eq!(value["field_truncated"], json!(true));
+        assert_eq!(value["limit_hit"], json!("bytes"));
+
+        let keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
+        for forbidden in [
+            "sql",
+            "password",
+            "passwd",
+            "pwd",
+            "secret",
+            "token",
+            "dsn",
+            "credential",
+        ] {
+            assert!(
+                !keys.iter().any(|k| k.contains(forbidden)),
+                "结果 DTO 结构性不得含 {forbidden}（实际键: {keys:?}）"
+            );
+        }
+
+        // 历史 JSON 兼容：缺 limit_hit 必须解析为 None
+        let legacy = r#"{"query_id":"q2","columns":[],"rows":[],"row_count":0,
+            "truncated":false,"field_truncated":false,"elapsed_ms":0,"state":"completed"}"#;
+        let parsed: DbQueryResult = serde_json::from_str(legacy).unwrap();
+        assert_eq!(parsed.limit_hit, None);
+        assert_eq!(parsed.state, DbQueryState::Completed);
+    }
+
+    /// T-db-c8：取数状态 / 上限原因 / 单元格值的 serde 串稳定，未知状态 fail-closed。
+    #[test]
+    fn t_db_c8_query_state_and_value_serde_strings_are_stable() {
+        assert_eq!(
+            serde_json::to_value(DbQueryState::Completed).unwrap(),
+            json!("completed")
+        );
+        assert_eq!(
+            serde_json::to_value(DbQueryState::Cancelled).unwrap(),
+            json!("cancelled")
+        );
+        assert_eq!(
+            serde_json::to_value(DbQueryState::Timeout).unwrap(),
+            json!("timeout")
+        );
+        assert_eq!(
+            serde_json::to_value(DbQueryState::Failed).unwrap(),
+            json!("failed")
+        );
+        // 截断不是状态；未知状态串必须解析失败（fail-closed）
+        assert!(serde_json::from_str::<DbQueryState>(r#""truncated""#).is_err());
+
+        assert_eq!(
+            serde_json::to_value(DbLimitKind::Rows).unwrap(),
+            json!("rows")
+        );
+        assert_eq!(
+            serde_json::to_value(DbLimitKind::Bytes).unwrap(),
+            json!("bytes")
+        );
+        assert_eq!(
+            serde_json::to_value(DbLimitKind::Field).unwrap(),
+            json!("field")
+        );
+
+        assert_eq!(serde_json::to_value(DbValue::Null).unwrap(), json!("null"));
+        assert_eq!(
+            serde_json::to_value(DbValue::BlobLen(7)).unwrap(),
+            json!({ "blob_len": 7 }),
+            "二进制列只回长度，不回字节"
         );
     }
 }

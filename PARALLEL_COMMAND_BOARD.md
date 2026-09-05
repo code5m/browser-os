@@ -1,19 +1,19 @@
 # Parallel Command Board
 
-> Updated: 2026-09-05 23:55 CST
+> Updated: 2026-09-06 00:20 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
 > Current mainline: `master` at `a75ba24` locally, remote may lag if A0 has not pushed
 > Current NEXT: batch implementation mode for M4 database + scheduler lanes
 
-This file is the coordination board for 12 parallel agents. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
+This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
 ## One-Line Resume Prompt
 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-继续 Lane AX，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 Batch Implementation Dispatch 做完整代码包，自行 rebase/整理补丁，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 Integration Fix Wave 修复自己的阻塞项并按 Batch Implementation Dispatch 做完整代码包，自行 rebase/整理补丁，不 push。
 ```
 
 Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
@@ -43,6 +43,7 @@ git diff --binary > logs/checkpoints/Lane-AX-<task>-<YYYYMMDD-HHMM>.patch
 Every agent must run:
 
 ```bash
+cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
 cat .workspace-identity
 pwd
 git status --short --branch
@@ -125,11 +126,146 @@ No lane may force-push, reset, or overwrite another lane's changes.
 | A9 | **START READ/WRITE DOCS ONLY** | Prepare M5 split after M4: knowledge graph, protocol, agent/plugin lanes, dependency blockers. | `logs/assist/`, future task-card docs only | No M5 product code before M4 PASS. |
 | A10 | **START** | Review A2/A3/A4/A6/A7 security-sensitive changes as they land. May add failing policy samples, but product-code fixes require A0 assignment. | `logs/assist/`, policy gap docs; if A0 assigns, policy scripts only | Do not edit product code by default. |
 | A11 | **START** | Maintain verification matrix and manual/GUI checklist; update after each implementation lane output. | `logs/assist/`, `logs/checkpoints/` verification docs | Do not edit product code. |
-| A12 | **START** | Cross-lane conflict scan: stale NEXT, empty files, lane ownership drift, duplicate command names, doc/code mismatch. | `logs/assist/A12-*.md` | Do not edit product code. |
 
 ## Batch Implementation Dispatch
 
 This section supersedes the short `Code Dispatch Now` table for the next parallel wave. Agents should execute the largest safe chunk in their lane, verify it, and leave one coherent deliverable.
+
+## Integration Fix Wave
+
+> Added 2026-09-06 after A0 spot-check of the large M4 batch.
+> Current machine facts: `cargo test --manifest-path src-tauri/Cargo.toml` = **328 passed**; `npm run build` = **PASS**; db/scheduler policy self-tests and UI logic tests = **PASS**; `bash scripts/pre-merge.sh` = **FAIL**.
+> The goal of this wave is to make the batch mergeable, not to add new features.
+
+### Current Red Lights
+
+| ID | Red Light | Owner | Required Fix |
+|---|---|---|---|
+| IF-1 | `cargo fmt main` fails on M4 Rust files | A3/A4/A7, then A0 | Run `cargo fmt --manifest-path src-tauri/Cargo.toml`; do not manually reformat unrelated files. |
+| IF-2 | Build metrics growth: frontend main JS about 197.04 kB vs 161.36 kB baseline, over 15% gate | A5/A8 investigate, A0 decides | Identify whether growth is expected from M4 UI or accidental eager imports. Prefer lazy-loading database/scheduler panels or splitting heavy helpers. If still over budget, document exact justification for A0 threshold/baseline decision. |
+| IF-3 | `check-tools-policy.py --self-test` fails; A11 says existing non-M4 gate defect | A10 inspect, A0 fixes/decides | Confirm whether it is pre-existing by comparing with `origin/master`; propose smallest fix or explicit temporary waiver. Do not hide the failure. |
+| IF-4 | `Cargo.toml` added `rusqlite`/`mysql`/`postgres`; `cargo check` warning count rose from 2 to 5 in one run | A3/A4 | Remove new unused imports/dead public methods where possible, or justify `#[allow(dead_code)]` with named consumer. Target warning count returns to baseline 2 unless A0 accepts a documented exception. |
+| IF-5 | A11 batch2 report is stale in places: it records 323 tests and old DB policy failures, while A0 spot-check now sees 328 tests and DB policy PASS | A11 | Produce one final verification batch after IF-1..IF-4 are resolved; do not keep updating per tiny change. |
+
+### Fix Assignments
+
+#### Lane A3: DB Runtime Fix Package
+
+Focus only on DB runtime merge blockers.
+
+- Rebase/refresh on current local `master` state when possible; if local dirty state blocks ff-only pull, keep your lane changes and produce one patch.
+- Run `cargo fmt --manifest-path src-tauri/Cargo.toml` only if you own the Rust files being formatted, or coordinate by noting that A0 may run global fmt at the end.
+- Remove or justify new warnings from `src-tauri/src/database.rs`.
+- Re-check that user SQL never uses `execute_batch`, `simple_query`, or `batch_execute`; test fixtures may use setup helpers, but production user-SQL paths must be single statement.
+- Verify:
+  - `cargo test --manifest-path src-tauri/Cargo.toml database`
+  - `python3 scripts/check-database-policy.py --self-test`
+  - `python3 scripts/check-database-policy.py`
+  - `python3 scripts/check-database-policy.py --expect-pending`
+  - `git diff --check`
+
+#### Lane A4: DB Safety/Command Fix Package
+
+Focus only on command/safety merge blockers.
+
+- Confirm `DB_MULTI_STATEMENT_FORBIDDEN` policy is active if implementation exists; `--expect-pending` should not report implemented pending items.
+- Verify `db_*` commands, if present, are in all three places: Rust handler, frontend bridge/types, ACL before `list_artifact_images`.
+- Ensure audit detail never contains raw SQL, password, DSN, token, cookie, Authorization, or Set-Cookie.
+- Remove unused import warnings in `security_policy.rs` if present.
+- Verify:
+  - `cargo test --manifest-path src-tauri/Cargo.toml security_policy`
+  - `cargo test --manifest-path src-tauri/Cargo.toml database`
+  - `python3 scripts/check-database-policy.py --self-test`
+  - `python3 scripts/check-database-policy.py`
+  - `bash scripts/pre-merge.sh` if the worktree is otherwise ready
+
+#### Lane A5: DB UI Size/Import Fix Package
+
+Focus only on frontend build size and DB UI readiness.
+
+- Inspect whether `DatabasePanel.vue`, `useDatabaseStore.ts`, or `dbUi.ts` are eagerly imported in a way that grows the main chunk unnecessarily.
+- Prefer lazy-loading the database panel from the layout switch if this matches existing patterns and does not destabilize UI.
+- Keep password values component-local; do not add persistence.
+- Verify:
+  - `node scripts/check-database-ui-logic.mjs`
+  - `npm run build`
+  - record resulting `dist/assets/index-*.js` size in checkpoint
+
+#### Lane A6: Scheduler Policy Fix Package
+
+Focus only on scheduler policy/pre-merge stability.
+
+- Keep `scripts/check-scheduler-policy.py` active set consistent with implemented scheduler code.
+- Ensure the script has no false positive on current real repo.
+- Verify:
+  - `python3 scripts/check-scheduler-policy.py --self-test`
+  - `python3 scripts/check-scheduler-policy.py`
+  - `bash scripts/pre-merge.sh` if the worktree is otherwise ready
+
+#### Lane A7: Scheduler Backend Fix Package
+
+Focus only on scheduler backend merge blockers.
+
+- Remove or justify new Rust warnings introduced by scheduler/task code.
+- Ensure scheduler has no direct process execution path and only calls `script_runner::start_run` / `start_command`.
+- Ensure shutdown registration order remains `stop-scheduler` before `kill-running-scripts`.
+- Verify:
+  - `cargo test --manifest-path src-tauri/Cargo.toml scheduler`
+  - `cargo test --manifest-path src-tauri/Cargo.toml task`
+  - `python3 scripts/check-scheduler-policy.py`
+  - `git diff --check`
+
+#### Lane A8: Scheduler UI Size/Import Fix Package
+
+Focus only on scheduler UI readiness and build size.
+
+- Inspect whether `TaskPanel.vue`, `TaskEditDialog.vue`, `useTaskStore.ts`, or `taskUi.ts` are eagerly imported unnecessarily.
+- Prefer lazy-loading scheduler UI if it reduces main chunk and fits existing layout patterns.
+- Verify:
+  - `node scripts/check-scheduler-ui-logic.mjs`
+  - `python3 scripts/check-scheduler-ui-policy.py --self-test`
+  - `python3 scripts/check-scheduler-ui-policy.py`
+  - `npm run build`
+
+#### Lane A10: Batch Re-Review After Fixes
+
+Do not review every small edit. Wait until A3/A4/A5/A6/A7/A8 report their fix package, then produce:
+
+- `logs/assist/A10-M4-security-review-batch-final-<timestamp>.md`
+
+Must explicitly answer:
+
+- Are DB write gates still fail-closed?
+- Are credentials absent from DTOs, audit, frontend state, files, and logs?
+- Are user SQL paths single-statement only?
+- Does scheduler reuse M2-4 execution and shutdown correctly?
+- Are any new warnings or policy exceptions acceptable?
+
+#### Lane A11: Final Verification Batch Only
+
+Wait for A10 final review or all fix packages, then produce:
+
+- `logs/checkpoints/A11-M4-verification-final-<timestamp>.md`
+
+Must rerun and record:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml`
+- `npm run build`
+- all new policy scripts self-test/default/pending modes
+- `bash scripts/pre-merge.sh`
+- `git diff --check`
+
+#### Lane A11: Final Conflict Scan Before A0
+
+As part of the final verification batch, A11 must also check:
+
+- no empty files
+- no stale `STOPPED` claiming as PASS
+- no duplicate command names
+- ACL order
+- bridge/main/types command parity
+- docs NEXT consistency
+- no lane scope drift in checkpoints
 
 ### Lane A2: Finish M4-1 Contract Closure
 
@@ -323,30 +459,22 @@ This section supersedes the short `Code Dispatch Now` table for the next paralle
 
 **Write:** verification matrix, manual checklist, debt ledger. Do not edit product code.
 
-### Lane A12: Batch Conflict Scan
-
-**Goal:** run conflict scans before A0 merge, not continuously.
-
-**Check:** dirty files, empty files, stale NEXT, duplicate command names, ACL order, bridge/main/type mismatch, policy scripts in pre-merge, docs claiming PASS without evidence.
-
-**Write:** `logs/assist/A12-M4-conflict-scan-<timestamp>.md`.
-
 ## Lane-Specific Minimal Prompts
 
 Use exactly one line per agent:
 
 ```text
-继续 Lane A2，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
-继续 Lane A3，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
-继续 Lane A4，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
-继续 Lane A5，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
-继续 Lane A6，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
-继续 Lane A7，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
-继续 Lane A8，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
-继续 Lane A9，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
-继续 Lane A10，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
-继续 Lane A11，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
-继续 Lane A12，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，只按自己的 Lane 执行，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A1，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 Integration Fix Wave 修复自己的阻塞项并按 Batch Implementation Dispatch 做完整代码包，自行 rebase/整理补丁，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A2，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 Integration Fix Wave 修复自己的阻塞项并按 Batch Implementation Dispatch 做完整代码包，自行 rebase/整理补丁，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A3，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 Integration Fix Wave 修复自己的阻塞项并按 Batch Implementation Dispatch 做完整代码包，自行 rebase/整理补丁，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A4，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 Integration Fix Wave 修复自己的阻塞项并按 Batch Implementation Dispatch 做完整代码包，自行 rebase/整理补丁，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A5，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 Integration Fix Wave 修复自己的阻塞项并按 Batch Implementation Dispatch 做完整代码包，自行 rebase/整理补丁，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A6，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 Integration Fix Wave 修复自己的阻塞项并按 Batch Implementation Dispatch 做完整代码包，自行 rebase/整理补丁，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A7，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 Integration Fix Wave 修复自己的阻塞项并按 Batch Implementation Dispatch 做完整代码包，自行 rebase/整理补丁，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A8，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 Integration Fix Wave 修复自己的阻塞项并按 Batch Implementation Dispatch 做完整代码包，自行 rebase/整理补丁，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A9，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 Integration Fix Wave 修复自己的阻塞项并按 Batch Implementation Dispatch 做完整代码包，自行 rebase/整理补丁，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A10，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 Integration Fix Wave 修复自己的阻塞项并按 Batch Implementation Dispatch 做完整代码包，自行 rebase/整理补丁，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A11，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 Integration Fix Wave 修复自己的阻塞项并按 Batch Implementation Dispatch 做完整代码包，自行 rebase/整理补丁，不 push。
 ```
 
 ## Dispatch Waves

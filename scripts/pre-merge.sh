@@ -28,6 +28,7 @@
 #  20. M2-6.d 命令片段库 UI 逻辑层测试
 #  21. M3.a 终端输出管道不变量夹具 + 前端 Channel/防抖接入
 #  22. 工作树、暂存区、当前分支相对基线的 git diff --check
+#  23. M4-8 定时任务 UI 不变量夹具（SCHEDUI_*）+ 前端逻辑层测试（加载真实 taskUi.ts / useTaskStore.ts）
 #
 # 用法:
 #   scripts/pre-merge.sh            正式门禁（所有检查必须通过）
@@ -87,7 +88,13 @@ pre-merge.sh — M0-1.c 本地 pre-merge 门禁（M0-1 脚本合并前检查入�
   terminal UI logic tests       check-terminal-ui-logic.mjs（Node，headless）
   script domain fixture         check-script-domain-policy.py --self-test / 默认门禁
   command UI logic tests        check-command-ui-logic.mjs（Node，headless）
+  scheduler policy fixture      check-scheduler-policy.py --self-test / --expect-pending / 默认门禁
+                                （M4-5.d；20 ACTIVE 码 + 0 pending 码，A7 落地后已全转为默认判定）
+  database policy fixture       check-database-policy.py --self-test / --expect-pending / 默认门禁
+                                （M4-2.s；7 ACTIVE 码 + 8 pending 码，产物存在才判）
   git diff --check              工作树 + 暂存区 + 当前分支相对基线（机器证据除外）
+  scheduler UI policy fixture   check-scheduler-ui-policy.py --self-test / 默认门禁（SCHEDUI_*，M4-8）
+  scheduler UI logic tests      check-scheduler-ui-logic.mjs（Node，headless，加载真实 taskUi.ts / useTaskStore.ts）
 
 退出码: 0 = 全部通过；1 = 任一失败；2 = 非法参数
 EOF
@@ -342,6 +349,48 @@ run_pre_merge() {
   (cd "$ROOT" && node "$SCRIPT_DIR/check-command-ui-logic.mjs") >/dev/null 2>&1 \
     || pm_fail "check-command-ui-logic.mjs（命令片段库前端逻辑回归）"
 
+  # M4-4.a（Lane A5）：数据库面板 UI 逻辑层回归。加载真实 src/utils/dbUi.ts，
+  # 覆盖 F1 写默认拒绝 / F2 凭据零落地 / 截断告警 / 带标签 DbValue 解码 / CSV 脱敏 /
+  # 风险·生产判定 / 运行门禁等。与 M2-6.d 同范式（headless，无 GUI 依赖）。
+  pm_log "M4-4.a 数据库面板 UI 逻辑层自动化测试（headless，加载真实 dbUi.ts）…"
+  (cd "$ROOT" && node "$SCRIPT_DIR/check-database-ui-logic.mjs") >/dev/null 2>&1 \
+    || pm_fail "check-database-ui-logic.mjs（数据库面板前端逻辑回归）"
+
+  # M4-5.d（Lane A6）：调度契约不变量。scheduler/tasks/TaskDef 由 A7 落地，实现经
+  # 自检全合规，原 8 个 pending 码位已全部提升为 ACTIVE（现 20 ACTIVE / 0 pending）。
+  pm_log "M4-5.d 调度契约不变量夹具（20 ACTIVE 码，0 pending 码）…"
+  python3 "$SCRIPT_DIR/check-scheduler-policy.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-scheduler-policy.py --self-test"
+  python3 "$SCRIPT_DIR/check-scheduler-policy.py" >/dev/null 2>&1 \
+    || pm_fail "check-scheduler-policy.py（调度契约被破坏）"
+  python3 "$SCRIPT_DIR/check-scheduler-policy.py" --expect-pending >/dev/null 2>&1 \
+    || pm_fail "check-scheduler-policy.py --expect-pending（有 pending 码位已实现，应转入默认判定）"
+
+  # M4-2.s（Lane A4）：数据库安全闸门不变量。SQL 风险分类与生产判定是纯函数
+  # （零 db 依赖），故本项可先于 database.rs 落地即生效；db 命令 / 连接池相关的
+  # 8 个 pending 码位在产物不存在时自动降级为 no-op，落地后立即接管。
+  pm_log "M4-2.s 数据库安全闸门不变量夹具（7 ACTIVE 码 + 8 pending 码，产物存在才判）…"
+  python3 "$SCRIPT_DIR/check-database-policy.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-database-policy.py --self-test"
+  python3 "$SCRIPT_DIR/check-database-policy.py" >/dev/null 2>&1 \
+    || pm_fail "check-database-policy.py（数据库安全闸门被破坏）"
+  python3 "$SCRIPT_DIR/check-database-policy.py" --expect-pending >/dev/null 2>&1 \
+    || pm_fail "check-database-policy.py --expect-pending（有 pending 码位已实现，应转入默认判定）"
+
+  # M4-8（Lane A8）：定时任务 UI 不变量夹具 + 前端逻辑层测试。
+  # 守护「前端不许绕过 A6 契约」的结构红线（SCHEDUI_* 码位），与 M4-5.d 后端码位互不重叠。
+  # --self-test 双向自检（1 好样本 + N 坏样本变异防呆）；默认模式按设计放行。
+  pm_log "M4-8 定时任务 UI 不变量夹具（SCHEDUI_* 码位）…"
+  python3 "$SCRIPT_DIR/check-scheduler-ui-policy.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-scheduler-ui-policy.py --self-test"
+  python3 "$SCRIPT_DIR/check-scheduler-ui-policy.py" >/dev/null 2>&1 \
+    || pm_fail "check-scheduler-ui-policy.py（定时任务 UI 契约被破坏）"
+
+  # M4-8 前端逻辑层测试（headless，加载真实 src/utils/taskUi.ts + useTaskStore.ts）。
+  pm_log "M4-8 定时任务 UI 逻辑层自动化测试（headless，加载真实 taskUi.ts / useTaskStore.ts）…"
+  (cd "$ROOT" && node "$SCRIPT_DIR/check-scheduler-ui-logic.mjs") >/dev/null 2>&1 \
+    || pm_fail "check-scheduler-ui-logic.mjs（定时任务前端逻辑回归）"
+
   pm_log "git diff --check（工作树 + 暂存区，机器证据除外）…"
   # Raw evidence is immutable third-party output; SHA256SUMS, not whitespace rewriting, protects it.
   git -C "$ROOT" diff --check -- . ':(exclude)logs/m0-baseline/**' || pm_fail "git diff --check (worktree)"
@@ -407,6 +456,7 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/check-script-ui-policy.py" ] || { echo "FAIL: check-script-ui-policy.py missing"; rc=1; }
   [ -f "$SCRIPT_DIR/check-script-ui-logic.mjs" ] || { echo "FAIL: check-script-ui-logic.mjs missing"; rc=1; }
   [ -f "$SCRIPT_DIR/check-command-ui-logic.mjs" ] || { echo "FAIL: check-command-ui-logic.mjs missing"; rc=1; }
+  [ -f "$SCRIPT_DIR/check-database-ui-logic.mjs" ] || { echo "FAIL: check-database-ui-logic.mjs missing"; rc=1; }
   if ! python3 "$SCRIPT_DIR/check-image-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-image-policy.py --self-test"; rc=1
   fi
@@ -425,6 +475,9 @@ run_self_test() {
   if ! (cd "$ROOT" && node "$SCRIPT_DIR/check-command-ui-logic.mjs") >/dev/null 2>&1; then
     echo "FAIL: check-command-ui-logic.mjs"; rc=1
   fi
+  if ! (cd "$ROOT" && node "$SCRIPT_DIR/check-database-ui-logic.mjs") >/dev/null 2>&1; then
+    echo "FAIL: check-database-ui-logic.mjs"; rc=1
+  fi
   [ -f "$SCRIPT_DIR/check-tools-policy.py" ] || { echo "FAIL: check-tools-policy.py missing"; rc=1; }
   [ -f "$SCRIPT_DIR/check-terminal-policy.py" ] || { echo "FAIL: check-terminal-policy.py missing"; rc=1; }
   if ! python3 "$SCRIPT_DIR/check-terminal-policy.py" --self-test >/dev/null 2>&1; then
@@ -433,6 +486,18 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/check-terminal-ui-logic.mjs" ] || { echo "FAIL: check-terminal-ui-logic.mjs missing"; rc=1; }
   if ! (cd "$ROOT" && node "$SCRIPT_DIR/check-terminal-ui-logic.mjs") >/dev/null 2>&1; then
     echo "FAIL: check-terminal-ui-logic.mjs"; rc=1
+  fi
+  [ -f "$SCRIPT_DIR/check-database-policy.py" ] || { echo "FAIL: check-database-policy.py missing"; rc=1; }
+  if ! python3 "$SCRIPT_DIR/check-database-policy.py" --self-test >/dev/null 2>&1; then
+    echo "FAIL: check-database-policy.py --self-test"; rc=1
+  fi
+  [ -f "$SCRIPT_DIR/check-scheduler-ui-policy.py" ] || { echo "FAIL: check-scheduler-ui-policy.py missing"; rc=1; }
+  if ! python3 "$SCRIPT_DIR/check-scheduler-ui-policy.py" --self-test >/dev/null 2>&1; then
+    echo "FAIL: check-scheduler-ui-policy.py --self-test"; rc=1
+  fi
+  [ -f "$SCRIPT_DIR/check-scheduler-ui-logic.mjs" ] || { echo "FAIL: check-scheduler-ui-logic.mjs missing"; rc=1; }
+  if ! (cd "$ROOT" && node "$SCRIPT_DIR/check-scheduler-ui-logic.mjs") >/dev/null 2>&1; then
+    echo "FAIL: check-scheduler-ui-logic.mjs"; rc=1
   fi
   if ! python3 "$SCRIPT_DIR/check-tools-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-tools-policy.py --self-test"; rc=1

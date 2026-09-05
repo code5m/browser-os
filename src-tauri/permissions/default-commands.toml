@@ -107,5 +107,13 @@ commands.allow = [
     "snippet_remove",
     "run_command",
     "list_tools",
+    "task_list",
+    "task_add",
+    "task_update",
+    "task_remove",
+    "task_run_now",
+    "db_connect",
+    "db_query",
+    "db_disconnect",
     "list_artifact_images"
 ]

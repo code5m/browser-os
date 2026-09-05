@@ -1,0 +1,559 @@
+diff --git a/logs/assist/A10-M4-security-recheck-A1A2A6-20260905-2345.md b/logs/assist/A10-M4-security-recheck-A1A2A6-20260905-2345.md
+new file mode 100644
+index 0000000..c0473d0
+--- /dev/null
++++ b/logs/assist/A10-M4-security-recheck-A1A2A6-20260905-2345.md
+@@ -0,0 +1,207 @@
++# A10 · M4 已合入内容安全复核（A1 / A2 / A6）
++
++> Lane: `A10` — M4 security review（`AI:DEEP / R:xhigh`）
++> 时间: 2026-09-05 23:45 CST
++> Base: `47fce60`（`master`）
++> 范围: **只读安全复核**。只写 `logs/assist/A10-*.md`，**零产品代码改动、零提交、零 push**
++> 复核对象: A1 展开卡（`M4-20260905-2225.md`）、A2（`M4-1.b` domain.rs / `M4-1.c` / `M4-1.d`）、A6（`M4-5` 调度契约）
++> 复核红线: 隐私 / 凭据 / 写权限 / 无限增长 / source check 与 ACL
++
++---
++
++## 1. 启动门禁取证（实测）
++
++```text
++cat .workspace-identity  → WORKSPACE_ID=BACKV3_MAIN / EXPECTED_BRANCH=master   ✅
++pwd                      → /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3  ✅
++git pull                 → 已经是最新的。                                        ✅
++git status --short --branch → ## master...origin/master（无 ahead/behind，无脏文件）✅
++git log --oneline -3     → 47fce60 docs(M4-1.d): record database policy notes
++                           d6457fe feat(M4-1.b): add database domain contract types
++                           6d73ce1 docs(M4): integrate parallel lane checkpoints
++```
++
++门禁**全项通过**：规范主目录、`master`、工作树干净、与远程同步、`git pull` 无新提交。
++
++---
++
++## 2. 结论摘要
++
++| 复核对象 | 裁定 | 说明 |
++|---|---|---|
++| **A2 / M4-1.b** `domain.rs` 类型提案 | **PASS** | 隐私与写权限两条红线**结构性**落实，超出预期（见 §4.1） |
++| **A2 / M4-1.d** policy notes | **PASS_WITH_DEBT** | 信号契约质量高；但所引用的上限常量源自状态自相矛盾的 `M4-1.c`（R-6） |
++| **A6 / M4-5** 调度契约 | **PASS_WITH_DEBT** | 设计严谨、主动采纳更严口径；但存在**审计冲刷**（R-1，高）与**危险片段无人值守放大**（R-3） |
++| **A1** 展开卡 | **PASS**（本轮仅复核其被下游引用的裁决） | F-1/F-4/F-5/F-7 等事实修正经我独立复跑，均成立 |
++
++**总体：`PASS_WITH_DEBT`**。共 **11 条发现**（R-1 ~ R-11），其中 **1 条【高】**、**4 条【中高/中】** 需 A0 处置，其余为低风险或信息项。
++**未发现任何凭据明文落盘、隐私字段泄漏、source check 缺失或 ACL 漏登记。**
++
++---
++
++## 3. 复核方法
++
++- 逐行读 `M4-1.b`(173 行)、`M4-1.c`(149 行)、`M4-1.d`(202 行)、`A6-M4-5`(616 行)、`M4-20260905-2225.md` 关键段。
++- 对 A2 新增 `domain.rs` 段（`src-tauri/src/domain.rs:813-1009` 与单测 `1152-1260`）逐行审读。
++- **所有关键结论回源码验证**，不采信文档自述：`workspace.rs:388`（审计 cap 1000）、`bridge.rs:2977`（`run_command` 无确认闸门）、`domain.rs:623`（`ScriptParam.secret`）、`script_runner.rs:46-48`（超时常量）。
++- **未**运行 `cargo test` / `npm run build`：本轮零产品代码改动；A2 已交 `cargo test` 237 passed（基线 232 + 5）、pre-merge `ALL_PASS`，我采信其**自报**并标注为未经我复跑（见 §8 声明）。
++
++---
++
++## 4. 逐卡复核
++
++### 4.1 A2 / M4-1.b —— `domain.rs` 类型提案【PASS】
++
++三条安全红线**结构性**落实，不是靠约定：
++
++| 红线 | 落实方式 | 证据 |
++|---|---|---|
++| **凭据** | `DbConnectionConfig` **类型上不存在** password/dsn/connection_string 字段；凭据只经 Keyring，键 `db:<conn_id>` | `domain.rs:905-941`；单测 `T-db-c3` 断言序列化键不得含 `password/passwd/pwd/secret/token/dsn/conn_str/uri/url` |
++| **写权限** | `allow_write` 带 `#[serde(default)]` → 缺省 `false`（缺字段即无写权限）；`DbSslMode` 缺省 `Prefer` | `domain.rs:931-933`、`899-903`；单测 `T-db-c4` 断言历史 JSON 缺字段落在更严一侧 |
++| **生产判定** | `production_hint: Option<bool>`，`None` = 无信号（不放行） | `domain.rs:934-936` |
++
++**这是我上一轮 G-1 / G-2 的最强落地形态**：我原本只要求「凭据以类型化字段流转、不序列化」，A2 直接做到「字段根本不存在」+ 单测锁死，优于我的要求。
++`from_kind_str` 亦为 fail-closed（未知/大小写变形/前后空格一律 `None`，`domain.rs:856-863`）。
++
++**未新增任何 `#[tauri::command]`**（`git show d6457fe -- domain.rs | grep -c tauri::command` → **0**），故本卡**不涉及** ACL / source check 面。✅
++
++### 4.2 A2 / M4-1.d —— policy notes【PASS_WITH_DEBT】
++
++- **生产判定信号契约（§3）质量高**，且**正确实现了我 G-5 的核心要求**：规则 4「无任何信号 → `Unknown`（不是 NonProduction）」= 无信息时按生产处理、拒绝写。
++- 失败序设计正确：`S2`（名称命中 prod 词表）→ **Unknown** 而非 Production，即名称启发式**永不单独放行**；且 `S2` 命中优先于 `S2'`/`S3` 的 NonProduction 候选（规则 2 先于规则 3），`prod-dev.corp` 这类会落在 Unknown。✅
++- 码位表（§5）覆盖了 `DB_CRED_IN_AUDIT`、`DB_RESULT_LIMIT_MISSING`、`DB_ACL_ORDER`、`DB_PERSIST_NOT_ATOMIC` 等我上一轮提出的点。
++
++**债务**：本卡 §1 第 12~16 行（结果上限 / 截断 / 取消 / 超时 / 多语句）**全部引用 `M4-1.c`**，而 `M4-1.c` 状态自相矛盾 —— 见 **R-6**。
++
++### 4.3 A6 / M4-5 —— 调度契约【PASS_WITH_DEBT】
++
++A6 主动采纳了更严口径，应予肯定：
++
++| 我的上一轮建议 | A6 处置 | 证据 |
++|---|---|---|
++| G-7.5「新建任务默认 `enabled=false`」 | **采纳**，且给出「自动执行 vs 列表可见性」不同险的论证，并存量为缺字段亦按 false | `A6 §3.5 裁定 R-A6-1` |
++| G-9「scheduler 停止须注册在 `kill-running-scripts` 之前」 | **采纳**，落位索引 1（`stop-background-workers` 之后、`flush-sessions` 之前） | `A6 §5.5` |
++| G-8「持久化 fail-closed、不内联凭据」 | **强化**：R-3 禁止 `ScriptParam.secret` 参数值入 `tasks.json`，且目标含必填 secret 参数时**拒绝创建**；并要求损坏文件 rename 为 `.corrupt` + 日志（O-A6-7），优于既有 `load_scripts_at` 的静默丢弃 | `A6 §3.3 R-3`、`§3.4` |
++| G-10「ACL 插在 `list_artifact_images` 之前、命令过 source check」 | **采纳**：5 条命令全过 `check_invocation_source`，ACL 108→113 | `A6 §6` |
++| G-3「审计不含凭据」 | **采纳**：R-3 + §6.4 + §7 脱敏行 | `A6 §7` |
++
++**无限增长**面上的正向设计：`SCHED_MAX_TASKS=200`、`task-runs.json` 环形 500、`SCHED_MAX_SLOT_SCAN=512`、`catch_up_limit ≤ 10`、`Interval.every_secs ≥ 60`、`MAX_CONCURRENT_RUNS=8`。**增长边界基本封闭**，仅审计与运行记录存在挤出（R-1 / R-2）。
++
++---
++
++## 5. 发现（R-1 ~ R-11）
++
++### R-1【高】审计冲刷：定时任务的每次执行写 `audit.json`，可在数小时内抹掉全部历史审计
++
++**事实**：
++- `workspace::log_audit` 上限 1000 条 FIFO（`workspace.rs:388-389`：`if list.len() > 1000 { list.drain(0..len-1000) }`）。
++- A6 §7 冻结的审计事件含 **`task.run.start` 与 `task.run.finish`**，即**每次执行** 2 条。
++- 最小间隔 = 60s（`F-A6-6`），cron 最小粒度 = 1 分钟 → 单任务最多 **1440 次/天**。
++
++**推算**：1 个任务 × 2 条/次 × 1440 次/天 = **2880 条/天** → 容量 1000 的 `audit.json` 约每 **8.3 小时被完全替换一轮**；即使每次只写 1 条，约每 16.7 小时一轮。
++
++**影响**：`audit.json` 是**全局共享**的（手工 git 写、脚本/命令执行、书签等都在里面）。高频定时任务会把**全部手工操作审计冲掉**，直接破坏「可审计性」这一 M4 红线，且不可逆、无告警。
++
++**加重因素**：这些运行明细**已完整存放在 `task-runs.json`（cap 500，A6 §7）**，写进 `audit.json` 属**重复存储且有害**。A6 已识别「每 tick 写审计」的风险并明令禁止（§7），但**每次执行**这一层未堵。
++
++**建议（A6/A7/A0）**：把 `task.run.start` / `task.run.finish` **移出** `audit.json` 事件表（明细留在 `task-runs.json`）；`audit.json` 只保留生命周期与失败事件（`task.add/update/remove/enable/auto_disabled/clock.rewind/run.reject/run.missed(over_limit)`）。若必须保留成功事件，则须改为独立审计文件或按任务限流采样。
++**验收**：以 60s 间隔任务连跑 N 次，断言 `audit.json` 中非 task 类历史条目不被挤出。
++
++### R-2【中高】`script-runs.json`（cap 200 FIFO）会被定时任务挤出手工执行记录
++
++**事实**：A6 §7 复用既有 `script-runs.json`（`MAX_RUN_RECORDS=200`，FIFO）承载调度执行明细。
++**影响**：一个 60s 间隔任务每天产生 1440 条记录，会在 **约 3.3 小时内**把 200 条环形缓冲全部替换为定时任务记录，**手工执行记录被挤出**。叠加既有债务 **D21**（`ScriptRunRecord` 无 `kind` 判别，A6 `O-A6-3` 已记），被留下的记录**无法区分是定时还是手工**，排障证据实质丢失。
++**建议**：A7 落地时评估是否为调度记录启用独立文件或独立配额；至少在 A11 的验证清单中登记「高频任务下手工记录被挤出」为已知观察项。与 D21 合并权衡是否单开卡。
++
++### R-3【中】`dangerous=true` 命令片段可被定时任务引用，确认只在创建时发生一次
++
++**事实**：A6 `§3.3 R-7` 允许 Command 类任务引用 `dangerous == true` 的片段，仅要求带 `dangerous` 透传标记「供 M4-8 UI 二次确认」。
++**实测校正（对 A6 与我上一轮都重要）**：我核了手工路径 —— `run_command`（`bridge.rs:2977`）**没有**确认闸门，只有 `check_invocation_source` + `check_id` + `start_command` 内部策略；`snippet.dangerous` 只是**写进审计**（`bridge.rs:3017-3021`），不拦截。二次确认闸门仅存在于 **git 写**路径（`confirmed_dangerous`，`bridge.rs:1913/1924`）。
++**结论**：因此这不是定时任务**新引入的绕过**（手工同样无闸门），我按事实下调严重度；但它是**风险放大**——无人值守 × 周期重复 × 危险片段，而唯一确认只在创建时发生一次，之后每次自动执行都无人参与。
++**建议**：由 A0 显式裁决其一：① 首期**禁止**定时任务引用 `dangerous=true` 片段（与 M4「默认拒绝」主题一致、无人为可执行）；② 保留但在 `TaskDef` 增加显式 `acknowledge_dangerous: bool`（默认 false）+ 每次执行写 `task.run.dangerous` 审计。
++**不建议**依赖「UI 二次确认」——无人值守场景拿不到逐次同意。
++
++### R-4【中】`secret` 参数值只在**创建时**校验，事后改标不会被复检
++
++**事实**：`R-3` 在 `task_add` 时校验 `params` 不含 `ScriptParam.secret == true` 的值，目标含必填 secret 参数则拒绝创建。
++**缺口**：若脚本**后来**被编辑、把某参数改标为 `secret = true`，已创建任务 `tasks.json` 中的**明文值不会被再校验也不会被清除**，且调度器继续按原值执行（`domain.rs:623` 确认 `secret` 是可变字段；`bridge.rs:2889` 确认片段可改）。
++**建议**：A7 在调度器**加载任务时**与 `task_update` 时复跑 R-3；命中即自动 `enabled=false` + 审计（沿用 §5.2 持久性错误的既有处置），而非静默执行。
++
++### R-5【中】未标记 `secret` 的参数值仍以明文落盘 `tasks.json`
++
++**事实**：R-3 依赖脚本作者**正确标注** `ScriptParam.secret`。未标注但实际敏感的参数（如把 token 当普通参数传）会明文进 `tasks.json`。`tasks.json` 是普通文件，属 M4 红线「凭据不得进普通文件」的字面违反面。
++**评估**：这是**残余风险而非缺陷**——后端无法可靠推断任意参数是否敏感，强行做值形态启发式会带来误报与新的复杂度。
++**建议**：A0 显式接受并登记为债务；同时要求 A8 在 M4-8 UI 对 `params` 输入做「疑似敏感值」提示（软提示，不做硬拦截）。
++
++### R-6【中高】`M4-1.c` 是自相矛盾的产物，而 M4-1.d 的上限/取消/超时常量全部引用它
++
++**事实**：`logs/checkpoints/M4-1.c-20260905-2255.md` 当前同时包含——
++- **第 1~125 行**：A2 写就的**完整**契约（上限数值表、结果 DTO、取消三层、超时分层、多语句、测试策略）；
++- **第 126~149 行**：A0 的 `STOPPED_EMPTY_ARTIFACT` 裁定（「核查时为 0 字节空文件…后续 Lane A2 需要重新领取并完成 M4-1.c / M4-1.d」）。
++
++即：**正文已补写，但尾部的 STOPPED 裁定未撤销**，文件自身状态矛盾。
++**影响面**：`M4-1.d` §1 第 12~16 行（行 1000 / 4 MiB / 64 KiB / SQL 64 KiB；三层取消；30/600/5 超时；多语句显式关闭）**全部以 `c §1`~`c §5` 为出处**。这些恰是「无限增长 / 写权限」红线所依赖的数值。
++**建议（A0）**：明确裁定 `M4-1.c` 状态（建议：撤销尾部 STOPPED 裁定、保留正文，并按 §8「未做/未实测」如实在主文档标注为 `CONTRACT_FROZEN(文档态, 常量未落代码)`）。**在状态澄清前，`M4-1.d` 的上限数值不应被视为已冻结的验收基线。**
++
++### R-7【中】上限常量未落代码，当前零代码级约束
++
++**事实**：`M4-1.c §8` 明说「上限常量**未写入 `domain.rs`**…由 A3 落实现侧」。我 grep `domain.rs` 的 M4 段（813-1009）确认**无任何 `const` / `MAX_*` 定义**（仅错误码字符串）。
++**评估**：就 M4-1「纯契约卡」定位而言这是合理的（避免无消费者常量，M2-3.b 教训），**不算缺陷**；但须明确记录：**截至 `47fce60`，结果行数/字节上限在代码层面尚不存在**，唯一约束是 A3 的自觉。
++**建议**：A3 落地时必须把这些常量与 `DbErrorCode` 同处定义并配单测；建议加码位守护「常量缺失即报」，避免 A3 遗漏。
++
++### R-8【低】`domain.rs:819` 注释声称被 `check-database-policy.py` 守护，但该脚本不存在
++
++**事实**：`domain.rs:819` 写「三条硬约束（由 `check-database-policy.py` 与本文件单测**双向**守住）」；实测 `ls scripts/check-database-policy.py` → **不存在**。A2 在 `M4-1.d §10` 与 `O-A2-2` 已如实声明未创建该脚本，归属改给 A4。
++**评估**：**非缺陷**（A2 已诚实声明、未冒领），但代码注释与仓库实际状态不符，后续读者会误以为有外层静态守护。
++**建议**：A4 落地脚本时同步把该注释从「双向守住」改为「由本文件单测守住，`check-database-policy.py` 见 `DB_*` 码位（M4-1.d §5）」；在脚本落地前，三条硬约束处于**单侧守护**（仅 Rust 单测 `T-db-c3` / `T-db-c4`），可满足但应知情。
++
++### R-9【低】ACL 条目数将超过 A6 的 113 预估
++
++**事实**：A6 §6 预估 108 → 113（5 条 `task_*`）。但 `M4-1.c §3` 还冻结了 `db_cancel`（第 4 条 db 命令），`O-A2-1` 另有待决的 `db_forget_connection`（第 5 条）。加上 A1 的 `db_*` 三条，实际将达 **114~115**。
++**影响**：纯计数问题，但 `DB_ACL_ORDER` / `SCHED_ACL_ORDER` 码位须覆盖**全部**新命令，漏一条即「命令静默不可用 + 夹具不报警」。
++**建议**：A4 冻结命令名时一次性给全 db 命令清单，并让两个 ACL 码位按「末条锚点之前必须包含全部 `db_*`/`task_*`」来判定，而非按固定条数。
++
++### R-10【信息】`O-A6-11` 已失效，无需订正
++
++A6 §10 `O-A6-11` 称「A10 的 G-8 标题仍写 `workspace/tasks.yaml`，建议 A0 订正」。
++我实测核对：工作区与**已提交版本**（`git show HEAD:...`）第 129 行均为
++`### G-8【中】`tasks.json` 是可执行载荷的明文文件，损坏恢复须 fail-closed`。
++**该标题已在上轮修订为 `tasks.json`**，A6 读到的是修订前副本。**O-A6-11 可关闭，A0 无需动作。**
++
++### R-11【低】重试总时长硬上界未冻结
++
++A6 §5.3 把「重试**总时长**硬上界常量」交给 M4-7。按已冻结值最坏估算：`max_attempts≤5` × `timeout≤600s` + 4 段 `delay≤600s` = **≤ 5400s（90 分钟）/ 任务**。并发上界 8，故不会无限堆积，但单任务占用时长可观。
++**建议**：A7 落地时冻结该常量并配单测（可纳入 `SCHED_RETRY_UNBOUNDED` 码位）。
++
++---
++
++## 6. 红线对照总表
++
++| 红线 | 结论 | 依据 |
++|---|---|---|
++| **隐私** | ✅ 无违规 | `DbConnectionConfig` 结构性无凭据字段（T-db-c3）；审计 detail 不含参数值/正文（`A6 §6.4`）；BLOB 不回传字节（`M4-1.c §2`） |
++| **凭据** | ⚠️ 残留 2 项 | 结构性设计优秀；残留 R-4（事后改标不复检）、R-5（未标 secret 明文落盘） |
++| **写权限** | ✅ 达标 | `allow_write` 默认 false；三态 `Unknown ⇒ 拒写`；`enabled` 默认 false；分类器「不可解析即拒」已进码位 |
++| **无限增长** | ⚠️ 边界基本封闭，审计有缺口 | 任务/历史/扫描/并发均有上界；缺口 = **R-1（审计冲刷）**、**R-2（运行记录挤出）** |
++| **source check / ACL** | ✅ 达标 | 本轮无新命令落地；契约层已冻结「5 条 `task_*` 全过 `check_invocation_source` + ACL 插在 `list_artifact_images` 之前」；待落地时覆盖 db 命令（R-9） |
++
++---
++
++## 7. 需 A0 处置项（按优先级）
++
++1. **R-1（高）**：裁决 `task.run.start/finish` 是否移出 `audit.json` —— 这是本轮唯一可能**实际破坏可审计性**的问题。
++2. **R-6（中高）**：澄清 `M4-1.c` 状态（撤销或确认尾部 STOPPED 裁定），否则 M4-1.d 的上限数值无有效基线。
++3. **R-3（中）**：裁决定时任务能否引用 `dangerous=true` 片段（建议首期禁止）。
++4. **R-2（中）**：登记「高频任务挤出手工运行记录」为已知观察项，与 D21 一并权衡。
++5. **R-4（中）**：要求 A7 在调度器加载/`task_update` 时复跑 R-3 校验。
++6. **R-10**：关闭 `O-A6-11`，无需订正我的文档。
++
++---
++
++## 8. 声明（避免误读）
++
++- **本轮为文档级复核**：复核对象全部是**契约/类型提案文档**，M4 尚无任何可执行的数据库或调度代码（`src-tauri/src/` 无 `database*` / `scheduler*`）。因此本文件**不构成对 M4 实现的运行时安全裁定**，实现落地后须复审。
++- **未复跑测试**：`cargo test` 237 passed / `pre-merge.sh` ALL_PASS 采信 A2 自报（`M4-1.d §9`），本轮**未由我复跑**（我零代码改动，且复跑不改变文档结论）。
++- **未改产品代码、未 `git add`、未提交、未 push**（按指挥板 Merge Rule：只有 A0 可向 `master` 提交与推送）。本轮唯一新增 = 本文件。
++- **独立性**：A2 与 A6 均为 CodeBuddy Hy4（与我同模型），A6 §11.3 已自陈「与 A1 展开者同模型，独立性弱于跨模型裁定」。故本复核**刻意以源码实证替代采信**：R-1 的容量与频率我回查了 `workspace.rs:388`；R-3 的「手工也无闸门」我回查了 `bridge.rs:2977-3021`；R-4 的可变性我回查了 `domain.rs:623` 与 `bridge.rs:2889`。三条结论均非文档互证。
++- 上一轮 `A10-M4-security-review-20260905-2240.md` 的 G-1~G-12 仍然有效，本文件为**增量复核**，不替代之。
+diff --git a/logs/assist/A10-M4-security-review-batch-DB-1-20260905-2319.md b/logs/assist/A10-M4-security-review-batch-DB-1-20260905-2319.md
+new file mode 100644
+index 0000000..a3dc82e
+--- /dev/null
++++ b/logs/assist/A10-M4-security-review-batch-DB-1-20260905-2319.md
+@@ -0,0 +1,132 @@
++# A10 · Batch DB-1 安全复核（A2 + A3 + A4）
++
++> Lane: `A10` — M4 security review（`AI:DEEP / R:xhigh`）
++> 时间: 2026-09-05 23:19 CST
++> Base: `85d2d7b`（`master`；`git fetch` + `git pull --ff-only` → 已经是最新的）
++> 批次: **Batch DB-1**（board §Batch Implementation Dispatch → Lane A10 → Batch DB-1: A2+A3+A4 together）
++> 范围: **只读复核**。本轮**未改任何产品代码、未改任何策略脚本**（board：A10「May edit policy scripts only if A0 explicitly assigns a fix」，A0 未指派）
++> 前序: `logs/assist/A10-M4-security-review-20260905-2240.md`（G-1~G-12）、`logs/assist/A10-M4-security-recheck-A1A2A6-20260905-2345.md`（R-1~R-11）。本文件为增量，不替代二者。
++
++---
++
++## 1. 批次状态
++
++| Lane | 本批产出 | 评审结论 |
++|---|---|---|
++| **A2**（M4-1 契约） | `domain.rs` 类型提案（前批已评）+ **本批新增上限常量** | PASS（常量已落代码，数值与 M4-1.c 一致） |
++| **A3**（M4-2 池/驱动基础） | `Cargo.toml` / `Cargo.lock` 加入 `rusqlite`(bundled) / `mysql` / `postgres`；**`database.rs` 尚未创建** | **PASS_WITH_DEBT**：依赖正确，但模块未落地，包不自洽 |
++| **A4**（M4-2.s 安全闸门） | `security_policy.rs` +896 行：SQL 风险分类器、生产判定、写闸门、测试 | **PASS**（G-4 / G-5 实质达标） |
++
++**批次裁定：`PASS_WITH_DEBT`**。5 条发现（D1-1 ~ D1-5），其中 **1 条【中高】**。
++
++---
++
++## 2. 正向确认（红线达标项）
++
++### 2.1 A4 分类器实质落实 G-4 / G-5 —— 本批最重要的安全资产
++
++`classify_sql_risk`（`security_policy.rs:912`）的实现顺序**逐条对应**我上一轮的 G-4：
++
++| G-4 要求 | 实现 | 位置 |
++|---|---|---|
++| ① 确定性剥离注释与字符串字面量 | `mask_literals_and_comments(sql)`，失败即 `Err` | `:927-930` |
++| ② 注释/引号未闭合 → 拒绝（fail-closed） | `Err(_) ⇒ DB_SQL_PARSE_FAILED` | `:929` |
++| ③ 整批处理，批中多于一条语句**整批拒绝** | `count > 1 ⇒ DB_MULTIPLE_STATEMENTS` | `:941-945` |
++| ④ 不可解析即拒，不降级放行 | 未知动词 ⇒ `SqlRiskClass::Unknown` ⇒ `DB_SQL_PARSE_FAILED` | `:949-953` |
++| ⑤ 不可用于「反向放行」 | `is_write_statement` 文档明写「fail-closed…调用方只能用它来**拒绝**，不能反过来用它放行」 | `:962-968` |
++
++**G-5（生产判定 fail-closed）**：`is_production_database`（`:1012`）中 S5（库名空 / 主机不可解析）与 S2（名称命中生产词表）、S4（公网未加密）**一律返回 `Unknown`**（`:1022/1025/1029/1032/1035`）；写闸门 `:1084-1096` 中
++- `Ddl | Admin ⇒ WriteDenied`
++- `Production ⇒ WriteDenied`
++- **`Unknown ⇒ ProductionUnknown`（拒绝）**
++- `NonProduction` 仍需 `allow_write` 才放行，否则 `WriteDenied`
++
++即「无信息 = 拒绝写」，与 M4-1.d §3 规则 4 一致。**G-5 实质达标。**
++
++### 2.2 依赖栈符合冻结裁定
++
++`Cargo.toml` 新增仅三项，且**精确等于** M4-1.a 裁定的同步栈：
++
++```toml
++rusqlite = { version = "0.40.2", features = ["bundled"] }
++mysql = "28.0.2"
++postgres = "0.19.14"
++```
++
++`tokio` / `sqlx` / `diesel` / JDBC / YAML / 代码生成 **均未引入**（与 `DB_UNDECLARED_RUNTIME`、`DB_JDBC_SIDECAR` 码位一致）。
++
++### 2.3 上限常量已落代码（关闭我上一轮的 R-7）
++
++`domain.rs:1014-1027`：
++
++| 常量 | 值 | 与 M4-1.c §1 冻结值 |
++|---|---|---|
++| `DB_MAX_SQL_BYTES` | 64 KiB | ✅ 一致 |
++| `DB_MAX_ROWS` | 1 000 | ✅ 一致 |
++| `DB_MAX_RESULT_BYTES` | 4 MiB | ✅ 一致 |
++| `DB_MAX_TEXT_FIELD_BYTES` | 64 KiB | ✅ 一致 |
++
++上一轮 R-7「上限常量未落代码、当前零代码级约束」**已由 A3 关闭**。
++
++---
++
++## 3. 发现
++
++### D1-1【中高】`DB_MAX_SQL_BYTES` 被重复定义，形成双真相源
++
++**事实**：同一个安全上限常量在两处各定义一次——
++
++```text
++src-tauri/src/domain.rs:1014          pub const DB_MAX_SQL_BYTES: usize = 64 * 1024;
++src-tauri/src/security_policy.rs:576  pub const DB_MAX_SQL_BYTES: usize = 64 * 1024;
++```
++
++**现状**：两处数值**当前一致**（均 64 KiB，且与 M4-1.c 冻结值相符），故**尚无实际绕过**。
++**风险**：这是一个安全上限的两个独立真相源，无任何机制强制同步。若将来只改一处（例如把 `domain.rs` 调到 128 KiB 而 `security_policy.rs` 仍是 64 KiB），则**分类器按 64 KiB 拒绝、调用方按 128 KiB 放行**，或反之——产生「分类与执行不一致」的真实绕过窗。同族问题在本项目有过教训（M2-2.b「通道/边界/命令三处同步」）。
++**建议（A3/A4 协商，A0 指定其一改）**：`security_policy.rs` 改为 `use crate::domain::DB_MAX_SQL_BYTES;`（或由 `domain.rs` 反向引用），**只保留一处定义**。
++**建议加码位**：`DB_LIMIT_CONSTANT_DUPLICATED` —— 扫描 `src-tauri/src/*.rs`，同名 `pub const DB_*` 出现多于一次即报。
++
++### D1-2【中】A3 的 `database.rs` 尚未落地，本批「代码包」不自洽
++
++**事实**：board §Batch Implementation Dispatch → Lane A3 要求「Add `src-tauri/src/database.rs` or `src-tauri/src/database/`」并包含连接校验、凭据键助手 `db:<conn_id>`、`DbPool`、连接/断开生命周期、SQLite 路径根校验、结果 DTO 与取消/超时钩子。
++**实测**：`ls src-tauri/src/database*.rs` → **不存在**；本批 A3 的改动**只有** `Cargo.toml` 与 `Cargo.lock`。
++**影响**：依赖已就位但模块缺失 → 编译期会引入未使用的依赖；A4 的命令层无内部 API 可调用。**这本身不违反安全红线**（未落地即无风险面），但使 Batch DB-1 无法判定为完整交付。
++**建议**：A3 补齐 `database.rs` 后再请 A10 复核该模块（凭据键命名空间、路径根校验、结果截断、取消/超时为本批复核重点）。
++
++### D1-3【中】二进制体积 +14.6%，逼近 15% 门禁上限（跨批次风险，详见 SCHED-1 的 S1-4）
++
++`measure-build-metrics.py --compare … --skip-build` 输出 `total_bytes_pct: 14.6`，未超 15% 上限（`exceeds_growth_limit: false`），但**余量仅 0.4 个百分点**。
++**风险**：M4-2 尚未接线（无 `database.rs`、无命令）就已耗尽体积预算；A4/A5 后续必然再增，届时 `build metrics` 会**硬失败**且难以回旋（要么抬门槛、要么砍依赖）。
++**建议（A0）**：提前决策——是上调门禁阈值并说明理由，还是改用 `rusqlite` 非 bundled（依赖系统 sqlite）以省体积。不要等到红灯才处理。
++
++### D1-4【低】`M4-1.c` 仍为 STOPPED，但常量已被下游按文档值落地
++
++board 第 112 行确认「`M4-1.c` remains STOPPED and must be completed」；而 A3 已按 M4-1.c §1 的数值把常量写进 `domain.rs`。
++**评估**：**数值本身正确且可用**，不构成安全问题；但「契约卡 STOPPED、实现已按其落地」的状态应尽快由 A2 收口（board §Lane A2 已派工），否则后续若 M4-1.c 被改写，代码与契约会漂移。
++**继承上一轮 R-6**：`M4-1.c-20260905-2255.md` 仍是「完整正文 + 尾部 STOPPED 裁定」并存的矛盾产物。
++
++### D1-5【低】本批无新增命令，source check / ACL 面尚未产生
++
++`git diff src-tauri/permissions/default-commands.toml` → **空**；`main.rs` 中无 `db_*` 注册。
++**评估**：故本批**不涉及** G-10 / R-9（ACL 插位、来源校验）。这是**中性事实而非缺陷**——A4 的派工也明确要求「Do not implement bridge commands until A3 pool boundary exists」。
++**待办**：A4 落地命令时须一次性满足 `DB_ACL_ORDER`（插在 `list_artifact_images` 之前）、`check_invocation_source` 置首行、审计脱敏三条。
++
++---
++
++## 4. 红线对照（Batch DB-1）
++
++| 红线 | 结论 | 依据 |
++|---|---|---|
++| 凭据 | ✅ 本批无凭据面 | 无命令、无 `database.rs`；`DbConnectionConfig` 结构性无凭据字段（前批 T-db-c3） |
++| 写权限 | ✅ 达标 | 写闸门 `:1084-1096`，`Unknown ⇒ ProductionUnknown ⇒ 拒绝` |
++| 结果上限/取消 | ⚠️ 常量已落、实现未至 | 常量正确（`:1014-1027`）；取数循环/截断/取消尚无 `database.rs` 承载 |
++| 隐私 | ✅ 无违规 | 分类器不落盘、不记录 SQL 正文；审计脱敏待命令层落地时复核 |
++| source check / ACL | ➖ 本批不适用 | 无新增命令 |
++
++---
++
++## 5. 声明
++
++- 本轮**未修改任何产品代码或策略脚本**（board：A10 仅在 A0 明确指派时方可改策略脚本；D1-1 的修复需 A0 指派 A3 或 A4 之一执行，我未擅改）。
++- 未复跑 `cargo test` / `npm run build` 全量：`pre-merge.sh` 实跑 **EXIT=1**（唯一 FAIL = build metrics，见 SCHED-1 §S1-4），已作为证据记录；本轮仅执行 `cargo check` 取样警告分布。
++- 结论均基于源码实证（`security_policy.rs:912-1096`、`domain.rs:1014-1027`、`Cargo.toml` diff），非文档互证。
+diff --git a/logs/assist/A10-M4-security-review-batch-SCHED-1-20260905-2319.md b/logs/assist/A10-M4-security-review-batch-SCHED-1-20260905-2319.md
+new file mode 100644
+index 0000000..39bebe3
+--- /dev/null
++++ b/logs/assist/A10-M4-security-review-batch-SCHED-1-20260905-2319.md
+@@ -0,0 +1,202 @@
++# A10 · Batch SCHED-1 安全复核（A6 + A7）
++
++> Lane: `A10` — M4 security review（`AI:DEEP / R:xhigh`）
++> 时间: 2026-09-05 23:19 CST
++> Base: `85d2d7b`（`master`；`git fetch` + `git pull --ff-only` → 已经是最新的）
++> 批次: **Batch SCHED-1**（board §Batch Implementation Dispatch → Lane A10 → Batch SCHED-1: A6+A7 together）
++> 范围: **只读复核**。本轮**未改任何产品代码、未改任何策略脚本**（board：A10「May edit policy scripts only if A0 explicitly assigns a fix」；A0 未指派，故 S1-2 我**只报不修**）
++> 前序: `A10-M4-security-review-20260905-2240.md`（G-1~G-12）、`A10-M4-security-recheck-A1A2A6-20260905-2345.md`（R-1~R-11）。本文件为增量。
++
++---
++
++## 1. 批次状态
++
++| Lane | 本批产出 | 评审结论 |
++|---|---|---|
++| **A6**（M4-5.d 夹具） | `scripts/check-scheduler-policy.py`（34 319 B）+ `pre-merge.sh` 接入 + `logs/checkpoints/A6-M4-5.d-20260905-2350.md` | **PASS**（自检 20 坏样本全检出） |
++| **A7**（M4-6 后端） | `src-tauri/src/tasks.rs`（新，含 cron 解析/校验/测试）、`domain.rs`、`workspace.rs` 改动；**无 `scheduler.rs`、无 `task_*` 命令** | **PASS_WITH_DEBT**：纯逻辑层安全达标，但 `cargo` 警告激增 |
++
++**批次裁定：`PASS_WITH_DEBT`**。5 条发现（S1-1 ~ S1-5），其中 **1 条【阻断】**（S1-2 会让 pre-merge 默认模式变红）。
++
++---
++
++## 2. 时间线说明（重要，避免误判为结论反复）
++
++本批评审期间工作树被并发 lane 持续改写，我的取证按**观测时点**如实记录，不以后续状态倒填：
++
++| 时点 | `check-scheduler-policy.py` | `--self-test` | 默认扫描 |
++|---|---|---|---|
++| 23:0x（首次取证） | 29 660 B | **EXIT=1**，3 个码位无坏样本覆盖（`SCHED_AUDIT_PER_RUN_EVENT` / `SCHED_TOKIO_CRON_DEP` / `SCHED_TOKIO_PROMOTED`）；连跑 3 次 md5 一致，确定性失败 | EXIT=0 |
++| 23:07（被并发修复后） | 34 319 B | **EXIT=0**，`PASS: 2 好样本 + 20 坏样本全检出（含变异防呆）；ACTIVE=14 PENDING=6` | **EXIT=1**（见 S1-2） |
++
++→ S1-1 记录为「**观测到的真实缺陷、已被他人在我复核期间修复**」，保留证据链；S1-2 为**当前仍然生效的阻断项**。
++
++---
++
++## 3. 发现
++
++### S1-1【已修复·留档】夹具自检曾确定性失败（3 码位无坏样本覆盖）
++
++**观测**（23:0x，连跑 3 次输出 md5 完全相同，`EXIT=1`）：
++
++```text
++SCHED_SELF_TEST_RESULT=FAIL
++  x 以下码位没有任何坏样本覆盖：['SCHED_AUDIT_PER_RUN_EVENT', 'SCHED_TOKIO_CRON_DEP', 'SCHED_TOKIO_PROMOTED']
++```
++
++**严重性（当时）**：board §Batch Implementation Rule 第 4 条要求交付「self-verifying」包；且 `pre-merge.sh` 已接入 `--self-test`，该项失败会直接打红集成门禁。
++**现状**：23:07 被并发 lane 修复（文件 29 660 → 34 319 B），现为 `PASS … 20 个坏样本全部检出（含变异防呆）`。
++**留档理由**：证据链完整（3 次确定性复现），若后续回归可据此定位；同时提醒 A0：该文件在本轮内被**同一 lane 二次改写**，集成时须确认取到的是最终版。
++
++### S1-2【阻断】`SCHED_CRON_MACRO_SUPPORT` 误报：默认扫描命中 A7 测试中的拒绝用例，pre-merge 默认模式变红
++
++**实测**：
++
++```text
++$ python3 scripts/check-scheduler-policy.py
++SCHED_POLICY_RESULT=FAIL
++  SCHED_CRON_MACRO_SUPPORT:tasks:"@daily"
++EXIT=1
++```
++
++**根因（已定位到行）**：`src-tauri/src/tasks.rs:591` 是
++
++```rust
++    #[test]
++    fn t_sched_c2_invalid_cron_expressions_are_rejected() {
++        for bad in [
++            "0 0 0 0 0 0",   // 6 段（带秒）
++            "@daily",          // 宏        ← 第 591 行
++            …
++```
++
++该处位于 `#[[cfg(test)]]`（模块起始于 `tasks.rs:523`）**之内**，是 A7 为验证「宏一律拒绝」而写的**非法输入清单**。夹具的 `CRON_MACRO_RE` 对 `tasks` 源码做**原文正则扫描**，把测试里的坏样本字符串当成实现，遂误报。
++
++**为什么这是误报而非真实违规**：A6 契约 §4.4 与 A7 实现一致要求「不支持 `@reboot`/`@daily` 等宏，非法输入定义期拒绝」；`tasks.rs` 中出现该串恰恰证明**拒绝逻辑存在且有测试**，与码位意图相反。
++
++**影响**：pre-merge 中 `python3 check-scheduler-policy.py || pm_fail "check-scheduler-policy.py（调度契约被破坏）"` 会**持续失败**，A0 集成被阻断。
++
++**修复建议（须 A0 指派；A6 夹具与 A7 实现均可改，建议改夹具）**：
++1. **首选**：源码扫描前剔除 `#[cfg(test)]` 区域（夹具已有 `strip_comments`，需补 `strip_test_modules`；`rust_fn_body` 一类取函数体的辅助也可复用）。
++2. 次选：宏检测只作用于**非字符串字面量**的上下文（避免命中任何 `"@daily"` 字面量）。
++3. 无论选哪种，**必须为这条规则补一个「测试区含宏字面量 → 不报」的好样本**，防止回归（夹具 `--self-test` 目前只验证「真实仓库 + 合成参考实现」两个好样本，未覆盖此场景）。
++
++### S1-3【低】`pre-merge.sh` 帮助文本与日志中的码位计数已过期
++
++**事实**：两处均写「**9 ACTIVE 码 + 8 pending 码位**」（`scripts/pre-merge.sh:91`、`:349`），而脚本实际为 **`ACTIVE_CODES` 14 条、`PENDING_CODES` 6 条**（`check-scheduler-policy.py:75-105`，且自检输出自证 `ACTIVE=14 PENDING=6`）。
++**成因**：A6 契约 §8.1/§8.2 初版为 9+8，后按 board 23:55 派工追加了 `SCHED_TOKIO_PROMOTED`、`SCHED_TOKIO_CRON_DEP`、`SCHED_SHUTDOWN_NOT_REGISTERED`、`SCHED_SHUTDOWN_ORDER`、`SCHED_AUDIT_PER_RUN_EVENT` 共 5 条 ACTIVE，但 pre-merge 文案未同步。
++**风险**：低（仅文案），但会误导后续 lane 判断覆盖范围。建议 A6 或 A0 顺手订正为「14 ACTIVE + 6 pending」。
++
++### S1-4【中高】`cargo` 警告 2 → 27，触发 build-metrics 门禁；且与 A2 既有约定不一致
++
++**实测**：
++
++```text
++$ bash scripts/pre-merge.sh
++…
++[pre-merge] FAIL: build metrics regression vs logs/m0-build-metrics/build-metrics-4f0e8ab.json
++[pre-merge] PRE_MERGE_RESULT=FAIL          （EXIT=1，全批唯一 FAIL）
++
++$ python3 scripts/measure-build-metrics.py --compare … --skip-build
++{ "exceeds_growth_limit": false, "deltas": { "total_bytes_pct": 14.6, "cargo_warnings": 25 },
++  "warnings_increased": true }              （EXIT=1）
++
++$ cargo check --manifest-path src-tauri/Cargo.toml | grep ^warning
++… `mvp-browser-os` (bin "mvp-browser-os") generated 27 warnings
++```
++
++**新增警告几乎全部是 `never used` 死代码**，来源为 A7 新落地的契约类型：
++
++```text
++struct `TaskDef` / `TaskRunRecord` / `RetryPolicy` is never constructed
++enum `TaskTrigger` / `TaskKind` / `MissedRunPolicy` / `RetryBackoff` / `TaskRunTrigger` is never used
++function `default_task_enabled` / `default_misfire_grace_secs` / `default_catch_up_limit` is never used
++method `delay_secs` / `as_str` is never used
++```
++
++**关键不一致**：A2 在 `domain.rs` 为同类「暂无消费者的契约类型」统一加了 `#[allow(dead_code)]`（**26 处**），而 A7 的 `tasks.rs` 中 `allow(dead_code)` 数量为 **0**。
++**评估**：这不是安全问题，但**当前确实打红了 build-metrics 门禁**，属集成阻塞项。
++**建议**：
++1. A7 落地 `task_*` 命令后这些类型即有消费者，警告会自然消失 —— 若 A7 即将接线，可暂不处理并登记；
++2. 若接线尚早，按 A2 约定补 `#[allow(dead_code)]`（保持全仓一致）；
++3. **不建议**为过门禁而放宽 `warnings_increased` 判定。
++
++### S1-5【中】二进制体积 +14.6%，M4 体积预算已近耗尽
++
++`total_bytes_pct: 14.6`，门禁上限 15%（`exceeds_growth_limit: false`，**未超但余量 0.4pt**）。
++**风险**：`rusqlite`(**bundled**) + `mysql` + `postgres` 三个依赖在**功能尚未接线**时即吃掉几乎全部预算（对照：M4-2 无 `database.rs`、无命令）。A4/A5 后续必然再增，届时 `build metrics` 硬失败，可选退路很少。
++**建议（A0 决策）**：① 上调阈值并书面说明理由；或 ② `rusqlite` 改非 bundled（依赖系统 sqlite3，A6 实测项 17 已记系统 sqlite3 在）；或 ③ 延后引入 `mysql`/`postgres` 之一，待 M4-2 真正需要时再补。**勿等红灯。**
++**关联债务**：D24（M0-0.b 吞吐基线未重采）会削弱吞吐维度的对比可信度，但**不豁免**体积与警告维度。
++
++---
++
++## 4. 正向确认（红线达标项）
++
++| 检查项 | 结论 | 证据 |
++|---|---|---|
++| **无第二执行路径**（F6 红线） | ✅ | `grep -n "std::process::Command\|Command::new\|sh -c\|bash -c" tasks.rs workspace.rs` → **空**；`scheduler.rs` 尚未创建，当前无触发逻辑 |
++| **secret 参数不落盘**（R-3 / 我上一轮 R-4 的**定义期**部分） | ✅ 已实现且有测试 | `tasks.rs:369-381`（`p.secret && (supplied.contains_key(\|\| p.required)` ⇒ 拒绝；必填 secret 亦可拒绝，注释明写「无人值守任务无法交互输入凭据」），测试 `tasks.rs:698-734` |
++| **cron 方言收敛** | ✅ | 仅 5 段；6 段 / 宏 / 越界 / 空串 / 步长 0 等 9 类非法输入在测试中全部断言拒绝（`tasks.rs:588-600`）—— **也正是这批用例触发了 S1-2 误报** |
++| **凭据不入调度侧** | ✅ | `tasks.rs` 无任何 Keyring / `db:` / password 引用；与 A6 §7「任务不持有凭据」一致 |
++| **A6 采纳我上一轮 R-1** | ✅ 已转码位 | `ACTIVE_CODES` 含 `SCHED_AUDIT_PER_RUN_EVENT`，注释明写「A10 R-1（审计冲刷）：契约 §7 据此修订」；`PER_RUN_AUDIT_EVENTS = ("task.run.start","task.run.finish")`（`:167`）。**契约 §7 的实际修订权在 A0**，A6 未擅改，处置得当 |
++
++> **R-1 现状跟踪**：码位已就位，但**契约 §7 仍把 `task.run.start`/`task.run.finish` 列为审计事件**。A7 尚未产生审计写入代码，故审计冲刷**尚未成为实债**；一旦 A7 接线，风险立即生效。请 A0 在 A7 落地前完成 R-1 裁决（把两个事件移出 `audit.json`，明细留 `task-runs.json`）。
++
++---
++
++## 5. 红线对照（Batch SCHED-1）
++
++| 红线 | 结论 | 依据 |
++|---|---|---|
++| 写权限 / 无人值守 | ✅ 达标 | `enabled` 默认 false（`default_task_enabled`）；A6 裁定 R-A6-1 已被 A7 类型层承接 |
++| 凭据 | ✅ 达标 | `tasks.rs` 零凭据引用；R-3 定义期拒绝已实现 |
++| 第二执行路径 | ✅ 达标（`scheduler.rs` 已落地并复用 `script_runner::start_run`/`start_command`，无第二进程路径） | `scheduler.rs:32,659,685`；`Command::new`/`sh -c` 命中仅出现在注释 |
++| 无限增长 | ✅ 边界已在契约层封闭（200 任务 / 500 历史 / 512 扫描 / catch_up ≤10 / 间隔 ≥60s）；**审计冲刷为已落地的实债（R-1 见 §7 S1-8，待 A0 修订契约 §7 后由 A7 改代码）** | A6 §3.4 / §5 |
++| source check / ACL | ✅ 达标 | A7 落地 5 条 `task_*` 命令：ACL 插在 `list_artifact_images` 之前、每条命令首行 `check_invocation_source`（bridge.rs:949/975/1027/1065/1089） |
++
++---
++
++## 6. 声明
++
++- 本轮**未修改任何产品代码或策略脚本**。S1-2 与 S1-3 的修复建议**均需 A0 指派**（board §Batch Implementation Dispatch → Lane A10：「May edit policy scripts only if A0 explicitly assigns a fix. Otherwise no product-code edits.」）。我刻意**不自行修复**，以免与 A6/A7 并发写入同一文件造成覆盖。
++- `pre-merge.sh` 实跑 **EXIT=1**，全批唯一 FAIL 为 build metrics（S1-4/S1-5）；S1-2 在 pre-merge 的**默认模式**分支中亦会失败，二者叠加均为红灯。
++- 因工作树被并发改写，S1-1 与 S1-2 的取证**按观测时点分别记录**，未以后续状态倒填前序结论。
++
++---
++
++## 7. 复核补遗（2026-09-06，A7 落命令后触发）
++
++评审期间 A7 在 Batch SCHED-1 内继续落地了命令层与运行器：`bridge.rs`（5 条 `task_*`，约 207 行新增）、`main.rs`（注册）、`default-commands.toml`（ACL）、以及 `src-tauri/src/scheduler.rs`（35 072 B，23:23 创建）。据此**修正 §4/§5 中"source check / 第二执行路径 本批不适用/未落地"的临时表述**，并落实我上一轮 R-1 的最终判定。
++
++### S1-6【已达标】新增 5 条 `task_*` 命令的来源校验与 ACL 插位（G-10 / R-9 / `SCHED_CMD_NOT_REGISTERED` / `SCHED_ACL_ORDER`）
++
++- **ACL 插位正确**：`default-commands.toml` 5 条 `task_*` 插入在末条 `list_artifact_images` **之前** ✅（契合坑位备忘②"ACL 末条恒为 list_artifact_images"，也满足 `SCHED_ACL_ORDER`）。
++- **注册完整**：`main.rs:1413-1417` 注册 `task_list`/`task_add`/`task_update`/`task_remove`/`task_run_now` ✅。
++- **来源校验置首行**：`bridge.rs` 每条命令**函数体第一行**即 `check_invocation_source(&webview, "task_*", None, &app)?`（task_list:949 / task_add:975 / task_update:1027 / task_remove:1065 / task_run_now:1089）✅ —— 远程 webview 伪造 label 无法调用，满足护栏"所有新命令必须过来源校验"。
++- **结论**：原 §5 "source check / ACL ➖ 本批不适用" **作废**，改判 **✅ 达标**。
++
++### S1-7【已达标】执行通道复用（F6 红线）
++
++- `scheduler.rs:7-8` 文档声明"本模块只做触发""禁止第二套进程/spawn 路径（`std::process::Command` / `sh -c` / `bash -c`）"；`:32` 仅 `use crate::script_runner::{RunError, RunSnapshot, ScriptProcessTable}`。
++- 实际触发走 `script_runner::start_run`（`:659`）/ `start_command`（`:685`）✅ —— 复用 M2-4 既有通道，**无第二执行路径**。
++- 全仓对 `std::process::Command` / `Command::new` / `sh -c` / `bash -c` 的命中**仅出现在注释**（`:8`），运行代码零独立 spawn ✅。
++- 审计 detail 已脱敏：`scheduler.rs:777-778` 明写仅含 `task_id`/`run_id`/`reason`/`status`/`error_code`，**不含参数值、命令正文、脚本正文、输出、任何凭据** ✅ —— 落实 G-3 与我上轮 R-1 的"定义期拒绝/脱敏"部分。
++- **结论**：原 §5 "第二执行路径（scheduler.rs 未落地，接线后须复审）" **改判为 ✅ 达标（已落地并验证）**。
++
++### S1-8【高·实债】R-1（审计冲刷）已由 A7 落地为真实代码路径，待 A0 修订契约 §7 后由 A7 改代码
++
++- **证据链**：`scheduler.rs:779-793` `record_run_start` / `record_run_finish` 调用 `crate::workspace::log_audit(app, "task.run.start" / "task.run.finish", ...)`；`workspace.rs:384` 落盘 **`audit.json`**，`:393-394` **cap 1000 FIFO**（超则 `list.drain(0..len-1000)`）。
++- **与 A6 裁定一致**：A6 在 M4-5.d §5 已"接受 R-1，建议修订契约 §7，契约修订权在 A0，本轮不改"。但 **A0 尚未修订契约 §7**，A7 已按未修订的 §7 把每次 tick 的 per-run 事件写入 `audit.json`。即 R-1 从"建议"变为"已落地、待闭环"。
++- **风险量化**：单任务每 1 分钟 = 1440 次/天 → 日增 2880 条 audit 条目；`audit.json` cap 1000，故生命周期与失败事件（`task.add`/`update`/`remove`/`enable`/`auto_disabled`/`clock.rewind`/`run.reject`/`run.missed(over_limit)`）会在调度器开始 tick 后**数分钟内被冲刷**，审计不可用于事后取证。
++- **处理建议（待 A0 裁决，归属 A6/A7，非 A10 权限）**：
++  1. 契约 §7 把 `task.run.start` / `task.run.finish` **移出 `audit.json`**，明细留 `task-runs.json`（run 历史）；`audit.json` 仅保留生命周期与失败事件。
++  2. 代码侧 `scheduler.rs` 的 `record_run_start` / `record_run_finish` 改为写 `task-runs.json`（或等价 history），不动 `audit.json`。**该改动属产品代码，超出我 A10 本轮权限（board：A10 仅 A0 指派时改策略脚本，产品代码零改），须 A0 指派 A7 执行。**
++  3. `SCHED_AUDIT_PER_RUN_EVENT` 码位（A6 已加，self-test 现 PASS）应随之从"检测是否漏记 per-run 审计"改为"检测是否误把 per-run 审计写进 `audit.json`"——随契约 §7 修订一并归属 A0/A6。
++
++### 修正汇总（覆盖 §4/§5 临时表述）
++
++| 红线 | 原表述 | 现判 |
++|---|---|---|
++| 第二执行路径 | ✅（scheduler.rs 未落地，接线后须复审） | **✅ 达标**（已落地并复用 script_runner，S1-7） |
++| source check / ACL | ➖ 本批不适用 | **✅ 达标**（S1-6） |
++| 审计冲刷 R-1 | 待 A0 裁决 | **【高·实债】已落地为真实路径，待 A0 修订契约 §7 后由 A7 改代码（S1-8）** |

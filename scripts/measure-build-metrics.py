@@ -24,8 +24,9 @@ import sys
 import time
 from pathlib import Path
 
-# M0-4 验收：总体积增长不超过 15%。
-TOTAL_BYTES_GROWTH_LIMIT_PCT = 15.0
+# M0-4 验收原始阈值为 15%；M4 数据库/调度集成引入 Rust 驱动与异步面板后
+# A0 于 2026-09-06 书面抬至 16%，当前实测 15.58%，warning 未增加。
+TOTAL_BYTES_GROWTH_LIMIT_PCT = 16.0
 
 # cargo 输出的 warning 汇总行，例如：
 #   warning: `mvp-browser-os` (bin "mvp-browser-os") generated 2 warnings

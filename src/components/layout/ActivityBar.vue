@@ -35,6 +35,8 @@ const menuSections = [
       { view: "scripts", icon: "📜", label: "脚本库" },
       { view: "commands", icon: "⚡", label: "命令库" },
       { view: "tools", icon: "🧰", label: "工具箱" },
+      { view: "db", icon: "🗄️", label: "数据库" },
+      { view: "tasks", icon: "⏰", label: "定时任务" },
     ],
   },
   {

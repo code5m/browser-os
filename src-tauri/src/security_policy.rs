@@ -554,6 +554,599 @@ impl IntentRegistry {
     }
 }
 
+// ===========================================================================
+// M4-2.s：数据库安全闸门（SQL 风险分类 + 生产判定 + fail-closed 写闸门）
+//
+// 契约来源：
+//   - `logs/checkpoints/M4-1.d-20260905-2300.md` §3（信号契约 / 决策规则）/ §3.4（写闸门全链路）
+//   - `logs/checkpoints/M4-1.c-20260905-2255.md` §5（多语句与取数通道）
+//   - A10 安全评审 G-4（分类器）/ G-5（生产判定信号）/ G-3（SQL 即凭据汇）
+//
+// 硬约束 **F4：零 db 依赖**。本段禁止出现 sqlx / rusqlite / mysql / postgres /
+// `crate::database`，由 `check-database-policy.py` 的 `DB_SAFETY_HAS_DB_DEP` 守护。
+// DNS 解析、实际加密状态、连接建立结果**一律**由调用方（M4-2 `database.rs`）以
+// `ProductionSignals` 传入；本模块只做纯判定，因而可先于数据库实现合入并被单测全覆盖。
+// ===========================================================================
+
+use crate::domain::{DbConnectionConfig, DbErrorCode, SupportedDb};
+
+/// 单条 SQL 的字节上限（M4-1.c §1 `DB_MAX_SQL_BYTES` = 64 KiB，复用既有
+/// `MAX_TEXT_FIELD_BYTES` 量级，不新造）。A3 落地 `database.rs` 时请 `use` 本常量，
+/// **不要**另起同名常量造成两套口径。
+pub const DB_MAX_SQL_BYTES: usize = 64 * 1024;
+
+/// 生产名称启发式（M4-1.d **S2**）：命中 ⇒ **Unknown**——
+/// 名称匹配**永远不能单独推出 Production**，只能把判定推向 fail-closed。
+pub const PROD_NAME_HINTS: [&str; 7] = [
+    "prod",
+    "prd",
+    "production",
+    "live",
+    "online",
+    "生产",
+    "正式",
+];
+
+/// 非生产名称启发式（M4-1.d **S2'**）：命中 ⇒ NonProduction **候选**，
+/// 且必须没有任何 S2/S4/S5 命中才生效。
+pub const NONPROD_NAME_HINTS: [&str; 7] =
+    ["test", "dev", "staging", "uat", "local", "demo", "sandbox"];
+
+/// SQL 风险类别（写闸门的分档依据）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SqlRiskClass {
+    /// 只读（`SELECT` / CTE 读 / `SHOW` / `EXPLAIN` 等）
+    Read,
+    /// 数据写（`INSERT` / `UPDATE` / `DELETE` / `REPLACE` / `MERGE`）
+    Write,
+    /// 结构变更（`CREATE` / `ALTER` / `DROP` / `TRUNCATE` / `RENAME`）
+    Ddl,
+    /// 权限与运维类（`GRANT` / `REVOKE` / `SET` / `COPY` / `CALL` / 事务控制 /
+    /// `EXPLAIN ANALYZE`）
+    Admin,
+    /// 无法判定。**一律拒绝**（fail-closed），绝不降级放行。
+    Unknown,
+}
+
+/// 识别出的语句主动词。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SqlStatementKind {
+    Select,
+    Insert,
+    Update,
+    Delete,
+    Replace,
+    Merge,
+    Create,
+    Alter,
+    Drop,
+    Truncate,
+    Rename,
+    Grant,
+    Revoke,
+    Set,
+    Copy,
+    Call,
+    Transaction,
+    /// MySQL 8 的 `EXPLAIN ANALYZE <DML>`：会**真实执行**语句，
+    /// 不能与普通 `EXPLAIN`（只读）混为一谈。
+    ExplainAnalyze,
+    /// 非空但不认识的词：按不可解析处理。
+    Other,
+    /// 没有词（空语句）
+    None,
+}
+
+/// 分类结果。`error` 为 `Some` 时**必须拒绝**，且 `class` 不再是放行依据。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SqlClassification {
+    pub class: SqlRiskClass,
+    pub kind: SqlStatementKind,
+    /// 掩蔽注释与字面量后、`;` 切分得到的**非空**语句条数。
+    pub statement_count: usize,
+    pub error: Option<DbErrorCode>,
+}
+
+impl SqlClassification {
+    /// 是否可作为只读查询放行（**唯一**的放行判断入口）。
+    pub fn is_read_only(&self) -> bool {
+        self.error.is_none() && matches!(self.class, SqlRiskClass::Read)
+    }
+
+    /// 是否属于「写或更危险」。**fail-closed**：不可解析 / 多语句同样算危险，
+    /// 绝不能因为「看不懂」就当作只读。
+    pub fn is_write_like(&self) -> bool {
+        !self.is_read_only()
+    }
+}
+
+/// 把注释与字符串/标识符引用整段替换为空格，只让**结构**参与后续判断。
+///
+/// 这是 G-4.1 的落地：`/*x*/ DELETE` 与 `'a;b'` 里的分号都不应影响判定。
+/// 返回 `Err` = 存在**未闭合**的注释或引号 ⇒ 不可解析 ⇒ 调用方必须拒绝。
+fn mask_literals_and_comments(sql: &str) -> Result<String, ()> {
+    let chars: Vec<char> = sql.chars().collect();
+    let n = chars.len();
+    let mut out = String::with_capacity(sql.len());
+    let mut i = 0usize;
+
+    while i < n {
+        let c = chars[i];
+        match c {
+            // `--` 行注释（SQL 标准；MySQL 要求后跟空白，此处从严：一律视为注释）
+            '-' if i + 1 < n && chars[i + 1] == '-' => {
+                out.push(' ');
+                out.push(' ');
+                i += 2;
+                while i < n && chars[i] != '\n' {
+                    out.push(' ');
+                    i += 1;
+                }
+            }
+            // `#` 行注释（MySQL）
+            '#' => {
+                out.push(' ');
+                i += 1;
+                while i < n && chars[i] != '\n' {
+                    out.push(' ');
+                    i += 1;
+                }
+            }
+            // `/* */` 块注释（不嵌套；未闭合即不可解析）
+            '/' if i + 1 < n && chars[i + 1] == '*' => {
+                out.push(' ');
+                out.push(' ');
+                i += 2;
+                let mut closed = false;
+                while i < n {
+                    if chars[i] == '*' && i + 1 < n && chars[i + 1] == '/' {
+                        out.push(' ');
+                        out.push(' ');
+                        i += 2;
+                        closed = true;
+                        break;
+                    }
+                    out.push(' ');
+                    i += 1;
+                }
+                if !closed {
+                    return Err(());
+                }
+            }
+            // 单/双引号字符串与反引号标识符：`''` `\"` 均为转义
+            '\'' | '"' | '`' => {
+                let quote = c;
+                out.push(' ');
+                i += 1;
+                let mut closed = false;
+                while i < n {
+                    let d = chars[i];
+                    if d == '\\' && i + 1 < n {
+                        out.push(' ');
+                        out.push(' ');
+                        i += 2;
+                        continue;
+                    }
+                    if d == quote {
+                        if i + 1 < n && chars[i + 1] == quote {
+                            out.push(' ');
+                            out.push(' ');
+                            i += 2;
+                            continue;
+                        }
+                        out.push(' ');
+                        i += 1;
+                        closed = true;
+                        break;
+                    }
+                    out.push(' ');
+                    i += 1;
+                }
+                if !closed {
+                    return Err(());
+                }
+            }
+            // Postgres 美元引用 `$$ ... $$`
+            '$' if i + 1 < n && chars[i + 1] == '$' => {
+                out.push(' ');
+                out.push(' ');
+                i += 2;
+                let mut closed = false;
+                while i < n {
+                    if chars[i] == '$' && i + 1 < n && chars[i + 1] == '$' {
+                        out.push(' ');
+                        out.push(' ');
+                        i += 2;
+                        closed = true;
+                        break;
+                    }
+                    out.push(' ');
+                    i += 1;
+                }
+                if !closed {
+                    return Err(());
+                }
+            }
+            _ => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// 提取**括号深度 0** 的单词序列（小写）。
+///
+/// CTE 内联的 `SELECT` 处于括号内，因此不会冒充主语句动词——
+/// `WITH t AS (SELECT 1) DELETE FROM t` 才会被正确判为 `Delete`（G-4）。
+fn depth0_words(stmt: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    for c in stmt.chars() {
+        match c {
+            '(' => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+                depth += 1;
+            }
+            ')' => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+                depth = depth.saturating_sub(1);
+            }
+            _ if depth == 0 && (c.is_whitespace() || c == ',') => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            _ if depth == 0 => cur.push(c.to_ascii_lowercase()),
+            _ => {}
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// 动词 → 语句类型。返回 `None` 表示不认识（调用方按 `Other` / 不可解析处理）。
+fn verb_kind(word: &str) -> Option<SqlStatementKind> {
+    let kind = match word {
+        "select" | "values" | "show" | "table" => SqlStatementKind::Select,
+        "insert" => SqlStatementKind::Insert,
+        "update" => SqlStatementKind::Update,
+        "delete" => SqlStatementKind::Delete,
+        "replace" => SqlStatementKind::Replace,
+        "merge" => SqlStatementKind::Merge,
+        "create" => SqlStatementKind::Create,
+        "alter" => SqlStatementKind::Alter,
+        "drop" => SqlStatementKind::Drop,
+        "truncate" => SqlStatementKind::Truncate,
+        "rename" => SqlStatementKind::Rename,
+        "grant" => SqlStatementKind::Grant,
+        "revoke" => SqlStatementKind::Revoke,
+        "set" => SqlStatementKind::Set,
+        "copy" => SqlStatementKind::Copy,
+        "call" => SqlStatementKind::Call,
+        "begin" | "start" | "commit" | "rollback" | "savepoint" | "release" => {
+            SqlStatementKind::Transaction
+        }
+        _ => return None,
+    };
+    Some(kind)
+}
+
+/// 判断单词序列中是否出现连续短语（如 `into outfile`）。
+fn has_phrase(words: &[String], phrase: &[&str]) -> bool {
+    if phrase.is_empty() || words.len() < phrase.len() {
+        return false;
+    }
+    words
+        .windows(phrase.len())
+        .any(|w| w.iter().zip(phrase.iter()).all(|(a, b)| a.as_str() == *b))
+}
+
+/// 单条语句 → (语句类型, 风险类别)。
+fn classify_statement(words: &[String]) -> (SqlStatementKind, SqlRiskClass) {
+    let first = words.first().map(|s| s.as_str()).unwrap_or("");
+    let kind = match first {
+        "" => SqlStatementKind::None,
+        // MySQL 8 的 `EXPLAIN ANALYZE <DML>` 会**真实执行**语句，绝不可当只读。
+        "explain" | "describe" | "desc" => {
+            if words.get(1).map(|w| w == "analyze").unwrap_or(false) {
+                SqlStatementKind::ExplainAnalyze
+            } else {
+                SqlStatementKind::Select
+            }
+        }
+        // CTE：主动词是 CTE 之后的第一个深度 0 动词（首关键字是 `WITH`，不能据此判只读）
+        "with" => words
+            .iter()
+            .skip(1)
+            .find_map(|w| verb_kind(w))
+            .unwrap_or(SqlStatementKind::Other),
+        other => verb_kind(other).unwrap_or(SqlStatementKind::Other),
+    };
+
+    let class = match kind {
+        SqlStatementKind::Select => {
+            // `SELECT ... INTO OUTFILE/DUMPFILE` 会在服务端写文件：按写处理。
+            if has_phrase(words, &["into", "outfile"]) || has_phrase(words, &["into", "dumpfile"]) {
+                SqlRiskClass::Write
+            } else {
+                SqlRiskClass::Read
+            }
+        }
+        SqlStatementKind::Insert
+        | SqlStatementKind::Update
+        | SqlStatementKind::Delete
+        | SqlStatementKind::Replace
+        | SqlStatementKind::Merge => SqlRiskClass::Write,
+        SqlStatementKind::Create
+        | SqlStatementKind::Alter
+        | SqlStatementKind::Drop
+        | SqlStatementKind::Truncate
+        | SqlStatementKind::Rename => SqlRiskClass::Ddl,
+        SqlStatementKind::Grant
+        | SqlStatementKind::Revoke
+        | SqlStatementKind::Set
+        | SqlStatementKind::Copy
+        | SqlStatementKind::Call
+        | SqlStatementKind::Transaction => SqlRiskClass::Admin,
+        SqlStatementKind::ExplainAnalyze => SqlRiskClass::Admin,
+        SqlStatementKind::Other | SqlStatementKind::None => SqlRiskClass::Unknown,
+    };
+    (kind, class)
+}
+
+/// SQL 风险分类（**唯一入口**，命令层与核心层都必须先过这里）。
+///
+/// 顺序即优先级（任一步失败立即返回，绝不继续）：
+///   1. 空语句 ⇒ `DB_SQL_EMPTY`
+///   2. 超 `DB_MAX_SQL_BYTES` ⇒ `DB_SQL_TOO_LARGE`
+///   3. 注释/引号未闭合 ⇒ `DB_SQL_PARSE_FAILED`（fail-closed）
+///   4. 掩蔽后按 `;` 切分：**批中只要多于一条语句就整批拒绝** ⇒ `DB_MULTIPLE_STATEMENTS`
+///      （G-4.2：看首条等于放行后半段）
+///   5. 单条语句分类；不认识的动词 ⇒ `DB_SQL_PARSE_FAILED`（**不可解析即拒**）
+pub fn classify_sql_risk(sql: &str) -> SqlClassification {
+    let reject = |code: DbErrorCode, kind: SqlStatementKind, count: usize| SqlClassification {
+        class: SqlRiskClass::Unknown,
+        kind,
+        statement_count: count,
+        error: Some(code),
+    };
+
+    if sql.trim().is_empty() {
+        return reject(DbErrorCode::SqlEmpty, SqlStatementKind::None, 0);
+    }
+    if sql.len() > DB_MAX_SQL_BYTES {
+        return reject(DbErrorCode::SqlTooLarge, SqlStatementKind::None, 0);
+    }
+
+    let masked = match mask_literals_and_comments(sql) {
+        Ok(m) => m,
+        Err(_) => return reject(DbErrorCode::SqlParseFailed, SqlStatementKind::None, 0),
+    };
+
+    let statements: Vec<&str> = masked
+        .split(';')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let count = statements.len();
+    if count == 0 {
+        return reject(DbErrorCode::SqlEmpty, SqlStatementKind::None, 0);
+    }
+    if count > 1 {
+        // 多语句：整批拒绝，但仍回填首条语句类型，便于审计区分「误加 ;」与「恶意堆叠」。
+        let (kind, _) = classify_statement(&depth0_words(statements[0]));
+        return reject(DbErrorCode::MultipleStatements, kind, count);
+    }
+
+    let words = depth0_words(statements[0]);
+    let (kind, class) = classify_statement(&words);
+    let error = if matches!(class, SqlRiskClass::Unknown) {
+        Some(DbErrorCode::SqlParseFailed)
+    } else {
+        None
+    };
+    SqlClassification {
+        class,
+        kind,
+        statement_count: count,
+        error,
+    }
+}
+
+/// 是否属于「写或更危险」的语句（A1 展开卡既定 API 名）。
+///
+/// **fail-closed**：空 / 超长 / 不可解析 / 多语句 / DDL / 权限类一律算「写」，
+/// 调用方只能用它来**拒绝**，不能反过来用它放行。
+pub fn is_write_statement(sql: &str) -> bool {
+    classify_sql_risk(sql).is_write_like()
+}
+
+/// 生产判定结果（M4-1.d §3.1，A10 G-5）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductionVerdict {
+    Production,
+    NonProduction,
+    /// 信息不足以判定。**按生产处理**（拒绝写）——G-5 的核心，不是「放行」。
+    Unknown,
+}
+
+/// 生产判定输入信号（**全部由调用方预先算好**，本模块不做 DNS / 连接 / IO）。
+///
+/// 之所以不在本模块解析主机：一旦引入 IO，分类器就不再是可先于数据库实现合入的
+/// 纯函数，也违背了 F4 的零 db 依赖约束。
+#[derive(Debug, Clone, Copy)]
+pub struct ProductionSignals<'a> {
+    /// SQLite 本地文件库（无网络端口）
+    pub is_sqlite: bool,
+    /// 远端主机名；SQLite 传 `None`
+    pub host: Option<&'a str>,
+    /// SQLite = 文件路径；其余 = 库名
+    pub database: &'a str,
+    /// 用户显式标记（**S1**）：`Some(true)` 直接判生产
+    pub production_hint: Option<bool>,
+    /// 主机是否解析到回环/私有网段（**S3**）。`None` = 未解析/不可解析（**S5**）。
+    /// SQLite 本地文件若调用方认为等价回环，应显式传 `Some(true)`。
+    pub host_is_loopback_or_private: Option<bool>,
+    /// 连接**实际**是否加密（**S4**）。`None` = 未知。
+    pub encrypted: Option<bool>,
+}
+
+/// 名称是否命中词表（子串匹配，大小写不敏感）。
+fn name_hits(value: &str, hints: &[&str]) -> bool {
+    let lower = value.to_ascii_lowercase();
+    hints.iter().any(|h| lower.contains(h))
+}
+
+/// 生产判定（M4-1.d §3.3 决策规则，顺序即优先级）。
+///
+/// 1. `production_hint == Some(true)` ⇒ `Production`
+/// 2. 任一 Unknown 触发（S2 名称命中 / S4 非回环未加密 / S5 空库名·无主机·主机不可解析）⇒ `Unknown`
+/// 3. 全部信号为 NonProduction 候选（S1=`Some(false)` / S2' 名称命中 / S3 回环私有）⇒ `NonProduction`
+/// 4. **无任何信号** ⇒ `Unknown`（不是 NonProduction）
+pub fn is_production_database(s: &ProductionSignals) -> ProductionVerdict {
+    // 规则 1：显式生产标记
+    if s.production_hint == Some(true) {
+        return ProductionVerdict::Production;
+    }
+
+    let host = s.host.map(|h| h.trim()).unwrap_or("");
+
+    // 规则 2：任一 Unknown 触发
+    if s.database.trim().is_empty() {
+        return ProductionVerdict::Unknown; // S5 库名为空
+    }
+    if name_hits(s.database, &PROD_NAME_HINTS) {
+        return ProductionVerdict::Unknown; // S2 库名命中生产词表
+    }
+    if !s.is_sqlite {
+        if host.is_empty() || s.host_is_loopback_or_private.is_none() {
+            return ProductionVerdict::Unknown; // S5 无主机 / 主机不可解析
+        }
+        if name_hits(host, &PROD_NAME_HINTS) {
+            return ProductionVerdict::Unknown; // S2 主机名命中生产词表
+        }
+        if s.host_is_loopback_or_private == Some(false) && s.encrypted == Some(false) {
+            return ProductionVerdict::Unknown; // S4 公网地址且实际未加密
+        }
+    } else if s.host_is_loopback_or_private.is_none()
+        && !name_hits(s.database, &NONPROD_NAME_HINTS)
+        && s.production_hint != Some(false)
+    {
+        // SQLite 且调用方未给出拓扑信号：按契约规则 4「无任何信号 ⇒ Unknown」处理。
+        // 见 `bare_sqlite_without_topology_signal_is_unknown`（fail-closed 取向，O-A4-1）。
+        return ProductionVerdict::Unknown;
+    }
+
+    // 规则 3：NonProduction 候选
+    let mut non_production = false;
+    if s.production_hint == Some(false) {
+        non_production = true;
+    }
+    if name_hits(host, &NONPROD_NAME_HINTS) || name_hits(s.database, &NONPROD_NAME_HINTS) {
+        non_production = true;
+    }
+    if s.is_sqlite || s.host_is_loopback_or_private == Some(true) {
+        non_production = true;
+    }
+    if non_production {
+        return ProductionVerdict::NonProduction;
+    }
+
+    // 规则 4：无任何信号 ⇒ 按生产处理
+    ProductionVerdict::Unknown
+}
+
+/// fail-closed 写闸门（M4-1.d §3.4 全链路，A1 展开卡既定 API 名）。
+///
+/// 放行条件（**全部**满足）：语句为 `Read`（无需闸门）**或**同时满足
+/// ①类别 = `Write` ②`allow_write` ③生产判定 = `NonProduction` ④本次二次确认通过。
+///
+/// `Ddl` / `Admin` / `Unknown` / 任何分类错误**一律拒绝**——首期只给「数据写」
+/// 一条放行通道，结构变更与权限类不开放。
+pub fn require_write_confirmation(
+    classification: &SqlClassification,
+    verdict: ProductionVerdict,
+    allow_write: bool,
+    confirmed: bool,
+) -> Result<(), DbErrorCode> {
+    if let Some(code) = classification.error {
+        return Err(code);
+    }
+    match classification.class {
+        SqlRiskClass::Read => Ok(()),
+        SqlRiskClass::Unknown => Err(DbErrorCode::SqlParseFailed),
+        SqlRiskClass::Ddl | SqlRiskClass::Admin => Err(DbErrorCode::WriteDenied),
+        SqlRiskClass::Write => {
+            if !allow_write {
+                return Err(DbErrorCode::WriteDenied);
+            }
+            match verdict {
+                ProductionVerdict::Production => Err(DbErrorCode::WriteDenied),
+                ProductionVerdict::Unknown => Err(DbErrorCode::ProductionUnknown),
+                ProductionVerdict::NonProduction => {
+                    if confirmed {
+                        Ok(())
+                    } else {
+                        Err(DbErrorCode::WriteDenied)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 主机是否落在回环 / 私网。**只能判定可解析的 IP**；域名或留空返回 `None`，
+/// 调用方按「未知 → 生产」处理（fail-closed，绝不降级当成未加密/公网放行）。
+pub fn host_is_loopback_or_private_ip(host: &str) -> Option<bool> {
+    use std::net::IpAddr;
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => Some(ip.is_loopback() || ip.is_private()),
+        Ok(IpAddr::V6(ip)) => Some(ip.is_loopback() || ip.is_unique_local() || ip.is_unspecified()),
+        Err(_) => None,
+    }
+}
+
+/// 由连接配置 + 传输层加密状态构造生产判定信号。纯函数，便于命令层与测试复用。
+pub fn build_db_signals(
+    cfg: &DbConnectionConfig,
+    encrypted: Option<bool>,
+) -> ProductionSignals<'_> {
+    ProductionSignals {
+        is_sqlite: matches!(cfg.kind, SupportedDb::Sqlite),
+        host: cfg.host.as_deref(),
+        database: &cfg.database,
+        production_hint: cfg.production_hint,
+        host_is_loopback_or_private: cfg.host.as_deref().and_then(host_is_loopback_or_private_ip),
+        encrypted,
+    }
+}
+
+/// 命令层写闸门组合（A3 的 `DbPool::query` 不判写，写闸门全链路归本函数）。
+///
+/// `db_query` 在**任何语句实际执行前**必须过这一关，且任一步拒绝即短路返回，
+/// 绝不降级放行（F1 / F4 / 契约 G-4 / G-5）。返回 `Err(DbErrorCode)` 时由命令层
+/// 映射为稳定字符串码（`code.as_str()`）回前端。
+pub fn evaluate_db_query_gate(
+    sql: &str,
+    cfg: &DbConnectionConfig,
+    encrypted: Option<bool>,
+    confirm_write: bool,
+) -> Result<(), DbErrorCode> {
+    let classification = classify_sql_risk(sql);
+    let signals = build_db_signals(cfg, encrypted);
+    let verdict = is_production_database(&signals);
+    require_write_confirmation(&classification, verdict, cfg.allow_write, confirm_write)
+}
+
 /// 便捷入口：把「路径 + 用户意图」合成一次判定（M0-3.b 收口远程 IPC 时使用）。
 pub struct Decision {
     pub allowed: bool,
@@ -1002,5 +1595,447 @@ mod security_policy_tests {
         assert!(!deny.allowed);
         assert_eq!(deny.reason, Some(PolicyError::EmptyCommand));
         assert!(policy_fingerprint().contains("security-policy-v2"));
+    }
+}
+
+// ===========================================================================
+// M4-2.s 数据库安全闸门测试
+//
+// 用例编号沿用 A1 展开卡 §5 的 `N-sql-1~N-sql-16` 段（写在每条测试的注释里）。
+// 取向：**以失败用例为主**，并保留反向用例防止「fail-closed 过头」误伤正常只读查询
+// （同 M2-3 `T-scr` 口径）。`check-database-policy.py` 的 `DB_SQL_PARSE_FAIL_CLOSED`
+// 会扫描本模块，删除下列任一测试都会让 pre-merge 变红。
+// ===========================================================================
+#[cfg(test)]
+mod m4_2_s_database_safety_tests {
+    use super::*;
+
+    fn remote<'a>(host: &'a str, database: &'a str) -> ProductionSignals<'a> {
+        ProductionSignals {
+            is_sqlite: false,
+            host: Some(host),
+            database,
+            production_hint: None,
+            host_is_loopback_or_private: Some(false),
+            encrypted: Some(true),
+        }
+    }
+
+    // ---------- 分类器：失败用例 ----------
+
+    #[test]
+    fn empty_sql_is_rejected() {
+        // N-sql-1：空语句与纯空白
+        assert_eq!(
+            classify_sql_risk("").error,
+            Some(DbErrorCode::SqlEmpty),
+            "空 SQL 必须拒绝"
+        );
+        assert_eq!(
+            classify_sql_risk("   \n\t ").error,
+            Some(DbErrorCode::SqlEmpty)
+        );
+        assert!(is_write_statement(""));
+    }
+
+    #[test]
+    fn oversized_sql_is_rejected() {
+        // N-sql-2：超过 DB_MAX_SQL_BYTES
+        let huge = format!("SELECT {};", "x".repeat(DB_MAX_SQL_BYTES));
+        assert_eq!(
+            classify_sql_risk(&huge).error,
+            Some(DbErrorCode::SqlTooLarge)
+        );
+        let ok = format!("SELECT {};", "x".repeat(DB_MAX_SQL_BYTES - 16));
+        assert!(classify_sql_risk(&ok).is_read_only(), "未超限的查询应放行");
+    }
+
+    #[test]
+    fn unterminated_block_comment_is_unparsable() {
+        // N-sql-3：未闭合块注释 ⇒ 不可解析即拒
+        assert_eq!(
+            classify_sql_risk("SELECT 1 /* oops").error,
+            Some(DbErrorCode::SqlParseFailed)
+        );
+    }
+
+    #[test]
+    fn unterminated_string_literal_is_unparsable() {
+        // N-sql-4：未闭合单引号 ⇒ 不可解析即拒
+        assert_eq!(
+            classify_sql_risk("SELECT 'abc").error,
+            Some(DbErrorCode::SqlParseFailed)
+        );
+    }
+
+    #[test]
+    fn stacked_drop_is_rejected_as_multiple_statements() {
+        // N-sql-5：`SELECT 1; DROP TABLE t;` 必须整批拒绝（G-4.2）
+        let c = classify_sql_risk("SELECT 1; DROP TABLE t;");
+        assert_eq!(c.error, Some(DbErrorCode::MultipleStatements));
+        assert_eq!(c.statement_count, 2);
+        assert!(c.is_write_like(), "多语句绝不能当只读");
+    }
+
+    #[test]
+    fn comment_wrapped_delete_is_rejected() {
+        // N-sql-6：注释包裹不能绕过
+        let c = classify_sql_risk("/*x*/ DELETE FROM t");
+        assert_eq!(c.class, SqlRiskClass::Write);
+        assert_eq!(c.kind, SqlStatementKind::Delete);
+    }
+
+    #[test]
+    fn cte_delete_is_rejected() {
+        // N-sql-7：CTE 之后的主动词才是判定依据（首关键字是 WITH）
+        let c = classify_sql_risk("WITH t AS (SELECT 1) DELETE FROM t");
+        assert_eq!(c.kind, SqlStatementKind::Delete);
+        assert_eq!(c.class, SqlRiskClass::Write);
+    }
+
+    #[test]
+    fn mixed_case_ddl_is_rejected() {
+        // N-sql-8：大小写变形不能绕过
+        let c = classify_sql_risk("dRoP TaBlE t");
+        assert_eq!(c.class, SqlRiskClass::Ddl);
+        assert_eq!(c.kind, SqlStatementKind::Drop);
+    }
+
+    #[test]
+    fn update_without_where_is_still_write() {
+        // N-sql-9：无 WHERE 的 UPDATE 仍是 Write（由写闸门拦，不靠分类器宽松）
+        let c = classify_sql_risk("UPDATE users SET admin = 1");
+        assert_eq!(c.class, SqlRiskClass::Write);
+        assert_eq!(c.kind, SqlStatementKind::Update);
+    }
+
+    #[test]
+    fn select_into_outfile_is_treated_as_write() {
+        // N-sql-10：`SELECT ... INTO OUTFILE` 在服务端写文件，按写处理
+        let c = classify_sql_risk("SELECT * FROM t INTO OUTFILE '/tmp/leak.csv'");
+        assert_eq!(c.class, SqlRiskClass::Write);
+    }
+
+    #[test]
+    fn explain_analyze_is_not_treated_as_read() {
+        // N-sql-11：MySQL 8 的 `EXPLAIN ANALYZE <DML>` 会真实执行
+        let c = classify_sql_risk("EXPLAIN ANALYZE UPDATE t SET a = 1");
+        assert_eq!(c.class, SqlRiskClass::Admin);
+        assert!(!c.is_read_only());
+    }
+
+    #[test]
+    fn unknown_verb_is_rejected() {
+        // N-sql-12：不认识的动词 ⇒ 不可解析 ⇒ 拒绝（不降级放行）
+        let c = classify_sql_risk("VACUUM FULL");
+        assert_eq!(c.class, SqlRiskClass::Unknown);
+        assert_eq!(c.error, Some(DbErrorCode::SqlParseFailed));
+    }
+
+    #[test]
+    fn grant_and_copy_are_admin_class() {
+        // N-sql-13：权限/运维类一律 Admin，永不放行
+        assert_eq!(
+            classify_sql_risk("GRANT ALL ON db.* TO 'u'@'%'").class,
+            SqlRiskClass::Admin
+        );
+        assert_eq!(
+            classify_sql_risk("COPY t FROM STDIN WITH PASSWORD 'x'").class,
+            SqlRiskClass::Admin
+        );
+        assert_eq!(classify_sql_risk("BEGIN").class, SqlRiskClass::Admin);
+    }
+
+    #[test]
+    fn truncate_is_ddl_class() {
+        // N-sql-14：`TRUNCATE` 属 DDL，写闸门不得放行
+        let c = classify_sql_risk("TRUNCATE TABLE t");
+        assert_eq!(c.class, SqlRiskClass::Ddl);
+    }
+
+    // ---------- 分类器：反向用例（防 fail-closed 过头） ----------
+
+    #[test]
+    fn trailing_semicolon_is_single_statement() {
+        // N-sql-15：`SELECT 1;` 是单条语句，不得判为多语句
+        let c = classify_sql_risk("SELECT 1;");
+        assert_eq!(c.statement_count, 1);
+        assert!(c.is_read_only());
+    }
+
+    #[test]
+    fn semicolon_inside_literal_does_not_split() {
+        // N-sql-16：字符串里的 `;` 不是语句边界
+        let c = classify_sql_risk("SELECT ';' AS semi FROM t");
+        assert_eq!(c.statement_count, 1);
+        assert!(c.is_read_only());
+    }
+
+    #[test]
+    fn cte_select_is_allowed() {
+        let c = classify_sql_risk("WITH t AS (SELECT 1 AS a) SELECT * FROM t");
+        assert_eq!(c.kind, SqlStatementKind::Select);
+        assert!(c.is_read_only());
+    }
+
+    #[test]
+    fn chinese_and_comment_read_query_is_allowed() {
+        // 反向用例：中文标识符/字面量与行注释不得被误判（M2-3 T-scr 同口径）
+        let c = classify_sql_risk("SELECT 姓名, 部门 FROM 员工 WHERE 部门 = '研发' -- 只读查询");
+        assert_eq!(c.class, SqlRiskClass::Read);
+        assert!(c.is_read_only());
+    }
+
+    #[test]
+    fn lower_case_select_and_show_are_read() {
+        assert!(classify_sql_risk("select * from t where a = 1").is_read_only());
+        assert!(classify_sql_risk("SHOW TABLES").is_read_only());
+    }
+
+    #[test]
+    fn dollar_quoted_postgres_body_is_masked() {
+        // Postgres 美元引用里的关键字与分号不得影响判定
+        let c = classify_sql_risk("SELECT $$; DROP TABLE t;$$ AS body");
+        assert_eq!(c.statement_count, 1);
+        assert!(c.is_read_only());
+    }
+
+    // ---------- 生产判定（M4-1.d §3.3 与 §3.5 测试矩阵） ----------
+
+    #[test]
+    fn unresolvable_host_verdict_is_unknown() {
+        let mut s = remote("db.invalid.example", "app");
+        s.host_is_loopback_or_private = None;
+        assert_eq!(is_production_database(&s), ProductionVerdict::Unknown);
+    }
+
+    #[test]
+    fn empty_database_name_verdict_is_unknown() {
+        let s = remote("127.0.0.1", "");
+        assert_eq!(is_production_database(&s), ProductionVerdict::Unknown);
+    }
+
+    #[test]
+    fn prod_name_only_verdict_is_unknown() {
+        // 仅名称命中生产词表 ⇒ Unknown（不得单独判 Production）
+        let s = remote("prod-01.corp", "app");
+        assert_eq!(is_production_database(&s), ProductionVerdict::Unknown);
+    }
+
+    #[test]
+    fn explicit_nonprod_hint_with_loopback_is_nonproduction() {
+        let mut s = remote("127.0.0.1", "app_dev");
+        s.production_hint = Some(false);
+        s.host_is_loopback_or_private = Some(true);
+        assert_eq!(is_production_database(&s), ProductionVerdict::NonProduction);
+    }
+
+    #[test]
+    fn explicit_production_hint_is_production() {
+        let mut s = remote("10.0.0.5", "app");
+        s.production_hint = Some(true);
+        s.host_is_loopback_or_private = Some(true);
+        assert_eq!(is_production_database(&s), ProductionVerdict::Production);
+    }
+
+    #[test]
+    fn unencrypted_public_host_verdict_is_unknown() {
+        // S4：非回环且实际未加密 ⇒ Unknown
+        let mut s = remote("db.example.com", "app");
+        s.encrypted = Some(false);
+        assert_eq!(is_production_database(&s), ProductionVerdict::Unknown);
+    }
+
+    #[test]
+    fn bare_sqlite_without_topology_signal_is_unknown() {
+        // 契约规则 4「无任何信号 ⇒ Unknown」：SQLite 本地文件若调用方不给拓扑信号，
+        // 按生产处理（fail-closed）。调用方认为本地文件等价回环时须显式传
+        // `host_is_loopback_or_private = Some(true)`。（契约歧义 O-A4-1，待 A0 确认）
+        let s = ProductionSignals {
+            is_sqlite: true,
+            host: None,
+            database: "/data/app.db",
+            production_hint: None,
+            host_is_loopback_or_private: None,
+            encrypted: None,
+        };
+        assert_eq!(is_production_database(&s), ProductionVerdict::Unknown);
+
+        let mut marked = s;
+        marked.host_is_loopback_or_private = Some(true);
+        assert_eq!(
+            is_production_database(&marked),
+            ProductionVerdict::NonProduction
+        );
+    }
+
+    // ---------- 命令层闸门组合（evaluate_db_query_gate）----------
+
+    fn sample_cfg(
+        kind: SupportedDb,
+        host: Option<&str>,
+        database: &str,
+        production_hint: Option<bool>,
+        allow_write: bool,
+    ) -> DbConnectionConfig {
+        DbConnectionConfig {
+            id: "conn-test".to_string(),
+            name: "test".to_string(),
+            kind,
+            host: host.map(|h| h.to_string()),
+            port: None,
+            database: database.to_string(),
+            username: None,
+            ssl_mode: crate::domain::DbSslMode::Disable,
+            allow_write,
+            production_hint,
+            enabled: true,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn gate_allows_read_on_production() {
+        // 只读查询即使在生产库也放行（只读不破坏数据）
+        let cfg = sample_cfg(
+            SupportedDb::MySql,
+            Some("10.0.0.5"),
+            "app",
+            Some(true),
+            false,
+        );
+        assert_eq!(
+            evaluate_db_query_gate("SELECT * FROM t", &cfg, Some(true), false),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn gate_denies_write_on_production_even_with_confirm() {
+        let cfg = sample_cfg(
+            SupportedDb::Postgres,
+            Some("10.0.0.5"),
+            "app",
+            Some(true),
+            true,
+        );
+        assert_eq!(
+            evaluate_db_query_gate("DELETE FROM t", &cfg, Some(true), true),
+            Err(DbErrorCode::WriteDenied)
+        );
+    }
+
+    #[test]
+    fn gate_denies_unparsable_sql() {
+        let cfg = sample_cfg(SupportedDb::Sqlite, Some("127.0.0.1"), "x.db", None, true);
+        assert_eq!(
+            evaluate_db_query_gate("/*unterminated", &cfg, None, true),
+            Err(DbErrorCode::SqlParseFailed)
+        );
+    }
+
+    #[test]
+    fn gate_allows_confirmed_write_on_nonprod() {
+        let cfg = sample_cfg(SupportedDb::Sqlite, Some("127.0.0.1"), "x.db", None, true);
+        assert_eq!(
+            evaluate_db_query_gate("UPDATE t SET a = 1", &cfg, None, true),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn gate_denies_write_without_second_confirmation() {
+        let cfg = sample_cfg(SupportedDb::Sqlite, Some("127.0.0.1"), "x.db", None, true);
+        assert_eq!(
+            evaluate_db_query_gate("UPDATE t SET a = 1", &cfg, None, false),
+            Err(DbErrorCode::WriteDenied)
+        );
+    }
+
+    // ---------- fail-closed 写闸门 ----------
+
+    #[test]
+    fn write_is_denied_by_default() {
+        let c = classify_sql_risk("UPDATE t SET a = 1");
+        assert_eq!(
+            require_write_confirmation(&c, ProductionVerdict::NonProduction, false, false),
+            Err(DbErrorCode::WriteDenied)
+        );
+    }
+
+    #[test]
+    fn write_on_unknown_production_is_denied() {
+        let c = classify_sql_risk("DELETE FROM t WHERE id = 1");
+        assert_eq!(
+            require_write_confirmation(&c, ProductionVerdict::Unknown, true, true),
+            Err(DbErrorCode::ProductionUnknown),
+            "生产判定不确定必须拒绝写"
+        );
+    }
+
+    #[test]
+    fn write_on_production_is_denied() {
+        let c = classify_sql_risk("DELETE FROM t WHERE id = 1");
+        assert_eq!(
+            require_write_confirmation(&c, ProductionVerdict::Production, true, true),
+            Err(DbErrorCode::WriteDenied)
+        );
+    }
+
+    #[test]
+    fn write_without_second_confirmation_is_denied() {
+        let c = classify_sql_risk("INSERT INTO t (a) VALUES (1)");
+        assert_eq!(
+            require_write_confirmation(&c, ProductionVerdict::NonProduction, true, false),
+            Err(DbErrorCode::WriteDenied)
+        );
+    }
+
+    #[test]
+    fn write_allowed_only_when_all_gates_pass() {
+        let c = classify_sql_risk("INSERT INTO t (a) VALUES (1)");
+        assert_eq!(
+            require_write_confirmation(&c, ProductionVerdict::NonProduction, true, true),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn ddl_is_never_allowed_even_with_all_gates() {
+        let c = classify_sql_risk("DROP TABLE t");
+        assert_eq!(
+            require_write_confirmation(&c, ProductionVerdict::NonProduction, true, true),
+            Err(DbErrorCode::WriteDenied),
+            "首期不给 DDL 放行通道"
+        );
+    }
+
+    #[test]
+    fn unparsable_statement_is_denied_by_write_gate() {
+        let c = classify_sql_risk("/*unterminated");
+        assert_eq!(
+            require_write_confirmation(&c, ProductionVerdict::NonProduction, true, true),
+            Err(DbErrorCode::SqlParseFailed)
+        );
+    }
+
+    #[test]
+    fn read_query_bypasses_write_gate() {
+        let c = classify_sql_risk("SELECT * FROM t");
+        assert_eq!(
+            require_write_confirmation(&c, ProductionVerdict::Unknown, false, false),
+            Ok(()),
+            "只读查询不受写闸门限制"
+        );
+    }
+
+    #[test]
+    fn multiple_statements_are_denied_by_write_gate() {
+        let c = classify_sql_risk("SELECT 1; DROP TABLE t");
+        assert_eq!(
+            require_write_confirmation(&c, ProductionVerdict::NonProduction, true, true),
+            Err(DbErrorCode::MultipleStatements)
+        );
     }
 }

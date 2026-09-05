@@ -788,6 +788,19 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
         })?;
     }
 
+    // M4-7.c / F7：`stop-scheduler` 必须**早于** `kill-running-scripts`
+    // （先停触发，再杀运行中的；否则定时器可能在进程回收后再拉起子进程）。
+    // 紧随 `stop-background-workers` 之后注册 ⇒ 索引 1 < kill-running-scripts 的索引 5。
+    // 只置停止位 + 通知条件变量：**不 join 线程、不取消在飞运行**
+    // （M0-2.b：清理任务不得持业务锁阻塞；在飞运行交给 `kill-running-scripts` 收口）。
+    {
+        coordinator.register("stop-scheduler", move || {
+            crate::scheduler::request_stop();
+            eprintln!("[shutdown] stop-scheduler signalled");
+            Ok(())
+        })?;
+    }
+
     {
         // M1-9：会话 flush 必须**先于** close-tabs——先确定会话数据的落盘/释放，
         // 再销毁子 webview，避免清理过程中的失败/中断导致会话状态不确定。
@@ -882,6 +895,208 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// M4-6.b 定时任务命令（契约 `A6-M4-5-scheduler-contract-20260905-2330.md` §6）
+//
+// 五条命令**全部**过 `check_invocation_source`（远程 webview 一律拒绝，与
+// `run_command` / `run_script` 同口径）。审计 detail 只含 `id` / `kind` /
+// `trigger` / `count` / `reason` / `error_code`，**不含**参数值、命令正文、
+// 脚本正文、输出或任何凭据（契约 §7 + F5）。
+//
+// 触发语义归 `scheduler.rs`：本层只做 CRUD 与「立即跑一次」的入口，
+// 执行唯一入口仍是 `script_runner`（F6）。
+// ---------------------------------------------------------------------------
+
+/// 触发方式的审计标签。**不含**用户输入的表达式正文（避免把任意字符串塞进审计）。
+fn task_trigger_label(trigger: &TaskTrigger) -> &'static str {
+    match trigger {
+        TaskTrigger::Cron { .. } => "cron",
+        TaskTrigger::Interval { .. } => "interval",
+    }
+}
+
+/// 取目标（脚本 / 命令片段）的参数定义，用于 R-3 / R-4 校验。
+fn task_target_params(
+    app: &AppHandle,
+    kind: TaskKind,
+    target_id: &str,
+) -> Result<Vec<ScriptParam>, String> {
+    match kind {
+        TaskKind::Script => {
+            let script = workspace::load_scripts(app)
+                .into_iter()
+                .find(|s| s.id == target_id)
+                .ok_or_else(|| crate::tasks::TASK_TARGET_NOT_FOUND.to_string())?;
+            if !script.enabled {
+                return Err("SCRIPT_DISABLED".to_string());
+            }
+            Ok(script.params)
+        }
+        TaskKind::Command => {
+            let snippet = workspace::load_snippets(app)
+                .into_iter()
+                .find(|s| s.id == target_id)
+                .ok_or_else(|| crate::tasks::TASK_TARGET_NOT_FOUND.to_string())?;
+            if !snippet.enabled {
+                return Err("SNIPPET_DISABLED".to_string());
+            }
+            Ok(snippet.params)
+        }
+    }
+}
+
+/// 任务列表。**不含** secret 参数值 —— secret 参数在定义期即被拒绝落盘（契约 §3.3 R-3）。
+#[tauri::command]
+pub fn task_list(app: AppHandle, webview: tauri::Webview) -> Result<Vec<TaskDef>, String> {
+    check_invocation_source(&webview, "task_list", None, &app)?;
+    let list = crate::tasks::load_tasks_at(&crate::tasks::tasks_file(&app));
+    let count = list.len();
+    workspace::log_audit(&app, "task.runs.list", format!("count={count}"));
+    Ok(list)
+}
+
+/// 新建任务。默认 **不启用**（裁定 R-A6-1：自动执行必须是显式动作）；
+/// 创建时即计算并落盘 `next_run_at`，便于 UI 展示「下次执行时间」。
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub fn task_add(
+    app: AppHandle,
+    webview: tauri::Webview,
+    name: String,
+    kind: TaskKind,
+    target_id: String,
+    trigger: TaskTrigger,
+    params: Option<HashMap<String, String>>,
+    missed_run_policy: Option<MissedRunPolicy>,
+    catch_up_limit: Option<u32>,
+    misfire_grace_secs: Option<u64>,
+    retry: Option<RetryPolicy>,
+    timeout_secs: Option<u32>,
+    enabled: Option<bool>,
+) -> Result<TaskDef, String> {
+    check_invocation_source(&webview, "task_add", None, &app)?;
+    let supplied = params.unwrap_or_default();
+    let path = crate::tasks::tasks_file(&app);
+    let mut list = crate::tasks::load_tasks_at(&path);
+    crate::tasks::check_capacity(list.len()).map_err(|e| e.code().to_string())?;
+    let meta = task_target_params(&app, kind, &target_id)?;
+    crate::tasks::validate_params(&meta, &supplied).map_err(|e| e.code().to_string())?;
+
+    let now = chrono::Utc::now();
+    let mut task = TaskDef {
+        id: uuid::Uuid::new_v4().to_string(),
+        name,
+        kind,
+        target_id,
+        params: supplied,
+        enabled: enabled.unwrap_or(false),
+        trigger,
+        missed_run_policy: missed_run_policy.unwrap_or_default(),
+        catch_up_limit: catch_up_limit.unwrap_or(3),
+        misfire_grace_secs: misfire_grace_secs.unwrap_or(60),
+        retry: retry.unwrap_or_default(),
+        timeout_secs: timeout_secs.unwrap_or(0),
+        last_fired_at: None,
+        next_run_at: None,
+        created_at: now,
+        updated_at: now,
+    };
+    crate::tasks::validate_task(&task).map_err(|e| e.code().to_string())?;
+    task.next_run_at = crate::tasks::next_fire_after(&task.trigger, now);
+    list.push(task.clone());
+    crate::tasks::save_tasks_at(&path, &list)
+        .map_err(|_| crate::tasks::TASK_PERSIST_FAILED.to_string())?;
+
+    let kind_label = task.kind.as_str();
+    let trig_label = task_trigger_label(&task.trigger);
+    let id = task.id.clone();
+    workspace::log_audit(
+        &app,
+        "task.add",
+        format!("id={id} kind={kind_label} trigger={trig_label}"),
+    );
+    Ok(task)
+}
+
+/// 全量更新（按 id 替换）。`created_at` 由服务端保留，不可被前端改写；
+/// 改 `trigger` 后重算 `next_run_at`（契约 §5.4）。
+#[tauri::command]
+pub fn task_update(
+    app: AppHandle,
+    webview: tauri::Webview,
+    task: TaskDef,
+) -> Result<TaskDef, String> {
+    check_invocation_source(&webview, "task_update", None, &app)?;
+    let path = crate::tasks::tasks_file(&app);
+    let mut list = crate::tasks::load_tasks_at(&path);
+    let index = list
+        .iter()
+        .position(|t| t.id == task.id)
+        .ok_or_else(|| crate::tasks::TASK_NOT_FOUND.to_string())?;
+    // A10 R-4：参数校验在**更新期同样复跑** —— 防止脚本事后把参数改标 secret，
+    // 而既有任务仍持有明文值。
+    let meta = task_target_params(&app, task.kind, &task.target_id)?;
+    crate::tasks::validate_params(&meta, &task.params).map_err(|e| e.code().to_string())?;
+    crate::tasks::validate_task(&task).map_err(|e| e.code().to_string())?;
+
+    let created_at = list[index].created_at;
+    let mut next = task;
+    next.created_at = created_at;
+    next.updated_at = chrono::Utc::now();
+    next.next_run_at = crate::tasks::next_fire_after(&next.trigger, next.updated_at);
+    list[index] = next.clone();
+    crate::tasks::save_tasks_at(&path, &list)
+        .map_err(|_| crate::tasks::TASK_PERSIST_FAILED.to_string())?;
+
+    let kind_label = next.kind.as_str();
+    let trig_label = task_trigger_label(&next.trigger);
+    let id = next.id.clone();
+    workspace::log_audit(
+        &app,
+        "task.update",
+        format!("id={id} kind={kind_label} trigger={trig_label}"),
+    );
+    Ok(next)
+}
+
+/// 删除任务：**先取消该任务的在飞运行**，再删持久化条目（契约 §5.4）。
+/// `task-runs.json` 的历史**保留**（审计与排障需要），不随任务删除。
+/// 幂等：id 不存在返回稳定错误码，不 panic。
+#[tauri::command]
+pub fn task_remove(app: AppHandle, webview: tauri::Webview, id: String) -> Result<bool, String> {
+    check_invocation_source(&webview, "task_remove", None, &app)?;
+    check_id(&id, "任务 id")?;
+    let path = crate::tasks::tasks_file(&app);
+    let mut list = crate::tasks::load_tasks_at(&path);
+    let before = list.len();
+    let cancelled = crate::scheduler::cancel_in_flight(&app, &id);
+    list.retain(|t| t.id != id);
+    if list.len() == before {
+        return Err(crate::tasks::TASK_NOT_FOUND.to_string());
+    }
+    crate::tasks::save_tasks_at(&path, &list)
+        .map_err(|_| crate::tasks::TASK_PERSIST_FAILED.to_string())?;
+    workspace::log_audit(
+        &app,
+        "task.remove",
+        format!("id={id} cancelled={cancelled}"),
+    );
+    Ok(true)
+}
+
+/// 立即触发一次（`trigger = Manual`）。**不推进** `last_fired_at` / `next_run_at`；
+/// 同样受「同任务 in_flight」与全局并发约束，冲突时返回 `TASK_ALREADY_RUNNING`。
+#[tauri::command]
+pub fn task_run_now(
+    app: AppHandle,
+    webview: tauri::Webview,
+    id: String,
+) -> Result<RunSnapshot, String> {
+    check_invocation_source(&webview, "task_run_now", None, &app)?;
+    check_id(&id, "任务 id")?;
+    crate::scheduler::fire_now(&app, &id)
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -5697,5 +5912,159 @@ mod snippet_execution_gate_tests {
         // 反例：argv[0] 为字面量时放行（不误伤 grep -r {PATTERN} 这类常规片段）
         s.argv = vec!["grep".to_string(), "-r".to_string(), "{PROG}".to_string()];
         assert_eq!(crate::snippets::validate_snippet(&s), Ok(()));
+    }
+}
+
+// ===========================================================================
+// M4-3 / M4-2.s（Lane A4）：数据库命令层
+//
+// 安全闸门接线（A3 的 `DbPool::query` 不判写，写闸门全链路归本层）：
+//   `db_query` 在**任何语句实际执行前**必须过 `security_policy::evaluate_db_query_gate`，
+//   任一步拒绝即短路返回，绝不降级放行（F1 / F4 / 契约 G-4 / G-5）。
+//
+// 连接模型：因 `DbPool` 包裹的驱动句柄（rusqlite::Connection 等）非 `Send`，
+// 不能驻留于 Tauri 全局 managed state，故采用「按需重连」模型——
+// `db_connect` 仅打通一次以校验可达性/凭据，并把配置登记进 `DbConnectionRegistry`、
+// 凭据写入系统密钥库（键 = `db:<conn_id>`）；`db_query` 每次从登记簿取配置 +
+// 从密钥库取凭据即时建连执行；`db_disconnect` 撤销登记并删除密钥。
+// SQLite 为文件级、MySQL/PostgreSQL 取数通道尚未实现（D27），故该模型对当前
+// 可验证路径完全成立。
+//
+// 凭据：password 永不进 `DbConnectionConfig`（F2），不进审计 detail（G-1 / G-3）。
+// ===========================================================================
+
+use crate::database::{DbPool, QueryCancel};
+use uuid::Uuid;
+
+/// 数据库连接配置登记簿（不含非 Send 的池句柄）。注册为 Tauri managed state。
+pub struct DbConnectionRegistry {
+    pub configs: Mutex<HashMap<String, DbConnectionConfig>>,
+}
+
+impl Default for DbConnectionRegistry {
+    fn default() -> Self {
+        DbConnectionRegistry {
+            configs: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DbConnectResult {
+    pub conn_id: String,
+    pub kind: SupportedDb,
+}
+
+#[tauri::command]
+pub fn db_connect(
+    app: AppHandle,
+    webview: tauri::Webview,
+    cfg: DbConnectionConfig,
+    password: Option<String>,
+) -> Result<DbConnectResult, String> {
+    check_invocation_source(&webview, "db_connect", None, &app)?;
+    // 实际打通一次以校验配置/凭据/可达性；连接不驻留全局（非 Send），校验后即弃。
+    let roots = allowed_roots(&app);
+    let kind = cfg.kind;
+    let conn_id = cfg.id.clone();
+    let _probe = DbPool::connect(&cfg, password.as_deref(), &roots)
+        .map_err(|e| format!("{}: {}", e.code_str(), e.message))?;
+    // G-1：凭据（若有）写入系统密钥库，键必须带 `db:` 前缀，与 git 的 repo_id 命名空间隔离。
+    if let Some(p) = password {
+        KeyringStore::save_token(&crate::database::credential_key(&conn_id), &p)?;
+    }
+    {
+        let reg = app.state::<DbConnectionRegistry>();
+        reg.configs.lock().unwrap().insert(conn_id.clone(), cfg);
+    }
+    // 审计 detail 禁含 SQL/凭据（G-3）：只记连接标识与类型。
+    workspace::log_audit(
+        &app,
+        "db.connect",
+        format!("conn_id={} kind={:?}", conn_id, kind),
+    );
+    Ok(DbConnectResult { conn_id, kind })
+}
+
+#[tauri::command]
+pub fn db_query(
+    app: AppHandle,
+    webview: tauri::Webview,
+    conn_id: String,
+    sql: String,
+    timeout_secs: Option<u64>,
+    confirm_write: bool,
+) -> Result<crate::database::DbQueryResult, String> {
+    use crate::security_policy as sp;
+    check_invocation_source(&webview, "db_query", None, &app)?;
+
+    // 取登记配置（db_connect 未登记即视为未连接）。
+    let cfg = {
+        let reg = app.state::<DbConnectionRegistry>();
+        let guard = reg.configs.lock().unwrap();
+        guard
+            .get(&conn_id)
+            .cloned()
+            .ok_or_else(|| "DB_NOT_CONNECTED".to_string())?
+    };
+
+    // SQLite 不需要密码；其余从密钥库取（键 = db:<conn_id>）。
+    let password = if cfg.kind == SupportedDb::Sqlite {
+        None
+    } else {
+        KeyringStore::get_token(&crate::database::credential_key(&conn_id)).ok()
+    };
+
+    let roots = allowed_roots(&app);
+    let mut pool = DbPool::connect(&cfg, password.as_deref(), &roots)
+        .map_err(|e| format!("{}: {}", e.code_str(), e.message))?;
+
+    // ===== 安全闸门（A3 的 query 不判写，全链路归此处）=====
+    let encrypted = pool.encrypted();
+    sp::evaluate_db_query_gate(&sql, &cfg, encrypted, confirm_write)
+        .map_err(|code| code.as_str().to_string())?;
+
+    // 执行取数。
+    let cancel = QueryCancel::new();
+    let query_id = Uuid::new_v4().to_string();
+    let result = pool
+        .query(&sql, &cancel, timeout_secs, &query_id)
+        .map_err(|e| format!("{}: {}", e.code_str(), e.message))?;
+
+    // 审计 detail 禁含 SQL 原文与凭据（G-3）：只记连接标识与截断标记。
+    workspace::log_audit(
+        &app,
+        "db.query",
+        format!(
+            "conn_id={} rows={} truncated={} field_truncated={}",
+            conn_id, result.row_count, result.truncated, result.field_truncated
+        ),
+    );
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn db_disconnect(
+    app: AppHandle,
+    webview: tauri::Webview,
+    conn_id: String,
+) -> Result<(), String> {
+    check_invocation_source(&webview, "db_disconnect", None, &app)?;
+    let removed = {
+        let reg = app.state::<DbConnectionRegistry>();
+        let mut guard = reg.configs.lock().unwrap();
+        guard.remove(&conn_id).is_some()
+    };
+    // 一并撤销密钥库中的凭据（G-1：命名空间隔离，不影响 git 的 repo_id）。
+    let _ = KeyringStore::delete_token(&crate::database::credential_key(&conn_id));
+    workspace::log_audit(
+        &app,
+        "db.disconnect",
+        format!("conn_id={} removed={}", conn_id, removed),
+    );
+    if removed {
+        Ok(())
+    } else {
+        Err("DB_NOT_CONNECTED".to_string())
     }
 }

@@ -38,7 +38,19 @@ import type {
   SessionFlushReport,
   ToolMeta,
   TermMessage,
+  TaskAddArgs,
+  TaskDef,
+  TaskRunRecord,
+  DbConnectionConfig,
+  DbConnectResult,
+  DbQueryResult,
 } from "./types";
+
+/// M4-8 可用性开关：A7（M4-6 / M4-7）已落地后端 `task_list / task_add / task_update /
+/// `task_remove / task_run_now` 五条命令（tasks.rs / scheduler.rs / bridge.rs / main.rs / ACL），
+/// 故置 `true` → 面板为**实时面板**；置 `false` 时 `useTaskStore` 不发出任何 invoke（只读壳）。
+/// 这是 board「LIMITED START」的落地方式：命令未就绪时**不假借未实现的命令名假装可用**。
+export const TASK_COMMANDS_AVAILABLE = true;
 
 // M0-0.b 测量配置（契约 logs/m0-baseline-contract-v1.md；非测量运行后端返回 null）
 export interface M0Config {
@@ -283,6 +295,40 @@ export const bridge = {
   // M2-6.c 命令片段执行：复用脚本执行态事件和运行历史。
   runCommand: (id: string, values: Record<string, string>) =>
     invoke<RunSnapshot>("run_command", { id, values }),
+
+  // ====== M4-8 定时任务（命令名沿用 A1 冻结的 5 条，A6 契约 §6 定义 DTO）======
+  // 后端实现归 A7（M4-6.b）；前端只在 TASK_COMMANDS_AVAILABLE 为 true 时调用。
+  taskList: () => invoke<TaskDef[]>("task_list"),
+
+  // M4-8 `task_add`：后端是**平铺命名参数**（非 TaskDef 结构体），且 Tauri 默认把参数名
+  // 从 snake_case 转成 camelCase，故多词键必须是 camelCase（targetId / catchUpLimit …）。
+  // 载荷由 `utils/taskUi.ts::serializeTaskAddArgs` 生成，整包传出、不做字段解构。
+  taskAdd: (p: TaskAddArgs) => invoke<TaskDef>("task_add", p),
+
+  // M4-8 `task_update`：后端参数为单个 `task: TaskDef` 结构体（serde snake_case），
+  // 必须包成 `{ task: p }`；多词键随 TaskDef 的 snake_case 落在此结构体内。
+  taskUpdate: (p: TaskDef) => invoke<TaskDef>("task_update", { task: p }),
+
+  taskRemove: (id: string) => invoke<boolean>("task_remove", { id }),
+
+  taskRunNow: (id: string) => invoke<RunSnapshot>("task_run_now", { id }),
+
+  // ====== M4-4 数据库面板（命令名沿用 A1 冻结的 3 条：db_connect / db_query / db_disconnect）======
+  // 后端实现归 A4（M4-2.s / M4-3）；前端封装归 A5（M4-4）。A4 检查点 A4-M4-2s-database-safety
+  // 已明确「前端 wiring 归 A5」，故本文件新增 db_* 封装属 A5 授权范围。
+  // 嵌套结构（DbConnectionConfig / DbQueryResult）一律 snake_case（Tauri 仅转换顶层 camelCase）。
+  dbConnect: (cfg: DbConnectionConfig, password: string) =>
+    invoke<DbConnectResult>("db_connect", { cfg, password: password || null }),
+
+  dbQuery: (p: { conn_id: string; sql: string; timeout_secs?: number | null; confirm_write: boolean }) =>
+    invoke<DbQueryResult>("db_query", p),
+
+  // 后端 db_disconnect 返回 Result<(), String>，Tauri 序列化为 null。
+  dbDisconnect: (conn_id: string) => invoke<null>("db_disconnect", { conn_id }),
+
+  // 说明：A6 §6 / F-A6-7 明确**没有** task_history / task_cancel 两条命令——
+  // 历史由 task_list 附带返回，取消复用既有 cancel_script(run_id)。
+  // 因此本文件不登记任何 A1/A6 之外的命令名。
 
   // 订阅脚本输出流（payload 为 ScriptOutputEvent；前端用 rAF 合并，避免高频打满渲染）
   onScriptOutput: (cb: (e: ScriptOutputEvent) => void) =>
