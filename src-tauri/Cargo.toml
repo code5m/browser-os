@@ -9,7 +9,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["unstable", "protocol-asset"] }
-tauri-plugin-shell = "2"
 # M1-4：单实例——应用已运行时再次 xdg-open（第二实例）把 argv 中的 http(s) URL
 # 路由给首个实例的内嵌页签，而不是另起窗口。grid 子进程走独立 Builder 不受其影响。
 tauri-plugin-single-instance = "2"

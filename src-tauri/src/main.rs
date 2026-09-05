@@ -80,7 +80,6 @@ fn run_grid_child(index: u32) {
     let sock_path = std::env::var("GRID_SOCK_PATH").unwrap_or_default();
     let label_for_plugin = label.clone();
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_browser_tabs::init_with_host(&label_for_plugin))
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
@@ -1076,7 +1075,6 @@ fn main() {
     }
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
         // 浏览器页签/宫格子 webview 统一由 browser-tabs 插件创建与定位
         .plugin(tauri_plugin_browser_tabs::init())
         // M1-4：单实例——应用已运行时再次 xdg-open（第二实例）把 argv 中的

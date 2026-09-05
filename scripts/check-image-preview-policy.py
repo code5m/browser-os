@@ -35,8 +35,10 @@ from pathlib import Path
 
 # ---------------- 基线指纹（M2-2.a 冻结时刻，b 卡不得改动这些文件） ----------------
 BASELINE_SHA256 = {
-    "package.json": "58596ae7f74ad05895f5bff2d83951ebb7c03accf49b15bee9efa232659b5c62",
-    "package-lock.json": "024f51edd0f1de2047a55f09ac20b54c059baa9072ae88f01325129582d67ee6",
+    # M2-4.e 裁定移除未使用的 @tauri-apps/plugin-shell，刷新 package 指纹；
+    # 本门禁仍守住 M2-2.b 之后不得新增前端依赖。
+    "package.json": "9c567f34a78d5f38a9d347b215282edd0fce81359cb2d77361680cb135599ec4",
+    "package-lock.json": "16103828ece143a50ac0203348e1e021de898c7c8cde80d15accdc9f7c13d7c6",
     "src-tauri/permissions/remote-collect.toml": (
         "cc35e0edc7933c2a43fd6e0c9271667db483aa5aa206d7e08d98a21b832f05da"
     ),

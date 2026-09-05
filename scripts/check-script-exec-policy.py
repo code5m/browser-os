@@ -14,14 +14,14 @@
   3. 不加引号（裁定书 §3.1）：argv 模式下给值加 `'...'` 会把单引号作字面量传进脚本。
 
 模式：
-  默认            判定 ACTIVE 码（b/c 卡职责内 + P0 红线）；零命中 → EXIT 0
+  默认            判定 ACTIVE 码（b/c/d/e 卡职责内 + P0 红线）；零命中 → EXIT 0
   --expect-pending 验证 PENDING 码位集合；M2-4.d 后应为空 → EXIT 0
   --self-test     好坏样本双向自检（含**变异防呆**：坏样本必须真的改动内容）
 
-关于「一次性定义码位」：沿用 M0-3.a 模式，18 个码位一次定义，
-默认门禁判定已落地的 b/c/d 卡职责。M2-4.d 后 pending 码位为空：
+关于「一次性定义码位」：沿用 M0-3.a 模式，23 个码位一次定义，
+默认门禁判定已落地的 b/c/d/e 卡职责。M2-4.d 后 pending 码位为空：
 `EXEC_SHUTDOWN_NOT_REGISTERED` / `EXEC_RUN_RECORD_MISSING` / `EXEC_NO_RING_CAP` /
-`EXEC_NO_OUTPUT_CAP` 已转入默认判定。
+`EXEC_NO_OUTPUT_CAP` 已转入默认判定；M2-4.e 追加 shell spawn 开放面移除检查。
 """
 
 from __future__ import annotations
@@ -36,6 +36,11 @@ RUNNER = ROOT / "src-tauri" / "src" / "script_runner.rs"
 MAIN_RS = ROOT / "src-tauri" / "src" / "main.rs"
 BRIDGE_RS = ROOT / "src-tauri" / "src" / "bridge.rs"
 ACL_TOML = ROOT / "src-tauri" / "permissions" / "default-commands.toml"
+CAPABILITY_JSON = ROOT / "src-tauri" / "capabilities" / "default.json"
+CARGO_TOML = ROOT / "src-tauri" / "Cargo.toml"
+CARGO_LOCK = ROOT / "src-tauri" / "Cargo.lock"
+PACKAGE_JSON = ROOT / "package.json"
+PACKAGE_LOCK = ROOT / "package-lock.json"
 
 # ----------------------------- 码位定义 -----------------------------
 
@@ -72,7 +77,14 @@ D_CARD_CODES = (
     "EXEC_NO_OUTPUT_CAP",
 )
 
-ACTIVE_CODES = P0_CODES + B_CARD_CODES + C_CARD_CODES + D_CARD_CODES
+# e 卡职责内（移除无调用点的 Tauri shell spawn 开放面）
+E_CARD_CODES = (
+    "EXEC_SHELL_SPAWN_CAPABILITY_PRESENT",
+    "EXEC_FRONTEND_SHELL_DEP_PRESENT",
+    "EXEC_RUST_SHELL_PLUGIN_PRESENT",
+)
+
+ACTIVE_CODES = P0_CODES + B_CARD_CODES + C_CARD_CODES + D_CARD_CODES + E_CARD_CODES
 
 PENDING_CODES: tuple[str, ...] = ()
 
@@ -145,6 +157,11 @@ def detect(ctx: dict[str, str]) -> set[str]:
     main = ctx["main"]
     bridge = ctx["bridge"]
     acl = ctx["acl"]
+    capability = ctx["capability"]
+    cargo_toml = ctx["cargo_toml"]
+    cargo_lock = ctx["cargo_lock"]
+    package_json = ctx["package_json"]
+    package_lock = ctx["package_lock"]
 
     # --- P0：命令注入红线 ---
     if SH_C_PATTERN.search(runner):
@@ -216,6 +233,18 @@ def detect(ctx: dict[str, str]) -> set[str]:
         hits.add("EXEC_NO_RING_CAP")
     if not re.search(r"pub\s+const\s+SCRIPT_RUN_TAIL_BYTES\s*:", runner):
         hits.add("EXEC_NO_OUTPUT_CAP")
+
+    # --- e 卡：移除 Tauri shell 插件开放面 ---
+    if "shell:allow-spawn" in capability:
+        hits.add("EXEC_SHELL_SPAWN_CAPABILITY_PRESENT")
+    if "@tauri-apps/plugin-shell" in package_json or "@tauri-apps/plugin-shell" in package_lock:
+        hits.add("EXEC_FRONTEND_SHELL_DEP_PRESENT")
+    if (
+        "tauri-plugin-shell" in cargo_toml
+        or "tauri-plugin-shell" in cargo_lock
+        or "tauri_plugin_shell::init" in main
+    ):
+        hits.add("EXEC_RUST_SHELL_PLUGIN_PRESENT")
     run_body = rust_fn_body(bridge, "run_script")
     helper_body = rust_fn_body(bridge, "get_enabled_script")
     if "start_run(" not in run_body or "validate_meta" not in helper_body:
@@ -257,6 +286,11 @@ def read_ctx() -> dict[str, str]:
         # can eat real Rust that follows. For c-card command checks, raw source is safer.
         "bridge": read(BRIDGE_RS),
         "acl": read(ACL_TOML),
+        "capability": read(CAPABILITY_JSON),
+        "cargo_toml": read(CARGO_TOML),
+        "cargo_lock": read(CARGO_LOCK),
+        "package_json": read(PACKAGE_JSON),
+        "package_lock": read(PACKAGE_LOCK),
     }
 
 
@@ -296,6 +330,12 @@ D_MUTATIONS: tuple[tuple[str, str, str, int], ...] = (
     ("EXEC_RUN_RECORD_MISSING", "pub struct ScriptRunRecord", "pub struct ScriptRunGone", 1),
     ("EXEC_NO_RING_CAP", "pub const RING_MAX_BYTES", "pub const RING_BYTES_DISABLED", 1),
     ("EXEC_NO_OUTPUT_CAP", "pub const SCRIPT_RUN_TAIL_BYTES", "pub const SCRIPT_RUN_TAIL_DISABLED", 1),
+)
+
+E_MUTATIONS: tuple[tuple[str, str, str, int, str], ...] = (
+    ("EXEC_SHELL_SPAWN_CAPABILITY_PRESENT", '"default-commands"', '"default-commands", "shell:allow-spawn"', 1, "capability"),
+    ("EXEC_FRONTEND_SHELL_DEP_PRESENT", '"@tauri-apps/api": "^2.0.0"', '"@tauri-apps/api": "^2.0.0",\n    "@tauri-apps/plugin-shell": "^2.3.5"', 1, "package_json"),
+    ("EXEC_RUST_SHELL_PLUGIN_PRESENT", 'tauri = { version = "2", features = ["unstable", "protocol-asset"] }', 'tauri = { version = "2", features = ["unstable", "protocol-asset"] }\ntauri-plugin-shell = "2"', 1, "cargo_toml"),
 )
 
 
@@ -339,6 +379,19 @@ def self_test() -> int:
         if code not in hits:
             failures.append(f"[{code}] 坏样本未被检出（实际命中：{sorted(hits & set(ACTIVE_CODES))}）")
 
+    for code, old, new, count, key in E_MUTATIONS:
+        if old not in ctx[key]:
+            failures.append(f"[{code}] 变异原文片段不存在，夹具已失效：{old!r}")
+            continue
+        mutated = dict(ctx)
+        mutated[key] = ctx[key].replace(old, new, count)
+        if mutated[key] == ctx[key]:
+            failures.append(f"[{code}] 变异未改变内容，按漏检测计")
+            continue
+        hits = detect(mutated)
+        if code not in hits:
+            failures.append(f"[{code}] 坏样本未被检出（实际命中：{sorted(hits & set(ACTIVE_CODES))}）")
+
     for code, old, new, count in D_MUTATIONS:
         if old not in ctx["runner"]:
             failures.append(f"[{code}] 变异原文片段不存在，夹具已失效：{old!r}")
@@ -362,7 +415,7 @@ def self_test() -> int:
         for f in failures:
             print(f"FAIL: {f}")
         return 1
-    print(f"SELF_TEST_RESULT=ALL_PASS（{len(MUTATIONS) + len(BRIDGE_MUTATIONS) + len(D_MUTATIONS)} 个坏样本 + 1 个好样本 + 码位完整性）")
+    print(f"SELF_TEST_RESULT=ALL_PASS（{len(MUTATIONS) + len(BRIDGE_MUTATIONS) + len(D_MUTATIONS) + len(E_MUTATIONS)} 个坏样本 + 1 个好样本 + 码位完整性）")
     return 0
 
 
