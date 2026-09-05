@@ -1,0 +1,150 @@
+[crashlog] 会话日志: /tmp/m0-6c-xdg-2wc_nlkz/data/com.jizhijiandan.mvp/logs/session-20260901-072624-main-pid53582.log (role=main pid=53582)
+[main] main window url=Ok(Url { scheme: "tauri", cannot_be_a_base: false, username: "", password: None, host: Some(Domain("localhost")), port: None, path: "", query: None, fragment: None })
+[main] security policy: security-policy-v2/max_html=1MiB/labels=main,tab-*,grid-*/intents=one-shot
+[FE] FE alive marker=2026-08-18-r2
+[FE] [M0] rAF1 fired
+[FE] [M0] rAF2 fired, invoking m0_ready
+[m0] m0_ready called run_id="" ready_file=None
+[FE] [M0] m0_ready ok run_id=
+[m0-6c-gui] PASS preflight: mock_base=http://127.0.0.1:44825
+[grid-manager] spawned grid-child-0 pid=53702
+[grid-child-0] starting (pid=53702)
+[crashlog] 会话日志: /tmp/m0-6c-xdg-2wc_nlkz/data/com.jizhijiandan.mvp/logs/session-20260901-072627-grid0-pid53702.log (role=grid0 pid=53702)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0-6c-xdg-2wc_nlkz/data/com.jizhijiandan.mvp/sock/grid-53582-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[create_grid] grid-0 子进程就绪
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=53776
+[grid-child-1] starting (pid=53776)
+[crashlog] 会话日志: /tmp/m0-6c-xdg-2wc_nlkz/data/com.jizhijiandan.mvp/logs/session-20260901-072628-grid1-pid53776.log (role=grid1 pid=53776)
+[grid-child-1] shell window created
+[grid-manager] grid-child-[grid-child-1] UDS 已连接 /tmp/m0-6c-xdg-2wc_nlkz/data/com.jizhijiandan.mvp/sock/grid-53582-1.sock
+1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-2 pid=53923
+[grid-child-2] starting (pid=53923)
+[crashlog] 会话日志: /tmp/m0-6c-xdg-2wc_nlkz/data/com.jizhijiandan.mvp/logs/session-20260901-072628-grid2-pid53923.log (role=grid2 pid=53923)
+[grid-child-2] shell window created
+[grid-child-2] UDS 已连接 /tmp/m0-6c-xdg-2wc_nlkz/data/com.jizhijiandan.mvp/sock/grid-53582-2.sock
+[grid-manager] grid-child-2 UDS 已连接
+[grid-child] CreateTab grid-2 完成
+[create_grid] grid-2 子进程就绪
+[browser-tabs] drift-correct label=grid-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] navigationFinished id=grid-2 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-3 pid=54054
+[grid-child-3] starting (pid=54054)
+[crashlog] 会话日志: /tmp/m0-6c-xdg-2wc_nlkz/data/com.jizhijiandan.mvp/logs/session-20260901-072629-grid3-pid54054.log (role=grid3 pid=54054)
+[grid-child-3] shell window created
+[grid-child-3] UDS 已连接 /tmp/m0-6c-xdg-2wc_nlkz/data/com.jizhijiandan.mvp/sock/grid-53582-3.sock
+[grid-manager] grid-child-3 UDS 已连接
+[grid-child] CreateTab grid-3 完成
+[create_grid] grid-3 子进程就绪
+[browser-tabs] drift-correct label=grid-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] drift-correct label=grid-0 target=(0,0,620x450) alloc_before=(0,0,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=http://127.0.0.1:44825/login?case=1&grid=0
+[browser-tabs] drift-correct label=grid-0 target=(0,0,620x450) alloc_before=(0,225,620x225)
+[browser-tabs] navigationFinished id=grid-3 url=https://www.baidu.com/
+[m0-6c-gui] PASS scenario-1-single-ai-broadcast: single grid command path exercised with local AI mock
+[browser-tabs] drift-correct label=grid-0 target=(0,0,600x420) alloc_before=(0,0,620x450)
+[browser-tabs] drift-correct label=grid-1 target=(0,0,600x420) alloc_before=(0,0,1x1)
+[browser-tabs] drift-correct label=grid-2 target=(0,0,600x420) alloc_before=(0,0,1x1)
+[browser-tabs] drift-correct label=grid-3 target=(0,0,600x420) alloc_before=(0,0,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=http://127.0.0.1:44825/login?case=2&grid=0
+[browser-tabs] navigationFinished id=grid-1 url=http://127.0.0.1:44825/login?case=2&grid=1
+[browser-tabs] drift-correct label=grid-0 target=(0,0,600x420) alloc_before=(0,210,600x210)
+[browser-tabs] navigationFinished id=grid-3 url=http://127.0.0.1:44825/login?case=2&grid=3
+[browser-tabs] navigationFinished id=grid-2 url=http://127.0.0.1:44825/login?case=2&grid=2
+[browser-tabs] drift-correct label=grid-2 target=(0,0,600x420) alloc_before=(0,210,600x210)
+[browser-tabs] drift-correct label=grid-3 target=(0,0,600x420) alloc_before=(0,210,600x210)
+[browser-tabs] drift-correct label=grid-1 target=(0,0,600x420) alloc_before=(0,210,600x210)
+[m0-6c-gui] PASS scenario-2-four-grid-concurrent-ai: four grid children opened, positioned, and evaluated
+[browser-tabs] navigationFinished id=grid-0 url=http://127.0.0.1:44825/login?case=3&grid=0
+[m0-6c-gui] PASS scenario-3-main-window-move-resize: main window moved/resized and grid layout replayed
+[browser-tabs] navigationFinished id=grid-0 url=http://127.0.0.1:44825/login?case=4&grid=0
+[m0-6c-gui] PASS scenario-4-blur-focus-grid-visibility: grid windows hidden for blur and restored for focus
+[browser-tabs] navigationFinished id=grid-0 url=http://127.0.0.1:44825/login?case=5&grid=0
+[spawn_child_window] 子 webview 已创建 label=tab-1
+[create_tab] 子窗口已提交创建 label=tab-1 init=(1x1) visible=false
+[browser-tabs] drift-correct label=tab-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] run_on_main_thread 已排队 label=tab-1
+[create_tab] 页签已创建 label=tab-1 url=http://127.0.0.1:44825/login?case=5&grid=0
+[apply_bounds] label=tab-1 logical=(60,120,800,520)
+[hide_all_webviews] 已处理全部子 webview
+[tab_activate] active=tab-1 others=[]
+[tab_activate] active=tab-1 记忆布局为隐藏态，跳过立即恢复
+[browser-tabs] drift-correct label=tab-1 target=(60,120,800x520) alloc_before=(0,0,1x1)
+[browser-tabs] drift-correct label=tab-1 target=(-30000,120,800x520) alloc_before=(60,120,800x520)
+[browser-tabs] navigationFinished id=tab-1 url=http://127.0.0.1:44825/login?case=5&grid=0
+[main] emit tab-navigated id=tab-1 url=http://127.0.0.1:44825/login?case=5&grid=0
+[browser-tabs] drift-correct label=grid-0 target=(0,0,620x450) alloc_before=(0,0,600x420)
+[browser-tabs] drift-correct label=grid-0 target=(0,0,620x450) alloc_before=(0,225,620x225)
+[m0-6c-gui] PASS scenario-5-switch-views: tab view and grid view switched without orphaned child windows
+[browser-tabs] navigationFinished id=grid-0 url=http://127.0.0.1:44825/login?case=6&grid=0
+[spawn_child_window] 子 webview 已创建 label=tab-2
+[browser-tabs] drift-correct label=tab-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] 子窗口已提交创建 label=tab-2 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-2
+[create_tab] 页签已创建 label=tab-2 url=http://127.0.0.1:44825/login?case=6&grid=0
+[spawn_child_window] 子 webview 已创建 label=tab-3
+[browser-tabs] drift-correct label=tab-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] 子窗口已提交创建 label=tab-3 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-3
+[create_tab] 页签已创建 label=tab-3 url=http://127.0.0.1:44825/login?case=6&grid=1
+[apply_bounds] label=tab-2 logical=(80,120,760,500)
+[apply_bounds] label=tab-3 logical=(90,130,760,500)
+[browser-tabs] drift-correct label=tab-2 target=(-30000,120,760x500) alloc_before=(0,0,1x1)
+[tab_activate] active=tab-2 others=[]
+[m0-6c-gui] PASS scenario-6-normal-tabs-multi-open: normal tabs opened, switched, closed, and grid survived
+[browser-tabs] navigationFinished id=grid-0 url=http://127.0.0.1:44825/login?case=7&grid=0
+[browser-tabs] drift-correct label=tab-2 target=(80,120,760x500) alloc_before=(0,0,1x1)
+[tab_activate] active=tab-3 others=[]
+[browser-tabs] drift-correct label=tab-3 target=(90,130,760x500) alloc_before=(0,0,1x1)
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] grid-child-0 异常退出 code=139，自动重启
+[grid-manager] spawned grid-child-0 pid=54391
+[grid-child-0] starting (pid=54391)
+[crashlog] 会话日志: /tmp/m0-6c-xdg-2wc_nlkz/data/com.jizhijiandan.mvp/logs/session-20260901-072643-grid0-pid54391.log (role=grid0 pid=54391)
+[grid-child-0] shell window created
+[grid-manager] grid-child-[grid-child-0] UDS 已连接 /tmp/m0-6c-xdg-2wc_nlkz/data/com.jizhijiandan.mvp/sock/grid-53582-0.sock
+0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[grid-manager] grid-child-0 状态重放完成 url=http://127.0.0.1:44825/login?case=7&grid=0
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] drift-correct label=grid-0 target=(0,0,620x450) alloc_before=(0,0,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=http://127.0.0.1:44825/login?case=7&grid=0
+[browser-tabs] drift-correct label=grid-0 target=(0,0,620x450) alloc_before=(0,225,620x225)
+[m0-6c-gui] PASS scenario-7-grid-child-crash-recovery: grid-0 recovered pid 53702->54391; grid-1 survived
+[browser-tabs] navigationFinished id=grid-0 url=http://127.0.0.1:44825/login?case=8&grid=0
+[m0-6c-gui] PASS scenario-8-terminal-resource-context-menu: terminal spawn/write/kill ok; resource app_total=2311.6MB
+[browser-tabs] navigationFinished id=grid-0 url=http://127.0.0.1:44825/login?case=9&grid=0
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] grid-child-0 异常退出 code=139，自动重启
+[grid-manager] spawned grid-child-0 pid=54565
+[grid-child-0] starting (pid=54565)
+[crashlog] 会话日志: /tmp/m0-6c-xdg-2wc_nlkz/data/com.jizhijiandan.mvp/logs/session-20260901-072701-grid0-pid54565.log (role=grid0 pid=54565)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /tmp/m0-6c-xdg-2wc_nlkz/data/com.jizhijiandan.mvp/sock/grid-53582-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[grid-manager] grid-child-0 状态重放完成 url=http://127.0.0.1:44825/login?case=9&grid=0
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[browser-tabs] drift-correct label=grid-0 target=(0,0,620x450) alloc_before=(0,0,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=http://127.0.0.1:44825/login?case=9&grid=0
+[browser-tabs] drift-correct label=grid-0 target=(0,0,620x450) alloc_before=(0,225,620x225)
+[m0-6c-gui] PASS scenario-9-login-state-after-restart: login mock replayed across grid restart pid 54391->54565
+[grid-manager] grid-child-2 UDS 对端关闭
+[grid-manager] shutdown grid-child-2
+[grid-manager] grid-child-3 UDS 对端关闭
+[grid-manager] shutdown grid-child-3
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[m0-6c-gui] PASS cleanup-close-grid: close_grid completed count=0
+[m0-6c-gui] RESULT=PASS report=/home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3/logs/m0-6c-gui-evidence/20260901-0726/driver-report.json

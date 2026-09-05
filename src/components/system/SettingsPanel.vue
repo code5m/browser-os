@@ -1,7 +1,47 @@
 <script setup lang="ts">
+import { onMounted, ref } from "vue";
+import { bridge } from "../../bridge";
 import { useSettingsStore } from "../../stores/useSettingsStore";
+import { useLayoutStore } from "../../stores/useLayoutStore";
 
 const settings = useSettingsStore();
+const layout = useLayoutStore();
+
+// M1-4：默认浏览器设置。硬约束：只有在用户点击按钮并二次确认后才调用
+// set_default_browser；应用安装/启动路径绝不触碰系统默认浏览器。
+const defaultBrowser = ref<string>("");
+const confirming = ref(false);
+const setting = ref(false);
+
+async function refreshDefaultBrowser() {
+  try {
+    defaultBrowser.value = await bridge.getDefaultBrowser();
+  } catch (e) {
+    defaultBrowser.value = "（查询失败）";
+    // eslint-disable-next-line no-console
+    console.warn("[settings] get_default_browser failed", e);
+  }
+}
+
+async function onSetDefault() {
+  if (!confirming.value) {
+    confirming.value = true;
+    return;
+  }
+  confirming.value = false;
+  setting.value = true;
+  try {
+    const desktop = await bridge.setDefaultBrowser();
+    layout.showToast(`✅ 已设为默认浏览器（${desktop}）`);
+    await refreshDefaultBrowser();
+  } catch (e) {
+    layout.showToast("❌ 设为默认浏览器失败: " + String(e));
+  } finally {
+    setting.value = false;
+  }
+}
+
+onMounted(refreshDefaultBrowser);
 </script>
 
 <template>
@@ -48,6 +88,33 @@ const settings = useSettingsStore();
           默认关闭。开启后，非激活超过 10 分钟的页签会销毁 webview 仅留网址（每个约省 300MB 内存），
           重新点击该页签时按网址重建（滚动位置/表单不保留，网站登录态保留）
         </span>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="section-title">默认浏览器</div>
+      <div class="setting-item">
+        <label>当前默认</label>
+        <span class="mono-text">{{ defaultBrowser || "查询中…" }}</span>
+      </div>
+      <div class="setting-item">
+        <label>设为默认</label>
+        <button class="default-btn" :disabled="setting" @click="onSetDefault">
+          {{
+            setting
+              ? "设置中…"
+              : confirming
+                ? "确认修改系统默认浏览器？再次点击确认"
+                : "将本应用设为系统默认浏览器"
+          }}
+        </button>
+        <button v-if="confirming" class="cancel-btn" @click="confirming = false">
+          取消
+        </button>
+      </div>
+      <div class="setting-desc">
+        仅点击上方按钮并二次确认后，才会通过 xdg-settings 修改系统默认浏览器
+        （仅接管 http/https 链接）；应用安装与启动过程不会自动更改。
       </div>
     </div>
 
@@ -130,5 +197,38 @@ const settings = useSettingsStore();
   color: #2b6cb0;
   font-family: monospace;
   font-weight: 600;
+}
+.mono-text {
+  font-family: monospace;
+  font-size: 12px;
+  color: #2b3a55;
+}
+.default-btn {
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid #2b6cb0;
+  border-radius: 6px;
+  background: #fff;
+  color: #2b6cb0;
+  font-size: 13px;
+  cursor: pointer;
+}
+.default-btn:hover:not(:disabled) {
+  background: #2b6cb0;
+  color: #fff;
+}
+.default-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.cancel-btn {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #e5e6eb;
+  border-radius: 6px;
+  background: #fff;
+  color: #4e5969;
+  font-size: 13px;
+  cursor: pointer;
 }
 </style>

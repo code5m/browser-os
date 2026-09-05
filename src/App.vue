@@ -3,7 +3,10 @@ import { onMounted, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { bridge } from "./bridge";
 import { useBrowserStore } from "./stores/useBrowserStore";
+import { useResourceStore } from "./stores/useResourceStore";
+import { useSessionStore } from "./stores/useSessionStore";
 import { useWorkspaceStore } from "./stores/useWorkspaceStore";
+import { useGitStore } from "./stores/useGitStore";
 import { useSystemStore } from "./stores/useSystemStore";
 import { useLayoutStore } from "./stores/useLayoutStore";
 import { useSettingsStore } from "./stores/useSettingsStore";
@@ -12,10 +15,16 @@ import ActivityBar from "./components/layout/ActivityBar.vue";
 import MainArea from "./components/layout/MainArea.vue";
 import StatusBar from "./components/layout/StatusBar.vue";
 import ConfirmModal from "./components/shared/ConfirmModal.vue";
+import GitWriteConfirmDialog from "./components/workspace/GitWriteConfirmDialog.vue";
+import SessionCloseDialog from "./components/browser/SessionCloseDialog.vue";
+import ImageLightbox from "./components/shared/ImageLightbox.vue";
 import AINavPanel from "./components/browser/AINavPanel.vue";
 
 const browser = useBrowserStore();
+const resources = useResourceStore();
+const session = useSessionStore();
 const ws = useWorkspaceStore();
+const git = useGitStore();
 const system = useSystemStore();
 const layout = useLayoutStore();
 const settings = useSettingsStore();
@@ -48,6 +57,12 @@ onMounted(async () => {
   await syncWindowSize();
   const unlisten = await getCurrentWindow().onResized(syncWindowSize);
   window.addEventListener("beforeunload", unlisten);
+  // M0-0.b 终端吞吐（契约 §6.3）：测量模式下自动挂载终端面板（前端驱动 10 MiB 负载）
+  system.loadM0Config().then(() => {
+    if (system.m0Cfg?.driver === "term-throughput") {
+      layout.setView("term");
+    }
+  });
   ws.loadRecents();
   system.loadClipHistory();
   system.startClipWatch();
@@ -59,6 +74,9 @@ onMounted(async () => {
   }
 
   bridge.onSyncCompleted((j) => ws.onSyncCompleted(j));
+  // M1-7：Git 写任务完成（成功/失败）→ 刷新 status/diff/branch；
+  // 订阅放全局，保证切换视图/面板卸载后仍能收到完成事件并刷新状态。
+  bridge.onGitWriteCompleted((j) => git.onWriteCompleted(j));
   bridge.onBrowserResources((r) => browser.setResources(r));
   bridge.onArtifactCollected(() => {
     ws.refresh();
@@ -66,8 +84,35 @@ onMounted(async () => {
   });
   bridge.onTabTitle((t) => browser.setTitle(t));
   bridge.onTabNavigated((d) => browser.setNavigated(d.id, d.url));
+  // M1-8：资源瀑布实时事件（payload 已是后端脱敏 DTO）。订阅放全局，
+  // 保证 Dock 面板未挂载时记录也不丢。
+  bridge.onResourceReceived((r) => resources.applyReceived(r));
+  // M1-9 关闭协议：tabClose 统一走拦截器（弹「保存/删除/取消」），
+  // 用户决定后由 useSessionStore.resolveClose 调 browser.closeTabNow 真正关闭。
+  browser.bindCloseInterceptor((id) => session.requestClose(id));
+  bridge.onTabRecovery((d) => browser.handleTabRecovery(d));
   bridge.onNewTabRequest((u) => {
     setTimeout(() => browser.tabNew(u.url), 0);
+  });
+  // M1-4：外部打开 URL（xdg-open / 默认浏览器路由）。后端统一进 pending 队列，
+  // 前端拉取即清空（天然去重）；就绪后新到的 URL 经 pending 提示触发立即拉取。
+  async function drainPendingOpenUrls() {
+    try {
+      const urls = await bridge.takePendingOpenUrls();
+      for (const url of urls) {
+        layout.showToast("🌐 外部链接已打开");
+        browser.tabNew(url);
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn("[open-url] drain pending failed", e);
+    }
+  }
+  bridge.onOpenUrlPending(() => {
+    drainPendingOpenUrls();
+  });
+  bridge.onOpenUrlRejected(() => {
+    layout.showToast("⚠️ 已拒绝非 http/https 链接");
   });
   bridge.onTermData((d) => system.onTermData(d));
   // 子 webview 右键"打开终端"：浏览器视图下优先开右侧 Dock（不离开网页），否则切全屏终端视图
@@ -103,6 +148,7 @@ onMounted(async () => {
   }
 
   function onGlobalKeydown(e: KeyboardEvent) {
+    if (system.m0Cfg?.driver) return;
     // 输入框/文本域内不触发全局快捷键
     const t = e.target as HTMLElement;
     if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)
@@ -148,11 +194,16 @@ onMounted(async () => {
   window.addEventListener("keydown", onGlobalKeydown);
 
   window.addEventListener("beforeunload", () => bridge.closeBrowser().catch(() => {}));
+  // M1-9：前端卸载前 flush（与后端 ShutdownCoordinator 的 flush-sessions 双保险）
+  window.addEventListener("beforeunload", () => bridge.flushSessions().catch(() => {}));
   window.addEventListener("click", ws.closeCtx);
   window.addEventListener("scroll", ws.closeCtx, true);
   // 文件树右键菜单同样需要点空白/滚动时关闭
   window.addEventListener("click", ws.closeFileCtx);
   window.addEventListener("scroll", ws.closeFileCtx, true);
+  // M1-4 冷启动兜底：进程启动时 argv 带入的 URL 已在后端队列，
+  // 挂载完成后首次拉取（此后经 onOpenUrlPending 提示增量拉取）。
+  drainPendingOpenUrls();
 });
 </script>
 
@@ -166,6 +217,12 @@ onMounted(async () => {
     </div>
     <StatusBar />
     <ConfirmModal />
+    <!-- M1-7 Git 写确认闸门：全局挂载，保证任何视图下待确认任务都能被看到/处理 -->
+    <GitWriteConfirmDialog />
+    <!-- M1-9 关闭协议弹窗：关闭页签时全局可见（保存/删除/取消） -->
+    <SessionCloseDialog />
+    <!-- M2-2.b 图片灯箱：全局挂载，任何视图点开画廊都能放大预览 -->
+    <ImageLightbox />
   </div>
 </template>
 

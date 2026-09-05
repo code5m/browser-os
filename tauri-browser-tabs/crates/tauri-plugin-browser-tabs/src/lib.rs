@@ -36,9 +36,7 @@ mod models;
 mod platform;
 
 pub use commands::{TabManager, TabManagerState};
-pub use models::{
-    BrowserTabError, BrowserTabEvent, CreateTabOptions, LogicalRect, Result, TabId,
-};
+pub use models::{BrowserTabError, BrowserTabEvent, CreateTabOptions, LogicalRect, Result, TabId};
 pub use platform::ensure_native_layout;
 
 use std::sync::Arc;
@@ -77,8 +75,10 @@ pub fn init_with_host(host_label: &str) -> TauriPlugin<Wry> {
             commands::set_zoom,
         ])
         .setup(move |app, _api| {
-            let manager: TabManagerState =
-                Arc::new(TabManager::new(app.app_handle().clone(), host_label.clone()));
+            let manager: TabManagerState = Arc::new(TabManager::new(
+                app.app_handle().clone(),
+                host_label.clone(),
+            ));
             app.manage(manager);
 
             // Notify the frontend when the host window resizes so it can

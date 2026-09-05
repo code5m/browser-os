@@ -28,7 +28,7 @@ export const useLayoutStore = defineStore("layout", () => {
   const leftResizing = ref(false);
   // 浏览器视图右侧 Dock：边浏览网页边操作文件/终端
   const browserDockOpen = ref(false);
-  const browserDockTab = ref<"files" | "term">("files");
+  const browserDockTab = ref<"files" | "term" | "net" | "session">("files");
   // 地址栏模式：🌐网址（默认）/ 📁目录（输入本地路径浏览目录）
   const addrMode = ref<"url" | "dir">("url");
   // 浏览器精简模式：隐藏地址栏+页签栏，给网页更大空间（类谷歌沉浸式）
@@ -148,7 +148,11 @@ export const useLayoutStore = defineStore("layout", () => {
     if (!t) return;
     activeModTab.value = id;
     setView(t.view);
-    // 目录页签：地址栏同步显示目录路径（动态引入避免 layout↔browser 循环依赖）
+    // 目录页签：地址栏同步显示目录路径。
+    // M0-4.b：此处**必须**保持动态引入——useBrowserStore 深度依赖本 store
+    // （mainView / showToast / isBrowserView 等多处），改为静态会形成
+    // layout ↔ browser 循环依赖。Vite 的 mix 告警属已知且必要的取舍，
+    // 已在 checkpoint `M0-4.b` 记录，不要为了消除告警把它改成静态引入。
     if (t.path) {
       const p = t.path;
       import("./useBrowserStore").then(({ useBrowserStore }) => {
@@ -174,7 +178,7 @@ export const useLayoutStore = defineStore("layout", () => {
   }
 
   // 浏览器视图右侧 Dock：指定 tab 时做"切到该 tab/再点收起"语义
-  function toggleBrowserDock(tab?: "files" | "term") {
+  function toggleBrowserDock(tab?: "files" | "term" | "net" | "session") {
     if (tab) {
       if (browserDockOpen.value && browserDockTab.value === tab) {
         browserDockOpen.value = false;

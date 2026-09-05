@@ -1,0 +1,280 @@
+[crashlog] 会话日志: /tmp/m0m/ce2e70368730/cycle-tab/data/com.jizhijiandan.mvp/logs/session-20260831-105232-main-pid1521387.log (role=main pid=1521387)
+[main] main window url=Ok(Url { scheme: "tauri", cannot_be_a_base: false, username: "", password: None, host: Some(Domain("localhost")), port: None, path: "", query: None, fragment: None })
+[main] security policy: security-policy-v2/max_html=1MiB/labels=main,tab-*,grid-*/intents=one-shot
+[FE] FE alive marker=2026-08-18-r2
+[FE] [M0] rAF1 fired
+[FE] [M0] rAF2 fired, invoking m0_ready
+[m0] m0_ready called run_id="20260831T105149+0800_68c78d7_release_x11" ready_file=Some("/tmp/m0m/ce2e70368730/reports/cycle-tab/ready.signal")
+[FE] [M0] m0_ready ok run_id=20260831T105149+0800_68c78d7_release_x11
+[m0-driver tab] ready ok
+[spawn_child_window] 子 webview 已创建 label=tab-1
+[create_tab] 子窗口已提交创建 label=tab-1 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-1
+[browser-tabs] drift-correct label=tab-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] 页签已创建 label=tab-1 url=about:blank
+[m0-driver tab] cycle 1 done
+[browser-tabs] drift-correct label=tab-2 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[spawn_child_window] 子 webview 已创建 label=tab-2
+[create_tab] 子窗口已提交创建 label=tab-2 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-2
+[create_tab] 页签已创建 label=tab-2 url=about:blank
+[m0-driver tab] cycle 2 done
+[spawn_child_window] 子 webview 已创建 label=tab-3
+[create_tab] 子窗口已提交创建 label=tab-3 init=(1x1) visible=false
+[browser-tabs] drift-correct label=tab-3 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] run_on_main_thread 已排队 label=tab-3
+[create_tab] 页签已创建 label=tab-3 url=about:blank
+[m0-driver tab] cycle 3 done
+[browser-tabs] drift-correct label=tab-4 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[spawn_child_window] 子 webview 已创建 label=tab-4
+[create_tab] 子窗口已提交创建 label=tab-4 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-4
+[create_tab] 页签已创建 label=tab-4 url=about:blank
+[m0-driver tab] cycle 4 done
+[spawn_child_window] 子 webview 已创建 label=tab-5
+[create_tab] 子窗口已提交创建 label=tab-5 init=(1x1) visible=false
+[browser-tabs] drift-correct label=tab-5 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] run_on_main_thread 已排队 label=tab-5
+[create_tab] 页签已创建 label=tab-5 url=about:blank
+[m0-driver tab] cycle 5 done
+[spawn_child_window] 子 webview 已创建 label=tab-6
+[create_tab] 子窗口已提交创建 label=tab-6 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-6
+[create_tab] 页签已创建 label=tab-6 url=about:blank
+[browser-tabs] drift-correct label=tab-6 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 6 done
+[spawn_child_window] 子 webview 已创建 label=tab-7
+[create_tab] 子窗口已提交创建 label=tab-7 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-7
+[create_tab] 页签已创建 label=tab-7 url=about:blank
+[browser-tabs] drift-correct label=tab-7 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 7 done
+[spawn_child_window] 子 webview 已创建 label=tab-8
+[create_tab] 子窗口已提交创建 label=tab-8 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-8
+[create_tab] 页签已创建 label=tab-8 url=about:blank
+[browser-tabs] drift-correct label=tab-8 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 8 done
+[spawn_child_window] 子 webview 已创建 label=tab-9
+[create_tab] 子窗口已提交创建 label=tab-9 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-9
+[create_tab] 页签已创建 label=tab-9 url=about:blank
+[browser-tabs] drift-correct label=tab-9 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 9 done
+[spawn_child_window] 子 webview 已创建 label=tab-10
+[create_tab] 子窗口已提交创建 label=tab-10 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-10
+[create_tab] 页签已创建 label=tab-10 url=about:blank
+[browser-tabs] drift-correct label=tab-10 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 10 done
+[browser-tabs] drift-correct label=tab-11 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[spawn_child_window] 子 webview 已创建 label=tab-11
+[create_tab] 子窗口已提交创建 label=tab-11 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-11
+[create_tab] 页签已创建 label=tab-11 url=about:blank
+[m0-driver tab] cycle 11 done
+[browser-tabs] drift-correct label=tab-12 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[spawn_child_window] 子 webview 已创建 label=tab-12
+[create_tab] 子窗口已提交创建 label=tab-12 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-12
+[create_tab] 页签已创建 label=tab-12 url=about:blank
+[m0-driver tab] cycle 12 done
+[spawn_child_window] 子 webview 已创建 label=tab-13
+[create_tab] 子窗口已提交创建 label=tab-13 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-13
+[create_tab] 页签已创建 label=tab-13 url=about:blank
+[browser-tabs] drift-correct label=tab-13 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 13 done
+[spawn_child_window] 子 webview 已创建 label=tab-14
+[create_tab] 子窗口已提交创建 label=tab-14 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-14
+[create_tab] 页签已创建 label=tab-14 url=about:blank
+[browser-tabs] drift-correct label=tab-14 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 14 done
+[spawn_child_window] 子 webview 已创建 label=tab-15
+[create_tab] 子窗口已提交创建 label=tab-15 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-15
+[create_tab] 页签已创建 label=tab-15 url=about:blank
+[browser-tabs] drift-correct label=tab-15 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 15 done
+[spawn_child_window] 子 webview 已创建 label=tab-16
+[create_tab] 子窗口已提交创建 label=tab-16 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-16
+[create_tab] 页签已创建 label=tab-16 url=about:blank
+[browser-tabs] drift-correct label=tab-16 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 16 done
+[spawn_child_window] 子 webview 已创建 label=tab-17
+[create_tab] 子窗口已提交创建 label=tab-17 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-17
+[create_tab] 页签已创建 label=tab-17 url=about:blank
+[browser-tabs] drift-correct label=tab-17 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 17 done
+[spawn_child_window] 子 webview 已创建 label=tab-18
+[create_tab] 子窗口已提交创建 label=tab-18 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-18
+[browser-tabs] drift-correct label=tab-18 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] 页签已创建 label=tab-18 url=about:blank
+[m0-driver tab] cycle 18 done
+[spawn_child_window] 子 webview 已创建 label=tab-19
+[create_tab] 子窗口已提交创建 label=tab-19 init=(1x1) visible=false
+[browser-tabs] drift-correct label=tab-19 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] run_on_main_thread 已排队 label=tab-19
+[create_tab] 页签已创建 label=tab-19 url=about:blank
+[m0-driver tab] cycle 19 done
+[spawn_child_window] 子 webview 已创建 label=tab-20
+[create_tab] 子窗口已提交创建 label=tab-20 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-20
+[create_tab] 页签已创建 label=tab-20 url=about:blank
+[browser-tabs] drift-correct label=tab-20 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 20 done
+[spawn_child_window] 子 webview 已创建 label=tab-21
+[create_tab] 子窗口已提交创建 label=tab-21 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-21
+[create_tab] 页签已创建 label=tab-21 url=about:blank
+[browser-tabs] drift-correct label=tab-21 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 21 done
+[spawn_child_window] 子 webview 已创建 label=tab-22
+[create_tab] 子窗口已提交创建 label=tab-22 init=(1x1) visible=false
+[browser-tabs] drift-correct label=tab-22 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_tab] run_on_main_thread 已排队 label=tab-22
+[create_tab] 页签已创建 label=tab-22 url=about:blank
+[m0-driver tab] cycle 22 done
+[spawn_child_window] 子 webview 已创建 label=tab-23
+[create_tab] 子窗口已提交创建 label=tab-23 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-23
+[create_tab] 页签已创建 label=tab-23 url=about:blank
+[browser-tabs] drift-correct label=tab-23 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 23 done
+[spawn_child_window] 子 webview 已创建 label=tab-24
+[create_tab] 子窗口已提交创建 label=tab-24 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-24
+[create_tab] 页签已创建 label=tab-24 url=about:blank
+[browser-tabs] drift-correct label=tab-24 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 24 done
+[spawn_child_window] 子 webview 已创建 label=tab-25
+[create_tab] 子窗口已提交创建 label=tab-25 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-25
+[create_tab] 页签已创建 label=tab-25 url=about:blank
+[browser-tabs] drift-correct label=tab-25 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 25 done
+[spawn_child_window] 子 webview 已创建 label=tab-26
+[create_tab] 子窗口已提交创建 label=tab-26 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-26
+[create_tab] 页签已创建 label=tab-26 url=about:blank
+[browser-tabs] drift-correct label=tab-26 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 26 done
+[spawn_child_window] 子 webview 已创建 label=tab-27
+[create_tab] 子窗口已提交创建 label=tab-27 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-27
+[create_tab] 页签已创建 label=tab-27 url=about:blank
+[browser-tabs] drift-correct label=tab-27 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 27 done
+[spawn_child_window] 子 webview 已创建 label=tab-28
+[create_tab] 子窗口已提交创建 label=tab-28 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-28
+[create_tab] 页签已创建 label=tab-28 url=about:blank
+[browser-tabs] drift-correct label=tab-28 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 28 done
+[spawn_child_window] 子 webview 已创建 label=tab-29
+[create_tab] 子窗口已提交创建 label=tab-29 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-29
+[create_tab] 页签已创建 label=tab-29 url=about:blank
+[browser-tabs] drift-correct label=tab-29 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 29 done
+[spawn_child_window] 子 webview 已创建 label=tab-30
+[create_tab] 子窗口已提交创建 label=tab-30 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-30
+[create_tab] 页签已创建 label=tab-30 url=about:blank
+[browser-tabs] drift-correct label=tab-30 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 30 done
+[spawn_child_window] 子 webview 已创建 label=tab-31
+[create_tab] 子窗口已提交创建 label=tab-31 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-31
+[create_tab] 页签已创建 label=tab-31 url=about:blank
+[browser-tabs] drift-correct label=tab-31 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 31 done
+[spawn_child_window] 子 webview 已创建 label=tab-32
+[create_tab] 子窗口已提交创建 label=tab-32 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-32
+[create_tab] 页签已创建 label=tab-32 url=about:blank
+[browser-tabs] drift-correct label=tab-32 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 32 done
+[spawn_child_window] 子 webview 已创建 label=tab-33
+[create_tab] 子窗口已提交创建 label=tab-33 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-33
+[create_tab] 页签已创建 label=tab-33 url=about:blank
+[browser-tabs] drift-correct label=tab-33 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 33 done
+[spawn_child_window] 子 webview 已创建 label=tab-34
+[create_tab] 子窗口已提交创建 label=tab-34 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-34
+[create_tab] 页签已创建 label=tab-34 url=about:blank
+[browser-tabs] drift-correct label=tab-34 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 34 done
+[spawn_child_window] 子 webview 已创建 label=tab-35
+[create_tab] 子窗口已提交创建 label=tab-35 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-35
+[create_tab] 页签已创建 label=tab-35 url=about:blank
+[browser-tabs] drift-correct label=tab-35 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 35 done
+[spawn_child_window] 子 webview 已创建 label=tab-36
+[create_tab] 子窗口已提交创建 label=tab-36 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-36
+[create_tab] 页签已创建 label=tab-36 url=about:blank
+[browser-tabs] drift-correct label=tab-36 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 36 done
+[spawn_child_window] 子 webview 已创建 label=tab-37
+[create_tab] 子窗口已提交创建 label=tab-37 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-37
+[create_tab] 页签已创建 label=tab-37 url=about:blank
+[browser-tabs] drift-correct label=tab-37 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 37 done
+[spawn_child_window] 子 webview 已创建 label=tab-38
+[create_tab] 子窗口已提交创建 label=tab-38 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-38
+[create_tab] 页签已创建 label=tab-38 url=about:blank
+[browser-tabs] drift-correct label=tab-38 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 38 done
+[spawn_child_window] 子 webview 已创建 label=tab-39
+[create_tab] 子窗口已提交创建 label=tab-39 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-39
+[create_tab] 页签已创建 label=tab-39 url=about:blank
+[browser-tabs] drift-correct label=tab-39 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 39 done
+[spawn_child_window] 子 webview 已创建 label=tab-40
+[create_tab] 子窗口已提交创建 label=tab-40 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-40
+[create_tab] 页签已创建 label=tab-40 url=about:blank
+[browser-tabs] drift-correct label=tab-40 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 40 done
+[spawn_child_window] 子 webview 已创建 label=tab-41
+[create_tab] 子窗口已提交创建 label=tab-41 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-41
+[create_tab] 页签已创建 label=tab-41 url=about:blank
+[browser-tabs] drift-correct label=tab-41 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 41 done
+[spawn_child_window] 子 webview 已创建 label=tab-42
+[create_tab] 子窗口已提交创建 label=tab-42 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-42
+[create_tab] 页签已创建 label=tab-42 url=about:blank
+[browser-tabs] drift-correct label=tab-42 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 42 done
+[spawn_child_window] 子 webview 已创建 label=tab-43
+[create_tab] 子窗口已提交创建 label=tab-43 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-43
+[create_tab] 页签已创建 label=tab-43 url=about:blank
+[browser-tabs] drift-correct label=tab-43 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 43 done
+[spawn_child_window] 子 webview 已创建 label=tab-44
+[create_tab] 子窗口已提交创建 label=tab-44 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-44
+[create_tab] 页签已创建 label=tab-44 url=about:blank
+[browser-tabs] drift-correct label=tab-44 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 44 done
+[spawn_child_window] 子 webview 已创建 label=tab-45
+[create_tab] 子窗口已提交创建 label=tab-45 init=(1x1) visible=false
+[create_tab] run_on_main_thread 已排队 label=tab-45
+[create_tab] 页签已创建 label=tab-45 url=about:blank
+[browser-tabs] drift-correct label=tab-45 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[m0-driver tab] cycle 45 done
+[m0-driver tab] driver result=PASS

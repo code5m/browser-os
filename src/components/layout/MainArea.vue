@@ -1,8 +1,12 @@
 <script setup lang="ts">
-import { ref, watch, nextTick } from "vue";
+import { computed, ref, watch, nextTick } from "vue";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../stores/useBrowserStore";
+import { useBookmarkStore } from "../../stores/useBookmarkStore";
 import BrowserHost from "../browser/BrowserHost.vue";
+import BookmarkPanel from "../browser/BookmarkPanel.vue";
+import ResourceWaterfall from "../browser/ResourceWaterfall.vue";
+import SessionPanel from "../browser/SessionPanel.vue";
 import UnifiedTabBar from "./UnifiedTabBar.vue";
 import FileEditor from "../workspace/FileEditor.vue";
 
@@ -18,6 +22,10 @@ import SettingsPanel from "../system/SettingsPanel.vue";
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
+const bookmarks = useBookmarkStore();
+
+// 收藏夹侧栏只在浏览器视图展开（宫格视图定位链路更敏感，不纳入本次改动范围）
+const bmPanelOpen = computed(() => bookmarks.panelOpen && layout.mainView === "browser");
 
 // 终端只挂载一次：首次进入后保持存活，避免切视图销毁 xterm 导致内容丢失
 const termMounted = ref(false);
@@ -64,6 +72,9 @@ watch(
         title="退出精简模式"
       >☰</button>
       <div class="browser-body">
+        <!-- M1-3 收藏夹侧栏：位于 viewport 左侧，撑窄 viewport 后由 BrowserHost 的
+             ResizeObserver 自动重定位子 webview，无需手动 relocate -->
+        <BookmarkPanel v-if="bmPanelOpen" />
         <div class="viewport" :class="{ 'grid-mode': browser.gridOpen }">
           <!-- BrowserHost 在 browser/grid 视图都要参与布局（有 rect 供宫格定位），
                其内部用 visibility 控制显隐（isBrowserVisible），不能用 v-show=display:none，
@@ -75,9 +86,15 @@ watch(
           <div class="tabs">
             <button :class="{ active: layout.browserDockTab === 'files' }" @click="layout.browserDockTab = 'files'">📂 文件</button>
             <button :class="{ active: layout.browserDockTab === 'term' }" @click="layout.browserDockTab = 'term'">💻 终端</button>
+            <button :class="{ active: layout.browserDockTab === 'net' }" @click="layout.browserDockTab = 'net'">🌊 资源</button>
+            <button :class="{ active: layout.browserDockTab === 'session' }" @click="layout.browserDockTab = 'session'">💾 会话</button>
             <button class="close" @click="layout.browserDockOpen = false" title="收起">✕</button>
           </div>
           <FilePanel v-if="layout.browserDockTab === 'files'" />
+          <!-- M1-8 资源瀑布：请求/响应列表（脱敏 DTO），挂 Dock 第三 Tab -->
+          <ResourceWaterfall v-else-if="layout.browserDockTab === 'net'" />
+          <!-- M1-9 历史会话：保存/回看/恢复/删除，挂 Dock 第四 Tab -->
+          <SessionPanel v-else-if="layout.browserDockTab === 'session'" />
           <!-- .terminal 是 absolute inset:0，需相对定位容器约束在 tab 栏之下 -->
           <div v-else class="dock-term-wrap"><TerminalPane /></div>
         </aside>

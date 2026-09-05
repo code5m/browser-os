@@ -1,0 +1,96 @@
+{
+  "run_id": "20260830T151000+0800_93a1ba6_release_x11",
+  "timestamp": "20260830T151000+0800",
+  "checkpoint": "M0-1.a",
+  "contract_version": "V1.1",
+  "script_version": "M0-1.a-4",
+  "run_mode": "formal",
+  "sample_profile": {
+    "frontend_formal_samples": 3,
+    "idle_seconds": 0,
+    "resource_cycle_formal_samples": 0,
+    "terminal_formal_samples": 0
+  },
+  "artifact": {
+    "profile": "release",
+    "binary_sha256": "6adb8197130f3ea278693dc4df61321b6097cf93b9b068678e5b626de63024eb",
+    "binary_bytes": 9135520
+  },
+  "repo_root": "/home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3",
+  "worktree_clean_at_start": true,
+  "git": {
+    "commit_sha": "93a1ba63983fba0e5e62ec623c225aa4c13f0bdd",
+    "short_sha": "93a1ba6",
+    "branch": "feature-M0-baseline"
+  },
+  "status": "PASS",
+  "results": {
+    "rust_fmt_main_exit": {
+      "status": "PASS",
+      "exit_code": 0
+    },
+    "rust_fmt_plugin_exit": {
+      "status": "PASS",
+      "exit_code": 0
+    },
+    "clippy_main_unique_warnings": {
+      "status": "PASS",
+      "count": 13
+    },
+    "clippy_plugin_unique_warnings": {
+      "status": "PASS",
+      "count": 0
+    },
+    "frontend_build_ms": {
+      "status": "PASS",
+      "warmup_ms": 2182,
+      "samples_ms": [
+        2282,
+        2235,
+        2245
+      ],
+      "median_ms": 2245,
+      "min_ms": 2235,
+      "max_ms": 2282,
+      "volatility": "2.1%"
+    },
+    "dist_total_bytes": {
+      "status": "PASS",
+      "bytes": 544870
+    },
+    "largest_js_bytes": {
+      "status": "PASS",
+      "path": "assets/index-DCX6UJ8H.js",
+      "bytes": 507980
+    },
+    "largest_js_gzip_bytes": {
+      "status": "PASS",
+      "path": "assets/index-DCX6UJ8H.js",
+      "bytes": 146078
+    },
+    "release_binary_bytes": {
+      "status": "PASS",
+      "bytes": 9135520,
+      "sha256": "6adb8197130f3ea278693dc4df61321b6097cf93b9b068678e5b626de63024eb"
+    }
+  },
+  "blocked": [],
+  "deferred": [
+    {
+      "metric": "script_first_response_ms",
+      "status": "DEFERRED(M2-4)"
+    },
+    {
+      "metric": "database_first_row_ms",
+      "status": "DEFERRED(M4-3)"
+    }
+  ],
+  "evidence": {
+    "run_dir": "logs/m0-baseline/20260830T151000+0800_93a1ba6_release_x11",
+    "environment": "environment.json",
+    "scenario": "scenario.json",
+    "summary_json": "summary.json",
+    "summary_md": "summary.md",
+    "sha256sums": "SHA256SUMS"
+  }
+}

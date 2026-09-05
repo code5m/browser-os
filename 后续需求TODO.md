@@ -1,9 +1,56 @@
 # 后续需求 TODO 列表
+> 本版变更：**M2-4.e 移除 shell spawn 开放面已完成（`AI:DEEP / R:high`，Codex gpt-5.5），NEXT=`M2-4 整体裁定`**。按 M2-4.a 裁定，移除 `src-tauri/capabilities/default.json` 中 `shell:allow-spawn args:true` 以及 `shell:allow-stdin-write`/`shell:allow-kill`，移除主进程与 grid child 两处 `tauri_plugin_shell::init()`，裁掉 Rust `tauri-plugin-shell` 与前端 `@tauri-apps/plugin-shell` 依赖；刷新 M2-2/M2-3 对 `package*.json` 的哈希基线。`check-script-exec-policy.py` 追加 e 卡三类默认违规码（capability / npm / Rust 插件回流），23 坏样本自检通过。验证：`cargo test` 198/198 PASS；`cargo build --release --locked` 0 error、2 warning 仍为既有 `grid_process.rs` 死代码；`npm run build` 0 error；三套相关 policy 全过；运行时 GUI 目视验收仍挂账。
 
-> 整理自 2026-08-26 的需求讨论。每项标注：目标、范围边界、与现有架构的关系、建议切入点。
-> 排期优先级为初步建议（P0 最高），可按实际节奏调整。
+> 文档角色：#1~#15 需求池、优先级与里程碑映射；不作为“已经做到哪里”的单独证明。
+> 进度与验收 SSOT：`详细设计与实施计划.md`。
+> 文档版本：V5.18。
+> 更新时间：2026-09-05 00:08 CST。
+> 本版变更：**M2-4.b 独立裁定已完成（`logs/checkpoints/M2-4.b-VERDICT-20260904-0705.md`，ADJUDICATED_WITH_REVISION），NEXT=`M2-4.b`（先修订展开卡再实现）**。裁定者 Kimi K3（**同会话同模型裁定，最弱独立性**，补偿=实测复跑+精读+反方检验）：§3.1 走路线 A（argv 不加引号，`M2-4.a §8.1` 末条作废）；**§3.2 推翻实现者倾向改走路线 B**（piped+只丢弃 drain，drain≠背压）；§3.3/§3.4/§3.5 确认。**新增后续检查点（与 M2-4.e 同级，b/c/d 稳定后单开）：评估废弃 `ScriptParam.raw`**——argv 模式下永无语义（`Command::arg()` 不经 shell，不存在单引号包裹概念），留着会形成「看似有用实则 no-op」的误导字段；废弃需改 `domain.rs` + `scripts.rs::validate_meta`（去 `INVALID_RAW_PARAM`）+ 重跑 M2-3 门禁，故不与进程组实现混在 b 卡。实现前须按裁定书 §6 修订展开卡；建议 b 卡实现后跨模型复核。上一版：M2-4.b 任务卡已展开（`logs/checkpoints/M2-4.b-20260904-0000.md`），NEXT=`M2-4.b`（可直接实现）**。b 卡 = 进程组与生命周期内核（`AI:DEEP/R:xhigh`）：`script_runner.rs`（setsid/killpg、超时软硬分层、轮询回收、平台降级、进程表、`build_argv`）+ `domain.rs` 落 `RunStatus`/`ScriptInterpreter::binary()`/`timeout_secs` 注释 300→60 + `check-script-exec-policy.py` 接 pre-merge 第 19 项。实测：`libc`/`uuid`/`chrono` 已就绪、`setsid`/`killpg`/`pre_exec` 全仓为零、既有两处 spawn 范式均不可复用（`bridge.rs:3499` 无进程组无超时无 wait；`grid_process.rs:677/743` 的 `child.kill()` 留孤儿）、门禁未锚定 `timeout` 故改注释安全。**5 处对冻结裁定书的澄清/微调**：①argv 模式一律不加引号（`raw` 为 no-op，加引号会把 `'` 字面量传进脚本，bug 级冲突，须裁定）；②b 卡 stdio 用 `null` 中间态（piped 不读会因 64KB 管道缓冲阻塞子进程），d 卡接 piped+reader；③`timeout_secs` 注释 300→60；④新增 `ScriptInterpreter::binary()` 落 `domain.rs`；⑤`RunStatus` 落 `domain.rs`。测试矩阵 B1~B13，**B7/B8/B9/B11/B12 为真实进程测试**（起真实 `sleep` + `/proc` 取证进程组回收，<15s），是 M2-4 首批机器可取的运行时证据。**纯文档展开，未改产品代码**。上一版：M2-4.a 执行安全契约冻结裁定书已落盘（`AI:DEEP / R:xhigh`，Kimi K3，`logs/checkpoints/M2-4.a-20260903-2233.md`），NEXT=`M2-4.b`。七组分歧逐组裁定（双层输出上限 4MB/256KB、全局默认超时 60s、并发同 id 禁+全局 8、只做 Unix、env 固定最小集、shell 权限归 e 卡、RunStatus=Succeeded+落盘 script-runs.json 上限 200）；冻结执行通道核心契约（argv 数组/cwd 锁定/setsid+killpg/背压/退出收口 kill-running-scripts/审计脱敏）。**未改任何产品代码**。b/c/d 在 a 卡冻结后逐张展开。上一版：M2-4 任务卡已展开为 a~e，NEXT=`M2-4.a`（`logs/checkpoints/M2-4-20260903-1659.md`）：M2-4 安全执行通道是项目最高风险面，拆为 a 执行安全契约冻结 / b 进程组与生命周期内核 / c 执行命令与校验接入 / d 输出背压·事件流·退出收口 / e（可选）移除 `shell:allow-spawn`；**本次只展开 a 卡**。实测：进程组能力全仓为零需新建（`libc` 已就绪）、既有 `child.kill()` 只杀直接子进程不得沿用、`ShutdownCoordinator` 已注册 5 个任务（草案「被阻塞」已解除）、**`shell:allow-spawn` 零调用点**。a 卡须裁决七组真实冲突（输出上限 4MB vs 256KB、超时 60s vs 300s、并发 8 vs 10、平台范围、env 策略、shell 权限处置、RunStatus 命名与落盘）。上一版：M2-3 整体裁定 PASS_WITH_DEBT（`AI:DEEP / R:high` Kimi K3）：五组冻结契约逐项裁定成立；两处「冻结裁定书微调」经独立重审接受；D12（命令端到端 IPC 未实测）、D13（「危险值被拒」运行时链路未打通）挂账，`can_delete` 返回 `InvalidId` 记 NON-BLOCKER；三个门禁冲突修复经复核均未降级既有门禁，新增变异防呆为正向改动。**独立性如实标注**：同模型裁定（弱于 M2-2 跨模型复核），用户明确指示，可被 Hy4/Codex 复核推翻或确认。证据 `logs/checkpoints/M2-3-ACCEPT-20260903-1645.md`。上一版：M2-3.b 已实现（PASS_WITH_DEBT）：新增 `src-tauri/src/scripts.rs` 纯函数层（20 个稳定错误码、定义期校验、九条 fail-closed 参数规则、脱敏三重保险）+ `domain.rs` 四个新类型（`ScriptInterpreter` 为枚举白名单）+ `workspace.rs` 脚本持久化（显式路径参数、原子写、路径三重校验、删除幂等）+ `bridge.rs` 四条命令 + 注册/ACL + TS 镜像 + `check-script-domain-policy.py`（14 违规码，1 好 + 17 坏，含变异防呆）接入 pre-merge 第 18 项；`cargo test` 178/178（新增 22 项含真实磁盘往返）、`cargo build --release` 0（warning 仍既有 2）、`npm run build` 0、总体积 +12.65%、pre-merge ALL_PASS、release 冒烟无 panic。两处对冻结裁定书的微调：`validate_param_value` 去掉无作用的 `raw` 参数；**未新增 `check-script-domain-logic.mjs`**（本卡无前端脚本逻辑，UI 属 M2-5，强加会成为无人消费的死代码）。**挂账**：端到端 IPC 往返与危险值运行时链路无 GUI 通道取证。**未签 M2-3 整体 PASS**。上一版：M2-3.a 冻结裁定书已落盘（`logs/checkpoints/M2-3.a-20260903-1604.md`，`AI:DEEP / R:high` Kimi K3）：五组分歧逐组裁定——字段口径（`params` + `ParamType` + `interpreter` 收紧为枚举 + `path` 相对文件名 + 新增字段 `#[serde(default)]`）、存储布局（`scripts.json` + `scripts/<id>.<ext>` 原子写；`ScriptRunRecord`/`RunStatus` 推迟 M2-4；既有 `save_repos`/`save_bookmarks` 非原子写属技术债不倒改）、危险参数 9 条规则落地为纯函数 `validate_param_value`（不复用/不修改 `check_shell_command`，元字符集合以其为下界扩展）、审计脱敏三重保险、M2-4/M2-5 边界。测试矩阵 T-scr-1~17、违规码 14 条。**M2-3 全程不做脚本执行**。上一版：M2-3 任务卡已展开为 a/b（`logs/checkpoints/M2-3-20260903-1556.md`）：实测确认 `ScriptMeta` 尚不存在、命令与 ACL 均 91 条、前端无脚本库面板、`shell:allow-spawn` 对 bash/sh/powershell 仍 `args: true` 全开；**修正两份前置草案的事实**——`ScriptMeta` 两套设计互不兼容（assist 版 `args`/prework 版 `params`+`ParamType`+`interpreter`），且 prework 的「`request_app_exit` 未落地」阻塞项**已解除**（`ShutdownCoordinator` 已落地并注册 6 个退出任务、支持 `register` 任意任务）。a 卡须裁决五组分歧；测试矩阵 T-scr-1~13 + 12 类违规码已定义；**M2-3 不做脚本执行**。上一版：
+> 编写/裁决模型：Codex gpt-5.5 high；机械文档审计：`gpt-5.6-luna / low`；M2-2.b 实现：CodeBuddy 会话（腾讯 Hy4）；M2-2 整体裁定：CodeBuddy 会话（Kimi K3）。
+> 本版变更：**M2-2 整体裁定 PASS_WITH_DEBT（`AI:DEEP / R:high`，Kimi K3 独立于实现者），NEXT=`M2-3`**：a/b 两卡全绿，七项冻结契约逐项裁定成立；R1（asset:// 运行时加载未实测）降级为 D10（scope 真实环境推导已覆盖 + asset:// 通道已有 AppPanel 图标加载的运行时先例 + 人工清单可复现）；R2（GUI 目视验收）为 D11；R3/R4/R5 可接受；三个门禁冲突修复经复核均未降级既有门禁。证据 `logs/checkpoints/M2-2-ACCEPT-20260903-1540.md`，复核输入包 `logs/checkpoints/M2-2-verdict-input-20260903-1502.md`。上一版：M2-2.b 画廊/灯箱/缩放 UI 已实现（PASS_WITH_DEBT）：后端新增 `workspace_images_dir` 只读命令（`check_invocation_source` + 审计只记 op 名）、`workspace::images_dir()`、`images::join_image_path()` 白名单拼接（fail-closed）；前端新增 `src/utils/imagePreview.ts` 纯逻辑层 + `useImagePreviewStore` + `shared/ImageGallery.vue` / `shared/ImageLightbox.vue`（成果库挂 `ArtifactPanel`、灯箱全局挂 `App.vue`）；字节通道 `convertFileSrc + asset://` 且**未扩 scope**、零新增 npm 依赖；新增 `check-image-preview-policy.py`（1 好 + 15 坏样本）与 `check-image-preview-logic.mjs`（97 断言，覆盖 T-prev-1~12）并接入 pre-merge 第 17 项；`cargo test` 156/156、`cargo build --release` 0（warning 仍为既有 2）、`npm run build` 0、总体积 +12.63%（≤15%）、pre-merge ALL_PASS、release 启动冒烟无 panic。**挂账**：asset:// 端到端加载与 GUI 目视验收未完成（无 GUI 自动化通道、真实数据目录尚无落盘图片），证据与人工验收清单见 `logs/checkpoints/M2-2.b-20260903-1454.md`。**未签 M2-2 整体 PASS**。上一版：M2-2.a 冻结裁定书已 PASS（`logs/checkpoints/M2-2.a-20260903-1352.md`）：七项冻结契约逐项结论，M2-2.b 按裁定书施工。再上一版：M2-2 任务卡已展开为 a（冻结）/b（实现）两张子卡，静态判断 workspace 图片目录已在现有 `assetProtocol.scope` 的 `$HOME/.local/share/**` 内无需扩 scope；证据 `logs/checkpoints/M2-2-20260903-1340.md`。再上一版：M2-1 图片领域与持久化已 PASS（`ImageRef`/`Artifact.images`/`save_image`，MIME 白名单 fail-closed + magic bytes 比对 + 10MB/50张/50MB/8000px 上限 + sha256 去重 + 原子写 + 删除联动，cargo test 151/151、pre-merge ALL_PASS，顺带修复 M1-ACCEPT 会话 id 校验挂账；运行时端到端联调挂账，证据 `logs/checkpoints/M2-1-20260903-0927.md`）。
 
 ---
+
+## 当前执行结论（截至 2026-09-01）
+
+**M0 已通过负责人验收；M1-0~M1-9 全部 PASS 且 M1-ACCEPT 里程碑验收 PASS（PASS_WITH_DEBT；D1~D9 保留），M1 关闭；M2-1 图片领域与持久化已 PASS；M2-2 图片预览 UI 已整体 PASS_WITH_DEBT；M2-3 已整体 PASS_WITH_DEBT；M2-4.a/b/c/d/e 已完成。当前 NEXT=`M2-4 整体裁定`。**
+
+| 里程碑 | 状态 | 当前口径 |
+|--------|------|----------|
+| **M0 安全与稳定性基线** | **PASS，已验收** | M0-0~M0-7 全部关闭；验收报告 `OWNER_APPROVED` |
+| M1 浏览器与版本控制 | **PASS，里程碑已验收（PASS_WITH_DEBT）** | `M1-0`~`M1-9` 全部 PASS；`M1-ACCEPT` 收口验收通过（无 BLOCKER；GUI/E2E 挂账 D1~D9 保留，汇总见 `logs/checkpoints/M1-ACCEPT-20260903-0843.md` §7） |
+| M2 本地资产与执行 | 进行中，NEXT=`M2-4 整体裁定` | M2-1/M2-2/M2-3 已完成；M2-4.a/b/c/d/e 已完成，下一步做 M2-4 整体裁定 |
+| M3 | 未开始、可并行评估 | 至少 M0 前置已满足，是否并行需看资源安排 |
+| M4~M5 | 未开始、仍锁定 | M4 等 M2 前置；M5 等 M1~M4 稳定 |
+
+判定规则：`P0/P1/P2` 表示业务与风险优先级，`M0~M5` 表示执行顺序。M0 已放行后，后续需求仍必须按 `详细设计与实施计划.md` 展开检查点、逐点验收、独立提交。
+
+M0 当前收口面共 8 项：完整基线、自动门禁、统一生命周期重构、统一安全边界重构、构建/依赖清理、资源生命周期闭环、崩溃与 9 项 GUI 回归、最终验收。任务定义、检查点和证据要求统一见 `详细设计与实施计划.md` §2。
+
+## AI 下一任务领取队列（唯一入口）
+
+AI 必须按 `详细设计与实施计划.md` §2.2 的**检查点关键路径**领取任务，不能只扫描最靠上的未完成 WBS。排序先看阻塞性和降低后续复杂度的收益，再看依赖，最后才在同级里把简单任务排前；模型标签及自动升级规则见详细计划的“AI 执行排序、模型路由与提交协议”。
+
+当前关键路径：`M0-0(完成，六项 UNSTABLE 已裁决) -> M0-1(PASS) -> M0-2(PASS: a/b/c/d) -> M0-3(PASS: a/b/c/d) -> M0-4(PASS: a/b/c) -> M0-5(PASS: a/b/c) -> M0-6(PASS: a/b/c) -> M0-7.a(PASS) -> M0-7.b(PASS) -> M0-7.c(PASS) -> M1-0(PASS) -> M1-1(PASS) -> M1-2(PASS) -> M1-2-fix1(PASS) -> M1-3(PASS) -> M1-4(PASS) -> M1-5(PASS) -> M1-6.a(PASS, 契约冻结) -> M1-6.b(PASS, 写后端核心) -> M1-6.c(PASS, 复核) -> M1-6.d(PASS, push) -> M1-7(PASS, Git UI；GUI 目视验收挂账) -> M1-8(PASS, 请求拦截与瀑布；运行时端到端联调挂账) -> M1-9(PASS, 会话持久化与关闭协议；运行时端到端联调挂账) -> M1-ACCEPT(PASS_WITH_DEBT, M1 里程碑收口) -> M2-1(PASS, 图片领域与持久化；运行时端到端联调挂账) -> M2-2.a(PASS, 字节通道决策与契约冻结) -> M2-2.b(PASS_WITH_DEBT, 画廊/灯箱/缩放 UI 已实现) -> M2-2(PASS_WITH_DEBT, 整体裁定：D10 asset:// 运行时加载未实测 / D11 GUI 目视验收) -> M2-3.a(PASS, 脚本领域契约冻结) -> M2-3.b(PASS_WITH_DEBT, 领域与持久化已实现) -> M2-3(PASS_WITH_DEBT, 整体裁定：D12/D13 挂账) -> M2-4.a(PASS, 执行安全契约冻结；M2-4 已展开为 a~e) -> M2-4.b(PASS, 进程组与生命周期内核) -> M2-4.c(PASS_WITH_DEBT, 执行命令与校验接入) -> M2-4.d(PASS_WITH_DEBT, 输出背压·事件流·退出收口) -> M2-4.e(PASS, 移除 shell spawn 开放面) -> M2-4 整体裁定(NEXT)`。M2-4.e 证据见 `logs/checkpoints/M2-4.e-20260905-0008.md`。
+
+当前执行器：Codex 主任务（`CODEX_READY`）；机械审计与独立脚本任务优先委派 `gpt-5.6-luna / low`。M0 已关闭，M1 起继续按关键路径逐点推进；每个检查点必须先验收、回写证据、独立提交并确认工作树干净，再领取下一点。硬停止条件和跨模型回归步骤统一见 `AI-模型切换与接手清单.md`。
+
+| 顺序 | WBS | 为什么排在这里 | 模型路由 | 最少提交 | 状态 |
+|------|-----|----------------|----------|----------|------|
+| 1 | M0-0 完整基线 | 没有可比基线就无法判断后续重构是否退化 | `AI:BALANCED/R:medium` | 3 | 已关闭；新三批逐批 PASS，raw aggregate UNSTABLE 的六项已裁决 |
+| 2 | M0-1 自动门禁 | 将冻结契约固化为脚本，再为 M0-0.b/c 采数 | `AI:BALANCED/R:high` | 3 | 已完成；核心 `2b476d3`，正式总控 `ac0ecac`，版本化证据门禁 `73e9dfb` |
+| 3 | M0-2 生命周期重构 | 先统一资源所有权，避免每个功能重复造退出逻辑 | `AI:DEEP/R:high` | 4 | `M0-2.a/b/c/d = PASS`；下一 WBS 为 M0-3（`AI:DEEP/R:xhigh`） |
+| 4 | M0-3 安全边界重构 | 先统一来源、路径和执行策略，避免 M1~M5 重复且不一致 | `AI:DEEP/R:xhigh` | 4 | 已关闭 |
+| 5 | M0-4 构建/依赖清理 | 上游边界明确后的快速、低风险清理 | `AI:BALANCED/R:medium` | 3 | 已关闭 |
+| 6 | M0-5 资源闭环 | 基于统一生命周期做真实 release 压测 | `AI:DEEP/R:high` | 3 | 已关闭 |
+| 7 | M0-6 崩溃与 GUI 回归 | 复杂、耗时，必须在前置结构稳定后验证 | `AI:DEEP/R:high` | 3 | 已关闭 |
+| 8 | M0-7 验收放行 | 小模型汇总证据，强模型独立复核后才能放行 | `AI:FAST/R:medium; ESCALATE:DEEP` | 3 | 已关闭 |
+
+执行单位必须是 `WBS.checkpoint`，例如 `M0-2.b`，不能是“完成 M0”。`SIMPLE/MEDIUM/COMPLEX` 分别至少拆成 2/3/4 个独立、可编译、可回滚提交；上一检查点 FAIL 时禁止进入下一检查点。「逐点执行」不等于「逐点停机」：PASS 且提交边界干净后可立即继续。检索、格式、schema、哈希和固定夹具先交给脚本或 `AI:FAST/R:low`，主模型只做关键 diff 复核；安全、生命周期、并发、IPC 和最终放行不得降级。
+
+---
+
+> 以下 #1~#15 按稳定需求 ID 展开，仅用于检索与范围说明，不代表执行顺序。AI 必须以上方“AI 下一任务领取队列”为当前入口，并以文末“有序需求表”判断后续里程碑顺序。
 
 ## 1. 脚本库中心：快速调用各种 shell 脚本  `P1`
 
@@ -66,7 +113,7 @@
 - [ ] 连续开关 N 次后内存是否线性增长（泄漏）？
 
 **与现有架构关系**
-- 现有 `grid_process.rs` 的 `GridChildHandle`（`pub struct`，line 75）含 `pub child: Child`（line 77），**无 `impl Drop`**；多进程改造（2026-08-24 落地）后关闭逻辑收口到 `GridProcessManager` 的 `kill_child`（line 619）/`restart`（line 631）/`shutdown_all`（line 680）显式 `child.kill()`（原 `close_grid`/`close_one` 已随多进程改造删除/改名）。需补"单一真退出入口"统一收口，避免残留。
+- 现有 `grid_process.rs` 的 `GridChildHandle`（`pub struct`，line 75）含 `pub child: Child`（line 77），**无 `impl Drop`**；多进程改造（2026-08-24 落地）后关闭逻辑收口到 `GridProcessManager` 的 `kill_child`（line 619）/`restart`（line 631）/`shutdown_all`（line 680）显式 `child.kill()`（原 `close_grid`/`close_one` 已随多进程改造删除/改名）。需接入 M0-2 统一生命周期，避免残留。
 - 终端改造详细设计里已规划 worker 线程退出机制（reader EOF → 线程自然结束）。
 - 本项目日志系统有 `session-*.log`，可借此观察关闭前后的进程/句柄变化。
 
@@ -172,7 +219,7 @@
 1. `bridge.rs` 加 `add_bookmark(url, title) / list_bookmarks() / remove_bookmark()`（+ 进 ACL）。
 2. 前端 `BrowserHost` 加地址栏「收藏」按钮 + 收藏夹侧栏。
 3. 默认浏览器：`setup-linux.sh` 里加 `xdg-settings` 注册 + `*.desktop` 文件；macOS/Windows 用 Tauri 的 `setAsDefault` 或打包配置。
-4. 图标：用现有 `icon.png` 生成全套尺寸（`npm run tauri icon` 或 `tauri icon`）。
+4. 图标：用现有 `icon.png` 生成全套尺寸（`npm run tauri -- icon` 或 `tauri icon`）。
 
 ---
 
@@ -235,7 +282,7 @@
 
 **与现有架构关系**
 - 执行通道直接复用 #1 的 `run_script` / #4 的 `run_command`（`Channel<LogLine>` 回显模型），定时任务只是"触发方"。
-- 调度器挂在 `main.rs` 的 `setup` 钩子里（`tokio::spawn` 常驻 task 循环扫描 next_run），与 #3 单一真退出入口协同（退出时取消所有 timer）。
+- 调度器挂在 `main.rs` 的 `setup` 钩子里（`tokio::spawn` 常驻 task 循环扫描 next_run），并注册到 M0-2 统一生命周期（退出时取消所有 timer）。
 - 每个任务执行仍走审计 `audit.json`（安全红线）+ 凭据 `KeyringStore`。
 
 **建议切入点**
@@ -243,7 +290,7 @@
 2. `bridge.rs` 加 `task_list() / task_add(def) / task_update(def) / task_remove(id) / task_run_now(id)`（**必须进 `permissions/default-commands.toml`**）。
 3. `domain.rs` 加 `TaskDef`（cron / command / enabled / last_run / next_run）。
 4. 前端加「定时任务」面板（CRUD + 开关 + 运行历史）。
-5. 退出收口：在 #3 的 `request_app_exit` 单一入口里 `scheduler.abort()`。
+5. 退出收口：把 `scheduler.abort()` 注册到 M0-2 生命周期协调器，不预设尚未实现的公开命令名。
 
 ---
 
@@ -311,14 +358,14 @@
 
 **范围**
 - **请求与资源可见**：监听每个 tab 的网络请求（`on_web_resource_response_received` / WebKit `WebResource` 事件），汇总为请求列表（URL / 方法 / 状态码 / 类型 / 大小 / 耗时）。资源可按类型（文档/脚本/样式/图片/媒体/XHR）筛选与预览（图片直接看、文本可查）。
-- **本地存档**：关闭 tab 或主动「保存会话」时，把该会话的请求清单 + 关键资源 + 页面快照落盘到 `workspace/sessions/<id>/`（首期用 `workspace.rs` 文件落盘 + #10 图片/富文本渲染；#6 数据库落地后可升级为库存储，注意 #6 在 M4 晚于本需求的 M1，故首期不强依赖 #6）。
+- **本地存档**：关闭 tab 或主动「保存会话」时，把该会话的请求清单 + 关键资源 + 页面快照落盘到 `workspace/sessions/<id>/`。M1 内置会话范围的最小文本/图片预览，不依赖 M2 的 #10；M2 再把预览契约抽成成果库/工具箱共用能力。#6 数据库在 M4，M1 不依赖数据库。
 - **关闭 UX**：关闭页签/窗口时弹「保存 / 删除」选择（不可静默丢）；已保存会话在「历史会话」面板可回看、可删除。
 - **隐私红线**：存档默认仅本地，不自动出网；存档落盘走 `audit.json`，资源含敏感内容时标注。
 
 **与现有架构关系**
 - 当前 `tauri-plugin-browser-tabs` 仅有 `on_navigation` / `on_new_window` 拦截（已核查 `commands.rs:57/74`），**无请求层监听**——需新增 `on_web_resource_response_received` 钩子（Tauri v2 支持；Linux WebKit 后端可用），把事件经 `app.emit` 推前端。
 - 前端 `collect.js` / `resources.js` 已在做 DOM 级收集，可扩展为"请求层 + DOM 层"双源。
-- 存档复用 #10 的图片/富文本渲染 + `workspace.rs` 落盘 + #6 的存储/查询。
+- 存档由 M1 提供会话范围最小预览并用 `workspace.rs` 落盘；#10 在 M2 抽取/增强为全局图片能力，#6 在 M4 可选升级索引与查询，二者都不是 M1 启动依赖。
 - 与 #8 收藏互补：收藏=主动存 URL，会话存档=被动存完整浏览痕迹。
 
 **建议切入点**
@@ -326,7 +373,7 @@
 2. `bridge.rs` 加 `session_save(tab_id) / session_list() / session_get(id) / session_delete(id) / session_export(id)`（**进 ACL**）。
 3. `domain.rs` 加 `BrowserSession`（tab_id / url / title / requests: Vec<ResourceReq> / snapshot / created_at）。
 4. 前端加「会话存档」面板（请求瀑布 + 资源预览 + 关闭弹窗保存/删除）。
-5. 与 #3 资源释放协同：关闭 tab 时先 flush 会话缓冲再 kill 子 webview。
+5. 与 M0-2 统一生命周期协同：关闭 tab 时先 flush 会话缓冲，再清理子 webview。
 
 ---
 
@@ -357,65 +404,48 @@
 
 ## 优先级总览与里程碑
 
-> 以下为基于源码核查的初步排期（单人节奏估算，含联调/自测，不含需求反复）。
+> 下表用于回答“需求放在哪个里程碑”，不是开工授权。M0 放行前，M1~M5 全部保持锁定。
 
-### 优先级表
-| ID | 需求 | 优先级 | 类型 | 依赖 |
-|----|------|--------|------|------|
-| 3  | 关闭窗口资源释放验证 | P0 | 验证+修复 | 无（先验证） |
-| 5  | Git 功能 | P0 | 开发 | 现有 sync.rs |
-| 8  | 浏览器收藏+默认浏览器+图标 | P0 | 开发 | browser-tabs |
-| 14 | 浏览器会话存档(请求/资源可见+关闭保存删除) | P1 | 开发 | browser-tabs / #10 |
-| 1  | 脚本库中心 | P1 | 开发 | 执行通道 |
-| 2  | HTML 工具 | P1 | 开发 | 子 webview 加载 |
-| 4  | Linux 命令库 | P1 | 开发 | 复用 #1 通道 |
-| 6  | 数据库功能 | P1 | 开发 | keyring/审计 |
-| 9  | 借鉴 fileterm 终端项目 | P1 | 开发 | 现有 term_* |
-| 10 | 支持图片展示 | P1 | 开发 | workspace/Artifact |
-| 11 | 定时任务调度 | P1 | 开发 | 复用 #1/#4 执行通道 |
-| 7  | A2P/A2A 协议 | P2 | 架构 | #1~#6 稳定后 |
-| 12 | Agent 与 Skill 生态 | P2 | 生态 | #1/#4/#6/#7/#11 稳定后 |
-| 13 | 知识图谱 | P2 | 生态 | #1/#4/#8/#10/#12 稳定后 |
-| 15 | 插件系统 | P2 | 生态 | #1/#2/#12/#14 稳定后 |
+### 有序需求表
 
-### 里程碑与工时估算（约 11~15 周，单人）
-| 里程碑 | 覆盖 | 子任务数 | 估时 | 交付标准 |
-|--------|------|----------|------|----------|
-| **M0 安全基线** | #3 + 基线评估(M0-0) | 7（M0-0~6） | 0.5~0.7周 | 性能+可读性基线归档（见 `logs/baseline-2026-08-27.md`）、验证脚本+报告、单一退出入口、子 webview 回收、崩溃恢复、gtk/wry 死亡依赖清理 |
-| **M1 浏览器与版本控制** | #8, #14, #5 | 9（M1-1~9） | 2.5周 | 收藏/默认浏览器/图标；会话请求可见+关闭保存删除；Git 面板 |
-| **M2 本地资产与执行** | #1, #4, #2, #10 | 9（M2-1~9） | 3周 | 脚本库/命令库/工具箱(5内置工具)/图片预览 |
-| **M3 终端增强** | #9 | 4（M3-1~4） | 1周 | mpsc+pump、term_kill、退避重试 |
-| **M4 数据与调度** | #6, #11 | 8（M4-1~8） | 2周 | 数据库面板+护栏；定时任务调度 |
-| **M5 协议与智能生态** | #7, #12, #13, #15 | 12（M5-1~12） | 3周 | 内嵌 rmcp MCP；Agent+Skill；知识图谱；插件系统 |
-| 缓冲(测试/联调/需求微调) | GEN-test | — | 1~1.5周 | 前端 vitest + 契约测试 |
+> 同一里程碑先过滤未满足的硬依赖，再按阻塞级别、降复杂度收益和 `SIMPLE -> MEDIUM -> COMPLEX` 排序。下表只给需求级主路由；可执行检查点必须读取详细计划中的完整机器标签。
 
-> 注：并行可压缩——M1~M3 中无强依赖的项可由多人分担；上述为单人串行下限。#14 因需新增 WebKit 请求拦截钩子（Linux 后端验证），估时偏保守（+0.5周已含在 M1）。子任务共 49 项（M0:7/M1:9/M2:9/M3:4/M4:8/M5:12），与 `详细设计与实施计划.md` 里程碑表一致。M0-0 基线评估约 +0.2 周（一次性，后续每 Phase 仅对比不改基线）。
+| 顺序 | ID | 需求 | 优先级 | 最早里程碑 | AI 主路由 | 升级/降级边界 | 主要依赖 |
+|------|----|------|--------|------------|-----------|---------------|----------|
+| 1 | 3 | M0 安全与资源收口 | P0 | **M0** | `AI:BALANCED` | 机械采集可用 `FAST`；生命周期/安全转 `DEEP` | 当前执行面 |
+| 2 | 8 | 收藏、默认浏览器、图标 | P0 | M1 | `AI:BALANCED` | 图标可用 `FAST`；系统协议接入转 `DEEP` | M0 PASS、browser-tabs |
+| 3 | 5 | Git 功能 | P0 | M1 | `AI:BALANCED` | 写操作、权限与恢复转 `DEEP` | M0 PASS、现有 `sync.rs` |
+| 4 | 14 | 浏览器会话存档 | P1 | M1 | `AI:DEEP` | 不得降级 | M0 PASS、browser-tabs |
+| 5 | 10 | 图片展示 | P1 | M2 | `AI:BALANCED` | 纯 UI 机械项可用 `FAST` | M0 PASS、`workspace`/`Artifact` |
+| 6 | 1 | 脚本库中心 | P1 | M2 | `AI:BALANCED` | 执行通道与注入边界转 `DEEP` | M0 PASS、统一执行策略 |
+| 7 | 4 | Linux 命令库 | P1 | M2 | `AI:DEEP` | 不得降级 | 复用 #1 安全执行通道 |
+| 8 | 2 | HTML 工具框架 | P1 | M2 | `AI:BALANCED` | WebView 隔离与 ACL 转 `DEEP` | 子 WebView 隔离与打包 |
+| 9 | 9 | fileterm 终端增强 | P1 | M3 | `AI:DEEP` | 可选体验项可用 `FAST` | M0 PASS、现有 `term_*` |
+| 10 | 11 | 定时任务调度 | P1 | M4 | `AI:BALANCED` | 并发、触发与退出转 `DEEP` | M2 安全执行通道 |
+| 11 | 6 | 数据库功能 | P1 | M4 | `AI:DEEP` | 不得降级 | M2 PASS、Keyring/审计 |
+| 12 | 7 | A2P/A2A 协议 | P2 | M5 | `AI:DEEP` | 不得降级 | M1~M4 稳定 |
+| 13 | 12 | Agent 与 Skill 生态 | P2 | M5 | `AI:DEEP` | UI 机械项可用 `BALANCED` | #1/#4/#6/#7/#11 稳定 |
+| 14 | 15 | 插件系统 | P2 | M5 | `AI:DEEP` | UI 机械项可用 `BALANCED` | #1/#2/#12/#14 稳定 |
+| 15 | 13 | 知识图谱 | P2 | M5 | `AI:DEEP` | 展示层可用 `BALANCED` | #6/#8/#10/#12 稳定 |
 
-## 通用注意事项（来自历史教训）
-- **每新增一个 `#[tauri::command]`，必须同步加进 `permissions/default-commands.toml` 的 `commands.allow`**（主窗口调用；子 webview 另需 `permissions/remote-collect.toml` + `capabilities/browser-remote.json` 引用），否则被 ACL 静默拒绝（终端无日志、前端 catch 吞错，极难排查）。当前已注册 **59 个命令**（2026-08-27 实测，非早年文档写的 63）。
-- 任何出网/落盘/执行动作写入 `audit.json`（安全红线）。
-- 凭据只存系统密钥库（keyring），不出现在前端/网页 JS。
-- 后台执行用 `std::thread::spawn`，避免 UI 阻塞；结果通过 `app.emit` 事件回传。
+### 里程碑与滚动估算（约 14~16 周，单人）
 
-> **⚠️ 现状勘误（2026-08-27 源码复核）**：上方"必须同步加进 `permissions/default-commands.toml`"仍为硬规则，但**命令总数已不是早年文档写的 63，实测为 59 个**（见 `详细设计与实施计划.md` §0.1）。新增命令 PR 务必同时改该 toml，否则被 ACL 静默拒绝。
+| 里程碑 | 状态 | 覆盖 | 子任务数 | 剩余估时 | 放行标准 |
+|--------|------|------|----------|----------|----------|
+| **M0 安全与稳定性基线** | **PASS，已验收** | #3 + 基线/安全收口 | 8（M0-0~7） | 0 | 自动验证、资源闭环、9 项 GUI 回归、安全红线清零、验收报告 PASS |
+| M1 浏览器与版本控制 | **PASS，里程碑已验收（PASS_WITH_DEBT）** | #8、#14、#5 | 9 | 2.3 周 | M0 PASS；M1-0~M1-9 全部完成且 M1-ACCEPT 验收通过（M1-7 GUI 目视验收挂账、M1-8/M1-9 运行时端到端联调挂账等 D1~D9 保留）；M2-1 已完成，NEXT=M2-2 |
+| M2 本地资产与执行 | 可启动、默认排在 M1 后 | #1、#4、#2、#10 | 9 | 3 周 | M0 PASS 后具备资格；单人默认排在 M1 后 |
+| M3 终端增强 | 可并行评估、未开始 | #9 | 4 | 1 周 | 至少 M0 PASS；并行需资源数据支持 |
+| M4 数据与调度 | 锁定 | #6、#11 | 8 | 2 周 | M2 PASS 后启动 |
+| M5 协议与智能生态 | 锁定 | #7、#12、#13、#15 | 12 | 3 周 | M1~M4 PASS 后启动 |
+| 缓冲 | 未启用 | 测试/联调/需求微调 | - | 1~1.5 周 | 按实际风险启用 |
 
-> **⚠️ 性能/可读性基线前置（2026-08-27 新增，同日已实测采集）**：当前项目**零性能基准、零 clippy/lint 门槛**（`Cargo.toml` 无 `[[bench]]`/`clippy`，`package.json` 无 test/lint/bench，PROJECT-RULES 仅有功能正确版本基准）。✅ 可读性基线已于 2026-08-27 实测：`cargo clippy --all-targets` 唯一 **13 warning**（插件另有 1）、前端 `npm run build` 主 JS **505KB**/dist **548KB**（Vite 告警 >500KB 需 manualChunks 代码分割），已归档 `logs/baseline-2026-08-27.md`。在动 M1~M5 任何功能代码前，必须先按 `详细设计与实施计划.md` 的 **M0-0** 采集并归档性能+可读性基线（`logs/baseline-<date>.md`）。每阶段完成须对比基线，硬门槛：性能回退 >10% 或 `cargo clippy` 新增 warning 须显式说明方可合入。否则多进程/mpsc/数据库/Agent 流式等改造会**静默劣化且无法归因**——这正是你担心的"改完系统崩溃、性能降低却查不出原因"。无基线对比的 PR 不准合入。
+WBS 共 50 项（M0:8 / M1:9 / M2:9 / M3:4 / M4:8 / M5:12）。旧版 11~15 周和 M0 0.5~0.7 周已废弃：它遗漏了高风险入口收口、当前提交的 GUI 回归和验收证据建设。M0 的实时状态只维护在本文顶部领取队列，详细定义与勾选权归 `详细设计与实施计划.md` §2，避免双份状态镜像漂移。
 
----
+## 通用红线
 
-## 11. 待执行源码修复项（审核发现，尚未落地，等确认）
-
-> 以下三项为文档审核中确认的真实缺陷/待办，**源码尚未改动**。已分别对齐 `详细设计与实施计划.md` 的 M0 子任务编号，落地后可勾除。
-
-### 11.1 M0-1 写资源验证脚本 `scripts/verify-resources.sh`（补性能基线）
-- **现状**：M0-0 可读性基线已采集，但性能基线因该脚本未写 + `target/release` 未构建而空缺（`logs/baseline-2026-08-27.md` 已标"待补"）。
-- **动作**：新增 `scripts/verify-resources.sh`，开关窗口前后对比 `ps`/`lsof`/`/proc/<pid>/status`；终端页签关闭后确认 PTY 进程树已 kill；连续开关 N 次记录 VmRSS 斜率。
-- **后续**：release 构建后补"冷启动耗时"基线，固化进 `scripts/baseline-check.sh` 做 pre-merge 门禁。
-
-### 11.2 M0-6 清理 `gtk`/`wry` 死亡依赖（来自审核报告高危25，P0）
-- **现状**：`Cargo.toml` 第 25-30 行注释声称 gtk/wry 用于"方案 C3"，实际项目走方案 D（`Window::add_child`）。经 2026-08-27 全仓核查 `gtk`/`wry` **crate API 零引用**（仅注释提及 WebKitGTK/wry 行为；`bridge.rs:1362` 的 `freedesktop_icons::default_theme_gtk()` 非 gtk crate 调用，删 `gtk = "0.18"` 不破坏它）。
-- **动作**：删除 `gtk = "0.18"` 与 `wry = "0.55"` 两项依赖；删除前 `grep -rn "gtk::\|wry::"` 全仓 + `tauri-plugin-browser-tabs` 子 crate 确认零引用；预期缩小构建时间/二进制体积/依赖攻击面。
-
-### 11.3 前端主 JS chunk 代码分割（manualChunks）
-- **现状**：`npm run build` 主 JS `dist/assets/index-*.js` **505KB**（Vite 告警 >500KB 需代码分割）；`useBrowserStore.ts` 同时被静态 import 与动态 import，动态拆分失效。
-- **动作**：在 `vite.config.ts` 用 `build.rollupOptions.output.manualChunks` 拆分 vendor/业务 chunk；解除 `useBrowserStore.ts` 静/动态混用；目标把主 chunk 压到 500KB 以内，避免触发基线体积涨幅 >15% 红线。
+- 每新增一个 `#[tauri::command]`，同步更新 `permissions/default-commands.toml`；远程 webview 调用还需更新 `remote-collect.toml` 与对应 capability。2026-08-27 实测命令数为 59，仅作历史基线，不应硬编码为永久数量。
+- 任何出网、落盘、命令执行和高风险删除动作写入 `audit.json`；凭据只存系统 keyring。
+- 远程页面只获得完成当前交互所需的最小命令；本地写入、进程启动和危险文件操作必须绑定可验证的用户意图。
+- M1~M5 每次合入必须对比 M0 基线；性能回退 >10%、clippy 新增 warning、前端总体积增长 >15% 均需阻断或书面豁免。
+- 状态只依据当前提交的可复跑证据更新；“文件已落盘”“历史跑通过”“代码看起来存在”均不能单独标记完成。

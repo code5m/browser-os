@@ -3,6 +3,34 @@
 # 适配: Ubuntu 24.04 (Noble) / Debian 系; 自动探测其他发行版并提示
 set -euo pipefail
 
+# ---------- 0. (可选) 注册为系统默认浏览器（显式子命令，先于主流程判定） ----------
+# M1-4 硬约束：本脚本默认流程绝不触碰系统默认浏览器；只有用户显式传入
+# --register-default-browser 才执行。首选路径是应用内「设置 → 默认浏览器」按钮，
+# 本函数仅作命令行等价入口。desktop 文件名实测发现，禁止凭猜。
+register_default_browser() {
+  local desktop=""
+  for c in \
+    /usr/share/applications/mvp-browser-os.desktop \
+    /usr/share/applications/com.jizhijiandan.mvp.desktop \
+    "$HOME/.local/share/applications/mvp-browser-os.desktop"; do
+    if [ -f "$c" ]; then desktop="$(basename "$c")"; break; fi
+  done
+  if [ -z "$desktop" ]; then
+    echo "!! 未找到本应用 .desktop 条目（/usr/share/applications 或 ~/.local/share/applications）"
+    echo "   请先安装应用，或在应用内「设置 → 默认浏览器」一键注册后重试"; exit 1
+  fi
+  echo "==> 注册默认浏览器: $desktop（用户显式触发）"
+  if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
+  fi
+  xdg-settings set default-web-browser "$desktop"
+  echo "    当前默认浏览器: $(xdg-settings get default-web-browser)"
+}
+if [ "${1:-}" = "--register-default-browser" ]; then
+  register_default_browser
+  exit 0
+fi
+
 echo "==> 探测系统..."
 if [ -f /etc/os-release ]; then
   . /etc/os-release

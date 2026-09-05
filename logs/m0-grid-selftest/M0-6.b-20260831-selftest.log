@@ -1,0 +1,58 @@
+[run-gui] 启动中…… WEBKIT_DISABLE_DMABUF_RENDERER=1 GDK_BACKEND=x11
+[crashlog] 会话日志: /home/ainfinit/.local/share/com.jizhijiandan.mvp/logs/session-20260831-215415-main-pid2205270.log (role=main pid=2205270)
+[main] main window url=Ok(Url { scheme: "http", cannot_be_a_base: false, username: "", password: None, host: Some(Domain("localhost")), port: Some(1421), path: "/", query: None, fragment: None })
+[grid-manager] spawned grid-child-0 pid=2205383
+[grid-child-0] starting (pid=2205383)
+[crashlog] 会话日志: /home/ainfinit/.local/share/com.jizhijiandan.mvp/logs/session-20260831-215419-grid0-pid2205383.log (role=grid0 pid=2205383)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /home/ainfinit/.local/share/com.jizhijiandan.mvp/sock/grid-2205270-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[create_grid] grid-0 子进程就绪
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[grid-manager] spawned grid-child-1 pid=2205452
+[grid-child-1] starting (pid=2205452)
+[crashlog] 会话日志: /home/ainfinit/.local/share/com.jizhijiandan.mvp/logs/session-20260831-215420-grid1-pid2205452.log (role=grid1 pid=2205452)
+[grid-child-1] shell window created
+[grid-child-1] UDS 已连接 /home/ainfinit/.local/share/com.jizhijiandan.mvp/sock/grid-2205270-1.sock
+[grid-manager] grid-child-1 UDS 已连接
+[grid-child] CreateTab grid-1 完成
+[create_grid] grid-1 子进程就绪
+[grid-selftest] PASS create_grid(2)
+[browser-tabs] drift-correct label=grid-1 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[grid-selftest] PASS grid_open(0)
+[grid-selftest] PASS grid_open(1)
+[browser-tabs] drift-correct label=grid-0 target=(0,0,560x420) alloc_before=(0,0,1x1)
+[grid-selftest] PASS grid_position(0)
+[browser-tabs] drift-correct label=grid-1 target=(0,0,560x420) alloc_before=(0,0,1x1)
+[grid-selftest] PASS grid_position(1)
+[grid-selftest] PASS eval_in_tab(grid-0)
+[grid-selftest] kill -11 grid-child-0 pid=2205383
+[grid-manager] grid-child-0 UDS 对端关闭
+[browser-tabs] navigationFinished id=grid-1 url=https://www.baidu.com/
+[browser-tabs] navigationFinished id=grid-1 url=https://www.bing.com/
+[grid-manager] grid-child-0 异常退出 code=139，自动重启
+[grid-manager] spawned grid-child-0 pid=2205534
+[grid-child-0] starting (pid=2205534)
+[crashlog] 会话日志: /home/ainfinit/.local/share/com.jizhijiandan.mvp/logs/session-20260831-215422-grid0-pid2205534.log (role=grid0 pid=2205534)
+[browser-tabs] drift-correct label=grid-1 target=(0,0,560x420) alloc_before=(0,210,560x210)
+[grid-child-0] shell window created
+[grid-child-0] UDS 已连接 /home/ainfinit/.local/share/com.jizhijiandan.mvp/sock/grid-2205270-0.sock
+[grid-manager] grid-child-0 UDS 已连接
+[grid-child] CreateTab grid-0 完成
+[browser-tabs] drift-correct label=grid-0 target=(0,0,1x1) alloc_before=(-1,-1,1x1)
+[grid-manager] grid-child-0 状态重放完成 url=https://www.baidu.com
+[browser-tabs] drift-correct label=grid-0 target=(0,0,560x420) alloc_before=(0,0,1x1)
+[browser-tabs] navigationFinished id=grid-0 url=https://www.baidu.com/
+[browser-tabs] drift-correct label=grid-0 target=(0,0,560x420) alloc_before=(0,210,560x210)
+[grid-selftest] PASS crash-restart grid-0 重启 pid 2205383 -> 2205534
+[grid-selftest] PASS eval_in_tab(grid-0-after-restart)
+[grid-selftest] PASS grid-1-survived
+[grid-manager] grid-child-0 UDS 对端关闭
+[grid-manager] shutdown grid-child-0
+[grid-manager] grid-child-1 UDS 对端关闭
+[grid-manager] shutdown grid-child-1
+[grid-selftest] PASS close_grid
+[grid-selftest] PASS shutdown count=0
+[grid-selftest] SELFTEST_RESULT=ALL_PASS

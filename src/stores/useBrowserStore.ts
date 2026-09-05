@@ -3,6 +3,7 @@ import { ref, reactive, computed, nextTick, watch } from "vue";
 import { bridge } from "../bridge";
 import { useLayoutStore } from "./useLayoutStore";
 import { useWorkspaceStore } from "./useWorkspaceStore";
+import type { TabRecoveryEvent } from "../types";
 
 export interface AISite {
   name: string;
@@ -173,7 +174,21 @@ export const useBrowserStore = defineStore("browser", () => {
     schedulePosition();
     syncFreeze();
   }
+  // ===== M1-9 关闭协议 =====
+  // 关闭拦截器（由 useSessionStore 在 App.vue 挂载时注入）：返回 true 表示
+  // 已接管（弹「保存/删除/取消」），false 表示走默认直接关闭。
+  // 单向依赖：本 store 不 import useSessionStore，避免循环 import。
+  let closeInterceptor: ((id: string) => boolean) | null = null;
+  function bindCloseInterceptor(fn: (id: string) => boolean) {
+    closeInterceptor = fn;
+  }
   async function tabClose(id: string) {
+    if (closeInterceptor && closeInterceptor(id)) return;
+    await closeTabNow(id);
+  }
+  // 真正执行关闭（协议弹窗确认后由 useSessionStore.resolveClose 调用；
+  // 无协议/协议关闭时与旧 tabClose 行为完全一致）
+  async function closeTabNow(id: string) {
     const idx = tabs.findIndex((t) => t.id === id);
     if (idx < 0) return;
     await bridge.tabClose(id);
@@ -234,6 +249,21 @@ export const useBrowserStore = defineStore("browser", () => {
     const t = tabs.find((x) => x.id === id);
     if (t) t.url = navUrl;
     if (id === activeTabId.value) url.value = navUrl;
+  }
+  function handleTabRecovery(event: TabRecoveryEvent) {
+    bridge.debugLog(
+      `tabRecovery id=${event.id} status=${event.status} attempt=${event.attempt}/${event.max_attempts} reason=${event.reason}`
+    );
+    if (event.status === "recovered") {
+      if (event.id === activeTabId.value) nextTick(schedulePosition);
+      layout.showToast(`页签已自动恢复: ${event.id}`);
+    } else if (event.status === "budget-exhausted") {
+      layout.showToast(`页签恢复次数已用尽: ${event.id}`);
+    } else if (event.status === "failed") {
+      layout.showToast(`页签恢复失败: ${event.id}`);
+    } else if (event.status === "load-failed" && event.id === activeTabId.value) {
+      layout.showToast(`页面加载失败: ${event.url || event.id}`);
+    }
   }
 
   // ===== 宫格 =====
@@ -613,6 +643,8 @@ export const useBrowserStore = defineStore("browser", () => {
     tabNew,
     tabSwitch,
     tabClose,
+    closeTabNow,
+    bindCloseInterceptor,
     tabReload,
     tabNavigate,
     goBack,
@@ -620,6 +652,7 @@ export const useBrowserStore = defineStore("browser", () => {
     reloadActive,
     setTitle,
     setNavigated,
+    handleTabRecovery,
     buildGrid,
     layoutGrid,
     gridSetUrl,

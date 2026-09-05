@@ -4,6 +4,7 @@ import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../stores/useBrowserStore";
 import { useSystemStore } from "../../stores/useSystemStore";
 import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
+import BookmarkStar from "../browser/BookmarkStar.vue";
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
@@ -112,6 +113,10 @@ function setGridCount(n: number) {
 }
 
 async function onItem(v: string) {
+  if (system.m0Cfg?.driver) {
+    bridge.debugLog(`[M0] ignore activity item ${v} while driver=${system.m0Cfg.driver}`);
+    return;
+  }
   expanded.value = "";
   // 离开宫格视图时自动关闭宫格：gridOpen 悬挂为 true 会让浏览视图的定位
   // 走错分支（tab 不复位、宫格被拉回可视区），且在非浏览器视图空转重试
@@ -253,6 +258,8 @@ async function openDirCenter() {
             @keyup.enter="onAddrGo"
             @focus="expanded = 'omni'"
           />
+          <!-- M1-3：⭐ 收藏当前网页 + 📑 展开收藏夹侧栏 -->
+          <BookmarkStar v-if="layout.mainView === 'browser'" />
         </div>
         <button class="go" @click="onAddrGo">前往</button>
       </div>
@@ -264,6 +271,14 @@ async function openDirCenter() {
         <button class="tbtn" @click="layout.toggleCompact" title="精简模式：隐藏工具栏给网页更大空间">⛶</button>
       </template>
       <span class="sep"></span>
+      <button
+        class="sys"
+        :class="{ active: browser.aiNavOpen }"
+        title="AI 导航"
+        @click="browser.aiNavOpen = !browser.aiNavOpen"
+      >
+        <span class="ic">🤖</span>
+      </button>
       <button class="collect" :title="'采集选中内容'" @click="ws.collectSelection">
         <span class="ic">📥</span>
         <span class="lab">采集</span>

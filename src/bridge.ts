@@ -2,17 +2,45 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
   Artifact,
+  ImageRef,
+  ScriptMeta,
+  ScriptParam,
+  ScriptInterpreter,
+  RunSnapshot,
   RepoConfig,
   SyncPreview,
   SyncJob,
   AuditEntry,
   WorkspaceTree,
+  Bookmark,
   DirEntry,
   BrowserResources,
   TabInfo,
+  TabRecoveryEvent,
   AppEntry,
   ResourceStats,
+  GitFileStatus,
+  GitDiffResult,
+  GitBranch,
+  GitWriteOp,
+  GitWriteJob,
+  GitWritePreview,
+  ResourceReceived,
+  ResourceCaptureSettings,
+  TabResourceList,
+  BrowserSession,
+  SessionSummary,
+  SessionPolicy,
+  SessionFlushReport,
 } from "./types";
+
+// M0-0.b 测量配置（契约 logs/m0-baseline-contract-v1.md；非测量运行后端返回 null）
+export interface M0Config {
+  run_id: string;
+  driver: string;
+  ready_file: string | null;
+  report_dir: string | null;
+}
 
 // 类型化 IPC 封装：前端永远只传“意图”，不直接碰 OS / 凭据
 export const bridge = {
@@ -52,6 +80,78 @@ export const bridge = {
 
   listRepos: () => invoke<RepoConfig[]>("list_repos"),
 
+  // ====== M1-5 Git 只读能力（status / diff / branch_list） ======
+  // 只读取仓库状态：不可写、不联网、不回传凭据；diff 超限时由后端截断。
+  gitStatus: (p: { repoId: string }) =>
+    invoke<GitFileStatus[]>("git_status", p),
+
+  gitDiff: (p: { repoId: string; path?: string; maxBytes?: number }) =>
+    invoke<GitDiffResult>("git_diff", p),
+
+  gitBranchList: (p: { repoId: string }) =>
+    invoke<GitBranch[]>("git_branch_list", p),
+
+  // ====== M1-6.b Git 写能力（双阶段确认闸门；本期无 UI，UI 归 M1-7） ======
+  // 所有写操作都必须先 request（生成预览 + 待确认任务，不执行任何写），
+  // 再 confirm 才真正执行；discard 等 dangerous 操作 confirm 时必须带
+  // confirmedDangerous=true 二次确认。任务一次性、5 分钟过期。
+
+  // 阶段一：生成待确认 GitWriteJob 与预览
+  requestGitWrite: (p: {
+    repoId: string;
+    op: GitWriteOp;
+    paths?: string[];
+    message?: string;
+    branch?: string;
+    checkout?: boolean;
+  }) => invoke<GitWritePreview>("request_git_write", p),
+
+  // 阶段二：确认执行（后台线程执行，立即返回 Running 任务）
+  confirmGitWrite: (p: { jobId: string; confirmedDangerous?: boolean }) =>
+    invoke<GitWriteJob>("confirm_git_write", p),
+
+  // 订阅后台写任务完成事件（成功/失败都会触发，payload 为最终 GitWriteJob）
+  onGitWriteCompleted: (cb: (job: GitWriteJob) => void) =>
+    listen<GitWriteJob>("git-write-completed", (e) => cb(e.payload)),
+
+  // 六个白名单操作的便捷封装（只生成待确认任务，仍需 confirmGitWrite 才执行）
+  gitStage: (repoId: string, paths: string[]) =>
+    invoke<GitWritePreview>("request_git_write", { repoId, op: "stage", paths }),
+
+  gitUnstage: (repoId: string, paths: string[]) =>
+    invoke<GitWritePreview>("request_git_write", { repoId, op: "unstage", paths }),
+
+  gitDiscard: (repoId: string, paths: string[]) =>
+    invoke<GitWritePreview>("request_git_write", { repoId, op: "discard", paths }),
+
+  gitCommit: (repoId: string, message: string, paths?: string[]) =>
+    invoke<GitWritePreview>("request_git_write", {
+      repoId,
+      op: "commit",
+      message,
+      paths,
+    }),
+
+  gitCreateBranch: (repoId: string, name: string, checkout?: boolean) =>
+    invoke<GitWritePreview>("request_git_write", {
+      repoId,
+      op: "create_branch",
+      branch: name,
+      checkout,
+    }),
+
+  gitCheckoutBranch: (repoId: string, name: string) =>
+    invoke<GitWritePreview>("request_git_write", {
+      repoId,
+      op: "checkout_branch",
+      branch: name,
+    }),
+
+  // push 是 dangerous 操作（影响远端）：confirm 时必须带
+  // confirmedDangerous=true 二次确认；仅非 force 推当前分支到 origin 同名分支
+  gitPush: (repoId: string) =>
+    invoke<GitWritePreview>("request_git_write", { repoId, op: "push" }),
+
   // 第一步：生成“待确认”SyncJob（不真正推送）
   requestSync: (p: { artifactIds: string[]; repoId: string }) =>
     invoke<SyncPreview>("request_sync", p),
@@ -82,6 +182,63 @@ export const bridge = {
   deleteArtifact: (id: string) => invoke("delete_artifact", { id }),
 
   browseWorkspace: () => invoke<WorkspaceTree>("browse_workspace"),
+
+  // M2-1 图片领域与持久化（画廊/灯箱/缩放属 M2-2，本卡不实现）
+  saveImage: (p: {
+    artifactId: string;
+    data: number[];
+    mime: string;
+    sourceUrl?: string | null;
+    caption?: string | null;
+  }) => invoke<ImageRef>("save_image", p),
+
+  listArtifactImages: (artifactId: string) =>
+    invoke<ImageRef[]>("list_artifact_images", { artifactId }),
+
+  // M2-2.b 预览通道：只回目录基准（不含任何图片相对路径），
+  // 前端用它 + ImageRef.rel_path 拼绝对路径后交给 convertFileSrc 转 asset://。
+  workspaceImagesDir: () => invoke<string>("workspace_images_dir"),
+
+  // M2-3 脚本领域与持久化（**无执行能力**，run_script 归 M2-4）
+  scriptList: () => invoke<ScriptMeta[]>("script_list"),
+
+  scriptAdd: (p: {
+    name: string;
+    category: string;
+    interpreter: ScriptInterpreter;
+    body: string;
+    params: ScriptParam[];
+    description?: string | null;
+    timeoutSecs?: number | null;
+  }) => invoke<ScriptMeta>("script_add", p),
+
+  scriptUpdate: (p: {
+    id: string;
+    name: string;
+    category: string;
+    description?: string | null;
+    params: ScriptParam[];
+    timeoutSecs?: number | null;
+    enabled?: boolean | null;
+    body?: string | null;
+  }) => invoke<ScriptMeta>("script_update", p),
+
+  scriptRemove: (id: string) => invoke("script_remove", { id }),
+
+  // M2-4.c 脚本执行命令层：输出流/运行记录落盘归 M2-4.d
+  runScript: (id: string, values: Record<string, string>) =>
+    invoke<RunSnapshot>("run_script", { id, values }),
+
+  cancelScript: (runId: string) => invoke("cancel_script", { runId }),
+
+  scriptStatus: (runId: string) =>
+    invoke<RunSnapshot>("script_status", { runId }),
+
+  // M1-2 收藏领域
+  bookmarkAdd: (p: { url: string; title: string; category: string }) =>
+    invoke<Bookmark>("add_bookmark", p),
+  bookmarkList: () => invoke<Bookmark[]>("list_bookmarks"),
+  bookmarkRemove: (id: string) => invoke("remove_bookmark", { id }),
 
   // 本地文件浏览器
   listDir: (path: string) => invoke<DirEntry[]>("list_dir", { path }),
@@ -200,6 +357,25 @@ export const bridge = {
   onTabNavigated: (cb: (d: { id: string; url: string }) => void) =>
     listen<{ id: string; url: string }>("tab-navigated", (e) => cb(e.payload)),
 
+  // tab-N 主进程 WebView 恢复状态（有限预算；失败/耗尽可被前端提示和日志观测）。
+  onTabRecovery: (cb: (d: TabRecoveryEvent) => void) =>
+    listen<TabRecoveryEvent>("tab-recovery", (e) => cb(e.payload)),
+
+  // ====== M1-4 默认浏览器接入（外部打开 URL 路由） ======
+  // 拉取并清空后端 pending 队列（冷启动 argv / 单实例转发 / RunEvent::Opened
+  // 统一进队；拉取即清空，天然去重）。
+  takePendingOpenUrls: () => invoke<string[]>("take_pending_open_urls"),
+  // 后端在就绪后收到新外部 URL 时发的轻提示（URL 本体须用 takePendingOpenUrls 拉取）
+  onOpenUrlPending: (cb: () => void) =>
+    listen("app://open-url-pending", () => cb()),
+  // 非 http/https 的外部打开请求被后端拒绝（安全策略）——前端据此 toast
+  onOpenUrlRejected: (cb: (u: { url: string }) => void) =>
+    listen<{ url: string }>("app://open-url-rejected", (e) => cb(e.payload)),
+  // 查询当前系统默认浏览器（xdg-settings get）
+  getDefaultBrowser: () => invoke<string>("get_default_browser"),
+  // 把本应用设为系统默认浏览器。硬约束：只能由设置页按钮经用户显式确认后调用
+  setDefaultBrowser: () => invoke<string>("set_default_browser"),
+
   // ====== 真实 PTY 终端 ======
   termSpawn: () => invoke<{ id: string }>("term_spawn"),
 
@@ -213,4 +389,82 @@ export const bridge = {
   // 订阅终端输出流
   onTermData: (cb: (d: { id: string; data: string }) => void) =>
     listen<{ id: string; data: string }>("term-data", (e) => cb(e.payload)),
+
+  // ====== M1-8 资源瀑布（请求拦截与瀑布） ======
+  // 所有数据均已由后端脱敏（敏感查询参数值为 ***），不含任何 headers/body。
+  // 查询某 tab 的资源瀑布记录（含容量驱逐计数）
+  listTabResources: (tabId: string) =>
+    invoke<TabResourceList>("list_tab_resources", { tabId }),
+
+  // 清空某 tab 的资源瀑布记录（后端写审计，仅 tab_id + 计数，不含 URL）
+  clearTabResources: (tabId: string) =>
+    invoke("clear_tab_resources", { tabId }),
+
+  // 查询资源采集设置（开关 + 容量上限）
+  getResourceCaptureSettings: () =>
+    invoke<ResourceCaptureSettings>("get_resource_capture_settings"),
+
+  // 设置采集开关与每 tab 容量（会话内生效，不持久化）
+  setResourceCaptureSettings: (enabled: boolean, maxPerTab?: number) =>
+    invoke<ResourceCaptureSettings>("set_resource_capture_settings", {
+      enabled,
+      maxPerTab: maxPerTab ?? null,
+    }),
+
+  // 订阅资源事件（payload 为脱敏后的 ResourceReceived DTO）
+  onResourceReceived: (cb: (r: ResourceReceived) => void) =>
+    listen<ResourceReceived>("resource-received", (e) => cb(e.payload)),
+
+  // ====== M1-9 会话存档与关闭协议 ======
+  // 落盘数据全部为后端脱敏形态（URL 敏感参数值为 ***，无 headers/body）；
+  // 未显式保存的草稿不落盘（auto_save_on_exit 默认关）。
+
+  // 保存当前页签为会话（立即落盘）。preview 为最小文本预览（可空，后端截断 512B）
+  sessionSave: (tabId: string, preview?: string) =>
+    invoke<SessionSummary>("session_save", { tabId, preview: preview ?? null }),
+
+  // 明确丢弃草稿（关闭弹窗选「删除」）：不落盘
+  sessionDiscard: (tabId: string) => invoke("session_discard", { tabId }),
+
+  // 列出本地会话存档（按 updated_at 倒序）
+  sessionList: () => invoke<SessionSummary[]>("session_list"),
+
+  // 读取会话详情（含已脱敏资源列表）
+  sessionGet: (id: string) => invoke<BrowserSession>("session_get", { id }),
+
+  // 删除会话存档（幂等；删除存档不影响仍打开的同名页签）
+  sessionDelete: (id: string) => invoke<boolean>("session_delete", { id }),
+
+  // 导出会话为脱敏 JSON 文本（不写磁盘，由前端决定保存位置）
+  sessionExport: (id: string) => invoke<string>("session_export", { id }),
+
+  // 用会话中已脱敏的 URL 新建页签（登录态/一次性 token 不会恢复）
+  sessionRestore: (id: string) => invoke<TabInfo>("session_restore", { id }),
+
+  // 关闭路径 flush：按策略落盘/释放草稿 + 清理 tmp + 容量裁剪
+  flushSessions: () => invoke<SessionFlushReport>("flush_sessions"),
+
+  // 会话策略：关闭弹窗 / 退出自动保存
+  getSessionPolicy: () => invoke<SessionPolicy>("get_session_policy"),
+
+  setSessionPolicy: (closePrompt?: boolean, autoSaveOnExit?: boolean) =>
+    invoke<SessionPolicy>("set_session_policy", {
+      closePrompt: closePrompt ?? null,
+      autoSaveOnExit: autoSaveOnExit ?? null,
+    }),
+
+  // ====== M0-0.b 测量钩子（契约 logs/m0-baseline-contract-v1.md §6.1/§6.3） ======
+  // ready 信号：前端 mount + 2×rAF 后调用；后端写带 run_id 的 ready 信号（轻量 IPC 往返）
+  m0Ready: () => invoke<string>("m0_ready"),
+  // 查询当前 M0 测量配置（非测量运行返回 null）
+  m0Config: () => invoke<M0Config | null>("m0_config"),
+  // 终端吞吐报告：前端检测 __M0_TERM_END__ 并完成下一次 animation frame 后上报
+  m0TermReport: (report: {
+    begin_seen: number;
+    end_seen: number;
+    consumed_bytes: number;
+    start_ts_ms: number;
+    end_ts_ms: number;
+    frame_gaps_ms: number[];
+  }) => invoke("m0_term_report", { report }),
 };

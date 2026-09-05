@@ -1,0 +1,1 @@
+{"metric":"startup_ready_ms","run_id":"20260830T145905+0800_93a1ba6_release_x11","clock":"CLOCK_MONOTONIC","warmup":1,"formal":3,"samples":[1035, 1030, 1029],"stats":{"median": 1030.0, "min": 1029.0, "max": 1035.0, "volatility": "0.6%", "p95": null, "ols_slope": -3.0, "last_minus_first": -6.0, "pct": -0.5797101449275363}}

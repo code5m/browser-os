@@ -1,0 +1,16 @@
+[crashlog] 会话日志: /tmp/m0m/de9578877236/term-1/data/com.jizhijiandan.mvp/logs/session-20260831-165157-main-pid1921685.log (role=main pid=1921685)
+[main] main window url=Ok(Url { scheme: "tauri", cannot_be_a_base: false, username: "", password: None, host: Some(Domain("localhost")), port: None, path: "", query: None, fragment: None })
+[main] security policy: security-policy-v2/max_html=1MiB/labels=main,tab-*,grid-*/intents=one-shot
+[FE] FE alive marker=2026-08-18-r2
+[FE] [M0] rAF1 fired
+[FE] [M0] rAF2 fired, invoking m0_ready
+[m0] m0_ready called run_id="20260831T164058+0800_6534963_release_x11" ready_file=Some("/tmp/m0m/de9578877236/reports/term-1/ready.signal")
+[m0-driver term-throughput] ready ok
+[FE] [M0] m0_ready ok run_id=20260831T164058+0800_6534963_release_x11
+[FE] [TerminalPane] mounted termEl=true
+[FE] [TerminalPane] xterm initialized
+[FE] [TerminalPane] calling startShell
+[FE] syncViewVisibility view=term
+[hide_all_webviews] 已处理全部子 webview
+[m0-driver term-throughput] cycle 1 report ok
+[m0-driver term-throughput] driver result=PASS

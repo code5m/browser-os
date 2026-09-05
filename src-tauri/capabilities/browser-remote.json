@@ -3,7 +3,7 @@
   "identifier": "browser-remote",
   "description": "允许主窗口内的浏览器子 webview(外部域)调用 collect_selection 与 report_resources",
   "windows": ["main", "grid-child-*"],
-  "webviews": ["browser", "tab-*", "grid-*"],
+  "webviews": ["tab-*", "grid-*"],
   "remote": {"urls": ["https://*", "http://*"]},
   "permissions": ["core:default", "remote-collect"]
 }

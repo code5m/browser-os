@@ -18,10 +18,12 @@ use std::sync::atomic::{AtomicI32, Ordering};
 static LOG_FD: AtomicI32 = AtomicI32::new(-1);
 
 fn log_dir() -> PathBuf {
-    let base = std::env::var("XDG_DATA_HOME").map(PathBuf::from).unwrap_or_else(|_| {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        PathBuf::from(home).join(".local/share")
-    });
+    let base = std::env::var("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+            PathBuf::from(home).join(".local/share")
+        });
     base.join("com.jizhijiandan.mvp").join("logs")
 }
 
@@ -55,7 +57,11 @@ pub fn init() {
             let orig_err = libc::dup(2); // 原 stderr，线程回显用
             libc::dup2(writer, 2); // stderr → pipe（此后所有 stderr 输出都进管道）
             libc::close(writer);
-            if let Ok(file) = OpenOptions::new().create(true).append(true).open(&session_path) {
+            if let Ok(file) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&session_path)
+            {
                 use std::os::unix::io::IntoRawFd;
                 match file.try_clone() {
                     Ok(cloned) => {
@@ -153,7 +159,11 @@ extern "C" fn crash_signal_handler(sig: libc::c_int) {
 
 /// panic 文本同时写入 crash.log 与会话日志
 fn append_crash(dir: &Path, text: &str) {
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(dir.join("crash.log")) {
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("crash.log"))
+    {
         let _ = f.write_all(text.as_bytes());
     }
     let fd = LOG_FD.load(Ordering::SeqCst);

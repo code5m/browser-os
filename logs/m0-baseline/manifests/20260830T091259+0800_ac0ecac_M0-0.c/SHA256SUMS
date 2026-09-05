@@ -1,0 +1,8 @@
+5b20c74679556ec46a988d9889ee6acf69b230154bccfb307fdd88f5086f7cef  ./logs/batch-01-quality.log
+d832534596e10e3da0ab86ddd44cf0574118c435fe2e0f044052f43043d9db94  ./logs/batch-01-resources.log
+f18104831534cbe139d1ea6e07b957631579d6eba915e2e9eebfb8b6b3833d94  ./logs/batch-02-quality.log
+3faa45d6f8a259cf4f2cb9056c83e03608c5a65311f08479ecfc5b6383c4f3a0  ./logs/batch-02-resources.log
+8e8f2bf67a4540046b5ce510b8929b81f863418b1baf310c276bc4dc3199438e  ./logs/batch-03-quality.log
+9c62fa220bfb3a9eb7c4b3d93651f5490915ef453f4e17559b1dd681e243a206  ./logs/batch-03-resources.log
+e82655dfb9dd13b6900dbe45affe786455b82a4e175dfef8104f9cd647984b95  ./summary.json
+1ffe0d5cbe65da741063b3ebc3d94cbb8561b9e74ecd88b2faba02f42e1ca203  ./summary.md

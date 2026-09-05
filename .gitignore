@@ -9,9 +9,15 @@ src-tauri/target/
 src-tauri/gen/
 
 # 本地运行时数据（成果库 / 仓库配置 / 审计，含凭据引用）
-workspace/
+# 注意：必须锚定根目录（/workspace/），否则会误伤 src/components/workspace/ 组件
+/workspace/
 *.log
 derby.log
+
+# M0 基线证据目录（契约 §8）：environment/scenario/summary/measurements/哈希
+# 及 raw/ 原始命令输出均需入库可追溯，故对 logs/m0-baseline/ 开例外（含 *.log）
+!logs/m0-baseline/
+!logs/m0-baseline/**
 
 # 系统 / 编辑器
 .DS_Store

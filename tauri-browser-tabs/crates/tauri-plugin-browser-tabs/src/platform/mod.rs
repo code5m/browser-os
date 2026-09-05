@@ -23,6 +23,14 @@ pub fn ensure_native_layout<R: Runtime>(webview: &Webview<R>) -> Result<()> {
     Ok(())
 }
 
+/// Forget platform-specific bookkeeping for a child webview that was closed.
+pub fn forget_native_layout(label: &str) {
+    #[cfg(target_os = "linux")]
+    linux::forget_size_allocation(label);
+    #[cfg(not(target_os = "linux"))]
+    let _ = label;
+}
+
 /// Apply a logical rect to a child webview.
 ///
 /// We use logical coordinates (CSS pixels) exclusively to avoid the

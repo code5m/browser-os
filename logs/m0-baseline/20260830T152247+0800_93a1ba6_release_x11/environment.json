@@ -1,0 +1,94 @@
+{
+  "run_id": "20260830T152247+0800_93a1ba6_release_x11",
+  "timestamp": "20260830T152247+0800",
+  "contract_version": "V1.1",
+  "script_version": "M0-1.a-4",
+  "run_mode": "formal",
+  "git": {
+    "commit_sha": "93a1ba63983fba0e5e62ec623c225aa4c13f0bdd",
+    "short_sha": "93a1ba6",
+    "branch": "feature-M0-baseline",
+    "git_status_porcelain": "",
+    "repo_root": "/home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3"
+  },
+  "artifacts": {
+    "profile": "release",
+    "binary_path": "/home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3/src-tauri/target/release/mvp-browser-os",
+    "binary_sha256": "6adb8197130f3ea278693dc4df61321b6097cf93b9b068678e5b626de63024eb",
+    "build_cmd": "cargo build --manifest-path /home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3/src-tauri/Cargo.toml --release --locked",
+    "start_cmd": "WEBKIT_DISABLE_DMABUF_RENDERER=1 GDK_BACKEND=x11 /home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3/src-tauri/target/release/mvp-browser-os"
+  },
+  "locks": {
+    "cargo_lock_sha256": "52e6cc4fe8589d699c30c2a24c2e0b2c4281a3327daa31e46e59ca70fbed9971",
+    "npm_lock_sha256": "024f51edd0f1de2047a55f09ac20b54c059baa9072ae88f01325129582d67ee6"
+  },
+  "system": {
+    "os": "Ubuntu 24.04.4 LTS",
+    "kernel": "7.0.0-30-generic",
+    "arch": "x86_64",
+    "cpu_model": "AMD Ryzen 7 5700U with Radeon Graphics",
+    "logical_cpus": "16",
+    "mem_bytes": "16059621376"
+  },
+  "graphics": {
+    "xdg_session_type": "wayland",
+    "display": ":0",
+    "wayland": "wayland-0",
+    "resolution": "  dimensions:    1920x1080 pixels (508x285 millimeters)",
+    "scale": "1.0",
+    "gdk_backend": "x11",
+    "host_gdk_backend": "x11"
+  },
+  "webkit": {
+    "webkit_disable_dmabuf_renderer": "1",
+    "host_webkit_disable_dmabuf_renderer": "",
+    "webkitgtk_version": "2.52.3",
+    "gtk_version": "3.24.41"
+  },
+  "toolchain": {
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+    "node": "v26.7.0",
+    "npm": "11.19.0"
+  },
+  "runtime_conditions": {
+    "locale": "zh_CN.UTF-8",
+    "timezone": "Asia/Shanghai",
+    "load_average": "1.59,1.17,1.30",
+    "avail_mem_bytes": "9486548992",
+    "power_mode": "ACAD",
+    "isolated_xdg_data": "/tmp/m0m/9d2988db8faf/<scenario>/data",
+    "isolated_xdg_cache": "/tmp/m0m/9d2988db8faf/<scenario>/cache",
+    "isolated_xdg_config": "/tmp/m0m/9d2988db8faf/<scenario>/config"
+  },
+  "source_fingerprint": {
+    "commit_sha": "93a1ba63983fba0e5e62ec623c225aa4c13f0bdd",
+    "cargo_lock_sha256": "52e6cc4fe8589d699c30c2a24c2e0b2c4281a3327daa31e46e59ca70fbed9971",
+    "npm_lock_sha256": "024f51edd0f1de2047a55f09ac20b54c059baa9072ae88f01325129582d67ee6",
+    "release_binary_sha256": "6adb8197130f3ea278693dc4df61321b6097cf93b9b068678e5b626de63024eb"
+  },
+  "environment_fingerprint": {
+    "os": "Ubuntu 24.04.4 LTS",
+    "kernel": "7.0.0-30-generic",
+    "arch": "x86_64",
+    "cpu_model": "AMD Ryzen 7 5700U with Radeon Graphics",
+    "logical_cpus": "16",
+    "mem_bytes": "16059621376",
+    "xdg_session_type": "wayland",
+    "resolution": "  dimensions:    1920x1080 pixels (508x285 millimeters)",
+    "scale": "1.0",
+    "gdk_backend": "x11",
+    "host_gdk_backend": "x11",
+    "webkit_disable_dmabuf_renderer": "1",
+    "host_webkit_disable_dmabuf_renderer": "",
+    "webkitgtk_version": "2.52.3",
+    "gtk_version": "3.24.41",
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+    "node": "v26.7.0",
+    "npm": "11.19.0",
+    "locale": "zh_CN.UTF-8",
+    "timezone": "Asia/Shanghai",
+    "power_mode": "ACAD"
+  }
+}

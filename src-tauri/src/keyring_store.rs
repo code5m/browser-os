@@ -14,7 +14,9 @@ impl KeyringStore {
 
     pub fn get_token(repo_id: &str) -> Result<String, String> {
         let entry = Entry::new(SERVICE, repo_id).map_err(|e: Error| e.to_string())?;
-        entry.get_password().map_err(|e| format!("凭据缺失: {e}（请重新配置仓库）"))
+        entry
+            .get_password()
+            .map_err(|e| format!("凭据缺失: {e}（请重新配置仓库）"))
     }
 
     #[allow(dead_code)]

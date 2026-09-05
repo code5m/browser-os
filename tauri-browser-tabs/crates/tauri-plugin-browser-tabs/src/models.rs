@@ -54,18 +54,54 @@ fn default_visible() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum BrowserTabEvent {
-    NavigationStarted { id: TabId, url: String },
-    NavigationFinished { id: TabId, url: String },
-    TitleChanged { id: TabId, title: String },
-    FaviconChanged { id: TabId, favicon: String },
+    NavigationStarted {
+        id: TabId,
+        url: String,
+    },
+    NavigationFinished {
+        id: TabId,
+        url: String,
+    },
+    TitleChanged {
+        id: TabId,
+        title: String,
+    },
+    FaviconChanged {
+        id: TabId,
+        favicon: String,
+    },
     /// A page requested `window.open` / `target="_blank"`. The plugin always
     /// denies the new window and emits this event instead, so the host app
     /// can decide to open a new tab.
-    NewWindowRequested { id: TabId, url: String },
+    NewWindowRequested {
+        id: TabId,
+        url: String,
+    },
     /// 页面加载失败（网络/TLS 错误）。WebKit 内部错误页不注入用户脚本，
     /// 前端/注入脚本无法感知，必须由原生 load-failed 信号上报。
-    LoadFailed { id: TabId, url: String, error: String },
-    Closed { id: TabId },
+    LoadFailed {
+        id: TabId,
+        url: String,
+        error: String,
+    },
+    /// 子资源加载完成或失败（M1-8，Linux WebKitGTK 原生信号
+    /// resource-load-started + finished/failed）。字段只来自原生信号：
+    /// status/mime/size_bytes 在无真实响应时为 None，绝不伪造。
+    /// 注意：url 为页面上报的原始 URL，**未经脱敏**；主进程必须先经
+    /// `redact_sensitive_url` 过滤再入库/转发前端，本事件不外泄到前端。
+    ResourceReceived {
+        id: TabId,
+        url: String,
+        method: Option<String>,
+        status: Option<u32>,
+        mime: Option<String>,
+        size_bytes: Option<u64>,
+        started_at: i64,
+        finished_at: i64,
+    },
+    Closed {
+        id: TabId,
+    },
 }
 
 /// Error types for the plugin.

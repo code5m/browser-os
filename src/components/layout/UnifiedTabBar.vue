@@ -12,6 +12,7 @@ const ws = useWorkspaceStore();
 const system = useSystemStore();
 
 async function activateWeb(id: string) {
+  if (system.m0Cfg?.driver) return;
   if (browser.gridOpen) await browser.closeGridAll();
   if (!layout.isBrowserView()) layout.setView("browser");
   await browser.tabSwitch(id);
@@ -26,6 +27,7 @@ function isActiveMod(id: string) {
 }
 
 function activateMod(t: { id: string; view: string; path?: string }) {
+  if (system.m0Cfg?.driver) return;
   layout.activateModTab(t.id);
   if (t.view === "apps") system.loadApps();
   if (t.path) ws.enterDir(t.path);

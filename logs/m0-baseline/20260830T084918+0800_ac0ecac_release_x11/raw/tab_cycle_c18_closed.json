@@ -1,0 +1,1 @@
+{"root_pid": 825207, "members": [{"pid": 825207, "starttime": 17872922, "rss_kib": 197940, "fd_count": 68}, {"pid": 825219, "starttime": 17872945, "rss_kib": 75360, "fd_count": 48}, {"pid": 825227, "starttime": 17872947, "rss_kib": 182812, "fd_count": 29}], "unreadable": [], "total_rss_kib": 456112, "total_fd_count": 145}

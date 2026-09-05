@@ -1,0 +1,1 @@
+{"valid": true, "checks": {"run_id": true, "backend_valid": true, "backend_errors_empty": true, "begin_seen_once": true, "end_seen_once": true, "consumed_exactly_10mib": true, "expected_bytes_exactly_10mib": true, "elapsed_positive": true, "timestamps_ordered": true, "frame_gaps_nonempty": true, "frame_gaps_numeric": true}, "errors": []}

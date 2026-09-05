@@ -1,0 +1,59 @@
+[crashlog] 会话日志: /tmp/m0m/5da2bcc02074/cycle-terminal/data/com.jizhijiandan.mvp/logs/session-20260830-153257-main-pid1028950.log (role=main pid=1028950)
+[main] main window url=Ok(Url { scheme: "tauri", cannot_be_a_base: false, username: "", password: None, host: Some(Domain("localhost")), port: None, path: "", query: None, fragment: None })
+[FE] FE alive marker=2026-08-18-r2
+[FE] [M0] rAF1 fired
+[FE] [M0] rAF2 fired, invoking m0_ready
+[m0] m0_ready called run_id="20260830T152441+0800_93a1ba6_release_x11" ready_file=Some("/tmp/m0m/5da2bcc02074/reports/cycle-terminal/ready.signal")
+[m0-driver terminal] ready ok
+[FE] [M0] m0_ready ok run_id=20260830T152441+0800_93a1ba6_release_x11
+[m0-driver terminal] cycle 1: term_spawn ok id=term-9718c252-5900-416d-b66c-ba8f6956c533
+[m0-driver terminal] cycle 1 done
+[m0-driver terminal] cycle 2: term_spawn ok id=term-c5d64e5f-abd1-4477-bcf9-67686c9eaa33
+[m0-driver terminal] cycle 2 done
+[m0-driver terminal] cycle 3: term_spawn ok id=term-a9f1c723-f6ae-4083-9f4b-d0b7cb96f976
+[m0-driver terminal] cycle 3 done
+[m0-driver terminal] cycle 4: term_spawn ok id=term-2b7b0f68-4858-4de4-a3c1-4a07a9794b34
+[m0-driver terminal] cycle 4 done
+[m0-driver terminal] cycle 5: term_spawn ok id=term-2d436879-e0ae-4f8e-923d-b4bd9f2e1f18
+[m0-driver terminal] cycle 5 done
+[m0-driver terminal] cycle 6: term_spawn ok id=term-42244452-ddeb-4c07-80ae-a83cf474c9ca
+[m0-driver terminal] cycle 6 done
+[m0-driver terminal] cycle 7: term_spawn ok id=term-867da6ea-2638-465e-a7dc-3f1405e696d2
+[m0-driver terminal] cycle 7 done
+[m0-driver terminal] cycle 8: term_spawn ok id=term-27315969-3879-44f2-8812-602345f376ac
+[m0-driver terminal] cycle 8 done
+[m0-driver terminal] cycle 9: term_spawn ok id=term-8cd2ba2f-9f59-437d-b531-bb471435c8ea
+[m0-driver terminal] cycle 9 done
+[m0-driver terminal] cycle 10: term_spawn ok id=term-350998fb-9b2d-47d4-a5f9-bea649bca115
+[m0-driver terminal] cycle 10 done
+[m0-driver terminal] cycle 11: term_spawn ok id=term-98ba7efc-e335-4c1e-8068-b5be3baf24ed
+[m0-driver terminal] cycle 11 done
+[m0-driver terminal] cycle 12: term_spawn ok id=term-13e60283-ac18-4a80-83b3-cc43d044fc68
+[m0-driver terminal] cycle 12 done
+[m0-driver terminal] cycle 13: term_spawn ok id=term-78771a20-f142-48ce-940e-ead1e1d74920
+[m0-driver terminal] cycle 13 done
+[m0-driver terminal] cycle 14: term_spawn ok id=term-01e0f4f6-d374-46cf-979c-2b0877eea50e
+[m0-driver terminal] cycle 14 done
+[m0-driver terminal] cycle 15: term_spawn ok id=term-7e83dbd2-b8b6-4a66-b47e-5e596b695381
+[m0-driver terminal] cycle 15 done
+[m0-driver terminal] cycle 16: term_spawn ok id=term-16a63384-09bb-4d8a-b352-762a02442332
+[m0-driver terminal] cycle 16 done
+[m0-driver terminal] cycle 17: term_spawn ok id=term-ddb987d9-e8bc-40a4-add2-71b001357471
+[m0-driver terminal] cycle 17 done
+[m0-driver terminal] cycle 18: term_spawn ok id=term-822a1e10-b4a2-493a-bcee-52438a28b77e
+[m0-driver terminal] cycle 18 done
+[m0-driver terminal] cycle 19: term_spawn ok id=term-c09868ed-f279-402d-bd08-49b8862eb772
+[m0-driver terminal] cycle 19 done
+[m0-driver terminal] cycle 20: term_spawn ok id=term-5fc30bdb-6f78-4ad5-99b8-876d52989518
+[m0-driver terminal] cycle 20 done
+[m0-driver terminal] cycle 21: term_spawn ok id=term-cde9355e-97eb-4116-a90c-469a744386fc
+[m0-driver terminal] cycle 21 done
+[m0-driver terminal] cycle 22: term_spawn ok id=term-76f3e561-0850-4adc-b2d0-e3b72122214f
+[m0-driver terminal] cycle 22 done
+[m0-driver terminal] cycle 23: term_spawn ok id=term-2c0fdfd0-307e-475b-a205-70ebd8ceeabc
+[m0-driver terminal] cycle 23 done
+[m0-driver terminal] cycle 24: term_spawn ok id=term-15bf0b8c-196a-452f-8032-58d2a66b49bb
+[m0-driver terminal] cycle 24 done
+[m0-driver terminal] cycle 25: term_spawn ok id=term-939afc04-2406-45a8-a493-33fe3e319657
+[m0-driver terminal] cycle 25 done
+[m0-driver terminal] driver result=PASS

@@ -12,6 +12,105 @@ let term: Terminal | null = null;
 let fit: FitAddon | null = null;
 let resizeObserver: ResizeObserver | null = null;
 
+// ====== M0-0.b 终端吞吐测量钩子（契约 logs/m0-baseline-contract-v1.md §6.3） ======
+// 发送负载前启动 rAF 采样；xterm 完成 write 回调后再解析 begin/end 标记与有效载荷，
+// 收到 end 并完成下一次 animation frame 后经 m0_term_report 上报。
+const M0_BEGIN = "__M0_TERM_BEGIN__";
+const M0_END = "__M0_TERM_END__";
+let m0Armed = false;
+let m0ScanBuf = "";
+let m0PayloadCarry = "";
+let m0Sampling = false;
+let m0FrameSampling = false;
+let m0Frames: number[] = [];
+let m0LastTs = 0;
+let m0Bytes = 0;
+let m0BeginSeen = 0;
+let m0EndSeen = 0;
+const m0Encoder = new TextEncoder();
+
+function m0Prepare() {
+  m0Armed = true;
+  m0ScanBuf = "";
+  m0PayloadCarry = "";
+  m0Sampling = false;
+  m0Frames = [];
+  m0Bytes = 0;
+  m0BeginSeen = 0;
+  m0EndSeen = 0;
+  m0LastTs = performance.now();
+  m0FrameSampling = true;
+  const loop = () => {
+    if (!m0FrameSampling) return;
+    const now = performance.now();
+    m0Frames.push(now - m0LastTs);
+    m0LastTs = now;
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
+}
+
+function m0ReportAfterPaint() {
+  requestAnimationFrame(() => {
+    m0FrameSampling = false;
+    const frame_gaps = m0Frames.slice();
+    const consumed_bytes = m0Bytes;
+    const begin_seen = m0BeginSeen;
+    const end_seen = m0EndSeen;
+    const end_ts_ms = Date.now();
+    const start_ts_ms = system.m0StartTs;
+    m0Frames = [];
+    m0Bytes = 0;
+    bridge
+      .m0TermReport({
+        begin_seen,
+        end_seen,
+        consumed_bytes,
+        start_ts_ms,
+        end_ts_ms,
+        frame_gaps_ms: frame_gaps,
+      })
+      .catch(() => {});
+  });
+}
+
+function m0ConsumePayload(data: string) {
+  const combined = m0PayloadCarry + data;
+  const endIndex = combined.indexOf(M0_END);
+  if (endIndex >= 0) {
+    m0Bytes += m0Encoder.encode(combined.slice(0, endIndex)).length;
+    m0EndSeen += 1;
+    m0PayloadCarry = "";
+    m0Sampling = false;
+    m0Armed = false;
+    m0ReportAfterPaint();
+    return;
+  }
+
+  const carryLength = Math.min(M0_END.length - 1, combined.length);
+  const countable = combined.slice(0, combined.length - carryLength);
+  m0Bytes += m0Encoder.encode(countable).length;
+  m0PayloadCarry = combined.slice(combined.length - carryLength);
+}
+
+function m0TrackRendered(data: string) {
+  if (!m0Armed) return;
+  if (!m0Sampling) {
+    const combined = m0ScanBuf + data;
+    const bi = combined.indexOf(M0_BEGIN);
+    if (bi >= 0) {
+      m0BeginSeen += 1;
+      m0Sampling = true;
+      m0ScanBuf = "";
+      m0ConsumePayload(combined.slice(bi + M0_BEGIN.length));
+    } else {
+      m0ScanBuf = combined.slice(-(M0_BEGIN.length - 1));
+    }
+    return;
+  }
+  m0ConsumePayload(data);
+}
+
 onMounted(() => {
   bridge.debugLog(`[TerminalPane] mounted termEl=${!!termEl.value}`);
   if (!termEl.value) {
@@ -43,10 +142,11 @@ onMounted(() => {
       if (system.termId) system.termWrite(data);
     });
 
-    // 后端 PTY 输出 → xterm
+    // 后端 PTY 输出 → xterm（M0-0.b 吞吐钩子在此拦截）
     system.bindTermWriter((data) => {
-      term?.write(data);
+      term?.write(data, () => m0TrackRendered(data));
     });
+    system.bindM0ThroughputStart(m0Prepare);
 
     // 容器尺寸变化时自动 fit
     resizeObserver = new ResizeObserver(() => {
@@ -64,9 +164,11 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  m0FrameSampling = false;
   resizeObserver?.disconnect();
   term?.dispose();
   system.bindTermWriter(null);
+  system.bindM0ThroughputStart(null);
 });
 </script>
 

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# pre-merge-commit hook — M0-1.c 本地 pre-merge 门禁（可选安装）
+#
+# 安装方式（任选其一，请勿在未获授权时修改 git 配置）:
+#   A. 手动复制到当前仓库:  cp .githooks/pre-merge-commit .git/hooks/ && chmod +x .git/hooks/pre-merge-commit
+#   B. 全局 core.hooksPath（需自行执行）:
+#        git config core.hooksPath .githooks
+#
+# 行为: merge 提交前运行 scripts/pre-merge.sh；任一检查失败则中断 merge。
+# ---------------------------------------------------------------------------
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+exec "$ROOT/scripts/pre-merge.sh"

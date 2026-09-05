@@ -114,10 +114,12 @@ impl GridProcessManager {
     }
 
     fn socket_dir() -> PathBuf {
-        let base = std::env::var("XDG_DATA_HOME").map(PathBuf::from).unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-            PathBuf::from(home).join(".local/share")
-        });
+        let base = std::env::var("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+                PathBuf::from(home).join(".local/share")
+            });
         base.join("com.jizhijiandan.mvp").join("sock")
     }
 
@@ -138,10 +140,7 @@ impl GridProcessManager {
         let listener = UnixListener::bind(&path)
             .map_err(|e| format!("绑定 UDS {} 失败: {e}", path.display()))?;
         let comms = Arc::new(ChildComms::new());
-        self.listeners
-            .lock()
-            .unwrap()
-            .insert(index, comms.clone());
+        self.listeners.lock().unwrap().insert(index, comms.clone());
 
         // accept 循环线程：子进程（含崩溃重启后的新实例）连接到同一 listener。
         let comms_accept = comms.clone();
@@ -168,7 +167,9 @@ impl GridProcessManager {
                                 Ok(Some(Wire::Response { seq, ok, err })) => {
                                     let tx = comms_reader.pending.lock().unwrap().remove(&seq);
                                     if let Some(tx) = tx {
-                                        let _ = tx.send(if ok { Ok(()) } else {
+                                        let _ = tx.send(if ok {
+                                            Ok(())
+                                        } else {
                                             Err(err.unwrap_or_else(|| "子进程执行失败".into()))
                                         });
                                     }
@@ -188,9 +189,13 @@ impl GridProcessManager {
                                                 // 子窗口 blur 后若主窗也无焦点 → 隐藏防幽灵浮层
                                                 let app2 = app.clone();
                                                 std::thread::spawn(move || {
-                                                    std::thread::sleep(std::time::Duration::from_millis(150));
-                                                    let st = app2.state::<crate::bridge::AppState>();
-                                                    st.grid_manager.hide_for_blur_if_no_child_focus();
+                                                    std::thread::sleep(
+                                                        std::time::Duration::from_millis(150),
+                                                    );
+                                                    let st =
+                                                        app2.state::<crate::bridge::AppState>();
+                                                    st.grid_manager
+                                                        .hide_for_blur_if_no_child_focus();
                                                 });
                                             }
                                             _ => {
@@ -207,7 +212,10 @@ impl GridProcessManager {
                                     break;
                                 }
                                 Err(e) => {
-                                    eprintln!("[grid-manager] grid-child-{} UDS 读错误: {e}", index);
+                                    eprintln!(
+                                        "[grid-manager] grid-child-{} UDS 读错误: {e}",
+                                        index
+                                    );
                                     break;
                                 }
                             }
@@ -301,7 +309,10 @@ impl GridProcessManager {
         match self.request_once(index, &cmd, timeout_ms) {
             Ok(()) => Ok(()),
             Err(first) => {
-                eprintln!("[grid-manager] grid-{} 请求失败({})，等重连重试", index, first);
+                eprintln!(
+                    "[grid-manager] grid-{} 请求失败({})，等重连重试",
+                    index, first
+                );
                 let comms = self.wait_connected(index, 8000)?;
                 self.request_once_with(comms, &cmd, timeout_ms)
             }
@@ -325,8 +336,17 @@ impl GridProcessManager {
         let write_res = {
             let mut guard = comms.writer.lock().unwrap();
             match guard.as_mut() {
-                Some(w) => crate::grid_ipc::write_wire(w, &Wire::Request { seq, cmd: cmd.clone() }),
-                None => Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "未连接")),
+                Some(w) => crate::grid_ipc::write_wire(
+                    w,
+                    &Wire::Request {
+                        seq,
+                        cmd: cmd.clone(),
+                    },
+                ),
+                None => Err(std::io::Error::new(
+                    std::io::ErrorKind::NotConnected,
+                    "未连接",
+                )),
             }
         };
         if let Err(e) = write_res {
@@ -410,7 +430,13 @@ impl GridProcessManager {
             .collect();
         for (index, css) in items {
             if let Some(rect) = self.abs_rect(css) {
-                self.send(index, GridCmd::UpdateRect { id: format!("grid-{index}"), rect });
+                self.send(
+                    index,
+                    GridCmd::UpdateRect {
+                        id: format!("grid-{index}"),
+                        rect,
+                    },
+                );
             }
         }
     }
@@ -456,7 +482,12 @@ impl GridProcessManager {
                 }
             };
             if need {
-                self.send(index, GridCmd::HideWindow { id: format!("grid-{index}") });
+                self.send(
+                    index,
+                    GridCmd::HideWindow {
+                        id: format!("grid-{index}"),
+                    },
+                );
             }
         }
     }
@@ -476,7 +507,13 @@ impl GridProcessManager {
         };
         for (index, css) in items {
             if let Some(rect) = self.abs_rect(css) {
-                self.send(index, GridCmd::UpdateRect { id: format!("grid-{index}"), rect });
+                self.send(
+                    index,
+                    GridCmd::UpdateRect {
+                        id: format!("grid-{index}"),
+                        rect,
+                    },
+                );
             }
         }
     }
@@ -496,62 +533,69 @@ impl GridProcessManager {
             // 必须轮询 is_minimized，否则宫格残留浮在其它应用上）
             let mut was_minimized = false;
             loop {
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            let Some(app) = app.as_ref() else { continue };
-            let state = app.state::<crate::bridge::AppState>();
-            let manager = &state.grid_manager;
-            // 主窗最小化 → 隐藏全部宫格；恢复 → 还原 blur 隐藏的格子
-            if let Some(win) = app.get_window("main") {
-                let minimized = win.is_minimized().unwrap_or(false);
-                if minimized != was_minimized {
-                    was_minimized = minimized;
-                    if minimized {
-                        eprintln!("[grid-manager] 主窗最小化，隐藏全部宫格");
-                        manager.hide_for_blur();
-                    } else {
-                        eprintln!("[grid-manager] 主窗恢复，还原宫格");
-                        manager.show_for_focus();
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                let Some(app) = app.as_ref() else { continue };
+                let state = app.state::<crate::bridge::AppState>();
+                let manager = &state.grid_manager;
+                // 主窗最小化 → 隐藏全部宫格；恢复 → 还原 blur 隐藏的格子
+                if let Some(win) = app.get_window("main") {
+                    let minimized = win.is_minimized().unwrap_or(false);
+                    if minimized != was_minimized {
+                        was_minimized = minimized;
+                        if minimized {
+                            eprintln!("[grid-manager] 主窗最小化，隐藏全部宫格");
+                            manager.hide_for_blur();
+                        } else {
+                            eprintln!("[grid-manager] 主窗恢复，还原宫格");
+                            manager.show_for_focus();
+                        }
                     }
                 }
-            }
-            let mut exited: Vec<(u32, i32, SavedChildState)> = Vec::new();
-            {
-                let mut children = manager.children.lock().unwrap();
-                let indices: Vec<u32> = children.keys().cloned().collect();
-                for index in indices {
-                    if let Some(h) = children.get_mut(&index) {
-                        match h.child.try_wait() {
-                            Ok(Some(status)) => {
-                                let code = exit_code_of(&status);
-                                let h = children.remove(&index).unwrap();
-                                // 保留崩溃前状态供重放（新句柄默认 last_url=None
-                                // 会导致 replay 跳过，实测踩过）
-                                exited.push((index, code, SavedChildState {
-                                    last_url: h.last_url,
-                                    last_rect: h.last_rect,
-                                    hidden: h.hidden,
-                                    blur_hidden: h.blur_hidden,
-                                }));
-                            }
-                            Ok(None) => {}
-                            Err(e) => {
-                                eprintln!("[grid-manager] grid-child-{} try_wait error: {e}", index);
+                let mut exited: Vec<(u32, i32, SavedChildState)> = Vec::new();
+                {
+                    let mut children = manager.children.lock().unwrap();
+                    let indices: Vec<u32> = children.keys().cloned().collect();
+                    for index in indices {
+                        if let Some(h) = children.get_mut(&index) {
+                            match h.child.try_wait() {
+                                Ok(Some(status)) => {
+                                    let code = exit_code_of(&status);
+                                    let h = children.remove(&index).unwrap();
+                                    // 保留崩溃前状态供重放（新句柄默认 last_url=None
+                                    // 会导致 replay 跳过，实测踩过）
+                                    exited.push((
+                                        index,
+                                        code,
+                                        SavedChildState {
+                                            last_url: h.last_url,
+                                            last_rect: h.last_rect,
+                                            hidden: h.hidden,
+                                            blur_hidden: h.blur_hidden,
+                                        },
+                                    ));
+                                }
+                                Ok(None) => {}
+                                Err(e) => {
+                                    eprintln!(
+                                        "[grid-manager] grid-child-{} try_wait error: {e}",
+                                        index
+                                    );
+                                }
                             }
                         }
                     }
                 }
-            }
-            for (index, code, saved) in exited {
-                eprintln!(
-                    "[grid-manager] grid-child-{} 异常退出 code={}，自动重启",
-                    index, code
-                );
-                if let Err(e) = manager.spawn_with_state(index, Some(saved)) {
-                    eprintln!("[grid-manager] grid-child-{} 重启失败: {e}", index);
-                    continue;
+                for (index, code, saved) in exited {
+                    eprintln!(
+                        "[grid-manager] grid-child-{} 异常退出 code={}，自动重启",
+                        index, code
+                    );
+                    if let Err(e) = manager.spawn_with_state(index, Some(saved)) {
+                        eprintln!("[grid-manager] grid-child-{} 重启失败: {e}", index);
+                        continue;
+                    }
+                    manager.replay(index);
                 }
-                manager.replay(index);
-            }
             }
         });
     }
@@ -561,11 +605,7 @@ impl GridProcessManager {
         let (url, rect, visible) = {
             let children = self.children.lock().unwrap();
             match children.get(&index) {
-                Some(h) => (
-                    h.last_url.clone(),
-                    h.last_rect,
-                    !h.hidden && !h.blur_hidden,
-                ),
+                Some(h) => (h.last_url.clone(), h.last_rect, !h.hidden && !h.blur_hidden),
                 None => return,
             }
         };
@@ -594,23 +634,38 @@ impl GridProcessManager {
             let label = format!("grid-{index}");
             if let Err(e) = manager.request(
                 index,
-                GridCmd::CreateTab { id: label.clone(), url: url.clone() },
+                GridCmd::CreateTab {
+                    id: label.clone(),
+                    url: url.clone(),
+                },
                 15000,
             ) {
-                eprintln!("[grid-manager] grid-child-{} 重放 CreateTab 失败: {e}", index);
+                eprintln!(
+                    "[grid-manager] grid-child-{} 重放 CreateTab 失败: {e}",
+                    index
+                );
                 return;
             }
             if visible {
                 if let Some(css) = rect {
                     if let Some(abs) = manager.abs_rect(css) {
-                        manager.send(index, GridCmd::UpdateRect { id: label.clone(), rect: abs });
+                        manager.send(
+                            index,
+                            GridCmd::UpdateRect {
+                                id: label.clone(),
+                                rect: abs,
+                            },
+                        );
                     }
                 }
             }
             if zoom > 0.1 && (zoom - 1.0).abs() > 0.01 {
                 manager.send(index, GridCmd::SetZoom { id: label, zoom });
             }
-            eprintln!("[grid-manager] grid-child-{} 状态重放完成 url={}", index, url);
+            eprintln!(
+                "[grid-manager] grid-child-{} 状态重放完成 url={}",
+                index, url
+            );
         });
     }
 
@@ -664,7 +719,11 @@ impl GridProcessManager {
 
     /// 指定宫格子进程的 OS pid（自检/调试用）。
     pub fn pid_of(&self, index: u32) -> Option<u32> {
-        self.children.lock().unwrap().get(&index).map(|h| h.child.id())
+        self.children
+            .lock()
+            .unwrap()
+            .get(&index)
+            .map(|h| h.child.id())
     }
 
     /// 所有存活宫格子进程的 (index, pid) 列表（资源统计用）。

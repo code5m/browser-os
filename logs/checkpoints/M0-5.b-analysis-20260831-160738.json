@@ -1,0 +1,533 @@
+{
+  "run_id": "20260831T160738+0800_e998bbd_release_x11",
+  "run_dir": "/home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3/logs/m0-baseline/20260831T160738+0800_e998bbd_release_x11",
+  "commit": "e998bbd",
+  "run_mode": "smoke",
+  "source_status": "EXPLORATORY",
+  "kinds": {
+    "tab": {
+      "kind": "tab",
+      "formal_samples": 40,
+      "warmup_samples": 5,
+      "rss_kib": {
+        "count": 40,
+        "first": 407216.0,
+        "last": 421428.0,
+        "min": 407216.0,
+        "max": 421752.0,
+        "median": 417286.0,
+        "last_minus_first": 14212.0,
+        "pct": 3.4900396840988566,
+        "ols_slope": 185.48367729831145
+      },
+      "rss_early_window_slope_kib_per_cycle": 119.7233082706767,
+      "rss_late_window_slope_kib_per_cycle": 407.4165413533835,
+      "fd_delta": 1,
+      "fd_count": {
+        "count": 40,
+        "first": 103.0,
+        "last": 104.0,
+        "min": 103.0,
+        "max": 104.0,
+        "median": 104.0,
+        "last_minus_first": 1.0,
+        "pct": 0.9708737864077669,
+        "ols_slope": 0.016416510318949345
+      },
+      "orphan_count": {
+        "count": 40,
+        "first": 0.0,
+        "last": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "median": 0.0,
+        "last_minus_first": 0.0,
+        "pct": 0.0,
+        "ols_slope": 0.0
+      },
+      "orphan_max": 0,
+      "candidate_count": {
+        "count": 40,
+        "first": 0.0,
+        "last": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "median": 0.0,
+        "last_minus_first": 0.0,
+        "pct": 0.0,
+        "ols_slope": 0.0
+      },
+      "plateau_threshold_kib_per_cycle": 50.0,
+      "plateau": false,
+      "verdict": "LEAK_SUSPECT_FD_GROWTH",
+      "process_members": {
+        "closed_cycles": 40,
+        "closed_member_count": {
+          "count": 40,
+          "first": 3.0,
+          "last": 3.0,
+          "min": 3.0,
+          "max": 3.0,
+          "median": 3.0,
+          "last_minus_first": 0.0,
+          "pct": 0.0,
+          "ols_slope": 0.0
+        },
+        "opened_minus_baseline_member_count": {
+          "count": 40,
+          "first": 0.0,
+          "last": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "median": 0.0,
+          "last_minus_first": 0.0,
+          "pct": 0.0,
+          "ols_slope": 0.0
+        },
+        "roles": {
+          "child:WebKitNetworkPr": {
+            "presence_cycles": 40,
+            "rss_kib": {
+              "count": 40,
+              "first": 48496.0,
+              "last": 48512.0,
+              "min": 48496.0,
+              "max": 48512.0,
+              "median": 48502.0,
+              "last_minus_first": 16.0,
+              "pct": 0.03299241174529858,
+              "ols_slope": 0.3384615384615385
+            },
+            "rss_late_window_slope_kib_per_cycle": 0.7308270676691729,
+            "fd_count": {
+              "count": 40,
+              "first": 29.0,
+              "last": 30.0,
+              "min": 29.0,
+              "max": 30.0,
+              "median": 30.0,
+              "last_minus_first": 1.0,
+              "pct": 3.4482758620689653,
+              "ols_slope": 0.016416510318949345
+            },
+            "fd_targets_available": true,
+            "fd_target_deltas": [
+              {
+                "target": "anon_inode:timerfd",
+                "first": 0,
+                "last": 1,
+                "delta": 1
+              }
+            ],
+            "fd_target_deltas_exact": [
+              {
+                "target": "anon_inode:[timerfd]",
+                "first": 0,
+                "last": 1,
+                "delta": 1
+              }
+            ]
+          },
+          "child:WebKitWebProces": {
+            "presence_cycles": 40,
+            "rss_kib": {
+              "count": 40,
+              "first": 180296.0,
+              "last": 181328.0,
+              "min": 180296.0,
+              "max": 181808.0,
+              "median": 181276.0,
+              "last_minus_first": 1032.0,
+              "pct": 0.5723920663797311,
+              "ols_slope": 22.125703564727957
+            },
+            "rss_late_window_slope_kib_per_cycle": 12.553383458646616,
+            "fd_count": {
+              "count": 40,
+              "first": 29.0,
+              "last": 29.0,
+              "min": 29.0,
+              "max": 29.0,
+              "median": 29.0,
+              "last_minus_first": 0.0,
+              "pct": 0.0,
+              "ols_slope": 0.0
+            },
+            "fd_targets_available": true,
+            "fd_target_deltas": [],
+            "fd_target_deltas_exact": []
+          },
+          "root:mvp-browser-os": {
+            "presence_cycles": 40,
+            "rss_kib": {
+              "count": 40,
+              "first": 178424.0,
+              "last": 191588.0,
+              "min": 178424.0,
+              "max": 191588.0,
+              "median": 187410.0,
+              "last_minus_first": 13164.0,
+              "pct": 7.377931220015245,
+              "ols_slope": 163.01951219512196
+            },
+            "rss_late_window_slope_kib_per_cycle": 394.1323308270677,
+            "fd_count": {
+              "count": 40,
+              "first": 45.0,
+              "last": 45.0,
+              "min": 45.0,
+              "max": 45.0,
+              "median": 45.0,
+              "last_minus_first": 0.0,
+              "pct": 0.0,
+              "ols_slope": 0.0
+            },
+            "fd_targets_available": true,
+            "fd_target_deltas": [],
+            "fd_target_deltas_exact": []
+          }
+        }
+      }
+    },
+    "grid": {
+      "kind": "grid",
+      "formal_samples": 40,
+      "warmup_samples": 5,
+      "rss_kib": {
+        "count": 40,
+        "first": 415536.0,
+        "last": 408480.0,
+        "min": 408280.0,
+        "max": 417888.0,
+        "median": 416460.0,
+        "last_minus_first": -7056.0,
+        "pct": -1.6980478225713296,
+        "ols_slope": -18.03939962476548
+      },
+      "rss_early_window_slope_kib_per_cycle": 87.21503759398496,
+      "rss_late_window_slope_kib_per_cycle": -23.01954887218045,
+      "fd_delta": 0,
+      "fd_count": {
+        "count": 40,
+        "first": 108.0,
+        "last": 108.0,
+        "min": 108.0,
+        "max": 108.0,
+        "median": 108.0,
+        "last_minus_first": 0.0,
+        "pct": 0.0,
+        "ols_slope": 0.0
+      },
+      "orphan_count": {
+        "count": 40,
+        "first": 0.0,
+        "last": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "median": 0.0,
+        "last_minus_first": 0.0,
+        "pct": 0.0,
+        "ols_slope": 0.0
+      },
+      "orphan_max": 0,
+      "candidate_count": {
+        "count": 40,
+        "first": 12.0,
+        "last": 12.0,
+        "min": 12.0,
+        "max": 12.0,
+        "median": 12.0,
+        "last_minus_first": 0.0,
+        "pct": 0.0,
+        "ols_slope": 0.0
+      },
+      "plateau_threshold_kib_per_cycle": 50.0,
+      "plateau": true,
+      "verdict": "PLATEAU_OR_NO_GROWTH",
+      "process_members": {
+        "closed_cycles": 40,
+        "closed_member_count": {
+          "count": 40,
+          "first": 3.0,
+          "last": 3.0,
+          "min": 3.0,
+          "max": 3.0,
+          "median": 3.0,
+          "last_minus_first": 0.0,
+          "pct": 0.0,
+          "ols_slope": 0.0
+        },
+        "opened_minus_baseline_member_count": {
+          "count": 40,
+          "first": 12.0,
+          "last": 12.0,
+          "min": 12.0,
+          "max": 12.0,
+          "median": 12.0,
+          "last_minus_first": 0.0,
+          "pct": 0.0,
+          "ols_slope": 0.0
+        },
+        "roles": {
+          "child:WebKitNetworkPr": {
+            "presence_cycles": 40,
+            "rss_kib": {
+              "count": 40,
+              "first": 48496.0,
+              "last": 48496.0,
+              "min": 48496.0,
+              "max": 48496.0,
+              "median": 48496.0,
+              "last_minus_first": 0.0,
+              "pct": 0.0,
+              "ols_slope": 0.0
+            },
+            "rss_late_window_slope_kib_per_cycle": 0.0,
+            "fd_count": {
+              "count": 40,
+              "first": 29.0,
+              "last": 29.0,
+              "min": 29.0,
+              "max": 29.0,
+              "median": 29.0,
+              "last_minus_first": 0.0,
+              "pct": 0.0,
+              "ols_slope": 0.0
+            },
+            "fd_targets_available": true,
+            "fd_target_deltas": [],
+            "fd_target_deltas_exact": []
+          },
+          "child:WebKitWebProces": {
+            "presence_cycles": 40,
+            "rss_kib": {
+              "count": 40,
+              "first": 181020.0,
+              "last": 181572.0,
+              "min": 181020.0,
+              "max": 183212.0,
+              "median": 181788.0,
+              "last_minus_first": 552.0,
+              "pct": 0.3049386808087504,
+              "ols_slope": -12.063789868667918
+            },
+            "rss_late_window_slope_kib_per_cycle": 4.138345864661654,
+            "fd_count": {
+              "count": 40,
+              "first": 29.0,
+              "last": 29.0,
+              "min": 29.0,
+              "max": 29.0,
+              "median": 29.0,
+              "last_minus_first": 0.0,
+              "pct": 0.0,
+              "ols_slope": 0.0
+            },
+            "fd_targets_available": true,
+            "fd_target_deltas": [],
+            "fd_target_deltas_exact": []
+          },
+          "root:mvp-browser-os": {
+            "presence_cycles": 40,
+            "rss_kib": {
+              "count": 40,
+              "first": 186020.0,
+              "last": 178412.0,
+              "min": 178200.0,
+              "max": 186496.0,
+              "median": 186180.0,
+              "last_minus_first": -7608.0,
+              "pct": -4.089882808300183,
+              "ols_slope": -5.975609756097564
+            },
+            "rss_late_window_slope_kib_per_cycle": -27.157894736842106,
+            "fd_count": {
+              "count": 40,
+              "first": 50.0,
+              "last": 50.0,
+              "min": 50.0,
+              "max": 50.0,
+              "median": 50.0,
+              "last_minus_first": 0.0,
+              "pct": 0.0,
+              "ols_slope": 0.0
+            },
+            "fd_targets_available": true,
+            "fd_target_deltas": [],
+            "fd_target_deltas_exact": []
+          }
+        }
+      }
+    },
+    "terminal": {
+      "kind": "terminal",
+      "formal_samples": 40,
+      "warmup_samples": 5,
+      "rss_kib": {
+        "count": 40,
+        "first": 408736.0,
+        "last": 417856.0,
+        "min": 408736.0,
+        "max": 418272.0,
+        "median": 417536.0,
+        "last_minus_first": 9120.0,
+        "pct": 2.2312690832224225,
+        "ols_slope": 21.30356472795497
+      },
+      "rss_early_window_slope_kib_per_cycle": 125.10977443609022,
+      "rss_late_window_slope_kib_per_cycle": -8.496240601503759,
+      "fd_delta": 0,
+      "fd_count": {
+        "count": 40,
+        "first": 104.0,
+        "last": 104.0,
+        "min": 104.0,
+        "max": 106.0,
+        "median": 104.0,
+        "last_minus_first": 0.0,
+        "pct": 0.0,
+        "ols_slope": 0.005816135084427768
+      },
+      "orphan_count": {
+        "count": 40,
+        "first": 0.0,
+        "last": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "median": 0.0,
+        "last_minus_first": 0.0,
+        "pct": 0.0,
+        "ols_slope": 0.0
+      },
+      "orphan_max": 0,
+      "candidate_count": {
+        "count": 40,
+        "first": 1.0,
+        "last": 1.0,
+        "min": 1.0,
+        "max": 1.0,
+        "median": 1.0,
+        "last_minus_first": 0.0,
+        "pct": 0.0,
+        "ols_slope": 0.0
+      },
+      "plateau_threshold_kib_per_cycle": 50.0,
+      "plateau": true,
+      "verdict": "PLATEAU_OR_NO_GROWTH",
+      "process_members": {
+        "closed_cycles": 40,
+        "closed_member_count": {
+          "count": 40,
+          "first": 3.0,
+          "last": 3.0,
+          "min": 3.0,
+          "max": 3.0,
+          "median": 3.0,
+          "last_minus_first": 0.0,
+          "pct": 0.0,
+          "ols_slope": 0.0
+        },
+        "opened_minus_baseline_member_count": {
+          "count": 40,
+          "first": 1.0,
+          "last": 1.0,
+          "min": 1.0,
+          "max": 1.0,
+          "median": 1.0,
+          "last_minus_first": 0.0,
+          "pct": 0.0,
+          "ols_slope": 0.0
+        },
+        "roles": {
+          "child:WebKitNetworkPr": {
+            "presence_cycles": 40,
+            "rss_kib": {
+              "count": 40,
+              "first": 48356.0,
+              "last": 48356.0,
+              "min": 48356.0,
+              "max": 48356.0,
+              "median": 48356.0,
+              "last_minus_first": 0.0,
+              "pct": 0.0,
+              "ols_slope": 0.0
+            },
+            "rss_late_window_slope_kib_per_cycle": 0.0,
+            "fd_count": {
+              "count": 40,
+              "first": 29.0,
+              "last": 29.0,
+              "min": 29.0,
+              "max": 29.0,
+              "median": 29.0,
+              "last_minus_first": 0.0,
+              "pct": 0.0,
+              "ols_slope": 0.0
+            },
+            "fd_targets_available": true,
+            "fd_target_deltas": [],
+            "fd_target_deltas_exact": []
+          },
+          "child:WebKitWebProces": {
+            "presence_cycles": 40,
+            "rss_kib": {
+              "count": 40,
+              "first": 181832.0,
+              "last": 183284.0,
+              "min": 181832.0,
+              "max": 183708.0,
+              "median": 183024.0,
+              "last_minus_first": 1452.0,
+              "pct": 0.7985393110123631,
+              "ols_slope": 17.18686679174484
+            },
+            "rss_late_window_slope_kib_per_cycle": 8.4,
+            "fd_count": {
+              "count": 40,
+              "first": 29.0,
+              "last": 29.0,
+              "min": 29.0,
+              "max": 29.0,
+              "median": 29.0,
+              "last_minus_first": 0.0,
+              "pct": 0.0,
+              "ols_slope": 0.0
+            },
+            "fd_targets_available": true,
+            "fd_target_deltas": [],
+            "fd_target_deltas_exact": []
+          },
+          "root:mvp-browser-os": {
+            "presence_cycles": 40,
+            "rss_kib": {
+              "count": 40,
+              "first": 178548.0,
+              "last": 186216.0,
+              "min": 178252.0,
+              "max": 186500.0,
+              "median": 186204.0,
+              "last_minus_first": 7668.0,
+              "pct": 4.2946434572215875,
+              "ols_slope": 4.116697936210131
+            },
+            "rss_late_window_slope_kib_per_cycle": -16.89624060150376,
+            "fd_count": {
+              "count": 40,
+              "first": 46.0,
+              "last": 46.0,
+              "min": 46.0,
+              "max": 48.0,
+              "median": 46.0,
+              "last_minus_first": 0.0,
+              "pct": 0.0,
+              "ols_slope": 0.005816135084427768
+            },
+            "fd_targets_available": true,
+            "fd_target_deltas": [],
+            "fd_target_deltas_exact": []
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "status": "PASS",
+  "driver_status": "PASS",
+  "checks": [
+    {
+      "name": "driver-status",
+      "status": "PASS",
+      "detail": "driver status=PASS"
+    },
+    {
+      "name": "scenario-1-event",
+      "status": "PASS",
+      "detail": "single grid AI mock event with session cookie"
+    },
+    {
+      "name": "scenario-2-grid-0",
+      "status": "PASS",
+      "detail": "concurrent AI mock event for grid-0"
+    },
+    {
+      "name": "scenario-2-grid-1",
+      "status": "PASS",
+      "detail": "concurrent AI mock event for grid-1"
+    },
+    {
+      "name": "scenario-2-grid-2",
+      "status": "PASS",
+      "detail": "concurrent AI mock event for grid-2"
+    },
+    {
+      "name": "scenario-2-grid-3",
+      "status": "PASS",
+      "detail": "concurrent AI mock event for grid-3"
+    },
+    {
+      "name": "scenario-3-event",
+      "status": "PASS",
+      "detail": "main-window move/resize event reached grid-0"
+    },
+    {
+      "name": "scenario-4-event",
+      "status": "PASS",
+      "detail": "blur/focus recovery event reached grid-0"
+    },
+    {
+      "name": "scenario-5-event",
+      "status": "PASS",
+      "detail": "view-switch event reached grid-0"
+    },
+    {
+      "name": "scenario-6-event",
+      "status": "PASS",
+      "detail": "normal tab workflow left grid-0 usable"
+    },
+    {
+      "name": "scenario-7-event",
+      "status": "PASS",
+      "detail": "grid child crash recovery event reached restarted grid-0"
+    },
+    {
+      "name": "scenario-8-menu",
+      "status": "PASS",
+      "detail": "injected context menu opened inside grid webview"
+    },
+    {
+      "name": "scenario-9-before",
+      "status": "PASS",
+      "detail": "login-state cookie present before grid restart"
+    },
+    {
+      "name": "scenario-9-after",
+      "status": "PASS",
+      "detail": "login-state cookie present after grid restart"
+    }
+  ],
+  "evidence_dir": "/home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3/logs/m0-6c-gui-evidence/20260901-0726"
+}

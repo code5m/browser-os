@@ -1,0 +1,42 @@
+{
+  "run_id": "20260829T181925+0800_a5ca274_release_wayland",
+  "timestamp": "20260829T181925+0800",
+  "checkpoint": "M0-1.b",
+  "contract_version": "V1.0",
+  "script_version": "M0-1.b-2",
+  "scenario_version": "M0-1.b-v1",
+  "repo_root": "/home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3",
+  "worktree_clean_at_start": true,
+  "git": {
+    "commit_sha": "a5ca27472ad21eebc953919505e4dd40730bcd85",
+    "short_sha": "a5ca274",
+    "branch": "feature-M0-baseline"
+  },
+  "status": "PASS",
+  "driver_selfcheck": {
+    "status": "PASS",
+    "detail": "proc-snapshot(root_pid=714602,members=1,rss/fd readable=1); stats(10,20,30)->{\"median\": 20.0, \"min\": 10.0, \"max\": 30.0, \"volatility\": \"100.0%\", \"p95\": null, \"ols_slope\": 10.0, \"last_minus_first\": 20.0, \"pct\": 200.0}"
+  },
+  "measurements": {
+    "ok": true
+  },
+  "blocked": [],
+  "deferred": [
+    {
+      "metric": "script_first_response_ms",
+      "status": "DEFERRED(M2-4)"
+    },
+    {
+      "metric": "database_first_row_ms",
+      "status": "DEFERRED(M4-3)"
+    }
+  ],
+  "evidence": {
+    "run_dir": "logs/m0-baseline/20260829T181925+0800_a5ca274_release_wayland",
+    "environment": "environment.json",
+    "scenario": "scenario.json",
+    "summary_json": "summary.json",
+    "summary_md": "summary.md",
+    "sha256sums": "SHA256SUMS"
+  }
+}

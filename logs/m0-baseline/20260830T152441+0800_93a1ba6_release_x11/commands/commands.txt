@@ -1,0 +1,11 @@
+M0-1.b commands — run_id=20260830T152441+0800_93a1ba6_release_x11
+generated=2026-08-30 15:35:37 +0800
+
+# 启动（契约 §6.1；ready 钩子由 M0-0.b 补齐）
+WEBKIT_DISABLE_DMABUF_RENDERER=1 GDK_BACKEND=x11 /home/ainfinit/.codex/worktrees/7350/mvp-browser-os-v3/src-tauri/target/release/mvp-browser-os
+# idle 采样（契约 §6.1；每 5 秒 1 点，持续 60 秒）
+snapshot_process_tree <root_pid> -> VmRSS / FD / starttime
+# 资源循环（契约 §6.2；tab/grid/terminal，5 预热 + 20 正式）
+# 终端吞吐（契约 §6.3；10 MiB，__M0_TERM_BEGIN__/__M0_TERM_END__）
+# 指纹
+environment.json / scenario.json（本 run）

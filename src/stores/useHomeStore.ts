@@ -3,6 +3,7 @@ import { reactive, computed } from "vue";
 import { bridge } from "../bridge";
 import { useBrowserStore } from "./useBrowserStore";
 import { useLayoutStore } from "./useLayoutStore";
+import { useWorkspaceStore } from "./useWorkspaceStore";
 
 // 主页快捷方式：网页（url）、系统应用（app）或本地目录（dir）
 export interface HomeShortcut {
@@ -15,6 +16,7 @@ export interface HomeShortcut {
 }
 
 const STORAGE_KEY = "browser-os-home-shortcuts";
+const DIRS_SEEDED_KEY = "browser-os-home-dirs-seeded-v2";
 
 // 默认快捷方式（首次使用 / 未配置时）
 function defaultShortcuts(): HomeShortcut[] {
@@ -31,6 +33,7 @@ function defaultShortcuts(): HomeShortcut[] {
 export const useHomeStore = defineStore("home", () => {
   const browser = useBrowserStore();
   const layout = useLayoutStore();
+  const workspace = useWorkspaceStore();
 
   const shortcuts = reactive<HomeShortcut[]>(load());
   const editing = reactive<{
@@ -42,22 +45,20 @@ export const useHomeStore = defineStore("home", () => {
     icon: string;
   }>({ open: false, id: "", type: "url", name: "", target: "", icon: "🔗" });
 
-  // 常用目录播种（仅首次）：主目录/桌面/文档/下载自动进主页
-  const DIRS_SEEDED_KEY = "browser-os-home-dirs-seeded";
+  // 常用目录播种（仅首次）：把后端承诺的起始目录补进主页，旧版只播了前 4 个系统目录。
   async function seedDirShortcuts() {
     try {
       if (localStorage.getItem(DIRS_SEEDED_KEY)) return;
       const dirs = await bridge.getStartDirs();
-      // 只取前 4 个常用系统目录（主目录/桌面/文档/下载），工作区/笔记不自动加
-      for (const d of dirs.slice(0, 4)) {
+      for (const d of dirs) {
         if (shortcuts.some((s) => s.target === d.path)) continue;
         const m = d.name.match(/^(\S+)\s(.+)$/); // "📁 桌面" → icon=📁 name=桌面
-        shortcuts.push({
-          id: "dir-" + Math.random().toString(36).slice(2),
+        addShortcut({
           type: "dir",
           name: m ? m[2] : d.name,
           target: d.path,
           icon: m ? m[1] : "📁",
+          silent: true,
         });
       }
       save();
@@ -83,6 +84,74 @@ export const useHomeStore = defineStore("home", () => {
 
   const has = computed(() => shortcuts.length > 0);
 
+  function makeId(prefix = "home") {
+    return `${prefix}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  function fileNameFromPath(path: string) {
+    return path.replace(/\/+$/, "").split("/").filter(Boolean).pop() || path || "/";
+  }
+
+  function looksLikeDir(path: string) {
+    return path.trim().startsWith("/") || path.trim().startsWith("~") || /^[A-Za-z]:[\\/]/.test(path.trim());
+  }
+
+  function addShortcut(input: {
+    type: HomeShortcut["type"];
+    name: string;
+    target: string;
+    icon?: string;
+    silent?: boolean;
+  }) {
+    const name = input.name.trim();
+    const target = input.target.trim();
+    if (!name || !target) return false;
+    const existing = shortcuts.find((s) => s.type === input.type && s.target === target);
+    if (existing) {
+      existing.name = name;
+      existing.icon = input.icon || existing.icon || "🔗";
+    } else {
+      shortcuts.push({
+        id: makeId(input.type),
+        type: input.type,
+        name,
+        target,
+        icon: input.icon || "🔗",
+      });
+    }
+    save();
+    if (!input.silent) layout.showToast(`已收藏到主页: ${name}`);
+    return true;
+  }
+
+  function favoriteCurrentPage() {
+    const target = (browser.activeTab?.url || browser.url || "").trim();
+    if (!target || looksLikeDir(target) || target === "about:blank") {
+      layout.showToast("当前没有可收藏网页");
+      return;
+    }
+    addShortcut({
+      type: "url",
+      name: browser.activeTab?.title || target,
+      target,
+      icon: "⭐",
+    });
+  }
+
+  function favoriteCurrentDir() {
+    const target = (layout.mainView === "files" ? workspace.filePath : browser.url).trim();
+    if (!target || !looksLikeDir(target)) {
+      layout.showToast("当前没有可收藏目录");
+      return;
+    }
+    addShortcut({
+      type: "dir",
+      name: fileNameFromPath(target),
+      target,
+      icon: "📁",
+    });
+  }
+
   // 打开快捷方式：url → 内嵌浏览器；app → 启动系统应用；dir → 文件视图（IDE 树）
   async function open(s: HomeShortcut) {
     if (s.type === "url") {
@@ -90,7 +159,8 @@ export const useHomeStore = defineStore("home", () => {
       layout.setView("browser");
       await browser.openBrowser();
     } else if (s.type === "dir") {
-      const { useWorkspaceStore } = await import("./useWorkspaceStore");
+      // M0-4.b：改为静态引入。useWorkspaceStore 已被 App.vue 等十余处静态引入，
+      // 这里的动态 import 既不会分包（Vite 会报 mix 告警），也不构成循环依赖。
       const ws = useWorkspaceStore();
       browser.url = s.target; // 地址栏同步显示目录路径
       layout.openDirTab(s.target);
@@ -144,7 +214,7 @@ export const useHomeStore = defineStore("home", () => {
       }
     } else {
       shortcuts.push({
-        id: Math.random().toString(36).slice(2),
+        id: makeId(editing.type),
         type: editing.type,
         name,
         target,
@@ -176,6 +246,8 @@ export const useHomeStore = defineStore("home", () => {
     has,
     open,
     seedDirShortcuts,
+    favoriteCurrentPage,
+    favoriteCurrentDir,
     startAdd,
     startEdit,
     cancelEdit,
