@@ -761,6 +761,42 @@ mod tests {
         assert!(handles.pump.is_finished(), "pump 线程应结束");
     }
 
+    /// T4：真实 resize —— `master.resize` 之后 PTY 尺寸确实变了（F5 的运行时取证，
+    /// 静态夹具只能证明代码里调了 resize，证明不了它生效）。
+    #[test]
+    fn resize_changes_real_pty_size() {
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("openpty");
+        let cmd = CommandBuilder::new("/bin/sh");
+        let child = pair.slave.spawn_command(cmd).expect("spawn sh");
+        drop(pair.slave);
+        let master = pair.master;
+        let writer = master.take_writer().expect("writer");
+        let pgid = pgid_of(&child);
+        let mut session = TerminalSession {
+            writer,
+            master,
+            child,
+            pgid,
+            stop: Arc::new(AtomicBool::new(false)),
+            handles: None,
+        };
+
+        resize(&mut session, 120, 40).expect("resize 应成功（不再是空实现）");
+        let size = session.master.get_size().expect("get_size");
+        assert_eq!(size.cols, 120, "列数应真实生效");
+        assert_eq!(size.rows, 40, "行数应真实生效");
+
+        // 收口：杀进程组，避免测试残留孤儿 shell。
+        terminate_session(&mut session).expect("terminate_session");
+    }
+
     /// T3：进程组回收 —— `sleep 300` 随 shell 一起被杀，不留孤儿（F6）。
     #[test]
     fn terminate_group_kills_whole_process_group() {

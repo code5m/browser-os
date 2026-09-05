@@ -4447,10 +4447,15 @@ pub fn term_resize(app: AppHandle, id: String, cols: u16, rows: u16) -> Result<(
 pub fn term_kill(app: AppHandle, id: String) -> Result<(), String> {
     let state = app.state::<AppState>();
     let mut terms = state.terminals.lock().unwrap();
-    if let Some(mut session) = terms.remove(&id) {
-        terminal::terminate_session(&mut session)?;
-    }
-    Ok(())
+    let removed = terms.remove(&id);
+    // 复核整改（M3 整体裁定 P2）：`terminate_session` 最长约 4 s（进程组宽限 2 s +
+    // 线程回收 2 s）。必须先释放这张表的锁，否则期间 term_write / term_resize /
+    // term_spawn 全部阻塞在互斥量上，前端点「关闭/重启」时会连带卡住其它终端调用。
+    drop(terms);
+    let Some(mut session) = removed else {
+        return Ok(());
+    };
+    terminal::terminate_session(&mut session)
 }
 
 // ====== M0-0.b 测量钩子（契约 logs/m0-baseline-contract-v1.md §6.1/§6.3） ======

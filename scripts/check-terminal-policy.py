@@ -85,6 +85,12 @@ def detect_violations(files: dict) -> list[str]:
         v.append("TERM_LIFECYCLE_KILL:生命周期仍用 child.kill()（只杀直接子进程，留孤儿）")
     if "terminal::terminate_session" not in bridge:
         v.append("TERM_LIFECYCLE_MISSING:bridge.rs 未统一走 terminal::terminate_session")
+    # 复核整改 P2：终止最长约 4 s（进程组宽限 + 线程回收），必须先放表锁再终止，
+    # 否则 term_write / term_resize / term_spawn 会一起卡在互斥量上。
+    if "terminal::terminate_session(&mut session)" in bridge and "drop(terms)" not in bridge:
+        v.append(
+            "TERM_KILL_LOCK_HELD:term_kill 持 terminals 锁执行 terminate_session（最长约 4 s 阻塞其它终端 IPC）"
+        )
 
     # ---- F7：关闭协议（stop 标志 + 线程回收）----
     if "Arc<AtomicBool>" not in term or "stop" not in term:
@@ -341,6 +347,14 @@ def run_self_test(root: Path) -> int:
         mutate(main_rs=good["main_rs"].replace("bridge::term_spawn_channel,\n", "")),
         "main_rs",
         "TERM_HANDLER_MISSING",
+    )
+
+    # 16. term_kill 持锁终止（阻塞其它终端 IPC）
+    add(
+        "term_kill 持表锁执行终止",
+        mutate(bridge_rs=good["bridge_rs"].replace("    drop(terms);\n", "")),
+        "bridge_rs",
+        "TERM_KILL_LOCK_HELD",
     )
 
     # 17. 前端 resize 防抖被移除
