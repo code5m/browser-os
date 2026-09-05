@@ -8,7 +8,7 @@ use url::Url;
 use crate::domain::*;
 use crate::grid_ipc::GridCmd;
 use crate::keyring_store::KeyringStore;
-use crate::script_runner::{RunError, RunSnapshot, ScriptProcessTable};
+use crate::script_runner::{RunError, RunSnapshot, ScriptProcessTable, ScriptRunRecord};
 use crate::sync;
 use crate::workspace;
 
@@ -2886,6 +2886,38 @@ pub fn script_status(
         format!("run_id={} status={:?}", snapshot.run_id, snapshot.status),
     );
     Ok(snapshot)
+}
+
+/// 列出脚本运行历史：读 `script-runs.json`（M2-4.d 落盘），全量或按 `script_id` 过滤。
+///
+/// 仅终态记录（运行态查询走 `script_status` 内存快照）。记录已含 `output_tail`
+/// 与 `truncated` 标志，前端可直接展示。
+/// 文件不存在或为空时返回空 `Vec`，不报错（首跑无历史属正常路径）。
+#[tauri::command]
+pub fn script_runs_list(
+    app: AppHandle,
+    webview: tauri::Webview,
+    script_id: Option<String>,
+) -> Result<Vec<ScriptRunRecord>, String> {
+    check_invocation_source(&webview, "script_runs_list", None, &app)?;
+    let path = workspace::script_runs_file(&app);
+    let mut records = crate::script_runner::load_run_records(&path);
+    if let Some(sid) = script_id.as_deref() {
+        check_id(sid, "脚本 id")?;
+        records.retain(|r| r.script_id == sid);
+    }
+    // 审计 detail 只含 count + 可选 script_id，不含任何参数值（沿用 M2-4.b-VERDICT
+    // 脱敏三重保险）。
+    workspace::log_audit(
+        &app,
+        "script.runs.list",
+        format!(
+            "count={} script_id={}",
+            records.len(),
+            script_id.as_deref().unwrap_or("*")
+        ),
+    );
+    Ok(records)
 }
 
 /// M1-2: 新增或更新一条收藏。同 URL 视为更新。

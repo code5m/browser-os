@@ -29,9 +29,9 @@
   --expect-pending 验证 PENDING 码位集合（b/c 职责）确实仍未实现 → EXIT 0
   --self-test     好坏样本双向自检（含**变异防呆**：坏样本必须真的改动内容）
 
-关于「一次性定义码位」：沿用 M0-3.a 模式，12 个码位一次定义，
-a/b 卡职责的 11 个 ACTIVE 码默认判定；c 卡职责的 `SCRIPTUI_RUNS_LIST_MISSING`
-仍为 PENDING（归 M2-5.c，待 script_runs_list 落地后转 active）。
+关于「一次性定义码位」：沿用 M0-3.a 模式，13 个码位一次定义，
+a/b/c 卡职责的 12 个 ACTIVE 码默认判定；PENDING 集合当前为空
+（待 M2-6 等新卡回归时按需扩展）。
 """
 
 from __future__ import annotations
@@ -71,12 +71,12 @@ ACTIVE_CODES = (
     "SCRIPTUI_OUTPUT_NO_THROTTLE",
     "SCRIPTUI_SANDBOX_ESCAPE",
     "SCRIPTUI_AUDIT_REJECT_MISSING",
-)
-
-# b/c 卡职责（默认不判，pending）
-PENDING_CODES = (
+    # c 卡职责（运行历史，已落地：script_runs_list 命令 + UI）
     "SCRIPTUI_RUNS_LIST_MISSING",
 )
+
+# 当前无 pending 码位（a/b/c 全 active）；保留元组结构便于后续 M2-6 等回归
+PENDING_CODES: tuple[str, ...] = ()
 
 # ----------------------------- 检测规则 -----------------------------
 
@@ -194,6 +194,14 @@ def detect(ctx: dict[str, str]) -> set[str]:
     if "script.validate.reject" not in bridge_rs:
         hits.add("SCRIPTUI_AUDIT_REJECT_MISSING")
 
+    # 13) M2-5.c 运行历史命令：bridge.rs 须含 `script_runs_list` 函数或字符串（SCRIPTUI_RUNS_LIST_MISSING）。
+    # 同时检查「fn script_runs_list」与裸字符串，避免「删函数但留注释」漏检。
+    if (
+        "fn script_runs_list" not in bridge_rs
+        and "script_runs_list" not in bridge_rs
+    ):
+        hits.add("SCRIPTUI_RUNS_LIST_MISSING")
+
     return hits
 
 
@@ -230,6 +238,18 @@ MUTATIONS: tuple[tuple[str, str, str, int, str], ...] = (
     ("SCRIPTUI_OUTPUT_NO_THROTTLE", "rafId = requestAnimationFrame(flushOutput);", "flushOutput();", 1, "rundialog"),
     ("SCRIPTUI_AUDIT_REJECT_MISSING", '"script.validate.reject"', '"script.run.start"', 1, "bridge_rs"),
     ("SCRIPTUI_SANDBOX_ESCAPE", '<pre class="out">{{ output }}</pre>', '<pre class="out" v-html="output"></pre>', 1, "rundialog"),
+    # ---- c 卡职责坏样本（运行历史命令）----
+    # 模拟"开发者误删 script_runs_list 命令"：把全部 `script_runs_list` 字眼替换为
+    # `dummy_history_removed`（bridge.rs 中共 2 处：pub fn 行 + 内部 check_invocation_source
+    # 命令名）。detector 要求 `fn script_runs_list` 与 `script_runs_list` 字符串皆不存在，
+    # 因此替换后 detect 必然命中。
+    (
+        "SCRIPTUI_RUNS_LIST_MISSING",
+        "script_runs_list",
+        "dummy_history_removed",
+        2,
+        "bridge_rs",
+    ),
 )
 
 
@@ -274,12 +294,12 @@ def self_test() -> int:
 # ----------------------------- 主流程 -----------------------------
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="M2-5 脚本库 UI 安全不变量夹具（a/b 卡合并）")
+    parser = argparse.ArgumentParser(description="M2-5 脚本库 UI 安全不变量夹具（a/b/c 卡合并）")
     parser.add_argument("--self-test", action="store_true", help="好坏样本双向自检")
     parser.add_argument(
         "--expect-pending",
         action="store_true",
-        help="验证 pending 码（b/c 卡职责）确实仍未实现",
+        help="验证 PENDING_CODES 中码位确实仍未落地（a/b/c 后应为空）",
     )
     args = parser.parse_args()
 

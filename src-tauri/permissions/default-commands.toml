@@ -99,5 +99,6 @@ commands.allow = [
     "run_script",
     "cancel_script",
     "script_status",
+    "script_runs_list",
     "list_artifact_images"
 ]

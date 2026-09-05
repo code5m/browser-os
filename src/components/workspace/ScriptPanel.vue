@@ -6,6 +6,7 @@ import { buildCategoryTree, validateScriptForm, canDeleteScript } from "../../ut
 import type { ScriptMeta } from "../../types";
 import ScriptParamForm from "./ScriptParamForm.vue";
 import ScriptRunDialog from "./ScriptRunDialog.vue";
+import ScriptRunHistory from "./ScriptRunHistory.vue";
 
 const ws = useWorkspaceStore();
 const layout = useLayoutStore();
@@ -13,6 +14,8 @@ const layout = useLayoutStore();
 const selectedId = ref<string | null>(null);
 const editing = ref(false);
 const running = ref<ScriptMeta | null>(null);
+// M2-5.c 运行历史 tab：'list' 列表（CRUD） / 'history' 历史
+const viewTab = ref<"list" | "history">("list");
 
 const tree = computed(() => buildCategoryTree(ws.scripts));
 const issues = computed(() => validateScriptForm(ws.scriptForm));
@@ -67,22 +70,32 @@ function openRun(m: ScriptMeta) {
 
     <!-- 列表态 -->
     <div v-if="!editing" class="list-pane">
-      <button class="new-btn" @click="newScript">+ 新建脚本</button>
-      <div v-if="!ws.scripts.length" class="empty">暂无脚本，点「新建脚本」添加一个</div>
-      <div v-for="node in tree" :key="node.category" class="cat">
-        <div class="cat-title">{{ node.category }}（{{ node.scripts.length }}）</div>
-        <ul>
-          <li v-for="s in node.scripts" :key="s.id" :class="{ builtin: s.builtin }">
-            <button class="row" @click="editScript(s)">
-              <span class="name">{{ s.name }}</span>
-              <span class="meta">{{ s.interpreter }}{{ s.builtin ? " · 内置" : "" }}{{ s.enabled ? "" : " · 已禁用" }}</span>
-            </button>
-            <button class="run" title="运行" @click.stop="openRun(s)">▶</button>
-            <button v-if="canDeleteScript(s)" class="del" title="删除" @click.stop="remove(s)">🗑</button>
-            <span v-else class="lock" title="内置脚本不可删除">🔒</span>
-          </li>
-        </ul>
+      <!-- M2-5.c tab 切换：列表 ↔ 历史（沿用 a 卡 XSS 红线：纯文本插值，禁动态 HTML） -->
+      <div class="view-tabs">
+        <button :class="{ active: viewTab === 'list' }" @click="viewTab = 'list'">脚本</button>
+        <button :class="{ active: viewTab === 'history' }" @click="viewTab = 'history'">历史</button>
       </div>
+
+      <template v-if="viewTab === 'list'">
+        <button class="new-btn" @click="newScript">+ 新建脚本</button>
+        <div v-if="!ws.scripts.length" class="empty">暂无脚本，点「新建脚本」添加一个</div>
+        <div v-for="node in tree" :key="node.category" class="cat">
+          <div class="cat-title">{{ node.category }}（{{ node.scripts.length }}）</div>
+          <ul>
+            <li v-for="s in node.scripts" :key="s.id" :class="{ builtin: s.builtin }">
+              <button class="row" @click="editScript(s)">
+                <span class="name">{{ s.name }}</span>
+                <span class="meta">{{ s.interpreter }}{{ s.builtin ? " · 内置" : "" }}{{ s.enabled ? "" : " · 已禁用" }}</span>
+              </button>
+              <button class="run" title="运行" @click.stop="openRun(s)">▶</button>
+              <button v-if="canDeleteScript(s)" class="del" title="删除" @click.stop="remove(s)">🗑</button>
+              <span v-else class="lock" title="内置脚本不可删除">🔒</span>
+            </li>
+          </ul>
+        </div>
+      </template>
+
+      <ScriptRunHistory v-else />
     </div>
 
     <!-- 编辑态 -->
@@ -129,6 +142,9 @@ function openRun(m: ScriptMeta) {
 <style scoped>
 .script-panel { display: flex; flex-direction: column; height: 100%; }
 .new-btn { margin: 8px; padding: 6px 10px; border: 1px solid #2b6cb0; background: #2b6cb0; color: #fff; border-radius: 5px; cursor: pointer; font-size: 12px; }
+.view-tabs { display: flex; gap: 0; border-bottom: 1px solid #e5e6eb; }
+.view-tabs button { flex: 1; padding: 6px 0; border: none; background: transparent; cursor: pointer; font-size: 12px; color: #86909c; }
+.view-tabs button.active { color: #1f2329; border-bottom: 2px solid #2b6cb0; }
 .list-pane { overflow: auto; flex: 1; }
 .cat { margin: 4px 8px; }
 .cat-title { font-size: 12px; color: #86909c; padding: 4px 0; }

@@ -2,7 +2,7 @@
 // M2-5.a 脚本库 CRUD UI 的纯逻辑层（无 Vue / bridge 运行时依赖，供 headless 测试加载真实逻辑）。
 // 组件只负责渲染与事件，所有可判定逻辑集中在此，便于 `check-script-ui-logic.mjs` 验证。
 
-import type { ScriptMeta, ScriptParam, ScriptInterpreter } from "../types";
+import type { ScriptMeta, ScriptParam, ScriptInterpreter, ScriptRunRecord, RunStatus } from "../types";
 
 export interface ScriptForm {
   /** null = 新建；非 null = 编辑既有 */
@@ -169,4 +169,107 @@ export function canDeleteScript(m: ScriptMeta | null): boolean {
 /** 列出某脚本的参数名（供执行面板后续消费，a 卡仅暴露数据） */
 export function paramNames(form: ScriptForm): string[] {
   return form.params.map((p) => p.name);
+}
+
+// ---------------- M2-5.c 运行历史纯逻辑（无 Vue/bridge 依赖） ----------------
+
+/** 状态筛选：'all' 表示不过滤 */
+export type RunStatusFilter = RunStatus | "all";
+
+/** 过滤运行记录：按状态 + 按 script_id（scriptId 空表示不按 id 过滤） */
+export function filterRuns(
+  records: ScriptRunRecord[],
+  status: RunStatusFilter,
+  scriptId?: string,
+): ScriptRunRecord[] {
+  let out = records;
+  if (status !== "all") {
+    out = out.filter((r) => r.status === status);
+  }
+  if (scriptId) {
+    out = out.filter((r) => r.script_id === scriptId);
+  }
+  return out;
+}
+
+/** 状态徽章文本（中文短词，给 UI 标签用） */
+export function runStatusLabel(status: RunStatus): string {
+  switch (status) {
+    case "running":
+      return "运行中";
+    case "succeeded":
+      return "成功";
+    case "failed":
+      return "失败";
+    case "cancelled":
+      return "已取消";
+    case "timeout":
+      return "超时";
+  }
+}
+
+/** 状态颜色（仅返回 CSS class 后缀，便于主题切换） */
+export function runStatusClass(status: RunStatus): string {
+  return `status-${status}`;
+}
+
+/** 人类可读运行时长：秒/分:秒 / 时:分:秒。毫秒级精度不必要。 */
+export function formatRunDuration(r: ScriptRunRecord): string {
+  const start = Date.parse(r.started_at);
+  // 历史记录全部是终态（M2-4.a 冻结），finished_at 必非空；防御兜底
+  const end = r.finished_at ? Date.parse(r.finished_at) : NaN;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+    return "-";
+  }
+  const sec = Math.round((end - start) / 1000);
+  if (sec < 60) return `${sec} 秒`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m < 60) return `${m} 分 ${s} 秒`;
+  const h = Math.floor(m / 60);
+  return `${h} 时 ${m % 60} 分`;
+}
+
+/** 提取 YYYY-MM-DD（本地时区）作为分组 key */
+function dayKey(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "未知日期";
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** 按本地日分组，组内按 started_at 倒序（最近在前） */
+export function groupRunsByDay(
+  records: ScriptRunRecord[],
+): Array<{ day: string; items: ScriptRunRecord[] }> {
+  const sorted = records.slice().sort((a, b) => b.started_at.localeCompare(a.started_at));
+  const map = new Map<string, ScriptRunRecord[]>();
+  for (const r of sorted) {
+    const k = dayKey(r.started_at);
+    if (!map.has(k)) map.set(k, []);
+    map.get(k)!.push(r);
+  }
+  return [...map.entries()].map(([day, items]) => ({ day, items }));
+}
+
+/** 统计：各状态计数（运行态记录若存在，会归到 running） */
+export function summarizeRuns(records: ScriptRunRecord[]): Record<RunStatus, number> {
+  const out: Record<RunStatus, number> = {
+    running: 0,
+    succeeded: 0,
+    failed: 0,
+    cancelled: 0,
+    timeout: 0,
+  };
+  for (const r of records) out[r.status] += 1;
+  return out;
+}
+
+/** 解析运行记录的 `output_tail` 预览：去掉尾部空白并截到前 N 字符（纯文本，不解析 ANSI） */
+export function tailPreview(r: ScriptRunRecord, max = 240): string {
+  const t = (r.output_tail || "").replace(/\s+$/, "");
+  if (t.length <= max) return t;
+  return `…${t.slice(-max)}`;
 }

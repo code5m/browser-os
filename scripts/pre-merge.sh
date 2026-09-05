@@ -23,7 +23,7 @@
 #  15. M1-9 会话持久化/关闭协议不变量夹具 + 前端逻辑层测试
 #  16. M2-1 图片领域与持久化不变量夹具 + 前端展示逻辑层测试
 #  17. M2-2.b 图片预览不变量夹具 + 预览逻辑层测试
-#  18. M2-3.b 脚本领域与持久化不变量夹具（前端逻辑测试随 M2-5 UI 落地）
+#  18. M2-3.b 脚本领域与持久化不变量夹具（前端逻辑测试已随 M2-5 UI 落地）
 #  19. M2-4.e 脚本执行通道不变量夹具（进程组/输出上限/尾存/退出收口/shell spawn 移除）
 #  20. 工作树、暂存区、当前分支相对基线的 git diff --check
 #
@@ -291,15 +291,15 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/check-script-exec-policy.py" --expect-pending >/dev/null 2>&1 \
     || pm_fail "check-script-exec-policy.py --expect-pending（有 pending 码位已实现，应转入默认判定）"
 
-  pm_log "M2-5.a 脚本库 CRUD UI 不变量夹具（7 默认码 + 6 pending 码位）…"
+  pm_log "M2-5 脚本库 UI 不变量夹具（12 默认码；PENDING 集合当前为空）…"
   python3 "$SCRIPT_DIR/check-script-ui-policy.py" --self-test >/dev/null 2>&1 \
     || pm_fail "check-script-ui-policy.py --self-test"
   python3 "$SCRIPT_DIR/check-script-ui-policy.py" >/dev/null 2>&1 \
-    || pm_fail "check-script-ui-policy.py（脚本库 CRUD UI 安全边界被破坏）"
+    || pm_fail "check-script-ui-policy.py（脚本库 UI 安全边界被破坏）"
   python3 "$SCRIPT_DIR/check-script-ui-policy.py" --expect-pending >/dev/null 2>&1 \
-    || pm_fail "check-script-ui-policy.py --expect-pending（b/c 码位应仍 pending）"
+    || pm_fail "check-script-ui-policy.py --expect-pending（pending 码位集合应与 PENDING_CODES 一致）"
 
-  pm_log "M2-5.a 脚本库 CRUD UI 逻辑层自动化测试（headless，加载真实 scriptUi.ts）…"
+  pm_log "M2-5 脚本库 UI 逻辑层自动化测试（headless，加载真实 scriptUi.ts）…"
   (cd "$ROOT" && node "$SCRIPT_DIR/check-script-ui-logic.mjs") >/dev/null 2>&1 \
     || pm_fail "check-script-ui-logic.mjs（脚本库 CRUD 前端逻辑回归）"
 

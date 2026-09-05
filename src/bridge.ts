@@ -236,6 +236,10 @@ export const bridge = {
   scriptStatus: (runId: string) =>
     invoke<RunSnapshot>("script_status", { runId }),
 
+  // M2-5.c 运行历史：读 script-runs.json 全量或按 script_id 过滤
+  scriptRunsList: (scriptId?: string) =>
+    invoke<ScriptRunRecord[]>("script_runs_list", { scriptId: scriptId ?? null }),
+
   // 订阅脚本输出流（payload 为 ScriptOutputEvent；前端用 rAF 合并，避免高频打满渲染）
   onScriptOutput: (cb: (e: ScriptOutputEvent) => void) =>
     listen<ScriptOutputEvent>("script-output", (e) => cb(e.payload)),
