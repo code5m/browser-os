@@ -1,9 +1,9 @@
 # Parallel Command Board
 
-> Updated: 2026-09-05 22:45 CST
+> Updated: 2026-09-05 23:00 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` at `e6e09cf`
+> Current mainline: `master` at `f376346`
 > Current NEXT: `M4-1 数据库驱动与生成契约`
 
 This file is the coordination board for 12 parallel agents. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
@@ -29,6 +29,8 @@ Hard stop if:
 - The instruction names one lane but says to follow another lane's scope.
 
 If an instruction says `You are Lane A3` but later says `follow Lane A1`, treat it as a prompt typo. Do not blend scopes. Stop and report the conflict unless the controller has already corrected the lane in `PARALLEL_COMMAND_BOARD.md`.
+
+If the only blocker is an unfinished predecessor lane, do not edit product code. Produce a read-only assist note under `logs/assist/` with findings, risks, likely files, and exact unblock condition.
 
 ## Merge Rule
 
@@ -70,6 +72,34 @@ No lane may force-push, reset, or overwrite another lane's changes.
 7. A9 may research M5, but must not implement M5 product code before M4 is PASS.
 8. A10 reviews security-sensitive M4 lanes after their output exists.
 9. A11 prepares verification evidence and manual acceptance checklists before final A0 integration.
+
+## Dispatch Waves
+
+### Wave 1: Start Now
+
+These lanes may run immediately from `f376346`:
+
+- A1: Expand M4 cards and dependency graph.
+- A2: Freeze M4-1 database contract.
+- A6: Freeze M4-5 scheduler contract.
+- A9: M5 prework only, no product code.
+- A10: Baseline security review of existing M4 plans and prior gates; product-code changes forbidden.
+
+### Wave 2: Start After Contract Output Exists
+
+These lanes should not edit product code until their unblock condition is true:
+
+- A3: Start after A2 delivers `SupportedDb`, config schema, dependency choice, and database safety contract.
+- A4: Start after A2 delivers command DTOs and A3 delivers pool/safety interfaces.
+- A7: Start after A6 freezes `TaskDef`, trigger kind, missed-run policy, and cancellation semantics.
+
+### Wave 3: Start After Command DTOs Exist
+
+These lanes should wait for stable backend command names and DTOs:
+
+- A5: Start after A2/A3/A4 freeze database command DTOs.
+- A8: Start after A6/A7 freeze scheduler command DTOs.
+- A11: Start after at least one implementation lane returns output; before that it may only draft a verification matrix in `logs/assist/`.
 
 ## File Conflict Map
 
