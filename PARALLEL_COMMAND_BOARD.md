@@ -6,7 +6,7 @@
 > Current mainline: `master` at `c83fde2`
 > Current NEXT: `M4-1 数据库驱动与生成契约`
 
-This file is the coordination board for 10 parallel agents. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
+This file is the coordination board for 12 parallel agents. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
 ## Startup Gate
 
@@ -53,6 +53,8 @@ No lane may force-push, reset, or overwrite another lane's changes.
 | A7 | M4-6/M4-7 scheduler backend | AI:DEEP / R:xhigh | `src-tauri/src/scheduler*`, `bridge.rs`, `domain.rs`, ACL, tests | task CRUD, atomic persistence, scheduler shutdown, audit | 5 |
 | A8 | M4-8 scheduler UI | AI:BALANCED / R:medium | `src/components/**`, `src/stores/**`, `src/bridge.ts`, `src/types.ts`, UI tests | CRUD, enable switch, next run, history, retry state | 7 |
 | A9 | M5 prework only | AI:DEEP / R:high | `logs/assist/`, future task-card docs only | knowledge graph / Agent / plugin prework, no product code | Not merged before M4 |
+| A10 | M4 security review | AI:DEEP / R:xhigh | review notes, policy gaps, `logs/assist/`, no product code unless assigned by A0 | independent review of A2/A3/A4/A7 guardrails | After relevant lane |
+| A11 | M4 verification evidence | AI:BALANCED / R:medium | verification logs/checkpoints, manual test checklist, no product code unless assigned by A0 | targeted command matrix, GUI/manual checklist, debt ledger | Before A0 final push |
 
 ## Current Priority
 
@@ -63,6 +65,8 @@ No lane may force-push, reset, or overwrite another lane's changes.
 5. A7 starts only after A6 freezes `TaskDef` and trigger semantics.
 6. A5 and A8 start after their command names and DTOs are stable.
 7. A9 may research M5, but must not implement M5 product code before M4 is PASS.
+8. A10 reviews security-sensitive M4 lanes after their output exists.
+9. A11 prepares verification evidence and manual acceptance checklists before final A0 integration.
 
 ## File Conflict Map
 
@@ -98,7 +102,7 @@ If two lanes need the same high-conflict file, the earlier merge-order lane land
 Each lane should finish with:
 
 ```text
-LANE=<A1..A9>
+LANE=<A1..A11>
 STATUS=PASS | PASS_WITH_DEBT | BLOCKED
 BASE=<commit>
 HEAD=<commit or patch path>
