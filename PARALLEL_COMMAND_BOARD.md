@@ -1,10 +1,10 @@
 # Parallel Command Board
 
-> Updated: 2026-09-06 08:35 CST
+> Updated: 2026-09-06 17:10 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` at `a1a2061` locally and on `origin/master`
-> Current NEXT: M5-W1 core boundary implementation; only Lane A2 may write product code, other lanes continue docs/review support
+> Current mainline: `master` at `712a14c` locally and on `origin/master`
+> Current NEXT: M5-W3 parallel implementation; Lane A2 owns M5-1.b core extraction, Lane A3 owns M5-2 MCP command-registry/policy slice, other lanes docs/review/support only
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
@@ -13,7 +13,7 @@ This file is the coordination board for 11 parallel agents plus A0 integration. 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W1 Implementation Dispatch 完成自己的整包交付，自行 rebase/整理补丁，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W3 Parallel Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
 ```
 
 Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
@@ -128,6 +128,44 @@ No lane may force-push, reset, or overwrite another lane's changes.
 | A11 | **START** | Maintain verification matrix and manual/GUI checklist; update after each implementation lane output. | `logs/assist/`, `logs/checkpoints/` verification docs | Do not edit product code. |
 
 
+
+
+## M5-W3 Parallel Dispatch
+
+> Added 2026-09-06 17:10 CST by A0 after pushing through `712a14c`.
+> Current facts: M5-W1 core boundary gate is integrated; M5-W2 constants are centralized in `domain.rs`; A3's M5-2 policy gate is already integrated.
+> W3 opens two isolated product-code lanes only: A2 for core extraction, A3 for MCP command-registry/policy shell. Everything else stays docs/review/support.
+
+### W3 One-Line Prompt
+
+```text
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W3 Parallel Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+```
+
+### W3 Assignments
+
+| Lane | Status | Task | Allowed Scope | Must Deliver |
+|---|---|---|---|---|
+| A1 | **START DOCS ONLY** | Reconcile cards to current mainline `712a14c`; mark W1/W2 complete and make M5-W3 the active checkpoint. | `PARALLEL_COMMAND_BOARD.md`, `AI-模型切换与接手清单.md`, `详细设计与实施计划.md`, `后续需求TODO.md`, `logs/checkpoints/M5-20260906/*.md` | One reconciliation patch/checkpoint; no product code. |
+| A2 | **START PRODUCT CODE** | Implement `M5-1.b` smallest B-class core extraction: trait/seam injection only, no behavior change. Prefer extracting pure path/limit helpers or contract adapters already identified in A2 notes. | `src-tauri/src/core/**`, `src-tauri/src/lib.rs`, narrowly related `src-tauri/src/domain.rs` / `workspace.rs` / `database.rs` / `script_runner.rs`, `scripts/check-core-boundary.py`, focused tests/checkpoint | `check-core-boundary.py` PASS, targeted `cargo test` PASS, no new dependency, no command/ACL/UI. |
+| A3 | **START PRODUCT CODE** | Implement the first M5-2 MCP command-registry/policy slice without adding `rmcp`: frozen DTOs/pure registry/policy checks only; no server runtime and no network listener. | `src-tauri/src/domain.rs`, `src-tauri/src/security_policy.rs`, optional `src-tauri/src/mcp.rs`, `scripts/check-mcp-policy.py`, `scripts/pre-merge.sh`, focused Rust tests/checkpoint | Policy self-test + default PASS, pre-merge hook, no new Tauri commands unless ACL/source check are included and A0 can merge atomically. |
+| A4 | **SUPPORT DOCS ONLY** | Prepare M5-3 A2A/agent memory contract against A2/A3 actual outputs; no product code. | `logs/assist/A4-M5-a2a-memory-*.md`, optional checkpoint patch | Delta note with exact dependency on MCP registry and core seam. |
+| A5 | **SUPPORT DOCS ONLY** | Prepare M5-4/M5-5 Agent/Skill runtime next implementation card; keep execution reuse of M2-4 explicit. | `logs/assist/A5-M5-agent-skill-*.md`, `logs/checkpoints/M5-20260906/M5-4*.md`, `M5-5*.md` | Next-card delta; no runtime code. |
+| A6 | **SUPPORT DOCS ONLY** | Prepare Agent/Skill UI data contract and no-router panel placement; no UI code. | `logs/assist/A6-M5-agent-ui-*.md` | UI readiness delta; no frontend product code. |
+| A7 | **SUPPORT DOCS ONLY** | Prepare graph model/storage implementation card after A2/A3; do not write graph runtime yet. | `logs/assist/A7-M5-graph-core-*.md`, `logs/checkpoints/M5-20260906/M5-7*.md`, `M5-8*.md` | Exact DTO/schema and blockers; no graph product code. |
+| A8 | **SUPPORT DOCS ONLY** | Prepare graph UI card after A7 schema freeze; no UI code. | `logs/assist/A8-M5-graph-ui-*.md` | UI split and logic-test plan; no frontend product code. |
+| A9 | **SUPPORT DOCS ONLY** | Align plugin seam to A3 MCP registry and A5 Agent/Skill boundary; no plugin runtime code. | `logs/assist/A9-M5-plugin-*.md`, `logs/checkpoints/M5-20260906/M5-10*.md` through `M5-12*.md` | Delta note; keep Ed25519/form③ assumptions explicit. |
+| A10 | **START REVIEW** | Review A2/A3 W3 outputs for boundary leaks, duplicate execution path, ACL/source-check drift, sensitive logging, and policy false negatives. | `logs/assist/A10-M5-W3-*.md`; policy script tests only if assigned in response to a concrete failure | Review after A2/A3 output; no product code by default. |
+| A11 | **START VERIFICATION** | Update verification matrix for W3; collect A2/A3 commands and results. | `logs/assist/M5-A11-*.md`, `logs/checkpoints/M5-A11-*.md` | One verification delta after W3 outputs. |
+
+### W3 Hard Stops
+
+- Only A2 and A3 may write product code in W3.
+- A2 must not touch MCP/Agent/Graph/Plugin command/UI/runtime.
+- A3 must not add a network server, background listener, `rmcp`, npm dependency, plugin runtime, or Agent runtime.
+- Any new Tauri command must include source check, ACL entry, frontend type/bridge sync, and policy coverage in the same lane package.
+- A4-A11 must stop if product code is required; produce docs/checkpoint only.
+- All lanes must pull from `origin/master` first; no push.
 
 ## M5-W1 Implementation Dispatch
 

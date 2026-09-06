@@ -1,4 +1,5 @@
 # 后续需求 TODO 列表
+> A0 update 2026-09-06 17:10 CST: `origin/master` pushed to `712a14c`; NEXT=`M5-W3`. W3 opens only A2 (M5-1.b core extraction) and A3 (M5-2 MCP registry/policy shell) for product code; A4-A11 remain docs/review/support.
 
 ## 0. 工作目录身份与自救规则（所有智能体先读）
 
@@ -50,7 +51,7 @@ git log --oneline -12
 
 ## 当前执行结论（截至 2026-09-06 · M4 已合流推送 + M5-W1 已安排）
 
-> **本版变更：A0 已将 M4 数据库 + 定时任务并行成果合流为 `a1a2061 feat(M4): integrate database and scheduler lanes` 并推送 `origin/master`。机器门禁：`cargo test` 329/329、`npm run build` PASS、`pre-merge` ALL_PASS；M4-9 红灯已处置。当前 NEXT=`M5-W1`：A1 展开 M5 任务卡，A2-A9 只做架构/契约 prework 文档，A10 安全复核，A11 验证矩阵；M5 产品代码仍锁定到 A0 签第一张实现卡。**
+> **本版变更：A0 已将 M4 数据库 + 定时任务并行成果合流为 `a1a2061 feat(M4): integrate database and scheduler lanes` 并推送 `origin/master`。机器门禁：`cargo test` 329/329、`npm run build` PASS、`pre-merge` ALL_PASS；M4-9 红灯已处置。当前 NEXT=`M5-W3`：A1 展开 M5 任务卡，A2-A9 只做架构/契约 prework 文档，A10 安全复核，A11 验证矩阵；M5 产品代码仍锁定到 A0 签第一张实现卡。**
 
 
 | 里程碑 | 状态 | 当前口径 |
