@@ -779,3 +779,47 @@ export interface PendingConfirm {
 
 /// 面板三态（空 / 错误 / 加载），供 shell 组件统一渲染。
 export type PanelState = "loading" | "empty" | "ready" | "error";
+
+// ====== M5-9 图谱领域（前端 DTO 镜像；与 src-tauri/src/domain.rs 同义）======
+// 仅数据镜像，不含任何后端命令调用 / 凭据 / 正文。
+// 后端 domain.rs（Lane A7，W5）为权威源；本段与其逐字段对齐（serde rename_all = "snake_case"）。
+//
+// 隐私红线（K7）：GraphProps 已在后端脱敏（不含量/凭据/body），UI 仍**禁止渲染 props 正文**；
+// GraphNode/Edge 无 privacy 字段——脱敏属后端职责，前端只负责不显示 props。
+
+export type GraphNodeKind =
+  | "file" | "dir" | "tab" | "script" | "skill" | "agent" | "tag" | "topic";
+
+export type GraphEdgeKind =
+  | "in_dir" | "references" | "related_to" | "tagged_with"
+  | "uses" | "a2a_with" | "memorizes";
+
+/// 已脱敏的键值对（单一真源在后端：不得含凭据/正文/body）。
+export type GraphProps = Record<string, string>;
+
+export interface GraphNode {
+  id: string;
+  kind: GraphNodeKind;
+  label: string;
+  /// 后端已脱敏；UI 不得渲染其正文（K7）
+  props: GraphProps;
+}
+
+export interface GraphEdge {
+  from: string;
+  to: string;
+  kind: GraphEdgeKind;
+  weight: number;
+  /// 同上，UI 不得渲染（K7）
+  props: GraphProps;
+}
+
+// 与 domain.rs 常量对齐（前端仅用于容量展示/守卫；后端为单一真源）。
+export const GRAPH_MAX_DEPTH = 4;
+export const GRAPH_QUERY_LIMIT = 1000;
+export const GRAPH_MAX_NODES = 5000;
+export const GRAPH_MAX_EDGES = 20000;
+export const GRAPH_LABEL_MAX_BYTES = 256;
+/// = MAX_TEXT_FIELD_BYTES (64KiB)
+export const GRAPH_PROPS_MAX_BYTES = 65536;
+export const GRAPH_NODE_ID_HEX_LEN = 64;

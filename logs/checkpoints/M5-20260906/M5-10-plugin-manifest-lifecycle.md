@@ -5,6 +5,63 @@
 > 父卡：`详细设计与实施计划.md` L574（`M5-10 插件 manifest 与生命周期`）
 > 主预研：`logs/assist/M5-15.a-prework-20260902-1055.md` · `logs/assist/A9-M5-plugin-form-feasibility-20260906-0700.md`（**默认形态③声明式**）
 > 配套：`M5-11-plugin-commands-isolation.md`（命令与隔离）· `M5-12-plugin-ui.md`（管理 UI）
+>
+> **W3** BLOCKED（待 A5 W4 契约 + A3 W3 MCP policy shell）· **W4** ACTIVE（A9 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A9 W5 仍 SUPPORT DOCS ONLY）· **W6** ACTIVE（**A9 升级为 START PRODUCT CODE**：M5-10 manifest DTOs + validation + lifecycle state machine + permission manifest rules + policy script；详见本卡顶部 `[W6 next-card acceptance criteria]` 段；M5-11 同步派发见其卡顶部 [W6] 段）
+
+---
+
+## [W6 next-card acceptance criteria · 2026-09-06 19:25 CST] A9 M5-10 W6 实施期 acceptance criteria（manifest DTOs + validation + lifecycle state machine + permission manifest rules + policy script · 不 install/uninstall/delete/download/execute real plugins / 不做网络 / 不做签名强制 / 不注册 10 条 plugin_* 命令 / 不破 capability.rs 漂移）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L160（**A9 M5-W6** *"Implement M5-10/M5-11 plugin manifest/lifecycle policy slice: DTOs, validation, lifecycle state machine, permission manifest rules, policy script. No install/uninstall file mutation runtime, no downloaded plugins, no signature enforcement beyond pure validation unless fully local."*）+ L164-170 硬约束 + A9 prework（A9-M5-plugin-system-prework-20260906-1100.md + A9-M5-plugin-impl-seam-20260906-1630.md + A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md）+ A5 W4 capability 真源（A5-W4 `src-tauri/src/agent.rs` `preview_*` + AclLevel + MCP_CAPABILITY_V1）。
+> **消费依赖（已落地，A9 W6 可直接接入）**：
+> - **A5 W4 AgentDef/SkillDef + permission preview 已落**（`1610939` 拣入 `src-tauri/src/agent.rs` + `skills.rs`）—— A9 W6 PluginManifest schema / PluginCapability 命名 / permission manifest rules **复用** 同一 capability.rs 真源。
+> - **A3 W3 MCP command-registry + global policy shell 已落**（`12f1cff` 拣入）—— A9 W6 lifecycle state machine 与 A3 W3 MCP registry 复用同款"白名单+审计"基元。
+> - **A2 W2 constants centralized**（`712a14c`）—— A9 W6 PluginManifest 容量 / 路径 / 字节上限**复用** `MAX_TEXT_FIELD_BYTES` / 路径 policy 同一真源，**禁止**在 `plugin.rs` 写容量字面量。
+> - **A4 W4 agent_memory KV privacy 双扫**（`1610939` `agent_memory.rs`）—— A9 W6 plugin 资源 metadata **复用** 同一套 `SENSITIVE_KEY_NAMES` + `SENSITIVE_VALUE_PATTERNS` 隐私断言（plugin 不存 secret / token / DSN）。
+> - **A7 W5 graph 7 容量常量**（`4b438ef`）—— A9 W6 plugin metadata 容量**不**与 graph 耦合，但 PluginManifest 字段长度上限**复用** `MAX_TEXT_FIELD_BYTES=64KiB` 同一真源。
+> **A1 W6 角色**：A1 W6 **不**改 §1~§11 决策史；仅在头部加本 `[W6 next-card acceptance criteria]` 段，**明确 A9 W6 实施期 4 项 AC + 5 项 hard stops**，供 A9 / A10 / A11 / A0 验收。
+
+### W6 A9 M5-10 实施期 acceptance criteria（4 项）
+
+| AC | 描述 | 验收证据 |
+|----|------|----------|
+| AC-1 **PluginManifest DTOs + validation 冻结** | `src-tauri/src/domain.rs` 追加：① `PluginManifest { id, version, display_name, description, min_app_version, entry: PluginEntry, capabilities: Vec<PluginCapability>, hash, signature: PluginSignature, metadata: serde_json::Value }` ② `PluginEntry { entry_url, icon }` ③ `PluginCapability { capability, reason }`（**capability 字段名复用** capability.rs 既有 `MCP_CAPABILITY_V1` 命名空间，**不**重定义）④ `PluginSignature { algorithm, key_id, value, signed_at }`（**算法仅声明 "Ed25519" 字面量**；**不**实装验证逻辑，validation 仅做 schema 字段长度/必填/版本正则 + 资源 hash 字节长度 64-hex sha256）⑤ `validate_plugin_manifest(m: &PluginManifest) -> ValidationResult` 纯函数（**不**调 fs / **不**调 crypto / **不**调 network）—— 容量上限：`display_name ≤ 64` / `description ≤ 1024` / `min_app_version` 必为 semver / `metadata` JSON 序列化字节 ≤ `MAX_TEXT_FIELD_BYTES/2`（**复用** A2 W2 常量）| `cargo test --manifest-path src-tauri/Cargo.toml plugin` PASS + `python3 scripts/check-plugin-policy.py --self-test` PASS + A10 抽查 |
+| AC-2 **lifecycle state machine 状态机冻结** | `src-tauri/src/plugin.rs`（或 `src-tauri/src/plugin_lifecycle.rs`，A9 W6 决定）追加：① `PluginState` 枚举（`Discovered` / `Validating` / `Signed` / `Loaded` / `Enabled` / `Disabled` / `Uninstalled`）② `PluginLifecycleEvent` 枚举（`OnDiscovered` / `OnValidationOk` / `OnValidationFail` / `OnSigned` / `OnSignedFail` / `OnLoad` / `OnEnable` / `OnDisable` / `OnUninstall`）③ `transition(state, event) -> Result<PluginState, TransitionError>` 纯函数（**不**写文件 / **不**调网络 / **不**调真实 crypto）④ 状态转移图覆盖 7 态 + 至少 12 条边（详见 A9 W5 提案 §3 状态机扩展点）+ 至少 3 个非法转移（`Discovered → Enabled` / `Loaded → Uninstalled` 等）返回 `TransitionError` | 单测 + `python3 scripts/check-plugin-policy.py` PASS + 状态转移图文档（A9 W6 出 `logs/assist/A9-M5-W6-plugin-lifecycle-state-machine-20260906-XXXX.md` 备查）|
+| AC-3 **permission manifest rules + capability 真源单点** | ① `PermissionManifestRule` 纯函数（输入 `Vec<PluginCapability>` + `&CapabilityRegistry`（= capability.rs 既有白名单）→ 输出 `PermissionVerdict { allowed: Vec<PluginCapability>, denied: Vec<(PluginCapability, DenyReason)> }`）② 拒绝原因枚举：`CapabilityNotInWhitelist` / `CapabilityEmpty` / `ReasonEmpty`（capability 字段名必填 reason 字段，**禁止**空 reason 通过）③ 同一 capability **不**允许在 plugin metadata 出现 2 次（去重）④ 同一 plugin 最多 5 个 capability（首期上限，**复用** `MAX_PLUGIN_CAPABILITIES=5` 单一真源常量）| 单测 + A10 抽查 + A5 W4 capability.rs 0 drift |
+| AC-4 **policy script + pre-merge wire** | `scripts/check-plugin-policy.py` 新增：① 至少 6 ACTIVE 码：`PLUGIN_MANIFEST_SCHEMA_PRESENT` / `PLUGIN_VALIDATION_PURE` / `PLUGIN_LIFECYCLE_STATE_MACHINE` / `PLUGIN_CAPABILITY_WHITELIST_ONLY` / `PLUGIN_NO_INSTALL_RUNTIME` / `PLUGIN_NO_NETWORK` ② 3 模式（`--self-test` 至少 4 好 + 4 坏样本；`--default` 扫描当前仓库；`--expect-pending` 报 PENDING）③ `scripts/pre-merge.sh` 接入 `check-plugin-policy.py`（如 A6 W5 接入 `check-graph-policy.py` 同款位置）④ 无 secrets / token / DSN 写日志（参考 A4 W4 隐私双扫） | `python3 scripts/check-plugin-policy.py --self-test` PASS（ACTIVE=6） + `python3 scripts/check-plugin-policy.py` PASS + `python3 scripts/check-plugin-policy.py --expect-pending` PASS（如有 PENDING） + `bash scripts/pre-merge.sh` ALL_PASS |
+
+### W6 A9 M5-10 实施期 hard stops（5 项）
+
+| HS | 约束 | 来源 |
+|----|------|------|
+| W6-HS1 | **不 install/uninstall/delete/download/execute/enable 真实 plugins** —— W6 仅纯 manifest/lifecycle policy + validation（**不**写 `plugins_dir()` 文件 IO / **不**写 install 真实解包 / **不**写 delete 真删文件 / **不**做网络下载）| PARALLEL_COMMAND_BOARD L160 + L168 |
+| W6-HS2 | **不做网络 / 不做下载 / 不做签名强制**（仅 schema 字段校验 + algorithm 字面量 `"Ed25519"` 声明；**不**实装 Ed25519 验证 / **不**连 NTP / **不**拉远端 pubkey / **不**写 trusted-pubkeys.json 持久化）—— 持久化 / 网络 / 加密 / 远端校验在 W7+ 派发 | PARALLEL_COMMAND_BOARD L160 + L168 |
+| W6-HS3 | **不注册 10 条 plugin_* 命令**（**不**改 `src-tauri/bridge.rs` / `main.rs` / `default-commands.toml` / `src/bridge.ts` / `src/types.ts` 任何 plugin_* 条目；W6 优先倾向 **0 新命令**）—— 10 条命令在 W7+ 由 A9 实施期承接 M5-11 §3 WRITE 列表时引入 | PARALLEL_COMMAND_BOARD L160 + L169（*"prefer no command in W6"*）|
+| W6-HS4 | **不破 capability.rs 漂移**（A2P / A2A / Skill / Plugin / Agent 五类共用 capability.rs 单一真源；A9 W6 加 `PLUGIN_CAPABILITY_V*` 必须**走同一文件**，**禁止**在 `plugin.rs` 内嵌 capability 字面量；`PermissionManifestRule` 接受 `&CapabilityRegistry` 参数）| A5 W4 + A3 W3 + M5-2 §4.2-4.3 + M5-10 §4.1 形态③ |
+| W6-HS5 | **不破 K1（ACL 末条恒为 `list_artifact_images`）+ K3 + K5** —— 任何 plugin_* 命令插入必须插在 `list_artifact_images` **之前**（W6 期间不插，但 W7+ 接入时严守）| M5-10 §5 FORBID + 全局 K1 |
+
+### W6 验证清单（供 A11 收口）
+
+- `cargo test --manifest-path src-tauri/Cargo.toml plugin` PASS（如 A9 W6 创建 plugin module）
+- `cargo test --manifest-path src-tauri/Cargo.toml domain` PASS
+- `cargo test --manifest-path src-tauri/Cargo.toml` 全绿（无新增 warning > 0；W6 受 A0 warning 门禁约束）
+- `python3 scripts/check-plugin-policy.py --self-test` PASS（ACTIVE=6）
+- `python3 scripts/check-plugin-policy.py` PASS
+- `python3 scripts/check-plugin-policy.py --expect-pending` PASS（如有 PENDING）
+- `bash scripts/pre-merge.sh` ALL_PASS
+- `git diff --check` CLEAN
+- A11 比对 `src-tauri/src/domain.rs` 与 A5 W4 capability.rs / A3 W3 MCP registry 0 drift
+- `grep -nE 'plugin_install|plugin_uninstall|plugin_list|plugin_get|plugin_enable|plugin_disable|plugin_keys_add' src-tauri/src/bridge.rs src-tauri/src/main.rs src-tauri/permissions/default-commands.toml src/bridge.ts src/types.ts` W6 期间 0 命中（10 条命令 W7+ 才插）
+- `grep -nE 'tauri::Manager|std::fs::write|reqwest|ureq' src-tauri/src/plugin.rs src-tauri/src/plugin_lifecycle.rs` 0 命中（无真实 IO / 无网络）
+- `grep -nE 'ed25519|ring::signature|signature::Signer' src-tauri/src/plugin.rs` 仅命中 `algorithm = "Ed25519"` 字面量声明（不命中真验证代码）
+- **A10 复审 PASS**（无 install runtime / 无网络 / 无签名强制 / 无 10 条命令 / capability 真源单点 / 隐私断言 / 状态机非法转移覆盖）
+- **A11 verification delta** 产出 `logs/checkpoints/M5-A11-W6-*.md`
+
+### W6 A1 不修订范围（本卡）
+
+- **§1 GOAL / §2 READ / §3 WRITE / §4 关键契约 / §5 FORBID / §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION / §9 DOC_BACKWRITE / §10 COMMIT / §11 FORBID 遵守记录**：A1 W6 **不动**（决策史保持 W0 原文；W6 AC 在本顶部段单列；M5-10 §4.1 形态决策与 §4.4 签名验证在 W6 **仅冻结 schema，不实装**）。
+- **三份主文档 / ACL / Capability / pre-merge.sh / scripts/**：A1 W6 不动（policy 脚本由 A9 W6 落地）。
+- **`NEXT` 标记**：A0 调度权；A1 不改字面值。
 
 ---
 

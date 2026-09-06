@@ -49,6 +49,8 @@ import type {
   AgentRunRecord,
   SkillDef,
   SkillRunRecord,
+  GraphEdge,
+  GraphNode,
 } from "./types";
 
 /// M4-8 可用性开关：A7（M4-6 / M4-7）已落地后端 `task_list / task_add / task_update /
@@ -62,6 +64,12 @@ export const TASK_COMMANDS_AVAILABLE = true;
 // `false` → useAgentStore 不发出任何 invoke（只读壳）。命令落地后置 true 即可解锁面板动作。
 // 这是 board「LIMITED START」的落地方式：命令未就绪时**不假借未实现的命令名假装可用**。
 export const AGENT_SKILL_COMMANDS_AVAILABLE = false;
+
+// M5-9 可用性开关：A7（M5-7/8）已落地 GraphNode/GraphEdge DTO + 有界存储（domain.rs / graph.rs /
+// check-graph-policy.py），但 **graph_* 后端命令（graph_query 等）尚未落地**；故置 `false` →
+// useGraphStore 不发出任何 invoke（只读壳）。命令落地后置 true 即可解锁面板实时载入。
+// 这是 board「LIMITED START」的落地方式：命令未就绪时**不假借未实现的命令名假装可用**。
+export const GRAPH_COMMANDS_AVAILABLE = false;
 
 // M0-0.b 测量配置（契约 logs/m0-baseline-contract-v1.md；非测量运行后端返回 null）
 export interface M0Config {
@@ -372,6 +380,12 @@ export const bridge = {
     invoke("agent_chat", { agentId, prompt, sessionId }),
 
   agentRunCancel: (runId: string) => invoke("agent_chat_cancel", { runId }),
+
+  // ====== M5-9 图谱面板（命令名沿用 A7 M5-7/8 规划的 graph_*；A8 前端封装）======
+  // 后端实现归 A7（后续 wave 落地 graph_query 等）；前端只在 GRAPH_COMMANDS_AVAILABLE 为 true 时调用。
+  // W6 当前后端命令尚未落地，故该标志为 false，useGraphStore 在调用前一律拦截（零 invoke）。
+  // 以下封装是「契约占位」，命令落地后组件无需改动。
+  graphQuery: () => invoke<{ nodes: GraphNode[]; edges: GraphEdge[] }>("graph_query"),
 
   // 运行历史（读 skill-runs.json / agent-runs.json，各自 500 上限 FIFO）。
   skillRunsList: (id: string) => invoke<SkillRunRecord[]>("skill_runs_list", { id }),

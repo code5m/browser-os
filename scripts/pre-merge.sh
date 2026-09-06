@@ -443,6 +443,14 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/check-graph-policy.py" >/dev/null 2>&1 \
     || pm_fail "check-graph-policy.py（M5-7/8 图谱安全不变量被破坏：常量缺失/隐私未扫值/容量未接/遍历无界/id 非十六进制/第二执行路径）"
 
+  # M5-10/11（Lane A9）：插件 manifest/生命周期策略不变量夹具（PLUGIN_* 码位）。
+  # 守能力单一真源 / 无第二执行路径 / 无内联 shell / 无签名旁路 / 仅形态③ / 无凭据字段。
+  pm_log "M5-10/11 插件 manifest/生命周期策略不变量夹具（PLUGIN_* 码位）…"
+  python3 "$SCRIPT_DIR/check-plugin-policy.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-plugin-policy.py --self-test"
+  python3 "$SCRIPT_DIR/check-plugin-policy.py" >/dev/null 2>&1 \
+    || pm_fail "check-plugin-policy.py（M5-10/11 插件安全不变量被破坏：能力漂移/第二执行路径/内联shell/签名旁路/非形态③/凭据字段）"
+
   pm_log "git diff --check（工作树 + 暂存区，机器证据除外）…"
   # Raw evidence is immutable third-party output; SHA256SUMS, not whitespace rewriting, protects it.
   git -C "$ROOT" diff --check -- . ':(exclude)logs/m0-baseline/**' || pm_fail "git diff --check (worktree)"
@@ -573,6 +581,11 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/check-graph-policy.py" ] || { echo "FAIL: check-graph-policy.py missing"; rc=1; }
   if ! python3 "$SCRIPT_DIR/check-graph-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-graph-policy.py --self-test"; rc=1
+  fi
+  # M5-10/11（Lane A9）：插件策略夹具自检。
+  [ -f "$SCRIPT_DIR/check-plugin-policy.py" ] || { echo "FAIL: check-plugin-policy.py missing"; rc=1; }
+  if ! python3 "$SCRIPT_DIR/check-plugin-policy.py" --self-test >/dev/null 2>&1; then
+    echo "FAIL: check-plugin-policy.py --self-test"; rc=1
   fi
   if ! python3 "$SCRIPT_DIR/check-tools-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-tools-policy.py --self-test"; rc=1

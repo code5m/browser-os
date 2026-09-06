@@ -11,6 +11,7 @@ mod grid_ipc;
 mod grid_process;
 mod images;
 mod mcp;
+mod plugin;
 mod scheduler;
 mod script_runner;
 mod scripts;

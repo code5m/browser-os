@@ -61,6 +61,12 @@ pub enum PolicyError {
     UnknownCapability(String),
     /// 必填字段为空（id / version 等）。
     EmptyRequiredField(String),
+    /// 插件 manifest 结构非法（schema 边界 / 形态③入口 / 哈希 / 元数据体量等）。
+    InvalidPluginManifest(String),
+    /// 插件签名结构非法（仅 W6 结构校验；真 Ed25519 验签由运行时 lane 在本地完成）。
+    InvalidPluginSignature(String),
+    /// 插件生命周期非法迁移。
+    PluginStateTransition(String),
 }
 
 impl std::fmt::Display for PolicyError {
@@ -117,6 +123,15 @@ impl std::fmt::Display for PolicyError {
             }
             PolicyError::EmptyRequiredField(field) => {
                 write!(f, "必填字段为空：{field}")
+            }
+            PolicyError::InvalidPluginManifest(msg) => {
+                write!(f, "插件 manifest 非法：{msg}")
+            }
+            PolicyError::InvalidPluginSignature(msg) => {
+                write!(f, "插件签名结构非法（仅 W6 结构校验）：{msg}")
+            }
+            PolicyError::PluginStateTransition(msg) => {
+                write!(f, "插件生命周期非法迁移：{msg}")
             }
         }
     }
@@ -2101,6 +2116,38 @@ pub fn check_agent_capabilities(ids: &[String]) -> Result<(), PolicyError> {
         }
     }
     Ok(())
+}
+
+/// Plugin 能力白名单（v1）。与 SKILL / AGENT_CAPABILITY_V1 同文件（单一真源），
+/// 承 security_policy.rs §M5-4/5 头注释「Skill / Agent / MCP / Plugin / A2A 共用本文件」。
+/// ⚠️ 与 MCP_CAPABILITY_V1 当前分处两文件（MCP 在 domain.rs），系 W4 已记录的能力真源
+/// 碎片化待收口项；W6 A9 将 Plugin 落在 security_policy.rs 以贴合该头注释意图，
+/// 不破坏既有 A3/A5 门禁。
+pub const PLUGIN_CAPABILITY_V1: &[&str] = &[];
+
+/// 校验 Plugin 声明的能力是否全部登记（单一真源）。
+pub fn check_plugin_capabilities(ids: &[String]) -> Result<(), PolicyError> {
+    for id in ids {
+        if !PLUGIN_CAPABILITY_V1.contains(&id.as_str()) {
+            return Err(PolicyError::UnknownCapability(id.clone()));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod plugin_capability_tests {
+    use super::*;
+
+    #[test]
+    fn plugin_capability_whitelist_empty_accepts_nothing() {
+        // 首期白名单为空：任何能力声明都按 fail-closed 拒绝。
+        assert!(check_plugin_capabilities(&vec![]).is_ok());
+        assert!(matches!(
+            check_plugin_capabilities(&vec!["fs_write".to_string()]),
+            Err(PolicyError::UnknownCapability(_))
+        ));
+    }
 }
 
 #[cfg(test)]

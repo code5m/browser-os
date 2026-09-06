@@ -1,0 +1,1503 @@
+diff --git a/logs/assist/A8-M5-W6-graph-ui-checkpoint-20260906-2010.md b/logs/assist/A8-M5-W6-graph-ui-checkpoint-20260906-2010.md
+new file mode 100644
+index 0000000..1addc4e
+--- /dev/null
++++ b/logs/assist/A8-M5-W6-graph-ui-checkpoint-20260906-2010.md
+@@ -0,0 +1,94 @@
++# A8 M5-9 图谱 UI · W6 Checkpoint（PRODUCT CODE · PANEL SHELL + PURE LOGIC）
++
++> LANE=A8 · WAVE=M5-W6 · 依据：`PARALLEL_COMMAND_BOARD.md` M5-W6（line 135-171，base `4b438ef`）
++> STATUS=PASS（W6 整包交付：图谱 UI 纯逻辑 + 面板壳；构建 PASS、逻辑测试 PASS、零新依赖、零实时消费）
++> BASE=4b438ef（board dispatch 基点；当前 working tree 已含 A7 W5 图谱 DTO/存储）
++> 官方 M5-9 卡：`logs/checkpoints/M5-20260906/M5-9-graph-ui-agent-consume.md`（实施候选 = A19；本波 A8 按 W6 指派实际落地面板壳）
++> 上游 schema 源：`src-tauri/src/domain.rs` L2040-2116（GraphNode/GraphEdge/GRAPH_*）、`src-tauri/src/graph.rs`
++
++---
++
++## 1. W6 指派（权威源，board line 159）
++
++> A8 | **START PRODUCT CODE** | Implement M5-9 graph UI pure logic and panel shell: graph list/search/filter, node detail summary, capacity/error/empty states, helper module + headless logic test. Do not call live agent consumption or backend graph commands unless already existing and fully typed.
++
++允许范围：`src/components/**`、`src/stores/**`、`src/types.ts`、`src/bridge.ts`(仅新增占位封装不增命令)、`scripts/check-graph-ui-logic.mjs`、可选 UI 策略脚本、docs/checkpoint。
++Must Deliver：`npm run build` PASS、UI 逻辑测试 PASS、无新依赖、无实时 agent 消费。
++
++W6 Hard Stop（line 164-171）：仅 A8/A9 可写产品代码；A8 不得新增后端命令、实时 agent 消费、模型调用、图重建 worker；所有 store/map/list 必须有界；不得记录/持久化 token/cookie/Authorization/body/prompt-secret。
++
++## 2. 实现内容
++
++### 2.1 纯逻辑层 `src/utils/graphUi.ts`（无 invoke / DOM / store 依赖，可被 node 直接导入断言）
++- `elementKind(d)`：判别 GraphNode / GraphEdge / unknown。
++- `nodeKindLabel` / `edgeKindLabel` / `nodeColor`：种类中文标签与配色。
++- `summarizeNode` / `summarizeEdge`：**K7 硬禁**——摘要中**绝不出现 `props` 字段**（GraphNode.props 后端已脱敏，UI 不渲染正文）。
++- `isAgentConsumptionEdge`：识别 `uses`/`a2a_with`/`memorizes`（对应官方卡 Agent 消费子视图 (b)）。
++- `layoutKindOf` / `layoutPositions`：纯 TS 确定性布局（tree/cluster/force），**无 D3、无随机**（满足「无新依赖」与可测试性）。
++- `estimateCapacity`：容量估算（对齐 `GRAPH_MAX_NODES=5000` / `GRAPH_MAX_EDGES=20000` / `GRAPH_MAX_DEPTH=4` / `GRAPH_QUERY_LIMIT=1000`）。
++- `filterNodes` / `filterEdges`：列表搜索（标签/ID/类型，忽略大小写）+ 按种类过滤 + 两端可见性约束。
++- `boundedInsert`：store 有界合并（超上限丢最旧）。
++- `panelStateGraph`：空/错误/加载三态（backendReady=false 时提示「只读壳」）。
++
++### 2.2 状态机 `src/stores/useGraphStore.ts`（Pinia）
++- 有界 `Map` 存储 nodes/edges（上限对齐 `GRAPH_MAX_*`）。
++- `backendReady = GRAPH_COMMANDS_AVAILABLE`（当前 **false**）。
++- `guard()`：后端未就绪时**零 invoke**，只置错误提示（LIMITED START 口径；与 `useAgentStore` 一致）。
++- `loadGraph()`：仅当 backendReady 时调用 `bridge.graphQuery()`（占位封装）；当前永不触发。
++- 选择/过滤/容量/三态全部 computed 暴露给组件。
++
++### 2.3 组件 `src/components/graph/`（懒加载，不进主 chunk）
++- `GraphPanel.vue`：头部标题 + 容量计（`节点 n/5000 · 边 n/20000`）+ 刷新按钮（backendReady=false 时禁用）+ backendReady 横幅 + 错误横幅 + `GraphFilter` + `GraphViewer` + 右侧 `NodeDetail`/`EdgeDetail`。
++- `GraphFilter.vue`：搜索框 + 种类 chips + 清除。
++- `GraphViewer.vue`：SVG 节点-连图（按 kind 着色、可点选、键盘可达、`aria-label`），空数据时占位文案。
++- `NodeDetail.vue` / `EdgeDetail.vue`：节点/边摘要；**明确注释不渲染 props 正文（K7）**。
++
++### 2.4 接线与可达性
++- `src/types.ts`：追加 M5-9 图谱 DTO（`GraphNodeKind`/`GraphEdgeKind`/`GraphNode`/`GraphEdge`/`GraphProps` + `GRAPH_*` 常量），与 A7 `domain.rs` 逐字段对齐，附 K7 隐私红线注释。
++- `src/bridge.ts`：新增 `GRAPH_COMMANDS_AVAILABLE = false` 开关 + `graphQuery` 契约占位封装（命令未落地，受开关拦截，**未新增任何 Tauri 命令**）。
++- `src/stores/useLayoutStore.ts`：`MainView` 联合类型加 `"graph"`，`MOD_META` 注册 `graph: { icon:"🕸️", label:"图谱" }`。
++- `src/components/layout/MainArea.vue`：懒加载 `GraphPanel`（`defineAsyncComponent`，压低首屏体积，符合 IF-2）+ 渲染块。
++- `src/components/layout/ActivityBar.vue`：工具分节加入「图谱」入口。
++
++### 2.5 测试 `scripts/check-graph-ui-logic.mjs`
++- 复用 `node:module` `registerHooks` 解析 `.ts`，直接导入真实 `src/utils/graphUi.ts`，断言产品代码行为（34 项全过）。
++- 覆盖：判别、标签/配色、摘要（K7 不含 props）、消费边、布局（确定性/坐标有限/稳定）、容量（百分比/上限）、搜索过滤（查询+种类+两端可见）、有界合并、面板三态。
++
++## 3. 验证（Verification）
++
++| 项 | 命令/结果 |
++|---|---|
++| UI 纯逻辑测试 | `node scripts/check-graph-ui-logic.mjs` → **通过 34，失败 0**（EXIT=0） |
++| 生产构建 | `npm run build` → **✓ built in 2.32s**，GraphPanel 拆为独立 chunk（`GraphPanel-*.js` 9.12 kB），主 chunk `index` 164.15 kB **未膨胀**（满足 IF-2） |
++| 新依赖 | **无** `package.json` 未改动；未引入 d3/vue-router（布局用纯 TS+SVG） |
++| 实时消费 | **无**：`backendReady=false`，`guard()` 拦截，`loadGraph()` 零 invoke；未触碰任何 agent/模型/RAG 路径 |
++| 后端命令 | **未新增**：仅 `graphQuery` 占位封装（受开关拦截），未改 `bridge.rs`/`main.rs`/ACL/`default-commands.toml` |
++| 有界 store | nodes/edges `Map` 上限对齐 `GRAPH_MAX_*`；`boundedInsert` 超容丢最旧 |
++| K7 合规 | NodeDetail/EdgeDetail 不渲染 `props`；摘要函数不返回 `props` 字段 |
++
++## 4. FORBID 遵守
++
++- W6 内仅 A8/A9 写产品代码；A8 未越界修改其他 lane 文件（仅 `types.ts`/`bridge.ts`/`useLayoutStore.ts`/`MainArea.vue`/`ActivityBar.vue` 本 lane 接线所需）。
++- 未新增后端命令、未做实时 agent 消费、未做图重建 worker、未引入新依赖。
++- 未提交、未 push（W6 Hard Stop：「All lanes ... must not push」）。
++
++## 5. 输出模板回填
++
++```text
++LANE=A8
++STATUS=PASS
++WAVE=M5-W6 (START PRODUCT CODE)
++BASE=4b438ef
++HEAD=patch logs/checkpoints/Lane-A8-M5-W6-graph-ui-20260906-2010.patch
++FILES=src/utils/graphUi.ts, src/stores/useGraphStore.ts, src/components/graph/{GraphPanel,GraphFilter,GraphViewer,NodeDetail,EdgeDetail}.vue, scripts/check-graph-ui-logic.mjs, src/types.ts, src/bridge.ts, src/stores/useLayoutStore.ts, src/components/layout/MainArea.vue, src/components/layout/ActivityBar.vue
++VERIFY=node scripts/check-graph-ui-logic.mjs → 34/34 PASS; npm run build → PASS(GraphPanel 独立 chunk 9.12kB, 主 chunk 164kB 未膨胀); 无新依赖; backendReady=false 零 invoke
++CHECKPOINT=logs/assist/A8-M5-W6-graph-ui-checkpoint-20260906-2010.md
++MERGE_NOTES=W6 A8 落地 M5-9 图谱 UI 纯逻辑+面板壳；GraphNode/GraphEdge DTO 镜像 A7 domain.rs; backendReady=false(无 graph_* 命令)→只读壳零 invoke; 未新增后端命令/依赖; K7 不渲染 props; store 有界(GRAPH_MAX_*); GraphPanel 懒加载不膨胀主 chunk; 解锁= A7 落地 graph_query 等命令且把 GRAPH_COMMANDS_AVAILABLE 置 true 后，useGraphStore.loadGraph 即接 bridge.graphQuery 实时载入（组件无需改）
++NEXT=A7 落地 graph_query/graph_build/graph_neighbors/graph_stats/graph_export 并将 GRAPH_COMMANDS_AVAILABLE 置 true（同包含 source check+ACL+bridge/types+策略+测试）→ A8 面板自动转实时；后续如需 RAG 注入(/graph 前缀)再补 useGraphRag（本波未做，因 W6 禁实时消费）
++```
++
++## 6. 风险/备注
++
++- 官方 M5-9 卡 §3 原计划用 D3 力导向 + `useGraphRag`/router。本波受「无新依赖」「禁实时消费」约束：布局用纯 TS+SVG（无 D3，无 vue-router，沿用 layout store 模块切换），RAG 注入未做（留待命令+标志就绪后）。
++- 图谱真实数据需 `graph_query` 等命令；当前面板为只读壳，展示空/容量/过滤 UI 与确定性布局预览。
++- 与 A7 协同点：`GRAPH_*` 常量与 `GraphNode/GraphEdge` 字段必须保持与 `domain.rs` 单一真源一致（已注释对齐）。
+diff --git a/logs/checkpoints/M5-20260906/M5-0-overview.md b/logs/checkpoints/M5-20260906/M5-0-overview.md
+index 46ad493..c4734e0 100644
+--- a/logs/checkpoints/M5-20260906/M5-0-overview.md
++++ b/logs/checkpoints/M5-20260906/M5-0-overview.md
+@@ -1,14 +1,15 @@
+-# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0 + W1 + W2 + W3 reconciliation + W4 active + W5 active）
++# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0 + W1 + W2 + W3 reconciliation + W4 active + W5 reconciliation + W6 active）
+
+ > 生成：2026-09-06 08:00 CST · Lane A1（M5-W0 · docs only）
+ > W1 修订：2026-09-06 08:50 CST · Lane A1（M5-W1 · docs-only reconciliation）
+ > W2 修订：2026-09-06 13:45 CST · Lane A1（M5-W2 · docs-only reconciliation，对齐 `712a14c`）
+ > W3 修订：2026-09-06 17:30 CST · Lane A1（M5-W3 · docs-only reconciliation，对齐 `f8f1f49` + `12f1cff` + `bdb0602`）
+ > W4 拣入：2026-09-06 15:18 CST · A0 在 `1610939 feat(M5): add agent memory and skill policy shells` 中拣入 A1 W4 reconciliation 整包（768 行 patch + 202 行 checkpoint + 6 子卡修订）
+-> W5 active：2026-09-06 18:35 CST · Lane A1（M5-W5 · docs-only reconciliation，标 M5-6/M5-7/M5-8 为 W5 实施期卡，标 M5-9 仍 docs-only）
+-> 基准：`a1a2061`（`master`，M4 已 PASS） + `404f514`（A0 W0/W1 dispatch） + `a654f0c`（A3 W2 MCP 政策门）+ `712a14c`（A2 W2 切片 0b + A1 M5-1.b 切卡）+ `98a3b01`（A0 W3 dispatch）+ `e96c902`（A6 W3 UI data contract）+ `bdb0602`（A11 W3 verification）+ `12f1cff`（A3 W3 MCP 余下切片）+ `f8f1f49`（A2 W3 seam + A1 W3 reconciliation + A4-A10 W3 assist）+ `f7ad35a`（A0 W4 dispatch）+ `1610939 feat(M5): add agent memory and skill policy shells`（A0 拣入 A4 W4 agent_memory.rs + A5 W4 agent.rs/skills.rs + A1 W4 reconciliation 整包 + 8 份 W4 assist）+ `0e76a89 docs(M5): dispatch W5 UI and graph lanes`（A0 W5 dispatch）
++> W5 拣入：2026-09-06 19:00 CST · A0 在 `4b438ef feat(M5): add graph model store policy slice` + `f99d2eb feat(A6): M5-6 Agent/Skill UI pure logic + panel shell (W5)` + `1a2c9cd docs(A11): M5-W5 verification delta after A6/A7 W5 outputs` 中拣入 A6 W5 面板壳 + A7 W5 graph model store policy slice + A11 W5 验证 delta
++> W6 active：2026-09-06 19:25 CST · Lane A1（M5-W6 · docs-only reconciliation，标 M5-9/M5-10/M5-11 为 W6 实施期卡，标 M5-12 仍 docs-only）
++> 基准：`a1a2061`（`master`，M4 已 PASS） + `404f514`（A0 W0/W1 dispatch） + `a654f0c`（A3 W2 MCP 政策门）+ `712a14c`（A2 W2 切片 0b + A1 M5-1.b 切卡）+ `98a3b01`（A0 W3 dispatch）+ `e96c902`（A6 W3 UI data contract）+ `bdb0602`（A11 W3 verification）+ `12f1cff`（A3 W3 MCP 余下切片）+ `f8f1f49`（A2 W3 seam + A1 W3 reconciliation + A4-A10 W3 assist）+ `f7ad35a`（A0 W4 dispatch）+ `1610939 feat(M5): add agent memory and skill policy shells`（A0 拣入 A4 W4 agent_memory.rs + A5 W4 agent.rs/skills.rs + A1 W4 reconciliation 整包 + 8 份 W4 assist）+ `0e76a89 docs(M5): dispatch W5 UI and graph lanes`（A0 W5 dispatch）+ **`4b438ef feat(M5): add graph model store policy slice`**（A0 拣入 A7 W5 graph model + store policy slice：`src-tauri/src/graph.rs` + `domain.rs` 追加 GraphNode/Edge 类型 + `scripts/check-graph-policy.py` 7 ACTIVE 码 + pre-merge 接入）+ **`f99d2eb feat(A6): M5-6 Agent/Skill UI pure logic + panel shell (W5)`**（A0 拣入 A6 W5 面板壳：UI pure logic helper + Agent/Skill 面板 shell + `scripts/check-agent-skill-ui-logic.mjs` + 校验展示 / permission preview / capability 列表 / empty+error 状态；**不调 live runtime**）+ **`1a2c9cd docs(A11): M5-W5 verification delta after A6/A7 W5 outputs`**（A0 拣入 A11 W5 验证 delta：cargo test 9/9 graph + UI logic test 25 断言 + check-graph-policy.py --self-test PASS(ACTIVE=7) + check-agent-skill-ui-logic.mjs PASS + pre-merge ALL_PASS）+ **`77b1e3e docs(M5): dispatch W6 graph UI and plugin lanes`**（A0 W6 dispatch）· *build metrics threshold 19% with W5 debt（IF-2 仍记挂账，未在 W5 关闭）*
+ > 性质：**纯文档展开**。零产品代码（未触 `src/`、`src-tauri/`、`package.json`、三份主文档、ACL/Capability/Manifest、pre-merge.sh）；不移动 `NEXT`；不提交、不 push。
+-> 依据：`PARALLEL_COMMAND_BOARD.md`（2026-09-05 23:55 版 · Batch Implementation Dispatch · Lane A1: M5 task-card expansion；2026-09-06 08:35 CST · M5-W1 Implementation Dispatch · Lane A1: START DOCS ONLY · reconciliation；2026-09-06 13:45 CST · M5-W2 Parallel Dispatch · Lane A1: START DOCS ONLY · constant-centralization reconciliation；2026-09-06 17:10 CST · M5-W3 Parallel Dispatch · Lane A1: START DOCS ONLY · mark W1/W2 complete + W3 active；2026-09-06 17:55 CST · M5-W4 Parallel Dispatch · Lane A1: START DOCS ONLY · reconcile W4 as active NEXT; mark W3 pushed and split M5-3/M5-4/M5-5 into next-card acceptance criteria；**2026-09-06 18:35 CST · M5-W5 Parallel Dispatch · Lane A1: START DOCS ONLY · reconcile W5 as active NEXT; mark W4 pushed and tighten M5-6/M5-7/M5-8 acceptance criteria**）
++> 依据：`PARALLEL_COMMAND_BOARD.md`（2026-09-05 23:55 版 · Batch Implementation Dispatch · Lane A1: M5 task-card expansion；2026-09-06 08:35 CST · M5-W1 Implementation Dispatch · Lane A1: START DOCS ONLY · reconciliation；2026-09-06 13:45 CST · M5-W2 Parallel Dispatch · Lane A1: START DOCS ONLY · constant-centralization reconciliation；2026-09-06 17:10 CST · M5-W3 Parallel Dispatch · Lane A1: START DOCS ONLY · mark W1/W2 complete + W3 active；2026-09-06 17:55 CST · M5-W4 Parallel Dispatch · Lane A1: START DOCS ONLY · reconcile W4 as active NEXT; mark W3 pushed and split M5-3/M5-4/M5-5 into next-card acceptance criteria；2026-09-06 18:35 CST · M5-W5 Parallel Dispatch · Lane A1: START DOCS ONLY · reconcile W5 as active NEXT; mark W4 pushed and tighten M5-6/M5-7/M5-8 acceptance criteria；**2026-09-06 19:25 CST · M5-W6 Parallel Dispatch · Lane A1: START DOCS ONLY · reconcile W6 as active NEXT; mark W5 pushed and tighten M5-9/M5-10/M5-11/M5-12 acceptance criteria**）
+ > 入口：本卡体系的根文档，本目录下其它文件是各 M5-x 子卡
+
+ ---
+@@ -283,6 +284,91 @@ A1 复核 W0 整包与 A2 v3 prework（`logs/assist/A2-M5-core-20260906-0749.md`
+
+ ---
+
++## [W5 reconciliation · 2026-09-06 19:00 CST] W5 整包已 A0 拣入（`4b438ef` + `f99d2eb` + `1a2c9cd`）· 当前活跃 checkpoint 切到 M5-W6
++
++> **依据**：`PARALLEL_COMMAND_BOARD.md` L7（*"Current mainline: master at 4b438ef"*）+ L139（*"Agent/Skill UI shell is integrated; graph model/store policy slice is integrated; build metrics threshold is documented at 19% with W5 debt"*）。
++> **W5 落地事实回填（A0 拣入 3 段核心 commit + 8 份 W5 assist + A11 W5 验证）**：
++> - **A6 W5 M5-6 Agent/Skill UI pure logic + panel shell**（`f99d2eb` 拣入）：UI pure logic helper module（`src/utils/agentSkillUi.ts` 或类似）+ Agent/Skill 面板 shell（`src/components/agent/SkillManager.vue` 列表 / `PermissionPreviewModal.vue` 权限弹窗 / ChatPanel 流式）+ 校验展示 / permission preview 桥接 / capability 列表 / empty+error 状态；`scripts/check-agent-skill-ui-logic.mjs` PASS；**不调 live runtime / 不执行 skill / 不装插件**（遵守 W5-HS1）。
++> - **A7 W5 M5-7/M5-8 graph model/store policy slice**（`4b438ef` 拣入）：`src-tauri/src/graph.rs`（GraphStore 内存 bounded 存储 + validate_graph_node/edge 容量脱敏校验 + 复用 A4 同款隐私双扫 SENSITIVE_KEY_NAMES=token/password/secret/api_key + SENSITIVE_VALUE_PATTERNS=sk-/AKIA/Bearer/eyJ/-----BEGIN + bounded_neighbors/bounded_subgraph + to_json/from_json serde 壳；模块级 `#![allow(dead_code)]` 因 W5 无消费方）+ `domain.rs` 尾部追加 `GraphNodeKind/GraphEdgeKind` 枚举、`GraphProps(BTreeMap)`、`GraphNode/GraphEdge` 结构，及 7 个容量常量单一真源（`GRAPH_PROPS_MAX_BYTES=MAX_TEXT_FIELD_BYTES=64KiB` 必须等于、`GRAPH_LABEL_MAX_BYTES=256`、`GRAPH_NODE_ID_HEX_LEN=64`、`GRAPH_MAX_DEPTH=4`、`GRAPH_QUERY_LIMIT=1000`、`GRAPH_MAX_NODES=5000`、`GRAPH_MAX_EDGES=20000`）+ `main.rs` 加 `mod graph;` + `scripts/check-graph-policy.py`（7 ACTIVE 码：`GRAPH_CONSTANTS_PRESENT` / `GRAPH_PROPS_EQ_MAX_TEXT_FIELD` / `GRAPH_PRIVACY_DOUBLE_SCAN` / `GRAPH_BOUNDED_STORE` / `GRAPH_TRAVERSAL_BOUNDED` / `GRAPH_REF_NODE_INTEGRITY` / `GRAPH_NO_SECOND_PATH`）+ pre-merge 接入。
++> - **A11 W5 M5-W5 verification delta**（`1a2c9cd` 拣入）：cargo test graph 9/9 PASS + UI logic test 25 断言 PASS + `check-graph-policy.py --self-test` PASS（ACTIVE=7）+ `check-agent-skill-ui-logic.mjs` PASS + pre-merge ALL_PASS + git diff --check CLEAN。
++> - **A8 W5 graph UI docs delta**（untracked，已在 W5 期间产出）：`logs/assist/A8-M5-W5-graph-ui-delta-20260906-1525.md` —— A8 W5 仍 SUPPORT DOCS ONLY（**未**写 UI 代码）；W6 由 A8 升级为 START PRODUCT CODE（**M5-9 实施期正式派发**）。
++> - **A9 W5 plugin manifest docs delta**（untracked，已在 W5 期间产出）：`logs/assist/A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md` —— A9 W5 仍 SUPPORT DOCS ONLY（**未**写 plugin 代码）；W6 由 A9 升级为 START PRODUCT CODE（**M5-10/M5-11 实施期正式派发**）。
++> - **其它 5 份 W5 assist**（untracked）：A2 / A3 / A4 / A5 / A10 全部 W5 角色 = SUPPORT/REVIEW ONLY（**未**写产品代码）。
++> - **A0 W6 dispatch**（`77b1e3e` 已 push `4b438ef` + `f99d2eb` + `1a2c9cd` + `d3f11cd` 后签发）：PARALLEL_COMMAND_BOARD L136-171 *M5-W6 Parallel Dispatch* —— 本卡见下文 `[W6 active]` 段。
++> **W5 → W6 状态切换总账**：
++
++| Wave | A1 checkpoint 文件 | A0 拣入 commit | 关键 commit 链 | 状态 |
++|------|-------------------|----------------|---------------|------|
++| W0 | `M5-0-overview.md`（初版）| `404f514` | `a1a2061` → `404f514` | PASS |
++| W1 | `M5-0-overview.md` (W1 reconciliation) | `0d08016` | + `854bc40` + `0d08016` | PASS |
++| W2 | `M5-0-overview.md` (W2 patched) | `712a14c` | + `a654f0c` + `712a14c` | PASS |
++| W3 | `A1-M5-W3-reconciliation-20260906-1730.md` | `f8f1f49` | + `98a3b01` + `e96c902` + `bdb0602` + `12f1cff` + `f8f1f49` | PASS |
++| W4 | `A1-M5-W4-reconciliation-20260906-1755.md` | `1610939` | + `d71f558` + `13c5279` + `562efb9` + `1610939` | PASS |
++| W5 | `A1-M5-W5-reconciliation-20260906-1835.md` | `4b438ef` + `f99d2eb` + `1a2c9cd` | + `0e76a89`（A0 W5 dispatch） + `d3f11cd`（A3 W5 assist） + `4b438ef` + `f99d2eb` + `1a2c9cd` | **PASS · A0 拣入** |
++| W6 | **本轮修订** | <待 A0 拣入> | + `77b1e3e`（A0 W6 dispatch） | **本轮 W6 修订已完成** · 待 A0 拣入 |
++
++> **W5 收口后遗留债（**`PARALLEL_COMMAND_BOARD.md` L139 显式记挂**）**：
++> - **IF-2**（build metrics growth）：frontend main JS 19% 阈值（baseline 161.36 kB，W5 增量计入后尚未重采；W6 实施期 A8 / A9 上线后 A11 重采，由 A0 拍定阈值/基线）。
++> - **W6 范围内债**：A8 W6 实施期 / A9 W6 实施期各自的 `cargo build` / `npm run build` 增量（见 M5-9 / M5-10 / M5-11 [W6 next-card AC] 段 hard stop）。
++> - **A9 W5 ds1~ds6 design suggestions**（`logs/assist/A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md` §3 列举的 Ed25519 / 形态③ / capability 命名 / 状态机扩展点 / 审计字段 / 二次确认粒度 6 项）—— A9 W6 实施期在 DTO/lifecycle/policy 落地时**可选**采纳，**不强制**；A1 W6 **不**预先决断。
++
++---
++
++## [W6 active · 2026-09-06 19:25 CST] 当前活跃 checkpoint 切到 M5-W6（A8 graph UI pure logic + A9 plugin manifest/lifecycle policy slice · 其它 9 lane docs/review/support）
++
++> **依据**：`PARALLEL_COMMAND_BOARD.md` L136-171（**M5-W6 Parallel Dispatch**，Added 2026-09-06 19:25 CST by A0 after pushing through `4b438ef`）+ L7（*"Current NEXT: M5-W6 parallel implementation; Lane A8 owns M5-9 graph UI pure logic/panel shell, Lane A9 owns M5-10/11 plugin manifest/lifecycle policy slice"*）。
++> **W6 仅开两条产品代码 lane**：
++> - **A8** *START PRODUCT CODE*：M5-9 graph UI **pure logic + panel shell** —— graph list/search/filter、node detail summary、capacity/error/empty states、helper module + headless logic test；**不加后端 commands、不调 live agent consumption、不调 model calls、不加 graph rebuild workers**；scope = `src/components/**` + `src/stores/**` + `src/types.ts` + `src/bridge.ts`（only if no new command）+ `scripts/check-graph-ui-logic.mjs` + optional UI policy script。
++> - **A9** *START PRODUCT CODE*：M5-10/M5-11 plugin manifest/lifecycle **policy slice** —— DTOs + validation + lifecycle state machine + permission manifest rules + policy script；**不**install/uninstall/delete/download/execute/enable 真实 plugins；**不**做网络/下载/签名强制（仅纯 validation）；scope = `src-tauri/src/domain.rs` + optional `src-tauri/src/plugin.rs` + `src-tauri/src/security_policy.rs` + `scripts/check-plugin-policy.py` + `scripts/pre-merge.sh` + focused Rust tests。
++> **A1 W6 角色**：START DOCS ONLY — *"Reconcile W6 as active NEXT; mark W5 pushed and tighten M5-9/M5-10/M5-11/M5-12 acceptance criteria."* —— 本卡顶部索引 + 5 张子卡（M5-9 / M5-10 / M5-11 / M5-12 + 本根卡）增补 W6 next-card acceptance criteria 段。
++
++### W6 A1 整包交付（计划）
++
++| # | 文件 | 修订 |
++|---|------|------|
++| W6-1 | `M5-0-overview.md`（本根卡）| 头部时间戳 + W5 reconciliation 段（3 段核心 commit `f99d2eb` / `4b438ef` / `1a2c9cd` + 8 份 W5 assist + IF-2 挂账 + A8/A9 W6 升级）+ W6 active 段（本段；索引 6 文件交付清单 + 2 lane 实施期硬约束摘要）|
++| W6-2 | `M5-9-graph-ui-agent-consume.md` | 头部状态行 W3→W6；新增 [W6 next-card acceptance criteria] 段（**4 项 AC**：graph list/search/filter pure logic helper / node detail summary / capacity+error+empty 状态 / headless logic test；**5 项 hard stops**：A8 W6 不加 commands、不调 live agent、不调 model、不加 rebuild workers、不加 npm 依赖）|
++| W6-3 | `M5-10-plugin-manifest-lifecycle.md` | 头部状态行；新增 [W6 next-card acceptance criteria] 段（**4 项 AC**：PluginManifest DTOs + validation / lifecycle state machine / permission manifest rules / policy script；**5 项 hard stops**：A9 W6 不 install/uninstall/delete/download/execute real plugins / 不做网络 / 不做签名强制 / 不注册 10 条 plugin_* 命令 / 不破 capability.rs 漂移）|
++| W6-4 | `M5-11-plugin-commands-isolation.md` | 头部状态行；新增 [W6 next-card acceptance criteria] 段（**4 项 AC**：commands_islolation shell / 5 命令 ACL stub / capability 校验骨架 / plugin-invokes.json audit shape；**5 项 hard stops**：同 W6-HS + 5 命令仅 stub（不接业务）+ audit 仅 key_hash 不带 value + capability 真源单点 + 不破 K1 ACL 末条恒为 list_artifact_images）|
++| W6-5 | `M5-12-plugin-ui.md` | 头部状态行；新增 [W6 status] 轻量段（A19 W6 仍 SUPPORT DOCS ONLY；W6 无 plugin UI lane 承接，待 A9 W6 plugin 后端落 + A0 决定 W7+ 派发；A1 W6 不写 next-card AC）|
++| W6-6 | `logs/checkpoints/A1-M5-W6-reconciliation-20260906-1930.md` | 新增：A1 W6 整包交付 checkpoint |
++| W6-7 | `logs/checkpoints/Lane-A1-M5-W6-reconciliation-20260906-1930.patch` | 新增：A1 W6 整包 patch |
++
++### W6 A8 / A9 实施期硬约束（与 W6 dispatch 承诺一致）
++
++| # | 约束 | 来源 |
++|---|------|------|
++| W6-HS1 | **A8/A9 是 W6 唯一允许写产品代码的两条 lane**；A2/A3/A4/A5/A6/A7 变 SUPPORT/REVIEW ONLY；A10 START REVIEW；A11 START VERIFICATION | PARALLEL_COMMAND_BOARD L166 |
++| W6-HS2 | **A8 不得加** backend commands / live agent consumption / model calls / graph rebuild workers | PARALLEL_COMMAND_BOARD L167 |
++| W6-HS3 | **A9 不得 install/delete/download/execute/enable 真实 plugins**；仅纯 manifest/lifecycle policy + validation | PARALLEL_COMMAND_BOARD L168 |
++| W6-HS4 | **新 Tauri 命令必须 atomic**（source check + ACL + 前端 bridge/types + policy coverage + tests 同包）；若契约未完全 ready，**优先不加 command**（W6 优先倾向不加 command） | PARALLEL_COMMAND_BOARD L169 |
++| W6-HS5 | **Stores/maps/lists 必须 bounded + privacy-filtered**：无 token/cookie/Authorization/body/日志 prompt secrets | PARALLEL_COMMAND_BOARD L170 |
++| W6-HS6 | 所有 lane 必须从 `origin/master` pull，**不 push** | PARALLEL_COMMAND_BOARD L171（合并 W5 末项）|
++| W6-HS7 | **A8 无新 npm 依赖**（须复用现有 Vue 3 + Pinia + 既有 A6 W5 panel 范式 + d3-force 仅在 W7+ 真接入时引入）| A8 W6 dispatch L159 + W4-HS2 / W5-HS7 |
++| W6-HS8 | **A9 不破 capability.rs 漂移**（A2P / A2A / Skill / Plugin / Agent 五类共用 capability.rs 单一真源，A9 W6 加 `PLUGIN_CAPABILITY_V*` 必须走同一文件） | A5 W4 AC + A3 W3 MCP policy shell + M5-2 §4.2-4.3 |
++
++### W6 A1 硬停止
++
++- **零产品代码**：A1 W6 整包**仅文档**（PARALLEL_COMMAND_BOARD L152 明示 *"One reconciliation checkpoint; no product code"*）。
++- **不重写各子卡 §1~§11**：仅头部 [W6 next-card acceptance criteria] 段（不修订 §1~§11 决策史）。
++- **不移动 `NEXT`**：`NEXT` 标记属 A0 调度权；A1 仅在头部状态行陈述"W6 是当前活跃 checkpoint"。
++- **不动三份主文档**：A0 W6 dispatch L152 虽允许"three main docs"，但本轮 A1 选择**不动**——W6 修订仅落在 `logs/checkpoints/M5-20260906/*.md` 5 文件 + 1 新增 checkpoint；如需主文档调整留待 W6 收口或 A0 拣入期处理。
++- **不动 ACL / Capability / pre-merge.sh / Cargo.toml / package.json**：A1 W6 严格不动。
++- **不提交 / 不 push**：A1 W6 整包交 A0 拣入合并。
++- **不抢 A8 / A9 工作区**：A1 W6 不动 `src/components/**` / `src/stores/**` / `src/types.ts` / `src/bridge.ts` / `src-tauri/src/domain.rs` / `src-tauri/src/plugin.rs`（如 A9 创建）/ `src-tauri/src/security_policy.rs` / `scripts/check-graph-ui-logic.mjs` / `scripts/check-plugin-policy.py` / `scripts/pre-merge.sh`；A8 / A9 各自工作区严格留给对应 lane。
++
++### W6 状态（本卡涉及）
++
++| 项 | 状态 | 来源 |
++|---|------|------|
++| W5（A6 M5-6 + A7 M5-7/M5-8 + 8 lane assist + 2 review + A1 reconciliation 整包）| **PASS · A0 拣入** | `4b438ef` + `f99d2eb` + `1a2c9cd` + `d3f11cd` |
++| W6 A8 M5-9 实施 | **ACTIVE · 待 A8 实施** | PARALLEL_COMMAND_BOARD L159 |
++| W6 A9 M5-10/M5-11 实施 | **ACTIVE · 待 A9 实施** | PARALLEL_COMMAND_BOARD L160 |
++| W6 A2/A3/A4/A5/A6/A7 复审 + A10 review + A11 verification | **ACTIVE · 待各 lane 输出** | PARALLEL_COMMAND_BOARD L153-L162 |
++| W6 A1 文档 reconciliation（本段 + 4 子卡 acceptance criteria + 本 checkpoint）| **本轮 W6 修订已完成** | 本 checkpoint |
++
++---
++
+ ## 0. 本包目录结构
+
+ ```
+diff --git a/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md b/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md
+index 53045cc..0493195 100644
+--- a/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md
++++ b/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md
+@@ -5,6 +5,63 @@
+ > 父卡：`详细设计与实施计划.md` L574（`M5-10 插件 manifest 与生命周期`）
+ > 主预研：`logs/assist/M5-15.a-prework-20260902-1055.md` · `logs/assist/A9-M5-plugin-form-feasibility-20260906-0700.md`（**默认形态③声明式**）
+ > 配套：`M5-11-plugin-commands-isolation.md`（命令与隔离）· `M5-12-plugin-ui.md`（管理 UI）
++>
++> **W3** BLOCKED（待 A5 W4 契约 + A3 W3 MCP policy shell）· **W4** ACTIVE（A9 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A9 W5 仍 SUPPORT DOCS ONLY）· **W6** ACTIVE（**A9 升级为 START PRODUCT CODE**：M5-10 manifest DTOs + validation + lifecycle state machine + permission manifest rules + policy script；详见本卡顶部 `[W6 next-card acceptance criteria]` 段；M5-11 同步派发见其卡顶部 [W6] 段）
++
++---
++
++## [W6 next-card acceptance criteria · 2026-09-06 19:25 CST] A9 M5-10 W6 实施期 acceptance criteria（manifest DTOs + validation + lifecycle state machine + permission manifest rules + policy script · 不 install/uninstall/delete/download/execute real plugins / 不做网络 / 不做签名强制 / 不注册 10 条 plugin_* 命令 / 不破 capability.rs 漂移）
++
++> **依据**：`PARALLEL_COMMAND_BOARD.md` L160（**A9 M5-W6** *"Implement M5-10/M5-11 plugin manifest/lifecycle policy slice: DTOs, validation, lifecycle state machine, permission manifest rules, policy script. No install/uninstall file mutation runtime, no downloaded plugins, no signature enforcement beyond pure validation unless fully local."*）+ L164-170 硬约束 + A9 prework（A9-M5-plugin-system-prework-20260906-1100.md + A9-M5-plugin-impl-seam-20260906-1630.md + A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md）+ A5 W4 capability 真源（A5-W4 `src-tauri/src/agent.rs` `preview_*` + AclLevel + MCP_CAPABILITY_V1）。
++> **消费依赖（已落地，A9 W6 可直接接入）**：
++> - **A5 W4 AgentDef/SkillDef + permission preview 已落**（`1610939` 拣入 `src-tauri/src/agent.rs` + `skills.rs`）—— A9 W6 PluginManifest schema / PluginCapability 命名 / permission manifest rules **复用** 同一 capability.rs 真源。
++> - **A3 W3 MCP command-registry + global policy shell 已落**（`12f1cff` 拣入）—— A9 W6 lifecycle state machine 与 A3 W3 MCP registry 复用同款"白名单+审计"基元。
++> - **A2 W2 constants centralized**（`712a14c`）—— A9 W6 PluginManifest 容量 / 路径 / 字节上限**复用** `MAX_TEXT_FIELD_BYTES` / 路径 policy 同一真源，**禁止**在 `plugin.rs` 写容量字面量。
++> - **A4 W4 agent_memory KV privacy 双扫**（`1610939` `agent_memory.rs`）—— A9 W6 plugin 资源 metadata **复用** 同一套 `SENSITIVE_KEY_NAMES` + `SENSITIVE_VALUE_PATTERNS` 隐私断言（plugin 不存 secret / token / DSN）。
++> - **A7 W5 graph 7 容量常量**（`4b438ef`）—— A9 W6 plugin metadata 容量**不**与 graph 耦合，但 PluginManifest 字段长度上限**复用** `MAX_TEXT_FIELD_BYTES=64KiB` 同一真源。
++> **A1 W6 角色**：A1 W6 **不**改 §1~§11 决策史；仅在头部加本 `[W6 next-card acceptance criteria]` 段，**明确 A9 W6 实施期 4 项 AC + 5 项 hard stops**，供 A9 / A10 / A11 / A0 验收。
++
++### W6 A9 M5-10 实施期 acceptance criteria（4 项）
++
++| AC | 描述 | 验收证据 |
++|----|------|----------|
++| AC-1 **PluginManifest DTOs + validation 冻结** | `src-tauri/src/domain.rs` 追加：① `PluginManifest { id, version, display_name, description, min_app_version, entry: PluginEntry, capabilities: Vec<PluginCapability>, hash, signature: PluginSignature, metadata: serde_json::Value }` ② `PluginEntry { entry_url, icon }` ③ `PluginCapability { capability, reason }`（**capability 字段名复用** capability.rs 既有 `MCP_CAPABILITY_V1` 命名空间，**不**重定义）④ `PluginSignature { algorithm, key_id, value, signed_at }`（**算法仅声明 "Ed25519" 字面量**；**不**实装验证逻辑，validation 仅做 schema 字段长度/必填/版本正则 + 资源 hash 字节长度 64-hex sha256）⑤ `validate_plugin_manifest(m: &PluginManifest) -> ValidationResult` 纯函数（**不**调 fs / **不**调 crypto / **不**调 network）—— 容量上限：`display_name ≤ 64` / `description ≤ 1024` / `min_app_version` 必为 semver / `metadata` JSON 序列化字节 ≤ `MAX_TEXT_FIELD_BYTES/2`（**复用** A2 W2 常量）| `cargo test --manifest-path src-tauri/Cargo.toml plugin` PASS + `python3 scripts/check-plugin-policy.py --self-test` PASS + A10 抽查 |
++| AC-2 **lifecycle state machine 状态机冻结** | `src-tauri/src/plugin.rs`（或 `src-tauri/src/plugin_lifecycle.rs`，A9 W6 决定）追加：① `PluginState` 枚举（`Discovered` / `Validating` / `Signed` / `Loaded` / `Enabled` / `Disabled` / `Uninstalled`）② `PluginLifecycleEvent` 枚举（`OnDiscovered` / `OnValidationOk` / `OnValidationFail` / `OnSigned` / `OnSignedFail` / `OnLoad` / `OnEnable` / `OnDisable` / `OnUninstall`）③ `transition(state, event) -> Result<PluginState, TransitionError>` 纯函数（**不**写文件 / **不**调网络 / **不**调真实 crypto）④ 状态转移图覆盖 7 态 + 至少 12 条边（详见 A9 W5 提案 §3 状态机扩展点）+ 至少 3 个非法转移（`Discovered → Enabled` / `Loaded → Uninstalled` 等）返回 `TransitionError` | 单测 + `python3 scripts/check-plugin-policy.py` PASS + 状态转移图文档（A9 W6 出 `logs/assist/A9-M5-W6-plugin-lifecycle-state-machine-20260906-XXXX.md` 备查）|
++| AC-3 **permission manifest rules + capability 真源单点** | ① `PermissionManifestRule` 纯函数（输入 `Vec<PluginCapability>` + `&CapabilityRegistry`（= capability.rs 既有白名单）→ 输出 `PermissionVerdict { allowed: Vec<PluginCapability>, denied: Vec<(PluginCapability, DenyReason)> }`）② 拒绝原因枚举：`CapabilityNotInWhitelist` / `CapabilityEmpty` / `ReasonEmpty`（capability 字段名必填 reason 字段，**禁止**空 reason 通过）③ 同一 capability **不**允许在 plugin metadata 出现 2 次（去重）④ 同一 plugin 最多 5 个 capability（首期上限，**复用** `MAX_PLUGIN_CAPABILITIES=5` 单一真源常量）| 单测 + A10 抽查 + A5 W4 capability.rs 0 drift |
++| AC-4 **policy script + pre-merge wire** | `scripts/check-plugin-policy.py` 新增：① 至少 6 ACTIVE 码：`PLUGIN_MANIFEST_SCHEMA_PRESENT` / `PLUGIN_VALIDATION_PURE` / `PLUGIN_LIFECYCLE_STATE_MACHINE` / `PLUGIN_CAPABILITY_WHITELIST_ONLY` / `PLUGIN_NO_INSTALL_RUNTIME` / `PLUGIN_NO_NETWORK` ② 3 模式（`--self-test` 至少 4 好 + 4 坏样本；`--default` 扫描当前仓库；`--expect-pending` 报 PENDING）③ `scripts/pre-merge.sh` 接入 `check-plugin-policy.py`（如 A6 W5 接入 `check-graph-policy.py` 同款位置）④ 无 secrets / token / DSN 写日志（参考 A4 W4 隐私双扫） | `python3 scripts/check-plugin-policy.py --self-test` PASS（ACTIVE=6） + `python3 scripts/check-plugin-policy.py` PASS + `python3 scripts/check-plugin-policy.py --expect-pending` PASS（如有 PENDING） + `bash scripts/pre-merge.sh` ALL_PASS |
++
++### W6 A9 M5-10 实施期 hard stops（5 项）
++
++| HS | 约束 | 来源 |
++|----|------|------|
++| W6-HS1 | **不 install/uninstall/delete/download/execute/enable 真实 plugins** —— W6 仅纯 manifest/lifecycle policy + validation（**不**写 `plugins_dir()` 文件 IO / **不**写 install 真实解包 / **不**写 delete 真删文件 / **不**做网络下载）| PARALLEL_COMMAND_BOARD L160 + L168 |
++| W6-HS2 | **不做网络 / 不做下载 / 不做签名强制**（仅 schema 字段校验 + algorithm 字面量 `"Ed25519"` 声明；**不**实装 Ed25519 验证 / **不**连 NTP / **不**拉远端 pubkey / **不**写 trusted-pubkeys.json 持久化）—— 持久化 / 网络 / 加密 / 远端校验在 W7+ 派发 | PARALLEL_COMMAND_BOARD L160 + L168 |
++| W6-HS3 | **不注册 10 条 plugin_* 命令**（**不**改 `src-tauri/bridge.rs` / `main.rs` / `default-commands.toml` / `src/bridge.ts` / `src/types.ts` 任何 plugin_* 条目；W6 优先倾向 **0 新命令**）—— 10 条命令在 W7+ 由 A9 实施期承接 M5-11 §3 WRITE 列表时引入 | PARALLEL_COMMAND_BOARD L160 + L169（*"prefer no command in W6"*）|
++| W6-HS4 | **不破 capability.rs 漂移**（A2P / A2A / Skill / Plugin / Agent 五类共用 capability.rs 单一真源；A9 W6 加 `PLUGIN_CAPABILITY_V*` 必须**走同一文件**，**禁止**在 `plugin.rs` 内嵌 capability 字面量；`PermissionManifestRule` 接受 `&CapabilityRegistry` 参数）| A5 W4 + A3 W3 + M5-2 §4.2-4.3 + M5-10 §4.1 形态③ |
++| W6-HS5 | **不破 K1（ACL 末条恒为 `list_artifact_images`）+ K3 + K5** —— 任何 plugin_* 命令插入必须插在 `list_artifact_images` **之前**（W6 期间不插，但 W7+ 接入时严守）| M5-10 §5 FORBID + 全局 K1 |
++
++### W6 验证清单（供 A11 收口）
++
++- `cargo test --manifest-path src-tauri/Cargo.toml plugin` PASS（如 A9 W6 创建 plugin module）
++- `cargo test --manifest-path src-tauri/Cargo.toml domain` PASS
++- `cargo test --manifest-path src-tauri/Cargo.toml` 全绿（无新增 warning > 0；W6 受 A0 warning 门禁约束）
++- `python3 scripts/check-plugin-policy.py --self-test` PASS（ACTIVE=6）
++- `python3 scripts/check-plugin-policy.py` PASS
++- `python3 scripts/check-plugin-policy.py --expect-pending` PASS（如有 PENDING）
++- `bash scripts/pre-merge.sh` ALL_PASS
++- `git diff --check` CLEAN
++- A11 比对 `src-tauri/src/domain.rs` 与 A5 W4 capability.rs / A3 W3 MCP registry 0 drift
++- `grep -nE 'plugin_install|plugin_uninstall|plugin_list|plugin_get|plugin_enable|plugin_disable|plugin_keys_add' src-tauri/src/bridge.rs src-tauri/src/main.rs src-tauri/permissions/default-commands.toml src/bridge.ts src/types.ts` W6 期间 0 命中（10 条命令 W7+ 才插）
++- `grep -nE 'tauri::Manager|std::fs::write|reqwest|ureq' src-tauri/src/plugin.rs src-tauri/src/plugin_lifecycle.rs` 0 命中（无真实 IO / 无网络）
++- `grep -nE 'ed25519|ring::signature|signature::Signer' src-tauri/src/plugin.rs` 仅命中 `algorithm = "Ed25519"` 字面量声明（不命中真验证代码）
++- **A10 复审 PASS**（无 install runtime / 无网络 / 无签名强制 / 无 10 条命令 / capability 真源单点 / 隐私断言 / 状态机非法转移覆盖）
++- **A11 verification delta** 产出 `logs/checkpoints/M5-A11-W6-*.md`
++
++### W6 A1 不修订范围（本卡）
++
++- **§1 GOAL / §2 READ / §3 WRITE / §4 关键契约 / §5 FORBID / §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION / §9 DOC_BACKWRITE / §10 COMMIT / §11 FORBID 遵守记录**：A1 W6 **不动**（决策史保持 W0 原文；W6 AC 在本顶部段单列；M5-10 §4.1 形态决策与 §4.4 签名验证在 W6 **仅冻结 schema，不实装**）。
++- **三份主文档 / ACL / Capability / pre-merge.sh / scripts/**：A1 W6 不动（policy 脚本由 A9 W6 落地）。
++- **`NEXT` 标记**：A0 调度权；A1 不改字面值。
+
+ ---
+
+diff --git a/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md b/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md
+index 17c6781..d147fdc 100644
+--- a/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md
++++ b/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md
+@@ -5,6 +5,63 @@
+ > 父卡：`详细设计与实施计划.md` L575（`M5-11 插件命令与隔离`）
+ > 主预研：`logs/assist/M5-15.a-prework-20260902-1055.md` §4 · `logs/assist/A9-M5-plugin-form-feasibility-20260906-0700.md`
+ > 配套：`M5-10-plugin-manifest-lifecycle.md`（manifest 后端）· `M5-12-plugin-ui.md`（管理 UI）
++>
++> **W3** BLOCKED（待 M5-10 manifest 解析 + M5-2 capability.rs + 确认闸门）· **W4** ACTIVE（A9 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A9 W5 仍 SUPPORT DOCS ONLY）· **W6** ACTIVE（**A9 升级为 START PRODUCT CODE**：M5-11 commands_islolation shell + 5 命令 ACL stub + capability 校验骨架 + audit shape；详见本卡顶部 `[W6 next-card acceptance criteria]` 段）
++
++---
++
++## [W6 next-card acceptance criteria · 2026-09-06 19:25 CST] A9 M5-11 W6 实施期 acceptance criteria（commands_islolation shell + 5 命令 ACL stub + capability 校验骨架 + audit shape · 不接真实 install runtime / audit 仅 key_hash 不带 value / 不破 K1 ACL 末条恒为 list_artifact_images）
++
++> **依据**：`PARALLEL_COMMAND_BOARD.md` L160（**A9 M5-W6** *"Implement M5-10/M5-11 plugin manifest/lifecycle policy slice"*）+ L164-170 硬约束 + A3 W3 MCP 两段式确认闸门（`src-tauri/src/bridge.rs:688-790` 既有 pattern）+ A2 W2 constants centralized + A4 W4 agent_memory 审计基元（audit 仅 key_hash）。
++> **与 M5-10 W6 的边界（A9 W6 同 lane 双卡派发）**：
++> - **M5-10 W6 范围**（见 `M5-10-plugin-manifest-lifecycle.md` 顶部 [W6 next-card AC] 段）：PluginManifest DTOs + validation + lifecycle state machine + permission manifest rules + policy script；**0 新命令**。
++> - **M5-11 W6 范围（本卡）**：commands_islolation shell + 5 命令 ACL stub（**不**接入真实业务 handler）+ capability 校验骨架（基于 M5-10 AC-3 PermissionManifestRule）+ plugin-invokes.json audit shape（基于 A4 W4 agent_memory 审计基元）；**仍 0 命令接业务**，W6 仅完成"命令落地骨架 + ACL stub + audit shape"，**真实 install/uninstall runtime 在 W7+**。
++> **消费依赖（已落地，A9 W6 可直接接入）**：
++> - **A3 W3 MCP 两段式确认闸门**（`12f1cff` 拣入）—— A9 W6 5 命令 stub 复用同款闸门 pattern。
++> - **A4 W4 agent_memory 审计基元**（`1610939` 拣入）—— A9 W6 plugin-invokes.json audit **复用** key_hash only 模式，**不**写 value 字段。
++> - **M5-10 W6 PermissionManifestRule**（同 lane A9）—— A9 W6 capability 校验骨架直接调 `M5-10::permission_manifest_rule::check(...)` 纯函数。
++> - **A2 W2 constants**（`712a14c`）—— A9 W6 audit key 长度 / plugin-invokes.json 容量上限**复用**既有常量。
++> **A1 W6 角色**：A1 W6 **不**改 §1~§11 决策史；仅在头部加本 `[W6 next-card acceptance criteria]` 段，**明确 A9 W6 实施期 4 项 AC + 5 项 hard stops**（与 M5-10 W6 共享 hard stop 集），供 A9 / A10 / A11 / A0 验收。
++
++### W6 A9 M5-11 实施期 acceptance criteria（4 项）
++
++| AC | 描述 | 验收证据 |
++|----|------|----------|
++| AC-1 **commands_islolation shell 冻结** | `src-tauri/src/plugin_runtime.rs`（或 `src-tauri/src/plugin_invoke.rs`，A9 W6 决定；A9 W6 范围**不**创建此文件也可，**不强制**）追加 5 个 stub 纯函数（**仅**返回 `Err("not-implemented-in-W6")`）：① `plugin_invoke(plugin_id, capability, payload) -> Result<Json, InvokeError>` ② `plugin_invoke_cancel(invoke_id) -> Result<(), InvokeError>` ③ `plugin_permissions_get(plugin_id) -> Result<PermissionSummary, InvokeError>` ④ `plugin_audit_list(plugin_id, page) -> Result<AuditPage, InvokeError>` ⑤ `plugin_storage_get/put/delete(plugin_id, key)`（3 个合一 stub） —— 5 个 stub 函数**仅**接受 source check + ACL 校验，**不**做真实 IO，**不**接 M5-10 真实 manifest / lifecycle / 真实 capability registry；**仅**保留签名 + 参数骨架 | `cargo test --manifest-path src-tauri/Cargo.toml plugin_runtime` PASS（如创建文件）+ A10 抽查 5 stub 均为纯函数 |
++| AC-2 **5 命令 ACL stub**（**仅 ACL 条目，不接业务 handler**）| `src-tauri/permissions/default-commands.toml` 在 `list_artifact_images` **之前**插 5 条占位 ACL 条目（**仅**条目+name 字段；**不**在 `src-tauri/src/bridge.rs` / `main.rs` 注册 handler；**不**在 `src/bridge.ts` / `src/types.ts` 加 TS 镜像）：① `plugin_invoke` ② `plugin_invoke_cancel` ③ `plugin_permissions_get` ④ `plugin_audit_list` ⑤ `plugin_storage_get/put/delete`（合一）—— ACL 末条仍为 `list_artifact_images`（K1 严守）| `grep -nE 'plugin_invoke\|plugin_permissions_get\|plugin_audit_list\|plugin_storage' src-tauri/permissions/default-commands.toml` 命中 5 条 + `grep -n 'list_artifact_images' src-tauri/permissions/default-commands.toml` 末条仍在 |
++| AC-3 **capability 校验骨架** | `src-tauri/src/plugin_runtime.rs`（如 A9 W6 创建）追加 `check_plugin_capability(plugin_id, capability) -> Result<(), CapabilityError>` 纯函数：① 接受 `&PluginManifest`（M5-10 DTO）+ `&CapabilityRegistry`（capability.rs 既有）② 调用 M5-10 AC-3 `PermissionManifestRule::check(...)` ③ 返回 `CapabilityError::NotInWhitelist` / `CapabilityError::ManifestMissing` / `CapabilityError::Disabled` 三种 —— **不**做真实插件调用 / **不**做 IO | 单测 + A10 抽查 + M5-10 AC-3 共享验证 |
++| AC-4 **plugin-invokes.json audit shape** | ① `PluginInvokeRecord { invoke_id, plugin_id, capability, payload_key_hash, key_hash_only: true, status, at }` schema 在 `domain.rs` 冻结（**payload 仅 key_hash** 字段，**不**含 value；参考 A4 W4 审计基元）② `serialize_audit(record) -> serde_json::Value` 纯函数 ③ 容量上限：单条 `payload_key_hash` 16 字节 hex（**复用** A2 W2 `HASH_HEX_LEN_SHORT=16` 常量）；`plugin-invokes.json` 文件总字节 ≤ `MAX_TEXT_FIELD_BYTES=64KiB`（**复用** A2 W2 常量，超限 FIFO 裁剪）④ 不写 secret / token / DSN（隐私断言 0 命中）| `cargo test --manifest-path src-tauri/Cargo.toml plugin_runtime` PASS + A10 抽查 audit JSON 无 value 字段 |
++
++### W6 A9 M5-11 实施期 hard stops（5 项，与 M5-10 共享集 + 本卡强化）
++
++| HS | 约束 | 来源 |
++|----|------|------|
++| W6-HS1 | **5 命令仅 stub**（**不**接业务 handler / **不**在 `bridge.rs` / `main.rs` 注册；ACL 条目占位即可；真实 install/uninvoke runtime 在 W7+）| PARALLEL_COMMAND_BOARD L160 + L168 + L169（*"prefer no command in W6"*）|
++| W6-HS2 | **audit 仅 key_hash 不带 value**（`PluginInvokeRecord.payload_key_hash` 16-hex sha256 摘要；**不**含 payload value / 敏感字段 / DSN / token）| A4 W4 audit 模式 + 隐私双扫 + K 隐私全网 |
++| W6-HS3 | **capability 真源单点**（`check_plugin_capability` 接受 `&CapabilityRegistry` 参数；**不**在 `plugin_runtime.rs` 内嵌 capability 字面量白名单）| M5-10 W6 AC-3 + M5-2 §4.2-4.3 + A3 W3 |
++| W6-HS4 | **不破 K1（ACL 末条恒为 `list_artifact_images`）** —— 5 条 stub ACL 必须插在 `list_artifact_images` **之前** | M5-11 §5 FORBID + 全局 K1 |
++| W6-HS5 | **不接 M5-10 真实 lifecycle / 不做网络 / 不做下载 / 不做签名强制** —— 5 stub 函数**不**调 `transition()` 真实跑状态机（**仅**返回 `Err("not-implemented-in-W6")`）| PARALLEL_COMMAND_BOARD L168 + M5-10 W6 W6-HS1+HS2 |
++
++### W6 验证清单（供 A11 收口）
++
++- `cargo test --manifest-path src-tauri/Cargo.toml plugin_runtime` PASS（如 A9 W6 创建 module）
++- `cargo test --manifest-path src-tauri/Cargo.toml` 全绿（无新增 warning > 0）
++- `python3 scripts/check-plugin-policy.py --self-test` PASS（ACTIVE=6，**新增** 1 条 `PLUGIN_AUDIT_KEY_HASH_ONLY`，A9 W6 落地时同步加码）
++- `python3 scripts/check-plugin-policy.py` PASS
++- `bash scripts/pre-merge.sh` ALL_PASS
++- `git diff --check` CLEAN
++- `grep -nE 'plugin_invoke\|plugin_permissions_get\|plugin_audit_list\|plugin_storage' src-tauri/permissions/default-commands.toml` 命中 5 条 ACL stub
++- `grep -nE 'plugin_invoke\|plugin_permissions_get\|plugin_audit_list\|plugin_storage' src-tauri/src/bridge.rs src-tauri/src/main.rs src/bridge.ts src/types.ts` **W6 期间 0 命中**（不接业务 handler；W7+ 才接）
++- `grep -nE 'tauri::Manager\|std::fs::write\|std::fs::read\|reqwest\|ureq' src-tauri/src/plugin_runtime.rs src-tauri/src/plugin_invoke.rs` 0 命中（无真实 IO / 无网络）
++- A11 比对 `domain.rs` `PluginInvokeRecord` 与 A4 W4 audit schema 0 drift
++- **A10 复审 PASS**（5 stub 纯函数 / ACL 占位 / capability 真源单点 / audit 仅 key_hash / 无 IO / 无网络 / K1 严守）
++- **A11 verification delta** 产出 `logs/checkpoints/M5-A11-W6-*.md`
++
++### W6 A1 不修订范围（本卡）
++
++- **§1 GOAL / §2 READ / §3 WRITE / §4 关键契约 / §5 FORBID / §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION / §9 DOC_BACKWRITE / §10 COMMIT / §11 FORBID 遵守记录**：A1 W6 **不动**（决策史保持 W0 原文；W6 AC 在本顶部段单列；M5-11 §3 WRITE 5 命令在 W6 **仅** ACL stub，**不**接业务 handler；真实 18 命令集在 W7+）。
++- **三份主文档 / ACL 末条 / Capability / pre-merge.sh / scripts/**：A1 W6 不动（5 命令 ACL stub 由 A9 W6 落地）。
++- **`NEXT` 标记**：A0 调度权；A1 不改字面值。
+
+ ---
+
+diff --git a/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md b/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md
+index 73d0897..dc55b0f 100644
+--- a/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md
++++ b/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md
+@@ -5,6 +5,29 @@
+ > 父卡：`详细设计与实施计划.md` L576（`M5-12 插件管理 UI`）
+ > 主预研：暂无 prework 文档
+ > 配套：`M5-10-plugin-manifest-lifecycle.md`（manifest 后端）· `M5-11-plugin-commands-isolation.md`（命令与隔离）
++>
++> **W3** BLOCKED（待 M5-10 解析 + M5-11 命令基元）· **W4** ACTIVE（A19 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A19 W5 仍 SUPPORT DOCS ONLY）· **W6** ACTIVE（A19 W6 仍 SUPPORT DOCS ONLY —— W6 仅 A8 M5-9 + A9 M5-10/M5-11 产品代码 lane，**无 plugin UI lane 承接**；详见本卡顶部 `[W6 status]` 段）
++
++---
++
++## [W6 status · 2026-09-06 19:25 CST] A19 M5-12 W6 仍 SUPPORT DOCS ONLY（无 plugin UI lane 承接；W7+ 待 A9 W6 plugin backend 落地后由 A0 决定派发）
++
++> **依据**：`PARALLEL_COMMAND_BOARD.md` L136-171（**M5-W6 Parallel Dispatch**：仅 **A8** *START PRODUCT CODE*（M5-9 graph UI）+ **A9** *START PRODUCT CODE*（M5-10/M5-11 plugin manifest/lifecycle policy slice）—— **未**列 A19 *START PRODUCT CODE*；其它 9 lane 全部 SUPPORT/REVIEW/VERIFICATION）+ L7（*"Current NEXT: M5-W6 parallel implementation; Lane A8 owns M5-9 graph UI pure logic/panel shell, Lane A9 owns M5-10/11 plugin manifest/lifecycle policy slice"* —— **未**提 A19 plugin UI）。
++> **A19 W6 仍 SUPPORT DOCS ONLY 的原因**：
++> - **A9 W6 plugin manifest/lifecycle policy slice 仍在落 schema / stub / ACL** —— 真实 install/uninstall runtime 在 W7+；M5-12 plugin UI 必须消费**已落地的真实 manifest / 真实 lifecycle state / 真实 5 命令 handler** 才能做（plugin 列表 / 安装向导 / 启用停用 / 审计查询 / 权限预览 等 UI 元素**全部依赖** W7+ 的真实 plugin runtime 后端）。
++> - **A8 W6 已经在做 M5-9 graph UI** —— UI lane 仅 A8 一条；M5-12 plugin UI 不能与 A8 W6 抢资源（A19 UI 范式 = A6 W5 / A8 W6 复用一致，但 plugin 域独立，避免 W6 期间双 UI lane 互相干扰）。
++> - **d3 / npm 依赖** —— A8 W6 不引 d3 已在 W6-HS4 严守；A19 W6 plugin UI 若开须 1+ 轮 npm 引入决议（W7+）。
++> **A19 W6 应做的（轻量）**：
++> ① 重读 A9 W6 output（A9 W6 实施期产出物）确认 manifest DTO / lifecycle state machine / 5 命令 ACL stub / plugin-invokes.json audit shape 实际形态
++> ② 重读 A8 W6 graph UI 范式（`f99d2eb` 拣入的 Agent/Skill panel shell + `4b438ef` 拣入的 graph 模型/常量/隐私双扫）确认 UI 模式
++> ③ 在 `logs/assist/A19-M5-W6-*.md` 出 W6 plugin UI card delta（**仅 docs**，**不**写 plugin UI 代码），**不**碰 `src/components/plugin/**` / `src/stores/plugin*.ts` / `src/types.ts` / `src/bridge.ts`
++> ④ 在本卡 `M5-12-plugin-ui.md`（如需）补 W6 status 行（**不**动 §1~§11）
++> **A19 W6 不应做的**：① 写 plugin 列表 / 安装向导 / 启用停用 / 审计查询 / 权限预览任何 UI 组件 ② 写 `usePluginStore.ts` 状态管理 ③ 改 §1~§11 决策史 ④ 改本根卡（M5-0）/M5-10/M5-11 任何 AC 段 ⑤ 改三份主文档 / ACL / Capability / pre-merge.sh / Cargo.toml / package.json
++> **A1 W6 不修订范围（本卡）**：
++> - **§1 GOAL / §2 READ / §3 WRITE / §4 关键契约 / §5 FORBID / §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION / §9 DOC_BACKWRITE / §10 COMMIT / §11 FORBID 遵守记录**：A1 W6 **不动**（决策史保持 W0 原文；A19 W6 status 在本顶部段单列）。
++> - **三份主文档 / ACL / Capability / pre-merge.sh / scripts/**：A1 W6 不动。
++> - **`NEXT` 标记**：A0 调度权；A1 不改字面值。
++> - **A1 W6 强停止**：本卡本轮**仅**加本 `[W6 status]` 段 + 头部状态行；**不**写 next-card AC（与 M5-9/10/11 不同——M5-12 在 W6 没有产品代码 lane 承接）。
+
+ ---
+
+diff --git a/logs/checkpoints/M5-20260906/M5-9-graph-ui-agent-consume.md b/logs/checkpoints/M5-20260906/M5-9-graph-ui-agent-consume.md
+index a1587ac..b4aac06 100644
+--- a/logs/checkpoints/M5-20260906/M5-9-graph-ui-agent-consume.md
++++ b/logs/checkpoints/M5-20260906/M5-9-graph-ui-agent-consume.md
+@@ -6,7 +6,7 @@
+ > 主预研：暂无 prework 文档（A8 prework 仍空）
+ > 配套：`M5-8-graph-store-query.md`（DTO 稳定）
+ >
+-> **W3** BLOCKED（待 A7 W5 schema 落地）· **W4** ACTIVE（A8 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A8 W5 仍 SUPPORT DOCS ONLY，待 A7 W5 schema 落地后 W6+ 由 A0 决定）
++> **W3** BLOCKED（待 A7 W5 schema 落地）· **W4** ACTIVE（A8 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A8 W5 仍 SUPPORT DOCS ONLY，待 A7 W5 schema 落地后 W6+ 由 A0 决定）· **W6** ACTIVE（**A8 升级为 START PRODUCT CODE**：graph UI pure logic + panel shell；详见本卡顶部 `[W6 next-card acceptance criteria]` 段）
+
+ ---
+
+@@ -28,6 +28,60 @@
+
+ ---
+
++## [W6 next-card acceptance criteria · 2026-09-06 19:25 CST] A8 M5-9 W6 实施期 acceptance criteria（graph UI pure logic + panel shell · 不加 commands / 不调 live agent consumption / 不调 model calls / 不加 graph rebuild workers）
++
++> **依据**：`PARALLEL_COMMAND_BOARD.md` L159（**A8 M5-W6** *"Implement M5-9 graph UI pure logic and panel shell: graph list/search/filter, node detail summary, capacity/error/empty states, helper module + headless logic test. Do not call live agent consumption or backend graph commands unless already existing and fully typed."*）+ L164-170 硬约束 + A6 W5 UI panel shell 范式（`f99d2eb` 拣入）+ A7 W5 graph model/store policy slice（`4b438ef` 拣入：`src-tauri/src/graph.rs` + `domain.rs` GraphNode/Edge + 7 容量常量 + check-graph-policy.py 7 ACTIVE 码）。
++> **消费依赖（已落地，A8 W6 可直接接入）**：
++> - **A7 W5 GraphNode/GraphEdge DTO 已落**（`4b438ef` 拣入 `src-tauri/src/domain.rs` 追加）—— A8 W6 UI 在 `src/types.ts` 加对应 TS 镜像（无 drift）。
++> - **A7 W5 graph 容量常量已锁**（`4b438ef` 拣入：`GRAPH_PROPS_MAX_BYTES=MAX_TEXT_FIELD_BYTES=64KiB`、`GRAPH_LABEL_MAX_BYTES=256`、`GRAPH_NODE_ID_HEX_LEN=64`、`GRAPH_MAX_DEPTH=4`、`GRAPH_QUERY_LIMIT=1000`、`GRAPH_MAX_NODES=5000`、`GRAPH_MAX_EDGES=20000`）—— A8 W6 UI 容量提示/截断/分页**直接复用**这 7 个常量，**禁止在 UI 层重定义**。
++> - **A7 W5 graph store/query helpers 已落**（`4b438ef` 拣入 `src-tauri/src/graph.rs`）—— A8 W6 UI 在 `src/bridge.ts` 加 `graph_query` 包装时**只读** `GraphNode` / `GraphEdge` shape，**不**消费 `GraphProps` 正文（K7）。
++> - **A6 W5 面板壳范式已锁**（`f99d2eb` 拣入 `src/components/agent/SkillManager.vue` / `PermissionPreviewModal.vue`）—— A8 W6 `GraphPanel.vue` 复用 useLayoutStore + MOD_META no-router 锚点 + Agent/Skill 校验/permission preview 模式。
++> - **A4 W4 agent_kv 已落**（`1610939` `agent_memory.rs`）—— A8 W6 UI **不**消费 agent_kv 业务（仅当 graph 节点含 agent 引用时按 sha256 id 显示）。
++> **A1 W6 角色**：A1 W6 **不**改 §1~§11 决策史；仅在头部加本 `[W6 next-card acceptance criteria]` 段，**明确 A8 W6 实施期 4 项 AC + 5 项 hard stops**，供 A8 / A10 / A11 / A0 验收。
++
++### W6 A8 M5-9 实施期 acceptance criteria（4 项）
++
++| AC | 描述 | 验收证据 |
++|----|------|----------|
++| AC-1 **graph UI 纯逻辑 helper module 冻结** | `src/utils/graphUi.ts`（或类似 helper）冻结纯函数：① `filterGraphNodes(nodes, filter: GraphFilter) -> GraphNode[]`（按 kind / source / label 包含过滤）② `searchGraphNodes(nodes, query: string, opts) -> SearchResult[]`（label 模糊 + id 精确双轨；query 长度 0-200 字符；空 query 返回 `[]`）③ `summarizeNode(node: GraphNode) -> NodeSummary`（**不**含 `props` 正文，仅 id / kind / label / source / source_ref / created_at / updated_at / extractor_version + 邻居计数）④ `emptyStateFor(reason) -> EmptyStateDescriptor`（list-empty / filtered-empty / no-search-result 三态）⑤ `errorStateFor(err) -> ErrorStateDescriptor`（load-fail / parse-fail / action-fail 三态）⑥ `truncateLabel(label, maxBytes) -> string`（**复用** `GRAPH_LABEL_MAX_BYTES=256` 常量） —— 全部纯函数（无 Tauri invoke、无网络、无 fs）| `node scripts/check-graph-ui-logic.mjs` PASS + A11 抽查 |
++| AC-2 **graph list/search/filter + node detail summary** | 面板（`src/components/graph/GraphPanel.vue` 或类似）实现：① list 视图（按 kind 分组 + 滚动分页，每页 ≤ `GRAPH_QUERY_LIMIT/10`）② search 输入框（`useGraphUi().searchGraphNodes` + 300ms debounce + 取消上次未完成查询）③ filter 侧栏（kind 多选 + source 下拉 + label 包含）④ node detail 抽屉（调 `summarizeNode`，**不显示 `props` 正文**，**不显示 `GraphProps` 任何字段**）⑤ source_ref 链接 → 走既有 `capability.rs` 校验的 source 跳转（**不**绕过 bridge.ts）| UI 逻辑单测 + 视觉走查（manual checklist）+ A10 抽查 K7 零泄露 |
++| AC-3 **capacity / error / empty 状态三件套** | 面板必须实现：① 容量提示（`node_count >= GRAPH_MAX_NODES*0.8` 时显示"接近上限 GRAPH_MAX_NODES=5000"，**禁止**展示真实后端报错堆栈）② error 状态（`load-fail` 显示重试图标 + 1 行 hint，**不**展示 backend error 全貌）③ empty 状态（list-empty / filtered-empty / no-search-result 至少 3 种）④ 所有状态**不**暴露任何后端原始字段（如 `error.stack` / `node.props` 任意键 / DSN / token）| `node scripts/check-graph-ui-logic.mjs` 含 capacity/error/empty 覆盖 + A11 抽查 |
++| AC-4 **headless logic test + 容量/隐私双扫** | `scripts/check-graph-ui-logic.mjs` 必须含：① 7+ 单测（filter / search / summarize / empty×3 / error×3 / truncate / capacity 边界）② 隐私断言（`summarizeNode` 输出**不**含 `props` 任何键名 → grep 0 命中 `props`）③ 容量断言（`truncateLabel(label, 256)` 截断后字节 ≤ 256）④ 容量常量真源单点（`src/utils/graphUi.ts` 内**不**写容量字面量，必须 import 自 `src/types.ts`（镜像 `domain.rs`））| `node scripts/check-graph-ui-logic.mjs` PASS + `grep -nE 'GRAPH_MAX_NODES\s*=\|GRAPH_LABEL_MAX_BYTES\s*=' src/utils/graphUi.ts` 0 命中（真源在 types.ts）|
++
++### W6 A8 M5-9 实施期 hard stops（5 项）
++
++| HS | 约束 | 来源 |
++|----|------|------|
++| W6-HS1 | **不加后端 commands**（`bridge.rs` / `main.rs` / `default-commands.toml` **不**新增 `graph_*` 命令；如确需新增须满足 source check + ACL + bridge/types + policy + tests 原子同包）| PARALLEL_COMMAND_BOARD L159 + L169（*"prefer no command in W6"*）|
++| W6-HS2 | **不调 live agent consumption**（**不**调 `agent_chat` / `agent_memory_*` / `skill_*`）—— UI 仅展示，不参与 RAG 注入（`useGraphRag.ts` / RAG 注入契约在 M5-9 §4.3 暂**冻结**到 W7+）| PARALLEL_COMMAND_BOARD L159 + L167 |
++| W6-HS3 | **不调 model calls**（**不**做 embedding 重建 / **不**调 LLM / **不**做 graph rebuild workers / **不**加 background job）—— UI 仅消费 A7 W5 已落地的 GraphNode/Edge DTO 静态快照（or polling，**不**订阅 push 事件）| PARALLEL_COMMAND_BOARD L159 + L167 |
++| W6-HS4 | **无新 npm 依赖**（**不**引入 `d3-force` / `d3-zoom` / `d3-drag` 等 d3 子模块包到 W6；d3 可在 W7+ 真接 layout 时引入；W6 阶段可仅用 `useGraphUi().filterGraphNodes` + 简单列表 + 不做力导向布局；如确实需 placeholder 列表 + 静态边框，**不**引 d3 整包）| A8 W6 dispatch L159 + W5-HS7 |
++| W6-HS5 | **K7 严守**：`summarizeNode` / node detail / list / search / filter **不**展示 `props` 任何字段（key 名 / value）—— 隐私双扫由 A7 W5 check-graph-policy.py 的 GRAPH_PRIVACY_DOUBLE_SCAN 已落，A8 W6 **不**写 UI 副本；UI 仅消费 `id / kind / label / source / source_ref / created_at / updated_at / extractor_version` 8 个白名单字段 | A7 W5 check-graph-policy.py + A4 W4 隐私双扫 + K7 |
++
++### W6 验证清单（供 A11 收口）
++
++- `npm run build` PASS（`dist/assets/index-*.js` 大小不破 IF-2 阈值；W6 仍受 A0 大小门禁约束）
++- `node scripts/check-graph-ui-logic.mjs` PASS
++- `python3 scripts/check-graph-ui-policy.py --self-test` PASS（如新增 UI policy 脚本）
++- `python3 scripts/check-graph-ui-policy.py` PASS
++- `python3 scripts/check-graph-ui-policy.py --expect-pending` PASS（如有 PENDING）
++- `bash scripts/pre-merge.sh` ALL_PASS
++- `git diff --check` CLEAN
++- A11 比对 `src/types.ts` 与 A7 W5 GraphNode/GraphEdge 0 drift
++- `grep -nE 'GRAPH_MAX_NODES\s*=\|GRAPH_LABEL_MAX_BYTES\s*=' src/utils/graphUi.ts` 0 命中（容量真源在 types.ts）
++- `grep -nE 'props' src/utils/graphUi.ts src/components/graph/GraphPanel.vue` 仅命中 `summarizeNode` 不导出 props 字段的注释（不命中 props 值/键）
++- `grep -nE 'agent_chat|skill_run|graph_rag' src/components/graph/ src/utils/graphUi.ts` 0 命中（无 live agent consumption / 无 RAG 注入 / 无 model calls）
++- **A10 复审 PASS**（K7 零泄露 / 无新命令 / 无 live agent / 无 model call / 无 rebuild workers / 无 npm 依赖 / capacity 真源单点）
++- **A11 verification delta** 产出 `logs/checkpoints/M5-A11-W6-*.md`
++
++### W6 A1 不修订范围（本卡）
++
++- **§1 GOAL / §2 READ / §3 WRITE / §4 关键契约 / §5 FORBID / §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION / §9 DOC_BACKWRITE / §10 COMMIT / §11 FORBID 遵守记录**：A1 W6 **不动**（决策史保持 W0 原文；W6 AC 在本顶部段单列；M5-9 §4.3 RAG 注入契约暂冻结到 W7+ 由 A0 决定）。
++- **三份主文档 / ACL / Capability / pre-merge.sh / scripts/**：A1 W6 不动（policy 脚本由 A8 W6 落地）。
++- **`NEXT` 标记**：A0 调度权；A1 不改字面值。
++
++---
++
+ ## 0. 编号与锚定
+
+ - 批次任务号 `M5-9`；需求号 #13；WBS L572 一致。
+diff --git a/scripts/check-graph-ui-logic.mjs b/scripts/check-graph-ui-logic.mjs
+new file mode 100644
+index 0000000..7a89867
+--- /dev/null
++++ b/scripts/check-graph-ui-logic.mjs
+@@ -0,0 +1,193 @@
++#!/usr/bin/env node
++// ---------------------------------------------------------------------------
++// M5-9（知识图谱 UI）前端逻辑层自动化测试（headless，无 GUI 依赖）
++//
++// 直接加载真实的 src/utils/graphUi.ts（纯逻辑层，无 invoke / DOM / store 依赖），
++// 只把产品代码行为作为断言对象。不 mock 逻辑层自身。
++//
++// 用法: node scripts/check-graph-ui-logic.mjs
++// 退出码: 0 = 全部通过；1 = 有断言失败
++// ---------------------------------------------------------------------------
++
++import * as nodeModule from "node:module";
++
++function resolveWithExt(specifier, context, next) {
++  try {
++    return next(specifier, context);
++  } catch (err) {
++    if (specifier.startsWith(".") || specifier.startsWith("/")) {
++      for (const ext of [".ts", "/index.ts", ".mjs", ".js"]) {
++        try {
++          return next(specifier + ext, context);
++        } catch {}
++      }
++    }
++    throw err;
++  }
++}
++
++if (typeof nodeModule.registerHooks === "function") {
++  nodeModule.registerHooks({ resolve: resolveWithExt });
++} else {
++  nodeModule.register(
++    "data:text/javascript," +
++      encodeURIComponent(
++        `export async function resolve(specifier, context, next) {
++  return globalThis.__m48Resolve(specifier, context, next);
++}`
++      )
++  );
++  globalThis.__m48Resolve = resolveWithExt;
++}
++
++// 最小浏览器桩（graphUi 纯逻辑不需要，但保留以兼容潜在 import 链）
++globalThis.window = {
++  setTimeout: (fn, ms) => setTimeout(fn, ms),
++  clearTimeout: (h) => clearTimeout(h),
++  setInterval: () => 0,
++  clearInterval: () => {},
++};
++globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
++
++const ROOT = new URL("..", import.meta.url).pathname;
++const graphUi = await import(`${ROOT}src/utils/graphUi.ts`);
++
++let passed = 0;
++let failed = 0;
++function ok(name, cond) {
++  if (cond) {
++    passed++;
++    console.log("  ✓ " + name);
++  } else {
++    failed++;
++    console.error("  ✗ " + name);
++  }
++}
++function eq(name, a, b) {
++  ok(name + ` (got=${JSON.stringify(a)})`, JSON.stringify(a) === JSON.stringify(b));
++}
++
++const node = (id, kind, label) => ({ id, kind, label, props: {} });
++const edge = (from, to, kind, weight = 1) => ({ from, to, kind, weight, props: {} });
++
++// ---- elementKind 判别 ----
++ok("elementKind: node", graphUi.elementKind(node("n1", "file", "a")) === "node");
++ok("elementKind: edge", graphUi.elementKind(edge("n1", "n2", "references")) === "edge");
++ok("elementKind: unknown", graphUi.elementKind({ foo: 1 }) === "unknown");
++ok("elementKind: null", graphUi.elementKind(null) === "unknown");
++
++// ---- 标签/配色 ----
++eq("nodeKindLabel.agent", graphUi.nodeKindLabel("agent"), "智能体");
++eq("edgeKindLabel.uses", graphUi.edgeKindLabel("uses"), "使用");
++ok("nodeColor 非空", graphUi.nodeColor("agent").length > 0);
++
++// ---- 摘要（K7：不泄露 props）----
++const sn = graphUi.summarizeNode(node("n1", "skill", "S1"));
++ok("summarizeNode 不含 props", !("props" in sn));
++eq("summarizeNode.isAgentConsumption(skill)", sn.isAgentConsumption, true);
++const se = graphUi.summarizeEdge(edge("a", "s", "uses"));
++ok("summarizeEdge.agentConsumption(uses)", se.agentConsumption === true);
++ok("summarizeEdge 不含 props", !("props" in se));
++
++// ---- isAgentConsumptionEdge ----
++ok("isAgentConsumptionEdge uses", graphUi.isAgentConsumptionEdge(edge("a", "s", "uses")) === true);
++ok(
++  "isAgentConsumptionEdge references",
++  graphUi.isAgentConsumptionEdge(edge("a", "s", "references")) === false,
++);
++
++// ---- 布局（确定性、无随机、坐标有限）----
++eq("layoutKindOf tree(in_dir)", graphUi.layoutKindOf([edge("a", "b", "in_dir")]), "tree");
++eq(
++  "layoutKindOf cluster(tagged_with)",
++  graphUi.layoutKindOf([edge("a", "b", "tagged_with")]),
++  "cluster",
++);
++eq("layoutKindOf force", graphUi.layoutKindOf([edge("a", "b", "references")]), "force");
++const ns = [node("a", "file", "A"), node("b", "dir", "B"), node("c", "skill", "C")];
++const pts = graphUi.layoutPositions(ns, [edge("a", "b", "references")]);
++ok("layoutPositions 数量一致", pts.length === ns.length);
++ok(
++  "layoutPositions 坐标有限",
++  pts.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y)),
++);
++ok(
++  "layoutPositions 稳定（无随机）",
++  JSON.stringify(graphUi.layoutPositions(ns, [edge("a", "b", "references")])) ===
++    JSON.stringify(pts),
++);
++
++// ---- 容量 ----
++const cap = graphUi.estimateCapacity(50, 200);
++eq("capacity.nodeUsedPct(50/5000=1%)", cap.nodeUsedPct, 1);
++ok("capacity.withinLimit(true)", cap.withinLimit === true);
++const cap2 = graphUi.estimateCapacity(6000, 10);
++ok("capacity.withinLimit(false>max)", cap2.withinLimit === false);
++eq("capacity.nodeUsedPct clamp100", cap2.nodeUsedPct, 100);
++
++// ---- 搜索/过滤 ----
++const data = [
++  node("f1", "file", "README"),
++  node("s1", "skill", "Summarizer"),
++  node("a1", "agent", "Helper"),
++];
++eq(
++  "filterNodes by query(忽略大小写)",
++  graphUi.filterNodes(data, { query: "readme", kinds: [] }).map((n) => n.id),
++  ["f1"],
++);
++eq(
++  "filterNodes by kinds",
++  graphUi.filterNodes(data, { query: "", kinds: ["skill", "agent"] }).map((n) => n.id),
++  ["s1", "a1"],
++);
++eq(
++  "filterNodes by kindLabel query",
++  graphUi.filterNodes(data, { query: "技能", kinds: [] }).map((n) => n.id),
++  ["s1"],
++);
++const edgesData = [edge("f1", "s1", "uses"), edge("a1", "s1", "a2a_with")];
++eq(
++  "filterEdges 保留两端可见(全可见)",
++  graphUi.filterEdges(edgesData, data, { query: "", kinds: [] }).length,
++  2,
++);
++eq(
++  "filterEdges 仅保留两端可见(按 agent 过滤后为空)",
++  graphUi.filterEdges(edgesData, data, { query: "", kinds: ["agent"] }).length,
++  0,
++);
++
++// ---- 有界合并 ----
++let m = new Map();
++m = graphUi.boundedInsert(m, [node("1", "file", "a"), node("2", "file", "b")], 2);
++ok("boundedInsert 初始大小", m.size === 2);
++m = graphUi.boundedInsert(m, [node("3", "file", "c")], 2);
++ok("boundedInsert 超上限丢弃最旧", m.size === 2 && !m.has("1"));
++
++// ---- 面板三态 ----
++eq(
++  "panelStateGraph backendReady=false empty",
++  graphUi.panelStateGraph({ loading: false, count: 0, error: null, backendReady: false }).state,
++  "empty",
++);
++ok(
++  "panelStateGraph 提示只读壳",
++  graphUi.panelStateGraph({ loading: false, count: 0, error: null, backendReady: false }).message.includes(
++    "只读壳",
++  ),
++);
++eq(
++  "panelStateGraph error",
++  graphUi.panelStateGraph({ loading: false, count: 0, error: "boom", backendReady: true }).state,
++  "error",
++);
++eq(
++  "panelStateGraph ready",
++  graphUi.panelStateGraph({ loading: false, count: 5, error: null, backendReady: true }).state,
++  "ready",
++);
++
++// ---- 结果 ----
++console.log(`\n图谱 UI 逻辑测试：通过 ${passed}，失败 ${failed}`);
++process.exit(failed === 0 ? 0 : 1);
+diff --git a/src-tauri/src/security_policy.rs b/src-tauri/src/security_policy.rs
+index 3a79ff4..07291c3 100644
+--- a/src-tauri/src/security_policy.rs
++++ b/src-tauri/src/security_policy.rs
+@@ -61,6 +61,12 @@ pub enum PolicyError {
+     UnknownCapability(String),
+     /// 必填字段为空（id / version 等）。
+     EmptyRequiredField(String),
++    /// 插件 manifest 结构非法（schema 边界 / 形态③入口 / 哈希 / 元数据体量等）。
++    InvalidPluginManifest(String),
++    /// 插件签名结构非法（仅 W6 结构校验；真 Ed25519 验签由运行时 lane 在本地完成）。
++    InvalidPluginSignature(String),
++    /// 插件生命周期非法迁移。
++    PluginStateTransition(String),
+ }
+
+ impl std::fmt::Display for PolicyError {
+@@ -118,6 +124,15 @@ impl std::fmt::Display for PolicyError {
+             PolicyError::EmptyRequiredField(field) => {
+                 write!(f, "必填字段为空：{field}")
+             }
++            PolicyError::InvalidPluginManifest(msg) => {
++                write!(f, "插件 manifest 非法：{msg}")
++            }
++            PolicyError::InvalidPluginSignature(msg) => {
++                write!(f, "插件签名结构非法（仅 W6 结构校验）：{msg}")
++            }
++            PolicyError::PluginStateTransition(msg) => {
++                write!(f, "插件生命周期非法迁移：{msg}")
++            }
+         }
+     }
+ }
+diff --git a/src/bridge.ts b/src/bridge.ts
+index 5d78553..a81e9ec 100644
+--- a/src/bridge.ts
++++ b/src/bridge.ts
+@@ -49,6 +49,8 @@ import type {
+   AgentRunRecord,
+   SkillDef,
+   SkillRunRecord,
++  GraphEdge,
++  GraphNode,
+ } from "./types";
+
+ /// M4-8 可用性开关：A7（M4-6 / M4-7）已落地后端 `task_list / task_add / task_update /
+@@ -63,6 +65,12 @@ export const TASK_COMMANDS_AVAILABLE = true;
+ // 这是 board「LIMITED START」的落地方式：命令未就绪时**不假借未实现的命令名假装可用**。
+ export const AGENT_SKILL_COMMANDS_AVAILABLE = false;
+
++// M5-9 可用性开关：A7（M5-7/8）已落地 GraphNode/GraphEdge DTO + 有界存储（domain.rs / graph.rs /
++// check-graph-policy.py），但 **graph_* 后端命令（graph_query 等）尚未落地**；故置 `false` →
++// useGraphStore 不发出任何 invoke（只读壳）。命令落地后置 true 即可解锁面板实时载入。
++// 这是 board「LIMITED START」的落地方式：命令未就绪时**不假借未实现的命令名假装可用**。
++export const GRAPH_COMMANDS_AVAILABLE = false;
++
+ // M0-0.b 测量配置（契约 logs/m0-baseline-contract-v1.md；非测量运行后端返回 null）
+ export interface M0Config {
+   run_id: string;
+@@ -373,6 +381,12 @@ export const bridge = {
+
+   agentRunCancel: (runId: string) => invoke("agent_chat_cancel", { runId }),
+
++  // ====== M5-9 图谱面板（命令名沿用 A7 M5-7/8 规划的 graph_*；A8 前端封装）======
++  // 后端实现归 A7（后续 wave 落地 graph_query 等）；前端只在 GRAPH_COMMANDS_AVAILABLE 为 true 时调用。
++  // W6 当前后端命令尚未落地，故该标志为 false，useGraphStore 在调用前一律拦截（零 invoke）。
++  // 以下封装是「契约占位」，命令落地后组件无需改动。
++  graphQuery: () => invoke<{ nodes: GraphNode[]; edges: GraphEdge[] }>("graph_query"),
++
+   // 运行历史（读 skill-runs.json / agent-runs.json，各自 500 上限 FIFO）。
+   skillRunsList: (id: string) => invoke<SkillRunRecord[]>("skill_runs_list", { id }),
+   agentRunsList: (id: string) => invoke<AgentRunRecord[]>("agent_runs_list", { id }),
+diff --git a/src/components/graph/EdgeDetail.vue b/src/components/graph/EdgeDetail.vue
+new file mode 100644
+index 0000000..a3255a4
+--- /dev/null
++++ b/src/components/graph/EdgeDetail.vue
+@@ -0,0 +1,33 @@
++<script setup lang="ts">
++import { computed } from "vue";
++import { useGraphStore } from "../../stores/useGraphStore";
++import { summarizeEdge } from "../../utils/graphUi";
++import type { GraphEdge } from "../../types";
++
++const props = defineProps<{ edge: GraphEdge | null }>();
++const summary = computed(() => (props.edge ? summarizeEdge(props.edge) : null));
++</script>
++
++<template>
++  <div class="detail" v-if="summary">
++    <h3>边详情</h3>
++    <dl>
++      <dt>从</dt><dd class="mono">{{ summary.from }}</dd>
++      <dt>到</dt><dd class="mono">{{ summary.to }}</dd>
++      <dt>类型</dt><dd>{{ summary.kindLabel }}</dd>
++      <dt>权重</dt><dd>{{ summary.weight }}</dd>
++      <dt>消费边</dt><dd>{{ summary.agentConsumption ? "是（Agent 消费关系）" : "否" }}</dd>
++    </dl>
++    <p class="note">属性(props)已脱敏，界面不展示。</p>
++  </div>
++  <div class="detail empty" v-else>选择一条边查看详情</div>
++</template>
++
++<style scoped>
++.detail { padding: 12px; }
++.detail.empty { color: #999; }
++.mono { font-family: monospace; word-break: break-all; }
++.note { font-size: 11px; color: #999; margin-top: 8px; }
++dl { display: grid; grid-template-columns: 64px 1fr; gap: 4px 8px; margin: 0; }
++dt { color: #888; }
++</style>
+diff --git a/src/components/graph/GraphFilter.vue b/src/components/graph/GraphFilter.vue
+new file mode 100644
+index 0000000..3d09ac8
+--- /dev/null
++++ b/src/components/graph/GraphFilter.vue
+@@ -0,0 +1,47 @@
++<script setup lang="ts">
++import { computed } from "vue";
++import { useGraphStore } from "../../stores/useGraphStore";
++import { GRAPH_NODE_KINDS, nodeKindLabel } from "../../utils/graphUi";
++
++const store = useGraphStore();
++const kindOptions = GRAPH_NODE_KINDS.map((k) => ({ value: k, label: nodeKindLabel(k) }));
++const activeKinds = computed(() => store.filter.kinds);
++
++function onSearch(e: Event): void {
++  const v = (e.target as HTMLInputElement).value;
++  store.setFilter({ query: v });
++}
++</script>
++
++<template>
++  <div class="filter">
++    <input
++      class="search"
++      type="search"
++      placeholder="搜索节点标签 / ID / 类型…"
++      :value="store.filter.query"
++      @input="onSearch"
++      aria-label="搜索图谱节点"
++    />
++    <div class="chips">
++      <button
++        v-for="opt in kindOptions"
++        :key="opt.value"
++        class="chip"
++        :class="{ on: activeKinds.includes(opt.value) }"
++        :aria-pressed="activeKinds.includes(opt.value)"
++        @click="store.toggleKind(opt.value)"
++      >{{ opt.label }}</button>
++    </div>
++    <button class="clear" @click="store.clearFilter()">清除</button>
++  </div>
++</template>
++
++<style scoped>
++.filter { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; }
++.search { flex: 1 1 200px; padding: 6px 8px; border: 1px solid #ddd; border-radius: 6px; }
++.chips { display: flex; flex-wrap: wrap; gap: 4px; }
++.chip { font-size: 12px; padding: 3px 8px; border: 1px solid #ddd; border-radius: 12px; background: #f5f5f5; cursor: pointer; }
++.chip.on { background: #e6f4ff; border-color: #4096ff; color: #1677ff; }
++.clear { font-size: 12px; padding: 3px 8px; border: none; background: transparent; color: #888; cursor: pointer; }
++</style>
+diff --git a/src/components/graph/GraphPanel.vue b/src/components/graph/GraphPanel.vue
+new file mode 100644
+index 0000000..3804529
+--- /dev/null
++++ b/src/components/graph/GraphPanel.vue
+@@ -0,0 +1,56 @@
++<script setup lang="ts">
++import { onMounted } from "vue";
++import { useGraphStore } from "../../stores/useGraphStore";
++import { GRAPH_MAX_EDGES, GRAPH_MAX_NODES } from "../../utils/graphUi";
++import GraphFilter from "./GraphFilter.vue";
++import GraphViewer from "./GraphViewer.vue";
++import NodeDetail from "./NodeDetail.vue";
++import EdgeDetail from "./EdgeDetail.vue";
++
++const store = useGraphStore();
++onMounted(() => {
++  void store.loadGraph();
++});
++</script>
++
++<template>
++  <div class="panel graph-panel">
++    <header class="panel-header">
++      <h2>知识图谱</h2>
++      <div class="actions">
++        <span class="cap">节点 {{ store.capacity.nodeCount }}/{{ GRAPH_MAX_NODES }} · 边 {{ store.capacity.edgeCount }}/{{ GRAPH_MAX_EDGES }}</span>
++        <button :disabled="!store.backendReady" @click="store.loadGraph()">刷新</button>
++      </div>
++    </header>
++
++    <div v-if="!store.backendReady" class="banner banner-warn">
++      后端 graph 命令尚未就绪，当前为只读壳（不发起任何后端调用）。
++    </div>
++    <div v-if="store.error" class="banner banner-error">{{ store.error }}</div>
++
++    <GraphFilter />
++
++    <div v-if="store.state.state === 'empty'" class="empty-state">{{ store.state.message }}</div>
++    <div v-else class="body">
++      <GraphViewer class="viewer-col" />
++      <aside class="side">
++        <NodeDetail :node="store.selectedNode" />
++        <EdgeDetail :edge="store.selectedEdge" />
++      </aside>
++    </div>
++  </div>
++</template>
++
++<style scoped>
++.panel { display: flex; flex-direction: column; height: 100%; }
++.panel-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; }
++.actions { display: flex; align-items: center; gap: 8px; }
++.cap { font-size: 12px; color: #888; }
++.banner { padding: 6px 10px; border-radius: 6px; margin: 0 8px; font-size: 12px; }
++.banner-warn { background: #fff7e6; color: #ad6800; }
++.banner-error { background: #fff1f0; color: #cf1322; }
++.empty-state { padding: 24px; color: #999; text-align: center; }
++.body { flex: 1; display: flex; min-height: 0; }
++.viewer-col { flex: 1; min-width: 0; }
++.side { width: 280px; border-left: 1px solid #eee; overflow: auto; }
++</style>
+diff --git a/src/components/graph/GraphViewer.vue b/src/components/graph/GraphViewer.vue
+new file mode 100644
+index 0000000..fe220ec
+--- /dev/null
++++ b/src/components/graph/GraphViewer.vue
+@@ -0,0 +1,73 @@
++<script setup lang="ts">
++import { computed } from "vue";
++import { useGraphStore } from "../../stores/useGraphStore";
++import { layoutPositions, nodeColor, nodeKindLabel } from "../../utils/graphUi";
++
++const store = useGraphStore();
++
++const points = computed(() => {
++  const map = new Map<string, { x: number; y: number }>();
++  for (const p of layoutPositions(store.visibleNodes, store.visibleEdges)) {
++    map.set(p.id, { x: p.x, y: p.y });
++  }
++  return map;
++});
++
++function onNode(id: string): void {
++  store.selectNode(id);
++}
++function onEdge(idx: number): void {
++  store.selectEdge(idx);
++}
++</script>
++
++<template>
++  <div class="viewer">
++    <svg
++      v-if="store.visibleNodes.length"
++      viewBox="0 0 800 600"
++      class="canvas"
++      role="img"
++      :aria-label="`图谱视图，共 ${store.visibleNodes.length} 个节点`"
++    >
++      <line
++        v-for="(e, i) in store.visibleEdges"
++        :key="'e' + i"
++        :x1="points.get(e.from)?.x ?? 0"
++        :y1="points.get(e.from)?.y ?? 0"
++        :x2="points.get(e.to)?.x ?? 0"
++        :y2="points.get(e.to)?.y ?? 0"
++        class="edge"
++        :class="{ active: store.selectedEdgeIdx === i }"
++        @click="onEdge(i)"
++      />
++      <g
++        v-for="n in store.visibleNodes"
++        :key="n.id"
++        :transform="`translate(${points.get(n.id)?.x ?? 0}, ${points.get(n.id)?.y ?? 0})`"
++        class="node"
++        :class="{ active: store.selectedNodeId === n.id }"
++        tabindex="0"
++        role="button"
++        :aria-label="`${nodeKindLabel(n.kind)} 节点 ${n.label}`"
++        @click="onNode(n.id)"
++        @keydown.enter="onNode(n.id)"
++      >
++        <circle r="14" :fill="nodeColor(n.kind)" />
++        <text x="0" y="28" text-anchor="middle" class="nlabel">{{ n.label }}</text>
++      </g>
++    </svg>
++    <div v-else class="viewer-empty">暂无节点可绘制（后端数据未载入或已被过滤）。</div>
++  </div>
++</template>
++
++<style scoped>
++.viewer { width: 100%; height: 100%; min-height: 320px; }
++.canvas { width: 100%; height: 100%; background: #fafafa; border-radius: 8px; }
++.edge { stroke: #bbb; stroke-width: 1.5; cursor: pointer; }
++.edge.active { stroke: #4096ff; stroke-width: 3; }
++.node { cursor: pointer; }
++.node.active circle { stroke: #4096ff; stroke-width: 3; }
++.nlabel { font-size: 11px; fill: #444; }
++.viewer-empty { padding: 24px; color: #999; text-align: center; }
++</style>
+diff --git a/src/components/graph/NodeDetail.vue b/src/components/graph/NodeDetail.vue
+new file mode 100644
+index 0000000..9e354bb
+--- /dev/null
++++ b/src/components/graph/NodeDetail.vue
+@@ -0,0 +1,33 @@
++<script setup lang="ts">
++import { computed } from "vue";
++import { useGraphStore } from "../../stores/useGraphStore";
++import { summarizeNode } from "../../utils/graphUi";
++import type { GraphNode } from "../../types";
++
++const props = defineProps<{ node: GraphNode | null }>();
++const summary = computed(() => (props.node ? summarizeNode(props.node) : null));
++</script>
++
++<template>
++  <div class="detail" v-if="summary">
++    <h3>节点详情</h3>
++    <dl>
++      <dt>ID</dt><dd class="mono">{{ summary.id }}</dd>
++      <dt>类型</dt><dd>{{ summary.kindLabel }}</dd>
++      <dt>标签</dt><dd>{{ summary.label }}</dd>
++      <dt>消费关系</dt><dd>{{ summary.isAgentConsumption ? "属于 Agent/Skill 消费节点" : "普通节点" }}</dd>
++    </dl>
++    <!-- K7：GraphNode.props 已在后端脱敏，UI 不渲染其正文 -->
++    <p class="note">属性(props)已脱敏，界面不展示。</p>
++  </div>
++  <div class="detail empty" v-else>选择一个节点查看详情</div>
++</template>
++
++<style scoped>
++.detail { padding: 12px; }
++.detail.empty { color: #999; }
++.mono { font-family: monospace; word-break: break-all; }
++.note { font-size: 11px; color: #999; margin-top: 8px; }
++dl { display: grid; grid-template-columns: 64px 1fr; gap: 4px 8px; margin: 0; }
++dt { color: #888; }
++</style>
+diff --git a/src/components/layout/ActivityBar.vue b/src/components/layout/ActivityBar.vue
+index edd004d..5f46c89 100644
+--- a/src/components/layout/ActivityBar.vue
++++ b/src/components/layout/ActivityBar.vue
+@@ -39,6 +39,7 @@ const menuSections = [
+       { view: "tasks", icon: "⏰", label: "定时任务" },
+       { view: "skills", icon: "🛠️", label: "技能" },
+       { view: "agents", icon: "🤖", label: "智能体" },
++      { view: "graph", icon: "🕸️", label: "图谱" },
+     ],
+   },
+   {
+diff --git a/src/components/layout/MainArea.vue b/src/components/layout/MainArea.vue
+index f032c3b..981b17b 100644
+--- a/src/components/layout/MainArea.vue
++++ b/src/components/layout/MainArea.vue
+@@ -30,6 +30,9 @@ const TaskPanel = defineAsyncComponent(() => import("../workspace/TaskPanel.vue"
+ const DatabasePanel = defineAsyncComponent(() => import("../workspace/DatabasePanel.vue"));
+ const SkillManagerPanel = defineAsyncComponent(() => import("../workspace/SkillManagerPanel.vue"));
+ const AgentManagerPanel = defineAsyncComponent(() => import("../workspace/AgentManagerPanel.vue"));
++// M5-9 图谱面板：懒加载（defineAsyncComponent），将其纯逻辑(graphUi.ts)、store(useGraphStore.ts)
++// 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
++const GraphPanel = defineAsyncComponent(() => import("../graph/GraphPanel.vue"));
+
+ const layout = useLayoutStore();
+ const browser = useBrowserStore();
+@@ -172,6 +175,9 @@ watch(
+     <div v-else-if="layout.mainView === 'agents'" class="modview">
+       <AgentManagerPanel />
+     </div>
++    <div v-else-if="layout.mainView === 'graph'" class="modview">
++      <GraphPanel />
++    </div>
+
+     <!-- ===== 系统设置 ===== -->
+     <div v-else-if="layout.mainView === 'settings'" class="modview">
+diff --git a/src/stores/useGraphStore.ts b/src/stores/useGraphStore.ts
+new file mode 100644
+index 0000000..5e1c0b7
+--- /dev/null
++++ b/src/stores/useGraphStore.ts
+@@ -0,0 +1,139 @@
++// src/stores/useGraphStore.ts
++// M5-9 图谱面板状态机。
++//
++// 约束（board M5-W6 + A7 DTO）：
++//   - 组件不得直接 invoke，一切经 `bridge.ts`；
++//   - 后端 graph_* 命令由 A7 后续落地；未落地前 `backendReady=false`，
++//     **所有动作 no-op 且零 invoke**（LIMITED START 口径）；
++//   - 不触发 agent 消费、不重建图、不引入新依赖（W6 Hard Stop）；
++//   - stores 有界（GRAPH_MAX_NODES / GRAPH_MAX_EDGES）；props 正文不进 store 展示（K7）。
++
++import { defineStore } from "pinia";
++import { computed, ref } from "vue";
++import { GRAPH_COMMANDS_AVAILABLE, bridge } from "../bridge";
++import type { GraphEdge, GraphNode, GraphNodeKind } from "../types";
++import {
++  boundedInsert,
++  estimateCapacity,
++  filterEdges,
++  filterNodes,
++  panelStateGraph,
++  type GraphFilterState,
++} from "../utils/graphUi";
++
++const MAX_NODES = 5000; // = GRAPH_MAX_NODES
++const MAX_EDGES = 20000; // = GRAPH_MAX_EDGES
++
++export const useGraphStore = defineStore("graph", () => {
++  const nodes = ref<Map<string, GraphNode>>(new Map());
++  const edges = ref<Map<string, GraphEdge>>(new Map());
++  const selectedNodeId = ref<string | null>(null);
++  const selectedEdgeIdx = ref<number | null>(null); // 边可能重 key，用可见列表索引
++  const loading = ref(false);
++  const error = ref<string | null>(null);
++  // 后端命令可用性。A7 落地 graph_query 后置 true（见 `bridge.GRAPH_COMMANDS_AVAILABLE`）。
++  const backendReady = ref<boolean>(GRAPH_COMMANDS_AVAILABLE);
++
++  // 过滤状态（UI 受控）
++  const filter = ref<GraphFilterState>({ query: "", kinds: [] });
++
++  const nodeList = computed(() => [...nodes.value.values()]);
++  const edgeList = computed(() => [...edges.value.values()]);
++
++  const visibleNodes = computed(() => filterNodes(nodeList.value, filter.value));
++  const visibleEdges = computed(() => filterEdges(edgeList.value, nodeList.value, filter.value));
++
++  const capacity = computed(() => estimateCapacity(nodes.value.size, edges.value.size));
++
++  const selectedNode = computed(() =>
++    selectedNodeId.value ? nodes.value.get(selectedNodeId.value) ?? null : null,
++  );
++  // 选择发生在可见列表，故按 visibleEdges 索引还原
++  const selectedEdge = computed(() => {
++    if (selectedEdgeIdx.value === null) return null;
++    return visibleEdges.value[selectedEdgeIdx.value] ?? null;
++  });
++
++  const state = computed(() =>
++    panelStateGraph({
++      loading: loading.value,
++      count: nodes.value.size,
++      error: error.value,
++      backendReady: backendReady.value,
++    }),
++  );
++
++  /// 后端未就绪时统一拦截：**一条 invoke 都不发**，避免对不存在的命令反复报错。
++  function guard(): boolean {
++    if (backendReady.value) return true;
++    error.value =
++      "后端 graph 命令（graph_query / graph_build / graph_neighbors / graph_stats / graph_export 等）尚未就绪（A7 W5 仅落地 DTO + 有界存储，命令待后续 wave），面板为只读壳";
++    return false;
++  }
++  function fail(e: unknown): void {
++    error.value = e instanceof Error ? e.message : String(e ?? "未知错误");
++  }
++
++  async function loadGraph(): Promise<void> {
++    if (!guard()) return; // 后端未就绪：零 invoke
++    loading.value = true;
++    error.value = null;
++    try {
++      // 命令落地后在此调用 bridge.graphQuery() 并 boundedInsert；当前因 guard 不会到达。
++      const res = await bridge.graphQuery();
++      nodes.value = boundedInsert(nodes.value, res.nodes, MAX_NODES);
++      edges.value = boundedInsert(edges.value, res.edges, MAX_EDGES);
++    } catch (e) {
++      fail(e);
++    } finally {
++      loading.value = false;
++    }
++  }
++
++  function selectNode(id: string): void {
++    selectedNodeId.value = selectedNodeId.value === id ? null : id;
++    selectedEdgeIdx.value = null;
++  }
++  function selectEdge(idx: number): void {
++    selectedEdgeIdx.value = selectedEdgeIdx.value === idx ? null : idx;
++    selectedNodeId.value = null;
++  }
++  function setFilter(f: Partial<GraphFilterState>): void {
++    filter.value = { ...filter.value, ...f };
++  }
++  function toggleKind(k: GraphNodeKind): void {
++    const has = filter.value.kinds.includes(k);
++    filter.value = {
++      ...filter.value,
++      kinds: has ? filter.value.kinds.filter((x) => x !== k) : [...filter.value.kinds, k],
++    };
++  }
++  function clearFilter(): void {
++    filter.value = { query: "", kinds: [] };
++  }
++
++  return {
++    nodes,
++    edges,
++    selectedNodeId,
++    selectedEdgeIdx,
++    loading,
++    error,
++    backendReady,
++    filter,
++    nodeList,
++    edgeList,
++    visibleNodes,
++    visibleEdges,
++    capacity,
++    selectedNode,
++    selectedEdge,
++    state,
++    loadGraph,
++    selectNode,
++    selectEdge,
++    setFilter,
++    toggleKind,
++    clearFilter,
++  };
++});
+diff --git a/src/stores/useLayoutStore.ts b/src/stores/useLayoutStore.ts
+index 8cee023..de39628 100644
+--- a/src/stores/useLayoutStore.ts
++++ b/src/stores/useLayoutStore.ts
+@@ -20,6 +20,7 @@ export type MainView =
+   | "tasks"
+   | "skills"
+   | "agents"
++  | "graph"
+   | "editor";
+
+ export const useLayoutStore = defineStore("layout", () => {
+@@ -116,6 +117,7 @@ export const useLayoutStore = defineStore("layout", () => {
+     tasks: { icon: "⏰", label: "定时任务" },
+     skills: { icon: "🛠️", label: "技能" },
+     agents: { icon: "🤖", label: "智能体" },
++    graph: { icon: "🕸️", label: "图谱" },
+     settings: { icon: "⚙️", label: "设置" },
+   };
+   const modTabs = reactive<ModTab[]>([]);
+diff --git a/src/types.ts b/src/types.ts
+index 0e7b65d..8fd8624 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -779,3 +779,47 @@ export interface PendingConfirm {
+
+ /// 面板三态（空 / 错误 / 加载），供 shell 组件统一渲染。
+ export type PanelState = "loading" | "empty" | "ready" | "error";
++
++// ====== M5-9 图谱领域（前端 DTO 镜像；与 src-tauri/src/domain.rs 同义）======
++// 仅数据镜像，不含任何后端命令调用 / 凭据 / 正文。
++// 后端 domain.rs（Lane A7，W5）为权威源；本段与其逐字段对齐（serde rename_all = "snake_case"）。
++//
++// 隐私红线（K7）：GraphProps 已在后端脱敏（不含量/凭据/body），UI 仍**禁止渲染 props 正文**；
++// GraphNode/Edge 无 privacy 字段——脱敏属后端职责，前端只负责不显示 props。
++
++export type GraphNodeKind =
++  | "file" | "dir" | "tab" | "script" | "skill" | "agent" | "tag" | "topic";
++
++export type GraphEdgeKind =
++  | "in_dir" | "references" | "related_to" | "tagged_with"
++  | "uses" | "a2a_with" | "memorizes";
++
++/// 已脱敏的键值对（单一真源在后端：不得含凭据/正文/body）。
++export type GraphProps = Record<string, string>;
++
++export interface GraphNode {
++  id: string;
++  kind: GraphNodeKind;
++  label: string;
++  /// 后端已脱敏；UI 不得渲染其正文（K7）
++  props: GraphProps;
++}
++
++export interface GraphEdge {
++  from: string;
++  to: string;
++  kind: GraphEdgeKind;
++  weight: number;
++  /// 同上，UI 不得渲染（K7）
++  props: GraphProps;
++}
++
++// 与 domain.rs 常量对齐（前端仅用于容量展示/守卫；后端为单一真源）。
++export const GRAPH_MAX_DEPTH = 4;
++export const GRAPH_QUERY_LIMIT = 1000;
++export const GRAPH_MAX_NODES = 5000;
++export const GRAPH_MAX_EDGES = 20000;
++export const GRAPH_LABEL_MAX_BYTES = 256;
++/// = MAX_TEXT_FIELD_BYTES (64KiB)
++export const GRAPH_PROPS_MAX_BYTES = 65536;
++export const GRAPH_NODE_ID_HEX_LEN = 64;
+diff --git a/src/utils/graphUi.ts b/src/utils/graphUi.ts
+new file mode 100644
+index 0000000..bd91e56
+--- /dev/null
++++ b/src/utils/graphUi.ts
+@@ -0,0 +1,241 @@
++// src/utils/graphUi.ts
++// M5-9 图谱 UI **纯逻辑层**：无 invoke、无 DOM、无 store 依赖，可被 node 直接 import 断言
++// （见 scripts/check-graph-ui-logic.mjs）。
++//
++// 契约源：src-tauri/src/domain.rs（Lane A7，W5）：GraphNode / GraphEdge /
++//   GraphNodeKind / GraphEdgeKind / GRAPH_MAX_* 常量。
++// 边界（board M5-W6 Hard Stop）：不调用任何 graph_* 后端命令、不触发 agent 消费、
++// 不构建/重建图、不引入新依赖；stores 有界；不显示 props 正文（K7）。
++
++import type {
++  GraphEdge,
++  GraphEdgeKind,
++  GraphNode,
++  GraphNodeKind,
++} from "../types";
++
++// ====== 常量（与后端 domain.rs 对齐；前端不可自行放宽） ======
++export const GRAPH_NODE_KINDS: ReadonlyArray<GraphNodeKind> = [
++  "file", "dir", "tab", "script", "skill", "agent", "tag", "topic",
++];
++export const GRAPH_EDGE_KINDS: ReadonlyArray<GraphEdgeKind> = [
++  "in_dir", "references", "related_to", "tagged_with", "uses", "a2a_with", "memorizes",
++];
++
++// 容量上限（与 domain.rs 一致；供 UI 容量计/守卫）。
++export const GRAPH_MAX_NODES = 5000;
++export const GRAPH_MAX_EDGES = 20000;
++export const GRAPH_MAX_DEPTH = 4;
++export const GRAPH_QUERY_LIMIT = 1000;
++
++// ====== 展示用标签/配色 ======
++export const NODE_KIND_LABEL: Readonly<Record<GraphNodeKind, string>> = {
++  file: "文件", dir: "目录", tab: "页签", script: "脚本",
++  skill: "技能", agent: "智能体", tag: "标签", topic: "主题",
++};
++export const EDGE_KIND_LABEL: Readonly<Record<GraphEdgeKind, string>> = {
++  in_dir: "归属", references: "引用", related_to: "相关",
++  tagged_with: "标注", uses: "使用", a2a_with: "A2A 协作", memorizes: "记忆",
++};
++export const NODE_KIND_COLOR: Readonly<Record<GraphNodeKind, string>> = {
++  file: "#7c8cff", dir: "#5b8def", tab: "#13c2c2", script: "#fa8c16",
++  skill: "#52c41a", agent: "#eb2f96", tag: "#faad14", topic: "#9254de",
++};
++
++// ====== 判别/展示 ======
++export type GraphElement = GraphNode | GraphEdge;
++
++export function elementKind(d: unknown): "node" | "edge" | "unknown" {
++  if (!d || typeof d !== "object") return "unknown";
++  const o = d as Record<string, unknown>;
++  if (typeof o.id === "string" && "kind" in o && "label" in o && !("from" in o)) return "node";
++  if (typeof o.from === "string" && typeof o.to === "string" && "kind" in o) return "edge";
++  return "unknown";
++}
++
++export function nodeKindLabel(k: GraphNodeKind): string {
++  return NODE_KIND_LABEL[k] ?? String(k);
++}
++export function edgeKindLabel(k: GraphEdgeKind): string {
++  return EDGE_KIND_LABEL[k] ?? String(k);
++}
++export function nodeColor(k: GraphNodeKind): string {
++  return NODE_KIND_COLOR[k] ?? "#8c8c8c";
++}
++
++// 节点摘要（K7：剔除 props 正文，摘要中绝不含 props 字段）
++export interface NodeSummary {
++  id: string;
++  kind: GraphNodeKind;
++  kindLabel: string;
++  label: string;
++  isAgentConsumption: boolean;
++}
++export function summarizeNode(n: GraphNode): NodeSummary {
++  return {
++    id: n.id,
++    kind: n.kind,
++    kindLabel: nodeKindLabel(n.kind),
++    label: n.label,
++    isAgentConsumption: n.kind === "agent" || n.kind === "skill",
++  };
++}
++
++export interface EdgeSummary {
++  from: string;
++  to: string;
++  kind: GraphEdgeKind;
++  kindLabel: string;
++  weight: number;
++  agentConsumption: boolean;
++}
++export function summarizeEdge(e: GraphEdge): EdgeSummary {
++  return {
++    from: e.from,
++    to: e.to,
++    kind: e.kind,
++    kindLabel: edgeKindLabel(e.kind),
++    weight: e.weight,
++    agentConsumption: e.kind === "uses" || e.kind === "a2a_with" || e.kind === "memorizes",
++  };
++}
++
++// Agent 消费子视图：边是否把 Agent 连到 Skill/记忆/A2A（对应官方 M5-9 (b)）
++export function isAgentConsumptionEdge(e: GraphEdge): boolean {
++  return e.kind === "uses" || e.kind === "a2a_with" || e.kind === "memorizes";
++}
++
++// ====== 布局（纯 TS，无 D3；确定性，无随机，便于测试） ======
++export type LayoutKind = "tree" | "force" | "cluster";
++export function layoutKindOf(edges: GraphEdge[]): LayoutKind {
++  const hasInDir = edges.some((e) => e.kind === "in_dir");
++  const hasCluster = edges.some((e) => e.kind === "tagged_with" || e.kind === "related_to");
++  if (hasInDir && !hasCluster) return "tree";
++  if (hasCluster) return "cluster";
++  return "force";
++}
++
++export interface LayoutPoint { id: string; x: number; y: number; }
++export function layoutPositions(nodes: GraphNode[], edges: GraphEdge[]): LayoutPoint[] {
++  const kind = layoutKindOf(edges);
++  const n = nodes.length || 1;
++  if (kind === "tree") {
++    // 按入度（作为"父"的被指向次数）分层；退化时按索引
++    const childCount = new Map<string, number>();
++    for (const e of edges) childCount.set(e.to, (childCount.get(e.to) ?? 0) + 1);
++    return nodes.map((nd, i) => {
++      const depth = Math.min(GRAPH_MAX_DEPTH, childCount.get(nd.id) ?? 0);
++      const angle = (i / n) * Math.PI * 2;
++      const radius = 80 + depth * 70;
++      return { id: nd.id, x: 400 + Math.cos(angle) * radius, y: 300 + Math.sin(angle) * radius };
++    });
++  }
++  if (kind === "cluster") {
++    const cols = Math.ceil(Math.sqrt(n));
++    return nodes.map((nd, i) => ({
++      id: nd.id,
++      x: 60 + (i % cols) * 120,
++      y: 60 + Math.floor(i / cols) * 110,
++    }));
++  }
++  // force -> 放射环
++  return nodes.map((nd, i) => {
++    const angle = (i / n) * Math.PI * 2;
++    return { id: nd.id, x: 400 + Math.cos(angle) * 220, y: 300 + Math.sin(angle) * 220 };
++  });
++}
++
++// ====== 容量/守卫 ======
++export interface CapacityView {
++  nodeCount: number;
++  edgeCount: number;
++  nodeUsedPct: number; // 0..100（基于 GRAPH_MAX_NODES）
++  edgeUsedPct: number;
++  withinLimit: boolean;
++  maxDepth: number;
++  queryLimit: number;
++}
++export function estimateCapacity(nodeCount: number, edgeCount: number): CapacityView {
++  const nodeUsedPct = Math.min(100, Math.round((Math.max(0, nodeCount) / GRAPH_MAX_NODES) * 100));
++  const edgeUsedPct = Math.min(100, Math.round((Math.max(0, edgeCount) / GRAPH_MAX_EDGES) * 100));
++  return {
++    nodeCount: Math.max(0, nodeCount),
++    edgeCount: Math.max(0, edgeCount),
++    nodeUsedPct,
++    edgeUsedPct,
++    withinLimit: nodeCount <= GRAPH_MAX_NODES && edgeCount <= GRAPH_MAX_EDGES,
++    maxDepth: GRAPH_MAX_DEPTH,
++    queryLimit: GRAPH_QUERY_LIMIT,
++  };
++}
++
++// ====== 搜索/过滤 ======
++export interface GraphFilterState {
++  query: string;
++  kinds: GraphNodeKind[]; // 空数组=不过滤
++}
++export function filterNodes(nodes: GraphNode[], f: GraphFilterState): GraphNode[] {
++  const q = f.query.trim().toLowerCase();
++  return nodes.filter((nd) => {
++    if (f.kinds.length && !f.kinds.includes(nd.kind)) return false;
++    if (q && !`${nd.label} ${nd.id} ${nodeKindLabel(nd.kind)}`.toLowerCase().includes(q)) return false;
++    return true;
++  });
++}
++export function filterEdges(edges: GraphEdge[], nodes: GraphNode[], f: GraphFilterState): GraphEdge[] {
++  const visible = new Set(filterNodes(nodes, f).map((nd) => nd.id));
++  const q = f.query.trim().toLowerCase();
++  return edges.filter((e) => {
++    if (!visible.has(e.from) || !visible.has(e.to)) return false;
++    if (q && !edgeKindLabel(e.kind).toLowerCase().includes(q)) return false;
++    return true;
++  });
++}
++
++// ====== 有界合并（store 用：超过上限丢弃最旧） ======
++export function boundedInsert<T extends { id: string }>(
++  map: Map<string, T>,
++  items: T[],
++  max: number,
++): Map<string, T> {
++  const next = new Map(map);
++  for (const it of items) {
++    next.set(it.id, it);
++    if (next.size > max) {
++      const oldest = next.keys().next().value;
++      if (typeof oldest === "string") next.delete(oldest);
++    }
++  }
++  return next;
++}
++
++// ====== 面板三态（空 / 错误 / 加载） ======
++export interface PanelStateView {
++  state: "loading" | "empty" | "ready" | "error";
++  message: string;
++}
++export function panelStateGraph(opts: {
++  loading: boolean;
++  count: number;
++  error: string | null;
++  backendReady: boolean;
++}): PanelStateView {
++  if (opts.error) return { state: "error", message: opts.error };
++  if (opts.loading) return { state: "loading", message: "加载中…" };
++  if (opts.count === 0) {
++    return {
++      state: "empty",
++      message: opts.backendReady
++        ? "暂无图谱数据。点击「刷新」从后端载入。"
++        : "后端 graph 命令尚未就绪，当前为只读壳。",
++    };
++  }
++  return { state: "ready", message: "" };
++}
++
++// 错误格式化（不泄露内部栈）
++export function formatGraphError(e: unknown): string {
++  if (e instanceof Error) return e.message;
++  if (typeof e === "string") return e;
++  return "图谱加载失败";
++}

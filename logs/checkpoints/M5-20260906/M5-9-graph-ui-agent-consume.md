@@ -6,7 +6,7 @@
 > 主预研：暂无 prework 文档（A8 prework 仍空）
 > 配套：`M5-8-graph-store-query.md`（DTO 稳定）
 >
-> **W3** BLOCKED（待 A7 W5 schema 落地）· **W4** ACTIVE（A8 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A8 W5 仍 SUPPORT DOCS ONLY，待 A7 W5 schema 落地后 W6+ 由 A0 决定）
+> **W3** BLOCKED（待 A7 W5 schema 落地）· **W4** ACTIVE（A8 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A8 W5 仍 SUPPORT DOCS ONLY，待 A7 W5 schema 落地后 W6+ 由 A0 决定）· **W6** ACTIVE（**A8 升级为 START PRODUCT CODE**：graph UI pure logic + panel shell；详见本卡顶部 `[W6 next-card acceptance criteria]` 段）
 
 ---
 
@@ -25,6 +25,60 @@
 > - **三份主文档 / ACL / Capability / pre-merge.sh / scripts/**：A1 W5 不动。
 > - **`NEXT` 标记**：A0 调度权；A1 不改字面值。
 > - **A1 W5 强停止**：本卡本轮**仅**加本 `[W5 status]` 段 + 头部状态行；**不**写 next-card AC（与 M5-6/7/8 不同——M5-9 在 W5 没有产品代码 lane 承接）。
+
+---
+
+## [W6 next-card acceptance criteria · 2026-09-06 19:25 CST] A8 M5-9 W6 实施期 acceptance criteria（graph UI pure logic + panel shell · 不加 commands / 不调 live agent consumption / 不调 model calls / 不加 graph rebuild workers）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L159（**A8 M5-W6** *"Implement M5-9 graph UI pure logic and panel shell: graph list/search/filter, node detail summary, capacity/error/empty states, helper module + headless logic test. Do not call live agent consumption or backend graph commands unless already existing and fully typed."*）+ L164-170 硬约束 + A6 W5 UI panel shell 范式（`f99d2eb` 拣入）+ A7 W5 graph model/store policy slice（`4b438ef` 拣入：`src-tauri/src/graph.rs` + `domain.rs` GraphNode/Edge + 7 容量常量 + check-graph-policy.py 7 ACTIVE 码）。
+> **消费依赖（已落地，A8 W6 可直接接入）**：
+> - **A7 W5 GraphNode/GraphEdge DTO 已落**（`4b438ef` 拣入 `src-tauri/src/domain.rs` 追加）—— A8 W6 UI 在 `src/types.ts` 加对应 TS 镜像（无 drift）。
+> - **A7 W5 graph 容量常量已锁**（`4b438ef` 拣入：`GRAPH_PROPS_MAX_BYTES=MAX_TEXT_FIELD_BYTES=64KiB`、`GRAPH_LABEL_MAX_BYTES=256`、`GRAPH_NODE_ID_HEX_LEN=64`、`GRAPH_MAX_DEPTH=4`、`GRAPH_QUERY_LIMIT=1000`、`GRAPH_MAX_NODES=5000`、`GRAPH_MAX_EDGES=20000`）—— A8 W6 UI 容量提示/截断/分页**直接复用**这 7 个常量，**禁止在 UI 层重定义**。
+> - **A7 W5 graph store/query helpers 已落**（`4b438ef` 拣入 `src-tauri/src/graph.rs`）—— A8 W6 UI 在 `src/bridge.ts` 加 `graph_query` 包装时**只读** `GraphNode` / `GraphEdge` shape，**不**消费 `GraphProps` 正文（K7）。
+> - **A6 W5 面板壳范式已锁**（`f99d2eb` 拣入 `src/components/agent/SkillManager.vue` / `PermissionPreviewModal.vue`）—— A8 W6 `GraphPanel.vue` 复用 useLayoutStore + MOD_META no-router 锚点 + Agent/Skill 校验/permission preview 模式。
+> - **A4 W4 agent_kv 已落**（`1610939` `agent_memory.rs`）—— A8 W6 UI **不**消费 agent_kv 业务（仅当 graph 节点含 agent 引用时按 sha256 id 显示）。
+> **A1 W6 角色**：A1 W6 **不**改 §1~§11 决策史；仅在头部加本 `[W6 next-card acceptance criteria]` 段，**明确 A8 W6 实施期 4 项 AC + 5 项 hard stops**，供 A8 / A10 / A11 / A0 验收。
+
+### W6 A8 M5-9 实施期 acceptance criteria（4 项）
+
+| AC | 描述 | 验收证据 |
+|----|------|----------|
+| AC-1 **graph UI 纯逻辑 helper module 冻结** | `src/utils/graphUi.ts`（或类似 helper）冻结纯函数：① `filterGraphNodes(nodes, filter: GraphFilter) -> GraphNode[]`（按 kind / source / label 包含过滤）② `searchGraphNodes(nodes, query: string, opts) -> SearchResult[]`（label 模糊 + id 精确双轨；query 长度 0-200 字符；空 query 返回 `[]`）③ `summarizeNode(node: GraphNode) -> NodeSummary`（**不**含 `props` 正文，仅 id / kind / label / source / source_ref / created_at / updated_at / extractor_version + 邻居计数）④ `emptyStateFor(reason) -> EmptyStateDescriptor`（list-empty / filtered-empty / no-search-result 三态）⑤ `errorStateFor(err) -> ErrorStateDescriptor`（load-fail / parse-fail / action-fail 三态）⑥ `truncateLabel(label, maxBytes) -> string`（**复用** `GRAPH_LABEL_MAX_BYTES=256` 常量） —— 全部纯函数（无 Tauri invoke、无网络、无 fs）| `node scripts/check-graph-ui-logic.mjs` PASS + A11 抽查 |
+| AC-2 **graph list/search/filter + node detail summary** | 面板（`src/components/graph/GraphPanel.vue` 或类似）实现：① list 视图（按 kind 分组 + 滚动分页，每页 ≤ `GRAPH_QUERY_LIMIT/10`）② search 输入框（`useGraphUi().searchGraphNodes` + 300ms debounce + 取消上次未完成查询）③ filter 侧栏（kind 多选 + source 下拉 + label 包含）④ node detail 抽屉（调 `summarizeNode`，**不显示 `props` 正文**，**不显示 `GraphProps` 任何字段**）⑤ source_ref 链接 → 走既有 `capability.rs` 校验的 source 跳转（**不**绕过 bridge.ts）| UI 逻辑单测 + 视觉走查（manual checklist）+ A10 抽查 K7 零泄露 |
+| AC-3 **capacity / error / empty 状态三件套** | 面板必须实现：① 容量提示（`node_count >= GRAPH_MAX_NODES*0.8` 时显示"接近上限 GRAPH_MAX_NODES=5000"，**禁止**展示真实后端报错堆栈）② error 状态（`load-fail` 显示重试图标 + 1 行 hint，**不**展示 backend error 全貌）③ empty 状态（list-empty / filtered-empty / no-search-result 至少 3 种）④ 所有状态**不**暴露任何后端原始字段（如 `error.stack` / `node.props` 任意键 / DSN / token）| `node scripts/check-graph-ui-logic.mjs` 含 capacity/error/empty 覆盖 + A11 抽查 |
+| AC-4 **headless logic test + 容量/隐私双扫** | `scripts/check-graph-ui-logic.mjs` 必须含：① 7+ 单测（filter / search / summarize / empty×3 / error×3 / truncate / capacity 边界）② 隐私断言（`summarizeNode` 输出**不**含 `props` 任何键名 → grep 0 命中 `props`）③ 容量断言（`truncateLabel(label, 256)` 截断后字节 ≤ 256）④ 容量常量真源单点（`src/utils/graphUi.ts` 内**不**写容量字面量，必须 import 自 `src/types.ts`（镜像 `domain.rs`））| `node scripts/check-graph-ui-logic.mjs` PASS + `grep -nE 'GRAPH_MAX_NODES\s*=\|GRAPH_LABEL_MAX_BYTES\s*=' src/utils/graphUi.ts` 0 命中（真源在 types.ts）|
+
+### W6 A8 M5-9 实施期 hard stops（5 项）
+
+| HS | 约束 | 来源 |
+|----|------|------|
+| W6-HS1 | **不加后端 commands**（`bridge.rs` / `main.rs` / `default-commands.toml` **不**新增 `graph_*` 命令；如确需新增须满足 source check + ACL + bridge/types + policy + tests 原子同包）| PARALLEL_COMMAND_BOARD L159 + L169（*"prefer no command in W6"*）|
+| W6-HS2 | **不调 live agent consumption**（**不**调 `agent_chat` / `agent_memory_*` / `skill_*`）—— UI 仅展示，不参与 RAG 注入（`useGraphRag.ts` / RAG 注入契约在 M5-9 §4.3 暂**冻结**到 W7+）| PARALLEL_COMMAND_BOARD L159 + L167 |
+| W6-HS3 | **不调 model calls**（**不**做 embedding 重建 / **不**调 LLM / **不**做 graph rebuild workers / **不**加 background job）—— UI 仅消费 A7 W5 已落地的 GraphNode/Edge DTO 静态快照（or polling，**不**订阅 push 事件）| PARALLEL_COMMAND_BOARD L159 + L167 |
+| W6-HS4 | **无新 npm 依赖**（**不**引入 `d3-force` / `d3-zoom` / `d3-drag` 等 d3 子模块包到 W6；d3 可在 W7+ 真接 layout 时引入；W6 阶段可仅用 `useGraphUi().filterGraphNodes` + 简单列表 + 不做力导向布局；如确实需 placeholder 列表 + 静态边框，**不**引 d3 整包）| A8 W6 dispatch L159 + W5-HS7 |
+| W6-HS5 | **K7 严守**：`summarizeNode` / node detail / list / search / filter **不**展示 `props` 任何字段（key 名 / value）—— 隐私双扫由 A7 W5 check-graph-policy.py 的 GRAPH_PRIVACY_DOUBLE_SCAN 已落，A8 W6 **不**写 UI 副本；UI 仅消费 `id / kind / label / source / source_ref / created_at / updated_at / extractor_version` 8 个白名单字段 | A7 W5 check-graph-policy.py + A4 W4 隐私双扫 + K7 |
+
+### W6 验证清单（供 A11 收口）
+
+- `npm run build` PASS（`dist/assets/index-*.js` 大小不破 IF-2 阈值；W6 仍受 A0 大小门禁约束）
+- `node scripts/check-graph-ui-logic.mjs` PASS
+- `python3 scripts/check-graph-ui-policy.py --self-test` PASS（如新增 UI policy 脚本）
+- `python3 scripts/check-graph-ui-policy.py` PASS
+- `python3 scripts/check-graph-ui-policy.py --expect-pending` PASS（如有 PENDING）
+- `bash scripts/pre-merge.sh` ALL_PASS
+- `git diff --check` CLEAN
+- A11 比对 `src/types.ts` 与 A7 W5 GraphNode/GraphEdge 0 drift
+- `grep -nE 'GRAPH_MAX_NODES\s*=\|GRAPH_LABEL_MAX_BYTES\s*=' src/utils/graphUi.ts` 0 命中（容量真源在 types.ts）
+- `grep -nE 'props' src/utils/graphUi.ts src/components/graph/GraphPanel.vue` 仅命中 `summarizeNode` 不导出 props 字段的注释（不命中 props 值/键）
+- `grep -nE 'agent_chat|skill_run|graph_rag' src/components/graph/ src/utils/graphUi.ts` 0 命中（无 live agent consumption / 无 RAG 注入 / 无 model calls）
+- **A10 复审 PASS**（K7 零泄露 / 无新命令 / 无 live agent / 无 model call / 无 rebuild workers / 无 npm 依赖 / capacity 真源单点）
+- **A11 verification delta** 产出 `logs/checkpoints/M5-A11-W6-*.md`
+
+### W6 A1 不修订范围（本卡）
+
+- **§1 GOAL / §2 READ / §3 WRITE / §4 关键契约 / §5 FORBID / §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION / §9 DOC_BACKWRITE / §10 COMMIT / §11 FORBID 遵守记录**：A1 W6 **不动**（决策史保持 W0 原文；W6 AC 在本顶部段单列；M5-9 §4.3 RAG 注入契约暂冻结到 W7+ 由 A0 决定）。
+- **三份主文档 / ACL / Capability / pre-merge.sh / scripts/**：A1 W6 不动（policy 脚本由 A8 W6 落地）。
+- **`NEXT` 标记**：A0 调度权；A1 不改字面值。
 
 ---
 

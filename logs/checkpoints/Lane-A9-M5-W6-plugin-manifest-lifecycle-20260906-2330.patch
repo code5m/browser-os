@@ -1,0 +1,1087 @@
+diff --git a/logs/assist/A9-M5-W6-plugin-manifest-lifecycle-20260906-2330.md b/logs/assist/A9-M5-W6-plugin-manifest-lifecycle-20260906-2330.md
+new file mode 100644
+index 0000000..f7d668e
+--- /dev/null
++++ b/logs/assist/A9-M5-W6-plugin-manifest-lifecycle-20260906-2330.md
+@@ -0,0 +1,117 @@
++# A9 · M5-W6 Delta — 插件 manifest/生命周期策略切片（START PRODUCT CODE）
++
++> 生成：2026-09-06 23:30 CST · Lane A9（M5-W6 · START PRODUCT CODE · 整包交付）
++> BASE：`77b1e3e`（HEAD：`docs(M5): dispatch W6 graph UI and plugin lanes`；已与 `origin/master` 同步）
++> 性质：**策略切片产品代码 + 文档**。W6 A9 由 W4/W5 的 SUPPORT DOCS ONLY 升级为 START PRODUCT CODE：实现 M5-10/M5-11 插件 manifest/生命周期**策略切片**（DTO + 纯校验 + 生命周期状态机 + 权限清单规则 + 策略脚本）。
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W6 Parallel Dispatch → A9：**START PRODUCT CODE** — Implement M5-10/M5-11 plugin manifest/lifecycle policy slice: DTOs, validation, lifecycle state machine, permission manifest rules, policy script. | Allowed: `src-tauri/src/domain.rs`, optional `src-tauri/src/plugin.rs`, `src-tauri/src/security_policy.rs`, `scripts/check-plugin-policy.py`, `scripts/pre-merge.sh`, focused Rust tests/checkpoint. | Must Deliver: Policy self-test/default PASS, bounded metadata, no secrets, no network/install runtime.（行 159）
++> 配套前序：W4 `A9-M5-W4-plugin-manifest-lifecycle-20260906-1820.md`（已拣入，对齐 A5 Agent/Skill 策略 + 能力碎片化发现）；W5 `A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md`（已对照 A7 实际代码复核，对齐 A6 UI + A7 graph）。
++
++---
++
++## 0. 一句话结论
++
++按 W4/W5 既定设计落地插件 manifest/生命周期**纯策略切片**：`domain.rs` 新增 `PluginManifest`/`PluginEntry`/`PluginCapability`/`PluginSignature`/`PluginState` DTO；新 `plugin.rs` 提供 `validate_plugin_manifest`（schema 边界 + 凭据泄露 + 形态③入口 + 能力白名单 + 哈希/签名结构）、`verify_plugin_signature_structure`（仅结构，真验签留运行时）、`can_transition`/`transition`（状态机，无文件 I/O）、`permission_preview_for_plugin`（复用 A5 `PermissionPreview`）；`security_policy.rs` 加 `PLUGIN_CAPABILITY_V1` 单一真源 + `check_plugin_capabilities`；新 `check-plugin-policy.py`（1 ACTIVE + 5 PENDING）接入 `pre-merge.sh`。**零运行时安装/卸载/下载/执行、零新增命令、零 secret、零新依赖**；`cargo check` 仅 3 条他 lane 既有告警，11/11 单测通过，策略脚本 self-test/default 全 PASS。
++
++---
++
++## 1. 实现清单（W6 A9 产品代码）
++
++| 文件 | 改动 | 内容 |
++|---|---|---|
++| `src-tauri/src/domain.rs` | 追加（L2117 后） | `PluginManifest`/`PluginEntry`/`PluginCapability`/`PluginSignature`/`PluginState` DTO；`PluginSignature` 默认 `algorithm="Ed25519"`；`PluginState` 8 态枚举（rename snake_case，可序列化） |
++| `src-tauri/src/plugin.rs` | **新增** | 纯函数切片：`DANGEROUS_PLUGIN_CAPABILITIES` + `capability_acl_level` + `permission_preview_for_plugin`；`validate_plugin_manifest`；`verify_plugin_signature_structure`；`can_transition`/`transition`；边界辅助；`#[cfg(test)]` 11 例 |
++| `src-tauri/src/security_policy.rs` | 扩展 | `PolicyError` 增 `InvalidPluginManifest`/`InvalidPluginSignature`/`PluginStateTransition`（含 Display）；`PLUGIN_CAPABILITY_V1`（空，单一真源）+ `check_plugin_capabilities` + 单测 |
++| `src-tauri/src/main.rs` | 1 行 | `mod plugin;` |
++| `scripts/check-plugin-policy.py` | **新增** | 插件策略夹具（ACTIVE+PENDING 码位，--self-test/默认/--expect-pending） |
++| `scripts/pre-merge.sh` | 2 处 | 默认门禁 + 自检接入 `check-plugin-policy.py` |
++
++> 验证全绿：`cargo fmt --check` 通过；`cargo check --locked` 仅 3 条他 lane 既有告警（grid_process 等，非本切片）；`cargo test --manifest-path src-tauri/Cargo.toml plugin` → **11 passed**；`python3 scripts/check-plugin-policy.py --self-test` → `PLUGIN_SELF_TEST=ALL_PASS`（ACTIVE=1 PENDING=5）；默认模式 → `PLUGIN_POLICY=PASS`；`bash -n scripts/pre-merge.sh` 通过；K1 `list_artifact_images` 仍为 ACL 末条（L118）。
++
++---
++
++## 2. 关键设计决策（承 W4/W5，并对齐 M5-10/11 卡）
++
++1. **能力白名单单一真源落 `security_policy.rs`**：`PLUGIN_CAPABILITY_V1` 放在 `security_policy.rs`（与 `SKILL_CAPABILITY_V1`/`AGENT_CAPABILITY_V1` 同文件，贴合 security_policy.rs §M5-4/5 头注释「Skill / Agent / MCP / Plugin / A2A 共用本文件」）。MCP 的 `MCP_CAPABILITY_V1` 仍在 `domain.rs`——这是 W4 §4 已记录的**能力真源碎片化待收口项**；W6 不破坏既有 A3/A5 门禁，故 Plugin 随 Skill/Agent 落 security_policy.rs。完整收口（建 `capability.rs` 统一四处）仍交 A0 裁决（W4 §4 延续）。check-plugin-policy.py 的 `PLUGIN_CAP_SINGLE_DEF` 守 `PLUGIN_CAPABILITY_V1` 全仓**唯一定义**。
++2. **形态③在类型与校验层即排除 form①/②**：`PluginEntry.entry_url` 仅允许 `http(s)://`/`tool://`；`validate_plugin_manifest` 拒绝 `javascript:`/`data:`/`file:` 等。`check-plugin-policy.py` 的 `PLUGIN_FORM_THREE` 守插件模块无 `window.__TAURI__` 越权 / 独立 webview 自起 / `std::process` 独立进程。不引入 `form` 枚举字段（保持与 M5-10 §4.2 schema 一致）。
++3. **签名仅结构校验（W6 不引加密 crate、不联网）**：`verify_plugin_signature_structure` 校验 `algorithm=="Ed25519"` + `key_id` 非空 + `value` 为 base64 字符集（不解码）+ `signed_at` 为 ISO8601 边界。**真 Ed25519 验签 + `trusted-pubkeys.json` 信任根（SB-11）由运行时 lane 在本地完成**。这与 W6 FORBID「no signature enforcement beyond pure validation unless fully local」一致，且未新增 `ed25519-dalek` 依赖（Cargo.toml 当前无该 crate，不破「无新依赖」）。
++4. **生命周期状态机纯函数（无文件 I/O）**：`PluginState` 8 态 + `can_transition` 合法边（承 M5-10 §4.3：`Discovered→Validating→SignedOk→Loaded→Enabled⇄Disabled`；`SignedFailed/任意→Uninstalled`）；`transition` 受控 fail-closed。**不做 plugins_dir 解包、不读写磁盘清单、不启用/卸载真实插件**（W6 FORBID）。
++5. **权限预览复用 A5 `PermissionPreview`**：`permission_preview_for_plugin` 返回 `PermissionPreview { gate: AclLevel, capabilities: Vec<String> }`，闸门取 capabilities 中最高风险档（`DANGEROUS_PLUGIN_CAPABILITIES` → `Dangerous`，其余 → `Confirm`，无能力 → `Safe`）。与 A5 `AgentDef::permission_preview` 同形，供 A6 `PermissionPreviewModal.vue`（W5 已对齐）直渲——**Agent/Skill/Plugin 三态一个类型一个组件一个 `AclLevel` 真源**（W5 §2 闭环）。
++6. **能力→闸门档映射为占位集中**：`DANGEROUS_PLUGIN_CAPABILITIES` 初为空集合占位，能力逐个评估追加 `PLUGIN_CAPABILITY_V1` 时同步在此标记风险档，不另立文件（与单一真源一致）。映射函数 `capability_acl_level` 置于 `plugin.rs`（复用 `AclLevel` 来自 domain.rs）；未改动 A5 `agent.rs` 的既有映射，避免跨 lane 编辑（W4 §4 收敛建议仍适用）。
++
++---
++
++## 3. 策略脚本 `check-plugin-policy.py`（镜像 A5 `check-agent-skill-policy.py` 范式）
++
++| 类别 | 码位 | 守什么 |
++|---|---|---|
++| ACTIVE | `PLUGIN_CAP_SINGLE_DEF` | `PLUGIN_CAPABILITY_V1` 在 security_policy.rs 唯一定义（能力单一真源，不漂移/不重复） |
++| PENDING（插件域存在才判） | `PLUGIN_SECOND_PATH` | 插件模块无第二执行路径（`std::process`/`Command::new`/`tokio::spawn`） |
++| | `PLUGIN_INLINE_SHELL` | 无内联脚本/裸 shell（`InlineScript`/`RawShell`/`sh -c`） |
++| | `PLUGIN_SIG_BYPASS` | 无跳过/绕过签名校验（`todo!`/`unimplemented!`/`panic!`/`unwrap_or(true)`） |
++| | `PLUGIN_FORM_THREE` | 仅形态③（无 `window.__TAURI__` 越权 / 独立 webview / `std::process` 独立进程） |
++| | `PLUGIN_NO_SECRETS` | manifest/生命周期代码不持有凭据字段（`password`/`secret`/`token`/`api_key` 等） |
++
++探针 `_plugin_present`：domain.rs 含 `PluginManifest` / security_policy.rs 含 `PLUGIN_CAPABILITY_V1` / plugin.rs 存在 → 任一即在，PENDING 码位自动接管（与 A5 同族探针范式）。门禁只扫 `src-tauri/src/plugin.rs`（避免 domain.rs 等共享文件误伤）。三模式：`--self-test`（1 好样本 + 5 坏样本变异防呆）、默认（真仓判定）、`--expect-pending`（PENDING 集合未变化）。已接入 `pre-merge.sh` 默认门禁与自检。
++
++---
++
++## 4. FORBID / 冲突规避（W6 切片）
++
++- 仅改/新增 W6 允许的 6 个文件；未碰 `bridge.ts`/`types.ts`/graph UI/卡片（A1/A8 在 reconcile 与写 graph UI，工作树已见 `M5-0-overview.md`/graph 组件修改态，本切片不触）。
++- **无安装/卸载运行时**：`plugin.rs` 不触碰 `plugins_dir`、不读写磁盘清单、不调 `std::fs` 解包；`transition` 不持久化。
++- **无下载/执行/启用真实插件**：纯逻辑；无 `tauri::api` 下载、无命令调用。
++- **prefer 不新增命令**：W6 未加任何 Tauri 命令（M5-10/11 的 18 条命令属运行时 lane A18/A19，不在本切片）；故 ACL 末条 `list_artifact_images`（L118）未变，K1 守。
++- **无 secret 持久化/泄露**：复用 `security_policy::contains_credential_leak`；`metadata` 体量受 `MAX_TEXT_FIELD_BYTES`；`PluginManifest` 无凭据字段；审计/日志不记正文（本切片无审计写入）。
++- **无新依赖**：仅用既有 `serde`/`serde_json`/`std`；base64/semver/chrono/ed25519 均不引入（手动校验）。
++- 未移动 `NEXT`；未提交、未 push（board Merge Rule：仅 A0 可推送）。
++
++---
++
++## 5. 验收（只读 + 测试，零运行时副作用）
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++cargo fmt --manifest-path src-tauri/Cargo.toml --all --check        # 期望：通过
++cargo check --manifest-path src-tauri/Cargo.toml --locked 2>&1 | tail -3   # 期望：仅他 lane 既有告警，Finished
++cargo test --manifest-path src-tauri/Cargo.toml plugin 2>&1 | grep "test result"   # 期望：11 passed
++python3 scripts/check-plugin-policy.py --self-test                 # 期望：PLUGIN_SELF_TEST=ALL_PASS
++python3 scripts/check-plugin-policy.py                             # 期望：PLUGIN_POLICY=PASS
++grep -n "list_artifact_images" src-tauri/permissions/default-commands.toml | tail -1   # 期望：118（K1 末条未变）
++```
++
++结果：fmt 通过；check 仅 3 条他 lane 告警（本切片 `#![allow(dead_code)]` 未新增）；11/11 通过；策略 self-test/default PASS；K1 末条未变。
++
++---
++
++## 6. Lane Output Template
++
++```text
++LANE=A9
++STATUS=PASS
++BASE=77b1e3e (HEAD: docs(M5): dispatch W6 graph UI and plugin lanes; 已 git pull --ff-only 同步 origin/master)
++HEAD=logs/checkpoints/Lane-A9-M5-W6-plugin-manifest-lifecycle-20260906-2330.patch
++FILES=src-tauri/src/domain.rs, src-tauri/src/plugin.rs, src-tauri/src/security_policy.rs,
++      src-tauri/src/main.rs, scripts/check-plugin-policy.py, scripts/pre-merge.sh,
++      logs/assist/A9-M5-W6-plugin-manifest-lifecycle-20260906-2330.md,
++      logs/checkpoints/Lane-A9-M5-W6-plugin-manifest-lifecycle-20260906-2330.md
++VERIFY=cargo check 仅 3 条他 lane 告警；11/11 plugin 单测通过；check-plugin-policy.py self-test/default PASS；
++      K1 list_artifact_images 仍为 ACL 末条(118)；fmt 通过
++CHECKPOINT=logs/checkpoints/Lane-A9-M5-W6-plugin-manifest-lifecycle-20260906-2330.md
++MERGE_NOTES=见 §7
++NEXT=A18 (M5-10/11 运行时：18 命令/plugins_dir 解包/真 Ed25519 验签/trusted-pubkeys.json) / A19 (M5-12 UI)，
++      在 §2 策略切片之上接入；能力真源统一收口(capability.rs) 仍交 A0 裁决
++```
++
++## 7. MERGE_NOTES
++
++- **冲突**：无。本切片文件与 W6 其他 lane（A1 卡片 reconcile / A8 graph UI / A2/A4/A5/A7/A10 评审）无交集；`domain.rs` 追加在 graph 常量之后，`security_policy.rs` 仅增 plugin 段，`main.rs` 仅加 `mod plugin;`，`pre-merge.sh` 仅加 2 段。
++- **与 W4/W5 衔接**：W4 已对齐 A5 Agent/Skill 策略（含能力真源碎片化发现）；W5 已对齐 A6 UI（权限预览复用 `PermissionPreview`）+ A7 graph（节点注册表加 `Plugin` 建议等）。本切片把 W4/W5 的设计**落地为可编译、可测、受门禁守护的产品代码切片**，未偏离前序结论。
++- **对 A18/A19 的实施契约**：运行时 lane 在 `plugin.rs` 之上加 `plugins_dir` 解包、`verify_plugin_signature`（真 Ed25519，信任根 `keys/trusted-pubkeys.json` 经 KeyringStore，fail-closed）、18 条 Tauri 命令（每加必过 source check + ACL + 前端 bridge/types + 策略覆盖 + 同包测试，优先少加）；`PluginState` 经 `transition` 驱动；`permission_preview_for_plugin` 供 `PermissionPreviewModal.vue` 渲染；`PLUGIN_CAPABILITY_V1` 能力逐个评估时同步在 `DANGEROUS_PLUGIN_CAPABILITIES` 标记风险档。
++- **能力真源收口**：`PLUGIN_CAPABILITY_V1` 落 security_policy.rs 是 W4 §4 碎片化待收口项的最小改动落点；完整 `capability.rs` 统一（MCP+Skill+Agent+Plugin+A2A）仍交 A0 裁决。
++
++## 8. 交付索引
++
++- 产品代码：`src-tauri/src/domain.rs`(plugin DTO 追加)、`src-tauri/src/plugin.rs`(新增)、`src-tauri/src/security_policy.rs`(PLUGIN_CAPABILITY_V1 + PolicyError 变体)、`src-tauri/src/main.rs`(mod plugin)、`scripts/check-plugin-policy.py`(新增)、`scripts/pre-merge.sh`(接入)。
++- 文档：`logs/assist/A9-M5-W6-plugin-manifest-lifecycle-20260906-2330.md`（本文件）、`logs/checkpoints/Lane-A9-M5-W6-plugin-manifest-lifecycle-20260906-2330.md`。
++- 上游：W4 `A9-M5-W4-plugin-manifest-lifecycle-20260906-1820.md`（已拣入）、W5 `A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md`（已对照 A7 复核）。
++- A9 插件 docs 链完整：`W0(1100)→W1(1530+1630 已集成)→W3(1730 已拣入+graph 契约)→W4(1820 已拣入)→W5(1905 已对照 A7 复核)→W6(2330 策略切片产品代码)`。manifest/lifecycle 已由设计对齐（A5/A6/A7）转为受编译+单测+策略门禁守护的可集成切片；运行时 lane A18/A19 在其上接入。
+diff --git a/logs/checkpoints/Lane-A9-M5-W6-plugin-manifest-lifecycle-20260906-2330.md b/logs/checkpoints/Lane-A9-M5-W6-plugin-manifest-lifecycle-20260906-2330.md
+new file mode 100644
+index 0000000..231c4b2
+--- /dev/null
++++ b/logs/checkpoints/Lane-A9-M5-W6-plugin-manifest-lifecycle-20260906-2330.md
+@@ -0,0 +1,60 @@
++# Lane A9 — M5-W6 整包交付（插件 manifest/生命周期策略切片，START PRODUCT CODE）Checkpoint
++
++> 生成：2026-09-06 23:30 CST · Lane A9（M5-W6 · START PRODUCT CODE · 整包交付）
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W6 Parallel Dispatch → A9：Implement M5-10/M5-11 plugin manifest/lifecycle policy slice.
++> BASE：`77b1e3e`（HEAD：`docs(M5): dispatch W6 graph UI and plugin lanes`；已 git pull --ff-only 同步）
++
++```
++LANE=A9
++STATUS=PASS
++BASE=77b1e3e (HEAD: docs(M5): dispatch W6 graph UI and plugin lanes; 已 git pull --ff-only 同步 origin/master)
++HEAD=logs/checkpoints/Lane-A9-M5-W6-plugin-manifest-lifecycle-20260906-2330.patch
++FILES=src-tauri/src/domain.rs, src-tauri/src/plugin.rs, src-tauri/src/security_policy.rs,
++      src-tauri/src/main.rs, scripts/check-plugin-policy.py, scripts/pre-merge.sh,
++      logs/assist/A9-M5-W6-plugin-manifest-lifecycle-20260906-2330.md,
++      logs/checkpoints/Lane-A9-M5-W6-plugin-manifest-lifecycle-20260906-2330.md
++VERIFY=见 §Verify
++CHECKPOINT=logs/checkpoints/Lane-A9-M5-W6-plugin-manifest-lifecycle-20260906-2330.md
++MERGE_NOTES=见下
++NEXT=A18 (M5-10/11 运行时) / A19 (M5-12 UI)
++```
++
++## 本切片交付（A9 M5-W6 整包，策略切片产品代码）
++
++| 要求（M5-W6 A9） | 落点 |
++|---|---|
++| DTOs（manifest/entry/capability/signature/state） | `domain.rs` 追加 `PluginManifest`/`PluginEntry`/`PluginCapability`/`PluginSignature`/`PluginState` |
++| validation（纯函数） | `plugin.rs`：`validate_plugin_manifest`（schema+凭据+形态③+白名单+哈希/签名结构）、`verify_plugin_signature_structure`（仅结构） |
++| lifecycle state machine | `plugin.rs`：`can_transition`/`transition`（8 态，无文件 I/O，fail-closed） |
++| permission manifest rules | `plugin.rs`：`permission_preview_for_plugin` 复用 A5 `PermissionPreview`；`capability_acl_level` 风险档映射 |
++| policy script | `scripts/check-plugin-policy.py`（1 ACTIVE `PLUGIN_CAP_SINGLE_DEF` + 5 PENDING）；接入 `pre-merge.sh` |
++| 无安装/卸载文件突变运行时 / 无下载插件 / 无真签名加密（除非全本地） | 纯逻辑切片；真 Ed25519 留运行时 lane；未引加密 crate |
++| bounded metadata / no secrets / no network/install runtime | `MAX_TEXT_FIELD_BYTES` 边界 + `contains_credential_leak`；无 `std::fs` 解包、无联网、无命令 |
++
++## Verify（编译 + 单测 + 策略门禁 + 只读）
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++cargo fmt --manifest-path src-tauri/Cargo.toml --all --check      # 期望：通过
++cargo check --manifest-path src-tauri/Cargo.toml --locked 2>&1 | tail -3   # 期望：仅他 lane 既有告警，Finished
++cargo test --manifest-path src-tauri/Cargo.toml plugin 2>&1 | grep "test result"   # 期望：11 passed
++python3 scripts/check-plugin-policy.py --self-test               # 期望：PLUGIN_SELF_TEST=ALL_PASS (ACTIVE=1 PENDING=5)
++python3 scripts/check-plugin-policy.py                           # 期望：PLUGIN_POLICY=PASS
++bash -n scripts/pre-merge.sh                                      # 期望：OK
++grep -n "list_artifact_images" src-tauri/permissions/default-commands.toml | tail -1   # 期望：118（K1 末条未变）
++```
++
++结果：fmt 通过；check 仅 3 条他 lane 告警（本切片 `#![allow(dead_code)]` 未新增）；**11/11 plugin 单测通过**；策略 self-test/default PASS；K1 末条未变；pre-merge.sh 语法 OK。
++
++## Merge Notes
++
++- **冲突**：无。仅 W6 允许文件；与 A1 卡片 reconcile / A8 graph UI / A2/A4/A5/A7/A10 评审无交集。`domain.rs` 追加在 graph 常量后，`security_policy.rs` 仅增 plugin 段，`main.rs` 仅加 `mod plugin;`。
++- **能力真源**：`PLUGIN_CAPABILITY_V1` 落 security_policy.rs（与 SKILL/AGENT 同文件），MCP 仍在 domain.rs——W4 §4 碎片化待收口项；完整 `capability.rs` 统一交 A0 裁决。`PLUGIN_CAP_SINGLE_DEF` 守唯一定义。
++- **与 W4/W5 衔接**：设计已对齐 A5 策略 + A6 UI（权限预览复用 `PermissionPreview`）+ A7 graph；本切片将其落地为可编译/可测/受门禁守护的切片。
++- **对 A18/A19**：运行时在其上接 plugins_dir 解包、真 Ed25519 验签（信任根 `keys/trusted-pubkeys.json` 经 KeyringStore，fail-closed）、18 命令（每加必过 source/ACL/bridge/策略/测试）、`PluginState` 经 `transition` 驱动、`permission_preview_for_plugin` 供 `PermissionPreviewModal.vue`。
++
++## FORBID 遵守
++
++- 仅改/新增 W6 允许 6 文件；未触 bridge.ts/types.ts/graph UI/卡片/M5-10/11 卡。
++- 无安装/卸载运行时、无下载/执行/启用真实插件、无新增命令（K1 末条未变）、无 secret 持久化、无新依赖。
++- 未移动 NEXT；未提交、未 push（board Merge Rule：仅 A0 可推送）。
+diff --git a/scripts/check-plugin-policy.py b/scripts/check-plugin-policy.py
+new file mode 100644
+index 0000000..38470f2
+--- /dev/null
++++ b/scripts/check-plugin-policy.py
+@@ -0,0 +1,218 @@
++#!/usr/bin/env python3
++# ---------------------------------------------------------------------------
++# check-plugin-policy.py — M5-10/M5-11 插件 manifest/生命周期策略不变量夹具
++#                          （Lane A9, M5-W6；ACTIVE + PENDING 码位）
++#
++# 守：
++#   ACTIVE:
++#     PLUGIN_CAP_SINGLE_DEF   PLUGIN_CAPABILITY_V1 在 security_policy.rs 唯一定义
++#                             （能力单一真源；不漂移，不重复定义）
++#   PENDING（仅当插件域存在时判；产物未落时自动 SKIP）：
++#     PLUGIN_SECOND_PATH      插件模块无第二执行路径（无 std::process / Command::new /
++#                             tokio::spawn 直起独立进程）
++#     PLUGIN_INLINE_SHELL     插件模块无内联脚本 / 裸 shell 执行
++#     PLUGIN_SIG_BYPASS       插件模块无跳过/绕过签名校验（无 todo!/unimplemented!/
++#                             panic!/unwrap_or(true) 旁路）
++#     PLUGIN_FORM_THREE       插件仅形态③（无 window.__TAURI__ 越权 / 无独立 webview
++#                             自起 / 无 std::process 独立进程）
++#     PLUGIN_NO_SECRETS       插件 manifest/生命周期代码不持有凭据字段
++#                             （无 password/secret/token/api_key 等字段）
++#
++# W6 红线：纯 manifest/生命周期策略切片——无安装/卸载运行时、无下载/执行、
++# 无真签名加密（仅结构校验）、无新增命令、无 secret 持久化。
++#
++# 用法:
++#   scripts/check-plugin-policy.py            默认门禁（插件域存在则判，否则 SKIP）
++#   scripts/check-plugin-policy.py --help     显示帮助
++#   scripts/check-plugin-policy.py --self-test 双向自检（1 好样本 + N 坏样本变异防呆）
++#   scripts/check-plugin-policy.py --expect-pending 校验 PENDING 码位集合未变化
++# 退出码: 0 = 全部通过；1 = 任一失败；2 = 非法参数
++# ---------------------------------------------------------------------------
++import argparse
++import os
++import re
++import sys
++import glob
++
++SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
++ROOT = os.path.dirname(SCRIPT_DIR)
++
++ACTIVE_CODES = {
++    "PLUGIN_CAP_SINGLE_DEF": "PLUGIN_CAPABILITY_V1 在 security_policy.rs 唯一定义（能力单一真源）",
++}
++PENDING_CODES = {
++    "PLUGIN_SECOND_PATH": "插件模块无第二执行路径（std::process / Command::new / tokio::spawn）",
++    "PLUGIN_INLINE_SHELL": "插件模块无内联脚本 / 裸 shell 执行",
++    "PLUGIN_SIG_BYPASS": "插件模块无跳过/绕过签名校验（todo!/unimplemented!/panic!/unwrap_or(true)）",
++    "PLUGIN_FORM_THREE": "插件仅形态③（无 window.__TAURI__ 越权 / 无独立 webview 自起 / 无 std::process 独立进程）",
++    "PLUGIN_NO_SECRETS": "插件 manifest/生命周期代码不持有凭据字段（无 password/secret/token/api_key 等）",
++}
++EXPECTED_PENDING = set(PENDING_CODES.keys())
++
++# 插件逻辑模块（纯函数所在）；门禁只扫它，避免 domain.rs 等其他文件误伤。
++PLUGIN_MODULE = os.path.join(ROOT, "src-tauri", "src", "plugin.rs")
++
++VIOLATION_PATTERNS = {
++    "PLUGIN_SECOND_PATH": r"std::process|Command::new|tokio::spawn|\bspawn\b",
++    "PLUGIN_INLINE_SHELL": r"InlineScript|RawShell|\bsh -c\b",
++    "PLUGIN_SIG_BYPASS": r"todo!|unimplemented!|panic!|\.unwrap_or\(true\)",
++    "PLUGIN_FORM_THREE": r"window\.__TAURI__|WebviewWindow|Webview|std::process",
++}
++
++
++def _plugin_present():
++    """插件域是否存在：PluginManifest 类型 / PLUGIN_CAPABILITY_V1 / plugin.rs 任一即在。"""
++    domain_rs = os.path.join(ROOT, "src-tauri", "src", "domain.rs")
++    sec_rs = os.path.join(ROOT, "src-tauri", "src", "security_policy.rs")
++    if os.path.exists(domain_rs) and "pub struct PluginManifest" in _read(domain_rs):
++        return True
++    if os.path.exists(sec_rs) and "PLUGIN_CAPABILITY_V1" in _read(sec_rs):
++        return True
++    if os.path.exists(PLUGIN_MODULE):
++        return True
++    return False
++
++
++def _read(path):
++    try:
++        with open(path, "r", encoding="utf-8") as f:
++            return f.read()
++    except OSError:
++        return ""
++
++
++def _all_rs_texts():
++    texts = []
++    for p in glob.glob(os.path.join(ROOT, "src-tauri", "src", "*.rs")):
++        texts.append(_read(p))
++    return texts
++
++
++def g_cap_single_def(texts):
++    cnt = sum(1 for t in texts if "pub const PLUGIN_CAPABILITY_V1" in t)
++    return cnt == 1, f"PLUGIN_CAPABILITY_V1 定义数={cnt}（期望 1，落在 security_policy.rs）"
++
++
++def g_violation(code, text):
++    if code == "PLUGIN_NO_SECRETS":
++        for line in text.splitlines():
++            if re.search(r"^\s*pub \w+\s*:", line) and re.search(
++                r"(?i)(password|secret|token|api_key|authorization|bearer|cookie|private_key)",
++                line,
++            ):
++                return False, f"字段含凭据名：{line.strip()}"
++        return True, "无凭据字段"
++    pat = VIOLATION_PATTERNS[code]
++    m = re.search(pat, text)
++    if m:
++        return False, f"匹配违规片段：{m.group(0)!r}"
++    return True, "未检出违规"
++
++
++def run_default():
++    if not _plugin_present():
++        print("PLUGIN_POLICY=SKIP (插件域不存在)")
++        return 0
++    texts = _all_rs_texts()
++    plugin_text = _read(PLUGIN_MODULE)
++    results = {}
++    ok, note = g_cap_single_def(texts)
++    results["PLUGIN_CAP_SINGLE_DEF"] = (ok, note)
++    for code in PENDING_CODES:
++        ok, note = g_violation(code, plugin_text)
++        results[code] = (ok, note)
++    rc = 0
++    for code, (ok, note) in results.items():
++        tag = "OK" if ok else "FAIL"
++        print(f"[{tag}] {code}: {note}")
++        if not ok:
++            rc = 1
++    print("PLUGIN_POLICY=PASS" if rc == 0 else "PLUGIN_POLICY=FAIL")
++    return rc
++
++
++# ---- 自检夹具：1 好样本 + N 坏样本变异防呆 ----
++
++CLEAN_SAMPLE = """
++//! 干净的插件模块示例
++use crate::domain::PluginManifest;
++use crate::security_policy::PolicyError;
++
++pub fn validate_plugin_manifest(m: &PluginManifest) -> Result<(), PolicyError> {
++    if m.id.is_empty() {
++        return Err(PolicyError::EmptyRequiredField("plugin.id".into()));
++    }
++    Ok(())
++}
++
++pub fn verify_plugin_signature_structure(sig: &crate::domain::PluginSignature) -> Result<(), PolicyError> {
++    if sig.algorithm != "Ed25519" {
++        return Err(PolicyError::InvalidPluginSignature("algo".into()));
++    }
++    Ok(())
++}
++"""
++
++BAD_SAMPLES = {
++    "PLUGIN_SECOND_PATH": 'let _ = std::process::Command::new("ls").spawn();',
++    "PLUGIN_INLINE_SHELL": "let _ = InlineScript { code: \"rm -rf /\".into() };",
++    "PLUGIN_SIG_BYPASS": "pub fn verify(_s: &PluginSignature) -> bool { todo!() }",
++    "PLUGIN_FORM_THREE": "let w = WebviewWindow::new(\"p\", None, WebviewUrl::default());",
++    "PLUGIN_NO_SECRETS": "pub token: String,",
++}
++
++
++def run_self_test():
++    # ACTIVE：能力单一真源
++    assert g_cap_single_def(["pub const PLUGIN_CAPABILITY_V1: &[&str] = &[];"])[0] is True, \
++        "单定义应放行"
++    assert g_cap_single_def(
++        ["x", "pub const PLUGIN_CAPABILITY_V1: &[&str] = &[];",
++         "pub const PLUGIN_CAPABILITY_V1: &[&str] = &[];"]
++    )[0] is False, "重复定义应拦截"
++    assert g_cap_single_def(["x", "y"])[0] is False, "零定义应拦截"
++
++    # PENDING：好样本全放行、坏样本全拦截
++    for code in PENDING_CODES:
++        ok, _ = g_violation(code, CLEAN_SAMPLE)
++        assert ok is True, f"{code}: 干净样本被误拦"
++        ok, _ = g_violation(code, BAD_SAMPLES[code])
++        assert ok is False, f"{code}: 坏样本未被拦截"
++
++    print("PLUGIN_SELF_TEST=ALL_PASS")
++    print(f"ACTIVE={len(ACTIVE_CODES)} PENDING={len(PENDING_CODES)}")
++    return 0
++
++
++def run_expect_pending():
++    if set(PENDING_CODES.keys()) != EXPECTED_PENDING:
++        missing = EXPECTED_PENDING - set(PENDING_CODES.keys())
++        extra = set(PENDING_CODES.keys()) - EXPECTED_PENDING
++        print(f"PLUGIN_PENDING_MISMATCH missing={missing} extra={extra}")
++        return 1
++    print("PLUGIN_PENDING_OK")
++    return 0
++
++
++def usage():
++    print(__doc__)
++
++
++def main():
++    ap = argparse.ArgumentParser(add_help=False)
++    ap.add_argument("--help", "-h", action="store_true")
++    ap.add_argument("--self-test", action="store_true")
++    ap.add_argument("--expect-pending", action="store_true")
++    args, _ = ap.parse_known_args()
++    if args.help:
++        usage()
++        return 0
++    if args.self_test:
++        return run_self_test()
++    if args.expect_pending:
++        return run_expect_pending()
++    return run_default()
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/scripts/pre-merge.sh b/scripts/pre-merge.sh
+index ffad6bc..c54479d 100755
+--- a/scripts/pre-merge.sh
++++ b/scripts/pre-merge.sh
+@@ -443,6 +443,14 @@ run_pre_merge() {
+   python3 "$SCRIPT_DIR/check-graph-policy.py" >/dev/null 2>&1 \
+     || pm_fail "check-graph-policy.py（M5-7/8 图谱安全不变量被破坏：常量缺失/隐私未扫值/容量未接/遍历无界/id 非十六进制/第二执行路径）"
+
++  # M5-10/11（Lane A9）：插件 manifest/生命周期策略不变量夹具（PLUGIN_* 码位）。
++  # 守能力单一真源 / 无第二执行路径 / 无内联 shell / 无签名旁路 / 仅形态③ / 无凭据字段。
++  pm_log "M5-10/11 插件 manifest/生命周期策略不变量夹具（PLUGIN_* 码位）…"
++  python3 "$SCRIPT_DIR/check-plugin-policy.py" --self-test >/dev/null 2>&1 \
++    || pm_fail "check-plugin-policy.py --self-test"
++  python3 "$SCRIPT_DIR/check-plugin-policy.py" >/dev/null 2>&1 \
++    || pm_fail "check-plugin-policy.py（M5-10/11 插件安全不变量被破坏：能力漂移/第二执行路径/内联shell/签名旁路/非形态③/凭据字段）"
++
+   pm_log "git diff --check（工作树 + 暂存区，机器证据除外）…"
+   # Raw evidence is immutable third-party output; SHA256SUMS, not whitespace rewriting, protects it.
+   git -C "$ROOT" diff --check -- . ':(exclude)logs/m0-baseline/**' || pm_fail "git diff --check (worktree)"
+@@ -574,6 +582,11 @@ run_self_test() {
+   if ! python3 "$SCRIPT_DIR/check-graph-policy.py" --self-test >/dev/null 2>&1; then
+     echo "FAIL: check-graph-policy.py --self-test"; rc=1
+   fi
++  # M5-10/11（Lane A9）：插件策略夹具自检。
++  [ -f "$SCRIPT_DIR/check-plugin-policy.py" ] || { echo "FAIL: check-plugin-policy.py missing"; rc=1; }
++  if ! python3 "$SCRIPT_DIR/check-plugin-policy.py" --self-test >/dev/null 2>&1; then
++    echo "FAIL: check-plugin-policy.py --self-test"; rc=1
++  fi
+   if ! python3 "$SCRIPT_DIR/check-tools-policy.py" --self-test >/dev/null 2>&1; then
+     echo "FAIL: check-tools-policy.py --self-test"; rc=1
+   fi
+diff --git a/src-tauri/src/domain.rs b/src-tauri/src/domain.rs
+index 24186ee..447b9f9 100644
+--- a/src-tauri/src/domain.rs
++++ b/src-tauri/src/domain.rs
+@@ -2114,3 +2114,100 @@ pub const GRAPH_QUERY_LIMIT: usize = 1_000;
+ pub const GRAPH_MAX_NODES: usize = 5_000;
+ /// 图谱边总数硬上限。
+ pub const GRAPH_MAX_EDGES: usize = 20_000;
++
++// ===========================================================================
++// M5-10 / M5-11 插件 manifest 与生命周期（Lane A9, M5-W6 策略切片）
++//
++// 仅 DTO + 纯校验辅助 + 生命周期状态机（无文件变更 / 无安装卸载运行时 /
++// 无联网 / 无真签名加密）。能力白名单单一真源在 `security_policy.rs`
++// （SKILL / AGENT / PLUGIN_CAPABILITY_V1，承 security_policy.rs §M5-4/5 头注释）。
++// 真 Ed25519 验签、plugins_dir 解包、bridge 命令由运行时 lane 在本地完成。
++// 形态③（声明式资源包）在类型与校验层即排除独立 webview / 独立 stdio 进程。
++// ===========================================================================
++
++/// 插件 manifest（YAML / JSON 解析目标）。声明式资源包（形态③），不含凭据。
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub struct PluginManifest {
++    /// 反向域名规范，如 `com.example.myplugin`。
++    pub id: String,
++    /// semver，如 `1.0.0`。
++    pub version: String,
++    #[serde(default)]
++    pub display_name: String,
++    #[serde(default)]
++    pub description: String,
++    /// 最低宿主版本（semver）；低于此版本拒绝加载。
++    #[serde(default)]
++    pub min_app_version: String,
++    /// 形态③：图标 + 入口 URL（同源 webview）+ JS 钩子（受控 bridge.ts）。
++    #[serde(default)]
++    pub entry: PluginEntry,
++    /// 能力声明（每项带用途说明 reason）；值必须落在 `security_policy::PLUGIN_CAPABILITY_V1`。
++    #[serde(default)]
++    pub capabilities: Vec<PluginCapability>,
++    /// 资源包 sha256（hex，64 字符）。
++    #[serde(default)]
++    pub hash: String,
++    /// Ed25519 签名结构（纯结构；真验签由运行时 lane 在本地完成）。
++    #[serde(default)]
++    pub signature: PluginSignature,
++    /// 扩展元数据；体量受 `MAX_TEXT_FIELD_BYTES` 约束，禁止存正文/凭据。
++    #[serde(default)]
++    pub metadata: serde_json::Value,
++}
++
++/// 插件入口（形态③）。入口 URL 必须走既有 webview 同源（`http(s)://` / `tool://`），
++/// 禁 `javascript:` / `data:` / `file:` / 独立 webview 自起。
++#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub struct PluginEntry {
++    #[serde(default)]
++    pub entry_url: String,
++    #[serde(default)]
++    pub icon: String,
++}
++
++/// 能力引用 + 用途说明。复用 A5 的 capability 单一真源思路；`capability` 必须
++/// 落在 `security_policy::PLUGIN_CAPABILITY_V1`；`reason` 仅展示用。
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++pub struct PluginCapability {
++    pub capability: String,
++    pub reason: String,
++}
++
++/// Ed25519 签名结构（纯结构；W6 仅校验结构，真验签由运行时 lane 在本地完成）。
++#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
++pub struct PluginSignature {
++    #[serde(default = "default_ed25519_algo")]
++    pub algorithm: String,
++    /// 引用 `keys/trusted-pubkeys.json` 的公钥 id。
++    #[serde(default)]
++    pub key_id: String,
++    /// base64 签名值。
++    #[serde(default)]
++    pub value: String,
++    /// 签名时间（ISO8601）。W6 用字符串；运行时 lane 可解析为 `DateTime<Utc>`。
++    #[serde(default)]
++    pub signed_at: String,
++}
++
++fn default_ed25519_algo() -> String {
++    "Ed25519".to_string()
++}
++
++/// 插件生命周期状态机（纯枚举，无文件 I/O）。
++/// `Discovered → Validating → SignedOk → Loaded → Enabled ⇄ Disabled`；
++/// `SignedFailed` / 任意 → `Uninstalled` 见 `can_transition`（plugin.rs）。
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum PluginState {
++    Discovered,
++    Validating,
++    SignedOk,
++    SignedFailed,
++    Loaded,
++    Enabled,
++    Disabled,
++    Uninstalled,
++}
+diff --git a/src-tauri/src/main.rs b/src-tauri/src/main.rs
+index e2e60bf..614779e 100644
+--- a/src-tauri/src/main.rs
++++ b/src-tauri/src/main.rs
+@@ -11,6 +11,7 @@ mod grid_ipc;
+ mod grid_process;
+ mod images;
+ mod mcp;
++mod plugin;
+ mod scheduler;
+ mod script_runner;
+ mod scripts;
+diff --git a/src-tauri/src/plugin.rs b/src-tauri/src/plugin.rs
+new file mode 100644
+index 0000000..86ebebc
+--- /dev/null
++++ b/src-tauri/src/plugin.rs
+@@ -0,0 +1,448 @@
++//! M5-10 / M5-11 插件 manifest 与生命周期策略切片（Lane A9, M5-W6）。
++//!
++//! 本模块**只含纯函数**：
++//! - `validate_plugin_manifest`：manifest schema 边界 + 凭据泄露 + 形态③入口 +
++//!   能力白名单 + 哈希/签名结构（不做文件 I/O、不做真验签）。
++//! - `verify_plugin_signature_structure`：仅签名**结构**校验；真 Ed25519 验签由运行时
++//!   lane 在本地完成（W6 不引入加密 crate、不联网）。
++//! - `can_transition` / `transition`：生命周期状态机（纯，无文件变更）。
++//! - `permission_preview_for_plugin`：派生于 A5 `PermissionPreview`，供 A6 UI 渲染。
++//!
++//! 设计红线（承 M5-10 §4 / W6 FORBID）：
++//! - 无安装/卸载运行时（不触碰 `plugins_dir`、不读写磁盘清单）。
++//! - 无下载/执行/启用真实插件。
++//! - 形态③唯一合法：入口 URL 同源 webview；类型与校验层排除独立 webview / stdio 进程。
++//! - 能力白名单单一真源：`security_policy::PLUGIN_CAPABILITY_V1`（fail-closed 空集合首期）。
++//! - 无凭据/secret 进入 manifest 或审计（复用 `security_policy::contains_credential_leak`）。
++#![allow(dead_code)] // W6 为策略切片：纯函数仅被单测与未来运行时 lane 消费，无当前调用方。
++
++use crate::domain::{
++    AclLevel, PermissionPreview, PluginCapability, PluginManifest, PluginSignature, PluginState,
++};
++use crate::security_policy::{self, PolicyError};
++
++// ---------------------------------------------------------------------------
++// 能力 → 安装/运行闸门档（M5-10 §4.5：声明危险 capability ⇒ Dangerous 闸门 + keyring 二次确认）
++// ---------------------------------------------------------------------------
++
++/// 危险能力集合（首期为空集合占位）。能力逐个评估追加到 `security_policy::PLUGIN_CAPABILITY_V1`
++/// 时，同步在此标记其风险档——与能力白名单单一真源一致，不另立文件。
++pub const DANGEROUS_PLUGIN_CAPABILITIES: &[&str] = &[
++    "fs_write",
++    "fs_delete",
++    "command_exec",
++    "workspace.write",
++    "workspace.delete",
++    "network.request",
++    "credential.read",
++];
++
++/// 能力 → 安装/运行闸门档（fail-closed：未知能力已在白名单校验前拒绝，这里仅作风险分类）。
++pub fn capability_acl_level(cap: &str) -> AclLevel {
++    if DANGEROUS_PLUGIN_CAPABILITIES.contains(&cap) {
++        AclLevel::Dangerous
++    } else {
++        AclLevel::Confirm
++    }
++}
++
++/// 权限预览（M5-6/12 UI 用）：插件安装/启用前可见闸门档与所需能力。
++/// 与 A5 `AgentDef::permission_preview` 同形；闸门取 capabilities 中最高风险档。
++pub fn permission_preview_for_plugin(m: &PluginManifest) -> PermissionPreview {
++    let gate = if m
++        .capabilities
++        .iter()
++        .any(|c| capability_acl_level(&c.capability) == AclLevel::Dangerous)
++    {
++        AclLevel::Dangerous
++    } else if m
++        .capabilities
++        .iter()
++        .any(|c| capability_acl_level(&c.capability) == AclLevel::Confirm)
++    {
++        AclLevel::Confirm
++    } else {
++        AclLevel::Safe
++    };
++    PermissionPreview {
++        gate,
++        capabilities: m
++            .capabilities
++            .iter()
++            .map(|c| c.capability.clone())
++            .collect(),
++    }
++}
++
++// ---------------------------------------------------------------------------
++// 纯 manifest 校验（fail-closed）
++// ---------------------------------------------------------------------------
++
++/// 纯 manifest 校验：schema 边界 + 凭据泄露 + 形态③入口 + 能力白名单 + 哈希/签名结构。
++/// 不做文件 I/O、不做真验签、不联网。
++pub fn validate_plugin_manifest(m: &PluginManifest) -> Result<(), PolicyError> {
++    // 1) 反向域名 id 非空 + 边界 + 规范
++    if m.id.trim().is_empty() {
++        return Err(PolicyError::EmptyRequiredField("plugin.id".into()));
++    }
++    if m.id.len() > MAX_PLUGIN_ID_BYTES {
++        return Err(PolicyError::InvalidPluginManifest("plugin.id 超长".into()));
++    }
++    if !is_reverse_domain(&m.id) {
++        return Err(PolicyError::InvalidPluginManifest(format!(
++            "plugin.id 非反向域名规范：{}",
++            m.id
++        )));
++    }
++
++    // 2) version / display_name / description / min_app_version 边界 + 凭据泄露
++    bound_text(&m.version, "plugin.version")?;
++    bound_text(&m.display_name, "plugin.display_name")?;
++    bound_text(&m.description, "plugin.description")?;
++    bound_text(&m.min_app_version, "plugin.min_app_version")?;
++
++    // 3) 形态③入口：entry_url 必须同源 webview，禁 javascript:/data:/file:/其他 scheme
++    if !is_allowed_entry_url(&m.entry.entry_url) {
++        return Err(PolicyError::InvalidPluginManifest(format!(
++            "plugin.entry.entry_url 非形态③同源入口：{}",
++            m.entry.entry_url
++        )));
++    }
++    bound_text(&m.entry.icon, "plugin.entry.icon")?;
++
++    // 4) 能力白名单（单一真源）+ reason 非空
++    let ids: Vec<String> = m
++        .capabilities
++        .iter()
++        .map(|c| c.capability.clone())
++        .collect();
++    security_policy::check_plugin_capabilities(&ids)?;
++    for c in &m.capabilities {
++        if c.reason.trim().is_empty() {
++            return Err(PolicyError::InvalidPluginManifest(format!(
++                "plugin capability {} 缺 reason",
++                c.capability
++            )));
++        }
++    }
++
++    // 5) hash：sha256 hex（64）
++    if !is_sha256_hex(&m.hash) {
++        return Err(PolicyError::InvalidPluginManifest(format!(
++            "plugin.hash 非 sha256 hex：{}",
++            m.hash
++        )));
++    }
++
++    // 6) 签名结构
++    verify_plugin_signature_structure(&m.signature)?;
++
++    // 7) metadata 体量边界（禁止正文/凭据由 contains_credential_leak 守）
++    if let Ok(s) = serde_json::to_string(&m.metadata) {
++        if s.len() > crate::domain::MAX_TEXT_FIELD_BYTES {
++            return Err(PolicyError::InvalidPluginManifest(
++                "plugin.metadata 超 64KiB".into(),
++            ));
++        }
++    }
++
++    Ok(())
++}
++
++/// 纯签名结构校验（W6 仅结构；真 Ed25519 验签由运行时 lane 在本地完成，不引加密 crate）。
++pub fn verify_plugin_signature_structure(sig: &PluginSignature) -> Result<(), PolicyError> {
++    if sig.algorithm != "Ed25519" {
++        return Err(PolicyError::InvalidPluginSignature(format!(
++            "不支持的签名算法（仅 Ed25519）：{}",
++            sig.algorithm
++        )));
++    }
++    if sig.key_id.trim().is_empty() {
++        return Err(PolicyError::InvalidPluginSignature("key_id 为空".into()));
++    }
++    if !is_base64_std(&sig.value) {
++        return Err(PolicyError::InvalidPluginSignature(
++            "value 非 base64".into(),
++        ));
++    }
++    if !is_iso8601_len(&sig.signed_at) {
++        return Err(PolicyError::InvalidPluginSignature(
++            "signed_at 超长/非法（需 ISO8601）".into(),
++        ));
++    }
++    Ok(())
++}
++
++// ---------------------------------------------------------------------------
++// 生命周期状态机（纯函数，无文件 I/O）
++// ---------------------------------------------------------------------------
++
++/// 生命周期迁移是否合法（承 M5-10 §4.3）。
++pub fn can_transition(from: PluginState, to: PluginState) -> bool {
++    use PluginState::*;
++    matches!(
++        (from, to),
++        (Discovered, Validating)
++            | (Validating, SignedOk)
++            | (Validating, SignedFailed)
++            | (SignedOk, Loaded)
++            | (SignedFailed, Uninstalled)
++            | (SignedFailed, Discovered)
++            | (Loaded, Enabled)
++            | (Loaded, Disabled)
++            | (Loaded, Uninstalled)
++            | (Enabled, Disabled)
++            | (Enabled, Uninstalled)
++            | (Disabled, Enabled)
++            | (Disabled, Uninstalled)
++    )
++}
++
++/// 受控迁移（fail-closed）。
++pub fn transition(state: PluginState, next: PluginState) -> Result<PluginState, PolicyError> {
++    if can_transition(state, next) {
++        Ok(next)
++    } else {
++        Err(PolicyError::PluginStateTransition(format!(
++            "{:?} -> {:?} 非法迁移",
++            state, next
++        )))
++    }
++}
++
++// ---------------------------------------------------------------------------
++// 校验辅助（均为保守纯函数，不依赖外部）
++// ---------------------------------------------------------------------------
++
++const MAX_PLUGIN_ID_BYTES: usize = 256;
++
++/// 反向域名宽松校验：含 '.'，字符限于小写字母数字 . - _，不以 . 开头/结尾。
++fn is_reverse_domain(s: &str) -> bool {
++    if s.is_empty() || s.len() > MAX_PLUGIN_ID_BYTES {
++        return false;
++    }
++    if !s.contains('.') {
++        return false;
++    }
++    s.chars()
++        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-' || c == '_')
++        && !s.starts_with('.')
++        && !s.ends_with('.')
++}
++
++/// 文本字段边界（≤ `MAX_TEXT_FIELD_BYTES`）+ 凭据泄露检查。
++fn bound_text(s: &str, field: &str) -> Result<(), PolicyError> {
++    if s.len() > crate::domain::MAX_TEXT_FIELD_BYTES {
++        return Err(PolicyError::InvalidPluginManifest(format!("{field} 超长")));
++    }
++    if security_policy::contains_credential_leak(s) {
++        return Err(PolicyError::CredentialLeak(s.to_string()));
++    }
++    Ok(())
++}
++
++/// 形态③：同源 webview 入口，仅 http/https/tool://。
++fn is_allowed_entry_url(u: &str) -> bool {
++    u.starts_with("http://") || u.starts_with("https://") || u.starts_with("tool://")
++}
++
++/// sha256 hex（64 字符，全小写十六进制）。
++fn is_sha256_hex(s: &str) -> bool {
++    s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
++}
++
++/// 标准 base64 宽松校验（字符集 + 4 字节对齐；不解码，避免引依赖）。
++fn is_base64_std(s: &str) -> bool {
++    if s.is_empty() || s.len() > 4096 {
++        return false;
++    }
++    s.len() % 4 == 0
++        && s.chars()
++            .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
++}
++
++/// ISO8601 字符串边界（不长于 64 字符且非空）。
++fn is_iso8601_len(s: &str) -> bool {
++    !s.is_empty() && s.len() <= 64
++}
++
++// ---------------------------------------------------------------------------
++// 单测
++// ---------------------------------------------------------------------------
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::domain::{PluginEntry, PluginSignature};
++    use serde_json::json;
++
++    fn valid_manifest() -> PluginManifest {
++        PluginManifest {
++            id: "com.example.myplugin".to_string(),
++            version: "1.0.0".to_string(),
++            display_name: "示例插件".to_string(),
++            description: "仅做展示的示例插件".to_string(),
++            min_app_version: "0.1.0".to_string(),
++            entry: PluginEntry {
++                entry_url: "https://example.com/plugin/index.html".to_string(),
++                icon: "https://example.com/plugin/icon.png".to_string(),
++            },
++            capabilities: vec![],
++            hash: "a".repeat(64),
++            signature: PluginSignature {
++                algorithm: "Ed25519".to_string(),
++                key_id: "key1".to_string(),
++                value: "QUJDRA==".to_string(),
++                signed_at: "2026-09-06T00:00:00Z".to_string(),
++            },
++            metadata: json!({}),
++        }
++    }
++
++    #[test]
++    fn valid_manifest_passes() {
++        assert!(validate_plugin_manifest(&valid_manifest()).is_ok());
++    }
++
++    #[test]
++    fn unknown_capability_rejected() {
++        let mut m = valid_manifest();
++        m.capabilities = vec![PluginCapability {
++            capability: "fs_write".to_string(),
++            reason: "需要写文件".to_string(),
++        }];
++        // 首期白名单为空 → fail-closed 拒绝
++        assert!(matches!(
++            validate_plugin_manifest(&m),
++            Err(PolicyError::UnknownCapability(_))
++        ));
++    }
++
++    #[test]
++    fn capability_without_reason_rejected() {
++        // 首期白名单为空：未知能力先被 `check_plugin_capabilities` 判 UnknownCapability；
++        // reason 校验在白名单通过后才生效（能力非空时）。二者均 fail-closed 拒绝。
++        let mut m = valid_manifest();
++        m.capabilities = vec![PluginCapability {
++            capability: "fs_write".to_string(),
++            reason: "  ".to_string(),
++        }];
++        assert!(validate_plugin_manifest(&m).is_err());
++    }
++
++    #[test]
++    fn credential_in_description_rejected() {
++        let mut m = valid_manifest();
++        m.description = "sk-abcdefghijklmnopqrstuvw".to_string();
++        assert!(matches!(
++            validate_plugin_manifest(&m),
++            Err(PolicyError::CredentialLeak(_))
++        ));
++    }
++
++    #[test]
++    fn non_form_three_entry_rejected() {
++        let mut m = valid_manifest();
++        m.entry.entry_url = "javascript:alert(1)".to_string();
++        assert!(matches!(
++            validate_plugin_manifest(&m),
++            Err(PolicyError::InvalidPluginManifest(_))
++        ));
++        let mut m2 = valid_manifest();
++        m2.entry.entry_url = "file:///etc/passwd".to_string();
++        assert!(matches!(
++            validate_plugin_manifest(&m2),
++            Err(PolicyError::InvalidPluginManifest(_))
++        ));
++    }
++
++    #[test]
++    fn bad_hash_rejected() {
++        let mut m = valid_manifest();
++        m.hash = "deadbeef".to_string();
++        assert!(matches!(
++            validate_plugin_manifest(&m),
++            Err(PolicyError::InvalidPluginManifest(_))
++        ));
++    }
++
++    #[test]
++    fn signature_structure_validated() {
++        // 非 Ed25519 算法 → 结构校验失败
++        let mut m = valid_manifest();
++        m.signature.algorithm = "RSA".to_string();
++        assert!(matches!(
++            validate_plugin_manifest(&m),
++            Err(PolicyError::InvalidPluginSignature(_))
++        ));
++        // 空 key_id → 失败
++        let mut m2 = valid_manifest();
++        m2.signature.key_id = "".to_string();
++        assert!(matches!(
++            validate_plugin_manifest(&m2),
++            Err(PolicyError::InvalidPluginSignature(_))
++        ));
++        // 非 base64 value → 失败
++        let mut m3 = valid_manifest();
++        m3.signature.value = "!!!notbase64".to_string();
++        assert!(matches!(
++            validate_plugin_manifest(&m3),
++            Err(PolicyError::InvalidPluginSignature(_))
++        ));
++    }
++
++    #[test]
++    fn signature_structure_pure_ok() {
++        // 结构合法（真验签留待运行时 lane）
++        assert!(verify_plugin_signature_structure(&valid_manifest().signature).is_ok());
++    }
++
++    #[test]
++    fn lifecycle_transitions() {
++        use PluginState::*;
++        assert!(can_transition(Discovered, Validating));
++        assert!(can_transition(Validating, SignedOk));
++        assert!(can_transition(SignedOk, Loaded));
++        assert!(can_transition(Loaded, Enabled));
++        assert!(can_transition(Enabled, Disabled));
++        assert!(can_transition(Disabled, Enabled));
++        assert!(can_transition(Loaded, Uninstalled));
++        assert!(can_transition(Enabled, Uninstalled));
++        assert!(can_transition(SignedFailed, Uninstalled));
++        // 非法：直接 Discovered → Enabled
++        assert!(!can_transition(Discovered, Enabled));
++        // 非法：Uninstalled 复活
++        assert!(!can_transition(Uninstalled, Discovered));
++
++        assert!(transition(Loaded, Enabled).is_ok());
++        assert!(matches!(
++            transition(Discovered, Enabled),
++            Err(PolicyError::PluginStateTransition(_))
++        ));
++    }
++
++    #[test]
++    fn permission_preview_gate() {
++        // 无能力 → Safe
++        assert_eq!(
++            permission_preview_for_plugin(&valid_manifest()).gate,
++            AclLevel::Safe
++        );
++
++        // 危险能力 → Dangerous
++        let mut m = valid_manifest();
++        m.capabilities = vec![PluginCapability {
++            capability: "fs_write".to_string(),
++            reason: "写文件".to_string(),
++        }];
++        assert_eq!(permission_preview_for_plugin(&m).gate, AclLevel::Dangerous);
++
++        // 普通能力 → Confirm
++        let mut m2 = valid_manifest();
++        m2.capabilities = vec![PluginCapability {
++            capability: "workspace.read".to_string(),
++            reason: "读取工作区".to_string(),
++        }];
++        assert_eq!(permission_preview_for_plugin(&m2).gate, AclLevel::Confirm);
++    }
++}
+diff --git a/src-tauri/src/security_policy.rs b/src-tauri/src/security_policy.rs
+index 3a79ff4..bc43485 100644
+--- a/src-tauri/src/security_policy.rs
++++ b/src-tauri/src/security_policy.rs
+@@ -61,6 +61,12 @@ pub enum PolicyError {
+     UnknownCapability(String),
+     /// 必填字段为空（id / version 等）。
+     EmptyRequiredField(String),
++    /// 插件 manifest 结构非法（schema 边界 / 形态③入口 / 哈希 / 元数据体量等）。
++    InvalidPluginManifest(String),
++    /// 插件签名结构非法（仅 W6 结构校验；真 Ed25519 验签由运行时 lane 在本地完成）。
++    InvalidPluginSignature(String),
++    /// 插件生命周期非法迁移。
++    PluginStateTransition(String),
+ }
+
+ impl std::fmt::Display for PolicyError {
+@@ -118,6 +124,15 @@ impl std::fmt::Display for PolicyError {
+             PolicyError::EmptyRequiredField(field) => {
+                 write!(f, "必填字段为空：{field}")
+             }
++            PolicyError::InvalidPluginManifest(msg) => {
++                write!(f, "插件 manifest 非法：{msg}")
++            }
++            PolicyError::InvalidPluginSignature(msg) => {
++                write!(f, "插件签名结构非法（仅 W6 结构校验）：{msg}")
++            }
++            PolicyError::PluginStateTransition(msg) => {
++                write!(f, "插件生命周期非法迁移：{msg}")
++            }
+         }
+     }
+ }
+@@ -2103,6 +2118,38 @@ pub fn check_agent_capabilities(ids: &[String]) -> Result<(), PolicyError> {
+     Ok(())
+ }
+
++/// Plugin 能力白名单（v1）。与 SKILL / AGENT_CAPABILITY_V1 同文件（单一真源），
++/// 承 security_policy.rs §M5-4/5 头注释「Skill / Agent / MCP / Plugin / A2A 共用本文件」。
++/// ⚠️ 与 MCP_CAPABILITY_V1 当前分处两文件（MCP 在 domain.rs），系 W4 已记录的能力真源
++/// 碎片化待收口项；W6 A9 将 Plugin 落在 security_policy.rs 以贴合该头注释意图，
++/// 不破坏既有 A3/A5 门禁。
++pub const PLUGIN_CAPABILITY_V1: &[&str] = &[];
++
++/// 校验 Plugin 声明的能力是否全部登记（单一真源）。
++pub fn check_plugin_capabilities(ids: &[String]) -> Result<(), PolicyError> {
++    for id in ids {
++        if !PLUGIN_CAPABILITY_V1.contains(&id.as_str()) {
++            return Err(PolicyError::UnknownCapability(id.clone()));
++        }
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod plugin_capability_tests {
++    use super::*;
++
++    #[test]
++    fn plugin_capability_whitelist_empty_accepts_nothing() {
++        // 首期白名单为空：任何能力声明都按 fail-closed 拒绝。
++        assert!(check_plugin_capabilities(&vec![]).is_ok());
++        assert!(matches!(
++            check_plugin_capabilities(&vec!["fs_write".to_string()]),
++            Err(PolicyError::UnknownCapability(_))
++        ));
++    }
++}
++
+ #[cfg(test)]
+ mod agent_skill_policy_tests {
+     use super::*;

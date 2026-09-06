@@ -1,0 +1,193 @@
+#!/usr/bin/env node
+// ---------------------------------------------------------------------------
+// M5-9（知识图谱 UI）前端逻辑层自动化测试（headless，无 GUI 依赖）
+//
+// 直接加载真实的 src/utils/graphUi.ts（纯逻辑层，无 invoke / DOM / store 依赖），
+// 只把产品代码行为作为断言对象。不 mock 逻辑层自身。
+//
+// 用法: node scripts/check-graph-ui-logic.mjs
+// 退出码: 0 = 全部通过；1 = 有断言失败
+// ---------------------------------------------------------------------------
+
+import * as nodeModule from "node:module";
+
+function resolveWithExt(specifier, context, next) {
+  try {
+    return next(specifier, context);
+  } catch (err) {
+    if (specifier.startsWith(".") || specifier.startsWith("/")) {
+      for (const ext of [".ts", "/index.ts", ".mjs", ".js"]) {
+        try {
+          return next(specifier + ext, context);
+        } catch {}
+      }
+    }
+    throw err;
+  }
+}
+
+if (typeof nodeModule.registerHooks === "function") {
+  nodeModule.registerHooks({ resolve: resolveWithExt });
+} else {
+  nodeModule.register(
+    "data:text/javascript," +
+      encodeURIComponent(
+        `export async function resolve(specifier, context, next) {
+  return globalThis.__m48Resolve(specifier, context, next);
+}`
+      )
+  );
+  globalThis.__m48Resolve = resolveWithExt;
+}
+
+// 最小浏览器桩（graphUi 纯逻辑不需要，但保留以兼容潜在 import 链）
+globalThis.window = {
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  clearTimeout: (h) => clearTimeout(h),
+  setInterval: () => 0,
+  clearInterval: () => {},
+};
+globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+
+const ROOT = new URL("..", import.meta.url).pathname;
+const graphUi = await import(`${ROOT}src/utils/graphUi.ts`);
+
+let passed = 0;
+let failed = 0;
+function ok(name, cond) {
+  if (cond) {
+    passed++;
+    console.log("  ✓ " + name);
+  } else {
+    failed++;
+    console.error("  ✗ " + name);
+  }
+}
+function eq(name, a, b) {
+  ok(name + ` (got=${JSON.stringify(a)})`, JSON.stringify(a) === JSON.stringify(b));
+}
+
+const node = (id, kind, label) => ({ id, kind, label, props: {} });
+const edge = (from, to, kind, weight = 1) => ({ from, to, kind, weight, props: {} });
+
+// ---- elementKind 判别 ----
+ok("elementKind: node", graphUi.elementKind(node("n1", "file", "a")) === "node");
+ok("elementKind: edge", graphUi.elementKind(edge("n1", "n2", "references")) === "edge");
+ok("elementKind: unknown", graphUi.elementKind({ foo: 1 }) === "unknown");
+ok("elementKind: null", graphUi.elementKind(null) === "unknown");
+
+// ---- 标签/配色 ----
+eq("nodeKindLabel.agent", graphUi.nodeKindLabel("agent"), "智能体");
+eq("edgeKindLabel.uses", graphUi.edgeKindLabel("uses"), "使用");
+ok("nodeColor 非空", graphUi.nodeColor("agent").length > 0);
+
+// ---- 摘要（K7：不泄露 props）----
+const sn = graphUi.summarizeNode(node("n1", "skill", "S1"));
+ok("summarizeNode 不含 props", !("props" in sn));
+eq("summarizeNode.isAgentConsumption(skill)", sn.isAgentConsumption, true);
+const se = graphUi.summarizeEdge(edge("a", "s", "uses"));
+ok("summarizeEdge.agentConsumption(uses)", se.agentConsumption === true);
+ok("summarizeEdge 不含 props", !("props" in se));
+
+// ---- isAgentConsumptionEdge ----
+ok("isAgentConsumptionEdge uses", graphUi.isAgentConsumptionEdge(edge("a", "s", "uses")) === true);
+ok(
+  "isAgentConsumptionEdge references",
+  graphUi.isAgentConsumptionEdge(edge("a", "s", "references")) === false,
+);
+
+// ---- 布局（确定性、无随机、坐标有限）----
+eq("layoutKindOf tree(in_dir)", graphUi.layoutKindOf([edge("a", "b", "in_dir")]), "tree");
+eq(
+  "layoutKindOf cluster(tagged_with)",
+  graphUi.layoutKindOf([edge("a", "b", "tagged_with")]),
+  "cluster",
+);
+eq("layoutKindOf force", graphUi.layoutKindOf([edge("a", "b", "references")]), "force");
+const ns = [node("a", "file", "A"), node("b", "dir", "B"), node("c", "skill", "C")];
+const pts = graphUi.layoutPositions(ns, [edge("a", "b", "references")]);
+ok("layoutPositions 数量一致", pts.length === ns.length);
+ok(
+  "layoutPositions 坐标有限",
+  pts.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y)),
+);
+ok(
+  "layoutPositions 稳定（无随机）",
+  JSON.stringify(graphUi.layoutPositions(ns, [edge("a", "b", "references")])) ===
+    JSON.stringify(pts),
+);
+
+// ---- 容量 ----
+const cap = graphUi.estimateCapacity(50, 200);
+eq("capacity.nodeUsedPct(50/5000=1%)", cap.nodeUsedPct, 1);
+ok("capacity.withinLimit(true)", cap.withinLimit === true);
+const cap2 = graphUi.estimateCapacity(6000, 10);
+ok("capacity.withinLimit(false>max)", cap2.withinLimit === false);
+eq("capacity.nodeUsedPct clamp100", cap2.nodeUsedPct, 100);
+
+// ---- 搜索/过滤 ----
+const data = [
+  node("f1", "file", "README"),
+  node("s1", "skill", "Summarizer"),
+  node("a1", "agent", "Helper"),
+];
+eq(
+  "filterNodes by query(忽略大小写)",
+  graphUi.filterNodes(data, { query: "readme", kinds: [] }).map((n) => n.id),
+  ["f1"],
+);
+eq(
+  "filterNodes by kinds",
+  graphUi.filterNodes(data, { query: "", kinds: ["skill", "agent"] }).map((n) => n.id),
+  ["s1", "a1"],
+);
+eq(
+  "filterNodes by kindLabel query",
+  graphUi.filterNodes(data, { query: "技能", kinds: [] }).map((n) => n.id),
+  ["s1"],
+);
+const edgesData = [edge("f1", "s1", "uses"), edge("a1", "s1", "a2a_with")];
+eq(
+  "filterEdges 保留两端可见(全可见)",
+  graphUi.filterEdges(edgesData, data, { query: "", kinds: [] }).length,
+  2,
+);
+eq(
+  "filterEdges 仅保留两端可见(按 agent 过滤后为空)",
+  graphUi.filterEdges(edgesData, data, { query: "", kinds: ["agent"] }).length,
+  0,
+);
+
+// ---- 有界合并 ----
+let m = new Map();
+m = graphUi.boundedInsert(m, [node("1", "file", "a"), node("2", "file", "b")], 2);
+ok("boundedInsert 初始大小", m.size === 2);
+m = graphUi.boundedInsert(m, [node("3", "file", "c")], 2);
+ok("boundedInsert 超上限丢弃最旧", m.size === 2 && !m.has("1"));
+
+// ---- 面板三态 ----
+eq(
+  "panelStateGraph backendReady=false empty",
+  graphUi.panelStateGraph({ loading: false, count: 0, error: null, backendReady: false }).state,
+  "empty",
+);
+ok(
+  "panelStateGraph 提示只读壳",
+  graphUi.panelStateGraph({ loading: false, count: 0, error: null, backendReady: false }).message.includes(
+    "只读壳",
+  ),
+);
+eq(
+  "panelStateGraph error",
+  graphUi.panelStateGraph({ loading: false, count: 0, error: "boom", backendReady: true }).state,
+  "error",
+);
+eq(
+  "panelStateGraph ready",
+  graphUi.panelStateGraph({ loading: false, count: 5, error: null, backendReady: true }).state,
+  "ready",
+);
+
+// ---- 结果 ----
+console.log(`\n图谱 UI 逻辑测试：通过 ${passed}，失败 ${failed}`);
+process.exit(failed === 0 ? 0 : 1);

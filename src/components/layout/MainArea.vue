@@ -30,6 +30,9 @@ const TaskPanel = defineAsyncComponent(() => import("../workspace/TaskPanel.vue"
 const DatabasePanel = defineAsyncComponent(() => import("../workspace/DatabasePanel.vue"));
 const SkillManagerPanel = defineAsyncComponent(() => import("../workspace/SkillManagerPanel.vue"));
 const AgentManagerPanel = defineAsyncComponent(() => import("../workspace/AgentManagerPanel.vue"));
+// M5-9 图谱面板：懒加载（defineAsyncComponent），将其纯逻辑(graphUi.ts)、store(useGraphStore.ts)
+// 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
+const GraphPanel = defineAsyncComponent(() => import("../graph/GraphPanel.vue"));
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
@@ -171,6 +174,9 @@ watch(
     </div>
     <div v-else-if="layout.mainView === 'agents'" class="modview">
       <AgentManagerPanel />
+    </div>
+    <div v-else-if="layout.mainView === 'graph'" class="modview">
+      <GraphPanel />
     </div>
 
     <!-- ===== 系统设置 ===== -->

@@ -20,6 +20,7 @@ export type MainView =
   | "tasks"
   | "skills"
   | "agents"
+  | "graph"
   | "editor";
 
 export const useLayoutStore = defineStore("layout", () => {
@@ -116,6 +117,7 @@ export const useLayoutStore = defineStore("layout", () => {
     tasks: { icon: "⏰", label: "定时任务" },
     skills: { icon: "🛠️", label: "技能" },
     agents: { icon: "🤖", label: "智能体" },
+    graph: { icon: "🕸️", label: "图谱" },
     settings: { icon: "⚙️", label: "设置" },
   };
   const modTabs = reactive<ModTab[]>([]);

@@ -2114,3 +2114,100 @@ pub const GRAPH_QUERY_LIMIT: usize = 1_000;
 pub const GRAPH_MAX_NODES: usize = 5_000;
 /// 图谱边总数硬上限。
 pub const GRAPH_MAX_EDGES: usize = 20_000;
+
+// ===========================================================================
+// M5-10 / M5-11 插件 manifest 与生命周期（Lane A9, M5-W6 策略切片）
+//
+// 仅 DTO + 纯校验辅助 + 生命周期状态机（无文件变更 / 无安装卸载运行时 /
+// 无联网 / 无真签名加密）。能力白名单单一真源在 `security_policy.rs`
+// （SKILL / AGENT / PLUGIN_CAPABILITY_V1，承 security_policy.rs §M5-4/5 头注释）。
+// 真 Ed25519 验签、plugins_dir 解包、bridge 命令由运行时 lane 在本地完成。
+// 形态③（声明式资源包）在类型与校验层即排除独立 webview / 独立 stdio 进程。
+// ===========================================================================
+
+/// 插件 manifest（YAML / JSON 解析目标）。声明式资源包（形态③），不含凭据。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct PluginManifest {
+    /// 反向域名规范，如 `com.example.myplugin`。
+    pub id: String,
+    /// semver，如 `1.0.0`。
+    pub version: String,
+    #[serde(default)]
+    pub display_name: String,
+    #[serde(default)]
+    pub description: String,
+    /// 最低宿主版本（semver）；低于此版本拒绝加载。
+    #[serde(default)]
+    pub min_app_version: String,
+    /// 形态③：图标 + 入口 URL（同源 webview）+ JS 钩子（受控 bridge.ts）。
+    #[serde(default)]
+    pub entry: PluginEntry,
+    /// 能力声明（每项带用途说明 reason）；值必须落在 `security_policy::PLUGIN_CAPABILITY_V1`。
+    #[serde(default)]
+    pub capabilities: Vec<PluginCapability>,
+    /// 资源包 sha256（hex，64 字符）。
+    #[serde(default)]
+    pub hash: String,
+    /// Ed25519 签名结构（纯结构；真验签由运行时 lane 在本地完成）。
+    #[serde(default)]
+    pub signature: PluginSignature,
+    /// 扩展元数据；体量受 `MAX_TEXT_FIELD_BYTES` 约束，禁止存正文/凭据。
+    #[serde(default)]
+    pub metadata: serde_json::Value,
+}
+
+/// 插件入口（形态③）。入口 URL 必须走既有 webview 同源（`http(s)://` / `tool://`），
+/// 禁 `javascript:` / `data:` / `file:` / 独立 webview 自起。
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct PluginEntry {
+    #[serde(default)]
+    pub entry_url: String,
+    #[serde(default)]
+    pub icon: String,
+}
+
+/// 能力引用 + 用途说明。复用 A5 的 capability 单一真源思路；`capability` 必须
+/// 落在 `security_policy::PLUGIN_CAPABILITY_V1`；`reason` 仅展示用。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginCapability {
+    pub capability: String,
+    pub reason: String,
+}
+
+/// Ed25519 签名结构（纯结构；W6 仅校验结构，真验签由运行时 lane 在本地完成）。
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct PluginSignature {
+    #[serde(default = "default_ed25519_algo")]
+    pub algorithm: String,
+    /// 引用 `keys/trusted-pubkeys.json` 的公钥 id。
+    #[serde(default)]
+    pub key_id: String,
+    /// base64 签名值。
+    #[serde(default)]
+    pub value: String,
+    /// 签名时间（ISO8601）。W6 用字符串；运行时 lane 可解析为 `DateTime<Utc>`。
+    #[serde(default)]
+    pub signed_at: String,
+}
+
+fn default_ed25519_algo() -> String {
+    "Ed25519".to_string()
+}
+
+/// 插件生命周期状态机（纯枚举，无文件 I/O）。
+/// `Discovered → Validating → SignedOk → Loaded → Enabled ⇄ Disabled`；
+/// `SignedFailed` / 任意 → `Uninstalled` 见 `can_transition`（plugin.rs）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginState {
+    Discovered,
+    Validating,
+    SignedOk,
+    SignedFailed,
+    Loaded,
+    Enabled,
+    Disabled,
+    Uninstalled,
+}

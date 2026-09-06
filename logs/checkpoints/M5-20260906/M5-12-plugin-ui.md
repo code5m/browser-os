@@ -5,6 +5,29 @@
 > 父卡：`详细设计与实施计划.md` L576（`M5-12 插件管理 UI`）
 > 主预研：暂无 prework 文档
 > 配套：`M5-10-plugin-manifest-lifecycle.md`（manifest 后端）· `M5-11-plugin-commands-isolation.md`（命令与隔离）
+>
+> **W3** BLOCKED（待 M5-10 解析 + M5-11 命令基元）· **W4** ACTIVE（A19 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A19 W5 仍 SUPPORT DOCS ONLY）· **W6** ACTIVE（A19 W6 仍 SUPPORT DOCS ONLY —— W6 仅 A8 M5-9 + A9 M5-10/M5-11 产品代码 lane，**无 plugin UI lane 承接**；详见本卡顶部 `[W6 status]` 段）
+
+---
+
+## [W6 status · 2026-09-06 19:25 CST] A19 M5-12 W6 仍 SUPPORT DOCS ONLY（无 plugin UI lane 承接；W7+ 待 A9 W6 plugin backend 落地后由 A0 决定派发）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L136-171（**M5-W6 Parallel Dispatch**：仅 **A8** *START PRODUCT CODE*（M5-9 graph UI）+ **A9** *START PRODUCT CODE*（M5-10/M5-11 plugin manifest/lifecycle policy slice）—— **未**列 A19 *START PRODUCT CODE*；其它 9 lane 全部 SUPPORT/REVIEW/VERIFICATION）+ L7（*"Current NEXT: M5-W6 parallel implementation; Lane A8 owns M5-9 graph UI pure logic/panel shell, Lane A9 owns M5-10/11 plugin manifest/lifecycle policy slice"* —— **未**提 A19 plugin UI）。
+> **A19 W6 仍 SUPPORT DOCS ONLY 的原因**：
+> - **A9 W6 plugin manifest/lifecycle policy slice 仍在落 schema / stub / ACL** —— 真实 install/uninstall runtime 在 W7+；M5-12 plugin UI 必须消费**已落地的真实 manifest / 真实 lifecycle state / 真实 5 命令 handler** 才能做（plugin 列表 / 安装向导 / 启用停用 / 审计查询 / 权限预览 等 UI 元素**全部依赖** W7+ 的真实 plugin runtime 后端）。
+> - **A8 W6 已经在做 M5-9 graph UI** —— UI lane 仅 A8 一条；M5-12 plugin UI 不能与 A8 W6 抢资源（A19 UI 范式 = A6 W5 / A8 W6 复用一致，但 plugin 域独立，避免 W6 期间双 UI lane 互相干扰）。
+> - **d3 / npm 依赖** —— A8 W6 不引 d3 已在 W6-HS4 严守；A19 W6 plugin UI 若开须 1+ 轮 npm 引入决议（W7+）。
+> **A19 W6 应做的（轻量）**：
+> ① 重读 A9 W6 output（A9 W6 实施期产出物）确认 manifest DTO / lifecycle state machine / 5 命令 ACL stub / plugin-invokes.json audit shape 实际形态
+> ② 重读 A8 W6 graph UI 范式（`f99d2eb` 拣入的 Agent/Skill panel shell + `4b438ef` 拣入的 graph 模型/常量/隐私双扫）确认 UI 模式
+> ③ 在 `logs/assist/A19-M5-W6-*.md` 出 W6 plugin UI card delta（**仅 docs**，**不**写 plugin UI 代码），**不**碰 `src/components/plugin/**` / `src/stores/plugin*.ts` / `src/types.ts` / `src/bridge.ts`
+> ④ 在本卡 `M5-12-plugin-ui.md`（如需）补 W6 status 行（**不**动 §1~§11）
+> **A19 W6 不应做的**：① 写 plugin 列表 / 安装向导 / 启用停用 / 审计查询 / 权限预览任何 UI 组件 ② 写 `usePluginStore.ts` 状态管理 ③ 改 §1~§11 决策史 ④ 改本根卡（M5-0）/M5-10/M5-11 任何 AC 段 ⑤ 改三份主文档 / ACL / Capability / pre-merge.sh / Cargo.toml / package.json
+> **A1 W6 不修订范围（本卡）**：
+> - **§1 GOAL / §2 READ / §3 WRITE / §4 关键契约 / §5 FORBID / §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION / §9 DOC_BACKWRITE / §10 COMMIT / §11 FORBID 遵守记录**：A1 W6 **不动**（决策史保持 W0 原文；A19 W6 status 在本顶部段单列）。
+> - **三份主文档 / ACL / Capability / pre-merge.sh / scripts/**：A1 W6 不动。
+> - **`NEXT` 标记**：A0 调度权；A1 不改字面值。
+> - **A1 W6 强停止**：本卡本轮**仅**加本 `[W6 status]` 段 + 头部状态行；**不**写 next-card AC（与 M5-9/10/11 不同——M5-12 在 W6 没有产品代码 lane 承接）。
 
 ---
 

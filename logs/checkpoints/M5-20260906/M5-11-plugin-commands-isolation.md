@@ -5,6 +5,63 @@
 > 父卡：`详细设计与实施计划.md` L575（`M5-11 插件命令与隔离`）
 > 主预研：`logs/assist/M5-15.a-prework-20260902-1055.md` §4 · `logs/assist/A9-M5-plugin-form-feasibility-20260906-0700.md`
 > 配套：`M5-10-plugin-manifest-lifecycle.md`（manifest 后端）· `M5-12-plugin-ui.md`（管理 UI）
+>
+> **W3** BLOCKED（待 M5-10 manifest 解析 + M5-2 capability.rs + 确认闸门）· **W4** ACTIVE（A9 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A9 W5 仍 SUPPORT DOCS ONLY）· **W6** ACTIVE（**A9 升级为 START PRODUCT CODE**：M5-11 commands_islolation shell + 5 命令 ACL stub + capability 校验骨架 + audit shape；详见本卡顶部 `[W6 next-card acceptance criteria]` 段）
+
+---
+
+## [W6 next-card acceptance criteria · 2026-09-06 19:25 CST] A9 M5-11 W6 实施期 acceptance criteria（commands_islolation shell + 5 命令 ACL stub + capability 校验骨架 + audit shape · 不接真实 install runtime / audit 仅 key_hash 不带 value / 不破 K1 ACL 末条恒为 list_artifact_images）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L160（**A9 M5-W6** *"Implement M5-10/M5-11 plugin manifest/lifecycle policy slice"*）+ L164-170 硬约束 + A3 W3 MCP 两段式确认闸门（`src-tauri/src/bridge.rs:688-790` 既有 pattern）+ A2 W2 constants centralized + A4 W4 agent_memory 审计基元（audit 仅 key_hash）。
+> **与 M5-10 W6 的边界（A9 W6 同 lane 双卡派发）**：
+> - **M5-10 W6 范围**（见 `M5-10-plugin-manifest-lifecycle.md` 顶部 [W6 next-card AC] 段）：PluginManifest DTOs + validation + lifecycle state machine + permission manifest rules + policy script；**0 新命令**。
+> - **M5-11 W6 范围（本卡）**：commands_islolation shell + 5 命令 ACL stub（**不**接入真实业务 handler）+ capability 校验骨架（基于 M5-10 AC-3 PermissionManifestRule）+ plugin-invokes.json audit shape（基于 A4 W4 agent_memory 审计基元）；**仍 0 命令接业务**，W6 仅完成"命令落地骨架 + ACL stub + audit shape"，**真实 install/uninstall runtime 在 W7+**。
+> **消费依赖（已落地，A9 W6 可直接接入）**：
+> - **A3 W3 MCP 两段式确认闸门**（`12f1cff` 拣入）—— A9 W6 5 命令 stub 复用同款闸门 pattern。
+> - **A4 W4 agent_memory 审计基元**（`1610939` 拣入）—— A9 W6 plugin-invokes.json audit **复用** key_hash only 模式，**不**写 value 字段。
+> - **M5-10 W6 PermissionManifestRule**（同 lane A9）—— A9 W6 capability 校验骨架直接调 `M5-10::permission_manifest_rule::check(...)` 纯函数。
+> - **A2 W2 constants**（`712a14c`）—— A9 W6 audit key 长度 / plugin-invokes.json 容量上限**复用**既有常量。
+> **A1 W6 角色**：A1 W6 **不**改 §1~§11 决策史；仅在头部加本 `[W6 next-card acceptance criteria]` 段，**明确 A9 W6 实施期 4 项 AC + 5 项 hard stops**（与 M5-10 W6 共享 hard stop 集），供 A9 / A10 / A11 / A0 验收。
+
+### W6 A9 M5-11 实施期 acceptance criteria（4 项）
+
+| AC | 描述 | 验收证据 |
+|----|------|----------|
+| AC-1 **commands_islolation shell 冻结** | `src-tauri/src/plugin_runtime.rs`（或 `src-tauri/src/plugin_invoke.rs`，A9 W6 决定；A9 W6 范围**不**创建此文件也可，**不强制**）追加 5 个 stub 纯函数（**仅**返回 `Err("not-implemented-in-W6")`）：① `plugin_invoke(plugin_id, capability, payload) -> Result<Json, InvokeError>` ② `plugin_invoke_cancel(invoke_id) -> Result<(), InvokeError>` ③ `plugin_permissions_get(plugin_id) -> Result<PermissionSummary, InvokeError>` ④ `plugin_audit_list(plugin_id, page) -> Result<AuditPage, InvokeError>` ⑤ `plugin_storage_get/put/delete(plugin_id, key)`（3 个合一 stub） —— 5 个 stub 函数**仅**接受 source check + ACL 校验，**不**做真实 IO，**不**接 M5-10 真实 manifest / lifecycle / 真实 capability registry；**仅**保留签名 + 参数骨架 | `cargo test --manifest-path src-tauri/Cargo.toml plugin_runtime` PASS（如创建文件）+ A10 抽查 5 stub 均为纯函数 |
+| AC-2 **5 命令 ACL stub**（**仅 ACL 条目，不接业务 handler**）| `src-tauri/permissions/default-commands.toml` 在 `list_artifact_images` **之前**插 5 条占位 ACL 条目（**仅**条目+name 字段；**不**在 `src-tauri/src/bridge.rs` / `main.rs` 注册 handler；**不**在 `src/bridge.ts` / `src/types.ts` 加 TS 镜像）：① `plugin_invoke` ② `plugin_invoke_cancel` ③ `plugin_permissions_get` ④ `plugin_audit_list` ⑤ `plugin_storage_get/put/delete`（合一）—— ACL 末条仍为 `list_artifact_images`（K1 严守）| `grep -nE 'plugin_invoke\|plugin_permissions_get\|plugin_audit_list\|plugin_storage' src-tauri/permissions/default-commands.toml` 命中 5 条 + `grep -n 'list_artifact_images' src-tauri/permissions/default-commands.toml` 末条仍在 |
+| AC-3 **capability 校验骨架** | `src-tauri/src/plugin_runtime.rs`（如 A9 W6 创建）追加 `check_plugin_capability(plugin_id, capability) -> Result<(), CapabilityError>` 纯函数：① 接受 `&PluginManifest`（M5-10 DTO）+ `&CapabilityRegistry`（capability.rs 既有）② 调用 M5-10 AC-3 `PermissionManifestRule::check(...)` ③ 返回 `CapabilityError::NotInWhitelist` / `CapabilityError::ManifestMissing` / `CapabilityError::Disabled` 三种 —— **不**做真实插件调用 / **不**做 IO | 单测 + A10 抽查 + M5-10 AC-3 共享验证 |
+| AC-4 **plugin-invokes.json audit shape** | ① `PluginInvokeRecord { invoke_id, plugin_id, capability, payload_key_hash, key_hash_only: true, status, at }` schema 在 `domain.rs` 冻结（**payload 仅 key_hash** 字段，**不**含 value；参考 A4 W4 审计基元）② `serialize_audit(record) -> serde_json::Value` 纯函数 ③ 容量上限：单条 `payload_key_hash` 16 字节 hex（**复用** A2 W2 `HASH_HEX_LEN_SHORT=16` 常量）；`plugin-invokes.json` 文件总字节 ≤ `MAX_TEXT_FIELD_BYTES=64KiB`（**复用** A2 W2 常量，超限 FIFO 裁剪）④ 不写 secret / token / DSN（隐私断言 0 命中）| `cargo test --manifest-path src-tauri/Cargo.toml plugin_runtime` PASS + A10 抽查 audit JSON 无 value 字段 |
+
+### W6 A9 M5-11 实施期 hard stops（5 项，与 M5-10 共享集 + 本卡强化）
+
+| HS | 约束 | 来源 |
+|----|------|------|
+| W6-HS1 | **5 命令仅 stub**（**不**接业务 handler / **不**在 `bridge.rs` / `main.rs` 注册；ACL 条目占位即可；真实 install/uninvoke runtime 在 W7+）| PARALLEL_COMMAND_BOARD L160 + L168 + L169（*"prefer no command in W6"*）|
+| W6-HS2 | **audit 仅 key_hash 不带 value**（`PluginInvokeRecord.payload_key_hash` 16-hex sha256 摘要；**不**含 payload value / 敏感字段 / DSN / token）| A4 W4 audit 模式 + 隐私双扫 + K 隐私全网 |
+| W6-HS3 | **capability 真源单点**（`check_plugin_capability` 接受 `&CapabilityRegistry` 参数；**不**在 `plugin_runtime.rs` 内嵌 capability 字面量白名单）| M5-10 W6 AC-3 + M5-2 §4.2-4.3 + A3 W3 |
+| W6-HS4 | **不破 K1（ACL 末条恒为 `list_artifact_images`）** —— 5 条 stub ACL 必须插在 `list_artifact_images` **之前** | M5-11 §5 FORBID + 全局 K1 |
+| W6-HS5 | **不接 M5-10 真实 lifecycle / 不做网络 / 不做下载 / 不做签名强制** —— 5 stub 函数**不**调 `transition()` 真实跑状态机（**仅**返回 `Err("not-implemented-in-W6")`）| PARALLEL_COMMAND_BOARD L168 + M5-10 W6 W6-HS1+HS2 |
+
+### W6 验证清单（供 A11 收口）
+
+- `cargo test --manifest-path src-tauri/Cargo.toml plugin_runtime` PASS（如 A9 W6 创建 module）
+- `cargo test --manifest-path src-tauri/Cargo.toml` 全绿（无新增 warning > 0）
+- `python3 scripts/check-plugin-policy.py --self-test` PASS（ACTIVE=6，**新增** 1 条 `PLUGIN_AUDIT_KEY_HASH_ONLY`，A9 W6 落地时同步加码）
+- `python3 scripts/check-plugin-policy.py` PASS
+- `bash scripts/pre-merge.sh` ALL_PASS
+- `git diff --check` CLEAN
+- `grep -nE 'plugin_invoke\|plugin_permissions_get\|plugin_audit_list\|plugin_storage' src-tauri/permissions/default-commands.toml` 命中 5 条 ACL stub
+- `grep -nE 'plugin_invoke\|plugin_permissions_get\|plugin_audit_list\|plugin_storage' src-tauri/src/bridge.rs src-tauri/src/main.rs src/bridge.ts src/types.ts` **W6 期间 0 命中**（不接业务 handler；W7+ 才接）
+- `grep -nE 'tauri::Manager\|std::fs::write\|std::fs::read\|reqwest\|ureq' src-tauri/src/plugin_runtime.rs src-tauri/src/plugin_invoke.rs` 0 命中（无真实 IO / 无网络）
+- A11 比对 `domain.rs` `PluginInvokeRecord` 与 A4 W4 audit schema 0 drift
+- **A10 复审 PASS**（5 stub 纯函数 / ACL 占位 / capability 真源单点 / audit 仅 key_hash / 无 IO / 无网络 / K1 严守）
+- **A11 verification delta** 产出 `logs/checkpoints/M5-A11-W6-*.md`
+
+### W6 A1 不修订范围（本卡）
+
+- **§1 GOAL / §2 READ / §3 WRITE / §4 关键契约 / §5 FORBID / §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION / §9 DOC_BACKWRITE / §10 COMMIT / §11 FORBID 遵守记录**：A1 W6 **不动**（决策史保持 W0 原文；W6 AC 在本顶部段单列；M5-11 §3 WRITE 5 命令在 W6 **仅** ACL stub，**不**接业务 handler；真实 18 命令集在 W7+）。
+- **三份主文档 / ACL 末条 / Capability / pre-merge.sh / scripts/**：A1 W6 不动（5 命令 ACL stub 由 A9 W6 落地）。
+- **`NEXT` 标记**：A0 调度权；A1 不改字面值。
 
 ---
 
