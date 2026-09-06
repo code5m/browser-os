@@ -6,7 +6,7 @@
 > 主预研：`logs/assist/A2-M5-core-20260906-0749.md`（A2 v3 升级版：4 边界 + 6 处分歧 C-1~C-6 + 2 处 v3 新增 C-7/C-8 + V-7 常量副本）
 > 配套：`logs/assist/A9-M5-split-20260905-2359.md` §5 · `A9-M5-A13plus-cards-20260906-0010.md` A13
 >
-> **W1** PASS（2026-09-06 13:00 CST · commit `854bc40`）· **W2** PASS（2026-09-06 14:02 CST · commit `712a14c`，切片 0b 常量集中）· **W3** ACTIVE（A2 仅做 trait/seam 注入；详见本卡顶部 `[W3 active]` 段）
+> **W1** PASS（2026-09-06 13:00 CST · commit `854bc40`）· **W2** PASS（2026-09-06 14:02 CST · commit `712a14c`，切片 0b 常量集中）· **W3** PASS（2026-09-06 14:33 CST · commit `f8f1f49`，A2 `mvp_core::seam` 三个 trait 落地 + `bridge.rs` Tauri 适配 + 2 单测）· **W4** ACTIVE（A4 + A5 产品代码 lane；A2 转入 SUPPORT/REVIEW ONLY；详见本卡顶部 `[W4 active]` 段）
 
 ---
 
@@ -87,6 +87,66 @@
 - **不重写 §1~§11**：A1 仅标记 W3 状态；§1~§11 决策史保持 W1/W2 原文。
 - **不移动 `NEXT`**：A0 调度权；A1 仅陈述"事实已变"在本段。
 - **不提交 / 不 push**：A1 整包交 A0 拣入合并。
+
+---
+
+## [W3 reconciliation · 2026-09-06 17:55 CST] A2 M5-1.b seam 抽象已 A0 拣入（`f8f1f49`）—— 切片 1 落地，切片 2（B 类搬入）留待后续 dispatch 决议
+
+> **W3 dispatch 依据**：`PARALLEL_COMMAND_BOARD.md` L133-167（**M5-W3 Parallel Dispatch**，Added 2026-09-06 17:10 CST by A0 after pushing through `712a14c`）。
+> **W3 拣入事实**（`f8f1f49` A0 拣入）：
+> - **A2 产品代码**：`f8f1f49 feat(M5): add core seam abstractions`
+>   - `src-tauri/src/core/seam.rs`（95 行新增）—— 定义三个零 Tauri 依赖的 trait：
+>     - `ProgressSink::emit(Progress)` —— 替换 `script_runner` 对 `tauri::Emitter` 的硬依赖（V-6）
+>     - `PathResolver::base_dir()` —— 替换 `tasks` / `workspace` / `sync` 对 `app.path().data_dir()` 的硬依赖（V-4 / V-5）
+>     - `RootsProvider::allowed_roots()` —— 替换 `scheduler` 对 `bridge::allowed_roots(app)` 的硬依赖（V-1）
+>   - `src-tauri/src/core/mod.rs`（7 行新增）—— 注册 `pub mod seam;`
+>   - `src-tauri/src/bridge.rs`（44 行新增）—— 提供三个 Tauri 适配实现（`TauriProgressSink` / `TauriPathResolver` / `TauriRootsProvider`）
+>   - 2 Rust 单测（`progress_sink_is_object_safe` + `path_and_roots_seams_are_usable`）
+> - **A2 W3 校验结果**（A11 W3 verification `bdb0602`）：cargo test 329 / core boundary policy self-test+default+pending PASS / git diff --check CLEAN / cargo fmt 干净。
+> - **A10 W3 复审**（`A10-M5-W3-security-review-20260906-1730.md`）：seam 抽象 **PASS**（三个 trait 均脱 Tauri；bridge.rs 适配在 bin 侧，不破 core boundary gate）。
+> - **本卡 §3 步骤 1（slice 1 trait/seam 注入）**实际落地；§3 步骤 2（slice 2 B 类搬入）**未落地**——A2 W3 守 *"trait/seam injection only, no behavior change"* 硬约束。
+
+### W3 拣入对本卡既有 §1~§11 的影响
+
+| §/项 | W2 状态 | W3 reconciliation |
+|------|--------|-------------------|
+| §3 步骤 1（trait/seam 注入）| 写卡中 | **已 PASS**（`f8f1f49` + A11 W3 verification）|
+| §3 步骤 2（slice 2 B 类搬入）| 写卡中 | **未动**（W3 不做行为变更；待 A0 后续 dispatch 决策）|
+| §10 反向边与契约常量随迁清单 | 写卡中 | 5 处 trait 注入落点（`script_runner` / `tasks` / `workspace` / `sync` / `scheduler`）已**准备好**接收 B 类搬入；**实际搬入待后续 dispatch** |
+| §9 COMMIT / NEXT | 写卡中 | W3 字面 NEXT 仍写"M5-1.b 待 A2 实施"——A1 不改字面值（仅在头部陈述"已 PASS f8f1f49"），A0 拣入期可同步刷新 |
+
+### W3 A1 不修订范围
+
+- **§1~§11 决策史**：A1 W3 reconciliation **不动**（除头部状态行）。
+- **三份主文档**：A0 W3 未指派 A1 改动；A1 W3 不动。
+- **`NEXT` 标记**：A1 在本段陈述"事实已变"，**不修改 §9 NEXT 字面值**。
+- **本卡顶部 W3 状态行**已从 "ACTIVE" 改为 "PASS"。
+
+---
+
+## [W4 active · 2026-09-06 17:55 CST] 当前活跃 checkpoint 切到 M5-W4
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L134-168（**M5-W4 Parallel Dispatch**，Added 2026-09-06 17:55 CST by A0 after pushing through `f8f1f49`）。
+> **事实摘要**：W3 整包已 A0 拣入（`f8f1f49` + `12f1cff` + `bdb0602` + `e96c902`）；A11 W3 验证 ALL_PASS；A2 转入 SUPPORT/REVIEW ONLY。
+> **W4 仅开两条产品代码 lane**：A4（M5-3.a agent memory KV）+ A5（M5-4/M5-5 Agent/Skill domain + command policy shell）。
+> **本卡在 W4 的角色**：**M5-1.b seam 已 PASS**（`f8f1f49`），W4 不再改本卡 §1~§11；A1 仅在头部加本 `[W4 active]` 段做"当前活跃 checkpoint"标记 + 提示 A4 W4 实施期可**消费**已落地的 `mvp_core::seam` trait。
+
+### W4 状态（本卡涉及）
+
+| 项 | 状态 | 来源 |
+|---|------|------|
+| W1 切片 0a/0b（前置）| **PASS** | `854bc40` / `712a14c` |
+| W2 `M5-1.b` 切卡拣入 | **PASS** | `712a14c` 拣入 A1 patch |
+| W3 `M5-1.b` seam 抽象落地 | **PASS** | `f8f1f49` + A11 W3 verification |
+| W4 A2 复审 A4/A5 是否正确消费 `mvp_core::seam` | **ACTIVE · 待 A2 复审输出** | PARALLEL_COMMAND_BOARD L151 + 本卡顶部"已落地 trait 列表"|
+| W4 A4 / A5 实施期可消费本卡 `mvp_core::seam`（`ProgressSink` / `PathResolver` / `RootsProvider`）| **READY · 待 A4/A5 接入** | `src-tauri/src/core/seam.rs` |
+| W4 A1 文档 reconciliation（本段 + 头部状态行）| **本卡 W4 修订已完成** | 本 checkpoint |
+
+### W4 A1 不修订范围（本卡）
+
+- **§1~§11 决策史**：A1 W4 **不动**（W3 已 PASS 且未引入新事实影响本卡决策）。
+- **三份主文档**：A1 W4 不动（PARALLEL_COMMAND_BOARD L150 虽允许 "three main docs"，但本轮 A1 选择**不动**，以避免与 A2 W4 复审期对 seam 用法的修订产生二次冲突）。
+- **`NEXT` 标记**：A0 调度权；A1 不改字面值。
 
 ---
 

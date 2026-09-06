@@ -55,6 +55,12 @@ pub enum PolicyError {
     BlockedLaunchProgram(String),
     /// 启动目标解析不到可执行文件。
     LaunchProgramNotFound(String),
+    /// 凭据/密钥泄露（Agent/Skill 定义里出现 sk-/api_key/secret/password 等）。
+    CredentialLeak(String),
+    /// 引用了未登记能力（不在 SKILL_CAPABILITY_V1 / AGENT_CAPABILITY_V1 单一真源内）。
+    UnknownCapability(String),
+    /// 必填字段为空（id / version 等）。
+    EmptyRequiredField(String),
 }
 
 impl std::fmt::Display for PolicyError {
@@ -102,6 +108,15 @@ impl std::fmt::Display for PolicyError {
             }
             PolicyError::LaunchProgramNotFound(p) => {
                 write!(f, "启动目标不是可执行文件：{p}")
+            }
+            PolicyError::CredentialLeak(s) => {
+                write!(f, "凭据/密钥泄露（禁止进入 Agent/Skill 定义）：{s}")
+            }
+            PolicyError::UnknownCapability(c) => {
+                write!(f, "引用未登记能力（单一真源缺失）：{c}")
+            }
+            PolicyError::EmptyRequiredField(field) => {
+                write!(f, "必填字段为空：{field}")
             }
         }
     }
@@ -2037,5 +2052,78 @@ mod m4_2_s_database_safety_tests {
             require_write_confirmation(&c, ProductionVerdict::NonProduction, true, true),
             Err(DbErrorCode::MultipleStatements)
         );
+    }
+}
+
+// ===========================================================================
+// M5-4 / M5-5 Agent/Skill 能力白名单与校验（Lane A5, W4）
+//
+// 能力白名单**单一真源**：Skill / Agent / MCP / Plugin / A2A 共用本文件，
+// 禁止在多处各自定义（由 `check-agent-skill-policy.py` 的 AGSK_7 守门）。
+// 首期列表为空：能力须逐个评估后追加；非空引用在列表未定义前 fail-closed。
+// ===========================================================================
+
+/// Skill 能力白名单（v1）。追加新能力时同步更新本常量与调用方校验。
+pub const SKILL_CAPABILITY_V1: &[&str] = &[];
+
+/// Agent 能力白名单（v1）。
+pub const AGENT_CAPABILITY_V1: &[&str] = &[];
+
+/// 判断一段文本是否疑似包含凭据/密钥（fail-closed 保守匹配）。
+pub fn contains_credential_leak(s: &str) -> bool {
+    let l = s.to_ascii_lowercase();
+    l.contains("sk-")
+        || l.contains("api_key")
+        || l.contains("apikey")
+        || l.contains("secret")
+        || l.contains("password")
+        || l.contains("authorization")
+        || l.contains("bearer")
+        || l.contains("x-api-key")
+        || l.contains("private_key")
+}
+
+/// 校验 Skill 声明的能力是否全部登记（单一真源）。
+pub fn check_skill_capabilities(ids: &[String]) -> Result<(), PolicyError> {
+    for id in ids {
+        if !SKILL_CAPABILITY_V1.contains(&id.as_str()) {
+            return Err(PolicyError::UnknownCapability(id.clone()));
+        }
+    }
+    Ok(())
+}
+
+/// 校验 Agent 声明的能力是否全部登记（单一真源）。
+pub fn check_agent_capabilities(ids: &[String]) -> Result<(), PolicyError> {
+    for id in ids {
+        if !AGENT_CAPABILITY_V1.contains(&id.as_str()) {
+            return Err(PolicyError::UnknownCapability(id.clone()));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod agent_skill_policy_tests {
+    use super::*;
+
+    #[test]
+    fn empty_skill_capabilities_pass() {
+        assert!(check_skill_capabilities(&[]).is_ok());
+    }
+
+    #[test]
+    fn unknown_skill_capability_rejected() {
+        assert!(matches!(
+            check_skill_capabilities(&["file_read".to_string()]),
+            Err(PolicyError::UnknownCapability(_))
+        ));
+    }
+
+    #[test]
+    fn credential_leak_detects_sk_and_bearer() {
+        assert!(contains_credential_leak("my token is sk-abc123XYZ"));
+        assert!(contains_credential_leak("Authorization: Bearer xyz"));
+        assert!(!contains_credential_leak("list all artifacts"));
     }
 }

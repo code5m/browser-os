@@ -31,6 +31,53 @@
 
 ---
 
+## [W4 next-card acceptance criteria · 2026-09-06 17:55 CST] A4 实施期 acceptance criteria（首切片：DTOs + 校验 + 容量/隐私 policy + JSON 持久化壳）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L153（**A4 M5-W4** *"Implement first M5-3 A2A/agent memory KV contract slice: DTOs, validation, capacity/privacy policy, pure store helpers or JSON persistence shell if already patterned; no network protocol and no background runtime."*）+ L134-168 硬约束 + A4 W3 delta（`logs/assist/A4-M5-a2a-memory-20260906-1410-w3-delta.md`）。
+> **消费依赖（已落地，A4 W4 可直接接入）**：
+> - **U-2 seam 已落**（`f8f1f49`）—— `mvp_core::seam::{ProgressSink, PathResolver, RootsProvider}` 可用于 agent_kv 的 path 解析与 root 校验（若需路径策略）。
+> - **U-4 capability 真源已落**（`12f1cff`）—— `MCP_CAPABILITY_V1` + `MCP_COMMAND_REGISTRY` + `evaluate_mcp_policy`；M5-3.b（A2A/dialect 命令闸门）W5+ 才消费，本卡 W4 暂不触。
+> **A1 W4 角色**：A1 W4 **不**改 §1~§11 决策史；仅在头部加本 `[W4 next-card acceptance criteria]` 段，**明确 A4 W4 实施期 4 项 AC + 5 项 hard stops**，供 A4 / A10 / A11 / A0 验收。
+
+### W4 A4 M5-3.a 实施期 acceptance criteria（4 项）
+
+| AC | 描述 | 验收证据 |
+|----|------|----------|
+| AC-1 **DTOs 冻结** | `agent_kv` 三层（**per-agent**：`agent_id` / **per-scope**：`scope` / **per-key**：`key`）结构体与序列化形态在 `domain.rs` 或新 `agent_memory.rs`/`a2a.rs` 冻结；不允许在桥接/UI 层临时重定义 | `cargo test domain::agent_memory` 编译期 + 单测 + A11 抽查 |
+| AC-2 **校验完整** | 字段名校验拒 `{"note":"sk-xxx"}`（A1 M5-3 卡 C-5 已识别错误——W3 delta §4 修正）；per-agent 条数上限 + 总条数上限（A1 卡 C-6 已识别 "per-agent 32 条"使 5000 总上限形同虚设——W3 delta §4 修正）；TTL/迟滞水位三层 + privacy 三重闸 | `scripts/check-agent-memory-policy.py` self-test + default + `--expect-pending` 三模式 + focused Rust 单测 |
+| AC-3 **容量/隐私 policy 守门** | 容量上限 + privacy filter（无 token/cookie/Authorization/body/日志 prompt secrets —— W4 Hard Stop W4-HS4）；policy 脚本接入 `pre-merge.sh` | `pre-merge.sh` ALL_PASS |
+| AC-4 **pure store helpers 或 JSON 持久化壳** | 若 core 内已 patterning：写 `core/agent_kv.rs` 纯 helper（无 Tauri 依赖）；若 binary 内：写 `agent_memory.rs` 配 `core::seam::PathResolver`（注入 base_dir）；持久化走 `session::atomic_write`（沿用唯一原子写原语）；**W4 不接 Tauri 命令**（W4-HS3 优先不加 command）| `cargo test agent_memory::` 或 `cargo test core::agent_kv::` |
+
+### W4 A4 M5-3.a 实施期 hard stops（5 项）
+
+| HS | 约束 | 来源 |
+|----|------|------|
+| W4-HS1 | **无 network protocol listener / 无 background runtime / 无 background scheduler** | PARALLEL_COMMAND_BOARD L153 + L165 |
+| W4-HS2 | **无新 Tauri 命令**（除非 source check + ACL + 前端 bridge/types + policy coverage + tests 同包完整；W4 优先不加） | PARALLEL_COMMAND_BOARD L153 + L166 |
+| W4-HS3 | **无新 Cargo 依赖**（除非已存在且有理由；A4 W3 delta 已声明 `serde_json` / `serde` 复用即可） | PARALLEL_COMMAND_BOARD L153 + A4 W3 delta |
+| W4-HS4 | **core 内常量自拥**（A2 0b 已统一到 `domain.rs` 副本零容忍 —— `R-B3`）；agent_kv 自己的常量应定义在 `core/agent_kv.rs`（不引 `crate::domain::AGENT_KV_*` 假货）| A2 W2 `712a14c` + A4 W3 delta §"常量落点修正" |
+| W4-HS5 | **所有 lane 必须从 `origin/master` pull，不 push** | PARALLEL_COMMAND_BOARD L168 |
+
+### W4 验证清单（供 A11 收口）
+
+- `cargo test --manifest-path src-tauri/Cargo.toml agent_memory`（或 `core::agent_kv`）PASS
+- `python3 scripts/check-agent-memory-policy.py --self-test` PASS
+- `python3 scripts/check-agent-memory-policy.py` PASS
+- `python3 scripts/check-agent-memory-policy.py --expect-pending` PASS（如有 PENDING）
+- `bash scripts/pre-merge.sh` ALL_PASS
+- `git diff --check` CLEAN
+- **A10 复审 PASS**（credential leakage / unbounded maps / command exposure / source-check/ACL drift / duplicate execution path 全否）
+- **A11 verification delta** 产出 `logs/checkpoints/M5-A11-W4-*.md`
+
+### W4 A1 不修订范围
+
+- **§1 GOAL / §2 READ / §3 WRITE / §4 关键契约 / §5 FORBID / §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION / §9 DOC_BACKWRITE / §10 COMMIT / §11 FORBID 遵守记录**：A1 W4 **不动**（决策史保持 W1 原文；W4 AC 在本顶部段单列）。
+- **三份主文档 / ACL / Capability / pre-merge.sh / scripts/**：A1 W4 不动（policy 脚本由 A4 落地）。
+- **`NEXT` 标记**：A0 调度权；A1 不改字面值。
+- **本卡顶部"四 vs M5-3 拆 a/b"已由 A4 W3 delta 给出**（`agent_kv` 纯逻辑 = M5-3.a 待 U-2 ✅；A2A/dialect 命令闸门 = M5-3.b 待 U-4 ✅）——A1 W4 在本段承接，不重写 §0。
+
+---
+
 ## 0. 编号与锚定
 
 - 批次任务号 `M5-3`；需求号 #7；WBS L564 一致。

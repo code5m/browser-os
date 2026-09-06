@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod agent;
+mod agent_memory;
 mod bridge;
 mod crashlog;
 mod database;
@@ -14,6 +16,7 @@ mod scripts;
 mod security_policy;
 mod session;
 mod shutdown;
+mod skills;
 mod snippets;
 mod sync;
 mod tasks;

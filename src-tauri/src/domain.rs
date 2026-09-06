@@ -1587,6 +1587,29 @@ pub struct McpPolicySnapshot {
 }
 
 // ---------------------------------------------------------------------------
+// M5-3 agent memory KV 契约常量（单一真源；由 check-agent-memory-policy.py 守门）
+//
+// 容量三不变量（修正 A1 卡 C-6：per-agent 软配额 = 字节，agent 数上限 = 32 为独立不变量）：
+//   总容量 5 MiB / 总条目 5000 / per-namespace 1000 / **per-agent 1 MiB 字节** / **agent 总数 32**
+// ---------------------------------------------------------------------------
+#[allow(dead_code)]
+pub const AGENT_KV_MAX_TOTAL_BYTES: usize = 5 * 1024 * 1024;
+#[allow(dead_code)]
+pub const AGENT_KV_MAX_TOTAL_RECORDS: usize = 5000;
+#[allow(dead_code)]
+pub const AGENT_KV_MAX_PER_NAMESPACE_RECORDS: usize = 1000;
+#[allow(dead_code)]
+pub const AGENT_KV_MAX_PER_AGENT_BYTES: usize = 1 * 1024 * 1024;
+#[allow(dead_code)]
+pub const AGENT_KV_MAX_AGENTS: usize = 32;
+#[allow(dead_code)]
+pub const AGENT_KV_MAX_KEY_BYTES: usize = 256;
+#[allow(dead_code)]
+pub const AGENT_KV_MAX_VALUE_BYTES: usize = 64 * 1024;
+#[allow(dead_code)]
+pub const AGENT_KV_MAX_TTL_SECS: u64 = 30 * 24 * 3600;
+
+// ---------------------------------------------------------------------------
 // M4-1 契约单测（ID 段 `T-db-c1~c5`，由 A1 展开卡 §5 分配）
 // 目的不是覆盖实现（实现归 M4-2/M4-3），而是把**契约本身**钉死：
 // 驱动身份串、能力表、凭据字段结构性缺失、缺省值 fail-closed、错误码闭合。
@@ -1876,4 +1899,129 @@ mod m4_1_db_contract_tests {
             "二进制列只回长度，不回字节"
         );
     }
+}
+
+// ===========================================================================
+// M5-4 / M5-5 Agent/Skill domain (Lane A5, W4)
+//
+// 仅 DTO + 校验辅助；**不执行、不安装、不联网、不引桥（crate::bridge）**。
+// 能力白名单单一真源在 `security_policy.rs`（SKILL_CAPABILITY_V1 /
+// AGENT_CAPABILITY_V1）；执行层（M5-4.b）才允许走 `script_runner`。
+// ===========================================================================
+
+/// 安装/运行闸门三档。与 M5-5 命令 ACL 同义；末条 ACL 恒为 `list_artifact_images`（K1）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AclLevel {
+    Safe,
+    Confirm,
+    Dangerous,
+}
+
+/// Skill 执行体的**唯一**合法形态：脚本/命令引用或串联。
+///
+/// 类型层面即排除内联 shell 字符串（K6）：不存在 `InlineScript` / `RawShell` 变体，
+/// `skill_runtime` 执行期也不得引入（由 `check-agent-skill-policy.py` 守门）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum SkillExec {
+    ScriptRef {
+        script_id: String,
+        params: serde_json::Value,
+    },
+    CommandRef {
+        command_id: String,
+        params: serde_json::Value,
+    },
+    Sequence {
+        steps: Vec<SkillExec>,
+    },
+}
+
+/// 能力引用；单一真源在 `security_policy.rs`，校验时按 id 查 `SKILL_CAPABILITY_V1` / `AGENT_CAPABILITY_V1`。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityRef {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SkillInput {
+    pub name: String,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SkillTest {
+    pub name: String,
+    #[serde(default)]
+    pub args: serde_json::Value,
+}
+
+/// Skill 定义（YAML/JSON 解析目标）。不含凭据；`exec` 仅引用已存脚本/命令。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SkillDef {
+    pub id: String,
+    pub version: String,
+    pub display_name: String,
+    pub description: String,
+    pub acl: AclLevel,
+    pub exec: SkillExec,
+    #[serde(default)]
+    pub inputs: Vec<SkillInput>,
+    #[serde(default)]
+    pub capabilities: Vec<CapabilityRef>,
+    #[serde(default)]
+    pub tests: Vec<SkillTest>,
+    #[serde(default)]
+    pub metadata: serde_json::Value,
+}
+
+/// Agent 方言标记（仅数据；endpoint 配置在 M5-4.b 执行期再加，避免 W4 引入模型供应商集成）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentDialect {
+    OpenAiCompatible,
+    ExternalCli,
+    Custom,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct A2aConfig {
+    #[serde(default)]
+    pub delegate_to: bool,
+    #[serde(default)]
+    pub delegated_from: bool,
+}
+
+/// Agent 定义。`system_prompt` 不含凭据（校验时拒绝 sk-/api_key/secret 等）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentDef {
+    pub id: String,
+    pub version: String,
+    pub display_name: String,
+    pub description: String,
+    pub dialect: AgentDialect,
+    pub system_prompt: String,
+    #[serde(default)]
+    pub default_capabilities: Vec<CapabilityRef>,
+    #[serde(default)]
+    pub a2a: A2aConfig,
+    #[serde(default)]
+    pub metadata: serde_json::Value,
+}
+
+/// 权限预览（供 M5-6 UI 展示：安装/运行前用户可见闸门档与所需能力）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct PermissionPreview {
+    pub gate: AclLevel,
+    pub capabilities: Vec<String>,
 }

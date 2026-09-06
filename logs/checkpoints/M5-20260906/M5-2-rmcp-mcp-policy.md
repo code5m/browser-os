@@ -6,7 +6,7 @@
 > 主预研：`logs/assist/M5-7.a-prework-20260902-1055.md`（A2P/A2A 协议草案，std #7）
 > 配套：`M5-1-core-workspace-split.md`（capability.rs 必先决位置）· `M5-5-agent-skill-commands.md`（共用 capability.rs）
 >
-> **W1** PASS（2026-09-06 13:00 CST · `M5-1.a` core boundary 已就位）· **W2** PASS（2026-09-06 13:55 CST · commit `a654f0c`，M5-2.a MCP 政策门就位）· **W3** ACTIVE（A3 仅做 frozen DTOs/pure registry/policy checks；详见本卡顶部 `[W3 active]` 段）
+> **W1** PASS（2026-09-06 13:00 CST · `M5-1.a` core boundary 已就位）· **W2** PASS（2026-09-06 13:55 CST · commit `a654f0c`，M5-2.a MCP 政策门就位）· **W3** PASS（2026-09-06 14:24 CST · commit `12f1cff`，A3 `mcp.rs` 冻结 DTOs + `MCP_COMMAND_REGISTRY` + `evaluate_mcp_policy` fail-closed + `MCP_FS_TOOL_PATH_POLICY` ACTIVE）· **W4** ACTIVE（A3 转入 SUPPORT/REVIEW ONLY；详见本卡顶部 `[W4 active]` 段）
 
 ---
 
@@ -42,6 +42,67 @@
 | W2 M5-2.a MCP 政策门拣入 | **PASS**（`a654f0c`）|
 | W3 A3 实施（M5-2 余下切片 · frozen DTOs/pure registry/policy）| **ACTIVE · 待 A3 实施** |
 | W3 A1 文档 reconciliation（本段 + 头部状态行）| **本卡 W3 修订已完成** |
+
+---
+
+## [W3 reconciliation · 2026-09-06 17:55 CST] A3 M5-2 余下切片已 A0 拣入（`12f1cff`）—— `mcp.rs` 冻结 + `MCP_FS_TOOL_PATH_POLICY` ACTIVE
+
+> **W3 拣入事实**（`12f1cff` A0 拣入）：
+> - **`src-tauri/src/mcp.rs`（首期切片，150+ 行新增）**：
+>   - `pub const MCP_COMMAND_REGISTRY: &[McpCommandDef]` 冻结 7 命令（`file_read` / `file_list` / `tab_query` / `history_query` / `bookmarks_query` / `downloads_query` / `console_query`），每项含 `capability` / `core_api` / `touches_fs` / `returns_url`
+>   - `pub fn lookup_mcp_command(capability: &str) -> Option<&'static McpCommandDef>`（fail-closed：未知能力返回 None）
+>   - `pub fn evaluate_mcp_policy(...)` 裁决（fail-closed：默认拒绝；复用 `security_policy::{check_path_within_roots, redact_sensitive_url}`）
+>   - **6 Rust 单测**（路径 root 校验、URL 脱敏、capability drift、未在白名单、touches_fs/returns_url 策略）
+> - **`src-tauri/src/domain.rs`（新增 6 项冻结 DTO/常量）**：
+>   - `pub const MCP_CAPABILITY_V1: &[&str]` —— 单一真源白名单（`MCP_CAPABILITY_DRIFT` 守门）
+>   - `pub struct McpCommandDef` / `pub enum McpCommandKind` / `pub struct McpToolCall` / `pub struct McpPolicyDecision`
+>   - `pub fn is_mcp_capability_allowed(name: &str) -> bool`
+> - **`src-tauri/src/main.rs`（bin only）**：`mod mcp;` —— 落在二进制侧，**不**触发 `mvp_core` core boundary gate（与 W2 `a654f0c` 守门一致）
+> - **`scripts/check-mcp-policy.py`**：加 `MCP_FS_TOOL_PATH_POLICY` ACTIVE 码位 + self-test 用例
+> - **`scripts/pre-merge.sh`**：wire `check-mcp-policy.py`（self-test + default 双跑）
+> - **A3 W3 守"无 rmcp / 无 server / 无 network listener / 无 npm / 无新 Tauri 命令 / 无 Agent 运行时"硬约束**——全部遵守（bin-only 注册表，server 集成留待 M5-2.b 后续 dispatch）
+
+### W3 拣入对本卡 §1~§X 的影响
+
+| §/项 | W2 状态 | W3 reconciliation |
+|------|---------|-------------------|
+| §1 GOAL（"首期切片 = 政策门 + 注册表"）| 写卡中 | **已 PASS**（`a654f0c` 政策门 + `12f1cff` 注册表）|
+| §3 WRITE 候选文件（`mcp.rs` / `domain.rs` DTOs / `check-mcp-policy.py`）| 写卡中 | **已 PASS**（`12f1cff`）|
+| §4 FORBID（无 rmcp / 无 server / 无 listener / 无 npm）| 写卡中 | **遵守**（A11 W3 verification 报 cargo fmt 干净 + cargo check 0 new warnings）|
+| §6 COMMANDS（无新 Tauri 命令，除非 source check/ACL/前端同包）| 写卡中 | **遵守**（A3 W3 未注册新 Tauri 命令）|
+| §7 PASS_CRITERIA（policy self-test + default PASS + pre-merge wire）| 写卡中 | **PASS**（A11 W3 verification 报 policy self-test+default+pending ALL_PASS）|
+| §9 COMMIT / NEXT | 写卡中 | 字面 NEXT 仍写"待 A3 实施余下切片"——A1 W3 不改字面值 |
+
+### W3 A1 不修订范围（本卡）
+
+- **§1 GOAL / §2 READ / §3 WRITE / §4 FORBID / §5 COMMANDS / §6 PASS_CRITERIA / §7 FAIL_ACTION / §8 DOC_BACKWRITE / §9 COMMIT / §10 实施步骤 / §11 反向边清单 / §12 FORBID 遵守记录**：A1 W3 reconciliation **不动**（决策史保持 W2 原文；事实回填在本段）。
+- **三份主文档 / ACL / Capability / pre-merge.sh**：均 A1 硬停止（pre-merge.sh 已由 A3 在 `12f1cff` 修订，A1 不再二次改）。
+- **`NEXT` 标记**：A0 调度权；A1 不改字面值。
+- **本卡顶部 W3 状态行**已从 "ACTIVE" 改为 "PASS"。
+
+---
+
+## [W4 active · 2026-09-06 17:55 CST] 当前活跃 checkpoint 切到 M5-W4（A3 转入 SUPPORT/REVIEW ONLY）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L134-168（**M5-W4 Parallel Dispatch**，Added 2026-09-06 17:55 CST by A0 after pushing through `f8f1f49`）。
+> **W4 事实摘要**：W3 整包已 A0 拣入；A3 在 W4 转入 *SUPPORT/REVIEW ONLY*（L152）—— *"Review A4/A5 against MCP registry/policy decisions; no MCP server/runtime expansion."*
+> **A1 W4 角色**：A1 仅在头部加本 `[W4 active]` 段做"当前活跃 checkpoint"标记 + 提示 W4 实施期 A4/A5 可**消费**本卡已落地的 `MCP_CAPABILITY_V1` 真源 + `MCP_COMMAND_REGISTRY` + `evaluate_mcp_policy` 裁决。
+
+### W4 状态（本卡）
+
+| 项 | 状态 | 来源 |
+|---|------|------|
+| W1 core boundary gate（前置）| **PASS** | `854bc40` / `0d08016` |
+| W2 M5-2.a MCP 政策门拣入 | **PASS** | `a654f0c` |
+| W3 M5-2 余下切片（`mcp.rs` + DTOs + 注册表 + 策略）| **PASS · A0 拣入** | `12f1cff` + A11 W3 verification |
+| W4 A3 复审 A4/A5 消费 MCP 真源/注册表 | **ACTIVE · 待 A3 输出** | PARALLEL_COMMAND_BOARD L152 |
+| W4 A1 文档 reconciliation（本段 + 头部状态行）| **本卡 W4 修订已完成** | 本 checkpoint |
+
+### W4 A1 不修订范围（本卡）
+
+- **§1~§12 决策史**：A1 W4 **不动**（W3 已 PASS 且未引入新事实影响本卡决策）。
+- **三份主文档 / ACL / Capability / pre-merge.sh**：A1 W4 不动。
+- **`NEXT` 标记**：A0 调度权；A1 不改字面值。
 
 ---
 

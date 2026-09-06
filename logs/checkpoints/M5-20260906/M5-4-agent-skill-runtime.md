@@ -5,6 +5,57 @@
 > 父卡：`详细设计与实施计划.md` L566（`M5-4 Agent/Skill runtime`）
 > 主预研：`logs/assist/M5-12.a-prework-20260902-1055.md`（SkillDef / AclLevel / 执行体禁 Inline）
 > 配套：`M5-5-agent-skill-commands.md`（命令与权限）· `M5-2-rmcp-mcp-policy.md`（capability.rs 共用）
+>
+> **W3** BLOCKED（待 A16 = A5 W4 实施期承接）· **W4** ACTIVE（**A5 domain + 校验 + permission preview + policy script**；详见本卡顶部 `[W4 next-card acceptance criteria]` 段）
+
+---
+
+## [W4 next-card acceptance criteria · 2026-09-06 17:55 CST] A5 M5-4 W4 实施期 acceptance criteria（domain + 校验 + permission preview + policy script · 不执行 skill）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L154（**A5 M5-W4** *"Implement first M5-4/M5-5 domain + command policy shell: AgentDef/SkillDef DTOs, validation, permission preview and policy script; do not execute skills yet. No second execution path, installer, network listener, model provider or download path."*）+ L134-168 硬约束 + A5 W3 next-card（`logs/assist/A5-M5-agent-skill-W3-next-card-20260906-1715.md`）+ A6 W3 UI data contract（`logs/assist/A6-M5-agent-ui-20260906-1710.md`）锁定 SkillExec / AclLevel / AgentDef / StreamChunk 经 Tauri event；no-router 锚点 useLayoutStore.ts MainView+MOD_META。
+> **消费依赖（已落地，A5 W4 可直接接入）**：
+> - **U-2 seam 已落**（`f8f1f49`）—— `mvp_core::seam::{PathResolver, RootsProvider}` 可用于 SkillDef 安装路径解析与 root 校验（避免硬编码 `~/.local/share/.../skills/`）。
+> - **U-4 capability 真源已落**（`12f1cff`）—— `MCP_CAPABILITY_V1` + `MCP_COMMAND_REGISTRY` + `evaluate_mcp_policy`；`SkillDef.capability` 校验应**复用** `is_mcp_capability_allowed`，避免 capability drift 双源。
+> - **A6 UI data contract 已锁**（`e96c902`）—— SkillExec / AclLevel / AgentDef / StreamChunk 四个 TS 类型在 `src/types.ts` 经 Tauri event 镜像；本卡 W4 应与 A6 锁定的 TS 类型**对齐**（不允许 W4 输出与 A6 已锁类型 drift）。
+> **A1 W4 角色**：A1 W4 **不**改 §1~§11 决策史；仅在头部加本 `[W4 next-card acceptance criteria]` 段，**明确 A5 W4 实施期 4 项 AC + 5 项 hard stops**，供 A5 / A10 / A11 / A0 验收。
+
+### W4 A5 M5-4 实施期 acceptance criteria（4 项）
+
+| AC | 描述 | 验收证据 |
+|----|------|----------|
+| AC-1 **AgentDef/SkillDef DTOs 冻结** | `AgentDef`（id / name / description / system_prompt / model_provider / capability 集合 / 流式参数 / 退避策略）；`SkillDef`（id / name / description / capability / version / inputs / outputs / install / run / tests）；两个 DTO 在 `domain.rs` 或新 `agent_def.rs` / `skill_def.rs` 冻结；与 A6 UI 锁定的 TS 类型**对齐**（无 drift） | `cargo test domain::agent_def` + `cargo test domain::skill_def` + A11 比对 `src/types.ts` 镜像 |
+| AC-2 **校验完整** | 字段名校验拒占位/默认（`name="default" / "sk-xxx"`等应拒）；capability 漂移校验复用 `MCP_CAPABILITY_V1`（U-4 真源）；版本号/inputs/outputs schema 校验；`install` 路径必须经 `RootsProvider::allowed_roots()` 校验（V-1）| `scripts/check-skill-policy.py`（或新 `check-agent-skill-policy.py`）self-test + default + `--expect-pending` 三模式 + focused Rust 单测 |
+| AC-3 **permission preview 静态裁定** | 对 `SkillDef` 提供 `preview_permission(skill_def) -> Vec<CapabilityKind>` 纯函数（不调 runtime、不写文件、不发请求）；返回 `capability` 集合 + `touches_fs` + `returns_url` + `requires_acl_level`，供 UI 二次确认弹窗消费 | `cargo test agent_def::preview_permission` + `cargo test skill_def::preview_permission` |
+| AC-4 **policy script + pre-merge wire** | `scripts/check-agent-skill-policy.py` 三模式 PASS；接入 `scripts/pre-merge.sh`；**无** `install_skill` / `remove_skill` / `skill_run` / `agent_chat` 等命令注册 | `pre-merge.sh` ALL_PASS + `grep -E "skill_install\|skill_run\|agent_chat" src-tauri/src/bridge.rs` 仅出现 `// not-implemented-yet` 注释 |
+
+### W4 A5 M5-4 实施期 hard stops（5 项）
+
+| HS | 约束 | 来源 |
+|----|------|------|
+| W4-HS1 | **不执行 skill**（"Do not execute skills yet"）—— `skill_run` / `agent_chat` 仅占位/类型/注释，**不**调 runtime / `SkillExec` / 流式 emit | PARALLEL_COMMAND_BOARD L154 |
+| W4-HS2 | **无 second execution path / installer / network listener / model provider / download path** | PARALLEL_COMMAND_BOARD L154 + L165 |
+| W4-HS3 | **无新 Tauri 命令**（W4 优先不加；M5-4 实施期只冻结 DTO + 校验 + preview + policy） | PARALLEL_COMMAND_BOARD L154 + L166 |
+| W4-HS4 | **capability 真源单点**（必须复用 `MCP_CAPABILITY_V1` + `is_mcp_capability_allowed`，禁止在 `agent_def.rs` / `skill_def.rs` 写 capability 白名单副本） | A2 W2 + A3 W3 + R-B3 |
+| W4-HS5 | **所有 lane 必须从 `origin/master` pull，不 push** | PARALLEL_COMMAND_BOARD L168 |
+
+### W4 验证清单（供 A11 收口）
+
+- `cargo test --manifest-path src-tauri/Cargo.toml agent_def`（或 `skill_def`）PASS
+- `python3 scripts/check-agent-skill-policy.py --self-test` PASS
+- `python3 scripts/check-agent-skill-policy.py` PASS
+- `python3 scripts/check-agent-skill-policy.py --expect-pending` PASS（如有 PENDING）
+- `bash scripts/pre-merge.sh` ALL_PASS
+- `git diff --check` CLEAN
+- A11 比对 `src/types.ts` 与本卡 DTO 0 drift
+- **A10 复审 PASS**（no second execution path / no installer / no network / no model provider / no download / capability 真源单点）
+- **A11 verification delta** 产出 `logs/checkpoints/M5-A11-W4-*.md`
+
+### W4 A1 不修订范围
+
+- **§1 GOAL / §2 READ / §3 WRITE / §4 关键契约 / §5 FORBID / §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION / §9 DOC_BACKWRITE / §10 COMMIT / §11 实施步骤 / §12 反向边清单 / §13 FORBID 遵守记录**：A1 W4 **不动**（决策史保持 W1 原文；W4 AC 在本顶部段单列）。
+- **三份主文档 / ACL / Capability / pre-merge.sh / scripts/**：A1 W4 不动（policy 脚本由 A5 落地）。
+- **`NEXT` 标记**：A0 调度权；A1 不改字面值。
+- **本卡与 M5-5 关系**（A5 实施期双卡并行）：M5-4 domain/校验/preview；M5-5 命令 policy shell（独立 AC 段）。A5 W4 dispatch 行内已说明双卡关联。
 
 ---
 

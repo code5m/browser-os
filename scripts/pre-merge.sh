@@ -418,6 +418,22 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/check-mcp-policy.py" >/dev/null 2>&1 \
     || pm_fail "check-mcp-policy.py（M5-2 MCP 安全不变量被破坏：能力漂移/路径根/URL 脱敏/rmcp/tokio/监听）"
 
+  # M5-3（Lane A4）：agent memory KV 契约不变量夹具（5 ACTIVE 码位，产物存在才判）。
+  # 守容量常量单一真源 / 隐私双扫 / per-agent 字节软配额 / 总上限接入 / 审计脱敏。
+  pm_log "M5-3 agent memory KV 策略不变量夹具（5 ACTIVE 码位）…"
+  python3 "$SCRIPT_DIR/check-agent-memory-policy.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-agent-memory-policy.py --self-test"
+  python3 "$SCRIPT_DIR/check-agent-memory-policy.py" >/dev/null 2>&1 \
+    || pm_fail "check-agent-memory-policy.py（M5-3 agent memory KV 契约被破坏：常量缺失/隐私未扫值/per-agent 误用 32/无上限/审计含值）"
+
+  # M5-4/5（Lane A5）：Agent/Skill 域与命令策略夹具（AGSK_* 码位）。
+  # 守护：无第二执行路径 / SkillExec 禁内联 / ACL 末条 K1 / 能力单一真源 / 命令 ACL 奇偶。
+  pm_log "M5-4/5 Agent/Skill 策略不变量夹具（AGSK_* 码位）…"
+  python3 "$SCRIPT_DIR/check-agent-skill-policy.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-agent-skill-policy.py --self-test"
+  python3 "$SCRIPT_DIR/check-agent-skill-policy.py" >/dev/null 2>&1 \
+    || pm_fail "check-agent-skill-policy.py（Agent/Skill 安全不变量被破坏：第二执行路径/Inline/ACL末条/能力漂移）"
+
   pm_log "git diff --check（工作树 + 暂存区，机器证据除外）…"
   # Raw evidence is immutable third-party output; SHA256SUMS, not whitespace rewriting, protects it.
   git -C "$ROOT" diff --check -- . ':(exclude)logs/m0-baseline/**' || pm_fail "git diff --check (worktree)"
@@ -534,6 +550,15 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/check-mcp-policy.py" ] || { echo "FAIL: check-mcp-policy.py missing"; rc=1; }
   if ! python3 "$SCRIPT_DIR/check-mcp-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-mcp-policy.py --self-test"; rc=1
+  fi
+  # M5-3（Lane A4）：agent memory KV 契约门禁自检。
+  [ -f "$SCRIPT_DIR/check-agent-memory-policy.py" ] || { echo "FAIL: check-agent-memory-policy.py missing"; rc=1; }
+  if ! python3 "$SCRIPT_DIR/check-agent-memory-policy.py" --self-test >/dev/null 2>&1; then
+    echo "FAIL: check-agent-memory-policy.py --self-test"; rc=1
+  fi
+  [ -f "$SCRIPT_DIR/check-agent-skill-policy.py" ] || { echo "FAIL: check-agent-skill-policy.py missing"; rc=1; }
+  if ! python3 "$SCRIPT_DIR/check-agent-skill-policy.py" --self-test >/dev/null 2>&1; then
+    echo "FAIL: check-agent-skill-policy.py --self-test"; rc=1
   fi
   if ! python3 "$SCRIPT_DIR/check-tools-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-tools-policy.py --self-test"; rc=1

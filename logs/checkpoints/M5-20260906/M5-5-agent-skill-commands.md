@@ -5,6 +5,54 @@
 > 父卡：`详细设计与实施计划.md` L567（`M5-5 Agent/Skill 命令与权限`）
 > 主预研：`logs/assist/M5-12.a-prework-20260902-1055.md` §4.1-4.2
 > 配套：`M5-4-agent-skill-runtime.md`（runtime 后端）· `M5-2-rmcp-mcp-policy.md`（capability.rs 共用）
+>
+> **W3** BLOCKED（待 A16 = A5 W4 实施期承接）· **W4** ACTIVE（**A5 command policy shell · 不注册实际命令**；详见本卡顶部 `[W4 next-card acceptance criteria]` 段）
+
+---
+
+## [W4 next-card acceptance criteria · 2026-09-06 17:55 CST] A5 M5-5 W4 实施期 acceptance criteria（command policy shell · 不注册实际命令）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L154（**A5 M5-W4** *"...no second execution path, installer, network listener, model provider or download path."*）+ L153-160 + L134-168 硬约束 + A5 W3 next-card（`logs/assist/A5-M5-agent-skill-W3-next-card-20260906-1715.md`）。
+> **本卡 W4 与 M5-4 W4 的关系**：A5 W4 dispatch L154 派发 **双卡**——M5-4 domain + 校验 + preview + policy script；M5-5 command policy shell + 权限闸门定义 + preview 二次确认弹窗契约。**M5-5 W4 不注册 15 条新 Tauri 命令**（W4 优先不加 command 硬约束）；仅冻结"未来注册命令"所需的 policy shell + permission preview API 契约 + ACL 闸门定义。
+> **A1 W4 角色**：A1 W4 **不**改 §1~§11 决策史；仅在头部加本 `[W4 next-card acceptance criteria]` 段，**明确 A5 W4 实施期 3 项 AC + 5 项 hard stops**，供 A5 / A10 / A11 / A0 验收。
+
+### W4 A5 M5-5 实施期 acceptance criteria（3 项）
+
+| AC | 描述 | 验收证据 |
+|----|------|----------|
+| AC-1 **command policy shell 冻结** | `scripts/check-agent-skill-command-policy.py` 脚本三模式（self-test / default / `--expect-pending`）PASS；policy 守门项至少 8 条：① 未来 `skill_install` / `skill_remove` / `skill_run` / `skill_cancel` 必须先经 capability 校验（复用 `MCP_CAPABILITY_V1`）② ACL 末条恒为 `list_artifact_images`（新命令必须插其之前）③ `skill_run` 必须先经 permission preview 静态裁定（无 second execution path）④ `agent_chat` 走二次确认 ⑤ 流式 emit 必须经 `A6 锁定的 Tauri event 名 + 镜像类型` ⑥ install/remove 必须经 `RootsProvider::allowed_roots()` 校验 ⑦ concurrency 互斥键 = `agent_id`/`skill_id` 而非 `task_id` ⑧ history FIFO 500 上限 | `scripts/check-agent-skill-command-policy.py` self-test + default + `--expect-pending` 三模式 PASS |
+| AC-2 **permission preview API 契约冻结** | `preview_skill_run(skill_def, args) -> RunPreview` / `preview_agent_chat(agent_def, messages) -> ChatPreview` 两个纯函数冻结在 `domain.rs` 或新 `command_preview.rs`；纯函数（不调 runtime、不写文件、不发请求）；返回 `capability` 集合 + `touches_fs` + `returns_url` + `requires_acl_level` + `requires_secondary_confirmation: bool`；供 M5-4 W4 permission preview 段 + UI 二次确认弹窗消费 | `cargo test command_preview::preview_skill_run` + `cargo test command_preview::preview_agent_chat` + A11 比对 `src/types.ts` 镜像 |
+| AC-3 **不注册 15 条新 Tauri 命令** | `grep -E "skill_install\|skill_remove\|skill_run\|agent_chat" src-tauri/src/bridge.rs` 仅出现 `// not-implemented-yet` 占位 / 注释；`src-tauri/permissions/default-commands.toml` 末条仍恒为 `list_artifact_images`，**未**新增 15 条 skill/agent 命令 | `git diff src-tauri/permissions/default-commands.toml` 无新增命令行 + A10 抽查 `bridge.rs` |
+
+### W4 A5 M5-5 实施期 hard stops（5 项）
+
+| HS | 约束 | 来源 |
+|----|------|------|
+| W4-HS1 | **不注册 15 条新 Tauri 命令**（W4 优先不加 command）| PARALLEL_COMMAND_BOARD L166 + 本卡 §0 §1 |
+| W4-HS2 | **不执行 skill**（"Do not execute skills yet"）—— `skill_run` / `agent_chat` 仅类型/注释/纯函数预览，**不**调 runtime | PARALLEL_COMMAND_BOARD L154 |
+| W4-HS3 | **无 second execution path / installer / network listener / model provider / download path / npm 依赖 / GUI panel** | PARALLEL_COMMAND_BOARD L154 + L165 |
+| W4-HS4 | **capability 真源单点**（必须复用 `MCP_CAPABILITY_V1` + `is_mcp_capability_allowed`）| A2 W2 + A3 W3 + R-B3 |
+| W4-HS5 | **所有 lane 必须从 `origin/master` pull，不 push** | PARALLEL_COMMAND_BOARD L168 |
+
+### W4 验证清单（供 A11 收口）
+
+- `python3 scripts/check-agent-skill-command-policy.py --self-test` PASS
+- `python3 scripts/check-agent-skill-command-policy.py` PASS
+- `python3 scripts/check-agent-skill-command-policy.py --expect-pending` PASS（如有 PENDING）
+- `cargo test --manifest-path src-tauri/Cargo.toml command_preview` PASS
+- `git diff src-tauri/permissions/default-commands.toml` 0 新增命令行
+- `grep -c "skill_install\|skill_remove\|skill_run\|agent_chat" src-tauri/src/bridge.rs` 仅匹配占位/注释
+- `bash scripts/pre-merge.sh` ALL_PASS
+- `git diff --check` CLEAN
+- **A10 复审 PASS**（no second execution path / no installer / no network / no model provider / no download / capability 真源单点 / ACL 末条恒为 `list_artifact_images`）
+- **A11 verification delta** 产出 `logs/checkpoints/M5-A11-W4-*.md`
+
+### W4 A1 不修订范围
+
+- **§1 GOAL / §2 READ / §3 WRITE / §4 关键契约 / §5 FORBID / §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION / §9 DOC_BACKWRITE / §10 COMMIT / §11 实施步骤 / §12 反向边清单 / §13 FORBID 遵守记录**：A1 W4 **不动**（决策史保持 W1 原文；W4 AC 在本顶部段单列）。
+- **三份主文档 / ACL / Capability / pre-merge.sh / scripts/**：A1 W4 不动（policy 脚本由 A5 落地）。
+- **`NEXT` 标记**：A0 调度权；A1 不改字面值。
+- **本卡与 M5-4 关系**（A5 实施期双卡并行）：M5-4 domain/校验/preview；M5-5 command policy shell + permission preview API + ACL 闸门定义。两条 AC 互补、不重叠。
 
 ---
 
