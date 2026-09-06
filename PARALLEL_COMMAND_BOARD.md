@@ -1,10 +1,10 @@
 # Parallel Command Board
 
-> Updated: 2026-09-06 18:35 CST
+> Updated: 2026-09-06 19:25 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` at `1610939` locally and on `origin/master`
-> Current NEXT: M5-W5 parallel implementation; Lane A6 owns M5-6 Agent/Skill UI pure logic/panel shell, Lane A7 owns M5-7/8 graph model/store policy slice, other lanes docs/review/support only
+> Current mainline: `master` at `4b438ef` locally and on `origin/master`
+> Current NEXT: M5-W6 parallel implementation; Lane A8 owns M5-9 graph UI pure logic/panel shell, Lane A9 owns M5-10/11 plugin manifest/lifecycle policy slice, other lanes docs/review/support only
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
@@ -13,7 +13,7 @@ This file is the coordination board for 11 parallel agents plus A0 integration. 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W5 Parallel Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W6 Parallel Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
 ```
 
 Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
@@ -131,6 +131,44 @@ No lane may force-push, reset, or overwrite another lane's changes.
 
 
 
+
+
+## M5-W6 Parallel Dispatch
+
+> Added 2026-09-06 19:25 CST by A0 after pushing through `4b438ef`.
+> Current facts: Agent/Skill UI shell is integrated; graph model/store policy slice is integrated; build metrics threshold is documented at 19% with W5 debt.
+> W6 opens A8 and A9 product-code lanes only. A8 may build graph UI pure logic/panel shell over A7 DTOs; A9 may build plugin manifest/lifecycle policy slice. No graph live agent consumption and no plugin installation runtime yet.
+
+### W6 One-Line Prompt
+
+```text
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W6 Parallel Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+```
+
+### W6 Assignments
+
+| Lane | Status | Task | Allowed Scope | Must Deliver |
+|---|---|---|---|---|
+| A1 | **START DOCS ONLY** | Reconcile W6 as active NEXT; mark W5 pushed and tighten M5-9/M5-10/M5-11/M5-12 acceptance criteria. | `PARALLEL_COMMAND_BOARD.md`, three main docs, `logs/checkpoints/M5-20260906/*.md` | One reconciliation checkpoint; no product code. |
+| A2 | **SUPPORT/REVIEW ONLY** | Review A8/A9 for core boundary and seam direction; no product code. | `logs/assist/A2-M5-W6-*.md` | Boundary review note. |
+| A3 | **SUPPORT/REVIEW ONLY** | Review plugin/graph exposure against MCP registry policy; no MCP runtime expansion. | `logs/assist/A3-M5-W6-*.md` | MCP compatibility note. |
+| A4 | **SUPPORT/REVIEW ONLY** | Review graph/plugin interactions with agent memory privacy/capacity; no product code. | `logs/assist/A4-M5-W6-*.md` | Review note. |
+| A5 | **SUPPORT/REVIEW ONLY** | Review A9 plugin manifest against Agent/Skill domain and permission preview assumptions. | `logs/assist/A5-M5-W6-*.md` | Review note. |
+| A6 | **SUPPORT/REVIEW ONLY** | Review A8 UI consistency with existing Agent/Skill UI shell; docs only. | `logs/assist/A6-M5-W6-*.md` | UI consistency note. |
+| A7 | **SUPPORT/REVIEW ONLY** | Review A8 graph UI against A7 DTO/query helpers; no graph product code unless fixing docs only. | `logs/assist/A7-M5-W6-*.md` | Graph contract review note. |
+| A8 | **START PRODUCT CODE** | Implement M5-9 graph UI pure logic and panel shell: graph list/search/filter, node detail summary, capacity/error/empty states, helper module + headless logic test. Do not call live agent consumption or backend graph commands unless already existing and fully typed. | `src/components/**`, `src/stores/**`, `src/types.ts`, `src/bridge.ts` only if no new command, `scripts/check-graph-ui-logic.mjs`, optional UI policy script, docs/checkpoint | `npm run build` PASS, UI logic test PASS, no new dependency, no live agent consumption. |
+| A9 | **START PRODUCT CODE** | Implement M5-10/M5-11 plugin manifest/lifecycle policy slice: DTOs, validation, lifecycle state machine, permission manifest rules, policy script. No install/uninstall file mutation runtime, no downloaded plugins, no signature enforcement beyond pure validation unless fully local. | `src-tauri/src/domain.rs`, optional `src-tauri/src/plugin.rs`, `src-tauri/src/security_policy.rs`, `scripts/check-plugin-policy.py`, `scripts/pre-merge.sh`, focused Rust tests/checkpoint | Policy self-test/default PASS, bounded metadata, no secrets, no network/install runtime. |
+| A10 | **START REVIEW** | Security review A8/A9 for secret display, unbounded UI/store growth, plugin path traversal, signature bypass, command exposure, and ACL drift. | `logs/assist/A10-M5-W6-*.md`; policy fixtures only for concrete failure | Review after A8/A9 output. |
+| A11 | **START VERIFICATION** | Update W6 verification matrix and GUI/manual debt ledger after A8/A9 outputs. | `logs/assist/M5-A11-W6-*.md`, `logs/checkpoints/M5-A11-W6-*.md` | One verification delta. |
+
+### W6 Hard Stops
+
+- Only A8 and A9 may write product code in W6.
+- A8 must not add backend commands, live agent consumption, model calls, or graph rebuild workers.
+- A9 must not install, delete, download, execute, or enable real plugins; pure manifest/lifecycle policy only.
+- Any new command requires source check, ACL, frontend bridge/types, policy coverage, and tests in the same package; prefer no command in W6.
+- All stores/maps/lists must be bounded; no token/cookie/Authorization/body/prompt-secret logging or persistence.
+- All lanes pull from `origin/master` first and must not push.
 
 ## M5-W5 Parallel Dispatch
 
