@@ -1,10 +1,12 @@
-# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0 + W1 reconciliation）
+# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0 + W1 + W2 reconciliation + W3 active）
 
 > 生成：2026-09-06 08:00 CST · Lane A1（M5-W0 · docs only）
 > W1 修订：2026-09-06 08:50 CST · Lane A1（M5-W1 · docs-only reconciliation）
-> 基准：`a1a2061`（`master`，M4 已 PASS，已合数据库+调度并行成果） +  本地 `5ca8f9f docs(M5): dispatch architecture prework lanes`（A0 预研派发） +  `404f514 docs(M5): integrate prework and dispatch core boundary wave`（A0 已拣入 W0 整包 + W1 dispatch）
+> W2 修订：2026-09-06 13:45 CST · Lane A1（M5-W2 · docs-only reconciliation，对齐 `712a14c`）
+> W3 active：2026-09-06 17:30 CST · Lane A1（M5-W3 · docs-only reconciliation + 标记当前活跃 checkpoint）
+> 基准：`a1a2061`（`master`，M4 已 PASS，已合数据库+调度并行成果） +  本地 `5ca8f9f docs(M5): dispatch architecture prework lanes`（A0 预研派发） +  `404f514 docs(M5): integrate prework and dispatch core boundary wave`（A0 已拣入 W0 整包 + W1 dispatch） +  `a654f0c feat(M5): add M5-2 MCP policy gate`（A3 W2 落地） +  `712a14c feat(M5): centralize core contract constants`（A2 W2 切片 0b 落地 + A1 `M5-1.b` 切卡拣入）
 > 性质：**纯文档展开**。零产品代码（未触 `src/`、`src-tauri/`、`package.json`、三份主文档、ACL/Capability/Manifest）；不移动 `NEXT`；不提交、不 push。
-> 依据：`PARALLEL_COMMAND_BOARD.md`（2026-09-05 23:55 版 · Batch Implementation Dispatch · Lane A1: M5 task-card expansion；2026-09-06 08:35 CST · M5-W1 Implementation Dispatch · Lane A1: START DOCS ONLY · reconciliation）
+> 依据：`PARALLEL_COMMAND_BOARD.md`（2026-09-05 23:55 版 · Batch Implementation Dispatch · Lane A1: M5 task-card expansion；2026-09-06 08:35 CST · M5-W1 Implementation Dispatch · Lane A1: START DOCS ONLY · reconciliation；2026-09-06 13:45 CST · M5-W2 Parallel Dispatch · Lane A1: START DOCS ONLY · constant-centralization reconciliation；2026-09-06 17:10 CST · M5-W3 Parallel Dispatch · Lane A1: START DOCS ONLY · mark W1/W2 complete + W3 active）
 > 入口：本卡体系的根文档，本目录下其它文件是各 M5-x 子卡
 
 ---
@@ -56,6 +58,73 @@ A1 复核 W0 整包与 A2 v3 prework（`logs/assist/A2-M5-core-20260906-0749.md`
 6. **步骤 c**（A1 M5-1.c 阶段二，可选）：根 `Cargo.toml [workspace]` 化（须 exclude `tauri-browser-tabs/`）。
 
 > 步骤 0→0b→0a→1→2 不可换序：换序则步骤 0b 后的常量引用在步骤 0a 完成前编译失败，步骤 0a 完成的 core 边界在步骤 1 前不构成"反向边解除"。
+
+---
+
+## [W2 patched · 2026-09-06 13:45 CST] 契约常量集中 + M5-1.b 卡拣入 + M5-2.a 政策门就位
+
+> **修订来源**：A0 M5-W2 Parallel Dispatch（`logs/checkpoints/A0-M5-W2-dispatch-20260906-1345.md`）A1 行 + A2 W2 切片 0b 落地（`712a14c`）+ A3 W2 M5-2.a 落地（`a654f0c`）+ A4/A5/A7/A8/A9 同期辅助 assist（`Lane-A4-M5-a2a-memory-20260906-1336-w2-slice.md` / `Lane-A5-M5-agent-skill-checkpoint-20260906-0915.md` / `A7-M5-graph-core-W1-checkpoint-20260906-1338.md` / `A8-M5-graph-ui-W1-final-20260906-1338.md` / `A9-M5-plugin-seam-20260906-1630.md`）。
+> **修订原则**：A1 W2 把 W1 dispatch 承诺的"切片 0b 落 `domain.rs`"+"新增 `M5-1.b` 切卡"+"M5-2.a 政策门"三项实际拣入事实**回填到根卡**；其它子卡通过行内 `[W2 patched]` 段同步，本根卡仅做"完成索引"+修订原则陈述，不重写 §0~§11。
+
+### W2 拣入事实（3 项落地 + 1 项切卡 + 5 项 assist 已落）
+
+| # | 项 | 落地 commit | 来源 Lane | 影响文件 |
+|---|---|---|---|---|
+| W2-1 | M5-1.a 切片 0b 契约常量集中 | `712a14c feat(M5): centralize core contract constants` | A2 | `src-tauri/src/domain.rs` + `database.rs` / `script_runner.rs` / `security_policy.rs`（同步消除 V-7 副本）|
+| W2-2 | M5-2.a MCP 政策门就位（contract-freeze slice）| `a654f0c feat(M5): add M5-2 MCP policy gate` | A3 | `scripts/check-mcp-policy.py`（504 行；13 项不变式 4 ACTIVE + 9 PENDING；`--self-test` / default / `--expect-pending` 三模式全 PASS）|
+| W2-3 | A1 切卡 `M5-1.b` 拣入 | `712a14c`（同 commit，A1 patch 随 A0 拣入） | A1 | `logs/checkpoints/M5-20260906/M5-1.b-seam-trait-injection-and-b-extract.md`（288 行新增；A1 `Lane-A1-M5-W2-pre-M5-1.b-card-20260906-1330.patch`）|
+| W2-4 | A4 A2A memory W2 slice spec 拣入 | `712a14c`（同 commit，A4 patch 随 A0 拣入） | A4 | `logs/assist/A4-M5-a2a-memory-20260906-1336-w2-slice.md`（201 行） + 同名 patch |
+| W2-5 | A7 graph-core W1 checkpoint 拣入 | `712a14c` | A7 | `logs/checkpoints/A7-M5-graph-core-W1-checkpoint-20260906-1338.md`（94 行）|
+| W2-6 | A8 graph-ui W1 final 拣入 | `712a14c` | A8 | `logs/checkpoints/A8-M5-graph-ui-W1-final-20260906-1338.md`（105 行）|
+| W2-7 | A5 agent-skill W1 checkpoint 拣入 | `712a14c` | A5 | `logs/checkpoints/Lane-A5-M5-agent-skill-checkpoint-20260906-0915.md`（98 行）|
+| W2-8 | A10 W1 security review 转 PASS | `712a14c`（重写） | A10 | `logs/assist/A10-M5-W1-security-review-20260906-1500.md`（220 行改写，转 PASS）|
+| W2-9 | A9 plugin seam W2 拣入 | `712a14c` | A9 | `logs/checkpoints/Lane-A9-M5-plugin-seam-20260906-1630.md` + 同名 patch + `logs/assist/A9-M5-plugin-impl-seam-20260906-1630.md`（156 行）|
+| W2-10 | A10 W2 MCP 设计/安全 review 拣入 | `712a14c` | A10 | `logs/assist/A10-M5-W2-mcp-design-security-review-20260906-1630.md`（131 行）|
+
+### W2 不修订
+
+- **三份主文档**（`详细设计与实施计划.md` / `后续需求TODO.md` / `AI-模型切换与接手清单.md`）：A0 W2 未指派 A1 改动；A1 W2 不动。
+- **本根卡 §0~§11**：仅在顶部加本 `[W2 patched]` 段 + 头部时间戳行；W2 dispatch 阶段 A1 仅承担"事实回填"角色，不重写决策史。
+- **`NEXT` 标记**：A1 W2 提交后 = M5-W3（待 A0 签发）；M5-W3 候选产品代码切片 `M5-1.b` 已由 A1 切卡并拣入。
+
+### W2 阶段 A1 边界
+
+- A1 W2 整包为**纯文档**：`logs/checkpoints/M5-20260906/M5-0-overview.md`（本根卡）头部更新 + 新增本 `[W2 patched]` 段；并随 `712a14c` 拣入 `M5-1.b-seam-trait-injection-and-b-extract.md` 切卡。
+- A1 W2 **未写一行产品代码**；**未触** `src/`、`src-tauri/`、`package.json`、三份主文档、ACL/Capability、pre-merge。
+
+---
+
+## [W3 active · 2026-09-06 17:30 CST] 当前活跃 checkpoint 切到 M5-W3（A1 整包完成 / W3 标记已落）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L133-167（**M5-W3 Parallel Dispatch**，Added 2026-09-06 17:10 CST by A0 after pushing through `712a14c`）。
+> **事实摘要**：M5-W1 core boundary gate 已集成（`854bc40`）；M5-W2 constants 已集中在 `domain.rs`（`712a14c`）；A3 M5-2.a 政策门已集成（`a654f0c`）。
+> **W3 仅开两条产品代码 lane**：A2（M5-1.b core extraction · trait/seam 注入 only）+ A3（M5-2 MCP command-registry/policy shell · frozen DTOs/pure registry/policy checks only · 无 server runtime / 无 network listener / 无 `rmcp` 依赖）。
+> **A1 W3 角色**：START DOCS ONLY — *"Reconcile cards to current mainline `712a14c`; mark W1/W2 complete and make M5-W3 the active checkpoint."*
+
+### W3 A1 整包交付
+
+| # | 文件 | 修订 |
+|---|------|-----|
+| W3-1 | `M5-0-overview.md`（本根卡）| 头部时间戳加 W3 active；新增本 `[W3 active]` 段（仅索引，不重写）|
+| W3-2 | `M5-1-core-workspace-split.md` | 头部 `[W3 active]` 段（标 W1/W2 已 PASS、W3 仅盯 trait/seam 注入）|
+| W3-3 | `M5-1.b-seam-trait-injection-and-b-extract.md` | 头部 `[W3 active]` 段（W3 唯一产品代码卡，A2 实施期承接）|
+| W3-4 | `M5-2-rmcp-mcp-policy.md` | 头部 `[W3 active]` 段（M5-2.a 政策门已集成；W3 余下切片冻结 DTO/pure registry/policy，A3 实施期承接）|
+| W3-5 | `logs/checkpoints/A1-M5-W3-reconciliation-20260906-1730.md` | 新增：A1 W3 整包交付 checkpoint |
+
+### W3 A1 硬停止
+
+- **零产品代码**：A1 W3 整包仅文档（PARALLEL_COMMAND_BOARD L149 明示 *"no product code"*）。
+- **不重写各子卡 §1~§11**：仅头部 `[W3 active]` 段 + 本根卡顶部索引段。
+- **不移动 `NEXT`**：`NEXT` 标记属 A0 调度权；A1 仅在头部状态行陈述"W3 是当前活跃 checkpoint"。
+- **不提交 / 不 push**：A1 W3 整包交 A0 拣入合并（PARALLEL_COMMAND_BOARD L168 *"All lanes must pull from `origin/master` first; no push"*）。
+
+### W3 状态（全部已 PASS，A1 仅做 docs reconciliation）
+
+| 项 | 状态 | 来源 |
+|---|------|------|
+| W1（core boundary gate · slice 0a + 0b + keyring_store）| **PASS** | `854bc40` + `0d08016` |
+| W2（constants 集中到 `domain.rs` + MCP 政策门 + 多 lane assist）| **PASS** | `712a14c` + `a654f0c` + `c4b0fb7`（A6 scheduler fixture）+ `1e114b6`（A11 W2 verification）|
+| W3（A2 M5-1.b + A3 M5-2 余下切片）| **ACTIVE · A1 docs-only** | PARALLEL_COMMAND_BOARD L133-167 + 本 checkpoint |
 
 ---
 

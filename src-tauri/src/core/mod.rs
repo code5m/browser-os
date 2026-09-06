@@ -22,3 +22,10 @@
 //! 详见 `logs/assist/A2-M5-core-20260906-0749.md` §6。
 
 pub mod keyring_store;
+
+/// M5-1.b 切片 1：抽取 Tauri 运行时耦合的三个薄抽象（seam）。
+///
+/// `ProgressSink` / `PathResolver` / `RootsProvider` 让 B 类模块在搬入 core 时通过
+/// 依赖注入消除「核心逻辑 → 命令层全局状态」反向边。本模块零 Tauri 依赖、零行为；
+/// 真实实现在二进制侧 `bridge.rs`，mock 实现见模块内测试。
+pub mod seam;

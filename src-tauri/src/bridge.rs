@@ -9,6 +9,7 @@ use crate::domain::*;
 use crate::grid_ipc::GridCmd;
 use crate::keyring_store::KeyringStore;
 use crate::script_runner::{RunError, RunSnapshot, ScriptProcessTable, ScriptRunRecord};
+use crate::seam::{PathResolver, Progress, ProgressSink, RootsProvider};
 use crate::sync;
 use crate::terminal::{self, ChannelSink, EventSink};
 use crate::workspace;
@@ -1132,6 +1133,49 @@ pub fn allowed_roots(app: &AppHandle) -> Vec<std::path::PathBuf> {
     roots.sort();
     roots.dedup();
     roots
+}
+
+// ── M5-1.b 切片 1：B 类模块搬入 core 的 Tauri 侧 seam 实现 ───────────────────────
+// 这些实现是切片 2（B 类模块实际搬入并注入 trait）的注入目标；切片 1 仅声明 trait，
+// 此处实现尚未被消费，故 `#[allow(dead_code)]` 避免新增 warning。
+// 见 `logs/checkpoints/M5-20260906/M5-1.b-seam-trait-injection-and-b-extract.md`。
+#[allow(dead_code)]
+pub struct TauriProgressSink<'a> {
+    app: &'a AppHandle,
+}
+
+#[allow(dead_code)]
+impl<'a> ProgressSink for TauriProgressSink<'a> {
+    fn emit(&self, p: Progress) {
+        let _ = self.app.emit("script:progress", p);
+    }
+}
+
+#[allow(dead_code)]
+pub struct TauriPathResolver<'a> {
+    app: &'a AppHandle,
+}
+
+#[allow(dead_code)]
+impl<'a> PathResolver for TauriPathResolver<'a> {
+    fn base_dir(&self) -> std::path::PathBuf {
+        self.app
+            .path()
+            .data_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+    }
+}
+
+#[allow(dead_code)]
+pub struct TauriRootsProvider<'a> {
+    app: &'a AppHandle,
+}
+
+#[allow(dead_code)]
+impl<'a> RootsProvider for TauriRootsProvider<'a> {
+    fn allowed_roots(&self) -> Vec<std::path::PathBuf> {
+        allowed_roots(self.app)
+    }
 }
 
 /// M0-3.b：远程上报入口的统一来源校验。未登记/伪造 label（含残留的 `browser`）一律拒绝。

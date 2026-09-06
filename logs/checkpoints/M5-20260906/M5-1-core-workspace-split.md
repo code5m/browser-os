@@ -5,6 +5,8 @@
 > 父卡：`详细设计与实施计划.md` L562（`M5-1 核心 workspace 下沉`）
 > 主预研：`logs/assist/A2-M5-core-20260906-0749.md`（A2 v3 升级版：4 边界 + 6 处分歧 C-1~C-6 + 2 处 v3 新增 C-7/C-8 + V-7 常量副本）
 > 配套：`logs/assist/A9-M5-split-20260905-2359.md` §5 · `A9-M5-A13plus-cards-20260906-0010.md` A13
+>
+> **W1** PASS（2026-09-06 13:00 CST · commit `854bc40`）· **W2** PASS（2026-09-06 14:02 CST · commit `712a14c`，切片 0b 常量集中）· **W3** ACTIVE（A2 仅做 trait/seam 注入；详见本卡顶部 `[W3 active]` 段）
 
 ---
 
@@ -34,6 +36,57 @@
 - A2 建议拆 `M5-1.a` 内部为两个 commit：先 0b（常量收口 + 改 t_db_c6），再建 0a（core lib + A 类搬入）—— A1 接受。
 - A2 建议 `M5-1.a` 含 0a+0b；`M5-1.b` 含切片 1/2；`M5-1.c` 阶段二 workspace 化（可选，延后到 M5-2/M5-7 需要时）—— A1 接受。
 - A2 建议 `check-core-boundary.py` 含 `--self-test` 2好+2坏+1阴（注释行不得误报）、默认扫描、`--expect-pending` 三模式 —— A1 接受。
+
+---
+
+## [W2 patched · 2026-09-06 13:45 CST] 切片 0b 落地确认 + 切卡 `M5-1.b` 拣入
+
+> **修订来源**：A0 M5-W2 Parallel Dispatch（`logs/checkpoints/A0-M5-W2-dispatch-20260906-1345.md`）A1 行 + A2 W2 切片 0b 落地（commit `712a14c feat(M5): centralize core contract constants`）+ A1 切卡 `M5-1.b` 拣入（`712a14c` 同 commit 拣入 A1 `Lane-A1-M5-W2-pre-M5-1.b-card-20260906-1330.patch`，403 行）+ A10 W1 security review 转 PASS（`712a14c` 重写 `A10-M5-W1-security-review-20260906-1500.md`）。
+> **修订原则**：A1 W2 仅做"事实回填"+头部时间戳，**不重写** §1~§11 决策史；§3、§5、§6、§9、§11 中已存在的 `[W1 patched]` 修订行**不再二次修订**（W2 是 W1 的事实拣入确认而非新修订）。
+
+### W2 拣入事实（5 项落地 / 本卡涉及）
+
+| # | 项 | 落地 commit | 影响 |
+|---|----|------------|------|
+| W2-1 | **切片 0b 契约常量集中**（`HARD_GRACE_SECS` / `MAX_TIMEOUT_SECS` / `MAX_TEXT_FIELD_BYTES` / `DB_MAX_TEXT_FIELD_BYTES` V-7 / `DB_SOFT_TO_HARD_GRACE_SECS` V-7）| `712a14c` | `src-tauri/src/domain.rs` + 同步消除 `database.rs` / `script_runner.rs` / `security_policy.rs` 中 V-7 副本 |
+| W2-2 | **V-7 副本收口**：`database.rs` 改 `pub use crate::domain::*`（V-7 "core 内常量影子副本"）| `712a14c` | `src-tauri/src/database.rs`（17 行变更）|
+| W2-3 | **`M5-1.a` 状态从 "PASS（2026-09-06 13:00 CST）"→"已合并 `854bc40`/`712a14c`"** | `854bc40` + `712a14c` | A10 W1 复审已转 PASS；A11 W1/W2 verification 已 PASS |
+| W2-4 | **新切卡 `M5-1.b` 拣入**（三个 seam trait 注入 + B 类模块搬入）| `712a14c` 拣入 A1 patch | `logs/checkpoints/M5-20260906/M5-1.b-seam-trait-injection-and-b-extract.md`（288 行新增）|
+| W2-5 | A10 W1 security review 重写并转 PASS | `712a14c` | `logs/assist/A10-M5-W1-security-review-20260906-1500.md`（220 行改写）|
+
+### W2 不修订
+
+- **§3 / §5 / §6 / §9 / §11 中既有的 `[W1 patched]` 行内修订**：W2 不二次修订（事实已拣入，不需再叠加 `[W2 patched]` 行内标记）。
+- **三份主文档**：A0 W2 未指派 A1 改动；A1 W2 不动。
+- **`NEXT` 标记**：A0 W2 已签发；A1 W2 头部仅陈述"W2 PASS"，**不移动** §9 的 NEXT 字面值（§9 NEXT 仍写"M5-1.b（待 A0 签发）"，事实已变；A1 在本 `[W2 patched]` 段陈述"已拣入 `712a14c`，待 W3 A2 实施"以避免行内漂移）。
+- **`M5-1.a` 状态行**：本卡 §9 末段原写"M5-1.a 状态（已 PASS，2026-09-06 13:00 CST）"—— W2 不修订；事实补强见 W2-3 表行。
+- **A2 v3 §14"建议直接签 M5-1.b"** 已生效：W2 切卡 `M5-1.b` 已拣入并冻结，A2 W3 待 W3 dispatch 开启后承接实施。
+
+---
+
+## [W3 active · 2026-09-06 17:30 CST] 当前活跃 checkpoint 切到 M5-W3
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L133-167（**M5-W3 Parallel Dispatch**，Added 2026-09-06 17:10 CST by A0 after pushing through `712a14c`）。
+> **事实摘要**：M5-W1 core boundary gate 已集成（`854bc40`）；M5-W2 constants 已集中在 `domain.rs`（`712a14c`）；M5-2.a MCP policy gate 已集成（`a654f0c`）。
+> **W3 仅开两条产品代码 lane**：A2（M5-1.b core extraction · trait/seam 注入 only）+ A3（M5-2 MCP command-registry/policy shell · frozen DTOs/pure registry/policy checks only · 无 server runtime / 无 network listener / 无 `rmcp` 依赖）。
+> **本卡在 W3 的角色**：**已完成 W1/W2**（均 PASS），W3 不再改本卡 §1~§11；A1 仅在头部加本 `[W3 active]` 段做"当前活跃 checkpoint"标记。
+
+### W3 状态（本卡涉及）
+
+| 项 | 状态 | 来源 |
+|---|------|------|
+| W1 切片 0a（core lib + A 类搬入 + `check-core-boundary.py` + `keyring_store`）| **PASS** | `854bc40` |
+| W1 切片 0b（5 个契约常量集中 + V-7 副本收口）| **PASS** | `712a14c` |
+| W2（`M5-1.b` 切卡拣入）| **PASS** | `712a14c` 拣入 A1 patch |
+| W3 A2 M5-1.b 实施（trait/seam 注入 only）| **ACTIVE · 待 A2 实施** | PARALLEL_COMMAND_BOARD L150（"START PRODUCT CODE · Implement `M5-1.b` smallest B-class core extraction: trait/seam injection only, no behavior change."）|
+| W3 A3 M5-2 余下切片（frozen DTOs/pure registry/policy）| **ACTIVE · 待 A3 实施** | PARALLEL_COMMAND_BOARD L151 |
+
+### W3 A1 硬停止（本卡范围内）
+
+- **零产品代码**：本卡 W3 修订**仅**头部 `[W3 active]` 段 + 本顶部"W1/W2 PASS · W3 ACTIVE"陈述。
+- **不重写 §1~§11**：A1 仅标记 W3 状态；§1~§11 决策史保持 W1/W2 原文。
+- **不移动 `NEXT`**：A0 调度权；A1 仅陈述"事实已变"在本段。
+- **不提交 / 不 push**：A1 整包交 A0 拣入合并。
 
 ---
 

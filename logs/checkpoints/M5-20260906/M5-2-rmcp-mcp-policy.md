@@ -5,6 +5,43 @@
 > 父卡：`详细设计与实施计划.md` L563（`M5-2 内嵌 rmcp 与全局护栏`）
 > 主预研：`logs/assist/M5-7.a-prework-20260902-1055.md`（A2P/A2A 协议草案，std #7）
 > 配套：`M5-1-core-workspace-split.md`（capability.rs 必先决位置）· `M5-5-agent-skill-commands.md`（共用 capability.rs）
+>
+> **W1** PASS（2026-09-06 13:00 CST · `M5-1.a` core boundary 已就位）· **W2** PASS（2026-09-06 13:55 CST · commit `a654f0c`，M5-2.a MCP 政策门就位）· **W3** ACTIVE（A3 仅做 frozen DTOs/pure registry/policy checks；详见本卡顶部 `[W3 active]` 段）
+
+---
+
+## [W3 active · 2026-09-06 17:30 CST] 当前活跃 checkpoint 切到 M5-W3（A3 实施期承接 · 仅 frozen DTOs/pure registry/policy）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L133-167（**M5-W3 Parallel Dispatch**，Added 2026-09-06 17:10 CST by A0 after pushing through `712a14c`）+ L151（"A3 | **START PRODUCT CODE** | Implement the first M5-2 MCP command-registry/policy slice without adding `rmcp`: frozen DTOs/pure registry/policy checks only; no server runtime and no network listener."）。
+> **事实摘要**：本卡 M5-2.a 政策门在 W2 dispatch（`a654f0c`）由 A3 拣入；W3 是 A3 实施期承接本卡余下切片（frozen DTOs/pure registry/policy checks only）的唯一窗口。
+> **A1 W3 角色**：START DOCS ONLY — *"mark W1/W2 complete and make M5-W3 the active checkpoint"*。A1 在本卡 W3 仅加本顶部 `[W3 active]` 段 + 头部状态行；**不重写 §0~§X 决策史**。
+
+### W3 A3 实施期硬约束（与 W3 dispatch 承诺一致 · A3 必守）
+
+| # | 约束 | 来源 |
+|---|------|------|
+| W3-1 | **不增 `rmcp` 依赖** | PARALLEL_COMMAND_BOARD L151 + Hard Stops L165 |
+| W3-2 | 仅 frozen DTOs / pure registry / policy checks | PARALLEL_COMMAND_BOARD L151 |
+| W3-3 | **无 server runtime、无 network listener** | PARALLEL_COMMAND_BOARD L151 + Hard Stops L165 |
+| W3-4 | **无新 Tauri 命令**（除非 ACL/source check 同包；A3 W3 默认不加）| PARALLEL_COMMAND_BOARD L151 + Hard Stops L166 |
+| W3-5 | `check-mcp-policy.py` PASS（已落 `a654f0c`；新增 DTO/registry/policy 仍不得引入 rmcp/tokio/MCP 服务器/Plugin runtime/Agent runtime）| L165 + L151 Must Deliver |
+| W3-6 | 无 npm 依赖 / 无 background listener | PARALLEL_COMMAND_BOARD L165 |
+| W3-7 | Policy self-test + default PASS；pre-merge hook 完整 | PARALLEL_COMMAND_BOARD L151 Must Deliver |
+
+### W3 A1 不修订范围
+
+- **§0 编号与锚定 / §1 GOAL / §2 READ / §3 WRITE / §4 FORBID / §5 COMMANDS / §6 PASS_CRITERIA / §7 FAIL_ACTION / §8 DOC_BACKWRITE / §9 COMMIT**：A1 W3 **不动**（这些是 A3 实施期工作卡，A1 仅冻结交付状态）。
+- **三份主文档**、ACL、Capability、pre-merge 全局：均 A1 硬停止。
+- **`NEXT` 标记**：A1 在本段陈述"事实已变 / 待 A3 实施"，但**不修改 §9 NEXT 字面值**（A0 调度权）。
+
+### W3 状态（本卡）
+
+| 项 | 状态 |
+|---|------|
+| W1 core boundary gate（前置）| **PASS**（`854bc40` / `0d08016`）|
+| W2 M5-2.a MCP 政策门拣入 | **PASS**（`a654f0c`）|
+| W3 A3 实施（M5-2 余下切片 · frozen DTOs/pure registry/policy）| **ACTIVE · 待 A3 实施** |
+| W3 A1 文档 reconciliation（本段 + 头部状态行）| **本卡 W3 修订已完成** |
 
 ---
 

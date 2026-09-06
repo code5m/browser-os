@@ -1,0 +1,180 @@
+diff --git a/logs/assist/A9-M5-plugin-W3-delta-20260906-1730.md b/logs/assist/A9-M5-plugin-W3-delta-20260906-1730.md
+new file mode 100644
+index 0000000..09bb178
+--- /dev/null
++++ b/logs/assist/A9-M5-plugin-W3-delta-20260906-1730.md
+@@ -0,0 +1,119 @@
++# A9 · M5-W3 Delta — 插件 seam 对齐 A3 MCP registry + A5 Agent/Skill 边界
++
++> 生成：2026-09-06 17:30 CST · Lane A9（M5-W3 · SUPPORT DOCS ONLY · 整包交付）
++> BASE：`98a3b01`（HEAD：`docs(M5): dispatch W3 parallel implementation lanes`；本地已与 `origin/master` 同步，`git pull --ff-only` 无新）
++> 性质：**对齐 delta**，零产品代码。仅 `logs/assist/A9-M5-plugin-*.md`。
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W3 Parallel Dispatch → A9：**SUPPORT DOCS ONLY**；「Align plugin seam to A3 MCP registry and A5 Agent/Skill boundary; no plugin runtime code. Delta note; keep Ed25519/form③ assumptions explicit.」
++> 配套：本 Lane 前序交付（已随 `712a14c` 集成）：`A9-M5-plugin-impl-seam-20260906-1630.md`（seam 设计）+ `Lane-A9-M5-plugin-seam-20260906-1630.{md,patch}`；以及 `A9-M5-plugin-W1-delta-20260906-1530.md`、`A9-M5-plugin-system-prework-20260906-1100.md` §10。
++> 权威输入（本次对齐的基线）：`A3-M5-mcp-20260906-0827-W1-delta.md` + 已集成 `scripts/check-mcp-policy.py`（a654f0c）+ `A5-M5-agent-skill-W1-delta-20260906-0900.md` + M5-4/5 卡。
++
++---
++
++## 0. 一句话结论
++
++把本 Lane 既有插件 seam（W1 delta 的 form③+Ed25519+18 命令+capability 模型，及 1630 的 core/bin 切分 + `check-plugin-policy.py` 设计）**对齐到现已落地的 A3 MCP registry 与 A5 Agent/Skill 边界**，确认 5 处一致、补 2 处具体落点、保持 Ed25519/form③ 显式。无产品代码、无新依赖、无命令/ACL。
++
++---
++
++## 1. 对齐基线事实（来源 file:line / 已集成提交）
++
++| 事实 | 来源 | 对插件 seam 的影响 |
++|---|---|---|
++| 能力白名单**单一真源 = `capability.rs`**（MCP/Skill/Agent/Plugin 共用一份），A11 挂债务 **D46**（责任 A3/A4/A5） | `A3-M5-mcp-20260906-0827-W1-delta.md` §5（未变假设）· §6 D46 · `A5-...-W1-delta.md` §3.3 `CapabilityRef` 引用 `capability.rs` | 插件 `can_invoke_plugin` 的 capability 源 = 同一 `capability.rs`；插件常量 `PLUGIN_CAPABILITY_V1` 是其中**一个**家族成员，不得另立第二定义 |
++| `check-mcp-policy.py` 已落地（a654f0c），门禁含 `MCP_CAPABILITY_DRIFT`：`MCP_CAPABILITY_V1` 全仓**仅一处定义** | `scripts/check-mcp-policy.py`（c_capability_drift，行 ~232） | 插件 capability 单一真源由该门自动守；我的 `PLUGIN_CAP_SINGLE_DEF` 与之同源、不再另设 |
++| A3 的 MCP 形态：`mcp_tools/` 目录 + feature-gated `mcp_server` bin（optional `rmcp`+`tokio`，`required-features=["mcp"]`，默认不编）；MCP 工具**只能调 core 内部 API**，禁 `crate::bridge`/命令层（B3/B5）；禁 `TcpListener`/端口（stdio-only） | `A3-...-W1-delta.md` §2/§3/§5 · `check-mcp-policy.py` `MCP_TOOL_CALLS_COMMAND`/`MCP_LISTEN_PORT`/`MCP_RUNTIME_LEAK` | 插件是**独立子系统**（非 MCP），但守同一组原则：core 内纯逻辑、bin 命令、无第二执行路径、无网络监听、policy 脚本同族 |
++| A5 的 M5-4/5 实现责任转 **A16**；`skill_runtime`/`agent_runtime` **必须落 `mvp_core`** 且复用 `script_runner`（`AGSK_1`：禁 `std::process::Command`/`Command::new`/`"-c"`/`tokio::spawn` 直起进程）；`CapabilityRef` 引用 `capability.rs` | `A5-...-W1-delta.md` §2.2/§2.3/§3.3/§6 | 插件 runtime（A18 实现期）须同形：纯逻辑落 `mvp_core`、复用 `script_runner`（与 form③ 一致）、capability 引用 `capability.rs` |
++| A5 的 15 条命令（7 skill+8 agent）进 ACL 且末条恒 `list_artifact_images`；每条 `check_invocation_source` + 审计脱敏 | `A5-...-W1-delta.md` §0/§3.5/§6 | 插件 18 条命令（M5-10/11）注册机制完全一致：bridge.rs + main.rs + ACL 前置 list_artifact_images + bridge.ts/types.ts 镜像 + check_invocation_source + 审计脱敏 |
++| `domain.rs` 已集中常量，但**全是 M4 家族**（DB_/SCHED_/IMAGE_/SESSION_/SNIPPET_/MAX_TIMEOUT_SECS…），grep `PLUGIN|MANIFEST|ED25519|CAPABILITY|SIGNATURE` = 0 | `src-tauri/src/domain.rs`（行 92/697/1015/1023/1291/…）；`git grep` 验证 0 命中 | 插件常量（manifest 字段上限、Ed25519 算法名、trusted-pubkeys 路径、capability 家族）**尚不存在**，由 A18/A19 按同 `domain.rs` 常量风格补，不提前占用 |
++| `capability.rs` **仍不存在**（全仓 grep 0 命中） | `find src-tauri -name capability.rs` 空 | 插件（及 Skill/Agent/MCP）的 capability 单一真源**未解锁**；是 A3 在 M5-2/W3 的产品码交付项 |
++
++---
++
++## 2. 与 1630 seam 的 5 处对齐（确认/补落点）
++
++> 1630（`A9-M5-plugin-impl-seam-20260906-1630.md`）整体仍有效；以下为基于 A3/A5 实际产物做的**确认 + 具体落点补充**。
++
++| # | 1630 原表述 | 对齐后（基于 A3/A5 实际） | 结论 |
++|---|---|---|---|
++| 1 | §2.1 `can_invoke_plugin` 的 capability 源 = `capability.rs`（单一源） | 具体化为：`capability.rs` 持有家族常量 `MCP_/SKILL_/AGENT_/PLUGIN_CAPABILITY_V1`，由 A3 在 M5-2/W3 建立；`check-mcp-policy.py::MCP_CAPABILITY_DRIFT` 已机械守"全仓仅一处定义" | ✅ 一致；我的 `PLUGIN_CAP_SINGLE_DEF` 撤销独立断言，改为**复用 D46 + MCP_CAPABILITY_DRIFT** |
++| 2 | §3 `check-plugin-policy.py` 设计（8 ACTIVE + 1 PENDING） | 代码风格必须与 A3 `check-mcp-policy.py` **同族**：`ACTIVE`/`PENDING` 二分、`_present()` 触发（仅当插件文件/常量出现才守门）、`--self-test`/`--expect-pending`/`pre-merge.sh` 三模式挂载 | ✅ 一致；补：命名与触发机制对齐，避免 A0 集成时两套范式 |
++| 3 | §2.1 插件纯逻辑落 `mvp_core`；form③ 复用 `script_runner` | 与 A5 §2.3 `skill_runtime/agent_runtime` 落 `mvp_core` + `AGSK_1`（禁直起进程）**同一范式** | ✅ 一致；插件 runtime（A18）落地时直接套用该范式，被 `check-core-boundary.py` 的 `CORE_SECOND_EXEC_PATH` 同守 |
++| 4 | §2.2 插件 18 命令：bridge.rs + main.rs + ACL 前置 list_artifact_images | 与 A5 的 15 命令注册**同一 3 处 + 同闸门**（check_invocation_source + 审计脱敏 + bridge.ts/types.ts 镜像） | ✅ 一致；补：插件命令与 Agent/Skill 命令共享"ACL 末条恒 list_artifact_images"红线 |
++| 5 | §4 SB-12：capability.rs 不存在 → 插件 capability 模型前置阻塞 | 具体化为：`capability.rs` = **D46**（A3/A4/A5 责任），即 A5/A16 的 M5-4/5 解锁闸 #2；插件（A18）解锁闸与之**同一事件** | ✅ 一致；SB-12 与 A5 闸 #2 合并为同一依赖项，避免重复追踪 |
++
++---
++
++## 3. Ed25519 / form③ 显式保留（未变假设）
++
++- **form③**（宿主内 `script_runner` 执行，禁独立 stdio 进程 / 独立 webview 访问 `window.__TAURI__`）：与 A3 的"MCP stdio-only、复用 core、无第二执行路径"及 A5 的 `AGSK_1` **同向**，不被任何 W3 产物推翻。
++- **Ed25519 插件签名 + fail-closed**：`verify_plugin_signature` 失败必须拒绝加载，不得被 `cfg`/`feature`/fallback 绕过（1630 `PLUGIN_SIG_BYPASS`）。A3/A5 无重叠主张，保持显式。
++- **信任根管理（SB-11）**：`trusted-pubkeys.json` 经 `mvp_core::keyring_store`（已搬入 core）封装；首装录 key、公钥不可改、签名绕过=红线。保持显式。
++
++---
++
++## 4. 统一解锁依赖（给 A0 编排）
++
++```
++插件（A18）实现解锁 = capability.rs 单一真源落地
++                     = D46（A3/A4/A5 责任，M5-2/W3 产品码）
++                     = A5/A16 的 M5-4/5 解锁闸 #2
++                     = 本 Lane 既有 SB-12
++```
++三者是**同一事件**。A3 在 W3 建立 `capability.rs` 后，插件/Skill/Agent/MCP 四类 capability 一并解锁。在此之前，插件仅文档就绪（本 Lane 已完成），不写产品码。
++
++---
++
++## 5. FORBID（W3 切片）
++
++- 仅写 `logs/assist/A9-M5-plugin-*.md`；未碰 `src/`/`src-tauri/`/`scripts/`（含 `pre-merge.sh`）/ACL/三主文档。
++- **不编辑 M5-10/11/12 卡**（`logs/checkpoints/M5-20260906/M5-1*.md`）：W3 中 A1 负责卡片 reconcile，为避免同文件 lane 冲突，本 Lane 仅在 `logs/assist/` 表达对齐，卡片合并交由 A0/A1。
++- 未移动 `NEXT`；未提交、未 push（board Merge Rule：仅 A0 可推送）。
++- 所有"已落地"陈述以来源 file:line / 已集成提交标注（§1）。
++
++---
++
++## 6. 验收（只读，零产品代码）
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++# A. 本 Lane 仅增 assist 文档，无产品码改动
++git status --porcelain -- src/ src-tauri/ scripts/   # 期望：空（W3 仅 A2/A3 可动产品码，本 Lane 不碰）
++# B. capability.rs 仍不存在（D46 未解锁，SB-12 仍阻塞）
++find src-tauri -name capability.rs   # 期望：无
++# C. ACL 末条恒 list_artifact_images（K1）
++grep -n "list_artifact_images" src-tauri/permissions/default-commands.toml | tail -1   # 期望：末条
++# D. 本切片为纯文档
++git status --porcelain -- logs/assist/A9-M5-plugin-W3-delta-20260906-1730.md   # 期望：??（新增未跟踪）
++```
++
++结果：产品代码工作树无 A9 改动；`capability.rs` 仍不存在（D46/SB-12 未解锁）；ACL 末条（list_artifact_images）未变；本切片为纯文档。
++
++---
++
++## 7. Lane Output Template
++
++```text
++LANE=A9
++STATUS=PASS
++BASE=98a3b01 (HEAD: docs(M5): dispatch W3 parallel implementation lanes; 已与 origin/master 同步)
++HEAD=logs/checkpoints/Lane-A9-M5-plugin-W3-delta-20260906-1730.patch
++FILES=logs/assist/A9-M5-plugin-W3-delta-20260906-1730.md, logs/checkpoints/Lane-A9-M5-plugin-W3-delta-20260906-1730.md
++VERIFY=见 §6（docs-only；capability.rs 仍不存在；ACL 末条 list_artifact_images 未变）
++CHECKPOINT=logs/checkpoints/Lane-A9-M5-plugin-W3-delta-20260906-1730.md
++MERGE_NOTES=见 §8
++NEXT=A18 (M5-10/11 runtime: 18 命令 + Ed25519 plugin_signature.rs + core 纯逻辑 + check-plugin-policy.py 实现) / A19 (M5-12 UI)，在 D46 capability.rs（A3/M5-2/W3）落地后由 A0 签发；卡片对齐合并建议交 A1
++```
++
++## 8. MERGE_NOTES
++
++- **冲突**：无。本 Lane 仅写 `logs/assist/A9-M5-plugin-W3-delta-20260906-1730.md` 与同名 checkpoint；与 A2（core 抽取）、A3（MCP registry + capability.rs）、A5（Agent/Skill 文档）、A16（未来实现）无文件交集。
++- **与 A1 的边界**：W3 中 A1 负责 M5-10/11/12 卡片 reconcile；本 Lane 刻意不编辑这些卡（§5 FORBID），对齐内容以 assist 文档表达，待 A0/A1 合并进卡。
++- **对 A3 的协同请求**：A3 建 `capability.rs` 时，请将插件家族 `PLUGIN_CAPABILITY_V1` 纳入同一文件（与 `MCP_/SKILL_/AGENT_CAPABILITY_V1` 并列），使 `MCP_CAPABILITY_DRIFT` 门一次覆盖四类。
++- **对 A18 的实施契约**（不变，重申）：插件纯逻辑落 `mvp_core` + 复用 `script_runner`（form③ / AGSK_1）；18 命令走 bridge/main/ACL前置/bridge.ts-types/check_invocation_source/审计脱敏；`check-plugin-policy.py` 同族 `check-mcp-policy.py` 风格；Ed25519 fail-closed 保留。
++- **本 Lane 已交付的插件 docs 链**（全 docs-only，均未写产品码）：W0 预研（1100）→ W1 delta（1530，随 `Lane-A9-M5-plugin-W1-pack-20260906-1530.patch`）→ W1 第二切片 seam（1630，已随 712a14c 集成）→ 本 W3 delta 对齐（1730）。插件子系统在文档层已完整就绪，待 D46 解锁后由 A18/A19 进入实现。
++
++## 9. 交付索引
++
++- `logs/assist/A9-M5-plugin-W3-delta-20260906-1730.md`（本文件）—— 插件 seam 对齐 A3 MCP registry + A5 Agent/Skill 边界。
++- 上游：`A9-M5-plugin-impl-seam-20260906-1630.md`（seam 设计，已集成）· `A9-M5-plugin-W1-delta-20260906-1530.md` · `A9-M5-plugin-system-prework-20260906-1100.md` §10。
++- 权威基线：`A3-M5-mcp-20260906-0827-W1-delta.md` · `scripts/check-mcp-policy.py`（a654f0c）· `A5-M5-agent-skill-W1-delta-20260906-0900.md` · M5-4/M5-5 卡。
+diff --git a/logs/checkpoints/Lane-A9-M5-plugin-W3-delta-20260906-1730.md b/logs/checkpoints/Lane-A9-M5-plugin-W3-delta-20260906-1730.md
+new file mode 100644
+index 0000000..acf0dfe
+--- /dev/null
++++ b/logs/checkpoints/Lane-A9-M5-plugin-W3-delta-20260906-1730.md
+@@ -0,0 +1,49 @@
++# Lane A9 — M5-W3 整包交付（插件 seam 对齐 A3 MCP + A5 Agent/Skill）Checkpoint
++
++> 生成：2026-09-06 17:30 CST · Lane A9（M5-W3 · SUPPORT DOCS ONLY · 整包交付）
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W3 Parallel Dispatch → A9：Align plugin seam to A3 MCP registry and A5 Agent/Skill boundary; Delta note; keep Ed25519/form③ explicit.
++
++```
++LANE=A9
++STATUS=PASS
++BASE=98a3b01 (HEAD: docs(M5): dispatch W3 parallel implementation lanes; 已 git pull --ff-only 同步 origin/master)
++HEAD=logs/checkpoints/Lane-A9-M5-plugin-W3-delta-20260906-1730.patch
++FILES=logs/assist/A9-M5-plugin-W3-delta-20260906-1730.md, logs/checkpoints/Lane-A9-M5-plugin-W3-delta-20260906-1730.md
++VERIFY=见下 §Verify
++CHECKPOINT=logs/checkpoints/Lane-A9-M5-plugin-W3-delta-20260906-1730.md
++MERGE_NOTES=见下
++NEXT=A18 (M5-10/11 runtime) / A19 (M5-12 UI)，在 D46 capability.rs（A3/M5-2/W3）落地后由 A0 签发；卡片对齐合并建议交 A1
++```
++
++## 本切片交付（A9 M5-W3 整包，docs-only）
++
++| 要求（M5-W3 A9） | 落点 |
++|---|---|
++| Align plugin seam to A3 MCP registry | §1/§2：capability 单一真源=`capability.rs`（D46），由 `check-mcp-policy.py::MCP_CAPABILITY_DRIFT` 守；`check-plugin-policy.py` 同族 A3 脚本风格；无第二执行路径/无网络监听与 A3 MCP 原则同向 |
++| Align to A5 Agent/Skill boundary | §2.#3/#4：插件 runtime 落 `mvp_core`+复用 `script_runner`（同 A5 `skill_runtime/agent_runtime`+AGSK_1）；18 命令注册机制同 A5 的 15 命令（bridge/main/ACL前置/bridge.ts-types/check_invocation_source/审计脱敏） |
++| no plugin runtime code | 仅对齐文档；未改 `src/`/`src-tauri/`/`scripts`/ACL/三主文档 |
++| keep Ed25519/form③ explicit | §3：form③ + Ed25519 fail-closed + 信任根(SB-11) 显式保留，未被 W3 任何产物推翻 |
++
++## Verify（只读，零产品代码）
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++git status --porcelain -- src/ src-tauri/ scripts/   # 期望：空（W3 仅 A2/A3 可动产品码）
++find src-tauri -name capability.rs   # 期望：无（D46/SB-12 未解锁）
++grep -n "list_artifact_images" src-tauri/permissions/default-commands.toml | tail -1   # 期望：末条
++```
++
++结果：产品代码工作树无 A9 改动；`capability.rs` 仍不存在（D46/SB-12 未解锁）；ACL 末条（list_artifact_images）未变。
++
++## Merge Notes
++
++- **冲突**：无。仅 `logs/assist/A9-M5-plugin-W3-delta-20260906-1730.md` + 同名 checkpoint；与 A2/A3/A5/A16 无文件交集。
++- **与 A1 边界**：W3 中 A1 负责 M5-10/11/12 卡片 reconcile；本 Lane 不编辑这些卡（FORBID §5），对齐内容以 assist 文档表达，待 A0/A1 合并。
++- **对 A3 协同**：建 `capability.rs` 时纳入 `PLUGIN_CAPABILITY_V1`（与 MCP/SKILL/AGENT 并列），使 `MCP_CAPABILITY_DRIFT` 一次覆盖四类。
++- **统一解锁依赖**：插件(SB-12) = D46 = A5/A16 闸#2 = 同一事件（A3 建 capability.rs）。
++- **A9 插件 docs 链完整就绪**：W0(1100)→W1 delta(1530)→W1 seam(1630, 已随 712a14c 集成)→W3 delta(1730)。待 D46 解锁后由 A18/A19 进入实现。
++
++## FORBID 遵守
++
++- 仅写 `logs/assist/` 与 `logs/checkpoints/Lane-A9-*.md`；未触产品代码、ACL、三主文档、`scripts/pre-merge.sh`。
++- 未移动 `NEXT`；未提交、未 push（board Merge Rule：仅 A0 可推送）。
