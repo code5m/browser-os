@@ -1,10 +1,10 @@
 # Parallel Command Board
 
-> Updated: 2026-09-06 17:55 CST
+> Updated: 2026-09-06 18:35 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` at `f8f1f49` locally and on `origin/master`
-> Current NEXT: M5-W4 parallel implementation; Lane A4 owns M5-3 A2A/agent memory KV contract slice, Lane A5 owns M5-4/5 Agent/Skill domain and command policy shell, other lanes docs/review/support only
+> Current mainline: `master` at `1610939` locally and on `origin/master`
+> Current NEXT: M5-W5 parallel implementation; Lane A6 owns M5-6 Agent/Skill UI pure logic/panel shell, Lane A7 owns M5-7/8 graph model/store policy slice, other lanes docs/review/support only
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
@@ -13,7 +13,7 @@ This file is the coordination board for 11 parallel agents plus A0 integration. 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W4 Parallel Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W5 Parallel Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
 ```
 
 Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
@@ -130,6 +130,44 @@ No lane may force-push, reset, or overwrite another lane's changes.
 
 
 
+
+
+## M5-W5 Parallel Dispatch
+
+> Added 2026-09-06 18:35 CST by A0 after pushing through `1610939`.
+> Current facts: core seam, MCP policy shell, agent memory KV policy shell, and Agent/Skill domain policy shell are integrated.
+> W5 opens A6 and A7 product-code lanes only. A6 may build frontend pure logic/panel shell for existing Agent/Skill DTOs; A7 may build graph model/store policy slice. No live graph UI or agent execution runtime yet.
+
+### W5 One-Line Prompt
+
+```text
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W5 Parallel Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+```
+
+### W5 Assignments
+
+| Lane | Status | Task | Allowed Scope | Must Deliver |
+|---|---|---|---|---|
+| A1 | **START DOCS ONLY** | Reconcile W5 as active NEXT; mark W4 pushed and tighten M5-6/M5-7/M5-8 acceptance criteria. | `PARALLEL_COMMAND_BOARD.md`, three main docs, `logs/checkpoints/M5-20260906/*.md` | One reconciliation checkpoint; no product code. |
+| A2 | **SUPPORT/REVIEW ONLY** | Review whether A7 graph store should use existing core seam or stay bin-side; no product code. | `logs/assist/A2-M5-W5-*.md` | Boundary note only. |
+| A3 | **SUPPORT/REVIEW ONLY** | Review A7 graph model against MCP registry exposure expectations; no MCP runtime expansion. | `logs/assist/A3-M5-W5-*.md` | MCP compatibility note. |
+| A4 | **SUPPORT/REVIEW ONLY** | Review A6/A7 for memory privacy/capacity interactions; no product code. | `logs/assist/A4-M5-W5-*.md` | Review note. |
+| A5 | **SUPPORT/REVIEW ONLY** | Review A6 UI against AgentDef/SkillDef contracts; no product code unless fixing docs only. | `logs/assist/A5-M5-W5-*.md` | Contract review note. |
+| A6 | **START PRODUCT CODE** | Implement M5-6 Agent/Skill UI pure logic and panel shell: validation display, permission preview, capability list, empty/error states. Prefer helper module + headless logic test. Do not execute skills, install plugins, or call live runtime. | `src/components/**`, `src/stores/**`, `src/types.ts`, `src/bridge.ts` only if no new command, `scripts/check-agent-skill-ui-logic.mjs`, optional UI policy script, docs/checkpoint | `npm run build` PASS, UI logic test PASS, no new dependency, no live execution. |
+| A7 | **START PRODUCT CODE** | Implement M5-7/M5-8 graph model/store policy slice: `GraphNode`/`GraphEdge` DTOs, capacity/redaction rules, pure graph store/query helpers, policy script. No graph UI and no agent consumption yet. | `src-tauri/src/domain.rs`, optional `src-tauri/src/graph.rs`, `src-tauri/src/security_policy.rs`, `scripts/check-graph-policy.py`, `scripts/pre-merge.sh`, focused Rust tests/checkpoint | Policy self-test/default PASS, Rust tests PASS, bounded nodes/edges, no command/ACL unless fully atomic. |
+| A8 | **SUPPORT DOCS ONLY** | Prepare graph UI after A7 schema lands; no UI code in W5. | `logs/assist/A8-M5-W5-*.md`, `logs/checkpoints/M5-20260906/M5-9*.md` | UI card delta only. |
+| A9 | **SUPPORT DOCS ONLY** | Align plugin manifest/lifecycle to A6 UI and A7 graph capabilities; no plugin product code. | `logs/assist/A9-M5-W5-*.md` | Delta note. |
+| A10 | **START REVIEW** | Security review A6/A7 for secret display, unbounded graph growth, command exposure, source-check/ACL drift, and prompt/body persistence. | `logs/assist/A10-M5-W5-*.md`; policy fixtures only for concrete failure | Review after A6/A7 output. |
+| A11 | **START VERIFICATION** | Update W5 verification matrix and GUI/manual debt ledger after A6/A7 outputs. | `logs/assist/M5-A11-W5-*.md`, `logs/checkpoints/M5-A11-W5-*.md` | One verification delta. |
+
+### W5 Hard Stops
+
+- Only A6 and A7 may write product code in W5.
+- A6 must not add execution runtime, installer, network/model calls, or new backend commands.
+- A7 must not add live UI, agent consumption, background graph rebuild workers, or network access.
+- Any new command requires source check, ACL, frontend bridge/types, policy coverage, and tests in the same package; prefer no command in W5.
+- All stores/maps/lists must be bounded; no token/cookie/Authorization/body/prompt-secret logging or persistence.
+- All lanes pull from `origin/master` first and must not push.
 
 ## M5-W4 Parallel Dispatch
 
