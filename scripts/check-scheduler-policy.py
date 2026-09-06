@@ -494,9 +494,11 @@ def detect_hits(files: dict) -> dict[str, list[str]]:
                     f"{label}:{event} 写入 audit.json（最小间隔 60s 时单任务 1440 次/天，会冲掉 cap 1000 缓冲；明细归 task-runs.json）",
                 )
 
-    # ================= PENDING：M4-6 / M4-7 职责 =================
+    # ================= ACTIVE（M4-5.d 收尾 Lane A7 已落地并提升为 ACTIVE；PENDING_CODES=()，见文件头 §79-82）=================
+    # 以下码位已登记进 ACTIVE_CODES（行 123-128），默认模式即生效；本注释段仅保留原
+    # 职责说明，避免维护者被「PENDING」旧标签误导。
 
-    # ---- PENDING 1) 五命令三处同步（ACL + main.rs 注册 + 来源校验）----
+    # ---- ACTIVE 15) 五命令三处同步（ACL + main.rs 注册 + 来源校验）----
     for cmd in TASK_COMMANDS:
         body = rust_fn_body(bridge, cmd)
         if not body:
@@ -508,7 +510,7 @@ def detect_hits(files: dict) -> dict[str, list[str]]:
         if f"bridge::{cmd}" not in main_rs:
             hit("SCHED_CMD_NOT_REGISTERED", f"{cmd}:缺 main.rs handler 注册")
 
-    # ---- PENDING 2) ACL 顺序：必须插在 list_artifact_images 之前 ----
+    # ---- ACTIVE 16) ACL 顺序：必须插在 list_artifact_images 之前 ----
     anchor = acl.find(f'"{ACL_ANCHOR}"')
     if anchor >= 0:
         for cmd in TASK_COMMANDS:
@@ -516,7 +518,7 @@ def detect_hits(files: dict) -> dict[str, list[str]]:
             if idx > anchor:
                 hit("SCHED_ACL_ORDER", f"{cmd} 排在 {ACL_ANCHOR} 之后")
 
-    # ---- PENDING 3) 审计 detail 不得泄露参数值 / 输出 ----
+    # ---- ACTIVE 17) 审计 detail 不得泄露参数值 / 输出 ----
     for event in TASK_AUDIT_EVENTS:
         index = bridge.find(f'"{event}"')
         if index < 0:
@@ -526,15 +528,15 @@ def detect_hits(files: dict) -> dict[str, list[str]]:
             if bad in window:
                 hit("SCHED_AUDIT_LEAKS_PARAMS", f"{event}:{bad}")
 
-    # ---- PENDING 4) 重试必须有硬上界 ----
+    # ---- ACTIVE 18) 重试必须有硬上界 ----
     if "attempt" in sched_code and "max_attempts" not in sched_code:
         hit("SCHED_RETRY_UNBOUNDED", "scheduler 含 attempt 逻辑但缺 max_attempts 上界")
 
-    # ---- PENDING 7) CatchUp 必须有硬上界 ----
+    # ---- ACTIVE 19) CatchUp 必须有硬上界 ----
     if "catch_up" in sched_code and "catch_up_limit" not in sched_code:
         hit("SCHED_CATCHUP_UNBOUNDED", "scheduler 含 catch_up 逻辑但缺 catch_up_limit 上界")
 
-    # ---- PENDING 8) 判重不得依赖历史（契约 §3.2 / F-A6-4）----
+    # ---- ACTIVE 20) 判重不得依赖历史（契约 §3.2 / F-A6-4）----
     for label, code in (("scheduler", sched_code), ("tasks", tasks_code)):
         if not code.strip():
             continue
