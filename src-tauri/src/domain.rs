@@ -2025,3 +2025,92 @@ pub struct PermissionPreview {
     pub gate: AclLevel,
     pub capabilities: Vec<String>,
 }
+
+// ===================== M5-7 / M5-8 知识图谱模型（Lane A7, M5-W5） =====================
+//
+// 本段仅含 DTO 与容量/脱敏常量（单一真源）。纯校验 / bounded store / query 助手在
+// `src-tauri/src/graph.rs`，与本段协同但不引入 tauri / AppHandle / crate::bridge / 网络 / 命令。
+//
+// 与 A5 的关系（关键裁定，承 W4 A7 delta）：Skill / Agent 节点**按 id 引用** A5 的
+// `SkillDef.id` / `AgentDef.id`（sha256 派生），图谱**不重定义** Agent/Skill 的完整结构
+// （A5 为单源）；图谱也不持有 `agent_kv` 的值（A4 的 KV 是 JSON 草稿纸），仅存
+// `Memorizes` 关系边（映射 A4 agent_kv 的 namespace 语义）。
+
+/// 图谱节点种类。`Skill` / `Agent` 为派生引用节点，id 须可反查 A5 的 `SkillDef.id` / `AgentDef.id`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GraphNodeKind {
+    File,
+    Dir,
+    Tab,
+    Script,
+    Skill,
+    Agent,
+    Tag,
+    Topic,
+}
+
+/// 图谱边种类。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GraphEdgeKind {
+    /// 文件系统归属（child -> parent dir）
+    InDir,
+    /// 引用 / 派生
+    References,
+    /// 语义相关
+    RelatedTo,
+    /// 标签标注
+    TaggedWith,
+    /// Agent 调用 Skill（引用 A5 `SkillDef.id`）
+    Uses,
+    /// Agent 间 A2A 双向（对应 A4 协议信封；图谱只存关系边，不存消息体）
+    A2aWith,
+    /// Agent 在 `agent_kv` 某 namespace 有记忆（映射 A4 agent_kv 语义；图谱不存值）
+    Memorizes,
+}
+
+/// 节点/边的附加属性：脱敏后的字符串键值（不得含凭据/正文/body）。
+pub type GraphProps = std::collections::BTreeMap<String, String>;
+
+/// 图谱节点 DTO。
+///
+/// `id` 稳定派生：普通节点 `sha256("kind:path")`；`Skill`/`Agent` 节点
+/// `sha256("skill:" + SkillDef.id)` / `sha256("agent:" + AgentDef.id)`，
+/// 须为 `GRAPH_NODE_ID_HEX_LEN` 位十六进制（AGRAPH-10 完整性）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphNode {
+    pub id: String,
+    pub kind: GraphNodeKind,
+    pub label: String,
+    #[serde(default)]
+    pub props: GraphProps,
+}
+
+/// 图谱边 DTO。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphEdge {
+    pub from: String,
+    pub to: String,
+    pub kind: GraphEdgeKind,
+    #[serde(default)]
+    pub weight: u32,
+    #[serde(default)]
+    pub props: GraphProps,
+}
+
+// ---- 容量 / 脱敏常量（单一真源；对齐 A4 agent_kv 同款不变量）----
+/// 节点 props 单值字节上限；**必须等于** `MAX_TEXT_FIELD_BYTES`（单测 `graph_constants_eq` 守）。
+pub const GRAPH_PROPS_MAX_BYTES: usize = MAX_TEXT_FIELD_BYTES;
+/// 节点 label 字节上限（与 `AGENT_KV_MAX_KEY_BYTES = 256` 同量级）。
+pub const GRAPH_LABEL_MAX_BYTES: usize = 256;
+/// 引用/派生节点 id 的十六进制长度（sha256）。
+pub const GRAPH_NODE_ID_HEX_LEN: usize = 64;
+/// 边遍历深度上限（防爆栈）。
+pub const GRAPH_MAX_DEPTH: usize = 4;
+/// 查询返回节点/边上限（防响应爆）。
+pub const GRAPH_QUERY_LIMIT: usize = 1_000;
+/// 图谱节点总数硬上限（防图爆炸；与 `AGENT_KV_MAX_ENTRIES = 5000` 同量级）。
+pub const GRAPH_MAX_NODES: usize = 5_000;
+/// 图谱边总数硬上限。
+pub const GRAPH_MAX_EDGES: usize = 20_000;

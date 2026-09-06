@@ -5,6 +5,58 @@
 > 父卡：`详细设计与实施计划.md` L570（`M5-7 图模型与可追溯抽取`）
 > 主预研：`logs/assist/M5-13.a-prework-20260902-1055.md`（两阶段抽取 + `source=Manual/Extract/Ai`）· `logs/assist/A9-M5-graph-store-contract-20260906-0700.md`（store 契约）
 > 配套：`M5-8-graph-store-query.md`（存储与查询）· `M5-9-graph-ui-agent-consume.md`（UI 与消费）
+>
+> **W3** BLOCKED（待 A17 = A7 W5 实施期承接）· **W4** ACTIVE（**A7 graph model/store policy slice**；详见本卡顶部 `[W5 next-card acceptance criteria]` 段）
+
+---
+
+## [W5 next-card acceptance criteria · 2026-09-06 18:35 CST] A7 M5-7 W5 实施期 acceptance criteria（DTO 冻结 + 容量/redaction + pure store · 不接 live UI / agent 消费）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L157（**A7 M5-W5** *"Implement M5-7/M5-8 graph model/store policy slice: `GraphNode`/`GraphEdge` DTOs, capacity/redaction rules, pure graph store/query helpers, policy script. No graph UI and no agent consumption yet."*）+ L134-170 硬约束 + A7 W4 graph core delta（`logs/assist/A7-M5-W4-checkpoint-20260906-1455.md` + `A7-M5-W4-graph-core-delta-20260906-1455.md`，`1610939` 拣入）锁定的 DTO/schema/边界。
+> **消费依赖（已落地，A7 W5 可直接接入）**：
+> - **A2 W3 seam 已落**（`f8f1f49`）—— `mvp_core::seam::{PathResolver, RootsProvider}` 可用于 graph 存储路径解析与 root 校验（避免硬编码）。
+> - **A3 W3 MCP capability 真源已落**（`12f1cff`）—— `MCP_CAPABILITY_V1` + `evaluate_mcp_policy`；A7 W5 抽"图边写"前需先判 capability（防污染）。
+> - **A9 graph store contract 已锁**（`logs/assist/A9-M5-graph-store-contract-20260906-0700.md`）—— DDL + GraphNode/GraphEdge DTO 已定；A7 W5 应**复用**而不重定义。
+> - **A9 graph scheduler feed 已锁**（`logs/assist/A9-M5-graph-scheduler-feed-20260906-0700.md`）—— scheduler 喂图接缝已定；A7 W5 抽写路径需考虑 scheduler feed contract。
+> **A1 W5 角色**：A1 W5 **不**改 §1~§11 决策史；仅在头部加本 `[W5 next-card acceptance criteria]` 段，**明确 A7 W5 实施期 4 项 AC + 5 项 hard stops**，供 A7 / A10 / A11 / A0 验收。
+
+### W5 A7 M5-7 实施期 acceptance criteria（4 项）
+
+| AC | 描述 | 验收证据 |
+|----|------|----------|
+| AC-1 **GraphNode/GraphEdge DTO 冻结（沿用 A9 prework）** | `GraphNode`（id / kind / label / props / source / source_ref / extracted_at / extractor_version）；`GraphEdge`（id / from / to / kind / label / props / source / source_ref / weight?）；两个 DTO 在 `src-tauri/src/domain.rs` 或新 `src-tauri/src/graph.rs` 冻结；**禁止**重定义 A9 prework 已定字段（仅允许加 `id` / `extracted_at` 等已知必填字段的 Rust 序列化形态）| `cargo test domain::graph` + `cargo test graph::types` + A11 比对 A9 prework 0 drift |
+| AC-2 **容量上界 + redaction 规则** | 节点总数 / 边总数 / 单节点 outgoing degree / 标签 / props JSON 大小 4 项上界常量在 `domain.rs` 冻结（如 `GRAPH_MAX_NODES` / `GRAPH_MAX_EDGES` / `GRAPH_MAX_OUT_DEGREE` / `GRAPH_MAX_LABEL_BYTES` / `GRAPH_MAX_PROPS_BYTES`）；redaction 规则覆盖：`source_ref` 中 URL token / query 段 / Authorization 头 / cookie / body 须脱敏；`props` JSON 内的密码/token 字段名（case-insensitive）也须脱敏 | `scripts/check-graph-policy.py` self-test + default + `--expect-pending` 三模式 + focused Rust 单测 |
+| AC-3 **pure graph store helpers（无 Tauri 依赖）** | `pure_insert_node(node) -> Result<...>` / `pure_insert_edge(edge) -> Result<...>` / `pure_upsert_*` / `pure_delete_*` / `pure_query_neighborhood(...)` 纯函数冻结在 `core::graph` 或 `core::graph_store` 模块（沿用 M5-1 W3 seam）；**不**含 Tauri AppHandle / 不含 `crate::bridge` import；持久化走 `session::atomic_write`（沿用唯一原子写原语）；**W5 不接 Tauri 命令**（W5-HS4 优先不加 command）| `cargo test core::graph` 或 `cargo test graph::pure_*` |
+| AC-4 **policy script + pre-merge wire** | `scripts/check-graph-policy.py` 三模式 PASS；接入 `scripts/pre-merge.sh`；**无** `graph_*` 命令注册 | `pre-merge.sh` ALL_PASS + `grep -E "graph_query\|graph_insert\|graph_delete" src-tauri/src/bridge.rs` 仅出现 `// not-implemented-yet` 注释 |
+
+### W5 A7 M5-7 实施期 hard stops（5 项）
+
+| HS | 约束 | 来源 |
+|----|------|------|
+| W5-HS1 | **无 live UI / 无 agent 消费 / 无 background graph rebuild workers / 无 network access** —— W5 仅冻结 DTO + capacity + redaction + pure store helpers | PARALLEL_COMMAND_BOARD L157 + L167 |
+| W5-HS2 | **无新 Tauri 命令**（W5 优先不加 command；除非 source check/ACL/types/bridge/tests 同包完整且 A0 可 atomic merge） | PARALLEL_COMMAND_BOARD L168 |
+| W5-HS3 | **无新 Cargo 依赖**（除非已存在且有理由；A7 应复用 A9 prework 已用 crate） | PARALLEL_COMMAND_BOARD L157 + A7 W4 delta |
+| W5-HS4 | **core 内常量自拥**（A2 0b 已统一到 `domain.rs` 副本零容忍 —— `R-B3`）；graph 自己的常量应定义在 `core::graph` 或 `domain.rs`（不引 `crate::domain::GRAPH_*` 假货）| A2 W2 `712a14c` + A7 W4 delta §"常量落点修正" |
+| W5-HS5 | **所有 lane 必须从 `origin/master` pull，不 push** | PARALLEL_COMMAND_BOARD L170 |
+
+### W5 验证清单（供 A11 收口）
+
+- `cargo test --manifest-path src-tauri/Cargo.toml graph`（或 `core::graph`）PASS
+- `python3 scripts/check-graph-policy.py --self-test` PASS
+- `python3 scripts/check-graph-policy.py` PASS
+- `python3 scripts/check-graph-policy.py --expect-pending` PASS（如有 PENDING）
+- `bash scripts/pre-merge.sh` ALL_PASS
+- `git diff --check` CLEAN
+- A11 比对 A9 prework 0 drift（DTO 字段名/类型完全一致）
+- **A10 复审 PASS**（no unbounded maps / no network / no agent consumption / capability 真源单点 / redaction 覆盖源 URL+props 双路径）
+- **A11 verification delta** 产出 `logs/checkpoints/M5-A11-W5-*.md`
+
+### W5 A1 不修订范围（本卡）
+
+- **§1 GOAL / §2 READ / §3 WRITE / §4 关键契约 / §5 FORBID / §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION / §9 DOC_BACKWRITE / §10 COMMIT / §11 FORBID 遵守记录**：A1 W5 **不动**（决策史保持 W0 原文；W5 AC 在本顶部段单列）。
+- **三份主文档 / ACL / Capability / pre-merge.sh / scripts/**：A1 W5 不动（policy 脚本由 A7 落地）。
+- **`NEXT` 标记**：A0 调度权；A1 不改字面值。
+- **本卡与 M5-8 关系**（A7 实施期双卡并行）：M5-7 DTO/容量/redaction/pure store；M5-8 pure graph query + policy + 无命令（独立 AC 段）。A7 W5 dispatch L157 派发双卡，两条 AC 互补、不重叠。
 
 ---
 

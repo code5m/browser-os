@@ -5,6 +5,58 @@
 > 父卡：`详细设计与实施计划.md` L568（`M5-6 Agent/Skill UI`）
 > 主预研：暂无 prework 文档（A5/A6 prework 仍空，由 A19 实施期补）
 > 配套：`M5-4-agent-skill-runtime.md`（后端）· `M5-5-agent-skill-commands.md`（15 条命令）
+>
+> **W3** BLOCKED（待 A16 = A6 W5 实施期承接）· **W4** ACTIVE（**A6 UI pure logic/panel shell**；详见本卡顶部 `[W5 next-card acceptance criteria]` 段）
+
+---
+
+## [W5 next-card acceptance criteria · 2026-09-06 18:35 CST] A6 M5-6 W5 实施期 acceptance criteria（UI pure logic + panel shell · 不调 live runtime）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L156（**A6 M5-W5** *"Implement M5-6 Agent/Skill UI pure logic and panel shell: validation display, permission preview, capability list, empty/error states. Prefer helper module + headless logic test. Do not execute skills, install plugins, or call live runtime."*）+ L134-170 硬约束 + A6 W4 UI contract（`562efb9` 拣入 *"convert A5 domain -> UI data contract + panel state plan"*）锁定的 SkillExec / AclLevel / AgentDef / StreamChunk 经 Tauri event 镜像 + no-router 锚点 useLayoutStore.ts MainView+MOD_META。
+> **消费依赖（已落地，A6 W5 可直接接入）**：
+> - **A5 W4 AgentDef/SkillDef 已落**（`1610939` 拣入 `src-tauri/src/agent.rs` 104 行 + `src-tauri/src/skills.rs` 147 行）—— A6 W5 UI 可在 `src/types.ts` 加对应 TS 镜像（无 drift）。
+> - **A5 W4 permission preview API 已落**（`1610939` `agent.rs` / `skills.rs` 内的 `preview_*` 纯函数）—— A6 W5 UI 可直接消费。
+> - **A6 W4 UI data contract 已锁**（`562efb9`）—— SkillExec / AclLevel / AgentDef / StreamChunk 四个 TS 类型在 `src/types.ts` 经 Tauri event 镜像；no-router 锚点 useLayoutStore.ts MainView+MOD_META。
+> - **A4 W4 agent_kv 已落**（`1610939` `agent_memory.rs`）—— A6 W5 UI 可消费 memory 列表/详情。
+> **A1 W5 角色**：A1 W5 **不**改 §1~§11 决策史；仅在头部加本 `[W5 next-card acceptance criteria]` 段，**明确 A6 W5 实施期 4 项 AC + 5 项 hard stops**，供 A6 / A10 / A11 / A0 验收。
+
+### W5 A6 M5-6 实施期 acceptance criteria（4 项）
+
+| AC | 描述 | 验收证据 |
+|----|------|----------|
+| AC-1 **UI 纯逻辑 helper module 冻结** | `src/utils/agentSkillUi.ts`（或类似 helper）冻结纯函数：① `validateAgentDefInput(def) -> ValidationResult` ② `validateSkillDefInput(def) -> ValidationResult` ③ `formatPermissionPreview(preview: PermissionPreview) -> PreviewItem[]` ④ `renderCapabilityBadge(cap: CapabilityKind) -> BadgeDescriptor` ⑤ `emptyStateFor(kind) -> EmptyStateDescriptor` ⑥ `errorStateFor(err) -> ErrorStateDescriptor` —— 全部纯函数（无 Tauri invoke、无网络、无 fs）| `node scripts/check-agent-skill-ui-logic.mjs` PASS + A11 抽查 |
+| AC-2 **校验展示 + 错误高亮** | 校验失败时面板显示字段级错误（field + message + severity：error/warn），禁止把后端 DTO 整个堆到 UI 错误提示；不展示原始后端错误堆栈（脱敏后仅留 message + 1 行 hint）| UI 逻辑单测 + 视觉走查（manual checklist） |
+| AC-3 **permission preview 桥接 + capability 列表** | 面板在 install/run/chat 前调用 A5 W4 提供的 `preview_*` API（消费 `MCP_CAPABILITY_V1` + AclLevel + touches_fs + returns_url）；capability 列表用 `formatCapabilityBadge` 统一渲染；二次确认弹窗的文案复用 `formatPermissionPreview` 输出（不允许 UI 自由发挥文案）| UI 逻辑单测 + 与 A5 W4 `preview_*` 函数签名 0 drift |
+| AC-4 **empty/error 状态** | 每种面板（Chat / Manage / Permission）至少 2 个 empty state（list-empty / filtered-empty）+ 2 个 error state（load-fail / action-fail）；空态/错态**不**暴露任何后端原始字段；图标 + 文案 + 复试图标三件套 | `node scripts/check-agent-skill-ui-logic.mjs` 含 empty/error 覆盖 + A11 抽查 |
+
+### W5 A6 M5-6 实施期 hard stops（5 项）
+
+| HS | 约束 | 来源 |
+|----|------|------|
+| W5-HS1 | **不调 live runtime / 不装插件 / 不执行 skill** —— UI 仅展示/校验/preview，**不**调 `skill_run` / `agent_chat` / `skill_install` 等真实 Tauri 命令 | PARALLEL_COMMAND_BOARD L156 |
+| W5-HS2 | **无 execution runtime / installer / network/model calls / 新后端 commands** | PARALLEL_COMMAND_BOARD L166 |
+| W5-HS3 | **无新 npm 依赖**（A6 须复用现有 Vue 3 + Pinia + D3.js + 既有 `useLayoutStore`） | A6 W5 dispatch L156 + W4-HS2 |
+| W5-HS4 | **capability 真源单点**（必须复用 `MCP_CAPABILITY_V1` + A5 W4 `preview_*` 纯函数，禁止在 `agentSkillUi.ts` 写 capability 白名单副本） | A2 W2 + A3 W3 + R-B3 + A5 W4 AC |
+| W5-HS5 | **所有 lane 必须从 `origin/master` pull，不 push** | PARALLEL_COMMAND_BOARD L170 |
+
+### W5 验证清单（供 A11 收口）
+
+- `npm run build` PASS（`dist/assets/index-*.js` 大小不破 IF-2 阈值；W5 仍受 A0 大小门禁约束）
+- `node scripts/check-agent-skill-ui-logic.mjs` PASS
+- `python3 scripts/check-agent-skill-ui-policy.py --self-test` PASS（如新增 UI policy 脚本）
+- `python3 scripts/check-agent-skill-ui-policy.py` PASS
+- `python3 scripts/check-agent-skill-ui-policy.py --expect-pending` PASS（如有 PENDING）
+- `bash scripts/pre-merge.sh` ALL_PASS
+- `git diff --check` CLEAN
+- A11 比对 `src/types.ts` 与 A5 W4 AgentDef/SkillDef 0 drift
+- **A10 复审 PASS**（no second execution path / no installer / no network / no model provider / no download / capability 真源单点 / 无 prompt-secret 展示）
+- **A11 verification delta** 产出 `logs/checkpoints/M5-A11-W5-*.md`
+
+### W5 A1 不修订范围（本卡）
+
+- **§1 GOAL / §2 READ / §3 WRITE / §4 关键契约 / §5 FORBID / §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION / §9 DOC_BACKWRITE / §10 COMMIT / §11 FORBID 遵守记录**：A1 W5 **不动**（决策史保持 W0 原文；W5 AC 在本顶部段单列）。
+- **三份主文档 / ACL / Capability / pre-merge.sh / scripts/**：A1 W5 不动（policy 脚本由 A6 落地）。
+- **`NEXT` 标记**：A0 调度权；A1 不改字面值。
 
 ---
 

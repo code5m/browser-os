@@ -6,6 +6,7 @@ mod bridge;
 mod crashlog;
 mod database;
 mod domain;
+mod graph;
 mod grid_ipc;
 mod grid_process;
 mod images;

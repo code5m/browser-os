@@ -5,6 +5,26 @@
 > 父卡：`详细设计与实施计划.md` L572（`M5-9 图谱 UI 与 Agent 消费`）
 > 主预研：暂无 prework 文档（A8 prework 仍空）
 > 配套：`M5-8-graph-store-query.md`（DTO 稳定）
+>
+> **W3** BLOCKED（待 A7 W5 schema 落地）· **W4** ACTIVE（A8 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A8 W5 仍 SUPPORT DOCS ONLY，待 A7 W5 schema 落地后 W6+ 由 A0 决定）
+
+---
+
+## [W5 status · 2026-09-06 18:35 CST] A8 W5 仍 SUPPORT DOCS ONLY（待 A7 W5 schema 落地后 W6+ 派发）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L158（**A8 M5-W5** *"Prepare graph UI after A7 schema lands; no UI code in W5."*）+ L134-170 硬约束。
+> **A1 W5 角色（轻量）**：A1 W5 **不**改 §1~§11 决策史；仅在头部加本 `[W5 status]` 段，**说明 A8 W5 仍 SUPPORT DOCS ONLY**；M5-9 决策史 / §3 WRITE 9 条命令列表保持 W0 原文不动，**待 A7 W5 schema 落地后由 A0 决定 M5-9 何时派发实施期**。
+> **A8 W5 应做的（轻量）**：
+> ① 重读 A7 W4 graph core delta（`logs/assist/A7-M5-W4-checkpoint-20260906-1455.md` + `A7-M5-W4-graph-core-delta-20260906-1455.md`，`1610939` 拣入）确认 W5 schema 边界
+> ② 重读 A7 W5 output（A7 W5 实施期产出物）确认 DTO/容量/redaction/pure store 实际形态
+> ③ 在 `logs/assist/A8-M5-W5-*.md` 出 W5 graph UI card delta（**仅 docs**，**不**写 UI 代码），**不**碰 `src/components/**` / `src/stores/**` / `src/types.ts` / `src/bridge.ts`
+> ④ 在本卡 `M5-9-graph-ui-agent-consume.md`（如需）补 W5 status 行（**不**动 §1~§11）
+> **A8 W5 不应做的**：① 写 D3.js 力导向布局代码 ② 写 `useGraphStore.ts` 状态管理 ③ 写 `GraphViewer.vue` 组件 ④ 改 §1~§11 决策史 ⑤ 改本根卡（M5-0）/M5-7/M5-8 任何 AC 段（避免与 A7 实施期冲突）
+> **A1 W5 不修订范围（本卡）**：
+> - **§1 GOAL / §2 READ / §3 WRITE / §4 关键契约 / §5 FORBID / §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION / §9 DOC_BACKWRITE / §10 COMMIT / §11 FORBID 遵守记录**：A1 W5 **不动**（决策史保持 W0 原文；A8 W5 status 在本顶部段单列）。
+> - **三份主文档 / ACL / Capability / pre-merge.sh / scripts/**：A1 W5 不动。
+> - **`NEXT` 标记**：A0 调度权；A1 不改字面值。
+> - **A1 W5 强停止**：本卡本轮**仅**加本 `[W5 status]` 段 + 头部状态行；**不**写 next-card AC（与 M5-6/7/8 不同——M5-9 在 W5 没有产品代码 lane 承接）。
 
 ---
 

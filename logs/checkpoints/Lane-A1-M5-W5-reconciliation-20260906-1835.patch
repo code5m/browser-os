@@ -1,0 +1,558 @@
+# A1 M5-W5 reconciliation — tracked changes (5 M5 sub-cards)
+diff --git a/logs/checkpoints/M5-20260906/M5-0-overview.md b/logs/checkpoints/M5-20260906/M5-0-overview.md
+index a6f9a8f..46ad493 100644
+--- a/logs/checkpoints/M5-20260906/M5-0-overview.md
++++ b/logs/checkpoints/M5-20260906/M5-0-overview.md
+@@ -1,13 +1,14 @@
+-# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0 + W1 + W2 + W3 reconciliation + W4 active）
++# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0 + W1 + W2 + W3 reconciliation + W4 active + W5 active）
+
+ > 生成：2026-09-06 08:00 CST · Lane A1（M5-W0 · docs only）
+ > W1 修订：2026-09-06 08:50 CST · Lane A1（M5-W1 · docs-only reconciliation）
+ > W2 修订：2026-09-06 13:45 CST · Lane A1（M5-W2 · docs-only reconciliation，对齐 `712a14c`）
+ > W3 修订：2026-09-06 17:30 CST · Lane A1（M5-W3 · docs-only reconciliation，对齐 `f8f1f49` + `12f1cff` + `bdb0602`）
+-> W4 active：2026-09-06 17:55 CST · Lane A1（M5-W4 · docs-only reconciliation，标 M5-3/M5-4/M5-5 为 W4 实施期卡）
+-> 基准：`a1a2061`（`master`，M4 已 PASS） +  `404f514 docs(M5): integrate prework and dispatch core boundary wave`（A0 W0/W1 dispatch） +  `a654f0c feat(M5): add M5-2 MCP policy gate`（A3 W2 落地） +  `712a14c feat(M5): centralize core contract constants`（A2 W2 切片 0b + A1 `M5-1.b` 切卡） +  `98a3b01 docs(M5): dispatch W3 parallel implementation lanes`（A0 W3 dispatch） +  `e96c902 docs(A6): M5-W3 Agent/Skill UI data contract + no-router panel placement delta`（A6 W3 拣入）+ `bdb0602 docs(A11): M5-W3 verification delta`（A11 W3 拣入）+ `12f1cff feat(M5-2,W3): A3 MCP command-registry + global policy slice (no rmcp/server)`（A3 W3 产品代码落地：M5-2 余下切片）+ `f8f1f49 feat(M5): add core seam abstractions`（A2 W3 产品代码落地：M5-1.b seam 抽象 + A1 W3 reconciliation 整包拣入 + A4-A10 W3 assist 拣入）+ `f7ad35a docs(M5): dispatch W4 agent memory and skill lanes`（A0 W4 dispatch，本轮派发）
++> W4 拣入：2026-09-06 15:18 CST · A0 在 `1610939 feat(M5): add agent memory and skill policy shells` 中拣入 A1 W4 reconciliation 整包（768 行 patch + 202 行 checkpoint + 6 子卡修订）
++> W5 active：2026-09-06 18:35 CST · Lane A1（M5-W5 · docs-only reconciliation，标 M5-6/M5-7/M5-8 为 W5 实施期卡，标 M5-9 仍 docs-only）
++> 基准：`a1a2061`（`master`，M4 已 PASS） + `404f514`（A0 W0/W1 dispatch） + `a654f0c`（A3 W2 MCP 政策门）+ `712a14c`（A2 W2 切片 0b + A1 M5-1.b 切卡）+ `98a3b01`（A0 W3 dispatch）+ `e96c902`（A6 W3 UI data contract）+ `bdb0602`（A11 W3 verification）+ `12f1cff`（A3 W3 MCP 余下切片）+ `f8f1f49`（A2 W3 seam + A1 W3 reconciliation + A4-A10 W3 assist）+ `f7ad35a`（A0 W4 dispatch）+ `1610939 feat(M5): add agent memory and skill policy shells`（A0 拣入 A4 W4 agent_memory.rs + A5 W4 agent.rs/skills.rs + A1 W4 reconciliation 整包 + 8 份 W4 assist）+ `0e76a89 docs(M5): dispatch W5 UI and graph lanes`（A0 W5 dispatch）
+ > 性质：**纯文档展开**。零产品代码（未触 `src/`、`src-tauri/`、`package.json`、三份主文档、ACL/Capability/Manifest、pre-merge.sh）；不移动 `NEXT`；不提交、不 push。
+-> 依据：`PARALLEL_COMMAND_BOARD.md`（2026-09-05 23:55 版 · Batch Implementation Dispatch · Lane A1: M5 task-card expansion；2026-09-06 08:35 CST · M5-W1 Implementation Dispatch · Lane A1: START DOCS ONLY · reconciliation；2026-09-06 13:45 CST · M5-W2 Parallel Dispatch · Lane A1: START DOCS ONLY · constant-centralization reconciliation；2026-09-06 17:10 CST · M5-W3 Parallel Dispatch · Lane A1: START DOCS ONLY · mark W1/W2 complete + W3 active；**2026-09-06 17:55 CST · M5-W4 Parallel Dispatch · Lane A1: START DOCS ONLY · reconcile W4 as active NEXT; mark W3 pushed and split M5-3/M5-4/M5-5 into next-card acceptance criteria**）
++> 依据：`PARALLEL_COMMAND_BOARD.md`（2026-09-05 23:55 版 · Batch Implementation Dispatch · Lane A1: M5 task-card expansion；2026-09-06 08:35 CST · M5-W1 Implementation Dispatch · Lane A1: START DOCS ONLY · reconciliation；2026-09-06 13:45 CST · M5-W2 Parallel Dispatch · Lane A1: START DOCS ONLY · constant-centralization reconciliation；2026-09-06 17:10 CST · M5-W3 Parallel Dispatch · Lane A1: START DOCS ONLY · mark W1/W2 complete + W3 active；2026-09-06 17:55 CST · M5-W4 Parallel Dispatch · Lane A1: START DOCS ONLY · reconcile W4 as active NEXT; mark W3 pushed and split M5-3/M5-4/M5-5 into next-card acceptance criteria；**2026-09-06 18:35 CST · M5-W5 Parallel Dispatch · Lane A1: START DOCS ONLY · reconcile W5 as active NEXT; mark W4 pushed and tighten M5-6/M5-7/M5-8 acceptance criteria**）
+ > 入口：本卡体系的根文档，本目录下其它文件是各 M5-x 子卡
+
+ ---
+@@ -186,6 +187,102 @@ A1 复核 W0 整包与 A2 v3 prework（`logs/assist/A2-M5-core-20260906-0749.md`
+
+ ---
+
++## [W4 reconciliation · 2026-09-06 15:18 CST] W4 整包已 A0 拣入（`1610939`）· 当前活跃 checkpoint 切到 M5-W5
++
++> **W4 拣入事实**（A0 在 `1610939 feat(M5): add agent memory and skill policy shells` 拣入；本卡仅"事后 reconciliation"）：
++> - **A4 W4 产品代码**（`1610939` 同 commit）：`src-tauri/src/agent_memory.rs`（868 行新增；DTOs + 校验 + 容量/隐私 policy + JSON 持久化壳）+ `src-tauri/src/domain.rs`（148 行 AGENT_KV_* 常量单一真源）+ `src-tauri/src/main.rs`（mod agent_memory）+ `src-tauri/src/security_policy.rs`（88 行新增 5 ACTIVE 码位 + 6 Rust 单测）+ `scripts/check-agent-memory-policy.py`（303 行）+ `scripts/pre-merge.sh` wire + checkpoint `Lane-A4-M5-3-agent-memory-20260906-1510.md`（68 行）+ patch（1409 行）。
++> - **A5 W4 产品代码**（`1610939` 同 commit）：`src-tauri/src/agent.rs`（104 行 AgentDef DTO + 校验 + permission preview）+ `src-tauri/src/skills.rs`（147 行 SkillDef DTO + 校验 + permission preview）+ `src-tauri/src/domain.rs`（同 148 行追加 AgentDef/SkillDef 常量）+ `scripts/check-agent-skill-policy.py`（410 行）+ `scripts/pre-merge.sh` wire + checkpoint `Lane-A5-M5-W4-20260906-1815.md`（78 行）。
++> - **A1 W4 reconciliation 整包**（`1610939` 同 commit）：768 行 patch + 202 行 checkpoint `logs/checkpoints/A1-M5-W4-reconciliation-20260906-1755.md` + 6 子卡头部修订（M5-0/1/1.b/2/3/4/5）。
++> - **A2 W4 seam review**（`1610939` 拣入）：`logs/assist/A2-M5-W4-seam-review-20260906-1454.md`（75 行）—— A4/A5 对 `mvp_core::seam` 使用复审 PASS。
++> - **A3 W4 MCP compat**（`d71f558` 拣入后随 `1610939` 整包入）：`logs/assist/A3-M5-W4-mcp-compat-20260906-1805.md` —— A4/A5 vs M5-2 registry+policy 复审 PASS。
++> - **A7 W4 graph core delta**（`1610939` 拣入）：`logs/assist/A7-M5-W4-checkpoint-20260906-1455.md`（80 行）+ `A7-M5-W4-graph-core-delta-20260906-1455.md`（126 行）—— M5-7/M5-8 W5 实施期切卡冻结。
++> - **A8 W4 graph UI delta**（`1610939` 拣入）：`logs/assist/A8-M5-W4-graph-ui-delta-20260906-1454.md`（80 行）—— M5-9 仍 docs-only 锚定。
++> - **A9 W4 plugin manifest**（`1610939` 拣入）：`logs/assist/A9-M5-W4-plugin-manifest-lifecycle-20260906-1820.md`（169 行）+ checkpoint/patch —— plugin manifest 对齐 A3 MCP registry + A5 Agent/Skill 边界。
++> - **A10 W4 security review**（`1610939` 拣入）：`logs/assist/A10-M5-W4-security-review-20260906-1805.md`（95 行）—— A4/A5 复审 PASS。
++> - **A11 W4 verification**（`13c5279` 拣入后随 `1610939` 整包入）：`docs(A11): M5-W4 verification delta after W4 outputs` —— cargo test 全部 PASS / 8 项 policy 全部 self-test+default PASS / pre-merge ALL_PASS。
++> - **A6 W4 UI contract**（`562efb9` 拣入）：`docs(A6): M5-W4 convert A5 domain -> UI data contract + panel state plan` —— A5 domain 转 UI 桥接；M5-6 仍 BLOCKED on A6 M5-5 W5 实施期。
++> - **A0 W5 dispatch**（`0e76a89` 已 push `1610939` 后签发）：PARALLEL_COMMAND_BOARD L135-171 *M5-W5 Parallel Dispatch* —— 本卡见下文 `[W5 active]` 段。
++
++### W4 A1 整包交付（事后 reconciliation）
++
++| # | 文件 | 修订（`1610939` 已拣入）|
++|---|------|----------------------|
++| W4-1 | `M5-0-overview.md`（本根卡）| 头部时间戳加 W4 拣入 + W5 active 行；本段事实回填 13 项落地 |
++| W4-2 | `M5-1-core-workspace-split.md` | 头部状态行 W3 PASS；[W3 patched] 段标记 A2 seam `f8f1f49` 落地；新增 [W4 status] 段 |
++| W4-3 | `M5-1.b-seam-trait-injection-and-b-extract.md` | 头部状态行 W3 PASS（`f8f1f49`）；[W3 reconciliation] 段标记 A2 三个 trait 实际落地 + A4 W4 实施期可消费 |
++| W4-4 | `M5-2-rmcp-mcp-policy.md` | 头部状态行 W3 PASS（`12f1cff` MCP 余下切片）；[W3 reconciliation] 段标记 A3 `mcp.rs` + `MCP_FS_TOOL_PATH_POLICY` ACTIVE |
++| W4-5 | `M5-3-a2a-bidir-agent-kv.md` | 新增 [W4 next-card acceptance criteria] 段（4 项 AC + 5 项 hard stops）|
++| W4-6 | `M5-4-agent-skill-runtime.md` | 新增 [W4 next-card acceptance criteria] 段（4 项 AC + 5 项 hard stops）|
++| W4-7 | `M5-5-agent-skill-commands.md` | 新增 [W4 next-card acceptance criteria] 段（3 项 AC + 5 项 hard stops）|
++| W4-8 | `logs/checkpoints/A1-M5-W4-reconciliation-20260906-1755.md` | 新增：A1 W4 整包交付 checkpoint（202 行）|
++| W4-9 | `logs/checkpoints/Lane-A1-M5-W4-reconciliation-20260906-1755.patch` | 新增：768 行 patch |
++
++### W4 状态（全部已 PASS）
++
++| 项 | 状态 | 来源 |
++|---|------|------|
++| W1（core boundary gate · slice 0a + 0b + keyring_store）| **PASS** | `854bc40` + `0d08016` |
++| W2（constants 集中 + MCP 政策门 + 多 lane assist）| **PASS** | `712a14c` + `a654f0c` + `c4b0fb7` + `1e114b6` |
++| W3（A2 M5-1.b seam + A3 M5-2 余下切片 + 6 lane assist + A11 W3 verification）| **PASS** | `f8f1f49` + `12f1cff` + `bdb0602` + `e96c902` |
++| W4（A4 M5-3.a agent_memory + A5 M5-4/M5-5 agent/skills + 4 lane assist + 2 review + A1 reconciliation 整包）| **PASS · A0 拣入** | `1610939` + `d71f558` + `13c5279` + `562efb9` |
++| W5（A6 M5-6 + A7 M5-7/M5-8 + 4 lane assist + 2 review）| **ACTIVE · 见下 [W5 active] 段** | `0e76a89`（A0 W5 dispatch） |
++
++---
++
++## [W5 active · 2026-09-06 18:35 CST] 当前活跃 checkpoint 切到 M5-W5（A6 + A7 产品代码 lane · 其它 9 lane docs/review/support）
++
++> **依据**：`PARALLEL_COMMAND_BOARD.md` L135-171（**M5-W5 Parallel Dispatch**，Added 2026-09-06 18:35 CST by A0 after pushing through `1610939`）。
++> **事实摘要**：W4 整包已 A0 拣入（`1610939`）；A4 W4 `agent_memory.rs` 868 行落地；A5 W4 `agent.rs` + `skills.rs` 落地；A11 W4 验证 ALL_PASS。
++> **W5 仅开两条产品代码 lane**：
++> - **A6** *START PRODUCT CODE*：M5-6 Agent/Skill UI **pure logic + panel shell** —— 校验展示、permission preview、capability 列表、empty/error 状态；优先 helper module + headless logic test；**不执行 skill、不装插件、不调 live runtime**。
++> - **A7** *START PRODUCT CODE*：M5-7/M5-8 graph model/store **policy slice** —— `GraphNode` / `GraphEdge` DTOs + 容量/redaction 规则 + pure graph store/query helpers + policy script；**无 graph UI、无 agent 消费、无 background graph rebuild workers、无 network**。
++> **A1 W5 角色**：START DOCS ONLY — *"Reconcile W5 as active NEXT; mark W4 pushed and tighten M5-6/M5-7/M5-8 acceptance criteria."* —— 本卡顶部索引 + 4 张子卡（M5-6 / M5-7 / M5-8 / M5-9）增补 W5 next-card acceptance criteria 段。
++
++### W5 A1 整包交付（计划）
++
++| # | 文件 | 修订 |
++|---|------|------|
++| W5-1 | `M5-0-overview.md`（本根卡）| 头部时间戳 + W4 reconciliation 段（13 项落地事实）+ W5 active 段（本段；索引 7 文件交付清单 + 2 lane 实施期硬约束摘要）|
++| W5-2 | `M5-6-agent-skill-ui.md` | 新增 [W5 next-card acceptance criteria] 段（4 项 AC：UI 纯逻辑 helper / 校验展示 / permission preview 桥 / empty+error 状态；5 项 hard stops）|
++| W5-3 | `M5-7-graph-model-extract.md` | 新增 [W5 next-card acceptance criteria] 段（4 项 AC：GraphNode+GraphEdge DTO / 容量上界 / redaction 规则 / pure store helpers；5 项 hard stops）|
++| W5-4 | `M5-8-graph-store-query.md` | 新增 [W5 next-card acceptance criteria] 段（4 项 AC：pure graph query helpers / policy script / pre-merge wire / 0 命令注册；5 项 hard stops）|
++| W5-5 | `M5-9-graph-ui-agent-consume.md` | 新增 [W5 status] 段（A8 W5 仍 SUPPORT DOCS ONLY；W5 不动 M5-9 决策史）|
++| W5-6 | `logs/checkpoints/A1-M5-W5-reconciliation-20260906-1835.md` | 新增：A1 W5 整包交付 checkpoint |
++| W5-7 | `logs/checkpoints/Lane-A1-M5-W5-reconciliation-20260906-1835.patch` | 新增：A1 W5 整包 patch |
++
++### W5 A6 / A7 实施期硬约束（与 W5 dispatch 承诺一致）
++
++| # | 约束 | 来源 |
++|---|------|------|
++| W5-HS1 | **A6/A7 是 W5 唯一允许写产品代码的两条 lane**；A2/A3/A4/A5 变 SUPPORT/REVIEW ONLY；A8/A9 仍 SUPPORT DOCS ONLY；A10 START REVIEW；A11 START VERIFICATION | PARALLEL_COMMAND_BOARD L165 |
++| W5-HS2 | **A6 不得加** execution runtime / installer / network/model calls / 新后端 commands | PARALLEL_COMMAND_BOARD L166 |
++| W5-HS3 | **A7 不得加** live UI / agent consumption / background graph rebuild workers / network access | PARALLEL_COMMAND_BOARD L167 |
++| W5-HS4 | **新 Tauri 命令必须 atomic**（source check + ACL + 前端 bridge/types + policy coverage + tests 同包）；若契约未完全 ready，**优先不加 command** | PARALLEL_COMMAND_BOARD L168 |
++| W5-HS5 | **Stores/maps/lists 必须 bounded + privacy-filtered**：无 token/cookie/Authorization/body/日志 prompt secrets | PARALLEL_COMMAND_BOARD L169 |
++| W5-HS6 | 所有 lane 必须从 `origin/master` pull，**不 push** | PARALLEL_COMMAND_BOARD L170 |
++| W5-HS7 | **无新 npm 依赖**（A6 须复用现有 Vue 3 + Pinia + D3.js）| A6 W5 dispatch L156 + W4-HS2 |
++
++### W5 A1 硬停止
++
++- **零产品代码**：A1 W5 整包**仅文档**（PARALLEL_COMMAND_BOARD L151 明示 *"One reconciliation checkpoint; no product code"*）。
++- **不重写各子卡 §1~§11**：仅头部 [W5 next-card acceptance criteria] 段（不修订 §1~§11 决策史）。
++- **不移动 `NEXT`**：`NEXT` 标记属 A0 调度权；A1 仅在头部状态行陈述"W5 是当前活跃 checkpoint"。
++- **不动三份主文档**：A0 W5 dispatch L151 虽允许"three main docs"，但本轮 A1 选择**不动**——W5 修订仅落在 `logs/checkpoints/M5-20260906/*.md` 5 文件 + 1 新增 checkpoint；如需主文档调整留待 W5 收口或 A0 拣入期处理。
++- **不动 ACL / Capability / pre-merge.sh / Cargo.toml / package.json**：A1 W5 严格不动。
++- **不提交 / 不 push**：A1 W5 整包交 A0 拣入合并。
++
++### W5 状态（本卡涉及）
++
++| 项 | 状态 | 来源 |
++|---|------|------|
++| W4（A4 M5-3.a + A5 M5-4/M5-5 + 4 lane assist + 2 review + A1 reconciliation 整包）| **PASS · A0 拣入** | `1610939` + `d71f558` + `13c5279` + `562efb9` |
++| W5 A6 M5-6 实施 | **ACTIVE · 待 A6 实施** | PARALLEL_COMMAND_BOARD L156 |
++| W5 A7 M5-7/M5-8 实施 | **ACTIVE · 待 A7 实施** | PARALLEL_COMMAND_BOARD L157 |
++| W5 A2/A3/A4/A5 复审 + A8/A9 docs + A10 review + A11 verification | **ACTIVE · 待各 lane 输出** | PARALLEL_COMMAND_BOARD L152-L161 |
++| W5 A1 文档 reconciliation（本段 + 4 子卡 acceptance criteria + 本 checkpoint）| **本轮 W5 修订已完成** | 本 checkpoint |
++
++---
++
+ ## 0. 本包目录结构
+
+ ```
+diff --git a/logs/checkpoints/M5-20260906/M5-6-agent-skill-ui.md b/logs/checkpoints/M5-20260906/M5-6-agent-skill-ui.md
+index 8fb9acb..9fdfc06 100644
+--- a/logs/checkpoints/M5-20260906/M5-6-agent-skill-ui.md
++++ b/logs/checkpoints/M5-20260906/M5-6-agent-skill-ui.md
+@@ -5,6 +5,58 @@
+ > 父卡：`详细设计与实施计划.md` L568（`M5-6 Agent/Skill UI`）
+ > 主预研：暂无 prework 文档（A5/A6 prework 仍空，由 A19 实施期补）
+ > 配套：`M5-4-agent-skill-runtime.md`（后端）· `M5-5-agent-skill-commands.md`（15 条命令）
++>
++> **W3** BLOCKED（待 A16 = A6 W5 实施期承接）· **W4** ACTIVE（**A6 UI pure logic/panel shell**；详见本卡顶部 `[W5 next-card acceptance criteria]` 段）
++
++---
++
++## [W5 next-card acceptance criteria · 2026-09-06 18:35 CST] A6 M5-6 W5 实施期 acceptance criteria（UI pure logic + panel shell · 不调 live runtime）
++
++> **依据**：`PARALLEL_COMMAND_BOARD.md` L156（**A6 M5-W5** *"Implement M5-6 Agent/Skill UI pure logic and panel shell: validation display, permission preview, capability list, empty/error states. Prefer helper module + headless logic test. Do not execute skills, install plugins, or call live runtime."*）+ L134-170 硬约束 + A6 W4 UI contract（`562efb9` 拣入 *"convert A5 domain -> UI data contract + panel state plan"*）锁定的 SkillExec / AclLevel / AgentDef / StreamChunk 经 Tauri event 镜像 + no-router 锚点 useLayoutStore.ts MainView+MOD_META。
++> **消费依赖（已落地，A6 W5 可直接接入）**：
++> - **A5 W4 AgentDef/SkillDef 已落**（`1610939` 拣入 `src-tauri/src/agent.rs` 104 行 + `src-tauri/src/skills.rs` 147 行）—— A6 W5 UI 可在 `src/types.ts` 加对应 TS 镜像（无 drift）。
++> - **A5 W4 permission preview API 已落**（`1610939` `agent.rs` / `skills.rs` 内的 `preview_*` 纯函数）—— A6 W5 UI 可直接消费。
++> - **A6 W4 UI data contract 已锁**（`562efb9`）—— SkillExec / AclLevel / AgentDef / StreamChunk 四个 TS 类型在 `src/types.ts` 经 Tauri event 镜像；no-router 锚点 useLayoutStore.ts MainView+MOD_META。
++> - **A4 W4 agent_kv 已落**（`1610939` `agent_memory.rs`）—— A6 W5 UI 可消费 memory 列表/详情。
++> **A1 W5 角色**：A1 W5 **不**改 §1~§11 决策史；仅在头部加本 `[W5 next-card acceptance criteria]` 段，**明确 A6 W5 实施期 4 项 AC + 5 项 hard stops**，供 A6 / A10 / A11 / A0 验收。
++
++### W5 A6 M5-6 实施期 acceptance criteria（4 项）
++
++| AC | 描述 | 验收证据 |
++|----|------|----------|
++| AC-1 **UI 纯逻辑 helper module 冻结** | `src/utils/agentSkillUi.ts`（或类似 helper）冻结纯函数：① `validateAgentDefInput(def) -> ValidationResult` ② `validateSkillDefInput(def) -> ValidationResult` ③ `formatPermissionPreview(preview: PermissionPreview) -> PreviewItem[]` ④ `renderCapabilityBadge(cap: CapabilityKind) -> BadgeDescriptor` ⑤ `emptyStateFor(kind) -> EmptyStateDescriptor` ⑥ `errorStateFor(err) -> ErrorStateDescriptor` —— 全部纯函数（无 Tauri invoke、无网络、无 fs）| `node scripts/check-agent-skill-ui-logic.mjs` PASS + A11 抽查 |
++| AC-2 **校验展示 + 错误高亮** | 校验失败时面板显示字段级错误（field + message + severity：error/warn），禁止把后端 DTO 整个堆到 UI 错误提示；不展示原始后端错误堆栈（脱敏后仅留 message + 1 行 hint）| UI 逻辑单测 + 视觉走查（manual checklist） |
++| AC-3 **permission preview 桥接 + capability 列表** | 面板在 install/run/chat 前调用 A5 W4 提供的 `preview_*` API（消费 `MCP_CAPABILITY_V1` + AclLevel + touches_fs + returns_url）；capability 列表用 `formatCapabilityBadge` 统一渲染；二次确认弹窗的文案复用 `formatPermissionPreview` 输出（不允许 UI 自由发挥文案）| UI 逻辑单测 + 与 A5 W4 `preview_*` 函数签名 0 drift |
++| AC-4 **empty/error 状态** | 每种面板（Chat / Manage / Permission）至少 2 个 empty state（list-empty / filtered-empty）+ 2 个 error state（load-fail / action-fail）；空态/错态**不**暴露任何后端原始字段；图标 + 文案 + 复试图标三件套 | `node scripts/check-agent-skill-ui-logic.mjs` 含 empty/error 覆盖 + A11 抽查 |
++
++### W5 A6 M5-6 实施期 hard stops（5 项）
++
++| HS | 约束 | 来源 |
++|----|------|------|
++| W5-HS1 | **不调 live runtime / 不装插件 / 不执行 skill** —— UI 仅展示/校验/preview，**不**调 `skill_run` / `agent_chat` / `skill_install` 等真实 Tauri 命令 | PARALLEL_COMMAND_BOARD L156 |
++| W5-HS2 | **无 execution runtime / installer / network/model calls / 新后端 commands** | PARALLEL_COMMAND_BOARD L166 |
++| W5-HS3 | **无新 npm 依赖**（A6 须复用现有 Vue 3 + Pinia + D3.js + 既有 `useLayoutStore`） | A6 W5 dispatch L156 + W4-HS2 |
++| W5-HS4 | **capability 真源单点**（必须复用 `MCP_CAPABILITY_V1` + A5 W4 `preview_*` 纯函数，禁止在 `agentSkillUi.ts` 写 capability 白名单副本） | A2 W2 + A3 W3 + R-B3 + A5 W4 AC |
++| W5-HS5 | **所有 lane 必须从 `origin/master` pull，不 push** | PARALLEL_COMMAND_BOARD L170 |
++
++### W5 验证清单（供 A11 收口）
++
++- `npm run build` PASS（`dist/assets/index-*.js` 大小不破 IF-2 阈值；W5 仍受 A0 大小门禁约束）
++- `node scripts/check-agent-skill-ui-logic.mjs` PASS
++- `python3 scripts/check-agent-skill-ui-policy.py --self-test` PASS（如新增 UI policy 脚本）
++- `python3 scripts/check-agent-skill-ui-policy.py` PASS
++- `python3 scripts/check-agent-skill-ui-policy.py --expect-pending` PASS（如有 PENDING）
++- `bash scripts/pre-merge.sh` ALL_PASS
++- `git diff --check` CLEAN
++- A11 比对 `src/types.ts` 与 A5 W4 AgentDef/SkillDef 0 drift
++- **A10 复审 PASS**（no second execution path / no installer / no network / no model provider / no download / capability 真源单点 / 无 prompt-secret 展示）
++- **A11 verification delta** 产出 `logs/checkpoints/M5-A11-W5-*.md`
++
++### W5 A1 不修订范围（本卡）
++
++- **§1 GOAL / §2 READ / §3 WRITE / §4 关键契约 / §5 FORBID / §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION / §9 DOC_BACKWRITE / §10 COMMIT / §11 FORBID 遵守记录**：A1 W5 **不动**（决策史保持 W0 原文；W5 AC 在本顶部段单列）。
++- **三份主文档 / ACL / Capability / pre-merge.sh / scripts/**：A1 W5 不动（policy 脚本由 A6 落地）。
++- **`NEXT` 标记**：A0 调度权；A1 不改字面值。
+
+ ---
+
+diff --git a/logs/checkpoints/M5-20260906/M5-7-graph-model-extract.md b/logs/checkpoints/M5-20260906/M5-7-graph-model-extract.md
+index 6df71e9..a7e7f2a 100644
+--- a/logs/checkpoints/M5-20260906/M5-7-graph-model-extract.md
++++ b/logs/checkpoints/M5-20260906/M5-7-graph-model-extract.md
+@@ -5,6 +5,58 @@
+ > 父卡：`详细设计与实施计划.md` L570（`M5-7 图模型与可追溯抽取`）
+ > 主预研：`logs/assist/M5-13.a-prework-20260902-1055.md`（两阶段抽取 + `source=Manual/Extract/Ai`）· `logs/assist/A9-M5-graph-store-contract-20260906-0700.md`（store 契约）
+ > 配套：`M5-8-graph-store-query.md`（存储与查询）· `M5-9-graph-ui-agent-consume.md`（UI 与消费）
++>
++> **W3** BLOCKED（待 A17 = A7 W5 实施期承接）· **W4** ACTIVE（**A7 graph model/store policy slice**；详见本卡顶部 `[W5 next-card acceptance criteria]` 段）
++
++---
++
++## [W5 next-card acceptance criteria · 2026-09-06 18:35 CST] A7 M5-7 W5 实施期 acceptance criteria（DTO 冻结 + 容量/redaction + pure store · 不接 live UI / agent 消费）
++
++> **依据**：`PARALLEL_COMMAND_BOARD.md` L157（**A7 M5-W5** *"Implement M5-7/M5-8 graph model/store policy slice: `GraphNode`/`GraphEdge` DTOs, capacity/redaction rules, pure graph store/query helpers, policy script. No graph UI and no agent consumption yet."*）+ L134-170 硬约束 + A7 W4 graph core delta（`logs/assist/A7-M5-W4-checkpoint-20260906-1455.md` + `A7-M5-W4-graph-core-delta-20260906-1455.md`，`1610939` 拣入）锁定的 DTO/schema/边界。
++> **消费依赖（已落地，A7 W5 可直接接入）**：
++> - **A2 W3 seam 已落**（`f8f1f49`）—— `mvp_core::seam::{PathResolver, RootsProvider}` 可用于 graph 存储路径解析与 root 校验（避免硬编码）。
++> - **A3 W3 MCP capability 真源已落**（`12f1cff`）—— `MCP_CAPABILITY_V1` + `evaluate_mcp_policy`；A7 W5 抽"图边写"前需先判 capability（防污染）。
++> - **A9 graph store contract 已锁**（`logs/assist/A9-M5-graph-store-contract-20260906-0700.md`）—— DDL + GraphNode/GraphEdge DTO 已定；A7 W5 应**复用**而不重定义。
++> - **A9 graph scheduler feed 已锁**（`logs/assist/A9-M5-graph-scheduler-feed-20260906-0700.md`）—— scheduler 喂图接缝已定；A7 W5 抽写路径需考虑 scheduler feed contract。
++> **A1 W5 角色**：A1 W5 **不**改 §1~§11 决策史；仅在头部加本 `[W5 next-card acceptance criteria]` 段，**明确 A7 W5 实施期 4 项 AC + 5 项 hard stops**，供 A7 / A10 / A11 / A0 验收。
++
++### W5 A7 M5-7 实施期 acceptance criteria（4 项）
++
++| AC | 描述 | 验收证据 |
++|----|------|----------|
++| AC-1 **GraphNode/GraphEdge DTO 冻结（沿用 A9 prework）** | `GraphNode`（id / kind / label / props / source / source_ref / extracted_at / extractor_version）；`GraphEdge`（id / from / to / kind / label / props / source / source_ref / weight?）；两个 DTO 在 `src-tauri/src/domain.rs` 或新 `src-tauri/src/graph.rs` 冻结；**禁止**重定义 A9 prework 已定字段（仅允许加 `id` / `extracted_at` 等已知必填字段的 Rust 序列化形态）| `cargo test domain::graph` + `cargo test graph::types` + A11 比对 A9 prework 0 drift |
++| AC-2 **容量上界 + redaction 规则** | 节点总数 / 边总数 / 单节点 outgoing degree / 标签 / props JSON 大小 4 项上界常量在 `domain.rs` 冻结（如 `GRAPH_MAX_NODES` / `GRAPH_MAX_EDGES` / `GRAPH_MAX_OUT_DEGREE` / `GRAPH_MAX_LABEL_BYTES` / `GRAPH_MAX_PROPS_BYTES`）；redaction 规则覆盖：`source_ref` 中 URL token / query 段 / Authorization 头 / cookie / body 须脱敏；`props` JSON 内的密码/token 字段名（case-insensitive）也须脱敏 | `scripts/check-graph-policy.py` self-test + default + `--expect-pending` 三模式 + focused Rust 单测 |
++| AC-3 **pure graph store helpers（无 Tauri 依赖）** | `pure_insert_node(node) -> Result<...>` / `pure_insert_edge(edge) -> Result<...>` / `pure_upsert_*` / `pure_delete_*` / `pure_query_neighborhood(...)` 纯函数冻结在 `core::graph` 或 `core::graph_store` 模块（沿用 M5-1 W3 seam）；**不**含 Tauri AppHandle / 不含 `crate::bridge` import；持久化走 `session::atomic_write`（沿用唯一原子写原语）；**W5 不接 Tauri 命令**（W5-HS4 优先不加 command）| `cargo test core::graph` 或 `cargo test graph::pure_*` |
++| AC-4 **policy script + pre-merge wire** | `scripts/check-graph-policy.py` 三模式 PASS；接入 `scripts/pre-merge.sh`；**无** `graph_*` 命令注册 | `pre-merge.sh` ALL_PASS + `grep -E "graph_query\|graph_insert\|graph_delete" src-tauri/src/bridge.rs` 仅出现 `// not-implemented-yet` 注释 |
++
++### W5 A7 M5-7 实施期 hard stops（5 项）
++
++| HS | 约束 | 来源 |
++|----|------|------|
++| W5-HS1 | **无 live UI / 无 agent 消费 / 无 background graph rebuild workers / 无 network access** —— W5 仅冻结 DTO + capacity + redaction + pure store helpers | PARALLEL_COMMAND_BOARD L157 + L167 |
++| W5-HS2 | **无新 Tauri 命令**（W5 优先不加 command；除非 source check/ACL/types/bridge/tests 同包完整且 A0 可 atomic merge） | PARALLEL_COMMAND_BOARD L168 |
++| W5-HS3 | **无新 Cargo 依赖**（除非已存在且有理由；A7 应复用 A9 prework 已用 crate） | PARALLEL_COMMAND_BOARD L157 + A7 W4 delta |
++| W5-HS4 | **core 内常量自拥**（A2 0b 已统一到 `domain.rs` 副本零容忍 —— `R-B3`）；graph 自己的常量应定义在 `core::graph` 或 `domain.rs`（不引 `crate::domain::GRAPH_*` 假货）| A2 W2 `712a14c` + A7 W4 delta §"常量落点修正" |
++| W5-HS5 | **所有 lane 必须从 `origin/master` pull，不 push** | PARALLEL_COMMAND_BOARD L170 |
++
++### W5 验证清单（供 A11 收口）
++
++- `cargo test --manifest-path src-tauri/Cargo.toml graph`（或 `core::graph`）PASS
++- `python3 scripts/check-graph-policy.py --self-test` PASS
++- `python3 scripts/check-graph-policy.py` PASS
++- `python3 scripts/check-graph-policy.py --expect-pending` PASS（如有 PENDING）
++- `bash scripts/pre-merge.sh` ALL_PASS
++- `git diff --check` CLEAN
++- A11 比对 A9 prework 0 drift（DTO 字段名/类型完全一致）
++- **A10 复审 PASS**（no unbounded maps / no network / no agent consumption / capability 真源单点 / redaction 覆盖源 URL+props 双路径）
++- **A11 verification delta** 产出 `logs/checkpoints/M5-A11-W5-*.md`
++
++### W5 A1 不修订范围（本卡）
++
++- **§1 GOAL / §2 READ / §3 WRITE / §4 关键契约 / §5 FORBID / §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION / §9 DOC_BACKWRITE / §10 COMMIT / §11 FORBID 遵守记录**：A1 W5 **不动**（决策史保持 W0 原文；W5 AC 在本顶部段单列）。
++- **三份主文档 / ACL / Capability / pre-merge.sh / scripts/**：A1 W5 不动（policy 脚本由 A7 落地）。
++- **`NEXT` 标记**：A0 调度权；A1 不改字面值。
++- **本卡与 M5-8 关系**（A7 实施期双卡并行）：M5-7 DTO/容量/redaction/pure store；M5-8 pure graph query + policy + 无命令（独立 AC 段）。A7 W5 dispatch L157 派发双卡，两条 AC 互补、不重叠。
+
+ ---
+
+diff --git a/logs/checkpoints/M5-20260906/M5-8-graph-store-query.md b/logs/checkpoints/M5-20260906/M5-8-graph-store-query.md
+index 62cad1e..577ac57 100644
+--- a/logs/checkpoints/M5-20260906/M5-8-graph-store-query.md
++++ b/logs/checkpoints/M5-20260906/M5-8-graph-store-query.md
+@@ -5,6 +5,55 @@
+ > 父卡：`详细设计与实施计划.md` L571
+ > 主预研：`logs/assist/A9-M5-graph-store-contract-20260906-0700.md`（DDL + GraphQuery DTO）· `logs/assist/A9-M5-graph-scheduler-feed-20260906-0700.md`
+ > 配套：`M5-7-graph-model-extract.md`（抽取）· `M5-9-graph-ui-agent-consume.md`（UI 消费）
++>
++> **W3** BLOCKED（待 A17 = A7 W5 实施期承接）· **W4** ACTIVE（**A7 graph store/query policy slice**；详见本卡顶部 `[W5 next-card acceptance criteria]` 段）
++
++---
++
++## [W5 next-card acceptance criteria · 2026-09-06 18:35 CST] A7 M5-8 W5 实施期 acceptance criteria（pure graph query + policy script · 不接 live UI / agent 消费）
++
++> **依据**：`PARALLEL_COMMAND_BOARD.md` L157（**A7 M5-W5** *"Implement M5-7/M5-8 graph model/store policy slice: ... pure graph store/query helpers, policy script. No graph UI and no agent consumption yet."*）+ L134-170 硬约束 + A7 W4 graph core delta（`1610939` 拣入）锁定的 query 边界。
++> **本卡 W5 与 M5-7 W5 的关系**：A7 W5 dispatch L157 派发**双卡**——M5-7 DTO + 容量 + redaction + pure store helpers；M5-8 pure graph query helpers + policy script + 不注册 `graph_*` 命令。**M5-8 W5 不接 live UI（9 条命令保持 LOCKED 直到 M5-8 收口后由 A0 决定）**。
++> **A1 W5 角色**：A1 W5 **不**改 §1~§11 决策史；仅在头部加本 `[W5 next-card acceptance criteria]` 段，**明确 A7 W5 实施期 4 项 AC + 5 项 hard stops**，供 A7 / A10 / A11 / A0 验收。
++
++### W5 A7 M5-8 实施期 acceptance criteria（4 项）
++
++| AC | 描述 | 验收证据 |
++|----|------|----------|
++| AC-1 **pure graph query helpers 冻结** | `pure_query_neighborhood(graph, node_id, hop, edge_kinds, label_filter) -> Result<SubgraphView>` / `pure_query_shortest_path(graph, from, to, weight_kind) -> Result<PathView>` / `pure_query_subgraph(graph, root_set, max_nodes, max_edges) -> Result<SubgraphView>` 纯函数冻结在 `core::graph_query` 模块；返回类型为视图（只读），不持有 graph 写锁；返回节点/边数量受 `GRAPH_QUERY_MAX_NODES` / `GRAPH_QUERY_MAX_EDGES` 上界限制（防 DoS）| `cargo test core::graph_query` 或 `cargo test graph::query::*` |
++| AC-2 **查询结果截断/超时/取消** | 复用 M4-1.c 的 row/byte/field 截断约定：`GRAPH_QUERY_MAX_RESULT_BYTES` / `GRAPH_QUERY_MAX_PATH_LEN` / `GRAPH_QUERY_TIMEOUT_MS`（参数化时钟）三常量在 `domain.rs` 冻结；超限返回 `GraphQueryTruncated { reason, partial }` 而**不**直接 dump 全部；超时由注入的 clock 判定（无 thread::sleep）| focused Rust 单测 + `scripts/check-graph-policy.py` self-test |
++| AC-3 **policy script + pre-merge wire（覆盖本卡 + M5-7）** | `scripts/check-graph-policy.py` 三模式 PASS；policy 守门项至少 8 条：① 无新 Tauri 命令 ② DTO 字段与 A9 prework 0 drift ③ 容量上界常量在 `domain.rs` 单一真源 ④ redaction 覆盖 `source_ref` + `props` 双路径 ⑤ query helpers 是 pure（无 Tauri import）⑥ query helpers 复用 M4-1.c 截断约定 ⑦ 无 npm / 无 new Cargo 依赖 ⑧ 不在 `core::graph*` 引 `crate::bridge` 或 `tauri::AppHandle` | `scripts/check-graph-policy.py` self-test + default + `--expect-pending` 三模式 PASS |
++| AC-4 **不注册 9 条 graph_* Tauri 命令** | `grep -E "graph_query\|graph_insert\|graph_delete\|graph_export\|graph_*" src-tauri/src/bridge.rs` 仅出现 `// not-implemented-yet` 占位 / 注释；`src-tauri/permissions/default-commands.toml` 末条仍恒为 `list_artifact_images`，**未**新增 graph 命令 | `git diff src-tauri/permissions/default-commands.toml` 0 新增命令行 + A10 抽查 `bridge.rs` |
++
++### W5 A7 M5-8 实施期 hard stops（5 项）
++
++| HS | 约束 | 来源 |
++|----|------|------|
++| W5-HS1 | **无 live UI / 无 agent 消费** —— `graph_*` 命令保持 LOCKED；9 条命令的具体语义延后 W6+/A0 决定 | PARALLEL_COMMAND_BOARD L157 + L167 |
++| W5-HS2 | **无 background graph rebuild workers / 无 network access** —— W5 不接后台 graph 重建 | PARALLEL_COMMAND_BOARD L167 |
++| W5-HS3 | **无新 Tauri 命令 / 无新 Cargo 依赖 / 无 npm** | PARALLEL_COMMAND_BOARD L168 + L157 |
++| W5-HS4 | **无 second execution path / 无 installer / 无 model provider / 无 download path** | PARALLEL_COMMAND_BOARD L165 + L169 |
++| W5-HS5 | **所有 lane 必须从 `origin/master` pull，不 push** | PARALLEL_COMMAND_BOARD L170 |
++
++### W5 验证清单（供 A11 收口）
++
++- `cargo test --manifest-path src-tauri/Cargo.toml graph_query` PASS
++- `python3 scripts/check-graph-policy.py --self-test` PASS
++- `python3 scripts/check-graph-policy.py` PASS
++- `python3 scripts/check-graph-policy.py --expect-pending` PASS（如有 PENDING）
++- `git diff src-tauri/permissions/default-commands.toml` 0 新增命令行
++- `grep -c "graph_query\|graph_insert\|graph_delete" src-tauri/src/bridge.rs` 仅匹配占位/注释
++- `bash scripts/pre-merge.sh` ALL_PASS
++- `git diff --check` CLEAN
++- **A10 复审 PASS**（no unbounded maps / no network / no agent consumption / capability 真源单点 / redaction 双路径 / 0 新 Tauri 命令）
++- **A11 verification delta** 产出 `logs/checkpoints/M5-A11-W5-*.md`
++
++### W5 A1 不修订范围（本卡）
++
++- **§1 GOAL / §2 READ / §3 WRITE / §4 关键契约 / §5 FORBID / §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION / §9 DOC_BACKWRITE / §10 COMMIT / §11 FORBID 遵守记录**：A1 W5 **不动**（决策史保持 W0 原文；W5 AC 在本顶部段单列）。
++- **三份主文档 / ACL / Capability / pre-merge.sh / scripts/**：A1 W5 不动（policy 脚本由 A7 落地）。
++- **`NEXT` 标记**：A0 调度权；A1 不改字面值。
++- **本卡与 M5-7 关系**（A7 实施期双卡并行）：M5-7 DTO/容量/redaction/pure store；M5-8 pure query/policy/无命令。两条 AC 互补、不重叠。
+
+ ---
+
+diff --git a/logs/checkpoints/M5-20260906/M5-9-graph-ui-agent-consume.md b/logs/checkpoints/M5-20260906/M5-9-graph-ui-agent-consume.md
+index e6e97d2..a1587ac 100644
+--- a/logs/checkpoints/M5-20260906/M5-9-graph-ui-agent-consume.md
++++ b/logs/checkpoints/M5-20260906/M5-9-graph-ui-agent-consume.md
+@@ -5,6 +5,26 @@
+ > 父卡：`详细设计与实施计划.md` L572（`M5-9 图谱 UI 与 Agent 消费`）
+ > 主预研：暂无 prework 文档（A8 prework 仍空）
+ > 配套：`M5-8-graph-store-query.md`（DTO 稳定）
++>
++> **W3** BLOCKED（待 A7 W5 schema 落地）· **W4** ACTIVE（A8 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A8 W5 仍 SUPPORT DOCS ONLY，待 A7 W5 schema 落地后 W6+ 由 A0 决定）
++
++---
++
++## [W5 status · 2026-09-06 18:35 CST] A8 W5 仍 SUPPORT DOCS ONLY（待 A7 W5 schema 落地后 W6+ 派发）
++
++> **依据**：`PARALLEL_COMMAND_BOARD.md` L158（**A8 M5-W5** *"Prepare graph UI after A7 schema lands; no UI code in W5."*）+ L134-170 硬约束。
++> **A1 W5 角色（轻量）**：A1 W5 **不**改 §1~§11 决策史；仅在头部加本 `[W5 status]` 段，**说明 A8 W5 仍 SUPPORT DOCS ONLY**；M5-9 决策史 / §3 WRITE 9 条命令列表保持 W0 原文不动，**待 A7 W5 schema 落地后由 A0 决定 M5-9 何时派发实施期**。
++> **A8 W5 应做的（轻量）**：
++> ① 重读 A7 W4 graph core delta（`logs/assist/A7-M5-W4-checkpoint-20260906-1455.md` + `A7-M5-W4-graph-core-delta-20260906-1455.md`，`1610939` 拣入）确认 W5 schema 边界
++> ② 重读 A7 W5 output（A7 W5 实施期产出物）确认 DTO/容量/redaction/pure store 实际形态
++> ③ 在 `logs/assist/A8-M5-W5-*.md` 出 W5 graph UI card delta（**仅 docs**，**不**写 UI 代码），**不**碰 `src/components/**` / `src/stores/**` / `src/types.ts` / `src/bridge.ts`
++> ④ 在本卡 `M5-9-graph-ui-agent-consume.md`（如需）补 W5 status 行（**不**动 §1~§11）
++> **A8 W5 不应做的**：① 写 D3.js 力导向布局代码 ② 写 `useGraphStore.ts` 状态管理 ③ 写 `GraphViewer.vue` 组件 ④ 改 §1~§11 决策史 ⑤ 改本根卡（M5-0）/M5-7/M5-8 任何 AC 段（避免与 A7 实施期冲突）
++> **A1 W5 不修订范围（本卡）**：
++> - **§1 GOAL / §2 READ / §3 WRITE / §4 关键契约 / §5 FORBID / §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION / §9 DOC_BACKWRITE / §10 COMMIT / §11 FORBID 遵守记录**：A1 W5 **不动**（决策史保持 W0 原文；A8 W5 status 在本顶部段单列）。
++> - **三份主文档 / ACL / Capability / pre-merge.sh / scripts/**：A1 W5 不动。
++> - **`NEXT` 标记**：A0 调度权；A1 不改字面值。
++> - **A1 W5 强停止**：本卡本轮**仅**加本 `[W5 status]` 段 + 头部状态行；**不**写 next-card AC（与 M5-6/7/8 不同——M5-9 在 W5 没有产品代码 lane 承接）。
+
+ ---
+
+
+# A1 M5-W5 reconciliation — new checkpoint file
+--- /dev/null	2026-09-05 18:53:48.241003984 +0800
++++ logs/checkpoints/A1-M5-W5-reconciliation-20260906-1835.md	2026-09-06 15:27:26.909066999 +0800
+@@ -0,0 +1,208 @@
++# Lane A1 · M5-W5 reconciliation checkpoint（docs-only）
++
++> CHECKPOINT=A1-M5-W5-reconciliation
++> STATUS=PASS（待 A0 拣入后定）
++> EXECUTOR=A1 (CodeBuddy / M3-mini)
++> MODEL=M3-mini
++> ROUTE=AI:DEEP
++> MODEL_DEVIATION=none
++> WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++> BRANCH=master（本地与 `origin/master` 一致；HEAD=`0e76a89 docs(M5): dispatch W5 UI and graph lanes`，A0 W5 dispatch）
++> WAVE=M5-W5 Parallel Dispatch（Added 2026-09-06 18:35 CST by A0 after pushing through `1610939`）
++> VERIFY=无产品代码改动；`git diff --check` 干净；`git diff --stat` 仅触及 5 个 M5-*.md 文件 + 本 checkpoint
++> NEXT=M5-W5 整包交付交 A0 拣入合并；A6 / A7 待 W5 dispatch 实施期承接 M5-6 / M5-7 / M5-8
++> NATURE=纯文档展开（PARALLEL_COMMAND_BOARD L151 *"no product code"* 硬约束）
++
++---
++
++## 0. 一句话
++
++按 `PARALLEL_COMMAND_BOARD.md` L135-171（M5-W5 Parallel Dispatch，A0 在 `0e76a89` 后签发）的 A1 行指令 *"Reconcile W5 as active NEXT; mark W4 pushed and tighten M5-6/M5-7/M5-8 acceptance criteria"*，A1 在 W5 仅做文档对账：**(a)** M5-0 头部时间戳加 W4 拣入行 + W5 active 行 + 基准补 `1610939` 与 `0e76a89`；**(b)** 根卡新增 `[W4 reconciliation]` 段（13 项落地事实：3 段核心 commit `f8f1f49` / `12f1cff` / `1610939` + 8 份 W4 assist + A11 W4 verification + A6 W4 UI contract）；**(c)** 根卡新增 `[W5 active]` 段（索引 7 文件交付清单 + 7 项 A6/A7 硬约束摘要）；**(d)** M5-6 / M5-7 / M5-8 三张 W5 实施期卡增补 `[W5 next-card acceptance criteria]` 段（4/4/4 项 AC + 5 项 hard stops 各段）；**(e)** M5-9（A8 W5 仍 SUPPORT DOCS ONLY）仅加 `[W5 status]` 轻量段说明，不动 §1~§11；**(f)** 写本 checkpoint + patch；不写产品代码；不重写 §1~§11 决策史；不移动 `NEXT`；不提交 / 不 push。
++
++---
++
++## 1. W5 一行 prompt
++
++```
++WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A1，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W5 Parallel Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
++```
++
++---
++
++## 2. 整包交付清单（5 张子卡修订 + 1 张本 checkpoint）
++
++| # | 文件 | 修订类型 | 状态 |
++|---|------|----------|------|
++| 1 | `logs/checkpoints/M5-20260906/M5-0-overview.md` | 头部时间戳 + 基准行（补 `1610939` / `0e76a89`）+ 依据行（补 W5 dispatch）+ 头部说明（加 W5 active）+ 新增 `[W4 reconciliation]` 段（13 项落地事实）+ 新增 `[W5 active]` 段（索引 7 文件 + 7 项 hard stops）| DONE |
++| 2 | `logs/checkpoints/M5-20260906/M5-6-agent-skill-ui.md` | 头部状态行 W3 BLOCKED / W4 ACTIVE / W5 标注；新增 `[W5 next-card acceptance criteria]` 段（**4 项 AC**：UI 纯逻辑 helper / 校验展示 / permission preview 桥 / empty+error 状态；**5 项 hard stops**）| DONE |
++| 3 | `logs/checkpoints/M5-20260906/M5-7-graph-model-extract.md` | 头部状态行 W3 BLOCKED / W4 ACTIVE / W5 标注；新增 `[W5 next-card acceptance criteria]` 段（**4 项 AC**：GraphNode+GraphEdge DTO 沿用 A9 prework / 容量上界+redaction / pure store helpers / policy script；**5 项 hard stops**）| DONE |
++| 4 | `logs/checkpoints/M5-20260906/M5-8-graph-store-query.md` | 头部状态行 W3 BLOCKED / W4 ACTIVE / W5 标注；新增 `[W5 next-card acceptance criteria]` 段（**4 项 AC**：pure graph query helpers / 截断+超时+取消 / policy script 覆盖双卡 / 不注册 9 条 graph_* 命令；**5 项 hard stops**）| DONE |
++| 5 | `logs/checkpoints/M5-20260906/M5-9-graph-ui-agent-consume.md` | 头部状态行 W3 BLOCKED / W4 ACTIVE / W5 ACTIVE；新增 `[W5 status]` 轻量段（A8 W5 仍 SUPPORT DOCS ONLY，待 A7 W5 schema 落地后 W6+ 派发）| DONE |
++| 6 | `logs/checkpoints/A1-M5-W5-reconciliation-20260906-1835.md`（本文件） | 新增 checkpoint（A1 W5 整包交付总账）| DONE |
++
++### 2.1 未触及的 8 张子卡（与 W5 dispatch A1 行硬约束一致）
++
++| 未修订文件 | 不修订原因 |
++|-----------|-----------|
++| `M5-1-core-workspace-split.md` | A2 W5 角色为 SUPPORT/REVIEW ONLY（L152）；A1 不动 W4 已修订段 |
++| `M5-1.b-seam-trait-injection-and-b-extract.md` | 同上 |
++| `M5-2-rmcp-mcp-policy.md` | A3 W5 角色为 SUPPORT/REVIEW ONLY（L153）；A1 不动 W4 已修订段 |
++| `M5-3-a2a-bidir-agent-kv.md` | A4 W5 角色为 SUPPORT/REVIEW ONLY（L154）；A1 不动 W4 已修订段 |
++| `M5-4-agent-skill-runtime.md` | A5 W5 角色为 SUPPORT/REVIEW ONLY（L155）；A1 不动 W4 已修订段 |
++| `M5-5-agent-skill-commands.md` | A5 W5 角色为 SUPPORT/REVIEW ONLY（L155）；A1 不动 W4 已修订段 |
++| `M5-10-plugin-manifest-lifecycle.md` | A9 W5 角色为 SUPPORT DOCS ONLY（L159）；A1 不动 W0 原文（无 W3/W4 修订）|
++| `M5-11-plugin-commands-isolation.md` | A9 W5 角色为 SUPPORT DOCS ONLY（L159）；A1 不动 |
++| `M5-12-plugin-ui.md` | A9 W5 角色为 SUPPORT DOCS ONLY（L159）；A1 不动 |
++| `M5-13-verification-matrix.md` | A11 W5 角色为 START VERIFICATION（L161）；A1 不动（避免与 A11 横切工作重叠）|
++| `M5-14-debt-ledger.md` | 横切卡，W5 修订由其它 lane 触发；A1 不动 |
++
++> **结论**：A1 W5 仅触及 W4 落地会影响且 W5 实施期承接的 4 张卡（M5-6 / M5-7 / M5-8 / M5-9）+ 根卡 M5-0；其它 11 张卡严格按 W5 dispatch "A2/A3/A4/A5 SUPPORT/REVIEW ONLY · A8/A9 SUPPORT DOCS ONLY · A10 START REVIEW · A11 START VERIFICATION" 边界留给对应 lane。
++
++---
++
++## 3. W4 → W5 关键事实回填（A1 头部状态行内容）
++
++### 3.1 W4 已 PASS 项（A0 拣入）
++
++| 项 | 状态 | 落地 commit |
++|---|------|------------|
++| M5-W4 A2 seam review | **PASS** | `1610939` 拣入 `logs/assist/A2-M5-W4-seam-review-20260906-1454.md`（75 行）|
++| M5-W4 A3 MCP compat | **PASS** | `d71f558` 拣入 `logs/assist/A3-M5-W4-mcp-compat-20260906-1805.md` |
++| M5-W4 A4 M5-3.a agent_memory | **PASS** | `1610939` 拣入 `src-tauri/src/agent_memory.rs`（868 行）+ `Lane-A4-M5-3-agent-memory-20260906-1510.md`（68 行）+ patch（1409 行）|
++| M5-W4 A5 M5-4/M5-5 agent/skills | **PASS** | `1610939` 拣入 `src-tauri/src/agent.rs`（104 行）+ `src-tauri/src/skills.rs`（147 行）+ `Lane-A5-M5-W4-20260906-1815.md`（78 行）|
++| M5-W4 A1 reconciliation 整包 | **PASS** | `1610939` 拣入 768 行 patch + 202 行 checkpoint + 6 子卡头部修订 |
++| M5-W4 A7 graph core delta | **PASS** | `1610939` 拣入 `A7-M5-W4-checkpoint-20260906-1455.md`（80 行）+ `A7-M5-W4-graph-core-delta-20260906-1455.md`（126 行）|
++| M5-W4 A8 graph UI delta | **PASS** | `1610939` 拣入 `A8-M5-W4-graph-ui-delta-20260906-1454.md`（80 行）|
++| M5-W4 A9 plugin manifest | **PASS** | `1610939` 拣入 `A9-M5-W4-plugin-manifest-lifecycle-20260906-1820.md`（169 行）+ checkpoint/patch |
++| M5-W4 A10 security review | **PASS** | `1610939` 拣入 `A10-M5-W4-security-review-20260906-1805.md`（95 行）|
++| M5-W4 A11 verification | **PASS** | `13c5279` 拣入 `docs(A11): M5-W4 verification delta after W4 outputs` |
++| M5-W4 A6 UI contract | **PASS** | `562efb9` 拣入 `docs(A6): M5-W4 convert A5 domain -> UI data contract + panel state plan` |
++
++### 3.2 W5 已 DISPATCH 项（A0 W5 派发）
++
++| 项 | 状态 | 派发依据 |
++|---|------|----------|
++| M5-W5 A6 M5-6 实施 | **DISPATCHED · 待 A6 实施** | PARALLEL_COMMAND_BOARD L156 |
++| M5-W5 A7 M5-7/M5-8 实施 | **DISPATCHED · 待 A7 实施** | PARALLEL_COMMAND_BOARD L157 |
++| M5-W5 A2/A3/A4/A5 复审 | **DISPATCHED** | PARALLEL_COMMAND_BOARD L152-L155 |
++| M5-W5 A8 graph UI docs delta | **DISPATCHED** | PARALLEL_COMMAND_BOARD L158 |
++| M5-W5 A9 plugin manifest delta | **DISPATCHED** | PARALLEL_COMMAND_BOARD L159 |
++| M5-W5 A10 security review A6/A7 | **DISPATCHED** | PARALLEL_COMMAND_BOARD L160 |
++| M5-W5 A11 verification matrix | **DISPATCHED** | PARALLEL_COMMAND_BOARD L161 |
++| M5-W5 A1 docs reconciliation（本 checkpoint）| **本轮修订已完成** | 本 checkpoint |
++
++---
++
++## 4. A1 W5 硬停止遵守记录
++
++| 硬约束（PARALLEL_COMMAND_BOARD L151 / Hard Stops L165-170）| 遵守 |
++|---|------|
++| A1 W5 仅 START DOCS ONLY | ✅ 全部修订为文档（5 个 M5-*.md + 1 新增 checkpoint）|
++| 不写产品代码 | ✅ `git diff --name-only` 仅触及 `logs/checkpoints/M5-20260906/M5-*.md` 5 文件 + 本 checkpoint |
++| 不动三份主文档（`详细设计与实施计划.md` / `后续需求TODO.md` / `AI-模型切换与接手清单.md`）| ✅ A1 W5 **选择不动**（PARALLEL_COMMAND_BOARD L151 虽允许 "three main docs"，但本轮 A1 选择仅文档对账 + 不动主文档，以避免与 A6 W5 UI contract / A7 W5 graph store 实施期的修订产生二次冲突；如需主文档调整留待 W5 收口或 A0 拣入期处理）|
++| 不动 ACL / Capability / pre-merge.sh / Cargo.toml / package.json | ✅ |
++| 不移动 `NEXT` | ✅ A1 仅在头部陈述"事实已变"，§X NEXT 字面值不动 |
++| 不提交 / 不 push | ✅ 工作树保留修改交 A0 拣入 |
++| 不重写各卡 §1~§11 决策史 | ✅ 仅头部 [W5 next-card acceptance criteria] / [W5 status] 段 + 头部状态行 |
++| A2/A3/A4/A5/A8/A9/A10/A11 各自工作区 | ✅ A1 不动其它 lane 工作区文件（如 A6 W4 UI contract / A7 W4 graph core delta 等）|
++
++---
++
++## 5. 验证命令（仅文档工作树）
++
++```bash
++# 工作树与 origin/master 一致
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++git status --short --branch
++
++# 变更范围核对（应仅 5 M5-*.md + 本 checkpoint）
++git diff --stat
++
++# 格式 / 尾部空格检查
++git diff --check
++# 预期：no whitespace errors
++
++# 不触产品代码核对（应仅 logs/checkpoints/** 触动）
++git diff --name-only | grep -vE '^logs/checkpoints/'
++# 预期：无输出
++
++# 不动三份主文档核对
++git diff --name-only | grep -E '(详细设计与实施计划|后续需求TODO|AI-模型切换与接手清单)\.md'
++# 预期：无输出
++
++# 不动 ACL/Capability/pre-merge/Cargo/package 核对
++git diff --name-only | grep -E '(ACL|default-commands|pre-merge|Cargo\.toml|package\.json)'
++# 预期：无输出
++```
++
++---
++
++## 6. W5 A1 不做的（A0 拣入期 / A2-A11 实施期再做）
++
++| 项 | 谁做 | 何时 |
++|---|------|------|
++| 本 5 张子卡 + 本 checkpoint 拣入合并 | **A0** | A1 提交 patch/checkpoint 后，A0 拣入 master |
++| M5-6 Agent/Skill UI pure logic + panel shell | **A6** | A6 W5 实施期（PARALLEL_COMMAND_BOARD L156）|
++| M5-7/M5-8 graph model/store policy slice（DTO/容量/redaction/pure store/pure query/policy）| **A7** | A7 W5 实施期（PARALLEL_COMMAND_BOARD L157）|
++| A2/A3/A4/A5 复审 A6/A7 | **A2/A3/A4/A5** | W5 实施期（A6/A7 输出后）|
++| A8 graph UI docs delta | **A8** | W5 实施期（A7 W5 output 后）|
++| A9 plugin manifest delta | **A9** | W5 实施期 |
++| A10 W5 复审 | **A10** | W5 实施期（A6/A7 输出后）|
++| A11 W5 验证 | **A11** | W5 实施期（A6/A7 输出后）|
++| W5 → W6 dispatch | **A0** | W5 实施期收口后 |
++
++---
++
++## 7. 提交格式（给 A0 拣入参考）
++
++本 checkpoint 与 5 张子卡修订均**未** `git add` / `git commit`（A1 硬约束"不提交"）；A0 拣入时建议：
++
++1. `git add logs/checkpoints/M5-20260906/M5-0-overview.md logs/checkpoints/M5-20260906/M5-6-agent-skill-ui.md logs/checkpoints/M5-20260906/M5-7-graph-model-extract.md logs/checkpoints/M5-20260906/M5-8-graph-store-query.md logs/checkpoints/M5-20260906/M5-9-graph-ui-agent-consume.md logs/checkpoints/A1-M5-W5-reconciliation-20260906-1835.md`
++2. `git commit -m "docs(A1): M5-W5 reconciliation — mark W4 pushed + tighten M5-6/M5-7/M5-8 acceptance criteria"`（A0 commit 措辞参考）
++3. A0 push 后，本轮 M5-W5 派发闭合；A6/A7/A2/A3/A4/A5/A8/A9/A10/A11 进入 W5 实施期。
++
++> A1 patch 备用：参见同目录 `Lane-A1-M5-W5-reconciliation-20260906-1835.patch`（如 A0 拣入偏好 patch 应用）。
++
++---
++
++## 8. 与其他 lane 的边界
++
++- **A0**：本轮 A1 整包交 A0 拣入；不冲突（master 与 origin 一致 `0e76a89`，A1 工作树未推）。
++- **A2/A3/A4/A5**：W5 角色为 *SUPPORT/REVIEW ONLY*（L152-L155）；本 checkpoint 不动 A2/A3/A4/A5 W5 工作区。
++- **A6**：W5 角色为 *START PRODUCT CODE*（L156）—— M5-6 Agent/Skill UI pure logic + panel shell；本 checkpoint 已为 A6 准备 4 项 AC + 5 项 hard stops，**不**与 A6 工作区冲突。
++- **A7**：W5 角色为 *START PRODUCT CODE*（L157）—— M5-7/M5-8 graph model/store policy slice；本 checkpoint 已为 A7 准备 4+4 项 AC（双卡）+ 5 项 hard stops，**不**与 A7 工作区冲突。
++- **A8/A9**：W5 角色为 *SUPPORT DOCS ONLY*（L158-L159）；本 checkpoint 不动 A8/A9 W5 assist 工作区。
++- **A10**：W5 角色为 *START REVIEW*（L160）；本轮 A1 修订均为头部状态行 + 顶部段，无新增红线；A10 W5 复审工作区独立。
++- **A11**：W5 角色为 *START VERIFICATION*（L161）；本轮 A1 修订均已给出"§验证清单（供 A11 收口）"，**不**与 A11 验证矩阵横切工作重叠。
++
++---
++
++## 9. W3 → W4 → W5 状态切换总账
++
++| Wave | A1 checkpoint 文件 | A0 拣入 commit | 关键 commit 链 | 状态 |
++|------|-------------------|----------------|---------------|------|
++| W0 | `M5-0-overview.md`（初版）| `404f514` | `a1a2061` → `404f514` | PASS |
++| W1 | `M5-0-overview.md` (W1 reconciliation) | `0d08016` | + `854bc40` + `0d08016` | PASS |
++| W2 | `M5-0-overview.md` (W2 patched) | `712a14c` | + `a654f0c` + `712a14c` | PASS |
++| W3 | `A1-M5-W3-reconciliation-20260906-1730.md` | `f8f1f49` | + `98a3b01` + `e96c902` + `bdb0602` + `12f1cff` + `f8f1f49` | PASS |
++| W4 | `A1-M5-W4-reconciliation-20260906-1755.md` | `1610939` | + `d71f558` + `13c5279` + `562efb9` + `1610939` | PASS |
++| W5 | **本 checkpoint** `A1-M5-W5-reconciliation-20260906-1835.md` | <待 A0 拣入> | + `0e76a89`（A0 W5 dispatch）| **本轮修订已完成** · 待 A0 拣入 |
++
++---
++
++## 10. CHECKPOINT 元数据
++
++```
++CHECKPOINT=A1-M5-W5-reconciliation
++STATUS=PASS（待 A0 拣入后定）
++EXECUTOR=A1 (CodeBuddy / M3-mini)
++MODEL=M3-mini
++ROUTE=AI:DEEP
++MODEL_DEVIATION=none
++WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++BRANCH=master（HEAD=0e76a89；与 origin/master 一致）
++COMMIT=<待 A0 拣入后填>
++VERIFY=见 §5 命令（仅文档工作树）；git diff --check 干净；5 张 M5-*.md 仅头部 + 顶部段，无 §1~§11 重写
++NEXT=M5-W5 整包交付交 A0 拣入合并；A6 / A7 待 W5 dispatch 实施期承接 M5-6 / M5-7 / M5-8
++NATURE=纯文档展开；零产品代码；不提交 / 不 push
++```
+\ 文件末尾没有换行符

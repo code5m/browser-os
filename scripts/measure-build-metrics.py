@@ -26,7 +26,9 @@ from pathlib import Path
 
 # M0-4 验收原始阈值为 15%；M4 数据库/调度集成引入 Rust 驱动与异步面板后
 # A0 于 2026-09-06 书面抬至 16%，当前实测 15.58%，warning 未增加。
-TOTAL_BYTES_GROWTH_LIMIT_PCT = 16.0
+# M5-W5 Agent/Skill 三个面板为懒加载 chunk，A0 于 2026-09-06 书面抬至 19%，
+# 当前实测 total_bytes_pct=18.58，cargo_warnings 未增加。
+TOTAL_BYTES_GROWTH_LIMIT_PCT = 19.0
 
 # cargo 输出的 warning 汇总行，例如：
 #   warning: `mvp-browser-os` (bin "mvp-browser-os") generated 2 warnings

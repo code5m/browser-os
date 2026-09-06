@@ -434,6 +434,15 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/check-agent-skill-policy.py" >/dev/null 2>&1 \
     || pm_fail "check-agent-skill-policy.py（Agent/Skill 安全不变量被破坏：第二执行路径/Inline/ACL末条/能力漂移）"
 
+  # M5-7/8（Lane A7）：知识图谱 core 切片不变量夹具（GRAPH_* 码位）。
+  # 守容量常量单一真源 / GRAPH_PROPS_MAX_BYTES == MAX_TEXT_FIELD_BYTES / 隐私双扫 /
+  # 容量拒绝 / 遍历有界 / Skill·Agent id 十六进制完整性 / 无第二执行路径。
+  pm_log "M5-7/8 知识图谱 core 切片策略不变量夹具（GRAPH_* 码位）…"
+  python3 "$SCRIPT_DIR/check-graph-policy.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-graph-policy.py --self-test"
+  python3 "$SCRIPT_DIR/check-graph-policy.py" >/dev/null 2>&1 \
+    || pm_fail "check-graph-policy.py（M5-7/8 图谱安全不变量被破坏：常量缺失/隐私未扫值/容量未接/遍历无界/id 非十六进制/第二执行路径）"
+
   pm_log "git diff --check（工作树 + 暂存区，机器证据除外）…"
   # Raw evidence is immutable third-party output; SHA256SUMS, not whitespace rewriting, protects it.
   git -C "$ROOT" diff --check -- . ':(exclude)logs/m0-baseline/**' || pm_fail "git diff --check (worktree)"
@@ -559,6 +568,11 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/check-agent-skill-policy.py" ] || { echo "FAIL: check-agent-skill-policy.py missing"; rc=1; }
   if ! python3 "$SCRIPT_DIR/check-agent-skill-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-agent-skill-policy.py --self-test"; rc=1
+  fi
+  # M5-7/8（Lane A7）：图谱策略夹具自检。
+  [ -f "$SCRIPT_DIR/check-graph-policy.py" ] || { echo "FAIL: check-graph-policy.py missing"; rc=1; }
+  if ! python3 "$SCRIPT_DIR/check-graph-policy.py" --self-test >/dev/null 2>&1; then
+    echo "FAIL: check-graph-policy.py --self-test"; rc=1
   fi
   if ! python3 "$SCRIPT_DIR/check-tools-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-tools-policy.py --self-test"; rc=1

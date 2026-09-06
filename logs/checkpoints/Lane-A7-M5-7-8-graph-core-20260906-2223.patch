@@ -1,0 +1,1013 @@
+diff --git a/scripts/check-graph-policy.py b/scripts/check-graph-policy.py
+new file mode 100644
+index 0000000..85385a8
+--- /dev/null
++++ b/scripts/check-graph-policy.py
+@@ -0,0 +1,379 @@
++#!/usr/bin/env python3
++"""把 M5-7/M5-8 知识图谱 core 切片的容量 / 隐私 / bounded / 完整性不变量暴露成可复现的准入夹具。
++
++契约来源（均来自本仓库既有交付，非本脚本发明）：
++- `logs/assist/A7-M5-W4-graph-core-delta-20260906-1455.md`（A7 W4 delta，对齐 A4/A5 契约）
++- `src-tauri/src/domain.rs`（本切片 DTO + 容量常量单一真源）
++- `src-tauri/src/graph.rs`（本切片实现，落点在 W5 Lane A7）
++
++本脚本的定位（对齐 A2 `check-core-boundary.py` / A3 `check-mcp-policy.py` / A4 `check-agent-memory-policy.py`）：
++- 它是**准入门禁脚本**，不是图谱运行时代码；只读取既有文件做静态断言。
++- 各码位只在对应文件存在时才判定（`graph.rs` / `domain.rs`），产物缺失自动 no-op。
++
++守什么（ACTIVE 码位，全部与 A7 W5 实现 + W4 delta 直接对应）：
++- `GRAPH_CONSTANTS_PRESENT`：容量常量在 `domain.rs` 单一真源定义。
++- `GRAPH_PROPS_EQ_MAX_TEXT_FIELD`：`GRAPH_PROPS_MAX_BYTES` 必须等于 `MAX_TEXT_FIELD_BYTES`（与
++  A4 `AGENT_KV_MAX_VALUE_BYTES == DB_MAX_TEXT_FIELD_BYTES` 同款不变量）。
++- `GRAPH_PRIVACY_DOUBLE_SCAN`：隐私双重扫描必须同时扫字段名 + 字符串值（镜像 A4 agent_kv C-5）。
++- `GRAPH_BOUNDED_STORE`：store 必须接 `GRAPH_MAX_NODES` / `GRAPH_MAX_EDGES` 容量拒绝逻辑。
++- `GRAPH_TRAVERSAL_BOUNDED`：遍历必须接 `GRAPH_MAX_DEPTH` / `GRAPH_QUERY_LIMIT` 上限。
++- `GRAPH_REF_NODE_INTEGRITY`：Skill/Agent 节点 id 必须是 `GRAPH_NODE_ID_HEX_LEN` 位十六进制
++  （AGRAPH-10 完整性；实时反查 A5 SkillDef/AgentDef 留待 agent store 接入后）。
++- `GRAPH_NO_SECOND_PATH`：graph.rs 不得出现 `std::process` / `Command::new` / `tokio` /
++  `use tauri` / `crate::bridge`（无第二执行路径 / 无网络 / 不反向依赖命令层）。
++
++用法：
++  python3 scripts/check-graph-policy.py                 默认扫描（无违规 → EXIT 0；有 → EXIT 2）
++  python3 scripts/check-graph-policy.py --self-test     好/坏样本双向自检（含变异防呆）
++  python3 scripts/check-graph-policy.py --expect-pending 验证图谱产物是否已落地（W5 后应翻为默认）
++"""
++
++from __future__ import annotations
++
++import argparse
++import os
++import re
++import sys
++
++ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++
++GRAPH = "src-tauri/src/graph.rs"
++DOMAIN = "src-tauri/src/domain.rs"
++
++
++def _read(path: str) -> str | None:
++    try:
++        with open(path, "r", encoding="utf-8", errors="replace") as fh:
++            return fh.read()
++    except OSError:
++        return None
++
++
++def _rel(path: str) -> str:
++    return os.path.relpath(path, ROOT)
++
++
++def _strip_comments(text: str) -> str:
++    """剥离行/块注释与字符串字面量，避免注释里的 `crate::bridge` 等字样误报。
++
++    与 `check-core-boundary.py` 同源思路：守门脚本只应判定真实代码路径。
++    """
++    text = re.sub(r"//[^\n]*", "", text)
++    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
++    text = re.sub(r'"(\\.|[^"\\])*"', '""', text)
++    return text
++
++
++def _scan_real_repo() -> dict[str, str]:
++    repo: dict[str, str] = {}
++    for rel in (DOMAIN, GRAPH):
++        t = _read(os.path.join(ROOT, rel))
++        if t is not None:
++            repo[rel] = t
++    return repo
++
++
++# ---------------------------------------------------------------------------
++# 码位
++# ---------------------------------------------------------------------------
++
++
++def c_constants_present(rel, text, _repo):
++    if rel != DOMAIN:
++        return None
++    need = (
++        "GRAPH_PROPS_MAX_BYTES",
++        "GRAPH_LABEL_MAX_BYTES",
++        "GRAPH_NODE_ID_HEX_LEN",
++        "GRAPH_MAX_DEPTH",
++        "GRAPH_QUERY_LIMIT",
++        "GRAPH_MAX_NODES",
++        "GRAPH_MAX_EDGES",
++    )
++    missing = [c for c in need if c not in text]
++    if missing:
++        return [f"domain.rs 缺图谱容量常量：{missing}"]
++    return None
++
++
++def c_props_eq_max_text_field(rel, text, _repo):
++    if rel != DOMAIN:
++        return None
++    if "GRAPH_PROPS_MAX_BYTES" not in text:
++        return ["domain.rs 缺 GRAPH_PROPS_MAX_BYTES"]
++    if "MAX_TEXT_FIELD_BYTES" not in text:
++        return ["domain.rs 缺 MAX_TEXT_FIELD_BYTES（GRAPH_PROPS_MAX_BYTES 必须与之相等）"]
++    return None
++
++
++def c_privacy_double_scan(rel, text, _repo):
++    if rel != GRAPH:
++        return None
++    # 必须同时扫字段名黑名单 + 字符串值模式（镜像 A4 agent_kv C-5 修正）。
++    need_key_names = ('"token"', '"password"', '"secret"', '"api_key"')
++    need_value_pat = ("sk-", "AKIA", "Bearer ", "eyJ", "-----BEGIN")
++    problems = []
++    if not all(tok in text for tok in need_key_names):
++        problems.append("隐私闸缺字段名黑名单（token/password/secret/api_key）")
++    if not all(p in text for p in need_value_pat):
++        problems.append("隐私闸缺字符串值敏感模式（sk-/AKIA/Bearer /eyJ/-----BEGIN）")
++    if "scan_graph_value" not in text or "graph_props_contain_secret" not in text:
++        problems.append("缺 scan_graph_value / graph_props_contain_secret（应递归扫字段名 + 字符串值）")
++    return problems or None
++
++
++def c_bounded_store(rel, text, _repo):
++    if rel != GRAPH:
++        return None
++    problems = []
++    if "GRAPH_MAX_NODES" not in text:
++        problems.append("store 未引用 GRAPH_MAX_NODES（节点容量拒绝逻辑缺失）")
++    if "GRAPH_MAX_EDGES" not in text:
++        problems.append("store 未引用 GRAPH_MAX_EDGES（边容量拒绝逻辑缺失）")
++    if "NodeCapacityExceeded" not in text or "EdgeCapacityExceeded" not in text:
++        problems.append("缺 NodeCapacityExceeded / EdgeCapacityExceeded 拒绝分支")
++    return problems or None
++
++
++def c_traversal_bounded(rel, text, _repo):
++    if rel != GRAPH:
++        return None
++    problems = []
++    if "GRAPH_MAX_DEPTH" not in text:
++        problems.append("遍历未引用 GRAPH_MAX_DEPTH（深度上限缺失，可能爆栈）")
++    if "GRAPH_QUERY_LIMIT" not in text:
++        problems.append("遍历未引用 GRAPH_QUERY_LIMIT（返回上限缺失，可能响应爆）")
++    return problems or None
++
++
++def c_ref_node_integrity(rel, text, _repo):
++    if rel == DOMAIN:
++        if "GRAPH_NODE_ID_HEX_LEN" not in text:
++            return ["domain.rs 缺 GRAPH_NODE_ID_HEX_LEN（Skill/Agent 节点 id 完整性基准）"]
++        return None
++    if rel == GRAPH:
++        # graph.rs 必须把 GRAPH_NODE_ID_HEX_LEN 用于 Skill/Agent id 校验。
++        if "GRAPH_NODE_ID_HEX_LEN" not in text or "RefIdNotHex" not in text or "is_hex" not in text:
++            return ["graph.rs 未将 GRAPH_NODE_ID_HEX_LEN 用于 Skill/Agent 节点 id 校验（AGRAPH-10）"]
++        return None
++    return None
++
++
++def c_no_second_path(rel, text, _repo):
++    if rel != GRAPH:
++        return None
++    code = _strip_comments(text)
++    forbidden = (
++        "std::process",
++        "Command::new",
++        "tokio",
++        "use tauri",
++        "crate::bridge",
++    )
++    hits = [f for f in forbidden if f in code]
++    if hits:
++        return [f"graph.rs 出现第二执行路径/网络/反向依赖标志：{hits}"]
++    return None
++
++
++ALL_CODES = [
++    ("GRAPH_CONSTANTS_PRESENT", c_constants_present),
++    ("GRAPH_PROPS_EQ_MAX_TEXT_FIELD", c_props_eq_max_text_field),
++    ("GRAPH_PRIVACY_DOUBLE_SCAN", c_privacy_double_scan),
++    ("GRAPH_BOUNDED_STORE", c_bounded_store),
++    ("GRAPH_TRAVERSAL_BOUNDED", c_traversal_bounded),
++    ("GRAPH_REF_NODE_INTEGRITY", c_ref_node_integrity),
++    ("GRAPH_NO_SECOND_PATH", c_no_second_path),
++]
++
++
++def detect_hits(repo: dict[str, str]) -> dict[str, list[str]]:
++    hits: dict[str, list[str]] = {}
++    for name, fn in ALL_CODES:
++        for rel, text in repo.items():
++            res = fn(rel, text, repo)
++            if res:
++                hits.setdefault(name, []).extend(res)
++    return hits
++
++
++# ---------------------------------------------------------------------------
++# 自测
++# ---------------------------------------------------------------------------
++
++GOOD_DOMAIN = """
++pub const MAX_TEXT_FIELD_BYTES: usize = 64 * 1024;
++pub const GRAPH_PROPS_MAX_BYTES: usize = MAX_TEXT_FIELD_BYTES;
++pub const GRAPH_LABEL_MAX_BYTES: usize = 256;
++pub const GRAPH_NODE_ID_HEX_LEN: usize = 64;
++pub const GRAPH_MAX_DEPTH: usize = 4;
++pub const GRAPH_QUERY_LIMIT: usize = 1_000;
++pub const GRAPH_MAX_NODES: usize = 5_000;
++pub const GRAPH_MAX_EDGES: usize = 20_000;
++"""
++
++GOOD_GRAPH = """
++use crate::domain::*;
++const SENSITIVE_KEY_NAMES: &[&str] = &["token","password","secret","api_key"];
++const SENSITIVE_VALUE_PATTERNS: &[&str] = &["sk-","AKIA","Bearer ","eyJ","-----BEGIN"];
++fn is_hex(s: &str, len: usize) -> bool { s.len() == len && s.bytes().all(|b| b.is_ascii_hexdigit()) }
++fn scan_graph_value(s: &str) -> bool { SENSITIVE_VALUE_PATTERNS.iter().any(|p| s.contains(p)) }
++fn graph_props_contain_secret(props: &GraphProps) -> bool {
++    for key in props.keys() { if SENSITIVE_KEY_NAMES.iter().any(|n| key.contains(n)) { return true; } }
++    for val in props.values() { if scan_graph_value(val) { return true; } }
++    false
++}
++fn validate_id(id: &str, kind: GraphNodeKind) -> Result<(), GraphError> {
++    if kind == GraphNodeKind::Skill || kind == GraphNodeKind::Agent {
++        if !is_hex(id, GRAPH_NODE_ID_HEX_LEN) { return Err(GraphError::RefIdNotHex); }
++    }
++    Ok(())
++}
++pub fn insert_node(&mut self, node: GraphNode) -> Result<(), GraphError> {
++    if self.nodes.len() >= GRAPH_MAX_NODES { return Err(GraphError::NodeCapacityExceeded); }
++    Ok(())
++}
++pub fn insert_edge(&mut self, edge: GraphEdge) -> Result<(), GraphError> {
++    if self.edges.len() >= GRAPH_MAX_EDGES { return Err(GraphError::EdgeCapacityExceeded); }
++    Ok(())
++}
++pub fn bounded_neighbors(&self, start_id: &str, depth: usize, limit: usize) -> Vec<GraphNode> {
++    let depth = depth.min(GRAPH_MAX_DEPTH);
++    let limit = limit.min(GRAPH_QUERY_LIMIT);
++    Vec::new()
++}
++"""
++
++
++def _baseline_repo() -> dict[str, str]:
++    return {DOMAIN: GOOD_DOMAIN, GRAPH: GOOD_GRAPH}
++
++
++def _run_self_test() -> int:
++    failures: list[str] = []
++    code_names = {n for n, _ in ALL_CODES}
++
++    good = _baseline_repo()
++    good_hits = detect_hits(good)
++    if good_hits:
++        failures.append(f"好样本误报：{good_hits}")
++
++    def mutate(**kw):
++        d = dict(good)
++        d.update(kw)
++        return d
++
++    bad_cases: list[tuple[str, str, dict[str, str], str]] = []
++    # (code, desc, mutated_repo, key_that_must_change)
++
++    bad_cases.append((
++        "GRAPH_CONSTANTS_PRESENT",
++        "domain.rs 缺 GRAPH_MAX_EDGES",
++        mutate(**{DOMAIN: GOOD_DOMAIN.replace(
++            "pub const GRAPH_MAX_EDGES: usize = 20_000;\n", "")}),
++        DOMAIN,
++    ))
++    bad_cases.append((
++        "GRAPH_PROPS_EQ_MAX_TEXT_FIELD",
++        "domain.rs 缺 GRAPH_PROPS_MAX_BYTES（须等于 MAX_TEXT_FIELD_BYTES）",
++        mutate(**{DOMAIN: GOOD_DOMAIN.replace(
++            "pub const GRAPH_PROPS_MAX_BYTES: usize = MAX_TEXT_FIELD_BYTES;\n", "")}),
++        DOMAIN,
++    ))
++    bad_cases.append((
++        "GRAPH_PRIVACY_DOUBLE_SCAN",
++        "graph.rs 只扫字段名不扫值",
++        mutate(**{GRAPH: GOOD_GRAPH.replace(
++            'const SENSITIVE_VALUE_PATTERNS: &[&str] = &["sk-","AKIA","Bearer ","eyJ","-----BEGIN"];',
++            'const SENSITIVE_VALUE_PATTERNS: &[&str] = &[];')}),
++        GRAPH,
++    ))
++    bad_cases.append((
++        "GRAPH_BOUNDED_STORE",
++        "graph.rs 未接 GRAPH_MAX_EDGES",
++        mutate(**{GRAPH: GOOD_GRAPH.replace(
++            "if self.edges.len() >= GRAPH_MAX_EDGES { return Err(GraphError::EdgeCapacityExceeded); }\n", "")}),
++        GRAPH,
++    ))
++    bad_cases.append((
++        "GRAPH_TRAVERSAL_BOUNDED",
++        "graph.rs 未接 GRAPH_MAX_DEPTH",
++        mutate(**{GRAPH: GOOD_GRAPH.replace(
++            "let depth = depth.min(GRAPH_MAX_DEPTH);\n", "")}),
++        GRAPH,
++    ))
++    bad_cases.append((
++        "GRAPH_REF_NODE_INTEGRITY",
++        "graph.rs 未校验 Skill/Agent id 十六进制",
++        mutate(**{GRAPH: GOOD_GRAPH.replace(
++            "if !is_hex(id, GRAPH_NODE_ID_HEX_LEN) { return Err(GraphError::RefIdNotHex); }\n", "")}),
++        GRAPH,
++    ))
++    bad_cases.append((
++        "GRAPH_NO_SECOND_PATH",
++        "graph.rs 出现第二执行路径",
++        mutate(**{GRAPH: GOOD_GRAPH.replace(
++            "use crate::domain::*;\n",
++            "use crate::domain::*;\nuse std::process::Command;\n")}),
++        GRAPH,
++    ))
++
++    for code, _desc, mutated, key in bad_cases:
++        if mutated.get(key, "") == good.get(key, ""):
++            print(f"self-test FAIL: 坏样本「{code}」未改动任何内容（变异失配，按漏检计）")
++            sys.exit(1)
++        h = detect_hits(mutated)
++        if code not in h:
++            failures.append(f"坏样本未检出码位 {code}（漏检）；命中={h}")
++
++    if failures:
++        for f in failures:
++            print(f"  - {f}")
++        print("GRAPH_POLICY_SELF_TEST=FAIL")
++        return 1
++    print(f"GRAPH_POLICY_SELF_TEST=PASS（ACTIVE={len(code_names)}）")
++    return 0
++
++
++# ---------------------------------------------------------------------------
++# 模式
++# ---------------------------------------------------------------------------
++
++
++def _mode_expect_pending() -> int:
++    repo = _scan_real_repo()
++    if GRAPH in repo:
++        print("GRAPH_PENDING_RESULT=FAIL：已检测到 M5-7/8 产物（graph.rs 已落地），"
++              "应把本脚本作为默认门禁接入 pre-merge.sh")
++        return 1
++    print("GRAPH_PENDING_RESULT=NONE（graph.rs 尚未落地，W5 前应处此态）")
++    return 0
++
++
++def _mode_default() -> int:
++    repo = _scan_real_repo()
++    hits = detect_hits(repo)
++    if not hits:
++        print("GRAPH_POLICY=PASS（无违规）")
++        return 0
++    for code, details in sorted(hits.items()):
++        for d in details:
++            print(f"  {code}: {d}")
++    print("GRAPH_POLICY=FAIL")
++    return 2
++
++
++def main() -> int:
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--self-test", action="store_true")
++    ap.add_argument("--expect-pending", action="store_true")
++    args = ap.parse_args()
++    if args.self_test:
++        return _run_self_test()
++    if args.expect_pending:
++        return _mode_expect_pending()
++    return _mode_default()
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/scripts/pre-merge.sh b/scripts/pre-merge.sh
+index eea0c8f..ffad6bc 100755
+--- a/scripts/pre-merge.sh
++++ b/scripts/pre-merge.sh
+@@ -434,6 +434,15 @@ run_pre_merge() {
+   python3 "$SCRIPT_DIR/check-agent-skill-policy.py" >/dev/null 2>&1 \
+     || pm_fail "check-agent-skill-policy.py（Agent/Skill 安全不变量被破坏：第二执行路径/Inline/ACL末条/能力漂移）"
+
++  # M5-7/8（Lane A7）：知识图谱 core 切片不变量夹具（GRAPH_* 码位）。
++  # 守容量常量单一真源 / GRAPH_PROPS_MAX_BYTES == MAX_TEXT_FIELD_BYTES / 隐私双扫 /
++  # 容量拒绝 / 遍历有界 / Skill·Agent id 十六进制完整性 / 无第二执行路径。
++  pm_log "M5-7/8 知识图谱 core 切片策略不变量夹具（GRAPH_* 码位）…"
++  python3 "$SCRIPT_DIR/check-graph-policy.py" --self-test >/dev/null 2>&1 \
++    || pm_fail "check-graph-policy.py --self-test"
++  python3 "$SCRIPT_DIR/check-graph-policy.py" >/dev/null 2>&1 \
++    || pm_fail "check-graph-policy.py（M5-7/8 图谱安全不变量被破坏：常量缺失/隐私未扫值/容量未接/遍历无界/id 非十六进制/第二执行路径）"
++
+   pm_log "git diff --check（工作树 + 暂存区，机器证据除外）…"
+   # Raw evidence is immutable third-party output; SHA256SUMS, not whitespace rewriting, protects it.
+   git -C "$ROOT" diff --check -- . ':(exclude)logs/m0-baseline/**' || pm_fail "git diff --check (worktree)"
+@@ -560,6 +569,11 @@ run_self_test() {
+   if ! python3 "$SCRIPT_DIR/check-agent-skill-policy.py" --self-test >/dev/null 2>&1; then
+     echo "FAIL: check-agent-skill-policy.py --self-test"; rc=1
+   fi
++  # M5-7/8（Lane A7）：图谱策略夹具自检。
++  [ -f "$SCRIPT_DIR/check-graph-policy.py" ] || { echo "FAIL: check-graph-policy.py missing"; rc=1; }
++  if ! python3 "$SCRIPT_DIR/check-graph-policy.py" --self-test >/dev/null 2>&1; then
++    echo "FAIL: check-graph-policy.py --self-test"; rc=1
++  fi
+   if ! python3 "$SCRIPT_DIR/check-tools-policy.py" --self-test >/dev/null 2>&1; then
+     echo "FAIL: check-tools-policy.py --self-test"; rc=1
+   fi
+diff --git a/src-tauri/src/domain.rs b/src-tauri/src/domain.rs
+index 1d0d48f..24186ee 100644
+--- a/src-tauri/src/domain.rs
++++ b/src-tauri/src/domain.rs
+@@ -2025,3 +2025,92 @@ pub struct PermissionPreview {
+     pub gate: AclLevel,
+     pub capabilities: Vec<String>,
+ }
++
++// ===================== M5-7 / M5-8 知识图谱模型（Lane A7, M5-W5） =====================
++//
++// 本段仅含 DTO 与容量/脱敏常量（单一真源）。纯校验 / bounded store / query 助手在
++// `src-tauri/src/graph.rs`，与本段协同但不引入 tauri / AppHandle / crate::bridge / 网络 / 命令。
++//
++// 与 A5 的关系（关键裁定，承 W4 A7 delta）：Skill / Agent 节点**按 id 引用** A5 的
++// `SkillDef.id` / `AgentDef.id`（sha256 派生），图谱**不重定义** Agent/Skill 的完整结构
++// （A5 为单源）；图谱也不持有 `agent_kv` 的值（A4 的 KV 是 JSON 草稿纸），仅存
++// `Memorizes` 关系边（映射 A4 agent_kv 的 namespace 语义）。
++
++/// 图谱节点种类。`Skill` / `Agent` 为派生引用节点，id 须可反查 A5 的 `SkillDef.id` / `AgentDef.id`。
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum GraphNodeKind {
++    File,
++    Dir,
++    Tab,
++    Script,
++    Skill,
++    Agent,
++    Tag,
++    Topic,
++}
++
++/// 图谱边种类。
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum GraphEdgeKind {
++    /// 文件系统归属（child -> parent dir）
++    InDir,
++    /// 引用 / 派生
++    References,
++    /// 语义相关
++    RelatedTo,
++    /// 标签标注
++    TaggedWith,
++    /// Agent 调用 Skill（引用 A5 `SkillDef.id`）
++    Uses,
++    /// Agent 间 A2A 双向（对应 A4 协议信封；图谱只存关系边，不存消息体）
++    A2aWith,
++    /// Agent 在 `agent_kv` 某 namespace 有记忆（映射 A4 agent_kv 语义；图谱不存值）
++    Memorizes,
++}
++
++/// 节点/边的附加属性：脱敏后的字符串键值（不得含凭据/正文/body）。
++pub type GraphProps = std::collections::BTreeMap<String, String>;
++
++/// 图谱节点 DTO。
++///
++/// `id` 稳定派生：普通节点 `sha256("kind:path")`；`Skill`/`Agent` 节点
++/// `sha256("skill:" + SkillDef.id)` / `sha256("agent:" + AgentDef.id)`，
++/// 须为 `GRAPH_NODE_ID_HEX_LEN` 位十六进制（AGRAPH-10 完整性）。
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++pub struct GraphNode {
++    pub id: String,
++    pub kind: GraphNodeKind,
++    pub label: String,
++    #[serde(default)]
++    pub props: GraphProps,
++}
++
++/// 图谱边 DTO。
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++pub struct GraphEdge {
++    pub from: String,
++    pub to: String,
++    pub kind: GraphEdgeKind,
++    #[serde(default)]
++    pub weight: u32,
++    #[serde(default)]
++    pub props: GraphProps,
++}
++
++// ---- 容量 / 脱敏常量（单一真源；对齐 A4 agent_kv 同款不变量）----
++/// 节点 props 单值字节上限；**必须等于** `MAX_TEXT_FIELD_BYTES`（单测 `graph_constants_eq` 守）。
++pub const GRAPH_PROPS_MAX_BYTES: usize = MAX_TEXT_FIELD_BYTES;
++/// 节点 label 字节上限（与 `AGENT_KV_MAX_KEY_BYTES = 256` 同量级）。
++pub const GRAPH_LABEL_MAX_BYTES: usize = 256;
++/// 引用/派生节点 id 的十六进制长度（sha256）。
++pub const GRAPH_NODE_ID_HEX_LEN: usize = 64;
++/// 边遍历深度上限（防爆栈）。
++pub const GRAPH_MAX_DEPTH: usize = 4;
++/// 查询返回节点/边上限（防响应爆）。
++pub const GRAPH_QUERY_LIMIT: usize = 1_000;
++/// 图谱节点总数硬上限（防图爆炸；与 `AGENT_KV_MAX_ENTRIES = 5000` 同量级）。
++pub const GRAPH_MAX_NODES: usize = 5_000;
++/// 图谱边总数硬上限。
++pub const GRAPH_MAX_EDGES: usize = 20_000;
+diff --git a/src-tauri/src/graph.rs b/src-tauri/src/graph.rs
+new file mode 100644
+index 0000000..8ce11b5
+--- /dev/null
++++ b/src-tauri/src/graph.rs
+@@ -0,0 +1,481 @@
++//! M5-7 / M5-8 知识图谱 core 切片（Lane A7, M5-W5）。
++//!
++//! 纯逻辑、无副作用：DTO 在 `domain.rs`，此处提供校验 / 容量 / 脱敏 / bounded store /
++//! bounded query 助手。本模块**不**引入 `tauri` / `AppHandle` / `crate::bridge` / 网络 /
++//! 命令 / 第二执行路径；持久化（SQLite 单连接）留待 M5-8 接 `database.rs`（A3/A4 稳定后）。
++//! 与 A4/A5 的契约边界（承 W4 A7 delta）：Skill/Agent 节点**按 id 引用** A5 的
++//! `SkillDef.id`/`AgentDef.id`，图谱不存 `agent_kv` 值（仅 `Memorizes` 关系边）。
++
++// M5-W5：本切片暂无消费方（图谱 UI / agent 消费 / 后台重建 worker 均留待 M5-8），
++// 故整模块允许 dead_code；待 M5-8 接入 store/query/UI 后自然消解。
++#![allow(dead_code)]
++
++use crate::domain::*;
++use serde::{Deserialize, Serialize};
++use std::collections::{BTreeMap, VecDeque};
++
++/// 凭据/正文敏感字段名黑名单（与 A4 agent_kv 隐私双扫同源）。
++const SENSITIVE_KEY_NAMES: &[&str] = &["token", "password", "secret", "api_key"];
++/// 凭据/正文敏感值模式（前缀/关键字匹配，避免误杀）。
++const SENSITIVE_VALUE_PATTERNS: &[&str] = &["sk-", "AKIA", "Bearer ", "eyJ", "-----BEGIN"];
++
++/// 单节点 props 条目数上限（防 props 膨胀）。
++const GRAPH_PROPS_MAX_ENTRIES: usize = 64;
++
++/// 图谱校验/容量错误。
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub enum GraphError {
++    EmptyId,
++    IdTooLong,
++    RefIdNotHex,
++    LabelTooLong,
++    PropKeyTooLong(String),
++    PropValueTooLong(String),
++    PropCountExceeded,
++    SecretInProps,
++    NodeCapacityExceeded,
++    EdgeCapacityExceeded,
++    DuplicateNode(String),
++    DuplicateEdge(String),
++    Serde(String),
++}
++
++impl std::fmt::Display for GraphError {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        match self {
++            GraphError::EmptyId => write!(f, "node/edge id 为空"),
++            GraphError::IdTooLong => write!(f, "node/edge id 超长"),
++            GraphError::RefIdNotHex => {
++                write!(
++                    f,
++                    "Skill/Agent 节点 id 须为 {GRAPH_NODE_ID_HEX_LEN} 位十六进制（AGRAPH-10）"
++                )
++            }
++            GraphError::LabelTooLong => write!(f, "label 超 GRAPH_LABEL_MAX_BYTES"),
++            GraphError::PropKeyTooLong(k) => write!(f, "prop key 超长: {k}"),
++            GraphError::PropValueTooLong(k) => {
++                write!(f, "prop value 超 GRAPH_PROPS_MAX_BYTES: {k}")
++            }
++            GraphError::PropCountExceeded => {
++                write!(f, "单节点 props 条目超过 {GRAPH_PROPS_MAX_ENTRIES}")
++            }
++            GraphError::SecretInProps => write!(f, "props 含凭据/正文敏感字段（AGRAPH-9）"),
++            GraphError::NodeCapacityExceeded => {
++                write!(f, "节点数超过 GRAPH_MAX_NODES={GRAPH_MAX_NODES}")
++            }
++            GraphError::EdgeCapacityExceeded => {
++                write!(f, "边数超过 GRAPH_MAX_EDGES={GRAPH_MAX_EDGES}")
++            }
++            GraphError::DuplicateNode(id) => write!(f, "重复节点 id: {id}"),
++            GraphError::DuplicateEdge(k) => write!(f, "重复边: {k}"),
++            GraphError::Serde(m) => write!(f, "序列化失败: {m}"),
++        }
++    }
++}
++
++fn is_hex(s: &str, len: usize) -> bool {
++    s.len() == len && s.bytes().all(|b| b.is_ascii_hexdigit())
++}
++
++/// 递归扫描一个字符串叶子是否命中敏感值模式（与 A4 隐私双扫同源）。
++fn scan_graph_value(s: &str) -> bool {
++    SENSITIVE_VALUE_PATTERNS.iter().any(|p| s.contains(p))
++}
++
++/// props 双重扫描：字段名黑名单 + 字符串值模式，任一命中即视为凭据/正文泄漏（AGRAPH-9）。
++pub fn graph_props_contain_secret(props: &GraphProps) -> bool {
++    for key in props.keys() {
++        let k = key.to_ascii_lowercase();
++        if SENSITIVE_KEY_NAMES.iter().any(|n| k.contains(n)) {
++            return true;
++        }
++    }
++    for val in props.values() {
++        if scan_graph_value(val) {
++            return true;
++        }
++    }
++    false
++}
++
++fn validate_id(id: &str, kind: GraphNodeKind) -> Result<(), GraphError> {
++    if id.is_empty() {
++        return Err(GraphError::EmptyId);
++    }
++    match kind {
++        GraphNodeKind::Skill | GraphNodeKind::Agent => {
++            if !is_hex(id, GRAPH_NODE_ID_HEX_LEN) {
++                return Err(GraphError::RefIdNotHex);
++            }
++        }
++        _ => {
++            if id.len() > 512 {
++                return Err(GraphError::IdTooLong);
++            }
++        }
++    }
++    Ok(())
++}
++
++fn validate_props(props: &GraphProps) -> Result<(), GraphError> {
++    if props.len() > GRAPH_PROPS_MAX_ENTRIES {
++        return Err(GraphError::PropCountExceeded);
++    }
++    for (k, v) in props.iter() {
++        if k.len() > GRAPH_LABEL_MAX_BYTES {
++            return Err(GraphError::PropKeyTooLong(k.clone()));
++        }
++        if v.len() > GRAPH_PROPS_MAX_BYTES {
++            return Err(GraphError::PropValueTooLong(k.clone()));
++        }
++    }
++    if graph_props_contain_secret(props) {
++        return Err(GraphError::SecretInProps);
++    }
++    Ok(())
++}
++
++/// 校验单个节点（容量 / 脱敏 / Skill·Agent id 完整性）。
++pub fn validate_graph_node(node: &GraphNode) -> Result<(), GraphError> {
++    validate_id(&node.id, node.kind)?;
++    if node.label.as_bytes().len() > GRAPH_LABEL_MAX_BYTES {
++        return Err(GraphError::LabelTooLong);
++    }
++    validate_props(&node.props)
++}
++
++/// 校验单条边（容量 / 脱敏；from/to 非空）。
++pub fn validate_graph_edge(edge: &GraphEdge) -> Result<(), GraphError> {
++    if edge.from.is_empty() || edge.to.is_empty() {
++        return Err(GraphError::EmptyId);
++    }
++    if edge.from.len() > 512 || edge.to.len() > 512 {
++        return Err(GraphError::IdTooLong);
++    }
++    validate_props(&edge.props)
++}
++
++/// 内存 bounded 图谱存储。所有插入受 `GRAPH_MAX_NODES` / `GRAPH_MAX_EDGES` 约束。
++#[derive(Debug, Clone, Default, Serialize, Deserialize)]
++pub struct GraphStore {
++    pub nodes: Vec<GraphNode>,
++    pub edges: Vec<GraphEdge>,
++}
++
++impl GraphStore {
++    pub fn new() -> Self {
++        Self::default()
++    }
++
++    fn find_node(&self, id: &str) -> Option<usize> {
++        self.nodes.iter().position(|n| n.id == id)
++    }
++
++    /// 插入节点；容量/去重/校验任一失败即拒。
++    pub fn insert_node(&mut self, node: GraphNode) -> Result<(), GraphError> {
++        validate_graph_node(&node)?;
++        if self.find_node(&node.id).is_some() {
++            return Err(GraphError::DuplicateNode(node.id.clone()));
++        }
++        if self.nodes.len() >= GRAPH_MAX_NODES {
++            return Err(GraphError::NodeCapacityExceeded);
++        }
++        self.nodes.push(node);
++        Ok(())
++    }
++
++    /// 插入边；容量/去重/校验任一失败即拒。
++    pub fn insert_edge(&mut self, edge: GraphEdge) -> Result<(), GraphError> {
++        validate_graph_edge(&edge)?;
++        let key = format!("{}|{:?}|{}", edge.from, edge.kind, edge.to);
++        if self
++            .edges
++            .iter()
++            .any(|e| format!("{}|{:?}|{}", e.from, e.kind, e.to) == key)
++        {
++            return Err(GraphError::DuplicateEdge(key));
++        }
++        if self.edges.len() >= GRAPH_MAX_EDGES {
++            return Err(GraphError::EdgeCapacityExceeded);
++        }
++        self.edges.push(edge);
++        Ok(())
++    }
++
++    /// 从 `start_id` 出发的 bounded 邻居查询：深度 ≤ `GRAPH_MAX_DEPTH`，返回节点数 ≤ `limit`。
++    /// 双向遍历（边无向用于发现），结果按 BFS 层级稳定排序。
++    pub fn bounded_neighbors(&self, start_id: &str, depth: usize, limit: usize) -> Vec<GraphNode> {
++        let depth = depth.min(GRAPH_MAX_DEPTH);
++        let limit = limit.min(GRAPH_QUERY_LIMIT);
++        let mut visited: BTreeMap<String, usize> = BTreeMap::new();
++        let mut out: Vec<GraphNode> = Vec::new();
++        let mut queue: VecDeque<(String, usize)> = VecDeque::new();
++        if let Some(n) = self.nodes.iter().find(|n| n.id == start_id) {
++            visited.insert(n.id.clone(), 0);
++            out.push(n.clone());
++            queue.push_back((n.id.clone(), 0));
++        }
++        while let Some((id, d)) = queue.pop_front() {
++            if d >= depth || out.len() >= limit {
++                break;
++            }
++            for e in self.edges.iter() {
++                let next = if e.from == id {
++                    Some(&e.to)
++                } else if e.to == id {
++                    Some(&e.from)
++                } else {
++                    None
++                };
++                if let Some(nb) = next {
++                    if visited.contains_key(nb) {
++                        continue;
++                    }
++                    if let Some(node) = self.nodes.iter().find(|n| &n.id == nb) {
++                        visited.insert(node.id.clone(), d + 1);
++                        out.push(node.clone());
++                        if out.len() >= limit {
++                            return out;
++                        }
++                        queue.push_back((node.id.clone(), d + 1));
++                    }
++                }
++            }
++        }
++        out
++    }
++
++    /// 从 `start_id` 出发、深度 ≤ `depth` 的 bounded 子图（节点 + 其间边），用于导出/查询。
++    pub fn bounded_subgraph(&self, start_id: &str, depth: usize) -> GraphStore {
++        let nodes = self.bounded_neighbors(start_id, depth, GRAPH_QUERY_LIMIT);
++        let ids: std::collections::BTreeSet<String> = nodes.iter().map(|n| n.id.clone()).collect();
++        let edges: Vec<GraphEdge> = self
++            .edges
++            .iter()
++            .filter(|e| ids.contains(&e.from) && ids.contains(&e.to))
++            .cloned()
++            .collect();
++        GraphStore { nodes, edges }
++    }
++
++    /// 序列化为 JSON（受 bounded 约束，整体不会超 `GRAPH_MAX_NODES/EDGES`）。
++    pub fn to_json(&self) -> Result<String, GraphError> {
++        serde_json::to_string(self).map_err(|e| GraphError::Serde(e.to_string()))
++    }
++
++    /// 从 JSON 反序列化并逐条校验（容量/脱敏/完整性）。
++    pub fn from_json(text: &str) -> Result<Self, GraphError> {
++        let store: GraphStore =
++            serde_json::from_str(text).map_err(|e| GraphError::Serde(e.to_string()))?;
++        for n in &store.nodes {
++            validate_graph_node(n)?;
++        }
++        for e in &store.edges {
++            validate_graph_edge(e)?;
++        }
++        if store.nodes.len() > GRAPH_MAX_NODES {
++            return Err(GraphError::NodeCapacityExceeded);
++        }
++        if store.edges.len() > GRAPH_MAX_EDGES {
++            return Err(GraphError::EdgeCapacityExceeded);
++        }
++        Ok(store)
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn ref_id() -> String {
++        // 64 位十六进制占位（sha256 派生形态；"skill:"/"agent:" 仅为派生前辍，不进存储 id）。
++        let mut s = String::with_capacity(64);
++        for _ in 0..64 {
++            s.push('a');
++        }
++        s
++    }
++
++    #[test]
++    fn graph_constants_eq() {
++        // GRAPH_PROPS_MAX_BYTES 必须等于 MAX_TEXT_FIELD_BYTES（单一不变量）。
++        assert_eq!(GRAPH_PROPS_MAX_BYTES, MAX_TEXT_FIELD_BYTES);
++    }
++
++    #[test]
++    fn validate_rejects_oversized_label() {
++        let node = GraphNode {
++            id: "file:/a".into(),
++            kind: GraphNodeKind::File,
++            label: "x".repeat(GRAPH_LABEL_MAX_BYTES + 1),
++            props: GraphProps::new(),
++        };
++        assert!(matches!(
++            validate_graph_node(&node),
++            Err(GraphError::LabelTooLong)
++        ));
++    }
++
++    #[test]
++    fn validate_rejects_secret_in_props() {
++        let mut props = GraphProps::new();
++        props.insert("note".into(), "Bearer abcd1234".into());
++        let node = GraphNode {
++            id: "file:/a".into(),
++            kind: GraphNodeKind::File,
++            label: "a".into(),
++            props,
++        };
++        assert!(matches!(
++            validate_graph_node(&node),
++            Err(GraphError::SecretInProps)
++        ));
++        // 字段名黑名单同样拦截
++        let mut props2 = GraphProps::new();
++        props2.insert("api_key".into(), "ok".into());
++        let node2 = GraphNode {
++            id: "file:/b".into(),
++            kind: GraphNodeKind::File,
++            label: "b".into(),
++            props: props2,
++        };
++        assert!(matches!(
++            validate_graph_node(&node2),
++            Err(GraphError::SecretInProps)
++        ));
++    }
++
++    #[test]
++    fn validate_requires_hex_ref_id_for_skill_agent() {
++        let bad = GraphNode {
++            id: "not-hex".into(),
++            kind: GraphNodeKind::Skill,
++            label: "s".into(),
++            props: GraphProps::new(),
++        };
++        assert!(matches!(
++            validate_graph_node(&bad),
++            Err(GraphError::RefIdNotHex)
++        ));
++        let good = GraphNode {
++            id: ref_id(),
++            kind: GraphNodeKind::Skill,
++            label: "s".into(),
++            props: GraphProps::new(),
++        };
++        assert!(validate_graph_node(&good).is_ok());
++    }
++
++    #[test]
++    fn store_enforces_node_capacity() {
++        let mut store = GraphStore::new();
++        for i in 0..GRAPH_MAX_NODES {
++            let node = GraphNode {
++                id: format!("file:/{i}"),
++                kind: GraphNodeKind::File,
++                label: "x".into(),
++                props: GraphProps::new(),
++            };
++            store.insert_node(node).unwrap();
++        }
++        let overflow = GraphNode {
++            id: "file:/overflow".into(),
++            kind: GraphNodeKind::File,
++            label: "x".into(),
++            props: GraphProps::new(),
++        };
++        assert!(matches!(
++            store.insert_node(overflow),
++            Err(GraphError::NodeCapacityExceeded)
++        ));
++    }
++
++    #[test]
++    fn store_rejects_duplicate_node() {
++        let mut store = GraphStore::new();
++        let node = GraphNode {
++            id: "file:/dup".into(),
++            kind: GraphNodeKind::File,
++            label: "x".into(),
++            props: GraphProps::new(),
++        };
++        store.insert_node(node.clone()).unwrap();
++        assert!(matches!(
++            store.insert_node(node),
++            Err(GraphError::DuplicateNode(_))
++        ));
++    }
++
++    #[test]
++    fn bounded_neighbors_respects_depth_and_limit() {
++        let mut store = GraphStore::new();
++        // 链 a->b->c->d->e->f（每节一个节点 + 一条 References 边）
++        let ids = ["a", "b", "c", "d", "e", "f"];
++        for id in ids.iter() {
++            store
++                .insert_node(GraphNode {
++                    id: id.to_string(),
++                    kind: GraphNodeKind::File,
++                    label: id.to_string(),
++                    props: GraphProps::new(),
++                })
++                .unwrap();
++        }
++        for w in ids.windows(2) {
++            store
++                .insert_edge(GraphEdge {
++                    from: w[0].to_string(),
++                    to: w[1].to_string(),
++                    kind: GraphEdgeKind::References,
++                    weight: 1,
++                    props: GraphProps::new(),
++                })
++                .unwrap();
++        }
++        // 深度 1：只有 a 和 b
++        let lvl1 = store.bounded_neighbors("a", 1, GRAPH_QUERY_LIMIT);
++        assert_eq!(lvl1.len(), 2);
++        // 深度 2：a,b,c
++        let lvl2 = store.bounded_neighbors("a", 2, GRAPH_QUERY_LIMIT);
++        assert_eq!(lvl2.len(), 3);
++        // 限制为 1：只有 a
++        let lim = store.bounded_neighbors("a", GRAPH_MAX_DEPTH, 1);
++        assert_eq!(lim.len(), 1);
++    }
++
++    #[test]
++    fn json_roundtrip_preserves_graph() {
++        let mut store = GraphStore::new();
++        store
++            .insert_node(GraphNode {
++                id: "file:/x".into(),
++                kind: GraphNodeKind::File,
++                label: "x".into(),
++                props: GraphProps::new(),
++            })
++            .unwrap();
++        store
++            .insert_edge(GraphEdge {
++                from: "file:/x".into(),
++                to: ref_id(),
++                kind: GraphEdgeKind::Uses,
++                weight: 1,
++                props: GraphProps::new(),
++            })
++            .unwrap();
++        let json = store.to_json().unwrap();
++        let back = GraphStore::from_json(&json).unwrap();
++        assert_eq!(back.nodes.len(), 1);
++        assert_eq!(back.edges.len(), 1);
++        assert_eq!(back.edges[0].kind, GraphEdgeKind::Uses);
++    }
++
++    #[test]
++    fn from_json_rejects_secret() {
++        let json = r#"{"nodes":[{"id":"file:/x","kind":"file","label":"x","props":{"api_key":"leak"}}],"edges":[]}"#;
++        assert!(matches!(
++            GraphStore::from_json(json),
++            Err(GraphError::SecretInProps)
++        ));
++    }
++}
+diff --git a/src-tauri/src/main.rs b/src-tauri/src/main.rs
+index 21ad055..e2e60bf 100644
+--- a/src-tauri/src/main.rs
++++ b/src-tauri/src/main.rs
+@@ -6,6 +6,7 @@ mod bridge;
+ mod crashlog;
+ mod database;
+ mod domain;
++mod graph;
+ mod grid_ipc;
+ mod grid_process;
+ mod images;

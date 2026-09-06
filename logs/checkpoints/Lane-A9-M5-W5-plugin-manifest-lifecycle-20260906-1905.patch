@@ -1,0 +1,233 @@
+diff --git a/logs/assist/A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md b/logs/assist/A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md
+new file mode 100644
+index 0000000..32f18bf
+--- /dev/null
++++ b/logs/assist/A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md
+@@ -0,0 +1,166 @@
++# A9 · M5-W5 Delta — 插件 manifest/lifecycle 对齐 A6 UI 与 A7 graph 能力（docs-only，设计基准）
++
++> 生成：2026-09-06 19:05 CST · Lane A9（M5-W5 · SUPPORT DOCS ONLY · 整包交付）
++> BASE：`0e76a89`（HEAD：`docs(M5): dispatch W5 UI and graph lanes`；已与 `origin/master` 同步，`git pull --ff-only` 无新）
++> 性质：**对齐 delta**，零产品代码。仅 `logs/assist/A9-M5-W5-*.md`。
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W5 Parallel Dispatch → A9：**SUPPORT DOCS ONLY**；「Align plugin manifest/lifecycle to A6 UI and A7 graph capabilities; no plugin product code.」（行 159）
++> 配套前序：W1 `A9-M5-plugin-W1-delta-20260906-1530.md`；W1 seam `A9-M5-plugin-impl-seam-20260906-1630.md`（已集成）；W3 `A9-M5-plugin-W3-delta-20260906-1730.md`（已拣入）+ W3 `A9-M5-graph-store-contract-20260906-0700.md`（被 M5-7/8 引用为真相源）；W4 `A9-M5-W4-plugin-manifest-lifecycle-20260906-1820.md`（已拣入，对齐 A5 Agent/Skill 策略 + 能力真源碎片化发现）。
++> 对齐基准（本切片）：**已集成的 A5 DTO**（`domain.rs` `AgentDef`/`SkillDef`/`AclLevel`/`CapabilityRef`/`PermissionPreview`/`SkillExec`）+ **卡片规格** `M5-6-agent-skill-ui.md`（A6 UI）/ `M5-7-graph-model-extract.md`（A7 graph 模型）/ `M5-8-graph-store-query.md`（A7 graph 存储）/ `M5-12-plugin-ui.md`（插件 UI）+ `M5-10-plugin-manifest-lifecycle.md`（插件 manifest/lifecycle）。
++
++> ⚠️ 基准说明：W5 刚由 A0 于 18:35 dispatch（commit `0e76a89`）。A6/A7 的 W5 **实际产品码未在本 canonical 树**（工作树除 A1 的 `M5-0-overview.md` 外干净；A6/A7 代码应在各自 worktree/未集成）。故本对齐**基于卡片规格 + 已集成的 A5 DTO**，与 W4（我读到 A5 同树 WIP）不同——本切片所有"对齐点"待 A6/A7 W5 代码落地后由 A0/A9 复核（见 §8 验收 C、§10 复核项）。
++
++---
++
++## 0. 一句话结论
++
++把插件 manifest/lifecycle 的 **UI 面向契约**对齐到 **A6 的 Agent/Skill UI 范式**（权限预览/能力清单/状态徽章/两段式确认态），并把 **graph 面向契约**对齐到 **A7 的图模型与存储不变量**（节点类型注册表、能力门控写图、K7 不存正文、容量/脱敏边界）；核心两条：(1) 插件权限预览必须复用 A5 `PermissionPreview` 类型 + A6 `PermissionPreviewModal.vue`，三态（Agent/Skill/Plugin）一个组件渲染；(2) 插件若要贡献图数据，须以 capability 门控调用 A7 `graph_*` 命令，绝不另开写路径。无产品代码。
++
++---
++
++## 1. 对齐基线事实（来源：已集成 DTO + 卡片规格）
++
++| 事实 | 来源 | 对插件 manifest/lifecycle 的影响 |
++|---|---|---|
++| A5 `PermissionPreview { gate: AclLevel, capabilities: Vec<String> }` 已落 `domain.rs`（`agent.rs:38-41` 实现 `permission_preview()` 映射 capability→gate） | W4 实测 `domain.rs:2001` + `agent.rs:38` | 插件权限预览应复用该类型；插件 `permission_preview() -> PermissionPreview` 即让 A6 `PermissionPreviewModal` 直渲（见 §2） |
++| A6 UI（M5-6）建通用 `PermissionPreviewModal.vue`（安装/运行前必显：名称+版本+ACL+capabilities 逐项+目标操作+风险提示；Dangerous 走 keyring 二次认证）；`useAgentStore.pendingConfirms: Map<id,{action,payload,expires_at}>` | `M5-6` §4.1/4.3 | 插件 install/enable/disable/uninstall 两段式确认态须同构；复用同一模态（见 §2/§3） |
++| M5-12 插件 UI **已明确复用** `PermissionPreviewModal.vue`(M5-6) + `SkillManager.vue` 范式；`usePluginStore.pendingConfirms` 与 M5-6 Agent 同构；权限清单独成 `PluginPermissionPanel.vue`，风险等级"与 MCP/Skill 范式一致" | `M5-12` §2/§4.2/§4.3/§4.5 | 插件 manifest 的 `capabilities` 必须能被同一模态按"风险等级=capability 的 AclLevel gate"渲染（见 §2） |
++| A7 graph 节点类型注册表首期：`File/Dir/Tab/Script/Skill/Agent/Tag/Topic`；边：`in_dir/references/related_to/tagged_with` | `M5-7` §4.2 | **插件（Plugin）不在节点注册表** → 若插件要进力导图(M5-9 Agent 消费)，须加 `Plugin` 节点类型（建议，交 A0/A17，见 §3） |
++| A7 `GraphSource::{Manual,Extract,Ai,Imported}`；`props` 不存主数据正文（K7）；`source=Manual` 不被自动抽取覆盖 | `M5-7` §4.1/4.3/4.5 | 插件贡献图数据须标 `source=Imported`（或新增 `Plugin`），不得污染 Manual；`props` 不存正文（见 §3） |
++| A7 `graph_*` 9 条命令全进 ACL；**首期不开第三方任意边写入（防污染）**；查询 `max_depth≤4`/`limit≤1000`；子图不返 `props` 正文（K7）；`graph-store-shutdown` 先于 `stop-scheduler` | `M5-8` §4.3/4.5/5 | 插件图写入必须走 `graph_*` 命令（capability 门控），不另开 DB 写路径；遵守容量/脱敏（见 §3） |
++| A7 graph-store 契约为我 W3 预研 `A9-M5-graph-store-contract-20260906-0700.md`（被 M5-7/8 引用为真相源，禁漂移） | `M5-7`/`M5-8` §0 | 图容量/脱敏/可追溯不变量已在我 W3 契约定义；插件图能力须遵守同一契约（见 §3） |
++| A3 `security_policy::{check_path_within_roots, redact_sensitive_url}` 单一真源（MCP 复用先例，`mcp.rs:16`） | W4 实测 | 插件图 URL/路径守门复用该单一真源（见 §3） |
++| 能力单一真源碎片化仍 open（W4 §4）：`domain.rs`(MCP) vs `security_policy.rs`(Skill/Agent)；A3/A5 漂移门按名硬编码 | W4 delta | 插件 `PLUGIN_CAPABILITY_V1` + 图 `GRAPH_CAPABILITY_V1` 须一并收口（见 §4） |
++| 插件 `PluginManifest`/`PluginState`(Discovered→…→Uninstalled)/`PluginCapability{capability,reason}`/`PluginSignature`(Ed25519) 见 `M5-10` §4.2/4.3；插件 18 条命令见 `M5-11` | `M5-10`/`M5-11` | 与 A6 UI + A7 graph 对齐的落点（见 §2/§3） |
++
++---
++
++## 2. 插件 ↔ A6 UI 对齐（manifest/lifecycle 的 UI 面向契约）
++
++| 维度 | A6 Agent/Skill UI（M5-6 实际范式） | 插件 manifest/lifecycle（M5-10/11/12） | 对齐 |
++|---|---|---|---|
++| 权限预览 | `PermissionPreviewModal.vue`：名称+版本+ACL+capabilities 逐项+目标操作+风险提示；Dangerous→keyring 二次认证 | M5-12 §4.3 复用同一模态；capabilities 逐项 + 风险等级 | ✅ **复用 A5 `PermissionPreview` 类型**：插件 `permission_preview() -> PermissionPreview { gate: AclLevel, capabilities: Vec<String> }`，模态按 `gate` 渲染风险等级。插件无需自建权限预览组件 |
++| 能力结构 | `capabilities: Vec<CapabilityRef{ id: String }>`（A5 实际） | `capabilities: Vec<PluginCapability{ capability, reason }>`（M5-10） | ⚠️ 已在 W4 建议：插件复用 `CapabilityRef{ id }` 作引用、`reason` 作独立字段/子文本。`PermissionPreviewModal` 渲 `capability.id` 列表，`reason` 作逐项副文本——避免插件并行能力渲染路径 |
++| 两段式确认态 | `useAgentStore.pendingConfirms: Map<id,{action,payload,expires_at}>`；UI→`confirm_<action>(request_id)` | M5-12 §4.5 `usePluginStore.pendingConfirms` 同构 | ✅ 生命周期 install/enable/disable/uninstall 的 `CONFIRM_REQUIRED` + `request_id` 流程与 Agent/Skill 完全一致；插件状态机(§4.3)的每个写转移都经此 |
++| 状态徽章 | Agent/Skill 安装状态列 | M5-12 §4.1 徽章：Enabled(绿)/Disabled(灰)/Failed(红) | ✅ 插件 `PluginState` 的 Enabled/Disabled/Failed/Uninstalled 直接映射到徽章；`Failed`=签名校验失败(Signed-Failed)，与 M5-10 §4.3 一致 |
++| 列表/详情范式 | `SkillManager.vue`/`AgentManager.vue`（表格 id/version/acl/状态/操作；详情含 metadata/capabilities/runs） | M5-12 `PluginManager.vue`/`PluginDetail.vue` 复用同范式 | ✅ 插件详情必显项(id/version/capabilities(source 逐项)/hash/signature 状态)与 Agent 详情同形 |
++| 风险等级来源 | `AclLevel` 由 `PermissionPreview.gate` 派生 | M5-12 §4.2 "风险等级与 MCP/Skill 范式一致" | ✅ 插件 capability 风险 = `AclLevel` 映射（单一真源，不另算） |
++
++**结论（§2 核心交付）**：插件权限预览 = A5 `PermissionPreview` 类型 + A6 `PermissionPreviewModal.vue` 单一组件渲染；插件 `capabilities` 复用 `CapabilityRef`，`reason` 作副文本；生命周期写转移复用 `pendingConfirms` 两段式范式。**三态（Agent/Skill/Plugin）一个权限预览组件、一个 `PermissionPreview` 类型、一个 `AclLevel` 真源**——这是 W5 对 W4 "危险 capability⇒Dangerous" 建议的 UI 落地闭环。
++
++---
++
++## 3. 插件 ↔ A7 graph 对齐（manifest/lifecycle 的 graph 面向契约）
++
++| 维度 | A7 graph 不变量（M5-7/8 + 我 W3 契约） | 插件 manifest/lifecycle | 对齐 |
++|---|---|---|---|
++| 节点类型注册表 | `File/Dir/Tab/Script/Skill/Agent/Tag/Topic`（首期，`domain.rs:2042` 实测） | 插件自身未注册（实测 `GraphNodeKind` 无 `Plugin`） | ➕ **建议**：在 A7 `GraphNodeKind` 加 `Plugin`（及 `Provides` 边类型），使"插件→提供 Skill/Agent→贡献图"关系可在力导图(M5-9)呈现。属 A7 schema 扩展，交 A0/A17 裁定（见 §3.1） |
++| 图写入路径 | 只走 `graph_*` 命令（全 ACL、source-check）；**禁第三方任意边写入** | 插件若贡献图数据 | ✅ **插件图写入须以 capability 门控调用 `graph_*` 命令**，绝不另开 DB/文件直写路径（与 form③ / 无第二执行路径一致）。插件 manifest 可声明 `graph:ingest`/`graph:source`/`graph:query` 能力，但实现期统一经 `graph_node_upsert`/`graph_edge_upsert`/`graph_query` |
++| `source` 溯源 | `GraphSource::{Manual,Extract,Ai,Imported}`；Manual 优先不被覆盖 | 插件导入 | ✅ 插件贡献节点标 `source=Imported`（或建议新增 `GraphSource::Plugin` 以增强溯源）；不得触碰 `source=Manual` 节点（M5-8 N3 红线） |
++| 正文不存（K7） | `GraphNode.props` 不存主数据正文；引用走 `source_ref` | 插件图 props | ✅ 插件写入的 `props` 同样禁存正文；插件审计/运行历史(`plugin-runs.json`)不记图节点 `props`/正文（K3+K7） |
++| 容量/边界 | `max_depth≤4`、`limit≤1000`、节点/边容量受限 | 插件图查询 | ✅ 插件经 `graph_query` 自动受 `GraphQuery` 上限约束；插件图数据量计入 A7 图存储容量预算 |
++| 脱敏 | `security_policy::{check_path_within_roots, redact_sensitive_url}` 单一真源 | 插件图 URL/路径 | ✅ 插件图相关 URL/路径守门复用该单一真源（同 A3 MCP 先例）；无 token/cookie/Authorization/body/prompt-secret 持久化（W5 Hard Stop） |
++| 可追溯 | 每节点/边带 `source`+`extractor_version`+时间戳；重复抽取按版本 | 插件导入 | ✅ 插件图导入须带 `extractor_version`(插件版本) + `source_ref`(插件包内资源路径) |
++
++### 3.1 对照 A7 实际代码（domain.rs:2042-2116，本 turn 已落本树）复核
++
++A7 W5 graph 类型已落 `domain.rs`（实测 L2042-2116）。对照本 delta §3 假设：
++
++| 实测项 | 实际代码 | 与本 delta 对齐 |
++|---|---|---|
++| 节点类型注册表 | `GraphNodeKind`(L2042) = `File/Dir/Tab/Script/Skill/Agent/Tag/Topic` | ✅ **确认 `Plugin` 缺席**（§3 建议加 `Plugin` 成立） |
++| 边类型注册表 | `GraphEdgeKind`(L2056) 含 `Uses`(Agent→Skill)/`A2aWith`(Agent-A2A)/`Memorizes`(Agent→agent_kv) + `InDir/References/RelatedTo/TaggedWith` | ✅ Agent/Skill/A2A/agent_kv 关系已接好；插件→提供 Skill 建议加 `Provides`(或复用 `Uses`) 边 |
++| 容量常量 | `GRAPH_MAX_DEPTH=4`(L2110)/`GRAPH_QUERY_LIMIT=1000`(L2112)/`GRAPH_MAX_NODES=5000`(L2114)/`GRAPH_MAX_EDGES=20000`(L2116)/`GRAPH_PROPS_MAX_BYTES=MAX_TEXT_FIELD_BYTES`(L2104)/`GRAPH_LABEL_MAX_BYTES=256`(L2106) | ✅ **容量边界与本 delta §3 完全一致**（max_depth≤4 / limit≤1000 已实测确认） |
++| 正文不存(K7) | `GraphProps = BTreeMap<String,String>`(L2074，脱敏后字符串 KV，注释"不得含凭据/正文/body") | ✅ **K7 已由有界字符串类型强制**（非 `serde_json::Value`）→ 插件 `props` 同样受此约束 |
++| 溯源字段 | **当前 `GraphNode`/`GraphEdge` 无 `source`/`created_at`/`updated_at`/`extractor_version`；`GraphSource` 枚举缺席** | ⚠️ **偏离 M5-7 §4.3/4.5"可追溯性"GOAL**。插件图溯源备选：(a) A7 恢复 `source: GraphSource` 字段（遵循 M5-7）；(b) 若无 `source`，插件贡献节点复用既有 id 约定 `sha256("plugin:" + plugin_id + ...)`（L2078-2080 已有 `sha256("skill:"/..)` 范式）→ 溯源编码进节点 id，无需 `source` 字段。推荐 (b) 作最小改动，或交 A0/A17 决 |
++
++**结论（§3 核心交付）**：插件对 graph 的贡献 = capability 声明（`graph:*`）+ 经 `graph_*` 命令的受控写入（不另开路径）+ 遵守 K7（`GraphProps` 有界）+ 容量边界（已实测 `GRAPH_MAX_*`）+ 溯源（id 约定 `sha256("plugin:"+...)` 或 A7 恢复 `source`）。插件自身建议注册为 graph 节点类型 `Plugin`（交 A0/A17）。插件图审计不记正文（K3+K7）。
++
++---
++
++## 4. 能力单一真源延续（W4 §4 仍 open，W5 新增图能力维度）
++
++W4 已发现能力白名单单一真源碎成 `domain.rs`(MCP) 与 `security_policy.rs`(Skill/Agent)，且 A3/A5 漂移门按名硬编码（插件 `PLUGIN_CAPABILITY_V1` 落点被阻塞）。W5 引入图能力后：
++- 若插件声明 `graph:*` 能力、A7 定义图能力白名单，则会出现 **第 4 个** `*_CAPABILITY_V1` 常量（`GRAPH_CAPABILITY_V1`）。
++- 必须在 W4 §4 的裁决（收口 domain.rs(a) / 新建 capability.rs(b) + 泛化漂移门正则 `\b[A-Z_]*CAPABILITY_V1\s*[=:]`）框架下，**一并纳入** `GRAPH_CAPABILITY_V1`，避免碎片化再扩大。
++- 插件图能力校验须复用统一后的能力真源 + 统一漂移门（一处覆盖 MCP/Skill/Agent/Plugin/Graph 五类）。
++
++> 本 Lane 不直改产品码（见 §7）；上述收口建议交 A0 在 §4(W4) 裁决时一并处理。
++
++---
++
++## 5. 策略脚本对齐（check-plugin-policy.py 须覆盖 A6 UI 红线 + A7 graph 红线）
++
++`check-plugin-policy.py`（1630 设计 + W4 §5 镜像 A5 `check-agent-skill-policy.py`）除既有 `PLUGIN_SECOND_PATH`/`PLUGIN_INLINE_SHELL`/`PLUGIN_SIG_BYPASS`/`PLUGIN_CAP_SINGLE_DEF` 外，W5 须增：
++- **A6 UI 红线**：插件不得绕 `bridge.ts` 直接 `invoke`（`AGSK`/MCP 同源：前端裸 invoke 阻断）；插件权限预览不得被折叠/默认确认（模态必显）。→ 可加 `PLUGIN_UI_GATE_REQUIRED`(若前端代码基线可见) 或对插件 manifest 校验"声明 Dangerous capability 必带 keyring 二次确认路径"。
++- **A7 graph 红线**：插件图写入不另开路径（`PLUGIN_GRAPH_VIA_COMMAND`：插件图能力实现不得含直连 DB/文件写，须经 `graph_*` 命令）；插件图 `props` 不存正文（`PLUGIN_GRAPH_NO_BODY`，K7）。
++- 维持同族 A3/A5：探针 `_plugin_present()` + ACTIVE/PENDING 二分 + 三模式 + pre-merge 挂载。
++
++---
++
++## 6. Ed25519 / form③ 显式保留（未变假设）
++
++- **form③**（声明式资源包：入口 URL 走既有 webview、JS 钩子走受控 `bridge.ts` 子集、禁独立 webview/独立 stdio 进程）与 A5 K6 + AGSK_1 + A7"无第二执行路径/禁第三方任意边写入"**同向**。
++- **Ed25519 插件签名 + fail-closed**（`verify_plugin_signature` 失败拒载，不得 `cfg`/`feature`/fallback 绕过）+ **信任根(SB-11)** `trusted-pubkeys.json` 经 KeyringStore（公钥不可改、改备注不替换）——与 A5/M3 凭据范式一致。W5 Hard Stop "no token/cookie/Authorization/body/prompt-secret logging" 一并满足。
++
++---
++
++## 7. FORBID（W5 切片）与冲突规避
++
++- 仅写 `logs/assist/A9-M5-W5-*.md`；未碰 `src/`/`src-tauri/`/`scripts/`（含 `pre-merge.sh`）/ACL/三主文档。
++- **不编辑 M5-10/11/12 卡**：W5 中 A1 正在 reconcile 卡片（工作树已见 `M5-0-overview.md` 修改态），且 A6/A7 产品码在各自 worktree；本 Lane 仅以 assist 文档表达对齐，不触卡片。
++- 不触 A6/A7 的 W5 产品码文件（`domain.rs` 图类型/`graph.rs`/`security_policy.rs`/`components/agent/*`/`stores/*`）——属 A6/A7 专属 scope。
++- 未移动 `NEXT`；未提交、未 push（board Merge Rule：仅 A0 可推送）。
++- 所有"已落地"陈述以来源（已集成 `domain.rs`/`agent.rs` 或卡片规格 file:line）标注（§1）。
++
++---
++
++## 8. 验收（只读，零产品代码）
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++# A. 本 Lane 仅增 assist 文档，无产品码改动
++git status --porcelain -- src/ src-tauri/ scripts/ | grep -iE "A9|plugin|graph" || echo "[无 A9 产品码改动]"
++# B. A5 权限预览类型仍在（插件将复用）
++grep -n "pub struct PermissionPreview" src-tauri/src/domain.rs   # 期望：2001
++grep -n "fn permission_preview" src-tauri/src/agent.rs           # 期望：38
++# C. A6/A7 W5 实际代码基准复核
++ls src/components/agent/PermissionPreviewModal.vue 2>&1 || echo "[A6 UI 组件未在本树：对齐以 M5-6 卡规格 + A5 PermissionPreview 类型为基准，待 A6 代码集成后复核]"
++grep -n "pub struct GraphNode\|pub enum GraphNodeKind\|GRAPH_MAX_DEPTH\|GRAPH_QUERY_LIMIT" src-tauri/src/domain.rs   # 期望：2082 / 2042 / 2110 / 2112（A7 图类型已落本树，§3.1 已对照）"
++# D. ACL 末条恒 list_artifact_images（K1）
++grep -n "list_artifact_images" src-tauri/permissions/default-commands.toml | tail -1   # 期望：118
++# E. 本切片为纯文档
++git status --porcelain -- logs/assist/A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md   # 期望：??
++```
++
++结果：产品代码工作树无 A9 改动；A5 `PermissionPreview`(domain.rs:2001)/`permission_preview()`(agent.rs:38) 在；A6/A7 W5 代码当前不在本树（对齐以卡规格为基准，待其集成后复核）；ACL 末条（list_artifact_images:118）未变；本切片为纯文档。
++
++---
++
++## 9. Lane Output Template
++
++```text
++LANE=A9
++STATUS=PASS
++BASE=0e76a89 (HEAD: docs(M5): dispatch W5 UI and graph lanes; 已 git pull --ff-only 同步 origin/master)
++HEAD=logs/checkpoints/Lane-A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.patch
++FILES=logs/assist/A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md, logs/checkpoints/Lane-A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md
++VERIFY=见 §8（docs-only；A5 PermissionPreview 在 domain.rs:2001；A6/A7 W5 代码未在本树→以卡规格为基准；ACL 末条 list_artifact_images:118 未变）
++CHECKPOINT=logs/checkpoints/Lane-A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md
++MERGE_NOTES=见 §10
++NEXT=A18 (M5-10/11 runtime) / A19 (M5-12 UI)，在 §4 能力真源收口 + A6/A7 W5 代码落地后由 A0 签发
++```
++
++## 10. MERGE_NOTES
++
++- **冲突**：无。本 Lane 仅写 `logs/assist/A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md` 与同名 checkpoint；与 A2/A3/A4/A5/A6/A7/A8/A10/A11 无文件交集（其余 Lane 的 W5 assist 文档并行存在，互不重叠）。
++- **⚠️ 对齐复核项**：A7 graph 类型已落本树（`domain.rs:2042-2116`），§3.1 已对照确认容量/K7/`Plugin` 缺席/溯源偏离；A6 UI 组件（`PermissionPreviewModal.vue` 等）仍不在本树。待 A6 代码经 A0 集成后，A9 须复核：(1) 插件 `permission_preview() -> PermissionPreview` 是否被 `PermissionPreviewModal` 正确渲染；(2) `Plugin` 节点类型是否已加入 `GraphNodeKind`（或确认不引入）；(3) `GRAPH_CAPABILITY_V1` 是否已随 §4 收口落入统一真源；(4) A7 `source` 溯源字段缺失是否由 id 约定(`sha256("plugin:"+...)`) 或恢复 `source` 解决。
++- **与 A1 边界**：W5 中 A1 正在 reconcile 卡片（工作树已见 `M5-0-overview.md` 修改态）；本 Lane 不编辑 M5-10/11/12 卡（§7 FORBID），对齐内容以 assist 文档表达。
++- **对 A6/A7 的建议**：① 插件权限预览复用 A5 `PermissionPreview` + A6 `PermissionPreviewModal`（勿为插件另建权限组件）；② 图节点注册表加 `Plugin`（或确认不引入），图写入只走 `graph_*` 命令；③ 图能力 `GRAPH_CAPABILITY_V1` 随 W4 §4 一并收口。
++- **对 A18/A19 的实施契约**（W4+W5 合订）：插件类型落 `domain.rs`；`capabilities` 复用 `CapabilityRef`+`reason` 独立字段；生命周期复用 A5 范式（`PermissionPreview` 闸门 + `pendingConfirms` 两段式 + 卸载删目录 + `plugin-runs.json` 500 审计不记正文 + Keyring）；插件图贡献经 `graph_*` 命令 + K7/溯源/容量/脱敏；`check-plugin-policy.py` 同族 A5 并覆盖 W5 UI/graph 红线；Ed25519 fail-closed 保留；`PLUGIN_CAPABILITY_V1`/`GRAPH_CAPABILITY_V1` 落点待 §4 裁决。
++- **A9 插件 docs 链完整就绪**：W0(1100)→W1(1530+1630 已集成)→W3(1730 已拣入+graph 契约)→W4(1820 已拣入，对齐 A5+能力碎片化)→**W5(1905，对齐 A6 UI + A7 graph)**。manifest/lifecycle 已对齐 A5 策略 + A6 UI 范式 + A7 graph 不变量；待 §4 能力真源收口 + A6/A7 代码落地后由 A18/A19 进入实现。
++
++## 11. 交付索引
++
++- `logs/assist/A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md`（本文件）—— 插件 manifest/lifecycle 对齐 A6 UI 与 A7 graph 能力（设计基准）。
++- 上游：`A9-M5-W4-plugin-manifest-lifecycle-20260906-1820.md`（已拣入，对齐 A5 + 能力碎片化）· `A9-M5-plugin-W3-delta-20260906-1730.md`（已拣入）· `A9-M5-graph-store-contract-20260906-0700.md`（被 M5-7/8 引用）· `A9-M5-plugin-impl-seam-20260906-1630.md`（已集成）· `A9-M5-plugin-W1-delta-20260906-1530.md`。
++- 权威基线：已集成 A5 `domain.rs`(L1892-2001)/`agent.rs:38`/`skills.rs`；卡片 `M5-6-agent-skill-ui.md`/`M5-7-graph-model-extract.md`/`M5-8-graph-store-query.md`/`M5-10-plugin-manifest-lifecycle.md`/`M5-12-plugin-ui.md`；A3 `security_policy::{check_path_within_roots, redact_sensitive_url}` 单一真源。
+diff --git a/logs/checkpoints/Lane-A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md b/logs/checkpoints/Lane-A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md
+new file mode 100644
+index 0000000..c8f87d1
+--- /dev/null
++++ b/logs/checkpoints/Lane-A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md
+@@ -0,0 +1,55 @@
++# Lane A9 — M5-W5 整包交付（插件 manifest/lifecycle 对齐 A6 UI 与 A7 graph 能力）Checkpoint
++
++> 生成：2026-09-06 19:05 CST · Lane A9（M5-W5 · SUPPORT DOCS ONLY · 整包交付）
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W5 Parallel Dispatch → A9：Align plugin manifest/lifecycle to A6 UI and A7 graph capabilities; no plugin product code.
++
++```
++LANE=A9
++STATUS=PASS
++BASE=0e76a89 (HEAD: docs(M5): dispatch W5 UI and graph lanes; 已 git pull --ff-only 同步 origin/master)
++HEAD=logs/checkpoints/Lane-A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.patch
++FILES=logs/assist/A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md, logs/checkpoints/Lane-A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md
++VERIFY=见下 §Verify
++CHECKPOINT=logs/checkpoints/Lane-A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md
++MERGE_NOTES=见下
++NEXT=A18 (M5-10/11 runtime) / A19 (M5-12 UI)，在 §4 能力真源收口 + A6/A7 W5 代码落地后由 A0 签发
++```
++
++## 本切片交付（A9 M5-W5 整包，docs-only，设计基准）
++
++| 要求（M5-W5 A9） | 落点 |
++|---|---|
++| Align plugin manifest/lifecycle to A6 UI | §2：插件权限预览复用 A5 `PermissionPreview`(domain.rs:2001) + A6 `PermissionPreviewModal.vue`（三态一个组件）；`capabilities` 复用 `CapabilityRef`+`reason` 副文本；生命周期写转移复用 `pendingConfirms` 两段式范式（与 M5-6 同构） |
++| Align plugin manifest/lifecycle to A7 graph capabilities | §3：插件图贡献 = capability 声明(`graph:*`) + 经 `graph_*` 命令受控写入（不另开路径）；遵守 K7 不存正文 / `source` 溯源 / 容量边界 / `security_policy` 脱敏单一真源；建议 A7 注册表加 `Plugin` 节点类型 |
++| no plugin product code | 仅对齐文档；未改 `src/`/`src-tauri/`/`scripts`/ACL/三主文档 |
++| 能力单一真源延续 | §4：W4 §4 碎片化仍 open；W5 新增图能力 `GRAPH_CAPABILITY_V1` 须一并收口（domain.rs(a)/capability.rs(b) + 泛化漂移门正则） |
++| 策略脚本对齐 | §5：`check-plugin-policy.py` 须增 A6 UI 红线(`PLUGIN_UI_GATE_REQUIRED`/`bridge.ts` 不绕) + A7 graph 红线(`PLUGIN_GRAPH_VIA_COMMAND`/`PLUGIN_GRAPH_NO_BODY`) |
++| Ed25519/form③ explicit | §6：form③ + Ed25519 fail-closed + 信任根(SB-11) 保留，满足 W5 Hard Stop 无 secret 持久化 |
++
++## Verify（只读，零产品代码）
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++git status --porcelain -- src/ src-tauri/ scripts/ | grep -iE "A9|plugin|graph" || echo "[无 A9 产品码改动]"
++grep -n "pub struct PermissionPreview" src-tauri/src/domain.rs   # 期望：2001
++grep -n "fn permission_preview" src-tauri/src/agent.rs           # 期望：38
++ls src/components/agent/PermissionPreviewModal.vue 2>&1 || echo "[A6 UI 未在本树：以 M5-6 卡规格为基准]"
++grep -rn "pub struct GraphNode\|GRAPH_CAPABILITY" src-tauri/src 2>/dev/null || echo "[A7 graph 未在本树：以 M5-7/8 卡规格为基准]"
++grep -n "list_artifact_images" src-tauri/permissions/default-commands.toml | tail -1   # 期望：118
++```
++
++结果：产品代码工作树无 A9 改动；A5 `PermissionPreview`(domain.rs:2024)/`permission_preview()`(agent.rs:40) 在；A7 graph 类型已落 `domain.rs:2042-2116`（§3.1 已对照），A6 UI 组件仍不在本树；ACL 末条（list_artifact_images:118）未变。
++
++## Merge Notes
++
++- **冲突**：无。仅 `logs/assist/A9-M5-W5-plugin-manifest-lifecycle-20260906-1905.md` + 同名 checkpoint；与 A2/A3/A4/A5/A6/A7/A8/A10/A11 无文件交集。
++- **⚠️ 对齐复核项**：A7 graph 类型已落本树（`domain.rs:2042-2116`），delta §3.1 已对照确认容量/K7/`Plugin` 缺席/溯源偏离；A6 UI 组件（`PermissionPreviewModal.vue` 等）仍不在本树。待 A6 代码经 A0 集成后复核：(1) 插件 `permission_preview()->PermissionPreview` 是否被模态渲染；(2) `Plugin` 节点类型是否入 `GraphNodeKind`；(3) `GRAPH_CAPABILITY_V1` 是否随 §4 收口。
++- **与 A1 边界**：W5 中 A1 正在 reconcile 卡片（工作树已见 `M5-0-overview.md` 修改态）；本 Lane 不编辑 M5-10/11/12 卡。
++- **对 A6/A7 建议**：插件权限预览复用 A5 `PermissionPreview`+A6 `PermissionPreviewModal`（勿另建）；图节点注册表加 `Plugin`；图写入只走 `graph_*` 命令；`GRAPH_CAPABILITY_V1` 随 W4 §4 收口。
++- **对 A18/A19 契约**（W4+W5 合订）：插件类型落 domain.rs；capabilities 复用 CapabilityRef+reason；生命周期复用 A5 范式；插件图贡献经 graph_* 命令 + K7/溯源/容量/脱敏；check-plugin-policy.py 同族 A5 并覆盖 W5 UI/graph 红线；Ed25519 fail-closed 保留；PLUGIN/GRAPH_CAPABILITY_V1 待 §4 裁决。
++- **A9 插件 docs 链完整就绪**：W0(1100)→W1(1530+1630 已集成)→W3(1730 已拣入+graph 契约)→W4(1820 已拣入)→W5(1905)。待 §4 收口 + A6/A7 落地后由 A18/A19 实现。
++
++## FORBID 遵守
++
++- 仅写 `logs/assist/` 与 `logs/checkpoints/Lane-A9-*.md`；未触产品代码、ACL、三主文档、`scripts/pre-merge.sh`。
++- 未移动 `NEXT`；未提交、未 push（board Merge Rule：仅 A0 可推送）。

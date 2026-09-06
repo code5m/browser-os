@@ -5,6 +5,55 @@
 > 父卡：`详细设计与实施计划.md` L571
 > 主预研：`logs/assist/A9-M5-graph-store-contract-20260906-0700.md`（DDL + GraphQuery DTO）· `logs/assist/A9-M5-graph-scheduler-feed-20260906-0700.md`
 > 配套：`M5-7-graph-model-extract.md`（抽取）· `M5-9-graph-ui-agent-consume.md`（UI 消费）
+>
+> **W3** BLOCKED（待 A17 = A7 W5 实施期承接）· **W4** ACTIVE（**A7 graph store/query policy slice**；详见本卡顶部 `[W5 next-card acceptance criteria]` 段）
+
+---
+
+## [W5 next-card acceptance criteria · 2026-09-06 18:35 CST] A7 M5-8 W5 实施期 acceptance criteria（pure graph query + policy script · 不接 live UI / agent 消费）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L157（**A7 M5-W5** *"Implement M5-7/M5-8 graph model/store policy slice: ... pure graph store/query helpers, policy script. No graph UI and no agent consumption yet."*）+ L134-170 硬约束 + A7 W4 graph core delta（`1610939` 拣入）锁定的 query 边界。
+> **本卡 W5 与 M5-7 W5 的关系**：A7 W5 dispatch L157 派发**双卡**——M5-7 DTO + 容量 + redaction + pure store helpers；M5-8 pure graph query helpers + policy script + 不注册 `graph_*` 命令。**M5-8 W5 不接 live UI（9 条命令保持 LOCKED 直到 M5-8 收口后由 A0 决定）**。
+> **A1 W5 角色**：A1 W5 **不**改 §1~§11 决策史；仅在头部加本 `[W5 next-card acceptance criteria]` 段，**明确 A7 W5 实施期 4 项 AC + 5 项 hard stops**，供 A7 / A10 / A11 / A0 验收。
+
+### W5 A7 M5-8 实施期 acceptance criteria（4 项）
+
+| AC | 描述 | 验收证据 |
+|----|------|----------|
+| AC-1 **pure graph query helpers 冻结** | `pure_query_neighborhood(graph, node_id, hop, edge_kinds, label_filter) -> Result<SubgraphView>` / `pure_query_shortest_path(graph, from, to, weight_kind) -> Result<PathView>` / `pure_query_subgraph(graph, root_set, max_nodes, max_edges) -> Result<SubgraphView>` 纯函数冻结在 `core::graph_query` 模块；返回类型为视图（只读），不持有 graph 写锁；返回节点/边数量受 `GRAPH_QUERY_MAX_NODES` / `GRAPH_QUERY_MAX_EDGES` 上界限制（防 DoS）| `cargo test core::graph_query` 或 `cargo test graph::query::*` |
+| AC-2 **查询结果截断/超时/取消** | 复用 M4-1.c 的 row/byte/field 截断约定：`GRAPH_QUERY_MAX_RESULT_BYTES` / `GRAPH_QUERY_MAX_PATH_LEN` / `GRAPH_QUERY_TIMEOUT_MS`（参数化时钟）三常量在 `domain.rs` 冻结；超限返回 `GraphQueryTruncated { reason, partial }` 而**不**直接 dump 全部；超时由注入的 clock 判定（无 thread::sleep）| focused Rust 单测 + `scripts/check-graph-policy.py` self-test |
+| AC-3 **policy script + pre-merge wire（覆盖本卡 + M5-7）** | `scripts/check-graph-policy.py` 三模式 PASS；policy 守门项至少 8 条：① 无新 Tauri 命令 ② DTO 字段与 A9 prework 0 drift ③ 容量上界常量在 `domain.rs` 单一真源 ④ redaction 覆盖 `source_ref` + `props` 双路径 ⑤ query helpers 是 pure（无 Tauri import）⑥ query helpers 复用 M4-1.c 截断约定 ⑦ 无 npm / 无 new Cargo 依赖 ⑧ 不在 `core::graph*` 引 `crate::bridge` 或 `tauri::AppHandle` | `scripts/check-graph-policy.py` self-test + default + `--expect-pending` 三模式 PASS |
+| AC-4 **不注册 9 条 graph_* Tauri 命令** | `grep -E "graph_query\|graph_insert\|graph_delete\|graph_export\|graph_*" src-tauri/src/bridge.rs` 仅出现 `// not-implemented-yet` 占位 / 注释；`src-tauri/permissions/default-commands.toml` 末条仍恒为 `list_artifact_images`，**未**新增 graph 命令 | `git diff src-tauri/permissions/default-commands.toml` 0 新增命令行 + A10 抽查 `bridge.rs` |
+
+### W5 A7 M5-8 实施期 hard stops（5 项）
+
+| HS | 约束 | 来源 |
+|----|------|------|
+| W5-HS1 | **无 live UI / 无 agent 消费** —— `graph_*` 命令保持 LOCKED；9 条命令的具体语义延后 W6+/A0 决定 | PARALLEL_COMMAND_BOARD L157 + L167 |
+| W5-HS2 | **无 background graph rebuild workers / 无 network access** —— W5 不接后台 graph 重建 | PARALLEL_COMMAND_BOARD L167 |
+| W5-HS3 | **无新 Tauri 命令 / 无新 Cargo 依赖 / 无 npm** | PARALLEL_COMMAND_BOARD L168 + L157 |
+| W5-HS4 | **无 second execution path / 无 installer / 无 model provider / 无 download path** | PARALLEL_COMMAND_BOARD L165 + L169 |
+| W5-HS5 | **所有 lane 必须从 `origin/master` pull，不 push** | PARALLEL_COMMAND_BOARD L170 |
+
+### W5 验证清单（供 A11 收口）
+
+- `cargo test --manifest-path src-tauri/Cargo.toml graph_query` PASS
+- `python3 scripts/check-graph-policy.py --self-test` PASS
+- `python3 scripts/check-graph-policy.py` PASS
+- `python3 scripts/check-graph-policy.py --expect-pending` PASS（如有 PENDING）
+- `git diff src-tauri/permissions/default-commands.toml` 0 新增命令行
+- `grep -c "graph_query\|graph_insert\|graph_delete" src-tauri/src/bridge.rs` 仅匹配占位/注释
+- `bash scripts/pre-merge.sh` ALL_PASS
+- `git diff --check` CLEAN
+- **A10 复审 PASS**（no unbounded maps / no network / no agent consumption / capability 真源单点 / redaction 双路径 / 0 新 Tauri 命令）
+- **A11 verification delta** 产出 `logs/checkpoints/M5-A11-W5-*.md`
+
+### W5 A1 不修订范围（本卡）
+
+- **§1 GOAL / §2 READ / §3 WRITE / §4 关键契约 / §5 FORBID / §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION / §9 DOC_BACKWRITE / §10 COMMIT / §11 FORBID 遵守记录**：A1 W5 **不动**（决策史保持 W0 原文；W5 AC 在本顶部段单列）。
+- **三份主文档 / ACL / Capability / pre-merge.sh / scripts/**：A1 W5 不动（policy 脚本由 A7 落地）。
+- **`NEXT` 标记**：A0 调度权；A1 不改字面值。
+- **本卡与 M5-7 关系**（A7 实施期双卡并行）：M5-7 DTO/容量/redaction/pure store；M5-8 pure query/policy/无命令。两条 AC 互补、不重叠。
 
 ---
 
