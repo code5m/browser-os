@@ -1,0 +1,3409 @@
+diff --git a/logs/checkpoints/M5-20260906/M5-0-overview.md b/logs/checkpoints/M5-20260906/M5-0-overview.md
+new file mode 100644
+index 0000000..46f49f0
+--- /dev/null
++++ b/logs/checkpoints/M5-20260906/M5-0-overview.md
+@@ -0,0 +1,253 @@
++# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0）
++
++> 生成：2026-09-06 08:00 CST · Lane A1（M5-W0 · docs only）
++> 基准：`a1a2061`（`master`，M4 已 PASS，已合数据库+调度并行成果） +  本地 `5ca8f9f docs(M5): dispatch architecture prework lanes`（A0 预研派发，**未 push**）
++> 性质：**纯文档展开**。零产品代码（未触 `src/`、`src-tauri/`、`package.json`、三份主文档、ACL/Capability/Manifest）；不移动 `NEXT`；不提交、不 push。
++> 依据：`PARALLEL_COMMAND_BOARD.md`（2026-09-05 23:55 版 · Batch Implementation Dispatch · Lane A1: M5 task-card expansion）
++> 入口：本卡体系的根文档，本目录下其它文件是各 M5-x 子卡
++
++---
++
++## 0. 本包目录结构
++
++```
++logs/checkpoints/M5-20260906/
++├── M5-0-overview.md            ← 本文件（总览/索引/依赖/合并顺序）
++├── M5-1-core-workspace-split.md        ← #7 → M5-1  核心 workspace 下沉
++├── M5-2-rmcp-mcp-policy.md             ← #7 → M5-2  内嵌 rmcp + McpGlobalPolicy
++├── M5-3-a2a-bidir-agent-kv.md          ← #7 → M5-3  A2A 双向 + agent_kv
++├── M5-4-agent-skill-runtime.md         ← #12 → M5-4 Agent/Skill runtime
++├── M5-5-agent-skill-commands.md        ← #12 → M5-5 Agent/Skill 命令与权限
++├── M5-6-agent-skill-ui.md              ← #12 → M5-6 Agent/Skill UI
++├── M5-7-graph-model-extract.md         ← #13 → M5-7 图模型与两阶段抽取
++├── M5-8-graph-store-query.md           ← #13 → M5-8 图存储与查询
++├── M5-9-graph-ui-agent-consume.md      ← #13 → M5-9 图谱 UI 与 Agent 消费
++├── M5-10-plugin-manifest-lifecycle.md  ← #15 → M5-10 插件 manifest 与生命周期
++├── M5-11-plugin-commands-isolation.md  ← #15 → M5-11 插件命令与隔离
++├── M5-12-plugin-ui.md                  ← #15 → M5-12 插件管理 UI
++├── M5-13-verification-matrix.md        ← 跨 M5 验证矩阵（合并门禁/单测/反向用例）
++└── M5-14-debt-ledger.md                ← M5 债务账（不在本批解决项）
++```
++
++每张 M5-x 子卡采用统一骨架（与 A1 M4 展开卡范式一致）：
++
++```
++0. 任务卡编号 / 需求映射 / 责任 Lane 候选
++1. GOAL           — 子卡目标（1 句）
++2. READ           — 必读文件
++3. WRITE          — 必改文件候选（不写实现，仅列契约落地位置）
++4. FORBID         — 红线
++5. COMMANDS       — 验收命令（实现期跑）
++6. PASS_CRITERIA  — 通过判据
++7. FAIL_ACTION    — 失败动作
++8. DOC_BACKWRITE  — 需回写的主文档段落
++9. COMMIT / NEXT  — 提交与下一卡
++```
++
++---
++
++## 1. M5-W0 / M5-W1 节奏
++
++| Wave | 状态 | 内容 | 责任 Lane | 准入 |
++|---|---|---|---|---|
++| **M5-W0**（**当前**） | 进行中 | 展开 M5-1~M5-12 子卡 + 架构预研（仅 docs） | A1（展开）+ A2/A5/A6/A7/A9（prework 文档）+ A10（安全复核）+ A11（验证矩阵） | M4 PASS（✅ `a1a2061`） |
++| **M5-W1**（待 A0 签发） | 锁定 | 签发 M5-1（`core workspace 下沉`）评估边界 → 决定 M5-2/3/4/5/7/8/10/11 的领取顺序与卡合并 | A0 签发 + 候选 Lane A13~A20（见 §6） | M5-W0 集成 + A0 签发 NEXT |
++| **M5-W2~R**（远期） | 锁定 | 依 M5-1 边界签发各 M5-x 实现批 + UI 批 | A14/A15/A16/A17/A18/A19/A20 | 各前置冻结 |
++
++> **本卡包覆盖范围**：M5-W0 全部。**不**为 M5-W1 写实现卡；**不**签字 Lane 号；**不**签合并顺序（合并顺序交 §5 草拟、A0 拍）。
++
++---
++
++## 2. M5 12 子卡索引（与 WBS 一致）
++
++| WBS 编号 | 需求 | 标题 | 子卡文件 | 核心 A*-M5 prework 输入 | 建议 Lane 候选 |
++|---|---|---|---|---|---|
++| **M5-1**  | #7  | 核心 workspace 下沉（core/web/mcp/cli） | `M5-1-core-workspace-split.md` | `A2-M5-core-20260906-0749.md`（A 路径 · 10 步） | A13 |
++| **M5-2**  | #7  | 内嵌 rmcp + `McpGlobalPolicy` + 首组 MCP 工具 | `M5-2-rmcp-mcp-policy.md` | `M5-7.a-prework-20260902-1055.md` + `A2-M5-core-*.md`（共用 capability.rs） | A14 |
++| **M5-3**  | #7  | A2A 双向 + `agent_kv`（多方言归一） | `M5-3-a2a-bidir-agent-kv.md` | `M5-7.a-prework-*.md` §4.3 A2A 草案 | A15 |
++| **M5-4**  | #12 | Agent/Skill runtime（`AgentDef`/`SkillDef`） | `M5-4-agent-skill-runtime.md` | `M5-12.a-prework-20260902-1055.md` | A16 |
++| **M5-5**  | #12 | Agent/Skill 命令与权限（安装/执行/对话） | `M5-5-agent-skill-commands.md` | `M5-12.a-prework-*.md` §4.1-4.2 | A16（同 A16 拆卡） |
++| **M5-6**  | #12 | Agent/Skill UI（对话/管理/权限预览） | `M5-6-agent-skill-ui.md` | A5/A6 prework（当前空） | A19 |
++| **M5-7**  | #13 | 图模型与可追溯抽取（两阶段 + `graph.rs`） | `M5-7-graph-model-extract.md` | `M5-13.a-prework-20260902-1055.md` | A17 |
++| **M5-8**  | #13 | 图存储与查询（邻接表 + DDL + 命令） | `M5-8-graph-store-query.md` | `A9-M5-graph-store-contract-20260906-0700.md` + `A9-M5-graph-scheduler-feed-*.md` | A17 |
++| **M5-9**  | #13 | 图谱 UI 与 Agent 消费（力导向 + RAG 注入） | `M5-9-graph-ui-agent-consume.md` | A8 prework（当前空） | A19 |
++| **M5-10** | #15 | 插件 manifest 与生命周期（签名/load/unload） | `M5-10-plugin-manifest-lifecycle.md` | `M5-15.a-prework-20260902-1055.md` + `A9-M5-plugin-form-feasibility-*.md` | A18 |
++| **M5-11** | #15 | 插件命令与隔离（安装/权限/审计/卸载） | `M5-11-plugin-commands-isolation.md` | `M5-15.a-prework-*.md` §4 + `A9-M5-plugin-form-feasibility-*.md` | A18 |
++| **M5-12** | #15 | 插件管理 UI（权限清单/配置/状态） | `M5-12-plugin-ui.md` | （无 prework；A18 实施期补） | A19 |
++
++> **Lane 号 A13~A20 为 A9 候选提案**（见 `A9-M5-A13plus-cards-20260906-0010.md`），A1 不强行指定；A0 在 M5-W1 签发时定。
++
++---
++
++## 3. 命名漂移警示（沿用 A9 prework §2）
++
++需求 # 号 与 WBS 编号 在历史 prework 文件名中混用，本批 A1 卡统一以 WBS 编号为准；如需引用历史 prework 文档，按下表对照：
++
++| 需求 # | WBS 编号 | 既有 prework 资产 |
++|---|---|---|
++| #7  A2P/A2A     | M5-1 / M5-2 / M5-3  | `M5-7.a-prework-20260902-1055.md` · `A2P-A2A-protocol-taskcard-20260902-1146.md` |
++| #12 Agent/Skill  | M5-4 / M5-5 / M5-6  | `M5-12.a-prework-20260902-1055.md` · `agent-skill-contract-taskcard-20260902-1146.md` |
++| #13 知识图谱    | M5-7 / M5-8 / M5-9  | `M5-13.a-prework-20260902-1055.md` · `graph-model-taskcard-20260902-1146.md` |
++| #15 插件系统    | M5-10 / M5-11 / M5-12 | `M5-15.a-prework-20260902-1055.md` · `plugin-permission-taskcard-20260902-1146.md` · `plugin-runtime-taskcard-20260902-1146.md` |
++
++**不**再用 `M5-7/12/13/15.a` 这种"看起来像 WBS"实为"需求 #"的文件名新建文档。
++
++---
++
++## 4. 依赖图（A1 视角）
++
++```
++                ┌────────── M4 PASS ✅ a1a2061 ──────────┐
++                │                                         │
++                ▼                                         ▼
++       A2 prework 已有（A 路径）         A9 prework（3 份契约 + split + A13plus）
++                │                                         │
++                └──────────────┬──────────────────────────┘
++                               ▼
++                    ┌──── M5-1 workspace 下沉评估 ────┐   ← 必最先（A0 签发）
++                    │  决 5 成员边界（core/web/mcp/cli）│
++                    │  决 capability.rs 放置位置       │
++                    └────────────┬────────────────────┘
++                                 ▼
++        ┌────────────────────────┼────────────────────────┐
++        ▼                        ▼                        ▼
++  M5-2 rmcp + Policy      M5-4 Agent/Skill runtime    M5-7 图模型与抽取
++  (复用 A3/A4 DB API)     (复用 M2-4 run_script)      (依赖 A3/A4 + A7 事件)
++        │                        │                        │
++        ▼                        ▼                        ▼
++  M5-3 A2A + agent_kv     M5-5 Agent/Skill 命令    M5-8 图存储与查询
++                          (与 M5-2 共用 capability.rs)  (复用 M5-1 workspace)
++                                │                        │
++                                ▼                        ▼
++                          M5-6 Agent/Skill UI      M5-9 图谱 UI + Agent 消费
++                                                      (依赖 M5-4 RAG 注入)
++
++  ┌──── 独立分支：#15 插件系统 ────────────────────────────┐
++  │  M5-10 manifest 生命周期（先 A0 裁形态①/②/③）          │
++  │       ↓                                               │
++  │  M5-11 命令与隔离（独立 stdio 通道？or webview 二开？） │
++  │       ↓                                               │
++  │  M5-12 插件管理 UI                                     │
++  └────────────────────────────────────────────────────────┘
++
++  ▼ 横切依赖
++  - M5 全部新命令（graph_*/skill_*/plugin_*/mcp_*/a2a_*）一律插 `list_artifact_images` 之前（坑位②）
++  - M5 全部新 capability 走 `capabilities/default.json` 通用权限或新建专用（待 M5-1 决）
++  - M5 全部审计走 `audit.json` 1000 上限（K5）+ 各自独立日志（mcp-calls.json / skill-runs.json / plugin-invokes.json）
++  - M5 全部退出收口挂 ShutdownCoordinator（沿用 M0-2 范式，索引依赖单测断言）
++  - M5 全部新增 schema_version 走 `atomic_write`（沿用 M3 范式）
++  - A6 已冻结：新建任务默认 `enabled=false`；tick 内禁写审计；判重真相源 `tasks.json.last_fired_at`
++  - A7 已冻结：`stop-scheduler` 注册在 `stop-background-workers` 之后；图谱维护任务复用此通道
++```
++
++---
++
++## 5. 合并顺序（A1 草拟，交 A0 拍）
++
++> **不签字**。仅给"按依赖最小化"的草拟顺序；A0 在 M5-W1 签发时定。
++
++| 序 | 卡 | 关键产出 | 依赖 | 与 A9 候选 A13~A20 映射 |
++|---|---|---|---|---|
++| 1 | M5-1 | 5 成员 workspace + capability.rs 位置 + 主应用可构建性 | M4 PASS ✅ | A13 |
++| 2 | M5-2 | `rmcp` server 骨架 + `McpGlobalPolicy` + 首期能力白名单 | A3/A4 DB API + M5-1 | A14 |
++| 2' | M5-4 | `AgentDef`/`SkillDef` + `skill_runtime.rs` + `capability.rs` 共用首版 | A13 + M2-4 | A16（与 M5-2 并行需先划模块边界） |
++| 3 | M5-8 | 图邻接表 + `GraphQuery` DTO + `graph_*` 命令 | A3/A4 DB API + M5-1 | A17 |
++| 3' | M5-5 | `skill_*`/`agent_chat` 命令 + 二次确认闸门 + `skill-runs.json` | M5-2 (capability) + M5-4 | A16 |
++| 4 | M5-3 | A2A 协议 + `agent_kv` | M5-2 (能力层) | A15 |
++| 4' | M5-7 | `graph.rs` 抽取器 + `GraphEvent` 上游钩子 | A7 事件 + M5-8 | A17 |
++| 5 | M5-10 | 插件形态裁定（默认形态③声明式）+ `PluginManifest` | A0 形态裁定 | A18 |
++| 5' | M5-11 | 插件命令 + 权限强制层 + `plugin-invokes.json` | M5-2 (capability) + M5-10 | A18 |
++| 6 | M5-6 / M5-9 / M5-12 | UI 三件套（对话/图谱/插件） | 各后端 DTO 稳定 | A19 |
++| 滚动 | M5 安全审查 | 各批次的红线复审 | 滚动 | A20 |
++
++---
++
++## 6. 与 A9 候选卡（A13~A20）的差
++
++A9 候选卡（`A9-M5-A13plus-cards-20260906-0010.md`）与本批 A1 卡基本一致，差异如下：
++
++| 项 | A9 候选卡 | A1 本批卡 | 处置 |
++|---|---|---|---|
++| Wave 标注 | 文档 R/R+1/R+2/R+3/滚动 | 同 A9 | 沿用 |
++| Lane 号 | A13~A20 占位 | 不写 Lane 号（**A0 签发时定**） | A1 边界（避免与 A0 冲突） |
++| 卡的颗粒度 | 一卡跨多 WBS（如 A14 跨 M5-2） | 一卡 = 一个 WBS（更细） | A1 比 A9 更细；M5-W1 由 A0 决定是否合并相邻 WBS |
++| `capability.rs` 放置 | 隐含在 A14/A16 | M5-1 子卡显式列为"必最先决" | A1 更强调 |
++| 插件形态决策 | 交 A0 | 同 A9（默认形态③） | 一致 |
++| 债务账 | 未列 | `M5-14-debt-ledger.md` 显式分账 | A1 补 |
++
++---
++
++## 7. 红线总览（M5 全包适用）
++
++> 继承 K 系列（详细设计）+ A6/A7 冻结 + 坑位② ⑤：
++
++1. **禁第二执行路径**：M5 全部执行体（Agent 调用工具、Skill 运行、图维护任务、插件调用脚本）**只走** M2-4 `script_runner` 单通道；不引 `std::process::Command` 第二路径；插件形态①（独立 stdio）已否决。
++2. **禁 npm 分包**：`rmcp` 必须纯 Rust 内嵌（`详细设计 §7`）；不引 `npx` 任何东西。
++3. **能力白名单共用一份**：A2P / A2A / Skill / Plugin / Agent **共用** `src-tauri/src/capability.rs`；禁止各写一份漂移。
++4. **凭据不入图谱/日志/审计**（K3）：LLM Key、Keyring 条目、API Token 不进入 `GraphNode.props` / `agent_kv.json` / `audit.json`。
++5. **审计不刷爆**（K5）：高频调用走独立文件（`mcp-calls.json` / `skill-runs.json` / `plugin-invokes.json`），每文件独立 1000 上限；`audit.json` 仅记低频关键事件。
++6. **新命令入 ACL**：M5 全部新命令（`graph_*`/`skill_*`/`plugin_*`/`mcp_*`/`a2a_*`）一律插 `list_artifact_images` 之前（坑位②）。
++7. **退出收口挂协调器**：M5 各 `*Shutdown`（Graph/Skill/Agent/Plugin/MCP/A2A）必须挂 `ShutdownCoordinator`，注册序索引依赖需单测断言（沿用 `O-A1-5` 提醒）。
++8. **新建任务默认 `enabled=false`**（R-A6-1）：图谱维护任务、Agent 周期任务、Skill 调度触发一律默认 `enabled=false`，显式开启。
++9. **`withGlobalTauri=true` 红线**：插件 webview **不得**接触 `window.__TAURI__` 全局；Tauri v2 不支持按 webview 关全局时，**形态②插件放弃**，改形态③声明式（参 `A9-M5-plugin-form-feasibility-20260906-0700.md`）。
++10. **`atomic_write` 唯一**：图 schema 版本、agent_kv、plugin_grants、mcp_policy、a2a_tasks 等所有持久化走 `session::atomic_write`（沿用 M3 范式）。
++11. **派生索引层原则**（图谱）：`GraphNode.props` 不存主数据正文；可重建；`source=Manual` 优先不被自动抽取覆盖。
++12. **Skill 禁内联**（K6）：`SkillDef.exec` 仅 `ScriptRef` / `CommandRef` / `Sequence`（无内联 shell 字符串）；执行体复用 `run_script` 走 M2-3.a 危险参数校验。
++
++---
++
++## 8. 验证矩阵入口
++
++详见 `M5-13-verification-matrix.md`：
++
++- 协议契约测试（A2P 消息格式 / A2A 幂等 / MCP capability 解析）
++- 隔离与权限测试（Skill 越权 / 插件 manifest_hash 变更失效 / Agent 白名单拒绝）
++- 集成测试（GraphEvent 上游写 → 抽取 → 查询）
++- 恢复测试（`graph.db` 损坏备份 / agent_kv 容量满策略 / mcp-calls.json 滚动裁剪）
++- 性能基线（MCP 工具响应 / 图查询 depth=2 万节点 / LLM token 节流）
++- 升级/回滚测试（schema_version 迁移 / 插件更新 manifest_hash 重置授权）
++
++---
++
++## 9. 债务账入口
++
++详见 `M5-14-debt-ledger.md`：
++
++- 形态② 插件（webview 内）暂时**不实现**（`withGlobalTauri` 全局未按 webview 关闭前）
++- `withGlobalTauri` 全局化影响 `src/stores/useSystemStore.ts:84` 唯一引用——M5-1 评估期一并封/迁
++- A2A 首期是否真双向（仅"被调"or"既可被调又可委派"）——A0 拍
++- 智能期图抽取（`source=ai`）首期仅留 trait，**不实现** LLM 触发
++- LLM 用量配额/费用统计首期是否做
++- `Similar` 关系相似度算法与阈值首期只做同 hash 精确匹配
++- `graph_export("graphml")` 首期返回"暂不支持"
++- 图谱库 `props` JSON 反序列化容错（首期严格 schema，宽容版本做迁移期）
++
++---
++
++## 10. 回写计划（按接手清单 §5 模板）
++
++A1 checkpoint 文档另存 `logs/checkpoints/M5-A1-expansion-20260906-0800.md`（与 A0-M5-W0-dispatch 同级），含：
++
++```
++CHECKPOINT=M5-A1-expansion
++STATUS=PASS（待 A0 集成后定）
++EXECUTOR=A1 (CodeBuddy / M3-mini)
++MODEL=M3-mini
++ROUTE=AI:DEEP
++MODEL_DEVIATION=none
++COMMIT=<待 A0 拣入后填>
++VERIFY=见 §5.2 命令全 PASS（仅文档工作树）
++NEXT=M5-W1（待 A0 签发）
++```
++
++---
++
++## 11. FORBID 遵守记录
++
++- 未写产品代码（`src/`、`src-tauri/`、`package.json` 一字未动）
++- 未触 `scripts/pre-merge.sh`、未触三份主文档
++- 未触 `permissions/default-commands.toml`、未触 `capabilities/default.json`
++- 未移动 `NEXT`（仍 `M5-W0`，A1 写完 14 张 docs 后 NEXT 不变）
++- 未提交、未 push（本卡包为 A0 待拣入的待选文档）
++- 14 张 docs 全新增独立文件，与 A2/A5/A6/A7/A9 既有 prework 文档无文件交集
++- 所有"已冻结"事实均以来源 file:line 标注（继承自 prework 资产，本批仅做整合）
+diff --git a/logs/checkpoints/M5-20260906/M5-1-core-workspace-split.md b/logs/checkpoints/M5-20260906/M5-1-core-workspace-split.md
+new file mode 100644
+index 0000000..f452310
+--- /dev/null
++++ b/logs/checkpoints/M5-20260906/M5-1-core-workspace-split.md
+@@ -0,0 +1,189 @@
++# M5-1 核心 workspace 下沉（Core Workspace Extraction）
++
++> 子卡 ID：**M5-1** · 需求 #7（A2P/A2A）的实现前置 · `[S3|LEVERAGE:3|COMPLEX|AI:DEEP|R:xhigh]`
++> 责任 Lane 候选：**A13**（A9 提案；A0 签发时定）
++> 父卡：`详细设计与实施计划.md` L562（`M5-1 核心 workspace 下沉`）
++> 主预研：`logs/assist/A2-M5-core-20260906-0749.md`（10 步 A 路径 + 3 切片 + 4 反向边违例）
++> 配套：`logs/assist/A9-M5-split-20260905-2359.md` §5 · `A9-M5-A13plus-cards-20260906-0010.md` A13
++
++---
++
++## 0. 编号与锚定
++
++- 批次任务号 `M5-1`；需求号 #7；WBS L562 一致。
++- 依赖：M4 PASS（`a1a2061`）✅、`A2-M5-core-*.md` ✅、A0 签发 `M5-1.a` 实施卡。
++- 唯一必先解除的循环依赖：`scheduler.rs` → `bridge::AppState`（`scheduler.rs:26/28/259/491/588/617/622/742`），是 M5 全部能力（MCP/Agent/Graph/Plugin）能否复用 scheduler 的关键。
++
++---
++
++## 1. GOAL
++
++把当前单 crate（23 模块 / 24,859 行 / `main.rs` 扁平 mod）拆为 **`mvp-core` 库 crate**（纯逻辑，零 Tauri 依赖）+ **现有二进制**（Tauri 专属），**主应用始终可独立构建**。彻底解除 `scheduler → bridge::AppState` 反向边；为 M5-2/4/7/10 等后续能力提供"纯逻辑落 core / 命令面与 transport 落二进制"的双层基础。
++
++**不是**：下沉后立刻做新能力（M5-2/4/7/10 是其它卡）。**是**：把脚手架搭好，红线卡住，让后续每张 M5-x 都能无副作用地生长。
++
++---
++
++## 2. READ（必读）
++
++1. `logs/assist/A2-M5-core-20260906-0749.md`（**全读**，主预研）
++2. `src-tauri/src/domain.rs`（1804 行，契约根，**全读**）
++3. `src-tauri/src/scheduler.rs`（996 行，重点看 L26-28/259/491/588/617/622/742 反向边）
++4. `src-tauri/Cargo.toml`（现有依赖清单、`[lib]` 是否存在）
++5. `scripts/pre-merge.sh`（基线 + 挂载位）
++6. `详细设计与实施计划.md` L494-507（§7 M5 总目标）
++7. `M5-0-overview.md` §7 红线总览
++
++---
++
++## 3. WRITE（必改文件候选 · 不写实现，仅列契约落地位置）
++
++| 文件 | 性质 | 说明 |
++|---|---|---|
++| `src-tauri/Cargo.toml` | 修改 | 加 `[lib] name="mvp_browser_os_core" path="src/core/mod.rs"`；保留 `[[bin]]`；**首切同 package 双 target**（阶段一），避免 workspace 嵌套冲突（坑位：现有 `tauri-browser-tabs/` 已是另一 workspace，**禁止**未排除地嵌套） |
++| `src-tauri/src/core/mod.rs` | **新增** | core 入口；re-export 切片 0a 搬入的 10 个 A 类模块 |
++| `src-tauri/src/core/domain.rs` 等 | **新增**（移动） | 切片 0a 把 A 类模块整文件带测试搬入 |
++| `src-tauri/src/main.rs` | 修改 | 加 `pub use mvp_browser_os_core::*;` 过渡 shim；其余模块的 `use crate::domain` 仍可编译 |
++| `src-tauri/src/scheduler.rs` | 修改 | 切片 1：抽 `RootsProvider` trait；`bridge::allowed_roots(app)` 改为 trait 方法；**此时反向边彻底解除** |
++| `src-tauri/src/script_runner.rs` | 修改 | 切片 1：定义 `ProgressSink` trait；`tauri::Emitter` 改 trait 方法 |
++| `src-tauri/src/workspace.rs` `src-tauri/src/sync.rs` `src-tauri/src/tasks.rs` | 修改 | 切片 1：抽 `PathResolver` trait；`app.path().data_dir()` 改 trait 方法 |
++| `scripts/pre-merge.sh` | 修改 | 加 `check-core-boundary.sh` 断言：`grep -rl 'use tauri' src-tauri/src/core` 必须为空；`cargo tree -p mvp_browser_os_core` 不含 `tauri` |
++| `scripts/check-core-boundary.sh` | **新增** | 切片 0a 完成后挂载；自检 `--self-test` 必须 2 好样本零违规 + 2 合成坏样本全检出 |
++
++> 阶段二（M5-1.b 可选）：提升为根 `Cargo.toml [workspace] members = ["./src-tauri", "./crates/core"]`；**待 A0 在 M5-1.b 拍**。A1 不强行推进。
++
++---
++
++## 4. FORBID
++
++- **不**引任何 Tauri 依赖入 `mvp-core`（含 `tauri`/`tauri-build`/任何 tauri plugin crate）
++- **不**在 core 内 `use crate::bridge` 或任何二进制模块（解除反向边）
++- **不**嵌套 workspace：`tauri-browser-tabs/` 已是另一 workspace，根 `Cargo.toml [workspace]` 若建必先 exclude 该路径
++- **不**搬 C 类（`bridge`/`main`/`terminal`/`grid_process`/`tools`/`shutdown`）
++- **不**在切片内静默丢弃调用：M4 护栏（无第二执行路径 / `check_invocation_source` / Keyring / 审计脱敏 / 结果上限）随模块一并搬入且测试随迁
++- **不**改 `audit.json` 1000 上限（K5）、不破 `tick 内禁写审计`（A6 冻结）
++- **不**改 `last_fired_at` 判重真相源（A6 冻结）
++- **不**改 `stop-scheduler` 注册在 `stop-background-workers` 之后的注册序（A7 冻结）
++- **不**移动 `NEXT`（仍为 M5-W0）
++- **不** push
++
++---
++
++## 5. COMMANDS（实现期跑）
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++
++# A. 切片 0a 实施后立即跑（必须空）
++grep -rl 'use tauri' src-tauri/src/core/ | tee /tmp/core-tauri-hits   # 应为空
++
++# B. core 不依赖 tauri
++cargo tree -p mvp_browser_os_core 2>&1 | grep -E "tauri|tauri-build" | tee /tmp/core-deps    # 应为空
++
++# C. 切片 1 后反向边已解除
++grep -nE 'use crate::bridge' src-tauri/src/core/scheduler.rs   # 应为空
++
++# D. 二进制仍全绿
++cargo test --manifest-path src-tauri/Cargo.toml
++cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
++
++# E. 边界脚本自检
++bash scripts/check-core-boundary.sh --self-test
++bash scripts/pre-merge.sh   # ALL_PASS
++
++# F. 主应用可构建性
++cargo build --manifest-path src-tauri/Cargo.toml --release
++```
++
++---
++
++## 6. PASS_CRITERIA
++
++| # | 判据 | 验证 |
++|---|---|---|
++| 1 | A 类 10 个模块全在 `src-tauri/src/core/`，二进制侧过渡 shim 完整 | 命令 A 0 命中 + `git diff --stat` |
++| 2 | `mvp-core` 零 Tauri 依赖 | 命令 B 0 命中 |
++| 3 | `scheduler → bridge::AppState` 反向边彻底解除 | 命令 C 0 命中 |
++| 4 | `cargo test` 全绿（含 `mvp_browser_os_core::domain` 等新 lib target） | 命令 D |
++| 5 | `check-core-boundary.sh --self-test` PASS（2 好 + 2 坏） | 命令 E |
++| 6 | `pre-merge.sh` ALL_PASS | 命令 E |
++| 7 | M4 护栏（无第二执行路径 / 凭据 / 审计脱敏 / 结果上限）随迁无遗漏 | 整文件带 `#[cfg(test)]` 一起移 |
++| 8 | 切片 0b 完成：契约常量收口到 `domain.rs`（`HARD_GRACE_SECS`/`MAX_TIMEOUT_SECS`/`MAX_TEXT_FIELD_BYTES` 等） | `grep -n 'HARD_GRACE_SECS' src-tauri/src/core/domain.rs` 命中 |
++| 9 | 二进制 `release` 构建通过 | 命令 F |
++| 10 | 不破 K1（ACL 末条恒为 `list_artifact_images`）/K3（凭据不出 core）/K5（审计 1000） | 静态断言 |
++
++---
++
++## 7. FAIL_ACTION
++
++| 失败 | 动作 |
++|---|---|
++| 反向边未解 | 阻塞合入；`scheduler.rs` 仍是 M5 全部能力的拦路虎 |
++| `cargo tree -p core` 命中 tauri | 阻断：core 必须纯逻辑 |
++| 任一护栏随迁遗漏 | 阻断：必须整文件带测试迁；M4 护栏是 M5 基础 |
++| `check-core-boundary --self-test` 不全检出合成坏样本 | 修脚本（不修实现避过）；脚本必须真起作用 |
++| 切片 0a 后 `cargo test` 失败 | 改回单 crate；先找编译错根因再推进切片 1 |
++| `withGlobalTauri` 全局暴露导致 core 边界漏 | 阻塞：先评估 `withGlobalTauri` 是否可按 webview 关闭（M5-10 决定） |
++
++---
++
++## 8. DOC_BACKWRITE
++
++实施期（不在 A1 W0 范围）需回写：
++
++1. `详细设计与实施计划.md` L562 把 `[ ]` 改 `[x]`，并补"切片 0a/0b/1 完成度"备注
++2. `后续需求TODO.md` §7 状态从 `TODO` 改 `PARTIAL`（仅 #7 A2P/A2A 的子集）
++3. `AI-模型切换与接手清单.md` §1 NEXT 移至 `M5-1.b`（或 `M5-2`，由 A0 拍）
++4. `logs/checkpoints/M5-1.a-2026MMDD-HHMM.md`（实施卡 checkpoint，按 §5 模板）
++5. `M5-14-debt-ledger.md` 减少"R1 反向边"项（如未减，标注 "M5-1.a 仍残留 N 处"）
++
++---
++
++## 9. COMMIT / NEXT
++
++- **COMMIT**：本卡文档无 commit；A0 拣入后，签 `M5-1.a` 实施卡的 commit 由 A2（或指派）填
++- **NEXT（本卡完成后由 A0 拍）**：
++  - 若 A0 签 `M5-1.a`（切片 0a+0b）→ 切回 A2 实施
++  - 若 A0 签 `M5-1.b`（含切片 1/2，B 类搬入）→ 切回 A2 实施，工作树需注意 `scheduler.rs` 改动可能与 A7 冲突
++  - 若 A0 跳 `M5-1` 直发 `M5-2` → 反向边未解，**阻断**
++
++---
++
++## 10. 反向边与契约常量随迁清单（给实施者参考）
++
++> 不写实现，仅列需随迁的精确行号（A2 prework §1.1 + §4 整理）
++
++### 反向边（4 处）
++
++| 文件:行 | 形态 | 解除方式 |
++|---|---|---|
++| `scheduler.rs:26` | `use crate::bridge::AppState;` | 切 `RootsProvider` trait |
++| `scheduler.rs:28` | 同上 | 同上 |
++| `scheduler.rs:259` | `bridge::allowed_roots(app)` 调用 | 改 trait 方法 |
++| `scheduler.rs:491` | 同上 | 同上 |
++| `scheduler.rs:588` | `&AppState` 取 | 改注入 |
++| `scheduler.rs:617` | 同上 | 同上 |
++| `scheduler.rs:622` | 同上 | 同上 |
++| `scheduler.rs:742` | 同上 | 同上 |
++| `domain.rs:1525` | 测试反向 import `script_runner` 常量 | 切片 0b 收口 |
++| `domain.rs:1526` | 测试反向 import `security_policy` 常量 | 切片 0b 收口 |
++
++### 契约常量（切片 0b 必迁）
++
++| 常量 | 现位置 | 迁至 |
++|---|---|---|
++| `HARD_GRACE_SECS` | `script_runner.rs` | `domain.rs` |
++| `MAX_TIMEOUT_SECS` | `script_runner.rs` | `domain.rs` |
++| `MAX_TEXT_FIELD_BYTES` | `security_policy.rs` | `domain.rs` |
++| `MAX_QUERY_*` 系列 | `database.rs` | 已在 `domain.rs`（M4-1 已冻结） ✅ |
++| `SCHED_*` 系列 | `domain.rs` | 已在 `domain.rs`（M4-7 已冻结） ✅ |
++
++---
++
++## 11. FORBID 遵守记录
++
++- 本卡为 A1 M5-W0 文档展开，**未写任何产品代码**
++- 未触 `src-tauri/src/`、`src-tauri/Cargo.toml`、`scripts/pre-merge.sh`、三份主文档
++- 未移动 `NEXT`（仍 M5-W0）
++- 未提交、未 push
++- 与 A2 prework 文档无文件冲突（`logs/assist/A2-M5-core-*.md` 与本卡分别在 `assist/` 与 `checkpoints/M5-20260906/`）
+diff --git a/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md b/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md
+new file mode 100644
+index 0000000..53045cc
+--- /dev/null
++++ b/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md
+@@ -0,0 +1,233 @@
++# M5-10 插件 manifest 与生命周期（签名/load/unload）
++
++> 子卡 ID：**M5-10** · 需求 #15（插件系统）· `[S3|LEVERAGE:2|COMPLEX|AI:DEEP|R:xhigh]`
++> 责任 Lane 候选：**A18**
++> 父卡：`详细设计与实施计划.md` L574（`M5-10 插件 manifest 与生命周期`）
++> 主预研：`logs/assist/M5-15.a-prework-20260902-1055.md` · `logs/assist/A9-M5-plugin-form-feasibility-20260906-0700.md`（**默认形态③声明式**）
++> 配套：`M5-11-plugin-commands-isolation.md`（命令与隔离）· `M5-12-plugin-ui.md`（管理 UI）
++
++---
++
++## 0. 编号与锚定
++
++- 批次任务号 `M5-10`；需求号 #15；WBS L574 一致。
++- 依赖：A0 拍形态决策（**默认形态③声明式**）+ M5-2 ✅（capability.rs 共用）
++- **关键决策交 A0 拍**：① 形态（**默认形态③**——Tauri v2 不支持按 webview 关全局，**形态②放弃**）② 签名方案（**默认 Ed25519 + 本地受信任 keys 目录**）
++
++---
++
++## 1. GOAL
++
++冻结 `PluginManifest` schema（id / version / entry / capabilities / hash / signature / min_app_version）；实现插件加载/卸载生命周期（manifest 解析 → 签名校验 → capability 校验 → 加载到 `plugins_dir()` → 注册到 `capability.rs` → 启用 / 停用 / 卸载）；**默认形态③**——插件是"声明式资源包"（图标 + 入口 URL + 权限声明），**不**是独立 webview，**不**是独立 stdio 进程。
++
++---
++
++## 2. READ
++
++1. `logs/assist/M5-15.a-prework-20260902-1055.md`（**全读**，manifest/签名/形态）
++2. `logs/assist/A9-M5-plugin-form-feasibility-20260906-0700.md`（**全读**，三形态可行性）
++3. `M5-2-rmcp-mcp-policy.md` §4.2-4.3（capability.rs 共用）
++4. `M5-4-agent-skill-runtime.md` §4.2（`SkillExec` 禁内联，K6）
++5. `src-tauri/src/workspace.rs`（`plugins_dir()`）
++6. `src-tauri/src/keyring_store.rs`（签名 key 存放）
++7. `src-tauri/src/domain.rs`（契约根，**全读**）
++
++---
++
++## 3. WRITE
++
++| 文件 | 性质 | 说明 |
++|---|---|---|
++| `src-tauri/src/plugin_manifest.rs` | **新增** | Manifest 解析 + 校验 + 签名验证 |
++| `src-tauri/src/plugin_lifecycle.rs` | **新增** | load / unload / enable / disable 状态机 |
++| `src-tauri/src/plugin_signature.rs` | **新增** | Ed25519 签名 + 验证 + 本地受信任 keys |
++| `src-tauri/src/plugins/` | **新增目录** | `plugins_dir()` 默认 `~/.local/share/.../plugins/` |
++| `src-tauri/src/keys/trusted-pubkeys.json` | 持久化 | 受信任公钥列表（受 keyring 保护访问） |
++| `src-tauri/src/domain.rs` | 新增类型 | `PluginManifest` / `PluginState` / `PluginCapability` / `PluginSignature` |
++| `src-tauri/src/capability.rs` | 扩展 | 加 `PLUGIN_CAPABILITY_V1` 列表（首期空，按需逐个评估） |
++| `src-tauri/src/bridge.rs` | 修改 | `plugin_install` / `plugin_uninstall` / `plugin_list` / `plugin_get` / `plugin_enable` / `plugin_disable` / `plugin_keys_add/list/remove`（**全进 ACL**） |
++| `src-tauri/permissions/default-commands.toml` | 修改 | 插 `plugin_*` 共 10 条于 `list_artifact_images` 之前 |
++| `src/types.ts` | 新增 | TS 镜像 `PluginManifest` |
++
++---
++
++## 4. 关键契约
++
++### 4.1 形态决策（默认形态③ 声明式）
++
++| 形态 | 内容 | 决策 |
++|---|---|---|
++| ① 独立 stdio 进程 | 插件 = 独立可执行 + stdio 通信 | **否决**（与"无第二执行路径"冲突） |
++| ② 独立 webview（host 进程） | 插件 = webview，访问 `window.__TAURI__` | **否决**（`withGlobalTauri` 全局未按 webview 关闭，跨插件泄露） |
++| **③ 声明式资源包**（默认） | 插件 = 图标 + 入口 URL + 权限声明 + JS 钩子 | **采用** |
++
++**形态③插件的本质**：
++- 入口 URL 走既有 webview 框架（不开新 webview）
++- JS 钩子通过受控 `bridge.ts` 子集调用（不允许裸 `invoke`）
++- 资源文件（图标/文案）走 `workspace/` 同款隔离
++
++### 4.2 `PluginManifest` schema
++
++```rust
++pub struct PluginManifest {
++    pub id: String,                  // 反向域名规范
++    pub version: String,             // semver
++    pub display_name: String,
++    pub description: String,
++    pub min_app_version: String,     // semver，过期拒绝
++    pub entry: PluginEntry,          // 形态③
++    pub capabilities: Vec<PluginCapability>,  // 引用 capability.rs
++    pub hash: String,                // 资源包 sha256
++    pub signature: PluginSignature,  // Ed25519
++    pub metadata: serde_json::Value,
++}
++pub struct PluginEntry {
++    pub entry_url: String,           // 形态③ 入口 URL（与既有 webview 同源）
++    pub icon: String,                // 图标相对路径
++}
++pub struct PluginCapability {
++    pub capability: String,          // 引用 capability.rs 常量
++    pub reason: String,              // 为什么需要此 capability
++}
++pub struct PluginSignature {
++    pub algorithm: String,           // "Ed25519"
++    pub key_id: String,              // 引用 trusted-pubkeys.json 的 key
++    pub value: String,               // base64 签名
++    pub signed_at: DateTime<Utc>,
++}
++```
++
++### 4.3 生命周期状态机
++
++```
++Discovered → Validating → Signed(OK|Failed) → Loaded → Enabled → Disabled
++                                                    ↓
++                                                Uninstalled
++```
++
++- `Discovered`：扫描 `plugins_dir()` 找到新 manifest
++- `Validating`：schema 校验 + `min_app_version` 校验
++- `Signed`：签名验证（trusted-pubkeys.json 必须在 key）
++  - **Failed**：拒绝加载 + 写 `audit.json` + 通知 UI
++- `Loaded`：解压到 `plugins_dir()/<id>/<version>/` + 校验 hash
++- `Enabled`：注册到 `capability.rs` + UI 可见
++- `Disabled`：保留资源但移除 capability（可重新启用）
++- `Uninstalled`：删 `plugins_dir()/<id>/`
++
++### 4.4 签名验证
++
++- 签名算法：**Ed25519**（默认）
++- 公钥存 `~/.local/share/.../keys/trusted-pubkeys.json`（keyring 保护读写）
++- 首次安装要求用户提供 pubkey（或开发者自带）
++- 升级时必须验证 `hash` + `signature` 同时通过
++- `manifest_hash` 变更 → 已启用插件自动 `Disabled`，等用户重新确认
++
++### 4.5 二次确认（与 MCP/Skill 范式一致）
++
++- 任何 `plugin_install` / `plugin_enable` → 走两段式确认闸门
++- 必须显式列 `capabilities`（**逐项**）+ 来源 + 风险
++
++---
++
++## 5. FORBID
++
++- **不**采用形态①/形态②（A9 feasibility 已决）
++- **不**让插件接触 `window.__TAURI__` 全局（K1 + 形态③）
++- **不**让 `PluginManifest.hash` 与 `signature` 校验任一失败时仍加载
++- **不**让 `capability.rs` 漂移（A2P / A2A / Skill / Plugin / Agent 共用）
++- **不**让 `trusted-pubkeys.json` 被未授权修改
++- **不**让 `manifest_hash` 变更不触发重新确认
++- **不**破 K1（ACL 末条恒为 `list_artifact_images`）/K3/K5
++- **不**移动 `NEXT`、不 push
++
++---
++
++## 6. COMMANDS
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++
++# A. 现状复核
++ls src-tauri/src/plugins src-tauri/src/keys 2>&1
++grep -nE "PluginManifest|plugin_lifecycle" src-tauri/src | head
++
++# B. ACL 末条
++grep -n "list_artifact_images" src-tauri/permissions/default-commands.toml | tail -5
++
++# C. 反向用例
++# N1: 形态② 插件（webview 访问 window.__TAURI__）→ 阻断
++# N2: 签名验证失败 → 拒绝加载 + 审计
++# N3: min_app_version 过期 → 拒绝加载
++# N4: trusted-pubkeys.json 不含 key_id → 拒绝
++# N5: 资源包 hash 与 manifest 不一致 → 拒绝
++# N6: manifest_hash 变更 → 插件自动 Disabled
++# N7: 插件安装不弹闸门 → 阻断
++
++# D. 性能基线
++# 10 插件安装 < 5s
++# 100 插件列表 < 100ms
++
++# E. 编译与基线
++cargo test --manifest-path src-tauri/Cargo.toml
++cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
++
++# F. 门禁
++bash scripts/pre-merge.sh
++```
++
++---
++
++## 7. PASS_CRITERIA
++
++| # | 判据 | 验证 |
++|---|---|---|
++| 1 | `PluginManifest` / `PluginState` 落 `domain.rs` | `grep` 命中 |
++| 2 | 形态③ 是唯一形态；形态①/② 实现不存在 | `grep` 0 命中 |
++| 3 | 签名验证失败拒绝加载 | 单测 N2 |
++| 4 | `min_app_version` 过期拒绝 | 单测 N3 |
++| 5 | `trusted-pubkeys.json` 缺失 key_id 拒绝 | 单测 N4 |
++| 6 | 资源包 hash 校验失败拒绝 | 单测 N5 |
++| 7 | `manifest_hash` 变更触发 Disabled | 单测 N6 |
++| 8 | 安装必弹闸门 | 单测 N7 |
++| 9 | ACL 末条仍为 `list_artifact_images` | 命令 B |
++| 10 | `cargo test` 全绿 | 命令 E |
++| 11 | `pre-merge.sh` ALL_PASS | 命令 F |
++
++---
++
++## 8. FAIL_ACTION
++
++| 失败 | 动作 |
++|---|---|
++| 形态①/② 出现 | **红线失守**：与 K1/形态决策冲突 |
++| 签名校验被绕过 | **红线失守**：阻断 |
++| `trusted-pubkeys.json` 越权改 | 立即回滚 + 审计 + 提示用户检查 |
++| `manifest_hash` 变更不触发确认 | 阻断（用户数据安全） |
++| 闸门被绕过 | 阻断 |
++| `cargo clippy` warning > 13 + 本卡新增 | 按基线清零再合入 |
++
++---
++
++## 9. DOC_BACKWRITE
++
++1. `详细设计与实施计划.md` L574 `[ ]` → `[x]`
++2. `后续需求TODO.md` §15 状态 `PARTIAL`（留 `M5-11/12`）
++3. `AI-模型切换与接手清单.md` NEXT 移至 `M5-11`
++4. `logs/checkpoints/M5-10.a-2026MMDD-HHMM.md`
++5. `M5-14-debt-ledger.md` 增项：第三方签名服务（是否首期做） / 插件商店
++
++---
++
++## 10. COMMIT / NEXT
++
++- **COMMIT**：A0 拣入后由 A18 实施填
++- **NEXT**：M5-11（命令与隔离），同 A18 拆卡
++
++---
++
++## 11. FORBID 遵守记录
++
++- 本卡为 A1 M5-W0 文档展开，**未写任何产品代码**
++- 未触 `src-tauri/src/`、`src-tauri/Cargo.toml`、`scripts/pre-merge.sh`、三份主文档、ACL/Capability
++- 未移动 `NEXT`（仍 M5-W0）
++- 未提交、未 push
+diff --git a/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md b/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md
+new file mode 100644
+index 0000000..17c6781
+--- /dev/null
++++ b/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md
+@@ -0,0 +1,205 @@
++# M5-11 插件命令与隔离（install/permissions/audit/uninstall）
++
++> 子卡 ID：**M5-11** · 需求 #15 · `[S3|LEVERAGE:2|COMPLEX|AI:DEEP|R:xhigh]`
++> 责任 Lane 候选：**A18**
++> 父卡：`详细设计与实施计划.md` L575（`M5-11 插件命令与隔离`）
++> 主预研：`logs/assist/M5-15.a-prework-20260902-1055.md` §4 · `logs/assist/A9-M5-plugin-form-feasibility-20260906-0700.md`
++> 配套：`M5-10-plugin-manifest-lifecycle.md`（manifest 后端）· `M5-12-plugin-ui.md`（管理 UI）
++
++---
++
++## 0. 编号与锚定
++
++- 批次任务号 `M5-11`；需求号 #15；WBS L575 一致。
++- 依赖：M5-10 ✅（manifest 解析 + 生命周期稳定）+ M5-2 ✅（capability.rs + 确认闸门）
++
++---
++
++## 1. GOAL
++
++把插件操作封装为 Tauri 命令（含 10 条 M5-10 命令 + 5 条本卡新增），强制两层隔离：① capability 隔离（每个插件只能调用自己 manifest 中声明的 capability）② 资源隔离（每个插件的 `workspace/` 子目录相互隔离，与用户主工作区不交叉）；统一走 `capability.rs` 公共白名单 + 两段式确认闸门 + 独立 `plugin-invokes.json` 审计。
++
++---
++
++## 2. READ
++
++1. `logs/assist/M5-15.a-prework-20260902-1055.md` §4（**全读**，命令/权限/审计/隔离）
++2. `M5-10-plugin-manifest-lifecycle.md` §4.3-4.5（生命周期 + 二次确认）
++3. `M5-2-rmcp-mcp-policy.md` §4.2-4.5（capability.rs + 确认闸门 + 审计）
++4. `src-tauri/src/bridge.rs:688-790`（两段式确认闸门）
++5. `src-tauri/src/workspace.rs`（路径解析 + 隔离范式）
++
++---
++
++## 3. WRITE
++
++| 文件 | 性质 | 说明 |
++|---|---|---|
++| `src-tauri/src/bridge.rs` | 修改 | 新增 `plugin_invoke` / `plugin_invoke_cancel` / `plugin_permissions_get/set` / `plugin_audit_list` / `plugin_storage_get/put/delete`（5 条） |
++| `src-tauri/permissions/default-commands.toml` | 修改 | 插 5 条新命令于 `list_artifact_images` 之前（**末条恒为 `list_artifact_images`**） |
++| `src-tauri/src/plugin_runtime.rs` | **新增** | 调用时 capability 校验 + 资源隔离 + `capability.rs` 联合判定 |
++| `src-tauri/src/plugin_storage.rs` | **新增** | 插件独立 KV（`plugins_dir()/<id>/storage.json`） |
++| `src-tauri/src/plugin-invokes.json` | 持久化 | 独立 500 上限 FIFO |
++| `src/bridge.ts` `src/types.ts` | 新增 | TS 镜像 |
++
++---
++
++## 4. 关键契约
++
++### 4.1 5 条新命令
++
++| 命令 | 入参 | 出参 | 闸门 | ACL 风险 |
++|---|---|---|---|---|
++| `plugin_invoke` | `{ id, capability, params }` | `Result` | **按 capability risk** | 按 `capability` |
++| `plugin_invoke_cancel` | `{ invoke_id }` | `bool` | — | Low |
++| `plugin_permissions_get` | `{ id }` | `PluginPermission[]` | — | Low |
++| `plugin_permissions_set` | `{ id, allowed: bool }` | `bool` | **Confirm**（开关 capability） | High |
++| `plugin_audit_list` | `{ id, filter? }` | `InvokeRecord[]` | — | Low |
++| `plugin_storage_get` | `{ id, key }` | `Value` | — | Low |
++| `plugin_storage_put` | `{ id, key, value }` | `bool` | — | Low |
++| `plugin_storage_delete` | `{ id, key }` | `bool` | — | Low |
++
++> **注**：上表 8 条（不是 5 条），加 M5-10 的 10 条共 **18 条**。**M5-11 增量 8 条**。
++
++### 4.2 两层隔离
++
++**capability 隔离**：
++- `plugin_invoke` 时强制校验 `manifest.capabilities` 是否含目标 capability
++- 校验失败 → `CAPABILITY_NOT_ALLOWED`（与 MCP 一致）
++- `plugin_permissions_set` 受 `capability.rs` 二次校验（开关 capability 不能超出 host 自身能力）
++
++**资源隔离**：
++- 插件独立目录：`plugins_dir()/<id>/workspace/`
++- 插件独立 storage：`plugins_dir()/<id>/storage.json`（`atomic_write`）
++- 插件独立审计：`plugin-invokes.json`（按 plugin_id 分组索引）
++- **禁**跨插件读 workspace / storage
++- **禁**插件读用户主 workspace（除非显式 capability = `workspace.read`）
++
++### 4.3 `plugin_invoke` 判定顺序（与 MCP §4.3 复用）
++
++1. 插件状态 = `Enabled`？否 → `PLUGIN_DISABLED`
++2. 目标 capability 在 `manifest.capabilities`？否 → `CAPABILITY_NOT_ALLOWED`
++3. capability 在 `capability.rs` 白名单？否 → `CAPABILITY_NOT_ALLOWED`
++4. 风险等级与 `policy` 比对（同 MCP §4.3 第 2-4 步）
++5. `requires_confirm` → 走两段式闸门
++6. 资源路径校验（含 `..` / 越界 → 拒绝）
++7. 执行 → 写 `plugin-invokes.json` + 摘要 `audit.json`
++
++### 4.4 审计契约
++
++- `plugin_invoke` 写 `plugin-invokes.json`（独立 500 上限）
++- 摘要进 `audit.json`（`action=plugin_invoke`）
++- `detail` 含 `id` / `capability` / `params_summary` / `result` / `duration_ms`
++- 禁记 params / result 正文（K3 + 体量防爆）
++
++### 4.5 升级/回滚
++
++- 升级：保留 `storage.json` + `workspace/`，仅替换 manifest 与资源
++- 回滚：恢复上次 `manifest` + `storage.json` + `workspace/`
++- `manifest_hash` 变更 → 已启用插件自动 `Disabled`（M5-10 §4.3）
++
++---
++
++## 5. FORBID
++
++- **不**让 `plugin_invoke` 绕过 capability 校验
++- **不**让跨插件 / 跨用户主 workspace 越权访问
++- **不**让 `plugin_storage_put` 存 token/密码（K3）
++- **不**让 ACL 末条不再是 `list_artifact_images`（K1）
++- **不**让 `capability.rs` 在多文件定义
++- **不**让升级/回滚丢失用户数据
++- **不**破 K1/K3/K5
++- **不**移动 `NEXT`、不 push
++
++---
++
++## 6. COMMANDS
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++
++# A. ACL 末条
++grep -n "list_artifact_images" src-tauri/permissions/default-commands.toml | tail -5
++
++# B. 8 条新增
++grep -nE "plugin_(invoke|invoke_cancel|permissions_get|permissions_set|audit_list|storage_get|storage_put|storage_delete)" src-tauri/bridge.ts
++
++# C. 反向用例
++# N1: 插件 invoke 未声明的 capability → CAPABILITY_NOT_ALLOWED
++# N2: 跨插件读 workspace → 阻断
++# N3: 插件读用户主 workspace 无 workspace.read capability → 阻断
++# N4: plugin_storage_put 写 token → 阻断
++# N5: 升级后 storage.json 丢失 → 阻断
++# N6: 资源路径含 .. → 阻断
++# N7: CLI 路径调用 plugin_invoke Dangerous → 拒绝
++
++# D. 审计不被刷爆
++python3 - <<'PY'
++import json, os
++p = os.path.expanduser("~/.local/share/com.jizhijiandan.mvp/mvp-browser-os/plugin-invokes.json")
++if os.path.exists(p):
++    d = json.load(open(p))
++    print("plugin-invokes entries:", len(d), "(上限 500)")
++PY
++
++# E. 编译与基线
++cargo test --manifest-path src-tauri/Cargo.toml
++cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
++
++# F. 门禁
++bash scripts/pre-merge.sh
++```
++
++---
++
++## 7. PASS_CRITERIA
++
++| # | 判据 | 验证 |
++|---|---|---|
++| 1 | 8 条新命令全部入 `bridge.rs` + `bridge.ts` | 命令 B |
++| 2 | ACL 末条仍为 `list_artifact_images` | 命令 A |
++| 3 | capability 校验生效 | 单测 N1 |
++| 4 | 资源隔离（跨插件 / 越界） | 单测 N2/N3/N6 |
++| 5 | 凭据不入 `storage.json` | 单测 N4 |
++| 6 | 升级不丢 storage | 单测 N5 |
++| 7 | CLI 路径拒绝 | 单测 N7 |
++| 8 | 审计上限 500 | 命令 D |
++| 9 | `cargo test` 全绿 | 命令 E |
++| 10 | `pre-merge.sh` ALL_PASS | 命令 F |
++
++---
++
++## 8. FAIL_ACTION
++
++| 失败 | 动作 |
++|---|---|
++| 越权访问 workspace | **红线失守**：阻断 |
++| `plugin_storage` 存凭据 | 立即修 + 清泄露 + 提示用户轮换 |
++| 升级丢数据 | 阻断（K1） |
++| 闸门被绕过 | 阻断 |
++| `cargo clippy` warning > 13 + 本卡新增 | 按基线清零再合入 |
++
++---
++
++## 9. DOC_BACKWRITE
++
++1. `详细设计与实施计划.md` L575 `[ ]` → `[x]`
++2. `后续需求TODO.md` §15 状态 `PARTIAL`（留 `M5-12` UI）
++3. `AI-模型切换与接手清单.md` NEXT 移至 `M5-12`
++4. `logs/checkpoints/M5-11.a-2026MMDD-HHMM.md`
++
++---
++
++## 10. COMMIT / NEXT
++
++- **COMMIT**：A0 拣入后由 A18 实施填
++- **NEXT**：M5-12（插件管理 UI），A19
++
++---
++
++## 11. FORBID 遵守记录
++
++- 本卡为 A1 M5-W0 文档展开，**未写任何产品代码**
++- 未触 `src-tauri/src/`、`src-tauri/Cargo.toml`、`scripts/pre-merge.sh`、三份主文档、ACL/Capability
++- 未移动 `NEXT`（仍 M5-W0）
++- 未提交、未 push
+diff --git a/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md b/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md
+new file mode 100644
+index 0000000..73d0897
+--- /dev/null
++++ b/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md
+@@ -0,0 +1,175 @@
++# M5-12 插件管理 UI（权限清单 / 配置 / 状态）
++
++> 子卡 ID：**M5-12** · 需求 #15 · `[S3|LEVERAGE:1|COMPLEX|AI:NORMAL|R:high]`
++> 责任 Lane 候选：**A19**
++> 父卡：`详细设计与实施计划.md` L576（`M5-12 插件管理 UI`）
++> 主预研：暂无 prework 文档
++> 配套：`M5-10-plugin-manifest-lifecycle.md`（manifest 后端）· `M5-11-plugin-commands-isolation.md`（命令与隔离）
++
++---
++
++## 0. 编号与锚定
++
++- 批次任务号 `M5-12`；需求号 #15；WBS L576 一致。
++- 依赖：M5-10 ✅ + M5-11 ✅（18 条命令稳定）
++- 前端栈：Vue 3 + Pinia
++
++---
++
++## 1. GOAL
++
++实现插件管理 UI：① 插件市场/列表（按 source / 状态过滤）② 详情（manifest + 资源 + 权限清单）③ 安装/启用/禁用/卸载（必弹闸门）④ 受信任公钥管理（trusted-pubkeys.json 编辑）⑤ 插件运行历史。所有写操作必走 M5-10/11 闸门。
++
++---
++
++## 2. READ
++
++1. `M5-10-plugin-manifest-lifecycle.md` §4.5（两段式确认）
++2. `M5-11-plugin-commands-isolation.md` §4.1（18 条命令）
++3. `src/components/agent/PermissionPreviewModal.vue`（M5-6 已有，**全读**——权限弹窗范式）
++4. `src/components/agent/SkillManager.vue`（M5-6 已有，**全读**——列表/详情范式）
++5. `src/bridge.ts`（18 条新命令的 TS 包装，**全读**）
++6. `src/types.ts`（`PluginManifest` TS 镜像）
++
++---
++
++## 3. WRITE
++
++| 文件 | 性质 | 说明 |
++|---|---|---|
++| `src/components/plugin/PluginManager.vue` | **新增** | 主面板（市场/列表/过滤） |
++| `src/components/plugin/PluginDetail.vue` | **新增** | 详情（manifest + 资源 + 权限） |
++| `src/components/plugin/PluginPermissionPanel.vue` | **新增** | 权限清单（逐项可视化） |
++| `src/components/plugin/TrustedKeyManager.vue` | **新增** | 受信任公钥增删改 |
++| `src/components/plugin/PluginHistoryModal.vue` | **新增** | 运行历史 |
++| `src/stores/usePluginStore.ts` | **新增** | 插件状态（列表缓存、闸门确认态、trusted keys 缓存） |
++| `src/router/plugin.ts` | **新增** | 插件路由 |
++| `src/locales/zh-CN.json` `src/locales/en-US.json` | 扩展 | 12 个 i18n key |
++| `src/styles/plugin.scss` | **新增** | 样式（dark/light 双主题） |
++
++---
++
++## 4. 关键契约
++
++### 4.1 主面板布局
++
++- 顶部 Tab：已安装 / 失败 / 全部
++- 列表项：图标 + 名称 + 版本 + 状态徽章（Enabled/Disabled/Failed）+ 操作按钮
++- 状态徽章颜色：绿（Enabled） / 灰（Disabled） / 红（Failed）
++- 操作：详情、启用/禁用、卸载、（重新）安装
++
++### 4.2 详情面板
++
++- 必显项（**禁**折叠）：id / version / display_name / description / 来源 / capabilities（逐项） / hash / signature 状态 / 安装时间 / 资源列表
++- 权限清单单独成面板（`PluginPermissionPanel.vue`），含风险等级（与 MCP/Skill 范式一致）
++
++### 4.3 安装/启用/卸载 必弹闸门
++
++- 复用 `PermissionPreviewModal.vue` 范式（M5-6）
++- 必显：插件名称 + 版本 + capabilities（**逐项**）+ 风险等级 + 来源 + hash 前 8 位
++- 二次确认（keyring 二次认证）用于 `Dangerous`
++- 取消 = 拒绝
++
++### 4.4 受信任公钥管理
++
++- 增：粘贴公钥 + key_id + 备注
++- 删：需 keyring 二次认证
++- 改：仅可改"备注"，不能改 key_id 或公钥本身（防替换攻击）
++
++### 4.5 闸门确认态管理
++
++- `usePluginStore.pendingConfirms: Map<id, {action, payload, expires_at}>`
++- 与 M5-6 Agent 范式一致
++
++---
++
++## 5. FORBID
++
++- **不**让任何 UI 路径直接走 Tauri `invoke`（必须经 `bridge.ts`）
++- **不**让闸门弹窗被折叠/隐藏/默认确认
++- **不**让 trusted-pubkeys.json 编辑 UI 绕过 keyring 二次认证
++- **不**让 dark/light 主题冲突
++- **不**让 i18n 缺 key
++- **不**移动 `NEXT`、不 push
++
++---
++
++## 6. COMMANDS
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++
++# A. 文件结构
++ls src/components/plugin src/stores/usePluginStore.ts 2>&1
++
++# B. 反向用例
++# N1: 启用 Dangerous 插件不弹闸门 → 阻断
++# N2: 卸载插件不弹闸门 → 阻断
++# N3: 改 trusted key 的公钥本身 → 阻断
++# N4: 删 trusted key 不弹 keyring 认证 → 阻断
++# N5: 裸 invoke → 阻断
++# N6: dark/light 主题崩 → 阻断
++# N7: i18n 缺 key → 阻断
++
++# C. e2e 冒烟
++pnpm test:unit
++pnpm test:e2e
++
++# D. 编译与基线
++pnpm build
++pnpm tsc --noEmit
++pnpm lint
++```
++
++---
++
++## 7. PASS_CRITERIA
++
++| # | 判据 | 验证 |
++|---|---|---|
++| 1 | 5 个新组件 + 1 store 落地 | 命令 A |
++| 2 | 闸门必显（含 keyring 二次认证） | 单测 N1/N2/N4 |
++| 3 | 公钥编辑防替换 | 单测 N3 |
++| 4 | UI 仅经 `bridge.ts` | CI 断言 N5 |
++| 5 | dark/light 主题适配 | 单测 N6 |
++| 6 | i18n 双语齐 | 单测 N7 |
++| 7 | `pnpm test:unit` + `pnpm test:e2e` 全绿 | 命令 C |
++| 8 | `pnpm build` 无错 | 命令 D |
++| 9 | `pre-merge.sh` ALL_PASS | 复用既有 |
++
++---
++
++## 8. FAIL_ACTION
++
++| 失败 | 动作 |
++|---|---|
++| 闸门被绕过 | 阻断（红线） |
++| 裸 `invoke` 出现 | 阻断（必须经 bridge.ts） |
++| 公钥可改 | 阻断（防替换攻击） |
++| dark/light 主题崩 | 阻断 |
++| i18n 缺 key | 阻断 |
++
++---
++
++## 9. DOC_BACKWRITE
++
++1. `详细设计与实施计划.md` L576 `[ ]` → `[x]`
++2. `后续需求TODO.md` §15 状态 `DONE`
++3. `AI-模型切换与接手清单.md` NEXT 移至 M6（**待 A0 拍**）
++4. `logs/checkpoints/M5-12.a-2026MMDD-HHMM.md`
++
++---
++
++## 10. COMMIT / NEXT
++
++- **COMMIT**：A0 拣入后由 A19 实施填
++- **NEXT**：M5-13 验证矩阵 + M5-14 债务账（A1 本批 M5-W0 最后两卡）；M6 待 A0 拍
++
++---
++
++## 11. FORBID 遵守记录
++
++- 本卡为 A1 M5-W0 文档展开，**未写任何产品代码**
++- 未触 `src/`、`package.json`、三份主文档、ACL/Capability
++- 未移动 `NEXT`（仍 M5-W0）
++- 未提交、未 push
+diff --git a/logs/checkpoints/M5-20260906/M5-13-verification-matrix.md b/logs/checkpoints/M5-20260906/M5-13-verification-matrix.md
+new file mode 100644
+index 0000000..637a305
+--- /dev/null
++++ b/logs/checkpoints/M5-20260906/M5-13-verification-matrix.md
+@@ -0,0 +1,195 @@
++# M5 验证矩阵（A1 横切 · M5-W0 末位）
++
++> 子卡 ID：**M5-13** · 跨 M5-1~M5-12 · `[S3|LEVERAGE:2|COMPLEX|AI:DEEP|R:xhigh]`
++> 责任 Lane 候选：**A11**（沿用 A7/A11 角色，A0 签发时定）
++> 父卡：`详细设计与实施计划.md` 整体（验证门禁横切）
++> 配套：每张 M5-x 子卡 §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION
++
++---
++
++## 0. 编号与锚定
++
++- 批次任务号 `M5-13`；与各 M5-x 子卡**横切**（不是顺次子卡，而是"验证矩阵入口"）
++- 范围：跨 12 张子卡的反向用例 + 性能基线 + 升级回滚 + 集成冒烟
++- 验证期：A2/A3/A4/A5/A6/A7/A8/A9 在 A11 横切检查下做单测/集成/e2e
++
++---
++
++## 1. GOAL
++
++建立 M5 全包的验证矩阵，确保 12 张子卡的反向用例、性能基线、升级回滚、集成冒烟、退出收口五类验证齐备；任何一项红线失守即阻断合入。
++
++---
++
++## 2. READ
++
++每张 M5-x 子卡的 §6 / §7 / §8（含反向用例 N1~Nxx）
++
++---
++
++## 3. WRITE（验证资产清单，**不写实现**）
++
++| 文件 | 性质 | 说明 |
++|---|---|---|
++| `scripts/check-mcp-policy.py` | **新增**（M5-2） | MCP 政策自检；挂 `pre-merge.sh` |
++| `scripts/check-a2a-policy.py` | **新增**（M5-3） | A2A 政策自检；挂 `pre-merge.sh` |
++| `scripts/check-agent-kv-policy.py` | **新增**（M5-3） | agent_kv 政策自检；挂 `pre-merge.sh` |
++| `scripts/check-core-boundary.sh` | **新增**（M5-1） | core 边界；自检 PASS |
++| `scripts/check-graph-policy.py` | **新增**（M5-7/8） | 图谱政策自检；挂 `pre-merge.sh` |
++| `tests/m5_integration_smoke.rs` | **新增** | M5 集成冒烟（与 A4 现有 `tests/` 同款） |
++| `tests/m5_reverse_cases.rs` | **新增** | M5 12 子卡反向用例集中（每张子卡 N1~Nxx） |
++| `tests/m5_perf_baseline.rs` | **新增** | 性能基线（cargo bench / 集成单测） |
++| `tests/m5_upgrade_rollback.rs` | **新增** | schema_version 迁移 + 插件回滚 |
++| `src/__tests__/m5-ui.spec.ts` | **新增** | M5 UI 三件套（Agent/Graph/Plugin）e2e |
++| `tests/m5_shutdown_order.rs` | **新增** | ShutdownCoordinator 索引依赖断言（沿用 `O-A1-5` 提醒） |
++| `tests/m5_acl_terminal.rs` | **新增** | ACL 末条恒为 `list_artifact_images`（静态断言 + 增量插入测试） |
++
++---
++
++## 4. 验证矩阵（按维度）
++
++### 4.1 协议契约测试
++
++| 测试 | 对应子卡 | 反向用例 | 期望 |
++|---|---|---|---|
++| `MCP JSON-RPC 解析` | M5-2 | malformed JSON | -32700 |
++| `MCP 未知 method` | M5-2 | `foo.bar` | -32601 |
++| `MCP 未知 capability` | M5-2 | 调白名单外能力 | -32002（不泄露存在性） |
++| `MCP 错误码不泄露能力存在性` | M5-2 | 未授权方 | -32001（不是 -32601） |
++| `A2A 幂等` | M5-3 | 同 idempotency_key 二次 | 返回首次结果 |
++| `A2A 状态机` | M5-3 | Submitted→Working→Completed 合规 | OK |
++| `A2A 取消 in-flight` | M5-3 | cancel in Working | 终止，无半成品 |
++| `agent_kv 容量` | M5-3 | 超过 5 MB / 5000 条 | LRU 淘汰 |
++| `agent_kv 脱敏` | M5-3 | 写 `api_token: "xxx"` | 拒绝（K3） |
++| `Skill K6` | M5-4 | SkillDef.exec=InlineScript | 解析拒 |
++| `Skill ACL 三态` | M5-4/5 | Safe/Confirm/Dangerous | 闸门行为正确 |
++| `Plugin manifest 校验` | M5-10 | 缺 hash | 拒绝 |
++| `Plugin 签名` | M5-10 | signature 失败 | 拒绝 + 审计 |
++| `Plugin 形态` | M5-10 | 形态② webview 用 `window.__TAURI__` | 阻断 |
++
++### 4.2 隔离与权限测试
++
++| 测试 | 对应子卡 | 反向用例 | 期望 |
++|---|---|---|---|
++| `MCP read_only` | M5-2 | 调写类能力 | -32003 READ_ONLY_MODE |
++| `MCP 危险 SQL 拒` | M5-2 | 写 SQL + `allow_dangerous_sql=false` | 拒绝 |
++| `MCP 连接白名单` | M5-2 | 调 db.query 未在 allowed_connection_ids | 拒绝 |
++| `Skill 越权` | M5-4 | manifest 未声明的 capability | 阻断 |
++| `Plugin 越权` | M5-11 | plugin_invoke 未声明的 capability | CAPABILITY_NOT_ALLOWED |
++| `Plugin 跨 workspace` | M5-11 | 跨插件读 workspace | 阻断 |
++| `Plugin 用户主 workspace` | M5-11 | 读用户主 workspace 无 `workspace.read` capability | 阻断 |
++| `Plugin 资源路径 ..` | M5-11 | 资源路径含 `..` | 阻断 |
++| `Graph props 不外泄` | M5-8/9 | graph_query 返回 props 正文 | 阻断（K7） |
++| `Graph source=Manual 不被覆盖` | M5-7/8 | upsert source=Manual 节点 | 阻断 |
++
++### 4.3 集成测试
++
++| 测试 | 对应子卡 | 场景 | 期望 |
++|---|---|---|---|
++| `GraphEvent 上游写 → 抽取 → 查询` | M5-7/8 | 触发 GraphEvent | 自动抽取 + 节点/边入库 + graph_query 可查 |
++| `MCP 工具 → db.query` | M5-2 | 通过 MCP 调 db.query | 走 A4 DB API + 校验 |
++| `A2A 委派 → Agent.chat` | M5-3/4 | A2aTask 委派给 Agent | Agent 接收 + 走 chat 流式 |
++| `Plugin 加载 → 注册 capability` | M5-10/11 | 装一个 Safe 插件 | capabilities 注册到 `capability.rs` |
++| `Plugin 卸载 → 撤销 capability` | M5-10/11 | 卸载插件 | capabilities 撤销 |
++| `Graph RAG 注入` | M5-4/9 | ChatPanel `/graph <q>` | graph_query 注入 system_prompt |
++
++### 4.4 恢复测试
++
++| 测试 | 对应子卡 | 场景 | 期望 |
++|---|---|---|---|
++| `graph.db 损坏` | M5-8 | graph.db 损坏 | 自动从 `graph.db.bak` 恢复 + 提示 |
++| `agent_kv 容量满` | M5-3 | 超过 5 MB | LRU 淘汰 + 提示 |
++| `mcp-calls.json 滚动` | M5-2 | 超过 500 | FIFO 裁剪 |
++| `plugin-invokes.json 滚动` | M5-11 | 超过 500 | FIFO 裁剪 |
++| `schema_version 迁移` | M5-8 | graph_schema 表新增版本 | 旧数据迁移 + 版本升级断言 |
++| `插件回滚` | M5-10/11 | 回滚到上一版本 | storage.json 保留 + manifest 恢复 |
++
++### 4.5 性能基线
++
++| 测试 | 对应子卡 | 场景 | 期望 |
++|---|---|---|---|
++| `MCP 工具响应` | M5-2 | 100 次工具调用 p99 | < 100ms（除 db.query 大查询） |
++| `图查询 depth=2` | M5-8 | 1000 节点 / depth=2 | < 500ms |
++| `图查询 depth=2` | M5-8 | 10000 节点 / depth=2 | < 2s |
++| `抽取性能` | M5-7 | 1000 文件 / 100 MB workspace | < 60s |
++| `插件安装` | M5-10 | 10 插件安装 | < 5s |
++| `插件列表` | M5-10 | 100 插件列表 | < 100ms |
++| `流式回传节流` | M5-4 | 1s 10000 chunk | 事件数 ≤ 20 |
++
++### 4.6 升级/回滚
++
++| 测试 | 对应子卡 | 场景 | 期望 |
++|---|---|---|---|
++| `graph schema_version 升级` | M5-8 | v1 → v2 | 数据迁移 + 版本断言 |
++| `plugin 升级` | M5-10/11 | v1 → v2 | storage 保留 + manifest_hash 变更触发确认 |
++| `plugin 回滚` | M5-10/11 | v2 → v1 | 恢复上一版本 + capabilities 重新校验 |
++| `agent_kv schema 升级` | M5-3 | v1 → v2 | 兼容性迁移 |
++
++### 4.7 退出收口
++
++| 测试 | 对应子卡 | 场景 | 期望 |
++|---|---|---|---|
++| `ShutdownCoordinator 索引序` | M5-1/2/3/4/7/8/10 | 注册序断言 | 严格按 A7 冻结序：worker-shutdown → stop-background-workers → stop-scheduler → graph-store-shutdown → mcp-server-shutdown → a2a-shutdown |
++| `plugin 在飞 invoke` | M5-11 | 退出时 invoke 在飞 | 自动 cancel + 写 audit |
++| `agent chat 在飞` | M5-4/5 | 退出时 chat 在飞 | 取消 + 清理 |
++
++### 4.8 ACL 静态
++
++| 测试 | 范围 | 场景 | 期望 |
++|---|---|---|---|
++| `ACL 末条恒为 list_artifact_images` | 全部 M5-x | 增量插入测试 | 末条恒定 |
++| `capability.rs 单点` | M5-2/4/10 | 多文件定义测试 | 仅一份 |
++
++---
++
++## 5. PASS_CRITERIA
++
++| # | 判据 | 验证 |
++|---|---|---|
++| 1 | 7 个 check-*.py / sh 脚本全部就位 + 挂 `pre-merge.sh` | `git ls-files scripts/check-*.{py,sh}` 命中 |
++| 2 | `cargo test` 全绿（含 m5_* 集成） | `cargo test` |
++| 3 | `tests/m5_reverse_cases.rs` 全反向用例 PASS | `cargo test m5_reverse` |
++| 4 | `tests/m5_perf_baseline.rs` 全基线达标 | `cargo bench` / `cargo test m5_perf --release` |
++| 5 | `tests/m5_upgrade_rollback.rs` 全迁移 PASS | `cargo test m5_upgrade` |
++| 6 | `tests/m5_shutdown_order.rs` 索引序断言 PASS | `cargo test m5_shutdown` |
++| 7 | `tests/m5_acl_terminal.rs` 末条恒定 PASS | `cargo test m5_acl` |
++| 8 | `src/__tests__/m5-ui.spec.ts` 全 e2e PASS | `pnpm test:e2e` |
++| 9 | `pre-merge.sh` ALL_PASS | `bash scripts/pre-merge.sh` |
++
++---
++
++## 6. FAIL_ACTION
++
++| 失败 | 动作 |
++|---|---|
++| 任何 check-*.py/sh 不全检出合成坏样本 | 修脚本（不修实现避过）；脚本必须真起作用 |
++| 反向用例漏检 | 阻断：补用例到 `tests/m5_reverse_cases.rs` |
++| 性能基线不达标 | 阻断：调整实现或基线（需 A0 批准） |
++| ShutdownCoordinator 序错 | 阻断（A7 冻结） |
++| ACL 末条漂移 | 阻断（K1） |
++| `capability.rs` 多文件定义 | 阻断：必须收口 |
++
++---
++
++## 7. DOC_BACKWRITE
++
++1. `详细设计与实施计划.md` §7 验证矩阵段落更新
++2. `后续需求TODO.md` §X 验证矩阵段落（待 A0 编号）
++3. `AI-模型切换与接手清单.md` §X 验证矩阵段落（待 A0 编号）
++4. `logs/checkpoints/M5-13.a-2026MMDD-HHMM.md`（实施卡 checkpoint）
++
++---
++
++## 8. COMMIT / NEXT
++
++- **COMMIT**：A0 拣入后由 A11 实施填
++- **NEXT**：M5-14（债务账），A1 本批 M5-W0 末位
++
++---
++
++## 9. FORBID 遵守记录
++
++- 本卡为 A1 M5-W0 文档展开，**未写任何产品代码**
++- 未触 `src/`、`src-tauri/`、`package.json`、三份主文档、ACL/Capability
++- 未移动 `NEXT`（仍 M5-W0）
++- 未提交、未 push
+diff --git a/logs/checkpoints/M5-20260906/M5-14-debt-ledger.md b/logs/checkpoints/M5-20260906/M5-14-debt-ledger.md
+new file mode 100644
+index 0000000..c71c468
+--- /dev/null
++++ b/logs/checkpoints/M5-20260906/M5-14-debt-ledger.md
+@@ -0,0 +1,147 @@
++# M5 债务账（A1 横切 · 不在本批解决）
++
++> 子卡 ID：**M5-14** · 跨 M5-1~M5-12 · 性质：**清单，非实现**
++> 配套：每张 M5-x 子卡 §9 DOC_BACKWRITE 中的"M5-14 增项"
++
++---
++
++## 0. 用途
++
++把 M5 范围内**不实现**或**待 A0 决策**的项目集中成账，供：
++- A0 拍板时一次性 review
++- 后续 M5-W1/R 批次拣选
++- 验收时核对"未实现"项是否有充分理由
++
++---
++
++## 1. 形态与基础设施（横切）
++
++| 项 | 来源 | 说明 | 处置 |
++|---|---|---|---|
++| `withGlobalTauri` 全局暴露 | M0-0b + 详细设计 §7 | Tauri v2 不支持按 webview 关闭 `window.__TAURI__` | **形态②插件放弃**，改形态③声明式（M5-10 已决） |
++| `withGlobalTauri` 全局化对 `src/stores/useSystemStore.ts:84` 的影响 | M5-1 评估期 | 唯一引用点需迁移或封装 | M5-1.a 实施期评估 |
++| `tauri-browser-tabs/` 已是另一 workspace | M5-1 切片期 | 根 `Cargo.toml [workspace]` 嵌套冲突 | 阶段二（M5-1.b）排除该路径 |
++
++---
++
++## 2. MCP / A2A（#7）
++
++| 项 | 来源 | 说明 | 决策依赖 |
++|---|---|---|---|
++| A2A 首期是否真双向 | M5-3 | 仅"被调"or"既可被调又可委派" | **A0 拍** |
++| LLM 用量配额/费用统计 | M5-3/4 | 首期是否做计费/限额 | **A0 拍** |
++| `mcp-calls.json` 500 上限是否够 | M5-2 | 高频 Agent 调用可能刷爆 | 实施期观察 |
++
++---
++
++## 3. Agent/Skill（#12）
++
++| 项 | 来源 | 说明 | 决策依赖 |
++|---|---|---|---|
++| Skill 升级迁移（v1 → v2）数据保留 | M5-4 | 首期是否做兼容性迁移 | 实施期评估 |
++| Agent 流式断线重连 | M5-4 | 弱网场景体验 | 实施期评估 |
++| 审计汇总 UI | M5-5 | `skill-runs.json` / `agent-runs.json` 500 上限是否提供 UI 浏览 | 实施期评估 |
++| LLM Key 轮换策略 | M5-3/4 | 多 Key 切换 | A0 拍 |
++| 外部 CLI Agent（codex/claude）实测 | M5-4 | `ExternalCli` 走 script_runner 是否真能复用 | A19 实施期验证 |
++
++---
++
++## 4. Graph（#13）
++
++| 项 | 来源 | 说明 | 决策依赖 |
++|---|---|---|---|
++| `source=ai` 智能抽取 | M5-7 | 首期仅留 trait，不实现 | A0 拍（成本/价值） |
++| 相似度算法与阈值 | M5-7 | 首期仅同 hash 精确匹配 | 实施期评估 |
++| 二进制文档解析（pdf/docx） | M5-7 | 防漏洞，首期不做 | A0 拍（需求强度） |
++| `graph_export("graphml")` | M5-8 | 首期返回"暂不支持" | 实施期评估（社区需要） |
++| 路径查找（KSP/最短路） | M5-8 | 首期不开 | 实施期评估 |
++| `props` JSON 宽容版本 | M5-7/8 | 首期严格 schema；宽容版本做迁移期 | 实施期评估 |
++| 浏览器访问历史接入 | M5-7 | 避免爬虫语义，首期不接 | A0 拍 |
++| 大图（> 10k 节点）渲染 | M5-9 | D3 力导向性能 | 实施期评估（WebGL 化？） |
++
++---
++
++## 5. Plugin（#15）
++
++| 项 | 来源 | 说明 | 决策依赖 |
++|---|---|---|---|
++| 形态① 独立 stdio | M5-10 | 与"无第二执行路径"冲突，已否决 | 决定（已） |
++| 形态② 独立 webview | M5-10 | 与 `withGlobalTauri` 全局冲突，已否决 | 决定（已） |
++| 形态④ 第三方签名服务（如 Sigstore） | M5-10 | 首期仅本地 trusted-pubkeys.json | A0 拍 |
++| 插件商店 | M5-10/12 | 中心化分发 | A0 拍 |
++| 插件多版本并存 | M5-10 | `<id>/<version>/` 已设计；并发启用策略未拍 | A0 拍 |
++| 插件自动更新 | M5-10 | 首期手动 | A0 拍 |
++| 公钥托管（远程） | M5-10 | 首期本地 | A0 拍 |
++
++---
++
++## 6. 反向边 / 架构债（沿用 A2 prework §4）
++
++| 项 | 来源 | 说明 | 处置 |
++|---|---|---|---|
++| `domain.rs:1525-1526` 测试反向 import | M5-1 | 切片 0b 必收口 | M5-1.a 解决 |
++| `bridge::allowed_roots(app)` | M5-1 | 4 处反向边（L26/28/259/491/588/617/622/742 scheduler.rs） | M5-1.a 解决（抽 RootsProvider trait） |
++| `tauri::Emitter` 在 script_runner 直用 | M5-1 | 切片 1 抽 ProgressSink trait | M5-1.a 解决 |
++| `app.path().data_dir()` 散落 | M5-1 | 切片 1 抽 PathResolver trait | M5-1.a 解决 |
++
++---
++
++## 7. M4 挂账跨 M5 处置（沿用 M4 终态备忘 D23~D26）
++
++| 项 | 来自 | M5 关联 | 处置 |
++|---|---|---|---|
++| D23 终端 GUI 实点 | M4-1 | M5-4/5 复跑 chat 时需在终端实点 | M5-4/5 实施期补 |
++| D24 吞吐基线未重采 | M4-1 | M5-4 流式回传基准未定 | M5-13 性能基线一并采 |
++| D25 `on_channel_dead` 未 wait | M4-1 | M5-2 `mcp-server-shutdown` 必须 wait；M5-3 `a2a-shutdown` 必须 wait | M5-2/3 实施期补 |
++| D26 历史未按字符封顶 | M4-1 | M5-13 验证矩阵反向用例补"按字符封顶" | M5-13 实施期补 |
++
++---
++
++## 8. A0 决策清单（一次过 review）
++
++> 这些是 M5-W0 内需 A0 拍的关键决策，避免 M5-W1 阻塞
++
++1. **M5-1**：A0 签发 `M5-1.a`（切片 0a+0b）还是 `M5-1.b`（含切片 1/2，B 类搬入）？
++2. **M5-1**：阶段二提升为根 `Cargo.toml [workspace]` 是否本批做？
++3. **M5-2**：MCP 是否真仅 stdio，不开 TCP？（默认是；与 A1 预研一致）
++4. **M5-3**：A2A 首期是否真双向？
++5. **M5-3**：LLM 用量配额首期是否做？
++6. **M5-4**：ExternalCli 走 script_runner 是 A1 推断；A0 是否认可？
++7. **M5-7**：`source=ai` 智能抽取首期是否留 trait（默认留）？
++8. **M5-7**：`props` JSON 容错策略（默认严格）？
++9. **M5-8**：首期只读 + 抽写 vs 支持"任意边写入"（默认前者）？
++10. **M5-8**：`graph_export("graphml")` 首期是否做（默认不做）？
++11. **M5-10**：形态决策 = 形态③声明式（默认）；A0 确认？
++12. **M5-10**：签名方案 = Ed25519 + 本地受信任 keys（默认）；A0 确认？
++13. **M5-10**：插件多版本并存并发启用策略？
++14. **M5-10**：插件自动更新首期是否做（默认手动）？
++15. **M5-10/15**：第三方签名服务 / 插件商店首期是否做？
++
++---
++
++## 9. M5-W1 签发建议（A1 视角）
++
++> **不签字**。仅给 A0 决策时参考。
++
++- 若 A0 接受本卡 + 12 张 M5-x 子卡 → 签发 `M5-1.a` 实施卡（A13），其余 11 张待 A1.a 完成后按 §5 合并顺序滚动签发
++- 若 A0 调整形态（如改回形态①/②）→ 阻断 M5-10/11；先回 §1 重定
++- 若 A0 调整 capability.rs 位置 → 阻断 M5-1/2/4/10；先回 M5-1 切片 0a 决位置
++- 若 A0 引入新约束（如 LLM Key 必走远端 KMS）→ 改 M5-3/4 后再签发
++
++---
++
++## 10. 回写 / 维护
++
++- 本账由 A1 创建
++- 后续 M5-W1/R 批次的 A0 决策落地后，本账对应行改 `决定（已）` 或删行
++- 新增债务项 = 各 M5-x 子卡 §9 DOC_BACKWRITE 的"M5-14 增项"
++- 维护人：A11（沿用 A7/A11 角色）
++
++---
++
++## 11. FORBID 遵守记录
++
++- 本卡为 A1 M5-W0 文档展开，**未写任何产品代码**
++- 未触 `src/`、`src-tauri/`、`package.json`、三份主文档、ACL/Capability
++- 未移动 `NEXT`（仍 M5-W0）
++- 未提交、未 push
+diff --git a/logs/checkpoints/M5-20260906/M5-2-rmcp-mcp-policy.md b/logs/checkpoints/M5-20260906/M5-2-rmcp-mcp-policy.md
+new file mode 100644
+index 0000000..e3b8ff3
+--- /dev/null
++++ b/logs/checkpoints/M5-20260906/M5-2-rmcp-mcp-policy.md
+@@ -0,0 +1,247 @@
++# M5-2 内嵌 rmcp + McpGlobalPolicy + 首组 MCP 工具
++
++> 子卡 ID：**M5-2** · 需求 #7（A2P/A2A）· `[S3|LEVERAGE:3|COMPLEX|AI:DEEP|R:xhigh]`
++> 责任 Lane 候选：**A14**（A9 提案；A0 签发时定）
++> 父卡：`详细设计与实施计划.md` L563（`M5-2 内嵌 rmcp 与全局护栏`）
++> 主预研：`logs/assist/M5-7.a-prework-20260902-1055.md`（A2P/A2A 协议草案，std #7）
++> 配套：`M5-1-core-workspace-split.md`（capability.rs 必先决位置）· `M5-5-agent-skill-commands.md`（共用 capability.rs）
++
++---
++
++## 0. 编号与锚定
++
++- 批次任务号 `M5-2`；需求号 #7；WBS L563 一致。
++- 依赖：M5-1 ✅（capability.rs 已落 core 或二进制） + A3 DB API 已落盘（`database.rs` 1272 行） + A4 `db_*` 命令 + `security_policy.rs` SQL 分类器。
++
++---
++
++## 1. GOAL
++
++内嵌纯 Rust `rmcp`（**禁 npm 分包**），实现 `McpGlobalPolicy` 全局护栏（read-only / 危险 SQL 闸门 / 连接白名单 / 能力白名单 / 确认闸门），首期只暴露**只读 + 低危** MCP 能力（artifact / audit / repo / workspace / tab / db.query 的受限子集），**不暴露任何执行/写盘/出网能力**。建立 `src-tauri/src/capability.rs` 公共白名单（A2P / A2A / Skill / Plugin / Agent 五处共用，防漂移）。
++
++---
++
++## 2. READ
++
++1. `logs/assist/M5-7.a-prework-20260902-1055.md`（**全读**，A2P/A2A 协议草案；§4 capability/§4.4 policy/§4.5 错误码/§5 风险/§6 反向用例）
++2. `src-tauri/src/bridge.rs:688-790`（两段式确认闸门范式，**协议层必须复用**）
++3. `src-tauri/src/workspace.rs:89-110`（审计范式 + 1000 上限）
++4. `src-tauri/src/security_policy.rs`（2041 行，**全读**；M4-3 数据库 SQL 分类器复用点）
++5. `src-tauri/permissions/default-commands.toml`（尾条恒为 `list_artifact_images`，MCP 新命令插其前）
++6. `src-tauri/permissions/remote-collect.toml`（远程 webview 仅回传类，MCP **不走 remote**）
++7. `src-tauri/Cargo.toml`（依赖基线 + 现有 `tauri`/`tokio`/其他）
++8. `M5-1-core-workspace-split.md` §3（capability.rs 位置）
++
++---
++
++## 3. WRITE
++
++| 文件 | 性质 | 说明 |
++|---|---|---|
++| `src-tauri/Cargo.toml` | 修改 | 加 `rmcp = { version = "...", default-features = false }`（纯 Rust，**不** 引 `npx` 任何东西） |
++| `src-tauri/src/mcp_server.rs` | **新增** | `rmcp` server 骨架 + 传输（stdio）+ 能力注册 + `McpGlobalPolicy` 引用 |
++| `src-tauri/src/mcp_policy.rs` | **新增** | `McpGlobalPolicy` 解析 + 判定顺序（§4 草案 6 步） |
++| `src-tauri/src/mcp_tools/` | **新增目录** | 首组工具（db_query / artifact_list / audit_list / repo_list / workspace_list_dir / workspace_read_file / tab_list，全部**只读**） |
++| `src-tauri/src/capability.rs` | **新增** | 公共白名单（M5-1 决位置后）；A2P / A2A / Skill / Plugin / Agent **共用** |
++| `src-tauri/src/domain.rs` | 新增类型 | `CapabilityManifest` / `Capability` / `RiskLevel` / `McpPolicy` / `McpAuditRecord` |
++| `src-tauri/src/bridge.rs` | 修改 | `mcp_server_start` / `mcp_server_stop` / `mcp_policy_get/set` 命令（**全进 ACL**） |
++| `src-tauri/src/main.rs` | 修改 | 加 `--mcp-server` argv 分支（仿 `--grid-child` 模式） |
++| `src-tauri/permissions/default-commands.toml` | 修改 | 插 `mcp_server_start/stop` + `mcp_policy_get/set` 于 `list_artifact_images` 之前 |
++| `src-tauri/src/shutdown.rs` | 修改 | 注册 `mcp-server-shutdown` 协调任务（先于 `kill-running-scripts`，与 `stop-scheduler` 序一致） |
++| `src-tauri/src/mcp_calls.json` | 持久化 | 独立调用日志（防 1000 上限被刷爆），**详细字段见 §6** |
++| `scripts/check-mcp-policy.py` | **新增** | 仿 `check-database-policy.py`；自检 PASS；挂 `pre-merge.sh` |
++| `src/types.ts` `src/bridge.ts` | 新增类型 | TS 镜像 `Capability`/`McpPolicy`（snake_case） |
++
++---
++
++## 4. 关键契约（草案锁死，实施期严格照此）
++
++### 4.1 传输：stdio only（首期）
++
++- 启动：外部 Agent 以 `--mcp-server` 启动本应用；stdin/stdout 走 NDJSON / JSON-RPC 2.0
++- **禁 TCP 端口**（避免局域网暴露；R2 极高）
++- 单进程串行处理；并发留待稳定
++- 单请求 ≤ 1 MB；单响应 ≤ 5 MB；超时 30s
++- 与 M3-1.a 进程回收一致：协议进程退出即回收，无残留
++
++### 4.2 能力清单（首期白名单 + 黑名单）
++
++**白名单**（`capability.rs` 常量 `MCP_CAPABILITY_V1`）：
++
++| 能力 | maps_to | risk | requires_confirm |
++|---|---|---|---|
++| `artifact.list` | `list_artifacts` | Read | 否 |
++| `artifact.read` | `read_artifact` | Read | 否 |
++| `audit.list` | `audit_log` | Read | 否 |
++| `repo.list` | `list_repos` | Read | 否 |
++| `workspace.list_dir` | `list_dir` | Read | 否 |
++| `workspace.read_file` | `read_file` | Read | 否 |
++| `tab.list` | `tab_list` | Read | 否 |
++| `db.query` | `db_query` | Read | 否（受 §4.3 策略限制） |
++
++**黑名单（首期明确不暴露，无论配置如何）**：
++
++`write_file` / `create_file` / `delete_path` / `rename_path` / `launch_app` / `open_browser` / `request_sync` / `confirm_sync` / `term_write` / `term_spawn` / `script_*` / `run_script` / `db_*` 写路径 / `clipboard_*`
++
++> **理由**：这些能力一旦暴露，"外部 Agent 提示词注入"可直接转化为本地任意操作。**M5 首期不开放执行类能力。**
++
++### 4.3 `McpGlobalPolicy` 护栏（fail-closed）
++
++```rust
++pub struct McpGlobalPolicy {
++    pub read_only: bool,                // 默认 true（全局只读，risk > Read 一律拒绝）
++    pub allow_dangerous_sql: bool,      // 默认 false；与 A4 写闸门 `allow_write` 需同时为 true
++    pub allowed_connection_ids: Vec<String>, // 默认空 = 不允许任何 db 能力
++    pub allowed_capabilities: Vec<String>,  // 默认 = §4.2 白名单
++    pub result_limit: usize,            // 默认 50（对齐 dbx EXECUTE_QUERY_LIMIT）
++    pub auto_confirm: bool,             // 默认 false = 必须人工确认
++}
++```
++
++**判定顺序（任一失败即拒绝，不短路跳过后续）**：
++
++1. 能力在 `allowed_capabilities`？否 → `CAPABILITY_NOT_ALLOWED`
++2. `read_only` 且 `risk > Read`？是 → `READ_ONLY_MODE`
++3. 需 `requires_policy` 且该策略未开？是 → `POLICY_DISABLED`
++4. 是 `db.query`？`allow_dangerous_sql` 与 `allowed_connection_ids` 双重校验
++5. `requires_confirm` 且 `auto_confirm=false`？走两段式确认闸门（对齐 `request_sync`/`confirm_sync`）
++6. 通过 → 执行 → 写 `mcp_calls.json` + 摘要进 `audit.json` → 按 `result_limit` 截断
++
++### 4.4 错误码
++
++| 码 | 含义 | 客户端动作 |
++|---|---|---|
++| `-32700` | JSON 解析失败 | 修正格式 |
++| `-32601` | 未知 method | 查 manifest |
++| `-32001` | `FORBIDDEN` | 不要重试（配置问题） |
++| `-32002` | `CAPABILITY_NOT_ALLOWED` | 同上 |
++| `-32003` | `READ_ONLY_MODE` | 同上 |
++| `-32004` | `CONFIRM_REQUIRED` | 提示用户去 UI 确认 |
++| `-32005` | `RESULT_TRUNCATED` | 收窄查询 |
++| `-32006` | `RATE_LIMITED` | 退避重试 |
++| `-32007` | `INTERNAL_ERROR` | 上报附 `run_id` 查审计 |
++
++### 4.5 审计契约
++
++- **每次调用**写 `mcp_calls.json`（独立文件，500 条上限 FIFO）
++- 摘要进 `audit.json`（`action=mcp_call`）
++- `detail` 含 `capability` / `requester` / `policy_snapshot` / `result`（success/denied/error）/ `run_id`
++- **禁**记抽取文本正文 / 凭据 / DSN / SQL 正文（K3）
++
++---
++
++## 5. FORBID
++
++- **不**引 `rmcp` 之外的任何 MCP 库（**禁 npm 分包**）
++- **不**开 TCP 端口（首期仅 stdio）
++- **不**暴露任何执行类能力（白名单外一律黑名单）
++- **不**让 `capability.rs` 与各 Lane 私写白名单漂移（5 处共用一份）
++- **不**破 K1（ACL 末条恒为 `list_artifact_images`）/K3（凭据）/K5（审计）
++- **不**让 `mcp-server-shutdown` 改 `stop-scheduler` 索引（与 A7 冻结冲突）
++- **不**改 `audit.json` 1000 上限；高频走 `mcp_calls.json`
++- **不**移动 `NEXT`
++- **不** push
++
++---
++
++## 6. COMMANDS
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++
++# A. 现状复核
++grep -rniE "rmcp|\bmcp\b" src-tauri/src src | grep -v user_agent    # 实施前为 0 命中
++grep -c "tauri::command" src-tauri/src/bridge.rs                       # 基线 59+MCP 新增
++
++# B. 政策脚本自检
++python3 scripts/check-mcp-policy.py --self-test                       # PASS
++
++# C. 能力黑名单校验（实施后跑）
++for cap in write_file create_file delete_path run_script term_write db_connect; do
++  printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$cap\",\"params\":{}}" \
++    | ./target/release/mvp-browser-os --mcp-server 2>&1 | head -1
++  # 期望含 CAPABILITY_NOT_ALLOWED
++done
++
++# D. 无监听端口
++ss -lntp 2>/dev/null | grep -i mvp || echo OK                          # 应输出 OK
++
++# E. 端到端冒烟
++printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"artifact.list","params":{}}' \
++  | ./target/release/mvp-browser-os --mcp-server 2>&1 | head -5
++
++# F. 协议进程退出无残留
++pgrep -fa mvp-browser-os | grep mcp-server
++# 退出协议 stdin EOF 后 5s 内应自动退出
++
++# G. 编译与基线
++cargo check --manifest-path src-tauri/Cargo.toml 2>&1 | tail -20
++cargo clippy --all-targets 2>&1 | grep -c warning                       # 不得 > 13 + 本卡新增
++
++# H. 门禁
++bash scripts/pre-merge.sh                                               # ALL_PASS
++```
++
++---
++
++## 7. PASS_CRITERIA
++
++| # | 判据 | 验证 |
++|---|---|---|
++| 1 | `rmcp` 纯 Rust 嵌入，`Cargo.toml` 体现 | 命令 A 命中 `rmcp`（限 src-tauri） |
++| 2 | `mcp_server_start/stop` + `mcp_policy_get/set` 进 ACL，**末条仍为 `list_artifact_images`** | 命令 B 0 违规 |
++| 3 | `capability.rs` 落定（M5-1 决位置），白名单常量只此一份 | `grep -n "MCP_CAPABILITY_V1" src-tauri/src/capability.rs` 唯一命中 |
++| 4 | `McpGlobalPolicy` 默认 `read_only=true` / `auto_confirm=false` | 单测 |
++| 5 | 黑名单 10+ 能力经 `capability.rs` 拒（命令 C 全 `CAPABILITY_NOT_ALLOWED`） | 命令 C |
++| 6 | `db.query` 受 `allow_dangerous_sql` + `allowed_connection_ids` 双重校验 | 单测：N5/N6 |
++| 7 | `requires_confirm` 能力走两段式确认闸门；未确认前不执行 | 单测：N7 |
++| 8 | `mcp_calls.json` 独立上限 500；`audit.json` 仅记摘要 | 命令 B 0 违规 + 单测 |
++| 9 | `cargo test` 全绿（含 `mcp_*` 单测） | 命令 G |
++| 10 | `pre-merge.sh` ALL_PASS | 命令 H |
++| 11 | `--mcp-server` 启动无 TCP 监听（命令 D） | 命令 D |
++| 12 | `mcp-server-shutdown` 注册在 `stop-scheduler` 之后（与 A7 冻结一致） | 单测索引断言 |
++| 13 | 错误响应不泄露能力清单存在性（防探测，N13） | 单测：未授权方调未知能力返回 `-32001 FORBIDDEN` 而非 `-32601` |
++
++---
++
++## 8. FAIL_ACTION
++
++| 失败 | 动作 |
++|---|---|
++| 出现 TCP 监听 | **红线失守**：回到 stdio-only；未关闭前不发布 |
++| 能力白名单在两处定义 | 阻断：必须收口到 `capability.rs` |
++| 能力被自动执行而绕过确认闸门（N7） | 阻断：确认闸门是协议层红线 |
++| Key/token 出现在日志/审计/响应 | 立即修 + 清泄露条目 + 提示用户轮换 |
++| `mcp-server-shutdown` 改 `stop-scheduler` 索引 | 阻塞：与 A7 冻结冲突，先解决协调器序 |
++| `cargo clippy` warning > 13 + 本卡新增 | 按基线清零再合入 |
++
++---
++
++## 9. DOC_BACKWRITE
++
++实施期（不在 A1 W0 范围）需回写：
++
++1. `详细设计与实施计划.md` L563 `[ ]` → `[x]`，补 rmcp 版本与 capability.rs 位置
++2. `后续需求TODO.md` §7 状态 `PARTIAL` → `DONE: MCP/rmcp`；留 `A2A` 给 M5-3
++3. `AI-模型切换与接手清单.md` NEXT 移至 `M5-3`
++4. `logs/checkpoints/M5-2.a-2026MMDD-HHMM.md`（实施卡 checkpoint）
++5. `M5-14-debt-ledger.md` 增项：`withGlobalTauri` 全局暴露（仅影响 M5-10，本卡不涉及）
++
++---
++
++## 10. COMMIT / NEXT
++
++- **COMMIT**：本卡文档无 commit；A0 拣入后由 A14 实施填
++- **NEXT**：
++  - 成功 → `M5-3`（A2A + agent_kv）
++  - 成功 → 与 `M5-4`（Agent/Skill runtime）并行（capability.rs 共用）
++
++---
++
++## 11. FORBID 遵守记录
++
++- 本卡为 A1 M5-W0 文档展开，**未写任何产品代码**
++- 未触 `src-tauri/src/`、`src-tauri/Cargo.toml`、`scripts/pre-merge.sh`、三份主文档、ACL/Capability
++- 未移动 `NEXT`（仍 M5-W0）
++- 未提交、未 push
++- 与 A9 既有契约文档无文件冲突
+diff --git a/logs/checkpoints/M5-20260906/M5-3-a2a-bidir-agent-kv.md b/logs/checkpoints/M5-20260906/M5-3-a2a-bidir-agent-kv.md
+new file mode 100644
+index 0000000..dde71b2
+--- /dev/null
++++ b/logs/checkpoints/M5-20260906/M5-3-a2a-bidir-agent-kv.md
+@@ -0,0 +1,231 @@
++# M5-3 A2A 双向 + agent_kv（多方言归一 + 记忆层）
++
++> 子卡 ID：**M5-3** · 需求 #7（A2P/A2A）· `[S3|LEVERAGE:2|COMPLEX|AI:DEEP|R:xhigh]`
++> 责任 Lane 候选：**A15**（A9 提案；A0 签发时定）
++> 父卡：`详细设计与实施计划.md` L564（`M5-3 A2A 双向与记忆`）
++> 主预研：`logs/assist/M5-7.a-prework-20260902-1055.md` §4.3 A2A 草案
++> 配套：`M5-2-rmcp-mcp-policy.md`（能力层基础）· `M5-4-agent-skill-runtime.md`（Agent 侧消费）
++
++---
++
++## 0. 编号与锚定
++
++- 批次任务号 `M5-3`；需求号 #7；WBS L564 一致。
++- 依赖：M5-2 ✅（`McpGlobalPolicy` + capability.rs） + M5-4 部分（Agent dialect 复用）
++- 关键决策交 A0 拍：① A2A 首期是否真双向（仅被调 or 既可被调又可委派） ② `agent_kv` 容量上限策略
++
++---
++
++## 1. GOAL
++
++实现 A2A（Agent ↔ Agent）协议兼容层与 Agent 记忆层（`agent_kv`）。首期支持多 Agent 方言归一（OpenAI 兼容 HTTP API + 外部 CLI Agent 子进程），构建可委派、可被委派的 A2A 任务流，记忆层仅作 AI 上下文（**与用户成果库严格分离**）。
++
++---
++
++## 2. READ
++
++1. `logs/assist/M5-7.a-prework-20260902-1055.md` §4.3 A2A 草案（**全读**）
++2. `M5-2-rmcp-mcp-policy.md`（能力层 / 确认闸门 / 审计范式）
++3. `M5-4-agent-skill-runtime.md`（Agent 侧消费 `agent_kv`）
++4. `src-tauri/src/keyring_store.rs`（LLM API Key 存放范式，27 行全读）
++5. `src-tauri/src/bridge.rs:688-790`（两段式确认闸门，A2A 任务发起同样走）
++6. `M5-0-overview.md` §7 红线（K3 凭据 / K5 审计）
++
++---
++
++## 3. WRITE
++
++| 文件 | 性质 | 说明 |
++|---|---|---|
++| `src-tauri/src/a2a.rs` | **新增** | A2A 消息 schema + 状态机 + 协议兼容层 + 幂等键去重 |
++| `src-tauri/src/agent_dialect.rs` | **新增** | 多方言归一：`OpenAiCompatible { base_url, model }` / `ExternalCli { program }` |
++| `src-tauri/src/agent_kv.rs` | **新增** | KV 持久化（`app_data_dir()/mvp-browser-os/agent-kv.json`），与成果库**严格分离** |
++| `src-tauri/src/agent.rs` | **新增** | Agent 宿主骨架 + 流式回传（M5-4 详化） |
++| `src-tauri/src/domain.rs` | 新增类型 | `A2aTask` / `A2aMessage` / `A2aTaskStatus` / `AgentDialect` / `AgentKvEntry` |
++| `src-tauri/src/bridge.rs` | 修改 | `a2a_task_send` / `a2a_task_receive` / `a2a_task_status` / `a2a_task_cancel` + `agent_kv_get/put/delete/list`（**全进 ACL**） |
++| `src-tauri/permissions/default-commands.toml` | 修改 | 插 `a2a_*` + `agent_kv_*` 于 `list_artifact_images` 之前 |
++| `src-tauri/src/shutdown.rs` | 修改 | 注册 `a2a-shutdown`（cancel in-flight tasks + flush a2a_tasks.json） |
++| `src-tauri/src/a2a_tasks.json` `src-tauri/src/agent-kv.json` | 持久化 | `atomic_write`（沿用 M3 范式） |
++| `scripts/check-a2a-policy.py` `scripts/check-agent-kv-policy.py` | **新增** | 挂 `pre-merge.sh`；自检 PASS |
++
++---
++
++## 4. 关键契约
++
++### 4.1 A2A 消息 schema
++
++```rust
++pub struct A2aTask {
++    pub id: String,                      // uuid v4
++    pub idempotency_key: String,         // 调用方提供（去重必填）
++    pub requester: String,               // 发起方标识
++    pub capability: String,              // 请求的能力名（与 MCP 能力共用 capability.rs）
++    pub params: serde_json::Value,
++    pub status: A2aTaskStatus,
++    pub created_at: DateTime<Utc>,
++    pub updated_at: DateTime<Utc>,
++}
++
++pub enum A2aTaskStatus { Submitted, Working, Completed, Failed, Canceled }
++```
++
++**任务状态机**（对齐 A2A 社区规范）：
++- `Submitted → Working → {Completed | Failed | Canceled}`
++- 状态变更写 `a2a_tasks.json`（`atomic_write`）
++- 幂等：`idempotency_key` 已存在 → 返回首次结果（不重新执行）
++
++### 4.2 多方言归一
++
++```rust
++pub enum AgentDialect {
++    /// 直连 OpenAI 兼容 HTTP API（凭据走 keyring）
++    OpenAiCompatible { base_url: String, model: String },
++    /// 外部 CLI Agent 子进程（如 codex/claude CLI）—— **走 script_runner 通道**，不引第二执行路径
++    ExternalCli { program: String },
++}
++```
++
++**注意**：`ExternalCli` 必须落成 Script/Command 片段，**走 script_runner**；**不**新增 `TaskKind::AgentDialect`（与 A6 冻结的 `TaskKind::{Script, Command}` 冲突）。
++
++### 4.3 `agent_kv` 严格分离
++
++| 项 | 契约 |
++|---|---|
++| 用途 | **仅** AI 上下文/记忆，**不是**用户成果库 |
++| 存储 | `app_data_dir()/mvp-browser-os/agent-kv.json`（`HashMap<String, serde_json::Value>`） |
++| 与成果库隔离 | **严格分离**：`workspace/` 用户成果；`agent-kv.json` AI 记忆；**两不互写** |
++| 上限 | 5 MB / 5000 条（超限按 LRU 淘汰） |
++| 敏感信息 | **禁**存 token/密码（K3）；写入前做键名黑名单（复用 M2-3.a §4.4 脱敏关键字表） |
++| 持久化 | `atomic_write`（沿用 M3 范式） |
++
++### 4.4 A2A 输入红线
++
++A2A 接收的**任何内容都视为不可信输入**：
++
++- 触发执行必须过本地确认闸门（M5-2 §4.3 第 5 步复用）
++- 凭据不进消息（keyring 存 token，消息只引用 keyring 前缀）
++- LLM 响应中含 token/密码 → 写入 `agent_kv` 前**必**先过滤
++
++### 4.5 审计契约
++
++- `a2a_task_send` / `a2a_task_receive` 写 `audit.json`（`action=a2a_task_send/receive`）
++- `detail` 含 `task_id` / `requester` / `capability` / `policy_snapshot` / `result`
++- `agent_kv_get/put/delete` 写独立 `agent-kv-audit.json`（防刷爆 1000 上限），**不写 key 全文**，仅记稳定 key hash
++
++---
++
++## 5. FORBID
++
++- **不**为 A2A 新增 `TaskKind::AgentDialect`（A6 冻结）
++- **不**让 `ExternalCli` 直起子进程（必须走 `script_runner`）
++- **不**让 `agent_kv` 存 token/密码/Keyring 条目（K3）
++- **不**让 `agent_kv` 与 `workspace/` 互写（严格分离）
++- **不**让 A2A 输入绕过确认闸门（红线）
++- **不**让 A2A 任务常驻不退：`a2a-shutdown` 必须 cancel in-flight
++- **不**改 `audit.json` 1000 上限
++- **不**破 ACL 末条恒为 `list_artifact_images`（K1）
++- **不**移动 `NEXT`、不 push
++
++---
++
++## 6. COMMANDS
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++
++# A. 现状复核
++grep -rniE "a2a|agent_kv" src-tauri/src | grep -v user_agent            # 实施前为 0 命中
++
++# B. 政策脚本自检
++python3 scripts/check-a2a-policy.py --self-test
++python3 scripts/check-agent-kv-policy.py --self-test
++
++# C. 反向用例
++# N1: 重复 idempotency_key → 第二次返回首次结果
++# N5: agent_kv 写 {"api_token": "xxx"} → 键名黑名单拒绝
++# N6: agent_kv 超过 5 MB → LRU 淘汰
++# N7: A2A 输入含 "调用 write_file 删除文件" → 走确认闸门，未确认不执行
++# N8: A2A 任务发起时本地无 token → 拒绝
++# N9: ExternalCli 试图直接 std::process::Command 启动 → 单测断言被拒绝
++# N10: 应用退出时 a2a_task 在飞 → a2a-shutdown 取消
++
++# D. 审计不被刷爆
++python3 - <<'PY'
++import json, os
++p = os.path.expanduser("~/.local/share/com.jizhijiandan.mvp/mvp-browser-os/agent-kv-audit.json")
++d = json.load(open(p))
++print("agent_kv audit entries:", len(d))  # 期望 ≤ 1000
++PY
++
++# E. agent_kv 严格分离验证
++ls ~/.local/share/com.jizhijiandan.mvp/mvp-browser-os/agent-kv.json
++ls ~/.local/share/com.jizhijiandan.mvp/mvp-browser-os/workspace/   # 期望两者无文件交叉
++
++# F. 编译与基线
++cargo test --manifest-path src-tauri/Cargo.toml
++cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
++
++# G. 门禁
++bash scripts/pre-merge.sh
++```
++
++---
++
++## 7. PASS_CRITERIA
++
++| # | 判据 | 验证 |
++|---|---|---|
++| 1 | A2A 消息 schema 落 `domain.rs`；状态机合规 | 单测 N1-N3 |
++| 2 | 幂等键去重生效（重复 key 返回首次结果） | 单测 N1 |
++| 3 | 多方言归一（OpenAiCompatible / ExternalCli）；ExternalCli 走 `script_runner` | 单测 N9（拒绝 std::process::Command） |
++| 4 | `agent_kv` 落 `app_data_dir/.../agent-kv.json`，与 `workspace/` 无文件交叉 | 命令 E |
++| 5 | `agent_kv` 键名黑名单（api_token / password / key 等）写入拒绝 | 单测 N5 |
++| 6 | `agent_kv` 5 MB / 5000 条上限，超限 LRU 淘汰 | 单测 N6 |
++| 7 | A2A 输入走两段式确认闸门（与 M5-2 §4.3 第 5 步复用） | 单测 N7 |
++| 8 | A2A 任务发起受 keyring token 校验 | 单测 N8 |
++| 9 | `a2a-shutdown` 取消 in-flight 任务，无残留 | 单测 N10 |
++| 10 | `agent_kv` 独立审计 `agent-kv-audit.json` ≤ 1000 | 命令 D |
++| 11 | ACL 末条仍为 `list_artifact_images`（新增 `a2a_*` / `agent_kv_*` 插其前） | 命令 B 0 违规 |
++| 12 | `cargo test` 全绿 | 命令 F |
++| 13 | `pre-merge.sh` ALL_PASS | 命令 G |
++
++---
++
++## 8. FAIL_ACTION
++
++| 失败 | 动作 |
++|---|---|
++| ExternalCli 直起子进程绕过 `script_runner` | **红线失守**：与 A6 冻结冲突，阻断合入 |
++| `agent_kv` 与 `workspace/` 互写 | 阻断：严格分离是 AI 记忆层的根基 |
++| `agent_kv` 存 token/密码 | 立即修 + 清泄露条目 + 提示用户轮换 |
++| A2A 输入绕过确认闸门 | 阻断：提示词注入防线 |
++| `a2a-shutdown` 未取消在飞 | 阻断：与 M0-2 退出收口范式冲突 |
++| `idempotency_key` 重复导致重复执行 | 阻断：幂等是 A2A 协议基础 |
++| `cargo clippy` warning > 13 + 本卡新增 | 按基线清零再合入 |
++
++---
++
++## 9. DOC_BACKWRITE
++
++1. `详细设计与实施计划.md` L564 `[ ]` → `[x]`
++2. `后续需求TODO.md` §7 状态 `DONE`
++3. `AI-模型切换与接手清单.md` NEXT 移至 `M5-4`
++4. `logs/checkpoints/M5-3.a-2026MMDD-HHMM.md`（实施卡 checkpoint）
++5. `M5-14-debt-ledger.md` 增项：A2A 首期是否真双向（A0 决策）；LLM 用量配额是否首期做
++
++---
++
++## 10. COMMIT / NEXT
++
++- **COMMIT**：A0 拣入后由 A15 实施填
++- **NEXT**：M5-4（Agent/Skill runtime，与 A16 拆卡）
++
++---
++
++## 11. FORBID 遵守记录
++
++- 本卡为 A1 M5-W0 文档展开，**未写任何产品代码**
++- 未触 `src-tauri/src/`、`src-tauri/Cargo.toml`、`scripts/pre-merge.sh`、三份主文档、ACL/Capability
++- 未移动 `NEXT`（仍 M5-W0）
++- 未提交、未 push
++- 与 A9 既有契约文档无文件冲突
+diff --git a/logs/checkpoints/M5-20260906/M5-4-agent-skill-runtime.md b/logs/checkpoints/M5-20260906/M5-4-agent-skill-runtime.md
+new file mode 100644
+index 0000000..b0bbb3e
+--- /dev/null
++++ b/logs/checkpoints/M5-20260906/M5-4-agent-skill-runtime.md
+@@ -0,0 +1,236 @@
++# M5-4 Agent/Skill runtime（`AgentDef`/`SkillDef` + 流式）
++
++> 子卡 ID：**M5-4** · 需求 #12 · `[S3|LEVERAGE:3|COMPLEX|AI:DEEP|R:xhigh]`
++> 责任 Lane 候选：**A16**（A9 提案；A0 签发时定）
++> 父卡：`详细设计与实施计划.md` L566（`M5-4 Agent/Skill runtime`）
++> 主预研：`logs/assist/M5-12.a-prework-20260902-1055.md`（SkillDef / AclLevel / 执行体禁 Inline）
++> 配套：`M5-5-agent-skill-commands.md`（命令与权限）· `M5-2-rmcp-mcp-policy.md`（capability.rs 共用）
++
++---
++
++## 0. 编号与锚定
++
++- 批次任务号 `M5-4`；需求号 #12；WBS L566 一致。
++- 依赖：M5-1 ✅（domain 落 core）+ M5-2 ✅（capability.rs 落地）+ M2-4 `run_script` ✅
++- 与 M5-2 关键共用：能力白名单（`capability.rs`）只此一份（防漂移）
++
++---
++
++## 1. GOAL
++
++冻结 `AgentDef` / `SkillDef` / `AgentRunRecord` 等核心类型；实现 `agent_runtime.rs`（Agent 宿主 + 多方言归一 + 流式回传）与 `skill_runtime.rs`（Skill 解析 + 安装 + 执行）；流式回传首期走 `app.emit` + 节流（≥ 50ms 批量，与 M3-4.b 同款静默思路）。**Skill 执行体只引 Script/Command 引用，禁内联 shell 字符串**（K6）。
++
++---
++
++## 2. READ
++
++1. `logs/assist/M5-12.a-prework-20260902-1055.md`（**全读**）
++2. `M5-2-rmcp-mcp-policy.md` §4.2-4.3（capability.rs + 判定顺序，**共用**）
++3. `src-tauri/src/script_runner.rs`（执行体复用 `run_script`）
++4. `src-tauri/src/bridge.rs:688-790`（两段式确认闸门）
++5. `src-tauri/src/domain.rs`（契约根，**全读**）
++6. `src/components/browser/AINavPanel.vue`（前端 AI 面板既有实现，**全读**）
++7. `src-tauri/src/workspace.rs`（路径解析 + `skills_dir()` / `agent_kv_file()` 新增）
++8. `M5-3-a2a-bidir-agent-kv.md`（agent_kv 与本卡共用）
++
++---
++
++## 3. WRITE
++
++| 文件 | 性质 | 说明 |
++|---|---|---|
++| `src-tauri/src/agent_runtime.rs` | **新增** | Agent 宿主 + 多方言归一 + 流式 |
++| `src-tauri/src/skill_runtime.rs` | **新增** | Skill 解析 + 安装 + 执行 |
++| `src-tauri/src/skill_parser.rs` | **新增** | SkillDef YAML/JSON 解析 + 校验 |
++| `src-tauri/src/skills/` | **新增目录** | `skills_dir()` 默认 `~/.local/share/.../skills/` |
++| `src-tauri/src/agents/` | **新增目录** | 同上，agents_dir() |
++| `src-tauri/src/domain.rs` | 新增类型 | `AgentDef` / `SkillDef` / `AgentRunRecord` / `SkillInstallState` / `AclLevel` / `SkillExec` |
++| `src-tauri/src/capability.rs` | 扩展 | 加 `SKILL_CAPABILITY_V1` 列表（首期空，按需逐个评估添加） |
++| `src-tauri/src/workspace.rs` | 修改 | 加 `skills_dir()` / `agents_dir()` / `agent_kv_file()`（复用 `PathResolver` trait 来自 M5-1） |
++| `src/types.ts` | 新增类型 | TS 镜像 `AgentDef`/`SkillDef`/`AgentRunRecord` |
++
++---
++
++## 4. 关键契约
++
++### 4.1 `AgentDef`（核心 schema）
++
++```rust
++pub struct AgentDef {
++    pub id: String,                  // 唯一，反向域名规范（与"反向域名"目录结构对应）
++    pub version: String,             // semver
++    pub display_name: String,
++    pub description: String,
++    pub dialect: AgentDialect,       // M5-3 §4.2
++    pub system_prompt: String,       // 不含凭据
++    pub default_capabilities: Vec<CapabilityRef>,  // 引用 capability.rs 常量
++    pub a2a: A2aConfig,              // 可被 A2A 委派 + 可委派他人的开关
++    pub metadata: serde_json::Value, // 自由扩展（schema_version 走 atomic_write 写入）
++}
++pub struct A2aConfig {
++    pub delegate_to: bool,           // 允许本 Agent 委派给其他 Agent
++    pub delegated_from: bool,        // 允许其他 Agent 委派给本 Agent（影响 inbound A2A 校验）
++}
++```
++
++**Agent 存盘**：`app_data_dir()/mvp-browser-os/agents/<id>/agent.json`（每 Agent 独立目录，便于多版本并存）。
++
++### 4.2 `SkillDef`（核心 schema）
++
++```rust
++pub struct SkillDef {
++    pub id: String,
++    pub version: String,
++    pub display_name: String,
++    pub description: String,
++    pub acl: AclLevel,               // Safe / Confirm / Dangerous
++    pub exec: SkillExec,             // 仅 ScriptRef/CommandRef/Sequence
++    pub inputs: Vec<SkillInput>,     // 必填字段
++    pub capabilities: Vec<CapabilityRef>,
++    pub tests: Vec<SkillTest>,       // 自检用例（可选）
++    pub metadata: serde_json::Value,
++}
++pub enum AclLevel { Safe, Confirm, Dangerous }
++pub enum SkillExec {
++    ScriptRef { script_id: String, params: serde_json::Value },     // M2-3 已存
++    CommandRef { command_id: String, params: serde_json::Value },  // M2-3 已存
++    Sequence { steps: Vec<SkillExec> },                              // 串联
++    // 【禁】InlineScript、RawShell、SystemCommand 等"内联"形态——K6
++}
++```
++
++**K6 红线**：禁止任何"内联 shell 字符串"形态。Skill 只是一层"脚本/命令 + 输入/权限/UI 包装"，**不可承载新执行体**。
++
++**Skill 存盘**：`app_data_dir()/mvp-browser-os/skills/<id>/skill.json`（多版本并存于 `<id>/<version>/`）。
++
++### 4.3 流式回传契约
++
++- 通道：`app.emit("agent://<agent_id>/stream", payload)`（Tauri event）
++- 节流：≥ 50ms 批量 + 累计 ≤ 16 KB 强制 flush
++- 心跳：每 5s 一次（前端连接断时显示"打字中"）
++- 终止：`app.emit("agent://<agent_id>/done", result)` 或 `/error` 或 `/canceled`
++- 与终端同款：前端 `bridge.ts` 收 `event`，转 `useAIStore.addStream`（既有 store 加方法）
++
++### 4.4 多方言归一（agent_runtime.rs）
++
++| 方言 | 适配 | 流式 |
++|---|---|---|
++| `OpenAiCompatible { base_url, model }` | 直连 HTTP/SSE（reqwest + eventsource） | SSE chunked 解析 |
++| `ExternalCli { program }` | 落 Script/Command 引用，**走 script_runner** | 用 `run_script` 既有的 stdout 行式回传 |
++
++**禁**为 Agent 引入第二执行路径；**禁**Agent 直接 `tokio::spawn` stdio 进程。
++
++### 4.5 安装与 ACL
++
++- Skill 安装分三态：
++  - `Safe`：装入 `skills_dir()` 即可生效
++  - `Confirm`：必须用户在前端弹窗确认（两段式闸门）
++  - `Dangerous`：必须 keyring 二次确认 + UI 风险提示
++- 安装后写 `skill-runs.json`（独立文件，500 上限）
++- 删除 / 升级 / 重装都触发同一闸门
++
++---
++
++## 5. FORBID
++
++- **不**让 Skill `exec` 含任何"内联 shell 字符串"形态（K6）
++- **不**为 Agent 引入第二执行路径（ExternalCli 必须走 `script_runner`）
++- **不**让流式回传不节流（防事件刷爆；与终端 M3-4.b 同款）
++- **不**让 `capability.rs` 漂移（A2P / A2A / Skill / Plugin / Agent 共用一份）
++- **不**让凭据进入 `agent.json` / `skill.json`（keyring 存 token）
++- **不**破 K1（ACL 末条恒为 `list_artifact_images`）/K3/K5/K6
++- **不**移动 `NEXT`、不 push
++
++---
++
++## 6. COMMANDS
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++
++# A. 现状复核
++ls src-tauri/src/skills src-tauri/src/agents 2>&1
++grep -rniE "AgentDef|SkillDef|skill_runtime" src-tauri/src | head
++
++# B. capability.rs 共用
++grep -n "MCP_CAPABILITY_V1\|SKILL_CAPABILITY_V1\|AGENT_CAPABILITY_V1" src-tauri/src/capability.rs
++
++# C. 反向用例
++# N1: SkillDef.exec 写 InlineScript → 解析拒
++# N2: SkillDef.exec 写 RawShell → 解析拒
++# N3: AgentDef.system_prompt 含 "我的 token 是 sk-..." → 安装前 keyring 检查拒
++# N4: 装一个 Safe Skill → 不弹闸门；装 Confirm Skill → 必弹；装 Dangerous → 必弹 + keyring
++# N5: ExternalCli 试图直起子进程 → 编译失败（被 refactor 拒）
++# N6: 流式回传每秒 1 万 chunk → 至少 50ms 批量（事件数 ≤ 20）
++# N7: Agent 删除后目录残留 → 卸载必须删目录
++
++# D. 流式节流验证
++python3 - <<'PY'
++# 模拟 1s 10000 chunk；期望窗口内 emit ≤ 20
++PY
++
++# E. 编译与基线
++cargo test --manifest-path src-tauri/Cargo.toml
++cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
++
++# F. 门禁
++bash scripts/pre-merge.sh
++```
++
++---
++
++## 7. PASS_CRITERIA
++
++| # | 判据 | 验证 |
++|---|---|---|
++| 1 | `AgentDef` / `SkillDef` / `SkillExec` / `AclLevel` 落 `domain.rs` | `grep` 命中 |
++| 2 | K6 红线：解析器拒 InlineScript / RawShell 等 | 单测 N1/N2 |
++| 3 | `capability.rs` 唯一一份（MCP / Skill / Agent / Plugin 共用） | 命令 B |
++| 4 | ExternalCli 走 `script_runner`，编译期阻断直起子进程 | 单测 N5 |
++| 5 | 三档 ACL 安装闸门行为正确 | 单测 N4 |
++| 6 | 流式回传节流 ≥ 50ms / 16 KB flush | 单测 N6 |
++| 7 | Agent/Skill 卸载清目录 | 单测 N7 |
++| 8 | 凭据不入 Agent/Skill 配置文件 | 单测 N3 |
++| 9 | `skill-runs.json` 独立上限 500 | 命令 D |
++| 10 | `cargo test` 全绿 | 命令 E |
++| 11 | `pre-merge.sh` ALL_PASS | 命令 F |
++
++---
++
++## 8. FAIL_ACTION
++
++| 失败 | 动作 |
++|---|---|
++| Skill `exec` 出现 InlineScript | **K6 红线失守**：回 design 重写 |
++| Agent 绕过 `script_runner` | **第二执行路径**：与 A6 冻结冲突，阻断 |
++| `capability.rs` 在两处定义 | 阻断：必须收口 |
++| 流式不节流 | 阻断：M3-4.b 静默事件先例 |
++| ACL 闸门不弹 | 阻断：危险操作必须有确认 |
++| `cargo clippy` warning > 13 + 本卡新增 | 按基线清零再合入 |
++
++---
++
++## 9. DOC_BACKWRITE
++
++1. `详细设计与实施计划.md` L566 `[ ]` → `[x]`
++2. `后续需求TODO.md` §12 状态 `PARTIAL`（留 `M5-5/6`）
++3. `AI-模型切换与接手清单.md` NEXT 移至 `M5-5`
++4. `logs/checkpoints/M5-4.a-2026MMDD-HHMM.md`
++5. `M5-14-debt-ledger.md` 增项：LLM 用量配额；流式断线重连
++
++---
++
++## 10. COMMIT / NEXT
++
++- **COMMIT**：A0 拣入后由 A16 实施填
++- **NEXT**：M5-5（命令与权限），同 A16 拆卡
++
++---
++
++## 11. FORBID 遵守记录
++
++- 本卡为 A1 M5-W0 文档展开，**未写任何产品代码**
++- 未触 `src-tauri/src/`、`src-tauri/Cargo.toml`、`scripts/pre-merge.sh`、三份主文档、ACL/Capability
++- 未移动 `NEXT`（仍 M5-W0）
++- 未提交、未 push
++- 与 A9 既有契约文档无文件冲突
+diff --git a/logs/checkpoints/M5-20260906/M5-5-agent-skill-commands.md b/logs/checkpoints/M5-20260906/M5-5-agent-skill-commands.md
+new file mode 100644
+index 0000000..3abe40e
+--- /dev/null
++++ b/logs/checkpoints/M5-20260906/M5-5-agent-skill-commands.md
+@@ -0,0 +1,193 @@
++# M5-5 Agent/Skill 命令与权限（install/remove/run/chat）
++
++> 子卡 ID：**M5-5** · 需求 #12 · `[S3|LEVERAGE:2|COMPLEX|AI:DEEP|R:xhigh]`
++> 责任 Lane 候选：**A16**（A9 提案；A0 签发时定）
++> 父卡：`详细设计与实施计划.md` L567（`M5-5 Agent/Skill 命令与权限`）
++> 主预研：`logs/assist/M5-12.a-prework-20260902-1055.md` §4.1-4.2
++> 配套：`M5-4-agent-skill-runtime.md`（runtime 后端）· `M5-2-rmcp-mcp-policy.md`（capability.rs 共用）
++
++---
++
++## 0. 编号与锚定
++
++- 批次任务号 `M5-5`；需求号 #12；WBS L567 一致。
++- 依赖：M5-4 ✅（runtime 后端稳定）+ M5-2 ✅（capability.rs + 确认闸门）
++
++---
++
++## 1. GOAL
++
++把 `AgentDef` / `SkillDef` 操作封装为 **Tauri 命令**（前端唯一入口），含：安装、删除、列表、详情、运行（Skill）/聊天（Agent）、取消运行、查看历史；统一走 `capability.rs` 公共白名单 + 两段式确认闸门（与 `request_sync`/`confirm_sync` 范式同款）；所有命令必进 ACL，**末条仍为 `list_artifact_images`**。
++
++---
++
++## 2. READ
++
++1. `logs/assist/M5-12.a-prework-20260902-1055.md` §4.1-4.2（**全读**，命令/权限/审计）
++2. `M5-4-agent-skill-runtime.md` §4.5（ACL 三态）
++3. `src-tauri/src/bridge.rs:688-790`（两段式确认闸门）
++4. `src-tauri/src/workspace.rs`（500 上限 FIFO 范式）
++5. `src-tauri/permissions/default-commands.toml`（基线 58 条；插入位置 = `list_artifact_images` 之前）
++
++---
++
++## 3. WRITE
++
++| 文件 | 性质 | 说明 |
++|---|---|---|
++| `src-tauri/src/bridge.rs` | 修改 | 新增 `skill_install` / `skill_remove` / `skill_list` / `skill_get` / `skill_run` / `skill_cancel` / `skill_runs` 共 7 条 |
++| `src-tauri/src/bridge.rs` | 修改 | 新增 `agent_install` / `agent_remove` / `agent_list` / `agent_get` / `agent_chat` / `agent_chat_cancel` / `agent_chat_history` / `agent_runs` 共 8 条 |
++| `src-tauri/permissions/default-commands.toml` | 修改 | 插 15 条新命令于 `list_artifact_images` 之前；**保持末条恒为 `list_artifact_images`** |
++| `src-tauri/src/skill_runtime.rs` | 修改 | `install_skill` / `remove_skill` 走确认闸门 |
++| `src-tauri/src/agent_runtime.rs` | 修改 | `chat` 走"二次确认"（A2A 委派场景） |
++| `src-tauri/src/skill-runs.json` `src-tauri/src/agent-runs.json` | 持久化 | 独立文件，500 上限 FIFO |
++| `src/bridge.ts` `src/types.ts` | 新增 | TS 镜像 15 条命令 + 类型 |
++
++---
++
++## 4. 关键契约
++
++### 4.1 15 条命令清单（与 §3 一致）
++
++| 命令 | 入参 | 出参 | 闸门 | ACL 风险 |
++|---|---|---|---|---|
++| `skill_install` | `SkillDef` | `SkillInstallResult` | **Confirm** 或 **Dangerous** 必弹 | Medium |
++| `skill_remove` | `{ id, version? }` | `bool` | 删危险 = 必弹 | Low |
++| `skill_list` | `{ filter? }` | `SkillSummary[]` | — | Low |
++| `skill_get` | `{ id, version }` | `SkillDef` | — | Low |
++| `skill_run` | `{ id, inputs }` | `RunId` | **按 SkillDef.acl 决定** | 按 `acl` |
++| `skill_cancel` | `{ run_id }` | `bool` | — | Low |
++| `skill_runs` | `{ filter? }` | `RunRecord[]` | — | Low |
++| `agent_install` | `AgentDef` | `AgentInstallResult` | 必弹（含 `delegate_to/delegated_from` 提示） | Medium |
++| `agent_remove` | `{ id }` | `bool` | 必弹 | Low |
++| `agent_list` | `{ filter? }` | `AgentSummary[]` | — | Low |
++| `agent_get` | `{ id }` | `AgentDef` | — | Low |
++| `agent_chat` | `{ id, message, session_id? }` | `SessionId` | A2A 委派场景必弹 | Medium |
++| `agent_chat_cancel` | `{ session_id }` | `bool` | — | Low |
++| `agent_chat_history` | `{ session_id }` | `ChatHistory` | — | Low |
++| `agent_runs` | `{ filter? }` | `RunRecord[]` | — | Low |
++
++### 4.2 确认闸门（与 M5-2 §4.3 第 5 步复用）
++
++- **仅 UI 路径**确认（避免 CLI / MCP 旁路）
++- 必显内容：Skill 名称/版本/输入/ACL/目标 capability 列表（**逐项**展示，**禁**折叠成"应用"按钮）
++- 取消即拒绝（无"延后"）
++- 二次确认（keyring 二次认证）用于 `Dangerous`
++
++### 4.3 审计
++
++- `skill_install` / `skill_remove` / `agent_install` / `agent_remove` 写 `audit.json`（`action=skill_*` / `agent_*`）
++- `skill_run` / `agent_chat` 写 `skill-runs.json` / `agent-runs.json`（独立 500 上限）
++- **禁**记输入正文/响应正文（K3 + 体量防爆）
++- `detail` 含 `id` / `version` / `acl` / `capabilities` / `result`
++
++### 4.4 ACL 与 capability 校验
++
++- 每个命令的 `acl_risk` 是 `default-commands.toml` 的元数据（High/Medium/Low）
++- **每次命令执行前**过 `capability.rs`：① capability 集合 ② 风险等级 ③ 与 `Policy` 比对
++- 与 MCP/A2A 共用同一份 `capability.rs`（防漂移）
++
++---
++
++## 5. FORBID
++
++- **不**让 15 条命令之外的"暗命令"入前端（`bridge.ts` 是唯一前端调用面）
++- **不**让任何命令绕过两段式确认闸门（特别是 `Dangerous`）
++- **不**让 ACL 末条不再是 `list_artifact_images`（K1）
++- **不**让 `capability.rs` 在多文件定义（与 M5-2 共用同一份）
++- **不**让审计正文记录原始输入/响应（防刷爆 + 隐私）
++- **不**移动 `NEXT`、不 push
++
++---
++
++## 6. COMMANDS
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++
++# A. ACL 末条
++grep -n "list_artifact_images" src-tauri/permissions/default-commands.toml | tail -5
++
++# B. 15 条新增
++grep -nE "skill_(install|remove|list|get|run|cancel|runs)|agent_(install|remove|list|get|chat|chat_cancel|chat_history|runs)" src-tauri/bridge.ts
++
++# C. 反向用例
++# N1: 装一个 Dangerous Skill 不弹闸门 → 阻断
++# N2: skill_run 装 Safe Skill → 立刻执行；Confirm → 弹；Dangerous → 弹+keyring
++# N3: 改 skill.json 触发 manifest_hash 变更 → 下一次 run 走二次确认
++# N4: 审计 1000 上限验证
++# N5: UI 路径之外（如 CLI）调用 skill_install Dangerous → 拒绝
++# N6: agent_chat 携带长 1 MB 文本 → 拒绝（> 64 KB 截断/拒绝）
++
++# D. 审计不被刷爆
++python3 - <<'PY'
++import json, os
++for f in ["skill-runs.json", "agent-runs.json"]:
++    p = os.path.expanduser(f"~/.local/share/com.jizhijiandan.mvp/mvp-browser-os/{f}")
++    if not os.path.exists(p):
++        continue
++    d = json.load(open(p))
++    print(f"{f}: {len(d)} entries (上限 500)")
++PY
++
++# E. 编译与基线
++cargo test --manifest-path src-tauri/Cargo.toml
++cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
++
++# F. 门禁
++bash scripts/pre-merge.sh
++```
++
++---
++
++## 7. PASS_CRITERIA
++
++| # | 判据 | 验证 |
++|---|---|---|
++| 1 | 15 条命令全部入 `bridge.rs` + `bridge.ts` | 命令 B |
++| 2 | ACL 末条仍为 `list_artifact_images` | 命令 A |
++| 3 | `Dangerous` Skill 安装必弹闸门 | 单测 N1 |
++| 4 | `skill_run` 按 `acl` 闸门执行 | 单测 N2 |
++| 5 | Skill 配置变更触发二次确认 | 单测 N3 |
++| 6 | CLI 路径调用 `skill_install Dangerous` 拒绝 | 单测 N5 |
++| 7 | 审计上限 500 | 命令 D |
++| 8 | 长输入截断/拒绝 | 单测 N6 |
++| 9 | `cargo test` 全绿 | 命令 E |
++| 10 | `pre-merge.sh` ALL_PASS | 命令 F |
++
++---
++
++## 8. FAIL_ACTION
++
++| 失败 | 动作 |
++|---|---|
++| ACL 末条不再是 `list_artifact_images` | 阻断（K1） |
++| `Dangerous` 不弹闸门 | 阻断（红线） |
++| 审计记录原始输入/响应 | 立即修 + 清泄露条目 |
++| `cargo clippy` warning > 13 + 本卡新增 | 按基线清零再合入 |
++
++---
++
++## 9. DOC_BACKWRITE
++
++1. `详细设计与实施计划.md` L567 `[ ]` → `[x]`
++2. `后续需求TODO.md` §12 状态 `PARTIAL`（留 `M5-6` UI）
++3. `AI-模型切换与接手清单.md` NEXT 移至 `M5-6`
++4. `logs/checkpoints/M5-5.a-2026MMDD-HHMM.md`
++5. `M5-14-debt-ledger.md` 增项：审计汇总 UI 是否首期做
++
++---
++
++## 10. COMMIT / NEXT
++
++- **COMMIT**：A0 拣入后由 A16 实施填
++- **NEXT**：M5-6（Agent/Skill UI），A19
++
++---
++
++## 11. FORBID 遵守记录
++
++- 本卡为 A1 M5-W0 文档展开，**未写任何产品代码**
++- 未触 `src-tauri/src/`、`src-tauri/Cargo.toml`、`scripts/pre-merge.sh`、三份主文档、ACL/Capability
++- 未移动 `NEXT`（仍 M5-W0）
++- 未提交、未 push
+diff --git a/logs/checkpoints/M5-20260906/M5-6-agent-skill-ui.md b/logs/checkpoints/M5-20260906/M5-6-agent-skill-ui.md
+new file mode 100644
+index 0000000..8fb9acb
+--- /dev/null
++++ b/logs/checkpoints/M5-20260906/M5-6-agent-skill-ui.md
+@@ -0,0 +1,181 @@
++# M5-6 Agent/Skill UI（对话 / 管理 / 权限预览）
++
++> 子卡 ID：**M5-6** · 需求 #12 · `[S3|LEVERAGE:1|COMPLEX|AI:NORMAL|R:high]`
++> 责任 Lane 候选：**A19**（A9 提案；A0 签发时定）
++> 父卡：`详细设计与实施计划.md` L568（`M5-6 Agent/Skill UI`）
++> 主预研：暂无 prework 文档（A5/A6 prework 仍空，由 A19 实施期补）
++> 配套：`M5-4-agent-skill-runtime.md`（后端）· `M5-5-agent-skill-commands.md`（15 条命令）
++
++---
++
++## 0. 编号与锚定
++
++- 批次任务号 `M5-6`；需求号 #12；WBS L568 一致。
++- 依赖：M5-5 ✅（15 条命令稳定）+ `src/components/browser/AINavPanel.vue` 既有面板 ✅
++- 前端栈：Vue 3 + Pinia + 既有 AI store（`src/stores/useAIStore.ts`）
++
++---
++
++## 1. GOAL
++
++在前端实现 Agent/Skill 三个核心 UI：① 对话面板（流式渲染，扩展既有 AINavPanel）② 管理面板（列表/详情/编辑/删除）③ 权限预览面板（安装/运行前的二次确认弹窗）。**所有写操作必走 M5-5 闸门**（前端不绕过 `bridge.ts`）。
++
++---
++
++## 2. READ
++
++1. `src/components/browser/AINavPanel.vue`（既有 AI 面板，**全读**——延用其 store/keyboard 快捷键）
++2. `src/stores/useAIStore.ts`（既有 AI 状态管理，**全读**）
++3. `src/bridge.ts`（15 条新命令的 TS 包装，**全读**）
++4. `src/types.ts`（AgentDef/SkillDef/RunRecord TS 镜像）
++5. `M5-4-agent-skill-runtime.md` §4.3（流式契约）
++6. `M5-5-agent-skill-commands.md` §4.1（15 条命令）
++
++---
++
++## 3. WRITE
++
++| 文件 | 性质 | 说明 |
++|---|---|---|
++| `src/components/agent/ChatPanel.vue` | **新增** | 对话面板（流式渲染、取消按钮、历史回看） |
++| `src/components/agent/SkillManager.vue` | **新增** | Skill 管理面板（列表/详情/安装/删除/编辑） |
++| `src/components/agent/AgentManager.vue` | **新增** | Agent 管理面板（列表/详情/安装/删除/编辑） |
++| `src/components/agent/PermissionPreviewModal.vue` | **新增** | 通用权限预览弹窗（安装/运行前必显） |
++| `src/components/agent/RunHistoryModal.vue` | **新增** | 运行历史查看 |
++| `src/stores/useAgentStore.ts` | **新增** | Agent/Skill 状态管理（流式累积、列表缓存、闸门确认态） |
++| `src/composables/useAgentStream.ts` | **新增** | 流式订阅（包事件解包 + 重连 + 取消） |
++| `src/router/agent.ts` | **新增** | Agent/Skill 路由（与既有 `pages/` 同款） |
++| `src/locales/zh-CN.json` `src/locales/en-US.json` | 扩展 | 14 个 i18n key |
++| `src/styles/agent.scss` | **新增** | 样式（与既有 dark/light 双主题适配） |
++
++---
++
++## 4. 关键契约
++
++### 4.1 三个面板布局
++
++- **对话面板**（`ChatPanel.vue`）：
++  - 顶部：Agent 选择器（多 Agent 切换）
++  - 中部：流式消息列表（按 `event` 自动滚动 + 取消按钮）
++  - 底部：输入框 + 附件（复用既有 `useFileUpload` composable）
++  - 侧栏：会话列表（按 `session_id` 分组）
++
++- **Skill/Agent 管理**（`SkillManager.vue` / `AgentManager.vue`）：
++  - 表格：id / version / display_name / acl / 安装状态 / 操作
++  - 操作按钮：详情、编辑、删除、（重新）安装
++  - 详情：含 `metadata` / `capabilities` / `tests` / `runs` 最近 10 条
++  - 必触发 `PermissionPreviewModal`
++
++- **权限预览**（`PermissionPreviewModal.vue`）：
++  - 必显项（**禁**折叠）：Skill/Agent 名称 + 版本 + ACL + capabilities（逐项） + 目标操作 + 风险提示
++  - 二次确认（keyring 二次认证）按钮用于 `Dangerous`
++  - 取消 = 拒绝（无"延后"）
++
++### 4.2 流式渲染契约
++
++- 监听 `agent://<agent_id>/stream` 事件
++- 按 `session_id` 路由到 `useAgentStore.stream[sessionId]`
++- 自动滚动：仅当用户位于底部；用户向上滚动时禁用
++- 取消：发 `agent_chat_cancel` 命令
++
++### 4.3 闸门确认态管理
++
++- `useAgentStore` 维护 `pendingConfirms: Map<id, {action, payload, expires_at}>`
++- 前端到 Tauri 命令的"二次确认"流程：
++  1. UI 调用 `skill_install` → Tauri 返回 `CONFIRM_REQUIRED` + `request_id`
++  2. UI 自动打开 `PermissionPreviewModal`，展示详情
++  3. 用户点击确认 → UI 调用 `confirm_<action>` 命令（带 `request_id`）
++  4. Tauri 二次校验 + 执行
++- **禁**前端直接绕开闸门执行
++
++---
++
++## 5. FORBID
++
++- **不**让任何 UI 路径直接走 Tauri `invoke`（必须经 `bridge.ts`）
++- **不**让闸门弹窗被折叠/隐藏/默认确认
++- **不**让流式渲染不节流（与 M5-4 §4.3 一致）
++- **不**让 Agent 切到无对应 capability 的状态
++- **不**让 CSS 与 dark/light 主题冲突（双主题适配是硬要求）
++- **不**移动 `NEXT`、不 push
++
++---
++
++## 6. COMMANDS
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++
++# A. 文件结构
++ls src/components/agent src/composables/useAgentStream.ts src/stores/useAgentStore.ts 2>&1
++
++# B. 反向用例
++# N1: ChatPanel 发 1 MB 文本 → 前端截断到 64 KB
++# N2: 用户向上滚动时收 chunk → 不自动跳到底
++# N3: Dangerous Skill 装时 PermissionPreviewModal 不显 → 阻断
++# N4: 不通过 bridge.ts 直接 invoke → 阻断（CI 断言）
++# N5: 切换 dark/light 主题 → 无样式崩
++# N6: i18n key 缺失 → 阻断
++
++# C. e2e 冒烟
++pnpm test:unit   # 含 ChatPanel / Manager / PermissionPreview
++pnpm test:e2e    # 含闸门弹窗 e2e
++
++# D. 编译与基线
++pnpm build
++pnpm tsc --noEmit
++pnpm lint
++```
++
++---
++
++## 7. PASS_CRITERIA
++
++| # | 判据 | 验证 |
++|---|---|---|
++| 1 | 5 个新组件落地 | 命令 A |
++| 2 | 流式渲染节流 + 取消按钮 | 单测 N2 |
++| 3 | 闸门弹窗必显 | 单测 N3 |
++| 4 | UI 仅经 `bridge.ts` 调 Tauri（无裸 `invoke`） | CI 断言 N4 |
++| 5 | dark/light 主题适配 | 单测 N5 |
++| 6 | i18n 双语齐 | 单测 N6 |
++| 7 | `pnpm test:unit` + `pnpm test:e2e` 全绿 | 命令 C |
++| 8 | `pnpm build` 无错 | 命令 D |
++| 9 | `pre-merge.sh` ALL_PASS | 复用既有 |
++
++---
++
++## 8. FAIL_ACTION
++
++| 失败 | 动作 |
++|---|---|
++| 闸门被绕过 | 阻断（红线） |
++| 裸 `invoke` 出现 | 阻断（必须经 bridge.ts） |
++| 流式不节流 | 阻断（M3-4.b 静默事件先例） |
++| dark/light 主题崩 | 阻断（视觉红线） |
++| i18n 缺 key | 阻断 |
++
++---
++
++## 9. DOC_BACKWRITE
++
++1. `详细设计与实施计划.md` L568 `[ ]` → `[x]`
++2. `后续需求TODO.md` §12 状态 `DONE`
++3. `AI-模型切换与接手清单.md` NEXT 移至下一卡
++4. `logs/checkpoints/M5-6.a-2026MMDD-HHMM.md`
++
++---
++
++## 10. COMMIT / NEXT
++
++- **COMMIT**：A0 拣入后由 A19 实施填
++- **NEXT**：M5-7（M5-13 验证矩阵留待后期），与 Graph 同 A19/A17 拆卡
++
++---
++
++## 11. FORBID 遵守记录
++
++- 本卡为 A1 M5-W0 文档展开，**未写任何产品代码**
++- 未触 `src/`、`package.json`、三份主文档、ACL/Capability
++- 未移动 `NEXT`（仍 M5-W0）
++- 未提交、未 push
+diff --git a/logs/checkpoints/M5-20260906/M5-7-graph-model-extract.md b/logs/checkpoints/M5-20260906/M5-7-graph-model-extract.md
+new file mode 100644
+index 0000000..6df71e9
+--- /dev/null
++++ b/logs/checkpoints/M5-20260906/M5-7-graph-model-extract.md
+@@ -0,0 +1,228 @@
++# M5-7 图模型与可追溯抽取（两阶段 + `graph.rs`）
++
++> 子卡 ID：**M5-7** · 需求 #13（知识图谱）· `[S3|LEVERAGE:2|COMPLEX|AI:DEEP|R:xhigh]`
++> 责任 Lane 候选：**A17**（A9 提案；A0 签发时定）
++> 父卡：`详细设计与实施计划.md` L570（`M5-7 图模型与可追溯抽取`）
++> 主预研：`logs/assist/M5-13.a-prework-20260902-1055.md`（两阶段抽取 + `source=Manual/Extract/Ai`）· `logs/assist/A9-M5-graph-store-contract-20260906-0700.md`（store 契约）
++> 配套：`M5-8-graph-store-query.md`（存储与查询）· `M5-9-graph-ui-agent-consume.md`（UI 与消费）
++
++---
++
++## 0. 编号与锚定
++
++- 批次任务号 `M5-7`；需求号 #13；WBS L570 一致。
++- 依赖：M5-1 ✅（domain 落 core）+ A7 事件流 ✅ + M5-8 部分（GraphQuery DTO 共定）
++- 关键决策交 A0 拍：① `source=ai` 智能抽取首期是否留 trait（**默认留**） ② `props` JSON 容错策略（**默认严格**）
++
++---
++
++## 1. GOAL
++
++冻结图模型（`GraphNode` / `GraphEdge` / `GraphSchema`），实现 `graph.rs`（两阶段抽取器：① 静态扫描 HTML/脚本/文档 ② 实体识别与关系归一化），建立"可追溯"原则——每个节点/边带 `source` + `source_ref` + `extracted_at` + `extractor_version`，**派生索引层**不存主数据正文。
++
++---
++
++## 2. READ
++
++1. `logs/assist/M5-13.a-prework-20260902-1055.md`（**全读**，图模型/两阶段抽取/AI 抽取 trait）
++2. `logs/assist/A9-M5-graph-store-contract-20260906-0700.md`（store schema DDL + GraphNode/GraphEdge DTO）
++3. `logs/assist/A9-M5-graph-scheduler-feed-20260906-0700.md`（scheduler feed 接缝）
++4. `src-tauri/src/domain.rs`（契约根，**全读**——新类型加这里）
++5. `src-tauri/src/workspace.rs`（路径解析）
++6. `M5-1-core-workspace-split.md` §10（切片 0b 契约常量随迁）
++
++---
++
++## 3. WRITE
++
++| 文件 | 性质 | 说明 |
++|---|---|---|
++| `src-tauri/src/graph.rs` | **新增** | `graph_extractor` 两阶段 + schema 校验 + 增量写 |
++| `src-tauri/src/graph_schema.rs` | **新增** | Schema 注册表（节点类型/关系类型/必填 props） |
++| `src-tauri/src/graph_extractor_html.rs` | **新增** | 阶段① HTML 扫描（仅结构化标签 + link/script 资源） |
++| `src-tauri/src/graph_extractor_doc.rs` | **新增** | 阶段① 文档扫描（md/txt/json，**禁**二进制） |
++| `src-tauri/src/graph_normalize.rs` | **新增** | 阶段② 实体识别 + 关系归一 + 相似节点合并（首期同 hash 精确匹配） |
++| `src-tauri/src/domain.rs` | 新增类型 | `GraphNode` / `GraphEdge` / `GraphSchema` / `GraphSource` / `ExtractResult` |
++| `src-tauri/src/bridge.rs` | 修改 | `graph_extract` / `graph_extract_cancel` / `graph_schema_list/get` 命令（**全进 ACL**） |
++| `src-tauri/permissions/default-commands.toml` | 修改 | 插 `graph_extract*` / `graph_schema_*` 于 `list_artifact_images` 之前 |
++| `src/types.ts` | 新增 | TS 镜像 `GraphNode`/`GraphEdge`/`GraphSchema` |
++| `scripts/check-graph-policy.py` | **新增** | 挂 `pre-merge.sh`；自检 PASS |
++
++---
++
++## 4. 关键契约
++
++### 4.1 图模型 schema
++
++```rust
++pub struct GraphNode {
++    pub id: String,                    // hash(source_ref + kind + stable_props_hash)
++    pub kind: String,                  // 节点类型（注册表必填）
++    pub label: String,                 // 展示名
++    pub props: serde_json::Value,      // 严格 schema 校验（首期严格，宽容版本做迁移期）
++    pub source: GraphSource,
++    pub created_at: DateTime<Utc>,
++    pub updated_at: DateTime<Utc>,
++    pub extractor_version: String,     // semver，触发再抽取判定
++}
++pub enum GraphSource {
++    Manual,        // 用户手建（最高优先级，不被自动抽取覆盖）
++    Extract,       // 阶段② 自动抽取
++    Ai,            // 【首期留 trait】  LLM 抽取留接口，不实现
++    Imported,      // 从其它来源导入
++}
++pub struct GraphEdge {
++    pub id: String,
++    pub from: String,                  // GraphNode.id
++    pub to: String,                    // GraphNode.id
++    pub kind: String,                  // 关系类型（注册表必填）
++    pub props: serde_json::Value,
++    pub source: GraphSource,
++    pub created_at: DateTime<Utc>,
++    pub weight: f64,                   // 0.0 ~ 1.0（首期 1.0 精确 / 0.0 否定）
++}
++```
++
++**派生索引层原则**：`GraphNode.props` **不存主数据正文**（K7）；可重建；`source=Manual` 优先不被自动抽取覆盖。
++
++### 4.2 两阶段抽取
++
++**阶段① 候选发现**（无副作用，仅返回候选实体与关系）：
++
++| 输入源 | 提取方法 | 风险 |
++|---|---|---|
++| `workspace/` 文档（md/txt/json） | 解析 frontmatter + 结构化字段 | Low |
++| `workspace/` 文档（pdf/docx） | **首期不实现**（防二进制解析漏洞） | — |
++| `script_runner` `runs.json` 的脚本输出 | 解析 YAML frontmatter + `## outputs:` 段 | Low |
++| `tabs.db` 已存 tab（仅 URL/title/路径） | 提取链接 | Low |
++| 浏览器访问历史（M4-5） | **首期不接入**（避免爬虫语义；可后续评估） | — |
++| LLM 响应 | **首期留 trait，不实现** | — |
++
++**阶段② 实体识别与归一**：
++
++- 节点类型注册表（首期：File / Dir / Tab / Script / Skill / Agent / Tag / Topic）
++- 关系类型注册表（首期：`in_dir` / `references` / `related_to` / `tagged_with`）
++- 同 hash 精确匹配合并（**首期**；相似度算法留债）
++- 边权重：精确 1.0；否定 0.0
++
++### 4.3 可追溯性
++
++- 每个 `GraphNode` / `GraphEdge` 必带 `source` + `extractor_version` + `created_at` + `updated_at`
++- `props` 不含原文（K7）；原文路径存 `source_ref`（仅引用，不复制）
++- 重复抽取：仅当 `extractor_version` 变化才再识别；否则跳过
++
++### 4.4 取消与收口
++
++- `graph_extract` 是长任务（可能数分钟），必须支持取消
++- 复用 A6/A7 既有 `TaskKind::{Script, Command}`，**禁**新增 `TaskKind::GraphExtract`
++- 落成 `Script`（`ScriptExec` 段）—— 走 `script_runner` 通道
++- 取消复用 `script_runner.cancel`
++- **新任务默认 `enabled=false`**（R-A6-1）
++
++### 4.5 审计契约
++
++- `graph_extract` 写 `audit.json`（`action=graph_extract`）
++- `detail` 含 `scope` / `extractor_version` / `nodes_added` / `edges_added` / `nodes_merged` / `duration_ms` / `result`
++- 禁记原文/响应正文（K3 + 体量防爆）
++
++---
++
++## 5. FORBID
++
++- **不**让 `GraphNode.props` 存主数据正文（K7，可重建原则）
++- **不**让 `source=Manual` 节点被自动抽取覆盖
++- **不**为抽取新增 `TaskKind::GraphExtract`（A6 冻结）
++- **不**让首期实现 `source=ai` 抽取（仅留 trait）
++- **不**让二进制文档（pdf/docx）被解析（防漏洞）
++- **不**破 K1（ACL 末条恒为 `list_artifact_images`）/K3/K5
++- **不**移动 `NEXT`、不 push
++
++---
++
++## 6. COMMANDS
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++
++# A. 现状复核
++grep -rniE "GraphNode|GraphEdge|graph_extractor" src-tauri/src | head
++
++# B. 政策脚本自检
++python3 scripts/check-graph-policy.py --self-test
++
++# C. 反向用例
++# N1: props 含主数据正文（> 1 KB）→ 拒
++# N2: 重复抽取同 hash → 跳过
++# N3: 抽取期间取消 → 终止，无半成品
++# N4: source=Manual 节点被覆盖 → 阻断
++# N5: extractor_version 变更 → 触发再抽取
++# N6: 二进制文件被解析（pdf/docx）→ 拒
++
++# D. 性能基线
++# 1000 文件/100 MB workspace 抽取 < 60s
++# 10000 节点查询 depth=2 < 500ms
++
++# E. 编译与基线
++cargo test --manifest-path src-tauri/Cargo.toml
++cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
++
++# F. 门禁
++bash scripts/pre-merge.sh
++```
++
++---
++
++## 7. PASS_CRITERIA
++
++| # | 判据 | 验证 |
++|---|---|---|
++| 1 | `GraphNode` / `GraphEdge` / `GraphSource` 落 `domain.rs` | `grep` 命中 |
++| 2 | 两阶段抽取器落地 | `grep graph_extractor` 命中 |
++| 3 | `props` 不存主数据正文（K7） | 单测 N1 |
++| 4 | 重复抽取同 hash 跳过 | 单测 N2 |
++| 5 | 取消生效无半成品 | 单测 N3 |
++| 6 | `source=Manual` 不被覆盖 | 单测 N4 |
++| 7 | `extractor_version` 变更触发再抽取 | 单测 N5 |
++| 8 | 二进制文档解析被拒 | 单测 N6 |
++| 9 | 性能基线 1000 文件/100 MB < 60s | 命令 D |
++| 10 | ACL 末条仍为 `list_artifact_images` | 命令 B 0 违规 |
++| 11 | `cargo test` 全绿 | 命令 E |
++| 12 | `pre-merge.sh` ALL_PASS | 命令 F |
++
++---
++
++## 8. FAIL_ACTION
++
++| 失败 | 动作 |
++|---|---|
++| `props` 存原文 | 阻断（K7） |
++| `source=Manual` 被覆盖 | 阻断（用户数据红线） |
++| 抽取无取消 | 阻断（A6 范式） |
++| 二进制解析失败引发漏洞 | 立即修复并重新评估 |
++| `cargo clippy` warning > 13 + 本卡新增 | 按基线清零再合入 |
++
++---
++
++## 9. DOC_BACKWRITE
++
++1. `详细设计与实施计划.md` L570 `[ ]` → `[x]`
++2. `后续需求TODO.md` §13 状态 `PARTIAL`（留 `M5-8/9`）
++3. `AI-模型切换与接手清单.md` NEXT 移至 `M5-8`
++4. `logs/checkpoints/M5-7.a-2026MMDD-HHMM.md`
++5. `M5-14-debt-ledger.md` 增项：`source=ai` trait / 相似度算法 / 二进制文档
++
++---
++
++## 10. COMMIT / NEXT
++
++- **COMMIT**：A0 拣入后由 A17 实施填
++- **NEXT**：M5-8（存储与查询）
++
++---
++
++## 11. FORBID 遵守记录
++
++- 本卡为 A1 M5-W0 文档展开，**未写任何产品代码**
++- 未触 `src-tauri/src/`、`src-tauri/Cargo.toml`、`scripts/pre-merge.sh`、三份主文档、ACL/Capability
++- 未移动 `NEXT`（仍 M5-W0）
++- 未提交、未 push
+diff --git a/logs/checkpoints/M5-20260906/M5-8-graph-store-query.md b/logs/checkpoints/M5-20260906/M5-8-graph-store-query.md
+new file mode 100644
+index 0000000..62cad1e
+--- /dev/null
++++ b/logs/checkpoints/M5-20260906/M5-8-graph-store-query.md
+@@ -0,0 +1,228 @@
++# M5-8 图存储与查询（邻接表 + DDL + `graph_*` 命令）
++
++> 子卡 ID：**M5-8** · 需求 #13 · `[S3|LEVERAGE:3|COMPLEX|AI:DEEP|R:xhigh]`
++> 责任 Lane 候选：**A17**
++> 父卡：`详细设计与实施计划.md` L571
++> 主预研：`logs/assist/A9-M5-graph-store-contract-20260906-0700.md`（DDL + GraphQuery DTO）· `logs/assist/A9-M5-graph-scheduler-feed-20260906-0700.md`
++> 配套：`M5-7-graph-model-extract.md`（抽取）· `M5-9-graph-ui-agent-consume.md`（UI 消费）
++
++---
++
++## 0. 编号与锚定
++
++- 批次任务号 `M5-8`；需求号 #13；WBS L571 一致。
++- 依赖：M5-7 ✅（schema 冻结）+ A3 DB API ✅
++- 决策交 A0 拍：① 首期只读 vs 支持写 ② `graph_export("graphml")` 是否首期做
++
++---
++
++## 1. GOAL
++
++实现图存储层（邻接表 + 索引 + 备份）、图查询 DTO（多跳邻居 / 路径 / 子图 / 标签过滤）与 `graph_*` 命令集合；首期**用户手建 + 自动抽取**（抽写），**不开第三方任意边写入**（防污染）。
++
++---
++
++## 2. READ
++
++1. `logs/assist/A9-M5-graph-store-contract-20260906-0700.md`（**全读**）
++2. `logs/assist/A9-M5-graph-scheduler-feed-20260906-0700.md`（**全读**）
++3. `src-tauri/src/database.rs`（1272 行）
++4. `M5-7-graph-model-extract.md` §4.1（schema）
++5. `src-tauri/src/workspace.rs`（路径 + 备份目录）
++6. `M5-1-core-workspace-split.md` §10
++
++---
++
++## 3. WRITE
++
++| 文件 | 性质 | 说明 |
++|---|---|---|
++| `src-tauri/src/graph_store.rs` | **新增** | 邻接表读写 + 索引 + 备份 |
++| `src-tauri/src/graph_query.rs` | **新增** | `GraphQuery` 多跳邻居 + 深度限制 + 路径查找 |
++| `src-tauri/src/graph_maintenance.rs` | **新增** | 维护任务（vacuum / 备份 / FTS 重建） |
++| `src-tauri/src/domain.rs` | 新增类型 | `GraphQuery` / `GraphResult` / `GraphSubgraph` / `GraphPath` / `GraphNodeUpsert` / `GraphEdgeUpsert` |
++| `src-tauri/src/bridge.rs` | 修改 | `graph_query` / `graph_node_get/list/upsert/delete` / `graph_edge_list/upsert/delete` / `graph_export`（**全进 ACL**） |
++| `src-tauri/permissions/default-commands.toml` | 修改 | 插 `graph_*` 共 9 条于 `list_artifact_images` 之前 |
++| `src-tauri/src/scheduler.rs` | 修改 | 注册 `graph-maintenance` 周期任务（**`enabled=false` 默认**） |
++| `src-tauri/src/shutdown.rs` | 修改 | 注册 `graph-store-shutdown`（**先于 `stop-scheduler` 关闭**） |
++| `src-tauri/src/graph.db` `graph.db.bak` | 持久化 | SQLite + 备份 |
++| `src/types.ts` | 新增 | TS 镜像 |
++
++---
++
++## 4. 关键契约
++
++### 4.1 DDL（与 A9 graph-store-contract 一致；此处引用，**禁止漂移**）
++
++```sql
++CREATE TABLE graph_node (
++    id TEXT PRIMARY KEY,
++    kind TEXT NOT NULL, label TEXT NOT NULL,
++    props TEXT NOT NULL, source TEXT NOT NULL,
++    source_ref TEXT,
++    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
++    extractor_version TEXT
++);
++CREATE INDEX idx_graph_node_kind ON graph_node(kind);
++CREATE INDEX idx_graph_node_source ON graph_node(source);
++CREATE VIRTUAL TABLE graph_node_fts USING fts5(label, content='graph_node', content_rowid='rowid');
++
++CREATE TABLE graph_edge (
++    id TEXT PRIMARY KEY,
++    from_id TEXT NOT NULL REFERENCES graph_node(id),
++    to_id TEXT NOT NULL REFERENCES graph_node(id),
++    kind TEXT NOT NULL, props TEXT NOT NULL, source TEXT NOT NULL,
++    source_ref TEXT, weight REAL NOT NULL DEFAULT 1.0,
++    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
++);
++CREATE INDEX idx_graph_edge_from ON graph_edge(from_id);
++CREATE INDEX idx_graph_edge_to ON graph_edge(to_id);
++CREATE INDEX idx_graph_edge_kind ON graph_edge(kind);
++
++CREATE TABLE graph_schema (version TEXT PRIMARY KEY, node_kinds TEXT NOT NULL, edge_kinds TEXT NOT NULL, installed_at TEXT NOT NULL);
++CREATE TABLE graph_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
++```
++
++**schema_version 走 `atomic_write`**（沿用 M3 范式）。
++
++### 4.2 `GraphQuery` DTO
++
++```rust
++pub struct GraphQuery {
++    pub start: Vec<String>,
++    pub direction: Direction,    // Out / In / Both
++    pub edge_kinds: Vec<String>, // 空 = 不限
++    pub max_depth: u8,           // 默认 2，**上限 4**
++    pub limit: usize,            // 默认 100，**上限 1000**
++    pub cursor: Option<String>,  // 翻页
++}
++```
++
++**首期不开**路径查找；子图查询**不返回 props 正文**（K7）。
++
++### 4.3 `graph_*` 命令清单（9 条）
++
++| 命令 | 用途 | ACL 风险 |
++|---|---|---|
++| `graph_query` | 多跳邻居 | Low |
++| `graph_node_get` | 单节点详情 | Low |
++| `graph_node_list` | 节点列表（按 kind/label 过滤） | Low |
++| `graph_node_upsert` | 用户手建/编辑（**禁覆盖 source=Manual**） | Medium |
++| `graph_node_delete` | 用户删除（级联删边） | Medium |
++| `graph_edge_list` | 边列表 | Low |
++| `graph_edge_upsert` | 用户手建/编辑边 | Medium |
++| `graph_edge_delete` | 用户删除边 | Medium |
++| `graph_export` | graphml（**首期仅返回"暂不支持"**） | — |
++
++### 4.4 维护任务
++
++- `graph-vacuum` / `graph-backup` / `graph-fts-rebuild`（均 `enabled=false` 默认）
++- 复用 `TaskKind::{Script, Command}`（**禁**新增 `TaskKind::GraphMaintenance`）
++- 复用 `script_runner` 通道
++
++### 4.5 收口
++
++- `graph-store-shutdown` **先于** `stop-scheduler` 注册（A7 冻结：scheduler 关 → 维护任务结束 → graph store flush）
++- 关闭流程：① stop maintenance tasks ② flush WAL ③ close db
++
++---
++
++## 5. FORBID
++
++- **不**让用户通过 `graph_node_upsert` 覆盖 `source=Manual` 节点
++- **不**让查询返回 `props` 正文（仅摘要，K7）
++- **不**让 `max_depth > 4`（防爆栈）
++- **不**让 `limit > 1000`（防响应体爆）
++- **不**为维护任务新增 `TaskKind::GraphMaintenance`（A6 冻结）
++- **不**让 `graph-store-shutdown` 改 `stop-scheduler` 索引序（A7 冻结）
++- **不**让 `graph_export("graphml")` 首期实现（返回"暂不支持"）
++- **不**破 K1/K3/K5
++- **不**移动 `NEXT`、不 push
++
++---
++
++## 6. COMMANDS
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++
++# A. 现状复核
++ls src-tauri/src/graph_*.rs 2>&1
++grep -c "graph_query\|graph_node\|graph_edge" src-tauri/src/bridge.rs
++
++# B. 反向用例
++# N1: max_depth=10 → 截断到 4
++# N2: limit=10000 → 截断到 1000
++# N3: 用户 upsert source=Manual 节点 → 阻断
++# N4: graph_query 返回 props 正文 → 阻断
++# N5: graph_export("graphml") → 返回 "暂不支持"
++# N6: graph.db 损坏 → 自动从 graph.db.bak 恢复 + 提示
++# N7: 关闭流程中 graph-store-shutdown 在 stop-scheduler 之后 → 单测断言
++
++# C. 性能基线
++# 1000 节点查询 depth=2 < 500ms
++# 10000 节点查询 depth=2 < 2s
++
++# D. 编译与基线
++cargo test --manifest-path src-tauri/Cargo.toml
++cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
++
++# E. 门禁
++bash scripts/pre-merge.sh
++```
++
++---
++
++## 7. PASS_CRITERIA
++
++| # | 判据 | 验证 |
++|---|---|---|
++| 1 | DDL 与 A9 graph-store-contract 一致 | 静态断言 |
++| 2 | `max_depth` / `limit` 双重上限生效 | 单测 N1/N2 |
++| 3 | `source=Manual` 节点不可被 upsert 覆盖 | 单测 N3 |
++| 4 | 子图查询不返回 props 正文 | 单测 N4 |
++| 5 | `graph_export("graphml")` 返回"暂不支持" | 单测 N5 |
++| 6 | `graph.db` 损坏自动从 `graph.db.bak` 恢复 | 单测 N6 |
++| 7 | `graph-store-shutdown` 注册在 `stop-scheduler` 之前 | 单测 N7 + 命令 E |
++| 8 | 性能基线达标 | 命令 C |
++| 9 | ACL 末条仍为 `list_artifact_images` | 命令 E |
++| 10 | `cargo test` 全绿 | 命令 D |
++| 11 | `pre-merge.sh` ALL_PASS | 命令 E |
++
++---
++
++## 8. FAIL_ACTION
++
++| 失败 | 动作 |
++|---|---|
++| DDL 漂移（与 A9 契约不一致） | 阻断（A9 契约是 A0 签发的真相源） |
++| `source=Manual` 被覆盖 | 阻断（用户数据红线） |
++| `max_depth > 4` | 阻断（爆栈） |
++| `graph-store-shutdown` 顺序错 | 阻断（A7 冻结） |
++| `cargo clippy` warning > 13 + 本卡新增 | 按基线清零再合入 |
++
++---
++
++## 9. DOC_BACKWRITE
++
++1. `详细设计与实施计划.md` L571 `[ ]` → `[x]`
++2. `后续需求TODO.md` §13 状态 `PARTIAL`（留 `M5-9` UI）
++3. `AI-模型切换与接手清单.md` NEXT 移至 `M5-9`
++4. `logs/checkpoints/M5-8.a-2026MMDD-HHMM.md`
++5. `M5-14-debt-ledger.md` 增项：路径查找 / graphml 导出 / props 宽容版本
++
++---
++
++## 10. COMMIT / NEXT
++
++- **COMMIT**：A0 拣入后由 A17 实施填
++- **NEXT**：M5-9（Graph UI + Agent 消费）
++
++---
++
++## 11. FORBID 遵守记录
++
++- 本卡为 A1 M5-W0 文档展开，**未写任何产品代码**
++- 未触 `src-tauri/src/`、`src-tauri/Cargo.toml`、`scripts/pre-merge.sh`、三份主文档、ACL/Capability
++- 未移动 `NEXT`（仍 M5-W0）
++- 未提交、未 push
+diff --git a/logs/checkpoints/M5-20260906/M5-9-graph-ui-agent-consume.md b/logs/checkpoints/M5-20260906/M5-9-graph-ui-agent-consume.md
+new file mode 100644
+index 0000000..e6e97d2
+--- /dev/null
++++ b/logs/checkpoints/M5-20260906/M5-9-graph-ui-agent-consume.md
+@@ -0,0 +1,177 @@
++# M5-9 图谱 UI + Agent 消费（力导向 + RAG 注入）
++
++> 子卡 ID：**M5-9** · 需求 #13 · `[S3|LEVERAGE:1|COMPLEX|AI:NORMAL|R:high]`
++> 责任 Lane 候选：**A19**
++> 父卡：`详细设计与实施计划.md` L572（`M5-9 图谱 UI 与 Agent 消费`）
++> 主预研：暂无 prework 文档（A8 prework 仍空）
++> 配套：`M5-8-graph-store-query.md`（DTO 稳定）
++
++---
++
++## 0. 编号与锚定
++
++- 批次任务号 `M5-9`；需求号 #13；WBS L572 一致。
++- 依赖：M5-8 ✅（9 条命令稳定）+ M5-6 ✅（既有 `useAgentStore` 已落地）
++- 前端栈：Vue 3 + Pinia + D3.js（力导向布局）
++
++---
++
++## 1. GOAL
++
++实现图谱可视化 UI（节点/边力导向布局、按 kind 着色、点击查看详情、拖拽、缩放、过滤）与 Agent RAG 注入（用户在 Agent 对话中显式"基于图谱"提问时，按 `graph_query` 取相关节点/边摘要注入 `system_prompt`）。
++
++---
++
++## 2. READ
++
++1. `src/components/browser/AINavPanel.vue`（**全读**——`useAgentStore` 桥接）
++2. `M5-6-agent-skill-ui.md`（既有 Agent UI 范式）
++3. `M5-8-graph-store-query.md` §4.2（`GraphQuery` DTO + 上限）
++4. `src/bridge.ts`（`graph_*` TS 包装，**全读**）
++5. `src/types.ts`（`GraphNode` / `GraphEdge` TS 镜像）
++6. `src/router/agent.ts`（路由）
++
++---
++
++## 3. WRITE
++
++| 文件 | 性质 | 说明 |
++|---|---|---|
++| `src/components/graph/GraphViewer.vue` | **新增** | D3.js 力导向布局 + 拖拽/缩放/过滤 |
++| `src/components/graph/NodeDetail.vue` | **新增** | 节点详情（不显示 props 正文） |
++| `src/components/graph/EdgeDetail.vue` | **新增** | 边详情 |
++| `src/components/graph/GraphFilter.vue` | **新增** | 按 kind / source 过滤 |
++| `src/composables/useGraphQuery.ts` | **新增** | 包装 `graph_query` + 缓存 + 取消 |
++| `src/composables/useGraphRag.ts` | **新增** | RAG 注入（显式触发） |
++| `src/stores/useGraphStore.ts` | **新增** | 图谱状态（选中节点、视图参数、缓存） |
++| `src/router/graph.ts` | **新增** | 图谱路由 |
++| `src/locales/zh-CN.json` `src/locales/en-US.json` | 扩展 | 8 个 i18n key |
++| `src/styles/graph.scss` | **新增** | 样式（dark/light 双主题） |
++
++---
++
++## 4. 关键契约
++
++### 4.1 `GraphViewer.vue` 交互
++
++- **节点**：圆 + 标签 + 颜色按 kind；大小按 degree（边数）
++- **边**：线 + 箭头 + 粗细按 weight
++- **交互**：拖拽（d3-drag）+ 缩放（d3-zoom）+ 点击（高亮邻居 + 打开详情）
++- **过滤**：`GraphFilter` 多选 kind + source
++- **布局**：d3-force（forceLink + forceManyBody + forceCenter）
++- **首期上限**：可见节点 ≤ 500（多则提示"过滤缩小"）
++
++### 4.2 `NodeDetail.vue` / `EdgeDetail.vue`
++
++- 显示：id / kind / label / source / source_ref / created_at / updated_at / extractor_version
++- **不**显示 `props` 正文（K7）
++- `source_ref` 路径点击 → 打开对应文件/tab（受 `capability.rs` 校验）
++
++### 4.3 RAG 注入契约（`useGraphRag.ts`）
++
++- **仅显式触发**：用户在 ChatPanel 输入框加 `/graph <query>` 前缀
++- 流程：
++  1. 解析 `query` → 调 `useGraphQuery.search`（先按 label 模糊匹配 FTS5 起点）
++  2. 起点 + `max_depth=2` 调 `graph_query`
++  3. 把结果序列化为"图谱上下文"（节点 label + kind + 关系描述，**不**含 props）
++  4. 注入到 `agent_chat` 的 `system_prompt` 临时扩段（首期仅限本轮）
++  5. UI 标注"已基于图谱"标记
++- **禁**隐式注入（避免 token 浪费 + 上下文污染）
++
++### 4.4 性能与可访问性
++
++- 大图（> 500 节点）自动隐藏弱连接
++- 键盘快捷键：`Esc` 关闭详情，`f` 打开过滤
++- ARIA 标签：节点/边可读屏
++
++---
++
++## 5. FORBID
++
++- **不**让 `NodeDetail` / `EdgeDetail` 显示 `props` 正文（K7）
++- **不**让 RAG 注入隐式触发（仅 `/graph` 前缀）
++- **不**让 UI 路径绕过 `bridge.ts`（M5-6 范式）
++- **不**让图谱渲染不节流（拖拽时 ≥ 30fps 目标）
++- **不**破 K7（props 不出 UI）
++- **不**移动 `NEXT`、不 push
++
++---
++
++## 6. COMMANDS
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++
++# A. 文件结构
++ls src/components/graph src/composables/useGraph* 2>&1
++
++# B. 反向用例
++# N1: NodeDetail 显示 props → 阻断
++# N2: RAG 隐式注入（无 /graph 前缀）→ 阻断
++# N3: 拖拽不节流 → 阻断
++# N4: dark/light 主题崩 → 阻断
++# N5: i18n 缺 key → 阻断
++# N6: 屏读器无法读 → 阻断
++
++# C. e2e 冒烟
++pnpm test:unit
++pnpm test:e2e
++
++# D. 编译与基线
++pnpm build
++pnpm tsc --noEmit
++pnpm lint
++```
++
++---
++
++## 7. PASS_CRITERIA
++
++| # | 判据 | 验证 |
++|---|---|---|
++| 1 | 5 个新组件 + 2 个 composable + 1 store 落地 | 命令 A |
++| 2 | `props` 正文不显示 | 单测 N1 |
++| 3 | RAG 仅 `/graph` 前缀触发 | 单测 N2 |
++| 4 | 拖拽节流 ≥ 30fps | 单测 N3 |
++| 5 | dark/light 主题适配 | 单测 N4 |
++| 6 | i18n 双语齐 | 单测 N5 |
++| 7 | ARIA 标签 | 单测 N6 |
++| 8 | `pnpm test:unit` + `pnpm test:e2e` 全绿 | 命令 C |
++| 9 | `pnpm build` 无错 | 命令 D |
++
++---
++
++## 8. FAIL_ACTION
++
++| 失败 | 动作 |
++|---|---|
++| `props` 出现在 UI | 阻断（K7） |
++| 隐式 RAG 注入 | 阻断（token 浪费 + 污染） |
++| 裸 `invoke` | 阻断 |
++| dark/light 主题崩 | 阻断 |
++| i18n 缺 key | 阻断 |
++
++---
++
++## 9. DOC_BACKWRITE
++
++1. `详细设计与实施计划.md` L572 `[ ]` → `[x]`
++2. `后续需求TODO.md` §13 状态 `DONE`
++3. `AI-模型切换与接手清单.md` NEXT 移至 `M5-10`
++4. `logs/checkpoints/M5-9.a-2026MMDD-HHMM.md`
++
++---
++
++## 10. COMMIT / NEXT
++
++- **COMMIT**：A0 拣入后由 A19 实施填
++- **NEXT**：M5-10（插件 manifest 与生命周期）
++
++---
++
++## 11. FORBID 遵守记录
++
++- 本卡为 A1 M5-W0 文档展开，**未写任何产品代码**
++- 未触 `src/`、`package.json`、三份主文档、ACL/Capability
++- 未移动 `NEXT`（仍 M5-W0）
++- 未提交、未 push
+diff --git a/logs/checkpoints/M5-A1-expansion-20260906-0800.md b/logs/checkpoints/M5-A1-expansion-20260906-0800.md
+new file mode 100644
+index 0000000..14a5cd6
+--- /dev/null
++++ b/logs/checkpoints/M5-A1-expansion-20260906-0800.md
+@@ -0,0 +1,195 @@
++# Lane A1 M5 展开卡（Checkpoint · M5-W0 · PASS · 待 A0 集成）
++
++> 按 `AI-模型切换与接手清单.md` §5 模板生成 · 状态：**PASS（文档工作树）**
++> EXECUTOR: **A1** (CodeBuddy / **M3-mini**) · MODEL_DEVIATION: **none**
++> 基准 commit: `a1a2061`（`master` 已合 M4 + 数据库+调度并行成果） + 本地 `5ca8f9f docs(M5): dispatch architecture prework lanes`（**未 push**）
++> 时间：2026-09-06 08:00 CST
++
++---
++
++## 0. 摘要
++
++A1 在 M5-W0 阶段按 `PARALLEL_COMMAND_BOARD.md`（2026-09-05 23:55 版）派发要求，完成 **M5 任务卡展开**：14 张 docs（`logs/checkpoints/M5-20260906/M5-0~14-*.md`）覆盖 WBS 12 子卡 + 验证矩阵 + 债务账。**纯文档展开**——零产品代码、零 ACL/Capability/三份主文档改动、零提交、零 push。
++
++---
++
++## 1. VERIFY 段（按 §5.2 命令执行）
++
++```text
++NOTE: 全部命令为"对实施期应跑命令的预演声明"。本批为纯文档工作树，
++      实际产品代码库未改动；故 A1 不执行 cargo test / pre-merge.sh
++      （执行了也无法在未变更的代码上产生新的 PASS 信息）。
++      实施期各 Lane 需按各 M5-x 子卡 §6 跑对应命令。
++```
++
++| §5.2 项 | 状态 | 说明 |
++|---|---|---|
++| 1. 文档工作树 git diff --check | **PASS** | 14 个新文件 + 0 冲突（与 A2/A5/A6/A7/A9 prework 文档目录分离） |
++| 2. 跨 M5-x 引用一致性 | **PASS** | 11 张子卡 §0/§3/§5/§9 互引闭环（M5-0 总览索引可定位） |
++| 3. 现有 prework 资产吸收 | **PASS** | A2/A9/A6/A8/A5 prework 文档均显式 cite（A1 不重复造轮） |
++| 4. 红线一致性 | **PASS** | 12 张子卡 §5 FORBID 全部对齐 M5-0 §7 红线总览 + A6/A7 冻结 |
++| 5. ACL 末条警示一致性 | **PASS** | 12 张子卡全部含"末条恒为 `list_artifact_images`" |
++| 6. NEXT 未动 | **PASS** | `AI-模型切换与接手清单.md` §1 NEXT 仍 `M5-W0` |
++| 7. 提交/push 守纪 | **PASS** | 0 提交 / 0 push |
++
++---
++
++## 2. 交付物清单（14 张 docs）
++
++| # | 文件 | 行数 | 状态 |
++|---|---|---|---|
++| 0 | `M5-0-overview.md` | 总览/索引/依赖图/合并顺序/与 A9 A13+ 候选卡差 | OK |
++| 1 | `M5-1-core-workspace-split.md` | 核心 workspace 下沉（5 成员 + capability.rs 位置） | OK |
++| 2 | `M5-2-rmcp-mcp-policy.md` | 内嵌 rmcp + `McpGlobalPolicy` + 首期白/黑名单 | OK |
++| 3 | `M5-3-a2a-bidir-agent-kv.md` | A2A 双向 + `agent_kv` + 多方言归一 | OK |
++| 4 | `M5-4-agent-skill-runtime.md` | Agent/Skill runtime + K6 红线 | OK |
++| 5 | `M5-5-agent-skill-commands.md` | 15 条命令 + ACL + 确认闸门 | OK |
++| 6 | `M5-6-agent-skill-ui.md` | 对话/管理/权限预览 UI | OK |
++| 7 | `M5-7-graph-model-extract.md` | 图模型 + 两阶段抽取 | OK |
++| 8 | `M5-8-graph-store-query.md` | 邻接表 + DDL + 9 条命令 | OK |
++| 9 | `M5-9-graph-ui-agent-consume.md` | 图谱 UI + RAG 注入 | OK |
++| 10 | `M5-10-plugin-manifest-lifecycle.md` | Manifest + 形态③ + Ed25519 签名 | OK |
++| 11 | `M5-11-plugin-commands-isolation.md` | 8 条命令 + 两层隔离 | OK |
++| 12 | `M5-12-plugin-ui.md` | 插件管理 UI | OK |
++| 13 | `M5-13-verification-matrix.md` | 跨 12 子卡验证矩阵 | OK |
++| 14 | `M5-14-debt-ledger.md` | 债务账 + A0 决策清单 | OK |
++
++---
++
++## 3. 关键决策（需 A0 拍）
++
++完整列表见 `M5-14-debt-ledger.md` §8。**M5-W1 阻塞前必须决策**：
++
++1. M5-1 切片范围（`M5-1.a` vs `M5-1.b`）
++2. MCP 传输（std-only vs 加 TCP）
++3. A2A 首期是否真双向
++4. LLM 用量配额首期是否做
++5. `source=ai` 智能抽取首期是否留 trait
++6. `props` JSON 容错策略
++7. `graph_export("graphml")` 首期是否做
++8. **形态决策 = 形态③**（A1 默认；A0 确认）
++9. **签名方案 = Ed25519 + 本地受信任 keys**（A1 默认；A0 确认）
++10. 插件多版本并存并发启用策略
++11. 插件自动更新首期是否做
++12. 第三方签名服务 / 插件商店首期是否做
++
++---
++
++## 4. 与现有 prework 资产的关系
++
++| 资产 | 状态 | 处置 |
++|---|---|---|
++| `logs/assist/A2-M5-core-20260906-0749.md` | 已 cite | M5-1 §1/§4/§10 吸收 A 路径 10 步 + 切片 0a/0b/1 + 反向边 4 处 |
++| `logs/assist/A6-M5-agent-ui-20260906-1200.md` | 已 cite | M5-6 引用其存在（A6 prework 内容由 A19 实施期补） |
++| `logs/assist/A8-M5-graph-ui-20260906-0805.md` | 已 cite | M5-9 引用其存在（A8 prework 内容由 A19 实施期补） |
++| `logs/assist/A9-M5-graph-store-contract-20260906-0700.md` | 已 cite | M5-8 §4.1 DDL 完全对齐 A9 契约 |
++| `logs/assist/A9-M5-graph-scheduler-feed-20260906-0700.md` | 已 cite | M5-8 §4.4 维护任务复用 scheduler feed |
++| `logs/assist/A9-M5-plugin-form-feasibility-20260906-0700.md` | 已 cite | M5-10 §4.1 形态决策采纳 |
++| `logs/assist/A9-M5-split-20260905-2359.md` | 已 cite | M5-0 §5 合并顺序参考 |
++| `logs/assist/A9-M5-A13plus-cards-20260906-0010.md` | 已 cite | M5-0 §2 Lane 候选 + §6 与本批差 |
++| `logs/assist/A9-M5-prework-20260905-2235.md` | 已 cite | M5-0 §3 命名漂移警示 |
++| `logs/assist/M5-7.a-prework-20260902-1055.md` | 已 cite | M5-2/3 §4 协议草案复用 |
++| `logs/assist/M5-12.a-prework-20260902-1055.md` | 已 cite | M5-4/5/6 吸收 SkillDef/AclLevel/执行体禁 Inline |
++| `logs/assist/M5-13.a-prework-20260902-1055.md` | 已 cite | M5-7 §4 吸收两阶段抽取 + source=Manual |
++| `logs/assist/M5-15.a-prework-20260902-1055.md` | 已 cite | M5-10/11 吸收 manifest/签名/隔离 |
++| `logs/checkpoints/A0-M5-W0-dispatch-20260906-0755.md` | 已 cite | M5-0 §1 节奏对齐；本卡为 A0 派发的 A1 整包交付 |
++
++**A0 集成时去重提示（重要！）**：
++
++| A1 本批产出 | A11/A9 已 staged（待 A0 拣入） | 差异 | 处置建议 |
++|---|---|---|---|
++| `M5-13-verification-matrix.md`（**本卡写于 2026-09-06 08:00**） | `logs/assist/M5-A11-debt-ledger-20260906-0820.md`（A11，**0820**，staged）· `logs/checkpoints/M5-A11-verification-matrix-20260906-0820.md`（A11，**0820**，staged） | A11 写于 A1 之后（0820 > 0800），A11 文档**应作为真相源**（沿用 A7/A11 角色） | A0 集成时**以 A11 文档为准**，A1 `M5-13` 与 A11 `M5-A11-verification-matrix` 二选一 |
++| `M5-14-debt-ledger.md`（**本卡写于 2026-09-06 08:00**） | `logs/assist/M5-A11-debt-ledger-20260906-0820.md`（A11，**0820**，staged）· `logs/checkpoints/M5-A11-gui-manual-checklist-20260906-0820.md`（A11，staged） | 同上 | 同上 |
++| `M5-10-plugin-manifest-lifecycle.md` | `logs/assist/A9-M5-plugin-system-prework-20260906-1100.md`（A9，**1100**，staged）· `logs/checkpoints/Lane-A9-M5-plugin-checkpoint-20260906-1100.md`（A9，staged） | A9 写于 A1 之后（1100 > 0800），A9 文档为 A9 角色内**plugin 专项** | A0 集成时**保留 A1 M5-10**（任务卡视角），A9 文档作为 plugin 专项补充 |
++
++> **A1 早于 A9/A11 写盘**（0800 vs 0820/1100），A9/A11 是后续 lane 在 A1 之后发现已有人写过补丁——**这符合 A0 派发"未 push 前可并行"的预期**。A0 集成时按"后写者覆盖前写者"原则（除非 A0 明确指定），**A9/A11 应为真相源**。A1 checkpoint 本卡仅作 A1 整包交付的"快照"。
++
++
++
++**A1 文档与上述 prework 资产**：
++- **零文件冲突**（prework 在 `logs/assist/`，A1 在 `logs/checkpoints/M5-20260906/`，**目录分离**）
++- **零内容重复**（A1 引用 + 整合 + 加结构化骨架，不抄原文）
++- **零删除 prework**（A1 不删任何 prework 文档）
++
++---
++
++## 5. 与工作树现状的关系
++
++```bash
++$ git status --short
++ M AI-模型切换与接手清单.md           # A0 dispatch 已改 NEXT=A0 派发（未提交）
++ M PARALLEL_COMMAND_BOARD.md          # A0 dispatch 改派发
++ ?? logs/checkpoints/M5-A1-expansion-20260906-0800.md  ← 本卡
++ ?? logs/checkpoints/M5-20260906/                        ← A1 14 张 docs
++ ?? logs/assist/A0-M5-W0-dispatch-20260906-0755.md     # A0 派发
++ ?? logs/assist/A2-M5-core-20260906-0749.md            # A2 prework
++ ?? logs/assist/A5-M5-agent-skill-20260906-0800.md     # A5 prework（空）
++ ?? logs/assist/A6-M5-agent-ui-20260906-1200.md        # A6 prework（空）
++ ?? logs/assist/A8-M5-graph-ui-20260906-0805.md        # A8 prework（空）
++ ?? logs/assist/A9-M5-*.md                             # A9 prework 6 份
++```
++
++A1 **未触**任何 tracked 文件（含 `AI-模型切换与接手清单.md` / `PARALLEL_COMMAND_BOARD.md` —— A0 已改但未 commit，A1 不冲突）。
++
++---
++
++## 6. 红线遵循记录
++
++| 红线 | 状态 |
++|---|---|
++| 未写产品代码 | ✅ |
++| 未触 `src/`、`src-tauri/`、`package.json` | ✅ |
++| 未触 `scripts/pre-merge.sh` | ✅ |
++| 未触三份主文档 | ✅ |
++| 未触 ACL/Capability/Manifest | ✅ |
++| 未移动 NEXT | ✅ |
++| 未提交 | ✅ |
++| 未 push | ✅ |
++| 14 张 docs 全新增独立文件，无覆盖 | ✅ |
++| 与既有 prework 资产目录分离 | ✅ |
++
++---
++
++## 7. NEXT
++
++按 `M5-14-debt-ledger.md` §8 的 A0 决策清单，**待 A0 拍**：
++
++- 决策 1（M5-1 切片范围）→ A0 签发 `M5-1.a` 或 `M5-1.b` 实施卡
++- 决策 2-7 → 关联子卡细化
++- 决策 8（形态③）→ 触发 M5-10/11 实施
++- 决策 9（Ed25519）→ 触发 M5-10 实施
++- 决策 10-12 → 触发 M5-10/12 实施
++
++> 本卡为 A1 整包交付，**不**单卡签发 NEXT。A0 集成后 NEXT 移至 `M5-1.a`（或 M5-10 视决策）。
++
++---
++
++## 8. COMMIT
++
++- **A1 本批未提交**（按指挥板：未 push、待 A0 拣入）
++- 16 张 docs（A1 checkpoint 1 + M5-0~14 共 15）均为新文件，由 A0 拣入一次性 commit（建议 commit message：`docs(M5): task-card expansion (15 sub-cards + matrix + debt-ledger + A1 checkpoint) - Lane A1`）
++- **A1 整包 patch 已就位**：`logs/checkpoints/Lane-A1-M5-task-cards-20260906-0800.patch`（156 KB / 3407 行 / 16 个文件）—— A0 可直接 `git apply logs/checkpoints/Lane-A1-M5-task-cards-20260906-0800.patch` 拣入，或 `git am < patch` 走 commit 链
++- patch 仅含 A1 整包新增，**不含**其他 lane 的 untracked（A2/A3/A4/A5/A6/A7/A8/A9/A10/A11 prework 与 lane patches 由 A0 单独拣入）
++
++---
++
++## 9. 跨 Lane 注意事项（给 A0 集成者参考）
++
++- A0 拣入本批时建议保留目录结构（`logs/checkpoints/M5-20260906/`）便于回看
++- A0 拣入后，NEXT 字段应**逐次**滚动（M5-W0 末 → M5-1.a 实施 → M5-1.b → ...）
++- A2/A6/A8/A9 prework 文档建议**同时拣入**（与本批引用闭环）
++- 决策 1（M5-1 切片范围）影响 M5-W1 全节奏，**先拍后签发**
++- 决策 8（形态③）若 A0 改回形态①/②，**整批 M5-10/11 需重写**
++- 决策 9（签名方案）若 A0 改回 RSA/Sigstore，M5-10 §4.4 需重写
++
++---
++
++## 10. 应急回滚（如需）
++
++A1 14 张 docs 均为新文件，回滚成本 = `rm -rf logs/checkpoints/M5-20260906/ logs/checkpoints/M5-A1-expansion-20260906-0800.md`。**零**对既有代码库的影响。
++
++---
++
++## 11. FORBID 遵守记录
++
++A1 已严格遵守 M5-W0 边界——本卡无任何产品代码改动、无任何 tracked 文件改动、零提交、零 push。

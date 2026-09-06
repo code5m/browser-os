@@ -48,9 +48,9 @@ git log --oneline -12
 
 ---
 
-## 当前执行结论（截至 2026-09-06 · M4 已合流推送 + M5-W0 已安排）
+## 当前执行结论（截至 2026-09-06 · M4 已合流推送 + M5-W1 已安排）
 
-> **本版变更：A0 已将 M4 数据库 + 定时任务并行成果合流为 `a1a2061 feat(M4): integrate database and scheduler lanes` 并推送 `origin/master`。机器门禁：`cargo test` 329/329、`npm run build` PASS、`pre-merge` ALL_PASS；M4-9 红灯已处置。当前 NEXT=`M5-W0`：A1 展开 M5 任务卡，A2-A9 只做架构/契约 prework 文档，A10 安全复核，A11 验证矩阵；M5 产品代码仍锁定到 A0 签第一张实现卡。**
+> **本版变更：A0 已将 M4 数据库 + 定时任务并行成果合流为 `a1a2061 feat(M4): integrate database and scheduler lanes` 并推送 `origin/master`。机器门禁：`cargo test` 329/329、`npm run build` PASS、`pre-merge` ALL_PASS；M4-9 红灯已处置。当前 NEXT=`M5-W1`：A1 展开 M5 任务卡，A2-A9 只做架构/契约 prework 文档，A10 安全复核，A11 验证矩阵；M5 产品代码仍锁定到 A0 签第一张实现卡。**
 
 
 | 里程碑 | 状态 | 当前口径 |
@@ -60,7 +60,7 @@ git log --oneline -12
 | M2 本地资产与执行 | **PASS（含 M2-6.e 内置片段种子）** | M2-1~M2-6.d 逐卡 PASS_WITH_DEBT；M2-7/8/9 均 PASS；M2-6.e 关闭 D19 |
 | M3 终端增强 | **PASS_WITH_DEBT，整体裁定已签；M3.c 已交付（WBS M3-1~M3-4 全关闭）** | M3-1/2/3 已落地并通过裁定（证据 `logs/checkpoints/M3-REVIEW-VERDICT-20260905-2101.md` + `B-M3.a-terminal-pipeline-20260905-2035.md`）；M3.c = 临时历史 40 条 + resize 静默窗口（证据 `logs/checkpoints/M3.c-20260905-2202.md`，后端 `src-tauri/**` 零改动）；挂账 D23（GUI 实点）/ D24（M0-0.b 吞吐基线未重采）/ D25（`on_channel_dead` 未 wait）/ **D26**（历史按块计数，上界 40 × ≤64 KiB ≈ 2.5 MB，未按字符封顶） |
 | **M4 数据与调度** | **PASS_WITH_DEBT（A0 已合流推送 `a1a2061`；机器门禁全绿，GUI/真实 MySQL/PG 验收挂账）** | 前置已满足，M4 已解锁。展开卡 `logs/checkpoints/M4-20260905-2225.md`：M4-1~M4-8 → 30 张子卡 + 依赖图 + 冻结条款 F1~F12 + 测试矩阵 ID 段 + 6 个新夹具码位。库链 `M4-1(A2)→M4-2(A3)→M4-3(A4)→M4-4(A5)`；调度链 `M4-5(A6)→M4-6+M4-7(A7)→M4-8(A8)`；两链互不阻塞，库链内部 A3 先于 A4。并行施工按 `PARALLEL_COMMAND_BOARD.md`，**只有 A0 可 push** |
-| M5 协议与智能生态 | **M5-W0 已安排（任务卡展开 + 架构预研）** | 产品代码仍锁定；先由 A1-A11 输出卡片、契约、复核与验证矩阵 |
+| M5 协议与智能生态 | **M5-W1 已安排（A2 core boundary 首实现 + 其余 Lane docs/review）** | 仅 A2 可写 M5-1.a core boundary；MCP/Agent/Graph/Plugin 产品代码仍锁定 |
 
 判定规则：`P0/P1/P2` 表示业务与风险优先级，`M0~M5` 表示执行顺序。M0 已放行后，后续需求仍必须按 `详细设计与实施计划.md` 展开检查点、逐点验收、独立提交。
 

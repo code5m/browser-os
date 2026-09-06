@@ -1,0 +1,888 @@
+diff --git a/logs/assist/A4-M5-a2a-memory-20260906-0755.md b/logs/assist/A4-M5-a2a-memory-20260906-0755.md
+new file mode 100644
+index 0000000..a1da4cd
+--- /dev/null
++++ b/logs/assist/A4-M5-a2a-memory-20260906-0755.md
+@@ -0,0 +1,882 @@
++# A4 · M5-3 A2A 双向与记忆层契约预研（Agent Dialect + `agent_kv`）
++
++> LANE=A4　WAVE=M5 Wave 0　STATUS=PASS_WITH_DOCS（DOCS ONLY，无产品代码）
++> BASE=`5ca8f9f`（本地 master，领先 origin/master 1；M4 已集成推送，机器门禁全绿：cargo test 329/329、npm run build PASS、pre-merge ALL_PASS）
++> SCOPE=`logs/assist/A4-M5-a2a-memory-*.md` only —— 严禁改动 `src-*` / `src-tauri/*` / `Cargo.toml` / `package.json` / `scripts/pre-merge.sh`
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5 Dispatch Now → M5 Wave 0 Assignments → A4：**START DOCS ONLY**，
++> 交付物 = "Contract proposal + tests to require later"。
++> 启动门禁已执行：`.workspace-identity`=BACKV3_MAIN、`pwd` 匹配、`branch=master`、`git status` 仅有 A2/A5 两份未跟踪 assist 文档（非本 Lane 文件，未触碰）。
++
++---
++
++## 0. 摘要（给 A0 / A3 / A5 / A7 / A10 / A11）
++
++M5-3 的原文只有一句话：**"多 Agent 方言归一、协议兼容和 `agent_kv`，仅存 AI 上下文"**。
++这句话里藏着三个互相独立、但极易耦合变质的东西，必须先切开：
++
++| 概念 | 本质 | 是否执行层 | 是否出网/起进程 |
++|---|---|---|---|
++| **方言抽象（Dialect）** | 把"不同形态的外部 Agent"适配成宿主能理解的一种会话 | ❌ **不是**（只做 transport 适配） | 是，但**只能**复用既有两条通道 |
++| **A2A 协议兼容层** | 消息信封 + 能力协商 + 错误码 | ❌ 不是 | 否 |
++| **`agent_kv`** | AI 上下文/记忆的 KV 持久化 | ❌ 不是 | 否（只落盘本地文件） |
++
++核心裁定：**方言归一绝不能变成第二个执行层**（指挥板 §M4 Guardrails 第 5 条的同款红线，M5 延续）。
++外部 CLI Agent 子进程的启动/回收必须复用 M2-4 `script_runner`（`setsid`+`killpg` 进程组），
++禁止 `agent_runtime` 自己 `std::process::Command`；HTTP 方言的请求必须挂在 M5-2 的 `McpGlobalPolicy`
++域名白名单之下，禁止 Agent 侧另开一份更宽的能力清单。
++
++> **与 A5 的跨 Lane 硬冲突（2026-09-06 复审时发现）**：A5 的 `A5-M5-agent-skill-20260906-0800.md`
++> 与本文在三处直接撞车 —— ① `AgentDialect` **同名不同义**（A5=产品名枚举，本文=传输形态枚举）；
++> ② Keyring 键 `llm:<provider>` vs `agent:<agent_id>`；③ `agent_kv` 容量 1 MiB vs 5 MiB。
++> 三者都会在 A0 集成 `domain.rs` 时炸开，§8.2 给出调和方案 D1/D2/D3（D3 已回写 §4.4/§4.10：
++> 全局硬上限 5 MiB + **单 Agent 软配额 1 MiB（采纳 A5 值）**），列入 §10 待 A0 裁决项 #6~#8。
++>
++> **与 A1 卡的关系**：A1 已在本 Wave 落地 `logs/checkpoints/M5-20260906/M5-3-a2a-bidir-agent-kv.md`。
++> 本文 §8.0 给出 **10 项逐项对齐**：**6 项已按 A1 口径改名/改口径对齐**（方言枚举、审计独立文件、
++> 关闭任务名、两个策略脚本名、命令集、幂等键）、**4 项为"本文更严/更细"的建议**
++> （三层键空间、幂等键封顶、增加值扫描第二道闸、容量细化）、**1 项交 A0 拍板**（A2A 首期是否真双向）。
++
++`agent_kv` 的核心裁定：**它是"AI 草稿纸"，不是数据库、不是成果库、不是凭据库**。
++因此首期用**单文件 JSON + 既有 `session::atomic_write`（tmp+rename）**，不引 SQLite；
++写入要过**键名黑名单 + 值扫描**两道闸（定义期拒绝，不告警放行）；
++容量上限与 TTL/LRU 淘汰**全部冻结为 `domain.rs` 常量**，避免"UI 按 5000 条、后端按 1000 条"的口径漂移。
++
++本文给出：**14 条冻结裁定（F-A4-1~14）+ 完整类型/常量/错误码契约 + 5 条机器可检红线 +
++实现时必须补的 25 条 Rust 单测 + 策略脚本码位表 + pre-merge 接入点 + 4 项挂账**。
++
++---
++
++## 1. 现状证据（2026-09-06 实测，全部为可执行命令的真实输出）
++
++| 项 | 现状 | 证据命令 / 位置 |
++|---|---|---|
++| Agent / A2A / `agent_kv` 代码 | ❌ **零代码** | `grep -rIn "a2a_\|agent_chat\|agent_kv" src-tauri/src src` → 空 |
++| 命令总数 | 113 个 `tauri::command` | `grep -c "tauri::command" src-tauri/src/bridge.rs` |
++| ACL 条目 | **111 条**，末条恒为 `list_artifact_images`（第 118 行） | `grep -cE '^\s*"[a-z_]+",?\s*$' ` + `grep -n list_artifact_images` |
++| 数据目录 | `workspace::data_dir(app)` = `<app_data_dir>/mvp-browser-os`（`tasks.json`/`scripts.json` 等同目录，全仓唯一持久化根） | `workspace.rs:16-22` |
++| A1 M5-3 卡 | ✅ 已落地 `logs/checkpoints/M5-20260906/M5-3-a2a-bidir-agent-kv.md`（A2A 任务态机 + 幂等键 + 5MB/5000 条 + 独立审计文件） | 本文 §8.0 逐项对齐 |
++| 命令面文件 | `bridge.rs` 6070 行（23 模块共 24,859 行） | A2 预研 §1 同口径复核 |
++| 唯一执行通道 | ✅ `script_runner::{start_run, start_command}`，`setsid`+`killpg` 进程组，`MAX_TIMEOUT_SECS=600`、`HARD_GRACE_SECS=5` | `script_runner.rs:48/50/471/491/843/882` |
++| 执行取消 | ✅ `ScriptProcessTable::cancel(run_id)` | `script_runner.rs:282` |
++| 来源校验 | ✅ `check_invocation_source(&webview, "cmd", None, &app)?` | `bridge.rs:1138`，调用例 `bridge.rs:1097/5965` |
++| 审计 | ✅ `workspace::log_audit`，FIFO **上限 1000 条**（超限 drain 最旧） | `workspace.rs:386-394` |
++| 审计脱敏 | ✅ `bridge::sanitize_audit_text`（300 字节截断）、`security_policy::redact_sensitive_url` | `bridge.rs:2189`、`security_policy.rs` |
++| 原子写原语 | ✅ `session::atomic_write`（写 `.tmp` → `rename`）+ `prune_tmp_files` | `session.rs:30-38/220-237` |
++| 容量淘汰范式 | ✅ `session::prune_sessions(dir, keep)`（按 `updated_at` 从旧到新删） | `session.rs:189-216` |
++| 凭据存储 | ✅ `KeyringStore`（service `com.jizhijiandan.mvp`）；M4 已引入前缀命名空间 `db:<conn_id>` | `keyring_store.rs`、`database.rs:66-69` |
++| 非密钥参数校验范式 | ✅ `tasks::validate_params` 对 `ScriptParam.secret` **定义期拒绝** `TASK_SECRET_PARAM_FORBIDDEN` | `tasks.rs:58/377-380` |
++| DB 结果上限常量 | ✅ `domain.rs` 已冻结 `DB_MAX_ROWS=1000` / `DB_MAX_RESULT_BYTES=4MiB` / `DB_MAX_TEXT_FIELD_BYTES=64KiB` / 超时 30/600s / grace 5s | `domain.rs:1014-1047` |
++| 关闭协调器 | ✅ 7 个任务，顺序固定：`0 stop-background-workers` → `1 stop-scheduler` → `2 flush-sessions` → `3 close-tabs` → `4 kill-terminals` → `5 shutdown-grid` → `6 kill-running-scripts` | `bridge.rs:783/797/808/820/849/874/889` |
++| 策略脚本 | ✅ 现有 20+ 个 `check-*.py`/`.mjs`，均带 `--self-test` + 默认扫描 + pre-merge 接入 | `scripts/`、`scripts/pre-merge.sh:224+` |
++| 历史契约草案 | ⚠️ `A2P-A2A-protocol-taskcard-20260902-1146.md`（stdio + JSON-RPC 2.0 + 错误码 -32001~-32012）、`M5-12.a-prework`（`AgentDef`/`agent_kv` 定位，5MB/5000 条建议） | `logs/assist/` |
++
++> 结论：**M5-3 没有任何现存实现**，本文是在零代码基础上冻结契约，不与既有实现冲突。
++> 与历史草案的关系：A2P taskcard 的**传输/消息/错误码部分本文直接沿用**（不另起炉灶），
++> 只在其"平台保留错误码"区间内**追加**记忆层所需的码位（§4.2）；
++> `M5-12.a` 的 5MB/5000 条建议被本文**收编并细化**为带命名常量与淘汰顺序的硬契约（§4.4）。
++
++---
++
++## 2. 边界定义（先切清楚，再谈契约）
++
++### 2.1 方言抽象是什么 / 不是什么
++
++- **是**：把"LLM HTTP API""外部 CLI Agent（codex/claude/…）""内嵌 MCP 端点"三种外部形态，
++  适配成宿主内部**同一种** `AgentSession`（统一信封、统一超时、统一取消、统一审计）。
++- **不是**：不是新的命令白名单、不是新的进程启动器、不是新的网络客户端。
++  方言适配层**只允许依赖既有两条通道**：
++  1. 子进程类 → `script_runner::start_run` / `start_command`（M2-4，进程组回收）；
++  2. HTTP 类 → 未来 M5-2 `McpGlobalPolicy` 的域名/只读护栏（**本文不定义其实现，只声明依赖**）。
++
++### 2.2 `agent_kv` 是什么 / 不是什么
++
++| 是 | 不是 |
++|---|---|
++| AI 上下文/记忆（对话摘要、用户偏好、临时草稿、抽取事实） | ❌ 用户成果库（`workspace/` 的 Artifact/Note） |
++| 会话存档（`sessions/*.json`，浏览器 tab 上下文） | ❌ 知识图谱主数据（M5-7 的 `ref_id` 回指对象） |
++| 审计正文 | ❌ 审计明细（`audit.json` 1000 条上限，K5） |
++| 凭据库（凭据只走 Keyring，`agent:<agent_id>`） | ❌ 配置库（Agent 定义不落这里） |
++| 任务产物（`task-runs.json` / `script-runs.json`） | ❌ 跨设备同步数据（首期不支持） |
++
++---
++
++## 3. 冻结裁定（F-A4-1 ~ F-A4-14）
++
++> 以下 14 条为**本 Lane 冻结口径**，实现卡（M5-3.a/b）必须逐条满足；
++> 若实现侧认为某条不可行，须回 A0 裁决，不得静默偏离。
++
++| ID | 裁定 | 理由 |
++|---|---|---|
++| **F-A4-1** | 方言分三层：`AgentDialect`（**声明/配置**，`domain.rs` 类型）→ `DialectAdapter`（**transport trait**，实现在二进制侧）→ `AgentSession`（**宿主侧统一会话**）。声明层与传输层不得合并成一个 struct。 | 声明层要能落盘/序列化进 `mvp-core`（A2 预研 §2 A 类），传输层涉及进程/网络必须留在二进制（C 类）。合并会把 core 拖进 Tauri/进程耦合。 |
++| **F-A4-2** | **方言不得自带能力白名单**。能力判定唯一真相源 = `capability.rs` 白名单常量表（A3 §4.1）+ `McpGlobalPolicy`（A3 §4.2）的拒绝判定，两者**同一份、MCP/Agent/Skill/插件共用**；每条 `maps_to` 须过"handler 已注册 ∧ ACL 已允许 ∧ 策略未禁用"三处奇偶。 | 指挥板 §M5 Wave 0 Hard Stops：禁止"能力暴露不经 ACL"。两份白名单必然漂移出越权口子；A3 §4.1 已把 `capability.rs` 定为共用真源，A4 直接消费、不另立。 |
++| **F-A4-3** | 首期方言枚举**仅 2 个**（对齐 A1 卡 §4.2）：`OpenAiCompatible { base_url, model }`、`ExternalCli { program }`。**禁止**第 3 种；`McpInproc`（把内嵌 MCP 端点当"方言"驱动 Agent）列为挂账 D-M5-3-5，需 A0/A3 先回答"MCP 是 Agent 的传输还是 Agent 对外暴露面"。 | 与 M5-2 的"stdio + 内嵌 rmcp"口径一致；每多一种 transport 就多一个绕过面。 |
++| **F-A4-4** | 子进程型方言**必须**走 `script_runner::start_run/start_command`，**禁止** `std::process::Command` / `shell` 插件 / 自研 spawn。硬取消 = 进程组 `killpg`，宽限 5s 与 `script_runner::HARD_GRACE_SECS` 相等（单测守）。 | 指挥板红线"no second execution path"；M2-4 已证明进程组回收有效（`script_runner.rs:1531` 有实测单测）。 |
++| **F-A4-5** | A2A 消息信封**沿用** `A2P-A2A-protocol-taskcard` §4.2 的 JSON-RPC 2.0 形态（字符串 id、object params、未知字段忽略、`meta.traceId` 贯穿），不自定义第二套。 | 该草案已与 MCP 生态对齐，重造会脱节；且 A10 已按此口径做过一轮复审。 |
++| **F-A4-6** | `agent_kv` 键空间三层：`agent_id` / `namespace` / `key`，`namespace` 为**枚举白名单**（`memory`/`facts`/`prefs`/`session`/`draft`），**禁止自由字符串**。 | 自由 namespace 会让"每个 Agent 自建一个 `secrets` 桶"成为绕过键名黑名单的捷径。 |
++| **F-A4-7** | `agent_kv` 首期落 `data_dir/agent-kv.json`（**不在 `workspace/`**），单文件 + `session::atomic_write`；**不引 SQLite**。 | `workspace/` 是用户成果库（F-A4-6 隔离）；SQLite 会与 M5-8 图谱争抢"第二个 DB 通道"，且 5MB 量级用不上。迁移触发条件见 §4.7。 |
++| **F-A4-8** | 写入前双重闸门：**键名黑名单** → `AGENT_KV_KEY_FORBIDDEN`；**值扫描**（递归字符串叶子）→ `AGENT_KV_SECRET_SUSPECTED`。两者都是 **Err 拒绝**，不是 warn 后放行。 | 对齐 `tasks.rs` 的 `TASK_SECRET_PARAM_FORBIDDEN` 定义期拒绝口径（R-3）；"告警放行"等于没有闸门。 |
++| **F-A4-9** | 审计**双文件拆分**（对齐 A1 卡 §4.5 与 A10 复审口径）：`agent_kv_*` 的明细落**独立 `agent-kv-audit.json`**（1000 条 FIFO，与 `audit.json` 同款上限，K5 不改），只记 `action` / `agent_id` / `namespace` / `key`（或稳定 key hash）/ `bytes` / `evicted` 计数；**值永不落审计**。错误串落审计前必须 `sanitize_audit_text`（300B）。若实测写入频率高到审计文件频繁淘汰，可由 A0 降级为"仅摘要进 `audit.json`"。 | `audit.json` 只有 1000 条上限且要留给生命周期/拒绝/危险能力同意等低频高价值事件；记忆写入是高频动作；明文值落审计 = 隐私事故。 |
++| **F-A4-10** | 容量上限全部为 `domain.rs` 命名常量（§4.10），淘汰顺序固定为：**① 过期 TTL → ② 单 namespace 超条目 → ③ 全局超条目 → ④ 全局超字节**；字节淘汰到 **90% 水位**（迟滞，避免每次写都触发全量淘汰）。 | 与 M4-1.c 的"常量收口进 domain、实现侧只消费不重定义"同款治漂移手法。 |
++| **F-A4-11** | **整库原子写**：读快照 → 内存改 → 全量序列化 → `atomic_write`。**禁止**增量追加写 / `fs::write` 直写目标文件。 | 崩溃一致性；`session.rs` 已验证该范式（T-sp-5）。 |
++| **F-A4-12** | 未来命令全部：① 过 `check_invocation_source`；② 进 ACL 且**插在 `list_artifact_images` 之前**；③ 出参 DTO **不含凭据**（凭据只以 `agent:<agent_id>` 存 Keyring）。 | 指挥板 §M5 Wave 0 Hard Stops；M4 已建立 `db:<conn_id>` 前缀范式，`agent:` 与之同级、不冲突。 |
++| **F-A4-13** | 关闭任务 **沿用 A1 卡命名 `a2a-shutdown`**，注册位置：**在 `stop-scheduler`（idx 1）之后、`flush-sessions`（idx 2）之前**（新 idx 2，其后任务顺延）。职责 = "置停止位 + cancel in-flight A2A 任务 + flush `a2a_tasks.json` 与 `agent-kv.json`"，**不 join、不 kill**。 | ① 与 M4-7.c `stop-scheduler` 早于 `kill-running-scripts` 同理：先停触发源，否则 stop 后仍被 Scheduled trigger 拉起；② 在飞子进程仍由 `kill-running-scripts` 收口（不新开 kill 路径）；③ 记忆层/A2A 任务态是会话存档的**引用目标**，先落被引用方再 `flush-sessions`，避免"会话引用了已被淘汰的记忆/已取消的任务"。 |
++| **F-A4-14** | **分波建议（最终以 A1 卡为准）**：建议 M5-3.a 只做 **Wave A（记忆层）+ Wave B（协商/能力查询）**，`a2a_task_send`/`a2a_spawn`（**对外发起**：出网 + 子进程起停）推迟到 **M5-3.b**。若 A0 采纳 A1 卡的"首期即双向"口径，则对外发起**必须同时满足**四条附加条件：① `McpGlobalPolicy` 已落地并默认 `read_only=true`；② 每次发起走两段式确认闸门（`bridge.rs:688-790` 同款）；③ 本地 keyring 无 `agent:<agent_id>` 凭据时**拒绝发起**（不静默匿名调用）；④ `a2a-shutdown` 已注册且能 cancel in-flight。 | 对外发起是 M5-3 里唯一既有出网又有进程起停的部分；在没有策略层之前实现 = 必然绕过。A1 卡 §0 已把"A2A 首期是否真双向"列为交 A0 拍板项，本文给出 A4 侧的推荐答案与兜底条件。 |
++
++---
++
++## 4. 契约提案
++
++### 4.1 方言抽象（三层）
++
++```rust
++// ---------- 第 1 层：声明/配置（纯类型，落 mvp-core，可序列化） ----------
++
++/// 方言种类（命名对齐 A1 卡 §4.2）。serde 形态固定（`open_ai_compatible` / `external_cli`）。
++#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum AgentDialect {
++    /// OpenAI 兼容 HTTP API。凭据**不在此结构内**，只以 keyring `agent:<agent_id>` 存。
++    OpenAiCompatible { base_url: String, model: String },
++    /// 外部 CLI Agent（stdio 子进程）。执行**必须**经 script_runner（F-A4-4），不得自起进程。
++    /// 注意（A1 卡 FORBID）：不新增 `TaskKind::AgentDialect`，ExternalCli 落成 Script/Command 片段后走 M2-4。
++    ExternalCli { program: String },
++    // 首期不实现：`McpInproc { endpoint }` —— 见 F-A4-3 与挂账 D-M5-3-5。
++}
++
++/// Agent 声明。**不含任何凭据字段**（F-A4-12）。
++#[derive(Debug, Clone, Serialize, Deserialize)]
++pub struct AgentDef {
++    pub id: String,
++    pub name: String,
++    pub dialect: AgentDialect,
++    pub protocol_version: String,          // 协商用，当前 "1.0"
++    /// 声明的能力；**判定在宿主侧**，此处只是"声称"（A2P taskcard §4.4 第 8 条禁止）。
++    pub declared_capabilities: Vec<String>,
++    pub enabled: bool,                     // 默认 false，与 M4-6 新建任务默认 disabled 同款保守口径
++    pub created_at: DateTime<Utc>,
++}
++```
++
++```rust
++// ---------- 第 2 层：transport trait（实现留在二进制侧，不进 core） ----------
++
++/// 方言适配器的**唯一**对外能力：把一条归一化请求送出去，把归一化响应收回来。
++/// 实现约束（F-A4-4）：
++///   - `ExternalCli` 的实现内部只能调 `script_runner::start_run` / `start_command`；
++///   - `OpenAiCompatible` 的实现必须走 M5-2 `McpGlobalPolicy` 的域名/只读判定；
++///   - 任何实现都**不得**出现 `std::process::Command`。
++pub trait DialectAdapter: Send + Sync {
++    fn kind(&self) -> AgentDialect;
++    fn negotiate(&self, version: &str) -> Result<Negotiated, AgentError>;
++    fn send(&self, env: &AgentRequest) -> Result<AgentResponse, AgentError>;
++    fn cancel(&self, request_id: &str) -> Result<(), AgentError>;
++}
++
++// ---------- 第 3 层：宿主侧统一会话（与方言无关） ----------
++
++pub struct AgentSession {
++    pub session_id: String,
++    pub agent_id: String,
++    pub trace_id: String,
++    pub started_at: DateTime<Utc>,
++    pub last_activity_at: DateTime<Utc>,
++    pub state: AgentSessionState,   // Negotiating | Ready | Busy | Closing | Closed
++}
++```
++
++**归一化的判定顺序（缺一即拒绝，不降级放行）**：
++`agent_id 已登记` → `enabled == true` → `协议版本兼容` → `方言已实现（未登记方言 → -32017）`
++→ `方法所需能力已被 McpGlobalPolicy 授予（F-A4-2）` → `危险能力有本次会话用户显式同意` → 执行。
++
++### 4.2 消息信封与错误码（沿用 + 追加）
++
++- 传输：首期只有 **stdio**（子进程 + NDJSON，单行 ≤ 1 MiB）一种入站/双向传输；
++  **HTTP 只作为 `OpenAiCompatible` 方言访问 LLM 的**出站**形态，不作为 A2A 入站传输**（避免开端口与鉴权暴露面）。
++- 消息结构：完全沿用 `A2P-A2A-protocol-taskcard` §4.2（`jsonrpc` / 字符串 `id` / `method` / object `params` / `meta.{sessionId,traceId,timeoutMs}`）。
++- 错误码：沿用 §4.7 的 `-32700~-32600`（标准）与 `-32001~-32012`（平台保留）。**追加**以下记忆层码位：
++
++| code | 名称 | `retriable` | 触发 |
++|---|---|---|---|
++| `-32013` | `AGENT_KV_KEY_FORBIDDEN` | false | 键名命中黑名单 / 格式非法 / 超长 |
++| `-32014` | `AGENT_KV_SECRET_SUSPECTED` | false | 值（递归字符串叶子）命中凭据特征 |
++| `-32015` | `AGENT_KV_CAPACITY_EXCEEDED` | false | 淘汰后仍无法容纳本次写入 |
++| `-32016` | `AGENT_KV_VALUE_TOO_LARGE` | false | 单值序列化后 > `AGENT_KV_MAX_VALUE_BYTES` |
++| `-32017` | `DIALECT_UNSUPPORTED` | false | 方言未登记 / 未启用 / 未实现 |
++| `-32018` | `AGENT_KV_NAMESPACE_UNKNOWN` | false | namespace 不在白名单（F-A4-6） |
++| `-32019` | 保留（未分配） | — | 留作 M5-3.b 对外发起使用 |
++
++> 规则沿用：`retriable` 必须由返回方显式给出，禁止调用方按 code 猜。
++
++### 4.3 `agent_kv` 数据模型
++
++```rust
++/// namespace 白名单（F-A4-6）。serde 形态：`memory` / `facts` / `prefs` / `session` / `draft`。
++#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
++#[serde(rename_all = "snake_case")]
++pub enum AgentKvNamespace { Memory, Facts, Prefs, Session, Draft }
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++pub struct AgentKvEntry {
++    pub key: String,
++    pub value: serde_json::Value,
++    pub bytes: u32,                    // value 序列化后真实字节（容量统计用，不伪造）
++    pub created_at: DateTime<Utc>,
++    pub updated_at: DateTime<Utc>,
++    pub expires_at: Option<DateTime<Utc>>,
++}
++
++/// 落盘文件形态（`<app_data_dir>/mvp-browser-os/agent-kv.json`，即 `workspace::data_dir(app)` 下，
++/// 与 `tasks.json` / `scripts.json` 同目录；**不在** `workspace/`）。
++/// **刻意用 BTreeMap**：保证同一内容两次序列化的字节完全一致（§6 T-kv-13），
++/// 让 atomic_write 的 diff 与单测可判定。
++#[derive(Debug, Clone, Serialize, Deserialize, Default)]
++pub struct AgentKvStore {
++    pub schema_version: u32,           // 首期 = 1
++    /// agents: agent_id -> namespace -> key -> entry
++    pub agents: BTreeMap<String, BTreeMap<AgentKvNamespace, BTreeMap<String, AgentKvEntry>>>,
++}
++
++/// ⚠️ **与 A1 卡 §4.3 的形态差异（提请 A0/A1 裁决，本 Lane 建议采纳三层）**
++/// A1 卡写的是 `HashMap<String, serde_json::Value>`（**扁平、无 namespace、无 TTL、无 per-ns 上限**）。
++/// 本文建议改为上面的三层嵌套，理由：
++///   1. 多 Agent 共存时扁平 key 只能靠前缀约定隔离 → 约定必然被绕过（例如某 Agent 自建 `secrets.xxx`）；
++///   2. 无 namespace 就无法做 per-namespace 条目上限与"prefs 永不过期"这类差异化保留策略；
++///   3. 无 `updated_at`/`expires_at` 就无法实现 LRU/TTL 淘汰（A1 卡 §4.3 又要求"超限 LRU 淘汰"，
++///      扁平结构里没有可排序的时间字段 —— 这是 A1 卡内部的自相矛盾，本文建议以此为准修订）。
++/// 若 A0 坚持扁平形态，则 F-A4-6（namespace 白名单）与 F-A4-10（TTL+LRU 淘汰顺序）自动失效，
++/// 需要 A10 重新评估"自建 secrets 桶"的绕过面。
++
++/// 列表出参（**不含 value**，避免列表 payload 膨胀 —— 对齐 `session::summarize` 的做法）。
++#[derive(Debug, Clone, Serialize, Deserialize)]
++pub struct AgentKvSummary {
++    pub agent_id: String,
++    pub namespace: AgentKvNamespace,
++    pub key: String,
++    pub bytes: u32,
++    pub updated_at: DateTime<Utc>,
++    pub expires_at: Option<DateTime<Utc>>,
++}
++
++/// put 出参：必须诚实报告淘汰情况（"悄悄淘汰"会让用户以为记忆还在）。
++#[derive(Debug, Clone, Serialize, Deserialize)]
++pub struct AgentKvPutResult {
++    pub stored_bytes: u32,
++    pub evicted_expired: usize,
++    pub evicted_lru: usize,
++    pub total_entries: usize,
++    pub total_bytes: u64,
++}
++```
++
++**损坏文件处理（新增裁定，接 F-A4-11）**：`agent-kv.json` 解析失败时，
++① 重命名为 `agent-kv.corrupt-<yyyymmdd-HHMMSS>.json` 保留现场（**不静默删除用户数据**），
++② 以空库重建，③ 写一条审计 `agent_kv.recover`（只记文件名与字节数，不记内容）。
++若 corrupt 备份文件已存在 3 个以上，删最旧的（避免崩溃循环把磁盘写满）。
++
++### 4.4 容量 / 保留 / 淘汰（F-A4-10）
++
++| 维度 | 常量 | 值 |
++|---|---|---|
++| 单键字节 | `AGENT_KV_MAX_KEY_BYTES` | 256 |
++| 单值字节 | `AGENT_KV_MAX_VALUE_BYTES` | 64 KiB（**必须等于 `DB_MAX_TEXT_FIELD_BYTES`**，单测守，口径统一） |
++| 单 namespace 条目 | `AGENT_KV_MAX_ENTRIES_PER_NS` | 1 000 |
++| 全局条目 | `AGENT_KV_MAX_ENTRIES` | 5 000 |
++| 全局字节 | `AGENT_KV_MAX_TOTAL_BYTES` | 5 MiB |
++| Agent 数 | `AGENT_KV_MAX_AGENTS` | 32 |
++| **单 Agent 软配额** | `AGENT_KV_SOFT_PER_AGENT_BYTES` | **1 MiB**（采纳 A5 建议值，见 §8.2 D3：软配额**不拒绝写入**，只影响淘汰优先级与 UI 提示） |
++| 默认 TTL | `AGENT_KV_DEFAULT_TTL_DAYS` | 30 天 |
++| TTL 上限 | `AGENT_KV_MAX_TTL_DAYS` | 365 天 |
++| 字节淘汰水位 | `AGENT_KV_EVICT_WATERMARK_PCT` | 90（淘汰到 90% 即停，迟滞） |
++
++**淘汰顺序（实现必须按此顺序，策略脚本可扫）**：
++0. **软配额优先**：先统计各 agent 占用字节；对超过 `AGENT_KV_SOFT_PER_AGENT_BYTES`（1 MiB）的 agent，
++   按 `updated_at` 升序淘汰到软配额以内（**仅在触发第 3/4 步全局淘汰时才执行第 0 步**，
++   单独一次 put 未触发全局上限时不额外淘汰，避免"写一条就淘汰一条"的抖动）；
++1. **过期**：`expires_at <= now` 全删（跨全部 agent/namespace）；
++2. **per-namespace 超条目**：在该 ns 内按 `updated_at` 升序删到 ≤ `AGENT_KV_MAX_ENTRIES_PER_NS`；
++3. **全局超条目**：全局按 `updated_at` 升序删到 ≤ `AGENT_KV_MAX_ENTRIES`；
++4. **全局超字节**：按 `updated_at` 升序删到 ≤ `AGENT_KV_MAX_TOTAL_BYTES * 90%`；
++5. 若以上全部执行后仍放不下本次写入 → `Err(-32015 AGENT_KV_CAPACITY_EXCEEDED)`（**不**为腾空间去删别人的 ns 之外的东西，也不截断 value）。
++
++**TTL 语义**：`ttl_days` 缺省取 30 天；`ttl_days = 0` 表示**不过期**仅限 `prefs` 命名空间（`prefs` 是用户偏好，被静默淘汰属于数据丢失）；
++其余命名空间 `ttl_days = 0` 一律视为非法入参。最大 365 天，超出拒绝。
++
++**审计口径**：淘汰**不逐条审计**，只在同一次写操作结束后写一条 `agent_kv.evict`
++（`expired=<n> lru=<n> bytes_freed=<n>`）。理由同 F-A4-9（1000 条上限）。
++
++### 4.5 隐私规则（三重闸）
++
++| 闸 | 位置 | 命中动作 |
++|---|---|---|
++| **① 键名闸门** | 写入前 | `namespace` 不在白名单 → `-32018`；`key` 不匹配 `^[a-z0-9][a-z0-9._-]{0,255}$` 或 > 256B → `-32013`；`key` 命中黑名单 → `-32013` |
++| **② 值扫描闸门** | 写入前 | 递归遍历 `serde_json::Value`（**深度上限 8、节点上限 1 000**，超限视为不可信直接拒），任一字符串叶子命中特征 → `-32014` |
++| **③ 出口闸门** | 审计/日志/前端 | 值一律不落审计（F-A4-9）；错误串经 `sanitize_audit_text`（300B）；前端 store 不得把 value 持久化到 localStorage（对齐会话逻辑测试口径） |
++
++**键名黑名单（首期，常量 `AGENT_KV_SECRET_KEY_HINTS`）**：
++`token`、`tokens`、`api_key`、`apikey`、`api-token`、`secret`、`secrets`、`password`、`passwd`、`pwd`、
++`credential`、`credentials`、`authorization`、`auth`、`cookie`、`session_id`、`sessionid`、
++`private_key`、`privatekey`、`access_token`、`refresh_token`、`otp`、`mnemonic`、`seed`。
++匹配方式：**小写化后子串包含即命中**（宁可误杀，也不可放过；误杀用户会改名，放过就是泄露）。
++
++**值特征（首期，常量 `AGENT_KV_SECRET_VALUE_PATTERNS`）**：仅做**前缀/关键字**匹配，避免误杀：
++`sk-`、`sk_`、`ghp_`、`gho_`、`ghs_`、`github_pat_`、`xoxb-`、`xoxp-`、`AIza`、`AKIA`、
++`Bearer `（含空格，防误伤 "Bearer" 单词）、`-----BEGIN `（PEM 私钥头）、`eyJ`（JWT 头，仅当长度 ≥ 40 时判定）。
++
++> **刻意不做**高熵（ Shannon entropy ）检测：首期误杀率不可控（base64 摘要、哈希、长 ID 都会被误杀），
++> 列为挂账 D-M5-3-3，等有真实样本再评估。
++
++### 4.6 隔离边界（与既有存储的横向关系）
++
++| 存储 | 路径 | `agent_kv` 是否可写 | 说明 |
++|---|---|---|---|
++| 成果库 | `workspace/**` | ❌ **禁止** | F-A4-7；`agent_kv` 文件在 `data_dir/` 下 |
++| 会话存档 | `data_dir/sessions/*.json` | ❌ 禁止 | 会话是浏览器上下文，与 AI 记忆不同源 |
++| 图谱 | M5-8（SQLite） | ❌ 禁止 | 图谱是**派生索引**，`ref_id` 回指主数据；不得反向写入 |
++| 审计 | `data_dir/audit.json` | ⚠️ 仅摘要 | 1000 条上限（K5）；只记 put/delete/clear/evict/recover |
++| 调度 | `tasks.json` / `task-runs.json` | ❌ 禁止 | 任务定义与运行记录独立 |
++| 凭据 | Keyring (`agent:<agent_id>`) | ❌ 禁止 | 凭据永不进 `agent-kv.json`（F-A4-12） |
++| 前端状态 | Pinia store / localStorage | ❌ 禁止持久化 value | 闸 ③ |
++
++### 4.7 存储选型裁定（JSON vs SQLite）
++
++**裁定：首期 JSON 单文件 + `session::atomic_write`。**
++
++理由（对 A9 `M5-graph-store-contract` 的 D1 决策点不越权，只声明自身立场）：
++1. 数据量小（≤ 5 MiB / 5 000 条），全量载入内存成本可忽略，JSON 足够；
++2. `agent_kv` 的写入是**低频、整库语义**（一次 put 要同时做过期/ns/全局三重淘汰），
++   整文件原子写天然一致，用 SQL 反而要把淘汰逻辑拆成多条语句加事务；
++3. **避免开第二个 DB 通道**——M5-8 图谱已确定走 SQLite，若 `agent_kv` 也走，
++   就要回答"是否共用连接池""是否共用 `db_*` 命令面""是否共用 `McpGlobalPolicy` 白名单"，
++   这些问题的答案 currently 未定，提前绑定会把 M5-8 的设计空间锁死；
++4. 零新依赖（对齐 M5 Wave 0 "不得新增 Cargo 依赖"的硬停止，也对齐 A2 F-1 的"零自研/零新依赖"倾向）。
++
++**迁移到 SQLite 的触发条件（任一成立即重开评估，写进挂账 D-M5-3-2）**：
++- 并发写冲突成为常态（≥ 3 个 Agent 同时高频 put，写锁争用导致 UI 可感卡顿）；
++- 条目数长期贴近 `AGENT_KV_MAX_ENTRIES`（5 000）且业务上不允许再淘汰；
++- 需要按 value 内容做**全文检索**或**语义检索**（图谱/Agent 上下文注入需要）；
++- 需要跨设备同步或增量备份。
++
++> 若未来迁移，**必须复用 M5-8 图谱的同一个 SQLite 连接与同一套凭据命名空间**，
++> 禁止为 `agent_kv` 单独开一个 DB 文件 + 单独一条连接（即"不制造第二个数据通道"的同一原则）。
++
++### 4.8 并发与原子性
++
++- 进程内：`Mutex<()>` 全局 kv 写锁；命令层在锁内"读快照 → 改内存副本 → 全量序列化 → `atomic_write`"。
++- **禁止**在 scheduler tick / 后台循环里逐条写 kv（对齐 M4-7 "tick 内不写审计"的既有口径）：
++  Agent 若要批量写记忆，必须**累积到一次批量 put**，走一次锁 + 一次原子写。
++- 跨进程：不支持（单实例应用，同 M4 数据库注册表口径）。
++- 启动时：`prune_tmp_files` 清残留 `.tmp` + 过期条目清理（与 `flush-sessions` 的启动清理同款）。
++
++### 4.9 命令契约（未来实现，本 Wave 不落地）
++
++> 全部满足 F-A4-12：`check_invocation_source` + ACL（插在 `list_artifact_images` 之前）+ 出参无凭据。
++> 命名沿用现有 `db_*` / `task_*` 的 snake_case 前缀风格。
++
++**Wave A —— 记忆层（无出网、无子进程，M5-3.a 首期）**
++
++| 命令 | 入参 | 出参 | 破坏性 |
++|---|---|---|---|
++| `agent_kv_list` | `agent_id`, `namespace?` | `Vec<AgentKvSummary>`（**无 value**） | 否 |
++| `agent_kv_get` | `agent_id`, `namespace`, `key` | `AgentKvEntry` | 否 |
++| `agent_kv_put` | `agent_id`, `namespace`, `key`, `value`, `ttl_days?` | `AgentKvPutResult` | 否 |
++| `agent_kv_delete` | `agent_id`, `namespace`, `key` | `bool`（幂等） | 是（单条） |
++| `agent_kv_clear` | `agent_id`, `namespace?` | `{ removed }` | **是（批量）→ 必须走确认闸门** |
++
++**Wave A 补充**：`agent_kv_clear` 是本文**新增建议**（A1 卡 §3 只有 get/put/delete/list）。
++成批删除属破坏性操作，必须走两段式确认闸门（`bridge.rs:688-790` 同款），
++且确认框须显示将删除的条目数（U-4）。若 A0 认为首期不需要批量清理，可砍掉本命令。
++
++**Wave B —— A2A 协商与任务态**
++
++| 命令 | 入参 | 出参 | 说明 | 来源 |
++|---|---|---|---|---|
++| `a2a_list_agents` | — | `Vec<AgentDef>` | 出参不含凭据（F-A4-12） | 本文新增建议 |
++| `a2a_capabilities` | `agent_id` | `{ declared, granted }` | `granted` 由 `capability.rs`+`McpGlobalPolicy` 判定，**不是** declared 的回声 | 本文新增建议 |
++| `a2a_negotiate` | `agent_id`, `protocol_version` | `Negotiated` | 版本不兼容 → `-32008` | 本文新增建议 |
++| `a2a_task_receive` | `A2aTask` | `A2aTask` | 入站任务（被委派），落 `a2a_tasks.json` | A1 卡 §3 |
++| `a2a_task_status` | `task_id` | `A2aTaskStatus` | 只读 | A1 卡 §3 |
++| `a2a_task_cancel` | `task_id` | `bool`（幂等） | 取消在飞；对已终态幂等无副作用 | A1 卡 §3 |
++
++**Wave C —— 对外发起（F-A4-14 建议推迟到 M5-3.b；A1 卡列为首期）**
++
++| 命令 | 附加前置条件（若首期落地则**必须**全满足） |
++|---|---|
++| `a2a_task_send` | ① `McpGlobalPolicy` 已落地且默认 `read_only=true`；② 两段式确认闸门；③ 本地 keyring 有 `agent:<agent_id>` 凭据，否则拒绝发起；④ `a2a-shutdown` 已注册且能 cancel in-flight |
++
++### 4.10 `domain.rs` 常量提案（可直接落，消费者已命名）
++
++```rust
++// ---------------------------------------------------------------------------
++// M5-3 A2A / agent_kv 契约常量（契约冻结见 logs/assist/A4-M5-a2a-memory-*.md）
++// 放进 domain.rs 的理由与 M4-1.c 同：这些是**多 Lane 共同消费**的跨模块契约
++// （A5 运行时 / A6 UI / A10 复审 / A11 验证都要按同一数值断言），
++// 若各侧自行定义就会出现「UI 按 5000 条、后端按 1000 条」的口径漂移。
++// 全部 #[allow(dead_code)] 并注明消费者；不引任何新依赖。
++// ---------------------------------------------------------------------------
++
++pub const A2A_PROTOCOL_VERSION: &str = "1.0";
++pub const A2A_MAX_LINE_BYTES: usize = 1_048_576;   // 消费者：M5-3.b stdio 读取
++pub const A2A_INIT_TIMEOUT_SECS: u32 = 10;         // 消费者：M5-3.b 会话协商
++pub const A2A_IDLE_TIMEOUT_SECS: u32 = 300;        // 消费者：M5-3.b 空闲回收
++pub const A2A_DEFAULT_TIMEOUT_SECS: u32 = 30;      // 消费者：M5-3.b 请求级
++pub const A2A_MAX_TIMEOUT_SECS: u32 = 600;         // 必须与 script_runner::MAX_TIMEOUT_SECS 相等（单测守）
++pub const A2A_SOFT_TO_HARD_GRACE_SECS: u32 = 5;    // 必须与 script_runner::HARD_GRACE_SECS 相等（单测守）
++pub const A2A_MAX_CONCURRENT_AGENTS: usize = 4;    // 消费者：M5-4 会话表
++pub const A2A_MAX_SESSIONS_PER_AGENT: usize = 2;   // 消费者：M5-4 会话表
++
++pub const AGENT_KV_FILE: &str = "agent-kv.json";   // 消费者：M5-3.a 路径函数（data_dir 下）
++pub const AGENT_KV_SCHEMA_VERSION: u32 = 1;
++pub const AGENT_KV_KEY_PREFIX: &str = "agent:";    // Keyring 命名空间，与 database.rs 的 "db:" 同级
++pub const AGENT_KV_NAMESPACES: [&str; 5] = ["memory", "facts", "prefs", "session", "draft"];
++pub const AGENT_KV_MAX_KEY_BYTES: usize = 256;
++pub const AGENT_KV_MAX_VALUE_BYTES: usize = 64 * 1024;   // 必须等于 DB_MAX_TEXT_FIELD_BYTES（单测守）
++pub const AGENT_KV_MAX_ENTRIES_PER_NS: usize = 1_000;
++pub const AGENT_KV_MAX_ENTRIES: usize = 5_000;
++pub const AGENT_KV_MAX_TOTAL_BYTES: u64 = 5 * 1024 * 1024;
++pub const AGENT_KV_MAX_AGENTS: usize = 32;
++pub const AGENT_KV_SOFT_PER_AGENT_BYTES: u64 = 1024 * 1024;  // 软配额（§8.2 D3 采纳 A5 建议值）
++pub const AGENT_KV_DEFAULT_TTL_DAYS: u32 = 30;
++pub const AGENT_KV_MAX_TTL_DAYS: u32 = 365;
++pub const AGENT_KV_EVICT_WATERMARK_PCT: u8 = 90;
++pub const AGENT_KV_VALUE_SCAN_MAX_DEPTH: u8 = 8;
++pub const AGENT_KV_VALUE_SCAN_MAX_NODES: usize = 1_000;
++pub const AGENT_KV_MAX_CORRUPT_BACKUPS: usize = 3;
++pub const AGENT_KV_SECRET_KEY_HINTS: [&str; 21] = [ /* §4.5 键名黑名单 */ ];
++pub const AGENT_KV_SECRET_VALUE_PATTERNS: [&str; 12] = [ /* §4.5 值特征 */ ];
++
++// ---- A2A 任务层（对齐 A1 卡 §4.1） ----
++pub const A2A_TASK_FILE: &str = "a2a_tasks.json";    // data_dir 下
++pub const A2A_MAX_TASKS: usize = 200;                // 与 SCHED_MAX_TASKS 同量级
++pub const A2A_IDEMPOTENCY_MAX_KEYS: usize = 1_000;   // 幂等键索引上限（FIFO）
++pub const A2A_IDEMPOTENCY_MAX_KEY_BYTES: usize = 256;
++pub const AGENT_KV_AUDIT_FILE: &str = "agent-kv-audit.json";  // 独立审计，1000 条 FIFO（F-A4-9）
++```
++
++### 4.11 A2A 任务层（沿用 A1 卡 §4.1，本文补常量与边界）
++
++```rust
++pub struct A2aTask {
++    pub id: String,                   // uuid v4
++    pub idempotency_key: String,      // 调用方提供（去重必填，≤256B）
++    pub requester: String,
++    pub capability: String,           // 必须命中 capability.rs 白名单（F-A4-2）
++    pub params: serde_json::Value,
++    pub status: A2aTaskStatus,
++    pub created_at: DateTime<Utc>,
++    pub updated_at: DateTime<Utc>,
++}
++
++pub enum A2aTaskStatus { Submitted, Working, Completed, Failed, Canceled }
++```
++
++本文补充的三条边界（A1 卡未定义，本文冻结）：
++
++1. **幂等键索引有上限**：`A2A_IDEMPOTENCY_MAX_KEYS = 1000`，超出按 `updated_at` FIFO 淘汰。
++   **理由**：幂等键必须与"首次结果"共存才能返回首次结果，若不封顶就是另一个无上限的持久化缓存
++   （且与 F-A4-10 的容量纪律一致）。
++2. **幂等只保证"不重复执行"，不保证"永久可重放"**：被淘汰的幂等键再次出现时，
++   返回 `-32010 INVALID_ID`（id/键不可复用语义），**不得**当作新任务重新执行
++   （否则淘汰动作本身就成了绕过幂等的口子）。
++3. **`params` 视为不可信输入**：落盘前经 §4.5 的②值扫描闸门（同一套特征表），
++   命中即拒绝任务（`AGENT_KV_SECRET_SUSPECTED`），不得落盘后再"使用时再过滤"。
++
++### 4.12 离线 / 不可达降级契约（补齐 A11 矩阵对 M5-3 的"离线降级"验证点）
++
++> A11 `M5-A11-verification-matrix-20260906-0820.md` §4.3 把"离线降级"列为 M5-3 的验证要点。
++> 本节冻结"外部 Agent / LLM 不可达时"的行为，**核心是三条"不得"**。
++
++| 场景 | 行为 | 错误码 |
++|---|---|---|
++| 初始化握手超时（10 s） | 会话关闭，不重试 | `-32004`（`retriable=true`）+ 审计 |
++| 请求超时（默认 30 s，上限 600 s） | soft 取消 → 宽限 5 s → 进程组 `killpg` | `-32004` |
++| stdio 管道中断 / 子进程崩溃 | in-flight 请求返回，会话关闭 | `-32009 TRANSPORT_CLOSED` |
++| DNS/网络不可达（HTTP 方言） | 与超时同路径，**不**做隐式重试（重试由调用方显式发起且带幂等键） | `-32004` |
++| 宿主正在退出 | in-flight 返回，进程组回收 | `-32012 SHUTTING_DOWN` |
++
++**三条"不得"**（任一违反即视为红线失守）：
++1. **不得伪造成功**：不可达时不得向调用方返回"空结果 + 成功"，必须显式返回错误码；
++2. **不得静默写脏记忆**：失败结果**禁止**写入 `agent_kv`（尤其 `facts` 命名空间）——
++   否则一次网络抖动就会把"调用失败"固化成"事实"，成为记忆投毒（R-A4-1）的放大路径；
++3. **不得无限重试**：重试必须由调用方显式发起且携带**同一个** `idempotency_key`；
++   运行时内部不得自动重试（避免"Agent 卡住 + 重试风暴"打满 `A2A_MAX_CONCURRENT_AGENTS`）。
++
++> 补充测试：`T-a2a-17`（见 §6.2）——模拟子进程立刻崩溃，断言 in-flight 返回 `-32009`
++> 且 `agent_kv` 条目数**未增加**（对应"不得静默写脏记忆"）。
++
++---
++
++## 5. 机器可检红线（交给策略脚本）
++
++| 不变量 | 检查方式 | 违反后果 |
++|---|---|---|
++| **N1 无第二执行路径**：`agent*`/`a2a*` 模块不得出现 `std::process::Command` / `Command::new` / shell 插件；子进程只允许 `script_runner::start_run\|start_command` | 源码扫描 | 阻断合入 |
++| **N2 来源校验**：每个 `agent_kv_*` / `a2a_*` 命令函数体首部必须有 `check_invocation_source` | 函数体扫描 | 阻断合入 |
++| **N3 ACL 顺序**：全部新命令在 ACL 中，索引 < `list_artifact_images` 索引 | ACL 解析 | 阻断合入 |
++| **N4 凭据隔离**：`agent_kv` 模块不得 `use crate::keyring_store`；`AgentDef` 结构体不得含 `token`/`key`/`secret`/`password` 字段名 | 结构/依赖扫描 | 阻断合入 |
++| **N5 审计不含值**：`log_audit` 调用点参数不得出现 `value` / 明文记忆内容；审计 detail 不得含 `password`/`token`/`authorization` | 调用点扫描 | 阻断合入 |
++
++> 这 5 条与指挥板 §M5 Wave 0 Hard Stops 一一对应（无第二执行路径 / 来源校验+ACL / Keyring /
++> 审计脱敏 / 容量上限），其中"容量上限"由 N6 补充：
++
++| 不变量 | 检查方式 |
++|---|---|
++| **N6 容量常量存在且被消费**：`domain.rs` 具备 §4.10 全部 `AGENT_KV_*` 常量；实现侧不得出现硬编码的 `1024 * 1024 * 5` / `5000` 之类的魔数 | 常量+魔数双重扫描 |
++
++---
++
++## 6. 实现时必须补的测试（"tests to require later"）
++
++> 这是本 Wave 的核心交付之一：**实现卡没有补上下列测试，不得签 PASS**。
++> 编号规则：`T-kv-*` 记忆层、`T-a2a-*` 方言/协议、`P-*` 策略脚本、`U-*` 前端逻辑、`G-*` 人工/GUI。
++
++### 6.1 Rust 单测（`src-tauri/src/agent_kv.rs`）
++
++| ID | 用例 | 期望断言 |
++|---|---|---|
++| T-kv-1 | `namespace = "passwd"`（不在白名单） | `Err(AGENT_KV_NAMESPACE_UNKNOWN)`，落盘字节数不变 |
++| T-kv-2 | `key = "api_token"`（命中黑名单） | `Err(AGENT_KV_KEY_FORBIDDEN)`，文件中不存在该 key |
++| T-kv-3 | `key = "Bad Key"` / 空 / 300 字节 | `Err(AGENT_KV_KEY_FORBIDDEN)`（格式非法） |
++| T-kv-4 | `value = "sk-abcdefghijklmnop..."` / `"ghp_xxx"` / `"Bearer eyJ..."` | `Err(AGENT_KV_SECRET_SUSPECTED)`，不落盘 |
++| T-kv-5 | 嵌套 object 第 6 层的字符串叶子含 `sk-xxx` | 仍被检出（深度 ≤ 8）；深度 9 处超限时按"不可信"拒绝 |
++| T-kv-6 | 单值序列化后 64 KiB + 1 | `Err(AGENT_KV_VALUE_TOO_LARGE)` |
++| T-kv-7 | 同 ns 写入 1 000 + 10 条 | 淘汰到 ≤ 1 000，`evicted_lru = 10`，保留最新的 1 000 条 |
++| T-kv-8 | 全局 5 000 + 10 条（分散在 6 个 agent） | 淘汰到 ≤ 5 000 |
++| T-kv-9 | 累计字节逼近 5 MiB | 淘汰后 ≤ 5 MiB × **90%**（迟滞水位），且不会每次写都触发全量淘汰 |
++| T-kv-10 | TTL：写入 `ttl_days=0` 的 `memory` 条目 | `Err`（非法）；`prefs` 的 `ttl_days=0` → 允许且永不过期 |
++| T-kv-11 | 过期条目 | `load` / `prune` 时被删，`evicted_expired` 计数正确 |
++| T-kv-12 | `ttl_days = 400` | `Err`（超 365 天上限） |
++| T-kv-13 | 原子写 | 写后目录内无 `.tmp` 残留；预置孤儿 `.tmp` 在启动清理时被删除且正常数据不受影响 |
++| T-kv-14 | 损坏文件 | 原文件重命名为 `agent-kv.corrupt-*.json` 保留、空库重建、审计含 `agent_kv.recover`；corrupt 备份超过 3 个时删最旧 |
++| T-kv-15 | 确定性序列化 | 同一内容两次落盘**字节完全相同**（BTreeMap 保证） |
++| T-kv-16 | 落盘字段白名单 | 序列化 JSON 的顶层键恰为 `schema_version` / `agents`；全文不含字段名 `token`/`secret`/`password` |
++| T-kv-17 | 隔离 | `agent_kv_put` 后 `workspace/` 目录文件数不变；agent-kv 文件位于 `data_dir`（非 workspace） |
++| T-kv-18 | 并发 | 8 线程并发 put 不同 ns，最终条目数 == 期望，文件可被 `serde_json` 正常解析 |
++| T-kv-19 | agent 数上限 | 第 33 个 agent_id 写入 → `Err(AGENT_KV_CAPACITY_EXCEEDED)` |
++| T-kv-20 | 容量硬失败 | 单条 value 已达 64 KiB 且全局已满 → 淘汰后仍放不下 → `Err(-32015)`，**不**截断 value 静默写入 |
++| T-kv-21 | 审计不含值 | 扫描落盘的 `agent-kv-audit.json`（F-A4-9 独立文件）：`agent_kv.put` 条目不含 value 明文，只含 action/agent_id/namespace/key/bytes；文件条数 ≤ 1000（FIFO） |
++| T-kv-23 | 独立审计不污染主审计 | 连续 1 200 次 `agent_kv_put` 后，`audit.json` 条目数**不因** kv 写入而增长（只有摘要级事件），`agent-kv-audit.json` 自身 ≤ 1000 |
++| T-kv-24 | 单 Agent 软配额（§8.2 D3） | agent A 占 2 MiB、agent B 占 0.1 MiB，全局触发字节淘汰时：**先**淘汰 A 的最旧条目至 1 MiB 以内，**再**走全局 LRU；且单次 put 未触发全局上限时不得触发第 0 步（无抖动） |
++| T-kv-25 | 命令四处 parity（A10 D-2） | `agent_kv_*` 命令在 Rust handler / `src/bridge.ts` / `src/types.ts` / ACL 中同名齐备，缺任一处即失败（`AGENTKV_PARITY`） |
++| T-kv-22 | 常量一致性 | `AGENT_KV_MAX_VALUE_BYTES == DB_MAX_TEXT_FIELD_BYTES`；`A2A_MAX_TIMEOUT_SECS == script_runner::MAX_TIMEOUT_SECS`；`A2A_SOFT_TO_HARD_GRACE_SECS == script_runner::HARD_GRACE_SECS` |
++
++### 6.2 Rust 单测（方言 / A2A，M5-3.b 生效）
++
++| ID | 用例 | 期望 |
++|---|---|---|
++| T-a2a-1 | `agent_id` 未登记 / `enabled=false` | `-32002` / `-32017`（不执行） |
++| T-a2a-2 | `protocol_version = "9.9"` | `-32008`，返回支持版本列表 |
++| T-a2a-3 | 数字 `id` / 数组 `params` | `-32010` / `-32011`（沿用 A2P taskcard R1/R2） |
++| T-a2a-4 | 声明了但未授予的能力被调用 | `-32001 CAPABILITY_DENIED`，**执行未发生**，审计有记录 |
++| T-a2a-5 | 并发启动第 5 个 Agent（上限 4） | `-32006 RATE_LIMITED`，无新进程 |
++| T-a2a-6 | ExternalCli 方言子进程的回收 | 进程组 `killpg` 生效，孙进程无残留（参照 `script_runner.rs:1531` 的实测手法） |
++| T-a2a-7 | 硬超时（timeout + 5s） | 进程组被杀，返回 `-32004`，`retriable=true` |
++| T-a2a-8 | 空闲 300s | 会话自动关闭，in-flight 请求返回 `-32009` |
++| T-a2a-9 | 对已终态 id 发 `$/cancel` | 无副作用（幂等） |
++| T-a2a-10 | 高频调用 1 000 次 | `audit.json` 不爆（明细进独立 `a2a-runs.json`，对齐 A2P §4.8 / K5） |
++| T-a2a-11 | 源码断言：方言适配层无 `std::process::Command` | 扫描失败即测试失败（把策略脚本红线 N1 固化进单测） |
++| T-a2a-12 | 关闭顺序 | `a2a-shutdown` 注册索引 > `stop-scheduler` 且 < `flush-sessions`（与 `shutdown.rs:646` 的顺序报告测试同款手法） |
++| T-a2a-13 | 幂等去重 | 相同 `idempotency_key` 提交两次 → 第二次**返回首次结果且未重新执行**（执行计数 == 1） |
++| T-a2a-14 | 幂等键封顶 | 写入 1 000 + 1 个不同键 → 最旧键被淘汰；被淘汰键再次出现 → `-32010 INVALID_ID`，**不**当新任务执行（§4.11 边界 2） |
++| T-a2a-15 | 入站不可信 | `a2a_task_receive` 的 `params` 含 `sk-xxx` → 拒绝落盘（`AGENT_KV_SECRET_SUSPECTED`），`a2a_tasks.json` 无该任务 |
++| T-a2a-16 | 无凭据不发起 | keyring 无 `agent:<agent_id>` 时调 `a2a_task_send` → 拒绝（F-A4-14 条件 ③），不静默匿名调用 |
++| T-a2a-17 | 离线降级（§4.12） | 模拟子进程立刻崩溃 / HTTP 不可达：in-flight 返回 `-32009`/`-32004`，**不**返回"空结果+成功"；且 `agent_kv` 条目数**未增加**（禁写脏记忆）；运行时内部**不**自动重试（执行计数 == 1） |
++
++### 6.3 策略脚本自测（`check-agent-kv-policy.py` + `check-a2a-policy.py`）
++
++- `P-1` **好样本**：一份含全部正确要素的参考实现（白名单 namespace、键名闸门、值闸门、`atomic_write`、
++  容量常量、正确 ACL 位置、正确关闭顺序）→ **零违规**；
++- `P-2` **合成坏样本**：对 §5 的 N1~N6 **每条至少 2 个**变异（共 ≥ 12 个）→ **全部被检出**；
++- `P-3` **真实变异测试**：对参考实现做真实源码变异（改常量、删 `check_invocation_source`、把 `atomic_write`
++  换成 `fs::write`、把命令插到 `list_artifact_images` 之后……）→ **全部被检出**；
++- `P-4` **空实现模式**：M5-3 尚未开工时，脚本以 `--expect-pending` 运行必须 PASS（pending 码位见 §7），
++  且**不得**把"未实现"报成"通过"。
++
++### 6.4 前端逻辑测试（由 A6 在 M5-6 承接，文件名交给 A6 定）
++
++- `U-1`：记忆面板的 value **不持久化**到 localStorage / sessionStorage（只保留当前会话内存态）；
++- `U-2`：容量条（entries / bytes / 百分比）在接近上限时的分级提示与"淘汰即将发生"提示文案由后端 `AgentKvPutResult` 驱动，前端**不得**自行计算容量；
++- `U-3`：键名/值的**前端预校验**只是体验优化，后端拒绝码（-32013/-32014）必须在 UI 上有明确可理解的错误呈现，**不得**静默吞掉；
++- `U-4`：`agent_kv_clear` 必须经确认闸门（破坏性），且确认框显示将删除的条目数。
++
++### 6.5 人工 / GUI 清单（由 A11 收编）
++
++- `G-1`：写入一条含 `sk-` 前缀的记忆 → 被拒且 UI 明确提示（不是"保存成功"）；
++- `G-2`：连续写入 5 000+ 条后，`agent-kv.json` 体积 ≤ 5 MiB 且应用启动不卡（全量载入耗时应可感地短）；
++- `G-3`：杀掉应用进程（`kill -9`）后重启，`agent-kv.json` 可正常解析，无 `.tmp` 残留；
++- `G-4`：手动把 `agent-kv.json` 改成非法 JSON 后启动 → 生成 corrupt 备份、空库重建、审计有 `agent_kv.recover`；
++- `G-5`：退出时若 Agent 正在写记忆 → `a2a-shutdown` 完成 flush，重启后数据完整；
++- `G-6`：`facts` 命名空间永不过期条目在 30 天后仍在（TTL 语义正确）。
++
++---
++
++## 7. 策略脚本提案（未来实现时落地）
++
++**文件**（命名对齐 A1 卡 §3 与 A10 复审 D-1，**拆两个**而非一个）：
++`scripts/check-a2a-policy.py`（协议/方言/任务态/关闭顺序）
++与 `scripts/check-agent-kv-policy.py`（记忆层容量/隐私/审计/隔离）。
++
++**必须支持三个模式**（与现有 20+ 个脚本一致）：`--self-test` / 默认扫描 / `--expect-pending`。
++
++**`check-agent-kv-policy.py` 默认码位（实现落地后生效）**
++
++| 码 | 检查 |
++|---|---|
++| `AGENTKV_NO_SECOND_EXEC_PATH` | agent/a2a 模块无 `Command::new` / `std::process::Command` / shell 插件；子进程只走 `script_runner` |
++| `AGENTKV_SOURCE_CHECK` | 每个 `agent_kv_*` / `a2a_*` 命令体首部有 `check_invocation_source` |
++| `AGENTKV_ACL_ORDER` | 命令在 ACL 且索引 < `list_artifact_images` |
++| `AGENTKV_NAMESPACE_WHITELIST` | `AGENT_KV_NAMESPACES` 常量存在，且写入路径对 namespace 做校验（拒绝自由字符串） |
++| `AGENTKV_SECRET_GATE` | 写入路径存在键名黑名单（`AGENT_KV_KEY_FORBIDDEN`）与值扫描（`AGENT_KV_SECRET_SUSPECTED`） |
++| `AGENTKV_AUDIT_NO_VALUE` | 审计 detail 不含 value / 明文；错误串经 `sanitize_audit_text` |
++| `AGENTKV_ATOMIC_WRITE` | 落盘经 `atomic_write`，**禁止** `fs::write` 直写目标文件 |
++| `AGENTKV_FILE_LOCATION` | agent-kv 文件在 `data_dir`，**不在** `workspace/` |
++| `AGENTKV_NO_KEYRING_MINGLING` | `agent_kv` 模块不 import keyring；Keyring 前缀 `agent:` 与 `db:` 不冲突 |
++| `AGENTKV_CAPACITY_CONSTS` | §4.10 常量齐备；实现侧无 5MB/5000 之类魔数 |
++| `AGENTKV_EVICTION_ORDER` | 淘汰实现按"过期 → ns 条目 → 全局条目 → 全局字节(90%)"顺序 |
++| `AGENTKV_SHUTDOWN_ORDER` | `a2a-shutdown` 注册索引 > `stop-scheduler` 且 < `flush-sessions`（F-A4-13） |
++| `AGENTKV_NO_TOKIO` | 不得新增 `tokio` / `tokio-cron-scheduler` 依赖（对齐 A2 F-1） |
++| `AGENTKV_UI_NO_VALUE_PERSIST` | 前端 store 不得把 kv value 写 localStorage |
++
++**`check-a2a-policy.py` 默认码位**
++
++| 码 | 检查 |
++|---|---|
++| `A2A_NO_SECOND_EXEC_PATH` | `a2a.rs` / `agent_dialect.rs` 无 `Command::new` / `std::process::Command` / shell 插件 |
++| `A2A_DIALECT_TWO_KINDS` | `AgentDialect` 首期恰好 2 个变体（`OpenAiCompatible` / `ExternalCli`），无第 3 种 |
++| `A2A_CAPABILITY_SINGLE_SOURCE` | 能力判定引用 `capability.rs` / `McpGlobalPolicy`，**不得**在 a2a 侧另立白名单常量 |
++| `A2A_IDEMPOTENCY` | 幂等键必填校验存在；幂等键索引有上限常量；重复键返回首次结果（不重执行） |
++| `A2A_TASK_STATE_MACHINE` | 状态变更落 `a2a_tasks.json` 且经 `atomic_write`；状态集合与 A1 卡 §4.1 一致 |
++| `A2A_SHUTDOWN_ORDER` | `a2a-shutdown` 注册索引 > `stop-scheduler` 且 < `flush-sessions`（F-A4-13） |
++| `A2A_SOURCE_CHECK` / `A2A_ACL_ORDER` | 每个 `a2a_*` 命令过来源校验；ACL 索引 < `list_artifact_images` |
++| `A2A_UNTRUSTED_INPUT` | 入站 `params` 落盘前经值扫描闸门（§4.5 ②） |
++
++**pending 码位（未开工时全部为 pending，`--expect-pending` 应 PASS）**：
++`AGENTKV_MODULE_PENDING` / `AGENTKV_COMMANDS_PENDING` / `AGENTKV_POLICY_PENDING`
++（`agent_kv.rs` 不存在 / 命令未注册 / 脚本已接入 pre-merge）；
++`A2A_MODULE_PENDING` / `A2A_COMMANDS_PENDING` / `A2A_POLICY_PENDING`（同理）。
++
++**pre-merge 接入点**：在 `scripts/pre-merge.sh` 中，紧随 `check-database-policy.py` 之后（约 93 行附近）追加，
++并置于 `git diff --check` 之前（A10 D-1 要求）：
++
++```bash
++python3 "$SCRIPT_DIR/check-agent-kv-policy.py" --self-test >/dev/null 2>&1 \
++  || pm_fail "check-agent-kv-policy.py --self-test"
++python3 "$SCRIPT_DIR/check-agent-kv-policy.py" >/dev/null 2>&1 \
++  || pm_fail "check-agent-kv-policy.py（Agent 记忆层不变量被破坏）"
++python3 "$SCRIPT_DIR/check-a2a-policy.py" --self-test >/dev/null 2>&1 \
++  || pm_fail "check-a2a-policy.py --self-test"
++python3 "$SCRIPT_DIR/check-a2a-policy.py" >/dev/null 2>&1 \
++  || pm_fail "check-a2a-policy.py（A2A 协议/方言不变量被破坏）"
++```
++
++> `pre-merge.sh` 属高冲突文件（指挥板 File Conflict Map），**本 Wave 不修改**；
++> 上述片段留给 A0 在实现卡签署后套用，或在 A0 指派时由本 Lane 补。
++
++---
++
++## 8. 与其他 Lane 的交接点
++
++### 8.0 与 A1 卡 `M5-20260906/M5-3-a2a-bidir-agent-kv.md` 的逐项对齐
++
++A1 已在本 Wave 落地 M5-3 卡。A1 拥有卡片，A4 只做预研补充；下表列出**全部差异与本文的建议口径**，
++最终以 A0 裁决为准（A1 卡 §0 已把"A2A 首期是否真双向""`agent_kv` 容量上限策略"两项列为交 A0 拍板）。
++
++| # | 项 | A1 卡 | 本文 | 处理建议 |
++|---|---|---|---|---|
++| 1 | `agent_kv` 形态 | `HashMap<String, Value>` 扁平 | 三层 `agent/ns/key` + namespace 枚举 + TTL（§4.3） | **建议改三层**：A1 卡内部矛盾（要求 LRU 淘汰但扁平结构无 `updated_at`），且扁平无法隔离多 Agent |
++| 2 | 审计落点 | 独立 `agent-kv-audit.json`，仅记 key hash | 同（§F-A4-9 已对齐），补充"值永不落审计""错误串 300B" | ✅ 已对齐 |
++| 3 | 关闭任务名 | `a2a-shutdown` | 同一名字，位置 = idx 2（§F-A4-13） | ✅ 已对齐（本文补位置） |
++| 4 | 策略脚本名 | `check-a2a-policy.py` + `check-agent-kv-policy.py` | 同（§7 已改为两个） | ✅ 已对齐 |
++| 5 | 方言枚举 | `OpenAiCompatible` / `ExternalCli` | 同（§4.1 已改名对齐），`McpInproc` 移挂账 | ✅ 已对齐 |
++| 6 | 对外发起 | 首期双向（`a2a_task_send`） | 建议推迟到 M5-3.b，若首期落地须满足 4 条附加条件（F-A4-14） | **交 A0** |
++| 7 | 命令集 | `a2a_task_send/receive/status/cancel` + `agent_kv_get/put/delete/list` | 沿用 + 新增建议 `agent_kv_clear`、`a2a_list_agents/capabilities/negotiate`（§4.9） | 新增项**交 A1 收编** |
++| 8 | 幂等键 | 必填、重复返回首次结果 | 沿用 + 封顶 1000、淘汰后重放返回 `-32010`（§4.11） | 本文补充边界 |
++| 9 | 值扫描（值闸门） | 只提"键名黑名单" | 增加**值扫描**第二道闸（§4.5 ②）：LLM 响应里回显 token 是最常见泄露路径 | **建议采纳**（A1 卡 §4.4 已要求"LLM 响应含 token 写入前必过滤"，本文给出可执行规则） |
++| 10 | 容量上限 | 5 MB / 5000 条、LRU | 沿用 + 拆 per-ns 1000、TTL 30/365 天、90% 水位、per-agent 上限（§4.4） | 本文细化，不冲突 |
++
++> 结论：**无阻断性冲突**。6 项已对齐，4 项为"本文更严/更细"的建议（#1/#8/#9/#10），
++> 1 项（#6 首期是否真双向）交 A0 拍板，本文已给出"若首期双向"的兜底条件。
++
++### 8.1 Lane 交接表
++
++| Lane | 交接内容 | 依赖方向 |
++|---|---|---|
++| **A1（M5 卡片）** | 本文 §8.0 已逐项对齐 A1 的 M5-3 卡；差异 6 项已对齐、4 项"更严建议"、1 项交 A0 | 双向（A1 持卡，A4 补契约） |
++| **A3（M5-2 MCP/rmcp）** | 本文 F-A4-2 要求方言能力判定**唯一真相源 = `capability.rs` + `McpGlobalPolicy`**，A3 需暴露"能力是否被授予"的纯函数供 A4 侧调用；`McpInproc` 变体（D-M5-3-5）依赖 M5-2 端点形态定案 | A4 依赖 A3 的策略接口 |
++| **A5（M5-4/5 Agent/Skill）** | 本文冻结的 `AgentDef`/`AgentDialect`/`AgentSession`/`AgentKvEntry` 直接供 A5 消费（A1 卡 `M5-4` §2 已把 `AgentDialect` 标注为"M5-3 §4.2"共用）；A5 的 `Scheduled` trigger 若可拉起 Agent，则必须满足 F-A4-13 的关闭顺序 | A5 依赖本文类型；关闭顺序需 A5 遵守 |
++| **A7（M5-7/8 图谱）** | 图谱是**派生索引**，`agent_kv` 不得被图谱反向写入（§4.6）；若未来 `agent_kv` 迁移 SQLite，必须复用 A7 的同一连接（§4.7） | 双向约束 |
++| **A6（M5-6 Agent UI）** | §6.4 的 U-1~U-4 是该 Lane 的必测项；记忆面板的容量/淘汰展示必须由后端 `AgentKvPutResult` 驱动 | A6 依赖本文出参 |
++| **A10（安全复审）** | 复审清单应覆盖 §5 的 N1~N6 与 §4.5 的三重闸；**重点复核**：黑名单是否过窄、值扫描是否可被嵌套/编码绕过、`prefs` 永不过期是否成为持久化泄露面 | A10 复审本文 |
++| **A11（验证矩阵）** | §6 全部测试编号 + §6.5 的 G-1~G-6 可直接并入 M5 验证矩阵与债务台账 | A11 收编 |
++| **A2（M5-1 core 下沉）** | 本文第一层（声明层 `AgentDef`/`AgentDialect`/`AgentKvEntry`/`A2aTask` 类型与常量）为**纯类型**，应落 `mvp-core`；第二层 `DialectAdapter` 实现（进程/网络）留在二进制，与 A2 的 A/B/C 分类一致 | 一致，无冲突 |
++
++### 8.2 ⚠️ 与 A5（M5-4/5 `A5-M5-agent-skill-20260906-0800.md`）的三处硬冲突与调和方案
++
++> A5 文档（2026-09-06 08:00）与本文存在**三处会直接撞车**的冲突。二者都要把类型写进同一个
++> `domain.rs`，**不调和就会导致 A0 集成时出现同名类型/不同 Keyring 前缀/不同容量上限**。
++> 以下为 M5-3 契约方（A4）给出的调和方案，**提请 A0 裁决**（列入 §10 待裁决项 6~8）。
++
++#### C-1 · `AgentDialect` **同名不同义**（最硬冲突）
++
++| 来源 | 定义 | 语义 |
++|---|---|---|
++| A5 §3.2 | `enum AgentDialect { Codex, ClaudeCode, CodeBuddy, Qoder, OpenCode, Cursor, Grok, OpenAiCompatible }` | **产品名**（哪个外部 CLI Agent） |
++| 本文 §4.1 / A1 卡 §4.2 | `enum AgentDialect { OpenAiCompatible { base_url, model }, ExternalCli { program } }` | **传输形态**（怎么连/怎么起进程/怎么回收） |
++
++二者无法二选一：产品名枚举无法表达"OpenAI 兼容 HTTP 的 model"，
++传输形态枚举无法表达"这个 CLI 是 codex 还是 claude"（参数拼装不同）。
++
++**调和方案 D1（本文建议）：拆成 transport × product 两层。**
++
++```rust
++/// 传输形态（**M5-3 负责**，决定起进程/连 HTTP/超时/回收/取消 —— 安全相关）
++pub enum DialectTransport {
++    OpenAiCompatible { base_url: String },
++    ExternalCli { program: String },   // 必须走 script_runner（F-A4-4）
++}
++
++/// 产品方言（**M5-4/5 负责**，仅在 ExternalCli 下有意义，决定参数拼装；新增产品不动执行层）
++pub enum AgentProduct {
++    Codex, ClaudeCode, CodeBuddy, Qoder, OpenCode, Cursor, Grok, Generic,
++}
++
++pub struct AgentDialect {
++    pub transport: DialectTransport,
++    pub product: AgentProduct,      // transport == OpenAiCompatible 时取 Generic
++}
++```
++
++理由：① 新增一个 CLI 产品不应触碰执行层代码（否则每加一个 Agent 都要改 `script_runner` 调用点）；
++② 执行/回收路径的归属清晰，`check-a2a-policy.py` 只需扫 `DialectTransport` 即可守住"无第二执行路径"；
++③ A5 的"多方言归一"诉求被完整保留（8 个产品都还在，只是换了层级）。
++
++#### C-2 · Keyring 键命名空间冲突
++
++| 来源 | 键名 | 语义 |
++|---|---|---|
++| A5 §3.2 | `llm_credential_key: String`（示例 `"llm:openai"`） | 按 **provider** 共享一个 key |
++| 本文 F-A4-12 | `agent:<agent_id>` | 按 **agent** 隔离 |
++
++**调和方案 D2**：默认键 = `agent:<agent_id>`；A5 的 `llm_credential_key` 降级为
++**可选覆盖字段 `Option<String>`**：
++- `None`（默认）→ 用 `agent:<agent_id>`，吊销/轮换只影响单个 Agent；
++- `Some("llm:openai")` → **必须**以 `llm:` 前缀开头（策略脚本可扫），且安装/编辑 Agent 时
++  UI 必须明示"该凭据被多个 Agent 共享，吊销将影响全部使用者"。
++
++理由：默认共享 key 会让"吊销某个 Agent 的凭据"变成不可能操作；共享必须是**显式且被知情**的选择。
++
++#### C-3 · `agent_kv` 容量口径不一致
++
++| 来源 | 口径 |
++|---|---|
++| A1 卡 §4.3 / 本文 §4.4 | 5 MiB / 5 000 条 + TTL 30 天 |
++| A5 §"容量"表 | **1 MiB / 30 天滚动** |
++
++**调和方案 D3（已按此更新 §4.4 与 §4.10）**：
++- **全局硬上限** = 5 MiB / 5 000 条（A1 卡口径，M5-3 是 `agent_kv` 的权威卡）；
++- **单 Agent 软配额** = `AGENT_KV_SOFT_PER_AGENT_BYTES = 1 MiB`（**采纳 A5 的 1 MiB**）：
++  软配额**不拒绝写入**，只在触发全局淘汰时"先淘汰超软配额 agent 的最旧条目"（§4.4 第 0 步），
++  并在 UI 提示"该 Agent 记忆占用偏高"；
++- **30 天 TTL 天然一致**：本文 `AGENT_KV_DEFAULT_TTL_DAYS = 30` 与 A5 的"30 天滚动"同值 ✅。
++
++#### C-4 · `AgentDef` 字段并集（无冲突，仅归属划分）
++
++| 字段 | 责任卡 | 说明 |
++|---|---|---|
++| `id` / `name` / `dialect` / `enabled`(默认 false) | M5-3（本文） | 身份与开关 |
++| `protocol_version` / `declared_capabilities` | M5-3（本文） | 协商与"声称"（判定在宿主侧） |
++| `model` / `system_prompt` / `tool_whitelist` / `max_tool_iters` / `token_budget` | M5-4/5（A5） | 编排层参数 |
++| `memory_enabled` | M5-4/5（A5） | 与本文 `enabled` **与关系**：`enabled && memory_enabled` 才允许写 `agent_kv` |
++| `llm_credential_key` → 建议改 `Option<String>` | M5-3 + M5-4 共管 | 见 D2 |
++
++### 8.3 对 A10 复审（`A10-M5-security-review-20260906-1410.md`）的接收
++
++A10 于 14:10 复审时本文尚未被其看到（其 §1 表格记"`A4-M5-a2a-memory-*.md` 缺失"，
++以 A1 卡为权威源复审）。A10 对 M5-3 的结论与本文一致、**无新增 A4 阻塞项**：
++
++| A10 结论 | 本文对应 | 状态 |
++|---|---|---|
++| C1 无第二执行路径：A2A `ExternalCli` 强制走 `script_runner`、禁 `std::process::Command` | F-A4-4 + §5 N1 + `A2A_NO_SECOND_EXEC_PATH` | ✅ 一致 |
++| C2 命令过 source check + 插 `list_artifact_images` 之前 | F-A4-12 + §5 N2/N3 | ✅ 一致 |
++| C3 `agent_kv` 严格分离 + 禁 token + 键名黑名单 + 独立 `agent-kv-audit.json` 仅记 key hash | F-A4-7/F-A4-8/F-A4-9 | ✅ 一致（本文补"值扫描"第二道闸，见 §8.0 #9） |
++| 停机：`a2a-shutdown` 挂 `ShutdownCoordinator` 取消在飞 | F-A4-13 | ✅ 一致（本文补注册位置） |
++| **D-1（唯一硬门槛）**：M5 策略脚本未落地、未挂 pre-merge | §7 已给出 `check-a2a-policy.py` + `check-agent-kv-policy.py` 的码位表、pending 码位与 `pre-merge.sh` 接入片段 | ✅ **本文即为 D-1 在 M5-3 上的可执行答复**，待实现期落地为文件 |
++| D-2 命令三处 parity（Rust / `bridge.ts`+`types.ts` / ACL）机检 | 本文 F-A4-12 只覆盖"ACL + source check"两侧 | 🟡 **本文补**：实现期须加 `A2A_PARITY` / `AGENTKV_PARITY` 码位，断言命令在 handler/bridge.ts/types.ts/ACL 四处齐备（见下方补录） |
++
++**补录（响应 D-2）**：`check-a2a-policy.py` 与 `check-agent-kv-policy.py` 各增一个码位：
++
++| 码 | 检查 |
++|---|---|
++| `A2A_PARITY` | `a2a_task_receive/status/cancel`(+`send`) 在 Rust handler、`src/bridge.ts`、`src/types.ts`、ACL 中**四处齐备且数量一致** |
++| `AGENTKV_PARITY` | `agent_kv_get/put/delete/list`(+`clear`) 同上四处齐备；且 `types.ts` 的 DTO 字段与 Rust 出参结构一致 |
++
++---
++
++## 9. 风险与挂账
++
++| ID | 风险 | 级别 | 缓解 |
++|---|---|---|---|
++| R-A4-1 | **记忆投毒**：被注入的网页/文档内容诱导 Agent 写入误导性"事实" | 高 | `facts` 命名空间写入走确认闸门；UI 记忆面板必须可见可删（U-3）；`facts` 条目可溯源（记 `updated_at`，不记来源正文） |
++| R-A4-2 | `prefs` 永不过期成为持久化泄露面（若值扫描被绕过则长期留存） | 中 | `prefs` 单值仍受 64 KiB 上限与键名/值闸门约束；A10 复审时重点看此路径 |
++| R-A4-3 | **值扫描被绕过**（编码/分片/大小写变形） | 中 | 首期只做前缀与关键字（低误杀），明确列出已覆盖与未覆盖形态；编码变体（`\u0073k-`）列为 D-M5-3-3 |
++| R-A4-4 | 5 MiB JSON 全量载入导致启动变慢 | 低 | 上限写死 5 MiB；若实测启动耗时可感，先降 `AGENT_KV_MAX_TOTAL_BYTES` 而非改存储 |
++| R-A4-5 | 与 M5-2 能力白名单口径漂移（Agent 侧另开清单） | 中 | F-A4-2 冻结 + 策略脚本 `AGENTKV_*` 扫 `declared_capabilities` 不得直接放行 |
++| R-A4-7 | **与 A5 的 `AgentDialect` 同名冲突未裁决就合并 `domain.rs`** | **高** | §8.2 D1 已给拆层方案；**A0 必须在集成 domain.rs 前定案**（§10 #6~#8） |
++| R-A4-8 | 离线时把失败结果写进 `agent_kv`，把"调用失败"固化成"事实" | 中 | §4.12 三条"不得" + `T-a2a-17` |
++| R-A4-6 | 本文冻结的常量与 A5/A6 的实现不同步 | 中 | 全部常量落 `domain.rs` 并带消费者注释；A11 验证矩阵按 §4.10 逐项断言 |
++
++**挂账（Debt）**
++
++| ID | 内容 | 解锁条件 |
++|---|---|---|
++| **D-M5-3-1** | 对外发起（`a2a_task_send`）是否进入首期未定：本文建议 Wave C 推迟，A1 卡列为首期 | A0 拍板；若首期落地须满足 F-A4-14 四条附加条件 |
++| **D-M5-3-2** | `agent_kv` 存储选型仅冻结"首期 JSON"，SQLite 迁移条件未达 | §4.7 四条触发条件任一成立 |
++| **D-M5-3-3** | 值扫描只做前缀/关键字，未做高熵检测与编码变体归一化（`\u0073k-` 之类绕过未覆盖） | 有真实误杀/漏检样本后评估 |
++| **D-M5-3-4** | 记忆导出 / 跨设备同步未定义（默认 opt-in 且导出默认不含 agent-kv） | M5-3.c 或产品显式需求 |
++| **D-M5-3-5** | 第 3 种方言 `McpInproc`（把内嵌 MCP 端点当 Agent 传输）未定案 | A0/A3 先回答"MCP 是 Agent 的传输，还是 Agent 对外的暴露面" |
++
++---
++
++## 10. 验证与合并须知（Merge Notes）
++
++- **本文件即交付物**：M5 Wave 0 A4 为 DOCS ONLY。
++  **未改动任何产品代码**、未新增/修改 `Cargo.toml` / `package.json` / `src-tauri/permissions/*` /
++  `scripts/pre-merge.sh` / 三份主计划文档。
++- **无产品代码补丁**：本 Wave 不产 patch（与 A2 预研 §9 同口径）。
++  实现卡编号为 **`M5-3.a`**（Wave A 记忆层 + Wave B 协商/任务态）与 **`M5-3.b`**（Wave C 对外发起，D-M5-3-1）。
++- **待 A0 裁决的八点**（本 Lane 已给默认口径，A0 可推翻；#1/#2 同时列入 A1 卡 §0 的拍板项；
++  **#6~#8 为与 A5 的跨 Lane 硬冲突，必须在 A0 集成 domain.rs 之前定案**）：
++  1. **A2A 首期是否真双向**（§8.0 #6 / F-A4-14）：本文建议对外发起推迟到 M5-3.b；
++     若首期落地，须满足 F-A4-14 的四条附加条件；
++  2. **`agent_kv` 容量上限策略**（§8.0 #10 / §4.4 / §8.2 D3）：本文在 A1 卡 5MB/5000 条基础上细化
++     per-ns 1000、TTL 30/365 天、90% 水位、per-agent 32，并采纳 A5 的 1 MiB 作为**单 Agent 软配额**；
++  3. F-A4-13 的 `a2a-shutdown` 插入位置（默认：idx 2，挤在 `flush-sessions` 前）；
++  4. F-A4-8 的"拒绝而非告警"（默认：拒绝）；
++  5. §4.4 的 `prefs` 永不过期例外（默认：允许，但受单值与闸门约束）；
++  6. **【与 A5 冲突】`AgentDialect` 拆 `DialectTransport` × `AgentProduct` 两层**（§8.2 D1）：
++     不拆则两份 `AgentDialect` 在 `domain.rs` 直接撞名；默认建议拆两层；
++  7. **【与 A5 冲突】Keyring 键命名空间**（§8.2 D2）：默认 `agent:<agent_id>`（按 agent 隔离），
++     A5 的 `llm_credential_key` 降级为 `Option<String>` 且共享键必须带 `llm:` 前缀 + UI 明示；
++  8. **【与 A5 冲突】`agent_kv` 全局硬上限 5 MiB（A1 卡）vs A5 的 1 MiB**（§8.2 D3）：
++     默认"硬 5 MiB + 软 1 MiB"，若 A0 直接取 1 MiB 为硬上限则 §4.10 的
++     `AGENT_KV_MAX_TOTAL_BYTES` / `AGENT_KV_MAX_ENTRIES` 须同步下调（并复核 A1 卡 §4.3）。
++- **未触碰**：A1 主计划文档与 A1 的 M5 卡片目录（仅**读取** `M5-20260906/M5-3-a2a-bidir-agent-kv.md`，
++  未修改）；其他 Lane 文件（工作树中 A2/A3/A5/A6/A7/A8/A9/A10/A11 的文档与 patch 均未改动）；
++  高冲突文件（`bridge.rs` / `domain.rs` / `main.rs` / ACL / `pre-merge.sh`）。
++- **NEXT**：A1 展开 M5 task-card → A0 签署 `M5-3.a` → 由 A4（或指派）实施 Wave A + Wave B，
++  并同步落地 §6 测试与 §7 策略脚本。
++
++---
++
++## 11. 输出模板回填
++
++```text
++LANE=A4
++STATUS=PASS_WITH_DOCS
++BASE=5ca8f9f
++HEAD=docs only；补丁 logs/checkpoints/Lane-A4-M5-a2a-memory-20260906-0755.patch
++FILES=logs/assist/A4-M5-a2a-memory-20260906-0755.md；logs/checkpoints/Lane-A4-M5-a2a-memory-20260906-0755.patch
++VERIFY=无产品代码改动；全部现状数据来自实测命令（见 §1）：grep a2a/agent_kv 零命中；113 个 tauri::command；ACL 111 条（末条 list_artifact_images 在第 118 行）；关闭顺序 7 任务（stop-background-workers→stop-scheduler→flush-sessions→close-tabs→kill-terminals→shutdown-grid→kill-running-scripts）；audit 上限 1000；atomic_write/prune_sessions 已存在；data_dir=app_data_dir/mvp-browser-os
++CHECKPOINT=logs/assist/A4-M5-a2a-memory-20260906-0755.md
++MERGE_NOTES=M5 Wave 0 DOCS ONLY（未改产品代码/依赖/命令/ACL/pre-merge）；补丁仅含本 assist 文档。冻结 F-A4-1~14（方言三层/无第二执行路径/能力真源 capability.rs+McpGlobalPolicy/键空间白名单/JSON+atomic_write/容量与淘汰/三重隐私闸/a2a-shutdown 位置/对外发起分波）；与 A1 卡 M5-3 逐项对齐（§8.0：6 项对齐、4 项更严建议、1 项交 A0）；**与 A5 三处硬冲突见 §8.2（AgentDialect 拆两层 D1 / Keyring 键 D2 / 容量硬 5MiB+软 1MiB D3，D3 已回写本文）**；A10 复审无 A4 阻塞项，本文 §7 即其 D-1 在 M5-3 上的答复，§8.3 补 D-2 parity 码位；八点待 A0 裁决见 §10（#6~#8 须在 A0 集成 domain.rs 前定案）；挂账 D-M5-3-1~5
++NEXT=**A0 裁决 §8.2 的 D1/D2/D3（与 A5 的冲突，阻塞 domain.rs 合并）** → A1 收编 §8.0 差异 → A0 签署 M5-3.a → 实施 Wave A(agent_kv_*)+Wave B(a2a_task_receive/status/cancel+协商) 并补 §6 的 25 条 `T-kv-*` + 17 条 `T-a2a-*` 单测与 check-agent-kv-policy.py / check-a2a-policy.py
++```

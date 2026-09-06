@@ -1,10 +1,10 @@
 # Parallel Command Board
 
-> Updated: 2026-09-06 07:55 CST
+> Updated: 2026-09-06 08:35 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
 > Current mainline: `master` at `a1a2061` locally and on `origin/master`
-> Current NEXT: M5 task-card expansion and architecture prework; M5 product code remains locked until A0 signs the first M5 implementation card
+> Current NEXT: M5-W1 core boundary implementation; only Lane A2 may write product code, other lanes continue docs/review support
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
@@ -13,7 +13,7 @@ This file is the coordination board for 11 parallel agents plus A0 integration. 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5 Dispatch Now 完成自己的整包交付，自行 rebase/整理补丁，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W1 Implementation Dispatch 完成自己的整包交付，自行 rebase/整理补丁，不 push。
 ```
 
 Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
@@ -128,6 +128,42 @@ No lane may force-push, reset, or overwrite another lane's changes.
 | A11 | **START** | Maintain verification matrix and manual/GUI checklist; update after each implementation lane output. | `logs/assist/`, `logs/checkpoints/` verification docs | Do not edit product code. |
 
 
+
+## M5-W1 Implementation Dispatch
+
+> Added 2026-09-06 08:35 CST by A0 after reviewing M5-W0 outputs.
+> W0 completion facts: A1 expanded M5 cards under `logs/checkpoints/M5-20260906/`; A2-A9 prework exists; A10 security review exists; A11 verification/debt docs exist.
+> A0 decision: start only the M5-1 core-boundary slice. MCP/Agent/Graph/Plugin product code remains locked until M5-1 boundary checks land.
+
+### W1 One-Line Prompt
+
+```text
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W1 Implementation Dispatch 完成自己的整包交付，自行 rebase/整理补丁，不 push。
+```
+
+### W1 Assignments
+
+| Lane | Status | Task | Allowed Scope | Must Deliver |
+|---|---|---|---|---|
+| A1 | **START DOCS ONLY** | Reconcile M5 task cards with A2/A6/A10 findings: M5-1 internal order must be boundary policy first, then minimal extraction; remove stale assumptions such as vue-router and empty prework notes. | `logs/checkpoints/M5-20260906/*.md`, three main docs only if strictly needed | One reconciliation checkpoint; no product code. |
+| A2 | **START PRODUCT CODE** | Implement M5-1.a boundary gate first: add `scripts/check-core-boundary.py` with self-test/default/pending modes, wire it into `scripts/pre-merge.sh`, then create the smallest `mvp_core` module/lib boundary that compiles without moving behavior. Do not extract scheduler/database yet. | `src-tauri/Cargo.toml`, `src-tauri/src/lib.rs` or `src-tauri/src/core/**`, `scripts/check-core-boundary.py`, `scripts/pre-merge.sh`, focused docs/checkpoint | Boundary policy PASS, cargo test PASS for touched modules, no behavior change, no new Cargo/npm dependency. |
+| A3 | **SUPPORT DOCS ONLY** | Prepare M5-2 after M5-1: update MCP plan to consume A2 boundary shape; no rmcp dependency yet. | `logs/assist/A3-M5-mcp-*.md` | Delta note only if A2 boundary changes assumptions. |
+| A4 | **SUPPORT DOCS ONLY** | Prepare M5-3 A2A memory against the shared capability boundary; no product code. | `logs/assist/A4-M5-a2a-memory-*.md` | Delta note with exact dependency on capability/core boundary. |
+| A5 | **SUPPORT DOCS ONLY** | Prepare M5-4/5 Agent/Skill runtime commands after core boundary; no product code. | `logs/assist/A5-M5-agent-skill-*.md` | Delta note; keep Skill execution reuse of M2-4 explicit. |
+| A6 | **SUPPORT DOCS ONLY** | Update Agent/Skill UI prework to remove vue-router assumption and align to `useLayoutStore` unless A1/A0 decides otherwise. | `logs/assist/A6-M5-agent-ui-*.md` | Delta note; no UI code. |
+| A7 | **SUPPORT DOCS ONLY** | Prepare graph model/storage to consume A2 boundary; identify which graph pure functions belong in core. | `logs/assist/A7-M5-graph-core-*.md` | Delta note; no graph product code. |
+| A8 | **SUPPORT DOCS ONLY** | Prepare graph UI after graph DTO freeze; no UI code. | `logs/assist/A8-M5-graph-ui-*.md` | Delta note only. |
+| A9 | **SUPPORT DOCS ONLY** | Prepare plugin system after capability boundary; preserve form③ and Ed25519 proposal unless A10 finds blocker. | `logs/assist/A9-M5-plugin-*.md` | Delta note; no plugin product code. |
+| A10 | **START REVIEW** | Review A2's W1 boundary patch for leaks: core importing tauri, duplicate execution path, hidden dependencies, command/ACL drift, policy false positives. | `logs/assist/A10-M5-W1-security-review-*.md` | Review after A2 output; no product code. |
+| A11 | **START VERIFICATION** | Update M5 verification matrix with A2's actual boundary gate, commands, and pre-merge result. | `logs/checkpoints/M5-A11-*.md`, `logs/assist/M5-A11-*.md` | One verification delta after A2/A10. |
+
+### W1 Hard Stops
+
+- Only A2 may touch product code in W1.
+- No `rmcp`, `tokio`, npm package, MCP server, Agent runtime, graph runtime, plugin runtime, new Tauri command, or ACL entry in W1.
+- `check-core-boundary.py` must fail if core imports `tauri`, references `AppHandle`, references `crate::bridge`, or creates a second execution path.
+- If A2 cannot keep behavior unchanged, stop with a patch/checkpoint instead of broad extraction.
+
 ## M5 Dispatch Now
 
 > Added 2026-09-06 07:55 CST by A0 after pushing `a1a2061`.
@@ -137,7 +173,7 @@ No lane may force-push, reset, or overwrite another lane's changes.
 ### One-Line Prompt For All Lanes
 
 ```text
-WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5 Dispatch Now 完成自己的整包交付，自行 rebase/整理补丁，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W1 Implementation Dispatch 完成自己的整包交付，自行 rebase/整理补丁，不 push。
 ```
 
 ### M5 Wave 0 Assignments
