@@ -1,5 +1,6 @@
 # AI 模型切换与接手清单
-> A0 update 2026-09-06 19:25 CST: `origin/master` pushed to `4b438ef`; NEXT=`M5-W6`. W6 opens only A8 (M5-9 graph UI pure logic/panel shell) and A9 (M5-10/11 plugin manifest/lifecycle policy slice) for product code; all other lanes remain docs/review/support.
+> A0 update 2026-09-07 00:50 CST: `origin/master` pushed to `5f92ece`; NEXT=`M5-W7`. W7 opens only A3 (MCP read-only command bridge) and A5 (Agent/Skill read-only command bridge) for product code; all other lanes remain docs/review/support.
+> A0 update 2026-09-06 19:25 CST: `origin/master` pushed to `4b438ef`; NEXT=`M5-W7`. W6 opens only A8 (M5-9 graph UI pure logic/panel shell) and A9 (M5-10/11 plugin manifest/lifecycle policy slice) for product code; all other lanes remain docs/review/support.
 > A0 update 2026-09-06 18:35 CST: `origin/master` pushed to `1610939`; NEXT=`M5-W6`. W5 opens only A6 (M5-6 Agent/Skill UI pure logic/panel shell) and A7 (M5-7/8 graph model/store policy slice) for product code; all other lanes remain docs/review/support.
 > A0 update 2026-09-06 17:55 CST: `origin/master` pushed to `f8f1f49`; NEXT=`M5-W5`. W4 opens only A4 (M5-3 A2A/agent memory KV contract) and A5 (M5-4/5 Agent/Skill domain + policy shell) for product code; all other lanes remain docs/review/support.
 > A0 update 2026-09-06 17:10 CST: `origin/master` pushed to `712a14c`; NEXT=`M5-W4`. W3 opens only A2 (M5-1.b core extraction) and A3 (M5-2 MCP registry/policy shell) for product code; A4-A11 remain docs/review/support.

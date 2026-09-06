@@ -1,10 +1,10 @@
 # Parallel Command Board
 
-> Updated: 2026-09-06 19:25 CST
+> Updated: 2026-09-07 00:50 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` at `4b438ef` locally and on `origin/master`
-> Current NEXT: M5-W6 parallel implementation; Lane A8 owns M5-9 graph UI pure logic/panel shell, Lane A9 owns M5-10/11 plugin manifest/lifecycle policy slice, other lanes docs/review/support only
+> Current mainline: `master` at `5f92ece` locally and on `origin/master`
+> Current NEXT: M5-W7 integration implementation; Lane A3 owns M5-2 read-only MCP command bridge, Lane A5 owns Agent/Skill read-only command bridge, other lanes docs/review/support only
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
@@ -13,7 +13,7 @@ This file is the coordination board for 11 parallel agents plus A0 integration. 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W6 Parallel Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W7 Integration Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
 ```
 
 Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
@@ -132,6 +132,43 @@ No lane may force-push, reset, or overwrite another lane's changes.
 
 
 
+
+
+## M5-W7 Integration Dispatch
+
+> Added 2026-09-07 00:50 CST by A0 after pushing through `5f92ece`.
+> Current facts: graph UI shell and plugin manifest/lifecycle policy are integrated. W7 is a narrow read-only command bridge wave, not runtime activation.
+> W7 opens A3 and A5 product-code lanes only. A3 may expose read-only MCP registry/policy commands. A5 may expose read-only Agent/Skill parse/validate/permission-preview commands. No server, no execution, no plugin install.
+
+### W7 One-Line Prompt
+
+```text
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W7 Integration Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+```
+
+### W7 Assignments
+
+| Lane | Status | Task | Allowed Scope | Must Deliver |
+|---|---|---|---|---|
+| A1 | **START DOCS ONLY** | Reconcile W7 as active NEXT; mark W6 pushed and define M5 final acceptance/debt list. | `PARALLEL_COMMAND_BOARD.md`, three main docs, `logs/checkpoints/M5-20260906/*.md` | One reconciliation checkpoint; no product code. |
+| A2 | **SUPPORT/REVIEW ONLY** | Review A3/A5 command bridges for core boundary leaks and duplicate execution paths. | `logs/assist/A2-M5-W7-*.md` | Boundary review note. |
+| A3 | **START PRODUCT CODE** | Implement M5-2 read-only MCP registry/policy bridge commands: list registry entries, preview capability verdicts, return redacted DTOs. Must include source check, ACL, frontend bridge/types only if commands are added. No rmcp/server/listener. | `src-tauri/src/mcp.rs`, `src-tauri/src/bridge.rs`, `src-tauri/src/main.rs`, `src-tauri/permissions/default-commands.toml`, `src/bridge.ts`, `src/types.ts`, `scripts/check-mcp-policy.py`, focused tests/checkpoint | Commands + ACL/source check + policy/tests PASS, no runtime server, no network. |
+| A4 | **SUPPORT/REVIEW ONLY** | Review A5 command payloads for memory/privacy interactions; no product code. | `logs/assist/A4-M5-W7-*.md` | Review note. |
+| A5 | **START PRODUCT CODE** | Implement Agent/Skill read-only command bridge: parse/validate AgentDef/SkillDef and permission preview. No skill execution, no install, no network, no persistence writes. Must include source check, ACL, frontend bridge/types if commands are added. | `src-tauri/src/agent.rs`, `src-tauri/src/skills.rs`, `src-tauri/src/bridge.rs`, `src-tauri/src/main.rs`, `src-tauri/permissions/default-commands.toml`, `src/bridge.ts`, `src/types.ts`, `scripts/check-agent-skill-policy.py`, focused tests/checkpoint | Commands + ACL/source check + policy/tests PASS, no execution path. |
+| A6 | **SUPPORT DOCS ONLY** | Prepare UI wiring expectations for A5 read-only commands; no UI code unless A0 later opens it. | `logs/assist/A6-M5-W7-*.md` | UI wiring note. |
+| A7 | **SUPPORT DOCS ONLY** | Prepare graph command bridge plan for later W8; no graph command code in W7. | `logs/assist/A7-M5-W7-*.md` | Graph bridge card. |
+| A8 | **SUPPORT/REVIEW ONLY** | Review A3/A5 frontend bridge/types for graph UI impact; no graph UI code. | `logs/assist/A8-M5-W7-*.md` | Review note. |
+| A9 | **SUPPORT/REVIEW ONLY** | Review plugin command surface stays absent or read-only; no plugin install/runtime code. | `logs/assist/A9-M5-W7-*.md` | Plugin review note. |
+| A10 | **START REVIEW** | Security review A3/A5 command bridges: source check, ACL, redaction, no execution/install/network, no sensitive audit. | `logs/assist/A10-M5-W7-*.md`; policy fixtures only for concrete failure | Review after A3/A5 output. |
+| A11 | **START VERIFICATION** | Update W7 verification matrix and M5 final readiness list after A3/A5 outputs. | `logs/assist/M5-A11-W7-*.md`, `logs/checkpoints/M5-A11-W7-*.md` | One verification delta. |
+
+### W7 Hard Stops
+
+- Only A3 and A5 may write product code in W7.
+- W7 commands are read-only only: no skill execution, no plugin install/enable/disable/uninstall, no MCP server/listener, no graph rebuild worker.
+- Every new command must be atomic with source check, ACL, frontend bridge/types, policy coverage, and tests.
+- No token/cookie/Authorization/body/prompt-secret logging or persistence.
+- All lanes pull from `origin/master` first and must not push.
 
 ## M5-W6 Parallel Dispatch
 
