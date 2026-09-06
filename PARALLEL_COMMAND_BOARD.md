@@ -1,10 +1,10 @@
 # Parallel Command Board
 
-> Updated: 2026-09-06 17:10 CST
+> Updated: 2026-09-06 17:55 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` at `712a14c` locally and on `origin/master`
-> Current NEXT: M5-W3 parallel implementation; Lane A2 owns M5-1.b core extraction, Lane A3 owns M5-2 MCP command-registry/policy slice, other lanes docs/review/support only
+> Current mainline: `master` at `f8f1f49` locally and on `origin/master`
+> Current NEXT: M5-W4 parallel implementation; Lane A4 owns M5-3 A2A/agent memory KV contract slice, Lane A5 owns M5-4/5 Agent/Skill domain and command policy shell, other lanes docs/review/support only
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
@@ -13,7 +13,7 @@ This file is the coordination board for 11 parallel agents plus A0 integration. 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W3 Parallel Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W4 Parallel Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
 ```
 
 Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
@@ -129,6 +129,43 @@ No lane may force-push, reset, or overwrite another lane's changes.
 
 
 
+
+
+## M5-W4 Parallel Dispatch
+
+> Added 2026-09-06 17:55 CST by A0 after pushing through `f8f1f49`.
+> Current facts: M5 core boundary/seam is integrated; M5-2 MCP registry/policy shell is integrated without rmcp/server runtime.
+> W4 opens A4 and A5 product-code lanes only. A2/A3 become support/review for their landed contracts; A6-A11 remain docs/review/support unless explicitly listed below.
+
+### W4 One-Line Prompt
+
+```text
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W4 Parallel Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+```
+
+### W4 Assignments
+
+| Lane | Status | Task | Allowed Scope | Must Deliver |
+|---|---|---|---|---|
+| A1 | **START DOCS ONLY** | Reconcile W4 as active NEXT; mark W3 pushed and split M5-3/M5-4/M5-5 into next-card acceptance criteria. | `PARALLEL_COMMAND_BOARD.md`, three main docs, `logs/checkpoints/M5-20260906/*.md` | One reconciliation checkpoint; no product code. |
+| A2 | **SUPPORT/REVIEW ONLY** | Review A4/A5 use of `mvp_core::seam`; propose next core extraction only if needed, no product code. | `logs/assist/A2-M5-W4-*.md` | Boundary review note; no product code. |
+| A3 | **SUPPORT/REVIEW ONLY** | Review A4/A5 against MCP registry/policy decisions; no MCP server/runtime expansion. | `logs/assist/A3-M5-W4-*.md` | MCP compatibility note; no product code. |
+| A4 | **START PRODUCT CODE** | Implement first M5-3 A2A/agent memory KV contract slice: DTOs, validation, capacity/privacy policy, pure store helpers or JSON persistence shell if already patterned; no network protocol and no background runtime. | `src-tauri/src/domain.rs`, optional `src-tauri/src/agent_memory.rs` or `src-tauri/src/a2a.rs`, `src-tauri/src/security_policy.rs`, `scripts/check-agent-memory-policy.py`, `scripts/pre-merge.sh`, focused Rust tests/checkpoint | Policy self-test/default PASS, no credentials/body leakage, bounded records, no new dependency unless already present and justified. |
+| A5 | **START PRODUCT CODE** | Implement first M5-4/M5-5 Agent/Skill domain + command policy shell: `AgentDef`/`SkillDef` DTOs, validation, permission preview, policy script. Do not execute skills yet; do not add command runtime unless source check/ACL/types/bridge/tests are complete in same patch. | `src-tauri/src/domain.rs`, optional `src-tauri/src/agent.rs` or `src-tauri/src/skills.rs`, `src-tauri/src/security_policy.rs`, `scripts/check-agent-skill-policy.py`, `scripts/pre-merge.sh`, focused Rust tests/checkpoint | Policy self-test/default PASS, no second execution path, no installer/network/download. |
+| A6 | **SUPPORT DOCS ONLY** | Convert A5 domain into future UI data contract and panel state plan; no UI code. | `logs/assist/A6-M5-W4-*.md`, `logs/checkpoints/M5-20260906/M5-6*.md` | UI delta note; no frontend product code. |
+| A7 | **SUPPORT DOCS ONLY** | Prepare graph core slice after A4/A5 data contracts; no graph runtime. | `logs/assist/A7-M5-W4-*.md`, `logs/checkpoints/M5-20260906/M5-7*.md`, `M5-8*.md` | Next-card delta; no product code. |
+| A8 | **SUPPORT DOCS ONLY** | Prepare graph UI after A7 freezes schema; no UI code. | `logs/assist/A8-M5-W4-*.md` | UI delta note. |
+| A9 | **SUPPORT DOCS ONLY** | Align plugin manifest/lifecycle plans to A5 Agent/Skill policy; no plugin product code. | `logs/assist/A9-M5-W4-*.md`, `logs/checkpoints/M5-20260906/M5-10*.md` through `M5-12*.md` | Plugin delta note. |
+| A10 | **START REVIEW** | Security review A4/A5 for credential leakage, unbounded maps, command exposure, source-check/ACL drift, duplicate execution path. | `logs/assist/A10-M5-W4-*.md`; policy fixtures only if fixing concrete failure | Review after A4/A5 output. |
+| A11 | **START VERIFICATION** | Update W4 verification matrix and manual debt ledger after A4/A5 outputs. | `logs/assist/M5-A11-W4-*.md`, `logs/checkpoints/M5-A11-W4-*.md` | One verification delta. |
+
+### W4 Hard Stops
+
+- Only A4 and A5 may write product code in W4.
+- No network protocol listener, rmcp server, plugin installer, model provider integration, background agent runtime, npm dependency, or GUI panel in W4.
+- Any new command must be atomic with source check, ACL, frontend bridge/types, policy coverage, and tests. Prefer no command in W4 unless the contract is fully ready.
+- Stores must be bounded and privacy-filtered; no token/cookie/Authorization/body/logged prompt secrets.
+- All lanes pull from `origin/master` first and must not push.
 
 ## M5-W3 Parallel Dispatch
 
