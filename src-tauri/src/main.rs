@@ -7,6 +7,7 @@ mod domain;
 mod grid_ipc;
 mod grid_process;
 mod images;
+mod mcp;
 mod scheduler;
 mod script_runner;
 mod scripts;
@@ -25,6 +26,7 @@ mod workspace;
 // 每搬入一个模块，就在下方补一行 `pub use mvp_core::<mod>;`，
 // 并保证 `mod <mod>;` 已从上面删除（重复定义由 check-core-boundary.py 的
 // `CORE_SHIM_CONFLICT` 守门）。
+pub use mvp_core::core::seam;
 pub use mvp_core::keyring_store;
 
 use bridge::AppState;

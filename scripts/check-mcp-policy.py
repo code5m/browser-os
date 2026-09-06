@@ -149,6 +149,18 @@ def c_node_runtime(rel, text, repo):
     return None
 
 
+def c_fs_tool_policy(rel, text, repo):
+    # 注册表文件：touches_fs / returns_url 必须与路径根 / URL 脱敏守门一致（B8/B9）。
+    if "MCP_COMMAND_REGISTRY" not in text:
+        return None
+    problems = []
+    if "touches_fs" in text and "check_path_within_roots" not in text:
+        problems.append("注册表含 touches_fs 项但缺 check_path_within_roots（远程任意文件读风险，B8）")
+    if "returns_url" in text and "redact_sensitive_url" not in text:
+        problems.append("注册表含 returns_url 项但缺 redact_sensitive_url（URL 敏感信息泄露，B9）")
+    return problems or None
+
+
 # ---- PENDING（仅当 MCP 产物已存在时守门）----
 
 
@@ -273,6 +285,7 @@ ACTIVE_CODES = [
     ("MCP_NPM_IN_CARGO", "ACTIVE", c_npm_cargo),
     ("MCP_NODE_RUNTIME_PRESENT", "ACTIVE", c_node_runtime),
     ("MCP_CAPABILITY_DRIFT", "ACTIVE", c_capability_drift),
+    ("MCP_FS_TOOL_PATH_POLICY", "ACTIVE", c_fs_tool_policy),
 ]
 PENDING_CODES = [
     ("MCP_LISTEN_PORT", "PENDING", c_listen_port),
@@ -402,6 +415,9 @@ def _run_self_test() -> int:
         mutate(**{"src-tauri/Cargo.toml": "[dependencies]\nmcp_js = { path = \"crates/mcp\", npm = true }\n"}), "src-tauri/Cargo.toml")
     add("MCP_NODE_RUNTIME_PRESENT", "src 内 Command::new(\"node\")",
         mutate(**{"src-tauri/src/bridge.rs": 'fn run() { std::process::Command::new("node").spawn(); }\n'}), "src-tauri/src/bridge.rs")
+    add("MCP_FS_TOOL_PATH_POLICY", "注册表 touches_fs 缺 check_path_within_roots",
+        _with_artifact(**{"src-tauri/src/mcp_tools/registry.rs": "pub const MCP_COMMAND_REGISTRY: &[McpCommandDef] = &[ McpCommandDef { capability: \"file_read\", touches_fs: true, returns_url: true } ];\n"}),
+        "src-tauri/src/mcp_tools/registry.rs")
 
     # PENDING 坏样本：必须带最小 MCP 产物（_MCP_ARTIFACT）才能让 gate 生效
     add("MCP_LISTEN_PORT", "mcp_server 出现 TcpListener",

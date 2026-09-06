@@ -408,6 +408,16 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/check-core-boundary.py" --expect-pending >/dev/null 2>&1 \
     || pm_fail "check-core-boundary.py --expect-pending（有 pending 码位已实现，应转入默认判定）"
 
+  # M5-2（Lane A3）：MCP 命令注册表 / 全局策略夹具（15 码位：5 ACTIVE + 9 PENDING + 1 注册表路径策略）。
+  # ⚠️ 同 check-core-boundary 同理：rmcp/tokio 红线在编译层守不住，只能靠本夹具。
+  # 首期切片已实现 `src-tauri/src/mcp.rs` + `domain.rs` 能力白名单（无 rmcp/无 server/无监听），
+  # 故只挂 --self-test + 默认门禁（不再挂 --expect-pending：M5-2 产物已存在）。
+  pm_log "M5-2 MCP 策略不变量夹具（5 ACTIVE 码 + 9 PENDING 码 + 1 注册表路径策略码，产物存在才判）…"
+  python3 "$SCRIPT_DIR/check-mcp-policy.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-mcp-policy.py --self-test"
+  python3 "$SCRIPT_DIR/check-mcp-policy.py" >/dev/null 2>&1 \
+    || pm_fail "check-mcp-policy.py（M5-2 MCP 安全不变量被破坏：能力漂移/路径根/URL 脱敏/rmcp/tokio/监听）"
+
   pm_log "git diff --check（工作树 + 暂存区，机器证据除外）…"
   # Raw evidence is immutable third-party output; SHA256SUMS, not whitespace rewriting, protects it.
   git -C "$ROOT" diff --check -- . ':(exclude)logs/m0-baseline/**' || pm_fail "git diff --check (worktree)"
@@ -520,6 +530,10 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/check-core-boundary.py" ] || { echo "FAIL: check-core-boundary.py missing"; rc=1; }
   if ! python3 "$SCRIPT_DIR/check-core-boundary.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-core-boundary.py --self-test"; rc=1
+  fi
+  [ -f "$SCRIPT_DIR/check-mcp-policy.py" ] || { echo "FAIL: check-mcp-policy.py missing"; rc=1; }
+  if ! python3 "$SCRIPT_DIR/check-mcp-policy.py" --self-test >/dev/null 2>&1; then
+    echo "FAIL: check-mcp-policy.py --self-test"; rc=1
   fi
   if ! python3 "$SCRIPT_DIR/check-tools-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-tools-policy.py --self-test"; rc=1

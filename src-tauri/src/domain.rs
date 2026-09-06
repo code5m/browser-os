@@ -1524,6 +1524,69 @@ pub struct TaskRunRecord {
 }
 
 // ---------------------------------------------------------------------------
+// M5-2 MCP 命令注册表 / 全局策略 DTO（契约冻结见 A3 M5-2 主篇 / A1 M5-2 卡）
+//
+// 首期切片（W3 Lane A3）：**只有类型与常量**，无任何 rmcp 依赖、无 server runtime、
+// 无网络监听、无新 Tauri 命令。策略逻辑在 `src-tauri/src/mcp.rs`，纯函数且复用
+// `security_policy` 既有路径根 / URL 脱敏守门（单一真源，不得各实现一份）。
+//
+// 全部 `#[allow(dead_code)]`：本段是契约层，由 `mcp.rs`（bin 专属）消费；
+// `mvp_core` lib 编译时尚未被使用（与 `DbConnectionConfig` 等同口径）。
+// ---------------------------------------------------------------------------
+
+/// MCP 能力白名单（首期：只读 + 路径根 / 脱敏约束）。
+/// **单一真源**：不得在其他文件重复定义（`check-mcp-policy.py` `MCP_CAPABILITY_DRIFT` 守门）。
+#[allow(dead_code)]
+pub const MCP_CAPABILITY_V1: &[&str] = &[
+    "file_read",
+    "file_list",
+    "tab_query",
+    "history_query",
+    "bookmarks_query",
+    "downloads_query",
+    "console_query",
+];
+
+/// MCP 工具注册项：能力名 + 落地的内部核心 API + 是否触碰文件系统 / 是否回传 URL。
+///
+/// `core_api` 是文档性标注（首期无 server，不真的调用），指明该工具应走哪条
+/// **核心内部 API**——绝不能是命令层 `bridge::*`（A3 补篇 B3：MCP 工具不得绕过来源校验）。
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct McpCommandDef {
+    pub capability: &'static str,
+    pub core_api: &'static str,
+    /// 触碰文件系统：必须经 `security_policy::check_path_within_roots`
+    pub touches_fs: bool,
+    /// 回传 URL：必须经 `security_policy::redact_sensitive_url`
+    pub returns_url: bool,
+}
+
+/// MCP 全局策略裁决（fail-closed：默认拒绝）。
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpDecision {
+    Allow,
+    Deny,
+}
+
+/// 能力是否在白名单内（fail-closed：未知 / 大小写变形一律 false）。
+#[allow(dead_code)]
+pub fn is_known_mcp_capability(name: &str) -> bool {
+    MCP_CAPABILITY_V1.contains(&name)
+}
+
+/// 策略快照（未来 `mcp_policy_get` 命令的返回形态；首期仅冻结 DTO）。
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpPolicySnapshot {
+    /// 当前生效的能力集合（恒为 `MCP_CAPABILITY_V1`）
+    pub capabilities: Vec<String>,
+    /// 全局策略版本（与 A1 M5-2 卡 §4 对齐）
+    pub policy_version: &'static str,
+}
+
+// ---------------------------------------------------------------------------
 // M4-1 契约单测（ID 段 `T-db-c1~c5`，由 A1 展开卡 §5 分配）
 // 目的不是覆盖实现（实现归 M4-2/M4-3），而是把**契约本身**钉死：
 // 驱动身份串、能力表、凭据字段结构性缺失、缺省值 fail-closed、错误码闭合。
