@@ -37,6 +37,8 @@ const menuSections = [
       { view: "tools", icon: "🧰", label: "工具箱" },
       { view: "db", icon: "🗄️", label: "数据库" },
       { view: "tasks", icon: "⏰", label: "定时任务" },
+      { view: "skills", icon: "🛠️", label: "技能" },
+      { view: "agents", icon: "🤖", label: "智能体" },
     ],
   },
   {

@@ -640,3 +640,142 @@ export interface DbQueryResult {
   elapsed_ms: number;
   state: DbQueryState;
 }
+
+// ====== M5-4 / M5-5 / M5-6 Agent/Skill UI 类型（前端 DTO 镜像；与 src-tauri/src/domain.rs 同义）======
+// 仅数据镜像，不含任何执行 / 安装 / 网络 / 凭据字段。
+// 后端 domain.rs（Lane A5，W4）为权威源；本段与其逐字段对齐（serde rename_all = "snake_case"）。
+// UI 侧类型名沿用域类型名（与 A6 W4 数据契约一致），避免 W3 -era 的 SkillMeta/SkillParam 误名。
+
+/// 安装/运行闸门三档。与 M5-5 命令 ACL 同义；末条 ACL 恒为 `list_artifact_images`（K1）。
+export type AclLevel = "safe" | "confirm" | "dangerous";
+
+/// Skill 执行体的**唯一**合法形态：脚本/命令引用或串联（类型层面排除内联 shell，K6）。
+export type SkillExec =
+  | { kind: "script_ref"; scriptId: string; params: Record<string, unknown> }
+  | { kind: "command_ref"; commandId: string; params: Record<string, unknown> }
+  | { kind: "sequence"; steps: SkillExec[] };
+
+/// 能力引用；单一真源在后端 security_policy.rs（SKILL_CAPABILITY_V1 / AGENT_CAPABILITY_V1）。
+export interface CapabilityRef {
+  id: string;
+}
+
+/// 输入字段（镜像 SkillDef.inputs，后端当前仅 name/required/description）。
+export interface SkillInput {
+  name: string;
+  required: boolean;
+  description: string;
+}
+
+/// 自检用例（可选，UI 仅展示）。
+export interface SkillTest {
+  name: string;
+  args: unknown;
+}
+
+export interface SkillDef {
+  id: string;
+  version: string;
+  displayName: string;
+  description: string;
+  acl: AclLevel;
+  exec: SkillExec;
+  inputs: SkillInput[];
+  capabilities: CapabilityRef[];
+  tests: SkillTest[];
+  metadata: unknown;
+}
+
+/// Agent 方言标记（仅数据；endpoint 配置在 M5-4.b 执行期再加，避免 W4 引入模型供应商集成）。
+export type AgentDialect = "open_ai_compatible" | "external_cli" | "custom";
+
+export interface A2aConfig {
+  delegateTo: boolean;
+  delegatedFrom: boolean;
+}
+
+/// Agent 定义。注意：AgentDef 自身**无** acl 字段；其闸门来自后端 PermissionPreview.gate。
+export interface AgentDef {
+  id: string;
+  version: string;
+  displayName: string;
+  description: string;
+  dialect: AgentDialect;
+  systemPrompt: string;
+  defaultCapabilities: CapabilityRef[];
+  a2a: A2aConfig;
+  metadata: unknown;
+}
+
+/// 后端提供的权限预览（安装/运行前 UI 展示闸门档与所需能力）。
+export interface PermissionPreview {
+  gate: AclLevel;
+  capabilities: string[];
+}
+
+/// 安装态（镜像后端 SkillInstallState / AgentInstallState；字段由 A5 落码时定，此处取最小集）。
+export interface SkillInstallState {
+  meta: SkillDef;
+  enabled: boolean;
+  installedAt: string;
+  updatedAt: string;
+  grantedCapabilities: string[];
+}
+
+export interface AgentInstallState {
+  meta: AgentDef;
+  enabled: boolean;
+  installedAt: string;
+  updatedAt: string;
+  grantedCapabilities: string[];
+}
+
+/// 运行态（复用 M4 RunStatus；前端侧记录，后端落盘各自 500 上限 FIFO）。
+export interface SkillRunRecord {
+  runId: string;
+  skillId: string;
+  version: string;
+  status: RunStatus;
+  startedAt: string;
+  finishedAt?: string;
+  exitCode?: number;
+  truncated: boolean;
+  error?: { code: string; message: string; retriable: boolean; details?: string };
+}
+
+export interface AgentRunRecord {
+  runId: string;
+  agentId: string;
+  sessionId: string;
+  status: RunStatus;
+  startedAt: string;
+  finishedAt?: string;
+  truncated: boolean;
+  error?: { code: string; message: string; retriable: boolean; details?: string };
+}
+
+/// 流式载荷（前端侧）。后端经 Tauri event 推流；终止用独立的 done/error/canceled 事件，
+/// 与 M5-4 §4.3 的 `agent://<id>/stream` + `.../done|error|canceled` 四个 event 对应。
+export type StreamChunk =
+  | { kind: "data"; data: string; runId?: string; sessionId?: string }
+  | { kind: "flow"; droppedChunks?: number; droppedBytes?: number; runId?: string; sessionId?: string };
+
+/// 前端 agent 会话态（仅 UI 展示，不落盘）。
+export interface AgentSessionUI {
+  sessionId: string;
+  agentId: string;
+  status: "active" | "streaming" | "done" | "error" | "canceled";
+  chunks: StreamChunk[];
+  error?: { code: string; message: string };
+}
+
+/// 二段式闸门待确认项（A1 M5-6 §4.3：CONFIRM_REQUIRED → 弹窗 → confirm_<action>）。
+export type PendingConfirmAction = "install_skill" | "run_skill" | "install_agent";
+export interface PendingConfirm {
+  action: PendingConfirmAction;
+  payload: unknown;
+  expiresAt: number;
+}
+
+/// 面板三态（空 / 错误 / 加载），供 shell 组件统一渲染。
+export type PanelState = "loading" | "empty" | "ready" | "error";

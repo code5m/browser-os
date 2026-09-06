@@ -28,6 +28,8 @@ import CommandSnippetPanel from "../workspace/CommandSnippetPanel.vue";
 // M4-8 定时任务面板同样懒加载：其纯逻辑(taskUi.ts)、store(useTaskStore.ts) 一并拆出主 chunk。
 const TaskPanel = defineAsyncComponent(() => import("../workspace/TaskPanel.vue"));
 const DatabasePanel = defineAsyncComponent(() => import("../workspace/DatabasePanel.vue"));
+const SkillManagerPanel = defineAsyncComponent(() => import("../workspace/SkillManagerPanel.vue"));
+const AgentManagerPanel = defineAsyncComponent(() => import("../workspace/AgentManagerPanel.vue"));
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
@@ -163,6 +165,12 @@ watch(
     <!-- ===== 定时任务（M4-8） ===== -->
     <div v-else-if="layout.mainView === 'tasks'" class="modview">
       <TaskPanel />
+    </div>
+    <div v-else-if="layout.mainView === 'skills'" class="modview">
+      <SkillManagerPanel />
+    </div>
+    <div v-else-if="layout.mainView === 'agents'" class="modview">
+      <AgentManagerPanel />
     </div>
 
     <!-- ===== 系统设置 ===== -->

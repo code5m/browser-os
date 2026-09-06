@@ -44,6 +44,11 @@ import type {
   DbConnectionConfig,
   DbConnectResult,
   DbQueryResult,
+  // M5-6 Agent/Skill 类型（仅方法返回类型用到）
+  AgentDef,
+  AgentRunRecord,
+  SkillDef,
+  SkillRunRecord,
 } from "./types";
 
 /// M4-8 可用性开关：A7（M4-6 / M4-7）已落地后端 `task_list / task_add / task_update /
@@ -51,6 +56,12 @@ import type {
 /// 故置 `true` → 面板为**实时面板**；置 `false` 时 `useTaskStore` 不发出任何 invoke（只读壳）。
 /// 这是 board「LIMITED START」的落地方式：命令未就绪时**不假借未实现的命令名假装可用**。
 export const TASK_COMMANDS_AVAILABLE = true;
+
+// M5-6 可用性开关：A5（M5-4/5）已落地 Agent/Skill domain + policy（domain.rs / skills.rs /
+// agent.rs / check-agent-skill-policy.py），但 **skill_*/agent_* 后端命令尚未落地**；故置
+// `false` → useAgentStore 不发出任何 invoke（只读壳）。命令落地后置 true 即可解锁面板动作。
+// 这是 board「LIMITED START」的落地方式：命令未就绪时**不假借未实现的命令名假装可用**。
+export const AGENT_SKILL_COMMANDS_AVAILABLE = false;
 
 // M0-0.b 测量配置（契约 logs/m0-baseline-contract-v1.md；非测量运行后端返回 null）
 export interface M0Config {
@@ -329,6 +340,42 @@ export const bridge = {
   // 说明：A6 §6 / F-A6-7 明确**没有** task_history / task_cancel 两条命令——
   // 历史由 task_list 附带返回，取消复用既有 cancel_script(run_id)。
   // 因此本文件不登记任何 A1/A6 之外的命令名。
+
+  // ====== M5-6 Agent/Skill 面板（命令名沿用 A5 M5-4/5 冻结的 skill_*/agent_*；A6 前端封装）======
+  // 后端实现归 A5（M5-4/5）；前端只在 AGENT_SKILL_COMMANDS_AVAILABLE 为 true 时调用。
+  // W5 当前后端命令尚未落地（A5 W4 仅 domain + policy），故该标志为 false，
+  // useAgentStore 在调用前一律拦截（零 invoke）。以下封装是「契约占位」，命令落地后组件无需改动。
+  skillList: () => invoke<SkillDef[]>("skill_list"),
+
+  agentList: () => invoke<AgentDef[]>("agent_list"),
+
+  // 安装：返回 { request_id } 时进入二段式闸门（UI 弹 PermissionPreviewModal）。
+  skillInstall: (id: string) =>
+    invoke<{ request_id?: string }>("skill_install", { id }),
+
+  agentInstall: (id: string) =>
+    invoke<{ request_id?: string }>("agent_install", { id }),
+
+  // 二段式闸门确认（install_skill / install_agent 共用 confirm 语义）。
+  confirmSkill: (requestId: string, decision: "approve" | "deny") =>
+    invoke("confirm_skill_install", { requestId, decision }),
+
+  confirmAgent: (requestId: string, decision: "approve" | "deny") =>
+    invoke("confirm_agent_install", { requestId, decision }),
+
+  // 运行 Skill（经后端 script_runner，不另起执行路径）。
+  skillRun: (id: string, inputs: Record<string, unknown>) =>
+    invoke<{ run_id: string }>("skill_run", { id, inputs }),
+
+  // 对话（流式经 agent://<id>/stream + done/error/canceled 事件）。
+  agentChat: (agentId: string, prompt: string, sessionId: string) =>
+    invoke("agent_chat", { agentId, prompt, sessionId }),
+
+  agentRunCancel: (runId: string) => invoke("agent_chat_cancel", { runId }),
+
+  // 运行历史（读 skill-runs.json / agent-runs.json，各自 500 上限 FIFO）。
+  skillRunsList: (id: string) => invoke<SkillRunRecord[]>("skill_runs_list", { id }),
+  agentRunsList: (id: string) => invoke<AgentRunRecord[]>("agent_runs_list", { id }),
 
   // 订阅脚本输出流（payload 为 ScriptOutputEvent；前端用 rAF 合并，避免高频打满渲染）
   onScriptOutput: (cb: (e: ScriptOutputEvent) => void) =>
