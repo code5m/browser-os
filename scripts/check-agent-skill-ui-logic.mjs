@@ -76,6 +76,7 @@ const {
   capabilityLabel,
   renderCapabilityList,
   buildPermissionPreview,
+  classifyCapability,
   runStatusUi,
   isTerminalStatus,
   validateSkillForm,
@@ -329,6 +330,71 @@ store.pushChunk("sess-9", { kind: "data", data: "你好" });
 assert(store.sessions["sess-9"].chunks.length === 1, "L-12 pushChunk 追加到会话");
 store.endSession("sess-9", "done");
 assert(store.sessions["sess-9"].status === "done", "L-13 endSession 终止会话");
+
+// ===========================================================================
+// 10. 只读校验消费路径（W8：面板消费 skill_validate/agent_validate 结果）
+//     仅用 agentSkillUi.ts 纯逻辑；不调用任何 bridge（只读命令尚未进 mainline，
+//     符合 W8 A6 "no live command execution unless bridge functions already
+//     exist and are typed"）。后端 SkillValidationResult 形状见 A6 W7 接线笔记
+//     §4（types.ts 暂由 A5 W8 落地，此处按契约构造做纯逻辑断言）。
+// ===========================================================================
+// 消费形状：{ ok, def: SkillDef|null, issues: ValidationIssue[], preview: PermissionPreview|null }
+const skillValidateOk = {
+  ok: true,
+  def: skillDef,
+  issues: [],
+  preview: { gate: "confirm", capabilities: ["fs:read", "net:http"] },
+};
+assert(skillValidateOk.ok === true, "W8-1 校验通过 ok=true");
+assert(skillValidateOk.issues.length === 0, "W8-2 校验通过无错误项");
+assert(skillValidateOk.preview !== null, "W8-3 校验通过回传权限预览");
+// 消费：用后端预览直接派生前端展示态（PermissionPreviewModal 直渲）
+const okView = buildPermissionPreview(skillValidateOk.def, skillValidateOk.preview.capabilities);
+assert(okView.gate === "confirm", "W8-4 展示态 gate 来自预览");
+assert(okView.capabilities.length === 2, "W8-5 预览含能力列表");
+assert(okView.dangerHint !== null, "W8-6 confirm 档展示提示");
+
+// 解析失败：无 def、无 preview，仅错误码
+const parseErr = {
+  ok: false,
+  def: null,
+  issues: [{ field: "json", code: "PARSE_ERROR", message: "JSON 解析失败" }],
+  preview: null,
+};
+assert(parseErr.def === null, "W8-7 解析失败无 def");
+assert(parseErr.preview === null, "W8-8 解析失败无 preview");
+assert(parseErr.issues.some((i) => i.code === "PARSE_ERROR"), "W8-9 解析错误码可见");
+
+// 语义校验失败：已解析 def 仍回传（供部分展示），preview 仍回传（只读可看）
+const validateFail = {
+  ok: false,
+  def: skillDef,
+  issues: [{ field: "id", code: "EmptyRequiredField", message: "id 为空" }],
+  preview: { gate: "confirm", capabilities: ["fs:read", "net:http"] },
+};
+assert(validateFail.ok === false, "W8-10 语义失败 ok=false");
+assert(validateFail.def !== null, "W8-11 仍回传已解析 def 供部分展示");
+assert(validateFail.preview !== null, "W8-12 仍回传 preview");
+const failView = buildPermissionPreview(validateFail.def, validateFail.preview.capabilities);
+assert(failView.gate === "confirm", "W8-13 失败项仍可渲染权限预览（只读）");
+assert(validateFail.issues.length > 0, "W8-14 错误项驱动 UI 错误展示");
+
+// dangerous 闸门：高危提示 + danger 配色
+const dangerDef = { ...skillDef, acl: "dangerous" };
+const dv = buildPermissionPreview(dangerDef, []);
+assert(dv.gate === "dangerous", "W8-15 dangerous gate");
+assert(dv.gateTone === "danger", "W8-16 dangerous 配色");
+assert(dv.dangerHint !== null, "W8-17 dangerous 提示必显");
+assert(dv.capabilities.every((c) => c.unknown), "W8-18 空白名单 → 全部 unknown（不谎报已授权）");
+
+// 单能力判定（供权限预览逐项 + 校验结果能力标签）
+assert(classifyCapability("fs:read", ["fs:read"]).granted === true, "W8-19 白名单内 → granted");
+assert(classifyCapability("file_read", []).unknown === true, "W8-20 白名单外 → unknown（前端不伪造授权）");
+
+// secret 边界（W8）：提示词本身不是 secret 键，不按键名脱敏；真正凭据泄露由后端判
+const red2 = redactSecrets({ system_prompt: "use sk-abc token", TOKEN: "x" });
+assert(red2.TOKEN === "***", "W8-21 TOKEN 键脱敏");
+assert(red2.system_prompt === "use sk-abc token", "W8-22 提示词按值不按键名脱敏（凭据泄露由后端判）");
 
 // ---------------- 汇总 ----------------
 console.log(`\ncheck-agent-skill-ui-logic: ${passed} assertions passed, ${failures.length} failed`);
