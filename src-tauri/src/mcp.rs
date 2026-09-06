@@ -14,6 +14,7 @@
 
 use crate::domain::*;
 use crate::security_policy::{check_path_within_roots, redact_sensitive_url};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// 首期命令注册表（冻结）。每一项必须落在 `MCP_CAPABILITY_V1` 内，且 `touches_fs`/
@@ -106,13 +107,55 @@ pub fn redact_mcp_url(raw: &str) -> String {
     redact_sensitive_url(raw)
 }
 
-/// 构造当前策略快照（未来 `mcp_policy_get` 命令的返回值来源；首期仅冻结）。
-#[allow(dead_code)]
+/// 构造当前策略快照（W7 经只读命令 `mcp_policy_get` 暴露；与 domain.rs 的
+/// `McpPolicySnapshot` 同一份，仅做只读返回，无副作用）。
 pub fn current_policy_snapshot() -> McpPolicySnapshot {
     McpPolicySnapshot {
         capabilities: MCP_CAPABILITY_V1.iter().map(|s| s.to_string()).collect(),
         policy_version: "MCP_CAPABILITY_V1",
     }
+}
+
+/// MCP 全局策略裁决的可序列化视图（供 `mcp_capability_preview` 命令返回）。
+/// 与 `domain.rs::McpDecision` 一一对应；snake_case 便于前端消费。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpDecisionView {
+    Allow,
+    Deny,
+}
+
+impl McpDecisionView {
+    pub fn from_decision(d: McpDecision) -> Self {
+        match d {
+            McpDecision::Allow => McpDecisionView::Allow,
+            McpDecision::Deny => McpDecisionView::Deny,
+        }
+    }
+}
+
+/// 注册表项的可序列化视图（供 `mcp_registry_list` 命令返回）。
+/// 与 `domain.rs::McpCommandDef` 字段对齐；此处显式构造视图而非直接序列化内部
+/// `McpCommandDef`，以保持对前端暴露面的控制（不泄露无关内部字段）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpRegistryEntryView {
+    pub capability: String,
+    pub core_api: String,
+    pub touches_fs: bool,
+    pub returns_url: bool,
+}
+
+/// 返回当前注册表的可序列化视图列表（只读 introspection，无副作用）。
+pub fn list_registry_entries() -> Vec<McpRegistryEntryView> {
+    MCP_COMMAND_REGISTRY
+        .iter()
+        .map(|e| McpRegistryEntryView {
+            capability: e.capability.to_string(),
+            core_api: e.core_api.to_string(),
+            touches_fs: e.touches_fs,
+            returns_url: e.returns_url,
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -189,5 +232,39 @@ mod mcp_policy_tests {
         let out = redact_mcp_url("https://u:p@h.example.com/t?token=abc#x=1");
         assert!(!out.contains("abc"));
         assert!(!out.contains("p@"));
+    }
+
+    // ---- W7 只读桥辅助（视图类型 / 注册表视图）----
+    #[test]
+    fn registry_view_mirrors_registry() {
+        let view = list_registry_entries();
+        assert_eq!(view.len(), MCP_COMMAND_REGISTRY.len());
+        for (v, def) in view.iter().zip(MCP_COMMAND_REGISTRY.iter()) {
+            assert_eq!(v.capability, def.capability);
+            assert_eq!(v.core_api, def.core_api);
+            assert_eq!(v.touches_fs, def.touches_fs);
+            assert_eq!(v.returns_url, def.returns_url);
+        }
+    }
+
+    #[test]
+    fn decision_view_maps_both_variants() {
+        assert_eq!(
+            McpDecisionView::from_decision(McpDecision::Allow),
+            McpDecisionView::Allow
+        );
+        assert_eq!(
+            McpDecisionView::from_decision(McpDecision::Deny),
+            McpDecisionView::Deny
+        );
+    }
+
+    #[test]
+    fn unknown_capability_preview_is_denied() {
+        let roots = vec![PathBuf::from("/workspace")];
+        assert_eq!(
+            McpDecisionView::from_decision(evaluate_mcp_command("exec", None, &roots)),
+            McpDecisionView::Deny
+        );
     }
 }

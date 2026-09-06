@@ -1,0 +1,602 @@
+diff --git a/scripts/check-mcp-policy.py b/scripts/check-mcp-policy.py
+index 02ce0f7..d04a02b 100755
+--- a/scripts/check-mcp-policy.py
++++ b/scripts/check-mcp-policy.py
+@@ -258,16 +258,20 @@ def c_capability_drift(rel, text, repo):
+ 
+ 
+ def c_parity(rel, text, repo):
+-    # 若 handler 暴露 mcp_* 命令，则 ACL 与 bridge.ts 必须同时出现（防止 ACL 缺口，B5/§2.2 F-1）
++    # 任何以 `bridge::mcp_` 注册的命令（main.rs generate_handler 中）必须同时具备
++    # ACL（default-commands.toml）与 bridge.ts 前端封装，否则存在 ACL/前端缺口（B5/§2.2 F-1）。
++    # 比首期「硬编码白名单」更稳：后续新增的 mcp_* 命令（如本次 W7 的
++    # mcp_policy_get / mcp_registry_list / mcp_capability_preview）一律受同一奇偶守门。
++    if rel != "src-tauri/src/main.rs":
++        return None
+     mcp_cmds = set()
+-    handler = repo.get("src-tauri/src/main.rs", "") + repo.get("src-tauri/src/bridge.rs", "")
+-    for m in re.finditer(r"\b(mcp_server_start|mcp_server_stop|mcp_policy_get|mcp_policy_set)\b", handler):
++    for m in re.finditer(r"bridge::(mcp_[a-z_]+)", text):
+         mcp_cmds.add(m.group(1))
+     if not mcp_cmds:
+         return None
+     acl = repo.get("src-tauri/permissions/default-commands.toml", "")
+     bts = repo.get("src/bridge.ts", "")
+-    missing = [c for c in mcp_cmds if c not in acl or c not in bts]
++    missing = [c for c in mcp_cmds if (f'"{c}"' not in acl) or (f'"{c}"' not in bts)]
+     if missing:
+         return [f"mcp 命令缺 ACL/bridge.ts 奇偶：{sorted(missing)}"]
+     return None
+@@ -279,6 +283,47 @@ def c_tree_tauri(_rel, _text, _repo):
+     return None
+ 
+ 
++_RE_MCP_CMD = re.compile(r"#\[tauri::command\][^\n]*\n\s*pub\s+fn\s+(mcp_[a-z_]+)\s*\(")
++# 只读约束（W7 Hard Stop）：mcp_* 命令不得含写/执行类副作用。
++_FORBIDDEN_SIDE_EFFECT = re.compile(
++    r"\b(?:std::fs::write|fs::write|write_file|create_file|create_dir|delete_path|"
++    r"rename_path|script_runner|run_command|db_connect|db_query|db_disconnect|"
++    r"spawn|Command::new|\.store\(|insert\(|emit\()"
++)
++
++
++def _extract_fn_body(text: str, start: int) -> str:
++    """从签名起点提取函数体（首个 `{` 起，括号配平到 0）。"""
++    i = text.find("{", start)
++    if i < 0:
++        return ""
++    depth = 0
++    j = i
++    while j < len(text):
++        c = text[j]
++        if c == "{":
++            depth += 1
++        elif c == "}":
++            depth -= 1
++            if depth == 0:
++                return text[i + 1 : j]
++        j += 1
++    return text[i + 1 :]
++
++
++def c_bridge_readonly(rel, text, repo):
++    # mcp_* 只读桥命令不得引入写/执行类副作用（与 W7 Hard Stop「只读」一致）。
++    if rel not in ("src-tauri/src/bridge.rs", "src-tauri/src/mcp.rs"):
++        return None
++    problems = []
++    for m in _RE_MCP_CMD.finditer(text):
++        name = m.group(1)
++        body = _extract_fn_body(text, m.end())
++        if _FORBIDDEN_SIDE_EFFECT.search(body):
++            problems.append(f"mcp 命令 {name} 含写/执行类副作用（W7 只读约束）")
++    return problems or None
++
++
+ # 码位登记表
+ ACTIVE_CODES = [
+     ("MCP_NPM_SDK_PRESENT", "ACTIVE", c_npm_sdk),
+@@ -286,6 +331,7 @@ ACTIVE_CODES = [
+     ("MCP_NODE_RUNTIME_PRESENT", "ACTIVE", c_node_runtime),
+     ("MCP_CAPABILITY_DRIFT", "ACTIVE", c_capability_drift),
+     ("MCP_FS_TOOL_PATH_POLICY", "ACTIVE", c_fs_tool_policy),
++    ("MCP_BRIDGE_READONLY", "ACTIVE", c_bridge_readonly),
+ ]
+ PENDING_CODES = [
+     ("MCP_LISTEN_PORT", "PENDING", c_listen_port),
+@@ -445,8 +491,15 @@ def _run_self_test() -> int:
+         mutate(**{"src-tauri/src/core/mod.rs": "const MCP_CAPABILITY_V1: &[&str] = &[];\n",
+                   "src-tauri/src/extra.rs": "const MCP_CAPABILITY_V1: &[&str] = &[];\n"}),
+         "src-tauri/src/core/mod.rs")
+-    add("MCP_PARITY", "mcp_server_start 只在 handler 不在 ACL/bridge.ts",
+-        _with_artifact(**{"src-tauri/src/bridge.rs": "pub fn mcp_server_start(app: AppHandle) {}\n"}),
++    add("MCP_PARITY", "mcp 命令在 handler 缺 ACL/bridge.ts",
++        _with_artifact(**{
++            "src-tauri/src/main.rs": "fn main() { tauri::generate_handler![bridge::mcp_server_start]; }\n",
++            "src-tauri/src/bridge.rs": "pub fn mcp_server_start(app: AppHandle) {}\n",
++        }),
++        "src-tauri/src/main.rs")
++    add("MCP_BRIDGE_READONLY", "mcp 命令含写副作用",
++        _with_artifact(**{"src-tauri/src/bridge.rs":
++            "#[tauri::command]\npub fn mcp_policy_set(app: AppHandle, webview: tauri::Webview, v: String) { std::fs::write(\"/x\", v).unwrap(); }\n"}),
+         "src-tauri/src/bridge.rs")
+     # MCP_TREE_TAURI 是 PENDING 主动 no-op，不要求坏样本检出（其本身是「期望尚未实现」）
+ 
+diff --git a/src-tauri/permissions/default-commands.toml b/src-tauri/permissions/default-commands.toml
+index 0fdf183..d661365 100644
+--- a/src-tauri/permissions/default-commands.toml
++++ b/src-tauri/permissions/default-commands.toml
+@@ -115,5 +115,14 @@ commands.allow = [
+     "db_connect",
+     "db_query",
+     "db_disconnect",
++    "agent_parse",
++    "agent_validate",
++    "agent_permission_preview",
++    "skill_parse",
++    "skill_validate",
++    "skill_permission_preview",
++    "mcp_capability_preview",
++    "mcp_policy_get",
++    "mcp_registry_list",
+     "list_artifact_images"
+ ]
+diff --git a/src-tauri/src/bridge.rs b/src-tauri/src/bridge.rs
+index 4e53700..b9e2f64 100644
+--- a/src-tauri/src/bridge.rs
++++ b/src-tauri/src/bridge.rs
+@@ -8,6 +8,7 @@ use url::Url;
+ use crate::domain::*;
+ use crate::grid_ipc::GridCmd;
+ use crate::keyring_store::KeyringStore;
++use crate::mcp::{McpDecisionView, McpRegistryEntryView};
+ use crate::script_runner::{RunError, RunSnapshot, ScriptProcessTable, ScriptRunRecord};
+ use crate::seam::{PathResolver, Progress, ProgressSink, RootsProvider};
+ use crate::sync;
+@@ -6112,3 +6113,233 @@ pub fn db_disconnect(
+         Err("DB_NOT_CONNECTED".to_string())
+     }
+ }
++
++// ===== M5-W7（Lane A5）：Agent/Skill 只读命令桥 =====
++// 仅 parse / validate / permission_preview，绝不执行/安装/联网/持久化写。
++// 每个命令首行做 source check（防前端裸 invoke）；返回类型可序列化供前端消费。
++// 命名与 A6 M5-6 UI 冻结的 agent_*/skill_* 前缀一致，但本波仅「只读」子集，不含 M5-5 运行时命令。
++
++/// 校验报告（agent_validate / skill_validate 返回）。
++#[derive(Debug, Clone, serde::Serialize)]
++pub struct ValidationReport {
++    pub valid: bool,
++    pub errors: Vec<String>,
++}
++
++impl ValidationReport {
++    fn ok() -> Self {
++        ValidationReport {
++            valid: true,
++            errors: Vec::new(),
++        }
++    }
++    fn with_errors(errors: Vec<String>) -> Self {
++        ValidationReport {
++            valid: errors.is_empty(),
++            errors,
++        }
++    }
++}
++
++fn agent_validate_inner(text: &str) -> ValidationReport {
++    match crate::domain::AgentDef::parse(text) {
++        Ok(def) => match def.validate() {
++            Ok(()) => ValidationReport::ok(),
++            Err(e) => ValidationReport::with_errors(vec![format!("{e}")]),
++        },
++        Err(e) => ValidationReport::with_errors(vec![e]),
++    }
++}
++
++#[tauri::command]
++pub fn agent_parse(
++    app: AppHandle,
++    webview: tauri::Webview,
++    text: String,
++) -> Result<crate::domain::AgentDef, String> {
++    check_invocation_source(&webview, "agent_parse", None, &app)?;
++    crate::domain::AgentDef::parse(&text)
++}
++
++#[tauri::command]
++pub fn agent_validate(
++    app: AppHandle,
++    webview: tauri::Webview,
++    text: String,
++) -> Result<ValidationReport, String> {
++    check_invocation_source(&webview, "agent_validate", None, &app)?;
++    Ok(agent_validate_inner(&text))
++}
++
++#[tauri::command]
++pub fn agent_permission_preview(
++    app: AppHandle,
++    webview: tauri::Webview,
++    text: String,
++) -> Result<crate::domain::PermissionPreview, String> {
++    check_invocation_source(&webview, "agent_permission_preview", None, &app)?;
++    let def = crate::domain::AgentDef::parse(&text)?;
++    Ok(def.permission_preview())
++}
++
++fn skill_validate_inner(text: &str) -> ValidationReport {
++    match crate::domain::SkillDef::parse(text) {
++        Ok(def) => match def.validate() {
++            Ok(()) => ValidationReport::ok(),
++            Err(e) => ValidationReport::with_errors(vec![format!("{e}")]),
++        },
++        Err(e) => ValidationReport::with_errors(vec![e]),
++    }
++}
++
++#[tauri::command]
++pub fn skill_parse(
++    app: AppHandle,
++    webview: tauri::Webview,
++    text: String,
++) -> Result<crate::domain::SkillDef, String> {
++    check_invocation_source(&webview, "skill_parse", None, &app)?;
++    crate::domain::SkillDef::parse(&text)
++}
++
++#[tauri::command]
++pub fn skill_validate(
++    app: AppHandle,
++    webview: tauri::Webview,
++    text: String,
++) -> Result<ValidationReport, String> {
++    check_invocation_source(&webview, "skill_validate", None, &app)?;
++    Ok(skill_validate_inner(&text))
++}
++
++#[tauri::command]
++pub fn skill_permission_preview(
++    app: AppHandle,
++    webview: tauri::Webview,
++    text: String,
++) -> Result<crate::domain::PermissionPreview, String> {
++    check_invocation_source(&webview, "skill_permission_preview", None, &app)?;
++    let def = crate::domain::SkillDef::parse(&text)?;
++    Ok(def.permission_preview())
++}
++
++#[cfg(test)]
++mod agent_skill_bridge_tests {
++    use super::*;
++    use crate::domain::{AclLevel, AgentDialect, SkillExec};
++    use serde_json;
++
++    fn good_agent_json() -> String {
++        let a = crate::domain::AgentDef {
++            id: "assistant".into(),
++            version: "1.0.0".into(),
++            display_name: "Assistant".into(),
++            description: "general assistant".into(),
++            dialect: AgentDialect::OpenAiCompatible,
++            system_prompt: "You are helpful.".into(),
++            default_capabilities: vec![],
++            a2a: crate::domain::A2aConfig {
++                delegate_to: false,
++                delegated_from: false,
++            },
++            metadata: serde_json::json!({}),
++        };
++        serde_json::to_string(&a).unwrap()
++    }
++
++    fn good_skill_json() -> String {
++        let s = crate::domain::SkillDef {
++            id: "demo".into(),
++            version: "1.0.0".into(),
++            display_name: "Demo".into(),
++            description: "a safe demo".into(),
++            acl: AclLevel::Safe,
++            exec: SkillExec::ScriptRef {
++                script_id: "s1".into(),
++                params: serde_json::json!({}),
++            },
++            inputs: vec![],
++            capabilities: vec![],
++            tests: vec![],
++            metadata: serde_json::json!({}),
++        };
++        serde_json::to_string(&s).unwrap()
++    }
++
++    #[test]
++    fn validate_inner_accepts_good_agent() {
++        assert!(agent_validate_inner(&good_agent_json()).valid);
++    }
++
++    #[test]
++    fn validate_inner_rejects_credential_leak() {
++        let mut a: crate::domain::AgentDef = serde_json::from_str(&good_agent_json()).unwrap();
++        a.system_prompt = "use sk-abc123XYZ".into();
++        let r = agent_validate_inner(&serde_json::to_string(&a).unwrap());
++        assert!(!r.valid, "credential-leak agent must be invalid, errors={:?}", r.errors);
++        assert!(!r.errors.is_empty());
++        let joined = r.errors.join(" ");
++        assert!(joined.contains("泄露") || joined.contains("凭据")
++                || joined.to_lowercase().contains("credential")
++                || joined.to_lowercase().contains("leak"),
++                "errors should mention credential leak, got {:?}", r.errors);
++    }
++
++    #[test]
++    fn validate_inner_accepts_good_skill() {
++        assert!(skill_validate_inner(&good_skill_json()).valid);
++    }
++
++    #[test]
++    fn validate_inner_rejects_skill_credential() {
++        let mut s: crate::domain::SkillDef = serde_json::from_str(&good_skill_json()).unwrap();
++        s.description = "token sk-abc123".into();
++        let r = skill_validate_inner(&serde_json::to_string(&s).unwrap());
++        assert!(!r.valid);
++    }
++
++    #[test]
++    fn report_ok_and_err() {
++        assert!(ValidationReport::ok().valid);
++        assert!(!ValidationReport::with_errors(vec!["x".into()]).valid);
++    }
++}
++
++// ====== M5-2 MCP 只读注册表/策略桥命令（W7）======
++// 无 rmcp / 无 server / 无监听 / 无网络；仅把已冻结的纯注册表 + 纯策略以只读
++// introspection 形式暴露给受信任的主窗口。每一项都先过来源校验
++// `check_invocation_source`（main 受信任免令牌；tab-*/grid-* 无令牌一律拒绝），
++// 与 M5-2 红线和 W7 Hard Stop「只读」完全一致。路径裁决复用既有的
++// `evaluate_mcp_command`（内部走 `check_path_within_roots` + `redact_sensitive_url`）。
++
++#[tauri::command]
++pub fn mcp_policy_get(
++    app: AppHandle,
++    webview: tauri::Webview,
++) -> Result<McpPolicySnapshot, String> {
++    check_invocation_source(&webview, "mcp_policy_get", None, &app)?;
++    Ok(crate::mcp::current_policy_snapshot())
++}
++
++#[tauri::command]
++pub fn mcp_registry_list(
++    app: AppHandle,
++    webview: tauri::Webview,
++) -> Result<Vec<McpRegistryEntryView>, String> {
++    check_invocation_source(&webview, "mcp_registry_list", None, &app)?;
++    Ok(crate::mcp::list_registry_entries())
++}
++
++#[tauri::command]
++pub fn mcp_capability_preview(
++    app: AppHandle,
++    webview: tauri::Webview,
++    capability: String,
++    raw_path: Option<String>,
++) -> Result<McpDecisionView, String> {
++    check_invocation_source(&webview, "mcp_capability_preview", None, &app)?;
++    let roots = allowed_roots(&app);
++    Ok(McpDecisionView::from_decision(
++        crate::mcp::evaluate_mcp_command(&capability, raw_path.as_deref(), &roots),
++    ))
++}
+diff --git a/src-tauri/src/main.rs b/src-tauri/src/main.rs
+index 614779e..f5a7f82 100644
+--- a/src-tauri/src/main.rs
++++ b/src-tauri/src/main.rs
+@@ -1431,9 +1431,18 @@ fn main() {
+             bridge::task_update,
+             bridge::task_remove,
+             bridge::task_run_now,
++            bridge::agent_parse,
++            bridge::agent_validate,
++            bridge::agent_permission_preview,
++            bridge::skill_parse,
++            bridge::skill_validate,
++            bridge::skill_permission_preview,
+             bridge::db_connect,
+             bridge::db_query,
+             bridge::db_disconnect,
++            bridge::mcp_capability_preview,
++            bridge::mcp_policy_get,
++            bridge::mcp_registry_list,
+         ])
+         .build(tauri::generate_context!())
+         .unwrap_or_else(|e| {
+diff --git a/src-tauri/src/mcp.rs b/src-tauri/src/mcp.rs
+index f368095..58f4e49 100644
+--- a/src-tauri/src/mcp.rs
++++ b/src-tauri/src/mcp.rs
+@@ -14,6 +14,7 @@
+ 
+ use crate::domain::*;
+ use crate::security_policy::{check_path_within_roots, redact_sensitive_url};
++use serde::{Deserialize, Serialize};
+ use std::path::PathBuf;
+ 
+ /// 首期命令注册表（冻结）。每一项必须落在 `MCP_CAPABILITY_V1` 内，且 `touches_fs`/
+@@ -106,8 +107,8 @@ pub fn redact_mcp_url(raw: &str) -> String {
+     redact_sensitive_url(raw)
+ }
+ 
+-/// 构造当前策略快照（未来 `mcp_policy_get` 命令的返回值来源；首期仅冻结）。
+-#[allow(dead_code)]
++/// 构造当前策略快照（W7 经只读命令 `mcp_policy_get` 暴露；与 domain.rs 的
++/// `McpPolicySnapshot` 同一份，仅做只读返回，无副作用）。
+ pub fn current_policy_snapshot() -> McpPolicySnapshot {
+     McpPolicySnapshot {
+         capabilities: MCP_CAPABILITY_V1.iter().map(|s| s.to_string()).collect(),
+@@ -115,6 +116,48 @@ pub fn current_policy_snapshot() -> McpPolicySnapshot {
+     }
+ }
+ 
++/// MCP 全局策略裁决的可序列化视图（供 `mcp_capability_preview` 命令返回）。
++/// 与 `domain.rs::McpDecision` 一一对应；snake_case 便于前端消费。
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum McpDecisionView {
++    Allow,
++    Deny,
++}
++
++impl McpDecisionView {
++    pub fn from_decision(d: McpDecision) -> Self {
++        match d {
++            McpDecision::Allow => McpDecisionView::Allow,
++            McpDecision::Deny => McpDecisionView::Deny,
++        }
++    }
++}
++
++/// 注册表项的可序列化视图（供 `mcp_registry_list` 命令返回）。
++/// 与 `domain.rs::McpCommandDef` 字段对齐；此处显式构造视图而非直接序列化内部
++/// `McpCommandDef`，以保持对前端暴露面的控制（不泄露无关内部字段）。
++#[derive(Debug, Clone, Serialize, Deserialize)]
++pub struct McpRegistryEntryView {
++    pub capability: String,
++    pub core_api: String,
++    pub touches_fs: bool,
++    pub returns_url: bool,
++}
++
++/// 返回当前注册表的可序列化视图列表（只读 introspection，无副作用）。
++pub fn list_registry_entries() -> Vec<McpRegistryEntryView> {
++    MCP_COMMAND_REGISTRY
++        .iter()
++        .map(|e| McpRegistryEntryView {
++            capability: e.capability.to_string(),
++            core_api: e.core_api.to_string(),
++            touches_fs: e.touches_fs,
++            returns_url: e.returns_url,
++        })
++        .collect()
++}
++
+ #[cfg(test)]
+ mod mcp_policy_tests {
+     use super::*;
+@@ -190,4 +233,38 @@ mod mcp_policy_tests {
+         assert!(!out.contains("abc"));
+         assert!(!out.contains("p@"));
+     }
++
++    // ---- W7 只读桥辅助（视图类型 / 注册表视图）----
++    #[test]
++    fn registry_view_mirrors_registry() {
++        let view = list_registry_entries();
++        assert_eq!(view.len(), MCP_COMMAND_REGISTRY.len());
++        for (v, def) in view.iter().zip(MCP_COMMAND_REGISTRY.iter()) {
++            assert_eq!(v.capability, def.capability);
++            assert_eq!(v.core_api, def.core_api);
++            assert_eq!(v.touches_fs, def.touches_fs);
++            assert_eq!(v.returns_url, def.returns_url);
++        }
++    }
++
++    #[test]
++    fn decision_view_maps_both_variants() {
++        assert_eq!(
++            McpDecisionView::from_decision(McpDecision::Allow),
++            McpDecisionView::Allow
++        );
++        assert_eq!(
++            McpDecisionView::from_decision(McpDecision::Deny),
++            McpDecisionView::Deny
++        );
++    }
++
++    #[test]
++    fn unknown_capability_preview_is_denied() {
++        let roots = vec![PathBuf::from("/workspace")];
++        assert_eq!(
++            McpDecisionView::from_decision(evaluate_mcp_command("exec", None, &roots)),
++            McpDecisionView::Deny
++        );
++    }
+ }
+diff --git a/src/bridge.ts b/src/bridge.ts
+index a81e9ec..8546b51 100644
+--- a/src/bridge.ts
++++ b/src/bridge.ts
+@@ -51,6 +51,7 @@ import type {
+   SkillRunRecord,
+   GraphEdge,
+   GraphNode,
++  ValidationReport,
+ } from "./types";
+ 
+ /// M4-8 可用性开关：A7（M4-6 / M4-7）已落地后端 `task_list / task_add / task_update /
+@@ -65,6 +66,10 @@ export const TASK_COMMANDS_AVAILABLE = true;
+ // 这是 board「LIMITED START」的落地方式：命令未就绪时**不假借未实现的命令名假装可用**。
+ export const AGENT_SKILL_COMMANDS_AVAILABLE = false;
+ 
++// M5-W7（A5）只读桥命令（agent_parse / agent_validate / agent_permission_preview + skill_* 同款）已落地，故置 true。
++// 注意：这是「只读解析/校验/预览」，不是上述 M5-5 运行时命令。
++export const AGENT_SKILL_READONLY_COMMANDS_AVAILABLE = true;
++
+ // M5-9 可用性开关：A7（M5-7/8）已落地 GraphNode/GraphEdge DTO + 有界存储（domain.rs / graph.rs /
+ // check-graph-policy.py），但 **graph_* 后端命令（graph_query 等）尚未落地**；故置 `false` →
+ // useGraphStore 不发出任何 invoke（只读壳）。命令落地后置 true 即可解锁面板实时载入。
+@@ -357,6 +362,17 @@ export const bridge = {
+ 
+   agentList: () => invoke<AgentDef[]>("agent_list"),
+ 
++  // ====== M5-W7（A5）Agent/Skill 只读桥：parse/validate/permission_preview ======
++  // 与 W7 后端命令一一对应；仅解析/校验/预览，无执行/安装/联网/写持久化。
++  agentParse: (text: string) => invoke<AgentDef>("agent_parse", { text }),
++  agentValidate: (text: string) => invoke<ValidationReport>("agent_validate", { text }),
++  agentPermissionPreview: (text: string) =>
++    invoke<PermissionPreview>("agent_permission_preview", { text }),
++  skillParse: (text: string) => invoke<SkillDef>("skill_parse", { text }),
++  skillValidate: (text: string) => invoke<ValidationReport>("skill_validate", { text }),
++  skillPermissionPreview: (text: string) =>
++    invoke<PermissionPreview>("skill_permission_preview", { text }),
++
+   // 安装：返回 { request_id } 时进入二段式闸门（UI 弹 PermissionPreviewModal）。
+   skillInstall: (id: string) =>
+     invoke<{ request_id?: string }>("skill_install", { id }),
+@@ -644,4 +660,12 @@ export const bridge = {
+     end_ts_ms: number;
+     frame_gaps_ms: number[];
+   }) => invoke("m0_term_report", { report }),
++
++  // ====== M5-2 MCP 只读注册表/策略桥（W7）======
++  // 仅暴露只读 introspection：策略快照 / 注册表 / 能力裁决预览。
++  // 后端来源校验确保只有受信任的 main 主窗口可调用（tab-*/grid-* 无令牌被拒）。
++  mcpPolicyGet: () => invoke<McpPolicySnapshot>("mcp_policy_get"),
++  mcpRegistryList: () => invoke<McpRegistryEntry[]>("mcp_registry_list"),
++  mcpCapabilityPreview: (p: { capability: string; rawPath?: string | null }) =>
++    invoke<McpDecision>("mcp_capability_preview", p),
+ };
+diff --git a/src/types.ts b/src/types.ts
+index 8fd8624..4bd03e3 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -713,6 +713,12 @@ export interface PermissionPreview {
+   capabilities: string[];
+ }
+ 
++/// 校验报告（后端 agent_validate / skill_validate 返回）：valid 为 true 表示通过校验，errors 非空时携带具体错误。
++export interface ValidationReport {
++  valid: boolean;
++  errors: string[];
++}
++
+ /// 安装态（镜像后端 SkillInstallState / AgentInstallState；字段由 A5 落码时定，此处取最小集）。
+ export interface SkillInstallState {
+   meta: SkillDef;
+@@ -823,3 +829,28 @@ export const GRAPH_LABEL_MAX_BYTES = 256;
+ /// = MAX_TEXT_FIELD_BYTES (64KiB)
+ export const GRAPH_PROPS_MAX_BYTES = 65536;
+ export const GRAPH_NODE_ID_HEX_LEN = 64;
++
++// ====== M5-2 MCP 只读桥 DTO（与后端 domain.rs / mcp.rs 对齐）======
++// 仅描述能力白名单 / 注册表映射 / 裁决结果，不含任何凭据、URL 明文或内部状态。
++
++/** 能力裁决结果（snake_case，与后端 McpDecisionView 对应）。 */
++export type McpDecision = "allow" | "deny";
++
++/** 当前生效的 MCP 全局策略快照（与后端 McpPolicySnapshot 对应）。 */
++export interface McpPolicySnapshot {
++  /** 当前生效的能力集合（恒为 MCP_CAPABILITY_V1）。 */
++  capabilities: string[];
++  /** 全局策略版本（与 A1 M5-2 卡 §4 对齐）。 */
++  policy_version: string;
++}
++
++/** 注册表单条目的可序列化视图（与后端 McpRegistryEntryView 对应）。 */
++export interface McpRegistryEntry {
++  capability: string;
++  /** 该能力对应的核心内部 API（只读展示用，非凭据）。 */
++  core_api: string;
++  /** 是否触碰文件系统（须经路径根校验）。 */
++  touches_fs: boolean;
++  /** 是否回传 URL（须经脱敏）。 */
++  returns_url: boolean;
++}

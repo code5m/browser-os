@@ -8,6 +8,7 @@ use url::Url;
 use crate::domain::*;
 use crate::grid_ipc::GridCmd;
 use crate::keyring_store::KeyringStore;
+use crate::mcp::{McpDecisionView, McpRegistryEntryView};
 use crate::script_runner::{RunError, RunSnapshot, ScriptProcessTable, ScriptRunRecord};
 use crate::seam::{PathResolver, Progress, ProgressSink, RootsProvider};
 use crate::sync;
@@ -6111,4 +6112,234 @@ pub fn db_disconnect(
     } else {
         Err("DB_NOT_CONNECTED".to_string())
     }
+}
+
+// ===== M5-W7（Lane A5）：Agent/Skill 只读命令桥 =====
+// 仅 parse / validate / permission_preview，绝不执行/安装/联网/持久化写。
+// 每个命令首行做 source check（防前端裸 invoke）；返回类型可序列化供前端消费。
+// 命名与 A6 M5-6 UI 冻结的 agent_*/skill_* 前缀一致，但本波仅「只读」子集，不含 M5-5 运行时命令。
+
+/// 校验报告（agent_validate / skill_validate 返回）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ValidationReport {
+    pub valid: bool,
+    pub errors: Vec<String>,
+}
+
+impl ValidationReport {
+    fn ok() -> Self {
+        ValidationReport {
+            valid: true,
+            errors: Vec::new(),
+        }
+    }
+    fn with_errors(errors: Vec<String>) -> Self {
+        ValidationReport {
+            valid: errors.is_empty(),
+            errors,
+        }
+    }
+}
+
+fn agent_validate_inner(text: &str) -> ValidationReport {
+    match crate::domain::AgentDef::parse(text) {
+        Ok(def) => match def.validate() {
+            Ok(()) => ValidationReport::ok(),
+            Err(e) => ValidationReport::with_errors(vec![format!("{e}")]),
+        },
+        Err(e) => ValidationReport::with_errors(vec![e]),
+    }
+}
+
+#[tauri::command]
+pub fn agent_parse(
+    app: AppHandle,
+    webview: tauri::Webview,
+    text: String,
+) -> Result<crate::domain::AgentDef, String> {
+    check_invocation_source(&webview, "agent_parse", None, &app)?;
+    crate::domain::AgentDef::parse(&text)
+}
+
+#[tauri::command]
+pub fn agent_validate(
+    app: AppHandle,
+    webview: tauri::Webview,
+    text: String,
+) -> Result<ValidationReport, String> {
+    check_invocation_source(&webview, "agent_validate", None, &app)?;
+    Ok(agent_validate_inner(&text))
+}
+
+#[tauri::command]
+pub fn agent_permission_preview(
+    app: AppHandle,
+    webview: tauri::Webview,
+    text: String,
+) -> Result<crate::domain::PermissionPreview, String> {
+    check_invocation_source(&webview, "agent_permission_preview", None, &app)?;
+    let def = crate::domain::AgentDef::parse(&text)?;
+    Ok(def.permission_preview())
+}
+
+fn skill_validate_inner(text: &str) -> ValidationReport {
+    match crate::domain::SkillDef::parse(text) {
+        Ok(def) => match def.validate() {
+            Ok(()) => ValidationReport::ok(),
+            Err(e) => ValidationReport::with_errors(vec![format!("{e}")]),
+        },
+        Err(e) => ValidationReport::with_errors(vec![e]),
+    }
+}
+
+#[tauri::command]
+pub fn skill_parse(
+    app: AppHandle,
+    webview: tauri::Webview,
+    text: String,
+) -> Result<crate::domain::SkillDef, String> {
+    check_invocation_source(&webview, "skill_parse", None, &app)?;
+    crate::domain::SkillDef::parse(&text)
+}
+
+#[tauri::command]
+pub fn skill_validate(
+    app: AppHandle,
+    webview: tauri::Webview,
+    text: String,
+) -> Result<ValidationReport, String> {
+    check_invocation_source(&webview, "skill_validate", None, &app)?;
+    Ok(skill_validate_inner(&text))
+}
+
+#[tauri::command]
+pub fn skill_permission_preview(
+    app: AppHandle,
+    webview: tauri::Webview,
+    text: String,
+) -> Result<crate::domain::PermissionPreview, String> {
+    check_invocation_source(&webview, "skill_permission_preview", None, &app)?;
+    let def = crate::domain::SkillDef::parse(&text)?;
+    Ok(def.permission_preview())
+}
+
+#[cfg(test)]
+mod agent_skill_bridge_tests {
+    use super::*;
+    use crate::domain::{AclLevel, AgentDialect, SkillExec};
+    use serde_json;
+
+    fn good_agent_json() -> String {
+        let a = crate::domain::AgentDef {
+            id: "assistant".into(),
+            version: "1.0.0".into(),
+            display_name: "Assistant".into(),
+            description: "general assistant".into(),
+            dialect: AgentDialect::OpenAiCompatible,
+            system_prompt: "You are helpful.".into(),
+            default_capabilities: vec![],
+            a2a: crate::domain::A2aConfig {
+                delegate_to: false,
+                delegated_from: false,
+            },
+            metadata: serde_json::json!({}),
+        };
+        serde_json::to_string(&a).unwrap()
+    }
+
+    fn good_skill_json() -> String {
+        let s = crate::domain::SkillDef {
+            id: "demo".into(),
+            version: "1.0.0".into(),
+            display_name: "Demo".into(),
+            description: "a safe demo".into(),
+            acl: AclLevel::Safe,
+            exec: SkillExec::ScriptRef {
+                script_id: "s1".into(),
+                params: serde_json::json!({}),
+            },
+            inputs: vec![],
+            capabilities: vec![],
+            tests: vec![],
+            metadata: serde_json::json!({}),
+        };
+        serde_json::to_string(&s).unwrap()
+    }
+
+    #[test]
+    fn validate_inner_accepts_good_agent() {
+        assert!(agent_validate_inner(&good_agent_json()).valid);
+    }
+
+    #[test]
+    fn validate_inner_rejects_credential_leak() {
+        let mut a: crate::domain::AgentDef = serde_json::from_str(&good_agent_json()).unwrap();
+        a.system_prompt = "use sk-abc123XYZ".into();
+        let r = agent_validate_inner(&serde_json::to_string(&a).unwrap());
+        assert!(!r.valid, "credential-leak agent must be invalid, errors={:?}", r.errors);
+        assert!(!r.errors.is_empty());
+        let joined = r.errors.join(" ");
+        assert!(joined.contains("泄露") || joined.contains("凭据")
+                || joined.to_lowercase().contains("credential")
+                || joined.to_lowercase().contains("leak"),
+                "errors should mention credential leak, got {:?}", r.errors);
+    }
+
+    #[test]
+    fn validate_inner_accepts_good_skill() {
+        assert!(skill_validate_inner(&good_skill_json()).valid);
+    }
+
+    #[test]
+    fn validate_inner_rejects_skill_credential() {
+        let mut s: crate::domain::SkillDef = serde_json::from_str(&good_skill_json()).unwrap();
+        s.description = "token sk-abc123".into();
+        let r = skill_validate_inner(&serde_json::to_string(&s).unwrap());
+        assert!(!r.valid);
+    }
+
+    #[test]
+    fn report_ok_and_err() {
+        assert!(ValidationReport::ok().valid);
+        assert!(!ValidationReport::with_errors(vec!["x".into()]).valid);
+    }
+}
+
+// ====== M5-2 MCP 只读注册表/策略桥命令（W7）======
+// 无 rmcp / 无 server / 无监听 / 无网络；仅把已冻结的纯注册表 + 纯策略以只读
+// introspection 形式暴露给受信任的主窗口。每一项都先过来源校验
+// `check_invocation_source`（main 受信任免令牌；tab-*/grid-* 无令牌一律拒绝），
+// 与 M5-2 红线和 W7 Hard Stop「只读」完全一致。路径裁决复用既有的
+// `evaluate_mcp_command`（内部走 `check_path_within_roots` + `redact_sensitive_url`）。
+
+#[tauri::command]
+pub fn mcp_policy_get(
+    app: AppHandle,
+    webview: tauri::Webview,
+) -> Result<McpPolicySnapshot, String> {
+    check_invocation_source(&webview, "mcp_policy_get", None, &app)?;
+    Ok(crate::mcp::current_policy_snapshot())
+}
+
+#[tauri::command]
+pub fn mcp_registry_list(
+    app: AppHandle,
+    webview: tauri::Webview,
+) -> Result<Vec<McpRegistryEntryView>, String> {
+    check_invocation_source(&webview, "mcp_registry_list", None, &app)?;
+    Ok(crate::mcp::list_registry_entries())
+}
+
+#[tauri::command]
+pub fn mcp_capability_preview(
+    app: AppHandle,
+    webview: tauri::Webview,
+    capability: String,
+    raw_path: Option<String>,
+) -> Result<McpDecisionView, String> {
+    check_invocation_source(&webview, "mcp_capability_preview", None, &app)?;
+    let roots = allowed_roots(&app);
+    Ok(McpDecisionView::from_decision(
+        crate::mcp::evaluate_mcp_command(&capability, raw_path.as_deref(), &roots),
+    ))
 }

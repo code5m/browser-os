@@ -258,16 +258,20 @@ def c_capability_drift(rel, text, repo):
 
 
 def c_parity(rel, text, repo):
-    # 若 handler 暴露 mcp_* 命令，则 ACL 与 bridge.ts 必须同时出现（防止 ACL 缺口，B5/§2.2 F-1）
+    # 任何以 `bridge::mcp_` 注册的命令（main.rs generate_handler 中）必须同时具备
+    # ACL（default-commands.toml）与 bridge.ts 前端封装，否则存在 ACL/前端缺口（B5/§2.2 F-1）。
+    # 比首期「硬编码白名单」更稳：后续新增的 mcp_* 命令（如本次 W7 的
+    # mcp_policy_get / mcp_registry_list / mcp_capability_preview）一律受同一奇偶守门。
+    if rel != "src-tauri/src/main.rs":
+        return None
     mcp_cmds = set()
-    handler = repo.get("src-tauri/src/main.rs", "") + repo.get("src-tauri/src/bridge.rs", "")
-    for m in re.finditer(r"\b(mcp_server_start|mcp_server_stop|mcp_policy_get|mcp_policy_set)\b", handler):
+    for m in re.finditer(r"bridge::(mcp_[a-z_]+)", text):
         mcp_cmds.add(m.group(1))
     if not mcp_cmds:
         return None
     acl = repo.get("src-tauri/permissions/default-commands.toml", "")
     bts = repo.get("src/bridge.ts", "")
-    missing = [c for c in mcp_cmds if c not in acl or c not in bts]
+    missing = [c for c in mcp_cmds if (f'"{c}"' not in acl) or (f'"{c}"' not in bts)]
     if missing:
         return [f"mcp 命令缺 ACL/bridge.ts 奇偶：{sorted(missing)}"]
     return None
@@ -279,6 +283,47 @@ def c_tree_tauri(_rel, _text, _repo):
     return None
 
 
+_RE_MCP_CMD = re.compile(r"#\[tauri::command\][^\n]*\n\s*pub\s+fn\s+(mcp_[a-z_]+)\s*\(")
+# 只读约束（W7 Hard Stop）：mcp_* 命令不得含写/执行类副作用。
+_FORBIDDEN_SIDE_EFFECT = re.compile(
+    r"\b(?:std::fs::write|fs::write|write_file|create_file|create_dir|delete_path|"
+    r"rename_path|script_runner|run_command|db_connect|db_query|db_disconnect|"
+    r"spawn|Command::new|\.store\(|insert\(|emit\()"
+)
+
+
+def _extract_fn_body(text: str, start: int) -> str:
+    """从签名起点提取函数体（首个 `{` 起，括号配平到 0）。"""
+    i = text.find("{", start)
+    if i < 0:
+        return ""
+    depth = 0
+    j = i
+    while j < len(text):
+        c = text[j]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[i + 1 : j]
+        j += 1
+    return text[i + 1 :]
+
+
+def c_bridge_readonly(rel, text, repo):
+    # mcp_* 只读桥命令不得引入写/执行类副作用（与 W7 Hard Stop「只读」一致）。
+    if rel not in ("src-tauri/src/bridge.rs", "src-tauri/src/mcp.rs"):
+        return None
+    problems = []
+    for m in _RE_MCP_CMD.finditer(text):
+        name = m.group(1)
+        body = _extract_fn_body(text, m.end())
+        if _FORBIDDEN_SIDE_EFFECT.search(body):
+            problems.append(f"mcp 命令 {name} 含写/执行类副作用（W7 只读约束）")
+    return problems or None
+
+
 # 码位登记表
 ACTIVE_CODES = [
     ("MCP_NPM_SDK_PRESENT", "ACTIVE", c_npm_sdk),
@@ -286,6 +331,7 @@ ACTIVE_CODES = [
     ("MCP_NODE_RUNTIME_PRESENT", "ACTIVE", c_node_runtime),
     ("MCP_CAPABILITY_DRIFT", "ACTIVE", c_capability_drift),
     ("MCP_FS_TOOL_PATH_POLICY", "ACTIVE", c_fs_tool_policy),
+    ("MCP_BRIDGE_READONLY", "ACTIVE", c_bridge_readonly),
 ]
 PENDING_CODES = [
     ("MCP_LISTEN_PORT", "PENDING", c_listen_port),
@@ -445,8 +491,15 @@ def _run_self_test() -> int:
         mutate(**{"src-tauri/src/core/mod.rs": "const MCP_CAPABILITY_V1: &[&str] = &[];\n",
                   "src-tauri/src/extra.rs": "const MCP_CAPABILITY_V1: &[&str] = &[];\n"}),
         "src-tauri/src/core/mod.rs")
-    add("MCP_PARITY", "mcp_server_start 只在 handler 不在 ACL/bridge.ts",
-        _with_artifact(**{"src-tauri/src/bridge.rs": "pub fn mcp_server_start(app: AppHandle) {}\n"}),
+    add("MCP_PARITY", "mcp 命令在 handler 缺 ACL/bridge.ts",
+        _with_artifact(**{
+            "src-tauri/src/main.rs": "fn main() { tauri::generate_handler![bridge::mcp_server_start]; }\n",
+            "src-tauri/src/bridge.rs": "pub fn mcp_server_start(app: AppHandle) {}\n",
+        }),
+        "src-tauri/src/main.rs")
+    add("MCP_BRIDGE_READONLY", "mcp 命令含写副作用",
+        _with_artifact(**{"src-tauri/src/bridge.rs":
+            "#[tauri::command]\npub fn mcp_policy_set(app: AppHandle, webview: tauri::Webview, v: String) { std::fs::write(\"/x\", v).unwrap(); }\n"}),
         "src-tauri/src/bridge.rs")
     # MCP_TREE_TAURI 是 PENDING 主动 no-op，不要求坏样本检出（其本身是「期望尚未实现」）
 

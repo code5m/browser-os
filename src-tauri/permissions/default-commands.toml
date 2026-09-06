@@ -115,5 +115,14 @@ commands.allow = [
     "db_connect",
     "db_query",
     "db_disconnect",
+    "agent_parse",
+    "agent_validate",
+    "agent_permission_preview",
+    "skill_parse",
+    "skill_validate",
+    "skill_permission_preview",
+    "mcp_capability_preview",
+    "mcp_policy_get",
+    "mcp_registry_list",
     "list_artifact_images"
 ]

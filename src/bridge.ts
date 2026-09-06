@@ -51,6 +51,7 @@ import type {
   SkillRunRecord,
   GraphEdge,
   GraphNode,
+  ValidationReport,
 } from "./types";
 
 /// M4-8 可用性开关：A7（M4-6 / M4-7）已落地后端 `task_list / task_add / task_update /
@@ -64,6 +65,10 @@ export const TASK_COMMANDS_AVAILABLE = true;
 // `false` → useAgentStore 不发出任何 invoke（只读壳）。命令落地后置 true 即可解锁面板动作。
 // 这是 board「LIMITED START」的落地方式：命令未就绪时**不假借未实现的命令名假装可用**。
 export const AGENT_SKILL_COMMANDS_AVAILABLE = false;
+
+// M5-W7（A5）只读桥命令（agent_parse / agent_validate / agent_permission_preview + skill_* 同款）已落地，故置 true。
+// 注意：这是「只读解析/校验/预览」，不是上述 M5-5 运行时命令。
+export const AGENT_SKILL_READONLY_COMMANDS_AVAILABLE = true;
 
 // M5-9 可用性开关：A7（M5-7/8）已落地 GraphNode/GraphEdge DTO + 有界存储（domain.rs / graph.rs /
 // check-graph-policy.py），但 **graph_* 后端命令（graph_query 等）尚未落地**；故置 `false` →
@@ -357,6 +362,17 @@ export const bridge = {
 
   agentList: () => invoke<AgentDef[]>("agent_list"),
 
+  // ====== M5-W7（A5）Agent/Skill 只读桥：parse/validate/permission_preview ======
+  // 与 W7 后端命令一一对应；仅解析/校验/预览，无执行/安装/联网/写持久化。
+  agentParse: (text: string) => invoke<AgentDef>("agent_parse", { text }),
+  agentValidate: (text: string) => invoke<ValidationReport>("agent_validate", { text }),
+  agentPermissionPreview: (text: string) =>
+    invoke<PermissionPreview>("agent_permission_preview", { text }),
+  skillParse: (text: string) => invoke<SkillDef>("skill_parse", { text }),
+  skillValidate: (text: string) => invoke<ValidationReport>("skill_validate", { text }),
+  skillPermissionPreview: (text: string) =>
+    invoke<PermissionPreview>("skill_permission_preview", { text }),
+
   // 安装：返回 { request_id } 时进入二段式闸门（UI 弹 PermissionPreviewModal）。
   skillInstall: (id: string) =>
     invoke<{ request_id?: string }>("skill_install", { id }),
@@ -644,4 +660,12 @@ export const bridge = {
     end_ts_ms: number;
     frame_gaps_ms: number[];
   }) => invoke("m0_term_report", { report }),
+
+  // ====== M5-2 MCP 只读注册表/策略桥（W7）======
+  // 仅暴露只读 introspection：策略快照 / 注册表 / 能力裁决预览。
+  // 后端来源校验确保只有受信任的 main 主窗口可调用（tab-*/grid-* 无令牌被拒）。
+  mcpPolicyGet: () => invoke<McpPolicySnapshot>("mcp_policy_get"),
+  mcpRegistryList: () => invoke<McpRegistryEntry[]>("mcp_registry_list"),
+  mcpCapabilityPreview: (p: { capability: string; rawPath?: string | null }) =>
+    invoke<McpDecision>("mcp_capability_preview", p),
 };

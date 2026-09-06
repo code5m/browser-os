@@ -713,6 +713,12 @@ export interface PermissionPreview {
   capabilities: string[];
 }
 
+/// 校验报告（后端 agent_validate / skill_validate 返回）：valid 为 true 表示通过校验，errors 非空时携带具体错误。
+export interface ValidationReport {
+  valid: boolean;
+  errors: string[];
+}
+
 /// 安装态（镜像后端 SkillInstallState / AgentInstallState；字段由 A5 落码时定，此处取最小集）。
 export interface SkillInstallState {
   meta: SkillDef;
@@ -823,3 +829,28 @@ export const GRAPH_LABEL_MAX_BYTES = 256;
 /// = MAX_TEXT_FIELD_BYTES (64KiB)
 export const GRAPH_PROPS_MAX_BYTES = 65536;
 export const GRAPH_NODE_ID_HEX_LEN = 64;
+
+// ====== M5-2 MCP 只读桥 DTO（与后端 domain.rs / mcp.rs 对齐）======
+// 仅描述能力白名单 / 注册表映射 / 裁决结果，不含任何凭据、URL 明文或内部状态。
+
+/** 能力裁决结果（snake_case，与后端 McpDecisionView 对应）。 */
+export type McpDecision = "allow" | "deny";
+
+/** 当前生效的 MCP 全局策略快照（与后端 McpPolicySnapshot 对应）。 */
+export interface McpPolicySnapshot {
+  /** 当前生效的能力集合（恒为 MCP_CAPABILITY_V1）。 */
+  capabilities: string[];
+  /** 全局策略版本（与 A1 M5-2 卡 §4 对齐）。 */
+  policy_version: string;
+}
+
+/** 注册表单条目的可序列化视图（与后端 McpRegistryEntryView 对应）。 */
+export interface McpRegistryEntry {
+  capability: string;
+  /** 该能力对应的核心内部 API（只读展示用，非凭据）。 */
+  core_api: string;
+  /** 是否触碰文件系统（须经路径根校验）。 */
+  touches_fs: boolean;
+  /** 是否回传 URL（须经脱敏）。 */
+  returns_url: boolean;
+}

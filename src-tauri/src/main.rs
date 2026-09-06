@@ -1431,9 +1431,18 @@ fn main() {
             bridge::task_update,
             bridge::task_remove,
             bridge::task_run_now,
+            bridge::agent_parse,
+            bridge::agent_validate,
+            bridge::agent_permission_preview,
+            bridge::skill_parse,
+            bridge::skill_validate,
+            bridge::skill_permission_preview,
             bridge::db_connect,
             bridge::db_query,
             bridge::db_disconnect,
+            bridge::mcp_capability_preview,
+            bridge::mcp_policy_get,
+            bridge::mcp_registry_list,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
