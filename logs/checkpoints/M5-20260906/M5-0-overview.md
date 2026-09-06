@@ -33,7 +33,7 @@ A1 复核 W0 整包与 A2 v3 prework（`logs/assist/A2-M5-core-20260906-0749.md`
 
 - **M5-2 / M5-4 / M5-5 / M5-6 / M5-7 / M5-8 / M5-9 / M5-10 / M5-11 / M5-12**（10 张）：A0 W1 dispatch 把 M5-2/4/5/6/7/8/9/10/11/12 的产品代码**仍锁定**，A1 不在 W1 范围改这些卡。
 - **三份主文档**（`详细设计与实施计划.md` / `后续需求TODO.md` / `AI-模型切换与接手清单.md`）：A0 W1 未指派必要改动；A1 也不在 W1 范围动。
-- **`NEXT` 标记**：仍为 M5-W1（由 A0 拣入本批修订后改 `M5-1.a` 或 `M5-1.b`，按决策 1 拍）。
+- **`NEXT` 标记**：[W1 patched · 2026-09-06 13:30 CST] M5-W1 收口后 = M5-W2；M5-W2 待 A0 签发 dispatch；候选子卡 `M5-1.b` 已被 A1 在本批拆卡（`logs/checkpoints/M5-20260906/M5-1.b-seam-trait-injection-and-b-extract.md`），A0 W2 dispatch 时可直接引用该卡作为下达蓝本；`M5-1.c` 阶段二 workspace 化为可选延后项。
 
 ### A2 v3 C-1~C-8 摘要（A1 M5-1 卡应用 6+2 处分歧的源）
 

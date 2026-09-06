@@ -44,10 +44,8 @@ use tauri::{AppHandle, Emitter};
 
 /// 全局默认超时（a 卡 §2：`ScriptMeta.timeout_secs == 0` 时取此值）。
 pub const DEFAULT_TIMEOUT_SECS: u32 = 60;
-/// 脚本级超时上限（a 卡 §2：超过即拒绝，**不静默封顶**，fail-closed）。
-pub const MAX_TIMEOUT_SECS: u32 = 600;
-/// soft 超时（SIGTERM）到 hard（SIGKILL）的宽限（a 卡 §2）。
-pub const HARD_GRACE_SECS: u32 = 5;
+// M5-1 切片 0b：超时/宽限上限收口到 `domain.rs`（值逐字不变），此处仅再导出。
+pub use crate::domain::{HARD_GRACE_SECS, MAX_TIMEOUT_SECS};
 /// 取消（SIGTERM）到 SIGKILL 的宽限（a 卡 §2）。
 pub const CANCEL_GRACE_SECS: u32 = 5;
 /// 全局并发护栏（a 卡 §3；R14 语义为「≤8 个**不同**脚本并发」）。

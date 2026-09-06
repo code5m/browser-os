@@ -204,11 +204,13 @@ cargo build --manifest-path src-tauri/Cargo.toml --release
 ## 9. COMMIT / NEXT
 
 - **COMMIT**：本卡文档无 commit；A0 拣入后，签 `M5-1.a` 实施卡的 commit 由 A2（或指派）填
-- **NEXT（本卡完成后由 A0 拍；[W1 patched] 编号已拆三档）**：
-  - 若 A0 签 `M5-1.a`（**步骤 0b + 步骤 0a**，含常量收口 + A 类搬入）→ 切回 A2 实施；**此时反向边仍未解**（属 `M5-1.b`）
-  - 若 A0 签 `M5-1.b`（含**步骤 1 抽 trait 解反向边** + 步骤 2 B 类 seam）→ 切回 A2 实施，工作树需注意 `scheduler.rs` 改动可能与 A7 冲突
-  - 若 A0 签 `M5-1.c`（阶段二 workspace 化，可选）→ 独立 commit
-  - 若 A0 跳 `M5-1` 直发 `M5-2` → 反向边未解，**阻断**（除非 A0 显式接受"反向边未解"风险）
+- **M5-1.a 状态（已 PASS，2026-09-06 13:00 CST）**：由 Lane A2 在 commit `854bc40 feat(M5): add core boundary gate` 落地，含 `check-core-boundary.py` + 最小 core lib + `keyring_store` 搬入 + 切片 0b 常量收口（5 个常量）。A10 W1 复审已转 PASS（`logs/assist/A10-M5-W1-security-review-20260906-1500.md` §4），A11 W1 verification 已 PASS（`logs/checkpoints/M5-A11-W1-verification-delta-20260906-0830.md`）。
+- **M5-1.b 状态（2026-09-06 13:30 CST · A1 拆卡）**：A1 已起草独立子卡 `logs/checkpoints/M5-20260906/M5-1.b-seam-trait-injection-and-b-extract.md`（含切片 1 三个 trait 注入 + 切片 2 B 类 5 模块搬入 + 顺序约束 + 判据 14 条 + 失败动作 + 跨 Lane 注意事项 + COMMIT 拆分建议）。A0 W2 dispatch 时可直接引用该卡作为下达蓝本。
+- **NEXT（本卡完成后由 A0 拍；[W1 patched] 编号已拆三档；M5-1.a 已被 A2 落地 PASS，候选只剩 b/c 二档）**：
+  - 若 A0 签 `M5-1.b`（**切片 1 抽 trait + 切片 2 B 类 seam**，解除 scheduler 反向边 8 处 + scripts.rs 测试反向 import）→ 切回 A2 实施；按 A1 拆卡的实施卡蓝本执行；A2 v3 §14 建议"直接签这一个"
+  - 若 A0 签 `M5-1.c`（阶段二 workspace 化，可选）→ 独立 commit；可与 `M5-2` capability 并行
+  - 若 A0 拆 `M5-1.b` 为两阶段（先 trait 后搬入）→ 切 A2 实施；A1 拆卡 §8 已给 commit 拆分建议
+  - 若 A0 跳 `M5-1.b/c` 直发 `M5-2` → 反向边未解，**阻断**（A5 M5-4/5 Agent 运行时复用脱 Tauri 的 `script_runner` 必先 `M5-1.b` PASS）
 
 ---
 

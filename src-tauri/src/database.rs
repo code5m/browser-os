@@ -41,15 +41,14 @@ pub const DB_MAX_SQL_BYTES: usize = 65_536;
 pub const DB_MAX_ROWS: usize = 1_000;
 /// 结果字节上限（4 MiB）。
 pub const DB_MAX_RESULT_BYTES: usize = 4_194_304;
-/// 单字段字节上限（64 KiB），超限截断并置 `field_truncated`。
-pub const DB_MAX_TEXT_FIELD_BYTES: usize = 65_536;
+// M5-1 切片 0b：常量收口到 `domain.rs`（值逐字不变），此处仅再导出。
+pub use crate::domain::DB_MAX_TEXT_FIELD_BYTES;
 /// 默认查询超时（秒）。
 pub const DB_DEFAULT_QUERY_TIMEOUT_SECS: u64 = 30;
 /// 查询超时上限（秒），超过按 `DB_INVALID_CONFIG` 拒绝。
 pub const DB_MAX_QUERY_TIMEOUT_SECS: u64 = 600;
-/// soft → hard 宽限（秒）。注意 **M4 的 soft/hard 机制与 M2-4 不同**：
-/// M2-4 是 SIGTERM/SIGKILL，DB 无进程可杀，改为「带外取消」+「弃连接」。
-pub const DB_SOFT_TO_HARD_GRACE_SECS: u64 = 5;
+// M5-1 切片 0b：常量收口到 `domain.rs`（值逐字不变；注意 domain 为 `u32`，下方 `from_secs` 需 `as u64`）。此处仅再导出。
+pub use crate::domain::DB_SOFT_TO_HARD_GRACE_SECS;
 /// 每 N 行检查一次取消/超时标志（避免逐行原子读）。
 pub const DB_CANCEL_CHECK_EVERY_ROWS: usize = 64;
 /// 导出/落盘上限（16 MiB）。**尚无消费方**（A5 未确认是否做导出），仅占位常量。
@@ -215,7 +214,7 @@ impl QueryDeadline {
     }
 
     fn hard_reached(&self) -> bool {
-        self.start.elapsed() >= self.soft + Duration::from_secs(DB_SOFT_TO_HARD_GRACE_SECS)
+        self.start.elapsed() >= self.soft + Duration::from_secs(DB_SOFT_TO_HARD_GRACE_SECS as u64)
     }
 }
 
@@ -1133,8 +1132,10 @@ mod tests {
             panic!("期望 SQLite 连接");
         };
         // 把起点推到过去，使 hard 先于 soft 判定命中
-        let mut deadline = QueryDeadline::new(Duration::from_secs(DB_SOFT_TO_HARD_GRACE_SECS + 10));
-        deadline.start = Instant::now() - Duration::from_secs(DB_SOFT_TO_HARD_GRACE_SECS + 20);
+        let mut deadline =
+            QueryDeadline::new(Duration::from_secs(DB_SOFT_TO_HARD_GRACE_SECS as u64 + 10));
+        deadline.start =
+            Instant::now() - Duration::from_secs(DB_SOFT_TO_HARD_GRACE_SECS as u64 + 20);
         let err = query_sqlite_with_deadline(
             conn,
             "SELECT v FROM t",

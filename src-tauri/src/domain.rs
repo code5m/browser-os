@@ -1009,6 +1009,15 @@ impl DbErrorCode {
 // 全部 `#[allow(dead_code)]`，消费者 = M4-2 / M4-3；不引任何 db 依赖。
 // ---------------------------------------------------------------------------
 
+// M5-1 切片 0b：通用契约常量收口自 `script_runner` / `security_policy`（值逐字不变）。
+// `script_runner` / `security_policy` 改为 `pub use crate::domain::*`，仅再导出，不再自定。
+/// 脚本级超时上限（fail-closed，超过即拒绝，不静默封顶）。收口自 `script_runner::MAX_TIMEOUT_SECS`。
+pub const MAX_TIMEOUT_SECS: u32 = 600;
+/// soft 超时（SIGTERM）→ hard（SIGKILL）宽限。收口自 `script_runner::HARD_GRACE_SECS`。
+pub const HARD_GRACE_SECS: u32 = 5;
+/// 单条上报文本字段默认上限（防外部页面超大字符串拖垮主进程）。收口自 `security_policy::MAX_TEXT_FIELD_BYTES`。
+pub const MAX_TEXT_FIELD_BYTES: usize = 64 * 1024;
+
 /// 单条 SQL 文本字节上限。与 `security_policy::MAX_TEXT_FIELD_BYTES` 同量级（单测 T-db-c6 守）。
 #[allow(dead_code)] // 消费者：M4-3 命令层入参校验
 pub const DB_MAX_SQL_BYTES: usize = 64 * 1024;
@@ -1522,8 +1531,6 @@ pub struct TaskRunRecord {
 #[cfg(test)]
 mod m4_1_db_contract_tests {
     use super::*;
-    use crate::script_runner::{HARD_GRACE_SECS, MAX_TIMEOUT_SECS};
-    use crate::security_policy::MAX_TEXT_FIELD_BYTES;
     use serde_json::json;
     use std::collections::BTreeSet;
 
@@ -1683,21 +1690,26 @@ mod m4_1_db_contract_tests {
     /// T-db-c6：上限与超时常量的**跨模块对齐**（防 A3/A4 各写一份导致口径漂移）。
     #[test]
     fn t_db_c6_limit_and_timeout_constants_are_aligned() {
+        // M5-1 切片 0b 后常量已收口进 `domain.rs`，原「跨模块对齐」退化为同模块自比；
+        // 改为「字面值锁定 + 契约别名同值」双保险，仍防 A3/A4 改值时口径漂移。
+        assert_eq!(MAX_TEXT_FIELD_BYTES, 64 * 1024, "文本字段上限字面值锁定");
+        assert_eq!(MAX_TIMEOUT_SECS, 600, "脚本超时上限字面值锁定");
+        assert_eq!(HARD_GRACE_SECS, 5, "soft→hard 宽限字面值锁定");
         assert_eq!(
             DB_MAX_TEXT_FIELD_BYTES, MAX_TEXT_FIELD_BYTES,
-            "单字段上限必须与 security_policy::MAX_TEXT_FIELD_BYTES 同值"
+            "DB 单字段上限必须=通用文本字段上限（契约别名同值）"
         );
         assert_eq!(
             DB_MAX_SQL_BYTES, MAX_TEXT_FIELD_BYTES,
-            "SQL 文本上限复用既有文本字段量级"
+            "SQL 文本上限复用文本字段量级"
         );
         assert_eq!(
             DB_MAX_QUERY_TIMEOUT_SECS, MAX_TIMEOUT_SECS,
-            "查询超时上限必须与 script_runner::MAX_TIMEOUT_SECS 一致"
+            "DB 查询超时上限=通用超时上限"
         );
         assert_eq!(
             DB_SOFT_TO_HARD_GRACE_SECS, HARD_GRACE_SECS,
-            "soft→hard 宽限必须与 script_runner::HARD_GRACE_SECS 一致"
+            "DB soft→hard 宽限=通用宽限"
         );
         assert_eq!(DB_MAX_ROWS, 1_000);
         assert_eq!(DB_MAX_RESULT_BYTES, 4 * 1024 * 1024);

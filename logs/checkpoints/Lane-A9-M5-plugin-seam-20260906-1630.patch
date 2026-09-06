@@ -1,0 +1,216 @@
+diff --git a/logs/assist/A9-M5-plugin-impl-seam-20260906-1630.md b/logs/assist/A9-M5-plugin-impl-seam-20260906-1630.md
+new file mode 100644
+index 0000000..0696b60
+--- /dev/null
++++ b/logs/assist/A9-M5-plugin-impl-seam-20260906-1630.md
+@@ -0,0 +1,156 @@
++# A9 M5-W1 第二切片 — 插件实现 core/bin seam 切分 + `check-plugin-policy.py` 设计
++
++> 生成：2026-09-06 16:30 CST · Lane A9（M5-W1 · SUPPORT DOCS ONLY · 第二切片）
++> BASE：`854bc40`（HEAD：`feat(M5): add core boundary gate`；本地领先 `origin/master` 4）
++> 性质：**可照着实现的 seam + 机检脚本设计**，零产品代码。仅 `logs/assist/A9-M5-plugin-*.md`。
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W1 Implementation Dispatch → A9 行（`SUPPORT DOCS ONLY`；`logs/assist/A9-M5-plugin-*.md`；Delta note，no plugin product code）。本切片是 W1 delta（`A9-M5-plugin-W1-delta-20260906-1530.md`）的**可执行化续片**：把"form③ + Ed25519 + 18 命令 + capability.rs 模型"落成"core/bin 落点 + pre-merge 机检"，供 A18 实现即过门禁。
++> 配套：`A9-M5-plugin-system-prework-20260906-1100.md`（W0 预研 + §10 W1 附录）· `A9-M5-plugin-W1-delta-20260906-1530.md`（W1 reconciliation）· `A2-M5-core-20260906-0749.md` §8 · `scripts/check-core-boundary.py`。
++
++---
++
++## 0. 切片定位
++
++| 项 | 结论 |
++|---|---|
++| A9 在 M5-W1 的角色 | **SUPPORT DOCS ONLY**（board §M5-W1 行 156） |
++| 本切片目标 | 把 W1 delta 的可执行化：① 插件纯逻辑 vs 命令/UI 的 core/bin 落点 ② `check-plugin-policy.py` 机检设计（解 A10 D-1） |
++| 允许范围 | `logs/assist/A9-M5-plugin-*.md` |
++| 交付物 | 本 seam 设计文档；无插件产品代码 |
++| W1 硬停（行 160-165） | 仅 A2 可碰产品代码；禁 plugin runtime/新命令/ACL 条目。本切片**只描述落点与脚本设计，不写实现** |
++
++---
++
++## 1. 已落地的 boundary 事实（来源 file:line）
++
++| 事实 | 来源 |
++|---|---|
++| `mvp_core` 已建，首件 `keyring_store` | `src-tauri/src/core/mod.rs:24` `pub mod keyring_store;` |
++| core 受 7 个 ACTIVE 码位守护 | `scripts/check-core-boundary.py:106-113`（`CORE_TAURI_IMPORT`/`CORE_APP_HANDLE`/`CORE_BRIDGE_REF`/`CORE_SECOND_EXEC_PATH`/`CORE_LIB_UNDECLARED`/`CORE_SHIM_CONFLICT`/`CORE_EMPTY_PLACEHOLDER`） |
++| core 后续切片 0b/0a/1/2（纯逻辑搬入顺序） | `src-tauri/src/core/mod.rs:13-21`（0b：`domain.rs` 常量 + `workspace.rs` 纯路径；0a：A 类整模块；1/2：注入 `ProgressSink`/`PathResolver`/`RootsProvider` 的 B 类） |
++| ACL 末条恒 `list_artifact_images`（K1） | `src-tauri/permissions/default-commands.toml:118` |
++| `capability.rs` **当前不存在** | `search_file` 全仓 0 命中 → 插件 capability 模型的前置阻塞（见 §4 SB-12） |
++| `domain.rs`(70KB)/`bridge.rs`(227KB)/`main.rs` 在 `src-tauri/src/`（未入 core） | `search_file` 命中 |
++
++---
++
++## 2. 插件 core/bin seam 切分（对齐 A2 §8 A9 行 + mod.rs 切片规划）
++
++> A2 §8 衔接表 A9 行："manifest/生命周期纯逻辑落 core，权限 UI/安装命令落 bin；R-B4 天然约束插件不反向污染 bin；插件能力注册必经 ACL + source check"。
++
++### 2.1 落 `mvp_core`（须过 CORE_* 门；零 Tauri 耦合）
++
++| 模块（建议路径） | 内容 | 须过的 CORE 码位 |
++|---|---|---|
++| `core/domain.rs`（切片 0b 后）或 `core/plugin_manifest.rs` | `PluginManifest`/`PluginState`/`PluginSignature`/`PluginCapability` 类型 + manifest 解析（schema/`min_app_version` 校验） | `CORE_TAURI_IMPORT`/`CORE_APP_HANDLE`/`CORE_BRIDGE_REF`/`CORE_SECOND_EXEC_PATH` |
++| `core/plugin_signature.rs` | `verify_plugin_signature(manifest, trusted_keys) -> Result`：Ed25519 验签纯函数，fail-closed | 同上 + `CORE_EMPTY_PLACEHOLDER` |
++| `core/plugin_runtime.rs`（纯逻辑部分） | `can_invoke_plugin(manifest, capability, policy) -> verdict`：`capability.rs` 白名单 + risk 等级 + `fs_roots` canonicalize 前缀 + `net_hosts` 精确匹配禁通配 | 同上 |
++| `core/plugin_lifecycle.rs` | `transition(state, event)` 状态机纯函数：`Discovered→Validating→Signed(OK/Failed)→Loaded→Enabled→Disabled→Uninstalled`；`manifest_hash` 变更→`Disabled` | 同上 |
++| `core/` zip-slip 防护 | 复用 `workspace.rs` 纯路径函数（`mod.rs:16` 切片 0b 下沉后） | 同上 |
++
++**约束**：core 内不得出现 `use tauri` / `AppHandle` / `crate::bridge` / `std::process::Command`（CORE_* 门断言）。纯逻辑只在 core，bin 不得重复实现签名/capability/状态机（防漂移）。
++
++### 2.2 落 `bin`（tauri bin；A18 实现）
++
++| 落点 | 内容 |
++|---|---|
++| `src-tauri/src/bridge.rs` + `main.rs` 注册 | 18 条 `plugin_*` Tauri 命令（M5-10 的 10 + M5-11 的 8），全部插 `list_artifact_images` 之前（K1） |
++| `src-tauri/permissions/default-commands.toml` | 18 条 `plugin_*` 于 `list_artifact_images` 之前（K1，末条不变） |
++| `src/components/plugin/*` + `src/bridge.ts` + `src/types.ts` | 插件管理 UI（M5-12）；UI 仅经 `bridge.ts`，禁裸 `invoke` |
++| `trusted-pubkeys.json` 读写 | 经 `core/keyring_store`（已搬入 core）封装，bin 调用，受 keyring 保护（SB-11） |
++
++**form③ 复用 M2-4**：`plugin_invoke` 执行经 `bridge.rs` → `script_runner::start_run` / `start_command`（无第二执行路径，`CORE_SECOND_EXEC_PATH` + M4 护栏天然满足）。
++
++### 2.3 搬入顺序依赖
++
++- 插件类型当前暂留 `src-tauri/src/domain.rs`；待 A2 切片 **0b**（`domain.rs` 常量下沉 core）后，随 `domain.rs` 一并迁 `core/domain.rs`，再拆 `core/plugin_*.rs`。
++- 插件 capability 判定依赖 **`capability.rs`**（M5-2/A3 落地，见 §4 SB-12）；落地前 `can_invoke_plugin` 的 capability 源以 `capability.rs` 占位常量编译，不得 bin 内另起常量。
++
++---
++
++## 3. `check-plugin-policy.py` 设计（解 A10 D-1）
++
++> A10 复审（§129 D-1）："M5 各实现 lane 的策略脚本（含 `check-plugin-policy.py`）尚未建立、未挂 `pre-merge.sh` … unblock = A18 实现期随代码落地"。本切片给出码位与自测样本，使 A18 实现即过门禁。
++
++### 3.1 形态
++
++- 位置：`scripts/check-plugin-policy.py`（与 `check-core-boundary.py` 同目录）。
++- 挂 `scripts/pre-merge.sh`：在 `git diff --check` 之前（参考 A2 在 `pre-merge.sh:404-409` 的三模式接入）。
++- 模式：`--self-test`（好/坏样本）· 默认扫描（ACTIVE 码位全过 → EXIT 0）· `--expect-pending`（实现前 pending 项允许）。
++
++### 3.2 ACTIVE 码位（实现后转 default）
++
++| 码位 | 断言 | 失败样本 |
++|---|---|---|
++| `PLUGIN_FORM_ILLEGAL` | 插件相关文件不得出现 form①（独立 stdio 进程）/form②（独立 webview 访问 `window.__TAURI__`）实现 | `Command::new` 插件进程 / 插件 webview host / 裸 `__TAURI__` 插件引用 |
++| `PLUGIN_SECOND_EXEC` | 插件执行不得新起 `std::process::Command`；必须走 `script_runner` | 插件模块出现 `std::process::Command`/`Command::new` |
++| `PLUGIN_ACL_ORDER` | `default-commands.toml` 所有 `plugin_*` 出现在 `list_artifact_images` 之前 | 任一 `plugin_*` 在末条之后 |
++| `PLUGIN_CAP_SINGLE_DEF` | capability 白名单单一源（`capability.rs`）；bin 不得另起 capability 常量 | bin 内出现 `const PLUGIN_CAPABILITY_*` 定义块 |
++| `PLUGIN_SIG_BYPASS` | `verify_plugin_signature` 不得被 `cfg`/`feature`/fallback 跳过；失败必须 fail-closed 拒绝加载 | 验签函数有 `return Ok` 提前返回 / `#[cfg(test)]` 外跳过分支 |
++| `PLUGIN_HASH_RECONFIRM` | `manifest_hash` 变更必须触发 `Disabled`/重确认分支存在 | 生命周期代码无 hash 变更→Disabled 分支 |
++| `PLUGIN_GLOBAL_TAURI` | 插件 webview/JS 不得启用 `useGlobalTauri` 或裸 `window.__TAURI__`（K1 + form③） | 插件前端出现 `window.__TAURI__` / 配置 `useGlobalTauri=true` |
++| `PLUGIN_NO_STORE_SECRET` | `plugin_storage` 不得存 token/密码（K3） | `plugin_storage_put` 路径出现 token/密码字段名白名单外落库 |
++
++### 3.3 PENDING 码位（实现前 pending，落地后转 ACTIVE）
++
++| 码位 | 含义 |
++|---|---|
++| `PLUGIN_POLICY_SCRIPT_ITSELF` | 本脚本存在且挂 `pre-merge.sh`（D-1 自身） |
++
++### 3.4 与 `check-core-boundary.py` 协同
++
++- core 内插件纯逻辑由 `CORE_*` 门守（CORE_TAURI_IMPORT / CORE_BRIDGE_REF / CORE_SECOND_EXEC_PATH …）。
++- bin 内插件面（命令/UI/ACL）由 `PLUGIN_*` 门守。
++- 双脚本覆盖 A10 C4（不安全安装）全链：form③ + 默认禁用 + fail-closed + 签名 + 能力共用 + zip-slip。
++
++---
++
++## 4. 依赖与阻塞（供 A0 编排）
++
++| ID | 类型 | 说明 | 解锁方 |
++|---|---|---|---|
++| **SB-12**（新增依赖） | 阻塞 | `capability.rs` 当前不存在（grep 0 命中）；插件 capability 模型（can_invoke_plugin 的 capability 源）须 M5-2 先落地 | A3（M5-2） |
++| **SB-11**（既有） | 阻塞 | Ed25519 信任根管理（trusted-pubkeys.json keyring 保护、首装录 key、公钥不可改、签名绕过=红线） | A18 / A0 |
++| **D-1**（A10） | 硬门 | `check-plugin-policy.py` 待建 → 本切片已设计，归 A18 实现期随代码落地 + 挂 `pre-merge.sh` | A18 |
++| core 切片 0b/0a | 前置 | `domain.rs` 常量与纯路径下沉后，插件类型才能干净搬入 core；否则暂留 `src-tauri/src/domain.rs` | A2 |
++
++---
++
++## 5. 与 W0/W1 交付关系
++
++- 不重复 form③ 裁定、Ed25519、`can_invoke` 7 步、生命周期、SB-1~SB-10、N1~N16（见 1100 §2/§3 与 W1-delta）。
++- 本切片只补**可执行的 seam 落点 + 机检脚本设计**，把 W1 delta 的契约转成 A18 可实现的边界与 pre-merge 断言。
++
++---
++
++## 6. FORBID（W1 切片）
++
++- 仅写 `logs/assist/A9-M5-plugin-*.md`；未碰 `src/`、`src-tauri/`、`scripts/pre-merge.sh`（脚本**设计** ≠ 改动）、ACL、三份主文档。
++- 未移动 `NEXT`；未提交、未 push（board Merge Rule：仅 A0 可推送）。
++- 所有"已冻结/已落地"陈述以来源 file:line 标注（§1）。
++
++---
++
++## 7. 验收（只读，零产品代码）
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++# A. 本切片未碰产品代码
++git status --porcelain -- src/ src-tauri/ scripts/   # 期望：仅含 A2 既有 core 边界改动（非本 lane），无 A9 新增产品码
++# B. core 边界已落地（引用）
++grep -n "pub mod keyring_store" src-tauri/src/core/mod.rs          # 期望：24
++grep -n "list_artifact_images" src-tauri/permissions/default-commands.toml | tail -1   # 期望：118（末条）
++# C. capability.rs 仍不存在（SB-12 依赖未解锁）
++find src-tauri -name capability.rs   # 期望：无输出
++# D. 本切片为纯文档
++git status --porcelain -- logs/assist/A9-M5-plugin-impl-seam-20260906-1630.md   # 期望：??（新增未跟踪）
++```
++
++结果：产品代码工作树无 A9 改动；core 边界（mod.rs:24）与 ACL 末条（default-commands.toml:118）已落地；`capability.rs` 仍不存在（SB-12 未解锁）；本切片为纯文档。
++
++---
++
++## 8. 交付索引
++
++- `logs/assist/A9-M5-plugin-impl-seam-20260906-1630.md`（本文件）—— 插件 core/bin seam + `check-plugin-policy.py` 设计。
++- 上游：`A9-M5-plugin-W1-delta-20260906-1530.md`（form③+Ed25519+18 命令 reconciliation）· `A9-M5-plugin-system-prework-20260906-1100.md` §10。
++- 权威输入：`A2-M5-core-20260906-0749.md` §8 · `scripts/check-core-boundary.py` · `logs/checkpoints/M5-20260906/M5-10/11/12` · `A10-M5-security-review-20260906-1410.md` §129 D-1。
+diff --git a/logs/checkpoints/Lane-A9-M5-plugin-seam-20260906-1630.md b/logs/checkpoints/Lane-A9-M5-plugin-seam-20260906-1630.md
+new file mode 100644
+index 0000000..c4e8da1
+--- /dev/null
++++ b/logs/checkpoints/Lane-A9-M5-plugin-seam-20260906-1630.md
+@@ -0,0 +1,48 @@
++# Lane A9 — M5-W1 第二切片（插件 seam + 策略脚本设计）Checkpoint
++
++> 生成：2026-09-06 16:30 CST · Lane A9（M5-W1 · SUPPORT DOCS ONLY · 第二切片）
++> 依据：`PARALLEL_COMMAND_BOARD.md` → §M5-W1 Implementation Dispatch → A9 行（SUPPORT DOCS ONLY；本切片为 W1 delta 的可执行化续片）。
++
++```
++LANE=A9
++STATUS=PASS
++BASE=854bc40 (HEAD: feat(M5): add core boundary gate; 领先 origin/master 4)
++HEAD=logs/checkpoints/Lane-A9-M5-plugin-seam-20260906-1630.patch
++FILES=logs/assist/A9-M5-plugin-impl-seam-20260906-1630.md, logs/checkpoints/Lane-A9-M5-plugin-seam-20260906-1630.md
++VERIFY=见下 §Verify
++CHECKPOINT=logs/checkpoints/Lane-A9-M5-plugin-seam-20260906-1630.md
++MERGE_NOTES=见下
++NEXT=A18 (M5-10/11 runtime: 18 命令 + Ed25519 plugin_signature.rs + 落 core 纯逻辑 + check-plugin-policy.py 实现) / A19 (M5-12 UI)，在 M5-2 capability.rs (SB-12) 落地后由 A0 签发
++```
++
++## 本切片交付（A9 M5-W1 第二切片，docs-only）
++
++| 要求（M5-W1 A9 行） | 落点 |
++|---|---|
++| 在 capability boundary 之后准备插件系统 | seam §2 给出 core/bin 落点（对齐 A2 §8 A9 行 + `core/mod.rs` 切片 0b/0a/1/2）；core 纯逻辑须过 `check-core-boundary.py` 7 ACTIVE 码位 |
++| 保留 form③ 与 Ed25519 | seam §3 `PLUGIN_FORM_ILLEGAL`/`PLUGIN_SECOND_EXEC`/`PLUGIN_SIG_BYPASS` 把 form③ + Ed25519 fail-closed 落成机检（不重复裁定，引用 W1-delta） |
++| no plugin product code | 仅设计；未改 `src/`/`src-tauri/`/`scripts/pre-merge.sh`/ACL/三主文档 |
++
++## Verify（只读，零产品代码）
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++git status --porcelain -- src/ src-tauri/ scripts/   # 期望：仅 A2 既有 core 边界改动，无 A9 新增产品码
++grep -n "pub mod keyring_store" src-tauri/src/core/mod.rs          # 期望：24
++grep -n "list_artifact_images" src-tauri/permissions/default-commands.toml | tail -1   # 期望：118
++find src-tauri -name capability.rs   # 期望：无（SB-12 依赖未解锁）
++```
++
++结果：产品代码工作树无 A9 改动；core 边界（mod.rs:24）+ ACL 末条（default-commands.toml:118）已落地；`capability.rs` 仍不存在（SB-12 未解锁）。
++
++## Merge Notes
++
++- **冲突**：无。A9 仅写 `logs/assist/A9-M5-plugin-*.md` 与 `logs/checkpoints/Lane-A9-M5-plugin-seam-*.md`；与 A2（core 边界产品码）、A3（M5-2 capability.rs）、A18/A19（未来实现）无文件交集。工作树中 A2 的 `logs/checkpoints/M5-20260906/M5-1.b-seam-trait-injection-and-b-extract.md`（未跟踪）非本 lane 产物，未触碰。
++- **与 W0/W1 关系**：W0 预研（1100，已集成 404f514/5ca8f9f）+ W1 delta（1530，在 `Lane-A9-M5-plugin-W1-pack-20260906-1530.patch`）+ 本切片（1630）构成 A9 完整插件 docs 链；本切片不重复前两者分析，只补可执行 seam + 机检。
++- **新增项**：SB-12（capability.rs 依赖，归 A3/M5-2）；`check-plugin-policy.py` 码位设计（解 A10 D-1，归 A18 实现期）。
++- **下游硬门**：SB-12（capability.rs 未落地）+ D-1（策略脚本待建）均归 A18；core 切片 0b/0a 归 A2。
++
++## FORBID 遵守
++
++- 仅写 `logs/assist/` 与 `logs/checkpoints/Lane-A9-*.md`；未触产品代码、ACL、三主文档、`scripts/pre-merge.sh`。
++- 未移动 `NEXT`；未提交、未 push（board Merge Rule：仅 A0 可推送）。

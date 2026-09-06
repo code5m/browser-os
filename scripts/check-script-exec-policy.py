@@ -33,6 +33,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "src-tauri" / "src" / "script_runner.rs"
+DOMAIN_RS = ROOT / "src-tauri" / "src" / "domain.rs"
 MAIN_RS = ROOT / "src-tauri" / "src" / "main.rs"
 BRIDGE_RS = ROOT / "src-tauri" / "src" / "bridge.rs"
 ACL_TOML = ROOT / "src-tauri" / "permissions" / "default-commands.toml"
@@ -183,12 +184,16 @@ def detect(ctx: dict[str, str]) -> set[str]:
     if "killpg" not in kill_body or DIRECT_CHILD_KILL_PATTERN.search(runner):
         hits.add("EXEC_NO_KILLPG")
 
-    # 必须存在 soft/hard 分层的**常量定义**：只查定义不查使用处，
-    # 否则把常量改名后，使用处残留的字符串会让检测蒙混过关。
-    if not (
+    # 必须存在 soft/hard 分层的**常量定义**：M5-1 切片 0b 后常量可收口到
+    # `domain.rs`（pub const）或保留在 `script_runner.rs`（pub const / pub use re-export）。
+    # 只查定义不查使用处，否则把常量改名后使用处残留字符串会让检测蒙混过关。
+    domain_src = ctx.get("domain", "")
+    hard_grace_present = (
         re.search(r"pub const HARD_GRACE_SECS\s*:", runner)
-        and re.search(r"pub const CANCEL_GRACE_SECS\s*:", runner)
-    ):
+        or re.search(r"pub use crate::domain::HARD_GRACE_SECS", runner)
+        or re.search(r"pub const HARD_GRACE_SECS\s*:", domain_src)
+    )
+    if not (hard_grace_present and re.search(r"pub const CANCEL_GRACE_SECS\s*:", runner)):
         hits.add("EXEC_TIMEOUT_NOT_LAYERED")
 
     # 回收必须发生在 supervisor 内，且必须是**非阻塞轮询** `try_wait`
@@ -281,6 +286,7 @@ def read_ctx() -> dict[str, str]:
 
     return {
         "runner": strip_tests(strip_comments(read(RUNNER))),
+        "domain": strip_tests(strip_comments(read(DOMAIN_RS))),
         "main": strip_comments(read(MAIN_RS)),
         # bridge.rs contains large embedded JS/CSS strings where naive block-comment stripping
         # can eat real Rust that follows. For c-card command checks, raw source is safer.
@@ -308,7 +314,6 @@ MUTATIONS: tuple[tuple[str, str, str, int], ...] = (
     ("EXEC_STRING_INTERPOLATION", "Command::new(program)", 'Command::new(format!("{}", program))', 1),
     ("EXEC_NO_SETSID", "            libc::setsid();", "            // removed", 1),
     ("EXEC_NO_KILLPG", "        libc::killpg(pgid, sig);", "        let _ = sig;", 1),
-    ("EXEC_TIMEOUT_NOT_LAYERED", "pub const HARD_GRACE_SECS: u32 = 5;", "pub const HARD_GRACE_UNUSED: u32 = 0;", 1),
     ("EXEC_NO_WAIT_REAP", "        match child.try_wait() {", "        match child.id() {", 1),
     ("EXEC_ARG_QUOTED", "argv.push(value.to_string());", 'argv.push(format!("\'{}\'", value));', 1),
     ("EXEC_PLATFORM_STUB_MISSING", "#[cfg(not(unix))]", "#[cfg(unix)]", -1),
@@ -336,6 +341,12 @@ E_MUTATIONS: tuple[tuple[str, str, str, int, str], ...] = (
     ("EXEC_SHELL_SPAWN_CAPABILITY_PRESENT", '"default-commands"', '"default-commands", "shell:allow-spawn"', 1, "capability"),
     ("EXEC_FRONTEND_SHELL_DEP_PRESENT", '"@tauri-apps/api": "^2.0.0"', '"@tauri-apps/api": "^2.0.0",\n    "@tauri-apps/plugin-shell": "^2.3.5"', 1, "package_json"),
     ("EXEC_RUST_SHELL_PLUGIN_PRESENT", 'tauri = { version = "2", features = ["unstable", "protocol-asset"] }', 'tauri = { version = "2", features = ["unstable", "protocol-asset"] }\ntauri-plugin-shell = "2"', 1, "cargo_toml"),
+)
+
+# M5-1 切片 0b 后 `HARD_GRACE_SECS` 收口到 `domain.rs`：该变异作用于 domain 文件，
+# 仍验证「定义消失即检出」的变异防呆（runner 为 re-export 时亦能捕获 domain 定义被删）。
+DOMAIN_MUTATIONS: tuple[tuple[str, str, str, int, str], ...] = (
+    ("EXEC_TIMEOUT_NOT_LAYERED", "pub const HARD_GRACE_SECS: u32 = 5;", "pub const HARD_GRACE_UNUSED: u32 = 0;", 1, "domain"),
 )
 
 
@@ -392,6 +403,19 @@ def self_test() -> int:
         if code not in hits:
             failures.append(f"[{code}] 坏样本未被检出（实际命中：{sorted(hits & set(ACTIVE_CODES))}）")
 
+    for code, old, new, count, key in DOMAIN_MUTATIONS:
+        if old not in ctx[key]:
+            failures.append(f"[{code}] 变异原文片段不存在，夹具已失效：{old!r}")
+            continue
+        mutated = dict(ctx)
+        mutated[key] = ctx[key].replace(old, new, count)
+        if mutated[key] == ctx[key]:
+            failures.append(f"[{code}] 变异未改变内容，按漏检测计")
+            continue
+        hits = detect(mutated)
+        if code not in hits:
+            failures.append(f"[{code}] 坏样本未被检出（实际命中：{sorted(hits & set(ACTIVE_CODES))}）")
+
     for code, old, new, count in D_MUTATIONS:
         if old not in ctx["runner"]:
             failures.append(f"[{code}] 变异原文片段不存在，夹具已失效：{old!r}")
@@ -415,7 +439,7 @@ def self_test() -> int:
         for f in failures:
             print(f"FAIL: {f}")
         return 1
-    print(f"SELF_TEST_RESULT=ALL_PASS（{len(MUTATIONS) + len(BRIDGE_MUTATIONS) + len(D_MUTATIONS) + len(E_MUTATIONS)} 个坏样本 + 1 个好样本 + 码位完整性）")
+    print(f"SELF_TEST_RESULT=ALL_PASS（{len(MUTATIONS) + len(BRIDGE_MUTATIONS) + len(D_MUTATIONS) + len(E_MUTATIONS) + len(DOMAIN_MUTATIONS)} 个坏样本 + 1 个好样本 + 码位完整性）")
     return 0
 
 

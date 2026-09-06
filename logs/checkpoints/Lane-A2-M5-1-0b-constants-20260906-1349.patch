@@ -1,0 +1,230 @@
+diff --git a/scripts/check-script-exec-policy.py b/scripts/check-script-exec-policy.py
+index 6d1458a..248364c 100644
+--- a/scripts/check-script-exec-policy.py
++++ b/scripts/check-script-exec-policy.py
+@@ -33,6 +33,7 @@ from pathlib import Path
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+ RUNNER = ROOT / "src-tauri" / "src" / "script_runner.rs"
++DOMAIN_RS = ROOT / "src-tauri" / "src" / "domain.rs"
+ MAIN_RS = ROOT / "src-tauri" / "src" / "main.rs"
+ BRIDGE_RS = ROOT / "src-tauri" / "src" / "bridge.rs"
+ ACL_TOML = ROOT / "src-tauri" / "permissions" / "default-commands.toml"
+@@ -183,12 +184,16 @@ def detect(ctx: dict[str, str]) -> set[str]:
+     if "killpg" not in kill_body or DIRECT_CHILD_KILL_PATTERN.search(runner):
+         hits.add("EXEC_NO_KILLPG")
+ 
+-    # 必须存在 soft/hard 分层的**常量定义**：只查定义不查使用处，
+-    # 否则把常量改名后，使用处残留的字符串会让检测蒙混过关。
+-    if not (
++    # 必须存在 soft/hard 分层的**常量定义**：M5-1 切片 0b 后常量可收口到
++    # `domain.rs`（pub const）或保留在 `script_runner.rs`（pub const / pub use re-export）。
++    # 只查定义不查使用处，否则把常量改名后使用处残留字符串会让检测蒙混过关。
++    domain_src = ctx.get("domain", "")
++    hard_grace_present = (
+         re.search(r"pub const HARD_GRACE_SECS\s*:", runner)
+-        and re.search(r"pub const CANCEL_GRACE_SECS\s*:", runner)
+-    ):
++        or re.search(r"pub use crate::domain::HARD_GRACE_SECS", runner)
++        or re.search(r"pub const HARD_GRACE_SECS\s*:", domain_src)
++    )
++    if not (hard_grace_present and re.search(r"pub const CANCEL_GRACE_SECS\s*:", runner)):
+         hits.add("EXEC_TIMEOUT_NOT_LAYERED")
+ 
+     # 回收必须发生在 supervisor 内，且必须是**非阻塞轮询** `try_wait`
+@@ -281,6 +286,7 @@ def read_ctx() -> dict[str, str]:
+ 
+     return {
+         "runner": strip_tests(strip_comments(read(RUNNER))),
++        "domain": strip_tests(strip_comments(read(DOMAIN_RS))),
+         "main": strip_comments(read(MAIN_RS)),
+         # bridge.rs contains large embedded JS/CSS strings where naive block-comment stripping
+         # can eat real Rust that follows. For c-card command checks, raw source is safer.
+@@ -308,7 +314,6 @@ MUTATIONS: tuple[tuple[str, str, str, int], ...] = (
+     ("EXEC_STRING_INTERPOLATION", "Command::new(program)", 'Command::new(format!("{}", program))', 1),
+     ("EXEC_NO_SETSID", "            libc::setsid();", "            // removed", 1),
+     ("EXEC_NO_KILLPG", "        libc::killpg(pgid, sig);", "        let _ = sig;", 1),
+-    ("EXEC_TIMEOUT_NOT_LAYERED", "pub const HARD_GRACE_SECS: u32 = 5;", "pub const HARD_GRACE_UNUSED: u32 = 0;", 1),
+     ("EXEC_NO_WAIT_REAP", "        match child.try_wait() {", "        match child.id() {", 1),
+     ("EXEC_ARG_QUOTED", "argv.push(value.to_string());", 'argv.push(format!("\'{}\'", value));', 1),
+     ("EXEC_PLATFORM_STUB_MISSING", "#[cfg(not(unix))]", "#[cfg(unix)]", -1),
+@@ -338,6 +343,12 @@ E_MUTATIONS: tuple[tuple[str, str, str, int, str], ...] = (
+     ("EXEC_RUST_SHELL_PLUGIN_PRESENT", 'tauri = { version = "2", features = ["unstable", "protocol-asset"] }', 'tauri = { version = "2", features = ["unstable", "protocol-asset"] }\ntauri-plugin-shell = "2"', 1, "cargo_toml"),
+ )
+ 
++# M5-1 切片 0b 后 `HARD_GRACE_SECS` 收口到 `domain.rs`：该变异作用于 domain 文件，
++# 仍验证「定义消失即检出」的变异防呆（runner 为 re-export 时亦能捕获 domain 定义被删）。
++DOMAIN_MUTATIONS: tuple[tuple[str, str, str, int, str], ...] = (
++    ("EXEC_TIMEOUT_NOT_LAYERED", "pub const HARD_GRACE_SECS: u32 = 5;", "pub const HARD_GRACE_UNUSED: u32 = 0;", 1, "domain"),
++)
++
+ 
+ def self_test() -> int:
+     ctx = read_ctx()
+@@ -392,6 +403,19 @@ def self_test() -> int:
+         if code not in hits:
+             failures.append(f"[{code}] 坏样本未被检出（实际命中：{sorted(hits & set(ACTIVE_CODES))}）")
+ 
++    for code, old, new, count, key in DOMAIN_MUTATIONS:
++        if old not in ctx[key]:
++            failures.append(f"[{code}] 变异原文片段不存在，夹具已失效：{old!r}")
++            continue
++        mutated = dict(ctx)
++        mutated[key] = ctx[key].replace(old, new, count)
++        if mutated[key] == ctx[key]:
++            failures.append(f"[{code}] 变异未改变内容，按漏检测计")
++            continue
++        hits = detect(mutated)
++        if code not in hits:
++            failures.append(f"[{code}] 坏样本未被检出（实际命中：{sorted(hits & set(ACTIVE_CODES))}）")
++
+     for code, old, new, count in D_MUTATIONS:
+         if old not in ctx["runner"]:
+             failures.append(f"[{code}] 变异原文片段不存在，夹具已失效：{old!r}")
+@@ -415,7 +439,7 @@ def self_test() -> int:
+         for f in failures:
+             print(f"FAIL: {f}")
+         return 1
+-    print(f"SELF_TEST_RESULT=ALL_PASS（{len(MUTATIONS) + len(BRIDGE_MUTATIONS) + len(D_MUTATIONS) + len(E_MUTATIONS)} 个坏样本 + 1 个好样本 + 码位完整性）")
++    print(f"SELF_TEST_RESULT=ALL_PASS（{len(MUTATIONS) + len(BRIDGE_MUTATIONS) + len(D_MUTATIONS) + len(E_MUTATIONS) + len(DOMAIN_MUTATIONS)} 个坏样本 + 1 个好样本 + 码位完整性）")
+     return 0
+ 
+ 
+diff --git a/src-tauri/src/database.rs b/src-tauri/src/database.rs
+index 0e29c1f..8926d4d 100644
+--- a/src-tauri/src/database.rs
++++ b/src-tauri/src/database.rs
+@@ -41,15 +41,14 @@ pub const DB_MAX_SQL_BYTES: usize = 65_536;
+ pub const DB_MAX_ROWS: usize = 1_000;
+ /// 结果字节上限（4 MiB）。
+ pub const DB_MAX_RESULT_BYTES: usize = 4_194_304;
+-/// 单字段字节上限（64 KiB），超限截断并置 `field_truncated`。
+-pub const DB_MAX_TEXT_FIELD_BYTES: usize = 65_536;
++// M5-1 切片 0b：常量收口到 `domain.rs`（值逐字不变），此处仅再导出。
++pub use crate::domain::DB_MAX_TEXT_FIELD_BYTES;
+ /// 默认查询超时（秒）。
+ pub const DB_DEFAULT_QUERY_TIMEOUT_SECS: u64 = 30;
+ /// 查询超时上限（秒），超过按 `DB_INVALID_CONFIG` 拒绝。
+ pub const DB_MAX_QUERY_TIMEOUT_SECS: u64 = 600;
+-/// soft → hard 宽限（秒）。注意 **M4 的 soft/hard 机制与 M2-4 不同**：
+-/// M2-4 是 SIGTERM/SIGKILL，DB 无进程可杀，改为「带外取消」+「弃连接」。
+-pub const DB_SOFT_TO_HARD_GRACE_SECS: u64 = 5;
++// M5-1 切片 0b：常量收口到 `domain.rs`（值逐字不变；注意 domain 为 `u32`，下方 `from_secs` 需 `as u64`）。此处仅再导出。
++pub use crate::domain::DB_SOFT_TO_HARD_GRACE_SECS;
+ /// 每 N 行检查一次取消/超时标志（避免逐行原子读）。
+ pub const DB_CANCEL_CHECK_EVERY_ROWS: usize = 64;
+ /// 导出/落盘上限（16 MiB）。**尚无消费方**（A5 未确认是否做导出），仅占位常量。
+@@ -215,7 +214,7 @@ impl QueryDeadline {
+     }
+ 
+     fn hard_reached(&self) -> bool {
+-        self.start.elapsed() >= self.soft + Duration::from_secs(DB_SOFT_TO_HARD_GRACE_SECS)
++        self.start.elapsed() >= self.soft + Duration::from_secs(DB_SOFT_TO_HARD_GRACE_SECS as u64)
+     }
+ }
+ 
+@@ -1133,8 +1132,10 @@ mod tests {
+             panic!("期望 SQLite 连接");
+         };
+         // 把起点推到过去，使 hard 先于 soft 判定命中
+-        let mut deadline = QueryDeadline::new(Duration::from_secs(DB_SOFT_TO_HARD_GRACE_SECS + 10));
+-        deadline.start = Instant::now() - Duration::from_secs(DB_SOFT_TO_HARD_GRACE_SECS + 20);
++        let mut deadline =
++            QueryDeadline::new(Duration::from_secs(DB_SOFT_TO_HARD_GRACE_SECS as u64 + 10));
++        deadline.start =
++            Instant::now() - Duration::from_secs(DB_SOFT_TO_HARD_GRACE_SECS as u64 + 20);
+         let err = query_sqlite_with_deadline(
+             conn,
+             "SELECT v FROM t",
+diff --git a/src-tauri/src/domain.rs b/src-tauri/src/domain.rs
+index f9d00cb..785e53c 100644
+--- a/src-tauri/src/domain.rs
++++ b/src-tauri/src/domain.rs
+@@ -1009,6 +1009,15 @@ impl DbErrorCode {
+ // 全部 `#[allow(dead_code)]`，消费者 = M4-2 / M4-3；不引任何 db 依赖。
+ // ---------------------------------------------------------------------------
+ 
++// M5-1 切片 0b：通用契约常量收口自 `script_runner` / `security_policy`（值逐字不变）。
++// `script_runner` / `security_policy` 改为 `pub use crate::domain::*`，仅再导出，不再自定。
++/// 脚本级超时上限（fail-closed，超过即拒绝，不静默封顶）。收口自 `script_runner::MAX_TIMEOUT_SECS`。
++pub const MAX_TIMEOUT_SECS: u32 = 600;
++/// soft 超时（SIGTERM）→ hard（SIGKILL）宽限。收口自 `script_runner::HARD_GRACE_SECS`。
++pub const HARD_GRACE_SECS: u32 = 5;
++/// 单条上报文本字段默认上限（防外部页面超大字符串拖垮主进程）。收口自 `security_policy::MAX_TEXT_FIELD_BYTES`。
++pub const MAX_TEXT_FIELD_BYTES: usize = 64 * 1024;
++
+ /// 单条 SQL 文本字节上限。与 `security_policy::MAX_TEXT_FIELD_BYTES` 同量级（单测 T-db-c6 守）。
+ #[allow(dead_code)] // 消费者：M4-3 命令层入参校验
+ pub const DB_MAX_SQL_BYTES: usize = 64 * 1024;
+@@ -1522,8 +1531,6 @@ pub struct TaskRunRecord {
+ #[cfg(test)]
+ mod m4_1_db_contract_tests {
+     use super::*;
+-    use crate::script_runner::{HARD_GRACE_SECS, MAX_TIMEOUT_SECS};
+-    use crate::security_policy::MAX_TEXT_FIELD_BYTES;
+     use serde_json::json;
+     use std::collections::BTreeSet;
+ 
+@@ -1683,21 +1690,26 @@ mod m4_1_db_contract_tests {
+     /// T-db-c6：上限与超时常量的**跨模块对齐**（防 A3/A4 各写一份导致口径漂移）。
+     #[test]
+     fn t_db_c6_limit_and_timeout_constants_are_aligned() {
++        // M5-1 切片 0b 后常量已收口进 `domain.rs`，原「跨模块对齐」退化为同模块自比；
++        // 改为「字面值锁定 + 契约别名同值」双保险，仍防 A3/A4 改值时口径漂移。
++        assert_eq!(MAX_TEXT_FIELD_BYTES, 64 * 1024, "文本字段上限字面值锁定");
++        assert_eq!(MAX_TIMEOUT_SECS, 600, "脚本超时上限字面值锁定");
++        assert_eq!(HARD_GRACE_SECS, 5, "soft→hard 宽限字面值锁定");
+         assert_eq!(
+             DB_MAX_TEXT_FIELD_BYTES, MAX_TEXT_FIELD_BYTES,
+-            "单字段上限必须与 security_policy::MAX_TEXT_FIELD_BYTES 同值"
++            "DB 单字段上限必须=通用文本字段上限（契约别名同值）"
+         );
+         assert_eq!(
+             DB_MAX_SQL_BYTES, MAX_TEXT_FIELD_BYTES,
+-            "SQL 文本上限复用既有文本字段量级"
++            "SQL 文本上限复用文本字段量级"
+         );
+         assert_eq!(
+             DB_MAX_QUERY_TIMEOUT_SECS, MAX_TIMEOUT_SECS,
+-            "查询超时上限必须与 script_runner::MAX_TIMEOUT_SECS 一致"
++            "DB 查询超时上限=通用超时上限"
+         );
+         assert_eq!(
+             DB_SOFT_TO_HARD_GRACE_SECS, HARD_GRACE_SECS,
+-            "soft→hard 宽限必须与 script_runner::HARD_GRACE_SECS 一致"
++            "DB soft→hard 宽限=通用宽限"
+         );
+         assert_eq!(DB_MAX_ROWS, 1_000);
+         assert_eq!(DB_MAX_RESULT_BYTES, 4 * 1024 * 1024);
+diff --git a/src-tauri/src/script_runner.rs b/src-tauri/src/script_runner.rs
+index e12b0fc..2a2bd8a 100644
+--- a/src-tauri/src/script_runner.rs
++++ b/src-tauri/src/script_runner.rs
+@@ -44,10 +44,8 @@ use tauri::{AppHandle, Emitter};
+ 
+ /// 全局默认超时（a 卡 §2：`ScriptMeta.timeout_secs == 0` 时取此值）。
+ pub const DEFAULT_TIMEOUT_SECS: u32 = 60;
+-/// 脚本级超时上限（a 卡 §2：超过即拒绝，**不静默封顶**，fail-closed）。
+-pub const MAX_TIMEOUT_SECS: u32 = 600;
+-/// soft 超时（SIGTERM）到 hard（SIGKILL）的宽限（a 卡 §2）。
+-pub const HARD_GRACE_SECS: u32 = 5;
++// M5-1 切片 0b：超时/宽限上限收口到 `domain.rs`（值逐字不变），此处仅再导出。
++pub use crate::domain::{HARD_GRACE_SECS, MAX_TIMEOUT_SECS};
+ /// 取消（SIGTERM）到 SIGKILL 的宽限（a 卡 §2）。
+ pub const CANCEL_GRACE_SECS: u32 = 5;
+ /// 全局并发护栏（a 卡 §3；R14 语义为「≤8 个**不同**脚本并发」）。
+diff --git a/src-tauri/src/security_policy.rs b/src-tauri/src/security_policy.rs
+index bb2ddcc..a040e51 100644
+--- a/src-tauri/src/security_policy.rs
++++ b/src-tauri/src/security_policy.rs
+@@ -446,8 +446,8 @@ pub fn redact_sensitive_url(raw: &str) -> String {
+ // M0-3.b：来源校验 + 用户意图令牌 + 载荷边界
+ // ===========================================================================
+ 
+-/// 单条上报文本字段的默认上限（防止外部页面用超大字符串拖垮主进程内存）。
+-pub const MAX_TEXT_FIELD_BYTES: usize = 64 * 1024; // 64 KiB
++// M5-1 切片 0b：常量收口到 `domain.rs`（值逐字不变），此处仅再导出。
++pub use crate::domain::MAX_TEXT_FIELD_BYTES;
+ /// `report_resources` 单次上报的条目上限（防止事件洪水）。
+ pub const MAX_RESOURCE_ITEMS: usize = 500;
+ /// 意图令牌默认有效期。

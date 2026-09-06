@@ -446,8 +446,8 @@ pub fn redact_sensitive_url(raw: &str) -> String {
 // M0-3.b：来源校验 + 用户意图令牌 + 载荷边界
 // ===========================================================================
 
-/// 单条上报文本字段的默认上限（防止外部页面用超大字符串拖垮主进程内存）。
-pub const MAX_TEXT_FIELD_BYTES: usize = 64 * 1024; // 64 KiB
+// M5-1 切片 0b：常量收口到 `domain.rs`（值逐字不变），此处仅再导出。
+pub use crate::domain::MAX_TEXT_FIELD_BYTES;
 /// `report_resources` 单次上报的条目上限（防止事件洪水）。
 pub const MAX_RESOURCE_ITEMS: usize = 500;
 /// 意图令牌默认有效期。
