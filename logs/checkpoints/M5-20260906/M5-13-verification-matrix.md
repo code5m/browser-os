@@ -1,9 +1,20 @@
-# M5 验证矩阵（A1 横切 · M5-W0 末位）
+# M5 验证矩阵（A1 横切 · M5-W0 末位 + W1 reconciliation）
 
 > 子卡 ID：**M5-13** · 跨 M5-1~M5-12 · `[S3|LEVERAGE:2|COMPLEX|AI:DEEP|R:xhigh]`
 > 责任 Lane 候选：**A11**（沿用 A7/A11 角色，A0 签发时定）
 > 父卡：`详细设计与实施计划.md` 整体（验证门禁横切）
 > 配套：每张 M5-x 子卡 §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION
+
+---
+
+## [W1 patched · 2026-09-06 08:50 CST] 策略脚本后缀一致性（.sh → .py）
+
+> **修订来源**：A0 M5-W1 dispatch（`logs/checkpoints/A0-M5-W1-dispatch-20260906-0835.md`）A1 行 reconcile + A2 v3 prework（`logs/assist/A2-M5-core-20260906-0749.md` §13.3 C-8 "用 `.py` 不用 `.sh`"）。
+> **修订原则**：A1 W1 接受 A2 C-8 建议（仓库 `scripts/` 30+ 门禁脚本惯例 + `pre-merge.sh` 的 `python3 "$SCRIPT_DIR/x.py" --self-test` 挂法 + A2 §3.3 fixtures 复用）。修订**仅**策略脚本后缀行内修正，**不重写**矩阵结构。
+
+| 修订点 | W0 现状 | W1 修订 |
+|---|---|---|
+| `check-core-boundary` 后缀 | `.sh` | **`.py`** |
 
 ---
 
@@ -34,7 +45,7 @@
 | `scripts/check-mcp-policy.py` | **新增**（M5-2） | MCP 政策自检；挂 `pre-merge.sh` |
 | `scripts/check-a2a-policy.py` | **新增**（M5-3） | A2A 政策自检；挂 `pre-merge.sh` |
 | `scripts/check-agent-kv-policy.py` | **新增**（M5-3） | agent_kv 政策自检；挂 `pre-merge.sh` |
-| `scripts/check-core-boundary.sh` | **新增**（M5-1） | core 边界；自检 PASS |
+| `scripts/check-core-boundary.py` | **新增**（M5-1） | core 边界；自检 PASS（`--self-test` 2好+2坏+1阴/默认扫描/`--expect-pending` 三模式） |
 | `scripts/check-graph-policy.py` | **新增**（M5-7/8） | 图谱政策自检；挂 `pre-merge.sh` |
 | `tests/m5_integration_smoke.rs` | **新增** | M5 集成冒烟（与 A4 现有 `tests/` 同款） |
 | `tests/m5_reverse_cases.rs` | **新增** | M5 12 子卡反向用例集中（每张子卡 N1~Nxx） |

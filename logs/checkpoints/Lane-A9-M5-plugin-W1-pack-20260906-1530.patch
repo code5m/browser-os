@@ -1,0 +1,235 @@
+diff --git a/logs/assist/A9-M5-plugin-W1-delta-20260906-1530.md b/logs/assist/A9-M5-plugin-W1-delta-20260906-1530.md
+new file mode 100644
+index 0000000..f420e10
+--- /dev/null
++++ b/logs/assist/A9-M5-plugin-W1-delta-20260906-1530.md
+@@ -0,0 +1,149 @@
++# A9 M5-10/11/12 插件系统 — M5-W1 实现派发 Delta Note
++
++> 生成：2026-09-06 15:30 CST · Lane A9（M5-W1 · SUPPORT DOCS ONLY · delta note）
++> BASE：`404f514`（HEAD，`docs(M5): integrate prework and dispatch core boundary wave`；本地领先 `origin/master` 2）
++> 性质：**可照着实现的契约 reconciliation**，零产品代码。仅 `logs/assist/A9-M5-plugin-*.md`，未触 `src/`、`src-tauri/`、`scripts/pre-merge.sh`、ACL、三份主文档。
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W1 Implementation Dispatch → A9 行（SUPPORT DOCS ONLY：在 capability boundary 之后准备插件系统、**保留 form③ 与 Ed25519 提案**，除非 A10 找到阻断项）。
++> 配套：`A9-M5-plugin-system-prework-20260906-1100.md`（W0 预研 + §10 W1 附录）· `A10-M5-security-review-20260906-1410.md`（复审）· A1 权威卡 `M5-20260906/M5-10/11/12`。
++
++---
++
++## 0. W1 派发定位
++
++| 项 | 结论 |
++|---|---|
++| A9 在 W1 的角色 | **SUPPORT DOCS ONLY**（board §M5-W1 行 156） |
++| 允许范围 | `logs/assist/A9-M5-plugin-*.md`（本 note + 1100 §10 附录） |
++| 交付物 | **Delta note；无插件产品代码** |
++| W1 硬停 | 仅 A2 可碰产品代码；禁插件 runtime / 新命令 / ACL 条目 / 新 Cargo/npm 依赖（board §M5-W1 行 160-165） |
++| 与 A2/W0 关系 | 在 A2 的 M5-1 core boundary 之后准备；A1 权威卡已把 form③ 裁定为默认形态 |
++
++---
++
++## 1. 与 A2 M5-1 core boundary 对齐（capability boundary）
++
++引用 A2 `A2-M5-core-20260906-0749.md` §8 衔接表 A9 行：
++
++> "manifest/生命周期纯逻辑落 core，权限 UI/安装命令落 bin … §2.1 R-B4 天然约束插件不得反向污染 bin；插件能力注册必须经 ACL + source check"
++
++| 边界约束（A2 §2.1 R-B1~R-B6） | 插件系统落点 |
++|---|---|
++| R-B1 core ⇸ tauri | `PluginManifest`/生命周期/签名校验类型落在 `domain.rs` → M5-1 后 `src/core/domain.rs`；**插件模块不得 `use tauri`**（受 `check-core-boundary.py` 的 `COREBOUND_TAURI_IN_CORE` 断言） |
++| R-B2 core ⇸ crate::bridge | 插件运行时（`plugin_runtime.rs`/`plugin_signature.rs`）只依赖 `domain`/`capability.rs`/`security_policy`/`script_runner`（seam 化后），不得反向引用 `bridge` |
++| R-B4 web ⇸ mcp ⇸ cli ⇸ gui-bin | 插件能力注册经 ACL + source check，天然不反向污染 bin（R-B4 单向往 core） |
++| R-B5 core 禁 `std::process::Command` | form③ 复用 `script_runner::start_run`/`start_command`（M2-4），**无第二执行路径**，天然满足 |
++| 切片 3（M5 能力生长） | M5-10/11/12 纯逻辑落 core、命令面/transport 落 bin（A2 §6 切片 3 行 356-359） |
++
++→ 我的 W0 预研 §2.1（类型在 `domain.rs`）、§3.2（form③ 复用 M2-4）、§3.1（命令在 `bridge.rs` + ACL）与 A2 boundary **完全一致**，无需改设计。
++
++---
++
++## 2. 与 A1 M5-20260906 权威卡对齐（关键偏差 reconciliation）
++
++A10 复审（§36）已确认 **A1 的 `M5-0..M5-14` 卡集是 M5-W0 权威 WBS**，A2/A7/A9 prework 为子卡输入。以下偏差以 A1 权威卡为准裁定：
++
++### 2.1 形态③（一致，已裁定）
++- A1 `M5-10` §4.1：默认 **form③ 声明式资源包**（icon + `entry_url` + capability 声明 + JS 钩子；复用既有 webview，JS 经受控 `bridge.ts` 子集，无裸 `invoke`）。form①（独立进程）/form②（独立 webview）**否决**。
++- 与 1100 §1 裁定（①否决/②否决/③采用）**一致**。1100 §2.1 把 form③ 具体化为"插件声明 `kind` + 指向既有 `ScriptMeta`/`ToolMeta`/`SkillDef`/`SessionHandler` id"——可作为 form③ 的**后端能力实现形态**（插件声明的能力由既有实体经 M2-4/M2-9 承载），二者不冲突。
++- A10 G-6（§94）已裁定形态冲突解决，旧 `plugin-runtime-taskcard` 的 form①「✅推荐」措辞作废。
++
++### 2.2 签名方案（关键修正 ← Ed25519）
++| 来源 | 立场 |
++|---|---|
++| A1 `M5-10` §0 行 15 / §3 / §4.2 / §4.4 | **默认 Ed25519 + 本地受信任 keys 目录**；`plugin_signature.rs` 新增；`PluginSignature{ algorithm:"Ed25519", key_id, value, signed_at }`；`trusted-pubkeys.json` 受 keyring 保护；升级须 `hash`+`signature` 同过 |
++| 1100 §2.3（原） | "M5 首期不实现签名校验" + 仅 `manifest_hash` |
++
++**delta 裁定**：以 A1 为准，**保留 Ed25519 提案**。1100 §2.3 立场 SUPERSEDED（见 1100 §10 附录）。`PluginManifest` 须含 `hash`(sha256 资源包) + `signature`(Ed25519)。`manifest_hash` 变更 → 授权失效自动 `Disabled`（与 1100 原意一致，仅从"仅 hash 绑定"升级为"hash + Ed25519 签名双重约束"）。
++
++### 2.3 权限模型（capability.rs 共用为主）
++- A1 `M5-10` §4.2：`capabilities: Vec<PluginCapability>`，`capability` 引用共享 `capability.rs`（M5-0 §7 红线③ A2P/A2A/Skill/Plugin/Agent 共用，防漂移）。
++- 1100 §2.1 用自研 `acl_level: AclLevel` + `permissions`(commands/fs_roots/net_hosts/db_conn_ids/keyring_prefixes)。
++- **delta 裁定**：主模型以 A1 `capability.rs` 共用白名单为准（防漂移）；1100 的 `can_invoke` fail-closed 7 步链 **保留为运行时执行层**，但第 2-3 步改为针对 `capability.rs` 白名单 + capability risk 等级（与 M5-11 §4.3 复用 MCP §4.3 判定）；`fs_roots`/`net_hosts` 的资源约束并入 M5-11 §4.2 资源隔离（独立 `plugins_dir()/<id>/workspace/` + 独立 `storage.json` + 独立 audit），不再作为 manifest 字段而作为 capability 范围。
++
++### 2.4 命令面（18 条）
++| 来源 | 命令数 |
++|---|---|
++| A1 `M5-10` §3 | `plugin_install`/`uninstall`/`list`/`get`/`enable`/`disable`/`keys_add`/`keys_list`/`keys_remove` = **10 条** |
++| A1 `M5-11` §4.1 | `plugin_invoke`/`invoke_cancel`/`permissions_get`/`permissions_set`/`audit_list`/`storage_get`/`storage_put`/`storage_delete` = **8 条** |
++| 合计 | **18 条**，全插 `list_artifact_images` 之前（K1） |
++| 1100 §3.1（原） | 6 条（子集） |
++
++**delta 裁定**：以 A1 **18 条**为准；1100 §3.1 为子集，实施期扩展。
++
++### 2.5 审计文件
++- A1 `M5-11` §4.4：`plugin-invokes.json`（独立 500 FIFO）+ 摘要进 `audit.json`（`detail` 含 id/capability/params_summary/result/duration_ms，禁记 params/result 正文，K3）。
++- 1100 §3.4（原）：`plugin-audit.json`。
++- **delta 裁定**：以 A1 `plugin-invokes.json` 为准（K5 防刷爆一致）。
++
++### 2.6 信任根 / 密钥
++- A1 `M5-10` §4.4：`trusted-pubkeys.json` 受 keyring 保护；首装须用户提供 pubkey；升级须 hash+signature 同过；`manifest_hash` 变更触发重新确认。
++- **delta 裁定**：1100 §2.3 原"仅本地路径 + 不实现签名"升级为 Ed25519 信任模型（见 §4 SB-11）。
++
++---
++
++## 3. A10 M5-W0 复审结论（1410）与阻断项
++
++- form③ + `can_invoke` 7 步 + 能力共用 + 默认禁用 + zip-slip 防护 → **C4 不安全安装 ✅ PASS**（§108/§148）。
++- 形态冲突 G-6 已在设计层解决（A9 §1 裁定 form① 否决，旧卡措辞作废，D-4）→ **不再阻塞**。
++- **未对 form③ / Ed25519 提阻断** → 按 board §M5-W1 A9 行要求，**保留 form③ 与 Ed25519 提案**。
++- **唯一硬门 D-1**（§129 D-1）：M5 策略脚本（`check-mcp/graph/plugin/agent/a2a/skill-policy.py` + UI logic 脚本）各 lane 已定义码位但**尚未建、未挂 `pre-merge.sh`**。→ unblock = A18 实现期随代码落地并挂 `pre-merge.sh`（在 `git diff --check` 之前）。
++
++---
++
++## 4. 新增安全阻塞项 SB-11（Ed25519 信任模型）
++
++| ID | 阻塞项 | 影响 | 建议处置 |
++|---|---|---|---|
++| **SB-11** | Ed25519 信任根管理：`trusted-pubkeys.json` 须 keyring 保护、禁止未授权改、首装须显式录入 pubkey、升级须 hash+signature 同过、公钥本身不可改（防替换攻击）、签名绕过=红线失守 | 全部插件安装/启用 | 归 A18 实现 `plugin_signature.rs` 时落实；A12/A0 在 `check-plugin-policy.py` 增加"签名校验不可绕过"断言 |
++
++（SB-1~SB-10 见 1100 §6，继续有效。）
++
++---
++
++## 5. 任务拆分 / 责任 lane 再确认
++
++| 子卡（A1 权威） | 责任 lane | 与 1100 §5 关系 |
++|---|---|---|
++| M5-10（manifest/生命周期/签名） | **A18** | 1100 §5 M5-10.a/b 有效，命令数改为 10；新增 `plugin_signature.rs` |
++| M5-11（命令 18 条/隔离/审计） | **A18** | 1100 §5 M5-11.a/b 有效，命令面扩至 18，审计改 `plugin-invokes.json` |
++| M5-12（UI） | **A19** | 1100 §5 M5-12.a/b 有效 |
++
++合并顺序：M5-10 → M5-11 → M5-12（A19 与 A18 收尾并行），与 1100 §5 一致。
++
++---
++
++## 6. FORBID 遵守（W1）
++
++- 未写产品代码；未触 `src/`、`src-tauri/`、`scripts/pre-merge.sh`、ACL（`default-commands.toml`）、三份主文档。
++- 未移动 `NEXT`；未提交、未 push。
++- 所有"已冻结/已落地"陈述以来源 file:line 标注（A1 M5-10/11/12、A2 core §8、A10 1410 §46/§92/§108/§129）。
++- Ed25519 提案已保留（对齐 A1 `M5-10` §4.4）；form③ 保留（A10 未提阻断）。
++
++---
++
++## 7. 验收（只读，零产品代码）
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++# A. W1 硬停：A9 未碰产品代码
++git status --porcelain -- src/ src-tauri/ scripts/   # 期望：空
++# B. Ed25519 已在 A1 权威卡定义（非 A9 新增代码）
++grep -n "Ed25519" logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md   # 期望命中 §0/§3/§4.2/§4.4
++# C. 18 条命令已在 A1 卡定义
++grep -cE "plugin_(install|uninstall|list|get|enable|disable|keys_add|keys_list|keys_remove|invoke|invoke_cancel|permissions_get|permissions_set|audit_list|storage_get|storage_put|storage_delete)" \
++  logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md
++# D. capability.rs 共用白名单（防漂移）
++grep -n "capability.rs" logs/checkpoints/M5-20260906/M5-2-rmcp-mcp-policy.md | head
++# E. A10 未对插件/form③ 提阻断
++grep -n "M5-10/11/12 插件" logs/assist/A10-M5-security-review-20260906-1410.md   # 期望：✅
++```
++
++结果：产品代码工作树干净；Ed25519 / 18 命令 / capability.rs 共用 / plugin-invokes.json 均在 A1 权威卡落地；A10 复审无插件/form③ 阻断；form③ 与 Ed25519 提案已保留。
++
++---
++
++## 8. 交付索引
++
++- `logs/assist/A9-M5-plugin-W1-delta-20260906-1530.md`（本文件）—— W1 reconciliation delta。
++- `logs/assist/A9-M5-plugin-system-prework-20260906-1100.md` §10 —— W1 对账附录（保留 Ed25519，对齐 A1 卡）。
++- 权威输入：`logs/checkpoints/M5-20260906/M5-10/11/12`、`A2-M5-core-20260906-0749.md` §8、`A10-M5-security-review-20260906-1410.md`。
+diff --git a/logs/assist/A9-M5-plugin-system-prework-20260906-1100.md b/logs/assist/A9-M5-plugin-system-prework-20260906-1100.md
+index 2024f00..d1f92b1 100644
+--- a/logs/assist/A9-M5-plugin-system-prework-20260906-1100.md
++++ b/logs/assist/A9-M5-plugin-system-prework-20260906-1100.md
+@@ -306,3 +306,20 @@ cargo clippy --manifest-path src-tauri/Cargo.toml 2>&1 | grep -c warning   # 不
+ - `logs/assist/A9-M5-plugin-system-prework-20260906-1100.md`（本文件）—— M5-10/11/12 契约 + 任务拆分 + 安全阻塞项。
+ - 继承：`logs/assist/A9-M5-plugin-form-feasibility-20260906-0700.md`（形态裁定）。
+ - 配套卡：`A9-M5-A13plus-cards-20260906-0010.md`（A18 runtime / A19 UI）。
++
++---
++
++## §10 W1 Reconciliation Addendum（2026-09-06 · M5-W1）
++
++> 本文件为 A9 M5-W0 预研（docs only）。M5-W1 派发（`PARALLEL_COMMAND_BOARD.md` §M5-W1 Implementation Dispatch · A9 行 = SUPPORT DOCS ONLY）要求 A9 在 capability boundary 之后准备插件系统、**保留 form③ 与 Ed25519 提案**。完整 reconciliation 见 `logs/assist/A9-M5-plugin-W1-delta-20260906-1530.md`。
++>
++> 与 A1 权威卡 `logs/checkpoints/M5-20260906/M5-10/11/12` 的偏差裁定（**以 A1 权威卡为准**）：
++
++1. **签名方案（关键修正）**：原文 §2.3「M5 首期不实现签名校验」+ 仅 `manifest_hash` → **SUPERSEDED**。以 M5-10 §4.4 为准，默认 **Ed25519 + 本地受信任 keys 目录**（`plugin_signature.rs` 新增；`trusted-pubkeys.json` 受 keyring 保护）；`PluginManifest` 含 `hash`(sha256 资源包) + `signature`(Ed25519，引用 `trusted-pubkeys.json` 的 `key_id`)。`manifest_hash` 变更 → 授权失效自动 `Disabled`（与原文 §2.3 一致）。
++2. **命令面**：原文 §3.1 的 6 条（`list/install/enable/disable/uninstall/config_get/set`）为子集 → 以 M5-10(10) + M5-11(8) = **18 条**为准（全插 `list_artifact_images` 之前）。
++3. **审计文件**：原文 §3.4 `plugin-audit.json` → SUPERSEDED，以 M5-11 §4.4 `plugin-invokes.json`（独立 500 FIFO）+ 摘要进 `audit.json` 为准。
++4. **权限模型**：原文 §2.1 自研 `acl_level` + `permissions`(commands/fs_roots/net_hosts/db_conn_ids/keyring_prefixes) 保留为**运行时 fail-closed 执行层**；主模型以 A1 `capability.rs` 共用白名单为准（M5-0 §7 红线③ A2P/A2A/Skill/Plugin/Agent 共用，防漂移）；`fs_roots`/`net_hosts` 资源约束并入 M5-11 §4.2 资源隔离（`plugins_dir()/<id>/workspace/` + 独立 storage + 独立 audit）。
++
++> A10 复审（`A10-M5-security-review-20260906-1410.md` §46/§92/§108/§148）对 form③ / `can_invoke` 7 步 / 能力共用 / 默认禁用 / zip-slip 防护 **未提阻断**（C4 不安全安装 ✅ PASS、G-6 形态冲突已解决）。唯一硬门 **D-1**：M5 策略脚本（含 `check-plugin-policy.py`）尚未建且未挂 `pre-merge.sh`，归 A18 实现期随代码落地。
++>
++> **结论**：form③ 与 Ed25519 提案均已保留；本文件其余分析（生命周期默认 `Disabled`、zip-slip 防护、`can_invoke` 7 步、SB-1~SB-10、N1~N16 反向用例）继续有效。
+diff --git a/logs/checkpoints/Lane-A9-M5-plugin-W1-checkpoint-20260906-1530.md b/logs/checkpoints/Lane-A9-M5-plugin-W1-checkpoint-20260906-1530.md
+new file mode 100644
+index 0000000..2978432
+--- /dev/null
++++ b/logs/checkpoints/Lane-A9-M5-plugin-W1-checkpoint-20260906-1530.md
+@@ -0,0 +1,49 @@
++# Lane A9 — M5-W1 插件系统 Delta 整包交付 Checkpoint
++
++> 生成：2026-09-06 15:30 CST · Lane A9（M5-W1 · SUPPORT DOCS ONLY · delta note）
++> 依据：`PARALLEL_COMMAND_BOARD.md` → §M5-W1 Implementation Dispatch → A9 行（SUPPORT DOCS ONLY；capability boundary 之后准备插件系统，保留 form③ 与 Ed25519 提案）。
++
++```
++LANE=A9
++STATUS=PASS
++BASE=404f514 (HEAD: docs(M5): integrate prework and dispatch core boundary wave; 领先 origin/master 2)
++HEAD=logs/checkpoints/Lane-A9-M5-plugin-W1-pack-20260906-1530.patch
++FILES=logs/assist/A9-M5-plugin-W1-delta-20260906-1530.md, logs/assist/A9-M5-plugin-system-prework-20260906-1100.md (§10 附录), logs/checkpoints/Lane-A9-M5-plugin-W1-checkpoint-20260906-1530.md
++VERIFY=见下 §Verify
++CHECKPOINT=logs/checkpoints/Lane-A9-M5-plugin-W1-checkpoint-20260906-1530.md
++MERGE_NOTES=见下 §Merge Notes
++NEXT=A18(M5-10/11 runtime, 18 命令 + Ed25519 plugin_signature.rs) / A19(M5-12 UI)，在 M5-1 core boundary 落地后由 A0 签发；D-1(check-plugin-policy.py 待建) 归 A18 实现期
++```
++
++## 交付内容（M5-W1 A9 Must Deliver = Delta note）
++
++| 要求（M5-W1 A9 行） | 落点 |
++|---|---|
++| 在 capability boundary 之后准备插件系统 | delta §1（对齐 A2 §8 A9 行：类型落 core/domain.rs，命令/UI 落 bin，form③ 复用 M2-4 满足 R-B4/R-B5） |
++| 保留 form③ | delta §2.1 + §3（A10 复审未提阻断，G-6 形态冲突已解决） |
++| 保留 Ed25519 提案 | delta §2.2（对齐 A1 `M5-10` §4.4，1100 §2.3 SUPERSEDED，§10 附录记录） |
++| 除非 A10 找到阻断项 | delta §3（A10 1410 对 form③/Ed25519 **未提阻断**；唯一硬门 D-1 归 A18） |
++
++## Verify（只读，零产品代码）
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++git status --porcelain -- src/ src-tauri/ scripts/   # 期望：空（A9 未改产品代码）
++grep -n "Ed25519" logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md   # 期望命中
++grep -n "M5-10/11/12 插件" logs/assist/A10-M5-security-review-20260906-1410.md       # 期望：✅
++```
++
++结果：产品代码工作树干净；Ed25519 / 18 命令 / capability.rs 共用 / plugin-invokes.json 均在 A1 权威卡落地；A10 复审无插件/form③ 阻断。
++
++## Merge Notes
++
++- **冲突**：无。A9 仅写 `logs/assist/A9-M5-plugin-*.md` 与 `logs/checkpoints/Lane-A9-M5-plugin-W1-*.md`；与 A2（core boundary）、A1（M5-20260906 卡）、A10（复审）、A18/A19（未来实现）无文件交集。
++- **与 W0 预研关系**：W0 的 `A9-M5-plugin-system-prework-20260906-1100.md` 已被 A0 集成（commit `404f514`）；本 W1 通过**追加 §10 附录 + 新 delta note** 做 reconciliation，不重写 W0 主体，保留其生命周期/zip-slip/`can_invoke` 7 步/SB-1~SB-10/N1~N16 分析有效。
++- **关键偏差裁定**：① 签名由"延后"改为"默认 Ed25519"（对齐 A1 `M5-10` §4.4）；② 命令面由 6 条扩至 18 条（A1 `M5-10` 10 + `M5-11` 8）；③ 审计文件由 `plugin-audit.json` 改为 `plugin-invokes.json`（A1 `M5-11` §4.4）；④ 权限主模型由自研 `acl_level` 改为 `capability.rs` 共用（A1 `M5-10` §4.2）。
++- **新增阻塞**：SB-11（Ed25519 信任根管理）交 A18/A0。
++- **下游硬门**：D-1（M5 策略脚本 `check-plugin-policy.py` 待建 + 挂 `pre-merge.sh`）归 A18 实现期，非 A9 范围。
++
++## FORBID 遵守
++
++- 未写产品代码；未触 `src/`、`src-tauri/`、`scripts/pre-merge.sh`、ACL、三份主文档。
++- 未移动 `NEXT`；未提交、未 push（board Merge Rule：仅 A0 可推送）。

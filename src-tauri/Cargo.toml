@@ -4,6 +4,16 @@ version = "0.1.0"
 description = "极智简单 · 浏览器OS融合 MVP"
 edition = "2021"
 
+# M5-1.a：纯逻辑库边界。阶段一采用「同 package 双 target」——lib 与 bin 共处本 package，
+# 不改跨 crate 依赖图、编译模型变化最小。阶段二再按需提升为 workspace member。
+#
+# ⚠️ 编译器守不住 core 的纯洁性：package 级 [dependencies] 对 lib 与 bin 同时生效，
+# 因此 core 内直接引用 Tauri 的 API **照样可以编译通过**。边界只能由
+# `scripts/check-core-boundary.py`（已接入 pre-merge）在静态层断言。
+[lib]
+name = "mvp_core"
+path = "src/lib.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

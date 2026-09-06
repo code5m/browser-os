@@ -1,7 +1,20 @@
-# M5 债务账（A1 横切 · 不在本批解决）
+# M5 债务账（A1 横切 · 不在本批解决 · W1 修订）
 
 > 子卡 ID：**M5-14** · 跨 M5-1~M5-12 · 性质：**清单，非实现**
 > 配套：每张 M5-x 子卡 §9 DOC_BACKWRITE 中的"M5-14 增项"
+
+---
+
+## [W1 patched · 2026-09-06 08:50 CST] §6 反向边挂卡修正（C-7/V-7 补项）
+
+> **修订来源**：A0 M5-W1 dispatch（`logs/checkpoints/A0-M5-W1-dispatch-20260906-0835.md`）A1 行 reconcile + A2 v3 prework（`logs/assist/A2-M5-core-20260906-0749.md` §13.2 C-7 "scheduler 反向边错挂在 M5-1.a"+ §13.4 V-7 "core 内常量影子副本"）。
+> **修订原则**：A1 W1 接受 A2 v3 全部建议（C-7 + V-7 + C-5 补 `scheduler.rs:761` + `scripts.rs` 15 处测试反向 import 纳入 M5-1.b 切片 2）。修订**仅 §6 整段**与本顶部 `[W1 patched]` 段，**不重写** §1~§5/§7/§8 决策史。
+
+### 修订影响
+
+- §6 4 行原"处置：M5-1.a 解决"全改"**M5-1.b 解决**"（C-7）
+- §6 补 3 行（W1 新增）：`scheduler.rs:761`（C-5 漏项）/ `scripts.rs` 15 处测试反向 import（测试反向）/ V-7 `database.rs` 常量副本（步骤 0b 收口）
+- **关键不变量**：`M5-1.a` 只解决"测试反向 import 收口 + V-7 副本收口"，**`scheduler → bridge::AppState` 反向边 8 处 + 测试反向 2 组属 `M5-1.b`**（A1 卡 §9 与 M5-14 §6 必须严格一致）
 
 ---
 
@@ -75,14 +88,17 @@
 
 ---
 
-## 6. 反向边 / 架构债（沿用 A2 prework §4）
+## 6. 反向边 / 架构债（沿用 A2 prework §4 + v3 §13.2 C-7 修订）
 
 | 项 | 来源 | 说明 | 处置 |
 |---|---|---|---|
 | `domain.rs:1525-1526` 测试反向 import | M5-1 | 切片 0b 必收口 | M5-1.a 解决 |
-| `bridge::allowed_roots(app)` | M5-1 | 4 处反向边（L26/28/259/491/588/617/622/742 scheduler.rs） | M5-1.a 解决（抽 RootsProvider trait） |
-| `tauri::Emitter` 在 script_runner 直用 | M5-1 | 切片 1 抽 ProgressSink trait | M5-1.a 解决 |
-| `app.path().data_dir()` 散落 | M5-1 | 切片 1 抽 PathResolver trait | M5-1.a 解决 |
+| `bridge::allowed_roots(app)` | M5-1 | 4 处反向边（L26/28/259/491/588/617/622/742 scheduler.rs） | **[W1 patched] M5-1.b 解决**（抽 RootsProvider trait）—— 原挂 `M5-1.a` 错（C-7）；切片 1 才真正抽 trait |
+| `tauri::Emitter` 在 script_runner 直用 | M5-1 | 切片 1 抽 ProgressSink trait | **[W1 patched] M5-1.b 解决** |
+| `app.path().data_dir()` 散落 | M5-1 | 切片 1 抽 PathResolver trait | **[W1 patched] M5-1.b 解决** |
+| `scheduler.rs:761` 漏反向边 | M5-1 | [W1 patched] C-5 补：同模式 `&AppState` | M5-1.b 解决 |
+| `scripts.rs` 15 处测试反向 import | M5-1 | [W1 patched] 测试反向 `crate::workspace::*_at/_in` | M5-1.b 解决 |
+| `database.rs:45/52` 常量影子副本 | M5-1 | [W1 patched] V-7 `DB_MAX_TEXT_FIELD_BYTES` / `DB_SOFT_TO_HARD_GRACE_SECS` 副本，值同但 `u32`/`u64` 类型不同 | M5-1.a 解决（步骤 0b 收口 + `as u64` 转换） |
 
 ---
 

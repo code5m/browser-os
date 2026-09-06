@@ -29,6 +29,9 @@
 #  21. M3.a 终端输出管道不变量夹具 + 前端 Channel/防抖接入
 #  22. 工作树、暂存区、当前分支相对基线的 git diff --check
 #  23. M4-8 定时任务 UI 不变量夹具（SCHEDUI_*）+ 前端逻辑层测试（加载真实 taskUi.ts / useTaskStore.ts）
+#  24. M5-1.a core 边界不变量夹具（CORE_* 码位）：core 不得 import tauri / 引用 AppHandle·AppState /
+#      反向引用 crate::bridge / 出现第二执行路径；[lib] 已声明；shim 与 mod 不冲突；无空文件。
+#      ⚠️ 同 package 双 target 下编译器守不住这些，本夹具是唯一防线
 #
 # 用法:
 #   scripts/pre-merge.sh            正式门禁（所有检查必须通过）
@@ -391,6 +394,20 @@ run_pre_merge() {
   (cd "$ROOT" && node "$SCRIPT_DIR/check-scheduler-ui-logic.mjs") >/dev/null 2>&1 \
     || pm_fail "check-scheduler-ui-logic.mjs（定时任务前端逻辑回归）"
 
+  # M5-1.a（Lane A2）：core 边界不变量夹具（CORE_* 码位）。
+  # ⚠️ 这是**唯一**能守住 core 纯洁性的手段：阶段一采用同 package 双 target，
+  # package 级 [dependencies] 对 lib 与 bin 同时生效，因此 core 内写 `use tauri::…`
+  # 在**编译上完全能过**——rustc 与 cargo tree 都不会报错，只有本夹具会拦。
+  # 守住：core 不 import tauri / 不引用 AppHandle·AppState / 不反向引用 crate::bridge
+  # 与二进制专属模块 / 不出现第二执行路径 / [lib] 已声明 / shim 与 mod 不冲突 / 无空文件。
+  pm_log "M5-1.a core 边界不变量夹具（CORE_* 码位）…"
+  python3 "$SCRIPT_DIR/check-core-boundary.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-core-boundary.py --self-test"
+  python3 "$SCRIPT_DIR/check-core-boundary.py" >/dev/null 2>&1 \
+    || pm_fail "check-core-boundary.py（core 边界被破坏：tauri / AppHandle / crate::bridge / 第二执行路径）"
+  python3 "$SCRIPT_DIR/check-core-boundary.py" --expect-pending >/dev/null 2>&1 \
+    || pm_fail "check-core-boundary.py --expect-pending（有 pending 码位已实现，应转入默认判定）"
+
   pm_log "git diff --check（工作树 + 暂存区，机器证据除外）…"
   # Raw evidence is immutable third-party output; SHA256SUMS, not whitespace rewriting, protects it.
   git -C "$ROOT" diff --check -- . ':(exclude)logs/m0-baseline/**' || pm_fail "git diff --check (worktree)"
@@ -498,6 +515,11 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/check-scheduler-ui-logic.mjs" ] || { echo "FAIL: check-scheduler-ui-logic.mjs missing"; rc=1; }
   if ! (cd "$ROOT" && node "$SCRIPT_DIR/check-scheduler-ui-logic.mjs") >/dev/null 2>&1; then
     echo "FAIL: check-scheduler-ui-logic.mjs"; rc=1
+  fi
+  # M5-1.a（Lane A2）：core 边界夹具（core 纯洁性在编译层守不住，只能靠它）
+  [ -f "$SCRIPT_DIR/check-core-boundary.py" ] || { echo "FAIL: check-core-boundary.py missing"; rc=1; }
+  if ! python3 "$SCRIPT_DIR/check-core-boundary.py" --self-test >/dev/null 2>&1; then
+    echo "FAIL: check-core-boundary.py --self-test"; rc=1
   fi
   if ! python3 "$SCRIPT_DIR/check-tools-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-tools-policy.py --self-test"; rc=1

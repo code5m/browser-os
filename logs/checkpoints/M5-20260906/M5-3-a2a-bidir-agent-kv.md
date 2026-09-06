@@ -3,8 +3,31 @@
 > 子卡 ID：**M5-3** · 需求 #7（A2P/A2A）· `[S3|LEVERAGE:2|COMPLEX|AI:DEEP|R:xhigh]`
 > 责任 Lane 候选：**A15**（A9 提案；A0 签发时定）
 > 父卡：`详细设计与实施计划.md` L564（`M5-3 A2A 双向与记忆`）
-> 主预研：`logs/assist/M5-7.a-prework-20260902-1055.md` §4.3 A2A 草案
+> 主预研：`logs/assist/M5-7.a-prework-20260902-1055.md` §4.3 A2A 草案；`logs/assist/A4-M5-a2a-memory-20260906-0755.md`（A4 v1 冻结 F-A4-1~14）
 > 配套：`M5-2-rmcp-mcp-policy.md`（能力层基础）· `M5-4-agent-skill-runtime.md`（Agent 侧消费）
+
+---
+
+## [W1 patched · 2026-09-06 08:50 CST] agent_kv 三层嵌套 + 隐私三重闸 + TTL/迟滞水位
+
+> **修订来源**：A0 M5-W1 dispatch（`logs/checkpoints/A0-M5-W1-dispatch-20260906-0835.md`）A1 行 reconcile + A4 prework（`logs/assist/A4-M5-a2a-memory-20260906-0755.md` F-A4-6/7/9 + N1~N6 + 25 单测）+ A10 复审（`logs/assist/A10-M5-security-review-20260906-1410.md` §104 "A1 卡 `agent_kv` 为扁平 `HashMap`（且其要求 LRU 淘汰但无 `updated_at`，内部自相矛盾）；A4 建议改三层嵌套（更严）"）。
+> **修订原则**：A1 W1 接受 A4 更严方案（两层选一，"两者均安全，A4 更严"），修订**仅 §4.3 整段**与本顶部 `[W1 patched]` 段，**不重写 §1/§2/§4.1/§4.2/§4.4/§4.5 与 §5~§11 决策史**。
+
+### W1 修订点
+
+| # | W0 现状 | W1 修订 |
+|---|---|---|
+| W1-3-1 | §4.3 "存储" `HashMap<String, serde_json::Value>` 扁平 | 改**三层嵌套** `agent_kv[<agent_id>][<namespace>][<key>]`；namespace 白名单 `memory`/`facts`/`prefs`/`session`/`draft` |
+| W1-3-2 | §4.3 "上限 5 MB / 5000 条（超限按 LRU 淘汰）" | 改 5 MiB 总 / 5000 条总 + **per-namespace 1000 条** + **per-agent 32 条**软配额 |
+| W1-3-3 | §4.3 "LRU 淘汰但无 `updated_at`"（A10 §104 内部矛盾） | 加 `updated_at` 必填 + 90% 迟滞水位触发 + 按 `updated_at` 升序淘汰；TTL：`session` 30d / `prefs`/`facts` 365d / `memory`/`draft` 永久 |
+| W1-3-4 | §4.3 "键名黑名单（复用 M2-3.a §4.4）" | 改**三重隐私闸**：① 键名黑名单 ② 值 JSON 字段名前缀关键字 ③ 出口脱敏（不入审计/前端/日志） |
+| W1-3-5 | §4.3 未提 storage backend | 钉死**不引 SQLite**（沿用 M3 范式 `atomic_write` 单文件 JSON） |
+
+### 引用与一致性
+
+- 与 A4 预研对齐（`logs/assist/A4-M5-a2a-memory-20260906-0755.md` §5/§6 F-A4-6/7/9 + N1~N6 机器可检红线 + 25 单测）
+- 与 A1 整包对齐（`M5-A1-expansion-20260906-0800.md` §"M5-3 与 A4"）
+- 不与 A1 其它卡冲突（`M5-2`/`M5-4`/`M5-5`/`M5-6` 未涉 `agent_kv` 细节）
 
 ---
 
@@ -87,16 +110,22 @@ pub enum AgentDialect {
 
 **注意**：`ExternalCli` 必须落成 Script/Command 片段，**走 script_runner**；**不**新增 `TaskKind::AgentDialect`（与 A6 冻结的 `TaskKind::{Script, Command}` 冲突）。
 
-### 4.3 `agent_kv` 严格分离
+### 4.3 `agent_kv` 严格分离 · [W1 patched 2026-09-06 08:50 CST]
+
+> **修订来源**：A4 prework `logs/assist/A4-M5-a2a-memory-20260906-0755.md` F-A4-6（三层键空间白名单）+ F-A4-7（容量/TTL/迟滞水位）+ F-A4-9（隐私三重闸）；A10 §104（"A1 卡 `agent_kv` 为扁平 `HashMap`（且其要求 LRU 淘汰但无 `updated_at`，内部自相矛盾）；A4 建议改三层嵌套（更严）。交 A0 裁决，两者均安全，A4 更严"）。A1 W1 接受 A4 更严方案。
 
 | 项 | 契约 |
 |---|---|
 | 用途 | **仅** AI 上下文/记忆，**不是**用户成果库 |
-| 存储 | `app_data_dir()/mvp-browser-os/agent-kv.json`（`HashMap<String, serde_json::Value>`） |
+| 存储 | `app_data_dir()/mvp-browser-os/agent-kv.json`（**三层嵌套** `agent_kv[<agent_id>][<namespace>][<key>]`，非扁平 `HashMap`） |
 | 与成果库隔离 | **严格分离**：`workspace/` 用户成果；`agent-kv.json` AI 记忆；**两不互写** |
-| 上限 | 5 MB / 5000 条（超限按 LRU 淘汰） |
-| 敏感信息 | **禁**存 token/密码（K3）；写入前做键名黑名单（复用 M2-3.a §4.4 脱敏关键字表） |
-| 持久化 | `atomic_write`（沿用 M3 范式） |
+| **三层键空间** | **namespace 白名单**（[W1 patched] 替代 W0 的扁平设计）：`memory`（长期记忆）/ `facts`（事实表）/ `prefs`（用户偏好）/ `session`（会话短时）/ `draft`（草稿）；**禁**自建 `secrets` 等其他 namespace |
+| **TTL** | [W1 patched] `session` 30 天（到期淘汰）；`prefs`/`facts` 365 天（按 `updated_at` 续期）；`memory`/`draft` 永久（手动删） |
+| 上限 | 5 MiB 总 / 5000 条总 + **per-namespace 1000 条** + **per-agent 32 条**软配额（[W1 patched] A4 值，只影响淘汰优先级不拒绝写入） |
+| 淘汰策略 | [W1 patched] 90% 迟滞水位触发淘汰：按 `updated_at` 升序（最久未访问先淘汰）；W0 的"LRU 淘汰但无 `updated_at`"矛盾已修 |
+| **`updated_at` 必填** | [W1 patched] 每次 `put` 更新 `updated_at`（UTC ISO 8601 字符串）；TTL 续期、`agent_kv_get` 读取也刷新 `updated_at` |
+| 敏感信息 | **禁**存 token/密码（K3）；**三重隐私闸**（[W1 patched] 替代 W0 的单层键名黑名单）：① **键名黑名单**（`token`/`password`/`api_key`/`secret` 等）；② **值扫描前缀关键字**（值 JSON 内任一字段名命中黑名单则**拒绝写入**）；③ **出口脱敏**（不入审计、不入前端响应、不入日志） |
+| 持久化 | `atomic_write`（沿用 M3 范式）；**不引 SQLite**（[W1 patched] A4 F-A4-6 钉死） |
 
 ### 4.4 A2A 输入红线
 

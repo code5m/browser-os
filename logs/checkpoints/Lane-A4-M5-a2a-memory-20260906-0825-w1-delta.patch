@@ -1,0 +1,307 @@
+diff --git a/logs/assist/A4-M5-a2a-memory-20260906-0825-w1-delta.md b/logs/assist/A4-M5-a2a-memory-20260906-0825-w1-delta.md
+new file mode 100644
+index 0000000..edabff2
+--- /dev/null
++++ b/logs/assist/A4-M5-a2a-memory-20260906-0825-w1-delta.md
+@@ -0,0 +1,301 @@
++# A4 · M5-W1 Delta：M5-3（A2A / `agent_kv`）对 core 与 capability 边界的**精确依赖**
++
++> LANE=A4　WAVE=**M5-W1**　STATUS=DOCS ONLY（SUPPORT DOCS ONLY，无产品代码）
++> BASE=`404f514`（`docs(M5): integrate prework and dispatch core boundary wave`；本地 master，领先 origin/master 2）
++> SCOPE=`logs/assist/A4-M5-a2a-memory-*.md` only —— 未改 `src-tauri/**` / `Cargo.toml` / `scripts/pre-merge.sh` / 三份主文档
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W1 Implementation Dispatch → A4：**SUPPORT DOCS ONLY**，
++> Must Deliver = **"Delta note with exact dependency on capability/core boundary"**
++> 上游：`logs/assist/A2-M5-core-20260906-0749.md`（v2/v3，698 行，已被 A0 合入 `404f514`）
++> W0 基线契约：`logs/assist/A4-M5-a2a-memory-20260906-0755.md`（882 行，已随 `404f514` 合入；**本 delta 不修改它，只增量**）
++> 启动门禁已执行：`.workspace-identity`=BACKV3_MAIN、`pwd` 匹配、`branch=master`、`git fetch` 已跑。
++
++---
++
++## 0. 摘要（给 A0 / A2 / A10 / A11）
++
++M5-3 的**纯逻辑可以、且应当**整体落进 `mvp_browser_os_core`，但它依赖 A2 的 W1 边界先给出三样东西，
++缺一样 M5-3 的实现就会把 Tauri 反向拖进 core（正是 A2 §2.1 R-B1 要防的事）：
++
++| # | 我需要的 | 现状（**2026-09-06 08:28~08:50 实查**） | 缺口 |
++|---|---|---|---|
++| 1 | **`seam.rs` 里的目录/时钟/审计注入** | 只有 `ProgressSink`/`PathResolver`/`RootsProvider`（A2 §6 切片 1） | ❌ 缺 `Clock`、`AuditSink`（`KeyringProvider` 可选） |
++| 2 | **`capability.rs` 落 core**（而非二进制） | A1 `M5-2` 卡写的是"已落 **core 或二进制**"（口径未定） | ❌ 未定；M5-3 要求**必须 core** |
++| 3 | **边界脚本防"同名重复定义"** | ✅ **已落地 + 已挂 pre-merge**：`scripts/check-core-boundary.py`（591 行，7 ACTIVE + 2 PENDING，命名 `CORE_*`，非 W0 稿的 `COREBOUND_*`）；`scripts/pre-merge.sh:404-409` 已挂三模式（`--self-test` / 默认 / `--expect-pending`） | ❌ 缺 `CORE_CONST_SHADOW`、`CORE_DIALECT_SINGLE_DEF`、`CORE_CAPABILITY_SINGLE_DEF`（§5） |
++| 4 | **`agent_kv` 形态与 A1 权威卡对齐** | 🟢 **A1 已在 `M5-3` 卡 `[W1 patched 08:50]` 采纳 A4 更严方案**（三层嵌套 / per-ns 1000 / 90% 水位 / `updated_at` 必填 / 不引 SQLite / 三重隐私闸） | ⚠️ **采纳时产生 3 处新偏差**：TTL 分档（C-4）、值扫描口径（C-5）、per-agent "32" 被误用为条数（C-6） |
++
++另外，A2 §13.4（V-7）与 §13.5（自比退化）暴露的两类问题**同样会命中我的 W0 契约**，
++本文 §6 给出自我修订：**`T-kv-22` 常量一致性断言会被切片 0b 打成"自比"，必须改为跨模块比较**。
++
++**一句话**：M5-3 不需要 A2 现在就搬任何模块，只需要 A2 在 W1 把 **seam 签名**和 **3 个防重复定义码位**留出来、
++并把边界脚本**挂上 pre-merge**；这几件事不做，M5-3.a 就只能先在二进制落地，且未来搬 core 时要重写。
++
++> **本 delta 写完后工作树又有并发推进**（A2 落脚本、A1 修卡、A3/A5/A8/A9 交 W1 delta、A10 出 W1 复审）。
++> 凡与本文判断冲突处，一律以「实查时间 08:50」的 §1 事实表为准；本文结论已按新事实更新。
++
++---
++
++## 1. 读到的 A2 边界事实（带出处，全部为已合入文档）
++
++| 事实 | 出处 |
++|---|---|
++| 阶段一 = 同 package 双 target：`[lib] name="mvp_browser_os_core" path="src/lib.rs"` + `src/core/**`，`build.rs` 不动 | A2 §3.1 |
++| 依赖方向硬规则 **R-B1~R-B6**（core 禁 tauri / 禁 `crate::bridge` / 单向依赖 / **core 内禁 `std::process::Command`** / 依赖白名单） | A2 §2.1 |
++| 边界只能靠脚本守（编译器守不住），脚本 = `check-core-boundary.py`，8 个 `COREBOUND_*` 码位 | A2 §3.2/§3.3 |
++| core 依赖白名单含 `keyring`、`rusqlite`、`chrono`、`uuid`、`serde_json`；黑名单含 `tauri*`、`tokio` | A2 §3.3 |
++| 切片顺序改为 **0b（契约收口）→ 0a（建 core 搬 A 类）→ 1（seam 注入）→ 2（搬 B 类）** | A2 §6 |
++| **A2 对 A4 的明确约束**："`agent_kv` 落 core，复用 `session::atomic_write` 与 `security_policy` 脱敏；凭据不出 core；保留/容量规则须与 §3.3 白名单一致" | A2 §8 表（A4 行） |
++| **V-7**：core 内已存在常量影子副本 —— `DB_MAX_TEXT_FIELD_BYTES`（`domain.rs:1027` vs `database.rs:45`）、`DB_SOFT_TO_HARD_GRACE_SECS`（`domain.rs:1039` vs `database.rs:52`，**类型还不同 u32/u64**） | A2 §13.4 |
++| **T-db-c6 自比退化**：切片 0b 把 `database.rs` 副本删掉改 `pub use` 后，原断言会退化成"domain 的 A == domain 的 A" | A2 §13.5 |
++| 脚本技术栈裁定：用 **`.py`**（对齐仓库 30+ 个 `.py` 门禁与 `--self-test`/默认/`--expect-pending` 三模式） | A2 §13.3 C-8 |
++| A5（Agent/Skill）**必须在 M5-1.c 之后**（否则复用绑 Tauri 的 `script_runner`，把 Tauri 拖进 Agent 单测） | A2 §8 表（A5 行） |
++| **W1 已落地**：`scripts/check-core-boundary.py`（591 行，08:28），码位命名 **`CORE_*`**（7 ACTIVE：`CORE_TAURI_IMPORT`/`CORE_APP_HANDLE`/`CORE_BRIDGE_REF`/`CORE_SECOND_EXEC_PATH`/`CORE_LIB_UNDECLARED`/`CORE_SHIM_CONFLICT`/`CORE_EMPTY_PLACEHOLDER`；2 PENDING：`CORE_TREE_TAURI`/`CORE_DEP_NOT_ALLOWLISTED`）；`[lib] name = "mvp_core"`（**注意：与 W0 稿 §3.1 的 `mvp_browser_os_core` 不同**，实现期以脚本为准）；设计哲学"产物存在才判"（`src/core/` 不存在时相关码位 no-op） | 实查 `scripts/check-core-boundary.py:107-120`、文件头注释 |
++| ✅ **已挂 `scripts/pre-merge.sh`**：`:404-409` 三行（`--self-test` / 默认 / `--expect-pending`），`:520-522` 另有存在性 + 自检校验 | 实查（修订前为零命中，A2 随后挂载） |
++| ✅ **core 已成立**：`src-tauri/Cargo.toml:13-15` 新增 `[lib] name="mvp_core" path="src/lib.rs"`；新增 `src-tauri/src/lib.rs` + `src/core/{mod.rs,keyring_store.rs}`（A 类第一小批：`keyring_store.rs` 已从二进制移入）；`main.rs` 走 re-export shim | 实查 |
++| ❌ **`src/core/seam.rs` 尚未出现**（切片 1 未做）→ 本文 §3 需要的 `Clock` / `AuditSink` 仍未就位 | 实查 `ls src-tauri/src/core/` |
++| 🟢 **A1 已在 `M5-3` 权威卡 `[W1 patched · 2026-09-06 08:50 CST]` 采纳 A4 更严方案**：三层嵌套替代扁平 `HashMap`（W1-3-1）、5 MiB/5000 条 + per-ns 1000（W1-3-2）、`updated_at` 必填 + 90% 迟滞水位（W1-3-3）、三重隐私闸（W1-3-4）、钉死不引 SQLite（W1-3-5）；卡头已把本文列为"主预研"之一 | `git diff` A1 对 `M5-20260906/M5-3-a2a-bidir-agent-kv.md` |
++
++> 与本文 W0 契约的关系：F-A4-1（方言三层，声明层落 core / transport 留二进制）**与 R-B1~R-B3 完全一致** ✅；
++> F-A4-7（JSON + `session::atomic_write`）**与 A2 §8 对 A4 的约束一致** ✅；
++> F-A4-4（禁 `std::process::Command`）**被 R-B5 覆盖** ✅。无冲突。
++
++---
++
++## 2. M5-3 的 core / bin 切分表（逐类型、逐函数）
++
++> 这是本文给 A2/A0 的核心输入：**哪些进 `src/core/**`、哪些必须留在二进制**。
++
++### 2.1 落 core（`src/core/agent_kv.rs` + `src/core/a2a.rs`，纯逻辑、可脱离 Tauri 单测）
++
++| 项 | 类型 / 函数 | 说明 |
++|---|---|---|
++| 类型 | `AgentDef`、`AgentDialect`（建议拆 `DialectTransport`×`AgentProduct`）、`AgentSession`、`AgentKvNamespace`、`AgentKvEntry`、`AgentKvStore`、`AgentKvSummary`、`AgentKvPutResult`、`A2aTask`、`A2aTaskStatus`、`Negotiated` | 全部纯数据 + serde |
++| 常量 | §4.10 的 `A2A_*` / `AGENT_KV_*` **全部只在 `domain.rs` 定义一次**，core 内模块 `pub use crate::domain::{...}`，**禁止再 `pub const` 一次**（防 V-7 重演，见 §6.2） | 与切片 0b 同款纪律 |
++| 纯函数 | 键名校验/黑名单、值扫描（递归字符串叶子）、TTL 计算、容量统计与淘汰排序（过期→软配额→per-ns→全局条目→全局字节 90% 水位）、`AgentKvStore` 序列化（BTreeMap 确定性）、幂等键索引 FIFO、JSON-RPC 信封解析与错误码映射（`-32001~-32018`）、能力判定的纯函数部分 | **无任何 IO、无时钟、无 Tauri** |
++| 复用 | `session::atomic_write`（切片 0a 后已在 core）、`security_policy` 脱敏（同上）、`domain` 常量 | A2 §8 已指定 |
++
++### 2.2 必须留在二进制
++
++| 项 | 原因 |
++|---|---|
++| `DialectAdapter` 的 `OpenAiCompatible` 实现（HTTP 客户端） | 出网；受 `McpGlobalPolicy` 域名白名单约束，属 transport 适配 |
++| `DialectAdapter` 的 `ExternalCli` 实现（`script_runner::start_run/start_command`） | `script_runner` 在 W1 仍是 **B 类（Tauri 耦合）**，A2 §8 明确 A5 复用它要等 M5-1.c |
++| `agent_kv` 的**文件 IO**（`data_dir` 解析、读目录、rename） | 需要注入的 `PathResolver`；core 只吃 `&Path` |
++| Keyring 实际读写（`agent:<agent_id>`） | 虽在白名单内，但建议经 trait 注入以便单测（§3） |
++| 审计落盘（`log_audit` 与 `agent-kv-audit.json` 写入） | 需要 `&AppHandle`，违反 R-B1 → core 只产出事件，由二进制落盘（§3 `AuditSink`） |
++| Tauri 命令 handler（`agent_kv_*` / `a2a_*`）+ `check_invocation_source` | 命令面恒在 bin（A2 §8 对 A6 同口径） |
++| `a2a-shutdown` 注册 | 生命周期，属 C 类 |
++
++---
++
++## 3. 对 A2 切片 1（`src/core/seam.rs`）的 seam 需求
++
++A2 提案的三个 trait（`ProgressSink` / `PathResolver` / `RootsProvider`）中，M5-3 **复用 2 个、需要新增 2 个**。
++
++| Seam | 状态 | M5-3 用途 | 建议签名 |
++|---|---|---|---|
++| `PathResolver` | ✅ **复用**（不需改） | `agent_kv` 落盘目录、`a2a_tasks.json` 目录 | `fn data_dir(&self) -> PathBuf` |
++| `ProgressSink` | ✅ **复用**（与 A5 共用） | Agent 流式 token / 工具循环进度（目前 `script_runner` 用 `tauri::Emitter`） | `fn emit(&self, p: Progress)` |
++| **`Clock`** | ❌ **新增（必须）** | TTL 过期判定、幂等键 FIFO 淘汰、空闲超时 —— **不可注入时钟则 `agent_kv` 的 TTL/淘汰单测无法确定性运行** | `fn now(&self) -> DateTime<Utc>` |
++| **`AuditSink`** | ❌ **新增（必须）** | core 产出结构化审计事件，二进制落 `audit.json` / `agent-kv-audit.json`。**没有它，core 为了满足 F-A4-9（审计拆独立文件）只能调 `log_audit(app)`，直接违反 R-B1** | `fn record(&self, ev: AuditEvent)` |
++| `KeyringProvider` | 🟡 建议（可选） | 凭据读写 `agent:<agent_id>`。白名单已允许 core 直接用 `keyring`；但加 trait 后 `agent_kv`/A2A 可脱离系统密钥库单测 | `fn get(&self, key: &str) -> Result<String, String>` / `fn set` / `fn delete` |
++
++> **与 A6（M5-6 调度）的一致性**：A6 的契约已冻结"时钟可注入"（调度判重/错过执行依赖它）。
++> `Clock` 与 A6 复用同一个 trait 即可，**不要出现第二套时钟抽象**（否则又是 A2 §2.1 要防的漂移）。
++
++---
++
++## 4. `capability.rs` 归属：**M5-3 要求落 core**
++
++A1 `M5-2` 卡（§"依赖"）写的是 `capability.rs 已落 core **或二进制**` —— 这个"或"必须消除。
++
++**M5-3 的立场：必须落 `src/core/capability.rs`。**
++
++| 理由 | 说明 |
++|---|---|
++| 1 | M5-3 的能力判定纯逻辑（`declared` vs `granted`、scope 匹配）要在 core 内单测；若 `capability.rs` 在二进制，core 侧无法判定 → 只能把判定搬回 bin，**A2A 信封解析与能力判定被劈成两半** |
++| 2 | 五处共用（A2P / A2A / Skill / Plugin / Agent）**全部跨 crate 边界**：其中 A2A 信封解析在 core、Skill 在 core（A5 也要落 core）、插件 manifest 在 core（A2 §8）、MCP 在 `mcp` crate（R-B3 规定 `mcp → core`）。落二进制会让 `mcp` 反向依赖 bin，**直接违反 R-B3** |
++| 3 | 未来的 `cli` crate 同样要消费（R-B3：`cli → core`） |
++
++**要求的最小形状**（core 内）：
++
++```rust
++// src/core/capability.rs
++pub const MCP_CAPABILITY_V1: &[Capability] = &[ /* 常量表，非扫描 */ ];
++pub struct Capability { pub name: String, pub maps_to: String, pub risk: RiskLevel,
++                        pub requires_confirm: bool, pub requires_policy: Option<String>,
++                        pub params_schema: serde_json::Value }
++pub fn can_invoke(name: &str, policy: &McpGlobalPolicy) -> CapabilityVerdict; // 纯函数，fail-closed
++```
++
++`McpGlobalPolicy` 的**反序列化与解析**也应在 core（fail-closed 解析是纯逻辑）；
++只有"从配置文件读 / 从 UI 写"留在二进制。
++
++---
++
++## 5. 对 `check-core-boundary.py` 的码位请求（A2 拥有该脚本）
++
++**职责切分（避免与我的两个脚本重叠）**：
++`check-core-boundary.py` 只管**边界与重复定义**（跨能力通用）；
++`check-agent-kv-policy.py` / `check-a2a-policy.py`（W0 §7 提案）只管**语义**（容量/隐私/审计内容/协议/关闭顺序）。
++
++**请求新增的 3 个码位（命名对齐 A2 已落地的 `CORE_*` 前缀）+ 2 项既有事项**：
++
++| 规则码 | 断言内容 | 来源 | 级别 |
++|---|---|---|---|
++| **`CORE_CONST_SHADOW`** | core 内同一常量名（`pub const <NAME>`）不得在 `src/core/**` 中出现 ≥2 次；定义必须唯一，其余模块只能 `pub use` | **A2 §13.4 V-7 的通用化** | FAIL |
++| **`CORE_DIALECT_SINGLE_DEF`** | `AgentDialect` / `DialectTransport` / `AgentProduct` 在 `src-tauri/**` 内**单一定义** | **本文 W0 §8.2 C-1**：A4 与 A5 各写了一份同名不同义的 `AgentDialect`，不钉死就会在合并 `domain.rs` 时撞车 | FAIL |
++| **`CORE_CAPABILITY_SINGLE_DEF`** | `capability.rs` 与 `MCP_CAPABILITY_V1` 常量表**单一定义**，且位于 core | 五处共用防漂移（A3 reconcile §"能力白名单真源是常量表"） | FAIL |
++| `CORE_SECOND_EXEC_PATH`（**既有，请确认覆盖范围**） | 需额外覆盖"core 内出现 `script_runner::` 直接调用" | A2 脚本现扫 `std::process::Command`/`Command::new`/`sh -c`/`bash -c`；**切片 2 之前 `script_runner` 仍在 bin，core 引用会编译失败**（天然挡住），切片 2 之后需确认只经 `DialectAdapter` trait 调用 | FAIL（现有） |
++| **`pre-merge.sh` 挂载** | 按现有惯例挂两行：`python3 "$SCRIPT_DIR/check-core-boundary.py" --self-test` + 默认扫描，位置在 `git diff --check` 之前 | **脚本已落地但未挂载**（实查零命中），不挂载等于没有门禁 | 阻塞项 |
++
++**两点实现约定（贴合 A2 脚本的既有哲学，降低采纳成本）**：
++1. **"产物存在才判"**：三个新码位在 `agent_kv.rs` / `a2a.rs` / `capability.rs` 尚不存在时应 **no-op**，
++   与现有 `CORE_LIB_UNDECLARED`/`CORE_SHIM_CONFLICT` 同款降级，保证脚本在 M5-3 落地前后都长期有效；
++2. **纯源码扫描、无需编译**：与现有 7 个 ACTIVE 码位同族（正则扫描 + `--self-test` 好/坏样本），
++   实现成本 ≈ 3 个正则 + 6 个自测样本，但能挡住 W0 已暴露的三类真实漂移
++   （常量影子副本 / 方言同名 / 能力白名单多份）。
++
++---
++
++## 6. 对我 W0 契约的自我修订（delta）
++
++### 6.1 `T-kv-22` 常量一致性断言**必须改为跨模块比较**（否则会退化成"自比"）
++
++W0 §6.1 `T-kv-22` 写的是：
++
++```
++AGENT_KV_MAX_VALUE_BYTES == DB_MAX_TEXT_FIELD_BYTES；
++A2A_MAX_TIMEOUT_SECS == script_runner::MAX_TIMEOUT_SECS；
++A2A_SOFT_TO_HARD_GRACE_SECS == script_runner::HARD_GRACE_SECS
++```
++
++- 其中 `AGENT_KV_MAX_VALUE_BYTES` 与 `DB_MAX_TEXT_FIELD_BYTES` **都定义在 `domain.rs`**。
++  一旦 A2 切片 0b 按 §13.4 把 `database.rs` 的副本删掉改 `pub use`，这条断言就变成
++  ”`domain::AGENT_KV_MAX_VALUE_BYTES` == `domain::DB_MAX_TEXT_FIELD_BYTES`”——
++  **两值仍会相等，但断言已不再守护任何跨模块口径**（A2 §13.5 指出的自比退化，同款）。
++- **修订**：`T-kv-22` 改为比较 **`domain::AGENT_KV_MAX_VALUE_BYTES` vs `security_policy::MAX_TEXT_FIELD_BYTES`**
++  （后者是 `security_policy.rs` 的自有常量，与 `domain.rs` 分属两个模块，切片 0b 后仍是真跨模块比较）；
++  另两条（`script_runner::MAX_TIMEOUT_SECS` / `HARD_GRACE_SECS`）保持跨模块不变 ✅。
++- **附加断言**：若某次重构使两侧合并为同一常量，则该断言**必须被替换**为
++  "存在跨模块消费者 + `pub use` 单一定义"，**不得静默保留一个恒真的自比断言**。
++
++### 6.2 常量"零影子副本"纪律（写给未来实现 M5-3 的 lane）
++
++- `A2A_*` / `AGENT_KV_*` 常量**只在 `domain.rs` 定义一次**（W0 §4.10）；
++- `agent_kv.rs` / `a2a.rs` 一律 `pub use crate::domain::{...}`，**禁止在本模块再 `pub const` 一次**；
++- 违反者由 §5 的 `COREBOUND_CONST_SHADOW` 在 pre-merge 拦下。
++
++### 6.3 `agent_kv` 落 core 后的路径注入形态
++
++W0 F-A4-7 写的是"落 `data_dir/agent-kv.json`"；落 core 后**必须**改为注入形态：
++
++```rust
++// core 内：只吃 &Path，不知道 AppHandle 存在
++pub fn kv_file_path(root: &Path) -> PathBuf { root.join(AGENT_KV_FILE) }   // AGENT_KV_FILE = "agent-kv.json"
++pub fn load(root: &Path, now: DateTime<Utc>) -> Result<AgentKvStore, KvError>;
++pub fn put(root: &Path, now: DateTime<Utc>, audit: &dyn AuditSink, req: PutReq) -> Result<AgentKvPutResult, KvError>;
++```
++
++二进制侧：`root = path_resolver.data_dir()`、`now = clock.now()`、`audit = AppAuditSink(app)`。
++
++### 6.4 W0 §8.2 的 C-1 冲突（`AgentDialect` 同名）获得机器防线
++
++W0 §8.2 提出的拆层方案（`DialectTransport` × `AgentProduct`）待 A0 裁决；
++**无论裁决结果如何**，`CORE_DIALECT_SINGLE_DEF`（§5）都应先落地 ——
++它防的不是"选哪个方案"，而是"两份定义同时存在"。**建议在 W1 就加，不要等 M5-3 实现期。**
++
++### 6.5 🆕 A1 `M5-3` 卡 `[W1 patched]` 采纳 A4 方案后产生的 **3 处新偏差（C-4 ~ C-6）**
++
++A1 在 08:50 已把本文（更严）方案并入权威卡 §4.3，方向一致 ✅。
++但**转写过程中出现 3 处与本契约不一致**，其中 **C-6 会让容量上限形同虚设**，必须回修：
++
++| # | A1 卡 W1 修订 | 本文 W0 契约 | 差异性质 | A4 建议 |
++|---|---|---|---|---|
++| **C-4** | TTL 分档：`session` 30 天 / `prefs`+`facts` 365 天 / `memory`+`draft` **永久** | 默认 TTL 30 天（全 ns）、上限 365 天；仅 `prefs` 可永不过期 | **A1 语义更合理但口径不同**：本文的默认 30 天会把"长期记忆"（`memory`）淘汰掉，与命名矛盾 | **采纳 A1 分档**，但补两条硬约束：① 永久条目**仍计入** 5 MiB 总字节与单 Agent 软配额，且**优先**被淘汰（否则"永久"= 无界增长，最终靠 LRU 挤掉别人的记忆）；② 把 `AGENT_KV_DEFAULT_TTL_DAYS` 改为按 namespace 的表 `AGENT_KV_TTL_BY_NAMESPACE`，单一默认值退化为"未指定时取 `session` 档 30 天" |
++| **C-5** | 三重闸②= "值 JSON 的**字段名**命中前缀关键字" | 三重闸②= **递归遍历字符串叶子的值本身**（深度 ≤ 8、节点 ≤ 1000，特征表 `sk-`/`ghp_`/`xoxb-`/`AIza`/`AKIA`/`Bearer `/`-----BEGIN `/`eyJ` 等） | **A1 更窄、可被绕过**：把 token 塞进字段名无害的值里（如 `{"note": "sk-xxxx"}`）即可放行 —— 这正是 LLM 响应回显凭据的最常见形态 | **两者都要**：字段名黑名单 **且** 字符串值扫描。A1 的②是必要不充分条件，补上值扫描才是 W0 §4.5 定义的三重闸 |
++| **C-6** | "per-agent **32 条**软配额"（W1-3-2） | `AGENT_KV_MAX_AGENTS = 32` 是 **agent 数量上限**；**单 Agent 软配额 = 1 MiB（字节）**（W0 §8.2 D3 采纳 A5 值） | ⚠️ **数字误用**：32 条 × 32 agent = 1024 条即触发"软配额"，而总上限是 5000 条 → 软配额**永远先于**总上限触发，5 MiB / 5000 条的总上限**形同虚设** | 更正为：单 Agent 软配额 = `AGENT_KV_SOFT_PER_AGENT_BYTES = 1 MiB`（**字节**口径）；`AGENT_KV_MAX_AGENTS = 32`（**agent 数**上限）。若 A1 坚持条数口径，则 §4.10 的 `AGENT_KV_MAX_ENTRIES` 应同步下调到 ~1024，否则两个上限自相矛盾 |
++
++> 三处都**不涉及安全放宽**（都不触碰隐私/执行/凭据红线），属"口径对齐"级别。
++> 建议 A0 在集成 `M5-3` 卡时一并回填；**C-6 必须在实现开始前定案**，否则实现期会出现
++> "按 5000 条写测试、按 1024 条跑行为"的经典漂移（正是 A2 §2.1 与本文 F-A4-10 要防的那一类）。
++
++---
++
++## 7. 解锁条件与 fallback
++
++### 7.1 M5-3.a（`agent_kv` 记忆层）可实施的前置
++
++| # | 条件 | 现状 | 归属 |
++|---|---|---|---|
++| U-1 | core 成立（切片 0a/0b 完成，`src/core/` 存在且 `cargo test` 绿） | 🟡 **已起步**：`[lib] mvp_core` + `src/core/{mod.rs,keyring_store.rs}` 已落（切片 0a 第一小批）；A 类其余模块与切片 0b 契约收口未完成 | A2 |
++| U-2 | `PathResolver` + **`Clock`** + **`AuditSink`** 三个 seam 就位 | ❌ `src/core/seam.rs` 未出现（切片 1 未做），三个都缺 | A2（本文 §3 已提签名） |
++| U-3 | `check-core-boundary.py` 落地 + 挂 `pre-merge.sh` + §5 的 3 个新码位 | 🟡 **前两项已完成**（已挂三模式）；**3 个新码位未加** | A2（加码位） |
++| U-4 | `capability.rs` 位置裁决为 core | ❌ 未定（A1 卡写"core 或二进制"） | A0 / A1 / A3 |
++| U-5 | W0 §8.2 的 C-1/C-2/C-3 三项 A4↔A5 冲突裁决 | ❌ 未裁决 | A0 |
++| **U-6** | **§6.5 的 C-4（TTL 分档）/ C-5（值扫描口径）/ C-6（per-agent "32" 误用）回填到 A1 `M5-3` 卡** | ❌ A1 已采纳更严方案但转写产生偏差（08:50） | A0 / A1（**C-6 须在实现开始前定案**） |
++
++### 7.2 Fallback（若 W1 只落边界脚本、seam 未就位）
++
++board W1 对 A2 的授权是"**最小 lib/core 边界，不迁移任何业务行为**"，
++因此 **U-2 在 W1 内大概率不会就位**。此时若 A0 仍要放行 M5-3.a，采用**"二进制先行 + 零成本搬迁"**形态：
++
++1. `agent_kv` 实现**先放二进制**，但**所有纯函数签名按 §6.3 的注入形态写**（`root: &Path` / `now: DateTime<Utc>` / `audit: &dyn AuditSink`），
++   只是由命令层从 `app` 取值后传入 —— **seam 就位后只需把文件从 `src/` 移到 `src/core/`，函数体零改动**；
++2. 常量仍只写进 `domain.rs`（§6.2），`COREBOUND_CONST_SHADOW` 此时即生效（防影子副本）；
++3. 单测照写（注入临时目录 + 固定时钟），**测试代码在搬迁后可直接随文件搬进 core**；
++4. **明确禁止**的捷径：为了赶工在 core 里直接 `app.path()` / `log_audit(app)`（会污染边界，后续清理成本远高于现在等 seam）。
++
++> 推荐：若 U-2 未就位，**优先等 M5-1.c（A2 §8 给 A5 的同款门槛）**，而不是走 fallback。
++> 理由与 A2 给 A5 的理由完全同构：在 `script_runner`/路径/审计仍绑 Tauri 时落地，
++> 会把 Tauri 拖进 Agent 与记忆层的单测。
++
++---
++
++## 8. 挂账（本波新增）
++
++| ID | 内容 | 解锁条件 |
++|---|---|---|
++| **D-M5-3-6** | `Clock` / `AuditSink` seam 未纳入 A2 切片 1 提案（M5-3 的 TTL/淘汰/审计拆分的**可测性**依赖它） | A2 在切片 1 增补，或 A0 指派 A4 提供 trait 草案 |
++| **D-M5-3-7** | `capability.rs` 归属口径未定（A1 卡"core 或二进制"）；M5-3 要求 core | A0/A1 在 M5-1 卡片中钉死为 core |
++| **D-M5-3-8** | A1 `M5-3` 卡 `[W1 patched]` 转写偏差 C-4（TTL 分档）/ C-5（值扫描只查字段名）/ C-6（per-agent "32 条"误用，致总上限形同虚设） | A0/A1 回填权威卡；**C-6 须在 M5-3.a 实现开始前定案** |
++| **D-M5-3-9** | `check-core-boundary.py` 落地 + 挂 `pre-merge.sh` **已完成 ✅**；但 §5 的 3 个防重复定义码位仍未加（`CORE_CONST_SHADOW` / `CORE_DIALECT_SINGLE_DEF` / `CORE_CAPABILITY_SINGLE_DEF`） | A2 补 3 个码位（含 `--self-test` 好/坏样本，遵循"产物存在才判" no-op 降级） |
++
++（W0 已有的 D-M5-3-1~5 不变：对外发起分波、SQLite 迁移、高熵检测、导出同步、`McpInproc` 方言。）
++
++---
++
++## 9. 验证与合并须知（Merge Notes）
++
++- **本文件即 W1 交付物**：DOCS ONLY，**未改动任何产品代码、未新增/修改 `Cargo.toml`、`scripts/pre-merge.sh`、
++  `src-tauri/**`、三份主文档**；也**未修改**已随 `404f514` 合入的 W0 文档（只做增量，避免与 A0 的集成冲突）。
++- **补丁**：随本文件产出 `logs/checkpoints/Lane-A4-M5-a2a-memory-20260906-0825-w1-delta.patch`（仅含本 delta 文档）。
++- **给 A2 的三个可立即采纳的动作**（按性价比排序）：
++  1. `scripts/check-core-boundary.py` 加 `CORE_CONST_SHADOW`（顺手把 §13.4 的 V-7 变成机器门禁）；
++  2. 同脚本加 `CORE_DIALECT_SINGLE_DEF` + `CORE_CAPABILITY_SINGLE_DEF`
++     （挡住 W0 已暴露的两次撞名，成本 = 3 个正则 + 6 个自测样本，且遵循"产物存在才判"的 no-op 降级）；
++  3. 切片 1 的 `src/core/seam.rs` 增补 `Clock` 与 `AuditSink`（M5-3 与 M5-6 共用）。
++- **给 A0 的两个动作**：
++  1. 确认 `check-core-boundary.py` 的 pre-merge 挂载生效（**A2 已完成**：`pre-merge.sh:404-409` 三模式），
++     并推动补齐 §5 的 3 个码位（D-M5-3-9）；
++  2. 裁 `capability.rs` 必须落 core（§4 / U-4）。
++- **给 A1 的一个动作**：回填 §6.5 的 **C-4/C-5/C-6**（尤其 C-6 的 per-agent "32" 误用）。
++- **给 A0/A1 的裁决（沿用 W0）**：W0 §8.2 的 C-1/C-2/C-3 三项 A4↔A5 冲突（§7 U-5）。
++- **未触碰**：其他 Lane 文件、高冲突文件（`bridge.rs` / `domain.rs` / `main.rs` / ACL / `pre-merge.sh`）。
++- **NEXT**：A2 落 W1 边界（含 §5 码位与 §3 seam 是否采纳）→ A0/A1 裁 `capability.rs` 位置与 §8.2 三项冲突
++  → A0 签 `M5-3.a` → 实施时按 §7.1 的 U-1~U-5 逐条验收。
++
++---
++
++## 10. 输出模板回填
++
++```text
++LANE=A4
++STATUS=PASS_WITH_DOCS（M5-W1 SUPPORT DOCS ONLY）
++BASE=404f514
++HEAD=docs only；补丁 logs/checkpoints/Lane-A4-M5-a2a-memory-20260906-0825-w1-delta.patch
++FILES=logs/assist/A4-M5-a2a-memory-20260906-0825-w1-delta.md；logs/checkpoints/Lane-A4-M5-a2a-memory-20260906-0825-w1-delta.patch
++VERIFY=无产品代码改动；事实来自已合入文档实读（A2 §2.1/§3.1/§3.3/§6/§8/§13.3/§13.4/§13.5、A1 M5-2 与 M5-3 卡、board §M5-W1、A0-M5-W1-dispatch-20260906-0835.md）+ 工作树实查（08:50：无 lib.rs / 无 src/core = core 未成立；check-core-boundary.py 已存在 591 行但未挂 pre-merge；A1 对 M5-3 卡的 W1 patched diff 已读）
++CHECKPOINT=logs/assist/A4-M5-a2a-memory-20260906-0825-w1-delta.md
++MERGE_NOTES=W1 delta；4 项依赖请求（seam Clock+AuditSink / capability.rs 落 core / 3 个防重复定义码位 CORE_CONST_SHADOW+CORE_DIALECT_SINGLE_DEF+CORE_CAPABILITY_SINGLE_DEF / pre-merge 挂载）；自我修订 T-kv-22 自比退化与常量零影子副本纪律；**新发现 A1 采纳更严方案后的 3 处转写偏差 C-4/C-5/C-6（C-6 使总上限形同虚设，须实现前定案）**；解锁条件 U-1~U-6 与 fallback；新增挂账 D-M5-3-6~9
++NEXT=A2 采纳 §3/§5 + A0 挂 pre-merge + A1 回填 C-4/C-5/C-6 → A0 裁 capability.rs 位置与 §8.2 C-1/C-2/C-3 → 签 M5-3.a
++```

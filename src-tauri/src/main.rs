@@ -7,7 +7,6 @@ mod domain;
 mod grid_ipc;
 mod grid_process;
 mod images;
-mod keyring_store;
 mod scheduler;
 mod script_runner;
 mod scripts;
@@ -20,6 +19,13 @@ mod tasks;
 mod terminal;
 mod tools;
 mod workspace;
+
+// M5-1 re-export shim：已搬入 `mvp_core` 的模块在此再导出，
+// 于是二进制侧既有的 `crate::<mod>::X` 路径**无需任何改写**即可继续解析。
+// 每搬入一个模块，就在下方补一行 `pub use mvp_core::<mod>;`，
+// 并保证 `mod <mod>;` 已从上面删除（重复定义由 check-core-boundary.py 的
+// `CORE_SHIM_CONFLICT` 守门）。
+pub use mvp_core::keyring_store;
 
 use bridge::AppState;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};

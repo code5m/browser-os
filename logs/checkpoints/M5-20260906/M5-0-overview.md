@@ -1,10 +1,63 @@
-# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0）
+# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0 + W1 reconciliation）
 
 > 生成：2026-09-06 08:00 CST · Lane A1（M5-W0 · docs only）
-> 基准：`a1a2061`（`master`，M4 已 PASS，已合数据库+调度并行成果） +  本地 `5ca8f9f docs(M5): dispatch architecture prework lanes`（A0 预研派发，**未 push**）
+> W1 修订：2026-09-06 08:50 CST · Lane A1（M5-W1 · docs-only reconciliation）
+> 基准：`a1a2061`（`master`，M4 已 PASS，已合数据库+调度并行成果） +  本地 `5ca8f9f docs(M5): dispatch architecture prework lanes`（A0 预研派发） +  `404f514 docs(M5): integrate prework and dispatch core boundary wave`（A0 已拣入 W0 整包 + W1 dispatch）
 > 性质：**纯文档展开**。零产品代码（未触 `src/`、`src-tauri/`、`package.json`、三份主文档、ACL/Capability/Manifest）；不移动 `NEXT`；不提交、不 push。
-> 依据：`PARALLEL_COMMAND_BOARD.md`（2026-09-05 23:55 版 · Batch Implementation Dispatch · Lane A1: M5 task-card expansion）
+> 依据：`PARALLEL_COMMAND_BOARD.md`（2026-09-05 23:55 版 · Batch Implementation Dispatch · Lane A1: M5 task-card expansion；2026-09-06 08:35 CST · M5-W1 Implementation Dispatch · Lane A1: START DOCS ONLY · reconciliation）
 > 入口：本卡体系的根文档，本目录下其它文件是各 M5-x 子卡
+
+---
+
+## W1 Reconciliation Note（2026-09-06 08:50 CST · Lane A1 修订）
+
+### 触发
+
+A0 在 `404f514` 后下发 M5-W1 dispatch（`logs/checkpoints/A0-M5-W1-dispatch-20260906-0835.md`），A1 行要求：
+> *"Reconcile M5 task cards with A2/A6/A10 findings: M5-1 internal order must be boundary policy first, then minimal extraction; remove stale assumptions such as vue-router and empty prework notes."*
+
+A1 复核 W0 整包与 A2 v3 prework（`logs/assist/A2-M5-core-20260906-0749.md` §12/§13）、A6 prework、A10 复审（`logs/assist/A10-M5-security-review-20260906-1410.md` §36/§104）后，**确认 5 张子卡需修订**，**"vue-router"字面量不存在**，W0 中"被预研证伪的隐式假设"为：A1 W0 的事实数据（模块数 23/反向边 4 处/scheduler 4 行/agent_kv 扁平+缺 `updated_at`/`check-core-boundary.sh`/切片 0a→0b 顺序）被 A2/A4 实测修正。
+
+### 修订索引（5 处）
+
+| # | 文件 | 修订点 | 来源 |
+|---|---|---|---|
+| W1-1 | `M5-0-overview.md`（本文件） | 顶部加本节、依赖图注脚更新 | A0 W1 + A2 v3 |
+| W1-2 | `M5-1-core-workspace-split.md` | 应用 A2 v3 6+2 处分歧（详见该卡顶部 `[W1 patched]` 段） | A2 v3 §12/§13 + A0 W1 boundary-first |
+| W1-3 | `M5-3-a2a-bidir-agent-kv.md` | `agent_kv` 改三层嵌套 + 删 LRU 缺 `updated_at` 矛盾 | A4 prework + A10 §104 |
+| W1-4 | `M5-13-verification-matrix.md` | `check-core-boundary.sh` → `.py`（仓库惯例） | A2 v3 §13.3 C-8 |
+| W1-5 | `M5-14-debt-ledger.md` §6 L83 scheduler 反向边从 "M5-1.a 解决" 改 "M5-1.b 解决" | A2 v3 §13.2 C-7 |
+| W1-6 | `logs/checkpoints/M5-A1-expansion-20260906-0800.md` | 加 W1 修订段 | A0 W1 dispatch |
+
+### 不修订
+
+- **M5-2 / M5-4 / M5-5 / M5-6 / M5-7 / M5-8 / M5-9 / M5-10 / M5-11 / M5-12**（10 张）：A0 W1 dispatch 把 M5-2/4/5/6/7/8/9/10/11/12 的产品代码**仍锁定**，A1 不在 W1 范围改这些卡。
+- **三份主文档**（`详细设计与实施计划.md` / `后续需求TODO.md` / `AI-模型切换与接手清单.md`）：A0 W1 未指派必要改动；A1 也不在 W1 范围动。
+- **`NEXT` 标记**：仍为 M5-W1（由 A0 拣入本批修订后改 `M5-1.a` 或 `M5-1.b`，按决策 1 拍）。
+
+### A2 v3 C-1~C-8 摘要（A1 M5-1 卡应用 6+2 处分歧的源）
+
+- **C-1**：M5-1.a 内部顺序从 `0a → 0b` 改 `0b → 0a`（测试反向 import 必须先收口）
+- **C-2**：阶段一 `cargo tree -p core` 命令降级 PENDING，改用源码级 `grep -rE '^\s*use tauri' src-tauri/src/core/` 断言
+- **C-3**：`M5-1.b` 拆为 `M5-1.b`（B 类 seam+搬入）与 `M5-1.c`（阶段二 workspace 化）
+- **C-4**："23 模块" 回填为 "20 业务模块 + main.rs"
+- **C-5**：反向边从 "4 处" 改 "8 处 + 2 组测试反向 import"，补 `:761`
+- **C-6**：`[lib] path="src/core/mod.rs"` vs `src/lib.rs` 二选一均可（不强制）
+- **C-7**（v3 新增）：M5-14 §6 L83 反向边改挂 M5-1.b
+- **C-8**（v3 新增）：`check-core-boundary` 用 `.py`（仓库 `scripts/` 30+ 脚本惯例）
+
+### A0 W1 boundary-first 顺序（A1 M5-1 卡的实施序重组）
+
+1. **步骤 0（new in W1）**：A2 先建 `scripts/check-core-boundary.py`（含 `--self-test` 2好+2坏+1阴/默认扫描/`--expect-pending` 三模式）并挂 `scripts/pre-merge.sh` —— **本步是后续所有 core 内操作的准入前置**。
+2. **步骤 0b**（A1 M5-1.a 切片 0b）：先把 `HARD_GRACE_SECS` / `MAX_TIMEOUT_SECS` / `MAX_TEXT_FIELD_BYTES` / `DB_MAX_TEXT_FIELD_BYTES` / `DB_SOFT_TO_HARD_GRACE_SECS`（含 V-7 副本收口）收口到 `domain.rs`，改 `t_db_c6_limit_and_timeout_constants_are_aligned` 避免"自比退化"。
+3. **步骤 0a**（A1 M5-1.a 切片 0a）：建 `src-tauri/src/core/mod.rs` + A 类 10 模块整文件带 `#[cfg(test)]` 搬入。
+4. **步骤 1**（A1 M5-1.b 切片 1）：抽 `RootsProvider` / `ProgressSink` / `PathResolver` trait，解除 `scheduler → bridge::AppState` 反向边。
+5. **步骤 2**（A1 M5-1.b 切片 2）：B 类模块 seam 改造。
+6. **步骤 c**（A1 M5-1.c 阶段二，可选）：根 `Cargo.toml [workspace]` 化（须 exclude `tauri-browser-tabs/`）。
+
+> 步骤 0→0b→0a→1→2 不可换序：换序则步骤 0b 后的常量引用在步骤 0a 完成前编译失败，步骤 0a 完成的 core 边界在步骤 1 前不构成"反向边解除"。
+
+---
 
 ---
 

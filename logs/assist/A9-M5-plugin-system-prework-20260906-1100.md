@@ -306,3 +306,20 @@ cargo clippy --manifest-path src-tauri/Cargo.toml 2>&1 | grep -c warning   # 不
 - `logs/assist/A9-M5-plugin-system-prework-20260906-1100.md`（本文件）—— M5-10/11/12 契约 + 任务拆分 + 安全阻塞项。
 - 继承：`logs/assist/A9-M5-plugin-form-feasibility-20260906-0700.md`（形态裁定）。
 - 配套卡：`A9-M5-A13plus-cards-20260906-0010.md`（A18 runtime / A19 UI）。
+
+---
+
+## §10 W1 Reconciliation Addendum（2026-09-06 · M5-W1）
+
+> 本文件为 A9 M5-W0 预研（docs only）。M5-W1 派发（`PARALLEL_COMMAND_BOARD.md` §M5-W1 Implementation Dispatch · A9 行 = SUPPORT DOCS ONLY）要求 A9 在 capability boundary 之后准备插件系统、**保留 form③ 与 Ed25519 提案**。完整 reconciliation 见 `logs/assist/A9-M5-plugin-W1-delta-20260906-1530.md`。
+>
+> 与 A1 权威卡 `logs/checkpoints/M5-20260906/M5-10/11/12` 的偏差裁定（**以 A1 权威卡为准**）：
+
+1. **签名方案（关键修正）**：原文 §2.3「M5 首期不实现签名校验」+ 仅 `manifest_hash` → **SUPERSEDED**。以 M5-10 §4.4 为准，默认 **Ed25519 + 本地受信任 keys 目录**（`plugin_signature.rs` 新增；`trusted-pubkeys.json` 受 keyring 保护）；`PluginManifest` 含 `hash`(sha256 资源包) + `signature`(Ed25519，引用 `trusted-pubkeys.json` 的 `key_id`)。`manifest_hash` 变更 → 授权失效自动 `Disabled`（与原文 §2.3 一致）。
+2. **命令面**：原文 §3.1 的 6 条（`list/install/enable/disable/uninstall/config_get/set`）为子集 → 以 M5-10(10) + M5-11(8) = **18 条**为准（全插 `list_artifact_images` 之前）。
+3. **审计文件**：原文 §3.4 `plugin-audit.json` → SUPERSEDED，以 M5-11 §4.4 `plugin-invokes.json`（独立 500 FIFO）+ 摘要进 `audit.json` 为准。
+4. **权限模型**：原文 §2.1 自研 `acl_level` + `permissions`(commands/fs_roots/net_hosts/db_conn_ids/keyring_prefixes) 保留为**运行时 fail-closed 执行层**；主模型以 A1 `capability.rs` 共用白名单为准（M5-0 §7 红线③ A2P/A2A/Skill/Plugin/Agent 共用，防漂移）；`fs_roots`/`net_hosts` 资源约束并入 M5-11 §4.2 资源隔离（`plugins_dir()/<id>/workspace/` + 独立 storage + 独立 audit）。
+
+> A10 复审（`A10-M5-security-review-20260906-1410.md` §46/§92/§108/§148）对 form③ / `can_invoke` 7 步 / 能力共用 / 默认禁用 / zip-slip 防护 **未提阻断**（C4 不安全安装 ✅ PASS、G-6 形态冲突已解决）。唯一硬门 **D-1**：M5 策略脚本（含 `check-plugin-policy.py`）尚未建且未挂 `pre-merge.sh`，归 A18 实现期随代码落地。
+>
+> **结论**：form③ 与 Ed25519 提案均已保留；本文件其余分析（生命周期默认 `Disabled`、zip-slip 防护、`can_invoke` 7 步、SB-1~SB-10、N1~N16 反向用例）继续有效。
