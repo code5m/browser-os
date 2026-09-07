@@ -158,6 +158,32 @@ bridge.agentRunsList = async (id) => {
   calls.push(["agent_runs_list", id]);
   return [];
 };
+// W9：只读桥命令（M5-W7 已进 mainline，AGENT_SKILL_READONLY_COMMANDS_AVAILABLE=true）。
+// 成功路径默认 mock；§11.5 会临时改写为失败路径。
+bridge.skillValidate = async (t) => {
+  calls.push(["skill_validate", t]);
+  return { valid: true, errors: [] };
+};
+bridge.skillParse = async (t) => {
+  calls.push(["skill_parse", t]);
+  return skillDef;
+};
+bridge.skillPermissionPreview = async (t) => {
+  calls.push(["skill_permission_preview", t]);
+  return { gate: "confirm", capabilities: ["fs:read", "net:http"] };
+};
+bridge.agentValidate = async (t) => {
+  calls.push(["agent_validate", t]);
+  return { valid: true, errors: [] };
+};
+bridge.agentParse = async (t) => {
+  calls.push(["agent_parse", t]);
+  return agentDef;
+};
+bridge.agentPermissionPreview = async (t) => {
+  calls.push(["agent_permission_preview", t]);
+  return { gate: "safe", capabilities: ["net:http"] };
+};
 
 let passed = 0;
 const failures = [];
@@ -395,6 +421,90 @@ assert(classifyCapability("file_read", []).unknown === true, "W8-20 白名单外
 const red2 = redactSecrets({ system_prompt: "use sk-abc token", TOKEN: "x" });
 assert(red2.TOKEN === "***", "W8-21 TOKEN 键脱敏");
 assert(red2.system_prompt === "use sk-abc token", "W8-22 提示词按值不按键名脱敏（凭据泄露由后端判）");
+
+// ===========================================================================
+// 11. W9：Agent/Skill 面板消费打磨（只读校验命令已进 mainline，只读开关=true）
+//     - 确定的空/加载/成功/错误态（skillStatus / agentStatus）
+//     - 预览渲染有界（boundedPreview / boundedAgentPreview）
+//     - UI 状态不回显 secret：原始输入文本不进 store；错误串与解析 def 做 secret 模式脱敏
+//     全部经 store 动作 + mock bridge 驱动，反映产品代码行为。
+// ===========================================================================
+// 11.1 确定的空态
+store.clearValidation();
+assert(store.skillStatus === "empty", "W9-1 清空后 skill 面板为空态");
+assert(store.agentStatus === "empty", "W9-2 清空后 agent 面板为空态");
+assert(
+  store.boundedPreview.shown.length === 0 && store.boundedPreview.overflow === 0,
+  "W9-3 空态预览有界无溢出",
+);
+
+// 11.2 loading 态优先于其它态
+store.loading = true;
+assert(store.skillStatus === "loading", "W9-4 loading 优先于其它态");
+store.loading = false;
+
+// 11.3 validateSkill 串联消费：只读路径独立于 install/run 就绪（即便 backendReady=false）
+store.backendReady = false;
+resetCalls();
+await store.validateSkill("PASTED_JSON_TEXT");
+assert(
+  calls.some(([n, t]) => n === "skill_validate" && t === "PASTED_JSON_TEXT"),
+  "W9-5 只读校验发出 skill_validate（不受 backendReady 拦截）",
+);
+assert(store.skillValidation && store.skillValidation.valid === true, "W9-6 校验通过 valid=true");
+assert(store.skillParseDef && store.skillParseDef.id === "skill-1", "W9-7 解析出 def 供摘要展示");
+assert(
+  store.skillPreview && store.skillPreview.capabilities.length === 2,
+  "W9-8 权限预览回传（confirm 档 + 2 能力）",
+);
+assert(store.skillStatus === "ok", "W9-9 校验通过 → ok 态");
+store.backendReady = true;
+
+// 11.4 错误态 + 不回显 secret（错误串脱敏）
+bridge.skillValidate = async () => ({
+  valid: false,
+  errors: ["凭据泄露：sk-ABCDE12345678 出现在 system_prompt", "id 为空"],
+});
+resetCalls();
+await store.validateSkill("SECRET_INPUT_WITH_sk-ABCDE12345678");
+assert(store.skillStatus === "error", "W9-10 校验失败 → error 态");
+assert(
+  store.skillValidation.errors.some((e) => e.includes("id 为空")),
+  "W9-11 普通错误项可见",
+);
+assert(
+  store.skillValidation.errors.every((e) => !e.includes("sk-ABCDE12345678")),
+  "W9-12 错误串中 secret 模式已脱敏（不回显）",
+);
+// 原始输入文本绝不进入 store 状态
+assert(!("skillInputText" in store) && !("lastInput" in store), "W9-13 原始输入文本不进 store 状态");
+
+// 11.5 有界预览渲染
+store.skillPreview = { gate: "safe", capabilities: Array.from({ length: 100 }, (_, i) => `cap:${i}`) };
+assert(store.boundedPreview.shown.length === 20, "W9-14 预览仅展示前 20 项");
+assert(store.boundedPreview.overflow === 80, "W9-15 余下 80 项标记为溢出");
+assert(store.boundedPreview.total === 100, "W9-16 总数仍为 100（不丢信息）");
+
+// 11.6 agent 对称路径 + 解析 def 中 prompt-secret 不进前端状态
+bridge.agentParse = async () => ({
+  ...agentDef,
+  systemPrompt: "你是一个助手，内部 token=sk-ZZZ99999999999",
+});
+resetCalls();
+await store.validateAgent("AGENT_JSON_TEXT");
+assert(calls.some(([n]) => n === "agent_validate"), "W9-17 只读校验发出 agent_validate");
+assert(store.agentStatus === "ok", "W9-18 agent 校验通过 → ok 态");
+assert(
+  store.agentPreview && store.agentPreview.gate === "safe",
+  "W9-19 agent 权限预览（safe 档）",
+);
+assert(
+  store.agentParseDef && !store.agentParseDef.systemPrompt.includes("sk-ZZZ99999999999"),
+  "W9-20 解析出的 AgentDef.systemPrompt 中 secret 已脱敏（不进前端状态）",
+);
+
+// 11.7 收尾：回到空态，避免影响后续（如若有）断言
+await store.clearValidation();
 
 // ---------------- 汇总 ----------------
 console.log(`\ncheck-agent-skill-ui-logic: ${passed} assertions passed, ${failures.length} failed`);

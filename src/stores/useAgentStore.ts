@@ -10,13 +10,19 @@
 
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import { AGENT_SKILL_COMMANDS_AVAILABLE, bridge } from "../bridge";
+import {
+  AGENT_SKILL_COMMANDS_AVAILABLE,
+  AGENT_SKILL_READONLY_COMMANDS_AVAILABLE,
+  bridge,
+} from "../bridge";
 import type {
   AgentDef,
   AgentSessionUI,
   PendingConfirm,
+  PermissionPreview,
   SkillDef,
   StreamChunk,
+  ValidationReport,
 } from "../types";
 import {
   appendChunk,
@@ -41,11 +47,36 @@ export const useAgentStore = defineStore("agent", () => {
   // 后端命令可用性。A5 落地后置 true（见 `bridge.AGENT_SKILL_COMMANDS_AVAILABLE`）。
   const backendReady = ref<boolean>(AGENT_SKILL_COMMANDS_AVAILABLE);
 
+  // W9：只读校验消费态（M5-W7 桥已落地，AGENT_SKILL_READONLY_COMMANDS_AVAILABLE=true）。
+  // 仅持有后端返回的结构化结果（校验报告 / 解析 def / 权限预览），**不持有原始输入文本**，
+  // 避免 prompt-secret 进入前端状态（board W9 Hard Stop：no prompt-secret in frontend state）。
+  // 错误串与解析出的 def 在落入状态前做 secret 模式纵深脱敏。
+  const skillValidation = ref<ValidationReport | null>(null);
+  const skillParseDef = ref<SkillDef | null>(null);
+  const skillPreview = ref<PermissionPreview | null>(null);
+  const agentValidation = ref<ValidationReport | null>(null);
+  const agentParseDef = ref<AgentDef | null>(null);
+  const agentPreview = ref<PermissionPreview | null>(null);
+
   const selectedSkill = computed(() => skills.value.find((s) => s.id === selectedSkillId.value) ?? null);
   const selectedAgent = computed(() => agents.value.find((a) => a.id === selectedAgentId.value) ?? null);
   const pendingConfirmList = computed(() =>
     [...pendingConfirms.value.values()].filter((c) => !isConfirmExpired(c)),
   );
+
+  // W9：面板消费态机——确定的 empty / loading / ok / error 四态，供组件无歧义渲染。
+  const skillStatus = computed<"empty" | "loading" | "ok" | "error">(() => {
+    if (loading.value) return "loading";
+    if (!skillValidation.value) return "empty";
+    return skillValidation.value.valid ? "ok" : "error";
+  });
+  const agentStatus = computed<"empty" | "loading" | "ok" | "error">(() => {
+    if (loading.value) return "loading";
+    if (!agentValidation.value) return "empty";
+    return agentValidation.value.valid ? "ok" : "error";
+  });
+  const boundedPreview = computed(() => boundCaps(skillPreview.value?.capabilities));
+  const boundedAgentPreview = computed(() => boundCaps(agentPreview.value?.capabilities));
 
   /// 后端未就绪时统一拦截：**一条 invoke 都不发**，避免对不存在的命令反复报错。
   function guard(): boolean {
@@ -57,6 +88,40 @@ export const useAgentStore = defineStore("agent", () => {
 
   function fail(e: unknown): void {
     error.value = e instanceof Error ? e.message : String(e ?? "未知错误");
+  }
+
+  /// secret 模式（与 A4/A5 policy 同口径）：前端对错误串 / 解析 def 的纵深脱敏，
+  /// 兜底后端已做的 CredentialLeak Display 脱敏，确保 UI 状态绝不回显 secret。
+  const SECRET_REDACT_PATTERNS: RegExp[] = [
+    /sk-[A-Za-z0-9]{8,}/g,
+    /AKIA[0-9A-Z]{12,}/g,
+    /Bearer\s+[A-Za-z0-9._-]+/g,
+    /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
+    /-----BEGIN[^]*?PRIVATE KEY-----/g,
+  ];
+  function redactSecretsInText(s: string): string {
+    return SECRET_REDACT_PATTERNS.reduce((acc, re) => acc.replace(re, "***"), s);
+  }
+  function sanitizeErrors(errors: string[]): string[] {
+    return errors.map(redactSecretsInText);
+  }
+  function sanitizeSkillDef(d: SkillDef | null): SkillDef | null {
+    if (!d) return null;
+    return { ...d, description: redactSecretsInText(d.description) };
+  }
+  function sanitizeAgentDef(d: AgentDef | null): AgentDef | null {
+    if (!d) return null;
+    return {
+      ...d,
+      description: redactSecretsInText(d.description),
+      systemPrompt: redactSecretsInText(d.systemPrompt),
+    };
+  }
+  /// 预览能力有界：展示前 N 项，其余标为溢出（不丢总数信息，前端按需展开）。
+  const PREVIEW_CAP = 20;
+  function boundCaps(caps?: string[]): { shown: string[]; overflow: number; total: number } {
+    const c = caps ?? [];
+    return { shown: c.slice(0, PREVIEW_CAP), overflow: Math.max(0, c.length - PREVIEW_CAP), total: c.length };
   }
 
   function setPending(action: PendingConfirmAction, payload: unknown): string {
@@ -203,6 +268,67 @@ export const useAgentStore = defineStore("agent", () => {
     }
   }
 
+  // W9：只读校验消费。仅解析/校验/预览（M5-W7 桥），不安装/不执行/不写持久化。
+  // 经 AGENT_SKILL_READONLY_COMMANDS_AVAILABLE 开关放行——与 install/run 就绪态解耦：
+  // 即便 backendReady=false（W5 运行时命令未落地），只读校验仍可用。
+  // 三路结果并发拉取；解析/预览失败不影响校验结论（def/preview 为 null 即可）。
+  async function validateSkill(text: string): Promise<void> {
+    if (!AGENT_SKILL_READONLY_COMMANDS_AVAILABLE) {
+      error.value = "只读校验命令未就绪";
+      return;
+    }
+    loading.value = true;
+    error.value = null;
+    try {
+      const [report, def, preview] = await Promise.all([
+        bridge.skillValidate(text),
+        bridge.skillParse(text).catch(() => null),
+        bridge.skillPermissionPreview(text).catch(() => null),
+      ]);
+      skillValidation.value = { valid: report.valid, errors: sanitizeErrors(report.errors) };
+      skillParseDef.value = sanitizeSkillDef(def);
+      skillPreview.value = preview;
+    } catch (e) {
+      fail(e);
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function validateAgent(text: string): Promise<void> {
+    if (!AGENT_SKILL_READONLY_COMMANDS_AVAILABLE) {
+      error.value = "只读校验命令未就绪";
+      return;
+    }
+    loading.value = true;
+    error.value = null;
+    try {
+      const [report, def, preview] = await Promise.all([
+        bridge.agentValidate(text),
+        bridge.agentParse(text).catch(() => null),
+        bridge.agentPermissionPreview(text).catch(() => null),
+      ]);
+      agentValidation.value = { valid: report.valid, errors: sanitizeErrors(report.errors) };
+      agentParseDef.value = sanitizeAgentDef(def);
+      agentPreview.value = preview;
+    } catch (e) {
+      fail(e);
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  // 清空只读校验消费态，回到确定的 empty 态。
+  function clearValidation(): void {
+    skillValidation.value = null;
+    skillParseDef.value = null;
+    skillPreview.value = null;
+    agentValidation.value = null;
+    agentParseDef.value = null;
+    agentPreview.value = null;
+    error.value = null;
+  }
+
   // 组件层流式回调：把 chunk 追加到会话（有界）。
   function pushChunk(sessionId: string, chunk: StreamChunk): void {
     const s = sessions.value[sessionId];
@@ -245,5 +371,19 @@ export const useAgentStore = defineStore("agent", () => {
     cancelRun,
     pushChunk,
     endSession,
+    // W9 只读校验消费态（面板消费打磨）
+    validateSkill,
+    validateAgent,
+    clearValidation,
+    skillValidation,
+    skillParseDef,
+    skillPreview,
+    agentValidation,
+    agentParseDef,
+    agentPreview,
+    skillStatus,
+    agentStatus,
+    boundedPreview,
+    boundedAgentPreview,
   };
 });
