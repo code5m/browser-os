@@ -6,7 +6,7 @@
 > 主预研：暂无 prework 文档
 > 配套：`M5-10-plugin-manifest-lifecycle.md`（manifest 后端）· `M5-11-plugin-commands-isolation.md`（命令与隔离）
 >
-> **W3** BLOCKED（待 M5-10 解析 + M5-11 命令基元）· **W4** ACTIVE（A19 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A19 W5 仍 SUPPORT DOCS ONLY）· **W6** ACTIVE（A19 W6 仍 SUPPORT DOCS ONLY —— W6 仅 A8 M5-9 + A9 M5-10/M5-11 产品代码 lane，**无 plugin UI lane 承接**；详见本卡顶部 `[W6 status]` 段）
+> **W3** BLOCKED（待 M5-10 解析 + M5-11 命令基元）· **W4** ACTIVE（A19 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A19 W5 仍 SUPPORT DOCS ONLY）· **W6** ACTIVE（A19 W6 仍 SUPPORT DOCS ONLY —— W6 仅 A8 M5-9 + A9 M5-10/M5-11 产品代码 lane，**无 plugin UI lane 承接**；详见本卡顶部 `[W6 status]` 段）· **W7** RECONCILIATION（A3 W7 mcp_* 3 命令 + A11 W7 pre-merge FAIL 3 red lights + A6 W7 wiring 在 `6c1f30e` / `daa10f6` / `a29b796` 已拣入 master；A19 W7 仍 SUPPORT DOCS ONLY；plugin UI 待 W8+ A19 派发：plugin 列表 / 详情 / 安装向导 / 启用停用 / 审计查询 / 权限预览 6 项；A1 W7 整包本卡修订未进 master，留 W8 整包合并拣入；详见 `M5-0-overview.md` 顶部 `[W7 reconciliation]` 段 + `M5-14-debt-ledger.md` §10 DEBT-04）· **W8** ACTIVE（**A19 W8 仍 SUPPORT DOCS ONLY** —— **W8 仅 A5 START PRODUCT CODE 硬化 Agent/Skill read-only bridge + A6 START UI DOCS/LOGIC 实施 Agent/Skill 面板消费 + 纯 UI helper tests + A8 UI POLISH/TEST + A9 POLICY REVIEW；无 plugin UI lane 承接**；plugin UI 待 W9+ A19 派发，详见 `M5-0-overview.md` 顶部 `[W8 active]` 段 + `M5-14-debt-ledger.md` §10 DEBT-04 + §10.4 W8+ batch）
 
 ---
 

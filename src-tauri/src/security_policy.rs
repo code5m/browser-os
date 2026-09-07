@@ -115,8 +115,8 @@ impl std::fmt::Display for PolicyError {
             PolicyError::LaunchProgramNotFound(p) => {
                 write!(f, "启动目标不是可执行文件：{p}")
             }
-            PolicyError::CredentialLeak(s) => {
-                write!(f, "凭据/密钥泄露（禁止进入 Agent/Skill 定义）：{s}")
+            PolicyError::CredentialLeak(_s) => {
+                write!(f, "凭据/密钥泄露（禁止进入 Agent/Skill 定义）：<redacted>")
             }
             PolicyError::UnknownCapability(c) => {
                 write!(f, "引用未登记能力（单一真源缺失）：{c}")

@@ -175,7 +175,7 @@ watch(
     <div v-else-if="layout.mainView === 'agents'" class="modview">
       <AgentManagerPanel />
     </div>
-    <div v-else-if="layout.mainView === 'graph'" class="modview">
+    <div v-else-if="layout.mainView === 'graph'" class="modview" role="region" aria-label="知识图谱">
       <GraphPanel />
     </div>
 

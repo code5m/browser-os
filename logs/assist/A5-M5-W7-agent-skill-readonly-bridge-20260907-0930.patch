@@ -1,106 +1,69 @@
-diff --git a/scripts/check-mcp-policy.py b/scripts/check-mcp-policy.py
-index 02ce0f7..d04a02b 100755
---- a/scripts/check-mcp-policy.py
-+++ b/scripts/check-mcp-policy.py
-@@ -258,16 +258,20 @@ def c_capability_drift(rel, text, repo):
-
-
- def c_parity(rel, text, repo):
--    # 若 handler 暴露 mcp_* 命令，则 ACL 与 bridge.ts 必须同时出现（防止 ACL 缺口，B5/§2.2 F-1）
-+    # 任何以 `bridge::mcp_` 注册的命令（main.rs generate_handler 中）必须同时具备
-+    # ACL（default-commands.toml）与 bridge.ts 前端封装，否则存在 ACL/前端缺口（B5/§2.2 F-1）。
-+    # 比首期「硬编码白名单」更稳：后续新增的 mcp_* 命令（如本次 W7 的
-+    # mcp_policy_get / mcp_registry_list / mcp_capability_preview）一律受同一奇偶守门。
-+    if rel != "src-tauri/src/main.rs":
-+        return None
-     mcp_cmds = set()
--    handler = repo.get("src-tauri/src/main.rs", "") + repo.get("src-tauri/src/bridge.rs", "")
--    for m in re.finditer(r"\b(mcp_server_start|mcp_server_stop|mcp_policy_get|mcp_policy_set)\b", handler):
-+    for m in re.finditer(r"bridge::(mcp_[a-z_]+)", text):
-         mcp_cmds.add(m.group(1))
-     if not mcp_cmds:
-         return None
-     acl = repo.get("src-tauri/permissions/default-commands.toml", "")
-     bts = repo.get("src/bridge.ts", "")
--    missing = [c for c in mcp_cmds if c not in acl or c not in bts]
-+    missing = [c for c in mcp_cmds if (f'"{c}"' not in acl) or (f'"{c}"' not in bts)]
-     if missing:
-         return [f"mcp 命令缺 ACL/bridge.ts 奇偶：{sorted(missing)}"]
-     return None
-@@ -279,6 +283,47 @@ def c_tree_tauri(_rel, _text, _repo):
+diff --git a/scripts/check-agent-skill-policy.py b/scripts/check-agent-skill-policy.py
+index 436f8d6..30b676c 100644
+--- a/scripts/check-agent-skill-policy.py
++++ b/scripts/check-agent-skill-policy.py
+@@ -208,9 +208,46 @@ def c_command_parity(rel, text, repo):
      return None
 
 
-+_RE_MCP_CMD = re.compile(r"#\[tauri::command\][^\n]*\n\s*pub\s+fn\s+(mcp_[a-z_]+)\s*\(")
-+# 只读约束（W7 Hard Stop）：mcp_* 命令不得含写/执行类副作用。
-+_FORBIDDEN_SIDE_EFFECT = re.compile(
-+    r"\b(?:std::fs::write|fs::write|write_file|create_file|create_dir|delete_path|"
-+    r"rename_path|script_runner|run_command|db_connect|db_query|db_disconnect|"
-+    r"spawn|Command::new|\.store\(|insert\(|emit\()"
++_READONLY_CMDS = (
++    "agent_parse", "agent_validate", "agent_permission_preview",
++    "skill_parse", "skill_validate", "skill_permission_preview",
 +)
 +
++def c_readonly_command_parity(rel, text, repo):
++    """AGSK_RO_COMMAND_PARITY：W7 只读 Agent/Skill 桥命令须在 bridge.rs handler + main.rs 注册 + ACL + bridge.ts 四件套齐全。
 +
-+def _extract_fn_body(text: str, start: int) -> str:
-+    """从签名起点提取函数体（首个 `{` 起，括号配平到 0）。"""
-+    i = text.find("{", start)
-+    if i < 0:
-+        return ""
-+    depth = 0
-+    j = i
-+    while j < len(text):
-+        c = text[j]
-+        if c == "{":
-+            depth += 1
-+        elif c == "}":
-+            depth -= 1
-+            if depth == 0:
-+                return text[i + 1 : j]
-+        j += 1
-+    return text[i + 1 :]
-+
-+
-+def c_bridge_readonly(rel, text, repo):
-+    # mcp_* 只读桥命令不得引入写/执行类副作用（与 W7 Hard Stop「只读」一致）。
-+    if rel not in ("src-tauri/src/bridge.rs", "src-tauri/src/mcp.rs"):
++    与 c_command_parity（M5-5 运行时命令）互补：覆盖 W7 新增的「只读 parse/validate/permission_preview」子集。
++    仅在任一只读命令已出现时才守门（presence-gated），故 Agent/Skill 域未落地或 W7 未开工时自动 no-op。
++    """
++    if rel != "src-tauri/src/main.rs":
 +        return None
-+    problems = []
-+    for m in _RE_MCP_CMD.finditer(text):
-+        name = m.group(1)
-+        body = _extract_fn_body(text, m.end())
-+        if _FORBIDDEN_SIDE_EFFECT.search(body):
-+            problems.append(f"mcp 命令 {name} 含写/执行类副作用（W7 只读约束）")
-+    return problems or None
++    present = any(
++        c in repo.get("src-tauri/src/bridge.rs", "")
++        or c in repo.get("src-tauri/src/main.rs", "")
++        or c in repo.get("src/bridge.ts", "")
++        or c in repo.get("src-tauri/permissions/default-commands.toml", "")
++        for c in _READONLY_CMDS
++    )
++    if not present:
++        return None
++    bridge_rs = repo.get("src-tauri/src/bridge.rs", "")
++    main_rs = repo.get("src-tauri/src/main.rs", "")
++    acl = repo.get("src-tauri/permissions/default-commands.toml", "")
++    bts = repo.get("src/bridge.ts", "")
++    missing = []
++    for c in _READONLY_CMDS:
++        in_handler = (f"bridge::{c}" in bridge_rs) or (f"pub fn {c}" in bridge_rs)
++        if not (in_handler and c in main_rs and c in acl and c in bts):
++            missing.append(c)
++    if missing:
++        return [f"W7 只读 Agent/Skill 命令缺四件套奇偶（bridge.rs/main.rs/ACL/bridge.ts）：{sorted(missing)}"]
++    return None
 +
 +
- # 码位登记表
  ACTIVE_CODES = [
-     ("MCP_NPM_SDK_PRESENT", "ACTIVE", c_npm_sdk),
-@@ -286,6 +331,7 @@ ACTIVE_CODES = [
-     ("MCP_NODE_RUNTIME_PRESENT", "ACTIVE", c_node_runtime),
-     ("MCP_CAPABILITY_DRIFT", "ACTIVE", c_capability_drift),
-     ("MCP_FS_TOOL_PATH_POLICY", "ACTIVE", c_fs_tool_policy),
-+    ("MCP_BRIDGE_READONLY", "ACTIVE", c_bridge_readonly),
+     ("AGSK_ACL_TAIL", "ACTIVE", c_acl_tail),
+     ("AGSK_CAPABILITY_DRIFT", "ACTIVE", c_capability_drift),
++    ("AGSK_RO_COMMAND_PARITY", "ACTIVE", c_readonly_command_parity),
  ]
  PENDING_CODES = [
-     ("MCP_LISTEN_PORT", "PENDING", c_listen_port),
-@@ -445,8 +491,15 @@ def _run_self_test() -> int:
-         mutate(**{"src-tauri/src/core/mod.rs": "const MCP_CAPABILITY_V1: &[&str] = &[];\n",
-                   "src-tauri/src/extra.rs": "const MCP_CAPABILITY_V1: &[&str] = &[];\n"}),
-         "src-tauri/src/core/mod.rs")
--    add("MCP_PARITY", "mcp_server_start 只在 handler 不在 ACL/bridge.ts",
--        _with_artifact(**{"src-tauri/src/bridge.rs": "pub fn mcp_server_start(app: AppHandle) {}\n"}),
-+    add("MCP_PARITY", "mcp 命令在 handler 缺 ACL/bridge.ts",
-+        _with_artifact(**{
-+            "src-tauri/src/main.rs": "fn main() { tauri::generate_handler![bridge::mcp_server_start]; }\n",
-+            "src-tauri/src/bridge.rs": "pub fn mcp_server_start(app: AppHandle) {}\n",
-+        }),
-+        "src-tauri/src/main.rs")
-+    add("MCP_BRIDGE_READONLY", "mcp 命令含写副作用",
-+        _with_artifact(**{"src-tauri/src/bridge.rs":
-+            "#[tauri::command]\npub fn mcp_policy_set(app: AppHandle, webview: tauri::Webview, v: String) { std::fs::write(\"/x\", v).unwrap(); }\n"}),
+     ("AGSK_SECOND_PATH", "PENDING", c_second_path),
+@@ -336,6 +373,14 @@ def _run_self_test() -> int:
+     add("AGSK_COMMAND_PARITY", "bridge.rs 暴露 skill_install 但不在 ACL/bridge.ts",
+         mutate(**{"src-tauri/src/bridge.rs": "pub fn skill_install(app: AppHandle) {}\n"}),
          "src-tauri/src/bridge.rs")
-     # MCP_TREE_TAURI 是 PENDING 主动 no-op，不要求坏样本检出（其本身是「期望尚未实现」）
-
++    add("AGSK_RO_COMMAND_PARITY", "bridge.rs 暴露 agent_parse 但 ACL 缺失 → 四件套不齐",
++        mutate(**{
++            "src-tauri/src/bridge.rs": "pub fn agent_parse(app: AppHandle) {}\n",
++            "src-tauri/src/main.rs": "bridge::agent_parse,\n",
++            "src/bridge.ts": "export function invoke() {}\nagent_parse\n",
++            "src-tauri/permissions/default-commands.toml": "[commands]\nlist_artifact_images\n",
++        }),
++        "src-tauri/src/bridge.rs")
+     add("AGSK_CAPABILITY_DRIFT", "SKILL_CAPABILITY_V1 定义两处",
+         mutate(**{"src-tauri/src/security_policy.rs":
+                   good["src-tauri/src/security_policy.rs"] + "pub const SKILL_CAPABILITY_V1: &[&str] = &[\"x\"];\n",
 diff --git a/src-tauri/permissions/default-commands.toml b/src-tauri/permissions/default-commands.toml
 index 0fdf183..d661365 100644
 --- a/src-tauri/permissions/default-commands.toml
@@ -389,117 +352,6 @@ index 614779e..f5a7f82 100644
          ])
          .build(tauri::generate_context!())
          .unwrap_or_else(|e| {
-diff --git a/src-tauri/src/mcp.rs b/src-tauri/src/mcp.rs
-index f368095..58f4e49 100644
---- a/src-tauri/src/mcp.rs
-+++ b/src-tauri/src/mcp.rs
-@@ -14,6 +14,7 @@
-
- use crate::domain::*;
- use crate::security_policy::{check_path_within_roots, redact_sensitive_url};
-+use serde::{Deserialize, Serialize};
- use std::path::PathBuf;
-
- /// 首期命令注册表（冻结）。每一项必须落在 `MCP_CAPABILITY_V1` 内，且 `touches_fs`/
-@@ -106,8 +107,8 @@ pub fn redact_mcp_url(raw: &str) -> String {
-     redact_sensitive_url(raw)
- }
-
--/// 构造当前策略快照（未来 `mcp_policy_get` 命令的返回值来源；首期仅冻结）。
--#[allow(dead_code)]
-+/// 构造当前策略快照（W7 经只读命令 `mcp_policy_get` 暴露；与 domain.rs 的
-+/// `McpPolicySnapshot` 同一份，仅做只读返回，无副作用）。
- pub fn current_policy_snapshot() -> McpPolicySnapshot {
-     McpPolicySnapshot {
-         capabilities: MCP_CAPABILITY_V1.iter().map(|s| s.to_string()).collect(),
-@@ -115,6 +116,48 @@ pub fn current_policy_snapshot() -> McpPolicySnapshot {
-     }
- }
-
-+/// MCP 全局策略裁决的可序列化视图（供 `mcp_capability_preview` 命令返回）。
-+/// 与 `domain.rs::McpDecision` 一一对应；snake_case 便于前端消费。
-+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-+#[serde(rename_all = "snake_case")]
-+pub enum McpDecisionView {
-+    Allow,
-+    Deny,
-+}
-+
-+impl McpDecisionView {
-+    pub fn from_decision(d: McpDecision) -> Self {
-+        match d {
-+            McpDecision::Allow => McpDecisionView::Allow,
-+            McpDecision::Deny => McpDecisionView::Deny,
-+        }
-+    }
-+}
-+
-+/// 注册表项的可序列化视图（供 `mcp_registry_list` 命令返回）。
-+/// 与 `domain.rs::McpCommandDef` 字段对齐；此处显式构造视图而非直接序列化内部
-+/// `McpCommandDef`，以保持对前端暴露面的控制（不泄露无关内部字段）。
-+#[derive(Debug, Clone, Serialize, Deserialize)]
-+pub struct McpRegistryEntryView {
-+    pub capability: String,
-+    pub core_api: String,
-+    pub touches_fs: bool,
-+    pub returns_url: bool,
-+}
-+
-+/// 返回当前注册表的可序列化视图列表（只读 introspection，无副作用）。
-+pub fn list_registry_entries() -> Vec<McpRegistryEntryView> {
-+    MCP_COMMAND_REGISTRY
-+        .iter()
-+        .map(|e| McpRegistryEntryView {
-+            capability: e.capability.to_string(),
-+            core_api: e.core_api.to_string(),
-+            touches_fs: e.touches_fs,
-+            returns_url: e.returns_url,
-+        })
-+        .collect()
-+}
-+
- #[cfg(test)]
- mod mcp_policy_tests {
-     use super::*;
-@@ -190,4 +233,38 @@ mod mcp_policy_tests {
-         assert!(!out.contains("abc"));
-         assert!(!out.contains("p@"));
-     }
-+
-+    // ---- W7 只读桥辅助（视图类型 / 注册表视图）----
-+    #[test]
-+    fn registry_view_mirrors_registry() {
-+        let view = list_registry_entries();
-+        assert_eq!(view.len(), MCP_COMMAND_REGISTRY.len());
-+        for (v, def) in view.iter().zip(MCP_COMMAND_REGISTRY.iter()) {
-+            assert_eq!(v.capability, def.capability);
-+            assert_eq!(v.core_api, def.core_api);
-+            assert_eq!(v.touches_fs, def.touches_fs);
-+            assert_eq!(v.returns_url, def.returns_url);
-+        }
-+    }
-+
-+    #[test]
-+    fn decision_view_maps_both_variants() {
-+        assert_eq!(
-+            McpDecisionView::from_decision(McpDecision::Allow),
-+            McpDecisionView::Allow
-+        );
-+        assert_eq!(
-+            McpDecisionView::from_decision(McpDecision::Deny),
-+            McpDecisionView::Deny
-+        );
-+    }
-+
-+    #[test]
-+    fn unknown_capability_preview_is_denied() {
-+        let roots = vec![PathBuf::from("/workspace")];
-+        assert_eq!(
-+            McpDecisionView::from_decision(evaluate_mcp_command("exec", None, &roots)),
-+            McpDecisionView::Deny
-+        );
-+    }
- }
 diff --git a/src/bridge.ts b/src/bridge.ts
 index a81e9ec..8546b51 100644
 --- a/src/bridge.ts

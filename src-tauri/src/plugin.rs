@@ -271,7 +271,7 @@ fn is_iso8601_len(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{PluginEntry, PluginSignature};
+    use crate::domain::{PluginCapability, PluginEntry, PluginSignature};
     use serde_json::json;
 
     fn valid_manifest() -> PluginManifest {

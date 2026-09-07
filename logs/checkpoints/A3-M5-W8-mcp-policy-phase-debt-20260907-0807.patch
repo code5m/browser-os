@@ -15,7 +15,7 @@ index d04a02b..877055d 100755
 +  （mcp_policy_get / mcp_registry_list / mcp_capability_preview），W1 的「独立 rmcp server + mcp_tools」
 +  架构被 W7 Hard Stop 永久否决。故 W8 收口 W1 语义：PENDING 码位全部退役，rmcp/server/listener
 +  由单一 **ACTIVE** 守门 `MCP_NO_RMCP_SERVER` 永久禁止，并新增 `--expect-current-gaps` 当前相位断言。
- 
+
  为什么需要这个夹具（编译器与人工都守不住）：
  - 纯 Rust rmcp 会把 `tokio` 作为 **normal 非 optional** 依赖带进来（A3 主篇 §3.1 实测）；
 @@ -39,7 +40,7 @@
@@ -25,17 +25,17 @@ index d04a02b..877055d 100755
 -  python3 scripts/check-mcp-policy.py --expect-pending 验证 MCP 产物尚未落地（W1 守门）
 +  python3 scripts/check-mcp-policy.py --expect-current-gaps  当前相位断言（W8：只读桥已落地、无 rmcp/server/listener）
  """
- 
+
  from __future__ import annotations
 @@ -69,26 +70,21 @@ def _rel(path: str) -> str:
      return os.path.relpath(path, ROOT)
- 
- 
+
+
 -def _mcp_present(repo: dict[str, str]) -> bool:
 -    """PENDING 码位的统一 gate：仓库里是否已有任何 M5-2 产物。
 +def _mcp_bridge_present(repo: dict[str, str]) -> bool:
 +    """当前相位（W8）断言：只读 MCP 桥是否已落地。
- 
+
 -    判定依据（任一即视为 MCP 已开建）：
 -      - `src-tauri/Cargo.toml` 出现 `rmcp`
 -      - 存在目录 `src-tauri/src/mcp_tools/`
@@ -64,8 +64,8 @@ index d04a02b..877055d 100755
 +        and all(f'"{c}"' in acl for c in cmds)
 +        and all(f'"{c}"' in bts for c in cmds)
 +    )
- 
- 
+
+
  # ---------------------------------------------------------------------------
 @@ -96,26 +92,15 @@ def _mcp_present(repo: dict[str, str]) -> bool:
  # 每个码位是一个函数 (rel, text, repo) -> Optional[list[str]]
@@ -74,7 +74,7 @@ index d04a02b..877055d 100755
 -# kind: "ACTIVE"（始终守门） | "PENDING"（仅当 _mcp_present 为真时守门）
 +# kind: "ACTIVE"（始终守门）。W8 起不再有 PENDING 码位（W1 相位债已关闭）。
  # ---------------------------------------------------------------------------
- 
+
  _CODE_REX = {
      "MCP_NPM_SDK_PRESENT": re.compile(r'"@modelcontextprotocol/'),
      "MCP_NPM_IN_CARGO": re.compile(r"\bnpm\b"),
@@ -83,7 +83,7 @@ index d04a02b..877055d 100755
 -    "MCP_RUNTIME_LEAK": re.compile(r"tokio::|#\[tokio::main"),
 -    "MCP_TOOL_CALLS_COMMAND": re.compile(r"crate::bridge|bridge::|crate::terminal|::db_query\("),
  }
- 
+
 -# 仅出现在 MCP 专属文件（mcp_server / mcp_tools）里的形态才允许
 -_MCP_FILE_RE = re.compile(r"mcp_server|mcp_tools")
 -
@@ -94,11 +94,11 @@ index d04a02b..877055d 100755
 -
  def _is_src_rs(rel: str) -> bool:
      return rel.startswith("src-tauri/src/") and rel.endswith(".rs")
- 
+
 @@ -161,81 +146,33 @@ def c_fs_tool_policy(rel, text, repo):
      return problems or None
- 
- 
+
+
 -# ---- PENDING（仅当 MCP 产物已存在时守门）----
 -
 -
@@ -152,8 +152,8 @@ index d04a02b..877055d 100755
 +    if any(r.startswith("src-tauri/src/mcp_tools/") for r in repo):
 +        problems.append("存在 src-tauri/src/mcp_tools/ 目录（禁止独立 MCP 工具运行时）")
      return problems or None
- 
- 
+
+
 -def c_bin_gated(rel, text, repo):
 -    if not _mcp_present(repo):
 -        return None
@@ -197,13 +197,13 @@ index d04a02b..877055d 100755
 +# 该 server 架构被 W7 Hard Stop 永久否决，故 W8 将其收口为单一 ACTIVE 守门 `MCP_NO_RMCP_SERVER`
 +# （见上方 ALWAYS-ACTIVE 段）。`MCP_TREE_TAURI` 亦退役（core 纯洁性由 check-core-boundary.py 守）。
 +# 当前无任何 PENDING 码位；相位债已关闭。
- 
- 
+
+
  # ---- GLOBAL（需跨文件/跨 Cargo 上下文）----
 @@ -277,12 +214,6 @@ def c_parity(rel, text, repo):
      return None
- 
- 
+
+
 -def c_tree_tauri(_rel, _text, _repo):
 -    # PENDING：阶段一同 package 双 target 下 cargo tree -p mvp-core 必含 tauri（见 A3 W1 delta §3）。
 -    # 本脚本不在默认模式跑 cargo tree（慢且阶段一必然 FAIL）；阶段二独立 crate 后再接 ACTIVE。
@@ -234,11 +234,11 @@ index d04a02b..877055d 100755
 +# W8：W1 的 7 个 PENDING 码位 + MCP_TREE_TAURI 全部退役，相位债已关闭。当前无 PENDING 码位。
 +PENDING_CODES: list[tuple[str, str, Callable]] = []
  ALL_CODES = ACTIVE_CODES + PENDING_CODES
- 
- 
+
+
 @@ -395,8 +319,9 @@ def detect_hits(repo: dict[str, str]) -> dict[str, list[str]]:
- 
- 
+
+
  def _baseline_repo() -> dict[str, str]:
 -    # 注意：基线**不含**任何 M5-2 产物（无 mcp_tools 目录 / 无 mcp_server bin / 无 rmcp /
 -    # 无 MCP_CAPABILITY_V1），否则 _mcp_present 会被提前置真、PENDING gate 失效。
@@ -250,8 +250,8 @@ index d04a02b..877055d 100755
              "[package]\nname = \"mvp-browser-os\"\n"
 @@ -415,14 +340,6 @@ def _baseline_repo() -> dict[str, str]:
      }
- 
- 
+
+
 -# PENDING 坏样本需要「M5-2 已开建」才能让 gate 生效；最小产物 = 一个空的 mcp_server bin。
 -_MCP_ARTIFACT = {"src-tauri/src/bin/mcp_server.rs": "fn main() {}\n"}
 -
@@ -260,8 +260,8 @@ index d04a02b..877055d 100755
 -    d = dict(_MCP_ARTIFACT)
 -    d.update(kw)
 -    return d
- 
- 
+
+
  def _run_self_test() -> int:
 @@ -462,59 +379,34 @@ def _run_self_test() -> int:
      add("MCP_NODE_RUNTIME_PRESENT", "src 内 Command::new(\"node\")",
@@ -270,7 +270,7 @@ index d04a02b..877055d 100755
 -        _with_artifact(**{"src-tauri/src/mcp_tools/registry.rs": "pub const MCP_COMMAND_REGISTRY: &[McpCommandDef] = &[ McpCommandDef { capability: \"file_read\", touches_fs: true, returns_url: true } ];\n"}),
 +        mutate(**{"src-tauri/src/mcp_tools/registry.rs": "pub const MCP_COMMAND_REGISTRY: &[McpCommandDef] = &[ McpCommandDef { capability: \"file_read\", touches_fs: true, returns_url: true } ];\n"}),
          "src-tauri/src/mcp_tools/registry.rs")
- 
+
 -    # PENDING 坏样本：必须带最小 MCP 产物（_MCP_ARTIFACT）才能让 gate 生效
 -    add("MCP_LISTEN_PORT", "mcp_server 出现 TcpListener",
 -        _with_artifact(**{"src-tauri/src/bin/mcp_server.rs": "let _ = tokio::net::TcpListener::bind(\"127.0.0.1:9999\");\n"}),
@@ -319,7 +319,7 @@ index d04a02b..877055d 100755
          h = detect_hits(mutated)
          if code not in h:
              failures.append(f"坏样本未检出码位 {code}（漏检）；命中={h}")
- 
+
 -    # 3) 坏样本中 PENDING 码位必须依赖 mcp 产物存在：单独构造「无 mcp 产物」的坏内容，
 -    #    断言 PENDING 码位不误触发（gate 生效）
 -    no_mcp = mutate(**{"src-tauri/src/bridge.rs": "pub fn f() { let _ = tokio::spawn(async {}); }\n"})
@@ -328,13 +328,13 @@ index d04a02b..877055d 100755
 -    if leaked:
 -        failures.append(f"无 MCP 产物时 PENDING 码位误触发（gate 失效）：{leaked}")
 +    # 3) 当前无 PENDING 码位（W8 相位债已关闭），无需再构造「无 MCP 产物」的 gate 测试。
- 
+
      if failures:
          for f in failures:
 @@ -530,13 +422,28 @@ def _run_self_test() -> int:
  # ---------------------------------------------------------------------------
- 
- 
+
+
 -def _mode_expect_pending() -> int:
 +def _mode_expect_current_gaps() -> int:
 +    # W8 当前相位断言：只读 MCP 桥已落地、无 rmcp/server/listener/tokio、奇偶/只读/红线性门禁全绿。
@@ -363,8 +363,8 @@ index d04a02b..877055d 100755
 +    print("MCP_CURRENT_GAPS_RESULT=PASS（W8 相位：只读桥已落地，无 rmcp/server/listener/tokio，"
 +          "奇偶/只读/红线性门禁全绿）")
      return 0
- 
- 
+
+
 @@ -556,16 +463,17 @@ def _mode_default() -> int:
  def main() -> int:
      ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -373,21 +373,21 @@ index d04a02b..877055d 100755
 +    ap.add_argument("--expect-current-gaps", action="store_true",
 +                    help="当前相位断言（W8：只读桥已落地、无 rmcp/server/listener）")
      args = ap.parse_args()
- 
+
      if args.self_test:
          return _run_self_test()
 -    if args.expect_pending:
 -        return _mode_expect_pending()
 +    if args.expect_current_gaps:
 +        return _mode_expect_current_gaps()
- 
+
 -    # 默认：只跑默认扫描。self-test 由 pre-merge.sh 单独调用（与 check-core-boundary.py 同范式），
 -    # 不在默认模式内嵌，避免单次 pre-merge 重复执行。
 +    # 默认：只跑默认扫描。self-test / 当前相位断言 由 pre-merge.sh 单独调用
 +    # （与 check-core-boundary.py 同范式），不在默认模式内嵌，避免单次 pre-merge 重复执行。
      return _mode_default()
- 
- 
+
+
 diff --git a/scripts/pre-merge.sh b/scripts/pre-merge.sh
 index c54479d..7f9127a 100755
 --- a/scripts/pre-merge.sh
@@ -395,7 +395,7 @@ index c54479d..7f9127a 100755
 @@ -408,15 +408,17 @@ run_pre_merge() {
    python3 "$SCRIPT_DIR/check-core-boundary.py" --expect-pending >/dev/null 2>&1 \
      || pm_fail "check-core-boundary.py --expect-pending（有 pending 码位已实现，应转入默认判定）"
- 
+
 -  # M5-2（Lane A3）：MCP 命令注册表 / 全局策略夹具（15 码位：5 ACTIVE + 9 PENDING + 1 注册表路径策略）。
 +  # M5-2（Lane A3）：MCP 命令注册表 / 全局策略夹具。W8 收口 W1 相位债：PENDING 码位全部退役
 +  # （相位债关闭），rmcp/server/listener 由单一 ACTIVE 守门 MCP_NO_RMCP_SERVER 永久禁止；只读桥
@@ -411,6 +411,6 @@ index c54479d..7f9127a 100755
      || pm_fail "check-mcp-policy.py（M5-2 MCP 安全不变量被破坏：能力漂移/路径根/URL 脱敏/rmcp/tokio/监听）"
 +  python3 "$SCRIPT_DIR/check-mcp-policy.py" --expect-current-gaps >/dev/null 2>&1 \
 +    || pm_fail "check-mcp-policy.py --expect-current-gaps（W8 当前相位：只读桥在 / 无 rmcp-server/listener）"
- 
+
    # M5-3（Lane A4）：agent memory KV 契约不变量夹具（5 ACTIVE 码位，产物存在才判）。
    # 守容量常量单一真源 / 隐私双扫 / per-agent 字节软配额 / 总上限接入 / 审计脱敏。

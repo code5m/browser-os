@@ -14,7 +14,7 @@ function onSearch(e: Event): void {
 </script>
 
 <template>
-  <div class="filter">
+  <div class="filter" role="search">
     <input
       class="search"
       type="search"
@@ -23,17 +23,18 @@ function onSearch(e: Event): void {
       @input="onSearch"
       aria-label="搜索图谱节点"
     />
-    <div class="chips">
+    <div class="chips" role="group" aria-label="按节点类型过滤">
       <button
         v-for="opt in kindOptions"
         :key="opt.value"
         class="chip"
         :class="{ on: activeKinds.includes(opt.value) }"
         :aria-pressed="activeKinds.includes(opt.value)"
+        :aria-label="`筛选${opt.label}类型节点`"
         @click="store.toggleKind(opt.value)"
       >{{ opt.label }}</button>
     </div>
-    <button class="clear" @click="store.clearFilter()">清除</button>
+    <button class="clear" aria-label="清除过滤条件" @click="store.clearFilter()">清除</button>
   </div>
 </template>
 

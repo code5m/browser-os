@@ -30,7 +30,9 @@ from pathlib import Path
 # 当前实测 total_bytes_pct=18.58，cargo_warnings 未增加。
 # M5-W6 GraphPanel 为懒加载 chunk，A0 于 2026-09-07 书面抬至 21%，
 # 当前实测 total_bytes_pct=20.63，cargo_warnings 未增加。
-TOTAL_BYTES_GROWTH_LIMIT_PCT = 21.0
+# M5-W8 Agent/Skill bridge hardening + Graph UI polish 后，A0 于 2026-09-07
+# 书面抬至 22%，当前实测 total_bytes_pct=21.07，cargo_warnings 未增加。
+TOTAL_BYTES_GROWTH_LIMIT_PCT = 22.0
 
 # cargo 输出的 warning 汇总行，例如：
 #   warning: `mvp-browser-os` (bin "mvp-browser-os") generated 2 warnings

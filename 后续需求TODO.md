@@ -1,3 +1,6 @@
+> A0 update 2026-09-07 14:30 CST: W8 focused validation passed after A0 fixes (CredentialLeak redaction, cargo fmt, A3 patch whitespace). Build metrics accepted at 21.07% <= 22%, cargo warnings unchanged. NEXT=`M5-W9` runtime-free polish and final verification; no MCP/plugin/skill runtime expansion.
+> A0 update 2026-09-07 10:05 CST: A3 W7 MCP read-only bridge focused checks PASS except old `check-mcp-policy.py --expect-pending` phase debt; NEXT=`M5-W8` full-lane follow-up, A3 assigned policy-fix-only and all lanes may continue by board.
+> A0 update 2026-09-07 09:45 CST: W7 non-A3 focused checks PASS; NEXT=`M5-W8` excluding A3. A3 local commit exists but is held out of this wave; do not dispatch A3 until A0 resolves history/push boundary.
 # 后续需求 TODO 列表
 > A0 update 2026-09-07 00:50 CST: `origin/master` pushed to `5f92ece`; NEXT=`M5-W7`. W7 opens only A3 (MCP read-only command bridge) and A5 (Agent/Skill read-only command bridge) for product code; all other lanes remain docs/review/support.
 > A0 update 2026-09-06 19:25 CST: `origin/master` pushed to `4b438ef`; NEXT=`M5-W7`. W6 opens only A8 (M5-9 graph UI pure logic/panel shell) and A9 (M5-10/11 plugin manifest/lifecycle policy slice) for product code; all other lanes remain docs/review/support.

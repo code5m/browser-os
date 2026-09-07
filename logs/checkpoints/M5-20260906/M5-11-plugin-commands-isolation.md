@@ -6,7 +6,7 @@
 > 主预研：`logs/assist/M5-15.a-prework-20260902-1055.md` §4 · `logs/assist/A9-M5-plugin-form-feasibility-20260906-0700.md`
 > 配套：`M5-10-plugin-manifest-lifecycle.md`（manifest 后端）· `M5-12-plugin-ui.md`（管理 UI）
 >
-> **W3** BLOCKED（待 M5-10 manifest 解析 + M5-2 capability.rs + 确认闸门）· **W4** ACTIVE（A9 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A9 W5 仍 SUPPORT DOCS ONLY）· **W6** ACTIVE（**A9 升级为 START PRODUCT CODE**：M5-11 commands_islolation shell + 5 命令 ACL stub + capability 校验骨架 + audit shape；详见本卡顶部 `[W6 next-card acceptance criteria]` 段）
+> **W3** BLOCKED（待 M5-10 manifest 解析 + M5-2 capability.rs + 确认闸门）· **W4** ACTIVE（A9 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A9 W5 仍 SUPPORT DOCS ONLY）· **W6** PUSHED · **A9 升级为 START PRODUCT CODE** · `5f92ece` 拣入（M5-11 commands_isolation shell + 5 stub 命令 ACL 占位 + capability 校验骨架 + audit shape 仅 key_hash_only；详见本卡顶部 `[W6 next-card acceptance criteria]` 段；与 M5-10 W6 共享 hard stop 集）· **W7** RECONCILIATION（A3 W7 mcp_* 3 命令 + A11 W7 pre-merge FAIL 3 red lights + A6 W7 wiring 在 `6c1f30e` / `daa10f6` / `a29b796` 已拣入 master；A9 M5-10/11 在 W7 仍无新命令落地，5 stub 维持 `Err("not-implemented-in-W6")`；A1 W7 整包本卡修订未进 master，留 W8 整包合并拣入；详见 `M5-0-overview.md` 顶部 `[W7 reconciliation]` 段 + `M5-13-verification-matrix.md` 顶部 `[W7 verification scope]` 段）· **W8** ACTIVE（**A9 W8 = POLICY REVIEW ONLY** —— 与 M5-10 W8 共享 review scope：plugin 命令 ACL 维护 / stub 错误结构不变 / audit shape 维持 key_hash_only / 无 install/enable/delete 真实命令；**不**写 plugin runtime 命令；A3 W8 = HOLD/NO ASSIGNMENT；详见 `M5-0-overview.md` 顶部 `[W8 active]` 段 + `M5-13-verification-matrix.md` 顶部 `[W8 verification scope]` 段）
 
 ---
 

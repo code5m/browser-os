@@ -1,7 +1,128 @@
-# M5 债务账（A1 横切 · 不在本批解决 · W1 修订）
+> A0 2026-09-07 14:30: IF-2 threshold revised to 22% for W8; current build metrics total_bytes_pct=21.07 and cargo_warnings delta=0. W9 must preserve <=22% and re-record final verification.
+# M5 债务账（A1 横切 · 不在本批解决 · W1 修订 + W6/W7 reconciliation debt）
 
 > 子卡 ID：**M5-14** · 跨 M5-1~M5-12 · 性质：**清单，非实现**
 > 配套：每张 M5-x 子卡 §9 DOC_BACKWRITE 中的"M5-14 增项"
+
+---
+
+## [W7 reconciled · 2026-09-07 00:50 CST] W6 拣入 `5f92ece` 后债务账更新（M5 final debt ledger · A11 W7 收口基础）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L137-175（**M5-W7 Integration Dispatch**）+ `git log --oneline -20` 实测（`5f92ece feat(M5): add graph UI and plugin policy slices` 已 push）+ `M5-13-verification-matrix.md` §[W7 verification scope] 12 FAC。
+> **W6 拣入实测后债务账变化**（相对 W5 收口债 + W6 实施期增量）：
+> - **CLOSED-by-W6**：M5-9（4 vue + store + utils + 193 行 UI logic test PASS，5f92ece）/ M5-10（plugin.rs 446 行 DTOs + 7 状态机 + 6 ACTIVE policy）/ M5-11（5 stub + ACL stub + audit key_hash_only）/ M5-13-验证脚本（19 ACTIVE 码累计） —— 共 4 张子卡由 W6 拣入收口。
+> - **W6-F1-Critical patched**：M5-9 §4.1 `summarizeNode` 白名单 5 字段缺失（source/source_ref/created_at/updated_at/extractor_version），id=sha256 不可逆不可派生 —— **由 A1 W7 在 M5-9 卡头部 [W7 patched] 段订正**（5→4 字段 `{id,kind,label,neighborCount}`）；A8 W6 实际实现已基于 4 字段，无需回改代码。
+> - **DEBT-W6→W7**：M5-2 / Agent-Skill（命令集 read-only bridge wave 待 A3/A5 W7 落地）。
+> - **DRY-F1**：`SENSITIVE_KEY_NAMES` / `SENSITIVE_VALUE_PATTERNS` 在 `agent_memory.rs:134` 与 `graph.rs:18` 各定义一份 —— 留 W8+ 抽 `domain.rs` 单一真源。
+> - **IF-2 build metrics**：实测 18.58% vs 19% 阈值（余量 0.42%），W6 增量（4 vue + store + utils + plugin.rs 446 + domain.rs 97）**未**重采 baseline；W7 A11 重采挂账。
+
+### §10 M5 final debt ledger（W6 拣入后·W7 收口基础·M5 终态账目）
+
+| ID | 项 | 来源 | 影响 | 处置 | 闭账条件 |
+|----|---|------|------|------|----------|
+| DEBT-01 | IF-2 build metrics baseline 未重采（W6 增量后）| W6 收口实测 | frontend main JS 18.58% vs 19% 阈值（余量 0.42%）| A11 W7 重采；A0 拍阈值/基线 | A11 W7 delta 出 + A0 拍 |
+| DEBT-02 | M5-9 §4.1 `summarizeNode` 白名单 5→4 字段订正 | W6 A7 红线 F1 | 卡与代码不一致 | A1 W7 在 M5-9 卡头部 [W7 patched] 段订正 | A1 W7 checkpoint 出 |
+| DEBT-03 | DRY-F1 `SENSITIVE_*` 抽 `domain.rs` 单一真源 | A7 W6 review | `agent_memory.rs:134` + `graph.rs:18` 两份副本 | W8+ A4/A7 抽 trait 或 const | A8 W8+ 完成 |
+| DEBT-04 | M5-12 plugin UI（plugin 列表/详情/安装向导/启用停用/审计查询/权限预览）| A19 W6 仍 SUPPORT DOCS ONLY | plugin UI 全缺 | W8+ A19 派发（待 plugin runtime 落地后） | A19 W8+ 完成 |
+| DEBT-05 | M5-1.b trait 抽离（RootsProvider / ProgressSink / PathResolver）+ B 类 seam 改造 | M5-1.b 拆卡 | 反向边 8 处未解 | W8+ A1/A2 派发 | M5-1.b 实施卡拣入 |
+| DEBT-06 | M5-13 性能基线（cargo bench / cargo test m5_perf --release）| M5-13 §4.5 / §7 #4 | 性能基线未跑 | W8+ A11 跑 | A11 性能 delta 出 |
+| DEBT-07 | M5-11 §4.1 8 条新命令（W6 仅 5 stub + ACL 占位；W7+ 真实命令落地）| M5-11 §3 / §4.1 | runtime install/uninstall/storage 缺 | W7+ A9 派发 | A9 W8+ 完成 |
+| DEBT-08 | M5-10 §4.4 真实 Ed25519 验证（trusted-pubkeys.json + key_id）| M5-10 §4.4 | W6 仅字面量声明 | W8+ A9 派发 | A9 W8+ 完成 |
+| DEBT-09 | M5-2 / Agent-Skill 真实命令 bridge（W7 read-only 已 START，但真实落地待 A3/A5 W7）| W7 dispatch | read-only 命令未落地 | A3/A5 W7 实施期 | A3/A5 W7 完成 + A11 W7 verification delta |
+| DEBT-10 | A2A 首期是否真双向 | M5-3 §决策依赖 | 委派 vs 仅被调未定 | A0 拍 | A0 决策 + 实施期落地 |
+| DEBT-11 | LLM 用量配额/费用统计 | M5-3/4 | 首期是否做计费/限额未定 | A0 拍 | A0 决策 |
+| DEBT-12 | mcp-calls.json 500 上限是否够 | M5-2 | 高频 Agent 调用可能刷爆 | 实施期观察 | A11 观察后调整 |
+| DEBT-13 | Skill 升级迁移（v1 → v2）数据保留 | M5-4 | 首期是否做兼容性迁移 | 实施期评估 | A5 W8+ 评估 |
+| DEBT-14 | Agent 流式断线重连 | M5-4 | 弱网场景体验 | 实施期评估 | A5 W8+ 评估 |
+| DEBT-15 | 审计汇总 UI（skill-runs.json / agent-runs.json 500 上限 UI 浏览）| M5-5 | 审计 UI 缺 | 实施期评估 | A6 W8+ 评估 |
+| DEBT-16 | LLM Key 轮换策略 | M5-3/4 | 多 Key 切换 | A0 拍 | A0 决策 |
+| DEBT-17 | 外部 CLI Agent（codex/claude）实测 | M5-4 | `ExternalCli` 走 script_runner 是否真能复用 | A19 实施期验证 | A19 W8+ 实测 |
+| DEBT-18 | `source=ai` 智能抽取 | M5-7 | 首期仅留 trait，不实现 | A0 拍 | A0 决策 + 实施期落地 |
+| DEBT-19 | 相似度算法与阈值 | M5-7 | 首期仅同 hash 精确匹配 | 实施期评估 | A7 W8+ 评估 |
+| DEBT-20 | 二进制文档解析（pdf/docx）| M5-7 | 防漏洞，首期不做 | A0 拍 | A0 决策 |
+| DEBT-21 | `graph_export("graphml")` | M5-8 | 首期返回"暂不支持" | 实施期评估 | A7 W8+ 评估 |
+| DEBT-22 | 路径查找（KSP/最短路）| M5-8 | 首期不开 | 实施期评估 | A7 W8+ 评估 |
+| DEBT-23 | `props` JSON 宽容版本 | M5-7/8 | 首期严格 schema | 实施期评估 | A7 W8+ 评估 |
+| DEBT-24 | 浏览器访问历史接入 | M5-7 | 防爬虫语义，首期不接 | A0 拍 | A0 决策 |
+| DEBT-25 | 大图（> 10k 节点）渲染 | M5-9 | D3 力导向性能 | 实施期评估（WebGL 化？）| A8 W8+ 评估 |
+| DEBT-26 | 形态④ 第三方签名服务（如 Sigstore）| M5-10 | 首期仅本地 trusted-pubkeys.json | A0 拍 | A0 决策 |
+| DEBT-27 | 插件商店 | M5-10/12 | 中心化分发 | A0 拍 | A0 决策 |
+| DEBT-28 | 插件多版本并存 | M5-10 | `<id>/<version>/` 已设计；并发启用策略未拍 | A0 拍 | A0 决策 |
+| DEBT-29 | 插件自动更新 | M5-10 | 首期手动 | A0 拍 | A0 决策 |
+| DEBT-30 | 公钥托管（远程）| M5-10 | 首期本地 | A0 拍 | A0 决策 |
+| DEBT-31 | withGlobalTauri 全局化对 src/stores/useSystemStore.ts:84 的影响 | M5-1 评估期 | 唯一引用点需迁移或封装 | M5-1.a 实施期评估 | A2 W8+ 评估 |
+| DEBT-32 | tauri-browser-tabs/ 已是另一 workspace | M5-1 切片期 | 根 `Cargo.toml [workspace]` 嵌套冲突 | 阶段二（M5-1.c）排除该路径 | M5-1.c W8+ 派发 |
+| DEBT-33 | D23 终端 GUI 实点 | M4-1 | M5-4/5 复跑 chat 时需在终端实点 | M5-4/5 实施期补 | A5 W8+ 实点 |
+| DEBT-34 | D24 吞吐基线未重采 | M4-1 | M5-4 流式回传基准未定 | M5-13 性能基线一并采 | A11 W8+ 跑（与 DEBT-06 同）|
+| DEBT-35 | D25 on_channel_dead 未 wait | M4-1 | M5-2 `mcp-server-shutdown` 必须 wait；M5-3 `a2a-shutdown` 必须 wait | M5-2/3 实施期补 | A3/A4 W7+ 补 |
+| DEBT-36 | D26 历史未按字符封顶 | M4-1 | M5-13 验证矩阵反向用例补"按字符封顶" | M5-13 实施期补 | A11 W8+ 补 |
+| DEBT-37 | 基线文件双份（`4f0e8ab` + `6f4e554`）| W6 测出 | pre-merge 以 `sort|head -1` 取最旧，行为正确 | A0 归档旧基线 | A0 W8+ 拍 |
+| DEBT-38 | check-agent-skill-ui-logic.mjs 未接入 pre-merge | W6 测出 | 测试本身 PASS 但未接门禁 | A11 W7+ 接入 | A11 W8+ 接入 |
+| DEBT-39 | agent-skill 策略缺 --expect-pending 模式 | W6 测出 | 与其它策略不一致 | A11 W8+ 补 | A11 W8+ 补 |
+| DEBT-40 | MCP/agent-memory/graph --expect-pending FAIL by design | W5+W6 测出 | 翻转 PENDING→ACTIVE 模式 | 后续 wave 翻转 | A11 W8+ 翻转 |
+
+> **W7 收口后建议下批（A0 视角）**：
+> 1. **必批 W7**（最小收口）：A3 W7 + A5 W7 + A10 W7 + A11 W7 整包交付（4 lane）—— 闭环 DEBT-09 + DEBT-35。
+> 2. **必批 W8**（中批收口）：A1/A2 W8（M5-1.b trait + DRY-F1 抽）+ A9 W8（M5-11 真实命令）+ A19 W8（M5-12 plugin UI）+ A11 W8（M5-13 性能基线 + D23~D26 补）—— 闭环 DEBT-03 / DEBT-04 / DEBT-05 / DEBT-06 / DEBT-07 / DEBT-08 / DEBT-33 / DEBT-34 / DEBT-36 / DEBT-38 / DEBT-39。
+> 3. **可选 W9+**（决策依赖）：A0 拍 DEBT-10~DEBT-32 中待 A0 决策项 + A0 拍 DEBT-26~DEBT-30 第三方/商店/自动更新/多版本。
+
+---
+
+## [W7 reconciliation · 2026-09-07 09:45 CST] W7 拣入实测后债务账更新（A3 mcp_* 3 命令归位 / A11 pre-merge FAIL 3 red lights 挂账 / A1 W7 整包未进 master / DRY-F1 W7 残留扩大）
+
+> **依据**：`6c1f30e`（A3 W7 拣入）+ `daa10f6`（A11 W7 pre-merge FAIL 拣入）+ `a29b796`（A6 W7 wiring 拣入）+ A0 W7 dispatch `a26fbaf`。
+> **W7 reconciliation 债务账变化**（**A3 mcp_* 3 命令归位**）：
+
+| # | DEBT | W7 reconciliation | 状态 | closure |
+|---|------|------------------|------|---------|
+| DEBT-01 | IF-2 build metrics baseline 未重采 | W7 实测 **20.63% < 21% 阈值**（A0 `5f92ece` 抬阈值 19%→21% 后）| **THRESHOLD-REVISED · W8 delta 重采** | A11 W8 delta 复跑 metrics after A5/A6/A8/A9 实施期增量 |
+| DEBT-02 | A7 W6 review F1（`summarizeNode` 5 字段不在 DTO + id=sha256 不可逆）| A1 W7 [W7 patched] 段订正 8→4 字段 `{id,kind,label,neighborCount}` + W6-HS5 8→4+`props_size` + §4.2 fixture 8 字段 W8+ 取决 | **W7 F1 PATCHED** | A8 W8 UI POLISH 同步；fixture W8+ 在 graph_query 落地时同步 4 字段 |
+| **DEBT-41**（**新增**）| A11 W7 pre-merge FAIL **3 red lights**（W7-1 cargo test 4 errors / W7-2 cargo fmt 8 处 / W7-3 warnings_increased 2→3）| A0 拣入 `daa10f6` 时未修 | **A0 W8 拣入期消解**（plugin.rs L274 import + L20 删 import + `cargo fmt --all`）| A0 W8 拣入期执行修复并 `cargo test` + `cargo fmt --check` 复跑 |
+| **DEBT-42**（**新增**）| A1 W7 reconciliation 整包**未进 master**（M5-0/9/10/11/12/13/14 修订 + A1 W7 checkpoint + A1 W7 patch，共 9 文件 = +292 -15）| A0 W7 拣入期未消 | **A0 W8 拣入期必先消**（含 A1 W8 整包合并拣入）| A0 W8 拣入 A1 W8 整包（M5-0/9/10/11/12/13/14 修订 + A1 W8 checkpoint + A1 W8 patch）|
+| **DEBT-43**（**新增**）| DRY-F1 残留扩大（W7：A4 `agent_memory.rs:134` / A7 `graph.rs:18` SENSITIVE_* 双份；`useGraphStore.ts:24-25` / `graphUi.ts:26-29` 图谱容量常量三处拷贝）| A4 W7 review 已标 DRY-F1 扩大 | **A0 W8 必批 A1/A2 抽**（前端常量统一从 `src/types.ts` 引入 + 后端 SENSITIVE_* 抽 `domain.rs` 单源）| W8 A2 review note + A2/A1 W8 抽 `domain.rs` 单源 + `useGraphStore.ts` / `graphUi.ts` import `src/types.ts` |
+| **DEBT-44**（**新增**）| A3 W7 拣入**无** W7-1/W7-2/W7-3 修复责任（A3 仅管 MCP 文件，plugin.rs 属 A9）；A9 W8 POLICY REVIEW ONLY 模式**不写** plugin runtime 修复，故 W7-1/W7-3 须 A0 W8 拣入期**直接动手** | 责任缺口 | **A0 W8 拣入期必先消** | A0 W8 拣入期执行 `cargo fmt --all` + `cargo test` 复跑 + 删 plugin.rs L20 unused import |
+
+> **W7 → W8 状态切换债务账**：
+
+| 阶段 | 拣入 commit | DEBT 变化 |
+|------|------------|---------|
+| W6 收口 | `5f92ece` | 4 张子卡 CLOSED-by-W6（M5-3/4/5/6/7/8/9/10/11 = 9 张子卡） + DEBT-01 IF-2 抬阈值 + DEBT-02 F1 patched + DEBT-W6→W7 |
+| W7 拣入 | `6c1f30e` + `daa10f6` + `a29b796` | **DEBT-41 W7-1/W7-2/W7-3**（A11 pre-merge FAIL）+ **DEBT-42 A1 W7 整包未进 master** + **DEBT-43 DRY-F1 扩大** + **DEBT-44 A3 W7 修复责任缺口** + A3 mcp_* 3 命令归位 FAC-2 |
+| **W8 active**（**A1 W8 reconciliation 整包**）| 待 A0 拣入 | 收口 DEBT-41 / DEBT-42 / DEBT-44（**A0 拣入期必消**）；推 DEBT-43（A2 W8 review note + A1/A2 W8 抽单源）；续 A1/A2/A4/A5/A6/A7/A8/A9/A10/A11 W8 实施期债 |
+
+> **W8 实施期新增债**（**W8 = 硬化 + 复审 + 收口波，无 MCP 产品代码工作**）：
+
+| Lane | W8 范围 | 预计新增债 | closure |
+|------|--------|-----------|---------|
+| A1 | DOCS reconciliation | 无新增债（仅 reconciliation 整包）| W8 整包拣入即闭环 |
+| A2 | REVIEW ONLY（非 A3 boundary）| DEBT-43 DRY-F1 抽单源（提案 + review note）| A2 W8 review note 必填 |
+| A3 | **HOLD/NO ASSIGNMENT** | DEBT-45（**新增**）A3 local commit boundary 未消（A0 在 W8 dispatch 显式 *"A0 resolves the excluded A3 local commit boundary"*）| A0 在 W8 拣入期消解；A11 W8 delta 必标 A3 W8 HOLD 期间 mcp_* 相关产品代码改动数 = 0 |
+| A4 | REVIEW ONLY（Agent/Skill + graph + plugin 隐私/记忆复审）| DEBT-43 DRY-F1 扩大已挂账（A4 W7 review 标） | A4 W8 review note 必填 |
+| A5 | PRODUCT CODE（Agent/Skill read-only bridge 硬化）| 预计 DEBT-46（**新增**）：edge-case tests 缺口（W7 9 mcp.rs unit tests 类似深度）；validation error shape 改动 | A5 W8 实施期 0 债提交 |
+| A6 | UI DOCS/LOGIC（Agent/Skill 面板消费 + 纯 UI helper tests）| 预计 DEBT-47（**新增**）：UI helper tests 缺口（与 A5 read-only bridge 协调）| A6 W8 实施期 0 债提交 |
+| A7 | DOCS/GRAPH BRIDGE PLAN ONLY | 预计 DEBT-48（**新增**）：graph query command contract 提案（W8 不实施后端） | A7 W8 必填 1 graph bridge card |
+| A8 | UI POLISH/TEST ONLY | 预计 DEBT-49（**新增**）：accessibility labels / empty/error/oversize states / deterministic filters / search / 无 unbounded arrays 5 项 polish | A8 W8 实施期 0 债提交 |
+| A9 | POLICY REVIEW ONLY | 无新增债（仅 review note 或 policy patch）| A9 W8 0 债提交 |
+| A10 | SECURITY BATCH REVIEW | 预计 DEBT-50（**新增**）：A5/A6/A8/A9 W8 输出的批量安全复审 verdict 缺口 | A10 W8 必填 1 security verdict（**不** per-file drip）|
+| A11 | VERIFICATION BATCH | 预计 DEBT-51（**新增**）：W8 verification matrix（excluding A3）+ 12 FAC 实测 + 残留债 列表 | A11 W8 必填 1 final verification delta |
+
+> **W8 必批闭环**（A0 拣入期）：
+
+| 债 | 责任 | W8 拣入期消解路径 |
+|---|------|------------------|
+| DEBT-41 W7-1/W7-2/W7-3 | A0 | `cargo fmt --all` + plugin.rs L274 import + L20 删 import + `cargo test` 复跑 |
+| DEBT-42 A1 W7 整包未进 master | A0 | A0 W8 拣入 A1 W8 整包（合并 A1 W7 + A1 W8 reconciliation）|
+| DEBT-44 A3 W7 修复责任缺口 | A0 | 同 DEBT-41 |
+| DEBT-45 A3 local commit boundary | A0 | A0 在 W8 dispatch 显式 *"resolves the excluded A3 local commit boundary"* |
+| DEBT-43 DRY-F1 | A2 + A1 | A2 W8 review note + A2/A1 W8 抽 `domain.rs` 单源 + `useGraphStore.ts` / `graphUi.ts` import `src/types.ts` |
+| DEBT-46/47/49/50/51 | A5/A6/A8/A10/A11 | 各 lane W8 实施期 0 债提交 / 1 final note |
+
+> **W8 闭环条件**（**A0 推 master 前必达**）：
+> 1. A0 修复 DEBT-41 / DEBT-44（cargo fmt + cargo test + L20 unused import）。
+> 2. A0 拣入 A1 W8 整包（含 A1 W7 reconciliation 合并 + A1 W8 reconciliation 修订）。
+> 3. A0 解决 A3 local commit boundary（DEBT-45）。
+> 4. A2 W8 review note 必填（DEBT-43）。
+> 5. A11 W8 delta 必填 12 FAC + 残留债 + A3 W8 HOLD 期间 mcp_* 文件改动数 = 0 + W7-1/W7-2/W7-3 修复状态确认。
 
 ---
 

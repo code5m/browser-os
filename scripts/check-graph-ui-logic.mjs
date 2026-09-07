@@ -188,6 +188,34 @@ eq(
   "ready",
 );
 
+// ---- 容量健康度（超量态：ok/near/over，确定性）----
+eq("capacityState ok(50/200)", graphUi.capacityState(graphUi.estimateCapacity(50, 200)).level, "ok");
+eq(
+  "capacityState near(4700/19000≈94%)",
+  graphUi.capacityState(graphUi.estimateCapacity(4700, 19000)).level,
+  "near",
+);
+eq(
+  "capacityState over(6000/>max)",
+  graphUi.capacityState(graphUi.estimateCapacity(6000, 10)).level,
+  "over",
+);
+ok(
+  "capacityState over 文案非空",
+  graphUi.capacityState(graphUi.estimateCapacity(6000, 10)).message.length > 0,
+);
+
+// ---- 确定性搜索 / 无界数组防护 ----
+const big = [];
+for (let i = 0; i < 6000; i++) big.push(node("n" + i, i % 2 ? "file" : "dir", "Node" + i));
+const bigFiltered = graphUi.filterNodes(big, { query: "node1", kinds: [] });
+ok("filterNodes 不放大数组(6000→子集)", bigFiltered.length > 0 && bigFiltered.length <= 6000);
+const ordered = graphUi.filterNodes(big, { query: "", kinds: ["file"] });
+ok("filterNodes 顺序稳定(file 子集首项 n1)", ordered.length === 3000 && ordered[0].id === "n1");
+let bm = new Map();
+bm = graphUi.boundedInsert(bm, big, 5000);
+ok("boundedInsert 6000→封顶 5000(无界防护)", bm.size === 5000 && !bm.has("n0"));
+
 // ---- 结果 ----
 console.log(`\n图谱 UI 逻辑测试：通过 ${passed}，失败 ${failed}`);
 process.exit(failed === 0 ? 0 : 1);

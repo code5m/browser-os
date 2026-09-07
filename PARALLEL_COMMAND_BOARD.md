@@ -1,10 +1,10 @@
 # Parallel Command Board
 
-> Updated: 2026-09-07 00:50 CST
+> Updated: 2026-09-07 14:30 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` at `5f92ece` locally and on `origin/master`
-> Current NEXT: M5-W7 integration implementation; Lane A3 owns M5-2 read-only MCP command bridge, Lane A5 owns Agent/Skill read-only command bridge, other lanes docs/review/support only
+> Current mainline: `master` integration in progress after W7; do not push from lanes
+> Current NEXT: M5-W9 integration follow-up; W8 focused validation passed after A0 privacy/fmt/metrics fixes, lanes continue with runtime-free polish and verification
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
@@ -13,7 +13,7 @@ This file is the coordination board for 11 parallel agents plus A0 integration. 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W7 Integration Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W9 Runtime-Free Polish Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
 ```
 
 Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
@@ -169,6 +169,113 @@ WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane
 - Every new command must be atomic with source check, ACL, frontend bridge/types, policy coverage, and tests.
 - No token/cookie/Authorization/body/prompt-secret logging or persistence.
 - All lanes pull from `origin/master` first and must not push.
+
+
+
+## M5-W9 Runtime-Free Polish Dispatch
+
+> Added 2026-09-07 14:30 CST by A0 after W8 validation.
+> Current facts: A3 MCP policy is current-phase (`ACTIVE=8/PENDING=0`), A5 Agent/Skill policy is green after A0 redacted `CredentialLeak` Display, Agent/Skill UI logic has 79 assertions, Graph UI logic has 41 assertions, `npm run build` passes. Build metrics are accepted at 22% because current total_bytes_pct is 21.07 and cargo warnings did not increase.
+> W9 goal: finish runtime-free polish, docs, and final verification before any MCP server / plugin runtime / skill execution wave.
+
+### W9 One-Line Prompt
+
+```text
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W9 Runtime-Free Polish Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+```
+
+### W9 Assignments
+
+| Lane | Status | Task | Allowed Scope | Must Deliver |
+|---|---|---|---|---|
+| A1 | **START DOCS ONLY** | Reconcile W8 as accepted-with-fixes and mark W9 as active NEXT. Update M5 child-card status for MCP read-only bridge, Agent/Skill read-only bridge, Graph UI polish, plugin review, and build metrics threshold 22%. | `PARALLEL_COMMAND_BOARD.md`, three main docs, `logs/checkpoints/M5-20260906/*.md`, `logs/checkpoints/A1-M5-W9-*.md` | One reconciliation checkpoint; no product code. |
+| A2 | **START REVIEW ONLY** | Re-review command boundary after A3/A5 W8 fixes: no runtime server/listener, no core tauri leak, read-only bridge only, no duplicate execution path. | `logs/assist/A2-M5-W9-*.md` | Boundary verdict with concrete blockers only. |
+| A3 | **START POLICY/REVIEW ONLY** | Keep MCP policy current-phase green and prepare a later M5-2.b card for actual rmcp/server work. Do not implement rmcp/server/listener/network. | `scripts/check-mcp-policy.py` only if a regression is found, `logs/assist/A3-M5-W9-*.md` | Policy/review note; self-test/default/current-gaps command results. |
+| A4 | **START PRIVACY REVIEW ONLY** | Re-review all command error/display surfaces for secret echo after the A0 `CredentialLeak` redaction fix. Check Agent/Skill/MCP/Plugin/Graph visible errors and audit text. | `logs/assist/A4-M5-W9-*.md`, optional policy fixtures only | Privacy verdict; no product code unless policy-only bad sample is concrete. |
+| A5 | **START PRODUCT CODE SMALL** | Finish Agent/Skill read-only bridge hardening only: add focused tests for redacted validation errors and frontend parse/permission preview edge cases. No execution, install, persistence write, network, or model call. | `src-tauri/src/bridge.rs`, `src-tauri/src/agent.rs`, `src-tauri/src/skills.rs`, `scripts/check-agent-skill-policy.py`, `src/bridge.ts`, `src/types.ts`, checkpoint/patch | Focused Rust tests PASS and agent/skill policy PASS. |
+| A6 | **START UI LOGIC ONLY** | Agent/Skill panel consumption polish: deterministic empty/error/loading states, no secret text echo in UI state, bounded preview rendering. | `src/components/**`, `src/stores/**`, `scripts/check-agent-skill-ui-logic.mjs`, `logs/assist/A6-M5-W9-*.md` | UI logic assertions PASS; no backend command changes. |
+| A7 | **START GRAPH CONTRACT DOCS ONLY** | Finalize next graph bridge contract for later live graph query commands, separating runtime-free UI/store items from blocked backend runtime items. | `logs/assist/A7-M5-W9-*.md`, optional M5 graph card docs | One graph bridge contract note. |
+| A8 | **START GRAPH UI SMALL** | Graph UI polish only: keep filters/search/layout deterministic, preserve bounded arrays, improve no-backend/read-only states if needed. No backend graph commands. | `src/components/graph/**`, `src/stores/useGraphStore.ts`, `src/utils/graphUi.ts`, `scripts/check-graph-ui-logic.mjs`, checkpoint/patch | Graph UI logic PASS and `npm run build` PASS if code changed. |
+| A9 | **START PLUGIN REVIEW ONLY** | Plugin surface review after W8: verify manifest/lifecycle remains pure and real install/enable/delete/download commands are still absent. Do not implement plugin runtime. | `logs/assist/A9-M5-W9-*.md`, optional policy-only patch | Plugin verdict and any exact next runtime blockers. |
+| A10 | **START SECURITY FINAL REVIEW** | Batch review W8/W9 outputs after A5/A6/A8/A9 finish. Focus source check, ACL parity, read-only guarantees, redaction, and no runtime expansion. | `logs/assist/A10-M5-W9-*.md` | One final security verdict. |
+| A11 | **START FINAL VERIFICATION** | Produce final W9 verification matrix with exact command results, build metrics 21.07 <= 22%, cargo warnings unchanged, pre-merge result, remaining GUI/runtime debts, and push readiness. | `logs/checkpoints/A11-M5-W9-*.md`, `logs/assist/A11-M5-W9-*.md` | Verification checkpoint; no product code. |
+
+### W9 Hard Stops
+
+- No MCP server/listener/rmcp runtime, no plugin install/enable/delete/download runtime, no skill/agent execution, no model call, no network access.
+- New/changed commands must remain read-only and keep source check + ACL + bridge/types + policy/tests in the same package.
+- No token/cookie/Authorization/body/prompt-secret in logs, audit, frontend state, checkpoints, or error strings.
+- Build metrics threshold is 22% for this wave; any increase beyond 22% or any cargo warning increase blocks A0 push.
+- Only A0 pushes to remote.
+
+### W9 Direct Prompts
+
+```text
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A1，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W9 Runtime-Free Polish Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A2，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W9 Runtime-Free Polish Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A3，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W9 Runtime-Free Polish Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A4，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W9 Runtime-Free Polish Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A5，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W9 Runtime-Free Polish Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A6，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W9 Runtime-Free Polish Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A7，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W9 Runtime-Free Polish Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A8，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W9 Runtime-Free Polish Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A9，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W9 Runtime-Free Polish Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A10，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W9 Runtime-Free Polish Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A11，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W9 Runtime-Free Polish Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+```
+
+## M5-W8 Full-Lane Follow-up Dispatch
+
+> Added 2026-09-07 09:45 CST by A0.
+> Current facts: A3 MCP read-only bridge code is present in local master and focused checks pass except the old `--expect-pending` phase gate, which now correctly flags that W1 pending assumptions must be retired. A5 Agent/Skill read-only bridge focused checks pass. W7 assist/review notes from A1/A2/A4/A5/A7/A8/A9/A10/A11 are present.
+> W8 goal: close the A3 MCP policy pending-mode debt, harden Agent/Skill read-only bridge, wire/polish UI consumption, refresh graph/plugin plans, and produce one batch verification package before A0 push.
+
+### W8 One-Line Prompt
+
+```text
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W8 Full-Lane Follow-up Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+```
+
+### W8 Assignments
+
+| Lane | Status | Task | Allowed Scope | Must Deliver |
+|---|---|---|---|---|
+| A1 | **START DOCS ONLY** | Reconcile W7 full acceptance and promote W8 as active NEXT. Record that A3 W7 is present but has `check-mcp-policy.py --expect-pending` phase debt to close. Update M5 readiness/debt list for MCP bridge, Agent/Skill bridge, graph UI, and plugin policy. | `PARALLEL_COMMAND_BOARD.md`, `AI-模型切换与接手清单.md`, `详细设计与实施计划.md`, `后续需求TODO.md`, `logs/checkpoints/M5-20260906/*.md`, `logs/checkpoints/A1-M5-W8-*.md` | One reconciliation checkpoint; no product code. |
+| A2 | **START REVIEW ONLY** | Boundary review of A3/A5 W7 command bridges: confirm MCP and Agent/Skill bridges stay bin-side/read-only, do not leak into `mvp_core`, duplicate script execution, graph runtime, plugin runtime, or start MCP server/listener. Identify exact files/commands that must remain isolated. | `logs/assist/A2-M5-W8-*.md` | Boundary review note with PASS/BLOCKED and actionable line/file references. |
+| A3 | **START POLICY FIX ONLY** | Close W7 MCP policy phase debt: `check-mcp-policy.py --expect-pending` currently fails because MCP artifacts now exist. Convert W1 pending semantics into W7/W8 active checks or replace the mode with a current-phase assertion; keep default/self-test green. Do not add rmcp/server/listener/network/runtime execution. | `scripts/check-mcp-policy.py`, `scripts/pre-merge.sh` only if needed, `logs/checkpoints/A3-M5-W8-*.md`, optional policy-only fixtures | `check-mcp-policy.py --self-test` PASS, default PASS, current-phase mode PASS; focused MCP Rust tests still PASS; no product runtime expansion. |
+| A4 | **START REVIEW ONLY** | Privacy/memory review for Agent/Skill bridge and graph/plugin surfaces: credential redaction, bounded preview payloads, audit contents, no prompt/body persistence, no local secret capture. May propose policy fixtures but do not edit product code. | `logs/assist/A4-M5-W8-*.md` | Review note plus concrete recommended bad samples if any. |
+| A5 | **START PRODUCT CODE** | Harden Agent/Skill read-only bridge after A0 validation: add missing edge-case tests, improve validation error shape if needed, ensure ACL/source check/policy script and frontend bridge/types stay atomic. No execution, install, network, persistence writes, or plugin enablement. | `src-tauri/src/agent.rs`, `src-tauri/src/skills.rs`, `src-tauri/src/bridge.rs`, `src-tauri/src/main.rs`, `src-tauri/permissions/default-commands.toml`, `src/bridge.ts`, `src/types.ts`, `scripts/check-agent-skill-policy.py`, focused checkpoint/patch | Focused Rust tests PASS; `check-agent-skill-policy.py` self-test/default PASS; no A3/MCP files unless strictly shared ACL/type hunk and documented. |
+| A6 | **START UI DOCS/LOGIC** | Convert W7 UI wiring note into Agent/Skill panel consumption plan and pure UI helper tests. No live command execution unless bridge functions already exist and are typed; no visual redesign. | `src/components/**`, `src/stores/**`, `src/types.ts`, `src/bridge.ts`, `scripts/check-agent-skill-ui-logic.mjs`, `logs/assist/A6-M5-W8-*.md` | UI logic test PASS and checkpoint/assist note describing exact wiring state. |
+| A7 | **START DOCS/GRAPH BRIDGE PLAN ONLY** | Advance graph bridge plan without MCP/A3 dependency: define read-only graph query command contract, capacity/error states, and how GraphPanel consumes existing graph store. Do not implement backend commands. | `logs/assist/A7-M5-W8-*.md`, optional `logs/checkpoints/M5-20260906/M5-7*.md`, `M5-8*.md`, `M5-9*.md` | One graph bridge card with blocked-by-A3/MCP items separated from independently shippable UI/store items. |
+| A8 | **START UI POLISH/TEST ONLY** | Review and polish Graph UI pure logic already landed: accessibility labels, empty/error/oversize states, deterministic filters/search, no unbounded arrays. Do not add backend graph commands. | `src/components/**`, `src/stores/**`, `scripts/check-graph-ui-logic.mjs`, `logs/assist/A8-M5-W8-*.md` | `npm run build` or focused UI logic PASS; patch/checkpoint. |
+| A9 | **START POLICY REVIEW ONLY** | Plugin surface W8 review: ensure no install/enable/delete/download/runtime command slipped in, lifecycle remains pure, and capability verdict text is bounded/redacted. May extend plugin policy docs/tests only if concrete failure. | `logs/assist/A9-M5-W8-*.md`, optional `scripts/check-plugin-policy.py` policy-only hunk | Review note or policy patch; no runtime product code. |
+| A10 | **START SECURITY BATCH REVIEW** | Batch security review of all non-A3 W8 outputs after at least A5/A6/A8/A9 report. Focus source check, ACL drift, read-only guarantees, redaction, command payload bounds, no hidden execution/install/network. | `logs/assist/A10-M5-W8-*.md`; policy fixtures only for concrete failures | One security verdict, not per-file drip updates. |
+| A11 | **START VERIFICATION BATCH** | Maintain W8 verification matrix including A3. Record exact commands, pass/fail, residual debt, and whether A0 may push after A3 policy phase debt closes. | `logs/assist/A11-M5-W8-*.md`, `logs/checkpoints/A11-M5-W8-*.md` | One final verification delta after implementation lanes finish. |
+
+### W8 Hard Stops
+
+- A3 may edit only MCP policy/checkpoint files in W8; no new MCP product-code commands beyond the existing W7 read-only bridge.
+- No rmcp runtime, server/listener, plugin install/enable/delete/download, skill execution, model calls, or network access.
+- Every command touched by A5 must remain read-only and must include source check, ACL, frontend bridge/types, policy coverage, and focused tests in the same package.
+- No token/cookie/Authorization/body/prompt-secret logging, audit, persistence, checkpoint, or frontend state.
+- Lanes must deliver a coherent patch/checkpoint and must not ask A0 to merge tiny partial notes.
+- Only A0 pushes to remote.
+
+### W8 Direct Prompts
+
+```text
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A1，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W8 Full-Lane Follow-up Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A2，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W8 Full-Lane Follow-up Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A3，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W8 Full-Lane Follow-up Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A4，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W8 Full-Lane Follow-up Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A5，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W8 Full-Lane Follow-up Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A6，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W8 Full-Lane Follow-up Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A7，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W8 Full-Lane Follow-up Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A8，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W8 Full-Lane Follow-up Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A9，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W8 Full-Lane Follow-up Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A10，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W8 Full-Lane Follow-up Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A11，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W8 Full-Lane Follow-up Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+```
 
 ## M5-W6 Parallel Dispatch
 

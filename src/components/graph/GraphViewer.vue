@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useGraphStore } from "../../stores/useGraphStore";
-import { layoutPositions, nodeColor, nodeKindLabel } from "../../utils/graphUi";
+import {
+  edgeKindLabel,
+  layoutPositions,
+  nodeColor,
+  nodeKindLabel,
+} from "../../utils/graphUi";
 
 const store = useGraphStore();
 
@@ -23,6 +28,7 @@ function onEdge(idx: number): void {
 
 <template>
   <div class="viewer">
+    <p class="sr-only" aria-live="polite">{{ store.selectionText }}</p>
     <svg
       v-if="store.visibleNodes.length"
       viewBox="0 0 800 600"
@@ -39,7 +45,11 @@ function onEdge(idx: number): void {
         :y2="points.get(e.to)?.y ?? 0"
         class="edge"
         :class="{ active: store.selectedEdgeIdx === i }"
+        tabindex="0"
+        role="button"
+        :aria-label="`${edgeKindLabel(e.kind)}边，从 ${e.from} 到 ${e.to}`"
         @click="onEdge(i)"
+        @keydown.enter="onEdge(i)"
       />
       <g
         v-for="n in store.visibleNodes"
@@ -49,6 +59,8 @@ function onEdge(idx: number): void {
         :class="{ active: store.selectedNodeId === n.id }"
         tabindex="0"
         role="button"
+        aria-roledescription="图谱节点"
+        :aria-pressed="store.selectedNodeId === n.id"
         :aria-label="`${nodeKindLabel(n.kind)} 节点 ${n.label}`"
         @click="onNode(n.id)"
         @keydown.enter="onNode(n.id)"
@@ -57,12 +69,16 @@ function onEdge(idx: number): void {
         <text x="0" y="28" text-anchor="middle" class="nlabel">{{ n.label }}</text>
       </g>
     </svg>
-    <div v-else class="viewer-empty">暂无节点可绘制（后端数据未载入或已被过滤）。</div>
+    <div v-else class="viewer-empty" role="status">暂无节点可绘制（后端数据未载入或已被过滤）。</div>
   </div>
 </template>
 
 <style scoped>
 .viewer { width: 100%; height: 100%; min-height: 320px; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 .canvas { width: 100%; height: 100%; background: #fafafa; border-radius: 8px; }
 .edge { stroke: #bbb; stroke-width: 1.5; cursor: pointer; }
 .edge.active { stroke: #4096ff; stroke-width: 3; }

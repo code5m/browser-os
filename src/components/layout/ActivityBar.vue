@@ -218,6 +218,8 @@ async function openDirCenter() {
         v-for="it in topItems"
         :key="it.view"
         :class="{ active: layout.mainView === it.view }"
+        :aria-label="it.label"
+        :aria-current="layout.mainView === it.view ? 'page' : undefined"
         @click="onItem(it.view)"
         :title="it.label"
       >
@@ -373,6 +375,8 @@ async function openDirCenter() {
           v-for="c in s.items"
           :key="c.view"
           :class="{ active: layout.mainView === c.view }"
+          :aria-label="c.label"
+          :aria-current="layout.mainView === c.view ? 'page' : undefined"
           @click="onItem(c.view)"
         >
           <span class="ic">{{ c.icon }}</span> {{ c.label }}

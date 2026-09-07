@@ -208,15 +208,73 @@ def c_command_parity(rel, text, repo):
     return None
 
 
+_READONLY_CMDS = (
+    "agent_parse", "agent_validate", "agent_permission_preview",
+    "skill_parse", "skill_validate", "skill_permission_preview",
+)
+
+def c_readonly_command_parity(rel, text, repo):
+    """AGSK_RO_COMMAND_PARITY：W7 只读 Agent/Skill 桥命令须在 bridge.rs handler + main.rs 注册 + ACL + bridge.ts 四件套齐全。
+
+    与 c_command_parity（M5-5 运行时命令）互补：覆盖 W7 新增的「只读 parse/validate/permission_preview」子集。
+    仅在任一只读命令已出现时才守门（presence-gated），故 Agent/Skill 域未落地或 W7 未开工时自动 no-op。
+    """
+    if rel != "src-tauri/src/main.rs":
+        return None
+    present = any(
+        c in repo.get("src-tauri/src/bridge.rs", "")
+        or c in repo.get("src-tauri/src/main.rs", "")
+        or c in repo.get("src/bridge.ts", "")
+        or c in repo.get("src-tauri/permissions/default-commands.toml", "")
+        for c in _READONLY_CMDS
+    )
+    if not present:
+        return None
+    bridge_rs = repo.get("src-tauri/src/bridge.rs", "")
+    main_rs = repo.get("src-tauri/src/main.rs", "")
+    acl = repo.get("src-tauri/permissions/default-commands.toml", "")
+    bts = repo.get("src/bridge.ts", "")
+    missing = []
+    for c in _READONLY_CMDS:
+        in_handler = (f"bridge::{c}" in bridge_rs) or (f"pub fn {c}" in bridge_rs)
+        has_source_check = f'check_invocation_source(&webview, "{c}"' in bridge_rs
+        parity_ok = in_handler and c in main_rs and c in acl and c in bts
+        if not (parity_ok and has_source_check):
+            missing.append(c)
+    if missing:
+        return [f"W7 只读 Agent/Skill 命令缺四件套奇偶或 source check（bridge.rs handler/main.rs/ACL/bridge.ts/source-check）：{sorted(missing)}"]
+    return None
+
+
+def c_credential_not_echoed(rel, text, repo):
+    """AGSK_CREDENTIAL_NOT_ECHOED（W8 S-W8-1，A10 加）：PolicyError::CredentialLeak
+    的 Display 不得回显 secret 原文（{s}）。validate 拒后错误只给分类信息，不回显密文。
+
+    设计来源：A4 W8 隐私评审 F-W8-1 —— agent_validate/skill_validate 在 CredentialLeak
+    错误里明文回显 system_prompt/description/name（security_policy.rs Display 写 "{s}"；
+    agent.rs/skills.rs clone secret 进错误），前端日志/剪贴/缓存即捕获 → 击穿 W8 脱敏镜头 +
+    「no prompt-secret logging or persistence」精神。修复后 Display 用 <redacted> 或不插值。
+    """
+    if not _agent_skill_present(repo):
+        return None
+    if rel != "src-tauri/src/security_policy.rs":
+        return None
+    if re.search(r"CredentialLeak\(\w+\)\s*=>\s*\{[^}]{0,400}?\{s\}", text):
+        return ["PolicyError::CredentialLeak 的 Display 回显 secret 原文（{s}），违反 W8 脱敏镜头；应改为 <redacted> 或不插值捕获变量"]
+    return None
+
+
 ACTIVE_CODES = [
     ("AGSK_ACL_TAIL", "ACTIVE", c_acl_tail),
     ("AGSK_CAPABILITY_DRIFT", "ACTIVE", c_capability_drift),
+    ("AGSK_RO_COMMAND_PARITY", "ACTIVE", c_readonly_command_parity),
 ]
 PENDING_CODES = [
     ("AGSK_SECOND_PATH", "PENDING", c_second_path),
     ("AGSK_INLINE_SHELL_ENUM", "PENDING", c_inline_shell),
     ("AGSK_INLINE_SHELL_REF", "PENDING", c_no_inline_exec_variant),
     ("AGSK_COMMAND_PARITY", "PENDING", c_command_parity),
+    ("AGSK_CREDENTIAL_NOT_ECHOED", "PENDING", c_credential_not_echoed),
 ]
 ALL_CODES = ACTIVE_CODES + PENDING_CODES
 
@@ -291,6 +349,17 @@ def _baseline_repo() -> dict[str, str]:
         "src-tauri/src/security_policy.rs": (
             "pub const SKILL_CAPABILITY_V1: &[&str] = &[];\n"
             "pub const AGENT_CAPABILITY_V1: &[&str] = &[];\n"
+            "enum PolicyError { CredentialLeak(String) }\n"
+            "impl std::fmt::Display for PolicyError {\n"
+            "  fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {\n"
+            "    match self {\n"
+            "      PolicyError::CredentialLeak(_s) => {\n"
+            "        write!(f, \"凭据/密钥泄露（禁止进入 Agent/Skill 定义）：<redacted>\")\n"
+            "      }\n"
+            "      _ => Ok(()),\n"
+            "    }\n"
+            "  }\n"
+            "}\n"
         ),
         "src-tauri/permissions/default-commands.toml": "[commands]\nlist_artifacts\nlist_artifact_images\n",
         "src/bridge.ts": "export function invoke(name: string) {}\n",
@@ -336,10 +405,47 @@ def _run_self_test() -> int:
     add("AGSK_COMMAND_PARITY", "bridge.rs 暴露 skill_install 但不在 ACL/bridge.ts",
         mutate(**{"src-tauri/src/bridge.rs": "pub fn skill_install(app: AppHandle) {}\n"}),
         "src-tauri/src/bridge.rs")
+    add("AGSK_RO_COMMAND_PARITY", "bridge.rs 暴露 agent_parse 但 ACL 缺失 → 四件套不齐",
+        mutate(**{
+            "src-tauri/src/bridge.rs": "pub fn agent_parse(app: AppHandle) {}\n",
+            "src-tauri/src/main.rs": "bridge::agent_parse,\n",
+            "src/bridge.ts": "export function invoke() {}\nagent_parse\n",
+            "src-tauri/permissions/default-commands.toml": "[commands]\nlist_artifact_images\n",
+        }),
+        "src-tauri/src/bridge.rs")
+    add("AGSK_RO_COMMAND_PARITY", "6 只读命令四件套齐全但 handler 缺 check_invocation_source",
+        mutate(**{
+            "src-tauri/src/bridge.rs": (
+                'pub fn agent_parse(app: AppHandle) {}\n'
+                'pub fn agent_validate(app: AppHandle) {}\n'
+                'pub fn agent_permission_preview(app: AppHandle) {}\n'
+                'pub fn skill_parse(app: AppHandle) {}\n'
+                'pub fn skill_validate(app: AppHandle) {}\n'
+                'pub fn skill_permission_preview(app: AppHandle) {}\n'
+            ),
+            "src-tauri/src/main.rs": (
+                "bridge::agent_parse,\nbridge::agent_validate,\nbridge::agent_permission_preview,\n"
+                "bridge::skill_parse,\nbridge::skill_validate,\nbridge::skill_permission_preview,\n"
+            ),
+            "src/bridge.ts": (
+                "export function invoke() {}\n"
+                "agent_parse\nagent_validate\nagent_permission_preview\n"
+                "skill_parse\nskill_validate\nskill_permission_preview\n"
+            ),
+            "src-tauri/permissions/default-commands.toml": (
+                "[commands]\nlist_artifact_images\nagent_parse\nagent_validate\n"
+                "agent_permission_preview\nskill_parse\nskill_validate\nskill_permission_preview\n"
+            ),
+        }),
+        "src-tauri/src/bridge.rs")
     add("AGSK_CAPABILITY_DRIFT", "SKILL_CAPABILITY_V1 定义两处",
         mutate(**{"src-tauri/src/security_policy.rs":
                   good["src-tauri/src/security_policy.rs"] + "pub const SKILL_CAPABILITY_V1: &[&str] = &[\"x\"];\n",
                   "src-tauri/src/extra.rs": "pub const SKILL_CAPABILITY_V1: &[&str] = &[\"y\"];\n"}),
+        "src-tauri/src/security_policy.rs")
+    add("AGSK_CREDENTIAL_NOT_ECHOED", "CredentialLeak Display 回显 {s} 原文",
+        mutate(**{"src-tauri/src/security_policy.rs":
+                  good["src-tauri/src/security_policy.rs"].replace("<redacted>", "{s}")}),
         "src-tauri/src/security_policy.rs")
 
     for code, _desc, mutated in bad_cases:

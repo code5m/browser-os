@@ -1,0 +1,290 @@
+diff --git a/src-tauri/src/bridge.rs b/src-tauri/src/bridge.rs
+index b9e2f64..d7b80c7 100644
+--- a/src-tauri/src/bridge.rs
++++ b/src-tauri/src/bridge.rs
+@@ -6141,7 +6141,28 @@ impl ValidationReport {
+     }
+ }
+ 
++// M5-W8（A5）硬化：解析/校验/预览输入上限，防超大 payload DoS（A4 W7 评审 R5-2 / F2）。
++// Agent/Skill 定义为小结构，256 KiB 已留足余量；超出在来源校验之后直接拒绝。
++const AGENT_DEF_MAX_BYTES: usize = 256 * 1024;
++const SKILL_DEF_MAX_BYTES: usize = 256 * 1024;
++
++fn reject_oversized_def(text: &str, max: usize, kind: &str) -> Result<(), String> {
++    if text.len() > max {
++        return Err(format!(
++            "{kind} 定义超出大小上限（{} 字节），已拒绝解析",
++            max
++        ));
++    }
++    Ok(())
++}
++
+ fn agent_validate_inner(text: &str) -> ValidationReport {
++    if text.len() > AGENT_DEF_MAX_BYTES {
++        return ValidationReport::with_errors(vec![format!(
++            "Agent 定义超出大小上限（{} 字节），已拒绝解析",
++            AGENT_DEF_MAX_BYTES
++        )]);
++    }
+     match crate::domain::AgentDef::parse(text) {
+         Ok(def) => match def.validate() {
+             Ok(()) => ValidationReport::ok(),
+@@ -6158,7 +6179,7 @@ pub fn agent_parse(
+     text: String,
+ ) -> Result<crate::domain::AgentDef, String> {
+     check_invocation_source(&webview, "agent_parse", None, &app)?;
+-    crate::domain::AgentDef::parse(&text)
++    agent_parse_inner(&text)
+ }
+ 
+ #[tauri::command]
+@@ -6178,11 +6199,16 @@ pub fn agent_permission_preview(
+     text: String,
+ ) -> Result<crate::domain::PermissionPreview, String> {
+     check_invocation_source(&webview, "agent_permission_preview", None, &app)?;
+-    let def = crate::domain::AgentDef::parse(&text)?;
+-    Ok(def.permission_preview())
++    agent_permission_preview_inner(&text)
+ }
+ 
+ fn skill_validate_inner(text: &str) -> ValidationReport {
++    if text.len() > SKILL_DEF_MAX_BYTES {
++        return ValidationReport::with_errors(vec![format!(
++            "Skill 定义超出大小上限（{} 字节），已拒绝解析",
++            SKILL_DEF_MAX_BYTES
++        )]);
++    }
+     match crate::domain::SkillDef::parse(text) {
+         Ok(def) => match def.validate() {
+             Ok(()) => ValidationReport::ok(),
+@@ -6192,6 +6218,28 @@ fn skill_validate_inner(text: &str) -> ValidationReport {
+     }
+ }
+ 
++fn agent_parse_inner(text: &str) -> Result<crate::domain::AgentDef, String> {
++    reject_oversized_def(text, AGENT_DEF_MAX_BYTES, "Agent")?;
++    crate::domain::AgentDef::parse(text)
++}
++
++fn skill_parse_inner(text: &str) -> Result<crate::domain::SkillDef, String> {
++    reject_oversized_def(text, SKILL_DEF_MAX_BYTES, "Skill")?;
++    crate::domain::SkillDef::parse(text)
++}
++
++fn agent_permission_preview_inner(text: &str) -> Result<crate::domain::PermissionPreview, String> {
++    reject_oversized_def(text, AGENT_DEF_MAX_BYTES, "Agent")?;
++    let def = crate::domain::AgentDef::parse(text)?;
++    Ok(def.permission_preview())
++}
++
++fn skill_permission_preview_inner(text: &str) -> Result<crate::domain::PermissionPreview, String> {
++    reject_oversized_def(text, SKILL_DEF_MAX_BYTES, "Skill")?;
++    let def = crate::domain::SkillDef::parse(text)?;
++    Ok(def.permission_preview())
++}
++
+ #[tauri::command]
+ pub fn skill_parse(
+     app: AppHandle,
+@@ -6199,7 +6247,7 @@ pub fn skill_parse(
+     text: String,
+ ) -> Result<crate::domain::SkillDef, String> {
+     check_invocation_source(&webview, "skill_parse", None, &app)?;
+-    crate::domain::SkillDef::parse(&text)
++    skill_parse_inner(&text)
+ }
+ 
+ #[tauri::command]
+@@ -6219,8 +6267,7 @@ pub fn skill_permission_preview(
+     text: String,
+ ) -> Result<crate::domain::PermissionPreview, String> {
+     check_invocation_source(&webview, "skill_permission_preview", None, &app)?;
+-    let def = crate::domain::SkillDef::parse(&text)?;
+-    Ok(def.permission_preview())
++    skill_permission_preview_inner(&text)
+ }
+ 
+ #[cfg(test)]
+@@ -6276,13 +6323,21 @@ mod agent_skill_bridge_tests {
+         let mut a: crate::domain::AgentDef = serde_json::from_str(&good_agent_json()).unwrap();
+         a.system_prompt = "use sk-abc123XYZ".into();
+         let r = agent_validate_inner(&serde_json::to_string(&a).unwrap());
+-        assert!(!r.valid, "credential-leak agent must be invalid, errors={:?}", r.errors);
++        assert!(
++            !r.valid,
++            "credential-leak agent must be invalid, errors={:?}",
++            r.errors
++        );
+         assert!(!r.errors.is_empty());
+         let joined = r.errors.join(" ");
+-        assert!(joined.contains("泄露") || joined.contains("凭据")
++        assert!(
++            joined.contains("泄露")
++                || joined.contains("凭据")
+                 || joined.to_lowercase().contains("credential")
+                 || joined.to_lowercase().contains("leak"),
+-                "errors should mention credential leak, got {:?}", r.errors);
++            "errors should mention credential leak, got {:?}",
++            r.errors
++        );
+     }
+ 
+     #[test]
+@@ -6303,6 +6358,106 @@ mod agent_skill_bridge_tests {
+         assert!(ValidationReport::ok().valid);
+         assert!(!ValidationReport::with_errors(vec!["x".into()]).valid);
+     }
++
++    // ---- M5-W8 硬化：校验错误形状 + 边界用例 ----
++
++    #[test]
++    fn report_ok_has_empty_errors() {
++        let r = ValidationReport::ok();
++        assert!(r.valid);
++        assert!(r.errors.is_empty());
++    }
++
++    #[test]
++    fn report_with_errors_shape() {
++        let r = ValidationReport::with_errors(vec!["e1".into(), "e2".into()]);
++        assert!(!r.valid);
++        assert_eq!(r.errors.len(), 2);
++    }
++
++    #[test]
++    fn reject_oversized_def_guard() {
++        assert!(reject_oversized_def("small", AGENT_DEF_MAX_BYTES, "Agent").is_ok());
++        let huge = "x".repeat(AGENT_DEF_MAX_BYTES + 1);
++        let e = reject_oversized_def(&huge, AGENT_DEF_MAX_BYTES, "Agent").unwrap_err();
++        assert!(
++            e.contains("大小上限") || e.to_lowercase().contains("limit"),
++            "got {e}"
++        );
++    }
++
++    #[test]
++    fn agent_validate_inner_rejects_oversized() {
++        let huge = "x".repeat(AGENT_DEF_MAX_BYTES + 1);
++        let r = agent_validate_inner(&huge);
++        assert!(!r.valid);
++        assert!(!r.errors.is_empty());
++    }
++
++    #[test]
++    fn skill_validate_inner_rejects_oversized() {
++        let huge = "x".repeat(SKILL_DEF_MAX_BYTES + 1);
++        let r = skill_validate_inner(&huge);
++        assert!(!r.valid);
++    }
++
++    #[test]
++    fn agent_parse_inner_rejects_oversized() {
++        let huge = "x".repeat(AGENT_DEF_MAX_BYTES + 1);
++        assert!(agent_parse_inner(&huge).is_err());
++    }
++
++    #[test]
++    fn agent_parse_inner_rejects_malformed() {
++        assert!(agent_parse_inner("not json {{{").is_err());
++    }
++
++    #[test]
++    fn skill_parse_inner_rejects_oversized() {
++        let huge = "x".repeat(SKILL_DEF_MAX_BYTES + 1);
++        assert!(skill_parse_inner(&huge).is_err());
++    }
++
++    #[test]
++    fn agent_validate_rejects_invalid_dialect() {
++        let mut v: serde_json::Value = serde_json::from_str(&good_agent_json()).unwrap();
++        v["dialect"] = serde_json::json!(123); // 非枚举字符串 → 解析失败
++        let r = agent_validate_inner(&v.to_string());
++        assert!(!r.valid, "invalid dialect type must invalidate, got {:?}", r.errors);
++    }
++
++    #[test]
++    fn skill_validate_rejects_invalid_acl() {
++        let mut v: serde_json::Value = serde_json::from_str(&good_skill_json()).unwrap();
++        v["acl"] = serde_json::json!(123); // 非枚举字符串 → 解析失败
++        let r = skill_validate_inner(&v.to_string());
++        assert!(!r.valid, "invalid acl type must invalidate, got {:?}", r.errors);
++    }
++
++    #[test]
++    fn agent_permission_preview_inner_shape() {
++        let p = agent_permission_preview_inner(&good_agent_json()).unwrap();
++        assert!(matches!(
++            p.gate,
++            AclLevel::Safe | AclLevel::Confirm | AclLevel::Dangerous
++        ));
++        assert!(p.capabilities.is_empty());
++    }
++
++    #[test]
++    fn agent_permission_preview_inner_rejects_malformed() {
++        assert!(agent_permission_preview_inner("bad").is_err());
++    }
++
++    #[test]
++    fn skill_permission_preview_inner_shape() {
++        let p = skill_permission_preview_inner(&good_skill_json()).unwrap();
++        assert!(matches!(
++            p.gate,
++            AclLevel::Safe | AclLevel::Confirm | AclLevel::Dangerous
++        ));
++        assert!(p.capabilities.is_empty());
++    }
+ }
+ 
+ // ====== M5-2 MCP 只读注册表/策略桥命令（W7）======
+--- a/scripts/check-agent-skill-policy.py
++++ b/scripts/check-agent-skill-policy.py
+@@ -237,10 +237,12 @@
+     missing = []
+     for c in _READONLY_CMDS:
+         in_handler = (f"bridge::{c}" in bridge_rs) or (f"pub fn {c}" in bridge_rs)
+-        if not (in_handler and c in main_rs and c in acl and c in bts):
++        has_source_check = f'check_invocation_source(&webview, "{c}"' in bridge_rs
++        parity_ok = in_handler and c in main_rs and c in acl and c in bts
++        if not (parity_ok and has_source_check):
+             missing.append(c)
+     if missing:
+-        return [f"W7 只读 Agent/Skill 命令缺四件套奇偶（bridge.rs/main.rs/ACL/bridge.ts）：{sorted(missing)}"]
++        return [f"W7 只读 Agent/Skill 命令缺四件套奇偶或 source check（bridge.rs handler/main.rs/ACL/bridge.ts/source-check）：{sorted(missing)}"]
+     return None
+ 
+ 
+@@ -411,6 +413,31 @@
+             "src-tauri/permissions/default-commands.toml": "[commands]\nlist_artifact_images\n",
+         }),
+         "src-tauri/src/bridge.rs")
++    add("AGSK_RO_COMMAND_PARITY", "6 只读命令四件套齐全但 handler 缺 check_invocation_source",
++        mutate(**{
++            "src-tauri/src/bridge.rs": (
++                'pub fn agent_parse(app: AppHandle) {}\n'
++                'pub fn agent_validate(app: AppHandle) {}\n'
++                'pub fn agent_permission_preview(app: AppHandle) {}\n'
++                'pub fn skill_parse(app: AppHandle) {}\n'
++                'pub fn skill_validate(app: AppHandle) {}\n'
++                'pub fn skill_permission_preview(app: AppHandle) {}\n'
++            ),
++            "src-tauri/src/main.rs": (
++                "bridge::agent_parse,\nbridge::agent_validate,\nbridge::agent_permission_preview,\n"
++                "bridge::skill_parse,\nbridge::skill_validate,\nbridge::skill_permission_preview,\n"
++            ),
++            "src/bridge.ts": (
++                "export function invoke() {}\n"
++                "agent_parse\nagent_validate\nagent_permission_preview\n"
++                "skill_parse\nskill_validate\nskill_permission_preview\n"
++            ),
++            "src-tauri/permissions/default-commands.toml": (
++                "[commands]\nlist_artifact_images\nagent_parse\nagent_validate\n"
++                "agent_permission_preview\nskill_parse\nskill_validate\nskill_permission_preview\n"
++            ),
++        }),
++        "src-tauri/src/bridge.rs")
+     add("AGSK_CAPABILITY_DRIFT", "SKILL_CAPABILITY_V1 定义两处",
+         mutate(**{"src-tauri/src/security_policy.rs":
+                   good["src-tauri/src/security_policy.rs"] + "pub const SKILL_CAPABILITY_V1: &[&str] = &[\"x\"];\n",

@@ -14,10 +14,13 @@ import { GRAPH_COMMANDS_AVAILABLE, bridge } from "../bridge";
 import type { GraphEdge, GraphNode, GraphNodeKind } from "../types";
 import {
   boundedInsert,
+  capacityState,
   estimateCapacity,
   filterEdges,
   filterNodes,
   panelStateGraph,
+  summarizeEdge,
+  summarizeNode,
   type GraphFilterState,
 } from "../utils/graphUi";
 
@@ -44,6 +47,20 @@ export const useGraphStore = defineStore("graph", () => {
   const visibleEdges = computed(() => filterEdges(edgeList.value, nodeList.value, filter.value));
 
   const capacity = computed(() => estimateCapacity(nodes.value.size, edges.value.size));
+  const capState = computed(() => capacityState(capacity.value));
+
+  // 当前选择的可读播报（供 GraphViewer/详情区 aria-live 公告，确定性拼接）
+  const selectionText = computed(() => {
+    if (selectedNode.value) {
+      const s = summarizeNode(selectedNode.value);
+      return `已选择${s.kindLabel}节点 ${s.label}`;
+    }
+    if (selectedEdge.value) {
+      const s = summarizeEdge(selectedEdge.value);
+      return `已选择${s.kindLabel}边（${s.from} → ${s.to}）`;
+    }
+    return "";
+  });
 
   const selectedNode = computed(() =>
     selectedNodeId.value ? nodes.value.get(selectedNodeId.value) ?? null : null,
@@ -126,6 +143,8 @@ export const useGraphStore = defineStore("graph", () => {
     visibleNodes,
     visibleEdges,
     capacity,
+    capState,
+    selectionText,
     selectedNode,
     selectedEdge,
     state,

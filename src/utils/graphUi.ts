@@ -169,6 +169,22 @@ export function estimateCapacity(nodeCount: number, edgeCount: number): Capacity
   };
 }
 
+// 容量健康度（确定性、无随机）：over=超上限，near=接近上限(>=90%)，ok=正常。
+// 用于 UI 超量态横幅，避免对超限数据无提示。
+export interface CapacityState {
+  level: "ok" | "near" | "over";
+  message: string;
+}
+export function capacityState(cap: CapacityView): CapacityState {
+  if (!cap.withinLimit || cap.nodeUsedPct >= 100 || cap.edgeUsedPct >= 100) {
+    return { level: "over", message: "图谱已达容量上限，仅展示已载入部分。" };
+  }
+  if (cap.nodeUsedPct >= 90 || cap.edgeUsedPct >= 90) {
+    return { level: "near", message: "图谱接近容量上限，部分数据可能未载入。" };
+  }
+  return { level: "ok", message: "" };
+}
+
 // ====== 搜索/过滤 ======
 export interface GraphFilterState {
   query: string;

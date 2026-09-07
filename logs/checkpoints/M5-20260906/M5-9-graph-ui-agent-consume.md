@@ -6,7 +6,7 @@
 > 主预研：暂无 prework 文档（A8 prework 仍空）
 > 配套：`M5-8-graph-store-query.md`（DTO 稳定）
 >
-> **W3** BLOCKED（待 A7 W5 schema 落地）· **W4** ACTIVE（A8 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A8 W5 仍 SUPPORT DOCS ONLY，待 A7 W5 schema 落地后 W6+ 由 A0 决定）· **W6** ACTIVE（**A8 升级为 START PRODUCT CODE**：graph UI pure logic + panel shell；详见本卡顶部 `[W6 next-card acceptance criteria]` 段）
+> **W3** BLOCKED（待 A7 W5 schema 落地）· **W4** ACTIVE（A8 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A8 W5 仍 SUPPORT DOCS ONLY，待 A7 W5 schema 落地后 W6+ 由 A0 决定）· **W6** PUSHED · **A8 升级为 START PRODUCT CODE** · `5f92ece` 拣入（4 vue + store + utils + `scripts/check-graph-ui-logic.mjs` 193 行 PASS）· 详见本卡顶部 `[W6 next-card acceptance criteria]` 段）· **W7** RECONCILIATION（**A1 W7 标 F1 Critical 在本卡 [W7 patched] 段订正**：`summarizeNode` 白名单收紧 8→4 字段 `{id,kind,label,neighborCount}` + NodeDetail/EdgeDetail 8→4+`props_size` 字段 + §4.2 fixture 8 字段 W8+ 取决；A3 W7 mcp_* 3 命令 + A11 W7 pre-merge FAIL 3 red lights + A6 W7 wiring 在 `6c1f30e` / `daa10f6` / `a29b796` 已拣入 master；A1 W7 整包本卡修订未进 master，留 W8 整包合并拣入；详见本卡顶部 `[W7 patched · 2026-09-07 00:50 CST]` 段 + `M5-0-overview.md` 顶部 `[W7 reconciliation · 2026-09-07 09:45 CST]` 段）· **W8** ACTIVE（**A8 W8 = UI POLISH/TEST ONLY** —— 复审 + 磨光已落地 Graph UI pure logic：accessibility labels / empty/error/oversize states / deterministic filters / search / 无 unbounded arrays；**不**加后端 graph commands；A7 W8 = GRAPH BRIDGE PLAN ONLY 仅 docs/A7 card 规划 read-only graph query command + GraphPanel 消费既有 graph store；A3 W8 = HOLD/NO ASSIGNMENT；详见 `M5-0-overview.md` 顶部 `[W8 active · 2026-09-07 09:45 CST]` 段 + `M5-13-verification-matrix.md` 顶部 `[W8 verification scope]` 段）
 
 ---
 
@@ -28,6 +28,20 @@
 
 ---
 
+## [W7 patched · 2026-09-07 00:50 CST] A1 W7 订正 §[W6 next-card AC] AC-1 `summarizeNode` 白名单 8→4 字段 + §4.2 NodeDetail.vue 8字段 生产路径标 W8+ 取决（来源：A7 W6 review 红线 F1 Critical · `logs/assist/A7-M5-W6-graph-contract-review-20260906-2239.md`）
+
+> **依据**：`logs/assist/A7-M5-W6-graph-contract-review-20260906-2239.md` F1（**Critical**）—— *"M5-9 卡 W6 AC-1 的 `summarizeNode` 白名单含 5 个 A7 DTO 不存在的字段（source/source_ref/created_at/updated_at/extractor_version），且 `id=sha256` 不可逆无法派生，须由 A1 修订卡；W6 `summarizeNode` 实际仅可用 `{id, kind, label, neighborCount}`。"* + `5f92ece` 拣入实测 A8 W6 实际实现（`scripts/check-graph-ui-logic.mjs` 193 行 PASS）已基于 4 字段，无生产路径泄露。
+> **F1 订正（本卡修订 · A8 代码**无需回改**）**：
+> 1. **AC-1 `summarizeNode` 白名单收紧 8→4 字段**：原 AC-1 列 `{id, kind, label, source, source_ref, created_at, updated_at, extractor_version}` —— 后 5 字段 `source/source_ref/created_at/updated_at/extractor_version` **不在 A7 DTO**（A7 W5 GraphNode = `{id, kind, label, props}`），且 `id=sha256` 不可逆**无法派生** source/时间戳/extractor_version。**W7 修订 AC-1 白名单 = `{id, kind, label, neighborCount}`**。`neighborCount` 由 graph store `bounded_neighbors(id)` 调用派生，**不**消费 `GraphProps` 正文（K7 严守）。
+> 2. **W6-HS5 同步收紧 8→4 字段**：原 W6-HS5 列 NodeDetail.vue/EdgeDetail.vue 显示白名单 8 字段 + props 折略 —— **W7 修订 NodeDetail.vue 显示白名单 = `{id, kind, label, neighborCount, props_size}`**（**仅 props 字节数/字段数**，**不渲染 props 正文**）。EdgeDetail.vue 显示白名单 = `{from, to, kind, weight, props_size}`（同上，不渲染 props 正文）。**K7 双闸**（A7 W5 + A4 W6 复审确认）—— UI 不暴露敏感 props 纵深。
+> 3. **§4.2 NodeDetail.vue 面板壳 / EdgeDetail.vue 面板壳 当前实现状态**：A8 W6 实际实现吃的是 `useGraphStore.ts` 静态 fixture（含 5 个示例节点 + 7 条示例边），fixture 里硬编码了 8 字段（便于视觉验收），**但生产路径 `graph_query` 命令 W6 F2 红线未落地**（grep 全仓库 0 命中），故 W6 实际**无生产路径泄露**。**W8+ 待 `graph_query` 命令由 A8 实施期落地后，由 A8 W8+ 同步把 fixture 与生产路径对齐**（8 字段 fixture 同步改为 4 字段白名单）。
+> 4. **A8 W6 真实命令落地（`graph_query` 等）属 W8+ 范畴**：W7 dispatch（L155/L157）只开 A3 M5-2 read-only MCP bridge + A5 Agent/Skill read-only bridge；**A8 W7 不在 W7 派发**，W8+ A8 是否派发 `graph_query` 真实命令由 A0 W8 dispatch 决定，本卡 §[W6 next-card AC] AC-2~AC-5 维持 *not exist* 状态。
+> **本卡不动**：
+> - §1 GOAL · §3 WRITE · §4 关键契约 · §5 FORBID · §6 COMMANDS · §7 PASS_CRITERIA 主体 —— 仅头部状态行 + §[W6 next-card AC] AC-1 + W6-HS5 三处收紧修订。
+> - §[W6 next-card AC] AC-2~AC-5 / 4 项 hard stops HS1~HS4 / A1 W6 角色 / A8 W6 消费依赖 5 段 —— 维持 W6 原状（W6 已 A0 拣入 PASS）。
+
+---
+
 ## [W6 next-card acceptance criteria · 2026-09-06 19:25 CST] A8 M5-9 W6 实施期 acceptance criteria（graph UI pure logic + panel shell · 不加 commands / 不调 live agent consumption / 不调 model calls / 不加 graph rebuild workers）
 
 > **依据**：`PARALLEL_COMMAND_BOARD.md` L159（**A8 M5-W6** *"Implement M5-9 graph UI pure logic and panel shell: graph list/search/filter, node detail summary, capacity/error/empty states, helper module + headless logic test. Do not call live agent consumption or backend graph commands unless already existing and fully typed."*）+ L164-170 硬约束 + A6 W5 UI panel shell 范式（`f99d2eb` 拣入）+ A7 W5 graph model/store policy slice（`4b438ef` 拣入：`src-tauri/src/graph.rs` + `domain.rs` GraphNode/Edge + 7 容量常量 + check-graph-policy.py 7 ACTIVE 码）。
@@ -43,10 +57,10 @@
 
 | AC | 描述 | 验收证据 |
 |----|------|----------|
-| AC-1 **graph UI 纯逻辑 helper module 冻结** | `src/utils/graphUi.ts`（或类似 helper）冻结纯函数：① `filterGraphNodes(nodes, filter: GraphFilter) -> GraphNode[]`（按 kind / source / label 包含过滤）② `searchGraphNodes(nodes, query: string, opts) -> SearchResult[]`（label 模糊 + id 精确双轨；query 长度 0-200 字符；空 query 返回 `[]`）③ `summarizeNode(node: GraphNode) -> NodeSummary`（**不**含 `props` 正文，仅 id / kind / label / source / source_ref / created_at / updated_at / extractor_version + 邻居计数）④ `emptyStateFor(reason) -> EmptyStateDescriptor`（list-empty / filtered-empty / no-search-result 三态）⑤ `errorStateFor(err) -> ErrorStateDescriptor`（load-fail / parse-fail / action-fail 三态）⑥ `truncateLabel(label, maxBytes) -> string`（**复用** `GRAPH_LABEL_MAX_BYTES=256` 常量） —— 全部纯函数（无 Tauri invoke、无网络、无 fs）| `node scripts/check-graph-ui-logic.mjs` PASS + A11 抽查 |
-| AC-2 **graph list/search/filter + node detail summary** | 面板（`src/components/graph/GraphPanel.vue` 或类似）实现：① list 视图（按 kind 分组 + 滚动分页，每页 ≤ `GRAPH_QUERY_LIMIT/10`）② search 输入框（`useGraphUi().searchGraphNodes` + 300ms debounce + 取消上次未完成查询）③ filter 侧栏（kind 多选 + source 下拉 + label 包含）④ node detail 抽屉（调 `summarizeNode`，**不显示 `props` 正文**，**不显示 `GraphProps` 任何字段**）⑤ source_ref 链接 → 走既有 `capability.rs` 校验的 source 跳转（**不**绕过 bridge.ts）| UI 逻辑单测 + 视觉走查（manual checklist）+ A10 抽查 K7 零泄露 |
+| AC-1 **graph UI 纯逻辑 helper module 冻结** | `src/utils/graphUi.ts`（或类似 helper）冻结纯函数：① `filterGraphNodes(nodes, filter: GraphFilter) -> GraphNode[]`（按 kind / source / label 包含过滤）② `searchGraphNodes(nodes, query: string, opts) -> SearchResult[]`（label 模糊 + id 精确双轨；query 长度 0-200 字符；空 query 返回 `[]`）③ `summarizeNode(node: GraphNode) -> NodeSummary`（**不**含 `props` 正文，仅 `{id, kind, label, neighborCount}` —— **W7 修订**：原列 8 字段 `id / kind / label / source / source_ref / created_at / updated_at / extractor_version` 中后 5 字段不在 A7 DTO 且 `id=sha256` 不可逆无法派生，详见头部 [W7 patched · 2026-09-07 00:50 CST] 段 F1）④ `emptyStateFor(reason) -> EmptyStateDescriptor`（list-empty / filtered-empty / no-search-result 三态）⑤ `errorStateFor(err) -> ErrorStateDescriptor`（load-fail / parse-fail / action-fail 三态）⑥ `truncateLabel(label, maxBytes) -> string`（**复用** `GRAPH_LABEL_MAX_BYTES=256` 常量） —— 全部纯函数（无 Tauri invoke、无网络、无 fs）| `node scripts/check-graph-ui-logic.mjs` PASS + A11 抽查 |
+| AC-2 **graph list/search/filter + node detail summary** | 面板（`src/components/graph/GraphPanel.vue` 或类似）实现：① list 视图（按 kind 分组 + 滚动分页，每页 ≤ `GRAPH_QUERY_LIMIT/10`）② search 输入框（`useGraphUi().searchGraphNodes` + 300ms debounce + 取消上次未完成查询）③ filter 侧栏（kind 多选 + source 下拉 + label 包含）④ node detail 抽屉（调 `summarizeNode` 输出 `{id, kind, label, neighborCount}` + `props_size` 摘要；**不显示 `props` 正文**，**不显示 `GraphProps` 任何字段** —— **W7 修订**：详见头部 [W7 patched · 2026-09-07 00:50 CST] 段 F1）⑤ source_ref 链接 → 走既有 `capability.rs` 校验的 source 跳转（**不**绕过 bridge.ts）| UI 逻辑单测 + 视觉走查（manual checklist）+ A10 抽查 K7 零泄露 |
 | AC-3 **capacity / error / empty 状态三件套** | 面板必须实现：① 容量提示（`node_count >= GRAPH_MAX_NODES*0.8` 时显示"接近上限 GRAPH_MAX_NODES=5000"，**禁止**展示真实后端报错堆栈）② error 状态（`load-fail` 显示重试图标 + 1 行 hint，**不**展示 backend error 全貌）③ empty 状态（list-empty / filtered-empty / no-search-result 至少 3 种）④ 所有状态**不**暴露任何后端原始字段（如 `error.stack` / `node.props` 任意键 / DSN / token）| `node scripts/check-graph-ui-logic.mjs` 含 capacity/error/empty 覆盖 + A11 抽查 |
-| AC-4 **headless logic test + 容量/隐私双扫** | `scripts/check-graph-ui-logic.mjs` 必须含：① 7+ 单测（filter / search / summarize / empty×3 / error×3 / truncate / capacity 边界）② 隐私断言（`summarizeNode` 输出**不**含 `props` 任何键名 → grep 0 命中 `props`）③ 容量断言（`truncateLabel(label, 256)` 截断后字节 ≤ 256）④ 容量常量真源单点（`src/utils/graphUi.ts` 内**不**写容量字面量，必须 import 自 `src/types.ts`（镜像 `domain.rs`））| `node scripts/check-graph-ui-logic.mjs` PASS + `grep -nE 'GRAPH_MAX_NODES\s*=\|GRAPH_LABEL_MAX_BYTES\s*=' src/utils/graphUi.ts` 0 命中（真源在 types.ts）|
+| AC-4 **headless logic test + 容量/隐私双扫** | `scripts/check-graph-ui-logic.mjs` 必须含：① 7+ 单测（filter / search / summarize / empty×3 / error×3 / truncate / capacity 边界）② 隐私断言（`summarizeNode` 输出**不**含 `props` 任何键名 → grep 0 命中 `props`；输出字段集合 ⊆ `{id, kind, label, neighborCount}` —— **W7 修订**）③ 容量断言（`truncateLabel(label, 256)` 截断后字节 ≤ 256）④ 容量常量真源单点（`src/utils/graphUi.ts` 内**不**写容量字面量，必须 import 自 `src/types.ts`（镜像 `domain.rs`））| `node scripts/check-graph-ui-logic.mjs` PASS + `grep -nE 'GRAPH_MAX_NODES\s*=\|GRAPH_LABEL_MAX_BYTES\s*=' src/utils/graphUi.ts` 0 命中（真源在 types.ts）|
 
 ### W6 A8 M5-9 实施期 hard stops（5 项）
 
@@ -56,7 +70,7 @@
 | W6-HS2 | **不调 live agent consumption**（**不**调 `agent_chat` / `agent_memory_*` / `skill_*`）—— UI 仅展示，不参与 RAG 注入（`useGraphRag.ts` / RAG 注入契约在 M5-9 §4.3 暂**冻结**到 W7+）| PARALLEL_COMMAND_BOARD L159 + L167 |
 | W6-HS3 | **不调 model calls**（**不**做 embedding 重建 / **不**调 LLM / **不**做 graph rebuild workers / **不**加 background job）—— UI 仅消费 A7 W5 已落地的 GraphNode/Edge DTO 静态快照（or polling，**不**订阅 push 事件）| PARALLEL_COMMAND_BOARD L159 + L167 |
 | W6-HS4 | **无新 npm 依赖**（**不**引入 `d3-force` / `d3-zoom` / `d3-drag` 等 d3 子模块包到 W6；d3 可在 W7+ 真接 layout 时引入；W6 阶段可仅用 `useGraphUi().filterGraphNodes` + 简单列表 + 不做力导向布局；如确实需 placeholder 列表 + 静态边框，**不**引 d3 整包）| A8 W6 dispatch L159 + W5-HS7 |
-| W6-HS5 | **K7 严守**：`summarizeNode` / node detail / list / search / filter **不**展示 `props` 任何字段（key 名 / value）—— 隐私双扫由 A7 W5 check-graph-policy.py 的 GRAPH_PRIVACY_DOUBLE_SCAN 已落，A8 W6 **不**写 UI 副本；UI 仅消费 `id / kind / label / source / source_ref / created_at / updated_at / extractor_version` 8 个白名单字段 | A7 W5 check-graph-policy.py + A4 W4 隐私双扫 + K7 |
+| W6-HS5 | **K7 严守**：`summarizeNode` / node detail / list / search / filter **不**展示 `props` 任何字段（key 名 / value）—— 隐私双扫由 A7 W5 check-graph-policy.py 的 GRAPH_PRIVACY_DOUBLE_SCAN 已落，A8 W6 **不**写 UI 副本；UI 仅消费 `{id, kind, label, neighborCount}` + `props_size` 摘要白名单字段（**W7 修订**：原列 8 字段 `id / kind / label / source / source_ref / created_at / updated_at / extractor_version` 收紧为 4 字段 + `props_size`，详见头部 [W7 patched · 2026-09-07 00:50 CST] 段 F1） | A7 W5 check-graph-policy.py + A4 W4 隐私双扫 + K7 |
 
 ### W6 验证清单（供 A11 收口）
 
@@ -137,7 +151,7 @@
 
 ### 4.2 `NodeDetail.vue` / `EdgeDetail.vue`
 
-- 显示：id / kind / label / source / source_ref / created_at / updated_at / extractor_version
+- 显示：`{id, kind, label, neighborCount, props_size}` 摘要（**W7 修订**：原列 8 字段 `id / kind / label / source / source_ref / created_at / updated_at / extractor_version` 收紧为 4 字段 + `props_size`；fixture 仍含 8 字段硬编码由 W8+ A8 在 `graph_query` 真实命令落地时同步对齐，详见头部 [W7 patched · 2026-09-07 00:50 CST] 段 F1）
 - **不**显示 `props` 正文（K7）
 - `source_ref` 路径点击 → 打开对应文件/tab（受 `capability.rs` 校验）
 

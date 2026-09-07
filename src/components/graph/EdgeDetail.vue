@@ -9,7 +9,7 @@ const summary = computed(() => (props.edge ? summarizeEdge(props.edge) : null));
 </script>
 
 <template>
-  <div class="detail" v-if="summary">
+  <div class="detail" v-if="summary" role="region" aria-label="边详情" aria-live="polite">
     <h3>边详情</h3>
     <dl>
       <dt>从</dt><dd class="mono">{{ summary.from }}</dd>
@@ -20,7 +20,7 @@ const summary = computed(() => (props.edge ? summarizeEdge(props.edge) : null));
     </dl>
     <p class="note">属性(props)已脱敏，界面不展示。</p>
   </div>
-  <div class="detail empty" v-else>选择一条边查看详情</div>
+  <div class="detail empty" v-else role="status">选择一条边查看详情</div>
 </template>
 
 <style scoped>

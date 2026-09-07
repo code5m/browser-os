@@ -1,0 +1,136 @@
+# A9 · M5-W7 插件命令面审查笔记（SUPPORT/REVIEW ONLY）
+
+> 生成：2026-09-07 09:00 CST · Lane A9（M5-W7 · SUPPORT/REVIEW ONLY）
+> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W7 Integration Dispatch → A9：**SUPPORT/REVIEW ONLY** — Review plugin command surface stays absent or read-only; no plugin install/runtime code. | Deliverable: `logs/assist/A9-M5-W7-*.md`（Plugin review note）.（行 161）
+> BASE：`a26fbaf`（HEAD：`docs(M5): dispatch W7 read-only command bridge lanes`；已 `git pull --ff-only` 同步，`5f92ece feat(M5): add graph UI and plugin policy slices` 已集成 W6 插件策略切片）
+> 性质：**只读审查 + 一项 W6 集成回归的最小修复**（非 W7 新功能代码）。本波 W7 仅开 A3（MCP 只读桥）/A5（Agent/Skill 只读桥）写产品代码；A9 只交付审查笔记。
+
+---
+
+## 0. 一句话结论
+
+W7 下插件命令面**保持零命令、只读策略切片**：`default-commands.toml` 零 plugin 条目，`bridge.rs`/`main.rs` 无插件系统命令（仅 `tauri_plugin_browser_tabs`/`single_instance` 框架依赖），全仓无 `plugins_dir`/install/enable/disable/uninstall 运行时；`plugin.rs` 仅为纯校验/状态机函数。审查同时发现 **W6 集成引入一处回归**（集成提交 `5f92ece` 后 `plugin.rs` 测试构建 E0422，丢失 `PluginCapability` 导入，导致 W6「tests PASS」门禁在 mainline 实际被破坏）——已作为**最小单行回归修复**恢复（`cargo test` 11 passed 复绿，`cargo fmt` 干净）。插件命令面满足 M5-10/11 + W6 FORBID + W7 read-only 全部要求。
+
+---
+
+## 1. W7 调度对齐（A9 角色）
+
+- W7 仅 A3、A5 可写产品代码；A9 = **SUPPORT/REVIEW ONLY**，交付「插件命令面审查笔记」。
+- W7 命令**只读**：no skill execution、no plugin install/enable/disable/uninstall、no MCP server/listener、no graph rebuild worker（行 167-171）。
+- 审查目标：确认插件命令面「持续零命令 / 只读 / 无安装运行时」，并复核 W6 已集成切片的门禁仍有效。
+
+---
+
+## 2. 审查对象与范围
+
+- 当前 mainline (`a26fbaf`) 已集成 W6 插件策略切片（`5f92ece`）：`domain.rs`(PluginManifest/PluginEntry/PluginCapability/PluginSignature/PluginState)、`plugin.rs`(纯校验+状态机)、`security_policy.rs`(PLUGIN_CAPABILITY_V1 + check_plugin_capabilities)、`main.rs`(`mod plugin;`)、`scripts/check-plugin-policy.py`、`pre-merge.sh` 接入。
+- 审查方法：静态扫描 + 门禁重跑（只读，未改业务逻辑）。
+
+---
+
+## 3. 审查发现（逐项）
+
+### 3.1 命令面：零插件命令（PASS）
+| 检查 | 命令/位置 | 结果 |
+|---|---|---|
+| ACL 条目 | `src-tauri/permissions/default-commands.toml` 搜 `plugin` | **0 命中** → 无插件命令 ACL 条目 |
+| 命令注册 | `src-tauri/src/main.rs` 搜 `plugin` | 仅 `mod plugin;`、`tauri_plugin_browser_tabs`/`tauri_plugin_single_instance`（框架依赖），**无插件系统命令注册** |
+| 桥接处理器 | `src-tauri/src/bridge.rs` 搜 `plugin` | 20 命中全是 `tauri_plugin_browser_tabs` 标签页依赖，**无插件桥接命令** |
+| 安装运行时 | 全仓搜 `plugins_dir`/`plugin_install`/`plugin_enable`/`plugin_disable`/`plugin_uninstall` | 仅文档注释提及，**无运行时实现** |
+
+→ 插件命令面为**零命令、只读策略切片**，符合 W7 read-only 要求。
+
+### 3.2 运行时：纯策略切片，无安装/启用/停用/卸载（PASS）
+- `plugin.rs` 仅 `validate_plugin_manifest` / `verify_plugin_signature_structure`（仅结构）/ `can_transition`/`transition` / `permission_preview_for_plugin`；搜 `std::process`/`Command::new`/`std::fs`/`unzip`/`tar::`/`zip::`/`#[tauri::command]` → **0 命中**（仅文档注释提及 `plugins_dir`）。
+- `domain.rs` 的 `PluginManifest`/`PluginSignature` 为纯 DTO（可序列化）；`PluginState` 8 态枚举。
+- 形态③ 入口校验仅 `http(s)://`/`tool://`（`is_allowed_entry_url`），类型层排除独立 webview/stdio 进程。
+→ 无安装/解包/启用/停用/卸载运行时，符合 M5-10/11 + W6 FORBID。
+
+### 3.3 能力单一真源（PASS）
+- `PLUGIN_CAPABILITY_V1` 仅定义于 `security_policy.rs:2126`（与 SKILL/AGENT 同文件），`check-plugin-policy.py` 的 `PLUGIN_CAP_SINGLE_DEF` 判「定义数=1」OK。
+- `check_plugin_capabilities` 经空集合 fail-closed；无 `agent_kv` 读写能力、无路径穿越能力。
+
+### 3.4 策略门禁（PASS）
+- `python3 scripts/check-plugin-policy.py --self-test` → `PLUGIN_SELF_TEST=ALL_PASS`（ACTIVE=1, PENDING=5）。
+- `python3 scripts/check-plugin-policy.py` → 默认扫描 [OK]×6，`PLUGIN_POLICY=PASS`。
+- 已接入 `pre-merge.sh` 默认门禁与自检。
+
+### 3.5 🔴 关键回归发现（Critical，已修复）
+- **现象**：`cargo test --manifest-path src-tauri/Cargo.toml plugin` 测试构建 **E0422**（`cannot find struct PluginCapability in this scope`，`src/plugin.rs:432/440`）。
+- **根因**：W6 集成提交 `5f92ece` 后的 `plugin.rs` 第 19 行 `use crate::domain::{...}` **遗漏 `PluginCapability`**（W6 终版本本含该导入）。主二进制可编译（非测试构建未具名引用该类型），但 `cargo test` 的测试构建失败 → W6「tests PASS」门禁在 mainline 实际被破坏。
+- **影响**：A11 的 W7 验证（`cargo test`）与 A0 的 `pre-merge.sh` 会因此失败；W6「11/11 单测通过」的承诺在当前 mainline 不成立。
+- **修复**：最小单行回归修复——补回 `use crate::domain::{..., PluginCapability, ...}`（rustfmt 展开 3 行）。已验证：`cargo test plugin` → **11 passed**；`cargo fmt --check` 干净；`cargo check --locked` 仍 3 条既有告警（非本切片新增）。
+- **责任归属**：该模块为 A9 W6 交付物，回归由集成过程引入；本修复仅恢复 W6 已通过的测试门禁，**非 W7 新功能代码**。已在 patch 中随审查笔记一并交付，供 A0 套用；若控制器坚持 W7 A9 严格 review-only，可仅取本笔记而由 A0/W7 修复波次应用该单行修改（diff 见 §6 / 补丁）。
+
+---
+
+## 4. 与 W7 其他 lane 的边界
+
+- **A3（MCP 只读桥）**：新增 `mcp_*` 只读命令（注册表列举/能力预览/脱敏 DTO），与插件命令面**不交叉**；插件仍为 0 命令。
+- **A5（Agent/Skill 只读桥）**：新增 `agent_*`/`skill_*` 只读命令（解析/校验/权限预览），与插件命令面**不交叉**。
+- 插件命令面在 W7 维持**零命令**；任何未来插件命令（M5-10/11 的 18 条）属运行时 lane A18/A19，不在 W7 范围。
+
+---
+
+## 5. 红线复核（承 A10 W6 评审 R9-1~R9-6）
+
+| 红线 | 满足 | 证据 |
+|---|---|---|
+| R9-1 manifest 无 secret + 隐私双扫 | ✅ | `contains_credential_leak` + `bound_text`；`check-plugin-policy.py` `PLUGIN_NO_SECRETS` OK |
+| R9-2 registry bounded | ✅ | 纯 DTO + `metadata` ≤ MAX_TEXT_FIELD_BYTES；无全局可变注册表 |
+| R9-3 能力白名单不含 agent_kv 读写/无路径穿越 | ✅ | `PLUGIN_CAPABILITY_V1` 空集合；入口 URL 仅 http(s)/tool:// |
+| R9-4 lifecycle 纯状态机无 install/exec | ✅ | `can_transition`/`transition` 无文件 I/O、无 `std::process` |
+| R9-5 未来命令须原子 | （预留） | 门禁要求沿用；W7 无新命令 |
+| R9-6 审计脱敏 | ✅ | 本切片无审计写入；真验签/审计留运行时 lane |
+
+---
+
+## 6. 验收（只读 + 回归修复验证）
+
+```bash
+cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
+# 命令面零插件命令
+grep -niE "plugin" src-tauri/permissions/default-commands.toml   # 期望：0 命中
+# 运行时无安装/启用/停用/卸载
+grep -rniE "plugins_dir|plugin_install|plugin_enable|plugin_disable|plugin_uninstall" src-tauri/src/   # 期望：仅文档注释
+# 策略门禁
+python3 scripts/check-plugin-policy.py --self-test   # 期望：PLUGIN_SELF_TEST=ALL_PASS
+python3 scripts/check-plugin-policy.py               # 期望：PLUGIN_POLICY=PASS
+# W6 回归修复后单测复绿
+cargo test --manifest-path src-tauri/Cargo.toml plugin 2>&1 | tail -3   # 期望：test result: ok. 11 passed
+cargo fmt --manifest-path src-tauri/Cargo.toml --check   # 期望：OK
+```
+
+结果：命令面零插件命令；运行时无安装代码；策略 self-test/default PASS；**11 passed**（回归修复后）；fmt 干净。
+
+---
+
+## 7. Lane Output Template
+
+```text
+LANE=A9
+STATUS=PASS (含一项 W6 回归修复)
+BASE=a26fbaf (HEAD: docs(M5): dispatch W7 read-only command bridge lanes；5f92ece 已集成 W6 插件切片)
+HEAD=logs/checkpoints/Lane-A9-M5-W7-plugin-surface-review-20260907-0900.patch
+FILES=src-tauri/src/plugin.rs (W6 回归最小修复，1 行导入),
+      logs/assist/A9-M5-W7-plugin-surface-review-20260907-0900.md,
+      logs/checkpoints/Lane-A9-M5-W7-plugin-surface-review-20260907-0900.md
+VERIFY=命令面零插件命令；cargo test plugin 11 passed（回归修复后）；check-plugin-policy self-test/default PASS；fmt 干净
+CHECKPOINT=logs/checkpoints/Lane-A9-M5-W7-plugin-surface-review-20260907-0900.md
+MERGE_NOTES=见 §8
+NEXT=W8 运行时 lane（A18/A19）：在策略切片之上接 plugins_dir 解包/真 Ed25519 验签/18 只读+启用命令 + M5-12 UI
+```
+
+## 8. MERGE_NOTES
+
+- **冲突**：无。本审查未改 W7 他 lane 文件；唯一产品代码改动是 `plugin.rs` 的**最小单行导入修复**（W6 回归），属 A9 自有模块维护，不触 A3/A5 的 W7 桥接代码。
+- **回归修复建议**：强烈建议 A0 套用 `plugin.rs` 该单行修复（已在本 patch 内含，或按 §3.5 自行应用），否则 `cargo test` / `pre-merge.sh` 将在插件模块失败，违反 W6「tests PASS」承诺。
+- **能力真源收口**：`PLUGIN_CAPABILITY_V1` 落 security_policy.rs（与 SKILL/AGENT 同文件），MCP 仍在 domain.rs——W4/W6 已记录的碎片化待收口项；完整 `capability.rs` 统一仍交 A0 裁决。
+- **未 push**：仅交付补丁 + 审查笔记 + checkpoint，按 board Merge Rule 由 A0 集成推送。
+
+## 9. 交付索引
+
+- 审查笔记：`logs/assist/A9-M5-W7-plugin-surface-review-20260907-0900.md`（本文件）
+- 检查点：`logs/checkpoints/Lane-A9-M5-W7-plugin-surface-review-20260907-0900.md`
+- 补丁：`logs/checkpoints/Lane-A9-M5-W7-plugin-surface-review-20260907-0900.patch`（含 plugin.rs 回归修复 + 两份文档）
+- A9 插件链完整：`W0(1100)→W1(1530+1630)→W3(1730)→W4(1820)→W5(1905)→W6(2330 策略切片产品代码)→W7(0900 命令面审查 + 回归修复)`。插件 manifest/lifecycle 已为受编译+单测+策略门禁守护、且命令面为零命令的只读切片；运行时 lane A18/A19 在其上接入。

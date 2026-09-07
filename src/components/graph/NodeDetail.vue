@@ -9,7 +9,7 @@ const summary = computed(() => (props.node ? summarizeNode(props.node) : null));
 </script>
 
 <template>
-  <div class="detail" v-if="summary">
+  <div class="detail" v-if="summary" role="region" aria-label="节点详情" aria-live="polite">
     <h3>节点详情</h3>
     <dl>
       <dt>ID</dt><dd class="mono">{{ summary.id }}</dd>
@@ -20,7 +20,7 @@ const summary = computed(() => (props.node ? summarizeNode(props.node) : null));
     <!-- K7：GraphNode.props 已在后端脱敏，UI 不渲染其正文 -->
     <p class="note">属性(props)已脱敏，界面不展示。</p>
   </div>
-  <div class="detail empty" v-else>选择一个节点查看详情</div>
+  <div class="detail empty" v-else role="status">选择一个节点查看详情</div>
 </template>
 
 <style scoped>

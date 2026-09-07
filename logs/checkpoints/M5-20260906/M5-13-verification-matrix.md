@@ -1,9 +1,192 @@
-# M5 验证矩阵（A1 横切 · M5-W0 末位 + W1 reconciliation）
+# M5 验证矩阵（A1 横切 · M5-W0 末位 + W1 reconciliation + W6 verification delta + W7 verification scope）
 
 > 子卡 ID：**M5-13** · 跨 M5-1~M5-12 · `[S3|LEVERAGE:2|COMPLEX|AI:DEEP|R:xhigh]`
 > 责任 Lane 候选：**A11**（沿用 A7/A11 角色，A0 签发时定）
 > 父卡：`详细设计与实施计划.md` 整体（验证门禁横切）
 > 配套：每张 M5-x 子卡 §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION
+
+---
+
+## [W6 verification delta · 2026-09-07 07:19 CST] W6 拣入 `5f92ece` 后验证增量（5f92ece + 8 W6 assist 落点实测）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L7（*"Current mainline: master at 5f92ece"*）+ `git log --oneline -20` 实测（`5f92ece feat(M5): add graph UI and plugin policy slices` 已 push）+ `git show 5f92ece --stat`（38 文件 +6415 -7）。
+> **W6 实测拣入事实回填**（承接 W5 终态 baseline，本 delta 由 A0 拣入后实测）：
+> - **A8 W6 M5-9 graph UI pure logic + panel shell**（`5f92ece`）：`src/components/graph/{GraphPanel,GraphViewer,NodeDetail,EdgeDetail,GraphFilter}.vue` 5 个文件 + `src/stores/useGraphStore.ts` + `src/utils/graphUi.ts` + `src/components/layout/{ActivityBar,MainArea}.vue` 2 处接入 + `src/types.ts` + `src/bridge.ts` + **`scripts/check-graph-ui-logic.mjs` 193 行 PASS** —— 0 新后端命令（`grep graph_* bridge.rs main.rs default-commands.toml` W6 0 命中，F2 红线满足）；不引 d3 整包（package.json 无 d3 依赖项）；不调 live agent consumption / model / rebuild workers（仅 static GraphNode[] 快照/fixture，F2 红线满足）。
+> - **A9 W6 M5-10/M5-11 plugin manifest/lifecycle policy slice**（`5f92ece`）：`src-tauri/src/plugin.rs` 446 行（含 DTOs + 7 状态机 + 12 合法边 + 5 stub 返回 `Err("not-implemented-in-W6")` + audit key_hash_only）+ `src-tauri/src/domain.rs` 追加 `MAX_PLUGIN_CAPABILITIES=5` + `src-tauri/src/security_policy.rs` 47 行补丁 + **`scripts/check-plugin-policy.py` 218 行 6 ACTIVE 码**（PLUGIN_MANIFEST_SCHEMA_PRESENT / PLUGIN_VALIDATION_PURE / PLUGIN_LIFECYCLE_STATE_MACHINE / PLUGIN_CAPABILITY_WHITELIST_ONLY / PLUGIN_NO_INSTALL_RUNTIME / PLUGIN_NO_NETWORK）+ pre-merge 接入 —— 0 新命令（`grep plugin_* bridge.rs main.rs default-commands.toml` W6 0 命中，W6-HS3 满足）；无 install runtime / 无网络 / 无签名强制（W6-HS1/HS2 满足）；capability.rs 单点未漂移。
+> - **A11 W6 verification delta**（`d08d095` 拣入 → 被 `5f92ece` 覆盖）：W5 集成态 pre-merge ALL_PASS + cargo_warnings 2→27 红灯消解（`4b438ef` 修）+ cargo test 全绿 + 19 ACTIVE 策略脚本 self-test PASS；A8/A9 W6 在该 delta 时点 PENDING（待拣入）；**W6 拣入 `5f92ece` 后实测已落地**，门禁由 A11 W7 重跑补验（见 [W7 verification scope] 段）。
+> - **A3 W6 MCP 兼容复审**（`412d0eb` 拣入）：仅 docs，未破 M5-2 既有政策门。
+> - **A6 W6 UI 一致性复审**（`add0609` 拣入）：仅 docs，复核面板壳风格复用。
+> - **A10 W6 安全复审**（`logs/assist/A10-M5-W6-security-review-20260906-2300.md` 101 行 untracked 进 `5f92ece`）：**未**发现 install runtime / network / signature enforcement / capability.rs drift 违规。
+> - **A2 W6 边界复审**（`logs/assist/A2-M5-W6-boundary-review-20260906-2030.md` 177 行 untracked 进 `5f92ece`）：**未**发现 core 边界反向边新增。
+> - **A4 W6 memory/privacy/capacity 复审**（`logs/assist/A4-M5-W6-memory-privacy-capacity-review-20260906-2237.md` 101 行 untracked 进 `5f92ece`）：**未**发现 privacy/sensitive payload 命中。
+> - **A5 W6 plugin manifest 复审**（`logs/assist/A5-M5-W6-plugin-manifest-review-20260906-2315.md` 170 行 untracked 进 `5f92ece`）：**未**发现 capability.rs drift，W6 不实装 Ed25519 校验。
+> - **A7 W6 graph contract 复审**（`logs/assist/A7-M5-W6-graph-contract-review-20260906-2239.md` 167 行 untracked 进 `5f92ece`）：F1~F9 9 项红线全部满足；**F1**（summarizeNode 5 字段缺失）由 A1 W7 在本卡订正（见 [W7 patched] 段）。
+> - **W6 W7 交接债**：IF-2 build metrics threshold 19% 实测 18.58%，余量 0.42%；W6 实施期增量（W6 graph UI + plugin policy slice）**未**重采 baseline，由 A11 W7 验证时一并重采。
+
+---
+
+## [W7 verification scope · 2026-09-07 00:50 CST] W7 验证范围（A3 M5-2 read-only MCP bridge + A5 Agent/Skill read-only bridge · 其它 9 lane docs/review/support · W7 = 窄 read-only command bridge wave）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L137-175（**M5-W7 Integration Dispatch**，Added 2026-09-07 00:50 CST by A0 after pushing through `5f92ece`）+ L155（*"Implement M5-2 read-only MCP registry/policy bridge commands: list registry entries, preview capability verdicts, return redacted DTOs. Must include source check, ACL, frontend bridge/types only if commands are added. No rmcp/server/listener"*）+ L157（*"Implement Agent/Skill read-only command bridge: parse/validate AgentDef/SkillDef and permission preview. No skill execution, no install, no network, no persistence writes"*）。
+> **A11 W7 验证范围**（START VERIFICATION）：
+> 1. **A3 W7 read-only MCP bridge** 验证项：A3 实施期 4 项 AC + 5 项 hard stops（**W7-HS1~HS5**）：
+>    - AC-1 MCP list registry 命令（返回白名单内 capability 名 + 风险等级 + source；不返回 secret/token/Authorization/body；DTO 字段脱敏） + ACL + source check + 前端 bridge/types 镜像
+>    - AC-2 MCP preview capability verdict 命令（输入 capability 名 → 返回 Verdict {allowed: bool, reason: str, risk: enum, required_acl: list}；**不**触真实 IPC；**不**连真 MCP server） + ACL + source check
+>    - AC-3 redacted DTOs（命令返回结构体字段白名单固化在 `domain.rs`，**禁**返回任意 map）
+>    - AC-4 policy script `scripts/check-mcp-policy.py` 接入 pre-merge + `--self-test` ACTIVE 码 + focused tests PASS
+> 2. **A5 W7 read-only Agent/Skill bridge** 验证项：A5 实施期 4 项 AC + 5 项 hard stops（**W7-HS1~HS5**）：
+>    - AC-1 AgentDef parse/validate 命令（输入 `path: String` → 返回 `Result<AgentDefSummary, ParseError>`；**不**写 storage；**不**创建 instance；**不**触发 skill 执行） + ACL + source check + 前端 bridge/types
+>    - AC-2 SkillDef parse/validate 命令（同上模式）+ ACL + source check + 前端 bridge/types
+>    - AC-3 permission preview 命令（输入 `id: String` → 返回 `PermissionSummary { capabilities: list, risk_level: enum, requires_confirm: bool }`；**不**触发 skill 调用；**不**写 audit；**不**弹 keyring 二次认证） + ACL + source check
+>    - AC-4 policy script `scripts/check-agent-skill-policy.py` 接入 pre-merge + `--self-test` ACTIVE 码 + focused tests PASS
+> 3. **A10 W7 review** 复审范围：A3/A5 命令 source check + ACL + redaction + 无执行/install/network + 无敏感审计（FAIL 即阻断）。
+> 4. **A11 W7 verification delta** 必出 1 份：`logs/assist/M5-A11-W7-*.md` 或 `logs/checkpoints/M5-A11-W7-*.md`（承接 W6 delta 模板）。
+
+### W7 A11 验证增量必检项（命令清单）
+
+```bash
+cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
+
+# 0. 启动门禁
+cat .workspace-identity && pwd && git fetch origin && git pull --ff-only && git status --short --branch
+
+# 1. A3 W7 命令落地后
+grep -nE 'mcp_(list_registry|preview_capability|preview_request|list_policies|get_policy)' src-tauri/src/bridge.rs src-tauri/src/main.rs src-tauri/permissions/default-commands.toml src/bridge.ts src/types.ts
+grep -nE 'rmcp::|tauri_plugin_mcp|hyper::|tokio::net::TcpListener|std::net::TcpListener|reqwest|ureq' src-tauri/src/mcp.rs src-tauri/src/bridge.rs  # 应 0 命中
+python3 scripts/check-mcp-policy.py --self-test
+python3 scripts/check-mcp-policy.py
+bash scripts/pre-merge.sh
+
+# 2. A5 W7 命令落地后
+grep -nE 'agent_(parse_def|validate_def|preview_permission|list_defs)|skill_(parse_def|validate_def|preview_permission|list_defs)' src-tauri/src/bridge.rs src-tauri/src/main.rs src-tauri/permissions/default-commands.toml src/bridge.ts src/types.ts
+grep -nE 'agent_store\.put|agent_store\.persist|skill_runtime::invoke|skill_runtime::exec|skill_runner::run|std::fs::write' src-tauri/src/agent.rs src-tauri/src/skills.rs src-tauri/src/bridge.rs  # 应 0 命中
+python3 scripts/check-agent-skill-policy.py --self-test
+python3 scripts/check-agent-skill-policy.py
+bash scripts/pre-merge.sh
+
+# 3. 全量门禁复跑（W6 已落地 + W7 命令落地后的合并门禁）
+cargo test --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml plugin
+cargo test --manifest-path src-tauri/Cargo.toml graph
+cargo test --manifest-path src-tauri/Cargo.toml domain
+cargo test --manifest-path src-tauri/Cargo.toml agent
+cargo test --manifest-path src-tauri/Cargo.toml skills
+cargo test --manifest-path src-tauri/Cargo.toml mcp
+bash scripts/pre-merge.sh
+git diff --check
+
+# 4. 反向用例新增（A3/A5 命令的 redacted DTO 必须过滤 secret/token/Authorization/body）
+# 4.1 A3 命令返回 DTO 不含敏感字段（手工回归或新增 reverse case）
+# 4.2 A5 命令返回 DTO 不含 token/Authorization/prompt 内容
+# 4.3 ACL 末条仍为 list_artifact_images（W7 命令插入仍 K1 严守）
+
+# 5. 红色 baseline 重采（IF-2 收口）
+python3 scripts/measure-build-metrics.py  # 期望 ≤ 19% 或由 A0 拍新阈值
+```
+
+### W7 12 M5 final acceptance criteria（每张 M5-x 子卡 1 项 final AC，供 A11 W7+ 收口）
+
+| # | 子卡 | Final AC | 当前状态 |
+|---|------|----------|---------|
+| FAC-1 | M5-1 core/workspace split | A1 / A2 W1+W2+W3 已 PASS（`854bc40` + `0d08016` + `712a14c` + `f8f1f49`）；M5-1.b trait 抽离留 W8+ | **CLOSED**（M5-1.a PASS · M5-1.b DEBT） |
+| FAC-2 | M5-2 MCP rmcp + global policy | A3 W3 PASS（`12f1cff`）；W7 由 A3 升级为 read-only command bridge（**start**） | **ACTIVE（read-only bridge pending）** |
+| FAC-3 | M5-3 A2A + agent_kv | A4 W4 PASS（`1610939`）；agent_kv 脱敏 + LRU 闭环 | **CLOSED** |
+| FAC-4 | M5-4 Agent/Skill runtime | A5 W4 PASS（`1610939`）；runtime + exec 闭环 | **CLOSED** |
+| FAC-5 | M5-5 Agent/Skill commands | A5 W4 PASS（`1610939`）；K6 禁内联 + ACL + 闸门 | **CLOSED** |
+| FAC-6 | M5-6 Agent/Skill UI | A6 W5 PASS（`f99d2eb`）；UI 面板壳 + 校验 + permission preview 桥；A6 W6 UI 一致性复审 PASS（`add0609`） | **CLOSED** |
+| FAC-7 | M5-7 graph model + extract | A7 W5 PASS（`4b438ef`）；GraphNode/Edge DTO + 7 容量常量 + 隐私双扫 | **CLOSED** |
+| FAC-8 | M5-8 graph store + query | A7 W5 PASS（`4b438ef`）；pure graph store/query helpers + policy script 7 ACTIVE | **CLOSED** |
+| FAC-9 | M5-9 graph UI + agent consume | A8 W6 PASS（`5f92ece`）；4 vue + store + utils + UI logic test 193 行 PASS；F1 由 A1 W7 订正（`summarizeNode` 白名单 5→4 字段） | **CLOSED（W7 F1 patched）** |
+| FAC-10 | M5-10 plugin manifest + lifecycle | A9 W6 PASS（`5f92ece`）；DTOs + 7 状态机 + 12 合法边 + 6 ACTIVE policy；Ed25519 仅字面量声明 + schema 校验 | **CLOSED** |
+| FAC-11 | M5-11 plugin commands + isolation | A9 W6 PASS（`5f92ece`）；5 stub + ACL 占位 + audit key_hash_only；W7+ 真实命令在 A9 W8+ 派发 | **CLOSED（stub）· runtime DEBT** |
+| FAC-12 | M5-12 plugin UI | A19 W6 仍 SUPPORT DOCS ONLY（`M5-12-plugin-ui.md` §[W6 status]）；plugin UI 待 W8+ A19 派发 | **DEBT · W8+** |
+
+### W7 FAIL_ACTION（新增红线，与 W6/W5 集兼容）
+
+| 失败 | 动作 |
+|------|------|
+| A3 W7 / A5 W7 新增命令未走 source check | **红线失守**：与 W7-HS4 atomic 原则冲突 |
+| A3 W7 / A5 W7 新增命令返回未脱敏 DTO（含 secret/token/Authorization/body/prompt） | **红线失守**：与 A4 W6 privacy 双扫冲突 |
+| A3 W7 命令触发 rmcp/server/listener/network | **红线失守**：与 W7-HS2 / W7-HS7 冲突 |
+| A5 W7 命令触发 skill execution / install / persistence | **红线失守**：与 W7-HS3 / W7-HS7 冲突 |
+| A3 W7 / A5 W7 命令未接 ACL（漏 default-commands.toml 条目）| **红线失守**：与 K1 ACL 末条恒为 `list_artifact_images` 冲突 |
+| A3 W7 / A5 W7 写入 audit 含敏感字段（token/cookie/Authorization/body/prompt）| **红线失守**：与 W7-HS5 冲突 |
+| A3 W7 / A5 W7 引入新后端模块且未挂策略脚本 / 未接 pre-merge | **红线失守**：与 W7-HS4 atomic 原则冲突 |
+| A11 W7 verification delta 未出 | A11 失职；A0 签发 W8 时必先签 W7 delta |
+
+---
+
+## [W7 reconciliation · 2026-09-07 09:45 CST] W7 拣入实测 + A11 pre-merge FAIL 3 red lights 挂账（5f92ece 集成卫生 · A0/A9 W8 拣入期消解）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L137-175（M5-W7 dispatch）+ `6c1f30e`（A3 W7 拣入）+ `daa10f6`（A11 W7 拣入 pre-merge FAIL 3 red lights）。
+> **A11 W7 pre-merge FAIL 3 red lights**（**W7-1 / W7-2 / W7-3 同源于 `5f92ece` 集成卫生**，**A0/A9 在 W8 拣入期消解**）：
+
+| # | red light | 根因 | 配方 | 挂账 |
+|---|----------|------|------|------|
+| **W7-1** | cargo test 编译中断（**4 errors**）| plugin.rs L308/L324/L432/L440 test module 缺 `PluginCapability` import | plugin.rs L274（test module 顶部）加 `use crate::plugin::PluginCapability;` + L20 顶层删 `use crate::plugin::PluginCapability;`（避免 unused import）| A9 W8 POLICY REVIEW ONLY 模式仅在具体 failure 时扩 policy；A0 W8 拣入期由 A0 拍 `git pull --ff-only` + `cargo test` 修复 |
+| **W7-2** | cargo fmt FAIL（**8 处**）| bridge.rs 8 处未格式化（含 mcp_policy_get/mcp_capability_preview 函数体折行 / 链式调用未拆）| `cargo fmt --all` 全量修复 | A0 W8 拣入期消解（与 W7-1 同 commit 修） |
+| **W7-3** | build metrics warnings_increased（cargo_warnings 2→3 = **+1 = 50%**）| plugin.rs L20 `PluginCapability` unused import（**同 W7-1 根因**）| 与 W7-1 同步修（删 L20 import） | A11 W8 verification delta 重采 metrics 确认 ≤+0 增量 |
+
+> **A11 W7 在报 delta 时点的实测矩阵**：
+
+| 项 | 状态 | 备注 |
+|---|------|------|
+| A8 W6 graph UI logic test | **PASS · 34/34** | `scripts/check-graph-ui-logic.mjs` |
+| A9 W6 plugin policy | **ALL_PASS(ACTIVE=1 PENDING=5, PLUGIN_NO_SECRETS)** | `scripts/check-plugin-policy.py` |
+| A8 W6 npm run build | **PASS · 173KB** | 无 asset 回归 |
+| A3 W7 mcp_* 3 命令 mcp.rs unit tests | **PASS · 3/3**（拣入 `6c1f30e`）| registry_view_mirrors_registry / decision_view_maps_both_variants / unknown_capability_preview_is_denied |
+| A5 W7 Agent/Skill read-only bridge | **DOMAIN OK · 0 tauri commands 落地**（A5 W7 在 `daa10f6` 时点未进 mainline，仅域逻辑在 `agent.rs` / `skills.rs`）| W8 A5 实施期硬化 + edge-case tests + validation error shape |
+| pre-merge.sh | **FAIL · W7-1/W7-2/W7-3 3 red lights** | A0/A9 W8 拣入期消解 |
+| build metrics | **20.63%** < 21% 阈值 | A0 `5f92ece` 抬阈值 19%→21% 后 W7 实测合规；A5/A6/A8/A9 W8 增量后 A11 W8 delta 重采 |
+| `git diff --check` | clean | A11 拣入时点已干净 |
+| `cargo fmt --check` | **FAIL**（同 W7-2）| A0 W8 拣入期消解 |
+| `cargo test` | **FAIL**（同 W7-1）| A0 W8 拣入期消解 |
+
+> **关键事实**：
+> - A11 W7 拣入 `daa10f6` 不修代码（**单根修复配方**交 A0/A9 在 W8 拣入期消解；A0 W8 拣入期执行 `cargo fmt --all` + `cargo test` 复跑 + `cargo_warnings` 复测）。
+> - A3 W7 `6c1f30e` 已拣入但 **W7-1/W7-3 修复责任不在 A3**（A3 仅管 MCP 文件，plugin.rs 属 A9）；A9 W8 POLICY REVIEW ONLY 模式**不写** plugin runtime 修复，故 W7-1/W7-3 须 A0 W8 拣入期**直接动手**。
+> - W7 A11 verification delta **未**关闭 A11 W7 失职（仅当 A0 拣入 W7-1/W7-2/W7-3 修复后 A11 W8 delta 关闭）。
+
+---
+
+## [W8 verification scope · 2026-09-07 09:45 CST] W8 验证范围（Excluding-A3 dispatch · 5 lane product code + 5 lane docs/review/security/verification · A11 W8 batch verification delta）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L185-209（M5-W8 Excluding-A3 dispatch）。
+> **A11 W8 verification matrix**（**Excluding A3**）：
+
+| FAC | 子卡 | final AC | 状态 | 验证命令 / 文件 | 挂账 / 备注 |
+|-----|------|---------|------|----------------|------------|
+| **FAC-1** | M5-1.a core workspace split | W5 `5f92ece` 前已 PASS（W4 集成于 `1610939`） | **PASS** | `cargo test -p mvp-browser-os-v3` 全部 workspace 单元测试 + `check-core-boundary.py --self-test` PASS | 无挂账 |
+| **FAC-1.b** | M5-1.b seam trait injection + b extract | **DEBT · 待 A2 W8 review note + A1 W8 reconciliation 标注 A2 v3 prework §13 domain.rs 提案** | DEBT | A2 W8 review note 路径（`logs/assist/A2-M5-W8-*.md`）必填 + A1 W8 reconciliation 整包含本卡修订 | W8+ 收口；DEBT-03 |
+| **FAC-2** | M5-2 RMCP/MCP policy | **W7 拣入 `6c1f30e` ACTIVE = 3 mcp_* 命令已就位** | **ACTIVE · 3 mcp_* commands mcp_policy_get / mcp_registry_list / mcp_capability_preview**（W8 = **HOLD/NO ASSIGNMENT**，A0 排 A3 local commit boundary）| `cargo test mcp` 3/3 PASS + `check-mcp-policy.py --self-test` ACTIVE=6 PENDING=9 | **W7-1/W7-2/W7-3 修复责任不在 A3**（A0 W8 拣入期消解）；FAC-2.MCP_BRIDGE_READONLY 验证 |
+| **FAC-3** | M5-3 A2A bidir agent_kv | W4 `1610939` 拣入 + W5 review（G7-1/2/3）+ W6 review + W7 review | **PASS · 4 reviews** | 4 份 W4/W5/W6/W7 assist（PENDING 0）| 无挂账 |
+| **FAC-4** | M5-4 agent/skill runtime | W4 `1610939` 拣入 `agent.rs` / `skills.rs` + W5/W6/W7 review | **PASS · 3 reviews** | 3 份 W5/W6/W7 assist | W8 A5 实施期硬化（edge-case tests + validation error shape） |
+| **FAC-5** | M5-5 agent/skill commands | W4 `1610939` 拣入 + W5/W6/W7 review | **PASS · 3 reviews** | 同 FAC-4 | W8 A5 实施期硬化 |
+| **FAC-6** | M5-6 agent/skill UI | W5 `f99d2eb` 拣入 UI logic + panel shell + W6 UI consistency review + W7 UI wiring note | **PASS · 2 reviews** | `scripts/check-agent-skill-ui-logic.mjs` 25 断言 + W6 `add0609` + W7 `a29b796` UI wiring | W8 A6 实施期 UI helper tests + 面板消费 A5 read-only bridge |
+| **FAC-7** | M5-7 graph model extract | W5 `4b438ef` 拣入 graph.rs + DTO + 7 ACTIVE 码 | **PASS** | `cargo test graph` 9/9 + `check-graph-policy.py --self-test` PASS(ACTIVE=7) | W8 A7 GRAPH BRIDGE PLAN ONLY（不实施后端）|
+| **FAC-8** | M5-8 graph store query | W5 `4b438ef` 拣入 store + bounded query | **PASS** | 同 FAC-7 | W8 A7 GRAPH BRIDGE PLAN ONLY（不实施后端）|
+| **FAC-9** | M5-9 graph UI + agent consume | W6 `5f92ece` 拣入 4 vue + store + utils + 193 行 UI logic + W7 A1 [W7 patched] F1 订正 + W8 A8 UI POLISH/TEST ONLY | **PASS · W7 F1 patched · W8 polish pending** | `scripts/check-graph-ui-logic.mjs` 34/34 + A1 W7 [W7 patched] 段 4 字段白名单 | W8 A8 UI POLISH 必填（accessibility / empty/error/oversize / deterministic）|
+| **FAC-10** | M5-10 plugin manifest lifecycle | W6 `5f92ece` 拣入 plugin.rs + domain.rs + check-plugin-policy.py 6 ACTIVE 码 | **PASS** | `check-plugin-policy.py --self-test` ALL_PASS(ACTIVE=1 PENDING=5, PLUGIN_NO_SECRETS) | W8 A9 POLICY REVIEW ONLY（不写 plugin runtime）|
+| **FAC-11** | M5-11 plugin commands isolation | W6 `5f92ece` 拣入 5 stub + ACL stub + audit key_hash_only | **PASS (stub) · runtime DEBT** | 5 stub 维持 `Err("not-implemented-in-W6")` | DEBT-04；W8 A9 POLICY REVIEW 维持 stub 错误结构 |
+| **FAC-12** | M5-12 plugin UI | **DEBT · W8+ A19 派发**（plugin 列表 / 详情 / 安装向导 / 启用停用 / 审计查询 / 权限预览 6 项）| **DEBT** | — | W8 A19 仍 SUPPORT DOCS ONLY；W9+ A19 派发；DEBT-04 |
+
+> **W8 FAIL_ACTION**（A11 复跑红线）：
+
+| 失败项 | 失败行动 |
+|--------|----------|
+| cargo test FAIL（含 W7-1 复发）| 阻断合入；定位 A0 拣入期修复路径（plugin.rs L274 import + L20 删 import）|
+| cargo fmt FAIL | `cargo fmt --all` 自动修复；若残留未格式化，阻断合入并打回 |
+| build metrics warnings_increased | 阻断合入；定位 unused import / dead_code / type cast 警告源头 |
+| pre-merge FAIL 任一档 | 阻断合入；A11 W8 delta 标 PRE_MERGE=FAIL |
+| `git diff --check` 失败 | 阻断合入；空格 / tab 末行清理 |
+| A3 W8 product code 改动 | 阻断合入；A0 在 W8 拣入前已显式 `HOLD/NO ASSIGNMENT`，**A3 W7 已落地文件**（bridge.rs / mcp.rs / main.rs / default-commands.toml / bridge.ts / types.ts / check-mcp-policy.py）**A1 W8 不动**；A11 W8 delta 必标 A3 W8 HOLD 期间**无** mcp_* 相关产品代码改动 |
+| Agent/Skill bridge command 非 read-only | 阻断合入；A5 W8 实施期硬化必守 read-only hard stop（不可 install / execute / network / persist write / enable plugin）|
+| Graph UI 派生命令接入 / 直读 agent_kv | 阻断合入；A7/A8 W8 仅 docs/polish，不实施后端 |
+| Plugin runtime / install / enable / delete / download | 阻断合入；A9 W8 POLICY REVIEW ONLY 模式**不**写 runtime 代码 |
+| Token / cookie / Authorization / body / prompt-secret 落 audit / log / 持久化 / checkpoint / 前端 | 阻断合入；A1 W8 整包 / A11 W8 delta 必扫敏感面 |
+| A1 W7 整包未拣入 | A0 W8 拣入期必先消 A1 W7 整包（M5-0/9/10/11/12/13/14 修订 + A1 W7 checkpoint + A1 W7 patch 共 9 文件 = +292 -15 diff 干净）|
+
+> **A11 W8 delta 必标字段**：exact commands run / PASS-FAIL per lane / pre-merge result / build metrics before vs after / A3 W8 HOLD 期间 mcp_* 文件改动数 = 0 / 残留债 / A0 可否在 W8 拣入期推 master / W7-1/W7-2/W7-3 修复状态。
 
 ---
 

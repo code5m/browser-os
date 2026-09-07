@@ -1,0 +1,339 @@
+diff --git a/scripts/check-graph-ui-logic.mjs b/scripts/check-graph-ui-logic.mjs
+index 7a89867..f834d4a 100644
+--- a/scripts/check-graph-ui-logic.mjs
++++ b/scripts/check-graph-ui-logic.mjs
+@@ -188,6 +188,34 @@ eq(
+   "ready",
+ );
+ 
++// ---- 容量健康度（超量态：ok/near/over，确定性）----
++eq("capacityState ok(50/200)", graphUi.capacityState(graphUi.estimateCapacity(50, 200)).level, "ok");
++eq(
++  "capacityState near(4700/19000≈94%)",
++  graphUi.capacityState(graphUi.estimateCapacity(4700, 19000)).level,
++  "near",
++);
++eq(
++  "capacityState over(6000/>max)",
++  graphUi.capacityState(graphUi.estimateCapacity(6000, 10)).level,
++  "over",
++);
++ok(
++  "capacityState over 文案非空",
++  graphUi.capacityState(graphUi.estimateCapacity(6000, 10)).message.length > 0,
++);
++
++// ---- 确定性搜索 / 无界数组防护 ----
++const big = [];
++for (let i = 0; i < 6000; i++) big.push(node("n" + i, i % 2 ? "file" : "dir", "Node" + i));
++const bigFiltered = graphUi.filterNodes(big, { query: "node1", kinds: [] });
++ok("filterNodes 不放大数组(6000→子集)", bigFiltered.length > 0 && bigFiltered.length <= 6000);
++const ordered = graphUi.filterNodes(big, { query: "", kinds: ["file"] });
++ok("filterNodes 顺序稳定(file 子集首项 n1)", ordered.length === 3000 && ordered[0].id === "n1");
++let bm = new Map();
++bm = graphUi.boundedInsert(bm, big, 5000);
++ok("boundedInsert 6000→封顶 5000(无界防护)", bm.size === 5000 && !bm.has("n0"));
++
+ // ---- 结果 ----
+ console.log(`\n图谱 UI 逻辑测试：通过 ${passed}，失败 ${failed}`);
+ process.exit(failed === 0 ? 0 : 1);
+diff --git a/src/components/graph/EdgeDetail.vue b/src/components/graph/EdgeDetail.vue
+index a3255a4..ca06487 100644
+--- a/src/components/graph/EdgeDetail.vue
++++ b/src/components/graph/EdgeDetail.vue
+@@ -9,7 +9,7 @@ const summary = computed(() => (props.edge ? summarizeEdge(props.edge) : null));
+ </script>
+ 
+ <template>
+-  <div class="detail" v-if="summary">
++  <div class="detail" v-if="summary" role="region" aria-label="边详情" aria-live="polite">
+     <h3>边详情</h3>
+     <dl>
+       <dt>从</dt><dd class="mono">{{ summary.from }}</dd>
+@@ -20,7 +20,7 @@ const summary = computed(() => (props.edge ? summarizeEdge(props.edge) : null));
+     </dl>
+     <p class="note">属性(props)已脱敏，界面不展示。</p>
+   </div>
+-  <div class="detail empty" v-else>选择一条边查看详情</div>
++  <div class="detail empty" v-else role="status">选择一条边查看详情</div>
+ </template>
+ 
+ <style scoped>
+diff --git a/src/components/graph/GraphFilter.vue b/src/components/graph/GraphFilter.vue
+index 3d09ac8..e64fe95 100644
+--- a/src/components/graph/GraphFilter.vue
++++ b/src/components/graph/GraphFilter.vue
+@@ -14,7 +14,7 @@ function onSearch(e: Event): void {
+ </script>
+ 
+ <template>
+-  <div class="filter">
++  <div class="filter" role="search">
+     <input
+       class="search"
+       type="search"
+@@ -23,17 +23,18 @@ function onSearch(e: Event): void {
+       @input="onSearch"
+       aria-label="搜索图谱节点"
+     />
+-    <div class="chips">
++    <div class="chips" role="group" aria-label="按节点类型过滤">
+       <button
+         v-for="opt in kindOptions"
+         :key="opt.value"
+         class="chip"
+         :class="{ on: activeKinds.includes(opt.value) }"
+         :aria-pressed="activeKinds.includes(opt.value)"
++        :aria-label="`筛选${opt.label}类型节点`"
+         @click="store.toggleKind(opt.value)"
+       >{{ opt.label }}</button>
+     </div>
+-    <button class="clear" @click="store.clearFilter()">清除</button>
++    <button class="clear" aria-label="清除过滤条件" @click="store.clearFilter()">清除</button>
+   </div>
+ </template>
+ 
+diff --git a/src/components/graph/GraphPanel.vue b/src/components/graph/GraphPanel.vue
+index 3804529..486a480 100644
+--- a/src/components/graph/GraphPanel.vue
++++ b/src/components/graph/GraphPanel.vue
+@@ -14,23 +14,25 @@ onMounted(() => {
+ </script>
+ 
+ <template>
+-  <div class="panel graph-panel">
++  <div class="panel graph-panel" role="region" aria-label="知识图谱">
+     <header class="panel-header">
+       <h2>知识图谱</h2>
+       <div class="actions">
+-        <span class="cap">节点 {{ store.capacity.nodeCount }}/{{ GRAPH_MAX_NODES }} · 边 {{ store.capacity.edgeCount }}/{{ GRAPH_MAX_EDGES }}</span>
+-        <button :disabled="!store.backendReady" @click="store.loadGraph()">刷新</button>
++        <span class="cap" role="status" aria-live="polite">节点 {{ store.capacity.nodeCount }}/{{ GRAPH_MAX_NODES }} · 边 {{ store.capacity.edgeCount }}/{{ GRAPH_MAX_EDGES }}</span>
++        <button :disabled="!store.backendReady" aria-label="刷新图谱数据" @click="store.loadGraph()">刷新</button>
+       </div>
+     </header>
+ 
+-    <div v-if="!store.backendReady" class="banner banner-warn">
++    <div v-if="!store.backendReady" class="banner banner-warn" role="status" aria-live="polite">
+       后端 graph 命令尚未就绪，当前为只读壳（不发起任何后端调用）。
+     </div>
+-    <div v-if="store.error" class="banner banner-error">{{ store.error }}</div>
++    <div v-if="store.error" class="banner banner-error" role="alert" aria-live="assertive">{{ store.error }}</div>
++    <div v-if="store.capState.level !== 'ok'" class="banner banner-cap" role="status" aria-live="polite">{{ store.capState.message }}</div>
+ 
+     <GraphFilter />
+ 
+-    <div v-if="store.state.state === 'empty'" class="empty-state">{{ store.state.message }}</div>
++    <div v-if="store.state.state === 'empty'" class="state-block empty-state" role="status">{{ store.state.message }}</div>
++    <div v-else-if="store.state.state === 'error'" class="state-block error-state" role="alert">{{ store.state.message }}</div>
+     <div v-else class="body">
+       <GraphViewer class="viewer-col" />
+       <aside class="side">
+@@ -49,7 +51,10 @@ onMounted(() => {
+ .banner { padding: 6px 10px; border-radius: 6px; margin: 0 8px; font-size: 12px; }
+ .banner-warn { background: #fff7e6; color: #ad6800; }
+ .banner-error { background: #fff1f0; color: #cf1322; }
++.banner-cap { background: #f9f0ff; color: #722ed1; }
+ .empty-state { padding: 24px; color: #999; text-align: center; }
++.error-state { padding: 24px; color: #cf1322; text-align: center; }
++.state-block { margin: 8px; }
+ .body { flex: 1; display: flex; min-height: 0; }
+ .viewer-col { flex: 1; min-width: 0; }
+ .side { width: 280px; border-left: 1px solid #eee; overflow: auto; }
+diff --git a/src/components/graph/GraphViewer.vue b/src/components/graph/GraphViewer.vue
+index fe220ec..eee4509 100644
+--- a/src/components/graph/GraphViewer.vue
++++ b/src/components/graph/GraphViewer.vue
+@@ -1,7 +1,12 @@
+ <script setup lang="ts">
+ import { computed } from "vue";
+ import { useGraphStore } from "../../stores/useGraphStore";
+-import { layoutPositions, nodeColor, nodeKindLabel } from "../../utils/graphUi";
++import {
++  edgeKindLabel,
++  layoutPositions,
++  nodeColor,
++  nodeKindLabel,
++} from "../../utils/graphUi";
+ 
+ const store = useGraphStore();
+ 
+@@ -23,6 +28,7 @@ function onEdge(idx: number): void {
+ 
+ <template>
+   <div class="viewer">
++    <p class="sr-only" aria-live="polite">{{ store.selectionText }}</p>
+     <svg
+       v-if="store.visibleNodes.length"
+       viewBox="0 0 800 600"
+@@ -39,7 +45,11 @@ function onEdge(idx: number): void {
+         :y2="points.get(e.to)?.y ?? 0"
+         class="edge"
+         :class="{ active: store.selectedEdgeIdx === i }"
++        tabindex="0"
++        role="button"
++        :aria-label="`${edgeKindLabel(e.kind)}边，从 ${e.from} 到 ${e.to}`"
+         @click="onEdge(i)"
++        @keydown.enter="onEdge(i)"
+       />
+       <g
+         v-for="n in store.visibleNodes"
+@@ -49,6 +59,8 @@ function onEdge(idx: number): void {
+         :class="{ active: store.selectedNodeId === n.id }"
+         tabindex="0"
+         role="button"
++        aria-roledescription="图谱节点"
++        :aria-pressed="store.selectedNodeId === n.id"
+         :aria-label="`${nodeKindLabel(n.kind)} 节点 ${n.label}`"
+         @click="onNode(n.id)"
+         @keydown.enter="onNode(n.id)"
+@@ -57,12 +69,16 @@ function onEdge(idx: number): void {
+         <text x="0" y="28" text-anchor="middle" class="nlabel">{{ n.label }}</text>
+       </g>
+     </svg>
+-    <div v-else class="viewer-empty">暂无节点可绘制（后端数据未载入或已被过滤）。</div>
++    <div v-else class="viewer-empty" role="status">暂无节点可绘制（后端数据未载入或已被过滤）。</div>
+   </div>
+ </template>
+ 
+ <style scoped>
+ .viewer { width: 100%; height: 100%; min-height: 320px; }
++.sr-only {
++  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
++  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
++}
+ .canvas { width: 100%; height: 100%; background: #fafafa; border-radius: 8px; }
+ .edge { stroke: #bbb; stroke-width: 1.5; cursor: pointer; }
+ .edge.active { stroke: #4096ff; stroke-width: 3; }
+diff --git a/src/components/graph/NodeDetail.vue b/src/components/graph/NodeDetail.vue
+index 9e354bb..ddbd84d 100644
+--- a/src/components/graph/NodeDetail.vue
++++ b/src/components/graph/NodeDetail.vue
+@@ -9,7 +9,7 @@ const summary = computed(() => (props.node ? summarizeNode(props.node) : null));
+ </script>
+ 
+ <template>
+-  <div class="detail" v-if="summary">
++  <div class="detail" v-if="summary" role="region" aria-label="节点详情" aria-live="polite">
+     <h3>节点详情</h3>
+     <dl>
+       <dt>ID</dt><dd class="mono">{{ summary.id }}</dd>
+@@ -20,7 +20,7 @@ const summary = computed(() => (props.node ? summarizeNode(props.node) : null));
+     <!-- K7：GraphNode.props 已在后端脱敏，UI 不渲染其正文 -->
+     <p class="note">属性(props)已脱敏，界面不展示。</p>
+   </div>
+-  <div class="detail empty" v-else>选择一个节点查看详情</div>
++  <div class="detail empty" v-else role="status">选择一个节点查看详情</div>
+ </template>
+ 
+ <style scoped>
+diff --git a/src/components/layout/ActivityBar.vue b/src/components/layout/ActivityBar.vue
+index 5f46c89..8ae23e5 100644
+--- a/src/components/layout/ActivityBar.vue
++++ b/src/components/layout/ActivityBar.vue
+@@ -218,6 +218,8 @@ async function openDirCenter() {
+         v-for="it in topItems"
+         :key="it.view"
+         :class="{ active: layout.mainView === it.view }"
++        :aria-label="it.label"
++        :aria-current="layout.mainView === it.view ? 'page' : undefined"
+         @click="onItem(it.view)"
+         :title="it.label"
+       >
+@@ -373,6 +375,8 @@ async function openDirCenter() {
+           v-for="c in s.items"
+           :key="c.view"
+           :class="{ active: layout.mainView === c.view }"
++          :aria-label="c.label"
++          :aria-current="layout.mainView === c.view ? 'page' : undefined"
+           @click="onItem(c.view)"
+         >
+           <span class="ic">{{ c.icon }}</span> {{ c.label }}
+diff --git a/src/components/layout/MainArea.vue b/src/components/layout/MainArea.vue
+index 981b17b..a6b330d 100644
+--- a/src/components/layout/MainArea.vue
++++ b/src/components/layout/MainArea.vue
+@@ -175,7 +175,7 @@ watch(
+     <div v-else-if="layout.mainView === 'agents'" class="modview">
+       <AgentManagerPanel />
+     </div>
+-    <div v-else-if="layout.mainView === 'graph'" class="modview">
++    <div v-else-if="layout.mainView === 'graph'" class="modview" role="region" aria-label="知识图谱">
+       <GraphPanel />
+     </div>
+ 
+diff --git a/src/stores/useGraphStore.ts b/src/stores/useGraphStore.ts
+index 5e1c0b7..57cf5de 100644
+--- a/src/stores/useGraphStore.ts
++++ b/src/stores/useGraphStore.ts
+@@ -14,10 +14,13 @@ import { GRAPH_COMMANDS_AVAILABLE, bridge } from "../bridge";
+ import type { GraphEdge, GraphNode, GraphNodeKind } from "../types";
+ import {
+   boundedInsert,
++  capacityState,
+   estimateCapacity,
+   filterEdges,
+   filterNodes,
+   panelStateGraph,
++  summarizeEdge,
++  summarizeNode,
+   type GraphFilterState,
+ } from "../utils/graphUi";
+ 
+@@ -44,6 +47,20 @@ export const useGraphStore = defineStore("graph", () => {
+   const visibleEdges = computed(() => filterEdges(edgeList.value, nodeList.value, filter.value));
+ 
+   const capacity = computed(() => estimateCapacity(nodes.value.size, edges.value.size));
++  const capState = computed(() => capacityState(capacity.value));
++
++  // 当前选择的可读播报（供 GraphViewer/详情区 aria-live 公告，确定性拼接）
++  const selectionText = computed(() => {
++    if (selectedNode.value) {
++      const s = summarizeNode(selectedNode.value);
++      return `已选择${s.kindLabel}节点 ${s.label}`;
++    }
++    if (selectedEdge.value) {
++      const s = summarizeEdge(selectedEdge.value);
++      return `已选择${s.kindLabel}边（${s.from} → ${s.to}）`;
++    }
++    return "";
++  });
+ 
+   const selectedNode = computed(() =>
+     selectedNodeId.value ? nodes.value.get(selectedNodeId.value) ?? null : null,
+@@ -126,6 +143,8 @@ export const useGraphStore = defineStore("graph", () => {
+     visibleNodes,
+     visibleEdges,
+     capacity,
++    capState,
++    selectionText,
+     selectedNode,
+     selectedEdge,
+     state,
+diff --git a/src/utils/graphUi.ts b/src/utils/graphUi.ts
+index bd91e56..b2817e0 100644
+--- a/src/utils/graphUi.ts
++++ b/src/utils/graphUi.ts
+@@ -169,6 +169,22 @@ export function estimateCapacity(nodeCount: number, edgeCount: number): Capacity
+   };
+ }
+ 
++// 容量健康度（确定性、无随机）：over=超上限，near=接近上限(>=90%)，ok=正常。
++// 用于 UI 超量态横幅，避免对超限数据无提示。
++export interface CapacityState {
++  level: "ok" | "near" | "over";
++  message: string;
++}
++export function capacityState(cap: CapacityView): CapacityState {
++  if (!cap.withinLimit || cap.nodeUsedPct >= 100 || cap.edgeUsedPct >= 100) {
++    return { level: "over", message: "图谱已达容量上限，仅展示已载入部分。" };
++  }
++  if (cap.nodeUsedPct >= 90 || cap.edgeUsedPct >= 90) {
++    return { level: "near", message: "图谱接近容量上限，部分数据可能未载入。" };
++  }
++  return { level: "ok", message: "" };
++}
++
+ // ====== 搜索/过滤 ======
+ export interface GraphFilterState {
+   query: string;
