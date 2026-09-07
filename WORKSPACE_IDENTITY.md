@@ -42,3 +42,22 @@ git log --oneline -12
 3. If the task names `/home/ainfinit/.codex/worktrees/*`, leave this directory and use that exact worktree.
 4. If the task asks for final integration or remote push, return to this directory.
 5. Report the mismatch instead of continuing from the wrong checkout.
+
+## Desktop Runtime Source Gate
+
+This project has two intentionally different main-window origins. Treat this as a release-safety contract, not as a local setup detail:
+
+- Debug main window: `http://localhost:1421/`, created programmatically in `src-tauri/src/main.rs`.
+- Release main window: bundled `tauri://localhost` assets.
+- `src-tauri/tauri.conf.json` must not regain a global `build.devUrl`. In this project, raw release builds previously inherited Tauri's dev configuration and produced a client that depended on the Vite server.
+- Debug IPC access is granted only by `src-tauri/dev-capabilities/main.json`, registered under `#[cfg(debug_assertions)]`. The file deliberately lives outside the auto-scanned `src-tauri/capabilities/` directory and must not enter release capabilities.
+- Never fix a debug `not allowed ... URL: http://localhost:1421/` error by adding broad `remote.urls` to the default capability. First verify the caller origin and the debug-only capability registration.
+- A browser tab showing `localhost:1421` is only the frontend preview. Native-client acceptance must launch the Tauri window and verify at least one IPC command.
+
+Every new Tauri command is one atomic delivery: Rust implementation, `check_invocation_source`, `generate_handler!` registration, ACL permission, typed `src/bridge.ts`/`src/types.ts` exposure, and policy/tests. Before claiming it works, run:
+
+```bash
+python3 scripts/check-command-set-consistency.py
+bash scripts/check-dev-startup.sh
+bash scripts/pre-merge.sh
+```

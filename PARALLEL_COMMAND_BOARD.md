@@ -1,11 +1,11 @@
 # Parallel Command Board
 
-> Updated: 2026-09-08 11:00 CST
+> Updated: 2026-09-08 07:15 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` at `052b18a` — W15 release-readiness PUSHED and accepted (two high-risk write confirmations gained role/aria-modal, initial focus, Tab/Shift+Tab containment, Escape close, focus return; full Rust 431/431, MCP feature 21/21, `node scripts/check-ui-a11y-logic.mjs` PASS, `npm run build` PASS, `pre-merge.sh` ALL_PASS, build metrics `total_bytes_pct=25.14` ≤ **25.2%** one-time ceiling, warning delta=0). Retain every M5-W16 documentation/review deliverable; M5-W17 desktop-client completeness and home recovery is now active.
-> Current mainline chain: `886ea29`（W14 PUSHED · accepted，metrics 24.89 ≤ 25%）→ `052b18a`（W15 PUSHED · accepted，metrics 25.14 ≤ 25.2% one-time ceiling）. Runtime authority remains LOCKED: plugin invocation/command execution, dynamic loading, network download/listener, daemon, model call, Agent/Skill execution, MCP full runtime, graph write/export, and background workers. Only A0 pushes.
-> Current NEXT: `M5-BUG-HUNT` confirmed high-risk bug closure and evidence refresh. W17 desktop-client closeout is locally green; native visual acceptance remains user-side evidence. Only A0 pushes.
+> Current mainline: `master` at `8e67ab0` — W17, BUG-HUNT high-risk fixes, scheduler crash/concurrency safety, command-set consistency, and debug/release IPC-origin isolation are integrated and PUSHED.
+> Current mainline chain: `61cff56` (BUG-HUNT + scheduler safety) -> `e3b6b40` (ACL rebuild) -> `8e67ab0` (debug-only IPC origin isolation). Runtime authority remains LOCKED outside the explicitly bounded M5-W18 work below. Only A0 pushes.
+> Current NEXT: `M5-W18` reference-driven knowledge graph and database workbench advancement, using the pinned Obsidian vault, dbx source, and zvec-grep source listed in the dispatch below.
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
@@ -14,7 +14,7 @@ This file is the coordination board for 11 parallel agents plus A0 integration. 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按当前 M5-W17 Desktop Client Completeness Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按当前 M5-W18 Obsidian + dbx + zvec-grep Dispatch 完成自己的整包交付，自行 rebase/整理补丁与 checkpoint，不 push。
 ```
 
 Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
@@ -78,32 +78,30 @@ No lane may force-push, reset, or overwrite another lane's changes.
 
 ## Active Lanes
 
-| Lane | Purpose | Route | Allowed Scope | Must Deliver | Merge Order |
-|---|---|---|---|---|---|
-| A0 | Integration controller | AI:DEEP / R:xhigh | All files, only for merge/verification | merge log, final verification, push | Always last |
-| A1 | M4 task-card expansion | AI:DEEP / R:high | `AI-模型切换与接手清单.md`, `详细设计与实施计划.md`, `后续需求TODO.md`, `logs/checkpoints/` | M4-1~M4-8 expanded cards, dependency graph | 1 |
-| A2 | M4-1 database contract | AI:DEEP / R:high | docs, `src-tauri/src/domain.rs` type proposal only, policy notes | `SupportedDb`, config schema, dependency decision, checkpoint | 2 |
-| A3 | M4-2 PoolKind and production safety policy | AI:DEEP / R:xhigh | `src-tauri/src/database*`, `src-tauri/src/domain.rs`, `src-tauri/src/security_policy.rs`, db policy script, Rust tests | connection-pool abstraction, SQL risk classifier, fail-closed write policy, privacy/audit tests | 3 |
-| A4 | M4-3 database command layer | AI:DEEP / R:xhigh | `src-tauri/src/database*`, `src-tauri/src/bridge.rs`, `src-tauri/src/main.rs`, `src-tauri/permissions/default-commands.toml`, `src-tauri/src/domain.rs`, `src/bridge.ts`, `src/types.ts`, tests | `connect/query/disconnect`, ACL, source check, Keyring, audit, result limits | 4 |
-| A5 | M4-4 database UI | AI:BALANCED / R:high | `src/components/**`, `src/stores/**`, `src/bridge.ts`, `src/types.ts`, UI logic tests | connection form, editor, result grid, dangerous confirmation | 6 |
-| A6 | M4-5 scheduler contract | AI:DEEP / R:high | docs, pure domain type proposal, policy notes | `TaskDef` contract, clock/missed-run/cancel semantics | 2 |
-| A7 | M4-6/M4-7 scheduler backend | AI:DEEP / R:xhigh | `src-tauri/src/scheduler*`, `bridge.rs`, `domain.rs`, ACL, tests | task CRUD, atomic persistence, scheduler shutdown, audit | 5 |
-| A8 | M4-8 scheduler UI | AI:BALANCED / R:medium | `src/components/**`, `src/stores/**`, `src/bridge.ts`, `src/types.ts`, UI tests | CRUD, enable switch, next run, history, retry state | 7 |
-| A9 | M5 prework only | AI:DEEP / R:high | `logs/assist/`, future task-card docs only | knowledge graph / Agent / plugin prework, no product code | Not merged before M4 |
-| A10 | M4 security review | AI:DEEP / R:xhigh | review notes, policy gaps, `logs/assist/`, no product code unless assigned by A0 | independent review of A2/A3/A4/A7 guardrails | After relevant lane |
-| A11 | M4 verification evidence | AI:BALANCED / R:medium | verification logs/checkpoints, manual test checklist, no product code unless assigned by A0 | targeted command matrix, GUI/manual checklist, debt ledger | Before A0 final push |
+The authoritative assignments are the latest `M5-W18 Obsidian + dbx + zvec-grep Dispatch` at the end of this file. Earlier M4/M5 tables are retained only as history.
+
+| Lane | Current role | Status | Merge order |
+|---|---|---|---|
+| A0 | Integration controller; only lane allowed to push | ACTIVE | Last |
+| A1 | Reference contract and W18 documentation | START | 1 |
+| A2 | Obsidian-compatible bounded Markdown graph ingestion | START | 2 |
+| A3 | zvec-grep retrieval architecture/adoption spike | START | 3 |
+| A4 | dbx-informed database core/workbench backend | START | 4 |
+| A5 | Database command/DTO/ACL integration after A4 | PREPARE, then START | 5 |
+| A6 | dbx-informed database UI | START | 6 |
+| A7 | Obsidian-informed graph UI | START | 7 |
+| A8 | Graph/database policy and mutation fixtures | START | 8 |
+| A9 | Privacy/security review | START | 9 |
+| A10 | Cross-layer consistency and startup regression review | START | 10 |
+| A11 | Independent build/runtime/GUI verification matrix | START | 11 |
 
 ## Current Priority
 
-1. A1 expands M4 cards and freezes the execution order.
-2. A2 and A6 freeze contracts in parallel.
-3. A3 starts only after A2 freezes `SupportedDb`, config schema, and dependency choice.
-4. A4 starts only after A2 freezes command DTOs and A3 freezes pool/safety interfaces.
-5. A7 starts only after A6 freezes `TaskDef` and trigger semantics.
-6. A5 and A8 start after their command names and DTOs are stable.
-7. A9 may research M5, but must not implement M5 product code before M4 is PASS.
-8. A10 reviews security-sensitive M4 lanes after their output exists.
-9. A11 prepares verification evidence and manual acceptance checklists before final A0 integration.
+1. A1/A2/A3/A4 establish the reference contract and pure backend foundations in parallel.
+2. A6/A7 may improve pure UI logic against existing contracts, but must not invent unavailable backend data.
+3. A5 wires only the contract actually delivered by A4; every new command must ship as one command/ACL/source-check/bridge/type/test set.
+4. A8/A9/A10 continuously review boundedness, privacy, consistency, and the debug/release origin gate.
+5. A11 runs independent verification after implementation patches exist; A0 reviews, integrates, commits, and pushes.
 
 ## Code Dispatch Now
 
@@ -1349,3 +1347,85 @@ WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane
 ```
 
 Replace only `AX` with `A1` through `A11`.
+
+## M5-W18 Obsidian + dbx + zvec-grep Dispatch
+
+> Added 2026-09-08 by A0 after `8e67ab0`. This is the only active dispatch. Earlier lane tables are historical evidence.
+
+### Pinned reference inputs
+
+- Obsidian behavior/configuration reference: `/home/ainfinit/Documents/Knowledge-Base/secondBrain/.obsidian` (`graph.json`, `app.json`, `core-plugins.json`) and Markdown content under the same vault. Borrow vault, wikilink, backlink/outgoing-link, orphan, filter, and local-graph interaction semantics; Obsidian itself is not an open-source code dependency.
+- dbx implementation reference: `/home/ainfinit/Documents/极智简单/V3/research/dbx-src`; local unversioned snapshot with `Cargo.lock` SHA-256 `c0a7be12c05d8dffe867f1a70d4b82e881dec2da3bb622b5d3e3410c3d10e3a7`. Existing analysis lives in `/home/ainfinit/Documents/极智简单/V3/dbx-study/`. Borrow workbench flows, capability modeling, schema browsing, cancellation, bounded result/export, and production-safety ideas; do not copy its broad driver/runtime surface.
+- zvec-grep implementation reference: `/home/ainfinit/Documents/极智简单/V3/research/zvec-grep-src`, upstream `zvec-ai/zvec-grep` pinned at `52653951b24617762f4ab0c71c34d594e5001617` (Apache-2.0). Borrow workspace scoping, ignore rules, incremental freshness, exact/BM25/vector route separation, compact results, and explicit remote-embedding authorization. Do not start a daemon, expose MCP, download a model, send content remotely, or add the dependency in this wave without A0 approval after A3's adoption verdict.
+
+Reference code is evidence, not the product contract. Every lane must first compare the reference behavior with this repository's existing security, size, shutdown, and UI conventions. Blind copying is a failed delivery.
+
+### Why the last client failed and the non-repeat gate
+
+1. The debug main window is programmatically loaded from `http://localhost:1421/`, while release loads bundled `tauri://localhost` assets. Tauri authorization is origin-sensitive.
+2. The commands in the screenshots were already registered and listed in ACL. The failure was not a missing command; the debug external origin did not match the local-only capability.
+3. Restoring a global `build.devUrl` is forbidden: this repository previously produced a raw release binary that still depended on Vite because Tauri's build configuration exposed the dev path.
+4. The accepted solution is the exact debug-only capability `src-tauri/dev-capabilities/main.json`, dynamically registered only under `#[cfg(debug_assertions)]` and kept outside `src-tauri/capabilities/` so release cannot auto-include it.
+5. Never broaden default `remote.urls` to fix one screen. Never call a browser preview a native-client test. Never claim a new command works until implementation + source check + handler registration + ACL + typed bridge/types + policy tests all land together.
+6. Mandatory regression gates for any lane touching commands, capabilities, startup, or native UI: `check-command-set-consistency.py`, `check-dev-startup.sh`, focused tests, `npm run build`, and `pre-merge.sh`.
+
+### Shared W18 product boundary
+
+- Knowledge graph remains a derived local index. Primary Markdown/database/workspace data is not duplicated as an editable source of truth.
+- Initial graph ingestion is bounded Markdown metadata and links only: user-selected vault roots, `.md` files, `[[wikilinks]]`, Markdown links, tags/frontmatter names, and file/folder relationships. No PDF/DOCX parsing, no crawler, no AI extraction, no hidden home-directory scan, and no secret-bearing body/properties in graph DTOs.
+- Retrieval must expose honest modes. Exact, lexical, vector, and graph traversal are distinct capabilities; an unavailable vector route must show unavailable, not silently masquerade as semantic search.
+- Local-first is the default. Remote embeddings require a later explicit user authorization design and are not active in W18.
+- Database work remains fail-closed: no secret in DTO/store/log/audit/checkpoint, no raw DSN, no SQL history persistence, bounded metadata/results, real cancellation, source check, ACL, and existing production-write confirmation.
+- No new daemon, listener, MCP exposure, plugin/Agent/Skill execution, dynamic code loading, automatic model download, or unrestricted filesystem scan.
+- Build growth may not raise the accepted 25.2% ceiling. A lane that needs a dependency or exceeds the metric stops with measured evidence for A0.
+
+### Dedicated lane worktrees
+
+Each lane uses `/home/ainfinit/.codex/worktrees/m5-w18-aN/mvp-browser-os-v3` on branch `codex/m5-w18-aN`. Do not edit the canonical master working copy. Start by fetching and rebasing the lane branch onto `origin/master`; preserve lane work and stop on a real conflict. Only A0 integrates and pushes.
+
+### Lane assignments
+
+| Lane | Status | Allowed scope | Long-package deliverable |
+|---|---|---|---|
+| A1 | START DOCS | `AI-模型切换与接手清单.md`, `详细设计与实施计划.md`, `后续需求TODO.md`, `logs/checkpoints/`, `logs/assist/` | Produce the W18 reference-to-product contract: current graph/database capability inventory, Obsidian/dbx/zvec-grep feature mapping, accepted/deferred/rejected table, dependency graph, command/DTO proposal, privacy/capacity budgets, and two-wave merge plan. Reconcile NEXT without marking implementation complete. |
+| A2 | START GRAPH CORE | `src-tauri/src/graph_ingest.rs` (new), narrowly `src-tauri/src/graph.rs`, focused Rust tests, lane checkpoint | Implement a pure, deterministic, bounded Markdown graph-ingestion core inspired by Obsidian: normalize vault-relative paths, parse wikilinks/Markdown links/tags/frontmatter names, resolve aliases/unresolved links honestly, produce deduplicated nodes/edges, apply file/byte/node/edge/depth limits, ignore hidden/config/build/vendor paths, reject traversal/symlink escapes, and never place note bodies or secrets in graph properties. No bridge/main/ACL/filesystem watcher/background thread. |
+| A3 | START RETRIEVAL SPIKE | `logs/assist/`, `logs/checkpoints/`, optionally a self-contained benchmark under `scripts/spikes/` that is not in pre-merge or product runtime | Audit pinned zvec-grep end to end: exact/rg, BM25, vector, hybrid/RRF, index freshness, authorization, storage, server lifecycle, Node/native footprint, licensing, and failure modes. Run a local non-secret corpus benchmark. Deliver a measured adopt/wrap/reimplement decision and a frozen retrieval interface. Do not add zvec packages, models, MCP, server, daemon, or product commands. |
+| A4 | START DB CORE | `src-tauri/src/database.rs`, new `src-tauri/src/database_*.rs`, focused Rust tests, lane checkpoint | Build one coherent dbx-informed backend package: bounded schema/catalog metadata for existing SQLite/MySQL/Postgres connections, capability reporting per driver, cancellable query handles with deterministic cleanup, and sanitized stable errors. Preserve current query/write gate and Keyring boundary. Do not persist SQL text, credentials, or result bodies; do not edit bridge/main/domain/ACL/frontend. |
+| A5 | PREPARE THEN START COMMAND SET | `src-tauri/src/domain.rs`, `src-tauri/src/bridge.rs`, `src-tauri/src/main.rs`, `src-tauri/permissions/default-commands.toml`, `src/bridge.ts`, `src/types.ts`, focused command/contract tests, lane checkpoint | First review A4's exported contract. Then wire only its delivered capabilities as an atomic typed command set (expected areas: safe connection summaries, bounded schema metadata, query cancellation). Every command must include source check, handler registration, ACL, typed bridge/types, stable errors, redacted audit, and cancellation/lifecycle tests. Do not invent product behavior absent from A4; rebase after A4 lands. |
+| A6 | START DB UI | `src/components/database/`, `src/stores/useDatabaseStore.ts`, `src/utils/dbUi.ts`, `scripts/check-database-ui-logic.mjs`, lane checkpoint | Evolve the database screen toward dbx's workbench ergonomics using current contracts first: compact connection sidebar, schema tree states, query editor/run/cancel flow, bounded result grid, copy/export feedback, keyboard access, loading/empty/error states, and session-only bounded query tabs/history with no browser persistence. Feature-detect A5 additions; never raw-invoke or fake unavailable metadata. |
+| A7 | START GRAPH UI | `src/components/graph/`, `src/stores/useGraphStore.ts`, `src/utils/graphUi.ts`, `scripts/check-graph-ui-logic.mjs`, lane checkpoint | Evolve the graph surface using Obsidian semantics and current read-only commands: global/local graph modes, backlink/outgoing sections, unresolved/orphan/filter controls, deterministic selection/focus, capacity/truncation/unavailable states, and narrow-window accessibility. Do not add graph writes, raw invoke, canvas/3D dependency, fabricated semantic search, or expose raw props/note bodies. |
+| A8 | START POLICY/TEST | `scripts/check-graph-policy.py`, `scripts/check-database-policy.py`, new focused policy/fixture scripts, `scripts/pre-merge.sh` only for proven stable gates, lane checkpoint | Add mutation-resistant guards for W18: vault traversal/symlink/size limits, body/secret exclusion, deterministic graph IDs/edges, schema/result caps, query cancellation cleanup, no SQL persistence, no remote embedding/model/daemon, and no command-set drift. Self-test every new policy with good and bad fixtures before adding it to pre-merge. No product code. |
+| A9 | START SECURITY REVIEW | `logs/assist/`, `logs/checkpoints/`, policy bad fixtures only when needed | Threat-model A2/A4/A5/A6/A7 outputs: malicious Markdown/frontmatter/links, symlink escape, index poisoning, secret exfiltration, SQL/DSN leakage, cancellation races, remote embedding consent, DOM injection, and audit/error echo. Findings first with exact file/line evidence; do not edit product code. |
+| A10 | START CONSISTENCY REVIEW | `scripts/check-command-set-consistency.py`, `scripts/check-dev-startup.sh`, `logs/assist/`, `logs/checkpoints/` | Guard the cross-layer and client-startup invariants while W18 lands. Extend checks only for real gaps; ensure no lane restores global devUrl, broadens default remote capability, auto-scans dev capability into release, adds raw invoke, or lands a partial command set. Reproduce both debug `http://localhost:1421` and release `tauri://localhost` source expectations without changing authority. |
+| A11 | START VERIFICATION | `logs/assist/`, `logs/checkpoints/`, self-contained verification script only if essential | Maintain the independent W18 matrix and honest GUI checklist: targeted graph/database Rust tests, policy self/default tests, UI logic assertions, command/ACL/source consistency, debug-startup gate, npm build, full cargo test/release build, build metric, pre-merge, and native-client smoke for graph/database navigation. Do not fabricate visual evidence or edit product code. |
+
+### Dependencies and merge order
+
+- Immediate parallel work: `A1 + A2 + A3 + A4 + A6 + A7 + A8 + A9 + A10 + A11`.
+- A5 may audit existing contracts immediately but may write shared command files only after A4 returns a tested export surface.
+- A6/A7 must keep additions feature-detected until A5/A2 contracts land; they may not invent backend payloads.
+- Review order: `A2/A3/A4 -> A5 -> A6/A7 -> A8/A9/A10 -> A1/A11 -> A0`.
+- If two patches touch the same shared file, later lane rebases onto the earlier accepted lane. No lane resolves by deleting another lane's work.
+
+### Required lane output
+
+```text
+LANE=A1..A11
+STATUS=PASS | PASS_WITH_DEBT | BLOCKED
+BASE=<origin/master sha>
+HEAD=<lane commit sha>
+REFERENCE_EVIDENCE=<exact local paths and pinned revisions read>
+FILES=<changed files>
+VERIFY=<commands and exact pass/fail counts>
+CHECKPOINT=<path>
+MERGE_NOTES=<dependencies/conflicts/security debt>
+NEXT=<next concrete integration step>
+```
+
+### One-line prompt for all 11 agents
+
+```text
+继续 Lane AX：读取主仓库 WORKSPACE_IDENTITY.md 与 PARALLEL_COMMAND_BOARD.md，切到板上指定的 M5-W18 独立 worktree，按最新 “M5-W18 Obsidian + dbx + zvec-grep Dispatch” 完成长任务包；先 rebase origin/master，严格限于 Allowed scope，提交到自己的 codex/m5-w18-aN 分支，不 push。
+```
+
+Replace only `AX` with `A1` through `A11`. The lane number also determines `aN` in the worktree and branch path.
