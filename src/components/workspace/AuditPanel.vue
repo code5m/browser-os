@@ -19,7 +19,7 @@ const layout = useLayoutStore();
         </div>
         <div class="det">{{ e.detail }}</div>
       </li>
-      <li v-if="!ws.audit.length" class="empty">暂无记录</li>
+      <li v-if="!ws.audit.length" class="empty" role="status" aria-live="polite">暂无记录</li>
     </ul>
   </div>
 </template>

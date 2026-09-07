@@ -1,0 +1,83 @@
+{
+  "frontend_build_ms": 4812,
+  "frontend_build_exit": 0,
+  "chunks": [
+    {
+      "name": "vendor-l0sNRNKZ.js",
+      "kb": 0.0,
+      "gzip_kb": 0.02
+    },
+    {
+      "name": "SkillManagerPanel-CCH-qI3c.js",
+      "kb": 2.03,
+      "gzip_kb": 1.12
+    },
+    {
+      "name": "AgentManagerPanel-owzYJfAT.js",
+      "kb": 2.92,
+      "gzip_kb": 1.54
+    },
+    {
+      "name": "PermissionPreviewModal-CvQlBYo8.js",
+      "kb": 8.22,
+      "gzip_kb": 3.84
+    },
+    {
+      "name": "PluginManager-CH9gggtF.js",
+      "kb": 11.46,
+      "gzip_kb": 4.51
+    },
+    {
+      "name": "DatabasePanel-DvRbG3yy.js",
+      "kb": 14.49,
+      "gzip_kb": 6.14
+    },
+    {
+      "name": "GraphPanel-LFCm3bnC.js",
+      "kb": 15.19,
+      "gzip_kb": 6.7
+    },
+    {
+      "name": "tauri-vendor-BMTw2MlR.js",
+      "kb": 15.96,
+      "gzip_kb": 4.11
+    },
+    {
+      "name": "TaskPanel-Ces96yR8.js",
+      "kb": 23.01,
+      "gzip_kb": 9.0
+    },
+    {
+      "name": "vue-vendor-CP2RLxuz.js",
+      "kb": 73.59,
+      "gzip_kb": 29.37
+    },
+    {
+      "name": "index-CULqzURI.js",
+      "kb": 168.94,
+      "gzip_kb": 60.54
+    },
+    {
+      "name": "xterm-HfMqn6o1.js",
+      "kb": 334.02,
+      "gzip_kb": 84.74
+    }
+  ],
+  "chunk_over_500kb": false,
+  "dist": {
+    "file_count": 22,
+    "total_bytes": 769784,
+    "chunk_count": 12,
+    "largest_js": {
+      "name": "xterm-HfMqn6o1.js",
+      "bytes": 334208,
+      "gzip_bytes": 83916
+    }
+  },
+  "cargo_check_ms": 6967,
+  "cargo_warnings": 2,
+  "fmt_clean": true,
+  "schema": "m0-build-metrics-v1",
+  "generated_at": "2026-09-07T15:33:30+0800",
+  "git_commit": "886ea29"
+}

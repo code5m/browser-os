@@ -216,7 +216,7 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/check-lifecycle-contract.py" >/dev/null 2>&1 \
     || pm_fail "check-lifecycle-contract.py 默认生命周期门禁"
 
-  pm_log "M0-4.c 构建指标对比（总体积 ≤15% 增长、cargo warning 不增加）…"
+  pm_log "M0-4.c 构建指标对比（总体积遵循 measure-build-metrics.py 当前上限、cargo warning 不增加）…"
   local baseline_file
   baseline_file="$(ls -1 "$ROOT"/logs/m0-build-metrics/build-metrics-*.json 2>/dev/null | sort | head -1 || true)"
   if [ -n "$baseline_file" ]; then

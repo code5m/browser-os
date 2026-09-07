@@ -1,5 +1,5 @@
 > A0 2026-09-07 14:30: IF-2 threshold revised to 22% for W8; current build metrics total_bytes_pct=21.07 and cargo_warnings delta=0. W9 must preserve <=22% and re-record final verification.
-# M5 债务账（A1 横切 · 不在本批解决 · W1 修订 + W6/W7 reconciliation debt + W8 reconciliation + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active + W12 reconciliation + W12 PUSHED + W13 active + W13 PUSHED + W14 active）
+# M5 债务账（A1 横切 · 不在本批解决 · W1 修订 + W6/W7 reconciliation debt + W8 reconciliation + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active + W12 reconciliation + W12 PUSHED + W13 active + W13 PUSHED + W14 active + W14 PUSHED + W15 active）
 
 > 子卡 ID：**M5-14** · 跨 M5-1~M5-12 · 性质：**清单，非实现**
 > 配套：每张 M5-x 子卡 §9 DOC_BACKWRITE 中的"M5-14 增项"
@@ -503,3 +503,31 @@ IF-2 threshold revised to 23% for W12 graph live-query readonly bridge/UI; curre
 - **不** push
 
 **A6 W14 实施期收口**：A6 W14 实施完成 = 6 action 全 ACTIVE + `check-plugin-ui-logic.mjs` ≥9/9 PASS + A11 W14 verification delta 功能性 ALL_PASS + A7 W14 graph non-regression PASS + A10 W14 security review PASS → DEBT-04 closed-by-W14，M5 final debt ledger 维持 53 条（plugin UI 6 项由"挂账"转"收口"）。
+
+---
+
+## [W15 active · 2026-09-08 09:30 CST] A1 W15 reconciliation · W14 PUSHED 后债务账对账 + 25% 指标挂账跟踪
+
+**W14 已拣入接受（`886ea29` = HEAD，A0 `STATUS=PASS`）** → 本账 W14 预期全部兑现：
+
+| 项 | W14 派发期预期 | W14 拣入后实测 | 结论 |
+|---|---|---|---|
+| DEBT-04（plugin UI 6 项） | 0% ACTIVE → 6/6（A6 实施期收口） | **6/6 ACTIVE**（plugin UI logic 61/61 + 6 action 全覆盖） | **closed-by-W14** |
+| M5 final debt ledger 条目数 | 维持 53 条 | **维持 53 条**（条目数不变，DEBT-04 状态转收口） | 持平 |
+| W14 新增债 | 0 | **0**（无新命令 / 无 DTO 变更 / 无 raw 敏感渲染 / 无 runtime 扩张） | 持平 |
+| build metrics 阈值 | ≤23% | **24.89% ≤ 25%**（A0 抬阈值 23% → 25%，为懒加载 PluginManager chunk） | 挂账跟踪（余量 0.11pp） |
+
+**W15 债务账预期 = 0 新增**：
+
+- A6 W15 = NARROW UI POLISH ONLY（a11y 确认 / 模态焦点 / empty/loading/error 态）→ 不新增命令 / action / runtime surface / 依赖 → 无新债
+- A9 W15 = FROZEN W13 CONTRACT REVIEW（**no backend changes**）→ 无契约漂移债
+- A2/A3/A4/A5/A7/A8/A10 = review / checklist → 结论为 PASS / PASS_WITH_NOTE，不产生实现债
+- A11 W15 = final verification matrix + push readiness → 收口闸门，不产生债
+
+**25% 指标挂账跟踪（A1 W15 第二项职责 · 交 A0/A6/A11）**：
+
+- 生效常量 `scripts/measure-build-metrics.py` L38 `TOTAL_BYTES_GROWTH_LIMIT_PCT = 25.0`；当前实测 `total_bytes_pct=24.89`，余量 **0.11pp**（M5 全周期最紧）
+- 过期文案：`scripts/pre-merge.sh` L76 仍写「总体积 ≤15%」（仅说明文本滞后，门禁读常量，判定不受影响）→ **A1 不修**（门禁脚本不属 A1 允许范围），建议 A0 W15 拣入期同步为 `≤25%`
+- A6 W15 若有任何体积增量，A11 必须复跑 `--compare` 留证；超 25.0 → `exceeds_growth_limit=true` → `pre-merge.sh` FAIL → 不得进 push readiness
+
+**A1 W15 本账立场 = DOCS ONLY**：仅对账与跟踪（board + 3 主文档 + M5-0/10/11/12/13/14 + A1 W15 checkpoint + patch），零产品代码，不 commit、不 push。

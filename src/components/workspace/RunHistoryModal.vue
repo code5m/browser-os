@@ -19,7 +19,7 @@ const items = computed(() => props.records ?? []);
         <h3>{{ title ?? "运行历史" }}</h3>
         <button class="close" @click="emit('close')">×</button>
       </header>
-      <div v-if="items.length === 0" class="empty">暂无运行记录。</div>
+      <div v-if="items.length === 0" class="empty" role="status" aria-live="polite">暂无运行记录。</div>
       <ul v-else class="records">
         <li v-for="r in items" :key="r.runId" class="rec">
           <span class="tag" :class="runStatusUi(r.status).cls">{{ runStatusUi(r.status).label }}</span>

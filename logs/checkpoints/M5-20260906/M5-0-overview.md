@@ -1,4 +1,4 @@
-# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0 + W1 + W2 + W3 reconciliation + W4 active + W5 reconciliation + W6 reconciliation + W7 reconciliation + W8 reconciliation + W8 active + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active + W12 reconciliation + W12 PUSHED + W13 active + W13 PUSHED + W14 active）
+# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0 + W1 + W2 + W3 reconciliation + W4 active + W5 reconciliation + W6 reconciliation + W7 reconciliation + W8 reconciliation + W8 active + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active + W12 reconciliation + W12 PUSHED + W13 active + W13 PUSHED + W14 active + W14 PUSHED + W15 active）
 
 > 生成：2026-09-06 08:00 CST · Lane A1（M5-W0 · docs only）
 > W1 修订：2026-09-06 08:50 CST · Lane A1（M5-W1 · docs-only reconciliation）
@@ -1201,3 +1201,70 @@ NEXT=M5-W1（待 A0 签发）
 - **不** push
 
 **A6 W14 实施期收口**：A6 W14 实施完成 = 6 action 全 ACTIVE + `check-plugin-ui-logic.mjs` ≥9/9 PASS + A11 W14 verification delta 功能性 ALL_PASS + A7 W14 graph non-regression PASS + A10 W14 security review PASS → DEBT-04 closed-by-W14，M5 final debt ledger 维持 53 条（plugin UI 6 项由"挂账"转"收口"）。
+
+---
+
+## [W15 active · 2026-09-08 09:30 CST] A1 W15 reconciliation 立场 · release readiness 派发期 · W14 accepted 对账 + 25% 指标跟踪 + runtime surface 锁定状态表（14 行）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L1163+（M5-W15 Release Readiness Dispatch，Added 2026-09-08 02:00 CST by A0）+ `logs/checkpoints/A0-M5-W14-accept-W15-dispatch-20260908-0200.md`（`STATUS=PASS`）+ A1 W15 reconciliation 整包（`logs/checkpoints/A1-M5-W15-reconciliation-20260908-0930.md`）。
+
+### W14 accepted 对账（基线 `886ea29` = HEAD = `origin/master`）
+
+- A0 在 **`886ea29 feat(M5): integrate W14 plugin manager UI`（2026-09-07 15:07 CST）** 中拣入 W14 整包并接受：plugin UI logic **61/61**、plugin Rust **28/28**、full Rust **431/431**、MCP feature **21/21**、graph UI **113/113**、Agent/Skill UI **110/110**、`npm run build` PASS
+- A0 拣入期 4 项修正：Pinia setup-store 自动解包 / 错误 UI 固定安全文案（不透传后端错误文本）/ privacy fixture 区分瞬态表单输入与渲染秘密 / 补第 61 条 UI 断言
+- **plugin 执行 / 动态加载 / 网络下载监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP 全量 runtime / graph 写导出 / 后台 worker 全部仍 LOCKED**（W15 Hard Stop 沿用）
+- board L6 主线条已由本整包更正为 `886ea29`（原过期描述 `a7eefbb pending A0 W14 integration`）
+
+### 25% 指标跟踪（A1 W15 第二项职责）
+
+| 项 | 值 |
+|---|---|
+| 生效常量 | `scripts/measure-build-metrics.py` L38 `TOTAL_BYTES_GROWTH_LIMIT_PCT = 25.0` |
+| 当前实测（只读复跑） | `total_bytes_pct = 24.89`（基线 `logs/m0-build-metrics/build-metrics-4f0e8ab.json`，`--skip-build`） |
+| 余量 | **0.11 个百分点**（M5 全周期最紧一档） |
+| `cargo_warnings` delta | 0（`warnings_increased=false`，`exceeds_growth_limit=false`，exit=0） |
+| 阈值演进 | 15% → 19% → 22%（W8/W9）→ 23%（W12）→ **25%**（W14 抬升，为懒加载 PluginManager chunk） |
+| 约束 | A6 W15 窄 UI 磨光**不得**新增 chunk 体积 / 新依赖；超 25.0 即 `pre-merge.sh` FAIL |
+| 文档滞后（交 A0） | `scripts/pre-merge.sh` L76 文案仍写「总体积 ≤15%」，与实际常量 25.0 不一致（门禁读常量，判定不受影响；建议 A0 W15 拣入期同步文案） |
+
+### W15 runtime surface 锁定状态表（14 行 · 沿用 W14，W15 无新增开放面）
+
+| 维度 | W14 status | W15 status | 备注 |
+|------|-----------|-----------|------|
+| 1. `plugin_invoke` / `plugin_cancel` / `plugin_storage_*` 5 stub | 🔒 LOCKED | 🔒 LOCKED | 5 stub 错误结构不变；W15 不实现 |
+| 2. `plugin_install` / `plugin_enable` / `plugin_disable` stage-I lifecycle | 🟢 OPENED（narrow·local-only） | 🟢 OPENED（narrow·local-only） | W15 不重写 |
+| 3. `plugin_list` / `plugin_get` / `plugin_key_registry` | 🟢 OPENED（read-only） | 🟢 OPENED（read-only） | W15 不重写 |
+| 4. `plugin_audit_get` | 🟢 OPENED（read-only） | 🟢 OPENED（read-only） | W15 不重写 |
+| 5. network download / listener | 🔒 LOCKED | 🔒 LOCKED | W15 不引入 |
+| 6. dynamic code loading | 🔒 LOCKED | 🔒 LOCKED | W15 不引入 |
+| 7. daemon / model call | 🔒 LOCKED | 🔒 LOCKED | W15 不引入 |
+| 8. Agent/Skill execution | 🔒 LOCKED | 🔒 LOCKED | A5 W15 执行锁评审 PASS_WITH_CONTEXT |
+| 9. MCP full runtime | 🔒 LOCKED | 🔒 LOCKED | A3 W15 MCP 隔离回归 PASS |
+| 10. graph build-write-export | 🔒 LOCKED | 🔒 LOCKED | A7 W15 graph 零回归 |
+| 11. background worker | 🔒 LOCKED | 🔒 LOCKED | W15 不引入 |
+| 12. plugin UI 6 action（list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint） | 🟢 OPENED（A6 实施完成 61 断言） | 🟢 OPENED（**DEBT-04 closed-by-W14**） | W15 仅窄 UI 磨光，不加新 action |
+| 13. raw Tauri `invoke`（绕过 bridge.ts） | 🔒 LOCKED | 🔒 LOCKED | A2/A10 W15 复核：无裸 IPC 绕过 |
+| 14. raw signature / public-key / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr 渲染 | 🔒 LOCKED | 🔒 LOCKED | A4 W15 隐私面 PASS；A10 W15 敏感渲染逃逸 0 |
+
+### W15 lane 交付快照（2026-09-08 09:30 CST · A1 只读记录）
+
+| Lane | W15 角色 | 交付 | 结论 |
+|---|---|---|---|
+| A1 | Docs only（本卡） | 本 checkpoint + patch | DOCS ONLY · 不 push |
+| A2 | Boundary review | `A2-M5-W15-boundary-verdict-20260907-1523.md` + checkpoint + patch | PASS_WITH_DEBT（非阻塞） |
+| A3 | MCP isolation regression | `A3-M5-W15-mcp-isolation-verdict-20260907-1521.md` + checkpoint | PASS |
+| A4 | Plugin UI privacy / stable-error | `A4-M5-W15-privacy-stable-error-review-20260908-0900.md` + patch | 隐私 PASS；稳定错误 PASS_WITH_NOTE |
+| A5 | Agent/Skill execution-lock | `A5-M5-W15-agent-skill-lock-verdict-20260907-1505.md` | PASS_WITH_CONTEXT |
+| A6 | Narrow UI polish（a11y 确认/模态焦点 + empty/loading/error） | 工作树改动（A6 已 staged）：new = `scripts/check-ui-a11y-logic.mjs` / `src/components/shared/AsyncState.vue` / `src/composables/useModalFocus.ts` / `src/utils/asyncView.ts` / `src/utils/modalA11y.ts`；modified = `ConfirmModal.vue` / `ImageLightbox.vue` / `AuditPanel.vue` / `GitWriteConfirmDialog.vue` / `PermissionPreviewModal.vue` / `RunHistoryModal.vue` / `ScriptRunDialog.vue` / `TaskEditDialog.vue` | 进行中 |
+| A7 | Graph non-regression | `A7-M5-W15-graph-nonregression-20260907-1430.md` | 零回归 |
+| A8 | GUI/manual acceptance checklist | `A8-M5-W15-gui-acceptance-20260907-1526.md`（快照时为空） | 待内容 |
+| A9 | Frozen W13 backend-contract review | `A9-M5-W15-frozen-contract-review-20260907-1505.md` + patch | 契约冻结确认，零后端改动 |
+| A10 | Security release review | `A10-M5-W15-security-release-review-20260907-1522.md` + checkpoint | PASS |
+| A11 | Final verification matrix + push readiness | 快照时未见 W15 文件 | 待交付 |
+
+### A1 W15 派发期立场 = DOCS ONLY
+
+- reconcile W14 as accepted（`886ea29`）+ track 25% 指标 + track W15 status
+- **不**改 product scope / **不**碰产品代码（`src/**` / `src-tauri/**` / `scripts/**` / `bridge.ts` / `types.ts`）
+- **不**收其他 lane 的并发改动进本 patch；**不** commit、**不** push（本目录为 canonical main，A2 已有 staged 改动，A1 提交会误收他人变更）
+- W15 收口路径：A6 窄 UI 磨光 + A11 push readiness → A0 拣入并推送

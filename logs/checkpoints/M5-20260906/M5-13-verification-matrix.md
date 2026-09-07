@@ -1,4 +1,4 @@
-# M5 验证矩阵（A1 横切 · M5-W0 末位 + W1 reconciliation + W6 verification delta + W7 verification scope + W8 reconciliation + W9 verification scope + W10 verification scope + W10 verification delta + W11 verification scope + W12 verification scope + W12 build metrics threshold + W13 verification scope + W14 verification scope）
+# M5 验证矩阵（A1 横切 · M5-W0 末位 + W1 reconciliation + W6 verification delta + W7 verification scope + W8 reconciliation + W9 verification scope + W10 verification scope + W10 verification delta + W11 verification scope + W12 verification scope + W12 build metrics threshold + W13 verification scope + W14 verification scope + W14 PUSHED + W15 verification scope）
 
 > 子卡 ID：**M5-13** · 跨 M5-1~M5-12 · `[S3|LEVERAGE:2|COMPLEX|AI:DEEP|R:xhigh]`
 > 责任 Lane 候选：**A11**（沿用 A7/A11 角色，A0 签发时定）
@@ -11,6 +11,7 @@
 > **W11 PUSHED**（2026-09-07 20:30 CST · A0 拣入 `269269a` = HEAD）：A0 在 **`269269a feat(M5): integrate W11 MCP stdio dry-run hardening`** 中拣入 W11：MCP stdio dry-run 硬化（21/21 + ACTIVE=11/PENDING=0）+ A5 Agent/Skill 执行锁 policy（PENDING=6）+ A7 W12 graph live-query 实施卡 + A9 W12/W13 plugin staged cards + A1 W11 reconciliation 整包；完整验证矩阵见 [W11 verification scope] 段。
 > **W12** ACTIVE：**W12 graph live-query read-only verification matrix 模式** —— W12 三只读命令 `graph_query` / `graph_node_get` / `graph_stats` + A8 UI 消费 + 9 lane review/verification（见 [W12 verification scope] 段）；详见 `M5-0-overview.md` 顶部 `[W12 active · 2026-09-07 20:30 CST]` 段。
 > **W12 PUSHED**（2026-09-07 23:55 CST · A0 拣入 `3c3f460` = HEAD）：A0 在 **`3c3f460 feat(M5): integrate W12 graph live-query readonly bridge/UI`** 中拣入 W12；图谱 live-query 只读 3 命令 + A8 UI 消费 + 10 份 W12 assist + A1 W12 reconciliation 整包 + M5-0/7/8/9/10/11/12/13/14 头部 W11 PUSHED + W12 ACTIVE 修订 + 末尾 [W12 scope supersession]/[W12 verification scope]/[W12 active] 段 + 3 主文档 L1 W11 update 行 + board L6/L7 W12 dispatch；`cargo test graph` **15/15 PASS** + full cargo **414/414 PASS** + `cargo test --features mcp mcp_server` **21/21 PASS** + `check-graph-policy.py` **ACTIVE=8 PASS** + `check-mcp-policy.py` ACTIVE=12/PENDING=0 PASS + `check-agent-skill-policy.py` ACTIVE=3/PENDING=6 PASS + `check-graph-ui-logic.mjs` **113/113 PASS** + `check-agent-skill-ui-logic.mjs` **110/110 PASS** + `npm run build` PASS + `python3 scripts/measure-build-metrics.py` **`total_bytes_pct=22.26` ≤ 23% PASS**（A0 W12 拣入期 IF-2 阈值 22% → 23% 修订）+ cargo_warnings delta = 0。
+> **W14 PUSHED**（2026-09-08 09:30 CST 对账 · A0 拣入 `886ea29` = HEAD）：A0 在 **`886ea29 feat(M5): integrate W14 plugin manager UI`** 中拣入 W14 并接受（`STATUS=PASS`）：plugin UI logic **61/61** + plugin Rust 28/28 + full Rust 431/431 + MCP feature 21/21 + graph UI 113/113 + Agent/Skill UI 110/110 + `npm run build` PASS + `pre-merge.sh` ALL_PASS + build metrics `total_bytes_pct=24.89` ≤ **25%**（阈值 23% → 25% 上调，余量仅 0.11pp）+ cargo_warnings delta = 0；**W15 全部验证须以 25% 为门禁**（详见本卡末尾 [W15 verification scope] 段）。
 
 ---
 
@@ -634,3 +635,37 @@ W12 graph live-query readonly bridge/UI measured `total_bytes_pct=22.26` and `ca
 13. `python3 scripts/measure-build-metrics.py` `total_bytes_pct ≤ 23%` + `cargo_warnings delta = 0`（W12 A0 修订 IF-2 = 23%）
 
 **A1 W14 派发期本卡立场 = 整包文档收口（11 文件 = board L6 + 3 主文档 L1 + A1 W14 checkpoint + M5-0/10/11/12/13/14 头 + 末尾段），零产品代码，不 push**。A6 W14 实施期由 A11 出 W14 verification delta；A7 W14 GRAPH NON-REGRESSION DOCS ONLY 必保 W12 8 条 graph 集成锚点不回归；A10 W14 SECURITY REVIEW 必保 raw-invoke bypass / confirmation bypass / source-ACL drift / sensitive-render regression 四项不破。
+
+---
+
+## [W15 verification scope · 2026-09-08 09:30 CST] W15 release readiness 验证矩阵（A1 DOCS ONLY · A6 NARROW UI POLISH · 其余 9 lane review/docs/verification）
+
+**W15 派发** = Release Readiness Dispatch（board L1163+）：*closes M5 evidence and GUI acceptance without expanding runtime authority*；基线 `886ea29`（W14 PUSHED · accepted）。
+
+**A1 实测基线与门禁（只读复跑，2026-09-08 09:30 CST）**：
+
+```bash
+B=$(ls -1 logs/m0-build-metrics/build-metrics-*.json | sort | head -1)   # build-metrics-4f0e8ab.json
+python3 scripts/measure-build-metrics.py --compare "$B" --skip-build
+# {"exceeds_growth_limit": false, "deltas": {"total_bytes_pct": 24.89, "cargo_warnings": 0}, "warnings_increased": false}
+```
+
+**W15 验证矩阵（13 项必跑 · A11 push readiness 收口）**：
+
+1. `cargo test plugin` 28/28 PASS（W14 基线，W15 0 增量）
+2. `cargo test graph` 15/15 PASS（**A7 W15 GRAPH NON-REGRESSION** = W12 8 条 graph 集成锚点不回归）
+3. full cargo 431/431 PASS（W14 基线，W15 0 增量）
+4. `cargo test --features mcp mcp_server` 21/21 PASS（**A3 W15 MCP ISOLATION** = plugin 生命周期命令**未**经 MCP stdio 暴露）
+5. `cargo fmt --check` 干净
+6. `check-plugin-policy.py --self-test` PASS（ACTIVE=8/PENDING=0）
+7. `check-plugin-privacy.py --self-test` PASS（ACTIVE=4/PENDING=0）
+8. `check-plugin-ui-logic.mjs` 61/61 PASS（**A6 W15 窄磨光不得掉断言**）
+9. `check-graph-ui-logic.mjs` 113/113 PASS
+10. `check-agent-skill-ui-logic.mjs` 110/110 PASS（**A5 W15 执行锁** = 无 Agent/Skill 执行可供性）
+11. A6 W15 新增 UI 逻辑门禁（a11y 确认 / 模态焦点 / empty/loading/error 态）自测 PASS
+12. `npm run build` PASS + `python3 scripts/pre-merge.sh` ALL_PASS
+13. **`python3 scripts/measure-build-metrics.py --compare` `total_bytes_pct ≤ 25.0` + `cargo_warnings delta = 0`**（当前 24.89，余量 **0.11pp**；超 25.0 即 FAIL）
+
+**W15 硬停（board L1181）**：无 plugin 调用/执行、动态加载、网络下载监听、daemon、模型调用、Agent/Skill 执行、MCP 扩张、graph 写导出、后台 worker、raw Tauri invoke、敏感渲染/持久化。
+
+**A1 W15 本卡立场 = 整包文档收口（board + 3 主文档 + M5-0/10/11/12/13/14 + A1 W15 checkpoint + patch），零产品代码，不 push**；A11 出 push readiness 后由 A0 合并推送。

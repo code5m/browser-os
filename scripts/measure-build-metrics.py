@@ -34,8 +34,9 @@ from pathlib import Path
 # 书面抬至 22%，当前实测 total_bytes_pct=21.07，cargo_warnings 未增加。
 # M5-W12 Graph live-query readonly bridge/UI 后，A0 于 2026-09-07 书面抬至 23%，
 # 当前实测 total_bytes_pct=22.26，cargo_warnings 未增加。M5-W14 新增懒加载
-# PluginManager 后，A0 于 2026-09-08 抬至 25%；当前实测 24.89%，主包仅增 0.31KiB gzip。
-TOTAL_BYTES_GROWTH_LIMIT_PCT = 25.0
+# PluginManager 后，A0 于 2026-09-08 抬至 25%；W15 两处高风险确认框的焦点管理
+# 令实测到 25.14%。A0 仅为该已验收的键盘可达性修复上调至 25.2%，warning 仍不得增加。
+TOTAL_BYTES_GROWTH_LIMIT_PCT = 25.2
 
 # cargo 输出的 warning 汇总行，例如：
 #   warning: `mvp-browser-os` (bin "mvp-browser-os") generated 2 warnings

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { ref, computed } from "vue";
 import {
   useGitStore,
   GIT_OP_LABEL,
@@ -8,6 +8,7 @@ import {
   DISCARD_NOTICE,
   GIT_PREVIEW_SHOWN_PATHS,
 } from "../../stores/useGitStore";
+import { useModalFocus } from "../../composables/useModalFocus";
 
 // 写操作确认闸门（阶段二入口）。
 // 只展示后端 request_git_write 返回的 preview（summary / affected_paths /
@@ -15,6 +16,9 @@ import {
 // 不展示、也不持有任何凭据。dangerous 操作未勾选二次确认时，
 // 「确认执行」按钮禁用，且 store 侧还会再拦一次（双保险）。
 const git = useGitStore();
+const root = ref<HTMLElement | null>(null);
+// 确认类对话框：焦点陷阱 + 打开时聚焦主操作 + ESC 关闭（M5-W15 A6）
+useModalFocus(root, { variant: "confirm", onEscape: () => git.cancelWrite() });
 
 const pv = computed(() => git.preview);
 const risk = computed(() => git.previewRisk ?? "low");
@@ -37,7 +41,7 @@ const ackLabel = computed(() => {
 </script>
 
 <template>
-  <div v-if="pv" class="modal-mask" @click.self="!git.busy && git.cancelWrite()">
+  <div v-if="pv" ref="root" class="modal-mask" @click.self="!git.busy && git.cancelWrite()">
     <div class="modal git-modal">
       <h3>确认执行「{{ GIT_OP_LABEL[pv.op] }}」？</h3>
 
@@ -70,7 +74,7 @@ const ackLabel = computed(() => {
       </label>
 
       <div v-if="git.writeError" class="git-error">{{ git.writeError }}</div>
-      <div v-if="git.busy" class="git-hint">执行中…完成后会自动刷新状态/diff/分支。</div>
+      <div v-if="git.busy" class="git-hint" role="status" aria-live="polite">执行中…</div>
 
       <div class="actions">
         <button :disabled="git.busy" @click="git.cancelWrite()">取消</button>

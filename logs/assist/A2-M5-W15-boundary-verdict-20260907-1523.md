@@ -1,0 +1,202 @@
+# A2 · M5-W15 边界复核裁定（W14 UI/store + W15 证据）
+
+> 生成：2026-09-07 15:23 CST · Lane A2（M5-W15 · **REVIEW ONLY**）
+> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W15 Release Readiness Dispatch，A2 行：
+> 「Boundary review of W14 UI/store and W15 evidence.」→ Must Deliver：**Verdict**
+> 基线：`master @ 886ea29`（`feat(M5): integrate W14 plugin manager UI`）
+> 同步：`git fetch origin` + `git pull --ff-only origin master` → 已最新（0 领先 / 0 落后），工作树**干净**
+> 性质：**只读评审**。未写产品代码、未改 `src/**`/`src-tauri/**`/`scripts/**`、未 push。
+
+---
+
+## 0. 裁定摘要
+
+**STATUS = PASS_WITH_DEBT**（非阻塞，可进入 release readiness）
+
+| 边界条件（承 A2 W14 裁定 C0–C7） | 结论 | 关键证据 |
+|---|---|---|
+| **C0** 不渲染/不持久化裸签名、metadata、路径、公钥 | ✅ PASS | `redactDetail` 强制投影；`signature.value`/`metadata` 渲染命中 **0** |
+| **C1** 无领域逻辑重复（不重实现 `can_transition` 等） | ⚠️ **DEBT** | `pluginUi.ts:36-50` 镜像 `plugin.rs:194-212`；**当前 13 边 1:1 精确对齐、零漂移**，但**缺后端对账门禁** |
+| **C2** 无裸 Tauri `invoke`，一律走 `bridge.ts` | ✅ PASS | 全 `src/` 中 `invoke(` 仅命中 `bridge.ts` 一个文件；组件/store/utils **零调用** |
+| **C3** 无生命周期越权扩张 | ✅ PASS | 命令面恰 **8** 个冻结命令；被锁命令（invoke/storage/audit/permissions/delete/uninstall）命中 **0** |
+| **C4** 状态变更显式确认 | ✅ PASS | install/enable/disable/addKey/removeKey 均经确认弹层 |
+| **C5** 受信任密钥仅显指纹 | ✅ PASS | 只渲染 `key_id` + `fingerprint`(16hex) |
+| **C6** 常量单一真源 | ✅ PASS | 8 态与 `domain.rs:2290-2299` 同序同构；UI 无新增上限字面量 |
+| **C7** 仅本地安装、无网络/下载 | ✅ PASS（含 1 项措辞观察 O2） | 无下载逻辑；确认文案显式写「不下载、不执行」 |
+
+**一句话**：W14 插件 UI/store 在所有**安全相关**边界维度上干净，命令面与脱敏面均未扩张；
+唯一挂账是 C1 的**状态机镜像目前正确但缺少对账闸门**——它有漂移风险却**不影响安全**（后端仍 fail-closed），故判 `PASS_WITH_DEBT` 而非 BLOCKED。
+
+---
+
+## 1. 评审对象与证据
+
+| # | 对象 | 位置 | 规模/要点 |
+|---|---|---|---|
+| E1 | 插件面板 | `src/components/plugin/PluginManager.vue` | 424 行，含确认弹层与脱敏详情 |
+| E2 | 插件 store | `src/stores/usePluginStore.ts` | 238 行，8 个 `bridge.*` 调用 |
+| E3 | UI 纯逻辑层 | `src/utils/pluginUi.ts` | 221 行，**状态机镜像 + 脱敏投影 + manifest 预检** |
+| E4 | 前端命令面 | `src/bridge.ts:721-739` | 8 个冻结方法 |
+| E5 | 后端权威状态机 | `src-tauri/src/plugin.rs:194-212` | `can_transition` 13 边 + `transition()` fail-closed |
+| E6 | 后端状态枚举 | `src-tauri/src/domain.rs:2290-2299` | `PluginState` 8 态 |
+| E7 | A0 W14 验收 | `logs/checkpoints/A0-M5-W14-accept-W15-dispatch-20260908-0200.md` | STATUS=PASS |
+| E8 | A4 W15 隐私复核 | `logs/assist/A4-M5-W15-privacy-stable-error-review-20260908-0900.md` | 已产出 |
+
+---
+
+## 2. 代码级复核（本次相对 W14 的增量：从「契约级」下沉到「代码级」）
+
+> W14 时 A6 代码尚未落盘，A2 只能做**契约级**裁定并把代码级复核交 A10/A11；
+> W15 的评审对象正是**已集成落盘**的 W14 UI/store，故本轮完成真正的代码级比对。
+
+### 2.1 C2 · 无裸 invoke —— PASS
+
+- `grep -rl "invoke(" src/` → **仅 `src/bridge.ts`**。组件、store、utils **零 `invoke(` 调用**。
+- 组件/store/utils 中 24 处含 "invoke" 的文本，逐条甄别后**全部为注释或字符串字面量**：
+  - `ScriptPanel.vue:104` 为 HTML 注释；
+  - `agentSkillUi.ts:60` 为能力标签字符串 `"skill:invoke"`（非调用）。
+- 绕过式排查：`@tauri-apps/api/core` 的 `invoke` **仅** `bridge.ts:1` 导入；其余 3 处导入为 `convertFileSrc`（资源 URL 转换，非命令调用）。
+- 唯一 `__TAURI__` 使用为 `src/stores/useSystemStore.ts:84` 的 **`event.listen("tauri://focus")`**（窗口焦点事件，非命令调用，且属既有代码、非 W14 引入）。
+- 结论：**UI/store 无任何绕过 `bridge.ts` 的命令调用路径**。 ✅
+
+### 2.2 C3 · 生命周期未扩张 —— PASS
+
+`bridge.ts` 插件命令面实测恰为 8 个（与 W13 冻结一致）：
+
+```text
+plugin_install  plugin_enable  plugin_disable  plugin_list
+plugin_get      plugin_keys_add  plugin_keys_list  plugin_keys_remove
+```
+
+被锁命令 `plugin_invoke|plugin_storage|plugin_audit|plugin_permissions|plugin_delete|plugin_uninstall`
+在 `bridge.ts` 命中 **0**。
+组件仅有「启用 / 禁用 / 安装（校验）/ 登记密钥 / 移除密钥」按钮，**无** Run / Invoke / Execute 类执行入口。 ✅
+
+### 2.3 C0 / C5 · 脱敏与指纹 —— PASS
+
+- `PluginManager.vue:17` 详情**强制**走 `display = redactDetail(store.detail)`，
+  即使后端将来误带敏感字段，UI 也不渲染（纵深防御）。
+- `redactDetail`（`pluginUi.ts:141-160`）**显式逐字段挑选**，丢弃 `signature.value`、任何路径、`metadata`；
+  签名仅渲染 `algorithm`/`key_id`/`status`；资源仅 `declared_hash` + 两个布尔。
+- 密钥列表（`PluginManager.vue:159-161`）仅渲染 `key_id` 与 `fingerprint`，**无公钥原文**。
+- `grep -rnE "signature\.value|manifest\.metadata|\.metadata\b"` 于组件与 store → **0 命中**。
+- 错误文案 `describeError`（store:22-26）返回**固定本地串**，不回显后端错误（后端错误可能含 manifest 输入或路径）——此点已由 A0 在验收中确认并加断言。 ✅
+
+### 2.4 C4 · 显式确认 —— PASS
+
+`install/enable/disable/addKey/removeKey` 五类状态变更**全部**先置 `confirm`（`PluginManager.vue:28-71`），
+再由 `doConfirm()` 执行；点击遮罩可取消。安装确认文案明确：「仅做本地元数据校验，不下载、不执行」。 ✅
+
+### 2.5 C6 / C7 —— PASS
+
+- 前端 `PLUGIN_STATES`（`pluginUi.ts:24-33`）8 态与后端 `PluginState`（`domain.rs:2290-2299`）**同序同构**；UI 未新造上限字面量。
+- 安装为「粘贴 manifest JSON + 可选资源包路径」，**无** URL/下载入口与语义。
+
+---
+
+## 3. 唯一挂账：C1 状态机镜像缺后端对账（DEBT）
+
+### 3.1 事实
+
+`src/utils/pluginUi.ts:36-50` 以常量表 `TRANSITIONS` 复刻了后端迁移边，并经
+`canTransitionUi` / `enabledActionsFor` 驱动按钮灰显。这正是 A2 在 W14 裁定 C1 中
+明令禁止的「重实现 `can_transition`」。
+
+### 3.2 漂移实比对（本次逐边核对，**当前完全一致**）
+
+| # | 后端 `plugin.rs:194-212` | 前端 `pluginUi.ts:36-50` | 一致 |
+|---|---|---|---|
+| 1 | (Discovered, Validating) | discovered→validating | ✅ |
+| 2 | (Validating, SignedOk) | validating→signed_ok | ✅ |
+| 3 | (Validating, SignedFailed) | validating→signed_failed | ✅ |
+| 4 | (SignedOk, Loaded) | signed_ok→loaded | ✅ |
+| 5 | (SignedFailed, Uninstalled) | signed_failed→uninstalled | ✅ |
+| 6 | (SignedFailed, Discovered) | signed_failed→discovered | ✅ |
+| 7 | (Loaded, Enabled) | loaded→enabled | ✅ |
+| 8 | (Loaded, Disabled) | loaded→disabled | ✅ |
+| 9 | (Loaded, Uninstalled) | loaded→uninstalled | ✅ |
+| 10 | (Enabled, Disabled) | enabled→disabled | ✅ |
+| 11 | (Enabled, Uninstalled) | enabled→uninstalled | ✅ |
+| 12 | (Disabled, Enabled) | disabled→enabled | ✅ |
+| 13 | (Disabled, Uninstalled) | disabled→uninstalled | ✅ |
+
+状态集：后端 8 态（`domain.rs:2290-2299`）↔ 前端 8 态（`pluginUi.ts:24-33`）**顺序与取值一致**。
+→ **当前零漂移，UI 门控行为与后端完全等价。**
+
+### 3.3 为何仍挂账：现有 61 断言是「同义反复」，无法侦测漂移
+
+`scripts/check-plugin-ui-logic.mjs:62-80` 对 13 条合法边与 4 条非法边逐一断言——
+但断言的期望值是**手写复制的另一份清单**，脚本内**零引用 `plugin.rs` / `can_transition`**
+（实测：`grep -rnE "can_transition|plugin\.rs"` 于该脚本 → 无命中）。
+
+后果：若后端增删一条迁移边，前端 `TRANSITIONS` 与该断言会**一起保持不变并继续 PASS**，
+漂移不会被任何门禁捕获。
+
+### 3.4 影响评估（决定「非阻塞」）
+
+- 后端 `transition()`（`plugin.rs:215-224`）**fail-closed** 且是唯一权威：非法迁移必被拒。
+- 前端镜像**只影响按钮灰显**（UX），**不构成安全绕过或越权**。
+- 故：漂移最坏结果是「按钮该亮不亮 / 该灰不灰」，而非权限放大。
+→ **不阻塞 W15 release readiness**；但必须在 M5-11 真正开放生命周期命令前补齐对账。
+
+### 3.5 建议修法（交 A0 指派，A2 本轮不写码）
+
+在 **`scripts/check-plugin-policy.py`** 新增码位 `PLUGIN_UI_STATE_MIRROR_DRIFT`：
+该文件 line 71 已有 `PLUGIN_MODULE = .../plugin.rs`，天然适合做真源解析——
+用正则从 `plugin.rs::can_transition` 抽取 13 条边，与 `pluginUi.ts::TRANSITIONS`
+解析结果做集合比对，不等即 FAIL。建议同时保留为 PENDING→ACTIVE 的常规码位。
+
+### 3.6 C1 规则修订建议（A2 作为边界 owner 明确口径）
+
+将 W14 的「禁止重实现 `can_transition`」细化为：
+
+> **允许**在 UI 纯逻辑层做**只读镜像**用于按钮门控，但必须同时满足：
+> ① 后端为唯一权威且 fail-closed；② 存在**后端对账门禁**（上述 drift 码位）；
+> ③ 镜像不得用于任何「本地放行/本地拒绝」的决策，只能灰显。
+
+---
+
+## 4. W15 证据复核
+
+| 证据 | 结果 |
+|---|---|
+| A0 W14 验收（`A0-M5-W14-accept-W15-dispatch-20260908-0200.md`） | STATUS=PASS；Rust 全量 **431 passed**、plugin **28 passed**、MCP 21；`npm run build` PASS；构建指标 `total_bytes_pct=24.89` < 25% 上限；warning delta=0 |
+| `node scripts/check-plugin-ui-logic.mjs` | **61 断言通过，0 失败** |
+| `python3 scripts/check-plugin-policy.py --self-test` | `PLUGIN_SELF_TEST=ALL_PASS`（ACTIVE=7 / PENDING=5） |
+| `python3 scripts/check-plugin-policy.py` | `PLUGIN_POLICY=PASS` |
+| `python3 scripts/check-plugin-privacy.py` | all invariants hold（ACTIVE=2） |
+| `python3 scripts/check-plugin-ui-privacy.py` | all invariants hold（ACTIVE=2） |
+| A4 W15 隐私/稳定错误复核 | 已产出（`A4-M5-W15-privacy-stable-error-review-20260908-0900.md`） |
+
+→ W15 证据链完整，**无阻塞项**。
+
+---
+
+## 5. 次要观察（不阻塞，交对应 Lane）
+
+- **O1 · `uninstall` 死分支**：`enabledActionsFor` 返回 `uninstall` 门控、`ConfirmKind` 含 `"uninstall"`，
+  但冻结 8 命令中**无** `plugin_uninstall`，模板也**无**卸载按钮 → 当前为死代码。
+  风险在于后续若有人直接补按钮即构成命令面扩张。**建议**：移除死分支，或明确注释「待 M5-11 解冻」。（交 A6/A11）
+- **O2 · `resourcePath` 为自由文本输入**：C7 原文写「文件选择器」，实现为 `<input>` 文本。
+  因**无下载逻辑**、确认文案显式「不下载」，不构成能力扩张；仅措辞偏离。（交 A0 认领措辞或交 A6 改选文件器）
+- **O3 · `parseManifestInput` 前端解析**：C0 原文为「接收原始 JSON 文本透传」，实现为前端 JSON.parse + 结构预检。
+  其**不渲染、不持久化**（成功后即清空，仅以脱敏 `PluginDetail` 覆盖展示），且 A0 已用隐私夹具
+  区分「允许的表单瞬时输入」与「渲染出的秘密」并加断言 → 属**有益偏离**，予以接受。
+
+---
+
+## 6. 跨 Lane 传递
+
+- **A11（verification）**：请登记债务 `PLUGIN_UI_STATE_MIRROR_DRIFT`，并把「前后端状态机对账」纳入 W15 终验矩阵。
+- **A6（plugin UI）**：O1 死分支清理；O2 措辞/选文件器二选一。
+- **A10（security）**：本轮未发现新增安全面（无裸 invoke、无命令扩张、无敏感渲染）；可聚焦 O1 前瞻风险。
+- **A0**：维持 `NEXT=M5-W15`；本裁定不阻塞 release readiness。
+
+---
+
+## 7. 合规声明
+
+- 仅产出评审文档与补丁；**未写产品代码**，未改 `src/components/**`、`src/stores/**`、`src/utils/**`、
+  `src/bridge.ts`、`src/types.ts`、`src-tauri/**`、`scripts/**`。
+- 未移动 `NEXT`、未建分支、**未 push**（指挥板：仅 A0 推送）。
+- 全程在 `WORKDIR` 内操作，分支 `master`，同步后工作树干净。

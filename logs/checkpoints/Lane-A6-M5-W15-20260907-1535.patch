@@ -1,0 +1,701 @@
+diff --git a/scripts/check-ui-a11y-logic.mjs b/scripts/check-ui-a11y-logic.mjs
+new file mode 100644
+index 0000000..1478071
+--- /dev/null
++++ b/scripts/check-ui-a11y-logic.mjs
+@@ -0,0 +1,107 @@
++#!/usr/bin/env node
++// ---------------------------------------------------------------------------
++// M5-W15（Lane A6）UI 无障碍逻辑层自动化测试（headless，无 GUI 依赖）。
++//
++// 加载**真实** src/utils/modalA11y.ts 与 src/utils/asyncView.ts（纯函数层），
++// 断言焦点决策与异步视图状态的判定——这是 UI 打磨的可测核心。
++// 不重实现逻辑，每条断言反映的都是**产品代码**的行为。
++//
++// 用法: node scripts/check-ui-a11y-logic.mjs
++// 退出码: 0 = 全部通过；1 = 有断言失败
++// ---------------------------------------------------------------------------
++
++import * as nodeModule from "node:module";
++
++function resolveWithExt(specifier, context, next) {
++  try {
++    return next(specifier, context);
++  } catch (err) {
++    if (specifier.startsWith(".") || specifier.startsWith("/")) {
++      for (const ext of [".ts", "/index.ts", ".mjs", ".js"]) {
++        try {
++          return next(specifier + ext, context);
++        } catch {
++          /* try next */
++        }
++      }
++    }
++    throw err;
++  }
++}
++
++if (typeof nodeModule.registerHooks === "function") {
++  nodeModule.registerHooks({ resolve: resolveWithExt });
++} else {
++  nodeModule.register(
++    "data:text/javascript," +
++      encodeURIComponent(
++        `export async function resolve(specifier, context, next) { return globalThis.__uiA11yResolve(specifier, context, next); }`,
++      ),
++  );
++  globalThis.__uiA11yResolve = resolveWithExt;
++}
++
++const a11y = await import("../src/utils/modalA11y.ts");
++const view = await import("../src/utils/asyncView.ts");
++
++let failures = 0;
++function check(name, cond) {
++  if (cond) {
++    console.log("  ok   " + name);
++  } else {
++    console.log("  FAIL " + name);
++    failures++;
++  }
++}
++
++// ---- modalA11y.ts：role / escape / initial-focus / 焦点循环 ----
++
++check("ariaRole dialog -> dialog", a11y.ariaRoleForVariant("dialog") === "dialog");
++check("ariaRole confirm -> alertdialog", a11y.ariaRoleForVariant("confirm") === "alertdialog");
++check("ariaRole danger -> alertdialog", a11y.ariaRoleForVariant("danger") === "alertdialog");
++check("ariaRole alert -> alertdialog", a11y.ariaRoleForVariant("alert") === "alertdialog");
++
++check("escape dialog -> true", a11y.shouldCloseOnEscape("dialog") === true);
++check("escape confirm -> true", a11y.shouldCloseOnEscape("confirm") === true);
++check("escape alert -> false", a11y.shouldCloseOnEscape("alert") === false);
++
++check("initialFocus confirm 优先主按钮", a11y.initialFocusSelector("confirm").startsWith("button.primary"));
++check("initialFocus dialog 取首个可聚焦", a11y.initialFocusSelector("dialog").includes("button"));
++check("initialFocus container 回退容器", a11y.initialFocusSelector("dialog", "container") === ".modal,.modal-mask,[tabindex]");
++
++check("nextFocusIndex 回环", a11y.nextFocusIndex(3, 2) === 0);
++check("nextFocusIndex 起点-1", a11y.nextFocusIndex(3, -1) === 0);
++check("nextFocusIndex 空列表", a11y.nextFocusIndex(0, 0) === 0);
++check("prevFocusIndex 回环", a11y.prevFocusIndex(3, 0) === 2);
++check("prevFocusIndex 起点-1", a11y.prevFocusIndex(3, -1) === 2);
++check("cycleFocus 后退", a11y.cycleFocus(3, 0, true) === 2);
++check("cycleFocus 前进", a11y.cycleFocus(3, 2, false) === 0);
++
++// ---- asyncView.ts：状态解析 / ARIA / 文案 ----
++
++check("state loading 优先", view.resolveViewState({ loading: true, count: 0 }) === "loading");
++check("state error 高于 empty", view.resolveViewState({ error: "x", count: 0 }) === "error");
++check("state empty 当 count=0", view.resolveViewState({ count: 0 }) === "empty");
++check("state ready 当 count>0", view.resolveViewState({ count: 5 }) === "ready");
++
++check(
++  "aria loading = status/polite",
++  view.ariaForState("loading").role === "status" && view.ariaForState("loading").live === "polite",
++);
++check(
++  "aria error = alert/assertive",
++  view.ariaForState("error").role === "alert" && view.ariaForState("error").live === "assertive",
++);
++check("aria empty = status/polite", view.ariaForState("empty").live === "polite");
++check("aria ready = group/off", view.ariaForState("ready").live === "off");
++
++check("message 默认 loading", view.messageForState("loading") === "加载中…");
++check("message 覆盖 empty", view.messageForState("empty", { empty: "无记录" }) === "无记录");
++check("message error 回退原文", view.messageForState("error", { error: "网络异常" }) === "网络异常");
++
++if (failures) {
++  console.log(`UI_A11Y_RESULT=FAIL (${failures})`);
++  process.exit(1);
++}
++console.log("UI_A11Y_RESULT=PASS");
++process.exit(0);
+diff --git a/src/components/shared/AsyncState.vue b/src/components/shared/AsyncState.vue
+new file mode 100644
+index 0000000..36f1cd6
+--- /dev/null
++++ b/src/components/shared/AsyncState.vue
+@@ -0,0 +1,63 @@
++<script setup lang="ts">
++// M5-W15（Lane A6）：异步视图状态的统一渲染（loading / error / empty / ready）。
++// 纯决策见 src/utils/asyncView.ts；本组件只负责把状态渲染成带正确 ARIA 的占位。
++import { computed } from "vue";
++import { resolveViewState, ariaForState, messageForState, type AsyncStateKind } from "../../utils/asyncView";
++
++const props = withDefaults(
++  defineProps<{
++    loading?: boolean;
++    error?: string | null;
++    count?: number;
++    loadingText?: string;
++    emptyText?: string;
++    errorText?: string;
++  }>(),
++  { loading: false, error: null, count: 0 },
++);
++
++const state = computed<AsyncStateKind>(() =>
++  resolveViewState({ loading: props.loading, error: props.error, count: props.count }),
++);
++const aria = computed(() => ariaForState(state.value));
++const message = computed(() =>
++  messageForState(state.value, {
++    loading: props.loadingText,
++    empty: props.emptyText,
++    error: props.errorText || (props.error ?? undefined),
++  }),
++);
++</script>
++
++<template>
++  <div
++    v-if="state !== 'ready'"
++    :role="aria.role"
++    :aria-live="aria.live"
++    :aria-busy="loading || undefined"
++    class="async-state"
++  >
++    <p v-if="state === 'loading'" class="async-loading">{{ message }}</p>
++    <p v-else-if="state === 'error'" class="async-error">{{ message }}</p>
++    <p v-else class="async-empty">{{ message }}</p>
++  </div>
++  <slot v-else />
++</template>
++
++<style scoped>
++.async-state {
++  padding: 10px 12px;
++}
++.async-loading,
++.async-empty,
++.async-error {
++  margin: 0;
++  font-size: 13px;
++}
++.async-empty {
++  color: #8a8f99;
++}
++.async-error {
++  color: #cf1322;
++}
++</style>
+diff --git a/src/components/shared/ConfirmModal.vue b/src/components/shared/ConfirmModal.vue
+index c572a45..2f265f2 100644
+--- a/src/components/shared/ConfirmModal.vue
++++ b/src/components/shared/ConfirmModal.vue
+@@ -1,10 +1,16 @@
+ <script setup lang="ts">
++import { ref } from "vue";
+ import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
++import { useModalFocus } from "../../composables/useModalFocus";
++import AsyncState from "./AsyncState.vue";
+ const ws = useWorkspaceStore();
++const root = ref<HTMLElement | null>(null);
++// 确认类对话框：打开时焦点移入、焦点陷阱、关闭时归还焦点、ESC 关闭（M5-W15 A6）
++useModalFocus(root, { variant: "confirm", onEscape: () => (ws.preview = null) });
+ </script>
+
+ <template>
+-  <div v-if="ws.preview" class="modal-mask" @click.self="ws.preview = null">
++  <div v-if="ws.preview" ref="root" class="modal-mask" @click.self="ws.preview = null">
+     <div class="modal">
+       <h3>确认推送到「{{ ws.preview.repo_name }}」？</h3>
+       <p class="mono">{{ ws.preview.remote_url }}</p>
+@@ -12,7 +18,7 @@ const ws = useWorkspaceStore();
+       <ul>
+         <li v-for="t in ws.preview.artifact_titles" :key="t">· {{ t }}</li>
+       </ul>
+-      <div v-if="ws.busy" class="progress">推送中…</div>
++      <AsyncState :loading="ws.busy" loading-text="推送中…" />
+       <div class="actions">
+         <button :disabled="ws.busy" @click="ws.preview = null">取消</button>
+         <button class="primary" :disabled="ws.busy" @click="ws.confirmSync">确认推送</button>
+diff --git a/src/components/shared/ImageLightbox.vue b/src/components/shared/ImageLightbox.vue
+index 74ea7f7..045dca4 100644
+--- a/src/components/shared/ImageLightbox.vue
++++ b/src/components/shared/ImageLightbox.vue
+@@ -1,5 +1,6 @@
+ <script setup lang="ts">
+-import { computed, onBeforeUnmount, watch } from "vue";
++import { ref, computed, onBeforeUnmount, watch } from "vue";
++import { useModalFocus } from "../../composables/useModalFocus";
+ import { convertFileSrc } from "@tauri-apps/api/core";
+ import { useImagePreviewStore } from "../../stores/useImagePreviewStore";
+ import { createKeyBinder, keyAction } from "../../utils/imagePreview";
+@@ -12,6 +13,10 @@ import { createKeyBinder, keyAction } from "../../utils/imagePreview";
+ //   键盘监听仅 open 时绑定、关闭与卸载即解绑（防泄漏）。
+
+ const preview = useImagePreviewStore();
++const root = ref<HTMLElement | null>(null);
++// 灯箱：焦点陷阱 + 打开时聚焦容器 + ESC 关闭（M5-W15 A6；ESC 原由 window 监听处理，
++// 此处 composable 的 onEscape 与之等价且不冲突——stopPropagation 后仅本处触发一次关闭）
++useModalFocus(root, { variant: "dialog", onEscape: () => preview.close() });
+
+ const current = computed(() => preview.current);
+ const atFirst = computed(() => preview.index <= 0);
+@@ -97,7 +102,7 @@ function onMouseUp() {
+ </script>
+
+ <template>
+-  <div v-if="preview.open && current" class="modal-mask img-lightbox" @click.self="preview.close()">
++  <div v-if="preview.open && current" ref="root" class="modal-mask img-lightbox" @click.self="preview.close()">
+     <div class="lb">
+       <div class="lb-bar">
+         <span class="lb-count">{{ preview.index + 1 }} / {{ preview.count }}</span>
+diff --git a/src/components/workspace/AuditPanel.vue b/src/components/workspace/AuditPanel.vue
+index dd81bda..1dfa5a9 100644
+--- a/src/components/workspace/AuditPanel.vue
++++ b/src/components/workspace/AuditPanel.vue
+@@ -1,6 +1,7 @@
+ <script setup lang="ts">
+ import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
+ import { useLayoutStore } from "../../stores/useLayoutStore";
++import AsyncState from "../shared/AsyncState.vue";
+ const ws = useWorkspaceStore();
+ const layout = useLayoutStore();
+ </script>
+@@ -11,15 +12,16 @@ const layout = useLayoutStore();
+       <span>📜 审计日志</span>
+       <button class="close" @click="layout.sidebarOpen = false" title="收起">✕</button>
+     </div>
+-    <ul class="audit-list">
+-      <li v-for="(e, i) in ws.audit.slice().reverse()" :key="i">
+-        <div class="audit-row">
+-          <span class="at">{{ e.at.slice(0, 19) }}</span>
+-          <span class="act">{{ e.action }}</span>
+-        </div>
+-        <div class="det">{{ e.detail }}</div>
+-      </li>
+-      <li v-if="!ws.audit.length" class="empty">暂无记录</li>
+-    </ul>
++    <AsyncState :count="ws.audit.length" empty-text="暂无记录">
++      <ul class="audit-list">
++        <li v-for="(e, i) in ws.audit.slice().reverse()" :key="i">
++          <div class="audit-row">
++            <span class="at">{{ e.at.slice(0, 19) }}</span>
++            <span class="act">{{ e.action }}</span>
++          </div>
++          <div class="det">{{ e.detail }}</div>
++        </li>
++      </ul>
++    </AsyncState>
+   </div>
+ </template>
+diff --git a/src/components/workspace/GitWriteConfirmDialog.vue b/src/components/workspace/GitWriteConfirmDialog.vue
+index 59ad3b5..7607fe1 100644
+--- a/src/components/workspace/GitWriteConfirmDialog.vue
++++ b/src/components/workspace/GitWriteConfirmDialog.vue
+@@ -1,5 +1,5 @@
+ <script setup lang="ts">
+-import { computed } from "vue";
++import { ref, computed } from "vue";
+ import {
+   useGitStore,
+   GIT_OP_LABEL,
+@@ -8,6 +8,8 @@ import {
+   DISCARD_NOTICE,
+   GIT_PREVIEW_SHOWN_PATHS,
+ } from "../../stores/useGitStore";
++import { useModalFocus } from "../../composables/useModalFocus";
++import AsyncState from "../shared/AsyncState.vue";
+
+ // 写操作确认闸门（阶段二入口）。
+ // 只展示后端 request_git_write 返回的 preview（summary / affected_paths /
+@@ -15,6 +17,9 @@ import {
+ // 不展示、也不持有任何凭据。dangerous 操作未勾选二次确认时，
+ // 「确认执行」按钮禁用，且 store 侧还会再拦一次（双保险）。
+ const git = useGitStore();
++const root = ref<HTMLElement | null>(null);
++// 确认类对话框：焦点陷阱 + 打开时聚焦主操作 + ESC 关闭（M5-W15 A6）
++useModalFocus(root, { variant: "confirm", onEscape: () => git.cancelWrite() });
+
+ const pv = computed(() => git.preview);
+ const risk = computed(() => git.previewRisk ?? "low");
+@@ -37,7 +42,7 @@ const ackLabel = computed(() => {
+ </script>
+
+ <template>
+-  <div v-if="pv" class="modal-mask" @click.self="!git.busy && git.cancelWrite()">
++  <div v-if="pv" ref="root" class="modal-mask" @click.self="!git.busy && git.cancelWrite()">
+     <div class="modal git-modal">
+       <h3>确认执行「{{ GIT_OP_LABEL[pv.op] }}」？</h3>
+
+@@ -70,7 +75,7 @@ const ackLabel = computed(() => {
+       </label>
+
+       <div v-if="git.writeError" class="git-error">{{ git.writeError }}</div>
+-      <div v-if="git.busy" class="git-hint">执行中…完成后会自动刷新状态/diff/分支。</div>
++      <AsyncState :loading="git.busy" loading-text="执行中…" />
+
+       <div class="actions">
+         <button :disabled="git.busy" @click="git.cancelWrite()">取消</button>
+diff --git a/src/components/workspace/PermissionPreviewModal.vue b/src/components/workspace/PermissionPreviewModal.vue
+index b0dff95..53211eb 100644
+--- a/src/components/workspace/PermissionPreviewModal.vue
++++ b/src/components/workspace/PermissionPreviewModal.vue
+@@ -1,5 +1,6 @@
+ <script setup lang="ts">
+-import { computed } from "vue";
++import { ref, computed } from "vue";
++import { useModalFocus } from "../../composables/useModalFocus";
+ import type { AgentDef, SkillDef } from "../../types";
+ import { buildPermissionPreview } from "../../utils/agentSkillUi";
+
+@@ -12,10 +13,13 @@ const emit = defineEmits<{ (e: "close"): void }>();
+ const view = computed(() =>
+   props.def ? buildPermissionPreview(props.def, props.whitelist ?? []) : null,
+ );
++const root = ref<HTMLElement | null>(null);
++// 对话框：焦点陷阱 + 打开时聚焦首元素 + ESC 关闭（M5-W15 A6）
++useModalFocus(root, { variant: "dialog", onEscape: () => emit("close") });
+ </script>
+
+ <template>
+-  <div v-if="view" class="modal-mask" @click.self="emit('close')">
++  <div v-if="view" ref="root" class="modal-mask" @click.self="emit('close')">
+     <div class="modal">
+       <header>
+         <h3>权限预览</h3>
+diff --git a/src/components/workspace/RunHistoryModal.vue b/src/components/workspace/RunHistoryModal.vue
+index 7690ddc..0d1319f 100644
+--- a/src/components/workspace/RunHistoryModal.vue
++++ b/src/components/workspace/RunHistoryModal.vue
+@@ -1,5 +1,7 @@
+ <script setup lang="ts">
+-import { computed } from "vue";
++import { ref, computed } from "vue";
++import { useModalFocus } from "../../composables/useModalFocus";
++import AsyncState from "../shared/AsyncState.vue";
+ import type { AgentRunRecord, SkillRunRecord } from "../../types";
+ import { runStatusUi } from "../../utils/agentSkillUi";
+
+@@ -10,25 +12,29 @@ const props = defineProps<{
+ const emit = defineEmits<{ (e: "close"): void }>();
+
+ const items = computed(() => props.records ?? []);
++const root = ref<HTMLElement | null>(null);
++// 对话框：焦点陷阱 + 打开时聚焦首元素 + ESC 关闭（M5-W15 A6）
++useModalFocus(root, { variant: "dialog", onEscape: () => emit("close") });
+ </script>
+
+ <template>
+-  <div class="modal-mask" @click.self="emit('close')">
++  <div ref="root" class="modal-mask" @click.self="emit('close')">
+     <div class="modal">
+       <header>
+         <h3>{{ title ?? "运行历史" }}</h3>
+         <button class="close" @click="emit('close')">×</button>
+       </header>
+-      <div v-if="items.length === 0" class="empty">暂无运行记录。</div>
+-      <ul v-else class="records">
+-        <li v-for="r in items" :key="r.runId" class="rec">
+-          <span class="tag" :class="runStatusUi(r.status).cls">{{ runStatusUi(r.status).label }}</span>
+-          <span class="id">{{ r.runId }}</span>
+-          <span v-if="'skillId' in r" class="meta">skill {{ r.skillId }}</span>
+-          <span v-else class="meta">agent {{ r.agentId }}</span>
+-          <span v-if="r.error" class="err">{{ r.error.message }}</span>
+-        </li>
+-      </ul>
++      <AsyncState :count="items.length" empty-text="暂无运行记录。">
++        <ul class="records">
++          <li v-for="r in items" :key="r.runId" class="rec">
++            <span class="tag" :class="runStatusUi(r.status).cls">{{ runStatusUi(r.status).label }}</span>
++            <span class="id">{{ r.runId }}</span>
++            <span v-if="'skillId' in r" class="meta">skill {{ r.skillId }}</span>
++            <span v-else class="meta">agent {{ r.agentId }}</span>
++            <span v-if="r.error" class="err">{{ r.error.message }}</span>
++          </li>
++        </ul>
++      </AsyncState>
+       <footer><button class="primary" @click="emit('close')">关闭</button></footer>
+     </div>
+   </div>
+diff --git a/src/components/workspace/ScriptRunDialog.vue b/src/components/workspace/ScriptRunDialog.vue
+index 6854785..8d05b75 100644
+--- a/src/components/workspace/ScriptRunDialog.vue
++++ b/src/components/workspace/ScriptRunDialog.vue
+@@ -1,5 +1,6 @@
+ <script setup lang="ts">
+ import { ref, reactive, computed, onMounted, onUnmounted } from "vue";
++import { useModalFocus } from "../../composables/useModalFocus";
+ import { bridge } from "../../bridge";
+ import type {
+   CommandSnippet,
+@@ -13,6 +14,9 @@ const props = withDefaults(defineProps<{ script: ScriptMeta | CommandSnippet; ki
+   kind: "script",
+ });
+ const emit = defineEmits<{ close: [] }>();
++const root = ref<HTMLElement | null>(null);
++// 对话框：焦点陷阱 + 打开时聚焦首元素 + ESC 关闭（M5-W15 A6）
++useModalFocus(root, { variant: "dialog", onEscape: () => emit("close") });
+
+ // 参数值收集（统一字符串形态；bool 用 "true"/"false"）
+ const values = reactive<Record<string, string>>({});
+@@ -103,7 +107,7 @@ async function cancel() {
+ </script>
+
+ <template>
+-  <div class="run-mask" @click.self="emit('close')">
++  <div ref="root" class="run-mask" @click.self="emit('close')">
+     <div class="run-dialog">
+       <div class="run-head">
+         <span>▶ 运行：{{ script.name }}</span>
+diff --git a/src/components/workspace/TaskEditDialog.vue b/src/components/workspace/TaskEditDialog.vue
+index 4cba9c5..464c3a9 100644
+--- a/src/components/workspace/TaskEditDialog.vue
++++ b/src/components/workspace/TaskEditDialog.vue
+@@ -8,7 +8,8 @@
+ //     避免用户从 cron 种子工具复制 6 位表达式后到后端才被拒（A6 O-A6-4）；
+ //   - 敏感参数输入框禁用：secret 参数值不落 tasks.json（A6 §3.3 R-3）；
+ //   - catch_up_limit 仅 CatchUp 策略下可编辑（A6 §3.2，防「看似可配实则 no-op」）。
+-import { computed } from "vue";
++import { ref, computed } from "vue";
++import { useModalFocus } from "../../composables/useModalFocus";
+ import { useTaskStore } from "../../stores/useTaskStore";
+ import {
+   CRON_FIELD_COUNT,
+@@ -22,6 +23,9 @@ import {
+ } from "../../utils/taskUi";
+
+ const tasks = useTaskStore();
++const root = ref<HTMLElement | null>(null);
++// 对话框：焦点陷阱 + 打开时聚焦首元素 + ESC 关闭（M5-W15 A6）
++useModalFocus(root, { variant: "dialog", onEscape: () => tasks.closeEditor() });
+
+ const targetsOfKind = computed(() => tasks.targets.filter((t) => t.kind === tasks.draft.kind));
+
+@@ -49,7 +53,7 @@ function onTargetChange() {
+ </script>
+
+ <template>
+-  <div v-if="tasks.editorOpen" class="modal-mask" @click.self="tasks.closeEditor()">
++  <div v-if="tasks.editorOpen" ref="root" class="modal-mask" @click.self="tasks.closeEditor()">
+     <div class="modal task-editor">
+       <h3>{{ tasks.draft.id ? "编辑定时任务" : "新建定时任务" }}</h3>
+
+diff --git a/src/composables/useModalFocus.ts b/src/composables/useModalFocus.ts
+new file mode 100644
+index 0000000..f3d7bf3
+--- /dev/null
++++ b/src/composables/useModalFocus.ts
+@@ -0,0 +1,97 @@
++// M5-W15（Lane A6）：对话框 / 确认框无障碍焦点管理 composable。
++//
++// 职责：
++//   - 打开时把焦点移入对话框（confirm/danger 优先主操作按钮）；
++//   - 在可聚焦元素间 Tab 回环（焦点陷阱），ESC 按需关闭；
++//   - 关闭时把焦点还回触发元素；
++//   - 设置 role（alertdialog/dialog）与 aria-modal。
++//
++// 纯决策见 src/utils/modalA11y.ts。用 `watch(root, ...)` 而非 onMounted，
++// 以同时兼容两种挂载形态：组件级 v-if（打开即挂载）与模板内 v-if（组件常驻、
++// mask 随状态显隐）。两种形态下焦点陷阱都会正确启停。
++import { watch, onBeforeUnmount, type Ref } from "vue";
++import {
++  FOCUSABLE_SELECTOR,
++  ariaRoleForVariant,
++  shouldCloseOnEscape,
++  initialFocusSelector,
++  cycleFocus,
++  type ModalVariant,
++} from "../utils/modalA11y";
++
++export interface ModalFocusOptions {
++  variant?: ModalVariant;
++  initialFocus?: "confirm" | "first" | "container";
++  onEscape?: () => void;
++}
++
++export function useModalFocus(root: Ref<HTMLElement | null>, options: ModalFocusOptions = {}): void {
++  const variant = options.variant ?? "dialog";
++  const closeOnEscape = shouldCloseOnEscape(variant);
++  let previouslyFocused: HTMLElement | null = null;
++  let activeEl: HTMLElement | null = null;
++  let keyHandler: ((e: KeyboardEvent) => void) | null = null;
++
++  function focusableList(el: HTMLElement): HTMLElement[] {
++    return Array.from(el.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
++      (n) => n.getAttribute("aria-hidden") !== "true",
++    );
++  }
++
++  function focusInitial(el: HTMLElement): void {
++    const sel = initialFocusSelector(variant, options.initialFocus);
++    // 主按钮可能处于 disabled（如推送/执行中），此时跳过它取下一个可聚焦元素，
++    // 否则 focus() 会静默失败、焦点停留在 body 上。
++    const candidates = Array.from(el.querySelectorAll<HTMLElement>(sel));
++    const usable = candidates.find(
++      (n) => !(n as Partial<HTMLButtonElement>).disabled && n.getAttribute("aria-hidden") !== "true",
++    );
++    const target = usable ?? focusableList(el)[0] ?? el;
++    target.focus();
++  }
++
++  function activate(el: HTMLElement): void {
++    previouslyFocused = (document.activeElement as HTMLElement | null) ?? previouslyFocused;
++    el.setAttribute("role", ariaRoleForVariant(variant));
++    el.setAttribute("aria-modal", "true");
++    if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "-1");
++    keyHandler = (e: KeyboardEvent) => {
++      if (e.key === "Escape" && closeOnEscape) {
++        e.stopPropagation();
++        options.onEscape?.();
++        return;
++      }
++      if (e.key !== "Tab") return;
++      const list = focusableList(el);
++      if (list.length === 0) {
++        e.preventDefault();
++        return;
++      }
++      const idx = list.indexOf(document.activeElement as HTMLElement);
++      e.preventDefault();
++      list[cycleFocus(list.length, idx, e.shiftKey)]?.focus();
++    };
++    el.addEventListener("keydown", keyHandler);
++    activeEl = el;
++    requestAnimationFrame(() => focusInitial(el));
++  }
++
++  function deactivate(): void {
++    if (activeEl && keyHandler) activeEl.removeEventListener("keydown", keyHandler);
++    activeEl = null;
++    keyHandler = null;
++    previouslyFocused?.focus?.();
++    previouslyFocused = null;
++  }
++
++  watch(
++    root,
++    (el) => {
++      if (el) activate(el);
++      else deactivate();
++    },
++    { flush: "post" },
++  );
++
++  onBeforeUnmount(() => deactivate());
++}
+diff --git a/src/utils/asyncView.ts b/src/utils/asyncView.ts
+new file mode 100644
+index 0000000..9f41ab0
+--- /dev/null
++++ b/src/utils/asyncView.ts
+@@ -0,0 +1,51 @@
++// M5-W15（Lane A6）：异步视图状态（loading / error / empty / ready）的**纯决策层**。
++//
++// headless 可测（scripts/check-ui-a11y-logic.mjs）。渲染层在
++// src/components/shared/AsyncState.vue。
++
++export type AsyncStateKind = "loading" | "error" | "empty" | "ready";
++
++export interface AsyncViewInput {
++  loading?: boolean;
++  error?: string | null;
++  count?: number;
++}
++
++// 优先级：loading > error > empty > ready。
++export function resolveViewState(input: AsyncViewInput): AsyncStateKind {
++  if (input.loading) return "loading";
++  if (input.error) return "error";
++  if ((input.count ?? 0) <= 0) return "empty";
++  return "ready";
++}
++
++// 每个状态下的 ARIA role / live 区域约定。
++export function ariaForState(
++  state: AsyncStateKind,
++): { role: string; live: "polite" | "assertive" | "off" } {
++  switch (state) {
++    case "loading":
++      return { role: "status", live: "polite" };
++    case "error":
++      return { role: "alert", live: "assertive" };
++    case "empty":
++      return { role: "status", live: "polite" };
++    default:
++      return { role: "group", live: "off" };
++  }
++}
++
++const DEFAULT_LABELS: Record<AsyncStateKind, string> = {
++  loading: "加载中…",
++  error: "加载失败",
++  empty: "暂无数据",
++  ready: "",
++};
++
++export function messageForState(
++  state: AsyncStateKind,
++  labels?: Partial<Record<AsyncStateKind, string>>,
++): string {
++  if (labels && labels[state] != null && labels[state] !== "") return labels[state] as string;
++  return DEFAULT_LABELS[state];
++}
+diff --git a/src/utils/modalA11y.ts b/src/utils/modalA11y.ts
+new file mode 100644
+index 0000000..e01ec4a
+--- /dev/null
++++ b/src/utils/modalA11y.ts
+@@ -0,0 +1,59 @@
++// M5-W15（Lane A6）：对话框 / 确认框无障碍焦点决策的**纯函数层**。
++//
++// 与 Vue 渲染解耦，便于 headless 测试（scripts/check-ui-a11y-logic.mjs）。
++// 真正的 DOM 接线在 src/composables/useModalFocus.ts。
++
++export type ModalVariant = "dialog" | "confirm" | "danger" | "alert";
++
++// 可聚焦元素选择器（排除 disabled / 隐藏 tabindex / hidden input）。
++export const FOCUSABLE_SELECTOR = [
++  "a[href]",
++  "button:not([disabled])",
++  'input:not([disabled]):not([type="hidden"])',
++  "select:not([disabled])",
++  "textarea:not([disabled])",
++  '[tabindex]:not([tabindex="-1"])',
++  '[contenteditable="true"]',
++].join(",");
++
++// 确认 / 危险类对话框用 alertdialog（屏幕阅读器会 Announce，并提示用户需显式决策）；
++// 普通信息对话框用 dialog。
++export function ariaRoleForVariant(variant: ModalVariant): "dialog" | "alertdialog" {
++  return variant === "dialog" ? "dialog" : "alertdialog";
++}
++
++// 纯信息 alert（不可取消）不响应 ESC；其余（dialog/confirm/danger）可 ESC 关闭。
++export function shouldCloseOnEscape(variant: ModalVariant): boolean {
++  return variant !== "alert";
++}
++
++// 初始焦点目标选择器：confirm/danger 优先主操作按钮，否则第一个可聚焦元素。
++export function initialFocusSelector(
++  variant: ModalVariant,
++  prefer?: "confirm" | "first" | "container",
++): string {
++  if (prefer === "container") return ".modal,.modal-mask,[tabindex]";
++  if (prefer === "first") return FOCUSABLE_SELECTOR;
++  if (variant === "confirm" || variant === "danger" || prefer === "confirm") {
++    return "button.primary,button.danger,.confirm-btn,[data-modal-primary]," + FOCUSABLE_SELECTOR;
++  }
++  return FOCUSABLE_SELECTOR;
++}
++
++// 焦点循环（Tab / Shift+Tab 在可聚焦列表内回环）。
++export function nextFocusIndex(len: number, current: number): number {
++  if (len <= 0) return 0;
++  if (current < 0) return 0;
++  return (current + 1) % len;
++}
++
++export function prevFocusIndex(len: number, current: number): number {
++  if (len <= 0) return 0;
++  if (current < 0) return len - 1;
++  return (current - 1 + len) % len;
++}
++
++// 给定当前聚焦索引与方向，返回下一焦点索引（供 composable 使用）。
++export function cycleFocus(len: number, current: number, backward: boolean): number {
++  return backward ? prevFocusIndex(len, current) : nextFocusIndex(len, current);
++}

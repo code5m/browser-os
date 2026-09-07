@@ -1,0 +1,173 @@
+diff --git a/logs/assist/A4-M5-W15-privacy-stable-error-review-20260908-0900.md b/logs/assist/A4-M5-W15-privacy-stable-error-review-20260908-0900.md
+new file mode 100644
+index 0000000..69f6e05
+--- /dev/null
++++ b/logs/assist/A4-M5-W15-privacy-stable-error-review-20260908-0900.md
+@@ -0,0 +1,167 @@
++# A4 — M5-W15 Plugin Manager UI 隐私 & 稳定错误渲染评审（REVIEW ONLY · Verdict）
++
++- **Lane / 分派**：A4，`M5-W15 Release Readiness Dispatch`（board §1163-1178，A4 行 1168：*Plugin UI privacy and stable-error review* → **Verdict**）
++- **WORKDIR / 身份**：`/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`，`.workspace-identity = BACKV3_MAIN`，分支 `master`
++- **基线 / HEAD**：`886ea29`（master，feat(M5): integrate W14 plugin manager UI）；`git fetch && git pull --ff-only` = 已经是最新的
++- **评审对象**：W14 已落地的真实 Plugin Manager UI —— `src/components/plugin/PluginManager.vue`、`src/stores/usePluginStore.ts`、`src/utils/pluginUi.ts`、`src/bridge.ts:721-739`（冻结 8 方法）、`src/types.ts:937-1038`（冻结 DTO）
++- **形态**：REVIEW ONLY —— **零产品代码、零策略脚本改动**（W14 已落 `scripts/check-plugin-ui-privacy.py` 与 pre-merge 接入，本轮不重复造）。仅产出本 verdict。
++- **未 push**（board：Only A0 pushes）。
++
++---
++
++## 0. 与 W14 A4 隐私评审的关系
++
++| 维度 | W14 A4（2026-09-08 0030） | W15 A4（本轮） |
++|---|---|---|
++| 评审时机 | **前瞻验收**：A6 UI 尚未落地，夹具 gated 为绿 | **实证验收**：A6 UI 已合（`886ea29`），对真实代码逐行核查 |
++| 隐私结论 | PASS_WITH_DEBT（4 红线靠夹具守护，待 A6 落地验证） | **PASS**（实证：4 红线全部守住了） |
++| stable-error | W14 未单列（scope 仅 privacy） | **本轮新增重点**：见 §2 |
++| 交付形态 | 新增 `check-plugin-ui-privacy.py` + 接入 pre-merge | 仅 verdict（不重复造脚本） |
++
++> W15 关闭 M5 证据，隐私面从「前瞻 PASS_WITH_DEBT」升级为「实证 PASS」。
++
++---
++
++## 1. 隐私面（Privacy）—— 实证 PASS
++
++### 1.1 四条红线逐条实证
++
++| 码位 | 红线 | W14 A6 真实代码实证 | 结论 |
++|---|---|---|---|
++| `PLUGIN_UI_NO_RAW_INVOKE`（ACTIVE） | 只经 `bridge.pluginX`，禁裸 `invoke` / 直 import `@tauri-apps/api/tauri` | `usePluginStore.ts` 全部 8 处调用均 `bridge.pluginXxx(...)`（line 64/80/102/127/147/166/180/199）；`grep invoke\(` 在 plugin UI 文件**零命中**；无裸 `import ... tauri` | ✅ 守住 |
++| `PLUGIN_UI_NO_SECRET_RENDER`（ACTIVE） | 只渲染红脱敏 DTO 字段 | `PluginManager.vue` 模板仅渲染 `display.*`（line 176-213），`display = redactDetail(detail)`（line 17）；`redactDetail` 显式丢弃 `signature.value` / 路径 / `metadata`（pluginUi.ts:141-160）；无任何 `{{ ...signature.value }}` / `{{ ...path }}` / `{{ ...pubkey }}` | ✅ 守住 |
++| `PLUGIN_UI_NO_BROWSER_STORAGE`（PENDING→仍 pending） | 插件记录/密钥/清单原文不得落 localStorage/sessionStorage/indexedDB | `grep -E "localStorage\|sessionStorage\|indexedDB\|setItem"` 在三个文件**零命中**；`manifestText`/`resourcePath`/`keyForm.pubkey` 均为瞬时 `ref`，安装/登记成功后立即清空（usePluginStore line 107-108 / PluginManager.vue line 90） | ✅ 守住（pending 码无需提升） |
++| `PLUGIN_UI_ERROR_CODE_ONLY`（PENDING→仍 pending） | 错误渲染只用稳定码，禁 `err.message`/`String(err)`/`err.toString()` | 见 §2 实证 | ✅ 守住 |
++
++### 1.2 敏感入参（瞬时）处理
++
++| 入参 | 用途 | 隐私处置实证 |
++|---|---|---|
++| `manifestText`（含 `signature.value` 原始 base64） | 安装校验入参 | 仅 `parseManifestInput` 解析为 `PluginManifest` 瞬时传给 `bridge.pluginInstall`；成功后 `manifestText.value = ""`（usePluginStore:107）**不回显、不持久化** |
++| `resourcePath` | 资源包路径 | 同上为瞬时；成功后清空（usePluginStore:108）；后端只取布尔 `path_provided`，前端模板只显示「已提供路径：是/否」（PluginManager.vue:198） |
++| `keyForm.pubkey` | 受信任密钥登记 | 仅作输入框（`placeholder="pubkey（仅用于登记，不回显）"`），`addKey` 后 `keyForm.pubkey = ""`（PluginManager.vue:90）；后端仅回 16-hex 指纹，前端只渲染 `k.fingerprint`（line 161） |
++
++### 1.3 隐私面工具实测
++
++```text
++$ python3 scripts/check-plugin-ui-privacy.py --self-test
++PLUGIN_UI_PRIVACY_SELF_TEST_RESULT=PASS: 2 好样本零违规（真实仓库 gated + 合成参考实现）
++  + 8 个坏样本全部检出（含变异防呆）；ACTIVE=2 PENDING=2          → 退出 0
++$ python3 scripts/check-plugin-ui-privacy.py
++plugin UI privacy policy: all invariants hold（ACTIVE=2）   → 退出 0
++$ python3 scripts/check-plugin-ui-privacy.py --expect-pending
++PLUGIN_UI_PRIVACY_PENDING_RESULT=NONE（2 个 pending 码位均未检出）  → 退出 0
++```
++
++> 注：W14 A4 已说明 PENDING=2（`NO_BROWSER_STORAGE` / `ERROR_CODE_ONLY`）的"未检出"是**预期**——A6 代码经实证确认未踩这两条，故无需提升为 ACTIVE；若日后出现浏览器存储或原始错误回显，夹具会立即命中。
++
++**隐私面结论：PASS**（实证，无负债）。
++
++---
++
++## 2. 稳定错误渲染面（Stable-Error）—— PASS_WITH_NOTE
++
++W15 scope 新增 "stable-error review"。判据两层：
++
++### 2.1 底线：不回显原始错误体（隐私闭环）—— ✅ PASS
++
++- `usePluginStore.ts:22-26`：
++
++  ```ts
++  function describeError(e: unknown): string {
++    void e;                                   // 完全丢弃原始错误
++    return "插件操作失败，请检查输入或重试。";
++  }
++  ```
++
++- 所有 8 个 store action 的 `catch` 均 `error.value = describeError(e)`（line 66/82/112/132/152/168/187/202）；模板 `{{ store.error }}`（PluginManager.vue:226）只显示该本地固定文案。
++- `grep -E "err\.message|String\(err\)|err\.toString"` 在三个文件**零命中** → 无原始错误体逃逸到 UI。
++- 后端 `plugin.rs` 出错路径只 `Err(code.to_string())`，`code` 是稳定枚举（`PLUGIN_MANIFEST_INVALID` 等，plugin.rs:336-344），但前端**主动丢弃整个 `e`**，连稳定码都未用到 → 比"只显示稳定码"更严格（彻底无泄漏面）。
++
++### 2.2 增强：稳定码未被利用（UX 改进项，非阻断）—— ⚠️ NOTE
++
++- 后端已提供 9 个稳定错误码（`PLUGIN_CREDENTIAL_LEAK` / `PLUGIN_MANIFEST_INVALID` / `PLUGIN_SIGNATURE_INVALID` / `PLUGIN_STATE_TRANSITION` / `PLUGIN_FIELD_EMPTY` / `PLUGIN_PATH_OUTSIDE_ROOTS` / `PLUGIN_PATH_UNRESOLVABLE` / `PLUGIN_PATH_SYMLINK` / `PLUGIN_CAPABILITY_UNKNOWN`，见 `src-tauri/src/plugin.rs:336-344`）。
++- 前端 `describeError` 把稳定码一并丢弃，用户无法区分「manifest 非法」vs「状态迁移非法」vs「路径越界」。
++- **性质**：稳定码本身是非敏感的（不含密钥/路径/请求体），利用它做更精确的本地提示在隐私上是**安全**的；但当前实现选择"一刀切"也是合规的（更保守）。
++- **判定**：非阻断。W15 release readiness 下建议（非必须）未来把 `describeError` 改为「按稳定码映射本地文案」，提升可诊断性；本轮**不要求改**。
++
++**稳定错误面结论：PASS_WITH_NOTE**（底线满足；稳定码利用为可选 UX 改进）。
++
++---
++
++## 3. 附带 Finding（非隐私 / 非 stable-error，但 W15 值得记）
++
++### F-1【UI 一致性瑕疵 · 非阻断 · 建议转 A6/A0】
++
++- `PluginManager.vue:38` `confirmText` 的 `switch` 含 `case "uninstall":`，但：
++  - `ConfirmKind` 类型（line 28）**不含** `uninstall`；
++  - `doConfirm` 的 `switch`（line 77-96）**无** `uninstall` case；
++  - store 无 `uninstall` action（`usePluginStore` 导出清单 line 216-237）；
++  - 后端 W13/W14 8 命令中**无** `plugin_uninstall`（W14 Hard Stop 明确"不增 lifecycle 命令"；W13 8 命令也不含 uninstall，仅状态机有 `→ uninstalled` 迁移边）。
++- 结论：`uninstall` 是**永远不可达的死 case**（类型系统已阻止调用）。无害，但 release 前建议从 `confirmText` switch 删除该 case 以消除误导。
++- 归属：属 A6 UI 收尾 / A0 集成清理，**不在 A4 隐私/stable-error 审查范围**，仅记录移交。
++
++### F-2【前后端稳定码未对接 · 已知 · 非 A4 阻断】
++
++- 同上 §2.2：前端丢弃稳定码。若未来要做 F-1 的 UX 改进，需先在 `types.ts` 增加稳定码联合类型 + `bridge` 错误映射，再改 `describeError`。A4 仅记录，不越权改前端。
++
++---
++
++## 4. 与并行 lane 的边界
++
++| Lane | 重叠面 | A4 立场 |
++|---|---|---|
++| A6（W14 UI 产品代码） | 隐私/stable-error 实现方 | A4 评审其产出，不改动；F-1 移交 A6/A0 |
++| A10（W15 安全 release review，含 raw-invoke 与 error rendering） | 稳定错误渲染是共同关注点 | A4 负责"隐私 + 稳定错误渲染"实证；A10 负责"raw-invoke 旁路 + 确认旁路 + 敏感渲染回归"全栈。本 verdict §1/§2 与 A10 的 error-rendering 子项**结论一致**（无原始错误回显）。建议 A10 直接引用本 verdict §2.1 作为前端 error-rendering 证据 |
++| A11（W15 最终验证矩阵） | `check-plugin-ui-privacy.py` 已在 pre-merge | 本 verdict 提供隐私面 push-ready 证据；A11 纳入即可 |
++| A2（W14 UI/store 边界 review） | UI/store 是否越界 | A4 仅查隐私/错误，store 边界见 A2 verdict |
++
++---
++
++## 5. 交付物与下一步
++
++### 5.1 本轮交付
++
++| 文件 | 内容 |
++|---|---|
++| `logs/assist/A4-M5-W15-privacy-stable-error-review-20260908-0900.md` | 本 verdict（实证 PASS + PASS_WITH_NOTE + 2 附带 finding） |
++
++- 零产品代码改动（`src/**`、`src-tauri/**` 全未触碰）
++- 零策略脚本改动（`scripts/check-plugin-ui-privacy.py` 维持 W14 状态）
++- 未 commit、未 push（board：Only A0 pushes）
++
++### 5.2 A0 集成动作（建议）
++
++```bash
++# A4 W15 仅评审结论，无代码/脚本需 add。
++# 若要把 verdict 纳入版本控制：
++git add logs/assist/A4-M5-W15-privacy-stable-error-review-20260908-0900.md
++# 与 A10 / A11 的 W15 评审一起，由 A0 统一 commit（建议单独 docs commit）
++```
++
++### 5.3 决策摘要（给 A0 / A11 / A10）
++
++| 维度 | 结论 | 阻断？ |
++|---|---|---|
++| 隐私（4 红线） | **实证 PASS** | 否 |
++| 稳定错误渲染（底线：不回显原始体） | **PASS** | 否 |
++| 稳定错误渲染（增强：利用稳定码） | **NOTE（可选 UX 改进）** | 否 |
++| F-1 悬空 uninstall case | 移交 A6/A0 | 否 |
++| **A4 Lane 整体** | **PASS_WITH_NOTE，push-ready（隐私+稳定错误面）** | 否 |
++
++> A4 W15 不阻塞 M5 release。隐私与稳定错误渲染两项硬性要求均实证满足；唯一 NOTE（稳定码利用）与 F-1（死 case）均为非阻断改进项，移交后续清理。
++
++---
++
++## 6. 自检证据链
++
++| 检查 | 命令 / 位置 | 结果 |
++|---|---|---|
++| 启动门禁 | `pwd` / `git branch` / `git pull --ff-only` | BACKV3_MAIN / master / 已最新 ✅ |
++| 工作树 | `git status --short` | 干净（本评审仅新增 `logs/assist/` 下文件）✅ |
++| 隐私红线 1 | `grep invoke\( src/components/plugin src/stores src/utils/pluginUi` | 零命中 ✅ |
++| 隐私红线 2 | `grep -E "signature\.value\|resource_path\|\.pubkey|\.metadata" PluginManager.vue` | 仅注释/瞬时输入，无渲染 ✅ |
++| 隐私红线 3 | `grep -E "localStorage\|sessionStorage\|indexedDB\|setItem"` | 零命中 ✅ |
++| 稳定错误底线 | `grep -E "err\.message\|String\(err\)\|err\.toString"` | 零命中 ✅ |
++| 隐私夹具 | `python3 scripts/check-plugin-ui-privacy.py[ --self-test / 默认 / --expect-pending]` | 三模式全绿 ✅ |
++| 后端稳定码 | `src-tauri/src/plugin.rs:336-344` | 9 个稳定码存在，前端主动丢弃 ✅ |

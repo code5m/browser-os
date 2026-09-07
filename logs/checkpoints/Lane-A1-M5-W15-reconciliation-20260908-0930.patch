@@ -1,0 +1,505 @@
+diff --git a/AI-模型切换与接手清单.md b/AI-模型切换与接手清单.md
+index c24e1fd..63615f7 100644
+--- a/AI-模型切换与接手清单.md
++++ b/AI-模型切换与接手清单.md
+@@ -1268,3 +1268,4 @@ git log --reverse --oneline --decorate 504fcd7..HEAD
+ 当前应复制 §1 的 `M1-1` 任务卡，而不是继续使用上面的 M0 连续执行提示词。
+ > A0 update 2026-09-08 00:20 CST: W13 Stage-I plugin manifest lifecycle validation PASS (plugin tests 28/28, full cargo 431/431, MCP feature 21/21, plugin policy ACTIVE=7/PENDING=5, plugin privacy pending=NONE, graph/MCP/Agent-Skill policies and UI checks PASS, npm build and pre-merge ALL_PASS). NEXT=`M5-W14` plugin manager UI consuming only existing local lifecycle commands; plugin invoke/execution, dynamic loading, network download/listener, daemon, model call, Agent/Skill execution and MCP full runtime remain LOCKED; only A0 pushes.
+ > A0 update 2026-09-08 02:00 CST: W14 Plugin Manager UI validation PASS (plugin UI logic 61/61, plugin UI privacy self/default/pending PASS, full Rust 431/431, MCP feature 21/21, npm build PASS). A0 corrected Pinia auto-unwrapping and raw error passthrough. Build metric is 24.89% with warning delta=0; recorded limit updated to 25% for the new lazy plugin chunk. NEXT=`M5-W15` release-readiness and GUI acceptance; all plugin execution/runtime expansion remains LOCKED; only A0 pushes.
++> A1 update 2026-09-08 09:30 CST: A1 W15 reconciliation (docs only) — W14 accepted at `886ea29` (`feat(M5): integrate W14 plugin manager UI`); board mainline chain corrected `a7eefbb` → `886ea29` and M5-0/10/11/12/13/14 status reconciled; DEBT-04 plugin UI 6/6 closed-by-W14, M5 final debt ledger stays 53. 25% metric limit tracked: `scripts/measure-build-metrics.py` L38 `TOTAL_BYTES_GROWTH_LIMIT_PCT = 25.0`; read-only re-run vs `build-metrics-4f0e8ab.json` gives `total_bytes_pct=24.89`, `cargo_warnings` delta=0, `exceeds_growth_limit=false`, headroom only 0.11pp — A6 W15 narrow UI polish must add no new chunk size. W15 lane snapshot: A2 PASS_WITH_DEBT / A3 PASS / A4 privacy PASS + stable-error PASS_WITH_NOTE / A5 PASS_WITH_CONTEXT / A7 graph zero-regression / A9 frozen contract confirmed / A10 security PASS; A6 in progress, A8 checklist pending content, A11 push readiness pending. A1 delivers `logs/checkpoints/A1-M5-W15-reconciliation-20260908-0930.md` + patch, zero product code, no push.
+diff --git a/PARALLEL_COMMAND_BOARD.md b/PARALLEL_COMMAND_BOARD.md
+index 14c9f4a..94fa778 100644
+--- a/PARALLEL_COMMAND_BOARD.md
++++ b/PARALLEL_COMMAND_BOARD.md
+@@ -1,9 +1,9 @@
+ # Parallel Command Board
+
+-> Updated: 2026-09-08 02:00 CST
++> Updated: 2026-09-08 09:30 CST
+ > Controller: main integration agent
+ > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
+-> Current mainline: `master` at `a7eefbb` pending A0 W14 integration. W14 Plugin Manager UI is accepted locally with a redacted store, explicit confirmations, no raw invoke, and no execution surface. Only A0 pushes.
++> Current mainline: `master` at `886ea29` — W14 Plugin Manager UI PUSHED and accepted (plugin UI logic 61/61, plugin Rust 28/28, full Rust 431/431, MCP feature 21/21, `npm run build` PASS, build metrics `total_bytes_pct=24.89` ≤ 25% accepted limit, warning delta=0). W15 release-readiness and GUI acceptance is active; plugin invocation/command execution, dynamic loading, network download/listener, daemon, model call, Agent/Skill execution, MCP full runtime, graph write/export, and background workers remain LOCKED. Only A0 pushes.
+ > Current NEXT: M5-W15 release-readiness and GUI acceptance. Plugin invocation/command execution, dynamic loading, network download/listener, daemon, model call, Agent/Skill execution, MCP full runtime, graph write/export, and background workers remain LOCKED.
+
+ This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
+diff --git a/logs/checkpoints/A1-M5-W15-reconciliation-20260908-0930.md b/logs/checkpoints/A1-M5-W15-reconciliation-20260908-0930.md
+new file mode 100644
+index 0000000..8579739
+--- /dev/null
++++ b/logs/checkpoints/A1-M5-W15-reconciliation-20260908-0930.md
+@@ -0,0 +1,208 @@
++# A1 M5-W15 reconciliation checkpoint（DOCS ONLY · 2026-09-08 09:30 CST）
++
++> Lane A1（M5-W15 · docs-only reconciliation）
++> 派发来源：`PARALLEL_COMMAND_BOARD.md` L1163+（M5-W15 Release Readiness Dispatch，Added 2026-09-08 02:00 CST by A0）
++> A0 W14 acceptance 来源：`logs/checkpoints/A0-M5-W14-accept-W15-dispatch-20260908-0200.md`
++> 整包交付：本 checkpoint + `logs/checkpoints/Lane-A1-M5-W15-reconciliation-20260908-0930.patch`（11 文件改动）
++> A1 W15 立场 = **DOCS ONLY · 零产品代码 · 不 push**
++
++---
++
++## §1 任务接收
++
++**W15 派发** = Release Readiness Dispatch（board L1163+）：*W15 closes M5 evidence and GUI acceptance without expanding runtime authority. Only A0 pushes.*
++
++**A1 W15 任务边界（DOCS ONLY · 冻结）**：
++1. reconcile W14 as accepted after A0 push（`886ea29` = HEAD，与 `origin/master` 一致）
++2. track the 25% metric limit（构建体积门禁阈值 23% → 25%）
++3. track W15 status（11 lane 交付快照 + A1 自身整包）
++4. **不**改 product scope（W15 不扩张 runtime authority）
++5. **不**碰产品代码（`src/**` / `src-tauri/**` / `scripts/**` / `src/bridge.ts` / `src/types.ts`）
++6. **不** push
++
++**启动门禁实测**（`WORKSPACE_IDENTITY.md` Required Startup Check）：
++
++| 项 | 实测 | 判定 |
++|---|---|---|
++| `pwd` | `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3` | ✅ |
++| `.workspace-identity` | `WORKSPACE_ID=BACKV3_MAIN` | ✅ |
++| branch | `master` | ✅ |
++| `git fetch origin` + `git pull --ff-only` | 已经是最新的（`886ea29` = `origin/master`） | ✅ |
++| 工作树并发改动 | 存在 A2/A3/A4/A5/A6/A7/A8/A9/A10 其他 lane 的 W15 文件（**非 A1 范围，本 patch 不收**） | ⚠️ 记录不干预 |
++
++---
++
++## §2 整包改动清单（11 文件）
++
++| # | 文件 | 改动 | 性质 |
++|---|------|------|------|
++| 1 | `PARALLEL_COMMAND_BOARD.md` | L3 Updated 时间戳 + L6 mainline chain `a7eefbb` → `886ea29`（W14 PUSHED · accepted）+ W15 active 事实 | modified |
++| 2 | `详细设计与实施计划.md` | A1 W15 update 行（紧随 A0 2026-09-08 02:00 行后） | modified |
++| 3 | `AI-模型切换与接手清单.md` | A1 W15 update 行（同上） | modified |
++| 4 | `后续需求TODO.md` | A1 W15 update 行（同上） | modified |
++| 5 | `logs/checkpoints/M5-20260906/M5-0-overview.md` | L1 title 加 `W14 PUSHED + W15 active` + 末尾 [W15 active · 2026-09-08 09:30 CST] 段（W14 拣入事实 + 14 行 runtime surface 表 + 25% 指标跟踪 + W15 lane 快照） | modified |
++| 6 | `logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md` | 头增 W14 PUSHED + W15 ACTIVE status 行 | modified |
++| 7 | `logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md` | 头增 W14 PUSHED + W15 ACTIVE status 行 | modified |
++| 8 | `logs/checkpoints/M5-20260906/M5-12-plugin-ui.md` | 头增 W14 PUSHED + W15 ACTIVE status 行 + 末尾 [W15 · plugin UI 收口] 段 | modified |
++| 9 | `logs/checkpoints/M5-20260906/M5-13-verification-matrix.md` | L1 title 加 W15 verification scope + 末尾 [W15 verification scope · 2026-09-08 09:30 CST] 段（含 25% 门禁项） | modified |
++| 10 | `logs/checkpoints/M5-20260906/M5-14-debt-ledger.md` | L2 title 加 `W14 PUSHED + W15 active` + 末尾 [W15 active] 段（DEBT-04 closed-by-W14） | modified |
++| 11 | `logs/checkpoints/A1-M5-W15-reconciliation-20260908-0930.md` | **本 checkpoint（new）** | new |
++| 12 | `logs/checkpoints/Lane-A1-M5-W15-reconciliation-20260908-0930.patch` | **本 checkpoint 配套 patch（new）** | new |
++
++> 结构对齐 A1 W12/W13/W14 三 wave 同形：board + 3 主文档 + M5-0/10/11/12/13/14（**10 个已跟踪文件修订**）+ 本 checkpoint（new, #11）= **patch 内 11 文件**；**交付物 = 本 checkpoint + patch 两个文件**（patch 不自我包含）。
++
++---
++
++## §3 W14 accepted 对账（依据 `886ea29` + A0 acceptance）
++
++**A0 在 `886ea29 feat(M5): integrate W14 plugin manager UI`（2026-09-07 15:07 CST）中拣入 W14 整包**，并出具 `A0-M5-W14-accept-W15-dispatch-20260908-0200.md`（`STATUS=PASS`）：
++
++- A6 W14 落地 local-only Plugin Manager UI：list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint
++- 仅消费 frozen W13 6 命令（`plugin_list` / `plugin_get` / `plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_key_registry`），UI 只走 `src/bridge.ts`，**无** raw Tauri `invoke`
++- plugin 执行 / 动态加载 / 网络下载监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP 全量 runtime / graph 写导出 / 后台 worker **全部仍 LOCKED**
++- A0 拣入期 4 项修正：Pinia setup-store 自动解包（模板不再 `store.*.value`）、错误 UI 改用固定安全文案（不透传后端错误文本）、privacy fixture 区分"允许的瞬态表单输入"与"渲染出的秘密"、补第 61 条 UI 断言防 `.value` 回归
++
++**验证实跑（A0 acceptance 记录）**：
++
++| 项 | 结果 |
++|---|---|
++| plugin Rust tests | 28 passed |
++| full Rust tests | 431 passed |
++| MCP feature tests | 21 passed |
++| plugin / plugin-privacy / plugin-UI-privacy / MCP / Agent-Skill / graph 政策 | PASS |
++| plugin UI logic | 61 assertions passed |
++| graph UI logic | 113 passed |
++| Agent/Skill UI logic | 110 passed |
++| `npm run build` | PASS |
++| build metrics | `total_bytes_pct=24.89`，warning delta=0；**accepted limit 抬至 25%** |
++
++**A1 对账结论**：W13（`a7eefbb`）→ W14（`886ea29`）主线条已闭合，board L6 过期描述（`master at a7eefbb pending A0 W14 integration`）由本整包更正为 `886ea29` W14 PUSHED · accepted；`NEXT=M5-W15`。
++
++---
++
++## §4 25% 指标跟踪（A1 W15 第二项职责）
++
++### 4.1 阈值演进与当前常量
++
++| 阶段 | 阈值 | 依据 |
++|---|---|---|
++| M0-4.c 初始 | 15% | `scripts/pre-merge.sh` 文案（**L76 仍写 ≤15%，已滞后，见 4.4**） |
++| M5-W5 前后 | 19% | IF-2 A11 重采挂账 |
++| M5-W8/W9 | 22% | A0 2026-09-07 14:30 收口（`M5-14-debt-ledger.md` L1） |
++| M5-W12 | 23% | A0 W12 拣入期 IF-2 修订（`total_bytes_pct=22.26`） |
++| **M5-W14 → W15（当前）** | **25.0** | `scripts/measure-build-metrics.py` L38 `TOTAL_BYTES_GROWTH_LIMIT_PCT = 25.0`（L35-37 注释记录：M5-W14 新增懒加载 PluginManager 后 A0 于 2026-09-08 抬至 25%） |
++
++### 4.2 当前实测（A1 只读复跑，2026-09-08 09:30 CST）
++
++```bash
++B=$(ls -1 logs/m0-build-metrics/build-metrics-*.json | sort | head -1)
++python3 scripts/measure-build-metrics.py --compare "$B" --skip-build
++```
++
++```json
++{
++  "exceeds_growth_limit": false,
++  "deltas": { "total_bytes_pct": 24.89, "cargo_warnings": 0 },
++  "warnings_increased": false
++}
++```
++
++- 基线：`logs/m0-build-metrics/build-metrics-4f0e8ab.json`（`pre-merge.sh` L220 取同名排序首文件）
++- `total_bytes_pct = 24.89` ≤ **25.0** → **PASS**，余量 **0.11 个百分点**
++- `cargo_warnings` delta = 0，`warnings_increased = false`，exit = 0
++
++### 4.3 余量跟踪结论（交 A0 / A6 / A11）
++
++- 余量仅 **0.11pp**，为 M5 全周期最紧的一档；W15 唯一产品代码 lane = **A6 窄 UI 磨光**（无障碍确认/模态焦点 + empty/loading/error 态），**不得**新增 chunk 体积、不得引入新依赖
++- A6 W15 若有体积增量 → 必须重跑 `measure-build-metrics.py --compare`，超过 25.0 即 `exceeds_growth_limit=true`，`pre-merge.sh` 判 FAIL
++- 建议 A11 W15 收口时把 `total_bytes_pct` 实测值（含基线文件名）写入 W15 verification delta；A0 若再抬阈值须同步 `scripts/measure-build-metrics.py` L35-38 注释 + 本 checkpoint 4.1 表
++
++### 4.4 发现（文档滞后 · A1 不修，交 A0）
++
++- `scripts/pre-merge.sh` L76 文案仍写「总体积 ≤15% 增长」，与实际生效常量 `TOTAL_BYTES_GROWTH_LIMIT_PCT = 25.0` 不一致（仅为说明文本滞后，**门禁实际读常量，不影响判定**）
++- A1 为 docs-only lane，门禁脚本不属 A1 允许范围（W14 lane 表 A1 允许 = board / 3 主文档 / `logs/checkpoints/**`），故**只记录不修改**：建议 A0 在 W15 拣入期把 L76 文案同步为 `≤25%`（或改为读常量的动态说明），消除文档/实现漂移
++
++---
++
++## §5 W15 状态跟踪（2026-09-08 09:30 CST 快照 · 基线 `886ea29`）
++
++| Lane | W15 角色（board L1167-1179） | 交付快照 | 结论 |
++|---|---|---|---|
++| A1 | Docs only：reconcile W14 accepted + 25% 指标 + W15 状态 | 本 checkpoint + patch（10 实际改动 + 2 交付） | DOCS ONLY · 不 push |
++| A2 | Boundary review of W14 UI/store and W15 evidence | `logs/assist/A2-M5-W15-boundary-verdict-20260907-1523.md` + `logs/checkpoints/A2-M5-W15-20260907-1523.md` + `Lane-A2-M5-W15-20260907-1523.patch` | `STATUS=PASS_WITH_DEBT`（非阻塞） |
++| A3 | MCP isolation regression review | `logs/assist/A3-M5-W15-mcp-isolation-verdict-20260907-1521.md` + `logs/checkpoints/A3-M5-W15-mcp-isolation-20260907-1521.md` | PASS（无 MCP 隔离回归，零产品代码） |
++| A4 | Plugin UI privacy and stable-error review | `logs/assist/A4-M5-W15-privacy-stable-error-review-20260908-0900.md` + `Lane-A4-...patch` | 隐私面 PASS；稳定错误面 PASS_WITH_NOTE（建议删 `uninstall` 死 case） |
++| A5 | Agent/Skill execution-lock regression review | `logs/assist/A5-M5-W15-agent-skill-lock-verdict-20260907-1505.md` | `STATUS=PASS_WITH_CONTEXT`（执行锁 PASS） |
++| A6 | Narrow UI polish only（accessible confirmation/modal focus, empty/loading/error） | 工作树改动（A6 已 staged）：new = `scripts/check-ui-a11y-logic.mjs` / `src/components/shared/AsyncState.vue` / `src/composables/useModalFocus.ts` / `src/utils/asyncView.ts` / `src/utils/modalA11y.ts`；modified = `ConfirmModal.vue` / `ImageLightbox.vue` / `AuditPanel.vue` / `GitWriteConfirmDialog.vue` / `PermissionPreviewModal.vue` / `RunHistoryModal.vue` / `ScriptRunDialog.vue` / `TaskEditDialog.vue` | 进行中（A1 快照时未见其 checkpoint/patch） |
++| A7 | Graph non-regression review | `logs/assist/A7-M5-W15-graph-nonregression-20260907-1430.md` | Graph 零回归，可进 M5-W15 Release |
++| A8 | GUI/manual acceptance checklist + 视觉人体工学 | `logs/assist/A8-M5-W15-gui-acceptance-20260907-1526.md`（**快照时文件为空**） | 待内容落盘 |
++| A9 | Frozen W13 backend-contract review（no backend changes） | `logs/assist/A9-M5-W15-frozen-contract-review-20260907-1505.md` + `Lane-A9-M5-W15-frozen-contract-review-20260907-1505.patch` | 契约冻结确认 + W14/W15 零后端改动 |
++| A10 | Security release review（raw-invoke + error rendering） | `logs/assist/A10-M5-W15-security-release-review-20260907-1522.md` + `logs/checkpoints/A10-M5-W15-20260907-1522.md` | `STATUS=PASS`（无裸 IPC 绕过、无敏感渲染逃逸） |
++| A11 | Final verification matrix and push readiness | 快照时未见 W15 文件 | 待交付（push readiness 最终闸门） |
++
++> 快照口径：以 `git status --short` 与 `ls logs/assist logs/checkpoints` 实测为准；其它 lane 的并发改动**不在** A1 patch 范围，A1 只记录状态。
++
++---
++
++## §6 A1 W15 立场
++
++### 6.1 必做（已在本 checkpoint 完成）
++
++- ✅ reconcile W14 as accepted（board L6 + M5-0/10/11/12 + 3 主文档 + 本卡 §3）
++- ✅ track the 25% metric limit（常量定位 + 只读复跑实测 24.89/25.0 + 余量 0.11pp + 4.4 文档滞后发现 → §4）
++- ✅ track W15 status（11 lane 交付快照 → §5）
++- ✅ M5-13 末尾补 [W15 verification scope]（含 `≤25%` 门禁项）
++- ✅ M5-14 末尾补 [W15 active]（DEBT-04 closed-by-W14）
++
++### 6.2 必不做（A1 零产品代码 / 零 push）
++
++- ❌ 不写 `src/**`（含 A6 W15 的 `AsyncState.vue` / `useModalFocus.ts` / `asyncView.ts` / `modalA11y.ts`）
++- ❌ 不写 `scripts/**`（含 `check-ui-a11y-logic.mjs`、`measure-build-metrics.py`、`pre-merge.sh`）
++- ❌ 不写 `src-tauri/**`，不动 ACL / 命令 / DTO / `bridge.ts` / `types.ts`
++- ❌ 不扩张 runtime authority（plugin invoke / 动态加载 / 网络 / daemon / 模型 / Agent-Skill 执行 / MCP 全量 / graph 写导出 / 后台 worker 全锁）
++- ❌ 不替其他 lane 收口其 checkpoint/patch，不 `git add` 他 lane 文件
++- ❌ 不 commit、不 push（本目录为 canonical main，A2 已有 staged 改动，A1 提交会误收他人变更）
++
++---
++
++## §7 债务账变化（`M5-14-debt-ledger.md`）
++
++- **DEBT-04（plugin UI 6 项）**：W14 派发期 0% ACTIVE → A6 W14 实施 + A0 拣入（`886ea29`）后 **6/6 收口 = closed-by-W14**
++- **M5 final debt ledger 维持 53 条**（条目数不变，DEBT-04 状态由"挂账"转"收口"）
++- **W15 预期增量 = 0**（A6 W15 = 窄 UI 磨光，不新增命令/runtime；其余 10 lane = review/docs/verification）
++
++---
++
++## §8 A1 W15 整包交付
++
++- ✅ `logs/checkpoints/A1-M5-W15-reconciliation-20260908-0930.md`（本 checkpoint）
++- ✅ `logs/checkpoints/Lane-A1-M5-W15-reconciliation-20260908-0930.patch`（patch 内 **11 文件** = 10 个已跟踪文件修订 + 本 checkpoint（new），**路径限定 A1 范围**，不自我包含）
++- ✅ 工作树 A1 范围改动 = board + 3 主文档 + M5-0/10/11/12/13/14（10 个 modified）+ 本 checkpoint（new）+ patch（交付容器）
++- ✅ 自检：`grep -c "^diff --git"` = **11**（与整包清单一致）；`git apply --check --reverse` 通过（patch 与工作树 A1 改动一致）
++
++**patch 生成（路径限定，避免误收并发 lane 改动）**：
++
++```bash
++git add -N logs/checkpoints/A1-M5-W15-reconciliation-20260908-0930.md \
++           logs/checkpoints/Lane-A1-M5-W15-reconciliation-20260908-0930.patch
++git diff --binary -- PARALLEL_COMMAND_BOARD.md 详细设计与实施计划.md \
++  AI-模型切换与接手清单.md 后续需求TODO.md logs/checkpoints/M5-20260906 \
++  logs/checkpoints/A1-M5-W15-reconciliation-20260908-0930.md \
++  logs/checkpoints/Lane-A1-M5-W15-reconciliation-20260908-0930.patch \
++  > logs/checkpoints/Lane-A1-M5-W15-reconciliation-20260908-0930.patch
++```
++
++**A1 W15 不 push**：A0 拣入期按本 checkpoint + patch 套用；A11 出 push readiness 后由 A0 合并推送。
++
++---
++
++## §9 关联文件（Pointer）
++
++- 派发原文：`PARALLEL_COMMAND_BOARD.md` L1163-1185（M5-W15 Release Readiness Dispatch）
++- A0 W14 acceptance：`logs/checkpoints/A0-M5-W14-accept-W15-dispatch-20260908-0200.md`
++- A1 W14 整包（同形参考）：`logs/checkpoints/A1-M5-W14-reconciliation-20260908-0020.md` + `Lane-A1-M5-W14-reconciliation-20260908-0020.patch`
++- 25% 常量：`scripts/measure-build-metrics.py` L35-38；门禁调用：`scripts/pre-merge.sh` L218-231（文案 L76 滞后）
++- M5-0 末尾段：[W15 active · 2026-09-08 09:30 CST]
++- M5-12 末尾段：[W15 · plugin UI 收口 · 2026-09-08 09:30 CST]
++- M5-13 末尾段：[W15 verification scope · 2026-09-08 09:30 CST]
++- M5-14 末尾段：[W15 active · 2026-09-08 09:30 CST]
+diff --git a/logs/checkpoints/M5-20260906/M5-0-overview.md b/logs/checkpoints/M5-20260906/M5-0-overview.md
+index 10ab7a2..9d2bba0 100644
+--- a/logs/checkpoints/M5-20260906/M5-0-overview.md
++++ b/logs/checkpoints/M5-20260906/M5-0-overview.md
+@@ -1,4 +1,4 @@
+-# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0 + W1 + W2 + W3 reconciliation + W4 active + W5 reconciliation + W6 reconciliation + W7 reconciliation + W8 reconciliation + W8 active + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active + W12 reconciliation + W12 PUSHED + W13 active + W13 PUSHED + W14 active）
++# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0 + W1 + W2 + W3 reconciliation + W4 active + W5 reconciliation + W6 reconciliation + W7 reconciliation + W8 reconciliation + W8 active + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active + W12 reconciliation + W12 PUSHED + W13 active + W13 PUSHED + W14 active + W14 PUSHED + W15 active）
+
+ > 生成：2026-09-06 08:00 CST · Lane A1（M5-W0 · docs only）
+ > W1 修订：2026-09-06 08:50 CST · Lane A1（M5-W1 · docs-only reconciliation）
+@@ -1201,3 +1201,70 @@ NEXT=M5-W1（待 A0 签发）
+ - **不** push
+
+ **A6 W14 实施期收口**：A6 W14 实施完成 = 6 action 全 ACTIVE + `check-plugin-ui-logic.mjs` ≥9/9 PASS + A11 W14 verification delta 功能性 ALL_PASS + A7 W14 graph non-regression PASS + A10 W14 security review PASS → DEBT-04 closed-by-W14，M5 final debt ledger 维持 53 条（plugin UI 6 项由"挂账"转"收口"）。
++
++---
++
++## [W15 active · 2026-09-08 09:30 CST] A1 W15 reconciliation 立场 · release readiness 派发期 · W14 accepted 对账 + 25% 指标跟踪 + runtime surface 锁定状态表（14 行）
++
++> **依据**：`PARALLEL_COMMAND_BOARD.md` L1163+（M5-W15 Release Readiness Dispatch，Added 2026-09-08 02:00 CST by A0）+ `logs/checkpoints/A0-M5-W14-accept-W15-dispatch-20260908-0200.md`（`STATUS=PASS`）+ A1 W15 reconciliation 整包（`logs/checkpoints/A1-M5-W15-reconciliation-20260908-0930.md`）。
++
++### W14 accepted 对账（基线 `886ea29` = HEAD = `origin/master`）
++
++- A0 在 **`886ea29 feat(M5): integrate W14 plugin manager UI`（2026-09-07 15:07 CST）** 中拣入 W14 整包并接受：plugin UI logic **61/61**、plugin Rust **28/28**、full Rust **431/431**、MCP feature **21/21**、graph UI **113/113**、Agent/Skill UI **110/110**、`npm run build` PASS
++- A0 拣入期 4 项修正：Pinia setup-store 自动解包 / 错误 UI 固定安全文案（不透传后端错误文本）/ privacy fixture 区分瞬态表单输入与渲染秘密 / 补第 61 条 UI 断言
++- **plugin 执行 / 动态加载 / 网络下载监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP 全量 runtime / graph 写导出 / 后台 worker 全部仍 LOCKED**（W15 Hard Stop 沿用）
++- board L6 主线条已由本整包更正为 `886ea29`（原过期描述 `a7eefbb pending A0 W14 integration`）
++
++### 25% 指标跟踪（A1 W15 第二项职责）
++
++| 项 | 值 |
++|---|---|
++| 生效常量 | `scripts/measure-build-metrics.py` L38 `TOTAL_BYTES_GROWTH_LIMIT_PCT = 25.0` |
++| 当前实测（只读复跑） | `total_bytes_pct = 24.89`（基线 `logs/m0-build-metrics/build-metrics-4f0e8ab.json`，`--skip-build`） |
++| 余量 | **0.11 个百分点**（M5 全周期最紧一档） |
++| `cargo_warnings` delta | 0（`warnings_increased=false`，`exceeds_growth_limit=false`，exit=0） |
++| 阈值演进 | 15% → 19% → 22%（W8/W9）→ 23%（W12）→ **25%**（W14 抬升，为懒加载 PluginManager chunk） |
++| 约束 | A6 W15 窄 UI 磨光**不得**新增 chunk 体积 / 新依赖；超 25.0 即 `pre-merge.sh` FAIL |
++| 文档滞后（交 A0） | `scripts/pre-merge.sh` L76 文案仍写「总体积 ≤15%」，与实际常量 25.0 不一致（门禁读常量，判定不受影响；建议 A0 W15 拣入期同步文案） |
++
++### W15 runtime surface 锁定状态表（14 行 · 沿用 W14，W15 无新增开放面）
++
++| 维度 | W14 status | W15 status | 备注 |
++|------|-----------|-----------|------|
++| 1. `plugin_invoke` / `plugin_cancel` / `plugin_storage_*` 5 stub | 🔒 LOCKED | 🔒 LOCKED | 5 stub 错误结构不变；W15 不实现 |
++| 2. `plugin_install` / `plugin_enable` / `plugin_disable` stage-I lifecycle | 🟢 OPENED（narrow·local-only） | 🟢 OPENED（narrow·local-only） | W15 不重写 |
++| 3. `plugin_list` / `plugin_get` / `plugin_key_registry` | 🟢 OPENED（read-only） | 🟢 OPENED（read-only） | W15 不重写 |
++| 4. `plugin_audit_get` | 🟢 OPENED（read-only） | 🟢 OPENED（read-only） | W15 不重写 |
++| 5. network download / listener | 🔒 LOCKED | 🔒 LOCKED | W15 不引入 |
++| 6. dynamic code loading | 🔒 LOCKED | 🔒 LOCKED | W15 不引入 |
++| 7. daemon / model call | 🔒 LOCKED | 🔒 LOCKED | W15 不引入 |
++| 8. Agent/Skill execution | 🔒 LOCKED | 🔒 LOCKED | A5 W15 执行锁评审 PASS_WITH_CONTEXT |
++| 9. MCP full runtime | 🔒 LOCKED | 🔒 LOCKED | A3 W15 MCP 隔离回归 PASS |
++| 10. graph build-write-export | 🔒 LOCKED | 🔒 LOCKED | A7 W15 graph 零回归 |
++| 11. background worker | 🔒 LOCKED | 🔒 LOCKED | W15 不引入 |
++| 12. plugin UI 6 action（list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint） | 🟢 OPENED（A6 实施完成 61 断言） | 🟢 OPENED（**DEBT-04 closed-by-W14**） | W15 仅窄 UI 磨光，不加新 action |
++| 13. raw Tauri `invoke`（绕过 bridge.ts） | 🔒 LOCKED | 🔒 LOCKED | A2/A10 W15 复核：无裸 IPC 绕过 |
++| 14. raw signature / public-key / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr 渲染 | 🔒 LOCKED | 🔒 LOCKED | A4 W15 隐私面 PASS；A10 W15 敏感渲染逃逸 0 |
++
++### W15 lane 交付快照（2026-09-08 09:30 CST · A1 只读记录）
++
++| Lane | W15 角色 | 交付 | 结论 |
++|---|---|---|---|
++| A1 | Docs only（本卡） | 本 checkpoint + patch | DOCS ONLY · 不 push |
++| A2 | Boundary review | `A2-M5-W15-boundary-verdict-20260907-1523.md` + checkpoint + patch | PASS_WITH_DEBT（非阻塞） |
++| A3 | MCP isolation regression | `A3-M5-W15-mcp-isolation-verdict-20260907-1521.md` + checkpoint | PASS |
++| A4 | Plugin UI privacy / stable-error | `A4-M5-W15-privacy-stable-error-review-20260908-0900.md` + patch | 隐私 PASS；稳定错误 PASS_WITH_NOTE |
++| A5 | Agent/Skill execution-lock | `A5-M5-W15-agent-skill-lock-verdict-20260907-1505.md` | PASS_WITH_CONTEXT |
++| A6 | Narrow UI polish（a11y 确认/模态焦点 + empty/loading/error） | 工作树改动（A6 已 staged）：new = `scripts/check-ui-a11y-logic.mjs` / `src/components/shared/AsyncState.vue` / `src/composables/useModalFocus.ts` / `src/utils/asyncView.ts` / `src/utils/modalA11y.ts`；modified = `ConfirmModal.vue` / `ImageLightbox.vue` / `AuditPanel.vue` / `GitWriteConfirmDialog.vue` / `PermissionPreviewModal.vue` / `RunHistoryModal.vue` / `ScriptRunDialog.vue` / `TaskEditDialog.vue` | 进行中 |
++| A7 | Graph non-regression | `A7-M5-W15-graph-nonregression-20260907-1430.md` | 零回归 |
++| A8 | GUI/manual acceptance checklist | `A8-M5-W15-gui-acceptance-20260907-1526.md`（快照时为空） | 待内容 |
++| A9 | Frozen W13 backend-contract review | `A9-M5-W15-frozen-contract-review-20260907-1505.md` + patch | 契约冻结确认，零后端改动 |
++| A10 | Security release review | `A10-M5-W15-security-release-review-20260907-1522.md` + checkpoint | PASS |
++| A11 | Final verification matrix + push readiness | 快照时未见 W15 文件 | 待交付 |
++
++### A1 W15 派发期立场 = DOCS ONLY
++
++- reconcile W14 as accepted（`886ea29`）+ track 25% 指标 + track W15 status
++- **不**改 product scope / **不**碰产品代码（`src/**` / `src-tauri/**` / `scripts/**` / `bridge.ts` / `types.ts`）
++- **不**收其他 lane 的并发改动进本 patch；**不** commit、**不** push（本目录为 canonical main，A2 已有 staged 改动，A1 提交会误收他人变更）
++- W15 收口路径：A6 窄 UI 磨光 + A11 push readiness → A0 拣入并推送
+diff --git a/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md b/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md
+index d996f48..821227e 100644
+--- a/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md
++++ b/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md
+@@ -18,6 +18,8 @@
+ > **W13** ACTIVE（**A9 W13 = START PRODUCT CODE NARROW**（**plugin stage-I manifest 生命周期**：`plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_list` / `plugin_get` / `plugin_key_registry` 6 命令；本地 manifest 解析 / 静态资源元数据装载 / install / enable / disable / list / get / key registry 安全本地状态机；**不**实施 runtime invoke / 不暴露执行边 / 不引入网络下载或监听 / 不动态加载代码 / 不暴露文件 / 数据库 / 脚本 / Agent / Skill 副作用；**复用** W6 `5f92ece` `plugin.rs` 5 stub `plugin_invoke/cancel/permissions_get/audit_list/storage_*` 维持 `Err("not-implemented-in-W6")`，stage-I **不**实现 invoke / cancel / storage_* 5 stub；ACL 加 6 条插末条 `list_artifact_images` 前；`bridge.ts` / `types.ts` 镜像对齐；`check-plugin-policy.py` 新增 `PLUGIN_LIFECYCLE_LOCAL_ONLY` 政策码（ACTIVE 6 → 7））；**plugin invoke / command execution / dynamic code loading / network download/listener / MCP full runtime / Agent/Skill execution / daemon / model call / graph build-write-export 仍 LOCKED**（W13 Hard Stop）；详见 `M5-0-overview.md` 顶部 `[W13 active · 2026-09-07 23:55 CST]` 段 runtime-lock 状态表 13 行；**W13 plugin 范围冻结 = 恰好 6 条 stage-I manifest 生命周期命令**（详见 [W13 stage-I scope] 段）
+ > **W13 PUSHED**（2026-09-08 00:20 CST · A0 拣入 `a7eefbb` = HEAD）：A0 在 **`a7eefbb feat(M5): integrate W13 plugin manifest lifecycle`** 中拣入 W13：8 local-only lifecycle/key-registry 命令（`plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_list` / `plugin_get` / `plugin_key_registry` / `plugin_audit_get` / `plugin_storage_*` 4 stub 错误结构不变）+ 原子注册表持久化 + redacted DTO/audit + ACL/source-check parity + **无** execution surface；`cargo test plugin` 全绿 + `check-plugin-policy.py` ACTIVE=8/PENDING=0 + `check-plugin-privacy.py` ACTIVE=4/PENDING=0；A1 W13 reconciliation 整包合并拣入；**plugin UI runtime 仍 LOCKED**（W14 Hard Stop）+ **A19 仍 SUPPORT DOCS ONLY**（plugin UI 6 项仍 0% ACTIVE，DEBT-04 W14+ 仍挂账）。
+ > **W14** ACTIVE（**A6 W14 = START PRODUCT CODE NARROW（plugin manager UI 唯一产品代码 lane）** —— 消费 frozen W13 6 命令（`plugin_list` / `plugin_get` / `plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_key_registry`）+ `usePluginStore` + `check-plugin-ui-logic.mjs` + workspace navigation 集成；6 action = list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint；**不**实施 W14 新 lifecycle 命令 / **不**碰 `src/bridge.ts` DTO 形态 / **不** raw Tauri `invoke` / **不**渲染 raw signature / public-key / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr；**plugin invoke / 命令执行 / 动态加载 / 网络下载监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP 全量 / graph 写导出 / 后台 worker 仍 LOCKED**（W14 Hard Stop）；W14 命令名 + DTO 冻结 = 复吃 W13 6 命令，不增删 lifecycle；**A1 W14 = START DOCS ONLY**（reconcile W13 accepted + mark W14 active + **不**改 product scope）；A19 仍 SUPPORT（plugin UI 6 项 ACTIVE 仍 0%，待 A6 W14 实施完成 = DEBT-04 W14+ 仍挂账）；详见 `M5-0-overview.md` 顶部 `[W14 active · 2026-09-08 00:20 CST]` 段 runtime-lock 状态表 14 行 + `M5-12-plugin-ui.md` 末尾 [W14 active] 段）
++> **W14 PUSHED**（2026-09-08 09:30 CST 对账 · A0 拣入 `886ea29` = HEAD）：A0 在 **`886ea29 feat(M5): integrate W14 plugin manager UI`** 中拣入 A6 W14 plugin manager UI 并接受（`STATUS=PASS`）：消费 frozen W13 6 命令（`plugin_list` / `plugin_get` / `plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_key_registry`）+ `src/components/plugin/**` + `src/stores/usePluginStore.ts` + `scripts/check-plugin-ui-logic.mjs` + workspace navigation 集成；6 action 全覆盖 + plugin UI logic **61/61** + plugin Rust 28/28 + full Rust 431/431 + MCP feature 21/21 + `npm run build` PASS + build metrics `total_bytes_pct=24.89` ≤ **25%**（A0 W14 拣入期阈值 23% → 25% 上调）+ cargo_warnings delta = 0；A0 修正 Pinia 自动解包与 raw error 透传；**plugin invoke / 命令执行 / 动态加载 / 网络下载监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP 全量 / graph 写导出 / 后台 worker 仍 LOCKED**（W15 Hard Stop）
++> **W15** ACTIVE（**A6 W15 = NARROW UI POLISH ONLY**（accessible confirmation / modal focus + empty/loading/error 态；**不**新增命令 / runtime surface / 体积增量）+ **其余 10 lane = review / docs / verification**（A1 DOCS ONLY / A2 BOUNDARY / A3 MCP ISOLATION / A4 PRIVACY+STABLE-ERROR / A5 AGENT-SKILL LOCK / A7 GRAPH NON-REGRESSION / A8 GUI ACCEPTANCE / A9 FROZEN CONTRACT（**no backend changes**）/ A10 SECURITY / A11 VERIFICATION）；**W15 = release readiness + GUI 验收，不扩张运行时权限**；本卡 W15 **无** manifest / lifecycle 命令改动、**无** DTO / ACL 改动、**无**后端改动；详见 `M5-0-overview.md` 末尾 `[W15 active · 2026-09-08 09:30 CST]` 段 runtime surface 锁定状态表 14 行 + `M5-13-verification-matrix.md` 末尾 [W15 verification scope] 段）
+
+ ---
+
+diff --git a/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md b/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md
+index ca7b10d..624a18d 100644
+--- a/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md
++++ b/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md
+@@ -18,6 +18,8 @@
+ > **W13** ACTIVE（**A9 W13 = START PRODUCT CODE NARROW**（**plugin stage-I commands_isolation**：`plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_list` / `plugin_get` / `plugin_key_registry` 6 命令；K1 ACL 末条恒为 `list_artifact_images`，6 条新命令**插在其前**；**不**实施 `plugin_invoke` / `plugin_cancel` / `plugin_storage_*` 5 stub —— 维持 `Err("not-implemented-in-W6")`；stage-I commands_isolation 维持 pure / stub 错误结构不变 / audit shape 维持 key_hash_only / 无 invoke / 无真实 cancel / 无 storage 写；**复用** W6 `5f92ece` `plugin.rs` 5 stub + `domain.rs` PluginInvokeRecord + `security_policy.rs` 补丁，**只**加 stage-I lifecycle 真实命令）；**plugin invoke / command execution / dynamic code loading / network download/listener / MCP full runtime / Agent/Skill execution / daemon / model call 仍 LOCKED**（W13 Hard Stop）；详见 `M5-0-overview.md` 顶部 `[W13 active · 2026-09-07 23:55 CST]` 段 runtime-lock 状态表 13 行；**W13 plugin 范围冻结 = 恰好 6 条 stage-I manifest 生命周期命令**（详见 [W13 stage-I isolation] 段）
+ > **W13 PUSHED**（2026-09-08 00:20 CST · A0 拣入 `a7eefbb` = HEAD）：A0 在 **`a7eefbb feat(M5): integrate W13 plugin manifest lifecycle`** 中拣入 W13：commands_isolation 维持 pure / 5 stub 错误结构不变 / audit shape 维持 key_hash_only / K1 ACL 末条恒为 `list_artifact_images`（8 条新命令**插在其前**）/ source-check parity；A1 W13 reconciliation 整包合并拣入；**plugin invoke / cancel / storage_* runtime 仍 LOCKED**（W14 Hard Stop）。
+ > **W14** ACTIVE（**A6 W14 = START PRODUCT CODE NARROW（plugin manager UI 唯一产品代码 lane）** —— 消费 frozen W13 6 命令 + 6 action = list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint；**不**实施 W14 新 lifecycle 命令 / **不**碰 `bridge.ts` DTO 形态 / **不** raw Tauri `invoke` / **不**渲染 raw 敏感字段；**plugin invoke / 命令执行 / 动态加载 / 网络下载监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP 全量 / graph 写导出 / 后台 worker 仍 LOCKED**（W14 Hard Stop）；W14 命令名 + DTO 冻结 = 复吃 W13 6 命令，不增删 lifecycle；A1 W14 = START DOCS ONLY；详见 `M5-0-overview.md` 顶部 `[W14 active · 2026-09-08 00:20 CST]` 段）
++> **W14 PUSHED**（2026-09-08 09:30 CST 对账 · A0 拣入 `886ea29` = HEAD）：A0 在 **`886ea29 feat(M5): integrate W14 plugin manager UI`** 中拣入 A6 W14 plugin manager UI 并接受（`STATUS=PASS`）：commands_isolation 维持 pure / 5 stub `plugin_invoke` / `plugin_cancel` / `plugin_permissions_get` / `plugin_audit_list` / `plugin_storage_*` 错误结构不变 / audit shape 维持 key_hash_only / K1 ACL 末条恒为 `list_artifact_images`（W14 **未**新增 ACL）；plugin UI logic **61/61** + plugin Rust 28/28 + full Rust 431/431 + MCP feature 21/21 + `npm run build` PASS + build metrics `total_bytes_pct=24.89` ≤ **25%**（A0 W14 拣入期阈值 23% → 25% 上调）+ cargo_warnings delta = 0；**plugin invoke / cancel / storage_* runtime 仍 LOCKED**（W15 Hard Stop）
++> **W15** ACTIVE（**A6 W15 = NARROW UI POLISH ONLY**（accessible confirmation / modal focus + empty/loading/error 态；**不**新增命令 / runtime surface / 体积增量）+ **其余 10 lane = review / docs / verification**（A1 DOCS ONLY / A2 BOUNDARY / A3 MCP ISOLATION / A4 PRIVACY+STABLE-ERROR / A5 AGENT-SKILL LOCK / A7 GRAPH NON-REGRESSION / A8 GUI ACCEPTANCE / A9 FROZEN W13 CONTRACT（**no backend changes**）/ A10 SECURITY / A11 VERIFICATION）；**W15 = release readiness + GUI 验收，不扩张运行时权限**；本卡 W15 **无**命令 / stub / ACL / DTO 改动（K1 ACL 末条恒为 `list_artifact_images` 不破），A9 W15 仅冻结契约复核、**零后端改动**；详见 `M5-0-overview.md` 末尾 `[W15 active · 2026-09-08 09:30 CST]` 段 runtime surface 锁定状态表 14 行 + `M5-13-verification-matrix.md` 末尾 [W15 verification scope] 段）
+
+ ---
+
+diff --git a/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md b/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md
+index 29f4388..a6fa035 100644
+--- a/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md
++++ b/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md
+@@ -18,6 +18,8 @@
+ > **W13** ACTIVE（**A9 W13 = START PRODUCT CODE NARROW**（**plugin stage-I manifest 生命周期后端** —— `plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_list` / `plugin_get` / `plugin_key_registry` 6 命令 + 本地状态机）+ **A19 仍 SUPPORT DOCS ONLY**（plugin UI 6 项仍 0% ACTIVE，**仍待 A19 派发**；A0 W12/W13 期间未派发 A19 plugin UI 产品代码；plugin UI 6 项 = 列表 / 详情 / 安装向导 / 启用停用 / 审计查询 / 权限预览，**全部依赖** W13 stage-I 真实后端 6 命令落地）；**plugin UI runtime 仍 LOCKED**（W13 Hard Stop）；详见 `M5-0-overview.md` 顶部 `[W13 active · 2026-09-07 23:55 CST]` 段 runtime-lock 状态表 13 行；**DEBT-04（plugin UI 6 项仍 0% ACTIVE）= W14+ 仍挂账**；**W13 plugin 范围冻结 = 后端 6 条 stage-I 命令（**不**含 UI 实施）**（详见 [W13 plugin UI still locked] 段）
+ > **W13 PUSHED**（2026-09-08 00:20 CST · A0 拣入 `a7eefbb` = HEAD）：A0 在 **`a7eefbb feat(M5): integrate W13 plugin manifest lifecycle`** 中拣入 W13：8 local-only lifecycle/key-registry 命令（含 5 stub 错误结构不变）+ 原子注册表持久化 + redacted DTO/audit + ACL/source-check parity + **无** execution surface；A1 W13 reconciliation 整包合并拣入；**plugin UI 6 项 ACTIVE 仍 0%**（W14 派发 A6 实施前不挂 ACTIVE）；**DEBT-04 = W14+ 仍挂账**。
+ > **W14** ACTIVE（**A6 W14 = START PRODUCT CODE NARROW（plugin manager UI 唯一产品代码 lane）** —— 消费 frozen W13 6 命令（`plugin_list` / `plugin_get` / `plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_key_registry`）+ `src/components/plugin/**` + `src/stores/usePluginStore.ts` + `scripts/check-plugin-ui-logic.mjs` + workspace navigation 集成；6 action = list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint；**不**实施 W14 新 lifecycle 命令 / **不**碰 `src/bridge.ts` DTO 形态 / **不** raw Tauri `invoke` / **不**渲染 raw signature / public-key / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr；**plugin invoke / 命令执行 / 动态加载 / 网络下载监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP 全量 / graph 写导出 / 后台 worker 仍 LOCKED**（W14 Hard Stop）；W14 命令名 + DTO 冻结 = 复吃 W13 6 命令，不增删 lifecycle；**A1 W14 = START DOCS ONLY**（reconcile W13 accepted + mark W14 active + **不**改 product scope）；**plugin UI 6 项 ACTIVE 仍 0%**（A6 W14 实施后才标 ACTIVE，本 wave 派发期维持 0% = DEBT-04 W14+ 仍挂账）；A19 仍 SUPPORT；详见 `M5-0-overview.md` 顶部 `[W14 active · 2026-09-08 00:20 CST]` 段 runtime-lock 状态表 14 行 + 本卡末尾 [W14 active] 段）
++> **W14 PUSHED**（2026-09-08 09:30 CST 对账 · A0 拣入 `886ea29` = HEAD）：A0 在 **`886ea29 feat(M5): integrate W14 plugin manager UI`** 中拣入 A6 W14 plugin manager UI 并接受（`STATUS=PASS`）：`src/components/plugin/**` + `src/stores/usePluginStore.ts` + `scripts/check-plugin-ui-logic.mjs` + workspace navigation 集成；6 action（list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint）**全覆盖**；plugin UI logic **61/61**（A0 补第 61 条防 Pinia `.value` 回归）+ plugin UI privacy self/default/pending PASS + plugin Rust 28/28 + full Rust 431/431 + MCP feature 21/21 + `npm run build` PASS + build metrics `total_bytes_pct=24.89` ≤ **25%**（阈值 23% → 25% 上调）+ cargo_warnings delta = 0；**plugin UI 6 项 ACTIVE = 0% → 6/6 = DEBT-04 closed-by-W14**；**plugin invoke / 命令执行 / 动态加载 / 网络 / daemon / 模型 / Agent-Skill / MCP 全量 / graph 写导出 / 后台 worker 仍 LOCKED**（W15 Hard Stop）
++> **W15** ACTIVE（**A6 W15 = NARROW UI POLISH ONLY**（accessible confirmation / modal focus + empty/loading/error 态；**不**新增命令 / 不新增 action / runtime surface / 体积增量）+ **其余 10 lane = review / docs / verification**（A1 DOCS ONLY / A2 BOUNDARY / A3 MCP ISOLATION / A4 PRIVACY+STABLE-ERROR / A5 AGENT-SKILL LOCK / A7 GRAPH NON-REGRESSION / A8 GUI ACCEPTANCE / A9 FROZEN CONTRACT（**no backend changes**）/ A10 SECURITY / A11 VERIFICATION）；**W15 = release readiness + GUI 验收**；本卡 W15 **无**新命令 / 新 DTO / 新 ACL / 后端改动；详见 `M5-0-overview.md` 末尾 `[W15 active · 2026-09-08 09:30 CST]` 段 + 本卡末尾 [W15 · plugin UI 收口] 段 + `M5-13-verification-matrix.md` 末尾 [W15 verification scope] 段）
+
+ ---
+
+@@ -240,3 +242,28 @@ pnpm lint
+ **A8 W14 UI review / A9 W14 backend review / A10 W14 security review** 必保 A6 实施期：① UI 走 bridge.ts（无 raw invoke）+ ② 6 命令输入输出字段全在 W13 DTO 白名单内 + ③ 缺 read-only 字段时 A8/A9 报告，A6 不私加字段。
+
+ **A11 W14 verification scope** = `M5-13-verification-matrix.md` 末尾 [W14 verification scope] 段（6 UI 行动 + `check-plugin-ui-logic.mjs` + `npm run build` + privacy 复检 + build metrics ≤ 23% + cargo_warnings delta = 0）。
++
++---
++
++## [W15 · plugin UI 收口 · 2026-09-08 09:30 CST] A1 W15 reconciliation · DEBT-04 closed-by-W14 + A6 W15 窄磨光边界
++
++**W14 已拣入接受（`886ea29` = HEAD）** → 本卡 plugin UI 6 项由「0% ACTIVE / 挂账」转「**6/6 ACTIVE / closed-by-W14**」：
++
++| plugin UI 项 | W13 状态 | W14 状态 | W15 状态 |
++|---|---|---|---|
++| 列表 list | 🔒 未实现 | 🟢 ACTIVE | 🟢 保持（仅 a11y/状态态磨光） |
++| 过滤 filter | 🔒 未实现 | 🟢 ACTIVE | 🟢 保持 |
++| 详情 inspect | 🔒 未实现 | 🟢 ACTIVE | 🟢 保持 |
++| 安装 supplied manifest | 🔒 未实现 | 🟢 ACTIVE | 🟢 保持 |
++| 启用 / 停用 enable / disable | 🔒 未实现 | 🟢 ACTIVE | 🟢 保持 |
++| 可信 key 指纹管理 | 🔒 未实现 | 🟢 ACTIVE | 🟢 保持 |
++
++**DEBT-04 = closed-by-W14**（M5 final debt ledger 条目数维持 **53 条**，仅状态由挂账转收口）。
++
++**A6 W15 窄磨光边界（冻结）**：
++- 仅 accessible confirmation / modal focus + empty/loading/error 态
++- **不**新增命令、**不**新增 action、**不**扩 runtime surface、**不**引入新依赖
++- **不**动 `src/bridge.ts` DTO 与 `src/types.ts`；UI 仍只走 `src/bridge.ts`，**无** raw Tauri `invoke`
++- 体积约束：build metrics `total_bytes_pct ≤ 25.0`（当前实测 **24.89**，余量 **0.11pp**），A11 W15 必须复跑 `measure-build-metrics.py --compare` 留证
++
++**A4 W15 稳定错误面 PASS_WITH_NOTE（交 A0/A6 可选处理）**：`confirmText` switch 中 `uninstall` 为类型系统已阻止的**死 case**，建议 release 前删除以消除误导（非阻塞）。
+diff --git a/logs/checkpoints/M5-20260906/M5-13-verification-matrix.md b/logs/checkpoints/M5-20260906/M5-13-verification-matrix.md
+index 3e3c158..1127b37 100644
+--- a/logs/checkpoints/M5-20260906/M5-13-verification-matrix.md
++++ b/logs/checkpoints/M5-20260906/M5-13-verification-matrix.md
+@@ -1,4 +1,4 @@
+-# M5 验证矩阵（A1 横切 · M5-W0 末位 + W1 reconciliation + W6 verification delta + W7 verification scope + W8 reconciliation + W9 verification scope + W10 verification scope + W10 verification delta + W11 verification scope + W12 verification scope + W12 build metrics threshold + W13 verification scope + W14 verification scope）
++# M5 验证矩阵（A1 横切 · M5-W0 末位 + W1 reconciliation + W6 verification delta + W7 verification scope + W8 reconciliation + W9 verification scope + W10 verification scope + W10 verification delta + W11 verification scope + W12 verification scope + W12 build metrics threshold + W13 verification scope + W14 verification scope + W14 PUSHED + W15 verification scope）
+
+ > 子卡 ID：**M5-13** · 跨 M5-1~M5-12 · `[S3|LEVERAGE:2|COMPLEX|AI:DEEP|R:xhigh]`
+ > 责任 Lane 候选：**A11**（沿用 A7/A11 角色，A0 签发时定）
+@@ -11,6 +11,7 @@
+ > **W11 PUSHED**（2026-09-07 20:30 CST · A0 拣入 `269269a` = HEAD）：A0 在 **`269269a feat(M5): integrate W11 MCP stdio dry-run hardening`** 中拣入 W11：MCP stdio dry-run 硬化（21/21 + ACTIVE=11/PENDING=0）+ A5 Agent/Skill 执行锁 policy（PENDING=6）+ A7 W12 graph live-query 实施卡 + A9 W12/W13 plugin staged cards + A1 W11 reconciliation 整包；完整验证矩阵见 [W11 verification scope] 段。
+ > **W12** ACTIVE：**W12 graph live-query read-only verification matrix 模式** —— W12 三只读命令 `graph_query` / `graph_node_get` / `graph_stats` + A8 UI 消费 + 9 lane review/verification（见 [W12 verification scope] 段）；详见 `M5-0-overview.md` 顶部 `[W12 active · 2026-09-07 20:30 CST]` 段。
+ > **W12 PUSHED**（2026-09-07 23:55 CST · A0 拣入 `3c3f460` = HEAD）：A0 在 **`3c3f460 feat(M5): integrate W12 graph live-query readonly bridge/UI`** 中拣入 W12；图谱 live-query 只读 3 命令 + A8 UI 消费 + 10 份 W12 assist + A1 W12 reconciliation 整包 + M5-0/7/8/9/10/11/12/13/14 头部 W11 PUSHED + W12 ACTIVE 修订 + 末尾 [W12 scope supersession]/[W12 verification scope]/[W12 active] 段 + 3 主文档 L1 W11 update 行 + board L6/L7 W12 dispatch；`cargo test graph` **15/15 PASS** + full cargo **414/414 PASS** + `cargo test --features mcp mcp_server` **21/21 PASS** + `check-graph-policy.py` **ACTIVE=8 PASS** + `check-mcp-policy.py` ACTIVE=12/PENDING=0 PASS + `check-agent-skill-policy.py` ACTIVE=3/PENDING=6 PASS + `check-graph-ui-logic.mjs` **113/113 PASS** + `check-agent-skill-ui-logic.mjs` **110/110 PASS** + `npm run build` PASS + `python3 scripts/measure-build-metrics.py` **`total_bytes_pct=22.26` ≤ 23% PASS**（A0 W12 拣入期 IF-2 阈值 22% → 23% 修订）+ cargo_warnings delta = 0。
++> **W14 PUSHED**（2026-09-08 09:30 CST 对账 · A0 拣入 `886ea29` = HEAD）：A0 在 **`886ea29 feat(M5): integrate W14 plugin manager UI`** 中拣入 W14 并接受（`STATUS=PASS`）：plugin UI logic **61/61** + plugin Rust 28/28 + full Rust 431/431 + MCP feature 21/21 + graph UI 113/113 + Agent/Skill UI 110/110 + `npm run build` PASS + `pre-merge.sh` ALL_PASS + build metrics `total_bytes_pct=24.89` ≤ **25%**（阈值 23% → 25% 上调，余量仅 0.11pp）+ cargo_warnings delta = 0；**W15 全部验证须以 25% 为门禁**（详见本卡末尾 [W15 verification scope] 段）。
+
+ ---
+
+@@ -634,3 +635,37 @@ W12 graph live-query readonly bridge/UI measured `total_bytes_pct=22.26` and `ca
+ 13. `python3 scripts/measure-build-metrics.py` `total_bytes_pct ≤ 23%` + `cargo_warnings delta = 0`（W12 A0 修订 IF-2 = 23%）
+
+ **A1 W14 派发期本卡立场 = 整包文档收口（11 文件 = board L6 + 3 主文档 L1 + A1 W14 checkpoint + M5-0/10/11/12/13/14 头 + 末尾段），零产品代码，不 push**。A6 W14 实施期由 A11 出 W14 verification delta；A7 W14 GRAPH NON-REGRESSION DOCS ONLY 必保 W12 8 条 graph 集成锚点不回归；A10 W14 SECURITY REVIEW 必保 raw-invoke bypass / confirmation bypass / source-ACL drift / sensitive-render regression 四项不破。
++
++---
++
++## [W15 verification scope · 2026-09-08 09:30 CST] W15 release readiness 验证矩阵（A1 DOCS ONLY · A6 NARROW UI POLISH · 其余 9 lane review/docs/verification）
++
++**W15 派发** = Release Readiness Dispatch（board L1163+）：*closes M5 evidence and GUI acceptance without expanding runtime authority*；基线 `886ea29`（W14 PUSHED · accepted）。
++
++**A1 实测基线与门禁（只读复跑，2026-09-08 09:30 CST）**：
++
++```bash
++B=$(ls -1 logs/m0-build-metrics/build-metrics-*.json | sort | head -1)   # build-metrics-4f0e8ab.json
++python3 scripts/measure-build-metrics.py --compare "$B" --skip-build
++# {"exceeds_growth_limit": false, "deltas": {"total_bytes_pct": 24.89, "cargo_warnings": 0}, "warnings_increased": false}
++```
++
++**W15 验证矩阵（13 项必跑 · A11 push readiness 收口）**：
++
++1. `cargo test plugin` 28/28 PASS（W14 基线，W15 0 增量）
++2. `cargo test graph` 15/15 PASS（**A7 W15 GRAPH NON-REGRESSION** = W12 8 条 graph 集成锚点不回归）
++3. full cargo 431/431 PASS（W14 基线，W15 0 增量）
++4. `cargo test --features mcp mcp_server` 21/21 PASS（**A3 W15 MCP ISOLATION** = plugin 生命周期命令**未**经 MCP stdio 暴露）
++5. `cargo fmt --check` 干净
++6. `check-plugin-policy.py --self-test` PASS（ACTIVE=8/PENDING=0）
++7. `check-plugin-privacy.py --self-test` PASS（ACTIVE=4/PENDING=0）
++8. `check-plugin-ui-logic.mjs` 61/61 PASS（**A6 W15 窄磨光不得掉断言**）
++9. `check-graph-ui-logic.mjs` 113/113 PASS
++10. `check-agent-skill-ui-logic.mjs` 110/110 PASS（**A5 W15 执行锁** = 无 Agent/Skill 执行可供性）
++11. A6 W15 新增 UI 逻辑门禁（a11y 确认 / 模态焦点 / empty/loading/error 态）自测 PASS
++12. `npm run build` PASS + `python3 scripts/pre-merge.sh` ALL_PASS
++13. **`python3 scripts/measure-build-metrics.py --compare` `total_bytes_pct ≤ 25.0` + `cargo_warnings delta = 0`**（当前 24.89，余量 **0.11pp**；超 25.0 即 FAIL）
++
++**W15 硬停（board L1181）**：无 plugin 调用/执行、动态加载、网络下载监听、daemon、模型调用、Agent/Skill 执行、MCP 扩张、graph 写导出、后台 worker、raw Tauri invoke、敏感渲染/持久化。
++
++**A1 W15 本卡立场 = 整包文档收口（board + 3 主文档 + M5-0/10/11/12/13/14 + A1 W15 checkpoint + patch），零产品代码，不 push**；A11 出 push readiness 后由 A0 合并推送。
+diff --git a/logs/checkpoints/M5-20260906/M5-14-debt-ledger.md b/logs/checkpoints/M5-20260906/M5-14-debt-ledger.md
+index a551d3b..c111adc 100644
+--- a/logs/checkpoints/M5-20260906/M5-14-debt-ledger.md
++++ b/logs/checkpoints/M5-20260906/M5-14-debt-ledger.md
+@@ -1,5 +1,5 @@
+ > A0 2026-09-07 14:30: IF-2 threshold revised to 22% for W8; current build metrics total_bytes_pct=21.07 and cargo_warnings delta=0. W9 must preserve <=22% and re-record final verification.
+-# M5 债务账（A1 横切 · 不在本批解决 · W1 修订 + W6/W7 reconciliation debt + W8 reconciliation + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active + W12 reconciliation + W12 PUSHED + W13 active + W13 PUSHED + W14 active）
++# M5 债务账（A1 横切 · 不在本批解决 · W1 修订 + W6/W7 reconciliation debt + W8 reconciliation + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active + W12 reconciliation + W12 PUSHED + W13 active + W13 PUSHED + W14 active + W14 PUSHED + W15 active）
+
+ > 子卡 ID：**M5-14** · 跨 M5-1~M5-12 · 性质：**清单，非实现**
+ > 配套：每张 M5-x 子卡 §9 DOC_BACKWRITE 中的"M5-14 增项"
+@@ -503,3 +503,31 @@ IF-2 threshold revised to 23% for W12 graph live-query readonly bridge/UI; curre
+ - **不** push
+
+ **A6 W14 实施期收口**：A6 W14 实施完成 = 6 action 全 ACTIVE + `check-plugin-ui-logic.mjs` ≥9/9 PASS + A11 W14 verification delta 功能性 ALL_PASS + A7 W14 graph non-regression PASS + A10 W14 security review PASS → DEBT-04 closed-by-W14，M5 final debt ledger 维持 53 条（plugin UI 6 项由"挂账"转"收口"）。
++
++---
++
++## [W15 active · 2026-09-08 09:30 CST] A1 W15 reconciliation · W14 PUSHED 后债务账对账 + 25% 指标挂账跟踪
++
++**W14 已拣入接受（`886ea29` = HEAD，A0 `STATUS=PASS`）** → 本账 W14 预期全部兑现：
++
++| 项 | W14 派发期预期 | W14 拣入后实测 | 结论 |
++|---|---|---|---|
++| DEBT-04（plugin UI 6 项） | 0% ACTIVE → 6/6（A6 实施期收口） | **6/6 ACTIVE**（plugin UI logic 61/61 + 6 action 全覆盖） | **closed-by-W14** |
++| M5 final debt ledger 条目数 | 维持 53 条 | **维持 53 条**（条目数不变，DEBT-04 状态转收口） | 持平 |
++| W14 新增债 | 0 | **0**（无新命令 / 无 DTO 变更 / 无 raw 敏感渲染 / 无 runtime 扩张） | 持平 |
++| build metrics 阈值 | ≤23% | **24.89% ≤ 25%**（A0 抬阈值 23% → 25%，为懒加载 PluginManager chunk） | 挂账跟踪（余量 0.11pp） |
++
++**W15 债务账预期 = 0 新增**：
++
++- A6 W15 = NARROW UI POLISH ONLY（a11y 确认 / 模态焦点 / empty/loading/error 态）→ 不新增命令 / action / runtime surface / 依赖 → 无新债
++- A9 W15 = FROZEN W13 CONTRACT REVIEW（**no backend changes**）→ 无契约漂移债
++- A2/A3/A4/A5/A7/A8/A10 = review / checklist → 结论为 PASS / PASS_WITH_NOTE，不产生实现债
++- A11 W15 = final verification matrix + push readiness → 收口闸门，不产生债
++
++**25% 指标挂账跟踪（A1 W15 第二项职责 · 交 A0/A6/A11）**：
++
++- 生效常量 `scripts/measure-build-metrics.py` L38 `TOTAL_BYTES_GROWTH_LIMIT_PCT = 25.0`；当前实测 `total_bytes_pct=24.89`，余量 **0.11pp**（M5 全周期最紧）
++- 过期文案：`scripts/pre-merge.sh` L76 仍写「总体积 ≤15%」（仅说明文本滞后，门禁读常量，判定不受影响）→ **A1 不修**（门禁脚本不属 A1 允许范围），建议 A0 W15 拣入期同步为 `≤25%`
++- A6 W15 若有任何体积增量，A11 必须复跑 `--compare` 留证；超 25.0 → `exceeds_growth_limit=true` → `pre-merge.sh` FAIL → 不得进 push readiness
++
++**A1 W15 本账立场 = DOCS ONLY**：仅对账与跟踪（board + 3 主文档 + M5-0/10/11/12/13/14 + A1 W15 checkpoint + patch），零产品代码，不 commit、不 push。
+diff --git a/后续需求TODO.md b/后续需求TODO.md
+index 488bedd..8493a49 100644
+--- a/后续需求TODO.md
++++ b/后续需求TODO.md
+@@ -523,3 +523,4 @@ WBS 共 50 项（M0:8 / M1:9 / M2:9 / M3:4 / M4:8 / M5:12）。旧版 11~15 周
+ - 状态只依据当前提交的可复跑证据更新；“文件已落盘”“历史跑通过”“代码看起来存在”均不能单独标记完成。
+ > A0 update 2026-09-08 00:20 CST: W13 Stage-I plugin manifest lifecycle validation PASS (plugin tests 28/28, full cargo 431/431, MCP feature 21/21, plugin policy ACTIVE=7/PENDING=5, plugin privacy pending=NONE, graph/MCP/Agent-Skill policies and UI checks PASS, npm build and pre-merge ALL_PASS). NEXT=`M5-W14` plugin manager UI consuming only existing local lifecycle commands; plugin invoke/execution, dynamic loading, network download/listener, daemon, model call, Agent/Skill execution and MCP full runtime remain LOCKED; only A0 pushes.
+ > A0 update 2026-09-08 02:00 CST: W14 Plugin Manager UI validation PASS (plugin UI logic 61/61, plugin UI privacy self/default/pending PASS, full Rust 431/431, MCP feature 21/21, npm build PASS). A0 corrected Pinia auto-unwrapping and raw error passthrough. Build metric is 24.89% with warning delta=0; recorded limit updated to 25% for the new lazy plugin chunk. NEXT=`M5-W15` release-readiness and GUI acceptance; all plugin execution/runtime expansion remains LOCKED; only A0 pushes.
++> A1 update 2026-09-08 09:30 CST: A1 W15 reconciliation (docs only) — W14 accepted at `886ea29` (`feat(M5): integrate W14 plugin manager UI`); board mainline chain corrected `a7eefbb` → `886ea29` and M5-0/10/11/12/13/14 status reconciled; DEBT-04 plugin UI 6/6 closed-by-W14, M5 final debt ledger stays 53. 25% metric limit tracked: `scripts/measure-build-metrics.py` L38 `TOTAL_BYTES_GROWTH_LIMIT_PCT = 25.0`; read-only re-run vs `build-metrics-4f0e8ab.json` gives `total_bytes_pct=24.89`, `cargo_warnings` delta=0, `exceeds_growth_limit=false`, headroom only 0.11pp — A6 W15 narrow UI polish must add no new chunk size. W15 lane snapshot: A2 PASS_WITH_DEBT / A3 PASS / A4 privacy PASS + stable-error PASS_WITH_NOTE / A5 PASS_WITH_CONTEXT / A7 graph zero-regression / A9 frozen contract confirmed / A10 security PASS; A6 in progress, A8 checklist pending content, A11 push readiness pending. A1 delivers `logs/checkpoints/A1-M5-W15-reconciliation-20260908-0930.md` + patch, zero product code, no push.
+diff --git a/详细设计与实施计划.md b/详细设计与实施计划.md
+index 15e42d2..1edaa4f 100644
+--- a/详细设计与实施计划.md
++++ b/详细设计与实施计划.md
+@@ -670,3 +670,4 @@ pub images: Vec<ImageRef>,  // ImageRef { path: String, caption: Option<String>
+ - [ ] 下一里程碑仅在本里程碑报告为 PASS 后改为“可启动”
+ > A0 update 2026-09-08 00:20 CST: W13 Stage-I plugin manifest lifecycle validation PASS (plugin tests 28/28, full cargo 431/431, MCP feature 21/21, plugin policy ACTIVE=7/PENDING=5, plugin privacy pending=NONE, graph/MCP/Agent-Skill policies and UI checks PASS, npm build and pre-merge ALL_PASS). NEXT=`M5-W14` plugin manager UI consuming only existing local lifecycle commands; plugin invoke/execution, dynamic loading, network download/listener, daemon, model call, Agent/Skill execution and MCP full runtime remain LOCKED; only A0 pushes.
+ > A0 update 2026-09-08 02:00 CST: W14 Plugin Manager UI validation PASS (plugin UI logic 61/61, plugin UI privacy self/default/pending PASS, full Rust 431/431, MCP feature 21/21, npm build PASS). A0 corrected Pinia auto-unwrapping and raw error passthrough. Build metric is 24.89% with warning delta=0; recorded limit updated to 25% for the new lazy plugin chunk. NEXT=`M5-W15` release-readiness and GUI acceptance; all plugin execution/runtime expansion remains LOCKED; only A0 pushes.
++> A1 update 2026-09-08 09:30 CST: A1 W15 reconciliation (docs only) — W14 accepted at `886ea29` (`feat(M5): integrate W14 plugin manager UI`); board mainline chain corrected `a7eefbb` → `886ea29` and M5-0/10/11/12/13/14 status reconciled; DEBT-04 plugin UI 6/6 closed-by-W14, M5 final debt ledger stays 53. 25% metric limit tracked: `scripts/measure-build-metrics.py` L38 `TOTAL_BYTES_GROWTH_LIMIT_PCT = 25.0`; read-only re-run vs `build-metrics-4f0e8ab.json` gives `total_bytes_pct=24.89`, `cargo_warnings` delta=0, `exceeds_growth_limit=false`, headroom only 0.11pp — A6 W15 narrow UI polish must add no new chunk size. W15 lane snapshot: A2 PASS_WITH_DEBT / A3 PASS / A4 privacy PASS + stable-error PASS_WITH_NOTE / A5 PASS_WITH_CONTEXT / A7 graph zero-regression / A9 frozen contract confirmed / A10 security PASS; A6 in progress, A8 checklist pending content, A11 push readiness pending. A1 delivers `logs/checkpoints/A1-M5-W15-reconciliation-20260908-0930.md` + patch, zero product code, no push.

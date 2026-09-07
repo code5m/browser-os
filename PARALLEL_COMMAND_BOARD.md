@@ -1,9 +1,9 @@
 # Parallel Command Board
 
-> Updated: 2026-09-08 02:00 CST
+> Updated: 2026-09-08 09:30 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` at `a7eefbb` pending A0 W14 integration. W14 Plugin Manager UI is accepted locally with a redacted store, explicit confirmations, no raw invoke, and no execution surface. Only A0 pushes.
+> Current mainline: `master` at `886ea29` — W14 Plugin Manager UI PUSHED and accepted (plugin UI logic 61/61, plugin Rust 28/28, full Rust 431/431, MCP feature 21/21, `npm run build` PASS, build metrics `total_bytes_pct=24.89` ≤ 25% accepted limit, warning delta=0). W15 release-readiness and GUI acceptance is active; plugin invocation/command execution, dynamic loading, network download/listener, daemon, model call, Agent/Skill execution, MCP full runtime, graph write/export, and background workers remain LOCKED. Only A0 pushes.
 > Current NEXT: M5-W15 release-readiness and GUI acceptance. Plugin invocation/command execution, dynamic loading, network download/listener, daemon, model call, Agent/Skill execution, MCP full runtime, graph write/export, and background workers remain LOCKED.
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
@@ -1158,6 +1158,30 @@ bash scripts/pre-merge.sh
 git diff --check
 git status --short --branch
 git push origin master
+```
+
+## M5-W16 M5 Closeout and M6 Charter Dispatch
+
+> W15 is accepted locally by A0 pending this integration. W16 produces the only permissible next step: a reviewed M6 charter before any new runtime authority is implemented. Only A0 pushes.
+
+| Lane | Scope | Must Deliver |
+|---|---|---|
+| A1 | Reconcile W15 acceptance and author the M6 WBS/ordering proposal. | Checkpoint + WBS draft. |
+| A2 | Architecture boundaries for a candidate M6 runtime slice; enumerate non-goals and hard stops. | Decision note. |
+| A3 | MCP runtime threat-model and fail-closed contract only. | Review note. |
+| A4 | Privacy/stable-error contract for every candidate M6 surface. | Review note. |
+| A5 | Agent/Skill execution authorization design only; no execution code. | Contract note. |
+| A6 | Plugin/confirmation accessibility backlog and budget proposal only. | UI note. |
+| A7 | Graph write/export threat model and readonly regression plan. | Review note. |
+| A8 | Manual GUI/runtime acceptance matrix for the approved future slice. | Checklist. |
+| A9 | Frozen backend contract inventory and migration risks. | Inventory. |
+| A10 | Consolidated security release review and M6 entry gate. | Verdict. |
+| A11 | M5 final verification matrix and M6 verification-plan skeleton. | Checkpoint. |
+
+Hard stops: no product code, no new command/ACL/bridge/DTO, no plugin invoke/execution, dynamic loading, network download/listener, daemon, model call, Agent/Skill execution, MCP expansion, graph write/export, background worker, raw Tauri invoke, or sensitive rendering/persistence.
+
+```text
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W16 M5 Closeout and M6 Charter Dispatch 完成自己的整包文档/审查交付，自行整理 checkpoint，不写产品代码，不 push。
 ```
 
 ## M5-W15 Release Readiness Dispatch
