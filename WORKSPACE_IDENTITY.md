@@ -7,6 +7,18 @@ This directory is the canonical V3 main working copy. Agents should use this fil
 - Role: final integration, verification, commits, and pushes
 - Do not confuse this directory with `/home/ainfinit/.codex/worktrees/*/mvp-browser-os-v3`
 
+### Active W18 lane exception
+
+The only current exception is the controller-provisioned M5-W18 lane set:
+
+- Path pattern: `/home/ainfinit/.codex/worktrees/m5-w18-aN/mvp-browser-os-v3`
+- Branch pattern: `codex/m5-w18-aN`
+- Valid lane ids: `N=1..11`, with path, branch, and assigned `Lane AN` required to match exactly.
+- Role: isolated lane implementation/review only. A lane may commit to its own branch but must not push.
+- Source of truth: the latest `M5-W18 Obsidian + dbx + zvec-grep Dispatch` in `PARALLEL_COMMAND_BOARD.md`.
+
+This exception does not make arbitrary `.codex/worktrees/*` valid. Any other worktree remains a hard stop unless the user or A0 explicitly assigns it.
+
 ## Start Here
 
 Use this directory when the task says any of the following:
@@ -30,8 +42,8 @@ git log --oneline -12
 
 ## Hard Stop Rules
 
-- Stop if `pwd` is not `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`.
-- Stop if the branch is not `master`, unless the user explicitly named another branch.
+- Stop if `pwd` is neither the canonical path nor the exact active W18 lane path assigned in `PARALLEL_COMMAND_BOARD.md`.
+- Stop if the canonical branch is not `master`, or a W18 lane branch/path/id do not match `codex/m5-w18-aN` / `m5-w18-aN` / `Lane AN` exactly.
 - Stop if the worktree is dirty and the dirty files do not clearly belong to your assigned task.
 - Stop before pushing if there are unreviewed changes from another agent in the same files.
 
