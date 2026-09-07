@@ -1,0 +1,193 @@
+diff --git a/logs/assist/A10-M5-W13-plugin-runtime-security-review-20260907-2030.md b/logs/assist/A10-M5-W13-plugin-runtime-security-review-20260907-2030.md
+new file mode 100644
+index 0000000..551444e
+--- /dev/null
++++ b/logs/assist/A10-M5-W13-plugin-runtime-security-review-20260907-2030.md
+@@ -0,0 +1,135 @@
++# A10 · M5-W13 Plugin Runtime Stage-I Manifest Lifecycle — Security Review
++
++> 生成：2026-09-07 20:30 CST · Lane A10（M5-W13 · SECURITY REVIEW）
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W13（lines 177-208，Lane A10 row 207）
++> 启动门禁（见 §0）：`WORKSPACE_ID=BACKV3_MAIN` ✅ / 主目录 ✅ / `master` @ `3c3f460`（ff-only 已最新）✅ / 工作树干净 ✅
++> 形态：安全复核，仅 `logs/assist/` + `logs/checkpoints/`，**零产品代码、零策略脚本改动**（A9 的 `check-plugin-policy.py` 为高冲突共享文件，F-6 修复建议交 A0 指派 A9）。
++
++---
++
++## 0. 启动门禁自检
++
++```text
++pwd = /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3   ✅
++git branch = master                                          ✅
++git fetch && git pull --ff-only = 已经是最新的（HEAD 3c3f460） ✅
++git status --short = 空（工作树干净）                          ✅
++仅 A0 push（W13 Hard Stop：Do not push; only A0 pushes）       ✅ 遵守
++```
++
++---
++
++## 1. 评审范围（W13 Hard Stops → 安全面映射）
++
++按 board §W13 Hard Stops（lines 185-192）与 Lane A10 行（207），本批核查维度：
++
++| 维度 | 对应硬停 | 本批可达成的判定 |
++|---|---|---|
++| 执行旁路（execution bypass） | 191：禁 `plugin_invoke`/命令执行/动态代码/网络下载/监听/daemon/model call/Agent/Skill/MCP 全运行时 | 现有代码为纯函数切片，无执行路径；**运行时命令未落地→待实现波复审** |
++| 路径逃逸（path escape） | 191 + A9 HS-10：仅本地 `plugins_dir()` 解包 | 纯切片无路径参数；**运行时命令未落地→前向门禁** |
++| 凭据回显（secret echo） | 192：禁存凭据/原始签名/请求响应体/插件 stdout/stderr/未脱敏路径于审计或检查点 | 切片用 `contains_credential_leak` + `CredentialLeak`；无运行时日志 |
++| ACL / 来源校验缺口 | 191/256 通用：新命令必过 `check_invocation_source` + ACL | 树中零 plugin 命令 → 现无缺口；**前向门禁** |
++| 构建告警 / 指标回归 | W12 硬停：cargo 告警不增；二进制阈值 23%（board）/ 22%（A9 HS-12，见 F-5 不一致） | W13 无产品代码新增 → 无回归 |
++
++---
++
++## 2. 关键取证（现状快照）
++
++评审时点（`3c3f460`）插件域实际落地内容：
++
++- **纯策略切片**：`src-tauri/src/plugin.rs`（16 455 B，9-07 08:06，`mod plugin;` 于 `main.rs:14`）。模块头注释（`:1-17`）声明：纯函数、无文件 I/O、无真验签、无安装/卸载运行时、无第二执行路径、形态③唯一合法。
++- **冻结类型**：`domain.rs:2217 PluginManifest` / `:2260 PluginCapability` / `:2267 PluginSignature` / `:2290 PluginState` / `:1915 AclLevel`。`domain.rs:2210` 注释明确「真 Ed25519 验签、plugins_dir 解包、bridge 命令由运行时 lane 在本地完成」——即**运行时尚未落**。
++- **能力白名单单一真源**：`security_policy.rs:2126 PLUGIN_CAPABILITY_V1: &[&str] = &[]`（**空集合，fail-closed**）；`:2129 check_plugin_capabilities` 任何非白名单能力 → `UnknownCapability`。
++- **凭据判定基元**：`security_policy.rs:2088 contains_credential_leak`。
++- **不变量夹具**：`scripts/check-plugin-policy.py`（8 527 B）ACTIVE=1 / PENDING=5，self-test `ALL_PASS`，已接入 `pre-merge.sh:451-454, 588-590`。
++- **A9 的 W13 交付物**：`logs/assist/A9-M5-W13-plugin-runtime-delete-storage-card-20260907-2000.md` 为 **Stage-II 规划卡（STAGED CARD, NOT IMPLEMENTATION）**，第 5 行明示「本卡不写任何产品代码」，W13 硬停仍生效、plugin runtime 仍 LOCKED。
++
++**结论性快照**：W13 Stage-I 生命周期**命令**（`plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_list` / `plugin_get` / trusted-key add/list/remove）**当前不在树中**。证据：
++- `bridge.rs` 搜 `plugin_` → 仅 `plugin_eval`（属 `tauri_plugin_browser_tabs`，与本运行时无关）及 `tauri_plugin_*` 依赖引用，无任何 `plugin_install/enable/...` 命令体（bridge.rs 命令定义惯例：每个命令函数含 `Command` 属性 + `app.emit`/状态访问；全仓无 plugin 生命周期命令）。
++- `main.rs` 搜 `plugin` → 仅 `mod plugin;`（策略切片）与 `tauri_plugin_browser_tabs`/`tauri_plugin_single_instance` 依赖注入，**无生命周期命令注册**。
++- `default-commands.toml` 搜 `plugin` → **0 命中**（无 plugin ACL 条目，末条仍为 `list_artifact_images`）。
++- `domain.rs` 无 `PluginInvokeRecord` / `plugins_dir` 函数 / 无 plugin store / 无 `fn plugin_*`（仅 `plugins_dir` 出现在 `:2210` 注释）。
++
++---
++
++## 3. 发现
++
++### F-1【PASS】纯策略切片满足 W13 执行/形态/凭据硬停
++- `plugin.rs` 全程为纯函数：`validate_plugin_manifest` / `verify_plugin_signature_structure` / `can_transition` / `transition` / `permission_preview_for_plugin`，**零 `std::process` / `Command::new` / `tokio::spawn` / 网络 / 文件 I/O**（grep 确认）。
++- 形态③：`is_allowed_entry_url`（`:243-245`）仅放行 `http://` `https://` `tool://`，拒 `javascript:`/`data:`/`file:`（test `non_form_three_entry_rejected` 覆盖）。
++- 凭据：任何文本字段经 `bound_text`（`:232-240`）→ `contains_credential_leak`；命中返回 `CredentialLeak`。`PluginManifest`/`PluginSignature` 类型**无** password/secret/token 字段（夹具 `PLUGIN_NO_SECRETS` OK）。
++- 能力：白名单空 → 任何声明能力 fail-closed 拒（test `unknown_capability_rejected` 覆盖）；双层隔离（manifest + `PLUGIN_CAPABILITY_V1`）在切片层已就位。
++- 签名：**仅结构校验**（algorithm=Ed25519 / key_id 非空 / value base64 / signed_at ISO8601），不引入加密 crate、不联网（test `signature_structure_*` 覆盖）。
++- 状态机：`can_transition`（`:179-197`）fail-closed，`Uninstalled` 不可复活（test `lifecycle_transitions` 覆盖）。
++- 体量：`metadata` ≤ `MAX_TEXT_FIELD_BYTES`（`:139-145`），单一真源 `domain.rs:1019`（64 KiB）。
++
++### F-2【PASS】不变量夹具已接 pre-merge 且自检通过
++- `python3 scripts/check-plugin-policy.py --self-test` → `PLUGIN_SELF_TEST=ALL_PASS`，`ACTIVE=1 PENDING=5`。
++- 默认模式 → 全部 `[OK]`，`PLUGIN_POLICY=PASS`。
++- 接入 `pre-merge.sh:451-454`（运行期 self-test + default，任一失败 `pm_fail`）、`:588-590`（artifact 检查）。即 W13 前若该切片引入第二执行路径/内联 shell/签名旁路/非形态③/凭据字段，门禁变红。
++
++### F-3【阻断·范围缺口】W13 Stage-I 生命周期命令未落地，运行时安全面无法闭环
++- 按 board Lane A9 W13 行（206）应「Implement plugin manifest lifecycle Stage-I … plugin_install/enable/disable/list/get + trusted-key」。但截至评审时点（`:3c3f460`），这些命令**零落地**；A9 的 W13 交付仅为 Stage-II 规划卡。
++- 影响：execution bypass / path escape / ACL·来源校验 / 审计脱敏 / 构建指标 这五项中，凡依赖**运行时命令实现**的判定**无法在本题完成**，只能给出前向门禁（见 F-4）。
++- 处理：本批 A10 给出「基础层 PASS + 运行时层 PENDING」结论；待 A9 实现命令后，A10 须再开一轮复审（建议 A0 在 A9 命令 wave 合入后显式触发）。**这不是缺陷，是范围缺口**，须在 board 明确 A9 是否应在本批补实现，否则 W13 仅“规划”未“落地”。
++
++### F-4【前向门禁·供 A9 命令 wave 落地时强制满足】Stage-I 命令安全契约清单
++（映射 W13 Hard Stops + A9 HS-1..HS-19；A9 实现前逐条必须有对应单测/夹具）
++
++1. **来源校验 + ACL 同位**：每条 `plugin_*` 命令函数体**首行** `check_invocation_source(&webview, "plugin_*", None, &app)?`；ACL 条目插在 `list_artifact_images` **之前**（K1 末条恒定性）；`main.rs` 注册；`src/bridge.ts` + `src/types.ts` 镜像（禁字面量）。
++2. **无第二执行路径**：`plugin_install` 仅本地 `plugins_dir()` 内 `atomic_write`（复用 `session.rs` 唯一原子写原语）解包；禁 `std::process`/`Command::new`/`tokio::spawn`/reqwest/TCP 监听/daemon；禁任何形式的 `plugin_invoke` 触发（W13 锁）。
++3. **路径逃逸**：任何 path 参数须 `starts_with(plugins_dir/<id>/)` 且不含 `..`/绝对路径/越界前缀，否则 `PathEscape`（`will check_plugin_policy.py` 须扩展扫描 bridge.rs，见 F-6）。
++4. **凭据回显**：审计/错误/`Detail` 仅用 `id`/计数/`hash` 前缀（如 `key_id` 前 16 hex）；**禁**记 manifest `signature.value` 原文、请求/响应体、插件 stdout/stderr、未脱敏路径；`CredentialLeak` 经 `Display` 渲染为 `<redacted>`（`{:?}` 仅开发模式）。
++5. **密钥环**：`trusted-pubkeys.json` 增删须 keyring 二次认证（HS-5/HS-9）；**禁**磁盘存原始私钥。
++6. **能力白名单单一真源**：新能力**仅**加在 `security_policy::PLUGIN_CAPABILITY_V1`（PLUGIN_CAP_SINGLE_DEF 守）；`capability_acl_level` 风险档同步标记（Dangerous 集合在 `plugin.rs:28-36`）。
++7. **原子性/上限**：plugin store 写必 `atomic_write`；任何单值/文件 ≤ `MAX_TEXT_FIELD_BYTES`（64 KiB，单一真源 `domain.rs:1019`）。
++8. **构建指标**：cargo 告警不增；二进制增长 ≤ 控制阈值（见 F-5 阈值不一致，须 A0 先定 22% 或 23%）；`pre-merge.sh` ALL_PASS。
++
++### F-5【中·文档不一致】构建指标阈值 22% vs 23%
++- board W12/W10 Hard Stop（lines 258/312/365 等）统一「Build metrics threshold is 23% after W12」。
++- A9 卡 HS-12（line 234）写「build metrics ≤ 22%」。
++- 二者冲突。建议以 **board 硬停 23%** 为控制阈值（A9 22% 更严但无据，且与全局门禁口径不一，易造成 pre-merge 阈值误配）。**待 A0 裁决统一**。
++
++### F-6【中高·夹具缺口】`check-plugin-policy.py` 的 PENDING 检查仅扫 `plugin.rs`，不扫 `bridge.rs`
++- 证据：`run_default`（`:112-123`）计算 `texts = _all_rs_texts()`（全 rs），但 PENDING 违规判定（`:121-123`）**只对 `plugin_text`（`plugin.rs` 单文件）调用 `g_violation`**；`texts` 仅用于 `g_cap_single_def`（能力单定义）。即 `PLUGIN_SECOND_PATH`/`PLUGIN_INLINE_SHELL`/`PLUGIN_SIG_BYPASS`/`PLUGIN_FORM_THREE` 实则只检视 `plugin.rs`。
++- 风险：W13 命令 wave 将 `plugin_install/enable/...` 实现在 **`bridge.rs`**（惯例）；若其中引入 `std::process`/`Command::new`/`tokio::spawn`/裸 shell/非形态③，本夹具**不会报红**——第二执行路径护栏对实现层失效。
++- 修复建议（交 A0 指派 A9，避免我改高冲突共享脚本）：`run_default` 中 PENDING 违规改为扫描 `bridge.rs` 文本（或 `texts` 全量），并将「plugin 命令体」纳入 `VIOLATION_PATTERNS` 检视集；同时建议新增 `PLUGIN_CMD_SOURCE_CHECK` 码位（bridge.rs 每条 plugin 命令首行须 `check_invocation_source`）+ `PLUGIN_ACL_TAIL` 码位（ACL 末条恒 `list_artifact_images` 且 plugin 条目在其前）。
++- 性质：当前基础层 PASS 不受影响（plugin.rs 确为纯函数），但**对实现层是真实护栏缺口**。
++
++### F-7【INFO】`is_allowed_entry_url` 放行 `http://`（明文）
++- `plugin.rs:243-245` 允许 `http://` 同源入口。形态③要求「同源 webview」，明文 http 在本地回环可接受，但若入口指向远端 http 则存中间人风险。
++- 建议（前向）：Stage-I 落地时建议将入口限定 `https://` + `tool://`，或将 `http://` 收窄为仅 `localhost`/`127.0.0.1`；当前切片不影响判定（纯校验）。
++
++---
++
++## 4. 红线对照（W13 Hard Stops）
++
++| 硬停 | 判定 | 证据 |
++|---|---|---|
++| 191 执行旁路（禁 invoke/执行/动态码/网络/监听/daemon/model/Agent/Skill/MCP 全运行时） | ✅ 基础层达标；⏳ 运行时层 PENDING（命令未落地） | plugin.rs 纯函数；命令零落地 |
++| 191 禁 graph build/write/export、background workers | ✅ 不涉及（插件域未触 graph） | grep 无交叉 |
++| 192 禁存凭据/原始签名/请求响应体/stdout/stderr/未脱敏路径于审计/检查点 | ✅ 切片无审计/日志；脱敏基元就位 | `contains_credential_leak` + `CredentialLeak` |
++| 256 新命令必过 source check + ACL + main.rs + bridge.ts/types + policy + tests | ⏳ PENDING（无新命令） | 零 plugin 命令/ACL |
++| W12 构建指标 23% / cargo 告警不增 | ✅ 无 W13 产品代码新增 → 无回归 | 树仅 W6 切片（已合，编译通过） |
++| 仅 A0 push | ✅ 遵守 | 本批零提交零推送 |
++
++---
++
++## 5. 安全结论（VERDICT）
++
++**STATUS = PASS_WITH_DEBT（基础层 PASS + 运行时层 PENDING）**
++
++- 已闭环：W13 插件域**基础层**（纯策略切片 `plugin.rs` + 冻结类型 + 白名单 fail-closed + 凭据基元 + 不变量夹具 ACTIVE=1/PENDING=5 PASS 且接 pre-merge）满足全部适用硬停；无执行旁路、无凭据字段、形态③合规、能力 fail-closed、签名仅结构。
++- 未闭环（债）：W13 Stage-I 生命周期**命令未落地**（F-3），故 execution bypass / path escape / ACL·来源校验 / 审计脱敏 四项运行时判定无法完成，已给前向门禁（F-4）；另存两处待办——F-5 构建阈值 22% vs 23% 不一致（A0 裁决）、F-6 夹具仅扫 `plugin.rs` 不扫 `bridge.rs`（A0 指派 A9 修）。
++- 修复指派（均非 A10 权限/共享文件冲突，交 A0）：
++  - F-3：确认 A9 是否本批补实现；若补，A10 复审一轮。
++  - F-5：统一构建阈值口径。
++  - F-6：扩展 `check-plugin-policy.py` 扫描 `bridge.rs` + 增 `PLUGIN_CMD_SOURCE_CHECK`/`PLUGIN_ACL_TAIL` 码位（指派 A9）。
++
++---
++
++## 6. 声明
++
++- 本批**未修改任何产品代码或策略脚本**。F-6 修复建议明确**交 A0 指派 A9**（board：A10 仅「policy fixtures only for concrete failure」且 `check-plugin-policy.py` 属 A9 高冲突文件；沿用 M4-A10「报告不自治共享文件」惯例，避免覆盖）。
++- 未重新运行 `cargo build`/`cargo test`：W13 无产品代码新增（A9 仅交付规划卡），基础层切片已于 W6 合入且编译通过；本结论基于源码实证（grep + 夹具运行 + 类型/常量定位），非文档互证。
++- `pre-merge.sh` 接入状态据 `:451-454,588-590` 确认；未实跑完整 pre-merge（其红色项属其他 lane 既有，与插件域无关）。
+diff --git a/logs/checkpoints/A10-M5-W13-plugin-runtime-security-review-20260907-2030.md b/logs/checkpoints/A10-M5-W13-plugin-runtime-security-review-20260907-2030.md
+new file mode 100644
+index 0000000..3da26c5
+--- /dev/null
++++ b/logs/checkpoints/A10-M5-W13-plugin-runtime-security-review-20260907-2030.md
+@@ -0,0 +1,46 @@
++# A10 · M5-W13 Plugin Runtime Stage-I Manifest Lifecycle — Security Review Checkpoint
++
++> 检查点：2026-09-07 20:30 CST · Lane A10（SECURITY REVIEW）
++> 基线 HEAD `3c3f460`（ff-only 已最新），工作树干净，未提交未推送。
++
++## VERIFY（启动门禁）
++- `WORKSPACE_ID=BACKV3_MAIN` ✅ / 主目录 ✅ / `master` ✅ / `git pull --ff-only` 已最新 ✅ / 工作树干净 ✅
++- 遵守「仅 A0 push」。
++
++## SCOPE
++board §M5-W13 Lane A10（row 207）：review W13 plugin lifecycle for execution bypass / path escape / secret echo / ACL·source-check gaps / build warning·metric regression.
++
++## 交付物
++- `logs/assist/A10-M5-W13-plugin-runtime-security-review-20260907-2030.md`（完整复核）
++- 本检查点
++- 单补丁：`logs/checkpoints/Lane-A10-M5-W13-plugin-runtime-security-review-20260907-2030.patch`
++
++## VERDICT = PASS_WITH_DEBT（基础层 PASS + 运行时层 PENDING）
++
++### 已闭环（基础层）
++- `plugin.rs`（W6 纯策略切片，`mod plugin;` @ main.rs:14）满足：纯函数无执行路径、形态③（`http/https/tool://`）、能力白名单 `PLUGIN_CAPABILITY_V1` 空集合 fail-closed（security_policy.rs:2126）、`contains_credential_leak` 守凭据（:2088）、签名仅结构、状态机 fail-closed、metadata ≤64KiB（domain.rs:1019 单一真源）。
++- `check-plugin-policy.py` ACTIVE=1/PENDING=5，`--self-test` ALL_PASS，接 pre-merge.sh:451-454,588-590。
++
++### 未闭环（债 / 待办）
++- **F-3（范围缺口）**：W13 Stage-I 生命周期命令（`plugin_install/enable/disable/list/get` + trusted-key）当前**不在树中**（bridge.rs / main.rs / default-commands.toml 零 plugin 命令/ACL；A9 W13 交付仅为 Stage-II 规划卡）。execution bypass / path escape / ACL·来源校验 / 审计脱敏 四项运行时判定须 A9 命令 wave 落地后 A10 复审。
++- **F-5（文档不一致）**：构建阈值 board 23% vs A9 HS-12 22% → A0 裁决统一。
++- **F-6（夹具缺口·中高）**：`check-plugin-policy.py:121-123` PENDING 违规仅扫 `plugin.rs`，不扫 `bridge.rs`；命令 wave 落地后第二执行路径护栏对实现层失效。修复交 A0 指派 A9（扩展扫描 bridge.rs + 增 `PLUGIN_CMD_SOURCE_CHECK`/`PLUGIN_ACL_TAIL` 码位）。
++- **F-4**：供 A9 命令 wave 的前向安全门禁清单（8 条，映射 W13 硬停 + A9 HS-1..HS-19）。
++- **F-7（INFO）**：`is_allowed_entry_url` 放行 `http://` 明文，建议落地时收窄为 https/tool 或 localhost。
++
++## 修复指派（均非 A10 权限 / 共享文件冲突）
++- F-3：A0 确认 A9 是否本批补实现；若补，A10 复审。
++- F-5：统一构建阈值口径。
++- F-6：指派 A9 扩展 `check-plugin-policy.py` 扫描 bridge.rs。
++
++## 红线对照（摘要）
++| 硬停 | 判定 |
++|---|---|
++| 191 执行旁路 | ✅ 基础层；⏳ 运行时 PENDING |
++| 192 凭据回显 | ✅ 切片无审计；脱敏基元就位 |
++| 256 新命令 source-check+ACL+main+bridge/types+policy+tests | ⏳ PENDING（无新命令） |
++| 构建指标 23% / 告警不增 | ✅ 无 W13 产品代码新增 |
++| 仅 A0 push | ✅ |
++
++## 声明
++本批零产品代码、零策略脚本改动（F-6 修复交 A0 指派 A9，避免改高冲突共享脚本）。未实跑 cargo build（W13 无代码新增；基础层 W6 已合且编译通过）。

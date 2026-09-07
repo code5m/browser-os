@@ -2297,3 +2297,113 @@ pub enum PluginState {
     Disabled,
     Uninstalled,
 }
+
+// ===========================================================================
+// M5-W13 插件 manifest 生命周期 Stage-I DTO（Lane A9）
+//
+// 红线：本 wave **只管本地状态**——无 invoke / 无执行 / 无动态加载 / 无网络下载。
+// 登记簿与视图**不**落资源绝对路径、**不**落签名原文（`value`）、**不**落公钥原文
+// （仅 sha256 前 16 hex 指纹）。真验签与资源解包属后续运行时 wave，本 wave 不开启。
+// ===========================================================================
+
+/// 资源包元数据（Stage-I 仅元数据；**不**持久化资源绝对路径）。
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct PluginResourceMeta {
+    /// 声明摘要 = `manifest.hash` 前 16 hex。
+    #[serde(default)]
+    pub declared_hash: String,
+    /// 安装时是否提供了本地资源路径（仅布尔，不落路径）。
+    #[serde(default)]
+    pub path_provided: bool,
+    /// 该路径是否通过允许根目录校验（Stage-I 不解包、不真验签）。
+    #[serde(default)]
+    pub verified: bool,
+}
+
+/// 本地登记条目（`plugins.json` 单行）。
+///
+/// **刻意不整份持久化 `PluginManifest`**（A4 W13 F-A4-2 / F-A4-4 闭环）：
+/// - `metadata` 即使过了凭据检测也**不落盘**（自由文本，无 Stage-I 消费方）；
+/// - `signature.value`（裸签名）**永不**入库，只留 `algorithm` + `key_id`；
+/// 登记簿因此只含后续 wave 校验与 UI 展示所需的派生字段。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginRecord {
+    pub id: String,
+    pub version: String,
+    pub display_name: String,
+    pub description: String,
+    pub min_app_version: String,
+    pub capabilities: Vec<PluginCapability>,
+    /// 声明摘要（sha256 hex 64），供后续 wave 做资源比对。
+    pub hash: String,
+    /// 签名算法（**不**落 `value` 原文）。
+    pub signature_algorithm: String,
+    /// 受信任公钥 id（**不**落公钥原文）。
+    pub signature_key_id: String,
+    pub state: PluginState,
+    #[serde(default)]
+    pub installed_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+    #[serde(default)]
+    pub resource: PluginResourceMeta,
+}
+
+/// 列表视图（**无**签名原文 / **无**资源路径）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginSummary {
+    pub id: String,
+    pub version: String,
+    pub display_name: String,
+    pub state: PluginState,
+    pub capability_count: usize,
+    /// `manifest.hash` 前 16 hex。
+    pub hash_prefix: String,
+    pub updated_at: String,
+}
+
+/// 能力视图（含风险档，供 UI 逐项展示，禁折叠）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginCapabilityView {
+    pub capability: String,
+    pub reason: String,
+    pub acl_level: AclLevel,
+}
+
+/// 签名视图（**仅**算法 + key_id + 结构校验状态；**无** `value` 原文）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginSignatureView {
+    pub algorithm: String,
+    pub key_id: String,
+    /// `structure_ok` | `structure_failed`。
+    pub status: String,
+}
+
+/// 详情视图（**无**签名原文 / **无**资源路径 / **无**正文）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginDetail {
+    pub id: String,
+    pub version: String,
+    pub display_name: String,
+    pub description: String,
+    pub min_app_version: String,
+    pub state: PluginState,
+    pub capabilities: Vec<PluginCapabilityView>,
+    pub hash_prefix: String,
+    pub signature: PluginSignatureView,
+    pub installed_at: String,
+    pub updated_at: String,
+    pub resource: PluginResourceMeta,
+}
+
+/// 受信任公钥登记条目（数据管理；**不**落公钥原文，仅 sha256 前 16 hex 指纹）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrustedKeyRecord {
+    pub key_id: String,
+    /// sha256(pubkey) 前 16 hex。
+    pub fingerprint: String,
+    #[serde(default)]
+    pub note: String,
+    #[serde(default)]
+    pub added_at: String,
+}

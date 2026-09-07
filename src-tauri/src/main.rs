@@ -1474,6 +1474,15 @@ fn main() {
             bridge::graph_query,
             bridge::graph_node_get,
             bridge::graph_stats,
+            // M5-W13（Lane A9）：插件 manifest 生命周期 Stage-I（仅本地状态，无执行）。
+            bridge::plugin_install,
+            bridge::plugin_enable,
+            bridge::plugin_disable,
+            bridge::plugin_list,
+            bridge::plugin_get,
+            bridge::plugin_keys_add,
+            bridge::plugin_keys_list,
+            bridge::plugin_keys_remove,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {

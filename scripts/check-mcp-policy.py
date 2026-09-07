@@ -274,6 +274,35 @@ def c_graph_not_exposed(rel, text, repo):
     return problems or None
 
 
+def c_plugin_not_exposed(rel, text, repo):
+    # W13 A3（MCP REVIEW ONLY 的守门固化）：W13 的插件生命周期命令（`plugin_install` /
+    # `plugin_enable` / `plugin_disable` / `plugin_list` / `plugin_get` / `plugin_key_*`，以及
+    # 受信密钥增删）是 **Tauri 侧命令**，由 A9 在 W13 实现；它们不得经 MCP stdio 暴露成
+    # 可执行工具，也不得进入 MCP 能力白名单 / 注册表 / stdio 骨架
+    # （W13 Hard Stop：plugin invoke / command execution / MCP full runtime 仍然 LOCKED）。
+    # 守门文件：`mcp.rs`（命令注册表）、`domain.rs`（`MCP_CAPABILITY_V1` 白名单块）、
+    # `mcp_server.rs` / `bin/mcp_server.rs`（stdio 骨架）。命中任一插件能力标识即判
+    # 「插件能力被接进 MCP 面」；未解锁前必须显式改本码位并留 A0 裁决记录。
+    # 与 W12 的 `MCP_GRAPH_NOT_EXPOSED` 同源范式。
+    if rel not in ("src-tauri/src/mcp.rs", "src-tauri/src/domain.rs",
+                   "src-tauri/src/mcp_server.rs", "src-tauri/src/bin/mcp_server.rs"):
+        return None
+    # `domain.rs` 内本就有插件领域类型（如 `PluginManifest` / `PluginState`），
+    # 故只守「能力白名单块」，避免误报；其余 MCP 文件全文件扫描。
+    if rel == "src-tauri/src/domain.rs":
+        block = re.search(r"MCP_CAPABILITY_V1\s*:\s*&\[&str\]\s*=\s*&\[(.*?)\]", text, re.S)
+        text = block.group(1) if block else ""
+    problems = []
+    for m in ("plugin_install", "plugin_enable", "plugin_disable", "plugin_list",
+             "plugin_get", "plugin_key", "plugin_uninstall", "crate::plugin"):
+        if m in text:
+            problems.append(
+                f"{rel} 引用插件能力 `{m}`（插件生命周期命令不得经 MCP 暴露；"
+                "W13 Hard Stop：plugin invoke / MCP full runtime LOCKED）"
+            )
+    return problems or None
+
+
 # ---- PENDING（W8 已退役）----
 # W1 阶段曾以 7 个 PENDING 码位（`MCP_LISTEN_PORT` / `MCP_RUNTIME_LEAK` / `MCP_OPTIONAL_DEP` /
 # `MCP_BIN_GATED` / `MCP_TOOL_CALLS_COMMAND` / `MCP_PATH_POLICY_MISSING` / `MCP_URL_NOT_REDACTED`）
@@ -376,6 +405,7 @@ ACTIVE_CODES = [
     ("MCP_STDIO_NO_ARG_ECHO", "ACTIVE", c_stdio_no_arg_echo),
     ("MCP_STDIO_BOUNDED", "ACTIVE", c_stdio_bounded),
     ("MCP_GRAPH_NOT_EXPOSED", "ACTIVE", c_graph_not_exposed),
+    ("MCP_PLUGIN_NOT_EXPOSED", "ACTIVE", c_plugin_not_exposed),
     ("MCP_PARITY", "ACTIVE", c_parity),
 ]
 # W8：W1 的 7 个 PENDING 码位 + MCP_TREE_TAURI 全部退役，相位债已关闭。当前无 PENDING 码位。
@@ -568,6 +598,16 @@ def _run_self_test() -> int:
                   'fn read_line_bounded<R: BufRead>(r: &mut R, max: usize) -> Option<Vec<u8>> {\n'
                   '    let _ = (r, max);\n    None\n}\n'
                   'pub fn run_stdio() { let _ = crate::graph::graph_query("n1", 2, 1000); }\n'}),
+        "src-tauri/src/mcp_server.rs")
+    # W13：插件生命周期命令不得经 MCP 暴露（MCP_PLUGIN_NOT_EXPOSED）。
+    add("MCP_PLUGIN_NOT_EXPOSED", "mcp_server.rs 直接调 crate::plugin::plugin_install 暴露成 MCP 工具",
+        mutate(**{"src-tauri/src/mcp_server.rs":
+                  '#![cfg(feature = "mcp")]\nuse std::io::{self, BufRead, Write};\n'
+                  'const MAX_INPUT_BYTES: usize = 1048576;\n'
+                  'const MAX_RESPONSE_BYTES: usize = 4194304;\n'
+                  'fn read_line_bounded<R: BufRead>(r: &mut R, max: usize) -> Option<Vec<u8>> {\n'
+                  '    let _ = (r, max);\n    None\n}\n'
+                  'pub fn run_stdio() { let _ = crate::plugin::plugin_install("x", "y"); }\n'}),
         "src-tauri/src/mcp_server.rs")
     add("MCP_CAPABILITY_DRIFT", "MCP_CAPABILITY_V1 定义两处",
         mutate(**{"src-tauri/src/core/mod.rs": "const MCP_CAPABILITY_V1: &[&str] = &[];\n",

@@ -928,3 +928,110 @@ export interface McpRegistryEntry {
   /** 是否回传 URL（须经脱敏）。 */
   returns_url: boolean;
 }
+
+// ====== M5-W13 插件 manifest 生命周期 Stage-I DTO（与后端 domain.rs 1:1 镜像）======
+// 红线：Stage-I **只管本地状态**——无 invoke / 无执行 / 无动态加载 / 无网络下载。
+// 视图层永不出现：签名原文（`value`）、资源绝对路径、公钥原文（仅 16-hex 指纹）。
+// 真验签与资源解包属后续运行时 wave，本 wave 未开启。
+
+/** 生命周期状态（snake_case，与后端 `PluginState` serde 口径一致）。 */
+export type PluginState =
+  | "discovered"
+  | "validating"
+  | "signed_ok"
+  | "signed_failed"
+  | "loaded"
+  | "enabled"
+  | "disabled"
+  | "uninstalled";
+
+/** 形态③入口（同源 webview；icon 同源）。 */
+export interface PluginEntry {
+  entry_url: string;
+  icon: string;
+}
+
+/** 能力引用 + 用途说明（`capability` 必须落在后端能力白名单）。 */
+export interface PluginCapability {
+  capability: string;
+  reason: string;
+}
+
+/** 签名结构（**仅结构**；Stage-I 不做真验签）。 */
+export interface PluginSignature {
+  algorithm: string;
+  key_id: string;
+  value: string;
+  signed_at: string;
+}
+
+export interface PluginManifest {
+  id: string;
+  version: string;
+  display_name: string;
+  description: string;
+  min_app_version: string;
+  entry: PluginEntry;
+  capabilities: PluginCapability[];
+  /** sha256 hex（64）。 */
+  hash: string;
+  signature: PluginSignature;
+  metadata?: unknown;
+}
+
+/** 资源包元数据（**不**落资源绝对路径，仅布尔 + 声明摘要）。 */
+export interface PluginResourceMeta {
+  declared_hash: string;
+  path_provided: boolean;
+  verified: boolean;
+}
+
+/** 列表视图（无签名原文 / 无资源路径）。 */
+export interface PluginSummary {
+  id: string;
+  version: string;
+  display_name: string;
+  state: PluginState;
+  capability_count: number;
+  hash_prefix: string;
+  updated_at: string;
+}
+
+/** 能力视图（含风险档，UI 须逐项展示且禁折叠）。 */
+export interface PluginCapabilityView {
+  capability: string;
+  reason: string;
+  acl_level: "safe" | "confirm" | "dangerous";
+}
+
+/** 签名视图（**无** `value` 原文）。 */
+export interface PluginSignatureView {
+  algorithm: string;
+  key_id: string;
+  /** `structure_ok` | `structure_failed`。 */
+  status: string;
+}
+
+/** 详情视图（无签名原文 / 无资源路径 / 无正文）。 */
+export interface PluginDetail {
+  id: string;
+  version: string;
+  display_name: string;
+  description: string;
+  min_app_version: string;
+  state: PluginState;
+  capabilities: PluginCapabilityView[];
+  hash_prefix: string;
+  signature: PluginSignatureView;
+  installed_at: string;
+  updated_at: string;
+  resource: PluginResourceMeta;
+}
+
+/** 受信任公钥登记条目（**不**落公钥原文，仅 sha256 前 16 hex 指纹）。 */
+export interface TrustedKeyRecord {
+  key_id: string;
+  fingerprint: string;
+  note: string;
+  added_at: string;
+}

@@ -127,5 +127,13 @@ commands.allow = [
     "graph_query",
     "graph_node_get",
     "graph_stats",
+    "plugin_install",
+    "plugin_enable",
+    "plugin_disable",
+    "plugin_list",
+    "plugin_get",
+    "plugin_keys_add",
+    "plugin_keys_list",
+    "plugin_keys_remove",
     "list_artifact_images"
 ]

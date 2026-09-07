@@ -1,0 +1,72 @@
+# A7 · M5-W13 · Graph（W12）非回归说明（SUPPORT DOCS ONLY）
+
+> Lane: A7 ｜ Dispatch: `PARALLEL_COMMAND_BOARD.md` § M5-W13 Plugin Runtime Stage-I Manifest Lifecycle
+> 角色：SUPPORT DOCS ONLY —— 不写任何产品代码，仅产出 Graph（W12 已落地）的非回归说明。
+> 形态严守：本卡**未修改** `graph.rs` / `domain.rs` / `bridge.rs` / `main.rs` / `default-commands.toml` /
+> `src/bridge.ts` / `src/types.ts` / `scripts/check-graph-policy.py` / 三份主文档。唯一新增产物 = 本说明。
+> 时间戳：2026-09-07（W13 dispatch 由 A0 于 23:55 CST 加入；W12 在本批次本地已验收、待 A0 提交/push）。
+
+## 1. 结论
+
+**Graph（W12）与 W13 Plugin Runtime Stage-I 不冲突；预期零回归。** 理由有二：
+
+1. **范围上结构性隔离**：W13 硬停明令「manifest lifecycle state only」——禁止 `plugin_invoke`、命令执行、
+   动态代码加载、网络下载/监听、daemon、model call、Agent/Skill 执行、MCP 全量运行时、**graph
+   build/write/export**、background workers。Plugin 生命周期不读取/改写图谱，也不复用 graph 的执行路径。
+   A9 的 W13 实现卡（如 `A9-M5-W13-plugin-runtime-delete-storage-card-20260907-2000.md`）确认其 10~11 个
+   新命令全部为「本地清单状态管理 + trusted-key 数据管理」，落在 `plugin.rs` 纯 store/domain 助手 +
+   `bridge.rs` 命令壳，**不触碰 `graph.rs` / `GraphState` / W12 快照载入**。
+2. **当前工作树 Graph 集成已绿化（证据见 §2）**：`check-graph-policy.py` 自检 + 默认扫描均 PASS（ACTIVE=8），
+   证明图模块在当前（含所有并发 lane 未提交改动）状态下无违规。
+
+## 2. 当前 W12 Graph 集成证据（A0/A9 集成时的「不可动」锚点）
+
+| 面 | 当前状态 | 证据锚点 | 在 W13 中须保持 |
+|---|---|---|---|
+| 模块声明 | `mod graph;` 存在 | `src-tauri/src/main.rs:9` | 不被删除/改名 |
+| 模块声明 | `mod plugin;` 存在（W13 用，与 graph 互不干扰） | `src-tauri/src/main.rs:14` | 各自独立 |
+| 快照载入 | W12 只读快照载入，失败回退空 store | `src-tauri/src/main.rs:1328-1335` | W13 不改动 |
+| 托管状态 | `GraphState::default()` 托管（运行期只读） | `src-tauri/src/main.rs:1347` | W13 不改动 |
+| 命令注册 | 3 条 graph 命令在 invoke_handler | `src-tauri/src/main.rs:1474-1476`（`graph_query`/`graph_node_get`/`graph_stats`） | 三行保留 |
+| 命令实现 | 3 个 graph 命令壳（均过 `check_invocation_source`） | `src-tauri/src/bridge.rs:6605`（`graph_query`）、`6624`（`graph_node_get`）、`6641`（`graph_stats`） | 三函数保留、签名/审计不变 |
+| 域类型 | `GraphNodeKind`/`GraphEdgeKind`/`GraphNode`/`GraphEdge`/`GraphNodeView`/`GraphEdgeView`/`GraphProps` | `src-tauri/src/domain.rs:2042/2056/2082/2092/2107/2115`（及 2180 前后 `GraphProps`） | W13 新增 `PluginManifest*` 类型时**不得改/删**这些 |
+| 容量常量（单一真源） | 7 个 `GRAPH_*` 常量 | `src-tauri/src/domain.rs:2188/2190/2192/2194/2196/2198/2200`（`GRAPH_PROPS_MAX_BYTES`/`GRAPH_LABEL_MAX_BYTES`/`GRAPH_NODE_ID_HEX_LEN`/`GRAPH_MAX_DEPTH`/`GRAPH_QUERY_LIMIT`/`GRAPH_MAX_NODES`/`GRAPH_MAX_EDGES`） | 不改动 |
+| ACL | 3 条 graph 命令 + 末条恒 `list_artifact_images` | `src-tauri/permissions/default-commands.toml:127-130` | 3 条 graph 保留；**末条仍是 `list_artifact_images`**（W13 新 plugin 命令插其前，K1） |
+| 前端类型 | `GraphNodeView`/`GraphEdgeView` 等 TS 镜像 | `src/types.ts` | W13 新增 `Plugin*` 类型时不得删改 |
+| 前端桥 | `graphQuery` 等 TS 包装 | `src/bridge.ts` | W13 新增 `plugin*` 包装时不得删改 |
+
+## 3. 共享文件「非回归」断言清单（A0 集成 W13 时逐项 diff 核对）
+
+W13 与 Graph 的唯一重叠是**共享文件**（domain.rs / bridge.rs / main.rs / default-commands.toml /
+src/types.ts / src/bridge.ts）。A9 实现 W13 时，只要满足以下断言，Graph 即零回归：
+
+- [ ] `scripts/check-graph-policy.py --self-test` 仍 `GRAPH_POLICY_SELF_TEST=PASS（ACTIVE=8）`
+- [ ] `scripts/check-graph-policy.py` 默认扫描仍 `GRAPH_POLICY=PASS（无违规）`
+- [ ] `domain.rs` 中 §2 列出的 7 个 `GRAPH_*` 常量与 `GraphNode*`/`GraphEdge*`/`GraphProps`/`GraphNodeView`/`GraphEdgeView` 类型**字节级未变**（仅新增 `Plugin*` 类型）
+- [ ] `bridge.rs` 中 `graph_query`/`graph_node_get`/`graph_stats` 三函数体**未变**（仅新增 `plugin_*` 函数）
+- [ ] `main.rs` invoke_handler 仍含 `bridge::graph_query`/`bridge::graph_node_get`/`bridge::graph_stats`，且 `mod graph;` 仍在
+- [ ] `default-commands.toml` 末行仍是 `list_artifact_images`，且其中 `graph_query`/`graph_node_get`/`graph_stats` 三行仍在 `list_artifact_images` 之前
+- [ ] `src/types.ts` 的 `GraphNodeView`/`GraphEdgeView` 等未被删改
+- [ ] `src/bridge.ts` 的 `graphQuery` 等包装未被删改
+
+## 4. 越界即拒
+
+若 A9 的 W13 实现出现以下任一情况，即违反 W13 硬停，A0 应**拒绝合入**并回退（非 Graph 自身问题，而是 W13 越界）：
+
+- 修改 `graph.rs`、`GraphState`、W12 快照载入路径；
+- 让 `plugin_*` 命令调用 `crate::graph::*` 的写入/构建/导出路径；
+- 删除或重命名 §2 任一 graph 锚点；
+- `default-commands.toml` 末条不再是 `list_artifact_images`。
+
+## 5. 与全量 pre-merge 的关系（非 Graph 阻断项）
+
+A7 自身门禁（`check-graph-policy.py`）已全绿。全量 `pre-merge.sh` 可能的 FAIL 来自**其他并发 lane**
+（如 `cargo fmt`、`build metrics regression`、`check-tools-policy.py` / `check-database-policy.py` 等），
+与 Graph/W13 无关，归 A0 跨 lane 集成时统一处置。本卡不运行 cargo build / 全量 pre-merge（docs-only，且
+graph 门禁已由策略脚本权威覆盖）。
+
+## 6. 交付物
+
+- 本说明：`logs/assist/A7-M5-W13-graph-nonregression-20260907-2358.md`（唯一新增文件）
+- 补丁：`logs/checkpoints/Lane-A7-M5-W13-graph-nonregression-20260907-2358.patch`（仅含本说明，docs-only）
+- **未 push**（board：仅 A0 push）

@@ -1,10 +1,10 @@
 # Parallel Command Board
 
-> Updated: 2026-09-07 23:55 CST
+> Updated: 2026-09-08 00:20 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` at `269269a` after W11 push (W10 = `ba78092` A3 MCP stdio-prep + `5226aad` A0 W10 integration; W11 = `269269a` A0 integrate W11 MCP stdio dry-run hardening; 3-commit chain); A0 has shipped W11 to origin/master; W12 Graph Live-Query Readonly Dispatch added 2026-09-07 20:30 CST
-> Current NEXT: M5-W13 plugin runtime Stage-I manifest lifecycle; **W12 is accepted locally and pending A0 commit/push in this batch**; W13 opens only A9 plugin manifest lifecycle product code (install from local manifest/resource metadata, enable/disable/list/get/key registry as safe local state), while plugin invoke/command execution, network download/listener, dynamic code execution, MCP full runtime, Agent/Skill execution, daemon, and model call remain LOCKED; only A0 pushes
+> Current mainline: `master` at `3c3f460` pending A0 W13 integration. W13 Stage-I manifest lifecycle is accepted locally: eight local-only lifecycle/key-registry commands, atomic registry persistence, redacted DTO/audit, ACL/source-check parity and no execution surface. Only A0 pushes.
+> Current NEXT: M5-W14 plugin manager UI and Stage-I lifecycle consumption. W14 opens one narrow UI product lane only; plugin invocation/command execution, dynamic loading, network download/listener, daemon, model call, Agent/Skill execution, MCP full runtime, graph write/export, and background workers remain LOCKED.
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
@@ -13,7 +13,7 @@ This file is the coordination board for 11 parallel agents plus A0 integration. 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W14 Plugin Manager UI Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
 ```
 
 Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
@@ -1159,3 +1159,39 @@ git diff --check
 git status --short --branch
 git push origin master
 ```
+
+## M5-W14 Plugin Manager UI Dispatch
+
+> Added 2026-09-08 00:20 CST by A0 after W13 local acceptance. This wave consumes the eight existing local-only Stage-I commands; it does not expand runtime authority.
+
+### W14 Hard Stops
+
+- Work only in `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3` on `master`; pull fast-forward before starting when clean. Only A0 pushes.
+- No `plugin_invoke`, code execution, dynamic loading, network download/listener, daemon, model call, Agent/Skill execution, MCP runtime expansion, graph write/export, or background worker.
+- UI must call only `src/bridge.ts`; no raw Tauri `invoke`.
+- Do not display or persist a raw signature, public-key material, resource path, manifest metadata, credentials, request/response bodies, stdout, or stderr.
+- Existing command names and DTOs are frozen. Do not add lifecycle commands in W14.
+
+### W14 Lane Table
+
+| Lane | Status | Scope | Allowed Files | Must Deliver |
+|---|---|---|---|---|
+| A1 | START DOCS ONLY | Reconcile W13 accepted and W14 active; update M5-12/13/14 status without changing product scope. | Board, three main docs, `logs/checkpoints/M5-20260906/*.md`, W14 checkpoint | Docs package and patch. |
+| A2 | START REVIEW ONLY | Check UI/store boundary: no domain duplication, raw bridge invoke, or lifecycle authority expansion. | `logs/assist/A2-M5-W14-*.md` | Boundary verdict. |
+| A3 | START MCP REVIEW ONLY | Confirm no plugin lifecycle command becomes reachable through MCP stdio. | `logs/assist/A3-M5-W14-*.md`, MCP fixture only if concrete | Isolation verdict. |
+| A4 | START PRIVACY REVIEW ONLY | Check rendered DTO/error/state paths for secret, signature, key, metadata, and path echo. | `logs/assist/A4-M5-W14-*.md`, privacy fixture only if concrete | Privacy verdict. |
+| A5 | START AGENT/SKILL REVIEW ONLY | Confirm plugin UI contains no Agent/Skill/tool execution affordance. | `logs/assist/A5-M5-W14-*.md` | Lock verdict. |
+| A6 | START PRODUCT CODE NARROW | Build a compact Plugin Manager panel/store that lists, filters, inspects, installs a supplied manifest, enables/disables, and manages trusted-key fingerprints through frozen `bridge.ts` methods. Show only redacted DTO fields; use explicit confirmation for state-changing actions; add headless UI logic tests and integrate the panel into existing workspace navigation. | `src/components/plugin/**`, `src/stores/usePluginStore.ts`, existing workspace/layout navigation files, `src/bridge.ts`/`src/types.ts` only for frozen-type corrections, `scripts/check-plugin-ui-logic.mjs`, checkpoint | Usable local-only UI, no raw invoke, no execution action, UI tests and npm build PASS. |
+| A7 | SUPPORT DOCS ONLY | Graph non-regression review only. | `logs/assist/A7-M5-W14-*.md` | Note. |
+| A8 | SUPPORT UI REVIEW ONLY | Review A6 UI ergonomics and existing graph/workspace non-regression; no plugin product code. | `logs/assist/A8-M5-W14-*.md` | UI review. |
+| A9 | SUPPORT BACKEND REVIEW ONLY | Verify A6 consumes the frozen W13 contract without backend changes; document any missing read-only presentation field. | `logs/assist/A9-M5-W14-*.md` | Contract note. |
+| A10 | START SECURITY REVIEW | Review raw-invoke bypass, confirmation bypass, source/ACL drift, and sensitive-rendering regressions after A6 output. | `logs/assist/A10-M5-W14-*.md` | Security verdict. |
+| A11 | START VERIFICATION | Maintain W14 matrix: plugin-focused Rust, plugin/privacy/MCP/Agent-Skill/graph policies, UI logic, npm build, pre-merge, diff check. | `logs/checkpoints/A11-M5-W14-*.md`, `logs/assist/A11-M5-W14-*.md` | Push readiness evidence. |
+
+### One-Line Prompts
+
+```text
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W14 Plugin Manager UI Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+```
+
+Replace only `AX` with `A1` through `A11`.

@@ -11,6 +11,10 @@
 - `PARALLEL_COMMAND_BOARD.md` §M5-W4 Hard Stops：
   「no second execution path, no installer/network/download」「any new command must be atomic
    with source check, ACL, frontend bridge/types, policy coverage, and tests」。
+- `PARALLEL_COMMAND_BOARD.md` §M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch
+  Hard Stops：「Do not implement plugin_invoke, command execution, dynamic code loading,
+  network download/listener, daemon, model call, Agent/Skill execution, MCP full runtime」
+  → 对应本脚本 W13 三条 PENDING 码位（插件执行能力声明 / 插件执行类命令 / 插件 UI 执行可供性）。
 
 本脚本定位（对齐 A2 `check-core-boundary.py` / A3 `check-mcp-policy.py` 范式）：
 - 它是**准入门禁脚本**，不是 Agent/Skill 运行时代码；只读取既有文件做静态断言。
@@ -71,6 +75,49 @@ def _agent_skill_present(repo: dict[str, str]) -> bool:
         if rel == "src-tauri/src/security_policy.rs" and re.search(r"\bSKILL_CAPABILITY_V1\s*[=:]", text):
             return True
         if rel in ("src-tauri/src/skills.rs", "src-tauri/src/agent.rs"):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# 产物探针：W13 插件生命周期产物是否已落地（决定插件相关 PENDING 码位是否守门）
+# ---------------------------------------------------------------------------
+
+_PLUGIN_LIFECYCLE_CMDS = (
+    "plugin_install", "plugin_enable", "plugin_disable", "plugin_list", "plugin_get",
+    "plugin_key_add", "plugin_key_list", "plugin_key_remove",
+)
+
+
+def _is_plugin_ui(rel: str) -> bool:
+    """插件生命周期 UI 文件（仅当路径/文件名含 plugin 时判定）。
+
+    刻意只认 plugin 命名：**不**把脚本面板 / 终端 / 图谱等既有 UI 纳入扫描范围，
+    避免「运行」「执行」等既有按钮造成误报。
+    """
+    r = rel.replace("\\", "/").lower()
+    if not (r.startswith("src/components/") or r.startswith("src/stores/") or r.startswith("src/utils/")):
+        return False
+    return "plugin" in r
+
+
+def _plugin_lifecycle_present(repo: dict[str, str]) -> bool:
+    """W13 插件生命周期产物已存在的依据（任一即真）：
+    - 存在 `src-tauri/src/plugin.rs`（W6 已落地的纯策略切片）
+    - 任一 `plugin_*` 生命周期命令出现在 `bridge.rs` / `main.rs`
+    - 存在插件生命周期 UI 文件
+
+    门控语义与 `_agent_skill_present` 一致：产物未落地时插件相关码位自动 no-op；
+    A9 一旦落地 manifest 生命周期代码或插件 UI，码位自动生效。
+    """
+    for rel, text in repo.items():
+        if rel == "src-tauri/src/plugin.rs":
+            return True
+        if _is_plugin_ui(rel):
+            return True
+        if rel in ("src-tauri/src/bridge.rs", "src-tauri/src/main.rs") and re.search(
+            r"\b(?:" + "|".join(_PLUGIN_LIFECYCLE_CMDS) + r")\b", text
+        ):
             return True
     return False
 
@@ -301,6 +348,88 @@ def c_exec_locked(rel, text, repo):
     return None
 
 
+# ---- W13 插件生命周期 × Agent/Skill 执行锁定（A5 加，PENDING）----
+
+# 插件侧 Agent/Skill 执行能力声明形态：`agent.execute` / `skill.run` / `tool_invoke` 等。
+_PLUGIN_EXEC_CAP_REX = re.compile(
+    r"(?i)\b(?:agent|skill|tool)\s*[._:]\s*(?:execute|run|invoke|exec)\b"
+    r"|\b(?:agent_exec|skill_run|skill_exec|tool_invoke|tool_call|agent_chat)\b"
+)
+
+# 插件**执行类**命令（W13 Stage-I 一律禁止；`plugin_install/enable/disable/list/get` 属生命周期，不在此列）。
+_PLUGIN_EXEC_CMDS = (
+    "plugin_invoke", "plugin_exec", "plugin_run", "plugin_call", "plugin_tool_call",
+)
+
+# 插件 UI 的执行可供性：Run/Invoke/Execute + plugin/agent/skill/tool，或执行类前端 wrapper 引用。
+_PLUGIN_UI_EXEC_REX = re.compile(
+    r"(?i)\b(?:run|invoke|execute|exec)\s*[A-Z]?(?:plugin|agent|skill|tool)\b"
+    r"|\b(?:plugin|agent|skill|tool)\s*(?:Invoke|Exec|Run)\b"
+    r"|\bskillRun\b|\bagentChat\b"
+    r"|运行插件|执行插件|调用插件|运行智能体|运行技能|执行技能"
+)
+
+
+def c_plugin_manifest_agent_cap(rel, text, repo):
+    """AGSK_PLUGIN_MANIFEST_AGENT_CAP（W13 · A5 加）：插件侧不得声明 Agent/Skill 执行能力。
+
+    W13 Hard Stop：「Do not implement ... Agent/Skill execution」。插件 manifest 生命周期
+    Stage-I 只做元数据与状态管理，**不得**出现 `agent.execute` / `skill.run` / `tool.invoke`
+    一类执行能力声明；能力白名单单一真源 `PLUGIN_CAPABILITY_V1`（当前为空集合，fail-closed）
+    同样不得登记执行类能力。
+
+    扫描范围刻意限定在插件策略模块 / DTO / 能力白名单 / 前端 DTO 镜像；
+    用 `_strip_line_comments` 去掉行注释，避免 `skill_runtime` 一类文档措辞误报。
+    门控：仅当插件生命周期产物存在时守门（当前 `plugin.rs` 已存在 → 已生效）。
+    """
+    if not _plugin_lifecycle_present(repo):
+        return None
+    if rel not in ("src-tauri/src/plugin.rs", "src-tauri/src/domain.rs",
+                   "src-tauri/src/security_policy.rs", "src/types.ts"):
+        return None
+    m = _PLUGIN_EXEC_CAP_REX.search(_strip_line_comments(text))
+    if m:
+        return [f"插件侧出现 Agent/Skill 执行能力声明（W13 Stage-I 禁止，执行面解锁须先经 A0 裁决）：{m.group(0)!r}"]
+    return None
+
+
+def c_plugin_cmd_not_exec(rel, text, repo):
+    """AGSK_PLUGIN_CMD_NOT_EXEC（W13 · A5 加）：禁止插件**执行类**命令注册。
+
+    W13 只开放 manifest 生命周期五件套（install/enable/disable/list/get）+ 可信密钥数据管理。
+    `plugin_invoke` / `plugin_exec` / `plugin_run` / `plugin_call` 一旦出现在 handler/注册处，
+    即视为插件执行面解锁，同时违反 W13 Hard Stop 与 AGSK 执行锁定（插件常作为 Agent 工具入口）。
+    """
+    if not _plugin_lifecycle_present(repo):
+        return None
+    if rel not in ("src-tauri/src/bridge.rs", "src-tauri/src/main.rs"):
+        return None
+    found = sorted(set(re.findall(r"\b(?:" + "|".join(_PLUGIN_EXEC_CMDS) + r")\b", text)))
+    if found:
+        return [f"插件执行类命令已注册（W13 Stage-I 禁止，插件执行面解锁须先经 A0 裁决）：{found}"]
+    return None
+
+
+def c_plugin_ui_exec_affordance(rel, text, repo):
+    """AGSK_PLUGIN_UI_EXEC_AFFORDANCE（W13 · A5 加）：插件生命周期 UI 不得给出执行可供性。
+
+    对应派工 Q2：「plugin lifecycle UI does not imply agent/tool execution」。
+    插件 UI（路径/文件名含 plugin 的 components/stores/utils）不得出现
+    Run/Invoke/Execute 执行按钮，也不得引用 `skillRun` / `agentChat` 等执行类前端 wrapper。
+
+    「安装 / 启用 / 禁用 / 卸载」等生命周期按钮与只读状态展示**不在**拦截范围：
+    本正则只匹配执行语义组合，不拦截 `install` / `enable` / `disable`。
+    """
+    if not _plugin_lifecycle_present(repo):
+        return None
+    if not _is_plugin_ui(rel):
+        return None
+    m = _PLUGIN_UI_EXEC_REX.search(text)
+    if m:
+        return [f"插件 UI 出现执行可供性或 Agent/Skill 执行引用（W13 Stage-I 禁止）：{m.group(0)!r}"]
+    return None
+
+
 ACTIVE_CODES = [
     ("AGSK_ACL_TAIL", "ACTIVE", c_acl_tail),
     ("AGSK_CAPABILITY_DRIFT", "ACTIVE", c_capability_drift),
@@ -313,6 +442,10 @@ PENDING_CODES = [
     ("AGSK_COMMAND_PARITY", "PENDING", c_command_parity),
     ("AGSK_CREDENTIAL_NOT_ECHOED", "PENDING", c_credential_not_echoed),
     ("AGSK_EXEC_LOCKED", "PENDING", c_exec_locked),
+    # W13 插件生命周期 × Agent/Skill 执行锁定（A5 加；gate = 插件生命周期产物存在）
+    ("AGSK_PLUGIN_MANIFEST_AGENT_CAP", "PENDING", c_plugin_manifest_agent_cap),
+    ("AGSK_PLUGIN_CMD_NOT_EXEC", "PENDING", c_plugin_cmd_not_exec),
+    ("AGSK_PLUGIN_UI_EXEC_AFFORDANCE", "PENDING", c_plugin_ui_exec_affordance),
 ]
 ALL_CODES = ACTIVE_CODES + PENDING_CODES
 
@@ -343,6 +476,22 @@ def _scan_real_repo() -> dict[str, str]:
                     t = _read(full)
                     if t is not None:
                         repo[os.path.relpath(full, ROOT)] = t
+    # W13：只读入**插件命名**的前端文件（供 AGSK_PLUGIN_UI_EXEC_AFFORDANCE 判定）。
+    # 刻意不纳入其它 UI，避免既有面板的「运行/执行」控件造成误报。
+    for sub in ("src/components", "src/stores", "src/utils"):
+        base_ui = os.path.join(ROOT, sub)
+        if os.path.isdir(base_ui):
+            for root, _dirs, files in os.walk(base_ui):
+                for fn in files:
+                    if not (fn.endswith(".ts") or fn.endswith(".vue")):
+                        continue
+                    full = os.path.join(root, fn)
+                    r = os.path.relpath(full, ROOT)
+                    if "plugin" not in r.lower():
+                        continue
+                    t = _read(full)
+                    if t is not None:
+                        repo[r] = t
     return repo
 
 
@@ -488,6 +637,18 @@ def _run_self_test() -> int:
     add("AGSK_EXEC_LOCKED", "main.rs 注册 skill_run（执行解锁）但 ACL/bridge.ts 缺失",
         mutate(**{"src-tauri/src/main.rs": "bridge::skill_run,\n"}),
         "src-tauri/src/main.rs")
+    # W13 插件生命周期 × Agent/Skill 执行锁定（gate = 插件产物存在，故坏样本需含插件文件）
+    add("AGSK_PLUGIN_MANIFEST_AGENT_CAP", "plugin.rs 声明 agent.execute 执行能力",
+        mutate(**{"src-tauri/src/plugin.rs": "pub const X: &[&str] = &[\"agent.execute\"];\n"}),
+        "src-tauri/src/plugin.rs")
+    add("AGSK_PLUGIN_CMD_NOT_EXEC", "main.rs 注册 plugin_invoke（插件执行面解锁）",
+        mutate(**{"src-tauri/src/plugin.rs": "pub struct PluginManifest {}\n",
+                  "src-tauri/src/main.rs": "bridge::plugin_invoke,\n"}),
+        "src-tauri/src/main.rs")
+    add("AGSK_PLUGIN_UI_EXEC_AFFORDANCE", "插件 UI 出现「运行插件」执行按钮",
+        mutate(**{"src/components/workspace/PluginPanel.vue":
+                  "<template><button @click=\"runPlugin\">运行插件</button></template>\n"}),
+        "src/components/workspace/PluginPanel.vue")
 
     for code, _desc, mutated in bad_cases:
         h = detect_hits(mutated)

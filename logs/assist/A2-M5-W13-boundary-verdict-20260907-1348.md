@@ -1,0 +1,175 @@
+# A2 · M5-W13 插件生命周期边界评审裁定（BOUNDARY REVIEW VERDICT）
+
+> 生成：2026-09-07 13:48 CST · Lane A2（M5-W13 · **BOUNDARY REVIEW ONLY**）
+> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch，A2 行：
+> 「Review plugin lifecycle boundary: **pure domain/store helpers in plugin modules, commands in bridge**, no graph/db/script/mcp/agent execution path, no threads/listeners.」
+> 基线：`master @ 3c3f460`（`git fetch` + `git pull --ff-only` 后，与 `origin/master` 同步，工作树干净）
+> 性质：**只读评审**。未写任何产品代码，未改 `plugin.rs`/`bridge.rs`/`domain.rs`/`main.rs`/ACL/`Cargo.toml`/策略脚本，未 push（仅 A0 推送）。
+
+---
+
+## 0. 裁定摘要（VERDICT）
+
+| 维度 | 结论 |
+|---|---|
+| **现状代码边界** | ✅ **PASS** —— `plugin.rs` 为纯函数切片，执行路径/线程/全局态 **0 命中** |
+| **命令面现状** | ✅ **PASS** —— 尚无插件命令入 `bridge.rs`/`main.rs`/ACL；MCP **0 暴露** |
+| **Stage-I 可开工性** | ⛔ **BLOCKED** —— 3 个阻塞项（B1/B2/B3）未解除前，A9 不应落产品代码 |
+| **阻塞项归属** | B1 范围冲突（A0 拍）、B2 依赖缺失（A0 扩权或改放 `plugin.rs`）、B3 真验签不可达（顺延至 W14+） |
+
+**一句话**：`plugin.rs` 的**纯函数边界是干净的**，但 A9 手里那份名为「W13」的卡片**不是本次 W13 派发的内容**；按它实施会直接撞 W13 硬停（`plugin_invoke`）。必须先纠正范围，再开工。
+
+---
+
+## 1. 评审对象与证据
+
+| # | 对象 | 位置 | 规模 |
+|---|---|---|---|
+| E1 | 插件策略切片 | `src-tauri/src/plugin.rs` | 446 行（含 `mod tests`） |
+| E2 | 领域类型 | `src-tauri/src/domain.rs` | `PluginManifest`/`PluginEntry`/`PluginCapability`/`PluginSignature`/`PluginState`（2210-2300） |
+| E3 | 能力白名单真源 | `src-tauri/src/security_policy.rs` | `PLUGIN_CAPABILITY_V1`（2126）、`SKILL_CAPABILITY_V1`（2082）、`AGENT_CAPABILITY_V1`（2085） |
+| E4 | A9 Stage-I 卡（**本次应对齐的设计**） | `logs/assist/A9-M5-W12-plugin-runtime-install-enable-card-20260907-2000.md` | 301 行 |
+| E5 | A9 Stage-II 卡（**含 invoke，本次禁做**） | `logs/assist/A9-M5-W13-plugin-runtime-delete-storage-card-20260907-2000.md` | 333 行 |
+| E6 | 插件策略脚本 | `scripts/check-plugin-policy.py` | 218 行 |
+| E7 | 命令 ACL | `src-tauri/permissions/default-commands.toml` | 126 条，末条 `list_artifact_images` |
+
+---
+
+## 2. 边界合规：现状检查（逐条）
+
+### 2.1 ✅ 纯 domain/store 助手留在插件模块内（PASS）
+
+`plugin.rs` 公开面全为纯函数/常量，无副作用：
+
+```text
+DANGEROUS_PLUGIN_CAPABILITIES   plugin.rs:28   风险分档表（7 项）
+capability_acl_level            plugin.rs:39   cap → AclLevel
+permission_preview_for_plugin   plugin.rs:49   派生 A5 PermissionPreview
+validate_plugin_manifest        plugin.rs:81   schema/边界/凭据/形态③/白名单（无 I/O、无真验签）
+verify_plugin_signature_structure plugin.rs:151 **仅结构**校验
+can_transition / transition     plugin.rs:179/200 生命周期状态机（纯）
+```
+
+禁用模式扫描（`plugin.rs` 全文）：
+
+```text
+std::fs | std::thread | thread::spawn | tokio | Mutex< | RwLock< | OnceLock
+| static <大写>: | Command::new | std::process | reqwest | std::net | TcpListener
+→ 命中数 = 0
+```
+
+模块依赖只有 `crate::domain` + `crate::security_policy`（`plugin.rs:19-20`），**未触** graph / database / script_runner / mcp / agent / skills 任一模块。
+文件头 §设计红线 已自声明「不触碰 `plugins_dir`、不读写磁盘清单、不联网」（`plugin.rs:11-16`），与实际代码一致。
+
+### 2.2 ✅ 命令在 bridge、插件模块无命令（PASS）
+
+- `bridge.rs` / `main.rs`：**无** `plugin_install|enable|disable|list|get|keys_*|invoke` 命令。
+- `mcp_server.rs`：`plugin` 命中 **0** → 插件生命周期**未**经 MCP 暴露（与 A3 的 MCP 隔离结论一致，本 Lane 独立复核通过）。
+- `main.rs` 仅 `mod plugin;`（第 14 行），无 `invoke_handler` 中的插件条目。
+
+### 2.3 ✅ 无线程 / 无监听器（PASS）
+
+`plugin.rs` 无 `thread::spawn`/`tokio::spawn`/`app.listen`/`.emit(`；无后台 worker、无定时器。
+（注：`bridge.rs` 现存的 `plugin_eval`（第 143 行）是 **tabs 域**的 WebView JS-eval 助手，经 `tauri_plugin_browser_tabs::TabManagerState`，**与插件运行时无关**，见 §4 C5 命名冲突。）
+
+### 2.4 ✅ 测试现状（PASS）
+
+```text
+cargo test --manifest-path src-tauri/Cargo.toml plugin
+→ 11 passed; 0 failed; 0 ignored（403 filtered out）
+```
+
+其中 `security_policy::plugin_capability_tests::plugin_capability_whitelist_empty_accepts_nothing` 已把「空白名单 = 拒绝一切能力」钉死为**有意 fail-closed**，非缺陷。
+`PluginState` 8 变体（`Discovered/Validating/SignedOk/SignedFailed/Loaded/Enabled/Disabled/Uninstalled`）齐备，`can_transition` 迁移矩阵已覆盖（`plugin.rs:131-143`）。
+
+---
+
+## 3. ⛔ 阻塞项（BLOCKERS，须先解除）
+
+### B1 · 范围冲突：A9 的「W13 卡」不是本次 W13 派发（最严重）
+
+| 项 | 内容 |
+|---|---|
+| 事实 | A9 最新卡 `A9-M5-W13-plugin-runtime-delete-storage-card-20260907-2000.md` §2 规划 **10 命令**，含 **`plugin_invoke` / `plugin_invoke_cancel`**（§2.5、§3 invoke 序列、§9 R-N1~R-N7）。 |
+| 冲突 | 指挥板 W13 **Hard Stops**：「Do not implement `plugin_invoke`, command execution, dynamic code loading, network download/listener, …」；A9 行限定 **Stage-I manifest lifecycle**（install 元数据校验 / enable / disable / list / get / 受信任公钥），明确 **No invoke/execution/network/download/dynamic load**。 |
+| 风险 | A9 若按**文件名**「W13」对号入座实施自己的 W13 卡，将直接产出被硬停禁止的 `plugin_invoke`，整批不可集成。 |
+| 处置 | **交 A0 裁定并显式公告**：本次 W13 = A9 的 **W12 Stage-I 卡**（install/enable/disable/list/get + `plugin_keys_add/list/remove`，8 命令）；`A9-M5-W13-delete-storage` 卡（Stage-II，含 invoke/storage/audit/permissions/upgrade/rollback）**顺延至 W14+**，须由 A0 新 dispatch 开启（该卡 §HS-11 亦自述如此）。 |
+
+### B2 · 依赖缺失：Stage-I 卡声称「已有」的三项原语实际不存在
+
+A9 Stage-I 卡 §0 依赖清单声称已具备，实测：
+
+| 声称依赖 | 实际 | 证据 |
+|---|---|---|
+| `plugins_dir()`（`workspace.rs`） | ❌ **不存在** | 全仓 `plugins_dir` 仅 2 处**注释**（`plugin.rs:12`、`domain.rs:2210`）；`workspace.rs` 只有 `data_dir`/`workspace_dir`/`images_dir`/`notes_dir`/`scripts_dir`/`sessions_dir` |
+| `MAX_PLUGIN_CAPABILITIES = 5` | ❌ **不存在** | `grep 'pub const .*CAPABILIT'` 仅命中 `MCP_CAPABILITY_V1`/`DANGEROUS_PLUGIN_CAPABILITIES`/`SKILL_`/`AGENT_`/`PLUGIN_CAPABILITY_V1`，无该常量 |
+| `HASH_HEX_LEN_SHORT = 16` | ❌ **不存在** | 无 `HASH` 类长度常量 |
+| `MAX_TEXT_FIELD_BYTES = 64KiB` | ✅ 存在 | `domain.rs:1019` |
+| `atomic_write` | ✅ 存在 | `session.rs:30` |
+| `log_audit` | ✅ 存在 | `workspace.rs:386` |
+
+| 风险 | A9 按卡实施时会即兴造目录/造常量，导致路径与常量**散落多处**、违背「目录原语单一真源」「A2 W2 常量单一真源」。 |
+|---|---|
+| 处置（二选一，交 A0 拍） | ① **扩权**：把 `workspace.rs` 加入 A9 允许文件，按既有 `*dir(app)` 模式新增 `plugins_dir(app)`；② **内聚**：在 `plugin.rs`（已在允许清单）内定义路径助手与上限常量，不碰 `workspace.rs`。<br>无论哪种：常量**必须**落 `domain.rs` 常量区（A2 W2 单一真源）或 `plugin.rs` 且**全仓唯一**，**禁止**在 `bridge.rs`/前端/`check-plugin-policy.py` 各写一份字面量。 |
+
+### B3 · 真 Ed25519 验签在 W13 不可达（须降级声明，不得假称）
+
+| 事实 | ① `src-tauri/Cargo.toml` **无** `ed25519`/`ring` 依赖（仅有 `sha2 = "0.10"`、`keyring = "3"`）；② `Cargo.toml` **不在** A9 的 W13 允许文件清单内。 |
+|---|---|
+| 冲突 | A9 Stage-I 卡 §2.3 step 7 要求 `ed25519_verify(...)` 真验签，§3 FM-5 标「W12 必落真验签」。在无加密 crate、又不能改 `Cargo.toml` 的前提下**无法实现**。 |
+| 一致解法 | 与派发口径一致：`plugin_install` = **metadata-only 本地包校验**，即 `validate_plugin_manifest` + `verify_plugin_signature_structure`（结构）+ `sha256(resource) == manifest.hash`（`sha2` 已有）。**FM-5 真验签顺延 W14+**，须在 A0 明确引入加密 crate 后再落。 |
+| 红线 | **禁止**用「结构校验通过」对外表述为「已验签」；审计/UI 的签名字段须如实标 `signature.status = structure_ok` 之类的**中性状态**，不得冒用 `verified`/`SignedOk` 语义混淆（否则等于签名旁路）。 |
+
+---
+
+## 4. 条件项（CONDITIONS，非阻塞但开工即须满足）
+
+- **C1 命令分层**：命令实现**只**在 `bridge.rs`，注册在 `main.rs` + `default-commands.toml`；`plugin.rs` 保持**无命令、无 `#[tauri::command]`**。
+- **C2 ACL 位置**：新增命令一律插在末条 `list_artifact_images` **之前**（K1/HS-8）。现状 126 条，Stage-I 预计 +8。
+- **C3 白名单保持 fail-closed**：`PLUGIN_CAPABILITY_V1 = &[]`（`security_policy.rs:2126`）**禁止**为让 install/enable 测试通过而填入能力；Stage-I 无执行面，只接受 `capabilities: []` 的 manifest。改动该常量属能力真源变更（HS-4），须 A0 单独 dispatch。
+- **C4 存储与审计原语**：注册表/清单读写**只**用 `atomic_write`（`session.rs:30`）；审计**只**用 `log_audit`（`workspace.rs:386`）；**禁止** `Mutex`/`OnceLock` 全局插件注册表、**禁止**线程/监听器/后台扫描。
+- **C5 命名冲突**：`bridge.rs::plugin_eval`（143 行）已占位且属 **tabs 域 JS eval**。新增 `plugin_*` 命令须避免与之语义混淆，且**禁止**插件路径复用 `plugin_eval`（那等于给插件开 JS 执行旁路）。
+- **C6 审计脱敏**：审计/日志只记 `id` / 计数 / hash 前 16 hex，**禁** manifest 正文、资源路径、凭据、错误 `Debug`（沿用 `CredentialLeak` Display `<redacted>`）。
+- **C7 形态③**：仅声明式入口，无独立 webview、无 stdio 进程、无网络下载——`is_allowed_entry_url`（`plugin.rs:243`）已约束，新增代码不得放宽。
+
+---
+
+## 5. 观察项（WATCH，交对应 Lane）
+
+- **W1 双表漂移风险（→ A0/A10）**：`plugin.rs:28` `DANGEROUS_PLUGIN_CAPABILITIES`（7 项：fs_write/fs_delete/command_exec/workspace.write/workspace.delete/network.request/credential.read）与 `security_policy.rs:2126` `PLUGIN_CAPABILITY_V1`（空）是**两张表**。前者是**风险分档**，**不是白名单**；当前 `capability_acl_level` 会给未列入白名单的能力返回 `Dangerous`/`Confirm`。须在文档中明确二者语义，**禁止**后续 Lane 把 `DANGEROUS_PLUGIN_CAPABILITIES` 当作允许集合消费（HS-4 单一真源）。
+- **W2 策略脚本覆盖面不足（→ A9）**：`scripts/check-plugin-policy.py:53` 的 `PLUGIN_MODULE` **只扫 `src-tauri/src/plugin.rs` 单文件**，5 个 PENDING 码位（`PLUGIN_SECOND_PATH` / `PLUGIN_INLINE_SHELL` / `PLUGIN_SIG_BYPASS` / `PLUGIN_FORM_THREE` / `PLUGIN_NO_SECRETS`）全部基于该文件。一旦命令落 `bridge.rs`、「解包/落盘」落新模块，这些码位将**不再覆盖真实执行面**，门禁给出的是**虚假保证**。建议把扫描面扩为文件集合（`plugin.rs` + `bridge.rs` 插件命令区 + 任何新增 store 模块），并同步 `--expect-pending` 基线。
+- **W3 MCP 隔离（→ A3）**：本 Lane 复核 `mcp_server.rs` 对 `plugin` 命中 0，现状干净；A9 新增命令后请 A3 复核**未**被 MCP 工具面自动收录。
+- **W4 前端镜像（→ A6/A9）**：`src/types.ts` 的插件类型须镜像 `domain.rs`，禁字面量重复定义状态字符串。
+
+---
+
+## 6. A9 开工前自检清单（Stage-I）
+
+```text
+[ ] 已确认本次实施依据 = A9-M5-W12-install-enable 卡（Stage-I），不是 A9-M5-W13-delete-storage 卡
+[ ] 不出现 plugin_invoke / plugin_invoke_cancel / plugin_storage_* / plugin_audit_list / plugin_permissions_*
+[ ] plugin.rs 仍无 #[tauri::command]、无 std::fs / std::thread / tokio / Mutex / OnceLock
+[ ] install 仅元数据校验 + sha256 比对；文档中不出现「已验签 / verified」
+[ ] 命令在 bridge.rs，注册 main.rs，ACL 插在 list_artifact_images 之前
+[ ] PLUGIN_CAPABILITY_V1 仍为 &[]，未为测试放行能力
+[ ] 目录/常量原语按 B2 的 A0 裁定落地，全仓唯一
+[ ] 审计仅 id/count/hash 前 16 hex；错误走 Display
+[ ] cargo test --manifest-path src-tauri/Cargo.toml plugin 全绿
+[ ] scripts/check-plugin-policy.py --self-test / 默认门禁 PASS
+```
+
+---
+
+## 7. 需 A0 拍板（3 项）
+
+1. **B1**：公告「W13 = Stage-I（A9 的 W12 卡）」，`A9-M5-W13-delete-storage` 卡顺延 W14+。
+2. **B2**：`plugins_dir()` 与两个缺失常量——扩权 `workspace.rs`，还是内聚到 `plugin.rs`？
+3. **B3**：确认 W13 不做真 Ed25519（无加密 crate、不可改 `Cargo.toml`），FM-5 顺延；并要求禁用「已验签」表述。
+
+---
+
+## 8. 本 Lane 合规声明
+
+- 仅产出评审文档与补丁；**未写产品代码**，未改 `plugin.rs`/`bridge.rs`/`domain.rs`/`main.rs`/`default-commands.toml`/`Cargo.toml`/`scripts/check-plugin-policy.py`/三份主文档。
+- 未移动 `NEXT`、未建分支、**未 push**（board：仅 A0 推送）。
+- 评审期间已复核 `plugin.rs`/`bridge.rs`/`domain.rs` 无并发改动（`git status --short` 为空）。

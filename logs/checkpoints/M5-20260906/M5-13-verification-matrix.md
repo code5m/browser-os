@@ -1,4 +1,4 @@
-# M5 验证矩阵（A1 横切 · M5-W0 末位 + W1 reconciliation + W6 verification delta + W7 verification scope + W8 reconciliation + W9 verification scope）
+# M5 验证矩阵（A1 横切 · M5-W0 末位 + W1 reconciliation + W6 verification delta + W7 verification scope + W8 reconciliation + W9 verification scope + W10 verification scope + W10 verification delta + W11 verification scope + W12 verification scope + W12 build metrics threshold）
 
 > 子卡 ID：**M5-13** · 跨 M5-1~M5-12 · `[S3|LEVERAGE:2|COMPLEX|AI:DEEP|R:xhigh]`
 > 责任 Lane 候选：**A11**（沿用 A7/A11 角色，A0 签发时定）
@@ -10,6 +10,7 @@
 > **W11** ACTIVE：**W11 final verification matrix 模式** —— W11 dry-run 行为确定性 + A3 W11 bounded stdio dry-run hardening + A11 W11 verification delta 必跑 + 残留债 + push readiness（见 [W11 verification scope] 段）；详见 `M5-0-overview.md` 顶部 `[W11 active · 2026-09-07 18:30 CST]` 段
 > **W11 PUSHED**（2026-09-07 20:30 CST · A0 拣入 `269269a` = HEAD）：A0 在 **`269269a feat(M5): integrate W11 MCP stdio dry-run hardening`** 中拣入 W11：MCP stdio dry-run 硬化（21/21 + ACTIVE=11/PENDING=0）+ A5 Agent/Skill 执行锁 policy（PENDING=6）+ A7 W12 graph live-query 实施卡 + A9 W12/W13 plugin staged cards + A1 W11 reconciliation 整包；完整验证矩阵见 [W11 verification scope] 段。
 > **W12** ACTIVE：**W12 graph live-query read-only verification matrix 模式** —— W12 三只读命令 `graph_query` / `graph_node_get` / `graph_stats` + A8 UI 消费 + 9 lane review/verification（见 [W12 verification scope] 段）；详见 `M5-0-overview.md` 顶部 `[W12 active · 2026-09-07 20:30 CST]` 段。
+> **W12 PUSHED**（2026-09-07 23:55 CST · A0 拣入 `3c3f460` = HEAD）：A0 在 **`3c3f460 feat(M5): integrate W12 graph live-query readonly bridge/UI`** 中拣入 W12；图谱 live-query 只读 3 命令 + A8 UI 消费 + 10 份 W12 assist + A1 W12 reconciliation 整包 + M5-0/7/8/9/10/11/12/13/14 头部 W11 PUSHED + W12 ACTIVE 修订 + 末尾 [W12 scope supersession]/[W12 verification scope]/[W12 active] 段 + 3 主文档 L1 W11 update 行 + board L6/L7 W12 dispatch；`cargo test graph` **15/15 PASS** + full cargo **414/414 PASS** + `cargo test --features mcp mcp_server` **21/21 PASS** + `check-graph-policy.py` **ACTIVE=8 PASS** + `check-mcp-policy.py` ACTIVE=12/PENDING=0 PASS + `check-agent-skill-policy.py` ACTIVE=3/PENDING=6 PASS + `check-graph-ui-logic.mjs` **113/113 PASS** + `check-agent-skill-ui-logic.mjs` **110/110 PASS** + `npm run build` PASS + `python3 scripts/measure-build-metrics.py` **`total_bytes_pct=22.26` ≤ 23% PASS**（A0 W12 拣入期 IF-2 阈值 22% → 23% 修订）+ cargo_warnings delta = 0。
 
 ---
 
@@ -561,3 +562,45 @@ python3 scripts/measure-build-metrics.py  # 期望 ≤ 19% 或由 A0 拍新阈�
 ## [W12 build metrics threshold · 2026-09-07 23:55 CST]
 
 W12 graph live-query readonly bridge/UI measured `total_bytes_pct=22.26` and `cargo_warnings delta=0`; A0 raised `scripts/measure-build-metrics.py` threshold from 22% to 23% for W12 and updated self-test fixtures. This is accepted as feature cost, not a warning regression.
+
+---
+
+## [W13 verification scope · 2026-09-07 23:55 CST] W13 plugin stage-I manifest lifecycle 验证矩阵
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L228+（M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch，Added 2026-09-07 23:55 CST by A0）+ `M5-0-overview.md` 顶部 `[W13 active · 2026-09-07 23:55 CST]` 段 + A1 W13 reconciliation 整包（`logs/checkpoints/A1-M5-W13-reconciliation-20260907-2358.md`）。
+
+**W13 = 仅 A9 可写产品代码**（A9 plugin stage-I manifest 生命周期 6 命令 + 本地状态机）；其余 10 lane 全 review / docs / verification。
+
+| FAC | 子卡 | W13 AC | 状态 | 验证命令 / 文件 | 挂账 / 备注 |
+|-----|------|--------|------|----------------|------------|
+| **FAC-15.W13 (new·核心)** | M5-10/11/12 plugin stage-I 6 命令 | `plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_list` / `plugin_get` / `plugin_key_registry` 6 命令在 `bridge.rs` 过 `check_invocation_source` + 本地 manifest 解析 + 静态资源元数据装载 + install/enable/disable/list/get/key registry 安全本地状态机 + 6 命令 ACL 插末条 `list_artifact_images` 前 + `bridge.ts` / `types.ts` 镜像 + `check-plugin-policy.py` 新增 `PLUGIN_LIFECYCLE_LOCAL_ONLY` 守门码（ACTIVE 6 → 7） | **ACTIVE · A9 W13 实施** | `cargo test plugin`（W6 10/10 基线 + W13 增量）PASS；`check-plugin-policy.py --self-test/default` PASS（W6 ACTIVE=6 + W13 新增 `PLUGIN_LIFECYCLE_LOCAL_ONLY` 等守门码） | **W13 唯一后端产品代码 lane**；A2 boundary + A3 MCP + A4 privacy + A10 security 四重 review 必过；`plugin_invoke` / `plugin_cancel` / `plugin_storage_*` 5 stub 仍维持 `Err("not-implemented-in-W6")` |
+| **FAC-15.W13.UI** | M5-12 plugin UI 6 项 | plugin 列表 / 详情 / 安装向导 / 启用停用 / 审计查询 / 权限预览 6 项 | 🔒 **LOCKED** | —— | **A19 仍 SUPPORT DOCS ONLY**；plugin UI 6 项 0% ACTIVE = DEBT-04 W14+ 仍挂账；**A0 W12/W13 期间未派发 A19 plugin UI 产品代码** |
+| **FAC-15.W13.InvokeLock** | M5-10/11 plugin invoke / execution | invoke / cancel / 动态加载 / 网络下载 / 监听 / daemon / model call / Agent-Skill 执行 / MCP full runtime / graph build-write-export 全部 LOCKED | 🔒 **LOCKED** | `check-plugin-policy.py --self-test` PASS + W6 5 stub 仍 `Err("not-implemented-in-W6")` 不被 A9 W13 触碰 | **W13 红线**；A9 W13 仅实施 6 stage-I 命令，**不**改 invoke / cancel / storage_* 5 stub |
+
+**W13 硬停验证必跑**（8 条）：
+
+① **plugin stage-I 范围**：6 命令在 `bridge.rs` 过 `check_invocation_source` + 6 命令 ACL 插末条 `list_artifact_images` 前 + `bridge.ts` / `types.ts` 镜像 + `main.rs` handler 注册；**无** invoke / cancel / storage_* 5 stub 任何 runtime execution 路径落地（`plugin.rs` 5 stub 维持 `Err("not-implemented-in-W6")`）
+② **本地状态机**：install / enable / disable / list / get / key registry 全部基于本地 `plugin.rs` 既有 7 状态机 + 12 合法边；**不**引入网络下载 / 监听 / 动态加载 / 远程 manifest 拉取
+③ **输出脱敏**：`PluginManifestView` / `PluginStateView` / `PluginKeyEntryView` 不含 secret / raw signature / stdout / stderr / 路径含环境变量；`PluginError::code()` 稳定码 + 错误体不 echo secret / 路径 / URL / token / cookie / Authorization
+④ **同包五同步**：6 命令 + ACL（6 行插末条 `list_artifact_images` 前）+ `main.rs` + `bridge.ts` + `types.ts` + `check-plugin-policy.py`（含 `PLUGIN_LIFECYCLE_LOCAL_ONLY` 守门码）+ tests 同包
+⑤ **`plugin.rs` 不引入** `crate::bridge`（mirror `GRAPH_NO_SECOND_PATH` 守门）+ `plugin.rs` 不引入 `tokio` / `reqwest` / `ureq` / `std::process::Command::new` / `std::net` / 后台 worker
+⑥ **MCP 未暴露**：`check-mcp-policy.py` 仍 PASS + A3 W13 review note（plugin 6 命令**不**经 MCP stdio 暴露为可执行工具）+ `cargo test --features mcp mcp_server` 仍 21/21 PASS
+⑦ **build metrics ≤ 23%**（A0 W12 IF-2 修订阈值）+ `cargo_warnings delta = 0`；plugin domain 实施期 A11 复核 build metrics
+⑧ **仅 A0 push**（A1 W13 整包不 push，工作树留待 A0 拣入）
+
+**A7 W13 GRAPH NON-REGRESSION DOCS ONLY 必保**（W12 graph 集成锚点不回归）：① `mod graph` 在 `main.rs:9`；② `GraphState` 托管在 `main.rs:1347`；③ 快照载入在 `main.rs:1328-1335`；④ 3 graph 命令注册在 `main.rs:1474-1476`；⑤ `bridge.rs:6605/6624/6641` 3 invoke handler；⑥ `domain.rs` `GraphNode*` / `GraphEdge*` / `GraphProps` / View 在 L2042-2115；⑦ 7 容量常量在 `domain.rs` L2188-2200；⑧ ACL 3 行在 `src-tauri/default-commands.toml` L127-129（末条 `list_artifact_images` 在 L130）。A9 W13 实现只触碰共享文件（`domain.rs` / `bridge.rs` / `main.rs` / ACL / `types.ts` / `bridge.ts`），须保留上述 graph 锚点。
+
+**A11 W13 验证矩阵**（W13 拣入时跑）：
+
+- `cargo test plugin`（W6 10/10 基线 + W13 增量 6 命令）PASS
+- `cargo test` 整包（无 graph 回归）PASS
+- `cargo test --features mcp mcp_server` 21/21 PASS（plugin 6 命令**不**经 MCP stdio）
+- `check-plugin-policy.py --self-test/default` PASS（ACTIVE 6 → 7，`PLUGIN_LIFECYCLE_LOCAL_ONLY` PASS）
+- `check-graph-policy.py --self-test/default/current` 仍 PASS（ACTIVE=8 不变）
+- `check-mcp-policy.py --self-test/default/current` 仍 PASS（ACTIVE=12/PENDING=0）
+- `check-agent-skill-policy.py --self-test/default` 仍 PASS（ACTIVE=3/PENDING=6）
+- `check-graph-ui-logic.mjs` 仍 PASS（113/113）
+- `check-agent-skill-ui-logic.mjs` 仍 PASS（110/110）
+- `npm run build` PASS
+- `python3 scripts/pre-merge.sh` ALL_PASS
+- `python3 scripts/measure-build-metrics.py` `total_bytes_pct ≤ 23%` + `cargo_warnings delta = 0`

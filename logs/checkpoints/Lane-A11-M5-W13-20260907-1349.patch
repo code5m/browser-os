@@ -1,0 +1,372 @@
+diff --git a/logs/assist/A11-M5-W13-push-readiness-20260907-1349.md b/logs/assist/A11-M5-W13-push-readiness-20260907-1349.md
+new file mode 100644
+index 0000000..79f0a4c
+--- /dev/null
++++ b/logs/assist/A11-M5-W13-push-readiness-20260907-1349.md
+@@ -0,0 +1,105 @@
++# M5-A11 · W13 Push-Readiness Assist Note
++
++**Lane**: A11 · VERIFICATION（board L208）
++**Base**: `3c3f460`（A0 W12 集成）· 树 = 3c3f460 + 各 lane W13 在制**文档/策略**（A9 产品代码**未**入树）
++**Verdict**: ⚠️ **SPLIT**
++- **Baseline batch (docs/policy only, no A9 code): ✅ READY to push** — `pre-merge.sh` = `ALL_PASS`.
++- **After A9's Stage-I code landed in this worktree: ❌ BLOCKED** — `pre-merge.sh` = `FAIL`, single blocker: `check-plugin-policy.py` `PLUGIN_SIG_BYPASS` (a false positive, but a hard gate → must be fixed or explicitly waived). See "Second pass" below.
++
++## Gate results (all re-run on the current tree)
++
++| Gate | Result |
++|---|---|
++| `cargo test` (default) | ✅ **414 bin + 2 lib = 416 passed / 0 failed** |
++| `cargo test plugin` (focused) | ✅ **11 / 0** |
++| `cargo test graph` (regression ctrl) | ✅ 15 / 0 |
++| `cargo test --features mcp mcp_server` | ✅ **21 / 0** |
++| `cargo fmt --all --check` (main + browser-tabs) | ✅ 0 diff |
++| `cargo check --locked` | ✅ 0 error |
++| `npm run build` | ✅ PASS |
++| `bash scripts/pre-merge.sh` | ✅ **`PRE_MERGE_RESULT=ALL_PASS` (EXIT=0)** |
++| `git diff --check` (worktree / staged / merge-base..HEAD) | ✅ all three clean |
++| plugin policy self / default / `--expect-pending` | ✅ `ALL_PASS` (ACTIVE=1 PENDING=5) / `PASS` / `PLUGIN_PENDING_OK` |
++| graph policy self / default | ✅ PASS (ACTIVE=8) |
++| mcp policy self / default / `--expect-current-gaps` | ✅ PASS (ACTIVE=13, PENDING=0) |
++| agent-skill policy self / default | ✅ PASS (ACTIVE=3, PENDING=9 — A5 added 3 pending codes this wave) |
++| agent-memory / core-boundary / scheduler / database / tools / terminal / script-exec | ✅ ALL PASS |
++| UI logic (12 scripts) | ✅ graph 113/0 · agent-skill 110/0 · scheduler 105/0 · command 36/0 · database 119/0 · terminal 25/0 · session 34/0 · resource 84/0 · git ok · image 58/0 · image-preview 97/0 · script 32/0 |
++| build metrics | ✅ `total_bytes_pct=22.26` (limit 23.0), `cargo_warnings` delta 0, `warnings_increased=false` — ⚠ **headroom only 0.74pt** |
++
++## Pre-A9 "zero state" evidence (use as the diff baseline when A9 lands code)
++
++- ACL `default-commands.toml`: `plugin_*` entries = **0**; last entry is **`list_artifact_images`** → new plugin commands must be inserted **before** it.
++- `src/bridge.ts` / `src/types.ts`: **no** plugin symbol at all. No `src/components/plugin/**`.
++- `src-tauri/src/plugin.rs`: 446 lines, **pure functions only** (`capability_acl_level`, `permission_preview_for_plugin`, `validate_plugin_manifest`, `verify_plugin_signature_structure`, `can_transition`, `transition`) + 11 tests. No store, no commands, no persistence.
++- `domain.rs` already has `PluginManifest` / `PluginSignature` / `PluginState` — reuse, do not redefine.
++- Existing primitives to reuse: `check_invocation_source` (`bridge.rs:1183`), `session::atomic_write` (`session.rs:30`), `workspace::log_audit` (`workspace.rs:386`, 1000-entry FIFO).
++
++## A9 acceptance (A11 will re-run these once code lands — any failure blocks A0 push)
++
++1. `cargo check --locked` 0 error; `cargo fmt --all --check` 0 diff.
++2. `cargo test` ≥ 416/0, no regression in existing cases.
++3. `cargo test plugin` all pass + new cases: manifest validation accept/reject, install idempotence, enable/disable state-machine illegal-transition rejection, list/get empty & missing-id stable codes, trusted-key data-plane CRUD (if landed).
++4. No execution path: zero `std::process` / `Command::new` / `spawn` / inline shell / dynamic load; no `plugin_invoke`; all five `PLUGIN_*` pending codes OK in default mode.
++5. Command surface parity: `check_invocation_source` + ACL (before `list_artifact_images`) + `main.rs` handler + `bridge.ts` + `types.ts` + same-package tests — missing one = FAIL.
++6. MCP must not expose plugin lifecycle commands (mcp policy self/default/`--expect-current-gaps` PASS).
++7. Agent/Skill execution stays locked (agent-skill policy PASS); plugin UI must not imply execution.
++8. Audit/errors: ids/counts/hash-prefixes only; stable error codes; no path, raw signature, credential, request/response body, or plugin stdout/stderr echo.
++9. Persistence via `session::atomic_write`; bounded store; constants reused from `domain.rs` (no literals).
++10. Build metrics `total_bytes_pct ≤ 23.0` and warnings not increased — **this is the most likely regression point** (currently 22.26, only 0.74pt of headroom).
++11. `pre-merge.sh` → `ALL_PASS`; three `git diff --check` clean.
++
++## Second pass (A9's Stage-I code landed mid-run) — re-run on the same worktree
++
++| Gate | Result |
++|---|---|
++| `cargo test` (default) | ✅ **429 bin + 2 lib = 431 / 0** (was 414+2; +15 plugin cases); two consecutive clean runs |
++| `cargo test plugin` | ✅ **26 / 0** (was 11) |
++| `cargo test --features mcp mcp_server` | ✅ 21 / 0 |
++| `cargo fmt --all --check` | ✅ 0 diff (A9 fixed the earlier `plugin.rs:17` import diff) |
++| `git diff --check` | ✅ clean |
++| **`pre-merge.sh`** | ❌ **`PRE_MERGE_RESULT=FAIL`** — only failing item: `check-plugin-policy.py` |
++| **`check-plugin-policy.py` (default)** | ❌ `PLUGIN_POLICY=FAIL` — `[FAIL] PLUGIN_SIG_BYPASS: 匹配违规片段：'.unwrap_or(true)'` |
++| `check-plugin-privacy.py` (new, wired into pre-merge) | ✅ `--self-test` PASS (ACTIVE=2 PENDING=5) + default PASS |
++| graph / mcp / agent-skill policies | ✅ PASS |
++
++### The single blocker (false positive, but a hard gate)
++
++`src-tauri/src/plugin.rs:428` inside `filter_by_state` (doc comment: `None` = all):
++
++```rust
++.filter(|r| state.map(|s| r.state == s).unwrap_or(true))
++```
++
++`Option<bool>::unwrap_or(true)` here means "no state filter", **not** a signature bypass — it is a conservative-regex false positive (`PLUGIN_SIG_BYPASS` matches `todo!|unimplemented!|panic!|\.unwrap_or\(true\)`). It still fails pre-merge, so it must be resolved.
++
++**Minimal fix (recommended, zero behavior change):**
++
++```rust
++.filter(|r| state.map_or(true, |s| r.state == s))
++```
++
++**Do not** narrow the fixture regex — that weakens the real bypass gate. If A9 keeps `unwrap_or(true)`, A0 must explicitly waive it and sync `BAD_SAMPLES`.
++
++### Transient failure (not a stable regression)
++
++One intermediate run showed `428 passed; 1 failed` (test name not captured; next two runs were 429/0). Attributed to A9 writing files mid-run. Re-run once before pushing to confirm.
++
++### Plugin-privacy pending channel: 5 echo defects (not blocking the batch, must be closed before W13 sign-off)
++
++`check-plugin-privacy.py --expect-pending` lists: `entry_url` echoed raw into errors; `sig.algorithm` echoed raw into errors; metadata only size-bounded (not run through `contains_credential_leak`); raw field inside `CredentialLeak` payload (`s.to_string()`); registry persists the whole `PluginManifest` (metadata not credential-scanned + `signature.value` stored raw).
++
++`pre-merge.sh` intentionally wires only `--self-test` + default for this script, so these do **not** block the batch. ⚠ Note: the pre-merge comment says "3 defects" while the script reports **5** — A9 should reconcile before enabling `--expect-pending`.
++
++## Recommendation for A0
++
++- You may push the **docs/policy batch** (baseline pass: `pre-merge` = `ALL_PASS`). Do **not** sweep in A9's partially-landed Stage-I code while `check-plugin-policy.py` still fails.
++- Ask A9 to apply the `map_or(true, …)` fix + `cargo fmt --all`, then re-run `pre-merge.sh` until `ALL_PASS`.
++- After A9 lands Stage-I, ask A11 to re-run the full matrix + the 11 acceptance items before that commit is included in a push. Re-run `pre-merge.sh` yourself regardless (before-push gate).
++- Watch the build-metrics headroom (22.26 → 23.0) when A9 adds commands + bridge/types + UI.
++
++## Non-blocking observation (for A9/A0 decision, not fixed by A11)
++
++`check-plugin-policy.py --expect-pending` derives `EXPECTED_PENDING` from `PENDING_CODES.keys()`, so it is self-referential and always passes. Recommend hardcoding the expected set (as scheduler/database scripts do) in a later wave.
++
++Full detail: `logs/checkpoints/A11-M5-W13-verification-20260907-1349.md`. **No product code changed by A11.**
+diff --git a/logs/checkpoints/A11-M5-W13-verification-20260907-1349.md b/logs/checkpoints/A11-M5-W13-verification-20260907-1349.md
+new file mode 100644
+index 0000000..a06b392
+--- /dev/null
++++ b/logs/checkpoints/A11-M5-W13-verification-20260907-1349.md
+@@ -0,0 +1,255 @@
++# M5-A11 · W13 验证增量（Plugin Runtime Stage-I Manifest Lifecycle；基线全绿 / A9 产品代码未入树 → 交付件待签）
++
++```text
++LANE=A11
++STATUS=TWO_PASS（两轮实跑）
++      ① 基线轮（A9 产品代码未入树）：全绿，pre-merge ALL_PASS → 当前批次可 push
++      ② 复跑轮（A9 W13 在制代码落入后）：pre-merge **FAIL**，唯一阻断项 =
++         check-plugin-policy.py `PLUGIN_SIG_BYPASS` 命中 plugin.rs:428 `.unwrap_or(true)`（误报，见 §10.2）
++BASE=3c3f460（A0 W12 集成：feat(M5): integrate W12 graph live query）
++HEAD=logs/checkpoints/A11-M5-W13-verification-20260907-1349.md
++FILES=logs/checkpoints/A11-M5-W13-verification-20260907-1349.md ; logs/assist/A11-M5-W13-push-readiness-20260907-1349.md ; logs/checkpoints/Lane-A11-M5-W13-20260907-1349.patch
++VERIFY=§1 基线轮矩阵（全绿）+ §10 复跑轮矩阵（1 项 FAIL，其余全绿）；全部命令可复现
++CHECKPOINT=本文件
++MERGE_NOTES=§4 = A9 的 11 项验收程序；§10 = 对 A9 在制代码的复跑结论 + 精确阻断定位与最小修复；§7 推送判定（分批）
++NEXT=A9 处置 §10.2（`map_or(true, …)` 或等效改写）→ 跑 `cargo fmt --all` → 复跑 `pre-merge.sh` 至 ALL_PASS；
++     A9 闭环 §10.4 五项插件隐私 pending 回显缺陷后，再接入 `check-plugin-privacy.py --expect-pending`；
++     完成后 A11 按 §4 出 W13 复跑增量（重点盯构建指标 22.26→23.0，余量仅 0.74pt）
++```
++
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch（L177-222）→ **A11 = START VERIFICATION**（L208）：维护 W13 验证矩阵——cargo test plugin、cargo test、mcp feature test、plugin/graph/mcp/agent-skill policies、UI logic、npm build、pre-merge、diff check、push readiness。
++> W13 范围（L179 / L206）：**仅 manifest 生命周期状态**，`plugin_install` 为**元数据级本地包校验**、enable/disable/list/get、可信 key 数据管理；无 invoke/执行/网络下载/动态加载。
++> W13 硬停止（L185-192）：不得实现 `plugin_invoke`、命令执行、动态代码加载、网络下载/监听、daemon、model 调用、Agent/Skill 执行、MCP 全运行时、图 build/write/export、后台 worker；审计/检查点不得存凭据、原始签名（超出冻结 DTO 的部分）、请求响应体、插件 stdout/stderr、未脱敏路径。
++> 范围声明：A11 **仅验证，零产品代码改动**。W13 仅 A9 可写产品代码（`plugin.rs`/`domain.rs`/`bridge.rs`/`main.rs`/`default-commands.toml`/`src/bridge.ts`/`src/types.ts`/插件 UI/`check-plugin-policy.py`/测试），其余 lane 为 docs/review/policy fixture。
++> 姊妹件：W12 `A11-M5-W12-verification-delta-20260907-1055.md`、W11 `A11-M5-W11-verification-delta-20260907-1930.md`。
++> 时钟说明：本文件时间戳取本机实际时钟（CST +0800，2026-09-07 13:49）；board 头部写作 23:55，若 A0 按文件名排序，请以文件内 `BASE/VERIFY` 字段判定先后。
++
++---
++
++## 0. 启动门禁与调度匹配
++
++```bash
++cat .workspace-identity           # WORKSPACE_ID=BACKV3_MAIN / EXPECTED_BRANCH=master  ✅
++pwd                               # /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3  ✅
++git fetch origin && git pull --ff-only   # 已最新（fast-forward 无新提交）
++git rev-parse --short HEAD        # 3c3f460
++git status --short --branch       # ## master...origin/master（与 origin 同步）+ 下列在制改动
++```
++
++- **调度匹配**：board 头部 L7「Current NEXT: M5-W13 plugin runtime Stage-I manifest lifecycle; W12 is accepted locally and pending A0 commit/push in this batch」——与本次一致（W12 已由 A0 集成为 3c3f460 并落到 origin/master）。
++- **验证时刻工作树在制（均非 A11 产出）**：
++  - 已修改：`PARALLEL_COMMAND_BOARD.md`、`logs/checkpoints/M5-20260906/M5-0-overview.md`（A1）、`scripts/check-agent-skill-policy.py`（A5，+145 行）、`scripts/check-mcp-policy.py`（A3，+40 行）
++  - 未跟踪：`logs/assist/A2-M5-W13-boundary-verdict-20260907-1348.md`、`A3-M5-W13-mcp-plugin-isolation-verdict-20260907-1346.md`(+patch)、`A6-M5-W13-20260907-1410.md`、`A7-M5-W13-graph-nonregression-20260907-2358.md`(+patch)、`A8-M5-W13-graph-ui-nonregression-20260908-0000.md`、`A10-M5-W13-plugin-runtime-security-review-20260907-2030.md`
++  - **A9 的 W13 产品代码：未出现在工作树**（`plugin.rs` 仍 446 行纯函数、ACL 中 `plugin_*` 命令 0 条、`src/bridge.ts`/`src/types.ts` 零插件符号、无 `src/components/plugin/**`）——见 §4 前置事实。
++
++---
++
++## 1. W13 验证矩阵（当前树 = 3c3f460 + 在制文档/策略；全部实跑）
++
++| 门 | 命令 | 结果 | 判定 |
++|---|---|---|---|
++| cargo test（默认） | `cargo test --manifest-path src-tauri/Cargo.toml` | **414（bin）+ 2（lib）+ 0（doc）= 416 passed / 0 failed** | ✅ |
++| **cargo test plugin（聚焦）** | `cargo test plugin` | **11 passed / 0 failed**（403 filtered） | ✅ |
++| cargo test graph（聚焦，回归对照） | `cargo test graph` | **15 passed / 0 failed** | ✅ |
++| **mcp feature 测试** | `cargo test --features mcp mcp_server` | **21 passed / 0 failed** | ✅ |
++| cargo fmt（主工程 / browser-tabs） | `cargo fmt --all --check`（两个 manifest） | **0 diff**（FMT_MAIN_OK / FMT_PLUGIN_OK） | ✅ |
++| cargo check | `cargo check --locked`（随 pre-merge） | 0 error | ✅ |
++| **集成门禁** | `bash scripts/pre-merge.sh` | **`PRE_MERGE_RESULT=ALL_PASS`（EXIT=0）** | ✅ |
++| npm build | `npm run build`（随 pre-merge） | PASS | ✅ |
++| **git diff --check** | 工作树 + 暂存区 + `origin/master` merge-base..HEAD（随 pre-merge） | **三项全 PASS** | ✅ |
++| **plugin 策略** self / default / --expect-pending | `check-plugin-policy.py` | `PLUGIN_SELF_TEST=ALL_PASS`（ACTIVE=1 PENDING=5）/ `PLUGIN_POLICY=PASS` / `PLUGIN_PENDING_OK` | ✅ |
++| **graph 策略** self / default | `check-graph-policy.py` | `GRAPH_POLICY_SELF_TEST=PASS（ACTIVE=8）` / `GRAPH_POLICY=PASS` | ✅ |
++| **mcp 策略** self / default / --expect-current-gaps | `check-mcp-policy.py` | `PASS（ACTIVE=13，PENDING=0）` / `PASS` / `MCP_CURRENT_GAPS_RESULT=PASS` | ✅ |
++| **agent-skill 策略** self / default | `check-agent-skill-policy.py` | `PASS（ACTIVE=3，PENDING=9）` / `AGENT_SKILL_POLICY=PASS` | ✅ |
++| agent-memory / core 边界 / scheduler / database / tools / terminal / script-exec | 各 `--self-test` + 默认 | 全 PASS（ACTIVE=5 / 7 / 23 / 14 / — / — / 23） | ✅ |
++| **UI 逻辑（12 项全跑）** | graph 113/0、agent-skill 110/0、scheduler 105/0、command 36/0、database 119/0、terminal 25/0、session 34/0、resource 84/0、git ok、image 58/0、image-preview 97/0、script 32/0 | **全绿，0 失败** | ✅ |
++| 构建指标 | `measure-build-metrics.py --compare build-metrics-4f0e8ab.json --skip-build` | `total_bytes_pct=22.26`（limit 23.0，`exceeds_growth_limit=false`）；`cargo_warnings delta=0`，`warnings_increased=false` | ✅（⚠ 余量仅 0.74pt，见 §4.10） |
++
++> **结论**：W13 起点基线**全绿**——Rust 编译/测试、fmt、npm build、全策略门禁、全 UI 逻辑、pre-merge、diff check 均 PASS。与 W12 那轮（编译失败→BLOCKED）不同，本轮**无阻断项**；唯一缺口是 **A9 的产品代码尚未入树**，故 W13 交付件暂无可验对象。
++
++---
++
++## 2. 与 W12 的基线差（本轮实测 vs W12 终版）
++
++| 项 | W12 终版（3c3f460 之前） | W13 基线（当前树） | 说明 |
++|---|---|---|---|
++| cargo test（bin+lib） | 410（408+2） | **416（414+2）** | +6，来自 W12 图测试（graph 聚焦 9→15） |
++| cargo test plugin | 10 | **11** | +1（`signature_structure_pure_ok` 等稳定） |
++| mcp feature 测试 | 21/0 | **21/0** | 持平 |
++| graph 策略 ACTIVE | 7 | **8** | W12 新增 `GRAPH_OUTPUT_NO_PROPS` |
++| mcp 策略 ACTIVE | 12 | **13** | A3 W13 在制 +1 |
++| agent-skill PENDING | 6 | **9** | A5 W13 在制 +3（self/default 仍 PASS） |
++| plugin 策略 | ACTIVE=1 PENDING=5 PASS | 同 | 未动 |
++| graph UI 逻辑 | 113/0 | **113/0** | 持平 |
++| 构建指标 total_bytes_pct | 21.4 | **22.26** | ⚠ +0.86pt，逼近 23.0 上限 |
++| pre-merge | ALL_PASS | **ALL_PASS** | 持平 |
++
++---
++
++## 3. W13 前置事实（A9 落码前的“零态”证据，用于验收对照）
++
++| 面 | 当前事实（命令 + 结果） | A9 落地后应变为 |
++|---|---|---|
++| **ACL** `src-tauri/permissions/default-commands.toml` | `grep -n "plugin" …` → **0 条**；末条为 `"list_artifact_images"` | 新增 `plugin_install/enable/disable/list/get`（+ 可信 key 命令，若落地）**必须插在末条 `list_artifact_images` 之前** |
++| **main.rs** | 仅 `mod plugin;` + `tauri_plugin_browser_tabs` 引用，**无 plugin 生命周期命令注册** | 须在 `invoke_handler` 注册新命令 |
++| **bridge.rs** | 无 `plugin_*` 命令（`plugin_eval` 属浏览器标签内部函数，与插件域无关） | 新增命令须过 `check_invocation_source`（`bridge.rs:1183`） |
++| **src/bridge.ts** | `grep -n "plugin\|Plugin"` → **0 命中** | 新增包装函数，与命令名 1:1 |
++| **src/types.ts** | `grep -n "Plugin"` → **0 命中** | 新增只读视图类型（不落凭据/签名原文） |
++| **插件 UI** | `src/components/` 下**无 plugin 目录**（browser/graph/home/layout/shared/system/workspace） | 若新增 UI，执行类控件须显式禁用（A6 关注点） |
++| **plugin.rs** | 446 行，**纯函数**：`capability_acl_level` / `permission_preview_for_plugin` / `validate_plugin_manifest` / `verify_plugin_signature_structure` / `can_transition` / `transition` + 11 测试；**无 store/持久化/命令** | 新增本地 registry/store（元数据态），**不得**引入 `std::process`/`Command::new`/`spawn` |
++| **domain.rs** | `PluginManifest`(2217) / `PluginSignature`(2267) / `PluginState`(2290) 已存在 | 生命周期态复用既有枚举，勿另起一套 |
++| **既有原语** | `session::atomic_write`（tmp+rename，`session.rs:30`）、`workspace::log_audit`（`workspace.rs:386`，1000 条 FIFO） | 持久化复用 `atomic_write`；审计走 `log_audit` 且**只落 id/计数/hash 前缀** |
++
++---
++
++## 4. A9 W13 验收程序（落码后 A11 将逐条复跑；任一项失败 → 阻塞 A0 纳入 push）
++
++1. **编译/fmt 硬门槛**：`cargo check --locked` 0 error；`cargo fmt --all --check`（主工程 + browser-tabs）0 diff。
++2. **cargo test（默认）不回退**：≥416/0（414 bin + 2 lib），且**不得**因插件代码破坏既有用例。
++3. **cargo test plugin 聚焦全过**，且新增用例覆盖：manifest 元数据校验通过/拒绝（能力越界、id 非法、版本非法）、install 幂等与重复安装、enable/disable 状态机（`can_transition`/`transition` 非法跃迁被拒）、list/get 空集与不存在 id 的稳定错误码、可信 key add/list/remove 的数据面增删（若落地）。
++4. **无执行/无第二路径**：`plugin.rs` 及新增模块零 `std::process` / `Command::new` / `spawn` / 内联 shell / 动态加载；`check-plugin-policy.py` 五个 PENDING 码（`PLUGIN_SECOND_PATH`/`PLUGIN_INLINE_SHELL`/`PLUGIN_SIG_BYPASS`/`PLUGIN_FORM_THREE`/`PLUGIN_NO_SECRETS`）default 模式全 OK；**无 `plugin_invoke`**。
++5. **命令面四件套同源**：`check_invocation_source` + ACL（插 `list_artifact_images` 前）+ `main.rs` handler + `bridge.ts`/`types.ts` + 同包测试，缺一即 FAIL（board 硬停止口径）。
++6. **MCP 不暴露插件生命周期命令**：`check-mcp-policy.py --self-test/default/--expect-current-gaps` 仍 PASS（现 ACTIVE=13）；新命令注册在 `bridge.rs` 而非 `mcp_server.rs`。
++7. **Agent/Skill 执行仍锁**：`check-agent-skill-policy.py` self/default PASS（现 ACTIVE=3/PENDING=9）；插件 UI 不得暗示 agent/tool 执行。
++8. **审计/输出脱敏**：`log_audit` 只落 id/计数/hash 前缀；错误为稳定码，**不回显**路径、签名原文、凭据、请求/响应体、插件 stdout/stderr；`plugin_get`/`list` 输出不含未脱敏本地路径。
++9. **持久化原子性**：复用 `session::atomic_write`；无临时文件残留、无跨 lane 文件争用；store 容量/条数有界（对齐既有 domain.rs 常量单源，禁字面量）。
++10. **构建指标与告警**：`measure-build-metrics.py --compare --skip-build` → `total_bytes_pct ≤ 23.0` 且 `warnings_increased=false`。⚠ **当前 22.26，余量仅 0.74pt**——W13 若同时新增 5+ 命令 + bridge/types + UI，是本波**最可能的回归点**；建议 A9 先估字节增量，超限则与 A0 协商抬限（须同步改 `measure-build-metrics.py` 注释口径）或压缩实现。
++11. **pre-merge + diff check**：`bash scripts/pre-merge.sh` → `ALL_PASS`；三项 `git diff --check` 干净。
++
++> 复跑入口：A9 落码后请 A0/A9 通知 A11，A11 按 §1 全矩阵 + 本节 11 条重跑并出 W13 复跑增量。
++
++---
++
++## 5. W13 硬停止合规（现状核验；运行期待 A9 落码后验）
++
++| W13 硬停止（L185-192） | 当前树证据 | 判定 |
++|---|---|---|
++| 无 `plugin_invoke`/命令执行/动态加载/网络下载/监听/daemon/model 调用 | ACL `plugin_*`=0 条；`plugin.rs` 纯函数（11 测试）；全仓无插件执行入口 | ✅（零态成立） |
++| Agent/Skill 执行仍锁 | agent-skill 策略 PASS；无执行控件 | ✅ |
++| MCP 全运行时仍锁 | mcp 策略 ACTIVE=13 PASS，`--expect-current-gaps` PASS；`mcp_server` 仅 21 个 dry-run 测试 | ✅ |
++| 图 build/write/export 未开 | graph 策略 ACTIVE=8 PASS；graph 命令仅 3 个只读 | ✅ |
++| 无后台 worker 新增 | scheduler/terminal 策略 PASS；本波无新增 spawn | ✅ |
++| 审计/检查点不含凭据·签名原文·响应体·stdout·未脱敏路径 | 本文件与 §3 仅引用 id/行号/计数 | ✅（本 lane 自检） |
++| 仅 A0 push | 本 lane 不 push | ✅ |
++
++---
++
++## 6. 各 Lane W13 可观测状态（A11 仅登记门禁可观测事实，不审内容）
++
++验证时刻工作树内已出现的 W13 产出（均非 A11 产出、均未提交）：
++
++- **A1**（DOCS ONLY）：`PARALLEL_COMMAND_BOARD.md` + `logs/checkpoints/M5-20260906/M5-0-overview.md` 各 1 行改动（W13 active 对齐）。
++- **A2**（BOUNDARY REVIEW）：`A2-M5-W13-boundary-verdict-20260907-1348.md`。
++- **A3**（MCP REVIEW）：`A3-M5-W13-mcp-plugin-isolation-verdict-20260907-1346.md` + `A3-M5-W13-mcp-plugin-isolation.patch`；另改 `scripts/check-mcp-policy.py`（+40 行，复跑 self/default/current-gaps 仍全 PASS）。
++- **A5**（AGENT/SKILL）：改 `scripts/check-agent-skill-policy.py`（+145 行，PENDING 6→9），复跑 self/default 仍 PASS。
++- **A6**（UI REVIEW）：`A6-M5-W13-20260907-1410.md`。
++- **A7 / A8**（GRAPH 非回归）：`A7-M5-W13-graph-nonregression-20260907-2358.md`(+patch)、`A8-M5-W13-graph-ui-nonregression-20260908-0000.md`。
++- **A9**（PRODUCT CODE NARROW）：W12/W13 期仅见卡片 `A9-M5-W13-plugin-runtime-delete-storage-card-20260907-2000.md`；**Stage-I 产品代码尚未入树**。
++- **A10**（SECURITY REVIEW）：`A10-M5-W13-plugin-runtime-security-review-20260907-2030.md`。
++- **A11**（本 Lane）：本验证增量 + 推送就绪度 + patch。
++
++---
++
++## 7. 推送就绪度 = ⚠️ 分批判定
++
++**A. 基线批次（3c3f460 + 文档/策略类改动，不含 A9 代码）：✅ READY —— A0 可 push。**
++依据：`pre-merge.sh` → `ALL_PASS`（EXIT=0）；`cargo test` 416/0；plugin 11/0；mcp feature 21/0；fmt 0 diff；npm build PASS；三项 `git diff --check` 干净；构建指标 22.26 ≤ 23.0 且告警不增。
++
++**B. A9 W13 在制代码：❌ BLOCKED —— 不得并入本批 push。**
++复跑轮（§10）`pre-merge.sh` → `PRE_MERGE_RESULT=FAIL`，唯一 FAIL 项 = `check-plugin-policy.py`（`PLUGIN_SIG_BYPASS`）。修法极小（§10.2），但**未修前不可 push**。
++
++**C. W13 交付件签署：⏸ PENDING。**
++除 §10.2 阻断项外，还有 §10.4 五项插件隐私 pending 回显缺陷待闭环（当前未接入 pre-merge 判定通道，故不阻断批次，但签核前须清零）。
++
++**D. 交接**：A9 修 §10.2 → `cargo fmt --all` → 自跑 `pre-merge.sh` 至 `ALL_PASS` → 通知 A11 按 §4 复跑；A0 无论何时都自行复跑 `pre-merge.sh`（before-push 硬闸）。
++
++---
++
++## 8. 债务台账（相对 W12）
++
++| 项 | W12 终版 | W13 基线 | 备注 |
++|---|---|---|---|
++| cargo test（bin+lib） | 410 | **416** | +6（图测试） |
++| cargo test plugin | 10 | **11** | 持平量级 |
++| mcp feature 测试 | 21/0 | **21/0** | 持平 |
++| pre-merge | ALL_PASS | **ALL_PASS** | 持平 |
++| fmt / diff --check | 干净 | **干净** | 持平 |
++| 构建指标 total_bytes_pct | 21.4 | **22.26** | ⚠ 余量 0.74pt |
++| 残留 PENDING 码 | agent-skill 6 / plugin 5 / database 1 | **agent-skill 9 / plugin 5 / database 1** | 非阻塞（默认模式均 PASS） |
++| 新观察（低优先级，非本波阻断） | — | `check-plugin-policy.py --expect-pending` 的 `EXPECTED_PENDING` 由 `PENDING_CODES.keys()` **自派生**，恒真，实为空转门禁 | 建议后续波次改为硬编码期望集合（与 scheduler/database 脚本口径一致），由 A9/A0 裁决，本 lane 不改 |
++
++---
++
++## 10. 复跑轮（A9 W13 在制代码落入工作树后；同一工作树、同一时刻实跑）
++
++> 触发：首轮出稿后，A9 的 Stage-I 产品代码落入工作树（`src-tauri/src/plugin.rs`、`src-tauri/src/domain.rs` 已改，新增 `scripts/check-plugin-privacy.py`，`scripts/pre-merge.sh` 已接入该门禁）。A11 立即对**同一棵树**复跑关键门禁。
++> 声明：A9 当时仍在落码，故本节为**在制快照**；结论需在 A9 定稿后由 A0 复跑确认。
++
++### 10.1 复跑矩阵
++
++| 门 | 结果 | 判定 |
++|---|---|---|
++| cargo test（默认） | **429（bin）+ 2（lib）= 431 passed / 0 failed**（连续两次复跑一致；414→429，+15 为插件新增用例） | ✅ |
++| cargo test plugin（聚焦） | **26 passed / 0 failed**（11→26，+15） | ✅ |
++| cargo test --features mcp mcp_server | **21 passed / 0 failed** | ✅ |
++| cargo fmt（主工程） | **0 diff**（首轮复跑曾报 `plugin.rs:17` import 块未格式化，A9 已修） | ✅ |
++| npm build / cargo check --locked | 随 pre-merge 通过 | ✅ |
++| git diff --check（工作树） | 干净 | ✅ |
++| **pre-merge.sh** | **`PRE_MERGE_RESULT=FAIL`** —— 唯一 FAIL：`check-plugin-policy.py` | ❌ |
++| **plugin 策略（默认）** | **`PLUGIN_POLICY=FAIL`**：`[FAIL] PLUGIN_SIG_BYPASS: 匹配违规片段：'.unwrap_or(true)'` | ❌ |
++| plugin 策略 self / --expect-pending | `ALL_PASS`（ACTIVE=1 PENDING=5）/ `PLUGIN_PENDING_OK` | ✅ |
++| **新门禁** `check-plugin-privacy.py` | `--self-test` = PASS（ACTIVE=2 PENDING=5）；默认 = PASS；已接入 `pre-merge.sh`（A9/A4） | ✅（判定通道）/ ⚠ pending 缺陷见 §10.4 |
++| graph / mcp / agent-skill 策略 | 均 `PASS` | ✅ |
++
++### 10.2 唯一阻断项：PLUGIN_SIG_BYPASS 命中（`plugin.rs:428`）——**误报，但门禁必须处置**
++
++```rust
++425:/// 按状态过滤（`None` = 全部）。
++426:pub fn filter_by_state(list: &[PluginRecord], state: Option<PluginState>) -> Vec<PluginSummary> {
++427:    list.iter()
++428:        .filter(|r| state.map(|s| r.state == s).unwrap_or(true))
++429:        .map(summary_of)
++430:        .collect()
++431:}
++```
++
++- **性质**：`Option<bool>::unwrap_or(true)` 用于「`state=None` 则不过滤」，与**签名校验旁路无关**。属夹具正则 `PLUGIN_SIG_BYPASS = r"todo!|unimplemented!|panic!|\.unwrap_or\(true\)"` 的**误报**（该正则为保守宽匹配）。
++- **但它会真实阻断 pre-merge**（`pre-merge.sh` L451-454 调用默认模式），故必须处置，不能挂账。
++- **最小修复（推荐，代码侧，零行为变更）**：
++  ```rust
++  .filter(|r| state.map_or(true, |s| r.state == s))
++  ```
++  `Option::map_or` 语义完全等价（`None → true`，`Some(s) → r.state == s`），且不触碰 `unwrap_or(true)` 字面形态。改完无需动策略脚本，门禁立即转绿。
++- **备选（不推荐）**：收窄 `PLUGIN_SIG_BYPASS` 正则到签名上下文——会**削弱**该门禁的旁路拦截面（未来真旁路可能逃逸），A11 不建议。
++- 若 A9 选择保留 `unwrap_or(true)`，须由 A0/A9 显式裁决并同步 `check-plugin-policy.py` 的 `BAD_SAMPLES`，**不得**静默放行。
++
++### 10.3 一次瞬时失败（非稳定回归）
++
++复跑中途出现过一次 `test result: FAILED. 428 passed; 1 failed`（未能复现到用例名，随后两次连续 `429/0` 全绿）。判定：A9 落码过程中的**中间态**（文件正被写入）所致，非稳定回归。仍建议 A0 在 push 前独立复跑一次 `cargo test` 确认。
++
++### 10.4 插件隐私门禁：pending 通道列出 5 项回显缺陷（未接入判定，但签核前须清零）
++
++`python3 scripts/check-plugin-privacy.py --expect-pending` 实测列出：
++
++| 码位 | 实测描述 |
++|---|---|
++| `PLUGIN_ERR_NO_RAW_FIELD_ECHO` | `m.entry.entry_url` 原样进错误信息 |
++| `PLUGIN_ERR_NO_RAW_FIELD_ECHO` | `sig.algorithm` 原样进错误信息 |
++| `PLUGIN_METADATA_CRED_CHECKED` | metadata 只做体量边界，未过 `contains_credential_leak` |
++| `PLUGIN_CRED_LEAK_PAYLOAD_NOT_RAW` | 原始字段进 `CredentialLeak` 载荷：`s.to_string()` |
++| `PLUGIN_STORE_NO_SECRET` | 登记簿整份落盘 `PluginManifest`：metadata 未过凭据检测（密钥落盘）+ `signature.value` 原文入库 |
++
++- 这些**当前不阻断批次**：`pre-merge.sh` 只接了 `--self-test` 与默认门禁（ACTIVE=2），A9 在脚本注释中写明「pending 通道当前有意报红，待 W13 接线前修复后再接入 `--expect-pending`」。
++- **口径不一致提醒**：`pre-merge.sh` 注释写「3 项回显缺陷」，而脚本 pending 通道实测列出 **5 条**。请 A9 复核口径后再决定是否接入 `--expect-pending`。
++- A11 立场：这 5 条直指 W13 硬停止「审计/检查点不得存凭据、原始签名（超出冻结 DTO 的部分）、未脱敏路径」，**W13 签核前必须清零**。
++
++---
++
++## 9. 声明（避免误读）
++
++- 本车道**零产品代码改动**；仅产出验证文档与 patch。W13 产品代码（A9）、策略脚本改动（A3/A5）、文档（A1/A2/A6/A7/A8/A10）均非 A11 所为，A11 **仅验证并登记**。
++- 未 rebase、未 push（board 硬停止：仅 A0 推送）。
++- §1 为**基线轮**（A9 产品代码入树前）实跑；§10 为**复跑轮**（A9 在制代码落入后，同一棵树）实跑。两轮时间戳见各节；其他 lane 若在 A11 之后继续落码，矩阵需相应复跑。
++- §4 为**验收程序**；§10 为对 A9 在制代码的实测结论（1 项 FAIL + 5 项 pending 回显缺陷）。A11 **未修任何产品代码**，§10.2 仅给最小修复建议。
++- §10.3 的 428/1 为落码中间态瞬时失败，未复现，已标注为「非稳定回归」；A0 push 前请独立复跑一次确认。
++- 仅暂存并提交本 Lane 文件（checkpoint + assist + patch），**不带入他 lane 在制改动**。

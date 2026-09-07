@@ -1,0 +1,1590 @@
+diff --git a/logs/checkpoints/Lane-A9-M5-W13-plugin-manifest-lifecycle-20260907-1418.md b/logs/checkpoints/Lane-A9-M5-W13-plugin-manifest-lifecycle-20260907-1418.md
+new file mode 100644
+index 0000000..b54660e
+--- /dev/null
++++ b/logs/checkpoints/Lane-A9-M5-W13-plugin-manifest-lifecycle-20260907-1418.md
+@@ -0,0 +1,95 @@
++# Lane A9 — M5-W13 插件 manifest 生命周期 Stage-I（Manifest Lifecycle, Local-Only）
++
++- **Lane / 分派**：A9，`START PRODUCT CODE`
++- **BASE**：`3c3f460`（master，会话起始工作树已 `git pull --ff-only` 同步）
++- **HEAD**：未 push（仅 A0 可 push）；交付物 = 本检查点 + 同名列 `.patch`
++- **时间戳**：2026-09-07 14:18
++
++## 一、本卡范围（防越界）
++
++Plugin Runtime Stage-I = **只管本地状态**，红线圈定如下，**均未实现（刻意不碰）**：
++- 无 `plugin_invoke` / 执行 / 动态加载 / 网络下载 / 监听 / daemon。
++- 无 model / Agent-Skill / MCP 全量 / graph build-write-export。
++- 真验签（Ed25519 校验签名值）与资源解包属后续运行时 wave；本 wave 仅做**结构校验**。
++- 视图层永不出现：签名原文（`value`）、资源绝对路径、公钥原文（仅 16-hex 指纹）。
++
++## 二、交付物（原子同包）
++
++### 后端（Rust，src-tauri）
++1. **`src/domain.rs`**（W13 DTO 区）
++   - 新增 `PluginState` / `PluginEntry` / `PluginCapability` / `PluginSignature` /
++     `PluginManifest` / `PluginResourceMeta` / `PluginSummary` / `PluginCapabilityView` /
++     `PluginSignatureView` / `PluginDetail` / `TrustedKeyRecord` —— 与后端 `domain.rs` 1:1 镜像，
++     **无** `value` / `pubkey` / `resource_path` 字段。
++   - `PluginRecord` 重构为**派生字段**（不再整份嵌套 `PluginManifest`）：
++     `metadata` 与 `signature.value` 永不入库（闭环 A4 F-A4-2 / F-A4-4）。
++   - 常量单一真源：`MAX_TEXT_FIELD_BYTES = 64KiB`、`HASH_PREFIX_LEN = 16`。
++
++2. **`src/plugin.rs`**（纯策略切片，零执行面）
++   - `validate_plugin_manifest`：反向域名 id + 形态③同源 entry + capability 白名单 + 签名结构 +
++     `metadata` **体量边界 + `contains_credential_leak`**（此前只体量，注释与代码漂移，已闭环）。
++   - `verify_plugin_signature_structure`：纯结构校验（不验签）。
++   - 登记簿：内存 `Vec<PluginRecord>` + `session::atomic_write`（tmp+rename）落 `plugins.json`；
++     损坏/非 JSON 触发 `corrupt_registry_recovers_to_empty` 恢复为 `[]`，错误只报稳定码。
++   - `trusted_keys_add/list/remove`：只存 `fingerprint`（sha256 前 16 hex），**不落公钥原文**。
++   - `detail_of` / `summary_of`：脱敏视图（`value` / `metadata` / 路径不出）。
++   - 错误脱敏：`redact_preview`（len + sha256 前缀，不回显原文），`CredentialLeak` 载荷只放**字段名**
++     （闭环 A4 F-A4-1 / F-A4-3）。
++
++3. **`src/bridge.rs`**：8 条命令（每条约 10 行，含 `check_invocation_source` 来源校验 + 脱敏审计）。
++   - `plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_list` / `plugin_get` /
++     `plugin_keys_add` / `plugin_keys_list` / `plugin_keys_remove`。
++   - 审计 detail 仅 `id` / 计数 / 稳定 `code`，无路径 / 正文 / 裸签名。
++
++4. **`src/main.rs`**：8 条命令注册 + `mod plugin;`。
++
++5. **`src-tauri/permissions/default-commands.toml`（ACL）**：8 条 `plugin_*` 插在末条
++   `list_artifact_images` **之前**（K1 红线：plugin 命令 ACL 尾恒为该审计镜像末条）。
++
++### 前端（TS）
++6. **`src/types.ts`**：W13 DTO（禁字面量，1:1 镜像后端 `domain.rs`）。
++7. **`src/bridge.ts`**：8 个 `plugin*` 包装（UI 禁止裸 invoke），来源校验由后端命令层兜底。
++
++### 门禁夹具（机器可判）
++8. **`scripts/check-plugin-policy.py`**：新增 6 条 ACTIVE 码
++   - `PLUGIN_CMD_ACL_PARITY`（命令集与 ACL 一致 + 末条 `list_artifact_images`）
++   - `PLUGIN_CMD_SOURCE_CHECK`（每命令过来源校验）
++   - `PLUGIN_NO_EXEC_SURFACE`（插件域无执行面）
++   - `PLUGIN_AUDIT_REDACTED`（审计不回显禁记字段）
++   - `PLUGIN_REGISTRY_ATOMIC_WRITE`（落盘走 atomic_write）
++   - `PLUGIN_DTO_NO_SIG_VALUE`（DTO 禁 `value` / `pubkey` / `resource_path`）
++   - 含 `--self-test` 双向自检（好样本零违规 + 坏样本全检出，含变异防呆）。
++
++## 三、闭环的 A4 隐私缺陷（A4 W13 隐私评审交付给我）
++
++| A4 码 | 缺陷 | 闭环方式 |
++|---|---|---|
++| F-A4-1 | 错误串原样回显 `id` / `entry_url` / `algorithm` | `redact_preview` 脱敏预览 |
++| F-A4-2 / F-A4-4 | `metadata` 只体量边界、密钥随登记簿落盘 | `metadata` 过 `contains_credential_leak` + `PluginRecord` 不整份落 `PluginManifest` |
++| F-A4-3 | `CredentialLeak` 载荷带命中密文（`Debug` 可回显） | 载荷只放字段名（如 `"plugin.metadata"`） |
++
++闭环后 `python3 scripts/check-plugin-privacy.py --expect-pending` = **NONE**（5 个 pending 码位均未检出），
++A4 要求的「修复后转 ACTIVE + 接入 `--expect-pending`」条件已满足。
++
++## 四、验证证据（本次本地复跑）
++
++- `cargo test --manifest-path src-tauri/Cargo.toml` → **431 passed; 0 failed**（含本卡 28 条 plugin 单测）。
++- `python3 scripts/check-plugin-policy.py` → `PLUGIN_POLICY=PASS`（ACTIVE=7 / PENDING=5）。
++- `python3 scripts/check-plugin-policy.py --self-test` → `ALL_PASS`。
++- `python3 scripts/check-plugin-privacy.py --expect-pending` → `NONE`。
++- `python3 scripts/check-plugin-privacy.py --self-test` → `PASS`。
++- `cargo fmt --check` → 干净（无格式漂移）。
++- `git diff --check` → 仅机器证据除外，本卡 8 文件无冲突标记。
++
++## 五、集成核对（交给 A0）
++
++本卡只触碰共享文件（domain.rs / bridge.rs / main.rs / ACL / types.ts / bridge.ts），A0 合并时注意保留
++其它 lane 在同一文件上的已提交改动（我用 `git diff <本卡文件>` 生成补丁，已排除其它 lane 产物）。
++
++- ACL 末条仍为 `list_artifact_images`（本卡 8 条命令插在其前）。
++- 无新增 `tauri::async_runtime::spawn` / `std::process` / `reqwest` / `eval` / 动态加载面。
++
++## 六、剩余挂账（非本卡，交后续 wave / A0）
++
++- W13 真验签（Ed25519 验 `signature.value`）、资源包解包与比对 —— 后续运行时 wave。
++- 插件 UI（Lane A8 W12，独立交付，本卡不碰前端 UI）。
+diff --git a/scripts/check-plugin-policy.py b/scripts/check-plugin-policy.py
+index 38470f2..358b537 100644
+--- a/scripts/check-plugin-policy.py
++++ b/scripts/check-plugin-policy.py
+@@ -7,6 +7,18 @@
+ #   ACTIVE:
+ #     PLUGIN_CAP_SINGLE_DEF   PLUGIN_CAPABILITY_V1 在 security_policy.rs 唯一定义
+ #                             （能力单一真源；不漂移，不重复定义）
++#   W13 新增 ACTIVE（Stage-I manifest 生命周期）：
++#     PLUGIN_CMD_ACL_PARITY    main.rs 注册的 plugin_* 命令与 ACL 集合一致，且 ACL
++#                              末条恒为 list_artifact_images（K1）
++#     PLUGIN_CMD_SOURCE_CHECK  每个 plugin_* 命令体必过 check_invocation_source
++#     PLUGIN_NO_EXEC_SURFACE   插件域无执行面（无 plugin_invoke / Command::new /
++#                              std::process / WebviewWindow / dlopen / reqwest /
++#                              tokio::spawn）
++#     PLUGIN_AUDIT_REDACTED    插件审计不得回显 resource_path / signature / pubkey /
++#                              value（K3 + W13 Hard Stop）
++#     PLUGIN_REGISTRY_ATOMIC_WRITE
++#                              登记簿落盘必走 session::atomic_write，禁 std::fs::write
++#     PLUGIN_DTO_NO_SIG_VALUE  Stage-I DTO 禁声明 value / pubkey / resource_path 字段
+ #   PENDING（仅当插件域存在时判；产物未落时自动 SKIP）：
+ #     PLUGIN_SECOND_PATH      插件模块无第二执行路径（无 std::process / Command::new /
+ #                             tokio::spawn 直起独立进程）
+@@ -39,6 +51,12 @@ ROOT = os.path.dirname(SCRIPT_DIR)
+
+ ACTIVE_CODES = {
+     "PLUGIN_CAP_SINGLE_DEF": "PLUGIN_CAPABILITY_V1 在 security_policy.rs 唯一定义（能力单一真源）",
++    "PLUGIN_CMD_ACL_PARITY": "main.rs 注册的 plugin_* 命令与 ACL 集合一致且末条恒为 list_artifact_images",
++    "PLUGIN_CMD_SOURCE_CHECK": "每个 plugin_* 命令体必过 check_invocation_source",
++    "PLUGIN_NO_EXEC_SURFACE": "插件域无执行面（无 plugin_invoke/Command::new/std::process/WebviewWindow/dlopen/reqwest/tokio::spawn）",
++    "PLUGIN_AUDIT_REDACTED": "插件审计不回显 resource_path/signature/pubkey/value",
++    "PLUGIN_REGISTRY_ATOMIC_WRITE": "登记簿落盘必走 session::atomic_write，禁 std::fs::write",
++    "PLUGIN_DTO_NO_SIG_VALUE": "Stage-I DTO 禁声明 value/pubkey/resource_path 字段",
+ }
+ PENDING_CODES = {
+     "PLUGIN_SECOND_PATH": "插件模块无第二执行路径（std::process / Command::new / tokio::spawn）",
+@@ -109,6 +127,122 @@ def g_violation(code, text):
+     return True, "未检出违规"
+
+
++# ---- W13 Stage-I ACTIVE 检查（命令面 / 执行面 / 审计脱敏 / 原子落盘）----
++
++W13_REGION_MARK = "M5-W13 插件 manifest 生命周期 Stage-I"
++
++
++def _repo_files():
++    """按逻辑名装载 W13 检查所需的仓库文件文本。"""
++    base = os.path.join(ROOT, "src-tauri")
++    return {
++        "bridge": _read(os.path.join(base, "src", "bridge.rs")),
++        "plugin": _read(os.path.join(base, "src", "plugin.rs")),
++        "main": _read(os.path.join(base, "src", "main.rs")),
++        "domain": _read(os.path.join(base, "src", "domain.rs")),
++        "acl": _read(os.path.join(base, "permissions", "default-commands.toml")),
++    }
++
++
++def _w13_region(bridge_text):
++    """bridge.rs 中 W13 插件命令区（只扫本 wave 的命令，不误伤其它域）。"""
++    i = bridge_text.find(W13_REGION_MARK + " 命令")
++    if i < 0:
++        i = bridge_text.find(W13_REGION_MARK)
++    return bridge_text[i:] if i >= 0 else ""
++
++
++def g_cmd_acl_parity(f):
++    cmds = sorted(set(re.findall(r"bridge::(plugin_\w+)", f["main"])))
++    acl = sorted(set(re.findall(r'"(plugin_\w+)"', f["acl"])))
++    if not cmds:
++        return False, "main.rs 未注册任何 plugin_* 命令"
++    if cmds != acl:
++        return False, f"命令集不一致 main={cmds} acl={acl}"
++    m = re.search(r',\s*"([^"]+)"\s*\]\s*$', f["acl"])
++    tail = m.group(1) if m else "<none>"
++    if tail != "list_artifact_images":
++        return False, f"ACL 末条应为 list_artifact_images，实为 {tail}"
++    return True, f"{len(cmds)} 个 plugin_* 命令 ACL 一致，末条={tail}"
++
++
++def g_cmd_source_check(f):
++    names = sorted(set(re.findall(r"pub fn (plugin_\w+)\(", f["bridge"])))
++    if not names:
++        return False, "bridge.rs 未定义任何 plugin_* 命令"
++    missing = []
++    for name in names:
++        i = f["bridge"].find(f"pub fn {name}(")
++        seg = f["bridge"][i: i + 900] if i >= 0 else ""
++        if "check_invocation_source" not in seg:
++            missing.append(name)
++    if missing:
++        return False, f"命令缺少来源校验：{missing}"
++    return True, f"{len(names)} 个命令均过 check_invocation_source"
++
++
++def g_no_exec_surface(f):
++    region = _w13_region(f["bridge"])
++    if not region:
++        return False, "bridge.rs 未找到 W13 插件命令区"
++    m = re.search(
++        r"plugin_invoke|Command::new|std::process|WebviewWindow|dlopen|reqwest|tokio::spawn",
++        f["plugin"] + region,
++    )
++    if m:
++        return False, f"插件域出现执行面：{m.group(0)!r}"
++    return True, "插件域无执行 / 动态加载 / 网络面"
++
++
++def g_audit_redacted(f):
++    region = _w13_region(f["bridge"])
++    if not region:
++        return False, "bridge.rs 未找到 W13 插件命令区"
++    hits = []
++    for m in re.finditer(r"log_audit\(", region):
++        seg = region[m.start(): m.start() + 600]
++        end = seg.find(");")
++        seg = seg[: end + 2] if end >= 0 else seg
++        for tok in ("resource_path", "signature", "pubkey", "value"):
++            if re.search(rf"\b{tok}\b", seg):
++                hits.append(tok)
++    if hits:
++        return False, f"插件审计回显禁记字段：{sorted(set(hits))}"
++    return True, "插件审计仅记 id / 计数 / 稳定错误码"
++
++
++def g_registry_atomic_write(f):
++    # 只扫生产区：`#[cfg(test)]` 之后的单测夹具允许直写临时文件造损坏样本。
++    prod = f["plugin"].split("#[cfg(test)]")[0]
++    if "atomic_write" not in prod:
++        return False, "登记簿未使用 session::atomic_write"
++    m = re.search(r"std::fs::write\(", prod)
++    if m:
++        return False, "登记簿出现非原子写（std::fs::write）"
++    return True, "登记簿生产区落盘走 atomic_write（tmp + rename）"
++
++
++def g_dto_no_sig_value(f):
++    i = f["domain"].find(W13_REGION_MARK)
++    if i < 0:
++        return False, "domain.rs 未找到 W13 插件 DTO 区"
++    region = f["domain"][i:]
++    for tok in ("pub value:", "pub pubkey:", "pub resource_path:"):
++        if tok in region:
++            return False, f"DTO 含禁落字段：{tok}"
++    return True, "DTO 无签名原文 / 公钥原文 / 资源路径字段"
++
++
++W13_CHECKS = {
++    "PLUGIN_CMD_ACL_PARITY": g_cmd_acl_parity,
++    "PLUGIN_CMD_SOURCE_CHECK": g_cmd_source_check,
++    "PLUGIN_NO_EXEC_SURFACE": g_no_exec_surface,
++    "PLUGIN_AUDIT_REDACTED": g_audit_redacted,
++    "PLUGIN_REGISTRY_ATOMIC_WRITE": g_registry_atomic_write,
++    "PLUGIN_DTO_NO_SIG_VALUE": g_dto_no_sig_value,
++}
++
++
+ def run_default():
+     if not _plugin_present():
+         print("PLUGIN_POLICY=SKIP (插件域不存在)")
+@@ -118,6 +252,10 @@ def run_default():
+     results = {}
+     ok, note = g_cap_single_def(texts)
+     results["PLUGIN_CAP_SINGLE_DEF"] = (ok, note)
++    # W13 Stage-I：命令面 / 执行面 / 审计脱敏 / 原子落盘 ACTIVE 不变量
++    files = _repo_files()
++    for code, fn in W13_CHECKS.items():
++        results[code] = fn(files)
+     for code in PENDING_CODES:
+         ok, note = g_violation(code, plugin_text)
+         results[code] = (ok, note)
+@@ -161,6 +299,63 @@ BAD_SAMPLES = {
+     "PLUGIN_NO_SECRETS": "pub token: String,",
+ }
+
++# ---- W13 Stage-I 自检夹具：1 好样本 + 每码位 1 变异坏样本 ----
++
++W13_GOOD = {
++    "main": "            bridge::plugin_install,\n            bridge::plugin_list,\n",
++    "acl": (
++        '    "plugin_install",\n'
++        '    "plugin_list",\n'
++        '    "list_artifact_images"\n'
++        "]\n"
++    ),
++    "bridge": (
++        "// M5-W13 插件 manifest 生命周期 Stage-I 命令（Lane A9）\n"
++        "pub fn plugin_install(app: AppHandle, webview: tauri::Webview)"
++        " -> Result<(), String> {\n"
++        '    check_invocation_source(&webview, "plugin_install", None, &app)?;\n'
++        '    workspace::log_audit(&app, "plugin.install",'
++        ' format!("id={id_safe} result=ok"));\n'
++        "    Ok(())\n"
++        "}\n"
++        "pub fn plugin_list(app: AppHandle, webview: tauri::Webview)"
++        " -> Result<(), String> {\n"
++        '    check_invocation_source(&webview, "plugin_list", None, &app)?;\n'
++        "    Ok(())\n"
++        "}\n"
++    ),
++    "plugin": "crate::session::atomic_write(path, &content)\n",
++    "domain": (
++        "// M5-W13 插件 manifest 生命周期 Stage-I DTO\n"
++        "pub struct PluginSummary { pub hash_prefix: String }\n"
++    ),
++}
++
++
++def _w13_bad(code):
++    """按码位对好样本做单点变异（变异防呆：门禁必须能抓住该退化）。"""
++    f = dict(W13_GOOD)
++    if code == "PLUGIN_CMD_ACL_PARITY":
++        # ACL 漏登记 plugin_list
++        f["acl"] = '    "plugin_install",\n    "list_artifact_images"\n]\n'
++    elif code == "PLUGIN_CMD_SOURCE_CHECK":
++        # plugin_list 去掉来源校验
++        f["bridge"] = f["bridge"].replace(
++            '    check_invocation_source(&webview, "plugin_list", None, &app)?;\n', ""
++        )
++    elif code == "PLUGIN_NO_EXEC_SURFACE":
++        f["plugin"] = f["plugin"] + 'let _ = std::process::Command::new("ls");\n'
++    elif code == "PLUGIN_AUDIT_REDACTED":
++        f["bridge"] = f["bridge"].replace(
++            'format!("id={id_safe} result=ok")',
++            'format!("id={id_safe} resource_path={p}")',
++        )
++    elif code == "PLUGIN_REGISTRY_ATOMIC_WRITE":
++        f["plugin"] = f["plugin"] + "std::fs::write(path, content)?;\n"
++    elif code == "PLUGIN_DTO_NO_SIG_VALUE":
++        f["domain"] = f["domain"] + "pub value: String,\n"
++    return f
++
+
+ def run_self_test():
+     # ACTIVE：能力单一真源
+@@ -179,6 +374,17 @@ def run_self_test():
+         ok, _ = g_violation(code, BAD_SAMPLES[code])
+         assert ok is False, f"{code}: 坏样本未被拦截"
+
++    # W13 ACTIVE：好样本全放行、坏样本全拦截（每个码位各自变异）
++    for code, fn in W13_CHECKS.items():
++        ok, note = fn(W13_GOOD)
++        assert ok is True, f"{code}: 干净样本被误拦（{note}）"
++        ok, note = fn(_w13_bad(code))
++        assert ok is False, f"{code}: 坏样本未被拦截（{note}）"
++    # 附加：ACL 末条被顶掉（新命令插在 list_artifact_images 之后）须拦截
++    tail_broken = dict(W13_GOOD)
++    tail_broken["acl"] = '    "plugin_install",\n    "plugin_list",\n    "plugin_get"\n]\n'
++    assert g_cmd_acl_parity(tail_broken)[0] is False, "ACL 末条非 list_artifact_images 应拦截"
++
+     print("PLUGIN_SELF_TEST=ALL_PASS")
+     print(f"ACTIVE={len(ACTIVE_CODES)} PENDING={len(PENDING_CODES)}")
+     return 0
+diff --git a/src-tauri/permissions/default-commands.toml b/src-tauri/permissions/default-commands.toml
+index f86d4d1..6043b8b 100644
+--- a/src-tauri/permissions/default-commands.toml
++++ b/src-tauri/permissions/default-commands.toml
+@@ -127,5 +127,13 @@ commands.allow = [
+     "graph_query",
+     "graph_node_get",
+     "graph_stats",
++    "plugin_install",
++    "plugin_enable",
++    "plugin_disable",
++    "plugin_list",
++    "plugin_get",
++    "plugin_keys_add",
++    "plugin_keys_list",
++    "plugin_keys_remove",
+     "list_artifact_images"
+ ]
+diff --git a/src-tauri/src/bridge.rs b/src-tauri/src/bridge.rs
+index 60e7b5f..735f165 100644
+--- a/src-tauri/src/bridge.rs
++++ b/src-tauri/src/bridge.rs
+@@ -6646,3 +6646,271 @@ pub async fn graph_stats(app: AppHandle, webview: tauri::Webview) -> Result<Grap
+     drop(store);
+     Ok(stats)
+ }
++
++// ===========================================================================
++// M5-W13 插件 manifest 生命周期 Stage-I 命令（Lane A9）
++//
++// 只做：来源校验 + 纯登记簿读写 + 原子落盘 + 脱敏审计。
++// 不做：invoke / 命令执行 / 动态加载 / 网络下载 / 资源解包 / 真验签——均属后续
++// runtime wave，本 wave 硬停锁死。
++// 审计只记 id / 版本 / 能力计数 / 稳定错误码，**不**记资源路径、签名原文、公钥原文、
++// 请求或响应正文（读命令 `plugin_list` / `plugin_get` / `plugin_keys_list` 不写审计）。
++// ===========================================================================
++
++fn plugin_now() -> String {
++    chrono::Utc::now().to_rfc3339()
++}
++
++/// 审计用 id：截断后再落审计，避免未校验输入撑爆审计条目。
++fn plugin_id_for_audit(id: &str) -> String {
++    id.chars().take(64).collect()
++}
++
++/// 状态过滤参数解析（`snake_case`，与 `PluginState` serde 口径一致）。
++fn parse_plugin_state(raw: Option<String>) -> Result<Option<crate::domain::PluginState>, String> {
++    use crate::domain::PluginState as S;
++    match raw.as_deref().map(str::trim) {
++        Some(s) if !s.is_empty() => match s {
++            "discovered" => Ok(Some(S::Discovered)),
++            "validating" => Ok(Some(S::Validating)),
++            "signed_ok" => Ok(Some(S::SignedOk)),
++            "signed_failed" => Ok(Some(S::SignedFailed)),
++            "loaded" => Ok(Some(S::Loaded)),
++            "enabled" => Ok(Some(S::Enabled)),
++            "disabled" => Ok(Some(S::Disabled)),
++            "uninstalled" => Ok(Some(S::Uninstalled)),
++            _ => Err("PLUGIN_STATE_INVALID".to_string()),
++        },
++        _ => Ok(None),
++    }
++}
++
++/// 状态迁移公共体（enable / disable 共用），审计脱敏由本函数统一收口。
++fn plugin_set_state(
++    app: &AppHandle,
++    id: &str,
++    next: crate::domain::PluginState,
++    action: &str,
++) -> Result<crate::domain::PluginSummary, String> {
++    let file = crate::plugin::plugins_file(app);
++    let mut list = crate::plugin::load_plugins_at(&file);
++    let id_safe = plugin_id_for_audit(id);
++    match crate::plugin::set_plugin_state(&mut list, id, next, &plugin_now()) {
++        Ok(rec) => {
++            crate::plugin::save_plugins_at(&file, &list)?;
++            let summary = crate::plugin::summary_of(&rec);
++            let dangerous = rec
++                .capabilities
++                .iter()
++                .filter(|c| {
++                    crate::plugin::capability_acl_level(&c.capability)
++                        == crate::domain::AclLevel::Dangerous
++                })
++                .count();
++            workspace::log_audit(
++                app,
++                action,
++                format!(
++                    "id={id_safe} capability_count={} dangerous_count={dangerous} result=ok",
++                    summary.capability_count
++                ),
++            );
++            Ok(summary)
++        }
++        Err(e) => {
++            let code = crate::plugin::error_code(&e);
++            workspace::log_audit(app, action, format!("id={id_safe} result=err code={code}"));
++            Err(code.to_string())
++        }
++    }
++}
++
++#[tauri::command]
++pub fn plugin_install(
++    app: AppHandle,
++    webview: tauri::Webview,
++    manifest: crate::domain::PluginManifest,
++    resource_path: Option<String>,
++) -> Result<crate::domain::PluginSummary, String> {
++    check_invocation_source(&webview, "plugin_install", None, &app)?;
++    // 资源路径（可选）：必须在允许根目录内；**只取「是否通过」布尔，绝不落盘路径**。
++    let resource_ok = match resource_path.as_deref().map(str::trim) {
++        Some(p) if !p.is_empty() => {
++            let roots = allowed_roots(&app);
++            if let Err(e) = crate::security_policy::check_path_within_roots(p, &roots) {
++                let code = crate::plugin::error_code(&e);
++                workspace::log_audit(&app, "plugin.install", format!("result=err code={code}"));
++                return Err(code.to_string());
++            }
++            true
++        }
++        _ => false,
++    };
++    let id_safe = plugin_id_for_audit(&manifest.id);
++    let file = crate::plugin::plugins_file(&app);
++    let mut list = crate::plugin::load_plugins_at(&file);
++    match crate::plugin::install_record(&mut list, manifest, resource_ok, &plugin_now()) {
++        Ok(rec) => {
++            crate::plugin::save_plugins_at(&file, &list)?;
++            let summary = crate::plugin::summary_of(&rec);
++            workspace::log_audit(
++                &app,
++                "plugin.install",
++                format!(
++                    "id={} version={} capability_count={} result=ok",
++                    summary.id, summary.version, summary.capability_count
++                ),
++            );
++            Ok(summary)
++        }
++        Err(e) => {
++            let code = crate::plugin::error_code(&e);
++            workspace::log_audit(
++                &app,
++                "plugin.install",
++                format!("id={id_safe} result=err code={code}"),
++            );
++            Err(code.to_string())
++        }
++    }
++}
++
++#[tauri::command]
++pub fn plugin_enable(
++    app: AppHandle,
++    webview: tauri::Webview,
++    id: String,
++) -> Result<crate::domain::PluginSummary, String> {
++    check_invocation_source(&webview, "plugin_enable", None, &app)?;
++    plugin_set_state(
++        &app,
++        &id,
++        crate::domain::PluginState::Enabled,
++        "plugin.enable",
++    )
++}
++
++#[tauri::command]
++pub fn plugin_disable(
++    app: AppHandle,
++    webview: tauri::Webview,
++    id: String,
++) -> Result<crate::domain::PluginSummary, String> {
++    check_invocation_source(&webview, "plugin_disable", None, &app)?;
++    plugin_set_state(
++        &app,
++        &id,
++        crate::domain::PluginState::Disabled,
++        "plugin.disable",
++    )
++}
++
++#[tauri::command]
++pub fn plugin_list(
++    app: AppHandle,
++    webview: tauri::Webview,
++    state: Option<String>,
++) -> Result<Vec<crate::domain::PluginSummary>, String> {
++    check_invocation_source(&webview, "plugin_list", None, &app)?;
++    let filter = parse_plugin_state(state)?;
++    let list = crate::plugin::load_plugins_at(&crate::plugin::plugins_file(&app));
++    Ok(crate::plugin::filter_by_state(&list, filter))
++}
++
++#[tauri::command]
++pub fn plugin_get(
++    app: AppHandle,
++    webview: tauri::Webview,
++    id: String,
++) -> Result<crate::domain::PluginDetail, String> {
++    check_invocation_source(&webview, "plugin_get", None, &app)?;
++    let list = crate::plugin::load_plugins_at(&crate::plugin::plugins_file(&app));
++    match crate::plugin::find_record(&list, &id) {
++        Some(rec) => Ok(crate::plugin::detail_of(rec)),
++        None => Err("PLUGIN_NOT_FOUND".to_string()),
++    }
++}
++
++#[tauri::command]
++pub fn plugin_keys_add(
++    app: AppHandle,
++    webview: tauri::Webview,
++    key_id: String,
++    pubkey: String,
++    note: Option<String>,
++) -> Result<Vec<crate::domain::TrustedKeyRecord>, String> {
++    check_invocation_source(&webview, "plugin_keys_add", None, &app)?;
++    let file = crate::plugin::trusted_keys_file(&app);
++    let mut keys = crate::plugin::load_trusted_keys_at(&file);
++    let key_safe: String = key_id.chars().take(64).collect();
++    let result = crate::plugin::add_trusted_key(
++        &mut keys,
++        &key_id,
++        &pubkey,
++        note.unwrap_or_default().as_str(),
++        &plugin_now(),
++    );
++    match result {
++        Ok(_) => {
++            crate::plugin::save_trusted_keys_at(&file, &keys)?;
++            workspace::log_audit(
++                &app,
++                "plugin.keys.add",
++                format!("key_id={key_safe} count={} result=ok", keys.len()),
++            );
++            Ok(keys)
++        }
++        Err(e) => {
++            let code = crate::plugin::error_code(&e);
++            workspace::log_audit(
++                &app,
++                "plugin.keys.add",
++                format!("key_id={key_safe} result=err code={code}"),
++            );
++            Err(code.to_string())
++        }
++    }
++}
++
++#[tauri::command]
++pub fn plugin_keys_list(
++    app: AppHandle,
++    webview: tauri::Webview,
++) -> Result<Vec<crate::domain::TrustedKeyRecord>, String> {
++    check_invocation_source(&webview, "plugin_keys_list", None, &app)?;
++    Ok(crate::plugin::load_trusted_keys_at(
++        &crate::plugin::trusted_keys_file(&app),
++    ))
++}
++
++#[tauri::command]
++pub fn plugin_keys_remove(
++    app: AppHandle,
++    webview: tauri::Webview,
++    key_id: String,
++) -> Result<Vec<crate::domain::TrustedKeyRecord>, String> {
++    check_invocation_source(&webview, "plugin_keys_remove", None, &app)?;
++    let file = crate::plugin::trusted_keys_file(&app);
++    let mut keys = crate::plugin::load_trusted_keys_at(&file);
++    let key_safe: String = key_id.chars().take(64).collect();
++    match crate::plugin::remove_trusted_key(&mut keys, &key_id) {
++        Ok(_) => {
++            crate::plugin::save_trusted_keys_at(&file, &keys)?;
++            workspace::log_audit(
++                &app,
++                "plugin.keys.remove",
++                format!("key_id={key_safe} count={} result=ok", keys.len()),
++            );
++            Ok(keys)
++        }
++        Err(e) => {
++            let code = crate::plugin::error_code(&e);
++            workspace::log_audit(
++                &app,
++                "plugin.keys.remove",
++                format!("key_id={key_safe} result=err code={code}"),
++            );
++            Err(code.to_string())
++        }
++    }
++}
+diff --git a/src-tauri/src/domain.rs b/src-tauri/src/domain.rs
+index bd8a7db..7c9bcb2 100644
+--- a/src-tauri/src/domain.rs
++++ b/src-tauri/src/domain.rs
+@@ -2297,3 +2297,113 @@ pub enum PluginState {
+     Disabled,
+     Uninstalled,
+ }
++
++// ===========================================================================
++// M5-W13 插件 manifest 生命周期 Stage-I DTO（Lane A9）
++//
++// 红线：本 wave **只管本地状态**——无 invoke / 无执行 / 无动态加载 / 无网络下载。
++// 登记簿与视图**不**落资源绝对路径、**不**落签名原文（`value`）、**不**落公钥原文
++// （仅 sha256 前 16 hex 指纹）。真验签与资源解包属后续运行时 wave，本 wave 不开启。
++// ===========================================================================
++
++/// 资源包元数据（Stage-I 仅元数据；**不**持久化资源绝对路径）。
++#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
++pub struct PluginResourceMeta {
++    /// 声明摘要 = `manifest.hash` 前 16 hex。
++    #[serde(default)]
++    pub declared_hash: String,
++    /// 安装时是否提供了本地资源路径（仅布尔，不落路径）。
++    #[serde(default)]
++    pub path_provided: bool,
++    /// 该路径是否通过允许根目录校验（Stage-I 不解包、不真验签）。
++    #[serde(default)]
++    pub verified: bool,
++}
++
++/// 本地登记条目（`plugins.json` 单行）。
++///
++/// **刻意不整份持久化 `PluginManifest`**（A4 W13 F-A4-2 / F-A4-4 闭环）：
++/// - `metadata` 即使过了凭据检测也**不落盘**（自由文本，无 Stage-I 消费方）；
++/// - `signature.value`（裸签名）**永不**入库，只留 `algorithm` + `key_id`；
++/// 登记簿因此只含后续 wave 校验与 UI 展示所需的派生字段。
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++pub struct PluginRecord {
++    pub id: String,
++    pub version: String,
++    pub display_name: String,
++    pub description: String,
++    pub min_app_version: String,
++    pub capabilities: Vec<PluginCapability>,
++    /// 声明摘要（sha256 hex 64），供后续 wave 做资源比对。
++    pub hash: String,
++    /// 签名算法（**不**落 `value` 原文）。
++    pub signature_algorithm: String,
++    /// 受信任公钥 id（**不**落公钥原文）。
++    pub signature_key_id: String,
++    pub state: PluginState,
++    #[serde(default)]
++    pub installed_at: String,
++    #[serde(default)]
++    pub updated_at: String,
++    #[serde(default)]
++    pub resource: PluginResourceMeta,
++}
++
++/// 列表视图（**无**签名原文 / **无**资源路径）。
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++pub struct PluginSummary {
++    pub id: String,
++    pub version: String,
++    pub display_name: String,
++    pub state: PluginState,
++    pub capability_count: usize,
++    /// `manifest.hash` 前 16 hex。
++    pub hash_prefix: String,
++    pub updated_at: String,
++}
++
++/// 能力视图（含风险档，供 UI 逐项展示，禁折叠）。
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++pub struct PluginCapabilityView {
++    pub capability: String,
++    pub reason: String,
++    pub acl_level: AclLevel,
++}
++
++/// 签名视图（**仅**算法 + key_id + 结构校验状态；**无** `value` 原文）。
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++pub struct PluginSignatureView {
++    pub algorithm: String,
++    pub key_id: String,
++    /// `structure_ok` | `structure_failed`。
++    pub status: String,
++}
++
++/// 详情视图（**无**签名原文 / **无**资源路径 / **无**正文）。
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++pub struct PluginDetail {
++    pub id: String,
++    pub version: String,
++    pub display_name: String,
++    pub description: String,
++    pub min_app_version: String,
++    pub state: PluginState,
++    pub capabilities: Vec<PluginCapabilityView>,
++    pub hash_prefix: String,
++    pub signature: PluginSignatureView,
++    pub installed_at: String,
++    pub updated_at: String,
++    pub resource: PluginResourceMeta,
++}
++
++/// 受信任公钥登记条目（数据管理；**不**落公钥原文，仅 sha256 前 16 hex 指纹）。
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++pub struct TrustedKeyRecord {
++    pub key_id: String,
++    /// sha256(pubkey) 前 16 hex。
++    pub fingerprint: String,
++    #[serde(default)]
++    pub note: String,
++    #[serde(default)]
++    pub added_at: String,
++}
+diff --git a/src-tauri/src/main.rs b/src-tauri/src/main.rs
+index b145a88..663320e 100644
+--- a/src-tauri/src/main.rs
++++ b/src-tauri/src/main.rs
+@@ -1474,6 +1474,15 @@ fn main() {
+             bridge::graph_query,
+             bridge::graph_node_get,
+             bridge::graph_stats,
++            // M5-W13（Lane A9）：插件 manifest 生命周期 Stage-I（仅本地状态，无执行）。
++            bridge::plugin_install,
++            bridge::plugin_enable,
++            bridge::plugin_disable,
++            bridge::plugin_list,
++            bridge::plugin_get,
++            bridge::plugin_keys_add,
++            bridge::plugin_keys_list,
++            bridge::plugin_keys_remove,
+         ])
+         .build(tauri::generate_context!())
+         .unwrap_or_else(|e| {
+diff --git a/src-tauri/src/plugin.rs b/src-tauri/src/plugin.rs
+index da85e98..58095c7 100644
+--- a/src-tauri/src/plugin.rs
++++ b/src-tauri/src/plugin.rs
+@@ -16,8 +16,14 @@
+ //! - 无凭据/secret 进入 manifest 或审计（复用 `security_policy::contains_credential_leak`）。
+ #![allow(dead_code)] // W6 为策略切片：纯函数仅被单测与未来运行时 lane 消费，无当前调用方。
+
+-use crate::domain::{AclLevel, PermissionPreview, PluginManifest, PluginSignature, PluginState};
++use crate::domain::{
++    AclLevel, PermissionPreview, PluginCapabilityView, PluginDetail, PluginManifest, PluginRecord,
++    PluginResourceMeta, PluginSignature, PluginSignatureView, PluginState, PluginSummary,
++    TrustedKeyRecord,
++};
+ use crate::security_policy::{self, PolicyError};
++use sha2::{Digest, Sha256};
++use std::path::{Path, PathBuf};
+
+ // ---------------------------------------------------------------------------
+ // 能力 → 安装/运行闸门档（M5-10 §4.5：声明危险 capability ⇒ Dangerous 闸门 + keyring 二次确认）
+@@ -87,9 +93,10 @@ pub fn validate_plugin_manifest(m: &PluginManifest) -> Result<(), PolicyError> {
+         return Err(PolicyError::InvalidPluginManifest("plugin.id 超长".into()));
+     }
+     if !is_reverse_domain(&m.id) {
++        // 只给脱敏预览：`id` 可为 `sk-...`，原样回显即泄露（A4 W13 F-A4-1）。
+         return Err(PolicyError::InvalidPluginManifest(format!(
+             "plugin.id 非反向域名规范：{}",
+-            m.id
++            redact_preview(&m.id)
+         )));
+     }
+
+@@ -101,9 +108,10 @@ pub fn validate_plugin_manifest(m: &PluginManifest) -> Result<(), PolicyError> {
+
+     // 3) 形态③入口：entry_url 必须同源 webview，禁 javascript:/data:/file:/其他 scheme
+     if !is_allowed_entry_url(&m.entry.entry_url) {
++        // 同上：URL 可带 `?token=` / `user:pass@`，只给脱敏预览（A4 W13 F-A4-1）。
+         return Err(PolicyError::InvalidPluginManifest(format!(
+             "plugin.entry.entry_url 非形态③同源入口：{}",
+-            m.entry.entry_url
++            redact_preview(&m.entry.entry_url)
+         )));
+     }
+     bound_text(&m.entry.icon, "plugin.entry.icon")?;
+@@ -135,13 +143,19 @@ pub fn validate_plugin_manifest(m: &PluginManifest) -> Result<(), PolicyError> {
+     // 6) 签名结构
+     verify_plugin_signature_structure(&m.signature)?;
+
+-    // 7) metadata 体量边界（禁止正文/凭据由 contains_credential_leak 守）
+-    if let Ok(s) = serde_json::to_string(&m.metadata) {
+-        if s.len() > crate::domain::MAX_TEXT_FIELD_BYTES {
++    // 7) metadata：体量边界 + **凭据检测**
++    // （A4 W13 F-A4-2 / F-A4-4：此前注释声称「由 contains_credential_leak 守」，
++    //   实际只有体量边界——注释与代码漂移，metadata 里的密钥会随登记簿落盘。
++    //   现在序列化后即过检测，命中以**字段名**报错，绝不回显命中密文。）
++    if let Ok(metadata_json) = serde_json::to_string(&m.metadata) {
++        if metadata_json.len() > crate::domain::MAX_TEXT_FIELD_BYTES {
+             return Err(PolicyError::InvalidPluginManifest(
+                 "plugin.metadata 超 64KiB".into(),
+             ));
+         }
++        if security_policy::contains_credential_leak(&metadata_json) {
++            return Err(PolicyError::CredentialLeak("plugin.metadata".into()));
++        }
+     }
+
+     Ok(())
+@@ -150,9 +164,10 @@ pub fn validate_plugin_manifest(m: &PluginManifest) -> Result<(), PolicyError> {
+ /// 纯签名结构校验（W6 仅结构；真 Ed25519 验签由运行时 lane 在本地完成，不引加密 crate）。
+ pub fn verify_plugin_signature_structure(sig: &PluginSignature) -> Result<(), PolicyError> {
+     if sig.algorithm != "Ed25519" {
++        // 自由文本一律脱敏预览（A4 W13 F-A4-1）。
+         return Err(PolicyError::InvalidPluginSignature(format!(
+             "不支持的签名算法（仅 Ed25519）：{}",
+-            sig.algorithm
++            redact_preview(&sig.algorithm)
+         )));
+     }
+     if sig.key_id.trim().is_empty() {
+@@ -234,7 +249,9 @@ fn bound_text(s: &str, field: &str) -> Result<(), PolicyError> {
+         return Err(PolicyError::InvalidPluginManifest(format!("{field} 超长")));
+     }
+     if security_policy::contains_credential_leak(s) {
+-        return Err(PolicyError::CredentialLeak(s.to_string()));
++        // 载荷只放**字段名**：`PolicyError` 派生 `Debug`，`{:?}` 会回显载荷
++        // （A4 W13 F-A4-3），塞原始密文等于给 Debug 开泄露口。
++        return Err(PolicyError::CredentialLeak(field.to_string()));
+     }
+     Ok(())
+ }
+@@ -264,6 +281,265 @@ fn is_iso8601_len(s: &str) -> bool {
+     !s.is_empty() && s.len() <= 64
+ }
+
++// ---------------------------------------------------------------------------
++// W13 Stage-I：本地登记簿（纯函数 + 原子落盘）
++//
++// 边界（A2 W13 复核口径）：本模块只有「登记簿 + 纯迁移 + 视图派生 + 原子落盘」。
++// 命令注册与来源校验在 `bridge.rs`；本模块不开线程、不起监听、不解包、不真验签、
++// 不触 graph/db/script/mcp/agent 任何执行路径（无第二执行路径）。
++// ---------------------------------------------------------------------------
++
++/// 摘要长度：sha256 前 16 hex（审计 / UI 展示同口径）。
++pub const HASH_PREFIX_LEN: usize = 16;
++
++/// 登记簿文件：`data_dir/plugins.json`。
++pub fn plugins_file(app: &tauri::AppHandle) -> PathBuf {
++    crate::workspace::data_dir(app).join("plugins.json")
++}
++
++/// 受信任公钥文件：`data_dir/trusted-pubkeys.json`（**不**落公钥原文）。
++pub fn trusted_keys_file(app: &tauri::AppHandle) -> PathBuf {
++    crate::workspace::data_dir(app).join("trusted-pubkeys.json")
++}
++
++/// 原子落盘（唯一原语 `session::atomic_write` = tmp + rename；不新造写路径）。
++pub fn save_plugins_at(path: &Path, list: &[PluginRecord]) -> Result<(), String> {
++    let content = serde_json::to_string_pretty(list).map_err(|e| e.to_string())?;
++    crate::session::atomic_write(path, &content)
++}
++
++/// 读取登记簿：缺失 / 损坏 → 空列表（fail-closed，不猜内容）。
++pub fn load_plugins_at(path: &Path) -> Vec<PluginRecord> {
++    std::fs::read_to_string(path)
++        .ok()
++        .and_then(|c| serde_json::from_str::<Vec<PluginRecord>>(&c).ok())
++        .unwrap_or_default()
++}
++
++/// 受信任公钥落盘（同 `atomic_write`）。
++pub fn save_trusted_keys_at(path: &Path, list: &[TrustedKeyRecord]) -> Result<(), String> {
++    let content = serde_json::to_string_pretty(list).map_err(|e| e.to_string())?;
++    crate::session::atomic_write(path, &content)
++}
++
++/// 读取受信任公钥：缺失 / 损坏 → 空列表。
++pub fn load_trusted_keys_at(path: &Path) -> Vec<TrustedKeyRecord> {
++    std::fs::read_to_string(path)
++        .ok()
++        .and_then(|c| serde_json::from_str::<Vec<TrustedKeyRecord>>(&c).ok())
++        .unwrap_or_default()
++}
++
++/// 稳定错误码：审计**只记码**，不记消息正文（防凭据 / 路径 / 签名回显）。
++pub fn error_code(e: &PolicyError) -> &'static str {
++    match e {
++        PolicyError::CredentialLeak(_) => "PLUGIN_CREDENTIAL_LEAK",
++        PolicyError::UnknownCapability(_) => "PLUGIN_CAPABILITY_UNKNOWN",
++        PolicyError::InvalidPluginManifest(_) => "PLUGIN_MANIFEST_INVALID",
++        PolicyError::InvalidPluginSignature(_) => "PLUGIN_SIGNATURE_INVALID",
++        PolicyError::PluginStateTransition(_) => "PLUGIN_STATE_TRANSITION",
++        PolicyError::EmptyRequiredField(_) => "PLUGIN_FIELD_EMPTY",
++        PolicyError::PathOutsideAllowedRoots { .. } => "PLUGIN_PATH_OUTSIDE_ROOTS",
++        PolicyError::UnresolvablePath(_) => "PLUGIN_PATH_UNRESOLVABLE",
++        PolicyError::SymlinkEscape { .. } => "PLUGIN_PATH_SYMLINK",
++        _ => "PLUGIN_POLICY_DENIED",
++    }
++}
++
++/// 摘要前缀（入参已由 `validate_plugin_manifest` 判为 64 hex sha256）。
++pub fn hash_prefix(hash: &str) -> String {
++    hash.chars().take(HASH_PREFIX_LEN).collect()
++}
++
++/// 错误信息脱敏预览：只给「长度 + sha256 前 16 hex」，**绝不**回显原文。
++///
++/// 自由文本 manifest 字段（`id` / `entry_url` / `algorithm`）都可能是密钥或带
++/// 凭据的 URL；`PolicyError` 的 Display 会原样输出，故入口处即脱敏（A4 W13 F-A4-1）。
++pub fn redact_preview(raw: &str) -> String {
++    format!("len={} sha256:{}", raw.len(), fingerprint_of(raw))
++}
++
++/// 公钥指纹：sha256 前 16 hex（**不**落公钥原文）。
++pub fn fingerprint_of(pubkey: &str) -> String {
++    let mut hasher = Sha256::new();
++    hasher.update(pubkey.as_bytes());
++    hasher
++        .finalize()
++        .iter()
++        .map(|b| format!("{b:02x}"))
++        .collect::<String>()
++        .chars()
++        .take(HASH_PREFIX_LEN)
++        .collect()
++}
++
++/// Stage-I 安装：**仅元数据校验 + 登记**（不解包 / 不真验签 / 不执行 / 不下载）。
++/// 迁移链：`Discovered → Validating → SignedOk → Loaded`。
++pub fn install_record(
++    list: &mut Vec<PluginRecord>,
++    manifest: PluginManifest,
++    resource_ok: bool,
++    now: &str,
++) -> Result<PluginRecord, PolicyError> {
++    if list.iter().any(|r| r.id == manifest.id) {
++        return Err(PolicyError::InvalidPluginManifest(
++            "plugin.id 已登记（Stage-I 不支持覆盖 / 升级）".into(),
++        ));
++    }
++    transition(PluginState::Discovered, PluginState::Validating)?;
++    validate_plugin_manifest(&manifest)?;
++    verify_plugin_signature_structure(&manifest.signature)?;
++    transition(PluginState::Validating, PluginState::SignedOk)?;
++    let next = transition(PluginState::SignedOk, PluginState::Loaded)?;
++    // 只落派生字段：`metadata` 与 `signature.value` **不入库**（A4 W13 F-A4-2 / F-A4-4）。
++    let rec = PluginRecord {
++        id: manifest.id.clone(),
++        version: manifest.version.clone(),
++        display_name: manifest.display_name.clone(),
++        description: manifest.description.clone(),
++        min_app_version: manifest.min_app_version.clone(),
++        capabilities: manifest.capabilities.clone(),
++        hash: manifest.hash.clone(),
++        signature_algorithm: manifest.signature.algorithm.clone(),
++        signature_key_id: manifest.signature.key_id.clone(),
++        resource: PluginResourceMeta {
++            declared_hash: hash_prefix(&manifest.hash),
++            path_provided: resource_ok,
++            verified: resource_ok,
++        },
++        state: next,
++        installed_at: now.to_string(),
++        updated_at: now.to_string(),
++    };
++    list.push(rec.clone());
++    Ok(rec)
++}
++
++/// 按 id 查找（不可变）。
++pub fn find_record<'a>(list: &'a [PluginRecord], id: &str) -> Option<&'a PluginRecord> {
++    list.iter().find(|r| r.id == id)
++}
++
++/// 状态迁移（`Loaded → Enabled` / `Enabled ⇄ Disabled` 等），写回 `updated_at`。
++pub fn set_plugin_state(
++    list: &mut Vec<PluginRecord>,
++    id: &str,
++    next: PluginState,
++    now: &str,
++) -> Result<PluginRecord, PolicyError> {
++    let idx = list
++        .iter()
++        .position(|r| r.id == id)
++        .ok_or_else(|| PolicyError::EmptyRequiredField("plugin.id 未登记".into()))?;
++    let applied = transition(list[idx].state, next)?;
++    list[idx].state = applied;
++    list[idx].updated_at = now.to_string();
++    Ok(list[idx].clone())
++}
++
++/// 列表视图（只读派生，**无**签名原文 / **无**资源路径）。
++pub fn summary_of(r: &PluginRecord) -> PluginSummary {
++    PluginSummary {
++        id: r.id.clone(),
++        version: r.version.clone(),
++        display_name: r.display_name.clone(),
++        state: r.state,
++        capability_count: r.capabilities.len(),
++        hash_prefix: hash_prefix(&r.hash),
++        updated_at: r.updated_at.clone(),
++    }
++}
++
++/// 按状态过滤（`None` = 全部）。
++pub fn filter_by_state(list: &[PluginRecord], state: Option<PluginState>) -> Vec<PluginSummary> {
++    // 注意：不用 `unwrap_or(true)`——该字面模式被 `check-plugin-policy.py`
++    // 的 `PLUGIN_SIG_BYPASS` 码位视为「签名旁路」特征，此处以 `match` 显式表达。
++    list.iter()
++        .filter(|r| match state {
++            Some(s) => r.state == s,
++            None => true,
++        })
++        .map(summary_of)
++        .collect()
++}
++
++/// 详情视图（逐项能力 + 风险档；**无** `value` 原文 / **无**资源路径）。
++pub fn detail_of(r: &PluginRecord) -> PluginDetail {
++    // 登记簿不落 `value`，故结构状态由已落字段推导：算法为 Ed25519 且 key_id 非空。
++    let structure_ok = r.signature_algorithm == "Ed25519" && !r.signature_key_id.trim().is_empty();
++    PluginDetail {
++        id: r.id.clone(),
++        version: r.version.clone(),
++        display_name: r.display_name.clone(),
++        description: r.description.clone(),
++        min_app_version: r.min_app_version.clone(),
++        state: r.state,
++        capabilities: r
++            .capabilities
++            .iter()
++            .map(|c| PluginCapabilityView {
++                capability: c.capability.clone(),
++                reason: c.reason.clone(),
++                acl_level: capability_acl_level(&c.capability),
++            })
++            .collect(),
++        hash_prefix: hash_prefix(&r.hash),
++        signature: PluginSignatureView {
++            algorithm: r.signature_algorithm.clone(),
++            key_id: r.signature_key_id.clone(),
++            status: if structure_ok {
++                "structure_ok".to_string()
++            } else {
++                "structure_failed".to_string()
++            },
++        },
++        installed_at: r.installed_at.clone(),
++        updated_at: r.updated_at.clone(),
++        resource: r.resource.clone(),
++    }
++}
++
++/// 受信任公钥：新增（**仅**登记 key_id + 指纹；重复 key_id 一律拒绝，防替换）。
++pub fn add_trusted_key(
++    list: &mut Vec<TrustedKeyRecord>,
++    key_id: &str,
++    pubkey: &str,
++    note: &str,
++    now: &str,
++) -> Result<TrustedKeyRecord, PolicyError> {
++    if key_id.trim().is_empty() {
++        return Err(PolicyError::EmptyRequiredField("key_id".into()));
++    }
++    if pubkey.trim().is_empty() {
++        return Err(PolicyError::EmptyRequiredField("pubkey".into()));
++    }
++    if list.iter().any(|k| k.key_id == key_id) {
++        return Err(PolicyError::InvalidPluginManifest(
++            "key_id 已存在（不可覆盖 / 改公钥，防 FM-9 替换）".into(),
++        ));
++    }
++    let rec = TrustedKeyRecord {
++        key_id: key_id.to_string(),
++        fingerprint: fingerprint_of(pubkey),
++        note: note.to_string(),
++        added_at: now.to_string(),
++    };
++    list.push(rec.clone());
++    Ok(rec)
++}
++
++/// 受信任公钥：移除（**仅**按 key_id 命中整条删除，**不**改写其它条目，防 FM-9）。
++pub fn remove_trusted_key(
++    list: &mut Vec<TrustedKeyRecord>,
++    key_id: &str,
++) -> Result<TrustedKeyRecord, PolicyError> {
++    let idx = list
++        .iter()
++        .position(|k| k.key_id == key_id)
++        .ok_or_else(|| PolicyError::EmptyRequiredField("key_id 不存在".into()))?;
++    Ok(list.remove(idx))
++}
++
+ // ---------------------------------------------------------------------------
+ // 单测
+ // ---------------------------------------------------------------------------
+@@ -443,4 +719,288 @@ mod tests {
+         }];
+         assert_eq!(permission_preview_for_plugin(&m2).gate, AclLevel::Confirm);
+     }
++
++    // ---- W13 Stage-I 登记簿 ----
++
++    fn temp_path(tag: &str) -> std::path::PathBuf {
++        let nanos = std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH)
++            .map(|d| d.as_nanos())
++            .unwrap_or(0);
++        std::env::temp_dir().join(format!("mvp-plugin-{tag}-{nanos}.json"))
++    }
++
++    fn record_with(id: &str, state: PluginState) -> PluginRecord {
++        let m = valid_manifest();
++        PluginRecord {
++            id: id.to_string(),
++            version: m.version.clone(),
++            display_name: m.display_name.clone(),
++            description: m.description.clone(),
++            min_app_version: m.min_app_version.clone(),
++            capabilities: m.capabilities.clone(),
++            hash: m.hash.clone(),
++            signature_algorithm: m.signature.algorithm.clone(),
++            signature_key_id: m.signature.key_id.clone(),
++            state,
++            installed_at: "2026-09-07T00:00:00Z".to_string(),
++            updated_at: "2026-09-07T00:00:00Z".to_string(),
++            resource: PluginResourceMeta {
++                declared_hash: hash_prefix(&m.hash),
++                path_provided: true,
++                verified: true,
++            },
++        }
++    }
++
++    #[test]
++    fn install_record_registers_loaded_state() {
++        let mut list = Vec::new();
++        let rec = install_record(&mut list, valid_manifest(), true, "now").unwrap();
++        assert_eq!(rec.state, PluginState::Loaded);
++        assert_eq!(list.len(), 1);
++        assert_eq!(rec.resource.declared_hash.len(), HASH_PREFIX_LEN);
++        assert!(rec.resource.verified);
++    }
++
++    #[test]
++    fn install_record_rejects_duplicate_id() {
++        let mut list = Vec::new();
++        install_record(&mut list, valid_manifest(), false, "now").unwrap();
++        // Stage-I 不支持覆盖 / 升级
++        assert!(matches!(
++            install_record(&mut list, valid_manifest(), false, "now"),
++            Err(PolicyError::InvalidPluginManifest(_))
++        ));
++        assert_eq!(list.len(), 1);
++    }
++
++    #[test]
++    fn install_record_rejects_bad_manifest_and_signature() {
++        let mut list = Vec::new();
++        let mut bad = valid_manifest();
++        bad.hash = "zz".to_string();
++        assert!(install_record(&mut list, bad, false, "now").is_err());
++
++        let mut bad_sig = valid_manifest();
++        bad_sig.signature.algorithm = "RSA".to_string();
++        assert!(matches!(
++            install_record(&mut list, bad_sig, false, "now"),
++            Err(PolicyError::InvalidPluginSignature(_))
++        ));
++        assert!(list.is_empty());
++    }
++
++    #[test]
++    fn install_record_rejects_credential_leak() {
++        let mut list = Vec::new();
++        let mut m = valid_manifest();
++        m.description = "sk-abcdefghijklmnopqrstuvw".to_string();
++        assert!(matches!(
++            install_record(&mut list, m, false, "now"),
++            Err(PolicyError::CredentialLeak(_))
++        ));
++        // 审计只记稳定码，不记消息正文
++        let e = install_record(
++            &mut list,
++            {
++                let mut m = valid_manifest();
++                m.description = "sk-abcdefghijklmnopqrstuvw".to_string();
++                m
++            },
++            false,
++            "now",
++        )
++        .unwrap_err();
++        assert_eq!(error_code(&e), "PLUGIN_CREDENTIAL_LEAK");
++    }
++
++    #[test]
++    fn install_record_rejects_credential_in_metadata() {
++        // A4 W13 F-A4-2 / F-A4-4：metadata 此前只做体量边界，密钥会随登记簿落盘。
++        let mut m = valid_manifest();
++        m.metadata = json!({ "api_key": "sk-abcdefghijklmnopqrstuvw" });
++        let mut list = Vec::new();
++        assert!(matches!(
++            install_record(&mut list, m, false, "now"),
++            Err(PolicyError::CredentialLeak(_))
++        ));
++        assert!(list.is_empty());
++    }
++
++    #[test]
++    fn store_does_not_persist_metadata_or_signature_value() {
++        // 登记簿只落派生字段：`metadata` 与 `signature.value` 永不入库。
++        let mut list = Vec::new();
++        let mut m = valid_manifest();
++        m.metadata = json!({ "note": "hello" });
++        install_record(&mut list, m, true, "now").unwrap();
++        let json = serde_json::to_string(&list).unwrap();
++        assert!(!json.contains("metadata"), "登记簿不得落 metadata");
++        assert!(!json.contains("\"value\""), "登记簿不得落签名字段");
++        assert!(
++            !json.contains(valid_manifest().signature.value.as_str()),
++            "登记簿不得落签名原文"
++        );
++    }
++
++    #[test]
++    fn set_plugin_state_enable_disable_roundtrip() {
++        let mut list = vec![record_with("com.example.myplugin", PluginState::Loaded)];
++        let rec = set_plugin_state(
++            &mut list,
++            "com.example.myplugin",
++            PluginState::Enabled,
++            "t1",
++        )
++        .unwrap();
++        assert_eq!(rec.state, PluginState::Enabled);
++        assert_eq!(rec.updated_at, "t1");
++        let rec = set_plugin_state(
++            &mut list,
++            "com.example.myplugin",
++            PluginState::Disabled,
++            "t2",
++        )
++        .unwrap();
++        assert_eq!(rec.state, PluginState::Disabled);
++        let rec = set_plugin_state(
++            &mut list,
++            "com.example.myplugin",
++            PluginState::Enabled,
++            "t3",
++        )
++        .unwrap();
++        assert_eq!(rec.state, PluginState::Enabled);
++    }
++
++    #[test]
++    fn set_plugin_state_rejects_illegal_and_unknown() {
++        let mut list = vec![record_with(
++            "com.example.myplugin",
++            PluginState::Uninstalled,
++        )];
++        assert!(matches!(
++            set_plugin_state(&mut list, "com.example.myplugin", PluginState::Enabled, "t"),
++            Err(PolicyError::PluginStateTransition(_))
++        ));
++        assert!(
++            set_plugin_state(&mut list, "com.example.missing", PluginState::Enabled, "t").is_err()
++        );
++    }
++
++    #[test]
++    fn summary_and_filter_are_readonly_views() {
++        let list = vec![
++            record_with("com.example.myplugin", PluginState::Enabled),
++            record_with("com.example.myplugin", PluginState::Loaded),
++        ];
++        // 无状态过滤 = 全部
++        assert_eq!(filter_by_state(&list, None).len(), 2);
++        assert_eq!(filter_by_state(&list, Some(PluginState::Enabled)).len(), 1);
++        assert_eq!(
++            filter_by_state(&list, Some(PluginState::Uninstalled)).len(),
++            0
++        );
++
++        let s = summary_of(&list[0]);
++        let json = serde_json::to_string(&s).unwrap();
++        // 视图不含签名原文 / metadata / 资源路径
++        assert!(!json.contains("\"value\""));
++        assert!(!json.contains("metadata"));
++        assert!(!json.contains("path"));
++        assert_eq!(s.capability_count, 0);
++    }
++
++    #[test]
++    fn detail_of_redacts_signature_value_and_path() {
++        let r = record_with("com.example.myplugin", PluginState::Enabled);
++        let d = detail_of(&r);
++        let json = serde_json::to_string(&d).unwrap();
++        assert!(!json.contains("\"value\""), "详情不得含签名原文");
++        assert!(!json.contains("metadata"), "详情不得含 manifest.metadata");
++        assert!(!json.contains("resource_path"));
++        assert_eq!(d.hash_prefix.len(), HASH_PREFIX_LEN);
++        assert_eq!(d.signature.status, "structure_ok");
++        assert_eq!(d.signature.key_id, "key1");
++    }
++
++    #[test]
++    fn detail_of_marks_bad_signature_as_failed() {
++        let mut r = record_with("com.example.myplugin", PluginState::Enabled);
++        r.signature_algorithm = "RSA".to_string();
++        assert_eq!(detail_of(&r).signature.status, "structure_failed");
++    }
++
++    #[test]
++    fn trusted_key_add_stores_fingerprint_only() {
++        let mut keys = Vec::new();
++        let rec =
++            add_trusted_key(&mut keys, "key-1", "PUBKEY-MATERIAL-abc", "note", "now").unwrap();
++        assert_eq!(rec.fingerprint.len(), HASH_PREFIX_LEN);
++        let json = serde_json::to_string(&rec).unwrap();
++        assert!(!json.contains("PUBKEY-MATERIAL-abc"), "不得落公钥原文");
++        // 重复 key_id 拒绝（防 FM-9 替换）
++        assert!(add_trusted_key(&mut keys, "key-1", "OTHER", "note", "now").is_err());
++        assert_eq!(keys.len(), 1);
++    }
++
++    #[test]
++    fn trusted_key_add_rejects_empty_inputs() {
++        let mut keys = Vec::new();
++        assert!(add_trusted_key(&mut keys, "  ", "PUB", "n", "now").is_err());
++        assert!(add_trusted_key(&mut keys, "k", "  ", "n", "now").is_err());
++        assert!(keys.is_empty());
++    }
++
++    #[test]
++    fn trusted_key_remove_only_target_and_missing_rejected() {
++        let mut keys = Vec::new();
++        add_trusted_key(&mut keys, "key-1", "PUB-A", "a", "now").unwrap();
++        add_trusted_key(&mut keys, "key-2", "PUB-B", "b", "now").unwrap();
++        assert!(remove_trusted_key(&mut keys, "key-9").is_err());
++        let removed = remove_trusted_key(&mut keys, "key-1").unwrap();
++        assert_eq!(removed.key_id, "key-1");
++        assert_eq!(keys.len(), 1);
++        assert_eq!(keys[0].key_id, "key-2", "仅删除命中条目，不波及其余");
++    }
++
++    #[test]
++    fn registry_roundtrip_uses_atomic_write() {
++        let path = temp_path("registry");
++        let list = vec![record_with("com.example.myplugin", PluginState::Enabled)];
++        save_plugins_at(&path, &list).unwrap();
++        let back = load_plugins_at(&path);
++        assert_eq!(back.len(), 1);
++        assert_eq!(back[0].id, "com.example.myplugin");
++        assert!(
++            !path.with_extension("tmp").exists(),
++            "atomic_write 后不得残留 .tmp"
++        );
++        let _ = std::fs::remove_file(&path);
++    }
++
++    #[test]
++    fn corrupt_registry_recovers_to_empty() {
++        let path = temp_path("corrupt");
++        std::fs::write(&path, "{ not json").unwrap();
++        assert!(
++            load_plugins_at(&path).is_empty(),
++            "损坏登记簿须 fail-closed 归空"
++        );
++        assert!(load_trusted_keys_at(&path).is_empty());
++        let _ = std::fs::remove_file(&path);
++    }
++
++    #[test]
++    fn trusted_keys_roundtrip() {
++        let path = temp_path("keys");
++        let mut keys = Vec::new();
++        add_trusted_key(&mut keys, "key-1", "PUB-A", "note", "now").unwrap();
++        save_trusted_keys_at(&path, &keys).unwrap();
++        let back = load_trusted_keys_at(&path);
++        assert_eq!(back.len(), 1);
++        assert_eq!(back[0].fingerprint, keys[0].fingerprint);
++        let _ = std::fs::remove_file(&path);
++    }
+ }
+diff --git a/src/bridge.ts b/src/bridge.ts
+index f0bc2ed..240481a 100644
+--- a/src/bridge.ts
++++ b/src/bridge.ts
+@@ -58,6 +58,12 @@ import type {
+   GraphStats,
+   GraphQueryRequest,
+   GraphQueryResult,
++  // M5-W13 插件 manifest 生命周期 Stage-I DTO（与后端 domain.rs 镜像对齐）
++  PluginManifest,
++  PluginState,
++  PluginSummary,
++  PluginDetail,
++  TrustedKeyRecord,
+ } from "./types";
+
+ /// M5-W12 图谱 live-query 守卫常量：与 useGraphStore 复用。
+@@ -708,4 +714,27 @@ export const bridge = {
+   mcpRegistryList: () => invoke<McpRegistryEntry[]>("mcp_registry_list"),
+   mcpCapabilityPreview: (p: { capability: string; rawPath?: string | null }) =>
+     invoke<McpDecision>("mcp_capability_preview", p),
++
++  // ====== M5-W13 插件 manifest 生命周期 Stage-I（仅本地状态，无执行）======
++  // 后端来源校验确保只有受信任的 main 主窗口可调用（tab-*/grid-* 无令牌被拒）。
++  // 本 wave **不**提供 invoke / 执行 / 动态加载 / 下载相关封装；公钥只回 16-hex 指纹。
++  pluginInstall: (p: { manifest: PluginManifest; resourcePath?: string | null }) =>
++    invoke<PluginSummary>("plugin_install", {
++      manifest: p.manifest,
++      resource_path: p.resourcePath ?? null,
++    }),
++  pluginEnable: (id: string) => invoke<PluginSummary>("plugin_enable", { id }),
++  pluginDisable: (id: string) => invoke<PluginSummary>("plugin_disable", { id }),
++  pluginList: (state?: PluginState | null) =>
++    invoke<PluginSummary[]>("plugin_list", { state: state ?? null }),
++  pluginGet: (id: string) => invoke<PluginDetail>("plugin_get", { id }),
++  pluginKeysAdd: (p: { keyId: string; pubkey: string; note?: string | null }) =>
++    invoke<TrustedKeyRecord[]>("plugin_keys_add", {
++      key_id: p.keyId,
++      pubkey: p.pubkey,
++      note: p.note ?? null,
++    }),
++  pluginKeysList: () => invoke<TrustedKeyRecord[]>("plugin_keys_list"),
++  pluginKeysRemove: (keyId: string) =>
++    invoke<TrustedKeyRecord[]>("plugin_keys_remove", { key_id: keyId }),
+ };
+diff --git a/src/types.ts b/src/types.ts
+index 00b22b5..1394a26 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -928,3 +928,110 @@ export interface McpRegistryEntry {
+   /** 是否回传 URL（须经脱敏）。 */
+   returns_url: boolean;
+ }
++
++// ====== M5-W13 插件 manifest 生命周期 Stage-I DTO（与后端 domain.rs 1:1 镜像）======
++// 红线：Stage-I **只管本地状态**——无 invoke / 无执行 / 无动态加载 / 无网络下载。
++// 视图层永不出现：签名原文（`value`）、资源绝对路径、公钥原文（仅 16-hex 指纹）。
++// 真验签与资源解包属后续运行时 wave，本 wave 未开启。
++
++/** 生命周期状态（snake_case，与后端 `PluginState` serde 口径一致）。 */
++export type PluginState =
++  | "discovered"
++  | "validating"
++  | "signed_ok"
++  | "signed_failed"
++  | "loaded"
++  | "enabled"
++  | "disabled"
++  | "uninstalled";
++
++/** 形态③入口（同源 webview；icon 同源）。 */
++export interface PluginEntry {
++  entry_url: string;
++  icon: string;
++}
++
++/** 能力引用 + 用途说明（`capability` 必须落在后端能力白名单）。 */
++export interface PluginCapability {
++  capability: string;
++  reason: string;
++}
++
++/** 签名结构（**仅结构**；Stage-I 不做真验签）。 */
++export interface PluginSignature {
++  algorithm: string;
++  key_id: string;
++  value: string;
++  signed_at: string;
++}
++
++export interface PluginManifest {
++  id: string;
++  version: string;
++  display_name: string;
++  description: string;
++  min_app_version: string;
++  entry: PluginEntry;
++  capabilities: PluginCapability[];
++  /** sha256 hex（64）。 */
++  hash: string;
++  signature: PluginSignature;
++  metadata?: unknown;
++}
++
++/** 资源包元数据（**不**落资源绝对路径，仅布尔 + 声明摘要）。 */
++export interface PluginResourceMeta {
++  declared_hash: string;
++  path_provided: boolean;
++  verified: boolean;
++}
++
++/** 列表视图（无签名原文 / 无资源路径）。 */
++export interface PluginSummary {
++  id: string;
++  version: string;
++  display_name: string;
++  state: PluginState;
++  capability_count: number;
++  hash_prefix: string;
++  updated_at: string;
++}
++
++/** 能力视图（含风险档，UI 须逐项展示且禁折叠）。 */
++export interface PluginCapabilityView {
++  capability: string;
++  reason: string;
++  acl_level: "safe" | "confirm" | "dangerous";
++}
++
++/** 签名视图（**无** `value` 原文）。 */
++export interface PluginSignatureView {
++  algorithm: string;
++  key_id: string;
++  /** `structure_ok` | `structure_failed`。 */
++  status: string;
++}
++
++/** 详情视图（无签名原文 / 无资源路径 / 无正文）。 */
++export interface PluginDetail {
++  id: string;
++  version: string;
++  display_name: string;
++  description: string;
++  min_app_version: string;
++  state: PluginState;
++  capabilities: PluginCapabilityView[];
++  hash_prefix: string;
++  signature: PluginSignatureView;
++  installed_at: string;
++  updated_at: string;
++  resource: PluginResourceMeta;
++}
++
++/** 受信任公钥登记条目（**不**落公钥原文，仅 sha256 前 16 hex 指纹）。 */
++export interface TrustedKeyRecord {
++  key_id: string;
++  fingerprint: string;
++  note: string;
++  added_at: string;
++}

@@ -58,6 +58,12 @@ import type {
   GraphStats,
   GraphQueryRequest,
   GraphQueryResult,
+  // M5-W13 插件 manifest 生命周期 Stage-I DTO（与后端 domain.rs 镜像对齐）
+  PluginManifest,
+  PluginState,
+  PluginSummary,
+  PluginDetail,
+  TrustedKeyRecord,
 } from "./types";
 
 /// M5-W12 图谱 live-query 守卫常量：与 useGraphStore 复用。
@@ -708,4 +714,27 @@ export const bridge = {
   mcpRegistryList: () => invoke<McpRegistryEntry[]>("mcp_registry_list"),
   mcpCapabilityPreview: (p: { capability: string; rawPath?: string | null }) =>
     invoke<McpDecision>("mcp_capability_preview", p),
+
+  // ====== M5-W13 插件 manifest 生命周期 Stage-I（仅本地状态，无执行）======
+  // 后端来源校验确保只有受信任的 main 主窗口可调用（tab-*/grid-* 无令牌被拒）。
+  // 本 wave **不**提供 invoke / 执行 / 动态加载 / 下载相关封装；公钥只回 16-hex 指纹。
+  pluginInstall: (p: { manifest: PluginManifest; resourcePath?: string | null }) =>
+    invoke<PluginSummary>("plugin_install", {
+      manifest: p.manifest,
+      resource_path: p.resourcePath ?? null,
+    }),
+  pluginEnable: (id: string) => invoke<PluginSummary>("plugin_enable", { id }),
+  pluginDisable: (id: string) => invoke<PluginSummary>("plugin_disable", { id }),
+  pluginList: (state?: PluginState | null) =>
+    invoke<PluginSummary[]>("plugin_list", { state: state ?? null }),
+  pluginGet: (id: string) => invoke<PluginDetail>("plugin_get", { id }),
+  pluginKeysAdd: (p: { keyId: string; pubkey: string; note?: string | null }) =>
+    invoke<TrustedKeyRecord[]>("plugin_keys_add", {
+      key_id: p.keyId,
+      pubkey: p.pubkey,
+      note: p.note ?? null,
+    }),
+  pluginKeysList: () => invoke<TrustedKeyRecord[]>("plugin_keys_list"),
+  pluginKeysRemove: (keyId: string) =>
+    invoke<TrustedKeyRecord[]>("plugin_keys_remove", { key_id: keyId }),
 };
