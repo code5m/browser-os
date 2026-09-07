@@ -5,7 +5,7 @@ index b9e2f64..d7b80c7 100644
 @@ -6141,7 +6141,28 @@ impl ValidationReport {
      }
  }
- 
+
 +// M5-W8（A5）硬化：解析/校验/预览输入上限，防超大 payload DoS（A4 W7 评审 R5-2 / F2）。
 +// Agent/Skill 定义为小结构，256 KiB 已留足余量；超出在来源校验之后直接拒绝。
 +const AGENT_DEF_MAX_BYTES: usize = 256 * 1024;
@@ -38,7 +38,7 @@ index b9e2f64..d7b80c7 100644
 -    crate::domain::AgentDef::parse(&text)
 +    agent_parse_inner(&text)
  }
- 
+
  #[tauri::command]
 @@ -6178,11 +6199,16 @@ pub fn agent_permission_preview(
      text: String,
@@ -48,7 +48,7 @@ index b9e2f64..d7b80c7 100644
 -    Ok(def.permission_preview())
 +    agent_permission_preview_inner(&text)
  }
- 
+
  fn skill_validate_inner(text: &str) -> ValidationReport {
 +    if text.len() > SKILL_DEF_MAX_BYTES {
 +        return ValidationReport::with_errors(vec![format!(
@@ -62,7 +62,7 @@ index b9e2f64..d7b80c7 100644
 @@ -6192,6 +6218,28 @@ fn skill_validate_inner(text: &str) -> ValidationReport {
      }
  }
- 
+
 +fn agent_parse_inner(text: &str) -> Result<crate::domain::AgentDef, String> {
 +    reject_oversized_def(text, AGENT_DEF_MAX_BYTES, "Agent")?;
 +    crate::domain::AgentDef::parse(text)
@@ -95,7 +95,7 @@ index b9e2f64..d7b80c7 100644
 -    crate::domain::SkillDef::parse(&text)
 +    skill_parse_inner(&text)
  }
- 
+
  #[tauri::command]
 @@ -6219,8 +6267,7 @@ pub fn skill_permission_preview(
      text: String,
@@ -105,7 +105,7 @@ index b9e2f64..d7b80c7 100644
 -    Ok(def.permission_preview())
 +    skill_permission_preview_inner(&text)
  }
- 
+
  #[cfg(test)]
 @@ -6276,13 +6323,21 @@ mod agent_skill_bridge_tests {
          let mut a: crate::domain::AgentDef = serde_json::from_str(&good_agent_json()).unwrap();
@@ -130,7 +130,7 @@ index b9e2f64..d7b80c7 100644
 +            r.errors
 +        );
      }
- 
+
      #[test]
 @@ -6303,6 +6358,106 @@ mod agent_skill_bridge_tests {
          assert!(ValidationReport::ok().valid);
@@ -237,7 +237,7 @@ index b9e2f64..d7b80c7 100644
 +        assert!(p.capabilities.is_empty());
 +    }
  }
- 
+
  // ====== M5-2 MCP 只读注册表/策略桥命令（W7）======
 --- a/scripts/check-agent-skill-policy.py
 +++ b/scripts/check-agent-skill-policy.py
@@ -254,8 +254,8 @@ index b9e2f64..d7b80c7 100644
 -        return [f"W7 只读 Agent/Skill 命令缺四件套奇偶（bridge.rs/main.rs/ACL/bridge.ts）：{sorted(missing)}"]
 +        return [f"W7 只读 Agent/Skill 命令缺四件套奇偶或 source check（bridge.rs handler/main.rs/ACL/bridge.ts/source-check）：{sorted(missing)}"]
      return None
- 
- 
+
+
 @@ -411,6 +413,31 @@
              "src-tauri/permissions/default-commands.toml": "[commands]\nlist_artifact_images\n",
          }),

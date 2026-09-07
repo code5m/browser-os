@@ -5,7 +5,7 @@ index 7a89867..f834d4a 100644
 @@ -188,6 +188,34 @@ eq(
    "ready",
  );
- 
+
 +// ---- 容量健康度（超量态：ok/near/over，确定性）----
 +eq("capacityState ok(50/200)", graphUi.capacityState(graphUi.estimateCapacity(50, 200)).level, "ok");
 +eq(
@@ -43,7 +43,7 @@ index a3255a4..ca06487 100644
 +++ b/src/components/graph/EdgeDetail.vue
 @@ -9,7 +9,7 @@ const summary = computed(() => (props.edge ? summarizeEdge(props.edge) : null));
  </script>
- 
+
  <template>
 -  <div class="detail" v-if="summary">
 +  <div class="detail" v-if="summary" role="region" aria-label="边详情" aria-live="polite">
@@ -57,7 +57,7 @@ index a3255a4..ca06487 100644
 -  <div class="detail empty" v-else>选择一条边查看详情</div>
 +  <div class="detail empty" v-else role="status">选择一条边查看详情</div>
  </template>
- 
+
  <style scoped>
 diff --git a/src/components/graph/GraphFilter.vue b/src/components/graph/GraphFilter.vue
 index 3d09ac8..e64fe95 100644
@@ -65,7 +65,7 @@ index 3d09ac8..e64fe95 100644
 +++ b/src/components/graph/GraphFilter.vue
 @@ -14,7 +14,7 @@ function onSearch(e: Event): void {
  </script>
- 
+
  <template>
 -  <div class="filter">
 +  <div class="filter" role="search">
@@ -92,14 +92,14 @@ index 3d09ac8..e64fe95 100644
 +    <button class="clear" aria-label="清除过滤条件" @click="store.clearFilter()">清除</button>
    </div>
  </template>
- 
+
 diff --git a/src/components/graph/GraphPanel.vue b/src/components/graph/GraphPanel.vue
 index 3804529..486a480 100644
 --- a/src/components/graph/GraphPanel.vue
 +++ b/src/components/graph/GraphPanel.vue
 @@ -14,23 +14,25 @@ onMounted(() => {
  </script>
- 
+
  <template>
 -  <div class="panel graph-panel">
 +  <div class="panel graph-panel" role="region" aria-label="知识图谱">
@@ -112,7 +112,7 @@ index 3804529..486a480 100644
 +        <button :disabled="!store.backendReady" aria-label="刷新图谱数据" @click="store.loadGraph()">刷新</button>
        </div>
      </header>
- 
+
 -    <div v-if="!store.backendReady" class="banner banner-warn">
 +    <div v-if="!store.backendReady" class="banner banner-warn" role="status" aria-live="polite">
        后端 graph 命令尚未就绪，当前为只读壳（不发起任何后端调用）。
@@ -120,9 +120,9 @@ index 3804529..486a480 100644
 -    <div v-if="store.error" class="banner banner-error">{{ store.error }}</div>
 +    <div v-if="store.error" class="banner banner-error" role="alert" aria-live="assertive">{{ store.error }}</div>
 +    <div v-if="store.capState.level !== 'ok'" class="banner banner-cap" role="status" aria-live="polite">{{ store.capState.message }}</div>
- 
+
      <GraphFilter />
- 
+
 -    <div v-if="store.state.state === 'empty'" class="empty-state">{{ store.state.message }}</div>
 +    <div v-if="store.state.state === 'empty'" class="state-block empty-state" role="status">{{ store.state.message }}</div>
 +    <div v-else-if="store.state.state === 'error'" class="state-block error-state" role="alert">{{ store.state.message }}</div>
@@ -155,11 +155,11 @@ index fe220ec..eee4509 100644
 +  nodeColor,
 +  nodeKindLabel,
 +} from "../../utils/graphUi";
- 
+
  const store = useGraphStore();
- 
+
 @@ -23,6 +28,7 @@ function onEdge(idx: number): void {
- 
+
  <template>
    <div class="viewer">
 +    <p class="sr-only" aria-live="polite">{{ store.selectionText }}</p>
@@ -195,7 +195,7 @@ index fe220ec..eee4509 100644
 +    <div v-else class="viewer-empty" role="status">暂无节点可绘制（后端数据未载入或已被过滤）。</div>
    </div>
  </template>
- 
+
  <style scoped>
  .viewer { width: 100%; height: 100%; min-height: 320px; }
 +.sr-only {
@@ -211,7 +211,7 @@ index 9e354bb..ddbd84d 100644
 +++ b/src/components/graph/NodeDetail.vue
 @@ -9,7 +9,7 @@ const summary = computed(() => (props.node ? summarizeNode(props.node) : null));
  </script>
- 
+
  <template>
 -  <div class="detail" v-if="summary">
 +  <div class="detail" v-if="summary" role="region" aria-label="节点详情" aria-live="polite">
@@ -225,7 +225,7 @@ index 9e354bb..ddbd84d 100644
 -  <div class="detail empty" v-else>选择一个节点查看详情</div>
 +  <div class="detail empty" v-else role="status">选择一个节点查看详情</div>
  </template>
- 
+
  <style scoped>
 diff --git a/src/components/layout/ActivityBar.vue b/src/components/layout/ActivityBar.vue
 index 5f46c89..8ae23e5 100644
@@ -261,7 +261,7 @@ index 981b17b..a6b330d 100644
 +    <div v-else-if="layout.mainView === 'graph'" class="modview" role="region" aria-label="知识图谱">
        <GraphPanel />
      </div>
- 
+
 diff --git a/src/stores/useGraphStore.ts b/src/stores/useGraphStore.ts
 index 5e1c0b7..57cf5de 100644
 --- a/src/stores/useGraphStore.ts
@@ -279,10 +279,10 @@ index 5e1c0b7..57cf5de 100644
 +  summarizeNode,
    type GraphFilterState,
  } from "../utils/graphUi";
- 
+
 @@ -44,6 +47,20 @@ export const useGraphStore = defineStore("graph", () => {
    const visibleEdges = computed(() => filterEdges(edgeList.value, nodeList.value, filter.value));
- 
+
    const capacity = computed(() => estimateCapacity(nodes.value.size, edges.value.size));
 +  const capState = computed(() => capacityState(capacity.value));
 +
@@ -298,7 +298,7 @@ index 5e1c0b7..57cf5de 100644
 +    }
 +    return "";
 +  });
- 
+
    const selectedNode = computed(() =>
      selectedNodeId.value ? nodes.value.get(selectedNodeId.value) ?? null : null,
 @@ -126,6 +143,8 @@ export const useGraphStore = defineStore("graph", () => {
@@ -317,7 +317,7 @@ index bd91e56..b2817e0 100644
 @@ -169,6 +169,22 @@ export function estimateCapacity(nodeCount: number, edgeCount: number): Capacity
    };
  }
- 
+
 +// 容量健康度（确定性、无随机）：over=超上限，near=接近上限(>=90%)，ok=正常。
 +// 用于 UI 超量态横幅，避免对超限数据无提示。
 +export interface CapacityState {
