@@ -40,7 +40,7 @@
 用法：
   python3 scripts/check-mcp-policy.py                 默认扫描（无违规 → EXIT 0；有违规 → EXIT 2）
   python3 scripts/check-mcp-policy.py --self-test     好样本 + 坏样本双向自检（含变异防呆）
-  python3 scripts/check-mcp-policy.py --expect-current-gaps  当前相位断言（W8：只读桥已落地、无 rmcp/server/listener）
+  python3 scripts/check-mcp-policy.py --expect-current-gaps  当前相位断言（W10：只读桥在 + gated stdio 骨架已落地、无未门控 rmcp/server/listener）
 """
 
 from __future__ import annotations
@@ -147,22 +147,59 @@ def c_fs_tool_policy(rel, text, repo):
 
 
 def c_no_rmcp_server(rel, text, repo):
-    # W7 Hard Stop 永久守门（ACTIVE）：MCP 必须是只读 Tauri 命令桥，**禁止**独立的 rmcp server /
-    # 网络监听 / mcp_tools 运行时。W1 曾计划的「独立 mcp_server 二进制 + mcp_tools/ 目录」架构被
-    # W7 Hard Stop 否决，相关 7 个 PENDING 码位在 W8 收口为本单一 ACTIVE 守门。
+    # W7/W10 Hard Stop 守门（ACTIVE）：MCP 仍是只读优先；**禁止**未门控的 rmcp server / 网络监听 /
+    # mcp_tools 运行时。W7 否决了「未隔离的独立 server」架构，W8 收口为单一 ACTIVE 守门；W10 A3 打开
+    # 了**feature-gated 的 std-only stdio 骨架**（见 MCP_SERVER_GATED）：只要 mcp_server 二进制 /
+    # mcp_tools 目录是 feature-gated（required-features / #![cfg(feature="mcp")]）且 std-only，
+    # 本码位即放行；反之（未门控 / 含网络监听）仍判违规。
     problems = []
     if _is_cargo(rel):
         if re.search(r"\brmcp\b", text):
             problems.append("Cargo.toml 出现 rmcp 依赖（禁止 rmcp server 架构，MCP 须为只读 Tauri 桥）")
         if re.search(r"\btokio\b", text):
             problems.append("Cargo.toml 出现 tokio 依赖（MCP 只读桥无需异步运行时，W7 Hard Stop）")
-        if re.search(r'\[\[bin\]\][^\[]*?name\s*=\s*["\']mcp_server["\']', text, re.S):
-            problems.append("Cargo.toml 出现 [[bin]] mcp_server（禁止独立 MCP server 二进制）")
+        m = re.search(r'\[\[bin\]\][^\[]*?name\s*=\s*["\']mcp_server["\']([^\[]*)', text, re.S)
+        if m and "required-features" not in m.group(1):
+            problems.append("Cargo.toml 出现 [[bin]] mcp_server 但缺少 required-features 门控（禁止未隔离的独立 MCP server 二进制）")
     if _is_src_rs(rel):
         if re.search(r"\baxum\b|\bhyper::Server\b|tokio::net::TcpListener|std::net::TcpListener", text):
             problems.append("src 出现 HTTP/网络监听形态（axum/hyper::Server/TcpListener，禁止 MCP server 监听）")
-    if any(r.startswith("src-tauri/src/mcp_tools/") for r in repo):
-        problems.append("存在 src-tauri/src/mcp_tools/ 目录（禁止独立 MCP 工具运行时）")
+    # 允许 feature-gated 的 mcp_tools/ 目录（W10 可选）；仅当目录内存在非自门控文件时判违规。
+    for r in repo:
+        if r.startswith("src-tauri/src/mcp_tools/") and r.endswith(".rs"):
+            if not re.search(r'#!\s*\[\s*cfg\(\s*feature\s*=\s*"mcp"\s*\)\s*\]', repo[r]):
+                problems.append(f"{r} 非自门控（mcp_tools/ 内文件必须以 #![cfg(feature=\"mcp\")] 门控）")
+    return problems or None
+
+
+def c_server_gated(rel, text, repo):
+    # W10 A3：允许的 MCP stdio-prep 骨架（feature-gated、std-only、无网络监听、无执行副作用）。
+    # 仅当仓库存在 MCP 运行时预备件（src-tauri/src/bin/mcp_server.rs 或 src-tauri/src/mcp_server.rs）
+    # 时才守门；它必须：
+    #   1) 自门控：文件以 #![cfg(feature = "mcp")] 开头，确保默认构建不编译；
+    #   2) Cargo.toml 声明 [features] mcp（feature 门控存在）；
+    #   3) 不得含网络/监听/进程派生/执行副作用（axum/hyper::Server/TcpListener/TcpStream/UdpSocket/
+    #      Command::new/spawn/std::process）；
+    #   4) 必须走 stdio（使用 std::io 读 stdin），而非网络传输。
+    # 命中任一违规 ⇒ 视为「未正确门控的 MCP server」⇒ 报错（与 W7 Hard Stop 一致）。
+    if rel not in ("src-tauri/src/bin/mcp_server.rs", "src-tauri/src/mcp_server.rs"):
+        return None
+    problems = []
+    if not re.search(r'#!\s*\[\s*cfg\(\s*feature\s*=\s*"mcp"\s*\)\s*\]', text):
+        problems.append('MCP 运行时预备件未以 #![cfg(feature="mcp")] 自门控（默认构建不得编译）')
+    cargo = repo.get("src-tauri/Cargo.toml", "")
+    if not re.search(r"\[features\]", cargo) or not re.search(r"\bmcp\b", cargo):
+        problems.append("Cargo.toml 缺少 [features] mcp（feature 门控缺失）")
+    if re.search(
+        r"\baxum\b|\bhyper::Server\b|tokio::net::TcpListener|std::net::TcpListener|"
+        r"std::net::TcpStream|TcpListener|TcpStream|UdpSocket",
+        text,
+    ):
+        problems.append("MCP 骨架含网络监听/传输形态（禁 TCP/HTTP，只准 stdio）")
+    if re.search(r"Command::new|\.spawn\(|std::process", text):
+        problems.append("MCP 骨架含进程派生/执行副作用（MCP_NO_SECOND_PATH 红线）")
+    if "std::io" not in text:
+        problems.append("MCP 骨架未使用 std::io（stdio 传输缺失）")
     return problems or None
 
 
@@ -264,6 +301,7 @@ ACTIVE_CODES = [
     ("MCP_FS_TOOL_PATH_POLICY", "ACTIVE", c_fs_tool_policy),
     ("MCP_BRIDGE_READONLY", "ACTIVE", c_bridge_readonly),
     ("MCP_NO_RMCP_SERVER", "ACTIVE", c_no_rmcp_server),
+    ("MCP_SERVER_GATED", "ACTIVE", c_server_gated),
     ("MCP_PARITY", "ACTIVE", c_parity),
 ]
 # W8：W1 的 7 个 PENDING 码位 + MCP_TREE_TAURI 全部退役，相位债已关闭。当前无 PENDING 码位。
@@ -387,6 +425,11 @@ def _run_self_test() -> int:
     add("MCP_NO_RMCP_SERVER", "Cargo.toml 引入 rmcp 依赖",
         mutate(**{"src-tauri/Cargo.toml": "[dependencies]\nrmcp = { version = \"3\" }\ntauri = { version = \"2\" }\n"}),
         "src-tauri/Cargo.toml")
+    # W10：gated stdio 骨架的自门控 + 无网络守门（MCP_SERVER_GATED）。坏样本：未自门控且含网络监听。
+    add("MCP_SERVER_GATED", "mcp_server.rs 未自门控且含 TCP 监听",
+        mutate(**{"src-tauri/src/bin/mcp_server.rs":
+                  "use std::net::TcpListener;\nfn run() { let _ = TcpListener::bind(\"127.0.0.1:0\"); }\n"}),
+        "src-tauri/src/bin/mcp_server.rs")
     add("MCP_CAPABILITY_DRIFT", "MCP_CAPABILITY_V1 定义两处",
         mutate(**{"src-tauri/src/core/mod.rs": "const MCP_CAPABILITY_V1: &[&str] = &[];\n",
                   "src-tauri/src/extra.rs": "const MCP_CAPABILITY_V1: &[&str] = &[];\n"}),
@@ -431,19 +474,19 @@ def _mode_expect_current_gaps() -> int:
         problems.append("MCP 只读桥未落地（W8 期望 mcp_policy_get / mcp_registry_list / "
                         "mcp_capability_preview 已在 main.rs 注册且 ACL + bridge.ts 齐备）")
     # 任一 ACTIVE 码位命中即违反 W8 相位（红线 / 奇偶 / 只读 不应出现）
-    blocked = ("MCP_NO_RMCP_SERVER", "MCP_PARITY", "MCP_BRIDGE_READONLY",
+    blocked = ("MCP_NO_RMCP_SERVER", "MCP_SERVER_GATED", "MCP_PARITY", "MCP_BRIDGE_READONLY",
                "MCP_FS_TOOL_PATH_POLICY", "MCP_CAPABILITY_DRIFT",
                "MCP_NPM_SDK_PRESENT", "MCP_NPM_IN_CARGO", "MCP_NODE_RUNTIME_PRESENT")
     for code in blocked:
         if code in hits:
-            problems.append(f"{code} 命中（W8 不应出现）：{hits[code]}")
+            problems.append(f"{code} 命中（W10 不应出现）：{hits[code]}")
     if problems:
         for p in problems:
             print(f"  - {p}")
         print("MCP_CURRENT_GAPS_RESULT=FAIL")
         return 1
-    print("MCP_CURRENT_GAPS_RESULT=PASS（W8 相位：只读桥已落地，无 rmcp/server/listener/tokio，"
-          "奇偶/只读/红线性门禁全绿）")
+    print("MCP_CURRENT_GAPS_RESULT=PASS（W10 相位：只读桥在 + gated stdio 骨架已落地，"
+          "无未门控 rmcp/server/listener/tokio，奇偶/只读/红线性门禁全绿）")
     return 0
 
 
@@ -464,7 +507,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--self-test", action="store_true", help="好/坏样本双向自检")
     ap.add_argument("--expect-current-gaps", action="store_true",
-                    help="当前相位断言（W8：只读桥已落地、无 rmcp/server/listener）")
+                    help="当前相位断言（W10：只读桥在 + gated stdio 骨架已落地、无未门控 rmcp/server/listener）")
     args = ap.parse_args()
 
     if args.self_test:

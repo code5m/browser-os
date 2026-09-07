@@ -14,6 +14,14 @@ edition = "2021"
 name = "mvp_core"
 path = "src/lib.rs"
 
+# M5-W10 A3：MCP stdio-prep 骨架的 feature 门控。默认构建（`cargo build` / `cargo test`
+# 不带 --features mcp）不编译该骨架；仅 `cargo build --features mcp` / `cargo test --features mcp`
+# 才纳入。骨架为纯 std + serde_json（复用 crate::mcp 注册表/策略接线），不引入任何新依赖，
+# 故默认构建 / 依赖图 / 包体积零变化。W10 Hard Stop：MCP server 运行时依赖不得进入 default 构建；
+# 若未来确需引入，须 optional + required-features 隔离（见 scripts/check-mcp-policy.py 的 MCP_SERVER_GATED 守门）。
+[features]
+mcp = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

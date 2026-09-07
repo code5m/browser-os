@@ -26,6 +26,14 @@ mod terminal;
 mod tools;
 mod workspace;
 
+// M5-W10 A3：MCP stdio-prep 骨架（feature-gated，默认构建不编译）。
+// 仅 `--features mcp` 才纳入；以 `--mcp-stdio` 启动时不进入 Tauri 主流程，
+// 直接跑只读 stdio JSON-RPC 环（复用 crate::mcp 注册表/策略接线，无网络监听、
+// 无文件/数据库/脚本/插件执行副作用）。具体实现见 src/mcp_server.rs。
+#[cfg(feature = "mcp")]
+#[path = "mcp_server.rs"]
+mod mcp_server;
+
 // M5-1 re-export shim：已搬入 `mvp_core` 的模块在此再导出，
 // 于是二进制侧既有的 `crate::<mod>::X` 路径**无需任何改写**即可继续解析。
 // 每搬入一个模块，就在下方补一行 `pub use mvp_core::<mod>;`，
@@ -1076,6 +1084,15 @@ fn main() {
     // Phase 0：宫格子进程分支（在最前判断，避免初始化主进程逻辑）
     if let Some(index) = parse_grid_child_arg() {
         run_grid_child(index);
+        return;
+    }
+
+    // M5-W10 A3：MCP stdio-prep 骨架入口（仅 --features mcp 编译；默认构建不含）。
+    // 以 `--mcp-stdio` 启动时不进入 Tauri 主流程，直接跑只读 stdio JSON-RPC 环，
+    // 复用 crate::mcp 的注册表/策略接线，无网络监听、无文件/数据库/脚本/插件执行。
+    #[cfg(feature = "mcp")]
+    if std::env::args().any(|a| a == "--mcp-stdio") {
+        crate::mcp_server::run_stdio();
         return;
     }
 
