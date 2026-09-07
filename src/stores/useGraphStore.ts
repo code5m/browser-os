@@ -15,6 +15,7 @@ import type { GraphEdge, GraphNode, GraphNodeKind } from "../types";
 import {
   boundedInsert,
   capacityState,
+  edgeKey,
   estimateCapacity,
   filterEdges,
   filterNodes,
@@ -31,7 +32,7 @@ export const useGraphStore = defineStore("graph", () => {
   const nodes = ref<Map<string, GraphNode>>(new Map());
   const edges = ref<Map<string, GraphEdge>>(new Map());
   const selectedNodeId = ref<string | null>(null);
-  const selectedEdgeIdx = ref<number | null>(null); // 边可能重 key，用可见列表索引
+  const selectedEdgeKey = ref<string | null>(null); // 边用稳定标识(from|to|kind)选择，避免索引随过滤漂移
   const loading = ref(false);
   const error = ref<string | null>(null);
   // 后端命令可用性。A7 落地 graph_query 后置 true（见 `bridge.GRAPH_COMMANDS_AVAILABLE`）。
@@ -67,10 +68,10 @@ export const useGraphStore = defineStore("graph", () => {
   const selectedNode = computed(() =>
     selectedNodeId.value ? nodes.value.get(selectedNodeId.value) ?? null : null,
   );
-  // 选择发生在可见列表，故按 visibleEdges 索引还原
+  // 边按稳定标识选择：过滤变化后只要该边仍在可见集合即可还原，选择不随列表索引漂移（确定性）。
   const selectedEdge = computed(() => {
-    if (selectedEdgeIdx.value === null) return null;
-    return visibleEdges.value[selectedEdgeIdx.value] ?? null;
+    if (!selectedEdgeKey.value) return null;
+    return visibleEdges.value.find((e) => edgeKey(e) === selectedEdgeKey.value) ?? null;
   });
 
   const state = computed(() =>
@@ -111,10 +112,10 @@ export const useGraphStore = defineStore("graph", () => {
 
   function selectNode(id: string): void {
     selectedNodeId.value = selectedNodeId.value === id ? null : id;
-    selectedEdgeIdx.value = null;
+    selectedEdgeKey.value = null;
   }
-  function selectEdge(idx: number): void {
-    selectedEdgeIdx.value = selectedEdgeIdx.value === idx ? null : idx;
+  function selectEdge(key: string): void {
+    selectedEdgeKey.value = selectedEdgeKey.value === key ? null : key;
     selectedNodeId.value = null;
   }
   function setFilter(f: Partial<GraphFilterState>): void {
@@ -135,7 +136,7 @@ export const useGraphStore = defineStore("graph", () => {
     nodes,
     edges,
     selectedNodeId,
-    selectedEdgeIdx,
+    selectedEdgeKey,
     loading,
     error,
     backendReady,

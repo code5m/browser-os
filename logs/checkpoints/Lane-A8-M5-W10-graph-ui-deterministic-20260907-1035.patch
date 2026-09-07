@@ -1,0 +1,215 @@
+diff --git a/scripts/check-graph-ui-logic.mjs b/scripts/check-graph-ui-logic.mjs
+index 9037fdd..0ab265a 100644
+--- a/scripts/check-graph-ui-logic.mjs
++++ b/scripts/check-graph-ui-logic.mjs
+@@ -165,6 +165,20 @@ ok("boundedInsert 初始大小", m.size === 2);
+ m = graphUi.boundedInsert(m, [node("3", "file", "c")], 2);
+ ok("boundedInsert 超上限丢弃最旧", m.size === 2 && !m.has("1"));
+
++// ---- 确定性选择（边稳定标识 edgeKey）----
++ok("edgeKey 格式(from|to|kind)", graphUi.edgeKey(edge("a", "b", "uses")) === "a|b|uses");
++ok(
++  "edgeKey 同边同标识(确定性，避免索引漂移)",
++  graphUi.edgeKey(edge("a", "b", "uses")) === graphUi.edgeKey(edge("a", "b", "uses")),
++);
++
++// ---- 渲染有界（clampRender：UI 安全网，避免渲染数组无界增长）----
++const rc1 = graphUi.clampRender([1, 2, 3], 10);
++ok("clampRender 未超限不截断", rc1.truncated === false && rc1.items.length === 3 && rc1.total === 3);
++const bigArr = Array.from({ length: 6000 }, (_, i) => i);
++const rc2 = graphUi.clampRender(bigArr, 5000);
++ok("clampRender 超限封顶(cap=5000)", rc2.truncated === true && rc2.items.length === 5000 && rc2.total === 6000);
++
+ // ---- 面板三态 ----
+ eq(
+   "panelStateGraph backendReady=false empty",
+diff --git a/src/components/graph/GraphViewer.vue b/src/components/graph/GraphViewer.vue
+index eee4509..f8e47bf 100644
+--- a/src/components/graph/GraphViewer.vue
++++ b/src/components/graph/GraphViewer.vue
+@@ -2,17 +2,28 @@
+ import { computed } from "vue";
+ import { useGraphStore } from "../../stores/useGraphStore";
+ import {
++  clampRender,
++  edgeKey,
+   edgeKindLabel,
+   layoutPositions,
+   nodeColor,
+   nodeKindLabel,
++  RENDER_EDGE_CAP,
++  RENDER_NODE_CAP,
+ } from "../../utils/graphUi";
+
+ const store = useGraphStore();
+
++// 渲染有界：正常数据不会截断（cap=数据上限），仅作 UI 安全网（W10 有界渲染）。
++const renderNodes = computed(() => clampRender(store.visibleNodes, RENDER_NODE_CAP));
++const renderEdges = computed(() => clampRender(store.visibleEdges, RENDER_EDGE_CAP));
++const renderTruncated = computed(
++  () => renderNodes.value.truncated || renderEdges.value.truncated,
++);
++
+ const points = computed(() => {
+   const map = new Map<string, { x: number; y: number }>();
+-  for (const p of layoutPositions(store.visibleNodes, store.visibleEdges)) {
++  for (const p of layoutPositions(renderNodes.value.items, renderEdges.value.items)) {
+     map.set(p.id, { x: p.x, y: p.y });
+   }
+   return map;
+@@ -21,38 +32,41 @@ const points = computed(() => {
+ function onNode(id: string): void {
+   store.selectNode(id);
+ }
+-function onEdge(idx: number): void {
+-  store.selectEdge(idx);
++function onEdge(key: string): void {
++  store.selectEdge(key);
+ }
+ </script>
+
+ <template>
+   <div class="viewer">
+     <p class="sr-only" aria-live="polite">{{ store.selectionText }}</p>
++    <p v-if="renderTruncated" class="render-note" role="status">
++      视图仅渲染前 {{ RENDER_NODE_CAP }} 个节点 / {{ RENDER_EDGE_CAP }} 条边，完整数据可通过筛选查看。
++    </p>
+     <svg
+-      v-if="store.visibleNodes.length"
++      v-if="renderNodes.total"
+       viewBox="0 0 800 600"
+       class="canvas"
+       role="img"
+-      :aria-label="`图谱视图，共 ${store.visibleNodes.length} 个节点`"
++      :aria-label="`图谱视图，共 ${renderNodes.total} 个节点`"
+     >
+       <line
+-        v-for="(e, i) in store.visibleEdges"
+-        :key="'e' + i"
++        v-for="e in renderEdges.items"
++        :key="'e:' + edgeKey(e)"
+         :x1="points.get(e.from)?.x ?? 0"
+         :y1="points.get(e.from)?.y ?? 0"
+         :x2="points.get(e.to)?.x ?? 0"
+         :y2="points.get(e.to)?.y ?? 0"
+         class="edge"
+-        :class="{ active: store.selectedEdgeIdx === i }"
++        :class="{ active: store.selectedEdgeKey === edgeKey(e) }"
+         tabindex="0"
+         role="button"
+         :aria-label="`${edgeKindLabel(e.kind)}边，从 ${e.from} 到 ${e.to}`"
+-        @click="onEdge(i)"
+-        @keydown.enter="onEdge(i)"
++        @click="onEdge(edgeKey(e))"
++        @keydown.enter="onEdge(edgeKey(e))"
+       />
+       <g
+-        v-for="n in store.visibleNodes"
++        v-for="n in renderNodes.items"
+         :key="n.id"
+         :transform="`translate(${points.get(n.id)?.x ?? 0}, ${points.get(n.id)?.y ?? 0})`"
+         class="node"
+@@ -86,4 +100,5 @@ function onEdge(idx: number): void {
+ .node.active circle { stroke: #4096ff; stroke-width: 3; }
+ .nlabel { font-size: 11px; fill: #444; }
+ .viewer-empty { padding: 24px; color: #999; text-align: center; }
++.render-note { padding: 6px 10px; border-radius: 6px; margin: 0 8px 8px; font-size: 12px; background: #f9f0ff; color: #722ed1; text-align: center; }
+ </style>
+diff --git a/src/stores/useGraphStore.ts b/src/stores/useGraphStore.ts
+index cf534ff..02ed735 100644
+--- a/src/stores/useGraphStore.ts
++++ b/src/stores/useGraphStore.ts
+@@ -15,6 +15,7 @@ import type { GraphEdge, GraphNode, GraphNodeKind } from "../types";
+ import {
+   boundedInsert,
+   capacityState,
++  edgeKey,
+   estimateCapacity,
+   filterEdges,
+   filterNodes,
+@@ -31,7 +32,7 @@ export const useGraphStore = defineStore("graph", () => {
+   const nodes = ref<Map<string, GraphNode>>(new Map());
+   const edges = ref<Map<string, GraphEdge>>(new Map());
+   const selectedNodeId = ref<string | null>(null);
+-  const selectedEdgeIdx = ref<number | null>(null); // 边可能重 key，用可见列表索引
++  const selectedEdgeKey = ref<string | null>(null); // 边用稳定标识(from|to|kind)选择，避免索引随过滤漂移
+   const loading = ref(false);
+   const error = ref<string | null>(null);
+   // 后端命令可用性。A7 落地 graph_query 后置 true（见 `bridge.GRAPH_COMMANDS_AVAILABLE`）。
+@@ -67,10 +68,10 @@ export const useGraphStore = defineStore("graph", () => {
+   const selectedNode = computed(() =>
+     selectedNodeId.value ? nodes.value.get(selectedNodeId.value) ?? null : null,
+   );
+-  // 选择发生在可见列表，故按 visibleEdges 索引还原
++  // 边按稳定标识选择：过滤变化后只要该边仍在可见集合即可还原，选择不随列表索引漂移（确定性）。
+   const selectedEdge = computed(() => {
+-    if (selectedEdgeIdx.value === null) return null;
+-    return visibleEdges.value[selectedEdgeIdx.value] ?? null;
++    if (!selectedEdgeKey.value) return null;
++    return visibleEdges.value.find((e) => edgeKey(e) === selectedEdgeKey.value) ?? null;
+   });
+
+   const state = computed(() =>
+@@ -111,10 +112,10 @@ export const useGraphStore = defineStore("graph", () => {
+
+   function selectNode(id: string): void {
+     selectedNodeId.value = selectedNodeId.value === id ? null : id;
+-    selectedEdgeIdx.value = null;
++    selectedEdgeKey.value = null;
+   }
+-  function selectEdge(idx: number): void {
+-    selectedEdgeIdx.value = selectedEdgeIdx.value === idx ? null : idx;
++  function selectEdge(key: string): void {
++    selectedEdgeKey.value = selectedEdgeKey.value === key ? null : key;
+     selectedNodeId.value = null;
+   }
+   function setFilter(f: Partial<GraphFilterState>): void {
+@@ -135,7 +136,7 @@ export const useGraphStore = defineStore("graph", () => {
+     nodes,
+     edges,
+     selectedNodeId,
+-    selectedEdgeIdx,
++    selectedEdgeKey,
+     loading,
+     error,
+     backendReady,
+diff --git a/src/utils/graphUi.ts b/src/utils/graphUi.ts
+index b2817e0..3fcd54b 100644
+--- a/src/utils/graphUi.ts
++++ b/src/utils/graphUi.ts
+@@ -105,6 +105,12 @@ export function isAgentConsumptionEdge(e: GraphEdge): boolean {
+   return e.kind === "uses" || e.kind === "a2a_with" || e.kind === "memorizes";
+ }
+
++// 边的稳定标识（from|to|kind）：用于确定性选择/高亮，避免依赖可见列表索引
++// （索引随过滤变化而不稳定，W10 修正选中边漂移）。
++export function edgeKey(e: GraphEdge): string {
++  return `${e.from}|${e.to}|${e.kind}`;
++}
++
+ // ====== 布局（纯 TS，无 D3；确定性，无随机，便于测试） ======
+ export type LayoutKind = "tree" | "force" | "cluster";
+ export function layoutKindOf(edges: GraphEdge[]): LayoutKind {
+@@ -225,6 +231,22 @@ export function boundedInsert<T extends { id: string }>(
+   return next;
+ }
+
++// ====== 渲染有界（UI 安全网）======
++// 与数据有界(MAX_NODES/MAX_EDGES)同口径；正常数据不会触发截断，仅作为单点护栏，
++// 防止任何渲染数组无界增长。返回截断标记与总数，供 UI 提示（W10 有界渲染）。
++export const RENDER_NODE_CAP = 5000; // = GRAPH_MAX_NODES
++export const RENDER_EDGE_CAP = 20000; // = GRAPH_MAX_EDGES
++export interface RenderClamp<T> {
++  items: T[];
++  truncated: boolean;
++  total: number;
++}
++export function clampRender<T>(items: readonly T[], cap: number): RenderClamp<T> {
++  const total = items.length;
++  if (total <= cap) return { items: items as T[], truncated: false, total };
++  return { items: items.slice(0, cap) as T[], truncated: true, total };
++}
++
+ // ====== 面板三态（空 / 错误 / 加载） ======
+ export interface PanelStateView {
+   state: "loading" | "empty" | "ready" | "error";

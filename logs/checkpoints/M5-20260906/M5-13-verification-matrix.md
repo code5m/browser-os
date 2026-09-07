@@ -269,6 +269,39 @@ python3 scripts/measure-build-metrics.py  # 期望 ≤ 19% 或由 A0 拍新阈�
 
 ---
 
+## [W9 reconciliation · 2026-09-07 16:00 CST] W9 整包已 A0 拣入（`3792115` + `0d86a19` + `770e22c` + `ef87401`）· 当前活跃 verification scope 切到 M5-W10
+
+> **W9 拣入验证事实回填**（承接 W8 终态 `97118d6`，本 delta 由 A0 拣入后实测）：
+> - **A3 W9**（`ef87401`）：MCP policy current-phase 维持绿（`check-mcp-policy.py --self-test` ACTIVE=8 PENDING=0 + `--expect-current-gaps` PASS）；M5-2.b rmcp/server 前向卡就位；**无** rmcp server/listener/network 实施。
+> - **A6 W9**（`770e22c`）：Agent/Skill 面板消费磨光；`npm run build` PASS；Agent/Skill UI logic **99 断言**（W8 79 → W9 99）。
+> - **A8 W9**（`3792115` 内吸收）：GraphPanel.vue 修订 + `check-graph-ui-logic.mjs` **43 断言**（W8 41 → W9 43）；仍 no-backend / read-only。
+> - **A11 W9 final verification**（`0d86a19`）：cargo test **402/0**、build metrics **21.09% ≤ 22%**、cargo_warnings **0**、pre-merge **ALL_PASS**、W8 三红灯全闭（RED-1 fmt / RED-2 git-diff-check / RED-3 MCP `--expect-pending` 债）、**push-ready**。
+> - **A1 W9 reconciliation 整包**（`3792115` stat 28 files +2290 -10）：含本卡 [W9 verification scope] 段 + M5-0/9/10/11/12/14 修订 + A1 W9 checkpoint/patch + 11 lane assist/checkpoint。
+> - **W9 硬停止全守**：禁运行时（MCP server/rmcp/plugin-install/skill-exec/model-call/network）；build metrics 22% 阈值维持；仅 A0 push。
+
+---
+
+## [W10 verification scope · 2026-09-07 16:00 CST] W10 验证范围（Controlled Runtime Prep Dispatch · A3 窄产品代码 + 10 lane docs/review/security/verification · W10 = 受控运行时预备，**不开放不安全执行** · build metrics 阈值 22% 维持 · cargo_warnings delta = 0）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L176-227（M5-W10 Controlled Runtime Prep Dispatch）+ L7（*`Each lane 整包 deliver patch+checkpoint; only A0 pushes`*）。
+>
+> **W10 派发事实**（board L179）：W9 focused checks green — Agent/Skill bridge tests 26 / MCP tests 9 / Plugin tests 10 / Agent/Skill UI logic 99 / Graph UI logic 43 / npm build PASS / MCP·Agent policy PASS。
+>
+> **W10 验证矩阵（Controlled Runtime Prep）**：
+
+| FAC | 子卡 | W10 AC | 状态 | 验证命令 / 文件 | 挂账 / 备注 |
+|-----|------|--------|------|----------------|------------|
+| **FAC-2.W10 (new)** | M5-2 MCP stdio-prep | A3 W10 feature-gated `mcp` Cargo feature/bin 或等价编译隔离骨架；复用 `mcp.rs` registry/policy wiring；**无 TCP listener / 无网络 / 无 rmcp tool 副作用 / 无 file/db/script/plugin 执行**；`rmcp`/`tokio` optional + required-features gated | **ACTIVE · A3 W10 实施** | `cargo build`（默认，无 `mcp` feature）→ 无 rmcp/tokio 污染；`cargo test --features mcp`（若加 feature）或等价聚焦编译 PASS；`check-mcp-policy.py --self-test` ACTIVE=8 PENDING=0 维持 + 新增 MCP_STDIO_PREP_FEATURE_GATED 码守门 | W10 唯一可写产品代码 lane；A10 security review 必过 |
+| **FAC-13.W10 (carried)** | build metrics 22% threshold | W9 实测 21.09% ≤ 22% PASS | **PASS · W10 阈值不变** | `scripts/measure-build-metrics.sh` + `M5-14-debt-ledger.md` §10 IF-2 | W10 22% 阈值复检必跑 + cargo_warnings delta = 0 |
+| **FAC-10/11.W10 (carried)** | plugin manifest/commands | W6/W8 拣入 pure/stub；A9 W10 = PLUGIN RUNTIME PLAN ONLY（不实施 runtime） | **PASS (stub) · runtime LOCKED** | `check-plugin-policy.py --self-test` ALL_PASS(ACTIVE=6) | plugin install/enable/delete/download runtime 仍 LOCKED（W10 Hard Stop L207）；DEBT-04 |
+| **FAC-7/8.W10 (carried)** | graph model/store | W5 拣入；A7 W10 = GRAPH DOCS ONLY（live-query 实施卡预备） | **PASS · backend runtime LOCKED** | `cargo test graph` 9/9 + `check-graph-policy.py --self-test` PASS(ACTIVE=7) | graph live-query command 仍 BLOCKED（不实施） |
+| **FAC-4/5/6.W10 (carried)** | agent/skill runtime/commands/UI | W4/W5/W6/W8 拣入 + W9 磨光；A5 W10 = TEST/POLICY ONLY（read-only bridge 仍锁执行） | **PASS · execution LOCKED** | `cargo test agent skill` 26/0 + `check-agent-skill-policy.py` PASS + `check-agent-skill-ui-logic.mjs` 99 断言 | skill/agent execution 仍 LOCKED（W10 Hard Stop L207） |
+| **FAC-14.W10 (new)** | A11 W10 verification matrix | 本卡 [W10 verification scope] 段 | **ACTIVE · W10 验证矩阵** | 本卡 W10 矩阵 + A11 W10 delta 必填（`logs/checkpoints/A11-M5-W10-*.md`） | A11 W10 复检：default build/test + feature build/test（若 A3 加 `mcp`）+ policy/UI scripts + pre-merge + build metrics ≤22% + warnings unchanged |
+
+> **W10 hard stops 验证必跑**（board L204-211）：① 仅 A3 可触 MCP runtime-prep 产品代码，其余 runtime 面全锁；② 无 TCP listener / HTTP server / network bind / background daemon / plugin install·enable·delete·download / skill·agent execution / model call / hidden script·db execution；③ `rmcp`/`tokio` 必须 optional + feature-gated + 默认构建不污染 + 策略自测守门；④ 命令面 source check + ACL 同步；⑤ build metrics 阈值 22% 维持；⑥ cargo warnings 不增加；⑦ 仅 A0 push。
+
+---
+
 ## [W1 patched · 2026-09-06 08:50 CST] 策略脚本后缀一致性（.sh → .py）
 
 > **修订来源**：A0 M5-W1 dispatch（`logs/checkpoints/A0-M5-W1-dispatch-20260906-0835.md`）A1 行 reconcile + A2 v3 prework（`logs/assist/A2-M5-core-20260906-0749.md` §13.3 C-8 "用 `.py` 不用 `.sh`"）。

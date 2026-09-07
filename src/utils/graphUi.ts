@@ -105,6 +105,12 @@ export function isAgentConsumptionEdge(e: GraphEdge): boolean {
   return e.kind === "uses" || e.kind === "a2a_with" || e.kind === "memorizes";
 }
 
+// 边的稳定标识（from|to|kind）：用于确定性选择/高亮，避免依赖可见列表索引
+// （索引随过滤变化而不稳定，W10 修正选中边漂移）。
+export function edgeKey(e: GraphEdge): string {
+  return `${e.from}|${e.to}|${e.kind}`;
+}
+
 // ====== 布局（纯 TS，无 D3；确定性，无随机，便于测试） ======
 export type LayoutKind = "tree" | "force" | "cluster";
 export function layoutKindOf(edges: GraphEdge[]): LayoutKind {
@@ -223,6 +229,22 @@ export function boundedInsert<T extends { id: string }>(
     }
   }
   return next;
+}
+
+// ====== 渲染有界（UI 安全网）======
+// 与数据有界(MAX_NODES/MAX_EDGES)同口径；正常数据不会触发截断，仅作为单点护栏，
+// 防止任何渲染数组无界增长。返回截断标记与总数，供 UI 提示（W10 有界渲染）。
+export const RENDER_NODE_CAP = 5000; // = GRAPH_MAX_NODES
+export const RENDER_EDGE_CAP = 20000; // = GRAPH_MAX_EDGES
+export interface RenderClamp<T> {
+  items: T[];
+  truncated: boolean;
+  total: number;
+}
+export function clampRender<T>(items: readonly T[], cap: number): RenderClamp<T> {
+  const total = items.length;
+  if (total <= cap) return { items: items as T[], truncated: false, total };
+  return { items: items.slice(0, cap) as T[], truncated: true, total };
 }
 
 // ====== 面板三态（空 / 错误 / 加载） ======

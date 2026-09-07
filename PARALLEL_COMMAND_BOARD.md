@@ -1,10 +1,10 @@
 # Parallel Command Board
 
-> Updated: 2026-09-07 16:00 CST
+> Updated: 2026-09-07 18:30 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` integration in progress after W7; do not push from lanes
-> Current NEXT: M5-W10 controlled runtime prep; W9 outputs are ready for A0 integration and W10 opens only narrow MCP stdio shell preparation plus review/polish lanes
+> Current mainline: `master` integration in progress after W10; do not push from lanes
+> Current NEXT: M5-W11 MCP stdio dry-run hardening; W10 outputs are accepted locally and queued for A0 push; W11 opens only narrow MCP stdio dry-run/list-call hardening plus review/polish lanes
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
@@ -13,7 +13,7 @@ This file is the coordination board for 11 parallel agents plus A0 integration. 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W10 Controlled Runtime Prep Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W11 MCP Stdio Dry-Run Hardening Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
 ```
 
 Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
@@ -172,6 +172,60 @@ WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane
 
 
 
+
+## M5-W11 MCP Stdio Dry-Run Hardening Dispatch
+
+> Added 2026-09-07 18:30 CST by A0 after W10 focused validation.
+> Current facts: W10 A3 stdio-prep skeleton is feature-gated (`mcp`), std-only, no rmcp/tokio dependency, no TCP/network listener, and `cargo test --features mcp mcp_server` passes 7/7. W10 policy gates pass with `MCP_POLICY_SELF_TEST=PASS(ACTIVE=9,PENDING=0)` and `MCP_CURRENT_GAPS_RESULT=PASS`. A6/A8 UI logic checks and npm build pass in W10.
+> W11 goal: harden the MCP stdio shell through deterministic dry-run behavior and review evidence only. This is still not full runtime activation: no file/db/script/plugin execution, no network listener, no daemon, no model call.
+
+### W11 One-Line Prompt
+
+```text
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W11 MCP Stdio Dry-Run Hardening Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+```
+
+### W11 Assignments
+
+| Lane | Status | Task | Allowed Scope | Must Deliver |
+|---|---|---|---|---|
+| A1 | **START DOCS ONLY** | Reconcile W10 as accepted after A0 push and mark W11 active. Update M5 cards so W10 stdio-prep is recorded as feature-gated PASS and W11 remains dry-run only. | `PARALLEL_COMMAND_BOARD.md`, three main docs, `logs/checkpoints/M5-20260906/*.md`, `logs/checkpoints/A1-M5-W11-*.md` | One reconciliation checkpoint; no product code. |
+| A2 | **START BOUNDARY REVIEW ONLY** | Review W11 MCP dry-run changes for core/bin boundary: no tauri in core, no bridge::* calls from stdio tools, no duplicate script/db/plugin execution path, no workspace writes. | `logs/assist/A2-M5-W11-*.md`; policy-only fixtures if concrete | Boundary verdict with exact blockers. |
+| A3 | **START PRODUCT CODE NARROW** | Harden MCP stdio dry-run/list-call behavior only: deterministic JSON-RPC errors, bounded input/response size, stable `tools/list` schema, explicit fail-closed `tools/call` for all unbound capabilities, and tests/smoke for invalid JSON/unknown tool/large params. No real file/db/script/plugin execution. | `src-tauri/src/mcp_server.rs`, `src-tauri/src/mcp.rs` only if needed, `scripts/check-mcp-policy.py`, focused tests/checkpoint | `cargo test --features mcp mcp_server` PASS; MCP policy self/default/current PASS; no listener/network/rmcp/tokio; checkpoint + patch. |
+| A4 | **START PRIVACY REVIEW ONLY** | Review W11 stdio responses/errors for secret echo: URL/userinfo/query redaction, arguments not reflected raw, no audit/log payload leakage. | `logs/assist/A4-M5-W11-*.md`; policy-only fixtures if concrete | Privacy verdict; concrete blocker if raw params can echo. |
+| A5 | **START AGENT/SKILL POLICY ONLY** | Keep Agent/Skill execution locked. Add only missing policy fixtures if W10/W11 reviews found leaks; otherwise write readiness note for future execution-wave contract. | `scripts/check-agent-skill-policy.py`, `logs/assist/A5-M5-W11-*.md` | PASS/BLOCKED note; no execution runtime. |
+| A6 | **START UI SMALL ONLY** | Agent/Skill UI small polish only: disabled execution affordances, deterministic empty/error/loading states, no new backend command. | `src/components/workspace/**`, `src/stores/**`, `scripts/check-agent-skill-ui-logic.mjs`, checkpoint/assist | UI logic PASS and npm build if changed. |
+| A7 | **START GRAPH DOCS ONLY** | Convert W10 graph live-query card into a concrete W12 implementation plan with command contracts, limits, cancellation, privacy, and tests. Do not implement commands. | `logs/assist/A7-M5-W11-*.md`, M5 graph docs only | One graph W12 implementation card; no product code. |
+| A8 | **START GRAPH UI SMALL ONLY** | Graph UI deterministic polish only if backend-free: bounded rendering tests, no-backend states, selection/search stability. | `src/components/graph/**`, `src/stores/useGraphStore.ts`, `src/utils/graphUi.ts`, `scripts/check-graph-ui-logic.mjs`, checkpoint/assist | Graph UI logic PASS; no backend graph commands. |
+| A9 | **START PLUGIN DOCS/POLICY ONLY** | Turn W10 plugin runtime plan into W12/W13 staged implementation cards: manifest storage, install/enable/delete lifecycle, command isolation, audit redaction. Do not implement runtime. | `logs/assist/A9-M5-W11-*.md`, M5 plugin docs only | Plugin staged cards + blockers; no product code. |
+| A10 | **START SECURITY REVIEW** | Batch review W11 outputs, especially A3 bounded stdio dry-run. Block on any listener/network, raw argument echo, side-effecting tool, default dependency pollution, or policy weakening. | `logs/assist/A10-M5-W11-*.md`; policy fixtures only for concrete failure | Security verdict after A3 output. |
+| A11 | **START VERIFICATION** | Maintain W11 verification matrix: default cargo test, feature cargo test, MCP/Agent/Plugin/Graph policy, UI logic scripts, npm build, pre-merge, build metrics <=22%, warnings unchanged. | `logs/checkpoints/A11-M5-W11-*.md`, `logs/assist/A11-M5-W11-*.md` | Verification checkpoint and push readiness. |
+
+### W11 Hard Stops
+
+- W11 is still dry-run only: no real file/db/script/plugin/agent/skill/model execution.
+- No TCP listener, HTTP server, network bind, background daemon, plugin install/enable/delete/download, model call, or hidden script/db execution.
+- No raw argument/query/token/cookie/Authorization echo in stdio responses, logs, audit, checkpoints, or UI state.
+- Any dependency addition must be optional and feature-gated; default build behavior must stay unchanged.
+- All new or changed command surfaces must keep source check, ACL, bridge/types parity, and policy self-tests synchronized.
+- Build metrics threshold remains 22%; cargo warnings must not increase.
+- Only A0 pushes to remote.
+
+### W11 Direct Prompts
+
+```text
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A1，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W11 MCP Stdio Dry-Run Hardening Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A2，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W11 MCP Stdio Dry-Run Hardening Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A3，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W11 MCP Stdio Dry-Run Hardening Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A4，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W11 MCP Stdio Dry-Run Hardening Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A5，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W11 MCP Stdio Dry-Run Hardening Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A6，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W11 MCP Stdio Dry-Run Hardening Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A7，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W11 MCP Stdio Dry-Run Hardening Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A8，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W11 MCP Stdio Dry-Run Hardening Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A9，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W11 MCP Stdio Dry-Run Hardening Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A10，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W11 MCP Stdio Dry-Run Hardening Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A11，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W11 MCP Stdio Dry-Run Hardening Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+```
 
 ## M5-W10 Controlled Runtime Prep Dispatch
 

@@ -165,6 +165,20 @@ ok("boundedInsert 初始大小", m.size === 2);
 m = graphUi.boundedInsert(m, [node("3", "file", "c")], 2);
 ok("boundedInsert 超上限丢弃最旧", m.size === 2 && !m.has("1"));
 
+// ---- 确定性选择（边稳定标识 edgeKey）----
+ok("edgeKey 格式(from|to|kind)", graphUi.edgeKey(edge("a", "b", "uses")) === "a|b|uses");
+ok(
+  "edgeKey 同边同标识(确定性，避免索引漂移)",
+  graphUi.edgeKey(edge("a", "b", "uses")) === graphUi.edgeKey(edge("a", "b", "uses")),
+);
+
+// ---- 渲染有界（clampRender：UI 安全网，避免渲染数组无界增长）----
+const rc1 = graphUi.clampRender([1, 2, 3], 10);
+ok("clampRender 未超限不截断", rc1.truncated === false && rc1.items.length === 3 && rc1.total === 3);
+const bigArr = Array.from({ length: 6000 }, (_, i) => i);
+const rc2 = graphUi.clampRender(bigArr, 5000);
+ok("clampRender 超限封顶(cap=5000)", rc2.truncated === true && rc2.items.length === 5000 && rc2.total === 6000);
+
 // ---- 面板三态 ----
 eq(
   "panelStateGraph backendReady=false empty",

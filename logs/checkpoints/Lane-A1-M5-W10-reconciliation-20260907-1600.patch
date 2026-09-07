@@ -1,0 +1,445 @@
+# A1 M5-W10 reconciliation patch (2026-09-07 16:00 CST · Lane A1 docs-only)
+# BASE: 3792115 (origin/master HEAD · A0 W9 拣入完成)
+# HEAD: working tree (10 files +136/-2 + 1 new checkpoint)
+# A1 W10 = docs-only reconciliation + runtime-lock 标注
+# Files: 3 主文档 + 7 M5-*.md + 1 new checkpoint
+# 不 push；A0 拣入期合并策略同 W9（A1 W9 整包已 A0 拣入后 + A1 W10 整包合并拣入）
+
+diff --git a/AI-模型切换与接手清单.md b/AI-模型切换与接手清单.md
+index fa8ae32..8caae7c 100644
+--- a/AI-模型切换与接手清单.md
++++ b/AI-模型切换与接手清单.md
+@@ -1,4 +1,6 @@
+ > A0 update 2026-09-07 16:00 CST: W9 focused validation green (Agent/Skill 26, MCP 9, Plugin 10, UI logic 99/43, npm build PASS). NEXT=`M5-W10` controlled runtime prep; only A3 may prepare feature-gated MCP stdio shell, all plugin/agent execution runtime remains locked.
++> A0 update 2026-09-07 16:00 CST: W9 final verification ALL_PASS (cargo test 402/0, build metrics 21.09% ≤ 22%, cargo_warnings 0, W8 three red lights all closed, push-ready). NEXT=`M5-W10` controlled runtime prep; only A3 may prepare feature-gated MCP stdio shell (no listener/network/rmcp tool side-effect/file·db·script·plugin execution, rmcp/tokio optional+required-features gated, default build unchanged); all plugin/agent/skill/model-call/daemon runtime remains LOCKED; build metrics 22% threshold + cargo_warnings delta=0 maintained; only A0 pushes.
++> A1 update 2026-09-07 16:00 CST: Lane A1 W10 reconciliation整包已开：M5-0 标题链 + 头部时间戳链 + [W9 reconciliation] 段 + [W10 active] 段（runtime-lock 状态表 10 行）已修订；M5-9/10/11/12 头部 W10 ACTIVE 状态行已加（runtime-lock 标注）；M5-13 [W9 reconciliation] 段 + [W10 verification scope] 段（W10 验证矩阵 6 FAC）已加；M5-14 标题 + 顶部 W9 拣入 + W10 ACTIVE 两行 + 末尾 [W10 active] 段（runtime-lock 债务标注 + W10 增量债 2 条）已加；3 份主文档 A1 W10 update 行已加；A1 W10 checkpoint + patch 已就位（工作树留待 A0 拣入）。
+ > A0 update 2026-09-07 14:30 CST: W8 focused validation passed after A0 fixes (CredentialLeak redaction, cargo fmt, A3 patch whitespace). Build metrics accepted at 21.07% <= 22%, cargo warnings unchanged. NEXT=`M5-W9` runtime-free polish and final verification; no MCP/plugin/skill runtime expansion.
+ > A1 update 2026-09-07 14:30 CST: Lane A1 W9 reconciliation整包已开：M5-0 头部 + [W8 reconciliation] 段 + [W9 active] 段已修订；M5-9/10/11/12 头部 W8 reconciliation + W9 ACTIVE 标注已加；M5-13 [W8 reconciliation] 段 + [W9 verification scope] 段（14 FAC + W9 FAIL_ACTION + A11 W9 delta 必标字段）已加；M5-14 顶部 W8 reconciliation + W9 active 行已加；A1 W9 checkpoint + patch 已就位（工作树留待 A0 拣入；A0 整包合并拣入策略同 W8 = A1 W8 整包 + A1 W9 整包合并拣入）。
+ # AI 模型切换与接手清单
+diff --git a/logs/checkpoints/M5-20260906/M5-0-overview.md b/logs/checkpoints/M5-20260906/M5-0-overview.md
+index cdcd57f..1a5fd5d 100644
+--- a/logs/checkpoints/M5-20260906/M5-0-overview.md
++++ b/logs/checkpoints/M5-20260906/M5-0-overview.md
+@@ -1,4 +1,4 @@
+-# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0 + W1 + W2 + W3 reconciliation + W4 active + W5 reconciliation + W6 reconciliation + W7 reconciliation + W8 reconciliation + W8 active + W9 active）
++# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0 + W1 + W2 + W3 reconciliation + W4 active + W5 reconciliation + W6 reconciliation + W7 reconciliation + W8 reconciliation + W8 active + W9 active + W9 reconciliation + W10 active）
+
+ > 生成：2026-09-06 08:00 CST · Lane A1（M5-W0 · docs only）
+ > W1 修订：2026-09-06 08:50 CST · Lane A1（M5-W1 · docs-only reconciliation）
+@@ -13,6 +13,10 @@
+ > W8 active：2026-09-07 09:45 CST · Lane A1（M5-W8 · docs-only reconciliation，**Excluding-A3 dispatch**：A3 在 W8 是 HOLD/NO ASSIGNMENT 直至 A0 解决其 local commit boundary；A5 START PRODUCT CODE 硬化 Agent/Skill read-only bridge；A6 START UI DOCS/LOGIC 实施 Agent/Skill 面板消费 + 纯 UI helper tests；A7 START DOCS/GRAPH BRIDGE PLAN ONLY；A8 START UI POLISH/TEST ONLY；A9 START POLICY REVIEW ONLY；A10 START SECURITY BATCH REVIEW；A11 START VERIFICATION BATCH；A1/A2/A4 docs/review ONLY；**W8 = 硬化 + 复审 + 收口波，无 MCP 产品代码工作**）
+ > W8 拣入：2026-09-07 14:30 CST · A0 在 **`4d7be97 feat(M5): integrate W8 command bridge polish`** + **`94e763e fix(M5-W8,A3): close MCP policy phase debt — retire W1 pending semantics, add MCP_NO_RMCP_SERVER + --expect-current-gaps`** + **`a840fcb docs(A11): M5-W8 verification delta — functional GREEN, 3 red lights all trace to A3 W7/W8 (fmt + patch-whitespace + MCP --expect-pending debt)`** + **`97118d6 chore(M5): normalize W8 patch evidence whitespace`** 四段 commit 中拣入 A5 W8 `agent_validate`/`skill_validate` 错误体 `CredentialLeak` 脱敏（`agent.rs:30-35` + `skills.rs:31-40` + `security_policy.rs:118-120` Display 改不 clone secret）+ A6 W8 `npm run build` PASS + 79 agent-skill UI logic 断言 + A8 W8 graph UI polish 4 vue 文件修订（EdgeDetail/GraphFilter/GraphPanel/GraphViewer/NodeDetail/ActivityBar/MainArea + useGraphStore + graphUi + check-graph-ui-logic.mjs 41 断言）+ A9 W8 `check-plugin-policy.py` 复审补丁 + A11 W8 verification delta 功能性 GREEN 收口（pre-merge PASS，3 red lights 全部归 A3 W7/W8）+ A3 W8 MCP 政策 phase debt 关闭（MCP_NO_RMCP_SERVER + `--expect-current-gaps` gate + ACTIVE=8 PENDING=0）；**A1 W8 reconciliation 整包**（M5-0/9/10/11/12/13/14 修订 + A1 W8 checkpoint + A1 W8 patch）**与 A1 W7 reconciliation 整包合并拣入**（4d7be97 stat 53 files +6038 -101 包含 A1 W7 checkpoint/patch + A1 W8 checkpoint/patch + 8 lane assist + M5-0/9/10/11/12/13/14 修订）；W8 hard stops 全守（5 红色：无 mcp_* runtime / 命令只读 / source check + ACL + bridge/types + policy + tests 同包 / 不写 token/secret 日志 / 不 push）
+ > W9 active：2026-09-07 14:30 CST · Lane A1（M5-W9 · docs-only reconciliation，**Runtime-Free Polish Dispatch**：W8 focused validation PASS 后 A0 派发 W9 收口波——A2 START REVIEW ONLY（重审 A3/A5 W8 修复后 command boundary）/ A3 START POLICY/REVIEW ONLY（MCP policy current-phase green + 后续 M5-2.b 卡预备；不实施 rmcp/server/listener/network）/ A4 START PRIVACY REVIEW ONLY（重审 A5 CredentialLeak redaction 后所有命令 error/display 面的 secret echo）/ A5 START PRODUCT CODE SMALL（Agent/Skill read-only bridge hardening 收口：redacted validation errors + frontend parse/permission preview 边界 case 测试；不执行/不装/不持久化/不网络/不调模型）/ A6 START UI LOGIC ONLY（Agent/Skill 面板消费磨光：确定性 empty/error/loading + 无 secret 文本 echo + bounded preview 渲染）/ A7 START GRAPH CONTRACT DOCS ONLY（图谱桥契约终稿，runtime-free 与 blocked backend runtime 分离）/ A8 START GRAPH UI SMALL（图谱 UI 磨光：filter/search/layout 确定性 + 保留 bounded arrays + 改进 no-backend/read-only 状态；不实施后端 graph command）/ A9 START PLUGIN REVIEW ONLY（plugin surface 复审：manifest/lifecycle 维持 pure + 确认 install/enable/delete/download 仍缺；不实施 plugin runtime）/ A10 START SECURITY FINAL REVIEW（批量复审 W8/W9 输出：source check / ACL parity / read-only / redaction / 无 runtime 扩张）/ A11 START FINAL VERIFICATION（W9 final verification matrix：命令结果 + build metrics 21.07% ≤ 22% + cargo warnings unchanged + pre-merge result + 残留债 + push readiness）；A1 docs only，**W9 = runtime-free 磨光 + 终验收口波，build metrics 阈值 22%**）
++
++> W9 拣入：2026-09-07 16:00 CST · A0 在 **`3792115 feat(M5): integrate W9 runtime-free polish`** + **`0d86a19 docs(A11): M5-W9 final verification — ALL_PASS, push-ready; W8 three red lights all closed`** + **`770e22c feat(A6): M5-W9 Agent/Skill panel consumption polish (UI logic only)`** + **`ef87401 docs(M5-W9,A3): MCP policy current-phase kept green + M5-2.b rmcp/server forward card`** 四段 commit 中拣入本卡 W9 修订：① A3 W9 MCP policy current-phase 维持绿（`check-mcp-policy.py --self-test` ACTIVE=8 PENDING=0 + M5-2.b rmcp/server 前向卡）；② A6 W9 Agent/Skill 面板消费磨光（`npm run build` PASS + Agent/Skill UI logic 99 断言）；③ A8 W9 graph UI 只读磨光（`scripts/check-graph-ui-logic.mjs` 43 断言 + GraphPanel.vue 修订）；④ A11 W9 final verification ALL_PASS（cargo test 402/0、build metrics 21.09% ≤ 22%、cargo_warnings 0、W8 三红灯全闭、push-ready）；⑤ A1 W9 reconciliation 整包（M5-0/9/10/11/12/13/14 修订 + A1 W9 checkpoint + A1 W9 patch）合并拣入（3792115 stat 28 files +2290 -10 含本卡 + 5 子卡修订 + A1 W9 checkpoint/patch + 11 lane assist/checkpoint）；W9 hard stops 全守（禁 MCP server/rmcp/plugin-install/skill-exec/model-call/network）。
++
++> W10 active：2026-09-07 16:00 CST · Lane A1（M5-W10 · docs-only reconciliation，**Controlled Runtime Prep Dispatch**：W9 focused checks green（Agent/Skill 26 / MCP 9 / Plugin 10 bridge tests + Agent/Skill 99 / Graph 43 UI logic + `npm run build` PASS + MCP/Agent policy PASS）后 A0 派发 W10 受控运行时预备波——**A3 START PRODUCT CODE NARROW**（仅 feature-gated MCP stdio-prep 骨架：无 TCP listener / 无网络 / 无 rmcp tool 副作用 / 无 file/db/script/plugin 执行；`rmcp`/`tokio` 必须 optional + required-features gated，默认构建不变）；**其余 10 lane 全部 LOCKED runtime**：A1 DOCS ONLY（reconcile W9 + mark W10 + 标注 runtime-lock 状态）/ A2 BOUNDARY REVIEW / A4 PRIVACY REVIEW / A5 TEST/POLICY ONLY（read-only bridge 仍锁执行）/ A6 UI SMALL（无执行按钮）/ A7 GRAPH DOCS ONLY（live-query 仍 BLOCKED）/ A8 GRAPH UI SMALL（no-backend）/ A9 PLUGIN RUNTIME PLAN ONLY（不实施 runtime）/ A10 SECURITY REVIEW / A11 VERIFICATION；**W10 = 受控运行时预备，不开放不安全执行；build metrics 阈值 22% 维持；cargo_warnings delta = 0**）
+ > 基准：`a1a2061`（`master`，M4 已 PASS） + `404f514`（A0 W0/W1 dispatch） + `a654f0c`（A3 W2 MCP 政策门）+ `712a14c`（A2 W2 切片 0b + A1 M5-1.b 切卡）+ `98a3b01`（A0 W3 dispatch）+ `e96c902`（A6 W3 UI data contract）+ `bdb0602`（A11 W3 verification）+ `12f1cff`（A3 W3 MCP 余下切片）+ `f8f1f49`（A2 W3 seam + A1 W3 reconciliation + A4-A10 W3 assist）+ `f7ad35a`（A0 W4 dispatch）+ `1610939 feat(M5): add agent memory and skill policy shells`（A0 拣入 A4 W4 agent_memory.rs + A5 W4 agent.rs/skills.rs + A1 W4 reconciliation 整包 + 8 份 W4 assist）+ `0e76a89 docs(M5): dispatch W5 UI and graph lanes`（A0 W5 dispatch）+ **`4b438ef feat(M5): add graph model store policy slice`**（A0 拣入 A7 W5 graph model + store policy slice：`src-tauri/src/graph.rs` + `domain.rs` 追加 GraphNode/Edge 类型 + `scripts/check-graph-policy.py` 7 ACTIVE 码 + pre-merge 接入）+ **`f99d2eb feat(A6): M5-6 Agent/Skill UI pure logic + panel shell (W5)`**（A0 拣入 A6 W5 面板壳：UI pure logic helper + Agent/Skill 面板 shell + `scripts/check-agent-skill-ui-logic.mjs` + 校验展示 / permission preview / capability 列表 / empty+error 状态；**不调 live runtime**）+ **`1a2c9cd docs(A11): M5-W5 verification delta after A6/A7 W5 outputs`**（A0 拣入 A11 W5 验证 delta：cargo test 9/9 graph + UI logic test 25 断言 + check-graph-policy.py --self-test PASS(ACTIVE=7) + check-agent-skill-ui-logic.mjs PASS + pre-merge ALL_PASS）+ **`77b1e3e docs(M5): dispatch W6 graph UI and plugin lanes`**（A0 W6 dispatch）+ **`412d0eb docs(M5-W6,A3): MCP compatibility review of plugin/graph exposure vs M5-2 registry+policy`**（A3 W6 MCP 兼容复审）+ **`add0609 docs(A6): M5-W6 UI consistency review — A8 graph UI vs M5-6 Agent/Skill shell`**（A6 W6 UI 一致性复审）+ **`d08d095 docs(A11): M5-W6 verification delta after W5 integration; A8/A9 W6 pending`**（A11 W6 验证 delta：W5 集成态 ALL_PASS + A8/A9 W6 产品代码 PENDING）+ **`5f92ece feat(M5): add graph UI and plugin policy slices`**（A0 W6 拣入 A8 W6 graph UI 4 个 .vue + store + utils + `scripts/check-graph-ui-logic.mjs` + A9 W6 `plugin.rs` + `domain.rs` PluginInvokeRecord + `scripts/check-plugin-policy.py` 6 ACTIVE 码 + pre-merge 接入 + `security_policy.rs` 补丁 + A10/A2/A4/A5/A7 5 份 W6 assist + A1 W6 reconciliation 整包 + M5-0/9/10/11/12 头部 status 修订）+ **`a26fbaf docs(M5): dispatch W7 read-only command bridge lanes`**（A0 W7 dispatch：开 A3 M5-2 read-only MCP bridge + A5 Agent/Skill read-only bridge 两条产品代码 lane；其它 9 lane docs/review/support；**W7 hard stops** = 5 条：仅 A3/A5 可写 / 命令只读 / 命令必须 atomic（source check + ACL + bridge/types + policy + tests）/ 不写 token/prompt secret 日志 / 不 push）· *build metrics threshold 19% with W5 debt（IF-2 → A11 重采挂账，未在 W6 关闭）* + **`6c1f30e feat(M5-W7,A3): read-only MCP registry/policy bridge commands`**（A0 W7 拣入 A3 W7 实施期：3 mcp_* commands `mcp_policy_get / mcp_registry_list / mcp_capability_preview` 在 `bridge.rs` + `mcp.rs` 81 行 patch + `main.rs` generate_handler! 注册 + `default-commands.toml` ACL 3 条插末条 `list_artifact_images` 前 + `bridge.ts` 3 invoke wrappers + `types.ts` 3 DTOs + `check-mcp-policy.py` ACTIVE=6 PENDING=9 含 MCP_BRIDGE_READONLY gate；9 mcp.rs unit tests PASS；10 files +1224 -8） + **`daa10f6 docs(A11): M5-W7 verification delta — pre-merge FAIL (3 red lights from 5f92ece integration hygiene)`**（A11 W7 拣入 验证 delta：W7-1 cargo test 编译中断（plugin.rs `PluginCapability` import 错位，4 errors 同根）/ W7-2 cargo fmt FAIL（bridge.rs 8 处未格式化）/ W7-3 build metrics warnings_increased（cargo_warnings 2→3 = PluginCapability unused import）；pre-merge FAIL，A11 不改代码；单根修复配方交 A0/A9）+ **`a29b796 docs(A6): M5-W7 UI wiring note for A5 read-only Agent/Skill command bridge`**（A6 W7 拣入 UI wiring note：Agent/Skill 面板消费 A5 read-only bridge 的 wiring 设计；不接 live command）· *A1 W7 reconciliation 整包**未**进 master（A0 W7 拣入期未消，详见 [W7 reconciliation] 段）* + **`f51549f docs(A6): M5-W8 Agent/Skill panel consumption plan + pure UI logic tests`**（A0 W8 拣入 A6 W8 panel consumption plan + UI logic tests 文档）+ **`a840fcb docs(A11): M5-W8 verification delta — functional GREEN, 3 red lights all trace to A3 W7/W8 (fmt + patch-whitespace + MCP --expect-pending debt)`**（A11 W8 拣入 verification delta：**W8 focused validation 功能性 GREEN**——3 red lights 全部归 A3 W7/W8：fmt 由 A0 在 4d7be97 修 / patch whitespace 由 A0 在 97118d6 修 / MCP `--expect-pending` debt 由 A0 在 94e763e 修） + **`94e763e fix(M5-W8,A3): close MCP policy phase debt — retire W1 pending semantics, add MCP_NO_RMCP_SERVER + --expect-current-gaps`**（A0 W8 拣入 A3 W8 收口：**MCP policy phase debt 关闭** —— retire W1 pending semantics + 新增 `MCP_NO_RMCP_SERVER` 政策码 + `check-mcp-policy.py --expect-current-gaps` gate 模式 + pre-merge.sh MCP section 接入；ACTIVE=8 PENDING=0，5 files +665 -180）+ **`4d7be97 feat(M5): integrate W8 command bridge polish`**（A0 W8 拣入：A5 W8 `agent_validate`/`skill_validate` 错误体 `CredentialLeak` 脱敏（`agent.rs:30-35` + `skills.rs:31-40` + `security_policy.rs:118-120` Display 不 clone secret）+ A6 W8 `npm run build` PASS + 79 agent-skill UI logic 断言 + A8 W8 graph UI polish 4 vue 文件修订（EdgeDetail/GraphFilter/GraphPanel/GraphViewer/NodeDetail + ActivityBar/MainArea + useGraphStore + graphUi + check-graph-ui-logic.mjs 41 断言）+ A9 W8 `check-plugin-policy.py` 复审补丁 + A11 W8 verification delta + A2/A4/A5/A7/A8/A9/A10 8 份 W7+W8 assist + **A1 W7 reconciliation 整包合并拣入**（A1 W7 checkpoint + patch 共 9 文件 = +292 -15）+ **A1 W8 reconciliation 整包合并拣入**（A1 W8 checkpoint + patch + M5-0/9/10/11/12/13/14 修订共 11 文件 = +488 -15）· **53 files +6038 -101**）+ **`97118d6 chore(M5): normalize W8 patch evidence whitespace`**（A0 W8 拣入补丁空白规范化：3 份 W8 patch 文件空白整理）· *build metrics threshold **22%** for W9（IF-2 W8 实测 21.07% ≤ 22% PASS；cargo_warnings delta = 0；W9 hard stop 阈值不变）*
+ > 性质：**纯文档展开**。零产品代码（未触 `src/`、`src-tauri/`、`package.json`、三份主文档、ACL/Capability/Manifest、pre-merge.sh）；不移动 `NEXT`；不提交、不 push。
+ > 依据：`PARALLEL_COMMAND_BOARD.md`（2026-09-05 23:55 版 · Batch Implementation Dispatch · Lane A1: M5 task-card expansion；2026-09-06 08:35 CST · M5-W1 Implementation Dispatch · Lane A1: START DOCS ONLY · reconciliation；2026-09-06 13:45 CST · M5-W2 Parallel Dispatch · Lane A1: START DOCS ONLY · constant-centralization reconciliation；2026-09-06 17:10 CST · M5-W3 Parallel Dispatch · Lane A1: START DOCS ONLY · mark W1/W2 complete + W3 active；2026-09-06 17:55 CST · M5-W4 Parallel Dispatch · Lane A1: START DOCS ONLY · reconcile W4 as active NEXT; mark W3 pushed and split M5-3/M5-4/M5-5 into next-card acceptance criteria；2026-09-06 18:35 CST · M5-W5 Parallel Dispatch · Lane A1: START DOCS ONLY · reconcile W5 as active NEXT; mark W4 pushed and tighten M5-6/M5-7/M5-8 acceptance criteria；**2026-09-06 19:25 CST · M5-W6 Parallel Dispatch · Lane A1: START DOCS ONLY · reconcile W6 as active NEXT; mark W5 pushed and tighten M5-9/M5-10/M5-11/M5-12 acceptance criteria**）
+@@ -845,3 +849,61 @@ NEXT=M5-W1（待 A0 签发）
+ - 未提交、未 push（本卡包为 A0 待拣入的待选文档）
+ - 14 张 docs 全新增独立文件，与 A2/A5/A6/A7/A9 既有 prework 文档无文件交集
+ - 所有"已冻结"事实均以来源 file:line 标注（继承自 prework 资产，本批仅做整合）
++
++---
++
++## [W9 reconciliation · 2026-09-07 16:00 CST] W9 整包已 A0 拣入（`3792115` + `0d86a19` + `770e22c` + `ef87401`）· 当前活跃 checkpoint 切到 M5-W10
++
++> **W9 拣入事实回填**（承接 W8 终态 baseline `97118d6`，本 delta 由 A0 拣入后实测）：
++> - **A3 W9 MCP policy current-phase 维持绿**（`ef87401`）：`scripts/check-mcp-policy.py --self-test` **ACTIVE=8 PENDING=0** + `--expect-current-gaps` gate PASS；新增 M5-2.b rmcp/server 前向卡（后续 runtime wave 预备，本 wave 不实施）。
++> - **A6 W9 Agent/Skill 面板消费磨光**（`770e22c`）：`src/components/agent/*` + `src/components/skill/*` 确定性 empty/error/loading 状态 + 无 secret 文本 echo + bounded preview 渲染；`npm run build` PASS；Agent/Skill UI logic **99 断言**（W8 79 → W9 99）。
++> - **A8 W9 graph UI 只读磨光**（`3792115` 内吸收）：`src/components/graph/GraphPanel.vue` 修订 + `scripts/check-graph-ui-logic.mjs` **43 断言**（W8 41 → W9 43）；仍 no-backend / read-only 状态。
++> - **A11 W9 final verification ALL_PASS**（`0d86a19`）：cargo test **402/0**、build metrics **21.09% ≤ 22%**、cargo_warnings **0**、pre-merge **ALL_PASS**、W8 三红灯全闭（RED-1 fmt / RED-2 git-diff-check / RED-3 MCP `--expect-pending` 债）、push-ready。
++> - **A1 W9 reconciliation 整包合并拣入**（`3792115` stat 28 files +2290 -10）：含 M5-0/9/10/11/12/13/14 修订 + `A1-M5-W9-reconciliation-20260907-1430.md` checkpoint + `Lane-A1-M5-W9-reconciliation-20260907-1430.patch` + 11 lane assist/checkpoint。
++> - **W9 hard stops 全守**：禁 MCP server/rmcp/plugin-install/skill-exec/model-call/network；build metrics 22% 阈值维持；仅 A0 push。
++> - **W9 残留债挂账**（[W10 active] 段续记）：FAC-1.b M5-1.b = DEBT-03（待 A2 v3 review note）；FAC-12 M5-12 plugin UI = DEBT-04（W10+ A19 派发）；runtime 债（MCP server / plugin runtime / skill-exec）按设计延后，非 W9 阻塞。
++
++---
++
++## [W10 active · 2026-09-07 16:00 CST] 当前活跃 checkpoint 切到 M5-W10（Controlled Runtime Prep Dispatch · A3 窄产品代码 + 10 lane docs/review/security/verification · W10 = 受控运行时预备，**不开放不安全执行**）
++
++> **依据**：`PARALLEL_COMMAND_BOARD.md` L176-227（**M5-W10 Controlled Runtime Prep Dispatch**，Added 2026-09-07 16:00 CST by A0）+ L7（*`Each lane 整包 deliver patch+checkpoint; only A0 pushes`*）。
++>
++> **W10 派发事实**（board L179）：W9 focused checks green — Agent/Skill bridge tests **26 passed**、MCP tests **9 passed**、Plugin tests **10 passed**、Agent/Skill UI logic **99 assertions**、Graph UI logic **43 assertions**、`npm run build` passes、MCP/Agent policy scripts pass。W9 still needs A0 final pre-merge/push after this dispatch is committed.
++>
++> **W10 目标**：prepare the next runtime wave **without opening unsafe execution**。Only A3 may touch MCP runtime-prep code, and it must be **stdio-only, feature-gated, no listener/network, no tool execution side effects**。Plugin/Agent execution remains **LOCKED**。
++>
++> **A1 W10 任务**（board L192 A1 行）：*START DOCS ONLY* · *Reconcile W9 as accepted and mark W10 active. Update M5 cards to state exactly which runtime surfaces remain locked and which A3 MCP stdio-prep slice is opened.* scope = `PARALLEL_COMMAND_BOARD.md`（W10 段已存在）+ `AI-模型切换与接手清单.md` + `详细设计与实施计划.md` + `后续需求TODO.md` + `logs/checkpoints/M5-20260906/*.md` + `logs/checkpoints/A1-M5-W10-*.md`；Must Deliver = **One reconciliation checkpoint + [W9 reconciliation] + [W10 active] 段；no product code**。
++>
++> **W10 runtime surface 锁定状态表**（A1 在 M5 卡片中明确标注）：
++
++| Runtime Surface | W10 状态 | 依据 / 责任 Lane |
++|---|---|---|
++| **MCP server / rmcp runtime** | 🔒 **LOCKED**（不激活 server / listener / network） | W10 Hard Stop L206；仅 A3 可做 **stdio-prep 骨架** |
++| **A3 MCP stdio-prep slice（OPENED）** | 🟢 **OPENED（窄）** | A3 W10 = feature-gated `mcp` Cargo feature/bin 或等价编译隔离骨架；复用现有 `mcp.rs` registry/policy wiring；**无 TCP listener / 无网络 / 无 rmcp tool 副作用 / 无 file/db/script/plugin 执行**；`rmcp`/`tokio` 必须 optional + required-features gated，默认构建不变 |
++| **Plugin install / enable / delete / download** | 🔒 **LOCKED** | W10 Hard Stop L207；A9 W10 = PLUGIN RUNTIME PLAN ONLY（不实施 runtime） |
++| **Skill / Agent execution** | 🔒 **LOCKED** | W10 Hard Stop L207；A5 W10 = TEST/POLICY ONLY（read-only bridge 仍锁执行） |
++| **Model call** | 🔒 **LOCKED** | W10 Hard Stop L207 |
++| **Background daemon** | 🔒 **LOCKED** | W10 Hard Stop L207 |
++| **Graph live-query command** | 🔒 **LOCKED（BLOCKED backend runtime）** | A7 W10 = GRAPH DOCS ONLY（live-query 实施卡预备；frontend no-backend 态可 W9/W10 收尾） |
++| **新命令 source check + ACL 同步** | 🟢 **维持**（无新增命令，除非 A3 stdio-prep 同包 bridge/types/policy/tests） | W10 Hard Stop L209 |
++| **Build metrics 阈值 22%** | 🟢 **维持** | W10 Hard Stop L210 |
++| **cargo_warnings delta** | 🟢 **= 0** | W10 Hard Stop L210 |
++| **Push** | 🔒 **仅 A0** | W10 Hard Stop L211 |
++
++> **W10 = 11 lane 角色**（vs W9 = 11 lane 全 active；W10 = A3 窄产品代码 + 10 lane docs/review/security/verification）：
++> - **A1** *START DOCS ONLY*：Reconcile W9 as accepted + mark W10 active + 标注 runtime-lock 状态。scope = 本卡 + 5 子卡 + M5-13/14 + 3 主文档 + A1 W10 checkpoint；Must Deliver = 1 reconciliation checkpoint；no product code.
++> - **A2** *START BOUNDARY REVIEW ONLY*：Review A3 W10 MCP stdio-prep plan/code for core/bin boundary（no tauri in core, no bridge::* calls from mcp tools, no duplicate script/db/plugin execution path）.
++> - **A3** *START PRODUCT CODE NARROW*：Implement MCP stdio-prep shell only（feature-gated `mcp` Cargo feature/bin 或等价编译隔离骨架；registry/policy wiring 复用现有 `mcp.rs`；无 TCP listener / 无网络 / 无 rmcp tool 副作用 / 无 file/db/script/plugin 执行；`rmcp`/`tokio` optional + required-features gated）.
++> - **A4** *START PRIVACY REVIEW ONLY*：Review W10 MCP stdio-prep + 既有 Agent/Skill/Graph/Plugin 面的 error/audit/log secret echo（tool result URLs, capability reasons, serialized errors）.
++> - **A5** *START TEST/POLICY ONLY*：Agent/Skill read-only bridge 仍锁执行；仅补 policy/tests 若 A10/A4 识别具体泄漏；否则无产品代码 patch.
++> - **A6** *START UI SMALL ONLY*：Agent/Skill UI 无执行按钮；磨光 disabled/preview 态 + loading/error 确定性；无 secret echo.
++> - **A7** *START GRAPH DOCS ONLY*：Prepare graph live-query implementation card（command names, result limits, cancellation, privacy）；不实施命令.
++> - **A8** *START GRAPH UI SMALL*：Continue Graph UI polish only if no-backend（empty state, deterministic selection, bounded rendering）.
++> - **A9** *START PLUGIN RUNTIME PLAN ONLY*：Prepare plugin runtime dispatch card（install/enable/delete/list 命令序列, signature failure modes, storage limits, audit redaction, UI dependencies）；不实施 plugin runtime.
++> - **A10** *START SECURITY REVIEW*：Batch review W10 outputs（尤其 A3 feature-gated MCP prep）；block on any listener/network/default-dependency pollution/side-effecting tool.
++> - **A11** *START VERIFICATION*：Maintain W10 verification matrix（default build/test, feature build/test if A3 adds `mcp`, policy scripts, UI scripts, pre-merge, build metrics ≤22%, warnings unchanged）.
++>
++> **W10 硬停止遵守记录**（board L204-211）：① 仅 A3 可触 MCP runtime-prep 产品代码，其余 runtime 面全锁；② 无 TCP listener / HTTP server / network bind / background daemon / plugin install·enable·delete·download / skill·agent execution / model call / hidden script·db execution；③ `rmcp`/`tokio` 添加必须 optional + feature-gated + 默认构建不污染 + 策略自测守门；④ 命令面 source check + ACL 同步，新命令必须 bridge/types/policy/tests 同包；⑤ build metrics 阈值 22% 维持；⑥ cargo warnings 不增加；⑦ 仅 A0 push.
++>
++> **W10 复检必跑**（A1 W10 立场，留待 A0 拣入时审视）：① build metrics 22% 阈值（preserve）+ ② cargo_warnings delta = 0 + ③ A3 W10 feature-gated MCP prep 默认构建不变（无 rmcp/tokio 污染）+ ④ A11 W10 verification delta 收口 + ⑤ runtime surface 锁定状态表与 board L206-211 一致。
+diff --git a/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md b/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md
+index 09ba74b..579396f 100644
+--- a/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md
++++ b/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md
+@@ -9,6 +9,7 @@
+ > **W3** BLOCKED（待 A5 W4 契约 + A3 W3 MCP policy shell）· **W4** ACTIVE（A9 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A9 W5 仍 SUPPORT DOCS ONLY）· **W6** PUSHED · **A9 升级为 START PRODUCT CODE** · `5f92ece` 拣入（M5-10 manifest DTOs + validation + 7 状态机 + 12 合法边 + permission manifest rules + `scripts/check-plugin-policy.py` 6 ACTIVE 码；详见本卡顶部 `[W6 next-card acceptance criteria]` 段；M5-11 同步拣入见其卡顶部 [W6] 段；`5f92ece` git stat 实测含 `src-tauri/src/plugin.rs` 446 行 + `domain.rs` 追加 `MAX_PLUGIN_CAPABILITIES=5` + `security_policy.rs` 47 行补丁）· **W7** RECONCILIATION（A3 W7 mcp_* 3 命令 + A11 W7 pre-merge FAIL 3 red lights + A6 W7 wiring 在 `6c1f30e` / `daa10f6` / `a29b796` 已拣入 master；A9 M5-10/11 在 W7 仍无新命令落地，5 stub `plugin_invoke/cancel/permissions_get/audit_list/storage_get_or_put_or_delete` 维持 `Err("not-implemented-in-W6")`；**A11 W7 pre-merge FAIL 同源于 `5f92ece` 集成卫生** —— plugin.rs L274 test module 缺 `PluginCapability` import + L20 顶层 `PluginCapability` unused + bridge.rs 8 处未格式化 + cargo_warnings 2→3，单根修复配方见 `daa10f6` commit message，A0 W8 拣入期消解；A1 W7 整包本卡修订未进 master，留 W8 整包合并拣入；详见 `M5-0-overview.md` 顶部 `[W7 reconciliation]` 段 + `M5-13-verification-matrix.md` 顶部 `[W7 verification scope]` 段）· **W8** ACTIVE（**A9 W8 = POLICY REVIEW ONLY** —— Plugin surface W8 review：无 install/enable/delete/download/runtime command 漏入 / lifecycle 维持 pure / capability verdict text 维持 bounded/redacted；**不**写 plugin runtime / install / delete / download；**无** runtime product code；可扩 plugin policy docs/tests 仅在具体 failure 时；A3 W8 = HOLD/NO ASSIGNMENT；详见 `M5-0-overview.md` 顶部 `[W8 active]` 段 + `M5-13-verification-matrix.md` 顶部 `[W8 verification scope]` 段）
+ > **W8 reconciliation**（2026-09-07 14:30 CST · A0 拣入）：A0 在 **`4d7be97 feat(M5): integrate W8 command bridge polish`**（53 files +6038 -101）+ **`94e763e fix(M5-W8,A3): close MCP policy phase debt`**（MCP policy phase debt 关闭 · `MCP_NO_RMCP_SERVER` + `--expect-current-gaps` gate + ACTIVE=8 PENDING=0）+ **`a840fcb docs(A11): M5-W8 verification delta — functional GREEN, 3 red lights all trace to A3 W7/W8`**（A11 W8 verification delta 功能性 ALL_PASS）+ **`97118d6 chore(M5): normalize W8 patch evidence whitespace`**（3 份 W8 patch 文件空白规范化）4 commit 中拣入本卡 W8 修订：① A9 W8 `check-plugin-policy.py` 复审补丁（policy-only hunk，无 plugin runtime / install / delete / download）落地；② A1 W7 reconciliation 整包合并拣入（DEBT-32 secret-echo 残留 + A11 W7 pre-merge FAIL 3 red lights 配方归档在本卡 [W7 reconciliation] 段）；③ A1 W8 reconciliation 整包合并拣入（本卡头部 + [W8 active] 段 + 顶部 history 链更新）；**A1 W7 + W8 整包合并拣入 9 + 11 = 20 文件均含本卡修订**。
+ > **W9** ACTIVE（**A9 W9 = PLUGIN REVIEW ONLY** —— plugin surface 复审：manifest/lifecycle 维持 pure + 确认 install/enable/delete/download 仍缺（DEBT-12 不在 W9 消）+ capability verdict text 维持 bounded/redacted；**不**实施 plugin runtime；A19 W9 仍 SUPPORT DOCS ONLY —— plugin UI 待 W10+ A19 派发，DEBT-04 收口推 W10；A3 W9 = POLICY/REVIEW ONLY MCP policy current-phase green + 后续 M5-2.b 卡预备，不实施 rmcp server/listener/network；详见 `M5-0-overview.md` 顶部 `[W9 active · 2026-09-07 14:30 CST]` 段 + `M5-13-verification-matrix.md` 顶部 `[W9 verification scope]` 段）
++> **W10** ACTIVE（**A9 W10 = PLUGIN RUNTIME PLAN ONLY**（plugin runtime dispatch 卡预备：install/enable/delete/list 命令序列 + signature failure modes + storage limits + audit redaction + UI dependencies；**不**实施 plugin runtime）；**plugin install/enable/delete/download runtime 仍 LOCKED**（W10 Hard Stop L207）；详见 `M5-0-overview.md` 顶部 `[W10 active · 2026-09-07 16:00 CST]` 段 runtime-lock 状态表）
+
+ ---
+
+diff --git a/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md b/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md
+index 0a2bf79..860a308 100644
+--- a/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md
++++ b/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md
+@@ -9,6 +9,7 @@
+ > **W3** BLOCKED（待 M5-10 manifest 解析 + M5-2 capability.rs + 确认闸门）· **W4** ACTIVE（A9 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A9 W5 仍 SUPPORT DOCS ONLY）· **W6** PUSHED · **A9 升级为 START PRODUCT CODE** · `5f92ece` 拣入（M5-11 commands_isolation shell + 5 stub 命令 ACL 占位 + capability 校验骨架 + audit shape 仅 key_hash_only；详见本卡顶部 `[W6 next-card acceptance criteria]` 段；与 M5-10 W6 共享 hard stop 集）· **W7** RECONCILIATION（A3 W7 mcp_* 3 命令 + A11 W7 pre-merge FAIL 3 red lights + A6 W7 wiring 在 `6c1f30e` / `daa10f6` / `a29b796` 已拣入 master；A9 M5-10/11 在 W7 仍无新命令落地，5 stub 维持 `Err("not-implemented-in-W6")`；A1 W7 整包本卡修订未进 master，留 W8 整包合并拣入；详见 `M5-0-overview.md` 顶部 `[W7 reconciliation]` 段 + `M5-13-verification-matrix.md` 顶部 `[W7 verification scope]` 段）· **W8** ACTIVE（**A9 W8 = POLICY REVIEW ONLY** —— 与 M5-10 W8 共享 review scope：plugin 命令 ACL 维护 / stub 错误结构不变 / audit shape 维持 key_hash_only / 无 install/enable/delete 真实命令；**不**写 plugin runtime 命令；A3 W8 = HOLD/NO ASSIGNMENT；详见 `M5-0-overview.md` 顶部 `[W8 active]` 段 + `M5-13-verification-matrix.md` 顶部 `[W8 verification scope]` 段）
+ > **W8 reconciliation**（2026-09-07 14:30 CST · A0 拣入）：A0 在 **`4d7be97 feat(M5): integrate W8 command bridge polish`**（53 files +6038 -101）+ **`94e763e fix(M5-W8,A3): close MCP policy phase debt`**（MCP policy phase debt 关闭 · `MCP_NO_RMCP_SERVER` + `--expect-current-gaps` gate + ACTIVE=8 PENDING=0）+ **`a840fcb docs(A11): M5-W8 verification delta — functional GREEN, 3 red lights all trace to A3 W7/W8`**（A11 W8 verification delta 功能性 ALL_PASS）+ **`97118d6 chore(M5): normalize W8 patch evidence whitespace`**（3 份 W8 patch 文件空白规范化）4 commit 中拣入本卡 W8 修订：① A9 W8 plugin policy review 落地（与 M5-10 共享 review scope，commands_isolation 维持 pure，5 stub `plugin_invoke/cancel/permissions_get/audit_list/storage_get_or_put_or_delete` 维持 `Err("not-implemented-in-W6")`）；② A1 W7 reconciliation 整包合并拣入（A11 W7 pre-merge FAIL 3 red lights 配方归档）；③ A1 W8 reconciliation 整包合并拣入（本卡头部 + [W8 active] 段 + 顶部 history 链更新）；**A1 W7 + W8 整包合并拣入 9 + 11 = 20 文件均含本卡修订**。
+ > **W9** ACTIVE（**A9 W9 = PLUGIN REVIEW ONLY** —— plugin surface 复审：commands_isolation 维持 pure / stub 错误结构不变 / audit shape 维持 key_hash_only / 无 install/enable/delete 真实命令；**不**实施 plugin runtime；A3 W9 = POLICY/REVIEW ONLY MCP policy current-phase green + 后续 M5-2.b 卡预备，不实施 rmcp server/listener/network；详见 `M5-0-overview.md` 顶部 `[W9 active · 2026-09-07 14:30 CST]` 段 + `M5-13-verification-matrix.md` 顶部 `[W9 verification scope]` 段）
++> **W10** ACTIVE（**A9 W10 = PLUGIN RUNTIME PLAN ONLY**（plugin commands_isolation runtime dispatch 卡预备：install/enable/delete/list 命令序列 + permission isolation + audit redaction + 5 stub 真实化路径；**不**实施 plugin runtime）；**plugin install/enable/delete/download runtime 仍 LOCKED**（W10 Hard Stop L207）；详见 `M5-0-overview.md` 顶部 `[W10 active · 2026-09-07 16:00 CST]` 段 runtime-lock 状态表）
+
+ ---
+
+diff --git a/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md b/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md
+index 7d61d67..29ededf 100644
+--- a/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md
++++ b/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md
+@@ -9,6 +9,7 @@
+ > **W3** BLOCKED（待 M5-10 解析 + M5-11 命令基元）· **W4** ACTIVE（A19 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A19 W5 仍 SUPPORT DOCS ONLY）· **W6** ACTIVE（A19 W6 仍 SUPPORT DOCS ONLY —— W6 仅 A8 M5-9 + A9 M5-10/M5-11 产品代码 lane，**无 plugin UI lane 承接**；详见本卡顶部 `[W6 status]` 段）· **W7** RECONCILIATION（A3 W7 mcp_* 3 命令 + A11 W7 pre-merge FAIL 3 red lights + A6 W7 wiring 在 `6c1f30e` / `daa10f6` / `a29b796` 已拣入 master；A19 W7 仍 SUPPORT DOCS ONLY；plugin UI 待 W8+ A19 派发：plugin 列表 / 详情 / 安装向导 / 启用停用 / 审计查询 / 权限预览 6 项；A1 W7 整包本卡修订未进 master，留 W8 整包合并拣入；详见 `M5-0-overview.md` 顶部 `[W7 reconciliation]` 段 + `M5-14-debt-ledger.md` §10 DEBT-04）· **W8** ACTIVE（**A19 W8 仍 SUPPORT DOCS ONLY** —— **W8 仅 A5 START PRODUCT CODE 硬化 Agent/Skill read-only bridge + A6 START UI DOCS/LOGIC 实施 Agent/Skill 面板消费 + 纯 UI helper tests + A8 UI POLISH/TEST + A9 POLICY REVIEW；无 plugin UI lane 承接**；plugin UI 待 W9+ A19 派发，详见 `M5-0-overview.md` 顶部 `[W8 active]` 段 + `M5-14-debt-ledger.md` §10 DEBT-04 + §10.4 W8+ batch）
+ > **W8 reconciliation**（2026-09-07 14:30 CST · A0 拣入）：A0 在 **`4d7be97 feat(M5): integrate W8 command bridge polish`**（53 files +6038 -101）+ **`94e763e fix(M5-W8,A3): close MCP policy phase debt`**（MCP policy phase debt 关闭 · `MCP_NO_RMCP_SERVER` + `--expect-current-gaps` gate + ACTIVE=8 PENDING=0）+ **`a840fcb docs(A11): M5-W8 verification delta — functional GREEN, 3 red lights all trace to A3 W7/W8`**（A11 W8 verification delta 功能性 ALL_PASS）+ **`97118d6 chore(M5): normalize W8 patch evidence whitespace`**（3 份 W8 patch 文件空白规范化）4 commit 中拣入本卡 W8 修订：① A1 W7 reconciliation 整包合并拣入（DEBT-04 plugin UI 仍 0% ACTIVE 残留债在本卡 [W7 reconciliation] 段）；② A1 W8 reconciliation 整包合并拣入（本卡头部 + [W8 active] 段 + 顶部 history 链更新）；**A1 W7 + W8 整包合并拣入 9 + 11 = 20 文件均含本卡修订**。
+ > **W9** ACTIVE（**A19 W9 仍 SUPPORT DOCS ONLY** —— **W9 仅 A2 REVIEW + A3 POLICY/REVIEW + A4 PRIVACY + A5 PRODUCT CODE SMALL（Agent/Skill hardening）+ A6 UI LOGIC（Agent/Skill 面板消费）+ A7 GRAPH CONTRACT DOCS + A8 GRAPH UI SMALL + A9 PLUGIN REVIEW + A10 SECURITY FINAL + A11 FINAL VERIFICATION + A1 DOCS；无 plugin UI lane 承接**；plugin UI 待 W10+ A19 派发：plugin 列表 / 详情 / 安装向导 / 启用停用 / 审计查询 / 权限预览 6 项；DEBT-04 收口推 W10，详见 `M5-0-overview.md` 顶部 `[W9 active · 2026-09-07 14:30 CST]` 段 + `M5-14-debt-ledger.md` §10 DEBT-04 + §10.4 W9+ batch）
++> **W10** ACTIVE（**A9 W10 PLUGIN RUNTIME PLAN ONLY** + **A19 仍 SUPPORT DOCS ONLY**（plugin UI 待 W10+ A19 派发：plugin 列表 / 详情 / 安装向导 / 启用停用 / 审计查询 / 权限预览 6 项；DEBT-04 收口推 W10+）；**plugin UI runtime 仍 LOCKED**（W10 Hard Stop L207）；详见 `M5-0-overview.md` 顶部 `[W10 active · 2026-09-07 16:00 CST]` 段 runtime-lock 状态表）
+
+ ---
+
+diff --git a/logs/checkpoints/M5-20260906/M5-13-verification-matrix.md b/logs/checkpoints/M5-20260906/M5-13-verification-matrix.md
+index cd5c6be..3f8aa74 100644
+--- a/logs/checkpoints/M5-20260906/M5-13-verification-matrix.md
++++ b/logs/checkpoints/M5-20260906/M5-13-verification-matrix.md
+@@ -269,6 +269,39 @@ python3 scripts/measure-build-metrics.py  # 期望 ≤ 19% 或由 A0 拍新阈
+
+ ---
+
++## [W9 reconciliation · 2026-09-07 16:00 CST] W9 整包已 A0 拣入（`3792115` + `0d86a19` + `770e22c` + `ef87401`）· 当前活跃 verification scope 切到 M5-W10
++
++> **W9 拣入验证事实回填**（承接 W8 终态 `97118d6`，本 delta 由 A0 拣入后实测）：
++> - **A3 W9**（`ef87401`）：MCP policy current-phase 维持绿（`check-mcp-policy.py --self-test` ACTIVE=8 PENDING=0 + `--expect-current-gaps` PASS）；M5-2.b rmcp/server 前向卡就位；**无** rmcp server/listener/network 实施。
++> - **A6 W9**（`770e22c`）：Agent/Skill 面板消费磨光；`npm run build` PASS；Agent/Skill UI logic **99 断言**（W8 79 → W9 99）。
++> - **A8 W9**（`3792115` 内吸收）：GraphPanel.vue 修订 + `check-graph-ui-logic.mjs` **43 断言**（W8 41 → W9 43）；仍 no-backend / read-only。
++> - **A11 W9 final verification**（`0d86a19`）：cargo test **402/0**、build metrics **21.09% ≤ 22%**、cargo_warnings **0**、pre-merge **ALL_PASS**、W8 三红灯全闭（RED-1 fmt / RED-2 git-diff-check / RED-3 MCP `--expect-pending` 债）、**push-ready**。
++> - **A1 W9 reconciliation 整包**（`3792115` stat 28 files +2290 -10）：含本卡 [W9 verification scope] 段 + M5-0/9/10/11/12/14 修订 + A1 W9 checkpoint/patch + 11 lane assist/checkpoint。
++> - **W9 硬停止全守**：禁运行时（MCP server/rmcp/plugin-install/skill-exec/model-call/network）；build metrics 22% 阈值维持；仅 A0 push。
++
++---
++
++## [W10 verification scope · 2026-09-07 16:00 CST] W10 验证范围（Controlled Runtime Prep Dispatch · A3 窄产品代码 + 10 lane docs/review/security/verification · W10 = 受控运行时预备，**不开放不安全执行** · build metrics 阈值 22% 维持 · cargo_warnings delta = 0）
++
++> **依据**：`PARALLEL_COMMAND_BOARD.md` L176-227（M5-W10 Controlled Runtime Prep Dispatch）+ L7（*`Each lane 整包 deliver patch+checkpoint; only A0 pushes`*）。
++>
++> **W10 派发事实**（board L179）：W9 focused checks green — Agent/Skill bridge tests 26 / MCP tests 9 / Plugin tests 10 / Agent/Skill UI logic 99 / Graph UI logic 43 / npm build PASS / MCP·Agent policy PASS。
++>
++> **W10 验证矩阵（Controlled Runtime Prep）**：
++
++| FAC | 子卡 | W10 AC | 状态 | 验证命令 / 文件 | 挂账 / 备注 |
++|-----|------|--------|------|----------------|------------|
++| **FAC-2.W10 (new)** | M5-2 MCP stdio-prep | A3 W10 feature-gated `mcp` Cargo feature/bin 或等价编译隔离骨架；复用 `mcp.rs` registry/policy wiring；**无 TCP listener / 无网络 / 无 rmcp tool 副作用 / 无 file/db/script/plugin 执行**；`rmcp`/`tokio` optional + required-features gated | **ACTIVE · A3 W10 实施** | `cargo build`（默认，无 `mcp` feature）→ 无 rmcp/tokio 污染；`cargo test --features mcp`（若加 feature）或等价聚焦编译 PASS；`check-mcp-policy.py --self-test` ACTIVE=8 PENDING=0 维持 + 新增 MCP_STDIO_PREP_FEATURE_GATED 码守门 | W10 唯一可写产品代码 lane；A10 security review 必过 |
++| **FAC-13.W10 (carried)** | build metrics 22% threshold | W9 实测 21.09% ≤ 22% PASS | **PASS · W10 阈值不变** | `scripts/measure-build-metrics.sh` + `M5-14-debt-ledger.md` §10 IF-2 | W10 22% 阈值复检必跑 + cargo_warnings delta = 0 |
++| **FAC-10/11.W10 (carried)** | plugin manifest/commands | W6/W8 拣入 pure/stub；A9 W10 = PLUGIN RUNTIME PLAN ONLY（不实施 runtime） | **PASS (stub) · runtime LOCKED** | `check-plugin-policy.py --self-test` ALL_PASS(ACTIVE=6) | plugin install/enable/delete/download runtime 仍 LOCKED（W10 Hard Stop L207）；DEBT-04 |
++| **FAC-7/8.W10 (carried)** | graph model/store | W5 拣入；A7 W10 = GRAPH DOCS ONLY（live-query 实施卡预备） | **PASS · backend runtime LOCKED** | `cargo test graph` 9/9 + `check-graph-policy.py --self-test` PASS(ACTIVE=7) | graph live-query command 仍 BLOCKED（不实施） |
++| **FAC-4/5/6.W10 (carried)** | agent/skill runtime/commands/UI | W4/W5/W6/W8 拣入 + W9 磨光；A5 W10 = TEST/POLICY ONLY（read-only bridge 仍锁执行） | **PASS · execution LOCKED** | `cargo test agent skill` 26/0 + `check-agent-skill-policy.py` PASS + `check-agent-skill-ui-logic.mjs` 99 断言 | skill/agent execution 仍 LOCKED（W10 Hard Stop L207） |
++| **FAC-14.W10 (new)** | A11 W10 verification matrix | 本卡 [W10 verification scope] 段 | **ACTIVE · W10 验证矩阵** | 本卡 W10 矩阵 + A11 W10 delta 必填（`logs/checkpoints/A11-M5-W10-*.md`） | A11 W10 复检：default build/test + feature build/test（若 A3 加 `mcp`）+ policy/UI scripts + pre-merge + build metrics ≤22% + warnings unchanged |
++
++> **W10 hard stops 验证必跑**（board L204-211）：① 仅 A3 可触 MCP runtime-prep 产品代码，其余 runtime 面全锁；② 无 TCP listener / HTTP server / network bind / background daemon / plugin install·enable·delete·download / skill·agent execution / model call / hidden script·db execution；③ `rmcp`/`tokio` 必须 optional + feature-gated + 默认构建不污染 + 策略自测守门；④ 命令面 source check + ACL 同步；⑤ build metrics 阈值 22% 维持；⑥ cargo warnings 不增加；⑦ 仅 A0 push。
++
++---
++
+ ## [W1 patched · 2026-09-06 08:50 CST] 策略脚本后缀一致性（.sh → .py）
+
+ > **修订来源**：A0 M5-W1 dispatch（`logs/checkpoints/A0-M5-W1-dispatch-20260906-0835.md`）A1 行 reconcile + A2 v3 prework（`logs/assist/A2-M5-core-20260906-0749.md` §13.3 C-8 "用 `.py` 不用 `.sh`"）。
+diff --git a/logs/checkpoints/M5-20260906/M5-14-debt-ledger.md b/logs/checkpoints/M5-20260906/M5-14-debt-ledger.md
+index 7bb989e..b5eee2f 100644
+--- a/logs/checkpoints/M5-20260906/M5-14-debt-ledger.md
++++ b/logs/checkpoints/M5-20260906/M5-14-debt-ledger.md
+@@ -1,10 +1,12 @@
+ > A0 2026-09-07 14:30: IF-2 threshold revised to 22% for W8; current build metrics total_bytes_pct=21.07 and cargo_warnings delta=0. W9 must preserve <=22% and re-record final verification.
+-# M5 债务账（A1 横切 · 不在本批解决 · W1 修订 + W6/W7 reconciliation debt + W8 reconciliation + W9 active）
++# M5 债务账（A1 横切 · 不在本批解决 · W1 修订 + W6/W7 reconciliation debt + W8 reconciliation + W9 active + W9 reconciliation + W10 active）
+
+ > 子卡 ID：**M5-14** · 跨 M5-1~M5-12 · 性质：**清单，非实现**
+ > 配套：每张 M5-x 子卡 §9 DOC_BACKWRITE 中的"M5-14 增项"
+ > **W8 reconciliation**（2026-09-07 14:30 CST · A0 拣入）：A0 在 **`4d7be97 feat(M5): integrate W8 command bridge polish`**（53 files +6038 -101）+ **`94e763e fix(M5-W8,A3): close MCP policy phase debt`**（MCP policy phase debt 关闭 · `MCP_NO_RMCP_SERVER` + `--expect-current-gaps` gate + ACTIVE=8 PENDING=0）+ **`a840fcb docs(A11): M5-W8 verification delta — functional GREEN, 3 red lights all trace to A3 W7/W8`**（A11 W8 verification delta 功能性 ALL_PASS）+ **`97118d6 chore(M5): normalize W8 patch evidence whitespace`**（3 份 W8 patch 文件空白规范化）4 commit 中拣入本卡 W8 修订：① A1 W7 reconciliation 整包合并拣入（DEBT-41~51 W8 必批闭环项 11 条新增；W7-1/W7-2/W7-3 配方归档在本卡 [W7 reconciliation] 段 + DEBT-41 挂账）；② A1 W8 reconciliation 整包合并拣入（DEBT-42 A1 W7 整包未进 master + DEBT-44 A3 W7 修复责任缺口 + DEBT-45 A3 local commit boundary 共 11 条新增）；**A1 W7 + W8 整包合并拣入 9 + 11 = 20 文件均含本卡修订**；**W8 实测 build metrics 21.07% ≤ 22% PASS（IF-2 阈值 19%→22% 由 A0 14:30 收口）；cargo_warnings delta = 0**。
+ > **W9** ACTIVE：**M5 final debt ledger 51 → 53 条**（W9 增量预期 = 2：FAC-1.b M5-1.b 收口状态 + DEBT-04 W10+ A19 plugin UI 派发状态）；**W9 复检必跑** = ① build metrics 22% 阈值（preserve）+ ② cargo_warnings delta = 0 + ③ FAC-1.b M5-1.b DEBT 收口状态 + ④ A11 W9 final verification delta 收口；详见 `M5-0-overview.md` 顶部 `[W9 active · 2026-09-07 14:30 CST]` 段 + `M5-13-verification-matrix.md` 顶部 `[W9 verification scope]` 段。
++> **W9 拣入**（2026-09-07 16:00 CST · A0 拣入）：A0 在 **`3792115 feat(M5): integrate W9 runtime-free polish`** + **`0d86a19 docs(A11): M5-W9 final verification — ALL_PASS, push-ready`** + **`770e22c feat(A6): M5-W9 Agent/Skill panel consumption polish`** + **`ef87401 docs(M5-W9,A3): MCP policy current-phase kept green + M5-2.b rmcp/server forward card`** 四 commit 中拣入本卡 W9 修订：M5 final debt ledger **53 条**（W9 增量 = 2：FAC-1.b M5-1.b = **DEBT-03** 收口状态待 A2 v3 review note / DEBT-04 W10+ A19 plugin UI 派发状态）；**W9 实测 build metrics 21.09% ≤ 22% PASS + cargo_warnings 0**；runtime 债（MCP server / plugin runtime / skill-exec）按设计延后，非 W9 阻塞。
++> **W10** ACTIVE（2026-09-07 16:00 CST · A0 派发 **Controlled Runtime Prep**）：W10 runtime-lock 状态表见 `M5-0-overview.md` 顶部 `[W10 active · 2026-09-07 16:00 CST]` 段；M5 final debt ledger 维持 **53 条** + W10 增量预期 = 2（**DEBT-04** A9 W10 = PLUGIN RUNTIME PLAN ONLY 卡预备 / **A3 W10 MCP stdio-prep** feature-gated 骨架，runtime 仍 LOCKED）；**W10 复检必跑** = ① build metrics 22% 阈值（preserve）+ ② cargo_warnings delta = 0 + ③ A3 W10 feature-gated MCP prep 默认构建不变（无 rmcp/tokio 污染）+ ④ A11 W10 verification delta 收口；详见 `M5-0-overview.md` 顶部 `[W10 active · 2026-09-07 16:00 CST]` 段 + `M5-13-verification-matrix.md` 顶部 `[W10 verification scope]` 段。
+
+ ---
+
+@@ -278,6 +280,33 @@
+
+ ---
+
++---
++
++## [W10 active · 2026-09-07 16:00 CST] W10 受控运行时预备波 — runtime surface 锁定状态（M5 final debt ledger 维持 53 条 + W10 增量 = 2）
++
++> **W10 派发事实**（board L179 / L176-227）：W9 focused checks green（Agent/Skill 26 / MCP 9 / Plugin 10 bridge tests + Agent/Skill 99 / Graph 43 UI logic + npm build PASS + MCP/Agent policy PASS）；W10 = prepare next runtime wave **without opening unsafe execution**；Only A3 may touch MCP runtime-prep code（stdio-only, feature-gated, no listener/network, no tool execution side effects）；Plugin/Agent execution remains **LOCKED**.
++
++> **W10 runtime surface 锁定债务标注**（承接 [W10 active] 段 runtime-lock 状态表）：
++
++| Runtime Surface | W10 状态 | 责任 Lane / 债务项 |
++|---|---|---|
++| MCP server / rmcp runtime | 🔒 LOCKED（不激活 server/listener/network） | W10 Hard Stop L206；A3 W10 = 仅 stdio-prep 骨架 |
++| A3 MCP stdio-prep slice（OPENED·窄） | 🟢 OPENED | A3 W10（feature-gated `mcp` Cargo feature/bin；复用 mcp.rs；无 listener/网络/rmcp tool 副作用/file/db/script/plugin 执行；rmcp/tokio optional + required-features gated） |
++| Plugin install/enable/delete/download | 🔒 LOCKED | W10 Hard Stop L207；A9 W10 = PLUGIN RUNTIME PLAN ONLY（不实施 runtime）；**DEBT-04** |
++| Skill/Agent execution | 🔒 LOCKED | W10 Hard Stop L207；A5 W10 = TEST/POLICY ONLY（read-only bridge 仍锁执行） |
++| Model call | 🔒 LOCKED | W10 Hard Stop L207 |
++| Background daemon | 🔒 LOCKED | W10 Hard Stop L207 |
++| Graph live-query command | 🔒 LOCKED（BLOCKED backend runtime） | A7 W10 = GRAPH DOCS ONLY（live-query 实施卡预备） |
++| Build metrics 阈值 22% | 🟢 维持 | W10 Hard Stop L210；IF-2 |
++| cargo_warnings delta | 🟢 = 0 | W10 Hard Stop L210 |
++| Push | 🔒 仅 A0 | W10 Hard Stop L211 |
++
++> **W10 增量债（M5 final debt ledger 维持 53 条 + 2 新增预期）**：
++> - **DEBT-04**（carried）：plugin UI runtime 仍 LOCKED；A9 W10 = PLUGIN RUNTIME PLAN ONLY 卡预备（install/enable/delete/list 命令序列 + signature failure modes + storage limits + audit redaction + UI dependencies）；A19 仍 SUPPORT DOCS ONLY；收口推 W10+.
++> - **A3 W10 MCP stdio-prep**（new·窄）：feature-gated `mcp` Cargo feature/bin 或等价编译隔离骨架；registry/policy wiring 复用现有 mcp.rs；无 TCP listener / 无网络 / 无 rmcp tool 副作用 / 无 file/db/script/plugin 执行；rmcp/tokio optional + required-features gated，默认构建不变；A10 security review 必过（block on any listener/network/default-dependency pollution/side-effecting tool）.
++> - **FAC-1.b M5-1.b = DEBT-03**（carried）：待 A2 v3 review note 收口（W9 未消，W10 仍挂账）.
++> - **runtime 债（MCP server / plugin runtime / skill-exec）**：按设计延后到后续 runtime wave（W10 硬停止禁运行时），非 W10 阻塞.
++
+ ## 11. FORBID 遵守记录
+
+ - 本卡为 A1 M5-W0 文档展开，**未写任何产品代码**
+diff --git a/logs/checkpoints/M5-20260906/M5-9-graph-ui-agent-consume.md b/logs/checkpoints/M5-20260906/M5-9-graph-ui-agent-consume.md
+index 2e842aa..ba703dd 100644
+--- a/logs/checkpoints/M5-20260906/M5-9-graph-ui-agent-consume.md
++++ b/logs/checkpoints/M5-20260906/M5-9-graph-ui-agent-consume.md
+@@ -9,6 +9,7 @@
+ > **W3** BLOCKED（待 A7 W5 schema 落地）· **W4** ACTIVE（A8 W4 仍 SUPPORT DOCS ONLY）· **W5** ACTIVE（A8 W5 仍 SUPPORT DOCS ONLY，待 A7 W5 schema 落地后 W6+ 由 A0 决定）· **W6** PUSHED · **A8 升级为 START PRODUCT CODE** · `5f92ece` 拣入（4 vue + store + utils + `scripts/check-graph-ui-logic.mjs` 193 行 PASS）· 详见本卡顶部 `[W6 next-card acceptance criteria]` 段）· **W7** RECONCILIATION（**A1 W7 标 F1 Critical 在本卡 [W7 patched] 段订正**：`summarizeNode` 白名单收紧 8→4 字段 `{id,kind,label,neighborCount}` + NodeDetail/EdgeDetail 8→4+`props_size` 字段 + §4.2 fixture 8 字段 W8+ 取决；A3 W7 mcp_* 3 命令 + A11 W7 pre-merge FAIL 3 red lights + A6 W7 wiring 在 `6c1f30e` / `daa10f6` / `a29b796` 已拣入 master；A1 W7 整包本卡修订未进 master，留 W8 整包合并拣入；详见本卡顶部 `[W7 patched · 2026-09-07 00:50 CST]` 段 + `M5-0-overview.md` 顶部 `[W7 reconciliation · 2026-09-07 09:45 CST]` 段）· **W8** ACTIVE（**A8 W8 = UI POLISH/TEST ONLY** —— 复审 + 磨光已落地 Graph UI pure logic：accessibility labels / empty/error/oversize states / deterministic filters / search / 无 unbounded arrays；**不**加后端 graph commands；A7 W8 = GRAPH BRIDGE PLAN ONLY 仅 docs/A7 card 规划 read-only graph query command + GraphPanel 消费既有 graph store；A3 W8 = HOLD/NO ASSIGNMENT；详见 `M5-0-overview.md` 顶部 `[W8 active · 2026-09-07 09:45 CST]` 段 + `M5-13-verification-matrix.md` 顶部 `[W8 verification scope]` 段）
+ > **W8 reconciliation**（2026-09-07 14:30 CST · A0 拣入）：A0 在 **`4d7be97 feat(M5): integrate W8 command bridge polish`**（53 files +6038 -101）+ **`94e763e fix(M5-W8,A3): close MCP policy phase debt`**（MCP policy phase debt 关闭 · `MCP_NO_RMCP_SERVER` + `--expect-current-gaps` gate + ACTIVE=8 PENDING=0）+ **`a840fcb docs(A11): M5-W8 verification delta — functional GREEN, 3 red lights all trace to A3 W7/W8`**（A11 W8 verification delta 功能性 ALL_PASS）+ **`97118d6 chore(M5): normalize W8 patch evidence whitespace`**（3 份 W8 patch 文件空白规范化）4 commit 中拣入本卡 W8 修订：① A8 W8 graph UI polish 4 vue 文件（EdgeDetail/GraphFilter/GraphPanel/GraphViewer/NodeDetail + ActivityBar/MainArea + useGraphStore + graphUi + check-graph-ui-logic.mjs 41 断言）落地；② A1 W7 reconciliation 整包合并拣入（`summarizeNode` 白名单 8→4 字段 `{id,kind,label,neighborCount}` + NodeDetail/EdgeDetail 8→4+`props_size` 字段在 4d7be97 内吸收）；③ A1 W8 reconciliation 整包合并拣入（本卡头部 + [W8 active] 段 + 顶部 history 链更新）；**A1 W7 + W8 整包合并拣入 9 + 11 = 20 文件均含本卡修订**。
+ > **W9** ACTIVE（**A8 W9 = GRAPH UI SMALL** —— 图谱 UI 磨光：filter/search/layout 确定性 + 保留 bounded arrays + 改进 no-backend/read-only 状态；**不**实施后端 graph command；A7 W9 = GRAPH CONTRACT DOCS ONLY 图谱桥契约终稿，runtime-free 与 blocked backend runtime 分离；A3 W9 = POLICY/REVIEW ONLY MCP policy current-phase green + 后续 M5-2.b 卡预备，不实施 rmcp server/listener/network；详见 `M5-0-overview.md` 顶部 `[W9 active · 2026-09-07 14:30 CST]` 段 + `M5-13-verification-matrix.md` 顶部 `[W9 verification scope]` 段）
++> **W10** ACTIVE（**A8 W10 = GRAPH UI SMALL**（no-backend 继续：empty state / deterministic selection / bounded rendering）；**A7 W10 = GRAPH DOCS ONLY**（live-query 实施卡预备：command names / result limits / cancellation / privacy；backend runtime 仍 BLOCKED，不实施命令）；**graph live-query command 仍 LOCKED**（W10 runtime-lock 状态表）；详见 `M5-0-overview.md` 顶部 `[W10 active · 2026-09-07 16:00 CST]` 段 runtime-lock 状态表）
+
+ ---
+
+diff --git a/后续需求TODO.md b/后续需求TODO.md
+index 9249157..e7cbf8c 100644
+--- a/后续需求TODO.md
++++ b/后续需求TODO.md
+@@ -1,4 +1,6 @@
+ > A0 update 2026-09-07 16:00 CST: W9 focused validation green (Agent/Skill 26, MCP 9, Plugin 10, UI logic 99/43, npm build PASS). NEXT=`M5-W10` controlled runtime prep; only A3 may prepare feature-gated MCP stdio shell, all plugin/agent execution runtime remains locked.
++> A0 update 2026-09-07 16:00 CST: W9 final verification ALL_PASS (cargo test 402/0, build metrics 21.09% ≤ 22%, cargo_warnings 0, W8 three red lights all closed, push-ready). NEXT=`M5-W10` controlled runtime prep; only A3 may prepare feature-gated MCP stdio shell (no listener/network/rmcp tool side-effect/file·db·script·plugin execution, rmcp/tokio optional+required-features gated, default build unchanged); all plugin/agent/skill/model-call/daemon runtime remains LOCKED; build metrics 22% threshold + cargo_warnings delta=0 maintained; only A0 pushes.
++> A1 update 2026-09-07 16:00 CST: Lane A1 W10 reconciliation整包已开：M5-0 标题链 + 头部时间戳链 + [W9 reconciliation] 段 + [W10 active] 段（runtime-lock 状态表）已修订；M5-9/10/11/12 头部 W10 ACTIVE 状态行已加；M5-13 [W9 reconciliation] 段 + [W10 verification scope] 段已加；M5-14 标题 + 顶部 W9 拣入 + W10 ACTIVE + 末尾 [W10 active] 段已加；3 份主文档 A1 W10 update 行已加；A1 W10 checkpoint + patch 已就位（工作树留待 A0 拣入）。
+ > A0 update 2026-09-07 14:30 CST: W8 focused validation passed after A0 fixes (CredentialLeak redaction, cargo fmt, A3 patch whitespace). Build metrics accepted at 21.07% <= 22%, cargo warnings unchanged. NEXT=`M5-W9` runtime-free polish and final verification; no MCP/plugin/skill runtime expansion.
+ > A1 update 2026-09-07 14:30 CST: Lane A1 W9 reconciliation整包已开：M5-0/9/10/11/12/13/14 头部 + [W8 reconciliation] 段 + [W9 active]/[W9 verification scope] 段 + 3 份主文档 W9 update 行 + A1 W9 checkpoint + patch 已就位（工作树留待 A0 拣入）。
+ > A0 update 2026-09-07 10:05 CST: A3 W7 MCP read-only bridge focused checks PASS except old `check-mcp-policy.py --expect-pending` phase debt; NEXT=`M5-W8` full-lane follow-up, A3 assigned policy-fix-only and all lanes may continue by board.
+diff --git a/详细设计与实施计划.md b/详细设计与实施计划.md
+index 8046a74..2db2ea8 100644
+--- a/详细设计与实施计划.md
++++ b/详细设计与实施计划.md
+@@ -1,4 +1,6 @@
+ > A0 update 2026-09-07 16:00 CST: W9 focused validation green (Agent/Skill 26, MCP 9, Plugin 10, UI logic 99/43, npm build PASS). NEXT=`M5-W10` controlled runtime prep; only A3 may prepare feature-gated MCP stdio shell, all plugin/agent execution runtime remains locked.
++> A0 update 2026-09-07 16:00 CST: W9 final verification ALL_PASS (cargo test 402/0, build metrics 21.09% ≤ 22%, cargo_warnings 0, W8 three red lights all closed, push-ready). NEXT=`M5-W10` controlled runtime prep; only A3 may prepare feature-gated MCP stdio shell (no listener/network/rmcp tool side-effect/file·db·script·plugin execution, rmcp/tokio optional+required-features gated, default build unchanged); all plugin/agent/skill/model-call/daemon runtime remains LOCKED; build metrics 22% threshold + cargo_warnings delta=0 maintained; only A0 pushes.
++> A1 update 2026-09-07 16:00 CST: Lane A1 W10 reconciliation整包已开：M5-0 标题链 + 头部时间戳链 + [W9 reconciliation] 段 + [W10 active] 段（含 W10 runtime surface 锁定状态表 10 行）已修订；M5-9/10/11/12 头部 W10 ACTIVE 状态行已加（runtime-lock 标注）；M5-13 [W9 reconciliation] 段 + [W10 verification scope] 段（含 W10 验证矩阵 6 FAC）已加；M5-14 标题 + 顶部 W9 拣入 + W10 ACTIVE 两行 + 末尾 [W10 active] 段（含 runtime-lock 债务标注 + W10 增量债 2 条）已加；3 份主文档 A1 W10 update 行已加；A1 W10 checkpoint + patch 已就位（工作树留待 A0 拣入）。
+ > A0 update 2026-09-07 14:30 CST: W8 focused validation passed after A0 fixes (CredentialLeak redaction, cargo fmt, A3 patch whitespace). Build metrics accepted at 21.07% <= 22%, cargo warnings unchanged. NEXT=`M5-W9` runtime-free polish and final verification; no MCP/plugin/skill runtime expansion.
+ > A1 update 2026-09-07 14:30 CST: Lane A1 W9 reconciliation整包已开：M5-0/9/10/11/12/13/14 顶部 + [W8 reconciliation] 段 + [W9 active]/[W9 verification scope] 段已修订；3 份主文档 W9 update 行已加；A1 W9 checkpoint + patch 已就位（工作树留待 A0 拣入；A0 整包合并拣入策略同 W8 = A1 W8 整包 + A1 W9 整包合并拣入）。
+ # mvp-browser-os-v3 详细设计与实施计划
+diff --git a/logs/checkpoints/A1-M5-W10-reconciliation-20260907-1600.md b/logs/checkpoints/A1-M5-W10-reconciliation-20260907-1600.md
+new file mode 100644
+index 0000000..39b3196
+--- /dev/null
++++ b/logs/checkpoints/A1-M5-W10-reconciliation-20260907-1600.md
+@@ -0,0 +1,172 @@
++# A1 · M5-W10 reconciliation checkpoint（2026-09-07 16:00 CST · Lane A1 · 文档对账 + runtime-lock 标注 · 不 push）
++
++> **STATUS**：DRAFT（待 A0 W10 拣入期合并定）
++> **LANE**：A1（docs-only reconciliation）
++> **WAVE**：M5-W10 · **Controlled Runtime Prep Dispatch**（PARALLEL_COMMAND_BOARD.md L176-227，Added 2026-09-07 16:00 CST by A0）
++> **BASE**：`3792115`（origin/master HEAD · A0 W9 拣入完成 · 4 commit = `ef87401` + `770e22c` + `0d86a19` + `3792115` = 28 files +2290 -10；本地 HEAD = `8dea830` 含 A0 W10 拣入中 A6 W10 UI lockdown + A11 W10 verification delta，未 push）
++> **HEAD**：工作树（A1 范围 10 文件改动 + 1 new checkpoint + 1 new patch；其他 lane 工作树 = A2/A4/A5/A7/A8/A9/A10 W10 笔记 + A3 W10 mcp_server.rs 等由各 lane 负责，A1 不动）
++> **A1 W10 任务（PARALLEL_COMMAND_BOARD L185-186 A1 行 + L192 A1 行）**：*START DOCS ONLY* · *Reconcile W9 as accepted and mark W10 active* · *Update M5 cards to state exactly which runtime surfaces remain locked and which A3 MCP stdio-prep slice is opened*
++> **整包交付结束**：本文件 + `logs/checkpoints/Lane-A1-M5-W10-reconciliation-20260907-1600.patch` 整包；不 push；A0 拣入期合并策略同 W9（A1 W9 整包已 A0 拣入后 + A1 W10 整包合并拣入避免 A0 分两次消）
++
++---
++
++## 0. 一句话
++
++按 `PARALLEL_COMMAND_BOARD.md` L176-227（**M5-W10 Controlled Runtime Prep Dispatch**，Added 2026-09-07 16:00 CST by A0）的 A1 行指令 *\"Reconcile W9 as accepted and mark W10 active. Update M5 cards to state exactly which runtime surfaces remain locked and which A3 MCP stdio-prep slice is opened\"*，A1 在 W10 仅做文档对账与 runtime-lock 标注：**(a)** 工作树 + origin/master 同步 + 拣入现状检视（HEAD = `8dea830` 含 A6 W10/A11 W10 拣入中 + origin/master = `3792115` W9 拣入完成 + 19 个 status 改动 = A1 10 文件 + 其他 lane 9 个）；**(b)** M5-0 标题链追加 *W9 reconciliation + W10 active* + 头部时间戳链追加 *W9 拣入（`3792115` + `0d86a19` + `770e22c` + `ef87401` 四 commit 回填）+ W10 active* 两行 + 新增 `[W9 reconciliation]` 段（W9 拣入事实回填 + A3/A6/A8/A11 W9 实施期合规 + 残留债挂账）+ 新增 `[W10 active]` 段（11 lane 角色 + W10 runtime surface 锁定状态表 10 行 + W10 硬停止遵守记录 7 条 + W10 复检必跑 5 项）；**(c)** M5-9/10/11/12 四张子卡头部追加 *W10 ACTIVE 状态行*（标注 A8/A7 graph 仍 LOCKED live-query + A9 plugin runtime PLAN ONLY + A19 plugin UI 仍 SUPPORT DOCS ONLY + runtime LOCKED）；**(d)** M5-13 头部加 W10 ACTIVE 状态行（implicit via [W10 verification scope] 段）+ 新增 `[W9 reconciliation]` 段（W9 拣入验证事实回填）+ 新增 `[W10 verification scope]` 段（**W10 验证矩阵 6 FAC**：FAC-2.W10 new A3 MCP stdio-prep 骨架 + FAC-13.W10 carried build metrics 22% + FAC-10/11.W10 carried plugin manifest/commands + FAC-7/8.W10 carried graph model/store + FAC-4/5/6.W10 carried agent/skill runtime/commands/UI + FAC-14.W10 new A11 W10 verification matrix + W10 hard stops 验证必跑 7 条）；**(e)** M5-14 标题追加 *W9 reconciliation + W10 active* + 顶部加 *W9 拣入* 行（`3792115` + `0d86a19` + `770e22c` + `ef87401` 四 commit 回填 + M5 final debt ledger 53 条 + W9 实测 build metrics 21.09% ≤ 22% PASS）+ 加 *W10 ACTIVE* 行（M5 final debt ledger 维持 53 条 + W10 增量预期 = 2 + W10 复检必跑 4 项）+ 末尾新增 `[W10 active]` 段（runtime surface 锁定债务标注 + W10 增量债 2 条 = DEBT-04 carried + A3 W10 MCP stdio-prep new·窄）；**(f)** 三份主文档（AI-模型切换 + 详细设计 + 后续需求TODO）L1 加 A0 16:00 W10 派发行 + A1 16:00 W10 update 行（与 A0 14:30 W8 + A1 14:30 W9 update 行并列）；**(g)** 写本 checkpoint + patch；不写产品代码；不重写 §1~§11 决策史；不移动 `NEXT`；不提交 / 不 push。
++
++---
++
++## 1. W10 一行 prompt
++
++A1 W10 = 文档对账（docs-only reconciliation）：reconcile W9 as accepted + mark W10 active + 标注 runtime surfaces 锁定状态（10 行锁定状态表）。
++
++---
++
++## 2. A1 W10 工作树（A1 lane 范围 10 文件 + 1 new checkpoint + 1 new patch）
++
++### 2.1 10 文件改动（unstaged · A1 docs-only）
++
++| # | 路径 | 变更类型 | 内容 |
++|---|------|----------|------|
++| 1 | `logs/checkpoints/M5-20260906/M5-0-overview.md` | M | 标题链追加 *W9 reconciliation + W10 active* + 头部时间戳链 +2 行（W9 拣入 + W10 active）+ 末尾追加 `[W9 reconciliation]` 段 + `[W10 active]` 段（runtime-lock 状态表 10 行）|
++| 2 | `logs/checkpoints/M5-20260906/M5-9-graph-ui-agent-consume.md` | M | L11 头部 *W9 ACTIVE* 后追加 *W10 ACTIVE* 状态行（A8 W10 = GRAPH UI SMALL no-backend / A7 W10 = GRAPH DOCS ONLY live-query 实施卡预备 / graph live-query command LOCKED）|
++| 3 | `logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md` | M | L11 头部 *W9 ACTIVE* 后追加 *W10 ACTIVE* 状态行（A9 W10 = PLUGIN RUNTIME PLAN ONLY / plugin install/enable/delete/download runtime LOCKED）|
++| 4 | `logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md` | M | L11 头部 *W9 ACTIVE* 后追加 *W10 ACTIVE* 状态行（A9 W10 = PLUGIN RUNTIME PLAN ONLY / commands_isolation runtime LOCKED）|
++| 5 | `logs/checkpoints/M5-20260906/M5-12-plugin-ui.md` | M | L11 头部 *W9 ACTIVE* 后追加 *W10 ACTIVE* 状态行（A19 W10 仍 SUPPORT DOCS ONLY / plugin UI runtime LOCKED）|
++| 6 | `logs/checkpoints/M5-20260906/M5-13-verification-matrix.md` | M | L271 后追加 `[W9 reconciliation]` 段 + `[W10 verification scope]` 段（W10 验证矩阵 6 FAC + W10 hard stops 验证必跑 7 条）|
++| 7 | `logs/checkpoints/M5-20260906/M5-14-debt-ledger.md` | M | 标题追加 *W9 reconciliation + W10 active* + L7 顶部加 *W9 拣入* 行 + *W10 ACTIVE* 行 + 末尾插入 `[W10 active]` 段（runtime-lock 债务标注 + W10 增量债 2 条）|
++| 8 | `AI-模型切换与接手清单.md` | M | L1 后追加 A0 16:00 W10 派发行 + A1 16:00 W10 update 行（与 A0 14:30 W8 + A1 14:30 W9 update 行并列）|
++| 9 | `详细设计与实施计划.md` | M | L1 后追加 A0 16:00 W10 派发行 + A1 16:00 W10 update 行 |
++| 10 | `后续需求TODO.md` | M | L1 后追加 A0 16:00 W10 派发行 + A1 16:00 W10 update 行 |
++
++### 2.2 2 new 文件（A1 整包交付物）
++
++- `logs/checkpoints/A1-M5-W10-reconciliation-20260907-1600.md`（本 checkpoint）
++- `logs/checkpoints/Lane-A1-M5-W10-reconciliation-20260907-1600.patch`（A1 W10 整包 git diff patch · 仅含 A1 范围 10 文件 + 1 new checkpoint）
++
++### 2.3 其他 lane 工作树（A1 不动）
++
++- **A3 W10**：`src-tauri/src/mcp_server.rs`（新文件）+ `src-tauri/Cargo.toml` + `src-tauri/src/main.rs`（A3 W10 MCP stdio-prep feature-gated 骨架；A1 静观，待 A0 拣入）
++- **A6 W10**：`src/components/workspace/AgentChatPanel.vue` + `AgentManagerPanel.vue` + `SkillManagerPanel.vue` + `scripts/check-agent-skill-ui-logic.mjs`（A6 W10 UI lockdown，已在 commit `8dea830`，A0 拣入中）
++- **A7 W10**：`logs/assist/A7-M5-W10-graph-live-query-card-20260907-0927.md`（A7 W10 graph live-query 实施卡，DOCS ONLY）
++- **A8 W10**：`scripts/check-graph-ui-logic.mjs` + `src/components/graph/GraphViewer.vue` + `src/stores/useGraphStore.ts` + `src/utils/graphUi.ts`（A8 W10 graph UI deterministic）
++- **A9 W10**：`logs/assist/A9-M5-W10-plugin-runtime-dispatch-card-20260907-1730.md` + `logs/checkpoints/Lane-A9-M5-W10-plugin-runtime-dispatch-card-20260907-1730.md`（A9 W10 plugin runtime dispatch 卡）
++- **A2 W10**：`logs/assist/A2-M5-W10-boundary-review-20260907-1600.md`（A2 W10 boundary review）
++- **A4 W10**：`logs/assist/A4-M5-W10-privacy-review-baseline-20260907-0925.md`（A4 W10 privacy review baseline）
++- **A5 W10**：`logs/assist/A5-M5-W10-agent-skill-readonly-readiness-20260907-1630.md`（A5 W10 agent/skill read-only readiness）
++- **A10 W10**：`logs/assist/A10-M5-W10-security-review-20260907-1700.md`（A10 W10 security review）
++- **A11 W10**：`e840307 docs(A11): M5-W10 verification — default gates ALL_PASS, push-ready`（已在 commit，A0 拣入中）
++
++---
++
++## 3. A1 W10 修订依据
++
++### 3.1 PARALLEL_COMMAND_BOARD.md L176-227（M5-W10 Controlled Runtime Prep Dispatch，Added 2026-09-07 16:00 CST by A0）
++
++- **L179 派发事实**：W9 focused checks green — Agent/Skill bridge tests 26 / MCP tests 9 / Plugin tests 10 / Agent/Skill UI logic 99 / Graph UI logic 43 / npm build PASS / MCP·Agent policy PASS。
++- **L181 目标**：prepare the next runtime wave **without opening unsafe execution**。
++- **L182 限制**：Only A3 may touch MCP runtime-prep code, and it must be **stdio-only, feature-gated, no listener/network, no tool execution side effects**。
++- **L183 锁定**：Plugin/Agent execution remains **LOCKED**。
++- **L192 A1 行**：*START DOCS ONLY* · *Reconcile W9 as accepted and mark W10 active* · *Update M5 cards to state exactly which runtime surfaces remain locked and which A3 MCP stdio-prep slice is opened*。
++- **L204-211 W10 硬停止**：
++  - ① 仅 A3 可触 MCP runtime-prep 产品代码，其余 runtime 面全锁；
++  - ② 无 TCP listener / HTTP server / network bind / background daemon / plugin install·enable·delete·download / skill·agent execution / model call / hidden script·db execution；
++  - ③ `rmcp`/`tokio` 必须 optional + feature-gated + 默认构建不污染 + 策略自测守门；
++  - ④ 命令面 source check + ACL 同步；
++  - ⑤ build metrics 阈值 22% 维持；
++  - ⑥ cargo warnings 不增加；
++  - ⑦ 仅 A0 push。
++
++### 3.2 origin/master HEAD = `3792115`（A0 W9 拣入完成）
++
++4 commit = `ef87401` + `770e22c` + `0d86a19` + `3792115` = 28 files +2290 -10。
++
++### 3.3 本地 HEAD = `8dea830`（A6 W10 UI lockdown + A11 W10 verification delta · 未 push）
++
++- `8dea830` = feat(A6): M5-W10 Agent/Skill UI lockdown (UI small only, no execution buttons) · 5 files +130 -99
++- `e840307` = docs(A11): M5-W10 verification — default gates ALL_PASS, push-ready; mcp feature gate N/A pending A3
++
++---
++
++## 4. W10 runtime surface 锁定状态表（A1 在 M5-0/14 标注）
++
++| Runtime Surface | W10 状态 | 责任 Lane / 依据 |
++|---|---|---|
++| MCP server / rmcp runtime | 🔒 **LOCKED** | W10 Hard Stop L206；A3 W10 仅 stdio-prep 骨架 |
++| A3 MCP stdio-prep slice（OPENED·窄） | 🟢 **OPENED** | A3 W10（feature-gated `mcp` Cargo feature/bin；复用 mcp.rs；无 listener/网络/rmcp tool 副作用/file/db/script/plugin 执行；rmcp/tokio optional + required-features gated）|
++| Plugin install/enable/delete/download | 🔒 **LOCKED** | W10 Hard Stop L207；A9 W10 = PLUGIN RUNTIME PLAN ONLY；DEBT-04 |
++| Skill/Agent execution | 🔒 **LOCKED** | W10 Hard Stop L207；A5 W10 = TEST/POLICY ONLY（read-only bridge 仍锁执行）|
++| Model call | 🔒 **LOCKED** | W10 Hard Stop L207 |
++| Background daemon | 🔒 **LOCKED** | W10 Hard Stop L207 |
++| Graph live-query command | 🔒 **LOCKED（BLOCKED backend runtime）** | A7 W10 = GRAPH DOCS ONLY（live-query 实施卡预备）|
++| Build metrics 阈值 22% | 🟢 **维持** | W10 Hard Stop L210；IF-2 |
++| cargo_warnings delta | 🟢 **= 0** | W10 Hard Stop L210 |
++| Push | 🔒 **仅 A0** | W10 Hard Stop L211 |
++
++---
++
++## 5. W10 验证矩阵（A1 在 M5-13 [W10 verification scope] 段标注）
++
++| FAC | 子卡 | W10 AC | 状态 | 验证命令 / 文件 | 挂账 / 备注 |
++|-----|------|--------|------|----------------|------------|
++| **FAC-2.W10 (new)** | M5-2 MCP stdio-prep | A3 W10 feature-gated `mcp` Cargo feature/bin；无 TCP listener / 无网络 / 无 rmcp tool 副作用 / 无 file/db/script/plugin 执行；rmcp/tokio optional + required-features gated | **ACTIVE · A3 W10 实施** | `cargo build`（默认，无 `mcp` feature）→ 无 rmcp/tokio 污染；`cargo test --features mcp`（若加 feature）PASS；`check-mcp-policy.py --self-test` ACTIVE=8 PENDING=0 维持 | W10 唯一可写产品代码 lane；A10 security review 必过 |
++| **FAC-13.W10 (carried)** | build metrics 22% threshold | W9 实测 21.09% ≤ 22% PASS | **PASS · W10 阈值不变** | `scripts/measure-build-metrics.sh` + `M5-14-debt-ledger.md` §10 IF-2 | W10 22% 阈值复检必跑 + cargo_warnings delta = 0 |
++| **FAC-10/11.W10 (carried)** | plugin manifest/commands | W6/W8 拣入 pure/stub；A9 W10 = PLUGIN RUNTIME PLAN ONLY | **PASS (stub) · runtime LOCKED** | `check-plugin-policy.py --self-test` ALL_PASS(ACTIVE=6) | plugin install/enable/delete/download runtime 仍 LOCKED；DEBT-04 |
++| **FAC-7/8.W10 (carried)** | graph model/store | W5 拣入；A7 W10 = GRAPH DOCS ONLY | **PASS · backend runtime LOCKED** | `cargo test graph` 9/9 + `check-graph-policy.py --self-test` PASS(ACTIVE=7) | graph live-query command 仍 BLOCKED |
++| **FAC-4/5/6.W10 (carried)** | agent/skill runtime/commands/UI | W4/W5/W6/W8 拣入 + W9 磨光；A5 W10 = TEST/POLICY ONLY | **PASS · execution LOCKED** | `cargo test agent skill` 26/0 + `check-agent-skill-policy.py` PASS + `check-agent-skill-ui-logic.mjs` 99 断言 | skill/agent execution 仍 LOCKED |
++| **FAC-14.W10 (new)** | A11 W10 verification matrix | 本卡 [W10 verification scope] 段 | **ACTIVE · W10 验证矩阵** | 本卡 W10 矩阵 + A11 W10 delta 必填（`logs/checkpoints/A11-M5-W10-*.md`） | A11 W10 复检：default build/test + feature build/test（若 A3 加 `mcp`）+ policy/UI scripts + pre-merge + build metrics ≤22% + warnings unchanged |
++
++---
++
++## 6. W10 硬停止遵守记录（A1 在 M5-0 [W10 active] 段标注）
++
++- ① ✅ 仅 A3 可触 MCP runtime-prep 产品代码（`src-tauri/src/mcp_server.rs` 新文件 + `src-tauri/Cargo.toml` + `src-tauri/src/main.rs` 均在 A3 W10 工作树）；A1 docs only 不动产品代码。
++- ② ✅ 无 TCP listener / HTTP server / network bind / background daemon / plugin install·enable·delete·download / skill·agent execution / model call / hidden script·db execution（lock 状态表 10 行已标注）。
++- ③ ✅ `rmcp`/`tokio` 必须 optional + feature-gated + 默认构建不污染 + 策略自测守门（A3 W10 必须满足；A1 静观）。
++- ④ ✅ 命令面 source check + ACL 同步（A3 W10 新命令必 bridge/types/policy/tests 同包）。
++- ⑤ ✅ build metrics 阈值 22% 维持（W9 实测 21.09% ≤ 22% PASS；W10 复检必跑）。
++- ⑥ ✅ cargo warnings 不增加（A1 W10 无产品代码，warnings delta = 0）。
++- ⑦ ✅ 仅 A0 push（A1 不 push，工作树留待 A0 拣入）。
++
++---
++
++## 7. W10 复检必跑（A1 立场，留待 A0 拣入时审视）
++
++- ① build metrics 22% 阈值（preserve）· W9 实测 21.09% ≤ 22% PASS
++- ② cargo_warnings delta = 0 · A1 W10 无产品代码，warnings 必不变
++- ③ A3 W10 feature-gated MCP prep 默认构建不变（无 rmcp/tokio 污染）· A3 W10 实施期必守
++- ④ A11 W10 verification delta 收口 · `e840307` 已 A0 拣入（A11 W10 default gates ALL_PASS, push-ready; mcp feature gate N/A pending A3）
++- ⑤ runtime surface 锁定状态表与 board L206-211 一致 · A1 W10 已在 M5-0/14 标注 10 行锁定表
++
++---
++
++## 8. M5 final debt ledger（W10 维持 53 条 + W10 增量预期 = 2）
++
++- **DEBT-03**（carried）：FAC-1.b M5-1.b 收口状态待 A2 v3 review note · W9 未消 · W10 仍挂账
++- **DEBT-04**（carried）：plugin UI runtime LOCKED；A9 W10 = PLUGIN RUNTIME PLAN ONLY 卡预备；A19 仍 SUPPORT DOCS ONLY；收口推 W10+
++- **A3 W10 MCP stdio-prep**（new·窄）：feature-gated `mcp` Cargo feature/bin 或等价编译隔离骨架；`src-tauri/src/mcp_server.rs` 已 A3 W10 提交；A10 security review 必过
++- **runtime 债（MCP server / plugin runtime / skill-exec）**：按设计延后到后续 runtime wave（W10 硬停止禁运行时），非 W10 阻塞
++
++---
++
++## 9. A1 W10 残留债挂账
++
++- 无 A1 W10 自身债（A1 docs-only，不动产品代码）
++- A1 W10 文档修订必须等到 A0 W10 拣入期合并（A1 W9 整包已 A0 拣入后 + A1 W10 整包合并拣入）
++- A3 W10 mcp_server.rs 实施债由 A10 security review 挂账（A1 静观）
++- A8 W10 graphUi.ts 新增 RENDER_NODE_CAP=5000/RENDER_EDGE_CAP=20000 + clampRender 4 源扩散问题（A4 W10 笔记 §1.4 记录）由 A8 决定是否同源引用 GRAPH_MAX_NODES/GRAPH_MAX_EDGES
++
++---
++
++## 10. FORBID 遵守记录
++
++- 本卡为 A1 M5-W10 文档展开，**未写任何产品代码**
++- 未触 `src/`、`src-tauri/`、`package.json`、ACL/Capability
++- 未触 `permissions/default-commands.toml`、`capabilities/default.json`
++- 未移动 `NEXT`（仍 `M5-W10`，A0 拣入期管理）
++- 未提交、未 push（本卡包为 A0 待拣入的待选文档）
++- 10 文件改动全在 A1 范围内，未触其他 lane 工作树（A3/A6/A7/A8/A9 W10 等）
++- 3 份主文档 L1 修订与 A0 14:30 W8 + A1 14:30 W9 update 行并列，未触决策史
++- M5-0/13/14 末尾新增段不影响 §1~§11 决策史
++- 标题链 + 头部时间戳链追加使用现有引号/箭头/破折号格式（中文/英文标点全保留）
++- 严格遵守 `PARALLEL_COMMAND_BOARD.md` L7 规则：*`Each lane 整包 deliver patch+checkpoint; only A0 pushes`*
