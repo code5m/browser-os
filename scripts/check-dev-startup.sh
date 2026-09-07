@@ -7,7 +7,7 @@
 #   2) 无服务      → 自己拉起并等待就绪，cleanup 只回收自己那个（stub 消失、pidfile 清理）
 #   3) 启动超时    → 明确失败（非零退出）且不留下孤儿进程
 #   4) run-gui.sh 静态契约（可执行、引用助手、注册 cleanup trap、保留图形环境 workaround）
-#   5) main.rs debug/release 资产选择回归（A2 本次不改动，仅确认仍正确）
+#   5) main.rs debug/release 资产选择与 Tauri devUrl/ACL 来源身份回归
 
 set -euo pipefail
 
@@ -15,6 +15,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HELPER="$ROOT/scripts/dev-server.sh"
 RUN_GUI="$ROOT/run-gui.sh"
 MAIN_RS="$ROOT/src-tauri/src/main.rs"
+TAURI_CONF="$ROOT/src-tauri/tauri.conf.json"
+DEFAULT_CAP="$ROOT/src-tauri/capabilities/default.json"
+DEV_CAP="$ROOT/src-tauri/dev-capabilities/main.json"
 
 PASS=0
 FAIL=0
@@ -22,7 +25,7 @@ ok() { printf '  ✓ %s\n' "$*"; PASS=$((PASS + 1)); }
 bad() { printf '  ✗ %s\n' "$*"; FAIL=$((FAIL + 1)); }
 section() { printf '\n[%s]\n' "$*"; }
 
-for f in "$HELPER" "$RUN_GUI" "$MAIN_RS"; do
+for f in "$HELPER" "$RUN_GUI" "$MAIN_RS" "$TAURI_CONF" "$DEFAULT_CAP" "$DEV_CAP"; do
   if [[ ! -f "$f" ]]; then printf '缺少文件：%s\n' "$f" >&2; exit 1; fi
 done
 
@@ -139,7 +142,7 @@ fi
 if bash "$RUN_GUI" --help >/dev/null 2>&1; then ok "--help 退出 0（不构建、不启动）"; else bad "--help 失败"; fi
 
 # ---------------------------------------------------------------
-section "5) main.rs debug/release 资产选择回归（A2 不改动，仅确认）"
+section "5) main.rs debug/release 资产选择与 ACL 来源身份回归"
 if grep -q 'cfg!(debug_assertions)' "$MAIN_RS" && grep -q 'WebviewUrl::App("index.html".into())' "$MAIN_RS"; then
   ok "main.rs 仍为 debug→External(1421) / release→App(index.html)"
 else
@@ -150,10 +153,66 @@ if grep -q 'localhost:1421' "$MAIN_RS" && grep -q 'MVP_FORCE_DIST' "$MAIN_RS"; t
 else
   bad "main.rs 缺少 MVP_FORCE_DIST 逃生阀"
 fi
-if git -C "$ROOT" diff --quiet -- src-tauri/src/main.rs; then
-  ok "A2 未改动 main.rs（无需改动）"
+if grep -q '#\[cfg(debug_assertions)\]' "$MAIN_RS" && grep -q 'add_capability(include_str!("../dev-capabilities/main.json"))' "$MAIN_RS"; then
+  ok "开发 capability 仅在 debug 进程动态注册"
 else
-  bad "A2 改动了 main.rs（超出本次必要范围）"
+  bad "开发 capability 未受 debug_assertions 隔离"
+fi
+if python3 - "$TAURI_CONF" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    config = json.load(handle)
+raise SystemExit(0 if "devUrl" not in config.get("build", {}) else 1)
+PY
+then
+  ok "tauri.conf 不含 devUrl（release 不会被编译到开发服务器）"
+else
+  bad "tauri.conf 含 devUrl；可能令 release 加载开发服务器并白屏"
+fi
+if python3 - "$DEFAULT_CAP" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    capability = json.load(handle)
+raise SystemExit(0 if "remote" not in capability else 1)
+PY
+then
+  ok "default-commands 未向远程 URL 扩权"
+else
+  bad "default capability 含 remote URL；主窗口高权限命令不应向远程来源开放"
+fi
+if python3 - "$DEV_CAP" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    capability = json.load(handle)
+valid = (
+    capability.get("identifier") == "main-dev"
+    and capability.get("local") is False
+    and capability.get("windows") == ["main"]
+    and capability.get("remote", {}).get("urls") == ["http://localhost:1421/*"]
+    and capability.get("permissions") == [
+        "core:default",
+        "core:window:allow-create",
+        "browser-tabs:default",
+        "default-commands",
+    ]
+)
+raise SystemExit(0 if valid else 1)
+PY
+then
+  ok "开发 capability 仅授权 main + localhost:1421 精确来源"
+else
+  bad "开发 capability 范围漂移；不得扩大窗口、URL 或权限"
+fi
+if [[ ! -e "$ROOT/src-tauri/capabilities/main-dev.json" ]]; then
+  ok "开发 capability 未进入 release 自动扫描目录"
+else
+  bad "开发 capability 位于 capabilities/；会被静态打进 release"
 fi
 if grep -q '"open_tool"' "$ROOT/src-tauri/permissions/default-commands.toml"; then
   ok "工具打开命令已在主窗口 ACL 授权（避免运行时 not allowed）"

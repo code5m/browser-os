@@ -1139,6 +1139,12 @@ fn main() {
                 .unwrap()
         })
         .setup(|app| {
+            // debug 主界面由 Vite 的 HTTP 地址提供，只在 debug 进程动态授予精确
+            // localhost:1421 来源。文件故意放在 capabilities/ 之外，避免自动打进
+            // release；默认 capability 也不向任何远程来源扩权。
+            #[cfg(debug_assertions)]
+            app.add_capability(include_str!("../dev-capabilities/main.json"))?;
+
             // M1-4 冷启动：应用未运行时 xdg-open 经 desktop 文件 %u 把 URL 放进
             // 本进程 argv。此时前端未就绪，统一进 pending 队列（handle_open_url
             // 内部就绪前不发提示），待 m0_ready 后由前端拉取打开，保证不丢。
@@ -1204,8 +1210,10 @@ fn main() {
             // 浏览器页签/宫格仍通过 browser-tabs 插件 add_child 到该窗口——这不是
             // 多顶层 WebviewWindow，不会触发 X11 多窗口死锁。
             // dev 下强制指向 vite 开发服务器：本项目窗口是 Rust 代码里 programmatic
-            // 创建的，config 的 devUrl 解析未生效（webview 一直加载旧 dist，前端改动
-            // 全部不生效）。release 仍走 App("index.html") 打包包内资源。
+            // 创建的，曾出现 App URL 未切到 Vite、持续加载旧 dist 的问题。该 HTTP
+            // 来源由 dev-capabilities/main.json 在 debug 时动态精确授权；不能在全局
+            // 配置恢复 devUrl，否则无 custom-protocol 的 release 构建也会加载开发
+            // 地址。正式打包仍走 App("index.html") 的包内资源。
             // MVP_FORCE_DIST=1：强制加载内嵌 dist（白屏二分诊断用，绕开 vite）
             let main_url = if cfg!(debug_assertions) && std::env::var("MVP_FORCE_DIST").is_err() {
                 WebviewUrl::External("http://localhost:1421".parse().unwrap())

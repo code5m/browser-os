@@ -18,6 +18,8 @@
 | P2/P3 健壮性/加固 | 十余项 | 脱敏不全、无清理、无限重启、越界坐标等 |
 
 > 多处"同一根因"被多 lane 独立命中（已合并）：`collect.js` 三命令未授权（B1-2/B9-3/B12-03）。`open_tool` 的主窗口 ACL 漏配（B1-1/B12-01）已于 2026-09-07 修复，并纳入一致性与工具策略门禁。
+>
+> 2026-09-07 客户端实机补充：`list_bookmarks` / `term_spawn_channel` / `list_tools` 均已在 ACL，却仍整组拒绝。根因是硬编码的 `WebviewUrl::External("http://localhost:1421")` 被 Tauri 2.11.5 判为 remote origin。最终以独立 `main-dev` capability 精确授权 `main + localhost:1421/*`，仅在 debug 动态注册且不进入 release；未恢复会污染无 custom-protocol release 资产路径的全局 `devUrl`，默认 capability 也仍不向 remote 扩权。
 
 ---
 
