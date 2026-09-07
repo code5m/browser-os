@@ -1,9 +1,11 @@
-# M5 验证矩阵（A1 横切 · M5-W0 末位 + W1 reconciliation + W6 verification delta + W7 verification scope）
+# M5 验证矩阵（A1 横切 · M5-W0 末位 + W1 reconciliation + W6 verification delta + W7 verification scope + W8 reconciliation + W9 verification scope）
 
 > 子卡 ID：**M5-13** · 跨 M5-1~M5-12 · `[S3|LEVERAGE:2|COMPLEX|AI:DEEP|R:xhigh]`
 > 责任 Lane 候选：**A11**（沿用 A7/A11 角色，A0 签发时定）
 > 父卡：`详细设计与实施计划.md` 整体（验证门禁横切）
 > 配套：每张 M5-x 子卡 §6 COMMANDS / §7 PASS_CRITERIA / §8 FAIL_ACTION
+> **W8 reconciliation**（2026-09-07 14:30 CST · A0 拣入）：A0 在 **`4d7be97 feat(M5): integrate W8 command bridge polish`**（53 files +6038 -101）+ **`94e763e fix(M5-W8,A3): close MCP policy phase debt`**（MCP policy phase debt 关闭 · `MCP_NO_RMCP_SERVER` + `--expect-current-gaps` gate + ACTIVE=8 PENDING=0）+ **`a840fcb docs(A11): M5-W8 verification delta — functional GREEN, 3 red lights all trace to A3 W7/W8`**（A11 W8 verification delta 功能性 ALL_PASS）+ **`97118d6 chore(M5): normalize W8 patch evidence whitespace`**（3 份 W8 patch 文件空白规范化）4 commit 中拣入本卡 W8 修订：① A11 W8 verification delta 收口（a840fcb 关闭 W7-1/W7-2/W7-3 配方未消 = 已消；W8 focused validation 功能性 ALL_PASS）；② A1 W7 reconciliation 整包合并拣入（FAC-1.b DEBT-03 + A11 W7 pre-merge FAIL 3 red lights 配方归档在本卡 [W7 verification scope] 段）；③ A1 W8 reconciliation 整包合并拣入（本卡头部 L1 标题修订 + 顶部 W8 reconciliation 状态行 + [W8 verification scope] 段修订）。
+> **W9** ACTIVE：**W9 final verification matrix 模式** —— 命令结果 + build metrics 21.07% ≤ 22% + cargo warnings unchanged + pre-merge result + 残留债 + push readiness（见 [W9 verification scope] 段）；详见 `M5-0-overview.md` 顶部 `[W9 active · 2026-09-07 14:30 CST]` 段
 
 ---
 
@@ -187,6 +189,83 @@ python3 scripts/measure-build-metrics.py  # 期望 ≤ 19% 或由 A0 拍新阈�
 | A1 W7 整包未拣入 | A0 W8 拣入期必先消 A1 W7 整包（M5-0/9/10/11/12/13/14 修订 + A1 W7 checkpoint + A1 W7 patch 共 9 文件 = +292 -15 diff 干净）|
 
 > **A11 W8 delta 必标字段**：exact commands run / PASS-FAIL per lane / pre-merge result / build metrics before vs after / A3 W8 HOLD 期间 mcp_* 文件改动数 = 0 / 残留债 / A0 可否在 W8 拣入期推 master / W7-1/W7-2/W7-3 修复状态。
+
+---
+
+## [W8 reconciliation · 2026-09-07 14:30 CST] W8 整包 A0 拣入事实回填（4 commit 拣入 + W8 verification delta 功能性 ALL_PASS）
+
+> **A0 拣入 4 commit 事实**（origin/master HEAD `97118d6` + 工作树 clean）：
+> 1. **`f51549f docs(A6): M5-W8 Agent/Skill panel consumption plan + pure UI logic tests`**（A6 W8 拣入 panel consumption plan + UI logic tests 文档；**不**接 live command）
+> 2. **`a840fcb docs(A11): M5-W8 verification delta — functional GREEN, 3 red lights all trace to A3 W7/W8`**（A11 W8 拣入 verification delta：**W8 focused validation 功能性 GREEN**——3 red lights 全部归 A3 W7/W8：fmt 由 A0 在 4d7be97 修 / patch whitespace 由 A0 在 97118d6 修 / MCP `--expect-pending` debt 由 A0 在 94e763e 修；pre-merge 结果**功能性 ALL_PASS**，无新增 cargo 告警）
+> 3. **`94e763e fix(M5-W8,A3): close MCP policy phase debt — retire W1 pending semantics, add MCP_NO_RMCP_SERVER + --expect-current-gaps`**（A3 W8 拣入 policy 修复：**MCP policy phase debt 关闭** —— retire W1 pending semantics + 新增 `MCP_NO_RMCP_SERVER` 政策码 + `check-mcp-policy.py --expect-current-gaps` gate 模式 + pre-merge.sh MCP section 接入；ACTIVE=8 PENDING=0；**A3 W8 仍为 `HOLD/NO ASSIGNMENT` 直至此 commit 落地**，之后 A3 解禁但仍 **不** 实施 rmcp server/listener/network；5 files +665 -180）
+> 4. **`4d7be97 feat(M5): integrate W8 command bridge polish`**（A0 W8 拣入：① A5 W8 `agent_validate`/`skill_validate` 错误体 `CredentialLeak` 脱敏（`agent.rs:30-35` + `skills.rs:31-40` + `security_policy.rs:118-120` Display 改不 clone secret）；② A6 W8 `npm run build` PASS + 79 agent-skill UI logic 断言；③ A8 W8 graph UI polish 4 vue 文件修订（EdgeDetail/GraphFilter/GraphPanel/GraphViewer/NodeDetail + ActivityBar/MainArea + useGraphStore + graphUi + check-graph-ui-logic.mjs 41 断言）；④ A9 W8 `check-plugin-policy.py` 复审补丁；⑤ A11 W8 verification delta 收口；⑥ A2/A4/A5/A7/A8/A9/A10 8 份 W7+W8 assist；⑦ **A1 W7 reconciliation 整包合并拣入**（A1 W7 checkpoint + patch 共 9 文件 = +292 -15）；⑧ **A1 W8 reconciliation 整包合并拣入**（A1 W8 checkpoint + patch + M5-0/9/10/11/12/13/14 修订共 11 文件 = +488 -15）；⑨ 8 份 W7 assist + 8 份 W8 assist + 8 份 W7 patch = 53 files +6038 -101）
+> 5. **`97118d6 chore(M5): normalize W8 patch evidence whitespace`**（A0 W8 拣入 patch 空白规范化：3 份 W8 patch 文件空白整理）
+>
+> **W8 reconciliation 自检 PASS 清单**（A1 W9 拣入前必检）：
+> - [x] **A5 `CredentialLeak` 错误体脱敏**（94e763e 关闭 F-W8-1 critical · Display 不 clone secret）
+> - [x] **A6 `npm run build` PASS**（4d7be97 关闭 F-W6-2 UI 编译失败）
+> - [x] **A8 graph UI 41 断言 PASS**（4d7be97 关闭 F-W6-1 graph-ui 缺断言）
+> - [x] **A9 `check-plugin-policy.py` ACTIVE=6**（W7 + W8 累计；plugin install/enable/delete/download 仍缺）
+> - [x] **A11 verification delta 功能性 GREEN**（a840fcb 关闭 W7-1/W7-2/W7-3 配方未消 = 已消）
+> - [x] **A3 MCP policy phase debt 关闭**（94e763e 关闭 DEBT-44；ACTIVE=8 PENDING=0）
+> - [x] **cargo fmt --all**（4d7be97 修 W7-2 8 处未格式化）
+> - [x] **patch whitespace normalize**（97118d6 修 W7-3 patch 空白）
+> - [x] **build metrics W8 实测 21.07% ≤ 22% PASS**（IF-2 W8 关闭）
+> - [x] **cargo_warnings delta = 0**（PluginCapability unused import 已删）
+> - [x] **pre-merge ALL_PASS**（A11 W8 verification delta 确认）
+> - [x] **A1 W7 + W8 reconciliation 整包 20 文件合并拣入**（4d7be97 关闭 DEBT-42）
+> - [x] **A3 local commit boundary 已由 A0 94e763e 解禁**（A3 仍 NO_NEW_RMCP）
+>
+> **W8 残留债挂账（[W8 verification scope] 段已收）**：
+> - **DEBT-43**（DRY-F1 残留扩大 = SENSITIVE_KEY_NAMES 双份 + 图谱容量常量三处拷贝）→ A2 W9 review 必填；A2 W9 抽 `domain.rs` 单源
+> - **DEBT-46~51**（A5/A6/A7/A8/A9/A10 W8 必批闭环项）→ A0 W8 拣入期已通过 4d7be97 + 94e763e + a840fcb 闭环
+> - **DEBT-12**（plugin install/enable/delete/download 仍缺）→ 后续 wave，非 W8 必消
+> - **DEBT-22**（build metrics 21% 阈值 IF-2）→ A0 94e763e 后改 22%，W9 阈值不变
+> - **DEBT-04**（plugin UI 仍 0% ACTIVE）→ A19 W9+ 派发
+> - **DEBT-23~26**（终端 M3 挂账）→ 非 M5 范畴
+> - **DEBT-31~33**（A7 graph 桥接 A3/MCP 阻塞）→ A3 解禁后可推 M5-2.b 卡
+
+---
+
+## [W9 verification scope · 2026-09-07 14:30 CST] W9 验证范围（Runtime-Free Polish Dispatch · 11 lane 全部活跃 · A11 W9 final verification matrix · build metrics 阈值 22%）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L175-210（M5-W9 Runtime-Free Polish Dispatch）+ L7（*`Each lane 整包 deliver patch+checkpoint; only A0 pushes`*）。
+>
+> **A11 W9 final verification matrix**（vs W8 = functional GREEN；W9 = 最终验收 matrix）：
+
+| FAC | 子卡 | W9 final AC | 状态 | 验证命令 / 文件 | 挂账 / 备注 |
+|-----|------|------------|------|----------------|------------|
+| **FAC-1** | M5-1.a core workspace split | W5 `5f92ece` 前已 PASS | **PASS** | `cargo test -p mvp-browser-os-v3` 全部 workspace 单元测试 + `check-core-boundary.py --self-test` PASS | 无挂账 |
+| **FAC-1.b** | M5-1.b seam trait injection + b extract | **W9 待 A2 review note 必填** | DEBT | A2 W9 review note 路径（`logs/assist/A2-M5-W9-*.md`）+ A2 v3 prework §13 domain.rs 提案 + A1 W9 reconciliation 标注 | W9 收口；DEBT-03 |
+| **FAC-2** | M5-2 RMCP/MCP policy | **W8 拣入 `94e763e` 关闭 MCP policy phase debt** | **ACTIVE · 8 MCP_* 政策码 + 0 PENDING**（W9 = POLICY/REVIEW ONLY + M5-2.b 卡预备；**不**实施 rmcp server/listener/network）| `cargo test mcp` 3/3 PASS + `check-mcp-policy.py --self-test` ACTIVE=8 PENDING=0 + `--expect-current-gaps` gate PASS | FAC-2.MCP_NO_RMCP_SERVER 验证 + FAC-2.MCP_BRIDGE_READONLY 维持 |
+| **FAC-3** | M5-3 A2A bidir agent_kv | W4 `1610939` 拣入 + W5/W6/W7 review + W8 A4 复审 | **PASS · 5 reviews** | 5 份 W4/W5/W6/W7/W8 assist（PENDING 0）| 无挂账 |
+| **FAC-4** | M5-4 agent/skill runtime | W4 `1610939` 拣入 + W5/W6/W7 review + **W8 A5 `CredentialLeak` Display 脱敏** | **PASS · 4 reviews** | 4 份 W5/W6/W7/W8 assist + `security_policy.rs:118-120` Display 不 clone secret | W9 A5 hardening 收口（redacted validation errors + frontend parse/permission preview 边界 case 测试）|
+| **FAC-5** | M5-5 agent/skill commands | W4 `1610939` 拣入 + W5/W6/W7 review + **W8 A5 `CredentialLeak` Display 脱敏** | **PASS · 4 reviews** | 同 FAC-4 | W9 A5 hardening 收口 |
+| **FAC-6** | M5-6 agent/skill UI | W5 `f99d2eb` 拣入 UI logic + panel shell + W6 UI consistency review + W7 UI wiring note + **W8 A6 `npm run build` PASS + 79 agent-skill UI logic 断言** | **PASS · 3 reviews · W8 polished** | `scripts/check-agent-skill-ui-logic.mjs` 79 断言 + W6 `add0609` + W7 `a29b796` UI wiring + W8 polish | W9 A6 UI LOGIC 收口（确定性 empty/error/loading + 无 secret 文本 echo + bounded preview 渲染）|
+| **FAC-7** | M5-7 graph model extract | W5 `4b438ef` 拣入 graph.rs + DTO + 7 ACTIVE 码 + W6 落地 + W7 A1 F1 订正 | **PASS** | `cargo test graph` 9/9 + `check-graph-policy.py --self-test` PASS(ACTIVE=7) | W9 A7 GRAPH CONTRACT DOCS ONLY（图谱桥契约终稿，runtime-free 与 blocked backend runtime 分离）|
+| **FAC-8** | M5-8 graph store query | W5 `4b438ef` 拣入 store + bounded query | **PASS** | 同 FAC-7 | 同 FAC-7 |
+| **FAC-9** | M5-9 graph UI + agent consume | W6 `5f92ece` 拣入 4 vue + store + utils + 193 行 UI logic + W7 A1 [W7 patched] F1 订正 + **W8 A8 graph UI polish 4 vue + 41 断言** | **PASS · W7 F1 patched · W8 polished** | `scripts/check-graph-ui-logic.mjs` 41/41 + A1 W7 [W7 patched] 段 4 字段白名单 + W8 A8 polish | W9 A8 GRAPH UI SMALL 收口（filter/search/layout 确定性 + 保留 bounded arrays + 改进 no-backend/read-only 状态）|
+| **FAC-10** | M5-10 plugin manifest lifecycle | W6 `5f92ece` 拣入 plugin.rs + domain.rs + check-plugin-policy.py 6 ACTIVE 码 + W7 review + W8 A9 policy review | **PASS · W8 reviewed** | `check-plugin-policy.py --self-test` ALL_PASS(ACTIVE=6) | W9 A9 PLUGIN REVIEW ONLY（manifest/lifecycle 维持 pure + 确认 install/enable/delete/download 仍缺）|
+| **FAC-11** | M5-11 plugin commands isolation | W6 `5f92ece` 拣入 5 stub + ACL stub + audit key_hash_only + W7 review + W8 A9 policy review | **PASS (stub) · runtime DEBT · W8 reviewed** | 5 stub 维持 `Err("not-implemented-in-W6")` | DEBT-04；W9 A9 PLUGIN REVIEW 维持 stub 错误结构 |
+| **FAC-12** | M5-12 plugin UI | **DEBT · W10+ A19 派发**（plugin 列表 / 详情 / 安装向导 / 启用停用 / 审计查询 / 权限预览 6 项）| **DEBT · W9 A19 仍 SUPPORT DOCS ONLY** | — | W10+ A19 派发；DEBT-04 |
+| **FAC-13 (W9 new)** | build metrics 22% threshold | **W8 实测 21.07% ≤ 22% PASS** | **PASS · W9 阈值不变** | `scripts/measure-build-metrics.sh` + `M5-14-debt-ledger.md` §10 IF-2 | W9 22% 阈值复检必跑 + cargo_warnings delta = 0 |
+| **FAC-14 (W9 new)** | A11 final verification matrix | **本卡 [W9 verification scope] 段** | **ACTIVE · 14 FAC · 1 DEBT（FAC-1.b M5-1.b）** | 本卡 14 FAC 矩阵 | A11 W9 final verification delta 必填（`logs/checkpoints/A11-M5-W9-*.md`）|
+
+> **W9 FAIL_ACTION**（A11 W9 复跑红线 · 沿用 W8 FAIL_ACTION + 5 条 W9 新增红线）：
+
+| 失败项 | 失败行动 |
+|--------|----------|
+| build metrics 22% 阈值回归 | 阻断合入；定位无谓依赖 / dead_code / 大型 cargo 警告源头 |
+| cargo_warnings delta > 0 | 阻断合入；`cargo build 2>&1` 末尾 `--message-format=json` 拉真实告警数对比 |
+| A3/A5 W9 实施期引入 mcp_* runtime / rmcp server / listener / network | 阻断合入；**A3 W9 = POLICY/REVIEW ONLY · A5 W9 = Agent/Skill read-only hardening（不实施 mcp_* / rmcp / network）**；`grep rmcp / listener / TcpListener` 必扫 |
+| A6 W9 实施期引入视觉重设计 / 接 live command 除非 bridge functions 已存在 | 阻断合入；**A6 W9 = UI LOGIC ONLY** |
+| A7/A8 W9 实施期引入后端 graph command / graph runtime | 阻断合入；**A7 W9 = GRAPH CONTRACT DOCS ONLY · A8 W9 = GRAPH UI SMALL** |
+| A9 W9 实施期引入 plugin runtime / install / enable / delete / download | 阻断合入；**A9 W9 = PLUGIN REVIEW ONLY** |
+| A10 W9 实施期引入 security-related runtime | 阻断合入；**A10 W9 = SECURITY FINAL REVIEW**（仅 fixture / docs）|
+| Token / cookie / Authorization / body / prompt-secret 落 audit / log / 持久化 / checkpoint / 前端 | 阻断合入；A1 W9 整包 / A11 W9 delta 必扫敏感面 |
+| FAC-1.b M5-1.b seam DEBT 未消 | 阻断合入；A2 W9 review note 必填 |
+
+> **A11 W9 delta 必标字段**：exact commands run / PASS-FAIL per lane（11 lane）/ pre-merge result / build metrics before vs after（21.07% vs 22% gate）/ cargo_warnings before vs after（must be 0 delta）/ A3/A5/A6/A7/A8/A9 W9 实施期合规（按 W9 hard stops）/ 残留债（DEBT-04 / DEBT-12 / DEBT-22 / DEBT-23~26 / DEBT-31~33 等）/ A0 可否在 W9 拣入期推 master / FAC-1.b M5-1.b 收口状态。
 
 ---
 

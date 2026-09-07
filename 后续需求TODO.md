@@ -1,4 +1,6 @@
+> A0 update 2026-09-07 16:00 CST: W9 focused validation green (Agent/Skill 26, MCP 9, Plugin 10, UI logic 99/43, npm build PASS). NEXT=`M5-W10` controlled runtime prep; only A3 may prepare feature-gated MCP stdio shell, all plugin/agent execution runtime remains locked.
 > A0 update 2026-09-07 14:30 CST: W8 focused validation passed after A0 fixes (CredentialLeak redaction, cargo fmt, A3 patch whitespace). Build metrics accepted at 21.07% <= 22%, cargo warnings unchanged. NEXT=`M5-W9` runtime-free polish and final verification; no MCP/plugin/skill runtime expansion.
+> A1 update 2026-09-07 14:30 CST: Lane A1 W9 reconciliation整包已开：M5-0/9/10/11/12/13/14 头部 + [W8 reconciliation] 段 + [W9 active]/[W9 verification scope] 段 + 3 份主文档 W9 update 行 + A1 W9 checkpoint + patch 已就位（工作树留待 A0 拣入）。
 > A0 update 2026-09-07 10:05 CST: A3 W7 MCP read-only bridge focused checks PASS except old `check-mcp-policy.py --expect-pending` phase debt; NEXT=`M5-W8` full-lane follow-up, A3 assigned policy-fix-only and all lanes may continue by board.
 > A0 update 2026-09-07 09:45 CST: W7 non-A3 focused checks PASS; NEXT=`M5-W8` excluding A3. A3 local commit exists but is held out of this wave; do not dispatch A3 until A0 resolves history/push boundary.
 # 后续需求 TODO 列表

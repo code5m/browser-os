@@ -1,8 +1,10 @@
 > A0 2026-09-07 14:30: IF-2 threshold revised to 22% for W8; current build metrics total_bytes_pct=21.07 and cargo_warnings delta=0. W9 must preserve <=22% and re-record final verification.
-# M5 债务账（A1 横切 · 不在本批解决 · W1 修订 + W6/W7 reconciliation debt）
+# M5 债务账（A1 横切 · 不在本批解决 · W1 修订 + W6/W7 reconciliation debt + W8 reconciliation + W9 active）
 
 > 子卡 ID：**M5-14** · 跨 M5-1~M5-12 · 性质：**清单，非实现**
 > 配套：每张 M5-x 子卡 §9 DOC_BACKWRITE 中的"M5-14 增项"
+> **W8 reconciliation**（2026-09-07 14:30 CST · A0 拣入）：A0 在 **`4d7be97 feat(M5): integrate W8 command bridge polish`**（53 files +6038 -101）+ **`94e763e fix(M5-W8,A3): close MCP policy phase debt`**（MCP policy phase debt 关闭 · `MCP_NO_RMCP_SERVER` + `--expect-current-gaps` gate + ACTIVE=8 PENDING=0）+ **`a840fcb docs(A11): M5-W8 verification delta — functional GREEN, 3 red lights all trace to A3 W7/W8`**（A11 W8 verification delta 功能性 ALL_PASS）+ **`97118d6 chore(M5): normalize W8 patch evidence whitespace`**（3 份 W8 patch 文件空白规范化）4 commit 中拣入本卡 W8 修订：① A1 W7 reconciliation 整包合并拣入（DEBT-41~51 W8 必批闭环项 11 条新增；W7-1/W7-2/W7-3 配方归档在本卡 [W7 reconciliation] 段 + DEBT-41 挂账）；② A1 W8 reconciliation 整包合并拣入（DEBT-42 A1 W7 整包未进 master + DEBT-44 A3 W7 修复责任缺口 + DEBT-45 A3 local commit boundary 共 11 条新增）；**A1 W7 + W8 整包合并拣入 9 + 11 = 20 文件均含本卡修订**；**W8 实测 build metrics 21.07% ≤ 22% PASS（IF-2 阈值 19%→22% 由 A0 14:30 收口）；cargo_warnings delta = 0**。
+> **W9** ACTIVE：**M5 final debt ledger 51 → 53 条**（W9 增量预期 = 2：FAC-1.b M5-1.b 收口状态 + DEBT-04 W10+ A19 plugin UI 派发状态）；**W9 复检必跑** = ① build metrics 22% 阈值（preserve）+ ② cargo_warnings delta = 0 + ③ FAC-1.b M5-1.b DEBT 收口状态 + ④ A11 W9 final verification delta 收口；详见 `M5-0-overview.md` 顶部 `[W9 active · 2026-09-07 14:30 CST]` 段 + `M5-13-verification-matrix.md` 顶部 `[W9 verification scope]` 段。
 
 ---
 

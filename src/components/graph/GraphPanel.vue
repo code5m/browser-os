@@ -31,7 +31,10 @@ onMounted(() => {
 
     <GraphFilter />
 
-    <div v-if="store.state.state === 'empty'" class="state-block empty-state" role="status">{{ store.state.message }}</div>
+    <div v-if="store.state.state === 'empty'" class="state-block" :class="store.readOnly ? 'readonly-state' : 'empty-state'" role="status">
+      <template v-if="store.readOnly">只读模式：后端 graph 命令尚未就绪，面板为只读壳，不发起任何后端调用。</template>
+      <template v-else>{{ store.state.message }}</template>
+    </div>
     <div v-else-if="store.state.state === 'error'" class="state-block error-state" role="alert">{{ store.state.message }}</div>
     <div v-else class="body">
       <GraphViewer class="viewer-col" />
@@ -53,6 +56,7 @@ onMounted(() => {
 .banner-error { background: #fff1f0; color: #cf1322; }
 .banner-cap { background: #f9f0ff; color: #722ed1; }
 .empty-state { padding: 24px; color: #999; text-align: center; }
+.readonly-state { padding: 24px; color: #ad6800; text-align: center; background: #fff7e6; border-radius: 8px; }
 .error-state { padding: 24px; color: #cf1322; text-align: center; }
 .state-block { margin: 8px; }
 .body { flex: 1; display: flex; min-height: 0; }

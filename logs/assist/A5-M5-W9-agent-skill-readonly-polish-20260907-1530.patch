@@ -1,0 +1,97 @@
+diff --git a/src-tauri/src/bridge.rs b/src-tauri/src/bridge.rs
+index 0dbf427..667fcf2 100644
+--- a/src-tauri/src/bridge.rs
++++ b/src-tauri/src/bridge.rs
+@@ -6466,6 +6466,92 @@ mod agent_skill_bridge_tests {
+         ));
+         assert!(p.capabilities.is_empty());
+     }
++
++    // ---- M5-W9 聚焦测试：脱敏校验错误 + 解析/权限预览边界（A4 W8 F-W8-1 闭环） ----
++
++    #[test]
++    fn credential_leak_display_is_redacted() {
++        // A0 修复 CredentialLeak Display 后必须不再回显密文
++        let e = crate::security_policy::PolicyError::CredentialLeak("sk-abc123XYZ".into());
++        let s = format!("{e}");
++        assert!(!s.contains("sk-abc123XYZ"), "Display 不得回显密文: {s}");
++        assert!(s.contains("<redacted>"), "Display 必须脱敏: {s}");
++    }
++
++    #[test]
++    fn agent_validate_redacts_credential_leak() {
++        let mut v: serde_json::Value = serde_json::from_str(&good_agent_json()).unwrap();
++        v["system_prompt"] =
++            serde_json::json!("system prompt contains sk-abc123XYZsecret token here");
++        let r = agent_validate_inner(&v.to_string());
++        assert!(!r.valid, "credential leak 必须使校验失败");
++        let msg = r.errors.concat();
++        assert!(!msg.contains("sk-abc123XYZ"), "校验错误不得回显密文: {msg}");
++        assert!(
++            msg.contains("<redacted>") || msg.contains("凭据") || msg.contains("密钥"),
++            "必须指示泄露但不含密文: {msg}"
++        );
++    }
++
++    #[test]
++    fn skill_validate_redacts_credential_leak() {
++        let mut v: serde_json::Value = serde_json::from_str(&good_skill_json()).unwrap();
++        v["description"] = serde_json::json!("desc with sk-abc123XYZsecret in it");
++        let r = skill_validate_inner(&v.to_string());
++        assert!(!r.valid, "credential leak 必须使校验失败");
++        let msg = r.errors.concat();
++        assert!(!msg.contains("sk-abc123XYZ"), "校验错误不得回显密文: {msg}");
++        assert!(
++            msg.contains("<redacted>") || msg.contains("凭据") || msg.contains("密钥"),
++            "必须指示泄露但不含密文: {msg}"
++        );
++    }
++
++    #[test]
++    fn agent_permission_preview_gate_is_confirm() {
++        // Agent 默认需确认（A2A 委派场景），权限预览闸门恒为 Confirm
++        let p = agent_permission_preview_inner(&good_agent_json()).unwrap();
++        assert_eq!(p.gate, AclLevel::Confirm);
++    }
++
++    #[test]
++    fn skill_permission_preview_gate_maps_acl() {
++        for (acl, expected) in [
++            ("safe", AclLevel::Safe),
++            ("confirm", AclLevel::Confirm),
++            ("dangerous", AclLevel::Dangerous),
++        ] {
++            let mut v: serde_json::Value = serde_json::from_str(&good_skill_json()).unwrap();
++            v["acl"] = serde_json::json!(acl);
++            let p = skill_permission_preview_inner(&v.to_string()).unwrap();
++            assert_eq!(p.gate, expected, "acl={acl} 映射错误");
++        }
++    }
++
++    #[test]
++    fn skill_permission_preview_reflects_declared_capabilities() {
++        // 预览能力来自定义声明的 capabilities（上游 validate 已按白名单校验），
++        // 这里确认预览原样透出，不臆造、不遗漏。
++        let mut v: serde_json::Value = serde_json::from_str(&good_skill_json()).unwrap();
++        v["capabilities"] = serde_json::json!([{"id": "cap_a"}, {"id": "cap_b"}]);
++        let p = skill_permission_preview_inner(&v.to_string()).unwrap();
++        assert_eq!(
++            p.capabilities,
++            vec!["cap_a".to_string(), "cap_b".to_string()]
++        );
++    }
++
++    #[test]
++    fn agent_parse_inner_rejects_empty() {
++        assert!(agent_parse_inner("").is_err());
++        assert!(agent_parse_inner("   ").is_err());
++    }
++
++    #[test]
++    fn skill_parse_inner_rejects_empty() {
++        assert!(skill_parse_inner("").is_err());
++        assert!(skill_parse_inner("   ").is_err());
++    }
+ }
+
+ // ====== M5-2 MCP 只读注册表/策略桥命令（W7）======

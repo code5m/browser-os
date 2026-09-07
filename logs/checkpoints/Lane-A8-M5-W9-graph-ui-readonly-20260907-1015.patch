@@ -1,0 +1,79 @@
+diff --git a/scripts/check-graph-ui-logic.mjs b/scripts/check-graph-ui-logic.mjs
+index f834d4a..9037fdd 100644
+--- a/scripts/check-graph-ui-logic.mjs
++++ b/scripts/check-graph-ui-logic.mjs
+@@ -187,6 +187,16 @@ eq(
+   graphUi.panelStateGraph({ loading: false, count: 5, error: null, backendReady: true }).state,
+   "ready",
+ );
++eq(
++  "panelStateGraph backendReady=true 空态文案",
++  graphUi.panelStateGraph({ loading: false, count: 0, error: null, backendReady: true }).message,
++  "暂无图谱数据。点击「刷新」从后端载入。",
++);
++ok(
++  "panelStateGraph 两态文案可区分(就绪空≠未就绪只读)",
++  graphUi.panelStateGraph({ loading: false, count: 0, error: null, backendReady: true }).message !==
++    graphUi.panelStateGraph({ loading: false, count: 0, error: null, backendReady: false }).message,
++);
+
+ // ---- 容量健康度（超量态：ok/near/over，确定性）----
+ eq("capacityState ok(50/200)", graphUi.capacityState(graphUi.estimateCapacity(50, 200)).level, "ok");
+diff --git a/src/components/graph/GraphPanel.vue b/src/components/graph/GraphPanel.vue
+index 486a480..cf41116 100644
+--- a/src/components/graph/GraphPanel.vue
++++ b/src/components/graph/GraphPanel.vue
+@@ -31,7 +31,10 @@ onMounted(() => {
+
+     <GraphFilter />
+
+-    <div v-if="store.state.state === 'empty'" class="state-block empty-state" role="status">{{ store.state.message }}</div>
++    <div v-if="store.state.state === 'empty'" class="state-block" :class="store.readOnly ? 'readonly-state' : 'empty-state'" role="status">
++      <template v-if="store.readOnly">只读模式：后端 graph 命令尚未就绪，面板为只读壳，不发起任何后端调用。</template>
++      <template v-else>{{ store.state.message }}</template>
++    </div>
+     <div v-else-if="store.state.state === 'error'" class="state-block error-state" role="alert">{{ store.state.message }}</div>
+     <div v-else class="body">
+       <GraphViewer class="viewer-col" />
+@@ -53,6 +56,7 @@ onMounted(() => {
+ .banner-error { background: #fff1f0; color: #cf1322; }
+ .banner-cap { background: #f9f0ff; color: #722ed1; }
+ .empty-state { padding: 24px; color: #999; text-align: center; }
++.readonly-state { padding: 24px; color: #ad6800; text-align: center; background: #fff7e6; border-radius: 8px; }
+ .error-state { padding: 24px; color: #cf1322; text-align: center; }
+ .state-block { margin: 8px; }
+ .body { flex: 1; display: flex; min-height: 0; }
+diff --git a/src/stores/useGraphStore.ts b/src/stores/useGraphStore.ts
+index 57cf5de..cf534ff 100644
+--- a/src/stores/useGraphStore.ts
++++ b/src/stores/useGraphStore.ts
+@@ -48,6 +48,8 @@ export const useGraphStore = defineStore("graph", () => {
+
+   const capacity = computed(() => estimateCapacity(nodes.value.size, edges.value.size));
+   const capState = computed(() => capacityState(capacity.value));
++  // 只读壳标志：后端 graph 命令未落地时为 true（预期态，非失败）。
++  const readOnly = computed(() => !backendReady.value);
+
+   // 当前选择的可读播报（供 GraphViewer/详情区 aria-live 公告，确定性拼接）
+   const selectionText = computed(() => {
+@@ -81,10 +83,10 @@ export const useGraphStore = defineStore("graph", () => {
+   );
+
+   /// 后端未就绪时统一拦截：**一条 invoke 都不发**，避免对不存在的命令反复报错。
++  /// 注意：不写入 `error`——"未就绪"是预期态（只读壳），不是失败；真正的错误才进 `error`，
++  /// 以免把"尚未实现"误报成红色错误横幅（W9 修正：与 readOnly 标志分流）。
+   function guard(): boolean {
+     if (backendReady.value) return true;
+-    error.value =
+-      "后端 graph 命令（graph_query / graph_build / graph_neighbors / graph_stats / graph_export 等）尚未就绪（A7 W5 仅落地 DTO + 有界存储，命令待后续 wave），面板为只读壳";
+     return false;
+   }
+   function fail(e: unknown): void {
+@@ -137,6 +139,7 @@ export const useGraphStore = defineStore("graph", () => {
+     loading,
+     error,
+     backendReady,
++    readOnly,
+     filter,
+     nodeList,
+     edgeList,

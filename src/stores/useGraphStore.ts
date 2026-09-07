@@ -48,6 +48,8 @@ export const useGraphStore = defineStore("graph", () => {
 
   const capacity = computed(() => estimateCapacity(nodes.value.size, edges.value.size));
   const capState = computed(() => capacityState(capacity.value));
+  // 只读壳标志：后端 graph 命令未落地时为 true（预期态，非失败）。
+  const readOnly = computed(() => !backendReady.value);
 
   // 当前选择的可读播报（供 GraphViewer/详情区 aria-live 公告，确定性拼接）
   const selectionText = computed(() => {
@@ -81,10 +83,10 @@ export const useGraphStore = defineStore("graph", () => {
   );
 
   /// 后端未就绪时统一拦截：**一条 invoke 都不发**，避免对不存在的命令反复报错。
+  /// 注意：不写入 `error`——"未就绪"是预期态（只读壳），不是失败；真正的错误才进 `error`，
+  /// 以免把"尚未实现"误报成红色错误横幅（W9 修正：与 readOnly 标志分流）。
   function guard(): boolean {
     if (backendReady.value) return true;
-    error.value =
-      "后端 graph 命令（graph_query / graph_build / graph_neighbors / graph_stats / graph_export 等）尚未就绪（A7 W5 仅落地 DTO + 有界存储，命令待后续 wave），面板为只读壳";
     return false;
   }
   function fail(e: unknown): void {
@@ -137,6 +139,7 @@ export const useGraphStore = defineStore("graph", () => {
     loading,
     error,
     backendReady,
+    readOnly,
     filter,
     nodeList,
     edgeList,

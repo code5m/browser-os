@@ -187,6 +187,16 @@ eq(
   graphUi.panelStateGraph({ loading: false, count: 5, error: null, backendReady: true }).state,
   "ready",
 );
+eq(
+  "panelStateGraph backendReady=true 空态文案",
+  graphUi.panelStateGraph({ loading: false, count: 0, error: null, backendReady: true }).message,
+  "暂无图谱数据。点击「刷新」从后端载入。",
+);
+ok(
+  "panelStateGraph 两态文案可区分(就绪空≠未就绪只读)",
+  graphUi.panelStateGraph({ loading: false, count: 0, error: null, backendReady: true }).message !==
+    graphUi.panelStateGraph({ loading: false, count: 0, error: null, backendReady: false }).message,
+);
 
 // ---- 容量健康度（超量态：ok/near/over，确定性）----
 eq("capacityState ok(50/200)", graphUi.capacityState(graphUi.estimateCapacity(50, 200)).level, "ok");

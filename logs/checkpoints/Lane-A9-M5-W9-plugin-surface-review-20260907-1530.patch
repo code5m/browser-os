@@ -1,0 +1,224 @@
+diff --git a/logs/assist/A9-M5-W9-plugin-surface-review-20260907-1530.md b/logs/assist/A9-M5-W9-plugin-surface-review-20260907-1530.md
+new file mode 100644
+index 0000000..0f0e316
+--- /dev/null
++++ b/logs/assist/A9-M5-W9-plugin-surface-review-20260907-1530.md
+@@ -0,0 +1,147 @@
++# A9 · M5-W9 插件命令面复核（PLUGIN REVIEW ONLY）
++
++> 生成：2026-09-07 15:30 CST · Lane A9（M5-W9 · PLUGIN REVIEW ONLY）
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W9 Runtime-Free Polish Dispatch → A9：**PLUGIN REVIEW ONLY** — Plugin surface review after W8: verify manifest/lifecycle remains pure and real install/enable/delete/download commands are still absent. Do not implement plugin runtime. Deliverable: `logs/assist/A9-M5-W9-*.md`（插件裁决 + 下一步运行时阻塞点），optional policy-only patch.（行 199）
++> BASE：`ef87401`（HEAD：`docs(M5-W9,A3): MCP policy current-phase kept green + M5-2.b rmcp/server forward card`；已 `git pull --ff-only` 同步；W9 事实：MCP policy GREEN(ACTIVE=8/PENDING=0)、A0 已脱敏 `CredentialLeak` Display、Agent/Skill UI 79 断言、Graph UI 41 断言、`npm run build` 通过、build metrics 21.07 ≤ 22%）
++> 性质：**只读复核**，未改任何产品代码（含 `plugin.rs`）。W9 硬停明确「no plugin install/enable/delete/download runtime」。
++
++---
++
++## 0. 一句话结论
++
++W8 集成后插件命令面**保持零命令、只读纯策略切片，无回归**：全仓扫描无 install/enable/disable/uninstall/delete/download 运行时；`plugin.rs` 生命周期状态机（`can_transition`/`transition`）仍为纯函数（无文件 I/O、`std::process`）；`check-plugin-policy.py` self-test ALL_PASS / default PASS（1 ACTIVE + 5 PENDING）；`CredentialLeak` Display 已脱敏（`<redacted>`，满足 W9 隐私事实）。W7 回归修复已由 A0 在 `4d7be97` 集成（`cargo test plugin` 11 passed）。W9 无插件命令/运行时混入。附**下一步运行时阻塞点清单 B1~B9**（供 A11 终验与 A0 开 runtime wave 规划）。
++
++---
++
++## 1. W9 调度对齐（A9 角色）
++
++- W9 = **M5-W9 Runtime-Free Polish**：在任意 MCP server / plugin runtime / skill exec wave 之前，完成 runtime-free 打磨、文档与终验。
++- A9 = **PLUGIN REVIEW ONLY**：W8 之后复核插件命令面；不得实现插件运行时；仅文档/可选 policy-only 补丁（无 concrete failure，故本交付不附 policy 补丁）。
++- W9 硬停（行 205-209）：no plugin install/enable/delete/download runtime、no MCP server/rmcp、no skill exec、no network；命令须 read-only + source/ACL/桥/类型/策略/测试原子；no secret 日志/审计/前端状态/checkpoint/错误串；build metrics ≤ 22%、cargo warnings 不增；仅 A0 push。
++
++---
++
++## 2. 审查对象与范围
++
++- 当前 mainline (`ef87401`) 已集成 W8 命令桥打磨（`4d7be97`）+ A3 MCP policy 收口（`94e763e`/`ef87401`）。W8 集成 commit `4d7be97` **包含我 W7 的 `PluginCapability` 导入修复**（`plugin.rs:274` 测试模块导入现含 `PluginCapability`），`git log -- plugin.rs` 末条为 `4d7be97`。
++- 审查方法：静态扫描 + 门禁重跑 + `CredentialLeak` Display 脱敏复核（只读，未改业务逻辑）。对照 W9 A9 关注点：① manifest/lifecycle 保持纯；② 真实 install/enable/delete/download 命令仍缺位。
++
++---
++
++## 3. 审查发现（逐项）
++
++### 3.1 manifest/lifecycle 保持纯（PASS）
++- `validate_plugin_manifest`（`plugin.rs:83`）：纯 schema 边界 + 凭据双扫 + 形态③入口 + 能力白名单 + 哈希/签名结构；**无文件 I/O、无真验签、不联网**。
++- `can_transition`（`plugin.rs:181`）：纯 `matches!` 枚举对，无副作用。
++- `transition`（`plugin.rs:202`）：合法返回 `next`，否则 `Err(...)`；**无文件 I/O、`std::process`、无磁盘/网络**。
++- W8 集成（`4d7be97`）未改 `plugin.rs` 业务逻辑（`git show 4d7be97 --stat` 仅含命令桥，无 plugin 改动），生命周期纯函数性未受 W8 影响。
++
++### 3.2 真实 install/enable/delete/download 命令仍缺位（PASS）
++| 检查 | 位置 | 结果 |
++|---|---|---|
++| 运行时关键字 | 全仓 `plugin_install`/`plugin_enable`/`plugin_disable`/`plugin_uninstall`/`plugin_delete`/`plugin_download`/`plugins_dir` | 仅文档注释（`plugin.rs:12` 红线；`domain.rs:2124` 注明「解包/验签/bridge 由运行时 lane 完成」），**无运行时实现** |
++| ACL 条目 | `src-tauri/permissions/default-commands.toml` 搜 `plugin` | **0 命中** |
++| 命令注册 | `src-tauri/src/main.rs` 搜 `plugin` | 仅 `mod plugin;` + 框架依赖 `tauri_plugin_browser_tabs`/`tauri_plugin_single_instance`，无插件系统命令 |
++| 桥接处理器 | `src-tauri/src/bridge.rs` 搜 `plugin` | 全为 `tauri_plugin_browser_tabs`，无插件桥接命令 |
++| 危险构造 | `plugin.rs` 搜 `std::process`/`Command::new`/`std::fs`/`unzip`/`tar::`/`zip::`/`#[tauri::command]`/`reqwest`/`tokio::net`/`std::net` | **0 命中** |
++
++→ 插件命令面为**零命令、只读纯策略切片**，W9 无命令/运行时混入，符合 W9 硬停。
++
++### 3.3 策略门禁（PASS）
++- `python3 scripts/check-plugin-policy.py --self-test` → `PLUGIN_SELF_TEST=ALL_PASS`（ACTIVE=1, PENDING=5）。
++- `python3 scripts/check-plugin-policy.py` → 默认扫描 [OK]×6，`PLUGIN_POLICY=PASS`。
++- 已接入 `pre-merge.sh`。
++
++### 3.4 隐私/脱敏复核（PASS，含建议）
++- `CredentialLeak` Display（`security_policy.rs:118-120`）已改为 `write!(f, "凭据/密钥泄露（禁止进入 Agent/Skill 定义）：<redacted>")`，**不回显 `_s`** → 满足 W9 事实「A0 已脱敏 `CredentialLeak` Display」。
++- 插件错误面 `bound_text` → `PolicyError::CredentialLeak(s.to_string())`（`plugin.rs:237`）经 Display 不再泄露 secret。
++- 建议（runtime wave 阻塞点 B6）：`CredentialLeak(String)` 变体载荷仍在内存（保留 `s`）；若 runtime wave 将 `PolicyError` 经 `Debug`（`{:?}`）或序列化为审计/前端状态，会泄露该载荷。须确保审计/日志/前端状态**只用 Display（`{}`）渲染，不用 Debug**，与 W9 硬停「no secret in logs/audit/frontend state/error strings」一致。
++
++### 3.5 与 W9 他 lane 边界（无交叉）
++- **A3（MCP policy）**：`ef87401` 仅 MCP policy，与插件命令面不交叉；插件仍 0 命令。
++- **A5（Agent/Skill 桥小改）**：改 `bridge.rs`/`agent.rs`/`skills.rs`/策略/前端，不触 `plugin.rs`/插件 DTO。
++- **A4（隐私复核）**：审查范畴，无插件产品代码改动。
++- **A6/A7/A8（UI/图谱）**：纯前端/图谱逻辑，不触插件后端。
++- 插件命令面在 W9 维持**零命令**；任何未来插件命令属运行时 lane（A18/A19），不在 W9 范围。
++
++---
++
++## 4. 下一步运行时阻塞点（exact next runtime blockers，供 A11 终验 / A0 开波规划）
++
++> W9 硬停明确禁止 plugin runtime；以下为「开 runtime wave（A18/A19）前必须就位的精确阻塞点」，非本 wave 交付。
++
++- **B1（原子命令包）**：18 只读 + 启用命令须原子接入——`default-commands.toml`(插 ACL 末条 `list_artifact_images` 前)、`bridge.rs`、`src/bridge.ts`、`src/types.ts`、`scripts/check-plugin-policy.py` 扩展 `PLUGIN_RUNTIME_GUARD`、单测，沿用 W6/W8 原子同包约束（单一 PR/补丁含全部）。
++- **B2（解包沙箱 + 真验签）**：`plugins_dir` 解包须沙箱化（无 `std::process`、无任意路径写），先校验 manifest `hash`(sha256) 与签名结构再落盘；当前 `verify_plugin_signature_structure` 仅结构，真 Ed25519 验签须在 runtime wave 实现（或显式接受「仅结构」风险并文档化，且 `PLUGIN_SIG_BYPASS` 门禁须同步收紧）。
++- **B3（capability 长度边界，F1）**：`validate_plugin_manifest` 对 `c.capability` 补 `≤ MAX_TEXT_FIELD_BYTES`，避免未验证 manifest 进入预览/错误路径（`UnknownCapability(id.clone())`）克隆超长串。
++- **B4（reason 边界，F2）**：若未来 `reason` 进裁决/持久化/审计，须先 `bound_text(c.reason, ..)` 以对齐其它文本字段口径（当前不进裁决、manifest 不持久化，无风险）。
++- **B5（能力真源收口）**：`PLUGIN_CAPABILITY_V1` 落 security_policy.rs、MCP 能力在 domain.rs（W4/W6 已记录碎片化）；runtime wave 前须收口到统一 `capability.rs`（A0 裁决），否则能力校验双真源风险。
++- **B6（错误序列化用 Display 非 Debug）**：见 §3.4，审计/日志/前端状态只用 Display 渲染，防 `CredentialLeak` 内存载荷泄露。
++- **B7（M5-12 UI 消费）**：随 B1 原子交付 A6/W8 风格 UI（空/错/加载态、bounded 预览、no secret echo）。
++- **B8（runtime 策略档）**：pre-merge 须增 `PLUGIN_RUNTIME_GUARD`（禁 `plugins_dir` 直写/禁 `std::process`/禁网络拉取）、`PLUGIN_MANIFEST_HASH_PINNED`（hash 须等于 entry 校验值）等，纳入 `check-plugin-policy.py` 默认扫描。
++- **B9（开波许可）**：runtime wave 须由 A0 显式新 dispatch 开启；W9 硬停仍禁，终验（A11 W9）须确认 21.07 ≤ 22%、cargo warnings 不增、pre-merge ALL_PASS 后方可放行。
++
++---
++
++## 5. 红线复核（承 W6/W7/W8 R9-1~R9-6，持续满足）
++
++| 红线 | 满足 | 证据 |
++|---|---|---|
++| R9-1 manifest 无 secret + 隐私双扫 | ✅ | `bound_text` 复用 `contains_credential_leak`；`check-plugin-policy.py` `PLUGIN_NO_SECRETS` OK |
++| R9-2 registry bounded | ✅ | 纯 DTO + `metadata` ≤ MAX_TEXT_FIELD_BYTES(64KiB)；无全局可变注册表 |
++| R9-3 能力白名单不含 agent_kv 读写/无路径穿越 | ✅ | `PLUGIN_CAPABILITY_V1` 空集合 fail-closed；入口 URL 仅 http(s)/tool:// |
++| R9-4 lifecycle 纯状态机无 install/exec | ✅ | `can_transition`/`transition` 纯函数，无 I/O/进程（W8 未改） |
++| R9-5 未来命令须原子 | （预留） | 见 B1/B8，W9 无新命令 |
++| R9-6 审计脱敏 | ✅ | 本切片无审计写入；`CredentialLeak` Display 已 `<redacted>`（见 B6 落实 Display-only） |
++
++---
++
++## 6. 验收（只读）
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++# W7 修复已集成：单测绿
++cargo test --manifest-path src-tauri/Cargo.toml plugin 2>&1 | tail -3   # 期望：test result: ok. 11 passed
++# 命令面零插件命令/运行时
++grep -rniE "plugin_install|plugin_enable|plugin_disable|plugin_uninstall|plugin_delete|plugin_download|plugins_dir" src-tauri/src/ src/   # 期望：仅文档注释
++grep -niE "plugin" src-tauri/permissions/default-commands.toml   # 期望：0 命中
++# 策略门禁
++python3 scripts/check-plugin-policy.py --self-test   # 期望：PLUGIN_SELF_TEST=ALL_PASS
++python3 scripts/check-plugin-policy.py               # 期望：PLUGIN_POLICY=PASS
++# 纯策略切片无危险构造
++grep -nE "std::process|Command::new|std::fs|unzip|tar::|zip::|#\[tauri::command\]" src-tauri/src/plugin.rs   # 期望：0 命中
++# 隐私：CredentialLeak 脱敏 Display
++grep -n "<redacted>" src-tauri/src/security_policy.rs   # 期望：命中 CredentialLeak Display
++```
++
++结果：单测 11 passed（W7 修复已集成）；命令面零插件命令/运行时；策略 self-test/default PASS；plugin.rs 无危险构造；`CredentialLeak` Display `<redacted>`。
++
++---
++
++## 7. Lane Output Template
++
++```text
++LANE=A9
++STATUS=PASS (PLUGIN REVIEW ONLY；无产品代码改动；含下一步运行时阻塞点 B1~B9)
++BASE=ef87401 (HEAD: docs(M5-W9,A3): MCP policy current-phase kept green + M5-2.b rmcp/server forward card)
++HEAD=logs/checkpoints/Lane-A9-M5-W9-plugin-surface-review-20260907-1530.patch
++FILES=logs/assist/A9-M5-W9-plugin-surface-review-20260907-1530.md,
++      logs/checkpoints/Lane-A9-M5-W9-plugin-surface-review-20260907-1530.md
++VERIFY=命令面零插件命令/运行时；cargo test plugin 11 passed（W7 修复已集成）；check-plugin-policy self-test/default PASS；CredentialLeak Display <redacted>
++CHECKPOINT=logs/checkpoints/Lane-A9-M5-W9-plugin-surface-review-20260907-1530.md
++MERGE_NOTES=见 §8
++NEXT=W9+ 运行时 lane (A18/A19)：须先就位 B1~B9（尤其 ACL 原子包/B2 解包沙箱/真验签/B6 Display-only）
++```
++
++## 8. MERGE_NOTES
++
++- **冲突**：无。本复核零产品代码改动（A9 W9 = review-only）；未触碰 W9 他 lane 文件（A1 `M5-0-overview.md`、A8 `useGraphStore.ts` 等）。
++- **W7 修复状态**：已由 A0 在 `4d7be97` 集成，`cargo test plugin` 11 passed，mainline 已绿；本 wave 无需再补丁。
++- **能力真源收口**：`PLUGIN_CAPABILITY_V1` 落 security_policy.rs（与 SKILL/AGENT 同文件），MCP 仍在 domain.rs（W4/W6 碎片化待收口，完整 `capability.rs` 交 A0 裁决，见 B5）。
++- **未 push**：仅交付审查笔记 + checkpoint + 补丁（仅含本 W9 两份文档），按 board Merge Rule 由 A0 集成推送。
++
++## 9. 交付索引
++
++- 审查笔记：`logs/assist/A9-M5-W9-plugin-surface-review-20260907-1530.md`（本文件）
++- 检查点：`logs/checkpoints/Lane-A9-M5-W9-plugin-surface-review-20260907-1530.md`
++- 补丁：`logs/checkpoints/Lane-A9-M5-W9-plugin-surface-review-20260907-1530.patch`（仅本 W9 两份文档）
++- A9 插件链：`W0(1100)→W1(1530+1630)→W3(1730)→W4(1820)→W5(1905)→W6(2330 策略切片)→W7(0900 命令面审查+回归修复)→W8(1300 策略审查·零产品代码)→W9(1530 复核·零产品代码·含运行时阻塞点)`。插件 manifest/lifecycle 始终为受编译+单测+策略门禁守护、命令面零命令的只读切片；运行时 lane A18/A19 须就位 B1~B9 后由 A0 新 dispatch 开启。
+diff --git a/logs/checkpoints/Lane-A9-M5-W9-plugin-surface-review-20260907-1530.md b/logs/checkpoints/Lane-A9-M5-W9-plugin-surface-review-20260907-1530.md
+new file mode 100644
+index 0000000..7cb1f64
+--- /dev/null
++++ b/logs/checkpoints/Lane-A9-M5-W9-plugin-surface-review-20260907-1530.md
+@@ -0,0 +1,65 @@
++# Lane A9 — M5-W9 插件命令面复核 Checkpoint（PLUGIN REVIEW ONLY）
++
++> 生成：2026-09-07 15:30 CST · Lane A9（M5-W9 · PLUGIN REVIEW ONLY）
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W9 Runtime-Free Polish Dispatch → A9（行 199）。W9 硬停：no plugin install/enable/delete/download runtime。
++> BASE：`ef87401`（HEAD：`docs(M5-W9,A3): MCP policy current-phase kept green + M5-2.b rmcp/server forward card`）
++
++```
++LANE=A9
++STATUS=PASS (PLUGIN REVIEW ONLY；零产品代码改动；含下一步运行时阻塞点 B1~B9)
++BASE=ef87401
++HEAD=logs/checkpoints/Lane-A9-M5-W9-plugin-surface-review-20260907-1530.patch
++FILES=logs/assist/A9-M5-W9-plugin-surface-review-20260907-1530.md,
++      logs/checkpoints/Lane-A9-M5-W9-plugin-surface-review-20260907-1530.md
++VERIFY=见 §Verify
++CHECKPOINT=logs/checkpoints/Lane-A9-M5-W9-plugin-surface-review-20260907-1530.md
++MERGE_NOTES=见下
++NEXT=W9+ 运行时 lane (A18/A19)：须先就位 B1~B9
++```
++
++## 复核结论（插件命令面 · W9，W8 之后）
++
++| W9 关注点 | 结果 | 证据 |
++|---|---|---|
++| ① manifest/lifecycle 保持纯 | PASS | `validate_plugin_manifest`/`can_transition`/`transition` 纯函数；W8 集成 `4d7be97` 未改 plugin 逻辑 |
++| ② 真实 install/enable/delete/download 命令仍缺位 | PASS | 全仓扫仅文档注释；`default-commands.toml` 0 命中；`plugin.rs` 0 危险构造 |
++| 策略门禁 | PASS | `check-plugin-policy.py` self-test ALL_PASS / default PASS（1 ACTIVE + 5 PENDING） |
++| 隐私（CredentialLeak 脱敏） | PASS | `security_policy.rs:118-120` Display `<redacted>`；`cargo test plugin` 11 passed（W7 修复已集成 `4d7be97`） |
++
++## 下一步运行时阻塞点（exact next runtime blockers）
++
++- **B1** 18 只读+启用命令原子包（ACL 末条前/bridge.rs/types.ts/policy/单测）
++- **B2** `plugins_dir` 解包沙箱 + 真 Ed25519 验签（当前仅结构）
++- **B3** `c.capability` 长度边界（F1，防未验证 manifest 克隆超长串）
++- **B4** `reason` 边界（F2，若未来进裁决/持久化/审计）
++- **B5** 能力真源收口（PLUGIN_CAPABILITY_V1 vs MCP 在 domain.rs → 统一 `capability.rs`）
++- **B6** 错误序列化用 Display 非 Debug（防 `CredentialLeak` 内存载荷泄露）
++- **B7** M5-12 UI 消费随 B1 原子交付
++- **B8** pre-merge 增 `PLUGIN_RUNTIME_GUARD`/`PLUGIN_MANIFEST_HASH_PINNED`
++- **B9** runtime wave 须 A0 显式新 dispatch 开启（W9 硬停仍禁）
++
++## Verify（只读）
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++cargo test --manifest-path src-tauri/Cargo.toml plugin 2>&1 | tail -3   # 期望：test result: ok. 11 passed
++grep -rniE "plugin_install|plugin_enable|plugin_disable|plugin_uninstall|plugin_delete|plugin_download|plugins_dir" src-tauri/src/ src/   # 期望：仅文档注释
++grep -niE "plugin" src-tauri/permissions/default-commands.toml   # 期望：0 命中
++python3 scripts/check-plugin-policy.py --self-test               # 期望：PLUGIN_SELF_TEST=ALL_PASS
++python3 scripts/check-plugin-policy.py                           # 期望：PLUGIN_POLICY=PASS
++grep -nE "std::process|Command::new|std::fs|unzip|tar::|zip::|#\[tauri::command\]" src-tauri/src/plugin.rs   # 期望：0 命中
++grep -n "<redacted>" src-tauri/src/security_policy.rs           # 期望：命中 CredentialLeak Display
++```
++
++## Merge Notes
++
++- **冲突**：无。A9 W9 零产品代码改动（review-only）；未触 W9 他 lane 文件。
++- **W7 修复状态**：已由 A0 在 `4d7be97` 集成，mainline 已绿；本 wave 无需补丁。
++- **能力真源**：`PLUGIN_CAPABILITY_V1` 落 security_policy.rs，MCP 在 domain.rs（W4/W6 碎片化待收口，完整 `capability.rs` 交 A0 裁决）。
++- 未 push（board Merge Rule：仅 A0 推送）。
++
++## FORBID 遵守（W9）
++
++- 仅新增审查笔记 + checkpoint；**未改任何产品代码**（含 `plugin.rs`）。
++- 插件命令面保持零命令、只读；无安装/卸载运行时、无下载/执行、无 secret 持久化、无新依赖。
++- 未移动 NEXT；未 push。
