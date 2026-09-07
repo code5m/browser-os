@@ -4,8 +4,8 @@
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
 > Current mainline: `master` at `8e67ab0` — W17, BUG-HUNT high-risk fixes, scheduler crash/concurrency safety, command-set consistency, and debug/release IPC-origin isolation are integrated and PUSHED.
-> Current mainline chain: `61cff56` (BUG-HUNT + scheduler safety) -> `e3b6b40` (ACL rebuild) -> `8e67ab0` (debug-only IPC origin isolation). Runtime authority remains LOCKED outside the explicitly bounded M5-W18 work below. Only A0 pushes.
-> Current NEXT: `M5-W18` reference-driven knowledge graph and database workbench advancement, using the pinned Obsidian vault, dbx source, and zvec-grep source listed in the dispatch below.
+> Current mainline chain: `61cff56` (BUG-HUNT + scheduler safety) -> `e3b6b40` (ACL rebuild) -> `8e67ab0` (debug-only IPC origin isolation) -> `12a09b8` (W18 lane isolation). Runtime authority remains LOCKED. A0 is the controller and the only lane that integrates or pushes; the external agents are A1-A11.
+> Current NEXT: `M5-W18-R` deep research and replication blueprint for Obsidian + dbx + zvec-grep. Product-code implementation is frozen until A0 accepts the consolidated blueprint and opens W19.
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
@@ -14,7 +14,7 @@ This file is the coordination board for 11 parallel agents plus A0 integration. 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按当前 M5-W18 Obsidian + dbx + zvec-grep Dispatch 完成自己的整包交付，自行 rebase/整理补丁与 checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，再切到板上指定的独立 worktree；按当前 M5-W18-R Research and Replication Blueprint Dispatch 做彻底研究，只交研究报告/复刻蓝图，不写产品代码，不 push。
 ```
 
 Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
@@ -83,25 +83,24 @@ The authoritative assignments are the latest `M5-W18 Obsidian + dbx + zvec-grep 
 | Lane | Current role | Status | Merge order |
 |---|---|---|---|
 | A0 | Integration controller; only lane allowed to push | ACTIVE | Last |
-| A1 | Reference contract and W18 documentation | START | 1 |
-| A2 | Obsidian-compatible bounded Markdown graph ingestion | START | 2 |
-| A3 | zvec-grep retrieval architecture/adoption spike | START | 3 |
-| A4 | dbx-informed database core/workbench backend | START | 4 |
-| A5 | Database command/DTO/ACL integration after A4 | PREPARE, then START | 5 |
-| A6 | dbx-informed database UI | START | 6 |
-| A7 | Obsidian-informed graph UI | START | 7 |
-| A8 | Graph/database policy and mutation fixtures | START | 8 |
-| A9 | Privacy/security review | START | 9 |
-| A10 | Cross-layer consistency and startup regression review | START | 10 |
-| A11 | Independent build/runtime/GUI verification matrix | START | 11 |
+| A1 | Current product inventory and requirements baseline | RESEARCH | 1 |
+| A2 | Obsidian vault/data/link semantics | RESEARCH | 2 |
+| A3 | Obsidian graph/backlink/search UX behavior | RESEARCH | 3 |
+| A4 | dbx backend architecture and transplantable modules | RESEARCH | 4 |
+| A5 | dbx desktop workbench and data-grid UX | RESEARCH | 5 |
+| A6 | dbx security, credentials, cancellation, and lifecycle | RESEARCH | 6 |
+| A7 | zvec-grep indexing, extraction, and freshness | RESEARCH | 7 |
+| A8 | zvec-grep exact/BM25/vector/hybrid retrieval | RESEARCH | 8 |
+| A9 | zvec-grep authorization, MCP/server, and privacy boundary | RESEARCH | 9 |
+| A10 | Licensing, dependency BOM, and source-transplant plan | RESEARCH | 10 |
+| A11 | Consolidated acceptance matrix and implementation-wave design | RESEARCH | 11 |
 
 ## Current Priority
 
-1. A1/A2/A3/A4 establish the reference contract and pure backend foundations in parallel.
-2. A6/A7 may improve pure UI logic against existing contracts, but must not invent unavailable backend data.
-3. A5 wires only the contract actually delivered by A4; every new command must ship as one command/ACL/source-check/bridge/type/test set.
-4. A8/A9/A10 continuously review boundedness, privacy, consistency, and the debug/release origin gate.
-5. A11 runs independent verification after implementation patches exist; A0 reviews, integrates, commits, and pushes.
+1. A1-A11 research in parallel from pinned sources and the current product; no product implementation occurs in W18-R.
+2. Each report must map exact source files/symbols, data flows, dependencies, tests, failure modes, license obligations, and what should be copied/adapted/rejected.
+3. A10 consolidates the legal/dependency source-transplant map; A11 consolidates acceptance and proposed implementation slices.
+4. A0 reviews all reports, resolves contradictions, freezes the target architecture, and only then opens W19 implementation.
 
 ## Code Dispatch Now
 
@@ -1348,17 +1347,24 @@ WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane
 
 Replace only `AX` with `A1` through `A11`.
 
-## M5-W18 Obsidian + dbx + zvec-grep Dispatch
+## M5-W18-R Research and Replication Blueprint Dispatch
 
-> Added 2026-09-08 by A0 after `8e67ab0`. This is the only active dispatch. Earlier lane tables are historical evidence.
+> Reset by A0 after the user required research before implementation. This is the only active dispatch. A0 is the controller; A1-A11 are research lanes. Earlier W18 implementation assignments are superseded and must not be executed.
 
 ### Pinned reference inputs
 
 - Obsidian behavior/configuration reference: `/home/ainfinit/Documents/Knowledge-Base/secondBrain/.obsidian` (`graph.json`, `app.json`, `core-plugins.json`) and Markdown content under the same vault. Borrow vault, wikilink, backlink/outgoing-link, orphan, filter, and local-graph interaction semantics; Obsidian itself is not an open-source code dependency.
-- dbx implementation reference: `/home/ainfinit/Documents/极智简单/V3/research/dbx-src`; local unversioned snapshot with `Cargo.lock` SHA-256 `c0a7be12c05d8dffe867f1a70d4b82e881dec2da3bb622b5d3e3410c3d10e3a7`. Existing analysis lives in `/home/ainfinit/Documents/极智简单/V3/dbx-study/`. Borrow workbench flows, capability modeling, schema browsing, cancellation, bounded result/export, and production-safety ideas; do not copy its broad driver/runtime surface.
+- dbx implementation reference: `/home/ainfinit/Documents/极智简单/V3/research/dbx-src`; local unversioned snapshot with `Cargo.lock` SHA-256 `c0a7be12c05d8dffe867f1a70d4b82e881dec2da3bb622b5d3e3410c3d10e3a7`, Apache-2.0. Existing analysis lives in `/home/ainfinit/Documents/极智简单/V3/dbx-study/`.
 - zvec-grep implementation reference: `/home/ainfinit/Documents/极智简单/V3/research/zvec-grep-src`, upstream `zvec-ai/zvec-grep` pinned at `52653951b24617762f4ab0c71c34d594e5001617` (Apache-2.0). Borrow workspace scoping, ignore rules, incremental freshness, exact/BM25/vector route separation, compact results, and explicit remote-embedding authorization. Do not start a daemon, expose MCP, download a model, send content remotely, or add the dependency in this wave without A0 approval after A3's adoption verdict.
 
-Reference code is evidence, not the product contract. Every lane must first compare the reference behavior with this repository's existing security, size, shutdown, and UI conventions. Blind copying is a failed delivery.
+Reference code is evidence, not yet the product contract. W18-R exists to make later reuse mechanical and safe: identify exact source modules/functions/tests that can be transplanted, document required adaptations, and reject incompatible pieces before writing product code.
+
+### Copy and replication policy
+
+- dbx and zvec-grep are Apache-2.0. W19 may copy or adapt selected source only after A10 records provenance, license/NOTICE obligations, modified-file notices, dependency compatibility, and the exact destination architecture.
+- Obsidian is not an open-source source-code donor. Reproduce only observable behavior and documented/local vault formats; do not copy proprietary code, icons, branding, or assets.
+- No wholesale repository copy. Prefer the smallest proven modules and their tests. Preserve upstream attribution and record each transplanted file/function in a source ledger.
+- A copied implementation is not accepted merely because it compiles. It must pass this product's source check, ACL, privacy, capacity, lifecycle, build-size, UI, and release-origin gates.
 
 ### Why the last client failed and the non-repeat gate
 
@@ -1369,43 +1375,41 @@ Reference code is evidence, not the product contract. Every lane must first comp
 5. Never broaden default `remote.urls` to fix one screen. Never call a browser preview a native-client test. Never claim a new command works until implementation + source check + handler registration + ACL + typed bridge/types + policy tests all land together.
 6. Mandatory regression gates for any lane touching commands, capabilities, startup, or native UI: `check-command-set-consistency.py`, `check-dev-startup.sh`, focused tests, `npm run build`, and `pre-merge.sh`.
 
-### Shared W18 product boundary
+### W18-R research-only boundary
 
-- Knowledge graph remains a derived local index. Primary Markdown/database/workspace data is not duplicated as an editable source of truth.
-- Initial graph ingestion is bounded Markdown metadata and links only: user-selected vault roots, `.md` files, `[[wikilinks]]`, Markdown links, tags/frontmatter names, and file/folder relationships. No PDF/DOCX parsing, no crawler, no AI extraction, no hidden home-directory scan, and no secret-bearing body/properties in graph DTOs.
-- Retrieval must expose honest modes. Exact, lexical, vector, and graph traversal are distinct capabilities; an unavailable vector route must show unavailable, not silently masquerade as semantic search.
-- Local-first is the default. Remote embeddings require a later explicit user authorization design and are not active in W18.
-- Database work remains fail-closed: no secret in DTO/store/log/audit/checkpoint, no raw DSN, no SQL history persistence, bounded metadata/results, real cancellation, source check, ACL, and existing production-write confirmation.
-- No new daemon, listener, MCP exposure, plugin/Agent/Skill execution, dynamic code loading, automatic model download, or unrestricted filesystem scan.
-- Build growth may not raise the accepted 25.2% ceiling. A lane that needs a dependency or exceeds the metric stops with measured evidence for A0.
+- No edits under product-code paths: `src/`, `src-tauri/`, `tauri-browser-tabs/`, production `scripts/`, permissions/capabilities, package manifests, lockfiles, or build configuration.
+- No dependency install, model download, daemon/server, MCP exposure, database connection, remote embedding, network upload, credential access, or mutation of the user's Obsidian vault.
+- Read local source/configuration and run read-only tests or benchmarks only on synthetic, non-secret fixtures.
+- Every proposed feature must be classified `COPY`, `ADAPT`, `REIMPLEMENT_FROM_BEHAVIOR`, `DEFER`, or `REJECT`, with reasons.
+- Every report must include: current-product gap, upstream source map with exact files/symbols, data/control flow, persistence format, concurrency/lifecycle, security/privacy, performance/capacity, dependencies/licenses, target mapping, test reuse, and unresolved questions.
+- Research is complete only when A0 can create implementation cards without asking agents to rediscover architecture.
 
 ### Dedicated lane worktrees
 
-Each lane uses `/home/ainfinit/.codex/worktrees/m5-w18-aN/mvp-browser-os-v3` on branch `codex/m5-w18-aN`. Do not edit the canonical master working copy. Start by fetching and rebasing the lane branch onto `origin/master`; preserve lane work and stop on a real conflict. Only A0 integrates and pushes.
+Each research lane uses `/home/ainfinit/.codex/worktrees/m5-w18-aN/mvp-browser-os-v3` on branch `codex/m5-w18-aN`. Do not edit the canonical master working copy. Rebase onto `origin/master`, then write only lane-owned reports under `logs/research/M5-W18/` and a lane checkpoint. Only A0 integrates and pushes.
 
 ### Lane assignments
 
 | Lane | Status | Allowed scope | Long-package deliverable |
 |---|---|---|---|
-| A1 | START DOCS | `AI-模型切换与接手清单.md`, `详细设计与实施计划.md`, `后续需求TODO.md`, `logs/checkpoints/`, `logs/assist/` | Produce the W18 reference-to-product contract: current graph/database capability inventory, Obsidian/dbx/zvec-grep feature mapping, accepted/deferred/rejected table, dependency graph, command/DTO proposal, privacy/capacity budgets, and two-wave merge plan. Reconcile NEXT without marking implementation complete. |
-| A2 | START GRAPH CORE | `src-tauri/src/graph_ingest.rs` (new), narrowly `src-tauri/src/graph.rs`, focused Rust tests, lane checkpoint | Implement a pure, deterministic, bounded Markdown graph-ingestion core inspired by Obsidian: normalize vault-relative paths, parse wikilinks/Markdown links/tags/frontmatter names, resolve aliases/unresolved links honestly, produce deduplicated nodes/edges, apply file/byte/node/edge/depth limits, ignore hidden/config/build/vendor paths, reject traversal/symlink escapes, and never place note bodies or secrets in graph properties. No bridge/main/ACL/filesystem watcher/background thread. |
-| A3 | START RETRIEVAL SPIKE | `logs/assist/`, `logs/checkpoints/`, optionally a self-contained benchmark under `scripts/spikes/` that is not in pre-merge or product runtime | Audit pinned zvec-grep end to end: exact/rg, BM25, vector, hybrid/RRF, index freshness, authorization, storage, server lifecycle, Node/native footprint, licensing, and failure modes. Run a local non-secret corpus benchmark. Deliver a measured adopt/wrap/reimplement decision and a frozen retrieval interface. Do not add zvec packages, models, MCP, server, daemon, or product commands. |
-| A4 | START DB CORE | `src-tauri/src/database.rs`, new `src-tauri/src/database_*.rs`, focused Rust tests, lane checkpoint | Build one coherent dbx-informed backend package: bounded schema/catalog metadata for existing SQLite/MySQL/Postgres connections, capability reporting per driver, cancellable query handles with deterministic cleanup, and sanitized stable errors. Preserve current query/write gate and Keyring boundary. Do not persist SQL text, credentials, or result bodies; do not edit bridge/main/domain/ACL/frontend. |
-| A5 | PREPARE THEN START COMMAND SET | `src-tauri/src/domain.rs`, `src-tauri/src/bridge.rs`, `src-tauri/src/main.rs`, `src-tauri/permissions/default-commands.toml`, `src/bridge.ts`, `src/types.ts`, focused command/contract tests, lane checkpoint | First review A4's exported contract. Then wire only its delivered capabilities as an atomic typed command set (expected areas: safe connection summaries, bounded schema metadata, query cancellation). Every command must include source check, handler registration, ACL, typed bridge/types, stable errors, redacted audit, and cancellation/lifecycle tests. Do not invent product behavior absent from A4; rebase after A4 lands. |
-| A6 | START DB UI | `src/components/database/`, `src/stores/useDatabaseStore.ts`, `src/utils/dbUi.ts`, `scripts/check-database-ui-logic.mjs`, lane checkpoint | Evolve the database screen toward dbx's workbench ergonomics using current contracts first: compact connection sidebar, schema tree states, query editor/run/cancel flow, bounded result grid, copy/export feedback, keyboard access, loading/empty/error states, and session-only bounded query tabs/history with no browser persistence. Feature-detect A5 additions; never raw-invoke or fake unavailable metadata. |
-| A7 | START GRAPH UI | `src/components/graph/`, `src/stores/useGraphStore.ts`, `src/utils/graphUi.ts`, `scripts/check-graph-ui-logic.mjs`, lane checkpoint | Evolve the graph surface using Obsidian semantics and current read-only commands: global/local graph modes, backlink/outgoing sections, unresolved/orphan/filter controls, deterministic selection/focus, capacity/truncation/unavailable states, and narrow-window accessibility. Do not add graph writes, raw invoke, canvas/3D dependency, fabricated semantic search, or expose raw props/note bodies. |
-| A8 | START POLICY/TEST | `scripts/check-graph-policy.py`, `scripts/check-database-policy.py`, new focused policy/fixture scripts, `scripts/pre-merge.sh` only for proven stable gates, lane checkpoint | Add mutation-resistant guards for W18: vault traversal/symlink/size limits, body/secret exclusion, deterministic graph IDs/edges, schema/result caps, query cancellation cleanup, no SQL persistence, no remote embedding/model/daemon, and no command-set drift. Self-test every new policy with good and bad fixtures before adding it to pre-merge. No product code. |
-| A9 | START SECURITY REVIEW | `logs/assist/`, `logs/checkpoints/`, policy bad fixtures only when needed | Threat-model A2/A4/A5/A6/A7 outputs: malicious Markdown/frontmatter/links, symlink escape, index poisoning, secret exfiltration, SQL/DSN leakage, cancellation races, remote embedding consent, DOM injection, and audit/error echo. Findings first with exact file/line evidence; do not edit product code. |
-| A10 | START CONSISTENCY REVIEW | `scripts/check-command-set-consistency.py`, `scripts/check-dev-startup.sh`, `logs/assist/`, `logs/checkpoints/` | Guard the cross-layer and client-startup invariants while W18 lands. Extend checks only for real gaps; ensure no lane restores global devUrl, broadens default remote capability, auto-scans dev capability into release, adds raw invoke, or lands a partial command set. Reproduce both debug `http://localhost:1421` and release `tauri://localhost` source expectations without changing authority. |
-| A11 | START VERIFICATION | `logs/assist/`, `logs/checkpoints/`, self-contained verification script only if essential | Maintain the independent W18 matrix and honest GUI checklist: targeted graph/database Rust tests, policy self/default tests, UI logic assertions, command/ACL/source consistency, debug-startup gate, npm build, full cargo test/release build, build metric, pre-merge, and native-client smoke for graph/database navigation. Do not fabricate visual evidence or edit product code. |
+| A1 | RESEARCH | `logs/research/M5-W18/A1-*`, lane checkpoint | Baseline the current product end to end: graph/database Rust modules, DTOs, commands, stores, panels, policies, tests, known debt, build-size budget, and locked authorities. Produce the canonical gap inventory and a requirements checklist that all other reports must answer. |
+| A2 | RESEARCH | `logs/research/M5-W18/A2-*`, lane checkpoint | Reverse-engineer Obsidian vault semantics from the local vault and public behavior: Markdown/wikilinks, aliases, headings/blocks, tags, frontmatter, attachments, unresolved links, backlinks/outgoing links, ignore filters, rename/delete behavior, and graph data derivation. Define behavior-compatible test fixtures without touching the vault. |
+| A3 | RESEARCH | `logs/research/M5-W18/A3-*`, lane checkpoint | Reverse-engineer Obsidian graph/search UX: global/local graph, filters, groups, orphans, unresolved nodes, depth, selection, navigation, keyboard/accessibility, settings persistence, empty/error/loading states, and narrow-window behavior. Produce screen/state flows and a Vue component/state blueprint; no Obsidian assets or code copying. |
+| A4 | RESEARCH | `logs/research/M5-W18/A4-*`, lane checkpoint | Map dbx backend architecture with exact Rust files/symbols/call paths for connection registry, driver capabilities, schema discovery, query execution, cancellation, history, export, SQL analysis/risk, errors, shutdown, and tests. Mark smallest transplantable Apache-2.0 modules and every adaptation required for this repository. |
+| A5 | RESEARCH | `logs/research/M5-W18/A5-*`, lane checkpoint | Map dbx desktop workbench UX with exact components/stores/tests: connection tree, schema browser, editor tabs, execution toolbar, cancel/progress, result grids, paging/filter/copy/export, history, keyboard/accessibility, loading/empty/error states, and responsive layout. Produce a Vue-specific replication blueprint rather than copying framework-incompatible UI wholesale. |
+| A6 | RESEARCH | `logs/research/M5-W18/A6-*`, lane checkpoint | Audit dbx security and lifecycle: credential storage, DSN redaction, production verdict/write confirmation, query timeout/cancel races, pool/session cleanup, bounded rows/bytes/files, history persistence, import/export, error/log sanitization, and shutdown. Compare every finding to current guards and produce mandatory W19 policy/test cases. |
+| A7 | RESEARCH | `logs/research/M5-W18/A7-*`, lane checkpoint | Reverse-engineer zvec-grep ingestion/index architecture: workspace authorization, discovery/ignore rules, extractors/chunking, manifest/files/index formats, incremental update, watcher reconciliation, corruption/rebuild, concurrency, capacity, and compact output. Map exact source files/symbols/tests and identify reusable Apache-2.0 units. |
+| A8 | RESEARCH | `logs/research/M5-W18/A8-*`, lane checkpoint | Reverse-engineer and benchmark zvec-grep retrieval on a synthetic corpus: managed ripgrep, FTS/BM25, vector, hybrid/RRF, filters, limits, ranking metadata, stale-index behavior, multilingual/code behavior, latency/memory/index size, and unavailable-model failure. Produce an evidence-based route-selection and adoption recommendation; no product dependency install. |
+| A9 | RESEARCH | `logs/research/M5-W18/A9-*`, lane checkpoint | Audit zvec-grep trust boundaries: local/remote embeddings, workspace grants, API-key storage, MCP toolsets, bearer auth, server/daemon lifecycle, logs, query/content redaction, model download, and data egress. Produce a threat model and list what W19 may copy, must adapt, or must keep disabled. |
+| A10 | RESEARCH | `logs/research/M5-W18/A10-*`, lane checkpoint | Build the source-transplant ledger and dependency BOM across dbx/zvec-grep plus behavior-only Obsidian replication. Record source path/symbol, upstream revision, license, notices, dependency license/native footprint, destination module, modification plan, copied tests, and reject reasons. Propose attribution/NOTICE files and a no-blind-copy review gate. |
+| A11 | RESEARCH | `logs/research/M5-W18/A11-*`, lane checkpoint | Synthesize a verification architecture from A1-A10 evidence: target acceptance matrix, synthetic vault/database/search corpora, unit/integration/security/performance/GUI cases, debug/release tests, migration/rollback, implementation slice boundaries, merge order, and stop criteria. Identify contradictions for A0; do not declare W18 complete before all reports exist. |
 
 ### Dependencies and merge order
 
-- Immediate parallel work: `A1 + A2 + A3 + A4 + A6 + A7 + A8 + A9 + A10 + A11`.
-- A5 may audit existing contracts immediately but may write shared command files only after A4 returns a tested export surface.
-- A6/A7 must keep additions feature-detected until A5/A2 contracts land; they may not invent backend payloads.
-- Review order: `A2/A3/A4 -> A5 -> A6/A7 -> A8/A9/A10 -> A1/A11 -> A0`.
-- If two patches touch the same shared file, later lane rebases onto the earlier accepted lane. No lane resolves by deleting another lane's work.
+- All eleven lanes start immediately and write disjoint report files.
+- Evidence dependency: A1 baseline informs everyone; A10 must consume A2/A4/A7-A9; A11 must consume A1-A10. If predecessors are unfinished, A10/A11 continue independent analysis and mark exact pending inputs instead of writing product code.
+- A0 research integration order: `A1 -> A2/A3 -> A4/A5/A6 -> A7/A8/A9 -> A10 -> A11 -> A0 consolidated architecture decision`.
+- W19 is not automatic. A0 opens it only after the source ledger, target architecture, test matrix, security boundaries, and license obligations are complete and mutually consistent.
 
 ### Required lane output
 
@@ -1413,19 +1417,21 @@ Each lane uses `/home/ainfinit/.codex/worktrees/m5-w18-aN/mvp-browser-os-v3` on 
 LANE=A1..A11
 STATUS=PASS | PASS_WITH_DEBT | BLOCKED
 BASE=<origin/master sha>
-HEAD=<lane commit sha>
+HEAD=<lane research commit sha>
 REFERENCE_EVIDENCE=<exact local paths and pinned revisions read>
 FILES=<changed files>
-VERIFY=<commands and exact pass/fail counts>
+SOURCE_MAP=<exact upstream and local files/symbols examined>
+CLASSIFICATION=<COPY/ADAPT/REIMPLEMENT_FROM_BEHAVIOR/DEFER/REJECT counts>
+VERIFY=<read-only tests/benchmarks and exact results>
 CHECKPOINT=<path>
 MERGE_NOTES=<dependencies/conflicts/security debt>
-NEXT=<next concrete integration step>
+NEXT=<missing research input or proposed W19 slice>
 ```
 
 ### One-line prompt for all 11 agents
 
 ```text
-继续 Lane AX：读取主仓库 WORKSPACE_IDENTITY.md 与 PARALLEL_COMMAND_BOARD.md，切到板上指定的 M5-W18 独立 worktree，按最新 “M5-W18 Obsidian + dbx + zvec-grep Dispatch” 完成长任务包；先 rebase origin/master，严格限于 Allowed scope，提交到自己的 codex/m5-w18-aN 分支，不 push。
+继续 Lane AX：先读取主仓库 WORKSPACE_IDENTITY.md 与 PARALLEL_COMMAND_BOARD.md，再切到板上指定的独立 worktree并 rebase origin/master；按最新 “M5-W18-R Research and Replication Blueprint Dispatch” 做彻底研究，只写 logs/research/M5-W18/ 下自己的报告和 checkpoint，不改任何产品代码，不 push。
 ```
 
 Replace only `AX` with `A1` through `A11`. The lane number also determines `aN` in the worktree and branch path.
