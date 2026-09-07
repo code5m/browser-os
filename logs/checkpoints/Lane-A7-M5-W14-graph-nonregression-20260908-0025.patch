@@ -1,0 +1,87 @@
+diff --git a/logs/assist/A7-M5-W14-graph-nonregression-20260908-0025.md b/logs/assist/A7-M5-W14-graph-nonregression-20260908-0025.md
+new file mode 100644
+index 0000000..b3c3c69
+--- /dev/null
++++ b/logs/assist/A7-M5-W14-graph-nonregression-20260908-0025.md
+@@ -0,0 +1,81 @@
++# A7 · M5-W14 · Graph（W12）非回归说明（SUPPORT DOCS ONLY）
++
++> Lane: A7 ｜ Dispatch: `PARALLEL_COMMAND_BOARD.md` § M5-W14 Plugin Manager UI Dispatch（2026-09-08 00:20 CST A0 加入）
++> 角色：SUPPORT DOCS ONLY —— 不写任何产品代码，仅产出 Graph（W12 已落地）的非回归评审说明。
++> 形态严守：本卡**未修改** `graph.rs` / `domain.rs` / `bridge.rs` / `main.rs` / `default-commands.toml` /
++> `src/bridge.ts` / `src/types.ts` / `scripts/check-graph-policy.py` / 三份主文档。唯一新增产物 = 本说明。
++> BASE：W13 已合入，`HEAD=a7eefbb feat(M5): integrate W13 plugin manifest lifecycle`。
++
++## 1. 结论
++
++**Graph（W12）与 W14 Plugin Manager UI 不冲突；预期零回归。** 理由：
++
++1. **范围上结构性隔离（前端-only）**：W14 仅开 A6 一个窄 UI product lane，消费 W13 冻结的 8 条本地
++   Stage-I 命令；A6 的 `Allowed Files` = `src/components/plugin/**`、`src/stores/usePluginStore.ts`、
++   现有 workspace/layout 导航文件、`src/bridge.ts`/`src/types.ts` **仅限冻结类型修正**、
++   `scripts/check-plugin-ui-logic.mjs`、checkpoint。**不含任何 Rust 文件**（`src-tauri/**`）。
++   因此 graph 后端（`graph.rs` / `domain.rs` 图类型与 7 容量常量 / `bridge.rs` 图命令壳 /
++   `main.rs` invoke_handler 与 `GraphState` 托管 / ACL 图条目）在 W14 中**结构性不被触及**。
++   W14 Hard Stops 亦重申：禁 `plugin_invoke`/执行/动态加载/网络/监听/daemon/model/Agent-Skill/MCP 全量/
++   **graph write/export**/后台 worker；现有命令名与 DTO 冻结。Plugin Manager UI 不进入 graph 数据路径。
++2. **当前工作树 Graph 集成已绿化（证据见 §2）**：`check-graph-policy.py` 自检 + 默认扫描均 PASS（ACTIVE=8，
++   基于 `a7eefbb` = W13 已合入状态），证明 W13 未使 graph 回归；W14 不碰 graph 后端，回归面仅落在
++   前端 `src/bridge.ts` / `src/types.ts` 的「冻结类型修正」，须保留其中 graph 锚点（见 §3）。
++
++## 2. 当前 Graph 集成证据（A0/A6 集成 W14 时的「不可动」锚点）
++
++| 面 | 当前状态 | 证据锚点 | W14 中须保持 |
++|---|---|---|---|
++| 后端模块声明 | `mod graph;` | `src-tauri/src/main.rs:9` | 不变（W14 不碰 Rust） |
++| 后端托管 | `GraphState::default()` 托管 | `src-tauri/src/main.rs:1347` | 不变 |
++| 后端快照载入 | W12 只读快照载入 | `src-tauri/src/main.rs:1328-1335` | 不变 |
++| 后端命令注册 | 3 条 graph 命令 | `src-tauri/src/main.rs:1474-1476` | 不变 |
++| 后端命令实现 | 3 函数壳（过 `check_invocation_source`） | `src-tauri/src/bridge.rs:6605`(`graph_query`)/`6624`(`graph_node_get`)/`6641`(`graph_stats`) | 不变 |
++| 后端 store/impl | `GraphStore` + 3 impl | `src-tauri/src/graph.rs:185`(`GraphStore`)/`338`(`graph_query_impl`)/`371`(`graph_node_get_impl`)/`380`(`graph_stats_impl`) | 不变 |
++| 后端域类型 | `GraphNodeKind`/`GraphEdgeKind`/`GraphNode`/`GraphEdge`/`GraphProps`/`GraphNodeView`/`GraphEdgeView` | `src-tauri/src/domain.rs:2042/2056/2082/2092/2107/2115` | 不变（W14 不碰 Rust） |
++| 后端容量常量 | 7 个 `GRAPH_*` | `src-tauri/src/domain.rs:2188/2190/2192/2194/2196/2198/2200` | 不变 |
++| ACL | 3 条 graph + 末条 `list_artifact_images` | `src-tauri/permissions/default-commands.toml:127-130` | 不变 |
++| **前端桥** | `graphQuery`/`graphNodeGet`/`graphStats` 包装 + 禁用守卫 | `src/bridge.ts:439-450`（含 `makeGraphCommandDisabledError` 守卫） | **A6 冻结类型修正不得删改这三个方法**（W14 唯一 graph 前端风险点） |
++| **前端类型** | `GraphNodeView`/`GraphEdgeView` + `GraphQueryResult` 复用 | `src/types.ts:831`(`GraphNodeView`)/`837`(`GraphEdgeView`)/`859-860`(`GraphQueryResult.nodes/edges`) | **A6 冻结类型修正不得删改这几个类型** |
++
++## 3. 共享前端文件的「非回归」断言（A6 做 `bridge.ts`/`types.ts` 冻结类型修正时须守）
++
++W14 与 Graph 的唯一重叠面是前端 `src/bridge.ts` 与 `src/types.ts`（A6 仅可在其中做「冻结类型修正」）。
++A6 实现 W14 时，只要满足以下断言，Graph 即零回归：
++
++- [ ] `scripts/check-graph-policy.py --self-test` 仍 `GRAPH_POLICY_SELF_TEST=PASS（ACTIVE=8）`
++- [ ] `scripts/check-graph-policy.py` 默认扫描仍 `GRAPH_POLICY=PASS（无违规）`
++- [ ] `src-tauri/**` 中 §2 列出的全部 graph 锚点**字节级未变**（W14 不应触碰任何 Rust 文件）
++- [ ] `src/bridge.ts` 中 `graphQuery`/`graphNodeGet`/`graphStats` 三个方法**未删、签名/禁用守卫未改**（A6 追加 plugin 包装时不得动这三个）
++- [ ] `src/types.ts` 中 `GraphNodeView`/`GraphEdgeView`/`GraphQueryResult` 类型**未删改**（A6 追加 `Plugin*` 类型时不得动这三个）
++- [ ] `default-commands.toml` 末行仍是 `list_artifact_images`，graph 三行仍在其前
++
++## 4. 越界即拒
++
++若 W14（A6 实现）出现以下任一，即违反 W14 Hard Stops / graph 非回归，A0 应**拒绝合入**并回退：
++
++- A6 在 `src-tauri/**` 增加/改动任何 graph 后端代码（W14 不在其权限内）；
++- A6 新增 raw Tauri `invoke`（绕过 `src/bridge.ts`）或任何 graph 写/导出路径；
++- A6 删改 `src/bridge.ts` 的 `graphQuery`/`graphNodeGet`/`graphStats` 或 `src/types.ts` 的
++  `GraphNodeView`/`GraphEdgeView`/`GraphQueryResult`；
++- `default-commands.toml` 末条不再是 `list_artifact_images`，或 graph 三行被移除。
++
++## 5. 与全量 pre-merge 的关系（非 Graph 阻断项）
++
++A7 自身门禁（`check-graph-policy.py`）已全绿。全量 `pre-merge.sh` 可能的 FAIL 来自**其他并发 lane**
++（如 `cargo fmt`、`build metrics regression`、`check-plugin-policy.py` / `check-plugin-ui-logic.mjs` /
++`check-tools-policy.py` 等），与 Graph/W14 无关，归 A0 跨 lane 集成统一处置。本卡不运行 cargo build /
++npm build / 全量 pre-merge（docs-only，graph 门禁已由策略脚本权威覆盖）。
++
++## 6. 工作树脏状态声明（透明）
++
++`git status` 当前显示 4 个 `M` 文件：`PARALLEL_COMMAND_BOARD.md` + 三份主文档
++（`AI-模型切换与接手清单.md` / `后续需求TODO.md` / `详细设计与实施计划.md`）。
++这些属 **A1 的文档 reconcile 未提交改动**（并行 lane 高冲突文件），**非 A7 引入、非 A7 交付**。
++A7 补丁已用路径限定（`git diff --binary -- <仅本说明>`），**绝不混入**上述文件或任何他 lane 改动。
++
++## 7. 交付物
++
++- 本说明：`logs/assist/A7-M5-W14-graph-nonregression-20260908-0025.md`（唯一新增文件）
++- 补丁：`logs/checkpoints/Lane-A7-M5-W14-graph-nonregression-20260908-0025.patch`（仅含本说明，docs-only）
++- **未 push**（board：仅 A0 push）

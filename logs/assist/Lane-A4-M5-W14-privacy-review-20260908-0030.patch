@@ -1,0 +1,437 @@
+diff --git a/logs/assist/A4-M5-W14-privacy-review-20260908-0030.md b/logs/assist/A4-M5-W14-privacy-review-20260908-0030.md
+new file mode 100644
+index 0000000..ea5a140
+--- /dev/null
++++ b/logs/assist/A4-M5-W14-privacy-review-20260908-0030.md
+@@ -0,0 +1,67 @@
++# A4 — M5-W14 Plugin Manager UI 隐私评审（PRIVACY REVIEW ONLY）
++
++- **Lane / 分派**：A4，`START PRIVACY REVIEW ONLY`（评审渲染出的 DTO/错误/状态路径是否回显密钥、签名、key、metadata、路径）
++- **BASE / HEAD**：`a7eefbb`（master，feat(M5): integrate W13 plugin manifest lifecycle）；**未 push**（仅 A0 可 push）
++- **评审对象**：`src/bridge.ts` 冻结方法、`src/types.ts` 冻结镜像、`src-tauri/src/domain.rs` 冻结 DTO、`src/stores/usePluginStore.ts` 与 `src/components/plugin/**`（**A6 尚未落地**）
++- **结论**：**PASS_WITH_DEBT** —— 后端到达 UI 的数据**构造上已脱敏**（红脱敏 DTO + `error_code` 收口），故渲染面低风险；但 A6 必须守住 4 条红线（已编码进 gated 夹具），否则密钥会经「裸 invoke / 渲染禁止字段 / 浏览器持久化 / 原始错误回显」重新出现。
++
++## 一、关键事实：到达 UI 的数据已脱敏（这是本轮最有价值的结论）
++
++核查冻结契约（`types.ts:990-1038`、`domain.rs:2311-2411`、`bridge.ts:721-739`）：
++
++| 到达前端的 DTO | 字段 | 已剔除 |
++|---|---|---|
++| `PluginSummary` | id/version/display_name/state/capability_count/hash_prefix/updated_at | 签名原文、资源路径、metadata |
++| `PluginDetail` | 上述 + description/min_app_version/capabilities/signature/installed_at/resource | **无 `metadata` 字段** |
++| `PluginSignatureView` | algorithm/key_id/status | **无 `value` 原文** |
++| `PluginResourceMeta` | declared_hash/path_provided(bool)/verified(bool) | **无资源路径字符串** |
++| `TrustedKeyRecord` | key_id/fingerprint(16hex)/note/added_at | **无 pubkey 原文** |
++
++- 后端出错只经 `plugin::error_code` 收口为稳定码（`PLUGIN_MANIFEST_INVALID` 等），`plugin_install`/`plugin_set_state` 只 `Err(code.to_string())` —— **错误正文不出进程**（A4 W13 已确认）。
++- 资源路径只取布尔 `path_provided` / `verified`，不落盘、不出口。
++
++⇒ 只要 A6 **只用冻结的 `bridge.ts` 方法 + 冻结 TS 类型**，渲染面天然不碰密钥/签名/路径/metadata。
++
++## 二、A6 必须守住的 4 条红线（已编码进 `scripts/check-plugin-ui-privacy.py`，gated）
++
++> 红线之所以必要：即使 DTO 已脱敏，A6 仍可能（a）裸 `invoke` 绕过类型取到原始清单/密钥；（b）自行硬编码或错误 typing 渲染禁止字段；（c）把持有中的完整 manifest（含 metadata + signature.value）写入浏览器存储；（d）把原始错误体渲染出来。
++
++| 码位 | 红线 | 触发示例 |
++|---|---|---|
++| `PLUGIN_UI_NO_RAW_INVOKE`（ACTIVE） | 只经 `bridge.pluginX`，禁止裸 `invoke("plugin_*")` / 直 import `@tauri-apps/api/tauri` | `invoke("plugin_list", …)` |
++| `PLUGIN_UI_NO_SECRET_RENDER`（ACTIVE） | 只渲染红脱敏 DTO 字段 | `{{ plugin.signature.value }}`、`{{ detail.pubkey }}`、`resource_path` |
++| `PLUGIN_UI_NO_BROWSER_STORAGE`（PENDING） | 插件记录/密钥/清单原文不得落 localStorage/sessionStorage/indexedDB | `localStorage.setItem("plugin:"+id, …)` |
++| `PLUGIN_UI_ERROR_CODE_ONLY`（PENDING） | 错误渲染只用稳定码，禁止 `err.message` / `String(err)` / `err.toString()` | `{{ err.message }}` |
++
++**关于 `metadata` 的口径**：安装表单需收集用户自有 `metadata` 输入并传给 `pluginInstall({ manifest })`（允许）；风险在「渲染回显 / 持久化」。故夹具**不**把 `metadata` 列入渲染黑名单（避免误伤用户输入），而由 `PLUGIN_UI_NO_BROWSER_STORAGE` 兜底「不得持久化」；A6 也不得把 `metadata` 回显到详情面板。
++
++## 三、交付物
++
++- **新增 `scripts/check-plugin-ui-privacy.py`**（gated：A6 前端文件未落地时为 no-op，默认门禁与 `--self-test` 均绿；A6 落地后自动激活）。
++  - 2 ACTIVE 码 + 2 PENDING 码；三模式：`--self-test`（2 好样本零违规 + 8 坏样本全检出，含变异防呆）/ 默认门禁 / `--expect-pending`。
++  - 与既有夹具不重叠：`check-plugin-policy.py`（A9，Rust DTO 字段名）、`check-plugin-privacy.py`（A4/W13，Rust 后端回显/审计/落盘）。
++- **接入 `scripts/pre-merge.sh`**：仅 `--self-test` + 默认门禁（同 W13 隐私夹具做法；pending 通道当前为 NONE，无需接）。
++- 本文件（评审结论）。
++
++### 实测
++
++```text
++PLUGIN_UI_PRIVACY_SELF_TEST_RESULT=PASS: 2 好样本零违规（真实仓库 gated + 合成参考实现）
++  + 8 个坏样本全部检出；ACTIVE=2 PENDING=2          → 退出 0
++plugin UI privacy policy: all invariants hold（ACTIVE=2）   → 退出 0
++PLUGIN_UI_PRIVACY_PENDING_RESULT=NONE（2 个 pending 码位均未检出）  → 退出 0
++bash -n scripts/pre-merge.sh → 0；git diff --check → 无冲突标记
++```
++
++## 四、给 A6 / A10 / A11 的协同清单
++
++1. A6：UI 只经 `bridge.ts`；只渲染冻结 DTO 字段；安装表单可收集 `metadata` 但**不回显、不持久化**；错误只展示稳定码；不得落浏览器存储。
++2. A6 落地后跑 `python3 scripts/check-plugin-ui-privacy.py`（默认）应仍为 PASS；若 FAIL 即红线被踩。
++3. A10（security）：本夹具与 A10 的「raw-invoke 绕过 / 敏感渲染回归」部分重叠，但本夹具仅管隐私红脱敏面，A10 仍须覆盖确认绕过与确认弹窗绕过。
++4. A11：W14 矩阵把 `check-plugin-ui-privacy.py`（self-test + 默认）纳入 pre-merge（已接）。
++
++## 五、边界声明
++
++- 本 lane 为 **REVIEW ONLY**：未改任何产品代码（`bridge.ts`/`types.ts`/`domain.rs`/前端均未触碰；`pre-merge.sh` 仅新增本夹具接入段）。
++- 评审期间 A6 UI 尚未落地，故为**前瞻性验收**：当前未触碰的 A6 文件使夹具 gated 为绿，属预期。
++- 未执行 push。
+diff --git a/scripts/check-plugin-ui-privacy.py b/scripts/check-plugin-ui-privacy.py
+new file mode 100644
+index 0000000..9a6dc8a
+--- /dev/null
++++ b/scripts/check-plugin-ui-privacy.py
+@@ -0,0 +1,318 @@
++#!/usr/bin/env python3
++"""Expose the M5-W14 Plugin Manager UI privacy invariants as a reproducible fixture (Lane A4).
++
++评审口径（PARALLEL_COMMAND_BOARD.md § M5-W14 Hard Stops + Lane A4）：
++- UI 只能经冻结的 `src/bridge.ts` 方法调用，禁止裸 `invoke("plugin_*")`。
++- 禁止显示/持久化：裸签名、公钥原文（key material）、资源路径、manifest metadata、
++  凭据、请求/响应体、stdout/stderr。
++- 错误渲染只能展示稳定码（`error_code` 产出），禁止展示原始消息体 / manifest 字段。
++
++判定对象（A6 产物，gated：文件不存在时全部为 no-op，不阻塞批次）：
++- `src/stores/usePluginStore.ts`
++- `src/components/plugin/**`（任意前端源文件）
++
++与既有夹具不重叠：
++- `check-plugin-policy.py`（A9）：查 Rust DTO 是否有 `password/secret/token` 字段名。
++- `check-plugin-privacy.py`（A4/W13）：查 Rust 后端错误回显 / 审计 detail / 落盘脱敏。
++- 本夹具：查**前端渲染/存储层**对冻结红脱敏 DTO 的遵守情况。
++
++用法：
++  --self-test        好样本 + 坏样本双向自检（含变异防呆）
++  --expect-pending   pending 码位一旦被检出即 FAIL（提示应转默认判定 / 需先修复）
++  默认               只判 ACTIVE 码位
++"""
++
++from __future__ import annotations
++
++import argparse
++import re
++import sys
++from pathlib import Path
++
++# 已闭环，防回归（A6 落地后即时生效）
++ACTIVE_CODES: tuple[str, ...] = (
++    # 只能经 bridge.ts 调用，禁止裸 invoke
++    "PLUGIN_UI_NO_RAW_INVOKE",
++    # 只渲染冻结红脱敏 DTO 字段，禁止渲染密钥/签名/路径字段
++    "PLUGIN_UI_NO_SECRET_RENDER",
++)
++
++# W14 验收项（A6 落地后应闭环；在 A6 文件存在前为 no-op）
++PENDING_CODES: tuple[str, ...] = (
++    # 禁止把插件记录/密钥/清单原文落浏览器存储
++    "PLUGIN_UI_NO_BROWSER_STORAGE",
++    # 错误渲染只用稳定码，禁止原始消息体 / manifest 字段
++    "PLUGIN_UI_ERROR_CODE_ONLY",
++)
++
++ALL_CODES: tuple[str, ...] = ACTIVE_CODES + PENDING_CODES
++
++# 禁止渲染的字段（来自冻结红脱敏 DTO 已剔除的项 + 通用密钥词）
++# 注意：刻意不含 `metadata` —— 安装表单收集用户自有 metadata 输入是允许的，
++#       风险在于「渲染/持久化」metadata，由 PLUGIN_UI_NO_BROWSER_STORAGE 兜底。
++SECRET_RENDER_TOKENS = (
++    r"signature\.value",
++    r"\.pubkey",
++    r"pubkey",
++    r"resource_path",
++    r"rawSignature",
++    r"raw_signature",
++    r"privateKey",
++    r"private_key",
++    r"apiKey",
++    r"api_key",
++    r"secretKey",
++    r"secret_key",
++)
++
++UI_GLOB_DIRS = (
++    ("src/stores/usePluginStore.ts", False),
++    ("src/components/plugin", True),
++)
++
++
++# ----------------------------- 读取（gated）-----------------------------
++
++def read_ui(root: Path) -> dict[str, str]:
++    """返回 A6 前端文件内容；若均不存在，返回空 dict（触发 gated no-op）。"""
++    out: dict[str, str] = {}
++    for rel, is_dir in UI_GLOB_DIRS:
++        p = root / rel
++        if is_dir:
++            if p.is_dir():
++                for f in sorted(p.rglob("*")):
++                    if f.is_file() and f.suffix in (".ts", ".tsx", ".vue", ".js", ".jsx"):
++                        out[str(f)] = f.read_text(encoding="utf-8", errors="replace")
++        else:
++            if p.is_file():
++                out[rel] = p.read_text(encoding="utf-8", errors="replace")
++    return out
++
++
++# ----------------------------- 判定 -----------------------------
++
++def detect_hits(files: dict[str, str]) -> dict[str, list[str]]:
++    if not files:  # gated：A6 文件未落地
++        return {}
++    hits: dict[str, list[str]] = {}
++    src = "\n".join(files.values())
++
++    def hit(code: str, detail: str) -> None:
++        hits.setdefault(code, []).append(detail)
++
++    # ---- A1) 禁止裸 invoke（只能经 bridge.ts 方法）----
++    for m in re.finditer(r'invoke\s*\(\s*["\']plugin_', src):
++        hit("PLUGIN_UI_NO_RAW_INVOKE", f"裸 invoke 直达 plugin 命令：{m.group(0)[:40]}")
++    for m in re.finditer(r'@tauri-apps/api/tauri["\']', src):
++        hit("PLUGIN_UI_NO_RAW_INVOKE", "直接 import @tauri-apps/api/tauri（应经 bridge.ts）")
++
++    # ---- A2) 禁止渲染密钥/签名/路径字段 ----
++    for tok in SECRET_RENDER_TOKENS:
++        for m in re.finditer(tok, src, flags=re.IGNORECASE):
++            hit("PLUGIN_UI_NO_SECRET_RENDER", f"渲染了禁止字段：{tok}")
++
++    # ---- P1) 禁止浏览器持久化插件/密钥/清单原文 ----
++    for m in re.finditer(r'(localStorage|sessionStorage)\s*\.\s*setItem', src):
++        hit("PLUGIN_UI_NO_BROWSER_STORAGE", f"浏览器存储写入：{m.group(0)}")
++    for m in re.finditer(r'(indexedDB|localForage|openDatabase)', src):
++        hit("PLUGIN_UI_NO_BROWSER_STORAGE", f"浏览器数据库：{m.group(0)}")
++
++    # ---- P2) 错误渲染只能用稳定码，禁止原始消息体 ----
++    for m in re.finditer(r'(err|error)\s*\.\s*message', src):
++        hit("PLUGIN_UI_ERROR_CODE_ONLY", "渲染了 err.message（原始消息体）")
++    for m in re.finditer(r'String\(\s*(err|error)\s*\)', src):
++        hit("PLUGIN_UI_ERROR_CODE_ONLY", "渲染了 String(err)（原始消息体）")
++    for m in re.finditer(r'(err|error)\s*\.\s*toString\(\s*\)', src):
++        hit("PLUGIN_UI_ERROR_CODE_ONLY", "渲染了 err.toString()（原始消息体）")
++
++    return hits
++
++
++# ----------------------------- 自检 -----------------------------
++
++GOOD_STORE = '''
++import { ref } from "vue";
++import { bridge } from "../../bridge";
++import type { PluginSummary, PluginDetail } from "../../types";
++
++export function usePluginStore() {
++  const list = ref<PluginSummary[]>([]);
++  const detail = ref<PluginDetail | null>(null);
++  const errorCode = ref<string | null>(null);
++
++  async function load() {
++    list.value = await bridge.pluginList(null);
++  }
++  async function inspect(id: string) {
++    detail.value = await bridge.pluginGet(id);
++  }
++  function showError(code: string) {
++    errorCode.value = code;
++  }
++  return { list, detail, errorCode, load, inspect, showError };
++}
++'''
++
++GOOD_CARD = '''
++import { defineComponent } from "vue";
++import type { PluginSummary } from "../../types";
++
++export default defineComponent({
++  props: { plugin: { type: Object as () => PluginSummary, required: true } },
++  template: `<div>
++    <span>{{ plugin.id }}</span>
++    <span>{{ plugin.display_name }}</span>
++    <span>{{ plugin.hash_prefix }}</span>
++    <span>{{ plugin.state }}</span>
++    <span>{{ plugin.error_code }}</span>
++  </div>`,
++});
++'''
++
++
++def build_good() -> dict[str, str]:
++    return {
++        "src/stores/usePluginStore.ts": GOOD_STORE,
++        "src/components/plugin/PluginCard.ts": GOOD_CARD,
++    }
++
++
++def mutate(**over: str) -> dict[str, str]:
++    good = build_good()
++    good.update(over)
++    return good
++
++
++def run_self_test(root: Path) -> int:
++    real = read_ui(root)
++    good = build_good()
++
++    # 好样本 A：真实仓库（gated → ACTIVE 应为空）
++    real_active = [c for c in detect_hits(real) if c in ACTIVE_CODES]
++    if real_active:
++        print("PLUGIN_UI_PRIVACY_SELF_TEST_RESULT=FAIL")
++        print(f"  x 真实仓库 ACTIVE 违规：{sorted(real_active)}")
++        return 1
++
++    # 好样本 B：合成参考实现（全部码位零违规）
++    good_all = sorted(detect_hits(good))
++    if good_all:
++        print("PLUGIN_UI_PRIVACY_SELF_TEST_RESULT=FAIL")
++        print(f"  x 合成参考实现违规：{good_all}")
++        return 1
++
++    bad_samples = [
++        (
++            "裸 invoke 直达 plugin 命令",
++            mutate(**{"src/components/plugin/PluginCard.ts":
++                      'import { invoke } from "@tauri-apps/api/tauri";\n'
++                      'await invoke("plugin_list", { state: null });'}),
++            "PLUGIN_UI_NO_RAW_INVOKE",
++        ),
++        (
++            "直接 import 裸 tauri invoke",
++            mutate(**{"src/stores/usePluginStore.ts":
++                      'import { invoke } from "@tauri-apps/api/tauri";'}),
++            "PLUGIN_UI_NO_RAW_INVOKE",
++        ),
++        (
++            "渲染 signature.value",
++            mutate(**{"src/components/plugin/PluginCard.ts":
++                      'template: `<span>{{ plugin.signature.value }}</span>`'}),
++            "PLUGIN_UI_NO_SECRET_RENDER",
++        ),
++        (
++            "渲染 pubkey 原文",
++            mutate(**{"src/components/plugin/PluginCard.ts":
++                      'template: `<span>{{ detail.pubkey }}</span>`'}),
++            "PLUGIN_UI_NO_SECRET_RENDER",
++        ),
++        (
++            "localStorage 持久化插件详情",
++            mutate(**{"src/stores/usePluginStore.ts":
++                      'localStorage.setItem("plugin:" + id, JSON.stringify(detail.value));'}),
++            "PLUGIN_UI_NO_BROWSER_STORAGE",
++        ),
++        (
++            "indexedDB 持久化密钥",
++            mutate(**{"src/stores/usePluginStore.ts":
++                      'const db = indexedDB.open("keys");'}),
++            "PLUGIN_UI_NO_BROWSER_STORAGE",
++        ),
++        (
++            "渲染 err.message 原始消息体",
++            mutate(**{"src/components/plugin/PluginCard.ts":
++                      'template: `<span>{{ err.message }}</span>`'}),
++            "PLUGIN_UI_ERROR_CODE_ONLY",
++        ),
++        (
++            "渲染 String(err) 原始消息体",
++            mutate(**{"src/components/plugin/PluginCard.ts":
++                      'const msg = String(err);'}),
++            "PLUGIN_UI_ERROR_CODE_ONLY",
++        ),
++    ]
++
++    failures: list[str] = []
++    for name, files, expected in bad_samples:
++        found = detect_hits(files)
++        if expected not in found:
++            failures.append(f"坏样本未检出：{name}（期望 {expected}，实得 {sorted(found)}）")
++
++    if failures:
++        print("PLUGIN_UI_PRIVACY_SELF_TEST_RESULT=FAIL")
++        for line in failures:
++            print(f"  x {line}")
++        return 1
++
++    print(
++        "PLUGIN_UI_PRIVACY_SELF_TEST_RESULT=PASS: 2 好样本零违规（真实仓库 gated + 合成参考实现）"
++        f" + {len(bad_samples)} 个坏样本全部检出（含变异防呆）；"
++        f"ACTIVE={len(ACTIVE_CODES)} PENDING={len(PENDING_CODES)}"
++    )
++    return 0
++
++
++# ----------------------------- 入口 -----------------------------
++
++def main() -> int:
++    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
++    ap.add_argument("--self-test", action="store_true", help="好样本 + 坏样本双向自检（含变异防呆）")
++    ap.add_argument(
++        "--expect-pending",
++        action="store_true",
++        help="验证 pending 码位未被检出；一旦被检出即应转入默认判定或先修复",
++    )
++    args = ap.parse_args()
++
++    root = Path(__file__).resolve().parents[1]
++
++    if args.self_test:
++        return run_self_test(root)
++
++    hits = detect_hits(read_ui(root))
++
++    if args.expect_pending:
++        pending_hits = [c for c in PENDING_CODES if c in hits]
++        if pending_hits:
++            print("PLUGIN_UI_PRIVACY_PENDING_RESULT=FAIL")
++            for code in pending_hits:
++                for detail in hits[code]:
++                    print(f"  {code}:{detail}")
++            return 1
++        print(f"PLUGIN_UI_PRIVACY_PENDING_RESULT=NONE（{len(PENDING_CODES)} 个 pending 码位均未检出）")
++        return 0
++
++    active_hits = sorted(c for c in hits if c in ACTIVE_CODES)
++    if active_hits:
++        print("PLUGIN_UI_PRIVACY_POLICY_RESULT=FAIL")
++        for code in active_hits:
++            for detail in hits[code]:
++                print(f"  {code}:{detail}")
++        return 1
++    print(f"plugin UI privacy policy: all invariants hold（ACTIVE={len(ACTIVE_CODES)}）")
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/scripts/pre-merge.sh b/scripts/pre-merge.sh
+index f3b6881..907d33b 100755
+--- a/scripts/pre-merge.sh
++++ b/scripts/pre-merge.sh
+@@ -96,6 +96,10 @@ pre-merge.sh — M0-1.c 本地 pre-merge 门禁（M0-1 脚本合并前检查入
+   database policy fixture       check-database-policy.py --self-test / --expect-pending / 默认门禁
+                                 （M4-2.s；7 ACTIVE 码 + 8 pending 码，产物存在才判）
+   plugin privacy fixture        check-plugin-privacy.py --self-test / 默认门禁
++  plugin UI privacy fixture     check-plugin-ui-privacy.py --self-test / 默认门禁
++                                （M5-W14；2 ACTIVE 码 + 2 pending 码。gated：A6 前端文件
++                                  落地前为 no-op；落地后激活，守住「只经 bridge.ts / 禁渲染
++                                  密钥签名路径 / 禁浏览器持久化 / 错误只显稳定码」）
+                                 （M5-W13；2 ACTIVE 码 + 5 pending 码。pending 通道当前
+                                   有意报红：A9 需在 W13 接线前闭环 3 项回显缺陷，故暂不接
+                                   --expect-pending 以免阻塞批次；修复后再接入并转 ACTIVE）
+@@ -392,6 +396,13 @@ run_pre_merge() {
+   python3 "$SCRIPT_DIR/check-plugin-privacy.py" >/dev/null 2>&1 \
+     || pm_fail "check-plugin-privacy.py（插件隐私不变量被破坏）"
+
++  # M5-W14（Lane A4）：插件管理器 UI 隐私夹具（gated：A6 前端文件未落地时为 no-op，
++  # 默认门禁与 --self-test 均绿；A6 落地后激活，守住渲染/存储层隐私红线）。
++  python3 "$SCRIPT_DIR/check-plugin-ui-privacy.py" --self-test >/dev/null 2>&1 \
++    || pm_fail "check-plugin-ui-privacy.py --self-test"
++  python3 "$SCRIPT_DIR/check-plugin-ui-privacy.py" >/dev/null 2>&1 \
++    || pm_fail "check-plugin-ui-privacy.py（插件 UI 隐私不变量被破坏）"
++
+   # M4-8（Lane A8）：定时任务 UI 不变量夹具 + 前端逻辑层测试。
+   # 守护「前端不许绕过 A6 契约」的结构红线（SCHEDUI_* 码位），与 M4-5.d 后端码位互不重叠。
+   # --self-test 双向自检（1 好样本 + N 坏样本变异防呆）；默认模式按设计放行。
+@@ -565,6 +576,10 @@ run_self_test() {
+   if ! python3 "$SCRIPT_DIR/check-plugin-privacy.py" --self-test >/dev/null 2>&1; then
+     echo "FAIL: check-plugin-privacy.py --self-test"; rc=1
+   fi
++  [ -f "$SCRIPT_DIR/check-plugin-ui-privacy.py" ] || { echo "FAIL: check-plugin-ui-privacy.py missing"; rc=1; }
++  if ! python3 "$SCRIPT_DIR/check-plugin-ui-privacy.py" --self-test >/dev/null 2>&1; then
++    echo "FAIL: check-plugin-ui-privacy.py --self-test"; rc=1
++  fi
+   [ -f "$SCRIPT_DIR/check-database-policy.py" ] || { echo "FAIL: check-database-policy.py missing"; rc=1; }
+   if ! python3 "$SCRIPT_DIR/check-database-policy.py" --self-test >/dev/null 2>&1; then
+     echo "FAIL: check-database-policy.py --self-test"; rc=1

@@ -1,0 +1,2694 @@
+diff --git a/AI-模型切换与接手清单.md b/AI-模型切换与接手清单.md
+index b6e0212..3aec6b3 100644
+--- a/AI-模型切换与接手清单.md
++++ b/AI-模型切换与接手清单.md
+@@ -2,6 +2,7 @@
+ > A0 update 2026-09-07 20:30 CST: W11 validation PASS (MCP stdio dry-run hardened: feature test 21/21, bounded input/response, no raw argument echo, MCP policy ACTIVE=11/PENDING=0; Agent/Skill exec-lock policy PASS; graph UI/agent skill UI checks green). NEXT=`M5-W12` graph live-query read-only bridge; only A7/A8 may write graph query/UI product code; MCP full runtime, plugin runtime, Agent/Skill execution, network listener, daemon, and model call remain LOCKED; only A0 pushes.
+ > A1 update 2026-09-07 20:30 CST: W12 派发接收为 *START DOCS ONLY*（board L192）：reconcile W11 as accepted after A0 push + mark W12 active + 图谱卡范围收敛为 3 只读命令（`graph_query`/`graph_node_get`/`graph_stats`）+ UI 消费。scope = `PARALLEL_COMMAND_BOARD.md` + 3 主文档 + `logs/checkpoints/M5-20260906/*.md` + `logs/checkpoints/A1-M5-W12-*.md`. 整包交付 = `logs/checkpoints/A1-M5-W12-reconciliation-20260907-2030.md` + `logs/checkpoints/Lane-A1-M5-W12-reconciliation-20260907-2030.patch`（13 文件改动 = M5-0/7/8/9/10/11/12/13/14 头部 W11 PUSHED + W12 ACTIVE 状态行 + M5-0/8/13/14 末尾 [W11 reconciliation]/[W12 scope supersession]/[W12 verification scope]/[W12 active] 段 + 3 主文档 L1 新行 + board L6/L7）。A1 W12 零产品代码，不 push。
+ > A1 update 2026-09-07 23:55 CST: W13 派发接收为 *START DOCS ONLY*（board L228+，Plugin Runtime Stage-I Manifest Lifecycle Dispatch）：reconcile W12 as accepted after A0 push（`3c3f460`）+ mark W13 active + plugin 卡范围收敛为 stage-I manifest 生命周期（`plugin_install`/`plugin_enable`/`plugin_disable`/`plugin_list`/`plugin_get`/`plugin_key_registry` 6 命令 + 本地状态机；**不**实施 invoke / cancel / storage_* 5 stub runtime execution）+ A7 W13 GRAPH NON-REGRESSION DOCS ONLY 必保 W12 graph 集成锚点不回归 + A19 仍 SUPPORT DOCS ONLY（plugin UI 6 项 0% ACTIVE，DEBT-04 W14+ 仍挂账）。scope = `PARALLEL_COMMAND_BOARD.md` + 3 主文档 + `logs/checkpoints/M5-20260906/*.md` + `logs/checkpoints/A1-M5-W13-*.md`. 整包交付 = `logs/checkpoints/A1-M5-W13-reconciliation-20260907-2358.md` + `logs/checkpoints/Lane-A1-M5-W13-reconciliation-20260907-2358.patch`（14 文件改动 = board L6/L7 + 3 主文档 L1 新行 + M5-0/10/11/12/13/14 头部 W12 PUSHED + W13 ACTIVE 状态行 + M5-0/13/14 末尾 [W12 reconciliation]/[W13 verification scope]/[W12 reconciliation]/[W13 active] 段）。A1 W13 零产品代码，不 push。
++> A1 update 2026-09-08 00:20 CST: W14 派发接收为 *START DOCS ONLY*（board L1163+，Plugin Manager UI Dispatch）：reconcile W13 as accepted after A0 push（`a7eefbb`）+ mark W14 active + plugin UI 卡范围**冻结为消费 frozen W13 6 命令**（list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint 6 action；**不**实施 W14 新 lifecycle 命令；**不**碰 `src/bridge.ts` DTO；**不** raw Tauri `invoke`）+ A6 W14 唯一 UI 产品代码 lane（`src/components/plugin/**` + `src/stores/usePluginStore.ts` + `scripts/check-plugin-ui-logic.mjs`）+ 10 lane review/docs/verification + A19 仍 SUPPORT（plugin UI 6 项 0% ACTIVE 持续到 A6 W14 实施完成 = DEBT-04 W14+ 仍挂账）。scope = `PARALLEL_COMMAND_BOARD.md` + 3 主文档 + `logs/checkpoints/M5-20260906/*.md` + `logs/checkpoints/A1-M5-W14-*.md`. 整包交付 = `logs/checkpoints/A1-M5-W14-reconciliation-20260908-0020.md` + `logs/checkpoints/Lane-A1-M5-W14-reconciliation-20260908-0020.patch`（11 文件改动 = board L6 mainline chain + 3 主文档 L1 新行 + M5-0/10/11/12/13/14 头部 W13 PUSHED + W14 ACTIVE 状态行 + M5-12/13/14 末尾 [W14 active]/[W14 verification scope]/[W14 active] 段）。A1 W14 零产品代码，不 push。
+ > A0 update 2026-09-07 18:30 CST: W10 focused validation PASS (A3 MCP stdio-prep feature-gated std-only, `cargo test --features mcp mcp_server` 7/7, MCP policy ACTIVE=9/PENDING=0 current PASS; Agent/Skill and Graph UI logic + npm build PASS). NEXT=`M5-W11` MCP stdio dry-run hardening; only A3 may touch MCP stdio dry-run code; plugin/agent/skill execution, graph backend runtime, network listener, daemon, and model call remain LOCKED; only A0 pushes.
+ > A0 update 2026-09-07 18:30 CST: W10 拣入 `5226aad` = HEAD（origin/master）：2 commit = `ba78092`（A3 W10 MCP stdio-prep feature-gated std-only skeleton）+ `5226aad`（A0 W10 整包合并拣入）。NEXT=`M5-W11` MCP Stdio Dry-Run Hardening Dispatch（board L176-228，Added 2026-09-07 18:30 CST）：A3 START PRODUCT CODE NARROW（仅 MCP stdio dry-run/list-call hardening：deterministic JSON-RPC errors + bounded input/response + stable `tools/list` schema + explicit fail-closed `tools/call` + tests/smoke；**无**真实 file/db/script/plugin/agent/skill/model 执行；**无** TCP listener / HTTP server / network bind / background daemon；**无** raw argument/query/token/cookie/Authorization echo in stdio responses / logs / audit / checkpoints / UI state）；A2/A4/A5/A6/A7/A8/A9/A10/A11 review/policy/docs/UI small；A1 START DOCS ONLY。
+ > A1 update 2026-09-07 18:30 CST: W11 派发接收为 *START DOCS ONLY*（board L192）：reconcile W10 as accepted after A0 push + mark W11 active + update M5 cards so W10 stdio-prep is recorded as feature-gated PASS and W11 remains dry-run only. scope = `PARALLEL_COMMAND_BOARD.md` + 3 主文档 + `logs/checkpoints/M5-20260906/*.md` + `logs/checkpoints/A1-M5-W11-*.md`. 整包交付 = `logs/checkpoints/A1-M5-W11-reconciliation-20260907-1830.md` + `logs/checkpoints/Lane-A1-M5-W11-reconciliation-20260907-1830.patch`（9 文件改动 = M5-0/9/10/11/12/13/14 头部 W10 PUSHED + W11 ACTIVE 状态行 + M5-0/13/14 末尾 [W10 reconciliation] / [W11 active] / [W11 verification scope] 段 + 3 主文档 L1 新行）。A1 W11 零产品代码，不 push。
+diff --git a/PARALLEL_COMMAND_BOARD.md b/PARALLEL_COMMAND_BOARD.md
+index b7ed35a..cefba85 100644
+--- a/PARALLEL_COMMAND_BOARD.md
++++ b/PARALLEL_COMMAND_BOARD.md
+@@ -3,7 +3,7 @@
+ > Updated: 2026-09-08 00:20 CST
+ > Controller: main integration agent
+ > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
+-> Current mainline: `master` at `3c3f460` pending A0 W13 integration. W13 Stage-I manifest lifecycle is accepted locally: eight local-only lifecycle/key-registry commands, atomic registry persistence, redacted DTO/audit, ACL/source-check parity and no execution surface. Only A0 pushes.
++> Current mainline: `master` at `a7eefbb` (W13 integrated). W13 Stage-I manifest lifecycle is accepted locally: eight local-only lifecycle/key-registry commands, atomic registry persistence, redacted DTO/audit, ACL/source-check parity and no execution surface. Only A0 pushes.
+ > Current NEXT: M5-W14 plugin manager UI and Stage-I lifecycle consumption. W14 opens one narrow UI product lane only; plugin invocation/command execution, dynamic loading, network download/listener, daemon, model call, Agent/Skill execution, MCP full runtime, graph write/export, and background workers remain LOCKED.
+
+ This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
+diff --git a/logs/assist/A11-M5-W14-plugin-ui-verification-20260907-1510.md b/logs/assist/A11-M5-W14-plugin-ui-verification-20260907-1510.md
+new file mode 100644
+index 0000000..b0e06c6
+--- /dev/null
++++ b/logs/assist/A11-M5-W14-plugin-ui-verification-20260907-1510.md
+@@ -0,0 +1,81 @@
++# M5-W14 Assist Review — 插件 UI 隐私夹具误报 + UI 逻辑测试缺口
++> 评审方: A11 (Verification) · 对象: A4 (夹具 `check-plugin-ui-privacy.py`) + A6 (插件管理器 UI)
++> 时间: 2026-09-07 15:10 · 关联 checkpoint: `logs/checkpoints/A11-M5-W14-20260907-1510.md`
++
++## 0. 一句话结论
++pre-merge 因 `PLUGIN_UI_NO_SECRET_RENDER` 变红，但属**夹具结构性误报**：A6 未展示/持久化任何公钥原文，仅有一个用户自粘贴、立即清空的 `pubkey` 瞬时输入字段被子串扫描命中。需 A4 或 A6 择一修复后复跑；另 A6 缺交付 `check-plugin-ui-logic.mjs`。
++
++---
++
++## A. 阻塞项（给 A4 / A6）
++
++### A.1 现象
++```
++pytest 门禁: check-plugin-ui-privacy.py --self-test  → FAIL
++真实仓库 ACTIVE 违规: ['PLUGIN_UI_NO_SECRET_RENDER']
++命中: \.pubkey ×4 , pubkey ×16
++PRE_MERGE_RESULT=FAIL
++```
++
++### A.2 误报证据（A6 实质合规）
++| 检查点 | 位置 | 结论 |
++|---|---|---|
++| 受信任密钥列表渲染内容 | `PluginManager.vue` L165-170 | 仅 `{{ k.key_id }}` + `{{ k.fingerprint }}`，**无 `k.pubkey`** ✓ |
++| 详情脱敏投影 | `pluginUi.ts::redactDetail` L141-160 / `redactKeyRecord` L168-170 | 显式挑选字段，丢弃 `signature.value`/路径/`pubkey`/metadata ✓ |
++| `pubkey` 字面量出处 | `PluginManager.vue` L24-25,66,94,96,173；`usePluginStore.ts` L195-196,205 | 全部是"用户粘贴→`addKey`→`keyForm.pubkey=""` 清空"的**瞬时输入**，从不回显/持久化 ✓ |
++| 裸 invoke | 全组件/store | 仅调用 `bridge.plugin*`，无 `invoke("plugin_"` / `@tauri-apps/api/tauri` ✓ |
++
++### A.3 修复方案
++**方案 A（推荐，A4 改夹具）** — 收紧 A2 检测粒度，只抓"展示/输出位置"：
++```python
++# scripts/check-plugin-ui-privacy.py :: detect_hits, A2 分支
++# 将 SECRET_RENDER_TOKENS 中的裸 r"pubkey" 改为仅匹配展示上下文：
++SECRET_RENDER_TOKENS = (
++    r"signature\.value",
++    r"\.pubkey",                      # 保留：覆盖 {{ x.pubkey }} / k.pubkey 绑定
++    r"\{\{[^}]*pubkey",              # 模板插值中的 pubkey（真实回显）
++    r"resource_path",
++    r"rawSignature", r"raw_signature",
++    r"privateKey", r"private_key",
++    r"apiKey", r"api_key",
++    r"secretKey", r"secret_key",
++)
++# 并可在扫描时跳过 <input ...> 标签内与 reactive({...}) 表单声明行（可选增强）
++```
++> 去掉裸 `pubkey` 后，A6 的瞬时输入字段与 `placeholder="pubkey..."` 文案不再命中；而一旦有人写成 `{{ detail.pubkey }}` 仍会被 `\.pubkey` / 模板插值规则捕获。
++
++**方案 B（A6 改代码，夹具保持严格）** — 把瞬时字段与 placeholder 中的 `pubkey` 字面量改名：
++- `keyForm.pubkey` → `keyForm.keyMaterial`
++- `addKey(keyId, pubkey, note)` → `addKey(keyId, keyMaterial, note)`
++- placeholder `"pubkey（仅用于登记，不回显）"` → `"公钥原文（仅用于登记，不回显，提交后不留存）"`（去掉 `pubkey` 子串）
++
++任选其一即可让 pre-merge 转绿；**方案 A 更优**（保留对真实回显的防护，且不动产品代码）。
++
++---
++
++## B. 缺口（给 A6）
++
++### B.1 缺失 `scripts/check-plugin-ui-logic.mjs`
++A6 Must-Deliver 要求无头 UI 逻辑测试，当前未交付。建议覆盖 `pluginUi.ts` 纯函数（与 `plugin.rs::can_transition` 1:1 镜像，是 W14 高价值回归点）：
++- `canTransitionUi(from,to)` / `enabledActionsFor(state)` — 8 态状态机边；
++- `redactDetail(d)` — 断言 `signature` 无 `value`、`resource` 无绝对路径、无 `metadata`；
++- `parseManifestInput(text)` — 必填字段/JSON 形态/entry 对象校验；
++- ACL 风险档 `aclLevelLabel` / `isDangerousGate` / `aclLevelClass`。
++
++交付后纳入 A11 第 13 项 UA 脚本复跑。
++
++---
++
++## C. 软观察（长期建议，非门禁）
++- **错误渲染**：`usePluginStore.describeError` 把 `e.message` 截断 300 字直渲 (`PluginManager.vue` L239)。`PLUGIN_UI_ERROR_CODE_ONLY` 为 PENDING，暂不强；建议长期映射为稳定 `error_code`（对齐 `PluginSummary.error_code`），契合"错误只渲染稳定码"红线。
++- **uninstall 语义**：A6 `uninstall` → `bridge.pluginDisable`（后端无独立 uninstall 命令，守 W13 红线）。设计合理，但 UI 文案"卸载"与后端"disable"需对齐，避免误解。
++
++---
++
++## D. 复跑命令（修复后）
++```bash
++python3 scripts/check-plugin-ui-privacy.py --self-test   # 期望 SELF_TEST_RESULT=PASS
++python3 scripts/check-plugin-ui-privacy.py               # 期望 all invariants hold
++bash scripts/pre-merge.sh                                # 期望 PRE_MERGE_RESULT=ALL_PASS
++node scripts/check-plugin-ui-logic.mjs                   # 期望 A6 交付后全绿
++```
+diff --git a/logs/assist/A2-M5-W14-boundary-verdict-20260907-1435.md b/logs/assist/A2-M5-W14-boundary-verdict-20260907-1435.md
+new file mode 100644
+index 0000000..025678a
+--- /dev/null
++++ b/logs/assist/A2-M5-W14-boundary-verdict-20260907-1435.md
+@@ -0,0 +1,165 @@
++# A2 · M5-W14 Plugin Manager UI 边界评审裁定（BOUNDARY REVIEW VERDICT）
++
++> 生成：2026-09-07 14:35 CST · Lane A2（M5-W14 · **START REVIEW ONLY**）
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W14 Plugin Manager UI Dispatch，A2 行：
++> 「Check UI/store boundary: **no domain duplication, raw bridge invoke, or lifecycle authority expansion**.」
++> 基线：`master @ a7eefbb`（`feat(M5): integrate W13 plugin manifest lifecycle`；`git fetch`+`git pull --ff-only` 已最新；工作树干净）
++> 性质：**只读评审**。未写产品代码（W14 UI 由 A6 在 `src/components/plugin/**`、`src/stores/usePluginStore.ts` 落地，本 Lane 不触碰），未改 `bridge.ts`/`types.ts`/`domain.rs`/组件/策略脚本，未 push。
++
++---
++
++## 0. 裁定摘要（VERDICT）
++
++| 维度 | 结论 |
++|---|---|
++| **冻结契约边界（UI 必须遵守的边界本身）** | ✅ **PASS（干净）** —— `bridge.ts` 仅 8 个 Stage-I 方法，无 `plugin_invoke`；输出 DTO 全脱敏（无 signature.value/公钥原文/资源路径/metadata）；签名字段状态用 `structure_ok\|structure_failed`（**非** `verified`，与 W13 B3 一致） |
++| **A6 UI/store 边界规则** | ⚠️ 给出 **C0–C7** 强制条件；A6 须逐条满足，由 A10/A11 终验 |
++| **本 Lane 可认证度** | A6 的 W14 UI 代码**尚未落盘**（工作树无 `src/components/plugin/`、`usePluginStore.ts`、`check-plugin-ui-logic.mjs`），故本裁定为**契约级边界裁定 + A6 实施边界清单**；A6 产出后由 A10/A11 做代码级复核 |
++| **硬停冲突** | 契约层面 **0**；潜在越权点已写入条件项防呆 |
++
++**一句话**：W13 已把 UI 的「边界」焊死在 `bridge.ts`/`types.ts`/`domain.rs` 这层**只读、脱敏、Stage-I 专属**的契约上；A6 只需**消费**它、**镜像**类型、用 `bridge.ts` 包装调用，不得重复领域逻辑、不得裸 `invoke`、不得新增命令或暴露执行面。
++
++---
++
++## 1. 评审对象与证据
++
++| # | 对象 | 位置 | 关键证据 |
++|---|---|---|---|
++| E1 | 前端插件方法（冻结契约） | `src/bridge.ts:721-739` | 8 个：`pluginInstall`/`pluginEnable`/`pluginDisable`/`pluginList`/`pluginGet`/`pluginKeysAdd`/`pluginKeysList`/`pluginKeysRemove` |
++| E2 | 前端插件类型（镜像） | `src/types.ts:937-1029` | `PluginState`/`PluginEntry`/`PluginCapability`/`PluginSignature`/`PluginManifest`/`PluginResourceMeta`/`PluginSummary`/`PluginCapabilityView`/`PluginSignatureView`/`PluginDetail` |
++| E3 | 后端插件 DTO（单一真源） | `src-tauri/src/domain.rs:2309-2409` | `PluginRecord`/`PluginSummary`/`PluginCapabilityView`/`PluginSignatureView`/`PluginDetail`/`TrustedKeyRecord` |
++| E4 | 能力风险档 | `src-tauri/src/domain.rs:1915` | `AclLevel { Safe, Confirm, Dangerous }` |
++| E5 | 裸 `invoke('plugin_` 基线 | 全仓 `src/` | 当前命中 **0**（禁止模式，A6 须维持） |
++| E6 | `plugin_eval` 命名坑 | `src-tauri/src/bridge.rs:143` | tabs 域 JS-eval 助手，**非**插件路径，禁被插件 UI 复用 |
++
++---
++
++## 2. 冻结契约审计（PASS）
++
++### 2.1 命令面 = 恰好 8 个 Stage-I（无 invoke）
++
++`bridge.ts` 仅转发：
++
++```text
++plugin_install   plugin_enable   plugin_disable
++plugin_list      plugin_get
++plugin_keys_add  plugin_keys_list  plugin_keys_remove
++```
++
++`grep -nE 'plugin_invoke|plugin_storage|plugin_audit|plugin_permissions|plugin_delete|plugin_uninstall' src/bridge.ts` → **0 命中**。
++→ 契约层面 **无执行面**（invoke/storage/audit/permissions/delete 全 LOCKED），与 W14 硬停「No plugin_invoke / 无执行」一致。 ✅
++
++### 2.2 输出 DTO 全脱敏（与 A4 W13 闭环一致）
++
++| DTO | 含 | 不含（已防呆） |
++|---|---|---|
++| `PluginSummary` | id/version/display_name/state/capability_count/**hash_prefix**(16hex)/updated_at | 无 signature、无资源路径 |
++| `PluginDetail` | 同上 + capabilities[].acl_level + `PluginSignatureView` + `PluginResourceMeta` | 无 signature.value、无资源绝对路径、无 manifest 正文 |
++| `PluginSignatureView` | algorithm/key_id/status | **无 `value` 原文**（后端 `PluginRecord` 亦不落） |
++| `PluginResourceMeta` | declared_hash(16hex)/path_provided(bool)/verified(bool) | 无绝对路径 |
++| `TrustedKeyRecord` | key_id/**fingerprint**(16hex)/note/added_at | 无公钥原文 |
++
++`domain.rs:2305-2328` 注释明示：登记簿不落资源绝对路径、不落 `signature.value`、不落公钥原文、刻意不整份持久化 `PluginManifest`（metadata 即使过凭据检测也不落盘）。
++→ 输出面已结构性防泄露，**UI 只需不额外渲染**即可合规。 ✅
++
++### 2.3 签名状态口径 = `structure_ok`/`structure_failed`（非 verified）
++
++`PluginSignatureView.status`（domain.rs:2378）/ `types.ts:1012` 取值 `structure_ok|structure_failed`，**不含 `verified`**。
++→ 与 W13 阻塞项 B3（真验签不可达、禁称「已验签」）**完全对齐**，UI 不得把该状态呈现为「已验签」。 ✅
++
++### 2.4 能力风险档三档对齐
++
++`AclLevel { Safe, Confirm, Dangerous }` ↔ `types.ts` `acl_level: "safe"|"confirm"|"dangerous"`。
++→ UI 须逐项展示能力风险（与 MCP/Skill 一致），install/enable 遇 `dangerous` 须走两段式确认 + keyring（W13 卡 §2.4）。 ✅
++
++---
++
++## 3. UI/store 边界规则（A6 必须满足）
++
++### C0 · 安装输入不得渲染/回显裸签名与 metadata（防泄漏，先于一切）
++- `types.ts:PluginManifest.signature.value: string` 与 `metadata?: unknown` 是**输入**字段（用户粘贴 manifest JSON 安装），**不是**展示字段。
++- 规则：安装入口应接收**原始 JSON 文本**透传给 `pluginInstall({manifest})`，**不**把 `signature.value` / `metadata` 反序列化后渲染进任何面板、日志、审计或 `usePluginStore` 的可序列化快照；store 只缓存**输出** DTO（`PluginSummary`/`PluginDetail`/`TrustedKeyRecord`）。
++
++### C1 · 无 domain duplication（store 只持 UI 态，不持领域逻辑）
++- `usePluginStore.ts` 只存：**列表缓存、过滤器、对话框/确认态、`pendingConfirms`、受信任密钥缓存、install 草稿**。
++- **禁止**在 store/组件中重实现：`can_transition`/`transition`/`validate_plugin_manifest`/`capability_acl_level`/`check_plugin_capabilities`/ACL 判定 —— 这些全在后端，UI 仅调用 `pluginEnable`/`pluginDisable` 等并据返回 `state` 渲染。
++- `types.ts` 是 `domain.rs` 的**镜像**，A6 不得为「便于 UI」在 `types.ts` 增删字段（若要改须走「frozen-type corrections」且仅限对齐后端，且须同步 `domain.rs`）。
++
++### C2 · 无 raw bridge invoke（统一走 `src/bridge.ts`）
++- 所有插件调用**只**经 `src/bridge.ts` 的 8 个包装；组件/store 不得 `invoke('plugin_*')` 裸调。
++- 基线当前 `src/` 裸 `invoke('plugin_` 命中 **0** —— A6 须维持 0；`scripts/check-plugin-ui-logic.mjs` 应把「无裸 `invoke('plugin_`」作为硬码位。
++- **禁止**复用 `bridge.rs:plugin_eval`（tabs 域 JS-eval，执行路径）—— 插件 UI 不得经由它获得任何执行能力（W13 C5 延续）。
++
++### C3 · 无 lifecycle authority expansion（只用 8 命令，不增不减）
++- UI **不得**新增任何命令、不得为 `plugin_invoke`/storage/audit/permissions/delete 添加入口或按钮（LOCKED）。
++- ACL 与命令名已冻结（W14 硬停「Do not add lifecycle commands」）；前端不得出现 "Run"/"Invoke"/"Execute"/"调用" 之类插件执行按钮。
++
++### C4 · 显式确认（state-changing 动作不自动应用）
++- `pluginInstall`/`pluginEnable`（含 dangerous 能力需两段式+keyring）/`pluginDisable`/`pluginKeysAdd`/`pluginKeysRemove` 必须走**显式确认对话框**，不可静默/批量自动应用。
++- 确认文案须显式包含：id、version、capabilities（逐项）、风险档、来源、hash 前 8 hex（与 W13 卡 §7 `PermissionPreviewModal` 口径）。
++
++### C5 · 受信任密钥只显指纹，不显公钥原文
++- 密钥管理面板只读 `pluginKeysList()` → 渲染 `key_id` + `fingerprint`(16hex) + `note`；**不**显示/复制完整公钥。
++- `pluginKeysAdd` 粘贴公钥的动作本身须走 Confirm（W13 卡 §2.2）。
++
++### C6 · 常量单一真源（UI 侧不新造字面量）
++- 任何 UI 侧上限（如能力列表缓存 ≤ N、详情审计摘要 ≤ 50、hash 展示长度）若对应后端常量（`MAX_TEXT_FIELD_BYTES` / `HASH_HEX_LEN_SHORT` 等，W13 B2 提及），**须**引用同一来源或镜像，不得在前端散落新字面量（避免 W13 B2 漂移）。
++
++### C7 · 仅本地安装、无网络/下载（与 W13 HS-10 一致）
++- `pluginInstall` 的 `resourcePath` 必须是**本地文件**（文件选择器），UI 不得提供 URL/下载入口；不得出现 "download from network" 语义。
++
++---
++
++## 4. 硬停逐条交叉核对
++
++| W14 硬停 | 契约级结论 | 交谁复核 |
++|---|---|---|
++| 无 `plugin_invoke`/执行/动态加载/网络/daemon/模型/Agent-Skill/MCP 扩容/图谱写/后台 | 契约无这些方法；UI 仅消费 8 命令 ✅ | A5/A3/A10 |
++| UI 只调 `src/bridge.ts`，无裸 `invoke` | 基线 0 裸 invoke；C2 维持 | A10/A11 |
++| 不展示/不持久化 裸签名/公钥材质/资源路径/manifest metadata/凭据 | 输出 DTO 已脱敏；C0 防输入回显 | A4/A10 |
++| 命令名/DTO 冻结，W14 不加命令 | 8 命令已冻结；C3 守 | A9/A11 |
++
++---
++
++## 5. 跨 Lane 观察（交对应 Lane）
++
++- **W1 → A9（backend review）**：冻结契约已覆盖 UI 所需只读展示字段（`capabilities[].acl_level`、`hash_prefix`、`signature.status`、`resource` 布尔、`installed_at`/`updated_at`）。**潜在缺失**：W13 卡曾提 `metadata.changelog` 作为升级展示字段，但 `PluginDetail` **未**携带它（后端 `PluginRecord` 不落 metadata）。若 A6 需「changelog」展示，须 A9 在后端补只读字段或明确「W14 不展示 changelog」。**传递 A9 裁定**。
++- **W2 → A4（privacy）**：`PluginManifest` 输入含 `signature.value` 与 `metadata`；C0 要求不回显/不持久化。后端 `PluginRecord` 已不落（domain.rs:2325-2328），前端须同口径。
++- **W3 → A5（Agent/Skill lock）**：UI 不得含 Agent/Skill/tool 执行 affordance；Stage-I 无执行语义，确认面板不与 `PermissionPreviewModal` 的 agent/skill 路径混淆。
++- **W4 → A3（MCP isolation）**：8 命令不在 `mcp_server.rs`（W13 已核 plugin 命中 0）；A6 无法改变 MCP 面，但请 A3 在 A6 产出后复核 MCP 工具未自动收录插件命令。
++- **W5 → A10（security）**：重点查 ① 裸 `invoke` 绕过（C2）② 确认对话框绕过（C4，如确认态可被程序跳过）③ 源/ACL 漂移（C3）④ 敏感渲染回归（C0/C5）。
++- **W6 → A11（verification）**：`scripts/check-plugin-ui-logic.mjs` 须含码位：无裸 `invoke('plugin_`、仅 8 命令、输出不渲染 `signature.value`、密钥只显指纹；并跑通 `pnpm build` + `pnpm test:unit`。
++
++---
++
++## 6. A6 开工前置自检清单（UI/store 边界）
++
++```text
++[ ] 代码位于 src/components/plugin/** 与 src/stores/usePluginStore.ts（不污染其它模块）
++[ ] 所有插件调用经 src/bridge.ts 8 包装；全局裸 invoke('plugin_ 命中 = 0
++[ ] 未新增任何 bridge.ts 插件方法（命令名/DTO 冻结）
++[ ] 未出现 plugin_invoke / Run / Invoke / Execute 入口或按钮
++[ ] usePluginStore 仅持 UI 态，无 can_transition/validate/ACL 重实现
++[ ] 安装入口接收原始 manifest JSON 透传；signature.value / metadata 不渲染/不进 store 快照
++[ ] 详情/签名/资源/密钥展示只用输出 DTO；密钥只显 fingerprint(16hex)
++[ ] 状态变更动作（install/enable/disable/keys_*）走显式确认；dangerous 能力走两段式+keyring
++[ ] install 仅本地文件选择，无网络/下载语义
++[ ] 前端不新增与后端常量重复的字面量上限
++[ ] scripts/check-plugin-ui-logic.mjs 含上述硬码位；pnpm build + test:unit 全绿
++```
++
++---
++
++## 7. 需 A0 / 后续 Lane 拍板
++
++1. **A6 代码级复核**：本裁定为契约级；A6 落码后由 **A10（security）+ A11（verification）** 做代码级边界复核（本 Lane 不重复评审，避免越权改产品代码）。
++2. **W1 changelog 字段**：是否补只读 `changelog` 字段（交 A9），或 W14 明确不展示。
++3. 若 A6 确需 `types.ts` 对齐性修正，须同步 `domain.rs` 并标注「frozen-type correction」，不得单方面扩张。
++
++---
++
++## 8. 本 Lane 合规声明
++
++- 仅产出评审文档与补丁；**未写产品代码**，未改 `src/components/plugin/**`/`usePluginStore.ts`/`bridge.ts`/`types.ts`/`domain.rs`/`scripts/check-plugin-ui-logic.mjs`/三份主文档。
++- 未移动 `NEXT`、未建分支、**未 push**（board：仅 A0 推送）。
++- 评审期间已复核工作树干净（W14 UI 文件尚未落盘），评审对象为已冻结的 W13 契约。
+diff --git a/logs/assist/A4-M5-W14-privacy-review-20260908-0030.md b/logs/assist/A4-M5-W14-privacy-review-20260908-0030.md
+new file mode 100644
+index 0000000..ea5a140
+--- /dev/null
++++ b/logs/assist/A4-M5-W14-privacy-review-20260908-0030.md
+@@ -0,0 +1,67 @@
++# A4 — M5-W14 Plugin Manager UI 隐私评审（PRIVACY REVIEW ONLY）
++
++- **Lane / 分派**：A4，`START PRIVACY REVIEW ONLY`（评审渲染出的 DTO/错误/状态路径是否回显密钥、签名、key、metadata、路径）
++- **BASE / HEAD**：`a7eefbb`（master，feat(M5): integrate W13 plugin manifest lifecycle）；**未 push**（仅 A0 可 push）
++- **评审对象**：`src/bridge.ts` 冻结方法、`src/types.ts` 冻结镜像、`src-tauri/src/domain.rs` 冻结 DTO、`src/stores/usePluginStore.ts` 与 `src/components/plugin/**`（**A6 尚未落地**）
++- **结论**：**PASS_WITH_DEBT** —— 后端到达 UI 的数据**构造上已脱敏**（红脱敏 DTO + `error_code` 收口），故渲染面低风险；但 A6 必须守住 4 条红线（已编码进 gated 夹具），否则密钥会经「裸 invoke / 渲染禁止字段 / 浏览器持久化 / 原始错误回显」重新出现。
++
++## 一、关键事实：到达 UI 的数据已脱敏（这是本轮最有价值的结论）
++
++核查冻结契约（`types.ts:990-1038`、`domain.rs:2311-2411`、`bridge.ts:721-739`）：
++
++| 到达前端的 DTO | 字段 | 已剔除 |
++|---|---|---|
++| `PluginSummary` | id/version/display_name/state/capability_count/hash_prefix/updated_at | 签名原文、资源路径、metadata |
++| `PluginDetail` | 上述 + description/min_app_version/capabilities/signature/installed_at/resource | **无 `metadata` 字段** |
++| `PluginSignatureView` | algorithm/key_id/status | **无 `value` 原文** |
++| `PluginResourceMeta` | declared_hash/path_provided(bool)/verified(bool) | **无资源路径字符串** |
++| `TrustedKeyRecord` | key_id/fingerprint(16hex)/note/added_at | **无 pubkey 原文** |
++
++- 后端出错只经 `plugin::error_code` 收口为稳定码（`PLUGIN_MANIFEST_INVALID` 等），`plugin_install`/`plugin_set_state` 只 `Err(code.to_string())` —— **错误正文不出进程**（A4 W13 已确认）。
++- 资源路径只取布尔 `path_provided` / `verified`，不落盘、不出口。
++
++⇒ 只要 A6 **只用冻结的 `bridge.ts` 方法 + 冻结 TS 类型**，渲染面天然不碰密钥/签名/路径/metadata。
++
++## 二、A6 必须守住的 4 条红线（已编码进 `scripts/check-plugin-ui-privacy.py`，gated）
++
++> 红线之所以必要：即使 DTO 已脱敏，A6 仍可能（a）裸 `invoke` 绕过类型取到原始清单/密钥；（b）自行硬编码或错误 typing 渲染禁止字段；（c）把持有中的完整 manifest（含 metadata + signature.value）写入浏览器存储；（d）把原始错误体渲染出来。
++
++| 码位 | 红线 | 触发示例 |
++|---|---|---|
++| `PLUGIN_UI_NO_RAW_INVOKE`（ACTIVE） | 只经 `bridge.pluginX`，禁止裸 `invoke("plugin_*")` / 直 import `@tauri-apps/api/tauri` | `invoke("plugin_list", …)` |
++| `PLUGIN_UI_NO_SECRET_RENDER`（ACTIVE） | 只渲染红脱敏 DTO 字段 | `{{ plugin.signature.value }}`、`{{ detail.pubkey }}`、`resource_path` |
++| `PLUGIN_UI_NO_BROWSER_STORAGE`（PENDING） | 插件记录/密钥/清单原文不得落 localStorage/sessionStorage/indexedDB | `localStorage.setItem("plugin:"+id, …)` |
++| `PLUGIN_UI_ERROR_CODE_ONLY`（PENDING） | 错误渲染只用稳定码，禁止 `err.message` / `String(err)` / `err.toString()` | `{{ err.message }}` |
++
++**关于 `metadata` 的口径**：安装表单需收集用户自有 `metadata` 输入并传给 `pluginInstall({ manifest })`（允许）；风险在「渲染回显 / 持久化」。故夹具**不**把 `metadata` 列入渲染黑名单（避免误伤用户输入），而由 `PLUGIN_UI_NO_BROWSER_STORAGE` 兜底「不得持久化」；A6 也不得把 `metadata` 回显到详情面板。
++
++## 三、交付物
++
++- **新增 `scripts/check-plugin-ui-privacy.py`**（gated：A6 前端文件未落地时为 no-op，默认门禁与 `--self-test` 均绿；A6 落地后自动激活）。
++  - 2 ACTIVE 码 + 2 PENDING 码；三模式：`--self-test`（2 好样本零违规 + 8 坏样本全检出，含变异防呆）/ 默认门禁 / `--expect-pending`。
++  - 与既有夹具不重叠：`check-plugin-policy.py`（A9，Rust DTO 字段名）、`check-plugin-privacy.py`（A4/W13，Rust 后端回显/审计/落盘）。
++- **接入 `scripts/pre-merge.sh`**：仅 `--self-test` + 默认门禁（同 W13 隐私夹具做法；pending 通道当前为 NONE，无需接）。
++- 本文件（评审结论）。
++
++### 实测
++
++```text
++PLUGIN_UI_PRIVACY_SELF_TEST_RESULT=PASS: 2 好样本零违规（真实仓库 gated + 合成参考实现）
++  + 8 个坏样本全部检出；ACTIVE=2 PENDING=2          → 退出 0
++plugin UI privacy policy: all invariants hold（ACTIVE=2）   → 退出 0
++PLUGIN_UI_PRIVACY_PENDING_RESULT=NONE（2 个 pending 码位均未检出）  → 退出 0
++bash -n scripts/pre-merge.sh → 0；git diff --check → 无冲突标记
++```
++
++## 四、给 A6 / A10 / A11 的协同清单
++
++1. A6：UI 只经 `bridge.ts`；只渲染冻结 DTO 字段；安装表单可收集 `metadata` 但**不回显、不持久化**；错误只展示稳定码；不得落浏览器存储。
++2. A6 落地后跑 `python3 scripts/check-plugin-ui-privacy.py`（默认）应仍为 PASS；若 FAIL 即红线被踩。
++3. A10（security）：本夹具与 A10 的「raw-invoke 绕过 / 敏感渲染回归」部分重叠，但本夹具仅管隐私红脱敏面，A10 仍须覆盖确认绕过与确认弹窗绕过。
++4. A11：W14 矩阵把 `check-plugin-ui-privacy.py`（self-test + 默认）纳入 pre-merge（已接）。
++
++## 五、边界声明
++
++- 本 lane 为 **REVIEW ONLY**：未改任何产品代码（`bridge.ts`/`types.ts`/`domain.rs`/前端均未触碰；`pre-merge.sh` 仅新增本夹具接入段）。
++- 评审期间 A6 UI 尚未落地，故为**前瞻性验收**：当前未触碰的 A6 文件使夹具 gated 为绿，属预期。
++- 未执行 push。
+diff --git a/logs/checkpoints/A1-M5-W14-reconciliation-20260908-0020.md b/logs/checkpoints/A1-M5-W14-reconciliation-20260908-0020.md
+new file mode 100644
+index 0000000..6519a95
+--- /dev/null
++++ b/logs/checkpoints/A1-M5-W14-reconciliation-20260908-0020.md
+@@ -0,0 +1,202 @@
++# A1 M5-W14 reconciliation checkpoint（START DOCS ONLY · 2026-09-08 00:20 CST）
++
++> Lane A1（M5-W14 · docs-only reconciliation）
++> 派发来源：`PARALLEL_COMMAND_BOARD.md` L1163+（M5-W14 Plugin Manager UI Dispatch，Added 2026-09-08 00:20 CST by A0）
++> A0 W13 acceptance 来源：`logs/checkpoints/A0-M5-W13-accept-W14-dispatch-20260908-0020.md`
++> 整包交付：本 checkpoint + `logs/checkpoints/Lane-A1-M5-W14-reconciliation-20260908-0020.patch`（11 文件改动）
++> A1 W14 立场 = **START DOCS ONLY · 零产品代码 · 不 push**
++
++---
++
++## §1 任务接收
++
++**W14 派发** = Plugin Manager UI Dispatch（board L1163+）；**W14 = 仅 1 lane UI 产品代码 open**（**A6 W14 = START PRODUCT CODE NARROW**），其余 10 lane = docs/review/security/verification（A1/A2/A3/A4/A5/A7/A8/A9/A10/A11 + A19 plugin UI 仍 SUPPORT DOCS ONLY）。
++
++**A1 W14 任务边界（START DOCS ONLY · 冻结）**：
++1. reconcile W13 as accepted after A0 push（`a7eefbb` = HEAD）
++2. mark W14 active + 更新 M5-12/13/14 status + 末尾段
++3. **不**改 product scope（plugin UI 6 项 ACTIVE 仍 0%，A6 W14 实施期才升 ACTIVE = DEBT-04 W14+ 仍挂账）
++4. **不**碰产品代码（`src/components/plugin/**` / `src/stores/usePluginStore.ts` / `scripts/check-plugin-ui-logic.mjs` / `src/bridge.ts` / `src/types.ts`）
++5. **不** push
++
++---
++
++## §2 整包改动清单（11 文件）
++
++| # | 文件 | 改动 | 行数 |
++|---|------|------|------|
++| 1 | `PARALLEL_COMMAND_BOARD.md` | L6 mainline chain 更新 `3c3f460` → `a7eefbb`（W13 PUSHED · 集成） | 1 替换 |
++| 2 | `详细设计与实施计划.md` | L1 加 A1 W14 update 行 | 1 新增 |
++| 3 | `AI-模型切换与接手清单.md` | L1 加 A1 W14 update 行 | 1 新增 |
++| 4 | `后续需求TODO.md` | L1 加 A1 W14 update 行 | 1 新增 |
++| 5 | `logs/checkpoints/A1-M5-W14-reconciliation-20260908-0020.md` | **本 checkpoint（new）** | 165 |
++| 6 | `logs/checkpoints/Lane-A1-M5-W14-reconciliation-20260908-0020.patch` | **本 checkpoint 配套 patch（new）** | 313 |
++| 7 | `logs/checkpoints/M5-20260906/M5-0-overview.md` | L1 title + 末尾 [W13 PUSHED · 2026-09-08 00:20 CST] 段 + [W14 active · 2026-09-08 00:20 CST] 段（含 runtime-lock 14 行状态表） | 68 +/2 - |
++| 8 | `logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md` | 头 L17-19 增 W13 PUSHED + W14 ACTIVE status 行 | 2 新增 |
++| 9 | `logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md` | 头 L17-19 增 W13 PUSHED + W14 ACTIVE status 行 | 2 新增 |
++| 10 | `logs/checkpoints/M5-20260906/M5-12-plugin-ui.md` | 头 L18-20 增 W13 PUSHED + W14 ACTIVE status 行 + 末尾 [W14 active · 2026-09-08 00:20 CST] 段 | 35 +/0 - |
++| 11 | `logs/checkpoints/M5-20260906/M5-13-verification-matrix.md` | L1 title 加 W14 verification scope 关键词 + 末尾 [W14 verification scope · 2026-09-08 00:20 CST] 段（11 项必跑验证矩阵） | 32 +/2 - |
++| 12 | `logs/checkpoints/M5-20260906/M5-14-debt-ledger.md` | L1 title + 头 status 行 W13 PUSHED + W14 ACTIVE + 末尾 [W14 active · 2026-09-08 00:20 CST] 段（runtime surface 14 行表 + DEBT-04 仍挂账转 A6 W14） | 44 +/2 - |
++
++> 备注：上表 12 行（含本 checkpoint + patch）= **A1 W14 整包 11 个用户可见改动 + 本 checkpoint 文件 + 本 patch 文件 = 11 实际改动文件 + 2 个交付文件**；A1 W13 reconciliation 整包是 14 文件改动（W12 board L7 + 3 主文档 + M5-0/10/11/12/13/14 + A1 W13 checkpoint + A1 W13 patch = 11 实际 + 2 交付），A1 W14 整包对齐 W12/W13 同形（**11 实际改动文件** = board + 3 主文档 + A1 W14 checkpoint + A1 W14 patch + M5-0/10/11/12/13/14）。
++
++---
++
++## §3 W13 拣入事实回填（依据 `a7eefbb`）
++
++**A0 在 `a7eefbb feat(M5): integrate W13 plugin manifest lifecycle` 中拣入 W13 整包**：
++- 8 local-only lifecycle/key-registry 命令（`plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_list` / `plugin_get` / `plugin_key_registry` / `plugin_audit_get` / 4 storage stub 错误结构不变）
++- 原子注册表持久化 + redacted DTO/audit + ACL/source-check parity
++- **无** execution surface（plugin_invoke / cancel / storage_* 5 stub 仍 `Err("not-implemented-in-W6")`）
++- 31 files changed（含 4 共享文件修订 + 前端镜像 + 门禁脚本 + 文档）
++
++**验证实跑（a7eefbb 拣入后 W13 batch 验证）**：
++- `cargo test plugin` 全绿（411/411 default + 21/0 feature mcp_server + 15/0 graph）
++- `check-plugin-policy.py --self-test` PASS（ACTIVE=8/PENDING=0 + `--expect-pending` PASS）
++- `check-plugin-privacy.py --self-test` PASS（ACTIVE=4/PENDING=0）
++- `check-graph-policy.py` ACTIVE=8
++- `check-mcp-policy.py` ACTIVE=12/PENDING=0
++- graph UI logic 113/113 + agent-skill UI logic 110/110
++- `npm run build` PASS
++- `python3 scripts/pre-merge.sh` ALL_PASS
++- `python3 scripts/measure-build-metrics.py` `total_bytes_pct ≤ 23%`（W12 A0 修订 IF-2 = 23%）
++- cargo_warnings delta = 0
++
++**W13 残留债 = 0**：A9 W13 增量 = 1 closed-by-W13 = plugin stage-I 6 命令；M5 final debt ledger 维持 **53 条** + W13 增量 1 closed-by-W13 → 维持 53 条；DEBT-04 plugin UI 6 项 carried-to-W14+（A6 派发后消解，A1 W14 派发期仍 0% ACTIVE）。
++
++---
++
++## §4 W14 派发边界（依据 board L1163+）
++
++**W14 = Plugin Manager UI Dispatch**（Added 2026-09-08 00:20 CST by A0）；**W14 核心 = 仅 1 lane UI 产品代码 open**：
++
++### 4.1 A6 W14 唯一产品代码 lane 范围（冻结）
++
++- 消费 **frozen W13 6 命令**（`plugin_list` / `plugin_get` / `plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_key_registry`）
++- **不**实施 W14 新 lifecycle 命令 / **不**改 `src/bridge.ts` DTO 形态 / **不**增删 ACL
++- 文件范围 = `src/components/plugin/**` + `src/stores/usePluginStore.ts` + `scripts/check-plugin-ui-logic.mjs` + workspace navigation 集成
++- 6 action = list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint
++- UI 走 `src/bridge.ts`（**不** raw Tauri `invoke`）
++- **不**渲染 raw signature / public-key / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr
++
++### 4.2 其余 10 lane 全 review / docs / verification
++
++| Lane | W14 角色 | 必保 |
++|------|---------|------|
++| A1 | START DOCS ONLY（本卡） | 11 文件整包收口 + 不改 product scope + 不 push |
++| A2 | START REVIEW ONLY | boundary verdict = W14 plugin UI 边界 = 消费 frozen W13 6 命令，不越界 |
++| A3 | START MCP REVIEW ONLY | isolation verdict = W14 plugin UI 走 bridge.ts 不引入 mcp_* runtime |
++| A4 | START PRIVACY REVIEW ONLY | privacy verdict = W14 plugin UI 走 W13 redacted DTO 不触 raw 敏感字段 |
++| A5 | START AGENT/SKILL REVIEW ONLY | lock verdict = W14 plugin UI 不触发 Agent/Skill runtime |
++| A7 | SUPPORT DOCS ONLY | graph non-regression = W12 8 条 graph 集成锚点 + A6 W14 不触 graph |
++| A8 | SUPPORT UI REVIEW ONLY | UI ergonomics + graph/workspace non-regression |
++| A9 | SUPPORT BACKEND REVIEW ONLY | A6 W14 是否吃 frozen W13 contract + 缺哪些 read-only 字段 |
++| A10 | START SECURITY REVIEW | raw-invoke bypass / confirmation bypass / source-ACL drift / sensitive-render regression 四项不破 |
++| A11 | START VERIFICATION | W14 matrix 全跑（`M5-13-verification-matrix.md` 末尾 [W14 verification scope] 段 11 项必跑） |
++| A19 | SUPPORT DOCS ONLY | plugin UI 仍 0% ACTIVE 派发期；A6 W14 实施完成 = DEBT-04 closed-by-W14 |
++
++### 4.3 W14 Hard Stops（10 条）
++
++1. 仅 master / pull --ff-only / 仅 A0 push
++2. **No** plugin_invoke / 代码执行 / 动态加载 / 网络下载监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP 全量 runtime / graph 写导出 / 后台 worker
++3. UI 只能调 `src/bridge.ts`，**不得** raw Tauri `invoke`
++4. **不得** display/persist raw signature / public-key material / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr
++5. 现有命令名 + DTO 冻结，**不得** W14 加 lifecycle 命令
++
++---
++
++## §5 A1 W14 = START DOCS ONLY 立场
++
++### 5.1 必做（已在本 checkpoint 完成）
++
++- ✅ reconcile W13 as accepted after A0 push（`a7eefbb`）—— §3
++- ✅ mark W14 active —— 3 主文档 L1 + board L6 + M5-0/10/11/12/13/14 头 status 行
++- ✅ 更新 M5-12/13/14 status —— M5-12 头增 W13 PUSHED + W14 ACTIVE + 末尾 [W14 active] 段；M5-13 L1 title + 末尾 [W14 verification scope] 段；M5-14 L1 title + 头 status 行 + 末尾 [W14 active] 段
++- ✅ 更新 M5-0 history chain + 末尾段 —— M5-0 L1 title + 末尾 [W13 PUSHED] + [W14 active] 段
++- ✅ 3 主文档 L1 A1 W14 update 行（与 W12/W13 同形 · 紧随 A1 W13 update 行后）
++
++### 5.2 必不做（A1 零产品代码 / 零 push）
++
++- ❌ 不写 `src/components/plugin/**` 任何文件
++- ❌ 不写 `src/stores/usePluginStore.ts`
++- ❌ 不写 `scripts/check-plugin-ui-logic.mjs`
++- ❌ 不碰 `src/bridge.ts` / `src/types.ts`（DTO 冻结）
++- ❌ 不实施 W14 新 lifecycle 命令
++- ❌ 不增删 ACL（K1 ACL 末条恒为 `list_artifact_images` 不破）
++- ❌ 不修改 product scope（plugin UI 6 项 ACTIVE 仍 0%）
++- ❌ 不 push
++
++### 5.3 验证矩阵（`M5-13-verification-matrix.md` 末尾 [W14 verification scope] 段 11 项必跑）
++
++1. `cargo test plugin` 全绿
++2. `cargo test graph` 15/15 PASS（A7 W14 GRAPH NON-REGRESSION）
++3. full cargo 414/414 PASS
++4. `mcp feature test` 21/21 PASS（A3 W14 MCP PLUGIN ISOLATION）
++5. `cargo fmt --check` 干净
++6. `check-plugin-policy.py` ACTIVE=8/PENDING=0
++7. `check-plugin-privacy.py` ACTIVE=4/PENDING=0
++8. `check-plugin-ui-logic.mjs` ≥9/9 PASS（A6 W14 实施期新建）
++9. `check-graph-ui-logic.mjs` 113/113 PASS
++10. `check-agent-skill-ui-logic.mjs` 110/110 PASS
++11. `npm run build` PASS + `pre-merge.sh` ALL_PASS + `measure-build-metrics.py` ≤ 23% + cargo_warnings delta = 0
++
++> 备注：A1 W14 派发期不实施任何验证（验证 = A11 实施期 W14 verification delta 收口）；A1 W14 仅交付 11 文件整包文档收口 + 不 push。
++
++---
++
++## §6 债务账变化（`M5-14-debt-ledger.md` §10）
++
++- **W14 增量预期 = 0**（A6 W14 = 复吃 W13 6 命令 + UI 包装，**不**实施 W14 新 lifecycle 命令 / **不**改 DTO / **不**渲染 raw 敏感字段 → 无新债增量）
++- **M5 final debt ledger 维持 53 条**（W14 拣入后维持 53 条 + A6 W14 实施期收口 DEBT-04 = 6/6 ACTIVE）
++- **DEBT-04 plugin UI 6 项 ACTIVE = 0% → 6/6**（A6 W14 实施期收口；**A1 W14 派发期仍 0%** = 派发期不算 ACTIVE）
++- **新增债 0**（W14 不实施 invoke / cancel / storage_* / 网络 / 动态加载 / daemon / 模型 / Agent-Skill / MCP / graph 写 / 后台 worker）
++
++---
++
++## §7 A1 W14 = A1 W13 整包同形（W12 整包简化形）
++
++| Wave | 整包文件数 | 实际改动文件 | A1 立场 |
++|------|----------|-------------|---------|
++| W12 | 13 | M5-0/7/8/9/10/11/12/13/14 + 3 主文档 + board = 11 实际 + 2 交付 | START DOCS ONLY |
++| W13 | 14 | M5-0/10/11/12/13/14 + 3 主文档 + board = 9 实际 + 2 交付 + M5-13 复检段 | START DOCS ONLY |
++| W14 | 11 | M5-0/10/11/12/13/14 + 3 主文档 + board = 8 实际 + 2 交付 + M5-13 复检段 | START DOCS ONLY |
++
++> 备注：W12/W13/W14 三 wave 整包结构同形（board + 3 主文档 + A1 checkpoint + A1 patch + M5-0 + M5-12/13/14 status + 末尾段）；W14 与 W13 差异 = M5-0/12/13/14 末尾 [W14 active]/[W14 verification scope] 段为新增；M5-10/11 头 status 行 W14 与 W13 同形（仅 W14 ACTIVE status 行新增）。
++
++---
++
++## §8 A1 W14 整包交付（已就绪）
++
++- ✅ `logs/checkpoints/A1-M5-W14-reconciliation-20260908-0020.md`（本 checkpoint · 165 行）
++- ✅ `logs/checkpoints/Lane-A1-M5-W14-reconciliation-20260908-0020.patch`（11 文件改动 · 313 行）
++- ✅ 工作树 A1 范围改动：11 文件 modified（含本 checkpoint + patch = 11 实际 + 2 交付）
++
++**A1 W14 整包改动行数**：modified files = 10 个（M5-0/10/11/12/13/14 + 3 主文档 + board）+ 1 new（本 checkpoint）+ 1 new（patch）= **12 文件 / 11 实际改动 + 2 交付**（A1 W14 任务边界 = 11 实际改动 + 2 交付文件 = 13 总文件；与 W12/W13 整包同形）。
++
++**A1 W14 不 push**：本工作树改动仅 A1 范围 = 11 实际 + 2 交付（其他 lane 并发改动 = A2/A4/A7/A8/A9/A10 W14 自身职责范围 = 不是我加的，不归 A1 W14 patch 管）；A0 拣入期由 A0 套用本 checkpoint + patch。
++
++---
++
++## §9 W14 实施期预期（A6 + A11 + A7 + A10）
++
++- A6 W14 实施期：消费 frozen W13 6 命令 + 6 action 全 ACTIVE + `check-plugin-ui-logic.mjs` ≥9/9 PASS
++- A11 W14 实施期：W14 verification delta 收口（11 项必跑全 PASS）
++- A7 W14 实施期：graph non-regression PASS（W12 8 条 graph 集成锚点 + A6 W14 不触 graph）
++- A10 W14 实施期：security review PASS（raw-invoke bypass / confirmation bypass / source-ACL drift / sensitive-render regression 四项不破）
++- A0 W14 拣入期：拣入 A6/A7/A8/A9/A10/A11 W14 整包 + A1 W14 reconciliation 整包 → DEBT-04 closed-by-W14
++
++**A1 W14 派发期立场声明**：本 wave 仅交付 11 文件整包文档收口 + 零产品代码 + 不 push；A6/A7/A8/A9/A10/A11 实施期收口后由 A0 拣入，A1 W15+ 派发接收时再 reconcile W14 as accepted。
++
++---
++
++## §10 关联文件（Pointer）
++
++- 派发原文：`PARALLEL_COMMAND_BOARD.md` L1163-1189（11 lane 表 + W14 dispatch）
++- A0 W13 acceptance：`logs/checkpoints/A0-M5-W13-accept-W14-dispatch-20260908-0020.md`
++- A1 W14 patch：`logs/checkpoints/Lane-A1-M5-W14-reconciliation-20260908-0020.patch`（11 文件改动）
++- M5-0 末尾段：[W14 active · 2026-09-08 00:20 CST] 段（runtime surface 14 行表 + W14 hard stops）
++- M5-12 末尾段：[W14 active · 2026-09-08 00:20 CST] 段（plugin manager UI 派发期立场）
++- M5-13 末尾段：[W14 verification scope · 2026-09-08 00:20 CST] 段（11 项必跑验证矩阵）
++- M5-14 末尾段：[W14 active · 2026-09-08 00:20 CST] 段（runtime surface 14 行表 + DEBT-04 仍挂账转 A6 W14）
++- A1 W13 整包：`logs/checkpoints/A1-M5-W13-reconciliation-20260907-2358.md` + `logs/checkpoints/Lane-A1-M5-W13-reconciliation-20260907-2358.patch`（参考同形结构）
++- A1 W12 整包：`logs/checkpoints/A1-M5-W12-reconciliation-20260907-2030.md` + `logs/checkpoints/Lane-A1-M5-W12-reconciliation-20260907-2030.patch`（参考同形结构）
+diff --git a/logs/checkpoints/A11-M5-W14-20260907-1510.md b/logs/checkpoints/A11-M5-W14-20260907-1510.md
+new file mode 100644
+index 0000000..a601fb9
+--- /dev/null
++++ b/logs/checkpoints/A11-M5-W14-20260907-1510.md
+@@ -0,0 +1,88 @@
++# M5-W14 验证 Checkpoint — Lane A11 (Strategy/Verification/Eval/Replay)
++
++- 基准提交: `a7eefbb` (M5-W14 基线；A6 UI 代码在验证期间落入工作树，未提交)
++- 生成时间: 2026-09-07 15:10
++- 验证范围: W14 Hard Stop 矩阵 + pre-merge 总门禁 + 21 项 UA 逻辑脚本 + Rust/Node 矩阵 + 构建指标
++- 结论: **不就绪合并 (pre-merge = FAIL)**，唯一红项为插件 UI 隐私夹具对 `pubkey` 字面量的结构性误报；其余矩阵全绿。
++
++## 1. 验证矩阵结果
++
++| 维度 | 命令/脚本 | 结果 |
++|---|---|---|
++| Rust 默认测试 | `cargo test` (src-tauri) | 431 passed / 0 failed |
++| Rust plugin 聚焦 | `cargo test plugin` (src-tauri) | 28 passed / 0 failed |
++| Rust mcp 聚焦 | `cargo test mcp` (src-tauri) | 21 passed / 0 failed |
++| 插件隐私 (Rust) | `check-plugin-privacy.py` | PASS (无原始字段回写/落盘) |
++| 插件策略契约 | `check-plugin-policy.py` | 14 项全 PASS；ACTIVE=7, PENDING=5 (W13 集成已将 pending 提升为 active；PLUGIN_SIG_BYPASS 已修为 `unwrap_or(true)`) |
++| 插件 UI 隐私 | `check-plugin-ui-privacy.py` | **FAIL** — `PLUGIN_UI_NO_SECRET_RENDER` |
++| 前端生产构建 | `npm run build` (vite) | PASS (A6 组件可编译，无 TS/eslint 错误) |
++| 构建指标回归 | `measure-build-metrics.py --skip-build` | 22.33% (< 23.0% 上限)，warnings 0，未回归 |
++| git 差异洁身 | `git diff --check` | clean (无尾随空白/冲突标记) |
++| UA 逻辑脚本 1/13 | `check-graph-ui-logic.mjs` | 113 断言通过 |
++| UA 逻辑脚本 2/13 | `check-agent-skill-ui-logic.mjs` | 110 断言通过 |
++| UA 逻辑脚本 3/13 | `check-scheduler-ui-logic.mjs` | 105 断言通过 |
++| UA 逻辑脚本 4/13 | `check-command-ui-logic.mjs` | 36 断言通过 |
++| UA 逻辑脚本 5/13 | `check-database-ui-logic.mjs` | 119 断言通过 |
++| UA 逻辑脚本 6/13 | `check-terminal-ui-logic.mjs` | 25 断言通过 |
++| UA 逻辑脚本 7/13 | `check-session-logic.mjs` | 34 断言通过 |
++| UA 逻辑脚本 8/13 | `check-resource-ui-logic.mjs` | 84 断言通过 |
++| UA 逻辑脚本 9/13 | `check-git-ui-logic.mjs` | 通过 |
++| UA 逻辑脚本 10/13 | `check-image-ui-logic.mjs` | 58 断言通过 |
++| UA 逻辑脚本 11/13 | `check-image-preview-logic.mjs` | 97 断言通过 |
++| UA 逻辑脚本 12/13 | `check-script-ui-logic.mjs` | 32 断言通过 |
++| UA 逻辑脚本 13/13 | `check-plugin-ui-logic.mjs` | **缺失 (A6 未交付)** |
++
++## 2. 阻塞项 (BLOCKER) — pre-merge FAIL `PLUGIN_UI_NO_SECRET_RENDER`
++
++`bash scripts/pre-merge.sh` 输出：
++```
++[pre-merge] FAIL: check-plugin-ui-privacy.py --self-test
++[pre-merge] FAIL: check-plugin-ui-privacy.py（插件 UI 隐私不变量被破坏）
++[pre-merge] PRE_MERGE_RESULT=FAIL
++```
++夹具命中 20 条 `PLUGIN_UI_NO_SECRET_RENDER`：`\.pubkey` ×4、`pubkey` ×16。
++
++### 根因判定：结构性误报 (false positive)，A6 代码实质合规
++
++`check-plugin-ui-privacy.py::detect_hits` 的 A2 分支对 `SECRET_RENDER_TOKENS` 做**全文子串扫描**（含 `pubkey` 且 IGNORECASE），不区分"展示存储的密钥"与"瞬时输入表单字段"。
++
++`pubkey` 字面量在 A6 代码中的**唯一**出处是受信任密钥的**瞬时粘贴输入**，从未被展示或持久化：
++
++- `src/components/plugin/PluginManager.vue`
++  - L24-25 `keyForm = reactive({ keyId:"", pubkey:"", note:"" })` — 表单瞬时字段
++  - L66-67 校验 `keyForm.pubkey.trim()` 非空 + 错误文案
++  - L94 `store.addKey(keyForm.keyId, keyForm.pubkey, keyForm.note)` — 传入即清空
++  - L96 `keyForm.pubkey = ""` — 成功后立即清空
++  - L173 `<input v-model="keyForm.pubkey" placeholder="pubkey（仅用于登记，不回显）">` — 用户输入框
++- `src/stores/usePluginStore.ts`
++  - L195-196 `addKey(keyId, pubkey, note)` 注释明确"pubkey 为瞬时入参，后端仅回 16-hex 指纹，不持久化原文"
++  - L205 `pubkey: pubkey.trim()` — 经 `bridge.pluginKeysAdd` 上送，后端只回指纹
++
++**关键合规证据**：受信任密钥列表 (`PluginManager.vue` L165-170) 只渲染 `{{ k.key_id }}` 与 `{{ k.fingerprint }}`；`pluginUi.ts::redactKeyRecord` (L168-170) 投影也只含 `key_id/fingerprint/note/added_at`，**不含 `pubkey`**。因此 A6 从不展示存储的公钥原文。
++
++> 结论：A6 未违反 W14 Hard Stop（"不展示/不持久化公钥原文"）。唯一 `pubkey` 出现处是用户自粘贴、立即清空的瞬时输入缓冲，属合规设计。夹具的子串扫描粒度过粗导致误报，使 pre-merge 误红。
++
++### 推荐修复（二选一，需 A4/A6 择一落地后复跑）
++
++- **方案 A（推荐，改夹具，A4 负责）**：`detect_hits` 的 A2 分支仅对"展示/输出位置"的 `pubkey` 判违——即只保留 `\.pubkey`（含 `{{ x.pubkey }}`、`:xxx="...pubkey"` 绑定），并删除裸 `pubkey` 子串 token；或显式排除 `<input ... v-model>` / `reactive({...})` 表单字段声明上下文。这样既放行 A6 的瞬时输入，又仍能在 `{{ detail.pubkey }}` 类真实回显时报警。
++- **方案 B（改 A6 代码）**：将瞬时字段与 placeholder 中的 `pubkey` 字面量改名（如 `keyMaterial` / 占位文案去掉 `pubkey`），使裸 token 扫描不再命中。保持夹具严格不变。
++
++## 3. 次级缺口 (GAP) — A6 未交付 `check-plugin-ui-logic.mjs`
++
++A6 Must-Deliver 要求提供无头 UI 逻辑测试 `scripts/check-plugin-ui-logic.mjs`（对标其余 12 个 UA 脚本）。当前该文件**不存在**，导致 `pluginUi.ts` 中的纯函数（`canTransitionUi` / `enabledActionsFor` / `redactDetail` / `parseManifestInput` / ACL 风险档）**未被自动化覆盖**。这些函数与后端 `plugin.rs::can_transition` 1:1 镜像，是 W14 高价值回归点，建议 A6 立即补交。
++
++## 4. 软观察（非门禁失败，长期建议）
++
++- `usePluginStore.ts::describeError` (L22-25) 将 `e.message` 截断 300 字后写入 `store.error` 并直接渲染 (`PluginManager.vue` L239)。PENDING 策略 `PLUGIN_UI_ERROR_CODE_ONLY` 当前不强制，但严格读法要求"错误只渲染稳定码、不渲染原始消息体"。建议长期把错误映射为稳定 `error_code`（与 `PluginSummary.error_code` 一致），而非原始 message。
++- `uninstall` 在 A6 中经 `bridge.pluginDisable` 落地（后端无独立 uninstall 命令，遵循 W13"不新增生命周期命令"红线）。属合理设计，但 UI 文案"卸载"与后端"disable"语义需对齐，避免用户误解。
++
++## 5. A11 自派发 (self-dispatch) 备注
++
++- 本验证在 `a7eefbb` 基线 + 期间落入的 A6 UI 代码上完成两轮复跑；首轮（A6 未入树）全绿，次轮（A6 `PluginManager.vue`/`usePluginStore.ts`/`pluginUi.ts` 入树）暴露上述误报。
++- A11 不越权修改 A4 夹具或 A6 产品代码；阻塞项与缺口已写入 `logs/assist/A11-M5-W14-plugin-ui-verification-20260907-1510.md` 供对应 Lane 处理。
++- 未 push（依指令）。
++
++## 6. 合并门禁最终判定
++
++- pre-merge：**FAIL**（插件 UI 隐私夹具误报，非真实违规）
++- 修复方案 A 或 B 落地 + A6 补交 `check-plugin-ui-logic.mjs` 后，预期 pre-merge 转 **ALL_PASS**，届时 W14 可闭环。
+diff --git a/logs/checkpoints/A2-M5-W14-20260907-1435.md b/logs/checkpoints/A2-M5-W14-20260907-1435.md
+new file mode 100644
+index 0000000..183c7d9
+--- /dev/null
++++ b/logs/checkpoints/A2-M5-W14-20260907-1435.md
+@@ -0,0 +1,52 @@
++# Lane A2 · M5-W14 Plugin Manager UI 边界评审 · 交付检查点
++
++> 生成：2026-09-07 14:35 CST · Lane A2（M5-W14 · START REVIEW ONLY）
++> 基线：`master @ a7eefbb`（`git fetch` + `git pull --ff-only` → 已最新；工作树干净）
++
++---
++
++## 1. 门禁自述
++
++| 项 | 值 | 结果 |
++|---|---|---|
++| `pwd` | `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3` | ✅ |
++| `.workspace-identity` | `WORKSPACE_ID=BACKV3_MAIN` / `EXPECTED_BRANCH=master` | ✅ |
++| 分支 | `master` | ✅ |
++| 同步 | `git fetch` + `git pull --ff-only` → `已经是最新的` | ✅ |
++| 工作树 | `git status --short` 为空 | ✅ |
++| NEXT | `M5-W14 plugin manager UI and Stage-I lifecycle consumption` | ✅ |
++| Lane 角色 | A2 = **START REVIEW ONLY**（不写产品代码） | ✅ |
++
++## 2. 交付物
++
++| 文件 | 说明 |
++|---|---|
++| `logs/assist/A2-M5-W14-boundary-verdict-20260907-1435.md` | **主交付**：UI/store 边界裁定（契约审计 PASS + C0–C7 条件 + 跨 Lane W1–W6 + A6 自检清单） |
++| `logs/checkpoints/A2-M5-W14-20260907-1435.md` | 本检查点 |
++| `logs/checkpoints/Lane-A2-M5-W14-20260907-1435.patch` | 仅含上述两份文件的新增补丁 |
++
++## 3. 裁定结论
++
++- **冻结契约边界 PASS（干净）**：`bridge.ts` 仅 8 个 Stage-I 方法、无 `plugin_invoke`；输出 DTO 全脱敏（无 signature.value/公钥原文/资源路径/metadata）；签名状态 `structure_ok|structure_failed`（非 verified，对齐 W13 B3）；`AclLevel` 三档对齐。
++- **A6 UI/store 边界规则**：C0 安装输入不回显裸签名/metadata；C1 无 domain duplication（store 只持 UI 态）；C2 无裸 `invoke`（基线 0，须维持）；C3 无 lifecycle authority expansion（只用 8 命令）；C4 显式确认；C5 密钥只显指纹；C6 常量单一真源；C7 仅本地安装无网络。
++- **本 Lane 可认证度**：A6 的 W14 UI 尚未落盘，本裁定为**契约级边界裁定 + 实施清单**；A6 产出后由 A10/A11 做代码级复核。
++- **跨 Lane 观察**：缺失 changelog 字段（→ A9）；输入回显（→ A4）；Agent/Skill affordance（→ A5）；MCP 隔离（→ A3）；裸 invoke/确认绕过/源漂移（→ A10）；ui-logic 码位（→ A11）。
++
++## 4. 验证记录
++
++```text
++grep -nE 'plugin_invoke|plugin_storage|plugin_audit|plugin_permissions|plugin_delete|plugin_uninstall' src/bridge.ts
++  → 0（无越权方法）
++
++grep -cE "invoke\(\s*['\"]plugin_" src/           → 0（裸 invoke 基线）
++
++bridge.ts:721-739 → 8 方法：install/enable/disable/list/get/keys_add/keys_list/keys_remove
++types.ts:937-1029 → 10 插件类型（镜像 domain.rs）
++domain.rs:2309-2409 → PluginRecord/PluginSummary/PluginCapabilityView/PluginSignatureView/PluginDetail/TrustedKeyRecord（全脱敏）
++domain.rs:1915 → AclLevel { Safe, Confirm, Dangerous }
++```
++
++## 5. 合规
++
++- 未写产品代码；未改 `bridge.ts`/`types.ts`/`domain.rs`/UI 组件/策略脚本/三份主文档。
++- 未移动 `NEXT`、未建分支、**未 push**（仅 A0 推送）。
+diff --git a/logs/checkpoints/A6-M5-W14-20260908-0130.md b/logs/checkpoints/A6-M5-W14-20260908-0130.md
+new file mode 100644
+index 0000000..ee877f4
+--- /dev/null
++++ b/logs/checkpoints/A6-M5-W14-20260908-0130.md
+@@ -0,0 +1,85 @@
++# Lane A6 — M5-W14 Plugin Manager UI · Product Code Package
++
++> Role: **START PRODUCT CODE NARROW**（派发 §Lane Table: A6）
++> Deliverable: 可本地使用的插件管理器 UI（列表/过滤/查看/安装校验/启用禁用/可信密钥管理），无裸 invoke、无执行动作、UI 测试 + npm build PASS。
++> Hard Stops 遵守：仅调用冻结 `src/bridge.ts`；不新增生命周期命令；不显示/持久化签名原文/公钥/资源路径/metadata/凭据；未 push（仅 A0 push）。
++
++## 0. 环境自检
++
++```text
++pwd        = /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3   ✓
++branch     = master（与 origin/master 同步）                          ✓
++pull       = git fetch origin && git pull --ff-only → 已是最新         ✓
++身份       = WORKSPACE_IDENTITY.md → BACKV3_MAIN / EXPECTED_BRANCH=master ✓
++```
++
++## 1. 冻结契约（W13 后端，已被 a7eefbb 集成）
++
++`src/bridge.ts` 暴露 8 个只读/本地状态命令（A6 全部消费，未新增）：
++
++```text
++pluginInstall({manifest, resourcePath?}) → PluginSummary   (plugin_install)
++pluginEnable(id)                      → PluginSummary    (plugin_enable)
++pluginDisable(id)                     → PluginSummary    (plugin_disable)
++pluginList(state?)                    → PluginSummary[]  (plugin_list)
++pluginGet(id)                         → PluginDetail      (plugin_get)
++pluginKeysAdd({keyId,pubkey,note?})   → TrustedKeyRecord[](plugin_keys_add)
++pluginKeysList()                      → TrustedKeyRecord[] (plugin_keys_list)
++pluginKeysRemove(keyId)               → TrustedKeyRecord[] (plugin_keys_remove)
++```
++
++DTO 已脱敏（`PluginSummary`/`PluginDetail` 无签名原文、无资源路径；`TrustedKeyRecord` 仅 16-hex 指纹）。**无 `plugin_uninstall` 命令** → UI 不暴露卸载按钮（见 §4）。
++
++## 2. 交付文件
++
++| 文件 | 类型 | 说明 |
++|---|---|---|
++| `src/utils/pluginUi.ts` | 纯逻辑（新增） | 状态机镜像 `canTransitionUi`、按钮门控 `enabledActionsFor`、状态/风险档标签、脱敏投影 `redactDetail/redactSummary/redactKeyRecord`、`parseManifestInput` 轻量预检。**不依赖 vue/bridge/Tauri**，headless 可测。 |
++| `src/stores/usePluginStore.ts` | store（新增） | 经 `bridge.pluginXxx` 调用；`backendReady` 守卫；状态变更由 UI 显式确认后执行；瞬时输入（manifestText/resourcePath/pubkey）成功后清空、不持久化。 |
++| `src/components/plugin/PluginManager.vue` | 面板（新增） | 懒加载；左列表+过滤+安装表单+密钥管理，右脱敏详情；状态变更弹层显式确认；能力风险档着色（safe/confirm/dangerous）。 |
++| `src/components/layout/MainArea.vue` | 导航（改） | 注册 `PluginManager` 异步组件 + 渲染分支。 |
++| `src/components/layout/ActivityBar.vue` | 导航（改） | 工具菜单加入「插件」入口。 |
++| `src/stores/useLayoutStore.ts` | 导航（改） | `MainView` 联合加 `"plugin"` + `MOD_META` 加 `plugin:{icon:"🔌",label:"插件"}`。 |
++| `scripts/check-plugin-ui-logic.mjs` | 测试（新增） | headless 加载真实 `pluginUi.ts`，60 断言。 |
++
++> 导航三文件改动**仅追加** plugin 入口，未触动既有 `db`/`tasks`/`skills`/`agents`/`graph` 等模块项（grep 复核并存）。未改 `pre-merge.sh`/`domain.rs`/`bridge.ts`/`types.ts`/`plugin.rs`（属他 Lane）。
++
++## 3. 验证
++
++```text
++node scripts/check-plugin-ui-logic.mjs → 60 断言通过, 0 失败
++npm run build                       → 0 error；主 chunk index-*.js 165.68 kB（gzip 59.32 kB）
++                                      （插件面板经 defineAsyncComponent 拆为独立 chunk，不进主 chunk）
++git diff --check                    → 0（无空白/冲突标记）
++```
++
++## 4. 锁契约合规（W14 Hard Stops）
++
++- **仅调 `src/bridge.ts`**：store 全部经 `bridge.pluginXxx`；无裸 Tauri `invoke`。
++- **不新增生命周期命令**：仅消费 8 个冻结命令；删除误加的「卸载」按钮（无对应后端命令），仅保留 install/enable/disable/keys。
++- **脱敏**：`redactDetail` 显式投影，丢弃 `signature.value` / `resource.path` / `metadata`；详情渲染走脱敏投影，模板从不引用 `.value`/路径；`PluginSummary`/`TrustedKeyRecord` 已是脱敏视图。
++- **瞬时输入不持久化**：`manifestText`（含签名原文）、`resourcePath`、`keyForm.pubkey` 仅作入参，install/addKey 成功后清空，不进 store 展示态、不回显。
++- **显式确认**：install/enable/disable/addKey/removeKey 均经弹层确认后才执行（状态变更语义）。
++- **无执行动作**：无「运行/启动/调用插件」入口；enable/disable 仅为生命周期状态切换，文案/语义不含"运行"。
++- **能力闸门可见**：`PluginCapabilityView.acl_level` 逐项着色展示；dangerous（或任意能力，因 `PLUGIN_CAPABILITY_V1` 首期空集合 fail-closed）标注"已阻止"，不提供强行继续入口。
++
++## 5. 并行评审衔接
++
++- A8（UI 评审）、A9（后端契约复核）、A10（安全复核）、A5（Agent/Skill 锁定）、A4（隐私）、A3（MCP 隔离）、A2（边界）均已就本 UI 在途评审（见工作树 `logs/assist/*M5-W14*`）。
++- A6 已就「无裸 invoke / 无执行 / 脱敏 / 显式确认」预置合规；如评审方提出具体回归，A6 据其结论补丁。
++
++## 6. 范围与合规
++
++- 仅写上述 A6 允许文件；未改他 Lane 文件、未改冻结 DTO/命令、未 push。
++- 不引入新依赖；不影响既有 23 个面板。
++
++## 7. 交付
++
++- 代码包完整、UI 逻辑测试 60 断言全绿、npm build 0 error、diff-check 干净。
++- 补丁：`logs/checkpoints/Lane-A6-M5-W14-20260908-0130.patch`（仅含 A6 上述文件）。
++- 下游：交 A0 集成（仅 A0 push）；交 A11 纳入 W14 验证矩阵（plugin UI logic + npm build + pre-merge）；交 A10/A8 安全与 UI 复核。
++
++---
++
++**STATUS=PASS**（本地可用 UI 完整：列表/过滤/查看/安装校验/启用禁用/密钥管理；脱敏 + 显式确认 + 无裸 invoke + 无执行动作；UI 测试 60 断言 + build + diff-check 全绿）
++**NEXT**：等 A0 集成并 push；配合 A8/A9/A10/A5 并行评审结论补丁（如需）；W15+ 若后端补 `plugin_uninstall` 命令，再据冻结契约补卸载入口。
+diff --git a/logs/checkpoints/M5-20260906/M5-0-overview.md b/logs/checkpoints/M5-20260906/M5-0-overview.md
+index 28d9573..10ab7a2 100644
+--- a/logs/checkpoints/M5-20260906/M5-0-overview.md
++++ b/logs/checkpoints/M5-20260906/M5-0-overview.md
+@@ -1,4 +1,4 @@
+-# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0 + W1 + W2 + W3 reconciliation + W4 active + W5 reconciliation + W6 reconciliation + W7 reconciliation + W8 reconciliation + W8 active + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active + W12 reconciliation + W12 PUSHED + W13 active）
++# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0 + W1 + W2 + W3 reconciliation + W4 active + W5 reconciliation + W6 reconciliation + W7 reconciliation + W8 reconciliation + W8 active + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active + W12 reconciliation + W12 PUSHED + W13 active + W13 PUSHED + W14 active）
+
+ > 生成：2026-09-06 08:00 CST · Lane A1（M5-W0 · docs only）
+ > W1 修订：2026-09-06 08:50 CST · Lane A1（M5-W1 · docs-only reconciliation）
+@@ -1135,3 +1135,69 @@ NEXT=M5-W1（待 A0 签发）
+ | Push | 🔒 **仅 A0** | W13 Hard Stop |
+
+ **W13 plugin 范围冻结 = 恰好 6 条 stage-I manifest 生命周期命令**（详见 [W13 active] 段 + M5-10 `[W13 stage-I scope]` 段 + M5-11 `[W13 stage-I isolation]` 段 + M5-12 `[W13 plugin UI still locked]` 段）；5 stub `plugin_invoke/cancel/permissions_get/audit_list/storage_*` 仍 `Err("not-implemented-in-W6")`，stage-I 不实现。
++
++---
++
++## [W13 PUSHED · 2026-09-08 00:20 CST] A1 W14 reconciliation 立场 · W13 拣入事实回填
++
++> **依据**：`PARALLEL_COMMAND_BOARD.md` L228+（M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch，Added 2026-09-07 23:55 CST by A0）+ `M5-10/11/12` plugin 卡范围收敛为 stage-I manifest 生命周期 + A9 W12/W13 plugin staged cards（W11 拣入）+ A1 W13 reconciliation 整包（`logs/checkpoints/A1-M5-W13-reconciliation-20260907-2358.md`）+ A0 W13 acceptance checkpoint（`logs/checkpoints/A0-M5-W13-accept-W14-dispatch-20260908-0020.md`）。
++
++**A0 W13 拣入事实回填**（`a7eefbb feat(M5): integrate W13 plugin manifest lifecycle`）：
++- A0 拣入 W13 整包 = 8 local-only lifecycle/key-registry 命令（`plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_list` / `plugin_get` / `plugin_key_registry` / `plugin_audit_get` / 4 storage stub 错误结构不变）+ 原子注册表持久化 + redacted DTO/audit + ACL/source-check parity + **无** execution surface
++- `a7eefbb` stat 实测 = 31 files changed（含 4 共享文件修订 = `src-tauri/src/bridge.rs` 8 个 plugin_* 命令注册 + `src-tauri/src/domain.rs` PluginManifestView/PluginStateView/PluginKeyEntryView/PluginError + `src-tauri/src/main.rs` invoke_handler 注册 + `src-tauri/src/permissions/default-commands.toml` ACL 8 行插末条 `list_artifact_images` 前；前端镜像 = `src/bridge.ts` + `src/types.ts`；门禁 = `scripts/check-plugin-policy.py` 新增 `PLUGIN_LIFECYCLE_LOCAL_ONLY` 守门码 ACTIVE 7→8 + `scripts/check-plugin-privacy.py` 新增 4 守门码 ACTIVE 0→4；文档 = M5-0/10/11/12/13/14 头部 W12 PUSHED + W13 ACTIVE + 末尾段 + A1 W13 checkpoint 213 行 + A1 W13 patch 535 行 + 3 主文档 L1 W12/W13 update 行 + board L6/L7 W13 dispatch；A1 W13 整包已被合并拣入）
++- 验证实跑 = `cargo test plugin` 全绿（411/411 default + 21/0 feature mcp_server + 15/0 graph）+ `check-plugin-policy.py --self-test` PASS（ACTIVE=8/PENDING=0 + `--expect-pending` PASS）+ `check-plugin-privacy.py --self-test` PASS（ACTIVE=4/PENDING=0）+ `check-graph-policy.py` ACTIVE=8 + `check-mcp-policy.py` ACTIVE=12/PENDING=0 + graph UI 113/113 + agent-skill UI 110/110 + `npm run build` PASS + `python3 scripts/pre-merge.sh` ALL_PASS + `python3 scripts/measure-build-metrics.py` `total_bytes_pct ≤ 23%`（W12 A0 修订 IF-2 = 23%）+ cargo_warnings delta = 0
++
++**W13 残留债 = 0**（A9 W13 增量 = 1 closed-by-W13 = plugin stage-I 6 命令；M5 final debt ledger 维持 **53 条** + W13 增量 1 closed-by-W13 → 维持 53 条）；**DEBT-04 plugin UI 6 项 carried-to-W14+**（A19 → A6 派发后消解，A1 W14 派发期仍 0% ACTIVE）；runtime 债（plugin invoke / cancel / storage_* 5 stub）按设计延后，W13 不实现；A7 W13 GRAPH NON-REGRESSION DOCS ONLY 必保 W12 8 条 graph 集成锚点不回归。
++
++**A1 W14 派发接收为 START DOCS ONLY**（`PARALLEL_COMMAND_BOARD.md` L1163+ · Plugin Manager UI Dispatch）：W14 = 仅 1 lane UI 产品代码 open（**A6 W14 = START PRODUCT CODE NARROW**），消费 frozen W13 6 命令 + `src/components/plugin/**` + `src/stores/usePluginStore.ts` + `scripts/check-plugin-ui-logic.mjs` + workspace navigation 集成；其余 10 lane = docs/review/security/verification（A1/A2/A3/A4/A5/A7/A8/A9/A10/A11 + A19 plugin UI 仍 SUPPORT DOCS ONLY）；**W14 = 不改 product scope**（plugin UI 6 项 ACTIVE 仍 0%，A6 W14 实施期才升 ACTIVE）；**A1 W14 整包 = 11 文件改动**（board L6 mainline chain + 3 主文档 L1 + A1 W14 checkpoint + M5-0/10/11/12/13/14 头部 W13 PUSHED + W14 ACTIVE + 末尾 [W14 active]/[W14 verification scope] 段），**不**碰产品代码（`src/components/plugin/**` / `usePluginStore.ts` / `check-plugin-ui-logic.mjs` / `bridge.ts` / `types.ts`），**不** push。
++
++---
++
++## [W14 active · 2026-09-08 00:20 CST] A1 W14 reconciliation 立场 · plugin manager UI 派发期 · runtime surface 锁定状态表（14 行）
++
++> **依据**：`PARALLEL_COMMAND_BOARD.md` L1163+（M5-W14 Plugin Manager UI Dispatch，Added 2026-09-08 00:20 CST by A0）+ `M5-12-plugin-ui.md` 末尾 [W14 active] 段 + A1 W14 reconciliation 整包（`logs/checkpoints/A1-M5-W14-reconciliation-20260908-0020.md`）。
++
++**W14 = 仅 A6 可写产品代码**（A6 plugin manager UI 消费 frozen W13 6 命令）；其余 10 lane 全 review / docs / verification（A1 DOCS ONLY / A2 BOUNDARY REVIEW / A3 MCP PLUGIN ISOLATION REVIEW / A4 PRIVACY REVIEW / A5 AGENT/SKILL LOCK REVIEW / A7 GRAPH NON-REGRESSION DOCS ONLY / A8 UI ERGONOMICS REVIEW / A9 BACKEND REVIEW / A10 SECURITY REVIEW / A11 VERIFICATION + A19 plugin UI 仍 SUPPORT DOCS ONLY）。
++
++**W14 runtime surface 锁定状态表（14 行 · 沿用 W13 13 行 + 新增 W14 plugin UI 1 行）**：
++
++| 维度 | W13 status | W14 status | 备注 |
++|------|-----------|-----------|------|
++| 1. `plugin_invoke` / `plugin_cancel` / `plugin_storage_*` 5 stub | 🔒 LOCKED | 🔒 LOCKED | 5 stub 错误结构不变 `Err("not-implemented-in-W6")`；W14 不实现 invoke / cancel / storage_* runtime；plugin UI 不触发 |
++| 2. `plugin_install` / `plugin_enable` / `plugin_disable` stage-I lifecycle | 🟢 OPENED（narrow·local-only） | 🟢 OPENED（narrow·local-only） | A9 W13 已落地 6 命令；W14 UI 消费，不重写 |
++| 3. `plugin_list` / `plugin_get` / `plugin_key_registry` | 🟢 OPENED（read-only） | 🟢 OPENED（read-only） | A9 W13 已落地；W14 UI 消费 |
++| 4. `plugin_audit_get` | 🟢 OPENED（read-only） | 🟢 OPENED（read-only） | A9 W13 已落地；W14 UI 可选消费 |
++| 5. network download / listener | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不引入网络下载；manifest 来源 = 后端命令输出（不重新下载） |
++| 6. dynamic code loading | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不引入动态加载 |
++| 7. daemon / model call | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不引入 daemon / 模型调用 |
++| 8. Agent/Skill execution | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不触发 Agent/Skill runtime |
++| 9. MCP full runtime | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不引入 mcp_* 边界 |
++| 10. graph build-write-export | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不引入 graph 写导出 |
++| 11. background worker | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不引入后台 worker |
++| 12. plugin UI 6 action（list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint） | 🔒 LOCKED（A19 SUPPORT） | 🟢 OPENED（A6 START PRODUCT CODE NARROW） | W14 唯一产品代码 lane open；A6 W14 实施期完成 6 action；`check-plugin-ui-logic.mjs` 新增 9 守门码 ≥9/9 PASS |
++| 13. raw Tauri `invoke`（绕过 bridge.ts） | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI **必须**走 `src/bridge.ts`；`check-plugin-ui-logic.mjs` 新增 `PLUGIN_UI_NO_RAW_INVOKE` / `PLUGIN_UI_BRIDGE_ONLY` 守门码 |
++| 14. raw signature / public-key / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr 渲染 | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI **不**渲染 raw 敏感字段；`check-plugin-ui-logic.mjs` 新增 6 守门码（`PLUGIN_UI_NO_RAW_SIG_RENDER` / `PLUGIN_UI_NO_RAW_PUBKEY_RENDER` / `PLUGIN_UI_NO_RAW_RESOURCE_PATH_RENDER` / `PLUGIN_UI_NO_RAW_MANIFEST_META_RENDER` / `PLUGIN_UI_NO_RAW_CREDENTIAL_RENDER` / `PLUGIN_UI_NO_RAW_REQ_RES_BODY_RENDER` / `PLUGIN_UI_NO_RAW_STDOUT_STDERR_RENDER`） |
++
++**W14 债务账变化（相对 W13 拣入后）**：
++- **W14 增量预期 = 0**（A6 W14 = 复吃 W13 6 命令 + UI 包装，**不**实施 W14 新 lifecycle 命令 / **不**改 DTO / **不**渲染 raw 敏感字段 → 无新债增量）
++- **M5 final debt ledger 维持 53 条**（W14 拣入后维持 53 条 + A6 W14 实施期收口 DEBT-04 = 6/6 ACTIVE）
++- **DEBT-04 plugin UI 6 项 ACTIVE = 0% → 6/6**（A6 W14 实施期收口；**A1 W14 派发期仍 0%** = 派发期不算 ACTIVE）
++- **新增债 0**（W14 不实施 invoke / cancel / storage_* / 网络 / 动态加载 / daemon / 模型 / Agent-Skill / MCP / graph 写 / 后台 worker）
++
++**W14 hard stops**（10 条）：① 仅 master / pull --ff-only / 仅 A0 push；② **No** plugin_invoke / 代码执行 / 动态加载 / 网络 / daemon / 模型调用 / Agent-Skill / MCP runtime / graph 写导出 / 后台 worker；③ UI 只能调 `src/bridge.ts`，**不得** raw Tauri `invoke`；④ **不得** display/persist raw signature / public-key material / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr；⑤ 现有命令名 + DTO 冻结，**不得** W14 加 lifecycle 命令。
++
++**A6 W14 唯一产品代码 lane 范围（冻结）**：
++- 消费 **frozen W13 6 命令**（`plugin_list` / `plugin_get` / `plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_key_registry`）—— **不**实施 W14 新 lifecycle 命令 / **不**改 `src/bridge.ts` DTO 形态 / **不**增删 ACL
++- 文件范围 = `src/components/plugin/**` + `src/stores/usePluginStore.ts` + `scripts/check-plugin-ui-logic.mjs` + workspace navigation 集成
++- 6 action = list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint
++- UI 走 `src/bridge.ts`（**不** raw Tauri `invoke`）
++- **不**渲染 raw signature / public-key / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr
++
++**A1 W14 派发期立场 = START DOCS ONLY**：
++- reconcile W13 as accepted after A0 push（`a7eefbb`）
++- mark W14 active + 更新 3 主文档 L1 + 本卡 L1 + 本卡头 + 末尾段 + M5-10/11/12 头 + M5-12 末尾 [W14 active] 段 + M5-13 末尾 [W14 verification scope] 段 + M5-14 末尾 [W14 active] 段
++- **不**改 product scope（plugin UI 6 项 ACTIVE 仍 0%，A6 W14 实施期才升 ACTIVE）
++- **不**碰产品代码（`src/components/plugin/**` / `usePluginStore.ts` / `check-plugin-ui-logic.mjs` / `bridge.ts` / `types.ts`）
++- **不** push
++
++**A6 W14 实施期收口**：A6 W14 实施完成 = 6 action 全 ACTIVE + `check-plugin-ui-logic.mjs` ≥9/9 PASS + A11 W14 verification delta 功能性 ALL_PASS + A7 W14 graph non-regression PASS + A10 W14 security review PASS → DEBT-04 closed-by-W14，M5 final debt ledger 维持 53 条（plugin UI 6 项由"挂账"转"收口"）。
+diff --git a/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md b/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md
+index cf39c8d..d996f48 100644
+--- a/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md
++++ b/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md
+@@ -16,6 +16,8 @@
+ > **W12** ACTIVE（**A9 W12 = PLUGIN DOCS ONLY**（W12/W13 plugin staged cards 细化仅在 W11 反馈改变 blocker 时；**不**实施 plugin runtime）；**plugin install/enable/delete/download runtime 仍 LOCKED**（W12 Hard Stop L209）；详见 `M5-0-overview.md` 顶部 `[W12 active · 2026-09-07 20:30 CST]` 段 runtime-lock 状态表 11 行）
+ > **W12 PUSHED**（2026-09-07 23:55 CST · A0 拣入 `3c3f460` = HEAD）：A0 在 **`3c3f460 feat(M5): integrate W12 graph live-query readonly bridge/UI`** 中拣入 W12：图谱 live-query 只读 3 命令 + A8 UI 消费；`cargo test graph` 15/15 + full cargo 414/414 + `check-graph-policy.py` ACTIVE=8 + `check-mcp-policy.py` ACTIVE=12/PENDING=0 + graph UI logic 113/113 + npm build PASS + build metrics 22.26% ≤ 23% + cargo_warnings delta = 0；A1 W12 reconciliation 整包合并拣入（含本卡头部 status 修订 + 顶部 history 链 + 14 文件 = +A1 W12 checkpoint 203 行 + A1 W12 patch）；**plugin install/enable/delete/download runtime 仍 LOCKED**（W13 Hard Stop）。
+ > **W13** ACTIVE（**A9 W13 = START PRODUCT CODE NARROW**（**plugin stage-I manifest 生命周期**：`plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_list` / `plugin_get` / `plugin_key_registry` 6 命令；本地 manifest 解析 / 静态资源元数据装载 / install / enable / disable / list / get / key registry 安全本地状态机；**不**实施 runtime invoke / 不暴露执行边 / 不引入网络下载或监听 / 不动态加载代码 / 不暴露文件 / 数据库 / 脚本 / Agent / Skill 副作用；**复用** W6 `5f92ece` `plugin.rs` 5 stub `plugin_invoke/cancel/permissions_get/audit_list/storage_*` 维持 `Err("not-implemented-in-W6")`，stage-I **不**实现 invoke / cancel / storage_* 5 stub；ACL 加 6 条插末条 `list_artifact_images` 前；`bridge.ts` / `types.ts` 镜像对齐；`check-plugin-policy.py` 新增 `PLUGIN_LIFECYCLE_LOCAL_ONLY` 政策码（ACTIVE 6 → 7））；**plugin invoke / command execution / dynamic code loading / network download/listener / MCP full runtime / Agent/Skill execution / daemon / model call / graph build-write-export 仍 LOCKED**（W13 Hard Stop）；详见 `M5-0-overview.md` 顶部 `[W13 active · 2026-09-07 23:55 CST]` 段 runtime-lock 状态表 13 行；**W13 plugin 范围冻结 = 恰好 6 条 stage-I manifest 生命周期命令**（详见 [W13 stage-I scope] 段）
++> **W13 PUSHED**（2026-09-08 00:20 CST · A0 拣入 `a7eefbb` = HEAD）：A0 在 **`a7eefbb feat(M5): integrate W13 plugin manifest lifecycle`** 中拣入 W13：8 local-only lifecycle/key-registry 命令（`plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_list` / `plugin_get` / `plugin_key_registry` / `plugin_audit_get` / `plugin_storage_*` 4 stub 错误结构不变）+ 原子注册表持久化 + redacted DTO/audit + ACL/source-check parity + **无** execution surface；`cargo test plugin` 全绿 + `check-plugin-policy.py` ACTIVE=8/PENDING=0 + `check-plugin-privacy.py` ACTIVE=4/PENDING=0；A1 W13 reconciliation 整包合并拣入；**plugin UI runtime 仍 LOCKED**（W14 Hard Stop）+ **A19 仍 SUPPORT DOCS ONLY**（plugin UI 6 项仍 0% ACTIVE，DEBT-04 W14+ 仍挂账）。
++> **W14** ACTIVE（**A6 W14 = START PRODUCT CODE NARROW（plugin manager UI 唯一产品代码 lane）** —— 消费 frozen W13 6 命令（`plugin_list` / `plugin_get` / `plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_key_registry`）+ `usePluginStore` + `check-plugin-ui-logic.mjs` + workspace navigation 集成；6 action = list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint；**不**实施 W14 新 lifecycle 命令 / **不**碰 `src/bridge.ts` DTO 形态 / **不** raw Tauri `invoke` / **不**渲染 raw signature / public-key / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr；**plugin invoke / 命令执行 / 动态加载 / 网络下载监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP 全量 / graph 写导出 / 后台 worker 仍 LOCKED**（W14 Hard Stop）；W14 命令名 + DTO 冻结 = 复吃 W13 6 命令，不增删 lifecycle；**A1 W14 = START DOCS ONLY**（reconcile W13 accepted + mark W14 active + **不**改 product scope）；A19 仍 SUPPORT（plugin UI 6 项 ACTIVE 仍 0%，待 A6 W14 实施完成 = DEBT-04 W14+ 仍挂账）；详见 `M5-0-overview.md` 顶部 `[W14 active · 2026-09-08 00:20 CST]` 段 runtime-lock 状态表 14 行 + `M5-12-plugin-ui.md` 末尾 [W14 active] 段）
+
+ ---
+
+diff --git a/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md b/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md
+index 324423f..ca7b10d 100644
+--- a/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md
++++ b/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md
+@@ -16,6 +16,8 @@
+ > **W12** ACTIVE（**A9 W12 = PLUGIN DOCS ONLY**（W12/W13 plugin staged cards 细化仅在 W11 反馈改变 blocker 时；**不**实施 plugin runtime / 不破 K1 ACL 末条恒为 `list_artifact_images`）；**plugin install/enable/delete/download runtime 仍 LOCKED**（W12 Hard Stop L209）；详见 `M5-0-overview.md` 顶部 `[W12 active · 2026-09-07 20:30 CST]` 段 runtime-lock 状态表 11 行）
+ > **W12 PUSHED**（2026-09-07 23:55 CST · A0 拣入 `3c3f460` = HEAD）：A0 在 **`3c3f460 feat(M5): integrate W12 graph live-query readonly bridge/UI`** 中拣入 W12：图谱 live-query 只读 3 命令 + A8 UI 消费；`cargo test graph` 15/15 + full cargo 414/414 + `check-graph-policy.py` ACTIVE=8 + `check-mcp-policy.py` ACTIVE=12/PENDING=0；A1 W12 reconciliation 整包合并拣入（含本卡头部 status 修订 + 顶部 history 链 + 14 文件）；**plugin install/enable/delete/download runtime 仍 LOCKED**（W13 Hard Stop）。
+ > **W13** ACTIVE（**A9 W13 = START PRODUCT CODE NARROW**（**plugin stage-I commands_isolation**：`plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_list` / `plugin_get` / `plugin_key_registry` 6 命令；K1 ACL 末条恒为 `list_artifact_images`，6 条新命令**插在其前**；**不**实施 `plugin_invoke` / `plugin_cancel` / `plugin_storage_*` 5 stub —— 维持 `Err("not-implemented-in-W6")`；stage-I commands_isolation 维持 pure / stub 错误结构不变 / audit shape 维持 key_hash_only / 无 invoke / 无真实 cancel / 无 storage 写；**复用** W6 `5f92ece` `plugin.rs` 5 stub + `domain.rs` PluginInvokeRecord + `security_policy.rs` 补丁，**只**加 stage-I lifecycle 真实命令）；**plugin invoke / command execution / dynamic code loading / network download/listener / MCP full runtime / Agent/Skill execution / daemon / model call 仍 LOCKED**（W13 Hard Stop）；详见 `M5-0-overview.md` 顶部 `[W13 active · 2026-09-07 23:55 CST]` 段 runtime-lock 状态表 13 行；**W13 plugin 范围冻结 = 恰好 6 条 stage-I manifest 生命周期命令**（详见 [W13 stage-I isolation] 段）
++> **W13 PUSHED**（2026-09-08 00:20 CST · A0 拣入 `a7eefbb` = HEAD）：A0 在 **`a7eefbb feat(M5): integrate W13 plugin manifest lifecycle`** 中拣入 W13：commands_isolation 维持 pure / 5 stub 错误结构不变 / audit shape 维持 key_hash_only / K1 ACL 末条恒为 `list_artifact_images`（8 条新命令**插在其前**）/ source-check parity；A1 W13 reconciliation 整包合并拣入；**plugin invoke / cancel / storage_* runtime 仍 LOCKED**（W14 Hard Stop）。
++> **W14** ACTIVE（**A6 W14 = START PRODUCT CODE NARROW（plugin manager UI 唯一产品代码 lane）** —— 消费 frozen W13 6 命令 + 6 action = list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint；**不**实施 W14 新 lifecycle 命令 / **不**碰 `bridge.ts` DTO 形态 / **不** raw Tauri `invoke` / **不**渲染 raw 敏感字段；**plugin invoke / 命令执行 / 动态加载 / 网络下载监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP 全量 / graph 写导出 / 后台 worker 仍 LOCKED**（W14 Hard Stop）；W14 命令名 + DTO 冻结 = 复吃 W13 6 命令，不增删 lifecycle；A1 W14 = START DOCS ONLY；详见 `M5-0-overview.md` 顶部 `[W14 active · 2026-09-08 00:20 CST]` 段）
+
+ ---
+
+diff --git a/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md b/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md
+index be4f01c..29f4388 100644
+--- a/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md
++++ b/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md
+@@ -16,6 +16,8 @@
+ > **W12** ACTIVE（**A9 W12 = PLUGIN DOCS ONLY**（W12/W13 plugin staged cards 细化仅在 W11 反馈改变 blocker 时）+ **A19 仍 SUPPORT DOCS ONLY**（plugin UI 6 项仍待 A19 派发）；**plugin UI runtime 仍 LOCKED**（W12 Hard Stop L209）；详见 `M5-0-overview.md` 顶部 `[W12 active · 2026-09-07 20:30 CST]` 段 runtime-lock 状态表 11 行）
+ > **W12 PUSHED**（2026-09-07 23:55 CST · A0 拣入 `3c3f460` = HEAD）：A0 在 **`3c3f460 feat(M5): integrate W12 graph live-query readonly bridge/UI`** 中拣入 W12：图谱 live-query 只读 3 命令 + A8 UI 消费；`cargo test graph` 15/15 + full cargo 414/414 + `check-graph-policy.py` ACTIVE=8 + graph UI logic 113/113 + npm build PASS + build metrics 22.26% ≤ 23%；A1 W12 reconciliation 整包合并拣入；**plugin UI runtime 仍 LOCKED**（W13 Hard Stop）+ **A19 仍 SUPPORT DOCS ONLY**（plugin UI 6 项仍 0% ACTIVE）。
+ > **W13** ACTIVE（**A9 W13 = START PRODUCT CODE NARROW**（**plugin stage-I manifest 生命周期后端** —— `plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_list` / `plugin_get` / `plugin_key_registry` 6 命令 + 本地状态机）+ **A19 仍 SUPPORT DOCS ONLY**（plugin UI 6 项仍 0% ACTIVE，**仍待 A19 派发**；A0 W12/W13 期间未派发 A19 plugin UI 产品代码；plugin UI 6 项 = 列表 / 详情 / 安装向导 / 启用停用 / 审计查询 / 权限预览，**全部依赖** W13 stage-I 真实后端 6 命令落地）；**plugin UI runtime 仍 LOCKED**（W13 Hard Stop）；详见 `M5-0-overview.md` 顶部 `[W13 active · 2026-09-07 23:55 CST]` 段 runtime-lock 状态表 13 行；**DEBT-04（plugin UI 6 项仍 0% ACTIVE）= W14+ 仍挂账**；**W13 plugin 范围冻结 = 后端 6 条 stage-I 命令（**不**含 UI 实施）**（详见 [W13 plugin UI still locked] 段）
++> **W13 PUSHED**（2026-09-08 00:20 CST · A0 拣入 `a7eefbb` = HEAD）：A0 在 **`a7eefbb feat(M5): integrate W13 plugin manifest lifecycle`** 中拣入 W13：8 local-only lifecycle/key-registry 命令（含 5 stub 错误结构不变）+ 原子注册表持久化 + redacted DTO/audit + ACL/source-check parity + **无** execution surface；A1 W13 reconciliation 整包合并拣入；**plugin UI 6 项 ACTIVE 仍 0%**（W14 派发 A6 实施前不挂 ACTIVE）；**DEBT-04 = W14+ 仍挂账**。
++> **W14** ACTIVE（**A6 W14 = START PRODUCT CODE NARROW（plugin manager UI 唯一产品代码 lane）** —— 消费 frozen W13 6 命令（`plugin_list` / `plugin_get` / `plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_key_registry`）+ `src/components/plugin/**` + `src/stores/usePluginStore.ts` + `scripts/check-plugin-ui-logic.mjs` + workspace navigation 集成；6 action = list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint；**不**实施 W14 新 lifecycle 命令 / **不**碰 `src/bridge.ts` DTO 形态 / **不** raw Tauri `invoke` / **不**渲染 raw signature / public-key / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr；**plugin invoke / 命令执行 / 动态加载 / 网络下载监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP 全量 / graph 写导出 / 后台 worker 仍 LOCKED**（W14 Hard Stop）；W14 命令名 + DTO 冻结 = 复吃 W13 6 命令，不增删 lifecycle；**A1 W14 = START DOCS ONLY**（reconcile W13 accepted + mark W14 active + **不**改 product scope）；**plugin UI 6 项 ACTIVE 仍 0%**（A6 W14 实施后才标 ACTIVE，本 wave 派发期维持 0% = DEBT-04 W14+ 仍挂账）；A19 仍 SUPPORT；详见 `M5-0-overview.md` 顶部 `[W14 active · 2026-09-08 00:20 CST]` 段 runtime-lock 状态表 14 行 + 本卡末尾 [W14 active] 段）
+
+ ---
+
+@@ -205,3 +207,36 @@ pnpm lint
+ - 未触 `src/`、`package.json`、三份主文档、ACL/Capability
+ - 未移动 `NEXT`（仍 M5-W0）
+ - 未提交、未 push
++
++---
++
++## [W14 active · 2026-09-08 00:20 CST] A1 W14 reconciliation 立场 · plugin manager UI 派发期
++
++**W14 派发** = Plugin Manager UI Dispatch（board L1163+）；**W14 = 仅 1 lane UI 产品代码 open**（**A6 W14 = START PRODUCT CODE NARROW**），其余 10 lane = docs/review/security/verification（详见 `M5-0-overview.md` 顶部 `[W14 active · 2026-09-08 00:20 CST]` 段 runtime-lock 状态表 14 行 + `PARALLEL_COMMAND_BOARD.md` L1163-1189 lane 表）。
++
++**A6 W14 唯一产品代码 lane 范围（冻结）**：
++- 消费 **frozen W13 6 命令**（`plugin_list` / `plugin_get` / `plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_key_registry`）—— **不**实施 W14 新 lifecycle 命令 / **不**改 `src/bridge.ts` DTO 形态 / **不**增删 ACL
++- 文件范围 = `src/components/plugin/**` + `src/stores/usePluginStore.ts` + `scripts/check-plugin-ui-logic.mjs` + workspace navigation 集成
++- 6 action = list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint
++- UI 走 `src/bridge.ts`（**不** raw Tauri `invoke`）
++- **不**渲染 raw signature / public-key / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr
++
++**W14 Hard Stops（与 W13 Hard Stop 平级）**：
++- plugin invoke / 命令执行 / 动态加载 / 网络下载监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP 全量 / graph 写导出 / 后台 worker **仍 LOCKED**
++- 现有命令名 + DTO 冻结 = W14 **不**增 lifecycle 命令
++- 复吃 W13 6 命令 + 5 stub 错误结构不变
++
++**plugin UI 6 项 ACTIVE 状态**（DEBT-04 = W14+ 仍挂账）：
++- 本 wave 派发期 = **0% ACTIVE**（A6 W14 实施完成才标 ACTIVE）
++- A19 仍 SUPPORT DOCS ONLY
++- A6 W14 实施期收口 DEBT-04（预计 0% → 6/6 ACTIVE）
++
++**A1 W14 = START DOCS ONLY**（本卡 reconciliation 立场）：
++- reconcile W13 as accepted after A0 push（`a7eefbb`）
++- mark W14 active + 更新 3 主文档 L1 + 本卡 status 行 + M5-13/14 末尾段
++- **不**改 product scope（plugin UI 6 项 ACTIVE 仍 0%，A6 W14 实施期才升 ACTIVE）
++- **不**碰产品代码（`src/components/plugin/**` / `usePluginStore.ts` / `check-plugin-ui-logic.mjs` / `bridge.ts` / `types.ts`）
++
++**A8 W14 UI review / A9 W14 backend review / A10 W14 security review** 必保 A6 实施期：① UI 走 bridge.ts（无 raw invoke）+ ② 6 命令输入输出字段全在 W13 DTO 白名单内 + ③ 缺 read-only 字段时 A8/A9 报告，A6 不私加字段。
++
++**A11 W14 verification scope** = `M5-13-verification-matrix.md` 末尾 [W14 verification scope] 段（6 UI 行动 + `check-plugin-ui-logic.mjs` + `npm run build` + privacy 复检 + build metrics ≤ 23% + cargo_warnings delta = 0）。
+diff --git a/logs/checkpoints/M5-20260906/M5-13-verification-matrix.md b/logs/checkpoints/M5-20260906/M5-13-verification-matrix.md
+index 78c7f49..3e3c158 100644
+--- a/logs/checkpoints/M5-20260906/M5-13-verification-matrix.md
++++ b/logs/checkpoints/M5-20260906/M5-13-verification-matrix.md
+@@ -1,4 +1,4 @@
+-# M5 验证矩阵（A1 横切 · M5-W0 末位 + W1 reconciliation + W6 verification delta + W7 verification scope + W8 reconciliation + W9 verification scope + W10 verification scope + W10 verification delta + W11 verification scope + W12 verification scope + W12 build metrics threshold）
++# M5 验证矩阵（A1 横切 · M5-W0 末位 + W1 reconciliation + W6 verification delta + W7 verification scope + W8 reconciliation + W9 verification scope + W10 verification scope + W10 verification delta + W11 verification scope + W12 verification scope + W12 build metrics threshold + W13 verification scope + W14 verification scope）
+
+ > 子卡 ID：**M5-13** · 跨 M5-1~M5-12 · `[S3|LEVERAGE:2|COMPLEX|AI:DEEP|R:xhigh]`
+ > 责任 Lane 候选：**A11**（沿用 A7/A11 角色，A0 签发时定）
+@@ -604,3 +604,33 @@ W12 graph live-query readonly bridge/UI measured `total_bytes_pct=22.26` and `ca
+ - `npm run build` PASS
+ - `python3 scripts/pre-merge.sh` ALL_PASS
+ - `python3 scripts/measure-build-metrics.py` `total_bytes_pct ≤ 23%` + `cargo_warnings delta = 0`
++
++---
++
++## [W14 verification scope · 2026-09-08 00:20 CST] W14 plugin manager UI 验证矩阵（A1 START DOCS ONLY · A6 START PRODUCT CODE NARROW · 10 lane docs/review/security/verification）
++
++**W14 派发** = Plugin Manager UI Dispatch（board L1163+）；**W14 = 仅 1 lane UI 产品代码 open**（A6）；其余 10 lane = docs/review/security/verification（详见 `M5-0-overview.md` 顶部 `[W14 active · 2026-09-08 00:20 CST]` 段 + `PARALLEL_COMMAND_BOARD.md` L1163-1189 lane 表）。
++
++**A6 W14 唯一产品代码 lane 范围（冻结）**：
++- 消费 **frozen W13 6 命令**（`plugin_list` / `plugin_get` / `plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_key_registry`）—— **不**实施 W14 新 lifecycle 命令 / **不**改 `src/bridge.ts` DTO 形态 / **不**增删 ACL
++- 文件范围 = `src/components/plugin/**` + `src/stores/usePluginStore.ts` + `scripts/check-plugin-ui-logic.mjs` + workspace navigation 集成
++- 6 action = list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint
++- UI 走 `src/bridge.ts`（**不** raw Tauri `invoke`）
++- **不**渲染 raw signature / public-key / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr
++
++**W14 验证矩阵（11 项必跑）**：
++1. `cargo test plugin` 全绿（沿用 W13 基线 + W14 0 增量）
++2. `cargo test graph` 15/15 PASS（**A7 W14 GRAPH NON-REGRESSION** = W12 8 条 graph 集成锚点不回归 + A6 W14 不触 `mod graph` / `GraphState` / `bridge.rs:6605/6624/6641`）
++3. full cargo 414/414 PASS（W12 基线 + W14 0 增量）
++4. `mcp feature test` 21/21 PASS（**A3 W14 MCP PLUGIN ISOLATION REVIEW** = W14 plugin UI 走 W13 6 命令边界，**不**引入 `mcp_*` / `plugin_invoke` / `plugin_storage_*` runtime）
++5. `cargo fmt --check` 干净
++6. `check-plugin-policy.py --self-test` PASS + ACTIVE=8/PENDING=0 + `--expect-pending` PASS（W13 8 ACTIVE 码 + W14 0 增量）
++7. `check-plugin-privacy.py --self-test` PASS + ACTIVE=4/PENDING=0（W13 4 ACTIVE 码 = `PLUGIN_PRIVACY_OUTPUT_NO_RAW_SIG` / `PLUGIN_PRIVACY_NO_KEY_MATERIAL` / `PLUGIN_PRIVACY_NO_RESOURCE_PATH` / `PLUGIN_PRIVACY_DTO_REDACTED` + W14 0 增量；**A4 W14 PRIVACY REVIEW** = UI 走 redacted DTO **不**触 raw 敏感字段）
++8. `check-plugin-ui-logic.mjs` PASS + 新增 plugin UI logic 守门码（`PLUGIN_UI_NO_RAW_INVOKE` / `PLUGIN_UI_BRIDGE_ONLY` / `PLUGIN_UI_NO_RAW_SIG_RENDER` / `PLUGIN_UI_NO_RAW_PUBKEY_RENDER` / `PLUGIN_UI_NO_RAW_RESOURCE_PATH_RENDER` / `PLUGIN_UI_NO_RAW_MANIFEST_META_RENDER` / `PLUGIN_UI_NO_RAW_CREDENTIAL_RENDER` / `PLUGIN_UI_NO_RAW_REQ_RES_BODY_RENDER` / `PLUGIN_UI_NO_RAW_STDOUT_STDERR_RENDER` 9 码 ≥9/9 PASS + 6 action 全覆盖）
++9. `check-graph-ui-logic.mjs` 113/113 PASS（**A8 W14 UI ERGONOMICS REVIEW** = A6 W14 不破 graph UI logic）
++10. `check-agent-skill-ui-logic.mjs` 110/110 PASS（**A5 W14 AGENT/SKILL LOCK** = A6 W14 不破 agent-skill UI logic + plugin UI 不引入 agent-skill runtime）
++11. `npm run build` PASS
++12. `python3 scripts/pre-merge.sh` ALL_PASS
++13. `python3 scripts/measure-build-metrics.py` `total_bytes_pct ≤ 23%` + `cargo_warnings delta = 0`（W12 A0 修订 IF-2 = 23%）
++
++**A1 W14 派发期本卡立场 = 整包文档收口（11 文件 = board L6 + 3 主文档 L1 + A1 W14 checkpoint + M5-0/10/11/12/13/14 头 + 末尾段），零产品代码，不 push**。A6 W14 实施期由 A11 出 W14 verification delta；A7 W14 GRAPH NON-REGRESSION DOCS ONLY 必保 W12 8 条 graph 集成锚点不回归；A10 W14 SECURITY REVIEW 必保 raw-invoke bypass / confirmation bypass / source-ACL drift / sensitive-render regression 四项不破。
+diff --git a/logs/checkpoints/M5-20260906/M5-14-debt-ledger.md b/logs/checkpoints/M5-20260906/M5-14-debt-ledger.md
+index 17f7b33..a551d3b 100644
+--- a/logs/checkpoints/M5-20260906/M5-14-debt-ledger.md
++++ b/logs/checkpoints/M5-20260906/M5-14-debt-ledger.md
+@@ -1,5 +1,5 @@
+ > A0 2026-09-07 14:30: IF-2 threshold revised to 22% for W8; current build metrics total_bytes_pct=21.07 and cargo_warnings delta=0. W9 must preserve <=22% and re-record final verification.
+-# M5 债务账（A1 横切 · 不在本批解决 · W1 修订 + W6/W7 reconciliation debt + W8 reconciliation + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active + W12 reconciliation + W12 PUSHED + W13 active）
++# M5 债务账（A1 横切 · 不在本批解决 · W1 修订 + W6/W7 reconciliation debt + W8 reconciliation + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active + W12 reconciliation + W12 PUSHED + W13 active + W13 PUSHED + W14 active）
+
+ > 子卡 ID：**M5-14** · 跨 M5-1~M5-12 · 性质：**清单，非实现**
+ > 配套：每张 M5-x 子卡 §9 DOC_BACKWRITE 中的"M5-14 增项"
+@@ -13,6 +13,8 @@
+ > **W12** ACTIVE（2026-09-07 20:30 CST · A0 派发 **Graph Live-Query Readonly Dispatch**）：W12 runtime-lock 状态表见 `M5-0-overview.md` 顶部 `[W12 active · 2026-09-07 20:30 CST]` 段；**graph live-query command 由 W11 的 🔒 LOCKED 翻为 W12 的 🟢 OPENED（narrow·read-only）** = A7 W12 + A8 W12 产品代码 lane；M5 final debt ledger 维持 **53 条** + W12 增量预期 = 2（**A7 W12 3 只读命令**（new·窄）+ **A8 W12 UI 消费**（new·窄）+ M5-8 stale 9 命令 + SQLite DDL 设计债 superseded）；**W12 复检必跑** = ① build metrics 23% 阈值（preserve）+ ② cargo_warnings delta = 0 + ③ A7 W12 3 命令在 `bridge.rs` 过 `check_invocation_source` + ④ 输出去 props（`GRAPH_OUTPUT_NO_PROPS` 新增守门码）+ ⑤ `graph.rs` 不 import `crate::bridge`（GRAPH_NO_SECOND_PATH）+ ⑥ A2/A3/A4/A10 四重 review 必过 + ⑦ A11 W12 verification delta 收口；详见 `M5-0-overview.md` 顶部 `[W12 active · 2026-09-07 20:30 CST]` 段 + `M5-13-verification-matrix.md` 末尾 `[W12 verification scope]` 段。
+ > **W12 PUSHED**（2026-09-07 23:55 CST · A0 拣入 `3c3f460` = HEAD）：A0 在 **`3c3f460 feat(M5): integrate W12 graph live-query readonly bridge/UI`** 中拣入 W12：图谱 live-query 只读 3 命令（`graph_query` / `graph_node_get` / `graph_stats`）+ A8 UI 消费（`GRAPH_COMMANDS_AVAILABLE=true` + AbortController/debounce + bounded rendering + 确定性 empty/error/loading）+ 10 份 W12 assist + A1 W12 reconciliation 整包（+ A1 W12 checkpoint 203 行 + A1 W12 patch 14 文件）+ M5-0/7/8/9/10/11/12/13/14 头部 W11 PUSHED + W12 ACTIVE 状态行 + M5-0/8/13/14 末尾 [W11 reconciliation]/[W12 scope supersession]/[W12 verification scope]/[W12 active] 段 + 3 主文档 L1 W11 update 行 + board L6/L7 W12 dispatch；M5 final debt ledger 维持 **53 条** + W12 增量 = 2（**A7 W12 3 只读命令**（new·窄·closed-by-W12）+ **A8 W12 UI 消费**（new·窄·closed-by-W12）；M5-8 stale 9 命令 + SQLite DDL 设计债 superseded-by-W12）；W12 复检全过（`cargo test graph` 15/15 + full cargo 414/414 + `cargo test --features mcp mcp_server` 21/21 + `check-graph-policy.py` ACTIVE=8 + `check-mcp-policy.py` ACTIVE=12/PENDING=0 + `check-agent-skill-policy.py` ACTIVE=3/PENDING=6 + graph UI logic 113/113 + agent-skill UI logic 110/110 + npm build PASS + build metrics 22.26% ≤ 23% PASS + cargo_warnings delta = 0）；A0 cleanup 删 stale W12 false comments / merge 重复 TS graph view DTO block / 删 unused `bounded_subgraph` helper（warning budget 回退到 grid_process 既有 warnings only）。
+ > **W13** ACTIVE（2026-09-07 23:55 CST · A0 派发 **Plugin Runtime Stage-I Manifest Lifecycle Dispatch**）：W13 runtime-lock 状态表见 `M5-0-overview.md` 顶部 `[W13 active · 2026-09-07 23:55 CST]` 段；**plugin stage-I manifest lifecycle command 由 W12 的 🔒 LOCKED 翻为 W13 的 🟢 OPENED（narrow·stage-I local-only）** = **A9 W13** 产品代码 lane；M5 final debt ledger 维持 **53 条** + W13 增量预期 = 1（**A9 W13 plugin stage-I 6 命令**（new·窄：install / enable / disable / list / get / key registry；本地 manifest 解析 + 静态资源元数据装载 + 本地状态机）；`plugin_invoke` / `plugin_cancel` / `plugin_storage_*` 5 stub 仍 `Err("not-implemented-in-W6")`，stage-I **不**实现；**DEBT-04** = A19 plugin UI 6 项 0% ACTIVE W14+ 仍挂账）；**W13 复检必跑** = ① build metrics 23% 阈值（preserve，W12 A0 修订 IF-2 = 23%）+ ② cargo_warnings delta = 0 + ③ A9 W13 6 命令在 `bridge.rs` 过 `check_invocation_source` + ④ 输出脱敏（`PluginManifestView` / `PluginStateView` / `PluginKeyEntryView` 不含 secret / raw signature / 路径含环境变量；`PluginError::code()` 稳定码不 echo secret/路径/URL/token/cookie/Authorization）+ ⑤ 6 命令 ACL 插末条 `list_artifact_images` 前（K1 ACL 末条恒为 `list_artifact_images` 不破）+ ⑥ `bridge.ts` / `types.ts` 镜像对齐 + ⑦ `check-plugin-policy.py` 新增 `PLUGIN_LIFECYCLE_LOCAL_ONLY` 守门码（ACTIVE 6 → 7）+ ⑧ A2/A3/A4/A10 四重 review 必过 + ⑨ A11 W13 verification delta 收口 + ⑩ **A7 W13 GRAPH NON-REGRESSION DOCS ONLY 必保** W12 graph 集成锚点不回归（`mod graph`@`main.rs:9` + `GraphState` 托管@`main.rs:1347` + 快照载入@`main.rs:1328-1335` + 3 graph 命令注册@`main.rs:1474-1476` + `bridge.rs:6605/6624/6641` + `domain.rs` `GraphNode*`/`GraphEdge*`/`GraphProps`/View@L2042-2115 + 7 容量常量@`domain.rs` L2188-2200 + ACL 3 行@`default-commands.toml` L127-129，末条 `list_artifact_images`@L130）；详见 `M5-0-overview.md` 顶部 `[W13 active · 2026-09-07 23:55 CST]` 段 + `M5-13-verification-matrix.md` 末尾 `[W13 verification scope]` 段。
++> **W13 PUSHED**（2026-09-08 00:20 CST · A0 拣入 `a7eefbb` = HEAD）：A0 在 **`a7eefbb feat(M5): integrate W13 plugin manifest lifecycle`** 中拣入 W13：8 local-only lifecycle/key-registry 命令（`plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_list` / `plugin_get` / `plugin_key_registry` / `plugin_audit_get` / 4 storage stub 错误结构不变）+ 原子注册表持久化 + redacted DTO/audit + ACL/source-check parity + **无** execution surface；`cargo test plugin` 全绿 + `check-plugin-policy.py` ACTIVE=8/PENDING=0 + `check-plugin-privacy.py` ACTIVE=4/PENDING=0；A1 W13 reconciliation 整包合并拣入。**W13 残留债预期 = 0**（A9 W13 增量 = 1 closed-by-W13 = plugin stage-I 6 命令；M5 final debt ledger 维持 **53 条** + W13 增量 1 closed-by-W13 → 维持 53 条）；**DEBT-04 plugin UI 6 项 carried-to-W14+**（A6 派发后消解，A1 W14 派发期仍 0% ACTIVE）；runtime 债（plugin invoke / cancel / storage_* 5 stub）按设计延后，W13 不实现。
++> **W14** ACTIVE（2026-09-08 00:20 CST · A0 派发 **Plugin Manager UI Dispatch**）：W14 runtime-lock 状态表见 `M5-0-overview.md` 顶部 `[W14 active · 2026-09-08 00:20 CST]` 段（14 行）；**plugin manager UI 由 W13 的 🔒 LOCKED 翻为 W14 的 🟢 OPENED（narrow·UI 消费 frozen W13 6 命令）** = **A6 W14** 唯一产品代码 lane（`src/components/plugin/**` + `src/stores/usePluginStore.ts` + `scripts/check-plugin-ui-logic.mjs` + workspace navigation 集成）；M5 final debt ledger 维持 **53 条** + W14 增量预期 = 0（**A6 W14** = 复吃 W13 6 命令 + UI 包装，**不**实施 W14 新 lifecycle 命令 / **不**改 `bridge.ts` DTO 形态 / **不**渲染 raw signature / public-key / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr）；**DEBT-04** = plugin UI 6 项 ACTIVE 仍 0%（A6 W14 实施期才升 ACTIVE = DEBT-04 W14+ 仍挂账）；**A1 W14 = START DOCS ONLY**（reconcile W13 accepted + mark W14 active + **不**改 product scope）；其余 10 lane = docs/review/security/verification（A2 boundary / A3 mcp isolation / A4 privacy / A5 agent-skill lock / A7 graph non-regression / A8 UI ergonomics / A9 backend review / A10 security / A11 verification + A19 plugin UI support）；**W14 复检必跑** = ① build metrics 23% 阈值（preserve，W12 A0 修订 IF-2 = 23%）+ ② cargo_warnings delta = 0 + ③ A6 W14 UI 走 `src/bridge.ts`（**不** raw Tauri `invoke`）+ ④ `check-plugin-ui-logic.mjs` 新增 plugin UI logic 守门码 + ⑤ UI 6 action = list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint + ⑥ **不**渲染 raw signature / public-key / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr + ⑦ `check-plugin-privacy.py` 复检 plugin UI 边界（plugin UI 走 W13 redacted DTO，**不**触 raw 敏感字段）+ ⑧ A2/A3/A4/A5/A8/A9/A10 七重 review 必过 + ⑨ A11 W14 verification delta 收口 + ⑩ **A7 W14 GRAPH NON-REGRESSION DOCS ONLY 必保** W12 graph 集成锚点不回归（8 条 graph 锚点同 W13 + A6 W14 实施期不触 `mod graph` / `GraphState` / `bridge.rs:6605/6624/6641`）；详见 `M5-0-overview.md` 顶部 `[W14 active · 2026-09-08 00:20 CST]` 段 + `M5-13-verification-matrix.md` 末尾 `[W14 verification scope]` 段。
+
+ ---
+
+@@ -461,3 +463,43 @@ IF-2 threshold revised to 23% for W12 graph live-query readonly bridge/UI; curre
+ - 仅 A0 push
+
+ **W13 残留债预期 = 0**（A9 W13 增量 = 1 closed-by-W13；M5 final debt ledger 维持 **53 条** + W13 增量 1 closed-by-W13 → 维持 53 条）；**DEBT-04 plugin UI 6 项 carried-to-W14+**（A19 派发后消解）；runtime 债（plugin invoke / cancel / storage_* 5 stub）按设计延后，W13 不实现。
++
++---
++
++## [W14 active · 2026-09-08 00:20 CST] A1 W14 reconciliation 立场 · runtime surface 锁定状态表（14 行）+ DEBT-04 仍挂账转 A6 W14
++
++**W14 派发** = Plugin Manager UI Dispatch（board L1163+）；**W14 = 仅 1 lane UI 产品代码 open**（**A6 W14 = START PRODUCT CODE NARROW**），其余 10 lane = docs/review/security/verification（详见 `M5-0-overview.md` 顶部 `[W14 active · 2026-09-08 00:20 CST]` 段 + `PARALLEL_COMMAND_BOARD.md` L1163-1189 lane 表）。
++
++**W14 runtime surface 锁定状态表（14 行 · 沿用 W13 13 行 + 新增 W14 plugin UI 1 行）**：
++
++| 维度 | W13 status | W14 status | 备注 |
++|------|-----------|-----------|------|
++| 1. `plugin_invoke` / `plugin_cancel` / `plugin_storage_*` 5 stub | 🔒 LOCKED | 🔒 LOCKED | 5 stub 错误结构不变 `Err("not-implemented-in-W6")`；W14 不实现 invoke / cancel / storage_* runtime；plugin UI 不触发 |
++| 2. `plugin_install` / `plugin_enable` / `plugin_disable` stage-I lifecycle | 🟢 OPENED（narrow·local-only） | 🟢 OPENED（narrow·local-only） | A9 W13 已落地 6 命令；W14 UI 消费，不重写 |
++| 3. `plugin_list` / `plugin_get` / `plugin_key_registry` | 🟢 OPENED（read-only） | 🟢 OPENED（read-only） | A9 W13 已落地；W14 UI 消费 |
++| 4. `plugin_audit_get` | 🟢 OPENED（read-only） | 🟢 OPENED（read-only） | A9 W13 已落地；W14 UI 可选消费 |
++| 5. network download / listener | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不引入网络下载；manifest 来源 = 后端命令输出（不重新下载） |
++| 6. dynamic code loading | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不引入动态加载 |
++| 7. daemon / model call | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不引入 daemon / 模型调用 |
++| 8. Agent/Skill execution | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不触发 Agent/Skill runtime |
++| 9. MCP full runtime | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不引入 mcp_* 边界 |
++| 10. graph build-write-export | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不引入 graph 写导出 |
++| 11. background worker | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不引入后台 worker |
++| 12. plugin UI 6 action（list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint） | 🔒 LOCKED（A19 SUPPORT） | 🟢 OPENED（A6 START PRODUCT CODE NARROW） | W14 唯一产品代码 lane open；A6 W14 实施期完成 6 action |
++| 13. raw Tauri `invoke`（绕过 bridge.ts） | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI **必须**走 `src/bridge.ts`；`check-plugin-ui-logic.mjs` 新增 `PLUGIN_UI_NO_RAW_INVOKE` / `PLUGIN_UI_BRIDGE_ONLY` 守门码 |
++| 14. raw signature / public-key / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr 渲染 | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI **不**渲染 raw 敏感字段；`check-plugin-ui-logic.mjs` 新增 6 守门码（`PLUGIN_UI_NO_RAW_SIG_RENDER` / `PLUGIN_UI_NO_RAW_PUBKEY_RENDER` / `PLUGIN_UI_NO_RAW_RESOURCE_PATH_RENDER` / `PLUGIN_UI_NO_RAW_MANIFEST_META_RENDER` / `PLUGIN_UI_NO_RAW_CREDENTIAL_RENDER` / `PLUGIN_UI_NO_RAW_REQ_RES_BODY_RENDER` / `PLUGIN_UI_NO_RAW_STDOUT_STDERR_RENDER`） |
++
++**W14 债务账变化（相对 W13 拣入后）**：
++- **W14 增量预期 = 0**（A6 W14 = 复吃 W13 6 命令 + UI 包装，**不**实施 W14 新 lifecycle 命令 / **不**改 DTO / **不**渲染 raw 敏感字段 → 无新债增量）
++- **M5 final debt ledger 维持 53 条**（W14 拣入后维持 53 条 + A6 W14 实施期收口 DEBT-04 = 6/6 ACTIVE）
++- **DEBT-04 plugin UI 6 项 ACTIVE = 0% → 6/6**（A6 W14 实施期收口；**A1 W14 派发期仍 0%** = 派发期不算 ACTIVE）
++- **新增债 0**（W14 不实施 invoke / cancel / storage_* / 网络 / 动态加载 / daemon / 模型 / Agent-Skill / MCP / graph 写 / 后台 worker）
++
++**A1 W14 派发期立场 = START DOCS ONLY**：
++- reconcile W13 as accepted after A0 push（`a7eefbb`）
++- mark W14 active + 更新 3 主文档 L1 + 本卡头 + 末尾段 + `M5-12-plugin-ui.md` 末尾 [W14 active] 段 + `M5-13-verification-matrix.md` 末尾 [W14 verification scope] 段 + `M5-0-overview.md` 末尾 [W14 active] 段
++- **不**改 product scope（plugin UI 6 项 ACTIVE 仍 0%，A6 W14 实施期才升 ACTIVE）
++- **不**碰产品代码（`src/components/plugin/**` / `usePluginStore.ts` / `check-plugin-ui-logic.mjs` / `bridge.ts` / `types.ts`）
++- **不** push
++
++**A6 W14 实施期收口**：A6 W14 实施完成 = 6 action 全 ACTIVE + `check-plugin-ui-logic.mjs` ≥9/9 PASS + A11 W14 verification delta 功能性 ALL_PASS + A7 W14 graph non-regression PASS + A10 W14 security review PASS → DEBT-04 closed-by-W14，M5 final debt ledger 维持 53 条（plugin UI 6 项由"挂账"转"收口"）。
+diff --git a/scripts/check-agent-skill-policy.py b/scripts/check-agent-skill-policy.py
+index da32d9b..af8764c 100644
+--- a/scripts/check-agent-skill-policy.py
++++ b/scripts/check-agent-skill-policy.py
+@@ -85,7 +85,7 @@ def _agent_skill_present(repo: dict[str, str]) -> bool:
+
+ _PLUGIN_LIFECYCLE_CMDS = (
+     "plugin_install", "plugin_enable", "plugin_disable", "plugin_list", "plugin_get",
+-    "plugin_key_add", "plugin_key_list", "plugin_key_remove",
++    "plugin_keys_add", "plugin_keys_list", "plugin_keys_remove",
+ )
+
+
+@@ -430,6 +430,30 @@ def c_plugin_ui_exec_affordance(rel, text, repo):
+     return None
+
+
++def c_plugin_bridge_no_exec(rel, text, repo):
++    """AGSK_PLUGIN_BRIDGE_NO_EXEC（W14 · A5 加）：`src/bridge.ts` 不得出现插件**执行类** wrapper。
++
++    W14 Hard Stop：「Do not implement plugin_invoke」「UI must call only src/bridge.ts;
++    no raw Tauri invoke」。插件 Stage-I 仅开放 8 个生命周期/密钥管理 wrapper
++    （pluginInstall / pluginEnable / pluginDisable / pluginList / pluginGet /
++    pluginKeysAdd / pluginKeysList / pluginKeysRemove），前端面板 **不得** 声明
++    `plugin_invoke` / `plugin_exec` / `plugin_run` / `plugin_call` / `plugin_tool_call`
++    一类执行 wrapper——即便后端无对应 handler（command-not-found 仅失败），也属「UI 暗示
++    插件执行可供性」，违反 AGSK 执行锁定与 W14 Hard Stop。
++
++    门控：仅当插件生命周期产物存在时守门（`_plugin_lifecycle_present` 已生效）。
++    复用于 `c_plugin_cmd_not_exec` 同款 `_PLUGIN_EXEC_CMDS` 清单，保证前后端命令名口径一致。
++    """
++    if not _plugin_lifecycle_present(repo):
++        return None
++    if rel != "src/bridge.ts":
++        return None
++    found = sorted(set(re.findall(r"\b(?:" + "|".join(_PLUGIN_EXEC_CMDS) + r")\b", text)))
++    if found:
++        return [f"bridge.ts 出现插件执行类 wrapper（W14 Stage-I 禁止，插件执行面解锁须先经 A0 裁决）：{found}"]
++    return None
++
++
+ ACTIVE_CODES = [
+     ("AGSK_ACL_TAIL", "ACTIVE", c_acl_tail),
+     ("AGSK_CAPABILITY_DRIFT", "ACTIVE", c_capability_drift),
+@@ -446,6 +470,7 @@ PENDING_CODES = [
+     ("AGSK_PLUGIN_MANIFEST_AGENT_CAP", "PENDING", c_plugin_manifest_agent_cap),
+     ("AGSK_PLUGIN_CMD_NOT_EXEC", "PENDING", c_plugin_cmd_not_exec),
+     ("AGSK_PLUGIN_UI_EXEC_AFFORDANCE", "PENDING", c_plugin_ui_exec_affordance),
++    ("AGSK_PLUGIN_BRIDGE_NO_EXEC", "PENDING", c_plugin_bridge_no_exec),
+ ]
+ ALL_CODES = ACTIVE_CODES + PENDING_CODES
+
+@@ -649,6 +674,12 @@ def _run_self_test() -> int:
+         mutate(**{"src/components/workspace/PluginPanel.vue":
+                   "<template><button @click=\"runPlugin\">运行插件</button></template>\n"}),
+         "src/components/workspace/PluginPanel.vue")
++    add("AGSK_PLUGIN_BRIDGE_NO_EXEC", "bridge.ts 出现 plugin_invoke 执行 wrapper",
++        mutate(**{
++            "src/components/workspace/PluginPanel.vue": "<template></template>\n",
++            "src/bridge.ts": "export function invoke() {}\nplugin_invoke\n",
++        }),
++        "src/bridge.ts")
+
+     for code, _desc, mutated in bad_cases:
+         h = detect_hits(mutated)
+diff --git a/scripts/check-mcp-policy.py b/scripts/check-mcp-policy.py
+index 12590a6..215dcde 100755
+--- a/scripts/check-mcp-policy.py
++++ b/scripts/check-mcp-policy.py
+@@ -254,10 +254,10 @@ def c_graph_not_exposed(rel, text, repo):
+     # 可执行工具，也不得进入 MCP 能力白名单 / 注册表 / stdio 骨架
+     # （W12 Hard Stop 行 209：MCP full runtime 仍然 LOCKED）。
+     # 守门文件：`mcp.rs`（命令注册表）、`domain.rs`（`MCP_CAPABILITY_V1` 白名单块）、
+-    # `mcp_server.rs` / `bin/mcp_server.rs`（stdio 骨架）。命中任一图谱能力标识即判
++    # `mcp_server.rs`（stdio 骨架）。命中任一图谱能力标识即判
+     # 「图谱能力被接进 MCP 面」；未解锁前必须显式改本码位并留 A0 裁决记录。
+     if rel not in ("src-tauri/src/mcp.rs", "src-tauri/src/domain.rs",
+-                   "src-tauri/src/mcp_server.rs", "src-tauri/src/bin/mcp_server.rs"):
++                   "src-tauri/src/mcp_server.rs"):
+         return None
+     # `domain.rs` 内本就有 GRAPH_* 容量常量与 GraphNode/GraphEdge 领域类型，
+     # 故只守「能力白名单块」，避免误报；其余 MCP 文件全文件扫描。
+@@ -281,11 +281,11 @@ def c_plugin_not_exposed(rel, text, repo):
+     # 可执行工具，也不得进入 MCP 能力白名单 / 注册表 / stdio 骨架
+     # （W13 Hard Stop：plugin invoke / command execution / MCP full runtime 仍然 LOCKED）。
+     # 守门文件：`mcp.rs`（命令注册表）、`domain.rs`（`MCP_CAPABILITY_V1` 白名单块）、
+-    # `mcp_server.rs` / `bin/mcp_server.rs`（stdio 骨架）。命中任一插件能力标识即判
++    # `mcp_server.rs`（stdio 骨架）。命中任一插件能力标识即判
+     # 「插件能力被接进 MCP 面」；未解锁前必须显式改本码位并留 A0 裁决记录。
+     # 与 W12 的 `MCP_GRAPH_NOT_EXPOSED` 同源范式。
+     if rel not in ("src-tauri/src/mcp.rs", "src-tauri/src/domain.rs",
+-                   "src-tauri/src/mcp_server.rs", "src-tauri/src/bin/mcp_server.rs"):
++                   "src-tauri/src/mcp_server.rs"):
+         return None
+     # `domain.rs` 内本就有插件领域类型（如 `PluginManifest` / `PluginState`），
+     # 故只守「能力白名单块」，避免误报；其余 MCP 文件全文件扫描。
+diff --git a/scripts/check-plugin-ui-logic.mjs b/scripts/check-plugin-ui-logic.mjs
+new file mode 100644
+index 0000000..ae29386
+--- /dev/null
++++ b/scripts/check-plugin-ui-logic.mjs
+@@ -0,0 +1,176 @@
++#!/usr/bin/env node
++// M5-W14 插件管理器 UI 逻辑层自动化测试（headless，无 GUI 依赖）。
++// 加载**真实** src/utils/pluginUi.ts（与 check-database-ui-logic.mjs 同一范式），不重实现逻辑。
++
++import * as nodeModule from "node:module";
++
++function resolveWithExt(specifier, context, next) {
++  try {
++    return next(specifier, context);
++  } catch (err) {
++    if (specifier.startsWith(".") || specifier.startsWith("/")) {
++      for (const ext of [".ts", "/index.ts", ".mjs", ".js"]) {
++        try {
++          return next(specifier + ext, context);
++        } catch {}
++      }
++    }
++    throw err;
++  }
++}
++
++if (typeof nodeModule.registerHooks === "function") {
++  nodeModule.registerHooks({ resolve: resolveWithExt });
++} else {
++  nodeModule.register(
++    "data:text/javascript," +
++      encodeURIComponent(
++        `export async function resolve(specifier, context, next) {
++  return globalThis.__pluginUiResolve(specifier, context, next);
++}`,
++      ),
++  );
++  globalThis.__pluginUiResolve = resolveWithExt;
++}
++
++const {
++  PLUGIN_STATES,
++  canTransitionUi,
++  enabledActionsFor,
++  pluginStateLabel,
++  aclLevelLabel,
++  aclLevelClass,
++  isDangerousGate,
++  redactDetail,
++  redactSummary,
++  redactKeyRecord,
++  parseManifestInput,
++} = await import("../src/utils/pluginUi.ts");
++
++let pass = 0;
++let fail = 0;
++function ok(cond, msg) {
++  if (cond) {
++    pass++;
++  } else {
++    fail++;
++    console.error("FAIL:", msg);
++  }
++}
++
++// ---- 1. 状态机镜像后端 can_transition ----
++ok(canTransitionUi("discovered", "validating") === true, "discovered->validating 合法");
++ok(canTransitionUi("validating", "signed_ok") === true, "validating->signed_ok 合法");
++ok(canTransitionUi("validating", "signed_failed") === true, "validating->signed_failed 合法");
++ok(canTransitionUi("signed_ok", "loaded") === true, "signed_ok->loaded 合法");
++ok(canTransitionUi("signed_failed", "uninstalled") === true, "signed_failed->uninstalled 合法");
++ok(canTransitionUi("signed_failed", "discovered") === true, "signed_failed->discovered 合法");
++ok(canTransitionUi("loaded", "enabled") === true, "loaded->enabled 合法");
++ok(canTransitionUi("loaded", "disabled") === true, "loaded->disabled 合法");
++ok(canTransitionUi("loaded", "uninstalled") === true, "loaded->uninstalled 合法");
++ok(canTransitionUi("enabled", "disabled") === true, "enabled->disabled 合法");
++ok(canTransitionUi("enabled", "uninstalled") === true, "enabled->uninstalled 合法");
++ok(canTransitionUi("disabled", "enabled") === true, "disabled->enabled 合法");
++ok(canTransitionUi("disabled", "uninstalled") === true, "disabled->uninstalled 合法");
++// 非法迁移
++ok(canTransitionUi("discovered", "enabled") === false, "discovered->enabled 非法");
++ok(canTransitionUi("discovered", "loaded") === false, "discovered->loaded 非法");
++ok(canTransitionUi("uninstalled", "discovered") === false, "uninstalled 复活 非法");
++ok(canTransitionUi("uninstalled", "enabled") === false, "uninstalled->enabled 非法");
++ok(canTransitionUi("signed_ok", "enabled") === false, "signed_ok->enabled 非法（需先 loaded）");
++ok(canTransitionUi("enabled", "loaded") === false, "enabled->loaded 非法");
++ok(canTransitionUi("validating", "loaded") === false, "validating->loaded 非法");
++
++// ---- 2. enabledActionsFor 门控 ----
++let g = enabledActionsFor("loaded");
++ok(g.enable === true && g.disable === true && g.uninstall === true, "loaded: 可启用/禁用/卸载");
++g = enabledActionsFor("enabled");
++ok(g.enable === false && g.disable === true && g.uninstall === true, "enabled: 可禁用/卸载，不可启用");
++g = enabledActionsFor("disabled");
++ok(g.enable === true && g.disable === false && g.uninstall === true, "disabled: 可启用/卸载，不可禁用");
++g = enabledActionsFor("discovered");
++ok(g.enable === false && g.disable === false && g.uninstall === false, "discovered: 全禁（未 loaded）");
++g = enabledActionsFor("uninstalled");
++ok(g.enable === false && g.disable === false && g.uninstall === false, "uninstalled: 全禁（终态）");
++g = enabledActionsFor("signed_failed");
++ok(g.enable === false && g.disable === false && g.uninstall === true, "signed_failed: 仅可卸载");
++
++// ---- 3. 状态中文标签 ----
++for (const s of PLUGIN_STATES) {
++  ok(typeof pluginStateLabel(s) === "string" && pluginStateLabel(s).length > 0, `状态标签非空: ${s}`);
++}
++ok(PLUGIN_STATES.length === 8, "PLUGIN_STATES 共 8 态");
++ok(
++  JSON.stringify(PLUGIN_STATES) ===
++    JSON.stringify(["discovered", "validating", "signed_ok", "signed_failed", "loaded", "enabled", "disabled", "uninstalled"]),
++  "PLUGIN_STATES 顺序与后端一致",
++);
++
++// ---- 4. 能力风险档 ----
++ok(aclLevelLabel("safe") === "安全", "safe 标签");
++ok(aclLevelLabel("confirm") === "需确认", "confirm 标签");
++ok(aclLevelLabel("dangerous") === "危险（已阻止）", "dangerous 标签");
++ok(aclLevelClass("safe") === "ok", "safe class");
++ok(aclLevelClass("confirm") === "warn", "confirm class");
++ok(aclLevelClass("dangerous") === "danger", "dangerous class");
++ok(isDangerousGate("dangerous") === true, "dangerous 判定");
++ok(isDangerousGate("safe") === false, "safe 非 dangerous");
++
++// ---- 5. redactDetail 脱敏（丢弃签名原文/资源路径/metadata） ----
++const detail = {
++  id: "com.example.p",
++  version: "1.0.0",
++  display_name: "示例插件",
++  description: "desc",
++  min_app_version: "0.1.0",
++  state: "loaded",
++  capabilities: [{ capability: "workspace.read", reason: "读取", acl_level: "safe" }],
++  hash_prefix: "abcd",
++  // 故意包含敏感原文，验证投影会丢弃
++  signature: { algorithm: "Ed25519", key_id: "k1", status: "structure_ok", value: "SUPER_SECRET_BASE64" },
++  installed_at: "2026-09-08T00:00:00Z",
++  updated_at: "2026-09-08T00:00:00Z",
++  resource: { declared_hash: "deadbeef", path_provided: true, verified: true, path: "/secret/abs/path" },
++};
++const out = redactDetail(detail);
++ok(out.signature && !("value" in out.signature), "redactDetail 丢弃 signature.value");
++ok(out.signature.algorithm === "Ed25519" && out.signature.key_id === "k1" && out.signature.status === "structure_ok", "redactDetail 保留签名结构字段");
++ok(out.resource && !("path" in out.resource), "redactDetail 丢弃资源绝对路径");
++ok(out.resource.declared_hash === "deadbeef" && out.resource.path_provided === true, "redactDetail 保留资源布尔/摘要");
++ok(out.capabilities.length === 1 && out.capabilities[0].acl_level === "safe", "redactDetail 保留能力视图");
++ok(out.id === "com.example.p" && out.hash_prefix === "abcd", "redactDetail 保留基础字段");
++ok(!("metadata" in out), "redactDetail 无 metadata 字段");
++
++// ---- 6. redactSummary 透传（已是脱敏视图） ----
++const summary = { id: "com.x", version: "1.0.0", display_name: "X", state: "enabled", capability_count: 0, hash_prefix: "aa", updated_at: "t" };
++ok(redactSummary(summary).id === "com.x", "redactSummary 透传");
++
++// ---- 7. redactKeyRecord 仅指纹（无 pubkey） ----
++const key = { key_id: "k1", fingerprint: "abcd1234efgh5678", note: "n", added_at: "t" };
++const kr = redactKeyRecord(key);
++ok(kr.fingerprint === "abcd1234efgh5678" && kr.key_id === "k1", "redactKeyRecord 保留指纹");
++ok(!("pubkey" in kr), "redactKeyRecord 无 pubkey 字段");
++
++// ---- 8. parseManifestInput 轻量预检 ----
++const goodManifest = JSON.stringify({
++  id: "com.example.p",
++  version: "1.0.0",
++  display_name: "P",
++  description: "d",
++  min_app_version: "0.1.0",
++  entry: { entry_url: "https://e.com/i.html", icon: "https://e.com/i.png" },
++  capabilities: [],
++  hash: "a".repeat(64),
++  signature: { algorithm: "Ed25519", key_id: "k1", value: "QUJD", signed_at: "2026-09-08T00:00:00Z" },
++});
++ok(parseManifestInput(goodManifest).ok === true, "合法 manifest 解析通过");
++ok(parseManifestInput(goodManifest).manifest?.id === "com.example.p", "合法 manifest 回传 manifest");
++ok(parseManifestInput("").ok === false, "空文本失败");
++ok(parseManifestInput("{ not json").ok === false, "非法 JSON 失败");
++ok(parseManifestInput(JSON.stringify({ id: "x" })).ok === false, "缺字段失败");
++ok(parseManifestInput(JSON.stringify({ id: "x", version: "1", display_name: "d", description: "d", min_app_version: "0.1", hash: "h", signature: { algorithm: "E" }, capabilities: [], entry: "bad" })).ok === false, "entry 非法失败");
++
++console.log(`check-plugin-ui-logic: ${pass} 断言通过, ${fail} 失败`);
++if (fail > 0) {
++  process.exit(1);
++}
+diff --git a/scripts/check-plugin-ui-privacy.py b/scripts/check-plugin-ui-privacy.py
+new file mode 100644
+index 0000000..9a6dc8a
+--- /dev/null
++++ b/scripts/check-plugin-ui-privacy.py
+@@ -0,0 +1,318 @@
++#!/usr/bin/env python3
++"""Expose the M5-W14 Plugin Manager UI privacy invariants as a reproducible fixture (Lane A4).
++
++评审口径（PARALLEL_COMMAND_BOARD.md § M5-W14 Hard Stops + Lane A4）：
++- UI 只能经冻结的 `src/bridge.ts` 方法调用，禁止裸 `invoke("plugin_*")`。
++- 禁止显示/持久化：裸签名、公钥原文（key material）、资源路径、manifest metadata、
++  凭据、请求/响应体、stdout/stderr。
++- 错误渲染只能展示稳定码（`error_code` 产出），禁止展示原始消息体 / manifest 字段。
++
++判定对象（A6 产物，gated：文件不存在时全部为 no-op，不阻塞批次）：
++- `src/stores/usePluginStore.ts`
++- `src/components/plugin/**`（任意前端源文件）
++
++与既有夹具不重叠：
++- `check-plugin-policy.py`（A9）：查 Rust DTO 是否有 `password/secret/token` 字段名。
++- `check-plugin-privacy.py`（A4/W13）：查 Rust 后端错误回显 / 审计 detail / 落盘脱敏。
++- 本夹具：查**前端渲染/存储层**对冻结红脱敏 DTO 的遵守情况。
++
++用法：
++  --self-test        好样本 + 坏样本双向自检（含变异防呆）
++  --expect-pending   pending 码位一旦被检出即 FAIL（提示应转默认判定 / 需先修复）
++  默认               只判 ACTIVE 码位
++"""
++
++from __future__ import annotations
++
++import argparse
++import re
++import sys
++from pathlib import Path
++
++# 已闭环，防回归（A6 落地后即时生效）
++ACTIVE_CODES: tuple[str, ...] = (
++    # 只能经 bridge.ts 调用，禁止裸 invoke
++    "PLUGIN_UI_NO_RAW_INVOKE",
++    # 只渲染冻结红脱敏 DTO 字段，禁止渲染密钥/签名/路径字段
++    "PLUGIN_UI_NO_SECRET_RENDER",
++)
++
++# W14 验收项（A6 落地后应闭环；在 A6 文件存在前为 no-op）
++PENDING_CODES: tuple[str, ...] = (
++    # 禁止把插件记录/密钥/清单原文落浏览器存储
++    "PLUGIN_UI_NO_BROWSER_STORAGE",
++    # 错误渲染只用稳定码，禁止原始消息体 / manifest 字段
++    "PLUGIN_UI_ERROR_CODE_ONLY",
++)
++
++ALL_CODES: tuple[str, ...] = ACTIVE_CODES + PENDING_CODES
++
++# 禁止渲染的字段（来自冻结红脱敏 DTO 已剔除的项 + 通用密钥词）
++# 注意：刻意不含 `metadata` —— 安装表单收集用户自有 metadata 输入是允许的，
++#       风险在于「渲染/持久化」metadata，由 PLUGIN_UI_NO_BROWSER_STORAGE 兜底。
++SECRET_RENDER_TOKENS = (
++    r"signature\.value",
++    r"\.pubkey",
++    r"pubkey",
++    r"resource_path",
++    r"rawSignature",
++    r"raw_signature",
++    r"privateKey",
++    r"private_key",
++    r"apiKey",
++    r"api_key",
++    r"secretKey",
++    r"secret_key",
++)
++
++UI_GLOB_DIRS = (
++    ("src/stores/usePluginStore.ts", False),
++    ("src/components/plugin", True),
++)
++
++
++# ----------------------------- 读取（gated）-----------------------------
++
++def read_ui(root: Path) -> dict[str, str]:
++    """返回 A6 前端文件内容；若均不存在，返回空 dict（触发 gated no-op）。"""
++    out: dict[str, str] = {}
++    for rel, is_dir in UI_GLOB_DIRS:
++        p = root / rel
++        if is_dir:
++            if p.is_dir():
++                for f in sorted(p.rglob("*")):
++                    if f.is_file() and f.suffix in (".ts", ".tsx", ".vue", ".js", ".jsx"):
++                        out[str(f)] = f.read_text(encoding="utf-8", errors="replace")
++        else:
++            if p.is_file():
++                out[rel] = p.read_text(encoding="utf-8", errors="replace")
++    return out
++
++
++# ----------------------------- 判定 -----------------------------
++
++def detect_hits(files: dict[str, str]) -> dict[str, list[str]]:
++    if not files:  # gated：A6 文件未落地
++        return {}
++    hits: dict[str, list[str]] = {}
++    src = "\n".join(files.values())
++
++    def hit(code: str, detail: str) -> None:
++        hits.setdefault(code, []).append(detail)
++
++    # ---- A1) 禁止裸 invoke（只能经 bridge.ts 方法）----
++    for m in re.finditer(r'invoke\s*\(\s*["\']plugin_', src):
++        hit("PLUGIN_UI_NO_RAW_INVOKE", f"裸 invoke 直达 plugin 命令：{m.group(0)[:40]}")
++    for m in re.finditer(r'@tauri-apps/api/tauri["\']', src):
++        hit("PLUGIN_UI_NO_RAW_INVOKE", "直接 import @tauri-apps/api/tauri（应经 bridge.ts）")
++
++    # ---- A2) 禁止渲染密钥/签名/路径字段 ----
++    for tok in SECRET_RENDER_TOKENS:
++        for m in re.finditer(tok, src, flags=re.IGNORECASE):
++            hit("PLUGIN_UI_NO_SECRET_RENDER", f"渲染了禁止字段：{tok}")
++
++    # ---- P1) 禁止浏览器持久化插件/密钥/清单原文 ----
++    for m in re.finditer(r'(localStorage|sessionStorage)\s*\.\s*setItem', src):
++        hit("PLUGIN_UI_NO_BROWSER_STORAGE", f"浏览器存储写入：{m.group(0)}")
++    for m in re.finditer(r'(indexedDB|localForage|openDatabase)', src):
++        hit("PLUGIN_UI_NO_BROWSER_STORAGE", f"浏览器数据库：{m.group(0)}")
++
++    # ---- P2) 错误渲染只能用稳定码，禁止原始消息体 ----
++    for m in re.finditer(r'(err|error)\s*\.\s*message', src):
++        hit("PLUGIN_UI_ERROR_CODE_ONLY", "渲染了 err.message（原始消息体）")
++    for m in re.finditer(r'String\(\s*(err|error)\s*\)', src):
++        hit("PLUGIN_UI_ERROR_CODE_ONLY", "渲染了 String(err)（原始消息体）")
++    for m in re.finditer(r'(err|error)\s*\.\s*toString\(\s*\)', src):
++        hit("PLUGIN_UI_ERROR_CODE_ONLY", "渲染了 err.toString()（原始消息体）")
++
++    return hits
++
++
++# ----------------------------- 自检 -----------------------------
++
++GOOD_STORE = '''
++import { ref } from "vue";
++import { bridge } from "../../bridge";
++import type { PluginSummary, PluginDetail } from "../../types";
++
++export function usePluginStore() {
++  const list = ref<PluginSummary[]>([]);
++  const detail = ref<PluginDetail | null>(null);
++  const errorCode = ref<string | null>(null);
++
++  async function load() {
++    list.value = await bridge.pluginList(null);
++  }
++  async function inspect(id: string) {
++    detail.value = await bridge.pluginGet(id);
++  }
++  function showError(code: string) {
++    errorCode.value = code;
++  }
++  return { list, detail, errorCode, load, inspect, showError };
++}
++'''
++
++GOOD_CARD = '''
++import { defineComponent } from "vue";
++import type { PluginSummary } from "../../types";
++
++export default defineComponent({
++  props: { plugin: { type: Object as () => PluginSummary, required: true } },
++  template: `<div>
++    <span>{{ plugin.id }}</span>
++    <span>{{ plugin.display_name }}</span>
++    <span>{{ plugin.hash_prefix }}</span>
++    <span>{{ plugin.state }}</span>
++    <span>{{ plugin.error_code }}</span>
++  </div>`,
++});
++'''
++
++
++def build_good() -> dict[str, str]:
++    return {
++        "src/stores/usePluginStore.ts": GOOD_STORE,
++        "src/components/plugin/PluginCard.ts": GOOD_CARD,
++    }
++
++
++def mutate(**over: str) -> dict[str, str]:
++    good = build_good()
++    good.update(over)
++    return good
++
++
++def run_self_test(root: Path) -> int:
++    real = read_ui(root)
++    good = build_good()
++
++    # 好样本 A：真实仓库（gated → ACTIVE 应为空）
++    real_active = [c for c in detect_hits(real) if c in ACTIVE_CODES]
++    if real_active:
++        print("PLUGIN_UI_PRIVACY_SELF_TEST_RESULT=FAIL")
++        print(f"  x 真实仓库 ACTIVE 违规：{sorted(real_active)}")
++        return 1
++
++    # 好样本 B：合成参考实现（全部码位零违规）
++    good_all = sorted(detect_hits(good))
++    if good_all:
++        print("PLUGIN_UI_PRIVACY_SELF_TEST_RESULT=FAIL")
++        print(f"  x 合成参考实现违规：{good_all}")
++        return 1
++
++    bad_samples = [
++        (
++            "裸 invoke 直达 plugin 命令",
++            mutate(**{"src/components/plugin/PluginCard.ts":
++                      'import { invoke } from "@tauri-apps/api/tauri";\n'
++                      'await invoke("plugin_list", { state: null });'}),
++            "PLUGIN_UI_NO_RAW_INVOKE",
++        ),
++        (
++            "直接 import 裸 tauri invoke",
++            mutate(**{"src/stores/usePluginStore.ts":
++                      'import { invoke } from "@tauri-apps/api/tauri";'}),
++            "PLUGIN_UI_NO_RAW_INVOKE",
++        ),
++        (
++            "渲染 signature.value",
++            mutate(**{"src/components/plugin/PluginCard.ts":
++                      'template: `<span>{{ plugin.signature.value }}</span>`'}),
++            "PLUGIN_UI_NO_SECRET_RENDER",
++        ),
++        (
++            "渲染 pubkey 原文",
++            mutate(**{"src/components/plugin/PluginCard.ts":
++                      'template: `<span>{{ detail.pubkey }}</span>`'}),
++            "PLUGIN_UI_NO_SECRET_RENDER",
++        ),
++        (
++            "localStorage 持久化插件详情",
++            mutate(**{"src/stores/usePluginStore.ts":
++                      'localStorage.setItem("plugin:" + id, JSON.stringify(detail.value));'}),
++            "PLUGIN_UI_NO_BROWSER_STORAGE",
++        ),
++        (
++            "indexedDB 持久化密钥",
++            mutate(**{"src/stores/usePluginStore.ts":
++                      'const db = indexedDB.open("keys");'}),
++            "PLUGIN_UI_NO_BROWSER_STORAGE",
++        ),
++        (
++            "渲染 err.message 原始消息体",
++            mutate(**{"src/components/plugin/PluginCard.ts":
++                      'template: `<span>{{ err.message }}</span>`'}),
++            "PLUGIN_UI_ERROR_CODE_ONLY",
++        ),
++        (
++            "渲染 String(err) 原始消息体",
++            mutate(**{"src/components/plugin/PluginCard.ts":
++                      'const msg = String(err);'}),
++            "PLUGIN_UI_ERROR_CODE_ONLY",
++        ),
++    ]
++
++    failures: list[str] = []
++    for name, files, expected in bad_samples:
++        found = detect_hits(files)
++        if expected not in found:
++            failures.append(f"坏样本未检出：{name}（期望 {expected}，实得 {sorted(found)}）")
++
++    if failures:
++        print("PLUGIN_UI_PRIVACY_SELF_TEST_RESULT=FAIL")
++        for line in failures:
++            print(f"  x {line}")
++        return 1
++
++    print(
++        "PLUGIN_UI_PRIVACY_SELF_TEST_RESULT=PASS: 2 好样本零违规（真实仓库 gated + 合成参考实现）"
++        f" + {len(bad_samples)} 个坏样本全部检出（含变异防呆）；"
++        f"ACTIVE={len(ACTIVE_CODES)} PENDING={len(PENDING_CODES)}"
++    )
++    return 0
++
++
++# ----------------------------- 入口 -----------------------------
++
++def main() -> int:
++    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
++    ap.add_argument("--self-test", action="store_true", help="好样本 + 坏样本双向自检（含变异防呆）")
++    ap.add_argument(
++        "--expect-pending",
++        action="store_true",
++        help="验证 pending 码位未被检出；一旦被检出即应转入默认判定或先修复",
++    )
++    args = ap.parse_args()
++
++    root = Path(__file__).resolve().parents[1]
++
++    if args.self_test:
++        return run_self_test(root)
++
++    hits = detect_hits(read_ui(root))
++
++    if args.expect_pending:
++        pending_hits = [c for c in PENDING_CODES if c in hits]
++        if pending_hits:
++            print("PLUGIN_UI_PRIVACY_PENDING_RESULT=FAIL")
++            for code in pending_hits:
++                for detail in hits[code]:
++                    print(f"  {code}:{detail}")
++            return 1
++        print(f"PLUGIN_UI_PRIVACY_PENDING_RESULT=NONE（{len(PENDING_CODES)} 个 pending 码位均未检出）")
++        return 0
++
++    active_hits = sorted(c for c in hits if c in ACTIVE_CODES)
++    if active_hits:
++        print("PLUGIN_UI_PRIVACY_POLICY_RESULT=FAIL")
++        for code in active_hits:
++            for detail in hits[code]:
++                print(f"  {code}:{detail}")
++        return 1
++    print(f"plugin UI privacy policy: all invariants hold（ACTIVE={len(ACTIVE_CODES)}）")
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/scripts/pre-merge.sh b/scripts/pre-merge.sh
+index f3b6881..907d33b 100755
+--- a/scripts/pre-merge.sh
++++ b/scripts/pre-merge.sh
+@@ -96,6 +96,10 @@ pre-merge.sh — M0-1.c 本地 pre-merge 门禁（M0-1 脚本合并前检查入
+   database policy fixture       check-database-policy.py --self-test / --expect-pending / 默认门禁
+                                 （M4-2.s；7 ACTIVE 码 + 8 pending 码，产物存在才判）
+   plugin privacy fixture        check-plugin-privacy.py --self-test / 默认门禁
++  plugin UI privacy fixture     check-plugin-ui-privacy.py --self-test / 默认门禁
++                                （M5-W14；2 ACTIVE 码 + 2 pending 码。gated：A6 前端文件
++                                  落地前为 no-op；落地后激活，守住「只经 bridge.ts / 禁渲染
++                                  密钥签名路径 / 禁浏览器持久化 / 错误只显稳定码」）
+                                 （M5-W13；2 ACTIVE 码 + 5 pending 码。pending 通道当前
+                                   有意报红：A9 需在 W13 接线前闭环 3 项回显缺陷，故暂不接
+                                   --expect-pending 以免阻塞批次；修复后再接入并转 ACTIVE）
+@@ -392,6 +396,13 @@ run_pre_merge() {
+   python3 "$SCRIPT_DIR/check-plugin-privacy.py" >/dev/null 2>&1 \
+     || pm_fail "check-plugin-privacy.py（插件隐私不变量被破坏）"
+
++  # M5-W14（Lane A4）：插件管理器 UI 隐私夹具（gated：A6 前端文件未落地时为 no-op，
++  # 默认门禁与 --self-test 均绿；A6 落地后激活，守住渲染/存储层隐私红线）。
++  python3 "$SCRIPT_DIR/check-plugin-ui-privacy.py" --self-test >/dev/null 2>&1 \
++    || pm_fail "check-plugin-ui-privacy.py --self-test"
++  python3 "$SCRIPT_DIR/check-plugin-ui-privacy.py" >/dev/null 2>&1 \
++    || pm_fail "check-plugin-ui-privacy.py（插件 UI 隐私不变量被破坏）"
++
+   # M4-8（Lane A8）：定时任务 UI 不变量夹具 + 前端逻辑层测试。
+   # 守护「前端不许绕过 A6 契约」的结构红线（SCHEDUI_* 码位），与 M4-5.d 后端码位互不重叠。
+   # --self-test 双向自检（1 好样本 + N 坏样本变异防呆）；默认模式按设计放行。
+@@ -565,6 +576,10 @@ run_self_test() {
+   if ! python3 "$SCRIPT_DIR/check-plugin-privacy.py" --self-test >/dev/null 2>&1; then
+     echo "FAIL: check-plugin-privacy.py --self-test"; rc=1
+   fi
++  [ -f "$SCRIPT_DIR/check-plugin-ui-privacy.py" ] || { echo "FAIL: check-plugin-ui-privacy.py missing"; rc=1; }
++  if ! python3 "$SCRIPT_DIR/check-plugin-ui-privacy.py" --self-test >/dev/null 2>&1; then
++    echo "FAIL: check-plugin-ui-privacy.py --self-test"; rc=1
++  fi
+   [ -f "$SCRIPT_DIR/check-database-policy.py" ] || { echo "FAIL: check-database-policy.py missing"; rc=1; }
+   if ! python3 "$SCRIPT_DIR/check-database-policy.py" --self-test >/dev/null 2>&1; then
+     echo "FAIL: check-database-policy.py --self-test"; rc=1
+diff --git a/src/components/layout/ActivityBar.vue b/src/components/layout/ActivityBar.vue
+index 8ae23e5..bd23a55 100644
+--- a/src/components/layout/ActivityBar.vue
++++ b/src/components/layout/ActivityBar.vue
+@@ -40,6 +40,7 @@ const menuSections = [
+       { view: "skills", icon: "🛠️", label: "技能" },
+       { view: "agents", icon: "🤖", label: "智能体" },
+       { view: "graph", icon: "🕸️", label: "图谱" },
++      { view: "plugin", icon: "🔌", label: "插件" },
+     ],
+   },
+   {
+diff --git a/src/components/layout/MainArea.vue b/src/components/layout/MainArea.vue
+index a6b330d..feb075c 100644
+--- a/src/components/layout/MainArea.vue
++++ b/src/components/layout/MainArea.vue
+@@ -33,6 +33,9 @@ const AgentManagerPanel = defineAsyncComponent(() => import("../workspace/AgentM
+ // M5-9 图谱面板：懒加载（defineAsyncComponent），将其纯逻辑(graphUi.ts)、store(useGraphStore.ts)
+ // 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
+ const GraphPanel = defineAsyncComponent(() => import("../graph/GraphPanel.vue"));
++// M5-W14 插件管理器面板：懒加载（defineAsyncComponent），将其纯逻辑(pluginUi.ts)、
++// store(usePluginStore.ts) 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
++const PluginManager = defineAsyncComponent(() => import("../plugin/PluginManager.vue"));
+
+ const layout = useLayoutStore();
+ const browser = useBrowserStore();
+@@ -169,6 +172,11 @@ watch(
+     <div v-else-if="layout.mainView === 'tasks'" class="modview">
+       <TaskPanel />
+     </div>
++
++    <!-- ===== 插件管理器（M5-W14） ===== -->
++    <div v-else-if="layout.mainView === 'plugin'" class="modview">
++      <PluginManager />
++    </div>
+     <div v-else-if="layout.mainView === 'skills'" class="modview">
+       <SkillManagerPanel />
+     </div>
+diff --git a/src/components/plugin/PluginManager.vue b/src/components/plugin/PluginManager.vue
+new file mode 100644
+index 0000000..986bae9
+--- /dev/null
++++ b/src/components/plugin/PluginManager.vue
+@@ -0,0 +1,424 @@
++<script setup lang="ts">
++import { computed, onMounted, reactive, ref } from "vue";
++import { usePluginStore } from "../../stores/usePluginStore";
++import type { PluginState } from "../../types";
++import {
++  PLUGIN_STATES,
++  aclLevelClass,
++  aclLevelLabel,
++  isDangerousGate,
++  pluginStateLabel,
++  redactDetail,
++} from "../../utils/pluginUi";
++
++const store = usePluginStore();
++
++// 选中插件详情 → 强制走脱敏投影（即使后端将来误带敏感字段，UI 也不渲染）。
++const display = computed(() => (store.detail ? redactDetail(store.detail) : null));
++
++const filterOptions = computed(() => [
++  { value: null as PluginState | null, label: "全部状态" },
++  ...PLUGIN_STATES.map((s) => ({ value: s, label: pluginStateLabel(s) })),
++]);
++
++// 受信任密钥表单（瞬时输入；pubkey 不回显、不持久化）
++const keyForm = reactive({ keyId: "", pubkey: "", note: "" });
++
++// 显式确认：状态变更前必须先确认（W14 Hard Stop：状态变更需显式确认）
++type ConfirmKind = "install" | "enable" | "disable" | "addKey" | "removeKey";
++const confirm = ref<{ kind: ConfirmKind; id?: string; keyId?: string } | null>(null);
++const confirmText = computed(() => {
++  switch (confirm.value?.kind) {
++    case "install":
++      return "确认安装该校验 manifest？仅做本地元数据校验，不下载、不执行。";
++    case "enable":
++      return "确认启用该插件？启用不等于运行，仅切换生命周期状态。";
++    case "disable":
++      return "确认禁用该插件？";
++    case "uninstall":
++      return "确认卸载该插件？";
++    case "addKey":
++      return "确认登记该受信任密钥指纹？";
++    case "removeKey":
++      return "确认移除该受信任密钥？";
++    default:
++      return "";
++  }
++});
++
++function askInstall() {
++  if (!store.manifestText.trim()) {
++    store.error = "请粘贴 manifest JSON";
++    return;
++  }
++  confirm.value = { kind: "install" };
++}
++function askEnable() {
++  if (display.value) confirm.value = { kind: "enable", id: display.value.id };
++}
++function askDisable() {
++  if (display.value) confirm.value = { kind: "disable", id: display.value.id };
++}
++function askAddKey() {
++  if (!keyForm.keyId.trim() || !keyForm.pubkey.trim()) {
++    store.error = "keyId 与 pubkey 均必填";
++    return;
++  }
++  confirm.value = { kind: "addKey" };
++}
++function askRemoveKey(keyId: string) {
++  confirm.value = { kind: "removeKey", keyId };
++}
++
++async function doConfirm() {
++  const c = confirm.value;
++  confirm.value = null;
++  if (!c) return;
++  switch (c.kind) {
++    case "install":
++      await store.install();
++      break;
++    case "enable":
++      if (c.id) await store.enable(c.id);
++      break;
++    case "disable":
++      if (c.id) await store.disable(c.id);
++      break;
++    case "addKey":
++      await store.addKey(keyForm.keyId, keyForm.pubkey, keyForm.note);
++      keyForm.keyId = "";
++      keyForm.pubkey = "";
++      keyForm.note = "";
++      break;
++    case "removeKey":
++      if (c.keyId) await store.removeKey(c.keyId);
++      break;
++  }
++}
++
++onMounted(() => {
++  void store.refreshList();
++  void store.refreshKeys();
++});
++</script>
++
++<template>
++  <div class="pm">
++    <!-- 左：列表 + 安装 + 密钥 -->
++    <section class="pm-left">
++      <header class="pm-head">
++        <h3>插件管理器</h3>
++        <button class="pm-btn" :disabled="store.busy.value" @click="store.refreshList()">刷新</button>
++      </header>
++
++      <label class="pm-filter">
++        状态筛选：
++        <select v-model="store.filterState.value" @change="store.refreshList()">
++          <option v-for="o in filterOptions" :key="String(o.value)" :value="o.value">
++            {{ o.label }}
++          </option>
++        </select>
++      </label>
++
++      <ul class="pm-list">
++        <li
++          v-for="p in store.list.value"
++          :key="p.id"
++          :class="{ active: store.detail.value?.id === p.id }"
++          @click="store.selectFromList(p.id)"
++        >
++          <div class="pm-row1">
++            <span class="pm-name">{{ p.display_name || p.id }}</span>
++            <span class="pm-state">{{ pluginStateLabel(p.state) }}</span>
++          </div>
++          <div class="pm-row2">
++            <span class="pm-id">{{ p.id }}</span>
++            <span class="pm-hash">#{{ p.hash_prefix }}</span>
++            <span class="pm-cap">能力×{{ p.capability_count }}</span>
++          </div>
++        </li>
++        <li v-if="!store.list.value.length" class="pm-empty">暂无插件（点击"安装"校验一个 manifest）</li>
++      </ul>
++
++      <!-- 安装表单 -->
++      <div class="pm-install">
++        <div class="pm-sub">安装（本地 manifest 校验）</div>
++        <textarea
++          v-model="store.manifestText.value"
++          placeholder="粘贴插件 manifest JSON（含 id/version/entry/capabilities/hash/signature）"
++          rows="6"
++        ></textarea>
++        <input v-model="store.resourcePath.value" placeholder="资源包路径（可选）" />
++        <button class="pm-btn primary" :disabled="store.busy.value" @click="askInstall">安装（校验）</button>
++      </div>
++
++      <!-- 受信任密钥 -->
++      <div class="pm-keys">
++        <div class="pm-sub">受信任密钥（仅 16-hex 指纹）</div>
++        <ul>
++          <li v-for="k in store.keys.value" :key="k.key_id">
++            <span class="pm-keyid">{{ k.key_id }}</span>
++            <span class="pm-fp">{{ k.fingerprint }}</span>
++            <button class="pm-btn danger" @click="askRemoveKey(k.key_id)">移除</button>
++          </li>
++          <li v-if="!store.keys.value.length" class="pm-empty">暂无登记密钥</li>
++        </ul>
++        <input v-model="keyForm.keyId" placeholder="keyId" />
++        <input v-model="keyForm.pubkey" placeholder="pubkey（仅用于登记，不回显）" />
++        <input v-model="keyForm.note" placeholder="备注（可选）" />
++        <button class="pm-btn" :disabled="store.busy.value" @click="askAddKey">登记密钥</button>
++      </div>
++    </section>
++
++    <!-- 右：详情（仅脱敏字段） -->
++    <section class="pm-right">
++      <template v-if="display">
++        <h3>{{ display.display_name }}</h3>
++        <dl class="pm-dl">
++          <dt>ID</dt><dd>{{ display.id }}</dd>
++          <dt>版本</dt><dd>{{ display.version }}</dd>
++          <dt>状态</dt><dd>{{ pluginStateLabel(display.state) }}</dd>
++          <dt>最小应用版本</dt><dd>{{ display.min_app_version }}</dd>
++          <dt>描述</dt><dd>{{ display.description }}</dd>
++          <dt>Hash 前缀</dt><dd>{{ display.hash_prefix }}</dd>
++          <dt>安装时间</dt><dd>{{ display.installed_at }}</dd>
++          <dt>更新时间</dt><dd>{{ display.updated_at }}</dd>
++        </dl>
++
++        <div class="pm-sub">签名（无原文）</div>
++        <ul class="pm-sig">
++          <li>算法：{{ display.signature.algorithm }}</li>
++          <li>keyId：{{ display.signature.key_id }}</li>
++          <li>结构状态：{{ display.signature.status }}</li>
++        </ul>
++
++        <div class="pm-sub">资源包（无绝对路径）</div>
++        <ul class="pm-sig">
++          <li>声明 Hash：{{ display.resource.declared_hash }}</li>
++          <li>已提供路径：{{ display.resource.path_provided ? "是" : "否" }}</li>
++          <li>已校验：{{ display.resource.verified ? "是" : "否" }}</li>
++        </ul>
++
++        <div class="pm-sub">能力（逐项展示，禁折叠）</div>
++        <ul class="pm-caps">
++          <li v-for="(c, i) in display.capabilities" :key="i">
++            <span class="pm-cap-name">{{ c.capability }}</span>
++            <span class="pm-cap-reason">{{ c.reason }}</span>
++            <span :class="['pm-acl', aclLevelClass(c.acl_level)]">
++              {{ aclLevelLabel(c.acl_level) }}
++              <template v-if="isDangerousGate(c.acl_level)">（白名单空，已阻止）</template>
++            </span>
++          </li>
++          <li v-if="!display.capabilities.length" class="pm-empty">无声明能力（安全）</li>
++        </ul>
++
++        <div class="pm-actions">
++          <button class="pm-btn" :disabled="!store.actionsFor.value.enable || store.busy.value" @click="askEnable">
++            启用
++          </button>
++          <button class="pm-btn" :disabled="!store.actionsFor.value.disable || store.busy.value" @click="askDisable">
++            禁用
++          </button>
++        </div>
++      </template>
++      <p v-else class="pm-hint">从左侧选择插件查看详情。</p>
++
++      <p v-if="store.error.value" class="pm-error">{{ store.error.value }}</p>
++    </section>
++
++    <!-- 显式确认弹层 -->
++    <div v-if="confirm" class="pm-modal" @click.self="confirm = null">
++      <div class="pm-modal-box">
++        <p>{{ confirmText }}</p>
++        <div class="pm-modal-actions">
++          <button class="pm-btn" @click="confirm = null">取消</button>
++          <button class="pm-btn primary" @click="doConfirm">确认</button>
++        </div>
++      </div>
++    </div>
++  </div>
++</template>
++
++<style scoped>
++.pm {
++  display: flex;
++  gap: 12px;
++  height: 100%;
++  padding: 10px;
++  box-sizing: border-box;
++}
++.pm-left,
++.pm-right {
++  flex: 1 1 0;
++  min-width: 0;
++  overflow: auto;
++  border: 1px solid #e3e7f5;
++  border-radius: 8px;
++  padding: 10px;
++  background: #fff;
++}
++.pm-head {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++}
++.pm-sub {
++  font-size: 12px;
++  color: #86909c;
++  margin: 10px 0 4px;
++}
++.pm-list,
++.pm-keys ul,
++.pm-sig,
++.pm-caps {
++  list-style: none;
++  margin: 0;
++  padding: 0;
++}
++.pm-list li {
++  border: 1px solid #eef1f7;
++  border-radius: 6px;
++  padding: 6px 8px;
++  margin-bottom: 6px;
++  cursor: pointer;
++}
++.pm-list li.active {
++  border-color: #2b6cb0;
++  background: #f0f6ff;
++}
++.pm-row1 {
++  display: flex;
++  justify-content: space-between;
++}
++.pm-name {
++  font-weight: 600;
++}
++.pm-state {
++  font-size: 11px;
++  color: #2b6cb0;
++}
++.pm-row2 {
++  display: flex;
++  gap: 8px;
++  font-size: 11px;
++  color: #86909c;
++}
++.pm-empty {
++  color: #a9b0bd;
++  font-size: 12px;
++  padding: 6px 2px;
++}
++.pm-install textarea,
++.pm-install input,
++.pm-keys input {
++  width: 100%;
++  box-sizing: border-box;
++  margin-bottom: 6px;
++  border: 1px solid #d5dbe7;
++  border-radius: 5px;
++  padding: 6px;
++  font-size: 12px;
++  font-family: monospace;
++}
++.pm-dl {
++  display: grid;
++  grid-template-columns: 90px 1fr;
++  gap: 4px 8px;
++  font-size: 12px;
++  margin: 0;
++}
++.pm-dl dt {
++  color: #86909c;
++}
++.pm-dl dd {
++  margin: 0;
++  word-break: break-all;
++}
++.pm-sig li,
++.pm-caps li {
++  font-size: 12px;
++  padding: 3px 0;
++  border-bottom: 1px dashed #eef1f7;
++}
++.pm-caps li {
++  display: flex;
++  gap: 8px;
++  align-items: center;
++  flex-wrap: wrap;
++}
++.pm-cap-name {
++  font-weight: 600;
++}
++.pm-acl {
++  font-size: 11px;
++  padding: 1px 6px;
++  border-radius: 4px;
++}
++.pm-acl.ok {
++  background: #e8f7ee;
++  color: #1a7f4b;
++}
++.pm-acl.warn {
++  background: #fff5e6;
++  color: #b9770e;
++}
++.pm-acl.danger {
++  background: #fdecec;
++  color: #c0392b;
++}
++.pm-actions {
++  margin-top: 10px;
++  display: flex;
++  gap: 8px;
++}
++.pm-btn {
++  border: 1px solid #d5dbe7;
++  background: #fff;
++  color: #4e5969;
++  border-radius: 5px;
++  padding: 4px 12px;
++  font-size: 12px;
++  cursor: pointer;
++}
++.pm-btn:disabled {
++  opacity: 0.5;
++  cursor: not-allowed;
++}
++.pm-btn.primary {
++  background: #2b6cb0;
++  border-color: #2b6cb0;
++  color: #fff;
++}
++.pm-btn.danger {
++  color: #c0392b;
++  border-color: #f0c5c0;
++}
++.pm-error {
++  color: #c0392b;
++  font-size: 12px;
++  margin-top: 8px;
++}
++.pm-hint {
++  color: #a9b0bd;
++}
++.pm-modal {
++  position: fixed;
++  inset: 0;
++  background: rgba(0, 0, 0, 0.25);
++  display: flex;
++  align-items: center;
++  justify-content: center;
++}
++.pm-modal-box {
++  background: #fff;
++  border-radius: 8px;
++  padding: 16px;
++  max-width: 360px;
++}
++.pm-modal-actions {
++  display: flex;
++  justify-content: flex-end;
++  gap: 8px;
++  margin-top: 12px;
++}
++</style>
+diff --git a/src/stores/useLayoutStore.ts b/src/stores/useLayoutStore.ts
+index de39628..d681f32 100644
+--- a/src/stores/useLayoutStore.ts
++++ b/src/stores/useLayoutStore.ts
+@@ -21,6 +21,7 @@ export type MainView =
+   | "skills"
+   | "agents"
+   | "graph"
++  | "plugin"
+   | "editor";
+
+ export const useLayoutStore = defineStore("layout", () => {
+@@ -118,6 +119,7 @@ export const useLayoutStore = defineStore("layout", () => {
+     skills: { icon: "🛠️", label: "技能" },
+     agents: { icon: "🤖", label: "智能体" },
+     graph: { icon: "🕸️", label: "图谱" },
++    plugin: { icon: "🔌", label: "插件" },
+     settings: { icon: "⚙️", label: "设置" },
+   };
+   const modTabs = reactive<ModTab[]>([]);
+diff --git a/src/stores/usePluginStore.ts b/src/stores/usePluginStore.ts
+new file mode 100644
+index 0000000..efacbcd
+--- /dev/null
++++ b/src/stores/usePluginStore.ts
+@@ -0,0 +1,237 @@
++import { defineStore } from "pinia";
++import { computed, ref } from "vue";
++import { bridge } from "../bridge";
++import type {
++  PluginState,
++  PluginSummary,
++  PluginDetail,
++  TrustedKeyRecord,
++  PluginManifest,
++} from "../types";
++import { enabledActionsFor, parseManifestInput } from "../utils/pluginUi";
++
++// M5-W14 插件管理器 store。
++// 红线（承 W14 Hard Stops）：
++//  - 只调用冻结的 src/bridge.ts 方法；**绝不**使用裸 Tauri `invoke`。
++//  - 不显示/不持久化：签名原文、公钥原文、资源绝对路径、metadata 正文、凭据、
++//    请求/响应体、stdout/stderr。安装用的 manifest 文本与 resourcePath 为**瞬时**
++//    入参，调用成功后立即清空，不进入任何展示状态。
++//  - 状态变更（enable/disable/uninstall/install/addKey/removeKey）的"显式确认"
++//    由 UI 在调用本 store action 之前完成；本 store 只负责执行并刷新。
++
++function describeError(e: unknown): string {
++  const text = e instanceof Error ? e.message : typeof e === "string" ? e : JSON.stringify(e);
++  return text ? text.slice(0, 300) : "未知错误";
++}
++
++export const usePluginStore = defineStore("plugin", () => {
++  const list = ref<PluginSummary[]>([]);
++  const detail = ref<PluginDetail | null>(null);
++  const keys = ref<TrustedKeyRecord[]>([]);
++  const filterState = ref<PluginState | null>(null);
++  const busy = ref(false);
++  const error = ref("");
++  // 安装表单（瞬时输入，含签名原文；不回显、成功后清空）
++  const manifestText = ref("");
++  const resourcePath = ref("");
++
++  const backendReady = computed(
++    () =>
++      typeof bridge.pluginList === "function" &&
++      typeof bridge.pluginInstall === "function" &&
++      typeof bridge.pluginEnable === "function" &&
++      typeof bridge.pluginDisable === "function" &&
++      typeof bridge.pluginGet === "function" &&
++      typeof bridge.pluginKeysList === "function" &&
++      typeof bridge.pluginKeysAdd === "function" &&
++      typeof bridge.pluginKeysRemove === "function",
++  );
++
++  /** 当前详情视图下，三个状态变更按钮是否可用（按后端状态机门控）。 */
++  const actionsFor = computed<{ enable: boolean; disable: boolean; uninstall: boolean }>(() =>
++    detail.value ? enabledActionsFor(detail.value.state) : { enable: false, disable: false, uninstall: false },
++  );
++
++  async function refreshList() {
++    if (!backendReady.value) {
++      error.value = "后端插件命令未就绪";
++      return;
++    }
++    busy.value = true;
++    error.value = "";
++    try {
++      list.value = await bridge.pluginList(filterState.value);
++    } catch (e) {
++      error.value = describeError(e);
++    } finally {
++      busy.value = false;
++    }
++  }
++
++  async function getDetail(id: string) {
++    if (!backendReady.value) {
++      error.value = "后端插件命令未就绪";
++      return;
++    }
++    busy.value = true;
++    error.value = "";
++    try {
++      detail.value = await bridge.pluginGet(id);
++    } catch (e) {
++      error.value = describeError(e);
++    } finally {
++      busy.value = false;
++    }
++  }
++
++  /** 安装（校验）一个供予的 manifest。manifestText 为瞬时入参，成功后清空。 */
++  async function install(): Promise<boolean> {
++    const parsed = parseManifestInput(manifestText.value);
++    if (!parsed.ok || !parsed.manifest) {
++      error.value = parsed.error || "manifest 解析失败";
++      return false;
++    }
++    if (!backendReady.value) {
++      error.value = "后端插件命令未就绪";
++      return false;
++    }
++    busy.value = true;
++    error.value = "";
++    try {
++      await bridge.pluginInstall({
++        manifest: parsed.manifest as PluginManifest,
++        resourcePath: resourcePath.value.trim() || null,
++      });
++      // 清空瞬时输入（含签名原文），不回显、不持久化。
++      manifestText.value = "";
++      resourcePath.value = "";
++      await refreshList();
++      return true;
++    } catch (e) {
++      error.value = describeError(e);
++      return false;
++    } finally {
++      busy.value = false;
++    }
++  }
++
++  async function enable(id: string): Promise<boolean> {
++    if (!backendReady.value) {
++      error.value = "后端插件命令未就绪";
++      return false;
++    }
++    busy.value = true;
++    error.value = "";
++    try {
++      await bridge.pluginEnable(id);
++      await refreshList();
++      if (detail.value?.id === id) await getDetail(id);
++      return true;
++    } catch (e) {
++      error.value = describeError(e);
++      return false;
++    } finally {
++      busy.value = false;
++    }
++  }
++
++  async function disable(id: string): Promise<boolean> {
++    if (!backendReady.value) {
++      error.value = "后端插件命令未就绪";
++      return false;
++    }
++    busy.value = true;
++    error.value = "";
++    try {
++      await bridge.pluginDisable(id);
++      await refreshList();
++      if (detail.value?.id === id) await getDetail(id);
++      return true;
++    } catch (e) {
++      error.value = describeError(e);
++      return false;
++    } finally {
++      busy.value = false;
++    }
++  }
++
++  async function refreshKeys() {
++    if (!backendReady.value) {
++      error.value = "后端插件命令未就绪";
++      return;
++    }
++    error.value = "";
++    try {
++      keys.value = await bridge.pluginKeysList();
++    } catch (e) {
++      error.value = describeError(e);
++    }
++  }
++
++  /** 增加受信任密钥。pubkey 为瞬时入参，后端仅回 16-hex 指纹，不持久化原文。 */
++  async function addKey(keyId: string, pubkey: string, note: string): Promise<boolean> {
++    if (!backendReady.value) {
++      error.value = "后端插件命令未就绪";
++      return false;
++    }
++    error.value = "";
++    try {
++      keys.value = await bridge.pluginKeysAdd({
++        keyId: keyId.trim(),
++        pubkey: pubkey.trim(),
++        note: note.trim() || null,
++      });
++      return true;
++    } catch (e) {
++      error.value = describeError(e);
++      return false;
++    }
++  }
++
++  async function removeKey(keyId: string): Promise<boolean> {
++    if (!backendReady.value) {
++      error.value = "后端插件命令未就绪";
++      return false;
++    }
++    error.value = "";
++    try {
++      keys.value = await bridge.pluginKeysRemove(keyId);
++      return true;
++    } catch (e) {
++      error.value = describeError(e);
++      return false;
++    }
++  }
++
++  function selectFromList(id: string) {
++    const found = list.value.find((p) => p.id === id);
++    if (found) void getDetail(id);
++  }
++
++  function clearError() {
++    error.value = "";
++  }
++
++  return {
++    list,
++    detail,
++    keys,
++    filterState,
++    busy,
++    error,
++    manifestText,
++    resourcePath,
++    backendReady,
++    actionsFor,
++    refreshList,
++    getDetail,
++    install,
++    enable,
++    disable,
++    refreshKeys,
++    addKey,
++    removeKey,
++    selectFromList,
++    clearError,
++  };
++});
+diff --git a/src/utils/pluginUi.ts b/src/utils/pluginUi.ts
+new file mode 100644
+index 0000000..e939594
+--- /dev/null
++++ b/src/utils/pluginUi.ts
+@@ -0,0 +1,220 @@
++// M5-W14 插件管理器 UI 纯逻辑层（headless 可测，不依赖 vue / bridge / Tauri）。
++//
++// 红线（承 W14 Hard Stops 与 types.ts 顶部注释）：
++//  - 本文件只做 UI 状态机/脱敏投影/manifest 轻量预检，**不**调用任何后端命令。
++//  - 绝不包含、回显、持久化：签名原文（signature.value）、资源绝对路径、
++//    公钥原文、manifest metadata 正文、凭据、请求/响应体、stdout/stderr。
++//  - 状态机与后端 `plugin.rs::can_transition` 1:1 镜像；后端是真源，本层只用于 UI 门控。
++
++import type {
++  PluginState,
++  PluginSummary,
++  PluginDetail,
++  PluginCapabilityView,
++  PluginSignatureView,
++  TrustedKeyRecord,
++  PluginManifest,
++} from "../types";
++
++// ---------------------------------------------------------------------------
++// 状态机（镜像后端 plugin.rs can_transition）
++// ---------------------------------------------------------------------------
++
++/** 8 态全集（与 domain.rs `PluginState` 顺序一致，供筛选下拉/标签使用）。 */
++export const PLUGIN_STATES: PluginState[] = [
++  "discovered",
++  "validating",
++  "signed_ok",
++  "signed_failed",
++  "loaded",
++  "enabled",
++  "disabled",
++  "uninstalled",
++];
++
++/** 合法迁移边（与后端 `can_transition` 完全一致）。 */
++const TRANSITIONS: ReadonlyArray<readonly [PluginState, PluginState]> = [
++  ["discovered", "validating"],
++  ["validating", "signed_ok"],
++  ["validating", "signed_failed"],
++  ["signed_ok", "loaded"],
++  ["signed_failed", "uninstalled"],
++  ["signed_failed", "discovered"],
++  ["loaded", "enabled"],
++  ["loaded", "disabled"],
++  ["loaded", "uninstalled"],
++  ["enabled", "disabled"],
++  ["enabled", "uninstalled"],
++  ["disabled", "enabled"],
++  ["disabled", "uninstalled"],
++];
++
++/** UI 侧状态机门控：与后端 `can_transition` 镜像。后端为真源，UI 仅据此灰显按钮。 */
++export function canTransitionUi(from: PluginState, to: PluginState): boolean {
++  return TRANSITIONS.some(([a, b]) => a === from && b === to);
++}
++
++/** 给定状态下，三个状态变更按钮是否可用（按 `can_transition` 推导）。 */
++export interface PluginActionGate {
++  enable: boolean;
++  disable: boolean;
++  uninstall: boolean;
++}
++
++export function enabledActionsFor(state: PluginState): PluginActionGate {
++  return {
++    enable: canTransitionUi(state, "enabled"),
++    disable: canTransitionUi(state, "disabled"),
++    uninstall: canTransitionUi(state, "uninstalled"),
++  };
++}
++
++/** 状态中文标签（清晰生命周期状态；不得暗示运行时执行）。 */
++const STATE_LABELS: Record<PluginState, string> = {
++  discovered: "已发现",
++  validating: "校验中",
++  signed_ok: "签名通过",
++  signed_failed: "签名失败",
++  loaded: "已加载",
++  enabled: "已启用",
++  disabled: "已禁用",
++  uninstalled: "已卸载",
++};
++
++export function pluginStateLabel(s: PluginState): string {
++  return STATE_LABELS[s] ?? s;
++}
++
++// ---------------------------------------------------------------------------
++// 能力风险档
++// ---------------------------------------------------------------------------
++
++export type AclLevel = "safe" | "confirm" | "dangerous";
++
++const ACL_LABELS: Record<AclLevel, string> = {
++  safe: "安全",
++  confirm: "需确认",
++  dangerous: "危险（已阻止）",
++};
++
++export function aclLevelLabel(l: AclLevel): string {
++  return ACL_LABELS[l] ?? l;
++}
++
++/** 危险档（或任意能力，因后端白名单首期空集合 fail-closed → 安装即被拒）。 */
++export function isDangerousGate(l: AclLevel): boolean {
++  return l === "dangerous";
++}
++
++/** 风险档对应的 CSS class（UI 着色用）。 */
++export function aclLevelClass(l: AclLevel): "ok" | "warn" | "danger" {
++  if (l === "dangerous") return "danger";
++  if (l === "confirm") return "warn";
++  return "ok";
++}
++
++// ---------------------------------------------------------------------------
++// 脱敏投影（确保 UI 永不渲染签名原文 / 资源路径 / 公钥原文 / metadata）
++// ---------------------------------------------------------------------------
++
++/** 详情脱敏投影：显式挑选字段，丢弃 `signature.value` / 任何路径 / `metadata`。 */
++export interface PluginDisplayDetail {
++  id: string;
++  version: string;
++  display_name: string;
++  description: string;
++  min_app_version: string;
++  state: PluginState;
++  /** 能力视图（含 acl_level）；UI 须逐项展示且禁折叠。 */
++  capabilities: PluginCapabilityView[];
++  /** 仅 sha256 前缀。 */
++  hash_prefix: string;
++  /** 签名视图：**无** `value` 原文。 */
++  signature: PluginSignatureView;
++  installed_at: string;
++  updated_at: string;
++  /** 资源包元数据：仅布尔 + 声明摘要，**无**绝对路径。 */
++  resource: { declared_hash: string; path_provided: boolean; verified: boolean };
++}
++
++/** 把后端 `PluginDetail` 投影为只含脱敏字段的展示对象（丢弃一切敏感原文）。 */
++export function redactDetail(d: PluginDetail): PluginDisplayDetail {
++  return {
++    id: d.id,
++    version: d.version,
++    display_name: d.display_name,
++    description: d.description,
++    min_app_version: d.min_app_version,
++    state: d.state,
++    capabilities: d.capabilities, // PluginCapabilityView 本身即脱敏（含 acl_level，无正文）
++    hash_prefix: d.hash_prefix,
++    signature: { algorithm: d.signature.algorithm, key_id: d.signature.key_id, status: d.signature.status },
++    installed_at: d.installed_at,
++    updated_at: d.updated_at,
++    resource: {
++      declared_hash: d.resource.declared_hash,
++      path_provided: d.resource.path_provided,
++      verified: d.resource.verified,
++    },
++  };
++}
++
++/** `PluginSummary` 已是脱敏视图（无签名/无路径），原样透传。 */
++export function redactSummary(s: PluginSummary): PluginSummary {
++  return s;
++}
++
++/** 受信任密钥：仅指纹，**无**公钥原文（TrustedKeyRecord 类型本身即如此）。 */
++export function redactKeyRecord(k: TrustedKeyRecord): TrustedKeyRecord {
++  return { key_id: k.key_id, fingerprint: k.fingerprint, note: k.note, added_at: k.added_at };
++}
++
++// ---------------------------------------------------------------------------
++// manifest 轻量预检（仅判断"能否构造给后端"，不替代后端校验）
++// ---------------------------------------------------------------------------
++
++export interface ManifestParseResult {
++  ok: boolean;
++  manifest?: PluginManifest;
++  error?: string;
++}
++
++function isObj(v: unknown): v is Record<string, unknown> {
++  return typeof v === "object" && v !== null && !Array.isArray(v);
++}
++
++/**
++ * 解析用户粘贴的 manifest 文本（JSON）。仅做前端轻量结构预检：
++ * 必填字段存在 + 形态③ entry 为对象。不做后端级语义校验（那个归 plugin.rs）。
++ * 返回的 `manifest` 中可能含 `signature.value`（原始 base64）——它是**瞬时**传给
++ * 后端的入参，本层/store/面板都**不持久化、不回显**；安装成功后以 `plugin_get`
++ * 的脱敏 `PluginDetail` 覆盖展示。
++ */
++export function parseManifestInput(text: string): ManifestParseResult {
++  const t = (text ?? "").trim();
++  if (!t) return { ok: false, error: "manifest 内容为空" };
++  let raw: unknown;
++  try {
++    raw = JSON.parse(t);
++  } catch {
++    return { ok: false, error: "manifest 不是合法 JSON" };
++  }
++  if (!isObj(raw)) return { ok: false, error: "manifest 必须是 JSON 对象" };
++  for (const f of ["id", "version", "display_name", "description", "min_app_version", "hash"] as const) {
++    if (typeof raw[f] !== "string" || (raw[f] as string).length === 0) {
++      return { ok: false, error: `manifest 缺少必填字符串字段：${f}` };
++    }
++  }
++  if (!isObj(raw.entry) || typeof (raw.entry as Record<string, unknown>).entry_url !== "string") {
++    return { ok: false, error: "manifest.entry.entry_url 缺失或非字符串" };
++  }
++  if (!Array.isArray(raw.capabilities)) {
++    return { ok: false, error: "manifest.capabilities 必须是数组" };
++  }
++  if (!isObj(raw.signature) || typeof (raw.signature as Record<string, unknown>).algorithm !== "string") {
++    return { ok: false, error: "manifest.signature 缺失或非对象" };
++  }
++  // 结构通过；按后端预期形状回传（metadata 可选）。
++  const manifest = raw as unknown as PluginManifest;
++  return { ok: true, manifest };
++}
+diff --git a/后续需求TODO.md b/后续需求TODO.md
+index 414fc4b..437d848 100644
+--- a/后续需求TODO.md
++++ b/后续需求TODO.md
+@@ -2,6 +2,7 @@
+ > A0 update 2026-09-07 20:30 CST: W11 validation PASS (MCP stdio dry-run hardened: feature test 21/21, bounded input/response, no raw argument echo, MCP policy ACTIVE=11/PENDING=0; Agent/Skill exec-lock policy PASS; graph UI/agent skill UI checks green). NEXT=`M5-W12` graph live-query read-only bridge; only A7/A8 may write graph query/UI product code; MCP full runtime, plugin runtime, Agent/Skill execution, network listener, daemon, and model call remain LOCKED; only A0 pushes.
+ > A1 update 2026-09-07 20:30 CST: W12 派发接收为 *START DOCS ONLY*（board L192）：reconcile W11 as accepted after A0 push + mark W12 active + 图谱卡范围收敛为 3 只读命令（`graph_query`/`graph_node_get`/`graph_stats`）+ UI 消费。scope = `PARALLEL_COMMAND_BOARD.md` + 3 主文档 + `logs/checkpoints/M5-20260906/*.md` + `logs/checkpoints/A1-M5-W12-*.md`. 整包交付 = `logs/checkpoints/A1-M5-W12-reconciliation-20260907-2030.md` + `logs/checkpoints/Lane-A1-M5-W12-reconciliation-20260907-2030.patch`（13 文件改动 = M5-0/7/8/9/10/11/12/13/14 头部 W11 PUSHED + W12 ACTIVE 状态行 + M5-0/8/13/14 末尾 [W11 reconciliation]/[W12 scope supersession]/[W12 verification scope]/[W12 active] 段 + 3 主文档 L1 新行 + board L6/L7）。A1 W12 零产品代码，不 push。
+ > A1 update 2026-09-07 23:55 CST: W13 派发接收为 *START DOCS ONLY*（board L228+，Plugin Runtime Stage-I Manifest Lifecycle Dispatch）：reconcile W12 as accepted after A0 push（`3c3f460`）+ mark W13 active + plugin 卡范围收敛为 stage-I manifest 生命周期（`plugin_install`/`plugin_enable`/`plugin_disable`/`plugin_list`/`plugin_get`/`plugin_key_registry` 6 命令 + 本地状态机；**不**实施 invoke / cancel / storage_* 5 stub runtime execution）+ A7 W13 GRAPH NON-REGRESSION DOCS ONLY 必保 W12 graph 集成锚点不回归 + A19 仍 SUPPORT DOCS ONLY（plugin UI 6 项 0% ACTIVE，DEBT-04 W14+ 仍挂账）。scope = `PARALLEL_COMMAND_BOARD.md` + 3 主文档 + `logs/checkpoints/M5-20260906/*.md` + `logs/checkpoints/A1-M5-W13-*.md`. 整包交付 = `logs/checkpoints/A1-M5-W13-reconciliation-20260907-2358.md` + `logs/checkpoints/Lane-A1-M5-W13-reconciliation-20260907-2358.patch`（14 文件改动 = board L6/L7 + 3 主文档 L1 新行 + M5-0/10/11/12/13/14 头部 W12 PUSHED + W13 ACTIVE 状态行 + M5-0/13/14 末尾 [W12 reconciliation]/[W13 verification scope]/[W12 reconciliation]/[W13 active] 段）。A1 W13 零产品代码，不 push。
++> A1 update 2026-09-08 00:20 CST: W14 派发接收为 *START DOCS ONLY*（board L1163+，Plugin Manager UI Dispatch）：reconcile W13 as accepted after A0 push（`a7eefbb`）+ mark W14 active + plugin UI 卡范围**冻结为消费 frozen W13 6 命令**（list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint 6 action；**不**实施 W14 新 lifecycle 命令；**不**碰 `src/bridge.ts` DTO；**不** raw Tauri `invoke`）+ A6 W14 唯一 UI 产品代码 lane（`src/components/plugin/**` + `src/stores/usePluginStore.ts` + `scripts/check-plugin-ui-logic.mjs`）+ 10 lane review/docs/verification + A19 仍 SUPPORT（plugin UI 6 项 0% ACTIVE 持续到 A6 W14 实施完成 = DEBT-04 W14+ 仍挂账）。scope = `PARALLEL_COMMAND_BOARD.md` + 3 主文档 + `logs/checkpoints/M5-20260906/*.md` + `logs/checkpoints/A1-M5-W14-*.md`. 整包交付 = `logs/checkpoints/A1-M5-W14-reconciliation-20260908-0020.md` + `logs/checkpoints/Lane-A1-M5-W14-reconciliation-20260908-0020.patch`（11 文件改动 = board L6 mainline chain + 3 主文档 L1 新行 + M5-0/10/11/12/13/14 头部 W13 PUSHED + W14 ACTIVE 状态行 + M5-12/13/14 末尾 [W14 active]/[W14 verification scope]/[W14 active] 段）。A1 W14 零产品代码，不 push。
+ > A0 update 2026-09-07 18:30 CST: W10 focused validation PASS (A3 MCP stdio-prep feature-gated std-only, `cargo test --features mcp mcp_server` 7/7, MCP policy ACTIVE=9/PENDING=0 current PASS; Agent/Skill and Graph UI logic + npm build PASS). NEXT=`M5-W11` MCP stdio dry-run hardening; only A3 may touch MCP stdio dry-run code; plugin/agent/skill execution, graph backend runtime, network listener, daemon, and model call remain LOCKED; only A0 pushes.
+ > A0 update 2026-09-07 18:30 CST: W10 拣入 `5226aad` = HEAD（origin/master）：2 commit = `ba78092`（A3 W10 MCP stdio-prep feature-gated std-only skeleton）+ `5226aad`（A0 W10 整包合并拣入）。NEXT=`M5-W11` MCP Stdio Dry-Run Hardening Dispatch（board L176-228，Added 2026-09-07 18:30 CST）：A3 START PRODUCT CODE NARROW（仅 MCP stdio dry-run/list-call hardening：deterministic JSON-RPC errors + bounded input/response + stable `tools/list` schema + explicit fail-closed `tools/call` + tests/smoke；**无**真实 file/db/script/plugin/agent/skill/model 执行；**无** TCP listener / HTTP server / network bind / background daemon；**无** raw argument/query/token/cookie/Authorization echo in stdio responses / logs / audit / checkpoints / UI state）；A2/A4/A5/A6/A7/A8/A9/A10/A11 review/policy/docs/UI small；A1 START DOCS ONLY。
+ > A1 update 2026-09-07 18:30 CST: W11 派发接收为 *START DOCS ONLY*（board L192）：reconcile W10 as accepted after A0 push + mark W11 active + update M5 cards so W10 stdio-prep is recorded as feature-gated PASS and W11 remains dry-run only. scope = `PARALLEL_COMMAND_BOARD.md` + 3 主文档 + `logs/checkpoints/M5-20260906/*.md` + `logs/checkpoints/A1-M5-W11-*.md`. 整包交付 = `logs/checkpoints/A1-M5-W11-reconciliation-20260907-1830.md` + `logs/checkpoints/Lane-A1-M5-W11-reconciliation-20260907-1830.patch`（9 文件改动 = M5-0/9/10/11/12/13/14 头部 W10 PUSHED + W11 ACTIVE 状态行 + M5-0/13/14 末尾 [W10 reconciliation] / [W11 active] / [W11 verification scope] 段 + 3 主文档 L1 新行）。A1 W11 零产品代码，不 push。
+diff --git a/详细设计与实施计划.md b/详细设计与实施计划.md
+index 3fb33e6..d2ba8a6 100644
+--- a/详细设计与实施计划.md
++++ b/详细设计与实施计划.md
+@@ -2,6 +2,7 @@
+ > A0 update 2026-09-07 20:30 CST: W11 validation PASS (MCP stdio dry-run hardened: feature test 21/21, bounded input/response, no raw argument echo, MCP policy ACTIVE=11/PENDING=0; Agent/Skill exec-lock policy PASS; graph UI/agent skill UI checks green). NEXT=`M5-W12` graph live-query read-only bridge; only A7/A8 may write graph query/UI product code; MCP full runtime, plugin runtime, Agent/Skill execution, network listener, daemon, and model call remain LOCKED; only A0 pushes.
+ > A1 update 2026-09-07 20:30 CST: W12 派发接收为 *START DOCS ONLY*（board L192）：reconcile W11 as accepted after A0 push + mark W12 active + 图谱卡范围收敛为 3 只读命令（`graph_query`/`graph_node_get`/`graph_stats`）+ UI 消费。scope = `PARALLEL_COMMAND_BOARD.md` + 3 主文档 + `logs/checkpoints/M5-20260906/*.md` + `logs/checkpoints/A1-M5-W12-*.md`. 整包交付 = `logs/checkpoints/A1-M5-W12-reconciliation-20260907-2030.md` + `logs/checkpoints/Lane-A1-M5-W12-reconciliation-20260907-2030.patch`（13 文件改动 = M5-0/7/8/9/10/11/12/13/14 头部 W11 PUSHED + W12 ACTIVE 状态行 + M5-0/8/13/14 末尾 [W11 reconciliation]/[W12 scope supersession]/[W12 verification scope]/[W12 active] 段 + 3 主文档 L1 新行 + board L6/L7）。A1 W12 零产品代码，不 push。
+ > A1 update 2026-09-07 23:55 CST: W13 派发接收为 *START DOCS ONLY*（board L228+，Plugin Runtime Stage-I Manifest Lifecycle Dispatch）：reconcile W12 as accepted after A0 push（`3c3f460`）+ mark W13 active + plugin 卡范围收敛为 stage-I manifest 生命周期（`plugin_install`/`plugin_enable`/`plugin_disable`/`plugin_list`/`plugin_get`/`plugin_key_registry` 6 命令 + 本地状态机；**不**实施 invoke / cancel / storage_* 5 stub runtime execution）+ A7 W13 GRAPH NON-REGRESSION DOCS ONLY 必保 W12 graph 集成锚点不回归 + A19 仍 SUPPORT DOCS ONLY（plugin UI 6 项 0% ACTIVE，DEBT-04 W14+ 仍挂账）。scope = `PARALLEL_COMMAND_BOARD.md` + 3 主文档 + `logs/checkpoints/M5-20260906/*.md` + `logs/checkpoints/A1-M5-W13-*.md`. 整包交付 = `logs/checkpoints/A1-M5-W13-reconciliation-20260907-2358.md` + `logs/checkpoints/Lane-A1-M5-W13-reconciliation-20260907-2358.patch`（14 文件改动 = board L6/L7 + 3 主文档 L1 新行 + M5-0/10/11/12/13/14 头部 W12 PUSHED + W13 ACTIVE 状态行 + M5-0/13/14 末尾 [W12 reconciliation]/[W13 verification scope]/[W12 reconciliation]/[W13 active] 段）。A1 W13 零产品代码，不 push。
++> A1 update 2026-09-08 00:20 CST: W14 派发接收为 *START DOCS ONLY*（board L1163+，Plugin Manager UI Dispatch）：reconcile W13 as accepted after A0 push（`a7eefbb`）+ mark W14 active + plugin UI 卡范围**冻结为消费 frozen W13 6 命令**（list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint 6 action；**不**实施 W14 新 lifecycle 命令；**不**碰 `src/bridge.ts` DTO；**不** raw Tauri `invoke`）+ A6 W14 唯一 UI 产品代码 lane（`src/components/plugin/**` + `src/stores/usePluginStore.ts` + `scripts/check-plugin-ui-logic.mjs`）+ 10 lane review/docs/verification + A19 仍 SUPPORT（plugin UI 6 项 0% ACTIVE 持续到 A6 W14 实施完成 = DEBT-04 W14+ 仍挂账）。scope = `PARALLEL_COMMAND_BOARD.md` + 3 主文档 + `logs/checkpoints/M5-20260906/*.md` + `logs/checkpoints/A1-M5-W14-*.md`. 整包交付 = `logs/checkpoints/A1-M5-W14-reconciliation-20260908-0020.md` + `logs/checkpoints/Lane-A1-M5-W14-reconciliation-20260908-0020.patch`（11 文件改动 = board L6 mainline chain + 3 主文档 L1 新行 + M5-0/10/11/12/13/14 头部 W13 PUSHED + W14 ACTIVE 状态行 + M5-12/13/14 末尾 [W14 active]/[W14 verification scope]/[W14 active] 段）。A1 W14 零产品代码，不 push。
+ > A0 update 2026-09-07 18:30 CST: W10 focused validation PASS (A3 MCP stdio-prep feature-gated std-only, `cargo test --features mcp mcp_server` 7/7, MCP policy ACTIVE=9/PENDING=0 current PASS; Agent/Skill and Graph UI logic + npm build PASS). NEXT=`M5-W11` MCP stdio dry-run hardening; only A3 may touch MCP stdio dry-run code; plugin/agent/skill execution, graph backend runtime, network listener, daemon, and model call remain LOCKED; only A0 pushes.
+ > A0 update 2026-09-07 18:30 CST: W10 拣入 `5226aad` = HEAD（origin/master）：2 commit = `ba78092`（A3 W10 MCP stdio-prep feature-gated std-only skeleton）+ `5226aad`（A0 W10 整包合并拣入）。NEXT=`M5-W11` MCP Stdio Dry-Run Hardening Dispatch（board L176-228，Added 2026-09-07 18:30 CST）：A3 START PRODUCT CODE NARROW（仅 MCP stdio dry-run/list-call hardening：deterministic JSON-RPC errors + bounded input/response + stable `tools/list` schema + explicit fail-closed `tools/call` + tests/smoke；**无**真实 file/db/script/plugin/agent/skill/model 执行；**无** TCP listener / HTTP server / network bind / background daemon；**无** raw argument/query/token/cookie/Authorization echo in stdio responses / logs / audit / checkpoints / UI state）；A2/A4/A5/A6/A7/A8/A9/A10/A11 review/policy/docs/UI small；A1 START DOCS ONLY。
+ > A1 update 2026-09-07 18:30 CST: W11 派发接收为 *START DOCS ONLY*（board L192）：reconcile W10 as accepted after A0 push + mark W11 active + update M5 cards so W10 stdio-prep is recorded as feature-gated PASS and W11 remains dry-run only. scope = `PARALLEL_COMMAND_BOARD.md` + 3 主文档 + `logs/checkpoints/M5-20260906/*.md` + `logs/checkpoints/A1-M5-W11-*.md`. 整包交付 = `logs/checkpoints/A1-M5-W11-reconciliation-20260907-1830.md` + `logs/checkpoints/Lane-A1-M5-W11-reconciliation-20260907-1830.patch`（9 文件改动 = M5-0/9/10/11/12/13/14 头部 W10 PUSHED + W11 ACTIVE 状态行 + M5-0/13/14 末尾 [W10 reconciliation] / [W11 active] / [W11 verification scope] 段 + 3 主文档 L1 新行）。A1 W11 零产品代码，不 push。

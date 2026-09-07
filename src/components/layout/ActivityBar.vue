@@ -40,6 +40,7 @@ const menuSections = [
       { view: "skills", icon: "🛠️", label: "技能" },
       { view: "agents", icon: "🤖", label: "智能体" },
       { view: "graph", icon: "🕸️", label: "图谱" },
+      { view: "plugin", icon: "🔌", label: "插件" },
     ],
   },
   {

@@ -1,4 +1,4 @@
-# M5 验证矩阵（A1 横切 · M5-W0 末位 + W1 reconciliation + W6 verification delta + W7 verification scope + W8 reconciliation + W9 verification scope + W10 verification scope + W10 verification delta + W11 verification scope + W12 verification scope + W12 build metrics threshold）
+# M5 验证矩阵（A1 横切 · M5-W0 末位 + W1 reconciliation + W6 verification delta + W7 verification scope + W8 reconciliation + W9 verification scope + W10 verification scope + W10 verification delta + W11 verification scope + W12 verification scope + W12 build metrics threshold + W13 verification scope + W14 verification scope）
 
 > 子卡 ID：**M5-13** · 跨 M5-1~M5-12 · `[S3|LEVERAGE:2|COMPLEX|AI:DEEP|R:xhigh]`
 > 责任 Lane 候选：**A11**（沿用 A7/A11 角色，A0 签发时定）
@@ -604,3 +604,33 @@ W12 graph live-query readonly bridge/UI measured `total_bytes_pct=22.26` and `ca
 - `npm run build` PASS
 - `python3 scripts/pre-merge.sh` ALL_PASS
 - `python3 scripts/measure-build-metrics.py` `total_bytes_pct ≤ 23%` + `cargo_warnings delta = 0`
+
+---
+
+## [W14 verification scope · 2026-09-08 00:20 CST] W14 plugin manager UI 验证矩阵（A1 START DOCS ONLY · A6 START PRODUCT CODE NARROW · 10 lane docs/review/security/verification）
+
+**W14 派发** = Plugin Manager UI Dispatch（board L1163+）；**W14 = 仅 1 lane UI 产品代码 open**（A6）；其余 10 lane = docs/review/security/verification（详见 `M5-0-overview.md` 顶部 `[W14 active · 2026-09-08 00:20 CST]` 段 + `PARALLEL_COMMAND_BOARD.md` L1163-1189 lane 表）。
+
+**A6 W14 唯一产品代码 lane 范围（冻结）**：
+- 消费 **frozen W13 6 命令**（`plugin_list` / `plugin_get` / `plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_key_registry`）—— **不**实施 W14 新 lifecycle 命令 / **不**改 `src/bridge.ts` DTO 形态 / **不**增删 ACL
+- 文件范围 = `src/components/plugin/**` + `src/stores/usePluginStore.ts` + `scripts/check-plugin-ui-logic.mjs` + workspace navigation 集成
+- 6 action = list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint
+- UI 走 `src/bridge.ts`（**不** raw Tauri `invoke`）
+- **不**渲染 raw signature / public-key / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr
+
+**W14 验证矩阵（11 项必跑）**：
+1. `cargo test plugin` 全绿（沿用 W13 基线 + W14 0 增量）
+2. `cargo test graph` 15/15 PASS（**A7 W14 GRAPH NON-REGRESSION** = W12 8 条 graph 集成锚点不回归 + A6 W14 不触 `mod graph` / `GraphState` / `bridge.rs:6605/6624/6641`）
+3. full cargo 414/414 PASS（W12 基线 + W14 0 增量）
+4. `mcp feature test` 21/21 PASS（**A3 W14 MCP PLUGIN ISOLATION REVIEW** = W14 plugin UI 走 W13 6 命令边界，**不**引入 `mcp_*` / `plugin_invoke` / `plugin_storage_*` runtime）
+5. `cargo fmt --check` 干净
+6. `check-plugin-policy.py --self-test` PASS + ACTIVE=8/PENDING=0 + `--expect-pending` PASS（W13 8 ACTIVE 码 + W14 0 增量）
+7. `check-plugin-privacy.py --self-test` PASS + ACTIVE=4/PENDING=0（W13 4 ACTIVE 码 = `PLUGIN_PRIVACY_OUTPUT_NO_RAW_SIG` / `PLUGIN_PRIVACY_NO_KEY_MATERIAL` / `PLUGIN_PRIVACY_NO_RESOURCE_PATH` / `PLUGIN_PRIVACY_DTO_REDACTED` + W14 0 增量；**A4 W14 PRIVACY REVIEW** = UI 走 redacted DTO **不**触 raw 敏感字段）
+8. `check-plugin-ui-logic.mjs` PASS + 新增 plugin UI logic 守门码（`PLUGIN_UI_NO_RAW_INVOKE` / `PLUGIN_UI_BRIDGE_ONLY` / `PLUGIN_UI_NO_RAW_SIG_RENDER` / `PLUGIN_UI_NO_RAW_PUBKEY_RENDER` / `PLUGIN_UI_NO_RAW_RESOURCE_PATH_RENDER` / `PLUGIN_UI_NO_RAW_MANIFEST_META_RENDER` / `PLUGIN_UI_NO_RAW_CREDENTIAL_RENDER` / `PLUGIN_UI_NO_RAW_REQ_RES_BODY_RENDER` / `PLUGIN_UI_NO_RAW_STDOUT_STDERR_RENDER` 9 码 ≥9/9 PASS + 6 action 全覆盖）
+9. `check-graph-ui-logic.mjs` 113/113 PASS（**A8 W14 UI ERGONOMICS REVIEW** = A6 W14 不破 graph UI logic）
+10. `check-agent-skill-ui-logic.mjs` 110/110 PASS（**A5 W14 AGENT/SKILL LOCK** = A6 W14 不破 agent-skill UI logic + plugin UI 不引入 agent-skill runtime）
+11. `npm run build` PASS
+12. `python3 scripts/pre-merge.sh` ALL_PASS
+13. `python3 scripts/measure-build-metrics.py` `total_bytes_pct ≤ 23%` + `cargo_warnings delta = 0`（W12 A0 修订 IF-2 = 23%）
+
+**A1 W14 派发期本卡立场 = 整包文档收口（11 文件 = board L6 + 3 主文档 L1 + A1 W14 checkpoint + M5-0/10/11/12/13/14 头 + 末尾段），零产品代码，不 push**。A6 W14 实施期由 A11 出 W14 verification delta；A7 W14 GRAPH NON-REGRESSION DOCS ONLY 必保 W12 8 条 graph 集成锚点不回归；A10 W14 SECURITY REVIEW 必保 raw-invoke bypass / confirmation bypass / source-ACL drift / sensitive-render regression 四项不破。

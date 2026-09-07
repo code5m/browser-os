@@ -1,0 +1,21 @@
+{
+  "frontend_build_ms": null,
+  "chunks": [],
+  "chunk_over_500kb": null,
+  "dist": {
+    "file_count": 22,
+    "total_bytes": 765493,
+    "chunk_count": 12,
+    "largest_js": {
+      "name": "xterm-HfMqn6o1.js",
+      "bytes": 334208,
+      "gzip_bytes": 83916
+    }
+  },
+  "cargo_check_ms": 439,
+  "cargo_warnings": 2,
+  "fmt_clean": true,
+  "schema": "m0-build-metrics-v1",
+  "generated_at": "2026-09-07T15:02:25+0800",
+  "git_commit": "a7eefbb"
+}

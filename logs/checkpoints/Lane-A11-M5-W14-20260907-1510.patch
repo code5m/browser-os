@@ -1,0 +1,227 @@
+diff --git a/logs/assist/A11-M5-W14-plugin-ui-verification-20260907-1510.md b/logs/assist/A11-M5-W14-plugin-ui-verification-20260907-1510.md
+new file mode 100644
+index 0000000..49664c7
+--- /dev/null
++++ b/logs/assist/A11-M5-W14-plugin-ui-verification-20260907-1510.md
+@@ -0,0 +1,101 @@
++# M5-W14 Assist Review — 插件 UI 隐私夹具误报 + UI 逻辑测试缺口
++> 评审方: A11 (Verification) · 对象: A4 (夹具 `check-plugin-ui-privacy.py`) + A6 (插件管理器 UI)
++> 时间: 2026-09-07 15:10 · 关联 checkpoint: `logs/checkpoints/A11-M5-W14-20260907-1510.md`
++
++## 0. 一句话结论
++pre-merge 因 `PLUGIN_UI_NO_SECRET_RENDER` 变红，但属**夹具结构性误报**：A6 未展示/持久化任何公钥原文，仅有一个用户自粘贴、立即清空的 `pubkey` 瞬时输入字段被子串扫描命中。需 A4 或 A6 择一修复后复跑；另 A6 缺交付 `check-plugin-ui-logic.mjs`。
++
++---
++
++## A. 阻塞项（给 A4 / A6）
++
++### A.1 现象
++```
++pytest 门禁: check-plugin-ui-privacy.py --self-test  → FAIL
++真实仓库 ACTIVE 违规: ['PLUGIN_UI_NO_SECRET_RENDER']
++命中: \.pubkey ×4 , pubkey ×16
++PRE_MERGE_RESULT=FAIL
++```
++
++### A.2 误报证据（A6 实质合规）
++| 检查点 | 位置 | 结论 |
++|---|---|---|
++| 受信任密钥列表渲染内容 | `PluginManager.vue` L165-170 | 仅 `{{ k.key_id }}` + `{{ k.fingerprint }}`，**无 `k.pubkey`** ✓ |
++| 详情脱敏投影 | `pluginUi.ts::redactDetail` L141-160 / `redactKeyRecord` L168-170 | 显式挑选字段，丢弃 `signature.value`/路径/`pubkey`/metadata ✓ |
++| `pubkey` 字面量出处 | `PluginManager.vue` L24-25,66,94,96,173；`usePluginStore.ts` L195-196,205 | 全部是"用户粘贴→`addKey`→`keyForm.pubkey=""` 清空"的**瞬时输入**，从不回显/持久化 ✓ |
++| 裸 invoke | 全组件/store | 仅调用 `bridge.plugin*`，无 `invoke("plugin_"` / `@tauri-apps/api/tauri` ✓ |
++
++### A.3 修复方案
++**方案 A（推荐，A4 改夹具）** — 收紧 A2 检测粒度，只抓"展示/输出位置"：
++```python
++# scripts/check-plugin-ui-privacy.py :: detect_hits, A2 分支
++# 将 SECRET_RENDER_TOKENS 中的裸 r"pubkey" 改为仅匹配展示上下文：
++SECRET_RENDER_TOKENS = (
++    r"signature\.value",
++    r"\.pubkey",                      # 保留：覆盖 {{ x.pubkey }} / k.pubkey 绑定
++    r"\{\{[^}]*pubkey",              # 模板插值中的 pubkey（真实回显）
++    r"resource_path",
++    r"rawSignature", r"raw_signature",
++    r"privateKey", r"private_key",
++    r"apiKey", r"api_key",
++    r"secretKey", r"secret_key",
++)
++# 并可在扫描时跳过 <input ...> 标签内与 reactive({...}) 表单声明行（可选增强）
++```
++> 去掉裸 `pubkey` 后，A6 的瞬时输入字段与 `placeholder="pubkey..."` 文案不再命中；而一旦有人写成 `{{ detail.pubkey }}` 仍会被 `\.pubkey` / 模板插值规则捕获。
++
++**方案 B（A6 改代码，夹具保持严格）** — 把瞬时字段与 placeholder 中的 `pubkey` 字面量改名：
++- `keyForm.pubkey` → `keyForm.keyMaterial`
++- `addKey(keyId, pubkey, note)` → `addKey(keyId, keyMaterial, note)`
++- placeholder `"pubkey（仅用于登记，不回显）"` → `"公钥原文（仅用于登记，不回显，提交后不留存）"`（去掉 `pubkey` 子串）
++
++任选其一即可让 pre-merge 转绿；**方案 A 更优**（保留对真实回显的防护，且不动产品代码）。
++
++---
++
++## B. 缺口（给 A6）
++
++### B.1 缺失 `scripts/check-plugin-ui-logic.mjs`
++A6 Must-Deliver 要求无头 UI 逻辑测试，当前未交付。建议覆盖 `pluginUi.ts` 纯函数（与 `plugin.rs::can_transition` 1:1 镜像，是 W14 高价值回归点）：
++- `canTransitionUi(from,to)` / `enabledActionsFor(state)` — 8 态状态机边；
++- `redactDetail(d)` — 断言 `signature` 无 `value`、`resource` 无绝对路径、无 `metadata`；
++- `parseManifestInput(text)` — 必填字段/JSON 形态/entry 对象校验；
++- ACL 风险档 `aclLevelLabel` / `isDangerousGate` / `aclLevelClass`。
++
++交付后纳入 A11 第 13 项 UA 脚本复跑。
++
++---
++
++## C. 软观察（长期建议，非门禁）
++- **错误渲染**：`usePluginStore.describeError` 把 `e.message` 截断 300 字直渲 (`PluginManager.vue` L239)。`PLUGIN_UI_ERROR_CODE_ONLY` 为 PENDING，暂不强；建议长期映射为稳定 `error_code`（对齐 `PluginSummary.error_code`），契合"错误只渲染稳定码"红线。
++- **uninstall 语义**：A6 `uninstall` → `bridge.pluginDisable`（后端无独立 uninstall 命令，守 W13 红线）。设计合理，但 UI 文案"卸载"与后端"disable"需对齐，避免误解。
++
++---
++
++## D. 构建指标回归（给 A0 / A6）
++
++### D.1 现象
++```
++[pre-merge] FAIL: build metrics regression vs logs/m0-build-metrics/build-metrics-4f0e8ab.json
++```
++- M0 基线 `build-metrics-4f0e8ab.json`：`dist.total_bytes = 612943`（8 文件）。
++- 当前（a7eefbb + A6 UI）：`dist.total_bytes = 765705`（22 文件）。
++- 增长 = (765705 − 612943) / 612943 = **+24.91%** > `TOTAL_BYTES_GROWTH_LIMIT_PCT = 23.0` → 失败。
++- `cargo_warnings = 2`（与基线持平，未增），`fmt_clean = true`，无 >500KB chunk → 仅体积越限。
++
++### D.2 归因
++`measure-build-metrics.py` 头部注释记录了阈值演进：M0=15% → M4=16% → W5=19% → W6=21% → W8=22% → W12=23%（每次均附"当前实测%"）。W12 实测 22.26% 压线；本波（W13/W14）前端新增以 **A6 插件管理器面板**（`PluginManager.vue` + `usePluginStore.ts` + `pluginUi.ts`）为主，把增长推到 24.91%，越过红线。属真实门禁失败（非工具误报）。
++
++### D.3 处置（需 A0 / A6 决策）
++- **方案 C（推荐，A0 重定基线）**：沿用 W5/W6/W8/W12 先例，在脚本注释追加 M5-W14 记录并把 `TOTAL_BYTES_GROWTH_LIMIT_PCT` 抬至 **26%**（实测 24.91%，留约 1pp 余量），附书面理由。
++- **方案 D（A6 减量）**：将插件面板改为路由级懒加载（动态 import）并剔除未用依赖；注意本门禁比对 dist **总**体积，懒加载主要降主包、对总量影响有限。
++
++---
++
++## E. 复跑命令（修复后）
++```bash
++python3 scripts/check-plugin-ui-privacy.py --self-test   # 期望 SELF_TEST_RESULT=PASS
++python3 scripts/check-plugin-ui-privacy.py               # 期望 all invariants hold
++bash scripts/pre-merge.sh                                # 期望 PRE_MERGE_RESULT=ALL_PASS
++node scripts/check-plugin-ui-logic.mjs                   # 期望 A6 交付后全绿
++```
+diff --git a/logs/checkpoints/A11-M5-W14-20260907-1510.md b/logs/checkpoints/A11-M5-W14-20260907-1510.md
+new file mode 100644
+index 0000000..3d94da5
+--- /dev/null
++++ b/logs/checkpoints/A11-M5-W14-20260907-1510.md
+@@ -0,0 +1,114 @@
++# M5-W14 验证 Checkpoint — Lane A11 (Strategy/Verification/Eval/Replay)
++
++- 基准提交: `a7eefbb` (M5-W14 基线；A6 UI 代码在验证期间落入工作树，未提交)
++- 生成时间: 2026-09-07 15:10
++- 验证范围: W14 Hard Stop 矩阵 + pre-merge 总门禁 + 21 项 UA 逻辑脚本 + Rust/Node 矩阵 + 构建指标
++- 结论: **不就绪合并 (pre-merge = FAIL)**，两项红项：(1) 插件 UI 隐私夹具对 `pubkey` 字面量的结构性误报（实质合规）；(2) 构建指标 dist 体积 +24.91% 超 23% 上限（真实回归，W14 插件面板为主因）。其余矩阵全绿。
++
++## 1. 验证矩阵结果
++
++| 维度 | 命令/脚本 | 结果 |
++|---|---|---|
++| Rust 默认测试 | `cargo test` (src-tauri) | 431 passed / 0 failed |
++| Rust plugin 聚焦 | `cargo test plugin` (src-tauri) | 28 passed / 0 failed |
++| Rust mcp 聚焦 | `cargo test mcp` (src-tauri) | 21 passed / 0 failed |
++| 插件隐私 (Rust) | `check-plugin-privacy.py` | PASS (无原始字段回写/落盘) |
++| 插件策略契约 | `check-plugin-policy.py` | 14 项全 PASS；ACTIVE=7, PENDING=5 (W13 集成已将 pending 提升为 active；PLUGIN_SIG_BYPASS 已修为 `unwrap_or(true)`) |
++| 插件 UI 隐私 | `check-plugin-ui-privacy.py` | **FAIL** — `PLUGIN_UI_NO_SECRET_RENDER` |
++| 前端生产构建 | `npm run build` (vite) | PASS (A6 组件可编译，无 TS/eslint 错误) |
++| 构建指标回归 | `measure-build-metrics.py`（pre-merge 对 `build-metrics-4f0e8ab.json` 比对） | **FAIL** — dist 765705B vs M0 基线 612943B = **+24.91%** > 23.0% 上限；cargo_warnings 2（与基线持平，未增）；fmt_clean；无 >500KB chunk |
++
++> 注：早前用 `--skip-build --compare $(ls -1t 最新json)` 得到的 22.33% 系自比基线（最新 json 与本树几乎同值）所致，为误报；pre-merge 内置对 `4f0e8ab` 的比对方为权威值。
++| git 差异洁身 | `git diff --check` | clean (无尾随空白/冲突标记) |
++| UA 逻辑脚本 1/13 | `check-graph-ui-logic.mjs` | 113 断言通过 |
++| UA 逻辑脚本 2/13 | `check-agent-skill-ui-logic.mjs` | 110 断言通过 |
++| UA 逻辑脚本 3/13 | `check-scheduler-ui-logic.mjs` | 105 断言通过 |
++| UA 逻辑脚本 4/13 | `check-command-ui-logic.mjs` | 36 断言通过 |
++| UA 逻辑脚本 5/13 | `check-database-ui-logic.mjs` | 119 断言通过 |
++| UA 逻辑脚本 6/13 | `check-terminal-ui-logic.mjs` | 25 断言通过 |
++| UA 逻辑脚本 7/13 | `check-session-logic.mjs` | 34 断言通过 |
++| UA 逻辑脚本 8/13 | `check-resource-ui-logic.mjs` | 84 断言通过 |
++| UA 逻辑脚本 9/13 | `check-git-ui-logic.mjs` | 通过 |
++| UA 逻辑脚本 10/13 | `check-image-ui-logic.mjs` | 58 断言通过 |
++| UA 逻辑脚本 11/13 | `check-image-preview-logic.mjs` | 97 断言通过 |
++| UA 逻辑脚本 12/13 | `check-script-ui-logic.mjs` | 32 断言通过 |
++| UA 逻辑脚本 13/13 | `check-plugin-ui-logic.mjs` | **缺失 (A6 未交付)** |
++
++## 2. 阻塞项 (BLOCKER) — pre-merge FAIL `PLUGIN_UI_NO_SECRET_RENDER`
++
++`bash scripts/pre-merge.sh` 输出：
++```
++[pre-merge] FAIL: check-plugin-ui-privacy.py --self-test
++[pre-merge] FAIL: check-plugin-ui-privacy.py（插件 UI 隐私不变量被破坏）
++[pre-merge] PRE_MERGE_RESULT=FAIL
++```
++夹具命中 20 条 `PLUGIN_UI_NO_SECRET_RENDER`：`\.pubkey` ×4、`pubkey` ×16。
++
++### 根因判定：结构性误报 (false positive)，A6 代码实质合规
++
++`check-plugin-ui-privacy.py::detect_hits` 的 A2 分支对 `SECRET_RENDER_TOKENS` 做**全文子串扫描**（含 `pubkey` 且 IGNORECASE），不区分"展示存储的密钥"与"瞬时输入表单字段"。
++
++`pubkey` 字面量在 A6 代码中的**唯一**出处是受信任密钥的**瞬时粘贴输入**，从未被展示或持久化：
++
++- `src/components/plugin/PluginManager.vue`
++  - L24-25 `keyForm = reactive({ keyId:"", pubkey:"", note:"" })` — 表单瞬时字段
++  - L66-67 校验 `keyForm.pubkey.trim()` 非空 + 错误文案
++  - L94 `store.addKey(keyForm.keyId, keyForm.pubkey, keyForm.note)` — 传入即清空
++  - L96 `keyForm.pubkey = ""` — 成功后立即清空
++  - L173 `<input v-model="keyForm.pubkey" placeholder="pubkey（仅用于登记，不回显）">` — 用户输入框
++- `src/stores/usePluginStore.ts`
++  - L195-196 `addKey(keyId, pubkey, note)` 注释明确"pubkey 为瞬时入参，后端仅回 16-hex 指纹，不持久化原文"
++  - L205 `pubkey: pubkey.trim()` — 经 `bridge.pluginKeysAdd` 上送，后端只回指纹
++
++**关键合规证据**：受信任密钥列表 (`PluginManager.vue` L165-170) 只渲染 `{{ k.key_id }}` 与 `{{ k.fingerprint }}`；`pluginUi.ts::redactKeyRecord` (L168-170) 投影也只含 `key_id/fingerprint/note/added_at`，**不含 `pubkey`**。因此 A6 从不展示存储的公钥原文。
++
++> 结论：A6 未违反 W14 Hard Stop（"不展示/不持久化公钥原文"）。唯一 `pubkey` 出现处是用户自粘贴、立即清空的瞬时输入缓冲，属合规设计。夹具的子串扫描粒度过粗导致误报，使 pre-merge 误红。
++
++### 推荐修复（二选一，需 A4/A6 择一落地后复跑）
++
++- **方案 A（推荐，改夹具，A4 负责）**：`detect_hits` 的 A2 分支仅对"展示/输出位置"的 `pubkey` 判违——即只保留 `\.pubkey`（含 `{{ x.pubkey }}`、`:xxx="...pubkey"` 绑定），并删除裸 `pubkey` 子串 token；或显式排除 `<input ... v-model>` / `reactive({...})` 表单字段声明上下文。这样既放行 A6 的瞬时输入，又仍能在 `{{ detail.pubkey }}` 类真实回显时报警。
++- **方案 B（改 A6 代码）**：将瞬时字段与 placeholder 中的 `pubkey` 字面量改名（如 `keyMaterial` / 占位文案去掉 `pubkey`），使裸 token 扫描不再命中。保持夹具严格不变。
++
++## 2b. 阻塞项 (BLOCKER) — 构建指标回归 (+24.91% > 23% 上限)
++
++`bash scripts/pre-merge.sh` 输出：
++```
++[pre-merge] FAIL: build metrics regression vs logs/m0-build-metrics/build-metrics-4f0e8ab.json
++```
++
++### 根因
++`measure-build-metrics.py` 的 `TOTAL_BYTES_GROWTH_LIMIT_PCT = 23.0`，pre-merge 固定与 M0 基线 `build-metrics-4f0e8ab.json` 比对：
++- M0 基线：`dist.file_count=8`, `total_bytes=612943`
++- 当前（a7eefbb + A6 UI）：`dist.file_count=22`, `total_bytes=765705`
++- 增长 = (765705 − 612943) / 612943 = **+24.91%** → 超 23% 上限 → 门禁 FAIL
++- 佐证：`cargo_warnings=2`（与基线持平，未增）、`fmt_clean=true`、无 >500KB chunk，故仅体积越限。
++
++### 归因
++脚本头部注释记录了阈值演进史（M0=15% → M4=16% → W5=19% → W6=21% → W8=22% → W12=23%，每次均附"当前实测%"，W12 实测 22.26% 刚好压线）。本波（W13/W14）前端新增以 **A6 插件管理器面板**（`PluginManager.vue` 全量面板 + `usePluginStore.ts` + `pluginUi.ts`）为主，把基线增长从 W12 的 22.26% 推到 24.91%，越过 23% 红线。属真实门禁失败（非工具误报）。
++
++### 推荐处置（需 A0 / A6 决策，**非 A11 越权修改**）
++- **方案 C（推荐，A0 重定基线）**：沿用历史先例（W5/W6/W8/W12 均由 A0 书面抬阈），在脚本注释中追加一条 M5-W14 记录并 `TOTAL_BYTES_GROWTH_LIMIT_PCT` 抬至 26%（当前实测 24.91%，留 1pp 余量），附书面理由。
++- **方案 D（A6 减量）**：若不愿抬阈，A6 可将插件面板改为路由级懒加载（动态 import）并剔除未用依赖，压低主包；但注意本门禁比对的是 dist **总**体积，懒加载只能降主包、难降总量，效果有限。
++
++## 3. 次级缺口 (GAP) — A6 未交付 `check-plugin-ui-logic.mjs`
++
++A6 Must-Deliver 要求提供无头 UI 逻辑测试 `scripts/check-plugin-ui-logic.mjs`（对标其余 12 个 UA 脚本）。当前该文件**不存在**，导致 `pluginUi.ts` 中的纯函数（`canTransitionUi` / `enabledActionsFor` / `redactDetail` / `parseManifestInput` / ACL 风险档）**未被自动化覆盖**。这些函数与后端 `plugin.rs::can_transition` 1:1 镜像，是 W14 高价值回归点，建议 A6 立即补交。
++
++## 4. 软观察（非门禁失败，长期建议）
++
++- `usePluginStore.ts::describeError` (L22-25) 将 `e.message` 截断 300 字后写入 `store.error` 并直接渲染 (`PluginManager.vue` L239)。PENDING 策略 `PLUGIN_UI_ERROR_CODE_ONLY` 当前不强制，但严格读法要求"错误只渲染稳定码、不渲染原始消息体"。建议长期把错误映射为稳定 `error_code`（与 `PluginSummary.error_code` 一致），而非原始 message。
++- `uninstall` 在 A6 中经 `bridge.pluginDisable` 落地（后端无独立 uninstall 命令，遵循 W13"不新增生命周期命令"红线）。属合理设计，但 UI 文案"卸载"与后端"disable"语义需对齐，避免用户误解。
++
++## 5. A11 自派发 (self-dispatch) 备注
++
++- 本验证在 `a7eefbb` 基线 + 期间落入的 A6 UI 代码上完成两轮复跑；首轮（A6 未入树）全绿，次轮（A6 `PluginManager.vue`/`usePluginStore.ts`/`pluginUi.ts` 入树）暴露上述误报。
++- A11 不越权修改 A4 夹具或 A6 产品代码；阻塞项与缺口已写入 `logs/assist/A11-M5-W14-plugin-ui-verification-20260907-1510.md` 供对应 Lane 处理。
++- 未 push（依指令）。
++
++## 6. 合并门禁最终判定
++
++- pre-merge：**FAIL**，两处红项：
++  1. 插件 UI 隐私夹具误报（`pubkey` 瞬时输入，非真实违规）→ 待方案 A 或 B 落地；
++  2. 构建指标回归（dist +24.91% > 23%）→ 待方案 C（A0 抬阈）或方案 D（A6 减量）。
++- A6 另需补交 `check-plugin-ui-logic.mjs`（第 13 项 UA 脚本）。
++- 上述三项（A/B + C/D + 缺失脚本）闭环后，预期 pre-merge 转 **ALL_PASS**，W14 可合并。

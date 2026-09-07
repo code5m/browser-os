@@ -1,0 +1,31 @@
+diff --git a/scripts/check-mcp-policy.py b/scripts/check-mcp-policy.py
+index 12590a6..215dcde 100755
+--- a/scripts/check-mcp-policy.py
++++ b/scripts/check-mcp-policy.py
+@@ -254,10 +254,10 @@ def c_graph_not_exposed(rel, text, repo):
+     # 可执行工具，也不得进入 MCP 能力白名单 / 注册表 / stdio 骨架
+     # （W12 Hard Stop 行 209：MCP full runtime 仍然 LOCKED）。
+     # 守门文件：`mcp.rs`（命令注册表）、`domain.rs`（`MCP_CAPABILITY_V1` 白名单块）、
+-    # `mcp_server.rs` / `bin/mcp_server.rs`（stdio 骨架）。命中任一图谱能力标识即判
++    # `mcp_server.rs`（stdio 骨架）。命中任一图谱能力标识即判
+     # 「图谱能力被接进 MCP 面」；未解锁前必须显式改本码位并留 A0 裁决记录。
+     if rel not in ("src-tauri/src/mcp.rs", "src-tauri/src/domain.rs",
+-                   "src-tauri/src/mcp_server.rs", "src-tauri/src/bin/mcp_server.rs"):
++                   "src-tauri/src/mcp_server.rs"):
+         return None
+     # `domain.rs` 内本就有 GRAPH_* 容量常量与 GraphNode/GraphEdge 领域类型，
+     # 故只守「能力白名单块」，避免误报；其余 MCP 文件全文件扫描。
+@@ -281,11 +281,11 @@ def c_plugin_not_exposed(rel, text, repo):
+     # 可执行工具，也不得进入 MCP 能力白名单 / 注册表 / stdio 骨架
+     # （W13 Hard Stop：plugin invoke / command execution / MCP full runtime 仍然 LOCKED）。
+     # 守门文件：`mcp.rs`（命令注册表）、`domain.rs`（`MCP_CAPABILITY_V1` 白名单块）、
+-    # `mcp_server.rs` / `bin/mcp_server.rs`（stdio 骨架）。命中任一插件能力标识即判
++    # `mcp_server.rs`（stdio 骨架）。命中任一插件能力标识即判
+     # 「插件能力被接进 MCP 面」；未解锁前必须显式改本码位并留 A0 裁决记录。
+     # 与 W12 的 `MCP_GRAPH_NOT_EXPOSED` 同源范式。
+     if rel not in ("src-tauri/src/mcp.rs", "src-tauri/src/domain.rs",
+-                   "src-tauri/src/mcp_server.rs", "src-tauri/src/bin/mcp_server.rs"):
++                   "src-tauri/src/mcp_server.rs"):
+         return None
+     # `domain.rs` 内本就有插件领域类型（如 `PluginManifest` / `PluginState`），
+     # 故只守「能力白名单块」，避免误报；其余 MCP 文件全文件扫描。

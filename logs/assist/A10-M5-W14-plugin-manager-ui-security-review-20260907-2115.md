@@ -1,0 +1,124 @@
+# A10 · M5-W14 Plugin Manager UI — Security Review
+
+> 生成：2026-09-07 21:15 CST · Lane A10（M5-W14 · SECURITY REVIEW）
+> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W14（lines 1163-1196，Lane A10 row 1188）
+> 启动门禁（见 §0）：`WORKSPACE_ID=BACKV3_MAIN` ✅ / 主目录 ✅ / `master` @ `a7eefbb`（ff-only 已最新）✅ / 工作树含 A1 文档在改（非我任务，已留 untouched）✅
+> 形态：安全复核，仅 `logs/assist/` + `logs/checkpoints/`，**零产品代码、零策略脚本改动**。
+
+---
+
+## 0. 启动门禁自检
+
+```text
+pwd = /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3     ✅
+git branch = master                                            ✅
+git fetch && git pull --ff-only = 已经是最新的（HEAD a7eefbb）   ✅
+git status --short = 4 个 M（AI-模型切换与接手清单.md / PARALLEL_COMMAND_BOARD.md /
+                  后续需求TODO.md / 详细设计与实施计划.md）—— 均属 A1 W14 文档协调，
+                  非本任务文件；按 M4 既定模式「后手 lane 只写自己检查点，不碰高冲突文档」留 untouched ✅
+仅 A0 push（W14 Hard Stop：Only A0 pushes）                      ✅ 遵守
+```
+
+> 工作树 dirty 的 4 个文件是 A1 的 W14 文档 reconcile（并行 lane 常态），不属 A10 范围；本批只读评审 + 仅新增 `logs/` 下自有文件，不触碰之，故不触发「stop if dirty」终止条件（未踩他人文件）。
+
+---
+
+## 1. 评审范围（W14 Hard Stops → 安全面映射）
+
+按 board §W14 Hard Stops（lines 1167-1174）与 Lane A10 行（1188），本批核查：
+
+| 维度 | 对应硬停 | 本批可达成的判定 |
+|---|---|---|
+| raw-invoke 旁路 | 1171：UI 只调 `src/bridge.ts`，禁裸 Tauri `invoke` | 后端契约层已审查；**UI 层待 A6 落地** |
+| 确认旁路（confirmation bypass） | 1172 上下文 + A6 行「state-changing 动作显式确认」 | **UI 层待 A6 落地** |
+| source / ACL 漂移 | 1173：命令名/DTO 冻结，W14 不增 lifecycle 命令 | ✅ 后端 8 命令齐全 + ACL + 来源校验；无漂移 |
+| 敏感渲染回归（sensitive-rendering） | 1172：禁显/存原始签名/公钥材料/资源路径/metadata/凭据/请求响应体/stdout/stderr | ✅ 冻结 DTO 展示面已脱敏；input 面须 UI 自律 |
+
+---
+
+## 2. 关键取证（现状快照）
+
+评审时点（`a7eefbb`，W13 已合）插件域实际落地：
+
+- **后端 8 命令（W13 合入）**：`bridge.rs` 函数 `plugin_install`(6729)/`plugin_enable`(6779)/`plugin_disable`(6794)/`plugin_list`(6809)/`plugin_get`(6821)/`plugin_keys_add`(6835)/`plugin_keys_list`(6876)/`plugin_keys_remove`(6887)。**每个函数体首行**即 `check_invocation_source(&webview, "plugin_*", None, &app)?`（行 6735/6784/6799/6814/6826/6842/6880/6892）。
+- **ACL**：`default-commands.toml:130-137` 列出全部 8 条，插在末条 `list_artifact_images` 之前（K1 末条恒定性）。
+- **审计脱敏（后端）**：`bridge.rs:6657-6658` 注释「读命令 `plugin_list`/`plugin_get`/`plugin_keys_list` 不写审计」；`plugin_install` 的 `resource_path`（:6736-6737）「必须在允许根目录内；**只取『是否通过』布尔，绝不落盘路径**」——无路径逃逸、无敏感路径入审计。
+- **冻结桥方法**：`src/bridge.ts:718-740` 8 个方法均经**中央 `invoke()` 包装**（非裸 `window.__TAURI__.invoke`），命令名 + 字段 snake_case 映射正确；注释声明「无执行面；公钥只回 16-hex 指纹」。
+- **冻结 TS DTO（展示面已脱敏）**：`src/types.ts` ——
+  - `PluginSummary`(990-998)：id/version/display_name/state/capability_count/**hash_prefix**/updated_at，无签名、无路径。
+  - `PluginDetail`(1016-1029)：同上 + `signature: PluginSignatureView`(1008-1013，无 `value`)+ `resource: PluginResourceMeta`(982-987，仅布尔+声明摘要，不落绝对路径)。
+  - `PluginSignatureView`(1008-1013)：algorithm/key_id/**status**，无 `value` 原文。
+  - `TrustedKeyRecord`(1032-1037)：key_id/**fingerprint**(16-hex)/note/added_at，无公钥原文。
+  - `PluginCapabilityView`(1001-1005)：capability/reason/acl_level，UI 须逐项展示禁折叠。
+- **A6 的 W14 UI 产品代码**：**不在树中**。证据：
+  - `git status --short` 仅 A1 的 4 文档；无 `src/components/plugin/**`（`list_dir` ENOENT）、无 `src/stores/usePluginStore.ts`（`search_file` 0）、无 `scripts/check-plugin-ui-logic.mjs`（`search_file` 0）。
+  - `grep -r plugin src/components src/stores` → 0 命中。
+  - 无 `logs/assist/A6-M5-W14*` / 无 A6 W14 提交（`git log` 末条 `a7eefbb` W13 合入）。
+
+---
+
+## 3. 发现
+
+### F-1【PASS】后端契约：8 命令齐全 + 来源校验 + ACL 同位 + 无审计/路径敏感
+- 8 命令全部 `check_invocation_source` 置首行（bridge.rs:6735/6784/6799/6814/6826/6842/6880/6892），远程伪造 label 一律拒。
+- ACL 8 条全登记于 `list_artifact_images` 之前（default-commands.toml:130-137）。
+- 读命令不写审计（bridge.rs:6657-6658）；`resource_path` 仅取布尔、不落盘（:6736-6737）。**source/ACL 无漂移**（W14 冻结未被破坏）。
+
+### F-2【PASS】冻结桥方法经中央 `invoke` 包装，无裸 Tauri invoke
+- `src/bridge.ts:718-740` 8 方法均 `invoke<T>("plugin_*", {...})`（中央包装），命令名与后端一致；无 `window.__TAURI__.invoke` 裸调用。契约层 raw-invoke 旁路已闭合。
+
+### F-3【PASS】TS DTO 展示面已脱敏（敏感渲染回归在类型层闭合）
+- `PluginSummary`/`PluginDetail`/`PluginSignatureView`/`TrustedKeyRecord`/`PluginResourceMeta` 均不含 `signature.value`、公钥原文、资源绝对路径；仅 `hash_prefix`/`fingerprint`/布尔（types.ts:982-1037）。
+- `PluginManifest.metadata?: unknown` 与 `PluginSignature.value` 仅作 **install 输入**类型（:961-980），**不出现在任何读/展示 DTO** → 展示路径无敏感渲染回归。
+
+### F-4【阻断·范围缺口】A6 W14 UI 未落地，UI 层三项判定无法闭环
+- 按 board Lane A6 W14 行（1184）应交付 `src/components/plugin/**` + `usePluginStore.ts` + `check-plugin-ui-logic.mjs` + workspace 导航集成。但截至 `a7eefbb` 这些**零落地**。
+- 影响：raw-invoke 旁路 / 确认旁路 / UI 敏感渲染 三项 **UI 层**判定无法在本题完成，只能给前向门禁（F-5）。
+- 处理：本批 A10 给「后端/契约层 PASS + UI 层 PENDING」；待 A6 命令 wave 合入后，A10 须再开一轮复审（建议 A0 在 A6 交付后显式触发）。**非缺陷，是范围缺口**。
+
+### F-5【前向门禁·供 A6 UI wave 落地时强制满足】W14 UI 安全契约清单
+（映射 W14 Hard Stops lines 1167-1174 + Lane A6 行 1184；A6 实现前逐条须有 UI 逻辑测试/断言）
+
+1. **仅经 `bridge.ts` 封装**：所有插件操作调 `bridge.pluginInstall/Enable/Disable/List/Get/KeysAdd/KeysList/KeysRemove`；**禁** `window.__TAURI__.invoke("plugin_*", ...)` 裸调用（raw-invoke 旁路）。`check-plugin-ui-logic.mjs` 须断言无裸 invoke（可扫 `src/components/plugin/**` 源码）。
+2. **状态变更显式确认**：install/enable/disable/keys_add/keys_remove 必须弹确认模态（含 id/version/风险档），**禁**静默执行（确认旁路）。禁用态/失败态/空态/加载态须确定性渲染。
+3. **渲染仅 redacted 字段**：禁显示或持久化 `signature.value`、公钥原文（仅 `fingerprint` 16-hex）、资源绝对路径、`manifest.metadata` 原文、凭据、请求/响应体、stdout/stderr。install 预览须用 `PluginSignatureView`（结构）而非 `PluginManifest.signature.value`。
+4. **命令/DTO 冻结**：W14 不新增 lifecycle 命令；不扩展运行时权限（无 `plugin_invoke`/执行/动态加载/下载）。`bridge.ts`/`types.ts` 仅 frozen-type 修正。
+5. **门禁**：`check-plugin-ui-logic.mjs` 断言 + `npm build` PASS + 纳入现有 workspace 导航且不引入 Agent/Skill/tool 执行入口（A5 锁，W14 Hard Stop 191 类一致）。
+
+### F-6【INFO·input 面自律】install 输入类型持原文，须 UI 不渲染
+- `PluginManifest.signature.value`(types.ts:964) 与 `metadata?: unknown`(:979) 为 install 输入；UI 构建安装清单时持有原文。**类型层展示面已脱敏，但输入面须 UI 自律**——仅用于提交 `pluginInstall`，绝不渲染/持久化/回显。建议 `check-plugin-ui-logic.mjs` 加断言：安装预览组件不绑定 `signature.value` 到任何 DOM 文本。
+
+---
+
+## 4. 红线对照（W14 Hard Stops）
+
+| 硬停 | 判定 | 证据 |
+|---|---|---|
+| 1171 禁裸 Tauri invoke（只调 bridge.ts） | ✅ 契约层（桥方法中央包装）；⏳ UI 层 PENDING | bridge.ts:718-740 |
+| 1172 禁显/存原始签名/公钥/路径/metadata/凭据/请求响应/stdout/stderr | ✅ 展示 DTO 已脱敏；⏳ UI 渲染 PENDING | types.ts:982-1037 |
+| 1173 命令名/DTO 冻结，W14 不增 lifecycle 命令 | ✅ 8 命令 + 视图类型，无新增 | bridge.ts/types.ts grep |
+| 1172 上下文：state-changing 显式确认 | ⏳ UI 层 PENDING（无 UI） | — |
+| 仅 A0 push | ✅ 遵守 | 本批零提交零推送 |
+
+---
+
+## 5. 安全结论（VERDICT）
+
+**STATUS = PASS_WITH_DEBT（后端/契约层 PASS + UI 层 PENDING）**
+
+- 已闭环：W14 依赖的后端 Stage-I 契约与冻结前端 DTO **全部满足** W14 安全硬停——
+  - source/ACL 无漂移（8 命令齐全 + 首行来源校验 + ACL 末条前登记）；
+  - raw-invoke 旁路在契约层闭合（桥方法中央 `invoke` 包装，无裸 Tauri invoke）；
+  - 敏感渲染回归在类型层闭合（展示 DTO 无 signature.value/公钥原文/资源路径，仅 hash_prefix/fingerprint）。
+- 未闭环（债）：A6 的 W14 **UI 产品代码未落地**（F-4），故 raw-invoke/确认/UI 敏感渲染 三项 UI 层判定须 A6 合入后 A10 复审；已给前向门禁（F-5）+ input 面自律提示（F-6）。
+- 构建指标：W14 无产品代码新增于本快照 → 无 cargo/npm 回归（A6 落地后由 A11 门禁覆盖）。
+
+---
+
+## 6. 声明
+
+- 本批**未修改任何产品代码或策略脚本**，亦**未触碰** A1 的 4 个 dirty 文档（高冲突文件，按 M4 模式留 A0 套用）。
+- 未实跑 `cargo build` / `npm build` / `pre-merge.sh`：W14 无产品代码新增于本快照（A6 未交付）；后端 W13 契约已合且编译通过。结论基于源码实证（grep + 类型/ACL/来源校验定位），非文档互证。
+- 修复指派（均非 A10 权限）：
+  - F-4：A0 确认 A6 本批补实现；若补，A10 复审（重点 F-5 三项 UI 层）。
+  - F-5/F-6：纳入 A6 UI wave 的 `check-plugin-ui-logic.mjs` 断言与组件实现要求。

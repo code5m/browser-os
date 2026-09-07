@@ -96,6 +96,10 @@ pre-merge.sh — M0-1.c 本地 pre-merge 门禁（M0-1 脚本合并前检查入�
   database policy fixture       check-database-policy.py --self-test / --expect-pending / 默认门禁
                                 （M4-2.s；7 ACTIVE 码 + 8 pending 码，产物存在才判）
   plugin privacy fixture        check-plugin-privacy.py --self-test / 默认门禁
+  plugin UI privacy fixture     check-plugin-ui-privacy.py --self-test / 默认门禁
+                                （M5-W14；2 ACTIVE 码 + 2 pending 码。gated：A6 前端文件
+                                  落地前为 no-op；落地后激活，守住「只经 bridge.ts / 禁渲染
+                                  密钥签名路径 / 禁浏览器持久化 / 错误只显稳定码」）
                                 （M5-W13；2 ACTIVE 码 + 5 pending 码。pending 通道当前
                                   有意报红：A9 需在 W13 接线前闭环 3 项回显缺陷，故暂不接
                                   --expect-pending 以免阻塞批次；修复后再接入并转 ACTIVE）
@@ -392,6 +396,13 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/check-plugin-privacy.py" >/dev/null 2>&1 \
     || pm_fail "check-plugin-privacy.py（插件隐私不变量被破坏）"
 
+  # M5-W14（Lane A4）：插件管理器 UI 隐私夹具（gated：A6 前端文件未落地时为 no-op，
+  # 默认门禁与 --self-test 均绿；A6 落地后激活，守住渲染/存储层隐私红线）。
+  python3 "$SCRIPT_DIR/check-plugin-ui-privacy.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-plugin-ui-privacy.py --self-test"
+  python3 "$SCRIPT_DIR/check-plugin-ui-privacy.py" >/dev/null 2>&1 \
+    || pm_fail "check-plugin-ui-privacy.py（插件 UI 隐私不变量被破坏）"
+
   # M4-8（Lane A8）：定时任务 UI 不变量夹具 + 前端逻辑层测试。
   # 守护「前端不许绕过 A6 契约」的结构红线（SCHEDUI_* 码位），与 M4-5.d 后端码位互不重叠。
   # --self-test 双向自检（1 好样本 + N 坏样本变异防呆）；默认模式按设计放行。
@@ -564,6 +575,10 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/check-plugin-privacy.py" ] || { echo "FAIL: check-plugin-privacy.py missing"; rc=1; }
   if ! python3 "$SCRIPT_DIR/check-plugin-privacy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-plugin-privacy.py --self-test"; rc=1
+  fi
+  [ -f "$SCRIPT_DIR/check-plugin-ui-privacy.py" ] || { echo "FAIL: check-plugin-ui-privacy.py missing"; rc=1; }
+  if ! python3 "$SCRIPT_DIR/check-plugin-ui-privacy.py" --self-test >/dev/null 2>&1; then
+    echo "FAIL: check-plugin-ui-privacy.py --self-test"; rc=1
   fi
   [ -f "$SCRIPT_DIR/check-database-policy.py" ] || { echo "FAIL: check-database-policy.py missing"; rc=1; }
   if ! python3 "$SCRIPT_DIR/check-database-policy.py" --self-test >/dev/null 2>&1; then

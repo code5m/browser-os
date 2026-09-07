@@ -33,6 +33,9 @@ const AgentManagerPanel = defineAsyncComponent(() => import("../workspace/AgentM
 // M5-9 图谱面板：懒加载（defineAsyncComponent），将其纯逻辑(graphUi.ts)、store(useGraphStore.ts)
 // 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
 const GraphPanel = defineAsyncComponent(() => import("../graph/GraphPanel.vue"));
+// M5-W14 插件管理器面板：懒加载（defineAsyncComponent），将其纯逻辑(pluginUi.ts)、
+// store(usePluginStore.ts) 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
+const PluginManager = defineAsyncComponent(() => import("../plugin/PluginManager.vue"));
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
@@ -168,6 +171,11 @@ watch(
     <!-- ===== 定时任务（M4-8） ===== -->
     <div v-else-if="layout.mainView === 'tasks'" class="modview">
       <TaskPanel />
+    </div>
+
+    <!-- ===== 插件管理器（M5-W14） ===== -->
+    <div v-else-if="layout.mainView === 'plugin'" class="modview">
+      <PluginManager />
     </div>
     <div v-else-if="layout.mainView === 'skills'" class="modview">
       <SkillManagerPanel />

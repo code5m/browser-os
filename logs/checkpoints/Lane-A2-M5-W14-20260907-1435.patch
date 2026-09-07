@@ -1,0 +1,229 @@
+diff --git a/logs/assist/A2-M5-W14-boundary-verdict-20260907-1435.md b/logs/assist/A2-M5-W14-boundary-verdict-20260907-1435.md
+new file mode 100644
+index 0000000..025678a
+--- /dev/null
++++ b/logs/assist/A2-M5-W14-boundary-verdict-20260907-1435.md
+@@ -0,0 +1,165 @@
++# A2 · M5-W14 Plugin Manager UI 边界评审裁定（BOUNDARY REVIEW VERDICT）
++
++> 生成：2026-09-07 14:35 CST · Lane A2（M5-W14 · **START REVIEW ONLY**）
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W14 Plugin Manager UI Dispatch，A2 行：
++> 「Check UI/store boundary: **no domain duplication, raw bridge invoke, or lifecycle authority expansion**.」
++> 基线：`master @ a7eefbb`（`feat(M5): integrate W13 plugin manifest lifecycle`；`git fetch`+`git pull --ff-only` 已最新；工作树干净）
++> 性质：**只读评审**。未写产品代码（W14 UI 由 A6 在 `src/components/plugin/**`、`src/stores/usePluginStore.ts` 落地，本 Lane 不触碰），未改 `bridge.ts`/`types.ts`/`domain.rs`/组件/策略脚本，未 push。
++
++---
++
++## 0. 裁定摘要（VERDICT）
++
++| 维度 | 结论 |
++|---|---|
++| **冻结契约边界（UI 必须遵守的边界本身）** | ✅ **PASS（干净）** —— `bridge.ts` 仅 8 个 Stage-I 方法，无 `plugin_invoke`；输出 DTO 全脱敏（无 signature.value/公钥原文/资源路径/metadata）；签名字段状态用 `structure_ok\|structure_failed`（**非** `verified`，与 W13 B3 一致） |
++| **A6 UI/store 边界规则** | ⚠️ 给出 **C0–C7** 强制条件；A6 须逐条满足，由 A10/A11 终验 |
++| **本 Lane 可认证度** | A6 的 W14 UI 代码**尚未落盘**（工作树无 `src/components/plugin/`、`usePluginStore.ts`、`check-plugin-ui-logic.mjs`），故本裁定为**契约级边界裁定 + A6 实施边界清单**；A6 产出后由 A10/A11 做代码级复核 |
++| **硬停冲突** | 契约层面 **0**；潜在越权点已写入条件项防呆 |
++
++**一句话**：W13 已把 UI 的「边界」焊死在 `bridge.ts`/`types.ts`/`domain.rs` 这层**只读、脱敏、Stage-I 专属**的契约上；A6 只需**消费**它、**镜像**类型、用 `bridge.ts` 包装调用，不得重复领域逻辑、不得裸 `invoke`、不得新增命令或暴露执行面。
++
++---
++
++## 1. 评审对象与证据
++
++| # | 对象 | 位置 | 关键证据 |
++|---|---|---|---|
++| E1 | 前端插件方法（冻结契约） | `src/bridge.ts:721-739` | 8 个：`pluginInstall`/`pluginEnable`/`pluginDisable`/`pluginList`/`pluginGet`/`pluginKeysAdd`/`pluginKeysList`/`pluginKeysRemove` |
++| E2 | 前端插件类型（镜像） | `src/types.ts:937-1029` | `PluginState`/`PluginEntry`/`PluginCapability`/`PluginSignature`/`PluginManifest`/`PluginResourceMeta`/`PluginSummary`/`PluginCapabilityView`/`PluginSignatureView`/`PluginDetail` |
++| E3 | 后端插件 DTO（单一真源） | `src-tauri/src/domain.rs:2309-2409` | `PluginRecord`/`PluginSummary`/`PluginCapabilityView`/`PluginSignatureView`/`PluginDetail`/`TrustedKeyRecord` |
++| E4 | 能力风险档 | `src-tauri/src/domain.rs:1915` | `AclLevel { Safe, Confirm, Dangerous }` |
++| E5 | 裸 `invoke('plugin_` 基线 | 全仓 `src/` | 当前命中 **0**（禁止模式，A6 须维持） |
++| E6 | `plugin_eval` 命名坑 | `src-tauri/src/bridge.rs:143` | tabs 域 JS-eval 助手，**非**插件路径，禁被插件 UI 复用 |
++
++---
++
++## 2. 冻结契约审计（PASS）
++
++### 2.1 命令面 = 恰好 8 个 Stage-I（无 invoke）
++
++`bridge.ts` 仅转发：
++
++```text
++plugin_install   plugin_enable   plugin_disable
++plugin_list      plugin_get
++plugin_keys_add  plugin_keys_list  plugin_keys_remove
++```
++
++`grep -nE 'plugin_invoke|plugin_storage|plugin_audit|plugin_permissions|plugin_delete|plugin_uninstall' src/bridge.ts` → **0 命中**。
++→ 契约层面 **无执行面**（invoke/storage/audit/permissions/delete 全 LOCKED），与 W14 硬停「No plugin_invoke / 无执行」一致。 ✅
++
++### 2.2 输出 DTO 全脱敏（与 A4 W13 闭环一致）
++
++| DTO | 含 | 不含（已防呆） |
++|---|---|---|
++| `PluginSummary` | id/version/display_name/state/capability_count/**hash_prefix**(16hex)/updated_at | 无 signature、无资源路径 |
++| `PluginDetail` | 同上 + capabilities[].acl_level + `PluginSignatureView` + `PluginResourceMeta` | 无 signature.value、无资源绝对路径、无 manifest 正文 |
++| `PluginSignatureView` | algorithm/key_id/status | **无 `value` 原文**（后端 `PluginRecord` 亦不落） |
++| `PluginResourceMeta` | declared_hash(16hex)/path_provided(bool)/verified(bool) | 无绝对路径 |
++| `TrustedKeyRecord` | key_id/**fingerprint**(16hex)/note/added_at | 无公钥原文 |
++
++`domain.rs:2305-2328` 注释明示：登记簿不落资源绝对路径、不落 `signature.value`、不落公钥原文、刻意不整份持久化 `PluginManifest`（metadata 即使过凭据检测也不落盘）。
++→ 输出面已结构性防泄露，**UI 只需不额外渲染**即可合规。 ✅
++
++### 2.3 签名状态口径 = `structure_ok`/`structure_failed`（非 verified）
++
++`PluginSignatureView.status`（domain.rs:2378）/ `types.ts:1012` 取值 `structure_ok|structure_failed`，**不含 `verified`**。
++→ 与 W13 阻塞项 B3（真验签不可达、禁称「已验签」）**完全对齐**，UI 不得把该状态呈现为「已验签」。 ✅
++
++### 2.4 能力风险档三档对齐
++
++`AclLevel { Safe, Confirm, Dangerous }` ↔ `types.ts` `acl_level: "safe"|"confirm"|"dangerous"`。
++→ UI 须逐项展示能力风险（与 MCP/Skill 一致），install/enable 遇 `dangerous` 须走两段式确认 + keyring（W13 卡 §2.4）。 ✅
++
++---
++
++## 3. UI/store 边界规则（A6 必须满足）
++
++### C0 · 安装输入不得渲染/回显裸签名与 metadata（防泄漏，先于一切）
++- `types.ts:PluginManifest.signature.value: string` 与 `metadata?: unknown` 是**输入**字段（用户粘贴 manifest JSON 安装），**不是**展示字段。
++- 规则：安装入口应接收**原始 JSON 文本**透传给 `pluginInstall({manifest})`，**不**把 `signature.value` / `metadata` 反序列化后渲染进任何面板、日志、审计或 `usePluginStore` 的可序列化快照；store 只缓存**输出** DTO（`PluginSummary`/`PluginDetail`/`TrustedKeyRecord`）。
++
++### C1 · 无 domain duplication（store 只持 UI 态，不持领域逻辑）
++- `usePluginStore.ts` 只存：**列表缓存、过滤器、对话框/确认态、`pendingConfirms`、受信任密钥缓存、install 草稿**。
++- **禁止**在 store/组件中重实现：`can_transition`/`transition`/`validate_plugin_manifest`/`capability_acl_level`/`check_plugin_capabilities`/ACL 判定 —— 这些全在后端，UI 仅调用 `pluginEnable`/`pluginDisable` 等并据返回 `state` 渲染。
++- `types.ts` 是 `domain.rs` 的**镜像**，A6 不得为「便于 UI」在 `types.ts` 增删字段（若要改须走「frozen-type corrections」且仅限对齐后端，且须同步 `domain.rs`）。
++
++### C2 · 无 raw bridge invoke（统一走 `src/bridge.ts`）
++- 所有插件调用**只**经 `src/bridge.ts` 的 8 个包装；组件/store 不得 `invoke('plugin_*')` 裸调。
++- 基线当前 `src/` 裸 `invoke('plugin_` 命中 **0** —— A6 须维持 0；`scripts/check-plugin-ui-logic.mjs` 应把「无裸 `invoke('plugin_`」作为硬码位。
++- **禁止**复用 `bridge.rs:plugin_eval`（tabs 域 JS-eval，执行路径）—— 插件 UI 不得经由它获得任何执行能力（W13 C5 延续）。
++
++### C3 · 无 lifecycle authority expansion（只用 8 命令，不增不减）
++- UI **不得**新增任何命令、不得为 `plugin_invoke`/storage/audit/permissions/delete 添加入口或按钮（LOCKED）。
++- ACL 与命令名已冻结（W14 硬停「Do not add lifecycle commands」）；前端不得出现 "Run"/"Invoke"/"Execute"/"调用" 之类插件执行按钮。
++
++### C4 · 显式确认（state-changing 动作不自动应用）
++- `pluginInstall`/`pluginEnable`（含 dangerous 能力需两段式+keyring）/`pluginDisable`/`pluginKeysAdd`/`pluginKeysRemove` 必须走**显式确认对话框**，不可静默/批量自动应用。
++- 确认文案须显式包含：id、version、capabilities（逐项）、风险档、来源、hash 前 8 hex（与 W13 卡 §7 `PermissionPreviewModal` 口径）。
++
++### C5 · 受信任密钥只显指纹，不显公钥原文
++- 密钥管理面板只读 `pluginKeysList()` → 渲染 `key_id` + `fingerprint`(16hex) + `note`；**不**显示/复制完整公钥。
++- `pluginKeysAdd` 粘贴公钥的动作本身须走 Confirm（W13 卡 §2.2）。
++
++### C6 · 常量单一真源（UI 侧不新造字面量）
++- 任何 UI 侧上限（如能力列表缓存 ≤ N、详情审计摘要 ≤ 50、hash 展示长度）若对应后端常量（`MAX_TEXT_FIELD_BYTES` / `HASH_HEX_LEN_SHORT` 等，W13 B2 提及），**须**引用同一来源或镜像，不得在前端散落新字面量（避免 W13 B2 漂移）。
++
++### C7 · 仅本地安装、无网络/下载（与 W13 HS-10 一致）
++- `pluginInstall` 的 `resourcePath` 必须是**本地文件**（文件选择器），UI 不得提供 URL/下载入口；不得出现 "download from network" 语义。
++
++---
++
++## 4. 硬停逐条交叉核对
++
++| W14 硬停 | 契约级结论 | 交谁复核 |
++|---|---|---|
++| 无 `plugin_invoke`/执行/动态加载/网络/daemon/模型/Agent-Skill/MCP 扩容/图谱写/后台 | 契约无这些方法；UI 仅消费 8 命令 ✅ | A5/A3/A10 |
++| UI 只调 `src/bridge.ts`，无裸 `invoke` | 基线 0 裸 invoke；C2 维持 | A10/A11 |
++| 不展示/不持久化 裸签名/公钥材质/资源路径/manifest metadata/凭据 | 输出 DTO 已脱敏；C0 防输入回显 | A4/A10 |
++| 命令名/DTO 冻结，W14 不加命令 | 8 命令已冻结；C3 守 | A9/A11 |
++
++---
++
++## 5. 跨 Lane 观察（交对应 Lane）
++
++- **W1 → A9（backend review）**：冻结契约已覆盖 UI 所需只读展示字段（`capabilities[].acl_level`、`hash_prefix`、`signature.status`、`resource` 布尔、`installed_at`/`updated_at`）。**潜在缺失**：W13 卡曾提 `metadata.changelog` 作为升级展示字段，但 `PluginDetail` **未**携带它（后端 `PluginRecord` 不落 metadata）。若 A6 需「changelog」展示，须 A9 在后端补只读字段或明确「W14 不展示 changelog」。**传递 A9 裁定**。
++- **W2 → A4（privacy）**：`PluginManifest` 输入含 `signature.value` 与 `metadata`；C0 要求不回显/不持久化。后端 `PluginRecord` 已不落（domain.rs:2325-2328），前端须同口径。
++- **W3 → A5（Agent/Skill lock）**：UI 不得含 Agent/Skill/tool 执行 affordance；Stage-I 无执行语义，确认面板不与 `PermissionPreviewModal` 的 agent/skill 路径混淆。
++- **W4 → A3（MCP isolation）**：8 命令不在 `mcp_server.rs`（W13 已核 plugin 命中 0）；A6 无法改变 MCP 面，但请 A3 在 A6 产出后复核 MCP 工具未自动收录插件命令。
++- **W5 → A10（security）**：重点查 ① 裸 `invoke` 绕过（C2）② 确认对话框绕过（C4，如确认态可被程序跳过）③ 源/ACL 漂移（C3）④ 敏感渲染回归（C0/C5）。
++- **W6 → A11（verification）**：`scripts/check-plugin-ui-logic.mjs` 须含码位：无裸 `invoke('plugin_`、仅 8 命令、输出不渲染 `signature.value`、密钥只显指纹；并跑通 `pnpm build` + `pnpm test:unit`。
++
++---
++
++## 6. A6 开工前置自检清单（UI/store 边界）
++
++```text
++[ ] 代码位于 src/components/plugin/** 与 src/stores/usePluginStore.ts（不污染其它模块）
++[ ] 所有插件调用经 src/bridge.ts 8 包装；全局裸 invoke('plugin_ 命中 = 0
++[ ] 未新增任何 bridge.ts 插件方法（命令名/DTO 冻结）
++[ ] 未出现 plugin_invoke / Run / Invoke / Execute 入口或按钮
++[ ] usePluginStore 仅持 UI 态，无 can_transition/validate/ACL 重实现
++[ ] 安装入口接收原始 manifest JSON 透传；signature.value / metadata 不渲染/不进 store 快照
++[ ] 详情/签名/资源/密钥展示只用输出 DTO；密钥只显 fingerprint(16hex)
++[ ] 状态变更动作（install/enable/disable/keys_*）走显式确认；dangerous 能力走两段式+keyring
++[ ] install 仅本地文件选择，无网络/下载语义
++[ ] 前端不新增与后端常量重复的字面量上限
++[ ] scripts/check-plugin-ui-logic.mjs 含上述硬码位；pnpm build + test:unit 全绿
++```
++
++---
++
++## 7. 需 A0 / 后续 Lane 拍板
++
++1. **A6 代码级复核**：本裁定为契约级；A6 落码后由 **A10（security）+ A11（verification）** 做代码级边界复核（本 Lane 不重复评审，避免越权改产品代码）。
++2. **W1 changelog 字段**：是否补只读 `changelog` 字段（交 A9），或 W14 明确不展示。
++3. 若 A6 确需 `types.ts` 对齐性修正，须同步 `domain.rs` 并标注「frozen-type correction」，不得单方面扩张。
++
++---
++
++## 8. 本 Lane 合规声明
++
++- 仅产出评审文档与补丁；**未写产品代码**，未改 `src/components/plugin/**`/`usePluginStore.ts`/`bridge.ts`/`types.ts`/`domain.rs`/`scripts/check-plugin-ui-logic.mjs`/三份主文档。
++- 未移动 `NEXT`、未建分支、**未 push**（board：仅 A0 推送）。
++- 评审期间已复核工作树干净（W14 UI 文件尚未落盘），评审对象为已冻结的 W13 契约。
+diff --git a/logs/checkpoints/A2-M5-W14-20260907-1435.md b/logs/checkpoints/A2-M5-W14-20260907-1435.md
+new file mode 100644
+index 0000000..183c7d9
+--- /dev/null
++++ b/logs/checkpoints/A2-M5-W14-20260907-1435.md
+@@ -0,0 +1,52 @@
++# Lane A2 · M5-W14 Plugin Manager UI 边界评审 · 交付检查点
++
++> 生成：2026-09-07 14:35 CST · Lane A2（M5-W14 · START REVIEW ONLY）
++> 基线：`master @ a7eefbb`（`git fetch` + `git pull --ff-only` → 已最新；工作树干净）
++
++---
++
++## 1. 门禁自述
++
++| 项 | 值 | 结果 |
++|---|---|---|
++| `pwd` | `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3` | ✅ |
++| `.workspace-identity` | `WORKSPACE_ID=BACKV3_MAIN` / `EXPECTED_BRANCH=master` | ✅ |
++| 分支 | `master` | ✅ |
++| 同步 | `git fetch` + `git pull --ff-only` → `已经是最新的` | ✅ |
++| 工作树 | `git status --short` 为空 | ✅ |
++| NEXT | `M5-W14 plugin manager UI and Stage-I lifecycle consumption` | ✅ |
++| Lane 角色 | A2 = **START REVIEW ONLY**（不写产品代码） | ✅ |
++
++## 2. 交付物
++
++| 文件 | 说明 |
++|---|---|
++| `logs/assist/A2-M5-W14-boundary-verdict-20260907-1435.md` | **主交付**：UI/store 边界裁定（契约审计 PASS + C0–C7 条件 + 跨 Lane W1–W6 + A6 自检清单） |
++| `logs/checkpoints/A2-M5-W14-20260907-1435.md` | 本检查点 |
++| `logs/checkpoints/Lane-A2-M5-W14-20260907-1435.patch` | 仅含上述两份文件的新增补丁 |
++
++## 3. 裁定结论
++
++- **冻结契约边界 PASS（干净）**：`bridge.ts` 仅 8 个 Stage-I 方法、无 `plugin_invoke`；输出 DTO 全脱敏（无 signature.value/公钥原文/资源路径/metadata）；签名状态 `structure_ok|structure_failed`（非 verified，对齐 W13 B3）；`AclLevel` 三档对齐。
++- **A6 UI/store 边界规则**：C0 安装输入不回显裸签名/metadata；C1 无 domain duplication（store 只持 UI 态）；C2 无裸 `invoke`（基线 0，须维持）；C3 无 lifecycle authority expansion（只用 8 命令）；C4 显式确认；C5 密钥只显指纹；C6 常量单一真源；C7 仅本地安装无网络。
++- **本 Lane 可认证度**：A6 的 W14 UI 尚未落盘，本裁定为**契约级边界裁定 + 实施清单**；A6 产出后由 A10/A11 做代码级复核。
++- **跨 Lane 观察**：缺失 changelog 字段（→ A9）；输入回显（→ A4）；Agent/Skill affordance（→ A5）；MCP 隔离（→ A3）；裸 invoke/确认绕过/源漂移（→ A10）；ui-logic 码位（→ A11）。
++
++## 4. 验证记录
++
++```text
++grep -nE 'plugin_invoke|plugin_storage|plugin_audit|plugin_permissions|plugin_delete|plugin_uninstall' src/bridge.ts
++  → 0（无越权方法）
++
++grep -cE "invoke\(\s*['\"]plugin_" src/           → 0（裸 invoke 基线）
++
++bridge.ts:721-739 → 8 方法：install/enable/disable/list/get/keys_add/keys_list/keys_remove
++types.ts:937-1029 → 10 插件类型（镜像 domain.rs）
++domain.rs:2309-2409 → PluginRecord/PluginSummary/PluginCapabilityView/PluginSignatureView/PluginDetail/TrustedKeyRecord（全脱敏）
++domain.rs:1915 → AclLevel { Safe, Confirm, Dangerous }
++```
++
++## 5. 合规
++
++- 未写产品代码；未改 `bridge.ts`/`types.ts`/`domain.rs`/UI 组件/策略脚本/三份主文档。
++- 未移动 `NEXT`、未建分支、**未 push**（仅 A0 推送）。

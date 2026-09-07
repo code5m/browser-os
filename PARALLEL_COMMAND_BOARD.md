@@ -1,10 +1,10 @@
 # Parallel Command Board
 
-> Updated: 2026-09-08 00:20 CST
+> Updated: 2026-09-08 02:00 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` at `3c3f460` pending A0 W13 integration. W13 Stage-I manifest lifecycle is accepted locally: eight local-only lifecycle/key-registry commands, atomic registry persistence, redacted DTO/audit, ACL/source-check parity and no execution surface. Only A0 pushes.
-> Current NEXT: M5-W14 plugin manager UI and Stage-I lifecycle consumption. W14 opens one narrow UI product lane only; plugin invocation/command execution, dynamic loading, network download/listener, daemon, model call, Agent/Skill execution, MCP full runtime, graph write/export, and background workers remain LOCKED.
+> Current mainline: `master` at `a7eefbb` pending A0 W14 integration. W14 Plugin Manager UI is accepted locally with a redacted store, explicit confirmations, no raw invoke, and no execution surface. Only A0 pushes.
+> Current NEXT: M5-W15 release-readiness and GUI acceptance. Plugin invocation/command execution, dynamic loading, network download/listener, daemon, model call, Agent/Skill execution, MCP full runtime, graph write/export, and background workers remain LOCKED.
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
@@ -13,7 +13,7 @@ This file is the coordination board for 11 parallel agents plus A0 integration. 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W14 Plugin Manager UI Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W15 Release Readiness Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
 ```
 
 Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
@@ -1158,6 +1158,30 @@ bash scripts/pre-merge.sh
 git diff --check
 git status --short --branch
 git push origin master
+```
+
+## M5-W15 Release Readiness Dispatch
+
+> W15 closes M5 evidence and GUI acceptance without expanding runtime authority. Only A0 pushes.
+
+| Lane | Scope | Must Deliver |
+|---|---|---|
+| A1 | Docs only: reconcile W14 accepted, track the 25% metric limit and W15 status. | Checkpoint + patch. |
+| A2 | Boundary review of W14 UI/store and W15 evidence. | Verdict. |
+| A3 | MCP isolation regression review. | Verdict. |
+| A4 | Plugin UI privacy and stable-error review. | Verdict. |
+| A5 | Agent/Skill execution-lock regression review. | Verdict. |
+| A6 | Narrow UI polish only: accessible confirmation/modal focus, empty/loading/error states, no new command or runtime surface. | UI patch + headless tests. |
+| A7 | Graph non-regression review. | Note. |
+| A8 | GUI/manual acceptance checklist and visual ergonomics review. | Checklist + verdict. |
+| A9 | Frozen W13 backend-contract review; no backend changes. | Note. |
+| A10 | Security release review, including raw-invoke and error rendering. | Verdict. |
+| A11 | Final verification matrix and push readiness. | Checkpoint. |
+
+Hard stops: no plugin invoke/execution, dynamic loading, network download/listener, daemon, model call, Agent/Skill execution, MCP expansion, graph write/export, background worker, raw Tauri invoke, or sensitive rendering/persistence.
+
+```text
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W15 Release Readiness Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
 ```
 
 ## M5-W14 Plugin Manager UI Dispatch

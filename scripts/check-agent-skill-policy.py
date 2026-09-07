@@ -85,7 +85,7 @@ def _agent_skill_present(repo: dict[str, str]) -> bool:
 
 _PLUGIN_LIFECYCLE_CMDS = (
     "plugin_install", "plugin_enable", "plugin_disable", "plugin_list", "plugin_get",
-    "plugin_key_add", "plugin_key_list", "plugin_key_remove",
+    "plugin_keys_add", "plugin_keys_list", "plugin_keys_remove",
 )
 
 
@@ -430,6 +430,30 @@ def c_plugin_ui_exec_affordance(rel, text, repo):
     return None
 
 
+def c_plugin_bridge_no_exec(rel, text, repo):
+    """AGSK_PLUGIN_BRIDGE_NO_EXEC（W14 · A5 加）：`src/bridge.ts` 不得出现插件**执行类** wrapper。
+
+    W14 Hard Stop：「Do not implement plugin_invoke」「UI must call only src/bridge.ts;
+    no raw Tauri invoke」。插件 Stage-I 仅开放 8 个生命周期/密钥管理 wrapper
+    （pluginInstall / pluginEnable / pluginDisable / pluginList / pluginGet /
+    pluginKeysAdd / pluginKeysList / pluginKeysRemove），前端面板 **不得** 声明
+    `plugin_invoke` / `plugin_exec` / `plugin_run` / `plugin_call` / `plugin_tool_call`
+    一类执行 wrapper——即便后端无对应 handler（command-not-found 仅失败），也属「UI 暗示
+    插件执行可供性」，违反 AGSK 执行锁定与 W14 Hard Stop。
+
+    门控：仅当插件生命周期产物存在时守门（`_plugin_lifecycle_present` 已生效）。
+    复用于 `c_plugin_cmd_not_exec` 同款 `_PLUGIN_EXEC_CMDS` 清单，保证前后端命令名口径一致。
+    """
+    if not _plugin_lifecycle_present(repo):
+        return None
+    if rel != "src/bridge.ts":
+        return None
+    found = sorted(set(re.findall(r"\b(?:" + "|".join(_PLUGIN_EXEC_CMDS) + r")\b", text)))
+    if found:
+        return [f"bridge.ts 出现插件执行类 wrapper（W14 Stage-I 禁止，插件执行面解锁须先经 A0 裁决）：{found}"]
+    return None
+
+
 ACTIVE_CODES = [
     ("AGSK_ACL_TAIL", "ACTIVE", c_acl_tail),
     ("AGSK_CAPABILITY_DRIFT", "ACTIVE", c_capability_drift),
@@ -446,6 +470,7 @@ PENDING_CODES = [
     ("AGSK_PLUGIN_MANIFEST_AGENT_CAP", "PENDING", c_plugin_manifest_agent_cap),
     ("AGSK_PLUGIN_CMD_NOT_EXEC", "PENDING", c_plugin_cmd_not_exec),
     ("AGSK_PLUGIN_UI_EXEC_AFFORDANCE", "PENDING", c_plugin_ui_exec_affordance),
+    ("AGSK_PLUGIN_BRIDGE_NO_EXEC", "PENDING", c_plugin_bridge_no_exec),
 ]
 ALL_CODES = ACTIVE_CODES + PENDING_CODES
 
@@ -649,6 +674,12 @@ def _run_self_test() -> int:
         mutate(**{"src/components/workspace/PluginPanel.vue":
                   "<template><button @click=\"runPlugin\">运行插件</button></template>\n"}),
         "src/components/workspace/PluginPanel.vue")
+    add("AGSK_PLUGIN_BRIDGE_NO_EXEC", "bridge.ts 出现 plugin_invoke 执行 wrapper",
+        mutate(**{
+            "src/components/workspace/PluginPanel.vue": "<template></template>\n",
+            "src/bridge.ts": "export function invoke() {}\nplugin_invoke\n",
+        }),
+        "src/bridge.ts")
 
     for code, _desc, mutated in bad_cases:
         h = detect_hits(mutated)

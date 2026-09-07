@@ -1,4 +1,4 @@
-# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0 + W1 + W2 + W3 reconciliation + W4 active + W5 reconciliation + W6 reconciliation + W7 reconciliation + W8 reconciliation + W8 active + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active + W12 reconciliation + W12 PUSHED + W13 active）
+# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0 + W1 + W2 + W3 reconciliation + W4 active + W5 reconciliation + W6 reconciliation + W7 reconciliation + W8 reconciliation + W8 active + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active + W12 reconciliation + W12 PUSHED + W13 active + W13 PUSHED + W14 active）
 
 > 生成：2026-09-06 08:00 CST · Lane A1（M5-W0 · docs only）
 > W1 修订：2026-09-06 08:50 CST · Lane A1（M5-W1 · docs-only reconciliation）
@@ -1135,3 +1135,69 @@ NEXT=M5-W1（待 A0 签发）
 | Push | 🔒 **仅 A0** | W13 Hard Stop |
 
 **W13 plugin 范围冻结 = 恰好 6 条 stage-I manifest 生命周期命令**（详见 [W13 active] 段 + M5-10 `[W13 stage-I scope]` 段 + M5-11 `[W13 stage-I isolation]` 段 + M5-12 `[W13 plugin UI still locked]` 段）；5 stub `plugin_invoke/cancel/permissions_get/audit_list/storage_*` 仍 `Err("not-implemented-in-W6")`，stage-I 不实现。
+
+---
+
+## [W13 PUSHED · 2026-09-08 00:20 CST] A1 W14 reconciliation 立场 · W13 拣入事实回填
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L228+（M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch，Added 2026-09-07 23:55 CST by A0）+ `M5-10/11/12` plugin 卡范围收敛为 stage-I manifest 生命周期 + A9 W12/W13 plugin staged cards（W11 拣入）+ A1 W13 reconciliation 整包（`logs/checkpoints/A1-M5-W13-reconciliation-20260907-2358.md`）+ A0 W13 acceptance checkpoint（`logs/checkpoints/A0-M5-W13-accept-W14-dispatch-20260908-0020.md`）。
+
+**A0 W13 拣入事实回填**（`a7eefbb feat(M5): integrate W13 plugin manifest lifecycle`）：
+- A0 拣入 W13 整包 = 8 local-only lifecycle/key-registry 命令（`plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_list` / `plugin_get` / `plugin_key_registry` / `plugin_audit_get` / 4 storage stub 错误结构不变）+ 原子注册表持久化 + redacted DTO/audit + ACL/source-check parity + **无** execution surface
+- `a7eefbb` stat 实测 = 31 files changed（含 4 共享文件修订 = `src-tauri/src/bridge.rs` 8 个 plugin_* 命令注册 + `src-tauri/src/domain.rs` PluginManifestView/PluginStateView/PluginKeyEntryView/PluginError + `src-tauri/src/main.rs` invoke_handler 注册 + `src-tauri/src/permissions/default-commands.toml` ACL 8 行插末条 `list_artifact_images` 前；前端镜像 = `src/bridge.ts` + `src/types.ts`；门禁 = `scripts/check-plugin-policy.py` 新增 `PLUGIN_LIFECYCLE_LOCAL_ONLY` 守门码 ACTIVE 7→8 + `scripts/check-plugin-privacy.py` 新增 4 守门码 ACTIVE 0→4；文档 = M5-0/10/11/12/13/14 头部 W12 PUSHED + W13 ACTIVE + 末尾段 + A1 W13 checkpoint 213 行 + A1 W13 patch 535 行 + 3 主文档 L1 W12/W13 update 行 + board L6/L7 W13 dispatch；A1 W13 整包已被合并拣入）
+- 验证实跑 = `cargo test plugin` 全绿（411/411 default + 21/0 feature mcp_server + 15/0 graph）+ `check-plugin-policy.py --self-test` PASS（ACTIVE=8/PENDING=0 + `--expect-pending` PASS）+ `check-plugin-privacy.py --self-test` PASS（ACTIVE=4/PENDING=0）+ `check-graph-policy.py` ACTIVE=8 + `check-mcp-policy.py` ACTIVE=12/PENDING=0 + graph UI 113/113 + agent-skill UI 110/110 + `npm run build` PASS + `python3 scripts/pre-merge.sh` ALL_PASS + `python3 scripts/measure-build-metrics.py` `total_bytes_pct ≤ 23%`（W12 A0 修订 IF-2 = 23%）+ cargo_warnings delta = 0
+
+**W13 残留债 = 0**（A9 W13 增量 = 1 closed-by-W13 = plugin stage-I 6 命令；M5 final debt ledger 维持 **53 条** + W13 增量 1 closed-by-W13 → 维持 53 条）；**DEBT-04 plugin UI 6 项 carried-to-W14+**（A19 → A6 派发后消解，A1 W14 派发期仍 0% ACTIVE）；runtime 债（plugin invoke / cancel / storage_* 5 stub）按设计延后，W13 不实现；A7 W13 GRAPH NON-REGRESSION DOCS ONLY 必保 W12 8 条 graph 集成锚点不回归。
+
+**A1 W14 派发接收为 START DOCS ONLY**（`PARALLEL_COMMAND_BOARD.md` L1163+ · Plugin Manager UI Dispatch）：W14 = 仅 1 lane UI 产品代码 open（**A6 W14 = START PRODUCT CODE NARROW**），消费 frozen W13 6 命令 + `src/components/plugin/**` + `src/stores/usePluginStore.ts` + `scripts/check-plugin-ui-logic.mjs` + workspace navigation 集成；其余 10 lane = docs/review/security/verification（A1/A2/A3/A4/A5/A7/A8/A9/A10/A11 + A19 plugin UI 仍 SUPPORT DOCS ONLY）；**W14 = 不改 product scope**（plugin UI 6 项 ACTIVE 仍 0%，A6 W14 实施期才升 ACTIVE）；**A1 W14 整包 = 11 文件改动**（board L6 mainline chain + 3 主文档 L1 + A1 W14 checkpoint + M5-0/10/11/12/13/14 头部 W13 PUSHED + W14 ACTIVE + 末尾 [W14 active]/[W14 verification scope] 段），**不**碰产品代码（`src/components/plugin/**` / `usePluginStore.ts` / `check-plugin-ui-logic.mjs` / `bridge.ts` / `types.ts`），**不** push。
+
+---
+
+## [W14 active · 2026-09-08 00:20 CST] A1 W14 reconciliation 立场 · plugin manager UI 派发期 · runtime surface 锁定状态表（14 行）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L1163+（M5-W14 Plugin Manager UI Dispatch，Added 2026-09-08 00:20 CST by A0）+ `M5-12-plugin-ui.md` 末尾 [W14 active] 段 + A1 W14 reconciliation 整包（`logs/checkpoints/A1-M5-W14-reconciliation-20260908-0020.md`）。
+
+**W14 = 仅 A6 可写产品代码**（A6 plugin manager UI 消费 frozen W13 6 命令）；其余 10 lane 全 review / docs / verification（A1 DOCS ONLY / A2 BOUNDARY REVIEW / A3 MCP PLUGIN ISOLATION REVIEW / A4 PRIVACY REVIEW / A5 AGENT/SKILL LOCK REVIEW / A7 GRAPH NON-REGRESSION DOCS ONLY / A8 UI ERGONOMICS REVIEW / A9 BACKEND REVIEW / A10 SECURITY REVIEW / A11 VERIFICATION + A19 plugin UI 仍 SUPPORT DOCS ONLY）。
+
+**W14 runtime surface 锁定状态表（14 行 · 沿用 W13 13 行 + 新增 W14 plugin UI 1 行）**：
+
+| 维度 | W13 status | W14 status | 备注 |
+|------|-----------|-----------|------|
+| 1. `plugin_invoke` / `plugin_cancel` / `plugin_storage_*` 5 stub | 🔒 LOCKED | 🔒 LOCKED | 5 stub 错误结构不变 `Err("not-implemented-in-W6")`；W14 不实现 invoke / cancel / storage_* runtime；plugin UI 不触发 |
+| 2. `plugin_install` / `plugin_enable` / `plugin_disable` stage-I lifecycle | 🟢 OPENED（narrow·local-only） | 🟢 OPENED（narrow·local-only） | A9 W13 已落地 6 命令；W14 UI 消费，不重写 |
+| 3. `plugin_list` / `plugin_get` / `plugin_key_registry` | 🟢 OPENED（read-only） | 🟢 OPENED（read-only） | A9 W13 已落地；W14 UI 消费 |
+| 4. `plugin_audit_get` | 🟢 OPENED（read-only） | 🟢 OPENED（read-only） | A9 W13 已落地；W14 UI 可选消费 |
+| 5. network download / listener | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不引入网络下载；manifest 来源 = 后端命令输出（不重新下载） |
+| 6. dynamic code loading | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不引入动态加载 |
+| 7. daemon / model call | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不引入 daemon / 模型调用 |
+| 8. Agent/Skill execution | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不触发 Agent/Skill runtime |
+| 9. MCP full runtime | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不引入 mcp_* 边界 |
+| 10. graph build-write-export | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不引入 graph 写导出 |
+| 11. background worker | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI 不引入后台 worker |
+| 12. plugin UI 6 action（list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint） | 🔒 LOCKED（A19 SUPPORT） | 🟢 OPENED（A6 START PRODUCT CODE NARROW） | W14 唯一产品代码 lane open；A6 W14 实施期完成 6 action；`check-plugin-ui-logic.mjs` 新增 9 守门码 ≥9/9 PASS |
+| 13. raw Tauri `invoke`（绕过 bridge.ts） | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI **必须**走 `src/bridge.ts`；`check-plugin-ui-logic.mjs` 新增 `PLUGIN_UI_NO_RAW_INVOKE` / `PLUGIN_UI_BRIDGE_ONLY` 守门码 |
+| 14. raw signature / public-key / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr 渲染 | 🔒 LOCKED | 🔒 LOCKED | W14 plugin UI **不**渲染 raw 敏感字段；`check-plugin-ui-logic.mjs` 新增 6 守门码（`PLUGIN_UI_NO_RAW_SIG_RENDER` / `PLUGIN_UI_NO_RAW_PUBKEY_RENDER` / `PLUGIN_UI_NO_RAW_RESOURCE_PATH_RENDER` / `PLUGIN_UI_NO_RAW_MANIFEST_META_RENDER` / `PLUGIN_UI_NO_RAW_CREDENTIAL_RENDER` / `PLUGIN_UI_NO_RAW_REQ_RES_BODY_RENDER` / `PLUGIN_UI_NO_RAW_STDOUT_STDERR_RENDER`） |
+
+**W14 债务账变化（相对 W13 拣入后）**：
+- **W14 增量预期 = 0**（A6 W14 = 复吃 W13 6 命令 + UI 包装，**不**实施 W14 新 lifecycle 命令 / **不**改 DTO / **不**渲染 raw 敏感字段 → 无新债增量）
+- **M5 final debt ledger 维持 53 条**（W14 拣入后维持 53 条 + A6 W14 实施期收口 DEBT-04 = 6/6 ACTIVE）
+- **DEBT-04 plugin UI 6 项 ACTIVE = 0% → 6/6**（A6 W14 实施期收口；**A1 W14 派发期仍 0%** = 派发期不算 ACTIVE）
+- **新增债 0**（W14 不实施 invoke / cancel / storage_* / 网络 / 动态加载 / daemon / 模型 / Agent-Skill / MCP / graph 写 / 后台 worker）
+
+**W14 hard stops**（10 条）：① 仅 master / pull --ff-only / 仅 A0 push；② **No** plugin_invoke / 代码执行 / 动态加载 / 网络 / daemon / 模型调用 / Agent-Skill / MCP runtime / graph 写导出 / 后台 worker；③ UI 只能调 `src/bridge.ts`，**不得** raw Tauri `invoke`；④ **不得** display/persist raw signature / public-key material / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr；⑤ 现有命令名 + DTO 冻结，**不得** W14 加 lifecycle 命令。
+
+**A6 W14 唯一产品代码 lane 范围（冻结）**：
+- 消费 **frozen W13 6 命令**（`plugin_list` / `plugin_get` / `plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_key_registry`）—— **不**实施 W14 新 lifecycle 命令 / **不**改 `src/bridge.ts` DTO 形态 / **不**增删 ACL
+- 文件范围 = `src/components/plugin/**` + `src/stores/usePluginStore.ts` + `scripts/check-plugin-ui-logic.mjs` + workspace navigation 集成
+- 6 action = list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint
+- UI 走 `src/bridge.ts`（**不** raw Tauri `invoke`）
+- **不**渲染 raw signature / public-key / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr
+
+**A1 W14 派发期立场 = START DOCS ONLY**：
+- reconcile W13 as accepted after A0 push（`a7eefbb`）
+- mark W14 active + 更新 3 主文档 L1 + 本卡 L1 + 本卡头 + 末尾段 + M5-10/11/12 头 + M5-12 末尾 [W14 active] 段 + M5-13 末尾 [W14 verification scope] 段 + M5-14 末尾 [W14 active] 段
+- **不**改 product scope（plugin UI 6 项 ACTIVE 仍 0%，A6 W14 实施期才升 ACTIVE）
+- **不**碰产品代码（`src/components/plugin/**` / `usePluginStore.ts` / `check-plugin-ui-logic.mjs` / `bridge.ts` / `types.ts`）
+- **不** push
+
+**A6 W14 实施期收口**：A6 W14 实施完成 = 6 action 全 ACTIVE + `check-plugin-ui-logic.mjs` ≥9/9 PASS + A11 W14 verification delta 功能性 ALL_PASS + A7 W14 graph non-regression PASS + A10 W14 security review PASS → DEBT-04 closed-by-W14，M5 final debt ledger 维持 53 条（plugin UI 6 项由"挂账"转"收口"）。
