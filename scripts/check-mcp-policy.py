@@ -22,10 +22,11 @@
 本脚本的定位（**关键，避免与 W1 硬停止冲突**）：
 - 它是**准入门禁脚本**，不是 MCP 运行时代码。它**不引入** rmcp / tokio / npm / MCP server / 新命令 /
   ACL 条目；只读取既有文件做静态断言。
-- 它对齐 A2 的 `scripts/check-core-boundary.py` 范式：「**产物存在才判**」——M5-2 代码尚未落地时，
-  PENDING 码位自动 no-op，默认扫描必然 EXIT 0；`--expect-pending` 验证「MCP 产物尚未出现」。
-- 一旦 M5-2 实现开始（A0 把板子翻到 W2），把相关 PENDING 码位的 gate 去掉、转 ACTIVE 即可，
-  不需要重写脚本。
+- 它对齐 A2 的 `scripts/check-core-boundary.py` 范式。W1 曾以 PENDING 码位「产物存在才判」
+  （`--expect-pending` 验证 MCP 产物尚未落地）；W7 A3 以**只读 Tauri 命令桥**落地 MCP
+  （mcp_policy_get / mcp_registry_list / mcp_capability_preview），W1 的「独立 rmcp server + mcp_tools」
+  架构被 W7 Hard Stop 永久否决。故 W8 收口 W1 语义：PENDING 码位全部退役，rmcp/server/listener
+  由单一 **ACTIVE** 守门 `MCP_NO_RMCP_SERVER` 永久禁止，并新增 `--expect-current-gaps` 当前相位断言。
 
 为什么需要这个夹具（编译器与人工都守不住）：
 - 纯 Rust rmcp 会把 `tokio` 作为 **normal 非 optional** 依赖带进来（A3 主篇 §3.1 实测）；
@@ -39,7 +40,7 @@
 用法：
   python3 scripts/check-mcp-policy.py                 默认扫描（无违规 → EXIT 0；有违规 → EXIT 2）
   python3 scripts/check-mcp-policy.py --self-test     好样本 + 坏样本双向自检（含变异防呆）
-  python3 scripts/check-mcp-policy.py --expect-pending 验证 MCP 产物尚未落地（W1 守门）
+  python3 scripts/check-mcp-policy.py --expect-current-gaps  当前相位断言（W8：只读桥已落地、无 rmcp/server/listener）
 """
 
 from __future__ import annotations
@@ -69,26 +70,21 @@ def _rel(path: str) -> str:
     return os.path.relpath(path, ROOT)
 
 
-def _mcp_present(repo: dict[str, str]) -> bool:
-    """PENDING 码位的统一 gate：仓库里是否已有任何 M5-2 产物。
+def _mcp_bridge_present(repo: dict[str, str]) -> bool:
+    """当前相位（W8）断言：只读 MCP 桥是否已落地。
 
-    判定依据（任一即视为 MCP 已开建）：
-      - `src-tauri/Cargo.toml` 出现 `rmcp`
-      - 存在目录 `src-tauri/src/mcp_tools/`
-      - 存在文件 `src-tauri/src/bin/mcp_server.rs`
-      - `src-tauri/src/**` 出现 `MCP_CAPABILITY_V1` 常量定义
+    A3 W7 以只读 Tauri 命令桥落地 MCP；本函数确认三条命令均已在 main.rs 注册、
+    ACL（default-commands.toml）与前端封装（bridge.ts）齐备。供 `--expect-current-gaps` 使用。
     """
-    for rel, text in repo.items():
-        if rel == "src-tauri/Cargo.toml" and "rmcp" in text:
-            return True
-        if rel.startswith("src-tauri/src/mcp_tools/"):
-            return True
-        if rel == "src-tauri/src/bin/mcp_server.rs":
-            return True
-        if rel.startswith("src-tauri/src/") and rel.endswith(".rs"):
-            if re.search(r"\bMCP_CAPABILITY_V1\s*[=:]", text):
-                return True
-    return False
+    main = repo.get("src-tauri/src/main.rs", "")
+    acl = repo.get("src-tauri/permissions/default-commands.toml", "")
+    bts = repo.get("src/bridge.ts", "")
+    cmds = ("mcp_policy_get", "mcp_registry_list", "mcp_capability_preview")
+    return (
+        all(f"bridge::{c}" in main for c in cmds)
+        and all(f'"{c}"' in acl for c in cmds)
+        and all(f'"{c}"' in bts for c in cmds)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -96,25 +92,14 @@ def _mcp_present(repo: dict[str, str]) -> bool:
 # 每个码位是一个函数 (rel, text, repo) -> Optional[list[str]]
 #   返回 None          := 不适用 / 干净（不计入违规）
 #   返回 [detail, ...] := 命中违规，detail 为可读说明
-# kind: "ACTIVE"（始终守门） | "PENDING"（仅当 _mcp_present 为真时守门）
+# kind: "ACTIVE"（始终守门）。W8 起不再有 PENDING 码位（W1 相位债已关闭）。
 # ---------------------------------------------------------------------------
 
 _CODE_REX = {
     "MCP_NPM_SDK_PRESENT": re.compile(r'"@modelcontextprotocol/'),
     "MCP_NPM_IN_CARGO": re.compile(r"\bnpm\b"),
     "MCP_NODE_RUNTIME_PRESENT": re.compile(r'Command::new\s*\(\s*["\'](?:node|npx)["\']'),
-    "MCP_LISTEN_PORT": re.compile(r"TcpListener|\.bind\s*\(|axum|hyper::Server|tokio::net::TcpListener|std::net::TcpListener"),
-    "MCP_RUNTIME_LEAK": re.compile(r"tokio::|#\[tokio::main"),
-    "MCP_TOOL_CALLS_COMMAND": re.compile(r"crate::bridge|bridge::|crate::terminal|::db_query\("),
 }
-
-# 仅出现在 MCP 专属文件（mcp_server / mcp_tools）里的形态才允许
-_MCP_FILE_RE = re.compile(r"mcp_server|mcp_tools")
-
-
-def _is_mcp_file(rel: str) -> bool:
-    return bool(_MCP_FILE_RE.search(rel)) and rel.endswith(".rs")
-
 
 def _is_src_rs(rel: str) -> bool:
     return rel.startswith("src-tauri/src/") and rel.endswith(".rs")
@@ -161,81 +146,33 @@ def c_fs_tool_policy(rel, text, repo):
     return problems or None
 
 
-# ---- PENDING（仅当 MCP 产物已存在时守门）----
-
-
-def c_listen_port(rel, text, repo):
-    if not _mcp_present(repo):
-        return None
-    if _is_mcp_file(rel) and _CODE_REX["MCP_LISTEN_PORT"].search(text):
-        return ["MCP 文件出现 TCP 监听形态（首期仅 stdio，禁端口）"]
-    return None
-
-
-def c_runtime_leak(rel, text, repo):
-    if not _mcp_present(repo):
-        return None
-    # 允许出现在 MCP 专属 bin / 工具目录；其余 src 出现 tokio 即视为漏进主构建
-    if _is_src_rs(rel) and not _is_mcp_file(rel) and _CODE_REX["MCP_RUNTIME_LEAK"].search(text):
-        return ["非 MCP 专属文件出现 tokio::（tokio 应通过 optional+required-features 隔离到 mcp_server bin）"]
-    return None
-
-
-def c_optional_dep(rel, text, repo):
-    if not _mcp_present(repo):
-        return None
-    if not _is_cargo(rel):
-        return None
+def c_no_rmcp_server(rel, text, repo):
+    # W7 Hard Stop 永久守门（ACTIVE）：MCP 必须是只读 Tauri 命令桥，**禁止**独立的 rmcp server /
+    # 网络监听 / mcp_tools 运行时。W1 曾计划的「独立 mcp_server 二进制 + mcp_tools/ 目录」架构被
+    # W7 Hard Stop 否决，相关 7 个 PENDING 码位在 W8 收口为本单一 ACTIVE 守门。
     problems = []
-    # rmcp / tokio 若存在，必须 optional=true，且由 [features] mcp 启用，且不在 default
-    for dep in ("rmcp", "tokio"):
-        m = re.search(re.escape(dep) + r"\s*=\s*\{[^}]*\}", text)
-        if m and "optional" not in m.group(0):
-            problems.append(f"{dep} 未声明 optional=true（会污染主二进制依赖图，违反 F-1 实质）")
-    # default features 不得含 mcp
-    dm = re.search(r"\[features\][^\[]*?default\s*=\s*\[(.*?)\]", text, re.S)
-    if dm and re.search(r"\bmcp\b", dm.group(1)):
-        problems.append("[features] default 含 mcp（默认构建会引入 tokio，违反 F-1 实质）")
-    # 存在 [[bin]] mcp_server 必须有 required-features
+    if _is_cargo(rel):
+        if re.search(r"\brmcp\b", text):
+            problems.append("Cargo.toml 出现 rmcp 依赖（禁止 rmcp server 架构，MCP 须为只读 Tauri 桥）")
+        if re.search(r"\btokio\b", text):
+            problems.append("Cargo.toml 出现 tokio 依赖（MCP 只读桥无需异步运行时，W7 Hard Stop）")
+        if re.search(r'\[\[bin\]\][^\[]*?name\s*=\s*["\']mcp_server["\']', text, re.S):
+            problems.append("Cargo.toml 出现 [[bin]] mcp_server（禁止独立 MCP server 二进制）")
+    if _is_src_rs(rel):
+        if re.search(r"\baxum\b|\bhyper::Server\b|tokio::net::TcpListener|std::net::TcpListener", text):
+            problems.append("src 出现 HTTP/网络监听形态（axum/hyper::Server/TcpListener，禁止 MCP server 监听）")
+    if any(r.startswith("src-tauri/src/mcp_tools/") for r in repo):
+        problems.append("存在 src-tauri/src/mcp_tools/ 目录（禁止独立 MCP 工具运行时）")
     return problems or None
 
 
-def c_bin_gated(rel, text, repo):
-    if not _mcp_present(repo):
-        return None
-    if not _is_cargo(rel):
-        return None
-    for bm in re.finditer(r"\[\[bin\]\][^\[]*?name\s*=\s*[\"']mcp_server[\"']", text, re.S):
-        block = bm.group(0)
-        if "required-features" not in block or "mcp" not in re.search(r"required-features\s*=\s*\[(.*?)\]", block, re.S).group(1):
-            return ["[[bin]] mcp_server 缺少 required-features=[\"mcp\"]（未隔离会导致默认构建编译 MCP）"]
-    return None
-
-
-def c_tool_calls_command(rel, text, repo):
-    if not _mcp_present(repo):
-        return None
-    if rel.startswith("src-tauri/src/mcp_tools/") and _CODE_REX["MCP_TOOL_CALLS_COMMAND"].search(text):
-        return ["mcp_tools 调用 bridge::/terminal:: 命令层（MCP 工具必须调 core 内部 API，不得绕过来源校验）"]
-    return None
-
-
-def c_path_policy_missing(rel, text, repo):
-    if not _mcp_present(repo):
-        return None
-    if rel.startswith("src-tauri/src/mcp_tools/") and re.search(r"\b(?:read_file|list_dir)\b", text):
-        if "check_path_within_roots" not in text:
-            return ["mcp_tools 暴露 read_file/list_dir 但缺 check_path_within_roots（远程任意文件读风险，B8）"]
-    return None
-
-
-def c_url_not_redacted(rel, text, repo):
-    if not _mcp_present(repo):
-        return None
-    if rel.startswith("src-tauri/src/mcp_tools/") and re.search(r"tab_list|redact_sensitive_url|\.url\b", text):
-        if "redact_sensitive_url" not in text:
-            return ["mcp_tools 回传 URL 但缺 redact_sensitive_url（URL 可能含敏感 query，B9）"]
-    return None
+# ---- PENDING（W8 已退役）----
+# W1 阶段曾以 7 个 PENDING 码位（`MCP_LISTEN_PORT` / `MCP_RUNTIME_LEAK` / `MCP_OPTIONAL_DEP` /
+# `MCP_BIN_GATED` / `MCP_TOOL_CALLS_COMMAND` / `MCP_PATH_POLICY_MISSING` / `MCP_URL_NOT_REDACTED`）
+# 守「独立 rmcp server」架构，约定「产物存在才判」。W7 A3 以只读 Tauri 命令桥落地 MCP，
+# 该 server 架构被 W7 Hard Stop 永久否决，故 W8 将其收口为单一 ACTIVE 守门 `MCP_NO_RMCP_SERVER`
+# （见上方 ALWAYS-ACTIVE 段）。`MCP_TREE_TAURI` 亦退役（core 纯洁性由 check-core-boundary.py 守）。
+# 当前无任何 PENDING 码位；相位债已关闭。
 
 
 # ---- GLOBAL（需跨文件/跨 Cargo 上下文）----
@@ -274,12 +211,6 @@ def c_parity(rel, text, repo):
     missing = [c for c in mcp_cmds if (f'"{c}"' not in acl) or (f'"{c}"' not in bts)]
     if missing:
         return [f"mcp 命令缺 ACL/bridge.ts 奇偶：{sorted(missing)}"]
-    return None
-
-
-def c_tree_tauri(_rel, _text, _repo):
-    # PENDING：阶段一同 package 双 target 下 cargo tree -p mvp-core 必含 tauri（见 A3 W1 delta §3）。
-    # 本脚本不在默认模式跑 cargo tree（慢且阶段一必然 FAIL）；阶段二独立 crate 后再接 ACTIVE。
     return None
 
 
@@ -332,18 +263,11 @@ ACTIVE_CODES = [
     ("MCP_CAPABILITY_DRIFT", "ACTIVE", c_capability_drift),
     ("MCP_FS_TOOL_PATH_POLICY", "ACTIVE", c_fs_tool_policy),
     ("MCP_BRIDGE_READONLY", "ACTIVE", c_bridge_readonly),
+    ("MCP_NO_RMCP_SERVER", "ACTIVE", c_no_rmcp_server),
+    ("MCP_PARITY", "ACTIVE", c_parity),
 ]
-PENDING_CODES = [
-    ("MCP_LISTEN_PORT", "PENDING", c_listen_port),
-    ("MCP_RUNTIME_LEAK", "PENDING", c_runtime_leak),
-    ("MCP_OPTIONAL_DEP", "PENDING", c_optional_dep),
-    ("MCP_BIN_GATED", "PENDING", c_bin_gated),
-    ("MCP_TOOL_CALLS_COMMAND", "PENDING", c_tool_calls_command),
-    ("MCP_PATH_POLICY_MISSING", "PENDING", c_path_policy_missing),
-    ("MCP_URL_NOT_REDACTED", "PENDING", c_url_not_redacted),
-    ("MCP_PARITY", "PENDING", c_parity),
-    ("MCP_TREE_TAURI", "PENDING", c_tree_tauri),
-]
+# W8：W1 的 7 个 PENDING 码位 + MCP_TREE_TAURI 全部退役，相位债已关闭。当前无 PENDING 码位。
+PENDING_CODES: list[tuple[str, str, Callable]] = []
 ALL_CODES = ACTIVE_CODES + PENDING_CODES
 
 
@@ -395,8 +319,9 @@ def detect_hits(repo: dict[str, str]) -> dict[str, list[str]]:
 
 
 def _baseline_repo() -> dict[str, str]:
-    # 注意：基线**不含**任何 M5-2 产物（无 mcp_tools 目录 / 无 mcp_server bin / 无 rmcp /
-    # 无 MCP_CAPABILITY_V1），否则 _mcp_present 会被提前置真、PENDING gate 失效。
+    # 注意：基线**不含**任何 MCP 只读桥产物（无 mcp_policy_get / mcp_registry_list /
+    # mcp_capability_preview 注册、无 rmcp / 无 mcp_server bin / 无 mcp_tools 目录），
+    # 否则 _mcp_bridge_present 会误判「桥已落地」、当前相位断言失真。
     return {
         "src-tauri/Cargo.toml": (
             "[package]\nname = \"mvp-browser-os\"\n"
@@ -415,14 +340,6 @@ def _baseline_repo() -> dict[str, str]:
     }
 
 
-# PENDING 坏样本需要「M5-2 已开建」才能让 gate 生效；最小产物 = 一个空的 mcp_server bin。
-_MCP_ARTIFACT = {"src-tauri/src/bin/mcp_server.rs": "fn main() {}\n"}
-
-
-def _with_artifact(**kw) -> dict[str, str]:
-    d = dict(_MCP_ARTIFACT)
-    d.update(kw)
-    return d
 
 
 def _run_self_test() -> int:
@@ -462,59 +379,34 @@ def _run_self_test() -> int:
     add("MCP_NODE_RUNTIME_PRESENT", "src 内 Command::new(\"node\")",
         mutate(**{"src-tauri/src/bridge.rs": 'fn run() { std::process::Command::new("node").spawn(); }\n'}), "src-tauri/src/bridge.rs")
     add("MCP_FS_TOOL_PATH_POLICY", "注册表 touches_fs 缺 check_path_within_roots",
-        _with_artifact(**{"src-tauri/src/mcp_tools/registry.rs": "pub const MCP_COMMAND_REGISTRY: &[McpCommandDef] = &[ McpCommandDef { capability: \"file_read\", touches_fs: true, returns_url: true } ];\n"}),
+        mutate(**{"src-tauri/src/mcp_tools/registry.rs": "pub const MCP_COMMAND_REGISTRY: &[McpCommandDef] = &[ McpCommandDef { capability: \"file_read\", touches_fs: true, returns_url: true } ];\n"}),
         "src-tauri/src/mcp_tools/registry.rs")
 
-    # PENDING 坏样本：必须带最小 MCP 产物（_MCP_ARTIFACT）才能让 gate 生效
-    add("MCP_LISTEN_PORT", "mcp_server 出现 TcpListener",
-        _with_artifact(**{"src-tauri/src/bin/mcp_server.rs": "let _ = tokio::net::TcpListener::bind(\"127.0.0.1:9999\");\n"}),
-        "src-tauri/src/bin/mcp_server.rs")
-    add("MCP_RUNTIME_LEAK", "非 MCP 专属文件出现 tokio::",
-        _with_artifact(**{"src-tauri/src/foo.rs": "pub fn f() { let _ = tokio::spawn(async {}); }\n"}),
-        "src-tauri/src/foo.rs")
-    add("MCP_OPTIONAL_DEP", "rmcp 非 optional",
-        _with_artifact(**{"src-tauri/Cargo.toml": "[dependencies]\nrmcp = { version = \"3\" }\n"}),
+    # W8：W1 的 7 个 PENDING 坏样本收口为单一 ACTIVE 守门 `MCP_NO_RMCP_SERVER` 的坏样本
+    # （Cargo.toml 引入 rmcp 即触发；不再有「MCP 产物才判」的 pending 语义）。
+    add("MCP_NO_RMCP_SERVER", "Cargo.toml 引入 rmcp 依赖",
+        mutate(**{"src-tauri/Cargo.toml": "[dependencies]\nrmcp = { version = \"3\" }\ntauri = { version = \"2\" }\n"}),
         "src-tauri/Cargo.toml")
-    add("MCP_BIN_GATED", "mcp_server bin 缺 required-features",
-        _with_artifact(**{"src-tauri/Cargo.toml": "[dependencies]\nrmcp = { version = \"3\", optional = true }\n[[bin]]\nname = \"mcp_server\"\npath = \"src/bin/mcp_server.rs\"\n"}),
-        "src-tauri/Cargo.toml")
-    add("MCP_TOOL_CALLS_COMMAND", "mcp_tools 调 bridge::db_query",
-        _with_artifact(**{"src-tauri/src/mcp_tools/db.rs": "pub fn run() { crate::bridge::db_query(Default::default(), \"x\".into()); }\n"}),
-        "src-tauri/src/mcp_tools/db.rs")
-    add("MCP_PATH_POLICY_MISSING", "mcp_tools 暴露 read_file 缺根策略",
-        _with_artifact(**{"src-tauri/src/mcp_tools/fs.rs": "pub fn read() { let _ = bridge::read_file(\"x\"); }\n"}),
-        "src-tauri/src/mcp_tools/fs.rs")
-    add("MCP_URL_NOT_REDACTED", "mcp_tools 回传 url 缺脱敏",
-        _with_artifact(**{"src-tauri/src/mcp_tools/tabs.rs": "pub fn tabs() -> Vec<String> { tab_list() }\n"}),
-        "src-tauri/src/mcp_tools/tabs.rs")
     add("MCP_CAPABILITY_DRIFT", "MCP_CAPABILITY_V1 定义两处",
         mutate(**{"src-tauri/src/core/mod.rs": "const MCP_CAPABILITY_V1: &[&str] = &[];\n",
                   "src-tauri/src/extra.rs": "const MCP_CAPABILITY_V1: &[&str] = &[];\n"}),
         "src-tauri/src/core/mod.rs")
     add("MCP_PARITY", "mcp 命令在 handler 缺 ACL/bridge.ts",
-        _with_artifact(**{
+        mutate(**{
             "src-tauri/src/main.rs": "fn main() { tauri::generate_handler![bridge::mcp_server_start]; }\n",
             "src-tauri/src/bridge.rs": "pub fn mcp_server_start(app: AppHandle) {}\n",
         }),
         "src-tauri/src/main.rs")
     add("MCP_BRIDGE_READONLY", "mcp 命令含写副作用",
-        _with_artifact(**{"src-tauri/src/bridge.rs":
+        mutate(**{"src-tauri/src/bridge.rs":
             "#[tauri::command]\npub fn mcp_policy_set(app: AppHandle, webview: tauri::Webview, v: String) { std::fs::write(\"/x\", v).unwrap(); }\n"}),
         "src-tauri/src/bridge.rs")
-    # MCP_TREE_TAURI 是 PENDING 主动 no-op，不要求坏样本检出（其本身是「期望尚未实现」）
-
     for code, _desc, mutated in bad_cases:
         h = detect_hits(mutated)
         if code not in h:
             failures.append(f"坏样本未检出码位 {code}（漏检）；命中={h}")
 
-    # 3) 坏样本中 PENDING 码位必须依赖 mcp 产物存在：单独构造「无 mcp 产物」的坏内容，
-    #    断言 PENDING 码位不误触发（gate 生效）
-    no_mcp = mutate(**{"src-tauri/src/bridge.rs": "pub fn f() { let _ = tokio::spawn(async {}); }\n"})
-    no_mcp_hits = detect_hits(no_mcp)
-    leaked = [c for c in no_mcp_hits if c in ("MCP_RUNTIME_LEAK", "MCP_OPTIONAL_DEP", "MCP_BIN_GATED")]
-    if leaked:
-        failures.append(f"无 MCP 产物时 PENDING 码位误触发（gate 失效）：{leaked}")
+    # 3) 当前无 PENDING 码位（W8 相位债已关闭），无需再构造「无 MCP 产物」的 gate 测试。
 
     if failures:
         for f in failures:
@@ -530,13 +422,28 @@ def _run_self_test() -> int:
 # ---------------------------------------------------------------------------
 
 
-def _mode_expect_pending() -> int:
+def _mode_expect_current_gaps() -> int:
+    # W8 当前相位断言：只读 MCP 桥已落地、无 rmcp/server/listener/tokio、奇偶/只读/红线性门禁全绿。
     repo = _scan_real_repo()
-    if _mcp_present(repo):
-        print("MCP_PENDING_RESULT=FAIL：已检测到 M5-2 产物（rmcp / mcp_tools / mcp_server bin / "
-              "MCP_CAPABILITY_V1），应把本脚本 PENDING 码位翻为 ACTIVE 并由 W2 实现接管")
+    hits = detect_hits(repo)
+    problems: list[str] = []
+    if not _mcp_bridge_present(repo):
+        problems.append("MCP 只读桥未落地（W8 期望 mcp_policy_get / mcp_registry_list / "
+                        "mcp_capability_preview 已在 main.rs 注册且 ACL + bridge.ts 齐备）")
+    # 任一 ACTIVE 码位命中即违反 W8 相位（红线 / 奇偶 / 只读 不应出现）
+    blocked = ("MCP_NO_RMCP_SERVER", "MCP_PARITY", "MCP_BRIDGE_READONLY",
+               "MCP_FS_TOOL_PATH_POLICY", "MCP_CAPABILITY_DRIFT",
+               "MCP_NPM_SDK_PRESENT", "MCP_NPM_IN_CARGO", "MCP_NODE_RUNTIME_PRESENT")
+    for code in blocked:
+        if code in hits:
+            problems.append(f"{code} 命中（W8 不应出现）：{hits[code]}")
+    if problems:
+        for p in problems:
+            print(f"  - {p}")
+        print("MCP_CURRENT_GAPS_RESULT=FAIL")
         return 1
-    print(f"MCP_PENDING_RESULT=NONE（{len(PENDING_CODES)} 个 pending 码位均未实现，W1 守门通过）")
+    print("MCP_CURRENT_GAPS_RESULT=PASS（W8 相位：只读桥已落地，无 rmcp/server/listener/tokio，"
+          "奇偶/只读/红线性门禁全绿）")
     return 0
 
 
@@ -556,16 +463,17 @@ def _mode_default() -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--self-test", action="store_true", help="好/坏样本双向自检")
-    ap.add_argument("--expect-pending", action="store_true", help="验证 MCP 产物尚未落地（W1 守门）")
+    ap.add_argument("--expect-current-gaps", action="store_true",
+                    help="当前相位断言（W8：只读桥已落地、无 rmcp/server/listener）")
     args = ap.parse_args()
 
     if args.self_test:
         return _run_self_test()
-    if args.expect_pending:
-        return _mode_expect_pending()
+    if args.expect_current_gaps:
+        return _mode_expect_current_gaps()
 
-    # 默认：只跑默认扫描。self-test 由 pre-merge.sh 单独调用（与 check-core-boundary.py 同范式），
-    # 不在默认模式内嵌，避免单次 pre-merge 重复执行。
+    # 默认：只跑默认扫描。self-test / 当前相位断言 由 pre-merge.sh 单独调用
+    # （与 check-core-boundary.py 同范式），不在默认模式内嵌，避免单次 pre-merge 重复执行。
     return _mode_default()
 
 

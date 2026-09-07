@@ -408,15 +408,17 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/check-core-boundary.py" --expect-pending >/dev/null 2>&1 \
     || pm_fail "check-core-boundary.py --expect-pending（有 pending 码位已实现，应转入默认判定）"
 
-  # M5-2（Lane A3）：MCP 命令注册表 / 全局策略夹具（15 码位：5 ACTIVE + 9 PENDING + 1 注册表路径策略）。
+  # M5-2（Lane A3）：MCP 命令注册表 / 全局策略夹具。W8 收口 W1 相位债：PENDING 码位全部退役
+  # （相位债关闭），rmcp/server/listener 由单一 ACTIVE 守门 MCP_NO_RMCP_SERVER 永久禁止；只读桥
+  # 已落地，故新增 --expect-current-gaps 当前相位断言（只读桥在 / 无 rmcp/server/listener / 奇偶只读全绿）。
   # ⚠️ 同 check-core-boundary 同理：rmcp/tokio 红线在编译层守不住，只能靠本夹具。
-  # 首期切片已实现 `src-tauri/src/mcp.rs` + `domain.rs` 能力白名单（无 rmcp/无 server/无监听），
-  # 故只挂 --self-test + 默认门禁（不再挂 --expect-pending：M5-2 产物已存在）。
-  pm_log "M5-2 MCP 策略不变量夹具（5 ACTIVE 码 + 9 PENDING 码 + 1 注册表路径策略码，产物存在才判）…"
+  pm_log "M5-2 MCP 策略不变量夹具（W8：8 ACTIVE 码，0 PENDING 码；--self-test + 默认 + 当前相位）…"
   python3 "$SCRIPT_DIR/check-mcp-policy.py" --self-test >/dev/null 2>&1 \
     || pm_fail "check-mcp-policy.py --self-test"
   python3 "$SCRIPT_DIR/check-mcp-policy.py" >/dev/null 2>&1 \
     || pm_fail "check-mcp-policy.py（M5-2 MCP 安全不变量被破坏：能力漂移/路径根/URL 脱敏/rmcp/tokio/监听）"
+  python3 "$SCRIPT_DIR/check-mcp-policy.py" --expect-current-gaps >/dev/null 2>&1 \
+    || pm_fail "check-mcp-policy.py --expect-current-gaps（W8 当前相位：只读桥在 / 无 rmcp-server/listener）"
 
   # M5-3（Lane A4）：agent memory KV 契约不变量夹具（5 ACTIVE 码位，产物存在才判）。
   # 守容量常量单一真源 / 隐私双扫 / per-agent 字节软配额 / 总上限接入 / 审计脱敏。
