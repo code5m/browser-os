@@ -111,8 +111,8 @@ export function dialectLabel(d: AgentDialect): string {
 export function a2aSummary(a2a: A2aConfig | undefined): string {
   if (!a2a) return "不可委派";
   const parts: string[] = [];
-  if (a2a.delegateTo) parts.push("可委派他人");
-  if (a2a.delegatedFrom) parts.push("可被委派");
+  if (a2a.delegate_to) parts.push("可委派他人");
+  if (a2a.delegated_from) parts.push("可被委派");
   return parts.length ? parts.join(" / ") : "不可委派";
 }
 
@@ -121,9 +121,9 @@ export function execSummary(exec: SkillExec | undefined): string {
   if (!exec) return "—";
   switch (exec.kind) {
     case "script_ref":
-      return `脚本 #${exec.scriptId}`;
+      return `脚本 #${exec.script_id}`;
     case "command_ref":
-      return `命令片段 #${exec.commandId}`;
+      return `命令片段 #${exec.command_id}`;
     case "sequence": {
       const n = Array.isArray(exec.steps) ? exec.steps.length : 0;
       return `串联 ${n} 步`;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, nextTick, defineAsyncComponent } from "vue";
+import { computed, ref, watch, nextTick, defineAsyncComponent, h } from "vue";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../stores/useBrowserStore";
 import { useBookmarkStore } from "../../stores/useBookmarkStore";
@@ -26,16 +26,66 @@ import CommandSnippetPanel from "../workspace/CommandSnippetPanel.vue";
 // store(useDatabaseStore.ts) 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
 // 仅在 mainView==='db' 首次渲染时才拉取该 chunk，不破坏其它视图。
 // M4-8 定时任务面板同样懒加载：其纯逻辑(taskUi.ts)、store(useTaskStore.ts) 一并拆出主 chunk。
-const TaskPanel = defineAsyncComponent(() => import("../workspace/TaskPanel.vue"));
-const DatabasePanel = defineAsyncComponent(() => import("../workspace/DatabasePanel.vue"));
-const SkillManagerPanel = defineAsyncComponent(() => import("../workspace/SkillManagerPanel.vue"));
-const AgentManagerPanel = defineAsyncComponent(() => import("../workspace/AgentManagerPanel.vue"));
+// W17(A7): 异步面板加载中/失败态兜底组件（纯展示，不引入运行时行为；用 h() 而非 template 以避免运行时编译依赖）。
+const panelLoading = {
+  render: () =>
+    h("div", { class: "modview panel-state", role: "status", "aria-live": "polite" }, "面板加载中…"),
+};
+const panelError = {
+  render: () =>
+    h("div", { class: "modview panel-state panel-error", role: "alert" }, "该面板暂时无法显示"),
+};
+
+// M4-8 定时任务面板同样懒加载：其纯逻辑(taskUi.ts)、store(useTaskStore.ts) 一并拆出主 chunk。
+const TaskPanel = defineAsyncComponent({
+  loader: () => import("../workspace/TaskPanel.vue"),
+  loadingComponent: panelLoading,
+  errorComponent: panelError,
+  delay: 80,
+  timeout: 10000,
+});
+// M4-4 数据库面板：懒加载（defineAsyncComponent），将其 15KB+ 纯逻辑(dbUi.ts)、
+// store(useDatabaseStore.ts) 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
+// 仅在 mainView==='db' 首次渲染时才拉取该 chunk，不破坏其它视图。
+const DatabasePanel = defineAsyncComponent({
+  loader: () => import("../workspace/DatabasePanel.vue"),
+  loadingComponent: panelLoading,
+  errorComponent: panelError,
+  delay: 80,
+  timeout: 10000,
+});
+const SkillManagerPanel = defineAsyncComponent({
+  loader: () => import("../workspace/SkillManagerPanel.vue"),
+  loadingComponent: panelLoading,
+  errorComponent: panelError,
+  delay: 80,
+  timeout: 10000,
+});
+const AgentManagerPanel = defineAsyncComponent({
+  loader: () => import("../workspace/AgentManagerPanel.vue"),
+  loadingComponent: panelLoading,
+  errorComponent: panelError,
+  delay: 80,
+  timeout: 10000,
+});
 // M5-9 图谱面板：懒加载（defineAsyncComponent），将其纯逻辑(graphUi.ts)、store(useGraphStore.ts)
 // 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
-const GraphPanel = defineAsyncComponent(() => import("../graph/GraphPanel.vue"));
+const GraphPanel = defineAsyncComponent({
+  loader: () => import("../graph/GraphPanel.vue"),
+  loadingComponent: panelLoading,
+  errorComponent: panelError,
+  delay: 80,
+  timeout: 10000,
+});
 // M5-W14 插件管理器面板：懒加载（defineAsyncComponent），将其纯逻辑(pluginUi.ts)、
 // store(usePluginStore.ts) 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
-const PluginManager = defineAsyncComponent(() => import("../plugin/PluginManager.vue"));
+const PluginManager = defineAsyncComponent({
+  loader: () => import("../plugin/PluginManager.vue"),
+  loadingComponent: panelLoading,
+  errorComponent: panelError,
+  delay: 80,
+  timeout: 10000,
+});
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
@@ -199,5 +249,51 @@ watch(
 
     <!-- ===== 文件编辑器 / Markdown 预览（覆盖层） ===== -->
     <FileEditor v-if="layout.mainView === 'editor'" />
+    <!-- ===== W17(A7) 兜底：未知/空视图时主区不得空白或死区 ===== -->
+    <!-- This is intentionally independent from FileEditor; an adjacent v-else
+         would bind to the editor v-if and render during every normal view. -->
+    <div
+      v-if="![
+        'home', 'browser', 'grid', 'files', 'arts', 'clip', 'repo', 'apps', 'audit',
+        'scripts', 'commands', 'tools', 'db', 'tasks', 'plugin', 'skills', 'agents',
+        'graph', 'settings', 'term', 'editor'
+      ].includes(layout.mainView)"
+      class="modview panel-state"
+      role="alert"
+      aria-live="polite"
+    >
+      <div>
+        <div class="pf-title">当前视图不可用</div>
+        <div class="pf-desc">未找到对应的面板（{{ layout.mainView || "空" }}）。请从左侧栏切换其它功能。</div>
+      </div>
+    </div>
   </main>
 </template>
+
+<style scoped>
+.panel-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 100%;
+  min-height: 200px;
+  padding: 24px;
+  color: #9aa4b2;
+  font-size: 14px;
+  text-align: center;
+}
+.panel-error {
+  color: #ff7a7a;
+}
+.pf-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #cbd5e0;
+}
+.pf-desc {
+  max-width: 420px;
+  line-height: 1.7;
+}
+</style>

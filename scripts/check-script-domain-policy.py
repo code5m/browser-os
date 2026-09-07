@@ -226,7 +226,7 @@ def detect_violations(files: dict) -> list[str]:
     save_body = rust_fn_body(workspace, "save_scripts_at")
     if not save_body:
         v.append("SCR_ATOMIC_WRITE_MISSING:save_scripts_at 缺失")
-    elif "atomic_write" not in save_body:
+    elif "atomic_write" not in save_body and "save_json_list_at" not in save_body:
         v.append("SCR_ATOMIC_WRITE_MISSING:save_scripts 未走原子写")
 
     # ---- 9) 审计不得泄露正文/默认值/参数值/绝对路径 ----
@@ -419,8 +419,8 @@ def run_self_test(root: Path) -> int:
     samples.append((
         "save_scripts_at 改为非原子写",
         mutate(workspace=good["workspace"].replace(
-            "    crate::session::atomic_write(path, &content)",
-            "    fs::write(path, &content).map_err(|e| e.to_string())")),
+            '    save_json_list_at(path, list, "脚本库")',
+            '    fs::write(path, serde_json::to_string(list).unwrap()).map_err(|e| e.to_string())')),
         "SCR_ATOMIC_WRITE_MISSING"))
     # 14. 审计泄露脚本正文
     samples.append((

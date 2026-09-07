@@ -193,7 +193,9 @@ def detect(ctx: dict[str, str]) -> set[str]:
     activity = ctx["activity"]
     enum_ok = bool(MAINVIEW_ENUM_PATTERN.search(layout))
     meta_ok = bool(MAINVIEW_META_PATTERN.search(layout))
-    activity_ok = '"scripts"' in activity
+    # W17 navigation now has one source of truth in useLayoutStore; ActivityBar
+    # consumes the exported menu instead of duplicating view strings.
+    activity_ok = '"scripts"' in activity or 'view: "scripts"' in layout
     if not (enum_ok and meta_ok and activity_ok):
         hits.add("SCRIPTUI_MAINVIEW_UNREGISTERED")
 
@@ -238,7 +240,7 @@ def detect(ctx: dict[str, str]) -> set[str]:
     if cmdsnippet:
         cmd_enum_ok = bool(CMD_MAINVIEW_ENUM_PATTERN.search(layout))
         cmd_meta_ok = bool(CMD_MAINVIEW_META_PATTERN.search(layout))
-        cmd_activity_ok = '"commands"' in activity
+        cmd_activity_ok = '"commands"' in activity or 'view: "commands"' in layout
         if not (cmd_enum_ok and cmd_meta_ok and cmd_activity_ok):
             hits.add("SCRIPTUI_CMD_MAINVIEW_UNREGISTERED")
 

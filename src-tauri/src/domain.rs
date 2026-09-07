@@ -2407,3 +2407,115 @@ pub struct TrustedKeyRecord {
     #[serde(default)]
     pub added_at: String,
 }
+
+// ===================== BUG-HUNT B8 序列化契约夹具（Lane A7, M5-W17 BUG-HUNT） =====================
+//
+// B8-1 / B8-2：`DbValue` / `SkillDef` / `AgentDef` 的 JSON 键名是前后端唯一契约。
+// 前端 `src/types.ts` 与 `src/utils/dbUi.ts` 曾按 PascalCase / camelCase 书写，与后端
+// `#[serde(rename_all = "snake_case")]` 的实际输出不符（数据库面板单元格全部渲染错）。
+// 本夹具把这些键名**钉死**：任何把键名改回 PascalCase / camelCase 的改动都会在此失败。
+#[cfg(test)]
+mod bug_hunt_b8_casing_fixtures {
+    use super::*;
+
+    fn json<T: Serialize>(v: &T) -> serde_json::Value {
+        serde_json::to_value(v).expect("serialize")
+    }
+
+    /// B8-1：`DbValue` 全部变体必须是 snake_case 标签（`blob_len` 而非 `BlobLen`）。
+    #[test]
+    fn dbvalue_uses_snake_case_tags() {
+        assert_eq!(json(&DbValue::Null), serde_json::json!("null"));
+        assert_eq!(
+            json(&DbValue::Bool(true)),
+            serde_json::json!({ "bool": true })
+        );
+        assert_eq!(json(&DbValue::Int(7)), serde_json::json!({ "int": 7 }));
+        assert_eq!(
+            json(&DbValue::Float(1.5)),
+            serde_json::json!({ "float": 1.5 })
+        );
+        assert_eq!(
+            json(&DbValue::Text("abc".into())),
+            serde_json::json!({ "text": "abc" })
+        );
+        assert_eq!(
+            json(&DbValue::BlobLen(1024)),
+            serde_json::json!({ "blob_len": 1024 })
+        );
+
+        // 反例哨兵：PascalCase 标签绝不允许复活
+        let v = json(&DbValue::Text("abc".into()));
+        assert!(v.get("Text").is_none(), "DbValue 不得出现 PascalCase 标签");
+    }
+
+    /// B8-2：`SkillDef` 必须 snake_case（`display_name`）；`exec` 为 `tag="kind"` + snake_case 字段。
+    #[test]
+    fn skilldef_uses_snake_case_fields() {
+        let def = SkillDef {
+            id: "s1".into(),
+            version: "1.0.0".into(),
+            display_name: "示例技能".into(),
+            description: "d".into(),
+            acl: AclLevel::Safe,
+            exec: SkillExec::ScriptRef {
+                script_id: "sc1".into(),
+                params: serde_json::Value::Null,
+            },
+            inputs: vec![],
+            capabilities: vec![],
+            tests: vec![],
+            metadata: serde_json::Value::Null,
+        };
+        let v = json(&def);
+        assert_eq!(v["display_name"], "示例技能");
+        assert!(
+            v.get("displayName").is_none(),
+            "SkillDef 不得出现 camelCase 键"
+        );
+        // exec：内部标签枚举 tag="kind"
+        assert_eq!(v["exec"]["kind"], "script_ref");
+        assert_eq!(v["exec"]["script_id"], "sc1");
+        assert!(
+            v["exec"].get("scriptId").is_none(),
+            "SkillExec 不得出现 camelCase 键"
+        );
+    }
+
+    /// B8-2：`AgentDef` 必须 snake_case（display_name / system_prompt / default_capabilities），
+    /// 嵌套 `a2a` 同样 snake_case（delegate_to / delegated_from）。
+    #[test]
+    fn agentdef_uses_snake_case_fields() {
+        let a = AgentDef {
+            id: "a1".into(),
+            version: "1.0.0".into(),
+            display_name: "示例智能体".into(),
+            description: "d".into(),
+            dialect: AgentDialect::OpenAiCompatible,
+            system_prompt: "sp".into(),
+            default_capabilities: vec![CapabilityRef {
+                id: "cap.read".into(),
+            }],
+            a2a: A2aConfig {
+                delegate_to: true,
+                delegated_from: false,
+            },
+            metadata: serde_json::Value::Null,
+        };
+        let v = json(&a);
+        assert_eq!(v["display_name"], "示例智能体");
+        assert_eq!(v["system_prompt"], "sp");
+        assert!(v["default_capabilities"].is_array());
+        for bad in ["displayName", "systemPrompt", "defaultCapabilities"] {
+            assert!(v.get(bad).is_none(), "AgentDef 不得出现 camelCase 键 {bad}");
+        }
+        assert_eq!(v["a2a"]["delegate_to"], true);
+        assert_eq!(v["a2a"]["delegated_from"], false);
+        assert!(
+            v["a2a"].get("delegateTo").is_none(),
+            "A2aConfig 不得出现 camelCase 键"
+        );
+        // 方言同样 snake_case
+        assert_eq!(v["dialect"], "open_ai_compatible");
+    }
+}

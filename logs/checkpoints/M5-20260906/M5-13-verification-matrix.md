@@ -1,4 +1,4 @@
-# M5 验证矩阵（A1 横切 · M5-W0 末位 + W1 reconciliation + W6 verification delta + W7 verification scope + W8 reconciliation + W9 verification scope + W10 verification scope + W10 verification delta + W11 verification scope + W12 verification scope + W12 build metrics threshold + W13 verification scope + W14 verification scope + W14 PUSHED + W15 verification scope）
+# M5 验证矩阵（A1 横切 · M5-W0 末位 + W1 reconciliation + W6 verification delta + W7 verification scope + W8 reconciliation + W9 verification scope + W10 verification scope + W10 verification delta + W11 verification scope + W12 verification scope + W12 build metrics threshold + W13 verification scope + W14 verification scope + W14 PUSHED + W15 verification scope + W15 PUSHED + W16）
 
 > 子卡 ID：**M5-13** · 跨 M5-1~M5-12 · `[S3|LEVERAGE:2|COMPLEX|AI:DEEP|R:xhigh]`
 > 责任 Lane 候选：**A11**（沿用 A7/A11 角色，A0 签发时定）
@@ -664,8 +664,100 @@ python3 scripts/measure-build-metrics.py --compare "$B" --skip-build
 10. `check-agent-skill-ui-logic.mjs` 110/110 PASS（**A5 W15 执行锁** = 无 Agent/Skill 执行可供性）
 11. A6 W15 新增 UI 逻辑门禁（a11y 确认 / 模态焦点 / empty/loading/error 态）自测 PASS
 12. `npm run build` PASS + `python3 scripts/pre-merge.sh` ALL_PASS
-13. **`python3 scripts/measure-build-metrics.py --compare` `total_bytes_pct ≤ 25.0` + `cargo_warnings delta = 0`**（当前 24.89，余量 **0.11pp**；超 25.0 即 FAIL）
+13. **`python3 scripts/measure-build-metrics.py --compare` `total_bytes_pct ≤ 25.2`**（A0 一次性上限）+ `cargo_warnings delta = 0`（W15 实测 **25.14**，余量 **0.06pp**；超 25.2 → `exceeds_growth_limit=true` → `pre-merge.sh` FAIL）
 
 **W15 硬停（board L1181）**：无 plugin 调用/执行、动态加载、网络下载监听、daemon、模型调用、Agent/Skill 执行、MCP 扩张、graph 写导出、后台 worker、raw Tauri invoke、敏感渲染/持久化。
 
 **A1 W15 本卡立场 = 整包文档收口（board + 3 主文档 + M5-0/10/11/12/13/14 + A1 W15 checkpoint + patch），零产品代码，不 push**；A11 出 push readiness 后由 A0 合并推送。
+
+---
+
+## [W15 PUSHED 结果回填 · 2026-09-08 11:00 CST] A1 W16 reconciliation（基线 `052b18a`）
+
+**13 项 W15 必跑结果（A0 acceptance 记录）**：
+
+| # | 项 | 结果 |
+|---|---|---|
+| 1 | full cargo | **431/431 PASS** |
+| 2 | MCP feature | **21/21 PASS** |
+| 3 | release build `--locked` | success（2 条既有 `grid_process.rs` dead-code 警告） |
+| 4 | `npm run build` | PASS（仅既有 mixed static/dynamic import 警告） |
+| 5 | plugin / graph / MCP / Agent-Skill / UI privacy / UI logic 策略 | PASS |
+| 6 | `node scripts/check-ui-a11y-logic.mjs`（A6 W15 新增） | PASS |
+| 7 | `pre-merge.sh` | ALL_PASS |
+| 8 | `git diff --check` | PASS |
+| 9 | **build metrics** | **25.14% ≤ 25.2%**（一次性上限），warning delta 0 |
+
+**A0 拣入期偏差（必须记账）**：A6 的第一个通用 async-state 组件会把总体积抬到 **25.60%**，已**移除**；焦点管理收窄为两个高危写确认（`ConfirmModal.vue` / `GitWriteConfirmDialog.vue`）。**A1 W16 已把本卡第 13 项门禁由 25.0 更正为 25.2**。
+
+**W16 后续**：`M5-W16` = M5 closeout + M6 charter，**docs/review only**（board L1181）；A11 出 M5 终版矩阵 + M6 验证计划骨架；M6 任何真实运行时权限需产品负责人书面批准 + A10 入口闸（见 `logs/checkpoints/A1-M5-W16-M6-WBS-proposal-20260908-1100.md` §5）。
+
+---
+
+## [W17 verification scope · 2026-09-08 12:00 CST] W17 desktop-client completeness 验证矩阵（A1 DOCS ONLY · A2/A3/A5/A6/A7 有界前端产品代码 · A4/A9 测试·策略 · A8 手动 QA · A10 安全 · A11 验证）
+
+> 依据：`PARALLEL_COMMAND_BOARD.md` L1164-1215（M5-W17 Desktop Client Completeness and Home Recovery Dispatch）；A1 W17 = **DOCS ONLY**，不产出验证执行结果，只定义范围与判定口径。
+
+**W17 与 W15/W16 的门禁差异（必须先记账）**：W17 是**真实产品代码波**（有界前端/启动体验），因此验证范围从 W16 的「纯文档/review」扩展为「前端构建 + 纯逻辑测试 + 策略脚本 + 手动桌面验收 + 体积门禁 + Rust 定向测试」；但 **不新增任何运行时权限**，故 M5 已锁的运行时面（plugin invoke / 命令执行 / 动态加载 / 远程下载·监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP live runtime / graph 写·导出 / 后台 worker）在 W17 **维持全锁**，不构成新增验证项。
+
+**W17 验证矩阵（6 FAC · 对应 board 六条共享 AC）**：
+
+| FAC | 对应 AC | 验证对象 | 责任 Lane | 判定口径（PASS 条件） | A1 W17 记录状态 |
+|---|---|---|---|---|---|
+| **FAC-1.W17** | AC-1 启动 | 桌面 dev 启动助手（`run-gui.sh` / `scripts/`）：检测/启动 Vite dev server → 等待就绪 → 拉起桌面端 → 退出只清理自己拥有的 server；release 仍用 bundled assets | A2 CODE + A11 验证 + A8 手动 | 从干净状态执行助手 **不出现** `localhost:1421` connection refused；release 构建仍加载 bundled assets（不依赖 dev server） | **ACTIVE · 待 A2 交付** |
+| **FAC-2.W17** | AC-2 首页 | `useHomeStore.ts` / `homeUi.ts` / `src/components/home/`：主工作区 launcher 可用路由 + 快捷/最近项有界 + 抗畸形本地数据 + 空/加载态连贯 + 非营销页 | A3 CODE（store/utils）+ A5 CODE（组件）+ A9 TEST + A11 | `scripts/check-home-store-logic.mjs` + `scripts/check-home-ui-logic.mjs` 全 PASS；畸形本地数据不抛异常（回退稳定默认）；列表长度受常量上界约束 | **ACTIVE · 待 A3/A5 交付** |
+| **FAC-3.W17** | AC-3 导航·窄窗口 | `ActivityBar.vue` / `useLayoutStore.ts` / `MainArea.vue` / `StatusBar.vue` / `App.vue`：既有模块可发现 + 稳定 active 态 + 窄窗口行为 + 面板解析失败不出现空白死区 | A6 CODE + A7 CODE + A9 TEST + A8 手动 | `scripts/check-client-navigation-logic.mjs` PASS；窄窗口下导航可达；面板解析失败有可读兜底（非空白） | **ACTIVE · 待 A6/A7 交付** |
+| **FAC-4.W17** | AC-4 可达性·无敏感泄露 | 全部新增可见控件：键盘可达 + accessible name + 沿用既有视觉语言；UI/错误中无敏感 URL/query/凭据/本地路径 | A4 REVIEW（新 `scripts/check-home-client-policy.py`）+ A9 TEST + A10 安全 | 新策略脚本 PASS；DOM/source 级检查无敏感文案；A10 verdict 无阻断发现 | **ACTIVE · 待 A4/A9/A10 交付** |
+| **FAC-5.W17** | AC-5 体积门禁 | `scripts/measure-build-metrics.py`：W17 前端改动后总体积增长仍 ≤ **25.2%**（一次性上限），warning delta = 0 | A11 验证（主）+ 全 lane 自律 | `total_bytes_pct ≤ 25.2` 且 `cargo_warnings` delta = 0；**超限必须报精确 delta，禁止抬上限**（board L1178） | **ACTIVE · 基线 25.14% @ `052b18a`，余量仅 0.06pp** |
+| **FAC-6.W17** | AC-6 交付完整性 | 每 lane 整包：代码/测试 + checkpoint + 精确命令与结果 + `git diff --check` + binary patch；不 commit、不 push | 全 11 lane + A0 集成 | 集成顺序 `A2 -> A3 -> A5 -> A6 -> A7 -> A4/A9 -> A8/A10/A11 -> A0` 无跨 lane 覆盖；冲突以 binary patch 呈现 | **ACTIVE · A1 已按此交付** |
+
+**A1 W17 立场**：本卡只定义范围与判定口径，**不产出任何验证执行结果**（无产品代码、不跑验证）；执行结果由 A2/A3/A5/A6/A7/A9 自测 + A11 独立矩阵 + A8 手动 QA 回填。A1 另出**用户可见验收清单/已知限制**：`logs/checkpoints/A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md`（人工勾选口径，供 A8 实跑与 A0 拣入验收使用）。
+
+**W17 硬停止验证必跑（board L1170 / L1201）**：
+1. 无新增 Tauri 命令 / bridge capability / ACL 条目 / 文件系统权限 / 网络特权 / 新依赖 —— **必须为零**
+2. 无命令执行 / plugin 调用 / 动态加载 / 远程下载·监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP live runtime / graph 写·导出 / 后台 worker
+3. UI 只调 `src/bridge.ts`，无 raw Tauri `invoke`
+4. 不启动任何 M6 权限切片；M6 开工需产品负责人书面批准 + A10 入口闸
+5. 允许文件已被他 lane 改动 → 出 binary patch，不覆盖、不跨 lane 解冲突
+6. 体积门禁 25.2% 维持；超限报 delta 不抬上限
+7. 仅 A0 集成 / commit / push
+
+---
+
+## [W17 acceptance closeout · 2026-09-08 12:30 CST] A1 W17 收口验证记录（证据 / 债闭环 / 手动验收边界 / HOLD lane）
+
+> 依据：`PARALLEL_COMMAND_BOARD.md` L1203-1229 + `logs/checkpoints/A1-M5-W17-acceptance-closeout-20260908-1230.md`。A1 = DOCS ONLY，**不产出验证执行结果**，只记录与对账。
+
+**FAC 状态更新（对应本卡 `[W17 verification scope]` 6 FAC）**：
+
+| FAC | W17 实施期 | **W17 收口期（A1 记录）** | 判定来源 |
+|---|---|---|---|
+| **FAC-1.W17 启动** | ACTIVE·待 A2 | A2 已交付 `run-gui.sh` + `check-dev-startup.sh` + `dev-server.sh`；安全面 PASS（无 `sudo`/`chmod 777`/`curl\|bash`/`eval`/无差别 `pkill`，`HOME_STARTUP_SAFE` 零命中）；**功能面 AC-1 人工实跑仍待 A0/人工在原生客户端执行** | A2 closeout + A4 §2.3 |
+| **FAC-2.W17 首页** | ACTIVE·待 A3/A5 | `check-home-store-logic.mjs` **105/0**；`check-home-ui-logic.mjs` 需 A9 收口后复测；home 列表有界 + 畸形容错已落 | A1 实测 + A3/A9 |
+| **FAC-3.W17 导航·窄窗口** | ACTIVE·待 A6/A7 | `check-client-navigation-logic.mjs` **60/60 PASS**；`check-ui-a11y-logic.mjs` PASS；`check-session-logic.mjs` ALL_PASS；A7 外壳兜底 PASS（主区无空白死区） | A6 closeout + A7 |
+| **FAC-4.W17 可达性·无敏感泄露** | ACTIVE·待 A4/A9/A10 | `check-home-client-policy.py` 默认 **ACTIVE=3 hold** 且 **`--expect-pending`=NONE（3 pending 码位全闭环）**；`grep 'invoke('` W17 scope **0 命中**；tauri::command **137** 不变；ACL 末条仍 `list_artifact_images` | A1 实测 + A4 + A8 + A10 |
+| **FAC-5.W17 体积门禁** | ACTIVE（基线 25.14%） | **开放**：A11 修复前 25.55%（超限 +0.35pp，未抬上限）；A1 脏树全量实测 **29.77%**（多 lane 叠加，基线被污染见 A6 §4-F1）；**最终须 A11 在 A0 集成后干净树复测** | A11 + A6 + A1 实测 |
+| **FAC-6.W17 交付完整性** | ACTIVE | 各 lane 已出 checkpoint + patch（A2/A3/A4/A5/A6/A7/A8/A9/A10/A11 齐备）；A5/A6/A7 按 HOLD 出 closeout；`git diff --check` CLEAN | A1 对账 |
+
+**唯一真实产品债 `HOME_NO_SECRET_PERSIST` = 已闭环（本卡必须记账的时间线更正）**：
+
+- 债：`useHomeStore.ts` 将 app 条目 `target`（app exec 命令体）落 `localStorage`
+- 修复：A3 以 `toPersisted()` + `isStorageSafe` 过滤，只落非敏感主页元数据（`:109` 注释明示）
+- **证据**：A5 closeout（`20260907-2133`）实测仍命中 `:72` = **修复前快照**；**A1 当前实测 `--expect-pending` = NONE** + store 逻辑 105/0 = **已闭环**
+- → A0 集成以**当前实测**为准；board L1205 的"仍存在"表述为派发时快照
+
+**HOLD lane（A5/A6/A7）不产生新验证项**：A5 PASS / A6 PASS_WITH_DEBT（门禁 60/60，4 条跨 lane 发现挂账）/ A7 PASS；均无具体阻塞，**不 reopen、不重复开发**。
+
+**W17 收口期新增待补验证（交 A11/A0）**：
+
+1. `pre-merge ALL_PASS` **未覆盖 W17 三个新门禁**（`check-home-client-policy.py` / `check-home-store-logic.mjs` / `check-home-ui-logic.mjs`）—— A6 §4-F2 发现，需 A11 纳入终版矩阵
+2. 体积门禁须在 **A0 集成后干净树**复测（当前脏树 29.77% 不可作为判定值）
+3. 原生客户端视觉验收（布局/窄窗视觉回流/焦点顺序/错误呈现）**headless BLOCKED**，须 A0/人工实跑；**未伪造截图**
+
+**波次流转（board L8，2026-09-08 13:00 CST）**：A0 已把 `NEXT` 由 `M5-W17` 转为 **`M5-BUG-HUNT`**（*confirmed high-risk bug closure and evidence refresh*），并声明 *"W17 desktop-client closeout is locally green; native visual acceptance remains user-side evidence"*。本卡 6 FAC 的收口状态以此为 A0 口径；**FAC-5（体积）与 FAC-1/FAC-3 的原生实跑项仍为开放项**，不随 `NEXT` 转移而消失。
+
+**A1 在 BUG-HUNT 波无验证任务**：BUG-HUNT Follow-up Dispatch（board L1235-1246）lane 表仅含 A2-A11，**无 A1 行**；BUG-HUNT 顺序 `A2/A3/A5/A6/A7/A8/A10/A9 -> A4 -> A11 -> A0` 亦不含 A1。本卡**不新增** BUG-HUNT 验证项（避免越界）。**唯一交叉提醒**：BUG-HUNT 的 **B5-1**（persistence-before-spawn 事务边界，需测试化后实施）与 W17 的 `HOME_NO_SECRET_PERSIST`（浏览器存储不落敏感命令体，**已闭环**）**主题相邻但不同层**（Rust spawn/持久化 vs 前端 localStorage），A0 集成时勿混淆两者的闭环状态。
+
+**FAC-3.W17 更正（2026-09-08 13:30 CST）**：本卡 FAC-3 原记"A7 外壳兜底 PASS（主区无空白死区）"→ 依据 A11 复跑 **B10-b = ✅ CONFIRMED（结构性）**，更正为 **`PASS_WITH_REGRESSION`**：`MainArea.vue:253` 的 `v-else` 与 `:251` 的 `FileEditor v-if` 配对（不与主链 `:128`–`:241` 相连）→ `mainView !== 'editor'` 时兜底块**恒渲染**"当前视图不可用"。登记为 **W17-D6**，交 A7/A0；用户可见后果**未真机验证**，需 A8 实跑确认。
+
+**BUG-HUNT 侧已确认的 W17 门禁增量**：A10 交付 B11-3 markdown XSS 修复并新增 `scripts/check-markdown-xss-logic.mjs`（16/16 PASS）；A11 交付 B8/B10/B12 复跑矩阵（3 CONFIRMED / 2 降级重分类 / 4 UNVERIFIED）。**A11 复跑属 BUG-HUNT 波验证项，不并入本卡 W17 六 FAC**（避免跨波次越界记账）。

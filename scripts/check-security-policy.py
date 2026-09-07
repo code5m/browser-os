@@ -76,7 +76,9 @@ def write_commands_use_path_policy(bridge_source: str) -> bool:
     return checked > 0
 
 
-def detect_gaps(bridge_source: str, capability_sources: str) -> list[str]:
+def detect_gaps(
+    bridge_source: str, capability_sources: str, policy_source: str = ""
+) -> list[str]:
     gaps: list[str] = []
 
     # SEC-01/SEC-07（M0-3.d 已收口）：launch_app 不得再用 sh -c，且必须过启动目标校验。
@@ -84,6 +86,23 @@ def detect_gaps(bridge_source: str, capability_sources: str) -> list[str]:
         gaps.append("LAUNCH_APP_ARBITRARY_SHELL")
     elif "check_launch_target" not in function_body(bridge_source, "launch_app"):
         gaps.append("LAUNCH_APP_WITHOUT_TARGET_POLICY")
+    else:
+        # B2-1（BUG-HUNT）：启动目标校验的**拦截完整性**——门禁不能只看"是否调用了函数"。
+        # 必须同时具备：执行包装器黑名单（env/sudo…）、解释器内联代码开关、符号链接解析后复查。
+        # 三者缺一即视为可被 env / 解释器 `-c` / 软链接绕过。
+        missing = [
+            marker
+            for marker in (
+                "BLOCKED_LAUNCH_WRAPPERS",
+                "BLOCKED_INTERPRETERS",
+                "INTERPRETER_EXEC_FLAGS",
+            )
+            if marker not in policy_source
+        ]
+        if missing or "resolve_program_file" not in function_body(
+            policy_source, "check_launch_target"
+        ):
+            gaps.append("LAUNCH_TARGET_BYPASS_NOT_HARDENED")
 
     # SEC-02（M0-3.c 已收口）：写/删类命令必须经 check_path_within_roots。
     # 判定方式：找到写/删命令的函数体，确认其中调用了路径策略。
@@ -148,9 +167,25 @@ def load_capability_sources(root: Path) -> str:
     return "\n".join(parts)
 
 
+def load_policy_source(root: Path) -> str:
+    """security_policy.rs：启动目标校验的拦截完整性在此定义（B2-1）。
+
+    文件缺失时返回空串——此时 launch_app 若已接入 check_launch_target，
+    detect_gaps 会据此判定完整性缺失（失败关闭）。
+    """
+    path = root / "src-tauri" / "src" / "security_policy.rs"
+    if not path.is_file():
+        return ""
+    return path.read_text(encoding="utf-8")
+
+
 def scan_repository(root: Path) -> list[str]:
     bridge_source = (root / "src-tauri" / "src" / "bridge.rs").read_text(encoding="utf-8")
-    return detect_gaps(bridge_source, load_capability_sources(root))
+    return detect_gaps(
+        bridge_source,
+        load_capability_sources(root),
+        load_policy_source(root),
+    )
 
 
 def run_self_test() -> int:
@@ -194,13 +229,28 @@ identifier = "remote-collect"
 commands.allow = ["collect_selection", "save_note", "request_open_terminal", "report_resources"]
 """
     # M0-3.a 时的真实状态：写命令无路径策略、capability 残留 browser、远程集放行副作用命令。
+    legacy_policy = """
+pub const BLOCKED_LAUNCH_PROGRAMS: [&str; 6] = ["sh", "bash", "zsh", "fish", "powershell", "cmd"];
+pub fn check_launch_target(line: &str) -> Result<(String, Vec<String>), PolicyError> {
+    check_shell_command(line)?;
+    let (program, args) = parse_command_line(line)?;
+    if BLOCKED_LAUNCH_PROGRAMS.contains(&program.as_str()) {
+        return Err(PolicyError::BlockedLaunchProgram(program));
+    }
+    Ok((program, args))
+}
+"""
     legacy_gaps = list(EXPECTED_GAPS) + [
         "LAUNCH_APP_ARBITRARY_SHELL",
         "FILE_COMMANDS_WITHOUT_PATH_POLICY",
         "CAPABILITY_STALE_BROWSER_LABEL",
         "REMOTE_SIDE_EFFECT_COMMANDS_EXPOSED",
     ]
-    detected = detect_gaps(legacy_bridge, legacy_capabilities + "\n" + legacy_permissions)
+    detected = detect_gaps(
+        legacy_bridge,
+        legacy_capabilities + "\n" + legacy_permissions,
+        legacy_policy,
+    )
     if sorted(detected) != sorted(legacy_gaps):
         print(f"self-test: legacy mismatch: {detected}", file=sys.stderr)
         return 1
@@ -243,7 +293,23 @@ pub fn read_file(path: String) -> Result<String, String> {
 identifier = "remote-collect"
 commands.allow = ["report_resources", "report_title", "report_grid_load_failed"]
 """
-    if detect_gaps(resolved_bridge, resolved_capabilities + "\n" + resolved_permissions):
+    resolved_policy = """
+pub const BLOCKED_LAUNCH_PROGRAMS: [&str; 12] = ["sh", "bash", "dash", "ash", "zsh", "ksh", "csh", "tcsh", "fish", "powershell", "pwsh", "cmd"];
+pub const BLOCKED_LAUNCH_WRAPPERS: [&str; 10] = ["env", "busybox", "nohup", "sudo", "su", "doas", "pkexec", "xargs", "timeout", "setsid"];
+pub const BLOCKED_INTERPRETERS: [&str; 12] = ["python", "perl", "ruby", "node", "nodejs", "deno", "bun", "lua", "luajit", "php", "tclsh", "osascript"];
+pub const INTERPRETER_EXEC_FLAGS: [&str; 6] = ["-c", "-e", "--eval", "-E", "-r", "-p"];
+pub fn check_launch_target(line: &str) -> Result<(String, Vec<String>), PolicyError> {
+    check_shell_command(line)?;
+    let (program, args) = parse_command_line(line)?;
+    let resolved = resolve_program_file(&program).ok_or(PolicyError::LaunchProgramNotFound(program.clone()))?;
+    Ok((program, args))
+}
+"""
+    if detect_gaps(
+        resolved_bridge,
+        resolved_capabilities + "\n" + resolved_permissions,
+        resolved_policy,
+    ):
         print("self-test: resolved fixture still reports gaps", file=sys.stderr)
         return 1
 
@@ -253,6 +319,9 @@ commands.allow = ["report_resources", "report_title", "report_grid_load_failed"]
         (root / "src-tauri" / "src").mkdir(parents=True)
         (root / "src-tauri" / "capabilities").mkdir(parents=True)
         (root / "src-tauri" / "src" / "bridge.rs").write_text(legacy_bridge, encoding="utf-8")
+        (root / "src-tauri" / "src" / "security_policy.rs").write_text(
+            legacy_policy, encoding="utf-8"
+        )
         (root / "src-tauri" / "capabilities" / "default.json").write_text(
             legacy_capabilities, encoding="utf-8"
         )

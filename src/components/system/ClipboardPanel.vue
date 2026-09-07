@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useSystemStore } from "../../stores/useSystemStore";
 import { useLayoutStore } from "../../stores/useLayoutStore";
+import { redactSecrets } from "../../utils/redact";
 const system = useSystemStore();
 const layout = useLayoutStore();
 </script>
@@ -22,16 +23,16 @@ const layout = useLayoutStore();
         class="clip-area"
         placeholder="在此编辑文本后点「复制当前」写入系统剪贴板；切回本应用或打开面板时自动同步"
       ></textarea>
-      <div class="clip-tip">切回本应用或打开面板时自动读取系统剪贴板，已保存 {{ system.clipHistory.length }} 条历史</div>
+      <div class="clip-tip">已保存 {{ system.clipHistory.length }} 条历史（仅本次会话保留，关闭应用后清空，不写入磁盘）</div>
       <div class="clip-history">
         <div
           v-for="(item, idx) in system.clipHistory.slice(0, 30)"
           :key="item.at + '-' + idx"
           class="clip-item"
-          :title="item.text"
+          :title="redactSecrets(item.text)"
           @click="system.useClipItem(item)"
         >
-          <span class="clip-text">{{ item.text }}</span>
+          <span class="clip-text">{{ redactSecrets(item.text) }}</span>
           <button class="clip-copy" @click.stop="system.copyClipItem(item)">📋</button>
         </div>
         <div v-if="!system.clipHistory.length" class="empty">暂无历史记录，复制内容后会自动收集</div>

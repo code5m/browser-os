@@ -305,6 +305,7 @@ fn run_loop(app: &AppHandle) {
 ///
 /// ⚠️ 契约 §7：本函数体内**不得**直接写审计（审计下沉到 `record_*`）。
 fn tick(app: &AppHandle, now: DateTime<Utc>, retries: &mut Vec<PendingRetry>) {
+    let _store_guard = tasks::task_store_lock();
     let path = tasks::tasks_file(app);
     let mut list = tasks::load_tasks_at(&path);
     let mut dirty = false;
@@ -357,6 +358,9 @@ fn tick(app: &AppHandle, now: DateTime<Utc>, retries: &mut Vec<PendingRetry>) {
     *retries = deferred;
 
     // 3) 逐任务扫描
+    // Keep a separate reservation snapshot so the mutable task borrow does not
+    // prevent an atomic pre-spawn save of the complete task list.
+    let mut reserved_list = list.clone();
     for task in list.iter_mut() {
         if !task.enabled {
             continue;
@@ -407,13 +411,26 @@ fn tick(app: &AppHandle, now: DateTime<Utc>, retries: &mut Vec<PendingRetry>) {
                     TaskRunTrigger::Scheduled
                 };
                 let slot = planned.slot;
+
+                // Reserve the slot durably before spawning. A crash after spawn
+                // but before the old end-of-tick save must not replay the slot
+                // on restart. The trade-off is intentional: persistence failure
+                // skips one run instead of risking duplicate execution.
+                reserve_scheduled_slot(task, slot, now);
+                if let Some(reserved_task) = reserved_list.iter_mut().find(|t| t.id == task.id) {
+                    reserved_task.last_fired_at = task.last_fired_at;
+                    reserved_task.next_run_at = task.next_run_at;
+                    reserved_task.updated_at = task.updated_at;
+                }
+                if tasks::save_tasks_at(&path, &reserved_list).is_err() {
+                    record_reject(app, &task.id, tasks::TASK_PERSIST_FAILED);
+                    continue;
+                }
+                dirty = false;
+
                 match fire(app, task, slot, trigger, 1) {
                     FireOutcome::Started(_) => {
-                        // last_fired_at 与 next_run_at 同一次原子落盘（契约 §5.1 不变量 3）
-                        let fired = task.last_fired_at.map(|l| l.max(slot)).unwrap_or(slot);
-                        task.last_fired_at = Some(fired);
-                        task.updated_at = now;
-                        dirty = true;
+                        // The reservation above is already durable before spawn.
                     }
                     FireOutcome::Skipped(reason) => record_skip(app, &task.id, reason),
                     FireOutcome::Reject(code) => {
@@ -459,6 +476,20 @@ fn is_occupied(task_id: &str) -> bool {
         .lock()
         .map(|m| m.contains_key(task_id))
         .unwrap_or_else(|p| p.into_inner().contains_key(task_id))
+}
+
+/// Advance the durable scheduling cursor before a process is started.
+///
+/// Keeping this as a small pure state transition makes the crash window
+/// explicit: the caller persists these fields before entering `fire`.
+fn reserve_scheduled_slot(task: &mut TaskDef, slot: DateTime<Utc>, now: DateTime<Utc>) {
+    let fired = task
+        .last_fired_at
+        .map(|last| last.max(slot))
+        .unwrap_or(slot);
+    task.last_fired_at = Some(fired);
+    task.next_run_at = tasks::next_fire_after(&task.trigger, now.max(fired));
+    task.updated_at = now;
 }
 
 fn mark_in_flight(
@@ -891,6 +922,40 @@ mod scheduler_tests {
         assert!(plan.fire.is_empty(), "占用中不得触发");
         assert_eq!(plan.skipped.len(), 3);
         assert!(plan.skipped.iter().all(|r| *r == tasks::SKIP_REENTRANT));
+    }
+
+    #[test]
+    fn scheduled_slot_is_reserved_before_spawn_window() {
+        let slot = Utc::now();
+        let now = slot + chrono::Duration::seconds(1);
+        let mut task = TaskDef {
+            id: "reservation-test".into(),
+            name: "reservation-test".into(),
+            kind: crate::domain::TaskKind::Script,
+            target_id: "target".into(),
+            params: std::collections::HashMap::new(),
+            enabled: true,
+            trigger: crate::domain::TaskTrigger::Interval { every_secs: 60 },
+            missed_run_policy: MissedRunPolicy::Skip,
+            catch_up_limit: 1,
+            misfire_grace_secs: 60,
+            retry: crate::domain::RetryPolicy::default(),
+            timeout_secs: 60,
+            last_fired_at: None,
+            next_run_at: None,
+            created_at: slot,
+            updated_at: slot,
+        };
+
+        reserve_scheduled_slot(&mut task, slot, now);
+
+        assert_eq!(task.last_fired_at, Some(slot));
+        assert_eq!(
+            task.next_run_at,
+            Some(now + chrono::Duration::seconds(60)),
+            "预留槽位后必须立即推进下一次计划"
+        );
+        assert_eq!(task.updated_at, now);
     }
 
     // ---------- last_fired_at 判重：已触发的 slot 不再出计划 ----------

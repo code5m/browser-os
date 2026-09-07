@@ -178,7 +178,11 @@ def check(files: dict[str, str]) -> list[str]:
     # --- SCHEDUI_PANEL_LAZY：定时任务面板必须懒加载（defineAsyncComponent），不进主 chunk ---
     if 'import TaskPanel from "../workspace/TaskPanel.vue";' in mainarea:
         violations.append("SCHEDUI_PANEL_LAZY")
-    if 'defineAsyncComponent(() => import("../workspace/TaskPanel.vue"))' not in mainarea:
+    lazy_loader_ok = (
+        'defineAsyncComponent(() => import("../workspace/TaskPanel.vue"))' in mainarea
+        or 'loader: () => import("../workspace/TaskPanel.vue")' in mainarea
+    )
+    if not lazy_loader_ok:
         violations.append("SCHEDUI_PANEL_LAZY")
 
     # 去重并保持顺序稳定，便于断言
@@ -296,7 +300,7 @@ BAD_SAMPLES: list[tuple[str, str, str, str]] = [
     (
         "SCHEDUI_PANEL_LAZY",
         MAIN_AREA,
-        'const TaskPanel = defineAsyncComponent(() => import("../workspace/TaskPanel.vue"));',
+        'loader: () => import("../workspace/TaskPanel.vue"),',
         'import TaskPanel from "../workspace/TaskPanel.vue";',
     ),
 ]

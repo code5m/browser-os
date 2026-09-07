@@ -263,21 +263,25 @@ export function truncateText(text: string, max: number): string {
 
 /**
  * 解码后端 `DbValue`（`rename_all="snake_case"` 带标签枚举）：
- * `"Null"` / `{Bool}` / `{Int}` / `{Float}` / `{Text}` / `{BlobLen}`。
+ * `"null"` / `{ bool }` / `{ int }` / `{ float }` / `{ text }` / `{ blob_len }`。
  * 二进制**只回长度不回字节**，统一展示为 `<binary N B>`。
  * 同时兜底「后端改为无标签标量」的情况，避免 IPC 形态变化时前端白屏。
+ *
+ * BUG-HUNT B8-1：此前按 PascalCase（"Null" / { Text }）解码，与后端 snake_case 实际输出不符，
+ * 每个带标签单元格都命中末尾兜底 `JSON.stringify`，被渲染成原始 JSON。现按权威 DTO 对齐。
  */
 export function decodeDbValue(value: unknown): DbScalar {
   if (value === null || value === undefined) return null;
-  if (value === "Null") return null;
+  // 单元变体 Null：后端序列化为 JSON 字符串 "null"，须先于通用 string 分支判为 JS null
+  if (value === "null") return null;
   if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") return value;
   if (typeof value === "object") {
     const rec = value as Record<string, unknown>;
-    if (typeof rec.Text === "string") return rec.Text;
-    if (typeof rec.Int === "number") return rec.Int;
-    if (typeof rec.Float === "number") return rec.Float;
-    if (typeof rec.Bool === "boolean") return rec.Bool;
-    if (typeof rec.BlobLen === "number") return `<binary ${formatBytes(rec.BlobLen)}>`;
+    if (typeof rec.text === "string") return rec.text;
+    if (typeof rec.int === "number") return rec.int;
+    if (typeof rec.float === "number") return rec.float;
+    if (typeof rec.bool === "boolean") return rec.bool;
+    if (typeof rec.blob_len === "number") return `<binary ${formatBytes(rec.blob_len)}>`;
   }
   return JSON.stringify(value);
 }

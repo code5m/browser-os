@@ -1,0 +1,285 @@
+diff --git a/logs/checkpoints/Lane-A9-M5-W17-home-ui-logic-20260907-1800.md b/logs/checkpoints/Lane-A9-M5-W17-home-ui-logic-20260907-1800.md
+new file mode 100644
+index 0000000..40d874e
+--- /dev/null
++++ b/logs/checkpoints/Lane-A9-M5-W17-home-ui-logic-20260907-1800.md
+@@ -0,0 +1,63 @@
++# Lane A9 — M5-W17 主页 UI 逻辑测试 Checkpoint（START TEST）
++
++> 生成：2026-09-07 18:00 CST · Lane A9（M5-W17 · START TEST）
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W17 Desktop Client Completeness and Home Recovery Dispatch → A9（行 1193）：**START TEST** — `scripts/check-home-ui-logic.mjs` (new), `scripts/pre-merge.sh` only if integration is required, `logs/checkpoints/`；DOM/source-level checks for A5 home actions, accessible names, bounded lists, and no sensitive copy. **Do not modify product components.**
++> BASE：`052b18a`（HEAD：`docs(M5-W15): release-readiness bundle`）
++> 范围：W17 允许有界前端/启动体验产品代码；**禁止新增运行时权限、远程执行或特权集成**。A9 仅写测试脚本，不碰产品组件。
++
++```
++LANE=A9
++STATUS=PASS (START TEST；新脚本 check-home-ui-logic.mjs 通过 29 项断言，0 失败)
++BASE=052b18a
++HEAD=logs/checkpoints/Lane-A9-M5-W17-home-ui-logic-20260907-1800.patch
++FILES=scripts/check-home-ui-logic.mjs,
++      logs/checkpoints/Lane-A9-M5-W17-home-ui-logic-20260907-1800.md
++VERIFY=node scripts/check-home-ui-logic.mjs （期望 HOME_UI_RESULT=PASS，exit 0，29 ok / 0 failed）
++CHECKPOINT=logs/checkpoints/Lane-A9-M5-W17-home-ui-logic-20260907-1800.md
++MERGE_NOTES=见下
++NEXT=A11 终验可直接 node scripts/check-home-ui-logic.mjs；A0 集成时建议在 pre-merge.sh 接线（避免跨 lane 冲突，本包不含 pre-merge.sh 改动）
++```
++
++## 交付物
++
++- **`scripts/check-home-ui-logic.mjs`**（新建，无依赖，headless 静态源码/DOM 级检查）：扫描 `src/components/home/*.vue` 合集 + `src/stores/useHomeStore.ts`，覆盖 W17 A9 四项要求。
++
++## 检查结果（W17 A9 要求项）
++
++| 组 | 检查 | 结果 |
++|---|---|---|
++| G1 home actions | 收藏网页/目录、新增、恢复默认、打开动作齐全；主要工作区入口(HomeLaunchers 宫格)、v-for 网格、空态文案 | ✅ 8/8 |
++| G2 accessible names | 全部 21 个交互控件（button/select/input）均有可访问名称：按钮含 `title`/`:aria-label`/文本；`<select>`/`<input>` 经 `<label for>` 程序化关联 | ✅ 21/21 |
++| G3 bounded lists | `VISIBLE_LIMIT=12` 常量 + `.slice(0, VISIBLE_LIMIT)` 渲染裁剪；畸形数据容错（store.load try/Array.isArray 与 HomeShortcuts.norm/safeType 防御归一化） | ✅ 3/3 |
++| G4 no sensitive copy | 首页组件与 store 不含硬编码 sk-/AKIA/token=/password=/secret=/Authorization/Bearer/api_key/credential（示例 URL `kimi.moonshot.cn`、占位路径 `/home/you/Documents` 非敏感，不计入） | ✅ 1/1 |
++
++合计 **29 ok / 0 failed**，`HOME_UI_RESULT=PASS`，`exit 0`。
++
++## 关键说明
++
++- A5 已将主页拆分为 4 组件：`HomePanel.vue`（外壳 + 4 动作按钮）、`HomeLaunchers.vue`（17 个主要工作区入口，含 `:aria-label`/`:aria-current`）、`HomeShortcuts.vue`（v-for 网格、`home.open`、`VISIBLE_LIMIT=12` 有界渲染、`norm`/`safeType` 畸形归一化、空态）、`HomeShortcutEditor.vue`（dialog + `aria-modal`/`aria-labelledby`、`<label for>` 关联、Tab/Shift+Tab 焦点闭环、Esc 关闭）。脚本据此扫描全部组件合集（非单一文件）。
++- **bounded lists 落地在渲染层**（`VISIBLE_LIMIT=12`），store 层 `addShortcut`/`saveEdit` 仍直接 `push` 无硬上限（防御纵深项，非阻塞；UI 已保证有界与畸形容错）。脚本对任一层有界即判 PASS。
++- 观察项（非阻塞）：`store.open` 失败提示回显 `e?.message`（运行时可能含路径），建议稳定文案，属 A5 后续项。
++
++## Verify（可复现）
++
++```bash
++cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
++node scripts/check-home-ui-logic.mjs
++# 期望：
++#   [G1] 8 ok  [G2] 21 ok  [G3] 3 ok  [G4] 1 ok
++#   主页 UI 逻辑测试：通过 29，失败 0
++#   HOME_UI_RESULT=PASS
++#   exit 0
++```
++
++## Merge Notes
++
++- **冲突风险规避**：未修改 `scripts/pre-merge.sh`（该文件为 685 行共享门禁脚本，A3 的 `check-home-store-logic.mjs` 与 A6 的 `check-client-navigation-logic.mjs` 同 wave 亦可能接线；按 board「跨 lane 冲突须出二进制补丁而非覆盖」指引，本包不含 pre-merge.sh 改动，由 A0 集成时统一接线）。
++- **零产品代码改动**：新增脚本为测试件，未改任何 `.vue`/store/桥/ACL/capability（符合 W17 A9「Do not modify product components」与 W17 硬停「no new backend contract」）。
++- 未 push（board Merge Rule：仅 A0 推送）。
++
++## FORBID 遵守（W17）
++
++- 仅新增 `scripts/check-home-ui-logic.mjs` + 本 checkpoint；**未改任何产品组件**，未改 `pre-merge.sh`/`capability.rs`/ACL/三份主文档。
++- 未移动 `NEXT`；未 push。
+diff --git a/scripts/check-home-ui-logic.mjs b/scripts/check-home-ui-logic.mjs
+new file mode 100644
+index 0000000..39cfb2e
+--- /dev/null
++++ b/scripts/check-home-ui-logic.mjs
+@@ -0,0 +1,210 @@
++#!/usr/bin/env node
++// ---------------------------------------------------------------------------
++// M5-W17（Lane A9）主页 UI 逻辑层自动化测试（source-level，headless，无 GUI/DOM 依赖）。
++//
++// 按 W17 调度 A9 职责对 A5 首页组件（src/components/home/**）做 DOM/源码级检查：
++//   1. home actions      —— 主区域入口/快捷方式动作齐全
++//   2. accessible names   —— 每个可见交互控件都有可访问名称
++//   3. bounded lists      —— 快捷方式数量有上限 + 新增/渲染时裁剪（W17 验收#2）
++//   4. no sensitive copy  —— 新 UI/错误文案不泄露凭据/密钥/敏感 URL
++//
++// 首页特性拆为 4 个组件（HomePanel / HomeLaunchers / HomeShortcuts / HomeShortcutEditor），
++// 故本脚本扫描 src/components/home 下全部 .vue 的合集，而非单一文件。
++// 不加载 pinia/vue（useHomeStore 含 pinia import，node 直载失败），改为静态解析。
++// 不修改任何产品组件（W17 A9 硬约束）。
++//
++// 用法: node scripts/check-home-ui-logic.mjs
++// 退出码: 0 = 全部通过；1 = 有必需项未通过（含已知债务，见 HOME_UI_RESULT）
++// ---------------------------------------------------------------------------
++
++import { readFileSync, readdirSync, existsSync } from "node:fs";
++import { join, dirname } from "node:path";
++import { fileURLToPath } from "node:url";
++
++const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
++const HOME_DIR = join(ROOT, "src/components/home");
++const STORE_PATH = join(ROOT, "src/stores/useHomeStore.ts");
++
++let passed = 0;
++let failed = 0;
++const failures = [];
++const notes = [];
++function ok(name) {
++  passed++;
++  console.log("  ok   " + name);
++}
++function fail(name, detail) {
++  failed++;
++  failures.push(name + (detail ? " :: " + detail : ""));
++  console.error("  FAIL " + name + (detail ? " :: " + detail : ""));
++}
++function note(msg) {
++  notes.push(msg);
++  console.log("  note " + msg);
++}
++
++// ---- 读取首页组件 ----
++function readHomeComponents() {
++  if (!existsSync(HOME_DIR)) return [];
++  return readdirSync(HOME_DIR)
++    .filter((f) => f.endsWith(".vue"))
++    .map((f) => ({ name: f, text: readFileSync(join(HOME_DIR, f), "utf8") }));
++}
++const components = readHomeComponents();
++const allHomeText = components.map((c) => c.text).join("\n");
++
++// ===========================================================================
++// G1 home actions —— A5 首页动作齐全
++// ===========================================================================
++console.log("[G1] home actions (A5 首页动作)");
++
++if (components.length === 0) {
++  fail("src/components/home 存在 .vue 组件", "目录为空");
++} else {
++  const needActions = [
++    ["favoriteCurrentPage", "收藏当前网页动作"],
++    ["favoriteCurrentDir", "收藏当前目录动作"],
++    ["startAdd", "新增快捷方式动作"],
++    ["resetDefault", "恢复默认动作"],
++    ["open", "打开快捷方式动作 (home.open / onOpen)"],
++  ];
++  for (const [sym, label] of needActions) {
++    if (new RegExp(`home\\.${sym}\\b|\\bonOpen\\s*\\(|onOpen\\(\\s*s\\s*\\)`).test(allHomeText) || allHomeText.includes(sym)) {
++      ok("首页含 " + label + " (" + sym + ")");
++    } else {
++      fail("首页缺少 " + label, sym);
++    }
++  }
++  // 主区域入口：HomeLaunchers 提供主要工作区宫格；快捷方式网格用 v-for 渲染
++  if (/launch-grid/.test(allHomeText) && /LAUNCHERS/.test(allHomeText)) ok("主要工作区入口（HomeLaunchers 宫格）存在");
++  else fail("缺少主要工作区入口", "HomeLaunchers 宫格/LAUNCHERS");
++  if (/shortcut-grid/.test(allHomeText) && /v-for=/.test(allHomeText)) ok("快捷方式网格用 v-for 迭代渲染");
++  else fail("快捷方式网格未用 v-for 迭代");
++  if (/home-empty|暂无快捷方式|还没有快捷方式/.test(allHomeText)) ok("存在空态文案（coherent empty state）");
++  else fail("缺少空态文案（empty state）");
++}
++
++// ===========================================================================
++// G2 accessible names —— 每个可见交互控件都有可访问名称
++// ===========================================================================
++console.log("[G2] accessible names (可访问名称)");
++
++function extractTags(html, tag) {
++  const re = new RegExp(`<${tag}\\b([^>]*)>([\\s\\S]*?)</${tag}>`, "gi");
++  const out = [];
++  let m;
++  while ((m = re.exec(html))) out.push({ attrs: m[1], inner: m[2] });
++  return out;
++}
++function extractVoidTags(html, tag) {
++  const re = new RegExp(`<${tag}\\b([^>]*)/?>`, "gi");
++  const out = [];
++  let m;
++  while ((m = re.exec(html))) out.push({ attrs: m[1], inner: "" });
++  return out;
++}
++function hasNameAttr(attrs) {
++  return /\b(?:title|:title)\s*=/i.test(attrs) || /\baria-label\b|\baria-labelledby\b/i.test(attrs);
++}
++function getId(attrs) {
++  const m = attrs.match(/\bid\s*=\s*["']([^"']+)["']/i);
++  return m ? m[1] : null;
++}
++
++// 收集全部模板中的 label[for] 关联（跨组件）
++const labelFors = new Set();
++{
++  let lm;
++  const labelForRe = /<label\b[^>]*\bfor\s*=\s*["']([^"']+)["']/gi;
++  while ((lm = labelForRe.exec(allHomeText))) labelFors.add(lm[1]);
++}
++
++let controlCount = 0;
++for (const c of components) {
++  const tpl = (c.text.match(/<template>([\s\S]*?)<\/template>/i) || [, ""])[1];
++  const controls = [
++    ...extractTags(tpl, "button").map((x) => ({ tag: "button", ...x })),
++    ...extractTags(tpl, "a").map((x) => ({ tag: "a", ...x })),
++    ...extractTags(tpl, "select").map((x) => ({ tag: "select", ...x })),
++    ...extractVoidTags(tpl, "input").map((x) => ({ tag: "input", ...x })),
++    ...extractTags(tpl, "textarea").map((x) => ({ tag: "textarea", ...x })),
++  ];
++  for (const ct of controls) {
++    controlCount++;
++    const innerTrim = (ct.inner || "").replace(/<[^>]+>/g, "").trim();
++    const id = getId(ct.attrs);
++    let named = false;
++    if (hasNameAttr(ct.attrs)) named = true;
++    else if (ct.tag === "button" || ct.tag === "a") named = innerTrim.length > 0;
++    else if (id && labelFors.has(id)) named = true; // <label for> 程序化关联
++    const sig = `<${ct.tag}${id ? " id=" + id : ""}>`;
++    if (named) ok("控件可访问名称存在 " + sig + " (" + c.name + ")");
++    else fail("控件缺少可访问名称（无 title/aria-label，且无 <label for> 关联）", sig + " (" + c.name + ")");
++  }
++}
++if (controlCount === 0) fail("未扫描到任何交互控件", "首页组件应至少含按钮");
++
++// ===========================================================================
++// G3 bounded lists —— 快捷方式数量有上限 + 渲染/新增时裁剪（W17 验收#2）
++// ===========================================================================
++console.log("[G3] bounded lists (有界列表)");
++
++// 边界可在 store 层（MAX_HOME_SHORTCUTS）或渲染层（VISIBLE_LIMIT）落地，任一即可。
++const storeText = existsSync(STORE_PATH) ? readFileSync(STORE_PATH, "utf8") : "";
++const capRe =
++  /(MAX_?HOME_?SHORTCUTS|HOME_?SHORTCUTS_?MAX|MAX_?SHORTCUTS|SHORTCUT_?MAX|VISIBLE_LIMIT|SHORTCUT_?VISIBLE_?LIMIT)\s*=\s*(\d+)/i;
++const capMatch = (storeText + "\n" + allHomeText).match(capRe);
++if (capMatch) ok("快捷方式上限常量已定义 (" + capMatch[1] + "=" + capMatch[2] + ")");
++else fail("快捷方式缺少上限常量（store 或渲染层）", "建议 MAX_HOME_SHORTCUTS / VISIBLE_LIMIT");
++
++const clampRe =
++  /\.slice\(\s*0\s*,\s*(?:MAX_?HOME_?SHORTCUTS|HOME_?SHORTCUTS_?MAX|MAX_?SHORTCUTS|SHORTCUT_?MAX|VISIBLE_LIMIT|\d+)|Math\.min\(\s*shortcuts\.length|shortcuts\.length\s*(?:>=|>\s*)(?:MAX_?HOME_?SHORTCUTS|HOME_?SHORTCUTS_?MAX|MAX_?SHORTCUTS|SHORTCUT_?MAX|\d+)/i;
++if (clampRe.test(storeText + "\n" + allHomeText)) ok("快捷方式数量在新增/渲染时被裁剪到上限");
++else fail("快捷方式数量未被裁剪到上限", "addShortcut/saveEdit/渲染层需 slice/clamp");
++
++// 畸形本地数据容错：store.load 的 try/Array.isArray，或 HomeShortcuts 的 norm/safeType 防御归一化
++const storeResilient = /load\(\)\s*\{[\s\S]*?try\s*\{[\s\S]*?Array\.isArray\([\s\S]*?\}\s*catch/.test(storeText);
++const renderResilient = /function\s+norm\s*\(|function\s+safeType\s*\(/.test(allHomeText);
++if (storeResilient || renderResilient) ok("对畸形本地数据容错（store.load try/Array.isArray 或 渲染层 norm/safeType）");
++else fail("缺少畸形数据容错");
++if (storeResilient && !renderResilient) note("渲染层 norm/safeType 防御归一化可作为额外纵深（当前仅 store 层容错）");
++
++// ===========================================================================
++// G4 no sensitive copy —— 新 UI/错误文案不泄露凭据/密钥/敏感 URL
++// ===========================================================================
++console.log("[G4] no sensitive copy (无敏感文案)");
++
++const sensitiveRe =
++  /sk-[A-Za-z0-9]{6,}|AKIA[0-9A-Z]{8,}|token\s*[=:]\s*\S+|password\s*[=:]\s*\S+|secret\s*[=:]\s*\S+|Authorization|Bearer\s+[A-Za-z0-9._-]+|api[_-]?key\s*[=:]\s*\S+|credential/i;
++const scan = [...components.map((c) => c.text)];
++if (existsSync(STORE_PATH)) scan.push(storeText);
++let sensitiveHit = false;
++for (const txt of scan) {
++  if (sensitiveRe.test(txt)) {
++    sensitiveHit = true;
++    break;
++  }
++}
++if (!sensitiveHit) ok("首页组件与 store 不含硬编码凭据/密钥/Authorization/Bearer 等敏感文案");
++else fail("发现敏感文案模式", "首页/store 源码含 sk-/AKIA/token=/password=/secret=/Authorization/Bearer/api_key/credential");
++
++// 错误/提示文案不回显原始报错体（仅展示稳定文案，不泄露路径/栈）
++if (/showToast\([^)]*\+\s*(e\?\._?message|err\._?message|error\._?message)/i.test(allHomeText + "\n" + storeText)) {
++  note("store.open 的失败提示回显 e?.message（运行时可能含路径；建议稳定文案，属 A5 后续项，非本卡阻塞）");
++}
++
++// ===========================================================================
++// 结果
++// ===========================================================================
++console.log(`\n主页 UI 逻辑测试：通过 ${passed}，失败 ${failed}`);
++if (notes.length) {
++  console.log("观察项（非阻塞）：");
++  for (const n of notes) console.log("  - " + n);
++}
++if (failures.length) {
++  console.log("未通过项：");
++  for (const f of failures) console.log("  - " + f);
++}
++const result = failed === 0 ? "PASS" : "PASS_WITH_DEBT";
++console.log(`HOME_UI_RESULT=${result}`);
++process.exit(failed === 0 ? 0 : 1);

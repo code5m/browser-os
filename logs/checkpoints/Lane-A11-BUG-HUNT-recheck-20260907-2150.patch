@@ -1,0 +1,152 @@
+diff --git a/logs/bug-hunt/A11-B8-B10-B12-recheck-20260907-2150.md b/logs/bug-hunt/A11-B8-B10-B12-recheck-20260907-2150.md
+new file mode 100644
+index 0000000..e5e5926
+--- /dev/null
++++ b/logs/bug-hunt/A11-B8-B10-B12-recheck-20260907-2150.md
+@@ -0,0 +1,99 @@
++# A11 · BUG-HUNT 截断三路复跑证据矩阵（B8 / B10 / B12）
++
++```text
++LANE: A11
++STATUS: PASS_WITH_DEBT（复跑完成；3 项 CONFIRMED、2 项降级/重分类、4 项 UNVERIFIED 仍需专项复跑）
++SCOPE: logs/bug-hunt/A11-B8-B10-B12-recheck-20260907-2150.md ; logs/checkpoints/A11-BUG-HUNT-recheck-20260907-2150.md ; logs/checkpoints/Lane-A11-BUG-HUNT-recheck-20260907-2150.patch （仅文档 + patch，零产品代码）
++DELIVERED: 对 BUG-HUNT-SUMMARY 中被平台截断的 B8/B10/B12 三路逐条复跑取证，产出「已确认 / 陈旧·已修 / 无依据 / 未取证」四分类证据矩阵，并校正 2 处原主张
++VERIFY: 见 §2-§4 每条「命令 → 结果」（静态取证 + 现有脚本实跑，2026-09-07 21:50 时点）
++METRICS: N/A（本任务不改动产品代码、不触发构建；未重跑构建指标）
++PATCH: /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3/logs/checkpoints/Lane-A11-BUG-HUNT-recheck-20260907-2150.patch
++RISKS: ①本矩阵为静态取证（源码/配置/类型契约比对），**未运行原生客户端**，凡涉「用户可见渲染/运行时行为」的结论均标注为「结构推断，未真机验证」；②B10 相关文件正被其它 lane 改写（见 §1），结论随时点漂移；③B8 两项截断发现（invoke 未 catch、并发响应覆盖）本次未取证，仍 OPEN。
++NO_PUSH: confirmed
++```
++
++> 依据：`PARALLEL_COMMAND_BOARD.md` §BUG-HUNT Follow-up Dispatch（L1231-1267）→ **A11 = START VERIFICATION**（L1247）：Re-run B8/B10/B12 truncated findings and produce a current evidence matrix; **distinguish confirmed bugs from stale/unsupported claims. No product code.** Scope `logs/bug-hunt/`+`logs/checkpoints/`。
++> 顺序（L1249）：`A2/A3/A5/A6/A7/A8/A10/A9 -> A4 -> A11 -> A0`；A0 拥有集成/commit/push。
++> 指令要求「**先确认当前代码未被其它 lane 改写**」→ 见 §1。
++
++---
++
++## 1. 前置确认：当前代码是否被其它 lane 改写
++
++```bash
++git status --short src/types.ts src-tauri/src/domain.rs src/components/layout/MainArea.vue \
++  src/components/layout/ActivityBar.vue src/components/layout/StatusBar.vue src/bridge.ts \
++  src-tauri/src/main.rs src-tauri/permissions/default-commands.toml src-tauri/injected/collect.js
++```
++| 文件 | 状态 |
++|---|---|
++| `src/components/layout/ActivityBar.vue` | ** M（被改写）** |
++| `src/components/layout/MainArea.vue` | ** M（被改写）** |
++| `src/components/layout/StatusBar.vue` | ** M（被改写）** |
++| `src/types.ts` / `src-tauri/src/domain.rs` / `src/bridge.ts` / `src-tauri/src/main.rs` / `default-commands.toml` / `collect.js` | 未见本地改动 |
++
++→ **B10 全部结论基于在制（已被改写）代码**；B8/B12 相关文件未被改写，结论相对稳定。
++
++---
++
++## 2. B8（状态与桥 / 类型契约）
++
++| 项 | 原主张 | 复跑证据 | 判定 |
++|---|---|---|---|
++| **B8-1** | `DbValue` TS PascalCase vs Rust snake_case → DB 面板单元格渲染错误 | `src/types.ts:601-607` = `\"Null\"\|{Bool}\|{Int}\|{Float}\|{Text}\|{BlobLen}`（PascalCase 标签）；`src-tauri/src/domain.rs:1093-1102` 带 `#[serde(rename_all=\"snake_case\")]` → 实发 `{\"text\":…}`/`{\"blob_len\":…}`。**通路已上线**：`main.rs:1468 bridge::db_query` 已注册，`src/bridge.ts:378-379 dbQuery: invoke<DbQueryResult>(\"db_query\")` | ✅ **CONFIRMED**（契约层确认；渲染后果为结构推断，未真机验证） |
++| **B8-2** | `SkillDef`/`AgentDef` 逐字段 camelCase↔snake_case 漂移 | `src/types.ts:679/701/704` 用 `displayName`/`systemPrompt`（camelCase），而 `src-tauri/src/domain.rs:1971/2009/2012` 为 `display_name`/`system_prompt` → 漂移成立；但 `src/types.ts:971/993/1019` 已是 `display_name`（snake_case），并非全部字段漂移 | ⚠ **PARTIALLY CONFIRMED**（仅 camelCase 声明子集漂移，非「逐字段」） |
++| B8（截断） | `invoke` 未 catch | 本次未取证（范围过大，需逐组件审计） | ⏸ **UNVERIFIED** |
++| B8（截断） | 并发响应覆盖 | 本次未取证（需运行时复现） | ⏸ **UNVERIFIED** |
++
++---
++
++## 3. B10（面板 UI）
++
++| 项 | 原主张 | 复跑证据 | 判定 |
++|---|---|---|---|
++| **B10-a** | ActivityBar/StatusBar 直接访问 `stats.main.rss_mb` 未守卫 → 后端缺 `main` 即 TypeError 白屏 | 确为直接访问无可选链：`StatusBar.vue:118`、`ActivityBar.vue:386`。**但** `src-tauri/src/bridge.rs:4311 pub main: ProcStat` 为**非 `Option`** 字段 → Rust serde 必然输出 `main`，常规路径下 `main` 不会缺失 | ❌ **UNSUPPORTED（降级）**：非活体缺陷；仅建议加可选链作防御性加固（P3） |
++| **B10-b** | MainArea 兜底 `v-else` 配对到 `editor` 的 `v-if` 而非主链（**疑似 A7 新引入回归**） | `MainArea.vue:251` `<FileEditor v-if=\"layout.mainView === 'editor'\" />` → `:253` `<div v-else class=\"modview panel-state\" role=\"alert\">`（注释自陈「W17(A7) 兜底：未知/空视图时主区不得空白或死区」）。主链为 `:128`–`:241` 的 `v-if`/`v-else-if` 序列，`:253` 的 `v-else` 与之**不相连**，而与 `:251` 配对 → 当 `mainView !== 'editor'` 时兜底块**恒渲染** | ✅ **CONFIRMED（结构性）**，且应验「A7 W17 引入」的怀疑；用户可见后果（常驻「当前视图不可用」告警）为模板结构推断，**未真机验证** |
++| **B10-c** | 解析崩溃：`JSON.parse` 未守卫 | 抽查两处高风险点**均已守卫**：`ActivityBar.vue:175`（`try { JSON.parse(...) } catch { return [] }`）、`useWorkspaceStore.ts:634`（`try{…}catch{}`）。其余 `useSystemStore.ts:24`、`useSettingsStore.ts:72`、`pluginUi.ts:198`、`snippetUi.ts:167` 未逐条核对 | ❌ **UNSUPPORTED（抽查点）** + ⏸ 其余 UNVERIFIED，建议 A6/A9 全量扫 |
++| B10（截断） | XSS / 异步兜底覆盖度 | 本次未取证 | ⏸ **UNVERIFIED** |
++
++---
++
++## 4. B12（门禁 / 三源一致性）
++
++| 项 | 原主张 | 复跑证据 | 判定 |
++|---|---|---|---|
++| **B12-02** | 三源（main.rs ∩ ACL ∩ bridge.ts）无自动化一致门禁 | `ls scripts/ \| grep -iE 'consist|command'` → 仅 `check-command-domain-policy.py`、`check-command-ui-logic.mjs`，**无** `check-command-set-consistency.py` | ✅ **CONFIRMED（仍缺）** |
++| **B12-01 / A−B** | `open_tool` 缺 ACL | `src-tauri/src/main.rs:1451` 注册 `tools::open_tool`；`src/bridge.ts:152 openTool: (id)=>invoke<void>(\"open_tool\",{id})`；`grep -rn open_tool src-tauri/permissions/*.toml` → **无任何条目** | ✅ **CONFIRMED**（与截断表 A−B=`open_tool` 完全吻合） |
++| **B12-03 / B1-2** | collect.js 三命令未授权 → 远端右键 not allowed | 文件实际在 **`src-tauri/injected/collect.js`**（SUMMARY 所载 `src/injected/collect.js` 路径**已失效**），`:120/150/167` 调用 `request_open_terminal`/`collect_selection`/`save_note`。**但** `remote-collect.toml` 注释明载：三命令「**已从远程集移除**……即使被调用也要求一次性用户意图令牌（见 `security_policy::check_remote_invocation`）」，现仅放行 `report_*` | 🔄 **STALE / 重分类**：ACL 移除系**有意设计**（有文档与补偿控制），非疏漏 → 原「未授权=bug」主张不成立。残留问题转为「运行时意图令牌通路是否可用」，需真机/A9 复核，本次无法静态裁定 |
++| **B12 / C−A** | bridge.ts:392-429 存在 skill/agent 11 条契约占位 | `src/bridge.ts:388-432`：解析/校验/预览类（`agentParse/agentValidate/agentPermissionPreview/skillParse/skillValidate/skillPermissionPreview`）为 W7 只读桥**已落地**；`skillInstall/agentInstall/confirmSkill/confirmAgent/skillRun/agentChat/agentRunCancel` 为**执行类**，因运行时权限 LOCKED 未注册 | ✅ **CONFIRMED 但属有意设计**（占位为锁定权限下的预期态）。残留风险：若 UI 路径触达未注册命令将静默失败 → 应由 B12-02 的一致性门禁覆盖 |
++
++---
++
++## 5. 四分类汇总
++
++| 判定 | 条目 |
++|---|---|
++| ✅ **CONFIRMED（仍是问题）** | B8-1（`DbValue` 大小写漂移，通路已上线）、B8-2（部分：camelCase 子集）、B12-02（三源一致门禁仍缺）、B12-01（`open_tool` 缺 ACL）、B10-b（MainArea `v-else` 错配，疑似 A7 W17 回归） |
++| 🔄 **STALE / 重分类（非 bug）** | B12-03（collect 三命令移除系有意设计 + 补偿控制；且原路径已失效） |
++| ❌ **UNSUPPORTED（主张不成立 / 降级）** | B10-a（`main` 非 Option，缺字段不可达 → 降为防御性加固）、B10-c（抽查两处 `JSON.parse` 均已守卫） |
++| ⏸ **UNVERIFIED（本次未取证，仍 OPEN）** | B8「invoke 未 catch」、B8「并发响应覆盖」、B10「XSS / 异步兜底覆盖度」、`useSystemStore.ts:24` 等 4 处 `JSON.parse` |
++
++---
++
++## 6. 归属建议（不阻塞，供 A0 派单）
++
++1. **B8-1 / B8-2** → 已由 BUG-HUNT dispatch 派给 **A7**（「Reconcile verified Rust/TypeScript serialization casing drift … add a fixture for `DbValue`, `SkillDef`, `AgentDef`」）→ 仍在 OPEN，建议保留并明确要求补 `DbValue`/`SkillDef`/`AgentDef` 三方 fixture。
++2. **B12-02 / B12-01** → 已派 **A9**（「add the smallest static consistency guard」）→ 建议其门禁同时覆盖 C−A（bridge.ts 有调用但 main.rs 未注册的执行类命令），把 B12 三类差集一次性纳入。
++3. **B10-b（MainArea `v-else` 错配）** → 归 **A7**；注意 A7 在 W17 closeout 为 **HOLD**，本条构成「具体验收发现」，据 HOLD 规则**应重开 A7**处理该回归。
++4. **B10-a / B10-c** → 无需按 P1 处理；可作 P3 防御性加固，归 A6（导航/状态条）顺手加可选链。
++5. **B12-03 残留（意图令牌通路）** → 归 **A8 真机 QA** + **A9** 复核：确认远端右键菜单实际行为与 `check_remote_invocation` 是否生效。
++6. **UNVERIFIED 四项** → 建议单独立一次「截断项专项复跑」（B8 并发/异常捕获 + B10 XSS/兜底），勿与本次矩阵混同。
++
++---
++
++## 7. 声明（避免误读）
++
++- 本 lane **零产品代码改动**（遵守 L1247「No product code」）；全部结论来自源码/配置/类型契约的静态比对与既有脚本输出。
++- **未运行原生客户端**：所有「用户可见后果」均标注为结构推断，未伪造任何真机现象或截图。
++- 未 `reset`/未 `clean` 他人改动；已如实记录 B10 相关文件处于在制状态（§1）。
++- 未 commit、未 push（L1249：A0 拥有集成/commit/push）。
+diff --git a/logs/checkpoints/A11-BUG-HUNT-recheck-20260907-2150.md b/logs/checkpoints/A11-BUG-HUNT-recheck-20260907-2150.md
+new file mode 100644
+index 0000000..2548d3a
+--- /dev/null
++++ b/logs/checkpoints/A11-BUG-HUNT-recheck-20260907-2150.md
+@@ -0,0 +1,41 @@
++# A11 · BUG-HUNT 截断三路复跑 Checkpoint（B8 / B10 / B12）
++
++```text
++LANE: A11
++STATUS: PASS_WITH_DEBT
++SCOPE: logs/bug-hunt/A11-B8-B10-B12-recheck-20260907-2150.md ; logs/checkpoints/A11-BUG-HUNT-recheck-20260907-2150.md ; logs/checkpoints/Lane-A11-BUG-HUNT-recheck-20260907-2150.patch
++DELIVERED: B8/B10/B12 逐条复跑 + 四分类证据矩阵 + 2 处原主张校正 + 归属建议
++VERIFY: 静态取证（源码/配置/类型契约比对），21:50 时点；未跑真机
++METRICS: N/A（不改产品代码、不触发构建）
++PATCH: /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3/logs/checkpoints/Lane-A11-BUG-HUNT-recheck-20260907-2150.patch
++RISKS: 静态取证为主；B10 文件被其它 lane 改写；4 项 UNVERIFIED 仍 OPEN
++NO_PUSH: confirmed
++```
++
++完整矩阵见：`logs/bug-hunt/A11-B8-B10-B12-recheck-20260907-2150.md`
++
++## 结论速览
++
++| 判定 | 条目 |
++|---|---|
++| ✅ CONFIRMED（仍是问题） | **B8-1** `DbValue` 大小写漂移（`types.ts:601-607` PascalCase vs `domain.rs:1093` `rename_all=snake_case`；通路已上线 `main.rs:1468` + `bridge.ts:378`）· **B8-2**（部分：`types.ts:679/701/704` camelCase vs `domain.rs:1971/2009/2012` snake_case）· **B12-02** 三源一致门禁仍缺（无 `check-command-set-consistency.py`）· **B12-01** `open_tool` 缺 ACL（注册+调用但 permissions 无条目）· **B10-b** `MainArea.vue:253` `v-else` 与 `:251` `FileEditor v-if` 错配（注释自陈「W17(A7) 兜底」）→ 疑似 A7 回归 |
++| 🔄 STALE / 重分类 | **B12-03** collect 三命令（`src-tauri/injected/collect.js:120/150/167`）的 ACL 移除系**有意设计**（`remote-collect.toml` 注释 + `check_remote_invocation` 意图令牌补偿）；原引用路径 `src/injected/collect.js` 已失效 → 「未授权=bug」不成立，残留为运行时令牌通路待验 |
++| ❌ UNSUPPORTED / 降级 | **B10-a** `bridge.rs:4311 pub main: ProcStat` 非 `Option` → 「缺 `main` 即 TypeError 白屏」不可达，降为 P3 防御性加固 · **B10-c** 抽查 `ActivityBar.vue:175`、`useWorkspaceStore.ts:634` 的 `JSON.parse` 均在 try/catch 内 |
++| ⏸ UNVERIFIED（仍 OPEN） | B8「invoke 未 catch」· B8「并发响应覆盖」· B10「XSS / 异步兜底覆盖度」· 另 4 处 `JSON.parse`（`useSystemStore.ts:24` 等）未逐条核对 |
++
++## 前置确认（指令要求）
++
++`ActivityBar.vue` / `MainArea.vue` / `StatusBar.vue` 均被其它 lane 改写（` M`）→ **B10 结论基于在制代码**；`types.ts`/`domain.rs`/`bridge.ts`/`main.rs`/`default-commands.toml`/`collect.js` 未见本地改动。
++
++## 归属建议
++
++- B8-1/B8-2 → **A7**（已派，仍 OPEN；建议补 `DbValue`/`SkillDef`/`AgentDef` fixture）
++- B12-02/B12-01 → **A9**（一致性门禁应同时覆盖 C−A：bridge.ts 有调用、main.rs 未注册的执行类命令）
++- **B10-b → A7**（HOLD 规则下的「具体验收发现」，应重开 A7 修该回归）
++- B10-a/B10-c → P3 加固，归 **A6**
++- B12-03 残留（意图令牌）→ **A8 真机 + A9**
++- UNVERIFIED 四项 → 建议单开「截断项专项复跑」
++
++## 声明
++
++零产品代码改动；未运行原生客户端（凡用户可见结论均标「结构推断，未真机验证」）；未 reset/clean 他人改动；未 commit、未 push。

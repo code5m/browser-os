@@ -17,6 +17,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use chrono::{DateTime, Datelike, Local, NaiveDateTime, Timelike, Utc};
 
@@ -25,6 +26,17 @@ use crate::domain::{
     SCHED_MAX_CATCH_UP, SCHED_MAX_HISTORY, SCHED_MAX_SLOT_SCAN, TASK_INTERVAL_MAX_SECS,
     TASK_INTERVAL_MIN_SECS, TASK_MAX_NAME_BYTES, TASK_MAX_PARAMS,
 };
+
+static TASK_STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+/// Serialize every tasks.json load-modify-save transaction across the scheduler
+/// and task commands. Callers must hold this guard until their save completes.
+pub fn task_store_lock() -> MutexGuard<'static, ()> {
+    TASK_STORE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 // ----------------------------- 错误类型 -----------------------------
 
@@ -556,6 +568,42 @@ mod task_domain_tests {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    #[test]
+    fn task_store_lock_serializes_concurrent_transactions() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let start = Arc::new(Barrier::new(8));
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::new();
+
+        for _ in 0..8 {
+            let start = Arc::clone(&start);
+            let active = Arc::clone(&active);
+            let max_active = Arc::clone(&max_active);
+            handles.push(thread::spawn(move || {
+                start.wait();
+                let _store_guard = task_store_lock();
+                let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                max_active.fetch_max(current, Ordering::SeqCst);
+                thread::yield_now();
+                active.fetch_sub(1, Ordering::SeqCst);
+            }));
+        }
+
+        for handle in handles {
+            handle.join().expect("并发事务线程不应 panic");
+        }
+
+        assert_eq!(
+            max_active.load(Ordering::SeqCst),
+            1,
+            "调度器与任务命令的 load-modify-save 临界区必须串行"
+        );
     }
 
     // ---------- T-sched-c1：合法 5 段解析 ----------

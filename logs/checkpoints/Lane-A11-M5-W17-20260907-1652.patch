@@ -1,0 +1,243 @@
+diff --git a/logs/assist/A11-M5-W17-verification-matrix-20260907-1652.md b/logs/assist/A11-M5-W17-verification-matrix-20260907-1652.md
+new file mode 100644
+index 0000000..724f34f
+--- /dev/null
++++ b/logs/assist/A11-M5-W17-verification-matrix-20260907-1652.md
+@@ -0,0 +1,46 @@
++# M5-A11 · W17 Verification Matrix (assist note)
++
++**Lane**: A11 · START VERIFICATION（board L1195）
++**Verdict**: ⛔ **BLOCKED** — 2 hard blockers; do NOT push.
++
++## Green (20+ gates)
++| Gate | Result |
++|---|---|
++| cargo test (default) | **433 passed / 0 failed**; warnings 2 = baseline |
++| cargo test --features mcp | **454 passed / 0 failed** (default 433 → +21, matches W15 "MCP feature 21/21") |
++| Cargo feature | `[features]` L22, `mcp = []` L23 (default excludes) |
++| cargo fmt --check | 0 diff |
++| npm run build | PASS — ✓ built in 5.13s; `index-D521uF3k.js` 169.45 kB (gzip 60.78) |
++| measure --self-test | ALL_PASS |
++| core / mcp / agent-memory / agent-skill / graph / plugin / tools / database / scheduler / script-exec | ALL PASS (mcp ACTIVE=13 PENDING=0 + `--expect-current-gaps` PASS; graph ACTIVE=8; plugin ALL_PASS + `--expect-pending` OK) |
++| **A4 W17 new** `check-home-client-policy.py` | default PASS ("all invariants hold", ACTIVE=3) + self-test PASS (ACTIVE=3/PENDING=3) |
++| UI logic | a11y **PASS**, graph **113-0**, agent-skill **110-0** |
++| `git diff --check` | worktree+index **EXIT=0**; `merge-base..HEAD` **EXIT=0** |
++
++## BLOCKER-1 · Build metrics over budget (W17 AC5)
++- Measured: `total_bytes_pct=25.55`, `exceeds_growth_limit=true`, `cargo_warnings` delta=0, `warnings_increased=false`.
++- Limit: `TOTAL_BYTES_GROWTH_LIMIT_PCT = 25.2` (`scripts/measure-build-metrics.py:39`; raised to 25.2 by A0 ONLY for the W15 accepted keyboard-accessibility fix).
++- **Exact delta: +0.35pp over 25.2 ceiling; +0.41pp vs W15 accepted 25.14%.** Main chunk 169.45 kB (W10: 164.82 kB, +4.63 kB).
++- Per AC5: **stopped and reported the delta; ceiling NOT raised, guard NOT bypassed.** Fix = shrink main chunk (lazy-load W17 home/nav logic & panels).
++- pre-merge L81 `FAIL: build metrics regression`.
++
++## BLOCKER-2 · `check-scheduler-ui-policy.py` SCHEDUI_PANEL_LAZY — **stale fixture, not a real regression**
++- Policy (L178-182) demands exact string `defineAsyncComponent(() => import("../workspace/TaskPanel.vue"))`.
++- `MainArea.vue` L40-41 actually uses the **object form** `defineAsyncComponent({ loader: () => import("../workspace/TaskPanel.vue"), ... })` → **lazy loading is CORRECT**; only the fixture anchor string is obsolete (self-test confirms: "变异锚点在 MainArea.vue 中不存在（夹具已过时）"). Same object form used for Database/SkillManager/AgentManager/Graph/PluginManager panels (L50/57/64/73/82).
++- `MainArea.vue` last changed by `886ea29` (W14 integration, committed) → **NOT attributable to A7 W17 WIP** (file shows no local modification).
++- Fix owner: the M4-8 scheduler-UI fixture owner — accept both arrow-shorthand and `{ loader: ... }` forms; update mutation samples.
++
++## Not yet delivered (⏸ N/A, not fabricated)
++- `scripts/check-home-store-logic.mjs` (A3) — missing
++- `scripts/check-home-ui-logic.mjs` (A9) — missing
++- `scripts/check-client-navigation-logic.mjs` (A6) — missing
++→ W17 **AC1** (desktop start, no localhost:1421 refused) and **AC3** (navigation/narrow-window discoverability) cannot be statically closed by A11 yet; needs A2/A6/A9 delivery + A8 real-client QA.
++
++## Point-in-time caveat
++Shared worktree is being mutated concurrently by other lanes (`useHomeStore.ts` went from unlisted to ` M` between two `git status` runs; `homeUi.ts` untracked-new and imported by `useHomeStore.ts`). All readings are a **16:52 snapshot**; metrics may drift.
++
++## Push readiness
++⛔ **NOT READY.** Either blocker alone fails `pre-merge.sh` (L81 / L110-111) → A0 must not push. Fix BLOCKER-1 (shrink main chunk) and BLOCKER-2 (update fixture), then re-run `pre-merge.sh` + this matrix.
++
++Full detail: `logs/checkpoints/A11-M5-W17-verification-20260907-1652.md`.
++Patch: `logs/checkpoints/Lane-A11-M5-W17-20260907-1652.patch`. No product code changed by A11; not committed; not pushed.
+diff --git a/logs/checkpoints/A11-M5-W17-verification-20260907-1652.md b/logs/checkpoints/A11-M5-W17-verification-20260907-1652.md
+new file mode 100644
+index 0000000..2a584d2
+--- /dev/null
++++ b/logs/checkpoints/A11-M5-W17-verification-20260907-1652.md
+@@ -0,0 +1,185 @@
++# M5-A11 · W17 独立集成验证（Desktop Client Completeness）— **BLOCKED**
++
++```text
++LANE: A11
++STATUS: BLOCKED
++SCOPE: logs/checkpoints/A11-M5-W17-verification-20260907-1652.md ; logs/assist/A11-M5-W17-verification-matrix-20260907-1652.md ; logs/checkpoints/Lane-A11-M5-W17-20260907-1652.patch （仅验证文档 + patch，零产品代码）
++DELIVERED: W17 独立集成验证矩阵（默认 Rust 测试 / feature Rust 测试 / npm build / 构建指标 / 全部策略脚本 + A4 新增 home 策略 / UI 逻辑脚本 / pre-merge / git diff --check），并对两处阻塞红灯给出精确定位、根因归因与责任归属
++VERIFY: 见 §2 矩阵（逐条「命令 → 结果」实跑）
++METRICS: total_bytes_pct=25.55 > TOTAL_BYTES_GROWTH_LIMIT_PCT=25.2（超限 +0.35pp；较 W15 已验收 25.14% 为 +0.41pp）；cargo_warnings delta=0；warnings_increased=false → **超限，按 AC5 停下报告 delta，不上抬上限**
++PATCH: /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3/logs/checkpoints/Lane-A11-M5-W17-20260907-1652.patch
++RISKS: ①共享工作树被 A3 等 lane 并发修改（useHomeStore.ts 在两次 status 间由「未改动」变 ` M`），本矩阵为 16:52 时点快照，重跑可能漂移；②A3/A9/A6 的 W17 验收脚本尚未交付，home/store/nav 三面无法端到端断言；③scheduler UI 夹具漂移若被误判为「真实回归」会误导修复方向——实为锚点字符串过时，懒加载行为正确。
++NO_PUSH: confirmed
++```
++
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W17 Desktop Client Completeness and Home Recovery Dispatch（L1164-1215）→ **A11 = START VERIFICATION**（L1195）：独立集成验证矩阵——targeted tests、`npm run build`、build metrics、relevant Rust tests；scope `logs/assist/`+`logs/checkpoints/`，除必要自包含验证脚本外不编辑源码。
++> W17 边界（L1168-1170）：真实产品代码波次，但**禁**命令执行/插件调用/动态加载/远程下载与监听/daemon/model call/Agent-Skill 执行/MCP 实时运行时/图写入导出/后台 worker；**无新依赖、无新 Tauri 命令、bridge 能力、ACL 条目、文件系统权限或网络特权**。
++> 共享验收标准（L1172-1179）关键点：AC5 **任何人不得绕过构建指标闸门**——记录指标；若实现超出当前预算须**停下并报告精确 delta，不得抬高上限**；AC6 每 lane 交 checkpoint + 精确命令结果 + `git diff --check` + **patch**，**不 commit 不 push**。
++> 集成顺序（L1199）：`A2 -> A3 -> A5 -> A6 -> A7 -> A4/A9 -> A8/A10/A11 -> A0`（A11 在 A8/A10 之后验收；A0 单独集成/commit/push）。
++> 姊妹件：W10 `A11-M5-W10-verification-delta-20260907-0930.md`、W9 `A11-M5-W9-verification-delta-20260907-0905.md`。
++
++---
++
++## 1. 启动门禁与基线
++
++```bash
++pwd                                        # /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3  ✅
++git fetch origin                           # 已同步；master == origin/master == 052b18a（0 ahead / 0 behind）
++git log --oneline -1                       # 052b18a feat(M5): close W15 release readiness
++git status --short                         # 大量 W16 保留产物 + W17 在制（A1 验收清单、A10 安全复核、A3 homeUi.ts、A4 check-home-client-policy.py）
++```
++- 基线：board L6 声明 W15 已 **PUSHED 并验收**（Rust 431/431、MCP feature 21/21、`check-ui-a11y-logic.mjs` PASS、`npm run build` PASS、pre-merge ALL_PASS、构建指标 25.14% ≤ 25.2% 一次性上限、warning delta=0）。
++- 本波验证对象 = `052b18a` + 当前在制 W16/W17 工作树（**含其他 lane 未提交改动**，见 §6）。
++
++---
++
++## 2. W17 验证矩阵（2026-09-07 16:52 时点实跑）
++
++| # | 门 | 命令 | 结果 | 判定 |
++|---|---|---|---|---|
++| 1 | Rust 单测（默认） | `cargo test --manifest-path src-tauri/Cargo.toml` | **433 passed（431 bin + 2），0 failed**，EXIT=0；warnings **2**（grid_process.rs 基线） | ✅ |
++| 2 | Rust 单测（feature） | `cargo test --manifest-path src-tauri/Cargo.toml --features mcp` | **454 passed（452 + 2），0 failed**，EXIT=0；较默认 **+21**（与 W15「MCP feature 21/21」吻合） | ✅ |
++| 3 | Cargo feature 定义 | `grep -nE '\[features\]\|^mcp =' src-tauri/Cargo.toml` | L22 `[features]` / L23 `mcp = []`（A3 W10/W11 落地，默认不含） | ✅ |
++| 4 | 格式化 | `cargo fmt --all --check` | **0 diff** | ✅ |
++| 5 | 前端构建 | `npm run build` | ✓ built in 5.13s；`index-D521uF3k.js`=169.45 kB（gzip 60.78）；`index-DyXJBGF1.css`=61.40 kB（gzip 11.05） | ✅ |
++| 6 | **构建指标** | `measure-build-metrics.py --compare logs/m0-build-metrics/build-metrics-4f0e8ab.json --skip-build` | **`total_bytes_pct=25.55`，`exceeds_growth_limit=true`**；`cargo_warnings=0`；`warnings_increased=false` | ❌ **超限（见 §3）** |
++| 7 | 指标脚本自检 | `measure-build-metrics.py --self-test` | `SELF_TEST_RESULT=ALL_PASS` | ✅ |
++| 8 | **集成门禁** | `bash scripts/pre-merge.sh` | **`PRE_MERGE_RESULT=FAIL`**（3 条 FAIL，见 §3/§4） | ❌ |
++| 9 | core 边界 | `check-core-boundary.py --self-test` | PASS（ACTIVE=7） | ✅ |
++| 10 | MCP 策略 | `check-mcp-policy.py --self-test` | PASS（ACTIVE=**13**，PENDING=0） | ✅ |
++| 11 | MCP 策略 | `check-mcp-policy.py`（default） | PASS | ✅ |
++| 12 | MCP 策略 | `check-mcp-policy.py --expect-current-gaps` | PASS（「只读桥在 + gated stdio 骨架已落地，无未门控 rmcp/server/listener/tokio」） | ✅ |
++| 13 | agent-memory | `check-agent-memory-policy.py --self-test` | PASS（ACTIVE=5） | ✅ |
++| 14 | agent-skill | `check-agent-skill-policy.py --self-test` / default | PASS（ACTIVE=3，PENDING=10）/ PASS | ✅ |
++| 15 | graph | `check-graph-policy.py --self-test` / default | PASS（ACTIVE=8）/ PASS | ✅ |
++| 16 | plugin | `check-plugin-policy.py --self-test` / default / `--expect-pending` | ALL_PASS / PASS / `PLUGIN_PENDING_OK` | ✅ |
++| 17 | tools / database / scheduler / script-exec | 各自 `--self-test` | 全 PASS（tools 16 坏样本；database 14/1；scheduler 23/0；script-exec ALL_PASS） | ✅ |
++| 18 | **scheduler UI 契约** | `check-scheduler-ui-policy.py --self-test` / default | **FAIL：`SCHEDUI_PANEL_LAZY`**（见 §4） | ❌ |
++| 19 | A4 W17 新增 | `scripts/check-home-client-policy.py`（default） | 「home client policy: all invariants hold（ACTIVE=3）」 | ✅ |
++| 20 | A4 W17 新增 | `scripts/check-home-client-policy.py --self-test` | PASS（ACTIVE=3，PENDING=3；6 坏样本全检） | ✅ |
++| 21 | a11y UI 逻辑 | `node scripts/check-ui-a11y-logic.mjs` | `UI_A11Y_RESULT=PASS` | ✅ |
++| 22 | graph UI 逻辑 | `node scripts/check-graph-ui-logic.mjs` | 通过 **113**，失败 0 | ✅ |
++| 23 | agent-skill UI 逻辑 | `node scripts/check-agent-skill-ui-logic.mjs` | **110** assertions passed，0 failed | ✅ |
++| 24 | `git diff --check` | 工作树+暂存区 / `merge-base..HEAD` 范围 | **EXIT=0 / EXIT=0**（无空白错误） | ✅ |
++| 25 | W17 targeted（A3 home store） | `scripts/check-home-store-logic.mjs` | **文件不存在 → N/A**（A3 未交付） | ⏸ |
++| 26 | W17 targeted（A9 home UI） | `scripts/check-home-ui-logic.mjs` | **文件不存在 → N/A**（A9 未交付） | ⏸ |
++| 27 | W17 targeted（A6 导航） | `scripts/check-client-navigation-logic.mjs` | **文件不存在 → N/A**（A6 未交付） | ⏸ |
++
++---
++
++## 3. BLOCKER-1：构建指标超限（W17 AC5 → 停下报告 delta，不上抬上限）
++
++**实测**：`total_bytes_pct = 25.55`，`exceeds_growth_limit = true`，`cargo_warnings` delta = 0，`warnings_increased = false`。
++
++**上限证据**（`scripts/measure-build-metrics.py`）：
++```python
++37:# PluginManager 后，A0 于 2026-09-08 抬至 25%；W15 两处高风险确认框的焦点管理
++38:# 令实测到 25.14%。A0 仅为该已验收的键盘可达性修复上调至 25.2%，warning 仍不得增加。
++39:TOTAL_BYTES_GROWTH_LIMIT_PCT = 25.2
++```
++
++**精确 delta（AC5 要求）**：
++| 参照 | 数值 | delta |
++|---|---|---|
++| 当前上限 `TOTAL_BYTES_GROWTH_LIMIT_PCT` | 25.2% | **超限 +0.35pp** |
++| W15 已验收实测 | 25.14% | **+0.41pp** |
++| W10 实测（本 lane 历史） | 21.38% | +4.17pp |
++
++**产物佐证**：主 chunk `index-D521uF3k.js` = **169.45 kB**（W10 时点 164.82 kB，+4.63 kB）。
++
++**归因（时点快照，见 §6）**：主 chunk 增长来自 W13/W14 插件管理器 UI、W15 两处高风险确认框焦点管理，以及当前在制的 A3 W17 home 逻辑（`src/utils/homeUi.ts` 新增未跟踪，且已被 `src/stores/useHomeStore.ts` import → 进主 chunk）。
++
++**处置（严格遵守 AC5）**：
++- ✅ 已记录精确 delta；
++- ❌ **未**修改 `TOTAL_BYTES_GROWTH_LIMIT_PCT`，**未**以任何方式绕过闸门（未改 pre-merge、未改 measure 脚本、未删基线）；
++- ⛔ **阻塞 A0 push**：pre-merge L81 `FAIL: build metrics regression`。
++- 修复方向（非 A11 执行）：削减主 chunk（把 W17 home/nav 纯逻辑与面板改为 `defineAsyncComponent` 懒加载、移出主 chunk），或由 A0 在**明确记录理由**的前提下单独裁定上限——但 W17 AC5 已预先禁止「以超限为由抬上限」。
++
++---
++
++## 4. BLOCKER-2：`check-scheduler-ui-policy.py` SCHEDUI_PANEL_LAZY —— **夹具过时（非真实回归）**
++
++**现象**：默认扫描与 `--self-test` 双 FAIL，仅 1 项违规 `SCHEDUI_PANEL_LAZY`；self-test 另给出：「✗ 好样本应零违规，实得 `['SCHEDUI_PANEL_LAZY']`」、「✗ SCHEDUI_PANEL_LAZY: **变异锚点在 `src/components/layout/MainArea.vue` 中不存在（夹具已过时）**」。坏样本防呆 16 项全部命中，脚本逻辑本身健康。
++
++**根因**：策略（L178-182）要求 `MainArea.vue` 含**精确字符串**：
++```
++defineAsyncComponent(() => import("../workspace/TaskPanel.vue"))
++```
++而 `MainArea.vue` 实际（L40-41）使用**对象形式**：
++```
++const TaskPanel = defineAsyncComponent({
++  loader: () => import("../workspace/TaskPanel.vue"),
++  ...
++});
++```
++→ **懒加载行为本身是正确的**（TaskPanel 仍在异步 chunk，未进主 chunk），失败 purely 源于契约锚点字符串未覆盖对象形式（同文件 DatabasePanel/SkillManagerPanel/AgentManagerPanel/GraphPanel/PluginManager 均为同一对象形式，L50/57/64/73/82）。
++
++**归属**：`MainArea.vue` 最后一次改动为 `886ea29 feat(M5): integrate W14 plugin manager UI`（早于本波，属已提交基线）→ 契约漂移由 W14 集成引入、夹具未同步。该脚本属 M4-8 定时任务 UI 契约夹具，修复归**该夹具 owner**（更新锚点以同时接受箭头简写与 `{ loader: ... }` 对象形式，并同步变异样本）。
++**注意**：A7 W17 的 scope 含 `MainArea.vue`，但 `git status` 未见其改动 → **本次失败不可归因于 A7 W17 在制改动**。
++
++**影响**：pre-merge L110/L111 FAIL → ⛔ 阻塞 A0 push（即使指标修复，此条仍红）。
++
++---
++
++## 5. W17 targeted 验收脚本交付状态（诚实记录，不虚构）
++
++| W17 lane | 约定交付脚本 | 状态 |
++|---|---|---|
++| A3 | `scripts/check-home-store-logic.mjs` | ⏸ **未交付**（文件不存在）→ home store 边界/畸形数据韧性无法断言 |
++| A9 | `scripts/check-home-ui-logic.mjs` | ⏸ **未交付** → home 可访问名/有界列表/敏感文案无法断言 |
++| A6 | `scripts/check-client-navigation-logic.mjs` | ⏸ **未交付** → 导航可达性/窄窗行为无法断言 |
++| A4 | `scripts/check-home-client-policy.py` | ✅ **已交付且 PASS**（default + self-test 双绿） |
++| A2 | `run-gui.sh`（桌面启动助手） | 存在，但本 lane 未执行真机启动（属 A8 MANUAL QA + A10 安全复核范畴） |
++
++→ 结论：W17 的 **AC1（桌面启动不落到 localhost:1421 refused）** 与 **AC3（导航/窄窗可发现性）** 目前**无法由 A11 静态验证闭环**，须待 A2/A6/A9 交付 + A8 真机 QA 后复核。
++
++---
++
++## 6. 时点性声明（共享工作树并发修改）
++
++验证期间，其他 lane 正并发修改同一工作树：两次 `git status` 之间 `src/stores/useHomeStore.ts` 由「未列出（未改动）」变为 ` M`，`src/utils/homeUi.ts` 始终为未跟踪新增。因此：
++- §2 全部读数（尤其 #5/#6 构建与指标）为 **16:52 时点快照**；
++- 若 A3/A5 继续改动 home 相关源码，`total_bytes_pct` 会漂移（可能升亦可能降）；
++- A11 未 `stash`、未 `checkout`、未改动任何他人文件——避免干扰他 lane 在制工作。
++
++---
++
++## 7. Push 就绪度
++
++> **⛔ NOT READY — BLOCKED（2 处硬阻塞）**
++> 1. **构建指标 25.55% > 25.2%**（+0.35pp / 较 W15 +0.41pp）→ W17 AC5 明确「停下并报告精确 delta，不得抬高上限」，本 lane 已照办，**未抬上限**；须由实现 lane 削减主 chunk 后复测。
++> 2. **`check-scheduler-ui-policy.py` SCHEDUI_PANEL_LAZY** → 夹具锚点过时（`MainArea.vue` 用 `{ loader: ... }` 对象形式），须更新夹具；非 A7 W17 引入。
++>
++> 两者任一未清，`pre-merge.sh` 即 FAIL，A0 **不得 push**。
++> 其余 20+ 项门（默认 433/0、feature 454/0、fmt 0、npm build PASS、全部策略脚本 PASS、A4 home 策略 PASS、a11y/graph/agent-skill UI 逻辑 PASS、`git diff --check` 双绿）**全绿**，阻塞项收敛于上述 2 条 + 3 个未交付 targeted 脚本。
++
++---
++
++## 8. 债务台账（W17 时点）
++
++| 项 | W15 基线（board） | W17 实测 | 判定 |
++|---|---|---|---|
++| 默认 Rust 测试 | 431/0 | **433/0** | ✅ |
++| MCP feature 测试 | 21/21 | **454/0（默认 433 → +21）** | ✅ |
++| cargo warnings | 2（delta 0） | 2（delta 0） | ✅ |
++| cargo fmt | 0 diff | 0 diff | ✅ |
++| npm build | PASS | PASS（169.45 kB） | ✅ |
++| **构建指标** | 25.14% ≤ 25.2% | **25.55% > 25.2%** | ❌ **超限 +0.35pp** |
++| **scheduler UI 契约** | （W15 未暴露） | **FAIL SCHEDUI_PANEL_LAZY** | ❌ 夹具过时 |
++| pre-merge | ALL_PASS | **FAIL**（2 类 3 条） | ❌ |
++| MCP 策略 | ACTIVE=13/PENDING=0 | 同 | ✅ |
++| graph 策略 | ACTIVE=8 | 同 | ✅ |
++| A4 home 策略（W17 新增） | — | PASS（ACTIVE=3/PENDING=3） | ✅ |
++| graph UI 逻辑 | 113/0 | 113/0 | ✅ |
++| agent-skill UI 逻辑 | 110/0 | 110/0 | ✅ |
++| a11y UI 逻辑 | PASS | PASS | ✅ |
++| `git diff --check` | 绿 | 绿（工作树 + 分支范围） | ✅ |
++
++---
++
++## 9. 声明（避免误读）
++
++- 本 lane **零产品代码 / 零门禁脚本改动**：未编辑 `measure-build-metrics.py`、`pre-merge.sh`、`check-scheduler-ui-policy.py`、`MainArea.vue` 或任何源码；仅新增本验证文档与 patch。
++- **未**为消除红灯而抬高指标上限、删除基线或放宽任何检查。
++- 未 commit、未 push（W17 AC6 + L1201：A0 单独集成/commit/push）；本 lane 文档按既有惯例 `git add` 暂存以便 A0 拾取，patch 以未跟踪文件留存。
++- 全部结论基于 §2 实跑证据；未交付脚本一律标 ⏸ N/A，**未以任何方式虚构通过**（W17 AC：「never fabricate」）。

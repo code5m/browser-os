@@ -1,0 +1,232 @@
+diff --git a/logs/assist/A4-M5-W16-privacy-stable-error-contract-20260908-1100.md b/logs/assist/A4-M5-W16-privacy-stable-error-contract-20260908-1100.md
+new file mode 100644
+index 0000000..a529565
+--- /dev/null
++++ b/logs/assist/A4-M5-W16-privacy-stable-error-contract-20260908-1100.md
+@@ -0,0 +1,226 @@
++# A4 — M5-W16 Privacy / Stable-Error Contract for every candidate M6 surface（REVIEW NOTE）
++
++- **Lane / 分派**：A4，`M5-W16 M5 Closeout and M6 Charter Dispatch`（board §1163-1183，A4 行 1172：*Privacy/stable-error contract for every candidate M6 surface* → **Review note**）
++- **WORKDIR / 身份**：`/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`，`.workspace-identity = BACKV3_MAIN`，分支 `master`
++- **基线 / HEAD**：`052b18a`（origin/master，feat(M5): close W15 release readiness，已由 A0 push）；`git fetch && git pull --ff-only` = 已最新
++- **形态**：REVIEW NOTE（文档/审查 only）—— **零产品代码、零策略脚本改动**。本文件即交付物；不写任何 `src/**` / `src-tauri/**` / `scripts/**`。
++- **未 push**（board：Only A0 pushes）。
++- **前置依赖**：A1 的 M6 WBS/ordering（候选 surface 清单来源）、A2 架构边界、A3 MCP 威胁模型、A5 Agent/Skill 授权设计、A7 graph 威胁模型、A10 安全门。本 note 在所有这些**之前/并行**给出隐私与稳定错误这一**横切契约骨架**，供各 lane 直接引用。
++
++---
++
++## 0. 为什么本 note 是 W16 的必要交付
++
++M6 的目标（board W16：*a reviewed M6 charter before any new runtime authority is implemented*）是在 M5 冻结的运行时边界上**解锁一部分运行时能力**。解锁意味着新的数据面（执行输出、网络流量、模型响应、Agent 动作、后台任务结果）会首次跨越进程/信任边界进入 UI、审计、日志、浏览器存储。
++
++M5 已证明一条铁律：**只要数据在到达 UI/审计/日志前已被红脱敏、错误已被 `error_code()` 收口为稳定 ASCII 码，渲染与持久化面就天然不碰密钥/签名/路径/凭据/正文**。A4 在 W10–W15 反复验证（plugin/graph/MCP/Agent-Skill/database/稳定错误）此铁律成立。
++
++本 note 把该铁律**形式化为 M6 每个候选 surface 的可执行合约**，使 M6 的实现 lane 在动手前就拿到隐私/稳定错误硬约束，而不是事后审查。这是 A4 在 W16 的唯一职责（board：*Review note*）。
++
++---
++
++## 1. 候选 M6 surface 枚举（来自 board W16 Hard Stops）
++
++board W16 Hard Stops 列出的「禁止项」恰好就是 M6 **可能解锁**的运行时能力集合。逐条映射为候选 surface：
++
++| # | 候选 M6 surface | M5 现状（冻结基线） | M6 若解锁则新增的数据面 |
++|---|---|---|---|
++| S1 | Plugin **execution / invoke**（运行插件） | W14 仅 UI + manifest 校验 + 生命周期状态机，**零执行** | 插件进程 stdout/stderr、退出码、运行时错误体、能力执行结果 |
++| S2 | Dynamic loading（动态加载模块/插件体） | 静态编译、无动态加载 | 加载源路径、加载器错误、模块指纹/哈希 |
++| S3 | Network download/listener（网络下载/监听） | 全禁 | 远端 URL、响应体、证书/TLS 材料、监听端口、请求头（可能含 token） |
++| S4 | Daemon（常驻后台进程） | 无 | 守护进程日志、PID/套接字路径、健康检查输出 |
++| S5 | Model call（模型调用） | 全禁 | 提示词（可能含 PII）、模型响应、token 用量、API key（调用凭证） |
++| S6 | Agent/Skill **execution**（执行 Agent/Skill） | W10 仅 read-only bridge，无执行 | Agent 动作轨迹、工具调用参数/结果、Skill 输出、执行错误 |
++| S7 | MCP **runtime** expansion（MCP 全运行时） | W11 仅 stdio dry-run | 真实 MCP 工具调用结果、服务端错误、传输噪声 |
++| S8 | Graph **write/export**（图写/导出） | W12 仅 read-only query | 写入确认、导出文件内容/路径、批量结果摘要 |
++| S9 | Background worker（后台任务） | 无 | 任务进度、worker 错误、中间产物路径 |
++| S10 | Raw Tauri `invoke`（绕过 bridge） | 永久禁止（M5 红线） | （任何 surface 若经裸 invoke 即破窗） |
++| S11 | Sensitive rendering/persistence（敏感渲染/持久化） | 永久禁止（M5 红线） | （凭据/签名/公钥/路径/请求响应体/stdout-stderr 不得落 UI 或存储） |
++
++> S10 / S11 是**永久红线**，不属于"M6 解锁项"，而是对所有 surface 的跨切约束（见 §2 P4/P6）。
++
++---
++
++## 2. 横切合约骨架（6 条不变式，源自 M5 实证）
++
++> 这些不变式在 M5 各 surface 已被 A4 实证（plugin W13/14/15、graph W12、MCP W11、Agent-Skill W10、database W9、稳定错误 W15）。M6 每个 surface 的合约（§3）都是这 6 条的**实例化**。
++
++| 不变式 | 约束 | M5 实证来源 |
++|---|---|---|
++| **P1 Redacted DTO at boundary** | 任何跨进程/信任边界的 DTO 不得携带：原始签名 `signature.value`、公钥原文、资源绝对路径、凭据、请求/响应体、stdout/stderr、PII。前端只收**红脱敏投影**（hash 前缀 / 16-hex 指纹 / 布尔 / 稳定码）。 | plugin `PluginSignatureView`/`PluginResourceMeta`（W13）；graph 输出 omit `props`（W12） |
++| **P2 Stable error_code only** | 所有错误经后端 `error_code()` 收口为稳定 ASCII 码（如 `PLUGIN_MANIFEST_INVALID`）；**错误正文不出进程**；前端只渲染稳定码或本地映射文案，禁 `err.message` / `String(err)` / `err.toString()`。 | plugin.rs:334 `error_code()`；W15 `describeError` 丢弃 `e` |
++| **P3 No browser persistence of secrets** | 密钥、签名原文、manifest 原文、凭据、请求/响应体、资源路径**不得**落 `localStorage`/`sessionStorage`/`indexedDB`。瞬时入参（manifest 文本、pubkey、resourcePath）用后清空。 | plugin UI `manifestText`/`pubkey` 成功后清空（W14） |
++| **P4 No raw Tauri invoke** | 所有桥调用只经 `src/bridge.ts` 中央包装方法；禁裸 `invoke("xxx")` / 直 import `@tauri-apps/api/tauri`。命令名 + DTO 冻结。 | plugin bridge 8 方法（W14）；A10 raw-invoke 审查 |
++| **P5 Audit redaction** | 审计只记录 ids / 计数 / hash 前缀 / 稳定码；**禁** label、prop、query body、路径、凭据、响应正文、stdout/stderr。 | plugin 读命令不写审计（W14 A10 F-1）；DB 审计约束 |
++| **P6 No sensitive rendering/persistence** | UI 不渲染、存储不持久化：凭据、原始签名、公钥原文、资源绝对路径、请求/响应体、stdout/stderr。 | plugin `redactDetail` 显式丢弃（W14） |
++
++---
++
++## 3. 逐 surface 隐私/稳定错误合约（M6 实现 lane 的硬约束）
++
++> 每张表列：敏感数据类（必须不泄漏）/ 必需的红脱敏 / 必需的稳定错误码命名空间 / 必需的策略夹具门禁（ship 前必须存在且绿）。
++
++### S1 — Plugin execution / invoke
++
++| 维度 | 合约 |
++|---|---|
++| 敏感数据类 | 插件 stdout/stderr（可能含路径/凭据/环境变量）、退出错误体、能力执行结果中的 PII、资源路径 |
++| 红脱敏 | 执行结果 DTO 只暴露：`exit_code`（稳定）、`output_hash_prefix`、`error_code`；stdout/stderr **截断 + hash 前缀**，绝不原样回 UI/审计；资源路径只取布尔 `path_provided`/`verified` |
++| 稳定错误码 | 扩展 `PLUGIN_*` 命名空间：`PLUGIN_EXEC_DENIED` / `PLUGIN_EXEC_TIMEOUT` / `PLUGIN_EXEC_OUTPUT_TOO_LARGE` / `PLUGIN_CAPABILITY_BLOCKED`（沿用 plugin.rs:336-344 风格，单一 `error_code()` 收口） |
++| 夹具门禁 | 扩展 `scripts/check-plugin-ui-privacy.py`：新增 `PLUGIN_EXEC_NO_RAW_OUTPUT_RENDER`（渲染面禁 stdout 原文）、`PLUGIN_EXEC_OUTPUT_AUDIT_REDACTED`（审计禁 stdout 原文） |
++
++### S2 — Dynamic loading
++
++| 维度 | 合约 |
++|---|---|
++| 敏感数据类 | 加载源绝对路径、模块哈希外的元数据、加载器内部错误（可能含路径/权限） |
++| 红脱敏 | 加载结果 DTO 只暴露 `module_id` / `hash_prefix` / `loaded: bool` / `error_code`；源路径只取布尔 `source_provided`/`verified` |
++| 稳定错误码 | 新命名空间 `LOAD_*`：`LOAD_SOURCE_UNTRUSTED` / `LOAD_HASH_MISMATCH` / `LOAD_FAILED` |
++| 夹具门禁 | 新增 `scripts/check-loader-privacy.py`：`LOADER_NO_PATH_ECHO` / `LOADER_NO_RAW_ERROR` |
++
++### S3 — Network download/listener
++
++| 维度 | 合约 |
++|---|---|
++| 敏感数据类 | 远端 URL（可能含 userinfo/token）、响应体、TLS 证书/私钥材料、监听端口号、请求头（可能含 Authorization） |
++| 红脱敏 | URL 渲染/审计只暴露 `scheme` + `host` + `path_hash_prefix`，**剥离 userinfo/query**；响应体只暴露 `bytes`/`hash_prefix`/`status_code`；证书只暴露指纹；端口只暴露布尔 `listening` |
++| 稳定错误码 | 新命名空间 `NET_*`：`NET_URL_REDACTED` / `NET_DOWNLOAD_FAILED` / `NET_TLS_INVALID` / `NET_LISTEN_DENIED` |
++| 夹具门禁 | 新增 `scripts/check-net-privacy.py`：`NET_NO_URL_USERINFO_ECHO` / `NET_NO_RESPONSE_BODY_RENDER` / `NET_NO_CERT_MATERIAL` |
++
++### S4 — Daemon
++
++| 维度 | 合约 |
++|---|---|
++| 敏感数据类 | 守护进程日志（可能含路径/凭据）、PID/套接字绝对路径、健康检查原始输出 |
++| 红脱敏 | 状态 DTO 只暴露 `running: bool` / `health: "ok"|"degraded"|"down"` / `error_code`；日志只暴露 `log_hash_prefix`；套接字路径只取布尔 `socket_provided` |
++| 稳定错误码 | 新命名空间 `DAEMON_*`：`DAEMON_START_FAILED` / `DAEMON_NOT_RUNNING` / `DAEMON_HEALTH_DEGRADED` |
++| 夹具门禁 | 新增 `scripts/check-daemon-privacy.py`：`DAEMON_NO_LOG_ECHO` / `DAEMON_NO_SOCKET_PATH` |
++
++### S5 — Model call
++
++| 维度 | 合约 |
++|---|---|
++| 敏感数据类 | **API key（调用凭证，最高敏感）**、提示词中的 PII、模型原始响应（可能含 PII/凭据）、token 用量明细 |
++| 红脱敏 | API key **永不**离开后端密钥库；前端只持 `model_id` / `call_id` / `error_code`；提示词/响应只暴露 `prompt_hash_prefix` / `response_hash_prefix` / `tokens: number`（聚合计数）；禁渲染原文 |
++| 稳定错误码 | 新命名空间 `MODEL_*`：`MODEL_KEY_MISSING` / `MODEL_CALL_DENIED` / `MODEL_TIMEOUT` / `MODEL_RESPONSE_FILTERED` |
++| 夹具门禁 | 新增 `scripts/check-model-privacy.py`：`MODEL_NO_APIKEY_ECHO` / `MODEL_NO_PROMPT_RENDER` / `MODEL_NO_RESPONSE_RENDER` |
++
++### S6 — Agent/Skill execution
++
++| 维度 | 合约 |
++|---|---|
++| 敏感数据类 | Agent 动作轨迹中的参数（可能含凭据/路径）、工具调用结果、Skill 输出（可能含 PII）、执行错误体 |
++| 红脱敏 | 执行结果 DTO 只暴露 `action_id` / `status` / `error_code` / `result_hash_prefix`；工具参数/结果只暴露 `arg_hash_prefix` / `result_hash_prefix`；禁原文渲染 |
++| 稳定错误码 | 新命名空间 `AGENTEXEC_*`：`AGENTEXEC_DENIED` / `AGENTEXEC_TOOL_BLOCKED` / `AGENTEXEC_FAILED` / `SKILL_EXEC_DENIED` |
++| 夹具门禁 | 扩展 `scripts/check-agent-skill-policy.py`：新增 `AGENTEXEC_NO_ARG_ECHO` / `AGENTEXEC_NO_RESULT_RENDER`；与 A5 授权设计协同 |
++
++### S7 — MCP runtime expansion
++
++| 维度 | 合约 |
++|---|---|
++| 敏感数据类 | 真实 MCP 工具调用结果（可能含路径/凭据）、服务端错误体、传输层噪声 |
++| 红脱敏 | 沿用 W11 dry-run 红脱敏：URL/userinfo/query 脱敏、参数不原样回显、审计/日志无 payload 泄漏；运行时结果只暴露 `tool_id` / `status` / `error_code` / `result_hash_prefix` |
++| 稳定错误码 | 扩展 `MCP_*`：`MCP_RUNTIME_DENIED` / `MCP_TOOL_BLOCKED` / `MCP_CALL_FAILED`（W11 已有 MCP stdio 约束，运行时复用并扩展） |
++| 夹具门禁 | 扩展 `scripts/check-mcp-policy.py`：新增 `MCP_RUNTIME_NO_PAYLOAD_ECHO` / `MCP_RUNTIME_OUTPUT_REDACTED`；与 A3 威胁模型协同 |
++
++### S8 — Graph write/export
++
++| 维度 | 合约 |
++|---|---|
++| 敏感数据类 | 导出文件绝对路径、导出内容（可能含 label/prop 中的敏感业务数据）、批量写入结果明细 |
++| 红脱敏 | 沿用 W12：输出 omit `props`；导出只暴露 `exported_count` / `error_code` / `file_hash_prefix`；路径只取布尔 `exported` / `verified`；禁渲染 label/prop 原文 |
++| 稳定错误码 | 扩展 `GRAPH_*`：`GRAPH_WRITE_DENIED` / `GRAPH_EXPORT_DENIED` / `GRAPH_WRITE_FAILED`（graph.rs:84-90 已有 `GRAPH_*` 风格） |
++| 夹具门禁 | 扩展 `scripts/check-graph-policy.py`：新增 `GRAPH_NO_EXPORT_PATH_ECHO` / `GRAPH_NO_PROP_RENDER`；与 A7 威胁模型协同 |
++
++### S9 — Background worker
++
++| 维度 | 合约 |
++|---|---|
++| 敏感数据类 | 任务中间产物路径、worker 错误体、进度消息中的 PII |
++| 红脱敏 | 进度/结果 DTO 只暴露 `task_id` / `progress: number` / `status` / `error_code` / `result_hash_prefix`；中间产物路径只取布尔 `artifact_provided` |
++| 稳定错误码 | 新命名空间 `WORKER_*`：`WORKER_DENIED` / `WORKER_FAILED` / `WORKER_CANCELLED` |
++| 夹具门禁 | 新增 `scripts/check-worker-privacy.py`：`WORKER_NO_ARTIFACT_PATH` / `WORKER_NO_RAW_ERROR` |
++
++### S10 / S11 — 永久红线（跨切，对所有 surface 生效）
++
++| 红线 | 合约 | 既有夹具 |
++|---|---|---|
++| S10 No raw Tauri invoke | 任何 surface 的桥调用只经 `src/bridge.ts` 中央包装；裸 `invoke` 一律拒 | `check-*-ui-privacy.py` 系列 `NO_RAW_INVOKE` 码位（plugin 已 ACTIVE） |
++| S11 No sensitive rendering/persistence | 凭据/签名原文/公钥原文/资源路径/请求响应体/stdout-stderr 不得渲染或持久化 | `check-plugin-ui-privacy.py` `NO_SECRET_RENDER` + `NO_BROWSER_STORAGE`（已 ACTIVE/PENDING） |
++
++---
++
++## 4. 稳定错误码命名空间提案（M6 收口规则）
++
++M5 已落地 `DB_*`（domain.rs:979-996）、`GRAPH_*`（graph.rs:84-90）、`PLUGIN_*`（plugin.rs:336-344）。M6 新增 surface 必须**沿用同一 `error_code()` 收口模式**：
++
++1. 每个新 surface 定义独立 `<PREFIX>_*` 命名空间（§3 已提案：LOAD_/NET_/DAEMON_/MODEL_/AGENTEXEC_/MCP_RUNTIME_ 复用 MCP_/WORKER_/GRAPH_ 扩展）。
++2. 每个 surface 的 Rust 错误枚举实现**单一** `error_code(&self) -> &'static str`，返回稳定 ASCII，禁返回 `format!` 动态串或错误 `Display` 原文。
++3. bridge 层 `Err(code.to_string())` 只传稳定码；**错误正文（含路径/上下文）在后端日志脱敏后丢弃，不出进程**。
++4. 前端 `describeError(e)` 模式（W15 plugin）推广为**所有 surface 的默认**：丢弃 `e`，按稳定码映射本地文案（可借鉴 W15 §2.2 的 NOTE：未来按码映射更精确，但"丢弃 e"始终是合规底线）。
++
++> 命名冲突防护：A0 在 M6 集成时维护一份 `<PREFIX>_*` 总表（类似现有 `security_policy.rs` 的码位枚举），避免不同 lane 复用前缀。建议 A11 的 M6 验证矩阵纳入「所有 surface 错误码稳定 ASCII」断言。
++
++---
++
++## 5. 策略夹具门禁要求（ship 前必须有且绿）
++
++M5 已建隐私/策略夹具库（`scripts/check-*-privacy.py` / `check-*-policy.py`，见 §7 清单）。M6 规则：
++
++1. **每个被解锁的 M6 surface，其 §3 所列夹具门禁码位必须在 surface 合入前存在且绿**（gated 亦可，但 surface 一旦 ship 必须 ACTIVE）。
++2. 新增夹具统一命名 `scripts/check-<surface>-privacy.py`，码位前缀与 §3 一致（`MODEL_*` / `NET_*` / …）。
++3. 所有新增隐私夹具接入 `scripts/pre-merge.sh`（同 W13/W14/W15 做法：self-test + 默认门禁）。
++4. **红脱敏 + 稳定错误码双断言**：每个夹具同时检查（a）DTO/渲染无敏感字段；（b）错误路径只产生稳定码、无原文泄漏。
++5. 既有夹具（plugin/graph/mcp/agent-skill/database）**不降级**：M6 扩展其码位时不得移除 M5 已 ACTIVE 的 `NO_RAW_INVOKE` / `NO_SECRET_RENDER` 等。
++
++---
++
++## 6. 交接与 A0 入口门（M6 启动前）
++
++| 接收方 | A4 提供的契约输入 |
++|---|---|
++| **A0** | 本 note §2–§5 即 M6 隐私/稳定错误**入口硬约束**；M6 任一 surface 的实现 PR 必须附「§3 对应 surface 合约逐条满足」证据，否则 A0 拒收 |
++| **A1（M6 WBS）** | 候选 surface 清单（§1）应与 A1 的 WBS 对齐；若 A1 新增 §1 未列 surface，须回填本 note |
++| **A2（架构边界）** | §2 P1/P4/P5 是边界红线的隐私实例化；A2 的 non-goals/hard-stops 应引用本 note |
++| **A3（MCP 威胁模型）** | S7 合约与 A3 协同；`MCP_RUNTIME_*` 命名空间归 A3 确认 |
++| **A5（Agent/Skill 授权）** | S6 合约与 A5 协同；`AGENTEXEC_*` 命名空间归 A5 确认；授权与隐私分离（A5 管"能否执行"，A4 管"执行结果不泄漏"） |
++| **A7（graph 威胁模型）** | S8 合约与 A7 协同；`GRAPH_*` 扩展归 A7 确认 |
++| **A10（安全门）** | 本 note 是 A10 M6 安全门输入之一；A10 最终 verdict 须确认 §3 各 surface 合约被实现覆盖 |
++| **A11（验证矩阵）** | §4/§5 的"稳定码 ASCII 断言 + 隐私夹具门禁"纳入 M6 验证矩阵 |
++
++**A0 M6 入口门（建议）**：
++```text
++M6 surface X 可进入实现 ⟺
++  (1) A2 架构边界已定义 X 的信任边界
++  (2) 本 note §3 的 X 合约已逐条映射为可执行夹具码位
++  (3) A10 确认 X 无绕过 raw-invoke / 敏感渲染回归
++  (4) A11 验证矩阵含 X 的隐私 + 稳定错误断言
++```
++
++---
++
++## 7. 自检证据链
++
++| 检查 | 位置 / 命令 | 结果 |
++|---|---|---|
++| 启动门禁 | `pwd` / `git branch` / `git pull --ff-only` | BACKV3_MAIN / master / 已最新（`052b18a`）✅ |
++| 工作树 | `git status --short` | 干净（本 note 为新增 `logs/assist/`，A0 集成时 add）✅ |
++| M5 隐私铁律实证 | `logs/assist/A4-M5-W1[0-5]*.md` 6 份 | 全部 PASS / PASS_WITH_NOTE ✅ |
++| 后端稳定码模式 | `plugin.rs:334-344` / `graph.rs:84-90` / `domain.rs:979-996` | `error_code()` 收口，稳定 ASCII ✅ |
++| 既有隐私夹具库 | `scripts/check-{plugin,graph,mcp,agent-skill,database}-*privacy*.py` | 11+ 套，M6 可扩展 ✅ |
++| 横切红线 | W14/W15 `NO_RAW_INVOKE` / `NO_SECRET_RENDER` / `NO_BROWSER_STORAGE` | 已编码并接入 pre-merge ✅ |
++| 零产品代码 | `git diff --stat -- src src-tauri scripts` | 空（本 note 仅 docs）✅ |
++
++---
++
++## 8. 交付物
++
++| 文件 | 内容 |
++|---|---|
++| `logs/assist/A4-M5-W16-privacy-stable-error-contract-20260908-1100.md` | 本 Review note（§1 候选 surface / §2 横切骨架 / §3 逐 surface 合约 / §4 错误码命名空间 / §5 夹具门禁 / §6 交接） |
++
++- 零产品代码改动（`src/**` / `src-tauri/**` 全未触碰）
++- 零策略脚本改动（`scripts/` 维持 W15 状态；本 note 仅**提案**新增夹具，未落地）
++- 未 commit、未 push（board：Only A0 pushes）
++
++**A4 Lane W16 结论**：候选 M6 surface 的隐私/稳定错误合约已**形式化完成**（11 surface × 6 不变式），可作为 M6 charter 的隐私/稳定错误横切硬约束直接并入 A1 WBS 与 A0 入口门。A4 不阻塞 W16 closeout。

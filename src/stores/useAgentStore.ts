@@ -114,7 +114,7 @@ export const useAgentStore = defineStore("agent", () => {
     return {
       ...d,
       description: redactSecretsInText(d.description),
-      systemPrompt: redactSecretsInText(d.systemPrompt),
+      system_prompt: redactSecretsInText(d.system_prompt),
     };
   }
   /// 预览能力有界：展示前 N 项，其余标为溢出（不丢总数信息，前端按需展开）。

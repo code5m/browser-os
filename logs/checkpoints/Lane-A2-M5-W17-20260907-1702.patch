@@ -1,0 +1,470 @@
+diff --git a/run-gui.sh b/run-gui.sh
+index 1146381..f84ff39 100755
+--- a/run-gui.sh
++++ b/run-gui.sh
+@@ -6,17 +6,101 @@
+ #   bash /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3/run-gui.sh
+ #
+ # 如需观察日志（排查白屏/崩溃），末尾加 2>&1 | tee /tmp/mvp-gui.log
++#
++# M5-W17（Lane A2）：debug 启动改为"先确保 Vite dev server 就绪，再拉起客户端"。
++#   背景：debug 构建的主窗口在 src-tauri/src/main.rs:1210-1214 强制指向
++#   WebviewUrl::External("http://localhost:1421")（条件 cfg!(debug_assertions) 且
++#   未设 MVP_FORCE_DIST），release 仍走 WebviewUrl::App("index.html") 打包资源。
++#   此前本脚本从不启动 Vite，于是 webview 直接 "connection refused"。
++#
++#   现在：scripts/dev-server.sh 负责检测/启动/等待 1421；本脚本拉起客户端；退出时
++#   **只回收本脚本自己拉起的那个** dev server（此前已在运行的不会被杀）。
++#
++#   本脚本不改动任何命令 / bridge / ACL / 生产运行时权限；release 行为不变。
++
++set -euo pipefail
+ 
+-set -e
+-APP_DIR="/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3"
++APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ BIN="$APP_DIR/src-tauri/target/debug/mvp-browser-os"
++DEV_SERVER_HELPER="$APP_DIR/scripts/dev-server.sh"
++
++FORCE_DIST="${MVP_FORCE_DIST:-}"
++NO_BUILD=0
++APP_ARGS=()
++
++print_usage() {
++  cat <<'USAGE'
++usage: run-gui.sh [--force-dist] [--no-build] [-h|--help] [-- <客户端参数...>]
++
++在图形终端里启动桌面 debug 客户端。debug 启动前会自动确保 Vite dev server
++（默认 http://127.0.0.1:1421）就绪，并在本脚本退出时只回收自己拉起的那个。
+ 
+-if [ ! -x "$BIN" ]; then
+-  echo "[run-gui] 未找到二进制，先编译……"
++  --force-dist   跳过 dev server，强制加载内嵌 dist（会导出 MVP_FORCE_DIST=1，
++                 与 main.rs 的同名分支一致）
++  --no-build     二进制已存在时跳过 cargo build
++  -h, --help     打印本帮助并退出（不做任何构建/启动）
++  --             其后参数原样透传给客户端二进制
++USAGE
++}
++
++while (($#)); do
++  case "$1" in
++    --force-dist | --no-dev-server) FORCE_DIST=1; shift ;;
++    --no-build) NO_BUILD=1; shift ;;
++    -h | --help) print_usage; exit 0 ;;
++    --)
++      shift
++      APP_ARGS+=("$@")
++      break
++      ;;
++    *)
++      APP_ARGS+=("$1")
++      shift
++      ;;
++  esac
++done
++
++DEV_STATE_DIR=""
++CLEANED=""
++
++cleanup() {
++  [[ -n "$CLEANED" ]] && return 0
++  CLEANED=1
++  if [[ -n "$DEV_STATE_DIR" && -f "$DEV_STATE_DIR/dev-server.pid" ]]; then
++    MVP_DEV_SERVER_STATE_DIR="$DEV_STATE_DIR" bash "$DEV_SERVER_HELPER" stop >/dev/null 2>&1 || true
++  fi
++  if [[ -n "$DEV_STATE_DIR" ]]; then rm -rf "$DEV_STATE_DIR" || true; fi
++  return 0
++}
++trap 'cleanup' EXIT
++trap 'cleanup; exit 130' INT
++trap 'cleanup; exit 143' TERM
++
++if [[ "$NO_BUILD" == "1" ]]; then
++  :
++elif [[ ! -x "$BIN" ]]; then
++  echo "[run-gui] 未找到二进制，先编译……" >&2
+   (cd "$APP_DIR/src-tauri" && cargo build)
+ fi
+ 
+-# 继承当前图形会话的环境（DISPLAY / WAYLAND_DISPLAY / XDG_RUNTIME_DIR 等）
++if [[ -n "$FORCE_DIST" ]]; then
++  echo "[run-gui] --force-dist：跳过 dev server，强制加载内嵌 dist" >&2
++  # 必须导出：main.rs 依据该变量决定走 App("index.html") 而不是 External(1421)
++  export MVP_FORCE_DIST=1
++else
++  if [[ ! -f "$DEV_SERVER_HELPER" ]]; then
++    echo "[run-gui][ERROR] 缺少 dev-server 助手：$DEV_SERVER_HELPER" >&2
++    exit 1
++  fi
++  # 私有 state dir：pidfile 只属于本次运行，避免跨运行误杀别人启动的 server
++  DEV_STATE_DIR="$(mktemp -d)"
++  export MVP_DEV_SERVER_STATE_DIR="$DEV_STATE_DIR"
++  # shellcheck source=scripts/dev-server.sh disable=SC1090
++  source "$DEV_SERVER_HELPER"
++  dev_server_ensure
++fi
++
++# 继承/补全当前图形会话环境（DISPLAY / WAYLAND_DISPLAY / XDG_RUNTIME_DIR 等）
+ #
+ # 关键 workaround：WebKitGTK 在 Wayland 下默认使用 DMA-BUF 渲染器会崩溃
+ # （进程静默退出、白屏）。禁用后即可稳定运行。同时用 X11 后端规避
+@@ -24,5 +108,7 @@ fi
+ export WEBKIT_DISABLE_DMABUF_RENDERER=1
+ export GDK_BACKEND=x11
+ 
+-echo "[run-gui] 启动中…… WEBKIT_DISABLE_DMABUF_RENDERER=1 GDK_BACKEND=x11"
+-exec "$BIN" "$@"
++echo "[run-gui] 启动中…… WEBKIT_DISABLE_DMABUF_RENDERER=1 GDK_BACKEND=x11" >&2
++# 不用 exec：保留本 shell，客户端退出后由 EXIT trap 回收自己拉起的 dev server
++"$BIN" ${APP_ARGS[@]+"${APP_ARGS[@]}"}
++exit $?
+diff --git a/scripts/check-dev-startup.sh b/scripts/check-dev-startup.sh
+new file mode 100755
+index 0000000..040c808
+--- /dev/null
++++ b/scripts/check-dev-startup.sh
+@@ -0,0 +1,162 @@
++#!/usr/bin/env bash
++# M5-W17 · Lane A2 —— run-gui.sh / scripts/dev-server.sh 启动路径的 ownership-safe 冒烟测试。
++#
++# 不启动真实 Vite、不启动 GUI：用 `python3 -m http.server` 作 stub server 在临时端口上
++# 验证所有权语义：
++#   1) 端口已有服务 → 判定"他人所有"：不启动，cleanup 也不杀它（stub 存活）
++#   2) 无服务      → 自己拉起并等待就绪，cleanup 只回收自己那个（stub 消失、pidfile 清理）
++#   3) 启动超时    → 明确失败（非零退出）且不留下孤儿进程
++#   4) run-gui.sh 静态契约（可执行、引用助手、注册 cleanup trap、保留图形环境 workaround）
++#   5) main.rs debug/release 资产选择回归（A2 本次不改动，仅确认仍正确）
++
++set -euo pipefail
++
++ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
++HELPER="$ROOT/scripts/dev-server.sh"
++RUN_GUI="$ROOT/run-gui.sh"
++MAIN_RS="$ROOT/src-tauri/src/main.rs"
++
++PASS=0
++FAIL=0
++ok() { printf '  ✓ %s\n' "$*"; PASS=$((PASS + 1)); }
++bad() { printf '  ✗ %s\n' "$*"; FAIL=$((FAIL + 1)); }
++section() { printf '\n[%s]\n' "$*"; }
++
++for f in "$HELPER" "$RUN_GUI" "$MAIN_RS"; do
++  if [[ ! -f "$f" ]]; then printf '缺少文件：%s\n' "$f" >&2; exit 1; fi
++done
++
++STATE_ROOT="$(mktemp -d)"
++trap 'rm -rf "$STATE_ROOT"' EXIT
++
++free_port() {
++  python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()'
++}
++
++port_open() {
++  local port="$1"
++  (exec 3<>"/dev/tcp/127.0.0.1/${port}") >/dev/null 2>&1
++}
++
++wait_port() {
++  local port="$1" i
++  for i in $(seq 1 60); do
++    if port_open "$port"; then return 0; fi
++    sleep 0.25
++  done
++  return 1
++}
++
++# 切到一份干净的 state，并按给定端口/命令重新加载助手（重算 pidfile 等）
++reset_state() {
++  local name="$1" port="$2" cmd="$3"
++  export MVP_DEV_SERVER_STATE_DIR="$STATE_ROOT/$name"
++  export MVP_DEV_SERVER_PORT="$port"
++  export MVP_DEV_SERVER_HOST="127.0.0.1"
++  export MVP_DEV_SERVER_URL="http://127.0.0.1:${port}/"
++  export MVP_DEV_SERVER_CMD="$cmd"
++  export MVP_DEV_SERVER_TIMEOUT_SECS="${MVP_DEV_SERVER_TIMEOUT_SECS:-60}"
++  rm -rf "$MVP_DEV_SERVER_STATE_DIR"
++  mkdir -p "$MVP_DEV_SERVER_STATE_DIR"
++  # shellcheck disable=SC1090
++  source "$HELPER"
++  unset DS_CLEANED 2>/dev/null || true
++}
++
++echo "== M5-W17 A2 dev-startup smoke =="
++
++# ---------------------------------------------------------------
++section "1) 端口已有服务 → 不接管、不清理"
++STUB1_PORT="$(free_port)"
++STUB1_DIR="$STATE_ROOT/stub1"
++mkdir -p "$STUB1_DIR"
++(cd "$STUB1_DIR" && exec python3 -m http.server "$STUB1_PORT" --bind 127.0.0.1 >/dev/null 2>&1) &
++STUB1_PID=$!
++if wait_port "$STUB1_PORT"; then ok "stub（他人服务）已就绪 :${STUB1_PORT}"; else bad "stub 未能就绪"; fi
++reset_state t1 "$STUB1_PORT" "true"
++if dev_server_ensure >/dev/null 2>&1; then ok "ensure 识别到已有服务并直接返回"; else bad "ensure 对已有服务报错"; fi
++if [[ -f "$MVP_DEV_SERVER_STATE_DIR/dev-server.pid" ]]; then
++  bad "不应写入 pidfile（未自己启动 → 不持有）"
++else
++  ok "未接管已有服务（无 pidfile → 不持有）"
++fi
++ds_cleanup >/dev/null 2>&1 || true
++if port_open "$STUB1_PORT"; then ok "cleanup 未杀掉他人服务（stub 仍存活）"; else bad "cleanup 误杀了他人服务"; fi
++kill "$STUB1_PID" 2>/dev/null || true
++wait "$STUB1_PID" 2>/dev/null || true
++
++# ---------------------------------------------------------------
++section "2) 无服务 → 自己拉起并等待就绪 → cleanup 只回收自己那个"
++STUB2_PORT="$(free_port)"
++STUB2_DIR="$STATE_ROOT/stub2"
++mkdir -p "$STUB2_DIR"
++reset_state t2 "$STUB2_PORT" "cd $STUB2_DIR && python3 -m http.server $STUB2_PORT --bind 127.0.0.1"
++if dev_server_ensure >/dev/null 2>&1; then ok "ensure 成功（拉起并等待就绪）"; else bad "ensure 失败"; fi
++if [[ -f "$MVP_DEV_SERVER_STATE_DIR/dev-server.pid" ]]; then ok "写入 pidfile（本助手持有）"; else bad "缺少 pidfile"; fi
++if ds_is_up; then ok "dev server 可探测（HTTP 就绪）"; else bad "探测失败"; fi
++ds_cleanup >/dev/null 2>&1 || true
++sleep 0.5
++if ds_is_up; then bad "cleanup 后服务仍在（未回收）"; else ok "cleanup 回收了自己拉起的 server"; fi
++if [[ -f "$MVP_DEV_SERVER_STATE_DIR/dev-server.pid" ]]; then bad "pidfile 未清理"; else ok "pidfile 已清理"; fi
++
++# ---------------------------------------------------------------
++section "3) 启动超时 → 明确失败且不留下孤儿"
++STUB3_PORT="$(free_port)"
++reset_state t3 "$STUB3_PORT" "sleep 30"
++export MVP_DEV_SERVER_TIMEOUT_SECS=2
++if dev_server_ensure >/dev/null 2>&1; then
++  bad "超时应失败，却返回成功"
++else
++  ok "超时明确失败（非零退出）"
++fi
++if [[ -f "$MVP_DEV_SERVER_STATE_DIR/dev-server.pid" ]]; then
++  bad "超时后残留 pidfile（可能留下孤儿）"
++else
++  ok "超时后 pidfile 已清理（已回收刚启动的进程）"
++fi
++if command -v pgrep >/dev/null 2>&1; then
++  if pgrep -f "sleep 30" >/dev/null 2>&1; then bad "残留孤儿进程（sleep 30）"; else ok "无孤儿进程残留"; fi
++fi
++export MVP_DEV_SERVER_TIMEOUT_SECS=60
++
++# ---------------------------------------------------------------
++section "4) run-gui.sh 静态契约"
++if [[ -x "$RUN_GUI" ]]; then ok "run-gui.sh 可执行"; else bad "run-gui.sh 不可执行"; fi
++if grep -q "scripts/dev-server.sh" "$RUN_GUI"; then ok "引用 dev-server 助手"; else bad "未引用 dev-server 助手"; fi
++if grep -q "trap 'cleanup' EXIT" "$RUN_GUI"; then ok "注册 EXIT cleanup trap"; else bad "缺少 cleanup trap"; fi
++if grep -qE '^exec "\$BIN"' "$RUN_GUI"; then bad "仍用 exec 启动（cleanup 将不会执行）"; else ok "未用 exec（客户端退出后 cleanup 可运行）"; fi
++if grep -q "WEBKIT_DISABLE_DMABUF_RENDERER" "$RUN_GUI" && grep -q "GDK_BACKEND" "$RUN_GUI"; then
++  ok "保留图形环境 workaround（WEBKIT/GDK）"
++else
++  bad "丢失图形环境 workaround"
++fi
++if grep -q "MVP_FORCE_DIST" "$RUN_GUI"; then ok "支持 MVP_FORCE_DIST（与 main.rs 分支一致）"; else bad "缺少 MVP_FORCE_DIST 支持"; fi
++if bash "$RUN_GUI" --help >/dev/null 2>&1; then ok "--help 退出 0（不构建、不启动）"; else bad "--help 失败"; fi
++
++# ---------------------------------------------------------------
++section "5) main.rs debug/release 资产选择回归（A2 不改动，仅确认）"
++if grep -q 'cfg!(debug_assertions)' "$MAIN_RS" && grep -q 'WebviewUrl::App("index.html".into())' "$MAIN_RS"; then
++  ok "main.rs 仍为 debug→External(1421) / release→App(index.html)"
++else
++  bad "main.rs 资产选择分支异常"
++fi
++if grep -q 'localhost:1421' "$MAIN_RS" && grep -q 'MVP_FORCE_DIST' "$MAIN_RS"; then
++  ok "main.rs 保留 MVP_FORCE_DIST 逃生阀"
++else
++  bad "main.rs 缺少 MVP_FORCE_DIST 逃生阀"
++fi
++if git -C "$ROOT" diff --quiet -- src-tauri/src/main.rs; then
++  ok "A2 未改动 main.rs（无需改动）"
++else
++  bad "A2 改动了 main.rs（超出本次必要范围）"
++fi
++if git -C "$ROOT" diff --quiet -- src-tauri/permissions/default-commands.toml src-tauri/src/bridge.rs; then
++  ok "A2 未改动 ACL / bridge（符合不得改动命令/bridge/ACL 的约束）"
++else
++  bad "A2 改动了 ACL 或 bridge"
++fi
++
++# ---------------------------------------------------------------
++printf '\n==== 冒烟结果：PASS=%s FAIL=%s ====\n' "$PASS" "$FAIL"
++if (("$FAIL" > 0)); then exit 1; fi
++exit 0
+diff --git a/scripts/dev-server.sh b/scripts/dev-server.sh
+new file mode 100755
+index 0000000..2a152ca
+--- /dev/null
++++ b/scripts/dev-server.sh
+@@ -0,0 +1,175 @@
++#!/usr/bin/env bash
++# M5-W17 · Lane A2 —— 桌面 debug 客户端的 ownership-safe Vite dev-server 助手。
++#
++# 背景（W17 AC-1）：debug 构建的主窗口在 src-tauri/src/main.rs:1210-1214 强制指向
++#   WebviewUrl::External("http://localhost:1421")（条件是 cfg!(debug_assertions) 且
++#   未设 MVP_FORCE_DIST），release 仍走 WebviewUrl::App("index.html") 打包资源。
++#   所以 debug 启动前必须保证 1421 上已有 Vite dev server，否则 webview 直接
++#   "connection refused"（此前 run-gui.sh 从不启动 Vite，正是该问题）。
++#
++# 所有权契约（ownership-safe）：
++#   - 启动前若端口已在服务 → 判定"他人所有"：本助手不启动，退出时也绝不杀它；
++#   - 仅当本助手自己拉起 dev server 时，才写入 pidfile（pid + pgid），
++#     cleanup 时按进程组回收（Vite 会派生子进程，故杀整个进程组）；
++#   - cleanup 由 pidfile 驱动且幂等，无 pidfile 则不动任何已有服务。
++#
++# 可测试性：端口/主机/启动命令/状态目录/超时均可由环境变量覆盖，便于
++#   scripts/check-dev-startup.sh 用 stub server（python3 -m http.server）在临时
++#   端口上验证所有权语义，无需真的启动 Vite 或 GUI。
++#
++# 用法：
++#   source scripts/dev-server.sh     # 作为库使用（dev_server_ensure / ds_cleanup ...）
++#   scripts/dev-server.sh ensure     # 确保 dev server 就绪（必要时才启动并等待）
++#   scripts/dev-server.sh is-up      # 仅探测（up/down，退出码 0/1）
++#   scripts/dev-server.sh stop       # 只停本助手记录的那个（无 pidfile 则不动）
++#   scripts/dev-server.sh url        # 打印 dev server URL
++
++set -euo pipefail
++
++MVP_DEV_SERVER_PORT="${MVP_DEV_SERVER_PORT:-1421}"
++MVP_DEV_SERVER_HOST="${MVP_DEV_SERVER_HOST:-127.0.0.1}"
++MVP_DEV_SERVER_URL="${MVP_DEV_SERVER_URL:-http://${MVP_DEV_SERVER_HOST}:${MVP_DEV_SERVER_PORT}/}"
++# 启动命令（测试时可替换为 stub）
++MVP_DEV_SERVER_CMD="${MVP_DEV_SERVER_CMD:-npm run dev}"
++MVP_DEV_SERVER_TIMEOUT_SECS="${MVP_DEV_SERVER_TIMEOUT_SECS:-60}"
++MVP_DEV_SERVER_STATE_DIR="${MVP_DEV_SERVER_STATE_DIR:-${TMPDIR:-/tmp}/mvp-dev-server-${UID:-$(id -u)}}"
++
++DS_PIDFILE="${MVP_DEV_SERVER_STATE_DIR}/dev-server.pid"
++DS_LOGFILE="${MVP_DEV_SERVER_STATE_DIR}/dev-server.log"
++
++ds_log() { printf '[dev-server] %s\n' "$*" >&2; }
++ds_err() { printf '[dev-server][ERROR] %s\n' "$*" >&2; }
++
++# 探测 dev server 是否就绪：优先 HTTP GET（python3），回退 TCP 连通性（/dev/tcp）
++ds_is_up() {
++  local url="${1:-$MVP_DEV_SERVER_URL}" host="${2:-$MVP_DEV_SERVER_HOST}" port="${3:-$MVP_DEV_SERVER_PORT}"
++  if command -v python3 >/dev/null 2>&1; then
++    python3 - "$url" <<'PY' >/dev/null 2>&1
++import sys, urllib.request
++try:
++    with urllib.request.urlopen(sys.argv[1], timeout=2) as r:
++        sys.exit(0 if r.status < 500 else 1)
++except Exception:
++    sys.exit(1)
++PY
++    return $?
++  fi
++  (exec 3<>"/dev/tcp/${host}/${port}") >/dev/null 2>&1
++}
++
++# 有界等待就绪（默认 60s），超时返回非零
++ds_wait_ready() {
++  local deadline
++  deadline=$(( $(date +%s) + MVP_DEV_SERVER_TIMEOUT_SECS ))
++  while (($(date +%s) < deadline)); do
++    if ds_is_up; then return 0; fi
++    sleep 0.5
++  done
++  return 1
++}
++
++_ds_pgid_of() {
++  local pid="$1" pgid=""
++  pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
++  if [[ -z "$pgid" ]]; then pgid="$pid"; fi
++  printf '%s' "$pgid"
++}
++
++# 记录 pid + pgid（只有本助手启动时才会写 → 即"所有权"标记）
++ds_record_pid() {
++  local pid="$1" pgid
++  pgid="$(_ds_pgid_of "$pid")"
++  mkdir -p "$MVP_DEV_SERVER_STATE_DIR"
++  printf '%s %s\n' "$pid" "$pgid" > "$DS_PIDFILE"
++}
++
++# 启动 dev server 并等待就绪；失败则回收刚启动的进程，不留孤儿
++ds_start() {
++  mkdir -p "$MVP_DEV_SERVER_STATE_DIR"
++  ds_log "启动 dev server：${MVP_DEV_SERVER_CMD}（端口 ${MVP_DEV_SERVER_PORT}，上限 ${MVP_DEV_SERVER_TIMEOUT_SECS}s）"
++  local pid=""
++  if command -v setsid >/dev/null 2>&1; then
++    setsid bash -c "$MVP_DEV_SERVER_CMD" >>"$DS_LOGFILE" 2>&1 &
++  else
++    bash -c "$MVP_DEV_SERVER_CMD" >>"$DS_LOGFILE" 2>&1 &
++  fi
++  pid=$!
++  ds_record_pid "$pid"
++  if ds_wait_ready; then
++    ds_log "dev server 就绪：${MVP_DEV_SERVER_URL}"
++    return 0
++  fi
++  ds_err "dev server 在 ${MVP_DEV_SERVER_TIMEOUT_SECS}s 内未就绪；日志：${DS_LOGFILE}"
++  ds_cleanup
++  return 1
++}
++
++# 确保 dev server 就绪：已有则接管为"他人所有"（不启动、不清理）
++dev_server_ensure() {
++  if ds_is_up; then
++    ds_log "dev server 已在运行（${MVP_DEV_SERVER_URL}）→ 非本助手启动，不接管、退出时不清理"
++    return 0
++  fi
++  ds_start
++}
++
++# 只回收本助手启动的（pidfile 驱动）；无 pidfile → 不动任何已有服务；幂等
++ds_cleanup() {
++  if [[ -n "${DS_CLEANED:-}" ]]; then return 0; fi
++  DS_CLEANED=1
++  if [[ ! -f "$DS_PIDFILE" ]]; then
++    ds_log "未持有 dev server（无 pidfile）→ 不清理任何已有服务"
++    return 0
++  fi
++  local pid="" pgid=""
++  if ! read -r pid pgid < "$DS_PIDFILE"; then
++    rm -f "$DS_PIDFILE"
++    return 0
++  fi
++  ds_log "回收本助手启动的 dev server（pid=${pid} pgid=${pgid}）"
++  kill -TERM "-${pgid}" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
++  local deadline
++  deadline=$(( $(date +%s) + 5 ))
++  while (($(date +%s) < deadline)); do
++    kill -0 "$pid" 2>/dev/null || break
++    sleep 0.2
++  done
++  kill -KILL "-${pgid}" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
++  rm -f "$DS_PIDFILE"
++  return 0
++}
++
++ds_usage() {
++  cat <<'USAGE'
++usage: dev-server.sh {ensure|is-up|stop|url}
++
++ownership-safe Vite dev-server 助手（M5-W17 A2）。
++  ensure  确保 dev server 就绪（已有则不启动、不接管；否则启动并等待就绪）
++  is-up   仅探测，打印 up/down（退出码 0/1）
++  stop    只停本助手记录的那个（无 pidfile 则不动任何已有服务）
++  url     打印 dev server URL
++
++环境变量：MVP_DEV_SERVER_{PORT,HOST,URL,CMD,TIMEOUT_SECS,STATE_DIR}
++USAGE
++}
++
++ds_main() {
++  case "${1:-ensure}" in
++    ensure) dev_server_ensure ;;
++    is-up)
++      if ds_is_up; then echo "up"; else echo "down"; return 1; fi
++      ;;
++    stop) ds_cleanup ;;
++    url) echo "$MVP_DEV_SERVER_URL" ;;
++    -h | --help) ds_usage ;;
++    *)
++      ds_usage >&2
++      return 2
++      ;;
++  esac
++}
++
++# 仅直接执行时跑 CLI；被 source 时只提供函数
++if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
++  ds_main "$@"
++fi

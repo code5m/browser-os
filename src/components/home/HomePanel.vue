@@ -1,136 +1,132 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { computed, onMounted } from "vue";
 import { useHomeStore } from "../../stores/useHomeStore";
-import type { HomeShortcut } from "../../stores/useHomeStore";
+import HomeLaunchers from "./HomeLaunchers.vue";
+import HomeRecents from "./HomeRecents.vue";
+import HomeShortcuts from "./HomeShortcuts.vue";
+import HomeShortcutEditor from "./HomeShortcutEditor.vue";
 
 const home = useHomeStore();
 
+// 常用目录播种（仅首次）：把后端承诺的起始目录补进主页。
 onMounted(() => home.seedDirShortcuts());
 
-function onOpen(s: HomeShortcut) {
-  home.open(s);
-}
-
-const TYPE_LABELS: Record<HomeShortcut["type"], string> = {
-  url: "🌐 网页",
-  app: "🚀 应用",
-  dir: "📁 目录",
-};
-const TARGET_LABELS: Record<HomeShortcut["type"], string> = {
-  url: "网址",
-  app: "启动命令",
-  dir: "目录路径",
-};
-const TARGET_PLACEHOLDERS: Record<HomeShortcut["type"], string> = {
-  url: "https://kimi.moonshot.cn",
-  app: "如 firefox / 应用 exec",
-  dir: "/home/you/Documents",
-};
+// 面板三态（A3 契约）：载入 / 错误，给连贯的状态反馈（共享验收 #2）。
+// 空态由各 section 自行呈现，这里只补载入/错误的全局横幅。
+const state = computed(() => home.panelState);
 </script>
 
 <template>
   <div class="home-panel">
-    <div class="home-head">
-      <span class="home-title">🏠 主页</span>
+    <header class="home-head">
+      <h1 class="hh-title">
+        <span class="hh-icon" aria-hidden="true">🏠</span>
+        <span>主页</span>
+      </h1>
       <div class="home-actions">
-        <button @click="home.favoriteCurrentPage" title="把当前浏览器页签保存到主页">☆ 网页</button>
-        <button @click="home.favoriteCurrentDir" title="把当前目录保存到主页">📁 目录</button>
-        <button @click="home.startAdd" title="新增快捷方式">＋ 新增</button>
-        <button @click="home.resetDefault" title="恢复默认">↺ 默认</button>
+        <button type="button" title="把当前网页收藏到主页" @click="home.favoriteCurrentPage">
+          ☆ 收藏网页
+        </button>
+        <button type="button" title="把当前目录收藏到主页" @click="home.favoriteCurrentDir">
+          📁 收藏目录
+        </button>
+        <button type="button" title="新增快捷方式" @click="home.startAdd">＋ 新增</button>
+        <button type="button" title="恢复默认快捷方式" @click="home.resetDefault">↺ 默认</button>
       </div>
-    </div>
+    </header>
 
-    <div v-if="home.shortcuts.length" class="home-grid">
-      <div
-        v-for="s in home.shortcuts"
-        :key="s.id"
-        class="home-card"
-        :title="s.target"
-        @click="onOpen(s)"
-      >
-        <div class="home-icon">{{ s.icon }}</div>
-        <div class="home-name">{{ s.name }}</div>
-        <div class="home-type">{{ TYPE_LABELS[s.type] }}</div>
-        <div class="home-ops" @click.stop>
-          <button class="op" @click="home.startEdit(s)" title="编辑">✏️</button>
-          <button class="op" @click="home.remove(s.id)" title="删除">🗑</button>
-        </div>
-      </div>
-    </div>
-    <div v-else class="home-empty">暂无快捷方式，点「＋ 新增」添加常用网页、应用或目录</div>
+    <!-- 载入/错误横幅（共享验收 #2 连贯状态；错误态不回显原始报错，只给稳定文案）。 -->
+    <p v-if="state.state === 'loading'" class="home-state" role="status">
+      {{ state.message }}
+    </p>
+    <p v-else-if="state.state === 'error'" class="home-state home-state-error" role="alert">
+      {{ state.message }}
+    </p>
 
-    <!-- 编辑弹窗 -->
-    <div v-if="home.editing.open" class="home-modal-mask" @click.self="home.cancelEdit">
-      <div class="home-modal">
-        <div class="hm-title">{{ home.editing.id ? "编辑快捷方式" : "新增快捷方式" }}</div>
-        <div class="hm-row">
-          <label>类型</label>
-          <select v-model="home.editing.type">
-            <option value="url">🌐 网页</option>
-            <option value="app">🚀 应用</option>
-            <option value="dir">📁 目录</option>
-          </select>
-        </div>
-        <div class="hm-row">
-          <label>名称</label>
-          <input v-model="home.editing.name" placeholder="如：Kimi" />
-        </div>
-        <div class="hm-row">
-          <label>{{ TARGET_LABELS[home.editing.type] }}</label>
-          <input
-            v-model="home.editing.target"
-            :placeholder="TARGET_PLACEHOLDERS[home.editing.type]"
-          />
-        </div>
-        <div class="hm-row">
-          <label>图标</label>
-          <input v-model="home.editing.icon" placeholder="emoji，如 🔍 🚀 📺" />
-        </div>
-        <div class="hm-btns">
-          <button class="primary" @click="home.saveEdit">保存</button>
-          <button @click="home.cancelEdit">取消</button>
-        </div>
-      </div>
-    </div>
+    <HomeLaunchers />
+    <HomeShortcuts />
+    <HomeRecents />
+    <HomeShortcutEditor />
   </div>
 </template>
 
 <style scoped>
+/* .home-panel 的 flex/overflow/背景由 global.css 提供，这里只补内部排版 */
 .home-panel {
-  flex: 1;
-  overflow-y: auto;
-  padding: 18px;
-  background: linear-gradient(135deg, #eef2fb 0%, #f7f9ff 45%, #f0f4fa 100%);
+  box-sizing: border-box;
 }
-.home-grid {
-  display: grid !important;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)) !important;
-  gap: 14px;
+.home-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
 }
-.home-card {
-  position: relative;
+.hh-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #1d2129;
+}
+.hh-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+.home-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.home-actions button {
+  border: 1px solid #d5dbe7;
   background: #fff;
-  border: 1px solid #e8ebf0;
-  border-radius: 12px;
-  padding: 18px 10px 12px;
-  text-align: center;
+  color: #4e5969;
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 12px;
   cursor: pointer;
-  transition: all 0.15s;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  white-space: nowrap;
 }
-.home-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 14px rgba(43, 108, 176, 0.12);
-  border-color: #c6d8ef;
+.home-actions button:hover {
+  border-color: #2b6cb0;
+  color: #2b6cb0;
 }
-.home-ops {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  display: none !important;
-  gap: 2px;
+.home-actions button:focus-visible {
+  outline: 2px solid #2b6cb0;
+  outline-offset: 2px;
 }
-.home-card:hover .home-ops {
-  display: flex !important;
+
+/* 面板状态横幅：载入/错误，淡色块，不喧宾夺主（共享验收 #2 连贯状态） */
+.home-state {
+  margin: 0 0 16px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #4e5969;
+  background: #f4f6fb;
+  border: 1px solid #e8ebf0;
+}
+.home-state-error {
+  color: #a8071a;
+  background: #fff1f0;
+  border-color: #ffccc7;
+}
+
+/* 窄窗口：标题与操作各占一行，操作按钮横向铺开便于点击 */
+@media (max-width: 720px) {
+  .home-panel {
+    padding: 12px;
+  }
+  .home-head {
+    align-items: stretch;
+    margin-bottom: 14px;
+  }
+  .home-actions button {
+    flex: 1 1 auto;
+  }
 }
 </style>

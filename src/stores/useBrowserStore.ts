@@ -462,8 +462,26 @@ export const useBrowserStore = defineStore("browser", () => {
     await bridge.closeGrid().catch(() => {});
     layout.gridToolbarOpen = false;
     gridRects.splice(0, gridRects.length);
+    // B9-4 修复：宫格关闭后必须把视图切回浏览器视图，否则
+    // (1) isBrowserVisible = !gridOpen && mainView==="browser" 为 false → BrowserHost
+    //     内部把浏览器 webview 设为 visibility:hidden；
+    // (2) schedulePosition 在 mainView!=="browser" 时直接 return（useBrowserHost.ts）→
+    //     活动页签 webview 停在宫格离屏坐标，浏览器区整片空白，须手动切视图才恢复。
+    // 切回 browser 会触发 mainView 的 watch → syncViewVisibility → relocate →
+    // schedulePosition 把活动页签 webview 重定位回浏览器区（原生 webview 布局不空白）。
+    // 仅当当前确处于宫格视图时复位，不打扰其它视图（如正在看 files/term）。
+    // 重激活活动页签（后端聚焦），确保关闭宫格后它就是可见页签；无活动页签则跳过。
+    if (activeTabId.value) {
+      await bridge.tabActivate(activeTabId.value).catch(() => {});
+    }
+    if (layout.mainView === "grid") {
+      layout.mainView = "browser";
+    }
     // 宫格关闭后激活页签重新可见 → 解冻
     syncFreeze();
+    // 兜底重定位活动页签 webview：此刻 gridOpen 已 false、mainView 若为 browser，
+    // schedulePosition 会真正下发 tabPosition；mainView 的 watch 下个 tick 也会再做一次。
+    schedulePosition();
     layout.showToast("已关闭宫格");
   }
   // 关闭单个宫格：销毁对应子 webview，其余保留，并按剩余数量重排

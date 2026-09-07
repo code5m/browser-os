@@ -1,10 +1,11 @@
 # Parallel Command Board
 
-> Updated: 2026-09-08 09:30 CST
+> Updated: 2026-09-08 11:00 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` at `886ea29` — W14 Plugin Manager UI PUSHED and accepted (plugin UI logic 61/61, plugin Rust 28/28, full Rust 431/431, MCP feature 21/21, `npm run build` PASS, build metrics `total_bytes_pct=24.89` ≤ 25% accepted limit, warning delta=0). W15 release-readiness and GUI acceptance is active; plugin invocation/command execution, dynamic loading, network download/listener, daemon, model call, Agent/Skill execution, MCP full runtime, graph write/export, and background workers remain LOCKED. Only A0 pushes.
-> Current NEXT: M5-W15 release-readiness and GUI acceptance. Plugin invocation/command execution, dynamic loading, network download/listener, daemon, model call, Agent/Skill execution, MCP full runtime, graph write/export, and background workers remain LOCKED.
+> Current mainline: `master` at `052b18a` — W15 release-readiness PUSHED and accepted (two high-risk write confirmations gained role/aria-modal, initial focus, Tab/Shift+Tab containment, Escape close, focus return; full Rust 431/431, MCP feature 21/21, `node scripts/check-ui-a11y-logic.mjs` PASS, `npm run build` PASS, `pre-merge.sh` ALL_PASS, build metrics `total_bytes_pct=25.14` ≤ **25.2%** one-time ceiling, warning delta=0). Retain every M5-W16 documentation/review deliverable; M5-W17 desktop-client completeness and home recovery is now active.
+> Current mainline chain: `886ea29`（W14 PUSHED · accepted，metrics 24.89 ≤ 25%）→ `052b18a`（W15 PUSHED · accepted，metrics 25.14 ≤ 25.2% one-time ceiling）. Runtime authority remains LOCKED: plugin invocation/command execution, dynamic loading, network download/listener, daemon, model call, Agent/Skill execution, MCP full runtime, graph write/export, and background workers. Only A0 pushes.
+> Current NEXT: `M5-BUG-HUNT` confirmed high-risk bug closure and evidence refresh. W17 desktop-client closeout is locally green; native visual acceptance remains user-side evidence. Only A0 pushes.
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
@@ -13,7 +14,7 @@ This file is the coordination board for 11 parallel agents plus A0 integration. 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W15 Release Readiness Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按当前 M5-W17 Desktop Client Completeness Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
 ```
 
 Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
@@ -1158,6 +1159,111 @@ bash scripts/pre-merge.sh
 git diff --check
 git status --short --branch
 git push origin master
+```
+
+## M5-W17 Desktop Client Completeness and Home Recovery Dispatch
+
+### Product decision and boundary
+
+The user has reported that the installed desktop client is fast but feels incomplete: the home page lacks important entry points and the client must be made ready for a focused human look-through before further runtime-platform work. This is a **real product-code wave**, but it is deliberately bounded to existing local client capabilities.
+
+Preserve M5-W16 outputs. Do not start any M6 authority slice. Do not add command execution, plugin invocation, dynamic loading, remote download/listener, daemon, model call, Agent/Skill execution, MCP live runtime, graph writes/exports, or background workers. No new dependency. No new Tauri command, bridge capability, ACL entry, filesystem permission, or network privilege.
+
+### Shared acceptance criteria
+
+1. A developer can start the desktop debug client without landing on `localhost:1421` connection refused: the documented helper detects/starts the Vite dev server, waits for it, launches the desktop app, and cleans up only the server it owns on exit. Release behavior must continue to use bundled assets.
+2. The home view exposes the existing principal work areas as usable routes, keeps user shortcuts/recent items bounded and resilient to malformed local data, and has coherent empty/loading states. It must not become a marketing page.
+3. Navigation and active-panel presentation make existing functionality discoverable in the native client, including narrow-window behavior. No backend contract changes.
+4. All new visible controls are keyboard reachable, have an accessible name, and use existing visual language. No sensitive URL/query/credential/local-path disclosure in the new UI or errors.
+5. No agent may evade the build-metric guard. Record the metric result; if an implementation exceeds its current budget, stop and report the exact delta rather than raising the ceiling.
+6. Each lane delivers a complete batch: scoped code/tests where assigned, a checkpoint, exact commands/results, `git diff --check`, and a binary patch. Do not commit or push.
+
+### Lane assignments
+
+| Lane | Status | Allowed scope | Must deliver |
+|---|---|---|---|
+| A1 | START DOCS | `AI-模型切换与接手清单.md`, `详细设计与实施计划.md`, `后续需求TODO.md`, `logs/checkpoints/` | Reconcile retained W16 outputs and write the W17 user-visible acceptance checklist/known limitations. No product code. |
+| A2 | START CODE | `run-gui.sh`, `scripts/` startup helpers/tests, narrowly `src-tauri/src/main.rs` only when needed for debug-vs-release asset selection | A reproducible, ownership-safe desktop dev start path and smoke check. Do not alter commands, bridge, ACL, or production runtime authority. |
+| A3 | START CODE | `src/stores/useHomeStore.ts`, `src/utils/homeUi.ts` (new if useful), `scripts/check-home-store-logic.mjs` | Bounded, validated home shortcut/recent-item state with stable defaults and migration-safe malformed-data handling. No component styling or backend edits. |
+| A4 | START REVIEW | `scripts/check-home-client-policy.py` (new), `logs/assist/`, `logs/checkpoints/` | Static privacy/security review for W17 UI/startup changes; guard against credentials, raw sensitive URLs/query values, shell injection, and privilege expansion. No product UI edits. |
+| A5 | START CODE | `src/components/home/` only | Rebuild the existing home surface around A3's state contracts: principal-area launchers, shortcuts/recent section, polished empty states, and responsive layout. Use no new dependency and no backend access. |
+| A6 | START CODE | `src/components/layout/ActivityBar.vue`, `src/stores/useLayoutStore.ts`, `scripts/check-client-navigation-logic.mjs` | Make existing modules discoverable and keyboard-accessible with stable active state/narrow-window behavior. Do not edit home components, `MainArea.vue`, or backend files. |
+| A7 | START CODE | `src/components/layout/MainArea.vue`, `src/components/layout/StatusBar.vue`, `src/App.vue` only | Improve client shell fallback/boot/error presentation for existing panels without adding runtime behavior; ensure no blank/dead main area when a panel fails to resolve. |
+| A8 | START MANUAL QA | `logs/assist/`, `logs/checkpoints/` | Run the actual native client after W17 changes are integrated or from a supplied patch. Capture an honest desktop/narrow-window acceptance checklist; report blockers, never fabricate screenshots. |
+| A9 | START TEST | `scripts/check-home-ui-logic.mjs` (new), `scripts/pre-merge.sh` only if integration is required, `logs/checkpoints/` | DOM/source-level checks for A5 home actions, accessible names, bounded lists, and no sensitive copy. Do not modify product components. |
+| A10 | START SECURITY REVIEW | `logs/assist/`, `logs/checkpoints/` | Review W17 patch boundaries against the locked runtime-authority list and desktop startup safety. Findings first; no product-code modifications. |
+| A11 | START VERIFICATION | `logs/assist/`, `logs/checkpoints/` | Independent integration-verification matrix: targeted tests, `npm run build`, build metrics, and relevant Rust tests. No source edits except a self-contained verification script if essential. |
+
+### Integration order
+
+`A2 -> A3 -> A5 -> A6 -> A7 -> A4/A9 -> A8/A10/A11 -> A0`.
+
+Each lane must inspect existing dirty W16 material and preserve it. If its permitted file is already modified by another lane, it must produce a binary patch instead of overwriting or resolving cross-lane conflicts. A0 alone integrates, commits, and pushes after review.
+
+### M5-W17 Acceptance Closeout Dispatch
+
+> Current evidence: targeted W17 checks PASS, `npm run build` PASS, and `bash scripts/pre-merge.sh` is `ALL_PASS`. Do not repeat completed UI work. The remaining product debt is `HOME_NO_SECRET_PERSIST`: app execution command bodies are still stored in browser storage by `useHomeStore.ts`. Native desktop visual acceptance is still user-side evidence only.
+
+| Lane | Status | Allowed scope | Must deliver |
+|---|---|---|---|
+| A1 | START DOCS | `AI-模型切换与接手清单.md`, `详细设计与实施计划.md`, `后续需求TODO.md`, `logs/checkpoints/` | Record W17 evidence, the one real home-storage debt, and the native-client manual-acceptance boundary. No product code. |
+| A2 | START VERIFY | `run-gui.sh`, `scripts/check-dev-startup.sh`, `logs/assist/`, `logs/checkpoints/` | Re-run the ownership-safe desktop startup smoke path and document exactly how the user launches the native client. No runtime authority changes. |
+| A3 | START CODE | `src/stores/useHomeStore.ts`, `src/utils/homeUi.ts`, `scripts/check-home-store-logic.mjs` | Remove or redesign persistence of app command bodies so browser storage keeps only non-sensitive home metadata; preserve migration and bounded-state behavior. Add regression assertions. |
+| A4 | START REVIEW | `scripts/check-home-client-policy.py`, `logs/assist/`, `logs/checkpoints/` | Re-check the A3 fix and W17 privacy boundary; default policy must pass, and report any intentionally pending debt. No product UI edits. |
+| A5 | HOLD | `src/components/home/` | No new work unless A3 changes the state contract and a focused UI adjustment is proven necessary. |
+| A6 | HOLD | `src/components/layout/ActivityBar.vue`, `src/stores/useLayoutStore.ts`, `scripts/check-client-navigation-logic.mjs` | No new work; existing navigation checks are green. Re-open only for a concrete acceptance finding. |
+| A7 | HOLD | `src/components/layout/MainArea.vue`, `src/components/layout/StatusBar.vue`, `src/App.vue` | No new work; existing shell fallback is covered. Re-open only for a concrete acceptance finding. |
+| A8 | START MANUAL QA | `logs/assist/`, `logs/checkpoints/` | Run the actual native client and record desktop, narrow-window, home launcher, and startup results. Screenshots may be attached only if genuinely observed. |
+| A9 | START TEST REVIEW | `scripts/check-home-ui-logic.mjs`, `scripts/check-client-navigation-logic.mjs`, `logs/checkpoints/` | Re-run focused UI logic checks after A3; add only narrow assertions needed for the persistence fix. No component edits. |
+| A10 | START SECURITY REVIEW | `logs/assist/`, `logs/checkpoints/` | Review the final W17 diff for raw sensitive persistence, shell/privilege expansion, and startup ownership. Findings first; no product-code edits. |
+| A11 | START VERIFICATION | `logs/assist/`, `logs/checkpoints/` | Final matrix after A3: policy self-tests/defaults, focused UI checks, `npm run build`, build metrics, `bash scripts/pre-merge.sh`, and `git diff --check`. No source edits. |
+
+### Closeout integration order
+
+`A3 -> A4/A9 -> A2/A8/A10 -> A1 -> A11 -> A0`.
+
+Only A0 integrates, commits, and pushes. Agents must preserve the existing dirty worktree, must not reset or clean unrelated changes, and must deliver a checkpoint plus binary patch when their allowed files overlap.
+
+```text
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W17 Acceptance Closeout Dispatch 完成自己的整包交付；A5/A6/A7 按 HOLD 规则只检查是否有具体阻塞，不重复开发；自行整理 checkpoint，不 push。
+```
+
+### BUG-HUNT Follow-up Dispatch
+
+> `logs/bug-hunt/BUG-HUNT-SUMMARY.md` has been reviewed. A0 directly fixed B9-1 (WebKitGTK hide deadlock recurrence) and B3-1 (normal script exit leaving inherited pipe readers/supervisor stuck). B5-1 is not a routine patch: it requires a tested persistence-before-spawn transaction boundary. Do not let a general lane rewrite it opportunistically.
+
+| Lane | Status | Scope | Must deliver |
+|---|---|---|---|
+| A0 | DONE | `tauri-browser-tabs/crates/tauri-plugin-browser-tabs/src/platform/linux.rs`, `src-tauri/src/script_runner.rs` | Fixed B9-1 WebKitGTK hide deadlock recurrence and B3-1 normal-exit supervisor/reader hang. Rust tests and fmt PASS. |
+| A2 | DONE | `src-tauri/src/security_policy.rs`, `scripts/check-security-policy.py` | Launch target hardening for wrappers, inline interpreters, and symlink resolution; focused tests and policy self-test PASS. |
+| A3 | DONE | `src-tauri/src/workspace.rs` | Atomic writes plus `.corrupt` backup/error handling; workspace tests PASS. |
+| A4 | DONE | `src-tauri/src/scheduler.rs`, `src-tauri/src/tasks.rs`, `src-tauri/src/bridge.rs`, `logs/checkpoints/` | Scheduler reserves and persists the trigger slot before spawn; scheduler/task commands share a storage transaction lock; crash-window and concurrent load-modify-save tests pass. |
+| A5 | DONE | `src-tauri/src/tools.rs`, focused tests | User tool HTML reads are capped at 2 MiB before allocation; tools tests 4/4 PASS. |
+| A6 | DONE | `src/stores/useSystemStore.ts`, `src/components/system/ClipboardPanel.vue`, `scripts/check-clipboard-persistence-logic.mjs` | Clipboard history is session-only, bounded, and redacted in the panel; focused test 16/16 PASS. |
+| A7 | DONE | `src-tauri/src/domain.rs`, `src/types.ts`, database/agent/skill UI adapters, focused tests | Confirmed Rust/TypeScript DTO casing drift fixed; Rust fixtures and database UI checks PASS. |
+| A8 | DONE | `src/stores/useBrowserStore.ts`, `scripts/check-grid-close-logic.mjs` | `closeGridAll` restores browser view, reactivates the tab, and repositions the webview; focused test 12/12 PASS. Native visual QA remains user-side. |
+| A9 | DONE | `scripts/check-command-set-consistency.py`, `logs/checkpoints/` | Three-way command/ACL/source consistency gate added and PASS; known legacy drift is explicitly allow-listed. |
+| A10 | DONE | `src/utils/markdown.ts`, affected renderers and tests | Confirmed Markdown link/XSS path fixed with focused logic checks. |
+| A11 | DONE | `logs/bug-hunt/`, `logs/checkpoints/` | B8/B10/B12 recheck complete; confirmed, stale, unsupported, and unverified findings separated. |
+
+BUG-HUNT order: `A2/A3/A4/A5/A6/A7/A8/A9/A10/A11 -> A0`. A0 has also fixed B10-b MainArea fallback pairing after A1/A11 confirmation. A4 scheduler review and implementation are complete; remaining work is A0 integration/commit/push. Simple follow-up items such as error-redaction spread, crash-log rotation, rel attributes, and UI guards remain ordinary-model work.
+
+```text
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，读取 BUG-HUNT-SUMMARY.md 和 PARALLEL_COMMAND_BOARD.md，按 BUG-HUNT Follow-up Dispatch 做自己的整包任务；先确认当前代码未被其它 lane 改写，交付测试、checkpoint 和二进制补丁，不 push。
+```
+
+### Lane output template
+
+```text
+LANE: A?
+STATUS: PASS | PASS_WITH_DEBT | BLOCKED
+SCOPE: <files actually changed>
+DELIVERED: <user-visible behavior>
+VERIFY: <exact command>: <result>
+METRICS: <result or N/A>
+PATCH: <absolute patch path>
+RISKS: <honest remaining risk>
+NO_PUSH: confirmed
 ```
 
 ## M5-W16 M5 Closeout and M6 Charter Dispatch

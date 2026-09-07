@@ -1,0 +1,350 @@
+diff --git a/scripts/check-database-ui-logic.mjs b/scripts/check-database-ui-logic.mjs
+index 619fd58..d513822 100644
+--- a/scripts/check-database-ui-logic.mjs
++++ b/scripts/check-database-ui-logic.mjs
+@@ -195,16 +195,18 @@ eq(buildResultView(null).warnings.length, 0, "空结果不抛异常");
+ eq(buildResultView(null).rowCount, 0, "空结果行数为 0");
+ 
+ // ===== 7b. 后端 DbValue 带标签解码（domain.rs rename_all="snake_case"） =====
+-eq(decodeDbValue("Null"), null, "字符串 Null 解码为 null");
+-eq(decodeDbValue({ Bool: true }), true, "Bool 标签解码为布尔");
+-eq(decodeDbValue({ Int: 7 }), 7, "Int 标签解码为数值");
+-eq(decodeDbValue({ Float: 1.5 }), 1.5, "Float 标签解码为数值");
+-eq(decodeDbValue({ Text: "abc" }), "abc", "Text 标签解码为字符串");
+-eq(formatCellValue({ Text: "abc" }), "abc", "Text 单元格原文展示");
+-eq(formatCellValue({ Int: 42 }), "42", "Int 单元格展示");
+-eq(formatCellValue({ Bool: false }), "false", "Bool 单元格展示");
+-eq(formatCellValue("Null"), "NULL", "Null 单元格展示为 NULL");
+-eq(formatCellValue({ BlobLen: 1024 }), "<binary 1.0 KiB>", "二进制列只展示长度不回字节");
++// BUG-HUNT B8-1：断言此前按 PascalCase 书写（与后端 snake_case 实际输出不符，等于把缺陷
++// 固化为契约）。现按权威 DTO 对齐 snake_case；任何回退到 PascalCase 的改动都会在此失败。
++eq(decodeDbValue("null"), null, "字符串 null 解码为 null");
++eq(decodeDbValue({ bool: true }), true, "bool 标签解码为布尔");
++eq(decodeDbValue({ int: 7 }), 7, "int 标签解码为数值");
++eq(decodeDbValue({ float: 1.5 }), 1.5, "float 标签解码为数值");
++eq(decodeDbValue({ text: "abc" }), "abc", "text 标签解码为字符串");
++eq(formatCellValue({ text: "abc" }), "abc", "text 单元格原文展示");
++eq(formatCellValue({ int: 42 }), "42", "int 单元格展示");
++eq(formatCellValue({ bool: false }), "false", "bool 单元格展示");
++eq(formatCellValue("null"), "NULL", "null 单元格展示为 NULL");
++eq(formatCellValue({ blob_len: 1024 }), "<binary 1.0 KiB>", "二进制列只展示长度不回字节");
+ eq(formatCellValue({ Weird: 1 }), JSON.stringify({ Weird: 1 }), "未知形态安全降级为 JSON 文本");
+ 
+ // ===== 7c. 状态与上限命中（非静默） =====
+@@ -219,7 +221,7 @@ const timedOut = buildResultView({ columns: ["a"], rows: [], row_count: 0, trunc
+ ok(timedOut.warnings.some((w) => w.includes("超时")), "超时必须给出结果不完整告警");
+ const failed = buildResultView({ columns: ["a"], rows: [], row_count: 0, truncated: false, field_truncated: false, elapsed_ms: 0, state: "failed", query_id: "q" });
+ ok(failed.warnings.some((w) => w.includes("失败")), "失败必须给出结果不完整告警");
+-const limitRows = buildResultView({ columns: ["a"], rows: [[{ Int: 1 }]], row_count: 1000, truncated: true, field_truncated: false, limit_hit: "rows", elapsed_ms: 5, state: "completed", query_id: "q" });
++const limitRows = buildResultView({ columns: ["a"], rows: [[{ int: 1 }]], row_count: 1000, truncated: true, field_truncated: false, limit_hit: "rows", elapsed_ms: 5, state: "completed", query_id: "q" });
+ eq(limitRows.rows[0][0], "1", "带标签值在结果视图中解码展示");
+ ok(limitRows.warnings.some((w) => w.includes("行数上限")), "命中行数上限时告警要明确原因");
+ eq(buildResultView({ columns: [], rows: [], row_count: 0, truncated: false, field_truncated: false, elapsed_ms: 0, state: "completed", query_id: "q", risk: "read", production_verdict: "NonProduction" }).verdict, "NonProduction", "结果视图回带后端生产判定");
+@@ -231,9 +233,9 @@ eq(toCsv(["a"], [["he said \"hi\""]]), "a\n\"he said \"\"hi\"\"\"", "引号转
+ eq(toCsv(["a"], [["l1\nl2"]]), "a\n\"l1\nl2\"", "含换行的单元格加引号");
+ eq(toCsv(["a"], [[null]]), "a\n", "null 导出为空");
+ eq(toCsv([], []), "", "空结果导出空串");
+-eq(toCsv(["a"], [[{ Text: "x,y" }]]), "a\n\"x,y\"", "带标签值同样按 CSV 转义");
+-eq(toCsv(["a"], [["Null"], [null]]), "a\n\n", "字符串 Null 与 JS null 都导出为空");
+-eq(toCsv(["a"], [[{ BlobLen: 128 }]]), "a\n<binary 128 B>", "二进制列导出为长度占位而非字节");
++eq(toCsv(["a"], [[{ text: "x,y" }]]), "a\n\"x,y\"", "带标签值同样按 CSV 转义");
++eq(toCsv(["a"], [["null"], [null]]), "a\n\n", "字符串 null 与 JS null 都导出为空");
++eq(toCsv(["a"], [[{ blob_len: 128 }]]), "a\n<binary 128 B>", "二进制列导出为长度占位而非字节");
+ 
+ // ===== 9. SQL 前置校验与提示 =====
+ eq(sqlIssues("select 1").length, 0, "正常 SQL 无问题");
+diff --git a/src-tauri/src/domain.rs b/src-tauri/src/domain.rs
+index 7c9bcb2..adb8077 100644
+--- a/src-tauri/src/domain.rs
++++ b/src-tauri/src/domain.rs
+@@ -2407,3 +2407,92 @@ pub struct TrustedKeyRecord {
+     #[serde(default)]
+     pub added_at: String,
+ }
++
++// ===================== BUG-HUNT B8 序列化契约夹具（Lane A7, M5-W17 BUG-HUNT） =====================
++//
++// B8-1 / B8-2：`DbValue` / `SkillDef` / `AgentDef` 的 JSON 键名是前后端唯一契约。
++// 前端 `src/types.ts` 与 `src/utils/dbUi.ts` 曾按 PascalCase / camelCase 书写，与后端
++// `#[serde(rename_all = "snake_case")]` 的实际输出不符（数据库面板单元格全部渲染错）。
++// 本夹具把这些键名**钉死**：任何把键名改回 PascalCase / camelCase 的改动都会在此失败。
++#[cfg(test)]
++mod bug_hunt_b8_casing_fixtures {
++    use super::*;
++
++    fn json<T: Serialize>(v: &T) -> serde_json::Value {
++        serde_json::to_value(v).expect("serialize")
++    }
++
++    /// B8-1：`DbValue` 全部变体必须是 snake_case 标签（`blob_len` 而非 `BlobLen`）。
++    #[test]
++    fn dbvalue_uses_snake_case_tags() {
++        assert_eq!(json(&DbValue::Null), serde_json::json!("null"));
++        assert_eq!(json(&DbValue::Bool(true)), serde_json::json!({ "bool": true }));
++        assert_eq!(json(&DbValue::Int(7)), serde_json::json!({ "int": 7 }));
++        assert_eq!(json(&DbValue::Float(1.5)), serde_json::json!({ "float": 1.5 }));
++        assert_eq!(json(&DbValue::Text("abc".into())), serde_json::json!({ "text": "abc" }));
++        assert_eq!(json(&DbValue::BlobLen(1024)), serde_json::json!({ "blob_len": 1024 }));
++
++        // 反例哨兵：PascalCase 标签绝不允许复活
++        let v = json(&DbValue::Text("abc".into()));
++        assert!(v.get("Text").is_none(), "DbValue 不得出现 PascalCase 标签");
++    }
++
++    /// B8-2：`SkillDef` 必须 snake_case（`display_name`）；`exec` 为 `tag="kind"` + snake_case 字段。
++    #[test]
++    fn skilldef_uses_snake_case_fields() {
++        let def = SkillDef {
++            id: "s1".into(),
++            version: "1.0.0".into(),
++            display_name: "示例技能".into(),
++            description: "d".into(),
++            acl: AclLevel::Safe,
++            exec: SkillExec::ScriptRef {
++                script_id: "sc1".into(),
++                params: serde_json::Value::Null,
++            },
++            inputs: vec![],
++            capabilities: vec![],
++            tests: vec![],
++            metadata: serde_json::Value::Null,
++        };
++        let v = json(&def);
++        assert_eq!(v["display_name"], "示例技能");
++        assert!(v.get("displayName").is_none(), "SkillDef 不得出现 camelCase 键");
++        // exec：内部标签枚举 tag="kind"
++        assert_eq!(v["exec"]["kind"], "script_ref");
++        assert_eq!(v["exec"]["script_id"], "sc1");
++        assert!(v["exec"].get("scriptId").is_none(), "SkillExec 不得出现 camelCase 键");
++    }
++
++    /// B8-2：`AgentDef` 必须 snake_case（display_name / system_prompt / default_capabilities），
++    /// 嵌套 `a2a` 同样 snake_case（delegate_to / delegated_from）。
++    #[test]
++    fn agentdef_uses_snake_case_fields() {
++        let a = AgentDef {
++            id: "a1".into(),
++            version: "1.0.0".into(),
++            display_name: "示例智能体".into(),
++            description: "d".into(),
++            dialect: AgentDialect::OpenAiCompatible,
++            system_prompt: "sp".into(),
++            default_capabilities: vec![CapabilityRef { id: "cap.read".into() }],
++            a2a: A2aConfig {
++                delegate_to: true,
++                delegated_from: false,
++            },
++            metadata: serde_json::Value::Null,
++        };
++        let v = json(&a);
++        assert_eq!(v["display_name"], "示例智能体");
++        assert_eq!(v["system_prompt"], "sp");
++        assert!(v["default_capabilities"].is_array());
++        for bad in ["displayName", "systemPrompt", "defaultCapabilities"] {
++            assert!(v.get(bad).is_none(), "AgentDef 不得出现 camelCase 键 {bad}");
++        }
++        assert_eq!(v["a2a"]["delegate_to"], true);
++        assert_eq!(v["a2a"]["delegated_from"], false);
++        assert!(v["a2a"].get("delegateTo").is_none(), "A2aConfig 不得出现 camelCase 键");
++        // 方言同样 snake_case
++        assert_eq!(v["dialect"], "open_ai_compatible");
++    }
++}
+diff --git a/src/components/workspace/AgentManagerPanel.vue b/src/components/workspace/AgentManagerPanel.vue
+index 839dc11..00fec34 100644
+--- a/src/components/workspace/AgentManagerPanel.vue
++++ b/src/components/workspace/AgentManagerPanel.vue
+@@ -24,7 +24,7 @@ onMounted(() => {
+ });
+ 
+ function caps(def: AgentDef) {
+-  return renderCapabilityList(def.defaultCapabilities, whitelist.value);
++  return renderCapabilityList(def.default_capabilities, whitelist.value);
+ }
+ </script>
+ 
+@@ -52,7 +52,7 @@ function caps(def: AgentDef) {
+         :class="{ active: store.selectedAgentId === a.id }"
+         @click="store.selectAgent(a.id)"
+       >
+-        <div class="card-title"><span>{{ a.displayName }}</span></div>
++        <div class="card-title"><span>{{ a.display_name }}</span></div>
+         <div class="card-sub">{{ a.id }} · {{ dialectLabel(a.dialect) }} · {{ a2aSummary(a.a2a) }}</div>
+         <div class="chips">
+           <span v-for="c in caps(a)" :key="c.id" class="chip" :class="{ granted: c.granted }">{{ c.label }}</span>
+diff --git a/src/components/workspace/PermissionPreviewModal.vue b/src/components/workspace/PermissionPreviewModal.vue
+index b0dff95..f33f867 100644
+--- a/src/components/workspace/PermissionPreviewModal.vue
++++ b/src/components/workspace/PermissionPreviewModal.vue
+@@ -21,7 +21,7 @@ const view = computed(() =>
+         <h3>权限预览</h3>
+         <button class="close" @click="emit('close')">×</button>
+       </header>
+-      <div class="row"><span class="label">名称</span><span>{{ def!.displayName }} <small>({{ def!.id }})</small></span></div>
++      <div class="row"><span class="label">名称</span><span>{{ def!.display_name }} <small>({{ def!.id }})</small></span></div>
+       <div class="row">
+         <span class="label">闸门</span>
+         <span class="tag" :class="view.gateTone">{{ view.gateLabel }}</span>
+diff --git a/src/components/workspace/SkillManagerPanel.vue b/src/components/workspace/SkillManagerPanel.vue
+index 80e939f..d87e990 100644
+--- a/src/components/workspace/SkillManagerPanel.vue
++++ b/src/components/workspace/SkillManagerPanel.vue
+@@ -55,7 +55,7 @@ function caps(def: SkillDef) {
+         @click="store.selectSkill(s.id)"
+       >
+         <div class="card-title">
+-          <span>{{ s.displayName }}</span>
++          <span>{{ s.display_name }}</span>
+           <span class="tag" :class="aclTone(s.acl)">{{ aclLabel(s.acl) }}</span>
+         </div>
+         <div class="card-sub">{{ s.id }} · {{ execSummary(s.exec) }}</div>
+diff --git a/src/stores/useAgentStore.ts b/src/stores/useAgentStore.ts
+index 669c32f..9731141 100644
+--- a/src/stores/useAgentStore.ts
++++ b/src/stores/useAgentStore.ts
+@@ -114,7 +114,7 @@ export const useAgentStore = defineStore("agent", () => {
+     return {
+       ...d,
+       description: redactSecretsInText(d.description),
+-      systemPrompt: redactSecretsInText(d.systemPrompt),
++      system_prompt: redactSecretsInText(d.system_prompt),
+     };
+   }
+   /// 预览能力有界：展示前 N 项，其余标为溢出（不丢总数信息，前端按需展开）。
+diff --git a/src/types.ts b/src/types.ts
+index 1394a26..d10e1a7 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -597,14 +597,16 @@ export type DbLimitKind = "rows" | "bytes" | "field";
+ 
+ export type DbQueryState = "completed" | "cancelled" | "timeout" | "failed";
+ 
+-// 与 domain.rs::DbValue 一致（带标签枚举：Null/Bool/Int/Float/Text/BlobLen）。
++// 与 domain.rs::DbValue 一致（带标签枚举，serde rename_all="snake_case"）。
++// BUG-HUNT B8-1：此前误写为 PascalCase（"Null" / { Text }），与后端实际 snake_case 不符，
++// 导致数据库面板每个带标签单元格都落进 decodeDbValue 兜底分支、被渲染成原始 JSON。
+ export type DbValue =
+-  | "Null"
+-  | { Bool: boolean }
+-  | { Int: number }
+-  | { Float: number }
+-  | { Text: string }
+-  | { BlobLen: number };
++  | "null"
++  | { bool: boolean }
++  | { int: number }
++  | { float: number }
++  | { text: string }
++  | { blob_len: number };
+ 
+ // db_connect 入参（结构性无 password 字段，F2：凭据只走瞬时参数，绝不进本 DTO）。
+ export interface DbConnectionConfig {
+@@ -651,8 +653,8 @@ export type AclLevel = "safe" | "confirm" | "dangerous";
+ 
+ /// Skill 执行体的**唯一**合法形态：脚本/命令引用或串联（类型层面排除内联 shell，K6）。
+ export type SkillExec =
+-  | { kind: "script_ref"; scriptId: string; params: Record<string, unknown> }
+-  | { kind: "command_ref"; commandId: string; params: Record<string, unknown> }
++  | { kind: "script_ref"; script_id: string; params: Record<string, unknown> }
++  | { kind: "command_ref"; command_id: string; params: Record<string, unknown> }
+   | { kind: "sequence"; steps: SkillExec[] };
+ 
+ /// 能力引用；单一真源在后端 security_policy.rs（SKILL_CAPABILITY_V1 / AGENT_CAPABILITY_V1）。
+@@ -676,7 +678,7 @@ export interface SkillTest {
+ export interface SkillDef {
+   id: string;
+   version: string;
+-  displayName: string;
++  display_name: string;
+   description: string;
+   acl: AclLevel;
+   exec: SkillExec;
+@@ -690,19 +692,19 @@ export interface SkillDef {
+ export type AgentDialect = "open_ai_compatible" | "external_cli" | "custom";
+ 
+ export interface A2aConfig {
+-  delegateTo: boolean;
+-  delegatedFrom: boolean;
++  delegate_to: boolean;
++  delegated_from: boolean;
+ }
+ 
+ /// Agent 定义。注意：AgentDef 自身**无** acl 字段；其闸门来自后端 PermissionPreview.gate。
+ export interface AgentDef {
+   id: string;
+   version: string;
+-  displayName: string;
++  display_name: string;
+   description: string;
+   dialect: AgentDialect;
+-  systemPrompt: string;
+-  defaultCapabilities: CapabilityRef[];
++  system_prompt: string;
++  default_capabilities: CapabilityRef[];
+   a2a: A2aConfig;
+   metadata: unknown;
+ }
+diff --git a/src/utils/agentSkillUi.ts b/src/utils/agentSkillUi.ts
+index e8df00e..22974a7 100644
+--- a/src/utils/agentSkillUi.ts
++++ b/src/utils/agentSkillUi.ts
+@@ -111,8 +111,8 @@ export function dialectLabel(d: AgentDialect): string {
+ export function a2aSummary(a2a: A2aConfig | undefined): string {
+   if (!a2a) return "不可委派";
+   const parts: string[] = [];
+-  if (a2a.delegateTo) parts.push("可委派他人");
+-  if (a2a.delegatedFrom) parts.push("可被委派");
++  if (a2a.delegate_to) parts.push("可委派他人");
++  if (a2a.delegated_from) parts.push("可被委派");
+   return parts.length ? parts.join(" / ") : "不可委派";
+ }
+ 
+@@ -121,9 +121,9 @@ export function execSummary(exec: SkillExec | undefined): string {
+   if (!exec) return "—";
+   switch (exec.kind) {
+     case "script_ref":
+-      return `脚本 #${exec.scriptId}`;
++      return `脚本 #${exec.script_id}`;
+     case "command_ref":
+-      return `命令片段 #${exec.commandId}`;
++      return `命令片段 #${exec.command_id}`;
+     case "sequence": {
+       const n = Array.isArray(exec.steps) ? exec.steps.length : 0;
+       return `串联 ${n} 步`;
+diff --git a/src/utils/dbUi.ts b/src/utils/dbUi.ts
+index 555d3d1..453847f 100644
+--- a/src/utils/dbUi.ts
++++ b/src/utils/dbUi.ts
+@@ -263,21 +263,25 @@ export function truncateText(text: string, max: number): string {
+ 
+ /**
+  * 解码后端 `DbValue`（`rename_all="snake_case"` 带标签枚举）：
+- * `"Null"` / `{Bool}` / `{Int}` / `{Float}` / `{Text}` / `{BlobLen}`。
++ * `"null"` / `{ bool }` / `{ int }` / `{ float }` / `{ text }` / `{ blob_len }`。
+  * 二进制**只回长度不回字节**，统一展示为 `<binary N B>`。
+  * 同时兜底「后端改为无标签标量」的情况，避免 IPC 形态变化时前端白屏。
++ *
++ * BUG-HUNT B8-1：此前按 PascalCase（"Null" / { Text }）解码，与后端 snake_case 实际输出不符，
++ * 每个带标签单元格都命中末尾兜底 `JSON.stringify`，被渲染成原始 JSON。现按权威 DTO 对齐。
+  */
+ export function decodeDbValue(value: unknown): DbScalar {
+   if (value === null || value === undefined) return null;
+-  if (value === "Null") return null;
++  // 单元变体 Null：后端序列化为 JSON 字符串 "null"，须先于通用 string 分支判为 JS null
++  if (value === "null") return null;
+   if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") return value;
+   if (typeof value === "object") {
+     const rec = value as Record<string, unknown>;
+-    if (typeof rec.Text === "string") return rec.Text;
+-    if (typeof rec.Int === "number") return rec.Int;
+-    if (typeof rec.Float === "number") return rec.Float;
+-    if (typeof rec.Bool === "boolean") return rec.Bool;
+-    if (typeof rec.BlobLen === "number") return `<binary ${formatBytes(rec.BlobLen)}>`;
++    if (typeof rec.text === "string") return rec.text;
++    if (typeof rec.int === "number") return rec.int;
++    if (typeof rec.float === "number") return rec.float;
++    if (typeof rec.bool === "boolean") return rec.bool;
++    if (typeof rec.blob_len === "number") return `<binary ${formatBytes(rec.blob_len)}>`;
+   }
+   return JSON.stringify(value);
+ }

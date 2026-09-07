@@ -21,7 +21,7 @@ const view = computed(() =>
         <h3>权限预览</h3>
         <button class="close" @click="emit('close')">×</button>
       </header>
-      <div class="row"><span class="label">名称</span><span>{{ def!.displayName }} <small>({{ def!.id }})</small></span></div>
+      <div class="row"><span class="label">名称</span><span>{{ def!.display_name }} <small>({{ def!.id }})</small></span></div>
       <div class="row">
         <span class="label">闸门</span>
         <span class="tag" :class="view.gateTone">{{ view.gateLabel }}</span>

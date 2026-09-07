@@ -24,7 +24,7 @@ onMounted(() => {
 });
 
 function caps(def: AgentDef) {
-  return renderCapabilityList(def.defaultCapabilities, whitelist.value);
+  return renderCapabilityList(def.default_capabilities, whitelist.value);
 }
 </script>
 
@@ -52,7 +52,7 @@ function caps(def: AgentDef) {
         :class="{ active: store.selectedAgentId === a.id }"
         @click="store.selectAgent(a.id)"
       >
-        <div class="card-title"><span>{{ a.displayName }}</span></div>
+        <div class="card-title"><span>{{ a.display_name }}</span></div>
         <div class="card-sub">{{ a.id }} · {{ dialectLabel(a.dialect) }} · {{ a2aSummary(a.a2a) }}</div>
         <div class="chips">
           <span v-for="c in caps(a)" :key="c.id" class="chip" :class="{ granted: c.granted }">{{ c.label }}</span>

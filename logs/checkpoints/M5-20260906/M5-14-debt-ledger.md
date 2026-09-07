@@ -1,5 +1,5 @@
 > A0 2026-09-07 14:30: IF-2 threshold revised to 22% for W8; current build metrics total_bytes_pct=21.07 and cargo_warnings delta=0. W9 must preserve <=22% and re-record final verification.
-# M5 债务账（A1 横切 · 不在本批解决 · W1 修订 + W6/W7 reconciliation debt + W8 reconciliation + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active + W12 reconciliation + W12 PUSHED + W13 active + W13 PUSHED + W14 active + W14 PUSHED + W15 active）
+# M5 债务账（A1 横切 · 不在本批解决 · W1 修订 + W6/W7 reconciliation debt + W8 reconciliation + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active + W12 reconciliation + W12 PUSHED + W13 active + W13 PUSHED + W14 active + W14 PUSHED + W15 active + W15 PUSHED + W16 active）
 
 > 子卡 ID：**M5-14** · 跨 M5-1~M5-12 · 性质：**清单，非实现**
 > 配套：每张 M5-x 子卡 §9 DOC_BACKWRITE 中的"M5-14 增项"
@@ -515,7 +515,7 @@ IF-2 threshold revised to 23% for W12 graph live-query readonly bridge/UI; curre
 | DEBT-04（plugin UI 6 项） | 0% ACTIVE → 6/6（A6 实施期收口） | **6/6 ACTIVE**（plugin UI logic 61/61 + 6 action 全覆盖） | **closed-by-W14** |
 | M5 final debt ledger 条目数 | 维持 53 条 | **维持 53 条**（条目数不变，DEBT-04 状态转收口） | 持平 |
 | W14 新增债 | 0 | **0**（无新命令 / 无 DTO 变更 / 无 raw 敏感渲染 / 无 runtime 扩张） | 持平 |
-| build metrics 阈值 | ≤23% | **24.89% ≤ 25%**（A0 抬阈值 23% → 25%，为懒加载 PluginManager chunk） | 挂账跟踪（余量 0.11pp） |
+| build metrics 阈值 | ≤23% | **25.14% ≤ 25.2%**（A0 一次性抬上限 25.0 → 25.2；通用 async-state 组件因抬到 25.60% 被移除） | **A1 W16 更正**（余量 **0.06pp**） |
 
 **W15 债务账预期 = 0 新增**：
 
@@ -524,10 +524,120 @@ IF-2 threshold revised to 23% for W12 graph live-query readonly bridge/UI; curre
 - A2/A3/A4/A5/A7/A8/A10 = review / checklist → 结论为 PASS / PASS_WITH_NOTE，不产生实现债
 - A11 W15 = final verification matrix + push readiness → 收口闸门，不产生债
 
-**25% 指标挂账跟踪（A1 W15 第二项职责 · 交 A0/A6/A11）**：
+**25%→25.2% 指标挂账跟踪（A1 W15 记录 + A1 W16 更正 · 交 A0/A11）**：
 
-- 生效常量 `scripts/measure-build-metrics.py` L38 `TOTAL_BYTES_GROWTH_LIMIT_PCT = 25.0`；当前实测 `total_bytes_pct=24.89`，余量 **0.11pp**（M5 全周期最紧）
-- 过期文案：`scripts/pre-merge.sh` L76 仍写「总体积 ≤15%」（仅说明文本滞后，门禁读常量，判定不受影响）→ **A1 不修**（门禁脚本不属 A1 允许范围），建议 A0 W15 拣入期同步为 `≤25%`
-- A6 W15 若有任何体积增量，A11 必须复跑 `--compare` 留证；超 25.0 → `exceeds_growth_limit=true` → `pre-merge.sh` FAIL → 不得进 push readiness
+- 生效上限：`scripts/measure-build-metrics.py` L38 `TOTAL_BYTES_GROWTH_LIMIT_PCT` W15 记录值 **25.0**，A0 拣入期**一次性抬到 25.2**（W15 实测 **25.14%**，余量 **0.06pp**）；**M5 后续任何增长需新的 A0 显式决策**
+- 常量与注释滞后（**A1 不修**，门禁脚本不属 A1 允许范围）：`measure-build-metrics.py` L35-38 仍写 25.0 / 24.89；`scripts/pre-merge.sh` L76 仍写「总体积 ≤15%」→ 建议 A0/A11 W16 拣入期同步为 25.2 / 25.14
+- A6/任何 lane 若有体积增量，A11 必须复跑 `--compare` 留证；超 **25.2** → `exceeds_growth_limit=true` → `pre-merge.sh` FAIL → 不得进 push readiness
 
 **A1 W15 本账立场 = DOCS ONLY**：仅对账与跟踪（board + 3 主文档 + M5-0/10/11/12/13/14 + A1 W15 checkpoint + patch），零产品代码，不 commit、不 push。
+
+---
+
+## [W16 active · 2026-09-08 11:00 CST] A1 W16 reconciliation · W15 accepted 对账 + M6 charter（docs/review only）
+
+**W15 accepted（`052b18a` = HEAD = `origin/master`，工作树 clean）**：
+
+- W15 债务账预期 = 0 新增（A6 窄 UI 磨光 / A9 冻结契约 / A2-3-4-5-7-8-10 review / A11 收口闸门）→ **实测 0 新增债兑现**
+- A0 拣入期偏差（已记账）：A6 第一个通用 async-state 组件会抬到 **25.60%** → 已移除；焦点管理收窄为两个高危写确认；最终 **25.14% ≤ 25.2%**（一次性上限），warning delta 0
+- M5 final debt ledger **维持 53 条**（W14 DEBT-04 收口后条目数不变）；W15 无新条目、无新命令/ACL/bridge/DTO/runtime 扩张
+
+**残留挂账（交 A0 / 产品负责人）**：
+
+| 挂账 | 来源 | A1 W16 处理 |
+|---|---|---|
+| 手动 GUI/运行时证据未补录 | A0 acceptance residual | 列为 M6 WBS §6 开放问题（不伪造、不阻塞 W16） |
+| 53 条债分配到 M6 波次 | M5 final ledger | M6 WBS §6 开放问题（建议 W1 一次性定责） |
+| 体积上限 25.2% 之后是否再抬 | A0 一次性声明 | M6 WBS §6 开放问题（需新 A0 决策） |
+| 门禁脚本常量/文案滞后（25.0 / ≤15%） | 不属 A1 范围 | 交 A0/A11 修 |
+
+**W16 = docs/review only**（board L1181 hard stops）：无产品代码、无新命令/ACL/bridge/DTO、不开放任何 M5 已锁的运行时权限。
+
+**A1 W16 交付**：对账 board L3/L6/L7/L8 + 3 主文档 + M5-0/10/11/12/13/14（含 25.0→**25.2** 更正）+ M6 WBS/排序提案（`A1-M5-W16-M6-WBS-proposal-20260908-1100.md`：6 候选工作流 M6-1~M6-6 · 波次 W1 契约冻结+入口闸 → W2 M6-2 → W3 M6-1 → W4 M6-3 → W5 M6-5 → W6 M6-4 →（W7 条件）M6-6 · 原则「一次只开一种运行时权限 / 默认 fail-closed / 命令五件套同包 / 体积硬顶 25.2% / 证据先于结论」· M6 入口闸 11 项 checklist）。
+
+**A1 W16 立场 = DOCS ONLY**：零产品代码、不 commit、不 push；M6 是否开工取决于产品负责人批准的有界运行时切片。
+
+---
+
+## [W17 active · 2026-09-08 12:00 CST] A1 W17 reconciliation · W16 outputs retained 对账 + desktop-client completeness（有界前端/启动体验产品代码）
+
+**W16 outputs retained（board L6）**：W15 accepted + PUSHED（`052b18a` = HEAD = `origin/master`）；A1 W16 全部文档产出保留生效（M6 WBS/排序提案 + 25.2% 门禁更正）。**M5 final debt ledger 维持 53 条**（W16 无新增条目；W17 为有界前端波，预期同样 0 新增债）。
+
+**W17 债务账立场**：
+
+| 项 | A1 W17 判定 |
+|---|---|
+| W17 增量债预期 | **0 新增**（W17 = 有界前端/启动体验，不动 backend 契约、不动运行时权限面） |
+| 53 条 M5 债 | 维持挂账；分配责任已在 M6 WBS §6 列为开放问题（建议 M6 W1 一次性定责） |
+| 体积上限 25.2% | 维持；W17 前端改动（首页 + 导航 + shell 兜底）是**本波最大的体积风险源**——基线 25.14%，余量仅 **0.06pp**；A5/A6/A7 新增组件若超限必须报精确 delta 并瘦身，**不得抬上限**（board L1178） |
+| 门禁脚本常量/文案滞后 | 不属 A1 范围，交 A0/A11 修 |
+| 手动 GUI/运行时证据 | 仍为 W15 遗留开放项；**W17 由 A8 START MANUAL QA 承接实跑**（board L1192），永不伪造截图 |
+
+**W17 已知限制（A1 必须显式记账，见 `A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md` §3）**：
+
+| 已知限制 | 性质 | 去向 |
+|---|---|---|
+| 首页/launcher 只暴露**既有**主工作区，不新增业务能力 | W17 边界（board L1175） | 新能力走 M6 |
+| plugin invoke / 命令执行 / 远程下载 / daemon / MCP live / Agent-Skill 执行 / graph 写导出 | **运行时权限仍全锁** | M6 入口闸（产品负责人批准 + A10 verdict） |
+| 桌面 dev 启动助手只解决本地 dev 体验，**不改 release 资产加载路径** | W17 AC-1 明确（board L1174） | 分发/签名属 M6-6 |
+| 窄窗口/HiDPI/多平台（Win/macOS）未实跑 | 环境限制 | A8 手动 QA 诚实记录；跨平台分发属 M6-6 |
+| 体积余量 0.06pp，任何新 chunk 都可能触顶 | 门禁现实 | A11 每波复测；M6 需新 A0 决策 |
+
+**A1 W17 交付**：对账 board L6/L8 + 3 主文档 + M5-0 `[W17 active]` 段 + M5-10/11/12 头 + M5-13 `[W17 verification scope]` 段 + 本段 + **W17 用户可见验收清单/已知限制**（`logs/checkpoints/A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md`）。
+
+**A1 W17 立场 = DOCS ONLY**：零产品代码、不 commit、不 push。
+
+---
+
+## [W17 acceptance closeout · 2026-09-08 12:30 CST] A1 W17 收口债务对账 · `HOME_NO_SECRET_PERSIST` 闭环 + 跨 lane 挂账
+
+**M5 final debt ledger 维持 53 条**（W17 为有界前端波，不动 backend 契约与运行时权限面；W17 增量债预期 **0**，收口期实测兑现）。
+
+**唯一真实产品债 `HOME_NO_SECRET_PERSIST` 状态对账**：
+
+| 时点 | 状态 | 证据 |
+|---|---|---|
+| board L1205（A0 派发） | 表述为"app exec 命令体仍落浏览器存储" | board 原文 |
+| A5 closeout `20260907-2133` | 仍命中 `useHomeStore.ts:72` | `--expect-pending` FAIL 1 项 |
+| **A1 收口实测（2026-09-08 12:30）** | **已闭环** | `--expect-pending` = **NONE**（3 pending 码位均未检出）+ `check-home-store-logic.mjs` 105/0 |
+
+→ 该债**不进入 M5 final debt ledger 新增项**（已闭环）；A0 集成以当前实测为准。
+
+**W17 跨 lane 挂账（非阻塞，交 A0/A11）**：
+
+| # | 挂账 | 来源 | 去向 |
+|---|---|---|---|
+| W17-D1 | 体积门禁基线被**脏树采集污染**（当前全量 29.77% 不可作判定值） | A6 §4-F1 + A1 实测 | A11 在 A0 集成后**干净树**复测；AC-5 禁抬 25.2% 上限 |
+| W17-D2 | `pre-merge ALL_PASS` **未覆盖 W17 三个新门禁**（`check-home-client-policy.py` / `check-home-store-logic.mjs` / `check-home-ui-logic.mjs`） | A6 §4-F2 | A11 纳入终版矩阵 |
+| W17-D3 | A11 矩阵第 27/130 行对 A6 **已过期** | A6 §4-F3 | A11 收口时更新 |
+| W17-D4 | 活动条仍持久化最近目录路径（本地路径持久化，**非 W17 新增**，不在 `HOME_NO_SECRET_PERSIST` 码位范围） | A6 §4-O1 | A0 决策是否扩 PENDING 码位 |
+| W17-D5 | 原生客户端**视觉**验收 headless BLOCKED（无 `DISPLAY`/`WAYLAND`、无预编译二进制） | A8 | A0/人工在 A2 助手落地后实跑；**未伪造截图** |
+| **W17-D6（新增）** | **B10-b `MainArea.vue` 兜底 `v-else` 配对错误**（W17/A7 引入，A11 判 **CONFIRMED 结构性**）：`:253` 与 `:251` `FileEditor v-if` 配对而非主链 → `mainView !== 'editor'` 时兜底块**恒渲染**"当前视图不可用" | A11 复跑 + A1 代码核对 | 交 **A7 / A0** 指派修复（A1 不修产品代码）；用户可见后果**未真机验证**，需 A8 实跑 |
+
+**A1 W17 收口立场**：DOCS ONLY · 零产品代码 · 不代跑 `pre-merge`/full Rust（属 A11/A0）· 不伪造证据 · 不 commit · 不 push。
+
+**波次流转记账（board L8，2026-09-08 13:00 CST）**：`NEXT` 由 `M5-W17` 转为 **`M5-BUG-HUNT`**；W17 closeout **locally green**（A0 认可）。**M5 final debt ledger 维持 53 条**（W17 增量 0；`HOME_NO_SECRET_PERSIST` 已闭环故不新增条目）。W17-D1~D5 五条跨 lane 挂账**随波次转移继续挂账**，不因 `NEXT` 变更而自动消解：
+
+| 挂账 | 归属 | 去向 |
+|---|---|---|
+| W17-D1 体积复测（干净树） | A11 | A0 集成 W17 后复测；AC-5 禁抬 25.2% |
+| W17-D2 `pre-merge` 覆盖 W17 三个新门禁 | A11 | 纳入终版矩阵 |
+| W17-D3 A11 矩阵过期行 | A11 | 收口更新 |
+| W17-D4 活动条持久化最近目录路径（非新增） | A0 决策 | 是否扩 PENDING 码位 |
+| W17-D5 原生客户端视觉验收（headless BLOCKED） | A0/人工 | A2 助手落地后实跑；**未伪造截图** |
+
+**BUG-HUNT 波对债务账的影响（A1 只记账，不越界）**：BUG-HUNT Follow-up Dispatch（board L1235-1246）**无 A1 行**，A1 不做其 lane 工作。记账要点：B9-1（WebKitGTK hide 死锁）与 B3-1（脚本退出遗留 pipe reader/supervisor）**A0 已直接修复**；**B5-1**（persistence-before-spawn 事务边界）为**非常规补丁**，须"先落盘再 spawn"测试化后实施，**禁止一般 lane opportunistic 改写**。B5-1 与 W17 的 `HOME_NO_SECRET_PERSIST` **不同层**（Rust spawn/持久化 vs 前端 localStorage），后者已闭环、前者未开工，A0 集成时勿混淆。
+
+**BUG-HUNT P0 未闭环挂账（A1 只读对账，2026-09-08 13:30）**：BUG-HUNT-SUMMARY 列 P0×5，已闭环 2（B9-1 / B3-1，A0 修，A1 已 diff 核实），**未闭环 3**：
+
+| P0 | 风险 | 派发 | 现状 |
+|---|---|---|---|
+| **B4-1/B4-2** | workspace 非原子写 + `unwrap_or_default()` 静默清空 → **数据无痕蒸发**（audit 热路径最致命） | A3 | `workspace.rs` 已改但**未见产物**，未闭环 |
+| **B5-1** | 调度崩溃窗口 → 任务**重复执行** | A4（先出设计与测试） | **未开工**；board 明令禁 opportunistic 改写 |
+| **B11-1** | 系统剪贴板历史**明文落 localStorage** + 明文渲染（最多 50 条跨重启留存） | A6 | 目标文件**未动**，未闭环 |
+
+**P1 未闭环（择要）**：B2-1 命令执行门禁可绕过（`/usr/bin/env bash -c`、符号链接）· B2-2 `check_html` 生产零接入 · B12-01 `open_tool` 缺 ACL（CONFIRMED）· B6-1 用户 HTML 无上限 OOM · B9-4 `closeGridAll` 浏览器区空白 · B8-1 `DbValue` casing 漂移 · B11-2 前端错误原文未接 `redactSecrets` · B3-2 孤儿进程 · B5-2 `tasks.json` 无共享锁 · D25（历史挂账仍未修）。
+
+**A11 复跑重分类（减少虚假债）**：B12-03 collect.js 三命令 → **STALE/有意设计**（`remote-collect.toml` 注释 + 意图令牌补偿控制），原"未授权=bug"不成立；B10-a `stats.main.rss_mb` → **UNSUPPORTED 降级 P3**（`bridge.rs:4311` 的 `main` 非 Option）；C−A skill/agent 11 条占位 → CONFIRMED 但属 LOCKED 下预期态。**B8-2 降级为 PARTIALLY CONFIRMED**（非"逐字段漂移"）。
+
+**已闭环**：B9-1 · B3-1（A0）· **B11-3 markdown XSS**（A10：`escapeAttr` 转义 + `rel="noopener noreferrer"`，新增 `scripts/check-markdown-xss-logic.mjs` 16/16 PASS）。完整矩阵见 `logs/checkpoints/A1-M5-BUG-HUNT-W17-verdict-20260908-1330.md` §4-§5。

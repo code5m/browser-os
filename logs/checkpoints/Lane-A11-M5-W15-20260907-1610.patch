@@ -1,0 +1,240 @@
+diff --git a/logs/checkpoints/A11-M5-W15-20260907-1610.md b/logs/checkpoints/A11-M5-W15-20260907-1610.md
+new file mode 100644
+index 0000000..b5792aa
+--- /dev/null
++++ b/logs/checkpoints/A11-M5-W15-20260907-1610.md
+@@ -0,0 +1,234 @@
++# A11 · M5-W15 最终验证矩阵 + 推送就绪 Checkpoint
++
++- **Lane / 分派**：A11，`M5-W15 Release Readiness Dispatch`（board §1163-1179，A11 行 1179：*Final verification matrix and push readiness* → **Checkpoint**）
++- **WORKDIR / 身份**：`/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`，`.workspace-identity = BACKV3_MAIN`，分支 `master`
++- **基线 / HEAD**：`052b18a`（`feat(M5): close W15 release readiness`）；`git fetch && git pull --ff-only` = 已经是最新的；`origin/master` 与本地一致；工作树**干净**
++- **生成时间**：2026-09-07 16:10
++- **验证范围**：Rust 全量 / 聚焦测试 + fmt + 25 套策略脚本 + 14 套 UA 逻辑脚本 + 生产构建 + 构建指标 + diff 洁身 + pre-merge 总门禁
++- **性质**：**验证/证据交付，零产品代码、零策略脚本改动**（不越权修改他 lane 产出）
++- **结论**：**全部门禁 ALL_PASS → 推送就绪**（真 M0 基线 `4f0e8ab` 比对，非自我比对）；附 **1 项门禁完整性发现**（`build metrics` 基线选取依赖哈希字典序、易被游离快照劫持；本批次已定位并自清理修复）+ **1 项体积预算耗尽风险**（真实 +25.14% / 上限 25.2%，余量 0.06pp）。二者**均不阻断本次发布**，但须 A0 在后续波次收口。
++
++---
++
++## 1. 最终验证矩阵（权威 · 基线 `052b18a`）
++
++### 1.1 Rust 层
++
++| 项 | 命令（`src-tauri/` 下执行） | 结果 |
++|---|---|---|
++| 全量测试 | `cargo test` | **433 passed / 0 failed**（`lib.rs` 2 + `main.rs` 431） |
++| Plugin 聚焦 | `cargo test plugin` | **28 passed / 0 failed** |
++| MCP 聚焦 | `cargo test mcp` | **9 passed / 0 failed** |
++| 格式 | `cargo fmt --check` | **干净**（rc=0） |
++| 编译告警 | `cargo check` / `measure-build-metrics` | `cargo_warnings=2`，与 M0 基线（2）**持平，未增加** |
++
++### 1.2 策略脚本层（25 套）
++
++全部 PASS，其中：
++
++- 默认模式 PASS（24 套）：`check-agent-memory-policy` / `check-agent-skill-policy` / `check-command-domain-policy` / `check-core-boundary` / `check-database-policy` / `check-git-ui-policy` / `check-git-write-policy` / `check-graph-policy` / `check-image-policy` / `check-image-preview-policy` / `check-lifecycle-contract` / `check-mcp-policy` / `check-plan-routing` / `check-plugin-policy` / `check-plugin-privacy` / `check-plugin-ui-privacy` / `check-resource-capture-policy` / `check-scheduler-policy` / `check-scheduler-ui-policy` / `check-script-domain-policy` / `check-script-exec-policy` / `check-script-ui-policy` / `check-session-persistence-policy` / `check-terminal-policy`
++- `check-security-policy.py`：默认模式 EXIT=1 **属设计预期**（见 §3.1），pre-merge 采用 `--self-test` + `--expect-current-gaps` 两模式，**均 PASS**
++- 附加模式全 PASS：`check-plugin-ui-privacy.py --self-test`、`--expect-pending`、`check-tools-policy.py --self-test`
++
++### 1.3 UA 逻辑脚本层（14 套，全部 PASS）
++
++`check-agent-skill-ui-logic` · `check-command-ui-logic` · `check-database-ui-logic` · `check-git-ui-logic` · `check-graph-ui-logic` · `check-image-preview-logic` · `check-image-ui-logic` · `check-plugin-ui-logic` · `check-resource-ui-logic` · `check-scheduler-ui-logic` · `check-script-ui-logic` · `check-session-logic` · `check-terminal-ui-logic` · **`check-ui-a11y-logic.mjs`（A6 W15 新增，第 14 套，`UI_A11Y_RESULT=PASS`）**
++
++> W14 遗留缺口「A6 未交付 `check-plugin-ui-logic.mjs`」**已闭环**（现 8830 B 且在矩阵中 PASS）。
++
++### 1.4 构建与门禁层
++
++| 项 | 命令 | 结果 |
++|---|---|---|
++| 前端生产构建 | `npm run build` | **PASS**（无 TS/eslint 错误） |
++| 构建指标 | `measure-build-metrics.py` | `total=767059B` · `largest_js=334208B` · `cargo_warnings=2` · `over_500kb=False` |
++| diff 洁身 | `git diff --check` | **clean**（无尾随空白/冲突标记） |
++| **总门禁** | `bash scripts/pre-merge.sh` | **`PRE_MERGE_RESULT=ALL_PASS`** |
++
++**汇总：50 项检查全部通过**（唯一 1 项 `FAIL` 为 §3.1 的调用方式误报，非回归）。
++
++---
++
++## 2. 门禁完整性缺陷（F-A11-W15-1）— `build metrics` 基线劫持（已定位并修复）
++
++**严重度：高（门禁可信度）· 不阻断本次发布（真实值仍在上限内）**
++
++### 现象（初见）
++
++`scripts/pre-merge.sh:221` 选取基线的方式为：
++
++```bash
++baseline_file="$(ls -1 "$ROOT"/logs/m0-build-metrics/build-metrics-*.json 2>/dev/null | sort | head -1 || true)"
++```
++
++`sort` 后**首个**文件为：
++
++```
++build-metrics-052b18a.json      ← 被选中（'0' < '4' < 'a'）
++build-metrics-4f0e8ab.json      ← 真正的 M0 基线，被跳过
++build-metrics-6f4e554.json
++build-metrics-886ea29.json
++build-metrics-a7eefbb.json
++build-metrics-w14-candidate.json
++```
++
++`build-metrics-052b18a.json` 与**当前 HEAD 自身**的指标完全一致（`total_bytes=767059`），因此比对结果：
++
++```json
++{ "exceeds_growth_limit": false, "deltas": { "total_bytes_pct": 0.0, ... } }
++```
++
++初看该门已退化为「HEAD 比 HEAD」，恒为 0.0%。
++
++### 根因（精确归因）
++
++经取证（`git ls-files` + `stat`）：`build-metrics-052b18a.json` 为**未跟踪**文件，mtime **2026-09-07 16:06:19** —— **即本 A11 验证批次在 16:06 自行执行 `measure-build-metrics.py` 时生成的快照**（该脚本默认按当前 HEAD 的 commit 命名写盘：`<root>/logs/m0-build-metrics/build-metrics-{git_commit}.json`）。**并非 A0/A1 在 W15 收口时生成**（初版 checkpoint 误记，以此修订）。
++
++因该 HEAD 哈希以 `0` 开头，字典序排在所有既有基线之前，被 `sort | head -1` 选中，从而把真实 M0 基线 `4f0e8ab` 挤出。真正的脆弱点在**基线选择依赖提交哈希前缀的字典序**——任何 lane 只要在「哈希前缀较低」的 HEAD 上跑一次 `measure-build-metrics.py`，就会留下同名的游离快照并静默劫持门禁。
++
++### 已应用的修复（A11 自清理）
++
++本批次已 `rm -f logs/m0-build-metrics/build-metrics-052b18a.json`（仅删除本批次自己产生的、未跟踪的游离产物，未触碰任何 lane 的已提交文件）。删除后 `sort | head -1` 重新选回真 M0 基线，复跑确认：
++
++```
++[pre-merge] M0-4.c 构建指标对比 ... 基线 logs/m0-build-metrics/build-metrics-4f0e8ab.json
++[pre-merge] build metrics 未回归（基线 ...4f0e8ab.json）
++[pre-merge] PRE_MERGE_RESULT=ALL_PASS
++```
++
++```json
++--compare build-metrics-4f0e8ab.json
++{ "exceeds_growth_limit": false, "deltas": { "total_bytes_pct": 25.14, ... } }
++```
++
++即：**真实增长 +25.14%，仍在 25.2% 上限内 → 本次发布真实合规**，门禁在删除游离快照后恢复有效。
++
++### 残留建议（A0 决策，A11 不越权改）
++
++根因在于基线选取逻辑，游离快照只是表象；为避免后续 lane 复现劫持，建议 A0 择一收口：
++
++- **方案 A（推荐）**：在 `pre-merge.sh` 中**显式钉住**基线文件（如 `build-metrics-4f0e8ab.json`），替换 `sort | head -1`；
++- **方案 B**：改 `measure-build-metrics.py` 基线选择为「按文件 mtime 最早」或显式配置项，避免依赖哈希字典序；
++- **方案 C**：在 `pre-merge.sh` 中忽略未跟踪的、与当前 HEAD 同名的指标快照（即排除 `build-metrics-${GIT_COMMIT}.json`）。
++
++
++---
++
++## 3. 已澄清的非问题（矩阵中的 2 处「假红」，避免误判）
++
++### 3.1 `check-security-policy.py` 默认模式 EXIT=1 —— 设计如此，非回归
++
++默认运行输出：
++
++```
++security-policy: FAIL (3 known gap(s))
++GAP=READ_ONLY_BROWSE_WITHOUT_PATH_POLICY
++GAP=REMOTE_WILDCARD_IPC
++GAP=EVAL_WITHOUT_SOURCE_CHECK
++```
++
++这 3 项是 `logs/m0-security-threat-matrix-v1.md` 中**已登记并接受的已知缺口（M0-3.b/c/d）**，脚本按设计在默认模式 EXIT=1。`pre-merge.sh:235-240` 采用 `--self-test` 与 `--expect-current-gaps` 两种模式，二者均 PASS —— 即「缺口集合与威胁矩阵一致」。故**非回归**，与 A10 的 `STATUS=PASS`（无裸 IPC 绕过、无敏感渲染逃逸）结论一致。
++
++### 3.2 `cargo` 在仓库根执行报 rc=101 —— 路径问题，非回归
++
++`Cargo.toml` 位于 `src-tauri/`，在仓库根目录执行 `cargo test` 会报 `could not find Cargo.toml`。首轮矩阵因此误报 4 项 FAIL；改到 `src-tauri/` 下执行后**全部通过**（见 §1.1）。
++
++---
++
++## 4. 体积预算耗尽风险（F-A11-W15-2）
++
++**严重度：中（前瞻）· 不阻断本次发布**
++
++阈值演进史（脚本注释）：M0=15% → M4=16% → W5=19% → W6=21% → W8=22% → W12=23% → W14=25.0% → **W15=25.2%**；真实增长 **25.14%**，**余量仅 0.06pp**。
++
++- 主因：M5 各波前端增量累积（W13/W14 插件管理器面板 + store + `pluginUi.ts`，W15 A6 无障碍/异步态组件）。
++- 含义：**下一个波次只要再增加约 0.4 KB 的 dist 体积即会撞线**。后续若继续走「抬阈」路径，门禁将彻底失去约束力。
++- 建议（A0/A6）：后续波次优先做**体积削减**而非抬阈——插件管理器面板改路由级懒加载、剔除未用依赖、或由 A0 重新基线（`re-baseline`）并书面说明。
++
++> 注：`cargo_warnings=2` 与 M0 基线持平且未增加，`over_500kb=False`，`fmt` 干净 —— 越限风险仅存在于 dist 体积单一维度。
++
++---
++
++## 5. M4 时代 A11 遗留债务 —— 全部闭环确认
++
++上一轮 A11 M4 checkpoint（`A11-M4-verification-final-20260906-0715.md`）登记的 5 项，现已全部关闭：
++
++| 编号 | 原问题 | 现状 | 结论 |
++|---|---|---|---|
++| F-A11-1 | `TASK_COMMANDS_AVAILABLE=false` 仍为禁用壳 | `src/bridge.ts:94` 已置 **`true`** | ✅ 闭环 |
++| F-A11-2 | `db_*` 后端齐但 `bridge.ts` 无封装、`types.ts` 无 DTO | `src/bridge.ts:371-382` 已落地 `dbConnect/dbQuery/dbDisconnect` 封装 | ✅ 闭环 |
++| F-A11-3 | `DatabasePanel.vue` / `useDatabaseStore.ts` / `dbUi.ts` 未 `git add` | 三文件均已在 `git ls-files` 中（已提交） | ✅ 闭环 |
++| F-A11-4 | 调度夹具对并发改树敏感（PASS/FAIL 翻转） | 冻结树下复跑稳定（`check-scheduler-policy` / `check-scheduler-ui-logic` 均 PASS） | ✅ 闭环 |
++| — | `check-plan-routing.py` 重复 WBS `M4-9` | 本轮 `check-plan-routing.py` **PASS** | ✅ 闭环 |
++
++---
++
++## 6. 跨 Lane W15 交付汇总（A11 集成视角）
++
++| Lane | W15 角色 | 结论 | 阻断？ |
++|---|---|---|---|
++| A1 | Docs reconcile（W14 accepted + 25% 指标 + W15 状态） | DOCS ONLY，不 push | 否 |
++| A2 | Boundary review（W14 UI/store） | `PASS_WITH_DEBT`（非阻塞） | 否 |
++| A3 | MCP isolation regression | **PASS**（无隔离回归，零产品代码） | 否 |
++| A4 | Plugin UI privacy + stable-error | 隐私 **PASS**；稳定错误 `PASS_WITH_NOTE`（建议删 `uninstall` 死 case） | 否 |
++| A5 | Agent/Skill execution-lock | `PASS_WITH_CONTEXT`（执行锁 PASS） | 否 |
++| A6 | Narrow UI polish（a11y / 空-载-错态） | 已提交 `useModalFocus.ts` / `modalA11y.ts` / `check-ui-a11y-logic.mjs`；`ConfirmModal.vue` 等已改，**矩阵 PASS** | 否 |
++| A7 | Graph non-regression | Graph 零回归 | 否 |
++| A8 | GUI 手动验收清单 + 视觉工效 | 已落盘（9018 B，`logs/assist/A8-M5-W15-gui-acceptance-20260907-1526.md`） | 否 |
++| A9 | Frozen W13 backend contract | 契约冻结确认，W14/W15 零后端改动 | 否 |
++| A10 | Security release review | **PASS**（无裸 IPC 绕过、无敏感渲染逃逸） | 否 |
++| **A11** | **最终验证矩阵 + 推送就绪** | **本 checkpoint：门禁 ALL_PASS，推送就绪** | 否 |
++
++> 无任一 lane 处于阻断态；A6 的 UI polish 与 A8 的验收清单在 A1 快照时尚未完成，现已落盘并纳入本轮矩阵验证。
++
++---
++
++## 7. 推送就绪判定
++
++### 7.1 判定
++
++**PUSH_READY = YES（门禁层面）**
++
++- `bash scripts/pre-merge.sh` → `PRE_MERGE_RESULT=ALL_PASS`
++- 工作树干净、`origin/master` 与本地一致、基线 `052b18a` 已由 A0 推送
++- 50 项检查实质全绿；3 处「红」均经查证为**非回归**（§3.1 设计预期、§3.2 路径问题）或**非阻断**（§2 游离快照已删除、真实值 +25.14% 合规）
++
++### 7.2 A0 后续收口项（非阻断，建议下波处理）
++
++1. **【高】修复 `build metrics` 基线选择逻辑**（§2 方案 A/B/C 择一）：本批次已删除自生成的游离快照 `build-metrics-052b18a.json`，门禁即时恢复对真 M0 基线比对；但根因（依赖哈希字典序选取）未除，后续 lane 在低位哈希 HEAD 上跑 `measure-build-metrics.py` 仍会复现劫持，须 A0 收口；
++2. **【中】体积预算**：真实 +25.14% / 上限 25.2%，余量 0.06pp —— 下波须走「削减」或「重新基线」而非继续抬阈；
++3. **【低】A4 F-1**：删除 `PluginManager.vue::confirmText` 中不可达的 `case "uninstall"` 死分支；
++4. **【低】A4 NOTE**：`usePluginStore.ts::describeError` 可改为按后端 9 个稳定码映射本地文案，提升可诊断性（当前一刀切丢弃，合规但 UX 可改进）。
++
++### 7.3 A11 自身交付
++
++| 文件 | 内容 |
++|---|---|
++| `logs/checkpoints/A11-M5-W15-20260907-1610.md` | 本 checkpoint（最终验证矩阵 + 推送就绪） |
++| `logs/checkpoints/Lane-A11-M5-W15-20260907-1610.patch` | 单文件补丁，`git apply --check -R` 已验证 |
++
++- 零产品代码改动（`src/**`、`src-tauri/**` 全未触碰）
++- 零策略脚本改动（`scripts/**` 全未触碰）
++- **未 commit、未 push**（board：Only A0 pushes）
++
++---
++
++## 8. 自检证据链
++
++| 检查 | 命令 / 位置 | 结果 |
++|---|---|---|
++| 启动门禁 | `pwd` / `git branch` / `git pull --ff-only` | BACKV3_MAIN / master / 已最新 ✅ |
++| 工作树 | `git status --short --branch` | 干净，与 `origin/master` 同步 ✅ |
++| 基线 | `git rev-parse --short HEAD` | `052b18a` ✅ |
++| Rust 全量 | `cd src-tauri && cargo test` | 433 passed / 0 failed ✅ |
++| Rust 聚焦 | `cargo test plugin` / `cargo test mcp` | 28 / 9 passed ✅ |
++| 格式 | `cargo fmt --check` | rc=0 ✅ |
++| 策略 | 25 套 `check-*.py` + 3 附加模式 | 全 PASS（`security` 按设计默认 EXIT=1，pre-merge 两模式 PASS）✅ |
++| UA 逻辑 | 14 套 `check-*.mjs` | 全 PASS ✅ |
++| 构建 | `npm run build` | PASS ✅ |
++| 指标 | `measure-build-metrics.py` | `total=767059B`，`warnings=2`，`over_500kb=False` ✅ |
++| 真实增长 | `--compare build-metrics-4f0e8ab.json` | `25.14%`（< 25.2%）⚠️ 余量 0.06pp |
++| 门禁 | `bash scripts/pre-merge.sh` | `PRE_MERGE_RESULT=ALL_PASS` ✅ |
++| 洁身 | `git diff --check` | clean ✅ |
++
++> ⚠️ 需 A0 知悉：本批次曾生成并随后删除一份游离指标快照 `build-metrics-052b18a.json`，使门禁短暂自我比对；删除后复跑确认门禁恢复对真 M0 基线（`4f0e8ab`）比对，真实值 25.14% 合规但余量极薄（0.06pp），A0 应修正基线选取逻辑以绝后患（§2）。

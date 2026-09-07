@@ -597,14 +597,16 @@ export type DbLimitKind = "rows" | "bytes" | "field";
 
 export type DbQueryState = "completed" | "cancelled" | "timeout" | "failed";
 
-// 与 domain.rs::DbValue 一致（带标签枚举：Null/Bool/Int/Float/Text/BlobLen）。
+// 与 domain.rs::DbValue 一致（带标签枚举，serde rename_all="snake_case"）。
+// BUG-HUNT B8-1：此前误写为 PascalCase（"Null" / { Text }），与后端实际 snake_case 不符，
+// 导致数据库面板每个带标签单元格都落进 decodeDbValue 兜底分支、被渲染成原始 JSON。
 export type DbValue =
-  | "Null"
-  | { Bool: boolean }
-  | { Int: number }
-  | { Float: number }
-  | { Text: string }
-  | { BlobLen: number };
+  | "null"
+  | { bool: boolean }
+  | { int: number }
+  | { float: number }
+  | { text: string }
+  | { blob_len: number };
 
 // db_connect 入参（结构性无 password 字段，F2：凭据只走瞬时参数，绝不进本 DTO）。
 export interface DbConnectionConfig {
@@ -651,8 +653,8 @@ export type AclLevel = "safe" | "confirm" | "dangerous";
 
 /// Skill 执行体的**唯一**合法形态：脚本/命令引用或串联（类型层面排除内联 shell，K6）。
 export type SkillExec =
-  | { kind: "script_ref"; scriptId: string; params: Record<string, unknown> }
-  | { kind: "command_ref"; commandId: string; params: Record<string, unknown> }
+  | { kind: "script_ref"; script_id: string; params: Record<string, unknown> }
+  | { kind: "command_ref"; command_id: string; params: Record<string, unknown> }
   | { kind: "sequence"; steps: SkillExec[] };
 
 /// 能力引用；单一真源在后端 security_policy.rs（SKILL_CAPABILITY_V1 / AGENT_CAPABILITY_V1）。
@@ -676,7 +678,7 @@ export interface SkillTest {
 export interface SkillDef {
   id: string;
   version: string;
-  displayName: string;
+  display_name: string;
   description: string;
   acl: AclLevel;
   exec: SkillExec;
@@ -690,19 +692,19 @@ export interface SkillDef {
 export type AgentDialect = "open_ai_compatible" | "external_cli" | "custom";
 
 export interface A2aConfig {
-  delegateTo: boolean;
-  delegatedFrom: boolean;
+  delegate_to: boolean;
+  delegated_from: boolean;
 }
 
 /// Agent 定义。注意：AgentDef 自身**无** acl 字段；其闸门来自后端 PermissionPreview.gate。
 export interface AgentDef {
   id: string;
   version: string;
-  displayName: string;
+  display_name: string;
   description: string;
   dialect: AgentDialect;
-  systemPrompt: string;
-  defaultCapabilities: CapabilityRef[];
+  system_prompt: string;
+  default_capabilities: CapabilityRef[];
   a2a: A2aConfig;
   metadata: unknown;
 }

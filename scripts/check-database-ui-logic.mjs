@@ -195,16 +195,18 @@ eq(buildResultView(null).warnings.length, 0, "空结果不抛异常");
 eq(buildResultView(null).rowCount, 0, "空结果行数为 0");
 
 // ===== 7b. 后端 DbValue 带标签解码（domain.rs rename_all="snake_case"） =====
-eq(decodeDbValue("Null"), null, "字符串 Null 解码为 null");
-eq(decodeDbValue({ Bool: true }), true, "Bool 标签解码为布尔");
-eq(decodeDbValue({ Int: 7 }), 7, "Int 标签解码为数值");
-eq(decodeDbValue({ Float: 1.5 }), 1.5, "Float 标签解码为数值");
-eq(decodeDbValue({ Text: "abc" }), "abc", "Text 标签解码为字符串");
-eq(formatCellValue({ Text: "abc" }), "abc", "Text 单元格原文展示");
-eq(formatCellValue({ Int: 42 }), "42", "Int 单元格展示");
-eq(formatCellValue({ Bool: false }), "false", "Bool 单元格展示");
-eq(formatCellValue("Null"), "NULL", "Null 单元格展示为 NULL");
-eq(formatCellValue({ BlobLen: 1024 }), "<binary 1.0 KiB>", "二进制列只展示长度不回字节");
+// BUG-HUNT B8-1：断言此前按 PascalCase 书写（与后端 snake_case 实际输出不符，等于把缺陷
+// 固化为契约）。现按权威 DTO 对齐 snake_case；任何回退到 PascalCase 的改动都会在此失败。
+eq(decodeDbValue("null"), null, "字符串 null 解码为 null");
+eq(decodeDbValue({ bool: true }), true, "bool 标签解码为布尔");
+eq(decodeDbValue({ int: 7 }), 7, "int 标签解码为数值");
+eq(decodeDbValue({ float: 1.5 }), 1.5, "float 标签解码为数值");
+eq(decodeDbValue({ text: "abc" }), "abc", "text 标签解码为字符串");
+eq(formatCellValue({ text: "abc" }), "abc", "text 单元格原文展示");
+eq(formatCellValue({ int: 42 }), "42", "int 单元格展示");
+eq(formatCellValue({ bool: false }), "false", "bool 单元格展示");
+eq(formatCellValue("null"), "NULL", "null 单元格展示为 NULL");
+eq(formatCellValue({ blob_len: 1024 }), "<binary 1.0 KiB>", "二进制列只展示长度不回字节");
 eq(formatCellValue({ Weird: 1 }), JSON.stringify({ Weird: 1 }), "未知形态安全降级为 JSON 文本");
 
 // ===== 7c. 状态与上限命中（非静默） =====
@@ -219,7 +221,7 @@ const timedOut = buildResultView({ columns: ["a"], rows: [], row_count: 0, trunc
 ok(timedOut.warnings.some((w) => w.includes("超时")), "超时必须给出结果不完整告警");
 const failed = buildResultView({ columns: ["a"], rows: [], row_count: 0, truncated: false, field_truncated: false, elapsed_ms: 0, state: "failed", query_id: "q" });
 ok(failed.warnings.some((w) => w.includes("失败")), "失败必须给出结果不完整告警");
-const limitRows = buildResultView({ columns: ["a"], rows: [[{ Int: 1 }]], row_count: 1000, truncated: true, field_truncated: false, limit_hit: "rows", elapsed_ms: 5, state: "completed", query_id: "q" });
+const limitRows = buildResultView({ columns: ["a"], rows: [[{ int: 1 }]], row_count: 1000, truncated: true, field_truncated: false, limit_hit: "rows", elapsed_ms: 5, state: "completed", query_id: "q" });
 eq(limitRows.rows[0][0], "1", "带标签值在结果视图中解码展示");
 ok(limitRows.warnings.some((w) => w.includes("行数上限")), "命中行数上限时告警要明确原因");
 eq(buildResultView({ columns: [], rows: [], row_count: 0, truncated: false, field_truncated: false, elapsed_ms: 0, state: "completed", query_id: "q", risk: "read", production_verdict: "NonProduction" }).verdict, "NonProduction", "结果视图回带后端生产判定");
@@ -231,9 +233,9 @@ eq(toCsv(["a"], [["he said \"hi\""]]), "a\n\"he said \"\"hi\"\"\"", "引号转�
 eq(toCsv(["a"], [["l1\nl2"]]), "a\n\"l1\nl2\"", "含换行的单元格加引号");
 eq(toCsv(["a"], [[null]]), "a\n", "null 导出为空");
 eq(toCsv([], []), "", "空结果导出空串");
-eq(toCsv(["a"], [[{ Text: "x,y" }]]), "a\n\"x,y\"", "带标签值同样按 CSV 转义");
-eq(toCsv(["a"], [["Null"], [null]]), "a\n\n", "字符串 Null 与 JS null 都导出为空");
-eq(toCsv(["a"], [[{ BlobLen: 128 }]]), "a\n<binary 128 B>", "二进制列导出为长度占位而非字节");
+eq(toCsv(["a"], [[{ text: "x,y" }]]), "a\n\"x,y\"", "带标签值同样按 CSV 转义");
+eq(toCsv(["a"], [["null"], [null]]), "a\n\n", "字符串 null 与 JS null 都导出为空");
+eq(toCsv(["a"], [[{ blob_len: 128 }]]), "a\n<binary 128 B>", "二进制列导出为长度占位而非字节");
 
 // ===== 9. SQL 前置校验与提示 =====
 eq(sqlIssues("select 1").length, 0, "正常 SQL 无问题");

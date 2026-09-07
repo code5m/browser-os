@@ -14,6 +14,20 @@ const ws = useWorkspaceStore();
 const layout = useLayoutStore();
 const settings = useSettingsStore();
 
+// W17(A7): 当前活动视图的可读名（纯展示，用于状态栏发现性；不引入运行时行为）。
+// mainView 为内部枚举键，非路径/URL/凭据，展示无敏感信息泄露风险。
+const KNOWN_VIEWS: Record<string, string> = {
+  home: "主页", browser: "浏览器", grid: "宫格", files: "文件", arts: "成果库",
+  clip: "剪贴板", repo: "仓库", apps: "应用", audit: "审计", scripts: "脚本库",
+  commands: "命令库", tools: "工具箱", db: "数据库", tasks: "定时任务",
+  plugin: "插件", skills: "技能", agents: "智能体", graph: "知识图谱",
+  settings: "设置", term: "终端", editor: "编辑器",
+};
+const viewLabel = computed(() => KNOWN_VIEWS[layout.mainView] ?? "");
+const viewUnknown = computed(
+  () => !!layout.mainView && !(layout.mainView in KNOWN_VIEWS)
+);
+
 const tabCount = computed(() => browser.tabs.length);
 const auditCount = computed(() => ws.audit.length);
 const termReady = computed(() => system.terminalOpen && !!system.termId);
@@ -64,6 +78,8 @@ const budgetLow = computed(
 <template>
   <footer class="status">
     <span class="ok">● 已连接</span>
+    <span v-if="viewLabel" class="viewchip">当前：{{ viewLabel }}</span>
+    <span v-else-if="viewUnknown" class="viewchip warn" role="alert">⚠ 未知视图：{{ layout.mainView }}</span>
     <span>页签 {{ tabCount }}</span>
     <span>· 终端{{ termReady ? "就绪" : "未启" }}</span>
     <span>· 仓库{{ repoReady ? "已配置" : "未配" }}</span>
@@ -134,6 +150,12 @@ const budgetLow = computed(
 .status .msg {
   margin-left: auto;
   color: #cbd5e0;
+}
+.viewchip {
+  color: #cbd5e0;
+}
+.viewchip.warn {
+  color: #ff7a7a;
 }
 .res {
   cursor: pointer;

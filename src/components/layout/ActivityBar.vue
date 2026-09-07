@@ -1,56 +1,27 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { useLayoutStore } from "../../stores/useLayoutStore";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import {
+  useLayoutStore,
+  TOP_NAV_ITEMS,
+  NAV_MENU_SECTIONS,
+  isNavActive,
+  nextNavIndex,
+} from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../stores/useBrowserStore";
 import { useSystemStore } from "../../stores/useSystemStore";
 import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
 import BookmarkStar from "../browser/BookmarkStar.vue";
+import { redactSecrets } from "../../utils/redact";
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
 const system = useSystemStore();
 const ws = useWorkspaceStore();
 
-// 一级入口：高频视图直达（主页/浏览/终端/剪贴板/知识库）
-const topItems = [
-  { view: "home", icon: "🏠", label: "主页" },
-  { view: "browser", icon: "📁", label: "浏览" },
-  { view: "term", icon: "💻", label: "终端" },
-  { view: "clip", icon: "📋", label: "剪贴板" },
-  { view: "arts", icon: "📚", label: "知识库" },
-] as const;
-
-// ☰ 菜单扩展行的分节内容
-const menuSections = [
-  {
-    title: "工作区",
-    items: [
-      { view: "files", icon: "📂", label: "文件" },
-    ],
-  },
-  {
-    title: "工具",
-    items: [
-      { view: "apps", icon: "🚀", label: "应用" },
-      { view: "scripts", icon: "📜", label: "脚本库" },
-      { view: "commands", icon: "⚡", label: "命令库" },
-      { view: "tools", icon: "🧰", label: "工具箱" },
-      { view: "db", icon: "🗄️", label: "数据库" },
-      { view: "tasks", icon: "⏰", label: "定时任务" },
-      { view: "skills", icon: "🛠️", label: "技能" },
-      { view: "agents", icon: "🤖", label: "智能体" },
-      { view: "graph", icon: "🕸️", label: "图谱" },
-      { view: "plugin", icon: "🔌", label: "插件" },
-    ],
-  },
-  {
-    title: "同步",
-    items: [
-      { view: "repo", icon: "🛰️", label: "仓库" },
-      { view: "audit", icon: "🛡️", label: "审计" },
-    ],
-  },
-] as const;
+// 一级入口与 ☰ 菜单分节统一来自 useLayoutStore（W17 导航真源），
+// 窄窗口按 navTopViews 从尾部裁剪，被裁掉的入口在 ☰ 菜单中仍可达。
+const menuSections = NAV_MENU_SECTIONS;
+const topItems = computed(() => TOP_NAV_ITEMS.filter((i) => layout.navTopViews.includes(i.view)));
 
 // 宫格设置扩展行数据
 const gridLayouts = [
@@ -64,7 +35,6 @@ const urlsOpen = ref(false);
 // ===== 资源监控（D）：宫格设置行"资源"按钮，2s 轮询 =====
 import type { ResourceStats } from "../../types";
 import { bridge } from "../../bridge";
-import { onBeforeUnmount } from "vue";
 const resOpen = ref(false);
 const resStats = ref<ResourceStats | null>(null);
 let resTimer: number | null = null;
@@ -83,7 +53,17 @@ function toggleRes() {
     resTimer = null;
   }
 }
+// ===== W17：窗口宽度上报（窄窗口密度）+ resize 监听清理 =====
+const navEl = ref<HTMLElement | null>(null);
+function syncWidth() {
+  layout.setWindowWidth(window.innerWidth || 0);
+}
+onMounted(() => {
+  syncWidth();
+  window.addEventListener("resize", syncWidth);
+});
 onBeforeUnmount(() => {
+  window.removeEventListener("resize", syncWidth);
   if (resTimer) clearInterval(resTimer);
 });
 function fmtMb(mb: number) {
@@ -94,10 +74,37 @@ function fmtMb(mb: number) {
 // 关键设计：面板【不悬浮】——页签/宫格是原生 GTK 子窗口，永远压在 HTML 之上，
 // 悬浮下拉必然被网页盖住。内联扩展行把工具栏撑高、网页随 viewport 整体下移
 // （RO 触发重定位），零遮挡、零闪烁，也不需要"隐藏-恢复"的 hack。
-const expanded = ref<"" | "grid" | "more" | "omni">("");
-
+// 扩展行状态提升到 store（layout.navSection）：视图切换/关闭都由 store 统一收起，
+// 组件内不再自持一份，避免"换了视图扩展行还挂着"的状态分裂。
 function toggleSection(key: "" | "grid" | "more" | "omni") {
-  expanded.value = expanded.value === key ? "" : key;
+  layout.toggleNavSection(key);
+}
+
+// W17：活动条键盘漫游 —— ←/→ 在入口间环绕移动焦点，Home/End 直达首尾
+function onNavKeydown(e: KeyboardEvent) {
+  const nav = navEl.value;
+  if (!nav) return;
+  const items = Array.from(nav.querySelectorAll<HTMLElement>("[data-nav-item]"));
+  if (!items.length) return;
+  const cur = items.indexOf(document.activeElement as HTMLElement);
+  let next = -1;
+  if (e.key === "ArrowRight") next = nextNavIndex(cur < 0 ? -1 : cur, 1, items.length);
+  else if (e.key === "ArrowLeft") next = nextNavIndex(cur < 0 ? 0 : cur, -1, items.length);
+  else if (e.key === "Home") next = 0;
+  else if (e.key === "End") next = items.length - 1;
+  else return;
+  e.preventDefault();
+  items[next]?.focus();
+}
+
+// W17：Esc 收起扩展行并把焦点还给触发它的按钮（键盘用户不会丢失焦点位置）
+function onEscape() {
+  const open = layout.navSection;
+  if (!open) return;
+  layout.closeNavSection();
+  nextTick(() => {
+    document.querySelector<HTMLElement>(`[data-nav-toggle="${open}"]`)?.focus();
+  });
 }
 
 function setGridLayout(mode: (typeof gridLayouts)[number]["key"]) {
@@ -126,7 +133,7 @@ async function onItem(v: string) {
     bridge.debugLog(`[M0] ignore activity item ${v} while driver=${system.m0Cfg.driver}`);
     return;
   }
-  expanded.value = "";
+  layout.navSection = "";
   // 离开宫格视图时自动关闭宫格：gridOpen 悬挂为 true 会让浏览视图的定位
   // 走错分支（tab 不复位、宫格被拉回可视区），且在非浏览器视图空转重试
   if (v !== "grid" && browser.gridOpen) await browser.closeGridAll();
@@ -158,6 +165,11 @@ const recentDirs = ref<string[]>(loadRecentDirs());
 const omniShowHistory = ref(true);
 const omniShowCommon = ref(true);
 
+// W17：最近网址/目录只做展示脱敏（点击仍用原始值），避免把带凭据的
+// 查询串或 token 原样贴在活动条上。
+function safeLabel(s: string): string {
+  return redactSecrets(s || "");
+}
 function loadRecentDirs(): string[] {
   try {
     return JSON.parse(localStorage.getItem(RECENT_DIRS_KEY) || "[]");
@@ -180,17 +192,17 @@ function looksLikeDir(s: string): boolean {
   return t.startsWith("/") || t.startsWith("~") || /^[A-Za-z]:[\\/]/.test(t);
 }
 function onAddrGo() {
-  expanded.value = "";
+  layout.navSection = "";
   if (looksLikeDir(browser.url)) openDirCenter();
   else browser.openBrowser();
 }
 function pickDir(p: string) {
-  expanded.value = "";
+  layout.navSection = "";
   browser.url = p;
   openDirCenter();
 }
 function pickUrl(u: string) {
-  expanded.value = "";
+  layout.navSection = "";
   browser.url = u;
   browser.openBrowser();
 }
@@ -212,15 +224,16 @@ async function openDirCenter() {
 </script>
 
 <template>
-  <div class="tbar">
-    <nav class="activity">
+  <div class="tbar" :class="'nav-' + layout.navDensity" @keydown.esc="onEscape">
+    <nav ref="navEl" class="activity" aria-label="主导航" @keydown="onNavKeydown">
       <!-- 左：视图导航 -->
       <button
         v-for="it in topItems"
         :key="it.view"
-        :class="{ active: layout.mainView === it.view }"
+        data-nav-item
+        :class="{ active: isNavActive(layout.mainView, it.view) }"
         :aria-label="it.label"
-        :aria-current="layout.mainView === it.view ? 'page' : undefined"
+        :aria-current="isNavActive(layout.mainView, it.view) ? 'page' : undefined"
         @click="onItem(it.view)"
         :title="it.label"
       >
@@ -230,7 +243,9 @@ async function openDirCenter() {
 
       <!-- 宫格：左键直达打开，右侧 ▾ 展开设置行 -->
       <button
-        :class="{ active: layout.mainView === 'grid' }"
+        data-nav-item
+        :class="{ active: isNavActive(layout.mainView, 'grid') }"
+        aria-label="打开宫格"
         title="打开宫格"
         @click="onItem('grid')"
       >
@@ -239,14 +254,24 @@ async function openDirCenter() {
       </button>
       <button
         class="caret-btn"
-        :class="{ active: expanded === 'grid' }"
+        data-nav-item
+        data-nav-toggle="grid"
+        :class="{ active: layout.navSection === 'grid' }"
+        aria-label="宫格设置"
+        :aria-expanded="layout.navSection === 'grid'"
+        aria-controls="nav-grid-row"
         title="宫格设置"
         @click.stop="toggleSection('grid')"
       >▾</button>
 
       <!-- ☰ 菜单：展开工作区/工具/同步 -->
       <button
-        :class="{ active: expanded === 'more' || menuSections.some((s) => s.items.some((c) => c.view === layout.mainView)) }"
+        data-nav-item
+        data-nav-toggle="more"
+        :class="{ active: layout.navSection === 'more' || menuSections.some((s) => s.items.some((c) => isNavActive(layout.mainView, c.view))) }"
+        aria-label="更多功能"
+        :aria-expanded="layout.navSection === 'more'"
+        aria-controls="nav-more-row"
         title="更多功能"
         @click.stop="toggleSection('more')"
       >
@@ -257,17 +282,21 @@ async function openDirCenter() {
       <!-- 中：智能地址栏 -->
       <div class="addr-mid">
         <template v-if="layout.mainView === 'browser' || layout.mainView === 'grid'">
-          <button class="tbtn" @click="browser.goBack" title="后退">←</button>
-          <button class="tbtn" @click="browser.goForward" title="前进">→</button>
-          <button class="tbtn" @click="browser.reloadActive" title="刷新">⟳</button>
+          <button class="tbtn" aria-label="后退" @click="browser.goBack" title="后退">←</button>
+          <button class="tbtn" aria-label="前进" @click="browser.goForward" title="前进">→</button>
+          <button class="tbtn" aria-label="刷新" @click="browser.reloadActive" title="刷新">⟳</button>
         </template>
         <div class="omni-wrap">
           <!-- 聚焦即自动展开最近/常用（无小三角）；选中或回车后自动收起 -->
           <input
             v-model="browser.url"
+            aria-label="地址栏"
+            data-nav-toggle="omni"
+            :aria-expanded="layout.navSection === 'omni'"
+            aria-controls="nav-omni-row"
             placeholder="输入网址或目录路径（如 baidu.com 或 /home/you/Documents），回车前往"
             @keyup.enter="onAddrGo"
-            @focus="expanded = 'omni'"
+            @focus="layout.navSection = 'omni'"
           />
           <!-- M1-3：⭐ 收藏当前网页 + 📑 展开收藏夹侧栏 -->
           <BookmarkStar v-if="layout.mainView === 'browser'" />
@@ -277,24 +306,26 @@ async function openDirCenter() {
 
       <!-- 右：浏览辅助 + 采集 + 设置 -->
       <template v-if="layout.mainView === 'browser'">
-        <button class="tbtn" @click="layout.toggleBrowserDock('files')" title="边浏览边管理文件">🗂</button>
-        <button class="tbtn" @click="layout.toggleBrowserDock('term')" title="边浏览边开终端">💻</button>
-        <button class="tbtn" @click="layout.toggleCompact" title="精简模式：隐藏工具栏给网页更大空间">⛶</button>
+        <button class="tbtn" aria-label="边浏览边管理文件" @click="layout.toggleBrowserDock('files')" title="边浏览边管理文件">🗂</button>
+        <button class="tbtn" aria-label="边浏览边开终端" @click="layout.toggleBrowserDock('term')" title="边浏览边开终端">💻</button>
+        <button class="tbtn" aria-label="精简模式" @click="layout.toggleCompact" title="精简模式：隐藏工具栏给网页更大空间">⛶</button>
       </template>
       <span class="sep"></span>
       <button
         class="sys"
+        data-nav-item
         :class="{ active: browser.aiNavOpen }"
+        aria-label="AI 导航"
         title="AI 导航"
         @click="browser.aiNavOpen = !browser.aiNavOpen"
       >
         <span class="ic">🤖</span>
       </button>
-      <button class="collect" :title="'采集选中内容'" @click="ws.collectSelection">
+      <button class="collect" data-nav-item aria-label="采集选中内容" :title="'采集选中内容'" @click="ws.collectSelection">
         <span class="ic">📥</span>
         <span class="lab">采集</span>
       </button>
-      <button class="sys" title="系统设置" @click="onItem('settings')">
+      <button class="sys" data-nav-item aria-label="系统设置" title="系统设置" @click="onItem('settings')">
         <span class="ic">⚙️</span>
       </button>
     </nav>
@@ -315,10 +346,10 @@ async function openDirCenter() {
     </div>
 
     <!-- 宫格设置扩展行 -->
-    <div v-if="expanded === 'grid'" class="expand-row">
+    <div v-if="layout.navSection === 'grid'" id="nav-grid-row" class="expand-row">
       <span class="er-label">模式</span>
-      <button :class="{ active: browser.gridMode === 'browse' }" @click="browser.gridMode = 'browse'">🌐 浏览</button>
-      <button :class="{ active: browser.gridMode === 'ai' }" @click="browser.gridMode = 'ai'">🤖 AI</button>
+      <button aria-label="宫格浏览模式" :class="{ active: browser.gridMode === 'browse' }" @click="browser.gridMode = 'browse'">🌐 浏览</button>
+      <button aria-label="宫格 AI 模式" :class="{ active: browser.gridMode === 'ai' }" @click="browser.gridMode = 'ai'">🤖 AI</button>
       <span class="er-sep"></span>
       <span class="er-label">布局</span>
       <button
@@ -337,16 +368,16 @@ async function openDirCenter() {
         @click="setGridCount(n)"
       >{{ n }}</button>
       <span class="er-sep"></span>
-      <button class="er-primary" @click="browser.gridOpen ? browser.layoutGrid() : onItem('grid')">
+      <button class="er-primary" aria-label="重排或打开宫格" @click="browser.gridOpen ? browser.layoutGrid() : onItem('grid')">
         {{ browser.gridOpen ? "重排" : "打开" }}
       </button>
-      <button :class="{ active: urlsOpen }" title="编辑各格网址" @click="urlsOpen = !urlsOpen">网址</button>
-      <button :class="{ active: resOpen }" title="查看内存占用" @click="toggleRes">资源</button>
-      <button class="er-danger" @click="expanded = ''; browser.closeGridAll()">关闭宫格</button>
-      <button class="er-close" @click="expanded = ''" title="收起">✕</button>
+      <button :class="{ active: urlsOpen }" aria-label="编辑各格网址" title="编辑各格网址" @click="urlsOpen = !urlsOpen">网址</button>
+      <button :class="{ active: resOpen }" aria-label="查看内存占用" title="查看内存占用" @click="toggleRes">资源</button>
+      <button class="er-danger" aria-label="关闭宫格" @click="layout.navSection = ''; browser.closeGridAll()">关闭宫格</button>
+      <button class="er-close" aria-label="收起宫格设置" @click="layout.navSection = ''" title="收起">✕</button>
     </div>
     <!-- 资源监控行：主进程 + 每宫格子进程树 RSS（2s 自动刷新） -->
-    <div v-if="expanded === 'grid' && resOpen && resStats" class="expand-row">
+    <div v-if="layout.navSection === 'grid' && resOpen && resStats" class="expand-row">
       <span class="er-label">
         系统可用 {{ fmtMb(resStats.mem_available_mb) }} / {{ fmtMb(resStats.mem_total_mb) }}
       </span>
@@ -360,52 +391,52 @@ async function openDirCenter() {
         ⚠️ 可用内存偏低，建议减少格数或关闭其它应用
       </span>
     </div>
-    <div v-if="expanded === 'grid' && urlsOpen" class="expand-row">
+    <div v-if="layout.navSection === 'grid' && urlsOpen" class="expand-row">
       <span v-for="i in browser.gridCount" :key="i" class="er-url">
         <span class="er-gidx">{{ i }}</span>
-        <input v-model="browser.gridUrls[i - 1]" placeholder="网址" @keyup.enter="browser.gridSetUrl(i - 1)" />
-        <button @click="browser.gridSetUrl(i - 1)">↺</button>
+        <input v-model="browser.gridUrls[i - 1]" :aria-label="'第 ' + i + ' 格网址'" placeholder="网址" @keyup.enter="browser.gridSetUrl(i - 1)" />
+        <button :aria-label="'刷新第 ' + i + ' 格'" @click="browser.gridSetUrl(i - 1)">↺</button>
       </span>
     </div>
 
     <!-- 功能菜单扩展行 -->
-    <div v-if="expanded === 'more'" class="expand-row">
+    <div v-if="layout.navSection === 'more'" id="nav-more-row" class="expand-row">
       <template v-for="s in menuSections" :key="s.title">
         <span class="er-label">{{ s.title }}</span>
         <button
           v-for="c in s.items"
           :key="c.view"
-          :class="{ active: layout.mainView === c.view }"
+          :class="{ active: isNavActive(layout.mainView, c.view) }"
           :aria-label="c.label"
-          :aria-current="layout.mainView === c.view ? 'page' : undefined"
+          :aria-current="isNavActive(layout.mainView, c.view) ? 'page' : undefined"
           @click="onItem(c.view)"
         >
           <span class="ic">{{ c.icon }}</span> {{ c.label }}
         </button>
         <span class="er-sep"></span>
       </template>
-      <button class="er-close" @click="expanded = ''" title="收起">✕</button>
+      <button class="er-close" aria-label="收起功能菜单" @click="layout.navSection = ''" title="收起">✕</button>
     </div>
 
     <!-- 最近网址 / 最近常用目录扩展行（历史/常用可独立开关） -->
-    <div v-if="expanded === 'omni'" class="expand-row omni-row">
-      <button :class="{ active: omniShowHistory }" title="显示/隐藏历史记录" @click="omniShowHistory = !omniShowHistory">🕒 历史</button>
-      <button :class="{ active: omniShowCommon }" title="显示/隐藏常用目录" @click="omniShowCommon = !omniShowCommon">📂 常用</button>
+    <div v-if="layout.navSection === 'omni'" id="nav-omni-row" class="expand-row omni-row">
+      <button :class="{ active: omniShowHistory }" aria-label="显示或隐藏历史记录" title="显示/隐藏历史记录" @click="omniShowHistory = !omniShowHistory">🕒 历史</button>
+      <button :class="{ active: omniShowCommon }" aria-label="显示或隐藏常用目录" title="显示/隐藏常用目录" @click="omniShowCommon = !omniShowCommon">📂 常用</button>
       <span class="er-sep"></span>
       <template v-if="omniShowHistory && ws.recents.some((r) => r.type === 'url')">
         <button
           v-for="r in ws.recents.filter((r) => r.type === 'url').slice(0, 8)"
           :key="'u' + r.path"
           class="chip"
-          :title="r.path"
+          :title="safeLabel(r.path)"
           @click="pickUrl(r.path)"
-        >🌐 {{ r.path }}</button>
+        >🌐 {{ safeLabel(r.path) }}</button>
       </template>
       <template v-if="omniShowHistory && recentDirs.length">
-        <button v-for="d in recentDirs" :key="'d' + d" class="chip" :title="d" @click="pickDir(d)">📁 {{ d }}</button>
+        <button v-for="d in recentDirs" :key="'d' + d" class="chip" :title="safeLabel(d)" @click="pickDir(d)">📁 {{ safeLabel(d) }}</button>
       </template>
       <template v-if="omniShowCommon && ws.startDirs.length">
-        <button v-for="d in ws.startDirs" :key="'s' + d.path" class="chip" :title="d.path" @click="pickDir(d.path)">📂 {{ d.name }}</button>
+        <button v-for="d in ws.startDirs" :key="'s' + d.path" class="chip" :title="safeLabel(d.path)" @click="pickDir(d.path)">📂 {{ d.name }}</button>
       </template>
       <span
         v-if="(omniShowHistory && !ws.recents.length && !recentDirs.length) && (omniShowCommon && !ws.startDirs.length)"
@@ -413,7 +444,7 @@ async function openDirCenter() {
       >
         暂无记录：输入网址或 / 开头的目录路径，回车即自动识别
       </span>
-      <button class="er-close" @click="expanded = ''" title="收起">✕</button>
+      <button class="er-close" aria-label="收起最近与常用" @click="layout.navSection = ''" title="收起">✕</button>
     </div>
   </div>
 </template>
@@ -574,5 +605,21 @@ async function openDirCenter() {
 .tbtn:hover {
   background: #2f3a47;
   color: #fff;
+}
+/* W17 窄窗口密度：compact 先收文字标签，icon 再收次要按钮。
+   裁剪掉的入口不会消失——它们仍在 ☰ 菜单里（由 store 的 navTopViews 保证）。 */
+.nav-compact .lab,
+.nav-icon .lab {
+  display: none;
+}
+.nav-compact .activity button,
+.nav-icon .activity button {
+  padding: 2px 6px;
+}
+.nav-icon .addr-mid .go {
+  display: none;
+}
+.nav-icon .omni-wrap input {
+  font-size: 11px;
 }
 </style>

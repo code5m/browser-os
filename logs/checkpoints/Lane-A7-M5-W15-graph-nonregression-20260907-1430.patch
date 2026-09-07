@@ -1,0 +1,52 @@
+diff --git a/logs/assist/A7-M5-W15-graph-nonregression-20260907-1430.md b/logs/assist/A7-M5-W15-graph-nonregression-20260907-1430.md
+index e8311f3..b00f2a8 100644
+--- a/logs/assist/A7-M5-W15-graph-nonregression-20260907-1430.md
++++ b/logs/assist/A7-M5-W15-graph-nonregression-20260907-1430.md
+@@ -7,7 +7,9 @@
+ > 形态严守：本卡**未修改** `graph.rs` / `domain.rs` / `bridge.rs` / `main.rs` / `default-commands.toml` /
+ > `src/bridge.ts` / `src/types.ts` / `scripts/check-graph-policy.py` / `scripts/check-graph-ui-logic.mjs` /
+ > 三份主文档 / 任何 graph Vue 组件。唯一新增产物 = 本说明。
+-> BASE：W14 已合入，`HEAD=886ea29 feat(M5): integrate W14 plugin manager UI`。
++> BASE：**W15 已由 A0 收口**，`HEAD=052b18a feat(M5): close W15 release readiness`（首跑于 `886ea29`）。
++> 复验：A0 收口后于 `052b18a` 重跑 graph 策略自检/默认、`check-graph-ui-logic.mjs`、graph cargo 单测，
++> 四项结果与首跑**完全一致**（见 §2）。
+ 
+ ## 1. 结论
+ 
+@@ -31,6 +33,10 @@
+ | 后端策略默认扫描 | `python3 scripts/check-graph-policy.py` → `GRAPH_POLICY=PASS（无违规）` |
+ | 前端 UI 逻辑 | `node scripts/check-graph-ui-logic.mjs` → 通过 **113**，失败 0（含 `GRAPH_DEBOUNCE_MS=300`、文案不泄露 props/secret/token、截断文案非空） |
+ | Rust 单测（graph） | `cargo test --manifest-path src-tauri/Cargo.toml graph` → **15 passed / 0 failed**（含 `from_json_rejects_secret`、`validate_rejects_secret_in_props`、`graph_query_ready_view_omits_props`、`store_rejects_duplicate_node`、`store_enforces_node_capacity`、`graph_query_truncates_when_over_limit`、`graph_stats_approaching_capacity_flag`、`error_codes_are_stable_ascii` 等只读/脱敏/容量守卫） |
++| 前端构建（Graph UI 在内） | `npm run build` → **✓ built in 5.82s，exit 0**；产出 `dist/assets/GraphPanel-Cuu_uIUY.js`(15.19 kB) / `GraphPanel-D1tkEMj4.css`(3.68 kB)，与 W14 同期 `PluginManager-BwrSrUtZ.js` 等同批无冲突 → Graph UI 无构建回归 |
++
++> 上表四项在 `HEAD=052b18a`（W15 收口）上**已复验一致**：`GRAPH_POLICY_SELF_TEST=PASS（ACTIVE=8）`、
++> `GRAPH_POLICY=PASS（无违规）`、UI 逻辑 **113/113**、graph Rust 单测 **15/15**。结论不因 A0 收口而变。
+ 
+ ## 3. 共享锚点复验（W14 → W15 字节级一致）
+ 
+@@ -67,8 +73,9 @@ Agent/Skill 执行、MCP 扩张、**graph write/export**、后台 worker、raw T
+ - A7 自身门禁（`check-graph-policy.py` + `check-graph-ui-logic.mjs` + graph cargo 单测）已全绿。
+ - 全量 `pre-merge.sh` 潜在的 FAIL 来自**其他并发 lane**（如 `cargo fmt`、`build metrics regression`、
+   `check-plugin-policy.py` / `check-plugin-ui-logic.mjs` / `check-tools-policy.py` 等），与 Graph 无关，
+-  归 A0 跨 lane 集成统一处置。本卡不运行 `npm run build` / 全量 `pre-merge`（GUI 验收归 A8、最终矩阵归 A11；
+-  Graph 权威覆盖已由策略脚本 + Rust/node 单测提供）。
++  归 A0 跨 lane 集成统一处置。本卡额外实跑了 `npm run build`（见 §2，✓ exit 0，Graph UI 构建无回归）以增强
++  W15 发布就绪证据；全量 `pre-merge.sh` 最终矩阵仍归 **A11**（GUI/人工验收清单归 **A8**），本卡不越界代跑。
++  Graph 权威覆盖 = 策略脚本 + Rust/node 单测 + 前端构建三项。
+ - 本 W15 评审**未改动任何产品代码**，仅新增本说明。
+ 
+ ## 6. 工作树脏状态声明（透明）
+@@ -83,6 +90,10 @@ Agent/Skill 执行、MCP 扩张、**graph write/export**、后台 worker、raw T
+ 
+ ## 7. 交付物
+ 
+-- 本说明：`logs/assist/A7-M5-W15-graph-nonregression-20260907-1430.md`（唯一新增文件，docs-only Note）
+-- **未 push**（board：仅 A0 push）
+-- Graph 零回归结论：✅ 可进 M5-W15 Release
++- 本说明：`logs/assist/A7-M5-W15-graph-nonregression-20260907-1430.md`（docs-only Note）
++  - **已随 `052b18a feat(M5): close W15 release readiness` 由 A0 合入**。
++  - 本卡后续仅做**证据补强**：BASE/复验声明、`npm run build` 证据行、§5 措辞更正（增量 Δ，见下）。
++- 补丁：`logs/checkpoints/Lane-A7-M5-W15-graph-nonregression-20260907-1430.patch`
++  = 相对 `052b18a` 的**增量 diff**（仅本说明，未含任何产品代码或他 lane 文件）。
++- **未 push**（board：仅 A0 push）。
++- Graph 零回归结论：✅ 可进 / 已进 M5-W15 Release（W15 已于 `052b18a` 收口）。

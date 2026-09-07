@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref, reactive } from "vue";
+import { ref, reactive, computed } from "vue";
 
 // 活动栏 9 个模块 + 浏览器/编辑器，对应 prototype.html 的 9 视图 + 浏览器主视图
 export type MainView =
@@ -24,6 +24,111 @@ export type MainView =
   | "plugin"
   | "editor";
 
+// ===== M5-W17（Lane A6）客户端导航契约 =====
+// ActivityBar 的唯一真源：一级入口、☰ 菜单分节、窄窗口密度、键盘漫游索引。
+// 设计约束（由 scripts/check-client-navigation-logic.mjs 断言）：
+//   1) 窄窗口从一级入口尾部裁剪，被裁掉的入口必须仍在 ☰ 菜单中可达；
+//   2) 激活态只由 mainView 决定，单一判定函数 isNavActive，避免多处各写一份 ===；
+//   3) 全部为纯函数，可在 Node 下直接加载测试，不触碰 bridge/后端。
+export const TOP_NAV_ITEMS = [
+  { view: "home", icon: "🏠", label: "主页" },
+  { view: "browser", icon: "📁", label: "浏览" },
+  { view: "term", icon: "💻", label: "终端" },
+  { view: "clip", icon: "📋", label: "剪贴板" },
+  { view: "arts", icon: "📚", label: "知识库" },
+] as const;
+
+export const NAV_MENU_SECTIONS = [
+  {
+    title: "工作区",
+    items: [
+      { view: "files", icon: "📂", label: "文件" },
+      { view: "clip", icon: "📋", label: "剪贴板" },
+      { view: "arts", icon: "📚", label: "知识库" },
+    ],
+  },
+  {
+    title: "工具",
+    items: [
+      // 终端既是窄窗口下会被裁掉的一级入口，也必须常驻 ☰ 菜单（否则窄窗口下不可达）
+      { view: "term", icon: "💻", label: "终端" },
+      { view: "apps", icon: "🚀", label: "应用" },
+      { view: "scripts", icon: "📜", label: "脚本库" },
+      { view: "commands", icon: "⚡", label: "命令库" },
+      { view: "tools", icon: "🧰", label: "工具箱" },
+      { view: "db", icon: "🗄️", label: "数据库" },
+      { view: "tasks", icon: "⏰", label: "定时任务" },
+      { view: "skills", icon: "🛠️", label: "技能" },
+      { view: "agents", icon: "🤖", label: "智能体" },
+      { view: "graph", icon: "🕸️", label: "图谱" },
+      { view: "plugin", icon: "🔌", label: "插件" },
+    ],
+  },
+  {
+    title: "同步",
+    items: [
+      { view: "repo", icon: "🛰️", label: "仓库" },
+      { view: "audit", icon: "🛡️", label: "审计" },
+    ],
+  },
+] as const;
+
+export const NAV_DENSITY_FULL_PX = 1180;
+export const NAV_DENSITY_COMPACT_PX = 900;
+export type NavDensity = "full" | "compact" | "icon";
+export type NavSection = "" | "grid" | "more" | "omni";
+
+export function navDensityForWidth(width: number): NavDensity {
+  const w = Number(width) || 0;
+  if (w >= NAV_DENSITY_FULL_PX) return "full";
+  if (w >= NAV_DENSITY_COMPACT_PX) return "compact";
+  return "icon";
+}
+
+// 窄窗口裁剪：full 全显示 → compact 保留前 3 个 → icon 只留主页+浏览。
+// 被裁掉的（终端/剪贴板/知识库）在 NAV_MENU_SECTIONS 中仍然可达。
+export function navTopViewsForWidth(width: number): string[] {
+  const d = navDensityForWidth(width);
+  if (d === "full") return TOP_NAV_ITEMS.map((i) => i.view);
+  if (d === "compact") return TOP_NAV_ITEMS.slice(0, 3).map((i) => i.view);
+  return TOP_NAV_ITEMS.slice(0, 2).map((i) => i.view);
+}
+
+// 激活态唯一判定：只有当前视图与入口视图完全一致才算激活（不留"包含/前缀"歧义）
+export function isNavActive(mainView: string, view: string): boolean {
+  return mainView === view;
+}
+
+// 左右方向键漫游（含首尾环绕）；非法长度返回 0，绝不抛异常
+export function nextNavIndex(current: number, delta: number, len: number): number {
+  if (!Number.isFinite(len) || len <= 0) return 0;
+  const c = Number.isFinite(current) ? current : 0;
+  return (((c + delta) % len) + len) % len;
+}
+
+// 模块页签元数据：W17 起提到模块级导出，供 check-client-navigation-logic.mjs
+// 断言"每个模块都有导航入口，不存在孤儿模块"。
+export const MODULE_META: Record<string, { icon: string; label: string }> = {
+  home: { icon: "🏠", label: "主页" },
+  grid: { icon: "🗂️", label: "宫格" },
+  files: { icon: "📂", label: "文件" },
+  clip: { icon: "📋", label: "剪贴板" },
+  arts: { icon: "📚", label: "知识库" },
+  apps: { icon: "🚀", label: "应用" },
+  term: { icon: "💻", label: "终端" },
+  repo: { icon: "🛰️", label: "仓库" },
+  audit: { icon: "🛡️", label: "审计" },
+  scripts: { icon: "📜", label: "脚本库" },
+  commands: { icon: "⚡", label: "命令库" },
+  tools: { icon: "🧰", label: "工具箱" },
+  tasks: { icon: "⏰", label: "定时任务" },
+  skills: { icon: "🛠️", label: "技能" },
+  agents: { icon: "🤖", label: "智能体" },
+  graph: { icon: "🕸️", label: "图谱" },
+  plugin: { icon: "🔌", label: "插件" },
+  settings: { icon: "⚙️", label: "设置" },
+};
+
 export const useLayoutStore = defineStore("layout", () => {
   const mainView = ref<MainView>("home");
   const sidebarOpen = ref(true);
@@ -42,6 +147,26 @@ export const useLayoutStore = defineStore("layout", () => {
   const addrMode = ref<"url" | "dir">("url");
   // 浏览器精简模式：隐藏地址栏+页签栏，给网页更大空间（类谷歌沉浸式）
   const compactMode = ref(false);
+  // M5-W17：客户端窗口宽度（px）→ 导航密度；ActivityBar 随 resize 上报
+  const windowWidth = ref(NAV_DENSITY_FULL_PX);
+  // M5-W17：活动条扩展行（宫格设置 / ☰ 菜单 / 最近与常用），同一时刻只开一个
+  const navSection = ref<NavSection>("");
+
+  const navDensity = computed<NavDensity>(() => navDensityForWidth(windowWidth.value));
+  const navTopViews = computed<string[]>(() => navTopViewsForWidth(windowWidth.value));
+
+  function setWindowWidth(px: number) {
+    const n = Math.round(Number(px) || 0);
+    windowWidth.value = Math.min(4096, Math.max(320, n));
+  }
+
+  function toggleNavSection(key: NavSection) {
+    navSection.value = navSection.value === key ? "" : key;
+  }
+
+  function closeNavSection() {
+    navSection.value = "";
+  }
 
   let toastTimer: number | null = null;
   function showToast(text: string) {
@@ -62,6 +187,8 @@ export const useLayoutStore = defineStore("layout", () => {
     mainView.value = v;
     // 进入模块视图时关闭文件编辑器覆盖层
     if (v !== "editor") fileEditorOpen.value = false;
+    // M5-W17：视图一变就收起活动条扩展行，避免"换了视图还挂着上一视图的菜单"
+    navSection.value = "";
   }
 
   function toggleSidebar() {
@@ -102,26 +229,7 @@ export const useLayoutStore = defineStore("layout", () => {
     label: string;
     path?: string; // 目录页签：记录的目录路径，激活时重新 enterDir
   }
-  const MOD_META: Record<string, { icon: string; label: string }> = {
-    home: { icon: "🏠", label: "主页" },
-    grid: { icon: "🗂️", label: "宫格" },
-    files: { icon: "📂", label: "文件" },
-    clip: { icon: "📋", label: "剪贴板" },
-    arts: { icon: "📚", label: "知识库" },
-    apps: { icon: "🚀", label: "应用" },
-    term: { icon: "💻", label: "终端" },
-    repo: { icon: "🛰️", label: "仓库" },
-    audit: { icon: "🛡️", label: "审计" },
-    scripts: { icon: "📜", label: "脚本库" },
-    commands: { icon: "⚡", label: "命令库" },
-    tools: { icon: "🧰", label: "工具箱" },
-    tasks: { icon: "⏰", label: "定时任务" },
-    skills: { icon: "🛠️", label: "技能" },
-    agents: { icon: "🤖", label: "智能体" },
-    graph: { icon: "🕸️", label: "图谱" },
-    plugin: { icon: "🔌", label: "插件" },
-    settings: { icon: "⚙️", label: "设置" },
-  };
+  const MOD_META: Record<string, { icon: string; label: string }> = MODULE_META;
   const modTabs = reactive<ModTab[]>([]);
   const activeModTab = ref("");
   let modTabSeq = 0;
@@ -223,6 +331,13 @@ export const useLayoutStore = defineStore("layout", () => {
     browserDockTab,
     addrMode,
     compactMode,
+    windowWidth,
+    navSection,
+    navDensity,
+    navTopViews,
+    setWindowWidth,
+    toggleNavSection,
+    closeNavSection,
     showToast,
     isBrowserView,
     setView,

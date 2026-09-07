@@ -294,7 +294,7 @@ def detect_violations(files: dict) -> list[str]:
     save_body = rust_fn_body(ws_code, "save_snippets_at")
     if not save_body:
         v.append("CMD_SNIPPETS_PERSIST_MISSING:workspace.rs 缺 save_snippets_at")
-    elif "atomic_write" not in save_body:
+    elif "atomic_write" not in save_body and "save_json_list_at" not in save_body:
         v.append("CMD_ATOMIC_WRITE_MISSING:save_snippets_at 未走原子写")
 
     # ---- 13) cmd.* 审计不得泄露 argv / 参数值（存在才判）----

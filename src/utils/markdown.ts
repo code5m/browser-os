@@ -3,6 +3,9 @@
 export function renderMd(src: string): string {
   const esc = (s: string) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // HTML 属性上下文转义：仅链接 URL（$2）未经 esc 处理引号；& < > 已由 esc 处理，这里补引号防属性注入。
+  const escapeAttr = (s: string) =>
+    s.replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const lines = src.replace(/\r\n/g, "\n").split("\n");
   let out = "";
   let inCode = false;
@@ -40,6 +43,12 @@ export function renderMd(src: string): string {
       .replace(/`([^`]+)`/g, "<code>$1</code>")
       .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
       .replace(/\*([^*]+)\*/g, "<i>$1</i>")
-      .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+      // 外部链接（scheme 已被正则限定 http/https）：URL 经 escapeAttr 转义防属性注入 XSS(B11-3)，
+      // 并加 rel="noopener noreferrer" 防 target=_blank 反劫持(B11-4/5/6)。链接文本 $1 已含 esc 结果，安全。
+      .replace(
+        /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,
+        (_m, text: string, url: string) =>
+          `<a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${text}</a>`,
+      );
   }
 }

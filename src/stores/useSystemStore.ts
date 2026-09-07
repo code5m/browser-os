@@ -13,21 +13,20 @@ export const useSystemStore = defineStore("system", () => {
   const layout = useLayoutStore();
 
   // ===== 剪贴板（事件驱动，无轮询） =====
+  // B11-1 修复（P0 明文落盘）：默认**不持久化**剪贴板历史。
+  // 历史只保留在会话内存、上限 CLIP_CAP 条；关闭应用即清空，绝不写入 localStorage / 磁盘。
   const clipText = ref("");
   const clipHistory = reactive<ClipItem[]>([]);
-  const CLIP_KEY = "browser-os-clipboard";
+  const CLIP_CAP = 30;
   let clipFocusBound = false;
 
+  // 历史不跨重启留存：保留为无副作用函数，供 App.vue 启动期调用而无需改动其调用点。
   function loadClipHistory() {
-    try {
-      const raw = localStorage.getItem(CLIP_KEY);
-      if (raw) clipHistory.splice(0, clipHistory.length, ...JSON.parse(raw));
-    } catch {}
+    /* intentionally no-op：不读取 localStorage，避免明文剪贴板历史落盘 */
   }
+  // 仅做内存上限裁剪，绝不调用 localStorage.setItem（B11-1 红线）。
   function saveClipHistory() {
-    try {
-      localStorage.setItem(CLIP_KEY, JSON.stringify(clipHistory.slice(0, 50)));
-    } catch {}
+    if (clipHistory.length > CLIP_CAP) clipHistory.splice(CLIP_CAP);
   }
   async function clipReadSilent() {
     try {

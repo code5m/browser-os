@@ -1,0 +1,1183 @@
+diff --git a/src/components/home/HomeLaunchers.vue b/src/components/home/HomeLaunchers.vue
+new file mode 100644
+index 0000000..d5d4b4e
+--- /dev/null
++++ b/src/components/home/HomeLaunchers.vue
+@@ -0,0 +1,148 @@
++<script setup lang="ts">
++import { useLayoutStore } from "../../stores/useLayoutStore";
++import type { MainView } from "../../stores/useLayoutStore";
++import { useBrowserStore } from "../../stores/useBrowserStore";
++import { useSystemStore } from "../../stores/useSystemStore";
++
++const layout = useLayoutStore();
++const browser = useBrowserStore();
++const system = useSystemStore();
++
++// 主页启动器：只覆盖「主要工作区」入口，不含主页自身、编辑器覆盖层与设置。
++//
++// 宫格（grid）刻意不列入：它的打开需要 gridMode + buildGrid 的重建仪式
++// （原生窗口会压在 HTML 之上），该仪式属 ActivityBar / UnifiedTabBar 职责。
++// 主页再实现一遍会形成第二条路径，也与 W17「不新增运行时行为」冲突。
++interface Launcher {
++  view: MainView;
++  icon: string;
++  label: string;
++}
++
++const LAUNCHERS: Launcher[] = [
++  { view: "browser", icon: "🌐", label: "浏览" },
++  { view: "files", icon: "📂", label: "文件" },
++  { view: "term", icon: "💻", label: "终端" },
++  { view: "clip", icon: "📋", label: "剪贴板" },
++  { view: "arts", icon: "📚", label: "知识库" },
++  { view: "apps", icon: "🚀", label: "应用" },
++  { view: "scripts", icon: "📜", label: "脚本库" },
++  { view: "commands", icon: "⚡", label: "命令库" },
++  { view: "tools", icon: "🧰", label: "工具箱" },
++  { view: "db", icon: "🗄️", label: "数据库" },
++  { view: "tasks", icon: "⏰", label: "定时任务" },
++  { view: "skills", icon: "🛠️", label: "技能" },
++  { view: "agents", icon: "🤖", label: "智能体" },
++  { view: "graph", icon: "🕸️", label: "图谱" },
++  { view: "plugin", icon: "🔌", label: "插件" },
++  { view: "repo", icon: "🛰️", label: "仓库" },
++  { view: "audit", icon: "🛡️", label: "审计" },
++];
++
++// 与 ActivityBar / UnifiedTabBar 保持同一套导航语义，避免主页另开一条：
++//   1) 进入非宫格视图前先关掉宫格（原生窗口压在 HTML 之上，不关会残留）
++//   2) 浏览器主视图不是模块页签，直接切视图
++//   3) 应用列表按需加载后走模块页签（同视图去重复用，不会点出一排重复标签）
++async function openArea(view: MainView) {
++  if (view !== "grid" && browser.gridOpen) await browser.closeGridAll();
++  if (view === "browser") {
++    layout.setView("browser");
++    return;
++  }
++  if (view === "apps") system.loadApps();
++  layout.openModule(view);
++}
++</script>
++
++<template>
++  <section class="home-section" aria-labelledby="home-launchers-title">
++    <h2 id="home-launchers-title" class="home-section-title">主要工作区</h2>
++    <div class="launch-grid">
++      <button
++        v-for="it in LAUNCHERS"
++        :key="it.view"
++        type="button"
++        class="launch-card"
++        :class="{ active: layout.mainView === it.view }"
++        :aria-label="it.label"
++        :aria-current="layout.mainView === it.view ? 'page' : undefined"
++        :title="it.label"
++        @click="openArea(it.view)"
++      >
++        <span class="launch-icon" aria-hidden="true">{{ it.icon }}</span>
++        <span class="launch-label">{{ it.label }}</span>
++      </button>
++    </div>
++  </section>
++</template>
++
++<style scoped>
++.home-section {
++  margin-bottom: 22px;
++}
++.home-section-title {
++  margin: 0 0 10px;
++  font-size: 13px;
++  font-weight: 600;
++  color: #4e5969;
++  letter-spacing: 0.3px;
++}
++.launch-grid {
++  display: grid;
++  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
++  gap: 10px;
++}
++.launch-card {
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  justify-content: center;
++  gap: 6px;
++  background: #fff;
++  border: 1px solid #e8ebf0;
++  border-radius: 10px;
++  padding: 12px 6px;
++  cursor: pointer;
++  font: inherit;
++  color: inherit;
++  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
++}
++.launch-card:hover {
++  transform: translateY(-2px);
++  box-shadow: 0 4px 14px rgba(43, 108, 176, 0.12);
++  border-color: #c6d8ef;
++}
++.launch-card.active {
++  border-color: #2b6cb0;
++  box-shadow: 0 0 0 2px rgba(43, 108, 176, 0.12);
++}
++.launch-card:focus-visible {
++  outline: 2px solid #2b6cb0;
++  outline-offset: 2px;
++}
++.launch-icon {
++  font-size: 20px;
++  line-height: 1;
++}
++.launch-label {
++  font-size: 12px;
++  color: #4e5969;
++}
++
++/* 窄窗口：缩小栅格与字号，保证 17 个入口不挤成一团 */
++@media (max-width: 720px) {
++  .launch-grid {
++    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
++    gap: 8px;
++  }
++  .launch-card {
++    padding: 10px 4px;
++  }
++  .launch-icon {
++    font-size: 18px;
++  }
++  .launch-label {
++    font-size: 11px;
++  }
++}
++</style>
+diff --git a/src/components/home/HomePanel.vue b/src/components/home/HomePanel.vue
+index b2c1fd8..ea6ae0b 100644
+--- a/src/components/home/HomePanel.vue
++++ b/src/components/home/HomePanel.vue
+@@ -1,136 +1,132 @@
+ <script setup lang="ts">
+-import { onMounted } from "vue";
++import { computed, onMounted } from "vue";
+ import { useHomeStore } from "../../stores/useHomeStore";
+-import type { HomeShortcut } from "../../stores/useHomeStore";
++import HomeLaunchers from "./HomeLaunchers.vue";
++import HomeRecents from "./HomeRecents.vue";
++import HomeShortcuts from "./HomeShortcuts.vue";
++import HomeShortcutEditor from "./HomeShortcutEditor.vue";
+ 
+ const home = useHomeStore();
+ 
++// 常用目录播种（仅首次）：把后端承诺的起始目录补进主页。
+ onMounted(() => home.seedDirShortcuts());
+ 
+-function onOpen(s: HomeShortcut) {
+-  home.open(s);
+-}
+-
+-const TYPE_LABELS: Record<HomeShortcut["type"], string> = {
+-  url: "🌐 网页",
+-  app: "🚀 应用",
+-  dir: "📁 目录",
+-};
+-const TARGET_LABELS: Record<HomeShortcut["type"], string> = {
+-  url: "网址",
+-  app: "启动命令",
+-  dir: "目录路径",
+-};
+-const TARGET_PLACEHOLDERS: Record<HomeShortcut["type"], string> = {
+-  url: "https://kimi.moonshot.cn",
+-  app: "如 firefox / 应用 exec",
+-  dir: "/home/you/Documents",
+-};
++// 面板三态（A3 契约）：载入 / 错误，给连贯的状态反馈（共享验收 #2）。
++// 空态由各 section 自行呈现，这里只补载入/错误的全局横幅。
++const state = computed(() => home.panelState);
+ </script>
+ 
+ <template>
+   <div class="home-panel">
+-    <div class="home-head">
+-      <span class="home-title">🏠 主页</span>
++    <header class="home-head">
++      <h1 class="hh-title">
++        <span class="hh-icon" aria-hidden="true">🏠</span>
++        <span>主页</span>
++      </h1>
+       <div class="home-actions">
+-        <button @click="home.favoriteCurrentPage" title="把当前浏览器页签保存到主页">☆ 网页</button>
+-        <button @click="home.favoriteCurrentDir" title="把当前目录保存到主页">📁 目录</button>
+-        <button @click="home.startAdd" title="新增快捷方式">＋ 新增</button>
+-        <button @click="home.resetDefault" title="恢复默认">↺ 默认</button>
++        <button type="button" title="把当前网页收藏到主页" @click="home.favoriteCurrentPage">
++          ☆ 收藏网页
++        </button>
++        <button type="button" title="把当前目录收藏到主页" @click="home.favoriteCurrentDir">
++          📁 收藏目录
++        </button>
++        <button type="button" title="新增快捷方式" @click="home.startAdd">＋ 新增</button>
++        <button type="button" title="恢复默认快捷方式" @click="home.resetDefault">↺ 默认</button>
+       </div>
+-    </div>
++    </header>
+ 
+-    <div v-if="home.shortcuts.length" class="home-grid">
+-      <div
+-        v-for="s in home.shortcuts"
+-        :key="s.id"
+-        class="home-card"
+-        :title="s.target"
+-        @click="onOpen(s)"
+-      >
+-        <div class="home-icon">{{ s.icon }}</div>
+-        <div class="home-name">{{ s.name }}</div>
+-        <div class="home-type">{{ TYPE_LABELS[s.type] }}</div>
+-        <div class="home-ops" @click.stop>
+-          <button class="op" @click="home.startEdit(s)" title="编辑">✏️</button>
+-          <button class="op" @click="home.remove(s.id)" title="删除">🗑</button>
+-        </div>
+-      </div>
+-    </div>
+-    <div v-else class="home-empty">暂无快捷方式，点「＋ 新增」添加常用网页、应用或目录</div>
++    <!-- 载入/错误横幅（共享验收 #2 连贯状态；错误态不回显原始报错，只给稳定文案）。 -->
++    <p v-if="state.state === 'loading'" class="home-state" role="status">
++      {{ state.message }}
++    </p>
++    <p v-else-if="state.state === 'error'" class="home-state home-state-error" role="alert">
++      {{ state.message }}
++    </p>
+ 
+-    <!-- 编辑弹窗 -->
+-    <div v-if="home.editing.open" class="home-modal-mask" @click.self="home.cancelEdit">
+-      <div class="home-modal">
+-        <div class="hm-title">{{ home.editing.id ? "编辑快捷方式" : "新增快捷方式" }}</div>
+-        <div class="hm-row">
+-          <label>类型</label>
+-          <select v-model="home.editing.type">
+-            <option value="url">🌐 网页</option>
+-            <option value="app">🚀 应用</option>
+-            <option value="dir">📁 目录</option>
+-          </select>
+-        </div>
+-        <div class="hm-row">
+-          <label>名称</label>
+-          <input v-model="home.editing.name" placeholder="如：Kimi" />
+-        </div>
+-        <div class="hm-row">
+-          <label>{{ TARGET_LABELS[home.editing.type] }}</label>
+-          <input
+-            v-model="home.editing.target"
+-            :placeholder="TARGET_PLACEHOLDERS[home.editing.type]"
+-          />
+-        </div>
+-        <div class="hm-row">
+-          <label>图标</label>
+-          <input v-model="home.editing.icon" placeholder="emoji，如 🔍 🚀 📺" />
+-        </div>
+-        <div class="hm-btns">
+-          <button class="primary" @click="home.saveEdit">保存</button>
+-          <button @click="home.cancelEdit">取消</button>
+-        </div>
+-      </div>
+-    </div>
++    <HomeLaunchers />
++    <HomeShortcuts />
++    <HomeRecents />
++    <HomeShortcutEditor />
+   </div>
+ </template>
+ 
+ <style scoped>
++/* .home-panel 的 flex/overflow/背景由 global.css 提供，这里只补内部排版 */
+ .home-panel {
+-  flex: 1;
+-  overflow-y: auto;
+-  padding: 18px;
+-  background: linear-gradient(135deg, #eef2fb 0%, #f7f9ff 45%, #f0f4fa 100%);
++  box-sizing: border-box;
++}
++.home-head {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 12px;
++  flex-wrap: wrap;
++  margin-bottom: 18px;
++}
++.hh-title {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  margin: 0;
++  font-size: 18px;
++  font-weight: 600;
++  color: #1d2129;
++}
++.hh-icon {
++  font-size: 20px;
++  line-height: 1;
+ }
+-.home-grid {
+-  display: grid !important;
+-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)) !important;
+-  gap: 14px;
++.home-actions {
++  display: flex;
++  gap: 8px;
++  flex-wrap: wrap;
+ }
+-.home-card {
+-  position: relative;
++.home-actions button {
++  border: 1px solid #d5dbe7;
+   background: #fff;
+-  border: 1px solid #e8ebf0;
+-  border-radius: 12px;
+-  padding: 18px 10px 12px;
+-  text-align: center;
++  color: #4e5969;
++  border-radius: 6px;
++  padding: 5px 12px;
++  font-size: 12px;
+   cursor: pointer;
+-  transition: all 0.15s;
+-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
++  white-space: nowrap;
++}
++.home-actions button:hover {
++  border-color: #2b6cb0;
++  color: #2b6cb0;
++}
++.home-actions button:focus-visible {
++  outline: 2px solid #2b6cb0;
++  outline-offset: 2px;
+ }
+-.home-card:hover {
+-  transform: translateY(-2px);
+-  box-shadow: 0 4px 14px rgba(43, 108, 176, 0.12);
+-  border-color: #c6d8ef;
++
++/* 面板状态横幅：载入/错误，淡色块，不喧宾夺主（共享验收 #2 连贯状态） */
++.home-state {
++  margin: 0 0 16px;
++  padding: 8px 12px;
++  border-radius: 8px;
++  font-size: 12px;
++  color: #4e5969;
++  background: #f4f6fb;
++  border: 1px solid #e8ebf0;
+ }
+-.home-ops {
+-  position: absolute;
+-  top: 6px;
+-  right: 6px;
+-  display: none !important;
+-  gap: 2px;
++.home-state-error {
++  color: #a8071a;
++  background: #fff1f0;
++  border-color: #ffccc7;
+ }
+-.home-card:hover .home-ops {
+-  display: flex !important;
++
++/* 窄窗口：标题与操作各占一行，操作按钮横向铺开便于点击 */
++@media (max-width: 720px) {
++  .home-panel {
++    padding: 12px;
++  }
++  .home-head {
++    align-items: stretch;
++    margin-bottom: 14px;
++  }
++  .home-actions button {
++    flex: 1 1 auto;
++  }
+ }
+ </style>
+diff --git a/src/components/home/HomeRecents.vue b/src/components/home/HomeRecents.vue
+new file mode 100644
+index 0000000..3b06995
+--- /dev/null
++++ b/src/components/home/HomeRecents.vue
+@@ -0,0 +1,247 @@
++<script setup lang="ts">
++import { computed } from "vue";
++import { useHomeStore } from "../../stores/useHomeStore";
++import type { HomeRecent } from "../../stores/useHomeStore";
++
++const home = useHomeStore();
++
++// 有界渲染：最近访问在 store 层已封顶 HOME_MAX_RECENTS；这里再渲前 N 个做视觉封顶，
++// 本地数据来自用户可编辑的 localStorage，损坏数据绝不进 UI（store 层已 normalizeRecents）。
++const VISIBLE_LIMIT = 8;
++const showAll = computed(() => home.recents.length <= VISIBLE_LIMIT);
++const visible = computed(() => home.recents.slice(0, VISIBLE_LIMIT));
++
++const TYPE_LABELS: Record<HomeRecent["type"], string> = {
++  url: "网页",
++  app: "应用",
++  dir: "目录",
++};
++
++// 打开：复用 store.open（url→浏览器 / dir→文件视图 / app→启动应用），不新增运行时路径。
++function onOpen(s: HomeRecent) {
++  home.open(s);
++}
++</script>
++
++<template>
++  <section class="home-section" aria-labelledby="home-recents-title">
++    <div class="hr-head">
++      <h2 id="home-recents-title" class="home-section-title">最近访问</h2>
++      <span v-if="home.hasRecents" class="hr-count">{{ home.recents.length }} 条</span>
++    </div>
++
++    <!-- 空态：给出明确说明，而不是一句灰色提示（共享验收 #2 连贯空态）。 -->
++    <div v-if="!home.hasRecents" class="home-empty hr-empty">
++      <div class="he-icon" aria-hidden="true">🕘</div>
++      <p class="he-title">还没有最近访问记录</p>
++      <p class="he-desc">打开任一快捷方式后，会在这里留下最近记录，方便快速回到。</p>
++    </div>
++
++    <template v-else>
++      <ul class="recent-list">
++        <li v-for="s in visible" :key="s.id || s.name" class="rc-item">
++          <!-- 打开动作是真正的 button（可 Tab 聚焦 + 回车触发）。
++               展示/无障碍文案只用 store 的安全摘要（displayTarget / accessibleLabel），
++               绝不回显完整路径 / URL query / 凭据（共享验收 #4）。 -->
++          <button
++            type="button"
++            class="rc-open"
++            :aria-label="home.accessibleLabel(s) || `打开 ${s.name}`"
++            @click="onOpen(s)"
++          >
++            <span class="rc-icon" aria-hidden="true">{{ s.icon }}</span>
++            <span class="rc-text">
++              <span class="rc-name">{{ s.name }}</span>
++              <span class="rc-target">{{ home.displayTarget(s) }}</span>
++            </span>
++            <span class="rc-type">{{ TYPE_LABELS[s.type] }}</span>
++          </button>
++          <button
++            type="button"
++            class="rc-rm"
++            :aria-label="`移除「${s.name}」的最近记录`"
++            title="移除"
++            @click="home.removeRecent(s.id)"
++          >
++            ✕
++          </button>
++        </li>
++      </ul>
++
++      <div v-if="home.recents.length > VISIBLE_LIMIT" class="rc-more">
++        <button type="button" @click="home.clearRecents">清空最近访问</button>
++      </div>
++    </template>
++  </section>
++</template>
++
++<style scoped>
++.home-section {
++  margin-bottom: 22px;
++}
++.hr-head {
++  display: flex;
++  align-items: baseline;
++  justify-content: space-between;
++  gap: 8px;
++}
++.home-section-title {
++  margin: 0 0 10px;
++  font-size: 13px;
++  font-weight: 600;
++  color: #4e5969;
++  letter-spacing: 0.3px;
++}
++.hr-count {
++  font-size: 11px;
++  color: #86909c;
++}
++
++.recent-list {
++  list-style: none;
++  margin: 0;
++  padding: 0;
++  display: flex;
++  flex-direction: column;
++  gap: 6px;
++}
++.rc-item {
++  display: flex;
++  align-items: center;
++  gap: 6px;
++  background: #fff;
++  border: 1px solid #e8ebf0;
++  border-radius: 10px;
++  transition: border-color 0.15s, box-shadow 0.15s;
++}
++.rc-item:hover {
++  border-color: #c6d8ef;
++  box-shadow: 0 2px 10px rgba(43, 108, 176, 0.1);
++}
++.rc-open {
++  flex: 1 1 auto;
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  min-width: 0;
++  background: transparent;
++  border: none;
++  border-radius: 10px;
++  padding: 10px 12px;
++  cursor: pointer;
++  font: inherit;
++  color: inherit;
++  text-align: left;
++}
++.rc-open:focus-visible {
++  outline: 2px solid #2b6cb0;
++  outline-offset: -2px;
++}
++.rc-icon {
++  font-size: 18px;
++  line-height: 1;
++  flex-shrink: 0;
++}
++.rc-text {
++  display: flex;
++  flex-direction: column;
++  min-width: 0;
++  gap: 2px;
++}
++.rc-name {
++  font-size: 12px;
++  color: #1d2129;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++.rc-target {
++  font-size: 11px;
++  color: #86909c;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++.rc-type {
++  font-size: 10px;
++  color: #86909c;
++  flex-shrink: 0;
++}
++.rc-rm {
++  border: 1px solid transparent;
++  background: #f4f6fb;
++  border-radius: 6px;
++  margin-right: 8px;
++  padding: 3px 7px;
++  font-size: 11px;
++  cursor: pointer;
++  line-height: 1;
++  flex-shrink: 0;
++}
++.rc-rm:hover {
++  border-color: #c6d8ef;
++  background: #fff;
++}
++.rc-rm:focus-visible {
++  outline: 2px solid #2b6cb0;
++  outline-offset: 1px;
++}
++
++.rc-more {
++  margin-top: 10px;
++  display: flex;
++  justify-content: flex-end;
++}
++.rc-more button {
++  border: 1px solid #d5dbe7;
++  background: #fff;
++  color: #4e5969;
++  border-radius: 6px;
++  padding: 5px 14px;
++  font-size: 12px;
++  cursor: pointer;
++}
++.rc-more button:hover {
++  border-color: #2b6cb0;
++  color: #2b6cb0;
++}
++.rc-more button:focus-visible {
++  outline: 2px solid #2b6cb0;
++  outline-offset: 2px;
++}
++
++/* 空态（与 shortcut 空态同语言） */
++.home-empty {
++  background: #fff;
++  border: 1px dashed #d5dbe7;
++  border-radius: 12px;
++  padding: 22px 18px;
++  text-align: center;
++}
++.he-icon {
++  font-size: 26px;
++  line-height: 1;
++  margin-bottom: 6px;
++}
++.he-title {
++  margin: 0 0 4px;
++  font-size: 13px;
++  font-weight: 600;
++  color: #1d2129;
++}
++.he-desc {
++  margin: 0;
++  font-size: 12px;
++  color: #86909c;
++}
++
++@media (max-width: 720px) {
++  .rc-open {
++    padding: 9px 10px;
++    gap: 8px;
++  }
++  .rc-icon {
++    font-size: 16px;
++  }
++}
++</style>
+diff --git a/src/components/home/HomeShortcutEditor.vue b/src/components/home/HomeShortcutEditor.vue
+new file mode 100644
+index 0000000..e7ba9cc
+--- /dev/null
++++ b/src/components/home/HomeShortcutEditor.vue
+@@ -0,0 +1,216 @@
++<script setup lang="ts">
++import { nextTick, ref, watch } from "vue";
++import { useHomeStore } from "../../stores/useHomeStore";
++import {
++  FOCUSABLE_SELECTOR,
++  ariaRoleForVariant,
++  shouldCloseOnEscape,
++} from "../../utils/modalA11y";
++
++const home = useHomeStore();
++
++// 复用 W15 落地的 modalA11y 语义（无新依赖）：编辑对话框是 dialog 变体，
++// 允许 Esc 关闭；role 由 ariaRoleForVariant 统一给出，避免各处手写不一致。
++const VARIANT = "dialog" as const;
++
++const mask = ref<HTMLElement | null>(null);
++const nameInput = ref<HTMLInputElement | null>(null);
++let lastFocused: HTMLElement | null = null;
++
++// 打开时把焦点送进对话框，关闭时归还给触发元素（键盘用户不会丢失位置）
++watch(
++  () => home.editing.open,
++  async (open) => {
++    if (open) {
++      lastFocused = document.activeElement as HTMLElement | null;
++      await nextTick();
++      nameInput.value?.focus();
++    } else if (lastFocused) {
++      lastFocused.focus();
++      lastFocused = null;
++    }
++  }
++);
++
++function onKeydown(e: KeyboardEvent) {
++  if (e.key === "Escape" && shouldCloseOnEscape(VARIANT)) {
++    e.stopPropagation();
++    home.cancelEdit();
++    return;
++  }
++  // Tab / Shift+Tab 焦点闭环：不让焦点跑到背后的主页上
++  if (e.key !== "Tab" || !mask.value) return;
++  const nodes = Array.from(
++    mask.value.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
++  ).filter((n) => !n.hasAttribute("disabled") && n.offsetParent !== null);
++  if (!nodes.length) return;
++  const first = nodes[0];
++  const last = nodes[nodes.length - 1];
++  const active = document.activeElement as HTMLElement | null;
++  if (e.shiftKey && (active === first || !mask.value.contains(active))) {
++    e.preventDefault();
++    last.focus();
++  } else if (!e.shiftKey && active === last) {
++    e.preventDefault();
++    first.focus();
++  }
++}
++</script>
++
++<template>
++  <div
++    v-if="home.editing.open"
++    ref="mask"
++    class="hs-mask"
++    @click.self="home.cancelEdit"
++    @keydown="onKeydown"
++  >
++    <div
++      class="hs-dialog"
++      :role="ariaRoleForVariant(VARIANT)"
++      aria-modal="true"
++      aria-labelledby="hs-dialog-title"
++    >
++      <h2 id="hs-dialog-title" class="hs-title">
++        {{ home.editing.id ? "编辑快捷方式" : "新增快捷方式" }}
++      </h2>
++
++      <div class="hs-row">
++        <label for="hs-type">类型</label>
++        <select id="hs-type" v-model="home.editing.type">
++          <option value="url">🌐 网页</option>
++          <option value="app">🚀 应用</option>
++          <option value="dir">📁 目录</option>
++        </select>
++      </div>
++
++      <div class="hs-row">
++        <label for="hs-name">名称</label>
++        <input id="hs-name" ref="nameInput" v-model="home.editing.name" placeholder="如：Kimi" />
++      </div>
++
++      <div class="hs-row">
++        <label for="hs-target">
++          {{ home.editing.type === "app" ? "启动命令" : home.editing.type === "dir" ? "目录路径" : "网址" }}
++        </label>
++        <input
++          id="hs-target"
++          v-model="home.editing.target"
++          :placeholder="
++            home.editing.type === 'app'
++              ? '如 firefox'
++              : home.editing.type === 'dir'
++                ? '/home/you/Documents'
++                : 'https://kimi.moonshot.cn'
++          "
++        />
++      </div>
++
++      <div class="hs-row">
++        <label for="hs-icon">图标</label>
++        <input id="hs-icon" v-model="home.editing.icon" placeholder="emoji，如 🔍 🚀 📺" />
++      </div>
++
++      <div class="hs-btns">
++        <button type="button" class="hs-primary" @click="home.saveEdit">保存</button>
++        <button type="button" @click="home.cancelEdit">取消</button>
++      </div>
++    </div>
++  </div>
++</template>
++
++<style scoped>
++.hs-mask {
++  position: fixed;
++  inset: 0;
++  background: rgba(0, 0, 0, 0.35);
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  z-index: 100;
++}
++.hs-dialog {
++  width: 360px;
++  max-width: calc(100vw - 32px);
++  background: #fff;
++  border-radius: 12px;
++  padding: 18px;
++  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
++}
++.hs-title {
++  margin: 0 0 14px;
++  font-size: 14px;
++  font-weight: 600;
++  color: #1d2129;
++}
++.hs-row {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  margin-bottom: 10px;
++}
++.hs-row label {
++  width: 64px;
++  flex-shrink: 0;
++  font-size: 12px;
++  color: #4e5969;
++}
++.hs-row input,
++.hs-row select {
++  flex: 1;
++  min-width: 0;
++  height: 28px;
++  border: 1px solid #d5dbe7;
++  border-radius: 6px;
++  padding: 0 8px;
++  font-size: 12px;
++  outline: none;
++}
++.hs-row input:focus,
++.hs-row select:focus {
++  border-color: #2b6cb0;
++}
++.hs-btns {
++  display: flex;
++  justify-content: flex-end;
++  gap: 8px;
++  margin-top: 16px;
++}
++.hs-btns button {
++  border: 1px solid #d5dbe7;
++  background: #fff;
++  color: #4e5969;
++  border-radius: 6px;
++  padding: 6px 16px;
++  font-size: 12px;
++  cursor: pointer;
++}
++.hs-btns button:hover {
++  border-color: #2b6cb0;
++  color: #2b6cb0;
++}
++.hs-btns button:focus-visible {
++  outline: 2px solid #2b6cb0;
++  outline-offset: 2px;
++}
++.hs-primary {
++  background: #2b6cb0 !important;
++  border-color: #2b6cb0 !important;
++  color: #fff !important;
++}
++
++@media (max-width: 720px) {
++  .hs-dialog {
++    width: calc(100vw - 32px);
++    padding: 14px;
++  }
++  .hs-row {
++    flex-direction: column;
++    align-items: stretch;
++    gap: 4px;
++  }
++  .hs-row label {
++    width: auto;
++  }
++}
++</style>
+diff --git a/src/components/home/HomeShortcuts.vue b/src/components/home/HomeShortcuts.vue
+new file mode 100644
+index 0000000..e860e2e
+--- /dev/null
++++ b/src/components/home/HomeShortcuts.vue
+@@ -0,0 +1,304 @@
++<script setup lang="ts">
++import { computed, ref } from "vue";
++import { useHomeStore } from "../../stores/useHomeStore";
++import type { HomeShortcut } from "../../stores/useHomeStore";
++
++const home = useHomeStore();
++
++// 有界渲染：默认只渲染前 N 个。本地存储来自用户可编辑的 localStorage，
++// 可能被手改或写坏，这里做渲染上限，避免损坏数据把主页撑成一屏垃圾。
++const VISIBLE_LIMIT = 12;
++const showAll = ref(false);
++
++const TYPE_LABELS: Record<HomeShortcut["type"], string> = {
++  url: "网页",
++  app: "应用",
++  dir: "目录",
++};
++
++// 防御性归一化：A3 会在 store 层做校验/限长，这里在渲染层再兜一层，
++// 保证 malformed 数据不会把主页渲染成空白或抛错（字段名/类型缺失都能撑住）。
++function safeType(t: unknown): HomeShortcut["type"] {
++  return t === "app" || t === "dir" ? t : "url";
++}
++function norm(s: Partial<HomeShortcut> | null | undefined) {
++  return {
++    id: typeof s?.id === "string" && s.id ? s.id : "",
++    type: safeType(s?.type),
++    name: (typeof s?.name === "string" && s.name.trim()) || "未命名",
++    target: typeof s?.target === "string" ? s.target : "",
++    icon: (typeof s?.icon === "string" && s.icon.trim()) || "🔗",
++  };
++}
++
++const items = computed(() => (home.shortcuts ?? []).map(norm));
++const visible = computed(() =>
++  showAll.value ? items.value : items.value.slice(0, VISIBLE_LIMIT)
++);
++const hiddenCount = computed(() => Math.max(0, items.value.length - visible.value.length));
++
++// 打开：url → 内嵌浏览器；dir → 文件视图；app → 启动系统应用（均由 store 负责）
++function onOpen(s: HomeShortcut) {
++  home.open(s);
++}
++</script>
++
++<template>
++  <section class="home-section" aria-labelledby="home-shortcuts-title">
++    <div class="hs-head">
++      <h2 id="home-shortcuts-title" class="home-section-title">快捷方式</h2>
++      <span v-if="items.length" class="hs-count">{{ items.length }} 个</span>
++    </div>
++
++    <!-- 空态：给出明确的下一步动作，而不是一句灰色提示 -->
++    <div v-if="!items.length" class="home-empty">
++      <div class="he-icon" aria-hidden="true">🧭</div>
++      <p class="he-title">还没有快捷方式</p>
++      <p class="he-desc">
++        把常用网页、系统应用或本地目录收藏到主页，下次一键打开。
++      </p>
++      <div class="he-actions">
++        <button type="button" class="he-primary" @click="home.startAdd">
++          ＋ 新增快捷方式
++        </button>
++        <button type="button" @click="home.resetDefault">↺ 恢复默认</button>
++      </div>
++    </div>
++
++    <template v-else>
++      <div class="shortcut-grid">
++        <div v-for="s in visible" :key="s.id || s.name" class="sc-card">
++          <!-- 打开动作是真正的 button（可 Tab 聚焦 + 回车触发），
++               编辑/删除是同级按钮，不再嵌套在可点元素里。 -->
++          <button
++            type="button"
++            class="sc-open"
++            :aria-label="`打开 ${s.name}（${TYPE_LABELS[s.type]}）`"
++            @click="onOpen(s)"
++          >
++            <span class="sc-icon" aria-hidden="true">{{ s.icon }}</span>
++            <span class="sc-name">{{ s.name }}</span>
++            <span class="sc-type">{{ TYPE_LABELS[s.type] }}</span>
++          </button>
++          <div class="sc-ops">
++            <button
++              type="button"
++              class="op"
++              :aria-label="`编辑 ${s.name}`"
++              title="编辑"
++              @click="home.startEdit(s)"
++            >
++              ✏️
++            </button>
++            <button
++              type="button"
++              class="op"
++              :aria-label="`删除 ${s.name}`"
++              title="删除"
++              @click="home.remove(s.id)"
++            >
++              🗑
++            </button>
++          </div>
++        </div>
++      </div>
++
++      <!-- 有界列表的显式出口：超过上限时可展开/收起 -->
++      <div v-if="items.length > VISIBLE_LIMIT" class="sc-more">
++        <button type="button" @click="showAll = !showAll" :aria-expanded="showAll ? 'true' : 'false'">
++          {{ showAll ? "收起" : `显示全部（还有 ${hiddenCount} 个）` }}
++        </button>
++      </div>
++    </template>
++  </section>
++</template>
++
++<style scoped>
++.home-section {
++  margin-bottom: 22px;
++}
++.hs-head {
++  display: flex;
++  align-items: baseline;
++  justify-content: space-between;
++  gap: 8px;
++}
++.home-section-title {
++  margin: 0 0 10px;
++  font-size: 13px;
++  font-weight: 600;
++  color: #4e5969;
++  letter-spacing: 0.3px;
++}
++.hs-count {
++  font-size: 11px;
++  color: #86909c;
++}
++
++.shortcut-grid {
++  display: grid;
++  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
++  gap: 14px;
++}
++.sc-card {
++  position: relative;
++  background: #fff;
++  border: 1px solid #e8ebf0;
++  border-radius: 12px;
++  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
++}
++.sc-card:hover {
++  transform: translateY(-2px);
++  box-shadow: 0 4px 14px rgba(43, 108, 176, 0.12);
++  border-color: #c6d8ef;
++}
++.sc-open {
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  gap: 4px;
++  width: 100%;
++  background: transparent;
++  border: none;
++  border-radius: 12px;
++  padding: 18px 10px 12px;
++  cursor: pointer;
++  font: inherit;
++  color: inherit;
++  text-align: center;
++}
++.sc-open:focus-visible {
++  outline: 2px solid #2b6cb0;
++  outline-offset: -2px;
++}
++.sc-icon {
++  font-size: 26px;
++  line-height: 1;
++}
++.sc-name {
++  font-size: 12px;
++  color: #1d2129;
++  max-width: 100%;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++.sc-type {
++  font-size: 10px;
++  color: #86909c;
++}
++/* 操作按钮常驻可见（原来 hover 才出现，触屏/键盘用户根本摸不到） */
++.sc-ops {
++  position: absolute;
++  top: 6px;
++  right: 6px;
++  display: flex;
++  gap: 2px;
++}
++.sc-ops .op {
++  border: 1px solid transparent;
++  background: #f4f6fb;
++  border-radius: 6px;
++  padding: 2px 4px;
++  font-size: 11px;
++  cursor: pointer;
++  line-height: 1;
++}
++.sc-ops .op:hover {
++  border-color: #c6d8ef;
++  background: #fff;
++}
++.sc-ops .op:focus-visible {
++  outline: 2px solid #2b6cb0;
++  outline-offset: 1px;
++}
++
++.sc-more {
++  margin-top: 12px;
++  display: flex;
++  justify-content: center;
++}
++.sc-more button {
++  border: 1px solid #d5dbe7;
++  background: #fff;
++  color: #4e5969;
++  border-radius: 6px;
++  padding: 5px 14px;
++  font-size: 12px;
++  cursor: pointer;
++}
++.sc-more button:hover {
++  border-color: #2b6cb0;
++  color: #2b6cb0;
++}
++.sc-more button:focus-visible {
++  outline: 2px solid #2b6cb0;
++  outline-offset: 2px;
++}
++
++/* 空态 */
++.home-empty {
++  background: #fff;
++  border: 1px dashed #d5dbe7;
++  border-radius: 12px;
++  padding: 28px 18px;
++  text-align: center;
++}
++.he-icon {
++  font-size: 30px;
++  line-height: 1;
++  margin-bottom: 8px;
++}
++.he-title {
++  margin: 0 0 4px;
++  font-size: 14px;
++  font-weight: 600;
++  color: #1d2129;
++}
++.he-desc {
++  margin: 0 0 14px;
++  font-size: 12px;
++  color: #86909c;
++}
++.he-actions {
++  display: flex;
++  gap: 8px;
++  justify-content: center;
++  flex-wrap: wrap;
++}
++.he-actions button {
++  border: 1px solid #d5dbe7;
++  background: #fff;
++  color: #4e5969;
++  border-radius: 6px;
++  padding: 6px 14px;
++  font-size: 12px;
++  cursor: pointer;
++}
++.he-actions button:hover {
++  border-color: #2b6cb0;
++  color: #2b6cb0;
++}
++.he-actions button:focus-visible {
++  outline: 2px solid #2b6cb0;
++  outline-offset: 2px;
++}
++.he-primary {
++  background: #2b6cb0 !important;
++  border-color: #2b6cb0 !important;
++  color: #fff !important;
++}
++
++@media (max-width: 720px) {
++  .shortcut-grid {
++    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
++    gap: 10px;
++  }
++  .sc-open {
++    padding: 14px 6px 10px;
++  }
++  .sc-icon {
++    font-size: 22px;
++  }
++}
++</style>

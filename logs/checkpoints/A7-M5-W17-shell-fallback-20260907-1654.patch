@@ -1,0 +1,319 @@
+diff --git a/src/App.vue b/src/App.vue
+index cccd185..bddf272 100644
+--- a/src/App.vue
++++ b/src/App.vue
+@@ -1,5 +1,5 @@
+ <script setup lang="ts">
+-import { onMounted, ref } from "vue";
++import { onMounted, onErrorCaptured, ref } from "vue";
+ import { getCurrentWindow } from "@tauri-apps/api/window";
+ import { bridge } from "./bridge";
+ import { useBrowserStore } from "./stores/useBrowserStore";
+@@ -29,6 +29,18 @@ const system = useSystemStore();
+ const layout = useLayoutStore();
+ const settings = useSettingsStore();
+ 
++// W17(A7): 外壳级兜底状态——启动遮罩与渲染错误兜底（纯展示，不引入运行时行为）。
++const ready = ref(false);
++const shellError = ref<string | null>(null);
++
++// W17(A7): 捕获子树渲染异常，避免整树白屏/死区；仅记录通用提示，不暴露内部错误细节。
++onErrorCaptured((err: unknown) => {
++  // eslint-disable-next-line no-console
++  console.error("[app] render error captured:", (err as Error)?.message ?? err);
++  shellError.value = "界面渲染遇到问题，请重启客户端。";
++  return false;
++});
++
+ const appHeight = ref<string>("100vh");
+ 
+ async function syncWindowSize() {
+@@ -54,6 +66,7 @@ async function syncWindowSize() {
+ }
+ 
+ onMounted(async () => {
++  try {
+   await syncWindowSize();
+   const unlisten = await getCurrentWindow().onResized(syncWindowSize);
+   window.addEventListener("beforeunload", unlisten);
+@@ -204,25 +217,40 @@ onMounted(async () => {
+   // M1-4 冷启动兜底：进程启动时 argv 带入的 URL 已在后端队列，
+   // 挂载完成后首次拉取（此后经 onOpenUrlPending 提示增量拉取）。
+   drainPendingOpenUrls();
++  } finally {
++    ready.value = true;
++  }
+ });
+ </script>
+ 
+ <template>
+   <div class="app" :style="{ height: appHeight }">
+-    <!-- 精简模式：整行工具栏隐藏，网页占满（由 MainArea 的 ☰ 悬浮钮退出） -->
+-    <ActivityBar v-show="!layout.compactMode" />
+-    <div class="body">
+-      <AINavPanel />
+-      <MainArea />
++    <!-- W17(A7): 启动遮罩——应用就绪前展示，避免首屏空白 -->
++    <div v-if="!ready && !shellError" class="boot-overlay" role="status" aria-live="polite">
++      <div class="boot-spinner" aria-hidden="true"></div>
++      <div class="boot-text">正在启动…</div>
+     </div>
+-    <StatusBar />
+-    <ConfirmModal />
+-    <!-- M1-7 Git 写确认闸门：全局挂载，保证任何视图下待确认任务都能被看到/处理 -->
+-    <GitWriteConfirmDialog />
+-    <!-- M1-9 关闭协议弹窗：关闭页签时全局可见（保存/删除/取消） -->
+-    <SessionCloseDialog />
+-    <!-- M2-2.b 图片灯箱：全局挂载，任何视图点开画廊都能放大预览 -->
+-    <ImageLightbox />
++    <!-- W17(A7): 外壳级错误兜底——子树渲染失败时不留白屏/死区 -->
++    <div v-else-if="shellError" class="shell-error" role="alert">
++      <div class="se-title">客户端遇到问题</div>
++      <div class="se-desc">{{ shellError }}</div>
++    </div>
++    <template v-else>
++      <!-- 精简模式：整行工具栏隐藏，网页占满（由 MainArea 的 ☰ 悬浮钮退出） -->
++      <ActivityBar v-show="!layout.compactMode" />
++      <div class="body">
++        <AINavPanel />
++        <MainArea />
++      </div>
++      <StatusBar />
++      <ConfirmModal />
++      <!-- M1-7 Git 写确认闸门：全局挂载，保证任何视图下待确认任务都能被看到/处理 -->
++      <GitWriteConfirmDialog />
++      <!-- M1-9 关闭协议弹窗：关闭页签时全局可见（保存/删除/取消） -->
++      <SessionCloseDialog />
++      <!-- M2-2.b 图片灯箱：全局挂载，任何视图点开画廊都能放大预览 -->
++      <ImageLightbox />
++    </template>
+   </div>
+ </template>
+ 
+@@ -237,4 +265,54 @@ onMounted(async () => {
+   display: flex;
+   min-height: 0;
+ }
++.boot-overlay {
++  position: fixed;
++  inset: 0;
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  justify-content: center;
++  gap: 14px;
++  background: #0f172a;
++  color: #cbd5e0;
++  z-index: 99998;
++}
++.boot-spinner {
++  width: 28px;
++  height: 28px;
++  border: 3px solid #2d3748;
++  border-top-color: #5b9dff;
++  border-radius: 50%;
++  animation: boot-spin 0.8s linear infinite;
++}
++@keyframes boot-spin {
++  to { transform: rotate(360deg); }
++}
++.boot-text {
++  font-size: 14px;
++}
++.shell-error {
++  position: fixed;
++  inset: 0;
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  justify-content: center;
++  gap: 10px;
++  background: #0f172a;
++  color: #ffb4b4;
++  z-index: 99998;
++  padding: 24px;
++  text-align: center;
++}
++.se-title {
++  font-size: 16px;
++  font-weight: 600;
++}
++.se-desc {
++  font-size: 14px;
++  color: #cbd5e0;
++  max-width: 480px;
++  line-height: 1.7;
++}
+ </style>
+diff --git a/src/components/layout/MainArea.vue b/src/components/layout/MainArea.vue
+index feb075c..5afe734 100644
+--- a/src/components/layout/MainArea.vue
++++ b/src/components/layout/MainArea.vue
+@@ -1,5 +1,5 @@
+ <script setup lang="ts">
+-import { computed, ref, watch, nextTick, defineAsyncComponent } from "vue";
++import { computed, ref, watch, nextTick, defineAsyncComponent, h } from "vue";
+ import { useLayoutStore } from "../../stores/useLayoutStore";
+ import { useBrowserStore } from "../../stores/useBrowserStore";
+ import { useBookmarkStore } from "../../stores/useBookmarkStore";
+@@ -26,16 +26,66 @@ import CommandSnippetPanel from "../workspace/CommandSnippetPanel.vue";
+ // store(useDatabaseStore.ts) 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
+ // 仅在 mainView==='db' 首次渲染时才拉取该 chunk，不破坏其它视图。
+ // M4-8 定时任务面板同样懒加载：其纯逻辑(taskUi.ts)、store(useTaskStore.ts) 一并拆出主 chunk。
+-const TaskPanel = defineAsyncComponent(() => import("../workspace/TaskPanel.vue"));
+-const DatabasePanel = defineAsyncComponent(() => import("../workspace/DatabasePanel.vue"));
+-const SkillManagerPanel = defineAsyncComponent(() => import("../workspace/SkillManagerPanel.vue"));
+-const AgentManagerPanel = defineAsyncComponent(() => import("../workspace/AgentManagerPanel.vue"));
++// W17(A7): 异步面板加载中/失败态兜底组件（纯展示，不引入运行时行为；用 h() 而非 template 以避免运行时编译依赖）。
++const panelLoading = {
++  render: () =>
++    h("div", { class: "modview panel-state", role: "status", "aria-live": "polite" }, "面板加载中…"),
++};
++const panelError = {
++  render: () =>
++    h("div", { class: "modview panel-state panel-error", role: "alert" }, "该面板暂时无法显示"),
++};
++
++// M4-8 定时任务面板同样懒加载：其纯逻辑(taskUi.ts)、store(useTaskStore.ts) 一并拆出主 chunk。
++const TaskPanel = defineAsyncComponent({
++  loader: () => import("../workspace/TaskPanel.vue"),
++  loadingComponent: panelLoading,
++  errorComponent: panelError,
++  delay: 80,
++  timeout: 10000,
++});
++// M4-4 数据库面板：懒加载（defineAsyncComponent），将其 15KB+ 纯逻辑(dbUi.ts)、
++// store(useDatabaseStore.ts) 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
++// 仅在 mainView==='db' 首次渲染时才拉取该 chunk，不破坏其它视图。
++const DatabasePanel = defineAsyncComponent({
++  loader: () => import("../workspace/DatabasePanel.vue"),
++  loadingComponent: panelLoading,
++  errorComponent: panelError,
++  delay: 80,
++  timeout: 10000,
++});
++const SkillManagerPanel = defineAsyncComponent({
++  loader: () => import("../workspace/SkillManagerPanel.vue"),
++  loadingComponent: panelLoading,
++  errorComponent: panelError,
++  delay: 80,
++  timeout: 10000,
++});
++const AgentManagerPanel = defineAsyncComponent({
++  loader: () => import("../workspace/AgentManagerPanel.vue"),
++  loadingComponent: panelLoading,
++  errorComponent: panelError,
++  delay: 80,
++  timeout: 10000,
++});
+ // M5-9 图谱面板：懒加载（defineAsyncComponent），将其纯逻辑(graphUi.ts)、store(useGraphStore.ts)
+ // 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
+-const GraphPanel = defineAsyncComponent(() => import("../graph/GraphPanel.vue"));
++const GraphPanel = defineAsyncComponent({
++  loader: () => import("../graph/GraphPanel.vue"),
++  loadingComponent: panelLoading,
++  errorComponent: panelError,
++  delay: 80,
++  timeout: 10000,
++});
+ // M5-W14 插件管理器面板：懒加载（defineAsyncComponent），将其纯逻辑(pluginUi.ts)、
+ // store(usePluginStore.ts) 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
+-const PluginManager = defineAsyncComponent(() => import("../plugin/PluginManager.vue"));
++const PluginManager = defineAsyncComponent({
++  loader: () => import("../plugin/PluginManager.vue"),
++  loadingComponent: panelLoading,
++  errorComponent: panelError,
++  delay: 80,
++  timeout: 10000,
++});
+ 
+ const layout = useLayoutStore();
+ const browser = useBrowserStore();
+@@ -199,5 +249,40 @@ watch(
+ 
+     <!-- ===== 文件编辑器 / Markdown 预览（覆盖层） ===== -->
+     <FileEditor v-if="layout.mainView === 'editor'" />
++    <!-- ===== W17(A7) 兜底：未知/空视图时主区不得空白或死区 ===== -->
++    <div v-else class="modview panel-state" role="alert" aria-live="polite">
++      <div>
++        <div class="pf-title">当前视图不可用</div>
++        <div class="pf-desc">未找到对应的面板（{{ layout.mainView || "空" }}）。请从左侧栏切换其它功能。</div>
++      </div>
++    </div>
+   </main>
+ </template>
++
++<style scoped>
++.panel-state {
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  justify-content: center;
++  gap: 8px;
++  height: 100%;
++  min-height: 200px;
++  padding: 24px;
++  color: #9aa4b2;
++  font-size: 14px;
++  text-align: center;
++}
++.panel-error {
++  color: #ff7a7a;
++}
++.pf-title {
++  font-size: 15px;
++  font-weight: 600;
++  color: #cbd5e0;
++}
++.pf-desc {
++  max-width: 420px;
++  line-height: 1.7;
++}
++</style>
+diff --git a/src/components/layout/StatusBar.vue b/src/components/layout/StatusBar.vue
+index 48c5be6..3b4df72 100644
+--- a/src/components/layout/StatusBar.vue
++++ b/src/components/layout/StatusBar.vue
+@@ -14,6 +14,20 @@ const ws = useWorkspaceStore();
+ const layout = useLayoutStore();
+ const settings = useSettingsStore();
+ 
++// W17(A7): 当前活动视图的可读名（纯展示，用于状态栏发现性；不引入运行时行为）。
++// mainView 为内部枚举键，非路径/URL/凭据，展示无敏感信息泄露风险。
++const KNOWN_VIEWS: Record<string, string> = {
++  home: "主页", browser: "浏览器", grid: "宫格", files: "文件", arts: "成果库",
++  clip: "剪贴板", repo: "仓库", apps: "应用", audit: "审计", scripts: "脚本库",
++  commands: "命令库", tools: "工具箱", db: "数据库", tasks: "定时任务",
++  plugin: "插件", skills: "技能", agents: "智能体", graph: "知识图谱",
++  settings: "设置", term: "终端", editor: "编辑器",
++};
++const viewLabel = computed(() => KNOWN_VIEWS[layout.mainView] ?? "");
++const viewUnknown = computed(
++  () => !!layout.mainView && !(layout.mainView in KNOWN_VIEWS)
++);
++
+ const tabCount = computed(() => browser.tabs.length);
+ const auditCount = computed(() => ws.audit.length);
+ const termReady = computed(() => system.terminalOpen && !!system.termId);
+@@ -64,6 +78,8 @@ const budgetLow = computed(
+ <template>
+   <footer class="status">
+     <span class="ok">● 已连接</span>
++    <span v-if="viewLabel" class="viewchip">当前：{{ viewLabel }}</span>
++    <span v-else-if="viewUnknown" class="viewchip warn" role="alert">⚠ 未知视图：{{ layout.mainView }}</span>
+     <span>页签 {{ tabCount }}</span>
+     <span>· 终端{{ termReady ? "就绪" : "未启" }}</span>
+     <span>· 仓库{{ repoReady ? "已配置" : "未配" }}</span>
+@@ -135,6 +151,12 @@ const budgetLow = computed(
+   margin-left: auto;
+   color: #cbd5e0;
+ }
++.viewchip {
++  color: #cbd5e0;
++}
++.viewchip.warn {
++  color: #ff7a7a;
++}
+ .res {
+   cursor: pointer;
+   white-space: nowrap;

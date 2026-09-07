@@ -1,34 +1,40 @@
 import { defineStore } from "pinia";
-import { reactive, computed } from "vue";
+import { reactive, computed, ref } from "vue";
 import { bridge } from "../bridge";
 import { useBrowserStore } from "./useBrowserStore";
 import { useLayoutStore } from "./useLayoutStore";
 import { useWorkspaceStore } from "./useWorkspaceStore";
+import {
+  HOME_APP_SESSION_ONLY_NOTICE,
+  HOME_MAX_RECENTS,
+  HOME_MAX_SHORTCUTS,
+  HOME_PRINCIPAL_AREAS,
+  HOME_SHORTCUT_LIMIT_MESSAGE,
+  defaultShortcuts,
+  homeAccessibleLabel,
+  homeDisplayTarget,
+  isStorageSafe,
+  normalizeRecents,
+  normalizeShortcuts,
+  panelStateHome,
+  pushRecent,
+  recentFromShortcut,
+  sanitizeShortcut,
+  stableId,
+  toPersisted,
+  type HomeArea,
+  type HomeAreaView,
+  type HomeRecent,
+  type HomeShortcut,
+} from "../utils/homeUi";
 
-// 主页快捷方式：网页（url）、系统应用（app）或本地目录（dir）
-export interface HomeShortcut {
-  id: string;
-  type: "url" | "app" | "dir";
-  name: string;
-  // type=url 时为网址；type=app 时为 .desktop 的 exec 命令；type=dir 时为目录绝对路径
-  target: string;
-  icon: string; // emoji 或图标
-}
+// M5-W17 A3：类型与默认值的**单一真源**迁到 `src/utils/homeUi.ts`（纯逻辑层，可 headless 直测）。
+// 此处原样再导出，保证既有消费方（HomePanel.vue / A5）的 import 路径与字段语义不变。
+export type { HomeShortcut, HomeRecent, HomeArea, HomeAreaView } from "../utils/homeUi";
 
 const STORAGE_KEY = "browser-os-home-shortcuts";
+const RECENTS_KEY = "browser-os-home-recents-v1";
 const DIRS_SEEDED_KEY = "browser-os-home-dirs-seeded-v2";
-
-// 默认快捷方式（首次使用 / 未配置时）
-function defaultShortcuts(): HomeShortcut[] {
-  return [
-    { id: "d1", type: "url", name: "百度", target: "https://www.baidu.com", icon: "🔍" },
-    { id: "d2", type: "url", name: "Kimi", target: "https://kimi.moonshot.cn", icon: "🌙" },
-    { id: "d3", type: "url", name: "DeepSeek", target: "https://chat.deepseek.com", icon: "🐋" },
-    { id: "d4", type: "url", name: "B站", target: "https://www.bilibili.com", icon: "📺" },
-    { id: "d5", type: "url", name: "GitHub", target: "https://github.com", icon: "🐙" },
-    { id: "d6", type: "url", name: "Gitee", target: "https://gitee.com", icon: "🐴" },
-  ];
-}
 
 export const useHomeStore = defineStore("home", () => {
   const browser = useBrowserStore();
@@ -36,6 +42,10 @@ export const useHomeStore = defineStore("home", () => {
   const workspace = useWorkspaceStore();
 
   const shortcuts = reactive<HomeShortcut[]>(load());
+  // M5-W17 A3：最近访问（有界 + 载入即校验，脏数据绝不进 UI）。
+  const recents = reactive<HomeRecent[]>(loadRecents());
+  const loading = ref(false);
+  const error = ref<string | null>(null);
   const editing = reactive<{
     open: boolean;
     id: string; // 空串 = 新增
@@ -66,26 +76,81 @@ export const useHomeStore = defineStore("home", () => {
     } catch {}
   }
 
+  // M5-W17 A3：载入必须**逐字段校验**——旧实现直接返回 `JSON.parse` 的原始数组，
+  // 缺 id / type 非法 / name 是 number 等脏数据会原样进 UI（渲染崩或显示 undefined）。
+  // 校验后为空（数据损坏或用户已清空）→ 回落到稳定默认，保证首页永远可用。
   function load(): HomeShortcut[] {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr) && arr.length) return arr;
+        const all = normalizeShortcuts(JSON.parse(raw));
+        // 迁移期清理：旧数据里的 app 条目（命令体）不进内存，并随即从浏览器存储中抹除。
+        const safe = all.filter(isStorageSafe);
+        if (safe.length !== all.length) {
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(safe));
+          } catch {}
+        }
+        if (safe.length) return safe;
       }
     } catch {}
     return defaultShortcuts();
   }
+  function loadRecents(): HomeRecent[] {
+    try {
+      const raw = localStorage.getItem(RECENTS_KEY);
+      // 最近访问同理：app 条目的 target 也是命令体，不还原、不落库。
+      if (raw) return normalizeRecents(JSON.parse(raw)).filter(isStorageSafe);
+    } catch {}
+    return [];
+  }
   function save() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(shortcuts));
+      // HOME_NO_SECRET_PERSIST：只落库非敏感主页元数据，app 命令体**不写**浏览器存储。
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(toPersisted(shortcuts)));
+    } catch {}
+  }
+  function saveRecents() {
+    try {
+      localStorage.setItem(RECENTS_KEY, JSON.stringify(toPersisted(recents)));
     } catch {}
   }
 
   const has = computed(() => shortcuts.length > 0);
+  const hasRecents = computed(() => recents.length > 0);
+  // 面板三态（共享验收 #2）：载入 / 空 / 就绪 / 错误，文案由纯逻辑层单一真源给出。
+  const panelState = computed(() =>
+    panelStateHome({ loading: loading.value, count: shortcuts.length, error: error.value }),
+  );
+  // 主要工作区入口（共享验收 #2/#3）：只读常量，**不新增路由、不新增命令**。
+  const principalAreas = HOME_PRINCIPAL_AREAS;
 
-  function makeId(prefix = "home") {
-    return `${prefix}-${Math.random().toString(36).slice(2)}`;
+  function openArea(view: HomeAreaView) {
+    layout.setView(view);
+  }
+  // 安全展示（共享验收 #4）：目录/应用只给末段名，URL 只给 host+path，绝不回显完整路径或凭据。
+  function displayTarget(s: HomeShortcut | HomeRecent) {
+    return homeDisplayTarget(s);
+  }
+  function accessibleLabel(s: HomeShortcut | HomeRecent) {
+    return homeAccessibleLabel(s);
+  }
+  function removeRecent(id: string) {
+    const i = recents.findIndex((r) => r.id === id);
+    if (i >= 0) {
+      recents.splice(i, 1);
+      saveRecents();
+    }
+  }
+  function clearRecents() {
+    recents.splice(0, recents.length);
+    saveRecents();
+  }
+
+  // M5-W17 A3：id 改为**确定性派生**（同 type+target ⇒ 同 id）。随机 id 会导致
+  // 每次载入渲染 key 漂移，且脏数据里的重复 id 无法去重。
+  function makeId(type: HomeShortcut["type"], target: string) {
+    return stableId(type, target);
   }
 
   function fileNameFromPath(path: string) {
@@ -103,24 +168,34 @@ export const useHomeStore = defineStore("home", () => {
     icon?: string;
     silent?: boolean;
   }) {
-    const name = input.name.trim();
-    const target = input.target.trim();
-    if (!name || !target) return false;
-    const existing = shortcuts.find((s) => s.type === input.type && s.target === target);
+    // M5-W17 A3：先过纯逻辑层校验（截断超长、丢弃非法 type / 空 name|target），再落库与渲染。
+    const clean = sanitizeShortcut({
+      id: "",
+      type: input.type,
+      name: input.name,
+      target: input.target,
+      icon: input.icon || "🔗",
+    });
+    if (!clean) return false;
+    const existing = shortcuts.find((s) => s.type === clean.type && s.target === clean.target);
     if (existing) {
-      existing.name = name;
-      existing.icon = input.icon || existing.icon || "🔗";
+      existing.name = clean.name;
+      existing.icon = clean.icon;
     } else {
-      shortcuts.push({
-        id: makeId(input.type),
-        type: input.type,
-        name,
-        target,
-        icon: input.icon || "🔗",
-      });
+      // 有界：新增前判上限（不再静默丢弃最旧，而是明确告知用户）。
+      if (shortcuts.length >= HOME_MAX_SHORTCUTS) {
+        if (!input.silent) layout.showToast(HOME_SHORTCUT_LIMIT_MESSAGE);
+        return false;
+      }
+      shortcuts.push({ ...clean, id: makeId(clean.type, clean.target) });
     }
     save();
-    if (!input.silent) layout.showToast(`已收藏到主页: ${name}`);
+    if (!input.silent) {
+      // app 条目不会落库，明确告知用户「仅本次会话有效」，避免重启后丢失造成的困惑。
+      layout.showToast(
+        clean.type === "app" ? HOME_APP_SESSION_ONLY_NOTICE : `已收藏到主页: ${clean.name}`,
+      );
+    }
     return true;
   }
 
@@ -170,10 +245,17 @@ export const useHomeStore = defineStore("home", () => {
       try {
         await bridge.launchApp(s.target);
         layout.showToast("已启动: " + s.name);
-      } catch (e: any) {
-        layout.showToast("启动失败: " + (e?.message ?? e));
+      } catch {
+        // M5-W17 A3（共享验收 #4）：启动失败**不回显原始错误串**——其中可能含
+        // 本地绝对路径 / URL 参数 / 凭据；只给确定且无敏感信息的提示。
+        layout.showToast("启动失败，请检查该快捷方式的目标是否有效。");
+        return;
       }
     }
+    // 仅成功路径记录最近访问：有界 + 去重 + 持久化（失败不污染最近列表）。
+    const next = pushRecent(recents.slice(), recentFromShortcut(s, Date.now()), HOME_MAX_RECENTS);
+    recents.splice(0, recents.length, ...next);
+    saveRecents();
   }
 
   // ===== 编辑 =====
@@ -198,33 +280,37 @@ export const useHomeStore = defineStore("home", () => {
     editing.id = "";
   }
   function saveEdit() {
-    const name = editing.name.trim();
-    const target = editing.target.trim();
-    if (!name || !target) {
+    // M5-W17 A3：编辑保存同样走校验（超长截断、非法 type 拒绝）。
+    const clean = sanitizeShortcut({
+      id: editing.id,
+      type: editing.type,
+      name: editing.name,
+      target: editing.target,
+      icon: editing.icon || "🔗",
+    });
+    if (!clean) {
       layout.showToast("请填写名称与目标");
       return;
     }
     if (editing.id) {
       const s = shortcuts.find((x) => x.id === editing.id);
       if (s) {
-        s.type = editing.type;
-        s.name = name;
-        s.target = target;
-        s.icon = editing.icon || "🔗";
+        s.type = clean.type;
+        s.name = clean.name;
+        s.target = clean.target;
+        s.icon = clean.icon;
       }
     } else {
-      shortcuts.push({
-        id: makeId(editing.type),
-        type: editing.type,
-        name,
-        target,
-        icon: editing.icon || "🔗",
-      });
+      if (shortcuts.length >= HOME_MAX_SHORTCUTS) {
+        layout.showToast(HOME_SHORTCUT_LIMIT_MESSAGE);
+        return;
+      }
+      shortcuts.push({ ...clean, id: makeId(clean.type, clean.target) });
     }
     save();
     editing.open = false;
     editing.id = "";
-    layout.showToast("已保存快捷方式");
+    layout.showToast(clean.type === "app" ? HOME_APP_SESSION_ONLY_NOTICE : "已保存快捷方式");
   }
   function remove(id: string) {
     const i = shortcuts.findIndex((x) => x.id === id);
@@ -241,6 +327,7 @@ export const useHomeStore = defineStore("home", () => {
   }
 
   return {
+    // 既有契约（保持字段名与语义不变，HomePanel.vue / A5 可直接消费）
     shortcuts,
     editing,
     has,
@@ -254,5 +341,17 @@ export const useHomeStore = defineStore("home", () => {
     saveEdit,
     remove,
     resetDefault,
+    // M5-W17 A3 新增：有界最近访问 + 主要工作区入口 + 安全展示/无障碍 + 面板三态
+    recents,
+    hasRecents,
+    loading,
+    error,
+    panelState,
+    principalAreas,
+    openArea,
+    displayTarget,
+    accessibleLabel,
+    removeRecent,
+    clearRecents,
   };
 });

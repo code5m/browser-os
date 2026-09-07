@@ -70,3 +70,24 @@ MCP 必须维持「dry-run / 只读 introspection」形态，不得成为第二�
 白名单、注册表、stdio 骨架、构建门控、ACL、前端六面均无插件可达路径，
 且 `MCP_PLUGIN_NOT_EXPOSED` 已固化为 ACTIVE 门禁并含坏样本。
 本 lane 无产品代码改动、无需补丁；可进入 A11 的 W15 放行矩阵。
+
+---
+
+## 6. 收口后复核（追加，针对 `052b18a`）
+
+Verdict 原文基于 `886ea29` 出具；随后 A0 落地 `052b18a feat(M5): close W15 release readiness`，
+其中**包含 A6 的 UI polish 产品代码**（W15 唯一有产品代码的 lane），故补做一次回归复核：
+
+| 复核项 | 结果 |
+|---|---|
+| A6 改动的 6 个前端文件（`ConfirmModal.vue` / `AuditPanel.vue` / `GitWriteConfirmDialog.vue` / `RunHistoryModal.vue` / `useModalFocus.ts` / `modalA11y.ts`）是否引入 MCP 面 | grep `mcp` **零命中** |
+| 上述文件是否绕过 `bridge.ts` 直接 raw `invoke`（`@tauri-apps/api`） | **零命中** |
+| `check-mcp-policy.py --self-test` | PASS（ACTIVE=13，PENDING=0）|
+| `check-mcp-policy.py`（默认）| PASS |
+| `check-mcp-policy.py --expect-current-gaps` | PASS |
+| `cargo test --features mcp mcp` | 30 passed / 0 failed |
+| `bash scripts/pre-merge.sh` | `PRE_MERGE_RESULT=ALL_PASS` |
+
+**结论维持 PASS**：A6 的 UI 可访问性/焦点/空-加载-错误态改动未触及 MCP 面，
+未引入第二执行路径或 raw invoke 绕过，§5 的隔离结论在最终 W15 树（`052b18a`）上依然成立。
+第 4 节的 `tools/list` 不对称观察仍未修复（预期，W15 禁止 MCP 扩张），维持交 A0 排入 M5-2.b。

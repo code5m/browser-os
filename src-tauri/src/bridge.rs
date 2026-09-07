@@ -953,6 +953,7 @@ fn task_target_params(
 #[tauri::command]
 pub fn task_list(app: AppHandle, webview: tauri::Webview) -> Result<Vec<TaskDef>, String> {
     check_invocation_source(&webview, "task_list", None, &app)?;
+    let _store_guard = crate::tasks::task_store_lock();
     let list = crate::tasks::load_tasks_at(&crate::tasks::tasks_file(&app));
     let count = list.len();
     workspace::log_audit(&app, "task.runs.list", format!("count={count}"));
@@ -979,6 +980,7 @@ pub fn task_add(
     enabled: Option<bool>,
 ) -> Result<TaskDef, String> {
     check_invocation_source(&webview, "task_add", None, &app)?;
+    let _store_guard = crate::tasks::task_store_lock();
     let supplied = params.unwrap_or_default();
     let path = crate::tasks::tasks_file(&app);
     let mut list = crate::tasks::load_tasks_at(&path);
@@ -1031,6 +1033,7 @@ pub fn task_update(
     task: TaskDef,
 ) -> Result<TaskDef, String> {
     check_invocation_source(&webview, "task_update", None, &app)?;
+    let _store_guard = crate::tasks::task_store_lock();
     let path = crate::tasks::tasks_file(&app);
     let mut list = crate::tasks::load_tasks_at(&path);
     let index = list
@@ -1069,6 +1072,7 @@ pub fn task_update(
 #[tauri::command]
 pub fn task_remove(app: AppHandle, webview: tauri::Webview, id: String) -> Result<bool, String> {
     check_invocation_source(&webview, "task_remove", None, &app)?;
+    let _store_guard = crate::tasks::task_store_lock();
     check_id(&id, "任务 id")?;
     let path = crate::tasks::tasks_file(&app);
     let mut list = crate::tasks::load_tasks_at(&path);
@@ -1097,6 +1101,7 @@ pub fn task_run_now(
     id: String,
 ) -> Result<RunSnapshot, String> {
     check_invocation_source(&webview, "task_run_now", None, &app)?;
+    let _store_guard = crate::tasks::task_store_lock();
     check_id(&id, "任务 id")?;
     crate::scheduler::fire_now(&app, &id)
 }

@@ -1,0 +1,183 @@
+diff --git a/scripts/check-markdown-xss-logic.mjs b/scripts/check-markdown-xss-logic.mjs
+new file mode 100644
+index 0000000..daf6c1f
+--- /dev/null
++++ b/scripts/check-markdown-xss-logic.mjs
+@@ -0,0 +1,149 @@
++#!/usr/bin/env node
++// ---------------------------------------------------------------------------
++// M5-BUG-HUNT（Lane A10）markdown 链接属性/XSS 修复的逻辑层自动化测试。
++//
++// 目标（BUG-HUNT Dispatch L1246，A10 scope=src/utils/markdown.ts + 受影响的渲染器 + 测试）：
++//   闭环 B11-3（markdown 链接 URL 未转义引号 → v-html 属性注入 XSS），
++//   并顺带确认 B11-4/5/6 的外部链接 rel=noopener 已补。
++//
++// 受影响的渲染器 FileEditor.vue:29 / FilePanel.vue:52 均经 useWorkspaceStore.ts 调
++// renderMd() 产出 mdHtml/inlineHtml 再 v-html；根因仅在 markdown.ts，渲染器无需改动。
++//
++// 不修改任何产品码；headless 加载真实 renderMd（native TS strip 优先，回退 esbuild）。
++// 用法: node scripts/check-markdown-xss-logic.mjs
++// 退出码: 0 = 全部通过；1 = 有必需项失败
++// ---------------------------------------------------------------------------
++
++import { readFileSync, existsSync, writeFileSync } from "node:fs";
++import { join, dirname } from "node:path";
++import { fileURLToPath, pathToFileURL } from "node:url";
++import os from "node:os";
++
++const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
++const MD_PATH = join(ROOT, "src/utils/markdown.ts");
++
++let passed = 0;
++let failed = 0;
++const failures = [];
++function ok(name) {
++  passed++;
++  console.log("  ok   " + name);
++}
++function fail(name, detail) {
++  failed++;
++  failures.push(name + (detail ? " :: " + detail : ""));
++  console.error("  FAIL " + name + (detail ? " :: " + detail : ""));
++}
++
++// 加载真实 renderMd（纯函数，无 pinia/vue 依赖）。
++async function loadMarkdown() {
++  if (!existsSync(MD_PATH)) return null;
++  try {
++    return await import(pathToFileURL(MD_PATH).href);
++  } catch {}
++  try {
++    const esbuildMod = await import("esbuild");
++    const src = readFileSync(MD_PATH, "utf8");
++    const { code } = esbuildMod.transformSync(src, { loader: "ts", format: "esm" });
++    const tmp = join(os.tmpdir(), `markdown.gen.${process.pid}.mjs`);
++    writeFileSync(tmp, code);
++    return await import(pathToFileURL(tmp).href);
++  } catch {
++    return null;
++  }
++}
++
++const mod = await loadMarkdown();
++if (!mod || typeof mod.renderMd !== "function") {
++  fail("renderMd 可加载", "无法以 native strip / esbuild 加载 src/utils/markdown.ts");
++  console.log(`\nMARKDOWN_XSS_RESULT=FAIL（无法加载 renderMd；${failed} 失败）`);
++  process.exit(1);
++}
++const renderMd = mod.renderMd;
++
++// ---- B11-3 核心：属性注入 XSS ----
++{
++  const payload = '[x](https://a.com/"onmouseover="alert(1))';
++  const out = renderMd(payload);
++  // 引号必须被转义，不能再以裸 " 突破 href 属性边界
++  if (out.includes('onmouseover="')) fail("B11-3 引号注入被转义", out);
++  else ok("B11-3 引号注入被转义（无裸 onmouseover=\" 属性）");
++  if (!out.includes("&quot;")) fail("B11-3 输出含 &quot;", out);
++  else ok("B11-3 输出含 &quot;（URL 属性转义生效）");
++  const m = out.match(/<a /g);
++  if (!m || m.length !== 1) fail("B11-3 仅一个 <a>", out);
++  else ok("B11-3 生成一个 <a> 链接");
++  if (!out.includes('rel="noopener noreferrer"'))
++    fail("B11-3 外部链接含 rel=noopener", out);
++  else ok("B11-3 外部链接含 rel=\"noopener noreferrer\"（B11-4/5/6）");
++}
++
++// ---- 正常外部链接：结构精确 ----
++{
++  const out = renderMd("[text](https://example.com)");
++  const want = '<a href="https://example.com" target="_blank" rel="noopener noreferrer">text</a>';
++  if (out.includes(want)) ok("正常外部链接结构精确");
++  else fail("正常外部链接结构", `期望含 ${want}，实得 ${out}`);
++}
++
++// ---- 查询串 & 已被 esc 处理，不二次转义 ----
++{
++  const out = renderMd("[x](https://a.com/?a=1&b=2)");
++  // esc 把 & 变 &amp;，escapeAttr 不动 &，故 href 内应为单个 &amp;
++  if (out.includes('href="https://a.com/?a=1&amp;b=2"'))
++    ok("查询串 & 转义为单 &amp;（无二次转义）");
++  else fail("查询串 & 转义", out);
++  if (out.includes("&amp;amp;")) fail("查询串无二次转义", out);
++  else ok("查询串无 &amp;amp; 二次转义");
++}
++
++// ---- URL 内 < > 不突破属性 ----
++{
++  const out = renderMd("[x](https://a.com/a<b)");
++  if (out.includes('href="https://a.com/a<b"')) fail("URL 内 < 被转义", out);
++  else ok("URL 内 < 不突破属性边界");
++  if (!out.includes("&lt;b")) fail("URL 内 < 转义为 &lt;", out);
++  else ok("URL 内 < 转义为 &lt;");
++}
++
++// ---- scheme 限定：javascript: 不当链接 ----
++{
++  const out = renderMd("[x](javascript:alert(1))");
++  if (out.includes('<a href="javascript:')) fail("javascript: 不被当作链接", out);
++  else ok("javascript: scheme 不被渲染为链接（正则限定 http/https）");
++}
++
++// ---- 链接文本特殊字符已被 esc（防元素内容 XSS） ----
++{
++  const out = renderMd("[<b>x</b>](https://a.com)");
++  if (out.includes("<b>x</b>")) fail("链接文本被 esc", out);
++  else ok("链接文本 <b> 被转义");
++  if (out.includes("&lt;b&gt;x&lt;/b&gt;")) ok("链接文本转义为 &lt;b&gt;x&lt;/b&gt;");
++  else fail("链接文本转义形态", out);
++}
++
++// ---- 代码块内链接不当链接（不渲染） ----
++{
++  const out = renderMd("```\n[x](https://a.com)\n```");
++  if (out.includes("<a ")) fail("代码块内不渲染链接", out);
++  else ok("代码块内链接不渲染");
++}
++
++// ---- 不回归基础 markdown ----
++{
++  if (renderMd("# T").includes("<h1>T</h1>")) ok("标题渲染保持");
++  else fail("标题渲染", renderMd("# T"));
++  if (renderMd("**b**").includes("<b>b</b>")) ok("粗体渲染保持");
++  else fail("粗体渲染", renderMd("**b**"));
++  if (renderMd("*i*").includes("<i>i</i>")) ok("斜体渲染保持");
++  else fail("斜体渲染", renderMd("*i*"));
++}
++
++console.log(
++  `\nMARKDOWN_XSS_RESULT=${failed === 0 ? "PASS" : "FAIL"}（通过 ${passed}，失败 ${failed}）`,
++);
++if (failed > 0) {
++  for (const f of failures) console.error("  - " + f);
++  process.exit(1);
++}
++process.exit(0);
+diff --git a/src/utils/markdown.ts b/src/utils/markdown.ts
+index 63e390a..1672224 100644
+--- a/src/utils/markdown.ts
++++ b/src/utils/markdown.ts
+@@ -3,6 +3,9 @@
+ export function renderMd(src: string): string {
+   const esc = (s: string) =>
+     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
++  // HTML 属性上下文转义：仅链接 URL（$2）未经 esc 处理引号；& < > 已由 esc 处理，这里补引号防属性注入。
++  const escapeAttr = (s: string) =>
++    s.replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+   const lines = src.replace(/\r\n/g, "\n").split("\n");
+   let out = "";
+   let inCode = false;
+@@ -40,6 +43,12 @@ export function renderMd(src: string): string {
+       .replace(/`([^`]+)`/g, "<code>$1</code>")
+       .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+       .replace(/\*([^*]+)\*/g, "<i>$1</i>")
+-      .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
++      // 外部链接（scheme 已被正则限定 http/https）：URL 经 escapeAttr 转义防属性注入 XSS(B11-3)，
++      // 并加 rel="noopener noreferrer" 防 target=_blank 反劫持(B11-4/5/6)。链接文本 $1 已含 esc 结果，安全。
++      .replace(
++        /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,
++        (_m, text: string, url: string) =>
++          `<a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${text}</a>`,
++      );
+   }
+ }

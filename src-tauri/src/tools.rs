@@ -17,6 +17,10 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use crate::domain::{ToolMeta, ToolSource};
 use crate::workspace;
 
+/// Maximum user-tool document size kept in memory by the local tool protocol.
+/// Built-in tools are compile-time assets and are intentionally not limited here.
+const MAX_USER_TOOL_BYTES: u64 = 2 * 1024 * 1024;
+
 /// 内置种子清单：`(id, 展示名, 分类, 入口文件名)`。
 ///
 /// 与 `builtin_tool_html` 的 match 臂一一对应（F9：种子为
@@ -159,6 +163,10 @@ pub fn tool_html(app: &AppHandle, uri: &str) -> String {
 fn read_user_tool(app: &AppHandle, file_name: &str) -> Result<String, String> {
     let base = crate::workspace::workspace_dir(app).join("tools");
     let target = validate_user_tool_path(&base, file_name)?;
+    let metadata = fs::metadata(&target).map_err(|_| "读取工具失败".to_string())?;
+    if metadata.len() > MAX_USER_TOOL_BYTES {
+        return Err("工具文件过大（上限 2 MiB）".to_string());
+    }
     fs::read_to_string(&target).map_err(|_| "读取工具失败".to_string())
 }
 
@@ -282,6 +290,11 @@ mod tests {
         // 非法 id（含分隔符）在 open_tool 层也被拒（结构复验，这里复测纯函数口径）
         assert!(validate_user_tool_path(&tmp, "x/../y.html").is_err());
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn user_tool_size_limit_is_bounded() {
+        assert_eq!(MAX_USER_TOOL_BYTES, 2 * 1024 * 1024);
     }
 
     // ---- 内容判定辅助（与 scripts/check-seed-tools.py 同口径） ----

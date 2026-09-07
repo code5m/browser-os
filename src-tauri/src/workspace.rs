@@ -24,6 +24,53 @@ fn ensure(dir: &PathBuf) {
     fs::create_dir_all(dir).ok();
 }
 
+// ---------------------------------------------------------------------------
+// BUG-HUNT B4-1/B4-2：workspace 系**共享落盘 / 读取原语**
+//
+// B4-1（破坏性覆盖写）：改前 artifacts / repos / bookmarks / audit 用 `fs::write`
+//   直接覆盖目标文件，崩溃会留下半截内容；
+// B4-2（静默清空）：加载侧 `unwrap_or_default()` 把「解析失败」当成空列表返回，
+//   于是「崩溃损坏 → 下次保存把空列表覆盖写回 → 用户数据无痕蒸发」（audit 是热路径，最致命）。
+//
+// 契约：
+//   - 落盘一律走**唯一**原子写原语 `crate::session::atomic_write`（tmp + rename），
+//     不新造第二条写路径、不 `fs::write` 直接覆盖目标文件；
+//   - 文件不存在 / 读不到 → 空列表（正常首次启动，不是数据丢失）；
+//   - **解析失败绝不静默清空**：备份为 `<file>.corrupt` + 告警后返回空
+//     （对齐 `tasks.rs` O-A6-7 范式，保证原字节可人工取回）。
+// ---------------------------------------------------------------------------
+
+/// 列表落盘（原子写：tmp + rename）。
+pub fn save_json_list_at<T: serde::Serialize>(
+    path: &Path,
+    list: &[T],
+    tag: &str,
+) -> Result<(), String> {
+    let content =
+        serde_json::to_string_pretty(list).map_err(|e| format!("序列化{tag}失败: {e}"))?;
+    crate::session::atomic_write(path, &content)
+}
+
+/// 列表读取：缺失 → 空；**损坏 → `.corrupt` 备份 + 告警 → 空**（不静默丢弃）。
+pub fn load_json_list_at<T: serde::de::DeserializeOwned>(path: &Path, tag: &str) -> Vec<T> {
+    let Ok(content) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    match serde_json::from_str::<Vec<T>>(&content) {
+        Ok(list) => list,
+        Err(e) => {
+            eprintln!(
+                "[workspace] {tag} 文件损坏，已备份为 .corrupt（不会静默清空后被覆盖写回）：{}（{e}）",
+                path.display()
+            );
+            let mut backup = path.as_os_str().to_os_string();
+            backup.push(".corrupt");
+            let _ = fs::rename(path, PathBuf::from(backup));
+            Vec::new()
+        }
+    }
+}
+
 /// 本地成果库目录
 pub fn workspace_dir(app: &AppHandle) -> PathBuf {
     let d = data_dir(app).join("workspace");
@@ -57,11 +104,9 @@ pub fn notes_dir(app: &AppHandle) -> PathBuf {
 pub fn save_artifact(app: &AppHandle, art: &Artifact) -> Result<PathBuf, String> {
     let dir = workspace_dir(app);
     let file = dir.join(format!("{}.json", art.id));
-    fs::write(
-        &file,
-        serde_json::to_string_pretty(art).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
+    // B4-1：原子写（tmp + rename），不再 `fs::write` 直接覆盖（崩溃会留半截文件）。
+    let content = serde_json::to_string_pretty(art).map_err(|e| e.to_string())?;
+    crate::session::atomic_write(&file, &content)?;
     Ok(file)
 }
 
@@ -76,9 +121,20 @@ pub fn load_artifacts(app: &AppHandle) -> Vec<Artifact> {
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
                 continue;
             }
-            if let Ok(c) = fs::read_to_string(path) {
-                if let Ok(a) = serde_json::from_str::<Artifact>(&c) {
-                    out.push(a);
+            if let Ok(c) = fs::read_to_string(&path) {
+                match serde_json::from_str::<Artifact>(&c) {
+                    Ok(a) => out.push(a),
+                    // B4-2：损坏的成果文件**不静默丢弃**——备份为 .corrupt 并告警，
+                    // 便于人工取回（成果逐文件保存，不会因空列表覆盖而整体蒸发）。
+                    Err(e) => {
+                        eprintln!(
+                            "[workspace] 成果文件损坏，已备份为 .corrupt：{}（{e}）",
+                            path.display()
+                        );
+                        let mut backup = path.as_os_str().to_os_string();
+                        backup.push(".corrupt");
+                        let _ = fs::rename(&path, PathBuf::from(backup));
+                    }
                 }
             }
         }
@@ -204,18 +260,14 @@ pub fn script_runs_file(app: &AppHandle) -> PathBuf {
     data_dir(app).join("script-runs.json")
 }
 
-/// 元数据落盘（原子写：tmp + rename）
+/// 元数据落盘（原子写：tmp + rename）。B4-1：走共享原语，不新造写路径。
 pub fn save_scripts_at(path: &Path, list: &[ScriptMeta]) -> Result<(), String> {
-    let content =
-        serde_json::to_string_pretty(list).map_err(|e| format!("序列化脚本库失败: {e}"))?;
-    crate::session::atomic_write(path, &content)
+    save_json_list_at(path, list, "脚本库")
 }
 
+/// 脚本库读取。B4-2：损坏 → `.corrupt` 备份 + 告警（不再 `unwrap_or_default()` 静默清空）。
 pub fn load_scripts_at(path: &Path) -> Vec<ScriptMeta> {
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|c| serde_json::from_str(&c).ok())
-        .unwrap_or_default()
+    load_json_list_at(path, "脚本库")
 }
 
 pub fn save_scripts(app: &AppHandle, list: &[ScriptMeta]) -> Result<(), String> {
@@ -239,18 +291,14 @@ pub fn snippets_file(app: &AppHandle) -> PathBuf {
     data_dir(app).join("snippets.json")
 }
 
-/// 命令片段落盘（原子写：tmp + rename）
+/// 命令片段落盘（原子写：tmp + rename）。B4-1：走共享原语。
 pub fn save_snippets_at(path: &Path, list: &[CommandSnippet]) -> Result<(), String> {
-    let content =
-        serde_json::to_string_pretty(list).map_err(|e| format!("序列化命令片段库失败: {e}"))?;
-    crate::session::atomic_write(path, &content)
+    save_json_list_at(path, list, "命令片段库")
 }
 
+/// 命令片段读取。B4-2：损坏 → `.corrupt` 备份 + 告警。
 pub fn load_snippets_at(path: &Path) -> Vec<CommandSnippet> {
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|c| serde_json::from_str(&c).ok())
-        .unwrap_or_default()
+    load_json_list_at(path, "命令片段库")
 }
 
 pub fn save_snippets(app: &AppHandle, list: &[CommandSnippet]) -> Result<(), String> {
@@ -365,18 +413,19 @@ pub fn delete_script_body(app: &AppHandle, file_name: &str) -> Result<(), String
 pub fn repos_file(app: &AppHandle) -> PathBuf {
     data_dir(app).join("repos.json")
 }
+/// 仓库配置读取（`_at` 便于无 AppHandle 单测）。B4-2：损坏 → `.corrupt` 备份 + 告警。
+pub fn load_repos_at(path: &Path) -> Vec<RepoConfig> {
+    load_json_list_at(path, "仓库配置")
+}
+/// 仓库配置落盘（`_at` 便于无 AppHandle 单测）。B4-1：原子写，不再 `fs::write` 直接覆盖。
+pub fn save_repos_at(path: &Path, repos: &[RepoConfig]) -> Result<(), String> {
+    save_json_list_at(path, repos, "仓库配置")
+}
 pub fn load_repos(app: &AppHandle) -> Vec<RepoConfig> {
-    fs::read_to_string(repos_file(app))
-        .ok()
-        .and_then(|c| serde_json::from_str(&c).ok())
-        .unwrap_or_default()
+    load_repos_at(&repos_file(app))
 }
 pub fn save_repos(app: &AppHandle, repos: &[RepoConfig]) -> Result<(), String> {
-    fs::write(
-        repos_file(app),
-        serde_json::to_string_pretty(repos).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())
+    save_repos_at(&repos_file(app), repos)
 }
 
 /// 审计日志
@@ -393,16 +442,22 @@ pub fn log_audit(app: &AppHandle, action: &str, detail: String) {
     if list.len() > 1000 {
         list.drain(0..list.len() - 1000);
     }
-    let _ = fs::write(
-        audit_file(app),
-        serde_json::to_string_pretty(&list).unwrap_or_default(),
-    );
+    // B4-1：原子写；且**序列化失败绝不写空串**——改前 `unwrap_or_default()` 会把整份
+    // 审计抹成空文件（`let _ =` 还吞掉错误）。现在失败只告警，原文件保持不被覆盖。
+    if let Err(e) = save_audit_at(&audit_file(app), &list) {
+        eprintln!("[workspace] 审计落盘失败（保留原文件，不覆盖写空）：{e}");
+    }
+}
+/// 审计读取（`_at` 便于无 AppHandle 单测）。B4-2：损坏 → `.corrupt` 备份 + 告警。
+pub fn load_audit_at(path: &Path) -> Vec<AuditEntry> {
+    load_json_list_at(path, "审计日志")
+}
+/// 审计落盘（`_at` 便于无 AppHandle 单测）。B4-1：原子写。
+pub fn save_audit_at(path: &Path, list: &[AuditEntry]) -> Result<(), String> {
+    save_json_list_at(path, list, "审计日志")
 }
 pub fn load_audit(app: &AppHandle) -> Vec<AuditEntry> {
-    fs::read_to_string(audit_file(app))
-        .ok()
-        .and_then(|c| serde_json::from_str(&c).ok())
-        .unwrap_or_default()
+    load_audit_at(&audit_file(app))
 }
 
 /// 收藏持久化文件
@@ -417,18 +472,19 @@ pub fn sessions_dir(app: &AppHandle) -> PathBuf {
     ensure(&d);
     d
 }
+/// 收藏读取（`_at` 便于无 AppHandle 单测）。B4-2：损坏 → `.corrupt` 备份 + 告警。
+pub fn load_bookmarks_at(path: &Path) -> Vec<Bookmark> {
+    load_json_list_at(path, "收藏")
+}
+/// 收藏落盘（`_at` 便于无 AppHandle 单测）。B4-1：原子写。
+pub fn save_bookmarks_at(path: &Path, list: &[Bookmark]) -> Result<(), String> {
+    save_json_list_at(path, list, "收藏")
+}
 pub fn load_bookmarks(app: &AppHandle) -> Vec<Bookmark> {
-    fs::read_to_string(bookmarks_file(app))
-        .ok()
-        .and_then(|c| serde_json::from_str(&c).ok())
-        .unwrap_or_default()
+    load_bookmarks_at(&bookmarks_file(app))
 }
 pub fn save_bookmarks(app: &AppHandle, list: &[Bookmark]) -> Result<(), String> {
-    fs::write(
-        bookmarks_file(app),
-        serde_json::to_string_pretty(list).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())
+    save_bookmarks_at(&bookmarks_file(app), list)
 }
 
 /// 新增收藏：若 url 已存在则视为更新（保留原 id/created_at，仅覆盖 title/category）。
@@ -534,6 +590,154 @@ mod snippet_persistence_tests {
         let corrupt = temp_path("snippets-corrupt");
         fs::write(&corrupt, "{not json").expect("write corrupt snippets");
         assert!(load_snippets_at(&corrupt).is_empty());
-        let _ = fs::remove_file(corrupt);
+        // B4-2：损坏文件改备份为 `.corrupt`（原字节可人工取回），不再无痕蒸发。
+        let mut backup = corrupt.as_os_str().to_os_string();
+        backup.push(".corrupt");
+        let backup = PathBuf::from(backup);
+        assert!(backup.exists(), "损坏文件应备份为 .corrupt");
+        let _ = fs::remove_file(&backup);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BUG-HUNT B4-1 / B4-2 回归测试：workspace 落盘必须原子，损坏必须留证
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod b4_atomic_persistence_tests {
+    use super::*;
+    use crate::domain::RepoProvider;
+
+    fn temp_path(name: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "mvp-browser-os-b4-{name}-{}-{}.json",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        path
+    }
+
+    /// `session::atomic_write` 的临时文件口径：`path.with_extension("json.tmp")`。
+    fn tmp_of(path: &Path) -> PathBuf {
+        path.with_extension("json.tmp")
+    }
+
+    fn corrupt_backup_of(path: &Path) -> PathBuf {
+        let mut backup = path.as_os_str().to_os_string();
+        backup.push(".corrupt");
+        PathBuf::from(backup)
+    }
+
+    fn repo() -> RepoConfig {
+        RepoConfig {
+            id: uuid::Uuid::new_v4().to_string(),
+            provider: RepoProvider::Git,
+            name: "demo".to_string(),
+            remote_url: "https://example.com/demo.git".to_string(),
+            branch: "main".to_string(),
+            username: "alice".to_string(),
+        }
+    }
+
+    fn audit_entry(action: &str) -> AuditEntry {
+        AuditEntry {
+            at: Utc::now(),
+            action: action.to_string(),
+            detail: "detail".to_string(),
+        }
+    }
+
+    #[test]
+    fn repos_roundtrip_is_atomic_without_tmp_leftover() {
+        let path = temp_path("repos");
+        save_repos_at(&path, &[repo()]).expect("save repos");
+        let back = load_repos_at(&path);
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].name, "demo");
+        assert!(!tmp_of(&path).exists(), "atomic_write 后不得残留 .tmp");
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn bookmarks_roundtrip_is_atomic_without_tmp_leftover() {
+        let path = temp_path("bookmarks");
+        let list = vec![Bookmark::new(
+            "https://example.com".to_string(),
+            "Example".to_string(),
+            "work".to_string(),
+        )];
+        save_bookmarks_at(&path, &list).expect("save bookmarks");
+        let back = load_bookmarks_at(&path);
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].title, "Example");
+        assert!(!tmp_of(&path).exists(), "atomic_write 后不得残留 .tmp");
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn audit_roundtrip_is_atomic_without_tmp_leftover() {
+        let path = temp_path("audit");
+        save_audit_at(&path, &[audit_entry("a.one"), audit_entry("a.two")]).expect("save audit");
+        let back = load_audit_at(&path);
+        assert_eq!(back.len(), 2);
+        assert_eq!(back[0].action, "a.one");
+        assert!(!tmp_of(&path).exists(), "atomic_write 后不得残留 .tmp");
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn corrupt_file_is_backed_up_not_silently_dropped() {
+        let path = temp_path("corrupt-repos");
+        // 先写有效数据，再模拟「崩溃把文件写坏」。
+        save_repos_at(&path, &[repo()]).expect("seed repos");
+        fs::write(&path, "{not json at all").expect("simulate corruption");
+
+        assert!(
+            load_repos_at(&path).is_empty(),
+            "损坏时返回空，避免把坏数据当真的用"
+        );
+
+        // B4-2 核心：原字节必须仍在（.corrupt 备份），不会被下次保存的空列表覆盖蒸发。
+        let backup = corrupt_backup_of(&path);
+        assert!(backup.exists(), "损坏文件必须备份为 .corrupt");
+        assert!(
+            !path.exists(),
+            "损坏文件已被 rename 走，不会被空列表覆盖写回"
+        );
+        let raw = fs::read_to_string(&backup).unwrap_or_default();
+        assert!(
+            raw.contains("not json at all"),
+            "备份保留原始字节，可人工取回"
+        );
+
+        let _ = fs::remove_file(&backup);
+    }
+
+    #[test]
+    fn corrupt_audit_is_backed_up_and_survives_next_save() {
+        let path = temp_path("corrupt-audit");
+        fs::write(&path, "{{{ broken").expect("simulate corruption");
+        assert!(load_audit_at(&path).is_empty());
+
+        let backup = corrupt_backup_of(&path);
+        assert!(backup.exists(), "审计损坏必须留证（.corrupt）");
+
+        // 即便随后再落盘一份新审计，证据仍在（审计是热路径，最需要留证）。
+        save_audit_at(&path, &[audit_entry("after.recovery")]).expect("save after corrupt");
+        assert!(backup.exists(), "新落盘不得破坏已备份的损坏证据");
+        assert_eq!(load_audit_at(&path).len(), 1);
+
+        let _ = fs::remove_file(&backup);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn missing_file_stays_empty_without_backup() {
+        let path = temp_path("missing");
+        assert!(load_repos_at(&path).is_empty());
+        assert!(
+            !corrupt_backup_of(&path).exists(),
+            "文件不存在属正常首次启动，不应产生 .corrupt"
+        );
     }
 }

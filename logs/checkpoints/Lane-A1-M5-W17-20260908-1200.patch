@@ -1,0 +1,672 @@
+diff --git a/AI-模型切换与接手清单.md b/AI-模型切换与接手清单.md
+index 742db97..79f7433 100644
+--- a/AI-模型切换与接手清单.md
++++ b/AI-模型切换与接手清单.md
+@@ -1267,6 +1267,8 @@ git log --reverse --oneline --decorate 504fcd7..HEAD
+ 
+ 当前应复制 §1 的 `M1-1` 任务卡，而不是继续使用上面的 M0 连续执行提示词。
+ > A0 update 2026-09-08 10:15 CST: W15 release-readiness accepted locally: high-risk write-confirmation dialogs now have keyboard focus containment, while runtime authority remains unchanged. Full Rust 431/431, MCP feature 21/21, policies/UI checks, release build, build, and pre-merge PASS. Build growth is 25.14% with warning delta 0; A0 recorded a one-time 25.2% ceiling. NEXT=`M5-W16` M5 closeout and M6 charter, docs/review only until a bounded runtime slice is approved; only A0 pushes.
++> A1 update 2026-09-08 11:00 CST: A1 W16 reconciliation (docs only) — W15 accepted at `052b18a` (`git pull --ff-only` clean; metrics `total_bytes_pct=25.14` ≤ **25.2%** one-time ceiling, warning delta=0; A0 removed the first generic async-state component because it would have raised growth to 25.60%, and narrowed focus management to the two high-risk write confirmations). A1 corrected every recorded 25.0% gate to the accepted 25.2% ceiling in M5-0/13/14. Manual GUI/runtime evidence remains an open acceptance item (not fabricated). A1 drafted the M6 WBS/ordering proposal `logs/checkpoints/A1-M5-W16-M6-WBS-proposal-20260908-1100.md`: 6 candidate workstreams (M6-1 plugin stage-II bounded invoke / M6-2 MCP stdio real runtime / M6-3 Agent-Skill execution authorization / M6-4 graph write+export / M6-5 background worker / M6-6 distribution and signing), all gated by an M6 entry gate (product owner approval + A10 verdict + A11 verification skeleton + 25.2% metric budget). Zero product code, no push.
++> A1 update 2026-09-08 12:00 CST: A1 W17 reconciliation (docs only) — W16 outputs retained per board L6 (W15 accepted+PUSHED at `052b18a`; M6 WBS/ordering proposal `A1-M5-W16-M6-WBS-proposal-20260908-1100.md` and the 25.2% gate correction stay in force) while `M5-W17` desktop-client completeness and home recovery is now the active NEXT. W17 is M5's first real frontend product-code wave but bounded: desktop dev start helper (A2), home store/utils (A3) + home components (A5), ActivityBar/layout navigation (A6), client shell fallback/boot/error presentation (A7); docs/review lanes A1/A4/A8/A9/A10/A11. Hard stops: no new Tauri command / bridge capability / ACL entry / filesystem permission / network privilege / new dependency; no command execution, plugin invocation, dynamic loading, remote download/listener, daemon, model call, Agent-Skill execution, MCP live runtime, graph write/export, or background worker; no M6 authority slice. A1 W17 deliverables: reconciled M5-0 title chain + `[W17 active]` section, M5-13 `[W17 verification scope]` (6 FAC mapped to the six shared ACs), M5-14 `[W17 active]` (debt ledger stays 53, W17 increment expected 0, five known limitations), M5-10/11/12 headers, and the new **W17 user-visible acceptance checklist / known limitations** `logs/checkpoints/A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md` (6 groups / 24 human-runnable checks + release judgment rules) for A8 live run, A11 matrix, and A0 integration. Key risks recorded: build-metric headroom is only 0.06pp (25.14% baseline vs 25.2% one-time ceiling) and the home view must not become a marketing page. Zero product code, no push.
+ > A0 update 2026-09-08 00:20 CST: W13 Stage-I plugin manifest lifecycle validation PASS (plugin tests 28/28, full cargo 431/431, MCP feature 21/21, plugin policy ACTIVE=7/PENDING=5, plugin privacy pending=NONE, graph/MCP/Agent-Skill policies and UI checks PASS, npm build and pre-merge ALL_PASS). NEXT=`M5-W14` plugin manager UI consuming only existing local lifecycle commands; plugin invoke/execution, dynamic loading, network download/listener, daemon, model call, Agent/Skill execution and MCP full runtime remain LOCKED; only A0 pushes.
+ > A0 update 2026-09-08 02:00 CST: W14 Plugin Manager UI validation PASS (plugin UI logic 61/61, plugin UI privacy self/default/pending PASS, full Rust 431/431, MCP feature 21/21, npm build PASS). A0 corrected Pinia auto-unwrapping and raw error passthrough. Build metric is 24.89% with warning delta=0; recorded limit updated to 25% for the new lazy plugin chunk. NEXT=`M5-W15` release-readiness and GUI acceptance; all plugin execution/runtime expansion remains LOCKED; only A0 pushes.
+ > A1 update 2026-09-08 09:30 CST: A1 W15 reconciliation (docs only) — W14 accepted at `886ea29` (`feat(M5): integrate W14 plugin manager UI`); board mainline chain corrected `a7eefbb` → `886ea29` and M5-0/10/11/12/13/14 status reconciled; DEBT-04 plugin UI 6/6 closed-by-W14, M5 final debt ledger stays 53. 25% metric limit tracked: `scripts/measure-build-metrics.py` L38 `TOTAL_BYTES_GROWTH_LIMIT_PCT = 25.0`; read-only re-run vs `build-metrics-4f0e8ab.json` gives `total_bytes_pct=24.89`, `cargo_warnings` delta=0, `exceeds_growth_limit=false`, headroom only 0.11pp — A6 W15 narrow UI polish must add no new chunk size. W15 lane snapshot: A2 PASS_WITH_DEBT / A3 PASS / A4 privacy PASS + stable-error PASS_WITH_NOTE / A5 PASS_WITH_CONTEXT / A7 graph zero-regression / A9 frozen contract confirmed / A10 security PASS; A6 in progress, A8 checklist pending content, A11 push readiness pending. A1 delivers `logs/checkpoints/A1-M5-W15-reconciliation-20260908-0930.md` + patch, zero product code, no push.
+diff --git a/logs/checkpoints/A1-M5-W17-reconciliation-20260908-1200.md b/logs/checkpoints/A1-M5-W17-reconciliation-20260908-1200.md
+new file mode 100644
+index 0000000..b1d4524
+--- /dev/null
++++ b/logs/checkpoints/A1-M5-W17-reconciliation-20260908-1200.md
+@@ -0,0 +1,147 @@
++# A1 M5-W17 reconciliation checkpoint（DOCS ONLY · 2026-09-08 12:00 CST）
++
++> Lane A1（M5-W17 · reconcile retained W16 outputs + W17 user-visible acceptance checklist/known limitations）
++> 派发来源：`PARALLEL_COMMAND_BOARD.md` L1164-1215（M5-W17 Desktop Client Completeness and Home Recovery Dispatch）
++> 配套交付：**W17 用户可见验收清单 / 已知限制** `logs/checkpoints/A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md`
++> 整包交付：本 checkpoint + `logs/checkpoints/Lane-A1-M5-W17-20260908-1200.patch`（路径限定 A1 范围）
++> A1 W17 立场 = **DOCS ONLY · 零产品代码 · 不 commit · 不 push**
++
++---
++
++## §1 任务接收
++
++**W17 派发** = Desktop Client Completeness and Home Recovery Dispatch（board L1164-1215）：用户反馈已安装桌面客户端"快但感觉不完整"——首页缺少重要入口，需要在继续运行时平台工作前先让人能专注地人工走查一遍。
++
++**A1 W17 任务边界（board L1185，冻结）**：
++1. Reconcile retained W16 outputs
++2. Write the W17 user-visible acceptance checklist / known limitations
++3. Allowed scope：`AI-模型切换与接手清单.md` / `详细设计与实施计划.md` / `后续需求TODO.md` / `logs/checkpoints/`
++4. **No product code**
++
++**启动门禁实测**：
++
++| 项 | 实测 | 判定 |
++|---|---|---|
++| `pwd` | `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3` | ✅ |
++| branch | `master` | ✅ |
++| `git fetch` + `git pull --ff-only` | 与 `origin/master` 一致，`052b18a`（`已经是最新的`） | ✅ |
++| HEAD | `052b18a feat(M5): close W15 release readiness` | ✅ |
++| W16 产出保留 | `A1-M5-W16-reconciliation-20260908-1100.md` + `A1-M5-W16-M6-WBS-proposal-20260908-1100.md` + `Lane-A1-M5-W16-20260908-1100.patch` 均在工作树（未 push，board L6 明确 retained） | ✅ |
++| board `NEXT` | `M5-W17` desktop-client completeness and home recovery（board L8） | ✅ |
++
++**工作树观察（A1 不动其他 lane）**：W15/W16 lane 产物共存（A2/A3/A4/A5/A6/A7/A8/A11 assist + checkpoint + patch）；**尚未见 W17 lane 产物**，A1 属 W17 早期 lane。A1 严格只在自身范围内改动，未触碰任何 `src/`、`src-tauri/`、`scripts/`、`package.json`、ACL/Capability。
++
++---
++
++## §2 整包改动清单（路径限定 A1 范围）
++
++| # | 路径 | 类型 | 内容 |
++|---|---|---|---|
++| 1 | `logs/checkpoints/M5-20260906/M5-0-overview.md` | M | 标题链追加 `+ W17 active`；末尾新增 `[W17 active · 2026-09-08 12:00 CST]` 段（W16 retained 对账 + W17 有界性质表 + 6 条共享 AC + 11 lane 角色表 + 集成顺序 + A1 交付索引） |
++| 2 | `logs/checkpoints/M5-20260906/M5-13-verification-matrix.md` | M | 末尾新增 `[W17 verification scope · 2026-09-08 12:00 CST]` 段（W17 vs W15/W16 门禁差异 + **6 FAC 验证矩阵**（对应 6 条共享 AC）+ 7 条硬停止验证必跑） |
++| 3 | `logs/checkpoints/M5-20260906/M5-14-debt-ledger.md` | M | 末尾新增 `[W17 active · 2026-09-08 12:00 CST]` 段（W16 retained + 债务账立场 5 项 + **已知限制 5 条** + A1 交付索引） |
++| 4 | `logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md` | M | L25 新增 W17 ACTIVE 状态行（契约冻结 / 不碰本卡 / 运行时全锁） |
++| 5 | `logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md` | M | L25 新增 W17 ACTIVE 状态行（pure 维持 / ACL 末条不破） |
++| 6 | `logs/checkpoints/M5-20260906/M5-12-plugin-ui.md` | M | L25 新增 W17 ACTIVE 状态行（DEBT-04 closed-by-W14 维持 / A5 只改 `src/components/home/`） |
++| 7 | `AI-模型切换与接手清单.md` | M | L1271 新增 A1 W17 update 行（紧邻 A1 W16 行之后） |
++| 8 | `详细设计与实施计划.md` | M | L30 新增 A1 W17 update 行 |
++| 9 | `后续需求TODO.md` | M | L19 新增 A1 W17 update 行 |
++| 10 | `logs/checkpoints/A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md` | **new** | **A1 W17 核心新交付**：6 组 24 项用户可见人工勾选项 + 5 条已知限制 + 通过判定口径（PASS / PASS_WITH_DEBT / BLOCKED）+ 责任矩阵 |
++| 11 | `logs/checkpoints/A1-M5-W17-reconciliation-20260908-1200.md` | **new** | 本 checkpoint |
++
++---
++
++## §3 W16 outputs retained 对账（A1 W17 第一项任务）
++
++**board L6 原文**：*"Retain every M5-W16 documentation/review deliverable; M5-W17 desktop-client completeness and home recovery is now active."*
++
++**对账结论**：
++
++| W16 产出 | 保留状态 | A1 W17 处理 |
++|---|---|---|
++| `A1-M5-W16-M6-WBS-proposal-20260908-1100.md`（M6-1~M6-6 六候选工作流 + 波次排序 + 入口闸 11 项） | ✅ retained | 在 M5-0 `[W17 active]` 段与 M5-14 `[W17 active]` 段显式引用；**W17 不启动任何 M6 权限切片** |
++| `A1-M5-W16-reconciliation-20260908-1100.md`（W15 accepted 对账 + 25.2% 门禁更正） | ✅ retained | 25.2% 上限在 M5-13 FAC-5.W17 与 M5-14 已知限制 L-5 中延续生效 |
++| M5-0/13/14 的 25.0 → **25.2** 门禁更正 | ✅ retained 且生效 | W17 体积门禁基线以 25.2% 为准（`total_bytes_pct=25.14`，余量 0.06pp） |
++| M5 final debt ledger 53 条 | ✅ 维持 | W17 预期 **0 新增**（有界前端波，不动 backend 契约与运行时权限面） |
++| W15 遗留：手动 GUI/运行时证据未补录 | 未消，转交 | **W17 由 A8 START MANUAL QA 承接实跑**（board L1192）；永不伪造截图 |
++
++---
++
++## §4 W17 用户可见验收清单（A1 W17 第二项任务 · 核心新交付）
++
++文件：`logs/checkpoints/A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md`
++
++**设计原则**：
++- 把 board 六条共享 AC **逐条展开为可人工勾选的用户可见检查项**（不写"符合 AC-1"这种无法执行的空话）
++- 每项三态 `PASS` / `FAIL` / `N/A`；`FAIL` 必须附**实际看到的现象**，`N/A` 必须写原因
++- 明确**不代跑、不代填、不伪造**（A1 只定义口径；执行由 A8 实跑 + A11 矩阵 + 各 lane 自测）
++
++**6 组 24 项**：
++
++| 组 | 对应 AC | 项数 | 责任 | 最关键项 |
++|---|---|---|---|---|
++| A 启动 | AC-1 | 6 | A2 码 / A8+A11 验 | **A-4 只清理自己启动的 server**（ownership-safe，最易错）· A-5 release 仍用 bundled assets |
++| B 首页 | AC-2 | 6 | A3 store + A5 组件 / A9 测 / A8 跑 | **B-2 不是营销页** · B-4 抗畸形本地数据 · B-3 列表有界 |
++| C 导航·窄窗口 | AC-3 | 5 | A6 + A7 / A8 跑 | C-3 窄窗口可用（记录实测宽度）· C-4 面板解析失败不留空白死区 |
++| D 可达性·无敏感泄露 | AC-4 | 5 | A4 静态 + A9 DOM + A10 安全 | D-2 accessible name · D-4 无凭据/URL query/本地路径泄露 |
++| E 体积门禁 | AC-5 | 3 | A11 主 | **E-1 ≤ 25.2%**（余量 0.06pp）· E-3 超限报 delta **不抬上限** |
++| F 交付完整性 | AC-6 | 3 | 全 lane + A0 | F-2 冲突出 binary patch 不覆盖 · F-3 无 lane 自行 push |
++
++**通过判定**：六组 `FAIL`=0 且 `N/A` 经 A0 认可 + 5 条已知限制显式确认 + A11 复测体积 + A8 与 A11 结论不冲突（冲突以实跑证据为准）。
++**PASS_WITH_DEBT**：非阻断 FAIL 经 A0 挂账，或体积未超限但余量耗尽待决策。
++**BLOCKED**：运行时权限被扩张 / 体积超限且抬上限 / 首页沦为营销页或存在装饰性不可用入口 / 启动助手破坏用户自有 dev server。
++
++---
++
++## §5 W17 有界性核对（A1 必须显式记账）
++
++| 维度 | W17 状态 | A1 记录 |
++|---|---|---|
++| 允许 | 有界前端/启动体验产品代码（A2 启动助手 / A3 首页 store+utils / A5 首页组件 / A6 导航 / A7 shell 兜底） | ✅ 已在 M5-0 `[W17 active]` 段 + M5-13 FAC 表标注 |
++| 禁止 | 命令执行 / plugin 调用 / 动态加载 / 远程下载·监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP live runtime / graph 写·导出 / 后台 worker | ✅ 已在 M5-13 硬停止必跑 2 + M5-14 已知限制 L-2 标注 |
++| 冻结 | 新 Tauri 命令 / bridge capability / ACL 条目 / 文件系统权限 / 网络特权 / 新依赖 = **零** | ✅ 已在 M5-13 硬停止必跑 1 标注 |
++| 不启动 | 任何 M6 权限切片 | ✅ 已在 M5-0 + M5-13 硬停止必跑 4 标注 |
++| 门禁 | 25.2% 上限 + warning delta=0；超限报 delta 不抬上限 | ✅ 已在 M5-13 FAC-5.W17 + M5-14 L-5 + 验收清单 E 组标注 |
++
++---
++
++## §6 A1 W17 立场
++
++- **DOCS ONLY**：零产品代码。未触 `src/`、`src-tauri/`、`scripts/`、`package.json`、`permissions/default-commands.toml`、`capabilities/default.json`、任何 ACL/Capability。
++- **不代跑、不代填、不伪造**：验收清单只定义口径与判定规则；实跑结果由 A8 / A11 / 各 lane 回填。
++- **不越界解冲突**：W17 lane 允许文件若已被他 lane 改动，A1 只出 binary patch（本次 A1 范围为纯文档，未出现冲突）。
++- **不移动 `NEXT`**：board L8 `NEXT=M5-W17` 由 A0 管理。
++- **不 commit、不 push**：整包留工作树交 A0 集成。
++
++---
++
++## §7 整包交付与自检
++
++- ✅ `logs/checkpoints/A1-M5-W17-reconciliation-20260908-1200.md`（本 checkpoint）
++- ✅ `logs/checkpoints/A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md`（W17 用户可见验收清单 / 已知限制）
++- ✅ `logs/checkpoints/Lane-A1-M5-W17-20260908-1200.patch`（路径限定 A1 范围）
++- ✅ 自检：`git diff --check` 干净；`git apply --check --reverse` 通过；`grep -c "^diff --git"` 计数核对
++
++**patch 生成（路径限定）**：
++
++```bash
++git add -N logs/checkpoints/A1-M5-W17-reconciliation-20260908-1200.md \
++           logs/checkpoints/A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md
++git diff --binary -- 详细设计与实施计划.md AI-模型切换与接手清单.md 后续需求TODO.md \
++  logs/checkpoints/M5-20260906 \
++  logs/checkpoints/A1-M5-W17-reconciliation-20260908-1200.md \
++  logs/checkpoints/A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md \
++  > logs/checkpoints/Lane-A1-M5-W17-20260908-1200.patch
++```
++
++**M5-0/13/14 与子卡修订载体**：M5-0 标题链 + `[W17 active]` 段 · M5-13 `[W17 verification scope]` 段 · M5-14 `[W17 active]` 段 · M5-10/11/12 L25 状态行 · 3 主文档 update 行。
++
++---
++
++## §8 关联指针
++
++- W17 派发：`PARALLEL_COMMAND_BOARD.md` L1164-1215
++- W17 用户可见验收清单：`logs/checkpoints/A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md`
++- A1 W16（retained）：`logs/checkpoints/A1-M5-W16-reconciliation-20260908-1100.md`
++- A1 W16 M6 WBS 提案（retained）：`logs/checkpoints/A1-M5-W16-M6-WBS-proposal-20260908-1100.md`
++- M5-0 `[W17 active]` 段 / M5-13 `[W17 verification scope]` 段 / M5-14 `[W17 active]` 段（三卡末尾）
+diff --git a/logs/checkpoints/A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md b/logs/checkpoints/A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md
+new file mode 100644
+index 0000000..f148612
+--- /dev/null
++++ b/logs/checkpoints/A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md
+@@ -0,0 +1,153 @@
++# A1 M5-W17 用户可见验收清单 / 已知限制（DOCS ONLY · 2026-09-08 12:00 CST）
++
++> Lane A1（M5-W17 · Desktop Client Completeness and Home Recovery Dispatch）
++> 派发来源：`PARALLEL_COMMAND_BOARD.md` L1164-1215（M5-W17 Desktop Client Completeness and Home Recovery Dispatch）
++> A1 W17 任务行（board L1185）：*Reconcile retained W16 outputs and write the W17 user-visible acceptance checklist/known limitations. No product code.*
++> 配套交付：**A1 W17 reconciliation checkpoint** `logs/checkpoints/A1-M5-W17-reconciliation-20260908-1200.md`
++> 立场：**DOCS ONLY · 零产品代码 · 不 commit · 不 push**
++> 用途：供 **A8 实跑验收**、**A11 独立矩阵引用**、**A0 拣入期人工走查**。清单项必须**由人真跑勾选**；A1 不代填、不伪造结果。
++
++---
++
++## §0 一页结论
++
++W17 是 M5 里**第一个真实前端产品代码波**（有界：桌面启动体验 + 首页 + 导航 + shell 兜底），但**运行时权限面维持全锁**。本清单把 board 六条共享 AC 展开为 **6 组 24 项用户可见检查项**（人工勾选）+ **5 条已知限制** + **1 条通过判定口径**。
++
++**最关键的两条风险**（A1 必须前置提示）：
++1. **体积余量仅 0.06pp**（基线 `total_bytes_pct=25.14`，上限 25.2%）—— A5/A6/A7 任一新增 chunk 都可能触顶；触顶必须**报精确 delta 并瘦身**，**禁止抬上限**。
++2. **首页容易滑向"营销页"**——AC-2 明确要求"exposes the existing principal work areas as usable routes… It must not become a marketing page"；验收时必须逐项确认每个 launcher 都**真的能进入既有功能**，而非装饰性入口。
++
++---
++
++## §1 基线与前提
++
++| 项 | 值 |
++|---|---|
++| mainline | `052b18a`（W15 release-readiness PUSHED and accepted） |
++| 工作树 | 含 W16 全部 retained 文档产出（未 push） |
++| W17 性质 | 有界**前端/启动体验**产品代码波；**不新增运行时权限** |
++| 集成顺序 | `A2 -> A3 -> A5 -> A6 -> A7 -> A4/A9 -> A8/A10/A11 -> A0` |
++| 体积基线 | `total_bytes_pct=25.14` ≤ **25.2%**（一次性上限），`cargo_warnings` delta = 0 |
++| 门禁原则 | 超限报精确 delta，**不抬上限**（board L1178） |
++
++**前置确认（勾选后才能进入 §2）**：
++
++- [ ] `git fetch origin && git pull --ff-only` 成功，HEAD = A0 集成后的 W17 提交（或已应用供验收的补丁）
++- [ ] 工作树无与验收无关的脏文件（其他 lane 的 W16/W17 产物应已被 A0 集成或明确挂起）
++- [ ] 已记录本机环境：OS / 桌面环境 / 屏幕宽度（窄窗口验收需 ≤ 某阈值，记录实际值）/ Node 与 Rust 版本
++
++---
++
++## §2 用户可见验收清单（6 组 · 24 项）
++
++> 每项三态勾选：`PASS` / `FAIL` / `N/A`。`FAIL` 必须附**实际看到的现象**（不写"不符合预期"这类空话），`N/A` 必须写原因。
++
++### 组 A · 启动（AC-1 · 责任 A2 · 实跑 A8/A11）
++
++- [ ] **A-1** 从干净状态执行桌面 dev 启动助手（如 `run-gui.sh`），**不出现** `localhost:1421` connection refused
++- [ ] **A-2** 助手能**检测**到已存在的 Vite dev server 并复用（不会盲目再起一个）
++- [ ] **A-3** 助手在 dev server 未就绪时会**等待**就绪后再拉起桌面端（不是固定 sleep 后硬拉）
++- [ ] **A-4** 退出桌面端后，助手**只清理自己启动的** dev server；用户自己预先启动的 server **仍在运行**（ownership-safe，是 AC-1 最容易错的一条）
++- [ ] **A-5** release 行为**不变**：仍加载 bundled assets，不依赖 dev server（release 构建下不出现任何 dev-only 路径）
++- [ ] **A-6** 启动失败时给出**可读的错误提示**（不是静默失败/空白窗口），且提示中**不含**本地绝对路径、端口凭据、敏感 URL/query
++
++### 组 B · 首页 / Home（AC-2 · 责任 A3 store + A5 组件 · 测试 A9 · 实跑 A8）
++
++- [ ] **B-1** 首页列出**既有主工作区**入口（如 workspace / graph / plugin / agent-skill / terminal 等既有能力），且每个入口**点击后真的进入对应功能**
++- [ ] **B-2** 首页**不是营销页**：无标语式 hero、无虚构能力宣传、无"敬请期待"占位入口（占位入口若存在必须显式标注不可用原因）
++- [ ] **B-3** 快捷方式 / 最近项**有界**：列表长度受显式常量上界约束（不是无上限增长），超出时按既定策略截断
++- [ ] **B-4** 快捷方式 / 最近项**抗畸形本地数据**：手工写入损坏/超长/类型错误的本地数据后，首页**不崩溃、不白屏**，回退到稳定默认并（可选项）记录一条非敏感的告警
++- [ ] **B-5** 空态 / 加载态 / 错误态**连贯且可读**：空列表有明确文案与下一步动作；加载中有可见指示；错误态给出可行动提示（非裸错误对象）
++- [ ] **B-6** 首页**无后端契约改动**：不新增/不调用任何 Tauri 命令（只消费既有 `src/bridge.ts` 能力）
++
++### 组 C · 导航与窄窗口（AC-3 · 责任 A6/A7 · 实跑 A8）
++
++- [ ] **C-1** 侧边/活动栏能让用户**发现既有模块**（不存在"功能存在但找不到入口"的情况）
++- [ ] **C-2** active 态**稳定**：切换面板后 active 高亮正确；刷新/重进后 active 态不丢失或能合理恢复
++- [ ] **C-3** **窄窗口**下导航仍可用（不出现入口被永久裁剪且无替代路径）；记录实测窗口宽度阈值
++- [ ] **C-4** 面板解析失败 / 路由失效时，**主区不出现空白死区**：有可读兜底文案（A7 责任）
++- [ ] **C-5** 状态栏（`StatusBar.vue`）在启动/错误/兜底态下的呈现**可读且不误导**（不显示虚假"已就绪"）
++
++### 组 D · 可达性与无敏感泄露（AC-4 · 责任 A4 静态 + A9 DOM + A10 安全）
++
++- [ ] **D-1** 所有新增可见控件**键盘可达**（Tab 顺序合理，无键盘陷阱）
++- [ ] **D-2** 所有新增可见控件**有 accessible name**（图标按钮/纯图形控件必须有 `aria-label` 或等价可访问名）
++- [ ] **D-3** 沿用**既有视觉语言**（未引入新设计体系/新依赖/新图标库）
++- [ ] **D-4** 新增 UI 与错误提示中**无敏感泄露**：不含凭据、token、原始敏感 URL/query 值、本地绝对路径、签名/公钥材料
++- [ ] **D-5** `scripts/check-home-client-policy.py`（A4 新）PASS；`scripts/check-home-ui-logic.mjs`（A9 新）PASS
++
++### 组 E · 体积门禁（AC-5 · 责任 A11 · 全 lane 自律）
++
++- [ ] **E-1** `scripts/measure-build-metrics.py` 复测：`total_bytes_pct ≤ 25.2`（基线 25.14%，余量 **0.06pp**）
++- [ ] **E-2** `cargo_warnings` delta = **0**
++- [ ] **E-3** 若超限：已记录**精确 delta** 与归因文件，并**已瘦身或已上报**；**未**修改 `TOTAL_BYTES_GROWTH_LIMIT_PCT` 抬上限
++
++### 组 F · 交付完整性（AC-6 · 全 11 lane + A0）
++
++- [ ] **F-1** 每个 lane 交付整包：代码/测试（如分配）+ checkpoint + 精确命令与结果 + `git diff --check` + **binary patch**
++- [ ] **F-2** 允许文件被他 lane 改动时**出 binary patch**，未覆盖他人改动、未跨 lane 解冲突
++- [ ] **F-3** 无 lane 自行 commit / push（仅 A0）
++
++---
++
++## §3 已知限制（W17 明确不做 / 遗留）
++
++> 这些是**设计边界**，不是缺陷。验收时不应因这些项判 FAIL；若产品认为需要，应另开波次而非在 W17 内扩张。
++
++| # | 已知限制 | 性质 | 去向 |
++|---|---|---|---|
++| L-1 | 首页/launcher **只暴露既有主工作区**，不新增业务能力 | W17 边界（board L1175） | 新能力走 M6（见 `A1-M5-W16-M6-WBS-proposal-20260908-1100.md`） |
++| L-2 | **运行时权限仍全锁**：plugin invoke / 命令执行 / 动态加载 / 远程下载·监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP live runtime / graph 写·导出 / 后台 worker | board L1170 hard stop | M6 入口闸（产品负责人书面批准 + A10 verdict + A11 骨架） |
++| L-3 | dev 启动助手**只改善本地 dev 体验**，不改 release 资产加载路径 | W17 AC-1 明确（board L1174） | 分发/签名属 M6-6 |
++| L-4 | **窄窗口/HiDPI/多平台（Windows / macOS）未实跑验证** | 环境限制（本次仅 Linux 本机） | A8 诚实记录已测环境；跨平台分发属 M6-6 |
++| L-5 | 体积余量 **0.06pp**，任何新 chunk 都可能触顶；W17 后若继续增长需新决策 | 门禁现实（25.2% 一次性上限） | A11 每波复测；抬上限需 A0 新决策 |
++
++**补充：W15 遗留开放项**（不属 W17 但需并读）——手动 GUI/运行时证据在 W15 未补录，W17 由 **A8 START MANUAL QA**（board L1192）承接实跑；**永不伪造截图**。
++
++---
++
++## §4 通过判定口径
++
++**W17 用户可见验收通过 = 同时满足**：
++
++1. §1 三条前置确认全部勾选
++2. §2 中 **A/B/C/D/E/F 六组**：每组 `FAIL` 数 = **0**；`N/A` 项必须写明原因且经 A0 认可
++3. §3 五条已知限制已被**显式确认**（不是被忽略）
++4. 体积门禁（E-1/E-2）由 A11 独立复测确认，且 **E-3 未被违反**
++5. A8 实跑记录与 A11 矩阵结论**不冲突**；若冲突，以**实跑证据**为准并记录分歧
++
++**判定为 `PASS_WITH_DEBT` 的情形**（须写明债务条目与去向）：
++- 出现非阻断 `FAIL` 且 A0 认可挂账（例如某窄窗口阈值下的布局瑕疵，但功能仍可通过其他路径完成）
++- 体积未超限但余量耗尽（需在下一波前给出瘦身或抬上限的 A0 决策）
++
++**判定为 `BLOCKED` 的情形**：
++- 任一"运行时权限面被扩张"（新增命令/ACL/bridge capability/网络特权/新依赖/执行能力）
++- 体积超限且未报 delta 或直接抬上限
++- 首页落入"营销页"或存在不可用的装饰性入口（AC-2 硬违约）
++- 启动助手破坏用户自有 dev server（AC-1 硬违约）
++
++---
++
++## §5 责任与不越界
++
++| 角色 | 在本清单中的职责 |
++|---|---|
++| **A1（本卡作者）** | 定义清单与判定口径；**不代跑、不代填、不伪造结果** |
++| **A2/A3/A5/A6/A7** | 自测并回填本卡对应组（A/B/C）的实际命令与结果 |
++| **A4/A9** | 出策略/DOM 级检查脚本并回填 D 组 |
++| **A8** | **实跑原生客户端**并逐项勾选（永不伪造截图）；记录实测窗口宽度 |
++| **A10** | 安全复核（D-4 + 硬停止 1/2/3） |
++| **A11** | 独立复测 E 组 + 汇总整包矩阵 |
++| **A0** | 集成、认可 `N/A`/挂账、判定 `PASS` / `PASS_WITH_DEBT` / `BLOCKED` |
++
++---
++
++## §6 关联指针
++
++- W17 派发：`PARALLEL_COMMAND_BOARD.md` L1164-1215
++- A1 W17 reconciliation checkpoint：`logs/checkpoints/A1-M5-W17-reconciliation-20260908-1200.md`
++- A1 W16（retained）M6 WBS 提案：`logs/checkpoints/A1-M5-W16-M6-WBS-proposal-20260908-1100.md`
++- A1 W16 reconciliation（retained）：`logs/checkpoints/A1-M5-W16-reconciliation-20260908-1100.md`
++- M5-0 `[W17 active]` 段：`logs/checkpoints/M5-20260906/M5-0-overview.md` 末尾
++- M5-13 `[W17 verification scope]` 段：`logs/checkpoints/M5-20260906/M5-13-verification-matrix.md` 末尾
++- M5-14 `[W17 active]` 段：`logs/checkpoints/M5-20260906/M5-14-debt-ledger.md` 末尾
+diff --git a/logs/checkpoints/M5-20260906/M5-0-overview.md b/logs/checkpoints/M5-20260906/M5-0-overview.md
+index 9d2bba0..4f86f08 100644
+--- a/logs/checkpoints/M5-20260906/M5-0-overview.md
++++ b/logs/checkpoints/M5-20260906/M5-0-overview.md
+@@ -1,4 +1,4 @@
+-# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0 + W1 + W2 + W3 reconciliation + W4 active + W5 reconciliation + W6 reconciliation + W7 reconciliation + W8 reconciliation + W8 active + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active + W12 reconciliation + W12 PUSHED + W13 active + W13 PUSHED + W14 active + W14 PUSHED + W15 active）
++# M5 协议与智能生态 — 任务卡展开（Lane A1 · M5-W0 + W1 + W2 + W3 reconciliation + W4 active + W5 reconciliation + W6 reconciliation + W7 reconciliation + W8 reconciliation + W8 active + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active + W12 reconciliation + W12 PUSHED + W13 active + W13 PUSHED + W14 active + W14 PUSHED + W15 active + W15 PUSHED + W16 active + W17 active）
+ 
+ > 生成：2026-09-06 08:00 CST · Lane A1（M5-W0 · docs only）
+ > W1 修订：2026-09-06 08:50 CST · Lane A1（M5-W1 · docs-only reconciliation）
+@@ -1215,17 +1215,18 @@ NEXT=M5-W1（待 A0 签发）
+ - **plugin 执行 / 动态加载 / 网络下载监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP 全量 runtime / graph 写导出 / 后台 worker 全部仍 LOCKED**（W15 Hard Stop 沿用）
+ - board L6 主线条已由本整包更正为 `886ea29`（原过期描述 `a7eefbb pending A0 W14 integration`）
+ 
+-### 25% 指标跟踪（A1 W15 第二项职责）
++### 体积指标跟踪（A1 W15 记录 + **A1 W16 更正为 25.2%**）
+ 
+-| 项 | 值 |
+-|---|---|
+-| 生效常量 | `scripts/measure-build-metrics.py` L38 `TOTAL_BYTES_GROWTH_LIMIT_PCT = 25.0` |
+-| 当前实测（只读复跑） | `total_bytes_pct = 24.89`（基线 `logs/m0-build-metrics/build-metrics-4f0e8ab.json`，`--skip-build`） |
+-| 余量 | **0.11 个百分点**（M5 全周期最紧一档） |
+-| `cargo_warnings` delta | 0（`warnings_increased=false`，`exceeds_growth_limit=false`，exit=0） |
+-| 阈值演进 | 15% → 19% → 22%（W8/W9）→ 23%（W12）→ **25%**（W14 抬升，为懒加载 PluginManager chunk） |
+-| 约束 | A6 W15 窄 UI 磨光**不得**新增 chunk 体积 / 新依赖；超 25.0 即 `pre-merge.sh` FAIL |
+-| 文档滞后（交 A0） | `scripts/pre-merge.sh` L76 文案仍写「总体积 ≤15%」，与实际常量 25.0 不一致（门禁读常量，判定不受影响；建议 A0 W15 拣入期同步文案） |
++| 项 | W15 记录 | **W16 更正（`052b18a`）** |
++|---|---|---|
++| 生效上限 | 25.0% | **25.2%**（A0 为无障碍工作**一次性**抬升；进一步增长需新的 A0 显式决策） |
++| 实测 | 24.89% | **25.14%**（`--compare --skip-build`，warning delta 0） |
++| 余量 | 0.11pp | **0.06pp**（M5 全周期最紧一档） |
++| `cargo_warnings` delta | 0 | 0（`warnings_increased=false`，`exceeds_growth_limit=false`） |
++| 阈值演进 | 15% → 19% → 22%（W8/W9）→ 23%（W12）→ 25%（W14） | 再 + **25.2%（W15，一次性）** |
++| A0 拣入期调整 | — | 通用 async-state 组件会抬到 **25.60%** → **已移除**；焦点管理收窄为两个高危写确认 |
++| 约束 | 超 25.0 即 FAIL | **超 25.2 即 `exceeds_growth_limit=true` → `pre-merge.sh` FAIL** |
++| 文档/常量滞后（交 A0/A11，A1 不修） | `pre-merge.sh` L76 写 ≤15% | 另需同步：`measure-build-metrics.py` L35-38 常量与注释仍为 25.0 / 24.89 |
+ 
+ ### W15 runtime surface 锁定状态表（14 行 · 沿用 W14，W15 无新增开放面）
+ 
+@@ -1267,4 +1268,68 @@ NEXT=M5-W1（待 A0 签发）
+ - reconcile W14 as accepted（`886ea29`）+ track 25% 指标 + track W15 status
+ - **不**改 product scope / **不**碰产品代码（`src/**` / `src-tauri/**` / `scripts/**` / `bridge.ts` / `types.ts`）
+ - **不**收其他 lane 的并发改动进本 patch；**不** commit、**不** push（本目录为 canonical main，A2 已有 staged 改动，A1 提交会误收他人变更）
+-- W15 收口路径：A6 窄 UI 磨光 + A11 push readiness → A0 拣入并推送
++- W15 收口路径：A6 窄 UI 磨光 + A11 push readiness → A0 拣入并推送（**已完成**：`052b18a`）
++
++---
++
++## [W16 active · 2026-09-08 11:00 CST] A1 W16 reconciliation 立场 · W15 accepted 对账 + M6 charter（docs/review only）
++
++> 依据：`PARALLEL_COMMAND_BOARD.md` L1163+（M5-W16 M5 Closeout and M6 Charter Dispatch）+ `logs/checkpoints/A0-M5-W15-accept-W16-dispatch-20260908-1015.md` + A1 W16 整包（`A1-M5-W16-reconciliation-20260908-1100.md` + `A1-M5-W16-M6-WBS-proposal-20260908-1100.md`）。
++
++**W15 accepted（`052b18a` = HEAD = `origin/master`，工作树 clean）**：
++
++- 两个高危写确认（`ConfirmModal.vue` / `GitWriteConfirmDialog.vue`）获得 `role/aria-modal` + 初始焦点 + Tab/Shift+Tab 焦点环 + Escape 关闭 + 焦点归还
++- 未改任何 backend 命令 / ACL / bridge / DTO / 网络 / worker / plugin 执行 / MCP 扩张 / Agent-Skill 执行 / graph 写导出 / 模型调用面
++- A0 拣入期调整：通用 async-state 组件（会抬到 25.60%）**已移除**；焦点管理收窄为两个高危写确认；实测 **25.14% ≤ 25.2%**（一次性上限），warning delta 0
++- 验证：full Rust 431/431 · MCP feature 21/21 · `check-ui-a11y-logic.mjs` PASS · `npm run build` PASS · `pre-merge.sh` ALL_PASS · `git diff --check` PASS
++- **残留**：手动 GUI/运行时证据仍是已记账的验收项（**未伪造**）→ 已在 M6 WBS 列为开放问题
++
++**W16 = docs/review only**（board L1181 hard stops）：无产品代码、无新命令/ACL/bridge/DTO、不开放任何 M5 已锁的运行时权限。
++
++**A1 W16 交付**：
++- 对账：board L3/L6/L7/L8 + 3 主文档 + 本卡 + M5-10/11/12 头 + M5-13/14 门禁更正（25.0 → **25.2**）
++- **M6 WBS / 排序提案**：`logs/checkpoints/A1-M5-W16-M6-WBS-proposal-20260908-1100.md` —— 6 个候选工作流（M6-1 plugin stage-II 有界调用 / M6-2 MCP stdio 真实只读绑定 / M6-3 Agent-Skill 执行授权 / M6-4 graph 受控写与导出 / M6-5 后台 worker 有界队列 / M6-6 分发与签名）· 波次 W1 契约冻结+入口闸 → W2 M6-2 → W3 M6-1 → W4 M6-3 → W5 M6-5 → W6 M6-4 →（W7 条件）M6-6 · 原则「一次只开一种运行时权限 / 默认 fail-closed / 命令五件套同包 / 体积硬顶 25.2% / 证据先于结论」· M6 入口闸 11 项 checklist
++
++**A1 W16 立场**：零产品代码、不 commit、不 push；M6 是否开工取决于产品负责人批准的有界运行时切片。
++
++---
++
++## [W17 active · 2026-09-08 12:00 CST] A1 W17 reconciliation 立场 · W16 outputs retained 对账 + desktop-client completeness（有界前端/启动体验产品代码）
++
++> 依据：`PARALLEL_COMMAND_BOARD.md` L1164-1215（**M5-W17 Desktop Client Completeness and Home Recovery Dispatch**）+ board L6/L8（mainline `052b18a`，`NEXT=M5-W17`）+ A1 W17 整包（`A1-M5-W17-reconciliation-20260908-1200.md` + `A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md`）。
++
++**W16 outputs retained（board L6 明确声明）**：W15 release-readiness 已 PUSHED 并 accepted（`052b18a` = HEAD = `origin/master`）；**A1 W16 全部文档产出保留生效**——M6 WBS/排序提案（`A1-M5-W16-M6-WBS-proposal-20260908-1100.md`：M6-1~M6-6 六候选工作流 · 波次 W1 契约冻结+入口闸 → W2 M6-2 → W3 M6-1 → W4 M6-3 → W5 M6-5 → W6 M6-4 →（W7 条件）M6-6 · 入口闸 11 项）+ M5-0/10/11/12/13/14 的 25.2% 门禁更正。**W17 不启动任何 M6 权限切片**（board L1170）。
++
++**W17 = 真实产品代码波，但严格有界**（board L1168-1170）：
++
++| 维度 | W17 状态 |
++|---|---|
++| 允许 | 有界**前端/启动体验**产品代码：桌面 dev 启动助手（`run-gui.sh`/`scripts/`）、首页 store/utils + 组件、ActivityBar/布局导航、shell 兜底/启动错误呈现、相关纯逻辑测试 |
++| 禁止 | 新增运行时权限、远程执行、特权集成；命令执行 / plugin 调用 / 动态加载 / 远程下载·监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP live runtime / graph 写·导出 / 后台 worker |
++| 冻结 | 新 Tauri 命令、bridge capability、ACL 条目、文件系统权限、网络特权、新依赖 —— **全部为零** |
++
++**W17 六条共享 AC（board L1172-1178）**：① dev 启动不落到 `localhost:1421` connection refused（助手检测/启动 Vite → 等待 → 拉起桌面端 → 退出只清理自己拥有的 server；release 仍用 bundled assets）；② 首页暴露既有主工作区为可用路由、快捷/最近项有界且抗畸形本地数据、空/加载态连贯、**不变成营销页**；③ 导航与 active-panel 呈现让既有功能在原生客户端可发现（含窄窗口）；④ 新增可见控件键盘可达 + 有 accessible name + 沿用既有视觉语言；无敏感 URL/query/凭据/本地路径泄露；⑤ 不得规避体积门禁（超限报精确 delta，**不抬上限**）；⑥ 每 lane 整包交付（代码/测试 + checkpoint + 精确命令结果 + `git diff --check` + binary patch），不 commit、不 push。
++
++**W17 lane 角色（board L1183-1195）**：
++
++| Lane | 状态 | 交付 |
++|---|---|---|
++| A1 | START DOCS | Reconcile retained W16 outputs + **W17 用户可见验收清单/已知限制**（本波 A1 核心新交付）· 零产品代码 |
++| A2 | START CODE | `run-gui.sh` + `scripts/` 启动助手/测试（必要时极窄 `src-tauri/src/main.rs` 仅用于 debug-vs-release 资产选择）：可复现、ownership-safe 的桌面 dev 启动路径 + smoke check |
++| A3 | START CODE | `src/stores/useHomeStore.ts` + `src/utils/homeUi.ts` + `scripts/check-home-store-logic.mjs`：有界/校验过的首页快捷·最近项状态 + 稳定默认 + 迁移安全的畸形数据处理 |
++| A4 | START REVIEW | `scripts/check-home-client-policy.py`（新）：W17 UI/启动改动静态隐私·安全审查（凭据 / 原始敏感 URL·query / shell 注入 / 权限扩张） |
++| A5 | START CODE | `src/components/home/` only：按 A3 契约重建首页（主工作区 launcher + 快捷/最近区 + 精致空态 + 响应式布局）· 无新依赖 · 无后端访问 |
++| A6 | START CODE | `ActivityBar.vue` + `useLayoutStore.ts` + `scripts/check-client-navigation-logic.mjs`：既有模块可发现 + 键盘可达 + 稳定 active 态/窄窗口行为 |
++| A7 | START CODE | `MainArea.vue` + `StatusBar.vue` + `App.vue` only：shell 兜底/启动/错误呈现，面板解析失败时**不出现空白死区** |
++| A8 | START MANUAL QA | 实跑原生客户端（集成后或供补丁），产出诚实的桌面/窄窗口验收清单；**永不伪造截图** |
++| A9 | START TEST | `scripts/check-home-ui-logic.mjs`（新）+ 必要时 `pre-merge.sh`：DOM/source 级检查 A5 首页动作、accessible name、有界列表、无敏感文案 |
++| A10 | START SECURITY REVIEW | W17 补丁边界 vs 已锁运行时权限清单 + 桌面启动安全；先出发现、不改产品代码 |
++| A11 | START VERIFICATION | 独立集成验证矩阵：定向测试 + `npm run build` + build metrics + 相关 Rust 测试 |
++
++**集成顺序**（board L1199）：`A2 -> A3 -> A5 -> A6 -> A7 -> A4/A9 -> A8/A10/A11 -> A0`；允许文件已被他 lane 改动时**必须出 binary patch**（不覆盖、不跨 lane 解冲突）；仅 A0 集成/commit/push。
++
++**A1 W17 交付**：
++- 对账：board L6/L8 + 3 主文档 + 本卡 + M5-10/11/12 头 + M5-13 `[W17 verification scope]` 段 + M5-14 `[W17 active]` 段
++- **W17 用户可见验收清单 / 已知限制**：`logs/checkpoints/A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md` —— 6 条共享 AC 逐条展开为**可人工勾选的用户可见检查项**（启动 / 首页 / 导航·窄窗口 / 可达性·无敏感泄露 / 体积门禁 / 交付完整性）+ **已知限制清单**（W17 明确不做的事 + 遗留待办）+ 验收通过判定口径
++
++**A1 W17 立场 = DOCS ONLY**：零产品代码、不 commit、不 push。
+diff --git a/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md b/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md
+index 821227e..9762ee1 100644
+--- a/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md
++++ b/logs/checkpoints/M5-20260906/M5-10-plugin-manifest-lifecycle.md
+@@ -20,6 +20,9 @@
+ > **W14** ACTIVE（**A6 W14 = START PRODUCT CODE NARROW（plugin manager UI 唯一产品代码 lane）** —— 消费 frozen W13 6 命令（`plugin_list` / `plugin_get` / `plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_key_registry`）+ `usePluginStore` + `check-plugin-ui-logic.mjs` + workspace navigation 集成；6 action = list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint；**不**实施 W14 新 lifecycle 命令 / **不**碰 `src/bridge.ts` DTO 形态 / **不** raw Tauri `invoke` / **不**渲染 raw signature / public-key / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr；**plugin invoke / 命令执行 / 动态加载 / 网络下载监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP 全量 / graph 写导出 / 后台 worker 仍 LOCKED**（W14 Hard Stop）；W14 命令名 + DTO 冻结 = 复吃 W13 6 命令，不增删 lifecycle；**A1 W14 = START DOCS ONLY**（reconcile W13 accepted + mark W14 active + **不**改 product scope）；A19 仍 SUPPORT（plugin UI 6 项 ACTIVE 仍 0%，待 A6 W14 实施完成 = DEBT-04 W14+ 仍挂账）；详见 `M5-0-overview.md` 顶部 `[W14 active · 2026-09-08 00:20 CST]` 段 runtime-lock 状态表 14 行 + `M5-12-plugin-ui.md` 末尾 [W14 active] 段）
+ > **W14 PUSHED**（2026-09-08 09:30 CST 对账 · A0 拣入 `886ea29` = HEAD）：A0 在 **`886ea29 feat(M5): integrate W14 plugin manager UI`** 中拣入 A6 W14 plugin manager UI 并接受（`STATUS=PASS`）：消费 frozen W13 6 命令（`plugin_list` / `plugin_get` / `plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_key_registry`）+ `src/components/plugin/**` + `src/stores/usePluginStore.ts` + `scripts/check-plugin-ui-logic.mjs` + workspace navigation 集成；6 action 全覆盖 + plugin UI logic **61/61** + plugin Rust 28/28 + full Rust 431/431 + MCP feature 21/21 + `npm run build` PASS + build metrics `total_bytes_pct=24.89` ≤ **25%**（A0 W14 拣入期阈值 23% → 25% 上调）+ cargo_warnings delta = 0；A0 修正 Pinia 自动解包与 raw error 透传；**plugin invoke / 命令执行 / 动态加载 / 网络下载监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP 全量 / graph 写导出 / 后台 worker 仍 LOCKED**（W15 Hard Stop）
+ > **W15** ACTIVE（**A6 W15 = NARROW UI POLISH ONLY**（accessible confirmation / modal focus + empty/loading/error 态；**不**新增命令 / runtime surface / 体积增量）+ **其余 10 lane = review / docs / verification**（A1 DOCS ONLY / A2 BOUNDARY / A3 MCP ISOLATION / A4 PRIVACY+STABLE-ERROR / A5 AGENT-SKILL LOCK / A7 GRAPH NON-REGRESSION / A8 GUI ACCEPTANCE / A9 FROZEN CONTRACT（**no backend changes**）/ A10 SECURITY / A11 VERIFICATION）；**W15 = release readiness + GUI 验收，不扩张运行时权限**；本卡 W15 **无** manifest / lifecycle 命令改动、**无** DTO / ACL 改动、**无**后端改动；详见 `M5-0-overview.md` 末尾 `[W15 active · 2026-09-08 09:30 CST]` 段 runtime surface 锁定状态表 14 行 + `M5-13-verification-matrix.md` 末尾 [W15 verification scope] 段）
++> **W15 PUSHED**（2026-09-08 11:00 CST 对账 · A0 拣入 `052b18a` = HEAD）：A0 在 **`052b18a feat(M5): integrate W15 release-readiness`** 中拣入 W15 并接受（`STATUS=PASS`）：两高危写确认 `ConfirmModal.vue` / `GitWriteConfirmDialog.vue` 获 focus containment + role/aria-modal；full Rust 431/431 + MCP feature 21/21 + `check-ui-a11y-logic.mjs` PASS + `npm run build` PASS + `pre-merge.sh` ALL_PASS；A0 移除会抬到 25.60% 的通用 async-state 组件，实测 `total_bytes_pct=25.14` ≤ **25.2%**（一次性上限）；warning delta = 0；**plugin invoke / 命令执行 / 动态加载 / 网络下载监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP 全量 / graph 写导出 / 后台 worker 仍 LOCKED**（W16 Hard Stop）
++> **W16** ACTIVE（**A1 W16 = DOCS ONLY**（reconcile W15 accepted + author M6 WBS/ordering proposal `A1-M5-W16-M6-WBS-proposal-20260908-1100.md`）；**无**产品代码 / **无**新命令·ACL·bridge·DTO / **不**开放任何 M5 已锁运行时权限；详见 `M5-0-overview.md` 末尾 `[W16 active · 2026-09-08 11:00 CST]` 段）
++> **W17** ACTIVE（**W17 = Desktop Client Completeness and Home Recovery Dispatch**（board L1164+）· **有界前端/启动体验产品代码波**：plugin manifest lifecycle 契约**维持冻结**，W17 **不**新增 lifecycle 命令 / **不**碰 `src-tauri/` / **不**碰本卡范围；A1 W17 = DOCS ONLY（reconcile retained W16 outputs + W17 用户可见验收清单/已知限制 `A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md`）；**plugin invoke / 命令执行 / 动态加载 / 远程下载·监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP live runtime / graph 写·导出 / 后台 worker 仍全锁**（W17 Hard Stop）；详见 `M5-0-overview.md` 末尾 `[W17 active · 2026-09-08 12:00 CST]` 段）
+ 
+ ---
+ 
+diff --git a/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md b/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md
+index 624a18d..fc343b4 100644
+--- a/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md
++++ b/logs/checkpoints/M5-20260906/M5-11-plugin-commands-isolation.md
+@@ -20,6 +20,9 @@
+ > **W14** ACTIVE（**A6 W14 = START PRODUCT CODE NARROW（plugin manager UI 唯一产品代码 lane）** —— 消费 frozen W13 6 命令 + 6 action = list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint；**不**实施 W14 新 lifecycle 命令 / **不**碰 `bridge.ts` DTO 形态 / **不** raw Tauri `invoke` / **不**渲染 raw 敏感字段；**plugin invoke / 命令执行 / 动态加载 / 网络下载监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP 全量 / graph 写导出 / 后台 worker 仍 LOCKED**（W14 Hard Stop）；W14 命令名 + DTO 冻结 = 复吃 W13 6 命令，不增删 lifecycle；A1 W14 = START DOCS ONLY；详见 `M5-0-overview.md` 顶部 `[W14 active · 2026-09-08 00:20 CST]` 段）
+ > **W14 PUSHED**（2026-09-08 09:30 CST 对账 · A0 拣入 `886ea29` = HEAD）：A0 在 **`886ea29 feat(M5): integrate W14 plugin manager UI`** 中拣入 A6 W14 plugin manager UI 并接受（`STATUS=PASS`）：commands_isolation 维持 pure / 5 stub `plugin_invoke` / `plugin_cancel` / `plugin_permissions_get` / `plugin_audit_list` / `plugin_storage_*` 错误结构不变 / audit shape 维持 key_hash_only / K1 ACL 末条恒为 `list_artifact_images`（W14 **未**新增 ACL）；plugin UI logic **61/61** + plugin Rust 28/28 + full Rust 431/431 + MCP feature 21/21 + `npm run build` PASS + build metrics `total_bytes_pct=24.89` ≤ **25%**（A0 W14 拣入期阈值 23% → 25% 上调）+ cargo_warnings delta = 0；**plugin invoke / cancel / storage_* runtime 仍 LOCKED**（W15 Hard Stop）
+ > **W15** ACTIVE（**A6 W15 = NARROW UI POLISH ONLY**（accessible confirmation / modal focus + empty/loading/error 态；**不**新增命令 / runtime surface / 体积增量）+ **其余 10 lane = review / docs / verification**（A1 DOCS ONLY / A2 BOUNDARY / A3 MCP ISOLATION / A4 PRIVACY+STABLE-ERROR / A5 AGENT-SKILL LOCK / A7 GRAPH NON-REGRESSION / A8 GUI ACCEPTANCE / A9 FROZEN W13 CONTRACT（**no backend changes**）/ A10 SECURITY / A11 VERIFICATION）；**W15 = release readiness + GUI 验收，不扩张运行时权限**；本卡 W15 **无**命令 / stub / ACL / DTO 改动（K1 ACL 末条恒为 `list_artifact_images` 不破），A9 W15 仅冻结契约复核、**零后端改动**；详见 `M5-0-overview.md` 末尾 `[W15 active · 2026-09-08 09:30 CST]` 段 runtime surface 锁定状态表 14 行 + `M5-13-verification-matrix.md` 末尾 [W15 verification scope] 段）
++> **W15 PUSHED**（2026-09-08 11:00 CST 对账 · A0 拣入 `052b18a` = HEAD）：A0 在 **`052b18a feat(M5): integrate W15 release-readiness`** 中拣入 W15 并接受（`STATUS=PASS`）：commands_isolation 维持 pure / 5 stub 错误结构不变 / K1 ACL 末条恒为 `list_artifact_images` 不破；full Rust 431/431 + MCP feature 21/21 + `check-ui-a11y-logic.mjs` PASS + `npm run build` PASS + `pre-merge.sh` ALL_PASS；A0 移除会抬到 25.60% 的通用 async-state 组件，实测 `total_bytes_pct=25.14` ≤ **25.2%**（一次性上限）；warning delta = 0；**plugin invoke / cancel / storage_* runtime 仍 LOCKED**（W16 Hard Stop）
++> **W16** ACTIVE（**A1 W16 = DOCS ONLY**（reconcile W15 accepted + author M6 WBS/ordering proposal `A1-M5-W16-M6-WBS-proposal-20260908-1100.md`）；**无**产品代码 / **无**新命令·ACL·bridge·DTO / **不**开放任何 M5 已锁运行时权限；详见 `M5-0-overview.md` 末尾 `[W16 active · 2026-09-08 11:00 CST]` 段）
++> **W17** ACTIVE（**W17 = Desktop Client Completeness and Home Recovery Dispatch**（board L1164+）· **有界前端/启动体验产品代码波**：commands_isolation 维持 pure / 5 stub 错误结构不变 / K1 ACL 末条恒为 `list_artifact_images` 不破；W17 **不**新增命令 / **不**改 ACL / **不**碰本卡范围；A1 W17 = DOCS ONLY（reconcile retained W16 outputs + W17 用户可见验收清单/已知限制 `A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md`）；**plugin invoke / cancel / storage_* runtime 仍全锁**（W17 Hard Stop）；详见 `M5-0-overview.md` 末尾 `[W17 active · 2026-09-08 12:00 CST]` 段）
+ 
+ ---
+ 
+diff --git a/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md b/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md
+index a6fa035..a2634aa 100644
+--- a/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md
++++ b/logs/checkpoints/M5-20260906/M5-12-plugin-ui.md
+@@ -20,6 +20,9 @@
+ > **W14** ACTIVE（**A6 W14 = START PRODUCT CODE NARROW（plugin manager UI 唯一产品代码 lane）** —— 消费 frozen W13 6 命令（`plugin_list` / `plugin_get` / `plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_key_registry`）+ `src/components/plugin/**` + `src/stores/usePluginStore.ts` + `scripts/check-plugin-ui-logic.mjs` + workspace navigation 集成；6 action = list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint；**不**实施 W14 新 lifecycle 命令 / **不**碰 `src/bridge.ts` DTO 形态 / **不** raw Tauri `invoke` / **不**渲染 raw signature / public-key / resource path / manifest metadata / credentials / 请求响应 body / stdout / stderr；**plugin invoke / 命令执行 / 动态加载 / 网络下载监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP 全量 / graph 写导出 / 后台 worker 仍 LOCKED**（W14 Hard Stop）；W14 命令名 + DTO 冻结 = 复吃 W13 6 命令，不增删 lifecycle；**A1 W14 = START DOCS ONLY**（reconcile W13 accepted + mark W14 active + **不**改 product scope）；**plugin UI 6 项 ACTIVE 仍 0%**（A6 W14 实施后才标 ACTIVE，本 wave 派发期维持 0% = DEBT-04 W14+ 仍挂账）；A19 仍 SUPPORT；详见 `M5-0-overview.md` 顶部 `[W14 active · 2026-09-08 00:20 CST]` 段 runtime-lock 状态表 14 行 + 本卡末尾 [W14 active] 段）
+ > **W14 PUSHED**（2026-09-08 09:30 CST 对账 · A0 拣入 `886ea29` = HEAD）：A0 在 **`886ea29 feat(M5): integrate W14 plugin manager UI`** 中拣入 A6 W14 plugin manager UI 并接受（`STATUS=PASS`）：`src/components/plugin/**` + `src/stores/usePluginStore.ts` + `scripts/check-plugin-ui-logic.mjs` + workspace navigation 集成；6 action（list / filter / inspect / install-supplied-manifest / enable / disable / key fingerprint）**全覆盖**；plugin UI logic **61/61**（A0 补第 61 条防 Pinia `.value` 回归）+ plugin UI privacy self/default/pending PASS + plugin Rust 28/28 + full Rust 431/431 + MCP feature 21/21 + `npm run build` PASS + build metrics `total_bytes_pct=24.89` ≤ **25%**（阈值 23% → 25% 上调）+ cargo_warnings delta = 0；**plugin UI 6 项 ACTIVE = 0% → 6/6 = DEBT-04 closed-by-W14**；**plugin invoke / 命令执行 / 动态加载 / 网络 / daemon / 模型 / Agent-Skill / MCP 全量 / graph 写导出 / 后台 worker 仍 LOCKED**（W15 Hard Stop）
+ > **W15** ACTIVE（**A6 W15 = NARROW UI POLISH ONLY**（accessible confirmation / modal focus + empty/loading/error 态；**不**新增命令 / 不新增 action / runtime surface / 体积增量）+ **其余 10 lane = review / docs / verification**（A1 DOCS ONLY / A2 BOUNDARY / A3 MCP ISOLATION / A4 PRIVACY+STABLE-ERROR / A5 AGENT-SKILL LOCK / A7 GRAPH NON-REGRESSION / A8 GUI ACCEPTANCE / A9 FROZEN CONTRACT（**no backend changes**）/ A10 SECURITY / A11 VERIFICATION）；**W15 = release readiness + GUI 验收**；本卡 W15 **无**新命令 / 新 DTO / 新 ACL / 后端改动；详见 `M5-0-overview.md` 末尾 `[W15 active · 2026-09-08 09:30 CST]` 段 + 本卡末尾 [W15 · plugin UI 收口] 段 + `M5-13-verification-matrix.md` 末尾 [W15 verification scope] 段）
++> **W15 PUSHED**（2026-09-08 11:00 CST 对账 · A0 拣入 `052b18a` = HEAD）：A0 在 **`052b18a feat(M5): integrate W15 release-readiness`** 中拣入 W15 并接受（`STATUS=PASS`）：plugin UI 6 项 DEBT-04 closed-by-W14 维持；full Rust 431/431 + MCP feature 21/21 + `check-ui-a11y-logic.mjs` PASS + `npm run build` PASS + `pre-merge.sh` ALL_PASS；A0 移除会抬到 25.60% 的通用 async-state 组件，实测 `total_bytes_pct=25.14` ≤ **25.2%**（一次性上限）；warning delta = 0；**plugin UI 仍为只读消费、无 invoke / 执行 / 动态加载 / 网络 / daemon / 模型 / Agent-Skill / MCP 全量 / graph 写导出 / 后台 worker**（W16 Hard Stop）
++> **W16** ACTIVE（**A1 W16 = DOCS ONLY**（reconcile W15 accepted + author M6 WBS/ordering proposal `A1-M5-W16-M6-WBS-proposal-20260908-1100.md`）；**无**产品代码 / **无**新命令·ACL·bridge·DTO / **不**开放任何 M5 已锁运行时权限；详见 `M5-0-overview.md` 末尾 `[W16 active · 2026-09-08 11:00 CST]` 段）
++> **W17** ACTIVE（**W17 = Desktop Client Completeness and Home Recovery Dispatch**（board L1164+）· **有界前端/启动体验产品代码波**：plugin UI 6 项 DEBT-04 closed-by-W14 维持；W17 **不**触碰 `src/components/plugin/**`（A5 只改 `src/components/home/`）/ **不**改本卡范围；A1 W17 = DOCS ONLY（reconcile retained W16 outputs + W17 用户可见验收清单/已知限制 `A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md`）；**plugin UI 仍为只读消费、无 invoke / 执行 / 动态加载 / 网络 / daemon / 模型 / Agent-Skill / MCP 全量 / graph 写导出 / 后台 worker**（W17 Hard Stop）；详见 `M5-0-overview.md` 末尾 `[W17 active · 2026-09-08 12:00 CST]` 段）
+ 
+ ---
+ 
+@@ -264,6 +267,6 @@ pnpm lint
+ - 仅 accessible confirmation / modal focus + empty/loading/error 态
+ - **不**新增命令、**不**新增 action、**不**扩 runtime surface、**不**引入新依赖
+ - **不**动 `src/bridge.ts` DTO 与 `src/types.ts`；UI 仍只走 `src/bridge.ts`，**无** raw Tauri `invoke`
+-- 体积约束：build metrics `total_bytes_pct ≤ 25.0`（当前实测 **24.89**，余量 **0.11pp**），A11 W15 必须复跑 `measure-build-metrics.py --compare` 留证
++- 体积约束：build metrics `total_bytes_pct ≤ 25.2`（A0 一次性上限；W15 实测 **25.14**，余量 **0.06pp**），A11 W15 必须复跑 `measure-build-metrics.py --compare` 留证
+ 
+ **A4 W15 稳定错误面 PASS_WITH_NOTE（交 A0/A6 可选处理）**：`confirmText` switch 中 `uninstall` 为类型系统已阻止的**死 case**，建议 release 前删除以消除误导（非阻塞）。
+diff --git a/logs/checkpoints/M5-20260906/M5-13-verification-matrix.md b/logs/checkpoints/M5-20260906/M5-13-verification-matrix.md
+index 1127b37..99b09b8 100644
+--- a/logs/checkpoints/M5-20260906/M5-13-verification-matrix.md
++++ b/logs/checkpoints/M5-20260906/M5-13-verification-matrix.md
+@@ -1,4 +1,4 @@
+-# M5 验证矩阵（A1 横切 · M5-W0 末位 + W1 reconciliation + W6 verification delta + W7 verification scope + W8 reconciliation + W9 verification scope + W10 verification scope + W10 verification delta + W11 verification scope + W12 verification scope + W12 build metrics threshold + W13 verification scope + W14 verification scope + W14 PUSHED + W15 verification scope）
++# M5 验证矩阵（A1 横切 · M5-W0 末位 + W1 reconciliation + W6 verification delta + W7 verification scope + W8 reconciliation + W9 verification scope + W10 verification scope + W10 verification delta + W11 verification scope + W12 verification scope + W12 build metrics threshold + W13 verification scope + W14 verification scope + W14 PUSHED + W15 verification scope + W15 PUSHED + W16）
+ 
+ > 子卡 ID：**M5-13** · 跨 M5-1~M5-12 · `[S3|LEVERAGE:2|COMPLEX|AI:DEEP|R:xhigh]`
+ > 责任 Lane 候选：**A11**（沿用 A7/A11 角色，A0 签发时定）
+@@ -664,8 +664,60 @@ python3 scripts/measure-build-metrics.py --compare "$B" --skip-build
+ 10. `check-agent-skill-ui-logic.mjs` 110/110 PASS（**A5 W15 执行锁** = 无 Agent/Skill 执行可供性）
+ 11. A6 W15 新增 UI 逻辑门禁（a11y 确认 / 模态焦点 / empty/loading/error 态）自测 PASS
+ 12. `npm run build` PASS + `python3 scripts/pre-merge.sh` ALL_PASS
+-13. **`python3 scripts/measure-build-metrics.py --compare` `total_bytes_pct ≤ 25.0` + `cargo_warnings delta = 0`**（当前 24.89，余量 **0.11pp**；超 25.0 即 FAIL）
++13. **`python3 scripts/measure-build-metrics.py --compare` `total_bytes_pct ≤ 25.2`**（A0 一次性上限）+ `cargo_warnings delta = 0`（W15 实测 **25.14**，余量 **0.06pp**；超 25.2 → `exceeds_growth_limit=true` → `pre-merge.sh` FAIL）
+ 
+ **W15 硬停（board L1181）**：无 plugin 调用/执行、动态加载、网络下载监听、daemon、模型调用、Agent/Skill 执行、MCP 扩张、graph 写导出、后台 worker、raw Tauri invoke、敏感渲染/持久化。
+ 
+ **A1 W15 本卡立场 = 整包文档收口（board + 3 主文档 + M5-0/10/11/12/13/14 + A1 W15 checkpoint + patch），零产品代码，不 push**；A11 出 push readiness 后由 A0 合并推送。
++
++---
++
++## [W15 PUSHED 结果回填 · 2026-09-08 11:00 CST] A1 W16 reconciliation（基线 `052b18a`）
++
++**13 项 W15 必跑结果（A0 acceptance 记录）**：
++
++| # | 项 | 结果 |
++|---|---|---|
++| 1 | full cargo | **431/431 PASS** |
++| 2 | MCP feature | **21/21 PASS** |
++| 3 | release build `--locked` | success（2 条既有 `grid_process.rs` dead-code 警告） |
++| 4 | `npm run build` | PASS（仅既有 mixed static/dynamic import 警告） |
++| 5 | plugin / graph / MCP / Agent-Skill / UI privacy / UI logic 策略 | PASS |
++| 6 | `node scripts/check-ui-a11y-logic.mjs`（A6 W15 新增） | PASS |
++| 7 | `pre-merge.sh` | ALL_PASS |
++| 8 | `git diff --check` | PASS |
++| 9 | **build metrics** | **25.14% ≤ 25.2%**（一次性上限），warning delta 0 |
++
++**A0 拣入期偏差（必须记账）**：A6 的第一个通用 async-state 组件会把总体积抬到 **25.60%**，已**移除**；焦点管理收窄为两个高危写确认（`ConfirmModal.vue` / `GitWriteConfirmDialog.vue`）。**A1 W16 已把本卡第 13 项门禁由 25.0 更正为 25.2**。
++
++**W16 后续**：`M5-W16` = M5 closeout + M6 charter，**docs/review only**（board L1181）；A11 出 M5 终版矩阵 + M6 验证计划骨架；M6 任何真实运行时权限需产品负责人书面批准 + A10 入口闸（见 `logs/checkpoints/A1-M5-W16-M6-WBS-proposal-20260908-1100.md` §5）。
++
++---
++
++## [W17 verification scope · 2026-09-08 12:00 CST] W17 desktop-client completeness 验证矩阵（A1 DOCS ONLY · A2/A3/A5/A6/A7 有界前端产品代码 · A4/A9 测试·策略 · A8 手动 QA · A10 安全 · A11 验证）
++
++> 依据：`PARALLEL_COMMAND_BOARD.md` L1164-1215（M5-W17 Desktop Client Completeness and Home Recovery Dispatch）；A1 W17 = **DOCS ONLY**，不产出验证执行结果，只定义范围与判定口径。
++
++**W17 与 W15/W16 的门禁差异（必须先记账）**：W17 是**真实产品代码波**（有界前端/启动体验），因此验证范围从 W16 的「纯文档/review」扩展为「前端构建 + 纯逻辑测试 + 策略脚本 + 手动桌面验收 + 体积门禁 + Rust 定向测试」；但 **不新增任何运行时权限**，故 M5 已锁的运行时面（plugin invoke / 命令执行 / 动态加载 / 远程下载·监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP live runtime / graph 写·导出 / 后台 worker）在 W17 **维持全锁**，不构成新增验证项。
++
++**W17 验证矩阵（6 FAC · 对应 board 六条共享 AC）**：
++
++| FAC | 对应 AC | 验证对象 | 责任 Lane | 判定口径（PASS 条件） | A1 W17 记录状态 |
++|---|---|---|---|---|---|
++| **FAC-1.W17** | AC-1 启动 | 桌面 dev 启动助手（`run-gui.sh` / `scripts/`）：检测/启动 Vite dev server → 等待就绪 → 拉起桌面端 → 退出只清理自己拥有的 server；release 仍用 bundled assets | A2 CODE + A11 验证 + A8 手动 | 从干净状态执行助手 **不出现** `localhost:1421` connection refused；release 构建仍加载 bundled assets（不依赖 dev server） | **ACTIVE · 待 A2 交付** |
++| **FAC-2.W17** | AC-2 首页 | `useHomeStore.ts` / `homeUi.ts` / `src/components/home/`：主工作区 launcher 可用路由 + 快捷/最近项有界 + 抗畸形本地数据 + 空/加载态连贯 + 非营销页 | A3 CODE（store/utils）+ A5 CODE（组件）+ A9 TEST + A11 | `scripts/check-home-store-logic.mjs` + `scripts/check-home-ui-logic.mjs` 全 PASS；畸形本地数据不抛异常（回退稳定默认）；列表长度受常量上界约束 | **ACTIVE · 待 A3/A5 交付** |
++| **FAC-3.W17** | AC-3 导航·窄窗口 | `ActivityBar.vue` / `useLayoutStore.ts` / `MainArea.vue` / `StatusBar.vue` / `App.vue`：既有模块可发现 + 稳定 active 态 + 窄窗口行为 + 面板解析失败不出现空白死区 | A6 CODE + A7 CODE + A9 TEST + A8 手动 | `scripts/check-client-navigation-logic.mjs` PASS；窄窗口下导航可达；面板解析失败有可读兜底（非空白） | **ACTIVE · 待 A6/A7 交付** |
++| **FAC-4.W17** | AC-4 可达性·无敏感泄露 | 全部新增可见控件：键盘可达 + accessible name + 沿用既有视觉语言；UI/错误中无敏感 URL/query/凭据/本地路径 | A4 REVIEW（新 `scripts/check-home-client-policy.py`）+ A9 TEST + A10 安全 | 新策略脚本 PASS；DOM/source 级检查无敏感文案；A10 verdict 无阻断发现 | **ACTIVE · 待 A4/A9/A10 交付** |
++| **FAC-5.W17** | AC-5 体积门禁 | `scripts/measure-build-metrics.py`：W17 前端改动后总体积增长仍 ≤ **25.2%**（一次性上限），warning delta = 0 | A11 验证（主）+ 全 lane 自律 | `total_bytes_pct ≤ 25.2` 且 `cargo_warnings` delta = 0；**超限必须报精确 delta，禁止抬上限**（board L1178） | **ACTIVE · 基线 25.14% @ `052b18a`，余量仅 0.06pp** |
++| **FAC-6.W17** | AC-6 交付完整性 | 每 lane 整包：代码/测试 + checkpoint + 精确命令与结果 + `git diff --check` + binary patch；不 commit、不 push | 全 11 lane + A0 集成 | 集成顺序 `A2 -> A3 -> A5 -> A6 -> A7 -> A4/A9 -> A8/A10/A11 -> A0` 无跨 lane 覆盖；冲突以 binary patch 呈现 | **ACTIVE · A1 已按此交付** |
++
++**A1 W17 立场**：本卡只定义范围与判定口径，**不产出任何验证执行结果**（无产品代码、不跑验证）；执行结果由 A2/A3/A5/A6/A7/A9 自测 + A11 独立矩阵 + A8 手动 QA 回填。A1 另出**用户可见验收清单/已知限制**：`logs/checkpoints/A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md`（人工勾选口径，供 A8 实跑与 A0 拣入验收使用）。
++
++**W17 硬停止验证必跑（board L1170 / L1201）**：
++1. 无新增 Tauri 命令 / bridge capability / ACL 条目 / 文件系统权限 / 网络特权 / 新依赖 —— **必须为零**
++2. 无命令执行 / plugin 调用 / 动态加载 / 远程下载·监听 / daemon / 模型调用 / Agent-Skill 执行 / MCP live runtime / graph 写·导出 / 后台 worker
++3. UI 只调 `src/bridge.ts`，无 raw Tauri `invoke`
++4. 不启动任何 M6 权限切片；M6 开工需产品负责人书面批准 + A10 入口闸
++5. 允许文件已被他 lane 改动 → 出 binary patch，不覆盖、不跨 lane 解冲突
++6. 体积门禁 25.2% 维持；超限报 delta 不抬上限
++7. 仅 A0 集成 / commit / push
+diff --git a/logs/checkpoints/M5-20260906/M5-14-debt-ledger.md b/logs/checkpoints/M5-20260906/M5-14-debt-ledger.md
+index c111adc..b705a7a 100644
+--- a/logs/checkpoints/M5-20260906/M5-14-debt-ledger.md
++++ b/logs/checkpoints/M5-20260906/M5-14-debt-ledger.md
+@@ -1,5 +1,5 @@
+ > A0 2026-09-07 14:30: IF-2 threshold revised to 22% for W8; current build metrics total_bytes_pct=21.07 and cargo_warnings delta=0. W9 must preserve <=22% and re-record final verification.
+-# M5 债务账（A1 横切 · 不在本批解决 · W1 修订 + W6/W7 reconciliation debt + W8 reconciliation + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active + W12 reconciliation + W12 PUSHED + W13 active + W13 PUSHED + W14 active + W14 PUSHED + W15 active）
++# M5 债务账（A1 横切 · 不在本批解决 · W1 修订 + W6/W7 reconciliation debt + W8 reconciliation + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active + W12 reconciliation + W12 PUSHED + W13 active + W13 PUSHED + W14 active + W14 PUSHED + W15 active + W15 PUSHED + W16 active）
+ 
+ > 子卡 ID：**M5-14** · 跨 M5-1~M5-12 · 性质：**清单，非实现**
+ > 配套：每张 M5-x 子卡 §9 DOC_BACKWRITE 中的"M5-14 增项"
+@@ -515,7 +515,7 @@ IF-2 threshold revised to 23% for W12 graph live-query readonly bridge/UI; curre
+ | DEBT-04（plugin UI 6 项） | 0% ACTIVE → 6/6（A6 实施期收口） | **6/6 ACTIVE**（plugin UI logic 61/61 + 6 action 全覆盖） | **closed-by-W14** |
+ | M5 final debt ledger 条目数 | 维持 53 条 | **维持 53 条**（条目数不变，DEBT-04 状态转收口） | 持平 |
+ | W14 新增债 | 0 | **0**（无新命令 / 无 DTO 变更 / 无 raw 敏感渲染 / 无 runtime 扩张） | 持平 |
+-| build metrics 阈值 | ≤23% | **24.89% ≤ 25%**（A0 抬阈值 23% → 25%，为懒加载 PluginManager chunk） | 挂账跟踪（余量 0.11pp） |
++| build metrics 阈值 | ≤23% | **25.14% ≤ 25.2%**（A0 一次性抬上限 25.0 → 25.2；通用 async-state 组件因抬到 25.60% 被移除） | **A1 W16 更正**（余量 **0.06pp**） |
+ 
+ **W15 债务账预期 = 0 新增**：
+ 
+@@ -524,10 +524,65 @@ IF-2 threshold revised to 23% for W12 graph live-query readonly bridge/UI; curre
+ - A2/A3/A4/A5/A7/A8/A10 = review / checklist → 结论为 PASS / PASS_WITH_NOTE，不产生实现债
+ - A11 W15 = final verification matrix + push readiness → 收口闸门，不产生债
+ 
+-**25% 指标挂账跟踪（A1 W15 第二项职责 · 交 A0/A6/A11）**：
++**25%→25.2% 指标挂账跟踪（A1 W15 记录 + A1 W16 更正 · 交 A0/A11）**：
+ 
+-- 生效常量 `scripts/measure-build-metrics.py` L38 `TOTAL_BYTES_GROWTH_LIMIT_PCT = 25.0`；当前实测 `total_bytes_pct=24.89`，余量 **0.11pp**（M5 全周期最紧）
+-- 过期文案：`scripts/pre-merge.sh` L76 仍写「总体积 ≤15%」（仅说明文本滞后，门禁读常量，判定不受影响）→ **A1 不修**（门禁脚本不属 A1 允许范围），建议 A0 W15 拣入期同步为 `≤25%`
+-- A6 W15 若有任何体积增量，A11 必须复跑 `--compare` 留证；超 25.0 → `exceeds_growth_limit=true` → `pre-merge.sh` FAIL → 不得进 push readiness
++- 生效上限：`scripts/measure-build-metrics.py` L38 `TOTAL_BYTES_GROWTH_LIMIT_PCT` W15 记录值 **25.0**，A0 拣入期**一次性抬到 25.2**（W15 实测 **25.14%**，余量 **0.06pp**）；**M5 后续任何增长需新的 A0 显式决策**
++- 常量与注释滞后（**A1 不修**，门禁脚本不属 A1 允许范围）：`measure-build-metrics.py` L35-38 仍写 25.0 / 24.89；`scripts/pre-merge.sh` L76 仍写「总体积 ≤15%」→ 建议 A0/A11 W16 拣入期同步为 25.2 / 25.14
++- A6/任何 lane 若有体积增量，A11 必须复跑 `--compare` 留证；超 **25.2** → `exceeds_growth_limit=true` → `pre-merge.sh` FAIL → 不得进 push readiness
+ 
+ **A1 W15 本账立场 = DOCS ONLY**：仅对账与跟踪（board + 3 主文档 + M5-0/10/11/12/13/14 + A1 W15 checkpoint + patch），零产品代码，不 commit、不 push。
++
++---
++
++## [W16 active · 2026-09-08 11:00 CST] A1 W16 reconciliation · W15 accepted 对账 + M6 charter（docs/review only）
++
++**W15 accepted（`052b18a` = HEAD = `origin/master`，工作树 clean）**：
++
++- W15 债务账预期 = 0 新增（A6 窄 UI 磨光 / A9 冻结契约 / A2-3-4-5-7-8-10 review / A11 收口闸门）→ **实测 0 新增债兑现**
++- A0 拣入期偏差（已记账）：A6 第一个通用 async-state 组件会抬到 **25.60%** → 已移除；焦点管理收窄为两个高危写确认；最终 **25.14% ≤ 25.2%**（一次性上限），warning delta 0
++- M5 final debt ledger **维持 53 条**（W14 DEBT-04 收口后条目数不变）；W15 无新条目、无新命令/ACL/bridge/DTO/runtime 扩张
++
++**残留挂账（交 A0 / 产品负责人）**：
++
++| 挂账 | 来源 | A1 W16 处理 |
++|---|---|---|
++| 手动 GUI/运行时证据未补录 | A0 acceptance residual | 列为 M6 WBS §6 开放问题（不伪造、不阻塞 W16） |
++| 53 条债分配到 M6 波次 | M5 final ledger | M6 WBS §6 开放问题（建议 W1 一次性定责） |
++| 体积上限 25.2% 之后是否再抬 | A0 一次性声明 | M6 WBS §6 开放问题（需新 A0 决策） |
++| 门禁脚本常量/文案滞后（25.0 / ≤15%） | 不属 A1 范围 | 交 A0/A11 修 |
++
++**W16 = docs/review only**（board L1181 hard stops）：无产品代码、无新命令/ACL/bridge/DTO、不开放任何 M5 已锁的运行时权限。
++
++**A1 W16 交付**：对账 board L3/L6/L7/L8 + 3 主文档 + M5-0/10/11/12/13/14（含 25.0→**25.2** 更正）+ M6 WBS/排序提案（`A1-M5-W16-M6-WBS-proposal-20260908-1100.md`：6 候选工作流 M6-1~M6-6 · 波次 W1 契约冻结+入口闸 → W2 M6-2 → W3 M6-1 → W4 M6-3 → W5 M6-5 → W6 M6-4 →（W7 条件）M6-6 · 原则「一次只开一种运行时权限 / 默认 fail-closed / 命令五件套同包 / 体积硬顶 25.2% / 证据先于结论」· M6 入口闸 11 项 checklist）。
++
++**A1 W16 立场 = DOCS ONLY**：零产品代码、不 commit、不 push；M6 是否开工取决于产品负责人批准的有界运行时切片。
++
++---
++
++## [W17 active · 2026-09-08 12:00 CST] A1 W17 reconciliation · W16 outputs retained 对账 + desktop-client completeness（有界前端/启动体验产品代码）
++
++**W16 outputs retained（board L6）**：W15 accepted + PUSHED（`052b18a` = HEAD = `origin/master`）；A1 W16 全部文档产出保留生效（M6 WBS/排序提案 + 25.2% 门禁更正）。**M5 final debt ledger 维持 53 条**（W16 无新增条目；W17 为有界前端波，预期同样 0 新增债）。
++
++**W17 债务账立场**：
++
++| 项 | A1 W17 判定 |
++|---|---|
++| W17 增量债预期 | **0 新增**（W17 = 有界前端/启动体验，不动 backend 契约、不动运行时权限面） |
++| 53 条 M5 债 | 维持挂账；分配责任已在 M6 WBS §6 列为开放问题（建议 M6 W1 一次性定责） |
++| 体积上限 25.2% | 维持；W17 前端改动（首页 + 导航 + shell 兜底）是**本波最大的体积风险源**——基线 25.14%，余量仅 **0.06pp**；A5/A6/A7 新增组件若超限必须报精确 delta 并瘦身，**不得抬上限**（board L1178） |
++| 门禁脚本常量/文案滞后 | 不属 A1 范围，交 A0/A11 修 |
++| 手动 GUI/运行时证据 | 仍为 W15 遗留开放项；**W17 由 A8 START MANUAL QA 承接实跑**（board L1192），永不伪造截图 |
++
++**W17 已知限制（A1 必须显式记账，见 `A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md` §3）**：
++
++| 已知限制 | 性质 | 去向 |
++|---|---|---|
++| 首页/launcher 只暴露**既有**主工作区，不新增业务能力 | W17 边界（board L1175） | 新能力走 M6 |
++| plugin invoke / 命令执行 / 远程下载 / daemon / MCP live / Agent-Skill 执行 / graph 写导出 | **运行时权限仍全锁** | M6 入口闸（产品负责人批准 + A10 verdict） |
++| 桌面 dev 启动助手只解决本地 dev 体验，**不改 release 资产加载路径** | W17 AC-1 明确（board L1174） | 分发/签名属 M6-6 |
++| 窄窗口/HiDPI/多平台（Win/macOS）未实跑 | 环境限制 | A8 手动 QA 诚实记录；跨平台分发属 M6-6 |
++| 体积余量 0.06pp，任何新 chunk 都可能触顶 | 门禁现实 | A11 每波复测；M6 需新 A0 决策 |
++
++**A1 W17 交付**：对账 board L6/L8 + 3 主文档 + M5-0 `[W17 active]` 段 + M5-10/11/12 头 + M5-13 `[W17 verification scope]` 段 + 本段 + **W17 用户可见验收清单/已知限制**（`logs/checkpoints/A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md`）。
++
++**A1 W17 立场 = DOCS ONLY**：零产品代码、不 commit、不 push。
+diff --git a/后续需求TODO.md b/后续需求TODO.md
+index 4dcd168..1271838 100644
+--- a/后续需求TODO.md
++++ b/后续需求TODO.md
+@@ -15,6 +15,8 @@
+ > A0 update 2026-09-07 09:45 CST: W7 non-A3 focused checks PASS; NEXT=`M5-W8` excluding A3. A3 local commit exists but is held out of this wave; do not dispatch A3 until A0 resolves history/push boundary.
+ # 后续需求 TODO 列表
+ > A0 update 2026-09-08 10:15 CST: W15 release-readiness accepted locally. High-risk push/Git confirmations gained keyboard focus containment; no runtime authority expanded. Full Rust 431/431, MCP feature 21/21, policy/UI checks, release build, build, and pre-merge PASS. Build growth is 25.14% with warning delta 0; A0 recorded a one-time 25.2% ceiling. NEXT=`M5-W16` M5 closeout and M6 charter, docs/review only until a product owner approves a bounded runtime slice; only A0 pushes.
++> A1 update 2026-09-08 11:00 CST: A1 W16 reconciliation (docs only) — W15 accepted at `052b18a` (`git pull --ff-only` clean; metrics `total_bytes_pct=25.14` ≤ **25.2%** one-time ceiling, warning delta=0; A0 removed the first generic async-state component because it would have raised growth to 25.60%, and narrowed focus management to the two high-risk write confirmations). A1 corrected every recorded 25.0% gate to the accepted 25.2% ceiling in M5-0/13/14. Manual GUI/runtime evidence remains an open acceptance item (not fabricated). A1 drafted the M6 WBS/ordering proposal `logs/checkpoints/A1-M5-W16-M6-WBS-proposal-20260908-1100.md`: 6 candidate workstreams (M6-1 plugin stage-II bounded invoke / M6-2 MCP stdio real runtime / M6-3 Agent-Skill execution authorization / M6-4 graph write+export / M6-5 background worker / M6-6 distribution and signing), all gated by an M6 entry gate (product owner approval + A10 verdict + A11 verification skeleton + 25.2% metric budget). Zero product code, no push.
++> A1 update 2026-09-08 12:00 CST: A1 W17 reconciliation (docs only) — W16 outputs retained per board L6 (W15 accepted+PUSHED at `052b18a`; M6 WBS/ordering proposal `A1-M5-W16-M6-WBS-proposal-20260908-1100.md` and the 25.2% gate correction stay in force) while `M5-W17` desktop-client completeness and home recovery is now the active NEXT. W17 is M5's first real frontend product-code wave but bounded: desktop dev start helper (A2), home store/utils (A3) + home components (A5), ActivityBar/layout navigation (A6), client shell fallback/boot/error presentation (A7); docs/review lanes A1/A4/A8/A9/A10/A11. Hard stops: no new Tauri command / bridge capability / ACL entry / filesystem permission / network privilege / new dependency; no command execution, plugin invocation, dynamic loading, remote download/listener, daemon, model call, Agent-Skill execution, MCP live runtime, graph write/export, or background worker; no M6 authority slice. A1 W17 deliverables: reconciled M5-0 title chain + `[W17 active]` section, M5-13 `[W17 verification scope]` (6 FAC mapped to the six shared ACs), M5-14 `[W17 active]` (debt ledger stays 53, W17 increment expected 0, five known limitations), M5-10/11/12 headers, and the new **W17 user-visible acceptance checklist / known limitations** `logs/checkpoints/A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md` (6 groups / 24 human-runnable checks + release judgment rules) for A8 live run, A11 matrix, and A0 integration. Key risks recorded: build-metric headroom is only 0.06pp (25.14% baseline vs 25.2% one-time ceiling) and the home view must not become a marketing page. Zero product code, no push.
+ > A0 update 2026-09-07 00:50 CST: `origin/master` pushed to `5f92ece`; NEXT=`M5-W7`. W7 opens only A3 (MCP read-only command bridge) and A5 (Agent/Skill read-only command bridge) for product code; all other lanes remain docs/review/support.
+ > A0 update 2026-09-06 19:25 CST: `origin/master` pushed to `4b438ef`; NEXT=`M5-W7`. W6 opens only A8 (M5-9 graph UI pure logic/panel shell) and A9 (M5-10/11 plugin manifest/lifecycle policy slice) for product code; all other lanes remain docs/review/support.
+ > A0 update 2026-09-06 18:35 CST: `origin/master` pushed to `1610939`; NEXT=`M5-W6`. W5 opens only A6 (M5-6 Agent/Skill UI pure logic/panel shell) and A7 (M5-7/8 graph model/store policy slice) for product code; all other lanes remain docs/review/support.
+diff --git a/详细设计与实施计划.md b/详细设计与实施计划.md
+index e83fcea..1a43531 100644
+--- a/详细设计与实施计划.md
++++ b/详细设计与实施计划.md
+@@ -26,6 +26,8 @@
+ > 再上一版（保留）：M2-5 任务卡已展开为 a/b/c 三张子卡（`logs/checkpoints/M2-5-20260905-1301.md`，纯文档展开，未改产品代码），NEXT=`M2-5.c`（b 已交付：执行面板=真实运行+取消+输出流rAF合并+补 D15 审计+D14 节流；c 待裁定：script_runs_list 运行历史）**。拆卡：a 脚本库 CRUD UI（纯前端不接执行）/ b 执行面板（真实执行+输出流+取消+补 D15 审计与 D14 后端 30ms 节流）/ c 运行历史（新增后端 `script_runs_list`）。现状实测：前端零 Script 组件，但 `bridge.ts` 7 条命令与 `types.ts` 类型镜像已由 M2-3/M2-4 交付就位；缺口仅 UI 组件与两项未交付物（**事件监听封装缺失 / 运行历史读取命令缺失**）。对两份 mock 草案做 6 处事实修正（草案写于 M2-4 落地前，「不接执行用 mock」前提已失效）；四组分歧留 b 卡裁定。新增 `check-script-ui-policy.py`（7 默认码+6 pending 码位+变异防呆）。上一版：M2-4 整体裁定已签（`PASS_WITH_DEBT`，`AI:DEEP / R:high`，裁定者 CodeBuddy Hy4 / 腾讯混元），NEXT=`M2-5`。本裁定为**跨模型复核**（与 a/b 卡裁定者 Kimi K3、c/d/e 实现者 Codex gpt-5.5 均不同模型），同时完成 `M2-4.b-VERDICT §6` 遗留要求：`§3.1 路线 A`（argv 一律不加引号）与 `§3.2 路线 B`（piped + 只丢弃 drain，drain≠背压）均**确认维持**；b 卡 IMPLEMENTER_ACTION 五项中四项闭环，仅 `scripts.rs` 措辞清理未闭环（NON-BLOCKER，结论不变）。`M2-4.a §8` 八组契约**六组完全成立、两组部分成立**（§8.5 节流、§8.7 审计），**四条 P0 红线（argv 数组无 shell 拼接 / cwd 锁定 / 进程组整组回收 / 明文不进审计）无一突破**，裁定动作全部亲自复跑（`cargo test` 198/198、三套 policy 全过、pre-merge ALL_PASS、git diff --check 0）。新增债务 **D14**（`script-output` 未按 §8.5 做 30 ms 时间节流，仅有 8 KiB 字节批量）/ **D15**（§8.7 审计缺 `script.run.finish` 与 `script.validate.reject`，`cancel` 缺 `cancelledBy`；属**未申明的契约偏离**）/ **D16**（R15 脚本文件被替换/删除未显式预检，依赖 spawn io error）/ **D17**（GUI 事件联调、R9 100 MB、R12 运行时链路无取证通道）。**D15 的 `validate.reject` 须在 M2-5 前端执行面板上线前补齐**。证据 `logs/checkpoints/M2-4-ACCEPT-20260905-1247.md`。**本卡为纯文档裁定，未改任何产品代码**。上一版：M2-4.e 移除 shell spawn 开放面已完成（`AI:DEEP / R:high`，Codex gpt-5.5），NEXT=`M2-4 整体裁定`。按 M2-4.a 裁定，移除 `src-tauri/capabilities/default.json` 中 `shell:allow-spawn args:true` 以及 `shell:allow-stdin-write`/`shell:allow-kill`，移除主进程与 grid child 两处 `tauri_plugin_shell::init()`，裁掉 Rust `tauri-plugin-shell` 与前端 `@tauri-apps/plugin-shell` 依赖；刷新 M2-2/M2-3 对 `package*.json` 的哈希基线。`check-script-exec-policy.py` 追加 e 卡三类默认违规码（capability / npm / Rust 插件回流），23 坏样本自检通过。验证：`cargo test` 198/198 PASS；`cargo build --release --locked` 0 error、2 warning 仍为既有 `grid_process.rs` 死代码；`npm run build` 0 error；三套相关 policy 全过；运行时 GUI 目视验收仍挂账。
+ 
+ > A0 update 2026-09-08 10:15 CST: W15 release-readiness accepted locally. Two high-risk write-confirmation dialogs gained focus containment; runtime authority remains frozen. Full Rust 431/431, MCP feature 21/21, policy/UI checks, release build, frontend build, and pre-merge PASS. Build growth is 25.14% with warning delta 0; the recorded ceiling is 25.2%. NEXT=`M5-W16` M5 closeout and M6 charter, docs/review only until a bounded runtime slice is approved.
++> A1 update 2026-09-08 11:00 CST: A1 W16 reconciliation (docs only) — W15 accepted at `052b18a` (`git pull --ff-only` clean; metrics `total_bytes_pct=25.14` ≤ **25.2%** one-time ceiling, warning delta=0; A0 removed the first generic async-state component because it would have raised growth to 25.60%, and narrowed focus management to the two high-risk write confirmations). A1 corrected every recorded 25.0% gate to the accepted 25.2% ceiling in M5-0/13/14. Manual GUI/runtime evidence remains an open acceptance item (not fabricated). A1 drafted the M6 WBS/ordering proposal `logs/checkpoints/A1-M5-W16-M6-WBS-proposal-20260908-1100.md`: 6 candidate workstreams (M6-1 plugin stage-II bounded invoke / M6-2 MCP stdio real runtime / M6-3 Agent-Skill execution authorization / M6-4 graph write+export / M6-5 background worker / M6-6 distribution and signing), all gated by an M6 entry gate (product owner approval + A10 verdict + A11 verification skeleton + 25.2% metric budget). Zero product code, no push.
++> A1 update 2026-09-08 12:00 CST: A1 W17 reconciliation (docs only) — W16 outputs retained per board L6 (W15 accepted+PUSHED at `052b18a`; M6 WBS/ordering proposal `A1-M5-W16-M6-WBS-proposal-20260908-1100.md` and the 25.2% gate correction stay in force) while `M5-W17` desktop-client completeness and home recovery is now the active NEXT. W17 is M5's first real frontend product-code wave but bounded: desktop dev start helper (A2), home store/utils (A3) + home components (A5), ActivityBar/layout navigation (A6), client shell fallback/boot/error presentation (A7); docs/review lanes A1/A4/A8/A9/A10/A11. Hard stops: no new Tauri command / bridge capability / ACL entry / filesystem permission / network privilege / new dependency; no command execution, plugin invocation, dynamic loading, remote download/listener, daemon, model call, Agent-Skill execution, MCP live runtime, graph write/export, or background worker; no M6 authority slice. A1 W17 deliverables: reconciled M5-0 title chain + `[W17 active]` section, M5-13 `[W17 verification scope]` (6 FAC mapped to the six shared ACs), M5-14 `[W17 active]` (debt ledger stays 53, W17 increment expected 0, five known limitations), M5-10/11/12 headers, and the new **W17 user-visible acceptance checklist / known limitations** `logs/checkpoints/A1-M5-W17-user-visible-acceptance-checklist-20260908-1200.md` (6 groups / 24 human-runnable checks + release judgment rules) for A8 live run, A11 matrix, and A0 integration. Key risks recorded: build-metric headroom is only 0.06pp (25.14% baseline vs 25.2% one-time ceiling) and the home view must not become a marketing page. Zero product code, no push.
+ > 文档角色：M0~M5 路线、门禁、WBS 与验收口径的唯一执行基准（SSOT）。需求池以 `后续需求TODO.md` 为准。
+ > 需求范围：`后续需求TODO.md` #1~#15、`PROJECT-RULES.md`、`dbx-study/`、`fileterm-study/`。
+ > 文档版本：V5.25。

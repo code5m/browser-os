@@ -1,0 +1,193 @@
+diff --git a/logs/assist/A11-M5-W17-closeout-matrix-20260907-2139.md b/logs/assist/A11-M5-W17-closeout-matrix-20260907-2139.md
+new file mode 100644
+index 0000000..0cbe302
+--- /dev/null
++++ b/logs/assist/A11-M5-W17-closeout-matrix-20260907-2139.md
+@@ -0,0 +1,46 @@
++# M5-A11 · W17 Acceptance Closeout Matrix (assist note)
++
++**Lane**: A11 · START VERIFICATION（board L1219）· 集成顺序 `A3 → A4/A9 → A2/A8/A10 → A1 → A11 → A0`
++**Verdict**: ✅ **PASS — A0 may push**（3 项非阻塞待认领条目见下）
++**Supersedes**: `A11-M5-W17-verification-20260907-1652.md`（STATUS=BLOCKED 已失效）
++
++## Final matrix (21:39 snapshot, all green)
++| Gate | Result |
++|---|---|
++| cargo test (default) | **433 passed / 0 failed**; warnings 2 = baseline |
++| cargo test --features mcp | **454 passed / 0 failed** (default 433 → +21) |
++| npm run build | PASS — ✓ built in 2.74s; `index-yBfHlICN.js` **183.27 kB** (gzip 65.63) |
++| build metrics (gate baseline `052b18a`) | `total_bytes_pct=0.0`, `exceeds_growth_limit=false`, `cargo_warnings=0`, `warnings_increased=false` |
++| **pre-merge.sh** | **`PRE_MERGE_RESULT=ALL_PASS`** (EXIT=0, zero FAIL) |
++| `git diff --check` | worktree+index **0**; `merge-base..HEAD` **0** |
++| Policies (self-test + default) | core 7 · mcp ACTIVE=13/PENDING=0 + `--expect-current-gaps` PASS · agent-memory 5 · agent-skill 3/10 · graph 8 · plugin ALL_PASS + `--expect-pending` OK · tools · database 14/1 · scheduler 23/0 · script-exec ALL_PASS |
++| **scheduler-UI (prev BLOCKER-2)** | **PASS（0 违规，17 码位）** + self-test ALL_PASS |
++| **A4 home policy** | default PASS + self-test PASS(ACTIVE=3/PENDING=3) + **`--expect-pending` NONE (RC=0)** |
++| W17 targeted UI | home-store **105/0** · home-ui **32/0** `HOME_UI_RESULT=PASS` · client-nav **PASS 60/60** · a11y PASS · graph 113/0 · agent-skill 110/0 |
++
++## Previous blockers — both cleared
++- BLOCKER-1 metrics 25.55% > 25.2% → gate now compares vs `build-metrics-052b18a.json` (0.0%, no regression).
++- BLOCKER-2 `SCHEDUI_PANEL_LAZY` → `CHECK_SCHEDULER_UI_POLICY_RESULT=PASS (0 violations, 17 codes)`.
++- Missing A3/A9/A6 targeted scripts → all three delivered and passing.
++
++## ⚠ Build-metric transparency (must be read before push)
++- Limit constant **unchanged**: `TOTAL_BYTES_GROWTH_LIMIT_PCT = 25.2` (`measure-build-metrics.py:39`) — **not raised**.
++- The pass comes from **A0's baseline re-anchor** (`052b18a` now sorts first in `logs/m0-build-metrics/`), **not** from bundle shrink: main chunk grew **169.45 → 183.27 kB** (+13.82 kB) since the 16:52 snapshot.
++- Cumulative growth vs the original M0 baseline `4f0e8ab`: **29.77%** (`exceeds_growth_limit=true`) — recorded for transparency; not the current gate criterion.
++- Recommend A0/A1 document the re-baseline rationale (board L722 IF-2).
++
++## HOME_NO_SECRET_PERSIST — closed in code
++- `isStorageSafe` = `s.type !== "app"`; `HOME_PERSISTED_TYPES = ["url","dir"]`; `toPersisted = list.filter(isStorageSafe)`; `HomeShortcut` = `id/type/name/target/icon` only (no command field) → app command bodies stay in memory, never persisted.
++- `--expect-pending` → `PENDING_RESULT=NONE` (all 3 pending codes clean), RC=0.
++- **Still listed as PENDING** in A4's policy (not promoted to ACTIVE) → A4 should flip it, else a future regression won't be caught by the default gate.
++
++## A5 / A6 / A7 HOLD check (blockers only, no re-development)
++- **A5** (home components): no blocker — home-ui 32/0; A3 preserved `HomeShortcut` fields & re-export path (`useHomeStore.ts:32`). Stay HOLD.
++- **A6** (nav): no blocker — `CLIENT_NAV_RESULT=PASS (60/60)`, store independent of bridge/backend. Stay HOLD.
++- **A7** (shell/MainArea): no blocker — its only related red light (`SCHEDUI_PANEL_LAZY`) is cleared. Stay HOLD.
++
++## Not covered by A11 (no fabrication)
++Native desktop visual acceptance (real client start, narrow-window, home launcher) remains **user-side evidence** — A8 MANUAL QA scope. A11 did not run the native client and attaches no screenshots.
++
++Full detail: `logs/checkpoints/A11-M5-W17-acceptance-closeout-20260907-2139.md`.
++Patch: `logs/checkpoints/Lane-A11-M5-W17-closeout-20260907-2139.patch`. No source edits; not committed; not pushed.
+diff --git a/logs/checkpoints/A11-M5-W17-acceptance-closeout-20260907-2139.md b/logs/checkpoints/A11-M5-W17-acceptance-closeout-20260907-2139.md
+new file mode 100644
+index 0000000..f3c9b15
+--- /dev/null
++++ b/logs/checkpoints/A11-M5-W17-acceptance-closeout-20260907-2139.md
+@@ -0,0 +1,135 @@
++# M5-A11 · W17 Acceptance Closeout 终版验证（A3 之后）— **PASS**
++
++```text
++LANE: A11
++STATUS: PASS（附 3 项待 A0/A1/A4 收口的透明度条目，见 §6）
++SCOPE: logs/checkpoints/A11-M5-W17-acceptance-closeout-20260907-2139.md ; logs/assist/A11-M5-W17-closeout-matrix-20260907-2139.md ; logs/checkpoints/Lane-A11-M5-W17-closeout-20260907-2139.patch （仅验证文档 + patch，零源码编辑）
++DELIVERED: A3 之后的 W17 终版矩阵——策略 self-test/default、focused UI checks、npm run build、构建指标、pre-merge.sh、git diff --check，外加默认/feature Rust 测试；并复核 A5/A6/A7 HOLD 是否有具体阻塞
++VERIFY: 见 §2 矩阵（逐条「命令 → 结果」实跑，2026-09-07 21:39 时点）
++METRICS: pre-merge 基线 build-metrics-052b18a.json → total_bytes_pct=0.0、exceeds_growth_limit=false、cargo_warnings=0、warnings_increased=false；上限常量 TOTAL_BYTES_GROWTH_LIMIT_PCT 仍为 25.2（未抬高）；对原始 M0 基线 4f0e8ab 的累计增幅为 29.77%（超 25.2，仅作透明度记录，非当前门禁判据）
++PATCH: /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3/logs/checkpoints/Lane-A11-M5-W17-closeout-20260907-2139.patch
++RISKS: ①构建指标「通过」源自 A0 的基线重锚（052b18a），而非包体缩小——主 chunk 反由 169.45→183.27 kB；②HOME_NO_SECRET_PERSIST 代码已闭环但策略码位仍列 PENDING，未转 ACTIVE，若 A3 代码回退将无默认门禁拦截；③原生桌面视觉验收仍为用户侧证据，A11 无真机执行。
++NO_PUSH: confirmed
++```
++
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W17 Acceptance Closeout Dispatch（L1203-1229）→ **A11 = START VERIFICATION**（L1219）：A3 之后的终版矩阵——policy self-tests/defaults、focused UI checks、`npm run build`、build metrics、`bash scripts/pre-merge.sh`、`git diff --check`；**No source edits**。scope `logs/assist/`+`logs/checkpoints/`。
++> 集成顺序（L1223）：`A3 -> A4/A9 -> A2/A8/A10 -> A1 -> A11 -> A0`；**仅 A0 集成/commit/push**；各 lane 须**保留现有脏工作树**，不得 reset/clean 他人改动（L1225）。
++> 用户指令：A5/A6/A7 按 HOLD 规则**只检查是否有具体阻塞、不重复开发** → 见 §5。
++> 本件**取代**同 lane 16:52 的 `A11-M5-W17-verification-20260907-1652.md`（其 STATUS=BLOCKED 已失效：两处阻塞均已消除）。
++
++---
++
++## 1. 启动门禁与基线
++
++```bash
++cat .workspace-identity       # WORKSPACE_ID=BACKV3_MAIN / PATH=.../mvp-browser-os-v3  ✅
++git fetch origin && git pull --ff-only   # 已经是最新的（master == origin/master == 052b18a）
++git status --short --branch   # 保留脏工作树：W16 产物 + W17 在制 + 本 lane 文档（未 reset/clean）
++```
++- HEAD = `052b18a feat(M5): close W15 release readiness`（无新提交；本波改动均在工作树）。
++- 验证对象 = `052b18a` + 当前完整脏工作树（含 A3/A4/A9 等 lane 在制改动）。
++
++---
++
++## 2. 终版验证矩阵（21:39 时点实跑）
++
++| # | 门 | 命令 | 结果 | 判定 |
++|---|---|---|---|---|
++| 1 | Rust 单测（默认） | `cargo test --manifest-path src-tauri/Cargo.toml` | **433 passed（431 bin + 2），0 failed**，EXIT=0；warnings **2**（grid_process.rs 基线） | ✅ |
++| 2 | Rust 单测（feature） | `cargo test --manifest-path src-tauri/Cargo.toml --features mcp` | **454 passed（452 + 2），0 failed**，EXIT=0；较默认 **+21** | ✅ |
++| 3 | 前端构建 | `npm run build` | ✓ built in 2.74s；`index-yBfHlICN.js`=**183.27 kB**（gzip 65.63）；`index-DNHAj0-Q.css`=71.99 kB（gzip 12.64） | ✅ |
++| 4 | **构建指标（当前门禁）** | pre-merge 取基线 `build-metrics-052b18a.json` | `total_bytes_pct=0.0`，`exceeds_growth_limit=false`，`cargo_warnings=0`，`warnings_increased=false` | ✅ |
++| 5 | 构建指标（透明度） | `measure-build-metrics.py --compare logs/m0-build-metrics/build-metrics-4f0e8ab.json --skip-build` | `total_bytes_pct=29.77`，`exceeds_growth_limit=true`（对原始 M0 基线的**累计**增幅） | ⚠ 记录 |
++| 6 | 指标上限常量 | `grep TOTAL_BYTES_GROWTH_LIMIT_PCT scripts/measure-build-metrics.py` | L39 `= 25.2` —— **未抬高** | ✅ |
++| 7 | 指标脚本自检 | `measure-build-metrics.py --self-test` | ALL_PASS | ✅ |
++| 8 | **集成门禁** | `bash scripts/pre-merge.sh` | **`PRE_MERGE_RESULT=ALL_PASS`**（EXIT=0，零 FAIL） | ✅ |
++| 9 | core 边界 | `check-core-boundary.py --self-test` | PASS（ACTIVE=7） | ✅ |
++| 10 | MCP 策略 | `--self-test` / default / `--expect-current-gaps` | PASS（ACTIVE=**13**，PENDING=0）/ PASS / PASS | ✅ |
++| 11 | agent-memory | `check-agent-memory-policy.py --self-test` | PASS（ACTIVE=5） | ✅ |
++| 12 | agent-skill | `--self-test` / default | PASS（ACTIVE=3，PENDING=10）/ PASS | ✅ |
++| 13 | graph | `--self-test` / default | PASS（ACTIVE=8）/ PASS | ✅ |
++| 14 | plugin | `--self-test` / default / `--expect-pending` | ALL_PASS / PASS / `PLUGIN_PENDING_OK` | ✅ |
++| 15 | tools / database / scheduler / script-exec | 各自 `--self-test` | 全 PASS（tools 16 坏样本；database 14/1；scheduler 23/0；script-exec ALL_PASS） | ✅ |
++| 16 | **scheduler UI（上轮 BLOCKER-2）** | `check-scheduler-ui-policy.py` / `--self-test` | **`PASS（0 违规，17 个码位守护中）`** / `ALL_PASS（1 好样本 + 17 坏样本）` | ✅ **已消** |
++| 17 | A4 W17 home 策略 | `check-home-client-policy.py`（default） | 「all invariants hold（ACTIVE=3）」 | ✅ |
++| 18 | A4 W17 home 策略 | `--self-test` | PASS（ACTIVE=3，PENDING=3；7 坏样本全检） | ✅ |
++| 19 | **HOME_NO_SECRET_PERSIST 债** | `check-home-client-policy.py --expect-pending` | **`PENDING_RESULT=NONE（3 个 pending 码位均未检出）`，RC=0** | ✅ **闭环** |
++| 20 | home store 逻辑（A3） | `node scripts/check-home-store-logic.mjs` | 通过 **105**，失败 0 | ✅ |
++| 21 | home UI 逻辑（A9） | `node scripts/check-home-ui-logic.mjs` | 通过 **32**，失败 0；`HOME_UI_RESULT=PASS` | ✅ |
++| 22 | 客户端导航逻辑（A6） | `node scripts/check-client-navigation-logic.mjs` | `CLIENT_NAV_RESULT=PASS (60/60)` | ✅ |
++| 23 | a11y / graph / agent-skill UI | 各自 mjs | `UI_A11Y_RESULT=PASS` / 113-0 / 110-0 | ✅ |
++| 24 | `git diff --check` | 工作树+暂存区 / `merge-base..HEAD` | **EXIT=0 / EXIT=0** | ✅ |
++
++---
++
++## 3. 上轮两处阻塞的消除确认
++
++| 上轮（16:52）阻塞 | 现状 | 证据 |
++|---|---|---|
++| BLOCKER-1 构建指标 25.55% > 25.2% | **消除**（门禁判据变为新基线） | pre-merge L81「build metrics 未回归（基线 …/build-metrics-052b18a.json）」；`exceeds_growth_limit=false` |
++| BLOCKER-2 `SCHEDUI_PANEL_LAZY` | **消除**（夹具/源码已对齐） | `CHECK_SCHEDULER_UI_POLICY_RESULT=PASS（0 违规，17 个码位守护中）` + self-test ALL_PASS |
++| 缺失 A3/A9/A6 targeted 脚本 | **全部交付且通过** | home-store 105/0、home-ui 32/0、client-nav 60/60 |
++
++---
++
++## 4. 构建指标「通过」的机制说明（必须透明记录）
++
++- 门禁判据：pre-merge 取 `logs/m0-build-metrics/build-metrics-*.json` 排序**首个**文件。目录中新增 `build-metrics-052b18a.json`（W15 关闭时点快照，`0` 排序先于 `4f0e8ab`）→ 现基线为 **052b18a**，测得 `total_bytes_pct=0.0`。
++- **上限常量未被抬高**：`TOTAL_BYTES_GROWTH_LIMIT_PCT` 仍为 `25.2`（L39）。
++- **但**：主 chunk 绝对值是**上升**的——16:52 快照 169.45 kB → 现 **183.27 kB**（+13.82 kB）；对原始 M0 基线 `4f0e8ab` 的累计增幅为 **29.77%**（`exceeds_growth_limit=true`）。
++- 结论：本次指标「通过」来自 **A0 的基线重锚（re-baseline）**，**不是**包体瘦身。按 board L722（IF-2）「基线/threshold 决策须记录确切理由」，此重锚**建议由 A0/A1 在文档中显式记载理由**；A11 不作裁定，仅如实记录双数值。
++
++---
++
++## 5. A5 / A6 / A7 HOLD 复核（只查阻塞，不重复开发）
++
++| Lane | HOLD scope | 阻塞检查 | 结论 |
++|---|---|---|---|
++| A5 | `src/components/home/` | home UI 逻辑 32/0 PASS；A3 虽改 `homeUi.ts`/`useHomeStore.ts`，但 `HomeShortcut` 字段（`id/type/name/target/icon`）与再导出路径保持不变（`useHomeStore.ts:32` 注释明示「保证既有消费方 HomePanel.vue / A5 的 import 路径与字段语义不变」） | **无具体阻塞 → 维持 HOLD，不重开** |
++| A6 | `ActivityBar.vue`、`useLayoutStore.ts`、`check-client-navigation-logic.mjs` | `CLIENT_NAV_RESULT=PASS (60/60)`，导航 store 不依赖 bridge/后端 | **无具体阻塞 → 维持 HOLD** |
++| A7 | `MainArea.vue`、`StatusBar.vue`、`App.vue` | 上轮唯一相关红灯 `SCHEDUI_PANEL_LAZY` 已消（§3）；shell fallback 无新失败面 | **无具体阻塞 → 维持 HOLD** |
++
++→ A5/A6/A7 三条 HOLD **均无具体验收发现可据以重开**，本 lane 未对其发起任何重复开发。
++
++---
++
++## 6. 待收口条目（不阻塞门禁，但须有人认领）
++
++1. **HOME_NO_SECRET_PERSIST 码位仍列 PENDING**（A4 策略 L56-63，注释「W17 应闭环的既有债务…应转 ACTIVE」）。代码侧已闭环（`isStorageSafe` = `s.type !== "app"`；`HOME_PERSISTED_TYPES=["url","dir"]`；app 命令体仅内存驻留；`--expect-pending` 未检出）→ **建议 A4 将其由 PENDING 转 ACTIVE**，否则日后 A3 代码回退时默认门禁不会拦截。
++2. **构建指标基线重锚 052b18a 需文档化理由**（§4），归 A0/A1（board L722）。
++3. **原生桌面视觉验收仍为用户侧证据**（board L1205 自述）——A11 未执行真机启动/窄窗/截图，属 A8 MANUAL QA 范畴，未伪造任何真机结论。
++
++---
++
++## 7. Push 就绪度
++
++> **✅ READY（A0 可 push）** —— `pre-merge.sh` = `ALL_PASS`、默认 433/0 + feature 454/0、`npm run build` PASS、全部策略 self-test/default 通过、W17 三份 targeted UI 脚本（105/0、32/0、60/60）通过、`git diff --check` 双绿、上轮两处阻塞均已消除、`HOME_NO_SECRET_PERSIST` 代码侧已闭环。
++> 建议 A0 push 前顺带处理 §6-1（PENDING 转 ACTIVE）与 §6-2（基线理由文档化）；二者不阻塞本次 push。
++> 本 lane **未 commit、未 push**（L1225：仅 A0 集成/commit/push）。
++
++---
++
++## 8. 债务台账（16:52 → 21:39）
++
++| 项 | 16:52（上轮） | 21:39（本轮） |
++|---|---|---|
++| pre-merge | **FAIL**（3 条） | ✅ **ALL_PASS** |
++| 构建指标（门禁基线） | 25.55% > 25.2%（FAIL） | ✅ 0.0%（基线 052b18a）；⚠ 对 4f0e8ab 累计 29.77% |
++| scheduler UI 契约 | FAIL `SCHEDUI_PANEL_LAZY` | ✅ PASS（0 违规 / 17 码位） |
++| A3 home-store 脚本 | ⏸ 缺失 | ✅ 105/0 |
++| A9 home-UI 脚本 | ⏸ 缺失 | ✅ 32/0 |
++| A6 nav 脚本 | ⏸ 缺失 | ✅ PASS 60/60 |
++| HOME_NO_SECRET_PERSIST | 债在（`useHomeStore` 落库命令体） | ✅ 代码闭环（`--expect-pending` NONE）；码位仍 PENDING 待 A4 转 ACTIVE |
++| 默认 / feature Rust | 433/0 · 454/0 | ✅ 433/0 · 454/0（未变） |
++| cargo warnings | 2（delta 0） | ✅ 2（delta 0） |
++| 主 chunk 体积 | 169.45 kB | 183.27 kB（+13.82 kB，见 §4） |
++
++---
++
++## 9. 声明（避免误读）
++
++- 本 lane **零源码编辑**（遵守 L1219「No source edits」）；未改 `measure-build-metrics.py`、`pre-merge.sh`、任何策略脚本或产品代码。
++- **未**为消除红灯而抬上限、删基线或放宽检查——上限常量 25.2 原样未动，基线更换由 A0 实施、本 lane 仅如实记录并提示文档化。
++- 未 `reset`/未 `clean` 任何他人改动，完整保留脏工作树（L1225）。
++- 全部结论基于 §2 实跑证据；未执行真机/截图，**未虚构任何原生桌面视觉验收结论**。
++- 未 commit、未 push；本 lane 文档按惯例 `git add` 暂存以便 A0 拾取，patch 以未跟踪文件留存。

@@ -55,7 +55,7 @@ function caps(def: SkillDef) {
         @click="store.selectSkill(s.id)"
       >
         <div class="card-title">
-          <span>{{ s.displayName }}</span>
+          <span>{{ s.display_name }}</span>
           <span class="tag" :class="aclTone(s.acl)">{{ aclLabel(s.acl) }}</span>
         </div>
         <div class="card-sub">{{ s.id }} · {{ execSummary(s.exec) }}</div>

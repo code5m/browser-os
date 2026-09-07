@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, onErrorCaptured, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { bridge } from "./bridge";
 import { useBrowserStore } from "./stores/useBrowserStore";
@@ -29,6 +29,18 @@ const system = useSystemStore();
 const layout = useLayoutStore();
 const settings = useSettingsStore();
 
+// W17(A7): 外壳级兜底状态——启动遮罩与渲染错误兜底（纯展示，不引入运行时行为）。
+const ready = ref(false);
+const shellError = ref<string | null>(null);
+
+// W17(A7): 捕获子树渲染异常，避免整树白屏/死区；仅记录通用提示，不暴露内部错误细节。
+onErrorCaptured((err: unknown) => {
+  // eslint-disable-next-line no-console
+  console.error("[app] render error captured:", (err as Error)?.message ?? err);
+  shellError.value = "界面渲染遇到问题，请重启客户端。";
+  return false;
+});
+
 const appHeight = ref<string>("100vh");
 
 async function syncWindowSize() {
@@ -54,6 +66,7 @@ async function syncWindowSize() {
 }
 
 onMounted(async () => {
+  try {
   await syncWindowSize();
   const unlisten = await getCurrentWindow().onResized(syncWindowSize);
   window.addEventListener("beforeunload", unlisten);
@@ -204,25 +217,40 @@ onMounted(async () => {
   // M1-4 冷启动兜底：进程启动时 argv 带入的 URL 已在后端队列，
   // 挂载完成后首次拉取（此后经 onOpenUrlPending 提示增量拉取）。
   drainPendingOpenUrls();
+  } finally {
+    ready.value = true;
+  }
 });
 </script>
 
 <template>
   <div class="app" :style="{ height: appHeight }">
-    <!-- 精简模式：整行工具栏隐藏，网页占满（由 MainArea 的 ☰ 悬浮钮退出） -->
-    <ActivityBar v-show="!layout.compactMode" />
-    <div class="body">
-      <AINavPanel />
-      <MainArea />
+    <!-- W17(A7): 启动遮罩——应用就绪前展示，避免首屏空白 -->
+    <div v-if="!ready && !shellError" class="boot-overlay" role="status" aria-live="polite">
+      <div class="boot-spinner" aria-hidden="true"></div>
+      <div class="boot-text">正在启动…</div>
     </div>
-    <StatusBar />
-    <ConfirmModal />
-    <!-- M1-7 Git 写确认闸门：全局挂载，保证任何视图下待确认任务都能被看到/处理 -->
-    <GitWriteConfirmDialog />
-    <!-- M1-9 关闭协议弹窗：关闭页签时全局可见（保存/删除/取消） -->
-    <SessionCloseDialog />
-    <!-- M2-2.b 图片灯箱：全局挂载，任何视图点开画廊都能放大预览 -->
-    <ImageLightbox />
+    <!-- W17(A7): 外壳级错误兜底——子树渲染失败时不留白屏/死区 -->
+    <div v-else-if="shellError" class="shell-error" role="alert">
+      <div class="se-title">客户端遇到问题</div>
+      <div class="se-desc">{{ shellError }}</div>
+    </div>
+    <template v-else>
+      <!-- 精简模式：整行工具栏隐藏，网页占满（由 MainArea 的 ☰ 悬浮钮退出） -->
+      <ActivityBar v-show="!layout.compactMode" />
+      <div class="body">
+        <AINavPanel />
+        <MainArea />
+      </div>
+      <StatusBar />
+      <ConfirmModal />
+      <!-- M1-7 Git 写确认闸门：全局挂载，保证任何视图下待确认任务都能被看到/处理 -->
+      <GitWriteConfirmDialog />
+      <!-- M1-9 关闭协议弹窗：关闭页签时全局可见（保存/删除/取消） -->
+      <SessionCloseDialog />
+      <!-- M2-2.b 图片灯箱：全局挂载，任何视图点开画廊都能放大预览 -->
+      <ImageLightbox />
+    </template>
   </div>
 </template>
 
@@ -236,5 +264,55 @@ onMounted(async () => {
   flex: 1;
   display: flex;
   min-height: 0;
+}
+.boot-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: #0f172a;
+  color: #cbd5e0;
+  z-index: 99998;
+}
+.boot-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #2d3748;
+  border-top-color: #5b9dff;
+  border-radius: 50%;
+  animation: boot-spin 0.8s linear infinite;
+}
+@keyframes boot-spin {
+  to { transform: rotate(360deg); }
+}
+.boot-text {
+  font-size: 14px;
+}
+.shell-error {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: #0f172a;
+  color: #ffb4b4;
+  z-index: 99998;
+  padding: 24px;
+  text-align: center;
+}
+.se-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+.se-desc {
+  font-size: 14px;
+  color: #cbd5e0;
+  max-width: 480px;
+  line-height: 1.7;
 }
 </style>

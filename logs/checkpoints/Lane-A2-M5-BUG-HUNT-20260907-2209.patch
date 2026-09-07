@@ -1,0 +1,341 @@
+diff --git a/scripts/check-security-policy.py b/scripts/check-security-policy.py
+index 8811b97..6b24e4a 100644
+--- a/scripts/check-security-policy.py
++++ b/scripts/check-security-policy.py
+@@ -76,7 +76,9 @@ def write_commands_use_path_policy(bridge_source: str) -> bool:
+     return checked > 0
+ 
+ 
+-def detect_gaps(bridge_source: str, capability_sources: str) -> list[str]:
++def detect_gaps(
++    bridge_source: str, capability_sources: str, policy_source: str = ""
++) -> list[str]:
+     gaps: list[str] = []
+ 
+     # SEC-01/SEC-07（M0-3.d 已收口）：launch_app 不得再用 sh -c，且必须过启动目标校验。
+@@ -84,6 +86,23 @@ def detect_gaps(bridge_source: str, capability_sources: str) -> list[str]:
+         gaps.append("LAUNCH_APP_ARBITRARY_SHELL")
+     elif "check_launch_target" not in function_body(bridge_source, "launch_app"):
+         gaps.append("LAUNCH_APP_WITHOUT_TARGET_POLICY")
++    else:
++        # B2-1（BUG-HUNT）：启动目标校验的**拦截完整性**——门禁不能只看"是否调用了函数"。
++        # 必须同时具备：执行包装器黑名单（env/sudo…）、解释器内联代码开关、符号链接解析后复查。
++        # 三者缺一即视为可被 env / 解释器 `-c` / 软链接绕过。
++        missing = [
++            marker
++            for marker in (
++                "BLOCKED_LAUNCH_WRAPPERS",
++                "BLOCKED_INTERPRETERS",
++                "INTERPRETER_EXEC_FLAGS",
++            )
++            if marker not in policy_source
++        ]
++        if missing or "resolve_program_file" not in function_body(
++            policy_source, "check_launch_target"
++        ):
++            gaps.append("LAUNCH_TARGET_BYPASS_NOT_HARDENED")
+ 
+     # SEC-02（M0-3.c 已收口）：写/删类命令必须经 check_path_within_roots。
+     # 判定方式：找到写/删命令的函数体，确认其中调用了路径策略。
+@@ -148,9 +167,25 @@ def load_capability_sources(root: Path) -> str:
+     return "\n".join(parts)
+ 
+ 
++def load_policy_source(root: Path) -> str:
++    """security_policy.rs：启动目标校验的拦截完整性在此定义（B2-1）。
++
++    文件缺失时返回空串——此时 launch_app 若已接入 check_launch_target，
++    detect_gaps 会据此判定完整性缺失（失败关闭）。
++    """
++    path = root / "src-tauri" / "src" / "security_policy.rs"
++    if not path.is_file():
++        return ""
++    return path.read_text(encoding="utf-8")
++
++
+ def scan_repository(root: Path) -> list[str]:
+     bridge_source = (root / "src-tauri" / "src" / "bridge.rs").read_text(encoding="utf-8")
+-    return detect_gaps(bridge_source, load_capability_sources(root))
++    return detect_gaps(
++        bridge_source,
++        load_capability_sources(root),
++        load_policy_source(root),
++    )
+ 
+ 
+ def run_self_test() -> int:
+@@ -194,13 +229,28 @@ identifier = "remote-collect"
+ commands.allow = ["collect_selection", "save_note", "request_open_terminal", "report_resources"]
+ """
+     # M0-3.a 时的真实状态：写命令无路径策略、capability 残留 browser、远程集放行副作用命令。
++    legacy_policy = """
++pub const BLOCKED_LAUNCH_PROGRAMS: [&str; 6] = ["sh", "bash", "zsh", "fish", "powershell", "cmd"];
++pub fn check_launch_target(line: &str) -> Result<(String, Vec<String>), PolicyError> {
++    check_shell_command(line)?;
++    let (program, args) = parse_command_line(line)?;
++    if BLOCKED_LAUNCH_PROGRAMS.contains(&program.as_str()) {
++        return Err(PolicyError::BlockedLaunchProgram(program));
++    }
++    Ok((program, args))
++}
++"""
+     legacy_gaps = list(EXPECTED_GAPS) + [
+         "LAUNCH_APP_ARBITRARY_SHELL",
+         "FILE_COMMANDS_WITHOUT_PATH_POLICY",
+         "CAPABILITY_STALE_BROWSER_LABEL",
+         "REMOTE_SIDE_EFFECT_COMMANDS_EXPOSED",
+     ]
+-    detected = detect_gaps(legacy_bridge, legacy_capabilities + "\n" + legacy_permissions)
++    detected = detect_gaps(
++        legacy_bridge,
++        legacy_capabilities + "\n" + legacy_permissions,
++        legacy_policy,
++    )
+     if sorted(detected) != sorted(legacy_gaps):
+         print(f"self-test: legacy mismatch: {detected}", file=sys.stderr)
+         return 1
+@@ -243,7 +293,23 @@ pub fn read_file(path: String) -> Result<String, String> {
+ identifier = "remote-collect"
+ commands.allow = ["report_resources", "report_title", "report_grid_load_failed"]
+ """
+-    if detect_gaps(resolved_bridge, resolved_capabilities + "\n" + resolved_permissions):
++    resolved_policy = """
++pub const BLOCKED_LAUNCH_PROGRAMS: [&str; 12] = ["sh", "bash", "dash", "ash", "zsh", "ksh", "csh", "tcsh", "fish", "powershell", "pwsh", "cmd"];
++pub const BLOCKED_LAUNCH_WRAPPERS: [&str; 10] = ["env", "busybox", "nohup", "sudo", "su", "doas", "pkexec", "xargs", "timeout", "setsid"];
++pub const BLOCKED_INTERPRETERS: [&str; 12] = ["python", "perl", "ruby", "node", "nodejs", "deno", "bun", "lua", "luajit", "php", "tclsh", "osascript"];
++pub const INTERPRETER_EXEC_FLAGS: [&str; 6] = ["-c", "-e", "--eval", "-E", "-r", "-p"];
++pub fn check_launch_target(line: &str) -> Result<(String, Vec<String>), PolicyError> {
++    check_shell_command(line)?;
++    let (program, args) = parse_command_line(line)?;
++    let resolved = resolve_program_file(&program).ok_or(PolicyError::LaunchProgramNotFound(program.clone()))?;
++    Ok((program, args))
++}
++"""
++    if detect_gaps(
++        resolved_bridge,
++        resolved_capabilities + "\n" + resolved_permissions,
++        resolved_policy,
++    ):
+         print("self-test: resolved fixture still reports gaps", file=sys.stderr)
+         return 1
+ 
+@@ -253,6 +319,9 @@ commands.allow = ["report_resources", "report_title", "report_grid_load_failed"]
+         (root / "src-tauri" / "src").mkdir(parents=True)
+         (root / "src-tauri" / "capabilities").mkdir(parents=True)
+         (root / "src-tauri" / "src" / "bridge.rs").write_text(legacy_bridge, encoding="utf-8")
++        (root / "src-tauri" / "src" / "security_policy.rs").write_text(
++            legacy_policy, encoding="utf-8"
++        )
+         (root / "src-tauri" / "capabilities" / "default.json").write_text(
+             legacy_capabilities, encoding="utf-8"
+         )
+diff --git a/src-tauri/src/security_policy.rs b/src-tauri/src/security_policy.rs
+index 9cf5b1d..0bc0f28 100644
+--- a/src-tauri/src/security_policy.rs
++++ b/src-tauri/src/security_policy.rs
+@@ -151,7 +151,30 @@ pub fn is_known_webview_label(label: &str) -> bool {
+ }
+ 
+ /// 不允许作为启动目标的解释器：放行它们等于把 `sh -c` 换个壳重新打开。
+-pub const BLOCKED_LAUNCH_PROGRAMS: [&str; 6] = ["sh", "bash", "zsh", "fish", "powershell", "cmd"];
++///
++/// B2-1 加固：名单必须覆盖 **POSIX shell 的真实实现名**（`dash`/`ash`/`ksh`…）。
++/// 本环境 `/bin/sh -> dash`，若只列 `sh`，「软链接指向 /bin/sh」在解析后会
++/// 被判成 `dash` 而绕过黑名单。
++pub const BLOCKED_LAUNCH_PROGRAMS: [&str; 12] = [
++    "sh", "bash", "dash", "ash", "zsh", "ksh", "csh", "tcsh", "fish", "powershell", "pwsh", "cmd",
++];
++
++/// 不允许作为启动目标的执行包装器：放行 `env`/`nohup`/`sudo` 之流等于
++/// 把 `sh -c` 再换个壳打开（B2-1：`/usr/bin/env bash -c "id"` 的 basename 是
++/// `env`，不在 shell 黑名单内，可直接绕过）。
++pub const BLOCKED_LAUNCH_WRAPPERS: [&str; 10] = [
++    "env", "busybox", "nohup", "sudo", "su", "doas", "pkexec", "xargs", "timeout", "setsid",
++];
++
++/// 脚本解释器：本身不是 shell，但带内联代码开关时与 `sh -c` 等价
++/// （B2-1：`python3 -c "…"`、`perl -e`、`ruby -e`、`node -e`，且可避开元字符闸门）。
++pub const BLOCKED_INTERPRETERS: [&str; 12] = [
++    "python", "perl", "ruby", "node", "nodejs", "deno", "bun", "lua", "luajit", "php", "tclsh",
++    "osascript",
++];
++
++/// 解释器的内联代码开关：与解释器同时出现即判定为「借解释器执行任意代码」。
++pub const INTERPRETER_EXEC_FLAGS: [&str; 6] = ["-c", "-e", "--eval", "-E", "-r", "-p"];
+ 
+ /// 把 `.desktop` 风格的 Exec 字符串解析成 (程序, 参数)。
+ ///
+@@ -196,21 +219,78 @@ fn is_desktop_field_code(arg: &str) -> bool {
+     )
+ }
+ 
+-/// 启动目标的最后一道闸：先过元字符，再禁解释器，再要求程序可解析到可执行文件。
++/// 归一化程序名：小写并去掉版本号后缀（`python3.12` → `python`、`ksh93` → `ksh`），
++/// 使黑名单对带版本号的 shell/解释器同样成立。
++fn normalize_program_name(name: &str) -> String {
++    name.to_ascii_lowercase()
++        .trim_end_matches(|c: char| c.is_ascii_digit() || c == '.')
++        .to_string()
++}
++
++/// 取程序路径最后一段并归一化（`/usr/bin/env` → `env`、`Python3.11` → `python`）。
++fn launch_basename(program: &str) -> String {
++    normalize_program_name(program.rsplit('/').next().unwrap_or_default())
++}
++
++/// shell 实现名与执行包装器（第二者放行即等于重新开放 `sh -c`）。
++fn is_blocked_launch_name(name: &str) -> bool {
++    BLOCKED_LAUNCH_PROGRAMS.contains(&name) || BLOCKED_LAUNCH_WRAPPERS.contains(&name)
++}
++
++/// 解释器 + 内联代码开关 → 与 `sh -c` 等价，必须拒绝。
++fn interpreter_exec_attempt(name: &str, args: &[String]) -> bool {
++    if !BLOCKED_INTERPRETERS.contains(&name) {
++        return false;
++    }
++    args.iter()
++        .any(|a| INTERPRETER_EXEC_FLAGS.contains(&a.to_ascii_lowercase().as_str()))
++}
++
++/// 解析到**真实**可执行文件（跟随符号链接），供「软链接指向 shell/解释器」的复查使用。
++fn resolve_program_file(program: &str) -> Option<PathBuf> {
++    let candidate = if program.contains('/') {
++        PathBuf::from(program)
++    } else {
++        let paths = std::env::var_os("PATH")?;
++        std::env::split_paths(&paths)
++            .map(|dir| dir.join(program))
++            .find(|p| p.is_file())?
++    };
++    let canonical = std::fs::canonicalize(&candidate).ok()?;
++    if canonical.is_file() {
++        Some(canonical)
++    } else {
++        None
++    }
++}
++
++/// 启动目标的最后一道闸：
++///   1. 元字符闸门（`check_shell_command`）；
++///   2. 按**调用方给出的名字**禁 shell / 执行包装器 / 解释器内联代码；
++///   3. 解析到真实文件后按**真实名字**再判一次（拦截指向 shell 的符号链接）；
++///   4. 仍要求程序可解析为可执行文件。
++///
++/// 第 3 步无法完成时按失败关闭处理：证明不了它不是 shell/解释器就一律拒绝。
+ pub fn check_launch_target(line: &str) -> Result<(String, Vec<String>), PolicyError> {
+     check_shell_command(line)?;
+     let (program, args) = parse_command_line(line)?;
+-    let file_name = program
+-        .rsplit('/')
+-        .next()
+-        .unwrap_or_default()
+-        .to_ascii_lowercase();
+-    if BLOCKED_LAUNCH_PROGRAMS.contains(&file_name.as_str()) {
++
++    let name = launch_basename(&program);
++    if is_blocked_launch_name(&name) || interpreter_exec_attempt(&name, &args) {
+         return Err(PolicyError::BlockedLaunchProgram(program));
+     }
++
+     if !program_resolves(&program) {
+-        return Err(PolicyError::LaunchProgramNotFound(program));
++        return Err(PolicyError::LaunchProgramNotFound(program.clone()));
++    }
++
++    let resolved = resolve_program_file(&program)
++        .ok_or_else(|| PolicyError::LaunchProgramNotFound(program.clone()))?;
++    let real_name = launch_basename(resolved.to_string_lossy().as_ref());
++    if is_blocked_launch_name(&real_name) || interpreter_exec_attempt(&real_name, &args) {
++        return Err(PolicyError::BlockedLaunchProgram(program));
+     }
++
+     Ok((program, args))
+ }
+ 
+@@ -1541,6 +1621,86 @@ mod security_policy_tests {
+         }
+     }
+ 
++    #[test]
++    fn env_and_exec_wrappers_are_blocked_as_launch_targets() {
++        // B2-1：`/usr/bin/env bash -c "id"` 的 basename 是 `env`，不在 shell 黑名单内。
++        for cmd in [
++            "/usr/bin/env bash -c id",
++            "env bash -c id",
++            "nohup sh",
++            "sudo id",
++            "xargs echo",
++            "timeout 5 sh",
++        ] {
++            let err = check_launch_target(cmd)
++                .expect_err("执行包装器不得作为启动目标（等价于借道 shell）");
++            assert!(
++                matches!(err, PolicyError::BlockedLaunchProgram(_)),
++                "{cmd} 实际错误：{err:?}"
++            );
++        }
++    }
++
++    #[test]
++    fn interpreter_inline_code_is_blocked() {
++        // B2-1：解释器 + 内联代码开关与 `sh -c` 等价，且可避开元字符闸门。
++        for cmd in [
++            r#"python3 -c "__import__('os').system('id')""#,
++            "python -c print(1)",
++            "perl -e print(1)",
++            "ruby -e puts(1)",
++            "node -e console.log(1)",
++            "php -r echo(1)",
++        ] {
++            let err = check_launch_target(cmd).expect_err("解释器内联代码不得作为启动目标");
++            assert!(
++                matches!(err, PolicyError::BlockedLaunchProgram(_)),
++                "{cmd} 实际错误：{err:?}"
++            );
++        }
++    }
++
++    #[test]
++    #[cfg(unix)]
++    fn symlink_to_shell_is_blocked() {
++        // B2-1：链接名不在黑名单，但解析后的真实实现（本环境 /bin/sh -> dash）必须被拦。
++        let dir =
++            std::env::temp_dir().join(format!("mvp-launch-shell-link-{}", std::process::id()));
++        let _ = std::fs::create_dir_all(&dir);
++        let link = dir.join("innocent-app");
++        let _ = std::fs::remove_file(&link);
++        if std::os::unix::fs::symlink("/bin/sh", &link).is_err() {
++            let _ = std::fs::remove_dir_all(&dir);
++            return;
++        }
++        let cmd = format!("{} -c id", link.display());
++        let err = check_launch_target(&cmd).expect_err("指向 shell 的符号链接不得绕过启动校验");
++        assert!(
++            matches!(err, PolicyError::BlockedLaunchProgram(_)),
++            "实际错误：{err:?}"
++        );
++        let _ = std::fs::remove_file(&link);
++        let _ = std::fs::remove_dir_all(&dir);
++    }
++
++    #[test]
++    #[cfg(unix)]
++    fn symlink_to_regular_program_is_still_allowed() {
++        // 反向护栏：复查按**解析后的真实名**而非链接名，普通程序不得被误杀。
++        let dir = std::env::temp_dir().join(format!("mvp-launch-ok-link-{}", std::process::id()));
++        let _ = std::fs::create_dir_all(&dir);
++        let link = dir.join("my-tool");
++        let _ = std::fs::remove_file(&link);
++        if std::os::unix::fs::symlink("/proc/self/exe", &link).is_err() {
++            let _ = std::fs::remove_dir_all(&dir);
++            return;
++        }
++        check_launch_target(&link.display().to_string())
++            .expect("指向普通可执行文件的符号链接应当放行");
++        let _ = std::fs::remove_file(&link);
++        let _ = std::fs::remove_dir_all(&dir);
++    }
++
+     #[test]
+     fn metacharacters_and_unknown_programs_are_rejected() {
+         assert!(matches!(

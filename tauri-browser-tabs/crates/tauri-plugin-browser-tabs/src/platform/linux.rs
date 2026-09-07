@@ -65,23 +65,14 @@ pub fn ensure_size_allocated<R: Runtime>(webview: &Webview<R>, rect: LogicalRect
                 // 3) 不 set_size_request、不 queue_resize —— 二者都会触发 GtkFixed 重算，
                 //    按"剩余空间"把子控件拉满全窗口。
                 //
-                // 额外修复：被移到屏幕外的隐藏页签必须真正隐藏 GTK widget。否则多个
-                // webview 同时"可见"时，GtkFixed 会按子控件数量做三等分/堆叠布局，
-                // 把本应收起的页签拉回屏幕（实测 alloc_before=(0,200/400/600,...））；
-                // 同时切换回主页等视图时，webview 会盖在主页上方造成"主页被遮挡"。
-                //
-                // 统一隐藏策略：屏幕外同时 set_child_visible(false) + gtk_widget_hide()。
-                // 只 set_child_visible(false) 时宫格仍会遮挡主页（widget 自身仍 visible，
-                // GTK 绘制时可能穿透到上层）；只 gtk_widget_hide() 时宫格恢复显示异常。
-                // 两者结合：脱离 GtkFixed 布局避免三等分，同时真正隐藏避免遮挡主页。
-                // 显示时 show() + set_child_visible(true) 恢复，配合 size_allocate + queue_draw
-                // 强制 WebKit 重绘，保证宫格内容正常展示。
+                // 被移到屏幕外的 webview 只退出 GtkFixed 子布局；对正在渲染的
+                // WebKitGTK 子控件禁止调用 hide()，否则会复燃历史主线程死锁。
+                // 位置、尺寸和重绘仍由下方三步固定，避免 GtkFixed 重排与主页遮挡。
                 if x >= -1000 {
                     gtk_webview.show();
                     gtk_webview.set_child_visible(true);
                 } else {
                     gtk_webview.set_child_visible(false);
-                    gtk_webview.hide();
                 }
                 if let Some(parent) = gtk_webview.parent() {
                     if let Ok(fixed) = parent.downcast::<gtk::Fixed>() {

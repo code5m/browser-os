@@ -662,6 +662,10 @@ fn supervise(
                 } else {
                     RunStatus::Failed
                 };
+                // A background child can inherit the output pipe after the leader exits.
+                // Close the process group before joining readers so the supervisor cannot
+                // remain Running forever waiting for EOF from an orphaned descendant.
+                terminate_group(pgid, HARD_GRACE_SECS);
                 join_output_readers(readers.take().unwrap_or_default());
                 finish(status, code, None);
                 return;
