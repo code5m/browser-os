@@ -15,18 +15,17 @@ import type { GraphEdge, GraphNode, GraphNodeKind } from "../types";
 import {
   boundedInsert,
   capacityState,
-  edgeKey,
   estimateCapacity,
   filterEdges,
   filterNodes,
+  GRAPH_MAX_EDGES,
+  GRAPH_MAX_NODES,
   panelStateGraph,
+  resolveEdgeByKey,
   summarizeEdge,
   summarizeNode,
   type GraphFilterState,
 } from "../utils/graphUi";
-
-const MAX_NODES = 5000; // = GRAPH_MAX_NODES
-const MAX_EDGES = 20000; // = GRAPH_MAX_EDGES
 
 export const useGraphStore = defineStore("graph", () => {
   const nodes = ref<Map<string, GraphNode>>(new Map());
@@ -69,10 +68,10 @@ export const useGraphStore = defineStore("graph", () => {
     selectedNodeId.value ? nodes.value.get(selectedNodeId.value) ?? null : null,
   );
   // 边按稳定标识选择：过滤变化后只要该边仍在可见集合即可还原，选择不随列表索引漂移（确定性）。
-  const selectedEdge = computed(() => {
-    if (!selectedEdgeKey.value) return null;
-    return visibleEdges.value.find((e) => edgeKey(e) === selectedEdgeKey.value) ?? null;
-  });
+  // 复用 graphUi.resolveEdgeByKey 单一真源（W11）。
+  const selectedEdge = computed(() =>
+    resolveEdgeByKey(visibleEdges.value, selectedEdgeKey.value),
+  );
 
   const state = computed(() =>
     panelStateGraph({
@@ -101,8 +100,8 @@ export const useGraphStore = defineStore("graph", () => {
     try {
       // 命令落地后在此调用 bridge.graphQuery() 并 boundedInsert；当前因 guard 不会到达。
       const res = await bridge.graphQuery();
-      nodes.value = boundedInsert(nodes.value, res.nodes, MAX_NODES);
-      edges.value = boundedInsert(edges.value, res.edges, MAX_EDGES);
+      nodes.value = boundedInsert(nodes.value, res.nodes, GRAPH_MAX_NODES);
+      edges.value = boundedInsert(edges.value, res.edges, GRAPH_MAX_EDGES);
     } catch (e) {
       fail(e);
     } finally {

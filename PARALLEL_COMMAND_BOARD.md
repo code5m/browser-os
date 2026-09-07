@@ -1,10 +1,10 @@
 # Parallel Command Board
 
-> Updated: 2026-09-07 18:30 CST
+> Updated: 2026-09-07 20:30 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` integration in progress after W10; do not push from lanes
-> Current NEXT: M5-W11 MCP stdio dry-run hardening; W10 outputs are accepted locally and queued for A0 push; W11 opens only narrow MCP stdio dry-run/list-call hardening plus review/polish lanes
+> Current mainline: `master` at `5226aad` after W10 push (2 commit: `ba78092` A3 W10 MCP stdio-prep feature-gated std-only skeleton + `5226aad` A0 W10 integration); A0 has shipped W10 to origin/master; W11 dispatch added 2026-09-07 18:30 CST
+> Current NEXT: M5-W12 graph live-query read-only bridge; W11 is accepted locally and queued for A0 push; W12 opens only A7 graph read-only query commands plus A8 UI consumption, while MCP full runtime, plugin runtime, agent/skill execution, network listener, daemon, and model call remain LOCKED; only A0 pushes
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
@@ -13,7 +13,7 @@ This file is the coordination board for 11 parallel agents plus A0 integration. 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W11 MCP Stdio Dry-Run Hardening Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W12 Graph Live-Query Readonly Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
 ```
 
 Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
@@ -172,6 +172,59 @@ WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane
 
 
 
+
+## M5-W12 Graph Live-Query Readonly Dispatch
+
+> Added 2026-09-07 20:30 CST by A0 after W11 validation.
+> Current facts: W11 MCP stdio dry-run hardening passes (`cargo test --features mcp mcp_server` 21/21, MCP policy ACTIVE=11/PENDING=0, no listener/network/raw argument echo, default build unchanged). A5 added Agent/Skill execution-lock policy (PENDING=6) with default PASS. A7 prepared the graph W12 implementation card; A9 prepared plugin W12/W13 cards.
+> W12 goal: implement a **read-only graph live-query bridge** and frontend consumption. This is not a graph builder, not a background indexer, and not plugin/agent runtime activation.
+
+### W12 One-Line Prompt
+
+```text
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W12 Graph Live-Query Readonly Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+```
+
+### W12 Assignments
+
+| Lane | Status | Task | Allowed Scope | Must Deliver |
+|---|---|---|---|---|
+| A1 | **START DOCS ONLY** | Reconcile W11 as accepted after A0 push and mark W12 active. Update M5 graph cards so W12 scope is exactly three read-only graph commands plus UI consumption. | `PARALLEL_COMMAND_BOARD.md`, three main docs, `logs/checkpoints/M5-20260906/*.md`, `logs/checkpoints/A1-M5-W12-*.md` | One reconciliation checkpoint; no product code. |
+| A2 | **START BOUNDARY REVIEW ONLY** | Review graph W12 bridge for core boundary: `graph.rs` pure/state only, commands in `bridge.rs`, no `crate::bridge` from graph, no DB/script/plugin/agent execution path, no background worker. | `logs/assist/A2-M5-W12-*.md`; policy fixtures only if concrete | Boundary verdict with blockers. |
+| A3 | **START MCP REVIEW ONLY** | Review that W12 graph commands are not accidentally exposed through MCP stdio as executable tools. MCP remains dry-run/read-only introspection only; do not change MCP product code unless fixing a concrete policy regression. | `logs/assist/A3-M5-W12-*.md`, `scripts/check-mcp-policy.py` only for concrete fixture | MCP review note; no runtime expansion. |
+| A4 | **START PRIVACY REVIEW ONLY** | Review graph query DTO/errors/audit for secret echo: output must omit `props`, errors must be stable codes, audit must not include labels/props/query bodies with secrets. | `logs/assist/A4-M5-W12-*.md`; policy fixtures only if concrete | Privacy verdict. |
+| A5 | **START AGENT/SKILL REVIEW ONLY** | Confirm Agent/Skill execution remains locked and graph UI does not imply agent consumption runtime. Add policy only for concrete leakage. | `logs/assist/A5-M5-W12-*.md`, `scripts/check-agent-skill-policy.py` only if concrete | Agent/Skill lock verdict. |
+| A6 | **START UI REVIEW ONLY** | Review workspace UI for Agent/Skill panels after W12 graph changes; keep execution controls disabled and deterministic. No backend changes. | `src/components/workspace/**`, `scripts/check-agent-skill-ui-logic.mjs`, checkpoint/assist if changed | UI logic PASS or no-change review. |
+| A7 | **START PRODUCT CODE NARROW** | Implement graph live-query read-only bridge: `GraphState` managed state, startup load of existing graph store if available, `graph_query`, `graph_node_get`, `graph_stats` commands with `check_invocation_source`, bounded depth/limit, stable error codes, no props in output DTOs, ACL/bridge.ts/types parity, graph policy self-test update. No graph build/index/write/export/background worker. | `src-tauri/src/graph.rs`, `src-tauri/src/domain.rs`, `src-tauri/src/bridge.rs`, `src-tauri/src/main.rs`, `src-tauri/permissions/default-commands.toml`, `src/bridge.ts`, `src/types.ts`, `scripts/check-graph-policy.py`, focused tests/checkpoint | Rust graph tests PASS; graph policy self/default PASS; ACL/source check parity; no props/secret echo; checkpoint + patch. |
+| A8 | **START PRODUCT CODE UI NARROW** | Consume W12 read-only graph commands in UI: enable backend-ready graph load/query/stats, AbortController/debounce where useful, bounded rendering preserved, deterministic empty/error/loading states. No backend changes beyond bridge/types use. | `src/components/graph/**`, `src/stores/useGraphStore.ts`, `src/utils/graphUi.ts`, `src/bridge.ts`, `src/types.ts`, `scripts/check-graph-ui-logic.mjs`, checkpoint/assist | Graph UI logic PASS; npm build PASS; no secret/props rendering. |
+| A9 | **START PLUGIN DOCS ONLY** | Keep plugin runtime locked. Refine W12/W13 plugin runtime cards only if W11 feedback changed blockers; do not implement install/enable/delete. | `logs/assist/A9-M5-W12-*.md`, plugin M5 docs only | Plugin plan delta or no-change note. |
+| A10 | **START SECURITY REVIEW** | Batch review W12 graph bridge/UI. Block on graph writes/builders/background workers, props/secret output, source-check/ACL gaps, DB/script/plugin/agent execution paths, build metric/warning regression. | `logs/assist/A10-M5-W12-*.md`; policy fixtures only for concrete failure | Security verdict after A7/A8 output. |
+| A11 | **START VERIFICATION** | Maintain W12 verification matrix: cargo test, graph focused tests, graph policy self/default, MCP policy still PASS, Agent/Skill lock still PASS, graph UI logic, npm build, pre-merge, build metrics <=22%, warnings unchanged. | `logs/checkpoints/A11-M5-W12-*.md`, `logs/assist/A11-M5-W12-*.md` | Verification checkpoint and push readiness. |
+
+### W12 Hard Stops
+
+- W12 graph scope is read-only query only: no graph build/index/write/export/background worker.
+- Graph output DTOs must omit raw `props`; errors must be stable codes and must not echo labels, props, query bodies, paths, URLs, tokens, cookies, or Authorization.
+- New commands must pass `check_invocation_source`, ACL, `main.rs` handler, `bridge.ts`, `types.ts`, policy, and tests in the same package.
+- MCP full runtime, plugin install/enable/delete/download, Agent/Skill execution, network listener, daemon, model call, and hidden script/db execution remain LOCKED.
+- Build metrics threshold remains 22%; cargo warnings must not increase.
+- Only A0 pushes to remote.
+
+### W12 Direct Prompts
+
+```text
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A1，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W12 Graph Live-Query Readonly Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A2，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W12 Graph Live-Query Readonly Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A3，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W12 Graph Live-Query Readonly Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A4，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W12 Graph Live-Query Readonly Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A5，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W12 Graph Live-Query Readonly Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A6，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W12 Graph Live-Query Readonly Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A7，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W12 Graph Live-Query Readonly Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A8，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W12 Graph Live-Query Readonly Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A9，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W12 Graph Live-Query Readonly Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A10，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W12 Graph Live-Query Readonly Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A11，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W12 Graph Live-Query Readonly Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+```
 
 ## M5-W11 MCP Stdio Dry-Run Hardening Dispatch
 

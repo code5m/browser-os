@@ -1,0 +1,399 @@
+diff --git a/logs/assist/A9-M5-W12-plugin-runtime-install-enable-card-20260907-2000.md b/logs/assist/A9-M5-W12-plugin-runtime-install-enable-card-20260907-2000.md
+new file mode 100644
+index 0000000..2719784
+--- /dev/null
++++ b/logs/assist/A9-M5-W12-plugin-runtime-install-enable-card-20260907-2000.md
+@@ -0,0 +1,301 @@
++# A9 · M5-W12 插件运行时 Stage-I Staged Card（install / enable / disable / list / get · 真 Ed25519 · 两段式闸门）
++
++> 生成：2026-09-07 20:00 CST · Lane A9（M5-W12 · PLUGIN RUNTIME STAGED CARD, NOT IMPLEMENTATION）
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W12/W13 Plugin Runtime Staged Dispatch（拟派，W11 后由 A0 显式开启）；承接 `logs/assist/A9-M5-W10-plugin-runtime-dispatch-card-20260907-1730.md`（W10 运行时 dispatch 汇总）与 `M5-10`/`M5-11` 冻结段（manifest/lifecycle/commands/isolation schema freeze）。
++> 性质：**规划卡片（STAGED CARD, NOT IMPLEMENTATION）**。**W12 硬停仍生效**：plugin runtime 仍 LOCKED；**本卡不写任何产品代码**（含 `plugin.rs`/`bridge.rs`/`main.rs`/`default-commands.toml`/`src/bridge.ts`/`src/types.ts`/`scripts/check-plugin-policy.py`/三份主文档）。
++> 形态③声明式（无独立 webview / 无 stdio 进程 / 无网络下载）严守；18 命令 ACL 末条恒为 `list_artifact_images`（K1）。
++
++---
++
++## 0. 编号与锚定
++
++- 卡片 ID：**A9-M5-W12-plugin-runtime-install-enable-card**；承接 W10 dispatch card；与 W13（delete / storage / audit / UI 收口）配对；W14+ 真正实施 wave 须由 A0 显式新 dispatch 开启。
++- 阶段切分理由（与 W10 计划 §1 一致，落地拆分）：
++  - **W12（本卡）** = `install` + `enable` + `disable` + `list` + `get` 5 核心命令 + 真 Ed25519 验签 + 两段式确认闸门 + `capability.rs` 写挂 + 受信任公钥管理（`plugin_keys_add/list/remove` 3 条）；
++  - **W13（姊妹卡）** = `delete`/`uninstall` + `plugin_storage_get/put/delete` + `plugin_audit_list` + `plugin_invoke` / `plugin_invoke_cancel` + 升级/回滚 + UI 收口 + 全部门禁扩展。
++- 依赖（当前 mainline `5226aad` 已具备）：
++  - `PluginManifest` / `PluginState` / `PluginCapability` / `PluginSignature`（`domain.rs`）；
++  - `validate_plugin_manifest` / `verify_plugin_signature_structure` / `can_transition` / `transition` / `permission_preview_for_plugin`（`plugin.rs`，纯函数，W6 freeze）；
++  - `capability_acl_level`（plugin.rs:39）/ `PLUGIN_CAPABILITY_V1`（security_policy.rs，首期空集合 fail-closed）；
++  - 两段式确认闸门（A3 W3 `bridge.rs:688-790` 既有 pattern）；
++  - `MAX_TEXT_FIELD_BYTES=64KiB` / `MAX_PLUGIN_CAPABILITIES=5` / `HASH_HEX_LEN_SHORT=16`（A2 W2）；
++  - `plugins_dir()`（`workspace.rs`）/ `atomic_write`（session.rs，唯一原子写原语）/ `log_audit` 1000 FIFO（A4 W4）；
++  - ACL 末条 `list_artifact_images`（K1）/ `CredentialLeak` Display `<redacted>`（K3 + W9 B6）/ `contains_credential_leak`（A4 W4）。
++- **关键决策交 A0 拍**：① 真 Ed25519 验签是否引入 `ed25519`/`ring` crate，或接受"结构 + 摘要"弱签名（见 §3 FM-5）② `trusted-pubkeys.json` 受 keyring 保护的具体路径（沿用 `~/.local/share/.../keys/`）③ W12 是否含 UI 收口（建议 UI 收口全部归 W13，W12 仅后端 + 政策）。
++
++---
++
++## 1. GOAL
++
++把 W10 dispatch card §2.1 的 4 核心命令（`plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_list|get`）落到**可实施级 staged 卡片**，明确：端到端执行序列、签名/版本/路径失败模式、capability 隔离写入、审计脱敏、两段式闸门消费、ACL 末条严守、关键边界硬停。**不**在 W12 落地产品代码；本卡为 W12 实施 wave（A18 backend + A19 UI）的**派发依据**。
++
++---
++
++## 2. 命令序列（5 + 3 = 8 核心命令，W12 范围）
++
++### 2.1 生命周期 5 命令（本卡片重点）
++
++| # | 命令 | ACL 位置 | 闸门 | 状态机迁移 | W12 重点 |
++|---|---|---|---|---|---|
++| 1 | `plugin_install(id, manifest, resource_path)` | `list_artifact_images` 之前 | **Confirm**（逐项 capability + 来源 + 风险） | `Discovered → Validating → Signed(Ok\|Failed) → [Ok] Loaded` | 扫描+校验+**真 Ed25519 验签**+解包落 `plugins_dir()/<id>/<version>/`；任一失败 → `SignedFailed`/`Validating` 失败 + 审计 + 通知 UI |
++| 2 | `plugin_enable(id)` | `list_artifact_images` 之前 | **Confirm/Dangerous → 两段式 + keyring 二次认证** | `Loaded → Enabled` | 注册 capability 到 `capability.rs` 插件作用域 + UI 可见 |
++| 3 | `plugin_disable(id)` | `list_artifact_images` 之前 | —（Low，只读无害） | `Enabled ⇄ Disabled` | 保留资源但从 capability 作用域移除（可重新 `enable`） |
++| 4 | `plugin_list(filter?)` | `list_artifact_images` 之前 | —（Low，只读） | 无迁移 | 查询 `Discovered..Loaded` 状态；不弹闸门 |
++| 5 | `plugin_get(id)` | `list_artifact_images` 之前 | —（Low，只读） | 无迁移 | 单插件详情（id/version/capabilities(逐项)/hash/signature 状态/资源大小/最近 50 审计摘要） |
++
++### 2.2 受信任公钥管理 3 命令（M5-10 §4.4 + W10 §2.2，W12 必落）
++
++| # | 命令 | ACL 位置 | 闸门 | 备注 |
++|---|---|---|---|---|
++| 6 | `plugin_keys_add(key_id, pubkey, note)` | 前 | **Confirm**（粘贴新公钥） | 写 `trusted-pubkeys.json`（keyring 二次认证） |
++| 7 | `plugin_keys_list()` | 前 | —（Low） | 列 key_id + pubkey 摘要前 16 hex + note + `added_at` |
++| 8 | `plugin_keys_remove(key_id)` | 前 | **Confirm + keyring 二次认证** | 删公钥（**仅** key_id 命中，**不**改公钥本身；防 FM-9 替换） |
++
++> W12 合计 **8 命令**入 ACL 末条 `list_artifact_images` **之前**。剩余 10 条（`plugin_invoke` / `plugin_invoke_cancel` / `plugin_permissions_get/set` / `plugin_audit_list` / `plugin_storage_get/put/delete` 8 + `plugin_delete`/`plugin_uninstall` 2）由 W13 收口。
++
++### 2.3 install 端到端序列（伪代码，供 A18 W14+ 实施 wave）
++
++```text
++plugin_install(id, manifest, resource_path):
++  1. parse manifest  (validate_plugin_manifest)            # W6 freeze: schema + bound_text + capability whitelist
++  2. if min_app_version < app_version:                     # FM-7
++        state = Validating.fail; audit(ValidatingFailed); notify_ui; return Err
++  3. if plugins_dir/<id>/<manifest.version>/ already exists: # FM-6 升级路径
++        return Err(PluginAlreadyInstalled)                 # 升级走 W13 plugin_storage_preserve 流程
++  4. state = Discovered -> Validating
++  5. verify_plugin_signature_structure(manifest.signature)  # W6 freeze 纯函数
++  6. if keyring lookup(manifest.signature.key_id) is None:    # FM-2
++        state = SignedFailed; audit(SignedFailed: key_id 缺失); notify_ui; return Err
++  7. if !ed25519_verify(manifest.hash, manifest.signature.value, pubkey):  # FM-5 真验签
++        state = SignedFailed; audit(SignedFailed: ed25519 verify fail); notify_ui; return Err
++  8. state = SignedOk
++  9. extract resource -> plugins_dir/<id>/<manifest.version>/tmp/   # atomic_write 模式
++ 10. if sha256(resource) != manifest.hash:                            # FM-6
++        cleanup tmp; state = LoadFailed; audit(LoadFailed: hash 不一致); return Err
++ 11. rename plugins_dir/<id>/<manifest.version>/tmp -> final         # atomic_write (tmp+rename)
++ 12. state = Loaded
++ 13. audit(Installed: {id, version, key_id, hash 前 16 hex, capability_count})
++ 14. notify_ui(PluginManager.vue -> Discovered 列表新增)
++ 15. return Ok(PluginSummary { id, version, state: Loaded })
++```
++
++### 2.4 enable 端到端序列（伪代码）
++
++```text
++plugin_enable(id):
++  1. 读取 plugins_dir/<id>/<version>/manifest.json        # 必须 Loaded 状态
++  2. if state != Loaded && state != Disabled:
++        return Err(PluginStateTransition)                  # FM-3 类错误
++  3. 对 manifest.capabilities 逐项检查 capability.rs 白名单
++     任一不在 PLUGIN_CAPABILITY_V1 + 任一 reason 含凭据 → return Err
++  4. if 任何 capability.acl_level >= Dangerous:            # capability_acl_level
++        走两段式确认闸门（PermissionPreviewModal.vue，参考 A3 W3 bridge.rs:688-790）
++        用户拒绝 → audit(EnableDenied) + return Err
++        接受 → 触发 keyring 二次认证（参考 M5-10 §4.5）
++        keyring 失败 → audit(KeyringFailed) + return Err
++  5. 注册 capability 到 plugin 作用域（**不**写入 host 自身 capability.rs 全局，**仅** plugin 域）
++  6. state = Enabled
++  7. audit(Enabled: {id, version, capabilities, dangerous_count, keyring_used: bool})
++  8. notify_ui(PluginManager.vue -> 状态徽章变绿)
++  9. return Ok
++```
++
++### 2.5 disable 端到端序列（伪代码）
++
++```text
++plugin_disable(id):
++  1. if state != Enabled && state != Disabled:
++        return Err
++  2. 解除 capability 注册（plugin 作用域）
++  3. state = Enabled -> Disabled
++  4. audit(Disabled: {id, version})
++  5. notify_ui(状态徽章变灰)
++  6. return Ok
++```
++
++### 2.6 list / get 端到端序列（只读）
++
++```text
++plugin_list(filter?):
++  1. 扫描 plugins_dir/<*>/*/manifest.json（不递归深入）
++  2. 对每个 manifest 还原 state + 校验 hash 头 16 hex
++  3. 按 filter {state? | capability? | has_update?} 过滤
++  4. 输出 PluginSummary[]（**仅** id/version/display_name/state/capabilities_count/hash 前 16 hex）
++  5. 不写审计（只读）
++  6. return Ok(List)
++
++plugin_get(id):
++  1. 读 plugins_dir/<id>/<version>/manifest.json
++  2. 输出 PluginDetail { id, version, display_name, description, min_app_version,
++                         entry, capabilities[逐项{capability, reason, acl_level, verdict}],
++                         hash, signature.status (OK|FAIL|MISSING), resource_size,
++                         state, last_50_audit_summaries(key_hash_only) }
++  3. 禁折叠（与 W10 §6 详情页禁折叠一致）
++  4. 不写审计
++  5. return Ok(Detail)
++```
++
++---
++
++## 3. 签名失败模式（signature failure modes，FM）
++
++| FM | 触发 | 行为 | 审计/通知 |
++|---|---|---|---|
++| FM-1 algorithm ≠ "Ed25519" | `verify_plugin_signature_structure` 现有已拒 | 拒载 + `InvalidPluginSignature` | audit + UI 红标 |
++| FM-2 key_id 空 / 不在 `trusted-pubkeys.json` | 验签前查 keyring | `SignedFailed` | audit + 提示用户 `plugin_keys_add` |
++| FM-3 value 非 base64 | `is_base64_std` 现有已拒 | 拒载 | audit |
++| FM-4 signed_at 非 ISO8601 / 超长 | `is_iso8601_len` 现有已拒 | 拒载 | audit |
++| **FM-5** **真 Ed25519 验签失败** | `ed25519_verify(manifest.hash, signature.value, pubkey) ≠ true` | `SignedFailed` + 写 `audit.json` + 通知 UI | **不**加载资源；**W12 必落真验签**（FM-5 为 W10 计划新增项） |
++| FM-6 资源包 hash ≠ `manifest.hash` | `sha256(resource) != manifest.hash` | 拒 `Loaded` + 清 tmp | audit + UI 红标 |
++| FM-7 `min_app_version` 过期 | `< app_version` | `Validating` 失败拒载 | audit |
++| FM-8 `manifest_hash` 变更（升级） | 已启用插件 manifest_hash 改变 | 自动 `Disabled` + 等用户重新确认（HS-6） | audit + UI 提示（升级流程归 W13） |
++| FM-9 `trusted-pubkeys.json` 越权改 | keyring 校验失败 | 立即回滚 + 审计 + 提示用户检查 | audit（高危） |
++| FM-10 绕过验签加载 | 任何路径在 hash/signature 未过即 load | **红线失守**：`check-plugin-policy.py` `PLUGIN_SIG_BYPASS` 门禁拦截 | 阻断 |
++
++> FM-1~FM-4 已被 `verify_plugin_signature_structure` 纯函数覆盖（W6 freeze）；**FM-5/FM-6 为 W12 必落**真验签 + 真 hash 比对；FM-7~FM-10 跨 W12/W13 生命周期/策略层防护。
++
++---
++
++## 4. 存储上限（storage limits，复用单一真源常量）
++
++| 项 | 上限 | 真源 | W12 必落 |
++|---|---|---|---|
++| `display_name` | ≤ 64 B | A2 W2 `bound_text` | ✓ |
++| `description` | ≤ 1024 B | A2 W2 `bound_text` | ✓ |
++| `metadata` JSON | ≤ `MAX_TEXT_FIELD_BYTES/2` (=32KiB) | A2 W2 | ✓（W6 已落） |
++| `plugin.id` | ≤ 256 B | `MAX_PLUGIN_ID_BYTES` | ✓（W6 已落） |
++| 单插件 capability 数 | ≤ `MAX_PLUGIN_CAPABILITIES=5` | capability.rs | ✓（W6 已落） |
++| `plugins_dir/<id>/<version>/` 资源 | 无显式字节上限，但**必须**有 `manifest.hash` 比对 | — | ✓（W12 必落 FM-6） |
++| `trusted-pubkeys.json` 单 key 容量 | 单 key_id ≤ 256 B；N 个 key | K1/keyring | ✓ |
++| `payload_key_hash` | 16-hex（sha256 摘要） | `HASH_HEX_LEN_SHORT` | ✓（审计仅摘要） |
++| `plugin-invokes.json` | **W13** 才落（500 FIFO / 64KiB） | A4 W4 | 跨 W13 |
++
++> W12 仅 install/enable/disable/list/get + 3 keyring 命令，**不**触碰 `plugin-invokes.json` / `plugin_storage` / `plugin_audit_list`（均 W13 落）。
++
++---
++
++## 5. 审计脱敏（audit redaction）
++
++- `audit.json` 摘要（W12 必落）：
++  - `action=plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_keys_add` / `plugin_keys_remove`
++  - `detail { id, version?, key_id?, capabilities_count?, dangerous_capabilities_count?, hash 前 16 hex?, result: Ok|Err(redacted_code), duration_ms }`
++  - **禁**记 `params/result` 正文（K3 + 体量防爆）
++  - **禁**记 `key_id` 对应公钥本身（公钥仅存 `trusted-pubkeys.json`）
++  - **禁**记 `keyring` 二次认证密码/口令/凭据
++- `plugin_list` / `plugin_get` / `plugin_keys_list`：**不**写审计（只读）
++- 错误日志经 `Display` 渲染 → `<redacted>`（`CredentialLeak` Display 实现）；**审计/日志/前端状态只用 `{}`（Display），不用 `{:?}`（Debug）**，防 `CredentialLeak(String)` 内存载荷泄露（W9 B6）
++
++---
++
++## 6. UI 依赖（M5-12，A19 承接；W12 范围仅后端，但 UI 必先文档化）
++
++| 依赖 | 文件 | W12 UI 必落 |
++|---|---|---|
++| 闸门弹窗（install/enable Dangerous） | 复用 `src/components/agent/PermissionPreviewModal.vue` | 必显 名称+版本+capabilities(逐项)+风险+来源+hash前8位；Dangerous→keyring 二次认证；取消=拒绝 |
++| 主面板 Tab | `src/components/plugin/PluginManager.vue` | Discovered/Enabled/Disabled/Failed 状态徽章 |
++| 受信任公钥面板 | `src/components/plugin/TrustedKeyManager.vue` | 增（粘贴 pubkey+key_id+备注）；删须 keyring 二次认证；**改仅备注，不可改 key_id/公钥本身**（防 FM-9） |
++| 状态管理 | `src/stores/usePluginStore.ts` | `pendingConfirms: Map<id,{action,payload,expires_at}>`；trusted keys 缓存 |
++| 桥接 | `src/bridge.ts` | 8 命令 TS 包装（仅 W12 范围）；**UI 禁止裸 `invoke`**（N5） |
++| 类型镜像 | `src/types.ts` | `PluginManifest`/`PluginState`/`PluginCapability`/`PluginSummary`/`PluginDetail`/`TrustedKey` TS 镜像（单一真源，禁字面量） |
++| 主题/i18n | `src/styles/plugin.scss` + `locales/*` | dark/light 双主题；W12 至少 6 i18n key（W13 扩 12） |
++
++> **W12 UI 切分建议**：本卡派发时 A19 同步落地 `PluginManager.vue`（状态徽章 + list 渲染）+ `TrustedKeyManager.vue`（公钥管理）+ 闸门弹窗签名复用；详情/权限面板/历史 modal 留 W13 收口。
++
++---
++
++## 7. Hard Stops（实施 wave 须严守）
++
++| HS | 约束 | 来源 |
++|---|---|---|
++| HS-1 | 仅形态③声明式（无独立 webview / 无 stdio 进程 / 无网络下载） | M5-10 §4.1 + 全局「无第二执行路径」 |
++| HS-2 | 插件不触 `window.__TAURI__` 全局 | K1 + 形态③ |
++| HS-3 | hash 或 signature 任一失败 **不**加载 | M5-10 §5 + FM-5/FM-6 |
++| HS-4 | capability.rs 单一真源（不漂移） | M5-2 §4.2 + A2P/A2A/Skill/Plugin/Agent 共用 |
++| HS-5 | `trusted-pubkeys.json` 授权改须 keyring | FM-9 |
++| HS-6 | `manifest_hash` 变更 → 自动 `Disabled` + 重新确认（M5-10 §4.4） | M5-10 §4.4 + FM-8 |
++| HS-7 | install/enable 闸门不可绕过（Dangerous→两段式+keyring） | M5-10 §4.5 |
++| HS-8 | ACL 末条恒 `list_artifact_images`；**W12 新增 8 命令**插其前 | K1 |
++| HS-9 | `plugin_storage_put` 拒凭据（**W13 落**） | M5-11 §5 |
++| HS-10 | 无第二执行路径 / 无网络下载（仅本地 `plugins_dir()` 解包） | 全局 + W10 硬停 |
++| HS-11 | **本 wave（W12）不实现**：plugin runtime 仍锁；仅 A0 可显式新 dispatch | W10 硬停(206-207) |
++| HS-12 | build metrics ≤ 22%、cargo warnings 不增、pre-merge ALL_PASS | W10 硬停(210) |
++| **HS-13** | **W12 仅 install/enable/disable/list/get + 3 keyring 命令**；其余 10 命令（invoke/permissions/audit/storage/delete）**全部留 W13** | 本卡切分 |
++| **HS-14** | **W12 不写 `plugin-invokes.json` / `plugin_storage` / 详情 modal / 升级回滚** | 本卡切分 |
++| **HS-15** | **W12 不动 A0 已拣入的 `5f92ece`/`6c1f30e`/`daa10f6`/`a29b796`/`ba78092`/`5226aad` 6 commit 集** | mainline 集成卫生 |
++
++---
++
++## 8. Tests（实施 wave 须通过的测试计划）
++
++### 8.1 单测（Rust，`cargo test --manifest-path src-tauri/Cargo.toml plugin`）
++
++- **R-N1** `plugin_install` 形态②（webview 访问 `__TAURI__`）→ 阻断（HS-1/HS-2）
++- **R-N2** `plugin_install` 签名验证失败（FM-5）→ `SignedFailed` + 审计
++- **R-N3** `min_app_version` 过期（FM-7）→ 拒载
++- **R-N4** `trusted-pubkeys.json` 缺 key_id（FM-2）→ 拒
++- **R-N5** 资源包 hash ≠ manifest（FM-6）→ 拒 `Loaded` + tmp 已清
++- **R-N6** `manifest_hash` 变更 → 已启用自动 `Disabled`（FM-8，**W13 验完整流程**，W12 仅 unit 验 disable 行为）
++- **R-N7** `plugin_install` / `plugin_enable` 不弹闸门 → 阻断（HS-7）
++- **R-N8** 危险 capability 启用 → 缺 keyring 二次认证 → 阻断（HS-7）
++- **R-N9** 升级（`plugins_dir/<id>/<version>/` 已存在）→ `PluginAlreadyInstalled` 阻断（**W13 走升级流程**）
++- **R-N10** `plugin_install` 资源解包失败（磁盘满 / IO 错误）→ `LoadFailed` + tmp 已清
++- **R-N11** `plugin_keys_add` 重复 key_id → 拒
++- **R-N12** `plugin_keys_remove` key_id 不存在 → 拒
++- **R-N13** `plugin_keys_*` 改公钥本身 → 阻断（FM-9）
++- **R-N14** capability 隔离：插件 capability 不写入 host 自身 `capability.rs` 全局（**W13 验 invoke 隔离**，W12 仅 unit 验作用域写入）
++- **R-N15** 错误日志经 Display → 无 `CredentialLeak` 字符串（K3 + W9 B6）
++- **R-N16** `plugin_list` 不写审计（只读）
++
++### 8.2 策略脚本（`scripts/check-plugin-policy.py` 扩展，须 self-test/default PASS）
++
++W12 实施期须新增/激活下列码位（**当前 ACTIVE=1 PENDING=5**，W12 须增 ≥3 ACTIVE）：
++
++| 码 | 类型 | 描述 | W12 落点 |
++|---|---|---|---|
++| `PLUGIN_RUNTIME_GUARD` | PENDING→ACTIVE | 禁 `plugins_dir` 直写 / 禁 `std::process` / 禁网络拉取 | W12 必落 |
++| `PLUGIN_MANIFEST_HASH_PINNED` | 新增 ACTIVE | `hash` 须 == entry 校验值 | W12 必落 |
++| `PLUGIN_TRUSTED_KEYS_KEYRING` | 新增 ACTIVE | `trusted-pubkeys.json` 读写须经 keyring | W12 必落 |
++| 既有 `PLUGIN_SIG_BYPASS`（FM-10）、`PLUGIN_NO_SECRETS`（§5）、`PLUGIN_FORM_THREE`、`PLUGIN_CAP_SINGLE_DEF` | 维持 | — | W12 维持 |
++| `PLUGIN_AUDIT_KEY_HASH_ONLY` | **W13 才落** | 审计仅摘要 | W13 |
++| `PLUGIN_OUTPUT_NO_PROPS` | **W13 才落** | 详情页不输出 capability reason 全文 | W13 |
++
++`pre-merge.sh` 接入并 ALL_PASS。
++
++### 8.3 UI / 集成（A19 实施期，本卡仅规划）
++
++- **I-N1** 启用 Dangerous 插件不弹闸门 → 阻断（§6 闸门）
++- **I-N2** 改 trusted key 公钥本身 → 阻断（FM-9）
++- **I-N3** 删 trusted key 不弹 keyring → 阻断
++- **I-N4** 裸 `invoke` → 阻断（经 `bridge.ts`）
++- **I-N5** dark/light 主题崩 → 阻断
++- **I-N6** i18n 缺 key（≥6）→ 阻断
++
++`pnpm build` + `pnpm test:unit` + `pnpm test:e2e` 全绿。
++
++---
++
++## 9. 与同期 wave 边界
++
++- **A3（MCP stdio-prep）**：W10 拣入 `ba78092` + `5226aad` 落地 `mcp_server.rs`（feature-gated `mcp`）；A3 W12+ 不触 plugin 域。
++- **A5/A6（Agent/Skill）**：locked from execution；与插件命令面无交叉。
++- **A7（graph）/A8（graph UI）**：纯图谱，不触 `plugin.rs`；A7 W12 已产 `logs/assist/A7-M5-W11-graph-w12-impl-plan-20260907-1019.md`，**与本卡无冲突**。
++- **A4（隐私复核）/A10（安全复核）/A11（终验）**：评审范畴；本卡供其对照 HS/tests 验收。
++- 实施 wave 须由 A0 显式新 dispatch 开启（HS-11）；**W12 不 push 任何产品代码**。
++
++---
++
++## 10. FORBID 遵守（本卡片）
++
++- 仅产出**规划卡片**，未写任何产品代码（含 `plugin.rs`/`bridge.rs`/`domain.rs`/`main.rs`/`default-commands.toml`/`bridge.ts`/`types.ts`/`scripts/check-plugin-policy.py`/三份主文档）。
++- 未改 ACL/`capability.rs`/`pre-merge.sh`/W10/W11 既有 patch。
++- 未移动 `NEXT`、未 push（board Merge Rule：仅 A0 推送）。
++
++---
++
++## 11. 交付索引
++
++- 本卡片：`logs/assist/A9-M5-W12-plugin-runtime-install-enable-card-20260907-2000.md`
++- 检查点：`logs/checkpoints/Lane-A9-M5-W12-plugin-runtime-install-enable-card-20260907-2000.md`
++- 补丁：`logs/checkpoints/Lane-A9-M5-W12-plugin-runtime-install-enable-card-20260907-2000.patch`（仅本卡片 + 检查点）
++- 承接链：W10 dispatch 汇总卡 → W12 install/enable/disable（**本卡**）→ W13 delete/storage/audit/UI 收口（姊妹卡）
++- A9 插件链：`W0→W1→W3→W4→W5→W6(策略切片)→W7(命令面审查+回归修复)→W8(策略审查)→W9(复核·含运行时阻塞点 B1~B9)→W10(运行时 dispatch 卡片·PLAN ONLY)→W11(plugin docs/policy only)→W12(本卡·Stage-I install/enable)→W13(Stage-II delete/storage/audit/UI 收口)`。
+diff --git a/logs/checkpoints/Lane-A9-M5-W12-plugin-runtime-install-enable-card-20260907-2000.md b/logs/checkpoints/Lane-A9-M5-W12-plugin-runtime-install-enable-card-20260907-2000.md
+new file mode 100644
+index 0000000..f8a2e61
+--- /dev/null
++++ b/logs/checkpoints/Lane-A9-M5-W12-plugin-runtime-install-enable-card-20260907-2000.md
+@@ -0,0 +1,86 @@
++# A9 · M5-W12 Plugin Runtime Stage-I Staged Card — Checkpoint
++
++> Lane：A9（PLUGIN DOCS/POLICY ONLY）
++> Wave：M5-W12（Plugin Runtime Staged Dispatch · Stage-I install/enable/disable/list/get）
++> 时间：2026-09-07 20:00 CST
++> 性质：**规划卡片 checkpoint · 无产品代码改动 · 未 push**
++
++## 1. 交付物
++
++- 卡片：`logs/assist/A9-M5-W12-plugin-runtime-install-enable-card-20260907-2000.md`
++  - 5 核心命令（`plugin_install` / `plugin_enable` / `plugin_disable` / `plugin_list` / `plugin_get`）+ 3 keyring 命令（`plugin_keys_add/list/remove`）= 8 命令
++  - 端到端执行序列（install/enable/disable/list/get 4 段伪代码）
++  - 签名失败模式（FM-1~FM-10）
++  - 存储上限（复用 W6/A2 W2 单一真源）
++  - 审计脱敏（`audit.json` 摘要 shape，禁记 params/result 正文/公钥本身/keyring 凭据）
++  - UI 依赖文档化（`PluginManager.vue` / `TrustedKeyManager.vue` / 闸门弹窗复用）
++  - 14 项 hard stops（含 HS-13/HS-14/HS-15 严守 W12 切分边界）
++  - 16 项 Rust 单测 + 3 新增 ACTIVE 政策码 + 6 项 UI 集成测试
++
++## 2. 与 W10 计划的对应
++
++| W10 § | 主题 | W12 落点 |
++|---|---|---|
++| §1 GOAL | 升级 0 命令只读切片为受控运行时 | W12 = Stage-I（install/enable/disable/list/get） |
++| §2.1 | 5 核心命令 | 全部覆盖（含端到端伪代码） |
++| §2.2 | 18 命令集 | W12 收 8 命令（install/enable/disable/list/get + 3 keyring） |
++| §2.3 | install 端到端 | 完整 15 步伪代码 |
++| §3 FM-1~FM-10 | 签名失败模式 | 全部覆盖 + W12 必落 FM-5/FM-6 |
++| §4 存储上限 | 8 项 | W12 覆盖 6 项（W13 接管 plugin-invokes.json） |
++| §5 审计脱敏 | audit shape | 覆盖 install/enable/disable/keyring 子集 |
++| §6 UI 依赖 | 7 文件 | 文档化 7 文件 + 明确 W12 UI 切分（详情/历史/storage/权限 留 W13） |
++| §7 HS-1~HS-12 | 12 项硬停 | 全部继承 + 新增 HS-13/HS-14/HS-15 严守切分 |
++| §8 Tests | 单测 14 + 策略 + UI | 16 项单测 + 3 新 ACTIVE 码 + 6 项 UI |
++
++## 3. 与冻结段的对齐
++
++- **M5-10 W6 freeze**：`PluginManifest` / `PluginState` / `PluginCapability` / `PluginSignature` DTOs + `validate_plugin_manifest` / `can_transition` / `transition` / `permission_preview_for_plugin` 纯函数 —— **W12 端到端序列直接复用，0 漂移**。
++- **M5-11 W6 freeze**：5 stub 命令 ACL + capability 校验骨架 + `PluginInvokeRecord` shape —— **W12 不重定义，invoke 留 W13**。
++- **A2 W2 constants**：`MAX_TEXT_FIELD_BYTES=64KiB` / `MAX_PLUGIN_CAPABILITIES=5` / `HASH_HEX_LEN_SHORT=16` / `MAX_PLUGIN_ID_BYTES=256` —— **W12 全部复用，0 字面量**。
++- **A3 W3 两段式确认闸门**（`bridge.rs:688-790`）：W12 `plugin_install` / `plugin_enable` 复用同款 pattern。
++- **A4 W4 审计基元**：W12 `audit.json` 摘要 shape 与 `plugin-invokes.json` 摘要字段对齐（`payload_key_hash` 16-hex）。
++- **A5 W4 capability.rs**：`PLUGIN_CAPABILITY_V1`（首期空集合 fail-closed）—— W12 enable 时双层校验（manifest ⊆ PLUGIN_CAPABILITY_V1）。
++- **K1/K3/K5/K7** 严守：ACL 末条恒 `list_artifact_images`、凭据禁记入 storage/audit、详情页禁折叠、capability.rs 单一真源。
++
++## 4. 政策脚本扩展（实施 wave 须落）
++
++`scripts/check-plugin-policy.py` 须由 PENDING=5 升 ACTIVE≥4：
++
++- `PLUGIN_RUNTIME_GUARD`（PENDING→ACTIVE）：禁 `plugins_dir` 直写 / 禁 `std::process` / 禁网络拉取
++- `PLUGIN_MANIFEST_HASH_PINNED`（新增 ACTIVE）：`hash` 须 == entry 校验值
++- `PLUGIN_TRUSTED_KEYS_KEYRING`（新增 ACTIVE）：`trusted-pubkeys.json` 读写须经 keyring
++
++`PLUGIN_SIG_BYPASS` / `PLUGIN_NO_SECRETS` / `PLUGIN_FORM_THREE` / `PLUGIN_CAP_SINGLE_DEF` 维持。
++
++## 5. 切分边界（严守）
++
++- **HS-13**：W12 仅 install/enable/disable/list/get + 3 keyring 命令；其余 10 命令（invoke/permissions/audit/storage/delete）**全部留 W13**。
++- **HS-14**：W12 不写 `plugin-invokes.json` / `plugin_storage` / 详情 modal / 升级回滚。
++- **HS-15**：W12 不动 A0 已拣入的 6 commit 集（`5f92ece`/`6c1f30e`/`daa10f6`/`a29b796`/`ba78092`/`5226aad`）。
++
++## 6. 验证状态（本卡生成期）
++
++- 卡片文件存在性：`test -f logs/assist/A9-M5-W12-plugin-runtime-install-enable-card-20260907-2000.md` PASS
++- 工作树状态：未污染（仅新增 `logs/assist/A9-M5-W12-*.md` + `logs/assist/A9-M5-W13-*.md` + 本 checkpoint + patch）
++- 政策脚本未改（`check-plugin-policy.py` ACTIVE=1 PENDING=5 维持）
++- ACL 未改（`default-commands.toml` 无 `plugin_install`/`plugin_enable`/`plugin_disable` 等命令）
++- `plugin.rs` / `bridge.rs` / `main.rs` 未改
++- UI / `bridge.ts` / `types.ts` / 三份主文档未改
++- 未移动 `NEXT`、未 push
++
++## 7. 与他 lane 协同
++
++- **A2 W11**（已拣入 draft）：A2 W11 笔记提及 `core/bin` 边界，与本卡 HS-2/HS-10 形态③ + 无第二执行路径一致。
++- **A4 W11**（已拣入）：A4 W11 笔记 `logs/assist/A4-M5-W11-privacy-review-20260907-1900.md` 提 A3 stdio-prep，本卡 W12 不触 A3 域（HS-2 严守）。
++- **A5 W11**（已拣入）：A5 W11 笔记 `logs/assist/A5-M5-W11-20260907-1935.md` 与本卡能力白名单 `PLUGIN_CAPABILITY_V1` 对齐。
++- **A7 W11**（已拣入）：A7 W12 graph impl plan 与本卡 plugin 域 0 交叉。
++- **A8 W11**（已拣入）：A8 graph UI polish 与本卡 UI 切分一致。
++- **A10 W11**（已拣入）：A10 W11 笔记 `logs/assist/A10-M5-W11-20260907-1910.md` 复审范畴，本卡供其对照。
++
++## 8. 交付索引
++
++- 卡片：`logs/assist/A9-M5-W12-plugin-runtime-install-enable-card-20260907-2000.md`
++- 姊妹卡：`logs/assist/A9-M5-W13-plugin-runtime-delete-storage-card-20260907-2000.md`
++- 本 checkpoint：`logs/checkpoints/Lane-A9-M5-W12-plugin-runtime-install-enable-card-20260907-2000.md`
++- 姊妹 checkpoint：`logs/checkpoints/Lane-A9-M5-W13-plugin-runtime-delete-storage-card-20260907-2000.md`
++- 承接链：W10 dispatch 汇总卡 → W12（本卡）/ W13（姊妹卡）→ 实施 wave 待 A0 显式新 dispatch

@@ -1,0 +1,293 @@
+diff --git a/logs/assist/A11-M5-W11-push-readiness-20260907-1930.md b/logs/assist/A11-M5-W11-push-readiness-20260907-1930.md
+new file mode 100644
+index 0000000..139af3b
+--- /dev/null
++++ b/logs/assist/A11-M5-W11-push-readiness-20260907-1930.md
+@@ -0,0 +1,64 @@
++# M5-A11 · W11 Push-Readiness Assist Note
++
++**Lane**: A11 · VERIFICATION（board L202）
++**Base**: `5226aad`（A0 W10 集成）· 树 = 5226aad + W11 各 lane 在制产出（含 A3 加固）
++**Version**: 第二版（A3 加固入树后完整复跑；首版数据作废）
++**Verdict**: ✅ **A0 MAY PUSH the current tree.** All gates green — default, feature, policy, UI, integration, build metrics. A3's W11 hardening **is in tree and passes all 9 acceptance items**. No blockers.
++
++## Headline delta
++
++| Item | W10-0930 | W11 v1 (pre-A3) | **W11 v2 (final)** |
++|---|---|---|---|
++| `mcp` feature gate | ⏸ N/A | 7/0 | ✅ **21/0** |
++| MCP policy ACTIVE | 8 | 9 | ✅ **11 / PENDING=0** |
++| cargo test (default) | 410/0 | 410/0 | ✅ **410/0** (unpolluted) |
++| cargo warnings | 2 | 2 | ✅ **2** (baseline) |
++| pre-merge | ALL_PASS | ALL_PASS | ✅ **ALL_PASS** (EXIT=0) |
++| build metrics | 21.38% | 21.4% | ✅ **21.4%** (≤22%) |
++| A3 W11 hardening | — | not in tree | ✅ **in tree · 9/9 acceptance PASS** |
++
++## Gate summary (final, current tree)
++
++| Gate | Result |
++|---|---|
++| cargo test (default) | **410 passed / 0 failed** (408 bin + 2 lib) |
++| cargo test --features mcp mcp_server | **21 passed / 0 failed** (408 filtered out) |
++| cargo check --locked | 2 warnings (= baseline) |
++| cargo check --features mcp --locked | 2 warnings (no new) |
++| cargo fmt --check | 0 diff |
++| npm run build | PASS (via pre-merge) |
++| build metrics | total_bytes_pct=**21.4** ≤22%; cargo_warnings delta=0; warnings_increased=false; exceeds_growth_limit=false |
++| pre-merge.sh | **ALL_PASS** (EXIT=0, zero FAIL lines) |
++| Policy scripts | core 7 · **mcp ACTIVE=11** (+default +`--expect-current-gaps`) · agent-memory 5 · agent-skill ACTIVE=3/PENDING=6 · graph 7 · plugin ALL_PASS+`--expect-pending` · tools · database 14-1 · scheduler 23 · script-exec ALL_PASS |
++| UI logic | graph **59-0** · agent-skill **110-0** · scheduler **105-0** · command **36-0** |
++
++## A3 W11 hardening — acceptance: 9/9 PASS
++
++1. ✅ Feature tests **21/0** (>7), covering invalid JSON / unknown tool / large params / stable schema.
++2. ✅ Default `cargo test` still **410/0** and **2 warnings** — **default build provably unpolluted**.
++3. ✅ `tools_list_schema_is_stable`; `known_unbound_capability_is_fail_closed`; `unknown_tool_is_fail_closed` → L288 `unknown tool '{...}'; fail-closed, no execution`.
++4. ✅ Deterministic errors, **no raw echo**: `handle_line_invalid_json_returns_parse_error`, `missing_tool_name_is_invalid_params`, `non_object_request_is_invalid_request`, `handle_line_too_large_returns_error`, `stdio_smoke_oversized_line_never_echoes_payload`, **`arguments_are_never_echoed_in_fail_closed`**.
++5. ✅ MCP policy ACTIVE **11 ≥ 9** (not dropped), all three modes PASS.
++6. ✅ pre-merge ALL_PASS.
++7. ✅ Build metrics 21.4% ≤22%; warnings not increased.
++8. ✅ No listener/network/daemon/tool side effects (scan excluding `//!` comments → zero product-code hits; stdio-only via `std::io`).
++9. ✅ **No new Tauri commands** (`mcp_server.rs` has no `#[tauri::command]`/`invoke_handler`) → no ACL/bridge changes required (N/A, not missing).
++
++**Bounded I/O**: `MAX_INPUT_BYTES=1 MiB`, `MAX_RESPONSE_BYTES=4 MiB`, `BOUND_READONLY_TOOLS`, `read_line_bounded()`, `request_too_large()`, `response_size_guard`.
++
++## ⚠️ Disclosed: one transient pre-merge FAIL
++
++During v1 verification, the **first** `pre-merge.sh` run returned `PRE_MERGE_RESULT=FAIL` (log not retained; sub-gate unidentified). Two immediate re-runs → `ALL_PASS`. Assessed as a **transient race** (hot `target/` from the preceding `cargo check --features mcp`, or a vite build race), **not a stable regression**. The **v2 run on the A3-hardened tree also returned ALL_PASS (EXIT=0)**, consistent with the stable state.
++**Action for A0**: re-run `pre-merge.sh` once before pushing (A0's before-push step already gates this).
++
++## W11 hard-stop compliance
++
++✅ dry-run only (no file/db/script/plugin/agent/skill/model exec) · ✅ no TCP/HTTP/network bind/daemon/plugin-install/model-call · ✅ no raw arg/token echo (guarded by `arguments_are_never_echoed_in_fail_closed` + MCP ACTIVE=11; A4 privacy review delivered) · ✅ build metrics 21.4% ≤22% · ✅ cargo warnings unchanged · ✅ only A0 pushes.
++
++## Push verdict
++
++- ✅ **A0 MAY PUSH** the current tree (W10 integration + all W11 lane outputs).
++- Non-blocking pre-push suggestions: (a) A0 re-runs `pre-merge.sh` once; (b) if `mcp_server.rs` or policy scripts change again, re-run the full matrix first; (c) residual PENDING codes (agent-skill 6 / plugin 5 / database 1) are future-phase fixtures.
++- Housekeeping: A11 removed a stray 0-byte `logs/checkpoints/A11` artifact from a failed write; `scripts/__pycache__/` is untracked build residue (suggest ignoring/cleaning before commit).
++
++Full detail: `logs/checkpoints/A11-M5-W11-verification-delta-20260907-1930.md`. **No product code changed by A11.**
+diff --git a/logs/checkpoints/A11-M5-W11-verification-delta-20260907-1930.md b/logs/checkpoints/A11-M5-W11-verification-delta-20260907-1930.md
+new file mode 100644
+index 0000000..bf59d47
+--- /dev/null
++++ b/logs/checkpoints/A11-M5-W11-verification-delta-20260907-1930.md
+@@ -0,0 +1,217 @@
++# M5-A11 · W11 验证增量（MCP Stdio Dry-Run Hardening；**含 A3 加固入树后终版复跑**；默认门 + 特性门 + 集成门全绿）
++
++```text
++LANE=A11
++STATUS=终版（第二版，含 A3 W11 加固入树后复跑）。默认门 410/0、2 warning=基线、fmt 0 diff；mcp 特性门 21/0（W10 为 N/A，W11 首轮为 7/0，A3 加固后提升至 21/0）；MCP 策略 ACTIVE=11、default 与 --expect-current-gaps 全 PASS；pre-merge ALL_PASS（EXIT=0）；构建指标 21.4% ≤22%、告警不增。A3 W11 加固已入树并通过 §3 九项验收 → 无阻塞项，A0 可 push（建议 push 前自复跑一次 pre-merge）。
++BASE=5226aad（A0 W10 集成：feat(M5): integrate W10 MCP stdio prep）
++TREE=5226aad + W11 在制改动（A1/A2/A3/A4/A5/A6/A7/A8/A9/A10 均已产出；本文件为复跑后终版）
++HEAD=logs/checkpoints/A11-M5-W11-verification-delta-20260907-1930.md
++FILES=logs/checkpoints/A11-M5-W11-verification-delta-20260907-1930.md ; logs/assist/A11-M5-W11-push-readiness-20260907-1930.md ; logs/checkpoints/Lane-A11-M5-W11-verification-20260907-1930.patch
++VERIFY=见 §1 验证矩阵（**第二版：对含 A3 加固的当前树复跑**，非首轮旧数据）
++CHECKPOINT=本文件
++MERGE_NOTES=§2 特性门实跑；§3 A3 加固九项验收（已 PASS）；§4 硬停止；§5 集成门；§7 push 就绪度
++NEXT=若后续 lane 再入树（尤其再改 mcp_server.rs / 策略脚本），需重跑 §1 全矩阵后方可 push
++```
++
++> **版本说明**：本文件为**第二版**。首版矩阵对「A3 加固未入树」的树跑通（特性门 7/0、MCP ACTIVE=9）；随后 A3 的 W11 加固（`mcp_server.rs` +424、`check-mcp-policy.py` +104）与其他 lane 产出入树，**本版已对当前树完整复跑**，特性门升至 **21/0**、MCP 策略升至 **ACTIVE=11**。首版数据作废，以本版为准（遵守不 stale 原则）。
++>
++> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W11 MCP Stdio Dry-Run Hardening Dispatch（L176-228）→ **A11 = START VERIFICATION**（L202）：维护 W11 验证矩阵——默认 cargo test、特性 cargo test、MCP/Agent/Plugin/Graph 策略、UI 逻辑脚本、npm build、pre-merge、构建指标 ≤22%、告警不变。
++> W11 目标（L180）：以确定性 dry-run 行为与复核证据加固 MCP stdio 外壳，仍非完整运行时激活——无 file/db/script/plugin 执行、无网络 listener、无 daemon、无 model 调用。
++> 范围声明：本增量**只产出验证文档，零产品代码改动**。A11 仅验证，不审内容、不修他人代码。
++> 姊妹件：W10 `A11-M5-W10-verification-delta-20260907-0930.md`、W9 `A11-M5-W9-verification-delta-20260907-0905.md`。
++
++---
++
++## 0. 启动门禁与调度匹配
++
++```bash
++cat .workspace-identity           # WORKSPACE_ID=BACKV3_MAIN / EXPECTED_BRANCH=master  ✅
++pwd                               # /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3  ✅
++git fetch origin && git pull --ff-only   # 已最新（origin/master 未动）
++git log --oneline -4              # 5226aad(W10 集成) / ba78092(A3 W10 stdio-prep) / 8dea830(A6 W10 UI) / e840307(A11 W10)
++```
++
++- **调度匹配**：board 头部 `Current NEXT: M5-W11 MCP stdio dry-run hardening; W10 outputs are accepted locally and queued for A0 push; W11 opens only narrow MCP stdio dry-run/list-call hardening plus review/polish lanes`（L7）。
++- **复跑触发原因**：首版验证进行时，A3 加固与其他 lane 产出陆续入树（`git status` 由「仅 A1/A2 文档」变为多 lane 改动），故对**当前树**完整复跑，避免结论 stale。
++- W11 硬停止（L204-211）：仍 dry-run only；禁 TCP listener/HTTP/daemon/plugin-install/model-call/隐藏 script-db 执行；stdio 响应/日志/审计/UI 禁原始参数/token 回显；构建指标 22%；cargo 告警不增；仅 A0 push。
++
++---
++
++## 1. W11 验证矩阵（第二版 · 对含 A3 加固的当前树实跑）
++
++| 门 | 命令 | 结果 | 判定 |
++|---|---|---|---|
++| Rust 单测（默认） | `cargo test --manifest-path src-tauri/Cargo.toml` | **410 passed（408 bin + 2 lib），0 failed** | ✅ |
++| cargo check 告警（默认） | `cargo check --locked` | **2 warnings**（grid_process.rs:76 index/comms；:103 new）= 基线 | ✅ |
++| cargo fmt | `cargo fmt --all --check` | **0 diff** | ✅ |
++| **mcp 特性测试** | `cargo test --features mcp mcp_server` | **21 passed，0 failed，408 filtered out** | ✅ **（首版 7 → 加固后 21）** |
++| mcp 特性编译告警 | `cargo check --features mcp --locked` | **2 warnings**（同基线，无新增） | ✅ |
++| 默认/特性依赖树对比 | `cargo tree` vs `cargo tree --features mcp` | 一致，无新增依赖（首版已核） | ✅ |
++| rmcp/tokio 污染 | `grep Cargo.toml` + `cargo tree` | **rmcp 全仓零出现**；`mcp = []` 空特性零依赖；`tokio` 仅经既有 `tokio-postgres`（数据库层，非 MCP 引入） | ✅ |
++| core 边界门 | `check-core-boundary.py --self-test` | `CORE_POLICY_SELF_TEST=PASS`（ACTIVE=7，坏样本=9） | ✅ |
++| M5-2 MCP 门 | `check-mcp-policy.py --self-test` | `MCP_POLICY_SELF_TEST=PASS`（**ACTIVE=11，PENDING=0**） | ✅ **（W10=8，首版=9，A3 后=11）** |
++| M5-2 MCP 门 | `check-mcp-policy.py`（default） | `MCP_POLICY=PASS`（无违规） | ✅ |
++| M5-2 MCP 门 | `check-mcp-policy.py --expect-current-gaps` | `MCP_CURRENT_GAPS_RESULT=PASS` | ✅ |
++| agent-memory 门 | `check-agent-memory-policy.py --self-test` | `AGENT_KV_POLICY_SELF_TEST=PASS`（ACTIVE=5） | ✅ |
++| agent-skill 门 | `check-agent-skill-policy.py --self-test` | `AGENT_SKILL_POLICY_SELF_TEST=PASS`（ACTIVE=3，**PENDING=6**） | ✅ |
++| agent-skill 门 | `check-agent-skill-policy.py`（default） | `AGENT_SKILL_POLICY=PASS`（无违规） | ✅ |
++| graph 门 | `check-graph-policy.py --self-test` | `GRAPH_POLICY_SELF_TEST=PASS`（ACTIVE=7） | ✅ |
++| graph 门 | `check-graph-policy.py`（default） | `GRAPH_POLICY=PASS`（无违规） | ✅ |
++| graph UI 逻辑 | `node scripts/check-graph-ui-logic.mjs` | **通过 59，失败 0** | ✅ |
++| Agent/Skill UI 逻辑 | `node scripts/check-agent-skill-ui-logic.mjs` | **110 assertions passed，0 failed** | ✅ |
++| scheduler UI 逻辑 | `node scripts/check-scheduler-ui-logic.mjs` | **105 assertions passed，0 failed** | ✅ |
++| command UI 逻辑 | `node scripts/check-command-ui-logic.mjs` | **36 断言全部通过** | ✅ |
++| A9 plugin 门 | `check-plugin-policy.py --self-test` | `PLUGIN_SELF_TEST=ALL_PASS`（ACTIVE=1，PENDING=5） | ✅ |
++| A9 plugin 门 | `check-plugin-policy.py --expect-pending` | `PLUGIN_PENDING_OK` | ✅ |
++| tools 门 | `check-tools-policy.py --self-test` | OK（好样本零违规 + 16 坏样本全检） | ✅ |
++| database 门 | `check-database-policy.py --self-test` | `DB_SELF_TEST_RESULT=PASS`（ACTIVE=14，PENDING=1） | ✅ |
++| scheduler 门 | `check-scheduler-policy.py --self-test` | `SCHED_SELF_TEST_RESULT=PASS`（ACTIVE=23，PENDING=0） | ✅ |
++| script-exec 门 | `check-script-exec-policy.py --self-test` | `SELF_TEST_RESULT=ALL_PASS` | ✅ |
++| 前端构建 | `npm run build`（经 pre-merge） | PASS（vite；面板分块懒加载） | ✅ |
++| 构建指标 | `measure-build-metrics.py --compare build-metrics-4f0e8ab.json --skip-build` | **total_bytes_pct=21.4（≤22%）**，cargo_warnings delta=0，warnings_increased=false，exceeds_growth_limit=false | ✅ |
++| **集成门禁** | `bash scripts/pre-merge.sh` | **`PRE_MERGE_RESULT=ALL_PASS`**（EXIT=0，零 FAIL 行） | ✅ |
++
++> 关键不变量：**默认构建零污染**——默认 410/0 与 2 warning 在 A3 加固前后**完全不变**；开启 `mcp` 才多出 21 个 stdio 测试。
++> `git diff --check`（工作树+暂存区）→ `DIFFCHECK_EXIT=0`，无空白错误。
++
++---
++
++## 2. mcp 特性门实跑（A3 加固后）
++
++| W10 §3 复核项 | 终版实测 | 判定 |
++|---|---|---|
++| 1. 特性测试 PASS、无工具副作用 | `cargo test --features mcp mcp_server` → **21 passed / 0 failed / 408 filtered out** | ✅ |
++| 2. 默认 cargo test 仍 410/0、告警仍 2 | **410/0**；`cargo check --locked` **2 warnings** | ✅ **默认构建零污染** |
++| 3. rmcp/tokio optional + gated，默认 tree 不含 | `Cargo.toml` L22-23 `mcp = []`；rmcp 全仓零；`cargo tree` 一致；tokio 仅 tokio-postgres 既有传递依赖 | ✅ |
++| 4. MCP 策略三模式 PASS | self（ACTIVE=11,PENDING=0）/ default / --expect-current-gaps **全 PASS** | ✅ |
++| 5. pre-merge ALL_PASS | **ALL_PASS**（EXIT=0） | ✅ |
++| 6. 构建指标 ≤22% | **21.4%** | ✅ |
++| 7. 无 listener/network/daemon/工具副作用 | 硬停止扫描（剔除 //! 注释后）**产品代码零命中**；传输仅 `std::io` stdio；main.rs L33-35/L1093-1095 `#[cfg(feature="mcp")]` 门控 | ✅ |
++| 8. 新增命令须同包 ACL/bridge/types/policy | **A3 未新增 Tauri 命令**（`mcp_server.rs` 无 `#[tauri::command]`/`invoke_handler`）→ 无需 ACL/bridge 改动 | ✅ |
++
++**有界性常量**：`MAX_INPUT_BYTES=1_048_576`（1 MiB）、`MAX_RESPONSE_BYTES=4_194_304`（4 MiB）、`BOUND_READONLY_TOOLS=["mcp_policy_get","mcp_registry_list"]`、`read_line_bounded()`、`request_too_large()`、`response_size_guard`。
++
++---
++
++## 3. A3 W11 加固验收（board L194）· **九项全 PASS**
++
++首版 §3 预定义验收程序；A3 加固入树后逐条实测：
++
++| # | 验收项 | 实测证据 | 判定 |
++|---|---|---|---|
++| 1 | 特性测试 PASS 且用例数 > 7（含 invalid JSON / unknown tool / large params / 稳定 schema） | **21 passed / 0 failed**（首版 7 → +14） | ✅ |
++| 2 | 默认 cargo test 仍 410/0、告警仍 2（零污染） | **410/0**；**2 warnings** | ✅ |
++| 3 | `tools/list` schema 稳定 + 未绑定能力显式 fail-closed | `tools_list_schema_is_stable`；`known_unbound_capability_is_fail_closed`；`unknown_tool_is_fail_closed`；代码 L288 `unknown tool '{other}'; fail-closed, no execution` | ✅ |
++| 4 | 确定性错误：invalid JSON / unknown tool / 超大 params，码与文案稳定、无原始输入回显 | `handle_line_invalid_json_returns_parse_error`、`missing_tool_name_is_invalid_params`、`non_object_request_is_invalid_request`、`handle_line_too_large_returns_error`、`stdio_smoke_oversized_line_never_echoes_payload`、**`arguments_are_never_echoed_in_fail_closed`** | ✅ |
++| 5 | MCP 策略三模式 PASS 且 ACTIVE 不下降 | ACTIVE **11 ≥ 9**（+2 新码），PENDING=0，三模式全 PASS | ✅ |
++| 6 | pre-merge 仍 ALL_PASS | **ALL_PASS**（EXIT=0） | ✅ |
++| 7 | 构建指标 ≤22%、告警不增 | **21.4%**；cargo_warnings delta **0** | ✅ |
++| 8 | 无 listener/network/daemon/工具副作用 | 扫描（剔注释）零命中；core/tools/mcp 策略全 PASS | ✅ |
++| 9 | 新增命令须同包 source-check+ACL+bridge/types+policy | **无新增命令** → 不适用（N/A，非缺失） | ✅ |
++
++**A3 新增测试全清单（21 项）**：`arguments_are_never_echoed_in_fail_closed`、`handle_line_empty_returns_none`、`handle_line_invalid_json_returns_parse_error`、`handle_line_too_large_returns_error`、`initialize_returns_server_info`、`known_unbound_capability_is_fail_closed`、`missing_tool_name_is_invalid_params`、`non_object_request_is_invalid_request`、`notifications_have_no_response`、`policy_get_is_readonly_no_error`、`read_line_bounded_keeps_short_lines`、`read_line_bounded_marks_truncated_and_drains`、`registry_list_is_readonly_no_error`、`response_size_guard_caps_oversized`、`stdio_smoke_empty_input_and_eof_only`、`stdio_smoke_invalid_json_unknown_tool_and_large_line`、`stdio_smoke_oversized_line_never_echoes_payload`、`tools_list_schema_is_stable`、`tools_list_uses_registry_source_of_truth`、`unknown_method_returns_method_not_found`、`unknown_tool_is_fail_closed`。
++
++> **结论**：A3 W11 加固**通过全部验收**，无阻塞项。
++
++---
++
++## 4. W11 硬停止合规复核（当前树，A3 加固后）
++
++| W11 硬停止（L204-211） | 当前树证据 | 判定 |
++|---|---|---|
++| dry-run only：无 file/db/script/plugin/agent/skill/model 执行 | 硬停止扫描（TcpListener/bind(/spawn/Command::new/std::process/tokio/rmcp/std::net/reqwest，剔除 //! 注释）**产品代码零命中**；策略（script-exec/tools/core/mcp/agent-skill/plugin）全 PASS | ✅ |
++| 禁 TCP listener / HTTP / network bind / daemon / plugin-install / model-call | 同上；传输仅 `std::io` stdio；`mcp_server.rs` 无 `#[tauri::command]`/`invoke_handler`（无新增命令面） | ✅ |
++| stdio 响应/日志/审计/UI 禁原始参数/token/cookie/Authorization 回显 | 新增测试 **`arguments_are_never_echoed_in_fail_closed`** + `stdio_smoke_oversized_line_never_echoes_payload` 直接守护；MCP 策略 ACTIVE=11。A4 W11 隐私复核已出（`logs/assist/A4-M5-W11-privacy-review-20260907-1900.md`、`logs/checkpoints/A4-M5-W11-stdio-privacy-20260907-1900.md`），以其 verdict 为内容层最终判据（A11 不审内容） | ✅ |
++| 构建指标 ≤22% | **21.4%** | ✅ |
++| cargo 告警不增 | cargo_warnings delta = **0**（基线 2） | ✅ |
++| 仅 A0 push | 本 Lane 不 push | ✅ |
++
++---
++
++## 5. 集成门禁结论
++
++- **当前树（含 A3 加固）**：`bash scripts/pre-merge.sh` → **`PRE_MERGE_RESULT=ALL_PASS`，EXIT=0**，`grep -nE '^FAIL|FAIL:'` **零命中**；`build metrics 未回归`（基线 `build-metrics-4f0e8ab.json`）。
++- **首版时的一次瞬时 FAIL（已处置）**：首轮验证中 pre-merge **首次调用返回 FAIL**（该次日志未留存，未能定位子门），随后连续两次复跑均 ALL_PASS。判定为**瞬时/竞态**（紧前 `cargo check --features mcp` 使 target/ 热态、或 vite 构建竞态），非稳定回归。**第二版（含 A3 加固）复跑为 ALL_PASS**，与稳定态一致。
++- **交接 A0**：push 前请**自行复跑一次 pre-merge.sh**（A0 before-push 本就必拦），以消除瞬时抖动风险。
++- pre-merge 覆盖：baseline/verify-resources self-test、npm build、cargo check、cargo fmt、全部 policy 不变量夹具、`git diff --check`（工作树+暂存区、merge-base..HEAD）→ 全绿。
++- cargo test 不在 pre-merge 覆盖内（前波结论一致），已由本 Lane 独立跑通 **默认 410/0 + 特性 21/0**。
++
++---
++
++## 6. 各 Lane W11 可观测状态（A11 仅验证门禁，不审内容）
++
++验证时刻工作树内已出现的 W11 产出（未跟踪/已改，均**未提交**）：
++
++- **A1**（DOCS）：`A1-M5-W11-reconciliation-20260907-1830.md` + patch；改 `PARALLEL_COMMAND_BOARD.md`、三份主文档、`M5-20260906/*` 多份卡片。
++- **A2**（BOUNDARY REVIEW）：`A2-M5-W11-20260907-1900.md` —— 结论 STATUS=PASS（core 无 tauri、stdio 工具不调 bridge::*、无重复执行路径、无工作区写入）。
++- **A3**（PRODUCT CODE NARROW）：改 `src-tauri/src/mcp_server.rs`（+424）、`scripts/check-mcp-policy.py`（+104）—— **已入树并通过 §3 九项验收**。
++- **A4**（PRIVACY REVIEW）：`A4-M5-W11-privacy-review-20260907-1900.md`、`A4-M5-W11-stdio-privacy-20260907-1900.md` + patch。
++- **A5**（AGENT/SKILL POLICY）：`A5-M5-W11-20260907-1935.md` + patch；改 `scripts/check-agent-skill-policy.py`（PENDING 5→6）。
++- **A6**（UI SMALL）：`A6-M5-W11-agent-skill-ui-polish-20260907-1020.md` + patch；改 `AgentManagerPanel.vue`/`SkillManagerPanel.vue`。
++- **A7**（GRAPH DOCS）：`A7-M5-W11-graph-w12-impl-plan-20260907-1019.md` / `A7-M5-W11-graph-w12-20260907-1019.md` + patch。
++- **A8**（GRAPH UI）：`A8-M5-W11-graph-ui-polish-20260907-1020.md` + patch；改 `useGraphStore.ts`、`graphUi.ts`、`check-graph-ui-logic.mjs`。
++- **A9**（PLUGIN DOCS）：`A9-M5-W12-plugin-runtime-install-enable-card-20260907-2000.md`、`A9-M5-W13-plugin-runtime-delete-storage-card-20260907-2000.md` + patches。
++- **A10**（SECURITY REVIEW）：`A10-M5-W11-20260907-1910.md`、`A10-M5-W11-20260907-1930.md`。
++- **A11**（本 Lane）：本验证增量 + push 就绪度 + patch。
++
++> 说明：上列 lane 产出**内容不由 A11 审核**；A11 仅确认「这些改动入树后，§1 全矩阵仍绿」。
++
++---
++
++## 7. Push 就绪度
++
++### 结论：**A0 可 push 当前树（W10 集成 + W11 全 lane 在制产出）**
++
++依据（第二版复跑，含 A3 加固）：
++- 默认门：cargo test **410/0**、cargo check **2 warning=基线**、fmt **0 diff**；
++- 特性门：**21/0**，且默认构建**零污染**（410/0、2 warning 与加固前一致）；
++- 策略：MCP **ACTIVE=11** 三模式 PASS；core / agent-memory / agent-skill / graph / plugin / tools / database / scheduler / script-exec **全 PASS**；
++- UI 逻辑：graph **59/0**、agent-skill **110/0**、scheduler **105/0**、command **36/0**；
++- 集成门：pre-merge **ALL_PASS**（EXIT=0）；
++- 构建指标：**21.4% ≤ 22%**，告警不增；
++- W11 硬停止**全部满足**（§4）；A3 加固通过 §3 **九项验收**。
++
++### 前置建议（非阻塞）
++1. A0 push 前**自复跑一次 `pre-merge.sh`**（首版曾现瞬时 FAIL，虽已复跑为 PASS，仍建议 A0 自验）。
++2. 本树为**多 lane 在制叠加态**（未提交），A0 集成时按 board 各自 scope 收口；后续若再改 `mcp_server.rs` 或策略脚本，需**重跑 §1 全矩阵**方可 push。
++3. 残留 PENDING 码（agent-skill 6 / plugin 5 / database 1）为**未来相位夹具，非阻塞**。
++
++### 工作树在制（验证时刻）
++- 已跟踪改动：三份主文档、`PARALLEL_COMMAND_BOARD.md`、`M5-20260906/*` 多份卡片、`scripts/check-agent-skill-policy.py`、`scripts/check-graph-ui-logic.mjs`、`scripts/check-mcp-policy.py`、`src-tauri/src/mcp_server.rs`、`AgentManagerPanel.vue`、`SkillManagerPanel.vue`、`useGraphStore.ts`、`graphUi.ts`。
++- 未跟踪：A1/A2/A4/A5/A6/A7/A8/A9/A10 文档与 patch、**本 Lane 两文件 + patch**。
++- **清理项**：A11 首版写入时因工具异常产生 0 字节空文件 `logs/checkpoints/A11`，**已删除**（遵守 board「不得留空文件」规则）。
++- 提示：`scripts/__pycache__/` 为未跟踪构建残留，建议 A0 提交前忽略/清理（非代码改动）。
++
++---
++
++## 8. 债务台账（相对 W10-0930）
++
++| 项 | W10-0930 | W11 终版 |
++|---|---|---|
++| cargo test（默认） | 410/0 | ✅ 410/0（不变） |
++| cargo 告警 | 2=baseline | ✅ 2=baseline（未增） |
++| cargo fmt | 0 diff | ✅ 0 diff |
++| **mcp 特性门** | 待 A3（N/A） | ✅ **21/0**（首版 7/0 → 加固后 21/0） |
++| **MCP 策略 ACTIVE** | 8 / PENDING=0 | ✅ **11 / PENDING=0**（+3） |
++| agent-skill PENDING | 5 | ✅ **6**（A5 新增 1 个未来相位码，非阻塞） |
++| Graph UI 逻辑 | 43/0 | ✅ 59/0 |
++| Agent/Skill UI 逻辑 | 99/0 | ✅ 110/0 |
++| Scheduler UI 逻辑 | — | ✅ 105/0 |
++| Command UI 逻辑 | — | ✅ 36/0 |
++| pre-merge | ALL_PASS | ✅ ALL_PASS（首版瞬时 FAIL×1，复跑均 PASS） |
++| 构建指标 | 21.38% | ✅ **21.4%**（≤22%） |
++| rmcp / tokio 污染 | 无 | ✅ 无（mcp = []，rmcp 零出现） |
++| **A3 W11 加固** | 未入树 | ✅ **已入树并通过九项验收** |
++| Plugin/Agent/Skill 执行 | 锁定 | ✅ 维持锁定（W11 硬停止） |
++| grid_process.rs 2 warning | 既有债 | ✅ 维持（非 M5 范围） |
++
++---
++
++## 9. 声明（避免误读）
++
++- 本车道**零产品代码改动**；仅产出验证文档与 patch。W10 集成（5226aad）、A3 特性落地（ba78092）与 W11 各 lane 产出均非 A11 所为，A11 **仅验证**。
++- 未 rebase、未 push（board Merge Rule：仅 A0 推送）。
++- **本文件为第二版**：首版对「A3 未入树」的旧树跑通；A3 加固入树后已**完整复跑**并全面更新（特性门 7→21、MCP ACTIVE 9→11、pre-merge 重跑）。**首版数据作废**，结论以本版为准。
++- 首版 pre-merge 的一次瞬时 FAIL 已如实披露（§5），稳定态与第二版均为 ALL_PASS；已建议 A0 push 前自复跑。
++- 已删除误建的 0 字节空文件 `logs/checkpoints/A11`。
++- 仅暂存并提交本 Lane 文件（checkpoint + assist + patch），**不带入他 lane 在制改动**。

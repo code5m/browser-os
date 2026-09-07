@@ -203,6 +203,51 @@ def c_server_gated(rel, text, repo):
     return problems or None
 
 
+def c_stdio_no_arg_echo(rel, text, repo):
+    # W11 Hard Stop（PARALLEL_COMMAND_BOARD.md 行 208）：stdio 响应 / 日志 / audit /
+    # 检查点 / UI 状态 不得回显原始 argument/query/token/cookie/Authorization。
+    # 本码位静态守护 stdio 传输层（mcp_server.rs）：其 JSON-RPC 响应构造不得把请求
+    # 的 params/arguments 原始内容插值进 format! 文本、序列化进响应、或打印进日志。
+    # 仅当仓库存在 MCP stdio 预备件时才守门（与 `MCP_SERVER_GATED` 同源文件判定）。
+    if rel not in ("src-tauri/src/bin/mcp_server.rs", "src-tauri/src/mcp_server.rs"):
+        return None
+    problems = []
+    # 1) 不得直接序列化 params/arguments 进响应文本（可能回显原始 argument）。
+    if re.search(r"to_string\s*\(\s*&?\s*params\s*\)", text) or \
+       re.search(r"to_string\s*\(\s*&?\s*arguments\s*\)", text):
+        problems.append("stdio 响应直接序列化 params/arguments（可能回显原始 argument）")
+    # 2) format! 中不得插值 {params} / {arguments}（原始 argument 回显）。
+    if re.search(r"format!\s*\([^)]*\{\s*params\s*\}", text) or \
+       re.search(r"format!\s*\([^)]*\{\s*arguments\s*\}", text):
+        problems.append("format! 把 params/arguments 插值进响应文本（原始 argument 回显）")
+    # 3) 不得用 println/eprintln 输出 params（日志 / 审计泄漏原始 argument）。
+    if re.search(r"(?:eprintln|println)\s*\([^)]*params", text):
+        problems.append("stdio 用 println/eprintln 输出 params（日志泄漏原始 argument）")
+    return problems or None
+
+
+def c_stdio_bounded(rel, text, repo):
+    # W11 A3：stdio dry-run 必须有界——输入行与响应序列化都要有字节上限，且不得退回
+    # 无限行读取（`stdin.lock().lines()` 会为超大行无限分配）。守门要点：
+    #   1) 必须声明 MAX_INPUT_BYTES / MAX_RESPONSE_BYTES 两个上限常量（单一真源）；
+    #   2) 必须存在有界读取函数（read_line_bounded 之类）并被 stdio 环调用；
+    #   3) 不得出现无界 `stdin.lock().lines()` 读取（越界请求可撑爆内存）。
+    # 与 `MCP_SERVER_GATED` 同源文件判定（产物不存在则不守门）。
+    if rel not in ("src-tauri/src/bin/mcp_server.rs", "src-tauri/src/mcp_server.rs"):
+        return None
+    problems = []
+    if not re.search(r"const\s+MAX_INPUT_BYTES\s*:", text):
+        problems.append("stdio 缺少 MAX_INPUT_BYTES 输入上限常量（无界读取风险）")
+    if not re.search(r"const\s+MAX_RESPONSE_BYTES\s*:", text):
+        problems.append("stdio 缺少 MAX_RESPONSE_BYTES 响应上限常量（无界响应风险）")
+    # 注：函数带泛型参数（`fn read_line_bounded<R: BufRead>(...)`），正则须放行 `<...>`。
+    if not re.search(r"fn\s+read_line_bounded\s*(?:<[^>]*>)?\s*\(", text):
+        problems.append("stdio 缺少有界行读取函数 read_line_bounded（超大行可无限分配）")
+    if re.search(r"stdin\(\)\s*\.lock\(\)\s*\.lines\(\)|stdin\.lock\(\)\s*\.lines\(\)", text):
+        problems.append("stdio 使用无界 .lines() 读取（应走 read_line_bounded 有界读）")
+    return problems or None
+
+
 # ---- PENDING（W8 已退役）----
 # W1 阶段曾以 7 个 PENDING 码位（`MCP_LISTEN_PORT` / `MCP_RUNTIME_LEAK` / `MCP_OPTIONAL_DEP` /
 # `MCP_BIN_GATED` / `MCP_TOOL_CALLS_COMMAND` / `MCP_PATH_POLICY_MISSING` / `MCP_URL_NOT_REDACTED`）
@@ -302,6 +347,8 @@ ACTIVE_CODES = [
     ("MCP_BRIDGE_READONLY", "ACTIVE", c_bridge_readonly),
     ("MCP_NO_RMCP_SERVER", "ACTIVE", c_no_rmcp_server),
     ("MCP_SERVER_GATED", "ACTIVE", c_server_gated),
+    ("MCP_STDIO_NO_ARG_ECHO", "ACTIVE", c_stdio_no_arg_echo),
+    ("MCP_STDIO_BOUNDED", "ACTIVE", c_stdio_bounded),
     ("MCP_PARITY", "ACTIVE", c_parity),
 ]
 # W8：W1 的 7 个 PENDING 码位 + MCP_TREE_TAURI 全部退役，相位债已关闭。当前无 PENDING 码位。
@@ -362,8 +409,34 @@ def _baseline_repo() -> dict[str, str]:
     # 否则 _mcp_bridge_present 会误判「桥已落地」、当前相位断言失真。
     return {
         "src-tauri/Cargo.toml": (
-            "[package]\nname = \"mvp-browser-os\"\n"
+            "[package]\nname = \"mvp-browser-os\"\nversion = \"0.1.0\"\n"
+            "[features]\nmcp = []\n"
             "[dependencies]\ntauri = { version = \"2\" }\nrusqlite = { version = \"0.31\" }\n"
+        ),
+        "src-tauri/src/mcp_server.rs": (
+            "#![cfg(feature = \"mcp\")]\n"
+            "use std::io::{self, BufRead, Write};\n"
+            "const MAX_INPUT_BYTES: usize = 1048576;\n"
+            "const MAX_RESPONSE_BYTES: usize = 4194304;\n"
+            "fn read_line_bounded<R: BufRead>(r: &mut R, max: usize) -> Option<Vec<u8>> {\n"
+            "    let _ = (r, max);\n    None\n}\n"
+            "pub fn run_stdio() {\n"
+            "    let stdin = io::stdin();\n"
+            "    let mut stdout = io::stdout().lock();\n"
+            "    let mut reader = stdin.lock();\n"
+            "    while let Some(line) = read_line_bounded(&mut reader, MAX_INPUT_BYTES) {\n"
+            "        let resp = handle_request(&line);\n"
+            "        let s = serde_json::to_string(&resp).unwrap_or_default();\n"
+            "        if s.len() <= MAX_RESPONSE_BYTES {\n"
+            "            let _ = writeln!(stdout, \"{s}\");\n"
+            "            let _ = stdout.flush();\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+            "fn handle_request(req: &[u8]) -> serde_json::Value {\n"
+            "    let _ = req;\n"
+            "    serde_json::json!({})\n"
+            "}\n"
         ),
         "src-tauri/src/bridge.rs": (
             "pub fn list_artifacts(app: AppHandle) -> Vec<Artifact> {\n"
@@ -430,6 +503,35 @@ def _run_self_test() -> int:
         mutate(**{"src-tauri/src/bin/mcp_server.rs":
                   "use std::net::TcpListener;\nfn run() { let _ = TcpListener::bind(\"127.0.0.1:0\"); }\n"}),
         "src-tauri/src/bin/mcp_server.rs")
+    # W11：stdio 响应不得回显原始 params/arguments（MCP_STDIO_NO_ARG_ECHO）。
+    add("MCP_STDIO_NO_ARG_ECHO", "mcp_server.rs 把 params/arguments 原始内容插值进响应文本",
+        mutate(**{"src-tauri/src/mcp_server.rs":
+                  '#![cfg(feature = "mcp")]\nuse std::io::{self, BufRead, Write};\n'
+                  'pub fn run_stdio() {\n'
+                  '    let stdin = io::stdin();\n    let mut stdout = io::stdout().lock();\n'
+                  '    for line in stdin.lock().lines() {\n'
+                  '        let line = match line { Ok(l) => l, Err(_) => break };\n'
+                  '        let params = "user_secret_arg";\n'
+                  '        let err = format!("invalid request: {params}");\n'
+                  '        let _ = serde_json::to_string(&params);\n'
+                  '        let _ = writeln!(stdout, "{err}");\n    }\n}\n'}),
+        "src-tauri/src/mcp_server.rs")
+    # W11：stdio 必须是有界的（MCP_STDIO_BOUNDED）。坏样本：退回无界 .lines() 读取且无上限常量。
+    add("MCP_STDIO_BOUNDED", "mcp_server.rs 退回无界 .lines() 读取、无输入/响应上限",
+        mutate(**{"src-tauri/src/mcp_server.rs":
+                  '#![cfg(feature = "mcp")]\nuse std::io::{self, BufRead, Write};\n'
+                  'pub fn run_stdio() {\n'
+                  '    let stdin = io::stdin();\n'
+                  '    let mut stdout = io::stdout().lock();\n'
+                  '    for line in stdin.lock().lines() {\n'
+                  '        let line = match line { Ok(l) => l, Err(_) => break };\n'
+                  '        let resp = handle_request(&line);\n'
+                  '        if let Ok(s) = serde_json::to_string(&resp) {\n'
+                  '            let _ = writeln!(stdout, "{s}");\n'
+                  '        }\n'
+                  '    }\n}\n'
+                  'fn handle_request(req: &str) -> serde_json::Value { let _ = req; serde_json::json!({}) }\n'}),
+        "src-tauri/src/mcp_server.rs")
     add("MCP_CAPABILITY_DRIFT", "MCP_CAPABILITY_V1 定义两处",
         mutate(**{"src-tauri/src/core/mod.rs": "const MCP_CAPABILITY_V1: &[&str] = &[];\n",
                   "src-tauri/src/extra.rs": "const MCP_CAPABILITY_V1: &[&str] = &[];\n"}),

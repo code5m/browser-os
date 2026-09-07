@@ -42,7 +42,8 @@ function caps(def: AgentDef) {
     </div>
     <div v-if="store.error" class="banner banner-error">{{ store.error }}</div>
 
-    <div v-if="state.state === 'empty'" class="empty-state">{{ state.message }}</div>
+    <div v-if="state.state === 'loading'" class="loading-state">{{ state.message }}</div>
+    <div v-else-if="state.state === 'empty'" class="empty-state">{{ state.message }}</div>
     <div v-else class="list">
       <div
         v-for="a in store.agents"
@@ -84,5 +85,6 @@ function caps(def: AgentDef) {
 .chip { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: #f0f0f0; color: #999; }
 .chip.granted { background: #e6f4ff; color: #1677ff; }
 .empty-state { padding: 24px; color: #999; text-align: center; }
+.loading-state { padding: 24px; color: #888; text-align: center; }
 .install-btn { margin-top: 6px; }
 </style>

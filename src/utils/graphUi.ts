@@ -111,6 +111,17 @@ export function edgeKey(e: GraphEdge): string {
   return `${e.from}|${e.to}|${e.kind}`;
 }
 
+// 确定性选择解析：在给定边集合中按稳定标识 `edgeKey` 解析选中边。
+// 过滤变化后只要该边仍在可见集合即可还原，选择不随可见列表索引漂移。
+// W11 收口为单一真源（store 的 selectedEdge 复用，杜绝选择逻辑散落）。
+export function resolveEdgeByKey(
+  edges: readonly GraphEdge[],
+  key: string | null,
+): GraphEdge | null {
+  if (!key) return null;
+  return edges.find((e) => edgeKey(e) === key) ?? null;
+}
+
 // ====== 布局（纯 TS，无 D3；确定性，无随机，便于测试） ======
 export type LayoutKind = "tree" | "force" | "cluster";
 export function layoutKindOf(edges: GraphEdge[]): LayoutKind {
@@ -232,10 +243,10 @@ export function boundedInsert<T extends { id: string }>(
 }
 
 // ====== 渲染有界（UI 安全网）======
-// 与数据有界(MAX_NODES/MAX_EDGES)同口径；正常数据不会触发截断，仅作为单点护栏，
-// 防止任何渲染数组无界增长。返回截断标记与总数，供 UI 提示（W10 有界渲染）。
-export const RENDER_NODE_CAP = 5000; // = GRAPH_MAX_NODES
-export const RENDER_EDGE_CAP = 20000; // = GRAPH_MAX_EDGES
+// 与数据有界(MAX_NODES/MAX_EDGES)同源：渲染护栏口径必须与数据上限严格一致，
+// 故直接引用 GRAPH_MAX_NODES/GRAPH_MAX_EDGES（W11 修正 R-W9-3 源扩散，不得再写字面量）。
+export const RENDER_NODE_CAP = GRAPH_MAX_NODES;
+export const RENDER_EDGE_CAP = GRAPH_MAX_EDGES;
 export interface RenderClamp<T> {
   items: T[];
   truncated: boolean;

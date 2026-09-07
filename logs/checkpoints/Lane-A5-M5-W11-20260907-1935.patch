@@ -1,0 +1,245 @@
+diff --git a/logs/assist/A5-M5-W11-20260907-1935.md b/logs/assist/A5-M5-W11-20260907-1935.md
+new file mode 100644
+index 0000000..40a4a07
+--- /dev/null
++++ b/logs/assist/A5-M5-W11-20260907-1935.md
+@@ -0,0 +1,173 @@
++# A5 · M5-W11 Agent/Skill Policy — Readiness Note（AGENT/SKILL POLICY ONLY）
++
++- **Lane**：A5 ｜ **Wave**：M5-W11（MCP Stdio Dry-Run Hardening）｜ **AI**：BALANCED ｜ **Risk**：medium
++- **角色**：W11 = `START AGENT/SKILL POLICY ONLY`（board W11：A5 = 政策/评审；`no execution runtime`）
++- **BASE**：`5226aad`（master，与 origin/master 同步：`git fetch origin && git pull --ff-only` → "已经是最新的"）
++- **HEAD**：`5226aad` + 本 note + `scripts/check-agent-skill-policy.py` 新增 1 个码位（**无产品代码改动**）
++- **时间戳**：2026-09-07 19:35 CST
++- **派工依据**：`PARALLEL_COMMAND_BOARD.md` §M5-W11 W11 Assignments A5 行：
++  > Keep Agent/Skill execution locked. Add only missing policy fixtures if W10/W11 reviews found leaks; otherwise write readiness note for future execution-wave contract.
++  > Allowed Scope: `scripts/check-agent-skill-policy.py`, `logs/assist/A5-M5-W11-*.md`
++
++---
++
++## Lane Output Template
++
++```text
++LANE=A5
++STATUS=PASS
++BASE=5226aad
++HEAD=5226aad
++FILES=logs/assist/A5-M5-W11-20260907-1935.md, scripts/check-agent-skill-policy.py
++VERIFY=见 §6
++CHECKPOINT=logs/assist/A5-M5-W11-20260907-1935.md
++MERGE_NOTES=自测计数由 ACTIVE=3/PENDING=5 变为 ACTIVE=3/PENDING=6（新增 AGSK_EXEC_LOCKED），A0/A11 需同步更新验证矩阵中的期望值；执行类前端 wrapper 悬空问题（§3.1）交 A6/A0 闭环
++NEXT=A6（Agent/Skill UI 禁用执行态）/ A10（W11 安全复核）/ 执行波次（M5-4.b / M5-5）
++```
++
++---
++
++## 1. 执行锁定实证（"Keep Agent/Skill execution locked" 验证）
++
++W11 Hard Stop 第一条：**"W11 is still dry-run only: no real file/db/script/plugin/agent/skill/model execution."**
++
++| 验证 | 命令 / 方法 | 结果 |
++|---|---|---|
++| Agent/Skill 模块无执行路径 | `grep -nE "skill_run\|agent_chat\|start_run\|std::process\|Command::new\|tokio::spawn\|fn run\b\|execute" src-tauri/src/skills.rs src-tauri/src/agent.rs` | **零命中**（无 `script_runner` 调用、无 `SkillExec` 执行分支、无派生子进程） |
++| 已注册命令仅 W7 只读六件套 | `grep -noE "\b(skill_\|agent_)[a-z_]+" src-tauri/src/main.rs` | 仅 `agent_parse`/`agent_validate`/`agent_permission_preview`/`skill_parse`/`skill_validate`/`skill_permission_preview` + `agent_memory`（A4 域） |
++| ACL 无 Agent/Skill 条目 | `grep -nE "^\s*(skill_\|agent_)[a-z_]+" src-tauri/permissions/default-commands.toml` | **零命中** |
++| 策略默认扫描 | `python3 scripts/check-agent-skill-policy.py` | `AGENT_SKILL_POLICY=PASS（无违规）` |
++| 策略自测 | `python3 scripts/check-agent-skill-policy.py --self-test` | `AGENT_SKILL_POLICY_SELF_TEST=PASS（ACTIVE=3，PENDING=6）` |
++
++**结论**：Agent/Skill 域已落地（类型 + 能力单源常量），但**仅解析/校验/权限预览层**，**后端无执行 handler、ACL 无条目**；执行保持锁定，符合 W11 Hard Stop。
++
++---
++
++## 2. 既有策略覆盖 + 本轮新增码位
++
++`scripts/check-agent-skill-policy.py` 覆盖 Agent/Skill 静态不变量：
++
++| 码位 | 类型 | 契约来源 | 守卫内容 |
++|---|---|---|---|
++| `AGSK_ACL_TAIL` | ACTIVE | K1 | ACL 末条恒 `list_artifact_images` |
++| `AGSK_CAPABILITY_DRIFT` | ACTIVE | AGSK_7 | `SKILL_CAPABILITY_V1` / `AGENT_CAPABILITY_V1` 单一真源，禁漂移/零定义 |
++| `AGSK_RO_COMMAND_PARITY` | ACTIVE | W7 | 只读 `agent_*/skill_*` parse/validate/permission_preview 四件套 + source check 奇偶 |
++| `AGSK_SECOND_PATH` | PENDING | AGSK_1 | skills.rs/agent.rs 禁 `std::process`/`Command::new`/`"-c"`/`tokio::spawn`（第二执行路径） |
++| `AGSK_INLINE_SHELL_ENUM` | PENDING | K6 | `SkillExec` 枚举禁 `InlineScript`/`RawShell` 等内联 shell 变体 |
++| `AGSK_INLINE_SHELL_REF` | PENDING | AGSK_3 | skills.rs/agent.rs 禁引用内联 shell 标识符 |
++| `AGSK_COMMAND_PARITY` | PENDING | AGSK_2 | M5-5 的 15 条运行时命令须 handler+main.rs+ACL+bridge.ts 奇偶 |
++| `AGSK_CREDENTIAL_NOT_ECHOED` | PENDING | W8 脱敏镜头 | `PolicyError::CredentialLeak` 的 Display 不得回显 secret 原文（`{s}`） |
++| **`AGSK_EXEC_LOCKED`** | **PENDING（W11 A5 新增）** | **W11 Hard Stop「no agent/skill execution」** | `main.rs` 一旦注册**执行类**命令（`skill_run`/`skill_cancel`/`skill_runs_list`/`agent_chat`/`agent_chat_cancel`/`agent_runs`），必须同时在 ACL 与 `bridge.ts` —— 防「执行先上线、门禁后补」的窗口期裸奔 |
++
++ACTIVE 三条始终守门；PENDING 六条按需激活（`_agent_skill_present` 或执行解锁事件）。
++
++---
++
++## 3. W10/W11 评审残留项
++
++### 3.1（本轮实测新发现，升级 A10 的 S-W8-3）前端存在**执行类** wrapper，后端/ACL 均无对应
++
++A10 W10 复核记录的 **S-W8-3** 原文为「`skill_list`/`agent_list` 前端 wrapper 无后端」（只读列举），
++本轮实测发现**实际缺口更宽，且含执行语义**：
++
++| 前端 wrapper（`src/bridge.ts`） | invoke 的命令 | 后端 main.rs | ACL |
++|---|---|---|---|
++| `skillRun`（:391-392） | `skill_run` | **未注册** | **无** |
++| `agentChat`（:395-396） | `agent_chat` | **未注册** | **无** |
++| `agentRunCancel`（:398） | `agent_chat_cancel` | **未注册** | **无** |
++| `skillRunsList`（:407） | `skill_runs_list` | **未注册** | **无** |
++
++- **当前不致命**：后端无 handler，invoke 会以 command-not-found 失败；执行面仍锁定。
++- **但属真实缺口**：前端已声明执行能力而后端/ACL 皆无，且 A10 记录只覆盖只读列举命令，
++  未覆盖 `skill_run`/`agent_chat` 等**执行类**。若未来后端补 handler 而 ACL/门禁未同步补齐，
++  就会出现「执行先上线」。
++- **A5 处置**：不改 `src/bridge.ts`（非本 lane 范围，属 A6 UI / A4 前端桥），
++  改为新增 `AGSK_EXEC_LOCKED` 码位（见 §2），把「执行解锁」变成机器可判事件：
++  main.rs 一旦注册执行类命令而 ACL/bridge.ts 未齐即判违规。
++- **交接**：`src/bridge.ts` 中上述 4 个悬空执行 wrapper 的存/废（删除 wrapper 或补齐后端+ACL）
++  交 **A6（Agent/Skill UI）与 A0** 闭环；A5 的码位保证一旦后端注册即被门禁捕获。
++
++### 3.2 S-W8-1 残留（LOW，非泄漏）
++
++`agent.rs`/`skills.rs` 仍 `clone` secret 进 `CredentialLeak` 结构体；但 `Display` 已不插值
++（`<redacted>`），`AGSK_CREDENTIAL_NOT_ECHOED` 自测 PASS → **secret 不回显**。
++仅为「传标记而非 clone 整段 secret」的 LOW 级整洁建议，非安全泄漏，非政策 lane 产品码范围。
++
++**结论：W10/W11 未发现 concrete 泄漏；本轮新增 1 个码位（AGSK_EXEC_LOCKED）用于把执行解锁变为可判事件。**
++
++---
++
++## 4. 未来执行波次契约（readiness note 主体）
++
++当 M5-4.b 执行层 / M5-5 命令真正落地（**非 W11 范围**）时，A5 视角的准入契约：
++
++1. **执行复用 M2-4**：`SkillExec` 的 `ScriptRef`/`CommandRef`/`Sequence` 只能经
++   `script_runner::start_run` / `start_command` 落地，**禁第二执行路径**（AGSK_1 / `AGSK_SECOND_PATH`）。
++2. **禁内联 shell**：`SkillExec` 枚举仅 `ScriptRef`/`CommandRef`/`Sequence`
++   （K6 / `AGSK_INLINE_SHELL_*`）。
++3. **ACL 末条恒定**：新增命令须进 `default-commands.toml`，末条恒 `list_artifact_images`
++   （K1 / `AGSK_ACL_TAIL`）。
++4. **能力单一真源**：`SKILL_CAPABILITY_V1` / `AGENT_CAPABILITY_V1` 各定义一次
++   （AGSK_7 / `AGSK_CAPABILITY_DRIFT`）。
++5. **四件套 + source check**：handler（`bridge.rs`）+ `main.rs` 注册 + ACL + `bridge.ts`，
++   且 handler 必带 `check_invocation_source`（AGSK_2 / `AGSK_COMMAND_PARITY` / `AGSK_RO_COMMAND_PARITY`）。
++6. **执行解锁先补门禁**：执行类命令注册即须 ACL + bridge.ts 齐备（`AGSK_EXEC_LOCKED`，本轮新增）。
++7. **凭据不回显**：`CredentialLeak` 等错误 Display 不插值（W8 脱敏镜头 / `AGSK_CREDENTIAL_NOT_ECHOED`）。
++8. **执行仍受 W 系列硬停约束**：无 listener/network、无 plugin install、无 model call、
++   无隐藏 script/db 执行；默认构建行为不变。
++
++> 契约来源（既有，非本 note 发明）：`logs/assist/A5-M5-agent-skill-*.md`（AGSK_1/3/7、K1/K6）、
++> `logs/checkpoints/M5-20260906/M5-4-agent-skill-runtime.md`、`M5-5-agent-skill-commands.md`（A1 卡）、
++> `src-tauri/src/security_policy.rs`（能力单源）、`PARALLEL_COMMAND_BOARD.md` §M5-W4/W7/W8/W11 Hard Stops。
++
++---
++
++## 5. 本轮改动清单
++
++| 文件 | 改动 | 说明 |
++|---|---|---|
++| `scripts/check-agent-skill-policy.py` | 新增 `_EXEC_CMDS` 常量 + `c_exec_locked()` 函数 + PENDING 注册 + 1 条自测坏样本 | 新增 `AGSK_EXEC_LOCKED` 码位；另修正：默认扫描保持 PASS，不引入红灯 |
++| `logs/assist/A5-M5-W11-20260907-1935.md`（本文） | 新增 | readiness note |
++
++**未触碰**：`src/**`、`src-tauri/**`（W11 Hard Stop：无 agent/skill 执行，无产品代码）。
++
++---
++
++## 6. 验证证据（命令 + 结果）
++
++```text
++$ python3 scripts/check-agent-skill-policy.py --self-test
++AGENT_SKILL_POLICY_SELF_TEST=PASS（ACTIVE=3，PENDING=6）     # 坏样本 AGSK_EXEC_LOCKED 已检出（变异防呆）
++
++$ python3 scripts/check-agent-skill-policy.py
++AGENT_SKILL_POLICY=PASS（无违规）                            # 默认扫描仍绿，未引入新红灯
++
++$ python3 - <<'PY'   # 变异验证：main.rs 注册 skill_run
++mutation hits: {'AGSK_COMMAND_PARITY': [...'skill_run'...],
++                'AGSK_EXEC_LOCKED': ['Agent/Skill 执行类命令已在 main.rs 注册但缺 ACL/bridge.ts …']}
++baseline hits: {}                                             # 基线无误报
++PY
++
++$ grep -nE "skill_run|agent_chat|start_run|std::process|Command::new|tokio::spawn|fn run\b|execute" \
++    src-tauri/src/skills.rs src-tauri/src/agent.rs
++（无输出 → Agent/Skill 执行路径零命中，执行锁定成立）
++
++$ git fetch origin && git pull --ff-only
++已经是最新的。        # BASE = 5226aad，与 origin/master 同步
++```
++
++---
++
++## 7. 结论与交接
++
++- **STATUS = PASS**：Agent/Skill 执行保持锁定（后端无执行 handler、ACL 无条目、模块零执行路径）；
++  策略脚本全绿（**ACTIVE=3 / PENDING=6**），新增 `AGSK_EXEC_LOCKED` 把执行解锁变为可判事件且默认扫描不红灯；
++  未来执行波次契约已在 §4 沉淀。
++- **自测计数变更（需 A0/A11 同步）**：`ACTIVE=3, PENDING=5` → `ACTIVE=3, PENDING=6`。
++  A10 W10 与 A11 验证矩阵中若硬编码了 `PENDING=5`，需按新值更新（**勿**为对齐旧值而删码位）。
++- **不 push / 不动产品代码**：依 board 规则仅 A0 推送；本交付无 `src/**` 改动，W11 Hard Stop 全部满足。
++- **交接 A6**：Agent/Skill UI 须保持执行态禁用；`src/bridge.ts` 中 4 个悬空执行 wrapper
++  （`skillRun`/`agentChat`/`agentRunCancel`/`skillRunsList`）的存/废请与本 lane 的 `AGSK_EXEC_LOCKED` 对齐。
++- **交接 A10**：以 §1/§2 证据为 W11 安全复核基线（重点：Agent/Skill 域无执行、凭据不回显、新码位无副作用）。
++- **交接未来执行波次（M5-4.b / M5-5）**：按 §4 契约实施；执行类命令一旦进 main.rs，
++  `AGSK_EXEC_LOCKED` 会强制要求 ACL + bridge.ts 同步补齐。
+diff --git a/scripts/check-agent-skill-policy.py b/scripts/check-agent-skill-policy.py
+index 6c134ba..371ee87 100644
+--- a/scripts/check-agent-skill-policy.py
++++ b/scripts/check-agent-skill-policy.py
+@@ -264,6 +264,43 @@ def c_credential_not_echoed(rel, text, repo):
+     return None
+
+
++# Agent/Skill **执行类**命令（M5-5 运行时命令中真正带副作用/执行语义的子集）。
++# 注意：不含 `skill_list`/`agent_list`（只读列举），执行面判据只看这些。
++_EXEC_CMDS = (
++    "skill_run", "skill_cancel", "skill_runs_list",
++    "agent_chat", "agent_chat_cancel", "agent_runs",
++)
++
++
++def c_exec_locked(rel, text, repo):
++    """AGSK_EXEC_LOCKED（W11 · A5 加）：Agent/Skill **执行面解锁**的前置门禁。
++
++    背景（本轮实测发现，升级 A10 的 S-W8-3）：
++      `src/bridge.ts` 已存在 `skillRun`/`agentChat`/`agentRunCancel`/`skillRunsList` 等
++      **执行类**前端 wrapper（invoke `skill_run` / `agent_chat` / `agent_chat_cancel` /
++      `skill_runs_list`），但 `main.rs` 只注册了 W7 只读六件套，`default-commands.toml`
++      中 `skill_*`/`agent_*` 条目为 0 —— 即「前端已声明执行能力、后端无 handler」。
++      当前不致命（invoke 会 command-not-found 失败），但 A10 W10 记录的 S-W8-3
++      只写了 `skill_list`/`agent_list`（只读），**未覆盖执行类 wrapper**，属描述不全。
++
++    本码位把「执行解锁」变成机器可判事件：一旦 `main.rs` 注册了任一执行类命令，
++    即视为执行面已开，则该命令**必须**同时出现在 ACL 与 bridge.ts（四件套最小集），
++    否则判违规 —— 防止「执行先上线、ACL/前端门禁后补」的窗口期裸奔，
++    并落实 W11 Hard Stop「no real agent/skill execution」。
++
++    门控：仅当 main.rs 出现执行类命令时才守门；当前执行未解锁 → no-op，
++    默认扫描保持 PASS（不引入新的红灯、不影响既有 ACTIVE/PENDING 计数语义）。
++    """
++    if rel != "src-tauri/src/main.rs":
++        return None
++    acl = repo.get("src-tauri/permissions/default-commands.toml", "")
++    bts = repo.get("src/bridge.ts", "")
++    missing = [c for c in _EXEC_CMDS if c in text and (c not in acl or c not in bts)]
++    if missing:
++        return [f"Agent/Skill 执行类命令已在 main.rs 注册但缺 ACL/bridge.ts（执行解锁须先补齐门禁，违反 AGSK 执行锁定）：{sorted(missing)}"]
++    return None
++
++
+ ACTIVE_CODES = [
+     ("AGSK_ACL_TAIL", "ACTIVE", c_acl_tail),
+     ("AGSK_CAPABILITY_DRIFT", "ACTIVE", c_capability_drift),
+@@ -275,6 +312,7 @@ PENDING_CODES = [
+     ("AGSK_INLINE_SHELL_REF", "PENDING", c_no_inline_exec_variant),
+     ("AGSK_COMMAND_PARITY", "PENDING", c_command_parity),
+     ("AGSK_CREDENTIAL_NOT_ECHOED", "PENDING", c_credential_not_echoed),
++    ("AGSK_EXEC_LOCKED", "PENDING", c_exec_locked),
+ ]
+ ALL_CODES = ACTIVE_CODES + PENDING_CODES
+
+@@ -447,6 +485,9 @@ def _run_self_test() -> int:
+         mutate(**{"src-tauri/src/security_policy.rs":
+                   good["src-tauri/src/security_policy.rs"].replace("<redacted>", "{s}")}),
+         "src-tauri/src/security_policy.rs")
++    add("AGSK_EXEC_LOCKED", "main.rs 注册 skill_run（执行解锁）但 ACL/bridge.ts 缺失",
++        mutate(**{"src-tauri/src/main.rs": "bridge::skill_run,\n"}),
++        "src-tauri/src/main.rs")
+
+     for code, _desc, mutated in bad_cases:
+         h = detect_hits(mutated)

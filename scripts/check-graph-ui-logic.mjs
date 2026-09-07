@@ -179,6 +179,67 @@ const bigArr = Array.from({ length: 6000 }, (_, i) => i);
 const rc2 = graphUi.clampRender(bigArr, 5000);
 ok("clampRender 超限封顶(cap=5000)", rc2.truncated === true && rc2.items.length === 5000 && rc2.total === 6000);
 
+// ---- W11：单源守卫（RENDER_* 必须 == 数据上限常量，杜绝 R-W9-3 源扩散）----
+ok(
+  "RENDER_NODE_CAP === GRAPH_MAX_NODES(5000)",
+  graphUi.RENDER_NODE_CAP === graphUi.GRAPH_MAX_NODES && graphUi.RENDER_NODE_CAP === 5000,
+);
+ok(
+  "RENDER_EDGE_CAP === GRAPH_MAX_EDGES(20000)",
+  graphUi.RENDER_EDGE_CAP === graphUi.GRAPH_MAX_EDGES && graphUi.RENDER_EDGE_CAP === 20000,
+);
+
+// ---- W11：有界渲染（边 cap=20000 与节点 cap=5000 同口径，UI 安全网）----
+const rcEdge = graphUi.clampRender(Array.from({ length: 25000 }, (_, i) => i), graphUi.GRAPH_MAX_EDGES);
+ok("clampRender 边上限封顶(cap=20000)", rcEdge.truncated === true && rcEdge.items.length === 20000 && rcEdge.total === 25000);
+const rcNode2 = graphUi.clampRender(Array.from({ length: 6000 }, (_, i) => i), graphUi.GRAPH_MAX_NODES);
+ok("clampRender 节点上限封顶(cap=5000)", rcNode2.truncated === true && rcNode2.items.length === 5000 && rcNode2.total === 6000);
+
+// ---- W11：面板三态补充（loading 态；只读壳文案不泄露后端命令名/invoke）----
+eq(
+  "panelStateGraph loading",
+  graphUi.panelStateGraph({ loading: true, count: 0, error: null, backendReady: false }).state,
+  "loading",
+);
+ok(
+  "panelStateGraph 只读壳文案不含后端命令名/invoke",
+  !/invoke|graph_query|graph_/.test(
+    graphUi.panelStateGraph({ loading: false, count: 0, error: null, backendReady: false }).message,
+  ),
+);
+
+// ---- W11：确定性选择（resolveEdgeByKey 单一真源，过滤后还原选中边，不随索引漂移）----
+const e1 = edge("a", "b", "uses");
+const e2 = edge("c", "d", "references");
+const e3 = edge("a", "d", "in_dir");
+const selEdges = [e1, e2, e3];
+const selKey = graphUi.edgeKey(e2); // c|d|references
+ok("resolveEdgeByKey 命中(from=c)", graphUi.resolveEdgeByKey(selEdges, selKey)?.from === "c");
+ok("resolveEdgeByKey 缺失 key 返回 null", graphUi.resolveEdgeByKey(selEdges, "x|y|z") === null);
+ok("resolveEdgeByKey null key 返回 null", graphUi.resolveEdgeByKey(selEdges, null) === null);
+// 过滤后（仅保留 file/agent 可见节点 a,d）→ 边 a|d|in_dir 两端仍可见，按同一 key 还原
+const fNodes = [node("a", "file", "A"), node("b", "dir", "B"), node("c", "skill", "C"), node("d", "agent", "D")];
+const visibleAfterFilter = graphUi.filterEdges(selEdges, fNodes, { query: "", kinds: ["file", "agent"] });
+ok(
+  "resolveEdgeByKey 过滤后仍可还原选中边(不随索引漂移)",
+  graphUi.resolveEdgeByKey(visibleAfterFilter, graphUi.edgeKey(e3))?.from === "a",
+);
+
+// ---- W11：搜索稳定性（filterEdges 对相同输入确定性输出；按边类型中文标签检索后 key 稳定）----
+const detA = graphUi.filterEdges(selEdges, fNodes, { query: "", kinds: [] });
+const detB = graphUi.filterEdges(selEdges, fNodes, { query: "", kinds: [] });
+ok(
+  "filterEdges 确定性(同输入同输出，顺序可复现非随机)",
+  detA.map(graphUi.edgeKey).join(",") === detB.map(graphUi.edgeKey).join(","),
+);
+// 按节点类型过滤后，保留边的 edgeKey 稳定（与可见集合顺序无关）；
+// 注意：filterEdges 的 query 同时作用于节点可见性与边类型标签，故边检索经节点类型过滤表达。
+const kindFiltered = graphUi.filterEdges(selEdges, fNodes, { query: "", kinds: ["file", "agent"] });
+ok(
+  "filterEdges 按节点类型过滤后边 key 稳定",
+  kindFiltered.length === 1 && graphUi.edgeKey(kindFiltered[0]) === graphUi.edgeKey(e3),
+);
+
 // ---- 面板三态 ----
 eq(
   "panelStateGraph backendReady=false empty",

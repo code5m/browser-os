@@ -44,7 +44,8 @@ function caps(def: SkillDef) {
     </div>
     <div v-if="store.error" class="banner banner-error">{{ store.error }}</div>
 
-    <div v-if="state.state === 'empty'" class="empty-state">{{ state.message }}</div>
+    <div v-if="state.state === 'loading'" class="loading-state">{{ state.message }}</div>
+    <div v-else-if="state.state === 'empty'" class="empty-state">{{ state.message }}</div>
     <div v-else class="list">
       <div
         v-for="s in store.skills"
@@ -91,5 +92,6 @@ function caps(def: SkillDef) {
 .tag.warn { background: #fff7e6; color: #ad6800; }
 .tag.danger { background: #fff1f0; color: #cf1322; }
 .empty-state { padding: 24px; color: #999; text-align: center; }
+.loading-state { padding: 24px; color: #888; text-align: center; }
 .install-btn { margin-top: 6px; }
 </style>

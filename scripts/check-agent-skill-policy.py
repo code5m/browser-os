@@ -264,6 +264,43 @@ def c_credential_not_echoed(rel, text, repo):
     return None
 
 
+# Agent/Skill **执行类**命令（M5-5 运行时命令中真正带副作用/执行语义的子集）。
+# 注意：不含 `skill_list`/`agent_list`（只读列举），执行面判据只看这些。
+_EXEC_CMDS = (
+    "skill_run", "skill_cancel", "skill_runs_list",
+    "agent_chat", "agent_chat_cancel", "agent_runs",
+)
+
+
+def c_exec_locked(rel, text, repo):
+    """AGSK_EXEC_LOCKED（W11 · A5 加）：Agent/Skill **执行面解锁**的前置门禁。
+
+    背景（本轮实测发现，升级 A10 的 S-W8-3）：
+      `src/bridge.ts` 已存在 `skillRun`/`agentChat`/`agentRunCancel`/`skillRunsList` 等
+      **执行类**前端 wrapper（invoke `skill_run` / `agent_chat` / `agent_chat_cancel` /
+      `skill_runs_list`），但 `main.rs` 只注册了 W7 只读六件套，`default-commands.toml`
+      中 `skill_*`/`agent_*` 条目为 0 —— 即「前端已声明执行能力、后端无 handler」。
+      当前不致命（invoke 会 command-not-found 失败），但 A10 W10 记录的 S-W8-3
+      只写了 `skill_list`/`agent_list`（只读），**未覆盖执行类 wrapper**，属描述不全。
+
+    本码位把「执行解锁」变成机器可判事件：一旦 `main.rs` 注册了任一执行类命令，
+    即视为执行面已开，则该命令**必须**同时出现在 ACL 与 bridge.ts（四件套最小集），
+    否则判违规 —— 防止「执行先上线、ACL/前端门禁后补」的窗口期裸奔，
+    并落实 W11 Hard Stop「no real agent/skill execution」。
+
+    门控：仅当 main.rs 出现执行类命令时才守门；当前执行未解锁 → no-op，
+    默认扫描保持 PASS（不引入新的红灯、不影响既有 ACTIVE/PENDING 计数语义）。
+    """
+    if rel != "src-tauri/src/main.rs":
+        return None
+    acl = repo.get("src-tauri/permissions/default-commands.toml", "")
+    bts = repo.get("src/bridge.ts", "")
+    missing = [c for c in _EXEC_CMDS if c in text and (c not in acl or c not in bts)]
+    if missing:
+        return [f"Agent/Skill 执行类命令已在 main.rs 注册但缺 ACL/bridge.ts（执行解锁须先补齐门禁，违反 AGSK 执行锁定）：{sorted(missing)}"]
+    return None
+
+
 ACTIVE_CODES = [
     ("AGSK_ACL_TAIL", "ACTIVE", c_acl_tail),
     ("AGSK_CAPABILITY_DRIFT", "ACTIVE", c_capability_drift),
@@ -275,6 +312,7 @@ PENDING_CODES = [
     ("AGSK_INLINE_SHELL_REF", "PENDING", c_no_inline_exec_variant),
     ("AGSK_COMMAND_PARITY", "PENDING", c_command_parity),
     ("AGSK_CREDENTIAL_NOT_ECHOED", "PENDING", c_credential_not_echoed),
+    ("AGSK_EXEC_LOCKED", "PENDING", c_exec_locked),
 ]
 ALL_CODES = ACTIVE_CODES + PENDING_CODES
 
@@ -447,6 +485,9 @@ def _run_self_test() -> int:
         mutate(**{"src-tauri/src/security_policy.rs":
                   good["src-tauri/src/security_policy.rs"].replace("<redacted>", "{s}")}),
         "src-tauri/src/security_policy.rs")
+    add("AGSK_EXEC_LOCKED", "main.rs 注册 skill_run（执行解锁）但 ACL/bridge.ts 缺失",
+        mutate(**{"src-tauri/src/main.rs": "bridge::skill_run,\n"}),
+        "src-tauri/src/main.rs")
 
     for code, _desc, mutated in bad_cases:
         h = detect_hits(mutated)

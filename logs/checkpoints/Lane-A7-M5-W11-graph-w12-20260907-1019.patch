@@ -1,0 +1,415 @@
+diff --git a/logs/assist/A7-M5-W11-graph-w12-impl-plan-20260907-1019.md b/logs/assist/A7-M5-W11-graph-w12-impl-plan-20260907-1019.md
+new file mode 100644
+index 0000000..e3a44ba
+--- /dev/null
++++ b/logs/assist/A7-M5-W11-graph-w12-impl-plan-20260907-1019.md
+@@ -0,0 +1,338 @@
++# Lane A7 · M5-W11 → W12 图谱 live-query 实施计划（GRAPH DOCS ONLY · 供后续 runtime wave 原子落地）
++
++> 续 W5（`4b438ef` 图谱 core）+ W6（契约评审 `A7-M5-W6-graph-contract-review-20260906-2239.md`）+ W7（`A7-M5-W7-graph-bridge-card-20260907-0725.md`）+ W8（`A7-M5-W8-graph-bridge-card-20260907-0756.md`）+ W9（`A7-M5-W9-graph-bridge-contract-20260907-0903.md`）+ W10（`A7-M5-W10-graph-live-query-card-20260907-0927.md`）。
++> 本文件是 **M5-W11 MCP Stdio Dry-Run Hardening Dispatch（board `5226aad`，A0 2026-09-07 18:30 添加）** 下 Lane A7 的 docs-only 交付。
++> 依据 board §M5-W11（line 198）：`A7 = START GRAPH DOCS ONLY`，任务 = *“Convert W10 graph live-query card into a concrete W12 implementation plan with command contracts, limits, cancellation, privacy, and tests. Do not implement commands.”* 交付物 = 本**图谱 W12 实施计划卡片**（无产品代码）。
++> **本波 W11 不写任何产品代码**；仅产出供后续 runtime wave（W12）原子实施的、可逐文件照抄的蓝图。
++
++## 0. 调度匹配自检
++
++| 项 | 实测 | 结论 |
++|---|---|---|
++| `WORKSPACE_IDENTITY` / `pwd` / branch | `BACKV3_MAIN` / 匹配 / `master` | ✅ |
++| `git fetch && git pull --ff-only` | 已最新（HEAD=`5226aad`，W10 MCP stdio prep 已集成、工作树干净） | ✅ |
++| NEXT/M5 | board §M5-W11：仅 A3 可碰 MCP stdio 加固；图谱 live-query 属“later wave”，**W11 不开** | ✅ 本包合规（仅卡片） |
++| A3 排除遵守（沿用 W8+） | 不触碰 `mcp.rs`/`mcp_server.rs`/A3 文件；图谱 live-query **零 MCP 依赖、不需 `mcp` feature gate** | ✅ |
++| 是否越界 | 仅产出本卡片（`logs/assist/`）+ 一个 checkpoint 补丁；**未**改 `graph.rs`/`domain.rs`/`bridge.rs`/`main.rs`/`default-commands.toml`/`src/types.ts`/`src/bridge.ts`/`workspace.rs`/`check-graph-policy.py`/`pre-merge.sh` | ✅ |
++| 工作树脏文件 | W11 其他 lane（A1/A2/A3/A4/A5/A6/A8/A9/A10/A11）并发产物非本 Lane，不纳入、不触碰 | — |
++
++## 1. W12 范围与硬停
++
++### 1.1 范围（W12 只做这三件只读命令）
++| 命令 | 用途 | 只读 | 写 store | 引依赖 |
++|---|---|---|---|---|
++| `graph_query` | 从 `start_id` 出发的有界子图查询（节点 + 其间边，删 props） | ✅ | 否 | 无 |
++| `graph_node_get` | 单点详情（Skill/Agent id 走 64-hex 校验），缺失返回 `null` | ✅ | 否 | 无 |
++| `graph_stats` | 容量概览（节点/边计数 + 容量 + 黄牌信号） | ✅ | 否 | 无 |
++
++> **不在 W12 范围**：`graph_node_upsert`/`graph_node_delete`/`graph_edge_upsert`/`graph_edge_delete`/`graph_node_list`/`graph_edge_list`/`graph_export`（M5-8 原始 9 命令设计中的写/列/导出命令）、图谱抽取器（extractor）、SQLite 持久化（`graph.db`）、后台 rebuild worker、维护任务（`graph-vacuum` 等）。这些属后续独立 wave，不阻塞 W12。
++
++### 1.2 硬停（W11 board L204–L212 全承；W12 实施时守）
++- W12 仍 **只读**：无文件/db/script/plugin/agent/skill/model 执行、无网络、无第二执行路径。
++- 无 TCP listener / HTTP server / 后台 daemon / 下载 / 模型调用 / 隐藏执行。
++- 无 raw `props`/`secret`/`token`/`cookie`/`query`/`body`/`capability reason` echo（响应/日志/审计/checkpoint/UI 态均不得含）。
++- 依赖零新增（默认构建不变）；如需新依赖必须 optional + feature-gated（W12 不需要）。
++- 新命令三同步：source check + ACL + bridge/types 镜像 + 策略 self-test。
++- build metrics ≤22%；`cargo` warning 不增。
++- 仅 A0 push。
++
++## 2. 事实基线（2026-09-07 仓库核查，W12 蓝图的唯一真相源）
++
++- `graph.rs`（`src-tauri/src/graph.rs`）：**0 个 `#[tauri::command]`**；但已有全部 pure helper：
++  - `GraphStore { nodes: Vec<GraphNode>, edges: Vec<GraphEdge> }`（`#[derive(Default)]`）。
++  - `GraphStore::bounded_neighbors(&self, start_id, depth, limit) -> Vec<GraphNode>`（BFS，`depth.min(GRAPH_MAX_DEPTH)`、`limit.min(GRAPH_QUERY_LIMIT)`）。
++  - `GraphStore::bounded_subgraph(&self, start_id, depth) -> GraphStore`（取 `bounded_neighbors(start, depth, GRAPH_QUERY_LIMIT)` 的节点 + 其间边）。
++  - `GraphStore::from_json(text) -> Result<Self, GraphError>`（逐条 `validate_graph_node/edge`，容量/双扫/完整性全守）。
++  - `validate_graph_node/edge`、`validate_id`（Skill/Agent `is_hex(id, GRAPH_NODE_ID_HEX_LEN)` → `RefIdNotHex`）、`graph_props_contain_secret`（字段名黑名单 `token/password/secret/api_key` + 值模式 `sk-/AKIA/Bearer /eyJ/-----BEGIN`）。
++  - `GraphError` 13 变体（`Display` 为中文串——W12 必须新增稳定 ASCII `code()`，见 §3.4）。
++  - 模块顶部有 `#![allow(dead_code)]`（W5 无消费方遗留；W12 命令消费 helpers 后**移除**）。
++- `domain.rs`（`src-tauri/src/domain.rs` L2040–L2116）冻结 DTO（**单一真源**）：
++  - `GraphNodeKind = File|Dir|Tab|Script|Skill|Agent|Tag|Topic`（`snake_case`）。
++  - `GraphEdgeKind = InDir|References|RelatedTo|TaggedWith|Uses|A2aWith|Memorizes`（`snake_case`）。
++  - `GraphProps = BTreeMap<String,String>`。
++  - `GraphNode { id, kind, label, props: GraphProps(#serde default) }`。
++  - `GraphEdge { from, to, kind, weight: u32(#serde default), props: GraphProps(#serde default) }`。
++  - 常量：`GRAPH_PROPS_MAX_BYTES=MAX_TEXT_FIELD_BYTES`、`GRAPH_LABEL_MAX_BYTES=256`、`GRAPH_NODE_ID_HEX_LEN=64`、`GRAPH_MAX_DEPTH=4`、`GRAPH_QUERY_LIMIT=1000`、`GRAPH_MAX_NODES=5000`、`GRAPH_MAX_EDGES=20000`。
++- `main.rs`：仅 `mod graph;`；**`GraphStore` 尚未作为 managed state 暴露**（W12 必须补，见 §7.2）。`AppState` 定义在 `bridge.rs` L253 `#[derive(Default)] pub struct AppState {…}`，**W12 不碰 `AppState`**（避免手动 `Default` 重构；改用独立 newtype，见 §7.1）。
++- `src/types.ts`：有 `GraphNode`/`GraphEdge` 镜像，**无 `GraphNodeView`/`GraphEdgeView`**（W12 新增）。
++- `src/bridge.ts` L400–404：有占位 `graphQuery: () => invoke<{nodes:GraphNode[];edges:GraphEdge[]}>("graph_query")`——**无参、返回全量含 props、无 `AbortSignal`**（W12 升级为含参 + 删 props View + `signal`，见 §7.5）。另有 `GRAPH_COMMANDS_AVAILABLE` 开关（A8 控制，W12 落地后翻 `true`）。
++- `default-commands.toml`：末条恒为 `list_artifact_images`（L118），**无 graph 命令行**（W12 插 3 条于其前，见 §7.3）。
++- `check-graph-policy.py`：**ACTIVE=7**（`GRAPH_CONSTANTS_PRESENT` / `GRAPH_PROPS_EQ_MAX_TEXT_FIELD` / `GRAPH_PRIVACY_DOUBLE_SCAN` / `GRAPH_BOUNDED_STORE` / `GRAPH_TRAVERSAL_BOUNDED` / `GRAPH_REF_NODE_INTEGRITY` / `GRAPH_NO_SECOND_PATH`）；W12 新增 `GRAPH_OUTPUT_NO_PROPS` → **ACTIVE=8**（见 §7.6）。
++- **偏离 stale `M5-8-graph-store-query.md` 的说明**：M5-8 原始设计（9 命令 + SQLite DDL `graph_store.rs`/`graph_query.rs`/`graph_maintenance.rs` + `source`/`source_ref`/`created_at`/`updated_at`/`extractor_version` 字段）已被 W5–W10 演进**取代**：真实落地为内存 `GraphStore` + 3 只读命令 + 无 `source` 字段 DTO（W6 评审 F1 已确认这些字段不存在）。**W12 以冻结的 `graph.rs`/`domain.rs` 为真相源，不回退到 M5-8 的 9 命令 SQLite 设计**。M5-8 文档更新归 A1/A0 文档整合，不在本 Lane 范围。
++
++## 3. 命令契约（精确签名 + DTO + 稳定错误码）
++
++> **关键架构裁定（修正 W10 §2.5 的含糊）**：3 条命令**定义在 `bridge.rs`**（与全仓其他命令一致），调用 `crate::graph::*` pure helper + `check_invocation_source`（同在 `bridge.rs`）。`graph.rs` **不 import `crate::bridge`**（守 `GRAPH_NO_SECOND_PATH`），仅提供 helper + `GraphState` newtype + `GraphError::code()`。这样既不破坏 `GRAPH_NO_SECOND_PATH`，又满足 source check 同源。
++
++### 3.1 `graph_query`
++```rust
++// bridge.rs
++#[tauri::command]
++pub async fn graph_query(
++    app: AppHandle,
++    webview: tauri::Webview,
++    req: GraphQueryRequest,        // { start_id: String, depth: Option<u8>, limit: Option<usize>, request_id: Option<String> }
++) -> Result<GraphQueryResult, String> {
++    check_invocation_source(&webview, "graph_query", None, &app)?;
++    let start = req.start_id.trim();
++    if start.is_empty() {
++        return Err("GRAPH_INVALID_ID".to_string());
++    }
++    let state = app.state::<crate::graph::GraphState>();
++    let store = state.store.read().unwrap();                 // 纯内存读锁，临界区不跨 await
++    let depth = (req.depth.unwrap_or(2) as usize).min(GRAPH_MAX_DEPTH);
++    let eff_limit = (req.limit.unwrap_or(GRAPH_QUERY_LIMIT)).min(GRAPH_QUERY_LIMIT);
++    let total = store.bounded_neighbors(start, depth, GRAPH_QUERY_LIMIT).len();   // 全局 cap 下的真实总数
++    let shown = store.bounded_neighbors(start, depth, eff_limit);
++    let ids: BTreeSet<String> = shown.iter().map(|n| n.id.clone()).collect();
++    let edges = store.edges.iter()
++        .filter(|e| ids.contains(&e.from) && ids.contains(&e.to))
++        .map(GraphEdgeView::from)
++        .collect();
++    let nodes = shown.into_iter().map(GraphNodeView::from).collect();
++    drop(store);
++    Ok(GraphQueryResult {
++        found: total > 0,
++        nodes, edges,
++        truncated: total > eff_limit,
++        applied: GraphQueryLimits { depth, limit: eff_limit },
++        node_count: <shown count>,
++        edge_count: <edges len>,
++    })
++}
++```
++- `found=false`（start 不在 store）返回 `Ok(...found:false, 空 nodes/edges)`，**不报错**。
++- `truncated`：当且仅当 `total > eff_limit`（含 `eff_limit` 被 `GRAPH_QUERY_LIMIT` 截断的情形）。
++- 复用纯 helper，无 `props` 流出（`GraphNodeView::from` 丢弃 `props`）。
++
++### 3.2 `graph_node_get`
++```rust
++// bridge.rs
++#[tauri::command]
++pub async fn graph_node_get(
++    app: AppHandle,
++    webview: tauri::Webview,
++    id: String,
++) -> Result<Option<GraphNodeView>, String> {
++    check_invocation_source(&webview, "graph_node_get", None, &app)?;
++    // 入参 id 完整性：Skill/Agent 必须 64-hex（复用 graph.rs validate_id 语义）
++    if let Err(e) = crate::graph::validate_id_public(&id) {   // W12 在 graph.rs 暴露一个 pub 包装
++        return Err(e.code().to_string());
++    }
++    let state = app.state::<crate::graph::GraphState>();
++    let store = state.store.read().unwrap();
++    Ok(store.find_node(&id).map(GraphNodeView::from))
++}
++```
++- 缺失 → `Ok(None)`（前端映射 `null`/`NO_RESULT`）；**不报错**。
++- id 非法（空 / 超长 / Skill|Agent 非 64-hex）→ 稳定码 `GRAPH_INVALID_ID` / `GRAPH_REF_ID_NOT_HEX`。
++
++### 3.3 `graph_stats`
++```rust
++// bridge.rs
++#[tauri::command]
++pub async fn graph_stats(
++    app: AppHandle,
++    webview: tauri::Webview,
++) -> Result<GraphStats, String> {
++    check_invocation_source(&webview, "graph_stats", None, &app)?;
++    let state = app.state::<crate::graph::GraphState>();
++    let store = state.store.read().unwrap();
++    let nc = store.nodes.len();
++    let ec = store.edges.len();
++    Ok(GraphStats {
++        node_count: nc,
++        edge_count: ec,
++        node_capacity: GRAPH_MAX_NODES,
++        edge_capacity: GRAPH_MAX_EDGES,
++        approaching_node_capacity: nc * 10 >= GRAPH_MAX_NODES * 9,   // ≥90%
++        approaching_edge_capacity: ec * 10 >= GRAPH_MAX_EDGES * 9,
++    })
++}
++```
++
++### 3.4 稳定错误码映射（`GraphError::code()`，零 secret echo）
++新增于 `graph.rs`，命令 `Err` 只返回此 ASCII 串（**绝不**返回 `Display` 中文串 / `props` 值）：
++| `GraphError` 变体 | 稳定码 |
++|---|---|
++| `EmptyId` / `IdTooLong` | `GRAPH_INVALID_ID` |
++| `RefIdNotHex` | `GRAPH_REF_ID_NOT_HEX` |
++| `LabelTooLong` | `GRAPH_LABEL_TOO_LONG` |
++| `PropKeyTooLong(_)` | `GRAPH_PROP_KEY_TOO_LONG` |
++| `PropValueTooLong(_)` | `GRAPH_PROP_VALUE_TOO_LONG` |
++| `PropCountExceeded` | `GRAPH_PROP_COUNT_EXCEEDED` |
++| `SecretInProps` | `GRAPH_SECRET_IN_PROPS` |
++| `NodeCapacityExceeded` | `GRAPH_NODE_CAPACITY_EXCEEDED` |
++| `EdgeCapacityExceeded` | `GRAPH_EDGE_CAPACITY_EXCEEDED` |
++| `DuplicateNode(_)` | `GRAPH_DUPLICATE_NODE` |
++| `DuplicateEdge(_)` | `GRAPH_DUPLICATE_EDGE` |
++| `Serde(_)` | `GRAPH_STORE_LOAD_FAILED` |
++| 兜底（命令内部异常） | `GRAPH_UNKNOWN_ERROR` |
++
++> 注：W10 §2.6 把多类折叠进 `GRAPH_STORE_LOAD_FAILED`；W12 改为 **1:1 稳定码**（更利于前端精确映射 UI 态与测试断言）。若 A0 偏好更少码位，可回退 W10 折叠法，但**稳定 ASCII 码 + 零 secret echo** 不变。
++
++## 4. 容量 / 截断 / 信号（全部引用 `domain.rs` 单源常量，命令内零字面量）
++- `depth = min(req.depth ?? 2, GRAPH_MAX_DEPTH=4)`；`limit = min(req.limit ?? GRAPH_QUERY_LIMIT, GRAPH_QUERY_LIMIT=1000)`。
++- 容量硬上限 `GRAPH_MAX_NODES=5000` / `GRAPH_MAX_EDGES=20000`（store 插入与 `from_json` 双守，W5 已实现）。
++- 字段长度 `GRAPH_LABEL_MAX_BYTES=256`、`GRAPH_PROPS_MAX_BYTES=65536`（= `MAX_TEXT_FIELD_BYTES`）、`GRAPH_NODE_ID_HEX_LEN=64`。
++- 返回截断信号：`graph_query` 出参 `truncated: bool` + `applied: {depth, limit}`（回显实际生效 cap，静默截断非错误）。
++- 遍历 BFS + `VecDeque` + 访问集去重，杜绝指数爆炸；**命令内不写字面量**（`5000`/`256`/`1000`/`4`）。
++
++## 5. Cancellation（W12 新增维度，确定性无副作用）
++- **前端**：`bridge.graphQuery(req, signal?)` 由 `AbortController` 包裹；新查询发起时 `abort()` 上一个（复用 W6 `searchGraphNodes` 的 300ms debounce + “cancel last query” 范式）；`request_id`（可选入参）作 `AbortController` map 的 key，避免乱序回包。
++- **后端**：命令标 `#[tauri::command] async`，但无 mutation / 无 IO / 无子进程；JS 丢弃 Promise 即 Tauri 取消 Future，**零副作用、零残留状态**（读锁在返回前已 `drop`）。
++- **取消语义**：命令要么返回完整结果、要么被丢弃；**不产生半截结果、不写审计、不泄露 props**。
++- **不引入取消信道开销**：因 bounded 查询瞬时完成，后端**不**需 `tokio` cancel channel；契约仅要求“drop = no-op”。与 W10 硬停 L208（rmcp/tokio 必须 optional+feature-gated、default 构建不变）一致——图谱 live-query **不引入**任何 `tokio`/`rmcp` 依赖。
++
++## 6. Privacy（W12 A4 复审口径对齐，K7 双闸）
++- **输出脱敏**：`graph_query`/`graph_node_get` 返回 `GraphNodeView`/`GraphEdgeView`（仅 `{id,kind,label}` / `{from,to,kind}`），**不含 `props`**。`GraphNodeView::from(GraphNode)` / `GraphEdgeView::from(GraphEdge)` 显式丢弃 `props` 字段（编译期保证 View 无 `props` 成员）。
++- **错误串零 secret**：所有 `Err` 为 §3.4 稳定 ASCII 码，**绝不** echo `props`/secret/body/路径/capability reason。图谱面无 URL/capability 概念，错误仅为稳定码 → A4 结论 PASS。
++- **载入双扫**：`GraphState` 快照经 `GraphStore::from_json` 载入，复用 `GRAPH_PRIVACY_DOUBLE_SCAN`（字段名 + 值模式），命中即拒（`SecretInProps`）。
++- **审计/日志**：3 命令**不写**任何含 props/secret 的审计；无 checkpoint 落盘 props。`check_invocation_source` 已挡远程 webview。
++- **ACL source check**：3 命令与全仓命令同口径过 `check_invocation_source`（远程页面/伪造 label 一律拒绝）。
++
++## 7. 原子同包清单（实施 wave 逐文件精准改动；本 Lane 不落地）
++
++### 7.1 `src-tauri/src/graph.rs`（纯扩展，不破 `GRAPH_NO_SECOND_PATH`）
++- 移除模块顶部 `#![allow(dead_code)]`（W5 遗留；W12 命令消费 helpers）。
++- 新增 newtype（独立 managed state，避开 `AppState` 的 `#[derive(Default)]` 重构）：
++  ```rust
++  pub struct GraphState { pub store: std::sync::RwLock<GraphStore> }
++  impl Default for GraphState { fn default() -> Self { Self { store: std::sync::RwLock::new(GraphStore::default()) } } }
++  ```
++- 新增 `pub fn validate_id_public(id: &str) -> Result<(), GraphError>`（`validate_id` 当前为私有，包一层 pub 供 `graph_node_get` 校验入参）。
++- 新增 `impl GraphError { pub fn code(&self) -> &'static str { … } }`（§3.4 表）。
++- 新增 `GraphNodeView`/`GraphEdgeView` 的 `From<&GraphNode>`/`From<&GraphEdge>`（`drop props`）——或把 View 类型放 `domain.rs`（见 7.4）。**推荐放 `domain.rs`**，本文件仅保留 `From` impl。
++- 新增 `pub fn load_snapshot(path: &str) -> GraphStore`：`fs::read_to_string` → `from_json`；**任何错误（缺文件/损坏/双扫命中）一律回退 `GraphStore::default()`（空 store），绝不 panic**。
++
++### 7.2 `src-tauri/src/main.rs`
++- `mod graph;` 已存在。
++- builder 注册 managed state：`.manage(crate::graph::GraphState::default())`。
++- `.setup(|app| { let p = graph_snapshot_path(app); let s = crate::graph::load_snapshot(&p); app.state::<crate::graph::GraphState>().store.write().unwrap().nodes = s.nodes; …edges = s.edges; })`（把快照载入 RwLock；store 在 W12 只读，载入后即不变）。
++- `invoke_handler!` 注册 3 命令：`bridge::graph_query` / `bridge::graph_node_get` / `bridge::graph_stats`（插在现有命令列表中，顺序无关，但保持末条 `list_artifact_images` 不变）。
++- 快照路径：新增 `workspace::graph_snapshot_path(app) -> PathBuf`（`<data_dir>/graph.json`）；或 main.rs 内联用 `app.path()` 计算。**抽取器生成 `graph.json` 属后续 wave，W12 无则空 store**（查询返回空，符合只读预期）。
++
++### 7.3 `src-tauri/permissions/default-commands.toml`
++- 在末条 `list_artifact_images`（L118）**之前**插入 3 行：
++  ```toml
++  "graph_query",
++  "graph_node_get",
++  "graph_stats",
++  ```
++
++### 7.4 `src-tauri/src/domain.rs`（DTO 单一真源）
++- 新增 View 类型（无 `props`）：
++  ```rust
++  #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++  pub struct GraphNodeView { pub id: String, pub kind: GraphNodeKind, pub label: String }
++  #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++  pub struct GraphEdgeView { pub from: String, pub to: String, pub kind: GraphEdgeKind }
++  #[derive(Debug, Clone, Serialize, Deserialize)]
++  pub struct GraphQueryRequest { pub start_id: String, #[serde(default)] pub depth: Option<u8>, #[serde(default)] pub limit: Option<usize>, #[serde(default)] pub request_id: Option<String> }
++  #[derive(Debug, Clone, Serialize, Deserialize)]
++  pub struct GraphQueryLimits { pub depth: usize, pub limit: usize }
++  #[derive(Debug, Clone, Serialize, Deserialize)]
++  pub struct GraphQueryResult { pub found: bool, pub nodes: Vec<GraphNodeView>, pub edges: Vec<GraphEdgeView>, pub truncated: bool, pub applied: GraphQueryLimits, pub node_count: usize, pub edge_count: usize }
++  #[derive(Debug, Clone, Serialize, Deserialize)]
++  pub struct GraphStats { pub node_count: usize, pub edge_count: usize, pub node_capacity: usize, pub edge_capacity: usize, pub approaching_node_capacity: bool, pub approaching_edge_capacity: bool }
++  ```
++
++### 7.5 `src/bridge.ts` + `src/types.ts`（前端镜像 + 取消）
++- `src/types.ts` 新增：`GraphNodeView`/`GraphEdgeView`/`GraphQueryRequest`/`GraphQueryLimits`/`GraphQueryResult`/`GraphStats`（字段 snake_case，与 §7.4 一致）。
++- `src/bridge.ts` 升级占位（L400–404）：
++  ```ts
++  graphQuery: (req: GraphQueryRequest, signal?: AbortSignal) =>
++    invoke<GraphQueryResult>("graph_query", { ...req }, signal ? { signal } : {}),
++  graphNodeGet: (id: string) => invoke<GraphNodeView | null>("graph_node_get", { id }),
++  graphStats: () => invoke<GraphStats>("graph_stats"),
++  ```
++  - 接受 `AbortSignal`（Tauri v2 `invoke` 支持 `signal` option）；`GRAPH_COMMANDS_AVAILABLE` 翻 `true`（由 A8 在 UI wave 控制，W12 后端落地即满足）。
++  - 返回类型为 View（删 props），与 §6 一致。
++
++### 7.6 `scripts/check-graph-policy.py`（ACTIVE 7 → 8）
++- `ALL_CODES` 新增 `("GRAPH_OUTPUT_NO_PROPS", c_output_no_props)`。
++- `c_output_no_props(rel, text, _repo)`：仅对 `GRAPH`（graph.rs）与 `DOMAIN`（domain.rs）生效：
++  - `DOMAIN`：断言 `GraphNodeView`/`GraphEdgeView` 定义**不含** `props` 字段（正则排除 `pub props` 在其 struct 体内）；且 3 命令返回类型（`GraphQueryResult`/`Option<GraphNodeView>`/`GraphStats`）引用 View 而非 `GraphNode`/`GraphEdge`。
++  - `GRAPH`：断言命令体用 `GraphNodeView::from`/`GraphEdgeView::from`（或构造 View 时未带 `props`）；`GraphError::code` 存在且返回 `GRAPH_` 前缀串。
++- 自测新增坏样本：把 `GraphNodeView` 加 `pub props: GraphProps`（或让命令返回 `GraphNode`）→ 必须被 `GRAPH_OUTPUT_NO_PROPS` 检出；好样本（当前 W12 设计）零误报。
++- `GRAPH_OUTPUT_NO_PROPS` 入 `detect_hits` 与坏样本表。
++
++### 7.7 `scripts/pre-merge.sh`
++- 既有 `GRAPH_*` 门禁自动覆盖新码（无需改结构，仅 `check-graph-policy.py` 增码后 `run_pre_merge` 自然计入）；如门禁按 `ACTIVE=` 数做阈值断言，需把期望值 7→8。
++
++### 7.8 `src-tauri/src/workspace.rs`（可选辅助）
++- 新增 `pub fn graph_snapshot_path(app: &AppHandle) -> PathBuf`（`<data_dir>/graph.json`）。若 main.rs 内联计算则可省；二选一，不重复。
++
++## 8. 测试（W12 实施时落地，本 Lane 给精确断言）
++
++### 8.1 Rust 单测（`graph.rs` / `bridge` 测试模块）
++```rust
++#[test]
++fn graph_query_truncation_and_no_props() {
++    let mut s = GraphStore::default();
++    // 造 start + 1500 个邻居（> GRAPH_QUERY_LIMIT=1000）
++    s.insert_node(GraphNode { id: "start".into(), kind: GraphNodeKind::Dir, label:"s".into(), props: Default::default() }).unwrap();
++    for i in 0..1500 { let _ = s.insert_node(GraphNode { id: format!("n{i}"), kind: GraphNodeKind::File, label: format!("n{i}"), props: { let mut m=GraphProps::new(); m.insert("k".into(), "v".into()); m } }); });
++    for i in 0..1500 { let _ = s.insert_edge(GraphEdge { from:"start".into(), to: format!("n{i}"), kind: GraphEdgeKind::InDir, weight:0, props: Default::default() }); }
++    let st = GraphState::default(); *st.store.write().unwrap() = s;
++    // 经 bridge::graph_query（用 mock AppHandle/Webview 或把逻辑抽到可测纯函数）
++    let r = graph_query_impl(&st, "start", Some(2), Some(500));
++    assert!(r.truncated); assert_eq!(r.nodes.len(), 500);
++    let json = serde_json::to_string(&r).unwrap();
++    assert!(!json.contains("\"props\""), "输出泄露 props");
++}
++#[test]
++fn graph_node_get_missing_is_none_and_hex_rejected() {
++    assert!(graph_node_get_impl(&st, "not-hex-skill-id").is_err()); // Skill/Agent 非 64-hex → GRAPH_REF_ID_NOT_HEX
++    assert_eq!(graph_node_get_impl(&st, "absent"), Ok(None));      // 缺失 → None
++}
++#[test]
++fn graph_stats_approaching() {
++    // 填满 90% 节点 → approaching_node_capacity == true
++}
++```
++> 实施提示：`graph_query` 等命令依赖 `AppHandle`/`Webview`（Tauri 运行时）。为可单测，建议把核心逻辑抽到 `pub fn graph_query_impl(state: &GraphState, start: &str, depth: Option<u8>, limit: Option<usize>) -> GraphQueryResult`（纯函数），命令体仅做 source check + 调 impl。单测直接打 impl。
++
++### 8.2 策略 self-test（`check-graph-policy.py --self-test`）
++- 好样本：`GRAPH_OUTPUT_NO_PROPS=PASS`（View 无 props，命令用 `::from`）。
++- 坏样本：View 加 `props` / 命令返回 `GraphNode` → `GRAPH_OUTPUT_NO_PROPS` 检出；其余 7 码不变。
++- 期望：`GRAPH_POLICY_SELF_TEST=PASS（ACTIVE=8）`。
++
++### 8.3 UI logic（A8 `check-graph-ui-logic.mjs`）
++- 期望断言（W12 落地后）：`graphQuery` 返回 `nodes` 每项仅 `{id,kind,label}`、`edges` 每项仅 `{from,to,kind}`；`truncated` 驱动 UI「已截断」提示；`found=false` → `EMPTY` 态；`request_id` 关联 `AbortController` map；取消上一个查询后无乱序渲染。当前 W11 `GRAPH` UI logic 仍 43 断言（W12 落地时 A8 增补，预期增量小）。
++
++## 9. 与 W10/W11 调度关系（关键）
++- **W12 是 W11 “later wave” 的具体化**：W11 仅开 A3 MCP stdio 加固；图谱 live-query 命令属安全只读 runtime 增补，W11/W10 均不开，W12 才落地。
++- **零 A3/MCP 依赖**：只读内存 store，不经 `mcp.rs`、不需 A3 `mcp` feature gate、不引 `rmcp`/`tokio` → 默认构建即含，与 W10/W11 硬停 default 构建不变相容。
++- **非 W10/W11 “locked runtime surface”**（Plugin/Agent 执行 / MCP stdio）：图谱 live-query 是安全只读增补，可在任一不含 unsafe execution 的 wave 落地，**无需等 A3**。
++- **store 来源**：命令读 `GraphState`（快照/AppState，由 `from_json` 载入）；命令**不构建** store（守“no graph rebuild worker”）；store 填充（extractor）属后续独立 scope，非本计划阻塞项。
++- **命令位置裁定**：W12 命令在 `bridge.rs`（非 `graph.rs`），以同时满足 source check 同源与 `GRAPH_NO_SECOND_PATH`（修正 W10 §2.5 含糊）。
++
++## 10. Build metrics / 硬停（W12 实施时守）
++- read-only：无插入/删除/更新、无 skill/plugin/agent 执行、无 model call、无网络、无第二执行路径（命令复用 `graph.rs` helper，禁 `std::process`/`Command::new`/`tokio`/网络；`graph.rs` 仍零 `crate::bridge`）。
++- ACL 同步：3 命令 source check + ACL + bridge/types + 策略 + 测试同包（W11 硬停 L210）。
++- build metrics ≤22%：W12 引少量 Rust 字节（View/命令/GraphState）+ 前端类型；届时 A11 复核（W11 阈值 22%，cargo warnings 不增）。本计划不增字节（docs-only）。
++- 无 secret echo（L208 隐含 + W9/W10/W11 隐私纪律）：错误串仅稳定码。
++- 仅 A0 push（L212）。
++
++## 11. 给各 Lane 的 NEXT
++- **给 A0**：本卡片即 W12 图谱 live-query 实施蓝图；开启时由 A7/A8 按 §3–§8 原子落地（命令在 `bridge.rs`、View 在 `domain.rs`、`GraphState` newtype 在 `graph.rs`、ACL 插 `list_artifact_images` 前、`check-graph-policy.py` ACTIVE=8、零 `tokio`/`rmcp`、默认构建安全）；无需等 A3。
++- **给 A3**：图谱 live-query 与你的 `mcp` feature 无关；请勿在 `mcp.rs` 内耦合图谱命令（守 core/bin 边界，A2 W11 复审）。
++- **给 A8（W11/W12）**：W11 继续 Graph UI polish（no-backend 态/确定性/有界渲染）；W12 落地时翻 `GRAPH_COMMANDS_AVAILABLE=true`、升级 `bridge.graphQuery` 为含参 + `AbortSignal`、增补 UI logic 断言（§8.3）。
++- **给 A4（W11/W12）**：图谱面隐私结论见 §6（稳定码错误、输出删 props、双扫）→ PASS；W12 实施时 A4 复核对 `GraphError::code()` 零 secret echo。
++- **给 A10（W11/W12）**：图谱 live-query 卡片零 listener/网络/side-effect，与 A3 MCP prep 隔离 → 不阻塞；W12 实施时 A10 抽查 `graph.rs` 仍无 `crate::bridge`、命令经 source check。
++- **给 A11（W11/W12）**：核对 W11 `graph.rs` 0 命令（live 延后）、`src/types.ts` 无 `GraphNodeView`（待 W12）、`check-graph-policy.py` ACTIVE 仍 7（W11 不新增，W12 → 8）、build metrics 21.07≤22%；W12 落地后重测默认+feature `cargo test`、graph UI logic、npm build、pre-merge ALL_PASS。
++
++## 12. LANE 输出模板
++```
++LANE=A7
++STATUS=PASS（GRAPH DOCS ONLY，无产品代码）
++WAVE=M5-W11 MCP Stdio Dry-Run Hardening
++BASE=5226aad
++HEAD=logs/assist/A7-M5-W11-graph-w12-impl-plan-20260907-1019.md
++FILES=logs/assist/A7-M5-W11-graph-w12-impl-plan-20260907-1019.md
++VERIFY=docs-only；把 W10 图谱 live-query 卡片升级为 W12 可原子实施的 concret 计划:① 范围=仅 3 只读命令 graph_query/graph_node_get/graph_stats(不含 M5-8 的 9 命令 SQLite 写/列/导出/抽取器/后台 worker);② 命令位置裁定=定义在 bridge.rs(非 graph.rs)以同时满足 source check 同源 + GRAPH_NO_SECOND_PATH(修正 W10 §2.5 含糊);③ 精确契约=graph_query(start_id,depth??2,limit??1000,request_id?)→GraphQueryResult{found,nodes:GraphNodeView[],edges:GraphEdgeView[],truncated,applied{depth,limit},node_count,edge_count};graph_node_get(id)→Option<GraphNodeView>(缺失 null,Skill/Agent 非 64-hex→GRAPH_REF_ID_NOT_HEX);graph_stats→GraphStats{计数+容量+≥90%黄牌};④ 稳定错误码=GraphError::code() 1:1 映射 13 变体→GRAPH_* ASCII 码(零 secret echo,修正 W10 折叠法);⑤ 容量/截断=depth≤4/limit≤1000 全引 domain.rs 常量无字面量+truncated/applied 信号;⑥ cancellation=前端 AbortController+300ms debounce+request_id map,后端 async stateless 有界 drop=no-op 零副作用,不引 tokio/rmcp;⑦ privacy=输出 GraphNodeView/EdgeView 删 props(K7 双闸,From 丢弃)+错误稳定码零 secret echo+GRAPH_PRIVACY_DOUBLE_SCAN 载入双扫+审计无 props+source check;⑧ 原子包=GraphState newtype(graph.rs,Default,RwLock<GraphStore>)+GraphError::code+移除#![allow(dead_code)]+load_snapshot(回退空 store 不 panic);main.rs manage+setup 载入+invoke_handler 3 命令;ACL 插 list_artifact_images 前 3 条;domain.rs View/Request/Result/Stats DTO;bridge.ts 升级含参+AbortSignal+翻 GRAPH_COMMANDS_AVAILABLE;types.ts View 类型;check-graph-policy.py GRAPH_OUTPUT_NO_PROPS ACTIVE=7→8+自测;pre-merge 自动覆盖;⑨ 测试=Rust 单测(截断+无 props 序列化+hex 拒+stats 黄牌)+policy self-test PASS(ACTIVE=8)+UI logic 断言;⑩ 偏离 stale M5-8 说明(以冻结 graph.rs/domain.rs 为真相源);W12 事实基线已核(graph.rs 0 命令/domain.rs 冻结 DTO/types.ts 无 View/bridge.ts 无参占位/ACL 无 graph/AppState 在 bridge.rs 未含 GraphStore);本 Lane 零产品代码改动
++CHECKPOINT=logs/checkpoints/Lane-A7-M5-W11-graph-w12-20260907-1019.patch
++MERGE_NOTES=A7 W11 GRAPH DOCS ONLY 把 W10 图谱 live-query 卡片升级为 W12 concret 实施计划:① 范围收窄为 3 只读命令(剔除 M5-8 的 9 命令 SQLite 写/列/导出/抽取器/后台 worker,以冻结 graph.rs/domain.rs 为真相源,偏离 stale M5-8);② 关键架构裁定:命令定义在 bridge.rs(非 graph.rs),调 crate::graph::* pure helper + check_invocation_source,graph.rs 仍零 crate::bridge(守 GRAPH_NO_SECOND_PATH)——修正 W10 §2.5 含糊;③ 精确签名:graph_query→GraphQueryResult{found,nodes:GraphNodeView[],edges:GraphEdgeView[],truncated,applied{depth,limit},node_count,edge_count};graph_node_get→Option<GraphNodeView>(缺失 null,Skill/Agent 非 64-hex→GRAPH_REF_ID_NOT_HEX);graph_stats→GraphStats{计数+容量+≥90%黄牌};④ 稳定错误码 GraphError::code() 1:1 映射 13 变体→GRAPH_* ASCII 串(零 secret echo,修正 W10 折叠);⑤ 容量 depth≤4/limit≤1000 全引常量无字面量+truncated/applied;⑥ cancellation 前端 AbortController+300ms debounce+request_id,后端 async stateless drop=no-op 不引 tokio/rmcp;⑦ privacy 输出 View 删 props(From 丢弃,K7 双闸)+错误稳定码+双扫+审计无 props+source check;⑧ 原子包逐文件:graph.rs(GraphState newtype Default RwLock<GraphStore>+GraphError::code+validate_id_public+移除 allow(dead_code)+load_snapshot 回退空 store)/main.rs(manage+setup 载入+invoke_handler 3 命令)/ACL(插 list_artifact_images 前)/domain.rs(View/Request/Result/Stats)/bridge.ts(含参+AbortSignal+翻 GRAPH_COMMANDS_AVAILABLE)/types.ts(View)/check-graph-policy.py(GRAPH_OUTPUT_NO_PROPS ACTIVE=8+自测)/pre-merge(自动覆盖);⑨ 测试 Rust 单测+policy self-test PASS(ACTIVE=8)+UI logic;⑩ W12 事实基线已核(graph.rs 0 命令、domain.rs 冻结、types.ts 无 View、bridge.ts 无参占位、ACL 无 graph、AppState 在 bridge.rs 未含 GraphStore);本 Lane 零产品代码,未改任何源文件,工作树仅新增本卡片+checkpoint 补丁
++NEXT=A0 后续 W12 开启 graph_query 时按 §3–§8 原子落地(命令在 bridge.rs、View 在 domain.rs、GraphState newtype 在 graph.rs、ACL 插 list_artifact_images 前、check-graph-policy.py ACTIVE=8、零 tokio/rmcp、默认构建安全,无需等 A3);A8 W12 翻 GRAPH_COMMANDS_AVAILABLE=true 并升级 bridge.graphQuery 为含参+AbortSignal;A3 勿在 mcp.rs 耦合图谱命令;A4 W12 复核对 GraphError::code 零 secret echo;A10 W12 抽查 graph.rs 仍无 crate::bridge 且命令过 source check;A11 W12 重测默认+feature cargo test/graph UI logic/npm build/pre-merge
++```
+diff --git a/logs/checkpoints/Lane-A7-M5-W11-graph-w12-20260907-1019.md b/logs/checkpoints/Lane-A7-M5-W11-graph-w12-20260907-1019.md
+new file mode 100644
+index 0000000..3a973ad
+--- /dev/null
++++ b/logs/checkpoints/Lane-A7-M5-W11-graph-w12-20260907-1019.md
+@@ -0,0 +1,65 @@
++# Lane A7 · M5-W11 Checkpoint（GRAPH DOCS ONLY · 不 push）
++
++> Wave：**M5-W11 MCP Stdio Dry-Run Hardening Dispatch**（board `5226aad`）
++> Base：`5226aad`（W10 MCP stdio prep 已集成，工作树干净）
++> 主产物：`logs/assist/A7-M5-W11-graph-w12-impl-plan-20260907-1019.md`（图谱 W12 实施计划卡片）
++> 本 Lane 范围：board L198 `A7 = START GRAPH DOCS ONLY` —— *“Convert W10 graph live-query card into a concrete W12 implementation plan with command contracts, limits, cancellation, privacy, and tests. Do not implement commands.”*
++
++## 1. 交付摘要
++
++把 W10 图谱 live-query 卡片（`A7-M5-W10-graph-live-query-card-20260907-0927.md`）升级为 **W12 可原子照抄的实施计划**，覆盖 board 要求的五维：command contracts / limits / cancellation / privacy / tests。
++
++**关键判定（本波新增，修正/收敛 W10 的含糊与 stale 文档）：**
++
++1. **范围收窄为 3 只读命令**：`graph_query` / `graph_node_get` / `graph_stats`。明确剔除 M5-8 原始 9 命令设计里的写/列/导出命令、SQLite 持久化、抽取器、后台维护任务——以冻结的 `graph.rs`/`domain.rs` 为真相源（M5-8 的 9 命令 + SQLite + `source`/`source_ref`/`created_at`/`updated_at`/`extractor_version` 设计已被 W5–W10 演进取代，W6 评审 F1 已确认这些字段不存在于真实 DTO）。
++2. **命令位置裁定（重要）**：3 命令**定义在 `bridge.rs`**，调用 `crate::graph::*` pure helper + `check_invocation_source`（同在 `bridge.rs`）；`graph.rs` 仍零 `crate::bridge`（守 `GRAPH_NO_SECOND_PATH`）。W10 §2.5 写的是“graph.rs 新增 3 命令”，与 `GRAPH_NO_SECOND_PATH` 冲突（graph.rs 若引 `crate::bridge` 取 source check 即违规），本计划据此纠正。
++3. **`GraphState` newtype 独立 managed state**：`pub struct GraphState { pub store: std::sync::RwLock<GraphStore> }` + `impl Default`。因 `AppState`（`bridge.rs` L253）是 `#[derive(Default)]` 而 `RwLock` 不 impl `Default`，改用独立 newtype 可**不动 `AppState`**，避免手动 `Default` 重构与他 Lane 冲突。
++4. **稳定错误码 1:1**：`GraphError::code()` 把 13 变体映射为 `GRAPH_*` ASCII 串（W10 §2.6 曾把多类折叠进 `GRAPH_STORE_LOAD_FAILED`，本计划改为 1:1 便于前端映射与测试断言；稳定 ASCII + 零 secret echo 不变）。
++5. **View 类型放 `domain.rs`**（DTO 单一真源），`graph.rs` 只放 `From` impl 与 helper。
++
++## 2. 五维覆盖（对应主卡片章节）
++
++| 维度 | 主卡片章节 | 要点 |
++|---|---|---|
++| Command contracts | §3 | 精确签名：`graph_query(req{start_id,depth?,limit?,request_id?})→GraphQueryResult{found,nodes:GraphNodeView[],edges:GraphEdgeView[],truncated,applied{depth,limit},node_count,edge_count}`；`graph_node_get(id)→Option<GraphNodeView>`（缺失 `null`、Skill/Agent 非 64-hex → `GRAPH_REF_ID_NOT_HEX`）；`graph_stats()→GraphStats{计数+容量+≥90%黄牌}` |
++| Limits | §4 | `depth=min(req??2,4)`、`limit=min(req??1000,1000)`，全引 `domain.rs` 常量、命令内零字面量；`truncated`/`applied` 静默截断信号；BFS+访问集去重 |
++| Cancellation | §5 | 前端 `AbortController` + 300ms debounce + `request_id` map；后端 `async` stateless 有界，`drop=no-op` 零副作用；**不引 `tokio`/`rmcp`** |
++| Privacy | §6 | 输出 `GraphNodeView`/`GraphEdgeView` **删 props**（K7 双闸）；错误仅稳定码零 secret echo；`from_json` 双扫（`GRAPH_PRIVACY_DOUBLE_SCAN`）；审计无 props；3 命令过 `check_invocation_source` |
++| Tests | §8 | Rust 单测（截断 + 序列化无 `props` + hex 拒 + stats 黄牌，建议抽 `*_impl` 纯函数可测）+ `check-graph-policy.py --self-test` PASS（ACTIVE=8）+ A8 UI logic 断言增量 |
++
++## 3. 原子同包清单（W12 实施时逐文件落地）
++
++| 文件 | 改动 |
++|---|---|
++| `src-tauri/src/graph.rs` | 移除 `#![allow(dead_code)]`；新增 `GraphState` newtype + `Default`；新增 `GraphError::code()`；新增 `validate_id_public`；新增 `load_snapshot`（任何错误回退空 store，**不 panic**） |
++| `src-tauri/src/main.rs` | `.manage(GraphState::default())`；`.setup` 载入快照；`invoke_handler!` 注册 3 命令 |
++| `src-tauri/permissions/default-commands.toml` | 末条 `list_artifact_images`（L118）**之前**插 3 条 |
++| `src-tauri/src/domain.rs` | 新增 `GraphNodeView`/`GraphEdgeView`/`GraphQueryRequest`/`GraphQueryLimits`/`GraphQueryResult`/`GraphStats`（View 无 `props`） |
++| `src/bridge.ts` | `graphQuery(req, signal?)`/`graphNodeGet(id)`/`graphStats()`；支持 `AbortSignal`；翻 `GRAPH_COMMANDS_AVAILABLE=true` |
++| `src/types.ts` | 新增对应 View/Request/Result/Stats 镜像 |
++| `scripts/check-graph-policy.py` | `GRAPH_OUTPUT_NO_PROPS` → ACTIVE 7→8 + 自测好/坏样本 |
++| `scripts/pre-merge.sh` | 既有 `GRAPH_*` 门禁自动覆盖（若按 `ACTIVE=` 阈值断言则 7→8） |
++| `src-tauri/src/workspace.rs`（可选） | `graph_snapshot_path(app)` |
++
++## 4. 合规性 / 验证（本 Lane）
++
++- **docs-only 合规**：仅新增 `logs/assist/A7-M5-W11-graph-w12-impl-plan-20260907-1019.md` 与本 checkpoint；**未**改 `graph.rs`/`domain.rs`/`bridge.rs`/`main.rs`/`default-commands.toml`/`src/types.ts`/`src/bridge.ts`/`workspace.rs`/`check-graph-policy.py`/`pre-merge.sh`，**零产品代码**。
++- **W11 硬停遵守**：无执行/网络/listener/daemon；无 secret echo（错误仅稳定码）；**零依赖新增**（不引 `tokio`/`rmcp`，不需 `mcp` feature gate，默认构建不变）；不改 ACL（W12 才插）；仅 A0 push，本 Lane 不 commit 不 push。
++- **A3 排除遵守**：不触碰 `mcp.rs`/`mcp_server.rs`/A3 文件；图谱 live-query 零 MCP 依赖。
++- **W12 事实基线（已核）**：`graph.rs` 0 个 `#[tauri::command]`；`domain.rs` L2040–L2116 DTO + 7 常量冻结；`src/types.ts` 无 `GraphNodeView`；`src/bridge.ts` L400–404 为**无参占位**且返回含 props 的 `GraphNode[]`；`default-commands.toml` 无 graph 行（末条 `list_artifact_images` L118）；`AppState` 在 `bridge.rs` L253 且未含 `GraphStore`；`check-graph-policy.py` ACTIVE=7。
++- **本波不改门禁/不跑重测**：因零产品代码，默认 `cargo test` / graph UI logic / npm build / pre-merge 结果与 W11 基线一致（W12 实施时由 A11 重测并复核 build metrics ≤22%）。
++
++## 5. LANE 输出
++
++```
++LANE=A7
++STATUS=PASS（GRAPH DOCS ONLY，无产品代码）
++WAVE=M5-W11 MCP Stdio Dry-Run Hardening
++BASE=5226aad
++HEAD=logs/assist/A7-M5-W11-graph-w12-impl-plan-20260907-1019.md
++FILES=logs/assist/A7-M5-W11-graph-w12-impl-plan-20260907-1019.md, logs/checkpoints/Lane-A7-M5-W11-graph-w12-20260907-1019.{md,patch}
++VERIFY=docs-only；W10 卡片升级为 W12 concret 计划:① 范围=仅 3 只读命令 graph_query/graph_node_get/graph_stats(剔除 M5-8 九命令 SQLite 写列导出/抽取器/后台 worker,以冻结 graph.rs/domain.rs 为真相源,偏离 stale M5-8);② 命令位置裁定=定义在 bridge.rs(非 graph.rs)以同时满足 source check 同源 + GRAPH_NO_SECOND_PATH(修正 W10 §2.5 含糊,graph.rs 仍零 crate::bridge);③ 精确契约 graph_query(start_id,depth??2,limit??1000,request_id?)→GraphQueryResult{found,nodes:GraphNodeView[],edges:GraphEdgeView[],truncated,applied{depth,limit},node_count,edge_count} / graph_node_get(id)→Option<GraphNodeView>(缺失 null,Skill/Agent 非 64-hex→GRAPH_REF_ID_NOT_HEX) / graph_stats→GraphStats{计数+容量+≥90%黄牌};④ 稳定错误码 GraphError::code() 1:1 映射 13 变体→GRAPH_* ASCII 码(零 secret echo,修正 W10 折叠法);⑤ 容量 depth≤4/limit≤1000 全引 domain.rs 常量无字面量+truncated/applied 信号;⑥ cancellation 前端 AbortController+300ms debounce+request_id map,后端 async stateless 有界 drop=no-op 零副作用,不引 tokio/rmcp;⑦ privacy 输出 GraphNodeView/EdgeView 删 props(From 丢弃,K7 双闸)+错误稳定码零 secret echo+GRAPH_PRIVACY_DOUBLE_SCAN 载入双扫+审计无 props+source check;⑧ 原子包 graph.rs(GraphState newtype Default RwLock<GraphStore>+GraphError::code+validate_id_public+移除 allow(dead_code)+load_snapshot 回退空 store 不 panic)/main.rs(manage+setup 载入+invoke_handler 3 命令)/ACL(插 list_artifact_images 前 3 条)/domain.rs(View/Request/Result/Stats)/bridge.ts(含参+AbortSignal+翻 GRAPH_COMMANDS_AVAILABLE)/types.ts(View)/check-graph-policy.py(GRAPH_OUTPUT_NO_PROPS ACTIVE=7→8+自测)/pre-merge(自动覆盖);⑨ 测试 Rust 单测(截断+无 props 序列化+hex 拒+stats 黄牌)+policy self-test PASS(ACTIVE=8)+UI logic 断言;⑩ W12 事实基线已核(graph.rs 0 命令/domain.rs 冻结/types.ts 无 View/bridge.ts 无参占位/ACL 无 graph/AppState 在 bridge.rs 未含 GraphStore/check-graph-policy ACTIVE=7);本 Lane 零产品代码改动
++CHECKPOINT=logs/checkpoints/Lane-A7-M5-W11-graph-w12-20260907-1019.patch
++MERGE_NOTES=见主卡片 §12 MERGE_NOTES；核心=W12 实施蓝图(3 只读命令,命令在 bridge.rs,View 在 domain.rs,GraphState newtype 在 graph.rs,ACL 插 list_artifact_images 前,check-graph-policy.py ACTIVE=8,零 tokio/rmcp 默认构建安全,无需等 A3)
++NEXT=A0 后续 W12 按主卡片 §3–§8 原子落地；A8 W12 翻 GRAPH_COMMANDS_AVAILABLE=true 并升级 bridge.graphQuery 为含参+AbortSignal；A3 勿在 mcp.rs 耦合图谱命令；A4 W12 复核对 GraphError::code 零 secret echo；A10 W12 抽查 graph.rs 仍无 crate::bridge 且命令过 source check；A11 W12 重测默认+feature cargo test/graph UI logic/npm build/pre-merge 与 build metrics ≤22%
++```

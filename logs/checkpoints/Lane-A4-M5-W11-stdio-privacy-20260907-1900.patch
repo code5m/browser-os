@@ -1,0 +1,255 @@
+diff --git a/scripts/check-mcp-policy.py b/scripts/check-mcp-policy.py
+index e0f6e7e..ea9c838 100755
+--- a/scripts/check-mcp-policy.py
++++ b/scripts/check-mcp-policy.py
+@@ -203,6 +203,29 @@ def c_server_gated(rel, text, repo):
+     return problems or None
+
+
++def c_stdio_no_arg_echo(rel, text, repo):
++    # W11 Hard Stop（PARALLEL_COMMAND_BOARD.md 行 208）：stdio 响应 / 日志 / audit /
++    # 检查点 / UI 状态 不得回显原始 argument/query/token/cookie/Authorization。
++    # 本码位静态守护 stdio 传输层（mcp_server.rs）：其 JSON-RPC 响应构造不得把请求
++    # 的 params/arguments 原始内容插值进 format! 文本、序列化进响应、或打印进日志。
++    # 仅当仓库存在 MCP stdio 预备件时才守门（与 `MCP_SERVER_GATED` 同源文件判定）。
++    if rel not in ("src-tauri/src/bin/mcp_server.rs", "src-tauri/src/mcp_server.rs"):
++        return None
++    problems = []
++    # 1) 不得直接序列化 params/arguments 进响应文本（可能回显原始 argument）。
++    if re.search(r"to_string\s*\(\s*&?\s*params\s*\)", text) or \
++       re.search(r"to_string\s*\(\s*&?\s*arguments\s*\)", text):
++        problems.append("stdio 响应直接序列化 params/arguments（可能回显原始 argument）")
++    # 2) format! 中不得插值 {params} / {arguments}（原始 argument 回显）。
++    if re.search(r"format!\s*\([^)]*\{\s*params\s*\}", text) or \
++       re.search(r"format!\s*\([^)]*\{\s*arguments\s*\}", text):
++        problems.append("format! 把 params/arguments 插值进响应文本（原始 argument 回显）")
++    # 3) 不得用 println/eprintln 输出 params（日志 / 审计泄漏原始 argument）。
++    if re.search(r"(?:eprintln|println)\s*\([^)]*params", text):
++        problems.append("stdio 用 println/eprintln 输出 params（日志泄漏原始 argument）")
++    return problems or None
++
++
+ # ---- PENDING（W8 已退役）----
+ # W1 阶段曾以 7 个 PENDING 码位（`MCP_LISTEN_PORT` / `MCP_RUNTIME_LEAK` / `MCP_OPTIONAL_DEP` /
+ # `MCP_BIN_GATED` / `MCP_TOOL_CALLS_COMMAND` / `MCP_PATH_POLICY_MISSING` / `MCP_URL_NOT_REDACTED`）
+@@ -302,6 +325,7 @@ ACTIVE_CODES = [
+     ("MCP_BRIDGE_READONLY", "ACTIVE", c_bridge_readonly),
+     ("MCP_NO_RMCP_SERVER", "ACTIVE", c_no_rmcp_server),
+     ("MCP_SERVER_GATED", "ACTIVE", c_server_gated),
++    ("MCP_STDIO_NO_ARG_ECHO", "ACTIVE", c_stdio_no_arg_echo),
+     ("MCP_PARITY", "ACTIVE", c_parity),
+ ]
+ # W8：W1 的 7 个 PENDING 码位 + MCP_TREE_TAURI 全部退役，相位债已关闭。当前无 PENDING 码位。
+@@ -362,9 +386,30 @@ def _baseline_repo() -> dict[str, str]:
+     # 否则 _mcp_bridge_present 会误判「桥已落地」、当前相位断言失真。
+     return {
+         "src-tauri/Cargo.toml": (
+-            "[package]\nname = \"mvp-browser-os\"\n"
++            "[package]\nname = \"mvp-browser-os\"\nversion = \"0.1.0\"\n"
++            "[features]\nmcp = []\n"
+             "[dependencies]\ntauri = { version = \"2\" }\nrusqlite = { version = \"0.31\" }\n"
+         ),
++        "src-tauri/src/mcp_server.rs": (
++            "#![cfg(feature = \"mcp\")]\n"
++            "use std::io::{self, BufRead, Write};\n"
++            "pub fn run_stdio() {\n"
++            "    let stdin = io::stdin();\n"
++            "    let mut stdout = io::stdout().lock();\n"
++            "    for line in stdin.lock().lines() {\n"
++            "        let line = match line { Ok(l) => l, Err(_) => break };\n"
++            "        let resp = handle_request(&line);\n"
++            "        if let Ok(s) = serde_json::to_string(&resp) {\n"
++            "            let _ = writeln!(stdout, \"{s}\");\n"
++            "            let _ = stdout.flush();\n"
++            "        }\n"
++            "    }\n"
++            "}\n"
++            "fn handle_request(req: &str) -> serde_json::Value {\n"
++            "    let _ = req;\n"
++            "    serde_json::json!({\"jsonrpc\":\"2.0\",\"id\":null,\"result\":{}})\n"
++            "}\n"
++        ),
+         "src-tauri/src/bridge.rs": (
+             "pub fn list_artifacts(app: AppHandle) -> Vec<Artifact> {\n"
+             "    workspace::load_artifacts(&app)\n}\n"
+@@ -430,6 +475,19 @@ def _run_self_test() -> int:
+         mutate(**{"src-tauri/src/bin/mcp_server.rs":
+                   "use std::net::TcpListener;\nfn run() { let _ = TcpListener::bind(\"127.0.0.1:0\"); }\n"}),
+         "src-tauri/src/bin/mcp_server.rs")
++    # W11：stdio 响应不得回显原始 params/arguments（MCP_STDIO_NO_ARG_ECHO）。
++    add("MCP_STDIO_NO_ARG_ECHO", "mcp_server.rs 把 params/arguments 原始内容插值进响应文本",
++        mutate(**{"src-tauri/src/mcp_server.rs":
++                  '#![cfg(feature = "mcp")]\nuse std::io::{self, BufRead, Write};\n'
++                  'pub fn run_stdio() {\n'
++                  '    let stdin = io::stdin();\n    let mut stdout = io::stdout().lock();\n'
++                  '    for line in stdin.lock().lines() {\n'
++                  '        let line = match line { Ok(l) => l, Err(_) => break };\n'
++                  '        let params = "user_secret_arg";\n'
++                  '        let err = format!("invalid request: {params}");\n'
++                  '        let _ = serde_json::to_string(&params);\n'
++                  '        let _ = writeln!(stdout, "{err}");\n    }\n}\n'}),
++        "src-tauri/src/mcp_server.rs")
+     add("MCP_CAPABILITY_DRIFT", "MCP_CAPABILITY_V1 定义两处",
+         mutate(**{"src-tauri/src/core/mod.rs": "const MCP_CAPABILITY_V1: &[&str] = &[];\n",
+                   "src-tauri/src/extra.rs": "const MCP_CAPABILITY_V1: &[&str] = &[];\n"}),
+diff --git a/logs/assist/A4-M5-W11-privacy-review-20260907-1900.md b/logs/assist/A4-M5-W11-privacy-review-20260907-1900.md
+new file mode 100644
+index 0000000..fc9160b
+--- /dev/null
++++ b/logs/assist/A4-M5-W11-privacy-review-20260907-1900.md
+@@ -0,0 +1,84 @@
++# Lane A4 · M5-W11 Privacy Review — MCP stdio dry-run shell (secret echo)
++
++> LANE=A4　WAVE=M5-W11 MCP Stdio Dry-Run Hardening Dispatch（board 行 195）
++> Status=**PASS（PRIVACY REVIEW ONLY，无产品代码；新增 1 个 policy 夹具）**
++> Base=`ba78092`（A3 W10 stdio-prep；W11 硬化已落 working tree：` M src-tauri/src/mcp_server.rs`）
++> 交付：`logs/assist/A4-M5-W11-privacy-review-20260907-1900.md`、`logs/checkpoints/A4-M5-W11-stdio-privacy-20260907-1900.md`、`scripts/check-mcp-policy.py`（新增 ACTIVE 码位 `MCP_STDIO_NO_ARG_ECHO`）
++> 不 push（规则）。
++
++---
++
++## 0. 调度自检
++
++| 项 | 实测 | 结论 |
++|---|---|---|
++| WORKSPACE_IDENTITY / pwd / branch | BACKV3_MAIN / 匹配 / master | ✅ |
++| `git fetch && pull --ff-only` | 已是最新（本地与 origin/master 同步，working tree 有 A3 W11 硬化 + A7 turn 的 cargo fmt 重格式化，均非 A4 产品代码） | ✅ |
++| 仍属 A4 可写范围 | ✅ 仅新增 policy 夹具 + review 文档；未触碰任何产品 Rust/TS/ACL | ✅ |
++| W11 Hard Stop 合规 | 未引入 listener/network/rmcp/tokio；stdio 仅 `std::io`；无第二执行路径 | ✅ |
++| 是否编辑产品代码 | 否（A4 严格 PRIVACY REVIEW ONLY） | ✅ |
++
++## 1. 评审对象与范围
++
++- **主对象**：`src-tauri/src/mcp_server.rs`（A3 W11 已硬化：确定性 JSON-RPC 错误、有界输入/响应、稳定 `tools/list`、未绑定/未知能力显式 fail-closed）。
++- **关联数据路径**：`crate::mcp::{current_policy_snapshot, list_registry_entries}`（mcp.rs）、`domain.rs::{McpPolicySnapshot, McpRegistryEntryView, MCP_CAPABILITY_V1}`。
++- **评审焦点**（board 行 195 + W11 Hard Stop 行 208）：stdio 响应/错误里不得回显原始 `argument`/`query`/`token`/`cookie`/`Authorization`；URL/userinfo/query 脱敏；audit/log 不泄漏载荷。
++
++## 2. 逐项评审（含实跑证据）
++
++### 2.1 原始参数绝不回显（W11 Hard Stop 行 208 核心）
++
++- `tools/call` 仅取出 `params.name`（能力名，协议标识符），**从不读取/序列化 `arguments` 对象**（mcp_server.rs:250, 272-285）。
++- 未绑定/未知能力失败文本只回显能力名 `other`（mcp_server.rs:278-283），形如 `"file_read is declared ... not yet bound"` / `"unknown tool 'x'; fail-closed"`——**不含任何 arguments 内容**。
++- A3 已落地回归测试 `arguments_are_never_echoed_in_fail_closed`（mcp_server.rs:371-379）：向 `arguments.path` 注入 `SECRET_TOKEN_DO_NOT_ECHO_xyz`，断言整个响应序列化串不含该串 → 通过（`cargo test --features mcp mcp_server` 18/18）。
++- 结论：**PASS**，且已有机器级回归保护。
++
++### 2.2 URL / userinfo / query 脱敏
++
++- `mcp_registry_list` 返回的 `McpRegistryEntryView` 仅含 `returns_url: bool`（mcp.rs:141-146），**从不序列化 URL 文本**；`tab_query`/`history_query` 虽 `returns_url=true`，dry-run 下未绑定、不返回内容。
++- `mcp_policy_get` 返回 `McpPolicySnapshot`（仅 `capabilities: Vec<String>` + 常量 `policy_version`），无 URL。
++- 真正绑定 URL 返回的工具若未来落地，必须经过 `redact_mcp_url`/`redact_sensitive_url`（mcp.rs:104-108，单一真源），且 `MCP_FS_TOOL_PATH_POLICY` 静态守门要求注册表含 `redact_sensitive_url`。
++- 结论：**PASS**（dry-run 无 URL 内容外泄；未来路径有脱敏单一真源 + 静态守门）。
++
++### 2.3 audit / log 载荷泄漏
++
++- `mcp_server.rs` 全文 **0 处 `log_audit` / `println!` / `eprintln!`**；所有输出仅经 `write_response` → `writeln!(stdout,...)` 的 JSON-RPC 响应（mcp_server.rs:123-126）。
++- 无审计写入、无 stderr 泄漏，参数不会落入 audit/日志/检查点/UI 状态（stdio 是 server 进程内通信，不经 Tauri IPC，前端不读 stdin/stdout）。
++- 结论：**PASS**。
++
++### 2.4 错误信息确定性、不泄露请求体
++
++- 全部错误为固定文案：Parse error(-32700) / Invalid Request(-32600) / Request too large(-32600) / Method not found(-32601) / Invalid params: missing tool name(-32602) / Response exceeded size limit(-32603)（mcp_server.rs:93-119, 267-271）。
++- 超界响应经 `serialize_bounded` 替换为固定错误串，绝不回吐业务/参数内容（mcp_server.rs:105-121, 484-491 测试）。
++- 结论：**PASS**。
++
++### 2.5 既有 4 域（Agent/Skill/Graph/Plugin）W11 范围内无回归
++
++- W11 这些域为 docs/policy/UI 小改（A5/A6/A8/A9），stdio 评审不涉及其产品代码；W10 A4 baseline（`logs/assist/A4-M5-W10-privacy-review-baseline-20260907-0925.md`）已记录 `CredentialLeak<redacted>`、Graph `SecretInProps` 固定分类、`agent_validate_inner` 走 `<redacted>` 等脱敏结论，W11 未改变这些路径。
++- 结论：**PASS（无回归）**。
++
++## 3. A4 新增 policy 夹具（concrete，已落地）
++
++- 新增 `MCP_STDIO_NO_ARG_ECHO`（ACTIVE）于 `scripts/check-mcp-policy.py`：静态守护 stdio 传输层不得把请求 `params`/`arguments` 原始内容插值进 `format!`、序列化进响应、或打印进日志。
++- 自测：坏样本 `mcp_server.rs` 把 `params` 插值进 `format!` 并 `to_string(&params)` → 必被检出；好样本（干净 `#![cfg(feature="mcp")]` + `std::io` 骨架）零命中。
++- 验证：`python3 scripts/check-mcp-policy.py --self-test` → **MCP_POLICY_SELF_TEST=PASS（ACTIVE=10，PENDING=0）**；`--expect-current-gaps` → PASS；default → PASS。
++- 注：ACTIVE 计数由 9→10（新增 1 码位），属预期内增长。
++
++## 4. Verdict
++
++**PRIVACY VERDICT = PASS（无具体 blocker）**。当前 W11 stdio dry-run shell 在「原始参数回显 / URL 脱敏 / audit-log 泄漏 / 错误体泄露」四个维度均满足 W11 Hard Stop 行 208；A3 已自带 `arguments_are_never_echoed_in_fail_closed` 运行时回归测试，A4 再叠加 `MCP_STDIO_NO_ARG_ECHO` 静态守门，形成「运行时测试 + 静态门禁」双重保护。
++
++## 5. 给下游的建议（非阻塞）
++
++- A3 失败文本回显能力名 `other` 是协议标识符（客户端已知），非机密；若未来希望更严格，可改为仅回显「是否已知」布尔 + 固定文案（不回显 `other` 原文）。当前可接受。
++- 未来绑定 `returns_url=true` 工具时，务必经 `redact_mcp_url`，`MCP_FS_TOOL_PATH_POLICY` 已静态要求——保持即可。
++
++## 6. 与 W11 其它 lane 的分工
++
++- A2：core/bin 边界（无 tauri/bridge::*/无第二执行路径）—— 互补，本评审不重叠。
++- A10：安全终审（listener/network/arg-echo/side-effect/依赖污染/政策弱化）—— 可引用本 verdict 的 2.1/2.3 证据。
++- A11：验证矩阵纳入 MCP policy ACTIVE=10。
++
++## 7. 不 push 声明
++
++按规则未 push；交付留于本地 working tree，交 A0 在 master 同步后集成（rebase / 补丁合并），由 A0 统一 push。
+diff --git a/logs/checkpoints/A4-M5-W11-stdio-privacy-20260907-1900.md b/logs/checkpoints/A4-M5-W11-stdio-privacy-20260907-1900.md
+new file mode 100644
+index 0000000..2949006
+--- /dev/null
++++ b/logs/checkpoints/A4-M5-W11-stdio-privacy-20260907-1900.md
+@@ -0,0 +1,65 @@
++# Lane A4 — M5-W11 MCP stdio dry-run privacy review（交付检查点）
++
++> Status：**PASS（PRIVACY REVIEW ONLY，无产品代码；新增 1 个 policy 夹具）**
++> Time：2026-09-07 19:00 CST
++> 依赖冻结契约：`PARALLEL_COMMAND_BOARD.md` §M5-W11（行 176-212），A4 行 195
++> 机器门禁：`scripts/check-mcp-policy.py`（self-test ACTIVE=10 / PENDING=0；current-gaps PASS；default PASS）
++
++## 1. 范围与边界（严格按 board §W11 Assignments A4 行）
++
++- **Allowed Scope**：`logs/assist/A4-M5-W11-*.md`；`scripts/check-mcp-policy.py` policy-only 夹具。
++- **不在本 lane 范围（属 A3 产品代码 lane）**：`src-tauri/src/mcp_server.rs` / `mcp.rs` 的运行时代码（A4 仅评审，不修改）。
++- **未 push**（规则），交 A0 集成 master。
++
++## 2. 交付文件与改动
++
++| 文件 | 改动 | 说明 |
++|---|---|---|
++| `scripts/check-mcp-policy.py` | 改（policy 夹具） | 新增 ACTIVE 码位 `MCP_STDIO_NO_ARG_ECHO`：静态守护 stdio 响应不得回显 `params`/`arguments`；基线新增干净 `mcp_server.rs` 样本 + 坏样本（回显 params）自测；ACTIVE 9→10 |
++| `logs/assist/A4-M5-W11-privacy-review-20260907-1900.md` | **新建** | W11 stdio 隐私评审 verdict（§0–§7） |
++| `logs/checkpoints/A4-M5-W11-stdio-privacy-20260907-1900.md` | **新建** | 本检查点 |
++
++## 3. 机器门禁结果（实跑证据）
++
++- `python3 scripts/check-mcp-policy.py --self-test` → **MCP_POLICY_SELF_TEST=PASS（ACTIVE=10，PENDING=0）** ✅
++- `python3 scripts/check-mcp-policy.py --expect-current-gaps` → **MCP_CURRENT_GAPS_RESULT=PASS** ✅
++- `python3 scripts/check-mcp-policy.py` → **MCP_POLICY=PASS（无违规）** ✅
++- `cargo test --manifest-path src-tauri/Cargo.toml --features mcp mcp_server` → **18 passed / 0 failed** ✅
++  - 含 A3 自带回归 `arguments_are_never_echoed_in_fail_closed`（断言响应不回显 secret 参数）→ PASS
++- 静态扫描 `mcp_server.rs`：**0 处 `log_audit` / `println!` / `eprintln!`**；`tools/call` 失败文本仅回显能力名（协议标识符），不回显 `arguments` ✅
++
++## 4. 隐私 verdict（W11 Hard Stop 行 208）
++
++| 维度 | 结论 | 证据 |
++|---|---|---|
++| 原始参数/argument/query/token 回显 | PASS | tools/call 不读 `arguments`（:250,272-285）；A3 `arguments_are_never_echoed_in_fail_closed` 测试通过 |
++| URL / userinfo / query 脱敏 | PASS | `returns_url` 仅 bool，从不序列化 URL 文本；`redact_mcp_url` 单一真源 + `MCP_FS_TOOL_PATH_POLICY` 守门 |
++| audit / log 载荷泄漏 | PASS | mcp_server.rs 0 log_audit/0 println/eprintln；stdout 仅 JSON-RPC 响应 |
++| 错误体泄露请求内容 | PASS | 全部错误固定文案；`serialize_bounded` 超界回确定性错误 |
++
++**结论：PRIVACY VERDICT = PASS，无 blocker。**
++
++## 5. 与 W10 baseline 的接续
++
++- W10 A4 baseline（`A4-M5-W10-privacy-review-baseline-20260907-0925.md`）提出的 §4-A/§4-B/§4-C 审查脚本，本次 W11 实证落地为：
++  - §4-B（tool result URL 脱敏）→ 确认 dry-run 不返回 URL 文本，未来路径受 `redact_mcp_url` 守门；
++  - §4-C（capability reasons / serialized errors）→ 失败文本仅能力名，无 raw error 透传；
++  - 新增 `MCP_STDIO_NO_ARG_ECHO` 是 §4-A（stdio 通道脱敏）的机器化守门实现。
++
++## 6. 不 push 声明
++
++按规则未 push。交付留于本地 working tree，交 A0 在 master 同步后集成（rebase / 补丁合并），由 A0 统一 push。
++
++---
++
++```text
++LANE=A4
++STATUS=PASS（PRIVACY REVIEW ONLY，无产品代码；新增 1 policy 夹具）
++BASE=ba78092
++HEAD=logs/assist/A4-M5-W11-privacy-review-20260907-1900.md + scripts/check-mcp-policy.py（MCP_STDIO_NO_ARG_ECHO）
++FILES=scripts/check-mcp-policy.py, logs/assist/A4-M5-W11-privacy-review-20260907-1900.md, logs/checkpoints/A4-M5-W11-stdio-privacy-20260907-1900.md
++VERIFY=check-mcp-policy.py --self-test → PASS(ACTIVE=10,PENDING=0); --expect-current-gaps → PASS; default → PASS; cargo test --features mcp mcp_server → 18 passed; mcp_server.rs 静态 0 log_audit/0 println/eprintln
++CHECKPOINT=logs/checkpoints/A4-M5-W11-stdio-privacy-20260907-1900.md
++MERGE_NOTES=A4 严格 REVIEW ONLY，未改产品代码；新增 MCP_STDIO_NO_ARG_ECHO 守门（基线新增干净 mcp_server.rs 样本 + 坏样本回显 params）；与 A2（边界）/A10（安全）分工互补；W11 stdio 已 PASS 隐私评审，无 blocker
++NEXT=A10 W11 安全终审（可引用本 verdict）；A11 W11 验证矩阵纳入 MCP policy ACTIVE=10
++```
