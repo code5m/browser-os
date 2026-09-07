@@ -37,7 +37,7 @@ usage: run-gui.sh [--force-dist] [--no-build] [-h|--help] [-- <客户端参数..
 
   --force-dist   跳过 dev server，强制加载内嵌 dist（会导出 MVP_FORCE_DIST=1，
                  与 main.rs 的同名分支一致）
-  --no-build     二进制已存在时跳过 cargo build
+  --no-build     跳过本次 cargo build（仅用于确认二进制已是最新时）
   -h, --help     打印本帮助并退出（不做任何构建/启动）
   --             其后参数原样透传给客户端二进制
 USAGE
@@ -77,9 +77,14 @@ trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
 
 if [[ "$NO_BUILD" == "1" ]]; then
-  :
-elif [[ ! -x "$BIN" ]]; then
-  echo "[run-gui] 未找到二进制，先编译……" >&2
+  if [[ ! -x "$BIN" ]]; then
+    echo "[run-gui][ERROR] --no-build 但未找到二进制：$BIN" >&2
+    exit 1
+  fi
+else
+  # Tauri 的 capability 在 Rust 构建期嵌入。始终构建可避免 Vite 已更新、
+  # 原生二进制仍携带旧 ACL 时，页面把所有 invoke 报成 "not allowed"。
+  echo "[run-gui] 校验并构建当前客户端……" >&2
   (cd "$APP_DIR/src-tauri" && cargo build)
 fi
 

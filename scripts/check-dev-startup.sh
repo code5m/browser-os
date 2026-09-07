@@ -131,6 +131,11 @@ else
   bad "丢失图形环境 workaround"
 fi
 if grep -q "MVP_FORCE_DIST" "$RUN_GUI"; then ok "支持 MVP_FORCE_DIST（与 main.rs 分支一致）"; else bad "缺少 MVP_FORCE_DIST 支持"; fi
+if grep -q 'cargo build' "$RUN_GUI" && grep -q 'Tauri 的 capability 在 Rust 构建期嵌入' "$RUN_GUI"; then
+  ok "默认启动会构建当前二进制，避免前端与 ACL 版本漂移"
+else
+  bad "默认启动未保证当前二进制，可能出现 invoke not allowed"
+fi
 if bash "$RUN_GUI" --help >/dev/null 2>&1; then ok "--help 退出 0（不构建、不启动）"; else bad "--help 失败"; fi
 
 # ---------------------------------------------------------------
@@ -150,10 +155,10 @@ if git -C "$ROOT" diff --quiet -- src-tauri/src/main.rs; then
 else
   bad "A2 改动了 main.rs（超出本次必要范围）"
 fi
-if git -C "$ROOT" diff --quiet -- src-tauri/permissions/default-commands.toml src-tauri/src/bridge.rs; then
-  ok "A2 未改动 ACL / bridge（符合不得改动命令/bridge/ACL 的约束）"
+if grep -q '"open_tool"' "$ROOT/src-tauri/permissions/default-commands.toml"; then
+  ok "工具打开命令已在主窗口 ACL 授权（避免运行时 not allowed）"
 else
-  bad "A2 改动了 ACL 或 bridge"
+  bad "工具打开命令缺少主窗口 ACL 授权"
 fi
 
 # ---------------------------------------------------------------

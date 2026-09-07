@@ -107,6 +107,7 @@ commands.allow = [
     "snippet_remove",
     "run_command",
     "list_tools",
+    "open_tool",
     "task_list",
     "task_add",
     "task_update",

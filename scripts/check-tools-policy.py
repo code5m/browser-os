@@ -186,6 +186,8 @@ def detect_violations(files: dict) -> list[str]:
         v.append("TOOL_OPEN_CMD_MISSING:tools.rs 缺 open_tool 命令")
     if "tools::open_tool" not in main_rs:
         v.append("TOOL_OPEN_REGISTERED_MISSING:main.rs 未注册 tools::open_tool")
+    if '"open_tool"' not in acl:
+        v.append("TOOL_OPEN_ACL_MISSING:default-commands.toml 未允许 open_tool")
 
     # ---- 12) tool:// 协议在 Builder 上注册 ----
     if 'register_uri_scheme_protocol("tool"' not in main_rs:
@@ -409,7 +411,15 @@ def run_self_test(root: Path) -> int:
         "TOOL_OPEN_REGISTERED_MISSING",
     )
 
-    # 13. tool:// 协议未注册
+    # 13. open_tool ACL 漏配
+    add(
+        "ACL 漏配 open_tool",
+        mutate(acl=good["acl"].replace('    "open_tool",\n', "", 1)),
+        "acl",
+        "TOOL_OPEN_ACL_MISSING",
+    )
+
+    # 14. tool:// 协议未注册
     add(
         "tool:// 协议未注册",
         mutate(

@@ -38,10 +38,9 @@ DEFAULT_TOML = os.path.join(REPO, "src-tauri", "permissions", "default-commands.
 REMOTE_TOML = os.path.join(REPO, "src-tauri", "permissions", "remote-collect.toml")
 
 # BUG-HUNT-SUMMARY.md 已记录的、当前已知且非本 lane 修复范围的漂移。
-# 其他 lane（A2/A3/A5/A6/A7/A8/A10）负责补 ACL / 落地契约；
-# 本门禁只防「新增」漂移，不阻止已知、已在跟进的存量问题。
+# 本门禁只防「新增」漂移，不阻止已声明的契约占位。
 KNOWN = {
-    "registered_not_in_default_acl": {"open_tool"},
+    "registered_not_in_default_acl": set(),
     "main_invoke_not_registered": {
         "agent_chat", "agent_chat_cancel",
         "confirm_agent_install", "confirm_skill_install",
@@ -118,7 +117,7 @@ def main():
             "C_remote - B_remote  (remote webview invoke not in remote ACL)",
     }
     known_comments = {
-        "registered_not_in_default_acl": "KNOWN DRIFT (open_tool, B1-1/B12-01)",
+        "registered_not_in_default_acl": "",
         "main_invoke_not_registered": "KNOWN DRIFT (agent/skill contract placeholders)",
         "remote_invoke_not_in_remote_acl": "KNOWN DRIFT (collect.js 3 cmds, B1-2/B9-3/B12-03)",
     }
