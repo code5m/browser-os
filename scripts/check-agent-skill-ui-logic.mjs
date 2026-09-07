@@ -506,6 +506,56 @@ assert(
 // 11.7 收尾：回到空态，避免影响后续（如若有）断言
 await store.clearValidation();
 
+// ===========================================================================
+// 12. W10：Agent/Skill UI 收口（UI SMALL ONLY）
+//     - no execution buttons：组件已移除安装/发送入口；store 执行动作在 backendReady=false
+//       下惰性零调用（对应"已移除的执行按钮"无执行路径）。
+//     - disabled / 预览态确定性：panelState 给出 error>loading>empty(只读壳文案)>ready。
+//     - no secret text echo：重申校验错误串 / 解析 def / 原始输入三者均不回显 secret。
+// ===========================================================================
+// 12.1 执行面仍锁死（W5 安装/运行命令未就绪）
+store.backendReady = false;
+assert(store.backendReady === false, "W10-1 执行面 backendReady=false（无执行命令就绪）");
+
+// 12.2 安装/运行动作在无就绪态下惰性零调用（对应已移除的执行按钮无执行路径）
+resetCalls();
+await store.installSkill("skill-x");
+assert(!calls.some(([n]) => n === "skill_install"), "W10-2 安装 Skill 在无就绪态下零调用（无执行路径）");
+
+resetCalls();
+await store.installAgent("agent-x");
+assert(!calls.some(([n]) => n === "agent_install"), "W10-3 安装 Agent 在无就绪态下零调用（无执行路径）");
+
+resetCalls();
+await store.runAgent("agent-x", "hi", "sess-x");
+assert(!calls.some(([n]) => n === "agent_chat"), "W10-4 运行 Agent 在无就绪态下零调用（无执行路径）");
+
+// 12.3 面板三态确定性（disabled / 预览 / loading / error）—— 组件据此渲染，无歧义
+const ps1 = panelState("skills", { loading: false, count: 0, error: null, backendReady: false });
+assert(ps1.state === "empty" && ps1.message.includes("只读壳"), "W10-5 未就绪空态给出只读壳文案（disabled 提示）");
+const ps2 = panelState("skills", { loading: true, count: 0, error: null, backendReady: false });
+assert(ps2.state === "loading", "W10-6 加载态优先于空态");
+const ps3 = panelState("skills", { loading: false, count: 0, error: "boom", backendReady: false });
+assert(ps3.state === "error" && ps3.message === "boom", "W10-7 错误态透传错误信息");
+const ps4 = panelState("skills", { loading: false, count: 3, error: null, backendReady: true });
+assert(ps4.state === "ready", "W10-8 有数据且就绪 → ready 态");
+
+// 12.4 no secret text echo（重申）：错误串 / 解析 def / 原始输入
+bridge.skillValidate = async () => ({ valid: false, errors: ["泄露 sk-SECRETXYZ123456 在描述"] });
+bridge.skillParse = async () => ({ ...skillDef, description: "内部 sk-SECRETXYZ123456 不要外泄" });
+resetCalls();
+await store.validateSkill("RAW_INPUT_WITH_sk-SECRETXYZ123456");
+assert(
+  store.skillValidation.errors.every((e) => !e.includes("sk-SECRETXYZ123456")),
+  "W10-9 错误串中 secret 模式已脱敏（不回显）",
+);
+assert(
+  store.skillParseDef && !store.skillParseDef.description.includes("sk-SECRETXYZ123456"),
+  "W10-10 解析 def 的 description 中 secret 已脱敏（不进前端状态）",
+);
+assert(!("skillInputText" in store), "W10-11 原始输入文本不进 store 状态");
+await store.clearValidation();
+
 // ---------------- 汇总 ----------------
 console.log(`\ncheck-agent-skill-ui-logic: ${passed} assertions passed, ${failures.length} failed`);
 if (failures.length > 0) {

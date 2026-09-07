@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import { useAgentStore } from "../../stores/useAgentStore";
 import { chunksToText } from "../../utils/agentSkillUi";
 
-// 对话壳：仅渲染会话与输入控件；实际流式由组件层 useAgentStream 订阅
-// agent://<id>/stream + done/error/canceled 事件填充（W5 不引入第二执行通道）。
+// 对话壳：仅渲染既有会话（只读视图）。执行通道（agent_chat / runAgent）在 W10 尚未开放，
+// 此处不提供发送/输入控件（W10 A6：no execution buttons）。
 const store = useAgentStore();
-const prompt = ref("");
 
 const agentId = computed(() => store.selectedAgentId ?? store.agents[0]?.id ?? null);
 const current = computed(() => {
@@ -15,13 +14,6 @@ const current = computed(() => {
   return store.sessions[ids[ids.length - 1]];
 });
 const text = computed(() => (current.value ? chunksToText(current.value.chunks) : ""));
-
-function send() {
-  if (!store.backendReady || !agentId.value || !prompt.value.trim()) return;
-  const sid = `sess-${Date.now()}`;
-  void store.runAgent(agentId.value, prompt.value.trim(), sid);
-  prompt.value = "";
-}
 </script>
 
 <template>
@@ -35,16 +27,7 @@ function send() {
       <div v-else-if="!current" class="empty-state">输入消息开始。</div>
       <pre v-else class="stream">{{ text || "（等待响应…）" }}</pre>
     </div>
-    <footer class="chat-foot">
-      <input
-        v-model="prompt"
-        :disabled="!store.backendReady"
-        placeholder="输入消息…"
-        @keyup.enter="send"
-      />
-      <button :disabled="!store.backendReady || !prompt.trim()" @click="send">发送</button>
-    </footer>
-    <div v-if="!store.backendReady" class="muted small">后端 agent_chat 命令未就绪，发送已禁用。</div>
+    <div v-if="!store.backendReady" class="muted small">后端 agent_chat 命令未就绪，对话为只读视图。</div>
   </section>
 </template>
 

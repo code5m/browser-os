@@ -26,9 +26,6 @@ onMounted(() => {
 function caps(def: AgentDef) {
   return renderCapabilityList(def.defaultCapabilities, whitelist.value);
 }
-async function onInstall(id: string) {
-  await store.installAgent(id);
-}
 </script>
 
 <template>
@@ -59,7 +56,6 @@ async function onInstall(id: string) {
         <div class="chips">
           <span v-for="c in caps(a)" :key="c.id" class="chip" :class="{ granted: c.granted }">{{ c.label }}</span>
         </div>
-        <button class="install-btn" :disabled="!store.backendReady" @click.stop="onInstall(a.id)">安装</button>
       </div>
     </div>
 
