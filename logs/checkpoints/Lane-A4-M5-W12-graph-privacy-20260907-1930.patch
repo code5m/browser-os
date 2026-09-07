@@ -1,0 +1,167 @@
+diff --git a/logs/assist/A4-M5-W12-privacy-review-20260907-1930.md b/logs/assist/A4-M5-W12-privacy-review-20260907-1930.md
+new file mode 100644
+index 0000000..076be46
+--- /dev/null
++++ b/logs/assist/A4-M5-W12-privacy-review-20260907-1930.md
+@@ -0,0 +1,95 @@
++# Lane A4 · M5-W12 Privacy Review — Graph Live-Query Readonly (secret echo)
++
++> LANE=A4　WAVE=M5-W12 Graph Live-Query Readonly Dispatch（board 行 195）
++> Status=**PASS（PRIVACY REVIEW ONLY，无产品代码；graph 命令尚未落地，本件为 pre-landing 评审 + 落地后复核框架）**
++> Base=`269269a`（A0 集成 W11 后：MCP stdio hardening 已合入 master）
++> 交付：`logs/assist/A4-M5-W12-privacy-review-20260907-1930.md`、`logs/checkpoints/A4-M5-W12-graph-privacy-20260907-1930.md`
++> 不 push（规则）。
++
++---
++
++## 0. 调度自检
++
++| 项 | 实测 | 结论 |
++|---|---|---|
++| WORKSPACE_IDENTITY / pwd / branch | BACKV3_MAIN / 匹配 / master | ✅ |
++| `git fetch && pull --ff-only` | 已是最新（HEAD=`269269a`，与 origin/master 同步） | ✅ |
++| 仍属 A4 可写范围 | ✅ 仅新增 review 文档；未触碰任何产品 Rust/TS/ACL/策略脚本 | ✅ |
++| W12 Hard Stop 合规 | 未引入 listener/network/第二执行路径；评审对象为既有 graph core + A7 计划 | ✅ |
++| 是否编辑产品代码 | 否（A4 严格 PRIVACY REVIEW ONLY，且 `check-graph-policy.py` 属 A7 范围，见 board 行 198） | ✅ |
++
++## 1. 评审对象与范围
++
++- **当前主对象**：`src-tauri/src/graph.rs`（M5-7/8 core 切片，含 `GraphStore`/`GraphNode`/`GraphEdge`/`GraphError`；`props` 存在但仅用于 store 持久化）。
++- **关联数据路径**：`domain.rs` 的 `GraphNode`/`GraphEdge`/`GraphProps`（`L2040–L2116`）、`bridge.rs`（**当前无** graph 命令）、A7 W12 实施计划 `logs/assist/A7-M5-W11-graph-w12-impl-plan-20260907-1019.md`。
++- **评审焦点**（board 行 195 + Hard Stop 行 207）：
++  1. 输出 DTO 必须删 `props`；
++  2. 错误必须稳定码，且不得回显 label / props / query body / path / URL / token / cookie / Authorization；
++  3. 审计不得含 labels / props / query bodies with secrets。
++
++## 2. 当前基线评审（graph.rs，命令未落地）
++
++### 2.1 `props` 处理
++- `GraphNode`/`GraphEdge` 含 `props: GraphProps`；`GraphStore::to_json` 序列化全量含 props——但**仅用于 store 持久化/导出**，不进入任何命令响应。
++- 插入时 `validate_props` 经 `graph_props_contain_secret` **双扫**（字段名黑名单 `token/password/secret/api_key` + 值模式 `sk-/AKIA/Bearer /eyJ/-----BEGIN`，AGRAPH-9）拒绝凭据，故 at-rest props 无机密。
++- **当前无 graph 命令**，props 不外流到响应；W12 命令将经 `GraphNodeView`/`GraphEdgeView` 丢弃 props（A7 §3）。
++- 结论：基线 props 不外流（持久化路径有双扫守门）；W12 输出删 props 由 A7 实施 + `GRAPH_OUTPUT_NO_PROPS` 守门。
++
++### 2.2 错误回显（当前 `Display` 的隐患）
++`GraphError::Display`（graph.rs:43-73）：
++- **固定文案、不回显**：`SecretInProps` / `LabelTooLong` / `PropCountExceeded` / `Node/EdgeCapacityExceeded` / `EmptyId` / `IdTooLong` / `RefIdNotHex`。
++- **会回显标识符/键**（graph.rs:55-58, 69-71）：
++  - `PropKeyTooLong(k)` / `PropValueTooLong(k)` → 回显 **prop key**（如 `"api_key"`），非值；轻微 info-leak。
++  - `DuplicateNode(id)` / `DuplicateEdge(k)` → 回显 node id / edge key（如 `"file:/a"`、64-hex），非机密。
++  - `Serde(m)` → 回显 **serde 错误消息 `m`**，可能含被序列化数据片段（path/URL/值）——**真实回显向量**。
++- **关键结论**：以上隐患仅在错误被“对外暴露”时成立。A7 W12 计划 §3.4 新增 `GraphError::code()`（稳定 ASCII 码），命令统一 `return Err(e.code().to_string())`——**只回稳定码，绝不用 `Display` 中文串、不回显 props/label/query body**。因此 W12 落地后，`Display` 回显隐患被 `code()` 路径消解。
++
++### 2.3 审计（当前 + W12）
++- 当前 `graph.rs` **0 处 `log_audit`**；`bridge.rs` 现有 `log_audit` 均为 task/session 等（grep 证实无 graph 命令审计）。
++- A7 计划 §6：3 命令**不写**任何含 props/secret 的审计；`check_invocation_source` 已挡远程 webview。
++- 结论：基线无审计泄漏；W12 由设计保证（命令不写 props 审计）。**建议**：落地后复核若 graph 命令新增 `log_audit`，其 detail 仅含 id/count/code，不得含 `props`/`label`/`query`/`body`。
++
++## 3. Pre-landing 评审：A7 W12 计划是否满足 W12 隐私三要件
++
++| 要件（Hard Stop 207） | A7 计划设计 | A4 判定 |
++|---|---|---|
++| ① 输出 DTO 删 `props` | `GraphNodeView`/`GraphEdgeView` 经 `From` 丢弃 props；命令返回 View（§3.1/3.2）；`GRAPH_OUTPUT_NO_PROPS` 守门（§7.6） | **PASS**（将由 A7 落地 + 机器守门） |
++| ② 错误稳定码、不回显 | `GraphError::code()` 1:1 映射 13 变体 → `GRAPH_*` ASCII；命令 `Err(e.code().to_string())`（§3.4） | **PASS**（设计满足；**机器守门缺口**见 §4 R1） |
++| ③ 审计不含 props/labels/query body | 3 命令不写 props/secret 审计（§6） | **PASS**（设计满足；**机器守门缺口**见 §4 R1） |
++
++### 3.1 当前 in-flight 代码观察（2026-09-07 作此评审时）
++评审时刻工作树中 A7 的 W12 产品代码已部分落地（未提交），`src-tauri/src/bridge.rs` 已出现三条命令：
++- `graph_query`（约 L6605）、`graph_node_get`（约 L6623，返回 `Option<GraphNodeView>`）、`graph_stats`（约 L6639），均经 `check_invocation_source` 守门；
++- 错误统一 `return Err(e.code().to_string())`（稳定 `GRAPH_*` 码，不走 `Display` 中文串）；
++- `graph_node_get` 返回 `GraphNodeView`（View DTO 丢弃 props）；命令函数体内 grep `props` 仅命中注释（“出参经 View DTO 删除 `props`；错误仅稳定 `GRAPH_*` 码，绝不 echo 凭据/路径/body”）。
++
++此观察与 §3 计划评审一致，进一步支持 **PASS**。但代码仍 in-flight、未提交，A4 不在此做完整静态守门（归 A10 终审）；最终以 §5 复核在 A7 包稳定后执行。`scripts/check-graph-policy.py` 此刻仍为 **ACTIVE=7**（A7 尚未加入 `GRAPH_OUTPUT_NO_PROPS`），故 §4 R1 缺口依旧成立。
++
++## 4. 具体建议（concrete，非阻塞；交 A7/A10 实施）
++
++- **R1（error-encoding / 审计机器守门缺口）**：A7 计划 §7.6 的 `GRAPH_OUTPUT_NO_PROPS` 仅守“输出 DTO 删 props”，**未覆盖要件②的错误编码路径与要件③的审计**。建议 A7 在其 `check-graph-policy.py` 同包内增补 `GRAPH_ERROR_STABLE_CODES`（或并入）：在 `bridge.rs` 的 `graph_*` 命令函数体内，断言（a）所有 `Err(GraphError::...)` 臂使用 `.code().to_string()` 而非 `to_string()`/`Display` 透传；（b）`graph_*` 命令内 `log_audit` detail 不含 `{props}`/`{label}`/`{query}`/`{body}`。此缺口当前**非 blocker**（A7 设计已满足），但缺机器守门，建议补强。
++- **R2（当前 `Display` 残留）**：`graph.rs` `Display` 仍回显 key/serde msg；只要命令不走 `Display` 即安全。建议 A7 落地时显式确认命令错误一律经 `code()`（A4 落地后复核会验证）。
++- **R3（持久化 `to_json`）**：`GraphStore::to_json` 序列化含 props，用于 store 落地；因插入已双扫拒密，at-rest 无机密；但 `from_json/to_json` 的 `Serde` 错误若外抛需经 `code()`。建议保持 `to_json` 仅用于持久化，不进入命令响应。
++
++## 5. 落地后复核框架（A4 在 A7 落地后执行）
++
++1. `python3 scripts/check-graph-policy.py`（default）→ PASS；`--self-test` → PASS（**ACTIVE=8**，含 `GRAPH_OUTPUT_NO_PROPS`）。
++2. `cargo test --manifest-path src-tauri/Cargo.toml graph`（或对应 crate graph 模块）→ 全绿（A7 新增 `graph_query`/`graph_node_get`/`graph_stats` 测试）。
++3. 静态复核 `bridge.rs` `graph_*` 命令：返回类型为 `GraphNodeView`/`GraphEdgeView`/`GraphQueryResult`/`GraphStats`（**非裸** `GraphNode`/`GraphEdge`）；错误臂用 `.code().to_string()`；`log_audit`（若有）detail 不含 `props`/`label`/`query`/`body`。
++4. 运行 A7 W12 计划 §7.6 的自测坏样本（View 加 `props` / 命令返回 `GraphNode` → 必须被 `GRAPH_OUTPUT_NO_PROPS` 检出）。
++
++## 6. Verdict
++
++**PRIVACY VERDICT = PASS（无具体 blocker）**。当前基线 props 不外流（持久化有双扫），无 graph 命令审计泄漏；A7 W12 计划在「输出删 props / 错误稳定码 / 审计不含 props」三要件上设计满足 W12 Hard Stop 行 207。唯一缺口为要件②③缺少机器守门（R1），属可补强项，**非阻塞**；建议 A7 在 `GRAPH_OUTPUT_NO_PROPS` 同包内补 `GRAPH_ERROR_STABLE_CODES`/审计守门。A4 将在 A7 落地后执行 §5 复核。
++
++## 7. 与 W12 其它 lane 的分工
++
++- A2：core/bin 边界（graph.rs 纯逻辑、命令在 bridge.rs、无 `crate::bridge`、无第二执行路径）—— 互补，本评审不重叠。
++- A3：MCP 不暴露 graph 命令（dry-run/只读自检）—— 可引用本 verdict 的 2.1 证据（props 不经 MCP 流出）。
++- A7：产品代码 + `check-graph-policy.py` 夹具（`GRAPH_OUTPUT_NO_PROPS` 归其所有，见 board 行 198）；R1 交其补强。
++- A10：安全终审（props/secret 输出、source-check/ACL 缺口、DB/script 执行路径、构建回归）—— 可引用本 verdict 的 §2/§3 证据。
++- A11：验证矩阵纳入 graph policy ACTIVE=8 与 graph cargo 测试。
++
++## 8. 不 push 声明
++
++按规则未 push；交付留于本地 working tree，交 A0 在 master 同步后集成（rebase / 补丁合并），由 A0 统一 push。
+diff --git a/logs/checkpoints/A4-M5-W12-graph-privacy-20260907-1930.md b/logs/checkpoints/A4-M5-W12-graph-privacy-20260907-1930.md
+new file mode 100644
+index 0000000..6a2e666
+--- /dev/null
++++ b/logs/checkpoints/A4-M5-W12-graph-privacy-20260907-1930.md
+@@ -0,0 +1,60 @@
++# Lane A4 — M5-W12 Graph Live-Query Readonly privacy review（交付检查点）
++
++> Status：**PASS（PRIVACY REVIEW ONLY，无产品代码；graph 命令未落地，pre-landing 评审 + 落地后框架）**
++> Time：2026-09-07 19:30 CST
++> 依赖冻结契约：`PARALLEL_COMMAND_BOARD.md` §M5-W12（行 188-212），A4 行 195
++> 机器门禁：`scripts/check-graph-policy.py`（default PASS；self-test `GRAPH_POLICY_SELF_TEST=PASS（ACTIVE=7）`）
++
++## 1. 范围与边界（严格按 board §W12 Assignments A4 行 195）
++
++- **Allowed Scope**：`logs/assist/A4-M5-W12-*.md`；policy fixtures only if concrete。
++- **不在本 lane 范围**（属 A7 产品代码 lane）：`src-tauri/src/{graph,domain,bridge,main}.rs`、`src/bridge.ts`、`src/types.ts`、`scripts/check-graph-policy.py`（board 行 198 明确归 A7）。A4 **未改**任何产品代码/策略脚本。
++- **未 push**（规则），交 A0 集成 master。
++
++## 2. 交付文件与改动
++
++| 文件 | 改动 | 说明 |
++|---|---|---|
++| `logs/assist/A4-M5-W12-privacy-review-20260907-1930.md` | **新建** | W12 graph 隐私评审 verdict（§0–§8） |
++| `logs/checkpoints/A4-M5-W12-graph-privacy-20260907-1930.md` | **新建** | 本检查点 |
++
++## 3. 机器门禁结果（实跑证据）
++
++- `python3 scripts/check-graph-policy.py` → **GRAPH_POLICY=PASS（无违规）** ✅
++- `python3 scripts/check-graph-policy.py --self-test` → **GRAPH_POLICY_SELF_TEST=PASS（ACTIVE=7）** ✅
++- `grep -nE "graph_query|graph_node_get|graph_stats" src-tauri/src/bridge.rs` → **无匹配**（命令未落地）✅
++- 静态扫描 `src-tauri/src/graph.rs` → **0 处 `log_audit`**；`Display` 回显隐患（key/serde msg）仅在命令走 `Display` 时成立，W12 由 `code()` 路径消解 ✅
++- `git status` 仅含本 lane 新建文档（未触碰产品代码/策略脚本）✅
++
++## 4. 隐私 verdict（W12 Hard Stop 行 207）
++
++| 维度 | 结论 | 证据 |
++|---|---|---|
++| ① 输出 DTO 删 `props` | PASS | 当前无 graph 命令不外流；A7 `GraphNodeView/EdgeView` 经 `From` 丢弃 props + `GRAPH_OUTPUT_NO_PROPS` 守门（§7.6） |
++| ② 错误稳定码、不回显 | PASS（设计满足；机器守门缺口 R1） | A7 `GraphError::code()`（§3.4）命令 `Err(e.code().to_string())`；缺机器守门，交 A7 补 `GRAPH_ERROR_STABLE_CODES` |
++| ③ 审计不含 props/labels/query body | PASS（设计满足；机器守门缺口 R1） | 当前 graph.rs 0 log_audit；A7 3 命令不写 props 审计（§6） |
++
++**结论：PRIVACY VERDICT = PASS，无 blocker。**
++
++## 5. 与 W11 baseline 的接续
++
++- W11 A4 已落地 `MCP_STDIO_NO_ARG_ECHO`（check-mcp-policy.py，属 A4 范围，已合入 `269269a`）。W12 的 `check-graph-policy.py` 属 A7 范围，故 A4 不重复改动，改为 review + 推荐 R1。
++- W12 三要件 A7 计划设计已满足；A4 提供落地后复核框架（§5 of verdict doc）以在 A7 落地后确认。
++
++## 6. 不 push 声明
++
++按规则未 push。交付留于本地 working tree，交 A0 在 master 同步后集成（rebase / 补丁合并），由 A0 统一 push。
++
++---
++
++```text
++LANE=A4
++STATUS=PASS（PRIVACY REVIEW ONLY；graph 命令未落地，pre-landing 评审 + 落地后框架）
++BASE=269269a
++HEAD=logs/assist/A4-M5-W12-privacy-review-20260907-1930.md
++FILES=logs/assist/A4-M5-W12-privacy-review-20260907-1930.md, logs/checkpoints/A4-M5-W12-graph-privacy-20260907-1930.md
++VERIFY=check-graph-policy.py default→PASS(self-test ACTIVE=7); bridge.rs 无 graph_* 命令(grep 证实); graph.rs 静态 0 log_audit; git status 仅含本 lane 新建文档
++CHECKPOINT=logs/checkpoints/A4-M5-W12-graph-privacy-20260907-1930.md
++MERGE_NOTES=A4 严格 REVIEW ONLY，未改产品代码/未改 check-graph-policy.py（属 A7 范围，board 行 198）；W12 隐私三要件 A7 计划设计满足，缺口 R1（error-encoding/审计缺机器守门）交 A7 补 GRAPH_ERROR_STABLE_CODES；A4 将 A7 落地后执行 verdict §5 复核
++NEXT=A7 落地 W12 命令 + GRAPH_OUTPUT_NO_PROPS（建议补 GRAPH_ERROR_STABLE_CODES）；A10 终审可引用本 verdict；A11 验证矩阵纳入 graph policy ACTIVE=8
++```

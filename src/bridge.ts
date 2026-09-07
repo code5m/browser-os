@@ -52,7 +52,34 @@ import type {
   GraphEdge,
   GraphNode,
   ValidationReport,
+  // M5-W12 图谱 live-query View DTO（与 A7 §7.5 镜像对齐；删 props，K7 双闸）
+  GraphNodeView,
+  GraphEdgeView,
+  GraphStats,
+  GraphQueryRequest,
+  GraphQueryResult,
 } from "./types";
+
+/// M5-W12 图谱 live-query 守卫常量：与 useGraphStore 复用。
+/// 当 `false` 时 `bridge.graphQuery / graphNodeGet / graphStats` 三个方法直接 reject 一个
+/// 稳定码错误（code=`GRAPH_UNKNOWN_ERROR` + 本地 message），**绝不 invoke**；
+/// 当 A0 集成完成 A7 §3 命令落地后翻 `true` 即可解锁命令面。集中可回滚。
+/// （**注**：本常量集中定义在下方 L100 区域，本文件内仅此一处。`makeGraphCommandDisabledError` 共享使用。）
+
+/** 生成"图谱命令未就绪"的稳定错误对象，供三个 W12 封装共享。 */
+function makeGraphCommandDisabledError(cmd: string): Error {
+  // 错误信息仅含"图谱命令面尚未落地"语义文案，**绝不**回显 cmd 之外的任何状态/请求体/URL。
+  // 这是 A4 W10 §4-C "错误稳定码 + 零 secret echo" 的前端镜像（A8 W12 §3.4 1:1 表）。
+  const err = new Error(`图谱命令 ${cmd} 尚未落地，请稍候刷新或联系维护者`) as Error & {
+    code?: string;
+  };
+  err.code = "GRAPH_UNKNOWN_ERROR";
+  return err;
+}
+
+// 为上方注释提供 re-export 占位（实际常量声明在下方，import 时按名解析）。
+// 这里**不**做重复 export —— TS 仅一处定义（下方 L100），所有消费方统一引用。
+export { };
 
 /// M4-8 可用性开关：A7（M4-6 / M4-7）已落地后端 `task_list / task_add / task_update /
 /// `task_remove / task_run_now` 五条命令（tasks.rs / scheduler.rs / bridge.rs / main.rs / ACL），
@@ -70,11 +97,9 @@ export const AGENT_SKILL_COMMANDS_AVAILABLE = false;
 // 注意：这是「只读解析/校验/预览」，不是上述 M5-5 运行时命令。
 export const AGENT_SKILL_READONLY_COMMANDS_AVAILABLE = true;
 
-// M5-9 可用性开关：A7（M5-7/8）已落地 GraphNode/GraphEdge DTO + 有界存储（domain.rs / graph.rs /
-// check-graph-policy.py），但 **graph_* 后端命令（graph_query 等）尚未落地**；故置 `false` →
-// useGraphStore 不发出任何 invoke（只读壳）。命令落地后置 true 即可解锁面板实时载入。
-// 这是 board「LIMITED START」的落地方式：命令未就绪时**不假借未实现的命令名假装可用**。
-export const GRAPH_COMMANDS_AVAILABLE = false;
+// M5-W12 图谱 live-query 守卫常量（W12 A7 已落地 graph_query/graph_node_get/graph_stats 三只读命令，置 true 解锁；回滚路径见 makeGraphCommandDisabledError）。
+export const GRAPH_COMMANDS_AVAILABLE = true;
+
 
 // M0-0.b 测量配置（契约 logs/m0-baseline-contract-v1.md；非测量运行后端返回 null）
 export interface M0Config {
@@ -397,11 +422,26 @@ export const bridge = {
 
   agentRunCancel: (runId: string) => invoke("agent_chat_cancel", { runId }),
 
-  // ====== M5-9 图谱面板（命令名沿用 A7 M5-7/8 规划的 graph_*；A8 前端封装）======
-  // 后端实现归 A7（后续 wave 落地 graph_query 等）；前端只在 GRAPH_COMMANDS_AVAILABLE 为 true 时调用。
-  // W6 当前后端命令尚未落地，故该标志为 false，useGraphStore 在调用前一律拦截（零 invoke）。
-  // 以下封装是「契约占位」，命令落地后组件无需改动。
-  graphQuery: () => invoke<{ nodes: GraphNode[]; edges: GraphEdge[] }>("graph_query"),
+  // ====== M5-W12 图谱 live-query（A7 后端只读命令 + A8 前端消费）======
+  // graphQuery：现在接受入参 + AbortSignal（与 A7 §5 cancellation 对齐）。
+  //   - 旧占位 `(req: GraphQueryRequest, signal?: AbortSignal) => invoke<GraphQueryResult>(...)`。
+  //   - 守卫：GRAPH_COMMANDS_AVAILABLE=false 时 reject 一个稳定码错误（不 invoke）。
+  //   - 返回 GraphQueryResult（删 props，K7 双闸），含 truncated/applied 信号。
+  // graphNodeGet：单节点查询（按 id）；id 校验在 A7 后端走 validate_id_public（Skill/Agent 64-hex）。
+  // graphStats：容量概览（计数 + 容量 + 90% 黄牌 approaching_*_capacity）。
+  //   - 三者共享 makeGraphCommandDisabledError（稳定码 GRAPH_UNKNOWN_ERROR + 静态文案，零 secret）。
+  graphQuery: (req: GraphQueryRequest, signal?: AbortSignal) =>
+    GRAPH_COMMANDS_AVAILABLE
+      ? invoke<GraphQueryResult>("graph_query", { ...req }, signal ? { signal } : {})
+      : Promise.reject<GraphQueryResult>(makeGraphCommandDisabledError("graph_query")),
+  graphNodeGet: (id: string) =>
+    GRAPH_COMMANDS_AVAILABLE
+      ? invoke<GraphNodeView | null>("graph_node_get", { id })
+      : Promise.reject<GraphNodeView | null>(makeGraphCommandDisabledError("graph_node_get")),
+  graphStats: () =>
+    GRAPH_COMMANDS_AVAILABLE
+      ? invoke<GraphStats>("graph_stats")
+      : Promise.reject<GraphStats>(makeGraphCommandDisabledError("graph_stats")),
 
   // 运行历史（读 skill-runs.json / agent-runs.json，各自 500 上限 FIFO）。
   skillRunsList: (id: string) => invoke<SkillRunRecord[]>("skill_runs_list", { id }),

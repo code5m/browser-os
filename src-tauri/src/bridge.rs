@@ -6592,3 +6592,57 @@ pub fn mcp_capability_preview(
         crate::mcp::evaluate_mcp_command(&capability, raw_path.as_deref(), &roots),
     ))
 }
+
+// ===========================================================================
+// M5-W12 图谱只读 live-query 命令（Lane A7）
+//
+// 命令体仅做来源校验 + 调 `crate::graph` 纯内核；不反向依赖 `crate::bridge`
+// （graph.rs 已是纯逻辑，守 GRAPH_NO_SECOND_PATH），无副作用 / 无 IO / 无写。
+// 出参经 View DTO 删除 `props`；错误仅稳定 `GRAPH_*` 码，绝不 echo 凭据/路径/body。
+// ===========================================================================
+
+#[tauri::command]
+pub async fn graph_query(
+    app: AppHandle,
+    webview: tauri::Webview,
+    req: GraphQueryRequest,
+) -> Result<GraphQueryResult, String> {
+    check_invocation_source(&webview, "graph_query", None, &app)?;
+    let start = req.start_id.trim();
+    if let Err(e) = crate::graph::validate_id_public(start) {
+        return Err(e.code().to_string());
+    }
+    // 纯内存读锁；临界区不跨 await，drop 后即无残留状态（取消 = no-op）。
+    let state = app.state::<crate::graph::GraphState>();
+    let store = state.store.read().unwrap();
+    let result = crate::graph::graph_query_impl(&store, start, req.depth, req.limit);
+    drop(store);
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn graph_node_get(
+    app: AppHandle,
+    webview: tauri::Webview,
+    id: String,
+) -> Result<Option<GraphNodeView>, String> {
+    check_invocation_source(&webview, "graph_node_get", None, &app)?;
+    if let Err(e) = crate::graph::validate_id_public(&id) {
+        return Err(e.code().to_string());
+    }
+    let state = app.state::<crate::graph::GraphState>();
+    let store = state.store.read().unwrap();
+    let view = crate::graph::graph_node_get_impl(&store, &id);
+    drop(store);
+    Ok(view)
+}
+
+#[tauri::command]
+pub async fn graph_stats(app: AppHandle, webview: tauri::Webview) -> Result<GraphStats, String> {
+    check_invocation_source(&webview, "graph_stats", None, &app)?;
+    let state = app.state::<crate::graph::GraphState>();
+    let store = state.store.read().unwrap();
+    let stats = crate::graph::graph_stats_impl(&store);
+    drop(store);
+    Ok(stats)
+}

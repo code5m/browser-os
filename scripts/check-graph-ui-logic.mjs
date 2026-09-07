@@ -301,6 +301,188 @@ let bm = new Map();
 bm = graphUi.boundedInsert(bm, big, 5000);
 ok("boundedInsert 6000→封顶 5000(无界防护)", bm.size === 5000 && !bm.has("n0"));
 
+// ============================================================================
+// M5-W12 增量断言（A7 §3.4 / §5 / §6；与 A8 前端消费契约对齐）
+// ============================================================================
+
+// ---- W12 稳定错误码识别与映射（与 A7 §3.4 1:1）----
+ok("isGraphStableErrorCode 命中 GRAPH_INVALID_ID", graphUi.isGraphStableErrorCode("GRAPH_INVALID_ID") === true);
+ok("isGraphStableErrorCode 命中 GRAPH_UNKNOWN_ERROR", graphUi.isGraphStableErrorCode("GRAPH_UNKNOWN_ERROR") === true);
+ok("isGraphStableErrorCode 拒绝 13 码之外的串", graphUi.isGraphStableErrorCode("GRAPH_NOT_A_REAL_CODE") === false);
+ok("isGraphStableErrorCode 拒绝 props 串", graphUi.isGraphStableErrorCode("token=sk-1234") === false);
+eq("isGraphStableErrorCode 拒绝空串", graphUi.isGraphStableErrorCode(""), false);
+
+// applyGraphErrorView：Error.code 路径
+const ev1 = graphUi.applyGraphErrorView({ code: "GRAPH_INVALID_ID" });
+eq("applyGraphErrorView 码→GRAPH_INVALID_ID", ev1.code, "GRAPH_INVALID_ID");
+ok("applyGraphErrorView 消息非空(本地化中文)", ev1.message.length > 0 && !/token|secret|sk-/.test(ev1.message));
+
+// applyGraphErrorView：字符串 body 路径
+const ev2 = graphUi.applyGraphErrorView("GRAPH_REF_ID_NOT_HEX");
+eq("applyGraphErrorView 字符串 body→GRAPH_REF_ID_NOT_HEX", ev2.code, "GRAPH_REF_ID_NOT_HEX");
+
+// applyGraphErrorView：未知错误 → 兜底（不泄露原始 message）
+const ev3 = graphUi.applyGraphErrorView(new Error("内部栈包含 token=sk-abcdef 应被丢弃"));
+eq("applyGraphErrorView 未知错误→GRAPH_UNKNOWN_ERROR", ev3.code, "GRAPH_UNKNOWN_ERROR");
+ok(
+  "applyGraphErrorView 兜底零 secret echo(原始 message 不透传)",
+  !/token=sk-abcdef/.test(ev3.message) && !/内部栈/.test(ev3.message),
+);
+
+// applyGraphErrorView：非稳定码字符串也走兜底
+const ev4 = graphUi.applyGraphErrorView("random error text");
+eq("applyGraphErrorView 非稳定码串→兜底", ev4.code, "GRAPH_UNKNOWN_ERROR");
+
+// applyGraphErrorView：null/undefined 走兜底
+const ev5 = graphUi.applyGraphErrorView(null);
+eq("applyGraphErrorView null→兜底", ev5.code, "GRAPH_UNKNOWN_ERROR");
+
+// formatGraphStableError：仅返回 message（绝大多数 UI 只需 message）
+ok("formatGraphStableError 串→非空中文", graphUi.formatGraphStableError("GRAPH_STORE_LOAD_FAILED").includes("图谱快照"));
+ok("formatGraphStableError Error→无 secret", !/sk-/.test(graphUi.formatGraphStableError(new Error("sk-abc"))));
+
+// 13 个稳定码全部能映射（A7 §3.4 全覆盖；避免新增码位时漏文案）
+const ALL_STABLE = [
+  "GRAPH_INVALID_ID", "GRAPH_REF_ID_NOT_HEX", "GRAPH_LABEL_TOO_LONG",
+  "GRAPH_PROP_KEY_TOO_LONG", "GRAPH_PROP_VALUE_TOO_LONG", "GRAPH_PROP_COUNT_EXCEEDED",
+  "GRAPH_SECRET_IN_PROPS", "GRAPH_NODE_CAPACITY_EXCEEDED", "GRAPH_EDGE_CAPACITY_EXCEEDED",
+  "GRAPH_DUPLICATE_NODE", "GRAPH_DUPLICATE_EDGE", "GRAPH_STORE_LOAD_FAILED", "GRAPH_UNKNOWN_ERROR",
+];
+ok(
+  "W12 13 稳定码全覆盖映射(零漏文案)",
+  ALL_STABLE.every((c) => {
+    const m = graphUi.applyGraphErrorView({ code: c }).message;
+    return m.length > 0 && !/token|secret|sk-/.test(m);
+  }),
+);
+
+// ---- W12 viewToNode/Edge：删 props 第三闸（K7 纵深防御）----
+const vNodeIn = { id: "n1", kind: "file", label: "L1", props: { token: "sk-leaked" } }; // 假设上游误传
+const vNodeOut = graphUi.viewToNode(vNodeIn);
+ok("viewToNode 删 props(无 props 字段)", !("props" in vNodeOut));
+ok("viewToNode 显式字段提取(id/kind/label)", vNodeOut.id === "n1" && vNodeOut.kind === "file" && vNodeOut.label === "L1");
+
+const vEdgeIn = { from: "a", to: "b", kind: "uses", props: { secret: "AKIA-leaked" } };
+const vEdgeOut = graphUi.viewToEdge(vEdgeIn);
+ok("viewToEdge 删 props(无 props 字段)", !("props" in vEdgeOut));
+ok("viewToEdge 显式字段提取(from/to/kind)", vEdgeOut.from === "a" && vEdgeOut.to === "b" && vEdgeOut.kind === "uses");
+
+// ---- W12 viewToQueryResult：组合转化 + truncated/applied 透传 + 删 props ----
+const vQueryIn = {
+  found: true,
+  nodes: [{ id: "n1", kind: "file", label: "L1", props: { token: "sk-1" } }],
+  edges: [{ from: "n1", to: "n2", kind: "uses", props: { secret: "AKIA-1" } }],
+  truncated: true,
+  applied: { depth: 2, limit: 100 },
+  node_count: 1,
+  edge_count: 1,
+};
+const vQueryOut = graphUi.viewToQueryResult(vQueryIn);
+eq("viewToQueryResult found 透传", vQueryOut.found, true);
+eq("viewToQueryResult truncated 透传", vQueryOut.truncated, true);
+eq("viewToQueryResult applied.depth=2", vQueryOut.applied.depth, 2);
+eq("viewToQueryResult applied.limit=100", vQueryOut.applied.limit, 100);
+eq("viewToQueryResult nodeCount 透传", vQueryOut.nodeCount, 1);
+ok("viewToQueryResult nodes 无 props(零透传)", !vQueryOut.nodes.some((n) => "props" in n));
+ok("viewToQueryResult edges 无 props(零透传)", !vQueryOut.edges.some((e) => "props" in e));
+
+// ---- W12 viewToStats：与 estimateCapacity 同口径 ----
+const vStatsIn = { node_count: 50, edge_count: 200, node_capacity: 5000, edge_capacity: 20000, approaching_node_capacity: false, approaching_edge_capacity: false };
+const vStatsOut = graphUi.viewToStats(vStatsIn);
+eq("viewToStats nodeCount 透传", vStatsOut.nodeCount, 50);
+eq("viewToStats edgeCount 透传", vStatsOut.edgeCount, 200);
+eq("viewToStats nodeUsedPct 1%", vStatsOut.nodeUsedPct, 1);
+ok("viewToStats withinLimit true", vStatsOut.withinLimit === true);
+
+// isApproachingCapacity：任一逼近即 true
+ok("isApproachingCapacity false 双 false", graphUi.isApproachingCapacity(vStatsIn) === false);
+ok(
+  "isApproachingCapacity true 节点逼近",
+  graphUi.isApproachingCapacity({ ...vStatsIn, approaching_node_capacity: true }) === true,
+);
+ok(
+  "isApproachingCapacity true 边逼近",
+  graphUi.isApproachingCapacity({ ...vStatsIn, approaching_edge_capacity: true }) === true,
+);
+
+// ---- W12 normalizeGraphQueryRequest：容量裁剪（domain.rs GRAPH_MAX_* 单源）----
+const nq1 = graphUi.normalizeGraphQueryRequest({ start_id: "n1" });
+eq("normalizeGraphQueryRequest 默认 depth=2", nq1.depth, 2);
+eq("normalizeGraphQueryRequest 默认 limit=GRAPH_QUERY_LIMIT(1000)", nq1.limit, 1000);
+ok("normalizeGraphQueryRequest 默认 request_id 8-hex", /^req-[0-9a-f]{8}$/.test(nq1.request_id));
+
+const nq2 = graphUi.normalizeGraphQueryRequest({ start_id: "n1", depth: 99, limit: 99999 });
+eq("normalizeGraphQueryRequest depth 截 GRAPH_MAX_DEPTH(4)", nq2.depth, 4);
+eq("normalizeGraphQueryRequest limit 截 GRAPH_QUERY_LIMIT(1000)", nq2.limit, 1000);
+
+const nq3 = graphUi.normalizeGraphQueryRequest({ start_id: "n1", depth: -5, limit: 0 });
+eq("normalizeGraphQueryRequest 负 depth→0", nq3.depth, 0);
+eq("normalizeGraphQueryRequest limit=0→最小 1", nq3.limit, 1);
+
+const nq4 = graphUi.normalizeGraphQueryRequest({ start_id: "n1", request_id: "req-custom" });
+eq("normalizeGraphQueryRequest request_id 透传", nq4.request_id, "req-custom");
+
+// ---- W12 makeAbortableDebouncer：取消上一个 / cancelAll / pending ----
+async function withTimeout(p, ms) {
+  return await Promise.race([p, new Promise((r) => setTimeout(() => r("__timeout__"), ms))]);
+}
+
+const d1 = graphUi.makeAbortableDebouncer(20);
+let d1Calls = 0;
+let d1LastToken = null;
+d1.schedule((t) => { d1Calls++; d1LastToken = t; });
+d1.schedule((t) => { d1Calls++; d1LastToken = t; });
+await new Promise((r) => setTimeout(r, 50));
+eq("abortableDebounce 两次 schedule 仅末次执行(防抖)", d1Calls, 1);
+ok("abortableDebounce 末次 token 未被取消", d1LastToken && d1LastToken.cancelled === false);
+
+const d2 = graphUi.makeAbortableDebouncer(20);
+let d2Calls = 0;
+d2.schedule(() => { d2Calls++; });
+d2.cancelAll();
+await new Promise((r) => setTimeout(r, 50));
+eq("abortableDebounce cancelAll 阻止执行", d2Calls, 0);
+ok("abortableDebounce cancelAll 后 pending=null", d2.pending() === null);
+
+const d3 = graphUi.makeAbortableDebouncer(20);
+let d3FirstCancelled = null;
+let d3SecondCalled = false;
+const d3First = d3.schedule((t) => { d3FirstCancelled = t.cancelled; });
+const d3Second = d3.schedule((t) => { d3SecondCalled = true; });
+// 直接断言 schedule 返回值（这是文档化契约；比闭包变量更稳）
+eq("abortableDebounce 第一次被取消(第一次 schedule 返回值.cancelled=true)", d3First.cancelled, true);
+eq("abortableDebounce 第二次未取消(第二次 schedule 返回值.cancelled=false)", d3Second.cancelled, false);
+await new Promise((r) => setTimeout(r, 50));
+ok("abortableDebounce 第二次正常执行", d3SecondCalled === true);
+
+const d4 = graphUi.makeAbortableDebouncer(20);
+let d4ThrowCount = 0;
+d4.schedule(() => { throw new Error("internal error"); });
+d4.schedule(() => { d4ThrowCount = 1; });
+await new Promise((r) => setTimeout(r, 50));
+ok("abortableDebounce 错误不冒泡到下一次 schedule", d4ThrowCount === 1);
+
+// ---- W12 request_id 唯一性 ----
+const r1 = graphUi.newGraphRequestId();
+const r2 = graphUi.newGraphRequestId();
+const r3 = graphUi.newGraphRequestId();
+ok("newGraphRequestId 唯一性(r1!=r2!=r3)", r1 !== r2 && r2 !== r3 && r1 !== r3);
+ok("newGraphRequestId 格式(/^req-[0-9a-f]{8}$/)", /^req-[0-9a-f]{8}$/.test(r1));
+
+// ---- W12 GRAPH_TRUNCATION_NOTICE / GRAPH_DEBOUNCE_MS 单源 ----
+ok("GRAPH_TRUNCATION_NOTICE 非空(用户可见)", graphUi.GRAPH_TRUNCATION_NOTICE.length > 0);
+eq("GRAPH_DEBOUNCE_MS=300(与 A7 §5 + W10 W11 一致)", graphUi.GRAPH_DEBOUNCE_MS, 300);
+
+// ---- W12 K7 双闸 + 零 props 渲染（panel 文案 / 错误文案全不漏 props）----
+const w12Texts = [
+  graphUi.GRAPH_TRUNCATION_NOTICE,
+  ...ALL_STABLE.map((c) => graphUi.applyGraphErrorView({ code: c }).message),
+];
+ok(
+  "W12 用户可见文案不泄露 props/secret/token 关键字",
+  w12Texts.every((t) => !/token|secret|api[_-]?key|password|Bearer|sk-|AKIA/.test(t)),
+);
+
 // ---- 结果 ----
 console.log(`\n图谱 UI 逻辑测试：通过 ${passed}，失败 ${failed}`);
 process.exit(failed === 0 ? 0 : 1);

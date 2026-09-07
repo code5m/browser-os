@@ -820,15 +820,89 @@ export interface GraphEdge {
   props: GraphProps;
 }
 
-// 与 domain.rs 常量对齐（前端仅用于容量展示/守卫；后端为单一真源）。
-export const GRAPH_MAX_DEPTH = 4;
-export const GRAPH_QUERY_LIMIT = 1000;
-export const GRAPH_MAX_NODES = 5000;
-export const GRAPH_MAX_EDGES = 20000;
-export const GRAPH_LABEL_MAX_BYTES = 256;
-/// = MAX_TEXT_FIELD_BYTES (64KiB)
-export const GRAPH_PROPS_MAX_BYTES = 65536;
-export const GRAPH_NODE_ID_HEX_LEN = 64;
+// ====== M5-W12 图谱 live-query View DTO（与后端 domain.rs GraphNodeView/GraphEdgeView 对齐）======
+// 严格删 props（K7 双闸后端 + 前端），仅 {id,kind,label} / {from,to,kind}。
+// 这是 A7 W12 实施卡 §7.5 的前端镜像；后端命令返回 View 而非 GraphNode/GraphEdge，
+// 故 UI 即便强制遍历 props 也不存在该字段（编译期 + 序列化双闸）。
+//
+// 字段 snake_case：与后端 GraphNodeView {id,kind,label} / GraphEdgeView {from,to,kind}
+// 逐字对齐（serde rename_all 不影响这两条命令的入参出参结构顶层）。
+
+export interface GraphNodeView {
+  id: string;
+  kind: GraphNodeKind;
+  label: string;
+}
+
+export interface GraphEdgeView {
+  from: string;
+  to: string;
+  kind: GraphEdgeKind;
+}
+
+export interface GraphQueryLimits {
+  depth: number;
+  limit: number;
+}
+
+export interface GraphQueryRequest {
+  start_id: string;
+  depth?: number | null;
+  limit?: number | null;
+  /** 用于 AbortController map 关联，避免乱序回包覆盖（与 A7 W12 §5 契约对齐） */
+  request_id?: string | null;
+}
+
+export interface GraphQueryResult {
+  /** start_id 不在 store 时为 false；nodes/edges 为空数组，但不报错 */
+  found: boolean;
+  nodes: GraphNodeView[];
+  edges: GraphEdgeView[];
+  /** total > applied.limit 或 depth 被 domain.rs GRAPH_MAX_DEPTH 截断时为 true */
+  truncated: boolean;
+  /** 实际生效的 depth/limit（可能被 domain.rs 常量 min 截断） */
+  applied: GraphQueryLimits;
+  node_count: number;
+  edge_count: number;
+}
+
+export interface GraphStats {
+  node_count: number;
+  edge_count: number;
+  node_capacity: number;
+  edge_capacity: number;
+  /** ≥ 90% 节点容量 */
+  approaching_node_capacity: boolean;
+  /** ≥ 90% 边容量 */
+  approaching_edge_capacity: boolean;
+}
+
+// ====== M5-W12 稳定错误码（与后端 GraphError::code() 1:1 镜像；零 secret echo）======
+// 来源：A7 W12 实施卡 §3.4（A7 实施时落地）。前端的 `applyGraphErrorView` /
+// `formatGraphStableError`（utils/graphUi.ts）按此表做 1:1 映射 → 稳定 UI 态。
+// 错误文本绝不含 label / props / 查询体 / 路径 / URL / token / cookie / Authorization
+// （board W12 Hard Stop 第 2 条 + A4 W10 §4-C）。
+export type GraphStableErrorCode =
+  | "GRAPH_INVALID_ID"
+  | "GRAPH_REF_ID_NOT_HEX"
+  | "GRAPH_LABEL_TOO_LONG"
+  | "GRAPH_PROP_KEY_TOO_LONG"
+  | "GRAPH_PROP_VALUE_TOO_LONG"
+  | "GRAPH_PROP_COUNT_EXCEEDED"
+  | "GRAPH_SECRET_IN_PROPS"
+  | "GRAPH_NODE_CAPACITY_EXCEEDED"
+  | "GRAPH_EDGE_CAPACITY_EXCEEDED"
+  | "GRAPH_DUPLICATE_NODE"
+  | "GRAPH_DUPLICATE_EDGE"
+  | "GRAPH_STORE_LOAD_FAILED"
+  | "GRAPH_UNKNOWN_ERROR";
+
+// 稳定错误视图（前端统一错误模型，UI 不直接消费裸 Promise rejection 文本）。
+export interface GraphErrorView {
+  code: GraphStableErrorCode;
+  /** 用户可见的本地化中文文案（不含 props/secret/URL/路径/查询体；脱敏过） */
+  message: string;
+}
 
 // ====== M5-2 MCP 只读桥 DTO（与后端 domain.rs / mcp.rs 对齐）======
 // 仅描述能力白名单 / 注册表映射 / 裁决结果，不含任何凭据、URL 明文或内部状态。

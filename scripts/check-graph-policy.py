@@ -21,6 +21,9 @@
   （AGRAPH-10 完整性；实时反查 A5 SkillDef/AgentDef 留待 agent store 接入后）。
 - `GRAPH_NO_SECOND_PATH`：graph.rs 不得出现 `std::process` / `Command::new` / `tokio` /
   `use tauri` / `crate::bridge`（无第二执行路径 / 无网络 / 不反向依赖命令层）。
+- `GRAPH_OUTPUT_NO_PROPS`：只读出参必须删除 `props`（K7 双闸）：`domain.rs` 的
+  `GraphNodeView` / `GraphEdgeView` 不得含 `props` 字段；`graph.rs` 命令内核须经
+  `GraphNodeView::from` / `GraphEdgeView::from` 转换，且 `GraphError` 须有稳定 `code()`。
 
 用法：
   python3 scripts/check-graph-policy.py                 默认扫描（无违规 → EXIT 0；有 → EXIT 2）
@@ -176,6 +179,26 @@ def c_no_second_path(rel, text, _repo):
     return None
 
 
+def c_output_no_props(rel, text, _repo):
+    if rel == DOMAIN:
+        # 只读 View 类型必须存在且结构体体内不得含 props 字段（K7 双闸：出参即删）。
+        if "GraphNodeView" not in text or "GraphEdgeView" not in text:
+            return ["domain.rs 缺只读 View 类型 GraphNodeView/GraphEdgeView（出参须删 props）"]
+        if re.search(r"struct GraphNodeView\s*\{[^}]*\bprops\b", text, flags=re.S):
+            return ["domain.rs GraphNodeView 含 props 字段（出参泄露脱敏前原文）"]
+        if re.search(r"struct GraphEdgeView\s*\{[^}]*\bprops\b", text, flags=re.S):
+            return ["domain.rs GraphEdgeView 含 props 字段（出参泄露脱敏前原文）"]
+        return None
+    if rel == GRAPH:
+        # 命令内核必须经 View 转换（删 props）；错误必须走稳定 code()（零 secret echo）。
+        if "GraphNodeView::from" not in text or "GraphEdgeView::from" not in text:
+            return ["graph.rs 图谱出参未经 GraphNodeView/GraphEdgeView 转换（props 可能外泄）"]
+        if "fn code(" not in text:
+            return ["graph.rs 缺 GraphError::code（稳定错误码缺失，错误会 echo 内部串）"]
+        return None
+    return None
+
+
 ALL_CODES = [
     ("GRAPH_CONSTANTS_PRESENT", c_constants_present),
     ("GRAPH_PROPS_EQ_MAX_TEXT_FIELD", c_props_eq_max_text_field),
@@ -184,6 +207,7 @@ ALL_CODES = [
     ("GRAPH_TRAVERSAL_BOUNDED", c_traversal_bounded),
     ("GRAPH_REF_NODE_INTEGRITY", c_ref_node_integrity),
     ("GRAPH_NO_SECOND_PATH", c_no_second_path),
+    ("GRAPH_OUTPUT_NO_PROPS", c_output_no_props),
 ]
 
 
@@ -210,6 +234,8 @@ pub const GRAPH_MAX_DEPTH: usize = 4;
 pub const GRAPH_QUERY_LIMIT: usize = 1_000;
 pub const GRAPH_MAX_NODES: usize = 5_000;
 pub const GRAPH_MAX_EDGES: usize = 20_000;
+pub struct GraphNodeView { pub id: String, pub kind: GraphNodeKind, pub label: String }
+pub struct GraphEdgeView { pub from: String, pub to: String, pub kind: GraphEdgeKind }
 """
 
 GOOD_GRAPH = """
@@ -242,6 +268,12 @@ pub fn bounded_neighbors(&self, start_id: &str, depth: usize, limit: usize) -> V
     let limit = limit.min(GRAPH_QUERY_LIMIT);
     Vec::new()
 }
+pub fn graph_query_impl(s: &GraphStore) -> GraphQueryResult {
+    let _ = s.nodes.iter().map(GraphNodeView::from).collect::<Vec<GraphNodeView>>();
+    let _ = s.edges.iter().map(GraphEdgeView::from).collect::<Vec<GraphEdgeView>>();
+    GraphQueryResult {}
+}
+impl GraphError { pub fn code(&self) -> &'static str { "GRAPH_INVALID_ID" } }
 """
 
 
@@ -315,6 +347,21 @@ def _run_self_test() -> int:
         mutate(**{GRAPH: GOOD_GRAPH.replace(
             "use crate::domain::*;\n",
             "use crate::domain::*;\nuse std::process::Command;\n")}),
+        GRAPH,
+    ))
+    bad_cases.append((
+        "GRAPH_OUTPUT_NO_PROPS",
+        "domain.rs GraphNodeView 含 props 字段（出参泄露）",
+        mutate(**{DOMAIN: GOOD_DOMAIN.replace(
+            "pub struct GraphNodeView { pub id: String, pub kind: GraphNodeKind, pub label: String }",
+            "pub struct GraphNodeView { pub id: String, pub kind: GraphNodeKind, pub label: String, pub props: GraphProps }")}),
+        DOMAIN,
+    ))
+    bad_cases.append((
+        "GRAPH_OUTPUT_NO_PROPS",
+        "graph.rs 出参未经 View 转换（props 可能外泄）",
+        mutate(**{GRAPH: GOOD_GRAPH.replace(
+            "GraphNodeView::from", "leak_raw_node")}),
         GRAPH,
     ))
 

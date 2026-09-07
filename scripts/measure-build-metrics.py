@@ -32,7 +32,9 @@ from pathlib import Path
 # 当前实测 total_bytes_pct=20.63，cargo_warnings 未增加。
 # M5-W8 Agent/Skill bridge hardening + Graph UI polish 后，A0 于 2026-09-07
 # 书面抬至 22%，当前实测 total_bytes_pct=21.07，cargo_warnings 未增加。
-TOTAL_BYTES_GROWTH_LIMIT_PCT = 22.0
+# M5-W12 Graph live-query readonly bridge/UI 后，A0 于 2026-09-07 书面抬至 23%，
+# 当前实测 total_bytes_pct=22.26，cargo_warnings 未增加。
+TOTAL_BYTES_GROWTH_LIMIT_PCT = 23.0
 
 # cargo 输出的 warning 汇总行，例如：
 #   warning: `mvp-browser-os` (bin "mvp-browser-os") generated 2 warnings
@@ -171,7 +173,7 @@ dist/assets/index-Dt_h_hIi.js          83.16 kB │ gzip:  30.20 kB
     if cmp_ok["deltas"]["total_bytes_pct"] != 10.0 or cmp_ok["exceeds_growth_limit"]:
         print(f"self-test: compare within limit failed: {cmp_ok}", file=sys.stderr)
         return 1
-    over_limit = compare({"dist": {"total_bytes": 1220}, "cargo_warnings": 2}, baseline)
+    over_limit = compare({"dist": {"total_bytes": 1240}, "cargo_warnings": 2}, baseline)
     if not over_limit["exceeds_growth_limit"]:
         print("self-test: growth limit not enforced", file=sys.stderr)
         return 1

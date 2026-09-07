@@ -124,5 +124,8 @@ commands.allow = [
     "mcp_capability_preview",
     "mcp_policy_get",
     "mcp_registry_list",
+    "graph_query",
+    "graph_node_get",
+    "graph_stats",
     "list_artifact_images"
 ]

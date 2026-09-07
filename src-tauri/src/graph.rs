@@ -6,13 +6,14 @@
 //! 与 A4/A5 的契约边界（承 W4 A7 delta）：Skill/Agent 节点**按 id 引用** A5 的
 //! `SkillDef.id`/`AgentDef.id`，图谱不存 `agent_kv` 值（仅 `Memorizes` 关系边）。
 
-// M5-W5：本切片暂无消费方（图谱 UI / agent 消费 / 后台重建 worker 均留待 M5-8），
-// 故整模块允许 dead_code；待 M5-8 接入 store/query/UI 后自然消解。
-#![allow(dead_code)]
+// M5-W12：本模块的 bounded 助手 / 校验已被 `bridge.rs` 的图谱只读命令消费，故移除 W5 遗留的
+// `#![allow(dead_code)]`。本模块仍为纯逻辑：不引入 tauri / AppHandle / crate::bridge /
+// 网络 / 命令 / 第二执行路径（守 GRAPH_NO_SECOND_PATH）。
 
 use crate::domain::*;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::RwLock;
 
 /// 凭据/正文敏感字段名黑名单（与 A4 agent_kv 隐私双扫同源）。
 const SENSITIVE_KEY_NAMES: &[&str] = &["token", "password", "secret", "api_key"];
@@ -35,7 +36,9 @@ pub enum GraphError {
     SecretInProps,
     NodeCapacityExceeded,
     EdgeCapacityExceeded,
+    #[cfg_attr(not(test), allow(dead_code))]
     DuplicateNode(String),
+    #[cfg_attr(not(test), allow(dead_code))]
     DuplicateEdge(String),
     Serde(String),
 }
@@ -69,6 +72,28 @@ impl std::fmt::Display for GraphError {
             GraphError::DuplicateNode(id) => write!(f, "重复节点 id: {id}"),
             GraphError::DuplicateEdge(k) => write!(f, "重复边: {k}"),
             GraphError::Serde(m) => write!(f, "序列化失败: {m}"),
+        }
+    }
+}
+
+impl GraphError {
+    /// 稳定 ASCII 错误码。命令 `Err` 只返回此串，**绝不** echo props / label / 路径 /
+    /// secret / query body（K7 双闸 + W12 硬停 §204）。
+    pub fn code(&self) -> &'static str {
+        match self {
+            GraphError::EmptyId => "GRAPH_INVALID_ID",
+            GraphError::IdTooLong => "GRAPH_INVALID_ID",
+            GraphError::RefIdNotHex => "GRAPH_REF_ID_NOT_HEX",
+            GraphError::LabelTooLong => "GRAPH_LABEL_TOO_LONG",
+            GraphError::PropKeyTooLong(_) => "GRAPH_PROP_KEY_TOO_LONG",
+            GraphError::PropValueTooLong(_) => "GRAPH_PROP_VALUE_TOO_LONG",
+            GraphError::PropCountExceeded => "GRAPH_PROP_COUNT_EXCEEDED",
+            GraphError::SecretInProps => "GRAPH_SECRET_IN_PROPS",
+            GraphError::NodeCapacityExceeded => "GRAPH_NODE_CAPACITY_EXCEEDED",
+            GraphError::EdgeCapacityExceeded => "GRAPH_EDGE_CAPACITY_EXCEEDED",
+            GraphError::DuplicateNode(_) => "GRAPH_DUPLICATE_NODE",
+            GraphError::DuplicateEdge(_) => "GRAPH_DUPLICATE_EDGE",
+            GraphError::Serde(_) => "GRAPH_STORE_LOAD_FAILED",
         }
     }
 }
@@ -163,15 +188,18 @@ pub struct GraphStore {
 }
 
 impl GraphStore {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn find_node(&self, id: &str) -> Option<usize> {
         self.nodes.iter().position(|n| n.id == id)
     }
 
     /// 插入节点；容量/去重/校验任一失败即拒。
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn insert_node(&mut self, node: GraphNode) -> Result<(), GraphError> {
         validate_graph_node(&node)?;
         if self.find_node(&node.id).is_some() {
@@ -185,6 +213,7 @@ impl GraphStore {
     }
 
     /// 插入边；容量/去重/校验任一失败即拒。
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn insert_edge(&mut self, edge: GraphEdge) -> Result<(), GraphError> {
         validate_graph_edge(&edge)?;
         let key = format!("{}|{:?}|{}", edge.from, edge.kind, edge.to);
@@ -245,20 +274,8 @@ impl GraphStore {
         out
     }
 
-    /// 从 `start_id` 出发、深度 ≤ `depth` 的 bounded 子图（节点 + 其间边），用于导出/查询。
-    pub fn bounded_subgraph(&self, start_id: &str, depth: usize) -> GraphStore {
-        let nodes = self.bounded_neighbors(start_id, depth, GRAPH_QUERY_LIMIT);
-        let ids: std::collections::BTreeSet<String> = nodes.iter().map(|n| n.id.clone()).collect();
-        let edges: Vec<GraphEdge> = self
-            .edges
-            .iter()
-            .filter(|e| ids.contains(&e.from) && ids.contains(&e.to))
-            .cloned()
-            .collect();
-        GraphStore { nodes, edges }
-    }
-
     /// 序列化为 JSON（受 bounded 约束，整体不会超 `GRAPH_MAX_NODES/EDGES`）。
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn to_json(&self) -> Result<String, GraphError> {
         serde_json::to_string(self).map_err(|e| GraphError::Serde(e.to_string()))
     }
@@ -280,6 +297,108 @@ impl GraphStore {
             return Err(GraphError::EdgeCapacityExceeded);
         }
         Ok(store)
+    }
+}
+
+// ===========================================================================
+// M5-W12 图谱只读 live-query 内核（Lane A7）
+//
+// 纯函数，无 AppHandle / 无 IO / 无副作用，可直接单测。`bridge.rs` 的命令体仅做
+// `check_invocation_source` + 调这些内核。`graph.rs` 仍零 `crate::bridge`（GRAPH_NO_SECOND_PATH）。
+// ===========================================================================
+
+/// W12 图谱只读托管状态：命令层经 `app.state::<GraphState>()` 读取；载入期写一次，运行期只读。
+pub struct GraphState {
+    pub store: RwLock<GraphStore>,
+}
+
+impl Default for GraphState {
+    fn default() -> Self {
+        GraphState {
+            store: RwLock::new(GraphStore::default()),
+        }
+    }
+}
+
+/// 入参 id 的 kind 无关校验（空 / 超长）。Skill / Agent 的 64-hex 完整性在 **store 载入期**
+/// （`from_json` -> `validate_graph_node`）已强制，查询期无需重复。
+pub fn validate_id_public(id: &str) -> Result<(), GraphError> {
+    if id.is_empty() {
+        return Err(GraphError::EmptyId);
+    }
+    if id.len() > 512 {
+        return Err(GraphError::IdTooLong);
+    }
+    Ok(())
+}
+
+/// `graph_query` 可单测内核：`found=false` 表示 start 不在图中（非错误）。
+/// `depth` 默认 `GRAPH_DEFAULT_QUERY_DEPTH`、上限 `GRAPH_MAX_DEPTH`；`limit` 默认
+/// `GRAPH_QUERY_LIMIT`、上限 `GRAPH_QUERY_LIMIT`；超出即静默截断（`truncated=true`）。
+pub fn graph_query_impl(
+    store: &GraphStore,
+    start_id: &str,
+    depth: Option<u8>,
+    limit: Option<usize>,
+) -> GraphQueryResult {
+    let depth = (depth.unwrap_or(GRAPH_DEFAULT_QUERY_DEPTH as u8) as usize).min(GRAPH_MAX_DEPTH);
+    let limit = limit.unwrap_or(GRAPH_QUERY_LIMIT).min(GRAPH_QUERY_LIMIT);
+    let total = store
+        .bounded_neighbors(start_id, depth, GRAPH_QUERY_LIMIT)
+        .len();
+    let nodes = store.bounded_neighbors(start_id, depth, limit);
+    let ids: BTreeSet<String> = nodes.iter().map(|n| n.id.clone()).collect();
+    let edges: Vec<GraphEdgeView> = store
+        .edges
+        .iter()
+        .filter(|e| ids.contains(&e.from) && ids.contains(&e.to))
+        .map(GraphEdgeView::from)
+        .collect();
+    let node_count = nodes.len();
+    let edge_count = edges.len();
+    GraphQueryResult {
+        found: total > 0,
+        nodes: nodes.iter().map(GraphNodeView::from).collect(),
+        edges,
+        truncated: total > limit,
+        applied: GraphQueryLimits { depth, limit },
+        node_count,
+        edge_count,
+    }
+}
+
+/// `graph_node_get` 可单测内核：缺失返回 `None`（非错误）。
+pub fn graph_node_get_impl(store: &GraphStore, id: &str) -> Option<GraphNodeView> {
+    store
+        .nodes
+        .iter()
+        .find(|n| n.id == id)
+        .map(GraphNodeView::from)
+}
+
+/// `graph_stats` 可单测内核：容量概览（≥90% 触发黄牌）。
+pub fn graph_stats_impl(store: &GraphStore) -> GraphStats {
+    let node_count = store.nodes.len();
+    let edge_count = store.edges.len();
+    GraphStats {
+        node_count,
+        edge_count,
+        node_capacity: GRAPH_MAX_NODES,
+        edge_capacity: GRAPH_MAX_EDGES,
+        approaching_node_capacity: node_count * 10 >= GRAPH_MAX_NODES * 9,
+        approaching_edge_capacity: edge_count * 10 >= GRAPH_MAX_EDGES * 9,
+    }
+}
+
+/// 启动期载入 `graph.json` 快照；**任何失败（缺文件 / 损坏 / 双扫命中）一律回退空 store**，
+/// 绝不 panic（W12 只读：无则空图，查询返回空，符合预期）。
+pub fn load_snapshot(path: &std::path::Path) -> GraphStore {
+    match std::fs::read_to_string(path) {
+        Ok(text) => match GraphStore::from_json(&text) {
+            Ok(store) => store,
+            Err(_) => GraphStore::default(),
+        },
+        Err(_) => GraphStore::default(),
     }
 }
 
@@ -477,5 +596,138 @@ mod tests {
             GraphStore::from_json(json),
             Err(GraphError::SecretInProps)
         ));
+    }
+
+    // ---- M5-W12 focused：只读 live-query 内核 ----
+
+    fn chain_store() -> GraphStore {
+        let mut store = GraphStore::new();
+        let ids = ["a", "b", "c", "d", "e", "f"];
+        for id in ids.iter() {
+            store
+                .insert_node(GraphNode {
+                    id: id.to_string(),
+                    kind: GraphNodeKind::File,
+                    label: id.to_string(),
+                    props: GraphProps::new(),
+                })
+                .unwrap();
+        }
+        for w in ids.windows(2) {
+            store
+                .insert_edge(GraphEdge {
+                    from: w[0].to_string(),
+                    to: w[1].to_string(),
+                    kind: GraphEdgeKind::References,
+                    weight: 1,
+                    props: GraphProps::new(),
+                })
+                .unwrap();
+        }
+        store
+    }
+
+    #[test]
+    fn graph_query_ready_view_omits_props() {
+        let mut store = chain_store();
+        // 给 a 一个 props，验证出参不携带
+        store.nodes[0]
+            .props
+            .insert("note".into(), "secret-ish".into());
+        let r = graph_query_impl(&store, "a", Some(2), None);
+        assert!(r.found);
+        assert_eq!(r.nodes.len(), 3); // a,b,c
+        assert_eq!(r.nodes[0].id, "a");
+        // View 无 props 字段：序列化不得含 "props"
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(!json.contains("\"props\""), "出参泄露 props: {json}");
+    }
+
+    #[test]
+    fn graph_query_truncates_when_over_limit() {
+        let mut store = GraphStore::new();
+        store
+            .insert_node(GraphNode {
+                id: "start".into(),
+                kind: GraphNodeKind::Dir,
+                label: "s".into(),
+                props: GraphProps::new(),
+            })
+            .unwrap();
+        for i in 0..1500 {
+            let id = format!("n{i}");
+            store
+                .insert_node(GraphNode {
+                    id: id.clone(),
+                    kind: GraphNodeKind::File,
+                    label: id,
+                    props: GraphProps::new(),
+                })
+                .unwrap();
+            store
+                .insert_edge(GraphEdge {
+                    from: "start".into(),
+                    to: format!("n{i}"),
+                    kind: GraphEdgeKind::InDir,
+                    weight: 0,
+                    props: GraphProps::new(),
+                })
+                .unwrap();
+        }
+        let r = graph_query_impl(&store, "start", Some(2), Some(500));
+        assert!(r.truncated);
+        assert_eq!(r.nodes.len(), 500);
+        assert_eq!(r.applied.limit, 500);
+        assert_eq!(r.applied.depth, 2);
+    }
+
+    #[test]
+    fn graph_query_missing_start_is_found_false_not_error() {
+        let store = chain_store();
+        let r = graph_query_impl(&store, "absent", None, None);
+        assert!(!r.found);
+        assert!(r.nodes.is_empty());
+        assert!(r.edges.is_empty());
+    }
+
+    #[test]
+    fn graph_node_get_missing_is_none() {
+        let store = chain_store();
+        assert_eq!(graph_node_get_impl(&store, "absent"), None);
+        let v = graph_node_get_impl(&store, "b").unwrap();
+        assert_eq!(v.id, "b");
+        assert_eq!(v.kind, GraphNodeKind::File);
+    }
+
+    #[test]
+    fn graph_stats_approaching_capacity_flag() {
+        let mut store = GraphStore::new();
+        let cap = GRAPH_MAX_NODES * 9 / 10; // 90%
+        for i in 0..cap {
+            store
+                .insert_node(GraphNode {
+                    id: format!("file:/{i}"),
+                    kind: GraphNodeKind::File,
+                    label: "x".into(),
+                    props: GraphProps::new(),
+                })
+                .unwrap();
+        }
+        let s = graph_stats_impl(&store);
+        assert_eq!(s.node_count, cap);
+        assert!(s.approaching_node_capacity);
+        assert_eq!(s.node_capacity, GRAPH_MAX_NODES);
+    }
+
+    #[test]
+    fn error_codes_are_stable_ascii() {
+        assert_eq!(GraphError::EmptyId.code(), "GRAPH_INVALID_ID");
+        assert_eq!(GraphError::RefIdNotHex.code(), "GRAPH_REF_ID_NOT_HEX");
+        assert_eq!(GraphError::SecretInProps.code(), "GRAPH_SECRET_IN_PROPS");
+        assert_eq!(
+            GraphError::Serde("x".into()).code(),
+            "GRAPH_STORE_LOAD_FAILED"
+        );
+        assert!(GraphError::EmptyId.code().starts_with("GRAPH_"));
     }
 }

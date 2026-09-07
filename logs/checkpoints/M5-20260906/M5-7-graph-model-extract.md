@@ -7,6 +7,7 @@
 > 配套：`M5-8-graph-store-query.md`（存储与查询）· `M5-9-graph-ui-agent-consume.md`（UI 与消费）
 >
 > **W3** BLOCKED（待 A17 = A7 W5 实施期承接）· **W4** ACTIVE（**A7 graph model/store policy slice**；详见本卡顶部 `[W5 next-card acceptance criteria]` 段）
+> **W12** ACTIVE（**A7 W12 = START PRODUCT CODE NARROW**（图谱后端 3 只读命令；W5 落地的内存 `GraphStore` / `graph.rs` 为真相源）；**两阶段抽取 / extractor 不在 W12**（W12 仅 read-only query，不接 live extraction）；M5-8 旧 9 命令 + SQLite DDL 设计已 superseded（见 `M5-8-graph-store-query.md` 顶部 `[W12 scope supersession]` 段）；详见 `M5-0-overview.md` 顶部 `[W12 active · 2026-09-07 20:30 CST]` 段 runtime-lock 状态表 11 行）
 
 ---
 

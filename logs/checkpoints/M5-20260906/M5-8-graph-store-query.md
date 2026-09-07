@@ -7,6 +7,7 @@
 > 配套：`M5-7-graph-model-extract.md`（抽取）· `M5-9-graph-ui-agent-consume.md`（UI 消费）
 >
 > **W3** BLOCKED（待 A17 = A7 W5 实施期承接）· **W4** ACTIVE（**A7 graph store/query policy slice**；详见本卡顶部 `[W5 next-card acceptance criteria]` 段）
+> **W12** ACTIVE（**A7 W12 = START PRODUCT CODE NARROW** 仅在 W5 落地的内存 `GraphStore` 上暴露 3 只读命令；**本卡原始 9 命令 + SQLite DDL 设计 superseded**，真相源见 `[W12 scope supersession]` 段）；详见 `M5-0-overview.md` 顶部 `[W12 active · 2026-09-07 20:30 CST]` 段
 
 ---
 
@@ -275,3 +276,31 @@ bash scripts/pre-merge.sh
 - 未触 `src-tauri/src/`、`src-tauri/Cargo.toml`、`scripts/pre-merge.sh`、三份主文档、ACL/Capability
 - 未移动 `NEXT`（仍 M5-W0）
 - 未提交、未 push
+
+---
+
+## [W12 scope supersession · 2026-09-07 20:30 CST] M5-8 旧 9 命令 + SQLite DDL 设计 → 3 只读命令 + 内存 GraphStore（SUPERSEDED·部分）
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L176-227（M5-W12 Graph Live-Query Readonly Dispatch）+ A7 W11 W12 实施卡 §2 L61（*"M5-8 文档更新归 A1/A0 文档整合"*）+ A1 W12 reconciliation 整包（`logs/checkpoints/A1-M5-W12-reconciliation-20260907-2030.md`）。
+> **状态**：本卡原始设计（9 命令 + SQLite DDL + `graph_store.rs`/`graph_query.rs`/`graph_maintenance.rs` + `source`/`source_ref`/`created_at`/`updated_at`/`extractor_version` 5 字段）**已 superseded（部分）**，W12 以冻结的 `graph.rs`/`domain.rs` 为真相源，**不回退**到 M5-8 的 9 命令 SQLite 设计。
+
+**W12 真实落地（IN SCOPE）**：
+
+- 内存 `GraphStore`（`src-tauri/src/graph.rs`，W5 `4b438ef` 落地）+ 3 只读命令：`graph_query` / `graph_node_get` / `graph_stats`
+- 命令定义在 `bridge.rs`，调用 `crate::graph::*` pure helper + `check_invocation_source`；`graph.rs` 不 import `crate::bridge`（守 `GRAPH_NO_SECOND_PATH`）
+- 输出 DTO `GraphNodeView` / `GraphEdgeView`（仅 `{id,kind,label}` / `{from,to,kind}`），**无 `props`**（编译期保证）
+- 启动载入既有 store（`GraphStore::from_json`，复用 `GRAPH_PRIVACY_DOUBLE_SCAN`）
+
+**M5-8 旧设计 OUT OF SCOPE（后续独立 wave）**：
+
+| M5-8 旧条目 | 现状 |
+|---|---|
+| `graph_node_upsert` / `graph_node_delete` / `graph_edge_upsert` / `graph_edge_delete` | 写命令，W12 不做 |
+| `graph_node_list` / `graph_edge_list` | 全量列命令，W12 不做 |
+| `graph_export`（graphml） | 导出命令（原始设计即"首期返回暂不支持"），W12 不做 |
+| 图谱抽取器（extractor） | M5-7 两阶段抽取，W12 不接 live extraction |
+| SQLite 持久化（`graph.db`） | W5 演进已取代，W12 用内存 store |
+| 后台 rebuild worker / 维护任务（`graph-vacuum`） | W12 不做 |
+| `source` / `source_ref` / `created_at` / `updated_at` / `extractor_version` 5 字段 | W6 评审 F1 已确认不存在，DTO 无此字段 |
+
+**A1 W12 文档整合责任**：本段为 A7 W11 卡 §2 L61 指定的 *"M5-8 文档更新归 A1/A0 文档整合"* 项的落地；后续 lane 实施 W12 以 `graph.rs`/`domain.rs` 为准，不得按本卡 stale 9 命令 SQLite 设计实施。

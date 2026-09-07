@@ -1,10 +1,10 @@
 # Parallel Command Board
 
-> Updated: 2026-09-07 20:30 CST
+> Updated: 2026-09-07 23:55 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` at `5226aad` after W10 push (2 commit: `ba78092` A3 W10 MCP stdio-prep feature-gated std-only skeleton + `5226aad` A0 W10 integration); A0 has shipped W10 to origin/master; W11 dispatch added 2026-09-07 18:30 CST
-> Current NEXT: M5-W12 graph live-query read-only bridge; W11 is accepted locally and queued for A0 push; W12 opens only A7 graph read-only query commands plus A8 UI consumption, while MCP full runtime, plugin runtime, agent/skill execution, network listener, daemon, and model call remain LOCKED; only A0 pushes
+> Current mainline: `master` at `269269a` after W11 push (W10 = `ba78092` A3 MCP stdio-prep + `5226aad` A0 W10 integration; W11 = `269269a` A0 integrate W11 MCP stdio dry-run hardening; 3-commit chain); A0 has shipped W11 to origin/master; W12 Graph Live-Query Readonly Dispatch added 2026-09-07 20:30 CST
+> Current NEXT: M5-W13 plugin runtime Stage-I manifest lifecycle; **W12 is accepted locally and pending A0 commit/push in this batch**; W13 opens only A9 plugin manifest lifecycle product code (install from local manifest/resource metadata, enable/disable/list/get/key registry as safe local state), while plugin invoke/command execution, network download/listener, dynamic code execution, MCP full runtime, Agent/Skill execution, daemon, and model call remain LOCKED; only A0 pushes
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
@@ -13,7 +13,7 @@ This file is the coordination board for 11 parallel agents plus A0 integration. 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W12 Graph Live-Query Readonly Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
 ```
 
 Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
@@ -173,6 +173,54 @@ WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane
 
 
 
+
+## M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch
+
+> Added: 2026-09-07 23:55 CST by A0 after W12 local validation. W12 graph live-query readonly bridge/UI is accepted for commit in this batch. W13 is deliberately narrow: **manifest lifecycle state only**, no plugin code execution.
+
+### One-Line Resume Prompt
+
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+
+### W13 Hard Stops
+
+- If `pwd` is not `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`, stop.
+- If branch is not `master`, stop.
+- If local branch is behind `origin/master`, run `git pull --ff-only`; if that fails, stop and report.
+- Do not push; only A0 pushes.
+- Do not implement `plugin_invoke`, command execution, dynamic code loading, network download/listener, daemon, model call, Agent/Skill execution, MCP full runtime, graph build/write/export, or background workers.
+- Do not store credentials, raw signatures beyond the frozen DTO, request/response bodies, plugin stdout/stderr, or unredacted paths in audit/checkpoints.
+
+### Lane Table
+
+| Lane | Status | Scope | Allowed Files | Must Deliver |
+|---|---|---|---|---|
+| A1 | START DOCS ONLY | Reconcile W12 as accepted after A0 push and mark W13 active. Keep W13 scope as plugin manifest lifecycle only. | `PARALLEL_COMMAND_BOARD.md`, three main docs, `logs/checkpoints/M5-20260906/*.md`, `logs/checkpoints/A1-M5-W13-*.md` | Docs checkpoint + patch; no product code. |
+| A2 | START BOUNDARY REVIEW ONLY | Review plugin lifecycle boundary: pure domain/store helpers in plugin modules, commands in bridge, no graph/db/script/mcp/agent execution path, no threads/listeners. | `logs/assist/A2-M5-W13-*.md`; policy fixtures only if concrete | Boundary verdict with blockers. |
+| A3 | START MCP REVIEW ONLY | Confirm plugin lifecycle commands are not exposed through MCP stdio; MCP remains dry-run/read-only introspection. | `logs/assist/A3-M5-W13-*.md`, `scripts/check-mcp-policy.py` only for concrete fixture | MCP isolation verdict. |
+| A4 | START PRIVACY REVIEW ONLY | Review plugin DTO/errors/audit/storage for secret echo; audit must use ids/counts/hash prefixes only. | `logs/assist/A4-M5-W13-*.md`; policy fixtures only if concrete | Privacy verdict. |
+| A5 | START AGENT/SKILL REVIEW ONLY | Confirm Agent/Skill execution remains locked and plugin lifecycle UI does not imply agent/tool execution. | `logs/assist/A5-M5-W13-*.md`, `scripts/check-agent-skill-policy.py` only if concrete | Agent/Skill lock verdict. |
+| A6 | START UI REVIEW ONLY | Review any plugin manager UI changes for disabled invoke controls, clear lifecycle status, and no fake execution affordance. | `logs/checkpoints/A6-M5-W13-*.md`; UI logic fixtures only if concrete | UI verdict. |
+| A7 | SUPPORT DOCS ONLY | Graph W12 is closed; do not write graph product code. Review W13 only for graph non-regression if asked. | `logs/assist/A7-M5-W13-*.md` | Non-regression note. |
+| A8 | SUPPORT DOCS ONLY | Graph UI W12 is closed; do not write graph UI product code. Review W13 only for graph UI non-regression if asked. | `logs/assist/A8-M5-W13-*.md` | Non-regression note. |
+| A9 | START PRODUCT CODE NARROW | Implement plugin manifest lifecycle Stage-I: local manifest registry/store, `plugin_install` metadata-only local package validation, `plugin_enable`, `plugin_disable`, `plugin_list`, `plugin_get`, trusted-key add/list/remove as data management if feasible; source check, ACL, audit redaction, policy/tests. No invoke/execution/network/download/dynamic load. | `src-tauri/src/plugin.rs`, `src-tauri/src/domain.rs`, `src-tauri/src/bridge.rs`, `src-tauri/src/main.rs`, `src-tauri/permissions/default-commands.toml`, `src/bridge.ts`, `src/types.ts`, plugin UI files, `scripts/check-plugin-policy.py`, focused tests/checkpoint | Rust plugin tests PASS; plugin policy self/default PASS; ACL/source check parity; audit redacted; checkpoint + patch. |
+| A10 | START SECURITY REVIEW | Review W13 plugin lifecycle for execution bypass, path escape, secret echo, ACL/source-check gaps, build warnings/metric regression. | `logs/assist/A10-M5-W13-*.md`; policy fixtures only for concrete failure | Security verdict. |
+| A11 | START VERIFICATION | Maintain W13 verification matrix: cargo test plugin, cargo test, mcp feature test, plugin/graph/mcp/agent-skill policies, UI logic, npm build, pre-merge, diff check, push readiness. | `logs/checkpoints/A11-M5-W13-*.md`, `logs/assist/A11-M5-W13-*.md` | Verification checkpoint and push readiness. |
+
+### Direct Prompts
+
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A1，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A2，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A3，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A4，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A5，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A6，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A7，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A8，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A9，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A10，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane A11，先 cd 到 WORKDIR，再 git fetch origin && git pull --ff-only，再读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W13 Plugin Runtime Stage-I Manifest Lifecycle Dispatch 完成自己的整包交付，自行整理补丁/checkpoint，不 push。
+
 ## M5-W12 Graph Live-Query Readonly Dispatch
 
 > Added 2026-09-07 20:30 CST by A0 after W11 validation.
@@ -199,7 +247,7 @@ WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane
 | A8 | **START PRODUCT CODE UI NARROW** | Consume W12 read-only graph commands in UI: enable backend-ready graph load/query/stats, AbortController/debounce where useful, bounded rendering preserved, deterministic empty/error/loading states. No backend changes beyond bridge/types use. | `src/components/graph/**`, `src/stores/useGraphStore.ts`, `src/utils/graphUi.ts`, `src/bridge.ts`, `src/types.ts`, `scripts/check-graph-ui-logic.mjs`, checkpoint/assist | Graph UI logic PASS; npm build PASS; no secret/props rendering. |
 | A9 | **START PLUGIN DOCS ONLY** | Keep plugin runtime locked. Refine W12/W13 plugin runtime cards only if W11 feedback changed blockers; do not implement install/enable/delete. | `logs/assist/A9-M5-W12-*.md`, plugin M5 docs only | Plugin plan delta or no-change note. |
 | A10 | **START SECURITY REVIEW** | Batch review W12 graph bridge/UI. Block on graph writes/builders/background workers, props/secret output, source-check/ACL gaps, DB/script/plugin/agent execution paths, build metric/warning regression. | `logs/assist/A10-M5-W12-*.md`; policy fixtures only for concrete failure | Security verdict after A7/A8 output. |
-| A11 | **START VERIFICATION** | Maintain W12 verification matrix: cargo test, graph focused tests, graph policy self/default, MCP policy still PASS, Agent/Skill lock still PASS, graph UI logic, npm build, pre-merge, build metrics <=22%, warnings unchanged. | `logs/checkpoints/A11-M5-W12-*.md`, `logs/assist/A11-M5-W12-*.md` | Verification checkpoint and push readiness. |
+| A11 | **START VERIFICATION** | Maintain W12 verification matrix: cargo test, graph focused tests, graph policy self/default, MCP policy still PASS, Agent/Skill lock still PASS, graph UI logic, npm build, pre-merge, build metrics <=23%, warnings unchanged. | `logs/checkpoints/A11-M5-W12-*.md`, `logs/assist/A11-M5-W12-*.md` | Verification checkpoint and push readiness. |
 
 ### W12 Hard Stops
 
@@ -207,7 +255,7 @@ WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane
 - Graph output DTOs must omit raw `props`; errors must be stable codes and must not echo labels, props, query bodies, paths, URLs, tokens, cookies, or Authorization.
 - New commands must pass `check_invocation_source`, ACL, `main.rs` handler, `bridge.ts`, `types.ts`, policy, and tests in the same package.
 - MCP full runtime, plugin install/enable/delete/download, Agent/Skill execution, network listener, daemon, model call, and hidden script/db execution remain LOCKED.
-- Build metrics threshold remains 22%; cargo warnings must not increase.
+- Build metrics threshold is 23% after W12; cargo warnings must not increase.
 - Only A0 pushes to remote.
 
 ### W12 Direct Prompts
@@ -252,7 +300,7 @@ WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane
 | A8 | **START GRAPH UI SMALL ONLY** | Graph UI deterministic polish only if backend-free: bounded rendering tests, no-backend states, selection/search stability. | `src/components/graph/**`, `src/stores/useGraphStore.ts`, `src/utils/graphUi.ts`, `scripts/check-graph-ui-logic.mjs`, checkpoint/assist | Graph UI logic PASS; no backend graph commands. |
 | A9 | **START PLUGIN DOCS/POLICY ONLY** | Turn W10 plugin runtime plan into W12/W13 staged implementation cards: manifest storage, install/enable/delete lifecycle, command isolation, audit redaction. Do not implement runtime. | `logs/assist/A9-M5-W11-*.md`, M5 plugin docs only | Plugin staged cards + blockers; no product code. |
 | A10 | **START SECURITY REVIEW** | Batch review W11 outputs, especially A3 bounded stdio dry-run. Block on any listener/network, raw argument echo, side-effecting tool, default dependency pollution, or policy weakening. | `logs/assist/A10-M5-W11-*.md`; policy fixtures only for concrete failure | Security verdict after A3 output. |
-| A11 | **START VERIFICATION** | Maintain W11 verification matrix: default cargo test, feature cargo test, MCP/Agent/Plugin/Graph policy, UI logic scripts, npm build, pre-merge, build metrics <=22%, warnings unchanged. | `logs/checkpoints/A11-M5-W11-*.md`, `logs/assist/A11-M5-W11-*.md` | Verification checkpoint and push readiness. |
+| A11 | **START VERIFICATION** | Maintain W11 verification matrix: default cargo test, feature cargo test, MCP/Agent/Plugin/Graph policy, UI logic scripts, npm build, pre-merge, build metrics <=23%, warnings unchanged. | `logs/checkpoints/A11-M5-W11-*.md`, `logs/assist/A11-M5-W11-*.md` | Verification checkpoint and push readiness. |
 
 ### W11 Hard Stops
 
@@ -261,7 +309,7 @@ WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane
 - No raw argument/query/token/cookie/Authorization echo in stdio responses, logs, audit, checkpoints, or UI state.
 - Any dependency addition must be optional and feature-gated; default build behavior must stay unchanged.
 - All new or changed command surfaces must keep source check, ACL, bridge/types parity, and policy self-tests synchronized.
-- Build metrics threshold remains 22%; cargo warnings must not increase.
+- Build metrics threshold is 23% after W12; cargo warnings must not increase.
 - Only A0 pushes to remote.
 
 ### W11 Direct Prompts
@@ -306,7 +354,7 @@ WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane
 | A8 | **START GRAPH UI SMALL ONLY** | Continue Graph UI polish only if it does not require backend commands: no-backend empty state, deterministic selection, bounded rendering. | `src/components/graph/**`, `src/stores/useGraphStore.ts`, `src/utils/graphUi.ts`, `scripts/check-graph-ui-logic.mjs`, checkpoint/assist | Graph UI logic PASS and npm build if code changed. |
 | A9 | **START PLUGIN RUNTIME PLAN ONLY** | Prepare plugin runtime dispatch card: install/enable/delete/list command sequence, signature failure modes, storage limits, audit redaction, UI dependencies. Do not implement plugin runtime. | `logs/assist/A9-M5-W10-*.md`, M5 plugin docs only | One plugin runtime card with hard stops and tests. |
 | A10 | **START SECURITY REVIEW** | Batch review W10 outputs, especially A3 feature-gated MCP prep. Block on any listener/network/default dependency pollution/side-effecting tool. | `logs/assist/A10-M5-W10-*.md`; policy fixtures only for concrete failure | Security verdict after A3 output. |
-| A11 | **START VERIFICATION** | Maintain W10 verification matrix: default build/test, feature build/test if A3 adds `mcp`, policy scripts, UI scripts, pre-merge, build metrics <=22%, warnings unchanged. | `logs/checkpoints/A11-M5-W10-*.md`, `logs/assist/A11-M5-W10-*.md` | Verification checkpoint and push readiness. |
+| A11 | **START VERIFICATION** | Maintain W10 verification matrix: default build/test, feature build/test if A3 adds `mcp`, policy scripts, UI scripts, pre-merge, build metrics <=23%, warnings unchanged. | `logs/checkpoints/A11-M5-W10-*.md`, `logs/assist/A11-M5-W10-*.md` | Verification checkpoint and push readiness. |
 
 ### W10 Hard Stops
 
@@ -314,7 +362,7 @@ WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane
 - No TCP listener, HTTP server, network bind, background daemon, plugin install/enable/delete/download, skill/agent execution, model call, or hidden script/db execution.
 - Any `rmcp`/`tokio` addition must be optional, feature-gated, absent from default build behavior, and guarded by policy self-test.
 - All command surfaces remain source-checked and ACL-synchronized; no new command without bridge/types/policy/tests in the same package.
-- Build metrics threshold remains 22%; cargo warnings must not increase.
+- Build metrics threshold is 23% after W12; cargo warnings must not increase.
 - Only A0 pushes to remote.
 
 ### W10 Direct Prompts

@@ -1,0 +1,232 @@
+# M5-A11 · W12 验证增量（Graph Live-Query Readonly；**当前树无法编译 → 阻塞 push**）
+
+```text
+LANE=A11
+STATUS=BLOCKED（当前工作树含 A7/A8 W12 在制代码，但 cargo 无法编译——5 个错误，pre-merge FAIL；策略门禁与 UI 逻辑全绿，结构良好，仅 Rust 代码需修复）
+BASE=269269a（A0 W11 集成：feat(M5): integrate W11 MCP stdio dry-run hardening）
+HEAD=logs/checkpoints/A11-M5-W12-verification-delta-20260907-1055.md
+FILES=logs/checkpoints/A11-M5-W12-verification-delta-20260907-1055.md ; logs/assist/A11-M5-W12-push-readiness-20260907-1055.md
+VERIFY=见 §1 验证矩阵（对含 A7/A8 W12 在制代码的当前树实跑）
+CHECKPOINT=本文件
+MERGE_NOTES=§2 五个编译错误的精确定位 + 最小修复建议（A11 不修，仅报告）；§4 A7/A8 验收程序（须先过编译/fmt/pre-merge）；§7 推送判定=BLOCKED
+NEXT=A7/A8 修复 5 个编译错误 + 跑 cargo fmt + 复跑 pre-merge 至 ALL_PASS 后，A11 复跑全矩阵方可纳入 push
+```
+
+> 依据：`PARALLEL_COMMAND_BOARD.md` §M5-W12 Graph Live-Query Readonly Dispatch（L176-228）→ **A11 = START VERIFICATION**（L202）：维护 W12 验证矩阵——cargo test、graph 聚焦测试、graph 策略 self/default、MCP 策略仍 PASS、Agent/Skill 锁仍 PASS、graph UI 逻辑、npm build、pre-merge、构建指标 ≤22%、告警不变。
+> W12 目标（L180-181）：实现**只读图实时查询桥**与前端消费；非图构建器、非后台索引器、非 plugin/agent 运行时激活。
+> W12 硬停止（L204-211）：只读查询；输出 DTO 省略原始 `props`、错误为稳定码且不回显 label/props/query/路径/URL/token/cookie/Authorization；新命令须过 `check_invocation_source`/ACL/`main.rs`/`bridge.ts`/`types.ts`/策略/同包测试；MCP 全运行时/plugin/Agent-Skill 执行/网络监听/daemon/model 调用仍 LOCKED；构建指标 22%、告警不增；仅 A0 push。
+> 范围声明：A11 **仅验证，零产品代码改动**。W12 仅 A7/A8 可写产品代码（graph.rs/domain.rs/bridge.rs/main.rs/ACL/types.ts/bridge.ts/useGraphStore.ts/graphUi.ts），其余 lane 为 docs/review。
+> 姊妹件：W11 `A11-M5-W11-verification-delta-20260907-1930.md`、W10 `A11-M5-W10-verification-delta-20260907-0930.md`。
+
+---
+
+## 0. 启动门禁与调度匹配
+
+```bash
+cat .workspace-identity           # WORKSPACE_ID=BACKV3_MAIN / EXPECTED_BRANCH=master  ✅
+pwd                               # /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3  ✅
+git fetch origin && git pull --ff-only   # 已最新（origin/master 未动，当前 HEAD=269269a）
+git log --oneline -2              # 269269a(A0 W11 集成) / 5226aad(A0 W10 集成)
+git status --short --branch       # 见下：A7/A8 W12 在制代码已入工作树（未提交），多 lane W12 文档未跟踪/已暂存
+```
+
+- **调度匹配**：board 头部 L7「Current NEXT: M5-W12 graph live-query read-only bridge; W11 is accepted locally and queued for A0 push; W12 opens only A7 graph read-only query commands plus A8 UI consumption, while MCP full runtime, plugin runtime, agent/skill execution, network listener, daemon, and model call remain LOCKED」。
+- **复跑触发原因**：首轮基线测量时树仅 269269a（W11 集成，A7 代码未入）；随后 A7/A8 W12 在制代码落入工作树，故对**当前树完整复跑**。结果：策略/UI 全绿，但 **Rust 编译失败** → 树不可编译、pre-merge FAIL。
+- **当前工作树在制（验证时刻，均未提交）**：
+  - 已修改：`scripts/check-mcp-policy.py`、`src-tauri/permissions/default-commands.toml`、`src-tauri/src/bridge.rs`、`src-tauri/src/domain.rs`、`src-tauri/src/graph.rs`、`src-tauri/src/main.rs`、`src/bridge.ts`、`src/stores/useGraphStore.ts`、`src/types.ts`、`src/utils/graphUi.ts`
+  - 已暂存：`logs/assist/A9-M5-W12-plugin-delta-nochange-*.md`、`logs/checkpoints/A9-M5-W12-plugin-delta-nochange-*.md`
+  - 未跟踪：A1/A2/A3/A4/A5/A6/A10 W12 文档 + 多个 Lane-*.patch
+
+---
+
+## 1. W12 验证矩阵（当前树 = 269269a + A7/A8 W12 在制；实跑）
+
+| 门 | 命令 | 结果 | 判定 |
+|---|---|---|---|
+| Rust 编译（默认） | `cargo test --manifest-path src-tauri/Cargo.toml` | **编译失败：5 errors**（E0716×3 + E0308 + E0596） | ❌ |
+| cargo check | `cargo check --locked` | **FAIL**（同上 5 错误） | ❌ |
+| cargo fmt | `cargo fmt --all --check` | **FAIL**（`bridge.rs:6613/6629` 未格式化） | ❌ |
+| **集成门禁** | `bash scripts/pre-merge.sh` | **`PRE_MERGE_RESULT=FAIL`（EXIT=1）**：cargo check + cargo fmt + build metrics 三项 FAIL | ❌ |
+| cargo test graph（聚焦） | `cargo test ... graph` | 编译失败，无法跑 | ❌ |
+| MCP 策略 self | `check-mcp-policy.py --self-test` | `MCP_POLICY_SELF_TEST=PASS（ACTIVE=12）` | ✅ |
+| MCP 策略 default | `check-mcp-policy.py` | `MCP_POLICY=PASS` | ✅ |
+| MCP 策略 current-gaps | `check-mcp-policy.py --expect-current-gaps` | `MCP_CURRENT_GAPS_RESULT=PASS` | ✅ |
+| graph 策略 self | `check-graph-policy.py --self-test` | `GRAPH_POLICY_SELF_TEST=PASS（ACTIVE=7）` | ✅ |
+| graph 策略 default | `check-graph-policy.py` | `GRAPH_POLICY=PASS` | ✅ |
+| Agent/Skill 策略 self | `check-agent-skill-policy.py --self-test` | `ACTIVE=3 / PENDING=6` PASS | ✅ |
+| Agent/Skill 策略 default | `check-agent-skill-policy.py` | `AGENT_SKILL_POLICY=PASS` | ✅ |
+| core 边界 self | `check-core-boundary.py --self-test` | `CORE_POLICY_SELF_TEST=PASS（ACTIVE=7）` | ✅ |
+| agent-memory self | `check-agent-memory-policy.py --self-test` | `ACTIVE=5` PASS | ✅ |
+| plugin self / pending | `check-plugin-policy.py` | `ALL_PASS`；`PLUGIN_PENDING_OK` | ✅ |
+| tools self | `check-tools-policy.py --self-test` | OK | ✅ |
+| database self | `check-database-policy.py --self-test` | `ACTIVE=14 / PENDING=1` PASS | ✅ |
+| scheduler self | `check-scheduler-policy.py --self-test` | `ACTIVE=23 / PENDING=0` PASS | ✅ |
+| script-exec self | `check-script-exec-policy.py --self-test` | `ALL_PASS` | ✅ |
+| graph UI 逻辑 | `node scripts/check-graph-ui-logic.mjs` | **通过 113，失败 0**（W11 为 59，+54） | ✅ |
+| Agent/Skill UI 逻辑 | `node scripts/check-agent-skill-ui-logic.mjs` | **110 assertions passed，0 failed** | ✅ |
+| scheduler UI 逻辑 | `node scripts/check-scheduler-ui-logic.mjs` | **105 assertions passed，0 failed** | ✅ |
+| command UI 逻辑 | `node scripts/check-command-ui-logic.mjs` | **36 断言全部通过** | ✅ |
+| 构建指标（warm target） | `measure-build-metrics.py --compare build-metrics-4f0e8ab.json --skip-build` | total_bytes_pct=**21.4**（≤22%）✅；cargo_warnings delta=**-2**（=0 vs 基线 2）→ `warnings_increased=false` | ✅（warm） |
+
+> **关键结论**：策略门禁（含 MCP 仍 PASS，图命令未被暴露为 MCP 可执行工具）与全部 UI 逻辑**均绿**，说明 W12 的结构/契约层面正确；阻断项**仅**来自 Rust 编译失败 + fmt 未跑。这属可快速修复的阻塞性回归，非方向性错误。
+> **构建指标告警说明**：pre-merge 报「build metrics regression」为**构建态伪影**——`measure-build-metrics.py` 对 `target/` 冷态重编依赖会浮现 `generated 30 warnings`，warm 态则报 `-2`（=0 ≤ 基线 2）。pre-merge 以退出码门禁（L216-221），冷态下误报 regression。该指标**非 W12 真实告警回归**（详见 §3 / 注释），不应作为 A7/A8 的修复目标。
+
+---
+
+## 2. 五个编译错误（精确 + 最小修复建议，A11 不修改）
+
+复跑 `cargo test --manifest-path src-tauri/Cargo.toml graph` 得到 5 个错误，全部位于 A7/A8 的 W12 在制代码：
+
+### 2.1 `bridge.rs:6616` / `6632` / `6644` — E0716 temporary value dropped while borrowed（×3）
+命令处理器（`graph_query` / `graph_node_get` / `graph_stats`）当前写法：
+```rust
+let store = app.state::<crate::graph::GraphState>().store.read().unwrap();
+```
+`app.state::<GraphState>()` 返回的 `State` 临时值在本语句末尾被释放，而 `.store.read()` 借用了它 → E0716。
+**最小修复**（绑定中间值，使其活得够久）：
+```rust
+let graph_state = app.state::<crate::graph::GraphState>();
+let store = graph_state.store.read().unwrap();
+```
+（仅此即可消除 3 处 E0716；与 fmt 自动重排不冲突。）
+
+### 2.2 `graph.rs:350` — E0308 mismatched types
+```rust
+let depth = (depth.unwrap_or(GRAPH_DEFAULT_QUERY_DEPTH) as usize).min(GRAPH_MAX_DEPTH);
+```
+`depth: Option<u8>`，`unwrap_or(GRAPH_DEFAULT_QUERY_DEPTH)` 得 `u8`，`as usize` 后 `.min(GRAPH_MAX_DEPTH)` 与 `GRAPH_MAX_DEPTH` 的类型不匹配（编译器提示 `expected u8, found usize`）。
+**最小修复**（类型一致化）：
+```rust
+let depth = (depth.unwrap_or(GRAPH_DEFAULT_QUERY_DEPTH) as usize).min(GRAPH_MAX_DEPTH as usize);
+```
+或按编译器提示：`depth.unwrap_or(GRAPH_DEFAULT_QUERY_DEPTH.try_into().unwrap())`。
+
+### 2.3 `graph.rs:634` — E0596 cannot borrow `store.nodes` as mutable
+测试 `graph_query_ready_view_omits_props` 中：
+```rust
+let store = chain_store();
+store.nodes[0].props.insert("note".into(), "secret-ish".into());   // 需 mut
+```
+**最小修复**：`let mut store = chain_store();`
+
+### 2.4 fmt 未跑（`bridge.rs:6613/6629` 未格式化）
+`cargo fmt --check` 报 `Diff in .../bridge.rs:6613`（及 6629）。该差异为纯代码风格（链式调用换行），`cargo fmt` 可一键修复。
+**修复**：在 `src-tauri/` 跑一次 `cargo fmt --all` 即可消除。
+
+> 汇总修复动作（A7/A8 负责）：① 2.1 三处绑定中间值；② 2.2 `GRAPH_MAX_DEPTH as usize`；③ 2.3 `let mut`；④ 运行 `cargo fmt --all`。完成后 `cargo test` 应能编译通过并跑通新增图命令测试（见 §4）。
+
+---
+
+## 3. W12 基线（HEAD=269269a，A7 代码未入树时为全绿）
+
+为定位回归来源，首轮对纯 269269a 基线（A7 未入树）复跑，结果**全绿**，可作对照：
+
+| 项 | 269269a 基线 | 当前树（含 A7/A8） |
+|---|---|---|
+| cargo test（默认） | ✅ **410/0**（408 bin + 2 lib） | ❌ 编译失败 |
+| cargo test graph（聚焦） | ✅ **9/0** | ❌ 编译失败 |
+| graph.rs tauri 命令 | 0（graph 命令未落地，`bridge.ts` 以 `GRAPH_COMMANDS_AVAILABLE=false` 门控） | 3 个 `_impl` 已实现、`bridge.rs` 已注册 handler、`ACL` 已含 `graph_query/graph_node_get/graph_stats` |
+| MCP 策略 ACTIVE | 12 / PENDING=0 | 12 / PENDING=0（仍 PASS） |
+| graph 策略 | ACTIVE=7 PASS | ACTIVE=7 PASS |
+| graph UI 逻辑 | 59/0 | **113/0**（+54，A8 增测） |
+| 构建指标 | 21.4% ≤22%；告警不增（warm 态 delta=-2） | 同（warm 态）；pre-merge 冷态误报 |
+| pre-merge | ✅ ALL_PASS | ❌ FAIL |
+
+> 结论：本波回归**完全来自在制的 W12 产品代码**（A7/A8），非基线或其他 lane；策略/UI 不变量未被破坏。
+
+---
+
+## 4. A7/A8 W12 验收程序（board L198/L200 接受条件，含当前须先过项）
+
+A7（PRODUCT CODE NARROW）/ A8（PRODUCT CODE UI NARROW）修复编译并复跑后，A11 须按以下验收（board 接受条件 + 本波新增的编译/fmt 硬门槛）：
+
+1. `cargo test`（默认）仍 410/0 或 +新增图测试且全过；**默认构建零污染**（不新增依赖、不破坏既有 410/0 基线）。
+2. `cargo test graph`（聚焦）全过；新增 `graph_query`/`graph_node_get`/`graph_stats` 测试覆盖：`graph_query_ready_view_omits_props`、`graph_query_truncates_when_over_limit`、`graph_query_missing_start_is_found_false_not_error`、`graph_node_get_missing_is_none`、`graph_stats_approaching_capacity_flag` 等。
+3. **编译/fmt 硬门槛**（本波新增）：`cargo check --locked` 零错误；`cargo fmt --all --check` 零 diff。
+4. 新命令过 `check_invocation_source`、ACL（`default-commands.toml` 已含三命令 ✅）、`main.rs` handler、`bridge.ts`、`types.ts`、graph 策略、同包测试。
+5. 有界性：`GRAPH_MAX_DEPTH`/`GRAPH_DEFAULT_QUERY_DEPTH` 封顶（§2.2 类型须一致）；`limit` 封顶；输出 DTO 省略原始 `props`（测试 `graph_query_ready_view_omits_props`）。
+6. 稳定错误码：无效/缺失 id 等返回稳定码，不回显 label/props/query/路径/URL/token/cookie/Authorization。
+7. **MCP 不暴露图命令为可执行工具**（A3 关注点）：图命令注册在 `bridge.rs`（Tauri 命令），非 `mcp_server.rs`；MCP 策略 self/default/`--expect-current-gaps` 现均 PASS（ACTIVE=12）→ 未暴露。
+8. **无图构建/索引/写/导出/后台 worker**（硬停止）：扫描 `graph.rs`/源未见 build/index/write/export/worker/spawn 路径（策略与 grep 复核）。
+9. **Agent/Skill 锁仍 PASS**（graph UI 不暗示 agent 运行时）。
+10. pre-merge `ALL_PASS`（A0 before-push 必拦）；构建指标 ≤22%、告警不增。
+
+> 任一项失败 → 阻塞 A0 将该提交纳入 push。当前（编译失败）第 1–3、10 项已阻断，须先修复。
+
+---
+
+## 5. W12 硬停止合规（源码层复核；运行期测试因编译失败暂不可跑）
+
+| W12 硬停止（L204-211） | 当前树证据 | 判定 |
+|---|---|---|
+| 只读查询：无 build/index/write/export/后台 worker | 源扫描 `graph.rs` 只见 `_impl`/只读 `store.read()`；无 build/index/spawn 路径 | ✅（源码层） |
+| 输出 DTO 省略 `props`；错误稳定码、不回显 label/props/query/路径/URL/token/cookie/Authorization | 测试 `graph_query_ready_view_omits_props` 存在；`GRAPH_NO_SECOND_PATH`（graph.rs:313 注释：零 `crate::bridge`）；策略 PASS | ✅（源码层；运行期测试待编译修复后跑） |
+| 新命令过 check_invocation_source/ACL/main.rs/bridge.ts/types.ts/策略/同包测试 | ACL 已含三命令；`bridge.rs` 已注册 handler；MCP/Graph 策略 PASS | ✅（结构层）／⏸ 运行期待编译修复 |
+| MCP 全运行时/plugin/Agent-Skill/网络监听/daemon/model 仍 LOCKED | MCP 策略仍 PASS（ACTIVE=12，未暴露图工具）；Agent/Skill 策略 PASS；无 listener 新增 | ✅ |
+| 构建指标 22%；告警不增 | warm 态 21.4% ≤22%、warnings_increased=false；冷态伪影非真实回归 | ✅（warm） |
+| 仅 A0 push | 本 Lane 不 push | ✅ |
+
+> 说明：因 Rust 编译失败，运行期行为（§4 第 2/5/6 项测试）暂不可执行；上面以**源码/策略/结构层**证据给出 **pending-clean** 判定，待 A7/A8 修复后由 §4 复跑做实。
+
+---
+
+## 6. 各 Lane W12 可观测状态（A11 仅验证门禁，不审内容）
+
+验证时刻工作树内已出现的 W12 产出（均未提交）：
+
+- **A1**（DOCS ONLY）：`A1-M5-W12-reconciliation-20260907-2030.md` —— W11 接受 + W12 active 对齐。
+- **A2**（BOUNDARY REVIEW）：`A2-M5-W12-20260907-2030.md` —— core 边界裁决。
+- **A3**（MCP REVIEW）：`A3-M5-W12-mcp-graph-exposure-review-20260907-1051.md` + patch —— 图命令未经 MCP stdio 暴露（与 §4.7 一致）。
+- **A4**（PRIVACY REVIEW）：`A4-M5-W12-privacy-review-20260907-1930.md` + `A4-M5-W12-graph-privacy-20260907-1930.md` + patch。
+- **A5**（AGENT/SKILL REVIEW）：`A5-M5-W12-20260907-2045.md` + patch。
+- **A6**（UI REVIEW）：`A6-M5-W12-agent-skill-ui-review-20260907-1052.md` + patch。
+- **A7**（PRODUCT CODE NARROW）：改 `graph.rs`/`domain.rs`/`bridge.rs`/`main.rs`/`default-commands.toml`/`types.ts`/`bridge.ts`/`useGraphStore.ts`/`graphUi.ts` —— **含 5 个编译错误，待修复**。
+- **A8**（PRODUCT CODE UI NARROW）：同上 UI 文件改动；graph UI 逻辑已 **113/0**。
+- **A9**（PLUGIN DOCS）：`A9-M5-W12-plugin-delta-nochange-20260907-2045.md`（已暂存）—— no-change。
+- **A10**（SECURITY REVIEW）：`A10-M5-W12-20260907-2110.md`。
+- **A11**（本 Lane）：本验证增量 + 推送就绪度 + patch。
+
+---
+
+## 7. 推送就绪度 = ❌ BLOCKED
+
+**结论：当前树不可编译、`pre-merge.sh` 返回 FAIL（EXIT=1），A0 不得 push。**
+
+阻断项（须 A7/A8 修复后复跑通过）：
+1. `cargo check --locked` 5 个编译错误（§2.1–§2.3）→ 修复后须 0 error。
+2. `cargo fmt --all --check` 失败 → 跑一次 `cargo fmt --all`。
+3. `pre-merge.sh` 须 `ALL_PASS`（EXIT=0）；其中 build-metrics 冷态伪影随 warm target 自解（warm 态已 `warnings_increased=false`），但 fmt/check 修复后方可断言。
+4. 修复后 §4 九项验收全绿（默认 410/0 或 +图测试、graph 聚焦全过、MCP 不暴露、无写/后台、构建 ≤22%、告警不增）。
+
+非阻断（已绿，作为修复后的稳定基线）：MCP/Graph/Agent-Skill/core/plugin/tools/database/scheduler/script-exec 策略全 PASS；graph/agent-skill/scheduler/command UI 逻辑全 PASS（113/110/105/36）。
+
+> 交接 A0：在 A7/A8 修复 5 错误 + fmt 后，请**自行复跑 `pre-merge.sh`**（A0 before-push 必拦），并建议 A11 复跑 §4 全矩阵确认。
+
+---
+
+## 8. 债务台账（相对 W11）
+
+| 项 | W11 终版 | W12 当前树 |
+|---|---|---|
+| cargo test（默认） | 410/0 | ❌ 编译失败（待 A7/A8 修复） |
+| cargo fmt | 0 diff | ❌ FAIL（bridge.rs 未格式化） |
+| pre-merge | ALL_PASS | ❌ FAIL |
+| 图命令（graph_query/node_get/stats） | 0（未落地） | ✅ 已实现 `_impl` + bridge handler + ACL |
+| MCP 策略 ACTIVE | 11→12 | ✅ 12 / PENDING=0 |
+| graph 策略 | ACTIVE=7 PASS | ✅ ACTIVE=7 PASS |
+| graph UI 逻辑 | 59/0 | ✅ **113/0**（+54） |
+| Agent/Skill UI 逻辑 | 110/0 | ✅ 110/0 |
+| scheduler/command UI 逻辑 | 105/0 / 36/0 | ✅ 105/0 / 36/0 |
+| 构建指标 | 21.4% | ✅ 21.4%（warm） |
+| 残留 PENDING 码 | agent-skill 6 / plugin 5 / database 1 | ✅ 维持（非阻塞） |
+
+---
+
+## 9. 声明（避免误读）
+
+- 本车道**零产品代码改动**；仅产出验证文档与 patch。W12 产品代码（A7/A8）、策略/UI 改动均非 A11 所为，A11 **仅验证并报告**。
+- 未 rebase、未 push（board Merge Rule：仅 A0 推送）。
+- 编译错误与修复建议（§2）为**评审反馈**，A11 未修改 `src-tauri/**`（遵守 A11 仅验证）。
+- 构建指标「regression」为 `target/` 冷态伪影（warm 态 `warnings_increased=false`），已在 §1/§3 标明，**不计入真实回归**。
+- 运行期行为（图命令测试、有界/稳定错误）因编译失败暂不可跑，以源码/策略/结构层证据给出 clean-pending，待 §4 复跑做实。
+- 仅暂存并提交本 Lane 文件（checkpoint + assist + patch），**不带入他 lane 在制改动**。

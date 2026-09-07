@@ -1,0 +1,165 @@
+diff --git a/logs/assist/A5-M5-W12-20260907-2045.md b/logs/assist/A5-M5-W12-20260907-2045.md
+new file mode 100644
+index 0000000..ba605c2
+--- /dev/null
++++ b/logs/assist/A5-M5-W12-20260907-2045.md
+@@ -0,0 +1,159 @@
++# A5 · M5-W12 Graph Live-Query Readonly — Agent/Skill 锁定复核（AGENT/SKILL REVIEW ONLY）
++
++- **Lane**：A5 ｜ **Wave**：M5-W12（Graph Live-Query Readonly）｜ **AI**：BALANCED ｜ **Risk**：medium
++- **角色**：W12 = `START AGENT/SKILL REVIEW ONLY`（board W12：A5 = 评审，**不产出产品代码**）
++- **BASE**：`269269a`（`feat(M5): integrate W11 MCP stdio dry-run hardening`；`git fetch origin && git pull --ff-only` →「已经是最新的」）
++- **HEAD**：`269269a` + 本评审文档（**无产品代码改动、无政策脚本改动**）
++- **时间戳**：2026-09-07 20:45 CST
++- **派工依据**：`PARALLEL_COMMAND_BOARD.md` §M5-W12 W12 Assignments A5 行：
++  > Confirm Agent/Skill execution remains locked and graph UI does not imply agent consumption runtime. Add policy only for concrete leakage.
++  > Allowed Scope: `logs/assist/A5-M5-W12-*.md`, `scripts/check-agent-skill-policy.py` only if concrete
++
++---
++
++## Lane Output Template
++
++```text
++LANE=A5
++STATUS=PASS
++BASE=269269a
++HEAD=269269a
++FILES=logs/assist/A5-M5-W12-20260907-2045.md
++VERIFY=见 §5
++CHECKPOINT=logs/assist/A5-M5-W12-20260907-2045.md
++MERGE_NOTES=无新增政策夹具（无 concrete leakage）；S-W8-3 悬空执行 wrapper 仍未闭环，继续交 A6/A0
++NEXT=A6（Agent/Skill UI 执行态禁用 + 悬空 wrapper 存废）/ A10（W12 安全复核）/ A11（验证矩阵）
++```
++
++---
++
++## 1. 复核判据
++
++派工给出两个必答问题：
++
++- **Q1**：Agent/Skill 执行是否仍锁定？
++- **Q2**：图谱 UI 是否隐含 Agent 消费运行时（agent consumption runtime）？
++
++并限定：仅在发现 **concrete leakage（具体泄漏）** 时才新增/修改 `scripts/check-agent-skill-policy.py`。
++
++---
++
++## 2. Q1：Agent/Skill 执行仍锁定 —— **是**
++
++| 证据 | 命令 / 位置 | 结果 |
++|---|---|---|
++| 已注册命令仅 W7 只读六件套 | `grep -noE "\b(skill_\|agent_)[a-z_]+" src-tauri/src/main.rs` | 仅 `agent_parse`(:1451) / `agent_validate`(:1452) / `agent_permission_preview`(:1453) / `skill_parse`(:1454) / `skill_validate`(:1455) / `skill_permission_preview`(:1456) + `agent_memory`(:4，A4 记忆域，非执行) |
++| **无任何执行类 handler** | 同上 | `skill_run` / `agent_chat` / `agent_chat_cancel` / `skill_runs_list` **均未注册** |
++| ACL 无 Agent/Skill 条目 | `grep -nE "^\s*(skill_\|agent_)[a-z_]+" src-tauri/permissions/default-commands.toml` | **零命中** |
++| 模块无执行路径 | `grep -nE "skill_run\|agent_chat\|std::process\|Command::new\|tokio::spawn\|fn run\b\|execute" src-tauri/src/skills.rs src-tauri/src/agent.rs` | **零命中** |
++| 策略门禁 | `python3 scripts/check-agent-skill-policy.py --self-test` | `PASS（ACTIVE=3，PENDING=6）` |
++| 策略默认扫描 | `python3 scripts/check-agent-skill-policy.py` | `PASS（无违规）` |
++| W12 未新增 Agent/Skill 命令 | 对比 W11 基线（同 §上 main.rs 列表） | 一致，**无新增** |
++
++**结论**：W12 未引入任何 Agent/Skill 执行面；执行保持锁定，符合 W12 Hard Stop
++「Agent/Skill execution … remain LOCKED」。
++
++---
++
++## 3. Q2：图谱 UI 不隐含 Agent 消费运行时 —— **确认不隐含**
++
++图谱侧确有 `agent`/`skill` 字样，但逐条核实**全部是只读展示/分类**，不是执行触发：
++
++| 位置 | 内容 | 性质判定 |
++|---|---|---|
++| `src/utils/graphUi.ts:80` | `isAgentConsumption: n.kind === "agent" \|\| n.kind === "skill"` | 由节点 kind 派生的**展示布尔**（打标签），非调用 |
++| `src/utils/graphUi.ts:99` | `agentConsumption: e.kind === "uses" \|\| "a2a_with" \|\| "memorizes"` | 边 kind 分类，同上 |
++| `src/utils/graphUi.ts:103-104` | `isAgentConsumptionEdge()` 纯函数 | 「Agent 消费**子视图**」的只读筛选谓词 |
++| `src/utils/graphUi.ts:19/34/42` | `skill: "技能"` / `agent: "智能体"` 及配色 | 图例文案与颜色 |
++| `src/components/graph/NodeDetail.vue:18` | `{{ summary.isAgentConsumption ? "属于 Agent/Skill 消费节点" : "普通节点" }}` | 详情面板**只读文本** |
++| `src/components/graph/EdgeDetail.vue:19` | `{{ summary.agentConsumption ? "是（Agent 消费关系）" : "否" }}` | 同上 |
++| `src/utils/graphUi.ts:7`、`useGraphStore.ts:8` | 注释明确「不触发 agent 消费、不重建图」 | 与实现一致 |
++| `src-tauri/src/graph.rs:6-7` | Skill/Agent 节点**仅按 id 引用** `SkillDef.id`/`AgentDef.id`；**不存 `agent_kv` 值** | 无值、无执行可达面 |
++
++**执行面可达性核查（关键）**：
++
++- 对 `src/components/graph/`、`src/stores/useGraphStore.ts`、`src/utils/graphUi.ts` 检索
++  `bridge\.|invoke\(|skillRun|agentChat|skill_run|agent_chat`：
++  **唯一的 bridge 调用是 `useGraphStore.ts:102` 的 `await bridge.graphQuery()`** —— 即 W12 的
++  **只读图谱查询**，且受 `store.backendReady` 守卫（:37，随 A7 `GRAPH_COMMANDS_AVAILABLE` 开合）。
++  **无任何 `skillRun` / `agentChat` / `agent_chat` 引用**。
++- 图谱 UI 的按钮仅两个：`GraphPanel.vue:22`「刷新」（`store.loadGraph()`，读）与
++  `GraphFilter.vue:37`「清除」（`store.clearFilter()`，本地）—— **无执行类按钮**。
++- `src-tauri/src/graph.rs` 对 `script_runner|std::process|Command::new|execute` **零命中**。
++
++**结论**：图谱 UI 的「Agent 消费」是**只读语义标注与子视图筛选**，不构成 agent consumption runtime，
++也不为 Agent/Skill 执行提供可达路径。
++
++---
++
++## 4. 政策夹具处置：本轮**不新增**（依派工限定）
++
++派工明确「**Add policy only for concrete leakage**」。本轮：
++
++- Q1 执行锁定成立、Q2 无执行可达面 → **无 concrete leakage**。
++- 故**不修改** `scripts/check-agent-skill-policy.py`，保持 `ACTIVE=3 / PENDING=6` 与默认 PASS。
++- W11 已加的 `AGSK_EXEC_LOCKED` 继续作为**执行解锁事件**的机器判据：`main.rs` 一旦注册
++  `skill_run`/`skill_cancel`/`skill_runs_list`/`agent_chat`/`agent_chat_cancel`/`agent_runs`
++  而 ACL/bridge.ts 未齐即判违规 —— 当前执行未解锁故 no-op，默认扫描不红灯。
++
++---
++
++## 5. 验证证据（命令 + 结果）
++
++```text
++$ python3 scripts/check-agent-skill-policy.py --self-test
++AGENT_SKILL_POLICY_SELF_TEST=PASS（ACTIVE=3，PENDING=6）
++
++$ python3 scripts/check-agent-skill-policy.py
++AGENT_SKILL_POLICY=PASS（无违规）
++
++$ grep -noE "\b(skill_|agent_)[a-z_]+" src-tauri/src/main.rs
++4:agent_memory  1451:agent_parse  1452:agent_validate  1453:agent_permission_preview
++1454:skill_parse  1455:skill_validate  1456:skill_permission_preview
++（无 skill_run / agent_chat / agent_chat_cancel / skill_runs_list）
++
++$ grep -nE "^\s*(skill_|agent_)[a-z_]+" src-tauri/permissions/default-commands.toml
++（无输出 → ACL 零条目）
++
++$ grep -rnE "bridge\.|invoke\(|skillRun|agentChat|skill_run|agent_chat" \
++    src/components/graph/ src/stores/useGraphStore.ts src/utils/graphUi.ts
++src/stores/useGraphStore.ts:102:      const res = await bridge.graphQuery();   # 仅此一处，只读
++（无 skillRun / agentChat 引用）
++
++$ node scripts/check-graph-ui-logic.mjs
++图谱 UI 逻辑测试：通过 59，失败 0
++
++$ git fetch origin && git pull --ff-only
++已经是最新的。        # BASE = 269269a
++```
++
++---
++
++## 6. 遗留债务（carried，非本轮新增）
++
++**S-W8-3 仍未闭环**：`src/bridge.ts` 中 4 个**执行类**前端 wrapper 依旧悬空（W11 已记录，本轮复查仍在）：
++
++| 位置 | 命令 | 后端 main.rs | ACL |
++|---|---|---|---|
++| `src/bridge.ts:392` | `skill_run` | 未注册 | 无 |
++| `src/bridge.ts:396` | `agent_chat` | 未注册 | 无 |
++| `src/bridge.ts:398` | `agent_chat_cancel` | 未注册 | 无 |
++| `src/bridge.ts:407` | `skill_runs_list` | 未注册 | 无 |
++
++- 当前**不致命**（无 handler → invoke 失败），故**不构成** concrete leakage，本轮不新增夹具。
++- 但仍是「前端已声明执行能力」的一致性缺口，建议 **A6（Agent/Skill UI）与 A0** 决定存/废：
++  删除 wrapper，或补齐后端 handler + ACL + source check（届时 `AGSK_EXEC_LOCKED` 会校验齐备性）。
++
++---
++
++## 7. 结论与交接
++
++- **STATUS = PASS**：Q1 Agent/Skill 执行仍锁定（无执行 handler / 无 ACL 条目 / 模块零执行路径 / 门禁全绿）；
++  Q2 图谱 UI 的 Agent 消费仅为只读展示与子视图筛选，**不隐含 agent consumption runtime**，无执行可达面；
++  **无 concrete leakage → 本轮不新增政策夹具**（严格遵循派工限定）。
++- **不 push / 不动产品代码**：依 board 规则仅 A0 推送；本交付仅评审文档，W12 Hard Stop 全部满足。
++- **交接 A6**：继续保持 Agent/Skill UI 执行态禁用；并请就 §6 的 4 个悬空执行 wrapper 给出存/废结论。
++- **交接 A10**：以 §2/§3 为 W12 安全复核基线（重点：graph 输出 DTO 须 omit `props`、错误为稳定码、
++  无 secret 回显 —— 属 A4 隐私评审主责；本 lane 仅确认 graph 侧不构成 Agent/Skill 执行面）。
++- **交接 A11**：验证矩阵中 `Agent/Skill lock` 一栏可记为 PASS（`ACTIVE=3/PENDING=6`，默认 PASS）；
++  若后续 A6 补齐或删除悬空 wrapper，`PENDING` 计数不变（本轮未动脚本）。

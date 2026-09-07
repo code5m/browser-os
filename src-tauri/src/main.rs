@@ -1325,6 +1325,14 @@ fn main() {
                     run_m0_driver(app.handle().clone(), m0_cfg);
                 }
             }
+            // M5-W12（Lane A7）：图谱只读快照载入（缺文件/损坏/双扫命中均回退空 store，绝不 panic）。
+            {
+                let path = workspace::data_dir(app.handle()).join("graph.json");
+                let store = crate::graph::load_snapshot(&path);
+                if let Ok(mut g) = app.state::<crate::graph::GraphState>().store.write() {
+                    *g = store;
+                }
+            }
             Ok(())
         })
         .manage(AppState::default())
@@ -1335,6 +1343,8 @@ fn main() {
         .manage(security_policy::IntentRegistry::new())
         // M4-3（Lane A4）：数据库连接配置登记簿（不含非 Send 的池句柄，按需重连）。
         .manage(bridge::DbConnectionRegistry::default())
+        // M5-W12（Lane A7）：图谱只读托管状态（载入期写一次，运行期只读）。
+        .manage(crate::graph::GraphState::default())
         .invoke_handler(tauri::generate_handler![
             bridge::open_browser,
             bridge::close_browser,
@@ -1460,6 +1470,10 @@ fn main() {
             bridge::mcp_capability_preview,
             bridge::mcp_policy_get,
             bridge::mcp_registry_list,
+            // M5-W12（Lane A7）：图谱只读 live-query 命令（见 bridge.rs）。
+            bridge::graph_query,
+            bridge::graph_node_get,
+            bridge::graph_stats,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {

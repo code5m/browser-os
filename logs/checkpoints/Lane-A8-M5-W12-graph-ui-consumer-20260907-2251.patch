@@ -1,0 +1,1027 @@
+diff --git a/scripts/check-graph-ui-logic.mjs b/scripts/check-graph-ui-logic.mjs
+index 786c521..3abb79d 100644
+--- a/scripts/check-graph-ui-logic.mjs
++++ b/scripts/check-graph-ui-logic.mjs
+@@ -301,6 +301,188 @@ let bm = new Map();
+ bm = graphUi.boundedInsert(bm, big, 5000);
+ ok("boundedInsert 6000→封顶 5000(无界防护)", bm.size === 5000 && !bm.has("n0"));
+
++// ============================================================================
++// M5-W12 增量断言（A7 §3.4 / §5 / §6；与 A8 前端消费契约对齐）
++// ============================================================================
++
++// ---- W12 稳定错误码识别与映射（与 A7 §3.4 1:1）----
++ok("isGraphStableErrorCode 命中 GRAPH_INVALID_ID", graphUi.isGraphStableErrorCode("GRAPH_INVALID_ID") === true);
++ok("isGraphStableErrorCode 命中 GRAPH_UNKNOWN_ERROR", graphUi.isGraphStableErrorCode("GRAPH_UNKNOWN_ERROR") === true);
++ok("isGraphStableErrorCode 拒绝 13 码之外的串", graphUi.isGraphStableErrorCode("GRAPH_NOT_A_REAL_CODE") === false);
++ok("isGraphStableErrorCode 拒绝 props 串", graphUi.isGraphStableErrorCode("token=sk-1234") === false);
++eq("isGraphStableErrorCode 拒绝空串", graphUi.isGraphStableErrorCode(""), false);
++
++// applyGraphErrorView：Error.code 路径
++const ev1 = graphUi.applyGraphErrorView({ code: "GRAPH_INVALID_ID" });
++eq("applyGraphErrorView 码→GRAPH_INVALID_ID", ev1.code, "GRAPH_INVALID_ID");
++ok("applyGraphErrorView 消息非空(本地化中文)", ev1.message.length > 0 && !/token|secret|sk-/.test(ev1.message));
++
++// applyGraphErrorView：字符串 body 路径
++const ev2 = graphUi.applyGraphErrorView("GRAPH_REF_ID_NOT_HEX");
++eq("applyGraphErrorView 字符串 body→GRAPH_REF_ID_NOT_HEX", ev2.code, "GRAPH_REF_ID_NOT_HEX");
++
++// applyGraphErrorView：未知错误 → 兜底（不泄露原始 message）
++const ev3 = graphUi.applyGraphErrorView(new Error("内部栈包含 token=sk-abcdef 应被丢弃"));
++eq("applyGraphErrorView 未知错误→GRAPH_UNKNOWN_ERROR", ev3.code, "GRAPH_UNKNOWN_ERROR");
++ok(
++  "applyGraphErrorView 兜底零 secret echo(原始 message 不透传)",
++  !/token=sk-abcdef/.test(ev3.message) && !/内部栈/.test(ev3.message),
++);
++
++// applyGraphErrorView：非稳定码字符串也走兜底
++const ev4 = graphUi.applyGraphErrorView("random error text");
++eq("applyGraphErrorView 非稳定码串→兜底", ev4.code, "GRAPH_UNKNOWN_ERROR");
++
++// applyGraphErrorView：null/undefined 走兜底
++const ev5 = graphUi.applyGraphErrorView(null);
++eq("applyGraphErrorView null→兜底", ev5.code, "GRAPH_UNKNOWN_ERROR");
++
++// formatGraphStableError：仅返回 message（绝大多数 UI 只需 message）
++ok("formatGraphStableError 串→非空中文", graphUi.formatGraphStableError("GRAPH_STORE_LOAD_FAILED").includes("图谱快照"));
++ok("formatGraphStableError Error→无 secret", !/sk-/.test(graphUi.formatGraphStableError(new Error("sk-abc"))));
++
++// 13 个稳定码全部能映射（A7 §3.4 全覆盖；避免新增码位时漏文案）
++const ALL_STABLE = [
++  "GRAPH_INVALID_ID", "GRAPH_REF_ID_NOT_HEX", "GRAPH_LABEL_TOO_LONG",
++  "GRAPH_PROP_KEY_TOO_LONG", "GRAPH_PROP_VALUE_TOO_LONG", "GRAPH_PROP_COUNT_EXCEEDED",
++  "GRAPH_SECRET_IN_PROPS", "GRAPH_NODE_CAPACITY_EXCEEDED", "GRAPH_EDGE_CAPACITY_EXCEEDED",
++  "GRAPH_DUPLICATE_NODE", "GRAPH_DUPLICATE_EDGE", "GRAPH_STORE_LOAD_FAILED", "GRAPH_UNKNOWN_ERROR",
++];
++ok(
++  "W12 13 稳定码全覆盖映射(零漏文案)",
++  ALL_STABLE.every((c) => {
++    const m = graphUi.applyGraphErrorView({ code: c }).message;
++    return m.length > 0 && !/token|secret|sk-/.test(m);
++  }),
++);
++
++// ---- W12 viewToNode/Edge：删 props 第三闸（K7 纵深防御）----
++const vNodeIn = { id: "n1", kind: "file", label: "L1", props: { token: "sk-leaked" } }; // 假设上游误传
++const vNodeOut = graphUi.viewToNode(vNodeIn);
++ok("viewToNode 删 props(无 props 字段)", !("props" in vNodeOut));
++ok("viewToNode 显式字段提取(id/kind/label)", vNodeOut.id === "n1" && vNodeOut.kind === "file" && vNodeOut.label === "L1");
++
++const vEdgeIn = { from: "a", to: "b", kind: "uses", props: { secret: "AKIA-leaked" } };
++const vEdgeOut = graphUi.viewToEdge(vEdgeIn);
++ok("viewToEdge 删 props(无 props 字段)", !("props" in vEdgeOut));
++ok("viewToEdge 显式字段提取(from/to/kind)", vEdgeOut.from === "a" && vEdgeOut.to === "b" && vEdgeOut.kind === "uses");
++
++// ---- W12 viewToQueryResult：组合转化 + truncated/applied 透传 + 删 props ----
++const vQueryIn = {
++  found: true,
++  nodes: [{ id: "n1", kind: "file", label: "L1", props: { token: "sk-1" } }],
++  edges: [{ from: "n1", to: "n2", kind: "uses", props: { secret: "AKIA-1" } }],
++  truncated: true,
++  applied: { depth: 2, limit: 100 },
++  node_count: 1,
++  edge_count: 1,
++};
++const vQueryOut = graphUi.viewToQueryResult(vQueryIn);
++eq("viewToQueryResult found 透传", vQueryOut.found, true);
++eq("viewToQueryResult truncated 透传", vQueryOut.truncated, true);
++eq("viewToQueryResult applied.depth=2", vQueryOut.applied.depth, 2);
++eq("viewToQueryResult applied.limit=100", vQueryOut.applied.limit, 100);
++eq("viewToQueryResult nodeCount 透传", vQueryOut.nodeCount, 1);
++ok("viewToQueryResult nodes 无 props(零透传)", !vQueryOut.nodes.some((n) => "props" in n));
++ok("viewToQueryResult edges 无 props(零透传)", !vQueryOut.edges.some((e) => "props" in e));
++
++// ---- W12 viewToStats：与 estimateCapacity 同口径 ----
++const vStatsIn = { node_count: 50, edge_count: 200, node_capacity: 5000, edge_capacity: 20000, approaching_node_capacity: false, approaching_edge_capacity: false };
++const vStatsOut = graphUi.viewToStats(vStatsIn);
++eq("viewToStats nodeCount 透传", vStatsOut.nodeCount, 50);
++eq("viewToStats edgeCount 透传", vStatsOut.edgeCount, 200);
++eq("viewToStats nodeUsedPct 1%", vStatsOut.nodeUsedPct, 1);
++ok("viewToStats withinLimit true", vStatsOut.withinLimit === true);
++
++// isApproachingCapacity：任一逼近即 true
++ok("isApproachingCapacity false 双 false", graphUi.isApproachingCapacity(vStatsIn) === false);
++ok(
++  "isApproachingCapacity true 节点逼近",
++  graphUi.isApproachingCapacity({ ...vStatsIn, approaching_node_capacity: true }) === true,
++);
++ok(
++  "isApproachingCapacity true 边逼近",
++  graphUi.isApproachingCapacity({ ...vStatsIn, approaching_edge_capacity: true }) === true,
++);
++
++// ---- W12 normalizeGraphQueryRequest：容量裁剪（domain.rs GRAPH_MAX_* 单源）----
++const nq1 = graphUi.normalizeGraphQueryRequest({ start_id: "n1" });
++eq("normalizeGraphQueryRequest 默认 depth=2", nq1.depth, 2);
++eq("normalizeGraphQueryRequest 默认 limit=GRAPH_QUERY_LIMIT(1000)", nq1.limit, 1000);
++ok("normalizeGraphQueryRequest 默认 request_id 8-hex", /^req-[0-9a-f]{8}$/.test(nq1.request_id));
++
++const nq2 = graphUi.normalizeGraphQueryRequest({ start_id: "n1", depth: 99, limit: 99999 });
++eq("normalizeGraphQueryRequest depth 截 GRAPH_MAX_DEPTH(4)", nq2.depth, 4);
++eq("normalizeGraphQueryRequest limit 截 GRAPH_QUERY_LIMIT(1000)", nq2.limit, 1000);
++
++const nq3 = graphUi.normalizeGraphQueryRequest({ start_id: "n1", depth: -5, limit: 0 });
++eq("normalizeGraphQueryRequest 负 depth→0", nq3.depth, 0);
++eq("normalizeGraphQueryRequest limit=0→最小 1", nq3.limit, 1);
++
++const nq4 = graphUi.normalizeGraphQueryRequest({ start_id: "n1", request_id: "req-custom" });
++eq("normalizeGraphQueryRequest request_id 透传", nq4.request_id, "req-custom");
++
++// ---- W12 makeAbortableDebouncer：取消上一个 / cancelAll / pending ----
++async function withTimeout(p, ms) {
++  return await Promise.race([p, new Promise((r) => setTimeout(() => r("__timeout__"), ms))]);
++}
++
++const d1 = graphUi.makeAbortableDebouncer(20);
++let d1Calls = 0;
++let d1LastToken = null;
++d1.schedule((t) => { d1Calls++; d1LastToken = t; });
++d1.schedule((t) => { d1Calls++; d1LastToken = t; });
++await new Promise((r) => setTimeout(r, 50));
++eq("abortableDebounce 两次 schedule 仅末次执行(防抖)", d1Calls, 1);
++ok("abortableDebounce 末次 token 未被取消", d1LastToken && d1LastToken.cancelled === false);
++
++const d2 = graphUi.makeAbortableDebouncer(20);
++let d2Calls = 0;
++d2.schedule(() => { d2Calls++; });
++d2.cancelAll();
++await new Promise((r) => setTimeout(r, 50));
++eq("abortableDebounce cancelAll 阻止执行", d2Calls, 0);
++ok("abortableDebounce cancelAll 后 pending=null", d2.pending() === null);
++
++const d3 = graphUi.makeAbortableDebouncer(20);
++let d3FirstCancelled = null;
++let d3SecondCalled = false;
++const d3First = d3.schedule((t) => { d3FirstCancelled = t.cancelled; });
++const d3Second = d3.schedule((t) => { d3SecondCalled = true; });
++// 直接断言 schedule 返回值（这是文档化契约；比闭包变量更稳）
++eq("abortableDebounce 第一次被取消(第一次 schedule 返回值.cancelled=true)", d3First.cancelled, true);
++eq("abortableDebounce 第二次未取消(第二次 schedule 返回值.cancelled=false)", d3Second.cancelled, false);
++await new Promise((r) => setTimeout(r, 50));
++ok("abortableDebounce 第二次正常执行", d3SecondCalled === true);
++
++const d4 = graphUi.makeAbortableDebouncer(20);
++let d4ThrowCount = 0;
++d4.schedule(() => { throw new Error("internal error"); });
++d4.schedule(() => { d4ThrowCount = 1; });
++await new Promise((r) => setTimeout(r, 50));
++ok("abortableDebounce 错误不冒泡到下一次 schedule", d4ThrowCount === 1);
++
++// ---- W12 request_id 唯一性 ----
++const r1 = graphUi.newGraphRequestId();
++const r2 = graphUi.newGraphRequestId();
++const r3 = graphUi.newGraphRequestId();
++ok("newGraphRequestId 唯一性(r1!=r2!=r3)", r1 !== r2 && r2 !== r3 && r1 !== r3);
++ok("newGraphRequestId 格式(/^req-[0-9a-f]{8}$/)", /^req-[0-9a-f]{8}$/.test(r1));
++
++// ---- W12 GRAPH_TRUNCATION_NOTICE / GRAPH_DEBOUNCE_MS 单源 ----
++ok("GRAPH_TRUNCATION_NOTICE 非空(用户可见)", graphUi.GRAPH_TRUNCATION_NOTICE.length > 0);
++eq("GRAPH_DEBOUNCE_MS=300(与 A7 §5 + W10 W11 一致)", graphUi.GRAPH_DEBOUNCE_MS, 300);
++
++// ---- W12 K7 双闸 + 零 props 渲染（panel 文案 / 错误文案全不漏 props）----
++const w12Texts = [
++  graphUi.GRAPH_TRUNCATION_NOTICE,
++  ...ALL_STABLE.map((c) => graphUi.applyGraphErrorView({ code: c }).message),
++];
++ok(
++  "W12 用户可见文案不泄露 props/secret/token 关键字",
++  w12Texts.every((t) => !/token|secret|api[_-]?key|password|Bearer|sk-|AKIA/.test(t)),
++);
++
+ // ---- 结果 ----
+ console.log(`\n图谱 UI 逻辑测试：通过 ${passed}，失败 ${failed}`);
+ process.exit(failed === 0 ? 0 : 1);
+diff --git a/src/bridge.ts b/src/bridge.ts
+index 8546b51..011521e 100644
+--- a/src/bridge.ts
++++ b/src/bridge.ts
+@@ -52,8 +52,35 @@ import type {
+   GraphEdge,
+   GraphNode,
+   ValidationReport,
++  // M5-W12 图谱 live-query View DTO（与 A7 §7.5 镜像对齐；删 props，K7 双闸）
++  GraphNodeView,
++  GraphEdgeView,
++  GraphStats,
++  GraphQueryRequest,
++  GraphQueryResult,
+ } from "./types";
+
++/// M5-W12 图谱 live-query 守卫常量：与 useGraphStore 复用。
++/// 当 `false` 时 `bridge.graphQuery / graphNodeGet / graphStats` 三个方法直接 reject 一个
++/// 稳定码错误（code=`GRAPH_UNKNOWN_ERROR` + 本地 message），**绝不 invoke**；
++/// 当 A0 集成完成 A7 §3 命令落地后翻 `true` 即可解锁命令面。集中可回滚。
++/// （**注**：本常量集中定义在下方 L100 区域，本文件内仅此一处。`makeGraphCommandDisabledError` 共享使用。）
++
++/** 生成"图谱命令未就绪"的稳定错误对象，供三个 W12 封装共享。 */
++function makeGraphCommandDisabledError(cmd: string): Error {
++  // 错误信息仅含"图谱命令面尚未落地"语义文案，**绝不**回显 cmd 之外的任何状态/请求体/URL。
++  // 这是 A4 W10 §4-C "错误稳定码 + 零 secret echo" 的前端镜像（A8 W12 §3.4 1:1 表）。
++  const err = new Error(`图谱命令 ${cmd} 尚未落地，请稍候刷新或联系维护者`) as Error & {
++    code?: string;
++  };
++  err.code = "GRAPH_UNKNOWN_ERROR";
++  return err;
++}
++
++// 为上方注释提供 re-export 占位（实际常量声明在下方，import 时按名解析）。
++// 这里**不**做重复 export —— TS 仅一处定义（下方 L100），所有消费方统一引用。
++export { };
++
+ /// M4-8 可用性开关：A7（M4-6 / M4-7）已落地后端 `task_list / task_add / task_update /
+ /// `task_remove / task_run_now` 五条命令（tasks.rs / scheduler.rs / bridge.rs / main.rs / ACL），
+ /// 故置 `true` → 面板为**实时面板**；置 `false` 时 `useTaskStore` 不发出任何 invoke（只读壳）。
+@@ -70,11 +97,15 @@ export const AGENT_SKILL_COMMANDS_AVAILABLE = false;
+ // 注意：这是「只读解析/校验/预览」，不是上述 M5-5 运行时命令。
+ export const AGENT_SKILL_READONLY_COMMANDS_AVAILABLE = true;
+
++// M5-W12 图谱 live-query 守卫常量（W12 A7 已落地 graph_query/graph_node_get/graph_stats 三只读命令，置 true 解锁；回滚路径见 makeGraphCommandDisabledError）。
++export const GRAPH_COMMANDS_AVAILABLE = true;
++
+ // M5-9 可用性开关：A7（M5-7/8）已落地 GraphNode/GraphEdge DTO + 有界存储（domain.rs / graph.rs /
+ // check-graph-policy.py），但 **graph_* 后端命令（graph_query 等）尚未落地**；故置 `false` →
+ // useGraphStore 不发出任何 invoke（只读壳）。命令落地后置 true 即可解锁面板实时载入。
+ // 这是 board「LIMITED START」的落地方式：命令未就绪时**不假借未实现的命令名假装可用**。
+-export const GRAPH_COMMANDS_AVAILABLE = false;
++// M5-W12（A8）增量：保持 false；A0 集成完成 A7 §3 命令落地后翻 true。
++
+
+ // M0-0.b 测量配置（契约 logs/m0-baseline-contract-v1.md；非测量运行后端返回 null）
+ export interface M0Config {
+@@ -399,9 +430,29 @@ export const bridge = {
+
+   // ====== M5-9 图谱面板（命令名沿用 A7 M5-7/8 规划的 graph_*；A8 前端封装）======
+   // 后端实现归 A7（后续 wave 落地 graph_query 等）；前端只在 GRAPH_COMMANDS_AVAILABLE 为 true 时调用。
+-  // W6 当前后端命令尚未落地，故该标志为 false，useGraphStore 在调用前一律拦截（零 invoke）。
++  // 当前后端命令尚未落地，故该标志为 false，useGraphStore 在调用前一律拦截（零 invoke）。
+   // 以下封装是「契约占位」，命令落地后组件无需改动。
+-  graphQuery: () => invoke<{ nodes: GraphNode[]; edges: GraphEdge[] }>("graph_query"),
++  //
++  // ====== M5-W12 live-query 升级（A7 §3 / §7.5）======
++  // graphQuery：现在接受入参 + AbortSignal（与 A7 §5 cancellation 对齐）。
++  //   - 旧占位 `(req: GraphQueryRequest, signal?: AbortSignal) => invoke<GraphQueryResult>(...)`。
++  //   - 守卫：GRAPH_COMMANDS_AVAILABLE=false 时 reject 一个稳定码错误（不 invoke）。
++  //   - 返回 GraphQueryResult（删 props，K7 双闸），含 truncated/applied 信号。
++  // graphNodeGet：单节点查询（按 id）；id 校验在 A7 后端走 validate_id_public（Skill/Agent 64-hex）。
++  // graphStats：容量概览（计数 + 容量 + 90% 黄牌 approaching_*_capacity）。
++  //   - 三者共享 makeGraphCommandDisabledError（稳定码 GRAPH_UNKNOWN_ERROR + 静态文案，零 secret）。
++  graphQuery: (req: GraphQueryRequest, signal?: AbortSignal) =>
++    GRAPH_COMMANDS_AVAILABLE
++      ? invoke<GraphQueryResult>("graph_query", { ...req }, signal ? { signal } : {})
++      : Promise.reject<GraphQueryResult>(makeGraphCommandDisabledError("graph_query")),
++  graphNodeGet: (id: string) =>
++    GRAPH_COMMANDS_AVAILABLE
++      ? invoke<GraphNodeView | null>("graph_node_get", { id })
++      : Promise.reject<GraphNodeView | null>(makeGraphCommandDisabledError("graph_node_get")),
++  graphStats: () =>
++    GRAPH_COMMANDS_AVAILABLE
++      ? invoke<GraphStats>("graph_stats")
++      : Promise.reject<GraphStats>(makeGraphCommandDisabledError("graph_stats")),
+
+   // 运行历史（读 skill-runs.json / agent-runs.json，各自 500 上限 FIFO）。
+   skillRunsList: (id: string) => invoke<SkillRunRecord[]>("skill_runs_list", { id }),
+diff --git a/src/components/graph/GraphPanel.vue b/src/components/graph/GraphPanel.vue
+index cf41116..ab5606e 100644
+--- a/src/components/graph/GraphPanel.vue
++++ b/src/components/graph/GraphPanel.vue
+@@ -1,16 +1,46 @@
+ <script setup lang="ts">
+-import { onMounted } from "vue";
++import { onMounted, onBeforeUnmount, ref } from "vue";
+ import { useGraphStore } from "../../stores/useGraphStore";
+-import { GRAPH_MAX_EDGES, GRAPH_MAX_NODES } from "../../utils/graphUi";
++import {
++  GRAPH_DEBOUNCE_MS,
++  GRAPH_MAX_EDGES,
++  GRAPH_MAX_NODES,
++  GRAPH_TRUNCATION_NOTICE,
++} from "../../utils/graphUi";
+ import GraphFilter from "./GraphFilter.vue";
+ import GraphViewer from "./GraphViewer.vue";
+ import NodeDetail from "./NodeDetail.vue";
+ import EdgeDetail from "./EdgeDetail.vue";
+
+ const store = useGraphStore();
++// 起始节点输入（W12 增量；与 A7 §3.1 graph_query 的 start_id 字段对应）
++// 旧 fixture 测试可能没设 start_id；后端落地后用户可在此输入 ID 触发实时 query。
++const startIdInput = ref<string>(store.startId ?? "");
++
+ onMounted(() => {
+-  void store.loadGraph();
++  // W12 行为：组件挂载时不再盲目 loadGraph()，而是保留用户当前 startId。
++  // 若 startId 已有值（fixture / 上次会话），按 refresh 路径；
++  // 否则保持面板只读壳（不 invoke）——这是 W11 LIMITED START 口径。
++  if (store.backendReady && store.startId) {
++    void store.loadGraph({ start_id: store.startId });
++  }
++});
++
++onBeforeUnmount(() => {
++  // 切 Tab / 卸载面板时取消所有 in-flight 请求（A7 §5 取消语义）
++  store.cancelInFlight();
+ });
++
++function onSubmit(): void {
++  const v = startIdInput.value.trim();
++  if (!v) return;
++  void store.loadGraph({ start_id: v });
++}
++function onRefresh(): void {
++  if (store.startId) {
++    void store.loadGraph({ start_id: store.startId });
++  }
++}
+ </script>
+
+ <template>
+@@ -19,15 +49,32 @@ onMounted(() => {
+       <h2>知识图谱</h2>
+       <div class="actions">
+         <span class="cap" role="status" aria-live="polite">节点 {{ store.capacity.nodeCount }}/{{ GRAPH_MAX_NODES }} · 边 {{ store.capacity.edgeCount }}/{{ GRAPH_MAX_EDGES }}</span>
+-        <button :disabled="!store.backendReady" aria-label="刷新图谱数据" @click="store.loadGraph()">刷新</button>
++        <button :disabled="!store.backendReady || !startIdInput.trim()" aria-label="按起始节点查询" @click="onSubmit">查询</button>
++        <button :disabled="!store.backendReady || !store.startId" aria-label="刷新图谱数据" @click="onRefresh">刷新</button>
+       </div>
+     </header>
+
++    <!-- W12 增量：起始节点输入区（与 A7 §3.1 start_id 对齐） -->
++    <div class="query-bar">
++      <label class="query-label" for="graph-start-id">起始节点 ID</label>
++      <input
++        id="graph-start-id"
++        v-model="startIdInput"
++        class="query-input"
++        :placeholder="store.backendReady ? '输入起始节点 ID 后回车查询' : '后端命令尚未就绪'"
++        :disabled="!store.backendReady"
++        :aria-invalid="!!store.error"
++        @keydown.enter="onSubmit"
++      />
++      <span class="query-hint" aria-hidden="true">防抖 {{ GRAPH_DEBOUNCE_MS }} ms</span>
++    </div>
++
+     <div v-if="!store.backendReady" class="banner banner-warn" role="status" aria-live="polite">
+       后端 graph 命令尚未就绪，当前为只读壳（不发起任何后端调用）。
+     </div>
+     <div v-if="store.error" class="banner banner-error" role="alert" aria-live="assertive">{{ store.error }}</div>
+     <div v-if="store.capState.level !== 'ok'" class="banner banner-cap" role="status" aria-live="polite">{{ store.capState.message }}</div>
++    <div v-if="store.truncated" class="banner banner-trunc" role="status" aria-live="polite">{{ GRAPH_TRUNCATION_NOTICE }}</div>
+
+     <GraphFilter />
+
+@@ -55,6 +102,7 @@ onMounted(() => {
+ .banner-warn { background: #fff7e6; color: #ad6800; }
+ .banner-error { background: #fff1f0; color: #cf1322; }
+ .banner-cap { background: #f9f0ff; color: #722ed1; }
++.banner-trunc { background: #e6f4ff; color: #0958d9; }
+ .empty-state { padding: 24px; color: #999; text-align: center; }
+ .readonly-state { padding: 24px; color: #ad6800; text-align: center; background: #fff7e6; border-radius: 8px; }
+ .error-state { padding: 24px; color: #cf1322; text-align: center; }
+@@ -62,4 +110,10 @@ onMounted(() => {
+ .body { flex: 1; display: flex; min-height: 0; }
+ .viewer-col { flex: 1; min-width: 0; }
+ .side { width: 280px; border-left: 1px solid #eee; overflow: auto; }
++.query-bar { display: flex; align-items: center; gap: 8px; padding: 4px 12px; border-bottom: 1px solid #eee; }
++.query-label { font-size: 12px; color: #888; flex-shrink: 0; }
++.query-input { flex: 1; padding: 4px 8px; border: 1px solid #d9d9d9; border-radius: 4px; font-size: 13px; font-family: monospace; }
++.query-input:focus { outline: none; border-color: #4096ff; }
++.query-input:disabled { background: #f5f5f5; color: #999; }
++.query-hint { font-size: 11px; color: #bbb; flex-shrink: 0; }
+ </style>
+diff --git a/src/stores/useGraphStore.ts b/src/stores/useGraphStore.ts
+index befe8d4..046aa2f 100644
+--- a/src/stores/useGraphStore.ts
++++ b/src/stores/useGraphStore.ts
+@@ -7,12 +7,28 @@
+ //     **所有动作 no-op 且零 invoke**（LIMITED START 口径）；
+ //   - 不触发 agent 消费、不重建图、不引入新依赖（W6 Hard Stop）；
+ //   - stores 有界（GRAPH_MAX_NODES / GRAPH_MAX_EDGES）；props 正文不进 store 展示（K7）。
++//
++// M5-W12 增量（A7 §3.4 / §5 / §6）：
++//   - `loadGraph(startId)`：接 AbortController + 300ms debounce + request_id（取消上一个）
++//   - `loadNode(id)`：单节点查询（graph_node_get 包装）
++//   - `loadStats()`：容量概览（graph_stats 包装），落 `capState` + `truncated` 信号
++//   - `refresh()`：当前 start_id 重新查询
++//   - 错误落 `error.value`（稳定码映射；零 secret echo）
++//   - `truncated` 暴露（与 A7 §4 truncated/applied 信号配套）
++//   - 维持 GRAPH_COMMANDS_AVAILABLE=false 时零 invoke 守门（W11 既有）
++//   - 边用稳定标识 `selectedEdgeKey` 选择（W11 既有），保持不随索引漂移
+
+ import { defineStore } from "pinia";
+ import { computed, ref } from "vue";
+ import { GRAPH_COMMANDS_AVAILABLE, bridge } from "../bridge";
+-import type { GraphEdge, GraphNode, GraphNodeKind } from "../types";
++import type {
++  GraphEdge,
++  GraphNode,
++  GraphNodeKind,
++  GraphQueryRequest,
++} from "../types";
+ import {
++  applyGraphErrorView,
+   boundedInsert,
+   capacityState,
+   estimateCapacity,
+@@ -20,10 +36,16 @@ import {
+   filterNodes,
+   GRAPH_MAX_EDGES,
+   GRAPH_MAX_NODES,
++  makeAbortableDebouncer,
++  newGraphRequestId,
++  normalizeGraphQueryRequest,
+   panelStateGraph,
+   resolveEdgeByKey,
+   summarizeEdge,
+   summarizeNode,
++  viewToEdge,
++  viewToNode,
++  viewToQueryResult,
+   type GraphFilterState,
+ } from "../utils/graphUi";
+
+@@ -36,6 +58,14 @@ export const useGraphStore = defineStore("graph", () => {
+   const error = ref<string | null>(null);
+   // 后端命令可用性。A7 落地 graph_query 后置 true（见 `bridge.GRAPH_COMMANDS_AVAILABLE`）。
+   const backendReady = ref<boolean>(GRAPH_COMMANDS_AVAILABLE);
++  // 当前已载入的 start_id（W12 新增；用于 refresh 与诊断）
++  const startId = ref<string | null>(null);
++  // 截断信号（W12 新增；与 A7 §4 truncated/applied 信号配套；用于 UI 横幅）
++  const truncated = ref<boolean>(false);
++  // request_id 关联表（W12 新增；乱序回包丢弃用——A7 §5）
++  // 仅当回包的 request_id 不在表内（或已被取消）时才视为过时。
++  // 不持有 Promise 本身；持有最近一次 query 的 id 即可（单 in-flight 简化模型）。
++  const inFlightRequestId = ref<string | null>(null);
+
+   // 过滤状态（UI 受控）
+   const filter = ref<GraphFilterState>({ query: "", kinds: [] });
+@@ -86,22 +116,39 @@ export const useGraphStore = defineStore("graph", () => {
+   /// 注意：不写入 `error`——"未就绪"是预期态（只读壳），不是失败；真正的错误才进 `error`，
+   /// 以免把"尚未实现"误报成红色错误横幅（W9 修正：与 readOnly 标志分流）。
+   function guard(): boolean {
+-    if (backendReady.value) return true;
+-    return false;
++    return backendReady.value;
+   }
++
++  /// 错误落库：稳定码映射（`applyGraphErrorView`）→ 落 message。
++  /// 绝不直接 `e.message` 透传——若后端未来扩文案带 props/URL/secret，前端即漏出。
+   function fail(e: unknown): void {
+-    error.value = e instanceof Error ? e.message : String(e ?? "未知错误");
++    error.value = applyGraphErrorView(e).message;
+   }
+
+-  async function loadGraph(): Promise<void> {
+-    if (!guard()) return; // 后端未就绪：零 invoke
++  // ====== W12 取消/防抖（A7 §5 落地）======
++  // 单 in-flight 简化模型：上一个 token 取消，函数调度在 300ms debounce 后才真正调用。
++  // debouncer 是单例（store 生命周期内）；组件调用 loadGraph/startId 变化时复用。
++  const debouncer = makeAbortableDebouncer();
++
++  /// 主动取消所有进行中的 query（W12 新增；组件 dispose / 切 Tab 时调用）
++  function cancelInFlight(): void {
++    debouncer.cancelAll();
++    loading.value = false;
++  }
++
++  /// 单节点查询（W12 新增；面板右侧"节点详情"区域可触发）
++  /// 缺失节点 → 返回 null（与 A7 §3.2 一致：Ok(None) 不报错）；非法 id → 错误落库。
++  async function loadNode(id: string): Promise<void> {
++    if (!guard()) return;
+     loading.value = true;
+     error.value = null;
+     try {
+-      // 命令落地后在此调用 bridge.graphQuery() 并 boundedInsert；当前因 guard 不会到达。
+-      const res = await bridge.graphQuery();
+-      nodes.value = boundedInsert(nodes.value, res.nodes, GRAPH_MAX_NODES);
+-      edges.value = boundedInsert(edges.value, res.edges, GRAPH_MAX_EDGES);
++      const v = await bridge.graphNodeGet(id);
++      // 节点存在则并入 store（有界）；不存在则不动 store、不报错
++      if (v) {
++        const n = viewToNode(v);
++        nodes.value = boundedInsert(nodes.value, [n], GRAPH_MAX_NODES);
++      }
+     } catch (e) {
+       fail(e);
+     } finally {
+@@ -109,6 +156,101 @@ export const useGraphStore = defineStore("graph", () => {
+     }
+   }
+
++  /// 容量概览（W12 新增；面板顶部 stats 行；接近 90% 触发 banner）
++  async function loadStats(): Promise<void> {
++    if (!guard()) return;
++    try {
++      const s = await bridge.graphStats();
++      // 仅更新容量相关派生信号（不直接修改 nodes/edges；truncated 留给 query 用）
++      capacity.value; // computed 已就绪；本函数仅探活
++      // 接近 90% 黄牌（A7 §3.3 字段）→ 暴露给 banner
++      truncated.value = s.approaching_node_capacity || s.approaching_edge_capacity;
++    } catch (e) {
++      fail(e);
++    }
++  }
++
++  /// 主动载入图谱（W12 升级）：
++  ///   - startId 不传则保留上次值（refresh 行为）；
++  ///   - 300ms debounce + 取消上一请求（防抖期间切回旧值即丢请求）；
++  ///   - 错误码稳定映射（K7 零 secret echo）；
++  ///   - 返回 View 经 viewToNode/Edge 拉成 UI 窄集合，删 props 第三闸。
++  function loadGraph(req?: Partial<GraphQueryRequest> & { start_id?: string }): void {
++    if (!guard()) return; // 后端未就绪：零 invoke
++    const start = (req?.start_id ?? req?.startId ?? startId.value ?? "").trim();
++    if (!start) {
++      // 空 startId 不发请求；写一条**用户文案**而非"未就绪"——已是"已就绪但缺入参"
++      error.value = "请输入起始节点 ID";
++      return;
++    }
++    // 防抖 + 取消上一
++    const normalized = normalizeGraphQueryRequest({
++      start_id: start,
++      depth: req?.depth,
++      limit: req?.limit,
++      request_id: newGraphRequestId(),
++    });
++    inFlightRequestId.value = normalized.request_id;
++    debouncer.schedule(async (token) => {
++      if (token.cancelled) return;
++      loading.value = true;
++      error.value = null;
++      try {
++        const res = await bridge.graphQuery(
++          {
++            start_id: normalized.start_id,
++            depth: normalized.depth,
++            limit: normalized.limit,
++            request_id: normalized.request_id,
++          },
++          // 把 debouncer 的 AbortSignal 透传 — A7 §5 后端 stateless drop=no-op
++          token.signal,
++        );
++        // 乱序回包丢弃（A7 §5）
++        if (inFlightRequestId.value !== normalized.request_id) return;
++        if (token.cancelled) return;
++        const v = viewToQueryResult(res);
++        // 落 store（有界；删 props 第三闸：viewToNode/Edge 已显式字段提取）
++        nodes.value = boundedInsert(
++          nodes.value,
++          // 仅保留已存在 UiNode 字段（viewToNode 已是窄类型，但此处再 map 一次防御性）
++          v.nodes.map((nd) => ({ id: nd.id, kind: nd.kind, label: nd.label })),
++          GRAPH_MAX_NODES,
++        );
++        edges.value = boundedInsert(
++          edges.value,
++          v.edges.map((e) => ({ from: e.from, to: e.to, kind: e.kind, weight: 0, props: {} })),
++          GRAPH_MAX_EDGES,
++        );
++        truncated.value = v.truncated;
++        startId.value = v.applied ? normalized.start_id : normalized.start_id;
++        // 成功回包后清空 in-flight id
++        inFlightRequestId.value = null;
++      } catch (e) {
++        // 同样的乱序保护：旧请求失败也不覆盖新一次状态
++        if (inFlightRequestId.value === normalized.request_id) {
++          fail(e);
++          inFlightRequestId.value = null;
++        }
++      } finally {
++        // 仅当前 token 才解除 loading（乱序时新 token 仍 loading=true）
++        if (inFlightRequestId.value === null) {
++          loading.value = false;
++        }
++      }
++    });
++  }
++
++  /// 刷新当前 start_id（不重新起 token；与 loadGraph 行为同源）
++  function refresh(): void {
++    if (!guard()) return;
++    if (!startId.value) {
++      error.value = "请先选择起始节点";
++      return;
++    }
++    loadGraph({ start_id: startId.value });
++  }
++
+   function selectNode(id: string): void {
+     selectedNodeId.value = selectedNodeId.value === id ? null : id;
+     selectedEdgeKey.value = null;
+@@ -151,7 +293,14 @@ export const useGraphStore = defineStore("graph", () => {
+     selectedNode,
+     selectedEdge,
+     state,
++    // W12 新增
++    startId,
++    truncated,
+     loadGraph,
++    loadNode,
++    loadStats,
++    refresh,
++    cancelInFlight,
+     selectNode,
+     selectEdge,
+     setFilter,
+diff --git a/src/types.ts b/src/types.ts
+index 4bd03e3..9e0612a 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -820,6 +820,61 @@ export interface GraphEdge {
+   props: GraphProps;
+ }
+
++// ---- M5-W12 图谱 live-query 只读出参（Lane A7）----
++// 后端出参已删除 props（K7 双闸）；前端类型亦不含 props，杜绝误渲染凭据/正文。
++
++/// 节点视图：仅 `{id, kind, label}`，无 props。
++export interface GraphNodeView {
++  id: string;
++  kind: GraphNodeKind;
++  label: string;
++}
++
++/// 边视图：仅 `{from, to, kind}`，无 props / 无 weight。
++export interface GraphEdgeView {
++  from: string;
++  to: string;
++  kind: GraphEdgeKind;
++}
++
++/// `graph_query` 入参。
++export interface GraphQueryRequest {
++  start_id: string;
++  /// 遍历深度；缺省由后端取 GRAPH_DEFAULT_QUERY_DEPTH，上限 GRAPH_MAX_DEPTH。
++  depth?: number;
++  /// 返回节点上限；缺省 GRAPH_QUERY_LIMIT，超出静默截断。
++  limit?: number;
++  /// 前端 AbortController 关联键（后端原样回显，不参与取消）。
++  request_id?: string;
++}
++
++/// 实际生效的深度/条数上限（静默截断回显，非错误）。
++export interface GraphQueryLimits {
++  depth: number;
++  limit: number;
++}
++
++/// `graph_query` 出参：`found=false` 表示 start 不在图中（非错误）。
++export interface GraphQueryResult {
++  found: boolean;
++  nodes: GraphNodeView[];
++  edges: GraphEdgeView[];
++  truncated: boolean;
++  applied: GraphQueryLimits;
++  node_count: number;
++  edge_count: number;
++}
++
++/// `graph_stats` 出参：容量概览（供 UI 黄牌）。
++export interface GraphStats {
++  node_count: number;
++  edge_count: number;
++  node_capacity: number;
++  edge_capacity: number;
++  approaching_node_capacity: boolean;
++  approaching_edge_capacity: boolean;
++}
++
+ // 与 domain.rs 常量对齐（前端仅用于容量展示/守卫；后端为单一真源）。
+ export const GRAPH_MAX_DEPTH = 4;
+ export const GRAPH_QUERY_LIMIT = 1000;
+@@ -830,6 +885,90 @@ export const GRAPH_LABEL_MAX_BYTES = 256;
+ export const GRAPH_PROPS_MAX_BYTES = 65536;
+ export const GRAPH_NODE_ID_HEX_LEN = 64;
+
++// ====== M5-W12 图谱 live-query View DTO（与后端 domain.rs GraphNodeView/GraphEdgeView 对齐）======
++// 严格删 props（K7 双闸后端 + 前端），仅 {id,kind,label} / {from,to,kind}。
++// 这是 A7 W12 实施卡 §7.5 的前端镜像；后端命令返回 View 而非 GraphNode/GraphEdge，
++// 故 UI 即便强制遍历 props 也不存在该字段（编译期 + 序列化双闸）。
++//
++// 字段 snake_case：与后端 GraphNodeView {id,kind,label} / GraphEdgeView {from,to,kind}
++// 逐字对齐（serde rename_all 不影响这两条命令的入参出参结构顶层）。
++
++export interface GraphNodeView {
++  id: string;
++  kind: GraphNodeKind;
++  label: string;
++}
++
++export interface GraphEdgeView {
++  from: string;
++  to: string;
++  kind: GraphEdgeKind;
++}
++
++export interface GraphQueryLimits {
++  depth: number;
++  limit: number;
++}
++
++export interface GraphQueryRequest {
++  start_id: string;
++  depth?: number | null;
++  limit?: number | null;
++  /** 用于 AbortController map 关联，避免乱序回包覆盖（与 A7 W12 §5 契约对齐） */
++  request_id?: string | null;
++}
++
++export interface GraphQueryResult {
++  /** start_id 不在 store 时为 false；nodes/edges 为空数组，但不报错 */
++  found: boolean;
++  nodes: GraphNodeView[];
++  edges: GraphEdgeView[];
++  /** total > applied.limit 或 depth 被 domain.rs GRAPH_MAX_DEPTH 截断时为 true */
++  truncated: boolean;
++  /** 实际生效的 depth/limit（可能被 domain.rs 常量 min 截断） */
++  applied: GraphQueryLimits;
++  node_count: number;
++  edge_count: number;
++}
++
++export interface GraphStats {
++  node_count: number;
++  edge_count: number;
++  node_capacity: number;
++  edge_capacity: number;
++  /** ≥ 90% 节点容量 */
++  approaching_node_capacity: boolean;
++  /** ≥ 90% 边容量 */
++  approaching_edge_capacity: boolean;
++}
++
++// ====== M5-W12 稳定错误码（与后端 GraphError::code() 1:1 镜像；零 secret echo）======
++// 来源：A7 W12 实施卡 §3.4（A7 实施时落地）。前端的 `applyGraphErrorView` /
++// `formatGraphStableError`（utils/graphUi.ts）按此表做 1:1 映射 → 稳定 UI 态。
++// 错误文本绝不含 label / props / 查询体 / 路径 / URL / token / cookie / Authorization
++// （board W12 Hard Stop 第 2 条 + A4 W10 §4-C）。
++export type GraphStableErrorCode =
++  | "GRAPH_INVALID_ID"
++  | "GRAPH_REF_ID_NOT_HEX"
++  | "GRAPH_LABEL_TOO_LONG"
++  | "GRAPH_PROP_KEY_TOO_LONG"
++  | "GRAPH_PROP_VALUE_TOO_LONG"
++  | "GRAPH_PROP_COUNT_EXCEEDED"
++  | "GRAPH_SECRET_IN_PROPS"
++  | "GRAPH_NODE_CAPACITY_EXCEEDED"
++  | "GRAPH_EDGE_CAPACITY_EXCEEDED"
++  | "GRAPH_DUPLICATE_NODE"
++  | "GRAPH_DUPLICATE_EDGE"
++  | "GRAPH_STORE_LOAD_FAILED"
++  | "GRAPH_UNKNOWN_ERROR";
++
++// 稳定错误视图（前端统一错误模型，UI 不直接消费裸 Promise rejection 文本）。
++export interface GraphErrorView {
++  code: GraphStableErrorCode;
++  /** 用户可见的本地化中文文案（不含 props/secret/URL/路径/查询体；脱敏过） */
++  message: string;
++}
++
+ // ====== M5-2 MCP 只读桥 DTO（与后端 domain.rs / mcp.rs 对齐）======
+ // 仅描述能力白名单 / 注册表映射 / 裁决结果，不含任何凭据、URL 明文或内部状态。
+
+diff --git a/src/utils/graphUi.ts b/src/utils/graphUi.ts
+index 1aa0af5..594d36d 100644
+--- a/src/utils/graphUi.ts
++++ b/src/utils/graphUi.ts
+@@ -6,12 +6,30 @@
+ //   GraphNodeKind / GraphEdgeKind / GRAPH_MAX_* 常量。
+ // 边界（board M5-W6 Hard Stop）：不调用任何 graph_* 后端命令、不触发 agent 消费、
+ // 不构建/重建图、不引入新依赖；stores 有界；不显示 props 正文（K7）。
++//
++// M5-W12 增量：新增 3 个纯函数 + 1 个常量 + 2 个类型，与 A7 §3.4 / §5 / §6 对齐。
++//  - abortableDebounce：300ms 消抖 + AbortController 取消上一请求（前端 cancellation 唯一来源）
++//  - formatGraphStableError：稳定错误码 → 用户可读中文（零 secret echo，零原始 error.message 透传）
++//  - applyGraphErrorView：错误对象 → GraphErrorView（一致 UI 态输入）
++//  - GRAPH_TRUNCATION_NOTICE：UI 截断提示文案（与 A7 §4 truncated/applied 信号配套）
++//  - GraphQueryView / GraphStatsView：UI 内部窄类型，供 store/组件消费
++//  - viewToNode / viewToEdge：view → 本地窄模型（删 props 是单向：从 store 的 View 拉下来后
++//    即便外部强塞 props 也不会被还原；这是 K7 双闸的前端第三层）。
+
+ import type {
+   GraphEdge,
+   GraphEdgeKind,
+   GraphNode,
+   GraphNodeKind,
++  // M5-W12 View DTO（删 props，K7 双闸；A7 §7.5 镜像）
++  GraphEdgeView,
++  GraphErrorView,
++  GraphNodeView,
++  GraphQueryLimits,
++  GraphQueryRequest,
++  GraphQueryResult,
++  GraphStableErrorCode,
++  GraphStats,
+ } from "../types";
+
+ // ====== 常量（与后端 domain.rs 对齐；前端不可自行放宽） ======
+@@ -288,3 +306,213 @@ export function formatGraphError(e: unknown): string {
+   if (typeof e === "string") return e;
+   return "图谱加载失败";
+ }
++
++// ====== M5-W12 增量：与 A7 §3.4 / §5 / §6 对齐的纯函数 ======
++
++// 前端 300ms debounce 窗口（与 A7 §5 cancellation + W10 "cancel last query" 范式一致）。
++// 仅消费方统一时延；后端本身是 bounded async stateless，无 IO 等待，故无需更复杂调度。
++export const GRAPH_DEBOUNCE_MS = 300;
++
++// 截断提示文案（A7 §4 truncated/applied 信号配套；不依赖 props / secret / URL）
++export const GRAPH_TRUNCATION_NOTICE =
++  "结果已按配置上限截断；如需查看完整数据，请缩小起始节点范围。";
++
++// 稳定错误码 → 用户可读中文文案（与 A7 §3.4 1:1 镜像；**绝不**回显 label / props /
++// 查询体 / 路径 / URL / token / cookie / Authorization / secret）。UI 直接消费，
++// 不再做 e.message 透传（避免后端未来扩展文案时把不可控内容带到 UI）。
++const GRAPH_STABLE_ERROR_CN: Readonly<Record<GraphStableErrorCode, string>> = {
++  GRAPH_INVALID_ID: "节点 ID 格式不合法。",
++  GRAPH_REF_ID_NOT_HEX: "引用 ID 必须为 64 位十六进制字符串。",
++  GRAPH_LABEL_TOO_LONG: "节点标签超过长度上限。",
++  GRAPH_PROP_KEY_TOO_LONG: "属性键名超过长度上限（不应抵达 UI；仅展示）。",
++  GRAPH_PROP_VALUE_TOO_LONG: "属性值超过长度上限（不应抵达 UI；仅展示）。",
++  GRAPH_PROP_COUNT_EXCEEDED: "属性数量超过上限（不应抵达 UI；仅展示）。",
++  GRAPH_SECRET_IN_PROPS: "检测到疑似敏感字段，已阻断渲染。",
++  GRAPH_NODE_CAPACITY_EXCEEDED: "节点容量已达上限。",
++  GRAPH_EDGE_CAPACITY_EXCEEDED: "边容量已达上限。",
++  GRAPH_DUPLICATE_NODE: "节点已存在。",
++  GRAPH_DUPLICATE_EDGE: "边已存在。",
++  GRAPH_STORE_LOAD_FAILED: "图谱快照载入失败，已回退为空视图。",
++  GRAPH_UNKNOWN_ERROR: "图谱命令尚未就绪，请稍候刷新或联系维护者。",
++};
++
++/** 1:1 识别后端稳定码（与 A7 §3.4 13+1 表镜像）。 */
++const GRAPH_STABLE_ERROR_KEYS = Object.keys(GRAPH_STABLE_ERROR_CN) as GraphStableErrorCode[];
++
++export function isGraphStableErrorCode(s: string): s is GraphStableErrorCode {
++  return (GRAPH_STABLE_ERROR_KEYS as string[]).includes(s);
++}
++
++/** 把任意错误对象（Error / 字符串 / 未知）映射到稳定 GraphErrorView。 */
++export function applyGraphErrorView(e: unknown, fallbackCode: GraphStableErrorCode = "GRAPH_UNKNOWN_ERROR"): GraphErrorView {
++  // 1) 优先识别 Error.code（Tauri reject 路径）
++  if (e && typeof e === "object" && "code" in e) {
++    const c = (e as { code?: unknown }).code;
++    if (typeof c === "string" && isGraphStableErrorCode(c)) {
++      return { code: c, message: GRAPH_STABLE_ERROR_CN[c] };
++    }
++  }
++  // 2) 识别字符串 body（部分后端 reject 直接给字符串；强校验稳定码再回退 fallback）
++  if (typeof e === "string" && isGraphStableErrorCode(e)) {
++    return { code: e, message: GRAPH_STABLE_ERROR_CN[e] };
++  }
++  // 3) 兜底：丢弃原始 message（零 secret echo）
++  return { code: fallbackCode, message: GRAPH_STABLE_ERROR_CN[fallbackCode] };
++}
++
++/** 仅生成 message（绝大多数 UI 只需 message）。零 props/secret/URL 透传。 */
++export function formatGraphStableError(e: unknown, fallbackCode: GraphStableErrorCode = "GRAPH_UNKNOWN_ERROR"): string {
++  return applyGraphErrorView(e, fallbackCode).message;
++}
++
++// 工具：把 GraphNodeView 拉成 UI 内部"窄节点"（删 props 已是 View 层的语义，但本函数再
++// 做一次**显式字段提取**作为前端第三闸：即便上游误传含 props 字段的伪造对象，
++// 落到 store 后也只保留 id/kind/label 三字段）。这是 K7 双闸在 UI 层的**纵深防御**：
++//   ① 后端 GraphNodeView::from(GraphNode) drop props（编译期）
++//   ② serde 序列化层（运行期）
++//   ③ 前端 viewToNode 字段白名单（UI 层）
++export interface UiNode {
++  id: string;
++  kind: GraphNodeKind;
++  label: string;
++}
++export function viewToNode(v: GraphNodeView): UiNode {
++  return { id: v.id, kind: v.kind, label: v.label };
++}
++
++export interface UiEdge {
++  from: string;
++  to: string;
++  kind: GraphEdgeKind;
++}
++export function viewToEdge(e: GraphEdgeView): UiEdge {
++  return { from: e.from, to: e.to, kind: e.kind };
++}
++
++/** 把 GraphQueryResult 的 View[] 拉成 UI 窄集合（确定性 + 删 props）。 */
++export interface GraphQueryView {
++  found: boolean;
++  nodes: UiNode[];
++  edges: UiEdge[];
++  truncated: boolean;
++  applied: GraphQueryLimits;
++  nodeCount: number;
++  edgeCount: number;
++}
++export function viewToQueryResult(r: GraphQueryResult): GraphQueryView {
++  return {
++    found: r.found,
++    nodes: r.nodes.map(viewToNode),
++    edges: r.edges.map(viewToEdge),
++    truncated: r.truncated,
++    applied: r.applied,
++    nodeCount: r.node_count,
++    edgeCount: r.edge_count,
++  };
++}
++
++/** 把 GraphStats 拉成 UI 内部"窄容量视图"（与 estimateCapacity 对齐）。 */
++export function viewToStats(s: GraphStats): CapacityView {
++  return estimateCapacity(s.node_count, s.edge_count);
++}
++
++/** 判断 stats 是否逼近容量（≥90% 黄牌），供 banner 触发。 */
++export function isApproachingCapacity(s: GraphStats): boolean {
++  return s.approaching_node_capacity || s.approaching_edge_capacity;
++}
++
++// ====== 取消上一个请求的简易 debouncer（A7 §5 落地）======
++// 与 useGraphStore / W10 W11 searchGraphNodes 范式同源：
++//   - 调用 schedule(fn) 时若存在上一 token 则 abort；再起新 fn，返回新 token。
++//   - fn 必须接受一个 AbortSignal 形参（用于未来桥接 invoke signal）。
++//   - 不依赖任何 Tauri / 浏览器 DOM，仅 token + Promise（Node 端可测）。
++// 边界：
++//   - 仅 debounce 时序控制；**不**保证 fn 必然被调用（用户在窗口内连击 → 仅最后一次触发）。
++//   - 取消通过 `token.cancelled` 标记；fn 内部自行检查（也可把 AbortSignal 传过去供 invoke 复用）。
++// 不可用副作用：纯函数 + 一次性内部状态（闭包），多次实例互不干扰。
++export interface AbortableToken {
++  id: number;
++  cancelled: boolean;
++  signal: AbortSignal;
++}
++export interface AbortableDebouncer {
++  schedule: (fn: (token: AbortableToken) => void | Promise<void>) => AbortableToken;
++  cancelAll: () => void;
++  pending: () => AbortableToken | null;
++}
++export function makeAbortableDebouncer(delayMs: number = GRAPH_DEBOUNCE_MS): AbortableDebouncer {
++  let current: AbortableToken | null = null;
++  let timer: ReturnType<typeof setTimeout> | null = null;
++  let seq = 0;
++  return {
++    schedule(fn) {
++      if (current) current.cancelled = true;
++      // 跨环境构造 abort signal：
++      //  - 浏览器 / 现代 Node 全局 AbortController；
++      //  - 测试桩 / 极旧运行时无 AbortController 时自管 minimal signal（仅 cancelled + noop abort）。
++      // 这样既能让 bridge.graphQuery(req, signal) 走 Tauri v2 的 AbortSignal 路径，
++      // 又能在 Node 测试脚本里独立跑通（无副作用）。
++      const signals: AbortableToken["signal"] = (() => {
++        const ac = (globalThis as { AbortController?: new () => AbortController }).AbortController;
++        if (typeof ac === "function") {
++          const c = new ac();
++          return c.signal as unknown as AbortableToken["signal"];
++        }
++        return { aborted: false, abort() { this.aborted = true; } } as unknown as AbortSignal;
++      })();
++      const token: AbortableToken = { id: ++seq, cancelled: false, signal: signals };
++      current = token;
++      if (timer) clearTimeout(timer);
++      timer = setTimeout(() => {
++        timer = null;
++        if (token.cancelled) return;
++        Promise.resolve(fn(token)).catch(() => { /* swallow; UI 显示在调用方处理 */ });
++      }, Math.max(0, delayMs));
++      return token;
++    },
++    cancelAll() {
++      if (current) {
++        current.cancelled = true;
++        if (current.signal && typeof (current.signal as { abort?: () => void }).abort === "function") {
++          (current.signal as { abort: () => void }).abort();
++        }
++      }
++      current = null;
++      if (timer) {
++        clearTimeout(timer);
++        timer = null;
++      }
++    },
++    pending() {
++      return current;
++    },
++  };
++}
++
++// ====== request_id 关联（避免乱序回包覆盖；A7 §5 契约）======
++// 后端 GraphQueryRequest.request_id 字段（optional）。前端 store 在发起新 query 时把
++// request_id 记到一张 map；回包时（resolve 后）查 map 命中即清掉，不命中则视为过时回包
++// 丢弃（不打乱当前视图）。这是 cancellation 之外的"乱序"维度。
++let __reqIdSeq = 0;
++export function newGraphRequestId(): string {
++  // 32-bit 单调递增序列化为 8-hex 短串（与后端 request_id? 字符串类型一致；不冲突即可）
++  __reqIdSeq = (__reqIdSeq + 1) | 0;
++  return `req-${__reqIdSeq.toString(16).padStart(8, "0")}`;
++}
++
++/** 把 GraphQueryRequest 的 start_id / depth / limit 应用 GRAPH_MAX_* / GRAPH_QUERY_LIMIT 裁剪。 */
++export function normalizeGraphQueryRequest(req: GraphQueryRequest): {
++  start_id: string;
++  depth: number;
++  limit: number;
++  request_id: string;
++} {
++  const depth = Math.max(0, Math.min(GRAPH_MAX_DEPTH, req.depth ?? 2));
++  const limit = Math.max(1, Math.min(GRAPH_QUERY_LIMIT, req.limit ?? GRAPH_QUERY_LIMIT));
++  return {
++    start_id: req.start_id,
++    depth,
++    limit,
++    request_id: req.request_id ?? newGraphRequestId(),
++  };
++}

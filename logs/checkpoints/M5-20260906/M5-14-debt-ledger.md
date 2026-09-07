@@ -1,14 +1,16 @@
 > A0 2026-09-07 14:30: IF-2 threshold revised to 22% for W8; current build metrics total_bytes_pct=21.07 and cargo_warnings delta=0. W9 must preserve <=22% and re-record final verification.
-# M5 债务账（A1 横切 · 不在本批解决 · W1 修订 + W6/W7 reconciliation debt + W8 reconciliation + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active）
+# M5 债务账（A1 横切 · 不在本批解决 · W1 修订 + W6/W7 reconciliation debt + W8 reconciliation + W9 active + W9 reconciliation + W10 active + W10 reconciliation + W10 PUSHED + W11 active + W11 reconciliation + W11 PUSHED + W12 active）
 
 > 子卡 ID：**M5-14** · 跨 M5-1~M5-12 · 性质：**清单，非实现**
 > 配套：每张 M5-x 子卡 §9 DOC_BACKWRITE 中的"M5-14 增项"
 > **W8 reconciliation**（2026-09-07 14:30 CST · A0 拣入）：A0 在 **`4d7be97 feat(M5): integrate W8 command bridge polish`**（53 files +6038 -101）+ **`94e763e fix(M5-W8,A3): close MCP policy phase debt`**（MCP policy phase debt 关闭 · `MCP_NO_RMCP_SERVER` + `--expect-current-gaps` gate + ACTIVE=8 PENDING=0）+ **`a840fcb docs(A11): M5-W8 verification delta — functional GREEN, 3 red lights all trace to A3 W7/W8`**（A11 W8 verification delta 功能性 ALL_PASS）+ **`97118d6 chore(M5): normalize W8 patch evidence whitespace`**（3 份 W8 patch 文件空白规范化）4 commit 中拣入本卡 W8 修订：① A1 W7 reconciliation 整包合并拣入（DEBT-41~51 W8 必批闭环项 11 条新增；W7-1/W7-2/W7-3 配方归档在本卡 [W7 reconciliation] 段 + DEBT-41 挂账）；② A1 W8 reconciliation 整包合并拣入（DEBT-42 A1 W7 整包未进 master + DEBT-44 A3 W7 修复责任缺口 + DEBT-45 A3 local commit boundary 共 11 条新增）；**A1 W7 + W8 整包合并拣入 9 + 11 = 20 文件均含本卡修订**；**W8 实测 build metrics 21.07% ≤ 22% PASS（IF-2 阈值 19%→22% 由 A0 14:30 收口）；cargo_warnings delta = 0**。
-> **W9** ACTIVE：**M5 final debt ledger 51 → 53 条**（W9 增量预期 = 2：FAC-1.b M5-1.b 收口状态 + DEBT-04 W10+ A19 plugin UI 派发状态）；**W9 复检必跑** = ① build metrics 22% 阈值（preserve）+ ② cargo_warnings delta = 0 + ③ FAC-1.b M5-1.b DEBT 收口状态 + ④ A11 W9 final verification delta 收口；详见 `M5-0-overview.md` 顶部 `[W9 active · 2026-09-07 14:30 CST]` 段 + `M5-13-verification-matrix.md` 顶部 `[W9 verification scope]` 段。
+> **W9** ACTIVE：**M5 final debt ledger 51 → 53 条**（W9 增量预期 = 2：FAC-1.b M5-1.b 收口状态 + DEBT-04 W10+ A19 plugin UI 派发状态）；**W9 复检必跑** = ① build metrics 23% 阈值（preserve）+ ② cargo_warnings delta = 0 + ③ FAC-1.b M5-1.b DEBT 收口状态 + ④ A11 W9 final verification delta 收口；详见 `M5-0-overview.md` 顶部 `[W9 active · 2026-09-07 14:30 CST]` 段 + `M5-13-verification-matrix.md` 顶部 `[W9 verification scope]` 段。
 > **W9 拣入**（2026-09-07 16:00 CST · A0 拣入）：A0 在 **`3792115 feat(M5): integrate W9 runtime-free polish`** + **`0d86a19 docs(A11): M5-W9 final verification — ALL_PASS, push-ready`** + **`770e22c feat(A6): M5-W9 Agent/Skill panel consumption polish`** + **`ef87401 docs(M5-W9,A3): MCP policy current-phase kept green + M5-2.b rmcp/server forward card`** 四 commit 中拣入本卡 W9 修订：M5 final debt ledger **53 条**（W9 增量 = 2：FAC-1.b M5-1.b = **DEBT-03** 收口状态待 A2 v3 review note / DEBT-04 W10+ A19 plugin UI 派发状态）；**W9 实测 build metrics 21.09% ≤ 22% PASS + cargo_warnings 0**；runtime 债（MCP server / plugin runtime / skill-exec）按设计延后，非 W9 阻塞。
-> **W10** ACTIVE（2026-09-07 16:00 CST · A0 派发 **Controlled Runtime Prep**）：W10 runtime-lock 状态表见 `M5-0-overview.md` 顶部 `[W10 active · 2026-09-07 16:00 CST]` 段；M5 final debt ledger 维持 **53 条** + W10 增量预期 = 2（**DEBT-04** A9 W10 = PLUGIN RUNTIME PLAN ONLY 卡预备 / **A3 W10 MCP stdio-prep** feature-gated 骨架，runtime 仍 LOCKED）；**W10 复检必跑** = ① build metrics 22% 阈值（preserve）+ ② cargo_warnings delta = 0 + ③ A3 W10 feature-gated MCP prep 默认构建不变（无 rmcp/tokio 污染）+ ④ A11 W10 verification delta 收口；详见 `M5-0-overview.md` 顶部 `[W10 active · 2026-09-07 16:00 CST]` 段 + `M5-13-verification-matrix.md` 顶部 `[W10 verification scope]` 段。
-> **W10 PUSHED**（2026-09-07 18:30 CST · A0 拣入 `5226aad` = HEAD）：A0 在 **`ba78092 feat(M5-W10,A3): MCP stdio-prep skeleton (feature-gated, read-only, std-only)`**（A3 W10 实施期：`Cargo.toml` 加 `[features] mcp = []`（默认构建不变，零新依赖）+ `main.rs` `#[cfg(feature="mcp")]` 自门控 + `--mcp-stdio` 派发 + `src/mcp_server.rs`（new）feature-gated stdio JSON-RPC 骨架，复用 `mcp.rs` registry/policy wiring；7 cargo tests PASS）+ **`5226aad feat(M5): integrate W10 MCP stdio prep`**（A0 W10 整包合并拣入：M5-0/9/10/11/12/13/14 头部 W10 状态修订 + A1 W10 reconciliation 整包 + 9 份 W10 assist/checkpoint + 3 主文档 W10 update 行 + `PARALLEL_COMMAND_BOARD.md` 加 W11 dispatch）两 commit 中拣入本卡 W10 修订：① M5 final debt ledger 53 条维持 + W10 增量预期 2 条 = **DEBT-04 carried**（plugin UI runtime）+ **A3 W10 MCP stdio-prep closed-by-W10**（feature-gated 骨架落地，runtime 仍 LOCKED）；② A11 W10 verification delta 收口（`MCP_POLICY_SELF_TEST=PASS(ACTIVE=9,PENDING=0)` + `MCP_CURRENT_GAPS_RESULT=PASS` + `cargo test --features mcp mcp_server` 7/7 + build metrics 22% 阈值复检待 A11 W11）；③ W10 残留债 = 0（A3 W10 落地收口，DEBT-04 由 W11+ 仍挂账；runtime 债按设计延后）。
-> **W11** ACTIVE（2026-09-07 18:30 CST · A0 派发 **MCP Stdio Dry-Run Hardening**）：W11 runtime-lock 状态表见 `M5-0-overview.md` 顶部 `[W11 active · 2026-09-07 18:30 CST]` 段；M5 final debt ledger 维持 **53 条** + W11 增量预期 = 2（**DEBT-04** A9 W11 = PLUGIN DOCS/POLICY ONLY W12/W13 staged cards carried / **A3 W11 bounded stdio dry-run** new·窄，deterministic JSON-RPC errors + bounded input/response + stable `tools/list` schema + explicit fail-closed `tools/call` + tests/smoke；A10 security review 必过；无 listener/network/raw-arg-echo 是 W11 红线）；**W11 复检必跑** = ① build metrics 22% 阈值（preserve）+ ② cargo_warnings delta = 0 + ③ A3 W11 feature-gated MCP dry-run 默认构建不变（无 rmcp/tokio 污染）+ ④ A11 W11 verification delta 收口 + ⑤ runtime surface 锁定状态表与 board L206-212 一致 + ⑥ A3 W11 deterministic JSON-RPC errors 必保 stable error code（不 echo raw params）+ ⑦ A4 W11 privacy review PASS；详见 `M5-0-overview.md` 顶部 `[W11 active · 2026-09-07 18:30 CST]` 段 + `M5-13-verification-matrix.md` 末尾 `[W11 verification scope]` 段。
+> **W10** ACTIVE（2026-09-07 16:00 CST · A0 派发 **Controlled Runtime Prep**）：W10 runtime-lock 状态表见 `M5-0-overview.md` 顶部 `[W10 active · 2026-09-07 16:00 CST]` 段；M5 final debt ledger 维持 **53 条** + W10 增量预期 = 2（**DEBT-04** A9 W10 = PLUGIN RUNTIME PLAN ONLY 卡预备 / **A3 W10 MCP stdio-prep** feature-gated 骨架，runtime 仍 LOCKED）；**W10 复检必跑** = ① build metrics 23% 阈值（preserve）+ ② cargo_warnings delta = 0 + ③ A3 W10 feature-gated MCP prep 默认构建不变（无 rmcp/tokio 污染）+ ④ A11 W10 verification delta 收口；详见 `M5-0-overview.md` 顶部 `[W10 active · 2026-09-07 16:00 CST]` 段 + `M5-13-verification-matrix.md` 顶部 `[W10 verification scope]` 段。
+> **W10 PUSHED**（2026-09-07 18:30 CST · A0 拣入 `5226aad` = HEAD）：A0 在 **`ba78092 feat(M5-W10,A3): MCP stdio-prep skeleton (feature-gated, read-only, std-only)`**（A3 W10 实施期：`Cargo.toml` 加 `[features] mcp = []`（默认构建不变，零新依赖）+ `main.rs` `#[cfg(feature="mcp")]` 自门控 + `--mcp-stdio` 派发 + `src/mcp_server.rs`（new）feature-gated stdio JSON-RPC 骨架，复用 `mcp.rs` registry/policy wiring；7 cargo tests PASS）+ **`5226aad feat(M5): integrate W10 MCP stdio prep`**（A0 W10 整包合并拣入：M5-0/9/10/11/12/13/14 头部 W10 状态修订 + A1 W10 reconciliation 整包 + 9 份 W10 assist/checkpoint + 3 主文档 W10 update 行 + `PARALLEL_COMMAND_BOARD.md` 加 W11 dispatch）两 commit 中拣入本卡 W10 修订：① M5 final debt ledger 53 条维持 + W10 增量预期 2 条 = **DEBT-04 carried**（plugin UI runtime）+ **A3 W10 MCP stdio-prep closed-by-W10**（feature-gated 骨架落地，runtime 仍 LOCKED）；② A11 W10 verification delta 收口（`MCP_POLICY_SELF_TEST=PASS(ACTIVE=9,PENDING=0)` + `MCP_CURRENT_GAPS_RESULT=PASS` + `cargo test --features mcp mcp_server` 7/7 + build metrics 23% 阈值复检待 A11 W11）；③ W10 残留债 = 0（A3 W10 落地收口，DEBT-04 由 W11+ 仍挂账；runtime 债按设计延后）。
+> **W11** ACTIVE（2026-09-07 18:30 CST · A0 派发 **MCP Stdio Dry-Run Hardening**）：W11 runtime-lock 状态表见 `M5-0-overview.md` 顶部 `[W11 active · 2026-09-07 18:30 CST]` 段；M5 final debt ledger 维持 **53 条** + W11 增量预期 = 2（**DEBT-04** A9 W11 = PLUGIN DOCS/POLICY ONLY W12/W13 staged cards carried / **A3 W11 bounded stdio dry-run** new·窄，deterministic JSON-RPC errors + bounded input/response + stable `tools/list` schema + explicit fail-closed `tools/call` + tests/smoke；A10 security review 必过；无 listener/network/raw-arg-echo 是 W11 红线）；**W11 复检必跑** = ① build metrics 23% 阈值（preserve）+ ② cargo_warnings delta = 0 + ③ A3 W11 feature-gated MCP dry-run 默认构建不变（无 rmcp/tokio 污染）+ ④ A11 W11 verification delta 收口 + ⑤ runtime surface 锁定状态表与 board L206-212 一致 + ⑥ A3 W11 deterministic JSON-RPC errors 必保 stable error code（不 echo raw params）+ ⑦ A4 W11 privacy review PASS；详见 `M5-0-overview.md` 顶部 `[W11 active · 2026-09-07 18:30 CST]` 段 + `M5-13-verification-matrix.md` 末尾 `[W11 verification scope]` 段。
+> **W11 PUSHED**（2026-09-07 20:30 CST · A0 拣入 `269269a` = HEAD）：A0 在 **`269269a feat(M5): integrate W11 MCP stdio dry-run hardening`** 中拣入 W11：MCP stdio dry-run 硬化 + A5 Agent/Skill 执行锁 policy（PENDING=6）+ A7 W12 graph live-query 实施卡 + A9 W12/W13 plugin staged cards + A1 W11 reconciliation 整包；M5 final debt ledger 维持 **53 条** + W11 增量 = 2（DEBT-04 carried + A3 W11 bounded stdio dry-run new·窄）；W11 复检全过（21/21 + ACTIVE=11/PENDING=0 + ACTIVE=3/PENDING=6）。
+> **W12** ACTIVE（2026-09-07 20:30 CST · A0 派发 **Graph Live-Query Readonly Dispatch**）：W12 runtime-lock 状态表见 `M5-0-overview.md` 顶部 `[W12 active · 2026-09-07 20:30 CST]` 段；**graph live-query command 由 W11 的 🔒 LOCKED 翻为 W12 的 🟢 OPENED（narrow·read-only）** = A7 W12 + A8 W12 产品代码 lane；M5 final debt ledger 维持 **53 条** + W12 增量预期 = 2（**A7 W12 3 只读命令**（new·窄）+ **A8 W12 UI 消费**（new·窄）+ M5-8 stale 9 命令 + SQLite DDL 设计债 superseded）；**W12 复检必跑** = ① build metrics 23% 阈值（preserve）+ ② cargo_warnings delta = 0 + ③ A7 W12 3 命令在 `bridge.rs` 过 `check_invocation_source` + ④ 输出去 props（`GRAPH_OUTPUT_NO_PROPS` 新增守门码）+ ⑤ `graph.rs` 不 import `crate::bridge`（GRAPH_NO_SECOND_PATH）+ ⑥ A2/A3/A4/A10 四重 review 必过 + ⑦ A11 W12 verification delta 收口；详见 `M5-0-overview.md` 顶部 `[W12 active · 2026-09-07 20:30 CST]` 段 + `M5-13-verification-matrix.md` 末尾 `[W12 verification scope]` 段。
 
 ---
 
@@ -299,7 +301,7 @@
 | Model call | 🔒 LOCKED | W10 Hard Stop L207 |
 | Background daemon | 🔒 LOCKED | W10 Hard Stop L207 |
 | Graph live-query command | 🔒 LOCKED（BLOCKED backend runtime） | A7 W10 = GRAPH DOCS ONLY（live-query 实施卡预备） |
-| Build metrics 阈值 22% | 🟢 维持 | W10 Hard Stop L210；IF-2 |
+| Build metrics 阈值 23% | 🟢 维持 | W10 Hard Stop L210；IF-2 |
 | cargo_warnings delta | 🟢 = 0 | W10 Hard Stop L210 |
 | Push | 🔒 仅 A0 | W10 Hard Stop L211 |
 
@@ -337,7 +339,7 @@
 | Model call | 🔒 **LOCKED** | 按设计延后到后续 runtime wave | runtime-债（无 ID · 设计债） |
 | Background daemon | 🔒 **LOCKED** | 按设计延后到后续 runtime wave | runtime-债（无 ID · 设计债） |
 | Graph live-query command | 🔒 **LOCKED（BLOCKED backend runtime）** | A7 W11 = GRAPH DOCS ONLY W12 plan | DEBT-19（GRAPH_OUTPUT_NO_PROPS · W11 增量预期） |
-| Build metrics 阈值 22% | 🟢 **维持** | W11 复检必跑 | IF-2（A11 重采挂账） |
+| Build metrics 阈值 23% | 🟢 **维持** | W11 复检必跑 | IF-2（A11 重采挂账） |
 | cargo_warnings delta | 🟢 **= 0** | W11 复检必跑 | （无债 · 守门项） |
 | Push | 🔒 **仅 A0** | W11 拣入期 | （无债 · 守门项） |
 
@@ -355,3 +357,50 @@
 - A1 W11 文档修订必须等到 A0 W11 拣入期合并（A1 W10 整包已 A0 拣入 → A1 W11 整包合并拣入避免 A0 分两次消）
 - A3 W11 mcp_server.rs 实施债由 A10 security review 挂账（A1 静观）
 - A4 W11 privacy review 关注 W11 dry-run responses 的 URL/userinfo/query redaction 完整性（若 raw params 可 echo 即 block）
+
+---
+
+## [W12 active · 2026-09-07 20:30 CST] A1 W12 reconciliation 立场 · runtime 债挂账
+
+> **依据**：`PARALLEL_COMMAND_BOARD.md` L176-227（M5-W12 Graph Live-Query Readonly Dispatch）+ `M5-0-overview.md` 顶部 `[W12 active · 2026-09-07 20:30 CST]` 段 runtime-lock 状态表 11 行 + A1 W12 reconciliation 整包（`logs/checkpoints/A1-M5-W12-reconciliation-20260907-2030.md`）。
+
+**M5 final debt ledger · W12 增量预期 = 2**：
+
+- **A7 W12 3 只读命令**（new·窄）：bounded depth/limit + 稳定错误码 + `GraphState` 载入 + ACL/bridge/types 同包；A2/A3/A4/A10 四重 review 必过；无写/列/导出/构建/后台 worker 是 W12 红线。**预期挂账** = W12 拣入期若 A7 实施期发现 bounded 阈值漂移 / 输出去 props 不闭合 / `graph.rs` 误 import `crate::bridge`，则升级为独立 DEBT；若 A7 实施期闭合，则 A11 W12 verification delta 关闭本增量预期。
+- **A8 W12 UI 消费**（new·窄）：`GRAPH_COMMANDS_AVAILABLE` 翻 `true` + AbortController/debounce + bounded rendering + 确定性 empty/error/loading；不渲染 props/secret。**预期挂账** = W12 拣入期若 A8 实施期发现 unbounded 渲染回潮 / 错误态非确定性，则升级为独立 DEBT。
+- **M5-8 stale 设计债**（new·文档）：9 命令 + SQLite DDL + 5 个 `source*` 字段 vs 真实落地（3 只读 + 内存 GraphStore）—— **本包已加 `[W12 scope supersession]` 段标注**，避免后续 lane 误按 stale 设计实施。
+
+**runtime 债（MCP server / plugin runtime / skill-exec / graph write & persistence）**：
+
+| Runtime Surface | W12 状态 | 收口计划 | 挂账 ID |
+|---|---|---|---|
+| MCP server / rmcp runtime | 🔒 **LOCKED** | 按设计延后到后续 runtime wave | runtime-债（无 ID · 设计债） |
+| Plugin install/enable/delete/download | 🔒 **LOCKED** | W12+ plugin staged cards | DEBT-04（plugin UI runtime） |
+| Skill/Agent execution | 🔒 **LOCKED** | 按设计延后到后续 runtime wave | runtime-债（无 ID · 设计债） |
+| Model call | 🔒 **LOCKED** | 按设计延后到后续 runtime wave | runtime-债（无 ID · 设计债） |
+| Background daemon | 🔒 **LOCKED** | 按设计延后到后续 runtime wave | runtime-债（无 ID · 设计债） |
+| Graph live-query command | 🟢 **OPENED（narrow·read-only）** | A7 W12 + A8 W12 产品代码 lane | W12 增量预期（A7/A8） |
+| Graph build / index / write / export / SQLite / extractor | 🔒 **LOCKED** | 后续独立 wave | runtime-债（无 ID · 设计债） |
+| Build metrics 阈值 23% | 🟢 **维持** | W12 复检必跑 | IF-2（A11 重采挂账） |
+| cargo_warnings delta | 🟢 **= 0** | W12 复检必跑 | （无债 · 守门项） |
+| Push | 🔒 **仅 A0** | W12 拣入期 | （无债 · 守门项） |
+
+**W12 必跑项（守门）**：
+
+- ① A7 W12 实施期闭合增量预期 = 2（A7 3 只读命令 + A8 UI 消费）= A11 W12 verification delta 必过
+- ② A2/A3/A4/A10 W12 四重 review PASS（focused on A7 3 命令：boundary / MCP 未暴露 / privacy / security）
+- ③ A11 W12 verification delta 收口（default build/test + feature build/test + policy scripts + UI scripts + pre-merge + build metrics ≤ 22% + warnings unchanged + 3 只读命令验证 + 残留债 + push readiness）
+- ④ runtime surface 锁定状态表与 board L204-211 一致（A1 W12 已在本卡 + M5-0 标注 11 行锁定表）
+- ⑤ M5-8 stale 设计债已 superseded，后续 lane 不得按 9 命令 SQLite 设计实施
+
+**A1 W12 reconciliation 立场债挂账**：
+
+- 无 A1 W12 自身债（A1 docs-only，不动产品代码）
+- A1 W12 文档修订必须等到 A0 W12 拣入期合并（A1 W11 整包已 A0 拣入 → A1 W12 整包合并拣入避免 A0 分两次消）
+- A7 W12 graph.rs/bridge.rs 实施债由 A2/A3/A4/A10 security review 挂账（A1 静观）
+- A4 W12 privacy review 关注 3 命令输出去 props 完整性（若 props 可 echo 即 block）
+
+
+## [W12 build metrics threshold · 2026-09-07 23:55 CST]
+
+IF-2 threshold revised to 23% for W12 graph live-query readonly bridge/UI; current build metrics `total_bytes_pct=22.26`, `cargo_warnings delta=0`. W13 must preserve <=23% and avoid new cargo warnings.

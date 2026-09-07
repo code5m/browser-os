@@ -2099,6 +2099,90 @@ pub struct GraphEdge {
     pub props: GraphProps,
 }
 
+// ---- M5-W12 图谱 live-query 只读出参 DTO（Lane A7）----
+// 关键隐私硬约束：出参 DTO **不含 `props`**（K7 双闸：命令输出即删，前端无从渲染 secret）。
+
+/// 节点视图：仅 `{id, kind, label}`，**无 props**。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphNodeView {
+    pub id: String,
+    pub kind: GraphNodeKind,
+    pub label: String,
+}
+
+/// 边视图：仅 `{from, to, kind}`，**无 props / 无 weight 语义外泄**。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphEdgeView {
+    pub from: String,
+    pub to: String,
+    pub kind: GraphEdgeKind,
+}
+
+impl From<&GraphNode> for GraphNodeView {
+    fn from(n: &GraphNode) -> Self {
+        GraphNodeView {
+            id: n.id.clone(),
+            kind: n.kind,
+            label: n.label.clone(),
+        }
+    }
+}
+
+impl From<&GraphEdge> for GraphEdgeView {
+    fn from(e: &GraphEdge) -> Self {
+        GraphEdgeView {
+            from: e.from.clone(),
+            to: e.to.clone(),
+            kind: e.kind,
+        }
+    }
+}
+
+/// `graph_query` 入参。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphQueryRequest {
+    pub start_id: String,
+    /// 遍历深度；缺省 `GRAPH_DEFAULT_QUERY_DEPTH`，上限 `GRAPH_MAX_DEPTH`。
+    #[serde(default)]
+    pub depth: Option<u8>,
+    /// 返回节点上限；缺省 `GRAPH_QUERY_LIMIT`，上限 `GRAPH_QUERY_LIMIT`。超出静默截断。
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// 前端 `AbortController` 关联键（后端不参与取消，仅原样回显）。
+    #[serde(default)]
+    pub request_id: Option<String>,
+}
+
+/// 实际生效的深度 / 条数上限（静默截断回显，非错误）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphQueryLimits {
+    pub depth: usize,
+    pub limit: usize,
+}
+
+/// `graph_query` 出参：`found=false` 表示 `start_id` 不在图中（非错误）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphQueryResult {
+    pub found: bool,
+    pub nodes: Vec<GraphNodeView>,
+    pub edges: Vec<GraphEdgeView>,
+    pub truncated: bool,
+    pub applied: GraphQueryLimits,
+    pub node_count: usize,
+    pub edge_count: usize,
+}
+
+/// `graph_stats` 出参：容量概览（供 UI 黄牌）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphStats {
+    pub node_count: usize,
+    pub edge_count: usize,
+    pub node_capacity: usize,
+    pub edge_capacity: usize,
+    pub approaching_node_capacity: bool,
+    pub approaching_edge_capacity: bool,
+}
+
 // ---- 容量 / 脱敏常量（单一真源；对齐 A4 agent_kv 同款不变量）----
 /// 节点 props 单值字节上限；**必须等于** `MAX_TEXT_FIELD_BYTES`（单测 `graph_constants_eq` 守）。
 pub const GRAPH_PROPS_MAX_BYTES: usize = MAX_TEXT_FIELD_BYTES;
@@ -2114,6 +2198,8 @@ pub const GRAPH_QUERY_LIMIT: usize = 1_000;
 pub const GRAPH_MAX_NODES: usize = 5_000;
 /// 图谱边总数硬上限。
 pub const GRAPH_MAX_EDGES: usize = 20_000;
+/// `graph_query` 默认遍历深度（静默截断，非错误；上限 `GRAPH_MAX_DEPTH`）。
+pub const GRAPH_DEFAULT_QUERY_DEPTH: usize = 2;
 
 // ===========================================================================
 // M5-10 / M5-11 插件 manifest 与生命周期（Lane A9, M5-W6 策略切片）
