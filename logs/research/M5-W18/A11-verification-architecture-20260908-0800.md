@@ -1,3 +1,5 @@
+> **R1 draft（保留历史，未改写）**：本文件已被 R2 证据闭环版 `A11-verification-architecture-R2-20260908.md` 取代。R2 按 `A0-M5-W18-R1-audit-20260908.md` 逐条 retract/replace 了本文件中的过时主张（命令计数、策略脚本数、DbValue、vault 锚点等），请勿以本文件结论为实施依据。
+
 # A11 · M5-W18-R 验证架构综合（Verification Architecture Synthesis）
 
 ```text
