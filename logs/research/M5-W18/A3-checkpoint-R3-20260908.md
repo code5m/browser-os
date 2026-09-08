@@ -46,7 +46,10 @@ $ node --check <原型内联脚本>        # 473 行
 JS_SYNTAX_OK
 
 $ git status --short --branch        # 提交后干净
-## codex/m5-w18-a3...origin/master [ahead 3]   (2 提交：研究产物 + 本 checkpoint)
+## codex/m5-w18-a3...origin/master [ahead 3]
+
+$ git apply --check --reverse logs/checkpoints/Lane-A3-M5-W18-R3-toolwindow-20260908-1306.patch
+REVERSE_APPLY_CHECK_OK              # 补丁可干净回滚
 ```
 
 未跑 `npm run build` / `pre-merge.sh`：本波零产品代码改动，且规格明确"本轮仅文档/合成研究资产，不跑 11 次全量构建"（`WORKBENCH_BLUEPRINT-20260908.md` §7）。
@@ -56,7 +59,11 @@ $ git status --short --branch        # 提交后干净
 | SHA | 说明 |
 |---|---|
 | `96bc45a` | `research(M5-W18-R3,A3): tool-window progressive disclosure spec, state machine and prototype` |
-| （本文件提交后追加） | `research(M5-W18-R3,A3): lane checkpoint` |
+| `509e301` | `research(M5-W18-R3,A3): lane checkpoint`（本文件） |
+| `59029bd` | `research(M5-W18-R3,A3): A0 integration patch` |
+
+集成基线：`200f0f1`（`origin/master`）；本 lane 领先 3 个提交。补丁已用
+`git apply --check --reverse` 验证可干净回滚（4 个文件）。
 
 产物：
 
