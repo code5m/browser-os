@@ -114,10 +114,10 @@ index 0000000..018d537
 +- `R3B-09` 原生项不计入 A11 失败，但须由 A0/用户在真实客户端确认。
 diff --git a/logs/research/M5-W18/A11-R3B-acceptance-matrix.py b/logs/research/M5-W18/A11-R3B-acceptance-matrix.py
 new file mode 100644
-index 0000000..440781e
+index 0000000..592d921
 --- /dev/null
 +++ b/logs/research/M5-W18/A11-R3B-acceptance-matrix.py
-@@ -0,0 +1,530 @@
+@@ -0,0 +1,535 @@
 +#!/usr/bin/env python3
 +"""A11 R3B acceptance matrix verifier.
 +
@@ -325,15 +325,17 @@ index 0000000..440781e
 +    result = {"available": False, "summary": "not run", "detail": ""}
 +    if not a10_path:
 +        return result
++    cleanup_tmp = None
 +    if not os.path.isfile(a10_path):
 +        content, _ = resolve(os.path.basename(a10_path))
 +        if content is None:
 +            return result
-+        tmp = os.path.join(repo_root(), "logs", "research", "M5-W18",
-+                           "_a10_tmp_check.py")
-+        with open(tmp, "w", encoding="utf-8") as fh:
++        import tempfile
++        fd, tmp = tempfile.mkstemp(suffix=".py", prefix="_a10_")
++        with os.fdopen(fd, "w", encoding="utf-8") as fh:
 +            fh.write(content)
 +        a10_path = tmp
++        cleanup_tmp = tmp
 +    try:
 +        out = subprocess.run([sys.executable, a10_path],
 +                             capture_output=True, text=True, cwd=repo_root(),
@@ -341,6 +343,9 @@ index 0000000..440781e
 +    except OSError as e:
 +        result["detail"] = f"run error: {e}"
 +        return result
++    finally:
++        if cleanup_tmp and os.path.isfile(cleanup_tmp):
++            os.remove(cleanup_tmp)
 +    result["available"] = True
 +    result["summary"] = "exit=%d" % out.returncode
 +    result["detail"] = (out.stdout + out.stderr)[-1500:]
@@ -650,10 +655,10 @@ index 0000000..440781e
 +    sys.exit(main())
 diff --git a/logs/research/M5-W18/A11-R3B-checkpoint.md b/logs/research/M5-W18/A11-R3B-checkpoint.md
 new file mode 100644
-index 0000000..fd487eb
+index 0000000..78c8d0c
 --- /dev/null
 +++ b/logs/research/M5-W18/A11-R3B-checkpoint.md
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,70 @@
 +# A11 · M5-W18-R3B 检查点
 +
 +- Lane: A11（RESEARCH_AND_PROTOTYPE，验收打包）
@@ -686,13 +691,20 @@ index 0000000..fd487eb
 +
 +## 2. 实跑结果（针对当前 R3 原型）
 +
++A11 矩阵（A11-R3B-acceptance-matrix.py --manifest ...）：
 +```
-+20 PASS / 0 FAIL / 12 GAP_CONFIRMED / 2 WARN / 0 NOT_RUN
++21 PASS / 0 FAIL / 12 GAP_CONFIRMED / 2 WARN / 0 NOT_RUN
 +OPEN R3B FINDINGS: R3B-01, R3B-02, R3B-03, R3B-04, R3B-05, R3B-06, R3B-08
 +GATE: FAIL   (PROVISIONAL_PENDING_UPSTREAM)
 +```
 +
-+缺口即上游 R3B 待办：A1 须补 worktree/conflicts/patch/amend/reset-revert、加 role/aria、加 1200×800 与 900×600、折叠保留 28px 条、换中性字体栈、把 `Ctrl+K` 改回地址；A10 须重跑检查器至全绿。
++A10 权威闭门审计（A10-R3B-closure-audit.py @ facc4b9，A0 九裁定 P1–P9）：
++```
++PROBES: 0/9 PASS   FINDINGS: HIGH=24 MEDIUM=25   GATE: FAIL
++```
++主阻断 = **A1 修正原型未交付**（worktree 仍 `ee2b8fd`），导致 P4/P5/P6 及其余探针连带 FAIL。
++
++缺口即上游 R3B 待办：A1 须补 worktree/conflicts/patch/amend/reset-revert、加 role/aria、加 1200×800 与 900×600、折叠保留 28px 条、换中性字体栈、把 `Ctrl+K` 改回地址；A10 须待 A1 落地后重跑审计至全绿。
 +
 +## 3. 如何复跑
 +
@@ -719,10 +731,10 @@ index 0000000..fd487eb
 +- 未 push。
 diff --git a/logs/research/M5-W18/A11-R3B-integration-manifest.json b/logs/research/M5-W18/A11-R3B-integration-manifest.json
 new file mode 100644
-index 0000000..59653e9
+index 0000000..2090d22
 --- /dev/null
 +++ b/logs/research/M5-W18/A11-R3B-integration-manifest.json
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,169 @@
 +{
 +  "manifest_version": 2,
 +  "wave": "M5-W18-R3B",
@@ -737,7 +749,7 @@ index 0000000..59653e9
 +  "status": "PROVISIONAL_PENDING_UPSTREAM",
 +  "finalize_blockers": [
 +    "R3B is A0's targeted closure wave. A11 may FINALIZE only after A1 delivers the R3B-corrected consolidated prototype (all 14 Git units + amend/reset-revert visibly located, role/aria added, 6 sizes incl 900x600, collapsed keeps the 28px strip, neutral font stack, Ctrl+K=address/search) AND A10 publishes the R3B independent review with no open high finding.",
-+    "Current state (this package): upstream A1-A10 R3B corrections are NOT yet committed in this workspace (A1 worktree still at R3 final ee2b8fd). The matrix therefore runs against the R3 prototype and reports the gap inventory below. Status stays PROVISIONAL until the corrected prototype + A10 review land and the matrix re-run shows GATE PASS."
++    "Current state (this package): A2-A10 have committed R3B corrections; A1 has NOT yet delivered the R3B-corrected prototype (worktree still at R3 final ee2b8fd). A10's authoritative closure-audit.py therefore reports GATE FAIL (0/9 probes, 24 HIGH / 25 MEDIUM). The A11 matrix runs against the R3 prototype and reports the gap inventory below. Status stays PROVISIONAL until the corrected prototype + A10 review land and the matrix re-run shows GATE PASS."
 +  ],
 +  "scope_boundary": {
 +    "product_code_changed": false,
@@ -750,6 +762,15 @@ index 0000000..59653e9
 +      "logs/research/M5-W18/",
 +      "logs/checkpoints/"
 +    ]
++  },
++  "a10_closure_audit": {
++    "script": "A10-R3B-closure-audit.py",
++    "commit": "facc4b9",
++    "gate": "FAIL",
++    "probes_pass": "0/9",
++    "high": 24,
++    "medium": 25,
++    "note": "Authoritative mechanical R3B gate (A0's nine rulings as P1-P9). A11's matrix is a complementary HTML-inspection layer. Primary blocker = A1 corrected prototype. Cross-lane findings: P7 (A7 COPY class + 2896562e not demoted in several docs incl. A11-R3-*.md), P8 (A7 REIMPLEMENT=9 vs A0 10), P9 (A4 keeps pinned on Collapse All)."
 +  },
 +  "gates": {
 +    "sizes": ["1920x1080", "1440x900", "1366x768", "1200x800", "1024x720", "900x600"],
@@ -805,25 +826,25 @@ index 0000000..59653e9
 +      "deliverable": "R3B-corrected consolidated prototype (A1-R3-prototype.html): 14 Git units + amend/reset-revert, role/aria, 6 sizes incl 900x600, collapsed keeps 28px strip, neutral font stack, Ctrl+K=address/search",
 +      "consumed_by_a11": true
 +    },
-+    "A2": {"branch": "codex/m5-w18-a2", "head": "63b0a6e", "r3b_status": "PENDING", "consumed_by_a11": true},
-+    "A3": {"branch": "codex/m5-w18-a3", "head": "0258c5b", "r3b_status": "PENDING", "consumed_by_a11": true},
-+    "A4": {"branch": "codex/m5-w18-a4", "head": "8e77799", "r3b_status": "PENDING", "consumed_by_a11": true},
-+    "A5": {"branch": "codex/m5-w18-a5", "head": "6bc4942", "r3b_status": "PENDING", "consumed_by_a11": true},
-+    "A6": {"branch": "codex/m5-w18-a6", "head": "d5eb144", "r3b_status": "PENDING", "consumed_by_a11": true},
-+    "A7": {"branch": "codex/m5-w18-a7", "head": "6e1f2ba", "r3b_status": "PENDING", "consumed_by_a11": true},
-+    "A8": {"branch": "codex/m5-w18-a8", "head": "0db481a", "r3b_status": "PENDING", "consumed_by_a11": true},
-+    "A9": {"branch": "codex/m5-w18-a9", "head": "23d12cd", "r3b_status": "PENDING", "consumed_by_a11": true},
++    "A2": {"branch": "codex/m5-w18-a2", "head": "bfe8e86", "r3b_status": "COMMITTED", "consumed_by_a11": true},
++    "A3": {"branch": "codex/m5-w18-a3", "head": "8d8719a", "r3b_status": "COMMITTED", "consumed_by_a11": true},
++    "A4": {"branch": "codex/m5-w18-a4", "head": "5d9e447", "r3b_status": "COMMITTED", "consumed_by_a11": true},
++    "A5": {"branch": "codex/m5-w18-a5", "head": "3ff1f8b", "r3b_status": "COMMITTED", "consumed_by_a11": true},
++    "A6": {"branch": "codex/m5-w18-a6", "head": "2bce4e3", "r3b_status": "COMMITTED", "consumed_by_a11": true},
++    "A7": {"branch": "codex/m5-w18-a7", "head": "b96cd51", "r3b_status": "COMMITTED", "consumed_by_a11": true},
++    "A8": {"branch": "codex/m5-w18-a8", "head": "ba92110", "r3b_status": "COMMITTED", "consumed_by_a11": true},
++    "A9": {"branch": "codex/m5-w18-a9", "head": "d17091c", "r3b_status": "COMMITTED", "consumed_by_a11": true},
 +    "A10": {
 +      "branch": "codex/m5-w18-a10",
-+      "head": "3a86834",
-+      "r3b_status": "PENDING",
++      "head": "facc4b9",
++      "r3b_status": "COMMITTED",
 +      "blocking": true,
-+      "deliverable": "R3B independent closure review of A1-A9; re-run corrected self-containment checker (must pass all 7 prototypes); no open high finding",
++      "deliverable": "R3B independent closure review (A10-R3B-closure-audit.py, 630 lines) + re-run self-containment checker; A10's gate currently FAIL until A1 lands",
 +      "consumed_by_a11": true
 +    },
 +    "A11": {
 +      "branch": "codex/m5-w18-a11",
-+      "head": "d96b9b5",
++      "head": "246c064",
 +      "r3b_status": "PROVISIONAL_PENDING_UPSTREAM",
 +      "deliverables": [
 +        "A11-R3B-integration-manifest.json",
@@ -837,15 +858,15 @@ index 0000000..59653e9
 +    }
 +  },
 +  "findings": [
-+    {"id": "R3B-01", "severity": "high", "title": "Git coverage incomplete in prototype", "detail": "Consolidated prototype visibly locates only part of the 14-unit Git workflow plus amend/reset-revert. Matrix GAP: worktrees, conflicts, patch, amend, reset-revert.", "owner": "A1 (R3B-corrected prototype)", "status": "OPEN", "matrix_probe": "G-worktrees/G-conflicts/G-patch/G-amend/G-reset-revert"},
-+    {"id": "R3B-02", "severity": "high", "title": "Prototype hygiene (donor font names + A10 checker fails)", "detail": "A1 CSS still names donor/vendor fonts (Cascadia Code, SF Mono, Segoe UI). A10 corrected self-containment checker exits 1 (prototype failures). Reports may cite sources; UI text must stay clean.", "owner": "A1 (neutral font stack) + A10 (re-run checker)", "status": "OPEN", "matrix_probe": "H-font/A10-gate"},
-+    {"id": "R3B-03", "severity": "high", "title": "Collapse semantics: activity strip hidden", "detail": "A1 CSS `.mode-collapsed .edge-strip { display:none }` violates A0 ruling that the 28px activity strip must remain visible in collapsed mode. Tool-window hide + restore affordance are correct.", "owner": "A1 (keep strip visible) + A3/A4 (pin semantics)", "status": "OPEN", "matrix_probe": "C-strip"},
-+    {"id": "R3B-04", "severity": "high", "title": "Accessibility not demonstrable", "detail": "Consolidated prototype has zero role=/aria-* attributes and no explicit :focus-visible outline. A6/A8 contract exists but is not reflected in the UI prototype.", "owner": "A1 (add role/aria + focus ring)", "status": "OPEN", "matrix_probe": "A-aria/A-focus"},
-+    {"id": "R3B-05", "severity": "medium", "title": "Geometry convention not frozen in prototype", "detail": "A0 formula passes at all 6 sizes (>=92%W/85%H), but A1 CSS status bar is 26px (A0 SSOT 24px) and cross-lane measurement conventions still differ. Freeze post-titlebar inner-viewport definition.", "owner": "A0 (freeze) + A2 (method)", "status": "OPEN", "matrix_probe": "GEO/GEO-chrome/GEO-status"},
-+    {"id": "R3B-06", "severity": "medium", "title": "Shortcut binding conflict", "detail": "A1 binds Ctrl+K to the command palette (title='command.palette') while A0 rules Ctrl+K = address/search and Ctrl+Shift+P = palette.", "owner": "A6 (register) + A1 (prototype)", "status": "OPEN", "matrix_probe": "K-binding"},
-+    {"id": "R3B-07", "severity": "medium", "title": "Reference identity mismatch", "detail": "A7 pinned cee14e9 as behavior SSOT; A10 used 2896562e as a later research snapshot. A0 rules cee14e9 v1.1.15 is the SSOT; 2896562e must not be provenance until re-verified.", "owner": "A10 (reconcile) + A7 (align)", "status": "OPEN", "matrix_probe": "M-pin"},
-+    {"id": "R3B-08", "severity": "medium", "title": "Minimum window 900x600 not covered", "detail": "Prototype renders 1920/1440/1366/1024 but not 1200x800 or 900x600. A0 requires acceptance at the product minimum 900x600; 800x600 dropped.", "owner": "A1 (add 900x600 frame) + A2 (verify)", "status": "OPEN", "matrix_probe": "S-1200x800/S-900x600"},
-+    {"id": "R3B-09", "severity": "medium", "title": "Native desktop feasibility not validated", "detail": "Child WebView focus, occlusion and resize behavior is unvalidated in a real Tauri client. Reserved for user/A0 review (native evidence explicitly out of A11 scope).", "owner": "A0 / user (real client)", "status": "RESERVED_NATIVE", "matrix_probe": "NOT_RUN (allowed per A0 exit gate)"}
++    {"id": "R3B-01", "severity": "high", "title": "Git coverage incomplete in prototype", "detail": "A10 P4: A1 prototype does not visibly locate 7 units (diff, worktrees, conflicts, patch, command log, amend, reset/revert). A11 matrix GAP: worktrees, conflicts, patch, amend, reset-revert.", "owner": "A1 (R3B-corrected prototype)", "status": "OPEN", "matrix_probe": "G-worktrees/G-conflicts/G-patch/G-amend/G-reset-revert", "a10_probe": "P4"},
++    {"id": "R3B-02", "severity": "high", "title": "Prototype hygiene (donor font names + A10 checker fails)", "detail": "A1 CSS still names donor/vendor fonts (Cascadia Code, SF Mono, Segoe UI). A10 P1 checker exits non-zero. Reports may cite sources; UI text/CSS must stay clean.", "owner": "A1 (neutral font stack) + A10 (re-run checker)", "status": "OPEN", "matrix_probe": "H-font/A10-gate", "a10_probe": "P1"},
++    {"id": "R3B-03", "severity": "high", "title": "Collapse semantics: activity strip hidden", "detail": "A1 CSS `.mode-collapsed .edge-strip { display:none }` violates A0 ruling that the 28px activity strip must remain visible in collapsed mode. Tool-window hide + restore affordance are correct.", "owner": "A1 (keep strip visible) + A3/A4 (pin semantics)", "status": "OPEN", "matrix_probe": "C-strip", "a10_probe": "P9"},
++    {"id": "R3B-04", "severity": "high", "title": "Accessibility not demonstrable", "detail": "A10 P5: A1 prototype role=0/8, aria-*=0/8, no :focus-visible. A6/A8 contract exists but not reflected in UI prototype.", "owner": "A1 (add role/aria + focus ring)", "status": "OPEN", "matrix_probe": "A-aria/A-focus", "a10_probe": "P5"},
++    {"id": "R3B-05", "severity": "medium", "title": "Geometry convention not frozen in prototype", "detail": "A0 formula passes at all 6 sizes (>=92%W/85%H), but A1 CSS status bar is 26px (A0 SSOT 24px) and cross-lane measurement conventions still differ. Freeze post-titlebar inner-viewport definition.", "owner": "A0 (freeze) + A2 (method)", "status": "OPEN", "matrix_probe": "GEO/GEO-chrome/GEO-status", "a10_probe": "P2"},
++    {"id": "R3B-06", "severity": "medium", "title": "Shortcut binding conflict", "detail": "A1 binds Ctrl+K to the command palette (title='command.palette') while A0 rules Ctrl+K = address/search and Ctrl+Shift+P = palette. A6 registry does not freeze the two bindings.", "owner": "A6 (register) + A1 (prototype)", "status": "OPEN", "matrix_probe": "K-binding", "a10_probe": "P6"},
++    {"id": "R3B-07", "severity": "medium", "title": "Reference identity mismatch", "detail": "A7 pinned cee14e9 as behavior SSOT; A10 used 2896562e as a later research snapshot. A0 rules cee14e9 v1.1.15 is the SSOT; 2896562e must not be provenance until re-verified. Several R3 docs (incl. A11-R3-*.md) cite 2896562e without demoting it.", "owner": "A10 (reconcile) + A7 (align) + A11 (reconcile own R3 docs)", "status": "OPEN", "matrix_probe": "M-pin", "a10_probe": "P7"},
++    {"id": "R3B-08", "severity": "medium", "title": "Minimum window 900x600 not covered", "detail": "Prototype renders 1920/1440/1366/1024 but not 1200x800 or 900x600. A0 requires acceptance at the product minimum 900x600; 800x600 dropped.", "owner": "A1 (add 900x600 frame) + A2 (verify)", "status": "OPEN", "matrix_probe": "S-1200x800/S-900x600", "a10_probe": "P3"},
++    {"id": "R3B-09", "severity": "medium", "title": "Native desktop feasibility not validated", "detail": "Child WebView focus, occlusion and resize behavior is unvalidated in a real Tauri client. Reserved for user/A0 review (native evidence explicitly out of A11 scope).", "owner": "A0 / user (real client)", "status": "RESERVED_NATIVE", "matrix_probe": "NOT_RUN (allowed per A0 exit gate)", "a10_probe": "n/a"}
 +  ],
 +  "checklist": [
 +    {"id": "S-1920x1080", "group": "sizes", "title": "1920x1080 frame", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A1"},
@@ -856,7 +877,7 @@ index 0000000..59653e9
 +    {"id": "S-900x600", "group": "sizes", "title": "900x600 frame (product min, missing)", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-08", "owner": "A1"},
 +    {"id": "G-status", "group": "git", "title": "status", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
 +    {"id": "G-hunk-staging", "group": "git", "title": "hunk staging", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
-+    {"id": "G-diff", "group": "git", "title": "diff", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
++    {"id": "G-diff", "group": "git", "title": "diff", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-01", "owner": "A7"},
 +    {"id": "G-log-graph", "group": "git", "title": "log/graph", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
 +    {"id": "G-branches", "group": "git", "title": "branches", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
 +    {"id": "G-worktrees", "group": "git", "title": "worktrees", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-01", "owner": "A7"},
@@ -867,7 +888,7 @@ index 0000000..59653e9
 +    {"id": "G-conflicts", "group": "git", "title": "conflicts", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-01", "owner": "A7"},
 +    {"id": "G-history-blame", "group": "git", "title": "history/blame", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
 +    {"id": "G-patch", "group": "git", "title": "patch", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-01", "owner": "A7"},
-+    {"id": "G-command-log", "group": "git", "title": "command log", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
++    {"id": "G-command-log", "group": "git", "title": "command log", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-01", "owner": "A7"},
 +    {"id": "G-amend", "group": "git", "title": "amend", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-01", "owner": "A1/A7"},
 +    {"id": "G-reset-revert", "group": "git", "title": "reset/revert", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-01", "owner": "A1/A7"},
 +    {"id": "A-aria", "group": "accessibility", "title": "role/aria-* in prototype", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-04", "owner": "A1"},
@@ -885,14 +906,14 @@ index 0000000..59653e9
 +}
 diff --git a/logs/research/M5-W18/A11-R3B-progress.md b/logs/research/M5-W18/A11-R3B-progress.md
 new file mode 100644
-index 0000000..83a7dba
+index 0000000..c0e7b17
 --- /dev/null
 +++ b/logs/research/M5-W18/A11-R3B-progress.md
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,105 @@
 +# A11 · M5-W18-R3B 进度账本（蓝图 §9 场景账本 + 验收追踪）
 +
 +> Lane A11 · R3B 最终验收打包 · 基线 `origin/master` `d96b9b5` · 不 push
-+> 本文件记录 R3B 波次各 lane 状态、9 项 R3B 发现处置、与 A11 验收矩阵实跑结果。
++> 本文件记录 R3B 波次各 lane 状态、9 项 R3B 发现处置、A10 权威审计、与 A11 验收矩阵实跑结果。
 +
 +## 1. 本 Lane 交付物
 +
@@ -912,41 +933,66 @@ index 0000000..83a7dba
 +- **A10 检查器内嵌**：直接运行 A10 修正后的自包含检查器并纳入门禁。
 +- **几何公式机算**：按 A0 公式 `(w-28)/w`、`(h-60-24)/h` 在六尺寸实算。
 +- **钉版结构校验**：manifest 参考钉版须为 `cee14e9`，否则 WARN（R3B-07）。
++- **消费 A10 权威门禁**：A10 `A10-R3B-closure-audit.py` 把 A0 九条裁定编码为 P1–P9，A11 直接运行并纳入本账本（见 §4）。
 +
-+## 3. Lane 状态（R3B 上游尚未提交）
++## 3. Lane 状态（R3B 上游进展）
 +
-+| Lane | 分支 | R3 HEAD | R3B 状态 | 阻断? |
++| Lane | 分支 | R3B HEAD | R3B 状态 | 阻断? |
 +|---|---|---|---|---|
-+| A1 | codex/m5-w18-a1 | ee2b8fd | PENDING | ✅ 阻断（交付修正原型） |
-+| A2 | codex/m5-w18-a2 | 63b0a6e | PENDING | — |
-+| A3 | codex/m5-w18-a3 | 0258c5b | PENDING | — |
-+| A4 | codex/m5-w18-a4 | 8e77799 | PENDING | — |
-+| A5 | codex/m5-w18-a5 | 6bc4942 | PENDING | — |
-+| A6 | codex/m5-w18-a6 | d5eb144 | PENDING | — |
-+| A7 | codex/m5-w18-a7 | 6e1f2ba | PENDING | — |
-+| A8 | codex/m5-w18-a8 | 0db481a | PENDING | — |
-+| A9 | codex/m5-w18-a9 | 23d12cd | PENDING | — |
-+| A10 | codex/m5-w18-a10 | 3a86834 | PENDING | ✅ 阻断（独立复核 + 检查器全绿） |
-+| A11 | codex/m5-w18-a11 | d96b9b5 | PROVISIONAL_PENDING_UPSTREAM | — |
++| A1 | codex/m5-w18-a1 | ee2b8fd | **PENDING（未交付修正原型）** | ✅ 主阻断 |
++| A2 | codex/m5-w18-a2 | bfe8e86 | COMMITTED | — |
++| A3 | codex/m5-w18-a3 | 8d8719a | COMMITTED | — |
++| A4 | codex/m5-w18-a4 | 5d9e447 | COMMITTED | — |
++| A5 | codex/m5-w18-a5 | 3ff1f8b | COMMITTED | — |
++| A6 | codex/m5-w18-a6 | 2bce4e3 | COMMITTED | — |
++| A7 | codex/m5-w18-a7 | b96cd51 | COMMITTED | — |
++| A8 | codex/m5-w18-a8 | ba92110 | COMMITTED | — |
++| A9 | codex/m5-w18-a9 | d17091c | COMMITTED | — |
++| A10 | codex/m5-w18-a10 | facc4b9 | COMMITTED（闭门审计脚本，但门禁仍 FAIL 待 A1） | ✅ 阻断上游 |
++| A11 | codex/m5-w18-a11 | 246c064 | PROVISIONAL_PENDING_UPSTREAM | — |
 +
-+## 4. R3B 发现处置
++> A2–A10 已提交 R3B 修订；**A1 修正原型尚未交付**（仍为 R3 终稿 `ee2b8fd`），故整波被 A1 阻塞。
++
++## 4. A10 权威闭门审计（A10-R3B-closure-audit.py @ facc4b9）
++
++```
++PROBES: 0/9 PASS
++FINDINGS: HIGH=24 MEDIUM=25
++GATE: FAIL
++```
++
++| 探针 | 结论 | 关键发现（A11 视角） |
++|---|---|---|
++| P1 自包含 | FAIL | A10 检查器 exit≠0（A1/A3/A5 原型含 donor 品牌/字体，R3B-02） |
++| P2 几何口径 | FAIL | 状态栏 26px≠24px 等陈旧口径（R3B-05） |
++| P3 尺寸覆盖 | FAIL | 缺 1200×800 / 900×600（R3B-08） |
++| P4 Git 单元 | FAIL | A1 原型缺 7 单元：diff/worktrees/conflicts/patch/command log/amend/reset-revert（R3B-01） |
++| P5 无障碍 | FAIL | A1 原型 role=0/8, aria=0/8，无 focus-visible（R3B-04） |
++| P6 快捷键 | FAIL | A1 把 Ctrl+K 绑 palette（L169）；A6 未冻结两绑定（R3B-06） |
++| P7 参考钉版 | FAIL | A7 归类 COPY（A0 定 COPY=0）；多处 R3 文档（含 `A11-R3-*.md`）并列引用 2896562e 未降级为研究快照（R3B-07） |
++| P8 归类 | FAIL | A7 行文 REIMPLEMENT=9，A0 定 10（A7 事项） |
++| P9 折叠语义 | FAIL | A4 折叠保留固定窗口，A0 定全隐藏含固定（R3B-03） |
++
++> R3B-07 对 `A11-R3-*.md` 的引用：这些是 R3 已定稿产物（写于 A0 钉版裁定前）。本 R3B manifest 已采用 `cee14e9` 为 SSOT，旧 R3 文件待 A0 集成时统一协调降级 2896562e（属历史引用，MEDIUM，不阻断 A11 本波验收逻辑）。
++
++## 5. R3B 发现处置
 +
 +| ID | 严重 | 主题 | 归属 | 状态 | 矩阵探针 |
 +|---|---|---|---|---|---|
-+| R3B-01 | high | Git 覆盖不全 | A1 | OPEN | G-worktrees/conflicts/patch/amend/reset-revert |
-+| R3B-02 | high | 原型卫生（donor 字体 + 检查器 FAIL） | A1/A10 | OPEN | H-font, A10-gate |
-+| R3B-03 | high | 折叠隐藏活动条 | A1/A3/A4 | OPEN | C-strip |
-+| R3B-04 | high | 无障碍不可证 | A1 | OPEN | A-aria, A-focus |
-+| R3B-05 | med | 几何口径未冻结 | A0/A2 | OPEN | GEO, GEO-status |
-+| R3B-06 | med | 快捷键冲突 | A6/A1 | OPEN | K-binding |
-+| R3B-07 | med | 参考钉版不一致 | A10/A7 | OPEN | M-pin |
-+| R3B-08 | med | 缺 1200×800 / 900×600 | A1/A2 | OPEN | S-1200x800, S-900x600 |
++| R3B-01 | high | Git 覆盖不全 | A1 | OPEN | G-worktrees/conflicts/patch/amend/reset-revert (A10 P4) |
++| R3B-02 | high | 原型卫生（donor 字体 + 检查器 FAIL） | A1/A10 | OPEN | H-font, A10-gate (A10 P1) |
++| R3B-03 | high | 折叠隐藏活动条 / A4 保留固定 | A1/A3/A4 | OPEN | C-strip (A10 P9) |
++| R3B-04 | high | 无障碍不可证 | A1 | OPEN | A-aria, A-focus (A10 P5) |
++| R3B-05 | med | 几何口径未冻结 | A0/A2 | OPEN | GEO, GEO-status (A10 P2) |
++| R3B-06 | med | 快捷键冲突 | A6/A1 | OPEN | K-binding (A10 P6) |
++| R3B-07 | med | 参考钉版不一致 | A10/A7/A11 | OPEN | M-pin (A10 P7) |
++| R3B-08 | med | 缺 1200×800 / 900×600 | A1/A2 | OPEN | S-1200x800, S-900x600 (A10 P3) |
 +| R3B-09 | med | 原生可行性未验证 | A0/用户 | RESERVED_NATIVE | （允许 NOT_RUN） |
 +
-+## 5. 矩阵实跑结果（A11-R3B-run-20260908.out，针对当前 R3 原型）
++## 6. A11 矩阵实跑结果（A11-R3B-run-20260908.out，针对当前 R3 原型）
 +
 +```
-+20 PASS / 0 FAIL / 12 GAP_CONFIRMED / 2 WARN / 0 NOT_RUN
++21 PASS / 0 FAIL / 12 GAP_CONFIRMED / 2 WARN / 0 NOT_RUN
 +OPEN R3B FINDINGS: R3B-01, R3B-02, R3B-03, R3B-04, R3B-05, R3B-06, R3B-08
 +GATE: FAIL   (PROVISIONAL_PENDING_UPSTREAM)
 +```
@@ -956,17 +1002,18 @@ index 0000000..83a7dba
 +`GEO-status` WARN（26px≠24px）；`A-focus` WARN（无 focus-visible 规则）；`M-pin` PASS（`cee14e9`）；
 +`H-brand` PASS（UI 文本干净，A10 检查器对正文更严）。
 +
-+## 6. 后续依赖（待上游落地后 A11 重跑定稿）
++## 7. 后续依赖（待 A1 落地后 A11 重跑定稿）
 +
-+1. A1 提交 R3B 修正原型（14 Git 单元 + amend/reset-revert、role/aria、六尺寸含 900×600、折叠保留 28px 条、中性字体栈、`Ctrl+K`=地址）。
-+2. A10 提交 R3B 独立复核 + 重跑自包含检查器（须全绿，且无 open high）。
-+3. A11 重跑 `A11-R3B-acceptance-matrix.py --manifest ... --report`：当 `GAP_CONFIRMED=0` 且 `WARN` 均可解释（仅 R3B-09 原生预留），将 manifest `status` 改为 `FINAL` 并出最终包。
++1. **A1 提交 R3B 修正原型**（14 Git 单元 + amend/reset-revert、role/aria、六尺寸含 900×600、折叠保留 28px 条、中性字体栈、`Ctrl+K`=地址）。这是整波主阻断。
++2. A10 重跑 `A10-R3B-closure-audit.py` 至全绿且无 open high（当前因 A1 未交付而 FAIL）。
++3. A11 重跑 `A11-R3B-acceptance-matrix.py --manifest ... --report`：当 `GAP_CONFIRMED=0` 且 `WARN` 仅剩 R3B-09 原生预留，将 manifest `status` 改为 `FINAL` 并出最终包。
 +4. A0 集成并开片交付用户评审。
 +
-+## 7. 风险
++## 8. 风险
 +
-+- **上游未动**：本包当前运行于 R3 原型，缺口即上游待办；非 A11 自身缺陷。
++- **主阻断在 A1**：本包当前运行于 R3 原型，缺口即上游待办；非 A11 自身缺陷。
 +- **A10 检查器更严**：要求连报告正文品牌串也清除，A1 修正版须注意。
++- **历史 R3 文档钉版引用**：`A11-R3-*.md` 等旧文件并列引用 2896562e，待 A0 集成时统一降级（MEDIUM，不阻断）。
 +- **不 push**：A11 仅提交本 lane 研究产物，集成/push 归 A0。
 diff --git a/logs/research/M5-W18/A11-R3B-run-20260908.out b/logs/research/M5-W18/A11-R3B-run-20260908.out
 new file mode 100644
