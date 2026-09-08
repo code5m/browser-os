@@ -61,6 +61,12 @@
   .edge.left { border-right: 1px solid var(--line); }
   .edge.right { border-left: 1px solid var(--line); }
   .edge.bottom { border-top: 1px solid var(--line); flex-direction: row; }
+
+  /* compact 28px activity/tool strip, visible even when every resizable panel is collapsed */
+  .activity-strip { flex: 0 0 28px; width: 28px; background: #14203a; border-right: 1px solid var(--line);
+                   display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 4px 0; }
+  .activity-strip button { width: 22px; height: 22px; padding: 0; font-size: 13px; line-height: 1; border-radius: 6px; }
+  .activity-strip button[aria-pressed="true"] { background: var(--accent); color: #fff; }
   .edge-head { display: flex; align-items: center; gap: 6px; padding: 5px 8px; font-size: 11px;
                color: var(--dim); border-bottom: 1px solid var(--line); flex: 0 0 auto; }
   .edge.bottom .edge-head { border-bottom: none; border-right: 1px solid var(--line);
@@ -128,7 +134,9 @@
       <option value="1920x1080">1920×1080</option>
       <option value="1440x900" selected>1440×900</option>
       <option value="1366x768">1366×768</option>
+      <option value="1200x800">1200×800</option>
       <option value="1024x720">1024×720</option>
+      <option value="900x600">900×600（产品最小）</option>
     </select>
     <div class="sep"></div>
     <button id="bFiles">📂 文件</button>
@@ -161,13 +169,14 @@
             <button title="命令面板">⌘</button>
           </div>
           <div class="row tabrow" id="tabrow">
-            <span class="chip">🌐 设计参考 · Rebased</span>
+            <span class="chip">🌐 设计参考</span>
             <span class="chip">📄 sql-控制台-1</span>
             <span class="chip">📝 笔记：工具窗口</span>
           </div>
         </div>
 
         <div class="body">
+          <div class="activity-strip" id="activityStrip" style="display:none" aria-label="工具入口条"></div>
           <div class="edge left" id="edge-left" style="width:0;display:none">
             <div class="edge-head">
               <span class="edge-title" id="left-title">工具窗口</span>
@@ -183,7 +192,7 @@
 
           <div class="center">
             <div class="doc" id="doc">
-              <h2>活动文档：设计参考 · Rebased</h2>
+              <h2>活动文档：设计参考</h2>
               <p>中央区永远是文档。工具窗口只从四周借空间，默认不挤压它：同一时刻最多两侧工具（左/右/底三取二），
               第三个要开就替换，除非被固定。</p>
               <div class="skeleton" style="width:70%"></div>
@@ -260,8 +269,9 @@
 <script>
 (function () {
   "use strict";
-  // ---------------- constants (mirror of the .mjs model) ----------------
-  var CHROME = { TITLEBAR_H: 32, TOP_ROW_H: 40, TOP_ROWS_H: 80, STATUS_H: 26 };
+  // ---------------- constants (mirror of the .mjs model, aligned to A0 SSOT) ----------------
+  var CHROME = { TITLEBAR_H: 0, TOP_ROW_H: 30, TOP_ROWS_H: 60, STATUS_H: 24 };
+  var ACTIVITY_STRIP_W = 28; // compact activity/tool strip visible even when all panels collapse
   var ACCEPT = { MIN_H: 0.85, MIN_W: 0.92, MIN_W_PX: 520, MIN_H_PX: 320 };
   var LIM = {
     left:   { min: 200, max: 420, def: 260, share: 0.32 },
@@ -587,18 +597,31 @@
       E[edge].box.style.borderColor = (!S.focusMode && S.focus === e.open && e.open) ? "var(--accent)" : "var(--line)";
     });
 
+    // collapsed-mode activity strip: the 28px launcher stays visible when every panel is hidden
+    var strip = $("activityStrip");
+    if (strip) {
+      strip.style.display = (!S.focusMode && collapsed) ? "flex" : "none";
+      if (collapsed) {
+        strip.innerHTML = Object.keys(TOOLS).map(function (k) {
+          return '<button data-open="' + k + '"' + (S.pinned[k] ? ' aria-pressed="true"' : "") +
+            ' title="' + TOOLS[k].label + '">' + TOOLS[k].label.charAt(0) + "</button>";
+        }).join("");
+      }
+    }
+
     var b = contentBox();
-    var post = S.vh - CHROME.TITLEBAR_H;
-    var hs = post ? b.h / post : 0, ws = S.vw ? b.w / S.vw : 0;
+    // A0 SSOT collapsed-mode acceptance: width=(vw-28)/vw, height=(vh-60-24)/vh
+    var cw = S.vw ? (S.vw - ACTIVITY_STRIP_W) / S.vw : 0;
+    var ch = S.vh ? (S.vh - CHROME.TOP_ROWS_H - CHROME.STATUS_H) / S.vh : 0;
     var collapsed = !S.edges.left.open && !S.edges.right.open && !S.edges.bottom.open;
     $("meter").textContent = "内容区 " + b.w + "×" + b.h +
-      "  (" + Math.round(ws * 1000) / 10 + "% 宽 / " + Math.round(hs * 1000) / 10 + "% 高)" +
+      "  (" + Math.round(cw * 1000) / 10 + "% 宽 / " + Math.round(ch * 1000) / 10 + "% 高，A0 收起公式)" +
       (S.focusMode ? " · 专注" : collapsed ? " · 收起态" : " · 常态");
     $("legend").innerHTML =
-      "当前：<b>" + S.vw + "×" + S.vh + "</b>　顶栏 " + (S.focusMode ? 0 : (S.topRows === 1 ? CHROME.TOP_ROW_H : CHROME.TOP_ROWS_H)) +
-      "px（≤80，≤2 行）　内容 " + Math.round(ws * 1000) / 10 + "% 宽 / " + Math.round(hs * 1000) / 10 + "% 高" +
-      "　收起态门槛：高 ≥85% 宽 ≥92% → " +
-      (collapsed || S.focusMode ? (hs >= ACCEPT.MIN_H && ws >= ACCEPT.MIN_W ? "<b>PASS</b>" : "<b>FAIL</b>") : "（仅收起态判定）") +
+      "当前：<b>" + S.vw + "×" + S.vh + "</b>　顶栏 " + (S.focusMode ? 0 : CHROME.TOP_ROWS_H) +
+      "px（A0：2×30=60）　状态栏 " + CHROME.STATUS_H + "px　活动条 " + ACTIVITY_STRIP_W + "px　" +
+      "收起态门槛 高≥85% 宽≥92% → " +
+      (collapsed || S.focusMode ? (ch >= ACCEPT.MIN_H && cw >= ACCEPT.MIN_W ? "<b>PASS</b>" : "<b>FAIL</b>") : "（仅收起态判定）") +
       (treeReport ? "　<br>树：" + treeReport : "");
     $("bPin").setAttribute("aria-pressed",
       ["left", "right", "bottom"].some(function (k) { return S.pinned[S.edges[k].open]; }) ? "true" : "false");
