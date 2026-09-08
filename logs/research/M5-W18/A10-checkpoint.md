@@ -5,7 +5,7 @@ LANE=A10
 STATUS=PASS_WITH_DEBT (HOLD finalization pending peer A2/A4/A7/A8/A9 R2 commits)
 BASE=78d2cfb8e90d323d35df920e9807d32189f867cd
 REBASED_ONTO=origin/master d6127c4 (docs(M5-W18): dispatch evidence closure research)
-HEAD=<set on commit>
+HEAD=08e61c55679bd3de1b8bb45a864c241732302549
 REFERENCE_EVIDENCE=
   - dbx: /home/ainfinit/Documents/极智简单/V3/research/dbx-src (Apache-2.0; Cargo.lock SHA-256 c0a7be12c05d8dffe867f1a70d4b82e881dec2da3bb622b5d3e3410c3d10e3a7, verified == dispatch pin)
   - zvec-grep: /home/ainfinit/Documents/极智简单/V3/research/zvec-grep-src (Apache-2.0; npm @zvec/zvec-grep 0.2.1; upstream rev 52653951b24617762f4ab0c71c34d594e5001617 per dispatch)
