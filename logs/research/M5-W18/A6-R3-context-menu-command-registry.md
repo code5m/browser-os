@@ -13,6 +13,7 @@ REFERENCE_EVIDENCE=CURRENT_PRODUCT (file:line below); REFERENCE_SOURCE (DetachHe
 FILES=logs/research/M5-W18/A6-R3-context-menu-command-registry.md, logs/research/M5-W18/A6-R3-checkpoint.md
 SOURCE_MAP=see §10
 CLASSIFICATION=COPY=0, ADAPT=4, REIMPLEMENT_FROM_BEHAVIOR=5, DEFER=1, REJECT=0
+SHORTCUTS=Ctrl+K -> address/search; Ctrl+Shift+P -> command palette; no collision.
 VERIFY=static source read + structural self-check (no runtime/build)
 CHECKPOINT=logs/research/M5-W18/A6-R3-checkpoint.md
 MERGE_NOTES=A7 Git action map + A9 safety/audit gate + A3 tool-window focus must land before W19 implementation; A6 only specifies the registry contract.

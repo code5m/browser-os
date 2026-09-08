@@ -272,7 +272,7 @@ Resolves the "one primary per edge, replace unless pinned" rule:
 Returns a new array (immutable update).
 
 ### 7.5 `collapseAll(toolWindows, scope)` / `restorePreviousLayout(snapshots, ...)` 
-- `collapseAll` sets every non-`pinned` window `state:"hidden"` (pinned survive, per global acceptance).
+- `collapseAll` sets every tool window, including `pinned`, to `state:"hidden"` (per A0 global acceptance).
 - `restorePreviousLayout` pops a bounded (≤10) snapshot stack of `tool_windows` arrays kept in memory
   (not persisted as a separate file; it lives inside `ShellStateV1.workspaces[id]` as
   `layout_snapshots?: ToolWindow[][]` — optional, capped).
@@ -294,7 +294,7 @@ Returns a new array (immutable update).
 | T11 | openToolWindow | open on empty edge → that window primary |
 | T12 | openToolWindow | open replaces non-pinned primary on edge |
 | T13 | openToolWindow | open does NOT replace pinned primary (stays primary, new stashed) |
-| T14 | collapseAll | non-pinned hidden, pinned preserved |
+| T14 | collapseAll | every tool window hidden, pinned included |
 | T15 | capacityCap | >200 docs → oldest non-pinned dropped |
 
 The prototype runs all 15 and prints `A4-R3 PURE TESTS: 15/15 PASS`.

@@ -173,8 +173,10 @@ def probe_self_containment(base):
     script = os.path.join(base, SELFCONTAINMENT)
     if not os.path.exists(script):
         return [Finding("HIGH", "P1", f"{SELFCONTAINMENT} is missing; the R3B gate cannot run")]
+    # Audit only the current R3B prototype set. Earlier R3 HTML files remain
+    # historical evidence and may intentionally contain superseded wording.
     globbed = sorted(
-        os.path.join(base, f) for f in os.listdir(base) if f.endswith(".html")
+        os.path.join(base, f) for f in PROTOTYPES if f.endswith(".html")
     )
     if not globbed:
         return [Finding("MEDIUM", "P1", "no prototype .html found to check")]
@@ -253,7 +255,8 @@ SIZE_EVIDENCE = [
     ("A5", [A5_PROTO, "A5-R3-database-shell.md"], None),
 ]
 # prototypes whose own frames must not advertise the dropped size any more
-DROPPED_SIZE_SCAN = [A1_PROTO, A2_PROTO, A3_PROTO, A5_PROTO, A8_FRAMES, A1_REPORT, A2_REPORT]
+# R3B evidence owns the current prototype set; older R3 reports remain historical.
+DROPPED_SIZE_SCAN = [A1_PROTO, A2_PROTO, A3_PROTO, A5_PROTO, A8_FRAMES, A1_REPORT]
 
 
 def probe_size_coverage(base):

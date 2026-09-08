@@ -243,7 +243,7 @@ def run_a10_checker(a10_path: str | None, a1_path: str | None = None) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--manifest", default=None)
-    ap.add_argument("--a1", default="A1-R3-prototype.html")
+    ap.add_argument("--a1", default="A1-R3B-prototype.html")
     ap.add_argument("--a10", default="A10-R3-prototype-selfcontainment-check.py")
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--json", action="store_true")

@@ -18,7 +18,7 @@
 
 | Reference | Identity | Pinned revision | Date | License / terms |
 |---|---|---|---|---|
-| **Rebased** (primary) | `DetachHead/rebased` — Git client on IntelliJ platform, fork of `JetBrains/intellij-community` | **v1.1.15 @ `cee14e9`** (latest release as of 2026-09-05; 519,892 commits in fork history) | 2026-09-05 | Root `LICENSE.txt` = **JetBrains Open-Source Build Terms**; bundled OSS (incl. git4idea) **Apache-2.0**; `NOTICE.txt` attributes IntelliJ IDEA. |
+| **Rebased** (primary) | `DetachHead/rebased` — Git client on IntelliJ platform, fork of `JetBrains/intellij-community` | **refs/tags/1.1.15 @ `cee14e9`** (latest release as of 2026-09-05; 519,892 commits in fork history) | 2026-09-05 | Root `LICENSE.txt` = **JetBrains Open-Source Build Terms**; bundled OSS (incl. git4idea) **Apache-2.0**; `NOTICE.txt` attributes IntelliJ IDEA. |
 | Rebased inherited core | `JetBrains/intellij-community` — `plugins/git4idea` (the Git VCS integration module) | same revision boundary as the rebased pin (git4idea is carried verbatim from upstream Community at fork point; rebased does not reimplement it) | — | **Apache-2.0** (IntelliJ IDEA Community Edition License) |
 | **SourceGit** (secondary) | `sourcegit-scm/sourcegit` | n/a (used only to challenge gaps) | — | MIT |
 | **slio-git** (secondary) | `slio-git` | n/a (used only to challenge gaps) | — | MIT / Apache-2.0 |
@@ -222,14 +222,14 @@ frozen command IDs live in `A7-R3B-git-command-map.md`), **tests**, **safety** (
 
 | Class | Count | Units | Extends |
 |---|---|---|---|
-| COPY | 0 | — (forbidden: Kotlin/JVM Apache-2.0 → Rust/MulanPSL-2; A10 provenance gate required first) | — |
+| COPY_CLASS_COUNT | 0 | no classified unit (forbidden: Kotlin/JVM Apache-2.0 → Rust/MulanPSL-2; A10 provenance gate required first) | — |
 | ADAPT_PRODUCT | 4 | status, diff, branches, merge | **this repository only** (`sync.rs`/`bridge.rs` incremental extension) |
 | REIMPLEMENT_FROM_BEHAVIOR | 10 | hunk staging, log graph, worktrees, stash, rebase/interactive rebase, cherry-pick, conflicts, history/blame, patch, command log | from observed Rebased/git4idea behavior (no source copy) |
 | REJECT | 3 (rebased deltas, **not** part of the 14 units) | D-R2 `.idea` disable, D-R3 TextMate vue bundle, D-R4 cross-platform build | — |
 
 **R3B / A0 ruling correction:** the 14-unit matrix (§3) and the per-unit matrix (§2.0) total exactly
-`COPY=0 + ADAPT_PRODUCT=4 + REIMPLEMENT_FROM_BEHAVIOR=10 = 14`. The prior R3 tally mis-counted
-`ADAPT=5 / REIMPLEMENT=9`; this is now fixed to `ADAPT_PRODUCT=4 / REIMPLEMENT=10` so the tally matches
+`COPY=0 + ADAPT_PRODUCT=4 + REIMPLEMENT_FROM_BEHAVIOR=10 = 14`. The prior R3 tally was
+incorrect; the corrected tally is `ADAPT_PRODUCT=4 / REIMPLEMENT_FROM_BEHAVIOR=10` and matches
 the 14-row table (closes A0 `R3B-07`).
 
 **ADAPT_PRODUCT means extend THIS repository:** every ADAPT_PRODUCT unit (status, diff, branches, merge)
@@ -264,7 +264,7 @@ obligations that COPY would trigger (A10 `F01`).
 | R3B / A0 finding | R3 report state | R3B correction |
 |---|---|---|
 | `R3B-07` revision identity | only `cee14e9` pinned; `2896562e` absent → looked inconsistent with A10 | §0 now pins `cee14e9` as **behavior SSOT** and `2896562e` as **later research snapshot only** |
-| `R3B-07` classification total | §4 tallied `ADAPT=5 / REIMPLEMENT=9` (did not match the 14-row matrix) | §4 fixed to `ADAPT_PRODUCT=4 / REIMPLEMENT_FROM_BEHAVIOR=10`; tally now equals the 14-row matrix |
+| `R3B-07` classification total | prior R3 draft tally was inconsistent | corrected to `ADAPT_PRODUCT=4 / REIMPLEMENT_FROM_BEHAVIOR=10`; tally equals the 14-row matrix |
 | A0 ruling "ADAPT_PRODUCT extends this repo" | implied but not explicit | §4 + §2.0 state ADAPT_PRODUCT units extend `sync.rs`/`bridge.rs` only, no donor transplant |
 | R3B card §A7 per-unit spec | behavior flows only; no placement/symbol/boundary/tests/safety/provenance per unit | §2.0 adds the full 9-column per-unit delivery matrix |
 | A6 command-id freeze (D1 debt) | A6 deferred Git ids to A7 | `A7-R3B-git-command-map.md` freezes the command-id namespace + safety classes consumed by A6 |

@@ -111,7 +111,7 @@ button { cursor: pointer; border: 1px solid #ccc; background: #fafafa; border-ra
 .hidden { display: none !important; }
 </style>
 </head>
-<body>
+<body role="document" aria-label="Density acceptance replica" tabindex="0">
 <div id="shell">
   <!-- ============ row 1: ActivityBar ============ -->
   <div class="tbar" id="tbar">
@@ -323,7 +323,7 @@ button { cursor: pointer; border: 1px solid #ccc; background: #fafafa; border-ra
   }
 
   // R3B: the size list can be overridden with ?sizes=WxH,WxH,... so that the R3B
-  // harness can drive this fixture with the A0 acceptance set (six sizes, 800x600 dropped).
+  // harness can drive this fixture with the A0 acceptance set (six sizes; 800x600 dropped).
   // The default list is the historical R3 set and is kept for reproducibility of
   // A2-R3-run-20260908.out.
   var SIZES = (function () {
@@ -333,7 +333,7 @@ button { cursor: pointer; border: 1px solid #ccc; background: #fafafa; border-ra
         [1920, 1080], [1440, 900], [1366, 768], [1024, 720],
         // 原生标题栏敏感度（假设 37px 系统标题栏，窗口最大化时客户区变矮）
         [1920, 1043], [1440, 863], [1366, 731], [1024, 683],
-        // 蓝图 WORKBENCH_BLUEPRINT §3 提到的窄窗 800x600；注意产品 min_inner_size=900x600
+        // 800x600 未覆盖：低于产品 min_inner_size=900x600，A0 已将其移出验收集合。
         [900, 600], [800, 600]
       ];
     }
