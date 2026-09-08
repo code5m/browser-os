@@ -117,13 +117,43 @@ Status legend: ✅ INDEPENDENTLY CONFIRMED · 🗣 AUTHOR CLAIMS · ❓ UNVERIFI
 
 ---
 
+### F13 — DbValue wire schema divergence (two Rust enums; frontend cannot decode numeric/binary) ★ HIGH-VALUE
+- **证据**: product has **two** `DbValue` enums with different JSON tags:
+  - `src-tauri/src/database.rs:122` `pub enum DbValue { Null, Bool, I64, F64, Text, Binary{bytes} }` + `serde rename_all="snake_case"` → wire tags **`null/bool/i64/f64/text/binary`**. `database.rs:128 DbQueryResult.rows: Vec<Vec<DbValue>>` uses **this** enum (the actual query DTO).
+  - `src-tauri/src/domain.rs:1094` `pub enum DbValue { Null, Bool, Int, Float, Text, BlobLen }` → tags **`null/bool/int/float/text/blob_len`**. Tests `domain.rs:2433` assert `DbValue::Int(7)`→`{"int":7}`; `:2413-2425` (B8-1) states "DbValue JSON 键名是前后端唯一契约" and mandates `blob_len`.
+  - TS mirror `src/types.ts:603-614` uses **`int/float/blob_len`** (matches `domain.rs`, NOT the wire `database.rs`).
+  - `src/utils/dbUi.ts:273-289 decodeDbValue` only handles `rec.int/rec.float/rec.blob_len`; for a wire value `{"i64":7}` none match → falls to `JSON.stringify(value)` → cell renders raw `{"i64":7}`.
+- **状态**: ✅ INDEPENDENTLY CONFIRMED defect. A4's "Ts 镜像须逐字对齐 domain.rs::DbValue" (R2B §11 校对项) is **NOT met on the wire**: the live `db_query` DTO serializes `i64/f64/binary`, but TS + `domain.rs` expect `int/float/blob_len`. B8-1 fixed only `domain.rs`, leaving `database.rs::DbQueryResult` on the divergent enum.
+- **问题/影响**: every numeric and binary DB cell renders as raw JSON in the panel; the "single source of truth" for the core DTO is split. This is exactly the kind of cross-layer contradiction A11 §9 claimed to "resolve (DbValue)" — but the resolution was at the report level; the **product still ships a dual-enum mismatch**.
+- **最小修正**: unify on ONE `DbValue` (recommend the `int/float/blob_len` form per B8-1 intent) and point `database.rs::DbQueryResult.rows` at it; add a serialization round-trip test (`database.rs` currently only tests `domain.rs` enum). **This is product code — A10 does NOT implement**; flag for W19 fix by A4 (DTO) + A5 (frontend).
+- **归属**: A4 (DTO contract) + A5 (frontend decode) + W19 product fix. ESCALATE (correctness defect on core DTO).
+
+### F14 — dbx credential live path is SQLite plaintext table, not dead `FileSecretStore` (A6 corrects A4 + A10 ledger D6)
+- **证据**: A6 §1.1/§5: dbx `FileSecretStore` (`connection_secrets.rs:37`) is **dead code** (`grep -rn "FileSecretStore::new"` → 0 matches); dbx desktop live path = SQLite plaintext `connection_secrets` table (`storage.rs:326-329` `secret TEXT NOT NULL`, `save_password=true` writes `password` plaintext at `:2374-2380`). Product DB creds correctly use `KeyringStore` (bridge.rs:6024/6065/6109, key `db:<conn_id>`).
+- **状态**: 🗣 AUTHOR claims (A6); ✅ consistent with product `keyring_store` usage (A10 verified bridge.rs flow).
+- **问题**: A4 map §1 + A10 ledger **D6** both REJECT "FileSecretStore 主路径" — wrong premise (FileSecretStore is dead); the real risk is dbx's **SQLite plaintext `connection_secrets` table**.
+- **影响**: classification rationale is based on a non-existent code path; the actual reject target (plaintext table) is mislabeled.
+- **最小修正**: A10 ledger D6 → reject **dbx SQLite plaintext `connection_secrets` table** (storage.rs), note FileSecretStore is dead; align with A6 MERGE_NOTES. (Ledger D6 updated below.) Product itself uses keyring — OK.
+- **归属**: A6 (found); A4 + A10 ledger (align). Low-risk ledger refinement, done in §9.
+
+### F15 — A11 R2-provisional "no peer R2 commit" is stale
+- **证据**: A11 R2-provisional (`c3d4712`) §1 line 7 / §1 line 77: "A1–A10 尚无任何 R2 commit" / "所有 peer 报告均为 R1 draft… 无任何 peer 产生 R2 commit". Current state: A10 has R2 + R2B commits; A4/A7/A8/A9 have R2/R2B reports.
+- **状态**: ❓ STALE at A11's commit time; now superseded by peer R2/R2B.
+- **问题**: if A11's matrix is taken as current, it understates peer R2 closure and could block W18 completion incorrectly.
+- **影响**: low — A11's own R2B task (§12) is to refresh after peers; expected, but note it.
+- **最小修正**: A11 refreshes the R2 status matrix against current peer HEADs (incl. this A10 R2B) before declaring W18 complete; must not claim "all peers have no R2".
+- **归属**: A11. Low-risk, return to A11.
+
 ## 3. Cross-cutting conflicts requiring A0 ruling (consolidated)
 
 | # | Conflict | Why A0 | Recommended option |
 |---|---|---|---|
+| F13 | DbValue wire dual-enum (`database.rs` i64/f64/binary vs `domain.rs`/TS int/float/blob_len) → numeric/binary cells render as raw JSON | core DTO correctness defect; not a report-only issue | unify on one `DbValue` (int/float/blob_len per B8-1); point `DbQueryResult.rows` at it; add round-trip test — W19 product fix by A4+A5 |
 | F10 | dispatch 1358 A3↔A8 attribution typo | dispatch doc authority | change to A8 |
 | F7 | zvec metric naming (precision vs recall@10) | W19 quality claims | A8 relabels; recall UNPROVEN until labeled set |
 | F12 | A4 must freeze `db_cancel` before A5 W19 | cross-lane open dependency | record SHA at W19 open |
+| F14 | dbx live cred path = SQLite plaintext `connection_secrets` (FileSecretStore dead) — A4/A10 D6 mislabeled | ledger accuracy | A10 ledger D6 updated; A4 align |
+| F15 | A11 "no peer R2 commit" stale | W18 completion gating | A11 refresh matrix vs current peer HEADs |
 
 Low-risk items (F2-b, F9, F11) returned to original lanes; not escalated.
 
@@ -132,7 +162,7 @@ Low-risk items (F2-b, F9, F11) returned to original lanes; not escalated.
 ## 4. Decision summary (≤2 pages)
 
 **Bottom line:** A10's R2 license/transplant ledger stands; R2B independent review
-confirms peers on the load-bearing claims and surfaces three items for A0.
+confirms peers on the load-bearing claims and surfaces four items for A0 (F7/F10/F12/F13).
 
 1. **Licensing — CLOSED, no conflict.** Product = MulanPSL-2.0 (re-confirmed from
    `LICENSE` + A8 fixing A0 #7). Inbound dbx (`c0a7be12`, Apache-2.0) and
@@ -149,9 +179,16 @@ confirms peers on the load-bearing claims and surfaces three items for A0.
    fix at source. Gap = live-DB integration tests only.
 5. **Egress — CONFIRMED safe by default.** A9 gate (default cancel) + product
    debug-only IPC = no network by default; remote-embedding apiKey must move to
-   keyring (F9) before W19.
-6. **Escalate to A0:** (a) dispatch 1358 A3→A8 typo (F10); (b) zvec metric naming
-   must not be quoted as recall@10 (F7); (c) A4 freezes `db_cancel` before A5 (F12).
+   keyring (F9) before W19. DB creds already use OS keyring (F14 confirms product
+   path correct; only dbx's plaintext `connection_secrets` table is rejected).
+6. **DbValue — DEFECT FOUND (escalate).** Product ships two `DbValue` enums: wire
+   `database.rs` uses `i64/f64/binary`, while `domain.rs` + TS mirror use
+   `int/float/blob_len`. Numeric/binary cells therefore render as raw JSON in the
+   panel; B8-1 only fixed `domain.rs`. Real cross-layer contradiction (not just a
+   report claim) — needs W19 product fix by A4+A5 (F13).
+7. **Escalate to A0:** (a) DbValue dual-enum unification (F13); (b) dispatch 1358
+   A3→A8 typo (F10); (c) zvec metric naming must not be quoted as recall@10 (F7);
+   (d) A4 freezes `db_cancel` before A5 (F12).
 
 **Consequence of each open item:** F10 is a doc fix (no code impact); F7 only
 affects how W19 cites retrieval quality (no correctness block); F12 is a W19
@@ -171,7 +208,7 @@ sequencing dependency (does not block low-risk first slices).
 
 ## 6. OPEN_DECISIONS / NEXT
 
-- **OPEN_DECISIONS**: F7 (metric naming → A0), F10 (dispatch typo → A0/A11), F12 (`db_cancel` freeze → A4, recorded by A0 at W19).
+- **OPEN_DECISIONS**: F13 (DbValue dual-enum → W19 product fix by A4+A5, escalate), F7 (metric naming → A0), F10 (dispatch typo → A0/A11), F12 (`db_cancel` freeze → A4, recorded by A0 at W19), F14 (ledger D6 dbx plaintext table → A10/A4 align, done), F15 (A11 refresh R2 matrix → A11).
 - **WAITING_DEPENDENCY**: none that block this review; A2/A3 Obsidian Vue blueprint (O1–O6) still pending for full transplant closure (does not change first slice).
 - **VERIFY (run)**: `grep -cE '^\s*#\[test\]' src-tauri/src/database.rs` → 23 (done, confirmed). Peer claims read from fixed SHAs (done). No product code executed; `NO_PRODUCT_CODE=true`, `NO_PUSH=true`.
 - **NEXT**: hand `A10-R2B-review-findings.md` + ledger §9 to A11 for the integration manifest; A0 rules F7/F10/F12 at W19 open.

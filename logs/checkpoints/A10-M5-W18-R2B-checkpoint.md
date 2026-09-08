@@ -27,6 +27,9 @@ CORRECTIONS=
   - A4 map "repo has zero DB tests" -> WRONG; product database.rs has 23 #[test] (R2B F2)
   - A0 R1 audit "22 DB tests" -> correct to 23
   - A10 R2 ledger Z8: "Rust API unresolved" -> RESOLVED via A7 (official zvec-rust crate + npm sidecar, both Apache-2.0)
+  - DbValue wire dual-enum: database.rs serializes i64/f64/binary, domain.rs+TS use int/float/blob_len; B8-1 only fixed domain.rs -> numeric/binary cells render raw JSON (R2B F13, escalate W19 fix A4+A5)
+  - A10 ledger D6: dbx live cred path = SQLite plaintext connection_secrets table; FileSecretStore is dead code (R2B F14, per A6)
+  - A11 R2-provisional "no peer R2 commit" stale vs current A10 R2+R2B / A4/A7/A8/A9 R2B (R2B F15)
 VERIFY=
   grep -cE '^\s*#\[test\]' src-tauri/src/database.rs  => 23  (executed, confirmed)
   head LICENSE => MulanPSL-2.0  (executed, confirmed)
@@ -36,9 +39,12 @@ PROPOSED_SLICES=
   P2 zvec-grep npm sidecar ADAPT (needs A9 egress gate) PROPOSED_NOT_AUTHORIZED
   P3 remote-embedding apiKey -> keyring_store.rs PROPOSED_NOT_AUTHORIZED
 OPEN_DECISIONS=
+  F13 DbValue dual-enum unification (database.rs i64/f64/binary vs domain.rs/TS int/float/blob_len) -> W19 product fix by A4+A5, escalate
   F7 zvec metric naming (precision mislabeled recall@10) -> A0 rule before W19
   F10 dispatch line 1358 A3->A8 attribution typo -> A0/A11 fix
   F12 A4 freeze db_cancel(conn_id, query_id) before A5 W19 -> A0 record dep SHA
+  F14 ledger D6 dbx plaintext table (done) -> A4 align
+  F15 A11 refresh R2 status matrix vs current peer HEADs -> A11
 NEXT=hand review + ledger §9 to A11 manifest; A0 rules F7/F10/F12 at W19 open
 NO_PRODUCT_CODE=true
 NO_PUSH=true
