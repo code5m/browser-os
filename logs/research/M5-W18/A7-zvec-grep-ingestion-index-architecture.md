@@ -210,3 +210,19 @@ A11 should fold these into the W19 acceptance matrix (unit + integration + a GUI
 - Snapshot: `/home/ainfinit/Documents/极智简单/V3/research/zvec-grep-src` — `git rev-parse HEAD = 5265395` (pinned `52653951b24617762f4ab0c71c34d594e5001617`), `package.json` version `0.2.1`, `LICENSE` = Apache License 2.0.
 - Key files read/confirmed: `src/engine/storage/layout.ts`, `src/authorization/types.ts`, `src/engine/pipeline/indexing/scanner/index.ts` (lines 130–224), `src/engine/pipeline/indexing/input-budget.ts`, `src/engine/storage/zvec.ts`, `src/engine/pipeline/search/index.ts`, `src/daemon/watch-manager.ts`, `src/daemon/change-set.ts`.
 - Dispatch: `PARALLEL_COMMAND_BOARD.md` § "M5-W18-R Research and Replication Blueprint Dispatch" (A7 row line 1401).
+
+---
+
+## 11. R2 evidence closure (2026-09-08) — supersedes open items, history preserved
+
+A0 audit (`logs/checkpoints/A0-M5-W18-R1-audit-20260908.md`, A7 = `REWORK`) named two open items. Both are now **resolved** in the dedicated R2 deliverable:
+`logs/research/M5-W18/A7-zvec-grep-R2-evidence-closure.md`.
+
+Key corrections (full table + evidence there):
+
+1. **`@zvec/zvec` npm package is Node-only N-API** (verified: `zvec_node_binding.node` is an ELF shared object exporting only `napi_*`; `package.json` uses `node-addon-api ^8.9.0`). It is **REJECT** for direct Rust linking.
+2. **The engine IS reachable from Rust** via the official crate **`zvec-rust` 0.7.0** (`github.com/zvec-ai/zvec-rust`, Apache-2.0) which binds the same C++ engine (`alibaba/zvec`) through its C API `libzvec_c_api`. So adopt via `zvec-rust`, not the npm package. This closes R1 §8 unresolved #1.
+3. **Product has NO workspace-grant model** — `src-tauri/src/workspace.rs` only resolves app data dirs. The R1 §4/§8 #3 "reconcile with product workspace authorization" claim is corrected: adoption must *introduce* a scope gate, not reconcile with an existing one. (Reframed for A9.)
+4. **Product `LICENSE` is MulanPSL-2.0** (not Apache-2.0). Inbound Apache-2.0 engines are fine but A10 must record NOTICE/attribution.
+5. **On-disk format** (`files.zvec`/`index.zvec`) is engine-version-pinned; `@zvec/zvec` 0.7.0 and `zvec-rust` 0.7.0 both bind engine v0.7.0 → indexes interoperate *iff* versions pinned; require explicit `rebuild` on version change.
+6. **Watcher-free bounded first slice** is defined in the R2 file §6 (FTS-only, explicitly triggered, no daemon/model/network; exact destination files, dependency closure, capacity, errors, tests, migration, rollback, hard stops).
