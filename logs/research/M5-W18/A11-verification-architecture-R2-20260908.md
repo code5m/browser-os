@@ -207,7 +207,9 @@ R2-provisional 原门禁（dispatch：“A11 终稿仅在 A1–A10 R2 commit 全
 2. **A1–A10 现已全部存在 R2 证据闭环提交**：A1 `526e2ef`、A2 `bcdfc3b`、A3 `ab455c1d`、A5 `a42b915`、A6 `38faa2d`、A7 `07fda2f`、A8 `f4a4f3b`、A9 `28a934a`、A10 `b81fa69`。**缺口两项**（R2B 的 `WAITING_DEPENDENCY`）：**A4 `b737e5d` 仍停留在 R1 架构图，无 R2 证据闭环提交**；**A10 仍 HOLD，`A10-R2B-review-findings.md` 尚未产出**（peer R2 现已齐，A10 应重读后产出）。
 3. A10 ledger 与 A11 matrix 一致性由 R2B 包的 `CONSUMED_PEERS` + 跨 lane 差异清单承接（见 R2B 进度包 §跨 lane 待 A0 裁决）。
 
-**本件保留为 R2-provisional 历史**；A11 当前权威状态以 R2B 包（`STATUS=WAITING_DEPENDENCY`）为准，不在此宣布 W18 完成。
+**本件保留为 R2-provisional 历史**；A11 当前权威状态以 R2B 包为准。
+
+> **滚动更新 2（2026-09-08）**：A4 `7f282d0b` 已产出 R2B 证据闭环、A10 `530d7086` 已产出 `A10-R2B-review-findings.md`，原 §10 登记的两项 `WAITING_DEPENDENCY` 缺口均已闭合；整包升级为 `READY_FOR_REVIEW`。详见 `A11-R2B-progress.md` / `A11-R2B-integration-manifest.json` / `A11-R2B-A0-brief.md`。
 
 **立即停止 / 阻断 W19 的条件**（不变）：体积无解且未获 A0 书面重基线；或 S5 未决却上 vector；或任何片引入 daemon/MCP/远程嵌入/模型下载。
 

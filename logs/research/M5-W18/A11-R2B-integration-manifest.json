@@ -1,42 +1,44 @@
 {
   "manifest_version": "M5-W18-R2B/A11",
   "generated_at": "2026-09-08",
+  "revision": "rolling-2",
   "author": "A11 (codex/m5-w18-a11)",
   "base_sha": "434e63f",
   "base_desc": "origin/master: docs(M5-W18): define daily workbench and second research dispatch",
   "a0_integration_order": ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10", "A11", "A0"],
   "lanes": {
     "A1": {
-      "sha": "526e2ef628c0f10617a816c7783a9b3ef72de3ad",
-      "status": "PASS_WITH_DEBT",
+      "sha": "eba0d52f0882b3a6a648fc7c8c75c23cec93a692",
+      "status": "R2B_READY_FOR_REVIEW",
       "files": [
-        "logs/research/M5-W18/A1-product-baseline-R2-20260908.md",
-        "logs/research/M5-W18/A1-checkpoint-R2-20260908.md"
+        "logs/research/M5-W18/A1-workbench-shell-R2B-20260908.md",
+        "logs/research/M5-W18/A1-wireframe-prototype-R2B.html",
+        "logs/research/M5-W18/A1-checkpoint-R2B-20260908.md"
       ],
-      "scope": "current-product baseline, gap inventory, R1->R2 corrections (6), machine-checkable facts",
+      "scope": "workbench shell + migration blueprint + wireframe (R2B)",
       "merge_after": [],
-      "deps_open": ["W17-D1~D5", "DbValue G4", "frontend test net G5"],
+      "deps_open": ["W17-D1~D6 (D5 native visual headless BLOCKED)"],
       "notes": "first in integration order; feeds A2-A11"
     },
     "A2": {
-      "sha": "bcdfc3bca922c398422f8efd652900896eb1652e",
-      "status": "PASS_WITH_DEBT",
+      "sha": "1eb86084ebacded1057b85e49f103d48b5c8f16a",
+      "status": "R2B_PASS_WITH_DEBT",
       "files": [
-        "logs/research/M5-W18/A2-obsidian-vault-semantics.md",
-        "logs/research/M5-W18/A2-fixtures.md",
-        "logs/checkpoints/A2-M5-W18-R-20260908.md"
+        "logs/research/M5-W18/A2-R2B-make_vault.py",
+        "logs/research/M5-W18/A2-R2B-resolve.py",
+        "logs/research/M5-W18/A2-R2B-run-20260908.out",
+        "logs/research/M5-W18/A2-R2B-note-semantics-evidence.md"
       ],
-      "scope": "Obsidian vault semantics reverse-engineering, synthetic fixtures 20/20",
+      "scope": "Obsidian note semantics + reproducible fixtures (19/19 PASS); withdrew some R2 claims per A0 audit #4",
       "merge_after": ["A1"],
-      "deps_open": ["B1: 8370>GRAPH_MAX_NODES=5000 (A1 capacity decision)", "B2: heading/block/embed unobservable"],
-      "notes": "feeds A3 graph UX, A9 workspace grant, A10 parser ledger, A11 test matrix"
+      "deps_open": ["B1: 8370>GRAPH_MAX_NODES=5000 (A1 capacity decision)", "B2"],
+      "notes": "feeds A3 graph UX, A9 workspace grant, A10 parser ledger"
     },
     "A3": {
       "sha": "ab455c1db9d3fe732cdff1aa95a2dff9c51955e6",
       "status": "R2B_PASS_WITH_DEBT",
       "files": [
         "logs/research/M5-W18/A3-R2B-graph-note-nav-20260908.md",
-        "logs/research/M5-W18/A3-obsidian-graph-search-ux-20260908-0759.md",
         "logs/checkpoints/A3-M5-W18-R2B-20260908.md"
       ],
       "scope": "graph/note joint UX and navigation design; check-graph-ui-logic 113 pass",
@@ -45,117 +47,113 @@
       "notes": "does NOT hold zvec engine adoption verdict"
     },
     "A4": {
-      "sha": "b737e5d4cc285ceea507154cc6e0f261e2e8c01e",
-      "status": "R1_ONLY__R2_CLOSURE_MISSING",
+      "sha": "7f282d0b9891deadd1e2d3be628361794c3b33b9",
+      "status": "R2B_READY_FOR_REVIEW",
       "files": [
-        "logs/research/M5-W18/A4-dbx-backend-architecture-map.md",
-        "logs/research/M5-W18/A4-checkpoint.md"
+        "logs/research/M5-W18/A4-R2B-backend-evidence-closure.md",
+        "logs/research/M5-W18/A4-M5-W18-R2B-checkpoint.md",
+        "logs/research/M5-W18/A4-checkpoint.md (R1 preserved)"
       ],
-      "scope": "dbx backend architecture map (R1-era; no R2 evidence closure commit)",
+      "scope": "R2B backend evidence closure: DbValue root cause (B8-1), 23 #[test] declared, dbx identity=t8y2/dbx (not IDEA), function-level COPY closure",
       "merge_after": ["A1"],
-      "deps_open": ["R2 evidence closure required by dispatch (DbValue contract, reference identity)"],
-      "notes": "WAITING_DEPENDENCY: A4 must produce R2 evidence-closure commit before A11 finalizes"
+      "deps_open": [],
+      "notes": "CLOSES prior WAITING_DEPENDENCY (A4 R2 missing). 23 #[test] declared, execution NOT_RUN (research lane)"
     },
     "A5": {
-      "sha": "a42b9154a8e2524a13f64d26f7a9815cc1345515",
-      "status": "PASS_WITH_DEBT",
+      "sha": "94c988bdcc92b5b73415475bf14a8d50d0a9baf0",
+      "status": "R2B_READY_FOR_REVIEW",
       "files": [
-        "logs/research/M5-W18/A5-workbench-ux-map.md",
-        "logs/research/M5-W18/A5-replication-blueprint.md",
-        "logs/research/M5-W18/A5-checkpoint.md"
+        "logs/research/M5-W18/A5-R2B-design.md",
+        "logs/research/M5-W18/A5-R2B-state-model.mjs",
+        "logs/research/M5-W18/A5-R2B-wireframe.html",
+        "logs/checkpoints/A5-M5-W18-R2B-checkpoint.md"
       ],
-      "scope": "database workbench UX map, R1->R2 corrections (8), check-database-ui-logic 119 pass",
+      "scope": "database workbench UX design + synthetic state model + wireframe (R2B)",
       "merge_after": ["A4", "A6", "A3"],
       "deps_open": ["A4 DTO freeze", "A6 credential/cancel lifecycle", "A3 connection bridge"],
       "notes": "size redline 25.2% (margin ~345B) constrains all UI changes"
     },
     "A6": {
-      "sha": "38faa2da7d521840966c83575cf152a573a68f91",
-      "status": "PASS_WITH_DEBT",
-      "r2_verdict": "REWORK_CLOSED",
+      "sha": "ac239538e6185b595784ddbfbafd0d1d5ce27263",
+      "status": "R2B_PASS_WITH_DEBT",
       "files": [
-        "logs/research/M5-W18/A6-security-lifecycle-audit.md",
-        "logs/research/M5-W18/A6-checkpoint.md"
+        "logs/research/M5-W18/A6-R2B-resource-lifecycle-recovery.md",
+        "logs/checkpoints/A6-M5-W18-R2B-checkpoint.md",
+        "logs/research/M5-W18/A6-security-lifecycle-audit.md (R2 preserved)"
       ],
-      "scope": "credential source-to-sink audit, race timelines, fail-closed assertions",
-      "merge_after": ["A4"],
-      "deps_open": ["A4 source-map consistency"],
-      "notes": "corrected 'never enters JS memory' myth"
+      "scope": "resource lifecycle & recovery contract (R2B) atop R2 credential audit",
+      "merge_after": ["A4", "A5"],
+      "deps_open": ["A4 R2B contract now present (D1 resolved)", "A5 multi-doc strategy"],
+      "notes": "REWORK_CLOSED on R2; A4 dependency now satisfied"
     },
     "A7": {
-      "sha": "07fda2f87c319f6731d065f69da1e00dae944a00",
-      "status": "PASS",
-      "head_inner": "8ec92bbf5baace5df3a499169816e6c95293a121",
+      "sha": "37be95eed91f27526615a3c50b90fc3c376b8f0a",
+      "status": "R2B_PASS_WITH_DEBT",
       "files": [
-        "logs/research/M5-W18/A7-zvec-grep-R2-evidence-closure.md",
-        "logs/research/M5-W18/A7-zvec-grep-ingestion-index-architecture.md",
-        "logs/research/M5-W18/A7-lane-checkpoint.md"
+        "logs/research/M5-W18/A7-R2B-retrieval-access-index-transaction.md",
+        "logs/checkpoints/A7-M5-W18-R2B-checkpoint.md",
+        "logs/research/M5-W18/A7-zvec-grep-R2-evidence-closure.md (§9 R2B corrections)",
+        "logs/research/M5-W18/A7-zvec-grep-ingestion-index-architecture.md"
       ],
-      "scope": "zvec-grep native binding, ingestion/index architecture",
+      "scope": "retrieval access feasibility + index-transaction evidence (R2B)",
       "merge_after": ["A10", "A9"],
       "deps_open": [
-        "A0 review: cross-binding interop unproven (WAL/lock interchange)",
-        "A0 review: cache namespace conflict (.zvec-grep root cleanup)",
         "A10 vendored-libzvec_c_api provenance + hermetic build",
-        "A9 local workspace-scope authorization gate (product currently has none)"
+        "A9 local workspace-scope authorization gate",
+        "cache namespace conflict (.zvec-grep root cleanup -> product-owned namespace)"
       ],
-      "notes": "W19 first slice = FTS-only (no watcher/daemon/model/network)"
+      "notes": "W19 first slice = FTS-only; reconciled with A8 (A8 R2B tracks A7)"
     },
     "A8": {
-      "sha": "f4a4f3bab71df7322a96c499facf201e35ffd441",
-      "status": "PASS_WITH_DEBT",
+      "sha": "ed5c0c8a8c1e0e3490a34cc85dfc9227f519bd8a",
+      "status": "R2B_READY_FOR_REVIEW",
       "files": [
-        "logs/research/M5-W18/A8-zvec-grep-retrieval.md",
-        "logs/research/M5-W18/A8-benchmark-ripgrep.mjs",
-        "logs/research/M5-W18/A8-benchmark-routes.mjs",
-        "logs/research/M5-W18/A8-checkpoint.md"
+        "logs/research/M5-W18/A8-R2B-retrieval-metrics-correction.md",
+        "logs/research/M5-W18/A8-R2B-benchmark-metrics.mjs",
+        "logs/checkpoints/A8-M5-W18-R2B-checkpoint.md",
+        "logs/research/M5-W18/A8-zvec-grep-retrieval.md (R2 preserved)"
       ],
-      "scope": "zvec-grep retrieval routes; real benchmark execution; COPY=0 (N-API only sidecar)",
+      "scope": "retrieval metrics correction (fixes A0 #7/#8: precision/recall naming, RSS boundary); A7/A8 reconciled",
       "merge_after": ["A1", "A3", "A10"],
-      "deps_open": [
-        "A0 review: metric naming (vRecall/fRecall denominator)",
-        "A0 review: perf boundary (RSS/duration != full OS peak/p95)",
-        "A3 retrieval landing decision",
-        "A10 Apache-2.0 inbound obligation ledger"
-      ],
+      "deps_open": ["A3 retrieval landing decision", "A10 Apache-2.0 inbound obligation ledger"],
       "notes": "recommend W19 first ADAPT managed-ripgrep; FTS/vector via sidecar, local-only default"
     },
     "A9": {
-      "sha": "28a934add0e09e26d42cd4759438e29f1300cba3",
-      "status": "PASS",
+      "sha": "66bd51140dc07829840ada02deb2306762d4d72a",
+      "status": "R2B_PASS",
       "files": [
-        "logs/research/M5-W18/A9-threat-model.md",
-        "logs/research/M5-W18/A9-source-map.md",
-        "logs/research/M5-W18/A9-checkpoint.md"
+        "logs/research/M5-W18/A9-R2B-capability-budgets.md",
+        "logs/research/M5-W18/A9-R2B-trust-boundary.md",
+        "logs/research/M5-W18/A9-R2B-webview-boundary.md",
+        "logs/checkpoints/A9-M5-W18-R2B-checkpoint.md",
+        "logs/research/M5-W18/A9-threat-model.md (R1 preserved)"
       ],
-      "scope": "zvec-grep trust boundary; remote-embedding egress gate strong",
+      "scope": "R2B: capability budgets, trust boundary, native WebView boundary (incl A11 executable scenarios)",
       "merge_after": ["A3"],
       "deps_open": [
-        "B2: daemon bearer token optional -> must be mandatory (fail-closed)",
+        "B2: daemon bearer token must be mandatory (fail-closed)",
         "B3: apiKey plaintext -> OS keychain, never in workspace",
-        "B7: local model download no integrity check -> checksum + pinned mirror or disabled"
+        "B7: local model download integrity check"
       ],
       "notes": "no dependency until A0 approval after A3"
     },
     "A10": {
-      "sha": "b81fa690e9ae3d4e12267cbabc8548ab1095e96f",
-      "status": "PASS_WITH_DEBT__HOLD",
+      "sha": "530d7086c2e4f33c79f06f3646741888aa3a675b",
+      "status": "R2B_READY_FOR_REVIEW",
       "files": [
+        "logs/research/M5-W18/A10-R2B-review-findings.md",
+        "logs/research/M5-W18/A10-source-transplant-ledger.md (Z8 + §9 R2B reconciliation)",
         "logs/research/M5-W18/A10-dependency-bom.md",
-        "logs/research/M5-W18/A10-source-transplant-ledger.md",
         "logs/research/M5-W18/A10-notice-and-review-gate.md",
-        "logs/research/M5-W18/A10-checkpoint.md"
+        "logs/checkpoints/A10-M5-W18-R2B-checkpoint.md"
       ],
-      "scope": "dependency BOM, source-transplant ledger, NOTICE/review-gate (R2)",
+      "scope": "R2B independent review: evidence->issue->impact->fix->owner, INDEPENDENTLY CONFIRMED/AUTHOR CLAIMS/UNVERIFIED; cross-lane conflicts for A0",
       "merge_after": ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9"],
-      "deps_open": [
-        "A10-R2B-review-findings.md NOT YET PRODUCED (peer R2 now present; A10 should re-read and finalize)",
-        "A4 R2 closure still missing (see A4)"
-      ],
-      "notes": "WAITING_DEPENDENCY: A10 must produce R2B independent review findings"
+      "deps_open": [],
+      "notes": "CLOSES prior WAITING_DEPENDENCY (A10 R2B findings missing). F1-F5 confirm DbValue/23 tests/sync drivers/dbx pin/zvec sidecar"
     },
     "A11": {
-      "sha": "abbbf63cb2f8b180f63d59571fead7381209ad68",
+      "sha": "f43196dc7aabfb24d22262850320f18204e7d7ce",
       "status": "R2B_READY_FOR_REVIEW",
       "files": [
         "logs/research/M5-W18/A11-R2B-progress.md",
@@ -166,21 +164,21 @@
       ],
       "scope": "integration manifest, progress/acceptance package, S0-S5 task cards, A0 brief",
       "merge_after": ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10"],
-      "deps_open": ["A4 R2 closure", "A10 R2B review-findings"],
-      "notes": "does not merge other lanes; A0 integrates"
+      "deps_open": [],
+      "notes": "does not merge other lanes; A0 integrates. Whole W18-R2B package now READY_FOR_REVIEW"
     }
   },
   "consumed_peers": [
-    {"lane": "A1", "sha": "526e2ef628c0f10617a816c7783a9b3ef72de3ad"},
-    {"lane": "A2", "sha": "bcdfc3bca922c398422f8efd652900896eb1652e"},
+    {"lane": "A1", "sha": "eba0d52f0882b3a6a648fc7c8c75c23cec93a692"},
+    {"lane": "A2", "sha": "1eb86084ebacded1057b85e49f103d48b5c8f16a"},
     {"lane": "A3", "sha": "ab455c1db9d3fe732cdff1aa95a2dff9c51955e6"},
-    {"lane": "A4", "sha": "b737e5d4cc285ceea507154cc6e0f261e2e8c01e"},
-    {"lane": "A5", "sha": "a42b9154a8e2524a13f64d26f7a9815cc1345515"},
-    {"lane": "A6", "sha": "38faa2da7d521840966c83575cf152a573a68f91"},
-    {"lane": "A7", "sha": "07fda2f87c319f6731d065f69da1e00dae944a00"},
-    {"lane": "A8", "sha": "f4a4f3bab71df7322a96c499facf201e35ffd441"},
-    {"lane": "A9", "sha": "28a934add0e09e26d42cd4759438e29f1300cba3"},
-    {"lane": "A10", "sha": "b81fa690e9ae3d4e12267cbabc8548ab1095e96f"},
+    {"lane": "A4", "sha": "7f282d0b9891deadd1e2d3be628361794c3b33b9"},
+    {"lane": "A5", "sha": "94c988bdcc92b5b73415475bf14a8d50d0a9baf0"},
+    {"lane": "A6", "sha": "ac239538e6185b595784ddbfbafd0d1d5ce27263"},
+    {"lane": "A7", "sha": "37be95eed91f27526615a3c50b90fc3c376b8f0a"},
+    {"lane": "A8", "sha": "ed5c0c8a8c1e0e3490a34cc85dfc9227f519bd8a"},
+    {"lane": "A9", "sha": "66bd51140dc07829840ada02deb2306762d4d72a"},
+    {"lane": "A10", "sha": "530d7086c2e4f33c79f06f3646741888aa3a675b"},
     {"lane": "A0", "ref": "origin/master 434e63f", "docs": [
       "WORKBENCH_BLUEPRINT-20260908.md",
       "A0-HANDOFF-LOW-COST-20260908.md",
@@ -190,18 +188,18 @@
       "WORKSPACE_IDENTITY.md"
     ]}
   ],
-  "open_decisions_for_a0": [
-    "A2 alias/同名/大小写 inference unverified -> confirm vs official doc or mark design choice (A2/A3)",
-    "A7 cross-binding interop + cache namespace conflict -> A7/A9/A10 reconcile",
-    "A8 metric naming (vRecall/fRecall) and perf boundary -> A8 correct",
-    "A7/A8 not reconciled (npm vs Rust binding) -> A0 adjudicate",
-    "dbx reference identity (t8y2/dbx) != necessarily user IDEA feature -> A4/A5",
-    "product LICENSE = MulanPSL-2.0 (not Apache-2.0); dbx = Apache-2.0 -> A10 attribution"
+  "resolved_gaps": [
+    "A4 R2 evidence-closure commit (was b737e5d R1-only) -> now 7f282d0b R2B_READY_FOR_REVIEW",
+    "A10 R2B independent review findings (was missing) -> now 530d7086 with A10-R2B-review-findings.md"
   ],
-  "waiting_dependency": {
-    "A4": "R2 evidence-closure commit missing (tip b737e5d is R1-era)",
-    "A10": "A10-R2B-review-findings.md not produced (peer R2 now present)"
-  },
+  "open_decisions_for_a0": [
+    "A7 cross-binding interop unproven (WAL/lock interchange) -> A7/A9/A10 reconcile",
+    "A7 cache namespace conflict (.zvec-grep root cleanup) -> product-owned namespace + generation commit (A10 ledger)",
+    "dbx reference identity = t8y2/dbx (Apache-2.0), NOT IDEA; IDEA identity UNKNOWN -> general DB UX continues, no precise-clone claim",
+    "product LICENSE = MulanPSL-2.0 (not Apache-2.0); dbx/upstream Apache-2.0 -> A10 attribution; zvec npm + zvec-rust both Apache-2.0, no conflict",
+    "frontend test wording: say 'missing test framework', not 'zero frontend tests'",
+    "A9 B2/B3/B7 must be fixed before any zvec capability ships"
+  ],
   "no_product_code": true,
   "no_push": true
 }
