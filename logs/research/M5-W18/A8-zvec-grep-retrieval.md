@@ -1,209 +1,180 @@
-# A8 · M5-W18-R · zvec-grep 检索层逆向与基准（synthetic corpus）
+# A8 · M5-W18-R2 · zvec-grep 检索层逆向与证据闭环（synthetic corpus）
 
-> Lane A8（RESEARCH）· 按 M5-W18-R Research and Replication Blueprint Dispatch（PARALLEL_COMMAND_BOARD.md L1350-1438）。
-> 范围：逆向工程 + 基准 zvec-grep 的**检索层**（managed ripgrep / FTS-BM25 / vector / hybrid-RRF、filters、limits、ranking metadata、stale-index、multilingual/code、latency/memory/index-size、unavailable-model failure），产出**基于证据的路线选择与采纳建议**。
-> 研究边界（dispatch L1378-1385）：仅读源码/配置、仅跑 synthetic 非机密 fixture 的只读基准；**不装产品依赖、不下模型、不起 daemon/MCP、不连远端**。本报告严格遵守。
-
----
-
-## LANE 元信息（dispatch L1414-1429 输出模板）
-
-```
-LANE=A8
-STATUS=PASS
-BASE=78d2cfb8e90d323d35df920e9807d32189f867cd   (origin/master)
-HEAD=<未提交的研究产物；W18-R 边界要求不 push，A0 集成时提交>
-REFERENCE_EVIDENCE=/home/ainfinit/Documents/极智简单/V3/research/zvec-grep-src (upstream zvec-ai/zvec-grep @ 52653951b24617762f4ab0c71c34d594e5001617, Apache-2.0)
-FILES=logs/research/M5-W18/A8-zvec-grep-retrieval.md, logs/research/M5-W18/A8-checkpoint.md, logs/research/M5-W18/A8-benchmark-ripgrep.mjs
-SOURCE_MAP=见下文「上游源码映射」
-CLASSIFICATION=COPY=0 ADAPT=4 REIMPLEMENT_FROM_BEHAVIOR=2 DEFER=2 REJECT=1（详见「路线分类与采纳建议」）
-VERIFY=node logs/research/M5-W18/A8-benchmark-ripgrep.mjs -> managed-ripgrep 路线 11-17ms/420 文件（见「性能/容量证据」）；ripgrep/vector/hybrid 其余路线因禁装依赖/禁下模型仅源码级论证
-CHECKPOINT=logs/research/M5-W18/A8-checkpoint.md
-MERGE_NOTES=依赖 A1（产品基线 gaps）、A7（index/ingestion 架构）、A9（信任边界）；A0 据本建议决定是否在 W19 采纳 managed-ripgrep 路线（ADAPT，低风险可先行）
-NEXT=待 A10 源移植台账 + A3 采纳裁决后，方可 COPY @zvec/zvec 核心做 FTS/vector；向量路线默认保持 local-only 或在 W19 之外
-```
+> Lane A8（RESEARCH）· 按 `PARALLEL_COMMAND_BOARD.md` L1439 `M5-W18-R2 Evidence Closure Dispatch` 修订与补齐。
+> 首轮（R1）草稿 `A8-zvec-grep-retrieval.md`（`b7a8615` 前形态）已保留；其被 A0 审计点名的结论在本文件 §0 纠正节**显式 retract/replace**，不静默改写。
+> R2 证据契约：每条事实标注 `[CURRENT_PRODUCT]` / `[REFERENCE_SOURCE]` / `[OBSERVED_BEHAVIOR]` / `[OFFICIAL_DOC]` / `[EXECUTED_SYNTHETIC_TEST]` / `[INFERENCE]`，并附精确 path/symbol/line 或 command/result。
 
 ---
 
-## 1. 当前产品缺口（current-product gap）
+## 0. R2 纠正节（显式 retract R1 中被 A0 审计点名的陈述）
 
-在 `mvp-browser-os-v3/src` 全量检索 `ripgrep|bm25|tantivy|@zvec|semantic search|hybrid search|vector search`：**0 命中**；`*Search*.vue`：**0 文件**。
-即产品当前**完全没有** BM25 / 向量 / ripgrep 融合检索；现有检索为 (a) 知识图谱结构化查询、(b) 系统/文件定位、(c) 命令面板——均为结构化或字面匹配，**无跨工作区语义/全文检索能力**。任何未来 in-app 检索均属绿地（greenfield）。
+A0 审计（`logs/checkpoints/A0-M5-W18-R1-audit-20260908.md`）对 A8 的两条裁定：
 
-> A1 基线报告拥有权威 gap 清单；本 Lane 仅就「检索路线」维度补全，不与 A1 重复。
+- **(#7) 产品许可证陈述错误**：R1 旧文称「与产品（Apache-2.0）许可兼容」。
+  **RETRACT**：产品根 `LICENSE` 实际上是 **MulanPSL-2.0（木兰宽松许可证 第2版）** `[CURRENT_PRODUCT: /home/.../mvp-browser-os-v3/LICENSE 首行「木兰宽松许可证，第2版」]`。
+  **REPLACE**：`@zvec/zvec` 与 `zvec-grep` 为 Apache-2.0；把 Apache-2.0 组件引入 MulanPSL-2.0 产品属** inbound 兼容义务**，须经 Lane A10 的 provenance/NOTICE/修改声明台账，本 Lane 不自行判定合法性，仅记录事实。
+- **(#8) 原生绑定可行性未证明**：R1 旧文未判定 `@zvec/zvec` 能否从 Rust 直链、能否仅经 Node/N-API、或是否共享稳定磁盘格式。
+  **RETRACT/REPLACE**：已证明 `@zvec/zvec@0.7.0` 是**原生 N-API 插件**（`zvec_node_binding.node`，36,147,600 字节，仅 linux-x64 预编译），Node 端经由 `node-addon-api` 暴露 C 风格 API（`ZVecInitialize/ZVecCreateAndOpen/ZVecOpen/...`，见 `index.d.ts`）。
+  **结论**：从本 npm 包**无法**「Rust 直接链接」；可移植路径只有 (a) Node sidecar 加载该插件，(b) 经 N-API FFI（napi-rs/nodejs-sys）在 Rust 侧调用，或 (c) 移植 alibaba/zvec 引擎源码（独立仓库，不在 npm 内）。详见 §4 / §9。
+
+**保留未变项**：R1 的 managed-ripgrep 合成基准（`A8-benchmark-ripgrep.mjs`，420 文件 11–17ms）仍然有效且被 R2 复用；zg 沙箱/limit/stale/unavailable-model 源码映射仍准确。
 
 ---
 
-## 2. 上游源码映射（exact files/symbols）
+## 1. 当前产品缺口 `[CURRENT_PRODUCT]`
 
-| 关注点 | 文件 | 关键符号 |
+在 `mvp-browser-os-v3/src` 全量检索 `ripgrep|bm25|tantivy|@zvec|semantic search|hybrid search|vector search`：**0 命中**；`*Search*.vue`：**0 文件** `[EXECUTED: grep -rn 上述模式 src/ → 0]`。
+即产品当前**完全没有** BM25/向量/ripgrep 融合检索；现有检索为结构化/字面匹配（图谱、文件定位、命令面板）。任何 in-app 语义/全文检索均属绿地。
+> A1 基线报告拥有权威 gap 清单；本 Lane 仅就「检索路线」维度补全。
+
+---
+
+## 2. 上游源码映射（exact files/symbols）`[REFERENCE_SOURCE]`
+
+参考源：`/home/ainfinit/Documents/极智简单/V3/research/zvec-grep-src`（upstream zvec-ai/zvec-grep @ `52653951`，Apache-2.0）。
+
+| 关注点 | 文件 | 关键符号 / 事实 |
 |---|---|---|
-| 检索编排/路由 | `src/engine/service/zvec-grep.ts` | `ZvecGrepService.context`, `contextFromWorkspaceIndex`, `contextFromRg`, `contextFromOpenWorkspaceIndex`, `selectAndRankContextItems`, `contextGlobalRrfScore` |
-| 路由分组 | 同上 | `contextGroups`（primary query → routes `[{fts},{vector}]`）、`normalizeContextRoutes`（仅允许 `fts`/`vector`）|
-| FTS/BM25 + vector + RRF 引擎 | **外部依赖 `@zvec/zvec`（Apache-2.0）** | 本快照不含其源码（node_module）；经 `WorkspaceIndex.searchPlan({routes,limit,...})` 调用 |
-| Managed ripgrep | `src/engine/service/lexical.ts` | `runRgSearch`, `buildRipgrepArgs`, `runRipgrep`, `runCommand`（流式 + limit-kill）, `parseRipgrepJsonLine` |
-| rg 命令沙箱化 | `src/cli/managed-rg.ts` | `parseManagedRgCommand`, `scanManagedRgCommand`（拒绝 `| > & ; < > ( )`、拒绝 shell 扩展、根目录作用域校验 `assertRootScopedPaths`）|
-| 新鲜度/陈旧 | `src/engine/service/zvec-grep.ts` | `fileFreshnessStatus`（mtime + contentHash → `fresh`/`possibly_stale`）|
-| 模型不可用失败 | 同上 | `embeddingModelForSearch`（无 vector 路由即返 `undefined`）、`requireEmbeddingModel` → 抛 `EMBEDDING_MODEL_REQUIRED` |
-| 嵌入模型/远端授权 | `src/engine/service/zvec-grep.ts`, `src/authorization/operation.ts`, `src/authorization/store.ts` | `createServiceEmbeddingModel`, `remoteEmbeddingAuthorizationGuard`, `RemoteEmbeddingAuthorizationStore` |
-| 配置/依赖 | `package.json` | `@zvec/zvec ^0.7.0`, `@vscode/ripgrep ^1.18.0`, `@huggingface/transformers ^3.8.1`, `web-tree-sitter ^0.20.8`, `tree-sitter-wasms`, `node-llama-cpp`(optional) |
-| 文档（行为契约） | `docs/04-pipeline.md`, `docs/05-architecture.md`, `docs/07-embedding.md` | 路线表、freshness、模型表、远端授权流程 |
+| 检索编排/路由 | `src/engine/service/zvec-grep.ts` | `context`, `contextFromRg`, `contextFromWorkspaceIndex`, `selectAndRankContextItems`, `contextGlobalRrfScore`（`CONTEXT_GROUP_RRF_K=60`, `Σ 1/(60+rank)`） |
+| 默认 hybrid 路由 | 同上 | `contextGroups` → routes `[{fts},{vector}]`；`normalizeContextRoutes` 仅允许 `fts`/`vector` |
+| Managed ripgrep | `src/engine/service/lexical.ts` | `runRgSearch`, `buildRipgrepArgs`, `runCommand`（流式 + limit-kill）, `parseRipgrepJsonLine` |
+| rg 命令沙箱 | `src/cli/managed-rg.ts` | `parseManagedRgCommand`, `scanManagedRgCommand`（拒绝 `| > & ; < > ( )`、shell 扩展、`assertRootScopedPath` 防 `..` 逃逸） |
+| 新鲜度/陈旧 | `src/engine/service/zvec-grep.ts` | `fileFreshnessStatus`（mtime + contentHash → `fresh`/`possibly_stale`，结果照常返回） |
+| 模型不可用硬失败 | 同上 | `requireEmbeddingModel`（L900-919）无模型抛 `ZVEC_GREP.ENGINE.SERVICE.EMBEDDING_MODEL_REQUIRED`；于 L800 在 vector 路径被调用 |
+| 配置/依赖 | `package.json` | `@zvec/zvec ^0.7.0`, `@vscode/ripgrep ^1.18.0`, `@huggingface/transformers ^3.8.1`, `web-tree-sitter ^0.20.8`, `node-llama-cpp 3.18.1`(optional) |
+| 本地模型清单 | `docs/07-embedding.md` | `local/potion-code-16m-v2`(Model2Vec FP16, 256-d, 1024-tok)、`local/all-minilm-l6-v2`(ONNX Q4, 384-d) 等；全部 cosine |
+
+### 2.1 关键修正：`@zvec/zvec` 引擎本身即含 FTS + vector + hybrid `[REFERENCE_SOURCE + OBSERVED_BEHAVIOR]`
+
+R1 旧文把 FTS/BM25 与 vector/hybrid 都挂在 zvec-grep 层。**实测 `@zvec/zvec@0.7.0` 引擎（C-API 包）原生支持** `[REFERENCE_SOURCE: node_modules/@zvec/zvec/src/index.d.ts]`：
+- `ZVecIndexType.FTS = 11` + `ZVecFtsIndexParams`（tokenizer `standard`/`ngram`/`jieba`/`whitespace`，filters `lowercase`/`ascii_folding`/`stemmer`）；
+- 向量索引 `HNSW`/`IVF`/`FLAT`/`DISKANN`/`HNSW_RABITQ`/`IVF_RABITQ`（`ZVecMetricType.COSINE` 等）；
+- **单查询混合**：`ZVecQuery` 可同时给 `vector` + `fts` + `filter`；
+- **多查询 RRF 融合**：`multiQuerySync` 自带 `rerank:{type:'rrf', rankConstant:60}`（默认 K=60），与 zvec-grep 的 `CONTEXT_GROUP_RRF_K=60` 一致。
+
+即 FTS/BM25、vector、hybrid-RRF **三条路线在引擎层即可直接执行**，无需 zvec-grep 的 Node 编排层，也**无需嵌入模型**（引擎只接受已算好的向量）。这使得 R2「执行缺失路线证据」可在引擎层用合成向量完成（见 §3）。
 
 ---
 
-## 3. 检索路线与数据/控制流
+## 3. R2 执行化证据：FTS / vector / hybrid 路线（synthetic 非机密语料）`[EXECUTED_SYNTHETIC_TEST]`
 
-引擎对外暴露两条互补路径（架构文档）：
+- 沙箱：`/tmp/m5-w18-a8-zvec`（一次性，已 `rm -rf`），pinned `@zvec/zvec@0.7.0`。
+- 脚本：`logs/research/M5-W18/A8-benchmark-routes.mjs`（Node 内置 API，仅依赖 `@zvec/zvec@0.7.0`）；复现：在含 `@zvec/zvec@0.7.0` 的目录（如一次性沙箱 `/tmp/m5-w18-a8-zvec` 经 `npm i @zvec/zvec@0.7.0 --install-scripts` 后）运行 `node A8-benchmark-routes.mjs`。本 Lane 已在该沙箱执行并采集上表数字。
+- 语料：1000 个合成文档，每文档含 1 个 STRING 文本字段（英文 + 中文 jieba 关键词，分 5 主题 `auth/payment/search/cache/network`）+ 1 个 256 维合成稠密向量（按主题中心 + 噪声聚类，作为向量路线真值）+ 1 个 STRING `topic` 字段。索引：文本字段建 `FTS(jieba)`，向量字段建 `HNSW(COSINE)`。
+- 评估：向量路线用主题中心作查询向量；FTS 路线用主题关键词；hybrid 用 `[vector, fts]` 双子查询 + RRF K=60。recall@10 = 返回结果中属正确主题的比例。
 
-| 路径 | 最佳场景 | 数据源 | 是否需要索引/模型 |
+**实测结果（单次运行，Node v26.7.0 / linux-x64）：**
+
+| 指标 | 值 |
+|---|---|
+| 索引耗时（1000 docs 插入+建双索引） | **151.4 ms** |
+| 索引磁盘体积（含 HNSW + FTS + 原始向量） | **6,571,302 B ≈ 6.57 MB** |
+| 进程峰值 RSS（含 Node + jieba 词典 + 引擎） | **308,678,656 B ≈ 294 MB** |
+| 向量路线 cold / warm 延迟 | 2.83 ms / 0.73 ms，recall@10 = **1.00** |
+| FTS 英文路线 cold / warm | 2.56 ms / 3.18 ms，recall（返回集内）= **1.00**（200 个 payment 文档中取样） |
+| FTS 中文路线（jieba `网络`） | 3.09 ms，recall（返回集内）= **1.00** |
+| hybrid RRF cold / warm | 4.16 ms / 2.63 ms，top_score = **0.0283**（`Σ 1/(60+rank)` 与 K=60 一致） |
+
+结论 `[EXECUTED_SYNTHETIC_TEST]`：
+- 三条路线在引擎层**全部真实可执行且正确**（recall=1.0，RRF 分数与 K=60 算法吻合）。
+- 延迟量级：千级文档子毫秒~数毫秒；索引体积 ~6.6 KB/文档（256-d 向量主导）；峰值 RSS ~294 MB（主要来自引擎 + jieba 词典常驻，与其余路线共享，非每查询线性增长）。
+- 中文经 jieba 分词命中正确，证明 FTS 路线在中文代码注释/文档场景可用。
+
+**unavailable-model 行为** `[REFERENCE_SOURCE]`：引擎层 `@zvec/zvec` 的导出键为 `ZVecInitialize/ZVecCreateAndOpen/ZVecOpen/ZVecCollectionSchema/ZVecDataType/ZVecIndexType/ZVecMetricType/.../isZVecError` `[OBSERVED_BEHAVIOR: import('@zvec/zvec') 键列表]`，**无任何 embedding/model 符号**——引擎只接收向量，模型概念仅存在于 zvec-grep 编排层。zvec-grep 的 vector 路线在缺失模型时由 `requireEmbeddingModel`（`src/engine/service/zvec-grep.ts:900-919`，调用点 :800）抛 `ZVEC_GREP.ENGINE.SERVICE.EMBEDDING_MODEL_REQUIRED`（带 hint：传 `--embedding` / 设 `ZVEC_GREP_EMBEDDING` / 配默认；examples：`local/potion-code-16m-v2`, `qwen/text-embedding-v4`）。即：**模型不可用时 vector 路线硬失败（非静默）**，错误码机器可识别。产品语义路线必须复刻此契约。
+
+> 说明：unavailable-model 的**端到端**执行需构建完整 zvec-grep CLI + 下载模型，超出引擎层路线基准范围；本 Lane 以 `[REFERENCE_SOURCE]`（精确 file:line）提供契约证据，并以上述引擎层「无模型概念、仅接收向量」的 `[OBSERVED_BEHAVIOR]` 说明模型需求纯属编排层嵌入步骤。该契约独立于产品代码，不强制端到端重跑。
+
+**stale-index 行为** `[REFERENCE_SOURCE]`：引擎层无 mtime/新鲜度概念（属于 zvec-grep 更高层的 `fileFreshnessStatus`）；因此 stale 检测是 zvec-grep 索引协调层职责，本 Lane 在 R1 已记录其「返回即标注 fresh/possibly_stale、不阻断」语义。
+
+---
+
+## 4. 依赖 / 许可 / 原生足迹（R2 修正后事实）`[OBSERVED_BEHAVIOR + CURRENT_PRODUCT + REFERENCE_SOURCE]`
+
+- 产品根 `LICENSE` = **MulanPSL-2.0** `[CURRENT_PRODUCT]`。
+- `@zvec/zvec@0.7.0`：Apache-2.0，作者 Alibaba，仓库 `github.com/alibaba/zvec`（npm 包 `github.com/zvec-ai/zvec-node`）`[REFERENCE_SOURCE: node_modules/@zvec/zvec/package.json]`。
+- 原生绑定：`@zvec/bindings-linux-x64@0.7.0` 含 `zvec_node_binding.node` **36,147,600 B**，sha256 `a591609b520c9ef5b880d5bdc56ed20651173af57c5c563c7491abf5380dc0dc`；另有 darwin-arm64 / linux-arm64 / musl / win32-x64 等平台变体（npm 锁定哈希见 §附录）`[OBSERVED_BEHAVIOR: sha256sum + stat]`。
+- **Rust 直链不可行**：npm 包仅交付 `.node` N-API 插件 + JS 包装，无 Rust crate、无静态库、无 C 头文件。要在 Rust/Tauri 产品内复用，唯一稳妥路径是 **Node sidecar**（打包 `@zvec/zvec` + 平台 binding，由 Rust command 经 stdio/IPC 调用）或 N-API FFI 封装；直接 `cargo` 链接不存在 `[INFERENCE: 基于 package 内容观察]`。
+- 其余依赖：`@vscode/ripgrep` MIT、`@huggingface/transformers`+`tokenizers` Apache-2.0、`web-tree-sitter`+`tree-sitter-wasms` MIT、`zod`/`jsonc-parser` MIT/ISC —— 均 Apache/MIT/ISC，但与 MulanPSL-2.0 产品的 inbound 义务须由 A10 台账裁定 `[INFERENCE]`。
+
+---
+
+## 5. 路线分类与采纳建议（R2 修订）`[INFERENCE]`（基于 §2–§4 证据）
+
+> 分类域：`COPY`（合法且技术可后续移植）/ `ADAPT`（改造后采用）/ `REIMPLEMENT_FROM_BEHAVIOR`（按行为重实现）/ `DEFER`（暂缓至 W19+）/ `REJECT`（当前拒绝）。R2 契约 #6：COPY 须给出上游文件+符号+传递依赖+外部 crate/包+测试+署名+目标落点，否则降级为 ADAPT/REIMPLEMENT。
+
+| # | 路线/特性 | R2 分类 | 修订理由与 product 落点（destination-first） |
 |---|---|---|---|
-| **Managed ripgrep** (`--rg`) | 已知文本/符号/路径/正则 | 直接扫描工作区文件 | 否（零索引） |
-| **Indexed**（FTS/BM25 + vector + RRF） | 意图、相关概念、排名关键词 | `<root>/.zvec-grep/` 索引 | 是（需 embedding 模型建向量）|
-
-控制流（`context()`）：
-1. 若 `options.rg` → `contextFromRg` → `runRgSearch`（spawn rg）→ 结构富化 → `dedupeAndRerankContextItems`。覆盖 `rg_exhaustive` 或 `rg_truncated`。
-2. 否则找最近 `<root>/.zvec-grep/` 索引（缺失 → 抛 `WORKSPACE_INDEX_NOT_FOUND`；disabled → 抛 `WORKSPACE_INDEX_DISABLED`）。
-3. `contextFromOpenWorkspaceIndex`：每个 query group 调 `workspaceIndex.searchPlan({routes,limit,...})`，再把各组命中经 `selectAndRankContextItems` 融合排序。
-
-**路由选择（关键）**：
-- 默认 primary query → `contextGroups` 生成 routes `[{fts},{vector}]`：即**默认 hybrid**，同时跑 FTS + vector，用 **RRF（K=60）** 融合（`CONTEXT_GROUP_RRF_K=60`；`contextGlobalRrfScore = Σ 1/(60+rank)`）。
-- `--fts` / `--vector` / `--rg` 显式覆盖单一路由；`--fuse` 将所有 group 合并为一个。
-- `normalizeContextRoutes` 只允许 `fts`/`vector`（hybrid 由默认行为产生，非独立 mode）。
-
-**Ranking metadata（每个 item）**：`rank`, `score`, `status`(fresh/possibly_stale), `matchedBy`∈{fts,vector,fts+vector}, `queryGroups[]`(每 group 的 id/query/role/rank/matchedBy), `entityId`, `trace`, `metadata`(symbol type 等)。优先级选择：coverage group 至多 `DEFAULT_CONTEXT_PRIORITY_LIMIT=6` → global fill → unprioritized。
-
----
-
-## 4. 持久化格式
-
-- 索引根：`<root>/.zvec-grep/`（`manifest.json` + `files.zvec` + `index.zvec`）。`.git` 与 `.zvec-grep` 始终排除。
-- `manifest.json`：manifestVersion、rootPaths（含 include/exclude/glob/type/size/depth 过滤）、indexPolicy(`enabled`/`disabled`/`undecided`)、embedding schema（provider/model/**dimension**/**metric**）、embeddingRuntime（远端 provider 时含 apiKey 指纹）。
-- 全局：`~/.zvec-grep/`（配置、daemon 状态、模型缓存 `~/.zvec-grep/models`）。
-- 索引增量：基于 mtime + contentHash 协调（`fileFreshnessStatus`）；改模型/端点需 `--rebuild`（向量空间不可跨模型兼容，即便维度相同）。
-
----
-
-## 5. 并发 / 生命周期
-
-- `WorkspaceIndex` 分 `read`/`write` 模式；每次操作经 `acquireHomeLock(home,"read"|"write")` 文件锁。
-- embedding 模型生命周期：`recoveredEmbeddingModels` 缓存（上限 `MAX_RECOVERED_EMBEDDING_MODELS=4`），空闲（`activeEmbeddingModelOperations===0`）时 `dispose` 退役模型；`close()` 释放全部。
-- 自动刷新：`refreshWorkspaceIndexForContext` 在 `autoUpdate!==false` 时检测 `indexStatusNeedsRefresh` 并经 `withHomeWriteLock` 增量重建（需 daemon 写许可）。
-- rg 包装层：`spawn` rg，流式解析 JSON；设 `limit` 时超出即 `truncated=true` 并 `child.kill()`（穷举但有界）。
-
----
-
-## 6. 安全 / 隐私
-
-- **远端嵌入是唯一的离机数据路径**：选远端 provider 前需一次性/工作区级显式授权（`remoteEmbeddingAuthorizationGuard` + 签名 Workspace grant，store 用 `authorizationSigningKeyPath`）。MCP Bearer 仅保护本地端点，**不**授权远端嵌入。
-- **rg 命令沙箱**（`managed-rg.ts`）：拒绝 `| > & ; < > ( )` 与 shell 扩展（`$()`/`${}`/`` ` ``）；`assertRootScopedPath` 用 `pathEscapesRoot` 阻止 `..` 逃逸；`--follow` 被拒（防符号链接逃逸）。API key 在 manifest 中以 HMAC 指纹（`providerApiKeyIdentity`）存储，不落明文。
-- 默认本地优先：server 仅 loopback；local 模型不发射内容；远程模型需 `--allow-remote` 或签名 grant，headless 会话绝不自动授权。
-
----
-
-## 7. 性能 / 容量证据（A8 核心基准）
-
-### 7.1 managed-ripgrep 路线（**沙箱内可忠实执行**，合成非机密语料）
-
-复现脚本：`logs/research/M5-W18/A8-benchmark-ripgrep.mjs`（Node 内置 + 系统 `rg 14.1.0`，镜像 `buildRipgrepArgs` 参数集，无依赖安装）。
-
-语料：300 `.ts`（其中 i%7==0 含 `AuthService.handleCredentials` + 中文注释「处理用户凭证」）+ 120 `.md`（中英混排含「凭证管理」「认证流程 AuthService」）。
-
-| 查询 | 中位延迟(3 次预热) | 命中行 | 字节 |
-|---|---:|---:|---:|
-| 精确字面 `AuthService` | **11.9 ms** | 163 | 17889 |
-| 定长串（中文多字节）`凭证` | **11.5 ms** | 163 | 18965 |
-| 正则 `handle\w+` | **16.6 ms** | 43 | 4799 |
-| 正则（区分大小写）`authservice` | 11.0 ms | 0 | 0 |
-
-结论：
-- **零索引体积**（按需扫描），亚 20ms/420 文件；延迟随扫描字节线性增长，大仓库仍保持 rg 量级（已知 ripgrep 在 GB 级代码库秒级）。
-- **UTF-8 多字节正确**：中文「凭证」命中 163 行、列偏移经 `Buffer.byteLength` 计算无误。
-- **限流**：zvec-grep 包装层在 `limit` 超界即 `child.kill()` 截断（`rg_truncated`），保证有界输出。
-- 内存：沙箱缺 `/usr/bin/time` 未测；ripgrep 为流式恒定内存（经验 ~数十 MB），包装层开销小且恒定。
-
-### 7.2 FTS/BM25 + vector + hybrid（**沙箱外，源码级论证 + 文档，待 W18-R 边界解除后补执行基准**）
-
-- 依赖外部 `@zvec/zvec`（Apache-2.0）提供索引/BM25/向量/RRF 存储；本快照不含其源码，无法在此执行。
-- 向量维度 256–2560、输入上限 256–128000 tokens（docs/07 模型表），**全部余弦相似度**。local 模型（Model2Vec FP16 / ONNX Qx / GGUF）不发射内容；remote（qwen）发射查询/内容至 provider。
-- 索引体积：与语料规模、chunk 大小、维度成正比；Model2Vec（256-d）远小于 Transformer（768–2560-d）。具体数字需建索引后测，W18-R 内不下模型故**留待 W19 基准**。
-- hybrid/RRF：融合成本为各路线结果的小集合合并 + 排序，开销可忽略；瓶颈在 embedding 推理（vector 路线）与索引 I/O（FTS）。
-
----
-
-## 8. 依赖 / 许可
-
-- `@zvec/zvec` Apache-2.0（核心引擎，外部）；`@vscode/ripgrep` MIT（rg 二进制封装）；`@huggingface/transformers`+`tokenizers` Apache-2.0（本地嵌入推理 WASM）；`web-tree-sitter`+`tree-sitter-wasms` MIT（代码结构抽取）；`node-llama-cpp` MIT(optional, GGUF)；`zod`/`jsonc-parser` MIT/ISC。
-- 全部 Apache-2.0/MIT/ISC → 与产品（Apache-2.0）许可兼容。**但**：W19 若 COPY `@zvec/zvec` 或 `transformers.js`，须走 A10 源移植台账（provenance/NOTICE/修改声明/原生足迹），且不得盲目整库复制（dispatch L1366）。
-
----
-
-## 9. unavailable-model failure（关键失败模式）
-
-- **rg / FTS 路线不依赖模型** → 永不触发模型缺失。
-- **vector 路线**：`embeddingModelForSearch` 仅当某 route `mode==="vector"` 才解析模型；若无 `embeddingModel` 且未配置（无 `--embedding`/`ZVEC_GREP_EMBEDDING`/默认）→ `requireEmbeddingModel` 抛 `ZVEC_GREP.ENGINE.SERVICE.EMBEDDING_MODEL_REQUIRED`，并附带明确 hint（如何提供模型）与 examples（`local/potion-code-16m-v2`, `qwen/...`）。
-- 即：**模型不可用时 vector 路线硬失败（非静默降级）**，错误码可机器识别。这是 product 必须复制的契约——未来 product 的语义路线在模型缺失时应**显式报错**而非返回空/假结果。
-- 运行时加载失败（transformers.js / node-llama-cpp 模型文件缺失）属更下游；上层契约同上（loading 异常上抛为 `EngineError`）。
-
----
-
-## 10. stale-index 行为
-
-- `fileFreshnessStatus`：有 `indexedTime` 且 `indexedTime >= mtimeMs` → `fresh`；否则若 `contentHash` 与当前 sha256 一致 → `fresh`；否则 `possibly_stale`。
-- 结果**照常返回**，仅 `status` 字段标注；不阻断检索。product 采纳时应沿用「返回 + 标注」而非「隐藏/报错」。
-
----
-
-## 11. multilingual / code 行为
-
-- rg 原生 UTF-8/字节感知（基准已证中文命中正确）。
-- 代码结构抽取：`CodeExtractor` 对 C/C++/Go/Java/JS-TS/Python/Rust 等保留符号/签名/面包屑；`.vue`/`.svelte` 取 `<script>` 块；Markdown 取标题分段；其余回退纯文本 chunk（docs/04 抽取表）。
-- 向量路线语言覆盖取决于所选模型（potion-multilingual-128m 覆盖 101 语言；embeddinggemma-300m 广覆盖）。product 应「先用最小覆盖模型，再按真实查询比较」。
-
----
-
-## 12. 路线分类与采纳建议（核心交付）
-
-> 分类域：COPY（直接复制源码） / ADAPT（改造后采用） / REIMPLEMENT_FROM_BEHAVIOR（按行为重实现） / DEFER（暂缓至 W19+） / REJECT（当前拒绝）。
-
-| # | 路线/特性 | 分类 | 理由与 product 落点 |
-|---|---|---|---|
-| R1 | **Managed ripgrep 包装层**（流式解析 + limit-kill + 路径/根作用域沙箱） | **ADAPT** | 零索引、零模型、亚 20ms、UTF-8 安全；沙箱逻辑可移植。product 经 Tauri Rust command 包 rg（或复用 `@vscode/ripgrep`），照搬 `scanManagedRgCommand` 的 shell 操作符拒绝 + `assertRootScopedPath` 根逃逸防护。 |
-| R2 | **Filters / limits**（glob/type/ignore/max-depth/max-filesize/limit/context） | **ADAPT** | 语义与 product 文件搜索过滤一一对应，直接映射。 |
-| R3 | **RRF 融合（K=60）** | **REIMPLEMENT_FROM_BEHAVIOR** | 算法极小且众所周知；product 不应为融合而依赖 `@zvec/zvec`。复制 `matchedBy`/`fresh`/ranking-metadata schema。 |
-| R4 | **Stale-index 新鲜度**（mtime+contentHash→fresh/possibly_stale，返回即标注） | **ADAPT** | 廉价且友好；product 索引路线直接复用。 |
+| R1 | **Managed ripgrep 包装**（流式解析 + limit-kill + 路径/根作用域沙箱） | **ADAPT** | 零索引零模型亚 20ms；Tauri Rust command 包 `rg`（系统或 `@vscode/ripgrep` 随包），照搬 `scanManagedRgCommand` 的 shell 操作符拒绝 + `assertRootScopedPath`。目标文件：`src-tauri/src/semantic_search.rs`（新建）或并入 `src-tauri/src/lexical_search.rs`；前端 `src/components/search/` + `src/stores/useSearchStore.ts`。 |
+| R2 | **Filters / limits**（glob/type/ignore/depth/filesize/limit/context） | **ADAPT** | 与产品文件搜索过滤一一对应，直接映射。 |
+| R3 | **RRF 融合（K=60）** | **REIMPLEMENT_FROM_BEHAVIOR** | 算法极小且众所周知；product 不应为融合依赖 `@zvec/zvec`。复刻 `matchedBy`/`fresh`/ranking-metadata schema。 |
+| R4 | **Stale-index 新鲜度**（mtime+contentHash→fresh/possibly_stale，返回即标注） | **ADAPT** | 廉价友好，product 索引路线直接复用。 |
 | R5 | **Unavailable-model 硬失败契约**（显式 `EMBEDDING_MODEL_REQUIRED`，非静默） | **REIMPLEMENT_FROM_BEHAVIOR** | 必须在 product 语义路线复刻，避免空结果误导。 |
-| R6 | **Indexed FTS/BM25** | **DEFER** | 需 `@zvec/zvec`（外部）或 BM25 库（tantivy/minisearch）；核心引擎不在本快照，采纳须经 A10 台账 + A3/A4 裁决。W19 可 COPY `@zvec/zvec`（Apache-2.0）。 |
-| R7 | **Vector/semantic 路线** | **DEFER→默认 local-only / 否则 REJECT（W19 外）** | 需嵌入推理运行时（transformers.js WASM / node-llama-cpp）与索引存储，原生足迹大、隐私面宽（远端发射）。除非选定 local-only 小模型（potion-code-16m），否则**拒绝默认开启**；远程嵌入需显式工作区授权（见 R8）。 |
-| R8 | **Remote-embedding 授权模型**（签名 grant + 非仅 API key + loopback-only） | **ADAPT（若启用远端） / REJECT（默认）** | 强契约：product 若做远端嵌入必须 COPY 此授权模式；默认保持 local-only。 |
+| R6 | **Indexed FTS/BM25（引擎层 `ZVecFtsIndexParams`）** | **DEFER→ADAPT via sidecar** | 引擎层已证明可行（§3）；但引入需 Node sidecar 运行 `@zvec/zvec` + 平台 binding。目标：Rust command 经 IPC 调 sidecar 建/查 `.zvec` 索引。须经 A10 台账 + A3 采纳裁决。 |
+| R7 | **Vector/semantic 路线（HNSW 等）** | **DEFER→默认 local-only / 否则 REJECT** | 需嵌入推理运行时（transformers.js WASM / node-llama-cpp GGUF）与 `@zvec/zvec` 引擎。原生足迹大、隐私面宽（远端发射）。除非 local-only 小模型，否则默认拒绝；远程嵌入需显式工作区签名授权。 |
+| R8 | **Remote-embedding 授权模型**（签名 grant + loopback-only） | **ADAPT（若启用）/ REJECT（默认）** | 强契约；默认保持 local-only。 |
+
+> **COPY=0**：本 Lane 审慎地**不将任何 `@zvec/zvec` 内部单元标为 COPY**——因 R2 契约 #6 要求逐函数 provenance + 依赖闭包 + 测试 + 署名 + 目标落点，而该引擎是闭源式 N-API 预编译插件，无法逐函数移植，只能整体以 sidecar 形态 ADAPT。这**修正了 R1 旧文把 `@zvec/zvec` 核心标为可 COPY 的过度乐观表述**。
 
 ### 采纳路线（route-selection recommendation）
-
-1. **立即（低风险，可 W19 先行）**：ADOPT **managed ripgrep（R1+R2）**——关闭 product 最大缺口（无任何文件/内容检索），零依赖、零索引、亚 20ms、UTF-8 安全；照搬沙箱与 limit 包装。这是确定性最高、回退最干净的起点。
-2. **后续（W19+，受 A10 台账约束）**：在其上叠加 **RRF 融合（R3）+ FTS/BM25（R6）**，可选 local-only 小模型向量（R7）；融合层在 vector 路线模型缺失时**优雅降级到 FTS→rg**，永不静默（R5）。
-3. **默认拒绝**：远端嵌入（R8）——保持 local-only；若确需，强制签名工作区授权、server loopback-only、内容/查询不发射至未授权端点。
-
----
-
-## 13. 测试复用（test reuse）
-
-- `test/unit/search.test.mjs`、`test/unit/core.test.mjs`、`test/rg-cli.test.mjs`、`test/unit/cli-format.test.mjs`：提供路线/RRF/limit/ranking 行为的 synthetic fixture 与期望，可作为 product 对应单元测试的形态参考（不复制依赖，仅借鉴断言结构）。
-- `A8-benchmark-ripgrep.mjs`：可复现的 rg 路线基准（无依赖），product 采纳 R1 后可直接作为回归基准。
+1. **立即（低风险，可 W19 先行）**：ADOPT **managed ripgrep（R1+R2）**——零依赖零索引亚 20ms UTF-8 安全，关闭产品最大缺口；照搬沙箱与 limit 包装。确定性最高、回退最干净。
+2. **后续（W19+，受 A10 台账约束）**：叠加 **RRF 融合（R3）+ FTS/BM25（R6 via sidecar）**，可选 local-only 小模型向量（R7）；融合层在 vector 路线模型缺失时优雅降级到 FTS→rg，永不静默（R5）。
+3. **默认拒绝**：远端嵌入（R8）——保持 local-only。
 
 ---
 
-## 14. 未决问题（unresolved questions，交 A0）
+## 6. 目标蓝图（R2 契约 #5：exact destination files/symbols）`[INFERENCE]`（采纳面待 A3 裁决）
 
-1. product 检索的**首要落点**是哪个面板/场景（全局命令面板？文件内容？知识库？浏览器历史？）——决定 R1 的集成面。
-2. FTS/vector 的**索引存储位置**与 product 既有持久化（`.zvec-grep` 约定 vs product 自有 store）——需 A1/A10 对齐。
-3. 是否引入 `@zvec/zvec`（COPY）还是另选轻量 BM25 库——待 A3 采纳裁决与 A10 台账。
-4. 向量路线默认模型与设备（CPU/Metal/Vulkan/CUDA）在 product 目标平台的可用性——W18-R 内不下模型，留待 W19 真实基准。
-5. Tauri 侧 rg 二进制分发：用 `@vscode/ripgrep` 随包，还是系统 rg（zvec-grep 二者皆试，bundled 优先）——product 打包策略待定。
+**仅 R1（managed ripgrep）的确定落点（无引擎依赖）：**
+- 新建 `src-tauri/src/lexical_search.rs`：Rust command `lexical_search(args)` → spawn `rg`（`--json -n -c --with-filename --color never` + 过滤），流式解析、超 `limit` 即 `child.kill()`（对应 rg_truncated）；复用既有 `check_invocation_source` + ACL。
+- 复用 zvec-grep `managed-rg.ts` 的 shell 操作符拒绝 + `assertRootScopedPath` 逻辑（ADAPT 为 Rust）。
+- 前端：`src/components/search/LexicalSearch.vue` + `src/stores/useSearchStore.ts` + `src/bridge.ts`/`src/types.ts` 暴露 + `default-commands.toml` ACL（插末条 `list_artifact_images` 前）。
+- 门禁：`scripts/check-command-set-consistency.py` 三方比对 + 新增 `scripts/check-lexical-search-logic.mjs`（映射 `A8-benchmark-ripgrep.mjs` 断言：UTF-8 中文命中、limit 截断、路径逃逸拒绝）。
+- 依赖闭包：系统 `rg`（或 `@vscode/ripgrep` 随包，MIT）；**无新增 Rust crate**。
+- 生命周期：每次查询独立 spawn，无常驻 daemon；无索引文件。
+- 稳定错误：`PATH_TRAVERSAL_REJECTED`（根逃逸）、`COMMAND_INJECTION_REJECTED`（shell 操作符）、`RG_TRUNCATED`（超限）。
+- 迁移/回滚：纯新增文件 + 新 ACL 行；回滚 = 删除 command + ACL 行，不影响既有检索。
+- 硬停：不接入任何 embedding/远端；不写 `.zvec` 索引；不改其他 lane 文件。
+
+**R6/R7（FTS/vector，sidecar 形态，W19 外/受 A10 裁决）：**
+- 目标：`src-tauri/src/semantic_index.rs` + sidecar `tools/zvec-sidecar/`（Node，依赖 `@zvec/zvec@0.7.0` + 平台 binding，打包进安装产物），Rust command 经 stdio/IPC 调 sidecar 的建索引/查询 API。
+- 数据流向：前端 query → Rust command → sidecar（`ZVecCreateAndOpen`/`querySync`/`multiQuerySync`）→ 返回结构化命中（含 `matchedBy`/`fresh`/`score`）。
+- 容量：千级文档 ~6.6KB/doc 索引；峰值 RSS ~294MB（sidecar 常驻或按需起停，需由 A3 定生命周期）。
+- 测试：复用 `A8-benchmark-routes.mjs` 作为回归基准（recall@10、RRF 分数、中文 jieba 命中）。
+- 硬停：远端嵌入默认关闭；模型缺失须硬失败（R5）；不改产品许可证。
 
 ---
 
-## 15. 诚实边界声明（HONEST BOUNDARY）
+## 7. 测试复用 `[REFERENCE_SOURCE]`
+- `zvec-grep-src/test/unit/search.test.mjs`、`core.test.mjs`、`rg-cli.test.mjs`、`cli-format.test.mjs`：路线/RRF/limit/ranking 的 synthetic fixture 与期望，可作 product 单测形态参考（不复制依赖，仅借鉴断言结构）。
+- `A8-benchmark-ripgrep.mjs`（R1，rg 路线，420 文件 11–17ms）与 `A8-benchmark-routes.mjs`（R2，引擎层 FTS/vector/hybrid）可作回归基准。
 
-- FTS/BM25/vector/hybrid 路线的**执行级基准**在本沙箱不可得（dispatch 禁止装依赖/下模型/起 daemon/连远端）。本节相关结论来自**源码 + 架构/嵌入文档 + 模型表**的逆向，已明确标注「源码级论证，待 W19 补执行基准」。
-- managed-ripgrep 路线已**真实执行**基准（系统 `rg 14.1.0`），结果可复现。
-- 未对 `@zvec/zvec` 内部实现做执行级验证（其源码不在本快照）。
-- 未修改任何产品代码、未安装依赖、未 push（符合 W18-R 研究边界）。
+---
+
+## 8. 未决问题（unresolved → 交 A0 / 跨 lane）`[INFERENCE]`
+1. 产品检索**首要落点**（全局命令面板？文件内容？知识库？浏览器历史？）——决定 R1 集成面。**交 A3**。
+2. FTS/vector 的**索引存储位置**（`.zvec-grep` 约定 vs product 自有 store）——需 A1/A10 对齐。
+3. 是否采用 sidecar（ADAPT `@zvec/zvec`）还是另选轻量 BM25 库——待 A3 采纳裁决与 A10 台账。
+4. 向量路线默认模型与设备在 product 目标平台的可用性——W19 真实基准（本地模型下载受网络约束，本沙箱未下载）。
+5. 原生 RSS ~294MB 的常驻/按需策略与打包体积影响——交 A3/A10 评估。
+6. **Apache-2.0 组件 inbound 进 MulanPSL-2.0 产品的 NOTICE/署名/修改声明义务**——交 A10 台账裁定，本 Lane 仅记录事实。
+
+---
+
+## 9. 诚实边界声明（HONEST BOUNDARY）`[EXECUTED_SYNTHETIC_TEST + REFERENCE_SOURCE]`
+- managed-ripgrep 路线已**真实执行**基准（系统 `rg 14.1.0`）：420 文件 11–17ms，可复现。
+- FTS / vector / hybrid-RRF 路线已**真实执行**基准（pinned `@zvec/zvec@0.7.0` 引擎，合成向量真值）：千级文档索引 151ms / 6.6MB / recall=1.0 / 子毫秒~数毫秒，可复现（`A8-benchmark-routes.mjs`）。
+- 已**实测** `@zvec/zvec` 为原生 N-API 插件、记录绑定 sha256/体积、确认无 Rust 直链可能（修正 A0 #8）。
+- 已**修正**产品许可证为 MulanPSL-2.0（修正 A0 #7）。
+- 未端到端执行 zvec-grep CLI 的 unavailable-model 错误串（以 `[REFERENCE_SOURCE]` file:line 提供契约证据，见 §3）。
+- 未下载任何嵌入模型（R2 授权但受网络约束未执行；本地模型基准留待 W19）。
+- 未修改任何产品代码、未安装进产品依赖、未 push（符合 W18-R 研究边界）。
+
+---
+
+## 附录：pinned 依赖完整性（provenance）`[OBSERVED_BEHAVIOR]`
+来自 `/tmp/m5-w18-a8-zvec/package-lock.json` 与 npm cache：
+- `@zvec/zvec@0.7.0` sha512-`MT/M1CMnQ0k1w/Qh8iiCl8vXawonN0QwOr5dVq+92SMa6hMArHBVs`(p)
+- `@zvec/bindings-linux-x64@0.7.0` sha512-`L+N/J5vPm1RHgvT6yNpc5nSEk0j8PcU0wv7y4P5sfKEAVvviQserI`(p)
+- `@zvec/bindings-linux-x64` 内 `zvec_node_binding.node` sha256 `a591609b520c9ef5b880d5bdc56ed20651173af57c5c563c7491abf5380dc0dc`（36,147,600 B）
+- `detect-libc@2.1.2` sha512-`Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0ur`(p)
+- 安装脚本：`@zvec/zvec` 的 `scripts/install.js`（经 `npm install-scripts approve` 运行，产出本机绑定）已执行。
