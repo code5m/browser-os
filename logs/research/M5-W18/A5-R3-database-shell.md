@@ -1,9 +1,9 @@
-# A5 · M5-W18-R3 — 浏览器优先外壳内的数据库工作台（研究 + 原型）
+# A5 · M5-W18-R3B — 浏览器优先外壳内的数据库工作台（研究 + 原型）
 
 | 项 | 值 |
 | --- | --- |
 | LANE | A5 |
-| 派发 | `M5-W18-R3-UX-TASKS-20260908.md` §A5「Database inside the browser-first shell」 |
+| 派发 | `M5-W18-R3B-CORRECTION-TASKS-20260908.md` §A5「Database mode closure」 |
 | MODE | `RESEARCH_AND_PROTOTYPE`（W19 = `CLOSED`） |
 | 工作树 | `/home/ainfinit/.codex/worktrees/m5-w18-a5/mvp-browser-os-v3` |
 | 分支 | `codex/m5-w18-a5`（已 rebase 到 `origin/master`） |
@@ -18,7 +18,7 @@
 | --- | --- | --- |
 | `logs/research/M5-W18/A5-R3-database-shell.md` | 本设计报告 | 阅读 |
 | `logs/research/M5-W18/A5-R3-prototype.html` | 自包含可点原型（合成数据、零 IPC、零网络、零持久化） | 浏览器直接打开文件即可 |
-| `logs/research/M5-W18/A5-R3-state-model.mjs` | **规范源**：布局常量 + 状态机 + 命令注册表 + 78 条断言（含原型一致性校验） | `node logs/research/M5-W18/A5-R3-state-model.mjs` → `ALL_PASS (78 checks)` |
+| `logs/research/M5-W18/A5-R3-state-model.mjs` | **规范源**：布局常量 + 状态机 + 命令注册表 + 95 条断言（含原型一致性校验与 R3B 收口断言） | `node logs/research/M5-W18/A5-R3-state-model.mjs` → `ALL_PASS (95 checks)` |
 | `logs/research/M5-W18/A5-R3-checkpoint.md` | lane 检查点 | 阅读 |
 
 规范源与原型的**防漂移机制**：`A5-R3-state-model.mjs` 的断言组 G8 会读取同目录 HTML，逐项校验六个 chrome 常量、工具窗口默认/最小/最大、树上限、四个尺寸预设、全部 62 个命令 id、13 个作用域挂点、五种结果状态、六种布局动作、DOM 量测读数存在性，以及「原型不含 `invoke(` / `__TAURI__` / 网络请求 / 浏览器存储」。文档说一套、原型画另一套会直接断言失败。
@@ -47,7 +47,7 @@ R2B 的数据库原型（`A5-R2B-wireframe.html`）被整体退回，R3 派发�
 | --- | --- | --- |
 | `tabStrip` | 28px | 行 1 统一标签条，**兼作标题栏基准**（后标题栏高度 = 窗口高 − 28） |
 | `navRow` | 32px | 行 2 导航 / 地址 / 全局入口 |
-| `statusBar` | 22px | 底部状态栏（兼工具窗口开关，收起态下的恢复入口之一） |
+| `statusBar` | 24px | 底部状态栏（兼工具窗口开关，收起态下的恢复入口之一）；A0 裁决 24px |
 | `railLeft` | 28px | 左侧工具图标细条（唯一常驻工具入口） |
 | `subTabs` | 26px | 数据库文档**内部**的 SQL 子标签条，仅当文档数 ≥2 时占位 |
 | `consoleStatus` | 22px | SQL 控制台状态行（运行/取消/execId/上限提示） |
@@ -66,23 +66,36 @@ R2B 的数据库原型（`A5-R2B-wireframe.html`）被整体退回，R3 派发�
 | 收起态 `collapsed` | 三边全隐；仅保留 rail + 状态栏作为恢复入口 | 受红线约束 |
 | 专注态 `focus` | 隐藏全部工具 chrome（含 rail / 导航行 / 状态栏 / 子标签 / 控制台状态行） | 100% 宽 + 100% 后标题栏高 |
 
-### 2.3 预算实测（`node` 运行结果，标签 = MEASURED）
+### 2.3 预算实测（对齐 A0 规范几何公式，标签 = MEASURED）
 
-最不利口径：**2 个 SQL 文档**（子标签条占位）+ 扣除控制台状态行。
+A0 裁决：collapsed active height = (innerH − 60 − 24) / innerH；active width = (innerW − 28) / innerW（28 = activity strip）。本模型 `computeLayout` 的 `canonicalHeightPct / canonicalWidthPct` 即该规范值（`statusBar=24` 时 `contentHeight = H−84`）。最不利口径：**2 个 SQL 文档**（子标签条占位）。
 
-| 尺寸 | 后标题栏高 | 收起态严格活动面 | 高占比（红线 85%） | 宽占比（红线 92%） |
+| 尺寸 | 收起态活动高 = (H−84)/H | 高占比（红线 85%） | 收起态活动宽 = (W−28)/W | 宽占比（红线 92%） |
 | --- | --- | --- | --- | --- |
-| 1920×1080 | 1052 | 1892×950 | **90.30%** PASS | **98.54%** PASS |
-| 1440×900 | 872 | 1412×770 | **88.30%** PASS | **98.06%** PASS |
-| 1366×768 | 740 | 1338×638 | **86.22%** PASS | **97.95%** PASS |
-| 1024×720 | 692 | 996×590 | **85.26%** PASS | **97.27%** PASS |
+| 1920×1080 | 996 / 1080 | **92.22%** PASS | 1892 / 1920 | **98.54%** PASS |
+| 1440×900 | 816 / 900 | **90.67%** PASS | 1412 / 1440 | **98.06%** PASS |
+| 1366×768 | 684 / 768 | **89.06%** PASS | 1338 / 1366 | **97.95%** PASS |
+| 1200×800 | 716 / 800 | **89.50%** PASS | 1172 / 1200 | **97.67%** PASS |
+| 1024×720 | 636 / 720 | **88.33%** PASS | 996 / 1024 | **97.27%** PASS |
+| 900×600 | 516 / 600 | **86.00%** PASS | 872 / 900 | **96.89%** PASS |
 
-单文档（无子标签条）时各高占比再 +26px：1920 = 92.78%、1440 = 91.28%、1366 = 89.73%、1024 = 89.02%。
+六个验收尺寸（A0 裁决：1920×1080 / 1440×900 / 1366×768 / 1200×800 / 1024×720 / **900×600 产品最小窗**；**800×600 低于产品最小窗，弃用**）全部达标。
 
-专注态四尺寸恒为 100% / 100%（活动面 = 窗口宽 × 后标题栏高）。
+> 附：若再扣除文档内部子标签条(26px)+控制台状态行(22px)的更严口径，900×600 = 81.82%、1024×720 = 84.97%（均 <85%）。该口径仅为内部余量提示，不作为红线门槛——规范红线以 (H−60−24)/H 为准（见 §2.4）。
 
-**800×600 压力发现（非必测尺寸，但评审文档 `M5-W18-PROTOTYPE-REVIEW-20260908.md:32` 提出「800x600 保持活动文档可用」）**：后标题栏高 572，2 文档时严格活动面 470px = **82.17%（低于 85%）**，单文档 496px = 86.71%。
-→ 建议规则 **D-A5-R3-3**：窗口高 < 768px 时，SQL 子标签条折叠为控制台状态行内的紧凑文档切换器（省 26px，1024×720 升至 89.02%，800×600 升至 86.71%）。本波**未实现**该规则（四个必测尺寸已达标，不为未验证代码加复杂度），交 A1 合并原型时决定。
+专注态六尺寸恒为 100% / 100%（活动面 = 窗口宽 × 后标题栏高）。
+
+### 2.4 R3B 收口变更（2026-09-08 第二轮 · `M5-W18-R3B-CORRECTION-TASKS-20260908.md` §A5）
+
+本轮按 A0 在 `A0-M5-W18-R3-acceptance-audit-20260908.md` 的裁决对原型与规范源做收口，不触碰任何产品代码：
+
+1. **规范几何对齐 A0 SSOT**：`statusBar` 由 22px 调为 **24px**（A0 裁决）；顶部 chrome 仍 = tabStrip(28)+navRow(32) = 60px；activity strip = railLeft(28)。
+2. **六个验收尺寸**：在原有四尺寸基础上新增 **1200×800** 与 **900×600**，并**弃用 800×600**（低于产品最小窗）。预算断言改用 A0 规范公式 `(H−60−24)/H` 与 `(W−28)/W`，`900×600` 高占比 **86.00%**、宽占比 **96.89%** 均过红线（§2.3）。
+3. **A3/A4 折叠·恢复语义对齐**：规范源 `collapseAll` 本就隐藏全部边（含已固定窗口）；`restorePreviousLayout` 已从快照逐字段还原 `edges`（含 `pinned`/尺寸/可见态）。本轮新增 G9 断言固化：① 收起全部连已固定左右边一并隐藏；② 恢复后可见态/自定义尺寸(360px)/固定态逐字段还原；③ 快照仅含 `{view, edges}`，不持久化 `focusReturnAction`/`expandedFrom` 等瞬时字段（A4 要求确定性、不持久化临时态）；④ `collapse→restore` 往返确定性。
+4. **去除捐赠方品牌字体（R3B-02）**：原型 `--mono` 曾含 `JetBrains Mono`，本轮移除；新增 G8 负向断言「原型不含 JetBrains/DataGrip/IntelliJ/Rebased」。报告可引用来源，原型 UI 文本不出现捐赠方品牌。
+5. **专注模式恢复活动面**：`enterFocus` 存快照、`exitFocus` 经 `restorePreviousLayout` 把活动编辑/结果面还原为正常停靠全视口（G3/G9 已验证）。
+6. **轻量 ARIA（R3B-04 不回退）**：树 `role="tree"`、SQL 子标签 `role="tablist"`+`tab`、结果网格 `role="grid"`+`gridcell`、历史/消息 `role="log"`、工具窗标题栏 `aria-label`，保持作用域右键菜单的禁用原因可见。
+7. **断言总数 78 → 95**：新增 G9（R3B 折叠/恢复/快照确定性 12 条）+ G8 品牌负向检查；`node A5-R3-state-model.mjs` → `ALL_PASS (95 checks)`。
 
 ### 2.4 正常态代价（明示）
 
@@ -235,7 +248,8 @@ R2B 的数据库原型（`A5-R2B-wireframe.html`）被整体退回，R3 派发�
 
 ## 15. 约束自查
 
-- 未改动任何产品代码 / 依赖 / ACL / capability / 原生运行时 / 用户数据；三个新文件全部落在 `logs/research/M5-W18/`。
-- 未触碰他 lane 文件（`M5-W18-R3-UX-TASKS-20260908.md`、`PARALLEL_COMMAND_BOARD.md`、其它 lane 报告均只读）。
-- 原型自包含：无外链脚本/样式/字体、无网络、无 IPC、无浏览器存储（G8 断言）。
+- 未改动任何产品代码 / 依赖 / ACL / capability / 原生运行时 / 用户数据；本波仅修订 `logs/research/M5-W18/A5-R3-*`（state-model / prototype / 本报告 / checkpoint）。
+- 未触碰他 lane 文件（`M5-W18-R3B-CORRECTION-TASKS-20260908.md`、`PARALLEL_COMMAND_BOARD.md`、其它 lane 报告均只读）。
+- 原型自包含：无外链脚本/样式/字体（已移除 `JetBrains Mono`）、无网络、无 IPC、无浏览器存储（G8 断言）。
 - 未 push；分支 `codex/m5-w18-a5` 停在本 lane 提交。
+- R3B 收口：规范几何对齐 A0 SSOT（statusBar=24px、六尺寸含 900×600）、A3/A4 折叠·恢复语义经 G9 固化、捐赠方品牌字体已移除。

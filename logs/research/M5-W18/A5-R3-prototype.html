@@ -2,13 +2,13 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>A5 · M5-W18-R3 数据库工作台原型（合成数据 · 零 IPC）</title>
+<title>A5 · M5-W18-R3B 数据库工作台原型（合成数据 · 零 IPC）</title>
 <style>
   :root{
-    --tabStrip:28px; --navRow:32px; --statusBar:22px; --railLeft:28px; --subTabs:26px; --consoleStatus:22px;
+    --tabStrip:28px; --navRow:32px; --statusBar:24px; --railLeft:28px; --subTabs:26px; --consoleStatus:22px;
     --bg:#1e1f22; --bg2:#2b2d30; --bg3:#35373b; --line:#43454a; --fg:#dfe1e5; --fg2:#9aa0a6;
     --acc:#3574f0; --warn:#e2a336; --err:#e05252; --ok:#4a9d5a;
-    --mono:ui-monospace,"JetBrains Mono","Cascadia Mono",Consolas,monospace;
+    --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
   }
   *{box-sizing:border-box}
   body{margin:0;background:#141517;color:var(--fg);font:12px/1.45 system-ui,"Noto Sans CJK SC",sans-serif}
@@ -155,7 +155,9 @@
   <button data-size="1920x1080">1920×1080</button>
   <button data-size="1440x900" aria-pressed="true">1440×900</button>
   <button data-size="1366x768">1366×768</button>
+  <button data-size="1200x800">1200×800</button>
   <button data-size="1024x720">1024×720</button>
+  <button data-size="900x600">900×600</button>
   <span style="width:12px"></span>
   <b>布局</b>
   <button id="btnCollapse">收起全部工具窗口</button>
@@ -198,7 +200,7 @@
       <div class="rail" id="rail"></div>
       <div id="leftHost"></div>
       <div class="col">
-        <div class="subtabs" id="subtabs"></div>
+        <div class="subtabs" id="subtabs" role="tablist" aria-label="SQL 文档标签"></div>
         <div class="docbody" id="docBody" tabindex="0" aria-label="活动 SQL 文档"></div>
         <div class="cstatus" id="cstatus"></div>
         <div id="bottomHost"></div>
@@ -215,7 +217,7 @@
     <li>右键任意对象（连接 / 模式 / 表 / 列 / 文档标签 / 编辑器 / 单元格 / 列头 / 行 / 结果窗口 / 工具窗口标题栏 / 历史条目 / 属性行）会弹出<b>仅属于该对象</b>的菜单；键盘路径 <code>Shift+F10</code> → <code>↑/↓</code> → <code>Enter</code>，<code>Esc</code> 关闭。</li>
     <li>禁用项不隐藏：聚焦/悬停即显示<b>禁用原因</b>；依赖未注册后端命令的动作标注 <code>DESIGN_ONLY</code>。</li>
     <li>安全分级：<span class="chip r">读</span> <span class="chip l">本地</span> <span class="chip w">写库</span> <span class="chip d">危险</span>（写库=单次确认，危险=键入确认+审计）。</li>
-    <li>顶部读数条实时用 <code>offsetWidth/offsetHeight</code> 量测活动文档面，红线：收起态 ≥85% 后标题栏高度、≥92% 宽度。</li>
+    <li>顶部读数条实时用 <code>offsetWidth/offsetHeight</code> 量测活动文档面，红线（规范几何）：收起态 活动高 ≥85% <code>(H-60-24)/H</code>、活动宽 ≥92% <code>(W-28)/W</code>；含产品最小窗 900×600。</li>
   </ul>
 </div>
 
@@ -224,7 +226,7 @@
 /* =====================================================================
    §1 常量（与 A5-R3-state-model.mjs 逐值一致，G8 断言校验）
    ===================================================================== */
-const CHROME = { tabStrip: 28, navRow: 32, statusBar: 22, railLeft: 28, subTabs: 26, consoleStatus: 22 };
+const CHROME = { tabStrip: 28, navRow: 32, statusBar: 24, railLeft: 28, subTabs: 26, consoleStatus: 22 };
 const TOOLS = {
   left: { def: 260, min: 180, max: 480 },
   right: { def: 280, min: 200, max: 420 },
@@ -537,7 +539,7 @@ function renderRail() {
 function twHeader(edge) {
   const e = state.edges[edge], id = e.visible, pinned = e.pinned.includes(id);
   const tabs = e.members.map((m) => '<span class="tt' + (m === id ? " on" : "") + '" data-vis="' + edge + "|" + m + '">' + TOOL_META[m].title + "</span>").join("");
-  return '<div class="twhead" ' + SCOPE_ATTR.toolwindow + ' data-edge="' + edge + '" tabindex="0">' +
+  return '<div class="twhead" ' + SCOPE_ATTR.toolwindow + ' data-edge="' + edge + '" tabindex="0" aria-label="工具窗口标题栏：' + TOOL_META[id].title + '">' +
     '<span class="t">' + TOOL_META[id].title + "</span>" +
     '<span class="twtabs">' + (e.members.length > 1 ? tabs : "") + "</span>" +
     '<span class="grow"></span>' +
@@ -574,21 +576,21 @@ function treeHtml() {
     '<button data-act="db.schema.expandAllBounded" title="Ctrl/Cmd+Shift+=">有界全展开</button>' +
     '<span style="flex:1"></span><span class="chip">层级 ' + state.tree.depth + "/" + TREE_LIMITS.maxDepth + "</span></div>" +
     (state.tree.notice ? '<div class="notice">⚠ ' + esc(state.tree.notice) + "</div>" : "") +
-    '<div class="tree">' + rows.join("") + "</div>";
+    '<div class="tree" role="tree" aria-label="数据库对象树（连接 / 库表 / 列）">' + rows.join("") + "</div>";
 }
 
 function gridHtml() {
   const cells = (r, ri) => r.map((v, ci) => {
-    if (v === null) return "<td " + SCOPE_ATTR.cell + ' data-c="' + ci + '" data-r="' + ri + '"><span class="nullv">NULL</span></td>';
-    if (v === "<bin>") return "<td " + SCOPE_ATTR.cell + ' data-c="' + ci + '" data-r="' + ri + '"><span class="bin">&lt;二进制 65,536 B · 已达 64.00 KiB 上限&gt;</span></td>';
+    if (v === null) return "<td role=\"gridcell\" " + SCOPE_ATTR.cell + ' data-c="' + ci + '" data-r="' + ri + '"><span class="nullv">NULL</span></td>';
+    if (v === "<bin>") return "<td role=\"gridcell\" " + SCOPE_ATTR.cell + ' data-c="' + ci + '" data-r="' + ri + '"><span class="bin">&lt;二进制 65,536 B · 已达 64.00 KiB 上限&gt;</span></td>';
     const long = v.length > 24;
-    return "<td " + SCOPE_ATTR.cell + ' data-c="' + ci + '" data-r="' + ri + '" title="' + esc(v) + '">' +
+    return "<td role=\"gridcell\" " + SCOPE_ATTR.cell + ' data-c="' + ci + '" data-r="' + ri + '" title="' + esc(v) + '">' +
       esc(long ? v.slice(0, 24) : v) + (long ? '<span class="trunc"> …⚠</span>' : "") + "</td>";
   }).join("");
-  return '<table class="grid"><thead><tr><th class="gut">#</th>' +
-    COLS.map((c, i) => "<th " + SCOPE_ATTR.colhead + ' data-c="' + i + '">' + c + "</th>").join("") +
+  return '<table class="grid" role="grid" aria-label="查询结果网格"><thead><tr role="row"><th class="gut" role="columnheader">#</th>' +
+    COLS.map((c, i) => "<th " + SCOPE_ATTR.colhead + ' role="columnheader" data-c="' + i + '">' + c + "</th>").join("") +
     "</tr></thead><tbody>" +
-    ROWS.map((r, ri) => "<tr>" + '<td class="gut" ' + SCOPE_ATTR.row + ' data-r="' + ri + '">' + (ri + 1) + "</td>" + cells(r, ri) + "</tr>").join("") +
+    ROWS.map((r, ri) => "<tr role=\"row\">" + '<td class="gut" ' + SCOPE_ATTR.row + ' role="gridcell" data-r="' + ri + '">' + (ri + 1) + "</td>" + cells(r, ri) + "</tr>").join("") +
     "</tbody></table>";
 }
 
@@ -621,14 +623,14 @@ function historyBody() {
     '<button data-act="db.history.clear">清空历史</button>' +
     '<button data-act="db.history.persistToggle" disabled title="依赖未注册命令 db_query_history">持久化历史（默认关）· DESIGN_ONLY</button>' +
     '<span style="flex:1"></span><span class="chip">仅本次会话 · SQL 全文不落盘</span></div>' +
-    '<ul class="hist">' + state.history.map((h, i) =>
+    '<ul class="hist" role="log" aria-label="查询历史">' + state.history.map((h, i) =>
       "<li " + SCOPE_ATTR.history + ' data-h="' + i + '" tabindex="-1">' + badge[h.state] +
       "<code>" + esc(h.sql) + '</code><span class="ms">' + h.ms + "ms · " + h.rows + " 行</span></li>").join("") + "</ul>";
 }
 
 function messagesBody() {
   return '<div class="twbar"><span class="chip">执行日志（合成）· 审计文案已脱敏</span></div>' +
-    '<div style="padding:4px 8px;font-family:var(--mono);font-size:10.5px;line-height:1.6">' +
+    '<div role="log" aria-label="执行日志" style="padding:4px 8px;font-family:var(--mono);font-size:10.5px;line-height:1.6">' +
     "<div>10:22:31 connect ok · local-sqlite · 非生产 · 写权限=关</div>" +
     "<div>10:22:44 query exec-7 · 812ms · 1000 行 · <span class=\"trunc\">truncated=true</span></div>" +
     "<div>10:23:02 query exec-8 · 30000ms · <span class=\"trunc\">timeout</span>（默认上限 30s）</div>" +
@@ -680,7 +682,7 @@ function renderSubtabs() {
   el.style.display = multi ? "flex" : "none";
   if (!multi) return;
   el.innerHTML = state.docs.map((d, i) =>
-    '<div class="subtab' + (i === state.activeDoc ? " on" : "") + '" ' + SCOPE_ATTR.console + ' data-doc="' + i + '" tabindex="0">' +
+    '<div class="subtab' + (i === state.activeDoc ? " on" : "") + '" ' + SCOPE_ATTR.console + ' role="tab" aria-selected="' + (i === state.activeDoc) + '" data-doc="' + i + '" tabindex="0">' +
     (d.dirty ? '<span class="dot" title="未保存"></span>' : "") + esc(d.title) +
     '<span class="chip">' + esc(d.conn) + "</span>" +
     (d.status === "running" ? '<span class="chip w">运行中</span>' : "") +
@@ -741,7 +743,9 @@ function measure() {
   const body = $("docBody");
   const postTitlebar = state.size.h - CHROME.tabStrip;
   const w = body.offsetWidth, h = body.offsetHeight;
-  const wp = Math.round((w / state.size.w) * 10000) / 100, hp = Math.round((h / postTitlebar) * 10000) / 100;
+  // 规范几何（A0 裁决）：collapsed active height = (H-60-24)/H；active width = (W-28)/W。
+  // 收起态 body.offsetHeight = contentHeight = H-84，offsetWidth = W-28，二者即规范占比。
+  const wp = Math.round((w / state.size.w) * 10000) / 100, hp = Math.round((h / state.size.h) * 10000) / 100;
   const strict = state.view === "collapsed" || state.view === "focus";
   const okW = wp >= BUDGET.minWidthPct, okH = hp >= BUDGET.minHeightPct;
   $("readout").innerHTML =
@@ -749,8 +753,8 @@ function measure() {
     "<span>顶部 chrome <var>2 行 / " + (CHROME.tabStrip + CHROME.navRow) + "px</var>（上限 " + BUDGET.maxTopChromePx + "px）</span>" +
     "<span>后标题栏高 <var>" + postTitlebar + "px</var></span>" +
     "<span>活动文档面 <var>" + w + "×" + h + "</var></span>" +
-    "<span>宽占比 <var class='" + (okW ? "pass" : "fail") + "'>" + wp + "%</var>（红线 " + BUDGET.minWidthPct + "%）</span>" +
-    "<span>高占比 <var class='" + (okH ? "pass" : "fail") + "'>" + hp + "%</var>（红线 " + BUDGET.minHeightPct + "%）</span>" +
+    "<span>宽占比 <var class='" + (okW ? "pass" : "fail") + "'>" + wp + "%</var>（规范 (W-28)/W，红线 " + BUDGET.minWidthPct + "%）</span>" +
+    "<span>高占比 <var class='" + (okH ? "pass" : "fail") + "'>" + hp + "%</var>（规范 (H-60-24)/H，红线 " + BUDGET.minHeightPct + "%）</span>" +
     "<span>" + (strict ? (okW && okH ? "<var class='pass'>预算 PASS</var>" : "<var class='fail'>预算 FAIL</var>") : "<span>（红线仅约束收起/专注态）</span>") + "</span>";
 }
 
