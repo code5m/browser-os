@@ -106,8 +106,31 @@ class Finding:
     def __repr__(self):
         return f"[{self.severity}] {self.probe}: {self.message}"
 
+    def to_dict(self):
+        """Machine-readable form; parses 'L<num>: <snippet>' evidence when present."""
+        line = None
+        snippet = self.evidence
+        m = re.match(r"\s*L(\d+)\s*:\s*(.*)", self.evidence)
+        if m:
+            line = int(m.group(1))
+            snippet = m.group(2)
+        return {
+            "severity": self.severity,
+            "probe": self.probe.split()[0],
+            "message": self.message,
+            "evidence": snippet,
+            "line": line,
+        }
+
 
 SEV_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2, "INFO": 3}
+
+# --strict-sizes switches P3 from the A0 four-size mandated set to all six sizes.
+STRICT_SIZES = False
+
+
+def accept_required():
+    return SIZES if STRICT_SIZES else ACCEPT_REQUIRED
 
 
 def read(base, name):
@@ -217,11 +240,11 @@ ACCEPT_REQUIRED = [(1920, 1080), (1440, 900), (1366, 768), (1024, 720)]
 SOFT_SIZES = [PRODUCT_DEFAULT_INNER, PRODUCT_MIN_INNER]   # 1200x800, 900x600
 
 SIZE_EVIDENCE = [
-    ("A1", [A1_PROTO], ACCEPT_REQUIRED),
-    ("A2", [A2_REPORT, "A2-R3-measure.py", "A2-R3-run-20260908.out"], ACCEPT_REQUIRED),
-    ("A3", [A3_PROTO, A3_REPORT], ACCEPT_REQUIRED),
-    ("A8", [A8_FRAMES, "A8-R3-visual-density-design.md"], ACCEPT_REQUIRED),
-    ("A5", [A5_PROTO, "A5-R3-database-shell.md"], ACCEPT_REQUIRED),
+    ("A1", [A1_PROTO], None),
+    ("A2", [A2_REPORT, "A2-R3-measure.py", "A2-R3-run-20260908.out"], None),
+    ("A3", [A3_PROTO, A3_REPORT], None),
+    ("A8", [A8_FRAMES, "A8-R3-visual-density-design.md"], None),
+    ("A5", [A5_PROTO, "A5-R3-database-shell.md"], None),
 ]
 # prototypes whose own frames must not advertise the dropped size any more
 DROPPED_SIZE_SCAN = [A1_PROTO, A2_PROTO, A3_PROTO, A5_PROTO, A8_FRAMES, A1_REPORT, A2_REPORT]
@@ -229,7 +252,8 @@ DROPPED_SIZE_SCAN = [A1_PROTO, A2_PROTO, A3_PROTO, A5_PROTO, A8_FRAMES, A1_REPOR
 
 def probe_size_coverage(base):
     findings = []
-    for lane, group, required in SIZE_EVIDENCE:
+    for lane, group, _ in SIZE_EVIDENCE:
+        required = accept_required()
         present = set()
         seen_any = False
         for name in group:
@@ -244,9 +268,10 @@ def probe_size_coverage(base):
             continue
         missing = [f"{w}x{h}" for (w, h) in required if (w, h) not in present]
         if missing:
-            findings.append(Finding("HIGH", "P3",
-                                    f"{lane} evidence does not cover mandated acceptance size(s) "
-                                    f"(A0 four-size set)",
+            scope = "all six sizes" if STRICT_SIZES else "A0 four-size set"
+            sev = "HIGH" if STRICT_SIZES else "HIGH"
+            findings.append(Finding(sev, "P3",
+                                    f"{lane} evidence does not cover mandated acceptance size(s) ({scope})",
                                     ", ".join(missing) + f"  [group: {', '.join(group)}]"))
         soft_missing = [f"{w}x{h}" for (w, h) in SOFT_SIZES if (w, h) not in present]
         if soft_missing:
@@ -261,7 +286,7 @@ def probe_size_coverage(base):
         for ln, body in lines_of(text, re.compile(r"800\s*[x×X*]\s*600")):
             findings.append(Finding("MEDIUM", "P3",
                                     f"{name} still references the dropped {DROPPED_SIZE[0]}x{DROPPED_SIZE[1]} size",
-                                    f"L{ln}: {body}"))
+                                    f"{name} L{ln}: {body}"))
     return findings
 
 
@@ -491,6 +516,31 @@ def run_audit(base, verbose=True):
     return all_findings
 
 
+def emit_json(base, findings, statuses):
+    import json
+    passed = sum(1 for _, s, _ in statuses if s == "PASS")
+    out = {
+        "tool": "A10-R3B-closure-audit",
+        "strict_sizes": STRICT_SIZES,
+        "base": base,
+        "generated_at": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+        "gate": "PASS" if not findings else "FAIL",
+        "probes": {
+            "total": len(statuses),
+            "passed": passed,
+            "failed": len(statuses) - passed,
+        },
+        "findings": {
+            "high": sum(1 for f in findings if f.severity == "HIGH"),
+            "medium": sum(1 for f in findings if f.severity == "MEDIUM"),
+            "low_info": sum(1 for f in findings if f.severity not in ("HIGH", "MEDIUM")),
+            "items": [f.to_dict() for f in sorted(findings, key=lambda x: (SEV_ORDER[x.severity], x.probe))],
+        },
+        "probe_status": [{"probe": l.split()[0], "status": s, "count": c} for l, s, c in statuses],
+    }
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+
+
 # ---------------------------------------------------------------------------- self-test
 CLEAN_PROTO_HEAD = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <style>:focus-visible{outline:2px solid #58a6ff}</style></head><body>
@@ -550,15 +600,17 @@ def _write_clean_base(base):
     def w(name, text):
         open(os.path.join(base, name), "w", encoding="utf-8").write(text)
 
+    # clean corpus always carries all six sizes, so both default and --strict-sizes
+    # self-tests pass; the mutation tests still prove each probe detects a miss.
     w(A1_PROTO, _a1_clean())
-    w(A2_PROTO, _clean_frames(ACCEPT_REQUIRED + SOFT_SIZES))
-    w(A3_PROTO, _clean_frames(ACCEPT_REQUIRED + SOFT_SIZES))
-    w(A8_FRAMES, _clean_frames(ACCEPT_REQUIRED + SOFT_SIZES))
-    w(A5_PROTO, _clean_frames(ACCEPT_REQUIRED + [PRODUCT_MIN_INNER]))
+    w(A2_PROTO, _clean_frames(SIZES))
+    w(A3_PROTO, _clean_frames(SIZES))
+    w(A8_FRAMES, _clean_frames(SIZES))
+    w(A5_PROTO, _clean_frames(SIZES))
     w(A1_REPORT, A1_REPORT_CLEAN)
     w(A2_REPORT, A2_REPORT_CLEAN)
     w(A3_REPORT, A3_CLEAN)
-    w(A5_REPORT, "# A5 database shell\n" + "".join(f"- {w}x{h} verified\n" for w, h in ACCEPT_REQUIRED + SOFT_SIZES))
+    w(A5_REPORT, "# A5 database shell\n" + "".join(f"- {w}x{h} verified\n" for w, h in SIZES))
     w(A3_SM, A3_SM_CLEAN)
     w(A4_REPORT, A4_CLEAN)
     w(A4_SM, A4_SM_CLEAN)
@@ -633,13 +685,27 @@ def self_test():
 
 
 def main():
+    global STRICT_SIZES
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default=HERE)
     ap.add_argument("--self-test", action="store_true")
+    ap.add_argument("--json", action="store_true", help="emit machine-readable JSON instead of text")
+    ap.add_argument("--strict-sizes", action="store_true",
+                    help="P3 requires all six sizes (1920x1080..900x600) as HIGH, not only the A0 four-size set")
     args = ap.parse_args()
     if args.self_test:
         return self_test()
-    findings = run_audit(os.path.abspath(args.base))
+    STRICT_SIZES = args.strict_sizes
+    findings = run_audit(os.path.abspath(args.base), verbose=not args.json)
+    if args.json:
+        statuses = []
+        for label, fn in PROBES:
+            try:
+                f = fn(os.path.abspath(args.base))
+            except Exception as exc:
+                f = [Finding("HIGH", label.split()[0], f"probe crashed: {type(exc).__name__}: {exc}")]
+            statuses.append((label, "FAIL" if f else "PASS", len(f)))
+        emit_json(os.path.abspath(args.base), findings, statuses)
     return 1 if findings else 0
 
 
