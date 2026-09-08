@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A1 R3B Browser-First Workbench — Corrected Prototype</title>
+<!--
+  A1 · M5-W18-R3B Corrected Consolidated Prototype
+  Wave: M5-W18-R3B (correction of R3 per A0 acceptance audit)
+  Rulings consumed: A0-M5-W18-R3-acceptance-audit-20260908.md
+  Peers consumed: A2(bfe8e86) A3(8d8719a) A4(5d9e447) A5(3ff1f8b) A6(2bce4e3) A7(b96cd51) A8(ba92110) A9(d17091c)
+  Boundary: self-contained synthetic HTML; no product code; no donor branding in UI; no native calls.
+  Geometry SSOT (A0): top chrome 60px (2×30), status 24px, activity strip 28px.
+  Sizes: 1920x1080 / 1440x900 / 1366x768 / 1200x800 / 1024x720 / 900x600 (800x600 dropped per A0).
+  Shortcuts (A0/A6): Ctrl+K = address/search; Ctrl+Shift+P = command palette.
+  Git 14 units (A0/A7): COPY=0, ADAPT_PRODUCT=4, REIMPLEMENT_FROM_BEHAVIOR=10.
+  Accessibility (A0/A6/A8): role=*, aria-*, keyboard focus, disabled reasons.
+-->
+<style>
+/* ===== A8 visual tokens (canonical, no donor branding) ===== */
+:root {
+  --accent: #2b6cb0;          /* single accent (A8) */
+  --accent-hover: #2c5282;
+  --bg: #ffffff;
+  --bg-elev: #f7f7f8;
+  --bg-sunken: #efeff1;
+  --border: #d0d0d4;
+  --border-strong: #a0a0a8;
+  --text: #1a1a1a;
+  --text-muted: #6a6a72;
+  --text-disabled: #b0b0b8;
+  --danger: #c53030;
+  --warn: #b7791f;
+  --ok: #2f855a;
+  /* A0 geometry hard constants */
+  --top-chrome-h: 60px;       /* 2 × 30px (A0 ruling) */
+  --row-h: 30px;              /* one top row */
+  --status-h: 24px;           /* status bar (A0 ruling) */
+  --strip-w: 28px;            /* activity strip (A0 ruling) */
+  --focus-ring: 2px solid var(--accent);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --accent: #4299e1;
+    --accent-hover: #63b3ed;
+    --bg: #1a1a1e;
+    --bg-elev: #22222a;
+    --bg-sunken: #15151a;
+    --border: #3a3a44;
+    --border-strong: #5a5a66;
+    --text: #e4e4e8;
+    --text-muted: #9a9aa4;
+    --text-disabled: #5a5a66;
+    --danger: #fc8181;
+    --warn: #f6e05e;
+    --ok: #68d391;
+  }
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 13px; color: var(--text); background: var(--bg); }
+body { overflow: hidden; }
+
+/* ===== Layout shell (A0 geometry) ===== */
+.shell { display: grid; grid-template-rows: var(--top-chrome-h) 1fr var(--status-h); height: 100vh; }
+.top-chrome { display: grid; grid-template-rows: var(--row-h) var(--row-h); background: var(--bg-elev); border-bottom: 1px solid var(--border); }
+.row { display: flex; align-items: center; padding: 0 8px; gap: 4px; height: var(--row-h); }
+.row-a { border-bottom: 1px solid var(--border); }
+.tab-strip { display: flex; align-items: center; gap: 2px; padding: 0 4px; overflow: hidden; }
+.tab { display: inline-flex; align-items: center; gap: 4px; padding: 0 10px; height: 26px; border-radius: 4px 4px 0 0; background: transparent; border: 1px solid transparent; cursor: pointer; white-space: nowrap; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+.tab[aria-selected="true"] { background: var(--bg); border-color: var(--border) var(--border) transparent; }
+.tab:focus-visible { outline: var(--focus-ring); outline-offset: -2px; }
+.tab-close { opacity: 0.5; cursor: pointer; }
+.tab-close:hover { opacity: 1; }
+
+/* nav buttons */
+.btn { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; padding: 0 6px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--text); cursor: pointer; font-size: 12px; }
+.btn:hover { background: var(--bg-sunken); }
+.btn:focus-visible { outline: var(--focus-ring); outline-offset: -1px; }
+.btn[aria-disabled="true"] { color: var(--text-disabled); cursor: not-allowed; }
+.btn.icon { width: 24px; padding: 0; }
+
+/* address / search field (Ctrl+K target) */
+.address-bar { flex: 1; display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; }
+.address-bar:focus-within { border-color: var(--accent); }
+.address-bar input { flex: 1; border: none; outline: none; background: transparent; color: var(--text); font-size: 12px; }
+.address-bar .kbd-hint { font-size: 10px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; }
+
+/* ===== Main area: strip + content + side tools ===== */
+.main { display: grid; grid-template-columns: var(--strip-w) 1fr; overflow: hidden; }
+.strip { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 0; background: var(--bg-elev); border-right: 1px solid var(--border); width: var(--strip-w); }
+.strip-btn { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid transparent; border-radius: 4px; cursor: pointer; color: var(--text-muted); font-size: 14px; }
+.strip-btn:hover { background: var(--bg-sunken); color: var(--text); }
+.strip-btn[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.strip-btn:focus-visible { outline: var(--focus-ring); outline-offset: -1px; }
+
+.content-area { display: grid; grid-template-columns: 1fr; overflow: hidden; position: relative; }
+.content { overflow: auto; padding: 16px; background: var(--bg); }
+.content:focus-visible { outline: var(--focus-ring); outline-offset: -2px; }
+
+/* tool windows (A3 collapse/restore semantics) */
+.toolwindow { position: absolute; background: var(--bg-elev); border: 1px solid var(--border); overflow: auto; }
+.toolwindow[aria-hidden="true"] { display: none; }
+.tw-left { left: 0; top: 0; bottom: 0; width: min(260px, 25%); }
+.tw-right { right: 0; top: 0; bottom: 0; width: min(320px, 28%); }
+.tw-bottom { left: 0; right: 0; bottom: 0; height: min(240px, 30%); }
+.tw-header { display: flex; align-items: center; justify-content: space-between; padding: 0 8px; height: 28px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 12px; }
+.tw-body { padding: 4px 8px; }
+
+/* ===== Status bar (A0: 24px) ===== */
+.statusbar { display: flex; align-items: center; gap: 12px; padding: 0 8px; height: var(--status-h); background: var(--bg-elev); border-top: 1px solid var(--border); font-size: 11px; color: var(--text-muted); }
+.status-item { display: inline-flex; align-items: center; gap: 4px; }
+.status-item.clickable { cursor: pointer; }
+.status-item.clickable:hover { color: var(--text); }
+
+/* ===== Context menu (A6: role=menu, scoped) ===== */
+.context-menu { position: fixed; z-index: 1000; min-width: 200px; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); padding: 4px 0; }
+.context-menu[aria-hidden="true"] { display: none; }
+.menu-group { padding: 0; }
+.menu-group + .menu-group { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 4px; }
+.menu-item { display: flex; align-items: center; justify-content: space-between; padding: 0 12px; height: 26px; cursor: pointer; font-size: 12px; }
+.menu-item:hover { background: var(--bg-sunken); }
+.menu-item:focus-visible { outline: var(--focus-ring); outline-offset: -1px; }
+.menu-item[aria-disabled="true"] { color: var(--text-disabled); cursor: not-allowed; }
+.menu-item[aria-disabled="true"]:hover { background: transparent; }
+.menu-label { flex: 1; }
+.menu-shortcut { color!color!color: var(--text-muted); font-size: 11px; margin-left: 16px; }
+.menu-safety { font-size: 9px; padding: 0 4px; border-radius: 2px; margin-left: 8px; }
+.safety-safe { background: #e6f4ea; color: var(--ok); }
+.safety-mutating { background: #fef3c7; color: var(--warn); }
+.safety-destructive { background: #fee2e2; color: var(--danger); }
+.safety-dangerous { background: #fecaca; color: var(--danger); font-weight: 700; }
+
+/* ===== Command palette (Ctrl+Shift+P) ===== */
+.palette-overlay { position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,0.3); display: flex; align-items: flex-start; justify-content: center; padding-top: 80px; }
+.palette-overlay[aria-hidden="true"] { display: none; }
+.palette { width: min(560px, 90%); background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); }
+.palette-input { width: 100%; padding: 10px 12px; border: none; border-bottom: 1px solid var(--border); background: transparent; color: var(--text); font-size: 13px; outline: none; }
+.palette-list { max-height: 320px; overflow: auto; padding: 4px 0; }
+.palette-item { display: flex; align-items: center; justify-content: space-between; padding: 0 12px; height: 28px; cursor: pointer; font-size: 12px; }
+.palette-item:hover, .palette-item[aria-selected="true"] { background: var(--bg-sunken); }
+.palette-item:focus-visible { outline: var(--focus-ring); outline-offset: -1px; }
+.palette-cat { font-size: 10px; color: var(--text-muted); text-transform: uppercase; }
+
+/* ===== Mode frames for demonstration ===== */
+.mode-frame { border: 1px solid var(--border); border-radius: 4px; margin: 8px 0; padding: 8px; background: var(--bg-elev); }
+.mode-label { font-size: 11px; font-weight: 700; color: var(--accent); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+.size-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0; }
+.size-card { border: 1px solid var(--border); border-radius: 4px; padding: 8px; background: var(--bg); }
+.size-title { font-weight: 600; font-size: 12px; margin-bottom: 4px; }
+.size-stat { font-size: 11px; color: var(--text-muted); }
+.size-stat.pass { color: var(--ok); }
+.size-stat.fail { color: var(--danger); }
+
+/* Git unit grid (A7 14 units) */
+.git-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; margin: 8px 0; }
+.git-unit { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 3px; font-size: 11px; }
+.git-unit-id { font-family: monospace; color: var(--accent); }
+.git-unit-class { font-size: 9px; padding: 0 3px; border-radius: 2px; }
+.class-adapt { background: #dbeafe; color: #1e40af; }
+.class-reimpl { background: #e0e7ff; color: #3730a3; }
+
+/* State demos */
+.state-demo { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px; margin: 4px; font-size: 11px; }
+.state-empty { color: var(--text-muted); }
+.state-loading { color: var(--accent); }
+.state-error { color: var(--danger); }
+.state-disabled { color: var(--text-disabled); }
+
+/* Focus mode */
+.focus-mode .top-chrome, .focus-mode .strip, .focus-mode .statusbar, .focus-mode .toolwindow { display: none; }
+.focus-mode .shell { grid-template-rows: 1fr; }
+.focus-mode .main { grid-template-columns: 1fr; }
+.focus-return { position: fixed; top: 8px; right: 8px; z-index: 100; }
+
+/* Section headers */
+h2 { font-size: 14px; margin: 16px 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+h3 { font-size: 13px; margin: 12px 0 6px; color: var(--accent); }
+code { font-family: ui-monospace, "Cascadia Code", monospace; background: var(--bg-sunken); padding: 1px 4px; border-radius: 2px; font-size: 11px; }
+.note { font-size: 11px; color: var(--text-muted); margin: 4px 0; }
+</style>
+</head>
+<body>
+
+<!-- ==================== Main Shell ==================== -->
+<div class="shell" id="shell">
+
+  <!-- Top chrome: 2 rows × 30px = 60px (A0 ruling) -->
+  <div class="top-chrome" role="toolbar" aria-label="Browser navigation">
+    <!-- Row 1: nav + address/search (Ctrl+K) + menu -->
+    <div class="row row-a">
+      <button class="btn icon" aria-label="Back" title="Back (Alt+←)">←</button>
+      <button class="btn icon" aria-label="Forward" title="Forward (Alt+→)">→</button>
+      <button class="btn icon" aria-label="Reload" title="Reload (Ctrl+R)">⟳</button>
+      <div class="address-bar" role="search">
+        <span aria-hidden="true">🔍</span>
+        <input type="text" id="addressInput" placeholder="Address or search…" aria-label="Address or search (Ctrl+K)" accesskey="k">
+        <span class="kbd-hint">Ctrl+K</span>
+      </div>
+      <button class="btn icon" aria-label="Command palette" title="Command palette (Ctrl+Shift+P)" onclick="openPalette()">⌘</button>
+      <button class="btn icon" aria-label="Menu" title="Menu">☰</button>
+    </div>
+    <!-- Row 2: document tabs -->
+    <div class="tab-strip" role="tablist" aria-label="Document tabs">
+      <div class="tab" role="tab" aria-selected="true" tabindex="0" onclick="selectTab(this)">📄 readme.md</div>
+      <div class="tab" role="tab" aria-selected="false" tabindex="0" onclick="selectTab(this)">🌐 docs.example</div>
+      <div class="tab" role="tab" aria-selected="false" tabindex="0" onclick="selectTab(this)">🗄️ query.sql</div>
+      <div class="tab" role="tab" aria-selected="false" tabindex="0" onclick="selectTab(this)">🕸️ graph</div>
+      <div class="tab" role="tab" aria-selected="false" tabindex="0" onclick="selectTab(this)">🛰️ git-log</div>
+      <button class="btn icon" aria-label="New tab" title="New tab (Ctrl+T)">+</button>
+    </div>
+  </div>
+
+  <!-- Main: 28px strip + content -->
+  <div class="main">
+    <!-- Activity strip (A0: 28px, visible in collapsed) -->
+    <div class="strip" role="toolbar" aria-label="Tool windows">
+      <button class="strip-btn" aria-pressed="true" aria-label="Files" title="Files" onclick="toggleTW('left', this)">📄</button>
+      <button class="strip-btn" aria-pressed="false" aria-label="Browser" title="Browser">🌐</button>
+      <button class="strip-btn" aria-pressed="false" aria-label="Database" title="Database" onclick="toggleTW('left', this)">🗄️</button>
+      <button class="strip-btn" aria-pressed="false" aria-label="Graph" title="Graph" onclick="toggleTW('right', this)">🕸️</button>
+      <button class="strip-btn" aria-pressed="false" aria-label="Git" title="Git" onclick="toggleTW('bottom', this)">🛰️</button>
+      <button class="strip-btn" aria-pressed="false" aria-label="Terminal" title="Terminal" onclick="toggleTW('bottom', this)">💻</button>
+    </div>
+
+    <!-- Content area with optional tool windows -->
+    <div class="content-area">
+      <div class="content" id="content" tabindex="0" role="main" aria-label="Active document">
+        <h2>A1 · R3B Corrected Browser-First Workbench</h2>
+        <p class="note">Self-contained synthetic prototype. No donor branding in UI. Geometry per A0 SSOT: 60px top, 24px status, 28px strip.</p>
+
+        <!-- ===== Six target sizes (A0/A2) ===== -->
+        <h3>Six Target Sizes (A0 ruling, A2 measured)</h3>
+        <p class="note">800×600 dropped (product min_inner_size=900×600). Collapsed: active H = (innerH−60−24)/innerH, active W = (W−28)/W.</p>
+        <div class="size-grid">
+          <div class="size-card">
+            <div class="size-title">1920×1080</div>
+            <div class="size-stat pass">H 92.22% W 98.54% ✅</div>
+            <div class="size-stat">content 996×1892</div>
+          </div>
+          <div class="size-card">
+            <div class="size-title">1440×900</div>
+            <div class="size-stat pass">H 90.67% W 98.06% ✅</div>
+            <div class="size-stat">content 816×1412</div>
+          </div>
+          <div class="size-card">
+            <div class="size-title">1366×768</div>
+            <div class="size-stat pass">H 89.06% W 97.95% ✅</div>
+            <div class="size-stat">content 684×1338</div>
+          </div>
+          <div class="size-card">
+            <div class="size-title">1200×800</div>
+            <div class="size-stat pass">H 89.50% W 97.67% ✅</div>
+            <div class="size-stat">content 716×1172</div>
+          </div>
+          <div class="size-card">
+            <div class="size-title">1024×720</div>
+            <div class="size-stat pass">H 88.33% W 97.27% ✅</div>
+            <div class="size-stat">content 636×996</div>
+          </div>
+          <div class="size-card">
+            <div class="size-title">900×600 (min)</div>
+            <div class="size-stat pass">H 86.00% W 96.89% ✅</div>
+            <div class="size-stat">content 516×872 (余量 1.00pp)</div>
+          </div>
+        </div>
+
+        <!-- ===== Git 14 units (A0/A7) ===== -->
+        <h3>Git Workflow — 14 Units (A7: COPY=0, ADAPT_PRODUCT=4, REIMPLEMENT=10)</h3>
+        <p class="note">Behavior SSOT: v1.1.15@cee14e9 (reference only, no source copying). All units have stable command IDs (A6).</p>
+        <div class="git-grid">
+          <div class="git-unit"><span class="git-unit-id">git.status.refresh</span> U01 <span class="git-unit-class class-adapt">ADAPT</span></div>
+          <div class="git-unit"><span class="git-unit-id">git.hunk.stage</span> U02 <span class="git-unit-class class-reimpl">REIMPL</span></div>
+          <div class="git-unit"><span class="git-unit-id">git.file.diff</span> U03 <span class="git-unit-class class-adapt">ADAPT</span></div>
+          <div class="git-unit"><span class="git-unit-id">git.log.graph</span> U04 <span class="git-unit-class class-reimpl">REIMPL</span></div>
+          <div class="git-unit"><span class="git-unit-id">git.branch.list</span> U05 <span class="git-unit-class class-adapt">ADAPT</span></div>
+          <div class="git-unit"><span class="git-unit-id">git.worktree.add</span> U06 <span class="git-unit-class class-reimpl">REIMPL</span></div>
+          <div class="git-unit"><span class="git-unit-id">git.stash.push</span> U07 <span class="git-unit-class class-reimpl">REIMPL</span></div>
+          <div class="git-unit"><span class="git-unit-id">git.branch.merge</span> U08 <span class="git-unit-class class-adapt">ADAPT</span></div>
+          <div class="git-unit"><span class="git-unit-id">git.rebase</span> U09 <span class="git-unit-class class-reimpl">REIMPL</span></div>
+          <div class="git-unit"><span class="git-unit-id">git.commit.cherrypick</span> U10 <span class="git-unit-class class-reimpl">REIMPL</span></div>
+          <div class="git-unit"><span class="git-unit-id">git.conflict.resolve</span> U11 <span class="git-unit-class class-reimpl">REIMPL</span></div>
+          <div class="git-unit"><span class="git-unit-id">git.blame</span> U12 <span class="git-unit-class class-reimpl">REIMPL</span></div>
+          <div class="git-unit"><span class="git-unit-id">git.patch.apply</span> U13 <span class="git-unit-class class-reimpl">REIMPL</span></div>
+          <div class="git-unit"><span class="git-unit-id">git.console</span> U14 <span class="git-unit-class class-reimpl">REIMPL</span></div>
+        </div>
+        <p class="note">Advanced actions (amend, reset/revert, rebase continue/abort, cherry-pick continue/abort, conflict resolution, patch, command log) belong in menus/palette, not permanent buttons.</p>
+        <p class="note">Placement: <code>git.log.graph</code> reversible center↔bottom (D-R1). Toggle via <code>git.log.placement.toggle</code>.</p>
+
+        <!-- ===== Modes ===== -->
+        <h3>Modes (7 + command palette)</h3>
+        <div class="mode-frame">
+          <div class="mode-label">Normal</div>
+          <p class="note">60px top + 28px strip + content + 24px status. Tool windows on demand.</p>
+        </div>
+        <div class="mode-frame">
+          <div class="mode-label">Collapsed</div>
+          <p class="note">All tool windows hidden (A3: including pinned). 28px strip remains (A0). Content ≥85% H / ≥92% W.</p>
+        </div>
+        <div class="mode-frame">
+          <div class="mode-label">Focus</div>
+          <p class="note">All chrome hidden. One return action (Esc). Content 100%.</p>
+        </div>
+        <div class="mode-frame">
+          <div class="mode-label">Database</div>
+          <p class="note">Left: connection tree. Center: SQL editor. Bottom: results (focus → full). Multi-doc independent.</p>
+        </div>
+        <div class="mode-frame">
+          <div class="mode-label">Knowledge</div>
+          <p class="note">Center: note editor. Right: backlinks + local graph (collapsible). No donor branding.</p>
+        </div>
+        <div class="mode-frame">
+          <div class="mode-label">Git — Central Log (D-R1a)</div>
+          <p class="note">Git log/graph in center document area. Reversible to bottom tool window.</p>
+        </div>
+        <div class="mode-frame">
+          <div class="mode-label">Git — Bottom Tool Window (D-R1b)</div>
+          <p class="note">Editor in center, Git log in bottom. Reversible to central.</p>
+        </div>
+        <div class="mode-frame">
+          <div class="mode-label">Context Menu (scope-aware, A6)</div>
+          <p class="note">Right-click scoped to object. Grouped, disabled reasons, shortcuts, safety class. See demo below.</p>
+        </div>
+
+        <!-- ===== States ===== -->
+        <h3>States (4)</h3>
+        <div>
+          <span class="state-demo state-empty">empty — no content</span>
+          <span class="state-demo state-loading">⟳ loading…</span>
+          <span class="state-demo state-error">⚠ error — [Retry]</span>
+          <span class="state-demo state-disabled">disabled — no staged changes</span>
+        </div>
+
+        <!-- ===== Accessibility (A6/A8) ===== -->
+        <h3>Accessibility (A6/A8, R3B-04 closure)</h3>
+        <p class="note">Every interactive element has <code>role</code>, <code>aria-label</code>, keyboard focus (<code>:focus-visible</code>), and disabled state with reason (<code>aria-disabled</code> + <code>title</code>).</p>
+        <p class="note">Menu navigation: ↑/↓ move, Enter execute, Esc close + return focus to origin. Tab order follows DOM.</p>
+        <p class="note">ARIA roles used: <code>toolbar</code>, <code>tablist</code>/<code>tab</code>, <code>search</code>, <code>main</code>, <code>menu</code>/<code>menuitem</code>, <code>dialog</code>, <code>tree</code>/<code>treeitem</code>, <code>status</code>, <code>button</code>.</p>
+
+        <!-- ===== Shortcuts (A0/A6) ===== -->
+        <h3>Frozen Shortcuts (A0 ruling, R3B-06 closure)</h3>
+        <p class="note"><code>Ctrl+K</code> → <code>browser.focusAddressSearch</code> (address/search field)</p>
+        <p class="note"><code>Ctrl+Shift+P</code> → <code>app.openCommandPalette</code> (command palette)</p>
+        <p class="note">No other command may claim either chord. All shortcuts unique (A6 audit PASS).</p>
+
+        <!-- ===== Collapse semantics (A0/A3/A4) ===== -->
+        <h3>Collapse/Restore Semantics (A0 ruling, A3/A4 aligned)</h3>
+        <p class="note"><strong>Collapse All</strong>: hides every tool window including pinned. Records one restorable snapshot.</p>
+        <p class="note"><strong>Restore Layout</strong>: restores visibility, dimensions, pin states from snapshot. Deterministic.</p>
+        <p class="note"><strong>Pin</strong>: affects ordinary replacement and auto-hide only. Pinned windows still hide on Collapse All.</p>
+        <p class="note">Transient hover/overlay state is NOT persisted (A4). Snapshot lifecycle: create on collapse, consume on restore, GC on close.</p>
+
+        <!-- ===== Geometry SSOT (A0/A2) ===== -->
+        <h3>Geometry SSOT (A0 ruling, A2 measured)</h3>
+        <p class="note">Top chrome = 60px (2×30). Status = 24px. Strip = 28px. These are hard constants.</p>
+        <p class="note">Collapsed active H = (innerH − 60 − 24) / innerH. Collapsed active W = (W − 28) / W.</p>
+        <p class="note">900×600 is the tightest: 86.00% H (余量 1.00pp). Any +1px to 60/24/28 breaks it first.</p>
+        <p class="note">Current baseline measures 63px top / 26px status (A2 §5). R3B prototype encodes A0 constants exactly.</p>
+      </div>
+
+      <!-- Left tool window (files) -->
+      <aside class="toolwindow tw-left" id="tw-left" aria-hidden="false" role="complementary" aria-label="Files">
+        <div class="tw-header">
+          <span>Files</span>
+          <button class="btn icon" aria-label="Close" onclick="closeTW('left')">✕</button>
+        </div>
+        <div class="tw-body" role="tree" aria-label="File tree">
+          <div role="treeitem" aria-expanded="true" tabindex="0">📁 src</div>
+          <div role="treeitem" style="padding-left:12px" tabindex="0">📄 App.vue</div>
+          <div role="treeitem" style="padding-left:12px" tabindex="0">📄 main.ts</div>
+          <div role="treeitem" aria-expanded="false" tabindex="0">📁 components</div>
+          <div role="treeitem" tabindex="0">📄 readme.md</div>
+        </div>
+      </aside>
+
+      <!-- Right tool window (graph/properties) -->
+      <aside class="toolwindow tw-right" id="tw-right" aria-hidden="true" role="complementary" aria-label="Properties">
+        <div class="tw-header">
+          <span>Backlinks</span>
+          <button class="btn icon" aria-label="Close" onclick="closeTW('right')">✕</button>
+        </div>
+        <div class="tw-body">
+          <p class="note">No backlinks (synthetic).</p>
+        </div>
+      </aside>
+
+      <!-- Bottom tool window (terminal/git) -->
+      <aside class="toolwindow tw-bottom" id="tw-bottom" aria-hidden="true" role="complementary" aria-label="Output">
+        <div class="tw-header">
+          <span>Git Log</span>
+          <button class="btn icon" aria-label="Close" onclick="closeTW('bottom')">✕</button>
+        </div>
+        <div class="tw-body">
+          <p class="note">U04 git.log.graph — bottom placement (D-R1b, reversible).</p>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Status bar: 24px (A0) -->
+  <div class="statusbar" role="status" aria-label="Status">
+    <span class="status-item">📁 workbench-repo</span>
+    <span class="status-item">🌿 main</span>
+    <span class="status-item">⏰ 0 tasks</span>
+    <span class="status-item">📡 index ready</span>
+    <span class="status-item">🔌 —</span>
+    <span class="status-item clickable" onclick="toggleFocus()" title="Toggle focus mode (F11)">🎯 Focus</span>
+  </div>
+</div>
+
+<!-- ==================== Context Menu (scope-aware, A6) ==================== -->
+<div class="context-menu" id="ctxMenu" role="menu" aria-hidden="true" aria-label="Context menu">
+  <!-- Group: File -->
+  <div class="menu-group" role="group" aria-label="File">
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Open</span><span class="menu-shortcut">Enter</span><span class="menu-safety safety-safe">safe</span>
+    </div>
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Copy Path</span><span class="menu-shortcut">Ctrl+C</span><span class="menu-safety safety-safe">safe</span>
+    </div>
+  </div>
+  <!-- Group: Git (14 units visible) -->
+  <div class="menu-group" role="group" aria-label="Git">
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Git: Status</span><span class="menu-shortcut"></span><span class="menu-safety safety-safe">safe</span>
+    </div>
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Git: Stage File</span><span class="menu-shortcut"></span><span class="menu-safety safety-mutating">mutating</span>
+    </div>
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Git: Stage Hunk</span><span class="menu-shortcut"></span><span class="menu-safety safety-mutating">mutating</span>
+    </div>
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Git: Diff</span><span class="menu-shortcut"></span><span class="menu-safety safety-safe">safe</span>
+    </div>
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Git: Log Graph</span><span class="menu-shortcut"></span><span class="menu-safety safety-safe">safe</span>
+    </div>
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Git: Branch…</span><span class="menu-shortcut"></span><span class="menu-safety safety-mutating">mutating</span>
+    </div>
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Git: Worktree Add…</span><span class="menu-shortcut"></span><span class="menu-safety safety-mutating">mutating</span>
+    </div>
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Git: Stash Push</span><span class="menu-shortcut"></span><span class="menu-safety safety-mutating">mutating</span>
+    </div>
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Git: Commit</span><span class="menu-shortcut"></span><span class="menu-safety safety-mutating">mutating</span>
+    </div>
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Git: Commit Amend</span><span class="menu-shortcut"></span><span class="menu-safety safety-destructive">destructive</span>
+    </div>
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Git: Revert</span><span class="menu-shortcut"></span><span class="menu-safety safety-mutating">mutating</span>
+    </div>
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Git: Reset…</span><span class="menu-shortcut"></span><span class="menu-safety safety-destructive">destructive</span>
+    </div>
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Git: Merge…</span><span class="menu-shortcut"></span><span class="menu-safety safety-destructive">destructive</span>
+    </div>
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Git: Rebase…</span><span class="menu-shortcut"></span><span class="menu-safety safety-destructive">destructive</span>
+    </div>
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Git: Cherry-Pick…</span><span class="menu-shortcut"></span><span class="menu-safety safety-mutating">mutating</span>
+    </div>
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Git: Resolve Conflict…</span><span class="menu-shortcut"></span><span class="menu-safety safety-mutating">mutating</span>
+    </div>
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Git: Blame / History</span><span class="menu-shortcut"></span><span class="menu-safety safety-safe">safe</span>
+    </div>
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Git: Patch Create</span><span class="menu-shortcut"></span><span class="menu-safety safety-safe">safe</span>
+    </div>
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Git: Patch Apply…</span><span class="menu-shortcut"></span><span class="menu-safety safety-destructive">destructive</span>
+    </div>
+    <div class="menu-item" role="menuitem" tabindex="0">
+      <span class="menu-label">Git: Command Log</span><span class="menu-shortcut"></span><span class="menu-safety safety-safe">safe</span>
+    </div>
+    <div class="menu-item" role="menuitem" aria-disabled="true" tabindex="-1" title="No staged changes">
+      <span class="menu-label">Git: Push</span><span class="menu-shortcut"></span><span class="menu-safety safety-dangerous">dangerous</span>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== Command Palette (Ctrl+Shift+P) ==================== -->
+<div class="palette-overlay" id="palette" aria-hidden="true" role="dialog" aria-label="Command palette" aria-modal="true">
+  <div class="palette">
+    <input type="text" class="palette-input" id="paletteInput" placeholder="Type a command… (Esc to close)" aria-label="Command search" autocomplete="off">
+    <div class="palette-list" id="paletteList" role="listbox" aria-label="Commands">
+      <!-- Shell -->
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Back</span><span class="palette-cat">Shell</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Forward</span><span class="palette-cat">Shell</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Reload</span><span class="palette-cat">Shell</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>New Tab</span><span class="palette-cat">Shell</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Close Tab</span><span class="palette-cat">Shell</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Focus Address/Search</span><span class="palette-cat">Shell · Ctrl+K</span></div>
+      <!-- Tool windows -->
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Toggle Files</span><span class="palette-cat">Tool</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Toggle Database</span><span class="palette-cat">Tool</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Toggle Graph</span><span class="palette-cat">Tool</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Toggle Git</span><span class="palette-cat">Tool</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Toggle Terminal</span><span class="palette-cat">Tool</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Collapse All Tool Windows</span><span class="palette-cat">Tool</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Restore Layout</span><span class="palette-cat">Tool</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Focus Mode</span><span class="palette-cat">Tool</span></div>
+      <!-- Git 14 units -->
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Status</span><span class="palette-cat">Git · safe</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Stage Hunk</span><span class="palette-cat">Git · mutating</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Diff</span><span class="palette-cat">Git · safe</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Log Graph</span><span class="palette-cat">Git · safe</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Log Placement Toggle</span><span class="palette-cat">Git · safe</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Branch New</span><span class="palette-cat">Git · mutating</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Worktree Add</span><span class="palette-cat">Git · mutating</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Stash Push</span><span class="palette-cat">Git · mutating</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Commit</span><span class="palette-cat">Git · mutating</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Commit Amend</span><span class="palette-cat">Git · destructive</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Revert</span><span class="palette-cat">Git · mutating</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Reset</span><span class="palette-cat">Git · destructive</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Merge</span><span class="palette-cat">Git · destructive</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Rebase</span><span class="palette-cat">Git · destructive</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Rebase Continue</span><span class="palette-cat">Git · mutating</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Rebase Abort</span><span class="palette-cat">Git · mutating</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Cherry-Pick</span><span class="palette-cat">Git · mutating</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Resolve Conflict</span><span class="palette-cat">Git · mutating</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Blame</span><span class="palette-cat">Git · safe</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: File History</span><span class="palette-cat">Git · safe</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Patch Create</span><span class="palette-cat">Git · safe</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Patch Apply</span><span class="palette-cat">Git · destructive</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Command Log</span><span class="palette-cat">Git · safe</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Git: Push</span><span class="palette-cat">Git · dangerous</span></div>
+      <!-- Database -->
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>DB: Connect</span><span class="palette-cat">Database</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>DB: Execute Query</span><span class="palette-cat">Database</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>DB: Cancel Query</span><span class="palette-cat">Database</span></div>
+      <!-- Knowledge -->
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Note: Open</span><span class="palette-cat">Knowledge</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Note: Follow Link</span><span class="palette-cat">Knowledge</span></div>
+      <div class="palette-item" role="option" aria-selected="false" tabindex="0"><span>Graph: Show Local</span><span class="palette-cat">Knowledge</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===== Keyboard shortcuts (A0/A6 frozen) =====
+document.addEventListener('keydown', function(e) {
+  // Ctrl+K → focus address/search (A0 ruling)
+  if (e.ctrlKey && e.key === 'k' && !e.shiftKey) {
+    e.preventDefault();
+    document.getElementById('addressInput').focus();
+    return;
+  }
+  // Ctrl+Shift+P → command palette (A0 ruling)
+  if (e.ctrlKey && e.shiftKey && (e.key === 'P' || e.key === 'p')) {
+    e.preventDefault();
+    openPalette();
+    return;
+  }
+  // Esc → close palette/menu or exit focus
+  if (e.key === 'Escape') {
+    closePalette();
+    closeCtxMenu();
+    if (document.body.classList.contains('focus-mode')) toggleFocus();
+    return;
+  }
+  // F11 → focus mode
+  if (e.key === 'F11') {
+    e.preventDefault();
+    toggleFocus();
+    return;
+  }
+});
+
+// ===== Tab selection =====
+function selectTab(el) {
+  document.querySelectorAll('.tab').forEach(t => { t.setAttribute('aria-selected', 'false'); });
+  el.setAttribute('aria-selected', 'true');
+}
+
+// ===== Tool window toggle (A3 semantics) =====
+function toggleTW(side, btn) {
+  const tw = document.getElementById('tw-' + side);
+  const hidden = tw.getAttribute('aria-hidden') === 'true';
+  tw.setAttribute('aria-hidden', hidden ? 'false' : 'true');
+  if (btn) btn.setAttribute('aria-pressed', hidden ? 'true' : 'false');
+}
+function closeTW(side) {
+  const tw = document.getElementById('tw-' + side);
+  tw.setAttribute('aria-hidden', 'true');
+  // Update strip button state
+  document.querySelectorAll('.strip-btn').forEach(b => b.setAttribute('aria-pressed', 'false'));
+}
+
+// ===== Context menu (scope-aware, A6) =====
+document.getElementById('content').addEventListener('contextmenu', function(e) {
+  e.preventDefault();
+  const menu = document.getElementById('ctxMenu');
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+  menu.setAttribute('aria-hidden', 'false');
+  // Focus first menu item
+  const first = menu.querySelector('.menu-item:not([aria-disabled])');
+  if (first) first.focus();
+});
+function closeCtxMenu() {
+  document.getElementById('ctxMenu').setAttribute('aria-hidden', 'true');
+}
+// Click outside closes menu
+document.addEventListener('click', function(e) {
+  const menu = document.getElementById('ctxMenu');
+  if (!menu.contains(e.target) && menu.getAttribute('aria-hidden') === 'false') {
+    closeCtxMenu();
+  }
+});
+
+// ===== Command palette (Ctrl+Shift+P) =====
+function openPalette() {
+  const p = document.getElementById('palette');
+  p.setAttribute('aria-hidden', 'false');
+  document.getElementById('paletteInput').focus();
+}
+function closePalette() {
+  const p = document.getElementById('palette');
+  p.setAttribute('aria-hidden', 'true');
+  document.getElementById('paletteInput').value = '';
+}
+// Palette item navigation
+document.getElementById('paletteInput').addEventListener('keydown', function(e) {
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const items = Array.from(document.querySelectorAll('.palette-item'));
+    const current = document.querySelector('.palette-item[aria-selected="true"]');
+    let idx = current ? items.indexOf(current) : -1;
+    idx += e.key === 'ArrowDown' ? 1 : -1;
+    if (idx < 0) idx = items.length - 1;
+    if (idx >= items.length) idx = 0;
+    items.forEach(i => i.setAttribute('aria-selected', 'false'));
+    items[idx].setAttribute('aria-selected', 'true');
+    items[idx].focus();
+  }
+});
+
+// ===== Focus mode =====
+function toggleFocus() {
+  document.body.classList.toggle('focus-mode');
+  const shell = document.getElementById('shell');
+  if (document.body.classList.contains('focus-mode')) {
+    // Add return button
+    if (!document.querySelector('.focus-return')) {
+      const btn = document.createElement('button');
+      btn.className = 'btn focus-return';
+      btn.textContent = 'Exit Focus (Esc)';
+      btn.setAttribute('aria-label', 'Exit focus mode');
+      btn.onclick = toggleFocus;
+      document.body.appendChild(btn);
+    }
+  } else {
+    const r = document.querySelector('.focus-return');
+    if (r) r.remove();
+  }
+}
+
+// ===== Collapse All (A3/A4: includes pinned, records snapshot) =====
+function collapseAll() {
+  document.querySelectorAll('.toolwindow').forEach(tw => tw.setAttribute('aria-hidden', 'true'));
+  document.querySelectorAll('.strip-btn').forEach(b => b.setAttribute('aria-pressed', 'false'));
+  // Snapshot recorded by A4 persistence contract (not persisted here — synthetic)
+}
+</script>
+
+</body>
+</html>
