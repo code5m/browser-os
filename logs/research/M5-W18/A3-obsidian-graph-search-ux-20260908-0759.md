@@ -276,3 +276,212 @@ NEXT=待 A2 提供链接/孤儿/未解析的权威语义后收敛派生规则；
      W19 建议切片：① 图谱过滤 DSL + 四开关 + 派生孤儿/未解析（纯前端，可先行）
      ② 设置持久化（含敏感过滤）③ global 图（需新命令，待 A0）④ 搜索面（与 A8 协同）
 ```
+
+---
+
+# R2 Evidence Closure Addendum (2026-09-08, A0 audit-driven)
+
+> 本附录按 `PARALLEL_COMMAND_BOARD.md` 的 `M5-W18-R2 Evidence Closure Dispatch` 与
+> `logs/checkpoints/A0-M5-W18-R1-audit-20260908.md` 的 A3 裁定（`REWORK`）补齐证据：
+> ① 显式修正/重分类 R1 中的证据分级；② 把每个屏幕/状态精确映射到**当前**产品源码
+> （符号 + 行号，均取自 `origin/master` d6127c4 rebase 后的本工作树）；③ 给出确切的
+> 组件/状态/事件增量、a11y/键盘/窄窗行为、以及**未来测试计划**（非伪造截图）；
+> ④ 声明状态与阻塞。R1 草稿正文（上文）保留作为历史，不静默改写。
+
+## R2-A. A0 审计对 A3 的裁定与对应动作
+
+- 裁定原文：「Strong UX/state outline, but global/local graph and group semantics depend on
+  unresolved A2 facts and need exact current Vue/store destination mapping.」
+- 对应动作：
+  1. **A2 对账**：经 `git show codex/m5-w18-a2:logs/research/M5-W18/A2-obsidian-vault-semantics.md`
+     （R1 草稿，A2 的 R2 尚未发布，见 §R2-G 阻塞）确认其语义定义：
+     - 未解析链接（2.7）= 指向不存在 note/alias/path 的 wikilink；Obsidian 仍记录它，
+       在图里作为 `unresolved` 占位节点呈现（当 `hideUnresolved:false`）。
+     - 孤儿（2.8/2.9 推导）= 无入边也无出边的节点；backlink/outgoing 为**派生**（逆索引），**不存储**。
+     - R1 对 `unresolvedIds`（作为 `to` 出现但不在 `nodes` 中）与 `orphanIds`（入度+出度均为 0）
+       的定义与 A2 一致；本附录保留并强化「局部子图内孤儿 ≠ 全库孤儿，UI 须标注『当前子图内无连接』」。
+  2. **精确目标映射**：见 §R2-B 全表（每个屏幕/状态 → 当前文件 : 符号 : 行号）。
+  3. **CURRENT_PRODUCT 证据**：现行图谱门禁已可执行并实跑（§R2-E）。
+
+## R2-B. 当前产品精确目标映射（CURRENT_PRODUCT，全部取自 rebase 后工作树）
+
+| 屏幕/状态 | 当前文件:行 | 当前符号/实现 | R1 差距判定复核 |
+|---|---|---|---|
+| 图谱面板容器 | `src/components/graph/GraphPanel.vue:1-119` | `role="region" aria-label="知识图谱"`；三态/截断/容量横幅；起始节点输入框（`#graph-start-id`） | 已有；缺四分区折叠壳 |
+| 起始节点查询/刷新 | `GraphPanel.vue:20-43` + `useGraphStore.loadGraph/refresh` | `onMounted` 仅当 `startId` 有值才 `loadGraph`；否则只读壳 | 与 W11 LIMITED START 一致 |
+| 只读壳/未就绪态 | `GraphPanel.vue:72-74`（banner-warn, `readOnly`）+ `useGraphStore.readOnly` | `backendReady=false` 时零 invoke | 达标（优于 Obsidian 无此态） |
+| 错误态 | `GraphPanel.vue:75`（banner-error `role=alert`）+ `store.error` | 经 `applyGraphErrorView` 稳定码映射 | 达标 |
+| 容量/截断态 | `GraphPanel.vue:51,76-77`（`capState`+`truncated` banner）+ `graphUi.capacityState` | `near(>=90%)`/`over` 黄牌 + `GRAPH_TRUNCATION_NOTICE` | 达标 |
+| 空态（库空/过滤无匹配/只读） | `GraphPanel.vue:81-84` + `graphUi.panelStateGraph`（四态 loading/empty/ready/error） | 仅区分 `empty` vs `error`；**缺『过滤后无匹配』子态** | 确认缺口（§R2-C 补） |
+| 渲染/布局 | `src/components/graph/GraphViewer.vue:1-104` | `clampRender` 渲染护栏；`layoutPositions`（确定性 tree/cluster/force，无 d3）；`RENDER_NODE_CAP/EDGE_CAP` | 确定性布局达标；力导向参数不照搬 |
+| 节点/边选择 | `GraphViewer.vue:32-81`（`onNode/onEdge`→`store.selectNode/selectEdge`）+ `useGraphStore.selectedNodeId/selectedEdgeKey` | **边用稳定键 `from\|to\|kind`（`edgeKey`/`resolveEdgeByKey`）**，过滤不漂移 | 优于 Obsidian 索引选择，保留 |
+| 过滤 DSL/类型 | `src/components/graph/GraphFilter.vue:1-48` + `graphUi.filterNodes/filterEdges` | 仅子串 `query` + 类型 `kinds` 芯片；**无 path/ext/name/AND/OR/`-` 字段运算符** | 确认 DSL 缺失 |
+| 类型开关（showTags/showAttachments/hideUnresolved/showOrphans） | 当前**无对应 UI/状态**（`GraphFilterState` 仅 `query/kinds`，`useGraphStore.ts:71,224-274`） | 仅 `kinds` 映射 kind，四语义开关完全缺失 | 确认缺口 |
+| 颜色分组 | 当前无；`graphUi.NODE_KIND_COLOR`（`graphUi.ts:58`）仅按 kind 着色 | `colorGroups` schema 本库为空，[UNKNOWN] | 仍 DEFER |
+| 详情面板 | `NodeDetail.vue:1-33` / `EdgeDetail.vue:1-33` | 展示 `summarizeNode/summarizeEdge` 白名单（id/kind/label） | 达标（K7 禁 props） |
+| 状态机 | `src/stores/useGraphStore.ts:52-310` | `loadGraph`（300ms 防抖+AbortController+`request_id` 乱序丢弃）/`loadNode`/`loadStats`/`selectNode/selectEdge`/`setFilter`/`toggleKind`/`clearFilter`；**无 viewMode/depth 控件/visibility/display/collapse/derived/layoutMode** | 确认蓝图需增量字段 |
+| 纯逻辑层 | `src/utils/graphUi.ts:1-518` | 导出 40+ 符号（见 R1 §4 及下方 R2-C 引用） | 518 行，与 R1 一致 |
+| 后端命令面 | `src-tauri/src/main.rs:1482-1484`；`src-tauri/permissions/default-commands.toml:128-130`；`src/bridge.ts:439-452` | `graph_query/graph_node_get/graph_stats` + `GRAPH_COMMANDS_AVAILABLE` 总开关 + `makeGraphCommandDisabledError` 回滚 | 3 只读命令，与 R1 一致 |
+| 后端存储/校验 | `src-tauri/src/graph.rs:1-733`；常量 `domain.rs:2188-2202` | `GraphStore{bounded_neighbors/insert_node/insert_edge/to_json/from_json}`、`graph_query_impl/graph_node_get_impl/graph_stats_impl/load_snapshot`、`validate_*`、`graph_props_contain_secret`；22 个 `#[test]` | 与 R1 一致；global 全量枚举命令缺失 |
+| 面板挂载/懒加载 | `src/components/layout/MainArea.vue:73-79`（defineAsyncComponent，含 loading/error 兜底）+ `:237`（`v-else-if mainView==='graph'`） | 与 db/skills/agents 同范式懒加载（压首屏体积） | 达标 |
+| 导航入口/窄窗 | `src/stores/useLayoutStore.ts:63,127`（graph 图标/标签）、`:33 TOP_NAV_ITEMS`、`:81 navDensityForWidth`、`:90 navTopViewsForWidth`、`:98 isNavActive`；`ActivityBar.vue:228-272`（`aria-label="主导航"` + `data-nav-item` + ←/→/Home/End 漫游） | 图谱作为 `MODULE_META`/`TOP_NAV_ITEMS` 一项，随 `navDensity`（full/compact/icon）在窄窗被裁减；**面板内部四分区折叠未实现** | 确认：导航层窄窗已由 A6 W17 处理；图谱*面板内*窄窗折叠属本 lane 待补（§R2-C） |
+
+## R2-C. 精确组件/状态/事件增量（蓝图，映射到当前符号）
+
+```
+当前真源（不得重写）：
+  GraphPanel.vue（容器+横幅+起始 ID 输入）
+  useGraphStore.ts（状态机，310 行）
+  graphUi.ts（纯逻辑，518 行，导出符号为唯一真源）
+  GraphFilter.vue / GraphViewer.vue / NodeDetail.vue / EdgeDetail.vue
+
+拟增量（只新增，不破坏现有字段/行为）：
+1) GraphFilter.vue → 改造为四分区折叠壳（对应 graph.json 的 collapse-*）：
+   - GraphFilter（过滤）：保留现有 query 子串 + kinds；新增 DSL 解析入口（接 §R2-C.5）
+   - 新增本地子组件 GraphDisplay / GraphGroups / GraphForces（纯展示控件，
+     调用 useGraphStore 的新增 display/visibility/colorGroups/collapse/layoutMode）
+2) useGraphStore.ts 新增 state（不删现有）：
+   viewMode:"local"|"global"（global 仍 DEFER，需后端枚举命令）
+   depth:number（默认 GRAPH_DEFAULT_QUERY_DEPTH=2；UI 滑块走 normalizeGraphQueryRequest 既有裁剪）
+   display:{showArrow,textFadeMultiplier,nodeSizeMultiplier,lineSizeMultiplier,scale}
+   visibility:{showTags,showAttachments,hideUnresolved,showOrphans}
+   colorGroups:ColorGroup[]（先 []，schema 待定 → DEFER）
+   collapse:{filter,display,forces,colorGroups}（窄窗即全 true → 抽屉）
+   derived:{orphanIds:Set<string>,unresolvedIds:Set<string>}  // 派生态，不入库
+   layoutMode:"tree"|"cluster"|"force"（复用 graphUi.layoutKindOf，不引 d3）
+   action 新增：setViewMode/setDepth/setDisplay/setVisibility/toggleCollapse/computeDerived
+3) 派生计算（graphUi.ts 新增纯函数，便于 check-graph-ui-logic.mjs 断言）：
+   computeOrphanIds(nodes,edges): 入度+出度均为 0 → 但须携带来源标记
+     "withinSubgraph:boolean"（局部子图内无连接 ≠ 全库孤儿）
+   computeUnresolvedIds(edges,nodes): 作为 to 出现但 nodes 中不存在的 id
+   （与 A2 §2.7 未解析占位节点定义对齐：属于 to 缺失，不污染 broken 度量）
+4) 空态补『过滤后无匹配』子态：
+   panelStateGraph 增加分支 visibleCount===0 && filter 非空 → message="当前过滤条件下无匹配节点"
+5) search DSL 解析器（REIMPLEMENT_FROM_BEHAVIOR，新纯函数 graphUi.parseGraphFilterDsl）：
+   支持字段 path:/ext:/name: + AND/OR + 取反 `-`，括号分组；
+   正向条件/tag: 等未观测项 → 先不支持并文档化（[UNKNOWN]）
+6) 持久化（隐私关键，REIMPLEMENT_FROM_BEHAVIOR）：
+   落 localStorage 仅 {viewMode,depth,display,visibility,collapse,layoutMode}；
+   禁止落库：含 `path:` 的 query 原文、colorGroups 路径规则、任何 label/路径
+   （与 W17 A3『浏览器存储只留非敏感元数据』同口径，复用 toPersisted 过滤范式）
+7) 事件契约（沿用现有 selectNode/selectEdge 稳定键；不新增命令/权限）：
+   无新增 tauri::command；global 图若未来需要，须新只读枚举命令 + check_invocation_source
+   + ACL + bridge/types + 策略同包交付（不在本 R2 范围）
+```
+
+## R2-D. 证据分级重分类（R2 契约：CURRENT_PRODUCT / REFERENCE_SOURCE / OBSERVED_BEHAVIOR / OFFICIAL_DOC / EXECUTED_SYNTHETIC_TEST / INFERENCE）
+
+R1 仅用 [OBSERVED]/[BEHAVIOR-INFERRED]/[UNKNOWN]，未按 R2 契约分词。重分类如下：
+
+| R1 原声明 | 原分级 | R2 重分类 | 依据 |
+|---|---|---|---|
+| `graph.json` 22 键取值（search/showTags/...） | [OBSERVED] | **REFERENCE_SOURCE**（读取用户 vault 配置文件，非产品代码）+ 其中各键*运行时语义*为 **INFERENCE** | 只读读取 `.obsidian/graph.json` 文件（CURRENT? 否，属 REFERENCE_SOURCE） |
+| 库级忽略过滤 `app.json.userIgnoreFilters` 11 条 | [OBSERVED] | **REFERENCE_SOURCE** | 同上为 vault 配置读取 |
+| 核心插件开关 `core-plugins.json` | [OBSERVED] | **REFERENCE_SOURCE** | 同上 |
+| 库规模 8253 篇 `.md` | [OBSERVED] | **OBSERVED_BEHAVIOR**（对本地 vault 的 `find` 统计，可复现） | 本环境实跑统计 |
+| 用户定调笔记（图谱是附属红利/Agent 不读图/不开源） | [OBSERVED] | **REFERENCE_SOURCE**（用户自有文档内容） | 读取用户笔记文件 |
+| 当前产品图谱底座（3 命令/518 行/5 组件/取消防抖截断容量） | （隐含产品事实） | **CURRENT_PRODUCT**（取自本工作树源码，见 §R2-B 行号） | 直接读源码 |
+| Obsidian 图渲染/快捷键/屏幕阅读器行为 | [BEHAVIOR-INFERRED] | **INFERENCE**（本环境无法运行 Obsidian，未直接观测） | 未实跑 |
+| local graph 设置在 Obsidian 落盘位置 | [UNKNOWN] | **INFERENCE/UNKNOWN**（维持） | 无证据 |
+| `colorGroups` schema / `search` 完整语法 | [UNKNOWN] | **INFERENCE/UNKNOWN**（维持） | 仅观测到空数组与取反+AND/OR，正向条件未观测 |
+
+> 修正说明：R1 的 `[OBSERVED]` 把「读 vault 配置文件」与「Obsidian 运行时行为」混为同一标记，
+> 弱化了「配置≠行为」的边界。R2 明确：配置文件内容是 REFERENCE_SOURCE，运行时行为是 INFERENCE，
+> 二者不可互代。本 lane 不把任何 INFERENCE 当作 OBSERVED_BEHAVIOR。
+
+## R2-E. 已执行的可验证证据（EXECUTED_SYNTHETIC_TEST / CURRENT_PRODUCT）
+
+- `node scripts/check-graph-ui-logic.mjs` → **通过 113，失败 0**（实跑于本工作树 HEAD）。
+  覆盖：`capacity` 容量百分比、`boundedInsert` 有界合并、`applyGraphErrorView` 零 secret/路径回显、
+  `viewToQueryResult`/`viewToNode`/`viewToEdge` 删 props 第三闸、`normalizeGraphQueryRequest`
+  （默认 depth=2/limit=1000 裁剪、`request_id` 8-hex）、`abortableDebounce` 防抖/取消、`GRAPH_DEBOUNCE_MS=300`、
+  `makeAbortableDebouncer`/`newGraphRequestId` 等。
+- `python3 scripts/check-graph-policy.py` → **GRAPH_POLICY=PASS（无违规）**（实跑）。
+- `git fetch origin` → `origin/master = d6127c4`；本分支 `codex/m5-w18-a3` 落后 0、领先 1
+  （仅上轮 R1 研究报告提交 7dde286）。rebase 为 fast-forward 已是最新，无需改动提交历史。
+- 读取校验：`main.rs:1482-1484` / `default-commands.toml:128-130` / `bridge.ts:439-452` /
+  `domain.rs:2188-2202` / `graph.rs:733` / `graphUi.ts:518` / `useGraphStore.ts:310` 行号与 R1 一致，
+  常量值（GRAPH_MAX_NODES=5000 等）未被改动 → R1 的「当前产品现状」部分**成立，无需 retract**。
+
+## R2-F. 与 A2 语义对账结论（CONSUME A2 via git show）
+
+- 未解析（unresolved）：A2 §2.7 → 占位节点 + `unresolved` 边标志；本 lane `unresolvedIds` 定义为
+  「作为 `to` 出现但不在 `nodes`」与此一致 → **采纳**，列为派生（非节点类型）。
+- 孤儿（orphan）：A2 §2.8/§2.9 → 无入出边的节点；backlink/outgoing 派生不存储 → 本 lane `orphanIds`
+  定义一致，并强调「局部子图内孤儿须标注『当前子图内无连接』」，避免与全库孤儿混淆 → **采纳并强化**。
+- 标签/附件/分组：A2 §2.4/§2.6 指明 tag/attachment 为 markdown 派生概念，本产品无 markdown 解析 →
+  开关语义须由前端按 `kinds`/`props` 映射，schema 待 A2 R2 给出 markdown 扫描真源后再定 → **部分依赖**。
+
+## R2-G. 状态与阻塞（诚实声明）
+
+- **状态：`PASS_WITH_DEBT`**。本 lane 已完成：精确目标映射（§R2-B）、R1 证据重分类（§R2-D）、
+  与 A2 R1 语义对账（§R2-F）、可执行的当前门禁证据（§R2-E）。但存在以下债务：
+- **债务 D-A3-1（阻塞，归 A2）**：A2 的 **R2** 研究报告尚未发布（本工作树 `codex/m5-w18-a2`
+  HEAD=7bc910e 仍为 A0 的 R1 保留提交，工作树干净、仅领先 origin/master 1）。
+  orphan/unresolved 的*权威派生规则*、markdown 扫描真源、colorGroups schema、search DSL 完整语法
+  的最终定义须消费 A2 R2 后才能冻结本 lane 的 W19 切片边界。在 A2 R2 发布前，本 lane 的派生计算
+  （§R2-C.3）以 A2 R1 草案语义为准并显式标注「待 A2 R2 复核」。
+- **债务 D-A3-2（已知差距，非阻塞）**：global 图需新只读枚举命令、`搜索面` 与 A8 zvec-grep 路线相邻、
+  实时刷新依赖 LOCKED 后台 watcher —— 三者均 DEFER，待 A0 裁决 W19。
+- **债务 D-A3-3（信息缺口，标注 UNKNOWN）**：`colorGroups` schema、search DSL 正向条件/tag:、local 图
+  设置落盘位置、Obsidian 运行时行为 —— 维持 [UNKNOWN]，W19 实测补证。
+- **分派笔误**：board 1358 行「after A3's adoption verdict」（zvec-grep 依赖采用）疑为 A8 之笔误，
+  已再次提请 A0/A11；本 lane 不对 zvec-grep 依赖作采用裁决（属 A8）。
+
+## R2-H. 未来验收测试计划（非伪造证据；W19 执行）
+
+> 下列为验收清单与预期断言来源，并非已通过的截图/证据。全部基于合成夹具（不引入用户 vault 内容）。
+
+1. **DSL 解析**（接 §R2-C.5）：`graphUi.parseGraphFilterDsl` 单测 ——
+   `-(path:phantom-wiki AND ext:py)` 解析为取反+AND 谓词；括号分组优先级；非法语法回退安全默认。
+   预期断言加入 `check-graph-ui-logic.mjs`。
+2. **四开关过滤**：`filterNodes/filterEdges` 增加 `visibility{showTags,showAttachments,hideUnresolved,showOrphans}`
+   分支：hideUnresolved 过滤掉 `unresolvedIds`；showOrphans 控制是否显示 orphanIds。
+3. **派生标注**：`computeOrphanIds` 返回 `{id, withinSubgraph:boolean}`；断言「局部子图内孤儿」文案
+   为『当前子图内无连接』而非『全库孤儿』。
+4. **空态三分**：`panelStateGraph` 区分 库空 / 只读壳 / 过滤无匹配；断言过滤无匹配 message 文案。
+5. **持久化隐私**：`toPersisted()` 过滤后断言 `localStorage` 不含 `path:` 片段、不含任何 label/路径；
+   复用 W17 A3 的 `check-clipboard-persistence-logic.mjs` 同范式新建 `check-graph-persistence-logic.mjs`。
+6. **无依赖/无权限扩张**：`check-command-set-consistency.py` 门禁维持 PASS（本 lane 零新命令）；
+   `scripts/check-graph-policy.py` 维持 PASS（GRAPH_NO_SECOND_PATH 等）。
+7. **a11y/键盘/窄窗**：GraphViewer 现有 `tabindex`/`role=button`/`aria-label`/`@keydown.enter` 保留并扩展
+   （方向键在可见节点间移动、Esc 取消选区）；窄窗下 GraphFilter 四分区 `collapse` 全 true → 抽屉；
+   断言 `aria-live` 播报 `selectionText` 随选择更新（已在 `GraphViewer.vue:42`）。
+
+## R2-I. 修正小结（针对 A0 审计逐条 retract/replace）
+
+- R1「全局/局部图与分组语义依赖未决 A2 事实」→ **已对账 A2 R1 草案并显式标注 A2 R2 阻塞（D-A3-1）**。
+- R1「需精确当前 Vue/store 目标映射」→ **已提供 §R2-B 全表（文件:符号:行号，取自 rebase 后工作树）**。
+- R1 证据分级混用 → **已按 R2 契约重分类（§R2-D）**，不再把 REFERENCE_SOURCE 当 OBSERVED_BEHAVIOR。
+- R1 的「当前产品现状/分类计数（COPY=0,ADAPT=4,REIMPLEMENT=10,DEFER=4,REJECT=2）」经 §R2-B/E 复核
+  **成立，保留**，仅把每一项补上确切目标符号。
+- 无任何 R1 事实性*错误*需 retract；A0 裁定属「不完整/需对齐」，本附录补全。
+
+---
+
+```text
+LANE=A3
+STATUS=R2_PASS_WITH_DEBT          # R1=PASS(草稿); R2=PASS_WITH_DEBT(见 D-A3-1)
+BASE=78d2cfb
+REBASE=fast-forward to origin/master d6127c4 (0 behind / 1 ahead = R1 commit 7dde286)
+HEAD=<this R2 commit sha>
+REFERENCE_EVIDENCE=(同 R1) + git show codex/m5-w18-a2:logs/research/M5-W18/A2-obsidian-vault-semantics.md (R1 draft)
+CURRENT_PRODUCT_MAP=见 §R2-B 全表（GraphPanel.vue:1-119 / GraphViewer.vue:1-104 / GraphFilter.vue:1-48
+           / NodeDetail.vue:1-33 / EdgeDetail.vue:1-33 / useGraphStore.ts:52-310 / graphUi.ts:1-518
+           / bridge.ts:439-452 / main.rs:1482-1484 / default-commands.toml:128-130
+           / domain.rs:2188-2202 / graph.rs:1-733 / MainArea.vue:73-79,237
+           / useLayoutStore.ts:33,63,81,90,98,127 / ActivityBar.vue:228-272）
+EXECUTED_CHECKS=node scripts/check-graph-ui-logic.mjs → 113 pass/0 fail;
+              python3 scripts/check-graph-policy.py → GRAPH_POLICY=PASS;
+              git fetch origin → origin/master=d6127c4, branch 0 behind/1 ahead
+CORRECTION=§R2-D 证据重分类(REFERENCE_SOURCE vs OBSERVED_BEHAVIOR vs INFERENCE);
+             §R2-I 逐条对账 A0 A3 裁定(无事实性 retract,补精确映射+显式 A2-R2 阻塞)
+CLASSIFICATION=(R1 计数保留) COPY=0 ADAPT=4 REIMPLEMENT_FROM_BEHAVIOR=10 DEFER=4 REJECT=2
+VERIFY=只读研究：零产品代码改动；未改 vault；未 push
+BLOCKER=D-A3-1(A2 R2 未发布) → orphan/unresolved 权威派生规则待 A2 R2 复核
+MERGE_NOTES=依赖 A1 基线 + A2 R2(链接/孤儿/未解析权威语义) + A8(搜索面路线);
+            global 图(新只读枚举命令)/实时刷新(LOCKED watcher) 仍 DEFER 待 A0;
+            分派 1358 行「A3's adoption verdict」疑为 A8 笔误，已提请
+NEXT=待 A2 R2 发布后冻结 §R2-C 派生计算边界；W19 切片按 §R2-H 验收计划推进
+NO_PUSH=confirmed
+```
