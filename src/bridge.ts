@@ -383,7 +383,6 @@ export const bridge = {
   dbListConnections: () => invoke<DbConnectionConfig[]>("db_list_connections"),
   dbCancel: (queryId: string) => invoke<boolean>("db_cancel", { queryId }),
   vaultOpen: (path: string) => invoke<{ root: string; notes: { path: string; text: string }[]; skipped: number; truncated: boolean }>("vault_open", { path }),
-  vaultPickDirectory: (current?: string) => invoke<string | null>("vault_pick_directory", { current: current || null }),
   gridReadReplies: (index: number) => invoke<{ provider?: string; replies: string[]; error?: string; truncated?: boolean }>("grid_read_replies", { index }),
   archiveReplies: (path: string, items: { label: string; markdown: string }[], tags: string[]) => invoke<{ label: string; path?: string; error?: string }[]>("archive_replies", { path, items, tags }),
   gitLog: (repoId: string) => invoke<{ oid: string; parents: string[]; summary: string; author: string; time: number }[]>("git_log", { repoId }),

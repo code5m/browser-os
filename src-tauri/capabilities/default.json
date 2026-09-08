@@ -9,6 +9,7 @@
     "core:default",
     "core:window:allow-create",
     "browser-tabs:default",
+    "dialog:allow-open",
     "default-commands"
   ]
 }

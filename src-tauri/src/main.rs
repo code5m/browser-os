@@ -1516,7 +1516,6 @@ fn main() {
             bridge::db_list_connections,
             bridge::db_cancel,
             bridge::vault_open,
-            bridge::vault_pick_directory,
             bridge::grid_read_replies,
             bridge::archive_replies,
             bridge::git_log,

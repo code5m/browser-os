@@ -3,7 +3,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Emitter, Manager};
-use tauri_plugin_dialog::DialogExt;
 use url::Url;
 
 use crate::domain::*;
@@ -6054,23 +6053,6 @@ pub async fn vault_open(
     tauri::async_runtime::spawn_blocking(move || crate::workbench::read_vault(&root))
         .await
         .map_err(|_| "VAULT_WORKER_FAILED")?
-}
-
-#[tauri::command]
-pub fn vault_pick_directory(
-    app: AppHandle,
-    webview: tauri::Webview,
-    current: Option<String>,
-) -> Result<Option<String>, String> {
-    check_invocation_source(&webview, "vault_pick_directory", None, &app)?;
-    let mut dialog = app.dialog().file().set_title("选择 Obsidian Vault 目录");
-    if let Some(path) = current.filter(|path| !path.trim().is_empty()) {
-        dialog = dialog.set_directory(path);
-    }
-    Ok(dialog
-        .blocking_pick_folder()
-        .and_then(|path| path.into_path().ok())
-        .map(|path| path.to_string_lossy().into_owned()))
 }
 
 #[tauri::command]

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { bridge } from '../bridge';
 import { noteLinks, resolveNote, searchNotes } from '../utils/vault.mjs';
 export const useVaultStore = defineStore('vault', () => {
@@ -45,8 +46,13 @@ export const useVaultStore = defineStore('vault', () => {
   async function pickDirectory() {
     error.value = '';
     try {
-      const picked = await bridge.vaultPickDirectory(path.value);
-      if (picked) {
+      const picked = await openDialog({
+        directory: true,
+        multiple: false,
+        defaultPath: path.value.trim() || undefined,
+        title: '选择 Obsidian Vault 目录',
+      });
+      if (typeof picked === 'string') {
         path.value = picked;
         await open();
       }
