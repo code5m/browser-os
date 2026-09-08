@@ -1,8 +1,8 @@
 A11-R3 acceptance matrix
   manifest      : logs/research/M5-W18/A11-R3-integration-manifest.json
   base          : 200f0f1 (origin/master)
-  status        : PROVISIONAL_PENDING_A5_A10_A1_REVISED
-  rebased pin   : cee14e9 (REIMPLEMENT_FROM_BEHAVIOR)
+  status        : PROVISIONAL_PENDING_A1_REVISED
+  rebased pin   : 2896562e (REIMPLEMENT_FROM_BEHAVIOR)
 
 [1] structural checks
   PASS manifest.required_keys           10 keys present
@@ -10,9 +10,9 @@ A11-R3 acceptance matrix
   PASS checklist.group_present          all items grouped
   PASS checklist.owner_known            10 owners resolve
   PASS checklist.expect_valid           covered/gap/deferred only
-  PASS findings.references_resolve      8 findings, 2 referenced
-  PASS reference_pins.pinned            rebased pinned=cee14e9
-  PASS lanes.blocking_flagged           blocking: A5,A10
+  PASS findings.references_resolve      9 findings, 2 referenced
+  PASS reference_pins.pinned            rebased pinned=2896562e
+  PASS lanes.blocking_flagged           blocking: A1
 
 [2] checklist probes (60 items)
   PASS           S-01  sizes          tokens 1920×1080
@@ -65,8 +65,8 @@ A11-R3 acceptance matrix
                  evidence: git:codex/m5-w18-a6:logs/research/M5-W18/A6-R3-context-menu-command-registry.md
   PASS           J-01  workflows      tokens documents|active_document_id
                  evidence: git:codex/m5-w18-a4:logs/research/M5-W18/A4-R3-shell-state-persistence-contract.md
-  NOT_RUN        J-02  workflows      deferred
-                 evidence: A5 not delivered
+  PASS           J-02  workflows      tokens connection|sql|result|cancel|bounded|null
+                 evidence: git:codex/m5-w18-a5:logs/research/M5-W18/A5-R3-prototype.html
   PASS           J-03  workflows      tokens 笔记|反链
                  evidence: git:codex/m5-w18-a1:logs/research/M5-W18/A1-R3-prototype.html
   PASS           J-04  workflows      tokens 命令面板
@@ -138,7 +138,7 @@ A11-R3 acceptance matrix
   group sizes          PASS=4 NOT_RUN=1
   group modes          PASS=11
   group context-menu   PASS=8
-  group workflows      PASS=4 NOT_RUN=2
+  group workflows      PASS=5 NOT_RUN=1
   group git            PASS=14 GAP_CONFIRMED=1
   group accessibility  PASS=5 GAP_CONFIRMED=1
   group failure-states PASS=5
@@ -164,16 +164,17 @@ A11-R3 acceptance matrix
   WARN                     divergence:collapsed_content_width_pct@1440x900 spread 4 > tolerance 2 [A1=96.0 A3=100.0 A8=100.0]
   WARN                     divergence:top_chrome_px@1440x900            spread 3 > tolerance 2 [A1=68.0 A8=65.0]
 
-  findings recorded: 8 (open: 8)
+  findings recorded: 9 (open: 8)
     F-A11-1 [high  ] A4 and A3 contradict each other on whether collapse-all skips pinned tool windows -> A10 ruling, then A3 + A4 reconcile, A1 prototype shows the chosen behaviour
-    F-A11-2 [high  ] A5 delivered nothing, so the database daily loop (J2) has no R3 acceptance evidence -> A5, then A1 revision, then A11 re-run
+    F-A11-2 [high  ] A5 delivered nothing, so the database daily loop (J2) has no R3 acceptance evidence -> A5; A11 re-probe PASS; A1 revision still needed to fold DB mode into the consolidated prototype
     F-A11-3 [medium] The consolidated prototype demonstrates only part of the 14-unit Git workflow -> A1 (final revision); A11 re-probes
     F-A11-4 [medium] Collapsed-mode geometry is reported under three different measurement conventions -> A0 to freeze one post-titlebar definition; A2 owns the measuring method
     F-A11-5 [medium] Top-chrome height budget is quoted three ways (68 / 65 / 60 px) -> A0, using A2's measurement method
     F-A11-6 [medium] The consolidated prototype carries no accessibility attributes -> A1 (final revision), verified by A10
     F-A11-7 [low   ] Command-entry shortcut is not frozen: A1 uses Ctrl+Shift+P, A2's budget frame uses Ctrl+K -> A0 ruling; A6 registers the binding
     F-A11-8 [low   ] 800x600 is in the workbench blueprint but unreachable in the current product -> A0
+    F-A11-9 [medium] Rebased pinned revision disagrees between A7 (cee14e9) and A10 (2896562e) -> A0 / A10 (final reconciliation); A11 manifest now adopts A10's authoritative pin
 
-A11-R3 ACCEPTANCE MATRIX: 55 PASS / 0 FAIL / 3 NOT_RUN / 2 GAP_CONFIRMED / 0 GAP_CLOSED / 2 WARN
+A11-R3 ACCEPTANCE MATRIX: 56 PASS / 0 FAIL / 2 NOT_RUN / 2 GAP_CONFIRMED / 0 GAP_CLOSED / 2 WARN
 GATE: PASS
 NOTE: PROVISIONAL - A11 may finalize only after A10 review and A1's revised prototype.

@@ -8,13 +8,13 @@ WORKDIR=/home/ainfinit/.codex/worktrees/m5-w18-a11/mvp-browser-os-v3
 BRANCH=codex/m5-w18-a11
 BASE=200f0f1cc032eb7dbd0229ab53a711a5ff1e3d6f (origin/master)
 HEAD=b920920
-CONSUMED_PEERS=A1 6470fce, A2 63b0a6e, A3 0258c5b, A4 8e77799, A6 d5eb144, A7 6e1f2ba, A8 0db481a, A9 23d12cd
-NOT_CONSUMED=A5 (branch still at 200f0f1), A10 (branch still at 200f0f1)
+CONSUMED_PEERS=A1 6470fce, A2 63b0a6e, A3 0258c5b, A4 8e77799, A5 6bc4942, A6 d5eb144, A7 6e1f2ba, A8 0db481a, A9 23d12cd, A10 3a86834
+NOT_CONSUMED=none (A5 + A10 delivered 13:47; only A1's revised consolidated prototype still pending)
 FILES=logs/research/M5-W18/A11-R3-{integration-manifest.json,acceptance-checklist.md,progress.md,acceptance-matrix.py,run-20260908.out,checkpoint.md}
       logs/checkpoints/A11-M5-W18-R3-20260908.md
       logs/checkpoints/Lane-A11-M5-W18-R3-acceptance-20260908-1314.patch
-VERIFY=A11-R3 ACCEPTANCE MATRIX: 55 PASS / 0 FAIL / 3 NOT_RUN / 2 GAP_CONFIRMED / 0 GAP_CLOSED / 2 WARN ; GATE: PASS
-FINDINGS=F-A11-1..F-A11-8 (8, all OPEN)
+VERIFY=A11-R3 ACCEPTANCE MATRIX: 56 PASS / 0 FAIL / 2 NOT_RUN / 2 GAP_CONFIRMED / 0 GAP_CLOSED / 2 WARN ; GATE: PASS
+FINDINGS=F-A11-1..F-A11-9 (9; F-A11-2 resolved-pending-A1-consolidation, 8 open)
 NO_PRODUCT_CODE=true
 NO_PEER_FILE_EDIT=true
 NO_PUSH=true
@@ -71,11 +71,11 @@ python3 logs/research/M5-W18/A11-R3-acceptance-matrix.py --json     # 机读
 
 ```
 [1] structural checks       8/8 PASS  (60 唯一 id、owner 可解析、finding 引用不悬空、rebased 已钉)
-[2] checklist probes        55 PASS / 0 FAIL / 3 NOT_RUN(待派发) / 2 GAP_CONFIRMED / 0 GAP_CLOSED
+[2] checklist probes        56 PASS / 0 FAIL / 2 NOT_RUN(待派发) / 2 GAP_CONFIRMED / 0 GAP_CLOSED
 [3] numeric gates           15 条全达标（含 6 条"现有产品基线预期失败"，作为改造前的反证）
     divergence WARN x2     collapsed width spread 4.0 (A1=96.0 A3=100.0 A8=100.0)
                            top_chrome_px  spread 3.0 (A1=68.0 A8=65.0)
-A11-R3 ACCEPTANCE MATRIX: 55 PASS / 0 FAIL / 3 NOT_RUN / 2 GAP_CONFIRMED / 0 GAP_CLOSED / 2 WARN
+A11-R3 ACCEPTANCE MATRIX: 56 PASS / 0 FAIL / 2 NOT_RUN / 2 GAP_CONFIRMED / 0 GAP_CLOSED / 2 WARN
 GATE: PASS
 ```
 
@@ -86,18 +86,19 @@ GATE: PASS
 
 | ID | 级别 | 归属 |
 |---|---|---|
-| F-A11-1 | high | A10 裁定 → A3/A4 对齐 → A1 原型体现（**A4 说固定窗口在"全部收起"中保留，A3 说一起收起再一键恢复，二者直接冲突**） |
-| F-A11-2 | high | A5 交付 → A1 修订 → A11 重跑（J2 与数据库模式现无任何验收证据） |
+| F-A11-1 | high | A10 终裁定 → A3/A4 对齐 → A1 原型体现（**A4 说固定窗口在"全部收起"中保留，A3 说一起收起再一键恢复，二者直接冲突**；A10 的 R3 交付是 preflight 而非终裁） |
+| F-A11-2 | high → RESOLVED_PENDING_A1 | A5 已交付 `6bc4942`（DB 闭环原型+壳层文档，J2 探针 PASS）；剩 A1 整合原型须并入 DB 模式 |
 | F-A11-3 | medium | A1 终稿（原型只见 hunk/stash/cherry/branch/log/graph；worktree/blame/amend/reset/revert/conflict/patch/命令日志/diff 仅存在于报告表格） |
 | F-A11-4 | medium | A0 冻结"后标题栏"口径（A2 拥有测量方法） |
 | F-A11-5 | medium | A0 冻结顶部 chrome 定义与预算 |
 | F-A11-6 | medium | A1 终稿补 aria/role，A10 复核 |
 | F-A11-7 | low | A0 裁定命令入口快捷键，A6 登记 |
 | F-A11-8 | low | A0 裁决 800×600 去留 |
+| F-A11-9 | medium | A7 钉 `cee14e9` 与 A10 钉 `2896562e` 不一致；A11 采纳 A10 权威钉版，A0/A10 终裁前不得 W19 采用任何 COPY/ADAPT 单元 |
 
 ## 6. 债务
 
-- **D-A11-1**：`A1` 与 `A5`/`A10` 的终稿未到，故清单为 `PROVISIONAL`；A11 在 A0 集成后需重跑脚本并更新 `lanes.*.head`。
+- **D-A11-1**：仅 `A1` 的整合原型终稿未到（A5 `6bc4942`、A10 `3a86834` 已交付并消费），故清单仍为 `PROVISIONAL_PENDING_A1_REVISED`；A11 在 A0 集成后需重跑脚本并更新 `lanes.A1.head`。
 - **D-A11-2**：门限数字取自各 lane 自报（A1 报告 §4、A3 自测输出、A8 §5、A2 实测 out），A11 未独立复算几何；口径统一后应以 A2 方法重测一次。
 - **D-A11-3**：Git 单元"原型可见性"用 token 探针近似（存在 ≠ 可操作）；原生验收时须人工走查 14 单元。
 - **D-A11-4**：J5（自动化与运行观察）R3 卡未给任何 lane 派发原型，账本只能记 `设计就绪=NO`。

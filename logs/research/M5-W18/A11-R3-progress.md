@@ -18,12 +18,12 @@
 | 场景 | 现有能力 | 设计就绪 | 代码完成 | 原生验收 | 用户试用 | 证据 |
 |---|---|---|---|---|---|---|
 | J1 打开并接续项目 | `PARTIAL` | `YES` | `NO` | `NOT_RUN` | `NOT_RUN` | 现有：页签/终端/浏览器在，但无文档身份与恢复契约；A2 实测平静态内容 90.1%/100%，最坏态 75.3% 已违 ≥85%。设计：A4 文档 DTO + A1/A3 原型 |
-| J2 数据库日常闭环 | `PARTIAL` | `NO` | `NO` | `NOT_RUN` | `NOT_RUN` | 现有：`DatabasePanel`/`useDatabaseStore` 在，但 DbValue 三重真源未修（A0 R2B 裁定 #3、A0 R3 未重开）。设计：**A5 分支仍在 `200f0f1`，零交付**（F-A11-2） |
+| J2 数据库日常闭环 | `PARTIAL` | `PARTIAL` | `NO` | `NOT_RUN` | `NOT_RUN` | 现有：`DatabasePanel`/`useDatabaseStore` 在，但 DbValue 三重真源未修（A0 R2B 裁定 #3、A0 R3 未重开）。设计：A5 交付 `6bc4942`（`A5-R3-prototype.html` 覆盖连接树/SQL/结果/取消/有界网格/NULL 截断，四尺寸）；仍须并入 A1 整合原型（F-A11-2 已 RESOLVED_PENDING_A1_CONSOLIDATION） |
 | J3 阅读、记录、关联 | `PARTIAL` | `PARTIAL` | `NO` | `NOT_RUN` | `NOT_RUN` | 现有：图谱/笔记/文件编辑器在（M4/M5 已落）。设计：A1 知识模式原型（反链 + 局部图谱），语义细节归 A2/A3 R2B |
 | J4 统一检索 / 命令入口 | `NO` | `PARTIAL` | `NO` | `NOT_RUN` | `NOT_RUN` | 现有：A2 实测 `grep -iE "palette|命令面板|CommandRegistry" src` 零命中。设计：A6 注册表契约 + A1 命令面板原型；检索后端属 R2B（ripgrep 优先，zvec 延后） |
 | J5 自动化与运行观察 | `YES` | `NO` | `PARTIAL` | `NOT_RUN` | `NOT_RUN` | 现有：TaskPanel / scheduler 已落（M4）。设计：R3 卡未给 A1–A10 任何 lane 派发 J5 原型 |
 | J6 正常退出与异常恢复 | `PARTIAL` | `YES` | `NO` | `NOT_RUN` | `NOT_RUN` | 设计：A4 原子写（tmp+rename）、`schema_version`、损坏回退默认态、15 条纯函数断言（T1–T15） |
-| Git 完整工作流 | `PARTIAL` | `YES` | `NO` | `NOT_RUN` | `NOT_RUN` | A7 实测：14 单元中 5 ADAPT（status/diff/branches/merge，其中 merge 仅自动同步）、9 REIMPLEMENT 全部缺失；rebased 钉 `cee14e9`，COPY=0 |
+| Git 完整工作流 | `PARTIAL` | `YES` | `NO` | `NOT_RUN` | `NOT_RUN` | A7 实测：14 单元中 5 ADAPT（status/diff/branches/merge，其中 merge 仅自动同步）、9 REIMPLEMENT 全部缺失；**rebased 固定修订 A7=`cee14e9` 与 A10=`2896562e` 不一致（F-A11-9）**，COPY=0 |
 | 工具窗口渐进披露 | `PARTIAL` | `YES` | `NO` | `NOT_RUN` | `NOT_RUN` | 现有：只有开/关，宽度硬编码，`SidebarResizer.vue` 未被 `App.vue` 使用（A2）。设计：A3 状态机 58 断言 + A4 持久化字段 |
 | 右键菜单 / 命令注册表 | `NO` | `YES` | `NO` | `NOT_RUN` | `NOT_RUN` | 现有：两处手写 `ctx-menu`（`FilePanel.vue`、`ArtifactPanel.vue`），无注册表面。设计：A6 契约（7 作用域 + 安全分级 + 审计类） |
 | 视觉密度与主题 | `PARTIAL` | `YES` | `NO` | `NOT_RUN` | `NOT_RUN` | 现有：无间距/字号标尺（A8 §2）。设计：A8 令牌 + 4 尺寸标注帧，折叠态 91.6%–94.5% 高 / 100% 宽 |
@@ -42,3 +42,7 @@
 | 2026-09-08 13:14 | 全部 | R3 首批记账（A1–A4、A6–A9 已消费；A5/A10 未交付） | `A11-R3-integration-manifest.json` |
 | 2026-09-08 13:14 | Git 完整工作流 | 设计就绪 `NO → YES` | A7 14 单元矩阵（COPY=0 / ADAPT=5 / REIMPLEMENT=9） |
 | 2026-09-08 13:14 | J2 | 设计就绪保持 `NO`（A5 未交付，不因 A1 数据库模式原型而升格） | F-A11-2 |
+| 2026-09-08 13:47 | A5 / A10 | `NOT_DELIVERED → DELIVERED`（A5 `6bc4942`、A10 `3a86834`） | `git branch -v`；A11 重消费 |
+| 2026-09-08 13:47 | J2 | 设计就绪 `NO → PARTIAL`（A5 交付 DB 闭环原型与壳层文档） | `A5-R3-prototype.html` 探针 PASS；F-A11-2 → RESOLVED_PENDING_A1_CONSOLIDATION |
+| 2026-09-08 13:47 | Git 完整工作流 | rebased 固定修订 A7=`cee14e9` 与 A10=`2896562e` 冲突 | F-A11-9（A11 采纳 A10 权威钉版） |
+| 2026-09-08 13:47 | 状态 | `PROVISIONAL_PENDING_A5_A10_A1_REVISED → PROVISIONAL_PENDING_A1_REVISED` | 仅 A1 草案终稿待出 |

@@ -9,11 +9,10 @@
     "short": "200f0f1",
     "sha": "200f0f1cc032eb7dbd0229ab53a711a5ff1e3d6f"
   },
-  "status": "PROVISIONAL_PENDING_A5_A10_A1_REVISED",
+  "status": "PROVISIONAL_PENDING_A1_REVISED",
   "finalize_blockers": [
-    "A5 has no R3 commit on codex/m5-w18-a5 (database-in-shell report/prototype absent) -> J2 and database-mode items are NOT_RUN.",
-    "A10 has no R3 commit on codex/m5-w18-a10 (independent UX/reference review absent) -> card requires A10 before A11 finalizes.",
-    "A1 published a DRAFT prototype (6470fce) and declared it will consume A2-A9 + A10 for the final revision; the consolidated final prototype is not yet published."
+    "A1 published a DRAFT prototype (6470fce) and declared it will consume A2-A9 + A10 for the final revision; the consolidated final prototype is not yet published. R3 card: A11 finalizes only after A10 and A1's revised prototype. A10 is now delivered (3a86834); A1 revision still pending.",
+    "Rebased pinned revision mismatch: A7 mapped COPY/ADAPT against cee14e9; A10's reference/license review fixed the canonical pin at 2896562e (2026-09-06). A0/A10 must reconcile before W19 adoption (F-A11-9)."
   ],
   "scope_boundary": {
     "product_code_changed": false,
@@ -42,13 +41,16 @@
     {
       "id": "rebased",
       "repo": "DetachHead/rebased",
-      "identity": "Git client on the IntelliJ platform, fork of JetBrains/intellij-community",
-      "pinned_revision": "cee14e9",
+      "identity": "Git client on the IntelliJ platform, fork of JetBrains/intellij-community (confirmed by A10)",
+      "pinned_revision": "2896562e",
+      "pinned_revision_full": "2896562e69ff2cac3c90eb3aae4bcce0d4aa9a99",
+      "a7_reported_revision": "cee14e9",
       "version": "v1.1.15",
-      "license": "root LICENSE.txt = JetBrains Open-Source Build Terms; bundled OSS (incl. git4idea) Apache-2.0; NOTICE.txt attributes IntelliJ IDEA",
+      "license": "root LICENSE.txt = JetBrains Open-Source Build Terms (v1.3 per A10); bundled OSS (incl. git4idea) Apache-2.0; NOTICE.txt attributes IntelliJ IDEA",
       "default_classification": "REIMPLEMENT_FROM_BEHAVIOR",
-      "source": "A7-R3-git-workflow-reference-map.md 0",
-      "file_level_provenance": "NOT_RECORDED - A10 gate must complete before any W19 adoption"
+      "authoritative_source": "A10-R3-reference-and-feasibility-review-20260908.md (pin 2896562e)",
+      "file_level_provenance": "NOT_RECORDED - A10 gate must complete before any W19 adoption",
+      "note": "SHA MISMATCH vs A7 (cee14e9) -> F-A11-9. A11 adopts A10's authoritative pin; A0 reconciles before W19."
     },
     {
       "id": "sourcegit",
@@ -72,7 +74,8 @@
         "logs/research/M5-W18/A1-R3-prototype.html",
         "logs/research/M5-W18/A1-R3-checkpoint.md"
       ],
-      "consumed_by_a11": true
+      "consumed_by_a11": true,
+      "blocking": true
     },
     "A2": {
       "branch": "codex/m5-w18-a2",
@@ -111,11 +114,16 @@
     },
     "A5": {
       "branch": "codex/m5-w18-a5",
-      "head": "200f0f1",
-      "status": "NOT_DELIVERED",
-      "deliverables": [],
-      "consumed_by_a11": false,
-      "blocking": true
+      "head": "6bc4942",
+      "status": "DELIVERED",
+      "deliverables": [
+        "logs/research/M5-W18/A5-R3-checkpoint.md",
+        "logs/research/M5-W18/A5-R3-database-shell.md",
+        "logs/research/M5-W18/A5-R3-prototype.html",
+        "logs/research/M5-W18/A5-R3-state-model.mjs"
+      ],
+      "consumed_by_a11": true,
+      "blocking": false
     },
     "A6": {
       "branch": "codex/m5-w18-a6",
@@ -160,11 +168,20 @@
     },
     "A10": {
       "branch": "codex/m5-w18-a10",
-      "head": "200f0f1",
-      "status": "NOT_DELIVERED",
-      "deliverables": [],
-      "consumed_by_a11": false,
-      "blocking": true
+      "head": "3a86834",
+      "status": "DELIVERED",
+      "deliverables": [
+        "logs/research/M5-W18/A10-R3-reference-and-feasibility-review-20260908.md",
+        "logs/research/M5-W18/A10-R3-acceptance-preflight-20260908.md",
+        "logs/research/M5-W18/A10-R3-reference-addendum-20260908.md",
+        "logs/research/M5-W18/A10-R3-current-chrome-baseline-20260908.md",
+        "logs/research/M5-W18/A10-R3-viewport-budget.py",
+        "logs/research/M5-W18/A10-R3-prototype-selfcontainment-check.py",
+        "logs/research/M5-W18/A10-checkpoint-R3-20260908.md"
+      ],
+      "consumed_by_a11": true,
+      "blocking": false,
+      "note": "Independent reference/license + feasibility review delivered; preflight checklist G1-G8 provided for A11/A0 reuse. A10's R3 output is explicitly a PREFLIGHT, not a final ruling on lane contradictions (e.g. F-A11-1) -> those remain A0's call."
     },
     "A11": {
       "branch": "codex/m5-w18-a11",
@@ -213,9 +230,9 @@
       "severity": "high",
       "title": "A5 delivered nothing, so the database daily loop (J2) has no R3 acceptance evidence",
       "detail": "codex/m5-w18-a5 is still at origin/master 200f0f1. No database-in-shell report, no revised DB prototype. A1's database mode is therefore unvalidated against A5's own design lane.",
-      "impact": "J2 and database-mode acceptance items cannot be exercised at any target size.",
-      "owner": "A5, then A1 revision, then A11 re-run",
-      "status": "OPEN"
+      "impact": "RESOLVED: A5 delivered codex/m5-w18-a5 6bc4942 (A5-R3-prototype.html covers connection / sql / result / cancel / bounded grid / null-truncation at the four sizes); J2 probe re-enabled below. Remaining: A5's DB mode must still be folded into A1's consolidated prototype.",
+      "owner": "A5; A11 re-probe PASS; A1 revision still needed to fold DB mode into the consolidated prototype",
+      "status": "RESOLVED_PENDING_A1_CONSOLIDATION"
     },
     {
       "id": "F-A11-3",
@@ -270,6 +287,15 @@
       "impact": "Acceptance scope ambiguity; A11 keeps 800x600 as a deferred decision item rather than a checklist row.",
       "owner": "A0",
       "status": "OPEN"
+    },
+    {
+      "id": "F-A11-9",
+      "severity": "medium",
+      "title": "Rebased pinned revision disagrees between A7 (cee14e9) and A10 (2896562e)",
+      "detail": "A7-R3-git-workflow-reference-map.md pinned DetachHead/rebased at cee14e9 and mapped all COPY/ADAPT units against it. A10's reference/license review fixes the canonical pin at 2896562e69ff2cac3c90eb3aae4bcce0d4aa9a99 (2026-09-06). The two SHAs are not the same commit, so every unit's COPY/ADAPT provenance reference in A7 may point at the wrong revision.",
+      "impact": "W19 cannot adopt any COPY/ADAPT unit until the canonical SHA is reconciled; adopting A7's pin would cite un-reviewed code, adopting A10's would invalidate A7's per-unit evidence without re-verification.",
+      "owner": "A0 / A10 (final reconciliation); A11 manifest now adopts A10's authoritative pin",
+      "status": "OPEN"
     }
   ],
   "checklist": [
@@ -301,7 +327,7 @@
     {"id": "C-08", "group": "context-menu", "title": "Every menu action carries registry identity, disabled reason, keyboard path and safety class", "how_to_verify": "Inspect one disabled item per scope: greyed, with a reason, a shortcut or palette entry, and a safety class.", "evidence": "A6-R3-context-menu-command-registry.md 3", "probe": {"file": "A6-R3-context-menu-command-registry.md", "tokens": ["disabledreason", "safetyclass"]}, "expect": "covered", "owner": "A6"},
 
     {"id": "J-01", "group": "workflows", "title": "J1 open and resume a project", "how_to_verify": "Open a file, edit, use the terminal, switch to a web page, return to the file; focus/scroll/selection survive; restart restores documents and layout.", "evidence": "A4-R3-shell-state-persistence-contract.md 2.1", "probe": {"file": "A4-R3-shell-state-persistence-contract.md", "tokens": ["documents", "active_document_id"]}, "expect": "covered", "owner": "A1/A4"},
-    {"id": "J-02", "group": "workflows", "title": "J2 database daily loop", "how_to_verify": "Connection tree, two SQL docs with independent text/connection/state/result, run, cancel, bounded grid, NULL/binary/truncation.", "evidence": "A5 not delivered", "probe": null, "expect": "deferred", "owner": "A5"},
+    {"id": "J-02", "group": "workflows", "title": "J2 database daily loop", "how_to_verify": "Connection tree, two SQL docs with independent text/connection/state/result, run, cancel, bounded grid, NULL/binary/truncation, at the four target sizes.", "evidence": "A5-R3-prototype.html", "probe": {"file": "A5-R3-prototype.html", "tokens": ["connection", "sql", "result", "cancel", "bounded", "null"]}, "expect": "covered", "owner": "A5"},
     {"id": "J-03", "group": "workflows", "title": "J3 read, note and relate", "how_to_verify": "Open a note, follow a link, inspect backlinks/local graph, return to the previous position.", "evidence": "A1-R3-prototype.html", "probe": {"file": "A1-R3-prototype.html", "tokens": ["\u7b14\u8bb0", "\u53cd\u94fe"]}, "expect": "covered", "owner": "A1"},
     {"id": "J-04", "group": "workflows", "title": "J4 unified search and command entry", "how_to_verify": "Open the command entry, search files/text/notes/actions, see source, scope and truncation, jump to the hit.", "evidence": "A1-R3-prototype.html", "probe": {"file": "A1-R3-prototype.html", "tokens": ["\u547d\u4ee4\u9762\u677f"]}, "expect": "covered", "owner": "A1"},
     {"id": "J-05", "group": "workflows", "title": "J5 automation and run observation", "how_to_verify": "Start a supported task, watch running state, cancel or inspect result, retry explicitly.", "evidence": "not dispatched in the R3 card; existing TaskPanel regression item", "probe": null, "expect": "deferred", "owner": "A0"},
