@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>A5-R2B 数据库工作台线框（合成数据 · 非真实 IPC）</title>
+<style>
+  :root { --bg:#1e1e1e; --panel:#252526; --bar:#333; --fg:#d4d4d4; --muted:#888; --acc:#0e639c; --acc2:#1177bb; --warn:#f0c36d; --err:#c0392b; --ok:#4caf50; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:13px/1.4 system-ui,Segoe UI,sans-serif; color:var(--fg); background:var(--bg); }
+  .app { display:flex; flex-direction:column; height:100vh; }
+  .topbar { display:flex; align-items:center; gap:8px; padding:4px 8px; background:var(--bar); border-bottom:1px solid #000; }
+  .topbar .ctx { color:var(--muted); }
+  .toolbtn { background:var(--acc); color:#fff; border:0; padding:4px 10px; border-radius:3px; cursor:pointer; }
+  .toolbtn[disabled] { opacity:.4; cursor:default; }
+  .toolbtn.danger { background:var(--err); }
+  .body { flex:1; display:flex; min-height:0; }
+  .left { width:260px; background:var(--panel); border-right:1px solid #000; display:flex; flex-direction:column; }
+  .left h4 { margin:0; padding:6px 8px; font-size:12px; color:var(--muted); border-bottom:1px solid #000; }
+  .tree { list-style:none; margin:0; padding:4px 0; overflow:auto; flex:1; }
+  .tree li { padding:2px 8px 2px 18px; white-space:nowrap; }
+  .tree .node { color:var(--muted); }
+  .center { flex:1; display:flex; flex-direction:column; min-width:0; }
+  .tabs { display:flex; background:var(--bar); border-bottom:1px solid #000; }
+  .tab { padding:5px 10px; border-right:1px solid #000; cursor:pointer; }
+  .tab.active { background:var(--panel); }
+  .tab .x { color:var(--muted); margin-left:6px; }
+  .editor { flex:1; display:flex; min-height:0; }
+  .editor textarea { flex:1; background:#1e1e1e; color:var(--fg); border:0; padding:8px; font:13px/1.5 ui-monospace,Consolas,monospace; resize:none; }
+  .statusline { padding:3px 8px; color:var(--muted); border-top:1px solid #000; }
+  .bottom { height:240px; background:var(--panel); border-top:1px solid #000; display:flex; flex-direction:column; }
+  .bottom .tabs2 { display:flex; background:var(--bar); }
+  .bottom .tabs2 span { padding:4px 10px; border-right:1px solid #000; cursor:pointer; }
+  .bottom .tabs2 span.active { background:var(--panel); }
+  .result { flex:1; overflow:auto; padding:4px; }
+  table { border-collapse:collapse; width:100%; font-size:12px; }
+  th,td { border:1px solid #333; padding:2px 6px; text-align:left; }
+  th { background:var(--bar); position:sticky; top:0; }
+  .msg { padding:6px 8px; }
+  .msg.warn { background:#3a2f12; color:var(--warn); }
+  .msg.err { background:#3a1410; color:#ff9b8a; }
+  .msg.busy { background:#10283a; color:#8fd0ff; }
+  .badge { display:inline-block; padding:1px 6px; border-radius:8px; font-size:11px; margin-left:6px; }
+  .badge.run { background:#10283a; color:#8fd0ff; }
+  .badge.ok { background:#143d18; color:#9be3a0; }
+  .badge.err { background:#3a1410; color:#ff9b8a; }
+  .badge.cut { background:#3a2f12; color:var(--warn); }
+  .trunc { color:var(--warn); }
+  /* 窄窗 1024×720 / 800×600：收起左侧树，工具窗口堆叠 */
+  @media (max-width:1100px) {
+    .left { width:0; display:none; }
+    .bottom { height:200px; }
+  }
+  @media (max-width:820px) {
+    .topbar .ctx { display:none; }
+    .bottom { height:160px; }
+    .editor textarea { font-size:12px; }
+  }
+  .kbd { font:11px ui-monospace,monospace; background:#000; border:1px solid #444; padding:0 4px; border-radius:3px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <strong>项目：my-app</strong>
+    <span class="ctx">· main @ feature/login</span>
+    <button class="toolbtn">全局搜索 ⌕</button>
+    <span style="flex:1"></span>
+    <span class="ctx">连接：<b>prod-replica</b> <span class="badge ok">已连接</span></span>
+  </div>
+
+  <div class="body">
+    <!-- 左侧：连接 / 库表树（A4 schema 命令未到，先占位契约） -->
+    <aside class="left">
+      <h4>数据库对象</h4>
+      <ul class="tree">
+        <li>▾ prod-replica <span class="badge ok">已连接</span></li>
+        <li class="node"> ▾ public</li>
+        <li class="node">  ▾ 表</li>
+        <li class="node">    users</li>
+        <li class="node">    orders</li>
+        <li class="node">  ▾ 视图</li>
+        <li class="node"> ▾ information_schema</li>
+        <li class="node" style="color:#666">（schema 浏览待 A4 db_list_schema 落地后填充）</li>
+      </ul>
+    </aside>
+
+    <!-- 中央：多 SQL 文档标签 + 控制台 -->
+    <section class="center">
+      <div class="tabs" role="tablist" aria-label="SQL 控制台">
+        <div class="tab active" role="tab" aria-selected="true">orders.sql <span class="x">×</span></div>
+        <div class="tab" role="tab" aria-selected="false">users-report.sql <span class="x">×</span></div>
+        <div class="tab">＋</div>
+      </div>
+      <div class="editor">
+        <textarea aria-label="SQL 编辑器（orders.sql）" spellcheck="false">-- 文档独立保存暂存 SQL / 连接引用 / 执行ID / 当前结果
+SELECT id, email, created_at
+FROM users
+WHERE created_at > now() - interval '7 day'
+ORDER BY created_at DESC
+LIMIT 200;</textarea>
+      </div>
+      <div class="statusline">
+        <button class="toolbtn" aria-label="执行查询 (Ctrl/Cmd+Enter)">▶ 运行</button>
+        <button class="toolbtn danger" disabled aria-label="取消当前查询">■ 取消</button>
+        <button class="toolbtn" aria-label="复制结果为 CSV">复制 CSV</button>
+        <button class="toolbtn" aria-label="清空结果">清空</button>
+        <span class="badge run">running · execId e1f2…</span>
+        <span style="float:right" class="kbd">Ctrl/Cmd+Enter</kbd> 运行 · <span class="kbd">Esc</span> 关确认 · <span class="kbd">Ctrl/Cmd+Alt+[ ]</span> 切标签</span>
+      </div>
+    </section>
+  </div>
+
+  <!-- 底部：结果 / 消息工具窗口 -->
+  <div class="bottom">
+    <div class="tabs2" role="tablist" aria-label="底部工具窗口">
+      <span class="active" role="tab" aria-selected="true">结果</span>
+      <span role="tab" aria-selected="false">消息</span>
+      <span role="tab" aria-selected="false">输出</span>
+    </div>
+    <div class="result">
+      <div class="msg busy">⏳ 查询执行中…（可点「取消」；旧请求迟到结果不会覆盖本标签）</div>
+      <table>
+        <thead><tr><th>id</th><th>email</th><th>created_at</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td class="trunc">alice@example.com</td><td>2026-09-01 10:02</td></tr>
+          <tr><td>2</td><td>bob@example.com</td><td>2026-09-02 14:21</td></tr>
+          <tr><td>…</td><td class="trunc">（长字段已截断，完整值 64KiB 上限）</td><td>…</td></tr>
+        </tbody>
+      </table>
+      <div class="msg warn">⚠ 结果已被截断（命中行数上限 1000 行 / 4.00 MiB），展示的不是完整结果集。</div>
+      <div class="msg err">✖ ERROR: relation "orders" does not exist（示例：写操作未开启或生产判定未知时被拒绝）</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
