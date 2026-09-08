@@ -8,6 +8,9 @@
   "permissions": [
     "core:default",
     "core:window:allow-create",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
     "browser-tabs:default",
     "dialog:allow-open",
     "default-commands"
