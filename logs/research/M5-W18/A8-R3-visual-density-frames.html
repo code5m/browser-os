@@ -2,14 +2,17 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
-<title>A8-R3 Visual Density Frames (synthetic)</title>
+<title>A8-R3B Visual Density Frames (canonical geometry, synthetic)</title>
 <style>
-  /* ===== A8-R3 token system (mirrors A8-R3-visual-density-design.md §3) ===== */
+  /* ===== A8-R3/R3B token system (mirrors A8-R3-visual-density-design.md §3) ===== */
   :root{
     --sp-1:2px; --sp-2:4px; --sp-3:6px; --sp-4:8px; --sp-5:12px; --sp-6:16px; --sp-7:24px; --sp-8:32px;
     --rd-xs:4px; --rd-md:8px; --rd-pill:999px;
     --fs-meta:11px; --fs-sm:12px; --fs-base:13px; --fs-md:14px; --fs-lg:15px; --fs-xl:18px;
     --icon-sm:14px; --icon-md:16px; --icon-lg:20px;
+    /* structural tokens (R3B §3.7, A0 SSOT) */
+    --chrome-top:60px; --chrome-row:30px; --statusbar-h:24px; --activity-w:28px;
+    --sidebar-w:260px; --bottom-h:240px;
     /* light theme (default) */
     --surface-content:#ffffff; --surface-sunken:#f7f8fa; --surface-raised:#eef1f6;
     --surface-chrome:#2b3442; --border-hair:#e5e6eb; --border-chrome:#3a4452;
@@ -31,36 +34,43 @@
   .frame-wrap{margin:16px 0;}
   .frame-label{font-size:12px;color:#cbd5e0;margin-bottom:6px;}
   .frame-label b{color:#6cb0ea;}
-  .scroll{overflow-x:auto; padding-bottom:8px; border-bottom:1px solid #262d38;}
-  /* ===== shell mock ===== */
-  .shell{display:flex; flex-direction:column; background:var(--surface-content); border:1px solid var(--border-chrome); border-radius:var(--rd-md); overflow:hidden;}
-  .tbar{height:32px; background:var(--surface-chrome); display:flex; align-items:center; gap:var(--sp-3); padding:0 var(--sp-4); flex-shrink:0; color:var(--text-on-chrome);}
-  .tbar .nav{display:flex; align-items:center; gap:var(--sp-2); padding:2px var(--sp-4); height:24px; border-radius:var(--rd-md); font-size:var(--fs-sm); color:var(--text-on-chrome);}
-  .tbar .nav.active{background:var(--accent); color:#fff;}
-  .tbar .nav:hover{background:var(--accent-hover-bg);}
-  .tbar .sep{width:1px; height:16px; background:var(--border-chrome);}
-  .tbar .grow{margin-left:auto; display:flex; gap:var(--sp-3); align-items:center;}
-  .omni{height:24px; width:170px; border:1px solid var(--border-chrome); border-radius:var(--rd-pill); padding:0 var(--sp-4); font-size:var(--fs-sm); color:var(--text-3); display:flex; align-items:center; background:rgba(255,255,255,.04);}
+  .scroll{overflow:auto; padding-bottom:8px; border-bottom:1px solid #262d38;}
+  /* ===== shell mock (canonical geometry) ===== */
+  .shell{display:flex; flex-direction:column; background:var(--surface-content); border:1px solid var(--border-chrome); border-radius:var(--rd-md); overflow:hidden; --scale:1;}
+  .tbar{height:var(--chrome-top); background:var(--surface-chrome); display:flex; flex-direction:column; flex-shrink:0; color:var(--text-on-chrome);}
+  .tbar-row{height:var(--chrome-row); display:flex; align-items:center; gap:var(--sp-3); padding:0 var(--sp-4);}
+  .tbar-row .nav{display:flex; align-items:center; gap:var(--sp-2); padding:2px var(--sp-4); height:22px; border-radius:var(--rd-md); font-size:var(--fs-sm); color:var(--text-on-chrome);}
+  .tbar-row .nav.active{background:var(--accent); color:#fff;}
+  .tbar-row .nav:hover{background:var(--accent-hover-bg);}
+  .tbar-row .sep{width:1px; height:16px; background:var(--border-chrome);}
+  .tbar-row .grow{margin-left:auto; display:flex; gap:var(--sp-3); align-items:center;}
+  .omni{height:22px; min-width:150px; border:1px solid var(--border-chrome); border-radius:var(--rd-pill); padding:0 var(--sp-4); font-size:var(--fs-sm); color:var(--text-3); display:flex; align-items:center; background:rgba(255,255,255,.04);}
   .body{flex:1; display:flex; min-height:0;}
-  .sidebar{width:260px; background:var(--surface-sunken); border-right:1px solid var(--border-hair); display:flex; flex-direction:column; flex-shrink:0;}
+  .activity{width:var(--activity-w); background:var(--surface-chrome); display:flex; flex-direction:column; align-items:center; gap:var(--sp-2); padding:var(--sp-3) 0; flex-shrink:0;}
+  .activity .ai{width:20px; height:20px; border-radius:var(--rd-md); display:flex; align-items:center; justify-content:center; font-size:13px; color:var(--text-on-chrome);}
+  .activity .ai.active{background:var(--accent); color:#fff;}
+  .work{flex:1; display:flex; min-width:0; min-height:0;}
+  .sidebar{width:var(--sidebar-w); background:var(--surface-sunken); border-right:1px solid var(--border-hair); display:flex; flex-direction:column; flex-shrink:0;}
   .side-h{height:28px; display:flex; align-items:center; gap:var(--sp-2); padding:0 var(--sp-4); border-bottom:1px solid var(--border-hair); font-size:var(--fs-sm); color:var(--text-2);}
   .tree{padding:var(--sp-3);}
   .tnode{display:flex; align-items:center; gap:var(--sp-2); padding:6px var(--sp-3); border-radius:var(--rd-xs); font-size:var(--fs-base); color:var(--text-2); min-height:24px;}
   .tnode:hover{background:var(--accent-tint); color:var(--accent);}
   .tnode.sel{background:var(--accent-tint); color:var(--accent); font-weight:600;}
   .tnode .ic{font-size:var(--icon-sm); width:16px; text-align:center;}
-  .content{flex:1; min-width:0; padding:var(--sp-7); color:var(--text-1); font-size:var(--fs-md); line-height:1.55;}
+  .contentcol{flex:1; display:flex; flex-direction:column; min-width:0;}
+  .content{flex:1; min-height:0; padding:var(--sp-7); color:var(--text-1); font-size:var(--fs-md); line-height:1.55; overflow:auto;}
   .content h3{font-size:var(--fs-xl); margin:0 0 var(--sp-4);}
   .content p{color:var(--text-2); margin:0 0 var(--sp-4); max-width:640px;}
   .content .mockimg{height:120px; background:linear-gradient(135deg,var(--surface-sunken),var(--surface-raised)); border:1px solid var(--border-hair); border-radius:var(--rd-md);}
-  .statusbar{height:26px; background:var(--surface-chrome); color:var(--text-on-chrome); font-size:var(--fs-meta); display:flex; align-items:center; gap:var(--sp-6); padding:0 var(--sp-5); flex-shrink:0;}
+  .bottom{height:var(--bottom-h); background:var(--surface-sunken); border-top:1px solid var(--border-hair); padding:var(--sp-4); color:var(--text-2); font-size:var(--fs-sm); overflow:auto;}
+  .statusbar{height:var(--statusbar-h); background:var(--surface-chrome); color:var(--text-on-chrome); font-size:var(--fs-meta); display:flex; align-items:center; gap:var(--sp-6); padding:0 var(--sp-5); flex-shrink:0;}
   .statusbar .ok{color:var(--success);}
+  /* collapsed: hide resizable tool windows (sidebar + bottom) */
+  .shell.collapsed .sidebar,.shell.collapsed .bottom{display:none;}
   /* measurement rulers */
   .measure{position:relative; margin:8px 0;}
   .rule-h{height:18px; border-left:1px solid #6cb0ea; border-right:1px solid #6cb0ea; position:relative; color:#6cb0ea; font-size:11px; display:flex; align-items:center; justify-content:center;}
   .rule-h::before,.rule-h::after{content:""; position:absolute; top:0; width:1px; height:18px; background:#6cb0ea;}
-  .rule-v{display:inline-flex; align-items:center; gap:4px; color:#6cb0ea; font-size:11px;}
-  .badge{display:inline-block; background:#16263a; border:1px solid #2c3543; color:#6cb0ea; border-radius:var(--rd-xs); padding:1px 6px; font-size:11px; margin-right:6px;}
   /* state gallery */
   .gallery{display:flex; flex-wrap:wrap; gap:12px; margin-top:8px;}
   .sw{width:200px; border:1px solid var(--border-chrome); border-radius:var(--rd-md); overflow:hidden; background:var(--surface-content);}
@@ -73,6 +83,7 @@
   .row.focus{outline:2px solid var(--accent); outline-offset:2px;}
   .row.danger{color:var(--danger);}
   .row.danger:hover{background:#fdeaea;}
+  .px{font-size:10px;color:var(--text-3);margin-top:2px;}
   /* before/after two-accent */
   .ba{display:flex; gap:16px; flex-wrap:wrap;}
   .ba .col{flex:1; min-width:280px; border:1px solid var(--border-chrome); border-radius:var(--rd-md); padding:var(--sp-4);}
@@ -92,88 +103,172 @@
 </style>
 </head>
 <body>
-<h1>A8 · R3 视觉密度与「大气」设计系统 — 标注帧（synthetic）</h1>
+<h1>A8 · R3B 视觉密度与「大气」设计系统 — 标注帧（canonical geometry, synthetic）</h1>
 <div class="note">
-  纯静态、无脚本、无外部资源、无产品数据。令牌见 <code>A8-R3-visual-density-design.md §3</code>。
-  每个 shell 帧按真实像素宽度渲染于可横向滚动容器内，测量标注为真实 CSS 像素。
-  浅/暗主题切换见各帧 class；<code>.dark</code> 为浅色令牌的参数镜像（§3.6）。
+  纯静态、无脚本、无外部资源、无产品数据、无捐助品牌。令牌见 <code>A8-R3-visual-density-design.md §3</code>。
+  每 shell 帧按真实 inner-viewport 像素渲染（宽度 = 验收宽，高度 = 验收高），标注为真实 CSS 像素与 A0 公式比值。
+  几何 SSOT（R3B-05）：inner viewport 排除 OS 标题栏；顶 chrome 60px（两行各 30px）、状态栏 24px、左活动条 28px（折叠常驻）；
+  折叠活动高% = (H−60−24)/H，折叠活动宽% = (W−28)/W。浅/暗主题见各帧 class；<code>.dark</code> 为浅色令牌的参数镜像（§3.6）。
 </div>
 
-<h2>1. 四尺寸折叠态（浅色，无工具窗口）→ 内容即产品</h2>
-<div class="note">折叠态 = ActivityBar 32px + StatusBar 26px，侧/底工具关闭。测量见 §5 表。</div>
+<h2>1. 六尺寸折叠态（浅色，无工具窗口）→ 内容即产品</h2>
+<div class="note">折叠态 = 60px 顶 chrome + 24px 状态栏，侧/底工具窗口隐藏，左 28px 活动条常驻。比值见 §5 表（全部达标）。</div>
 
-<!-- 1920 -->
+<!-- 1920x1080 -->
 <div class="frame-wrap">
-  <div class="frame-label"><b>1920×1080</b> · 后标题栏 H=1048 · 顶 chrome 32 · 底 26 · 内容 H=990 (94.5%) · 内容 W=1920 (100%)</div>
-  <div class="scroll"><div class="shell" style="width:1920px; height:540px;">
-    <div class="tbar"><div class="nav active">🏠 主页</div><div class="sep"></div><div class="nav">🌐 浏览器</div><div class="nav">📂 文件</div><div class="nav">🗃 数据库</div><div class="nav">🧠 图谱</div><div class="grow"><div class="omni">🔍 统一搜索…</div><div class="nav">☰</div></div></div>
-    <div class="body"><div class="content"><h3>活动文档 / 网页</h3><p>内容区使用纯白 <code>--surface-content</code>，chrome 退为中性深条，眼睛落在内容而非面板上。单一强调色蓝 <code>--accent</code>，绿仅留给成功态。</p><div class="mockimg"></div></div></div>
-    <div class="statusbar"><span class="ok">● 已连接</span><span>页签 3</span><span>· 终端就绪</span><span>· 内存 4.1G/15.6G</span></div>
+  <div class="frame-label"><b>1920×1080</b> · 折叠活动 H=996 (92.22%) · 活动 W=1892 (98.54%) · 顶 60 / 状态 24 / 活动条 28</div>
+  <div class="scroll"><div class="shell collapsed" style="width:1920px; height:1080px;">
+    <div class="tbar">
+      <div class="tbar-row"><div class="nav active">🏠 主页</div><div class="sep"></div><div class="nav">🌐 浏览器</div><div class="nav">📂 文件</div><div class="nav">🗃 数据库</div><div class="nav">🧠 图谱</div><div class="nav">📝 笔记</div><div class="nav">🗓 任务</div><div class="grow"><div class="omni">🔍 统一搜索…</div><div class="nav">☰</div></div></div>
+      <div class="tbar-row" style="background:rgba(255,255,255,.04)"><div class="nav">📄 文档</div><div class="nav">🖥 终端</div><div class="nav">📊 结果</div><div class="sep"></div><div class="nav">+ 新建标签</div></div>
+    </div>
+    <div class="body">
+      <div class="activity"><div class="ai active">🏠</div><div class="ai">🌐</div><div class="ai">📂</div><div class="ai">🗃</div><div class="ai">🧠</div><div class="ai">📝</div><div class="ai">🗓</div></div>
+      <div class="work"><div class="contentcol"><div class="content"><h3>活动文档 / 网页</h3><p>内容区使用纯白 <code>--surface-content</code>，chrome 退为中性深条，眼睛落在内容而非面板上。单一强调色蓝 <code>--accent</code>，绿仅留给成功态。</p><div class="mockimg"></div></div></div></div>
+    </div>
+    <div class="statusbar"><span class="ok">● 已连接</span><span>页签 3</span><span>· 终端就绪</span><span>· 内存 4.1G/15.6G</span><span>· 索引新鲜</span></div>
   </div></div>
 </div>
 
-<!-- 1440 -->
+<!-- 1440x900 -->
 <div class="frame-wrap">
-  <div class="frame-label"><b>1440×900</b> · 后标题栏 H=868 · 内容 H=810 (93.3%) · 内容 W=1440 (100%) — 验收基准尺寸</div>
-  <div class="scroll"><div class="shell" style="width:1440px; height:470px;">
-    <div class="tbar"><div class="nav active">🏠 主页</div><div class="sep"></div><div class="nav">🌐 浏览器</div><div class="nav">📂 文件</div><div class="nav">🗃 数据库</div><div class="grow"><div class="omni">🔍 搜索…</div><div class="nav">☰</div></div></div>
-    <div class="body"><div class="content"><h3>活动文档</h3><p>1440×900 折叠态内容占 93.3% 高度、100% 宽度，满足 R3 硬线（≥85%H / ≥92%W）。</p><div class="mockimg"></div></div></div>
+  <div class="frame-label"><b>1440×900</b> · 折叠活动 H=816 (90.67%) · 活动 W=1412 (98.06%) — 验收基准尺寸</div>
+  <div class="scroll"><div class="shell collapsed" style="width:1440px; height:900px;">
+    <div class="tbar">
+      <div class="tbar-row"><div class="nav active">🏠 主页</div><div class="sep"></div><div class="nav">🌐 浏览器</div><div class="nav">📂 文件</div><div class="nav">🗃 数据库</div><div class="nav">🧠 图谱</div><div class="grow"><div class="omni">🔍 搜索…</div><div class="nav">☰</div></div></div>
+      <div class="tbar-row" style="background:rgba(255,255,255,.04)"><div class="nav">📄 文档</div><div class="nav">🖥 终端</div><div class="nav">+ 新建</div></div>
+    </div>
+    <div class="body">
+      <div class="activity"><div class="ai active">🏠</div><div class="ai">🌐</div><div class="ai">📂</div><div class="ai">🗃</div><div class="ai">🧠</div></div>
+      <div class="work"><div class="contentcol"><div class="content"><h3>活动文档</h3><p>1440×900 折叠态内容占 90.67% 高度、98.06% 宽度，满足 R3B canonical 硬线（≥85%H / ≥92%W）。</p><div class="mockimg"></div></div></div></div>
+    </div>
     <div class="statusbar"><span class="ok">● 已连接</span><span>页签 3</span><span>· 终端就绪</span></div>
   </div></div>
 </div>
 
-<!-- 1366 -->
+<!-- 1366x768 -->
 <div class="frame-wrap">
-  <div class="frame-label"><b>1366×768</b> · 后标题栏 H=736 · 内容 H=678 (92.1%) · 内容 W=1366 (100%)</div>
-  <div class="scroll"><div class="shell" style="width:1366px; height:400px;">
-    <div class="tbar"><div class="nav active">🏠</div><div class="sep"></div><div class="nav">🌐</div><div class="nav">📂</div><div class="grow"><div class="omni">🔍</div><div class="nav">☰</div></div></div>
-    <div class="body"><div class="content"><h3>活动文档</h3><p>窄窗保留图标导航；文字标签在 ≤1180px 由 A1 navTopViews 裁剪，功能在 ☰ 仍可达。</p><div class="mockimg" style="height:80px"></div></div></div>
+  <div class="frame-label"><b>1366×768</b> · 折叠活动 H=684 (89.06%) · 活动 W=1338 (97.95%)</div>
+  <div class="scroll"><div class="shell collapsed" style="width:1366px; height:768px;">
+    <div class="tbar">
+      <div class="tbar-row"><div class="nav active">🏠</div><div class="sep"></div><div class="nav">🌐</div><div class="nav">📂</div><div class="nav">🗃</div><div class="grow"><div class="omni">🔍</div><div class="nav">☰</div></div></div>
+      <div class="tbar-row" style="background:rgba(255,255,255,.04)"><div class="nav">📄</div><div class="nav">🖥</div></div>
+    </div>
+    <div class="body">
+      <div class="activity"><div class="ai active">🏠</div><div class="ai">🌐</div><div class="ai">📂</div><div class="ai">🗃</div></div>
+      <div class="work"><div class="contentcol"><div class="content"><h3>活动文档</h3><p>窄窗保留图标导航；文字标签在 ≤1180px 由 A1 navTopViews 裁剪，功能在 ☰ 仍可达。</p><div class="mockimg" style="height:80px"></div></div></div></div>
+    </div>
     <div class="statusbar"><span class="ok">●</span><span>3</span><span>· 终端</span></div>
   </div></div>
 </div>
 
-<!-- 1024 -->
+<!-- 1200x800 -->
 <div class="frame-wrap">
-  <div class="frame-label"><b>1024×720</b> · 后标题栏 H=688 · 内容 H=630 (91.6%) · 内容 W=1024 (100%) — 窄窗保活动文档</div>
-  <div class="scroll"><div class="shell" style="width:1024px; height:360px;">
-    <div class="tbar"><div class="nav active">🏠</div><div class="sep"></div><div class="nav">🌐</div><div class="grow"><div class="nav">☰</div></div></div>
-    <div class="body"><div class="content"><h3>活动文档</h3><p>1024 仅留核心导航与 ☰；扩展行/侧栏按需开启，默认不挤压内容（内容 H 91.6%）。</p></div></div>
+  <div class="frame-label"><b>1200×800</b> · 折叠活动 H=716 (89.50%) · 活动 W=1172 (97.67%)</div>
+  <div class="scroll"><div class="shell collapsed" style="width:1200px; height:800px;">
+    <div class="tbar">
+      <div class="tbar-row"><div class="nav active">🏠</div><div class="sep"></div><div class="nav">🌐</div><div class="nav">📂</div><div class="nav">🗃</div><div class="grow"><div class="omni">🔍</div><div class="nav">☰</div></div></div>
+      <div class="tbar-row" style="background:rgba(255,255,255,.04)"><div class="nav">📄</div><div class="nav">🖥</div></div>
+    </div>
+    <div class="body">
+      <div class="activity"><div class="ai active">🏠</div><div class="ai">🌐</div><div class="ai">📂</div><div class="ai">🗃</div></div>
+      <div class="work"><div class="contentcol"><div class="content"><h3>活动文档</h3><p>1200×800 折叠态内容占 89.50% 高度，达标。侧栏/底栏按需开启，默认不挤压内容。</p><div class="mockimg" style="height:90px"></div></div></div></div>
+    </div>
+    <div class="statusbar"><span class="ok">●</span><span>3</span><span>· 终端</span></div>
+  </div></div>
+</div>
+
+<!-- 1024x720 -->
+<div class="frame-wrap">
+  <div class="frame-label"><b>1024×720</b> · 折叠活动 H=636 (88.33%) · 活动 W=996 (97.27%) — 窄窗保活动文档</div>
+  <div class="scroll"><div class="shell collapsed" style="width:1024px; height:720px;">
+    <div class="tbar">
+      <div class="tbar-row"><div class="nav active">🏠</div><div class="sep"></div><div class="nav">🌐</div><div class="grow"><div class="nav">☰</div></div></div>
+      <div class="tbar-row" style="background:rgba(255,255,255,.04)"><div class="nav">📄</div></div>
+    </div>
+    <div class="body">
+      <div class="activity"><div class="ai active">🏠</div><div class="ai">🌐</div><div class="ai">📂</div><div class="ai">🗃</div></div>
+      <div class="work"><div class="contentcol"><div class="content"><h3>活动文档</h3><p>1024 仅留核心导航与 ☰；扩展行/侧栏按需开启，默认不挤压内容（内容 H 88.33%）。</p><div class="mockimg" style="height:70px"></div></div></div></div>
+    </div>
     <div class="statusbar"><span class="ok">●</span><span>3</span></div>
   </div></div>
 </div>
 
-<h2>2. 正常态（同边一个工具窗口开，浅色 1440×900）</h2>
-<div class="scroll"><div class="shell" style="width:1440px; height:470px;">
-  <div class="tbar"><div class="nav active">📂 文件</div><div class="sep"></div><div class="nav">🏠 主页</div><div class="nav">🌐 浏览器</div><div class="grow"><div class="omni">🔍 搜索…</div><div class="nav">☰</div></div></div>
-  <div class="body">
-    <div class="sidebar"><div class="side-h">📂 文件 <span style="margin-left:auto;color:var(--text-3)">✕</span></div><div class="tree">
-      <div class="tnode sel"><span class="ic">📁</span> 工作区</div>
-      <div class="tnode"><span class="ic">📄</span> README.md</div>
-      <div class="tnode"><span class="ic">📄</span> plan.md</div>
-      <div class="tnode"><span class="ic">📁</span> src</div>
-    </div></div>
-    <div class="content"><h3>README.md</h3><p>侧栏 260px（浅色 <code>--surface-sunken</code>），发丝右边框 <code>--border-hair</code>。内容 W=1180 (81.9%)。同边再开工具窗口将替换本侧栏（A3 行为）。</p><div class="mockimg"></div></div>
+<!-- 900x600 minimum -->
+<div class="frame-wrap">
+  <div class="frame-label"><b>900×600（最小）</b> · 折叠活动 H=516 (86.00%) · 活动 W=872 (96.89%) — 产品最小窗口，≥85%H 硬线最紧</div>
+  <div class="scroll"><div class="shell collapsed" style="width:900px; height:600px;">
+    <div class="tbar">
+      <div class="tbar-row"><div class="nav active">🏠</div><div class="sep"></div><div class="nav">🌐</div><div class="grow"><div class="nav">☰</div></div></div>
+      <div class="tbar-row" style="background:rgba(255,255,255,.04)"><div class="nav">📄</div></div>
+    </div>
+    <div class="body">
+      <div class="activity"><div class="ai active">🏠</div><div class="ai">🌐</div><div class="ai">📂</div><div class="ai">🗃</div></div>
+      <div class="work"><div class="contentcol"><div class="content"><h3>活动文档</h3><p>900×600 高密度：仅图标导航 + ☰，文字标签隐藏；重要控件在 ☰ 仍可达，文本不遮挡。</p><div class="mockimg" style="height:60px"></div></div></div></div>
+    </div>
+    <div class="statusbar"><span class="ok">●</span><span>3</span></div>
+  </div></div>
+</div>
+
+<h2>2. 正常态（左活动条 28 + 侧栏 260 + 底部 240，浅色 1440×900）</h2>
+<div class="scroll"><div class="shell" style="width:1440px; height:900px;">
+  <div class="tbar">
+    <div class="tbar-row"><div class="nav active">📂 文件</div><div class="sep"></div><div class="nav">🏠 主页</div><div class="nav">🌐 浏览器</div><div class="nav">🗃 数据库</div><div class="grow"><div class="omni">🔍 搜索…</div><div class="nav">☰</div></div></div>
+    <div class="tbar-row" style="background:rgba(255,255,255,.04)"><div class="nav">📄 README.md</div><div class="nav">🖥 终端</div></div>
   </div>
-  <div class="statusbar"><span class="ok">● 已连接</span><span>文件</span><span>· 仓库已配置</span></div>
+  <div class="body">
+    <div class="activity"><div class="ai">🏠</div><div class="ai active">📂</div><div class="ai">🌐</div><div class="ai">🗃</div><div class="ai">🧠</div></div>
+    <div class="work">
+      <div class="sidebar"><div class="side-h">📂 文件 <span style="margin-left:auto;color:var(--text-3)">✕</span></div><div class="tree">
+        <div class="tnode sel"><span class="ic">📁</span> 工作区</div>
+        <div class="tnode"><span class="ic">📄</span> README.md</div>
+        <div class="tnode"><span class="ic">📄</span> plan.md</div>
+        <div class="tnode"><span class="ic">📁</span> src</div>
+      </div></div>
+      <div class="contentcol"><div class="content"><h3>README.md</h3><p>侧栏 260px（浅色 <code>--surface-sunken</code>），发丝右边框 <code>--border-hair</code>。正常态内容 W=1440−28−260=1152 (80.0%)。同边再开工具窗口将替换本侧栏（A3 行为）。</p><div class="mockimg"></div></div>
+      <div class="bottom">🖥 终端 — 底部工具窗口 240px；取消任务/销毁会话与关闭视图是不同语义（A6/J5/J6）。</div></div>
+    </div>
+  </div>
+  <div class="statusbar"><span class="ok">● 已连接</span><span>文件</span><span>· 仓库已配置</span><span>· 终端运行</span></div>
 </div></div>
 
 <h2>3. 暗色主题（参数镜像，1440×900 折叠）</h2>
-<div class="scroll"><div class="shell dark" style="width:1440px; height:470px;">
-  <div class="tbar"><div class="nav active">🏠 主页</div><div class="sep"></div><div class="nav">🌐 浏览器</div><div class="nav">📂 文件</div><div class="grow"><div class="omni">🔍 搜索…</div><div class="nav">☰</div></div></div>
-  <div class="body"><div class="content"><h3>活动文档（暗）</h3><p>同一组件，仅 <code>--surface/--text/--border</code> 翻面（§3.6）。强调蓝提亮为 <code>#4f9be0</code> 保 AA 对比。</p><div class="mockimg"></div></div></div>
+<div class="scroll"><div class="shell collapsed dark" style="width:1440px; height:900px;">
+  <div class="tbar">
+    <div class="tbar-row"><div class="nav active">🏠 主页</div><div class="sep"></div><div class="nav">🌐 浏览器</div><div class="nav">📂 文件</div><div class="nav">🗃 数据库</div><div class="grow"><div class="omni">🔍 搜索…</div><div class="nav">☰</div></div></div>
+    <div class="tbar-row" style="background:rgba(255,255,255,.04)"><div class="nav">📄 文档</div><div class="nav">🖥 终端</div></div>
+  </div>
+  <div class="body">
+    <div class="activity"><div class="ai active">🏠</div><div class="ai">🌐</div><div class="ai">📂</div><div class="ai">🗃</div></div>
+    <div class="work"><div class="contentcol"><div class="content"><h3>活动文档（暗）</h3><p>同一组件，仅 <code>--surface/--text/--border</code> 翻面（§3.6）。强调蓝提亮为 <code>#4f9be0</code> 保 AA 对比（≥4.5:1）。</p><div class="mockimg"></div></div></div></div>
+  </div>
   <div class="statusbar"><span class="ok">● 已连接</span><span>页签 3</span><span>· 终端就绪</span></div>
 </div></div>
 
-<h2>4. 状态规范画廊（§4）</h2>
+<h2>4. 900×600 高密度行为（图标导航 + ☰ 可达）</h2>
+<div class="note">最小窗口下：活动条仅图标（28px），顶 chrome 第二行仅保留「📄 文档」等核心标签；扩展模块（数据库/图谱/笔记/任务）经 ☰ 唤出，不常驻以免挤压内容。所有控件命中区 ≥24px（§3.7/§4），IME 与全局快捷键不误触（A9 边界）。内容 H 86.00% > 85% 硬线。</div>
+<div class="scroll"><div class="shell collapsed" style="width:900px; height:600px;">
+  <div class="tbar">
+    <div class="tbar-row"><div class="nav active">🏠</div><div class="sep"></div><div class="nav">🌐</div><div class="grow"><div class="nav">☰</div></div></div>
+    <div class="tbar-row" style="background:rgba(255,255,255,.04)"><div class="nav">📄</div><div class="nav">🖥</div></div>
+  </div>
+  <div class="body">
+    <div class="activity"><div class="ai active">🏠</div><div class="ai">🌐</div><div class="ai">📂</div><div class="ai">🗃</div><div class="ai">🧠</div></div>
+    <div class="work"><div class="contentcol"><div class="content"><h3>活动文档</h3><p>高密度：顶部两行 60px、状态栏 24px 不变；内容区仍占 86%。搜索/命令经 Ctrl+K / Ctrl+Shift+P（A6 冻结）。</p><div class="mockimg" style="height:60px"></div></div></div></div>
+  </div>
+  <div class="statusbar"><span class="ok">●</span><span>3</span></div>
+</div></div>
+
+<h2>5. 状态规范画廊（§4 + §4.1 客观像素证据）</h2>
 <div class="gallery">
-  <div class="sw"><div class="cap">hover</div><div class="body2"><div class="row hover">列表项 hover</div><div class="row">普通项</div></div></div>
-  <div class="sw"><div class="cap">selected / active</div><div class="body2"><div class="row sel">选中（左 2px 指示）</div><div class="row">普通项</div></div></div>
-  <div class="sw"><div class="cap">keyboard focus</div><div class="body2"><div class="row focus">焦点（2px 外环）</div></div></div>
-  <div class="sw"><div class="cap">disabled</div><div class="body2"><div class="row disabled">禁用（灰字可读）</div></div></div>
-  <div class="sw"><div class="cap">danger</div><div class="body2"><div class="row danger">删除此文件</div><div class="row danger">强制关闭</div></div></div>
+  <div class="sw"><div class="cap">hover</div><div class="body2"><div class="row hover">列表项 hover</div><div class="row">普通项</div><div class="px">底 --accent-tint，字不变；非焦点可见</div></div></div>
+  <div class="sw"><div class="cap">selected / active</div><div class="body2"><div class="row sel">选中（左 2px 指示）</div><div class="row">普通项</div><div class="px">2px --accent 指示线，与 hover 区分</div></div></div>
+  <div class="sw"><div class="cap">keyboard focus</div><div class="body2"><div class="row focus">焦点（2px 外环）</div><div class="px">outline:2px solid accent; offset:2px；AA 4.6:1</div></div></div>
+  <div class="sw"><div class="cap">disabled</div><div class="body2"><div class="row disabled">禁用（灰字可读）</div><div class="px">--text-3 on #fff ≥3:1；无指针</div></div></div>
+  <div class="sw"><div class="cap">danger</div><div class="body2"><div class="row danger">删除此文件</div><div class="row danger">强制关闭</div><div class="px">红字；hover 底 #fdeaea</div></div></div>
 </div>
 
-<h2>5. 右键菜单（命令身份 / 禁用理由 / 安全类，§4）</h2>
+<h2>6. 右键菜单（命令身份 / 禁用理由 / 安全类，§4）</h2>
 <div class="ctx">
   <div class="ci" data-cmd="file.open" data-safety="normal">打开</div>
   <div class="ci" data-cmd="file.rename" data-safety="normal">重命名</div>
@@ -182,8 +277,9 @@
   <div class="ci x" data-cmd="file.delete" data-disabled-reason="dirty-tree" data-safety="danger">删除（已禁用：脏树）</div>
   <div class="ci d" data-cmd="file.force_close" data-safety="danger">强制关闭会话</div>
 </div>
+<div class="note">菜单项高 ≥28px、padding 7px 12px、命中区 ≥24px；`data-cmd` / `data-disabled-reason` / `data-safety` 与 A6 命令注册对齐。</div>
 
-<h2>6. 双强调色修复对照（§1 诊断 1）</h2>
+<h2>7. 双强调色修复对照（§1 诊断 1）</h2>
 <div class="ba">
   <div class="col"><h4>修复前：绿按钮 + 蓝导航（两个产品感）</h4>
     <span class="btn green">主操作（绿 #2b6）</span>
@@ -197,7 +293,7 @@
   </div>
 </div>
 
-<h2>7. 态角注（empty / loading / error / disabled / context-menu）</h2>
+<h2>8. 态角注（empty / loading / error / disabled / context-menu）</h2>
 <div class="gallery">
   <div class="sw" style="width:240px"><div class="cap">empty</div><div class="empty">📭 暂无内容<br><span style="font-size:11px">点「+」新建</span></div></div>
   <div class="sw" style="width:240px"><div class="cap">loading</div><div class="empty">⏳ 加载中…<br><span style="font-size:11px">避免布局跳动</span></div></div>
@@ -207,7 +303,7 @@
 </div>
 
 <div class="note" style="margin-top:24px;border-top:1px solid #262d38;padding-top:12px;">
-  标注帧与 <code>A8-R3-visual-density-design.md</code> 一致。A8 仅拥有视觉令牌与测量；布局/行为/命令注册契约分别属 A1/A3/A6，未越权修改。未改产品代码、未 push。
+  R3B 修订：撤回 R3 旧几何（OS 标题栏 32px、顶 chrome 32/状态栏 26、仅 4 尺寸、含 800×600），改按 A0 SSOT（inner viewport、60/24、28px 活动条、6 尺寸、最小 900×600、剔除 800×600）。帧与 <code>A8-R3-visual-density-design.md</code> 一致。捐助品牌全文检索 0 处。A8 仅拥有视觉令牌与测量；布局/行为/命令注册契约分别属 A1/A3/A6，未越权修改。未改产品代码、未 push。
 </div>
 </body>
 </html>

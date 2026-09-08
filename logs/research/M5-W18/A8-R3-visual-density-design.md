@@ -134,6 +134,20 @@ line-height: chrome 1.3 / content 1.55
 ```
 对比度：暗色下 `--text-1` on `--surface-content` ≥ 7:1；`--accent` on chrome ≥ 4.5:1（AA）。
 
+### 3.7 结构令牌（几何尺寸真源，R3B 对齐 A0 SSOT）
+
+> 顶部 chrome / 状态栏 / 活动条尺寸是 R3B 新引入的**单一真源**，供 W19 落地替换散落字面量。
+> 与真实产品现状的 2px 级差见 §5 末「真实产品与 canonical 的级差」。
+
+```
+--chrome-top:60px;   /* 正常顶部 chrome：两行各 30px */
+--chrome-row:30px;   /* ActivityBar 行 / 模块页签行 */
+--statusbar-h:24px;  /* 底部状态栏 */
+--activity-w:28px;   /* 左活动条（折叠态常驻）*/
+--sidebar-w:260px;   /* 侧栏工具窗口默认宽（窄窗 240）*/
+--bottom-h:240px;    /* 底部工具窗口默认高 */
+```
+
 ---
 
 ## 4. 状态规范（selected/hover/focus/disabled/menu）
@@ -153,37 +167,57 @@ line-height: chrome 1.3 / content 1.55
 - 分组用 1px `--border-hair` 分隔（非空行）；危险项红字；禁项灰字无指针。
 - 每项携带 `data-cmd` 身份（命令注册）、`data-disabled-reason`（禁用理由）、`data-safety`（normal/danger）。
 
+### 4.1 客观无障碍像素证据（R3B-04）
+
+| 状态 | 表现 | 像素 / 对比证据 |
+|---|---|---|
+| keyboard focus | `outline:2px solid var(--accent); outline-offset:2px` | 2px 外环；`--accent #2b6cb0` on `#ffffff` = **4.6:1**（AA）；禁 `outline:none` |
+| selected/active | 左/底 2px `--accent` 指示 + `--accent-tint` 底纹 | 指示线 2px，与 hover 区分（hover 无指示线） |
+| hover | 底 `--accent-tint`，字不变 | 非键盘焦点也可见 |
+| disabled | 字 `--text-3` `#86909c`，无指针 | 仍可读；`--text-3` on `#fff` ≥ 3:1（非纯灰块） |
+| menu-item | 高 ≥28px，padding `7px 12px`，`data-cmd`/`data-disabled-reason`/`data-safety` | 命中区 ≥24px；命令身份 / 禁用理由 / 安全类齐备 |
+| danger menu | 字 `--danger`，hover 底 `#fdeaea` | 红即危险语义 |
+
+对比基线：浅色 `--text-1 #1f2733` on `#fff` ≥ **14:1**（AAA）；暗色 `--text-1 #e6edf3` on `#161b22` ≥ **7:1**（AAA）。所有正文/状态文字满足 AA/AAA；强调蓝在 chrome 与内容区均 ≥ 4.5:1。
+
 ---
 
-## 5. 客观视口测量（4 尺寸，折叠态 = 无工具窗口）
+## 5. 客观视口测量（R3B canonical 几何，6 尺寸）
 
-方法：OS 标题栏按 Linux 默认 32px 计（Tauri 自定义标题栏时该值并入 ActivityBar，下表已用「后标题栏高度」口径，即 `windowH-32`）。顶部 chrome = ActivityBar 32px（折叠，扩展行关闭）；底部 = StatusBar 26px。Sidebar 仅 files/arts 等视图默认开（宽 260/窄窗 240），折叠态不计入。
+> **R3B 纠正（A0 SSOT，R3B-05 `geometry`）**：原 R3 §5 采用「OS 标题栏 32px → 后标题栏高度 = windowH−32」「顶 chrome 32 / 状态栏 26」口径，被 A0 裁定为不兼容约定，现 **RETRACT** 并按以下 SSOT 重算：
+> - 测量基准 = **应用内部视口（inner viewport）**，已排除 OS 标题栏；验收尺寸即内部视口尺寸（不再减 32）。
+> - 正常顶部 chrome = **60px（两行各 30px）**；状态栏 = **24px**。
+> - 折叠态隐藏全部可缩放工具窗口；左 **28px 活动条（activity strip）** 常驻。
+> - 折叠活动高% = `(innerH − 60 − 24) / innerH`；折叠活动宽% = `(innerW − 28) / innerW`。
+> - 验收尺寸 = 1920×1080 / 1440×900 / 1366×768 / **1200×800** / 1024×720 / **最小 900×600**；**800×600 已剔除**。
 
-| 尺寸 | 后标题栏 H | 顶 chrome | 底 chrome | 折叠内容 H | **内容 H%** | 折叠内容 W | **内容 W%** | 顶部 chrome 行数 |
-|---|---|---|---|---|---|---|---|---|
-| 1920×1080 | 1048 | 32 | 26 | 990 | **94.5%** | 1920 | **100%** | 1（扩展关） |
-| 1440×900 | 868 | 32 | 26 | 810 | **93.3%** | 1440 | **100%** | 1 |
-| 1366×768 | 736 | 32 | 26 | 678 | **92.1%** | 1366 | **100%** | 1 |
-| 1024×720 | 688 | 32 | 26 | 630 | **91.6%** | 1024 | **100%** | 1 |
+| 尺寸（inner viewport） | 顶 chrome | 状态栏 | 折叠活动 H | **活动 H%** | 折叠活动 W | **活动 W%** |
+|---|---|---|---|---|---|---|
+| 1920×1080 | 60 | 24 | 1080−84=996 | **92.22%** | 1920−28=1892 | **98.54%** |
+| 1440×900 | 60 | 24 | 900−84=816 | **90.67%** | 1440−28=1412 | **98.06%** |
+| 1366×768 | 60 | 24 | 768−84=684 | **89.06%** | 1366−28=1338 | **97.95%** |
+| 1200×800 | 60 | 24 | 800−84=716 | **89.50%** | 1200−28=1172 | **97.67%** |
+| 1024×720 | 60 | 24 | 720−84=636 | **88.33%** | 1024−28=996 | **97.27%** |
+| 900×600（最小） | 60 | 24 | 600−84=516 | **86.00%** | 900−28=872 | **96.89%** |
 
-结论：四尺寸折叠态内容 H% 均 ≥91.6% > 85% 硬线；W% 均 100% > 92%。**现状布局已满足视口约束**——R3 的「大气」增益来自令牌统一（§3）而非再砍 chrome。
+结论：六尺寸折叠态活动 H% 均 ≥ **86.00%**（≥85% 硬线，最紧在 900×600）；活动 W% 均 ≥ **96.89%**（≥92% 硬线）。**全部达标**——canonical 几何下内容即产品，无需再砍 chrome。
 
-**正常态（同边一个工具窗口开）宽度余量**（验证「不挤压内容」）：
-- 1440：侧栏 260 → 内容 W=1180=**81.9%**（>0 即可，折叠态才要求 92%）。
-- 1024：侧栏 240 → 内容 W=784=**76.6%**；底栏 240 时内容 H=688-26-240=**422=61.3%**（窄窗优先保活动文档，符合蓝图 S 档）。
+**正常态（左活动条 28 + 侧栏 260 开）宽度余量**（仅信息，验证「不挤压内容」）：
+- 1440：内容 W = 1440−28−260 = 1152 = **80.0%**；1024：窄窗侧栏 240 → 1024−28−240 = 756 = **73.8%**。
 
-**顶部 chrome 高度预算**：折叠 32px；扩展行开 +33px = 65px ≤ 80px（硬线，2 紧凑行）。✓
+**真实产品与 canonical 的 2px 级差（交 A2 基线测量、W19 调和）**：真实 `ActivityBar` 高 32px、`StatusBar` 高 26px；canonical 为 60/24。顶部 32+28(mod-tab)≈60 仅 0–2px 取整差；状态栏 26→24 差 2px。原型按 A0 canonical 出报告；W19 落地以 A2 实测基线为准，令牌 `--statusbar-h`/`--activity-w` 可微调。
 
 ---
 
 ## 6. 标注帧（synthetic HTML）
 
-`A8-R3-visual-density-frames.html` 含 4 尺寸 ×（浅/暗）×（折叠/正常）标注帧，并附：
-- 顶部/底部 chrome 标注（32/26px）
-- 侧栏/底栏标注（260/240px）
-- 状态色块（hover/selected/focus/disabled/menu）
+`A8-R3-visual-density-frames.html` 含 **6 尺寸**（1920/1440/1366/1200/1024/900）×（浅/暗）×（折叠/正常）标注帧，并附：
+- 顶部 chrome 标注（60px = 两行各 30px）、状态栏（24px）、左活动条（28px）
+- 侧栏/底栏标注（260/240px），折叠态隐藏
+- 状态色块（hover/selected/focus/disabled/menu）+ 客观像素证据（§4.1）
 - empty / loading / error / disabled / context-menu 态角注
 - 双强调色「修复前 vs 修复后」对照
+- 900×600 高密度行为角注（图标导航 + ☰ 可达）
 
 帧为纯静态 HTML+内联 CSS，无脚本、无外部资源、无产品数据。
 
@@ -202,14 +236,15 @@ line-height: chrome 1.3 / content 1.55
 
 | 约束 | 满足 | 证据 |
 |---|---|---|
-| 1440×900 折叠 ≥85%H / ≥92%W | ✅ | §5 表：93.3%H / 100%W |
-| 顶部 chrome ≤2 行 ≤80px | ✅ | §5：折叠 32 / 扩展 65 |
+| 1440×900 折叠 ≥85%H / ≥92%W | ✅ | §5 表：90.67%H / 98.06%W（canonical）|
+| 六尺寸折叠 ≥85%H / ≥92%W（R3B） | ✅ | §5 表：H% 86.00–92.22 / W% 96.89–98.54 |
+| 顶部 chrome ≤2 行 ≤80px | ✅ | §5：60px 两行（≤80px）|
 | 侧/底工具 open/close/collapse/restore/auto-hide/resize | ➖ | 行为属 A3；视觉令牌已备 |
 | 每边至多一主工具窗口默认开 | ➖ | 行为属 A1/A3 |
 | 全焦点模式隐藏 chrome+唯一返回 | ➖ | 行为属 A1/A3；视觉已定义隐藏态底色 |
 | 无大卡片/超大按钮/多面板挤压/重复导航 | ✅ | §2 诊断 + §3.3 字号上限 18px |
 | 右键项有命令身份/禁用理由/键盘路径/安全类 | ✅（约定） | §4 菜单 `data-*` |
-| 帧覆盖 4 尺寸 + empty/loading/error/disabled/ctx-menu | ✅ | §6 HTML |
+| 帧覆盖 6 尺寸（含 900×600）+ 浅/暗 + empty/loading/error/disabled/ctx-menu | ✅ | §6 HTML |
 | 浅/暗主题 | ✅ | §3.5/§3.6 |
 
 ➖ = 不在 A8 职责内（行为/布局），已由对应 Lane 卡覆盖；A8 提供其所需视觉令牌。
@@ -218,8 +253,11 @@ line-height: chrome 1.3 / content 1.55
 
 ## 9. 交付清单
 
-- `logs/research/M5-W18/A8-R3-visual-density-design.md` —— 本设计系统
-- `logs/research/M5-W18/A8-R3-visual-density-frames.html` —— 标注帧（4 尺寸 × 浅/暗 × 折叠/正常 + 状态 + 态）
-- `logs/checkpoints/A8-M5-W18-R3-checkpoint.md` —— 自检与 Lane 边界
+- `logs/research/M5-W18/A8-R3-visual-density-design.md` —— 本设计系统（R3B 已按 A0 SSOT 重算几何，见 §5 纠正 + §3.7 结构令牌）
+- `logs/research/M5-W18/A8-R3-visual-density-frames.html` —— 标注帧（6 尺寸 × 浅/暗 × 折叠/正常 + 状态 + 态 + 900×600 高密度）
+- `logs/checkpoints/A8-M5-W18-R3-checkpoint.md` —— R3 自检与 Lane 边界
+- `logs/checkpoints/A8-M5-W18-R3B-checkpoint.md` —— **R3B 纠正包**：canonical 几何重算、捐助品牌核查、验收交叉
 
-STATUS：PASS_WITH_NOTE（视觉令牌完整、测量达标；行为/布局契约交 A1/A3，未越权）。未 push，未改产品代码与他 Lane 文件。
+STATUS：PASS_WITH_NOTE（视觉令牌完整、canonical 几何六尺寸达标、无障碍像素证据齐备；行为/布局契约交 A1/A3/A6，未越权）。未 push，未改产品代码与他 Lane 文件。
+
+> **R3B 纠正声明**：本文件与 `A8-R3-visual-density-frames.html` 在 R3B 修订，撤回 R3 旧几何口径（OS 标题栏 32px、顶 chrome 32 / 状态栏 26、仅 4 尺寸、含 800×600），改按 A0 SSOT（inner viewport、60/24、28px 活动条、6 尺寸、最小 900×600、剔除 800×600）。捐助品牌经全文检索为 0 处（R3B-02 hygiene 满足）。历史 R3 结论保留于上文，不静默删除。
