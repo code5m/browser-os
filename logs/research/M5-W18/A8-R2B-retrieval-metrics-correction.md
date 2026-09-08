@@ -12,7 +12,7 @@ STATUS=READY_FOR_REVIEW
 WORKDIR=/home/ainfinit/.codex/worktrees/m5-w18-a8/mvp-browser-os-v3
 BRANCH=codex/m5-w18-a8
 BASE=d6127c4 (origin/master R2B dispatch; 本提交 rebase 于其之上)
-HEAD=<本 R2B 提交，见文末>
+HEAD=1e71b3a63742f4dd256c8a9ebb125f7279e848bc
 CONSUMED_PEERS=A7 f157eb4eac5e29f88331a25fb9eda35f542b07e2 (A7-zvec-grep-R2-evidence-closure.md, A7-zvec-grep-ingestion-index-architecture.md)
 FILES=logs/research/M5-W18/A8-R2B-retrieval-metrics-correction.md, logs/checkpoints/A8-M5-W18-R2B-checkpoint.md, logs/research/M5-W18/A8-R2B-benchmark-metrics.mjs, logs/research/M5-W18/A8-zvec-grep-retrieval.md(追加 R2B 更正节), logs/research/M5-W18/A8-benchmark-routes.mjs(保留)
 CORRECTIONS=①指标命名(原 vRecall/fRecall/zRecall 实为 precision 类)；②RSS 边界(原单点采样≠OS峰值)；③采纳路径结论过度(原"仅 sidecar/COPY=0" → 修正为 npm 绑定 REJECT、引擎经 zvec-rust ADAPT)
