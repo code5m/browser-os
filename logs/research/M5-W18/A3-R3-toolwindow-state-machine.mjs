@@ -19,19 +19,27 @@
  */
 
 // =====================================================================
-// 1. Constants — single source for every number used by R3 acceptance
+// 1. Constants — single source for every number used by R3B acceptance.
+//    Aligned to the A0 M5-W18-R3 ruling (A0-M5-W18-R3-acceptance-audit-20260908.md):
+//    - Geometry SSOT uses the application INNER viewport (OS titlebar excluded).
+//    - Normal top chrome is exactly 60px = two 30px rows.
+//    - Status bar is 24px.
+//    - A compact 28px activity/tool strip remains visible in collapsed mode.
 // =====================================================================
 
 export const CHROME = Object.freeze({
-  TITLEBAR_H: 32, // custom/native title bar, excluded from "post-titlebar height"
-  TOP_ROW_H: 40, // one compact top row (collapsed mode)
-  TOP_ROWS_H: 80, // at most two compact rows (normal mode) — R3 hard cap
-  STATUS_H: 26, // measured: StatusBar.vue:136
+  TITLEBAR_H: 0, // OS titlebar is OUTSIDE the inner viewport (A0 ruling) -> 0 here
+  TOP_ROW_H: 30, // one compact top row (30px) — A0 SSOT
+  TOP_ROWS_H: 60, // normal top chrome = exactly 60px = two 30px rows — A0 SSOT
+  STATUS_H: 24, // status bar 24px — A0 SSOT
 });
 
+// 28px activity/tool strip that stays visible even when every resizable panel is collapsed.
+export const ACTIVITY_STRIP_W = 28;
+
 export const ACCEPT = Object.freeze({
-  MIN_CONTENT_H_SHARE: 0.85, // collapsed mode, post-titlebar height
-  MIN_CONTENT_W_SHARE: 0.92, // collapsed mode, width
+  MIN_CONTENT_H_SHARE: 0.85, // collapsed mode, inner-viewport height
+  MIN_CONTENT_W_SHARE: 0.92, // collapsed mode, viewport width
   MIN_CONTENT_W_PX: 520, // hard floor while resizing
   MIN_CONTENT_H_PX: 320, // hard floor while resizing
 });
@@ -146,14 +154,17 @@ export function contentBox(state) {
   return { w: Math.max(0, w), h: Math.max(0, h) };
 }
 
-/** R3 acceptance shares: collapsed mode must reserve >=85% height / >=92% width. */
+/**
+ * R3B acceptance shares (A0 SSOT formula):
+ *   collapsed active width  = (viewport width - 28) / viewport width
+ *   collapsed active height = (inner height - 60 - 24) / inner height
+ * The 28px activity strip and the 60px top chrome + 24px status bar stay visible;
+ * all resizable tool panels are hidden.
+ */
 export function collapsedShares(viewport) {
-  const st = createState(viewport);
-  st.topRows = 1; // collapsed: single compact row
-  for (const e of EDGES) st.edges[e].visible = false;
-  const box = contentBox(st);
-  const post = viewport.h - CHROME.TITLEBAR_H;
-  return { w: viewport.w ? box.w / viewport.w : 0, h: post ? box.h / post : 0 };
+  const w = viewport.w ? (viewport.w - ACTIVITY_STRIP_W) / viewport.w : 0;
+  const h = viewport.h ? (viewport.h - CHROME.TOP_ROWS_H - CHROME.STATUS_H) / viewport.h : 0;
+  return { w, h };
 }
 
 // =====================================================================
@@ -561,12 +572,14 @@ function selfTest() {
     return label;
   };
 
-  // --- 7.1 R3 viewport budget: collapsed mode at every target size ---
+  // --- 7.1 R3B viewport budget: collapsed mode at every A0 acceptance size ---
   for (const vp of [
     { w: 1920, h: 1080 },
     { w: 1440, h: 900 },
     { w: 1366, h: 768 },
+    { w: 1200, h: 800 },
     { w: 1024, h: 720 },
+    { w: 900, h: 600 }, // product minimum — A0 dropped 800x600
   ]) {
     const sh = collapsedShares(vp);
     assert(sh.h >= ACCEPT.MIN_CONTENT_H_SHARE, ok(`collapsed h share ${vp.w}x${vp.h} = ${(sh.h * 100).toFixed(1)}%`));
@@ -599,18 +612,28 @@ function selfTest() {
   r = openTool(togglePin(openTool(createState({ w: 1440, h: 900 }), "files").state, "files").state, "db");
   assert(r.effects.some((e) => e.type === "fallback"), ok("fallback emits an effect the UI can explain"));
 
-  // --- 7.5 collapse all / restore ---
+  // --- 7.5 collapse all / restore (R3B-03: Collapse All hides PINNED too) ---
   s = openTool(createState({ w: 1440, h: 900 }), "files").state;
   s = openTool(s, "term").state;
+  s = togglePin(s, "files").state; // pin a tool BEFORE collapse
+  const pinBefore = s.tools.files.pinned;
   r = collapseAll(s);
-  assert(!Object.values(r.state.tools).some((t) => t.open), ok("collapse all closes every tool window"));
-  assert(r.state.topRows === 1, ok("collapse all drops top chrome to one row"));
-  assert(r.state.snapshots.length === 1, ok("collapse all stores one snapshot"));
+  assert(!Object.values(r.state.tools).some((t) => t.open), ok("collapse all closes every tool window, including pinned"));
+  assert(!r.state.tools.files.open && !r.state.tools.term.open, ok("collapse all hides the pinned 'files' window too"));
+  assert(r.state.focus.surfaceId === "doc", ok("collapse all returns focus to the document (CR-10)"));
+  assert(r.state.snapshots.length === 1, ok("collapse all stores one restorable snapshot"));
   const restored = restorePrevious(r.state);
   assert(restored.state.tools.files.open && restored.state.tools.term.open, ok("restore brings the previous layout back"));
+  assert(restored.state.tools.files.pinned === pinBefore, ok("restore restores pin state from the snapshot"));
   assert(restored.state.snapshots.length === 0, ok("restore pops the snapshot"));
   const empty = restorePrevious(createState({ w: 1440, h: 900 }));
   assert(empty.state.tools.files.open, ok("empty stack -> documented default layout"));
+  // pin only changes ordinary replacement / auto-hide, never survives Collapse All
+  s = openTool(createState({ w: 1440, h: 900 }), "files").state;
+  s = togglePin(s, "files").state;
+  r = openTool(s, "db"); // unpinned 'db' cannot steal a pinned primary -> falls back
+  assert(r.state.edges.left.primary === "files" && s.tools.files.pinned, ok("pin blocks ordinary replacement (non-collapse)"));
+  assert(r.state.edges.bottom.primary === "db", ok("pin only affects replacement/auto-hide, not collapse"));
 
   // --- 7.6 expand active ---
   s = openTool(createState({ w: 1440, h: 900 }), "files").state;
@@ -692,9 +715,25 @@ function selfTest() {
   tr = treeBoundedExpandAll(lazy);
   assert(tr.report.pendingLoads.length > 0, ok("unloaded levels are reported as pending loads, not walked"));
 
-  // --- 7.15 keyboard reachability ---
+  // --- 7.15 keyboard reachability + focus (R3B-04) ---
   assert(Object.values(PROPOSED_KEYS).every((k) => k.vscode && k.idea && k.eclipse), ok("every proposed action exists in all three schemes"));
   assert(Object.keys(PROPOSED_KEYS).includes("hideAllTools") && Object.keys(PROPOSED_KEYS).includes("focusMode"), ok("collapse-all and focus mode are keyboard reachable"));
+  assert(Object.keys(PROPOSED_KEYS).includes("focusLeftTool") && Object.keys(PROPOSED_KEYS).includes("focusBottomTool") && Object.keys(PROPOSED_KEYS).includes("focusRightTool"), ok("each tool edge has a keyboard focus path (Alt+1/2/3)"));
+  assert(Object.keys(PROPOSED_KEYS).includes("treeCollapseAll") && Object.keys(PROPOSED_KEYS).includes("treeExpandOne") && Object.keys(PROPOSED_KEYS).includes("treeExpandAll"), ok("tree collapse/expand actions are keyboard reachable"));
+  // focus must shift deterministically with keyboard-driven transitions
+  s = openTool(createState({ w: 1440, h: 900 }), "files").state;
+  assert(s.focus.surfaceId === "files", ok("open moves focus to the tool window (keyboard target)"));
+  r = closeTool(s, "files");
+  assert(r.state.focus.surfaceId === "doc", ok("close returns focus to document"));
+  r = collapseAll(s);
+  assert(r.state.focus.surfaceId === "doc", ok("collapse all returns focus to document"));
+  s = openTool(createState({ w: 1440, h: 900 }), "files").state;
+  s = togglePin(s, "files").state;
+  r = togglePin(s, "files"); // unpin must not move focus
+  assert(r.state.focus.surfaceId === "files", ok("toggle pin preserves focus (no surprise steal)"));
+  // tree keyboard: collapse-all keeps the selection as the focus anchor
+  tr = treeCollapseAll(makeTree());
+  assert(tr.tree.selected === tree.selected && tr.report.selectionKept, ok("tree keyboard collapse keeps selection as focus anchor"));
 
   return n;
 }
@@ -744,7 +783,9 @@ if (typeof process !== "undefined" && process.argv && process.argv[1] && process
     { w: 1920, h: 1080 },
     { w: 1440, h: 900 },
     { w: 1366, h: 768 },
+    { w: 1200, h: 800 },
     { w: 1024, h: 720 },
+    { w: 900, h: 600 },
   ].map((vp) => {
     const sh = collapsedShares(vp);
     return `${vp.w}x${vp.h}: content ${Math.round(sh.w * 1000) / 10}% w / ${Math.round(sh.h * 1000) / 10}% h`;
