@@ -1,0 +1,160 @@
+{
+  "manifest_version": 2,
+  "wave": "M5-W18-R3B",
+  "lane": "A11",
+  "role": "R3B final acceptance package (integration manifest + user-review checklist + progress ledger)",
+  "generated_at": "2026-09-08T15:30+0800",
+  "base": {
+    "ref": "origin/master",
+    "short": "d96b9b5",
+    "sha": "d96b9b536803b72122ca4b0e4603e766c74fac68"
+  },
+  "status": "PROVISIONAL_PENDING_UPSTREAM",
+  "finalize_blockers": [
+    "R3B is A0's targeted closure wave. A11 may FINALIZE only after A1 delivers the R3B-corrected consolidated prototype (all 14 Git units + amend/reset-revert visibly located, role/aria added, 6 sizes incl 900x600, collapsed keeps the 28px strip, neutral font stack, Ctrl+K=address/search) AND A10 publishes the R3B independent review with no open high finding.",
+    "Current state (this package): upstream A1-A10 R3B corrections are NOT yet committed in this workspace (A1 worktree still at R3 final ee2b8fd). The matrix therefore runs against the R3 prototype and reports the gap inventory below. Status stays PROVISIONAL until the corrected prototype + A10 review land and the matrix re-run shows GATE PASS."
+  ],
+  "scope_boundary": {
+    "product_code_changed": false,
+    "dependencies_changed": false,
+    "acl_or_capability_changed": false,
+    "native_runtime_changed": false,
+    "user_data_touched": false,
+    "pushed": false,
+    "artifact_roots": [
+      "logs/research/M5-W18/",
+      "logs/checkpoints/"
+    ]
+  },
+  "gates": {
+    "sizes": ["1920x1080", "1440x900", "1366x768", "1200x800", "1024x720", "900x600"],
+    "dropped_size": "800x600 (below product min_inner_size 900x600; A0 ruling)",
+    "collapsed_content_height_pct_min": 85.0,
+    "collapsed_content_width_pct_min": 92.0,
+    "top_chrome_px": 60,
+    "top_chrome_rows": "two 30px rows (A0 SSOT)",
+    "status_bar_px": 24,
+    "activity_strip_px": 28,
+    "geometry_formula": {
+      "collapsed_active_width_pct": "(viewport_width - 28) / viewport_width",
+      "collapsed_active_height_pct": "(inner_height - 60 - 24) / inner_height",
+      "basis": "application inner viewport, excludes OS titlebar"
+    },
+    "shortcuts": {
+      "Ctrl+K": "browser address/search field",
+      "Ctrl+Shift+P": "command palette"
+    },
+    "reference_pin": "cee14e9 (DetachHead/rebased v1.1.15; A0 behavior SSOT)",
+    "reference_pin_research_snapshot": "2896562e (later research snapshot, NOT behavior SSOT; R3B-07)"
+  },
+  "git_classification": {
+    "total_units": 14,
+    "COPY": 0,
+    "ADAPT_PRODUCT": 4,
+    "REIMPLEMENT_FROM_BEHAVIOR": 10,
+    "ADAPT_PRODUCT_units": ["status", "diff", "branches", "merge"],
+    "REIMPLEMENT_units": ["hunk-staging", "log-graph", "worktrees", "stash", "rebase", "cherry-pick", "conflicts", "history-blame", "patch", "command-log"],
+    "prototype_must_also_locate": ["amend", "reset-revert"],
+    "note": "ADAPT_PRODUCT means extending this product's existing implementation, never transplanting Rebased/JetBrains source (R3B-02)."
+  },
+  "reference_pins": [
+    {
+      "id": "rebased",
+      "repo": "DetachHead/rebased",
+      "identity": "Git client on the IntelliJ platform, fork of JetBrains/intellij-community",
+      "pinned_revision": "cee14e9",
+      "version": "v1.1.15",
+      "license": "JetBrains Open-Source Build Terms (LICENSE.txt) + bundled OSS (incl. git4idea) Apache-2.0",
+      "default_classification": "REIMPLEMENT_FROM_BEHAVIOR",
+      "authoritative_source": "A0-M5-W18-R3-acceptance-audit-20260908.md ruling (SSOT = cee14e9)",
+      "research_snapshot": "2896562e retained only as a later research snapshot, not behavior SSOT (R3B-07)",
+      "note": "A11 adopts A0's cee14e9 pin; 2896562e must not be used as provenance for any COPY/ADAPT unit until A10 re-verifies."
+    }
+  ],
+  "lanes": {
+    "A1": {
+      "branch": "codex/m5-w18-a1",
+      "head": "ee2b8fd",
+      "r3b_status": "PENDING",
+      "blocking": true,
+      "deliverable": "R3B-corrected consolidated prototype (A1-R3-prototype.html): 14 Git units + amend/reset-revert, role/aria, 6 sizes incl 900x600, collapsed keeps 28px strip, neutral font stack, Ctrl+K=address/search",
+      "consumed_by_a11": true
+    },
+    "A2": {"branch": "codex/m5-w18-a2", "head": "63b0a6e", "r3b_status": "PENDING", "consumed_by_a11": true},
+    "A3": {"branch": "codex/m5-w18-a3", "head": "0258c5b", "r3b_status": "PENDING", "consumed_by_a11": true},
+    "A4": {"branch": "codex/m5-w18-a4", "head": "8e77799", "r3b_status": "PENDING", "consumed_by_a11": true},
+    "A5": {"branch": "codex/m5-w18-a5", "head": "6bc4942", "r3b_status": "PENDING", "consumed_by_a11": true},
+    "A6": {"branch": "codex/m5-w18-a6", "head": "d5eb144", "r3b_status": "PENDING", "consumed_by_a11": true},
+    "A7": {"branch": "codex/m5-w18-a7", "head": "6e1f2ba", "r3b_status": "PENDING", "consumed_by_a11": true},
+    "A8": {"branch": "codex/m5-w18-a8", "head": "0db481a", "r3b_status": "PENDING", "consumed_by_a11": true},
+    "A9": {"branch": "codex/m5-w18-a9", "head": "23d12cd", "r3b_status": "PENDING", "consumed_by_a11": true},
+    "A10": {
+      "branch": "codex/m5-w18-a10",
+      "head": "3a86834",
+      "r3b_status": "PENDING",
+      "blocking": true,
+      "deliverable": "R3B independent closure review of A1-A9; re-run corrected self-containment checker (must pass all 7 prototypes); no open high finding",
+      "consumed_by_a11": true
+    },
+    "A11": {
+      "branch": "codex/m5-w18-a11",
+      "head": "d96b9b5",
+      "r3b_status": "PROVISIONAL_PENDING_UPSTREAM",
+      "deliverables": [
+        "A11-R3B-integration-manifest.json",
+        "A11-R3B-acceptance-checklist.md",
+        "A11-R3B-progress.md",
+        "A11-R3B-acceptance-matrix.py",
+        "A11-R3B-run-20260908.out",
+        "A11-R3B-checkpoint.md"
+      ],
+      "consumed_by_a11": true
+    }
+  },
+  "findings": [
+    {"id": "R3B-01", "severity": "high", "title": "Git coverage incomplete in prototype", "detail": "Consolidated prototype visibly locates only part of the 14-unit Git workflow plus amend/reset-revert. Matrix GAP: worktrees, conflicts, patch, amend, reset-revert.", "owner": "A1 (R3B-corrected prototype)", "status": "OPEN", "matrix_probe": "G-worktrees/G-conflicts/G-patch/G-amend/G-reset-revert"},
+    {"id": "R3B-02", "severity": "high", "title": "Prototype hygiene (donor font names + A10 checker fails)", "detail": "A1 CSS still names donor/vendor fonts (Cascadia Code, SF Mono, Segoe UI). A10 corrected self-containment checker exits 1 (prototype failures). Reports may cite sources; UI text must stay clean.", "owner": "A1 (neutral font stack) + A10 (re-run checker)", "status": "OPEN", "matrix_probe": "H-font/A10-gate"},
+    {"id": "R3B-03", "severity": "high", "title": "Collapse semantics: activity strip hidden", "detail": "A1 CSS `.mode-collapsed .edge-strip { display:none }` violates A0 ruling that the 28px activity strip must remain visible in collapsed mode. Tool-window hide + restore affordance are correct.", "owner": "A1 (keep strip visible) + A3/A4 (pin semantics)", "status": "OPEN", "matrix_probe": "C-strip"},
+    {"id": "R3B-04", "severity": "high", "title": "Accessibility not demonstrable", "detail": "Consolidated prototype has zero role=/aria-* attributes and no explicit :focus-visible outline. A6/A8 contract exists but is not reflected in the UI prototype.", "owner": "A1 (add role/aria + focus ring)", "status": "OPEN", "matrix_probe": "A-aria/A-focus"},
+    {"id": "R3B-05", "severity": "medium", "title": "Geometry convention not frozen in prototype", "detail": "A0 formula passes at all 6 sizes (>=92%W/85%H), but A1 CSS status bar is 26px (A0 SSOT 24px) and cross-lane measurement conventions still differ. Freeze post-titlebar inner-viewport definition.", "owner": "A0 (freeze) + A2 (method)", "status": "OPEN", "matrix_probe": "GEO/GEO-chrome/GEO-status"},
+    {"id": "R3B-06", "severity": "medium", "title": "Shortcut binding conflict", "detail": "A1 binds Ctrl+K to the command palette (title='command.palette') while A0 rules Ctrl+K = address/search and Ctrl+Shift+P = palette.", "owner": "A6 (register) + A1 (prototype)", "status": "OPEN", "matrix_probe": "K-binding"},
+    {"id": "R3B-07", "severity": "medium", "title": "Reference identity mismatch", "detail": "A7 pinned cee14e9 as behavior SSOT; A10 used 2896562e as a later research snapshot. A0 rules cee14e9 v1.1.15 is the SSOT; 2896562e must not be provenance until re-verified.", "owner": "A10 (reconcile) + A7 (align)", "status": "OPEN", "matrix_probe": "M-pin"},
+    {"id": "R3B-08", "severity": "medium", "title": "Minimum window 900x600 not covered", "detail": "Prototype renders 1920/1440/1366/1024 but not 1200x800 or 900x600. A0 requires acceptance at the product minimum 900x600; 800x600 dropped.", "owner": "A1 (add 900x600 frame) + A2 (verify)", "status": "OPEN", "matrix_probe": "S-1200x800/S-900x600"},
+    {"id": "R3B-09", "severity": "medium", "title": "Native desktop feasibility not validated", "detail": "Child WebView focus, occlusion and resize behavior is unvalidated in a real Tauri client. Reserved for user/A0 review (native evidence explicitly out of A11 scope).", "owner": "A0 / user (real client)", "status": "RESERVED_NATIVE", "matrix_probe": "NOT_RUN (allowed per A0 exit gate)"}
+  ],
+  "checklist": [
+    {"id": "S-1920x1080", "group": "sizes", "title": "1920x1080 frame", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A1"},
+    {"id": "S-1440x900", "group": "sizes", "title": "1440x900 frame (primary)", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A1"},
+    {"id": "S-1366x768", "group": "sizes", "title": "1366x768 frame", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A1"},
+    {"id": "S-1200x800", "group": "sizes", "title": "1200x800 frame (missing)", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-08", "owner": "A1"},
+    {"id": "S-1024x720", "group": "sizes", "title": "1024x720 frame", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A1"},
+    {"id": "S-900x600", "group": "sizes", "title": "900x600 frame (product min, missing)", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-08", "owner": "A1"},
+    {"id": "G-status", "group": "git", "title": "status", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
+    {"id": "G-hunk-staging", "group": "git", "title": "hunk staging", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
+    {"id": "G-diff", "group": "git", "title": "diff", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
+    {"id": "G-log-graph", "group": "git", "title": "log/graph", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
+    {"id": "G-branches", "group": "git", "title": "branches", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
+    {"id": "G-worktrees", "group": "git", "title": "worktrees", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-01", "owner": "A7"},
+    {"id": "G-stash", "group": "git", "title": "stash", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
+    {"id": "G-merge", "group": "git", "title": "merge", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
+    {"id": "G-rebase", "group": "git", "title": "rebase", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
+    {"id": "G-cherry-pick", "group": "git", "title": "cherry-pick", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
+    {"id": "G-conflicts", "group": "git", "title": "conflicts", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-01", "owner": "A7"},
+    {"id": "G-history-blame", "group": "git", "title": "history/blame", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
+    {"id": "G-patch", "group": "git", "title": "patch", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-01", "owner": "A7"},
+    {"id": "G-command-log", "group": "git", "title": "command log", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
+    {"id": "G-amend", "group": "git", "title": "amend", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-01", "owner": "A1/A7"},
+    {"id": "G-reset-revert", "group": "git", "title": "reset/revert", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-01", "owner": "A1/A7"},
+    {"id": "A-aria", "group": "accessibility", "title": "role/aria-* in prototype", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-04", "owner": "A1"},
+    {"id": "A-focus", "group": "accessibility", "title": "visible :focus-visible outline", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-04", "owner": "A1/A8"},
+    {"id": "C-hide", "group": "collapse", "title": "collapsed hides tool windows", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A1/A3"},
+    {"id": "C-strip", "group": "collapse", "title": "28px strip stays in collapsed", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-03", "owner": "A1/A3"},
+    {"id": "C-restore", "group": "collapse", "title": "restore layout affordance", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A1/A3"},
+    {"id": "H-brand", "group": "hygiene", "title": "no donor branding in UI text", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A1"},
+    {"id": "H-font", "group": "hygiene", "title": "neutral font stack (no donor fonts)", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-02", "owner": "A1"},
+    {"id": "K-binding", "group": "shortcut", "title": "Ctrl+K=address, Ctrl+Shift+P=palette", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-06", "owner": "A6/A1"},
+    {"id": "GEO", "group": "geometry", "title": "A0 collapsed formula >=92%W/85%H", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A0/A2"},
+    {"id": "M-pin", "group": "reference", "title": "rebased pin = cee14e9", "probe_file": "manifest", "expect": "covered", "owner": "A10/A7"},
+    {"id": "A10-gate", "group": "hygiene", "title": "A10 self-containment checker exit 0", "probe_file": "A10-R3-prototype-selfcontainment-check.py", "expect": "gap", "finding": "R3B-02", "owner": "A10"}
+  ]
+}
