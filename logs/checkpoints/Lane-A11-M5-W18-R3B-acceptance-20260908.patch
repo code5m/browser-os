@@ -1,0 +1,1024 @@
+diff --git a/logs/research/M5-W18/A11-R3B-acceptance-checklist.md b/logs/research/M5-W18/A11-R3B-acceptance-checklist.md
+new file mode 100644
+index 0000000..018d537
+--- /dev/null
++++ b/logs/research/M5-W18/A11-R3B-acceptance-checklist.md
+@@ -0,0 +1,108 @@
++# A11 · M5-W18-R3B 原型验收清单（用户评审用）
++
++> Lane A11 · `RESEARCH_AND_PROTOTYPE` · 基线 `origin/master` `d96b9b5`
++> R3B = A0 退回的定向修订波（verdict `REVISE_TARGETED`，9 项阻塞 R3B-01..R3B-09）。
++> 机器可读真源：`A11-R3B-integration-manifest.json`；复核命令：
++> `python3 logs/research/M5-W18/A11-R3B-acceptance-matrix.py --manifest logs/research/M5-W18/A11-R3B-integration-manifest.json --report`
++> 本清单不引用产品代码/依赖/ACL/capability/用户数据；原型均为合成数据。
++
++## 0. 三句话
++
++1. **当前状态 = `PROVISIONAL_PENDING_UPSTREAM`**。A11 在 **A1 R3B 修正原型** 与 **A10 R3B 独立复核** 落地后才能定稿；二者在本工作区尚未提交（A1 工作树仍停在 R3 终稿 `ee2b8fd`）。
++2. **本包的核心改进（回应 A0 对 R3 的批语）**：Git 与无障碍探针**直接解析最终 A1 HTML 的 `.frame` 真实 UI 文本**，而不是在参考文档里找词。当前对 R3 原型实跑即暴露下方缺口。
++3. **A0 退出门**：R3B 可交付用户评审仅当——A10 自包含检查器全绿、A1 原型 14 Git 单元全可见、A2 验完含 900×600 的六尺寸、A3/A4 折叠/恢复一致、无障碍可机检、A10 无 open high、A11 无未解释 gap/warn。
++
++## 1. 怎么验
++
++| 对象 | 看什么 |
++|---|---|
++| `A1-R3-prototype.html` | 替代壳层：六尺寸 × 模式 × 状态；Git 中央/底部放置；**必须含 14 单元 + amend/reset-revert** |
++| `A11-R3B-acceptance-matrix.py` | 机器探针：尺寸 / Git 单元 / a11y / 折叠 / 卫生 / 快捷键 / 几何 / 钉版 / A10 检查器 |
++
++判定口径（A0 裁定）：折叠态内容 ≥85% 高、≥92% 宽；**顶部 chrome 恰 60px（两行 30px）**；状态栏 24px；活动条 28px 在折叠态保留；`Ctrl+K`=地址/搜索，`Ctrl+Shift+P`=命令面板。
++
++## 2. 六尺寸（S-01~S-06；R3B-08）
++
++| ID | 尺寸 | 现状 |
++|---|---|---|
++| S-1920x1080 | 1920×1080 | ✅ 已渲染 |
++| S-1440x900 | 1440×900（主） | ✅ 已渲染 |
++| S-1366x768 | 1366×768 | ✅ 已渲染 |
++| S-1200x800 | 1200×800 | ❌ 缺口（R3B-08） |
++| S-1024x720 | 1024×720 | ✅ 已渲染 |
++| S-900x600 | 900×600（产品最小） | ❌ 缺口（R3B-08；800×600 已剔除） |
++
++## 3. Git 工作流（G-01~G-16；R3B-01）
++
++参考 `DetachHead/rebased` v1.1.15 @ `cee14e9`，`COPY=0 / ADAPT_PRODUCT=4 / REIMPLEMENT=10`。A0 R3B-01 显式要求原型还须含 **amend / reset-revert**。
++
++| ID | 单元 | 归类 | 原型可见（当前 R3 原型） |
++|---|---|---|---|
++| G-status | status | ADAPT | ✅ |
++| G-hunk-staging | hunk 暂存 | REIMPLEMENT | ✅ |
++| G-diff | diff | ADAPT | ✅ |
++| G-log-graph | log/graph + 两放置 | REIMPLEMENT | ✅ |
++| G-branches | 分支 | ADAPT | ✅ |
++| G-worktrees | worktree | REIMPLEMENT | ❌ 缺口 |
++| G-stash | stash | REIMPLEMENT | ✅ |
++| G-merge | merge | ADAPT | ✅ |
++| G-rebase | rebase | REIMPLEMENT | ✅ |
++| G-cherry-pick | cherry-pick | REIMPLEMENT | ✅ |
++| G-conflicts | 冲突解决 | REIMPLEMENT | ❌ 缺口 |
++| G-history-blame | blame | REIMPLEMENT | ✅ |
++| G-patch | patch | REIMPLEMENT | ❌ 缺口 |
++| G-command-log | 命令日志 | REIMPLEMENT | ✅ |
++| G-amend | amend | REIMPLEMENT | ❌ 缺口（R3B-01 显式要求） |
++| G-reset-revert | reset/revert | REIMPLEMENT | ❌ 缺口（R3B-01 显式要求） |
++
++## 4. 无障碍（A-01~A-02；R3B-04）
++
++| ID | 检查项 | 现状 |
++|---|---|---|
++| A-aria | 原型 `role=`/`aria-*` 属性 | ❌ 缺口（当前 `.frame` 内零命中） |
++| A-focus | `:focus-visible` 可见外环 | ⚠ 警告（CSS 无显式规则） |
++
++## 5. 折叠/恢复（C-01~C-03；R3B-03）
++
++| ID | 检查项 | 现状 |
++|---|---|---|
++| C-hide | 折叠隐藏所有工具窗口（含固定） | ✅ |
++| C-strip | 折叠态保留 28px 活动条 | ❌ 缺口（当前 `.mode-collapsed .edge-strip{display:none}` 违反 A0） |
++| C-restore | 恢复布局入口 | ✅ |
++
++## 6. 卫生 / 快捷键 / 几何 / 钉版（R3B-02/05/06/07）
++
++| ID | 检查项 | 现状 |
++|---|---|---|
++| H-brand | UI 文本无 donor 品牌 | ✅（品牌串仅出现在报告正文，A10 检查器对此更严，见下） |
++| H-font | 中性字体栈（无 Cascadia/SF Mono/Segoe UI） | ❌ 缺口（R3B-02） |
++| K-binding | `Ctrl+K`=地址，`Ctrl+Shift+P`=面板 | ❌ 缺口（当前 `Ctrl+K` 绑到 palette，R3B-06） |
++| GEO | A0 折叠公式 ≥92%W/85%H（六尺寸） | ✅ 公式通过；⚠ 状态栏 26px≠24px（R3B-05） |
++| M-pin | rebased 钉版 = `cee14e9` | ✅（A0 SSOT；`2896562e` 仅研究快照，R3B-07） |
++| A10-gate | A10 自包含检查器 exit 0 | ❌ 缺口（exit=1：A1/A3/A5 原型含 donor 品牌/字体，R3B-02） |
++
++> A10 检查器比本包更严：它把 h2/frame-meta 正文里的 "Rebased" 也判为品牌串（L413/L414）。R3B 修正版须把品牌串**连同报告正文**一并清除，并改用中性字体栈。
++
++## 7. 原生可行性（R3B-09，留出）
++
++子 WebView 焦点/遮挡/缩放未在真实 Tauri 客户端验证 → **保留给用户/A0 评审**，不计入 A11 门禁失败（A0 退出门允许）。
++
++## 8. A11 记录的 9 项 R3B 发现（全部 OPEN，R3B-09 为原生预留）
++
++| ID | 级 | 结论 | 归属 |
++|---|---|---|---|
++| R3B-01 | high | 14 Git 单元 + amend/reset-revert 未全在原型可见 | A1 |
++| R3B-02 | high | donor 字体 + A10 检查器 FAIL | A1 字体栈 + A10 重跑 |
++| R3B-03 | high | 折叠态隐藏活动条（应保留 28px） | A1 + A3/A4 |
++| R3B-04 | high | 原型无 role/aria、无 focus 环 | A1 |
++| R3B-05 | med | 几何口径未冻结（状态栏 26≠24） | A0 冻结 + A2 |
++| R3B-06 | med | `Ctrl+K` 误绑 palette | A6 + A1 |
++| R3B-07 | med | 参考钉版 cee14e9 vs 2896562e | A10 + A7 |
++| R3B-08 | med | 缺 1200×800 / 900×600 | A1 + A2 |
++| R3B-09 | med | 原生可行性未验证（预留） | A0/用户 |
++
++## 9. 用户评审判定
++
++- 全部 `通过` → A0 可开片交付用户评审。
++- 任一 `不通过`/未关闭缺口 → 仅退回对应设计 lane，产品 UI 保持关闭，W19 仍 `CLOSED`。
++- `R3B-09` 原生项不计入 A11 失败，但须由 A0/用户在真实客户端确认。
+diff --git a/logs/research/M5-W18/A11-R3B-acceptance-matrix.py b/logs/research/M5-W18/A11-R3B-acceptance-matrix.py
+new file mode 100644
+index 0000000..440781e
+--- /dev/null
++++ b/logs/research/M5-W18/A11-R3B-acceptance-matrix.py
+@@ -0,0 +1,530 @@
++#!/usr/bin/env python3
++"""A11 R3B acceptance matrix verifier.
++
++R3B is A0's targeted closure wave for M5-W18-R3. A0's acceptance audit
++(`logs/checkpoints/A0-M5-W18-R3-acceptance-audit-20260908.md`) returned R3 with
++nine blocking findings (R3B-01 .. R3B-09) and one explicit critique of A11's R3
++matrix:
++
++    "A report that merely finds words in a reference document does not prove
++     prototype coverage: Git and accessibility probes must inspect the final
++     A1 HTML."
++
++This script honours that critique. It parses the *consolidated A1 prototype
++HTML* as a real document and mechanically verifies:
++
++  1. all six target viewport sizes are actually rendered as frames,
++  2. all 14 Git workflow units (plus the amend / reset-revert actions A0's
++     R3B-01 finding explicitly requires) are visibly located inside the
++     prototype UI -- text inside `.frame` elements (the mock chrome), NOT the
++     surrounding report prose or a reference document,
++  3. accessibility: real `role=` / `aria-*` attributes and a visible keyboard
++     focus indicator exist in the prototype,
++  4. collapse/restore semantics follow the A0 ruling (all tool windows hide,
++     the 28px activity strip stays, a restore affordance exists),
++  5. prototype hygiene: no donor branding in UI text, no donor/vendor font
++     names in CSS,
++  6. shortcut discipline: `Ctrl+K` -> address/search, `Ctrl+Shift+P` -> palette,
++     with no binding conflict.
++
++It also runs A10's corrected self-containment checker when present and folds
++the result into the exit gate.
++
++Research artifact only: Python standard library, no network, no product import,
++no build, no dependency / ACL / capability / native-runtime / user-data change.
++
++Usage:
++  python3 logs/research/M5-W18/A11-R3B-acceptance-matrix.py [--manifest PATH]
++                                                           [--a1 PATH]
++                                                           [--a10 PATH]
++                                                           [--report] [--json]
++Exit codes: 0 = GATE PASS (no unexpected result), 1 = GATE FAIL.
++"""
++
++from __future__ import annotations
++
++import argparse
++import html
++import json
++import os
++import re
++import subprocess
++import sys
++
++MANIFEST_NAME = "A11-R3B-integration-manifest.json"
++ARTIFACT_DIRS = ("logs/research/M5-W18", "logs/checkpoints")
++CANDIDATE_REFS = (
++    "HEAD", "origin/master", "master",
++    "codex/m5-w18-a1", "codex/m5-w18-a2", "codex/m5-w18-a3",
++    "codex/m5-w18-a4", "codex/m5-w18-a5", "codex/m5-w18-a6",
++    "codex/m5-w18-a7", "codex/m5-w18-a8", "codex/m5-w18-a9",
++    "codex/m5-w18-a10", "codex/m5-w18-a11",
++)
++
++# Six target sizes per A0 ruling (800x600 dropped; 900x600 is the product min).
++TARGET_SIZES = [
++    (1920, 1080), (1440, 900), (1366, 768),
++    (1200, 800), (1024, 720), (900, 600),
++]
++
++# 14 Git workflow units (A0 ruling: COPY=0 / ADAPT_PRODUCT=4 / REIMPLEMENT=10).
++# `amend` and `reset-revert` are added because A0's R3B-01 blocking finding
++# explicitly requires them to be located in the prototype even though they are
++# not named in the 14-unit classification line.
++# Each unit maps to a set of UI-text tokens; presence of ANY token inside the
++# prototype frame text counts as "visibly located".
++GIT_UNITS = [
++    ("status", ["status"], "ADAPT"),
++    ("hunk-staging", ["hunk", "暂存", "stage"], "REIMPLEMENT"),
++    ("diff", ["diff", "对比", "并排"], "ADAPT"),
++    ("log-graph", ["log", "graph", "提交图", "commit graph"], "REIMPLEMENT"),
++    ("branches", ["branch", "分支"], "ADAPT"),
++    ("worktrees", ["worktree", "工作树", "工作区"], "REIMPLEMENT"),
++    ("stash", ["stash", "储藏"], "REIMPLEMENT"),
++    ("merge", ["merge", "合并"], "ADAPT"),
++    ("rebase", ["rebase", "变基"], "REIMPLEMENT"),
++    ("cherry-pick", ["cherry", "cherry-pick", "挑选提交"], "REIMPLEMENT"),
++    ("conflicts", ["conflict", "冲突", "解决冲突"], "REIMPLEMENT"),
++    ("history-blame", ["blame", "annotate", "annotat", "文件历史", "行历史"],
++     "REIMPLEMENT"),
++    ("patch", ["patch", "format-patch", "补丁"], "REIMPLEMENT"),
++    ("command-log", ["command log", "命令日志", "操作日志", "git log --"],
++     "REIMPLEMENT"),
++    ("amend", ["amend", "修正提交", "amend"], "REIMPLEMENT"),
++    ("reset-revert", ["reset", "revert", "重置", "回退"], "REIMPLEMENT"),
++]
++
++# Donor/vendor font names A0 flagged as donor font strings in prototype CSS.
++DONOR_FONTS = ["cascadia code", "sf mono", "segoe ui", "jetbrains mono"]
++
++
++def repo_root() -> str:
++    cur = os.path.abspath(os.path.dirname(__file__))
++    for _ in range(6):
++        if os.path.isdir(os.path.join(cur, "logs")):
++            return cur
++        parent = os.path.dirname(cur)
++        if parent == cur:
++            break
++        cur = parent
++    return os.getcwd()
++
++
++def git_show(path: str, ref: str) -> str | None:
++    try:
++        out = subprocess.run(
++            ["git", "show", f"{ref}:{path}"],
++            capture_output=True, check=False,
++        )
++    except OSError:
++        return None
++    if out.returncode != 0:
++        return None
++    return out.stdout.decode("utf-8", errors="replace")
++
++
++def resolve(name: str) -> tuple[str | None, str]:
++    root = repo_root()
++    for d in ARTIFACT_DIRS:
++        p = os.path.join(root, d, name)
++        if os.path.isfile(p):
++            with open(p, encoding="utf-8", errors="replace") as fh:
++                return fh.read(), f"fs:{d}/{name}"
++    for d in ARTIFACT_DIRS:
++        for ref in CANDIDATE_REFS:
++            content = git_show(f"{d}/{name}", ref)
++            if content:
++                return content, f"git:{ref}:{d}/{name}"
++    return None, "absent"
++
++
++def extract_frames(html_src: str) -> list[str]:
++    """Return the raw HTML of each top-level `.frame` block.
++
++    Uses div-balance counting so an unclosed tag elsewhere cannot leak
++    report prose into the frame text.
++    """
++    frames: list[str] = []
++    for m in re.finditer(r'<div class="frame[ "][^"]*"', html_src):
++        start = m.start()
++        depth = 0
++        i = start
++        n = len(html_src)
++        end = n
++        while i < n:
++            lt = html_src.find("<", i)
++            if lt == -1:
++                break
++            if html_src.startswith("</div", lt):
++                depth -= 1
++                if depth == 0:
++                    end = html_src.find(">", lt) + 1
++                    break
++                i = lt + 6
++            elif html_src.startswith("<div", lt):
++                depth += 1
++                i = lt + 5
++            else:
++                gt = html_src.find(">", lt)
++                if gt == -1:
++                    break
++                i = gt + 1
++        frames.append(html_src[start:end])
++    return frames
++
++
++def strip_tags(block: str) -> str:
++    text = re.sub(r"<[^>]+>", " ", block)
++    return html.unescape(text).lower()
++
++
++def extract_css(html_src: str) -> str:
++    parts = re.findall(r"<style[^>]*>(.*?)</style>", html_src, re.DOTALL)
++    return "\n".join(parts)
++
++
++def find_size_rules(css: str) -> dict[int, tuple[int, int]]:
++    rules: dict[int, tuple[int, int]] = {}
++    for m in re.finditer(r"\.f-(\d+)\s*\{([^}]*)\}", css):
++        w = int(m.group(1))
++        bw = re.search(r"width:\s*(\d+)px", m.group(2))
++        bh = re.search(r"height:\s*(\d+)px", m.group(2))
++        if bw and bh:
++            rules[w] = (int(bw.group(1)), int(bh.group(1)))
++    return rules
++
++
++def find_frame_usages(html_src: str) -> set[int]:
++    used = set()
++    for m in re.finditer(r'class="frame\s+f-(\d+)', html_src):
++        used.add(int(m.group(1)))
++    return used
++
++
++def run_a10_checker(a10_path: str | None) -> dict:
++    result = {"available": False, "summary": "not run", "detail": ""}
++    if not a10_path:
++        return result
++    if not os.path.isfile(a10_path):
++        content, _ = resolve(os.path.basename(a10_path))
++        if content is None:
++            return result
++        tmp = os.path.join(repo_root(), "logs", "research", "M5-W18",
++                           "_a10_tmp_check.py")
++        with open(tmp, "w", encoding="utf-8") as fh:
++            fh.write(content)
++        a10_path = tmp
++    try:
++        out = subprocess.run([sys.executable, a10_path],
++                             capture_output=True, text=True, cwd=repo_root(),
++                             check=False)
++    except OSError as e:
++        result["detail"] = f"run error: {e}"
++        return result
++    result["available"] = True
++    result["summary"] = "exit=%d" % out.returncode
++    result["detail"] = (out.stdout + out.stderr)[-1500:]
++    return result
++
++
++def main() -> int:
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--manifest", default=None)
++    ap.add_argument("--a1", default="A1-R3-prototype.html")
++    ap.add_argument("--a10", default="A10-R3-prototype-selfcontainment-check.py")
++    ap.add_argument("--report", action="store_true")
++    ap.add_argument("--json", action="store_true")
++    args = ap.parse_args()
++
++    manifest_path = args.manifest or os.path.join(
++        os.path.dirname(os.path.abspath(__file__)), MANIFEST_NAME)
++    manifest = None
++    if os.path.isfile(manifest_path):
++        with open(manifest_path, encoding="utf-8") as fh:
++            manifest = json.load(fh)
++
++    rows: list[tuple[str, str, str]] = []
++    tally = {"PASS": 0, "FAIL": 0, "GAP_CONFIRMED": 0, "GAP_CLOSED": 0,
++             "NOT_RUN": 0, "WARN": 0}
++    open_findings: set[str] = set()
++
++    def flag(fid: str) -> None:
++        open_findings.add(fid)
++
++    a1_src, a1_src_from = resolve(args.a1)
++    if a1_src is None:
++        rows.append(("S-00", "GAP_CONFIRMED",
++                     f"consolidated A1 prototype not found ({args.a1})"))
++        tally["GAP_CONFIRMED"] += 1
++        flag("R3B-01")
++        a1_proto_present = False
++    else:
++        a1_proto_present = True
++        blocks = extract_frames(a1_src)
++        frame_text = " ".join(strip_tags(b) for b in blocks)
++        css = extract_css(a1_src)
++        css_low = css.lower()
++        size_rules = find_size_rules(css)
++        size_used = find_frame_usages(a1_src)
++
++        # [1] six target sizes rendered as frames
++        for (w, h) in TARGET_SIZES:
++            declared = w in size_rules and size_rules[w] == (w, h)
++            used = w in size_used
++            ok = declared and used
++            cid = f"S-{w}x{h}"
++            if ok:
++                tally["PASS"] += 1
++                rows.append((cid, "PASS", f"frame {w}x{h} declared+rendered"))
++            else:
++                tally["GAP_CONFIRMED"] += 1
++                rows.append((cid, "GAP_CONFIRMED",
++                             f"declared={declared} rendered={used} "
++                             f"(R3B-08 / R3B-05)"))
++                flag("R3B-08")
++
++        # [1b] geometry SSOT (A0 ruling): normal top chrome = 60px (two 30px
++        # rows), status bar = 24px, activity strip = 28px; collapsed active
++        # width = (w-28)/w, height = (h-60-24)/h, both >= 92% / 85%.
++        chrome_top, status_h, strip_w = 60, 24, 28
++        geo_fails = []
++        for (w, h) in TARGET_SIZES:
++            wp = (w - strip_w) / w * 100.0
++            hp = (h - chrome_top - status_h) / h * 100.0
++            if wp < 92 or hp < 85:
++                geo_fails.append(f"{w}x{h}:{wp:.1f}%W/{hp:.1f}%H")
++        if not geo_fails:
++            tally["PASS"] += 1
++            rows.append(("GEO", "PASS",
++                         "A0 collapsed formula >=92%W/85%H at all 6 sizes"))
++        else:
++            tally["GAP_CONFIRMED"] += 1
++            rows.append(("GEO", "GAP_CONFIRMED",
++                         f"formula fails: {'; '.join(geo_fails)} (R3B-05)"))
++            flag("R3B-05")
++        m_top = re.search(r"--top-h:\s*(\d+)px", css)
++        m_tab = re.search(r"--tab-h:\s*(\d+)px", css)
++        m_status = re.search(r"--status-h:\s*(\d+)px", css)
++        if m_top and m_tab:
++            top_sum = int(m_top.group(1)) + int(m_tab.group(1))
++            if top_sum != 60:
++                tally["WARN"] += 1
++                rows.append(("GEO-chrome", "WARN",
++                             f"top chrome rows sum {top_sum}px (A0 SSOT 60px) "
++                             "(R3B-05)"))
++                flag("R3B-05")
++            else:
++                tally["PASS"] += 1
++                rows.append(("GEO-chrome", "PASS",
++                             f"top chrome two rows = {top_sum}px (A0 SSOT)"))
++        if m_status and int(m_status.group(1)) != 24:
++            tally["WARN"] += 1
++            rows.append(("GEO-status", "WARN",
++                         f"status bar {m_status.group(1)}px (A0 SSOT 24px) "
++                         "(R3B-05)"))
++            flag("R3B-05")
++
++        # [2] Git units visibly located inside the prototype UI
++        for (unit, tokens, _cls) in GIT_UNITS:
++            hit = [t for t in tokens if t.lower() in frame_text]
++            cid = f"G-{unit}"
++            if hit:
++                tally["PASS"] += 1
++                rows.append((cid, "PASS",
++                             f"'{unit}' located in prototype UI "
++                             f"(tok: {', '.join(hit)})"))
++            else:
++                tally["GAP_CONFIRMED"] += 1
++                rows.append((cid, "GAP_CONFIRMED",
++                             f"'{unit}' NOT visible in prototype UI "
++                             f"(R3B-01 Git coverage)"))
++                flag("R3B-01")
++
++        # [3] accessibility: role/aria + visible focus indicator
++        aria_n = len(re.findall(r'\b(role|aria-[\w-]+)\s*=', " ".join(blocks)))
++        if aria_n > 0:
++            tally["PASS"] += 1
++            rows.append(("A-aria", "PASS",
++                         f"{aria_n} role/aria-* attrs inside prototype frames"))
++        else:
++            tally["GAP_CONFIRMED"] += 1
++            rows.append(("A-aria", "GAP_CONFIRMED",
++                         "no role=/aria-* inside prototype frames "
++                         "(R3B-04 accessibility)"))
++            flag("R3B-04")
++        focus_ok = bool(re.search(r":focus-visible", css)) and bool(
++            re.search(r":focus-visible\s*\{[^}]*outline", css)
++            or re.search(r"outline\s*:\s*(?!none)", css))
++        if focus_ok:
++            tally["PASS"] += 1
++            rows.append(("A-focus", "PASS", "visible :focus-visible outline in CSS"))
++        else:
++            tally["WARN"] += 1
++            rows.append(("A-focus", "WARN",
++                         "no explicit :focus-visible outline in CSS "
++                         "(R3B-04; verify manually)"))
++            flag("R3B-04")
++
++        # [4] collapse / restore semantics (A0 ruling)
++        collapsed_hides_tw = bool(re.search(
++            r"\.mode-collapsed[^{}]*\.tool-win\s*\{[^}]*display:\s*none", css))
++        strip_hidden = bool(re.search(
++            r"\.mode-collapsed[^{}]*\.edge-strip\s*\{[^}]*display:\s*none", css))
++        restore = ("restore" in frame_text) or ("恢复" in frame_text)
++        if collapsed_hides_tw:
++            tally["PASS"] += 1
++            rows.append(("C-hide", "PASS", "collapsed mode hides tool windows"))
++        else:
++            tally["GAP_CONFIRMED"] += 1
++            rows.append(("C-hide", "GAP_CONFIRMED",
++                         "collapsed mode does not hide tool windows "
++                         "(R3B-03)"))
++            flag("R3B-03")
++        if not strip_hidden:
++            tally["PASS"] += 1
++            rows.append(("C-strip", "PASS",
++                         "28px activity strip stays visible in collapsed mode"))
++        else:
++            tally["GAP_CONFIRMED"] += 1
++            rows.append(("C-strip", "GAP_CONFIRMED",
++                         "collapsed mode hides the activity strip "
++                         "(violates A0: 28px strip must remain; R3B-03)"))
++            flag("R3B-03")
++        if restore:
++            tally["PASS"] += 1
++            rows.append(("C-restore", "PASS", "restore-layout affordance present"))
++        else:
++            tally["GAP_CONFIRMED"] += 1
++            rows.append(("C-restore", "GAP_CONFIRMED",
++                         "no restore-layout affordance in prototype (R3B-03)"))
++            flag("R3B-03")
++
++        # [5] hygiene: donor branding in UI text, donor/vendor fonts in CSS
++        # Donor BRAND tokens are scanned only in frame UI text (report prose
++        # may cite sources per the R3B card).
++        brand_hits = [b for b in ("rebased", "jetbrains", "intellij",
++                                  "sourcegit", "gitkraken", "tower", "gitlens")
++                      if b in frame_text]
++        if not brand_hits:
++            tally["PASS"] += 1
++            rows.append(("H-brand", "PASS", "no donor branding in prototype UI text"))
++        else:
++            tally["GAP_CONFIRMED"] += 1
++            rows.append(("H-brand", "GAP_CONFIRMED",
++                         f"donor branding in UI text: {', '.join(brand_hits)} "
++                         "(R3B-02 hygiene)"))
++            flag("R3B-02")
++        font_hits = [f for f in DONOR_FONTS if f in css_low]
++        if not font_hits:
++            tally["PASS"] += 1
++            rows.append(("H-font", "PASS", "no donor/vendor font names in CSS"))
++        else:
++            tally["GAP_CONFIRMED"] += 1
++            rows.append(("H-font", "GAP_CONFIRMED",
++                         f"donor/vendor font names in CSS: {', '.join(font_hits)} "
++                         "(R3B-02; use neutral font stack)"))
++            flag("R3B-02")
++
++        # [6] shortcut discipline (A0 ruling: Ctrl+K = address/search,
++        # Ctrl+Shift+P = palette). A conflict is Ctrl+K being used as the
++        # command entry (palette/command) -- order-independent.
++        k_palette_conflict = False
++        for m in re.finditer(r"ctrl\+k", a1_src.lower()):
++            win = a1_src.lower()[max(0, m.start() - 140): m.end() + 140]
++            if "palette" in win or "command" in win:
++                k_palette_conflict = True
++                break
++        shift_p = "ctrl+shift+p" in a1_src.lower()
++        if k_palette_conflict:
++            tally["GAP_CONFIRMED"] += 1
++            rows.append(("K-binding", "GAP_CONFIRMED",
++                         "Ctrl+K used as command palette (must be address/search; "
++                         "Ctrl+Shift+P is palette) -> R3B-06"))
++            flag("R3B-06")
++        elif shift_p:
++            tally["PASS"] += 1
++            rows.append(("K-binding", "PASS",
++                         "Ctrl+Shift+P bound to palette; Ctrl+K not conflicting"))
++        else:
++            tally["WARN"] += 1
++            rows.append(("K-binding", "WARN",
++                         "shortcut bindings not clearly declared (R3B-06)"))
++            flag("R3B-06")
++
++    # ---- manifest structural check: R3B-07 reference identity ----
++    if manifest:
++        pins = manifest.get("reference_pins", [])
++        if pins and pins[0].get("pinned_revision") != "cee14e9":
++            tally["WARN"] += 1
++            rows.append(("M-pin", "WARN",
++                         f"rebased pin = {pins[0].get('pinned_revision')} "
++                         "(A0 SSOT is cee14e9 v1.1.15; R3B-07)"))
++            flag("R3B-07")
++        else:
++            tally["PASS"] += 1
++            rows.append(("M-pin", "PASS",
++                         "rebased pin = cee14e9 (A0 SSOT v1.1.15; R3B-07)"))
++
++    # ---- A10 self-containment checker (folded into gate) ----
++    a10 = run_a10_checker(args.a10)
++    if a10["available"]:
++        if "exit=0" in a10["summary"]:
++            tally["PASS"] += 1
++            rows.append(("A10-gate", "PASS", "A10 self-containment checker exit 0"))
++        else:
++            tally["GAP_CONFIRMED"] += 1
++            rows.append(("A10-gate", "GAP_CONFIRMED",
++                         f"A10 checker {a10['summary']} (R3B-02 hygiene)"))
++            flag("R3B-02")
++    else:
++        tally["NOT_RUN"] += 1
++        rows.append(("A10-gate", "NOT_RUN",
++                     "A10 self-containment checker not found in this worktree"))
++
++    if not a1_proto_present:
++        gate = "FAIL"
++    else:
++        unexplained = tally["GAP_CONFIRMED"] + tally["FAIL"]
++        gate = "PASS" if unexplained == 0 else "FAIL"
++
++    if args.json:
++        print(json.dumps({
++            "manifest": manifest_path,
++            "a1_source": a1_src_from,
++            "tally": tally,
++            "open_r3b_findings": sorted(open_findings),
++            "gate": gate,
++            "a10": a10,
++        }, indent=2, ensure_ascii=False))
++        return 0 if gate == "PASS" else 1
++
++    print("A11-R3B acceptance matrix (inspects the real A1 prototype HTML)")
++    print(f"  A1 prototype  : {args.a1} ({a1_src_from})")
++    if manifest:
++        print(f"  base          : {manifest['base']['short']}")
++        print(f"  status        : {manifest['status']}")
++        print(f"  rebased pin   : {manifest['reference_pins'][0]['pinned_revision']}"
++              f" ({manifest['reference_pins'][0]['default_classification']})")
++    print()
++    for cid, verdict, detail in rows:
++        mark = {"PASS": "PASS", "FAIL": "FAIL", "GAP_CONFIRMED": "GAP ",
++                "GAP_CLOSED": "CLOSED", "NOT_RUN": "NRUN", "WARN": "WARN"}.get(verdict, verdict)
++        if args.report or verdict in ("FAIL", "GAP_CONFIRMED", "GAP_CLOSED"):
++            print(f"  {mark:<6} {cid:<18} {detail}")
++    print()
++    print(f"  A10 checker   : {a10['summary']}")
++    print()
++    print(f"A11-R3B TALLY: {tally['PASS']} PASS / {tally['FAIL']} FAIL / "
++          f"{tally['GAP_CONFIRMED']} GAP_CONFIRMED / {tally['WARN']} WARN / "
++          f"{tally['NOT_RUN']} NOT_RUN")
++    if open_findings:
++        print(f"  OPEN R3B FINDINGS: {', '.join(sorted(open_findings))}")
++    print(f"GATE: {gate}")
++    if manifest and manifest["status"].startswith("PROVISIONAL"):
++        print("NOTE: PROVISIONAL - A11 finalizes only after A1 R3B-corrected "
++              "prototype + A10 R3B review land.")
++    return 0 if gate == "PASS" else 1
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/logs/research/M5-W18/A11-R3B-checkpoint.md b/logs/research/M5-W18/A11-R3B-checkpoint.md
+new file mode 100644
+index 0000000..fd487eb
+--- /dev/null
++++ b/logs/research/M5-W18/A11-R3B-checkpoint.md
+@@ -0,0 +1,63 @@
++# A11 · M5-W18-R3B 检查点
++
++- Lane: A11（RESEARCH_AND_PROTOTYPE，验收打包）
++- Wave: M5-W18-R3B（A0 退回的定向修订波，verdict `REVISE_TARGETED`）
++- Worktree: `/home/ainfinit/.codex/worktrees/m5-w18-a11/mvp-browser-os-v3`
++- Branch: `codex/m5-w18-a11`
++- Base: `origin/master` `d96b9b5`
++- HEAD (本提交): 见 `git rev-parse HEAD`（A11 仅新增 R3B 研究产物，未改产品代码）
++- Pushed: 否（仅 A0 可 push）
++- Generated: 2026-09-08T15:30+0800
++
++## 1. 本次做了什么
++
++按 R3B 卡「A11 - Final acceptance package」与 A0 审计的关键批语（Git/无障碍探针必须审真实 A1 HTML，而非参考文档找词），重新产出 A11 验收包：
++
++1. **`A11-R3B-acceptance-matrix.py`**（新写）：标准库 HTML 解析器，用 div 配平法提取每个 `.frame` 块真实 UI 文本，机检——
++   - 六目标尺寸是否渲染（1920/1440/1366/1200/1024/900×…）；
++   - 14 Git 单元 + amend/reset-revert 是否在原型 UI 可见；
++   - `role=`/`aria-*` 与 `:focus-visible` 是否存在；
++   - 折叠语义（隐藏工具窗口 / 保留 28px 条 / 恢复入口）；
++   - 卫生（UI 无 donor 品牌 / CSS 无 donor 字体）；
++   - 快捷键（`Ctrl+K` 误绑 palette 检测）；
++   - A0 几何公式六尺寸实算；
++   - 参考钉版 `cee14e9` 结构校验；
++   - 内嵌运行 A10 修正后的自包含检查器并纳入门禁。
++2. **`A11-R3B-integration-manifest.json`**：编码 A0 全部裁定（六尺寸、几何公式、60/24/28px、快捷键、`cee14e9` 钉版、`COPY=0/ADAPT=4/REIMPLEMENT=10`、9 项 R3B 发现、11 lane 状态）。
++3. **`A11-R3B-acceptance-checklist.md`**：用户评审清单（回应 A0 批语，映射 R3B-01..09）。
++4. **`A11-R3B-progress.md`**：进度账本（lane 状态、发现处置、矩阵实跑结果、后续依赖）。
++5. **`A11-R3B-run-20260908.out`**：矩阵实跑结果。
++
++## 2. 实跑结果（针对当前 R3 原型）
++
++```
++20 PASS / 0 FAIL / 12 GAP_CONFIRMED / 2 WARN / 0 NOT_RUN
++OPEN R3B FINDINGS: R3B-01, R3B-02, R3B-03, R3B-04, R3B-05, R3B-06, R3B-08
++GATE: FAIL   (PROVISIONAL_PENDING_UPSTREAM)
++```
++
++缺口即上游 R3B 待办：A1 须补 worktree/conflicts/patch/amend/reset-revert、加 role/aria、加 1200×800 与 900×600、折叠保留 28px 条、换中性字体栈、把 `Ctrl+K` 改回地址；A10 须重跑检查器至全绿。
++
++## 3. 如何复跑
++
++```bash
++cd /home/ainfinit/.codex/worktrees/m5-w18-a11/mvp-browser-os-v3
++python3 logs/research/M5-W18/A11-R3B-acceptance-matrix.py \
++  --manifest logs/research/M5-W18/A11-R3B-integration-manifest.json --report
++# 或仅看 JSON 汇总：
++python3 logs/research/M5-W18/A11-R3B-acceptance-matrix.py --json
++```
++
++当 A1 R3B 修正原型与 A10 R3B 复核落地后，重跑上述命令；若 `GAP_CONFIRMED=0` 且 WARN 仅剩 R3B-09 原生预留，将 manifest `status` 改为 `FINAL` 即定稿。
++
++## 4. 风险与后续依赖
++
++- 上游（A1 R3B 原型、A10 R3B 复核）尚未在本工作区提交；本包当前以 R3 原型为输入暴露缺口，属预期。
++- A10 检查器比本包更严（报告正文品牌串也判违规），A1 修正版须连同正文清除 "Rebased" 等并改中性字体栈。
++- 不 push；集成与开片由 A0 执行。W19 仍 `CLOSED`。
++
++## 5. 范围边界（硬约束）
++
++- 仅研究/验收产物，零产品代码、零依赖/ACL/capability/native runtime/用户数据改动。
++- 未编辑他 lane 文件。
++- 未 push。
+diff --git a/logs/research/M5-W18/A11-R3B-integration-manifest.json b/logs/research/M5-W18/A11-R3B-integration-manifest.json
+new file mode 100644
+index 0000000..59653e9
+--- /dev/null
++++ b/logs/research/M5-W18/A11-R3B-integration-manifest.json
+@@ -0,0 +1,160 @@
++{
++  "manifest_version": 2,
++  "wave": "M5-W18-R3B",
++  "lane": "A11",
++  "role": "R3B final acceptance package (integration manifest + user-review checklist + progress ledger)",
++  "generated_at": "2026-09-08T15:30+0800",
++  "base": {
++    "ref": "origin/master",
++    "short": "d96b9b5",
++    "sha": "d96b9b536803b72122ca4b0e4603e766c74fac68"
++  },
++  "status": "PROVISIONAL_PENDING_UPSTREAM",
++  "finalize_blockers": [
++    "R3B is A0's targeted closure wave. A11 may FINALIZE only after A1 delivers the R3B-corrected consolidated prototype (all 14 Git units + amend/reset-revert visibly located, role/aria added, 6 sizes incl 900x600, collapsed keeps the 28px strip, neutral font stack, Ctrl+K=address/search) AND A10 publishes the R3B independent review with no open high finding.",
++    "Current state (this package): upstream A1-A10 R3B corrections are NOT yet committed in this workspace (A1 worktree still at R3 final ee2b8fd). The matrix therefore runs against the R3 prototype and reports the gap inventory below. Status stays PROVISIONAL until the corrected prototype + A10 review land and the matrix re-run shows GATE PASS."
++  ],
++  "scope_boundary": {
++    "product_code_changed": false,
++    "dependencies_changed": false,
++    "acl_or_capability_changed": false,
++    "native_runtime_changed": false,
++    "user_data_touched": false,
++    "pushed": false,
++    "artifact_roots": [
++      "logs/research/M5-W18/",
++      "logs/checkpoints/"
++    ]
++  },
++  "gates": {
++    "sizes": ["1920x1080", "1440x900", "1366x768", "1200x800", "1024x720", "900x600"],
++    "dropped_size": "800x600 (below product min_inner_size 900x600; A0 ruling)",
++    "collapsed_content_height_pct_min": 85.0,
++    "collapsed_content_width_pct_min": 92.0,
++    "top_chrome_px": 60,
++    "top_chrome_rows": "two 30px rows (A0 SSOT)",
++    "status_bar_px": 24,
++    "activity_strip_px": 28,
++    "geometry_formula": {
++      "collapsed_active_width_pct": "(viewport_width - 28) / viewport_width",
++      "collapsed_active_height_pct": "(inner_height - 60 - 24) / inner_height",
++      "basis": "application inner viewport, excludes OS titlebar"
++    },
++    "shortcuts": {
++      "Ctrl+K": "browser address/search field",
++      "Ctrl+Shift+P": "command palette"
++    },
++    "reference_pin": "cee14e9 (DetachHead/rebased v1.1.15; A0 behavior SSOT)",
++    "reference_pin_research_snapshot": "2896562e (later research snapshot, NOT behavior SSOT; R3B-07)"
++  },
++  "git_classification": {
++    "total_units": 14,
++    "COPY": 0,
++    "ADAPT_PRODUCT": 4,
++    "REIMPLEMENT_FROM_BEHAVIOR": 10,
++    "ADAPT_PRODUCT_units": ["status", "diff", "branches", "merge"],
++    "REIMPLEMENT_units": ["hunk-staging", "log-graph", "worktrees", "stash", "rebase", "cherry-pick", "conflicts", "history-blame", "patch", "command-log"],
++    "prototype_must_also_locate": ["amend", "reset-revert"],
++    "note": "ADAPT_PRODUCT means extending this product's existing implementation, never transplanting Rebased/JetBrains source (R3B-02)."
++  },
++  "reference_pins": [
++    {
++      "id": "rebased",
++      "repo": "DetachHead/rebased",
++      "identity": "Git client on the IntelliJ platform, fork of JetBrains/intellij-community",
++      "pinned_revision": "cee14e9",
++      "version": "v1.1.15",
++      "license": "JetBrains Open-Source Build Terms (LICENSE.txt) + bundled OSS (incl. git4idea) Apache-2.0",
++      "default_classification": "REIMPLEMENT_FROM_BEHAVIOR",
++      "authoritative_source": "A0-M5-W18-R3-acceptance-audit-20260908.md ruling (SSOT = cee14e9)",
++      "research_snapshot": "2896562e retained only as a later research snapshot, not behavior SSOT (R3B-07)",
++      "note": "A11 adopts A0's cee14e9 pin; 2896562e must not be used as provenance for any COPY/ADAPT unit until A10 re-verifies."
++    }
++  ],
++  "lanes": {
++    "A1": {
++      "branch": "codex/m5-w18-a1",
++      "head": "ee2b8fd",
++      "r3b_status": "PENDING",
++      "blocking": true,
++      "deliverable": "R3B-corrected consolidated prototype (A1-R3-prototype.html): 14 Git units + amend/reset-revert, role/aria, 6 sizes incl 900x600, collapsed keeps 28px strip, neutral font stack, Ctrl+K=address/search",
++      "consumed_by_a11": true
++    },
++    "A2": {"branch": "codex/m5-w18-a2", "head": "63b0a6e", "r3b_status": "PENDING", "consumed_by_a11": true},
++    "A3": {"branch": "codex/m5-w18-a3", "head": "0258c5b", "r3b_status": "PENDING", "consumed_by_a11": true},
++    "A4": {"branch": "codex/m5-w18-a4", "head": "8e77799", "r3b_status": "PENDING", "consumed_by_a11": true},
++    "A5": {"branch": "codex/m5-w18-a5", "head": "6bc4942", "r3b_status": "PENDING", "consumed_by_a11": true},
++    "A6": {"branch": "codex/m5-w18-a6", "head": "d5eb144", "r3b_status": "PENDING", "consumed_by_a11": true},
++    "A7": {"branch": "codex/m5-w18-a7", "head": "6e1f2ba", "r3b_status": "PENDING", "consumed_by_a11": true},
++    "A8": {"branch": "codex/m5-w18-a8", "head": "0db481a", "r3b_status": "PENDING", "consumed_by_a11": true},
++    "A9": {"branch": "codex/m5-w18-a9", "head": "23d12cd", "r3b_status": "PENDING", "consumed_by_a11": true},
++    "A10": {
++      "branch": "codex/m5-w18-a10",
++      "head": "3a86834",
++      "r3b_status": "PENDING",
++      "blocking": true,
++      "deliverable": "R3B independent closure review of A1-A9; re-run corrected self-containment checker (must pass all 7 prototypes); no open high finding",
++      "consumed_by_a11": true
++    },
++    "A11": {
++      "branch": "codex/m5-w18-a11",
++      "head": "d96b9b5",
++      "r3b_status": "PROVISIONAL_PENDING_UPSTREAM",
++      "deliverables": [
++        "A11-R3B-integration-manifest.json",
++        "A11-R3B-acceptance-checklist.md",
++        "A11-R3B-progress.md",
++        "A11-R3B-acceptance-matrix.py",
++        "A11-R3B-run-20260908.out",
++        "A11-R3B-checkpoint.md"
++      ],
++      "consumed_by_a11": true
++    }
++  },
++  "findings": [
++    {"id": "R3B-01", "severity": "high", "title": "Git coverage incomplete in prototype", "detail": "Consolidated prototype visibly locates only part of the 14-unit Git workflow plus amend/reset-revert. Matrix GAP: worktrees, conflicts, patch, amend, reset-revert.", "owner": "A1 (R3B-corrected prototype)", "status": "OPEN", "matrix_probe": "G-worktrees/G-conflicts/G-patch/G-amend/G-reset-revert"},
++    {"id": "R3B-02", "severity": "high", "title": "Prototype hygiene (donor font names + A10 checker fails)", "detail": "A1 CSS still names donor/vendor fonts (Cascadia Code, SF Mono, Segoe UI). A10 corrected self-containment checker exits 1 (prototype failures). Reports may cite sources; UI text must stay clean.", "owner": "A1 (neutral font stack) + A10 (re-run checker)", "status": "OPEN", "matrix_probe": "H-font/A10-gate"},
++    {"id": "R3B-03", "severity": "high", "title": "Collapse semantics: activity strip hidden", "detail": "A1 CSS `.mode-collapsed .edge-strip { display:none }` violates A0 ruling that the 28px activity strip must remain visible in collapsed mode. Tool-window hide + restore affordance are correct.", "owner": "A1 (keep strip visible) + A3/A4 (pin semantics)", "status": "OPEN", "matrix_probe": "C-strip"},
++    {"id": "R3B-04", "severity": "high", "title": "Accessibility not demonstrable", "detail": "Consolidated prototype has zero role=/aria-* attributes and no explicit :focus-visible outline. A6/A8 contract exists but is not reflected in the UI prototype.", "owner": "A1 (add role/aria + focus ring)", "status": "OPEN", "matrix_probe": "A-aria/A-focus"},
++    {"id": "R3B-05", "severity": "medium", "title": "Geometry convention not frozen in prototype", "detail": "A0 formula passes at all 6 sizes (>=92%W/85%H), but A1 CSS status bar is 26px (A0 SSOT 24px) and cross-lane measurement conventions still differ. Freeze post-titlebar inner-viewport definition.", "owner": "A0 (freeze) + A2 (method)", "status": "OPEN", "matrix_probe": "GEO/GEO-chrome/GEO-status"},
++    {"id": "R3B-06", "severity": "medium", "title": "Shortcut binding conflict", "detail": "A1 binds Ctrl+K to the command palette (title='command.palette') while A0 rules Ctrl+K = address/search and Ctrl+Shift+P = palette.", "owner": "A6 (register) + A1 (prototype)", "status": "OPEN", "matrix_probe": "K-binding"},
++    {"id": "R3B-07", "severity": "medium", "title": "Reference identity mismatch", "detail": "A7 pinned cee14e9 as behavior SSOT; A10 used 2896562e as a later research snapshot. A0 rules cee14e9 v1.1.15 is the SSOT; 2896562e must not be provenance until re-verified.", "owner": "A10 (reconcile) + A7 (align)", "status": "OPEN", "matrix_probe": "M-pin"},
++    {"id": "R3B-08", "severity": "medium", "title": "Minimum window 900x600 not covered", "detail": "Prototype renders 1920/1440/1366/1024 but not 1200x800 or 900x600. A0 requires acceptance at the product minimum 900x600; 800x600 dropped.", "owner": "A1 (add 900x600 frame) + A2 (verify)", "status": "OPEN", "matrix_probe": "S-1200x800/S-900x600"},
++    {"id": "R3B-09", "severity": "medium", "title": "Native desktop feasibility not validated", "detail": "Child WebView focus, occlusion and resize behavior is unvalidated in a real Tauri client. Reserved for user/A0 review (native evidence explicitly out of A11 scope).", "owner": "A0 / user (real client)", "status": "RESERVED_NATIVE", "matrix_probe": "NOT_RUN (allowed per A0 exit gate)"}
++  ],
++  "checklist": [
++    {"id": "S-1920x1080", "group": "sizes", "title": "1920x1080 frame", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A1"},
++    {"id": "S-1440x900", "group": "sizes", "title": "1440x900 frame (primary)", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A1"},
++    {"id": "S-1366x768", "group": "sizes", "title": "1366x768 frame", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A1"},
++    {"id": "S-1200x800", "group": "sizes", "title": "1200x800 frame (missing)", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-08", "owner": "A1"},
++    {"id": "S-1024x720", "group": "sizes", "title": "1024x720 frame", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A1"},
++    {"id": "S-900x600", "group": "sizes", "title": "900x600 frame (product min, missing)", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-08", "owner": "A1"},
++    {"id": "G-status", "group": "git", "title": "status", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
++    {"id": "G-hunk-staging", "group": "git", "title": "hunk staging", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
++    {"id": "G-diff", "group": "git", "title": "diff", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
++    {"id": "G-log-graph", "group": "git", "title": "log/graph", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
++    {"id": "G-branches", "group": "git", "title": "branches", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
++    {"id": "G-worktrees", "group": "git", "title": "worktrees", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-01", "owner": "A7"},
++    {"id": "G-stash", "group": "git", "title": "stash", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
++    {"id": "G-merge", "group": "git", "title": "merge", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
++    {"id": "G-rebase", "group": "git", "title": "rebase", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
++    {"id": "G-cherry-pick", "group": "git", "title": "cherry-pick", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
++    {"id": "G-conflicts", "group": "git", "title": "conflicts", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-01", "owner": "A7"},
++    {"id": "G-history-blame", "group": "git", "title": "history/blame", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
++    {"id": "G-patch", "group": "git", "title": "patch", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-01", "owner": "A7"},
++    {"id": "G-command-log", "group": "git", "title": "command log", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A7"},
++    {"id": "G-amend", "group": "git", "title": "amend", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-01", "owner": "A1/A7"},
++    {"id": "G-reset-revert", "group": "git", "title": "reset/revert", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-01", "owner": "A1/A7"},
++    {"id": "A-aria", "group": "accessibility", "title": "role/aria-* in prototype", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-04", "owner": "A1"},
++    {"id": "A-focus", "group": "accessibility", "title": "visible :focus-visible outline", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-04", "owner": "A1/A8"},
++    {"id": "C-hide", "group": "collapse", "title": "collapsed hides tool windows", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A1/A3"},
++    {"id": "C-strip", "group": "collapse", "title": "28px strip stays in collapsed", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-03", "owner": "A1/A3"},
++    {"id": "C-restore", "group": "collapse", "title": "restore layout affordance", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A1/A3"},
++    {"id": "H-brand", "group": "hygiene", "title": "no donor branding in UI text", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A1"},
++    {"id": "H-font", "group": "hygiene", "title": "neutral font stack (no donor fonts)", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-02", "owner": "A1"},
++    {"id": "K-binding", "group": "shortcut", "title": "Ctrl+K=address, Ctrl+Shift+P=palette", "probe_file": "A1-R3-prototype.html", "expect": "gap", "finding": "R3B-06", "owner": "A6/A1"},
++    {"id": "GEO", "group": "geometry", "title": "A0 collapsed formula >=92%W/85%H", "probe_file": "A1-R3-prototype.html", "expect": "covered", "owner": "A0/A2"},
++    {"id": "M-pin", "group": "reference", "title": "rebased pin = cee14e9", "probe_file": "manifest", "expect": "covered", "owner": "A10/A7"},
++    {"id": "A10-gate", "group": "hygiene", "title": "A10 self-containment checker exit 0", "probe_file": "A10-R3-prototype-selfcontainment-check.py", "expect": "gap", "finding": "R3B-02", "owner": "A10"}
++  ]
++}
+diff --git a/logs/research/M5-W18/A11-R3B-progress.md b/logs/research/M5-W18/A11-R3B-progress.md
+new file mode 100644
+index 0000000..83a7dba
+--- /dev/null
++++ b/logs/research/M5-W18/A11-R3B-progress.md
+@@ -0,0 +1,79 @@
++# A11 · M5-W18-R3B 进度账本（蓝图 §9 场景账本 + 验收追踪）
++
++> Lane A11 · R3B 最终验收打包 · 基线 `origin/master` `d96b9b5` · 不 push
++> 本文件记录 R3B 波次各 lane 状态、9 项 R3B 发现处置、与 A11 验收矩阵实跑结果。
++
++## 1. 本 Lane 交付物
++
++| 文件 | 用途 |
++|---|---|
++| `A11-R3B-integration-manifest.json` | 验收真源：门限、A0 裁定、参考钉版、lane 状态、9 项发现、检查项 |
++| `A11-R3B-acceptance-matrix.py` | 机器探针：**解析真实 A1 HTML 的 `.frame` 文本**，覆盖尺寸/Git/a11y/折叠/卫生/快捷键/几何/钉版/A10 检查器 |
++| `A11-R3B-acceptance-checklist.md` | 用户评审清单 |
++| `A11-R3B-run-20260908.out` | 矩阵实跑结果（针对当前 R3 原型，暴露缺口） |
++| `A11-R3B-checkpoint.md` | Lane 检查点 |
++
++## 2. 对 A0 关键批语的回应
++
++A0 R3 审计指出 R3 的 A11 矩阵"只在参考文档里找词，不证明原型覆盖"。本 R3B 矩阵改为：
++
++- **真实 DOM 解析**：用 div 配平法提取每个 `.frame` 块文本（排除报告正文 h2/frame-meta/汇总表），Git 单元与无障碍属性只在原型 UI 文本/CSS 内判定。
++- **A10 检查器内嵌**：直接运行 A10 修正后的自包含检查器并纳入门禁。
++- **几何公式机算**：按 A0 公式 `(w-28)/w`、`(h-60-24)/h` 在六尺寸实算。
++- **钉版结构校验**：manifest 参考钉版须为 `cee14e9`，否则 WARN（R3B-07）。
++
++## 3. Lane 状态（R3B 上游尚未提交）
++
++| Lane | 分支 | R3 HEAD | R3B 状态 | 阻断? |
++|---|---|---|---|---|
++| A1 | codex/m5-w18-a1 | ee2b8fd | PENDING | ✅ 阻断（交付修正原型） |
++| A2 | codex/m5-w18-a2 | 63b0a6e | PENDING | — |
++| A3 | codex/m5-w18-a3 | 0258c5b | PENDING | — |
++| A4 | codex/m5-w18-a4 | 8e77799 | PENDING | — |
++| A5 | codex/m5-w18-a5 | 6bc4942 | PENDING | — |
++| A6 | codex/m5-w18-a6 | d5eb144 | PENDING | — |
++| A7 | codex/m5-w18-a7 | 6e1f2ba | PENDING | — |
++| A8 | codex/m5-w18-a8 | 0db481a | PENDING | — |
++| A9 | codex/m5-w18-a9 | 23d12cd | PENDING | — |
++| A10 | codex/m5-w18-a10 | 3a86834 | PENDING | ✅ 阻断（独立复核 + 检查器全绿） |
++| A11 | codex/m5-w18-a11 | d96b9b5 | PROVISIONAL_PENDING_UPSTREAM | — |
++
++## 4. R3B 发现处置
++
++| ID | 严重 | 主题 | 归属 | 状态 | 矩阵探针 |
++|---|---|---|---|---|---|
++| R3B-01 | high | Git 覆盖不全 | A1 | OPEN | G-worktrees/conflicts/patch/amend/reset-revert |
++| R3B-02 | high | 原型卫生（donor 字体 + 检查器 FAIL） | A1/A10 | OPEN | H-font, A10-gate |
++| R3B-03 | high | 折叠隐藏活动条 | A1/A3/A4 | OPEN | C-strip |
++| R3B-04 | high | 无障碍不可证 | A1 | OPEN | A-aria, A-focus |
++| R3B-05 | med | 几何口径未冻结 | A0/A2 | OPEN | GEO, GEO-status |
++| R3B-06 | med | 快捷键冲突 | A6/A1 | OPEN | K-binding |
++| R3B-07 | med | 参考钉版不一致 | A10/A7 | OPEN | M-pin |
++| R3B-08 | med | 缺 1200×800 / 900×600 | A1/A2 | OPEN | S-1200x800, S-900x600 |
++| R3B-09 | med | 原生可行性未验证 | A0/用户 | RESERVED_NATIVE | （允许 NOT_RUN） |
++
++## 5. 矩阵实跑结果（A11-R3B-run-20260908.out，针对当前 R3 原型）
++
++```
++20 PASS / 0 FAIL / 12 GAP_CONFIRMED / 2 WARN / 0 NOT_RUN
++OPEN R3B FINDINGS: R3B-01, R3B-02, R3B-03, R3B-04, R3B-05, R3B-06, R3B-08
++GATE: FAIL   (PROVISIONAL_PENDING_UPSTREAM)
++```
++
++逐项：`S-1200x800`/`S-900x600` GAP；`G-worktrees`/`G-conflicts`/`G-patch`/`G-amend`/`G-reset-revert` GAP；
++`A-aria` GAP；`C-strip` GAP；`H-font` GAP；`K-binding` GAP；`A10-gate` GAP（exit=1）；
++`GEO-status` WARN（26px≠24px）；`A-focus` WARN（无 focus-visible 规则）；`M-pin` PASS（`cee14e9`）；
++`H-brand` PASS（UI 文本干净，A10 检查器对正文更严）。
++
++## 6. 后续依赖（待上游落地后 A11 重跑定稿）
++
++1. A1 提交 R3B 修正原型（14 Git 单元 + amend/reset-revert、role/aria、六尺寸含 900×600、折叠保留 28px 条、中性字体栈、`Ctrl+K`=地址）。
++2. A10 提交 R3B 独立复核 + 重跑自包含检查器（须全绿，且无 open high）。
++3. A11 重跑 `A11-R3B-acceptance-matrix.py --manifest ... --report`：当 `GAP_CONFIRMED=0` 且 `WARN` 均可解释（仅 R3B-09 原生预留），将 manifest `status` 改为 `FINAL` 并出最终包。
++4. A0 集成并开片交付用户评审。
++
++## 7. 风险
++
++- **上游未动**：本包当前运行于 R3 原型，缺口即上游待办；非 A11 自身缺陷。
++- **A10 检查器更严**：要求连报告正文品牌串也清除，A1 修正版须注意。
++- **不 push**：A11 仅提交本 lane 研究产物，集成/push 归 A0。
+diff --git a/logs/research/M5-W18/A11-R3B-run-20260908.out b/logs/research/M5-W18/A11-R3B-run-20260908.out
+new file mode 100644
+index 0000000..d643007
+--- /dev/null
++++ b/logs/research/M5-W18/A11-R3B-run-20260908.out
+@@ -0,0 +1,48 @@
++A11-R3B acceptance matrix (inspects the real A1 prototype HTML)
++  A1 prototype  : A1-R3-prototype.html (fs:logs/research/M5-W18/A1-R3-prototype.html)
++  base          : d96b9b5
++  status        : PROVISIONAL_PENDING_UPSTREAM
++  rebased pin   : cee14e9 (REIMPLEMENT_FROM_BEHAVIOR)
++
++  PASS   S-1920x1080        frame 1920x1080 declared+rendered
++  PASS   S-1440x900         frame 1440x900 declared+rendered
++  PASS   S-1366x768         frame 1366x768 declared+rendered
++  GAP    S-1200x800         declared=False rendered=False (R3B-08 / R3B-05)
++  PASS   S-1024x720         frame 1024x720 declared+rendered
++  GAP    S-900x600          declared=False rendered=False (R3B-08 / R3B-05)
++  PASS   GEO                A0 collapsed formula >=92%W/85%H at all 6 sizes
++  PASS   GEO-chrome         top chrome two rows = 60px (A0 SSOT)
++  WARN   GEO-status         status bar 26px (A0 SSOT 24px) (R3B-05)
++  PASS   G-status           'status' located in prototype UI (tok: status)
++  PASS   G-hunk-staging     'hunk-staging' located in prototype UI (tok: hunk, 暂存, stage)
++  PASS   G-diff             'diff' located in prototype UI (tok: diff)
++  PASS   G-log-graph        'log-graph' located in prototype UI (tok: log, graph)
++  PASS   G-branches         'branches' located in prototype UI (tok: branch)
++  GAP    G-worktrees        'worktrees' NOT visible in prototype UI (R3B-01 Git coverage)
++  PASS   G-stash            'stash' located in prototype UI (tok: stash)
++  PASS   G-merge            'merge' located in prototype UI (tok: merge)
++  PASS   G-rebase           'rebase' located in prototype UI (tok: rebase)
++  PASS   G-cherry-pick      'cherry-pick' located in prototype UI (tok: cherry)
++  GAP    G-conflicts        'conflicts' NOT visible in prototype UI (R3B-01 Git coverage)
++  PASS   G-history-blame    'history-blame' located in prototype UI (tok: blame)
++  GAP    G-patch            'patch' NOT visible in prototype UI (R3B-01 Git coverage)
++  PASS   G-command-log      'command-log' located in prototype UI (tok: git log --)
++  GAP    G-amend            'amend' NOT visible in prototype UI (R3B-01 Git coverage)
++  GAP    G-reset-revert     'reset-revert' NOT visible in prototype UI (R3B-01 Git coverage)
++  GAP    A-aria             no role=/aria-* inside prototype frames (R3B-04 accessibility)
++  WARN   A-focus            no explicit :focus-visible outline in CSS (R3B-04; verify manually)
++  PASS   C-hide             collapsed mode hides tool windows
++  GAP    C-strip            collapsed mode hides the activity strip (violates A0: 28px strip must remain; R3B-03)
++  PASS   C-restore          restore-layout affordance present
++  PASS   H-brand            no donor branding in prototype UI text
++  GAP    H-font             donor/vendor font names in CSS: cascadia code, sf mono, segoe ui (R3B-02; use neutral font stack)
++  GAP    K-binding          Ctrl+K used as command palette (must be address/search; Ctrl+Shift+P is palette) -> R3B-06
++  PASS   M-pin              rebased pin = cee14e9 (A0 SSOT v1.1.15; R3B-07)
++  GAP    A10-gate           A10 checker exit=1 (R3B-02 hygiene)
++
++  A10 checker   : exit=1
++
++A11-R3B TALLY: 21 PASS / 0 FAIL / 12 GAP_CONFIRMED / 2 WARN / 0 NOT_RUN
++  OPEN R3B FINDINGS: R3B-01, R3B-02, R3B-03, R3B-04, R3B-05, R3B-06, R3B-08
++GATE: FAIL
++NOTE: PROVISIONAL - A11 finalizes only after A1 R3B-corrected prototype + A10 R3B review land.
