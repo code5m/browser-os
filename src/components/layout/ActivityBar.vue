@@ -15,12 +15,14 @@ import { redactSecrets } from "../../utils/redact";
 import { Search, PanelLeftClose, PanelLeftOpen } from "@lucide/vue";
 import { useWorkbenchStore } from "../../stores/useWorkbenchStore";
 import GridArchiveBar from "../browser/GridArchiveBar.vue";
+import { useBookmarkStore } from "../../stores/useBookmarkStore";
 const workbench = useWorkbenchStore();
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
 const system = useSystemStore();
 const ws = useWorkspaceStore();
+const bookmarks = useBookmarkStore();
 
 // 一级入口与 ☰ 菜单分节统一来自 useLayoutStore（W17 导航真源），
 // 窄窗口按 navTopViews 从尾部裁剪，被裁掉的入口在 ☰ 菜单中仍可达。
@@ -312,6 +314,7 @@ async function openDirCenter() {
       <template v-if="layout.mainView === 'browser'">
         <button class="tbtn" aria-label="边浏览边管理文件" @click="layout.toggleBrowserDock('files')" title="边浏览边管理文件">🗂</button>
         <button class="tbtn" aria-label="边浏览边开终端" @click="layout.toggleBrowserDock('term')" title="边浏览边开终端">💻</button>
+        <button class="tbtn bookmark-entry" :class="{ active: bookmarks.panelOpen }" aria-label="收藏夹" @click="bookmarks.togglePanel" title="打开收藏夹">📑 <span>收藏夹</span></button>
         <button class="tbtn" aria-label="精简模式" @click="layout.toggleCompact" title="精简模式：隐藏工具栏给网页更大空间">⛶</button>
       </template>
       <span class="sep"></span>

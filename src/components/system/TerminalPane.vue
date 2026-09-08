@@ -227,7 +227,9 @@ onBeforeUnmount(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
+  height: 100%;
   min-height: 0;
+  overflow: hidden;
   background: #1e1e1e;
 }
 .term-head {
@@ -261,7 +263,9 @@ onBeforeUnmount(() => {
 }
 .term-container {
   flex: 1;
+  height: 0;
   min-height: 0;
   padding: 2px;
+  overflow: hidden;
 }
 </style>

@@ -284,6 +284,11 @@ watch(
   font-size: 14px;
   text-align: center;
 }
+.term-mod {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
 .panel-error {
   color: #ff7a7a;
 }
