@@ -152,7 +152,6 @@
 
 - `HIGH` A7-R3-git-workflow-reference-map.md classifies a unit as COPY (A0 ruled COPY=0) L185 — `| COPY | 0 | — (forbidden: Kotlin/JVM Apache-2.0 → Rust/MulanPSL-2; A10 provenance gate required first) |`
 - `MEDIUM` A7-R3-git-workflow-reference-map.md writes the tag as v1.1.15; the upstream ref is refs/tags/1.1.15 (no v prefix) -> record the exact ref name
-
 ### P8 [HIGH×1]
 
 **裁定修复**：A7 分类计数须等于其 14 行表：ADAPT=4 / REIMPLEMENT=10 / COPY=0；散文与表保持一致。
@@ -193,4 +192,3 @@
 
 - `HIGH` A7-R3-git-workflow-reference-map.md classifies a unit as COPY (A0 ruled COPY=0) L185 — `| COPY | 0 | — (forbidden: Kotlin/JVM Apache-2.0 → Rust/MulanPSL-2; A10 provenance gate required first) |`
 - `MEDIUM` A7-R3-git-workflow-reference-map.md writes the tag as v1.1.15; the upstream ref is refs/tags/1.1.15 (no v prefix) -> record the exact ref name
-

@@ -106,7 +106,7 @@ index 6f125b4..22c32be 100644
 @@ -322,13 +322,26 @@ button { cursor: pointer; border: 1px solid #ccc; background: #fafafa; border-ra
      };
    }
- 
+
 -  var SIZES = [
 -    [1920, 1080], [1440, 900], [1366, 768], [1024, 720],
 -    // 原生标题栏敏感度（假设 37px 系统标题栏，窗口最大化时客户区变矮）
