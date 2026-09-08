@@ -76,3 +76,34 @@ python3 logs/research/M5-W18/A10-R3-viewport-budget.py   # 输出四尺寸侧栏
 1. 待 A2–A9 的 R3 产物落到 `master` 后，按主报告 §8 的 **G1–G8 闸门**逐条机械复核，出 A10 终审（卡片序列第 2 步），并同步给 A1（第 3 步）与 A11（第 4 步）。
 2. 终审重点：**G4 孤儿动作**、**G5 无来源百分比**、**G6 视口算术**、**G7 状态双重归属**。
 3. 仍不 push；终审同样以 lane 文件 + checkpoint 形式交付。
+
+---
+
+## 7. 第 2 波（2026-09-08 续，提交前状态）
+
+触发：`origin/master` 仍为 `200f0f1`，**A2–A9 的 R3 产物尚未落地**（`git ls-tree origin/master -- logs/research/M5-W18` 无 R3 文件），终审继续等待；本波做不依赖他 lane 的独立核验。
+
+新增产物：
+
+| 文件 | 说明 |
+|---|---|
+| `logs/research/M5-W18/A10-R3-reference-addendum-20260908.md` | 次级参照许可核验 + 能力交叉验证 + G8 门禁说明 |
+| `logs/research/M5-W18/A10-R3-prototype-selfcontainment-check.py` | G8 机械门禁脚本（6 条规则，exit 0/1） |
+
+结论补充：
+
+- **SourceGit = MIT 已核实**（raw LICENSE 抓取成功）；**slio-git 不可核验**（`api.github.com/repos/sk-wang/slio-git` 404，raw LICENSE/README 全 404；许可仅由官网 `slio-git.skwang.uk` 声明）⇒ 记为 `UNVERIFIED`，不得 COPY（**F16**）。
+- **F17**：slio-git（Rust + git2-rs + Iced）在**实现栈**上比 Rebased 更贴近本产品，应作为"可行性参照"；Rebased 仍是"产品语义/IA 参照"。两类角色须在 A7 映射表中分开，避免把"行为参照"误读成"可 COPY"。
+- **F18**：slio-git 的 `iced/wgpu/similar/syntect/notify/tokio` 在本产品当前约束下全部 BLOCKED（R3 不改依赖；M4 A2 F-1 不引 tokio；预算余量 ≈346B）⇒ 只能行为重实现。
+- G8 门禁基线：既有 2 个研究原型 `A1-wireframe-prototype-R2B.html`、`A5-R2B-wireframe.html` **均 PASS**，说明门槛可达；R3 新原型应以 exit 0 交付。
+
+验证命令：
+
+```bash
+git fetch origin && git log --oneline origin/master -3            # 仍 200f0f1，无 R3 产物
+python3 logs/research/M5-W18/A10-R3-prototype-selfcontainment-check.py   # RESULT: PASS (2/2 files clean)
+curl -s https://raw.githubusercontent.com/sourcegit-scm/sourcegit/master/LICENSE | head -1   # The MIT License (MIT)
+curl -s https://api.github.com/repos/sk-wang/slio-git | head -c 120                          # 404 Not Found
+```
+
+范围：仅新增 A10 lane 自有文件；零产品代码/依赖/ACL 改动；**未 push**。
