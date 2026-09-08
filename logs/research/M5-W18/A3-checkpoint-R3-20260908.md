@@ -62,7 +62,10 @@ REVERSE_APPLY_CHECK_OK              # 补丁可干净回滚
 | `509e301` | `research(M5-W18-R3,A3): lane checkpoint`（本文件） |
 | `59029bd` | `research(M5-W18-R3,A3): A0 integration patch` |
 
-集成基线：`200f0f1`（`origin/master`）；本 lane 领先 3 个提交。补丁已用
+| `4b95935` | `research(M5-W18-R3,A3): checkpoint SHA/verification addendum`（最后一次补录） |
+
+集成基线：`200f0f1`（`origin/master`）。本 lane 的提交数以上面表格与
+`git rev-parse --short HEAD` 为准（HEAD 即最后一行的补录提交）。补丁已用
 `git apply --check --reverse` 验证可干净回滚（4 个文件）。
 
 产物：
