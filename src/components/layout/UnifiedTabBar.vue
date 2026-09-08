@@ -5,7 +5,6 @@ import { ref } from "vue";
 import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
 import { useSystemStore } from "../../stores/useSystemStore";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Minus, Square, X } from "@lucide/vue";
 
 // 统一页签条：浏览器网页页签 + 目录页签 + 模块页签（终端/文件等）混排在同一条，
 // 不区分类型 —— 点击即切换对应视图，行为与浏览器标签一致。
@@ -13,8 +12,21 @@ const layout = useLayoutStore();
 const browser = useBrowserStore();
 const ws = useWorkspaceStore();
 const system = useSystemStore();
-const appWindow = getCurrentWindow();
 const context = ref<{ id: string; kind: 'web' | 'module' } | null>(null);
+
+// Resolve the native window only after an explicit user action so a browser/dev
+// preview can render the shell even when Tauri APIs are unavailable.
+async function minimizeWindow() {
+  try { await getCurrentWindow().minimize(); } catch { /* browser preview */ }
+}
+
+async function toggleWindowMaximize() {
+  try { await getCurrentWindow().toggleMaximize(); } catch { /* browser preview */ }
+}
+
+async function closeWindow() {
+  try { await getCurrentWindow().close(); } catch { /* browser preview */ }
+}
 async function closeContext(others = false) {
   const target = context.value;
   context.value = null;
@@ -81,9 +93,9 @@ function activateMod(t: { id: string; view: string; path?: string }) {
     <button class="tab-new" @click="browser.tabNew()" title="新建页签">＋</button>
     <div class="titlebar-drag" data-tauri-drag-region aria-hidden="true"></div>
     <div class="window-controls" aria-label="窗口控制">
-      <button title="最小化" @click.stop="appWindow.minimize()"><Minus :size="14" /></button>
-      <button title="最大化或还原" @click.stop="appWindow.toggleMaximize()"><Square :size="12" /></button>
-      <button class="window-close" title="关闭窗口" @click.stop="appWindow.close()"><X :size="14" /></button>
+      <button title="最小化" @click.stop="minimizeWindow">−</button>
+      <button title="最大化或还原" @click.stop="toggleWindowMaximize">□</button>
+      <button class="window-close" title="关闭窗口" @click.stop="closeWindow">×</button>
     </div>
   </div>
   <div v-if="context" class="tab-actions" role="menu" @keydown.esc="context = null">
