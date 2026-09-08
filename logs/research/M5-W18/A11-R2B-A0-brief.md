@@ -1,4 +1,4 @@
-# A11 · M5-W18-R2B A0 摘要（滚动更新 2，≤120 行）
+# A11 · M5-W18-R2B A0 摘要（滚动更新 3，≤120 行）
 
 > 用途：A0 低成本接手（见 `A0-HANDOFF-LOW-COST-20260908.md` §4）：读此摘要 + manifest，必要时抽查关键原证据。A11 不合并、不 push。**W18-R2B 全 11 lane 整包现已 READY_FOR_REVIEW**；两项此前缺口（A4 R2、A10 R2B 复核）均已闭合。
 
@@ -15,7 +15,7 @@
 | A7 | 37be95eed91f27526615a3c50b90fc3c376b8f0a | PASS_WITH_DEBT | 检索接入/索引事务证据（与 A8 追平） |
 | A8 | ed5c0c8a8c1e0e3490a34cc85dfc9227f519bd8a | READY_FOR_REVIEW | 指标修正（修 A0 #7/#8：命名/RSS 边界） |
 | A9 | 66bd51140dc07829840ada02deb2306762d4d72a | PASS | 能力预算 + 信任边界 + WebView 边界 |
-| A10 | 530d7086c2e4f33c79f06f3646741888aa3a675b | READY_FOR_REVIEW | **`A10-R2B-review-findings.md`（F1–F5）** + ledger Z8 和解 |
+| A10 | 3551184865fb76a71eac3a177b46ab6ebc79be82 | READY_FOR_REVIEW | **`A10-R2B-review-findings.md`（F1–F5）** + ledger Z8 和解 |
 | A11 | <FILLED_ON_COMMIT> | READY_FOR_REVIEW | 本包（progress/manifest/brief/cards/checkpoint） |
 
 A0 调度文档（origin/master `434e63f`）：`WORKBENCH_BLUEPRINT-20260908.md`、`A0-HANDOFF-LOW-COST-20260908.md`、`A0-M5-W18-R2B-dispatch-20260908.md`、`M5-W18-R2B-TASKS-20260908.md`。
@@ -28,11 +28,13 @@ A0 调度文档（origin/master `434e63f`）：`WORKBENCH_BLUEPRINT-20260908.md`
 
 ## 3. 独立复核结果（A10 findings F1–F5，A11 不重复裁决）
 
-- **F1 DbValue 序列化** ✅ 独立确认（`database.rs:118-168`）：`Null/Bool/I64/F64/Text/Binary{bytes}`，BLOB 仅返长度。
-- **F2 DB 测试数 = 23**（非 R1 audit 的 22、非 A4 R1 的“zero”）；真实缺口 = **live-DB 集成测试**（声明≠执行，A4/A0 均未重跑 cargo）。
-- **F3 同步驱动模型** ✅ 确认（无 tokio 第二运行时；A4/A7 一致）。
-- **F4 dbx 上游 pin `c0a7be12`** ✅ 一致（忽略 R1 误 `01a6e16`）。
-- **F5 zvec 绑定/格式** ✅ 确认：npm N-API addon + 官方 `zvec-rust` crate 均 Apache-2.0；产品路径 = npm N-API **sidecar**（ADAPT，非逐函数 COPY），与 A8 `COPY=0` 一致；Z8 HOLD-(a) 解除；原生占用 `.node` 41.7MB + 引擎 RSS ~294MB（bundle 影响交 A3/A10 评估）。
+- **F1–F5**（此前已录）：DbValue 序列化 ✅（`database.rs:118-168`）；DB 测试数 = 23（真实缺口 = live-DB 集成测试）；同步驱动 ✅（无 tokio 第二运行时）；dbx pin `c0a7be12` ✅；zvec 绑定/格式 ✅（npm N-API sidecar，Z8 HOLD-(a) 解除；`.node` 41.7MB + 引擎 RSS ~294MB，bundle 影响交 A3/A10）。
+- **F6–F12**：许可 MulanPSL-2.0 ✅；F7 zvec 指标命名引用口径交 A0（A8 R2B 已修）；F8 egress 默认关 ✅；F9 apiKey 明文 → keyring（A9 B3）；F10 dispatch 1358 行归属笔误（文档修正）；F11 共享 `ConfirmModal`/`useModalFocus`（A1/A5 壳层协调）；F12 `db_cancel` 冻结顺序 A4 先于 A5。
+- **F13 ★HIGH-VALUE 升级（滚动 3 新增）**：产品**双 `DbValue` 枚举线格式分歧**——`database.rs:122`（`i64/f64/binary`，`DbQueryResult.rows` 实线使用）vs `domain.rs:1094`+`types.ts:603`（`int/float/blob_len`）；`dbUi.ts:273 decodeDbValue` 只认后者 → **数值/二进制单元格渲染成原始 JSON**（如 `{"i64":7}`）。B8-1 只修了 `domain.rs`。最小修正：统一单枚举（建议 `int/float/blob_len`）+ 序列化往返测试；**W19 由 A4+A5 修复**（属产品代码，A10 不改）。
+- **F14**：dbx 凭据活路径 = SQLite 明文 `connection_secrets` 表（`FileSecretStore` 死代码），A6 更正 A4/A10 ledger D6 已和解；产品 `keyring_store` 正确。
+- **F15**：A11 R2 矩阵“无 peer R2”已过时 → A11 滚动更新 2 已解决。
+
+A10 候选实现片（PROPOSED_NOT_AUTHORIZED）：P1 dbx 同步移植（首波）、P2 zvec-grep npm sidecar（须先移 A9 egress 门，F9 阻塞）、P3 远程嵌入凭据 keyring（独立）。
 
 ## 4. 可开放切片（S0–S5，PROPOSED_NOT_AUTHORIZED）
 
@@ -46,6 +48,7 @@ A0 调度文档（origin/master `434e63f`）：`WORKBENCH_BLUEPRINT-20260908.md`
 - **S5 状态恢复与连续使用验收**：J1–J6 组合、故障恢复、debug/release、窄窗/DPI、旧功能回归。
 
 建议开放顺序：S0 → S1 →（S2/S3/S4 并行）→ S5；每片单独登记 `READY/BLOCKED/DEFERRED` + 唯一 owner + 文件范围 + 依赖 SHA + 验收（蓝图 §7）。**禁止全仓默认开放**。A9 B2/B3/B7 须在任意 zvec 能力发货前修复。
+- A10 候选片对齐：P1 ↔ S0/S2（dbx 同步移植 + F13 DbValue 统一）、P2 ↔ S4（zvec npm sidecar，先 A9 门）、P3 ↔ S0（凭据 keyring）。
 
 ## 5. 证据链接
 

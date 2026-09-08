@@ -13,6 +13,7 @@
 ## S0 · 现有契约与可运行基线
 
 - **范围**：DbValue 真实序列化确定唯一源；release 无 Vite 依赖、debug IPC 正确；保留已修正的调度并发/崩溃行为。
+- **已确认缺陷（A10 F13，★HIGH-VALUE）**：产品**双 `DbValue` 枚举线格式分歧**——`database.rs:122`（`i64/f64/binary`，`DbQueryResult.rows` 实线使用）vs `domain.rs:1094`+`types.ts:603`（`int/float/blob_len`）；`dbUi.ts:273 decodeDbValue` 只认后者 → 数值/二进制单元格渲染成原始 JSON（如 `{"i64":7}`）。S0 首步须统一单一 `DbValue`（建议 `int/float/blob_len`），`database.rs::DbQueryResult.rows` 指向它，并新增序列化往返测试。
 - **前置**：A4 DbValue 契约结论、A6 凭据/生命周期、A9 边界、A11 实证。
 - **步骤**：读 `database.rs:122` 活契约 → 删除/同源派生 `domain.rs:1094`+`types.ts:603` 镜像 → 校验 release bundle 无 `build.devUrl` → 校验 `dev-capabilities/main.json` 仅 `#[cfg(debug_assertions)]`。
 - **测试矩阵（PROPOSED）**：

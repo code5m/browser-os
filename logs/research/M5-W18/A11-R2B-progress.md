@@ -1,4 +1,4 @@
-# A11 · M5-W18-R2B 进度与验收总包（滚动更新 2）
+# A11 · M5-W18-R2B 进度与验收总包（滚动更新 3）
 
 ```text
 LANE=A11
@@ -14,7 +14,7 @@ NO_PRODUCT_CODE=true
 NO_PUSH=true
 ```
 
-> 本文件为第 2 次滚动审核产出：相对首版，A1–A10 全部推进到 R2B，A4/A10 两项 `WAITING_DEPENDENCY` 缺口均已闭合。首版历史保留，不重写。
+> 本文件为第 3 次滚动审核产出：相对首版，A1–A10 全部推进到 R2B，A4/A10 两项 `WAITING_DEPENDENCY` 缺口均已闭合。滚动更新 3：仅 A10 一 lane 有变化（`530d7086`→`35511848`），新增复核 F6–F15（含升级的 F13 双 `DbValue` 枚举线格式缺陷、F14 dbx 凭据活路径更正、F15 确认 A11 矩阵刷新已解）。首版历史保留，不重写。
 
 ## 0. 本包交付物（A11 允许范围）
 
@@ -37,7 +37,7 @@ NO_PUSH=true
 | A7 | 37be95eed91f27526615a3c50b90fc3c376b8f0a | R2B_PASS_WITH_DEBT | `A7-R2B-retrieval-access-index-transaction.md`、`A7-checkpoint-R2B-20260908.md`（§9 R2B 更正；与 A8 追平） | 缓存命名空间冲突待 A10 台账 | A10、A9 |
 | A8 | ed5c0c8a8c1e0e3490a34cc85dfc9227f519bd8a | R2B_READY_FOR_REVIEW | `A8-R2B-retrieval-metrics-correction.md`、`A8-R2B-benchmark-metrics.mjs`（修正 A0 #7/#8 指标名/RSS 边界） | 与 A7 已追平 | A1/A3/A10 |
 | A9 | 66bd51140dc07829840ada02deb2306762d4d72a | R2B_PASS | `A9-R2B-capability-budgets.md`、`A9-R2B-trust-boundary.md`、`A9-R2B-webview-boundary.md`、`A9-checkpoint-R2B-20260908.md` | B2/B3/B7 仍 W19 前必修 | A3 采纳裁决(无依赖直至 A0) |
-| A10 | 530d7086c2e4f33c79f06f3646741888aa3a675b | R2B_READY_FOR_REVIEW | **`A10-R2B-review-findings.md`**（独立复核，F1–F5）、ledger §9 Z8 和解 | **原缺口已闭** | A1–A9 |
+| A10 | 3551184865fb76a71eac3a177b46ab6ebc79be82 | R2B_READY_FOR_REVIEW | **`A10-R2B-review-findings.md`**（独立复核 F1–F15 + 候选片 P1–P3 + 决策摘要）、ledger §9/D6 和解 | **原缺口已闭**；F13 双 DbValue 缺陷升级交 W19 A4+A5 | A1–A9 |
 | A11 | f43196dc7aabfb24d22262850320f18204e7d7ce | R2B_READY_FOR_REVIEW | 本包（progress/manifest/brief/cards/checkpoint） | 无 | 全部 |
 
 ## 2. 场景分列（不虚构总进度条）
@@ -59,12 +59,24 @@ NO_PUSH=true
 8. ~~A7/A8 矛盾~~ → **已追平**：A8 R2B 明确 npm N-API sidecar 路线，与 A7 一致；Z8 HOLD-(a) 由 A10 F5 解除（官方 `zvec-rust` crate 已证，ADAPT-sidecar，双方 Apache-2.0 无许可冲突）。
 9. 许可：产品根 LICENSE = **MulanPSL-2.0**（非 Apache-2.0）；dbx/部分上游 Apache-2.0，移植署名归 A10。
 
-### A10 独立复核要点（F1–F5，A11 不重复裁决）
+### A10 独立复核要点（F1–F15，A11 不重复裁决）
 - F1 DbValue 序列化 ✅ 独立确认（`database.rs:118-168`）。
 - F2 DB 测试数 = **23**（非 22、非“zero”）；真实缺口 = live-DB 集成测试。
 - F3 同步驱动模型 ✅ 确认（无 tokio 第二运行时）。
 - F4 dbx 上游 pin `c0a7be12` ✅ 一致（忽略 R1 误 `01a6e16`）。
 - F5 zvec 绑定/格式 ✅ 确认；修正 A10 Z8；npm N-API sidecar；原生占用 `.node` 41.7MB + 引擎 RSS ~294MB（bundle 影响交 A3/A10 评估）。
+- F6 产品许可 = MulanPSL-2.0 ✅。
+- F7 zvec 指标命名不可引为 recall@10（A8 R2B 已修）；W19 引用口径交 A0。
+- F8 egress 默认关闭 ✅（A9）。
+- F9 远程嵌入 apiKey 明文存储 → W19 须 keyring（A9 B3）。
+- F10 dispatch 1358 行归属笔误（A3→A8）→ 文档修正，交 A0/A11。
+- F11 共享 `ConfirmModal`/`useModalFocus`（A1 vs A5）→ 壳层契约协调。
+- F12 `db_cancel` 冻结顺序：A4 先于 A5（W19 登记，不阻塞低风险首片）。
+- **F13 ★HIGH-VALUE（升级）**：产品存在**两个** `DbValue` 枚举且线格式分歧——`database.rs:122`（`i64/f64/binary`，`DbQueryResult.rows` 实际使用）vs `domain.rs:1094`+`types.ts:603`（`int/float/blob_len`）；`dbUi.ts:273 decodeDbValue` 只识别后者 → **每个数值/二进制单元格渲染成原始 JSON**（如 `{"i64":7}`）。B8-1 只修了 `domain.rs`。最小修正：统一单一 `DbValue`（建议 `int/float/blob_len`），`database.rs::DbQueryResult.rows` 指向它 + 加序列化往返测试。属产品代码 → **W19 由 A4+A5 修复**。
+- F14 dbx 凭据活路径 = SQLite 明文 `connection_secrets` 表，`FileSecretStore` 死代码（A6 更正 A4/A10 ledger D6，已和解）；产品 `keyring_store` 路径确认正确。
+- F15 A11 R2-provisional“无 peer R2”主张过时 → **已由 A11 滚动更新 2 解决**（旧 R2 §10 已更正 + 本滚动审核）。
+
+A10 候选实现片（PROPOSED_NOT_AUTHORIZED）：P1 dbx 同步移植（ADAPT over sync mysql/postgres/rusqlite；COPY D5a/D11a；REJECT D3/D4/D6/D11b/D16）、P2 zvec-grep npm sidecar（须先移植 A9 egress 门，F9 阻塞）、P3 远程嵌入凭据 keyring（独立）。
 
 ## 4. S0–S5 候选卡与测试矩阵
 
@@ -85,7 +97,7 @@ NO_PUSH=true
 - A7 `37be95eed91f27526615a3c50b90fc3c376b8f0a` → `A7-R2B-retrieval-access-index-transaction.md`, `A7-checkpoint-R2B-20260908.md`
 - A8 `ed5c0c8a8c1e0e3490a34cc85dfc9227f519bd8a` → `A8-R2B-retrieval-metrics-correction.md`, `A8-R2B-benchmark-metrics.mjs`, `A8-checkpoint-R2B-20260908.md`
 - A9 `66bd51140dc07829840ada02deb2306762d4d72a` → `A9-R2B-capability-budgets.md`, `A9-R2B-trust-boundary.md`, `A9-R2B-webview-boundary.md`, `A9-checkpoint-R2B-20260908.md`
-- A10 `530d7086c2e4f33c79f06f3646741888aa3a675b` → `A10-R2B-review-findings.md`, `A10-source-transplant-ledger.md`(更新 Z8+§9)
+- A10 `3551184865fb76a71eac3a177b46ab6ebc79be82` → `A10-R2B-review-findings.md`, `A10-source-transplant-ledger.md`(更新 Z8+§9)
 - A0 调度文档（origin/master `434e63f`）：`WORKBENCH_BLUEPRINT-20260908.md`、`A0-HANDOFF-LOW-COST-20260908.md`、`A0-M5-W18-R2B-dispatch-20260908.md`、`M5-W18-R2B-TASKS-20260908.md`、`PARALLEL_COMMAND_BOARD.md`、`WORKSPACE_IDENTITY.md`
 
 ## 7. 自检（交付前）

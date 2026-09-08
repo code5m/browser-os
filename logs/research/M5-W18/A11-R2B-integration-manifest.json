@@ -1,7 +1,7 @@
 {
   "manifest_version": "M5-W18-R2B/A11",
   "generated_at": "2026-09-08",
-  "revision": "rolling-2",
+  "revision": "rolling-3",
   "author": "A11 (codex/m5-w18-a11)",
   "base_sha": "434e63f",
   "base_desc": "origin/master: docs(M5-W18): define daily workbench and second research dispatch",
@@ -138,7 +138,7 @@
       "notes": "no dependency until A0 approval after A3"
     },
     "A10": {
-      "sha": "530d7086c2e4f33c79f06f3646741888aa3a675b",
+      "sha": "3551184865fb76a71eac3a177b46ab6ebc79be82",
       "status": "R2B_READY_FOR_REVIEW",
       "files": [
         "logs/research/M5-W18/A10-R2B-review-findings.md",
@@ -150,7 +150,7 @@
       "scope": "R2B independent review: evidence->issue->impact->fix->owner, INDEPENDENTLY CONFIRMED/AUTHOR CLAIMS/UNVERIFIED; cross-lane conflicts for A0",
       "merge_after": ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9"],
       "deps_open": [],
-      "notes": "CLOSES prior WAITING_DEPENDENCY (A10 R2B findings missing). F1-F5 confirm DbValue/23 tests/sync drivers/dbx pin/zvec sidecar"
+      "notes": "CLOSES prior WAITING_DEPENDENCY. F1-F15 confirm DbValue/23 tests/sync drivers/dbx pin/zvec sidecar; F13 ESCALATE dual-DbValue wire defect (W19 A4+A5, round-trip test); F14 dbx creds corrected (FileSecretStore dead code); F15 A11 matrix refresh (done). Candidate slices P1 dbx-sync, P2 zvec npm sidecar (F9 blocked), P3 keyring"
     },
     "A11": {
       "sha": "f43196dc7aabfb24d22262850320f18204e7d7ce",
@@ -178,7 +178,7 @@
     {"lane": "A7", "sha": "37be95eed91f27526615a3c50b90fc3c376b8f0a"},
     {"lane": "A8", "sha": "ed5c0c8a8c1e0e3490a34cc85dfc9227f519bd8a"},
     {"lane": "A9", "sha": "66bd51140dc07829840ada02deb2306762d4d72a"},
-    {"lane": "A10", "sha": "530d7086c2e4f33c79f06f3646741888aa3a675b"},
+    {"lane": "A10", "sha": "3551184865fb76a71eac3a177b46ab6ebc79be82"},
     {"lane": "A0", "ref": "origin/master 434e63f", "docs": [
       "WORKBENCH_BLUEPRINT-20260908.md",
       "A0-HANDOFF-LOW-COST-20260908.md",
@@ -193,6 +193,10 @@
     "A10 R2B independent review findings (was missing) -> now 530d7086 with A10-R2B-review-findings.md"
   ],
   "open_decisions_for_a0": [
+    "F13 ESCALATE: dual DbValue wire enum (database.rs i64/f64/binary vs domain.rs+TS int/float/blob_len) -> numeric/binary cells render raw JSON; W19 product fix by A4+A5 with serialization round-trip test",
+    "F7: zvec metric naming citation policy -> A0 rule at W19 (A8 R2B already corrected)",
+    "F10: dispatch L1358 attribution typo (A3->A8) -> doc fix",
+    "F12: db_cancel freeze order A4 before A5 (record at W19 open; does not block low-risk first slices)",
     "A7 cross-binding interop unproven (WAL/lock interchange) -> A7/A9/A10 reconcile",
     "A7 cache namespace conflict (.zvec-grep root cleanup) -> product-owned namespace + generation commit (A10 ledger)",
     "dbx reference identity = t8y2/dbx (Apache-2.0), NOT IDEA; IDEA identity UNKNOWN -> general DB UX continues, no precise-clone claim",
