@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A1 R3 Browser-First Workbench Prototype</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #1e1e2e; --bg2: #252537; --bg3: #2d2d44; --border: #3a3a55;
+    --text: #cdd6f4; --text2: #7f849c; --text3: #585b70;
+    --accent: #89b4fa; --accent-bg: #1e1e2e; --danger: #f38ba8; --success: #a6e3a1;
+    --top-h: 36px; --tab-h: 32px; --status-h: 24px;
+  }
+  body { font-family: -apple-system, "Segoe UI", "Noto Sans", sans-serif; background: #11111b; color: var(--text); display: flex; flex-direction: column; align-items: center; gap: 20px; padding: 20px; }
+  h1 { font-size: 16px; color: #fff; }
+  h2 { font-size: 13px; color: var(--text2); margin-bottom: 6px; }
+  .desc { font-size: 11px; color: var(--text3); max-width: 900px; line-height: 1.6; }
+  .frame-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .frame-label { font-size: 12px; color: var(--text2); }
+  .frame-meta { font-size: 10px; color: var(--text3); }
+  .frame { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; display: flex; flex-direction: column; background: var(--bg); position: relative; }
+
+  /* === Shell structure === */
+  .top-chrome { display: flex; align-items: center; gap: 6px; padding: 0 8px; background: var(--bg2); border-bottom: 1px solid var(--border); height: var(--top-h); font-size: 12px; }
+  .top-chrome .nav-btn { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 4px; cursor: pointer; color: var(--text2); font-size: 14px; }
+  .top-chrome .nav-btn:hover { background: var(--bg3); }
+  .top-chrome .addr { flex: 1; height: 24px; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; padding: 0 12px; display: flex; align-items: center; color: var(--text2); font-size: 12px; }
+  .top-chrome .cmd-btn { padding: 0 10px; height: 24px; display: flex; align-items: center; gap: 4px; background: var(--bg3); border-radius: 4px; cursor: pointer; color: var(--text2); font-size: 11px; }
+  .top-chrome .cmd-btn:hover { background: var(--accent); color: var(--bg); }
+  .top-chrome .menu-btn { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 4px; cursor: pointer; color: var(--text2); }
+
+  .tab-strip { display: flex; align-items: center; gap: 2px; padding: 0 6px; background: var(--bg2); border-bottom: 1px solid var(--border); height: var(--tab-h); }
+  .tab { display: flex; align-items: center; gap: 6px; padding: 0 10px; height: 26px; background: var(--bg3); border-radius: 5px 5px 0 0; cursor: pointer; font-size: 12px; color: var(--text2); max-width: 180px; }
+  .tab.active { background: var(--bg); color: var(--text); }
+  .tab .close { opacity: 0.4; font-size: 14px; }
+  .tab .close:hover { opacity: 1; }
+  .tab-new { width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; color: var(--text3); cursor: pointer; font-size: 16px; border-radius: 4px; }
+  .tab-new:hover { background: var(--bg3); }
+
+  .body-area { flex: 1; display: flex; min-height: 0; position: relative; }
+  .content { flex: 1; background: var(--bg); display: flex; flex-direction: column; min-width: 0; position: relative; }
+  .content-pad { flex: 1; padding: 16px; display: flex; align-items: center; justify-content: center; color: var(--text3); font-size: 13px; }
+
+  /* Tool windows — collapsible, not permanent */
+  .tool-win { background: var(--bg2); border: 1px solid var(--border); font-size: 11px; display: flex; flex-direction: column; }
+  .tool-win.left { border-right: none; }
+  .tool-win.right { border-left: none; }
+  .tool-win.bottom { border-top: 1px solid var(--border); }
+  .tool-win-header { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; background: var(--bg3); font-size: 11px; color: var(--text2); }
+  .tool-win-header .actions { display: flex; gap: 4px; }
+  .tool-win-header .act { width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0.6; font-size: 12px; }
+  .tool-win-header .act:hover { opacity: 1; }
+  .tool-win-body { padding: 6px 8px; color: var(--text2); line-height: 1.7; overflow: hidden; }
+
+  /* Edge activity strip — minimal, icon-only */
+  .edge-strip { display: flex; flex-direction: column; gap: 2px; padding: 4px 2px; background: var(--bg2); border-right: 1px solid var(--border); }
+  .edge-icon { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 4px; cursor: pointer; font-size: 14px; color: var(--text3); }
+  .edge-icon:hover { background: var(--bg3); color: var(--text); }
+  .edge-icon.active { color: var(--accent); }
+
+  .status-bar { display: flex; align-items: center; gap: 10px; padding: 0 10px; background: var(--bg2); border-top: 1px solid var(--border); height: var(--status-h); font-size: 10px; color: var(--text3); }
+
+  /* Context menu overlay */
+  .ctx-menu { position: absolute; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 4px 0; font-size: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); z-index: 100; min-width: 180px; }
+  .ctx-group { padding: 2px 0; }
+  .ctx-item { display: flex; align-items: center; justify-content: space-between; padding: 4px 12px; cursor: pointer; color: var(--text); }
+  .ctx-item:hover { background: var(--accent); color: var(--bg); }
+  .ctx-item.disabled { color: var(--text3); cursor: default; }
+  .ctx-item.disabled:hover { background: none; color: var(--text3); }
+  .ctx-item .shortcut { color: var(--text3); font-size: 10px; }
+  .ctx-sep { height: 1px; background: var(--border); margin: 4px 0; }
+  .ctx-label { padding: 2px 12px; font-size: 10px; color: var(--text3); }
+
+  /* Command palette overlay */
+  .cmd-palette { position: absolute; top: 40px; left: 50%; transform: translateX(-50%); width: 480px; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); z-index: 200; }
+  .cmd-input { width: 100%; padding: 10px 14px; background: none; border: none; border-bottom: 1px solid var(--border); color: var(--text); font-size: 14px; outline: none; }
+  .cmd-list { max-height: 300px; overflow-y: auto; }
+  .cmd-row { display: flex; align-items: center; gap: 8px; padding: 6px 14px; cursor: pointer; font-size: 12px; color: var(--text2); }
+  .cmd-row:hover, .cmd-row.sel { background: var(--accent); color: var(--bg); }
+  .cmd-row .cat { font-size: 10px; color: var(--text3); margin-left: auto; }
+
+  /* Mode badge */
+  .mode-badge { position: absolute; top: 4px; right: 8px; padding: 2px 8px; border-radius: 10px; font-size: 10px; z-index: 50; }
+  .mode-badge.normal { background: var(--bg3); color: var(--text2); }
+  .mode-badge.collapsed { background: var(--success); color: var(--bg); }
+  .mode-badge.focus { background: var(--accent); color: var(--bg); }
+  .mode-badge.db { background: #fab387; color: var(--bg); }
+  .mode-badge.git { background: #a6e3a1; color: var(--bg); }
+  .mode-badge.knowledge { background: #cba6f7; color: var(--bg); }
+
+  /* Viewport measurement */
+  .vp-measure { position: absolute; bottom: 4px; right: 8px; font-size: 9px; color: var(--text3); z-index: 50; }
+
+  /* === Size variants === */
+  .f-1920 { width: 1920px; height: 1080px; }
+  .f-1440 { width: 1440px; height: 900px; }
+  .f-1366 { width: 1366px; height: 768px; }
+  .f-1024 { width: 1024px; height: 720px; }
+
+  /* === Mode variants === */
+  /* Collapsed: no tool windows, minimal chrome */
+  .mode-collapsed .tool-win { display: none; }
+  .mode-collapsed .edge-strip { display: none; }
+  .mode-collapsed .tab-strip { height: 28px; }
+  .mode-collapsed .top-chrome { height: 32px; }
+
+  /* Focus: hide all chrome except one return action */
+  .mode-focus .tool-win { display: none; }
+  .mode-focus .edge-strip { display: none; }
+  .mode-focus .tab-strip { display: none; }
+  .mode-focus .top-chrome { height: 28px; }
+  .mode-focus .top-chrome .addr { display: none; }
+  .mode-focus .top-chrome .nav-btn { display: none; }
+  .mode-focus .status-bar { display: none; }
+  .focus-return { position: absolute; top: 4px; right: 8px; padding: 4px 10px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; font-size: 11px; color: var(--text2); z-index: 100; }
+
+  /* 1024: collapse secondary */
+  .f-1024 .tool-win.right { display: none; }
+  .f-1024 .tool-win.bottom { display: none; }
+
+  /* States */
+  .state-empty .content-pad::after { content: "空状态 — 无内容"; }
+  .state-loading .content-pad::after { content: "加载中…"; }
+  .state-error .content-pad::after { content: "错误：连接失败 [重试]"; color: var(--danger); }
+
+  /* Git log styles */
+  .git-log { font-family: "SF Mono", "Cascadia Code", monospace; font-size: 11px; line-height: 1.8; color: var(--text2); padding: 8px; }
+  .git-log .commit { display: flex; gap: 8px; }
+  .git-log .hash { color: var(--accent); }
+  .git-log .msg { color: var(--text); }
+  .git-log .author { color: var(--text3); margin-left: auto; }
+
+  /* DB result grid */
+  .db-grid { font-size: 11px; border-collapse: collapse; width: 100%; }
+  .db-grid th, .db-grid td { padding: 3px 8px; border: 1px solid var(--border); text-align: left; }
+  .db-grid th { background: var(--bg3); color: var(--text2); }
+  .db-grid td { color: var(--text); }
+  .db-grid .null { color: var(--text3); font-style: italic; }
+</style>
+</head>
+<body>
+<h1>A1 R3 Browser-First Workbench Prototype</h1>
+<p class="desc">替代壳层原型。保留 Chrome 式紧凑标签+地址栏+大内容区；IDEA 式渐进披露（可折叠工具窗口、右键菜单、命令面板）。合成数据，不接真实 IPC。覆盖 1920×1080 / 1440×900 / 1366×768 / 1024×720，含 collapsed / normal / database / knowledge / Git / context-menu / focus 模式。</p>
+
+<!-- ============================================================ -->
+<!-- 1. NORMAL MODE — 1440×900 (primary) -->
+<!-- ============================================================ -->
+<div class="frame-wrap">
+  <h2>1. Normal Mode — 1440×900（主视图）</h2>
+  <div class="frame-meta">顶部 ≤2 行 ≤80px | collapsed 时内容 ≥85% 高 / ≥92% 宽 | 左工具窗口可折叠</div>
+  <div class="frame f-1440">
+    <div class="mode-badge normal">NORMAL</div>
+    <!-- Top chrome: compact, ≤36px -->
+    <div class="top-chrome">
+      <div class="nav-btn">←</div><div class="nav-btn">→</div><div class="nav-btn">⟳</div>
+      <div class="addr">https://example.com/workbench</div>
+      <div class="cmd-btn">🔍 命令 (Ctrl+Shift+P)</div>
+      <div class="menu-btn">☰</div>
+    </div>
+    <!-- Tab strip: compact, 32px -->
+    <div class="tab-strip">
+      <div class="tab active">📄 workbench.md <span class="close">✕</span></div>
+      <div class="tab">🌐 example.com <span class="close">✕</span></div>
+      <div class="tab">📄 notes.md <span class="close">✕</span></div>
+      <div class="tab-new">+</div>
+    </div>
+    <!-- Body: edge strip + left tool (optional) + content + right tool (optional) -->
+    <div class="body-area">
+      <div class="edge-strip">
+        <div class="edge-icon active">📄</div>
+        <div class="edge-icon">🌐</div>
+        <div class="edge-icon">🗄️</div>
+        <div class="edge-icon">🕸️</div>
+        <div class="edge-icon">🛰️</div>
+        <div class="edge-icon">💻</div>
+      </div>
+      <!-- Left tool window: optional, collapsible -->
+      <div class="tool-win left" style="width:220px;">
+        <div class="tool-win-header">
+          <span>📂 文件树</span>
+          <div class="actions"><span class="act" title="折叠">▾</span><span class="act" title="关闭">✕</span></div>
+        </div>
+        <div class="tool-win-body">
+          📁 src/<br>
+          &nbsp;├ 📄 App.vue<br>
+          &nbsp;├ 📁 components/<br>
+          &nbsp;├ 📁 stores/<br>
+          &nbsp;└ 📄 bridge.ts<br>
+          📁 src-tauri/<br>
+          📄 package.json
+        </div>
+      </div>
+      <!-- Content: large, content-first -->
+      <div class="content">
+        <div class="content-pad">中央内容区 — 文件编辑 / 网页 / SQL / 笔记<br><br>默认状态：宽敞、内容优先。高级功能在可折叠工具窗口、右键菜单和命令面板中。</div>
+        <div class="vp-measure">viewport ≈ 1180×792 (88% H / 82% W)</div>
+      </div>
+    </div>
+    <div class="status-bar">
+      <span>📁 my-project</span><span>🌿 main</span><span>⏰ 0 运行中</span><span>🔌 已连接</span>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 2. COLLAPSED MODE — 1440×900 -->
+<!-- ============================================================ -->
+<div class="frame-wrap">
+  <h2>2. Collapsed Mode — 1440×900（所有工具窗口折叠）</h2>
+  <div class="frame-meta">内容 ≥85% 高 / ≥92% 宽 | 仅保留标签+地址栏+内容</div>
+  <div class="frame f-1440 mode-collapsed">
+    <div class="mode-badge collapsed">COLLAPSED</div>
+    <div class="top-chrome">
+      <div class="nav-btn">←</div><div class="nav-btn">→</div><div class="nav-btn">⟳</div>
+      <div class="addr">https://example.com/workbench</div>
+      <div class="cmd-btn">🔍 (Ctrl+Shift+P)</div>
+      <div class="menu-btn">☰</div>
+    </div>
+    <div class="tab-strip">
+      <div class="tab active">📄 workbench.md <span class="close">✕</span></div>
+      <div class="tab">🌐 example.com <span class="close">✕</span></div>
+      <div class="tab-new">+</div>
+    </div>
+    <div class="body-area">
+      <div class="content">
+        <div class="content-pad">内容区最大化 — 所有工具窗口已折叠<br><br>通过边缘图标或命令面板恢复任意工具窗口。</div>
+        <div class="vp-measure">viewport ≈ 1376×836 (93% H / 96% W) ✅ ≥85% H / ≥92% W</div>
+      </div>
+    </div>
+    <div class="status-bar"><span>📁 my-project</span><span>🌿 main</span></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 3. FOCUS MODE — 1440×900 -->
+<!-- ============================================================ -->
+<div class="frame-wrap">
+  <h2>3. Focus Mode — 1440×900（全屏专注，仅一个返回操作）</h2>
+  <div class="frame-meta">隐藏所有工具 chrome，保留一个明显的返回操作</div>
+  <div class="frame f-1440 mode-focus">
+    <div class="mode-badge focus">FOCUS</div>
+    <div class="top-chrome">
+      <div class="cmd-btn">🔍</div>
+    </div>
+    <div class="focus-return">退出专注 (Esc)</div>
+    <div class="body-area">
+      <div class="content">
+        <div class="content-pad" style="font-size:16px;">专注模式 — 内容占满整个视口<br><br>所有标签栏、工具窗口、状态栏已隐藏。<br>按 Esc 或点击右上角"退出专注"返回。</div>
+        <div class="vp-measure">viewport ≈ 1440×1048 (99% H / 100% W)</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 4. DATABASE MODE — 1440×900 -->
+<!-- ============================================================ -->
+<div class="frame-wrap">
+  <h2>4. Database Mode — 1440×900（按需展开连接树+结果）</h2>
+  <div class="frame-meta">连接树左 | SQL 文档中央 | 结果底部（可折叠）| focus 时结果/编辑器占满</div>
+  <div class="frame f-1440">
+    <div class="mode-badge db">DATABASE</div>
+    <div class="top-chrome">
+      <div class="nav-btn">←</div><div class="nav-btn">→</div>
+      <div class="addr">🗄️ my-db · query1.sql</div>
+      <div class="cmd-btn">🔍 (Ctrl+Shift+P)</div>
+      <div class="menu-btn">☰</div>
+    </div>
+    <div class="tab-strip">
+      <div class="tab active">🗄️ query1.sql <span class="close">✕</span></div>
+      <div class="tab">🗄️ query2.sql <span class="close">✕</span></div>
+      <div class="tab">📄 workbench.md <span class="close">✕</span></div>
+      <div class="tab-new">+</div>
+    </div>
+    <div class="body-area">
+      <div class="edge-strip">
+        <div class="edge-icon">📄</div>
+        <div class="edge-icon">🌐</div>
+        <div class="edge-icon active">🗄️</div>
+        <div class="edge-icon">🕸️</div>
+        <div class="edge-icon">🛰️</div>
+      </div>
+      <div class="tool-win left" style="width:200px;">
+        <div class="tool-win-header">
+          <span>🗄️ 连接树</span>
+          <div class="actions"><span class="act">▾</span><span class="act">📌</span><span class="act">✕</span></div>
+        </div>
+        <div class="tool-win-body">
+          🔌 my-db (PostgreSQL)<br>
+          &nbsp;├ 📁 public<br>
+          &nbsp;│&nbsp;├ 📋 users<br>
+          &nbsp;│&nbsp;├ 📋 orders<br>
+          &nbsp;│&nbsp;└ 📋 products<br>
+          &nbsp;└ 📁 analytics<br>
+          🔌 test-db (SQLite)
+        </div>
+      </div>
+      <div class="content">
+        <div class="content-pad" style="padding:8px;align-items:flex-start;justify-content:flex-start;flex-direction:column;">
+          <div style="font-family:monospace;font-size:12px;color:var(--text);width:100%;">
+            <div style="color:var(--text3);">-- SQL 控制台 (query1.sql)</div>
+            <div>SELECT id, name, email, created_at</div>
+            <div>FROM users</div>
+            <div>WHERE created_at &gt;= '2026-01-01'</div>
+            <div>ORDER BY created_at DESC</div>
+            <div>LIMIT 100;</div>
+          </div>
+          <div style="margin-top:8px;display:flex;gap:8px;">
+            <span style="padding:3px 10px;background:var(--accent);color:var(--bg);border-radius:4px;cursor:pointer;font-size:11px;">▶ 运行 (F5)</span>
+            <span style="padding:3px 10px;background:var(--bg3);color:var(--text2);border-radius:4px;cursor:pointer;font-size:11px;">⏹ 取消</span>
+          </div>
+        </div>
+        <!-- Bottom tool window: results, collapsible -->
+        <div class="tool-win bottom" style="height:200px;">
+          <div class="tool-win-header">
+            <span>📊 结果 (100 行, 14ms) — query1.sql</span>
+            <div class="actions"><span class="act" title="展开">▴</span><span class="act" title="折叠">▾</span><span class="act" title="关闭">✕</span></div>
+          </div>
+          <div class="tool-win-body" style="padding:0;">
+            <table class="db-grid">
+              <tr><th>id</th><th>name</th><th>email</th><th>created_at</th></tr>
+              <tr><td>1</td><td>张三</td><td>zhang@example.com</td><td>2026-09-01</td></tr>
+              <tr><td>2</td><td>李四</td><td>li@example.com</td><td>2026-08-15</td></tr>
+              <tr><td>3</td><td>...</td><td>...</td><td>...</td></tr>
+              <tr><td colspan="4" style="color:var(--text3);">显示 3/100 行 · <span class="null">NULL</span> 值显示为斜体</td></tr>
+            </table>
+          </div>
+        </div>
+        <div class="vp-measure">content ≈ 1020×592 (66% H / 71% W) | focus 时结果占满</div>
+      </div>
+    </div>
+    <div class="status-bar"><span>🔌 my-db:PostgreSQL</span><span>⏱️ 14ms</span><span>📊 100 行</span></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 5. KNOWLEDGE MODE — 1440×900 -->
+<!-- ============================================================ -->
+<div class="frame-wrap">
+  <h2>5. Knowledge Mode — 1440×900（笔记+反链+局部图谱按需展开）</h2>
+  <div class="frame-meta">笔记编辑中央 | 反链/局部图谱右侧（可折叠）| 全局图谱可作中央文档</div>
+  <div class="frame f-1440">
+    <div class="mode-badge knowledge">KNOWLEDGE</div>
+    <div class="top-chrome">
+      <div class="nav-btn">←</div><div class="nav-btn">→</div>
+      <div class="addr">📝 notes/设计笔记.md</div>
+      <div class="cmd-btn">🔍 (Ctrl+Shift+P)</div>
+      <div class="menu-btn">☰</div>
+    </div>
+    <div class="tab-strip">
+      <div class="tab active">📝 设计笔记.md <span class="close">✕</span></div>
+      <div class="tab">🕸️ 全局图谱 <span class="close">✕</span></div>
+      <div class="tab-new">+</div>
+    </div>
+    <div class="body-area">
+      <div class="edge-strip">
+        <div class="edge-icon">📄</div>
+        <div class="edge-icon">🌐</div>
+        <div class="edge-icon">🗄️</div>
+        <div class="edge-icon active">🕸️</div>
+        <div class="edge-icon">🛰️</div>
+      </div>
+      <div class="content">
+        <div class="content-pad" style="padding:16px;align-items:flex-start;justify-content:flex-start;flex-direction:column;text-align:left;">
+          <div style="font-size:16px;color:var(--text);margin-bottom:8px;"># 设计笔记</div>
+          <div style="font-size:13px;color:var(--text2);line-height:1.8;">
+            工作台壳层保留 Chrome 式内容优先布局。<br><br>
+            参见 [[工作台蓝图]] 和 [[渐进披露]]。<br><br>
+            反链和局部图谱在右侧工具窗口按需展开，<br>
+            不挤占笔记编辑区。
+          </div>
+        </div>
+      </div>
+      <!-- Right tool window: backlinks + local graph -->
+      <div class="tool-win right" style="width:240px;">
+        <div class="tool-win-header">
+          <span>🔗 反链 / 局部图谱</span>
+          <div class="actions"><span class="act">📌</span><span class="act">✕</span></div>
+        </div>
+        <div class="tool-win-body">
+          <div style="color:var(--text3);margin-bottom:4px;">反链 (3)</div>
+          ← [[工作台蓝图]]<br>
+          ← [[渐进披露]]<br>
+          ← [[R3 任务卡]]<br><br>
+          <div style="color:var(--text3);margin-bottom:4px;">局部图谱</div>
+          设计笔记 ─ 工作台蓝图<br>
+          &nbsp;└ 渐进披露<br>
+          &nbsp;└ R3 任务卡
+        </div>
+      </div>
+    </div>
+    <div class="status-bar"><span>📝 notes/</span><span>🔗 3 反链</span></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 6. GIT MODE — central log — 1440×900 -->
+<!-- ============================================================ -->
+<div class="frame-wrap">
+  <h2>6a. Git Mode — Central Log — 1440×900（Rebased 风格：log 作中央文档）</h2>
+  <div class="frame-meta">Git log/graph 占中央文档区 | 可切换到底部工具窗口（见 6b）| 不复制 Rebased 品牌/资产</div>
+  <div class="frame f-1440">
+    <div class="mode-badge git">GIT · CENTRAL LOG</div>
+    <div class="top-chrome">
+      <div class="nav-btn">←</div><div class="nav-btn">→</div>
+      <div class="addr">🛰️ my-project · git log --graph</div>
+      <div class="cmd-btn">🔍 (Ctrl+Shift+P)</div>
+      <div class="menu-btn">☰</div>
+    </div>
+    <div class="tab-strip">
+      <div class="tab active">🛰️ Git Log <span class="close">✕</span></div>
+      <div class="tab">📄 workbench.md <span class="close">✕</span></div>
+      <div class="tab-new">+</div>
+    </div>
+    <div class="body-area">
+      <div class="edge-strip">
+        <div class="edge-icon">📄</div>
+        <div class="edge-icon">🌐</div>
+        <div class="edge-icon">🗄️</div>
+        <div class="edge-icon">🕸️</div>
+        <div class="edge-icon active">🛰️</div>
+      </div>
+      <div class="content">
+        <div class="content-pad" style="padding:8px;align-items:flex-start;justify-content:flex-start;flex-direction:column;">
+          <div style="display:flex;gap:8px;margin-bottom:8px;">
+            <span style="padding:3px 10px;background:var(--bg3);border-radius:4px;font-size:11px;color:var(--text2);">Branch: main</span>
+            <span style="padding:3px 10px;background:var(--bg3);border-radius:4px;font-size:11px;color:var(--text2);">↓ 2 ↑ 0</span>
+            <span style="padding:3px 10px;background:var(--bg3);border-radius:4px;font-size:11px;color:var(--text2);">切换到底部窗口</span>
+          </div>
+          <div class="git-log" style="width:100%;">
+            <div class="commit"><span class="hash">* a1b2c3d</span><span class="msg">docs(R3): browser-first prototype</span><span class="author">A1 · 2m</span></div>
+            <div class="commit"><span class="hash">* e4f5g6h</span><span class="msg">feat: context menu registry</span><span class="author">A6 · 1h</span></div>
+            <div class="commit"><span class="hash">* i7j8k9l</span><span class="msg">fix: DbValue wire contract</span><span class="author">A4 · 3h</span></div>
+            <div class="commit"><span class="hash">|</span></div>
+            <div class="commit"><span class="hash">* m0n1o2p</span><span class="msg">merge: feature/graph-nav</span><span class="author">A0 · 5h</span></div>
+            <div class="commit"><span class="hash">|\\</span></div>
+            <div class="commit"><span class="hash">| * q3r4s5t</span><span class="msg">feat: local graph</span><span class="author">A3 · 6h</span></div>
+            <div class="commit"><span class="hash">| * u6v7w8x</span><span class="msg">feat: backlinks</span><span class="author">A3 · 7h</span></div>
+            <div class="commit"><span class="hash">|/</span></div>
+            <div class="commit"><span class="hash">* y9z0abc</span><span class="msg">docs: workbench blueprint</span><span class="author">A0 · 8h</span></div>
+          </div>
+        </div>
+        <div class="vp-measure">Git log 占中央文档区 — 可切换到底部</div>
+      </div>
+    </div>
+    <div class="status-bar"><span>🛰️ my-project</span><span>🌿 main</span><span>↓ 2</span></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 6b. GIT MODE — bottom tool window — 1440×900 -->
+<!-- ============================================================ -->
+<div class="frame-wrap">
+  <h2>6b. Git Mode — Bottom Tool Window — 1440×900（log 作底部工具窗口）</h2>
+  <div class="frame-meta">编辑器/网页占中央 | Git log 在底部工具窗口 | 两种放置可逆</div>
+  <div class="frame f-1440">
+    <div class="mode-badge git">GIT · BOTTOM</div>
+    <div class="top-chrome">
+      <div class="nav-btn">←</div><div class="nav-btn">→</div>
+      <div class="addr">📄 src/App.vue</div>
+      <div class="cmd-btn">🔍 (Ctrl+Shift+P)</div>
+      <div class="menu-btn">☰</div>
+    </div>
+    <div class="tab-strip">
+      <div class="tab active">📄 App.vue <span class="close">✕</span></div>
+      <div class="tab">🌐 example.com <span class="close">✕</span></div>
+      <div class="tab-new">+</div>
+    </div>
+    <div class="body-area">
+      <div class="edge-strip">
+        <div class="edge-icon active">📄</div>
+        <div class="edge-icon">🌐</div>
+        <div class="edge-icon">🗄️</div>
+        <div class="edge-icon">🕸️</div>
+        <div class="edge-icon active">🛰️</div>
+      </div>
+      <div class="content">
+        <div class="content-pad">中央内容区 — 文件编辑/网页<br><br>Git log 在底部工具窗口，不挤占中央。</div>
+        <div class="tool-win bottom" style="height:220px;">
+          <div class="tool-win-header">
+            <span>🛰️ Git Log — main (↓2 ↑0)</span>
+            <div class="actions"><span class="act" title="切换到中央">⬆</span><span class="act" title="折叠">▾</span><span class="act" title="关闭">✕</span></div>
+          </div>
+          <div class="tool-win-body" style="padding:0;">
+            <div class="git-log">
+              <div class="commit"><span class="hash">* a1b2c3d</span><span class="msg">docs(R3): browser-first prototype</span><span class="author">A1 · 2m</span></div>
+              <div class="commit"><span class="hash">* e4f5g6h</span><span class="msg">feat: context menu registry</span><span class="author">A6 · 1h</span></div>
+              <div class="commit"><span class="hash">* i7j8k9l</span><span class="msg">fix: DbValue wire contract</span><span class="author">A4 · 3h</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="vp-measure">编辑器占中央 | Git 底部 220px | ⬆ 可切换到中央</div>
+      </div>
+    </div>
+    <div class="status-bar"><span>🛰️ my-project</span><span>🌿 main</span><span>↓ 2</span></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 7. CONTEXT MENU — 1440×900 -->
+<!-- ============================================================ -->
+<div class="frame-wrap">
+  <h2>7. Context Menu — 1440×900（右键菜单：scope-aware，分组+禁用+快捷键）</h2>
+  <div class="frame-meta">每个右键动作也有命令注册身份、禁用原因、键盘/可达路径、安全类别</div>
+  <div class="frame f-1440">
+    <div class="mode-badge normal">CONTEXT MENU</div>
+    <div class="top-chrome">
+      <div class="nav-btn">←</div><div class="nav-btn">→</div>
+      <div class="addr">📄 src/App.vue</div>
+      <div class="cmd-btn">🔍 (Ctrl+Shift+P)</div>
+      <div class="menu-btn">☰</div>
+    </div>
+    <div class="tab-strip">
+      <div class="tab active">📄 App.vue <span class="close">✕</span></div>
+      <div class="tab-new">+</div>
+    </div>
+    <div class="body-area">
+      <div class="edge-strip">
+        <div class="edge-icon active">📄</div>
+        <div class="edge-icon">🌐</div>
+        <div class="edge-icon">🗄️</div>
+      </div>
+      <div class="tool-win left" style="width:220px;">
+        <div class="tool-win-header"><span>📂 文件树</span><div class="actions"><span class="act">✕</span></div></div>
+        <div class="tool-win-body">
+          📁 src/<br>
+          &nbsp;├ 📄 <span style="background:var(--accent);color:var(--bg);border-radius:2px;padding:0 2px;">App.vue</span><br>
+          &nbsp;├ 📁 components/<br>
+          &nbsp;└ 📄 bridge.ts
+        </div>
+      </div>
+      <div class="content">
+        <div class="content-pad" style="position:relative;">
+          中央内容区
+          <!-- Context menu overlay (right-click on App.vue in tree) -->
+          <div class="ctx-menu" style="top:20px;left:40px;">
+            <div class="ctx-label">文件操作 · App.vue</div>
+            <div class="ctx-item">打开 <span class="shortcut">Enter</span></div>
+            <div class="ctx-item">在新标签打开 <span class="shortcut">Ctrl+T</span></div>
+            <div class="ctx-sep"></div>
+            <div class="ctx-item">复制路径 <span class="shortcut">Ctrl+Shift+C</span></div>
+            <div class="ctx-item">复制相对路径 <span class="shortcut">Ctrl+Alt+C</span></div>
+            <div class="ctx-sep"></div>
+            <div class="ctx-item">Git: 暂存 <span class="shortcut">G S</span></div>
+            <div class="ctx-item">Git: 查看历史 <span class="shortcut">G H</span></div>
+            <div class="ctx-item">Git: 与 HEAD 比较 <span class="shortcut">G D</span></div>
+            <div class="ctx-sep"></div>
+            <div class="ctx-item">重命名 <span class="shortcut">F2</span></div>
+            <div class="ctx-item disabled">删除 <span class="shortcut">Del</span></div>
+            <div class="ctx-sep"></div>
+            <div class="ctx-item">在终端中打开 <span class="shortcut">Alt+T</span></div>
+            <div class="ctx-item">在文件管理器中显示</div>
+          </div>
+        </div>
+        <div class="vp-measure">右键 App.vue → scope-aware 菜单（文件操作+Git+终端）</div>
+      </div>
+    </div>
+    <div class="status-bar"><span>📁 my-project</span><span>🌿 main</span></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 8. COMMAND PALETTE — 1440×900 -->
+<!-- ============================================================ -->
+<div class="frame-wrap">
+  <h2>8. Command Palette — 1440×900（Ctrl+Shift+P 搜索所有命令）</h2>
+  <div class="frame-meta">文件/文本/笔记/操作统一入口 | 显示来源/范围/禁用原因</div>
+  <div class="frame f-1440">
+    <div class="mode-badge normal">COMMAND PALETTE</div>
+    <div class="top-chrome">
+      <div class="nav-btn">←</div><div class="nav-btn">→</div>
+      <div class="addr">📄 src/App.vue</div>
+      <div class="cmd-btn" style="background:var(--accent);color:var(--bg);">🔍 命令</div>
+      <div class="menu-btn">☰</div>
+    </div>
+    <div class="tab-strip">
+      <div class="tab active">📄 App.vue <span class="close">✕</span></div>
+      <div class="tab-new">+</div>
+    </div>
+    <div class="body-area">
+      <div class="content" style="position:relative;">
+        <div class="content-pad">中央内容区（命令面板激活时半透明遮罩）</div>
+        <!-- Command palette overlay -->
+        <div class="cmd-palette">
+          <input class="cmd-input" placeholder="输入命令、文件名或搜索…" value="git " autofocus>
+          <div class="cmd-list">
+            <div class="cmd-row sel">🛰️ Git: Status <span class="cat">Git</span></div>
+            <div class="cmd-row">🛰️ Git: Stage File <span class="cat">Git</span></div>
+            <div class="cmd-row">🛰️ Git: Stage Hunk <span class="cat">Git</span></div>
+            <div class="cmd-row">🛰️ Git: Commit <span class="cat">Git</span></div>
+            <div class="cmd-row">🛰️ Git: Log (中央) <span class="cat">Git</span></div>
+            <div class="cmd-row">🛰️ Git: Log (底部) <span class="cat">Git</span></div>
+            <div class="cmd-row">🛰️ Git: Branch <span class="cat">Git</span></div>
+            <div class="cmd-row">🛰️ Git: Rebase <span class="cat">Git</span></div>
+            <div class="cmd-row">🛰️ Git: Cherry-Pick <span class="cat">Git</span></div>
+            <div class="cmd-row">🛰️ Git: Stash <span class="cat">Git</span></div>
+          </div>
+        </div>
+        <div class="vp-measure">命令面板 — 输入 "git " 过滤所有 Git 命令</div>
+      </div>
+    </div>
+    <div class="status-bar"><span>📁 my-project</span><span>🌿 main</span></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 9. 1920×1080 — Normal -->
+<!-- ============================================================ -->
+<div class="frame-wrap">
+  <h2>9. Normal — 1920×1080（宽屏：左+右工具窗口均可展开）</h2>
+  <div class="frame f-1920">
+    <div class="mode-badge normal">NORMAL · 1920</div>
+    <div class="top-chrome">
+      <div class="nav-btn">←</div><div class="nav-btn">→</div><div class="nav-btn">⟳</div>
+      <div class="addr">https://example.com/workbench</div>
+      <div class="cmd-btn">🔍 (Ctrl+Shift+P)</div>
+      <div class="menu-btn">☰</div>
+    </div>
+    <div class="tab-strip">
+      <div class="tab active">📄 workbench.md <span class="close">✕</span></div>
+      <div class="tab">🌐 example.com <span class="close">✕</span></div>
+      <div class="tab">🗄️ query1.sql <span class="close">✕</span></div>
+      <div class="tab-new">+</div>
+    </div>
+    <div class="body-area">
+      <div class="edge-strip">
+        <div class="edge-icon active">📄</div><div class="edge-icon">🌐</div><div class="edge-icon">🗄️</div>
+        <div class="edge-icon">🕸️</div><div class="edge-icon">🛰️</div><div class="edge-icon">💻</div>
+      </div>
+      <div class="tool-win left" style="width:240px;">
+        <div class="tool-win-header"><span>📂 文件树</span><div class="actions"><span class="act">✕</span></div></div>
+        <div class="tool-win-body">📁 src/<br>&nbsp;├ 📄 App.vue<br>&nbsp;└ 📁 stores/</div>
+      </div>
+      <div class="content">
+        <div class="content-pad">中央内容区 — 1920 宽屏可同时展开左+右工具窗口</div>
+        <div class="vp-measure">viewport ≈ 1440×1012 (94% H / 75% W)</div>
+      </div>
+      <div class="tool-win right" style="width:220px;">
+        <div class="tool-win-header"><span>🔗 反链</span><div class="actions"><span class="act">✕</span></div></div>
+        <div class="tool-win-body">← [[蓝图]]<br>← [[R3]]</div>
+      </div>
+    </div>
+    <div class="status-bar"><span>📁 my-project</span><span>🌿 main</span></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 10. 1366×768 — Normal -->
+<!-- ============================================================ -->
+<div class="frame-wrap">
+  <h2>10. Normal — 1366×768（笔记本：左工具窗口可展开，右折叠）</h2>
+  <div class="frame f-1366">
+    <div class="mode-badge normal">NORMAL · 1366</div>
+    <div class="top-chrome">
+      <div class="nav-btn">←</div><div class="nav-btn">→</div>
+      <div class="addr">https://example.com/workbench</div>
+      <div class="cmd-btn">🔍</div>
+      <div class="menu-btn">☰</div>
+    </div>
+    <div class="tab-strip">
+      <div class="tab active">📄 workbench.md <span class="close">✕</span></div>
+      <div class="tab">🌐 example.com <span class="close">✕</span></div>
+      <div class="tab-new">+</div>
+    </div>
+    <div class="body-area">
+      <div class="edge-strip">
+        <div class="edge-icon active">📄</div><div class="edge-icon">🌐</div><div class="edge-icon">🗄️</div>
+      </div>
+      <div class="tool-win left" style="width:200px;">
+        <div class="tool-win-header"><span>📂 文件</span><div class="actions"><span class="act">✕</span></div></div>
+        <div class="tool-win-body">📁 src/<br>&nbsp;├ App.vue<br>&nbsp;└ stores/</div>
+      </div>
+      <div class="content">
+        <div class="content-pad">中央内容区</div>
+        <div class="vp-measure">viewport ≈ 1130×676 (88% H / 83% W)</div>
+      </div>
+    </div>
+    <div class="status-bar"><span>📁 my-project</span><span>🌿 main</span></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 11. 1024×720 — Normal (secondary collapse) -->
+<!-- ============================================================ -->
+<div class="frame-wrap">
+  <h2>11. Normal — 1024×720（窄窗：右/底部折叠，左可折叠）</h2>
+  <div class="frame f-1024">
+    <div class="mode-badge normal">NORMAL · 1024</div>
+    <div class="top-chrome">
+      <div class="nav-btn">←</div><div class="nav-btn">→</div>
+      <div class="addr">example.com</div>
+      <div class="cmd-btn">🔍</div>
+      <div class="menu-btn">☰</div>
+    </div>
+    <div class="tab-strip">
+      <div class="tab active">📄 workbench.md <span class="close">✕</span></div>
+      <div class="tab-new">+</div>
+    </div>
+    <div class="body-area">
+      <div class="edge-strip">
+        <div class="edge-icon active">📄</div><div class="edge-icon">🌐</div>
+      </div>
+      <div class="tool-win left" style="width:180px;">
+        <div class="tool-win-header"><span>📂</span><div class="actions"><span class="act">✕</span></div></div>
+        <div class="tool-win-body">📁 src/<br>&nbsp;├ App.vue</div>
+      </div>
+      <div class="content">
+        <div class="content-pad">中央内容区 — 窄窗仍可用</div>
+        <div class="vp-measure">viewport ≈ 800×628 (87% H / 78% W)</div>
+      </div>
+    </div>
+    <div class="status-bar"><span>📁 my-project</span></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 12. States: empty / loading / error / disabled -->
+<!-- ============================================================ -->
+<div class="frame-wrap">
+  <h2>12. States — empty / loading / error / disabled（1440×900）</h2>
+  <div class="frame-meta">每个状态有明确的视觉反馈和恢复路径</div>
+  <div class="frame f-1440">
+    <div class="mode-badge normal">STATES</div>
+    <div class="top-chrome">
+      <div class="nav-btn">←</div><div class="nav-btn">→</div>
+      <div class="addr">—</div>
+      <div class="cmd-btn">🔍</div>
+      <div class="menu-btn">☰</div>
+    </div>
+    <div class="tab-strip">
+      <div class="tab active">📄 new.md <span class="close">✕</span></div>
+      <div class="tab-new">+</div>
+    </div>
+    <div class="body-area">
+      <div class="content">
+        <div class="content-pad" style="flex-direction:column;gap:16px;">
+          <div style="padding:12px 20px;background:var(--bg2);border-radius:6px;border:1px solid var(--border);">
+            <span style="color:var(--text3);">空状态：</span><span style="color:var(--text2);">无内容 — 新建文件或从最近打开</span>
+          </div>
+          <div style="padding:12px 20px;background:var(--bg2);border-radius:6px;border:1px solid var(--border);">
+            <span style="color:var(--text3);">加载中：</span><span style="color:var(--text2);">⟳ 正在加载…</span>
+          </div>
+          <div style="padding:12px 20px;background:var(--bg2);border-radius:6px;border:1px solid var(--danger);">
+            <span style="color:var(--danger);">错误：</span><span style="color:var(--text2);">连接失败 — </span><span style="color:var(--accent);cursor:pointer;">[重试]</span>
+          </div>
+          <div style="padding:12px 20px;background:var(--bg2);border-radius:6px;border:1px solid var(--border);opacity:0.5;">
+            <span style="color:var(--text3);">禁用：</span><span style="color:var(--text3);">Git: Commit（无暂存更改）</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="status-bar"><span>📁 my-project</span></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- Design spec summary -->
+<!-- ============================================================ -->
+<div style="max-width:900px;font-size:11px;color:var(--text2);line-height:1.8;">
+  <h2>设计规格摘要</h2>
+  <table style="border-collapse:collapse;width:100%;font-size:11px;">
+    <tr style="background:var(--bg2);"><th style="padding:4px 8px;border:1px solid var(--border);text-align:left;">约束</th><th style="padding:4px 8px;border:1px solid var(--border);text-align:left;">值</th><th style="padding:4px 8px;border:1px solid var(--border);text-align:left;">验证</th></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">顶部 chrome</td><td style="padding:3px 8px;border:1px solid var(--border);">≤2 行, ≤80px</td><td style="padding:3px 8px;border:1px solid var(--border);">36px top + 32px tabs = 68px ✅</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">collapsed 内容</td><td style="padding:3px 8px;border:1px solid var(--border);">≥85% H, ≥92% W</td><td style="padding:3px 8px;border:1px solid var(--border);">93% H / 96% W ✅</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">工具窗口操作</td><td style="padding:3px 8px;border:1px solid var(--border);">open/close/collapse/restore/expand/pin/unpin/auto-hide/resize</td><td style="padding:3px 8px;border:1px solid var(--border);">header actions ✅</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">每边默认</td><td style="padding:3px 8px;border:1px solid var(--border);">仅 1 个主窗口</td><td style="padding:3px 8px;border:1px solid var(--border);">left OR right, not both (1440) ✅</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">focus 模式</td><td style="padding:3px 8px;border:1px solid var(--border);">隐藏所有 chrome + 1 个返回操作</td><td style="padding:3px 8px;border:1px solid var(--border);">Esc / "退出专注" ✅</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">右键菜单</td><td style="padding:3px 8px;border:1px solid var(--border);">scope-aware + 分组 + 禁用 + 快捷键</td><td style="padding:3px 8px;border:1px solid var(--border);">§7 context menu ✅</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">命令面板</td><td style="padding:3px 8px;border:1px solid var(--border);">统一入口 + 来源/范围/禁用</td><td style="padding:3px 8px;border:1px solid var(--border);">§8 command palette ✅</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">Git 放置</td><td style="padding:3px 8px;border:1px solid var(--border);">central log ↔ bottom window (可逆)</td><td style="padding:3px 8px;border:1px solid var(--border);">§6a / §6b ✅</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">尺寸覆盖</td><td style="padding:3px 8px;border:1px solid var(--border);">1920/1440/1366/1024</td><td style="padding:3px 8px;border:1px solid var(--border);">§9/§1/§10/§11 ✅</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">状态覆盖</td><td style="padding:3px 8px;border:1px solid var(--border);">empty/loading/error/disabled</td><td style="padding:3px 8px;border:1px solid var(--border);">§12 ✅</td></tr>
+  </table>
+</div>
+
+</body>
+</html>
