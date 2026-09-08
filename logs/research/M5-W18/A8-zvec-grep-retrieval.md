@@ -178,3 +178,14 @@ R1 旧文把 FTS/BM25 与 vector/hybrid 都挂在 zvec-grep 层。**实测 `@zve
 - `@zvec/bindings-linux-x64` 内 `zvec_node_binding.node` sha256 `a591609b520c9ef5b880d5bdc56ed20651173af57c5c563c7491abf5380dc0dc`（36,147,600 B）
 - `detect-libc@2.1.2` sha512-`Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0ur`(p)
 - 安装脚本：`@zvec/zvec` 的 `scripts/install.js`（经 `npm install-scripts approve` 运行，产出本机绑定）已执行。
+
+---
+
+## 10. R2B 更正声明（2026-09-08，M5-W18-R2B）
+
+> 本 R2 报告正文保留不变，仅追加本节作**有据更正**。A0 R2B 抽查（#7/#8）与本 Lane R2B 报告 `A8-R2B-retrieval-metrics-correction.md` 已实复测。
+
+- **指标命名更正（A0 #7）**：本文件 §4/§9 中的 `recall=1.0`（及 R2 脚本 `A8-benchmark-routes.mjs` 的 `vRecall/fRecall/zRecall`）实为**相关结果占比（precision 类）**，非对完整相关集合的 recall。R2B 重测（`A8-R2B-benchmark-metrics.mjs`）以人工标注相关集（200 篇含查询词文档）为分母：FTS **precision@10=1.0，recall@10=0.05**（k=50 时 recall=0.25）；向量路线同为 precision@10=1.0/recall@10=0.05，且**仅验证聚类机制、不构成真实 embedding 语义效果**。
+- **RSS 边界更正（A0 #8）**：本文件 §9「原生 RSS ~294MB」为查询后**单点采样**，非进程全程峰值。R2B 读 `/proc/self/status` 的 **VmHWM（内核记录本进程峰值 RSS）→ 真实 OS 峰值 ~309MB**，高于 R2 单点采样；cold/warm 现各 ≥5 次重复并报告 mean/std/min/max。
+- **采纳路径结论修正（A0 #9）**：本文件 §4/§8 「COPY=0，只能 sidecar/FFI ADAPT」**仅对 npm `@zvec/zvec` N-API 包成立**（REJECT for Rust）；据 A7 `f157eb4`，引擎 `alibaba/zvec` 经 C API 拥有**官方 Rust crate `zvec-rust` 0.7.0**（动态链 `libzvec_c_api`），引擎**可在 Rust 原生 ADAPT**。路线行为属引擎层、跨宿主一致，npm 绑定上验证的证据可迁移。集成路径（npm sidecar vs `zvec-rust` FFI）**交 A0 裁决，A3 不承担引擎裁决权**。
+- **完整修正 + 三路线体积/安装/延迟/内存对照 + 统一搜索体验（J4 文件/文本/笔记/操作分类、范围、定位、取消、旧请求失效、stale/截断/缺模型状态）**：见 `A8-R2B-retrieval-metrics-correction.md`。
