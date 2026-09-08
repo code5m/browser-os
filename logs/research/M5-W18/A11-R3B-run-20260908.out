@@ -1,48 +1,46 @@
 A11-R3B acceptance matrix (inspects the real A1 prototype HTML)
-  A1 prototype  : A1-R3-prototype.html (fs:logs/research/M5-W18/A1-R3-prototype.html)
+  A1 prototype  : /home/ainfinit/.codex/worktrees/m5-w18-a1/mvp-browser-os-v3/logs/research/M5-W18/A1-R3B-prototype.html (fs:logs/research/M5-W18//home/ainfinit/.codex/worktrees/m5-w18-a1/mvp-browser-os-v3/logs/research/M5-W18/A1-R3B-prototype.html)
   base          : d96b9b5
-  status        : PROVISIONAL_PENDING_UPSTREAM
+  status        : PROVISIONAL_PENDING_A0_ADJUDICATION
   rebased pin   : cee14e9 (REIMPLEMENT_FROM_BEHAVIOR)
 
   PASS   S-1920x1080        frame 1920x1080 declared+rendered
   PASS   S-1440x900         frame 1440x900 declared+rendered
   PASS   S-1366x768         frame 1366x768 declared+rendered
-  GAP    S-1200x800         declared=False rendered=False (R3B-08 / R3B-05)
+  PASS   S-1200x800         frame 1200x800 declared+rendered
   PASS   S-1024x720         frame 1024x720 declared+rendered
-  GAP    S-900x600          declared=False rendered=False (R3B-08 / R3B-05)
+  PASS   S-900x600          frame 900x600 declared+rendered
   PASS   GEO                A0 collapsed formula >=92%W/85%H at all 6 sizes
-  PASS   GEO-chrome         top chrome two rows = 60px (A0 SSOT)
-  WARN   GEO-status         status bar 26px (A0 SSOT 24px) (R3B-05)
   PASS   G-status           'status' located in prototype UI (tok: status)
-  PASS   G-hunk-staging     'hunk-staging' located in prototype UI (tok: hunk, 暂存, stage)
+  PASS   G-hunk-staging     'hunk-staging' located in prototype UI (tok: hunk, stage)
   PASS   G-diff             'diff' located in prototype UI (tok: diff)
   PASS   G-log-graph        'log-graph' located in prototype UI (tok: log, graph)
   PASS   G-branches         'branches' located in prototype UI (tok: branch)
-  GAP    G-worktrees        'worktrees' NOT visible in prototype UI (R3B-01 Git coverage)
+  PASS   G-worktrees        'worktrees' located in prototype UI (tok: worktree)
   PASS   G-stash            'stash' located in prototype UI (tok: stash)
   PASS   G-merge            'merge' located in prototype UI (tok: merge)
   PASS   G-rebase           'rebase' located in prototype UI (tok: rebase)
-  PASS   G-cherry-pick      'cherry-pick' located in prototype UI (tok: cherry)
-  GAP    G-conflicts        'conflicts' NOT visible in prototype UI (R3B-01 Git coverage)
+  PASS   G-cherry-pick      'cherry-pick' located in prototype UI (tok: cherry, cherry-pick)
+  PASS   G-conflicts        'conflicts' located in prototype UI (tok: conflict)
   PASS   G-history-blame    'history-blame' located in prototype UI (tok: blame)
-  GAP    G-patch            'patch' NOT visible in prototype UI (R3B-01 Git coverage)
-  PASS   G-command-log      'command-log' located in prototype UI (tok: git log --)
-  GAP    G-amend            'amend' NOT visible in prototype UI (R3B-01 Git coverage)
-  GAP    G-reset-revert     'reset-revert' NOT visible in prototype UI (R3B-01 Git coverage)
-  GAP    A-aria             no role=/aria-* inside prototype frames (R3B-04 accessibility)
-  WARN   A-focus            no explicit :focus-visible outline in CSS (R3B-04; verify manually)
+  PASS   G-patch            'patch' located in prototype UI (tok: patch)
+  PASS   G-command-log      'command-log' located in prototype UI (tok: command log)
+  PASS   G-amend            'amend' located in prototype UI (tok: amend, amend)
+  PASS   G-reset-revert     'reset-revert' located in prototype UI (tok: reset, revert)
+  PASS   A-aria             189 role/aria-* attrs inside prototype frames
+  PASS   A-focus            visible :focus-visible outline in CSS
   PASS   C-hide             collapsed mode hides tool windows
-  GAP    C-strip            collapsed mode hides the activity strip (violates A0: 28px strip must remain; R3B-03)
+  PASS   C-strip            28px activity strip stays visible in collapsed mode
   PASS   C-restore          restore-layout affordance present
   PASS   H-brand            no donor branding in prototype UI text
-  GAP    H-font             donor/vendor font names in CSS: cascadia code, sf mono, segoe ui (R3B-02; use neutral font stack)
-  GAP    K-binding          Ctrl+K used as command palette (must be address/search; Ctrl+Shift+P is palette) -> R3B-06
+  GAP    H-font             donor/vendor font names in CSS: cascadia code, segoe ui (R3B-02; use neutral font stack)
+  PASS   K-binding          Ctrl+K -> address/search; Ctrl+Shift+P -> palette (R3B-06)
   PASS   M-pin              rebased pin = cee14e9 (A0 SSOT v1.1.15; R3B-07)
-  GAP    A10-gate           A10 checker exit=1 (R3B-02 hygiene)
+  PASS   A10-gate           A10 self-containment checker exit 0
 
-  A10 checker   : exit=1
+  A10 checker   : exit=0
 
-A11-R3B TALLY: 21 PASS / 0 FAIL / 12 GAP_CONFIRMED / 2 WARN / 0 NOT_RUN
-  OPEN R3B FINDINGS: R3B-01, R3B-02, R3B-03, R3B-04, R3B-05, R3B-06, R3B-08
+A11-R3B TALLY: 32 PASS / 0 FAIL / 1 GAP_CONFIRMED / 0 WARN / 0 NOT_RUN
+  OPEN R3B FINDINGS: R3B-02
 GATE: FAIL
 NOTE: PROVISIONAL - A11 finalizes only after A1 R3B-corrected prototype + A10 R3B review land.

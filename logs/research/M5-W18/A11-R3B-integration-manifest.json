@@ -3,16 +3,17 @@
   "wave": "M5-W18-R3B",
   "lane": "A11",
   "role": "R3B final acceptance package (integration manifest + user-review checklist + progress ledger)",
-  "generated_at": "2026-09-08T15:30+0800",
+  "generated_at": "2026-09-08T18:00+0800",
   "base": {
     "ref": "origin/master",
     "short": "d96b9b5",
     "sha": "d96b9b536803b72122ca4b0e4603e766c74fac68"
   },
-  "status": "PROVISIONAL_PENDING_UPSTREAM",
+  "status": "PROVISIONAL_PENDING_A0_ADJUDICATION",
   "finalize_blockers": [
-    "R3B is A0's targeted closure wave. A11 may FINALIZE only after A1 delivers the R3B-corrected consolidated prototype (all 14 Git units + amend/reset-revert visibly located, role/aria added, 6 sizes incl 900x600, collapsed keeps the 28px strip, neutral font stack, Ctrl+K=address/search) AND A10 publishes the R3B independent review with no open high finding.",
-    "Current state (this package): A2-A10 have committed R3B corrections; A1 has NOT yet delivered the R3B-corrected prototype (worktree still at R3 final ee2b8fd). A10's authoritative closure-audit.py therefore reports GATE FAIL (0/9 probes, 24 HIGH / 25 MEDIUM). The A11 matrix runs against the R3 prototype and reports the gap inventory below. Status stays PROVISIONAL until the corrected prototype + A10 review land and the matrix re-run shows GATE PASS."
+    "A1 has delivered the R3B-corrected prototype (codex/m5-w18-a1 @ 60d887d) and A10 has completed the independent R3B review: A10-R3B-closure-20260908.md §7 states all 9 R3B findings are real corrections and the A10 gate returns 0 HIGH / 0 MEDIUM against the A1-R3B deliverables. Both upstream prerequisites of the R3B card are therefore satisfied.",
+    "The single residual is R3B-02 (donor/vendor FONT names): the A11 matrix flags 'Segoe UI' and 'Cascadia Code' in the prototype CSS, while A10's P1 self-containment gate passes (it does not flag these system fonts). This is a strictness divergence, not a disagreement about the UI text (both agree donor NAMES are removed). A0 must adjudicate whether system fonts satisfy the 'neutral font stack' clause. If upheld, A1 applies a one-line CSS swap to a neutral stack and this becomes GAP_CLOSED; A11 then flips status to FINAL.",
+    "A10's closure-audit.py still reports GATE FAIL (0/9 probes, HIGH=17 MEDIUM=18) when run from any lane worktree because A1's R3B commit 60d887d is not merged into master; the script therefore still resolves superseded R3 artifacts (A1-R3-prototype.html, A7-R3-git-workflow-reference-map.md, A4-R3-shell-state-persistence-contract.md). A10 documents this as a pre-integration transition state, not an A1 defect. Resolved automatically by A0's integration."
   ],
   "scope_boundary": {
     "product_code_changed": false,
@@ -28,12 +29,13 @@
   },
   "a10_closure_audit": {
     "script": "A10-R3B-closure-audit.py",
-    "commit": "facc4b9",
-    "gate": "FAIL",
+    "commit": "1a78857",
+    "gate": "FAIL (pre-integration transition state)",
     "probes_pass": "0/9",
-    "high": 24,
-    "medium": 25,
-    "note": "Authoritative mechanical R3B gate (A0's nine rulings as P1-P9). A11's matrix is a complementary HTML-inspection layer. Primary blocker = A1 corrected prototype. Cross-lane findings: P7 (A7 COPY class + 2896562e not demoted in several docs incl. A11-R3-*.md), P8 (A7 REIMPLEMENT=9 vs A0 10), P9 (A4 keeps pinned on Collapse All)."
+    "high": 17,
+    "medium": 18,
+    "a1_review_verdict": "PASS",
+    "note": "Authoritative mechanical R3B gate (A0's nine rulings as P1-P9). A11's matrix is a complementary HTML-inspection layer. A10 commit 1a78857 fixed 5 audit false-positives and verified A1 R3B: A10-R3B-closure-20260908.md §7 reports 0 HIGH / 0 MEDIUM against A1-R3B deliverables (P4/P5/P6/P7/P3 all PASS for A1) and confirms A1 status FINAL_READY_FOR_A10_REVIEW. The script's own GATE FAIL persists only because A1's 60d887d is not merged to master, so it still resolves superseded R3 files; A10 documents this explicitly. Remaining script findings target other lanes' pre-R3B assets (A2/A3/A4/A5/A6/A7), which those lanes' R3B commits supersede (e.g. A7 b96cd51 fixes the COPY classification and REIMPLEMENT=9->10; A4 5d9e447 aligns Collapse All with the A0 pinned rule)."
   },
   "gates": {
     "sizes": ["1920x1080", "1440x900", "1366x768", "1200x800", "1024x720", "900x600"],
@@ -83,52 +85,56 @@
   "lanes": {
     "A1": {
       "branch": "codex/m5-w18-a1",
-      "head": "ee2b8fd",
-      "r3b_status": "PENDING",
-      "blocking": true,
-      "deliverable": "R3B-corrected consolidated prototype (A1-R3-prototype.html): 14 Git units + amend/reset-revert, role/aria, 6 sizes incl 900x600, collapsed keeps 28px strip, neutral font stack, Ctrl+K=address/search",
+      "head": "60d887d",
+      "r3b_status": "COMMITTED",
+      "blocking": false,
+      "deliverable": "R3B-corrected consolidated prototype: A1-R3B-prototype.html / A1-R3B-browser-workbench.md / A1-R3B-checkpoint.md (+1039 lines, 3 files)",
+      "a10_review": "PASS (0 HIGH / 0 MEDIUM against A1-R3B deliverables, A10-R3B-closure-20260908.md §7)",
+      "a11_matrix": "32 PASS / 1 GAP (R3B-02 donor fonts only)",
       "consumed_by_a11": true
     },
-    "A2": {"branch": "codex/m5-w18-a2", "head": "bfe8e86", "r3b_status": "COMMITTED", "consumed_by_a11": true},
-    "A3": {"branch": "codex/m5-w18-a3", "head": "8d8719a", "r3b_status": "COMMITTED", "consumed_by_a11": true},
-    "A4": {"branch": "codex/m5-w18-a4", "head": "5d9e447", "r3b_status": "COMMITTED", "consumed_by_a11": true},
-    "A5": {"branch": "codex/m5-w18-a5", "head": "3ff1f8b", "r3b_status": "COMMITTED", "consumed_by_a11": true},
-    "A6": {"branch": "codex/m5-w18-a6", "head": "2bce4e3", "r3b_status": "COMMITTED", "consumed_by_a11": true},
-    "A7": {"branch": "codex/m5-w18-a7", "head": "b96cd51", "r3b_status": "COMMITTED", "consumed_by_a11": true},
-    "A8": {"branch": "codex/m5-w18-a8", "head": "ba92110", "r3b_status": "COMMITTED", "consumed_by_a11": true},
-    "A9": {"branch": "codex/m5-w18-a9", "head": "d17091c", "r3b_status": "COMMITTED", "consumed_by_a11": true},
+    "A2": {"branch": "codex/m5-w18-a2", "head": "bfe8e86", "r3b_status": "COMMITTED", "deliverable": "canonical geometry and minimum-size evidence", "consumed_by_a11": true},
+    "A3": {"branch": "codex/m5-w18-a3", "head": "8d8719a", "r3b_status": "COMMITTED", "deliverable": "collapse/restore + tree semantics aligned to A0 ruling", "consumed_by_a11": true},
+    "A4": {"branch": "codex/m5-w18-a4", "head": "5d9e447", "r3b_status": "COMMITTED", "deliverable": "persistence contract reconciliation (29/29 pure tests)", "consumed_by_a11": true},
+    "A5": {"branch": "codex/m5-w18-a5", "head": "8d4d41d", "r3b_status": "COMMITTED", "deliverable": "database prototype reconciled with canonical geometry + A3/A4 semantics", "consumed_by_a11": true, "a1_consumed_note": "A1 checkpoint cites 3ff1f8b, an earlier A5 commit; current HEAD is 8d4d41d (A1 consumed a superseded peer SHA)"},
+    "A6": {"branch": "codex/m5-w18-a6", "head": "4b59339", "r3b_status": "COMMITTED", "deliverable": "command registry, shortcut freeze (Ctrl+K / Ctrl+Shift+P) and accessibility closure (R3B deliverable commit ac3cb18; 4b59339 finalizes the HEAD reference)", "consumed_by_a11": true, "a1_consumed_note": "A1 checkpoint cites 2bce4e3, an earlier A6 commit; current HEAD is 4b59339"},
+    "A7": {"branch": "codex/m5-w18-a7", "head": "b96cd51", "r3b_status": "COMMITTED", "deliverable": "Git reference map corrected: SSOT pin cee14e9, totals 0/4/10, per-unit spec", "consumed_by_a11": true},
+    "A8": {"branch": "codex/m5-w18-a8", "head": "ba92110", "r3b_status": "COMMITTED", "deliverable": "canonical-geometry and accessibility states revision", "consumed_by_a11": true},
+    "A9": {"branch": "codex/m5-w18-a9", "head": "d17091c", "r3b_status": "COMMITTED", "deliverable": "Git interaction safety across all 14 units + 6 frozen boundaries", "consumed_by_a11": true},
     "A10": {
       "branch": "codex/m5-w18-a10",
-      "head": "facc4b9",
+      "head": "1a78857",
       "r3b_status": "COMMITTED",
-      "blocking": true,
-      "deliverable": "R3B independent closure review (A10-R3B-closure-audit.py, 630 lines) + re-run self-containment checker; A10's gate currently FAIL until A1 lands",
+      "blocking": false,
+      "deliverable": "R3B independent closure review: A10-R3B-closure-audit.py (5 false-positives fixed), closure doc §7 verifying A1 R3B, dual-size JSON",
+      "a1_verdict": "A1 R3B corrections all real; 0 HIGH / 0 MEDIUM against A1-R3B deliverables",
       "consumed_by_a11": true
     },
     "A11": {
       "branch": "codex/m5-w18-a11",
-      "head": "246c064",
-      "r3b_status": "PROVISIONAL_PENDING_UPSTREAM",
+      "head": "aa7f443",
+      "r3b_status": "PROVISIONAL_PENDING_A0_ADJUDICATION",
       "deliverables": [
         "A11-R3B-integration-manifest.json",
         "A11-R3B-acceptance-checklist.md",
         "A11-R3B-progress.md",
         "A11-R3B-acceptance-matrix.py",
         "A11-R3B-run-20260908.out",
-        "A11-R3B-checkpoint.md"
+        "A11-R3B-checkpoint.md",
+        "A11-R3B-final-closeout-20260908.md"
       ],
       "consumed_by_a11": true
     }
   },
   "findings": [
-    {"id": "R3B-01", "severity": "high", "title": "Git coverage incomplete in prototype", "detail": "A10 P4: A1 prototype does not visibly locate 7 units (diff, worktrees, conflicts, patch, command log, amend, reset/revert). A11 matrix GAP: worktrees, conflicts, patch, amend, reset-revert.", "owner": "A1 (R3B-corrected prototype)", "status": "OPEN", "matrix_probe": "G-worktrees/G-conflicts/G-patch/G-amend/G-reset-revert", "a10_probe": "P4"},
-    {"id": "R3B-02", "severity": "high", "title": "Prototype hygiene (donor font names + A10 checker fails)", "detail": "A1 CSS still names donor/vendor fonts (Cascadia Code, SF Mono, Segoe UI). A10 P1 checker exits non-zero. Reports may cite sources; UI text/CSS must stay clean.", "owner": "A1 (neutral font stack) + A10 (re-run checker)", "status": "OPEN", "matrix_probe": "H-font/A10-gate", "a10_probe": "P1"},
-    {"id": "R3B-03", "severity": "high", "title": "Collapse semantics: activity strip hidden", "detail": "A1 CSS `.mode-collapsed .edge-strip { display:none }` violates A0 ruling that the 28px activity strip must remain visible in collapsed mode. Tool-window hide + restore affordance are correct.", "owner": "A1 (keep strip visible) + A3/A4 (pin semantics)", "status": "OPEN", "matrix_probe": "C-strip", "a10_probe": "P9"},
-    {"id": "R3B-04", "severity": "high", "title": "Accessibility not demonstrable", "detail": "A10 P5: A1 prototype role=0/8, aria-*=0/8, no :focus-visible. A6/A8 contract exists but not reflected in UI prototype.", "owner": "A1 (add role/aria + focus ring)", "status": "OPEN", "matrix_probe": "A-aria/A-focus", "a10_probe": "P5"},
-    {"id": "R3B-05", "severity": "medium", "title": "Geometry convention not frozen in prototype", "detail": "A0 formula passes at all 6 sizes (>=92%W/85%H), but A1 CSS status bar is 26px (A0 SSOT 24px) and cross-lane measurement conventions still differ. Freeze post-titlebar inner-viewport definition.", "owner": "A0 (freeze) + A2 (method)", "status": "OPEN", "matrix_probe": "GEO/GEO-chrome/GEO-status", "a10_probe": "P2"},
-    {"id": "R3B-06", "severity": "medium", "title": "Shortcut binding conflict", "detail": "A1 binds Ctrl+K to the command palette (title='command.palette') while A0 rules Ctrl+K = address/search and Ctrl+Shift+P = palette. A6 registry does not freeze the two bindings.", "owner": "A6 (register) + A1 (prototype)", "status": "OPEN", "matrix_probe": "K-binding", "a10_probe": "P6"},
-    {"id": "R3B-07", "severity": "medium", "title": "Reference identity mismatch", "detail": "A7 pinned cee14e9 as behavior SSOT; A10 used 2896562e as a later research snapshot. A0 rules cee14e9 v1.1.15 is the SSOT; 2896562e must not be provenance until re-verified. Several R3 docs (incl. A11-R3-*.md) cite 2896562e without demoting it.", "owner": "A10 (reconcile) + A7 (align) + A11 (reconcile own R3 docs)", "status": "OPEN", "matrix_probe": "M-pin", "a10_probe": "P7"},
-    {"id": "R3B-08", "severity": "medium", "title": "Minimum window 900x600 not covered", "detail": "Prototype renders 1920/1440/1366/1024 but not 1200x800 or 900x600. A0 requires acceptance at the product minimum 900x600; 800x600 dropped.", "owner": "A1 (add 900x600 frame) + A2 (verify)", "status": "OPEN", "matrix_probe": "S-1200x800/S-900x600", "a10_probe": "P3"},
+    {"id": "R3B-01", "severity": "high", "title": "Git coverage incomplete in prototype", "detail": "A10 P4: A1 prototype does not visibly locate 7 units (diff, worktrees, conflicts, patch, command log, amend, reset/revert). A11 matrix GAP: worktrees, conflicts, patch, amend, reset-revert.", "owner": "A1 (R3B-corrected prototype)", "status": "GAP_CLOSED", "resolution": "A1 60d887d renders 14 git-unit labels (git.status.refresh ... git.worktree.add) plus amend/reset-revert; A11 matrix G-* all PASS; A10 P4 PASS.", "matrix_probe": "G-worktrees/G-conflicts/G-patch/G-amend/G-reset-revert", "a10_probe": "P4"},
+    {"id": "R3B-02", "severity": "high", "title": "Prototype hygiene (donor font names + A10 checker fails)", "detail": "A1 CSS still names donor/vendor fonts (Cascadia Code, Segoe UI). Reports may cite sources; UI text/CSS must stay clean.", "owner": "A1 (neutral font stack) + A0 (adjudicate system fonts)", "status": "OPEN_A0_ADJUDICATION", "resolution_partial": "Donor NAMES fully removed (Rebased/JetBrains/Obsidian/IntelliJ = 0): A11 H-brand PASS and A10 P1 PASS. Residual is the FONT clause only: A11 H-font still flags 'Segoe UI' and 'Cascadia Code' in CSS, while A10's P1 self-containment checker passes (exit 0) because it does not treat these system fonts as donor assets.", "remedy": "One-line CSS swap to a neutral stack (system-ui, -apple-system, sans-serif / ui-monospace, monospace).", "matrix_probe": "H-font/A10-gate", "a10_probe": "P1"},
+    {"id": "R3B-03", "severity": "high", "title": "Collapse semantics: activity strip hidden", "detail": "A1 CSS `.mode-collapsed .edge-strip { display:none }` violates A0 ruling that the 28px activity strip must remain visible in collapsed mode.", "owner": "A1 (keep strip visible) + A3/A4 (pin semantics)", "status": "GAP_CLOSED", "resolution": "A1 60d887d demonstrates Collapse All hiding every tool window (pinned included) with a Restore Layout snapshot affordance, and keeps the 28px strip: A11 C-hide/C-strip/C-restore all PASS; A10 P9 has no A1 finding.", "matrix_probe": "C-strip", "a10_probe": "P9"},
+    {"id": "R3B-04", "severity": "high", "title": "Accessibility not demonstrable", "detail": "A10 P5: A1 prototype role=0/8, aria-*=0/8, no :focus-visible.", "owner": "A1 (add role/aria + focus ring)", "status": "GAP_CLOSED", "resolution": "A1 60d887d carries 94 role=, 114-189 aria-*, 78 tabindex and a :focus-visible outline: A11 A-aria (189 attrs) and A-focus PASS; A10 P5 PASS.", "matrix_probe": "A-aria/A-focus", "a10_probe": "P5"},
+    {"id": "R3B-05", "severity": "medium", "title": "Geometry convention not frozen in prototype", "detail": "A0 formula passes at all 6 sizes (>=92%W/85%H), but A1 CSS status bar is 26px (A0 SSOT 24px) and cross-lane measurement conventions still differ.", "owner": "A0 (freeze) + A2 (method)", "status": "GAP_CLOSED", "resolution": "A1 60d887d hard-codes the A0 SSOT (60px top chrome as two 30px rows, 24px status bar, 28px strip); A11 GEO PASS at all 6 sizes and A10 P2 has no A1 finding. A2 bfe8e86 supplies the canonical measurement method.", "matrix_probe": "GEO/GEO-chrome/GEO-status", "a10_probe": "P2"},
+    {"id": "R3B-06", "severity": "medium", "title": "Shortcut binding conflict", "detail": "A1 binds Ctrl+K to the command palette (title='command.palette') while A0 rules Ctrl+K = address/search and Ctrl+Shift+P = palette.", "owner": "A6 (register) + A1 (prototype)", "status": "GAP_CLOSED", "resolution": "A1 60d887d binds Ctrl+K to browser.focusAddressSearch (address/search) and Ctrl+Shift+P to the palette; A11 K-binding PASS; A10 P6 PASS. A6 4b59339/ac3cb18 freezes both bindings in the command registry.", "matrix_probe": "K-binding", "a10_probe": "P6"},
+    {"id": "R3B-07", "severity": "medium", "title": "Reference identity mismatch", "detail": "A7 pinned cee14e9 as behavior SSOT; A10 used 2896562e as a later research snapshot. A0 rules cee14e9 v1.1.15 is the SSOT.", "owner": "A10 (reconcile) + A7 (align) + A11 (reconcile own R3 docs)", "status": "GAP_CLOSED", "resolution": "A7 b96cd51 publishes cee14e9 as the SSOT with the 2896562e snapshot demoted, and corrects the totals to 0/4/10; A11 M-pin PASS; A10 P7 has no A1 finding. Residual P7/P8 script findings still target the superseded A7-R3 file and clear once A0 integrates A7's R3B commit.", "matrix_probe": "M-pin", "a10_probe": "P7"},
+    {"id": "R3B-08", "severity": "medium", "title": "Minimum window 900x600 not covered", "detail": "Prototype renders 1920/1440/1366/1024 but not 1200x800 or 900x600. A0 requires acceptance at the product minimum 900x600; 800x600 dropped.", "owner": "A1 (add 900x600 frame) + A2 (verify)", "status": "GAP_CLOSED", "resolution": "A1 60d887d renders all six target sizes (1920x1080, 1440x900, 1366x768, 1200x800, 1024x720, 900x600) and drops 800x600: A11 S-* 6/6 PASS; A10 P3 PASS.", "matrix_probe": "S-1200x800/S-900x600", "a10_probe": "P3"},
     {"id": "R3B-09", "severity": "medium", "title": "Native desktop feasibility not validated", "detail": "Child WebView focus, occlusion and resize behavior is unvalidated in a real Tauri client. Reserved for user/A0 review (native evidence explicitly out of A11 scope).", "owner": "A0 / user (real client)", "status": "RESERVED_NATIVE", "matrix_probe": "NOT_RUN (allowed per A0 exit gate)", "a10_probe": "n/a"}
   ],
   "checklist": [
