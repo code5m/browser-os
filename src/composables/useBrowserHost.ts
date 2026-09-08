@@ -181,6 +181,14 @@ export function useBrowserHost() {
     // 把调度器注入 store，供 store 的 tab 操作回调
     browser.bindPositionScheduler(schedulePosition);
     browser.bindGridScheduler(scheduleGrid);
+    // 首次挂载时也同步显隐。主页/文件等非浏览器视图可能已经恢复了
+    // 浏览器页签，但此时还没有发生 mainView 变化，旧 webview 会保留尺寸并
+    // 漂移到主界面上方，形成白色遮挡。
+    nextTick(() => {
+      if (layout.mainView !== "browser" && layout.mainView !== "grid") {
+        bridge.hideAllWebviews().catch(() => {});
+      }
+    });
     window.addEventListener("resize", positionBrowserNow);
     // 主窗缩放后 viewport 大小会变，需要重定位
     window.addEventListener("tauri://window-resized", positionBrowserNow as any);
