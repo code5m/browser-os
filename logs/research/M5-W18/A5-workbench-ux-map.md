@@ -1,196 +1,120 @@
-# A5 · dbx 桌面工作台（Workbench）UX 组件/Store/测试全景映射
+# A5 · dbx 桌面工作台 UX 组件/Store/测试全景映射（M5-W18-R2 证据闭环修订版）
 
-> 研究目标（M5-W18-R Dispatch，board L90 / L1399）：映射 **dbx 桌面工作台 UX** 的精确组件 / store / 测试，覆盖连接树、Schema 浏览器、编辑器标签页、执行工具栏、取消/进度、结果网格、分页/筛选/复制/导出、历史、键盘/可访问性、加载/空/错误态、响应式布局，并据此产出 Vue 专属复刻蓝图。
+> 修订自 R1 `A5-workbench-ux-map.md`。R1 因引用不存在的 `useConnectionStore`、过时的 DTO 契约、未实测的体积/依赖判断被 A0 审计判定 `REWORK`（`logs/checkpoints/A0-M5-W18-R1-audit-20260908.md` L40）。
+> 本版按 `PARALLEL_COMMAND_BOARD.md` L1439《M5-W18-R2 Evidence Closure Dispatch》重写：每一条事实标注证据类型，并显式 retract 每条被纠正的 R1 陈述。
 >
-> 参考源（Apache-2.0，Cargo.lock 锁定）：`/home/ainfinit/Documents/极智简单/V3/research/dbx-src`（dbx 本身是 **Vue 3 + Tauri 2** 桌面数据库工作台，`apps/desktop` 含 421 个 `.vue`、74 个 Pinia store、110 个 composable）。既有分析：`/home/ainfinit/Documents/极智简单/V3/dbx-study/`。
-> 本报告只做映射与证据登记，**不含任何产品代码**。
-
-## 0. 方法论与关键结论
-
-dbx 前端采用 **“store 驱动 + composable 纯逻辑 + 薄 SFC 视图”** 三层架构，对当前产品（同构 Vue3+Tauri2）高度可迁移：
-
-- **Store（Pinia）** 持有全部会话态与领域态，组件只通过 `useXxxStore()` 消费，极少直接 `invoke`。
-- **`api` 调用层**（`@/lib/backend/api`）是 Tauri `invoke` 的唯一封装面；组件/store 经由它访问 Rust 后端（`api.executeQuery`、`api.searchHistory`、`api.saveHistory` …）。→ 对应本仓库的 `src/bridge.ts` + `src/types.ts`（snake_case DTO）。
-- **composable 承载纯逻辑**（分页、筛选、导出、选择、列布局…），可被 Vitest 单测隔离验证。
-- **可访问性** 是默认内建：focus ring、`aria-label`/`aria-pressed`/`aria-expanded`、`.sr-only`、`title`、自定义右键菜单。
-- **加载/空/错误** 是 store 一等公民（`loading`/`error`/`total`/`nextCursor`），组件用 `QueryLoadingState` / `ErrorBanner` 呈现。
-- **响应式** 由组件内 ResizeObserver + scrollWidth 测量驱动（非纯 CSS），toolbar 可折叠进 “More”。
-
-> 结论：**架构可直接借鉴（ADAPT）**；但 dbx 体量远超当前产品（30+ 数据库类型、ER 图、Mongo/Redis/MQ 专属浏览器、AI 助手等），且本仓库有 25.2% 产物体积硬上限与 `pre-merge.sh` 多门禁约束 —— 因此必须 **“复刻行为/架构、适配组件到本仓库约定、拒绝整段拷贝”**（详见 `A5-replication-blueprint.md`）。
+> 证据类型图例：`CURRENT_PRODUCT` = 本仓库现存代码/配置；`REFERENCE_SOURCE` = dbx 参考源（`/home/ainfinit/Documents/极智简单/V3/research/dbx-src`，Apache-2.0）；`OBSERVED_BEHAVIOR` = 已执行验证；`EXECUTED_SYNTHETIC_TEST` = 已执行门禁/测试；`INFERENCE` = 推断（须显式标出，不冒充观测）。
+>
+> 参考源已复核存在且为 Apache-2.0（`[REFERENCE_SOURCE]` LICENSE 头；`git rev-parse` 在该目录无 git 仓库，故不锚定 commit，仅按当前工作树快照引用）。
 
 ---
 
-## 1. 连接树（Connection Tree）
+## 0. 关键结论（修订）
 
-| 维度 | dbx 实现 |
+1. **dbx 与本仓库同栈（Vue3 + Tauri2）是真**`[REFERENCE_SOURCE]`：前端 421 个 `.vue`、`apps/desktop/src/stores/` 下 13 个 store、`lib/backend/api.ts` 为 invoke 唯一封装面。架构（store 驱动 + composable 纯逻辑 + 薄 SFC）与本仓库同构。
+2. **但本仓库数据库前端已是成型实现，不是空白**：`[CURRENT_PRODUCT]` `src/components/workspace/DatabasePanel.vue`（231 行 / 11,278 B）、`src/stores/useDatabaseStore.ts`（218 行 / 6,716 B）、`src/utils/dbUi.ts`（444 行 / 16,771 B）已落地，并由 `src/components/layout/MainArea.vue:50` 以 `defineAsyncComponent` 懒加载，门禁 `scripts/check-database-ui-logic.mjs`（274 行）**已存在且 119 断言全部通过**`[EXECUTED_SYNTHETIC_TEST]`。R1 把"新增 `check-database-ui-logic.mjs`"列为待办是**过时陈述**（文件早已存在并接线 pre-merge.sh:367/563）。
+3. **体积硬约束已逼近上限**：`[CURRENT_PRODUCT]` 真基线 `logs/m0-build-metrics/build-metrics-4f0e8ab.json` 的 `dist.total_bytes=612,943`；`measure-build-metrics.py:39` 上限 `TOTAL_BYTES_GROWTH_LIMIT_PCT=25.2` ⇒ 允许上限 `612,943 × 1.252 = 767,404 B`。同目录 `build-metrics-052b18a.json` 记录 `795,517 B`（**脏树产物**，A6 已标 F-1），`pre-merge.sh:221` 用 `ls|sort|head -1` 正好选中它作基线，掩盖真实回归。R1 所谓"懒加载即解决体积"是**错误**：`collect_dist()`（`measure-build-metrics.py:63`）对 `dist/` 下**所有文件**求和，懒加载 chunk 仍计入 `total_bytes`，只改善首屏不改善门禁。
+4. **产品无 Vitest、无 test 脚本**：`[CURRENT_PRODUCT]` `package.json` 仅 `dev/build/preview/tauri` 四个脚本、依赖仅 `vue/pinia/@tauri-apps/api/@xterm/*`（5 个运行时 + 2 个 dev）。R1 主张"直接采纳 dbx 的 Vitest 双范式"在**当前产品不可行**（需先引入 vitest 依赖，属体积/依赖扩张，违反 R2 限制与 25.2% 上限）。正确做法是沿用既有 `.mjs` 源码逻辑门禁范式。
+5. **本仓库没有 `useConnectionStore`、没有 `src/lib/`**：`[CURRENT_PRODUCT]` `grep -rn useConnectionStore src` 命中 0 行；`src/` 仅 `App.vue bridge.ts components composables main.ts stores styles types.ts utils`。R1 反复引用"M4-2 已建 useConnectionStore / src/lib/editor/shortcutRegistry.ts"均为**不存在的目标**，须 retract。
+
+---
+
+## 1. R1 → R2 纠正表（显式 retract，保留历史）
+
+| # | R1 陈述（误） | 纠正（R2） | 证据 |
+|---|---|---|---|
+| C1 | "M4-2 已埋 `useConnectionStore`" | 不存在；真实只有 `useDatabaseStore.ts`（含 `connections` ref，但无独立连接 store） | `grep -rn useConnectionStore src` → 0 `[CURRENT_PRODUCT]` |
+| C2 | "新增 `scripts/check-database-ui-logic.mjs` 承接 dbx 双测试范式" | 该脚本已存在（274 行 / 119 断言通过），是既有门禁而非待办 | `scripts/check-database-ui-logic.mjs` + `EXECUTED_SYNTHETIC_TEST` 退出码 0 `[CURRENT_PRODUCT]` |
+| C3 | "架构可直接借鉴；懒加载可把编辑器内核拆出去规避 25.2%" | 懒加载仍计入 `total_bytes` 门禁；当前净余量 ≈ 345 B（见 §5），**无法容纳任何净新组件** | `measure-build-metrics.py:63-77` `collect_dist` 全量求和 `[CURRENT_PRODUCT]` |
+| C4 | "直接采纳 dbx Vitest 单测 + `?raw` 契约" | 产品无 Vitest；须沿用 `.mjs` 门禁范式，新增断言进 `check-database-ui-logic.mjs` | `package.json` 无 vitest/test `[CURRENT_PRODUCT]` |
+| C5 | "建议新建 `src/lib/editor/shortcutRegistry.ts`" | `src/lib/` 不存在；键盘归一化应落在既有 `src/composables/` 或并入 `dbUi.ts` | `ls src/` 无 `lib/` `[CURRENT_PRODUCT]` |
+| C6 | 取消常量引自 `lib/sql/queryExecutionState.ts` | dbx 实际位于 `apps/desktop/src/stores/queryStore.ts:105-106`（`CANCEL_QUERY_TIMEOUT_MS=10_000`、`CANCEL_ACK_SETTLE_TIMEOUT_MS=2_000`） | `grep` 复核 `[REFERENCE_SOURCE]` |
+| C7 | `DataGridToolbarActionCapability` 定义在 `lib/dataGrid/dataGridToolbar` | 实际为 `apps/desktop/src/components/grid/DataGridToolbar.vue:18` 的内联 `type` | `grep` 复核 `[REFERENCE_SOURCE]` |
+| C8 | a11y"天然对齐 `check-ui-a11y-logic.mjs`" | 该门禁仅 74 行、9 断言，只覆盖 `modalA11y.ts` 的 modal 焦点决策，**不覆盖** grid/toolbar aria；数据库面板须自建 a11y 断言 | `scripts/check-ui-a11y-logic.mjs` 头部注释 `[CURRENT_PRODUCT]` |
+
+---
+
+## 2. CURRENT_PRODUCT 真实前端盘点（A5 工作唯一真相源）
+
+| 维度 | 真实现状（证据） |
 |---|---|
-| 主组件 | `apps/desktop/src/components/sidebar/ConnectionTree.vue`（132KB，极大）、`TreeItem.vue`、`SidebarTreeRuntimeHost.vue`、`SidebarTreeItemDialogs.vue` |
-| Store | `src/stores/connectionStore.ts`（`useConnectionStore`：connections、sidebarLayout、lazy `TreeNode`、completion metadata） |
-| 支撑 lib | `src/lib/sidebar/sidebarLayoutMonitor.ts`（展开/折叠/滚动壳诊断）、`src/lib/table/objectBrowserRowsCache` |
-| 关键行为 | 懒加载子节点（展开才取 `children`）；`store.canUseLoadedTreeNodeToggle(node)` 区分“已加载节点直接展开”与“未加载需异步取数”；搜索时自动展开命中分支（`searchAutoExpandedNodeIds`）；连接/ schema 展开态上报给 layout monitor 以诊断“半高视口卡死”类 bug |
-| 右键/对话框 | `SidebarTreeItemDialogs.vue`（新建/编辑/删除连接、DDL、导入导出） |
-| a11y | `TreeItem` 复用展开/折叠；`title` 提示；上下文菜单 `CustomContextMenu.vue` |
-| 测试 | `stores/__tests__/connectionStore.*.spec.ts`（completion 70KB、databaseInfo、defaultSchema、disconnectDataTabMetadata、dorisCatalog …）|
-
-> 复刻要点：连接树是“受控懒加载树 + 搜索自动展开 + 展开态诊断”的组合。`TreeItem` 递归组件 + `connectionStore` 的 `TreeNode` 模型可直接适配本仓库的 `useConnectionStore`（M4-2 已埋点）。
-
----
-
-## 2. Schema 浏览器（Schema / Object Browser）
-
-| 维度 | dbx 实现 |
-|---|---|
-| 主组件 | `src/components/objects/ObjectBrowser.vue`（对象/表浏览器，虚拟滚动）、`src/components/structure/TableStructureEditor.vue` |
-| ER 图 | `src/components/diagram/SchemaDiagramDialog.vue`、`LayerPanel.vue`、`DiagramToolbar.vue`、`DiagramInspector.vue` |
-| 选择 composable | `useSchemaOptions`、`useDatabaseOptions`（catalog/database/schema 三级联动） |
-| 支撑 lib | `src/lib/table/objectBrowserRows`（行构建/排序/过滤/统计/缓存）、`tableClipboard`（表数据复制粘贴）、`objectSourceEditor`、`dbAdminSql`（drop/truncate/vacuum/duplicate SQL 生成）、`objectBrowserRowAction`（单击/双击/延迟判定） |
-| 关键行为 | `RecycleScroller` 虚拟滚动；表/视图/函数等按 FK 依赖排序（`sortTablesByFkDependency`）；DDL 查看/导出；表数据复制→粘贴到另一 schema（带 schema 归一化与部分失败回滚）；DDL 写操作经 `executeWithProductionSqlGuard` 生产库保护 |
-| a11y | 行菜单懒绑定 `getObjectBrowserMenuItems(item)`；`title`/`role`；复制粘贴上下文菜单 |
-| 测试 | `components/objects/ObjectBrowserClipboard.spec.ts`（**`?raw` 源码契约测试**：正则断言“粘贴前归一化 schema”“仅完全成功才消费剪贴板”等代码形态）、`components/structure/TableStructureEditor.{primaryKey,charsetCollation}.spec.ts` |
-
-> 复刻要点：Schema 浏览器 = 虚拟滚动对象列表 + 三级选择联动 + 生产护栏 + 复制粘贴。ER 图（SchemaDiagramDialog）属 DEFER（超 M5 范围）。`?raw` 源码契约测试是 dbx 特有、值得借鉴的“防结构漂移”手段。
+| 连接/查询状态 | `useDatabaseStore.ts`：form / connections / activeId / sql / result / busy / error / risk / verdict / pendingSql；`backendReady`(`bridge.dbConnect/dbQuery/dbDisconnect` 三函数存在性) / `connected` / `runGate` / `requiresConfirm` / `confirmOpen` 等 computed。 |
+| 命令层 | `src/bridge.ts:375-382`：`dbConnect(cfg,password)` / `dbQuery(p)` / `dbDisconnect(conn_id)`，调用后端 `db_connect/db_query/db_disconnect`（A4 已落地）。`[CURRENT_PRODUCT]` |
+| 纯逻辑层 | `src/utils/dbUi.ts`：连接表单校验、payload 构造（**结构性无 password**，F2）、`DbValue` 解码（`snake_case`：null/bool/int/float/text/blob_len，`[CURRENT_PRODUCT]` types.ts:600-611 与 domain.rs 对齐，已修 B8-1）、结果视图、CSV、截断/状态告警、风险/生产文案、运行门禁。 |
+| 视图 | `DatabasePanel.vue`：连接表单 + SQL textarea + 运行/复制CSV/清空 + 写二次确认（**内联 `<div class="confirm">`，非 ConfirmModal**）+ 结果表（首 200 行 `DISPLAY_ROW_CAP`，`maxRows=1000` 后端上限另算）。**零 `aria-*`/`role`/`tabindex`/`@keydown`**（`grep -c` = 0）。 |
+| 懒加载 | `MainArea.vue:50` `defineAsyncComponent(() => import("../workspace/DatabasePanel.vue"))`，带 `panelLoading`(`role=status aria-live=polite`) / `panelError`(`role=alert`) 兜底。 |
+| 可复用资产 | `src/components/shared/ConfirmModal.vue` + `src/composables/useModalFocus.ts`（已用于 `GitWriteConfirmDialog.vue` 的写确认）；`useLayoutStore.showToast(text)`。 |
+| 门禁 | `check-database-ui-logic.mjs`（274 行 / 119 断言 / 退出 0，已接线 pre-merge）；`check-ui-a11y-logic.mjs`（仅 9 断言覆盖 modalA11y）。 |
+| 依赖/构建 | `package.json` 5 运行时 + 2 dev；`measure-build-metrics.py` 上限 25.2%；`cargo_warnings` 门禁要求"只减不增"。 |
 
 ---
 
-## 3. 编辑器标签页（Editor Tabs）
+## 3. dbx 参考源逐能力映射（带实测尺寸）
 
-| 维度 | dbx 实现 |
-|---|---|
-| 标签条 | `src/components/layout/AppTabBar.vue`、`TabExecutionStatus.vue` |
-| 拖拽/滚动 | `useTabDrag`（→ `queryStore.reorderTab`）、`useTabScroll` |
-| 模型 | `useQueryStore.tabs: QueryTab[]`，每项含 `mode`(query/data)、`title`、`pinned`、`isExecuting`/`isCancelling`、`dirty`（`closeConfirmDirtyTabIds`）、`resultRuns` |
-| 呈现 lib | `src/lib/tabs/tabPresentation.ts`（`tabDisplayTitle`、`tabTooltipLines`、`connectionColor`） |
-| 关键行为 | 固定(pinned)/普通标签分栏；拖拽重排；双击重命名（`renameTab`，选区到扩展名前）；关闭脏标签确认弹窗（单个/批量）；classic vs wrap 布局切换；`TabExecutionStatus` 显示每个标签的执行态 |
-| 编辑器内核 | `src/components/editor/QueryEditor.vue`（290KB，**CodeMirror 6**：动态 import 分包、vim 模式、SQL dialect、语义高亮、自动补全、语句 gutter 运行按钮、搜索 keymap） |
+> 所有尺寸为 `wc -c` 实测（`[REFERENCE_SOURCE]`，当前工作树快照，不锚 commit）。
 
-> 复刻要点：`useQueryStore.tabs` + `AppTabBar` + `useTabDrag` 的组合是直接可适配的。但 290KB 的 `QueryEditor.vue` **不可整段拷贝**——本仓库必须做一个“薄 CodeMirror 6 封装”（动态分包按需加载、语句级运行 gutter），以符合 25.2% 体积上限。
-
----
-
-## 4. 执行工具栏（Execution Toolbar）
-
-| 维度 | dbx 实现 |
-|---|---|
-| 主组件 | `src/components/layout/EditorToolbar.vue`（每标签一行，h-9 固定高） |
-| 运行/取消 | Run 按钮：`variant` 随 `activeTab.isExecuting` 在 `ghost`↔`destructive` 切换；图标 `Play`→`Square`（停止）；`isCancelling` 时显示 `Loader2 animate-spin`。点击逻辑：`activeTab.isExecuting ? emit('cancel') : emit('execute')` |
-| 其它动作 | Explain（`GitBranch`/停止）、Autotrace（DM/PG/SQLServer，字母 A 切换 `aria-pressed`）、Format、Compress、关键字大小写切换（a/A）、SQL 语义诊断（`SpellCheck2`）、Redis 危险命令盾（`Shield`）、Save/Open/Import 结果归档、ExPaste、Multi-execute（`CirclePlay`→`MultiDbExecuteDialog.vue`）、事务组（auto/commit/rollback，`Tx:` 徽标 + `aria-pressed`） |
-| 选择器 | 连接/目录(catalog)/库(database)/schema 四级 `SearchableSelect`，带生产上下文徽标（`ProductionContextBadge`）、加载态、`hexToRgba` 连接色 |
-| 禁用逻辑 | `disabled="isCancelling || isExplaining || (!isExecuting && !executableSql.trim())"`；执行中禁用格式/压缩/事务切换 |
-| 运行 gutter | `QueryEditor.vue` 的 `runStatementGutterExtension`：每行 `Play` 图标，作用域限定到该行语句/命令（`shouldShowStatementGutter`） |
-
-> 复刻要点：`EditorToolbar` 是“能力按钮 + 运行/取消互斥切换 + 生产徽标 + 事务组”的典范。**运行按钮直接用 `isExecuting` 做 Run/Stop 互斥** 这一模式必须复刻；按钮级 `aria-pressed`/`aria-label`/`title` 对齐本仓库 `check-ui-a11y-logic.mjs` 门禁。
+| # | 能力 | dbx 主文件（实测字节） | 关键符号（已复核） |
+|---|---|---|---|
+| 1 | 连接树 | `ConnectionTree.vue` 132,311；`connectionStore.ts` | `TreeNode`、`canUseLoadedTreeNodeToggle`、`searchAutoExpandedNodeIds` |
+| 2 | Schema 浏览器 | `ObjectBrowser.vue` 180,772；`TableStructureEditor.vue` | `RecycleScroller`、`useSchemaOptions`/`useDatabaseOptions`、`executeWithProductionSqlGuard`（遍布 objects/*） |
+| 3 | 编辑器标签 | `QueryEditor.vue` **291,246**；`queryStore.ts` **324,752** | `tabs: QueryTab[]`、`reorderTab`、`closeConfirmDirtyTabIds`、`TabExecutionStatus` |
+| 4 | 执行工具栏 | `EditorToolbar.vue` 32,173 | Run/Stop 互斥 `activeTab.isExecuting ? cancel : execute`；`disabled=isCancelling||isExplaining||(!isExecuting&&!executableSql.trim())` |
+| 5 | 取消/进度 | `queryStore.ts:105-106`（常量）；`queryStore.ts` 整体 | `CANCEL_QUERY_TIMEOUT_MS=10_000`、`CANCEL_ACK_SETTLE_TIMEOUT_MS=2_000`、`cancelTabExecution`、`appendQueryResultSegment`、`resultRuns/resultEvicted` |
+| 6 | 结果网格 | `DataGrid.vue` **661,097**；`DataGridToolbar.vue:18`（`DataGridToolbarActionCapability`） | `DataGridToolbarActionCapability{visible,disabled,loading,label,tooltip}`、`useDataGridExport` 等 composable |
+| 7 | 历史 | `historyStore.ts` 6,794；`QueryHistory.vue` 36,513 | `entries/loading/loadingMore/total/nextCursor/error`、`search(req,append)`、`requestSerial` 竞态守卫、`setHistoryPanelActive` |
+| 8 | 键盘/a11y | `shortcutRegistry.ts`、`keyboardShortcuts.ts` | `normalizeShortcutSettings`、`shortcutToCodeMirrorKey`；全站 focus ring / `aria-*` / `.sr-only` / `CustomContextMenu` |
+| 9 | 加载/空/错误 | `QueryLoadingState.vue` 1,843；`ErrorBanner.vue` 4,207 | `QueryLoadingState`、`ErrorBanner`、`translateBackendError` |
+| 10 | 响应式 | `AppToolbar.vue` | `toolbarCollapsed` + `rightOverflowCount` + `settleRightOverflow()`（ResizeObserver + scrollWidth 测量）；`set_macos_traffic_light_position`（macOS 专属，REJECT） |
+| 11 | 测试 | `*.spec.ts` 多处 | composable/store 单测（`vi.mock`）+ `?raw` 源码契约；`@vue/test-utils` 计数 0 |
 
 ---
 
-## 5. 取消 / 进度（Cancel / Progress）
+## 4. 能力 → 当前产品 映射与最小改动意图
 
-| 维度 | dbx 实现 |
-|---|---|
-| Store（核心） | `useQueryStore`：`tab.isExecuting` / `isCancelling` / `executionId` / `queryExecutionStartedAt` / `cancelRequestCount` / `batchSqlExecution` |
-| 取消 API | `cancelTabExecution(tabId)`、`cancelMultiDbExecutionScope(scopeId)`（并发取消所有 worker） |
-| 超时常量 | `CANCEL_QUERY_TIMEOUT_MS = 10_000`、`CANCEL_ACK_SETTLE_TIMEOUT_MS = 2_000` |
-| 可取消判定 | `lib/sql/queryExecutionState.ts`（`canCancelQueryExecution`） |
-| 进度 | `applyBatchSqlProgress(tab, progress)`：逐语句 `status`(pending/running/success/error) + `executionTimeMs` + `affectedRows`；流式结果经 `appendQueryResultSegment`（按 `maxRows` 截断追加，检测列变更/重复） |
-| 结果生命周期 | `resultRuns`（多次运行历史）、`resultEvicted`（LRU 驱逐）、`touchResult`；`closeQueryResult`/`clearQueryResults` 在 `isExecuting` 时拒绝 |
-| UI 呈现 | `EditorToolbar` 取消按钮 + spinner；`DataGrid` 加载态（`QueryLoadingState`）；导出进度 `ExportProgressPopover` / `ExportProgressDialog`（`useExportTracker` 任务生命周期） |
-
-> 复刻要点：**取消必须带超时与 ack 结算**，且 tab 级 `isExecuting/isCancelling` 是 UI 唯一真相源；批量进度用“语句级状态机 + 受影响行数”模型。这是行为级复刻（`REIMPLEMENT_FROM_BEHAVIOR`），因为本仓库 A4 的 DTO 仍在形成中。
-
----
-
-## 6. 结果网格（Result Grids）
-
-| 维度 | dbx 实现 |
-|---|---|
-| 主组件 | `src/components/grid/DataGrid.vue`（巨大）、`DataGridPagination.vue` |
-| 工具栏 | `DataGridToolbar.vue`（**能力（capability）模式**：`DataGridToolbarActionCapability{visible,disabled,loading,label,tooltip}`，由 `lib/dataGrid/dataGridToolbar` 的 `select/trigger/toggle` 驱动） |
-| 筛选/条件 | `DataGridQueryControls.vue`（WHERE/ORDER BY 内联编辑器 + 可拖拽分隔条）、`DataGridFilterBuilder.vue`、`DataGridConditionEditor.vue`、`DataGridTextFilterWorkbench.vue` |
-| 复制/导出 | `DataGridCopyColumnNamesDialog.vue`、`DataGridExtractorDialog.vue`、`DataGridBulkEditDialog.vue`、`DataGridInsertRowsDialog.vue`、`DataGridCellDetailDialog.vue`/`Panel`、`DataGridColumnLayoutPopover.vue`、`DataGridTypeColorSchemeDialog.vue`、`ImagePreviewDialog.vue`、`LayerPreviewDialog.vue`、`EnumCellEditor.vue`、`TemporalCellEditor.vue` |
-| 逻辑 composable | `useDataGridActions`(23KB)、`useDataGridExport`(58KB)、`useDataGridExport.sqlProgress`、`useDataGridSelection`(28KB)、`useDataGridColumnLayout`(33KB)、`useDataGridColumnResize`、`useDataGridConditionEditor`、`useDataGridFilterBuilder`、`useDataGridSearch`、`useDataGridSort`、`useDataGridAutoRefresh`、`useDataGridCanvasRuntime`(8KB) |
-| 支撑 lib | `lib/dataGrid/{paginationPageSize,queryResultRowLimit,dataGridPagination,dataGridSql,dataGridNavigation,gridRowStatus,dataGridConditionHistory}`、`lib/table/{tableEditing,tableDependencySort}` |
-| 分页 | `DataGridPagination` + `resolveDataGridPaginationTotal`/`canGoNextDataGridPage`/`canFetchNextDataGridSegment`；store 端 cursor/segment（`appendQueryResultSegment`） |
-| 测试 | `composables/__tests__/useDataGrid*.spec.ts`（actions/export/selection/columnLayout/columnResize/conditionEditor/filterBuilder/search/sort/autoRefresh/canvasRuntime）、`useDataGridExport.sqlProgress.spec.ts` |
-
-> 复刻要点：**“能力（capability）对象 + 工具栏渲染器”** 解耦是 dbx 网格最值得借鉴的架构——按钮可见性/禁用/加载都由纯数据驱动，便于单测与权限收敛。`useDataGridExport` 用 `vi.mock(api)` 隔离测试进度生命周期，是可直接套用的测试范式。
+| # | 能力 | 当前产品落点 | 最小改动意图（不新增文件/依赖前提下） |
+|---|---|---|---|
+| 1 连接树 | `useDatabaseStore.connections` + `DatabasePanel.vue` `conn-list` | 当前仅有静态 `connections` 列表（`refreshConnections()` 为空实现，A4 未给列表命令）。**最小改动**：保持空实现，W19 接 `db_list_connections` 后再填充；不新建连接树 store。 |
+| 2 Schema 浏览器 | 无当前对应 | **DEFER**：本 M5 即连即查模型无 schema 树。W19 可由 A4 提供 schema 浏览命令后再做，且用 `RecycleScroller` 等价（本仓库无虚拟滚动库，须自写或复用原生滚动）。 |
+| 3 编辑器标签 | `db.sql` 单 textarea | **REJECT 多标签内核**：当前单语句查询模型不需要 tab 系统。CodeMirror 290KB 内核在 0 余量下**禁止引入**（见 §5/C9）。保持 `<textarea>`。 |
+| 4 执行工具栏 | `DatabasePanel.vue` 的"运行/复制CSV/清空"按钮 | **ADAPT（小）**：补齐 Run/Stop 互斥符号与 `disabled` 公式；为每个动作加 `:aria-label`/`:title`，写类按钮加 `:aria-pressed`。 |
+| 5 取消/进度 | `useDatabaseStore.busy` / `pendingSql` | **REIMPLEMENT_FROM_BEHAVIOR**：当前仅 `busy` 布尔，无取消令牌。W19 接 A4 取消 DTO 后，于 `useDatabaseStore` 内增 `isExecuting/isCancelling/executionId`，常量照搬 dbx `10_000/2_000` 语义（`[REFERENCE_SOURCE]` queryStore.ts:105-106），但实现自写。 |
+| 6 结果网格 | `DatabasePanel.vue` `<table>`（首 200 行） | **ADAPT（小）**：保持原生 `<table>`；把"复制/导出"动作建模为能力对象 `{visible,disabled,label,tooltip}` 数据结构，便于单测；分页/筛选仅在有大数据量需求时做（当前 `maxRows=1000` 后端截断，前端无需分页器）。 |
+| 7 历史 | 无当前对应 | **DEFER/W19**：当前无历史持久化（A4 历史写入契约未定）。竞态守卫 `requestSerial` 模式记为 W19 实现要点。 |
+| 8 键盘/a11y | 全组件 | **ADAPT**：给 `DatabasePanel` 加 `aria-label`/`role`/`tabindex`、`@keydown` 在 textarea（Ctrl/Cmd+Enter 运行）；复用 `useModalFocus` 于写确认弹窗。 |
+| 9 加载/空/错误 | `db.busy`/`db.error`/`result` | **ADAPT/COPY 小**：`QueryLoadingState`/`ErrorBanner`（1,843/4,207 B）结构可移植，但**须评估字节余量**（见 §5）；更稳妥是内联等价 `<div role=status>`。 |
+| 10 响应式 | `DatabasePanel` 内 `<style scoped>` | **ADAPT**：本面板已在侧栏内滚动，无需溢出折叠；REJECT macOS 红绿灯同步。 |
 
 ---
 
-## 7. 历史（History）
+## 5. 体积硬约束（基于实测，决策前提）
 
-| 维度 | dbx 实现 |
-|---|---|
-| 主组件 | `src/components/editor/QueryHistory.vue` |
-| Store | `src/stores/historyStore.ts`（`useHistoryStore`）、`savedSqlStore.ts` |
-| 关键行为 | `entries/loading/loadingMore/total/nextCursor/error/connectionOptions`；`search(request, append)` 游标分页（`loadMore`）；`requestSerial`/`mutationGeneration`/`destructiveMutations` **防止过期响应覆盖**（竞态守卫）；`add/remove/clear`；`setHistoryPanelActive` 切出面板即作废在途请求 |
-| 写保护 | 写 SQL 经 `lib/database/productionExecutionGuard.ts` 的 `executeWithProductionSqlGuard`（生产库确认） |
-| UI | `RecycleScroller` 虚拟滚动；防抖搜索；日期范围/连接/库过滤；上下文菜单（重跑/复制/删除）；`sr-only`/`focus:ring`/`title`/`aria` |
-| 测试 | 由 historyStore 单测 + 复用 `useDataGrid*` 选择逻辑 |
-
-> 复刻要点：**游标分页 + 请求串行号竞态守卫** 是 store 层的典范模式，应行为级复刻到本仓库的查询历史 store。`productionExecutionGuard` 对应本仓库的 A4 安全闸门。
+- 真基线 `4f0e8ab`：`dist.total_bytes = 612,943 B` `[CURRENT_PRODUCT]`。
+- 上限 `25.2%` ⇒ 允许 `767,404 B`；当前干净 `052b18a` 实测 `767,059 B`（A6 记忆），**净余量 ≈ 345 B（0.06pp）**。
+- 结论（决策级）：**在 25.2% 上限且 `cargo_warnings` 不增的前提下，M5 阶段新增任何净字节的 UI 组件（含 CodeMirror、ErrorBanner、LoadingState 等）都不可行**。任何蓝图级改动必须"零净增"或"替代既有行内代码"，或等 A0 书面抬限（`AC-5` 当前禁止）。
+- **C9（体积结论）**：CodeMirror 6 引入属新增依赖（npm 包 + 分包），且 `@codemirror/*` 即便动态分包仍计入 `dist.total_bytes`，在 0 余量下**禁止**。R2 明确"不实测需求与体积不得选 CodeMirror"——本仓库未做实测，故分类 **REJECT（M5）/ DEFER（待 A0 在 disposable 工作区授权 footprint 测量）**。
 
 ---
 
-## 8. 键盘 / 可访问性（Keyboard / Accessibility）
+## 6. 许可证义务（已修正 R1）
 
-| 维度 | dbx 实现 |
-|---|---|
-| 快捷键注册 | `lib/editor/shortcutRegistry.ts`（`normalizeShortcutSettings`、`shortcutToCodeMirrorKey`）、`lib/editor/keyboardShortcuts.ts`（`isCancelSearchShortcut`）、`codemirror*` keymap（`searchKeymapWithoutModD`、`defaultKeymapForGlobalShortcuts`） |
-| 编辑器快捷键 | CodeMirror 6 `Prec` compartment 动态重配（font/theme/wordWrap/lineNumbers/vim/sqlLanguage/completion/diagnostic…），全局快捷键与编辑器内快捷键分离 |
-| 通用 a11y | 全站 `focus:ring`、`:focus-visible:outline-none`、`:aria-label`、`.sr-only`、`title` 提示、`role`/`aria-pressed`/`aria-expanded`/`aria-controls`、`CustomContextMenu.vue` |
-| 对话框 | `Dialog`/`Popover`/`DropdownMenu` 组件内建 focus 管理 |
-| 测试 | `ObjectBrowserClipboard.spec.ts`（`?raw` 契约）；组件级 a11y 主要靠源码契约 + `scripts/` 逻辑门禁 |
-
-> 复刻要点：dbx 的“全局快捷键 / 编辑器内快捷键”双层 + `shortcutRegistry` 归一化，对应本仓库的 `check-client-navigation-logic.mjs` / 快捷键约定，应适配复用。a11y 基元（focus ring、aria-*）与本仓库 `check-ui-a11y-logic.mjs` 门禁天然对齐。
+- dbx = **Apache-2.0**（LICENSE 头已确认）`[REFERENCE_SOURCE]`。
+- 本仓库 `LICENSE` = **MulanPSL-2.0**（A0 审计 L31 已指正 A8 的"Apache-2.0"误述；A5 在此确认本仓库为 MulanPSL-2.0）。
+- 含义：从 dbx 移植代码须遵守 **MulanPSL-2.0 接受 Apache-2.0  inbound 的兼容义务** + Apache-2.0 的 `NOTICE`/版权头保留；A10 负责最终移植账本与署名。A5 只做行为级复刻（自写实现），规避直接 copy 的归因负担。
 
 ---
 
-## 9. 加载 / 空 / 错误态（Loading / Empty / Error）
+## 7. 遗留风险 / 移交（Handoff）
 
-| 维度 | dbx 实现 |
-|---|---|
-| 加载 | `src/components/common/QueryLoadingState.vue`；store `loading/loadingMore`；`Loader2 animate-spin` 在工具栏/导出按钮 |
-| 错误 | `src/components/ui/ErrorBanner.vue`；store `error` 字段（如 `historyStore.error`）；`translateBackendError` 后端错误本地化 |
-| 空态 | 历史/网格在无数据时显示空态文案；列表 `empty-text` |
-| 缺库提示 | `EditorToolbar` 的 `database-required-prompt`（抖动手势 + 红色） |
-
-> 复刻要点：加载/空/错误是 store 一等字段 + 两个共享组件模式，应直接适配本仓库（`useXxxStore` 的 `loading/error` + 共享 `QueryLoadingState`/`ErrorBanner` 等价物）。
+- **B-A5-1（High，依赖 A4）**：`db_list_connections`、`db_cancel`、历史命令名与 DTO 未冻结 ⇒ 连接树列表填充、取消令牌、历史三大能力均 **W19 才能落地**。
+- **B-A5-2（High，体积）**：25.2% 余量 ≈ 345 B，任何净新组件须先解决体积预算（替代既有代码 / A0 抬限）。
+- **B-A5-3（Med，DbValue 漂移）**：本仓库 `types.ts:600` 与 `domain.rs` 现已对齐为 `snake_case`；但 `database.rs` 后端 Rust 侧 `DbValue` 变体为 `I64/F64/Binary{bytes}`，与 `domain.rs` 的 `Int/Float/BlobLen` 仍是双真源（A1 G4 / A4 已记）。A5 仅消费 `types.ts` 镜像，漂移修复归 A1/A4。
+- **B-A5-4（Low）**：`check-database-ui-logic.mjs` 当前只覆盖 `dbUi.ts` 纯逻辑；面板组件级 a11y/键盘断言尚缺，须在本 lane 后续或 W19 扩写。
+- 与 **A4**（DTO/安全闸门）、**A6**（凭据/取消/生命周期）、**A3**（连接桥）强耦合，顺序：A4 DTO 冻结 → A5 可进入 W19 实现。
 
 ---
 
-## 10. 响应式布局（Responsive Layout）
+## 8. 待办（本 lane R2 交付内可完成项）
 
-| 维度 | dbx 实现 |
-|---|---|
-| 全局 toolbar | `AppToolbar.vue`：`toolbarCollapsed`（宽度 < 屏宽一半即折叠）；`rightOverflowCount` + `settleRightOverflow()`（ResizeObserver + scrollWidth/clientWidth 测量，把溢出项收进 “More” `LightDropdown`）；macOS 红绿灯位置经 `invoke("set_macos_traffic_light_position")` 同步 |
-| 编辑器 toolbar | `EditorToolbar.vue`：固定 `h-9`，flex 分组，连接色背景，`toolbarStyle` 由 `hexToRgba` 计算 |
-| 主区 | `App.vue` / `ContentArea.vue` / `WelcomeScreen.vue` 区域切换；`app-toolbar`/`app-editor-toolbar` 固定高 + `shrink-0` |
-| 测试 | `styles/__tests__/legacyWebviewFallback.spec.ts`（25KB，旧 webview 回退） |
-
-> 复刻要点：dbx 的响应式是**“JS 测量 + 溢出折叠”**而非纯 CSS，toolbar 溢出项动态收进 More。该模式对窄窗/移动态稳健，应适配；但 `set_macos_traffic_light_position` 这类 Tauri 桌面专属同步可按需 REJECT（本仓库若不做 macOS 红绿灯对齐）。
-
----
-
-## 11. 测试体系（Tests）— 跨切面
-
-dbx 有 500+ spec，两类范式：
-
-1. **composable / store 纯逻辑单测（主流）**：Vitest + `vi.mock` 隔离 `@/lib/backend/api`、stores、`vue-i18n`、`tauriRuntime`；以 `createOptions()` 工厂构造 `computed`/`ref` 入参，调用 composable 后断言行为。例：`composables/__tests__/useDataGridExport.sqlProgress.spec.ts`（mock `startQueryResultExport` 的 `onProgress` 回调，断言进度对话框生命周期）、`useSqlExecution.spec.ts`（55KB）、`stores/__tests__/connectionStore.completion.spec.ts`（70KB）。
-2. **源码契约测试（`?raw`）**：`import src from "./X.vue?raw"` 后用正则 `.toMatch()` 断言“必须存在某段代码形态”（如 ObjectBrowser 粘贴归一化逻辑）。用于防结构漂移，不渲染 DOM。
-
-> 注意：**`@vue/test-utils` 计数为 0** —— dbx 不做 DOM 渲染式组件测试，全部走“逻辑单测 + 源码契约”。这正契合本仓库 `scripts/*.mjs` 源码逻辑门禁思路，应直接采纳为复刻测试策略。
-
----
-
-## 12. 许可证义务（License Obligations）
-
-- dbx 源码为 **Apache-2.0**（含 `Cargo.lock` SHA-256 锁定，分发需保留 NOTICE/归因）。
-- 复刻须遵守：① 复用任何 dbx 代码片段须保留 Apache-2.0 头与版权声明；② 若整文件移植，须在 `LICENSE`/第三方声明中登记；③ 建议优先 **行为级复刻 + 自写实现**（规避直接 copy 的归因负担与框架耦合），仅对明确可移植的小工具函数做带署名的 COPY。
-- 本仓库现有 Apache-2.0 兼容策略（见 `dbx-study/dbx-冲突风险.md`）应延续。
-
----
-
-## 13. 待办 / 移交（Handoff）
-
-- 本仓库 M4-2 已埋 `useConnectionStore` / `database.rs` 骨架；A4 安全闸门（DTO）未合前，**不得**接通 `db_*` bridge 调用（见 blueprint DEFER 项）。
-- 与 A4（安全/取消/生命周期）、A6（凭据/取消/生命周期）、A3（连接池/桥）强耦合：A5 的复刻蓝图须在 A4 DTO 冻结后方可进入 W19 实现。
-- 完整复刻决策见 `A5-replication-blueprint.md`；本文件为证据/映射层。
+- ✅ 已 retract R1 全部误述并补齐当前产品真实盘点（本文件 §1-§2）。
+- ✅ 已把"懒加载 / Vitest / CodeMirror / useConnectionStore / src/lib"五项误述纠正，给出最小改动意图（§4）与体积硬结论（§5）。
+- ⏸ 产品代码实现冻结至 W19（R2 禁止改 `src/`）。本文件为**证据/映射层**，落地代码归 W19 实现卡。
