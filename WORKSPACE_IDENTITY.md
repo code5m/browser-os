@@ -9,14 +9,14 @@ This directory is the canonical V3 main working copy. Agents should use this fil
 
 ### Current Dispatch
 
-- NEXT: `M5-W18-R2B`; W19: `CLOSED`.
-- Read `PARALLEL_COMMAND_BOARD.md` Current Dispatch Entry, then `M5-W18-R2B-TASKS-20260908.md`.
+- NEXT: `M5-W18-PROTOTYPE-REVIEW`; W19: `CLOSED`.
+- All A1-A11 R/R2/R2B research commits have been integrated into canonical `master`. Read `PARALLEL_COMMAND_BOARD.md` Current Dispatch Entry, `logs/checkpoints/A0-M5-W18-R2B-integration-audit-20260908.md`, then `M5-W18-PROTOTYPE-REVIEW-20260908.md`.
 - Product direction: `WORKBENCH_BLUEPRINT-20260908.md`; substitute-controller/model routing: `A0-HANDOFF-LOW-COST-20260908.md`.
 - Current entries override historical NEXT/dispatch statements elsewhere. A new prompt declares LANE once; the current card derives its exact worktree and branch. An agent may enter its already-provisioned matching worktree after verification.
 
-### Active W18 lane exception
+### Historical W18 lane exception
 
-The only current exception is the controller-provisioned M5-W18 lane set:
+The controller-provisioned M5-W18 lane set is retained for traceability, but all A1-A11 lanes are now HOLD:
 
 - Path pattern: `/home/ainfinit/.codex/worktrees/m5-w18-aN/mvp-browser-os-v3`
 - Branch pattern: `codex/m5-w18-aN`
