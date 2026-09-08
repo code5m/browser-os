@@ -135,6 +135,7 @@ Status legend: ✅ INDEPENDENTLY CONFIRMED · 🗣 AUTHOR CLAIMS · ❓ UNVERIFI
 - **影响**: classification rationale is based on a non-existent code path; the actual reject target (plaintext table) is mislabeled.
 - **最小修正**: A10 ledger D6 → reject **dbx SQLite plaintext `connection_secrets` table** (storage.rs), note FileSecretStore is dead; align with A6 MERGE_NOTES. (Ledger D6 updated below.) Product itself uses keyring — OK.
 - **归属**: A6 (found); A4 + A10 ledger (align). Low-risk ledger refinement, done in §9.
+- **G4 addendum (A6 §1.1.1/§1.5/G4)**: product `keyring_store` *usage* is correct, but cleanup is imperfect — `db_disconnect` swallows keyring-delete error with `let _ =` (`bridge.rs:6109`) and no orphan `db:<conn_id>` key cleanup on config-delete/shutdown → credentials silently persist in OS keyring. A6 classes this **G4 (ADAPT)**: explicit keyring-delete-failure handling + orphan-key cleanup. Low-risk, return to A6/A4 (separate from the dbx-reject rationale).
 
 ### F15 — A11 R2-provisional "no peer R2 commit" is stale
 - **证据**: A11 R2-provisional (`c3d4712`) §1 line 7 / §1 line 77: "A1–A10 尚无任何 R2 commit" / "所有 peer 报告均为 R1 draft… 无任何 peer 产生 R2 commit". Current state: A10 has R2 + R2B commits; A4/A7/A8/A9 have R2/R2B reports.
@@ -143,6 +144,22 @@ Status legend: ✅ INDEPENDENTLY CONFIRMED · 🗣 AUTHOR CLAIMS · ❓ UNVERIFI
 - **影响**: low — A11's own R2B task (§12) is to refresh after peers; expected, but note it.
 - **最小修正**: A11 refreshes the R2 status matrix against current peer HEADs (incl. this A10 R2B) before declaring W18 complete; must not claim "all peers have no R2".
 - **归属**: A11. Low-risk, return to A11.
+
+### F16 — A3 reconciled against A2 R1 draft; A2 R2 now published (retire D-A3-1)
+- **证据**: A3 `D-A3-1` (line 419): "A2 的 R2 研究报告尚未发布… orphan/unresolved 的权威派生规则、markdown 扫描真源、colorGroups schema、search DSL 完整语法 的最终定义须消费 A2 R2 后才能冻结本 lane 的 W19 切片边界"; A3 §R2-F reconciles against **A2 R1 draft** (line 297). A2 R2 (`bcdfc3b`) is now published and **consistent** with A3 on the load-bearing definitions: alias precedence filename>alias (§3.4/§3.5), `hideUnresolved`→unresolved (§3.7), backlink/outgoing = computed-not-stored (§3.8), orphan = node with in+out degree 0 (synthetic fixture §5 `orphan-D` PASS, lines 230/240).
+- **状态**: ✅ INDEPENDENTLY CONFIRMED consistent on orphan/unresolved/backlink; A2 R2 additionally supplies the tag/attachment/frontmatter + colorGroups schema A3 flagged as pending (A3 line 413 "schema 待 A2 R2").
+- **问题**: A3's "partial dependency on A2 R2" (§R2-F line 413) is now resolvable; D-A3-1 is stale and should be retired against A2 R2 (`bcdfc3b`) before W19.
+- **影响**: low — no contradiction; only a sequencing/version-staleness item (same pattern as F15).
+- **最小修正**: A3 re-syncs colorGroups/search-DSL schema against A2 R2 `bcdfc3b` and retires D-A3-1; A11 records A2 R2 HEAD in the manifest.
+- **归属**: A3 (re-sync); A11 (manifest). Low-risk, return to original lanes.
+
+### F17 — `db_cancel` contract must absorb A6 §4.2 race requirements (enriches F12)
+- **证据**: A6 §4.2: product `QueryCancel` (`database.rs:168`) has only an L1 atomic flag + an L2 fetch loop checking every 64 rows (`database.rs:184-192`); `QueryCancel::cancel` is `#[allow(dead_code)]` (`:187`) — **no `db_cancel` command triggers it**, so the race is currently unreachable; MySQL/Postgres fetch is `NotSupported` (`:490-497`), **no server-side KILL**. dbx correct form (REIMPLEMENT_FROM_BEHAVIOR): `query_cancel.rs` `RunningQueries` registry (`:84`) stores `execution_id ↔ CancellationToken + InterruptFn` under one lock (avoids orphan-registration race window `:71-79`); `register_interrupt` registers driver-level out-of-band interrupt; `DETACHED_REGISTRATION_GRACE_PERIOD=30min` (`:18`) reclaims orphan registrations. A6 acceptance assertion: `DB_CANCEL_SERVER_SIDE` fail-closed test.
+- **状态**: ✅ INDEPENDENTLY CONFIRMED (product source + A6). Extends F12.
+- **问题**: A4's F12 freeze target `db_cancel(conn_id, query_id)` must not be a bare flag-flip; it must carry the registry + server-side KILL + 30-min grace design, or the cancel race (G3) stays unfixable.
+- **影响**: design-contract alignment — A5's cancel UI (F12) depends on this; without the registry/KILL, W19 cancel is cosmetic.
+- **最小修正**: A4 freezes `db_cancel(conn_id, query_id)` with (a) `RunningQueries` registry (exec_id ↔ token+interrupt, single-lock), (b) driver-level `register_interrupt` + server-side KILL for MySQL/Postgres (resolve `NotSupported`), (c) `DETACHED_REGISTRATION_GRACE_PERIOD=30min` orphan reclamation; A6's `DB_CANCEL_SERVER_SIDE` fail-closed test becomes the W19 acceptance gate. A5 consumes.
+- **归属**: A4 (freeze design) + A6 (race spec) + A5 (consume). ESCALATE (extends F12 design contract).
 
 ## 3. Cross-cutting conflicts requiring A0 ruling (consolidated)
 
@@ -154,6 +171,8 @@ Status legend: ✅ INDEPENDENTLY CONFIRMED · 🗣 AUTHOR CLAIMS · ❓ UNVERIFI
 | F12 | A4 must freeze `db_cancel` before A5 W19 | cross-lane open dependency | record SHA at W19 open |
 | F14 | dbx live cred path = SQLite plaintext `connection_secrets` (FileSecretStore dead) — A4/A10 D6 mislabeled | ledger accuracy | A10 ledger D6 updated; A4 align |
 | F15 | A11 "no peer R2 commit" stale | W18 completion gating | A11 refresh matrix vs current peer HEADs |
+| F16 | A3 reconciled vs A2 R1; A2 R2 now published → retire D-A3-1 | version staleness | A3 re-sync colorGroups/search-DSL vs A2 R2 `bcdfc3b`; A11 record HEAD |
+| F17 | `db_cancel` must absorb A6 §4.2 race contract (registry + server-side KILL + 30min grace) | extends F12 design | A4 freezes `db_cancel` with A6 G3 spec; `DB_CANCEL_SERVER_SIDE` = W19 gate |
 
 Low-risk items (F2-b, F9, F11) returned to original lanes; not escalated.
 
@@ -162,7 +181,7 @@ Low-risk items (F2-b, F9, F11) returned to original lanes; not escalated.
 ## 4. Decision summary (≤2 pages)
 
 **Bottom line:** A10's R2 license/transplant ledger stands; R2B independent review
-confirms peers on the load-bearing claims and surfaces four items for A0 (F7/F10/F12/F13).
+confirms peers on the load-bearing claims and surfaces five items for A0 (F7/F10/F12/F13/F17).
 
 1. **Licensing — CLOSED, no conflict.** Product = MulanPSL-2.0 (re-confirmed from
    `LICENSE` + A8 fixing A0 #7). Inbound dbx (`c0a7be12`, Apache-2.0) and
@@ -188,7 +207,12 @@ confirms peers on the load-bearing claims and surfaces four items for A0 (F7/F10
    report claim) — needs W19 product fix by A4+A5 (F13).
 7. **Escalate to A0:** (a) DbValue dual-enum unification (F13); (b) dispatch 1358
    A3→A8 typo (F10); (c) zvec metric naming must not be quoted as recall@10 (F7);
-   (d) A4 freezes `db_cancel` before A5 (F12).
+   (d) A4 freezes `db_cancel` (with A6 §4.2 race contract: RunningQueries registry +
+   server-side KILL for MySQL/Postgres + 30-min grace; `DB_CANCEL_SERVER_SIDE` = W19
+   gate) before A5 (F12/F17).
+8. **A2↔A3 semantics consistent (low-risk):** A3's D-A3-1 is stale — A2 R2 (`bcdfc3b`)
+   is published and matches on orphan/unresolved/backlink; A3 should re-sync colorGroups/
+   search-DSL schema vs A2 R2 and retire D-A3-1 (F16).
 
 **Consequence of each open item:** F10 is a doc fix (no code impact); F7 only
 affects how W19 cites retrieval quality (no correctness block); F12 is a W19
@@ -208,7 +232,7 @@ sequencing dependency (does not block low-risk first slices).
 
 ## 6. OPEN_DECISIONS / NEXT
 
-- **OPEN_DECISIONS**: F13 (DbValue dual-enum → W19 product fix by A4+A5, escalate), F7 (metric naming → A0), F10 (dispatch typo → A0/A11), F12 (`db_cancel` freeze → A4, recorded by A0 at W19), F14 (ledger D6 dbx plaintext table → A10/A4 align, done), F15 (A11 refresh R2 matrix → A11).
+- **OPEN_DECISIONS**: F13 (DbValue dual-enum → W19 product fix by A4+A5, escalate), F7 (metric naming → A0), F10 (dispatch typo → A0/A11), F12+F17 (`db_cancel` freeze must include A6 §4.2 race contract → A4, recorded by A0 at W19), F14 (ledger D6 dbx plaintext table + G4 keyring cleanup → A10/A4/A6, done/carry), F15 (A11 refresh R2 matrix → A11), F16 (A3 re-sync vs A2 R2 `bcdfc3b`, retire D-A3-1 → A3/A11, low-risk).
 - **WAITING_DEPENDENCY**: none that block this review; A2/A3 Obsidian Vue blueprint (O1–O6) still pending for full transplant closure (does not change first slice).
 - **VERIFY (run)**: `grep -cE '^\s*#\[test\]' src-tauri/src/database.rs` → 23 (done, confirmed). Peer claims read from fixed SHAs (done). No product code executed; `NO_PRODUCT_CODE=true`, `NO_PUSH=true`.
 - **NEXT**: hand `A10-R2B-review-findings.md` + ledger §9 to A11 for the integration manifest; A0 rules F7/F10/F12 at W19 open.

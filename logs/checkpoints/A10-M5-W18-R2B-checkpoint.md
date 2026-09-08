@@ -30,6 +30,8 @@ CORRECTIONS=
   - DbValue wire dual-enum: database.rs serializes i64/f64/binary, domain.rs+TS use int/float/blob_len; B8-1 only fixed domain.rs -> numeric/binary cells render raw JSON (R2B F13, escalate W19 fix A4+A5)
   - A10 ledger D6: dbx live cred path = SQLite plaintext connection_secrets table; FileSecretStore is dead code (R2B F14, per A6)
   - A11 R2-provisional "no peer R2 commit" stale vs current A10 R2+R2B / A4/A7/A8/A9 R2B (R2B F15)
+  - A2<->A3: A3 reconciled vs A2 R1; A2 R2 (bcdfc3b) published & consistent on orphan/unresolved/backlink/alias -> A3 re-sync colorGroups/search-DSL, retire D-A3-1 (R2B F16, low-risk)
+  - db_cancel contract must absorb A6 §4.2 race spec (registry + server-side KILL + 30min grace; DB_CANCEL_SERVER_SIDE gate) -> extends F12 (R2B F17, escalate)
 VERIFY=
   grep -cE '^\s*#\[test\]' src-tauri/src/database.rs  => 23  (executed, confirmed)
   head LICENSE => MulanPSL-2.0  (executed, confirmed)
@@ -43,8 +45,10 @@ OPEN_DECISIONS=
   F7 zvec metric naming (precision mislabeled recall@10) -> A0 rule before W19
   F10 dispatch line 1358 A3->A8 attribution typo -> A0/A11 fix
   F12 A4 freeze db_cancel(conn_id, query_id) before A5 W19 -> A0 record dep SHA
-  F14 ledger D6 dbx plaintext table (done) -> A4 align
+  F14 ledger D6 dbx plaintext table + G4 keyring cleanup (done/carry) -> A4/A6 align
   F15 A11 refresh R2 status matrix vs current peer HEADs -> A11
+  F16 A3 re-sync vs A2 R2 bcdfc3b, retire D-A3-1 -> A3/A11 (low-risk)
+  F17 db_cancel must absorb A6 §4.2 race contract (registry+server-side KILL+30min grace) -> extends F12, escalate
 NEXT=hand review + ledger §9 to A11 manifest; A0 rules F7/F10/F12 at W19 open
 NO_PRODUCT_CODE=true
 NO_PUSH=true
