@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A1 R2B Workbench Wireframe Prototype</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", sans-serif; background: #1a1a2e; color: #cbd5e0; display: flex; flex-direction: column; align-items: center; gap: 24px; padding: 24px; }
+  h1 { font-size: 18px; color: #fff; }
+  h2 { font-size: 14px; color: #94a3b8; margin-bottom: 8px; }
+  .frame-container { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .frame-label { font-size: 13px; color: #64748b; }
+  .frame { border: 2px solid #475569; border-radius: 4px; overflow: hidden; display: flex; flex-direction: column; background: #0f172a; }
+
+  /* Shared shell elements */
+  .top-bar { display: flex; align-items: center; gap: 8px; padding: 0 12px; background: #1e293b; border-bottom: 1px solid #334155; font-size: 12px; }
+  .top-bar .slot { padding: 4px 8px; background: #334155; border-radius: 3px; color: #94a3b8; }
+  .top-bar .search { flex: 1; max-width: 300px; }
+  .activity-bar { display: flex; flex-direction: column; gap: 4px; padding: 8px 4px; background: #1e293b; border-right: 1px solid #334155; }
+  .activity-bar .icon { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 16px; border-radius: 4px; cursor: pointer; }
+  .activity-bar .icon:hover { background: #334155; }
+  .activity-bar .icon.active { background: #3b82f6; }
+  .left-panel { background: #1e293b; border-right: 1px solid #334155; padding: 8px; font-size: 11px; overflow: hidden; }
+  .left-panel .panel-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+  .left-panel .panel-tab { padding: 2px 6px; background: #334155; border-radius: 3px; cursor: pointer; }
+  .left-panel .panel-tab.active { background: #3b82f6; }
+  .left-panel .tree { padding-left: 12px; color: #64748b; line-height: 1.8; }
+  .center-area { flex: 1; display: flex; flex-direction: column; background: #0f172a; }
+  .doc-tabs { display: flex; gap: 2px; padding: 0 8px; background: #1e293b; border-bottom: 1px solid #334155; }
+  .doc-tab { padding: 6px 12px; font-size: 12px; color: #94a3b8; border-radius: 3px 3px 0 0; cursor: pointer; }
+  .doc-tab.active { background: #0f172a; color: #fff; }
+  .doc-tab .close { margin-left: 6px; opacity: 0.5; }
+  .doc-content { flex: 1; padding: 16px; font-size: 13px; color: #64748b; display: flex; align-items: center; justify-content: center; }
+  .right-panel { background: #1e293b; border-left: 1px solid #334155; padding: 8px; font-size: 11px; }
+  .bottom-panel { background: #1e293b; border-top: 1px solid #334155; padding: 8px; font-size: 11px; display: flex; flex-direction: column; }
+  .bottom-panel .bp-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+  .bottom-panel .bp-tab { padding: 2px 6px; background: #334155; border-radius: 3px; cursor: pointer; }
+  .bottom-panel .bp-tab.active { background: #3b82f6; }
+  .status-bar { display: flex; align-items: center; gap: 12px; padding: 0 12px; background: #1e293b; border-top: 1px solid #334155; font-size: 11px; color: #64748b; }
+  .status-bar .item { padding: 2px 4px; }
+  .body-row { flex: 1; display: flex; min-height: 0; }
+  .center-col { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+  /* 1440x900 */
+  .frame-1440 { width: 1440px; height: 900px; }
+  .frame-1440 .top-bar { height: 40px; }
+  .frame-1440 .activity-bar { width: 48px; }
+  .frame-1440 .left-panel { width: 260px; }
+  .frame-1440 .right-panel { width: 240px; }
+  .frame-1440 .bottom-panel { height: 240px; }
+  .frame-1440 .status-bar { height: 28px; }
+
+  /* 1024x720 */
+  .frame-1024 { width: 1024px; height: 720px; }
+  .frame-1024 .top-bar { height: 40px; }
+  .frame-1024 .activity-bar { width: 48px; }
+  .frame-1024 .left-panel { width: 220px; }
+  .frame-1024 .right-panel { display: none; }
+  .frame-1024 .bottom-panel { height: 180px; }
+  .frame-1024 .status-bar { height: 28px; }
+
+  /* 800x600 */
+  .frame-800 { width: 800px; height: 600px; }
+  .frame-800 .top-bar { height: 36px; }
+  .frame-800 .activity-bar { width: 40px; }
+  .frame-800 .left-panel { display: none; }
+  .frame-800 .right-panel { display: none; }
+  .frame-800 .bottom-panel { display: none; }
+  .frame-800 .status-bar { height: 24px; }
+
+  .annotation { font-size: 11px; color: #f59e0b; margin-top: 4px; }
+</style>
+</head>
+<body>
+<h1>A1 R2B Workbench Shell Wireframe Prototype</h1>
+<p style="font-size:12px;color:#64748b">自包含静态研究原型，浏览器直接打开。合成数据，不接真实 IPC。</p>
+
+<!-- 1440x900 -->
+<div class="frame-container">
+  <h2>桌面 1440×900</h2>
+  <div class="frame-label">DPI=1 / 1.5 / 2 均须测试</div>
+  <div class="frame frame-1440">
+    <div class="top-bar">
+      <span class="slot">📁 项目切换</span>
+      <span class="slot">当前上下文: my-project</span>
+      <span class="slot search">🔍 全局搜索 (Ctrl+P)</span>
+      <span class="slot">⚡ 快捷命令</span>
+    </div>
+    <div class="body-row">
+      <div class="activity-bar">
+        <div class="icon active">🏠</div>
+        <div class="icon">📁</div>
+        <div class="icon">💻</div>
+        <div class="icon">📋</div>
+        <div class="icon">📚</div>
+        <div class="icon">🗄️</div>
+        <div class="icon">🕸️</div>
+      </div>
+      <div class="left-panel">
+        <div class="panel-tabs">
+          <span class="panel-tab active">📂 文件</span>
+          <span class="panel-tab">🗄️ 连接</span>
+          <span class="panel-tab">📚 知识</span>
+        </div>
+        <div class="tree">
+          📁 src/<br>
+          &nbsp;├ 📄 App.vue<br>
+          &nbsp;├ 📁 components/<br>
+          &nbsp;├ 📁 stores/<br>
+          &nbsp;└ 📄 bridge.ts<br>
+          📁 src-tauri/<br>
+          📄 package.json
+        </div>
+      </div>
+      <div class="center-col">
+        <div class="doc-tabs">
+          <span class="doc-tab active">📄 App.vue <span class="close">✕</span></span>
+          <span class="doc-tab">📄 useLayoutStore.ts <span class="close">✕</span></span>
+          <span class="doc-tab">🗄️ query1.sql <span class="close">✕</span></span>
+          <span class="doc-tab">+</span>
+        </div>
+        <div class="doc-content">中央文档区 — 文件编辑/SQL控制台/笔记/网页</div>
+        <div class="bottom-panel">
+          <div class="bp-tabs">
+            <span class="bp-tab active">💻 终端</span>
+            <span class="bp-tab">📊 查询结果</span>
+            <span class="bp-tab">⏰ 任务</span>
+            <span class="bp-tab">🛡️ 问题</span>
+          </div>
+          <div style="color:#64748b;padding:8px;">$ cargo build --release<br>Compiling... (底部工具窗口 240px)</div>
+        </div>
+      </div>
+      <div class="right-panel">
+        <div style="color:#94a3b8;margin-bottom:8px;">右侧工具窗口</div>
+        <div class="tree">
+          📝 属性<br>
+          🔗 反向链接<br>
+          🕸️ 局部图谱<br>
+          <br>
+          <span style="color:#475569">按需显示 240px<br>不挤占固定宽度</span>
+        </div>
+      </div>
+    </div>
+    <div class="status-bar">
+      <span class="item">📁 my-project</span>
+      <span class="item">🌿 main</span>
+      <span class="item">⏰ 2 运行中</span>
+      <span class="item">📡 索引新鲜</span>
+      <span class="item">🔌 已连接</span>
+      <span class="item">💾 42M</span>
+    </div>
+  </div>
+  <div class="annotation">左260px + 底240px + 右240px(按需) | 中央剩余区不足时按优先级收起侧栏</div>
+</div>
+
+<!-- 1024x720 -->
+<div class="frame-container">
+  <h2>窄窗 1024×720</h2>
+  <div class="frame-label">右工具窗口隐藏 | 底部折叠 180px | 左可折叠</div>
+  <div class="frame frame-1024">
+    <div class="top-bar">
+      <span class="slot">📁 项目</span>
+      <span class="slot search">🔍</span>
+      <span class="slot">☰</span>
+    </div>
+    <div class="body-row">
+      <div class="activity-bar">
+        <div class="icon active">🏠</div>
+        <div class="icon">📁</div>
+        <div class="icon">💻</div>
+        <div class="icon">📋</div>
+        <div class="icon">📚</div>
+      </div>
+      <div class="left-panel">
+        <div class="panel-tabs">
+          <span class="panel-tab active">📂</span>
+          <span class="panel-tab">🗄️</span>
+          <span class="panel-tab">📚</span>
+        </div>
+        <div class="tree">
+          📁 src/<br>
+          &nbsp;├ 📄 App.vue<br>
+          &nbsp;└ 📁 stores/
+        </div>
+      </div>
+      <div class="center-col">
+        <div class="doc-tabs">
+          <span class="doc-tab active">📄 App.vue <span class="close">✕</span></span>
+          <span class="doc-tab">+</span>
+        </div>
+        <div class="doc-content">中央文档区</div>
+        <div class="bottom-panel">
+          <div class="bp-tabs">
+            <span class="bp-tab active">💻</span>
+            <span class="bp-tab">📊</span>
+            <span class="bp-tab">⏰</span>
+          </div>
+          <div style="color:#64748b;padding:4px;">$ (底部 180px)</div>
+        </div>
+      </div>
+    </div>
+    <div class="status-bar">
+      <span class="item">📁 my-project</span>
+      <span class="item">⏰ 2</span>
+      <span class="item">🔌 已连接</span>
+    </div>
+  </div>
+  <div class="annotation">右工具窗口隐藏(按需弹出) | 底部默认折叠 | 左可折叠为图标</div>
+</div>
+
+<!-- 800x600 -->
+<div class="frame-container">
+  <h2>窄窗 800×600</h2>
+  <div class="frame-label">左/右/底部全部折叠 | ☰ 菜单或快捷键弹出覆盖层</div>
+  <div class="frame frame-800">
+    <div class="top-bar">
+      <span class="slot">📁</span>
+      <span class="slot search">🔍</span>
+      <span class="slot">☰</span>
+    </div>
+    <div class="body-row">
+      <div class="activity-bar">
+        <div class="icon active">🏠</div>
+        <div class="icon">📁</div>
+      </div>
+      <div class="center-col">
+        <div class="doc-tabs">
+          <span class="doc-tab active">📄 App.vue <span class="close">✕</span></span>
+          <span class="doc-tab">+</span>
+        </div>
+        <div class="doc-content">中央文档区（全宽）</div>
+      </div>
+    </div>
+    <div class="status-bar">
+      <span class="item">📁 my-project</span>
+      <span class="item">🔌</span>
+    </div>
+  </div>
+  <div class="annotation">左/右/底部全部折叠 | 通过 ☰ 菜单或快捷键弹出覆盖层</div>
+</div>
+
+<!-- Keyboard/IME spec -->
+<div style="max-width:800px;font-size:12px;color:#94a3b8;line-height:1.8;">
+  <h2>焦点/键盘/IME 规格</h2>
+  <ul>
+    <li><b>Tab</b>: 活动栏 → 左工具窗口 → 中央文档区 → 底部 → 状态栏 循环</li>
+    <li><b>Ctrl+Shift+E</b>: 切换左工具窗口（文件树）</li>
+    <li><b>Ctrl+Shift+D</b>: 切换底部工具窗口（终端/结果）</li>
+    <li><b>Ctrl+Shift+A</b>: 切换右工具窗口（属性/反链）</li>
+    <li><b>Ctrl+P</b>: 全局搜索（文件/符号/操作）</li>
+    <li><b>IME 输入</b>: 不误触全局快捷键（INPUT/TEXTAREA/contentEditable 跳过）</li>
+    <li><b>焦点返回</b>: 工具窗口隐藏后焦点返回触发它的文档区位置</li>
+  </ul>
+</div>
+
+<!-- Coverage map -->
+<div style="max-width:800px;font-size:11px;color:#64748b;line-height:1.6;">
+  <h2>旧入口 → 新位置 覆盖</h2>
+  <table style="border-collapse:collapse;width:100%;">
+    <tr style="background:#1e293b;"><th style="padding:4px;border:1px solid #334155;text-align:left;">旧 MainView</th><th style="padding:4px;border:1px solid #334155;text-align:left;">新位置</th></tr>
+    <tr><td style="padding:3px;border:1px solid #334155;">home</td><td style="padding:3px;border:1px solid #334155;">中央文档区（工作恢复入口）</td></tr>
+    <tr><td style="padding:3px;border:1px solid #334155;">browser/grid</td><td style="padding:3px;border:1px solid #334155;">中央文档区（网页标签）</td></tr>
+    <tr><td style="padding:3px;border:1px solid #334155;">files</td><td style="padding:3px;border:1px solid #334155;">左工具窗口 + 中央编辑区</td></tr>
+    <tr><td style="padding:3px;border:1px solid #334155;">clip/term/tasks/audit</td><td style="padding:3px;border:1px solid #334155;">底部工具窗口</td></tr>
+    <tr><td style="padding:3px;border:1px solid #334155;">arts/scripts/commands/repo</td><td style="padding:3px;border:1px solid #334155;">左工具窗口</td></tr>
+    <tr><td style="padding:3px;border:1px solid #334155;">db</td><td style="padding:3px;border:1px solid #334155;">左(连接树)+中央(SQL)+底部(结果)</td></tr>
+    <tr><td style="padding:3px;border:1px solid #334155;">graph</td><td style="padding:3px;border:1px solid #334155;">右(局部图谱)+中央(全局图谱)</td></tr>
+    <tr><td style="padding:3px;border:1px solid #334155;">apps/tools/skills/agents/plugin/settings</td><td style="padding:3px;border:1px solid #334155;">☰ 菜单</td></tr>
+    <tr><td style="padding:3px;border:1px solid #334155;">editor</td><td style="padding:3px;border:1px solid #334155;">中央文档区（编辑/预览）</td></tr>
+  </table>
+</div>
+</body>
+</html>
