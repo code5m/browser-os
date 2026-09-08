@@ -123,3 +123,15 @@ curl -s https://api.github.com/repos/sk-wang/slio-git | head -c 120             
 git log -1 --format='%h %ad %s' --date=short -S"is intentionally independent from FileEditor" -- src/components/layout/MainArea.vue
 # -> 61cff56 2026-09-07 feat(M5): integrate bug-hunt closeout and scheduler safety
 ```
+
+---
+
+## 9. 第 4 波（2026-09-08 续 3）
+
+- 二次核验 F10：grep `registerCommand|executeCommand|commandRegistry|command_registry` → **0 命中**；`commands` 视图实为 `CommandSnippetPanel`（命令片段面板，`MainArea.vue:24,208`），**非**命令注册表。F10 维持。
+- 新增产物：`logs/research/M5-W18/A10-R3-acceptance-preflight-20260908.md`（给 A11 的 G1–G8 落点 + R3 卡验收项落点 + 缺失动作枚举 + 不可能转移清单 + 可复制验收前检）。
+- 价值：把 A10 前三波分散的基线收敛成一份**终审前可直接打勾**的清单；待 A2–A9 R3 产物落地后立刻执行。
+
+```bash
+grep -rniE "registerCommand|commandRegistry|executeCommand" src   # 0 命中（F10 维持）
+```
