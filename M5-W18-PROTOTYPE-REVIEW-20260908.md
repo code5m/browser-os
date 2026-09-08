@@ -1,6 +1,17 @@
 # M5-W18 Workbench Prototype Review
 
-Status: `READY_FOR_USER_REVIEW`
+Status: `REVISE`
+
+## User verdict
+
+The first prototype is rejected as the product shell. It makes the application feel smaller and busier than the current Chrome-like layout.
+
+- Preserve the familiar browser-first structure and large content viewport.
+- Remove always-visible feature buttons; the default state must be simpler and more spacious.
+- Borrow IDEA's discoverability and progressive disclosure rather than its dense permanent chrome: tool windows collapse all/restore/maximize, trees collapse all/expand one level/bounded expand all, plus pin/unpin and auto-hide.
+- Put complete, scope-aware actions in right-click menus and the command entry.
+- Git must become a full workflow, not a small status panel: stage by file/hunk, diff, log/graph, branches, worktrees, stash, merge, rebase/interactive rebase, cherry-pick, conflict resolution and command history.
+- R3 task cards and replacement prototypes are defined in `M5-W18-R3-UX-TASKS-20260908.md`.
 
 This review decides the interaction direction before product UI code is changed. The prototypes use synthetic data and do not invoke native commands.
 

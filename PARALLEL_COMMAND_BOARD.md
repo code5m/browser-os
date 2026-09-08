@@ -1,19 +1,19 @@
 # Parallel Command Board
 
-> Updated: 2026-09-08 11:30 CST
+> Updated: 2026-09-08 11:44 CST
 > Controller: A0; external lanes: A1-A11
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
 > Evidence baseline: `master` at `d6127c4`; obtain the current HEAD with git before starting. This dispatch changes documentation only.
 > Baseline chain: `61cff56` (BUG-HUNT + scheduler safety) -> `e3b6b40` (ACL rebuild) -> `8e67ab0` (debug-only IPC origin isolation) -> `12a09b8` (W18 lane isolation) -> `78d2cfb` (research-first reset) -> `d6127c4` (R2 evidence dispatch). Runtime authority remains LOCKED. A0 is the controller and the only lane that integrates or pushes; the external agents are A1-A11.
-> Current NEXT: `M5-W18-PROTOTYPE-REVIEW`. All A1-A11 R/R2/R2B research commits are integrated on canonical `master`; A0 verdict is `PASS_WITH_DECISIONS`. `W19=CLOSED` until the user accepts the workbench direction. Only an explicit A0 slice-opening record authorizes product code.
+> Current NEXT: `M5-W18-R3-UX`. The first IDEA-shell prototype was rejected by the user. Preserve the current Chrome-like content-first shell and redesign it with IDEA-style progressive disclosure, complete context menus, and a full Git workflow inspired by open-source Git clients. `W19=CLOSED`.
 
 ## Current Dispatch Entry
 
-Read [A0 integration audit](logs/checkpoints/A0-M5-W18-R2B-integration-audit-20260908.md), [prototype review gate](M5-W18-PROTOTYPE-REVIEW-20260908.md), [workbench blueprint](WORKBENCH_BLUEPRINT-20260908.md), and [A0 low-cost handoff](A0-HANDOFF-LOW-COST-20260908.md).
+Read [R3 UX task cards](M5-W18-R3-UX-TASKS-20260908.md), [rejected prototype review](M5-W18-PROTOTYPE-REVIEW-20260908.md), [A0 integration audit](logs/checkpoints/A0-M5-W18-R2B-integration-audit-20260908.md), and [workbench blueprint](WORKBENCH_BLUEPRINT-20260908.md).
 
-This entry supersedes conflicting historical NEXT, directory, model, and lane instructions below. The R2B research wave is complete and integrated. A11's rolling manifest is preserved as lane evidence, but the A0 integration audit is authoritative because it consumes A10's final rolling review. External lanes are HOLD until A0 opens named W19 slices after prototype review.
+This entry supersedes conflicting historical NEXT, directory, model, and lane instructions below. R2B domain research remains accepted. R3 reopens only interaction research and prototype work: no product source, dependencies, capabilities, ACLs, native runtime, or user data may change.
 
-Runtime authority remains locked. The candidate S0-S5 cards are not coding authorization. Review the A1 shell and A5 database prototypes first; approval opens only named slices with a unique owner, files, dependency SHA, tests, and rollback. A0 alone integrates and pushes.
+Runtime authority remains locked. A1 owns the consolidated prototype; A2-A9 provide bounded design evidence; A10 independently reviews; A11 packages acceptance. A0 alone integrates and pushes.
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
