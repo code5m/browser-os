@@ -30,13 +30,20 @@
 
 ## 2. 实跑结果（针对当前 R3 原型）
 
+A11 矩阵（A11-R3B-acceptance-matrix.py --manifest ...）：
 ```
-20 PASS / 0 FAIL / 12 GAP_CONFIRMED / 2 WARN / 0 NOT_RUN
+21 PASS / 0 FAIL / 12 GAP_CONFIRMED / 2 WARN / 0 NOT_RUN
 OPEN R3B FINDINGS: R3B-01, R3B-02, R3B-03, R3B-04, R3B-05, R3B-06, R3B-08
 GATE: FAIL   (PROVISIONAL_PENDING_UPSTREAM)
 ```
 
-缺口即上游 R3B 待办：A1 须补 worktree/conflicts/patch/amend/reset-revert、加 role/aria、加 1200×800 与 900×600、折叠保留 28px 条、换中性字体栈、把 `Ctrl+K` 改回地址；A10 须重跑检查器至全绿。
+A10 权威闭门审计（A10-R3B-closure-audit.py @ facc4b9，A0 九裁定 P1–P9）：
+```
+PROBES: 0/9 PASS   FINDINGS: HIGH=24 MEDIUM=25   GATE: FAIL
+```
+主阻断 = **A1 修正原型未交付**（worktree 仍 `ee2b8fd`），导致 P4/P5/P6 及其余探针连带 FAIL。
+
+缺口即上游 R3B 待办：A1 须补 worktree/conflicts/patch/amend/reset-revert、加 role/aria、加 1200×800 与 900×600、折叠保留 28px 条、换中性字体栈、把 `Ctrl+K` 改回地址；A10 须待 A1 落地后重跑审计至全绿。
 
 ## 3. 如何复跑
 
