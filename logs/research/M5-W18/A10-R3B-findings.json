@@ -1,0 +1,402 @@
+{
+  "tool": "A10-R3B-closure-audit",
+  "strict_sizes": false,
+  "base": "/home/ainfinit/.codex/worktrees/m5-w18-a10/mvp-browser-os-v3/logs/research/M5-W18",
+  "generated_at": "2026-09-08T16:21:31",
+  "gate": "FAIL",
+  "probes": {
+    "total": 9,
+    "passed": 0,
+    "failed": 9
+  },
+  "findings": {
+    "high": 18,
+    "medium": 30,
+    "low_info": 0,
+    "items": [
+      {
+        "severity": "HIGH",
+        "probe": "P1",
+        "message": "A1-R3-prototype.html is not self-contained",
+        "evidence": "PROTO_NO_BRANDING: donor branding string (allowed only as a documented source citation) (2 hit(s)) / L413: <h2>6a. Git Mode — Central Log — 1440×900（Rebased 风格：log 作中央文档）</h2> / L414: <div class=\"frame-meta\">Git log/graph 占中央文档区 | 可切换到底部工具窗口（见 6b）| 不复制 Rebased 品牌/资产</div>",
+        "line": null
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P1",
+        "message": "A3-R3-toolwindow-prototype.html is not self-contained",
+        "evidence": "PROTO_NO_BRANDING: donor branding string (allowed only as a documented source citation) (2 hit(s)) / L164: <span class=\"chip\">🌐 设计参考 · Rebased</span> / L186: <h2>活动文档：设计参考 · Rebased</h2>",
+        "line": null
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P1",
+        "message": "A5-R3-prototype.html is not self-contained",
+        "evidence": "PROTO_NO_BRANDING: donor branding string (allowed only as a documented source citation) (1 hit(s)) / L11: --mono:ui-monospace,\"JetBrains Mono\",\"Cascadia Mono\",Consolas,monospace;",
+        "line": null
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P2",
+        "message": "A1-R3-browser-workbench.md still states a superseded chrome number (A0 froze 60px top + 24px status)",
+        "evidence": "合计 68px ✅ ≤80px",
+        "line": 71
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P2",
+        "message": "A1-R3-browser-workbench.md still states a superseded chrome number (A0 froze 60px top + 24px status)",
+        "evidence": "- 顶部 chrome 68px + 边缘图标条 28px + 内容区 + 状态栏 24px",
+        "line": 119
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P2",
+        "message": "A1-R3-browser-workbench.md still states a superseded chrome number (A0 froze 60px top + 24px status)",
+        "evidence": "| A2 | 8 控件顶栏 (19→8), AFTER 帧 §7.3/§7.4, 实测 90.1% H 平静态, chrome 89px | §2.1 顶栏, §4 viewport |",
+        "line": 273
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P2",
+        "message": "A1-R3-browser-workbench.md still states a superseded chrome number (A0 froze 60px top + 24px status)",
+        "evidence": "- [x] 顶部 chrome ≤2 行 ≤80px（实测 68px）",
+        "line": 308
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P2",
+        "message": "A2-R3-shell-density-audit.md still states a superseded chrome number (A0 froze 60px top + 24px status)",
+        "evidence": "| 1 | 当前**平静态**并不拥挤：1440x900 下总 chrome 89px（活动条 32 + 页签条 31 + 状态栏 26），内容占 **90.1% 高 / 100.0% 宽**，已满足 R3\"≥85% 高 ≥92% 宽\" |",
+        "line": 20
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P2",
+        "message": "A2-R3-shell-density-audit.md still states a superseded chrome number (A0 froze 60px top + 24px status)",
+        "evidence": "### 7.1 BEFORE · 1440x900 · 平静态（chrome 89px）",
+        "line": 228
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P4",
+        "message": "A1-R3-prototype.html does not visibly locate 7 workflow unit(s)",
+        "evidence": "diff; worktrees; conflicts; patch; command log; amend; reset / revert",
+        "line": null
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P5",
+        "message": "A1-R3-prototype.html accessibility below the R3B floor",
+        "evidence": "role=0/8 aria-*=0/8 tabindex=0/1",
+        "line": null
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P6",
+        "message": "A6-R3-context-menu-command-registry.md does not freeze the palette shortcut (Ctrl+Shift+P)",
+        "evidence": "",
+        "line": null
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P6",
+        "message": "A6-R3-context-menu-command-registry.md does not freeze the address/search shortcut (Ctrl+K)",
+        "evidence": "",
+        "line": null
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P6",
+        "message": "A1-R3-prototype.html binds Ctrl+K to the command palette (A0 froze Ctrl+Shift+P)",
+        "evidence": "<div class=\"cmd-btn\" title=\"command.palette (PROPOSED_NEW, A6)\">🔍 (Ctrl+K)</div>",
+        "line": 169
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P7",
+        "message": "A7-R3-git-workflow-reference-map.md classifies a unit as COPY (A0 ruled COPY=0)",
+        "evidence": "| COPY | 0 | — (forbidden: Kotlin/JVM Apache-2.0 → Rust/MulanPSL-2; A10 provenance gate required first) |",
+        "line": 185
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P8",
+        "message": "A7-R3-git-workflow-reference-map.md prose tally states REIMPLEMENT=9, table/A0 ruling says 10",
+        "evidence": "- ✅ Default to behavior reimplementation (REIMPLEMENT=9, COPY=0).",
+        "line": 210
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P9",
+        "message": "A4-R3-shell-state-persistence-contract.md keeps pinned tool windows during Collapse All (A0 ruled Collapse All hides all, pinned included)",
+        "evidence": "- `collapseAll` sets every non-`pinned` window `state:\"hidden\"` (pinned survive, per global acceptance).",
+        "line": 268
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P9",
+        "message": "A4-R3-shell-state-persistence-contract.md keeps pinned tool windows during Collapse All (A0 ruled Collapse All hides all, pinned included)",
+        "evidence": "| T14 | collapseAll | non-pinned hidden, pinned preserved |",
+        "line": 290
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A1 evidence omits product-edge size(s) (1200x800 default / 900x600 min inner) — reported as hint",
+        "evidence": "1200x800  [group: A1-R3-prototype.html]",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A2 evidence omits product-edge size(s) (1200x800 default / 900x600 min inner) — reported as hint",
+        "evidence": "1200x800  [group: A2-R3-shell-density-audit.md, A2-R3-measure.py, A2-R3-run-20260908.out]",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A3 evidence omits product-edge size(s) (1200x800 default / 900x600 min inner) — reported as hint",
+        "evidence": "1200x800, 900x600  [group: A3-R3-toolwindow-prototype.html, A3-R3-toolwindow-disclosure-20260908.md]",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A8 evidence omits product-edge size(s) (1200x800 default / 900x600 min inner) — reported as hint",
+        "evidence": "1200x800, 900x600  [group: A8-R3-visual-density-frames.html, A8-R3-visual-density-design.md]",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A5 evidence omits product-edge size(s) (1200x800 default / 900x600 min inner) — reported as hint",
+        "evidence": "1200x800, 900x600  [group: A5-R3-prototype.html, A5-R3-database-shell.md]",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A1-R3-prototype.html still references the dropped 800x600 size",
+        "evidence": "A1-R3-prototype.html L152: <p class=\"desc\">替代壳层原型（终稿，消费 A2-A10）。保留 Chrome 式紧凑标签+地址栏+大内容区；IDEA 式渐进披露（可折叠工具窗口、右键菜单、命令面板）。合成数据，不接真实 IPC。覆盖 1920×1080 /",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A1-R3-prototype.html still references the dropped 800x600 size",
+        "evidence": "A1-R3-prototype.html L787: <tr><td style=\"padding:3px 8px;border:1px solid var(--border);\">尺寸覆盖</td><td style=\"padding:3px 8px;border:1px solid var",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A1-R3-prototype.html still references the dropped 800x600 size",
+        "evidence": "A1-R3-prototype.html L809: <tr><td style=\"padding:3px 8px;border:1px solid var(--border);\">A10</td><td style=\"padding:3px 8px;border:1px solid var(",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A2-R3-density-replica.html still references the dropped 800x600 size",
+        "evidence": "A2-R3-density-replica.html L329: // 蓝图 WORKBENCH_BLUEPRINT §3 提到的窄窗 800x600；注意产品 min_inner_size=900x600",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A1-R3-browser-workbench.md still references the dropped 800x600 size",
+        "evidence": "A1-R3-browser-workbench.md L210: | ~~800×600~~ | **剔除**：产品 `min_inner_size(900,600)` 不可达 | A10 F13 |",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A1-R3-browser-workbench.md still references the dropped 800x600 size",
+        "evidence": "A1-R3-browser-workbench.md L281: | A10 | F08(260px FAIL), F09(omni=扩展态), F13(800×600 剔除), G4(PROPOSED_NEW), G5(source-derived), G6(viewport budget PASS) ",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A1-R3-browser-workbench.md still references the dropped 800x600 size",
+        "evidence": "A1-R3-browser-workbench.md L321: - 7 种模式 × 4 种尺寸 × 4 种状态全覆盖（800×600 剔除 per A10 F13）",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A2-R3-shell-density-audit.md still references the dropped 800x600 size",
+        "evidence": "A2-R3-shell-density-audit.md L29: | 10 | 极窄窗已出现\"功能不可用\"而非\"变窄\"：900x600 三面同开内容只剩 **60px 宽**，800x600 为 **0px**；且 800x600 低于 `min_inner_size(900,600)`，与蓝图 §3 的",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A2-R3-shell-density-audit.md still references the dropped 800x600 size",
+        "evidence": "A2-R3-shell-density-audit.md L43: 蓝图提到的 900x600 / 800x600）。",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A2-R3-shell-density-audit.md still references the dropped 800x600 size",
+        "evidence": "A2-R3-shell-density-audit.md L46: ⚠️ `min_inner_size(900,600)` 意味着 **800x600 在现有产品里根本拉不出来**，与蓝图 §3 的\"窄窗 1024x720、800x600\"",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A2-R3-shell-density-audit.md still references the dropped 800x600 size",
+        "evidence": "A2-R3-shell-density-audit.md L115: ### 3.1 极窄窗（900x600 / 800x600）",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A2-R3-shell-density-audit.md still references the dropped 800x600 size",
+        "evidence": "A2-R3-shell-density-audit.md L117: | 状态 | 900x600 | 800x600 |",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A2-R3-shell-density-audit.md still references the dropped 800x600 size",
+        "evidence": "A2-R3-shell-density-audit.md L130: 2. 800x600 低于产品 `min_inner_size(900,600)`，真实产品拉不出这个尺寸；若要支持，必须先改窗口最小尺寸（属产品代码，A2 不做）。",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A2-R3-shell-density-audit.md still references the dropped 800x600 size",
+        "evidence": "A2-R3-shell-density-audit.md L309: - **A0/A1（尺寸口径）**：R3 卡写 4 个目标尺寸（1920x1080/1440x900/1366x768/1024x720），蓝图 §3 另提 800x600，",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A2-R3-shell-density-audit.md still references the dropped 800x600 size",
+        "evidence": "A2-R3-shell-density-audit.md L310: 但产品 `min_inner_size(900,600)`（`main.rs:1226`）使 800x600 不可达。请裁决：改最小窗口（产品代码，A2 不做）",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P3",
+        "message": "A2-R3-shell-density-audit.md still references the dropped 800x600 size",
+        "evidence": "A2-R3-shell-density-audit.md L311: 还是把 800x600 从目标里去掉。A2 两个尺寸都测了（§3.1），不影响其它结论。",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P5",
+        "message": "A1-R3-prototype.html has no :focus-visible styling",
+        "evidence": "",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P5",
+        "message": "A2-R3-density-replica.html accessibility below the R3B floor",
+        "evidence": "role=0/1 aria-*=0/1 tabindex=0/0",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P5",
+        "message": "A8-R3-visual-density-frames.html accessibility below the R3B floor",
+        "evidence": "role=0/1 aria-*=0/1 tabindex=0/0",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P7",
+        "message": "A7-R3-git-workflow-reference-map.md writes the tag as v1.1.15; the upstream ref is refs/tags/1.1.15 (no v prefix) -> record the exact ref name",
+        "evidence": "",
+        "line": null
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P7",
+        "message": "A10-R3-acceptance-preflight-20260908.md cites 2896562e without marking it a demoted research snapshot",
+        "evidence": "| 参照身份/许可 | `A10-R3-reference-and-feasibility-review-20260908.md` | rebased SHA `2896562e…`；Build Terms v1.3；NOTICE 3 行 ",
+        "line": 14
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P7",
+        "message": "A10-R3-reference-and-feasibility-review-20260908.md cites 2896562e without marking it a demoted research snapshot",
+        "evidence": "1. **参照身份可确认、许可不可简化**：`DetachHead/rebased` 确为 `JetBrains/intellij-community` 的 fork（GitHub API `fork=true`，`parent/sourc",
+        "line": 15
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P7",
+        "message": "A10-checkpoint-R3-20260908.md cites 2896562e without marking it a demoted research snapshot",
+        "evidence": "1. `DetachHead/rebased` = `JetBrains/intellij-community` fork（已确认），**固定修订 `2896562e69ff2cac3c90eb3aae4bcce0d4aa9a99`（202",
+        "line": 19
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P7",
+        "message": "A11-R3-checkpoint.md cites 2896562e without marking it a demoted research snapshot",
+        "evidence": "| F-A11-9 | medium | A7 钉 `cee14e9` 与 A10 钉 `2896562e` 不一致；A11 采纳 A10 权威钉版，A0/A10 终裁前不得 W19 采用任何 COPY/ADAPT 单元 |",
+        "line": 97
+      },
+      {
+        "severity": "MEDIUM",
+        "probe": "P7",
+        "message": "A11-R3-progress.md cites 2896562e without marking it a demoted research snapshot",
+        "evidence": "| Git 完整工作流 | `PARTIAL` | `YES` | `NO` | `NOT_RUN` | `NOT_RUN` | A7 实测：14 单元中 5 ADAPT（status/diff/branches/merge，其中 merg",
+        "line": 26
+      }
+    ]
+  },
+  "probe_status": [
+    {
+      "probe": "P1",
+      "status": "FAIL",
+      "count": 3
+    },
+    {
+      "probe": "P2",
+      "status": "FAIL",
+      "count": 6
+    },
+    {
+      "probe": "P3",
+      "status": "FAIL",
+      "count": 21
+    },
+    {
+      "probe": "P4",
+      "status": "FAIL",
+      "count": 1
+    },
+    {
+      "probe": "P5",
+      "status": "FAIL",
+      "count": 4
+    },
+    {
+      "probe": "P6",
+      "status": "FAIL",
+      "count": 3
+    },
+    {
+      "probe": "P7",
+      "status": "FAIL",
+      "count": 7
+    },
+    {
+      "probe": "P8",
+      "status": "FAIL",
+      "count": 1
+    },
+    {
+      "probe": "P9",
+      "status": "FAIL",
+      "count": 2
+    }
+  ]
+}

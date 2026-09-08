@@ -21,6 +21,12 @@ CLOSURE_RC=$?
 python3 "$R3/A10-R3-prototype-selfcontainment-check.py"
 SELFCON_RC=$?
 
+echo
+echo "===== [4/4] emit machine-readable artifacts (JSON + per-lane guide) ====="
+python3 "$R3/A10-R3B-closure-audit.py" --json > "$R3/A10-R3B-findings.json" 2>/dev/null \
+  && python3 "$R3/A10-R3B-gen-remediation.py" "$R3/A10-R3B-findings.json" "$R3/A10-R3B-remediation-guide.md" \
+  && echo "wrote A10-R3B-findings.json + A10-R3B-remediation-guide.md"
+
 if [ "$CLOSURE_RC" -eq 0 ] && [ "$SELFCON_RC" -eq 0 ]; then
   echo
   echo "GATE: PASS — R3B closure gate clean."
