@@ -1,0 +1,232 @@
+<!doctype html>
+<!--
+A2 / M5-W18-R3B :: CANONICAL geometry replica (MEASUREMENT FIXTURE, not a shipped prototype)
+
+Purpose
+  Encode the A0 geometry SSOT (logs/checkpoints/A0-M5-W18-R3-acceptance-audit-20260908.md,
+  "A0 rulings" bullet 4) as CSS, then let a real layout engine (headless Chrome) confirm the
+  encoding produces the arithmetic the ruling predicts at every acceptance size.
+
+A0 geometry SSOT encoded here
+  - geometry uses the application INNER viewport (W x H), excluding the OS titlebar
+  - normal top chrome = exactly 60px = two 30px rows  (#rowA + #rowB)
+  - status bar = 24px                                 (#status)
+  - collapsed mode keeps a 28px activity/tool strip    (#rail)
+  - collapsed active height = (H - 60 - 24) / H
+  - collapsed active width  = (W - 28) / W
+  - acceptance sizes: 1920x1080, 1440x900, 1366x768, 1200x800, 1024x720, 900x600
+    (800x600 dropped by A0: below product min_inner_size)
+
+What this file is NOT
+  - not product code, not a proposal for visual design, not a copy of any reference product
+  - no network, no external font, no dependency, no Tauri/bridge/IPC call, no persistence API
+  - all strings are synthetic; no real host path, no real vault or repo name, no donor name
+
+Tool window sizing modelled here (A2 design choice, DESIGN_DECISION - not frozen by A0)
+  left   = min(260, floor(0.25 * W))    blueprint §3 says ~260px on the left
+  right  = min(320, floor(0.28 * W))
+  bottom = min(240, floor(0.30 * H))    blueprint §3 says ~240px at the bottom
+
+Usage
+  open directly -> renders 1440x900 collapsed and prints nothing visible
+  python3 A2-R3B-measure.py -> drives this file with ?sizes=... and parses #out
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>A2 R3B canonical geometry replica</title>
+<style>
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: system-ui, "Noto Sans CJK SC", sans-serif;
+  background: #e9ecf2; color: #2b3240; font-size: 12px;
+}
+#shell { display: flex; flex-direction: column; overflow: hidden; background: #fff; }
+
+/* ---------- top chrome: exactly 60px = 30 + 30 ---------- */
+#top { flex-shrink: 0; }
+.row {
+  height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 6px;
+  overflow: hidden; white-space: nowrap; flex-shrink: 0;
+}
+#rowA { background: #1f2733; color: #cbd5e0; }
+#rowB { background: #eef1f6; border-bottom: 1px solid #dde2ea; }
+.chip {
+  display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px;
+  border-radius: 4px; background: rgba(255,255,255,.10); color: inherit; white-space: nowrap;
+}
+#rowB .chip { background: #fff; border: 1px solid #d9dfe8; color: #4e5969; }
+.spacer { flex: 1 1 auto; min-width: 0; }
+.field {
+  display: flex; align-items: center; height: 20px; min-width: 0; padding: 0 8px;
+  border-radius: 10px; background: #f4f6f9; color: #6b7280; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ---------- middle: 28px rail + tool windows + content ---------- */
+#mid { flex: 1 1 auto; display: flex; min-height: 0; min-width: 0; }
+#rail {
+  width: 28px; flex-shrink: 0; background: #232c3a; display: flex; flex-direction: column;
+  align-items: center; gap: 6px; padding: 5px 0; overflow: hidden;
+}
+#rail span { font-size: 13px; line-height: 1; }
+#pLeft, #pRight, #pBottom { background: #f7f8fa; flex-shrink: 0; overflow: hidden; }
+#pLeft { border-right: 1px solid #e2e6ee; }
+#pRight { border-left: 1px solid #e2e6ee; }
+#pBottom { border-top: 1px solid #e2e6ee; }
+#center { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+#content {
+  flex: 1 1 auto; min-width: 0; min-height: 0; background: #fff;
+  display: flex; align-items: center; justify-content: center; color: #9aa4b2; overflow: hidden;
+}
+.pad { padding: 8px 10px; color: #7c8698; }
+
+/* ---------- status bar: exactly 24px ---------- */
+#status {
+  height: 24px; flex-shrink: 0; background: #1f2733; color: #9aa4b2;
+  display: flex; align-items: center; gap: 14px; padding: 0 10px; overflow: hidden; white-space: nowrap;
+}
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="shell">
+  <div id="top">
+    <div class="row" id="rowA">
+      <span class="chip">◧ workbench-repo</span>
+      <span class="chip">▸ main</span>
+      <span class="chip">🏠</span><span class="chip">📁</span><span class="chip">🗂</span>
+      <span class="spacer"></span>
+      <span class="field">🔍 搜索文件 / 文本 / 命令 · Ctrl+K</span>
+      <span class="spacer"></span>
+      <span class="chip">⚡ 采集</span>
+      <span class="chip">⌘ 命令</span>
+      <span class="chip">⚙</span>
+    </div>
+    <div class="row" id="rowB">
+      <span class="chip">📄 readme.md</span>
+      <span class="chip">🌐 example.com</span>
+      <span class="chip">🗄 SQL 控制台</span>
+      <span class="chip">📝 笔记：周会</span>
+      <span class="chip">＋</span>
+      <span class="spacer"></span>
+      <span class="chip">⋯</span>
+    </div>
+  </div>
+
+  <div id="mid">
+    <div id="rail"><span>🏠</span><span>📁</span><span>🗄</span><span>🕸</span><span>⏰</span></div>
+    <aside id="pLeft" class="hidden"><div class="pad">左工具窗口 · 项目文件</div></aside>
+    <div id="center">
+      <div id="content">内容视口（active surface）</div>
+      <aside id="pBottom" class="hidden"><div class="pad">底部工具窗口 · 终端 / 结果 / 任务</div></aside>
+    </div>
+    <aside id="pRight" class="hidden"><div class="pad">右工具窗口 · 属性 / 反链</div></aside>
+  </div>
+
+  <footer id="status">
+    <span>● 已连接</span><span>分支 main</span><span>任务 0</span><span>索引 最新</span><span>文档 4</span>
+  </footer>
+</div>
+
+<pre id="out" style="display:none"></pre>
+<script>
+(function () {
+  var shell = document.getElementById("shell");
+  var top = document.getElementById("top");
+  var rowA = document.getElementById("rowA");
+  var rowB = document.getElementById("rowB");
+  var statusBar = document.getElementById("status");
+  var rail = document.getElementById("rail");
+  var pLeft = document.getElementById("pLeft");
+  var pRight = document.getElementById("pRight");
+  var pBottom = document.getElementById("pBottom");
+  var content = document.getElementById("content");
+
+  // Tool-window sizing: A2 DESIGN_DECISION (see file header). A0 froze only the
+  // collapsed-state formula, not tool-window widths.
+  function leftW(w) { return Math.min(260, Math.floor(0.25 * w)); }
+  function rightW(w) { return Math.min(320, Math.floor(0.28 * w)); }
+  function bottomH(h) { return Math.min(240, Math.floor(0.30 * h)); }
+
+  var STATES = {
+    // A0 collapsed: every tool window hidden, 28px strip still visible.
+    collapsed: { left: 0, right: 0, bottom: 0, focus: false },
+    left:      { left: 1, right: 0, bottom: 0, focus: false },
+    right:     { left: 0, right: 1, bottom: 0, focus: false },
+    bottom:    { left: 0, right: 0, bottom: 1, focus: false },
+    leftright: { left: 1, right: 1, bottom: 0, focus: false },
+    // Informational only: A0 has NOT frozen focus-mode geometry.
+    focus:     { left: 0, right: 0, bottom: 0, focus: true }
+  };
+
+  function toggle(el, on) { el.classList.toggle("hidden", !on); }
+
+  function measure(w, h, name) {
+    var st = STATES[name];
+    shell.style.width = w + "px";
+    shell.style.height = h + "px";
+
+    toggle(top, !st.focus);
+    toggle(statusBar, !st.focus);
+    toggle(rail, !st.focus);
+    toggle(pLeft, !!st.left);
+    toggle(pRight, !!st.right);
+    toggle(pBottom, !!st.bottom);
+    pLeft.style.width = leftW(w) + "px";
+    pRight.style.width = rightW(w) + "px";
+    pBottom.style.height = bottomH(h) + "px";
+
+    void shell.offsetHeight; // force layout
+
+    var c = content.getBoundingClientRect();
+    return {
+      fixture: "canonical",
+      size: w + "x" + h,
+      w: w,
+      h: h,
+      state: name,
+      topH: +top.getBoundingClientRect().height.toFixed(1),
+      rowAH: +rowA.getBoundingClientRect().height.toFixed(1),
+      rowBH: +rowB.getBoundingClientRect().height.toFixed(1),
+      statusH: +statusBar.getBoundingClientRect().height.toFixed(1),
+      railW: +rail.getBoundingClientRect().width.toFixed(1),
+      leftW: st.left ? leftW(w) : 0,
+      rightW: st.right ? rightW(w) : 0,
+      bottomH: st.bottom ? bottomH(h) : 0,
+      contentH: +c.height.toFixed(1),
+      contentW: +c.width.toFixed(1),
+      pctH: +(c.height / h * 100).toFixed(2),
+      pctW: +(c.width / w * 100).toFixed(2),
+      // >0 means the 30px row had to clip content at this width (no height growth allowed)
+      rowAClip: Math.max(0, rowA.scrollWidth - rowA.clientWidth),
+      rowBClip: Math.max(0, rowB.scrollWidth - rowB.clientWidth)
+    };
+  }
+
+  function sizesFromQuery() {
+    var m = /[?&]sizes=([^&]+)/.exec(location.search || "");
+    if (!m) return [[1440, 900]];
+    return decodeURIComponent(m[1]).split(",").map(function (s) {
+      var p = s.split("x");
+      return [parseInt(p[0], 10), parseInt(p[1], 10)];
+    }).filter(function (p) { return p[0] > 0 && p[1] > 0; });
+  }
+
+  var out = [];
+  sizesFromQuery().forEach(function (s) {
+    Object.keys(STATES).forEach(function (name) {
+      out.push(measure(s[0], s[1], name));
+    });
+  });
+
+  // Leave the page in a human-readable state: canonical 1440x900 collapsed.
+  measure(1440, 900, "collapsed");
+
+  window.__A2_GEOMETRY__ = out;
+  document.getElementById("out").textContent = JSON.stringify(out);
+})();
+</script>
+</body>
+</html>

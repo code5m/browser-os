@@ -193,8 +193,8 @@ button { cursor: pointer; border: 1px solid #ccc; background: #fafafa; border-ra
       <button class="chip">🌐 https://news.example.org/daily-brief</button>
       <button class="chip">🌐 https://docs.example.net/guide/getting-started</button>
       <button class="chip">🌐 https://shop.example.cn/item/8812345</button>
-      <button class="chip">📁 /home/ainfinit/Documents/Knowledge-Base/secondBrain</button>
-      <button class="chip">📁 /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3</button>
+      <button class="chip">📁 /srv/synthetic-vault/notes</button>
+      <button class="chip">📁 /srv/synthetic-repo/workbench</button>
       <button class="chip">📂 成果工作区</button><button class="chip">📂 知识库</button>
       <button class="er-close">✕</button>
     </div>
@@ -209,8 +209,8 @@ button { cursor: pointer; border: 1px solid #ccc; background: #fafafa; border-ra
         <div class="tab"><span>🌐</span><span>示例站点标题</span><button class="tab-close">✕</button></div>
         <div class="tab"><span>🌐</span><span>每日简报</span><button class="tab-close">✕</button></div>
         <div class="tab"><span>🌐</span><span>入门指南</span><button class="tab-close">✕</button></div>
-        <div class="tab"><span>📁</span><span>secondBrain</span><button class="tab-close">✕</button></div>
-        <div class="tab"><span>📁</span><span>mvp-browser-os-v3</span><button class="tab-close">✕</button></div>
+        <div class="tab"><span>📁</span><span>notes-vault</span><button class="tab-close">✕</button></div>
+        <div class="tab"><span>📁</span><span>workbench-repo</span><button class="tab-close">✕</button></div>
         <div class="tab"><span>🗄️</span><span>数据库</span><button class="tab-close">✕</button></div>
         <button class="tab-new">＋</button>
       </div>
@@ -322,13 +322,26 @@ button { cursor: pointer; border: 1px solid #ccc; background: #fafafa; border-ra
     };
   }
 
-  var SIZES = [
-    [1920, 1080], [1440, 900], [1366, 768], [1024, 720],
-    // 原生标题栏敏感度（假设 37px 系统标题栏，窗口最大化时客户区变矮）
-    [1920, 1043], [1440, 863], [1366, 731], [1024, 683],
-    // 蓝图 WORKBENCH_BLUEPRINT §3 提到的窄窗 800x600；注意产品 min_inner_size=900x600
-    [900, 600], [800, 600]
-  ];
+  // R3B: the size list can be overridden with ?sizes=WxH,WxH,... so that the R3B
+  // harness can drive this fixture with the A0 acceptance set (six sizes, 800x600 dropped).
+  // The default list is the historical R3 set and is kept for reproducibility of
+  // A2-R3-run-20260908.out.
+  var SIZES = (function () {
+    var m = /[?&]sizes=([^&]+)/.exec(location.search || "");
+    if (!m) {
+      return [
+        [1920, 1080], [1440, 900], [1366, 768], [1024, 720],
+        // 原生标题栏敏感度（假设 37px 系统标题栏，窗口最大化时客户区变矮）
+        [1920, 1043], [1440, 863], [1366, 731], [1024, 683],
+        // 蓝图 WORKBENCH_BLUEPRINT §3 提到的窄窗 800x600；注意产品 min_inner_size=900x600
+        [900, 600], [800, 600]
+      ];
+    }
+    return decodeURIComponent(m[1]).split(",").map(function (s) {
+      var p = s.split("x");
+      return [parseInt(p[0], 10), parseInt(p[1], 10)];
+    }).filter(function (p) { return p[0] > 0 && p[1] > 0; });
+  })();
   var out = [];
   SIZES.forEach(function (s) {
     Object.keys(STATES).forEach(function (name) {
