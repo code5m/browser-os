@@ -1,0 +1,1003 @@
+diff --git a/logs/checkpoints/A2-M5-W18-R3-20260908.md b/logs/checkpoints/A2-M5-W18-R3-20260908.md
+new file mode 100644
+index 0000000..42afd9a
+--- /dev/null
++++ b/logs/checkpoints/A2-M5-W18-R3-20260908.md
+@@ -0,0 +1,64 @@
++# A2 Checkpoint · M5-W18-R3 (2026-09-08)
++
++BASE：`origin/master` `200f0f1`（rebase 后本 lane 与 origin/master 一致；R2/R2B 三个提交已被 A0 集成，
++rebase 时按 git 提示 skipped previously applied）。
++分支/工作树：`codex/m5-w18-a2` @ `/home/ainfinit/.codex/worktrees/m5-w18-a2/mvp-browser-os-v3`。
++**未 push**（只有 A0 可推）。
++
++## CONSUMED_PEERS
++
++- `PARALLEL_COMMAND_BOARD.md` Current Dispatch Entry（2026-09-08 11:44，NEXT=`M5-W18-R3-UX`，W19=CLOSED）
++- `M5-W18-R3-UX-TASKS-20260908.md` §A2「Current-shell density audit」+ 全局验收约束
++- `M5-W18-PROTOTYPE-REVIEW-20260908.md`（用户裁决 REVISE：保留 Chrome 式内容优先外壳、去常驻功能按钮、
++  借 IDEA 的渐进披露与右键/命令发现性）
++- `WORKBENCH_BLUEPRINT-20260908.md` §3（左工具区约 260px、底部约 240px、尺寸目标 1440x900 / 1024x720 / 800x600）
++- `logs/research/M5-W18/A1-product-baseline-20260908.md`：grep 确认其中**没有** chrome/视口数字，
++  与本报告的测量口径不冲突
++
++## 本 checkpoint 完成项（R3 §A2）
++
++1. **可复现测量装置**：`A2-R3-density-replica.html`（自包含复刻，页内注释标注每个 px 的产品 CSS 出处；
++   无网络/无外部依赖/不 import 产品源码）+ `A2-R3-measure.py`（headless Chrome 驱动、解析、出表）
++   + `A2-R3-run-20260908.out`（9 状态 × 10 尺寸 = 90 条记录）。
++2. **实测**（主报告 §3 / §3.1）：
++   - 平静态 1440x900 chrome 89px（活动条 32 + 页签条 31 + 状态栏 26）→ 内容 **90.1% 高 / 100% 宽**；
++   - 地址栏聚焦自动展开 → **83.2%**；宫格 AI 态 → **81.9%**；四行同开 → **75.3%**（1024x720 仅 69.2%）；
++   - 右侧 Dock 固定 360px → 内容宽 **75.0%**（1440）/ **64.8%**（1024）；三面同开 → **41.7%** / **18.0%**；
++   - 900x600 三面同开内容宽 **60px**、800x600 为 **0px**（功能不可用，非"变窄"）；
++   - 精简模式 → **97.1% / 100%**。
++   - 副产品实测证据：页签条 `overflow-x:auto` 在真实溢出时**会长到 46px**（+15px 滚动条），已计入预算冗余。
++3. **R3 约束逐条判定**（§4）：PASS 1 项、PARTIAL 2 项、FAIL 7 项，每条附证据行号或实测值。
++4. **顶栏控件全量清单与归类**（§5）：活动条主行 19 项（≤1180px 为 17 项）+ 页签条 7 项 + 状态栏 1 可点区，
++   逐项判 常驻 / 溢出 / 右键菜单 / 命令入口 / 工具窗口 / 可删除重复。
++5. **Before/After 预算**（§6）：chrome 89~222px → **≤86px 恒定**；顶栏 ≤2 行 ≤80px（取 60px 目标）；
++   工具窗口默认 0、左 260 / 右 320 / 底 min(240,0.30H)、可拖、可自动隐藏（8px 边缘条）、同边单一。
++6. **带标注布局规格**（§7）：1440x900 before（平静/最坏）+ after、1024x720 after 四张标注帧。
++7. **跨 lane 问题分派**（§8）：A1 预算、A3 状态机/自动隐藏宽度、A6 命令注册表前置、A4 持久化项、
++   A8 图标密度、A9 焦点模式迷路风险、A10 复核、A11 验收断言，及 **A0/A1 尺寸口径冲突**（800x600 vs
++   `min_inner_size(900,600)`）。
++
++## 验证
++
++- `cd logs/research/M5-W18 && python3 A2-R3-measure.py` → 退出 0，生成 90 条记录的 `.out`。
++- 未改产品代码：`git status --short` 仅 `logs/research/M5-W18/`（4 个新文件）与 `logs/checkpoints/`（本文件 + patch）。
++- 未改其他 lane 文件；未 push。
++- 无真实用户数据进入报告：复刻页使用合成 URL/目录串，未采集本机真实路径。
++
++## 阻塞 / 债务
++
++- `STATUS=PASS_WITH_DEBT`
++- **D-A2-1**：复刻页只覆盖外壳，不含各模块视图内部分栏（数据库/图谱/Git/终端），模块视图仅用文件 IDE 260px 树代表。
++- **D-A2-2**：AI 群发行/资源监控按"单行不换行"量得，真实数据更长会再 +29px/行 → §3 的"最坏 75.3%"是**乐观值**。
++- **D-A2-3**：原生标题栏按 37px 估，未覆盖不同桌面主题。
++- **依赖 A0 裁决**：800x600 是否纳入目标（需改 `min_inner_size`，属产品代码，A2 不做）。
++
++## 交付清单
++
++| 文件 | 说明 |
++|---|---|
++| `logs/research/M5-W18/A2-R3-shell-density-audit.md` | 主报告（测量/判定/清单/预算/标注规格） |
++| `logs/research/M5-W18/A2-R3-density-replica.html` | 静态复刻量测页 |
++| `logs/research/M5-W18/A2-R3-measure.py` | headless Chrome 驱动 |
++| `logs/research/M5-W18/A2-R3-run-20260908.out` | 实测输出（90 条） |
++| `logs/checkpoints/A2-M5-W18-R3-20260908.md` | 本 checkpoint |
++| `logs/checkpoints/Lane-A2-M5-W18-R3-shell-density-20260908.patch` | 本波补丁（docs only） |
+diff --git a/logs/research/M5-W18/A2-R3-density-replica.html b/logs/research/M5-W18/A2-R3-density-replica.html
+new file mode 100644
+index 0000000..6f125b4
+--- /dev/null
++++ b/logs/research/M5-W18/A2-R3-density-replica.html
+@@ -0,0 +1,342 @@
++<!doctype html>
++<!--
++A2 / M5-W18-R3 :: current-shell density replica (MEASUREMENT FIXTURE ONLY)
++Purpose: reproduce the geometry of the shipping shell chrome with the exact CSS
++constants read from the product, so that chrome height / content viewport can be
++measured deterministically at every R3 target size.
++
++Rules for this file:
++- It is NOT a prototype and NOT a proposal. It copies numbers, not code:
++  every px value below is transcribed from the product CSS (file:line cited in
++  A2-R3-shell-density-audit.md). No product source is imported or executed.
++- No network, no external font, no dependency, no Tauri/bridge call.
++- The root wrapper is sized explicitly, so measurements are independent of the
++  real browser viewport (headless Chrome may report an 87px-smaller viewport).
++-->
++<html lang="zh-CN">
++<head>
++<meta charset="utf-8" />
++<title>A2 R3 density replica</title>
++<style>
++* { box-sizing: border-box; }
++body { margin: 0; font-family: system-ui, "PingFang SC", "Noto Sans CJK SC", sans-serif; }
++button { cursor: pointer; border: 1px solid #ccc; background: #fafafa; border-radius: 6px; padding: 6px 12px; }
++
++#shell { display: flex; flex-direction: column; overflow: hidden; background: #fff; }
++
++/* ---- ActivityBar (src/styles/global.css:9 .activity) ---- */
++.tbar { flex-shrink: 0; }
++.activity {
++  height: 32px; background: #1f2733; display: flex; flex-direction: row;
++  align-items: stretch; padding: 2px 8px; gap: 3px; flex-shrink: 0;
++}
++.activity button {
++  position: relative; min-width: 0; height: 100%; border: none; background: transparent;
++  color: #cbd5e0; border-radius: 6px; display: flex; flex-direction: row;
++  align-items: center; justify-content: center; gap: 4px; padding: 2px 8px;
++}
++.activity button .ic { font-size: 14px; line-height: 1; }
++.activity button .lab { font-size: 11px; line-height: 1; white-space: nowrap; }
++.activity .sep { width: 1px; align-self: center; height: 24px; background: #3a4452; margin: 0 4px; }
++.activity .sys { min-width: 40px; }
++.activity .collect { background: #2b6cb0; color: #fff; }
++.caret-btn { min-width: 16px; padding: 2px 3px 2px 0; font-size: 9px; color: #7d8794; }
++
++/* ---- address cluster (ActivityBar.vue:551-604) ---- */
++.addr-mid { flex: 1; display: flex; align-items: center; gap: 4px; min-width: 0; margin: 0 6px; }
++.omni-wrap { position: relative; flex: 1; display: flex; min-width: 0; }
++.omni-wrap input {
++  flex: 1; height: 24px; border: 1px solid #3a4452; border-radius: 12px; padding: 0 12px;
++  font-size: 12px; outline: none; min-width: 0; background: #f4f6f9; color: #333;
++}
++.addr-mid .go {
++  background: #2b6cb0; color: #fff; border: none; border-radius: 5px;
++  padding: 4px 12px; font-size: 12px; white-space: nowrap;
++}
++.tbtn {
++  min-width: 24px; height: 24px; border: none; background: transparent; color: #cbd5e0;
++  border-radius: 5px; font-size: 13px; display: flex; align-items: center;
++  justify-content: center; padding: 0 4px;
++}
++
++/* ---- expandable rows (ActivityBar.vue:466-544) ---- */
++.expand-row {
++  display: flex; align-items: center; gap: 5px; flex-wrap: wrap; padding: 4px 8px;
++  background: #f4f6fb; border-bottom: 1px solid #e3e7f5;
++}
++.expand-row button {
++  border: 1px solid #d5dbe7; background: #fff; color: #4e5969; border-radius: 5px;
++  padding: 3px 9px; font-size: 11px; white-space: nowrap;
++}
++.er-label { font-size: 11px; color: #86909c; }
++.er-sep { width: 1px; height: 16px; background: #d5dbe7; }
++.er-close { margin-left: auto; border: none; background: transparent; color: #999; }
++.er-url { display: inline-flex; align-items: center; gap: 3px; }
++.er-url input { width: 170px; height: 22px; border: 1px solid #d5dbe7; border-radius: 4px; font-size: 11px; padding: 0 6px; }
++.omni-row { max-height: 74px; overflow-y: auto; }
++.chip { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
++.ai-send-row { align-items: center; }
++.ai-send-input { flex: 1; height: 30px; border: 1px solid #e5e6eb; border-radius: 6px; padding: 0 12px; font-size: 13px; min-width: 0; }
++
++/* ---- UnifiedTabBar (UnifiedTabBar.vue:70-132) ---- */
++.unified {
++  display: flex; align-items: center; gap: 3px; padding: 3px 6px 0; background: #eef1f6;
++  border-bottom: 1px solid #e5e6eb; flex-shrink: 0; overflow-x: auto;
++}
++.tab {
++  display: inline-flex; align-items: center; gap: 5px; max-width: 200px; border: 1px solid #d5dbe7;
++  border-bottom: none; background: #f7f8fa; color: #4e5969; border-radius: 7px 7px 0 0;
++  padding: 4px 8px 4px 10px; font-size: 12px; white-space: nowrap;
++}
++.tab-close { border: none; background: transparent; color: #bbb; font-size: 10px; padding: 0 2px; }
++.tab-new { border: none; background: transparent; color: #4e5969; font-size: 14px; padding: 2px 8px; }
++
++/* ---- body / main (global.css:87,146-152,188) ---- */
++.body { flex: 1; display: flex; min-height: 0; }
++.main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
++.browser-body { flex: 1; display: flex; min-height: 0; min-width: 0; }
++.viewport { flex: 1; background: #fff; position: relative; overflow: hidden; min-height: 0; }
++.browser-dock { width: 360px; flex-shrink: 0; border-left: 1px solid #e5e6eb; display: flex; flex-direction: column; }
++.ai-nav { width: 220px; background: #f7f8ff; border-right: 1px solid #e3e7f5; flex-shrink: 0; }
++.bookmark-panel { width: 260px; flex-shrink: 0; border-right: 1px solid #e5e6eb; background: #fff; }
++.ftree { width: 260px; flex-shrink: 0; border-right: 1px solid #e5e6eb; }
++.status { height: 26px; background: #1f2733; color: #9aa4b2; font-size: 11px; display: flex; align-items: center; padding: 0 12px; gap: 16px; flex-shrink: 0; }
++.modview { flex: 1; display: flex; flex-direction: column; min-height: 0; background: #fff; }
++
++/* ---- responsive density (useLayoutStore.ts:76-95, ActivityBar.vue:609-624) ---- */
++.nav-compact .lab, .nav-icon .lab { display: none; }
++.nav-compact .activity button, .nav-icon .activity button { padding: 2px 6px; }
++.nav-icon .addr-mid .go { display: none; }
++.nav-icon .omni-wrap input { font-size: 11px; }
++.hidden { display: none !important; }
++</style>
++</head>
++<body>
++<div id="shell">
++  <!-- ============ row 1: ActivityBar ============ -->
++  <div class="tbar" id="tbar">
++    <div class="activity" id="activity">
++      <button data-nav-item><span class="ic">🏠</span><span class="lab">主页</span></button>
++      <button data-nav-item><span class="ic">📁</span><span class="lab">浏览</span></button>
++      <button data-nav-item><span class="ic">💻</span><span class="lab">终端</span></button>
++      <button data-nav-item><span class="ic">📋</span><span class="lab">剪贴板</span></button>
++      <button data-nav-item><span class="ic">📚</span><span class="lab">知识库</span></button>
++      <button data-nav-item><span class="ic">🗂️</span><span class="lab">宫格</span></button>
++      <button class="caret-btn" data-nav-item>▾</button>
++      <button data-nav-item><span class="ic">☰</span><span class="lab">菜单</span></button>
++      <div class="addr-mid">
++        <button class="tbtn">←</button>
++        <button class="tbtn">→</button>
++        <button class="tbtn">⟳</button>
++        <div class="omni-wrap"><input value="https://example.com/a-fairly-long-page-title" /><button>★</button></div>
++        <button class="go">前往</button>
++      </div>
++      <button class="tbtn">🗂</button>
++      <button class="tbtn">💻</button>
++      <button class="tbtn">⛶</button>
++      <span class="sep"></span>
++      <button class="sys"><span class="ic">🤖</span></button>
++      <button class="collect"><span class="ic">📥</span><span class="lab">采集</span></button>
++      <button class="sys"><span class="ic">⚙️</span></button>
++    </div>
++
++    <!-- AI 群发行：宫格打开且 AI 模式时常驻 -->
++    <div class="expand-row ai-send-row hidden" data-row="ai">
++      <span class="er-label">🤖 群发</span>
++      <input class="ai-send-input" />
++      <button>发送</button>
++    </div>
++
++    <!-- 宫格设置行 -->
++    <div class="expand-row hidden" data-row="grid">
++      <span class="er-label">模式</span><button>🌐 浏览</button><button>🤖 AI</button>
++      <span class="er-sep"></span><span class="er-label">布局</span>
++      <button>▦ 宫格</button><button>⊞ 四分</button><button>▭ 横向</button>
++      <span class="er-sep"></span><span class="er-label">格数</span>
++      <button>2</button><button>3</button><button>4</button><button>6</button><button>9</button>
++      <span class="er-sep"></span>
++      <button>打开</button><button>网址</button><button>资源</button><button>关闭宫格</button>
++      <button class="er-close">✕</button>
++    </div>
++
++    <!-- 资源监控行 -->
++    <div class="expand-row hidden" data-row="res">
++      <span class="er-label">系统可用 5.2G / 15.6G</span><span class="er-sep"></span>
++      <span class="er-label">应用共 1.4G</span><span class="er-label">主进程 410M</span>
++      <span class="er-label">格1 328M</span><span class="er-label">格2 301M</span>
++    </div>
++
++    <!-- 各格网址行（会换行） -->
++    <div class="expand-row hidden" data-row="urls">
++      <span class="er-url"><span class="er-gidx">1</span><input /><button>↺</button></span>
++      <span class="er-url"><span class="er-gidx">2</span><input /><button>↺</button></span>
++      <span class="er-url"><span class="er-gidx">3</span><input /><button>↺</button></span>
++      <span class="er-url"><span class="er-gidx">4</span><input /><button>↺</button></span>
++    </div>
++
++    <!-- ☰ 功能菜单行 -->
++    <div class="expand-row hidden" data-row="more">
++      <span class="er-label">工作区</span><button>📂 文件</button><button>📋 剪贴板</button><button>📚 知识库</button>
++      <span class="er-sep"></span><span class="er-label">工具</span>
++      <button>💻 终端</button><button>🚀 应用</button><button>📜 脚本库</button><button>⚡ 命令库</button>
++      <button>🧰 工具箱</button><button>🗄️ 数据库</button><button>⏰ 定时任务</button><button>🛠️ 技能</button>
++      <button>🤖 智能体</button><button>🕸️ 图谱</button><button>🔌 插件</button>
++      <span class="er-sep"></span><span class="er-label">同步</span>
++      <button>🛰️ 仓库</button><button>🛡️ 审计</button>
++      <button class="er-close">✕</button>
++    </div>
++
++    <!-- 最近/常用行（地址栏聚焦即自动展开） -->
++    <div class="expand-row omni-row hidden" data-row="omni">
++      <button>🕒 历史</button><button>📂 常用</button><span class="er-sep"></span>
++      <button class="chip">🌐 https://example.com/a-fairly-long-page-title</button>
++      <button class="chip">🌐 https://news.example.org/daily-brief</button>
++      <button class="chip">🌐 https://docs.example.net/guide/getting-started</button>
++      <button class="chip">🌐 https://shop.example.cn/item/8812345</button>
++      <button class="chip">📁 /home/ainfinit/Documents/Knowledge-Base/secondBrain</button>
++      <button class="chip">📁 /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3</button>
++      <button class="chip">📂 成果工作区</button><button class="chip">📂 知识库</button>
++      <button class="er-close">✕</button>
++    </div>
++  </div>
++
++  <!-- ============ body ============ -->
++  <div class="body">
++    <aside class="ai-nav hidden" data-side="ai">AI 导航 220px</aside>
++    <div class="main">
++      <!-- ============ row 2: UnifiedTabBar ============ -->
++      <div class="unified" id="tabbar">
++        <div class="tab"><span>🌐</span><span>示例站点标题</span><button class="tab-close">✕</button></div>
++        <div class="tab"><span>🌐</span><span>每日简报</span><button class="tab-close">✕</button></div>
++        <div class="tab"><span>🌐</span><span>入门指南</span><button class="tab-close">✕</button></div>
++        <div class="tab"><span>📁</span><span>secondBrain</span><button class="tab-close">✕</button></div>
++        <div class="tab"><span>📁</span><span>mvp-browser-os-v3</span><button class="tab-close">✕</button></div>
++        <div class="tab"><span>🗄️</span><span>数据库</span><button class="tab-close">✕</button></div>
++        <button class="tab-new">＋</button>
++      </div>
++      <!-- browser view -->
++      <div class="browser-body" id="browserview">
++        <aside class="bookmark-panel hidden" data-side="bm">收藏夹 260px</aside>
++        <div class="viewport" id="viewport">content viewport</div>
++        <aside class="browser-dock hidden" data-side="dock">右侧 Dock 360px</aside>
++      </div>
++      <!-- module view (files IDE: fixed 260px tree) -->
++      <div class="browser-body hidden" id="modview">
++        <aside class="ftree">文件树 260px</aside>
++        <div class="modview" id="modcontent">module content</div>
++      </div>
++    </div>
++  </div>
++
++  <!-- ============ row 3: StatusBar ============ -->
++  <footer class="status" id="status"><span>● 已连接</span><span>当前：浏览器</span><span>页签 6</span></footer>
++</div>
++
++<pre id="out" style="display:none"></pre>
++<script>
++(function () {
++  var shell = document.getElementById("shell");
++  var tbar = document.getElementById("tbar");
++  var activity = document.getElementById("activity");
++  var tabbar = document.getElementById("tabbar");
++  var statusBar = document.getElementById("status");
++  var viewport = document.getElementById("viewport");
++  var browserview = document.getElementById("browserview");
++  var modview = document.getElementById("modview");
++  var modcontent = document.getElementById("modcontent");
++
++  function q(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
++  function show(el, on) { el.classList.toggle("hidden", !on); }
++
++  // useLayoutStore.ts:76-95 —— full >=1180 显示 5 个一级入口，compact >=900 显示 3 个并收起文字，
++  // icon <900 只留 2 个。
++  function applyDensity(w) {
++    var navs = q("#activity > button[data-nav-item]");
++    var keep = w >= 1180 ? 5 : (w >= 900 ? 3 : 2);
++    // 前 5 个是一级入口（含终端/剪贴板/知识库），第 6/7/8 是宫格/▾/☰，始终保留
++    for (var i = 0; i < 5; i++) show(navs[i], i < keep);
++    tbar.classList.remove("nav-compact", "nav-icon");
++    if (w < 900) tbar.classList.add("nav-icon");
++    else if (w < 1180) tbar.classList.add("nav-compact");
++  }
++
++  var STATES = {
++    // 默认静态：无扩展行、无侧栏 —— 用户开机看到的"平静态"
++    calm:    { rows: [],                                  sides: [], view: "browser" },
++    // 地址栏一聚焦就自动展开"最近/常用"（ActivityBar.vue:299）
++    omni:    { rows: ["omni"],                            sides: [], view: "browser" },
++    // ☰ 功能菜单展开
++    more:    { rows: ["more"],                            sides: [], view: "browser" },
++    // 宫格 AI 模式：群发行常驻 + 宫格设置行
++    gridai:  { rows: ["ai", "grid"],                      sides: [], view: "browser" },
++    // 最坏情况：AI 群发 + 宫格设置 + 资源 + 网址 四行同时展开
++    worst:   { rows: ["ai", "grid", "res", "urls"],       sides: [], view: "browser" },
++    // 浏览器右侧 Dock（文件/终端）
++    dock:    { rows: [],                                  sides: ["dock"], view: "browser" },
++    // 左侧 AI 导航 + 收藏夹 + 右侧 Dock 三面同时开
++    sidestack: { rows: [], sides: ["ai", "bm", "dock"],   view: "browser" },
++    // 精简模式：ActivityBar 与页签条都隐藏（App.vue:240 / MainArea.vue:125）
++    compact: { rows: [], sides: [], view: "browser", compact: true },
++    // 模块视图（文件 IDE：固定 260px 树）
++    module:  { rows: [], sides: [], view: "module" }
++  };
++
++  function applyState(name) {
++    var st = STATES[name];
++    q("[data-row]").forEach(function (el) { show(el, st.rows.indexOf(el.getAttribute("data-row")) >= 0); });
++    q("[data-side]").forEach(function (el) { show(el, st.sides.indexOf(el.getAttribute("data-side")) >= 0); });
++    show(tbar, !st.compact);
++    show(tabbar, !st.compact);
++    show(browserview, st.view === "browser");
++    show(modview, st.view === "module");
++  }
++
++  function visibleButtons(root) {
++    return q(root + " button").filter(function (b) { return b.offsetParent !== null; }).length;
++  }
++
++  function measure(w, h, state) {
++    shell.style.width = w + "px";
++    shell.style.height = h + "px";
++    applyDensity(w);
++    applyState(state);
++    void shell.offsetHeight; // force layout
++    var contentEl = STATES[state].view === "module" ? modcontent : viewport;
++    var r = contentEl.getBoundingClientRect();
++    var chrome = h - r.height;
++    return {
++      size: w + "x" + h,
++      state: state,
++      activityH: +activity.getBoundingClientRect().height.toFixed(1),
++      expandH: +(tbar.getBoundingClientRect().height - activity.getBoundingClientRect().height).toFixed(1),
++      tabbarH: STATES[state].compact ? 0 : +tabbar.getBoundingClientRect().height.toFixed(1),
++      statusH: +statusBar.getBoundingClientRect().height.toFixed(1),
++      chromeH: +chrome.toFixed(1),
++      contentH: +r.height.toFixed(1),
++      contentW: +r.width.toFixed(1),
++      pctH: +(r.height / h * 100).toFixed(1),
++      pctW: +(r.width / w * 100).toFixed(1),
++      btnsTop: visibleButtons("#tbar"),
++      btnsTab: STATES[state].compact ? 0 : visibleButtons("#tabbar"),
++      density: w >= 1180 ? "full" : (w >= 900 ? "compact" : "icon")
++    };
++  }
++
++  var SIZES = [
++    [1920, 1080], [1440, 900], [1366, 768], [1024, 720],
++    // 原生标题栏敏感度（假设 37px 系统标题栏，窗口最大化时客户区变矮）
++    [1920, 1043], [1440, 863], [1366, 731], [1024, 683],
++    // 蓝图 WORKBENCH_BLUEPRINT §3 提到的窄窗 800x600；注意产品 min_inner_size=900x600
++    [900, 600], [800, 600]
++  ];
++  var out = [];
++  SIZES.forEach(function (s) {
++    Object.keys(STATES).forEach(function (name) {
++      out.push(measure(s[0], s[1], name));
++    });
++  });
++  document.getElementById("out").textContent = JSON.stringify(out);
++})();
++</script>
++</body>
++</html>
+diff --git a/logs/research/M5-W18/A2-R3-measure.py b/logs/research/M5-W18/A2-R3-measure.py
+new file mode 100644
+index 0000000..5254eeb
+--- /dev/null
++++ b/logs/research/M5-W18/A2-R3-measure.py
+@@ -0,0 +1,114 @@
++#!/usr/bin/env python3
++"""A2 / M5-W18-R3 :: run the current-shell density replica under headless Chrome.
++
++Reads `A2-R3-density-replica.html`, renders it once with `google-chrome --dump-dom`,
++parses the JSON the page writes into `#out`, and prints markdown tables.
++
++The replica sizes its own root wrapper explicitly, so the numbers do not depend on
++the real viewport of the headless browser (headless Chrome reports an 87px-smaller
++viewport than --window-size, which is exactly why the wrapper is used).
++
++Usage:  python3 A2-R3-measure.py [--html PATH] [--out PATH]
++"""
++
++from __future__ import annotations
++
++import argparse
++import html
++import json
++import pathlib
++import re
++import subprocess
++import sys
++
++HERE = pathlib.Path(__file__).resolve().parent
++DEFAULT_HTML = HERE / "A2-R3-density-replica.html"
++DEFAULT_OUT = HERE / "A2-R3-run-20260908.out"
++
++STATE_LABEL = {
++    "calm": "默认平静（无扩展行/无侧栏）",
++    "omni": "地址栏聚焦 → 最近/常用自动展开",
++    "more": "☰ 功能菜单展开",
++    "gridai": "宫格 AI 模式（群发行常驻 + 宫格设置）",
++    "worst": "最坏：AI 群发+宫格设置+资源+网址 四行同开",
++    "dock": "浏览器右侧 Dock（文件/终端）",
++    "sidestack": "左 AI 导航 + 收藏夹 + 右 Dock 三面同开",
++    "compact": "精简模式（隐藏活动条与页签条）",
++    "module": "模块视图（文件 IDE 固定 260px 树）",
++}
++STATE_ORDER = ["calm", "omni", "more", "gridai", "worst", "dock", "sidestack", "compact", "module"]
++PRIMARY_SIZES = ["1920x1080", "1440x900", "1366x768", "1024x720"]
++
++
++def run_chrome(html_path: pathlib.Path) -> str:
++    cmd = [
++        "google-chrome",
++        "--headless",
++        "--no-sandbox",
++        "--disable-gpu",
++        "--window-size=1920,1200",
++        "--dump-dom",
++        html_path.as_uri(),
++    ]
++    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
++    if proc.returncode != 0:
++        sys.exit("chrome failed: rc=%s\n%s" % (proc.returncode, proc.stderr[-2000:]))
++    return proc.stdout
++
++
++def extract_json(dom: str) -> list:
++    m = re.search(r'<pre id="out"[^>]*>(.*?)</pre>', dom, re.S)
++    if not m:
++        sys.exit("measurement output not found; the replica script did not run")
++    return json.loads(html.unescape(m.group(1)))
++
++
++def row_table(rows: list, sizes: list, title: str) -> list:
++    lines = ["", "### " + title, ""]
++    header = "| 状态 | " + " | ".join(sizes) + " |"
++    lines.append(header)
++    lines.append("|" + "---|" * (len(sizes) + 1))
++    for st in STATE_ORDER:
++        cells = []
++        for s in sizes:
++            r = next((x for x in rows if x["size"] == s and x["state"] == st), None)
++            cells.append("—" if r is None else "%.1f%% / %.1f%%" % (r["pctH"], r["pctW"]))
++        lines.append("| %s | %s |" % (STATE_LABEL[st], " | ".join(cells)))
++    return lines
++
++
++def main() -> None:
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--html", default=str(DEFAULT_HTML))
++    ap.add_argument("--out", default=str(DEFAULT_OUT))
++    args = ap.parse_args()
++
++    rows = extract_json(run_chrome(pathlib.Path(args.html)))
++    lines = [
++        "A2 R3 density run — current-shell replica, headless Chrome",
++        "columns: content height %% of viewport / content width %% of viewport",
++        "",
++    ]
++    lines += row_table(rows, PRIMARY_SIZES, "主尺寸（客户区 = 目标尺寸）")
++    lines += row_table(
++        rows,
++        ["1920x1043", "1440x863", "1366x731", "1024x683"],
++        "敏感度：窗口最大化且存在约 37px 原生标题栏时的客户区",
++    )
++
++    lines += ["", "### 明细（chrome 分解，px）", ""]
++    lines.append("| size | state | density | activity | expand | tabbar | status | chrome | contentH | contentW | btns(top) | btns(tab) |")
++    lines.append("|" + "---|" * 12)
++    for r in rows:
++        lines.append(
++            "| {size} | {state} | {density} | {activityH} | {expandH} | {tabbarH} | {statusH} | "
++            "{chromeH} | {contentH} | {contentW} | {btnsTop} | {btnsTab} |".format(**r)
++        )
++
++    text = "\n".join(lines) + "\n"
++    pathlib.Path(args.out).write_text(text, encoding="utf-8")
++    print(text)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/logs/research/M5-W18/A2-R3-run-20260908.out b/logs/research/M5-W18/A2-R3-run-20260908.out
+new file mode 100644
+index 0000000..8653616
+--- /dev/null
++++ b/logs/research/M5-W18/A2-R3-run-20260908.out
+@@ -0,0 +1,126 @@
++A2 R3 density run — current-shell replica, headless Chrome
++columns: content height %% of viewport / content width %% of viewport
++
++
++### 主尺寸（客户区 = 目标尺寸）
++
++| 状态 | 1920x1080 | 1440x900 | 1366x768 | 1024x720 |
++|---|---|---|---|---|
++| 默认平静（无扩展行/无侧栏） | 91.8% / 100.0% | 90.1% / 100.0% | 88.4% / 100.0% | 87.6% / 100.0% |
++| 地址栏聚焦 → 最近/常用自动展开 | 88.7% / 100.0% | 83.2% / 100.0% | 80.3% / 100.0% | 79.0% / 100.0% |
++| ☰ 功能菜单展开 | 88.7% / 100.0% | 86.4% / 100.0% | 84.1% / 100.0% | 79.0% / 100.0% |
++| 宫格 AI 模式（群发行常驻 + 宫格设置） | 84.9% / 100.0% | 81.9% / 100.0% | 78.8% / 100.0% | 77.4% / 100.0% |
++| 最坏：AI 群发+宫格设置+资源+网址 四行同开 | 79.4% / 100.0% | 75.3% / 100.0% | 71.1% / 100.0% | 69.2% / 100.0% |
++| 浏览器右侧 Dock（文件/终端） | 91.8% / 81.3% | 90.1% / 75.0% | 88.4% / 73.6% | 87.6% / 64.8% |
++| 左 AI 导航 + 收藏夹 + 右 Dock 三面同开 | 91.8% / 56.3% | 90.1% / 41.7% | 88.4% / 38.5% | 87.6% / 18.0% |
++| 精简模式（隐藏活动条与页签条） | 97.6% / 100.0% | 97.1% / 100.0% | 96.6% / 100.0% | 96.4% / 100.0% |
++| 模块视图（文件 IDE 固定 260px 树） | 91.8% / 86.5% | 90.1% / 81.9% | 88.4% / 81.0% | 87.6% / 74.6% |
++
++### 敏感度：窗口最大化且存在约 37px 原生标题栏时的客户区
++
++| 状态 | 1920x1043 | 1440x863 | 1366x731 | 1024x683 |
++|---|---|---|---|---|
++| 默认平静（无扩展行/无侧栏） | 91.5% / 100.0% | 89.7% / 100.0% | 87.8% / 100.0% | 87.0% / 100.0% |
++| 地址栏聚焦 → 最近/常用自动展开 | 88.3% / 100.0% | 82.5% / 100.0% | 79.3% / 100.0% | 77.9% / 100.0% |
++| ☰ 功能菜单展开 | 88.3% / 100.0% | 85.9% / 100.0% | 83.3% / 100.0% | 77.9% / 100.0% |
++| 宫格 AI 模式（群发行常驻 + 宫格设置） | 84.4% / 100.0% | 81.1% / 100.0% | 77.7% / 100.0% | 76.1% / 100.0% |
++| 最坏：AI 群发+宫格设置+资源+网址 四行同开 | 78.7% / 100.0% | 74.3% / 100.0% | 69.6% / 100.0% | 67.5% / 100.0% |
++| 浏览器右侧 Dock（文件/终端） | 91.5% / 81.3% | 89.7% / 75.0% | 87.8% / 73.6% | 87.0% / 64.8% |
++| 左 AI 导航 + 收藏夹 + 右 Dock 三面同开 | 91.5% / 56.3% | 89.7% / 41.7% | 87.8% / 38.5% | 87.0% / 18.0% |
++| 精简模式（隐藏活动条与页签条） | 97.5% / 100.0% | 97.0% / 100.0% | 96.4% / 100.0% | 96.2% / 100.0% |
++| 模块视图（文件 IDE 固定 260px 树） | 91.5% / 86.5% | 89.7% / 81.9% | 87.8% / 81.0% | 87.0% / 74.6% |
++
++### 明细（chrome 分解，px）
++
++| size | state | density | activity | expand | tabbar | status | chrome | contentH | contentW | btns(top) | btns(tab) |
++|---|---|---|---|---|---|---|---|---|---|---|---|
++| 1920x1080 | calm | full | 32 | 0 | 31 | 26 | 89 | 991 | 1920 | 19 | 7 |
++| 1920x1080 | omni | full | 32 | 33 | 31 | 26 | 122 | 958 | 1920 | 30 | 7 |
++| 1920x1080 | more | full | 32 | 33 | 31 | 26 | 122 | 958 | 1920 | 36 | 7 |
++| 1920x1080 | gridai | full | 32 | 74 | 31 | 26 | 163 | 917 | 1920 | 35 | 7 |
++| 1920x1080 | worst | full | 32 | 133 | 31 | 26 | 222 | 858 | 1920 | 39 | 7 |
++| 1920x1080 | dock | full | 32 | 0 | 31 | 26 | 89 | 991 | 1560 | 19 | 7 |
++| 1920x1080 | sidestack | full | 32 | 0 | 31 | 26 | 89 | 991 | 1080 | 19 | 7 |
++| 1920x1080 | compact | full | 0 | 0 | 0 | 26 | 26 | 1054 | 1920 | 0 | 0 |
++| 1920x1080 | module | full | 32 | 0 | 31 | 26 | 89 | 991 | 1660 | 19 | 7 |
++| 1440x900 | calm | full | 32 | 0 | 31 | 26 | 89 | 811 | 1440 | 19 | 7 |
++| 1440x900 | omni | full | 32 | 62 | 31 | 26 | 151 | 749 | 1440 | 30 | 7 |
++| 1440x900 | more | full | 32 | 33 | 31 | 26 | 122 | 778 | 1440 | 36 | 7 |
++| 1440x900 | gridai | full | 32 | 74 | 31 | 26 | 163 | 737 | 1440 | 35 | 7 |
++| 1440x900 | worst | full | 32 | 133 | 31 | 26 | 222 | 678 | 1440 | 39 | 7 |
++| 1440x900 | dock | full | 32 | 0 | 31 | 26 | 89 | 811 | 1080 | 19 | 7 |
++| 1440x900 | sidestack | full | 32 | 0 | 31 | 26 | 89 | 811 | 600 | 19 | 7 |
++| 1440x900 | compact | full | 0 | 0 | 0 | 26 | 26 | 874 | 1440 | 0 | 0 |
++| 1440x900 | module | full | 32 | 0 | 31 | 26 | 89 | 811 | 1180 | 19 | 7 |
++| 1366x768 | calm | full | 32 | 0 | 31 | 26 | 89 | 679 | 1366 | 19 | 7 |
++| 1366x768 | omni | full | 32 | 62 | 31 | 26 | 151 | 617 | 1366 | 30 | 7 |
++| 1366x768 | more | full | 32 | 33 | 31 | 26 | 122 | 646 | 1366 | 36 | 7 |
++| 1366x768 | gridai | full | 32 | 74 | 31 | 26 | 163 | 605 | 1366 | 35 | 7 |
++| 1366x768 | worst | full | 32 | 133 | 31 | 26 | 222 | 546 | 1366 | 39 | 7 |
++| 1366x768 | dock | full | 32 | 0 | 31 | 26 | 89 | 679 | 1006 | 19 | 7 |
++| 1366x768 | sidestack | full | 32 | 0 | 31 | 26 | 89 | 679 | 526 | 19 | 7 |
++| 1366x768 | compact | full | 0 | 0 | 0 | 26 | 26 | 742 | 1366 | 0 | 0 |
++| 1366x768 | module | full | 32 | 0 | 31 | 26 | 89 | 679 | 1106 | 19 | 7 |
++| 1024x720 | calm | compact | 32 | 0 | 31 | 26 | 89 | 631 | 1024 | 17 | 7 |
++| 1024x720 | omni | compact | 32 | 62 | 31 | 26 | 151 | 569 | 1024 | 28 | 7 |
++| 1024x720 | more | compact | 32 | 62 | 31 | 26 | 151 | 569 | 1024 | 34 | 7 |
++| 1024x720 | gridai | compact | 32 | 74 | 31 | 26 | 163 | 557 | 1024 | 33 | 7 |
++| 1024x720 | worst | compact | 32 | 133 | 31 | 26 | 222 | 498 | 1024 | 37 | 7 |
++| 1024x720 | dock | compact | 32 | 0 | 31 | 26 | 89 | 631 | 664 | 17 | 7 |
++| 1024x720 | sidestack | compact | 32 | 0 | 31 | 26 | 89 | 631 | 184 | 17 | 7 |
++| 1024x720 | compact | compact | 0 | 0 | 0 | 26 | 26 | 694 | 1024 | 0 | 0 |
++| 1024x720 | module | compact | 32 | 0 | 31 | 26 | 89 | 631 | 764 | 17 | 7 |
++| 1920x1043 | calm | full | 32 | 0 | 31 | 26 | 89 | 954 | 1920 | 19 | 7 |
++| 1920x1043 | omni | full | 32 | 33 | 31 | 26 | 122 | 921 | 1920 | 30 | 7 |
++| 1920x1043 | more | full | 32 | 33 | 31 | 26 | 122 | 921 | 1920 | 36 | 7 |
++| 1920x1043 | gridai | full | 32 | 74 | 31 | 26 | 163 | 880 | 1920 | 35 | 7 |
++| 1920x1043 | worst | full | 32 | 133 | 31 | 26 | 222 | 821 | 1920 | 39 | 7 |
++| 1920x1043 | dock | full | 32 | 0 | 31 | 26 | 89 | 954 | 1560 | 19 | 7 |
++| 1920x1043 | sidestack | full | 32 | 0 | 31 | 26 | 89 | 954 | 1080 | 19 | 7 |
++| 1920x1043 | compact | full | 0 | 0 | 0 | 26 | 26 | 1017 | 1920 | 0 | 0 |
++| 1920x1043 | module | full | 32 | 0 | 31 | 26 | 89 | 954 | 1660 | 19 | 7 |
++| 1440x863 | calm | full | 32 | 0 | 31 | 26 | 89 | 774 | 1440 | 19 | 7 |
++| 1440x863 | omni | full | 32 | 62 | 31 | 26 | 151 | 712 | 1440 | 30 | 7 |
++| 1440x863 | more | full | 32 | 33 | 31 | 26 | 122 | 741 | 1440 | 36 | 7 |
++| 1440x863 | gridai | full | 32 | 74 | 31 | 26 | 163 | 700 | 1440 | 35 | 7 |
++| 1440x863 | worst | full | 32 | 133 | 31 | 26 | 222 | 641 | 1440 | 39 | 7 |
++| 1440x863 | dock | full | 32 | 0 | 31 | 26 | 89 | 774 | 1080 | 19 | 7 |
++| 1440x863 | sidestack | full | 32 | 0 | 31 | 26 | 89 | 774 | 600 | 19 | 7 |
++| 1440x863 | compact | full | 0 | 0 | 0 | 26 | 26 | 837 | 1440 | 0 | 0 |
++| 1440x863 | module | full | 32 | 0 | 31 | 26 | 89 | 774 | 1180 | 19 | 7 |
++| 1366x731 | calm | full | 32 | 0 | 31 | 26 | 89 | 642 | 1366 | 19 | 7 |
++| 1366x731 | omni | full | 32 | 62 | 31 | 26 | 151 | 580 | 1366 | 30 | 7 |
++| 1366x731 | more | full | 32 | 33 | 31 | 26 | 122 | 609 | 1366 | 36 | 7 |
++| 1366x731 | gridai | full | 32 | 74 | 31 | 26 | 163 | 568 | 1366 | 35 | 7 |
++| 1366x731 | worst | full | 32 | 133 | 31 | 26 | 222 | 509 | 1366 | 39 | 7 |
++| 1366x731 | dock | full | 32 | 0 | 31 | 26 | 89 | 642 | 1006 | 19 | 7 |
++| 1366x731 | sidestack | full | 32 | 0 | 31 | 26 | 89 | 642 | 526 | 19 | 7 |
++| 1366x731 | compact | full | 0 | 0 | 0 | 26 | 26 | 705 | 1366 | 0 | 0 |
++| 1366x731 | module | full | 32 | 0 | 31 | 26 | 89 | 642 | 1106 | 19 | 7 |
++| 1024x683 | calm | compact | 32 | 0 | 31 | 26 | 89 | 594 | 1024 | 17 | 7 |
++| 1024x683 | omni | compact | 32 | 62 | 31 | 26 | 151 | 532 | 1024 | 28 | 7 |
++| 1024x683 | more | compact | 32 | 62 | 31 | 26 | 151 | 532 | 1024 | 34 | 7 |
++| 1024x683 | gridai | compact | 32 | 74 | 31 | 26 | 163 | 520 | 1024 | 33 | 7 |
++| 1024x683 | worst | compact | 32 | 133 | 31 | 26 | 222 | 461 | 1024 | 37 | 7 |
++| 1024x683 | dock | compact | 32 | 0 | 31 | 26 | 89 | 594 | 664 | 17 | 7 |
++| 1024x683 | sidestack | compact | 32 | 0 | 31 | 26 | 89 | 594 | 184 | 17 | 7 |
++| 1024x683 | compact | compact | 0 | 0 | 0 | 26 | 26 | 657 | 1024 | 0 | 0 |
++| 1024x683 | module | compact | 32 | 0 | 31 | 26 | 89 | 594 | 764 | 17 | 7 |
++| 900x600 | calm | compact | 32 | 0 | 31 | 26 | 89 | 511 | 900 | 17 | 7 |
++| 900x600 | omni | compact | 32 | 62 | 31 | 26 | 151 | 449 | 900 | 28 | 7 |
++| 900x600 | more | compact | 32 | 62 | 31 | 26 | 151 | 449 | 900 | 34 | 7 |
++| 900x600 | gridai | compact | 32 | 74 | 31 | 26 | 163 | 437 | 900 | 33 | 7 |
++| 900x600 | worst | compact | 32 | 133 | 31 | 26 | 222 | 378 | 900 | 37 | 7 |
++| 900x600 | dock | compact | 32 | 0 | 31 | 26 | 89 | 511 | 540 | 17 | 7 |
++| 900x600 | sidestack | compact | 32 | 0 | 46 | 26 | 104 | 496 | 60 | 17 | 7 |
++| 900x600 | compact | compact | 0 | 0 | 0 | 26 | 26 | 574 | 900 | 0 | 0 |
++| 900x600 | module | compact | 32 | 0 | 31 | 26 | 89 | 511 | 640 | 17 | 7 |
++| 800x600 | calm | icon | 32 | 0 | 31 | 26 | 89 | 511 | 800 | 15 | 7 |
++| 800x600 | omni | icon | 32 | 74 | 31 | 26 | 163 | 437 | 800 | 26 | 7 |
++| 800x600 | more | icon | 32 | 62 | 31 | 26 | 151 | 449 | 800 | 32 | 7 |
++| 800x600 | gridai | icon | 32 | 100 | 31 | 26 | 189 | 411 | 800 | 31 | 7 |
++| 800x600 | worst | icon | 32 | 189 | 31 | 26 | 278 | 322 | 800 | 35 | 7 |
++| 800x600 | dock | icon | 32 | 0 | 31 | 26 | 89 | 511 | 440 | 15 | 7 |
++| 800x600 | sidestack | icon | 32 | 0 | 46 | 26 | 104 | 496 | 0 | 15 | 7 |
++| 800x600 | compact | icon | 0 | 0 | 0 | 26 | 26 | 574 | 800 | 0 | 0 |
++| 800x600 | module | icon | 32 | 0 | 31 | 26 | 89 | 511 | 540 | 15 | 7 |
+diff --git a/logs/research/M5-W18/A2-R3-shell-density-audit.md b/logs/research/M5-W18/A2-R3-shell-density-audit.md
+new file mode 100644
+index 0000000..3479222
+--- /dev/null
++++ b/logs/research/M5-W18/A2-R3-shell-density-audit.md
+@@ -0,0 +1,327 @@
++# A2 · M5-W18-R3 当前外壳密度审计（Current-shell density audit）
++
++> Lane A2 在 R3 的角色是 **RESEARCH_AND_PROTOTYPE 中的测量/预算 lane**：`M5-W18-R3-UX-TASKS-20260908.md` §A2
++> 要求"测量当前产品的标题栏、页签条、工具栏、侧/底区域与内容视口（全部目标尺寸），清点每一个可见按钮并
++> 归类为 常驻 / 溢出 / 右键菜单 / 命令入口 / 可删除重复，交付 before/after 预算与带标注的布局规格"。
++>
++> 本报告的定位：**只做事实与预算，不做原型**。原型与最终 HTML 归 A1（`A1-R3-prototype.html`）；
++> 渐进披露的状态机归 A3；状态持久化归 A4；右键菜单/命令注册表归 A6；视觉密度归 A8；独立复核归 A10。
++> 本 lane 未修改产品代码、未修改其他 lane 文件、未 push。
++
++## 证据标签
++
++`CURRENT_PRODUCT`（读产品源码/CSS 得到）/ `EXECUTED_SYNTHETIC_TEST`（本机实测，命令与结果可复现）/
++`DESIGN_DECISION`（A2 提案，非授权）/ `INFERENCE`（推断，已标注）/ `CONSUMED_PEERS`（引用他 lane）。
++
++## 0. 执行摘要（先看这里）
++
++| # | 结论 | 证据 |
++|---|---|---|
++| 1 | 当前**平静态**并不拥挤：1440x900 下总 chrome 89px（活动条 32 + 页签条 31 + 状态栏 26），内容占 **90.1% 高 / 100.0% 宽**，已满足 R3"≥85% 高 ≥92% 宽" | 实测 `A2-R3-run-20260908.out` |
++| 2 | 真正的问题是**chrome 会自己长高**：地址栏 `@focus` 自动展开"最近/常用"行（`ActivityBar.vue:299`）→ 1440x900 内容掉到 **83.2%**；宫格 AI 模式常驻群发行 + 设置行 → **81.9%**；四行同开 → **75.3%**，1024x720 低至 **69.2%** | 同上 |
++| 3 | 顶部 chrome 违反"≤2 行 ≤80px"：最坏态 **5 行 196px**，超出上限 145% | 同上 |
++| 4 | 宽度才是重灾区：**右侧 Dock 固定 360px**（`global.css:147`）→ 1440 内容 **75.0% 宽**、1024 **64.8% 宽**；AI 导航 220 + 收藏夹 260 + Dock 360 三面同开 → **41.7%**（1440）/ **18.0%**（1024） | 同上 |
++| 5 | 侧/底工具窗口只有"开/关"，**无折叠全部 / 恢复 / 最大化 / 固定 / 自动隐藏 / 拖宽**；`SidebarResizer.vue` 存在但 `App.vue` 未使用 | `CURRENT_PRODUCT` |
++| 6 | 目录树只有逐节点 `toggleTreeDir`（`useWorkspaceStore.ts:418-470` 的 `Set<string>`），**无全部折叠 / 展开一层 / 有界全部展开**，大目录有卡死风险 | `CURRENT_PRODUCT` |
++| 7 | **不存在命令注册表/命令面板**（`grep -iE "palette|命令面板|CommandRegistry" src` 零命中），右键菜单只覆盖 2 个对象域（成果库 3 项 / 文件 5 项） | `CURRENT_PRODUCT` |
++| 8 | 顶栏常驻 **19 个控件**（满密度）/ 17 个（≤1180px），其中至少 7 个可下沉到右键菜单或命令入口、3 个属重复导航 | §5 清单 |
++| 9 | 好消息：现有"精简模式"已经是合格的焦点模式雏形——隐藏活动条+页签条后内容达 **97.1%**（1440x900），只差"明显返回动作"与"全视图可用" | 实测 |
++| 10 | 极窄窗已出现"功能不可用"而非"变窄"：900x600 三面同开内容只剩 **60px 宽**，800x600 为 **0px**；且 800x600 低于 `min_inner_size(900,600)`，与蓝图 §3 的窄窗目标冲突 | 实测 + `CURRENT_PRODUCT` |
++
++## 1. 方法（可复现，且不触碰产品源码）
++
++- 复刻而非猜算：把产品 CSS 中的**精确 px 常量**抄进一个自包含静态页面
++  `logs/research/M5-W18/A2-R3-density-replica.html`（无网络、无外部字体依赖、无 Tauri/bridge 调用、
++  不 import 任何产品文件；每个数值在页内注释里标注了出处行号）。
++- 用无头 Chrome 真实布局后取 `getBoundingClientRect()`：
++  `google-chrome --headless --no-sandbox --disable-gpu --dump-dom`（本机 `Google Chrome 150.0.7871.128`）。
++- 驱动脚本 `A2-R3-measure.py` → 输出 `A2-R3-run-20260908.out`（表 + 明细 JSON 表）。复现：
++  `cd logs/research/M5-W18 && python3 A2-R3-measure.py`。
++- **视口无关**：无头 Chrome 的 `--window-size=1440,900` 实际给出 813px 视口，因此复刻页把根容器显式
++  设为 `W×H` 再量子元素，测量与浏览器真实视口无关。
++- **状态矩阵**：9 个状态 × 10 个尺寸（4 个 R3 目标尺寸 + 4 个"扣除约 37px 原生标题栏"的敏感度尺寸 +
++  蓝图提到的 900x600 / 800x600）。
++  主窗口 `decorations` 未显式关闭（`main.rs:1223-1228` 仅 `inner_size(1200,800)`、`min_inner_size(900,600)`、
++  `maximized(true)`），因此标题栏高度随系统主题变化，故单列敏感度。
++  ⚠️ `min_inner_size(900,600)` 意味着 **800x600 在现有产品里根本拉不出来**，与蓝图 §3 的"窄窗 1024x720、800x600"
++  冲突——见 §8 交 A0/A1。
++
++### 1.1 假设与误差来源（诚实声明）
++
++| 项 | 处理 |
++|---|---|
++| 中文字体 | 复刻页用 `system-ui, "PingFang SC", "Noto Sans CJK SC"`；本机有 279 个 Noto/CJK 字体，与真机 PingFang 的换行点可能相差 ±1 行（影响"扩展行换行"状态，约 ±29px） |
++| 页签数量 | 取 6 个页签（4 网页 + 2 目录）。页签条高度**不随数量变化**（单行 + 横向溢出滚动），故不影响 chrome 高度 |
++| 横向滚动条 | `.unified` 为 `overflow-x:auto`；WebKitGTK 为覆盖式滚动条（0px），Chrome 桌面版会占 15px。**本次实测已抓到**：900x600 `sidestack` 状态下页签条从 31px 涨到 **46px**（`EXECUTED_SYNTHETIC_TEST`）。故 §6.1 顶栏上限取 60px 而非 63px，预留 15px 滚动条后仍 ≤80px |
++| 原生标题栏 | 未计入主尺寸（主尺寸 = 客户区 = R3 所说的"post-titlebar"）；另给 37px 扣除的敏感度表 |
++| 未测量 | 各模块视图内部（数据库/图谱/Git/终端）的自有分栏——属 A5/A7 lane，A2 只测外壳 |
++
++## 2. 当前外壳结构（`CURRENT_PRODUCT`）
++
++```
++App.vue(.app, flex column, height:100vh)
++├─ ActivityBar.vue(.tbar)                    v-show=!compactMode
++│   ├─ nav.activity            32px 固定     global.css:9     一行：5 个一级入口 + 宫格 + ▾ + ☰ + 地址簇 + 3 个浏览辅助 + 🤖 + 📥采集 + ⚙️
++│   ├─ .expand-row.ai-send-row  ~39px        宫格打开且 AI 模式时**常驻**
++│   ├─ .expand-row[grid]        ~30px        ☰▾ 宫格设置（模式/布局/格数/资源/网址…）
++│   ├─ .expand-row[res]         ~30px        资源监控（2s 轮询）
++│   ├─ .expand-row[urls]        ~31px/行     各格网址（窄屏换行 → 多行）
++│   ├─ .expand-row[more]        ~30px/行     ☰ 功能菜单（3 分节 16 项，窄屏换行）
++│   └─ .expand-row.omni-row     ≤83px        最近/常用（地址栏 @focus 自动展开，**非用户显式请求**）
++├─ .body(flex row, flex:1)
++│   ├─ AINavPanel(.ai-nav)     220px 固定    global.css:188，仅 browser 视图、aiNavOpen 时
++│   └─ MainArea(.main)
++│       ├─ UnifiedTabBar(.unified) 31px      实测；网页页签 + 目录页签 + 模块页签混排
++│       └─ 内容
++│           ├─ browser/grid: .browser-body → [BookmarkPanel 260px] + .viewport + [.browser-dock 360px]
++│           └─ 模块视图: .modview（files 视图内含 .ftree 260px 固定树）
++└─ StatusBar(.status)          26px 固定     StatusBar.vue:136
++```
++
++固定宽度常量一览（`CURRENT_PRODUCT`）：AI 导航 220（`global.css:188`）、收藏夹 260
++（`BookmarkPanel.vue:70`）、右侧 Dock 360（`global.css:147`）、文件树 260（`global.css:312`）。
++**全部为硬编码 px，均不可拖拽**。
++
++## 3. 实测结果（`EXECUTED_SYNTHETIC_TEST`）
++
++单位：内容区占客户区高度 % / 占客户区宽度 %。完整数据在 `A2-R3-run-20260908.out`。
++
++| 状态 | 1920x1080 | 1440x900 | 1366x768 | 1024x720 |
++|---|---|---|---|---|
++| 默认平静（无扩展行/无侧栏） | 91.8 / 100 | **90.1 / 100** | 88.4 / 100 | 87.6 / 100 |
++| 地址栏聚焦 → 最近/常用自动展开 | 88.7 / 100 | **83.2** / 100 | 80.3 / 100 | 79.0 / 100 |
++| ☰ 功能菜单展开 | 88.7 / 100 | 86.4 / 100 | 84.1 / 100 | 79.0 / 100 |
++| 宫格 AI 模式（群发行常驻 + 设置行） | 84.9 / 100 | **81.9** / 100 | 78.8 / 100 | 77.4 / 100 |
++| 最坏：四行同开 | 79.4 / 100 | **75.3** / 100 | 71.1 / 100 | 69.2 / 100 |
++| 右侧 Dock 打开 | 91.8 / 81.3 | 90.1 / **75.0** | 88.4 / 73.6 | 87.6 / **64.8** |
++| 左 AI 导航 + 收藏夹 + 右 Dock 三面同开 | 91.8 / 56.3 | 90.1 / **41.7** | 88.4 / 38.5 | 87.6 / **18.0** |
++| 精简模式（隐藏活动条 + 页签条） | 97.6 / 100 | **97.1 / 100** | 96.6 / 100 | 96.4 / 100 |
++| 模块视图（文件 IDE 固定 260px 树） | 91.8 / 86.5 | 90.1 / 81.9 | 88.4 / 81.0 | 87.6 / 74.6 |
++
++chrome 分解（px，1440x900；activity / expand / tabbar / status）：
++
++| 状态 | activity | expand | tabbar | status | **chrome 合计** | 顶栏行数 |
++|---|---|---|---|---|---|---|
++| 平静 | 32 | 0 | 31 | 26 | **89** | 2 |
++| omni | 32 | 62 | 31 | 26 | **151** | 3 |
++| more | 32 | 33 | 31 | 26 | **122** | 3 |
++| gridai | 32 | 74 | 31 | 26 | **163** | 4 |
++| worst | 32 | 133 | 31 | 26 | **222** | 6 |
++| compact | 0 | 0 | 0 | 26 | **26** | 0 |
++
++> 注：1024x720 走 `nav-compact` 密度（一级入口 3 个、文字标签隐藏），但 chrome 高度与 1440 相同，
++> 只有 ☰ 菜单行因换行从 33px 涨到 62px——**窄屏反而更高**，这是"溢出即换行撑高"的直接代价。
++
++### 3.1 极窄窗（900x600 / 800x600）
++
++| 状态 | 900x600 | 800x600 |
++|---|---|---|
++| 平静 | 85.2 / 100 | 85.2 / 100 |
++| omni | 74.8 / 100 | 72.8 / 100 |
++| more | 74.8 / 100 | 74.8 / 100 |
++| gridai | 72.8 / 100 | 68.5 / 100 |
++| worst | **63.0** / 100 | **53.7** / 100 |
++| dock | 85.2 / **60.0** | 85.2 / **55.0** |
++| sidestack | 82.7 / **6.7**（内容宽 60px） | 82.7 / **0.0**（内容宽 0px） |
++| compact | 95.7 / 100 | 95.7 / 100 |
++
++两个必须上报的事实：
++1. **三面同开在 ≤900px 宽度下把内容挤到 60px 甚至 0px**（`EXECUTED_SYNTHETIC_TEST`）。这不是"变窄"，是功能不可用。
++2. 800x600 低于产品 `min_inner_size(900,600)`，真实产品拉不出这个尺寸；若要支持，必须先改窗口最小尺寸（属产品代码，A2 不做）。
++
++## 4. 对照 R3 全局验收约束的判定
++
++| R3 约束 | 判定 | 证据 |
++|---|---|---|
++| 1440x900 折叠态 ≥85% 高、≥92% 宽 | **PASS（仅平静态）** 90.1% / 100% | 实测 |
++| 常态稳定在 ≥85% | **FAIL** 地址栏聚焦即掉到 83.2%，宫格 AI 81.9%，最坏 75.3% | 实测 |
++| 顶部 chrome ≤2 行、≤80px | **FAIL** 平静态 2 行 63px 合格；最坏态 6 行 196px（超 145%） | 实测 |
++| 侧/底工具窗口：开/关/折叠全部/恢复/最大化/固定/取消固定/自动隐藏/调整尺寸 | **FAIL** 只有开/关；宽度全部硬编码；`SidebarResizer.vue` 未被 `App.vue` 使用 | `CURRENT_PRODUCT` |
++| 层级视图：全部折叠 / 展开一层 / 有界全部展开 | **FAIL** 仅 `toggleTreeDir` 逐节点；无上界保护 | `useWorkspaceStore.ts:418-470` |
++| 每边默认最多一个主工具窗口，同边再开替换（固定除外） | **FAIL** 左边界可同时挂 AI 导航 220 + 收藏夹 260；实测三面同开内容宽 41.7%（1440）/ 18.0%（1024） | 实测 |
++| 全焦点模式隐藏所有工具 chrome 且保留一个明显返回动作 | **PARTIAL** 精简模式已隐藏活动条+页签条（内容 97.1%），但：① 仅 browser 视图可用；② 返回按钮默认 `opacity:.35`（`global.css:102`）几乎不可见；③ 状态栏仍占 26px | 实测 + `CURRENT_PRODUCT` |
++| 无重复导航 | **FAIL** `TOP_NAV_ITEMS` 的 终端/剪贴板/知识库 与 `NAV_MENU_SECTIONS` 重复（`useLayoutStore.ts:33-74`，注释说明为窄屏可达而有意重复）；视图切换存在三处入口（页签条 / 一级入口 / ☰ 菜单）；"前往"按钮与回车重复且在 ≤1180px 已被隐藏 | `CURRENT_PRODUCT` |
++| 每个右键动作都有命令注册表身份 / 禁用原因 / 键盘路径 / 安全分级 | **FAIL** 无命令注册表（grep 零命中）；右键仅 2 个对象域 | `CURRENT_PRODUCT` |
++| 右键菜单按指针下对象限定作用域 | **PARTIAL PASS** 现有两处已区分"条目 / 空白"，但覆盖面只到成果库与文件 | `CURRENT_PRODUCT` |
++
++## 5. 顶栏可见控件全量清单与归类（`CURRENT_PRODUCT` + `DESIGN_DECISION`）
++
++### 5.1 活动条主行（满密度、browser 视图 —— 实测 19 个可点控件）
++
++| # | 控件 | 位置 | 归类 | 理由 |
++|---|---|---|---|---|
++| 1-5 | 🏠主页 / 📁浏览 / 💻终端 / 📋剪贴板 / 📚知识库 | 左 | **溢出**（保留 主页+浏览；其余入命令入口/☰） | 5 个同级入口把"内容优先"变成"功能优先"；窄屏下已被裁到 2-3 个，证明非必需常驻 |
++| 6 | 🗂️宫格 | 左 | **常驻** | 产品核心差异能力 |
++| 7 | ▾ 宫格设置 | 左 | **右键菜单 / 工具窗口** | 15 个设置项属低频，应进宫格工具窗口或右键菜单 |
++| 8 | ☰ 菜单 | 左 | **保留为"命令入口"本体** | 概念上应升级为可搜索命令入口（R3 明确要求） |
++| 9-11 | ← → ⟳ | 中 | **常驻（仅 browser/grid）** | 已是条件渲染；浏览器肌肉记忆，成本低（3×24px） |
++| 12 | ⭐ 收藏星 | 中 | **常驻（仅 browser）** | 单控件高价值 |
++| 13 | 前往 | 中 | **可删除重复** | 回车等价；≤1180px 已被 CSS 隐藏（`ActivityBar.vue:619`），说明本就可省 |
++| 14-15 | 🗂文件 / 💻终端（Dock） | 右 | **工具窗口** | 属"边/底工具窗口"，不该占顶栏；应改为底部工具窗口 + 命令入口 |
++| 16 | ⛶ 精简模式 | 右 | **命令入口 / 焦点模式** | 应升级为全视图焦点模式（Esc 返回 + 边缘条） |
++| 17 | 🤖 AI 导航 | 右 | **工具窗口** | 它是一个 220px 侧栏开关，语义上就是左工具窗口 |
++| 18 | 📥 采集 | 右 | **常驻** | 产品主流程动作，保留 |
++| 19 | ⚙️ 设置 | 右 | **常驻** | 单入口，保留 |
++
++页签条：每个页签 1 个关闭 ✕ + 1 个新建 ＋（6 页签 = 7 个控件，**常驻**，合理）。
++状态栏：26px、6-8 段文本，仅"资源区"可点（打开明细浮层）——**非按钮，但常驻占高**，建议焦点模式下隐藏。
++
++### 5.2 扩展行（当前会**增加行高**，是 R3 约束的主要违反者）
++
++| 行 | 控件数 | 归类 | 建议 |
++|---|---|---|---|
++| 最近/常用（omni） | 2 开关 + N chips | **覆盖层**（不得占行） | 去掉 `@focus` 自动展开；改为显式触发 + 覆盖层（锚在地址栏下方，不推动内容） |
++| ☰ 功能菜单（more） | 16 项 + 关闭 | **命令入口 / 覆盖层** | 直接并入命令入口面板 |
++| 宫格设置（grid） | 15 项 | **工具窗口 / 右键菜单** | 并入宫格工具窗口 |
++| AI 群发行 | 输入框 + 发送 | **底部工具窗口** | 常驻行是"永久挤压"，应改底部工具窗口（默认收起） |
++| 资源监控 / 各格网址 | 7 + 4×(input+↺) | **工具窗口 / 浮层** | 同上 |
++
++## 6. Before / After 预算（`DESIGN_DECISION`，交 A1 落地）
++
++### 6.1 chrome 预算账本（px）
++
++| 元素 | Before（实测） | After 目标 | 差值 | 约束依据 |
++|---|---|---|---|---|
++| 活动条主行 | 32（平静）/ 32+0~133 扩展 | **32（恒定上限）** | -0 ~ -133 | 扩展不得再新增行 |
++| 页签条 | 31 | **28** | -3 | 建议微调页签内边距 |
++| 顶栏小计 | 63 ~ 196 | **≤ 60（恒定）** | ≤ -136 | R3"≤2 行 ≤80px"留 20px 冗余给滚动条/字体差异 |
++| 状态栏 | 26（恒显） | **26，焦点模式隐藏** | 0 | — |
++| 侧栏（单/双） | 220 / 260 / 360 硬编码 | **0（默认）/ ≤0.22W 左、≤0.28W 右、合计 ≤0.45W** | 见 §6.2 | 默认无边栏 = "内容优先" |
++| **chrome 合计** | **89 ~ 222** | **≤ 86（常态）/ ≤ 86（任何展开态）** | **-3 ~ -136** | — |
++
++### 6.2 工具窗口尺寸规格（与 `WORKBENCH_BLUEPRINT-20260908.md` §3 对齐）
++
++蓝图已定：左工具区默认约 260px、底部默认约 240px。A2 在此基础上补可拖范围与上限：
++
++| 边 | 默认 | 可拖范围 | 上限 | 自动隐藏 |
++|---|---|---|---|---|
++| 左 | **260px**（同蓝图） | 220–360 | `0.25W` | 8px 边缘条 |
++| 右 | **320px** | 260–420 | `0.28W` | 8px 边缘条 |
++| 底 | **`min(240, 0.30H)`**（蓝图 240 为上限） | 160–`0.35H` | `0.35H` | 8px 边缘条 |
++| 同边第二个 | — 替换当前（固定除外） | — | — | — |
++| 左右同时 | 合计 ≤ `0.45W` | — | — | — |
++
++### 6.3 目标占比（按 §6.1/§6.2 反推，非实测）
++
++| 尺寸 | 常态 chrome | 常态 内容高/宽 | 左开(260) 内容宽 | 右开(320) 内容宽 | 左右同开(580) | 底开(240) 内容高 | 焦点模式 |
++|---|---|---|---|---|---|---|---|
++| 1920x1080 | 86 | 92.0% / 100% | 86.5% | 83.3% | 69.8% | 69.8% | 100% / 100% |
++| 1440x900 | 86 | **90.4% / 100%** | 81.9% | 77.8% | 59.7% | 63.8% | 100% / 100% |
++| 1366x768 | 86 | 88.8% / 100% | 81.0% | 76.6% | 57.5% | 58.9% | 100% / 100% |
++| 1024x720 | 86 | 88.1% / 100% | 74.6% | 72.0%（受 0.28W 上限=287） | 46.6% | 58.1% | 100% / 100% |
++
++对比 BEFORE：打开一个右侧 Dock 今天是 **-25.0pp 宽**（1440）/ **-35.2pp**（1024），
++且**不可调**；三面同开今天是 **-58.3pp**（1440）/ **-82.0pp**（1024）。
++AFTER 的关键不是"让工具窗口更窄"，而是 **默认 0 + 可调 + 可隐藏 + 同边单一**。
++
++> 说明：R3 的"≥92% 宽"按字面只约束**折叠态**（AFTER 折叠态 = 100%），本表给出的是"打开工具窗口后"
++> 的可接受下限提案（≥55%），供 A1/A3/A11 定夺——若 A10 复核认为必须 ≥70%，则左右同开应默认禁止。
++
++### 6.4 三条硬规则（建议写成门禁断言，交 A4/A11）
++
++1. **顶栏行数 ≤ 2、总高 ≤ 80px（含滚动条）**，任何新功能不得新增常驻行——要用覆盖层 / 工具窗口 / 命令入口。
++2. **默认无侧栏**；同一边同时只允许 1 个主工具窗口（除非固定）。
++3. **任何状态下内容区 ≥85% 高（1440x900）**，最坏态不得低于 85%（今天最坏 75.3%，这是必须消掉的 10.3pp）。
++
++## 7. 带标注的布局规格（Annotated layout spec）
++
++### 7.1 BEFORE · 1440x900 · 平静态（chrome 89px）
++
++```
++┌──────────────────────────────────────────────────────────────┐
++│ 活动条 32px  19 个控件：5 入口·宫格·▾·☰ ·[←→⟳|omnibox|★|前往]·🗂💻⛶│🤖|📥采集|⚙️│ ← 单行已满
++├──────────────────────────────────────────────────────────────┤
++│ 页签条 31px  [🌐示例][🌐简报][🌐指南][📁secondBrain][📁mvp][🗄️DB] ＋      │
++├──────────────────────────────────────────────────────────────┤
++│                                                              │
++│                    内容视口 1440 × 811                        │  90.1% 高
++│                                                              │  100% 宽
++├──────────────────────────────────────────────────────────────┤
++│ 状态栏 26px  ●已连接 当前：浏览器 页签6 · 终端未启 · 仓库未配 · 内存…      │
++└──────────────────────────────────────────────────────────────┘
++```
++
++### 7.2 BEFORE · 1440x900 · 最坏态（chrome 222px，内容 75.3%）
++
++```
++┌──────────────────────────────────────────────────────────────┐
++│ 活动条 32px（同上）                                             │
++│ AI 群发行 39px   🤖群发 [___________________________] 发送       │ ← 常驻，非用户显式打开
++│ 宫格设置 30px    模式 浏览 AI | 布局 ▦ ⊞ ▭ | 格数 2 3 4 6 9 | …    │
++│ 资源监控 30px    系统可用… 应用共… 主进程… 格1… 格2…                │
++│ 各格网址 31px    1[___]↺ 2[___]↺ 3[___]↺ 4[___]↺               │
++├──────────────────────────────────────────────────────────────┤
++│ 页签条 31px                                                   │
++├──────────────────────────────────────────────────────────────┤
++│                    内容视口 1440 × 678                         │  75.3% 高 ← 违反 ≥85%
++├──────────────────────────────────────────────────────────────┤
++│ 状态栏 26px                                                   │
++└──────────────────────────────────────────────────────────────┘
++```
++
++### 7.3 AFTER · 1440x900 · 平静态（提案，chrome 86px）
++
++```
++┌──────────────────────────────────────────────────────────────┐
++│ 行 A 32px   🏠 📁 🗂️ │[←→⟳ omnibox ★]│ 🔍命令(Ctrl+K) 📥 ⚙️      │ ← 8 控件（原 19）
++│              └ 其余入口进 🔍 命令入口；无"前往"；扩展走覆盖层        │
++├──────────────────────────────────────────────────────────────┤
++│ 行 B 28px   [🌐示例][🌐简报][🌐指南][📁secondBrain][📁mvp][🗄️DB] ＋      │
++├──────────────────────────────────────────────────────────────┤
++│                                                              │
++│                    内容视口 1440 × 814                         │  90.4% 高 / 100% 宽
++│                                                              │
++├──────────────────────────────────────────────────────────────┤
++│ 状态栏 26px（焦点模式隐藏）                                       │
++└──────────────────────────────────────────────────────────────┘
++展开态：地址栏建议走**覆盖层**（锚在行 A 下方，浮在内容之上，不改变行高）；
++        宫格设置 / AI 群发 / 资源 / 网址 → 底部或右侧工具窗口（可折叠、可固定、可自动隐藏）。
++```
++
++### 7.4 AFTER · 1024x720 · 工具窗口打开（提案）
++
++```
++┌──────────────────────────────────────────────┐
++│ 行 A 32px  🏠 📁 🗂️ │[omnibox]│ 🔍 📥 ⚙️           │
++│ 行 B 28px  [🌐示例][🌐简报][📁secondBrain] ＋          │
++├──────────────────────────────────────────────┤
++│ 内容 737 × 634      │ 右工具窗口 287 (0.28W)  │ 内容 72.0% 宽 / 88.1% 高
++│                     │ ─ 可拖拽 / 固定 / 自动隐藏│
++├──────────────────────────────────────────────┤
++│ 状态栏 26px                                   │
++└──────────────────────────────────────────────┘
++对比 BEFORE：右 Dock 固定 360px → 内容仅 64.8% 宽（-27.2pp）。
++```
++
++## 8. 交给其他 lane 的问题（A2 不越权给结论）
++
++- **A1（原型）**：请直接采用 §6.1 预算与 §7.3/§7.4 帧；顶栏常驻从 19 → 8 的清单见 §5.1 归类列。
++- **A3（渐进披露）**：侧栏宽度公式（§6.2）与"同边单一主工具窗口"需要你的状态机支持；另外请冻结
++  自动隐藏态宽度（A2 提案 8px 边缘条）。
++- **A6（右键/命令注册表）**：§5.1 中 7 个控件被 A2 判为"右键菜单/命令入口"，需要你确认每个都有
++  命令身份 + 禁用原因 + 键盘路径；今天命令注册表**不存在**，这是跨 lane 的共同前置。
++- **A4（状态持久化）**："默认无侧栏 + 焦点模式"需要持久化项：每边当前工具窗口 id、是否固定、
++  是否自动隐藏、宽度。A2 不定义 DTO。
++- **A8（视觉密度）**：A2 只给 px 预算，不给字号/间距；行 A 32px 内放 8 个控件需要你的图标尺寸与间距系统。
++- **A9（交互安全）**：焦点模式"隐藏全部 chrome + 一个返回动作"有"用户迷路/无法退出"风险，请纳入威胁模型。
++- **A10（独立复核）**：请重点复核 §3 的实测数字（复刻页是否遗漏了某条常驻行）与 §6.2 的 0.28W 公式。
++- **A11（验收包）**：建议把 §6.4 三条硬规则做成可断言的验收项（顶栏行数/总高/内容占比）。
++- **A0/A1（尺寸口径）**：R3 卡写 4 个目标尺寸（1920x1080/1440x900/1366x768/1024x720），蓝图 §3 另提 800x600，
++  但产品 `min_inner_size(900,600)`（`main.rs:1226`）使 800x600 不可达。请裁决：改最小窗口（产品代码，A2 不做）
++  还是把 800x600 从目标里去掉。A2 两个尺寸都测了（§3.1），不影响其它结论。
++
++## 9. 债务（`STATUS=PASS_WITH_DEBT`）
++
++- **D-A2-1**：复刻页未包含各模块视图内部分栏（数据库/图谱/Git/终端），只测外壳；模块视图仅以文件 IDE 260px 树
++  作代表。若 A5/A7 需要，可追加第二个复刻页。
++- **D-A2-2**：`AI 群发行`与`资源监控`的行高按"单行不换行"量得；真实数据更长时会换行（+29px/行），
++  最坏态可能比 222px 更高——即 §3"最坏 75.3%"仍是**乐观值**。
++- **D-A2-3**：原生标题栏高度按 37px 估；GNOME/KDE/非 CSD 主题差异未覆盖，仅给敏感度表。
++
++## 10. 自检
++
++- [x] 测量可复现：`python3 A2-R3-measure.py` → `A2-R3-run-20260908.out`（9 状态 × 10 尺寸 = 90 条记录）
++- [x] 未改产品代码：`git status` 仅 `logs/` 下新增文件
++- [x] 未改其他 lane 文件
++- [x] 未 push
++- [x] 每个结论都标了证据标签与出处行

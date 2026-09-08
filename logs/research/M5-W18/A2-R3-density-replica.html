@@ -1,0 +1,342 @@
+<!doctype html>
+<!--
+A2 / M5-W18-R3 :: current-shell density replica (MEASUREMENT FIXTURE ONLY)
+Purpose: reproduce the geometry of the shipping shell chrome with the exact CSS
+constants read from the product, so that chrome height / content viewport can be
+measured deterministically at every R3 target size.
+
+Rules for this file:
+- It is NOT a prototype and NOT a proposal. It copies numbers, not code:
+  every px value below is transcribed from the product CSS (file:line cited in
+  A2-R3-shell-density-audit.md). No product source is imported or executed.
+- No network, no external font, no dependency, no Tauri/bridge call.
+- The root wrapper is sized explicitly, so measurements are independent of the
+  real browser viewport (headless Chrome may report an 87px-smaller viewport).
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>A2 R3 density replica</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, "PingFang SC", "Noto Sans CJK SC", sans-serif; }
+button { cursor: pointer; border: 1px solid #ccc; background: #fafafa; border-radius: 6px; padding: 6px 12px; }
+
+#shell { display: flex; flex-direction: column; overflow: hidden; background: #fff; }
+
+/* ---- ActivityBar (src/styles/global.css:9 .activity) ---- */
+.tbar { flex-shrink: 0; }
+.activity {
+  height: 32px; background: #1f2733; display: flex; flex-direction: row;
+  align-items: stretch; padding: 2px 8px; gap: 3px; flex-shrink: 0;
+}
+.activity button {
+  position: relative; min-width: 0; height: 100%; border: none; background: transparent;
+  color: #cbd5e0; border-radius: 6px; display: flex; flex-direction: row;
+  align-items: center; justify-content: center; gap: 4px; padding: 2px 8px;
+}
+.activity button .ic { font-size: 14px; line-height: 1; }
+.activity button .lab { font-size: 11px; line-height: 1; white-space: nowrap; }
+.activity .sep { width: 1px; align-self: center; height: 24px; background: #3a4452; margin: 0 4px; }
+.activity .sys { min-width: 40px; }
+.activity .collect { background: #2b6cb0; color: #fff; }
+.caret-btn { min-width: 16px; padding: 2px 3px 2px 0; font-size: 9px; color: #7d8794; }
+
+/* ---- address cluster (ActivityBar.vue:551-604) ---- */
+.addr-mid { flex: 1; display: flex; align-items: center; gap: 4px; min-width: 0; margin: 0 6px; }
+.omni-wrap { position: relative; flex: 1; display: flex; min-width: 0; }
+.omni-wrap input {
+  flex: 1; height: 24px; border: 1px solid #3a4452; border-radius: 12px; padding: 0 12px;
+  font-size: 12px; outline: none; min-width: 0; background: #f4f6f9; color: #333;
+}
+.addr-mid .go {
+  background: #2b6cb0; color: #fff; border: none; border-radius: 5px;
+  padding: 4px 12px; font-size: 12px; white-space: nowrap;
+}
+.tbtn {
+  min-width: 24px; height: 24px; border: none; background: transparent; color: #cbd5e0;
+  border-radius: 5px; font-size: 13px; display: flex; align-items: center;
+  justify-content: center; padding: 0 4px;
+}
+
+/* ---- expandable rows (ActivityBar.vue:466-544) ---- */
+.expand-row {
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap; padding: 4px 8px;
+  background: #f4f6fb; border-bottom: 1px solid #e3e7f5;
+}
+.expand-row button {
+  border: 1px solid #d5dbe7; background: #fff; color: #4e5969; border-radius: 5px;
+  padding: 3px 9px; font-size: 11px; white-space: nowrap;
+}
+.er-label { font-size: 11px; color: #86909c; }
+.er-sep { width: 1px; height: 16px; background: #d5dbe7; }
+.er-close { margin-left: auto; border: none; background: transparent; color: #999; }
+.er-url { display: inline-flex; align-items: center; gap: 3px; }
+.er-url input { width: 170px; height: 22px; border: 1px solid #d5dbe7; border-radius: 4px; font-size: 11px; padding: 0 6px; }
+.omni-row { max-height: 74px; overflow-y: auto; }
+.chip { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.ai-send-row { align-items: center; }
+.ai-send-input { flex: 1; height: 30px; border: 1px solid #e5e6eb; border-radius: 6px; padding: 0 12px; font-size: 13px; min-width: 0; }
+
+/* ---- UnifiedTabBar (UnifiedTabBar.vue:70-132) ---- */
+.unified {
+  display: flex; align-items: center; gap: 3px; padding: 3px 6px 0; background: #eef1f6;
+  border-bottom: 1px solid #e5e6eb; flex-shrink: 0; overflow-x: auto;
+}
+.tab {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 200px; border: 1px solid #d5dbe7;
+  border-bottom: none; background: #f7f8fa; color: #4e5969; border-radius: 7px 7px 0 0;
+  padding: 4px 8px 4px 10px; font-size: 12px; white-space: nowrap;
+}
+.tab-close { border: none; background: transparent; color: #bbb; font-size: 10px; padding: 0 2px; }
+.tab-new { border: none; background: transparent; color: #4e5969; font-size: 14px; padding: 2px 8px; }
+
+/* ---- body / main (global.css:87,146-152,188) ---- */
+.body { flex: 1; display: flex; min-height: 0; }
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.browser-body { flex: 1; display: flex; min-height: 0; min-width: 0; }
+.viewport { flex: 1; background: #fff; position: relative; overflow: hidden; min-height: 0; }
+.browser-dock { width: 360px; flex-shrink: 0; border-left: 1px solid #e5e6eb; display: flex; flex-direction: column; }
+.ai-nav { width: 220px; background: #f7f8ff; border-right: 1px solid #e3e7f5; flex-shrink: 0; }
+.bookmark-panel { width: 260px; flex-shrink: 0; border-right: 1px solid #e5e6eb; background: #fff; }
+.ftree { width: 260px; flex-shrink: 0; border-right: 1px solid #e5e6eb; }
+.status { height: 26px; background: #1f2733; color: #9aa4b2; font-size: 11px; display: flex; align-items: center; padding: 0 12px; gap: 16px; flex-shrink: 0; }
+.modview { flex: 1; display: flex; flex-direction: column; min-height: 0; background: #fff; }
+
+/* ---- responsive density (useLayoutStore.ts:76-95, ActivityBar.vue:609-624) ---- */
+.nav-compact .lab, .nav-icon .lab { display: none; }
+.nav-compact .activity button, .nav-icon .activity button { padding: 2px 6px; }
+.nav-icon .addr-mid .go { display: none; }
+.nav-icon .omni-wrap input { font-size: 11px; }
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="shell">
+  <!-- ============ row 1: ActivityBar ============ -->
+  <div class="tbar" id="tbar">
+    <div class="activity" id="activity">
+      <button data-nav-item><span class="ic">🏠</span><span class="lab">主页</span></button>
+      <button data-nav-item><span class="ic">📁</span><span class="lab">浏览</span></button>
+      <button data-nav-item><span class="ic">💻</span><span class="lab">终端</span></button>
+      <button data-nav-item><span class="ic">📋</span><span class="lab">剪贴板</span></button>
+      <button data-nav-item><span class="ic">📚</span><span class="lab">知识库</span></button>
+      <button data-nav-item><span class="ic">🗂️</span><span class="lab">宫格</span></button>
+      <button class="caret-btn" data-nav-item>▾</button>
+      <button data-nav-item><span class="ic">☰</span><span class="lab">菜单</span></button>
+      <div class="addr-mid">
+        <button class="tbtn">←</button>
+        <button class="tbtn">→</button>
+        <button class="tbtn">⟳</button>
+        <div class="omni-wrap"><input value="https://example.com/a-fairly-long-page-title" /><button>★</button></div>
+        <button class="go">前往</button>
+      </div>
+      <button class="tbtn">🗂</button>
+      <button class="tbtn">💻</button>
+      <button class="tbtn">⛶</button>
+      <span class="sep"></span>
+      <button class="sys"><span class="ic">🤖</span></button>
+      <button class="collect"><span class="ic">📥</span><span class="lab">采集</span></button>
+      <button class="sys"><span class="ic">⚙️</span></button>
+    </div>
+
+    <!-- AI 群发行：宫格打开且 AI 模式时常驻 -->
+    <div class="expand-row ai-send-row hidden" data-row="ai">
+      <span class="er-label">🤖 群发</span>
+      <input class="ai-send-input" />
+      <button>发送</button>
+    </div>
+
+    <!-- 宫格设置行 -->
+    <div class="expand-row hidden" data-row="grid">
+      <span class="er-label">模式</span><button>🌐 浏览</button><button>🤖 AI</button>
+      <span class="er-sep"></span><span class="er-label">布局</span>
+      <button>▦ 宫格</button><button>⊞ 四分</button><button>▭ 横向</button>
+      <span class="er-sep"></span><span class="er-label">格数</span>
+      <button>2</button><button>3</button><button>4</button><button>6</button><button>9</button>
+      <span class="er-sep"></span>
+      <button>打开</button><button>网址</button><button>资源</button><button>关闭宫格</button>
+      <button class="er-close">✕</button>
+    </div>
+
+    <!-- 资源监控行 -->
+    <div class="expand-row hidden" data-row="res">
+      <span class="er-label">系统可用 5.2G / 15.6G</span><span class="er-sep"></span>
+      <span class="er-label">应用共 1.4G</span><span class="er-label">主进程 410M</span>
+      <span class="er-label">格1 328M</span><span class="er-label">格2 301M</span>
+    </div>
+
+    <!-- 各格网址行（会换行） -->
+    <div class="expand-row hidden" data-row="urls">
+      <span class="er-url"><span class="er-gidx">1</span><input /><button>↺</button></span>
+      <span class="er-url"><span class="er-gidx">2</span><input /><button>↺</button></span>
+      <span class="er-url"><span class="er-gidx">3</span><input /><button>↺</button></span>
+      <span class="er-url"><span class="er-gidx">4</span><input /><button>↺</button></span>
+    </div>
+
+    <!-- ☰ 功能菜单行 -->
+    <div class="expand-row hidden" data-row="more">
+      <span class="er-label">工作区</span><button>📂 文件</button><button>📋 剪贴板</button><button>📚 知识库</button>
+      <span class="er-sep"></span><span class="er-label">工具</span>
+      <button>💻 终端</button><button>🚀 应用</button><button>📜 脚本库</button><button>⚡ 命令库</button>
+      <button>🧰 工具箱</button><button>🗄️ 数据库</button><button>⏰ 定时任务</button><button>🛠️ 技能</button>
+      <button>🤖 智能体</button><button>🕸️ 图谱</button><button>🔌 插件</button>
+      <span class="er-sep"></span><span class="er-label">同步</span>
+      <button>🛰️ 仓库</button><button>🛡️ 审计</button>
+      <button class="er-close">✕</button>
+    </div>
+
+    <!-- 最近/常用行（地址栏聚焦即自动展开） -->
+    <div class="expand-row omni-row hidden" data-row="omni">
+      <button>🕒 历史</button><button>📂 常用</button><span class="er-sep"></span>
+      <button class="chip">🌐 https://example.com/a-fairly-long-page-title</button>
+      <button class="chip">🌐 https://news.example.org/daily-brief</button>
+      <button class="chip">🌐 https://docs.example.net/guide/getting-started</button>
+      <button class="chip">🌐 https://shop.example.cn/item/8812345</button>
+      <button class="chip">📁 /home/ainfinit/Documents/Knowledge-Base/secondBrain</button>
+      <button class="chip">📁 /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3</button>
+      <button class="chip">📂 成果工作区</button><button class="chip">📂 知识库</button>
+      <button class="er-close">✕</button>
+    </div>
+  </div>
+
+  <!-- ============ body ============ -->
+  <div class="body">
+    <aside class="ai-nav hidden" data-side="ai">AI 导航 220px</aside>
+    <div class="main">
+      <!-- ============ row 2: UnifiedTabBar ============ -->
+      <div class="unified" id="tabbar">
+        <div class="tab"><span>🌐</span><span>示例站点标题</span><button class="tab-close">✕</button></div>
+        <div class="tab"><span>🌐</span><span>每日简报</span><button class="tab-close">✕</button></div>
+        <div class="tab"><span>🌐</span><span>入门指南</span><button class="tab-close">✕</button></div>
+        <div class="tab"><span>📁</span><span>secondBrain</span><button class="tab-close">✕</button></div>
+        <div class="tab"><span>📁</span><span>mvp-browser-os-v3</span><button class="tab-close">✕</button></div>
+        <div class="tab"><span>🗄️</span><span>数据库</span><button class="tab-close">✕</button></div>
+        <button class="tab-new">＋</button>
+      </div>
+      <!-- browser view -->
+      <div class="browser-body" id="browserview">
+        <aside class="bookmark-panel hidden" data-side="bm">收藏夹 260px</aside>
+        <div class="viewport" id="viewport">content viewport</div>
+        <aside class="browser-dock hidden" data-side="dock">右侧 Dock 360px</aside>
+      </div>
+      <!-- module view (files IDE: fixed 260px tree) -->
+      <div class="browser-body hidden" id="modview">
+        <aside class="ftree">文件树 260px</aside>
+        <div class="modview" id="modcontent">module content</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ row 3: StatusBar ============ -->
+  <footer class="status" id="status"><span>● 已连接</span><span>当前：浏览器</span><span>页签 6</span></footer>
+</div>
+
+<pre id="out" style="display:none"></pre>
+<script>
+(function () {
+  var shell = document.getElementById("shell");
+  var tbar = document.getElementById("tbar");
+  var activity = document.getElementById("activity");
+  var tabbar = document.getElementById("tabbar");
+  var statusBar = document.getElementById("status");
+  var viewport = document.getElementById("viewport");
+  var browserview = document.getElementById("browserview");
+  var modview = document.getElementById("modview");
+  var modcontent = document.getElementById("modcontent");
+
+  function q(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
+  function show(el, on) { el.classList.toggle("hidden", !on); }
+
+  // useLayoutStore.ts:76-95 —— full >=1180 显示 5 个一级入口，compact >=900 显示 3 个并收起文字，
+  // icon <900 只留 2 个。
+  function applyDensity(w) {
+    var navs = q("#activity > button[data-nav-item]");
+    var keep = w >= 1180 ? 5 : (w >= 900 ? 3 : 2);
+    // 前 5 个是一级入口（含终端/剪贴板/知识库），第 6/7/8 是宫格/▾/☰，始终保留
+    for (var i = 0; i < 5; i++) show(navs[i], i < keep);
+    tbar.classList.remove("nav-compact", "nav-icon");
+    if (w < 900) tbar.classList.add("nav-icon");
+    else if (w < 1180) tbar.classList.add("nav-compact");
+  }
+
+  var STATES = {
+    // 默认静态：无扩展行、无侧栏 —— 用户开机看到的"平静态"
+    calm:    { rows: [],                                  sides: [], view: "browser" },
+    // 地址栏一聚焦就自动展开"最近/常用"（ActivityBar.vue:299）
+    omni:    { rows: ["omni"],                            sides: [], view: "browser" },
+    // ☰ 功能菜单展开
+    more:    { rows: ["more"],                            sides: [], view: "browser" },
+    // 宫格 AI 模式：群发行常驻 + 宫格设置行
+    gridai:  { rows: ["ai", "grid"],                      sides: [], view: "browser" },
+    // 最坏情况：AI 群发 + 宫格设置 + 资源 + 网址 四行同时展开
+    worst:   { rows: ["ai", "grid", "res", "urls"],       sides: [], view: "browser" },
+    // 浏览器右侧 Dock（文件/终端）
+    dock:    { rows: [],                                  sides: ["dock"], view: "browser" },
+    // 左侧 AI 导航 + 收藏夹 + 右侧 Dock 三面同时开
+    sidestack: { rows: [], sides: ["ai", "bm", "dock"],   view: "browser" },
+    // 精简模式：ActivityBar 与页签条都隐藏（App.vue:240 / MainArea.vue:125）
+    compact: { rows: [], sides: [], view: "browser", compact: true },
+    // 模块视图（文件 IDE：固定 260px 树）
+    module:  { rows: [], sides: [], view: "module" }
+  };
+
+  function applyState(name) {
+    var st = STATES[name];
+    q("[data-row]").forEach(function (el) { show(el, st.rows.indexOf(el.getAttribute("data-row")) >= 0); });
+    q("[data-side]").forEach(function (el) { show(el, st.sides.indexOf(el.getAttribute("data-side")) >= 0); });
+    show(tbar, !st.compact);
+    show(tabbar, !st.compact);
+    show(browserview, st.view === "browser");
+    show(modview, st.view === "module");
+  }
+
+  function visibleButtons(root) {
+    return q(root + " button").filter(function (b) { return b.offsetParent !== null; }).length;
+  }
+
+  function measure(w, h, state) {
+    shell.style.width = w + "px";
+    shell.style.height = h + "px";
+    applyDensity(w);
+    applyState(state);
+    void shell.offsetHeight; // force layout
+    var contentEl = STATES[state].view === "module" ? modcontent : viewport;
+    var r = contentEl.getBoundingClientRect();
+    var chrome = h - r.height;
+    return {
+      size: w + "x" + h,
+      state: state,
+      activityH: +activity.getBoundingClientRect().height.toFixed(1),
+      expandH: +(tbar.getBoundingClientRect().height - activity.getBoundingClientRect().height).toFixed(1),
+      tabbarH: STATES[state].compact ? 0 : +tabbar.getBoundingClientRect().height.toFixed(1),
+      statusH: +statusBar.getBoundingClientRect().height.toFixed(1),
+      chromeH: +chrome.toFixed(1),
+      contentH: +r.height.toFixed(1),
+      contentW: +r.width.toFixed(1),
+      pctH: +(r.height / h * 100).toFixed(1),
+      pctW: +(r.width / w * 100).toFixed(1),
+      btnsTop: visibleButtons("#tbar"),
+      btnsTab: STATES[state].compact ? 0 : visibleButtons("#tabbar"),
+      density: w >= 1180 ? "full" : (w >= 900 ? "compact" : "icon")
+    };
+  }
+
+  var SIZES = [
+    [1920, 1080], [1440, 900], [1366, 768], [1024, 720],
+    // 原生标题栏敏感度（假设 37px 系统标题栏，窗口最大化时客户区变矮）
+    [1920, 1043], [1440, 863], [1366, 731], [1024, 683],
+    // 蓝图 WORKBENCH_BLUEPRINT §3 提到的窄窗 800x600；注意产品 min_inner_size=900x600
+    [900, 600], [800, 600]
+  ];
+  var out = [];
+  SIZES.forEach(function (s) {
+    Object.keys(STATES).forEach(function (name) {
+      out.push(measure(s[0], s[1], name));
+    });
+  });
+  document.getElementById("out").textContent = JSON.stringify(out);
+})();
+</script>
+</body>
+</html>
