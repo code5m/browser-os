@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, ref } from "vue";
 import type { Bookmark } from "../../types";
 import { useBrowserStore } from "../../stores/useBrowserStore";
 import { useBookmarkStore } from "../../stores/useBookmarkStore";
@@ -10,6 +10,7 @@ import { useLayoutStore } from "../../stores/useLayoutStore";
 const browser = useBrowserStore();
 const bookmarks = useBookmarkStore();
 const layout = useLayoutStore();
+const fileInput = ref<HTMLInputElement>();
 
 // 侧栏可能先于 ⭐ 按钮挂载（如刷新后直接展开），这里兜底加载一次
 onMounted(() => {
@@ -37,6 +38,19 @@ async function removeItem(b: Bookmark) {
   if (bookmarks.busy) return;
   await bookmarks.remove(b.id);
 }
+
+async function importFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  try {
+    await bookmarks.importFile(file);
+  } catch {
+    bookmarks.error = "收藏文件格式无法解析";
+  } finally {
+    input.value = "";
+  }
+}
 </script>
 
 <template>
@@ -45,7 +59,9 @@ async function removeItem(b: Bookmark) {
       <span class="bm-title">📑 收藏夹</span>
       <span class="bm-count">{{ list.length }}</span>
       <button title="刷新" @click="bookmarks.load()">↻</button>
+      <button title="导入 Chrome/Firefox/HTML 收藏夹" @click="fileInput?.click()">导入</button>
       <button class="close" title="收起" @click="bookmarks.togglePanel">✕</button>
+      <input ref="fileInput" class="hidden-file" type="file" accept=".json,.html,.htm" @change="importFile" />
     </div>
     <div v-if="bookmarks.error" class="bm-error">{{ bookmarks.error }}</div>
     <div class="bm-list">
@@ -75,6 +91,7 @@ async function removeItem(b: Bookmark) {
   background: #f7f8fa;
   min-height: 0;
 }
+.hidden-file { display: none; }
 .tabs {
   flex-shrink: 0;
 }

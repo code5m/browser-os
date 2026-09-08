@@ -1258,6 +1258,7 @@ fn main() {
             };
             let window = WebviewWindowBuilder::new(app, "main", main_url)
                 .title("浏览器OS融合")
+                .decorations(false)
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(900.0, 600.0)
                 .maximized(true)

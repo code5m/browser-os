@@ -152,6 +152,31 @@ export const useBookmarkStore = defineStore("bookmark", () => {
     return add(url, title);
   }
 
+  async function importFile(file: File): Promise<number> {
+    const text = await file.text();
+    const imported: { url: string; title: string }[] = [];
+    if (/\.(html?|HTML?)$/.test(file.name)) {
+      const doc = new DOMParser().parseFromString(text, "text/html");
+      doc.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((a) => {
+        if (/^https?:\/\//i.test(a.href)) imported.push({ url: a.href, title: a.textContent?.trim() || a.href });
+      });
+    } else {
+      const walk = (node: unknown): void => {
+        if (!node || typeof node !== "object") return;
+        const value = node as Record<string, unknown>;
+        if (typeof value.url === "string" && /^https?:\/\//i.test(value.url)) imported.push({ url: value.url, title: typeof value.name === "string" ? value.name : value.url });
+        if (Array.isArray(value.children)) value.children.forEach(walk);
+        if (value.roots && typeof value.roots === "object") Object.values(value.roots as Record<string, unknown>).forEach(walk);
+      };
+      walk(JSON.parse(text));
+    }
+    const unique = [...new Map(imported.map((item) => [normalizeUrl(item.url), item])).values()];
+    let count = 0;
+    for (const item of unique) if (await add(item.url, item.title)) count += 1;
+    layout.showToast(`已导入 ${count} 条收藏${unique.length !== count ? `（跳过 ${unique.length - count} 条）` : ""}`);
+    return count;
+  }
+
   function togglePanel(): void {
     panelOpen.value = !panelOpen.value;
   }
@@ -169,6 +194,7 @@ export const useBookmarkStore = defineStore("bookmark", () => {
     add,
     remove,
     toggle,
+    importFile,
     togglePanel,
   };
 });
