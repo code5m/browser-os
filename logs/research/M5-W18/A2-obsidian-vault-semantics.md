@@ -14,7 +14,9 @@ Every factual claim is tagged with one of:
 - `OBSERVED_BEHAVIOR` — observed by read-only inspection of the local vault (aggregate counts only; **no note body is quoted**).
 - `OFFICIAL_DOC` — stated by official Obsidian documentation. (Note: `help.obsidian.md` serves a JS-rendered SPA; `web_fetch` returned only the shell, so **no OFFICIAL_DOC was directly retrievable** in this session — documented rules below are tagged `INFERENCE` and flagged for A0/W19 to confirm against official docs.)
 - `REFERENCE_SOURCE` — a pinned reference path/file.
-- `EXECUTED_SYNTHETIC_TEST` — produced by `/tmp/m5-w18-a2/resolve.py` (20/20 PASS, see §5).
+- `EXECUTED_SYNTHETIC_TEST` — produced by the self-contained harness at `logs/research/M5-W18/A2-R2B-resolve.py`
+  (run via `A2-R2B-make_vault.py`); **proves the harness's own rules are deterministic — NOT that Obsidian
+  behaves that way** (see §0b retraction).
 - `INFERENCE` — reasoned from observed behavior / public knowledge, not directly verified.
 
 ---
@@ -32,10 +34,10 @@ REFERENCE_EVIDENCE=
   - product: src-tauri/src/graph.rs, src-tauri/src/domain.rs, src-tauri/src/main.rs, src-tauri/src/workspace.rs,
              src-tauri/src/bridge.rs, src-tauri/capabilities/default.json,
              src/components/graph/*, src/stores/useGraphStore.ts, src/utils/graphUi.ts, src/utils/markdown.ts   [CURRENT_PRODUCT]
-  - synthetic harness: /tmp/m5-w18-a2/{make_vault.py,resolve.py,run.out}   [EXECUTED_SYNTHETIC_TEST]
-FILES=logs/research/M5-W18/A2-obsidian-vault-semantics.md, logs/research/M5-W18/A2-fixtures.md, logs/checkpoints/A2-M5-W18-R-20260908.md
+  - synthetic harness (self-contained, no /tmp): logs/research/M5-W18/A2-R2B-{make_vault.py,resolve.py,run-20260908.out}   [EXECUTED_SYNTHETIC_TEST, 19/19 — determinism check only, not Obsidian authority]
+FILES=logs/research/M5-W18/A2-obsidian-vault-semantics.md, logs/research/M5-W18/A2-fixtures.md, logs/research/M5-W18/A2-R2B-note-semantics-evidence.md, logs/checkpoints/A2-M5-W18-R-20260908.md, logs/checkpoints/A2-M5-W18-R2B-20260908.md
 CLASSIFICATION=COPY=0, ADAPT=2, REIMPLEMENT_FROM_BEHAVIOR=10, DEFER=1, REJECT=Obsidian IP (policy)
-VERIFY=read-only vault inspection + EXECUTED_SYNTHETIC_TEST (20/20 PASS). No product tests run (research boundary).
+VERIFY=read-only vault inspection + EXECUTED_SYNTHETIC_TEST (self-contained harness, 19/19 — deterministic only; Obsidian behavior tagged OBSERVED_BEHAVIOR/INFERENCE). No product tests run (research boundary).
 CHECKPOINT=logs/checkpoints/A2-M5-W18-R-20260908.md
 MERGE_NOTES=feeds A3 (graph UX blueprint), A9 (workspace-grant + read-path authority), A10 (parser dependency ledger: markdown/YAML/glob), A11 (test matrix). Depends on A1 for capacity-budget decision on >5000 nodes.
 NEXT=W19 slice: read-only vault-derivation importer (scan → parse → resolve → GraphStore), gated by a workspace grant; DEFER rename/delete link-rewrite.
@@ -43,6 +45,17 @@ DEBT=B1: real vault has 8370 markdown files but GRAPH_MAX_NODES=5000 → full im
 ```
 
 ---
+
+## 0b. R2B correction (added 2026-09-08, per A0 audit #4 + R2B §3)
+
+> **Retraction:** R2 §5 (and the §3 rule headers) described the self-written `resolve.py` 20/20 result as
+> "proving" Obsidian behavior. **This was incorrect.** A `20/20 PASS` on a self-authored harness proves only
+> that *the harness's own resolution rules are internally consistent (deterministic)* — it is **not** evidence
+> of how Obsidian behaves. Every claim about actual Obsidian behavior must instead be tagged `OBSERVED_BEHAVIOR`
+> (directly measurable in the real vault) or `INFERENCE` (reasoned; to be confirmed against official docs in
+> W19). The corrected, self-contained harness now lives at `logs/research/M5-W18/A2-R2B-resolve.py` (run via
+> `A2-R2B-make_vault.py`); it is reproduced 19/19 there, still only as a determinism check, not authority.
+> See `A2-R2B-note-semantics-evidence.md` §0 for the full per-rule official/observed/design-decision table.
 
 ## 1. R1 correction log (explicit retractions)
 
@@ -200,12 +213,19 @@ persistence (add `save_snapshot` or populate `GraphState` at startup).
 
 ## 5. Synthetic fixtures + executed derivation test  (`EXECUTED_SYNTHETIC_TEST`)
 
-Harness (reproducible; captured in `A2-fixtures.md` §F-harness): `/tmp/m5-w18-a2/{make_vault.py,resolve.py}`.
-It builds a 10-file synthetic vault covering plain / display-alias / path-qualified / alias / heading /
-case-insensitive / duplicate-basename / unresolved / embed-attachment / inline-tag / frontmatter-tag /
-orphan / ignored-glob / secret-frontmatter cases, then asserts the derived graph.
+> **Caveat (R2B §0b):** this harness is **self-authored** and proves only that *its own resolution rules are
+> internally consistent* (deterministic). It is **not** evidence of Obsidian's actual behavior. Real-vault,
+> measurable items below are tagged `OBSERVED_BEHAVIOR`; everything else is `INFERENCE` until confirmed against
+> official docs. The self-contained, `/tmp`-free version now lives at `logs/research/M5-W18/A2-R2B-resolve.py`
+> (run via `A2-R2B-make_vault.py`), reproduced **19/19** there.
 
-**Result (2026-09-08): `20/20 PASS`** (summary):
+Harness (reproducible; captured in `A2-fixtures.md` §F-harness, refreshed in R2B): the earlier `/tmp/m5-w18-a2`
+scripts are superseded by `logs/research/M5-W18/A2-R2B-{make_vault,resolve}.py`. It builds a 10-file synthetic
+vault covering plain / display-alias / path-qualified / alias / heading / case-insensitive / duplicate-basename /
+unresolved / embed-attachment / inline-tag / frontmatter-tag / orphan / ignored-glob / secret-frontmatter cases,
+then asserts the derived graph.
+
+**Result (2026-09-08): self-contained harness `19/19 PASS`** (determinism check only; see caveat above). Summary:
 ```json
 { "vault_files": 10, "nodes": 10, "edges": 15, "orphans": ["D"],
   "summary": { "pass": 20, "fail": 0 } }

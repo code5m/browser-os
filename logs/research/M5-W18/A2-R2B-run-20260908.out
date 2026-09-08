@@ -1,0 +1,109 @@
+{
+  "vault_files": 10,
+  "nodes": 10,
+  "edges": 14,
+  "orphans": [
+    "D"
+  ],
+  "assertions": [
+    {
+      "name": "precedence-filename>alias:[[Alpha]]->Alpha",
+      "status": "PASS",
+      "detail": "('Alpha', 'path')"
+    },
+    {
+      "name": "alias:[[See C]]->C",
+      "status": "PASS",
+      "detail": "('C', 'alias')"
+    },
+    {
+      "name": "plain:[[B]]->B",
+      "status": "PASS",
+      "detail": "('B', 'path')"
+    },
+    {
+      "name": "path-qualified:[[sub/B]]->sub/B",
+      "status": "PASS",
+      "detail": "('sub/B', 'path')"
+    },
+    {
+      "name": "unresolved:[[Missing Note]]",
+      "status": "PASS",
+      "detail": "(None, 'unresolved')"
+    },
+    {
+      "name": "case-insensitive:[[ALPHA]]->Alpha",
+      "status": "PASS",
+      "detail": "('Alpha', 'basename-ambiguous')"
+    },
+    {
+      "name": "dup-basename:[[Note]]->Note(root)",
+      "status": "PASS",
+      "detail": "('Note', 'path')"
+    },
+    {
+      "name": "A->B link",
+      "status": "PASS",
+      "detail": "[('img.png', 'embed', False), ('B', 'link', False), ('C', 'link', False), ('Alpha', 'link', False), ('Missing Note', 'link', True), ('A', 'link', False)]"
+    },
+    {
+      "name": "A->C link(display alias)",
+      "status": "PASS",
+      "detail": "[('img.png', 'embed', False), ('B', 'link', False), ('C', 'link', False), ('Alpha', 'link', False), ('Missing Note', 'link', True), ('A', 'link', False)]"
+    },
+    {
+      "name": "A->self via alias-A (filename precedence -> Alpha)",
+      "status": "PASS",
+      "detail": "[('img.png', 'embed', False), ('B', 'link', False), ('C', 'link', False), ('Alpha', 'link', False), ('Missing Note', 'link', True), ('A', 'link', False)]"
+    },
+    {
+      "name": "A->Missing unresolved",
+      "status": "PASS",
+      "detail": "[('img.png', 'embed', False), ('B', 'link', False), ('C', 'link', False), ('Alpha', 'link', False), ('Missing Note', 'link', True), ('A', 'link', False)]"
+    },
+    {
+      "name": "A embed img.png (attachment, resolved, NOT broken link)",
+      "status": "PASS",
+      "detail": "[('img.png', 'embed', False), ('B', 'link', False), ('C', 'link', False), ('Alpha', 'link', False), ('Missing Note', 'link', True), ('A', 'link', False)]"
+    },
+    {
+      "name": "A->self via #Section heading",
+      "status": "PASS",
+      "detail": "[('img.png', 'embed', False), ('B', 'link', False), ('C', 'link', False), ('Alpha', 'link', False), ('Missing Note', 'link', True), ('A', 'link', False)]"
+    },
+    {
+      "name": "backlinks-A",
+      "status": "PASS",
+      "detail": "['A', 'Alpha', 'B', 'C', 'Note', 'alpha', 'secret', 'sub/B']"
+    },
+    {
+      "name": "orphan-D",
+      "status": "PASS",
+      "detail": "['D']"
+    },
+    {
+      "name": "tag proj nodes",
+      "status": "PASS",
+      "detail": "None"
+    },
+    {
+      "name": "privacy-secret-flagged",
+      "status": "PASS",
+      "detail": "None"
+    },
+    {
+      "name": "privacy-clean-ok",
+      "status": "PASS",
+      "detail": "None"
+    },
+    {
+      "name": "ignored .py excluded",
+      "status": "PASS",
+      "detail": "['B', 'alpha', 'secret', 'D', 'C', 'Alpha', 'A', 'Note', 'sub/B', 'sub/Note']"
+    }
+  ],
+  "summary": {
+    "pass": 19,
+    "fail": 0
+  }
+}
