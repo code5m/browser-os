@@ -1,7 +1,7 @@
 A11-R3 acceptance matrix
   manifest      : logs/research/M5-W18/A11-R3-integration-manifest.json
   base          : 200f0f1 (origin/master)
-  status        : PROVISIONAL_PENDING_A1_REVISED
+  status        : FINAL
   rebased pin   : 2896562e (REIMPLEMENT_FROM_BEHAVIOR)
 
 [1] structural checks
@@ -12,7 +12,7 @@ A11-R3 acceptance matrix
   PASS checklist.expect_valid           covered/gap/deferred only
   PASS findings.references_resolve      9 findings, 2 referenced
   PASS reference_pins.pinned            rebased pinned=2896562e
-  PASS lanes.blocking_flagged           blocking: A1
+  PASS lanes.blocking_flagged           none flagged (final)
 
 [2] checklist probes (60 items)
   PASS           S-01  sizes          tokens 1920×1080
@@ -103,7 +103,7 @@ A11-R3 acceptance matrix
                  evidence: git:codex/m5-w18-a7:logs/research/M5-W18/A7-R3-git-workflow-reference-map.md
   PASS           G-14  git            tokens command log
                  evidence: git:codex/m5-w18-a7:logs/research/M5-W18/A7-R3-git-workflow-reference-map.md
-  GAP_CONFIRMED  G-15  git            absent worktree|blame|amend
+  GAP_CONFIRMED  G-15  git            absent worktree|amend|reset|revert|conflict|patch
                  evidence: git:codex/m5-w18-a1:logs/research/M5-W18/A1-R3-prototype.html
   PASS           A-01  accessibility  tokens palette
                  evidence: git:codex/m5-w18-a6:logs/research/M5-W18/A6-R3-context-menu-command-registry.md
@@ -166,15 +166,14 @@ A11-R3 acceptance matrix
 
   findings recorded: 9 (open: 8)
     F-A11-1 [high  ] A4 and A3 contradict each other on whether collapse-all skips pinned tool windows -> A10 ruling, then A3 + A4 reconcile, A1 prototype shows the chosen behaviour
-    F-A11-2 [high  ] A5 delivered nothing, so the database daily loop (J2) has no R3 acceptance evidence -> A5; A11 re-probe PASS; A1 revision still needed to fold DB mode into the consolidated prototype
-    F-A11-3 [medium] The consolidated prototype demonstrates only part of the 14-unit Git workflow -> A1 (final revision); A11 re-probes
+    F-A11-2 [high  ] A5 delivered nothing, so the database daily loop (J2) has no R3 acceptance evidence -> A5 (delivered 6bc4942) + A1 (folded DB mode into ee2b8fd); J2 probe PASS
+    F-A11-3 [medium] The consolidated prototype demonstrates only part of the 14-unit Git workflow -> A1 final delivered; gap remained -> escalated to A0/W19 scope
     F-A11-4 [medium] Collapsed-mode geometry is reported under three different measurement conventions -> A0 to freeze one post-titlebar definition; A2 owns the measuring method
     F-A11-5 [medium] Top-chrome height budget is quoted three ways (68 / 65 / 60 px) -> A0, using A2's measurement method
-    F-A11-6 [medium] The consolidated prototype carries no accessibility attributes -> A1 (final revision), verified by A10
+    F-A11-6 [medium] The consolidated prototype carries no accessibility attributes -> A1 final delivered without aria; escalated to A0/A10 for W19
     F-A11-7 [low   ] Command-entry shortcut is not frozen: A1 uses Ctrl+Shift+P, A2's budget frame uses Ctrl+K -> A0 ruling; A6 registers the binding
     F-A11-8 [low   ] 800x600 is in the workbench blueprint but unreachable in the current product -> A0
     F-A11-9 [medium] Rebased pinned revision disagrees between A7 (cee14e9) and A10 (2896562e) -> A0 / A10 (final reconciliation); A11 manifest now adopts A10's authoritative pin
 
 A11-R3 ACCEPTANCE MATRIX: 56 PASS / 0 FAIL / 2 NOT_RUN / 2 GAP_CONFIRMED / 0 GAP_CLOSED / 2 WARN
 GATE: PASS
-NOTE: PROVISIONAL - A11 may finalize only after A10 review and A1's revised prototype.

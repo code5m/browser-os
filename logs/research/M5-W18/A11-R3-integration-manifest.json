@@ -9,10 +9,10 @@
     "short": "200f0f1",
     "sha": "200f0f1cc032eb7dbd0229ab53a711a5ff1e3d6f"
   },
-  "status": "PROVISIONAL_PENDING_A1_REVISED",
+  "status": "FINAL",
   "finalize_blockers": [
-    "A1 published a DRAFT prototype (6470fce) and declared it will consume A2-A9 + A10 for the final revision; the consolidated final prototype is not yet published. R3 card: A11 finalizes only after A10 and A1's revised prototype. A10 is now delivered (3a86834); A1 revision still pending.",
-    "Rebased pinned revision mismatch: A7 mapped COPY/ADAPT against cee14e9; A10's reference/license review fixed the canonical pin at 2896562e (2026-09-06). A0/A10 must reconcile before W19 adoption (F-A11-9)."
+    "RESOLVED: A1 published the consolidated final prototype (ee2b8fd) consuming A2-A10, and A10 delivered its reference/license + preflight review (3a86834). R3 card gate ('A11 finalizes only after A10 and A1's revised prototype') is now satisfied -> A11 finalizes.",
+    "Remaining gating for W19 (NOT A11 blockers, escalated to A0): F-A11-1 (collapse vs fixed-window, A10 preflight not final), F-A11-3 (Git 14-unit coverage in prototype still missing worktree/amend/reset/revert/conflict/patch/command-log), F-A11-4/5 (geometry convention freeze), F-A11-6 (no aria/role), F-A11-7 (Ctrl+Shift+P vs Ctrl+K), F-A11-8 (800x600), F-A11-9 (rebased pin cee14e9 vs 2896562e)."
   ],
   "scope_boundary": {
     "product_code_changed": false,
@@ -67,15 +67,15 @@
   "lanes": {
     "A1": {
       "branch": "codex/m5-w18-a1",
-      "head": "6470fce",
-      "status": "DRAFT_DELIVERED_AWAITING_REVISION",
+      "head": "ee2b8fd",
+      "status": "DELIVERED",
       "deliverables": [
         "logs/research/M5-W18/A1-R3-browser-workbench.md",
         "logs/research/M5-W18/A1-R3-prototype.html",
         "logs/research/M5-W18/A1-R3-checkpoint.md"
       ],
       "consumed_by_a11": true,
-      "blocking": true
+      "blocking": false
     },
     "A2": {
       "branch": "codex/m5-w18-a2",
@@ -230,17 +230,17 @@
       "severity": "high",
       "title": "A5 delivered nothing, so the database daily loop (J2) has no R3 acceptance evidence",
       "detail": "codex/m5-w18-a5 is still at origin/master 200f0f1. No database-in-shell report, no revised DB prototype. A1's database mode is therefore unvalidated against A5's own design lane.",
-      "impact": "RESOLVED: A5 delivered codex/m5-w18-a5 6bc4942 (A5-R3-prototype.html covers connection / sql / result / cancel / bounded grid / null-truncation at the four sizes); J2 probe re-enabled below. Remaining: A5's DB mode must still be folded into A1's consolidated prototype.",
-      "owner": "A5; A11 re-probe PASS; A1 revision still needed to fold DB mode into the consolidated prototype",
-      "status": "RESOLVED_PENDING_A1_CONSOLIDATION"
+      "impact": "RESOLVED: A5 delivered codex/m5-w18-a5 6bc4942 (A5-R3-prototype.html covers connection / sql / result / cancel / bounded grid / null-truncation at the four sizes). A1's final consolidated prototype (ee2b8fd) folds DB mode in (SQL/result/NULL/database tokens present). J2 is now covered at the prototype level.",
+      "owner": "A5 (delivered 6bc4942) + A1 (folded DB mode into ee2b8fd); J2 probe PASS",
+      "status": "RESOLVED"
     },
     {
       "id": "F-A11-3",
       "severity": "medium",
       "title": "The consolidated prototype demonstrates only part of the 14-unit Git workflow",
-      "detail": "A1-R3-prototype.html contains hunk/stash/cherry-pick/branch/log/graph but has no occurrence of worktree, blame, amend, reset, revert, conflict, patch, command-log or diff. Those units exist only in A1-R3-browser-workbench.md 7 table. A7 requires all 14 units to be demonstrable at the four sizes plus failure/empty/conflict states.",
-      "impact": "The user-review checklist cannot be completed for 9 of 14 Git units from the prototype alone.",
-      "owner": "A1 (final revision); A11 re-probes",
+      "detail": "A1-R3-prototype.html (ee2b8fd) now contains status/hunk/diff/branch/log/graph/stash/cherry-pick/merge/rebase/blame, but still has no occurrence of worktree, amend, reset, revert, conflict or a redacted command-log. Those units exist only in A1-R3-browser-workbench.md 7 table. A7 requires all 14 units to be demonstrable at the four sizes plus failure/empty/conflict states.",
+      "impact": "The user-review checklist cannot be completed for ~6 of 14 Git units from the prototype alone.",
+      "owner": "A1 final delivered; gap remained -> escalated to A0/W19 scope",
       "status": "OPEN"
     },
     {
@@ -265,16 +265,16 @@
       "id": "F-A11-6",
       "severity": "medium",
       "title": "The consolidated prototype carries no accessibility attributes",
-      "detail": "A1-R3-prototype.html has zero occurrences of 'aria-' or 'role='. A6-R3 11 requires role=menuitem / aria-disabled / focus moves into menu / Esc returns focus, A8-R3 3 requires a 2px focus ring, and A3's prototype does implement aria/role. The A1 draft therefore cannot demonstrate the accessibility acceptance items.",
-      "impact": "Accessibility rows of the user-review checklist are not executable against the current consolidated prototype.",
-      "owner": "A1 (final revision), verified by A10",
+      "detail": "A1-R3-prototype.html (ee2b8fd) still has zero occurrences of 'aria-' or 'role=' (grep count = 0). A6-R3 11 requires role=menuitem / aria-disabled / focus moves into menu / Esc returns focus, A8-R3 3 requires a 2px focus ring, and A3's prototype does implement aria/role. The A1 final therefore cannot demonstrate the accessibility acceptance items.",
+      "impact": "Accessibility rows of the user-review checklist are not executable against the consolidated prototype; escalated to A0/W19.",
+      "owner": "A1 final delivered without aria; escalated to A0/A10 for W19",
       "status": "OPEN"
     },
     {
       "id": "F-A11-7",
       "severity": "low",
       "title": "Command-entry shortcut is not frozen: A1 uses Ctrl+Shift+P, A2's budget frame uses Ctrl+K",
-      "detail": "A1-R3-browser-workbench.md 2.1/3.8 binds Ctrl+Shift+P; A2-R3-shell-density-audit.md 7.3 draws 'Ctrl+K'. One must be chosen before the palette is implemented.",
+      "detail": "A1-R3-browser-workbench.md 2.1/3.8 binds Ctrl+Shift+P (the ee2b8fd prototype shows 8 occurrences of 'Ctrl+Shift+P'); A2-R3-shell-density-audit.md 7.3 draws 'Ctrl+K'. A1 final did not converge on a single binding, so the inconsistency persists.",
       "impact": "Minor, but it would ship as an inconsistency in the first W19 shell slice.",
       "owner": "A0 ruling; A6 registers the binding",
       "status": "OPEN"
@@ -347,8 +347,8 @@
     {"id": "G-12", "group": "git", "title": "history / blame", "how_to_verify": "Annotate a file and list the commits that touched it.", "evidence": "A7-R3-git-workflow-reference-map.md 2.12", "probe": {"file": "A7-R3-git-workflow-reference-map.md", "tokens": ["blame"]}, "expect": "covered", "owner": "A7"},
     {"id": "G-13", "group": "git", "title": "patch", "how_to_verify": "Export with format-patch, import with apply/am.", "evidence": "A7-R3-git-workflow-reference-map.md 2.13", "probe": {"file": "A7-R3-git-workflow-reference-map.md", "tokens": ["patch"]}, "expect": "covered", "owner": "A7"},
     {"id": "G-14", "group": "git", "title": "command log", "how_to_verify": "Review every executed git command with output, redacted.", "evidence": "A7-R3-git-workflow-reference-map.md 2.14", "probe": {"file": "A7-R3-git-workflow-reference-map.md", "tokens": ["command log"]}, "expect": "covered", "owner": "A7"},
-    {"id": "G-15", "group": "git", "title": "All 14 units visible in the consolidated prototype (not only in the report)", "how_to_verify": "Walk the 14 units in A1-R3-prototype.html. Today worktree/blame/amend/reset/revert/conflict/patch/command-log/diff appear only in the markdown table.",
-      "evidence": "A1-R3-prototype.html", "probe": {"file": "A1-R3-prototype.html", "tokens": ["worktree", "blame", "amend"]}, "expect": "gap", "owner": "A1", "finding": "F-A11-3"},
+    {"id": "G-15", "group": "git", "title": "All 14 units visible in the consolidated prototype (not only in the report)", "how_to_verify": "Walk the 14 units in A1-R3-prototype.html (ee2b8fd). Present: status/hunk/diff/branch/log/graph/stash/cherry-pick/merge/rebase/blame. Still only in the markdown table: worktree/amend/reset/revert/conflict/patch/command-log.",
+      "evidence": "A1-R3-prototype.html", "probe": {"file": "A1-R3-prototype.html", "tokens": ["worktree", "amend", "reset", "revert", "conflict", "patch"]}, "expect": "gap", "owner": "A1", "finding": "F-A11-3"},
 
     {"id": "A-01", "group": "accessibility", "title": "Command-palette parity for every action", "how_to_verify": "Pick three menu actions and reach each from the palette.", "evidence": "A6-R3-context-menu-command-registry.md 9", "probe": {"file": "A6-R3-context-menu-command-registry.md", "tokens": ["palette"]}, "expect": "covered", "owner": "A6"},
     {"id": "A-02", "group": "accessibility", "title": "Menu items expose role=menuitem, aria-disabled and disabled reason", "how_to_verify": "Inspect a disabled item with a screen-reader or the accessibility tree.", "evidence": "A6-R3-context-menu-command-registry.md 11", "probe": {"file": "A6-R3-context-menu-command-registry.md", "tokens": ["aria-disabled", "menuitem"]}, "expect": "covered", "owner": "A6"},

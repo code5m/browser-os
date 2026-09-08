@@ -146,8 +146,13 @@ def structural_checks(manifest: dict) -> list[tuple[str, str, str]]:
                  "rebased pinned=" + str(manifest["reference_pins"][0].get("pinned_revision", "?"))))
 
     blocking = [n for n, l in manifest["lanes"].items() if l.get("blocking")]
-    rows.append(("lanes.blocking_flagged", "PASS" if blocking else "FAIL",
-                 "blocking: " + ",".join(blocking) if blocking else "none flagged"))
+    status = manifest.get("status", "")
+    if status.startswith("PROVISIONAL"):
+        rows.append(("lanes.blocking_flagged", "PASS" if blocking else "FAIL",
+                     "blocking: " + ",".join(blocking) if blocking else "none flagged (PROVISIONAL requires a blocking lane)"))
+    else:
+        rows.append(("lanes.blocking_flagged", "PASS" if not blocking else "FAIL",
+                     "none flagged (final)" if not blocking else "lanes still flagged blocking: " + ",".join(blocking)))
     return rows
 
 

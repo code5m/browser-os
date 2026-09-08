@@ -3,18 +3,18 @@
 ```text
 LANE=A11
 DISPATCH=M5-W18-R3-UX
-STATUS=PROVISIONAL_PENDING_A5_A10_A1_REVISED
+STATUS=FINAL
 WORKDIR=/home/ainfinit/.codex/worktrees/m5-w18-a11/mvp-browser-os-v3
 BRANCH=codex/m5-w18-a11
 BASE=200f0f1cc032eb7dbd0229ab53a711a5ff1e3d6f (origin/master)
 HEAD=b920920
-CONSUMED_PEERS=A1 6470fce, A2 63b0a6e, A3 0258c5b, A4 8e77799, A5 6bc4942, A6 d5eb144, A7 6e1f2ba, A8 0db481a, A9 23d12cd, A10 3a86834
-NOT_CONSUMED=none (A5 + A10 delivered 13:47; only A1's revised consolidated prototype still pending)
+CONSUMED_PEERS=A1 ee2b8fd, A2 63b0a6e, A3 0258c5b, A4 8e77799, A5 6bc4942, A6 d5eb144, A7 6e1f2ba, A8 0db481a, A9 23d12cd, A10 3a86834
+NOT_CONSUMED=none (all 11 peers delivered and consumed; A11 finalizes)
 FILES=logs/research/M5-W18/A11-R3-{integration-manifest.json,acceptance-checklist.md,progress.md,acceptance-matrix.py,run-20260908.out,checkpoint.md}
       logs/checkpoints/A11-M5-W18-R3-20260908.md
       logs/checkpoints/Lane-A11-M5-W18-R3-acceptance-20260908-1314.patch
 VERIFY=A11-R3 ACCEPTANCE MATRIX: 56 PASS / 0 FAIL / 2 NOT_RUN / 2 GAP_CONFIRMED / 0 GAP_CLOSED / 2 WARN ; GATE: PASS
-FINDINGS=F-A11-1..F-A11-9 (9; F-A11-2 resolved-pending-A1-consolidation, 8 open)
+FINDINGS=F-A11-1..F-A11-9 (9; F-A11-2 RESOLVED, 8 open -> escalated to A0 for W19 gating)
 NO_PRODUCT_CODE=true
 NO_PEER_FILE_EDIT=true
 NO_PUSH=true
@@ -87,8 +87,8 @@ GATE: PASS
 | ID | 级别 | 归属 |
 |---|---|---|
 | F-A11-1 | high | A10 终裁定 → A3/A4 对齐 → A1 原型体现（**A4 说固定窗口在"全部收起"中保留，A3 说一起收起再一键恢复，二者直接冲突**；A10 的 R3 交付是 preflight 而非终裁） |
-| F-A11-2 | high → RESOLVED_PENDING_A1 | A5 已交付 `6bc4942`（DB 闭环原型+壳层文档，J2 探针 PASS）；剩 A1 整合原型须并入 DB 模式 |
-| F-A11-3 | medium | A1 终稿（原型只见 hunk/stash/cherry/branch/log/graph；worktree/blame/amend/reset/revert/conflict/patch/命令日志/diff 仅存在于报告表格） |
+| F-A11-2 | high → RESOLVED | A5 交付 `6bc4942`（DB 闭环原型+壳层文档，J2 探针 PASS）；A1 终稿 `ee2b8fd` 已把 DB 模式并入整合原型（SQL/result/NULL 出现）→ J2 设计就绪 YES |
+| F-A11-3 | medium | A1 终稿 `ee2b8fd` 原型现含 status/hunk/diff/branch/log/graph/stash/cherry/merge/rebase/blame；仍缺 worktree/amend/reset/revert/conflict/patch/命令日志（~6/14 仅在报告表格，F-A11-3 收窄）→ 转 A0/W19 |
 | F-A11-4 | medium | A0 冻结"后标题栏"口径（A2 拥有测量方法） |
 | F-A11-5 | medium | A0 冻结顶部 chrome 定义与预算 |
 | F-A11-6 | medium | A1 终稿补 aria/role，A10 复核 |
