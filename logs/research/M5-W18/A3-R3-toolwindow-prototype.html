@@ -1,0 +1,737 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>A3 / M5-W18-R3 — Tool-window progressive disclosure prototype (synthetic)</title>
+<!--
+  Lane A3, M5-W18-R3 (RESEARCH_AND_PROTOTYPE).
+  Self-contained: zero product source, zero dependency, zero network, zero native call.
+  All data is synthetic. Purpose: make A3's deterministic tool-window/tree rules visible and
+  measurable (live content-share readout) so A1/A8/A10 can review behavior, not styling.
+-->
+<style>
+  :root {
+    --bg: #0f172a; --panel: #172033; --panel2: #1c2740; --line: #2a3550;
+    --txt: #dbe4f0; --dim: #8b98ad; --accent: #4c8dff;
+    --ok: #3ddc97; --warn: #f0b429; --err: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0b1220; color: var(--txt);
+         font: 13px/1.5 system-ui, -apple-system, "Segoe UI", "Noto Sans CJK SC", sans-serif; }
+  .wrap { padding: 16px 20px 40px; }
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  .sub { color: var(--dim); font-size: 12px; margin-bottom: 14px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; }
+  button, select { background: var(--panel2); color: var(--txt); border: 1px solid var(--line);
+                   border-radius: 6px; padding: 5px 9px; font-size: 12px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
+  .stage { position: relative; border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+           background: #0d1526; }
+  .frame { position: relative; transform-origin: top left; }
+
+  /* ---- shell ---- */
+  .shell { position: absolute; inset: 0; display: flex; flex-direction: column; background: #101a2e; }
+  .titlebar { height: 32px; flex: 0 0 32px; display: flex; align-items: center; gap: 8px;
+              padding: 0 10px; background: #0c1424; border-bottom: 1px solid var(--line);
+              font-size: 12px; color: var(--dim); }
+  .dots { display: flex; gap: 5px; }
+  .dots i { width: 10px; height: 10px; border-radius: 50%; background: #2b3752; display: block; }
+  .topchrome { flex: 0 0 auto; background: #14203a; border-bottom: 1px solid var(--line); }
+  .row { display: flex; align-items: center; gap: 6px; padding: 4px 8px; height: 40px; }
+  .row.tabrow { height: 32px; border-top: 1px solid var(--line); }
+  .addr { flex: 1; height: 24px; border-radius: 12px; border: 1px solid var(--line);
+          background: #0e1728; color: var(--dim); padding: 0 10px; font-size: 11px;
+          display: flex; align-items: center; }
+  .chip { background: #1b2743; border: 1px solid var(--line); border-radius: 999px;
+          padding: 2px 9px; font-size: 11px; color: var(--dim); }
+  .body { flex: 1; display: flex; min-height: 0; }
+  .center { flex: 1; min-width: 0; display: flex; flex-direction: column; background: #0f172a; }
+  .doc { flex: 1; margin: 0; padding: 18px 22px; overflow: auto; }
+  .doc h2 { font-size: 20px; margin: 0 0 10px; }
+  .doc p { color: #b9c6da; max-width: 62ch; }
+  .skeleton { height: 10px; border-radius: 5px; background: linear-gradient(90deg,#1a2540,#22304f,#1a2540);
+              background-size: 200% 100%; animation: sh 1.2s linear infinite; margin: 8px 0; }
+  @keyframes sh { from { background-position: 200% 0 } to { background-position: -200% 0 } }
+
+  .edge { position: relative; flex: 0 0 auto; background: var(--panel); border-color: var(--line);
+          display: flex; flex-direction: column; min-height: 0; }
+  .edge.left { border-right: 1px solid var(--line); }
+  .edge.right { border-left: 1px solid var(--line); }
+  .edge.bottom { border-top: 1px solid var(--line); flex-direction: row; }
+  .edge-head { display: flex; align-items: center; gap: 6px; padding: 5px 8px; font-size: 11px;
+               color: var(--dim); border-bottom: 1px solid var(--line); flex: 0 0 auto; }
+  .edge.bottom .edge-head { border-bottom: none; border-right: 1px solid var(--line);
+                            flex-direction: column; width: 92px; padding: 8px 6px; }
+  .edge-title { font-weight: 600; color: var(--txt); font-size: 12px; }
+  .sp { margin-left: auto; }
+  .edge-body { flex: 1; min-height: 0; overflow: auto; padding: 6px; }
+  .stripe { display: flex; gap: 4px; padding: 4px 6px; border-top: 1px solid var(--line); flex: 0 0 auto; }
+  .stripe button { padding: 2px 7px; font-size: 11px; }
+  .splitter { flex: 0 0 5px; background: transparent; cursor: col-resize; position: relative; }
+  .splitter:hover::after, .splitter.on::after { content: ""; position: absolute; inset: 0; background: var(--accent); opacity: .6; }
+  .splitter.h { cursor: row-resize; height: 5px; width: auto; }
+
+  /* ---- tree ---- */
+  .tree { font-size: 12px; }
+  .tnode { display: flex; align-items: center; gap: 4px; padding: 2px 4px; border-radius: 4px; cursor: default; }
+  .tnode:hover { background: #1e2b47; }
+  .tnode.sel { background: #24406e; }
+  .tnode:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .caret { width: 12px; color: var(--dim); }
+  .badge { font-size: 10px; color: var(--warn); }
+  .badge.err { color: var(--err); }
+  .empty { color: var(--dim); font-size: 11px; padding: 10px; text-align: center; }
+  .errbox { border: 1px solid #5a2b2b; background: #2a1717; color: #ffbcbc; border-radius: 6px;
+            padding: 8px; font-size: 11px; }
+
+  /* ---- status / focus ---- */
+  .statusbar { flex: 0 0 26px; height: 26px; display: flex; align-items: center; gap: 10px;
+               padding: 0 10px; font-size: 11px; color: var(--dim); background: #0c1424;
+               border-top: 1px solid var(--line); }
+  .pill { position: absolute; top: 42px; right: 14px; z-index: 20; background: #1d2c4c;
+          border: 1px solid var(--accent); color: #fff; }
+  .hint { position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%); z-index: 30;
+          background: #23324f; border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px;
+          font-size: 12px; opacity: 0; transition: opacity .15s; pointer-events: none; }
+  .hint.on { opacity: 1; }
+  .ctx { position: absolute; z-index: 40; background: #18233c; border: 1px solid var(--line);
+         border-radius: 6px; padding: 4px; min-width: 190px; box-shadow: 0 8px 24px #0008; display: none; }
+  .ctx.on { display: block; }
+  .ctx button { display: flex; width: 100%; justify-content: space-between; gap: 12px; background: none;
+                border: none; text-align: left; padding: 4px 6px; border-radius: 4px; }
+  .ctx button:hover:not(:disabled) { background: #24406e; }
+  .ctx .k { color: var(--dim); font-size: 11px; }
+  .ctx hr { border: none; border-top: 1px solid var(--line); margin: 4px 2px; }
+  .meter { font-variant-numeric: tabular-nums; }
+  .legend { margin-top: 12px; color: var(--dim); font-size: 12px; }
+  .legend b { color: var(--txt); }
+  .grid2 { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 10px; margin-top: 12px; }
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: #0f1930; }
+  .card h3 { font-size: 12px; margin: 0 0 6px; color: var(--txt); }
+  .card ul { margin: 0; padding-left: 16px; color: var(--dim); font-size: 11.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>A3 · R3 工具窗口渐进披露原型（合成数据 / 自包含）</h1>
+  <div class="sub">
+    行为规格见 <code>A3-R3-toolwindow-disclosure-20260908.md</code>；确定性规则实现见
+    <code>A3-R3-toolwindow-state-machine.mjs</code>（58 条断言 PASS）。本页不引用产品源码、依赖或原生能力。
+  </div>
+
+  <div class="bar">
+    <span>视口</span>
+    <select id="size">
+      <option value="1920x1080">1920×1080</option>
+      <option value="1440x900" selected>1440×900</option>
+      <option value="1366x768">1366×768</option>
+      <option value="1024x720">1024×720</option>
+    </select>
+    <div class="sep"></div>
+    <button id="bFiles">📂 文件</button>
+    <button id="bDb">🗄️ 数据库</button>
+    <button id="bGit">🌿 Git</button>
+    <button id="bTerm">💻 终端</button>
+    <button id="bInspect">🧩 属性</button>
+    <div class="sep"></div>
+    <button id="bCollapse">全部收起 <span class="chip">Ctrl+Shift+B</span></button>
+    <button id="bRestore">恢复上次</button>
+    <button id="bExpand">展开活动 <span class="chip">Ctrl+Alt+=</span></button>
+    <button id="bPin" aria-pressed="false">📌 固定 <span class="chip">Ctrl+Alt+P</span></button>
+    <button id="bAuto" aria-pressed="false">自动隐藏 <span class="chip">Ctrl+Alt+H</span></button>
+    <button id="bFocus">专注模式 <span class="chip">Ctrl+Alt+F</span></button>
+    <div class="sep"></div>
+    <button id="bStateEmpty">空态</button>
+    <button id="bStateLoad">加载态</button>
+    <button id="bStateErr">错误态</button>
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="frame" id="frame">
+      <div class="shell">
+        <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span> 浏览器 OS · 工作台（原型）</div>
+
+        <div class="topchrome" id="topchrome">
+          <div class="row">
+            <button title="项目">▣ 项目</button>
+            <div class="addr">🔍 搜索文件 / 文本 / 笔记 / 动作（统一入口）</div>
+            <button title="命令面板">⌘</button>
+          </div>
+          <div class="row tabrow" id="tabrow">
+            <span class="chip">🌐 设计参考 · Rebased</span>
+            <span class="chip">📄 sql-控制台-1</span>
+            <span class="chip">📝 笔记：工具窗口</span>
+          </div>
+        </div>
+
+        <div class="body">
+          <div class="edge left" id="edge-left" style="width:0;display:none">
+            <div class="edge-head">
+              <span class="edge-title" id="left-title">工具窗口</span>
+              <span class="sp"></span>
+              <button data-act="pin" title="固定">📌</button>
+              <button data-act="auto" title="自动隐藏">⇱</button>
+              <button data-act="close" title="关闭">✕</button>
+            </div>
+            <div class="edge-body" id="left-body"></div>
+            <div class="stripe" id="left-stripe"></div>
+          </div>
+          <div class="splitter" id="sp-left"></div>
+
+          <div class="center">
+            <div class="doc" id="doc">
+              <h2>活动文档：设计参考 · Rebased</h2>
+              <p>中央区永远是文档。工具窗口只从四周借空间，默认不挤压它：同一时刻最多两侧工具（左/右/底三取二），
+              第三个要开就替换，除非被固定。</p>
+              <div class="skeleton" style="width:70%"></div>
+              <div class="skeleton" style="width:92%"></div>
+              <div class="skeleton" style="width:86%"></div>
+              <div class="skeleton" style="width:54%"></div>
+            </div>
+          </div>
+
+          <div class="splitter" id="sp-right"></div>
+          <div class="edge right" id="edge-right" style="width:0;display:none">
+            <div class="edge-head">
+              <span class="edge-title" id="right-title">属性</span>
+              <span class="sp"></span>
+              <button data-act="pin" title="固定">📌</button>
+              <button data-act="auto" title="自动隐藏">⇱</button>
+              <button data-act="close" title="关闭">✕</button>
+            </div>
+            <div class="edge-body" id="right-body"></div>
+            <div class="stripe" id="right-stripe"></div>
+          </div>
+        </div>
+
+        <div class="splitter h" id="sp-bottom"></div>
+        <div class="edge bottom" id="edge-bottom" style="height:0;display:none">
+          <div class="edge-head">
+            <span class="edge-title" id="bottom-title">终端</span>
+            <button data-act="pin" title="固定">📌</button>
+            <button data-act="auto" title="自动隐藏">⇱</button>
+            <button data-act="close" title="关闭">✕</button>
+          </div>
+          <div class="edge-body" id="bottom-body"></div>
+        </div>
+
+        <div class="statusbar" id="statusbar">
+          <span>分支 main</span><span>运行中 0</span><span id="meter" class="meter">—</span>
+          <span class="sp" style="margin-left:auto">A3 原型 · 合成数据</span>
+        </div>
+
+        <button class="pill" id="exitFocus" style="display:none">退出专注模式（Esc）</button>
+        <div class="hint" id="hint"></div>
+        <div class="ctx" id="ctx"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend" id="legend"></div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>工具窗口规则（本原型可执行）</h3>
+      <ul>
+        <li>同侧只有一个主窗口；未固定则被新开者替换，固定者不被抢占，新开者落到备用边。</li>
+        <li>全部收起 → 1 行顶栏 + 无侧/底工具；恢复上次为 LIFO，最多 3 层快照。</li>
+        <li>自动隐藏只覆盖不占位，避免子 webview 重排；Esc / 点击外部 / 焦点移出即收。</li>
+        <li>分隔条有下限、上限与内容地板（520×320），触限返回 clamped 而不是静默无效。</li>
+        <li>窄窗策略：&lt;1180px 未固定侧工具自动隐藏；&lt;900px 固定侧工具与底部工具也自动隐藏。</li>
+        <li>专注模式隐藏全部工具 chrome，只留一个返回动作（右上角胶囊 + Esc）。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>树行为（右键树节点可看作用域菜单）</h3>
+      <ul>
+        <li>全部折叠：清空展开集合，保留选中项，不偷偷展开祖先链。</li>
+        <li>展开一级：只展开选中节点的直接子层；选中叶子是显式 no-op。</li>
+        <li>有界展开全部：预算 2000 节点 / 6 层，分块 200/帧，超限给出截断原因与“继续”。</li>
+        <li>惰性层级不盲走：未加载层以 pendingLoads 返回，逐层取数。</li>
+        <li>右键菜单项同时具备命令身份、禁用原因、快捷键与危险等级（A6 领域，本页仅示范）。</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  // ---------------- constants (mirror of the .mjs model) ----------------
+  var CHROME = { TITLEBAR_H: 32, TOP_ROW_H: 40, TOP_ROWS_H: 80, STATUS_H: 26 };
+  var ACCEPT = { MIN_H: 0.85, MIN_W: 0.92, MIN_W_PX: 520, MIN_H_PX: 320 };
+  var LIM = {
+    left:   { min: 200, max: 420, def: 260, share: 0.32 },
+    right:  { min: 200, max: 420, def: 280, share: 0.32 },
+    bottom: { min: 140, max: 420, def: 240, share: 0.45 }
+  };
+  var NARROW = { SIDE: 1180, ALL: 900 };
+  var TREE_BUDGET = { MAX_NODES: 2000, MAX_DEPTH: 6, CHUNK: 200 };
+
+  var TOOLS = {
+    files:   { edge: "left",   label: "📂 文件",     fallback: "bottom" },
+    db:      { edge: "left",   label: "🗄️ 数据库",   fallback: "bottom" },
+    git:     { edge: "left",   label: "🌿 Git",      fallback: "bottom" },
+    inspect: { edge: "right",  label: "🧩 属性",     fallback: "bottom" },
+    term:    { edge: "bottom", label: "💻 终端",     fallback: "left" },
+    problems:{ edge: "bottom", label: "⚠️ 问题",     fallback: "right" }
+  };
+
+  var S = {
+    vw: 1440, vh: 900, focusMode: false, topRows: 2,
+    edges: {
+      left:   { open: null, size: LIM.left.def,   auto: false },
+      right:  { open: null, size: LIM.right.def,  auto: false },
+      bottom: { open: null, size: LIM.bottom.def, auto: false }
+    },
+    // 固定状态属于「工具」而非「边」（与 .mjs 模型一致）：换边、关闭再开都保留
+    pinned: {}, snapshots: [], treeState: "normal", focus: "doc"
+  };
+
+  // ---------------- synthetic tree ----------------
+  function mk(ids, parent, depth, fanout) {
+    var out = [];
+    for (var i = 0; i < fanout; i++) {
+      var id = parent + "/" + i;
+      out.push({ id: id, name: (depth === 0 ? ["src","docs","tests","tools"][i] : "node-" + i),
+                 dir: depth < 3, parent: parent, depth: depth });
+    }
+    return out;
+  }
+  var NODES = { root: { id: "root", name: "工作区", dir: true, parent: null, depth: 0, loaded: true } };
+  var ROOTS = ["root"];
+  (function build(parent, depth) {
+    if (depth > 4) return;
+    var kids = mk(null, parent, depth, depth === 0 ? 4 : 3);
+    NODES[parent].children = kids.map(function (k) { return k.id; });
+    kids.forEach(function (k) {
+      NODES[k.id] = { id: k.id, name: k.name, dir: k.dir, parent: parent, depth: depth + 1, loaded: depth < 2 };
+      if (k.dir) build(k.id, depth + 1);
+    });
+  })("root", 0);
+  var expanded = { root: true };
+  var selected = "root/0";
+  var treeReport = null;
+
+  // ---------------- element refs ----------------
+  var $ = function (id) { return document.getElementById(id); };
+  var elStage = $("stage"), elFrame = $("frame"), elDoc = $("doc"), elHint = $("hint"), elCtx = $("ctx");
+  var elTop = $("topchrome"), elTabRow = $("tabrow"), elStatus = $("statusbar"), elPill = $("exitFocus");
+  var E = {
+    left:   { box: $("edge-left"),   body: $("left-body"),   stripe: $("left-stripe"),   title: $("left-title"),   sp: $("sp-left") },
+    right:  { box: $("edge-right"),  body: $("right-body"),  stripe: $("right-stripe"),  title: $("right-title"),  sp: $("sp-right") },
+    bottom: { box: $("edge-bottom"), body: $("bottom-body"), stripe: null,               title: $("bottom-title"), sp: $("sp-bottom") }
+  };
+
+  function hint(msg) {
+    elHint.textContent = msg; elHint.classList.add("on");
+    clearTimeout(hint._t); hint._t = setTimeout(function () { elHint.classList.remove("on"); }, 1900);
+  }
+
+  // ---------------- geometry ----------------
+  function used(edge) {
+    var e = S.edges[edge];
+    return (e.open && !e.auto) ? e.size : 0;
+  }
+  function clampSize(edge, px) {
+    var l = LIM[edge], vw = S.vw, vh = S.vh;
+    var s = Math.max(l.min, Math.min(l.max, Math.round(px || 0)));
+    if (edge === "bottom") {
+      var availH = vh - CHROME.TITLEBAR_H - CHROME.TOP_ROWS_H - CHROME.STATUS_H;
+      return Math.min(s, Math.max(l.min, availH - ACCEPT.MIN_H_PX), Math.floor(availH * l.share));
+    }
+    var availW = vw - (edge === "left" ? used("right") : used("left"));
+    return Math.min(s, Math.max(l.min, availW - ACCEPT.MIN_W_PX), Math.floor(vw * l.share));
+  }
+  function contentBox() {
+    var top = S.focusMode ? 0 : (S.topRows === 1 ? CHROME.TOP_ROW_H : CHROME.TOP_ROWS_H);
+    var st = S.focusMode ? 0 : CHROME.STATUS_H;
+    return {
+      w: S.vw - used("left") - used("right"),
+      h: S.vh - CHROME.TITLEBAR_H - top - st - used("bottom")
+    };
+  }
+  function snapshot() {
+    S.snapshots.push(JSON.stringify({ edges: S.edges, topRows: S.topRows }));
+    if (S.snapshots.length > 3) S.snapshots.shift();
+  }
+
+  // ---------------- transitions ----------------
+  function openTool(id) {
+    var t = TOOLS[id], e = S.edges[t.edge];
+    if (e.open === id) { closeTool(id); return; }
+    if (e.open && S.pinned[e.open]) {
+      var fb = TOOLS[id].fallback, fe = S.edges[fb];
+      if (fe.open && S.pinned[fe.open]) {
+        hint("两条边都被固定窗口占用：请先取消固定（命令面板同样有入口）"); return;
+      }
+      hint("「" + t.label + "」本侧已被固定窗口占用 → 改开在" + ({ left: "左侧", right: "右侧", bottom: "底部" })[fb]);
+      openOn(id, fb); return;
+    }
+    if (e.open) hint("已替换「" + TOOLS[e.open].label + "」（未占用额外空间）");
+    openOn(id, t.edge);
+  }
+  function openOn(id, edge) {
+    var e = S.edges[edge];
+    if (S.pinned[id] === undefined) S.pinned[id] = false;
+    e.open = id; e.auto = false;
+    e.size = clampSize(edge, LIM[edge].def);
+    S.focus = id;
+    narrowPolicy();
+    render();
+  }
+  function closeTool(id) {
+    var t = TOOLS[id], e = S.edges[t.edge];
+    if (e.open !== id) return;
+    e.open = null; // 固定状态保留在工具上（S.pinned），下次打开仍固定
+    S.focus = "doc";
+    render();
+  }
+  function collapseAll() {
+    var any = Object.keys(S.edges).some(function (k) { return S.edges[k].open; });
+    if (!any) { hint("没有打开的工具窗口"); return; }
+    snapshot();
+    Object.keys(S.edges).forEach(function (k) { S.edges[k].open = null; });
+    S.topRows = 1; S.focus = "doc"; S.focusMode = false;
+    hint("已全部收起（快照已存，可“恢复上次”）");
+    render();
+  }
+  function restorePrevious() {
+    if (!S.snapshots.length) { openTool("files"); hint("无快照 → 回到默认布局（左侧文件）"); return; }
+    var snap = JSON.parse(S.snapshots.pop());
+    S.edges = snap.edges; S.topRows = snap.topRows; S.focusMode = false;
+    S.focus = S.edges.left.open || S.edges.bottom.open || "doc";
+    hint("已恢复上一次布局");
+    render();
+  }
+  function expandActive() {
+    if (!S.edges.left.open && !S.edges.right.open && !S.edges.bottom.open) { enterFocus(); return; }
+    snapshot();
+    var edge = S.focus in TOOLS ? TOOLS[S.focus].edge : (S.edges.left.open ? "left" : S.edges.bottom.open ? "bottom" : "right");
+    var id = S.edges[edge].open;
+    Object.keys(S.edges).forEach(function (k) { if (k !== edge) S.edges[k].open = null; });
+    S.edges[edge].auto = false;
+    S.edges[edge].size = clampSize(edge, edge === "bottom"
+      ? (S.vh - CHROME.TITLEBAR_H - CHROME.TOP_ROWS_H - CHROME.STATUS_H) * 0.6
+      : S.vw * LIM[edge].share + 40);
+    hint("已展开「" + TOOLS[id].label + "」，其余边收起（可逆）");
+    render();
+  }
+  function togglePin(id) {
+    var key = id || S.focus, t = TOOLS[key], e = S.edges[t.edge];
+    if (e.open !== key) { hint("先打开一个工具窗口再固定"); return; }
+    S.pinned[key] = !S.pinned[key];
+    hint(S.pinned[key] ? "已固定：不会被同侧新窗口替换" : "已取消固定");
+    render();
+  }
+  function toggleAuto(id) {
+    var t = TOOLS[id || S.focus], e = S.edges[t.edge];
+    if (e.open !== (id || S.focus)) { hint("先打开一个工具窗口"); return; }
+    e.auto = !e.auto;
+    hint(e.auto ? "自动隐藏：覆盖显示，不占布局（不触发子窗口重排）" : "已取消自动隐藏");
+    render();
+  }
+  function enterFocus() {
+    if (S.focusMode) return;
+    snapshot(); S.focusMode = true;
+    Object.keys(S.edges).forEach(function (k) { S.edges[k].open = null; });
+    hint("专注模式：仅保留一个返回动作（右上角胶囊 / Esc）");
+    render();
+  }
+  function exitFocus() {
+    if (!S.focusMode) return;
+    if (S.snapshots.length) { var s = JSON.parse(S.snapshots.pop()); S.edges = s.edges; S.topRows = s.topRows; }
+    S.focusMode = false; render();
+  }
+  function narrowPolicy() {
+    Object.keys(S.edges).forEach(function (k) {
+      var e = S.edges[k];
+      if (!e.open) return;
+      var thr = (k === "bottom" || S.pinned[e.open]) ? NARROW.ALL : NARROW.SIDE;
+      e.auto = S.vw < thr;
+    });
+    var b = contentBox();
+    if (b.w < ACCEPT.MIN_W_PX || b.h < ACCEPT.MIN_H_PX) {
+      Object.keys(S.edges).forEach(function (k) { S.edges[k].open = null; });
+      S.topRows = 1;
+    }
+  }
+  function setViewport(w, h) { S.vw = w; S.vh = h; narrowPolicy(); render(); }
+
+  // ---------------- tree ops ----------------
+  function treeCollapseAll() { expanded = {}; treeReport = "全部折叠：展开集合已清空，选中项保留，未重新展开祖先链"; render(); }
+  function treeExpandOne() {
+    var n = NODES[selected] || NODES.root;
+    if (!n.dir) { treeReport = "展开一级：选中项是文件 → 显式 no-op（不报错、不跳转）"; render(); return; }
+    expanded[n.id] = true;
+    treeReport = "展开一级：只展开「" + n.name + "」的直接子层";
+    render();
+  }
+  function treeBoundedExpandAll() {
+    var visited = 0, depth = 0, truncated = null, queue = ROOTS.map(function (id) { return { id: id, d: 0 }; });
+    while (queue.length) {
+      var next = [];
+      for (var i = 0; i < queue.length; i++) {
+        var it = queue[i], n = NODES[it.id];
+        if (it.d > TREE_BUDGET.MAX_DEPTH) { truncated = "DEPTH_BUDGET"; continue; }
+        if (visited >= TREE_BUDGET.MAX_NODES) { truncated = "NODE_BUDGET"; continue; }
+        visited++; depth = Math.max(depth, it.d);
+        if (!n.loaded) continue;
+        if (n.dir) { expanded[n.id] = true; (n.children || []).forEach(function (c) { next.push({ id: c, d: it.d + 1 }); }); }
+      }
+      queue = next;
+    }
+    treeReport = "有界展开全部：访问 " + visited + " 项 / 深度 " + depth +
+      (truncated ? "，触发上限 " + truncated + "（分块 " + TREE_BUDGET.CHUNK + "/帧，可“继续”）" : "，未触限");
+    render();
+  }
+
+  // ---------------- rendering ----------------
+  function renderTree(host) {
+    if (S.treeState === "loading") {
+      host.innerHTML = '<div class="empty">加载中…</div>' +
+        '<div class="skeleton" style="width:80%"></div><div class="skeleton" style="width:60%"></div>';
+      return;
+    }
+    if (S.treeState === "error") {
+      host.innerHTML = '<div class="errbox">无法读取目录<br><span style="color:#ff9d9d">E_DIR_DENIED</span>' +
+        '<div style="margin-top:6px"><button>重试</button></div></div>';
+      return;
+    }
+    if (S.treeState === "empty") { host.innerHTML = '<div class="empty">此目录为空</div>'; return; }
+    var html = '<div class="tree" role="tree" aria-label="文件树">';
+    (function walk(ids, level) {
+      ids.forEach(function (id) {
+        var n = NODES[id]; if (!n) return;
+        var open = !!expanded[id];
+        html += '<div class="tnode' + (selected === id ? " sel" : "") + '" role="treeitem" tabindex="-1"' +
+          ' aria-level="' + (level + 1) + '" aria-expanded="' + (n.dir ? open : "undefined") + '" data-node="' + id + '">' +
+          '<span class="caret">' + (n.dir ? (open ? "▾" : "▸") : "") + "</span>" +
+          "<span>" + (n.dir ? "📁 " : "📄 ") + n.name + "</span>" +
+          (!n.loaded ? '<span class="badge">未加载</span>' : "") +
+          (id === "root/1" ? '<span class="badge err">读取失败</span>' : "") +
+          "</div>";
+        // 未加载的层级绝不盲走：先取数再展开
+        if (open && n.dir && n.loaded && n.children) walk(n.children, level + 1);
+      });
+    })(ROOTS, 0);
+    html += "</div>";
+    host.innerHTML = html;
+  }
+
+  function renderStripe(host, edge) {
+    var ids = Object.keys(TOOLS).filter(function (k) { return TOOLS[k].edge === edge; });
+    host.innerHTML = ids.map(function (k) {
+      return '<button data-open="' + k + '"' + (S.edges[edge].open === k ? ' aria-pressed="true"' : "") +
+        ' title="打开' + TOOLS[k].label.replace(/[^\x20-\x7E一-龥]/g, "") + '">' + TOOLS[k].label + "</button>";
+    }).join("");
+  }
+
+  function renderBody(edge, id) {
+    var host = E[edge].body;
+    if (id === "files" || id === "db" || id === "git") renderTree(host);
+    else if (id === "term") host.innerHTML = '<div class="empty">$ git status<br>$ 终端会话保持存活（切视图不销毁）</div>';
+    else if (id === "inspect") host.innerHTML = '<div class="empty">属性 / 反向链接 / 局部图谱<br>仅在需要时出现，不常驻占宽</div>';
+    else if (id === "problems") host.innerHTML = '<div class="empty">问题 0 · 索引新鲜度 2 分钟前</div>';
+    else host.innerHTML = '<div class="empty">空态：此工具窗口暂无内容</div>';
+  }
+
+  function render() {
+    // frame scale
+    var scale = Math.min(1, (elStage.clientWidth - 2) / S.vw);
+    elStage.style.height = Math.round(S.vh * scale) + "px";
+    elFrame.style.width = S.vw + "px"; elFrame.style.height = S.vh + "px";
+    elFrame.style.transform = "scale(" + scale + ")";
+
+    elTop.style.display = S.focusMode ? "none" : "";
+    elTabRow.style.display = (S.focusMode || S.topRows === 1) ? "none" : "";
+    elStatus.style.display = S.focusMode ? "none" : "";
+    elPill.style.display = S.focusMode ? "block" : "none";
+
+    ["left", "right", "bottom"].forEach(function (edge) {
+      var e = S.edges[edge], box = E[edge].box, sp = E[edge].sp;
+      var show = !!e.open && !S.focusMode;
+      box.style.display = show ? (edge === "bottom" ? "flex" : "flex") : "none";
+      sp.style.display = (show && !e.auto) ? "" : "none";
+      if (!show) return;
+      if (edge === "bottom") { box.style.height = (e.auto ? 0 : e.size) + "px"; }
+      else { box.style.width = (e.auto ? 0 : e.size) + "px"; }
+      box.style.opacity = e.auto ? "0.0" : "1";
+      box.style.position = e.auto ? "absolute" : "relative";
+      if (e.auto) {
+        box.style.zIndex = 15;
+        box.style.boxShadow = "0 10px 30px #000a";
+        if (edge === "left") { box.style.left = "0"; box.style.top = CHROME.TITLEBAR_H + "px"; box.style.bottom = "26px"; box.style.right = "auto"; box.style.opacity = "0"; }
+        if (edge === "right") { box.style.right = "0"; box.style.top = CHROME.TITLEBAR_H + "px"; box.style.bottom = "26px"; box.style.left = "auto"; box.style.opacity = "0"; }
+        if (edge === "bottom") { box.style.bottom = "26px"; box.style.left = "0"; box.style.right = "0"; box.style.opacity = "0"; }
+      } else {
+        box.style.zIndex = ""; box.style.boxShadow = "";
+        box.style.left = box.style.right = box.style.top = box.style.bottom = "auto";
+      }
+      E[edge].title.textContent = (TOOLS[e.open] ? TOOLS[e.open].label : "") +
+        (S.pinned[e.open] ? " · 已固定" : "") + (e.auto ? " · 自动隐藏" : "");
+      if (E[edge].stripe) renderStripe(E[edge].stripe, edge);
+      renderBody(edge, e.open);
+      var pinBtn = box.querySelector('[data-act="pin"]');
+      if (pinBtn) pinBtn.setAttribute("aria-pressed", S.pinned[e.open] ? "true" : "false");
+      var autoBtn = box.querySelector('[data-act="auto"]');
+      if (autoBtn) autoBtn.setAttribute("aria-pressed", e.auto ? "true" : "false");
+    });
+
+    // focus ring on the active tool window
+    ["left", "right", "bottom"].forEach(function (edge) {
+      var e = S.edges[edge];
+      E[edge].box.style.borderColor = (!S.focusMode && S.focus === e.open && e.open) ? "var(--accent)" : "var(--line)";
+    });
+
+    var b = contentBox();
+    var post = S.vh - CHROME.TITLEBAR_H;
+    var hs = post ? b.h / post : 0, ws = S.vw ? b.w / S.vw : 0;
+    var collapsed = !S.edges.left.open && !S.edges.right.open && !S.edges.bottom.open;
+    $("meter").textContent = "内容区 " + b.w + "×" + b.h +
+      "  (" + Math.round(ws * 1000) / 10 + "% 宽 / " + Math.round(hs * 1000) / 10 + "% 高)" +
+      (S.focusMode ? " · 专注" : collapsed ? " · 收起态" : " · 常态");
+    $("legend").innerHTML =
+      "当前：<b>" + S.vw + "×" + S.vh + "</b>　顶栏 " + (S.focusMode ? 0 : (S.topRows === 1 ? CHROME.TOP_ROW_H : CHROME.TOP_ROWS_H)) +
+      "px（≤80，≤2 行）　内容 " + Math.round(ws * 1000) / 10 + "% 宽 / " + Math.round(hs * 1000) / 10 + "% 高" +
+      "　收起态门槛：高 ≥85% 宽 ≥92% → " +
+      (collapsed || S.focusMode ? (hs >= ACCEPT.MIN_H && ws >= ACCEPT.MIN_W ? "<b>PASS</b>" : "<b>FAIL</b>") : "（仅收起态判定）") +
+      (treeReport ? "　<br>树：" + treeReport : "");
+    $("bPin").setAttribute("aria-pressed",
+      ["left", "right", "bottom"].some(function (k) { return S.pinned[S.edges[k].open]; }) ? "true" : "false");
+    $("bAuto").setAttribute("aria-pressed", (S.edges.left.auto || S.edges.right.auto || S.edges.bottom.auto) ? "true" : "false");
+  }
+
+  // ---------------- interactions ----------------
+  $("size").addEventListener("change", function () {
+    var p = this.value.split("x"); setViewport(+p[0], +p[1]);
+  });
+  [["bFiles", "files"], ["bDb", "db"], ["bGit", "git"], ["bTerm", "term"], ["bInspect", "inspect"]]
+    .forEach(function (p) { $(p[0]).addEventListener("click", function () { openTool(p[1]); }); });
+  $("bCollapse").addEventListener("click", collapseAll);
+  $("bRestore").addEventListener("click", restorePrevious);
+  $("bExpand").addEventListener("click", expandActive);
+  $("bPin").addEventListener("click", function () { togglePin(); });
+  $("bAuto").addEventListener("click", function () { toggleAuto(); });
+  $("bFocus").addEventListener("click", function () { S.focusMode ? exitFocus() : enterFocus(); });
+  $("exitFocus").addEventListener("click", exitFocus);
+  $("bStateEmpty").addEventListener("click", function () { S.treeState = "empty"; render(); });
+  $("bStateLoad").addEventListener("click", function () { S.treeState = "loading"; render(); });
+  $("bStateErr").addEventListener("click", function () { S.treeState = "error"; render(); });
+  $("bStateEmpty").addEventListener("dblclick", function () { S.treeState = "normal"; render(); });
+
+  // splitter drag
+  function drag(edge, horiz) {
+    var sp = E[edge].sp, start = 0, base = 0;
+    sp.addEventListener("mousedown", function (ev) {
+      start = horiz ? ev.clientY : ev.clientX; base = S.edges[edge].size; sp.classList.add("on");
+      var clamped = false;
+      function move(m) {
+        var d = ((horiz ? m.clientY : m.clientX) - start) / Math.min(1, (elStage.clientWidth - 2) / S.vw);
+        var want = horiz ? base - d : (edge === "left" ? base + d : base - d);
+        var got = clampSize(edge, want);
+        S.edges[edge].size = got;
+        // 触限必须显式告知，绝不做"拖不动但没反馈"的静默无效
+        if (got !== Math.round(want)) clamped = true;
+        render();
+      }
+      function up() {
+        sp.classList.remove("on");
+        if (clamped) hint("已到分隔条上限：内容区至少保留 520×320（或边上限 " + LIM[edge].max + "px）");
+        window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up);
+      }
+      window.addEventListener("mousemove", move); window.addEventListener("mouseup", up);
+      ev.preventDefault();
+    });
+  }
+  drag("left", false); drag("right", false); drag("bottom", true);
+
+  // tree: click select, caret toggle, context menu
+  document.addEventListener("click", function (ev) {
+    var open = ev.target.closest && ev.target.closest("[data-open]");
+    if (open) { openTool(open.getAttribute("data-open")); return; }
+    var act = ev.target.closest && ev.target.closest("[data-act]");
+    if (act) {
+      var edge = act.closest(".edge").id.replace("edge-", "");
+      var id = S.edges[edge].open;
+      var a = act.getAttribute("data-act");
+      if (a === "close") closeTool(id);
+      if (a === "pin") togglePin(id);
+      if (a === "auto") toggleAuto(id);
+      return;
+    }
+    var node = ev.target.closest && ev.target.closest("[data-node]");
+    if (node) {
+      var nid = node.getAttribute("data-node");
+      selected = nid; S.focus = "tool:" + nid;
+      var n = NODES[nid];
+      if (n && n.dir) expanded[nid] = !expanded[nid];
+      render(); return;
+    }
+    if (!ev.target.closest || !ev.target.closest("#ctx")) elCtx.classList.remove("on");
+  });
+
+  document.addEventListener("contextmenu", function (ev) {
+    var node = ev.target.closest && ev.target.closest("[data-node]");
+    if (!node) return;
+    ev.preventDefault();
+    var nid = node.getAttribute("data-node");
+    selected = nid;
+    elCtx.innerHTML = [
+      "<button>展开一级<span class='k'>Ctrl+Alt+=</span></button>",
+      "<button>全部折叠<span class='k'>Ctrl+Alt+-</span></button>",
+      "<button>有界展开全部<span class='k'>Ctrl+Alt+0</span></button>",
+      "<hr>",
+      "<button>在此新建文件<span class='k'>Alt+Insert</span></button>",
+      "<button disabled title='未选中版本控制内的路径'>Git 暂存此文件<span class='k'>需仓库内</span></button>",
+      "<button>重命名…<span class='k'>Shift+F6</span></button>",
+      "<hr>",
+      "<button style='color:#ff8a8a'>删除<span class='k'>确认 · 可撤销</span></button>"
+    ].join("");
+    elCtx.style.left = Math.min(ev.clientX, window.innerWidth - 220) + "px";
+    elCtx.style.top = Math.min(ev.clientY, window.innerHeight - 220) + "px";
+    elCtx.classList.add("on");
+    render();
+  });
+
+  elCtx.addEventListener("click", function (ev) {
+    var b = ev.target.closest("button"); if (!b) return;
+    var t = b.textContent;
+    if (t.indexOf("展开一级") === 0) treeExpandOne();
+    else if (t.indexOf("全部折叠") === 0) treeCollapseAll();
+    else if (t.indexOf("有界展开全部") === 0) treeBoundedExpandAll();
+    else hint("命令已注册：" + t.replace(/Ctrl.*|Alt.*|Shift.*|确认.*|需仓库内/g, "").trim() + "（合成，无副作用）");
+    elCtx.classList.remove("on");
+  });
+
+  // keyboard
+  document.addEventListener("keydown", function (ev) {
+    var tag = (ev.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea") return;
+    var k = ev.key.toLowerCase();
+    if (k === "escape") {
+      if (elCtx.classList.contains("on")) { elCtx.classList.remove("on"); return; }
+      if (S.focusMode) exitFocus(); return;
+    }
+    if (ev.ctrlKey && ev.shiftKey && k === "b") { ev.preventDefault(); collapseAll(); return; }
+    if (ev.ctrlKey && ev.altKey && (k === "=" || k === "+")) { ev.preventDefault(); expandActive(); return; }
+    if (ev.ctrlKey && ev.altKey && k === "p") { ev.preventDefault(); togglePin(); return; }
+    if (ev.ctrlKey && ev.altKey && k === "h") { ev.preventDefault(); toggleAuto(); return; }
+    if (ev.ctrlKey && ev.altKey && k === "f") { ev.preventDefault(); enterFocus(); return; }
+    if (ev.ctrlKey && ev.altKey && k === "-") { ev.preventDefault(); treeCollapseAll(); return; }
+    if (ev.ctrlKey && ev.altKey && k === "0") { ev.preventDefault(); treeBoundedExpandAll(); return; }
+    if (ev.altKey && k === "1") { ev.preventDefault(); openTool("files"); return; }
+    if (ev.altKey && k === "2") { ev.preventDefault(); openTool("term"); return; }
+    if (ev.altKey && k === "3") { ev.preventDefault(); openTool("inspect"); }
+  });
+
+  window.addEventListener("resize", render);
+  setViewport(1440, 900);
+  openTool("files");
+})();
+</script>
+</body>
+</html>
