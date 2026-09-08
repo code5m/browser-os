@@ -46,6 +46,10 @@ under its original license:
    See LICENSE-APACHE-ZVEC-GREP. Copyright per upstream file headers.
    Reimplemented (not copied) concepts: route selection, RRF fusion,
    type-aware chunking, incremental reconciliation, authorization-before-egress.
+   SECURITY: any remote-embedding egress derived from zvec-grep MUST ship
+   DISABLED by default (A9 B2/B7); an apiKey, if ever used, goes to the OS
+   keychain, never plaintext at rest (A9 B3). Z8 embedding copy is REJECTED;
+   a sidecar ADAPT requires A7 native-binding proof + A9 egress policy first.
 
 3. tauri-browser-tabs (vendored) — Apache-2.0 / MIT. See tauri-browser-tabs/.
 
@@ -86,7 +90,7 @@ Run in `pre-merge.sh` (gate mode) and as a standalone review aid. Active checks 
 | `TRANSPLANT_LICENSE_FILE` | If any `MODIFIED FROM dbx`/`zvec` header present → `LICENSE-APACHE-DBX` / `LICENSE-APACHE-ZVEC-GREP` exist in repo root | Apache §4(a) |
 | `TRANSPLANT_NOTICE_ENTRY` | `NOTICE` exists and contains a line referencing the upstream + pinned rev for every header seen | Apache §4(d) |
 | `TRANSPLANT_NATIVE_BUDGET` | `Cargo.toml` diff must NOT add `openssl` `vendored`, `aws-lc-rs`, `sqlite-sqlcipher`, or any `vendor/` Tauri fork | BOM §2.4 hard rejection |
-| `TRANSPLANT_NO_NODE_DEP` | `package.json` / lockfiles must NOT add `@zvec/zvec-grep`, `@huggingface/*`, `node-llama-cpp`, `@vscode/ripgrep` as product deps | zvec-grep is Node-bound; reject copy |
+| `TRANSPLANT_NO_NODE_DEP` | `package.json` / lockfiles must NOT add `@zvec/zvec-grep`, `@huggingface/*`, `node-llama-cpp`, `@vscode/ripgrep` as product deps | zvec-grep is Node-bound; reject copy. **Exception (HOLD):** a zvec-grep *sidecar* (Z8 ADAPT) may be approved by A0 only after A7 proves the `@zvec/zvec` Rust/NAPI binding and A9 ports the egress policy; such a sidecar is NOT a `package.json` dependency of the product and MUST NOT add those npm packages to the product tree. |
 | `TRANSPLANT_NO_TAURI_FORK` | `Cargo.toml` must NOT reference a second `wry`/`tauri` fork path | BOM §2.5 |
 | `TRANSPLANT_LEDGER_XREF` | Every `MODIFIED FROM` header's source path must appear in `logs/research/M5-W18/A10-source-transplant-ledger.md` (class COPY/ADAPT) | keep ledger as single source of truth |
 | `TRANSPLANT_ACL_PARITY` | Every new Tauri command in the transplant also adds ACL + bridge/types (reuse `check-command-set-consistency.py`) | board non-repeat gate |
@@ -123,5 +127,7 @@ The script is **fail-closed**: unknown upstreams (not dbx/zvec/Obsidian) default
 ## 5. Open items for A0
 
 - Finalize `<our entity>` copyright line in `NOTICE`.
-- Decide whether REIMPLEMENT (Rust) or ADAPT-sidecar is the W19 path for zvec-grep embeddings (Z8) — this determines whether `TRANSPLANT_NO_NODE_DEP` stays absolute or gains a sidecar exception with its own egress policy (A9 input).
+- **Add `license = "MulanPSL-2.0"` to `src-tauri/Cargo.toml`** (R2 gap — product crate currently unlicensed in metadata though root `LICENSE` is MulanPSL-2).
+- Decide whether REIMPLEMENT (Rust) or ADAPT-sidecar is the W19 path for zvec-grep embeddings (Z8) — this determines whether `TRANSPLANT_NO_NODE_DEP` stays absolute or gains a sidecar exception with its own egress policy (A9 input). **Current R2 position: Z8 copy = REJECT; sidecar = HOLD pending A7 native-binding proof + A9 egress policy.**
 - Approve `check-transplant-policy.py` as a W19 pre-merge gate before any transplant lands.
+- Confirm `sqlparser` (D4/D10 AST upgrade) only if A6 chooses AST-based classification; otherwise keep the product's existing regex `classify_sql_risk`.

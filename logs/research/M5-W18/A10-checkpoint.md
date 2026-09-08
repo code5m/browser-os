@@ -1,53 +1,62 @@
-# A10 — M5-W18-R Lane Checkpoint
+# A10 — M5-W18-R2 Lane Checkpoint
 
 ```text
 LANE=A10
-STATUS=PASS_WITH_DEBT
+STATUS=PASS_WITH_DEBT (HOLD finalization pending peer A2/A4/A7/A8/A9 R2 commits)
 BASE=78d2cfb8e90d323d35df920e9807d32189f867cd
-HEAD=3d513032cf340afbb1a57287cc8fc3792018aaf2
+REBASED_ONTO=origin/master d6127c4 (docs(M5-W18): dispatch evidence closure research)
+HEAD=<set on commit>
 REFERENCE_EVIDENCE=
   - dbx: /home/ainfinit/Documents/极智简单/V3/research/dbx-src (Apache-2.0; Cargo.lock SHA-256 c0a7be12c05d8dffe867f1a70d4b82e881dec2da3bb622b5d3e3410c3d10e3a7, verified == dispatch pin)
-  - zvec-grep: /home/ainfinit/Documents/极智简单/V3/research/zvec-grep-src (Apache-2.0; npm @zvec/zvec-grep 0.2.1; upstream rev 52653951b24617762f4ab0c71c34d594e5001617 per dispatch; snapshot unversioned locally)
+  - zvec-grep: /home/ainfinit/Documents/极智简单/V3/research/zvec-grep-src (Apache-2.0; npm @zvec/zvec-grep 0.2.1; upstream rev 52653951b24617762f4ab0c71c34d594e5001617 per dispatch)
   - Obsidian: /home/ainfinit/Documents/Knowledge-Base/secondBrain/.obsidian/{graph,app,core-plugins}.json (behavior/configuration reference only; no source donor)
-  - Prior analysis: /home/ainfinit/Documents/极智简单/V3/dbx-study/{dbx-借鉴分析,dbx-功能借鉴清单,dbx-冲突风险}.md (V5, cited as evidence)
-  - Product: /home/ainfinit/.codex/worktrees/m5-w18-a10/mvp-browser-os-v3 (MulanPSL-2; src-tauri/Cargo.toml, src-tauri/src/{graph,database,domain,bridge,mcp_server}.rs, default-commands.toml)
+  - Product: /home/ainfinit/.codex/worktrees/m5-w18-a10/mvp-browser-os-v3 (root LICENSE=MulanPSL-2; src-tauri/Cargo.toml has NO license field; src-tauri/src/{graph,database,security_policy,domain,bridge,mcp_server,shutdown}.rs)
 FILES=
-  - logs/research/M5-W18/A10-dependency-bom.md
-  - logs/research/M5-W18/A10-source-transplant-ledger.md
-  - logs/research/M5-W18/A10-notice-and-review-gate.md
-  - logs/research/M5-W18/A10-checkpoint.md
-SOURCE_MAP=
-  - dbx-core: connection.rs(PoolKind:85), production_safety.rs(:98/:184), sql_risk.rs(:686/:703), agent_tools.rs, connection_secrets.rs(:37), state_persistence.rs(:476-547), history.rs, query_execution_sql.rs/query_result_sql.rs/query_cancel.rs, schema.rs, sql_parser/, sql_dialect/, sql_analysis.rs, csv_export.rs/xlsx_export.rs/text_export.rs/database_export.rs, database_manifest.rs, agent_kv.rs, dbx-mcp/src/server.rs(:277-787), webview2_recovery.rs, app_settings.rs(:83), ssh_prompt.rs, deep_link.rs, update.rs, build.rs, plugins/connection-types/*.yaml, vendor/{ctor,rumqttc,dirs-sys,pageant,tiberius,wry}
-  - zvec-grep: src/engine/extraction/{code,markdown,text}/, storage/zvec.ts+layout.ts, service/{lexical,zvec-grep,structure-enrichment,workspace-index}.ts, pipeline/{indexing,search}/, authorization/*, daemon/*, mcp/*, cli/*, config.ts, file-size-policy.ts
-  - Obsidian: graph.json (local-graph filters/groups/depth/orphans/forces), core-plugins.json (graph/backlink/outgoing-link/tag-pane/canvas), app.json
-CLASSIFICATION=COPY:7 ADAPT:11 REIMPLEMENT:17 DEFER:3 REJECT:6
+  - logs/research/M5-W18/A10-dependency-bom.md (R2)
+  - logs/research/M5-W18/A10-source-transplant-ledger.md (R2)
+  - logs/research/M5-W18/A10-notice-and-review-gate.md (R2)
+  - logs/research/M5-W18/A10-checkpoint.md (R2)
+R1_VERDICT=A0: REWORK ("license/transplant contradictions, no function-level closure for COPY candidates")
+R2_CORRECTIONS=C1(async drivers) C2(workspace member) C3(D3 COPY) C4(D4 COPY) C5(D16 COPY) C6(D11 split) C7(D10 COPY) C8(product license)
+CONSUMED_PEERS=A4(R1 map: D3/D4 ADAPT diff-only; sync runtime D-A4-2), A7(R1: @zvec/zvec Rust API UNPROVEN -> Z8 REJECT-copy), A8(R1: managed-ripgrep kept), A9(R1: egress DISABLED-by-default, apiKey->keychain, B2/B3/B7 debt)
+CLASSIFICATION=COPY:3 ADAPT:15 REIMPLEMENT:17 DEFER:3 REJECT:8
+TRUE_COPY_UNITS=D5a(caps consts), D11a(format_csv cluster), Z12(type-aware size consts)
 VERIFY=
-  - sha256sum dbx Cargo.lock == c0a7be12c05d8dffe867f1a70d4b82e881dec2da3bb622b5d3e3410c3d10e3a7 (dispatch pin) -> MATCH
-  - both upstream LICENSE files read in full -> Apache-2.0 confirmed
-  - product LICENSE read -> MulanPSL-2 confirmed (dual-license handling required)
-  - zvec-grep package.json parsed -> Node>=22, 130 .ts, deps are Node/model-bound (REJECT copy)
+  - sha256sum dbx Cargo.lock == c0a7be12... (dispatch pin) -> MATCH
+  - product root LICENSE read -> MulanPSL-2 confirmed (23 "Mulan/木兰"); src-tauri/Cargo.toml NO license field (R2 gap)
+  - product Cargo.lock (293 crates): regex 1.13.1, tokio 1.53.1 transitive, rusqlite 0.40.2, mysql 28.0.2, postgres 0.19.14 PRESENT; sqlparser/notify/csv/aes-gcm/argon2/calamine ABSENT
+  - product security_policy.rs already has classify_sql_risk(:1046)/SqlRiskClass(:728)/ProductionSignals(:1118)/is_production_database(:1146) -> D3/D4 duplicate
+  - dbx file:line symbols read for D3/D4/D5/D10/D11/D16 (function-level closure captured)
+  - zvec-grep file-size-policy.ts consts + package.json deps read (Z12 self-contained; all else Node/model-bound)
   - no product code edited; only logs/research/M5-W18/ written (read-only research)
-CHECKPOINT=logs/research/M5-W18/A10-checkpoint.md
 MERGE_NOTES=
-  - Depends on A2/A4/A7/A8/A9 upstream reports for symbol-level precision (refinement only; architecture settled)
-  - License: inbound Apache-2.0 into MulanPSL-2 product -> dual attribution + NOTICE required
-  - Native budget: reject openssl=vendored, aws-lc-rs, sqlite-sqlcipher, Tauri wry fork, Node embedding deps
+  - Depends on A2/A3 (Obsidian Vue blueprint) and A7 (Z8 native proof) + A9 (egress policy) R2 commits to finalize (dispatch R2 sequencing)
+  - License: inbound Apache-2.0 into MulanPSL-2 product -> dual attribution + NOTICE required; add license field to Cargo.toml at W19
+  - Native budget: reuse existing sync mysql/postgres/rusqlite; reject openssl=vendored, aws-lc-rs, sqlite-sqlcipher, Tauri wry fork, Node embedding deps, async drivers (C1)
   - No-blind-copy gate: scripts/check-transplant-policy.py (8 gates) proposed for W19 pre-merge
   - W18-R boundary honored: no product code, no daemon/MCP/model/network, no vault mutation
 NEXT=
-  - Pending A2 (Obsidian Vue blueprint), A4 (dbx backend map), A7-A9 (zvec-grep maps) to finalize O1-O6 / D1-D24 / Z1-Z13 detail
-  - A0 decision needed: zvec-grep embeddings = REIMPLEMENT (Rust) vs ADAPT-sidecar (egress policy per A9)
-  - Proposed W19 slices: (1) curated pure-Rust DB driver subset + db_guard.rs (D2-D5,D8,D10,D11); (2) search.rs reimplement of zvec route/RRF/chunking (Z1-Z7,Z12,Z13) or sidecar; (3) NOTICE + check-transplant-policy.py gate
+  - AWAIT A2/A4/A7/A8/A9 R2 commits; then re-confirm Z8 (REJECT-copy / sidecar HOLD) and O1-O6 destinations
+  - A0 decision needed: Z8 embeddings = REIMPLEMENT(Rust) vs ADAPT-sidecar (egress policy per A9)
+  - Proposed W19 slices: (1) curated pure-Rust DB subset + db_guard.rs (D2,D3-diff,D4-opt,D5a,D7,D8,D9,D10,D12); (2) export.rs = D11a COPY; (3) search.rs REIMPLEMENT of zvec routes/RRF/chunking (Z1-Z7,Z9,Z12,Z13) or sidecar; (4) NOTICE + check-transplant-policy.py gate
 ```
 
 ## Status note
 
-STATUS = `PASS_WITH_DEBT` because the ledger is complete and sufficient for A0 to open W19 cards, but upstream lane reports (A2/A4/A7–A9) were not yet available at write time; their absence is a *refinement* debt, not a blocker. The research itself is internally consistent and evidence-backed (verified Cargo.lock SHA, read licenses, parsed package manifests, inspected source trees).
+STATUS = `PASS_WITH_DEBT` (HOLD finalization). All license analysis and function-level provenance/dependency/test closures requested by R2 are complete and evidence-backed from `CURRENT_PRODUCT` + `REFERENCE_SOURCE`. The R1 contradictions named in `A0-M5-W18-R1-audit-20260908.md` are explicitly retracted and replaced (§0 of the ledger). The only remaining items are **peer-R2 confirmations** (A2/A3 Obsidian Vue blueprint for O1–O6, A7 native-binding proof for Z8, A9 egress policy for Z8 sidecar) which, per R2 sequencing, must land before A10 may finalize — but none would change the first implementation slice.
 
-## Deliverables in this lane
+## R1 → R2 correction summary (audit items closed)
 
-1. **`A10-dependency-bom.md`** — full dependency BOM: dbx Rust crate table (COPY/AVOID/DEFER + native footprint), dbx workspace vendored forks, zvec-grep npm table (Node/model-bound), license topology (MulanPSL-2 ↔ Apache-2.0), provenance verification.
-2. **`A10-source-transplant-ledger.md`** — per-candidate ledger for dbx (D1–D24), zvec-grep (Z1–Z13), Obsidian (O1–O6) with all required fields and consolidated classification counts.
-3. **`A10-notice-and-review-gate.md`** — NOTICE/attribution artifacts proposal + `check-transplant-policy.py` 8-gate design + reviewer checklist + integration into pre-merge.
+| Audit item | A10 R1 issue | R2 resolution |
+|---|---|---|
+| license contradiction | implicit product=Apache-2.0 risk; "workspace member" surface | product = MulanPSL-2 verified; transplant lands in existing `src-tauri/src/` modules (M5-1.a), not a new workspace member (C2) |
+| transplant contradiction | recommended async `tokio-postgres`/`mysql_async` COPY | withdrawn — product uses sync `mysql`/`postgres`; M4-A2 F-1 forbids tokio direct dep; A4 D-A4-2 requires sync (C1) |
+| no function-level closure | D3/D4/D5/D10/D11/D16 marked module-level COPY | split into self-contained COPY (D5a, D11a, Z12) vs ADAPT/REJECT using file:line symbol + transitive-dep closure |
+
+## Deliverables in this lane (R2)
+
+1. **`A10-dependency-bom.md`** (R2) — sync-driver reuse, `sqlparser` optional, crypto/export pure-Rust subset, license topology + Cargo.toml license-field gap.
+2. **`A10-source-transplant-ledger.md`** (R2) — per-unit function-level closure, consolidated COPY:3/ADAPT:15/REIMPLEMENT:17/DEFER:3/REJECT:8, explicit ACCEPT/REJECT, hard stops.
+3. **`A10-notice-and-review-gate.md`** (R2) — NOTICE + `check-transplant-policy.py` 8-gate design reconciled with A9 egress policy.
 
 No product code changed. Not pushed (only A0 integrates/pushes).

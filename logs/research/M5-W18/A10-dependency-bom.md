@@ -2,9 +2,10 @@
 
 > Lane: A10 (Licensing, dependency BOM, source-transplant plan)
 > Wave: M5-W18-R Research and Replication Blueprint
+> Revision: **R2** (evidence-closure; rebased `origin/master` `d6127c4`)
 > Date: 2026-09-08
 > Author: Lane A10 (research only — no product code changed)
-> BASE: `78d2cfb8e90d323d35df920e9807d32189f867cd` (origin/master, worktree `m5-w18-a10`, branch `codex/m5-w18-a10`)
+> BASE: `78d2cfb8e90d323d35df920e9807d32189f867cd` → REBASED onto `origin/master` (`d6127c4`)
 
 This document is the **dependency bill of materials** consumed by the source-transplant ledger (`A10-source-transplant-ledger.md`). It records every external crate / npm package we would pull in, its license, its **native (C/C++/binary) footprint**, and a compatibility verdict for this product.
 
@@ -40,26 +41,29 @@ The dbx snapshot hash matches the dispatch pin exactly, so every crate version b
 
 MulanPSL-2 §3 likewise requires preserving the original license text of combined components. The combined work stays MulanPSL-2 overall; the copied files remain Apache-2.0 with dual attribution. **No file may be re-licensed wholesale to MulanPSL-2.**
 
+> **R2 license-gap finding (CURRENT_PRODUCT):** the product root `LICENSE` is unambiguously **MulanPSL-2** (23 occurrences of "Mulan/木兰"). However `src-tauri/Cargo.toml` declares **no `license` field** (the Rust package is unlicensed metadata), while the vendored `tauri-browser-tabs/Cargo.toml` correctly declares `license = "MIT OR Apache-2.0"`. **Action for W19:** add `license = "MulanPSL-2.0"` to `src-tauri/Cargo.toml` so the binary crate carries the project license (SPDX id `MulanPSL-2.0`). This resolves any ambiguity that an Apache-2.0 inbound file might "re-license" the whole crate.
+
 ---
 
 ## 2. dbx-core Rust dependency BOM
 
 Source: `crates/dbx-core/Cargo.toml` (read in full). Classification: **COPY** = pure-Rust, tractable, recommend adopting; **AVOID** = heavy native build or platform-specific fork; **DEFER** = optional feature / out of first-wave scope.
 
-### 2.1 Pure-Rust drivers & engines (recommended COPY subset)
+### 2.1 DB drivers — **reuse existing sync stack, DO NOT add async drivers (R2 correction C1)**
 
-| Crate | Version | License | Native footprint | Verdict |
+> **R2 correction (CURRENT_PRODUCT + M4-A2 F-1 + A4 D-A4-2):** the product `src-tauri/Cargo.toml` **already** depends on **sync** drivers `mysql 28.0.2`, `postgres 0.19.14`, `rusqlite 0.40.2 bundled`. M4-A2 decision F-1 = "不引 tokio 直接依赖" (use `std::thread`+`Condvar`); A4 `D-A4-2` requires "all移植 must be sync". Therefore the R1 recommendation of `tokio-postgres`/`deadpool-postgres`/`mysql_async` is **withdrawn** — adding async drivers would conflict with the product runtime contract and duplicate the existing sync drivers. dbx `PoolKind` (D2) maps onto the **existing sync** drivers, not new async ones.
+
+| Crate | In product? | License | Native | Verdict |
 |---|---|---|---|---|
-| `tokio-postgres` | 0.7 | MIT/Apache | none (pure Rust) | ✅ COPY (with `deadpool-postgres`, `rustls` feature, **not** `postgres-openssl`) |
-| `deadpool-postgres` | 0.14 | MIT/Apache | none | ✅ COPY |
-| `tokio-postgres-rustls` | 0.13 | MIT/Apache | none | ✅ COPY (use rustls, avoid openssl variant) |
-| `rusqlite` | 0.32 | MIT | **compiles SQLite C** (we already use 0.40.2 `bundled`) | 🔁 ADAPT to our 0.40.2; reuse existing bundled SQLite |
-| `mysql_async` | 0.37 (fork `zipg/mysql_async`) | MIT | none (pure Rust) | ⚠️ COPY-but-pin: fork has legacy-cert compat; prefer upstream `mysql_async` if equivalent |
-| `tiberius` | 0.12 (vendored at `vendor/tiberius`) | MIT | none (MSSQL TDS over pure Rust) | ✅ COPY if MSSQL needed; drop vendored Win7 patch |
-| `redis` | 0.32 | MIT/Apache | none | ✅ COPY if needed |
-| `mongodb` | 3.2 | Apache-2.0 | none | ✅ COPY if needed |
-| `sqlparser` | 0.62 | Apache-2.0 | none | ✅ COPY (SQL risk/analysis — see ledger) |
-| `tokio` / `tokio-util` / `futures` | 1.x | MIT | none | ✅ already in product |
+| `mysql` (sync) `28.0.2` | ✅ present | MIT/Apache | none | ✅ REUSE — dbx D2 maps here (no new dep) |
+| `postgres` (sync) `0.19.14` | ✅ present | MIT/Apache | none | ✅ REUSE — dbx D2 maps here (no new dep) |
+| `rusqlite` `0.40.2 bundled` | ✅ present | MIT | compiles SQLite C (existing) | ✅ REUSE — dbx D1/D7 map here |
+| `tokio-postgres` / `deadpool-postgres` / `mysql_async` | ❌ (and must stay out) | MIT/Apache | none | ⛔ **REJECT** (R2 C1) — async runtime conflict with M4-A2 F-1 / A4 D-A4-2; duplicates existing sync drivers |
+| `tiberius` (MSSQL) | ❌ | MIT | none | 🔁 ADAPT only if MSSQL needed; drop vendored Win7 patch |
+| `redis` `0.32` | ❌ | MIT/Apache | none | 🔁 DEFER (only if needed) |
+| `mongodb` `3.2` | ❌ | Apache-2.0 | none | 🔁 DEFER (only if needed) |
+| `sqlparser` `0.62` | ❌ (not in `Cargo.lock`, 293 crates) | Apache-2.0 | none | 🔁 ADAPT (new dep) — only if A6 upgrades `classify_sql_risk` to AST-based (D4/D10); otherwise keep product regex classifier |
+| `tokio` `1.53.1` | ✅ transitive (via tauri) | MIT | none | ⚠️ transitive only; **do not promote to direct dep** (F-1) |
 
 ### 2.2 Crypto / security (pure Rust, recommend COPY)
 
@@ -147,7 +151,8 @@ Source: `package.json` (read in full). **Every zvec-grep runtime dep implies a N
 
 ## 5. BOM verdict (one line per source)
 
-- **dbx**: adopt a **curated pure-Rust subset** (drivers + sqlparser + crypto + notify + export); **reject** vendored OpenSSL/aws-lc-rs, the Tauri `wry` fork, and all governance/MQ/Win7 patches.
+- **dbx**: **reuse existing sync `mysql`/`postgres`/`rusqlite`** drivers (do NOT add async drivers — R2 C1); adopt a curated pure-Rust subset (crypto `argon2`/`aes-gcm`, export `csv`/`calamine`/`notify`) only as needed; **reject** vendored OpenSSL/aws-lc-rs, the Tauri `wry` fork, and all governance/MQ/Win7 patches.
 - **zvec-grep**: **reject copy**; plan REIMPLEMENT (Rust) or ADAPT (sidecar). All deps are Node/model-bound.
 - **Obsidian**: behavior-only; no dependency BOM applies (no code donor).
-- **License**: all inbound is Apache-2.0 into a MulanPSL-2 product → dual-license attribution required (file-level Apache retention + NOTICE).
+- **License**: all inbound is Apache-2.0 into a MulanPSL-2 product → dual-license attribution required (file-level Apache retention + NOTICE). Product `src-tauri/Cargo.toml` must gain `license = "MulanPSL-2.0"` (R2 gap).
+- **Bundle impact note**: the only *new* direct Rust deps a first W19 slice would add are `sqlparser` (if A6 chooses AST), `argon2`/`aes-gcm` (credential KDF/encryption fallback), `csv`/`calamine`/`notify` (export/watcher) — all pure-Rust, none add a heavy C build; the curated set stays within the existing native budget (sqlite C + libgit2 C already compile). Each addition must be re-checked against the `TOTAL_BYTES_GROWTH_LIMIT_PCT=25.2` build-size gate (A1/A11).
