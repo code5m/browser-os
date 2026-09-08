@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>A8-R3 Visual Density Frames (synthetic)</title>
+<style>
+  /* ===== A8-R3 token system (mirrors A8-R3-visual-density-design.md §3) ===== */
+  :root{
+    --sp-1:2px; --sp-2:4px; --sp-3:6px; --sp-4:8px; --sp-5:12px; --sp-6:16px; --sp-7:24px; --sp-8:32px;
+    --rd-xs:4px; --rd-md:8px; --rd-pill:999px;
+    --fs-meta:11px; --fs-sm:12px; --fs-base:13px; --fs-md:14px; --fs-lg:15px; --fs-xl:18px;
+    --icon-sm:14px; --icon-md:16px; --icon-lg:20px;
+    /* light theme (default) */
+    --surface-content:#ffffff; --surface-sunken:#f7f8fa; --surface-raised:#eef1f6;
+    --surface-chrome:#2b3442; --border-hair:#e5e6eb; --border-chrome:#3a4452;
+    --text-1:#1f2733; --text-2:#4e5969; --text-3:#86909c; --text-on-chrome:#cbd5e0;
+    --accent:#2b6cb0; --accent-strong:#3182ce; --accent-tint:#eaf3fb; --accent-hover-bg:#2f3a47;
+    --success:#2f9e44; --danger:#d64545; --warning:#d4a94e;
+  }
+  .dark{
+    --surface-content:#161b22; --surface-sunken:#11161d; --surface-raised:#1c232d;
+    --surface-chrome:#0f141b; --border-hair:#262d38; --border-chrome:#2c3543;
+    --text-1:#e6edf3; --text-2:#aeb9c6; --text-3:#7d8794; --text-on-chrome:#aeb9c6;
+    --accent:#4f9be0; --accent-strong:#6cb0ea; --accent-tint:#16263a; --accent-hover-bg:#222b36;
+    --success:#3fb950; --danger:#f06565; --warning:#e3b341;
+  }
+  *{box-sizing:border-box; font-family:system-ui,"PingFang SC",sans-serif;}
+  body{margin:0; background:#0f141b; color:#cbd5e0; padding:24px;}
+  h1{font-size:18px;margin:0 0 4px;} h2{font-size:15px;margin:24px 0 8px;color:#9aa4b2;}
+  .note{font-size:12px;color:#86909c;line-height:1.6;max-width:880px;}
+  .frame-wrap{margin:16px 0;}
+  .frame-label{font-size:12px;color:#cbd5e0;margin-bottom:6px;}
+  .frame-label b{color:#6cb0ea;}
+  .scroll{overflow-x:auto; padding-bottom:8px; border-bottom:1px solid #262d38;}
+  /* ===== shell mock ===== */
+  .shell{display:flex; flex-direction:column; background:var(--surface-content); border:1px solid var(--border-chrome); border-radius:var(--rd-md); overflow:hidden;}
+  .tbar{height:32px; background:var(--surface-chrome); display:flex; align-items:center; gap:var(--sp-3); padding:0 var(--sp-4); flex-shrink:0; color:var(--text-on-chrome);}
+  .tbar .nav{display:flex; align-items:center; gap:var(--sp-2); padding:2px var(--sp-4); height:24px; border-radius:var(--rd-md); font-size:var(--fs-sm); color:var(--text-on-chrome);}
+  .tbar .nav.active{background:var(--accent); color:#fff;}
+  .tbar .nav:hover{background:var(--accent-hover-bg);}
+  .tbar .sep{width:1px; height:16px; background:var(--border-chrome);}
+  .tbar .grow{margin-left:auto; display:flex; gap:var(--sp-3); align-items:center;}
+  .omni{height:24px; width:170px; border:1px solid var(--border-chrome); border-radius:var(--rd-pill); padding:0 var(--sp-4); font-size:var(--fs-sm); color:var(--text-3); display:flex; align-items:center; background:rgba(255,255,255,.04);}
+  .body{flex:1; display:flex; min-height:0;}
+  .sidebar{width:260px; background:var(--surface-sunken); border-right:1px solid var(--border-hair); display:flex; flex-direction:column; flex-shrink:0;}
+  .side-h{height:28px; display:flex; align-items:center; gap:var(--sp-2); padding:0 var(--sp-4); border-bottom:1px solid var(--border-hair); font-size:var(--fs-sm); color:var(--text-2);}
+  .tree{padding:var(--sp-3);}
+  .tnode{display:flex; align-items:center; gap:var(--sp-2); padding:6px var(--sp-3); border-radius:var(--rd-xs); font-size:var(--fs-base); color:var(--text-2); min-height:24px;}
+  .tnode:hover{background:var(--accent-tint); color:var(--accent);}
+  .tnode.sel{background:var(--accent-tint); color:var(--accent); font-weight:600;}
+  .tnode .ic{font-size:var(--icon-sm); width:16px; text-align:center;}
+  .content{flex:1; min-width:0; padding:var(--sp-7); color:var(--text-1); font-size:var(--fs-md); line-height:1.55;}
+  .content h3{font-size:var(--fs-xl); margin:0 0 var(--sp-4);}
+  .content p{color:var(--text-2); margin:0 0 var(--sp-4); max-width:640px;}
+  .content .mockimg{height:120px; background:linear-gradient(135deg,var(--surface-sunken),var(--surface-raised)); border:1px solid var(--border-hair); border-radius:var(--rd-md);}
+  .statusbar{height:26px; background:var(--surface-chrome); color:var(--text-on-chrome); font-size:var(--fs-meta); display:flex; align-items:center; gap:var(--sp-6); padding:0 var(--sp-5); flex-shrink:0;}
+  .statusbar .ok{color:var(--success);}
+  /* measurement rulers */
+  .measure{position:relative; margin:8px 0;}
+  .rule-h{height:18px; border-left:1px solid #6cb0ea; border-right:1px solid #6cb0ea; position:relative; color:#6cb0ea; font-size:11px; display:flex; align-items:center; justify-content:center;}
+  .rule-h::before,.rule-h::after{content:""; position:absolute; top:0; width:1px; height:18px; background:#6cb0ea;}
+  .rule-v{display:inline-flex; align-items:center; gap:4px; color:#6cb0ea; font-size:11px;}
+  .badge{display:inline-block; background:#16263a; border:1px solid #2c3543; color:#6cb0ea; border-radius:var(--rd-xs); padding:1px 6px; font-size:11px; margin-right:6px;}
+  /* state gallery */
+  .gallery{display:flex; flex-wrap:wrap; gap:12px; margin-top:8px;}
+  .sw{width:200px; border:1px solid var(--border-chrome); border-radius:var(--rd-md); overflow:hidden; background:var(--surface-content);}
+  .sw .cap{font-size:11px; color:var(--text-3); padding:6px var(--sp-3); border-bottom:1px solid var(--border-hair);}
+  .sw .body2{padding:var(--sp-3); display:flex; flex-direction:column; gap:var(--sp-2);}
+  .row{display:flex; align-items:center; gap:var(--sp-2); height:28px; padding:0 var(--sp-3); border-radius:var(--rd-xs); font-size:var(--fs-base);}
+  .row.hover{background:var(--accent-tint); color:var(--accent);}
+  .row.sel{background:var(--accent-tint); color:var(--accent); font-weight:600; border-left:2px solid var(--accent);}
+  .row.disabled{color:var(--text-3);}
+  .row.focus{outline:2px solid var(--accent); outline-offset:2px;}
+  .row.danger{color:var(--danger);}
+  .row.danger:hover{background:#fdeaea;}
+  /* before/after two-accent */
+  .ba{display:flex; gap:16px; flex-wrap:wrap;}
+  .ba .col{flex:1; min-width:280px; border:1px solid var(--border-chrome); border-radius:var(--rd-md); padding:var(--sp-4);}
+  .ba .col h4{margin:0 0 8px; font-size:13px;}
+  .btn{height:24px; padding:0 12px; border-radius:var(--rd-md); font-size:var(--fs-base); border:none; cursor:pointer; display:inline-flex; align-items:center;}
+  .btn.green{background:#2b6; color:#fff;}      /* before: green primary */
+  .btn.blue{background:var(--accent); color:#fff;} /* after: unified blue */
+  .ctx{background:var(--surface-content); border:1px solid var(--border-hair); box-shadow:0 4px 16px rgba(0,0,0,.12); border-radius:var(--rd-md); min-width:170px; padding:4px; width:200px;}
+  .ctx .ci{height:28px; display:flex; align-items:center; padding:0 12px; border-radius:var(--rd-xs); font-size:var(--fs-base); color:var(--text-1);}
+  .ctx .ci:hover{background:var(--accent-tint); color:var(--accent);}
+  .ctx .ci.d{color:var(--danger);}
+  .ctx .ci.d:hover{background:#fdeaea;}
+  .ctx .ci.x{color:var(--text-3);}
+  .ctx .cd{height:1px; background:var(--border-hair); margin:4px 0;}
+  .empty,.loading,.error{height:120px; border:1px dashed var(--border-hair); border-radius:var(--rd-md); display:flex; align-items:center; justify-content:center; flex-direction:column; gap:6px; color:var(--text-3); font-size:var(--fs-sm);}
+  .error{border-color:var(--danger); color:var(--danger);}
+</style>
+</head>
+<body>
+<h1>A8 · R3 视觉密度与「大气」设计系统 — 标注帧（synthetic）</h1>
+<div class="note">
+  纯静态、无脚本、无外部资源、无产品数据。令牌见 <code>A8-R3-visual-density-design.md §3</code>。
+  每个 shell 帧按真实像素宽度渲染于可横向滚动容器内，测量标注为真实 CSS 像素。
+  浅/暗主题切换见各帧 class；<code>.dark</code> 为浅色令牌的参数镜像（§3.6）。
+</div>
+
+<h2>1. 四尺寸折叠态（浅色，无工具窗口）→ 内容即产品</h2>
+<div class="note">折叠态 = ActivityBar 32px + StatusBar 26px，侧/底工具关闭。测量见 §5 表。</div>
+
+<!-- 1920 -->
+<div class="frame-wrap">
+  <div class="frame-label"><b>1920×1080</b> · 后标题栏 H=1048 · 顶 chrome 32 · 底 26 · 内容 H=990 (94.5%) · 内容 W=1920 (100%)</div>
+  <div class="scroll"><div class="shell" style="width:1920px; height:540px;">
+    <div class="tbar"><div class="nav active">🏠 主页</div><div class="sep"></div><div class="nav">🌐 浏览器</div><div class="nav">📂 文件</div><div class="nav">🗃 数据库</div><div class="nav">🧠 图谱</div><div class="grow"><div class="omni">🔍 统一搜索…</div><div class="nav">☰</div></div></div>
+    <div class="body"><div class="content"><h3>活动文档 / 网页</h3><p>内容区使用纯白 <code>--surface-content</code>，chrome 退为中性深条，眼睛落在内容而非面板上。单一强调色蓝 <code>--accent</code>，绿仅留给成功态。</p><div class="mockimg"></div></div></div>
+    <div class="statusbar"><span class="ok">● 已连接</span><span>页签 3</span><span>· 终端就绪</span><span>· 内存 4.1G/15.6G</span></div>
+  </div></div>
+</div>
+
+<!-- 1440 -->
+<div class="frame-wrap">
+  <div class="frame-label"><b>1440×900</b> · 后标题栏 H=868 · 内容 H=810 (93.3%) · 内容 W=1440 (100%) — 验收基准尺寸</div>
+  <div class="scroll"><div class="shell" style="width:1440px; height:470px;">
+    <div class="tbar"><div class="nav active">🏠 主页</div><div class="sep"></div><div class="nav">🌐 浏览器</div><div class="nav">📂 文件</div><div class="nav">🗃 数据库</div><div class="grow"><div class="omni">🔍 搜索…</div><div class="nav">☰</div></div></div>
+    <div class="body"><div class="content"><h3>活动文档</h3><p>1440×900 折叠态内容占 93.3% 高度、100% 宽度，满足 R3 硬线（≥85%H / ≥92%W）。</p><div class="mockimg"></div></div></div>
+    <div class="statusbar"><span class="ok">● 已连接</span><span>页签 3</span><span>· 终端就绪</span></div>
+  </div></div>
+</div>
+
+<!-- 1366 -->
+<div class="frame-wrap">
+  <div class="frame-label"><b>1366×768</b> · 后标题栏 H=736 · 内容 H=678 (92.1%) · 内容 W=1366 (100%)</div>
+  <div class="scroll"><div class="shell" style="width:1366px; height:400px;">
+    <div class="tbar"><div class="nav active">🏠</div><div class="sep"></div><div class="nav">🌐</div><div class="nav">📂</div><div class="grow"><div class="omni">🔍</div><div class="nav">☰</div></div></div>
+    <div class="body"><div class="content"><h3>活动文档</h3><p>窄窗保留图标导航；文字标签在 ≤1180px 由 A1 navTopViews 裁剪，功能在 ☰ 仍可达。</p><div class="mockimg" style="height:80px"></div></div></div>
+    <div class="statusbar"><span class="ok">●</span><span>3</span><span>· 终端</span></div>
+  </div></div>
+</div>
+
+<!-- 1024 -->
+<div class="frame-wrap">
+  <div class="frame-label"><b>1024×720</b> · 后标题栏 H=688 · 内容 H=630 (91.6%) · 内容 W=1024 (100%) — 窄窗保活动文档</div>
+  <div class="scroll"><div class="shell" style="width:1024px; height:360px;">
+    <div class="tbar"><div class="nav active">🏠</div><div class="sep"></div><div class="nav">🌐</div><div class="grow"><div class="nav">☰</div></div></div>
+    <div class="body"><div class="content"><h3>活动文档</h3><p>1024 仅留核心导航与 ☰；扩展行/侧栏按需开启，默认不挤压内容（内容 H 91.6%）。</p></div></div>
+    <div class="statusbar"><span class="ok">●</span><span>3</span></div>
+  </div></div>
+</div>
+
+<h2>2. 正常态（同边一个工具窗口开，浅色 1440×900）</h2>
+<div class="scroll"><div class="shell" style="width:1440px; height:470px;">
+  <div class="tbar"><div class="nav active">📂 文件</div><div class="sep"></div><div class="nav">🏠 主页</div><div class="nav">🌐 浏览器</div><div class="grow"><div class="omni">🔍 搜索…</div><div class="nav">☰</div></div></div>
+  <div class="body">
+    <div class="sidebar"><div class="side-h">📂 文件 <span style="margin-left:auto;color:var(--text-3)">✕</span></div><div class="tree">
+      <div class="tnode sel"><span class="ic">📁</span> 工作区</div>
+      <div class="tnode"><span class="ic">📄</span> README.md</div>
+      <div class="tnode"><span class="ic">📄</span> plan.md</div>
+      <div class="tnode"><span class="ic">📁</span> src</div>
+    </div></div>
+    <div class="content"><h3>README.md</h3><p>侧栏 260px（浅色 <code>--surface-sunken</code>），发丝右边框 <code>--border-hair</code>。内容 W=1180 (81.9%)。同边再开工具窗口将替换本侧栏（A3 行为）。</p><div class="mockimg"></div></div>
+  </div>
+  <div class="statusbar"><span class="ok">● 已连接</span><span>文件</span><span>· 仓库已配置</span></div>
+</div></div>
+
+<h2>3. 暗色主题（参数镜像，1440×900 折叠）</h2>
+<div class="scroll"><div class="shell dark" style="width:1440px; height:470px;">
+  <div class="tbar"><div class="nav active">🏠 主页</div><div class="sep"></div><div class="nav">🌐 浏览器</div><div class="nav">📂 文件</div><div class="grow"><div class="omni">🔍 搜索…</div><div class="nav">☰</div></div></div>
+  <div class="body"><div class="content"><h3>活动文档（暗）</h3><p>同一组件，仅 <code>--surface/--text/--border</code> 翻面（§3.6）。强调蓝提亮为 <code>#4f9be0</code> 保 AA 对比。</p><div class="mockimg"></div></div></div>
+  <div class="statusbar"><span class="ok">● 已连接</span><span>页签 3</span><span>· 终端就绪</span></div>
+</div></div>
+
+<h2>4. 状态规范画廊（§4）</h2>
+<div class="gallery">
+  <div class="sw"><div class="cap">hover</div><div class="body2"><div class="row hover">列表项 hover</div><div class="row">普通项</div></div></div>
+  <div class="sw"><div class="cap">selected / active</div><div class="body2"><div class="row sel">选中（左 2px 指示）</div><div class="row">普通项</div></div></div>
+  <div class="sw"><div class="cap">keyboard focus</div><div class="body2"><div class="row focus">焦点（2px 外环）</div></div></div>
+  <div class="sw"><div class="cap">disabled</div><div class="body2"><div class="row disabled">禁用（灰字可读）</div></div></div>
+  <div class="sw"><div class="cap">danger</div><div class="body2"><div class="row danger">删除此文件</div><div class="row danger">强制关闭</div></div></div>
+</div>
+
+<h2>5. 右键菜单（命令身份 / 禁用理由 / 安全类，§4）</h2>
+<div class="ctx">
+  <div class="ci" data-cmd="file.open" data-safety="normal">打开</div>
+  <div class="ci" data-cmd="file.rename" data-safety="normal">重命名</div>
+  <div class="ci" data-cmd="file.copy_path" data-safety="normal">复制路径</div>
+  <div class="cd"></div>
+  <div class="ci x" data-cmd="file.delete" data-disabled-reason="dirty-tree" data-safety="danger">删除（已禁用：脏树）</div>
+  <div class="ci d" data-cmd="file.force_close" data-safety="danger">强制关闭会话</div>
+</div>
+
+<h2>6. 双强调色修复对照（§1 诊断 1）</h2>
+<div class="ba">
+  <div class="col"><h4>修复前：绿按钮 + 蓝导航（两个产品感）</h4>
+    <span class="btn green">主操作（绿 #2b6）</span>
+    <span style="margin-left:8px;color:var(--accent)">■ 导航 active（蓝 #2b6cb0）</span>
+    <div class="note">绿与蓝同时抢注意力，界面像拼合。</div>
+  </div>
+  <div class="col"><h4>修复后：唯一蓝强调，绿仅 success</h4>
+    <span class="btn blue">主操作（蓝 #2b6cb0）</span>
+    <span style="margin-left:8px;color:var(--success)">■ 成功/安全态（绿 #2f9e44）</span>
+    <div class="note">蓝统一品牌；绿只出现在「成功/已连接/安全」语义，层级清晰。</div>
+  </div>
+</div>
+
+<h2>7. 态角注（empty / loading / error / disabled / context-menu）</h2>
+<div class="gallery">
+  <div class="sw" style="width:240px"><div class="cap">empty</div><div class="empty">📭 暂无内容<br><span style="font-size:11px">点「+」新建</span></div></div>
+  <div class="sw" style="width:240px"><div class="cap">loading</div><div class="empty">⏳ 加载中…<br><span style="font-size:11px">避免布局跳动</span></div></div>
+  <div class="sw" style="width:240px"><div class="cap">error</div><div class="error">⚠ 加载失败<br><span style="font-size:11px">脱敏诊断，可重试</span></div></div>
+  <div class="sw" style="width:240px"><div class="cap">disabled 控件</div><div class="body2"><div class="row disabled">灰色可读无指针</div></div></div>
+  <div class="sw" style="width:240px"><div class="cap">context-menu</div><div class="ctx" style="width:auto"><div class="ci">打开</div><div class="ci d">删除</div></div></div>
+</div>
+
+<div class="note" style="margin-top:24px;border-top:1px solid #262d38;padding-top:12px;">
+  标注帧与 <code>A8-R3-visual-density-design.md</code> 一致。A8 仅拥有视觉令牌与测量；布局/行为/命令注册契约分别属 A1/A3/A6，未越权修改。未改产品代码、未 push。
+</div>
+</body>
+</html>
