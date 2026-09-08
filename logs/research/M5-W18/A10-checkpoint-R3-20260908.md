@@ -107,3 +107,19 @@ curl -s https://api.github.com/repos/sk-wang/slio-git | head -c 120             
 ```
 
 范围：仅新增 A10 lane 自有文件；零产品代码/依赖/ACL 改动；**未 push**。
+
+---
+
+## 8. 第 3 波（2026-09-08 续 2）
+
+新增产物：`logs/research/M5-W18/A10-R3-current-chrome-baseline-20260908.md`
+
+- 建立 A10 自己的**当前外壳基线**：一级常驻 5 项（`TOP_NAV_ITEMS`，`useLayoutStore.ts:33-39`）、密度阈值 1180/900（`:75-83`）、☰ 菜单 **16** 项（工作区 3 / 工具 11 / 同步 2，其中 term/clip/arts 有意重复）、`StatusBar` 26px 约 10 段信息、`compactMode` 同时隐藏 `ActivityBar` 与 `UnifiedTabBar`。
+- 指出与用户裁决的落差：当前是**顶部横向导航**而非 IDEA 左侧图标栏；R3 引入侧边工具窗口时必须回答与顶部栏的并存关系（否则触犯"不得重复导航"）。
+- **挂账核验（可直接关闭）**：M5-14 债务 D6「`MainArea` 兜底 `v-else` 恒渲染」**在当前 master 已修复** —— 现为白名单守卫 `v-if`（`MainArea.vue:250-258`，含防回归注释），由 `61cff56 feat(M5): integrate bug-hunt closeout and scheduler safety`（2026-09-07）引入；唯一其他 `v-else` 是 dock 页签兜底（`:166`，有意）。建议 A0/A11 关闭该挂账。
+- 给出 A2 交付后的**差分核对口径**（按钮数/阈值/菜单项数/五分类/同口径 px/是否覆盖 StatusBar 与 UnifiedTabBar）。
+
+```bash
+git log -1 --format='%h %ad %s' --date=short -S"is intentionally independent from FileEditor" -- src/components/layout/MainArea.vue
+# -> 61cff56 2026-09-07 feat(M5): integrate bug-hunt closeout and scheduler safety
+```
