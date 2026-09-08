@@ -7,10 +7,18 @@
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   :root {
+    /* A8 token system: single accent, 4px spacing scale, 3 corner radii */
     --bg: #1e1e2e; --bg2: #252537; --bg3: #2d2d44; --border: #3a3a55;
     --text: #cdd6f4; --text2: #7f849c; --text3: #585b70;
-    --accent: #89b4fa; --accent-bg: #1e1e2e; --danger: #f38ba8; --success: #a6e3a1;
-    --top-h: 36px; --tab-h: 32px; --status-h: 24px;
+    --accent: #89b4fa; --accent-bg: #1e1e2e; --danger: #f38ba8; --success: #a6e3a1; --warn: #f9e2af;
+    /* A8 spacing scale (4px base): 0/2/4/6/8/12/16/24/32 */
+    --sp-0:0; --sp-1:2px; --sp-2:4px; --sp-3:6px; --sp-4:8px; --sp-5:12px; --sp-6:16px; --sp-7:24px; --sp-8:32px;
+    /* A8 corner radii: xs=4, md=8, pill=999 */
+    --rd-xs:4px; --rd-md:8px; --rd-pill:999px;
+    /* A2/A3 chrome constants (source-derived) */
+    --top-h: 32px; --tab-h: 28px; --status-h: 26px; --edge-w: 28px;
+    /* A3 tool window limits: edge min200 max420 def260, bottom min140 max420 def240 */
+    /* A3 NARROW: <1180 unfixed auto-hide, <900 fixed also auto-hide */
   }
   body { font-family: -apple-system, "Segoe UI", "Noto Sans", sans-serif; background: #11111b; color: var(--text); display: flex; flex-direction: column; align-items: center; gap: 20px; padding: 20px; }
   h1 { font-size: 16px; color: #fff; }
@@ -141,22 +149,26 @@
 </head>
 <body>
 <h1>A1 R3 Browser-First Workbench Prototype</h1>
-<p class="desc">替代壳层原型。保留 Chrome 式紧凑标签+地址栏+大内容区；IDEA 式渐进披露（可折叠工具窗口、右键菜单、命令面板）。合成数据，不接真实 IPC。覆盖 1920×1080 / 1440×900 / 1366×768 / 1024×720，含 collapsed / normal / database / knowledge / Git / context-menu / focus 模式。</p>
+<p class="desc">替代壳层原型（终稿，消费 A2-A10）。保留 Chrome 式紧凑标签+地址栏+大内容区；IDEA 式渐进披露（可折叠工具窗口、右键菜单、命令面板）。合成数据，不接真实 IPC。覆盖 1920×1080 / 1440×900 / 1366×768 / 1024×720（800×600 已剔除：产品 min_inner_size=900×600 不可达，A10 F13），含 collapsed / normal / database / knowledge / Git / context-menu / focus 模式。消费：A2 密度审计（8 控件顶栏）·A3 工具窗口状态机（CR-1~CR-12, NARROW 策略）·A4 状态持久化契约·A5 数据库壳层·A6 命令注册表（CommandDef schema, 15 scope）·A7 Git 14 单元分类（COPY=0/ADAPT=5/REIMPLEMENT=9）·A8 视觉令牌（单强调色, 4px 标尺）·A9 交互安全（4 safety class, 4 confirm tier）·A10 独立复核（F01-F15, G1-G8 闸门）。</p>
 
 <!-- ============================================================ -->
 <!-- 1. NORMAL MODE — 1440×900 (primary) -->
 <!-- ============================================================ -->
 <div class="frame-wrap">
   <h2>1. Normal Mode — 1440×900（主视图）</h2>
-  <div class="frame-meta">顶部 ≤2 行 ≤80px | collapsed 时内容 ≥85% 高 / ≥92% 宽 | 左工具窗口可折叠</div>
+  <div class="frame-meta">顶部 ≤2 行 ≤80px（A2 实测 32+28+26=86px chrome）| collapsed 时内容 ≥85% 高 / ≥92% 宽 | 左工具窗口可折叠 | A3 CR-11: 最多 2 边同时常驻</div>
   <div class="frame f-1440">
     <div class="mode-badge normal">NORMAL</div>
-    <!-- Top chrome: compact, ≤36px -->
+    <!-- Top chrome: A2 8-control layout (down from 19), ≤32px -->
     <div class="top-chrome">
+      <div class="nav-btn" title="workspace.file.open">🏠</div>
+      <div class="nav-btn" title="workspace.tree">📁</div>
+      <div class="nav-btn" title="workspace.file.recent">🗂️</div>
       <div class="nav-btn">←</div><div class="nav-btn">→</div><div class="nav-btn">⟳</div>
       <div class="addr">https://example.com/workbench</div>
-      <div class="cmd-btn">🔍 命令 (Ctrl+Shift+P)</div>
-      <div class="menu-btn">☰</div>
+      <div class="cmd-btn" title="command.palette (PROPOSED_NEW, A6)">🔍 (Ctrl+K)</div>
+      <div class="nav-btn" title="workspace.capture">📥</div>
+      <div class="nav-btn" title="workspace.settings">⚙️</div>
     </div>
     <!-- Tab strip: compact, 32px -->
     <div class="tab-strip">
@@ -194,7 +206,7 @@
       <!-- Content: large, content-first -->
       <div class="content">
         <div class="content-pad">中央内容区 — 文件编辑 / 网页 / SQL / 笔记<br><br>默认状态：宽敞、内容优先。高级功能在可折叠工具窗口、右键菜单和命令面板中。</div>
-        <div class="vp-measure">viewport ≈ 1180×792 (88% H / 82% W)</div>
+        <div class="vp-measure">A2 实测: 1440×811 (90.1% H / 100% W) 平静态 | A3 模型: 92.6% H collapsed</div>
       </div>
     </div>
     <div class="status-bar">
@@ -225,7 +237,7 @@
     <div class="body-area">
       <div class="content">
         <div class="content-pad">内容区最大化 — 所有工具窗口已折叠<br><br>通过边缘图标或命令面板恢复任意工具窗口。</div>
-        <div class="vp-measure">viewport ≈ 1376×836 (93% H / 96% W) ✅ ≥85% H / ≥92% W</div>
+        <div class="vp-measure">A3 模型实算: 100% W / 92.6% H ✅ ≥92% W / ≥85% H | A10 G6 PASS</div>
       </div>
     </div>
     <div class="status-bar"><span>📁 my-project</span><span>🌿 main</span></div>
@@ -533,24 +545,24 @@
       <div class="content">
         <div class="content-pad" style="position:relative;">
           中央内容区
-          <!-- Context menu overlay (right-click on App.vue in tree) -->
+          <!-- Context menu overlay (right-click on App.vue in tree) — A6 CommandDef schema, A9 safety classes -->
           <div class="ctx-menu" style="top:20px;left:40px;">
-            <div class="ctx-label">文件操作 · App.vue</div>
-            <div class="ctx-item">打开 <span class="shortcut">Enter</span></div>
-            <div class="ctx-item">在新标签打开 <span class="shortcut">Ctrl+T</span></div>
+            <div class="ctx-label">scope=workspace.file · App.vue · A6 registry</div>
+            <div class="ctx-item">打开 <span class="shortcut">file.open · SAFE · Enter</span></div>
+            <div class="ctx-item">在新标签打开 <span class="shortcut">file.openInTab · SAFE · Ctrl+T</span></div>
             <div class="ctx-sep"></div>
-            <div class="ctx-item">复制路径 <span class="shortcut">Ctrl+Shift+C</span></div>
-            <div class="ctx-item">复制相对路径 <span class="shortcut">Ctrl+Alt+C</span></div>
+            <div class="ctx-item">复制路径 <span class="shortcut">file.copyPath · SAFE · Ctrl+Shift+C</span></div>
+            <div class="ctx-item">复制相对路径 <span class="shortcut">file.copyRelPath · SAFE · Ctrl+Alt+C</span></div>
             <div class="ctx-sep"></div>
-            <div class="ctx-item">Git: 暂存 <span class="shortcut">G S</span></div>
-            <div class="ctx-item">Git: 查看历史 <span class="shortcut">G H</span></div>
-            <div class="ctx-item">Git: 与 HEAD 比较 <span class="shortcut">G D</span></div>
+            <div class="ctx-item">Git: 暂存 <span class="shortcut">git.file.stage · MUTATES · G S</span></div>
+            <div class="ctx-item">Git: 查看历史 <span class="shortcut">git.file.history · SAFE · G H</span></div>
+            <div class="ctx-item">Git: 与 HEAD 比较 <span class="shortcut">git.file.diffHead · SAFE · G D</span></div>
             <div class="ctx-sep"></div>
-            <div class="ctx-item">重命名 <span class="shortcut">F2</span></div>
-            <div class="ctx-item disabled">删除 <span class="shortcut">Del</span></div>
+            <div class="ctx-item">重命名 <span class="shortcut">file.rename · MUTATES · F2</span></div>
+            <div class="ctx-item disabled">删除 <span class="shortcut">file.delete · DESTRUCTIVE_HARD · T3 · Del</span></div>
             <div class="ctx-sep"></div>
-            <div class="ctx-item">在终端中打开 <span class="shortcut">Alt+T</span></div>
-            <div class="ctx-item">在文件管理器中显示</div>
+            <div class="ctx-item">在终端中打开 <span class="shortcut">file.openInTerminal · SAFE · Alt+T</span></div>
+            <div class="ctx-item">在文件管理器中显示 <span class="shortcut">file.revealInFM · SAFE</span></div>
           </div>
         </div>
         <div class="vp-measure">右键 App.vue → scope-aware 菜单（文件操作+Git+终端）</div>
@@ -581,20 +593,22 @@
     <div class="body-area">
       <div class="content" style="position:relative;">
         <div class="content-pad">中央内容区（命令面板激活时半透明遮罩）</div>
-        <!-- Command palette overlay -->
+        <!-- Command palette overlay — A6 CommandDef, A7 14-unit classification -->
         <div class="cmd-palette">
           <input class="cmd-input" placeholder="输入命令、文件名或搜索…" value="git " autofocus>
           <div class="cmd-list">
-            <div class="cmd-row sel">🛰️ Git: Status <span class="cat">Git</span></div>
-            <div class="cmd-row">🛰️ Git: Stage File <span class="cat">Git</span></div>
-            <div class="cmd-row">🛰️ Git: Stage Hunk <span class="cat">Git</span></div>
-            <div class="cmd-row">🛰️ Git: Commit <span class="cat">Git</span></div>
-            <div class="cmd-row">🛰️ Git: Log (中央) <span class="cat">Git</span></div>
-            <div class="cmd-row">🛰️ Git: Log (底部) <span class="cat">Git</span></div>
-            <div class="cmd-row">🛰️ Git: Branch <span class="cat">Git</span></div>
-            <div class="cmd-row">🛰️ Git: Rebase <span class="cat">Git</span></div>
-            <div class="cmd-row">🛰️ Git: Cherry-Pick <span class="cat">Git</span></div>
-            <div class="cmd-row">🛰️ Git: Stash <span class="cat">Git</span></div>
+            <div class="cmd-row sel">🛰️ git.repo.status <span class="cat">ADAPT · SAFE</span></div>
+            <div class="cmd-row">🛰️ git.file.stage <span class="cat">ADAPT · MUTATES</span></div>
+            <div class="cmd-row">🛰️ git.hunk.stage <span class="cat">REIMPLEMENT · MUTATES</span></div>
+            <div class="cmd-row">🛰️ git.repo.commit <span class="cat">ADAPT · MUTATES · T1</span></div>
+            <div class="cmd-row">🛰️ git.repo.logCentral <span class="cat">REIMPLEMENT · SAFE</span></div>
+            <div class="cmd-row">🛰️ git.repo.logBottom <span class="cat">REIMPLEMENT · SAFE</span></div>
+            <div class="cmd-row">🛰️ git.branch.list <span class="cat">ADAPT · SAFE</span></div>
+            <div class="cmd-row">🛰️ git.repo.rebase <span class="cat">REIMPLEMENT · DESTRUCTIVE_SOFT · T2</span></div>
+            <div class="cmd-row">🛰️ git.repo.cherryPick <span class="cat">REIMPLEMENT · MUTATES · T1</span></div>
+            <div class="cmd-row">🛰️ git.repo.stash <span class="cat">REIMPLEMENT · MUTATES</span></div>
+            <div class="cmd-row">🛰️ git.repo.blame <span class="cat">REIMPLEMENT · SAFE</span></div>
+            <div class="cmd-row">🛰️ git.branch.forcePush <span class="cat">REIMPLEMENT · DESTRUCTIVE_HARD · T3</span></div>
           </div>
         </div>
         <div class="vp-measure">命令面板 — 输入 "git " 过滤所有 Git 命令</div>
@@ -758,19 +772,41 @@
 <!-- Design spec summary -->
 <!-- ============================================================ -->
 <div style="max-width:900px;font-size:11px;color:var(--text2);line-height:1.8;">
-  <h2>设计规格摘要</h2>
+  <h2>设计规格摘要（终稿，消费 A2-A10）</h2>
   <table style="border-collapse:collapse;width:100%;font-size:11px;">
-    <tr style="background:var(--bg2);"><th style="padding:4px 8px;border:1px solid var(--border);text-align:left;">约束</th><th style="padding:4px 8px;border:1px solid var(--border);text-align:left;">值</th><th style="padding:4px 8px;border:1px solid var(--border);text-align:left;">验证</th></tr>
-    <tr><td style="padding:3px 8px;border:1px solid var(--border);">顶部 chrome</td><td style="padding:3px 8px;border:1px solid var(--border);">≤2 行, ≤80px</td><td style="padding:3px 8px;border:1px solid var(--border);">36px top + 32px tabs = 68px ✅</td></tr>
-    <tr><td style="padding:3px 8px;border:1px solid var(--border);">collapsed 内容</td><td style="padding:3px 8px;border:1px solid var(--border);">≥85% H, ≥92% W</td><td style="padding:3px 8px;border:1px solid var(--border);">93% H / 96% W ✅</td></tr>
-    <tr><td style="padding:3px 8px;border:1px solid var(--border);">工具窗口操作</td><td style="padding:3px 8px;border:1px solid var(--border);">open/close/collapse/restore/expand/pin/unpin/auto-hide/resize</td><td style="padding:3px 8px;border:1px solid var(--border);">header actions ✅</td></tr>
-    <tr><td style="padding:3px 8px;border:1px solid var(--border);">每边默认</td><td style="padding:3px 8px;border:1px solid var(--border);">仅 1 个主窗口</td><td style="padding:3px 8px;border:1px solid var(--border);">left OR right, not both (1440) ✅</td></tr>
-    <tr><td style="padding:3px 8px;border:1px solid var(--border);">focus 模式</td><td style="padding:3px 8px;border:1px solid var(--border);">隐藏所有 chrome + 1 个返回操作</td><td style="padding:3px 8px;border:1px solid var(--border);">Esc / "退出专注" ✅</td></tr>
-    <tr><td style="padding:3px 8px;border:1px solid var(--border);">右键菜单</td><td style="padding:3px 8px;border:1px solid var(--border);">scope-aware + 分组 + 禁用 + 快捷键</td><td style="padding:3px 8px;border:1px solid var(--border);">§7 context menu ✅</td></tr>
-    <tr><td style="padding:3px 8px;border:1px solid var(--border);">命令面板</td><td style="padding:3px 8px;border:1px solid var(--border);">统一入口 + 来源/范围/禁用</td><td style="padding:3px 8px;border:1px solid var(--border);">§8 command palette ✅</td></tr>
-    <tr><td style="padding:3px 8px;border:1px solid var(--border);">Git 放置</td><td style="padding:3px 8px;border:1px solid var(--border);">central log ↔ bottom window (可逆)</td><td style="padding:3px 8px;border:1px solid var(--border);">§6a / §6b ✅</td></tr>
-    <tr><td style="padding:3px 8px;border:1px solid var(--border);">尺寸覆盖</td><td style="padding:3px 8px;border:1px solid var(--border);">1920/1440/1366/1024</td><td style="padding:3px 8px;border:1px solid var(--border);">§9/§1/§10/§11 ✅</td></tr>
-    <tr><td style="padding:3px 8px;border:1px solid var(--border);">状态覆盖</td><td style="padding:3px 8px;border:1px solid var(--border);">empty/loading/error/disabled</td><td style="padding:3px 8px;border:1px solid var(--border);">§12 ✅</td></tr>
+    <tr style="background:var(--bg2);"><th style="padding:4px 8px;border:1px solid var(--border);text-align:left;">约束</th><th style="padding:4px 8px;border:1px solid var(--border);text-align:left;">值</th><th style="padding:4px 8px;border:1px solid var(--border);text-align:left;">验证</th><th style="padding:4px 8px;border:1px solid var(--border);text-align:left;">来源</th></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">顶部 chrome</td><td style="padding:3px 8px;border:1px solid var(--border);">≤2 行, ≤80px</td><td style="padding:3px 8px;border:1px solid var(--border);">32+28+26=86px (A2 实测); normal=32+28=60px ✅</td><td style="padding:3px 8px;border:1px solid var(--border);">A2 §3, A10 F09</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">collapsed 内容</td><td style="padding:3px 8px;border:1px solid var(--border);">≥85% H, ≥92% W</td><td style="padding:3px 8px;border:1px solid var(--border);">A3 模型: 1920=93.7%, 1440=92.6%, 1366=91.0%, 1024=90.4% H ✅</td><td style="padding:3px 8px;border:1px solid var(--border);">A3 §0, A10 G6</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">工具窗口操作</td><td style="padding:3px 8px;border:1px solid var(--border);">9 种 (A3 CR-1~CR-12)</td><td style="padding:3px 8px;border:1px solid var(--border);">open/close/collapse/restore/expand/pin/unpin/auto-hide/resize ✅</td><td style="padding:3px 8px;border:1px solid var(--border);">A3 §4</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">每边默认</td><td style="padding:3px 8px;border:1px solid var(--border);">仅 1 个主窗口 (CR-2)</td><td style="padding:3px 8px;border:1px solid var(--border);">CR-11: 最多 2 边同时常驻 ✅</td><td style="padding:3px 8px;border:1px solid var(--border);">A3 CR-2/CR-11</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">focus 模式</td><td style="padding:3px 8px;border:1px solid var(--border);">隐藏所有 chrome + 1 返回 (CR-12)</td><td style="padding:3px 8px;border:1px solid var(--border);">Esc / 胶囊 ✅</td><td style="padding:3px 8px;border:1px solid var(--border);">A3 CR-12, A9</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">右键菜单</td><td style="padding:3px 8px;border:1px solid var(--border);">scope-aware + A6 CommandDef + A9 safety</td><td style="padding:3px 8px;border:1px solid var(--border);">§7: id+scope+safetyClass+confirmTier ✅</td><td style="padding:3px 8px;border:1px solid var(--border);">A6 §3, A9 §1</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">命令面板</td><td style="padding:3px 8px;border:1px solid var(--border);">A6 registry + A7 分类</td><td style="padding:3px 8px;border:1px solid var(--border);">§8: ADAPT/REIMPLEMENT + SAFE/MUTATES/DESTRUCTIVE ✅</td><td style="padding:3px 8px;border:1px solid var(--border);">A6, A7 §2</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">Git 放置</td><td style="padding:3px 8px;border:1px solid var(--border);">central ↔ bottom (D-R1 可逆)</td><td style="padding:3px 8px;border:1px solid var(--border);">§6a / §6b ✅</td><td style="padding:3px 8px;border:1px solid var(--border);">A7 D-R1</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">Git 14 单元</td><td style="padding:3px 8px;border:1px solid var(--border);">COPY=0, ADAPT=5, REIMPLEMENT=9</td><td style="padding:3px 8px;border:1px solid var(--border);">A7 §2 矩阵 ✅</td><td style="padding:3px 8px;border:1px solid var(--border);">A7 §2</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">尺寸覆盖</td><td style="padding:3px 8px;border:1px solid var(--border);">1920/1440/1366/1024</td><td style="padding:3px 8px;border:1px solid var(--border);">800×600 剔除 (min_inner_size=900×600) ✅</td><td style="padding:3px 8px;border:1px solid var(--border);">A10 F13</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">状态覆盖</td><td style="padding:3px 8px;border:1px solid var(--border);">empty/loading/error/disabled</td><td style="padding:3px 8px;border:1px solid var(--border);">§12 ✅</td><td style="padding:3px 8px;border:1px solid var(--border);">A5 M8</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">视觉令牌</td><td style="padding:3px 8px;border:1px solid var(--border);">单强调色, 4px 标尺, 3 圆角档</td><td style="padding:3px 8px;border:1px solid var(--border);">A8 §3 令牌系统 ✅</td><td style="padding:3px 8px;border:1px solid var(--border);">A8 §2/§3</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">NARROW 策略</td><td style="padding:3px 8px;border:1px solid var(--border);">&lt;1180 未固定自动隐藏, &lt;900 固定也隐藏</td><td style="padding:3px 8px;border:1px solid var(--border);">A3 §2 NARROW ✅</td><td style="padding:3px 8px;border:1px solid var(--border);">A3 §2</td></tr>
+  </table>
+</div>
+
+<!-- ============================================================ -->
+<!-- Peer consumption summary -->
+<!-- ============================================================ -->
+<div style="max-width:900px;font-size:11px;color:var(--text2);line-height:1.8;">
+  <h2>Peer 消费摘要（A2-A10）</h2>
+  <table style="border-collapse:collapse;width:100%;font-size:11px;">
+    <tr style="background:var(--bg2);"><th style="padding:4px 8px;border:1px solid var(--border);text-align:left;">Lane</th><th style="padding:4px 8px;border:1px solid var(--border);text-align:left;">消费内容</th><th style="padding:4px 8px;border:1px solid var(--border);text-align:left;">应用于</th></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">A2</td><td style="padding:3px 8px;border:1px solid var(--border);">8 控件顶栏 (19→8), AFTER 帧 §7.3/§7.4, 实测 90.1% H 平静态</td><td style="padding:3px 8px;border:1px solid var(--border);">§1 顶栏, viewport 测量</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">A3</td><td style="padding:3px 8px;border:1px solid var(--border);">CR-1~CR-12 状态机, NARROW 策略, collapsed 模型 92.6% H</td><td style="padding:3px 8px;border:1px solid var(--border);">§2 工具窗口, §3 collapsed</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">A4</td><td style="padding:3px 8px;border:1px solid var(--border);">状态持久化 DTO, schema_version, unknown-view fallback</td><td style="padding:3px 8px;border:1px solid var(--border);">§9 状态归属</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">A5</td><td style="padding:3px 8px;border:1px solid var(--border);">数据库壳层: 多 SQL 文档, 取消/截断/错误, 13 scope, 62 命令</td><td style="padding:3px 8px;border:1px solid var(--border);">§4 database mode</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">A6</td><td style="padding:3px 8px;border:1px solid var(--border);">CommandDef schema (id/scope/safetyClass/confirmTier), 15 scope</td><td style="padding:3px 8px;border:1px solid var(--border);">§7 右键菜单, §8 命令面板</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">A7</td><td style="padding:3px 8px;border:1px solid var(--border);">14 Git 单元: COPY=0/ADAPT=5/REIMPLEMENT=9, D-R1 可逆放置</td><td style="padding:3px 8px;border:1px solid var(--border);">§6a/§6b Git, §8 palette</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">A8</td><td style="padding:3px 8px;border:1px solid var(--border);">单强调色 #2b6cb0, 4px 标尺, 3 圆角档, 1px hairline, ≥24px 命中区</td><td style="padding:3px 8px;border:1px solid var(--border);">:root 令牌, 全局视觉</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">A9</td><td style="padding:3px 8px;border:1px solid var(--border);">4 safety class (SAFE/MUTATES/DESTRUCTIVE_SOFT/DESTRUCTIVE_HARD), 4 confirm tier</td><td style="padding:3px 8px;border:1px solid var(--border);">§7 右键菜单 safety 标注</td></tr>
+    <tr><td style="padding:3px 8px;border:1px solid var(--border);">A10</td><td style="padding:3px 8px;border:1px solid var(--border);">F08(260px FAIL), F09(omni=扩展态), F13(800×600 剔除), G4(PROPOSED_NEW), G5(source-derived), G6(viewport budget)</td><td style="padding:3px 8px;border:1px solid var(--border);">全帧 viewport, 尺寸集, 证据标注</td></tr>
   </table>
 </div>
 
