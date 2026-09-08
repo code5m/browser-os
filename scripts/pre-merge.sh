@@ -32,6 +32,7 @@
 #  24. M5-1.a core 边界不变量夹具（CORE_* 码位）：core 不得 import tauri / 引用 AppHandle·AppState /
 #      反向引用 crate::bridge / 出现第二执行路径；[lib] 已声明；shim 与 mod 不冲突；无空文件。
 #      ⚠️ 同 package 双 target 下编译器守不住这些，本夹具是唯一防线
+#  25. 原生 UI 线程阻塞门禁：禁止 blocking dialog、rfd 同步对话框和 runtime block_on。
 #
 # 用法:
 #   scripts/pre-merge.sh            正式门禁（所有检查必须通过）
@@ -106,6 +107,7 @@ pre-merge.sh — M0-1.c 本地 pre-merge 门禁（M0-1 脚本合并前检查入�
   git diff --check              工作树 + 暂存区 + 当前分支相对基线（机器证据除外）
   scheduler UI policy fixture   check-scheduler-ui-policy.py --self-test / 默认门禁（SCHEDUI_*，M4-8）
   scheduler UI logic tests      check-scheduler-ui-logic.mjs（Node，headless，加载真实 taskUi.ts / useTaskStore.ts）
+  UI thread blocking fixture    check-ui-thread-blocking.py --self-test / 默认门禁
 
 退出码: 0 = 全部通过；1 = 任一失败；2 = 非法参数
 EOF
@@ -176,6 +178,12 @@ run_pre_merge() {
 
   pm_log "Rust cargo check --locked…"
   cargo check --manifest-path "$ROOT/src-tauri/Cargo.toml" --locked || pm_fail "cargo check --locked"
+
+  pm_log "原生 UI 线程阻塞门禁…"
+  python3 "$SCRIPT_DIR/check-ui-thread-blocking.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-ui-thread-blocking.py --self-test"
+  python3 "$SCRIPT_DIR/check-ui-thread-blocking.py" >/dev/null 2>&1 \
+    || pm_fail "check-ui-thread-blocking.py（禁止 blocking dialog / rfd / runtime block_on）"
 
   pm_log "正式证据 schema / SHA256SUMS…"
   local evidence_file evidence_dir summary_file contract_version
@@ -619,6 +627,10 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/check-plugin-policy.py" ] || { echo "FAIL: check-plugin-policy.py missing"; rc=1; }
   if ! python3 "$SCRIPT_DIR/check-plugin-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-plugin-policy.py --self-test"; rc=1
+  fi
+  [ -f "$SCRIPT_DIR/check-ui-thread-blocking.py" ] || { echo "FAIL: check-ui-thread-blocking.py missing"; rc=1; }
+  if ! python3 "$SCRIPT_DIR/check-ui-thread-blocking.py" --self-test >/dev/null 2>&1; then
+    echo "FAIL: check-ui-thread-blocking.py --self-test"; rc=1
   fi
   if ! python3 "$SCRIPT_DIR/check-tools-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-tools-policy.py --self-test"; rc=1

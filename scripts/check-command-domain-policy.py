@@ -50,9 +50,9 @@ ID_COMMANDS = ("snippet_update", "snippet_remove", "run_command")
 BASELINE_SHA256 = {
     # 与 check-script-domain-policy.py 同源：M2-4.e 刷新后的指纹，
     # 本门禁守住 M2-6 全周期不得新增前端依赖。
-    # A0 workbench approved dependency set; unrelated additions remain rejected.
-    "package.json": "6c1c5121d3dc9fa40f3adf15fe1c1d2c523abd34a8d7f5b810446bffd4390e7a",
-    "package-lock.json": "63e0cd1caf12920f60a203cf2b5d94d07c9bd6625b75c94c8edb821b42e744f1",
+    # M5-W20：纳入修复 Vault 卡死所需的官方异步 dialog 插件；其他依赖仍禁止漂移。
+    "package.json": "ad5215097fd4ccb0a01dde3afef64fdbee8a0392ed02b299242accad87f4cf7a",
+    "package-lock.json": "d071ce3ff265297834c96eb9d53e5db79ce37c6cc2f8e16daa7f838a7c002dad",
 }
 
 # 审计格式串中禁止出现的片段（argv / 参数值 / 命令行明文）

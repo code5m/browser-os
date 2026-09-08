@@ -1489,3 +1489,47 @@ LANE=A1；读取 /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3/WORK
 ```
 
 Replace only the first declared `A1` with the assigned lane. Do not manually edit a second path or branch placeholder.
+
+## M5-W20 UI Responsiveness Audit Dispatch
+
+> Added 2026-09-09 by A0 after the Vault picker freeze. This is an audit wave: prove the call path before changing product code. The immediate hard gate is `scripts/check-ui-thread-blocking.py`; it permanently rejects blocking native dialogs, direct `rfd::FileDialog`, and runtime `block_on`/`block_in_place` in desktop runtime code.
+
+### Incident and acceptance rule
+
+- The failed implementation called `blocking_pick_folder()` from a synchronous Tauri command. It blocked the GTK/Tauri event loop and made the client unresponsive.
+- Compile, ACL consistency, process start and a rendered button are not GUI acceptance. Native interaction is PASS only with evidence for click, visible response, cancel recovery, success result and a second interaction proving the window remains responsive.
+- Do not replace asynchronous APIs with blocking variants, and do not hide blocking work inside a synchronous bridge command. Slow filesystem, subprocess, database and IPC work must have an explicit async/background boundary, timeout, cancellation or bounded completion contract as appropriate.
+- A lane may report a suspected problem but must not edit product code in this wave. A0 deduplicates findings and opens narrowly owned repair cards afterward.
+
+### Dedicated worktrees
+
+Each lane uses `/home/ainfinit/.codex/worktrees/m5-w18-aN/mvp-browser-os-v3` on `codex/m5-w18-aN`, where `N` is the lane number. Rebase `origin/master` first. Write only the assigned report under `logs/audits/M5-W20/` plus one lane checkpoint; commit on the lane branch and do not push.
+
+| Lane | Audit scope | Must deliver |
+|---|---|---|
+| A1 | `src-tauri/src/bridge.rs` lines 1-1600 and directly called helpers. | Inventory every synchronous command and callback that can wait on filesystem, mutex, channel, process, IPC or GUI; include exact call chain, worst-case duration, UI impact and recommended async boundary. |
+| A2 | `src-tauri/src/bridge.rs` lines 1601-3000 and directly called helpers. | Same evidence package; distinguish bounded in-memory work from real blocking work and flag lock-held calls. |
+| A3 | `src-tauri/src/bridge.rs` lines 3001-4400 and directly called helpers, especially grid/browser operations. | Same evidence package; measure/request timeout paths and identify commands that can freeze navigation or layout controls. |
+| A4 | `src-tauri/src/bridge.rs` lines 4401-end and directly called helpers, especially OS commands, database, Vault and archive flows. | Same evidence package; inspect child-process `.output/.wait`, directory traversal and database calls for UI-thread execution. |
+| A5 | `src-tauri/src/{database,scheduler,tasks,workspace,workbench}.rs`. | Trace every bridge entry into storage/query/scan code; report transaction-lock duration, cancellation, timeout, capacity and shutdown behavior. |
+| A6 | `src-tauri/src/{terminal,script_runner,scripts,plugin,tools}.rs`. | Trace process launch/read/wait and plugin/tool loading; report any synchronous wait, unbounded read, lock inversion or cancellation gap reachable from UI. |
+| A7 | `src-tauri/src/main.rs`, `grid_ipc.rs`, `grid_process.rs`, and `tauri-browser-tabs/`. | Audit setup/window callbacks, GTK calls, UDS request timeouts and cross-thread dispatch; identify anything executed on the event loop that can block or deadlock. |
+| A8 | `src/components/**` native-action handlers and `src/stores/**`. | Audit click handlers for missing `await`, duplicate submissions, unresolved promises, disabled-state dead ends, busy flags that never clear, and CPU-heavy computed/render loops. Provide reproducible UI steps. |
+| A9 | `scripts/check-ui-thread-blocking.py`, command consistency gate and existing policy scripts. | Adversarially review the new gate with good/bad mutations; propose precise additional ACTIVE rules without false positives and map every uncovered class to an owner. |
+| A10 | Independent cross-cutting review of A1-A9 reports and current source. | Deduplicate findings, rank P0-P3, reject false positives, and produce the authoritative remediation order with ownership and merge-conflict map. Finalize after A1-A9 commits exist. |
+| A11 | Verification architecture for the accepted findings. | Define headless, Rust, timeout/cancellation, debug/release and native GUI cases. Every GUI PASS must name observable evidence and include post-cancel/post-success responsiveness. Finalize after A10. |
+
+### Exit gate and merge order
+
+- A1-A9 run in parallel. A10 finalizes after A1-A9. A11 finalizes after A10.
+- Required finding fields: `ID`, severity, entry command/event, exact call path, blocking primitive, upper bound, lock context, reproduction, proposed fix, focused test, native acceptance, owner and conflicting files.
+- Reports must explicitly state `CONFIRMED`, `FALSE_POSITIVE`, or `NEEDS_RUNTIME_EVIDENCE`; “looks fine” is not a verdict.
+- Merge order: `A1-A9 reports -> A10 verdict -> A11 matrix -> A0 integration`. Only A0 pushes.
+
+### One-line prompt
+
+```text
+LANE=A1；读取 /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3/WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按 M5-W20 UI Responsiveness Audit Dispatch 推导本 lane 工作树/分支，rebase origin/master，完成整包审计报告与 checkpoint，提交本 lane；不改产品代码、不改他 lane 文件、不 push。
+```
+
+Only replace the first `A1` with the assigned lane number.
