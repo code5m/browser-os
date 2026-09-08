@@ -99,16 +99,16 @@ Upstream: `/home/ainfinit/Documents/极智简单/V3/research/zvec-grep-src` (Apa
 | Z5 | `src/engine/service/lexical.ts` (managed ripgrep) | `@vscode/ripgrep` | `search.rs` exact route | **ADAPT** | ACCEPT — shell system `rg` (present on Linux) |
 | Z6 | `src/engine/service/zvec-grep.ts`+`pipeline/search/*` (RRF) | `@zvec/zvec` | `search.rs` hybrid route | **REIMPLEMENT** | ACCEPT — port RRF fusion |
 | Z7 | `src/engine/pipeline/indexing/*` (incremental + watcher) | — | `search.rs` indexer | **REIMPLEMENT** | ACCEPT — watcher-free first slice (A7) |
-| Z8 | `@zvec/zvec` vector core + HF embedding | model weights + runtime | (external sidecar) | **REJECT copy** | **REJECT-as-COPY** — A7 unresolved whether Rust API exists (napi/neon). If sidecar: ADAPT but **HOLD** on (a) A7 native-binding proof, (b) A9 egress policy (remote-embedding DISABLED by default, apiKey→OS-keychain). See §8. |
+| Z8 | `@zvec/zvec` vector core + HF embedding | model weights + runtime | (external sidecar) | **ADAPT (whole-sidecar, not per-function COPY)** | **REJECT-as-COPY → RECLASSIFIED ADAPT (R2B, per A7 evidence closure E1–E7 + A8 §3/§4)**. Official `zvec-rust` 0.7.0 crate (Apache-2.0, depends `zvec-rust-sys` 0.7.0 linking `libzvec_c_api`) **exists** (A7 E4/E5); C++ core `alibaba/zvec` (Apache-2.0, exposes C API, per-platform prebuilt SDKs) (A7 E6). **Product adoption path = npm N-API sidecar** `@zvec/zvec` 0.7.0 + `@zvec/bindings-linux-x64` 0.7.0 (`zvec_node_binding.node`, ELF N-API, 41.7 MB) (A7 E1–E3). Both the official crate and the npm sidecar are **Apache-2.0 → no license conflict**; HOLD-(a) is **lifted**. HOLD-(b) remains: A9 egress policy (remote-embedding DISABLED by default, apiKey→OS-keychain) must be ported before W19 (see §8). Native footprint: `.node` 41.7 MB + engine RSS ~294 MB (bundle impact → A3/A10 eval). Matches A8 `COPY=0`. |
 | Z9 | `src/authorization/*` (8 files) | TS/MCP | `security_policy.rs`+ACL | **REIMPLEMENT concept** | ACCEPT — port "explicit one-time/workspace grant before egress" (A9: COPY=5 includes this gate) |
 | Z10 | `src/daemon/*` (16 files) | loopback server | (sidecar) | **DEFER/REJECT-in-product** | DEFER — daemon forbidden this wave (A7 DEFER=1) |
 | Z11 | `src/mcp/*` (10 files) | npm mcp | `mcp_server.rs` (Rust) | **ADAPT concept** | ACCEPT — reuse own Rust `rmcp` (A9 ADAPT=2) |
 | Z12 | `src/engine/file-size-policy.ts` consts: `DEFAULT_MAX_CODE_FILE_SIZE_BYTES=1*1024*1024`, `DEFAULT_MAX_TEXT=256*1024*1024`, `DEFAULT_MAX_DATA=16*1024*1024`, `DEFAULT_MAX_IMAGE=10*1024*1024`; `resolveMaxFileSizeBytes` + `FileKind` enum; `src/engine/config.ts` `GLOBAL_CONFIG_DIRECTORY_MODE=0o700`, `GLOBAL_CONFIG_FILE_MODE=0o600` | none (pure TS consts + trivial enum) | `search.rs` policy | **COPY** | **ACCEPT** — lift verbatim as Rust `const`s + reimplement `FileKind` (trivial enum) |
 | Z13 | `src/engine/service/structure-enrichment.ts` | — | `search.rs` | **REIMPLEMENT** | ACCEPT |
 
-**zvec-grep classification tally (R2):** COPY 1 (Z12) · ADAPT 4 (Z5, Z8-sidecar-HOLD, Z9, Z11) · REIMPLEMENT 7 (Z1,Z2,Z3,Z4,Z6,Z7,Z13) · DEFER 1 (Z10) · REJECT-copy 1 (Z8).
+**zvec-grep classification tally (R2, refined R2B):** COPY 1 (Z12) · ADAPT 4 (Z5, Z8-sidecar-ADAPT, Z9, Z11) · REIMPLEMENT 7 (Z1,Z2,Z3,Z4,Z6,Z7,Z13) · DEFER 1 (Z10) · REJECT-copy 0 (Z8 reclassified ADAPT).
 
-**zvec-grep headline verdict:** **REJECT direct copy** (Node/TS + model/runtime bound). Transplantable *value* = algorithm layer (route selection, RRF fusion, type-aware chunking, incremental reconciliation, freshness, compact output, authorization-before-egress) → **REIMPLEMENT in Rust** (Z1–Z7,Z9,Z12,Z13). Embeddings (Z8) = REJECT-copy; ADAPT-sidecar only with A0 approval after A7 native-binding proof + A9 egress policy.
+**zvec-grep headline verdict:** **REJECT direct copy** (Node/TS + model/runtime bound). Transplantable *value* = algorithm layer (route selection, RRF fusion, type-aware chunking, incremental reconciliation, freshness, compact output, authorization-before-egress) → **REIMPLEMENT in Rust** (Z1–Z7,Z9,Z12,Z13). Embeddings (Z8) = **ADAPT-sidecar** (npm N-API `@zvec/zvec` 0.7.0, Apache-2.0), no per-function COPY (A8 `COPY=0`); HOLD-(a) lifted by A7 R2B evidence, HOLD-(b) egress policy still gates W19.
 
 ---
 
@@ -171,11 +171,23 @@ No blanket "ready for W19" — see §6 hard stops.
 
 - **A2 / A3** (Obsidian Vue blueprint + vault fixtures) — refine O1–O6 destinations. **Not yet landed in R2.**
 - **A4** (dbx backend map) — consumed (R1); reconciled D3/D4/D10/D11/D16 (C3–C6). A4 R2 in progress.
-- **A7** (zvec-grep ingestion/index) — unresolved: `@zvec/zvec` Rust API existence (blocks Z8 ACCEPT/REJECT). **OPEN.**
+- **A7** (zvec-grep ingestion/index) — **RESOLVED (R2B)**: official `zvec-rust` 0.7.0 crate (Apache-2.0, `zvec-rust-sys` linking `libzvec_c_api`) exists; C++ core `alibaba/zvec` (Apache-2.0, C API + per-platform SDKs). Product path = npm N-API sidecar `@zvec/zvec` 0.7.0 (Apache-2.0). Z8 HOLD-(a) lifted → ADAPT-sidecar. See `A10-R2B-review-findings.md` F5.
 - **A8** (zvec-grep retrieval benchmark) — Z5/Z6 fusion thresholds. R1 consumed; A8 R2 in progress.
 - **A9** (zvec-grep trust boundary) — Z8 sidecar egress policy + apiKey→keychain (B3). R1 consumed; A9 R2 in progress.
 
 Per dispatch R2 sequencing, A10 may **finalize** only after A2/A4/A7/A8/A9 R2 commits exist. This R2 revision is therefore marked **PASS_WITH_DEBT** (HOLD finalization) — all function-level closures and license analysis are complete for the units A10 can verify from `CURRENT_PRODUCT` + `REFERENCE_SOURCE`; the only open items are peer R2 confirmations (Z8 native-binding proof, O1–O6 Vue blueprint) which would not change the first implementation slice.
+
+---
+
+## 9. R2B reconciliation (2026-09-08, A10 independent review)
+
+R2B reframes A10 as **independent review** of peer lanes. Consumed fixed SHAs: A1 `526e2ef`, A2 `bcdfc3b`, A3 `877b4f5`, A4 `b737e5d`, A5 `a42b915`, A6 `38faa2d`, A7 `07fda2f`, A8 `f4a4f3b`, A9 `28a934a`, A11 `c3d4712`. Detailed findings in `A10-R2B-review-findings.md`.
+
+- **Z8 HOLD-(a) lifted** (A7 R2B evidence closure): official `zvec-rust` crate + npm N-API sidecar both Apache-2.0; no license conflict; classify ADAPT-sidecar, not per-function COPY (matches A8 `COPY=0`).
+- **Product license re-confirmed MulanPSL-2.0** (R2B: `LICENSE` head + A8 correction of A0 #7). Inbound Apache-2.0 (dbx `c0a7be12`, zvec-grep `5265395`) compatible; NOTICE obligation retained.
+- **dbx pin `c0a7be12` already authoritative** in this ledger (matches A4's `Cargo.lock` SHA) — no correction needed vs R1 audit fragment.
+- **Correction surfaced to peers (R2B F2):** A4 map claims "repo currently has zero DB-layer tests" (§1.2/§2.x) — **false**; product `database.rs` contains **23** independent `#[test]` (verified `grep -cE '^\s*#\[test\]' database.rs` = 23; R2B card also states 23, correcting A0 R1 audit's 22). Gap is live-DB integration tests only, not all tests.
+- **Open items for A0 (R2B F7/F10/F12):** zvec metric semantics (A8 labels precision as recall@10), dispatch line 1358 A3↔A8 attribution typo, A4 must freeze `db_cancel(conn_id, query_id)` before A5 W19. See review-findings §Cross-cutting.
 
 ---
 
