@@ -8,7 +8,7 @@
 LANE=A6
 STATUS=PASS
 BASE=200f0f1cc032eb7dbd0229ab53a711a5ff1e3d6f
-HEAD=<set on commit>
+HEAD=ac3cb18ae3c265803ce5686ffd26683d20b5bf93
 DISPATCH=M5-W18-R3B
 REFERENCE_EVIDENCE=CURRENT_PRODUCT (file:line below, read from 200f0f1); REFERENCE_SOURCE (DetachHead/rebased Git action system, JetBrains IDEA action system, Obsidian note/graph menus); OFFICIAL_DOC (M5-W18-R3B-CORRECTION-TASKS-20260908.md, A0-M5-W18-R3-acceptance-audit-20260908.md)
 FILES=logs/research/M5-W18/A6-R3B-command-registry-closure.md, logs/research/M5-W18/A6-R3B-registry.mjs, logs/research/M5-W18/A6-R3B-registry-audit.mjs, logs/research/M5-W18/A6-R3B-checkpoint.md
