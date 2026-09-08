@@ -1,11 +1,11 @@
 # Parallel Command Board
 
-> Updated: 2026-09-08 07:15 CST
+> Updated: 2026-09-08 09:05 CST
 > Controller: main integration agent
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` at `8e67ab0` — W17, BUG-HUNT high-risk fixes, scheduler crash/concurrency safety, command-set consistency, and debug/release IPC-origin isolation are integrated and PUSHED.
-> Current mainline chain: `61cff56` (BUG-HUNT + scheduler safety) -> `e3b6b40` (ACL rebuild) -> `8e67ab0` (debug-only IPC origin isolation) -> `12a09b8` (W18 lane isolation). Runtime authority remains LOCKED. A0 is the controller and the only lane that integrates or pushes; the external agents are A1-A11.
-> Current NEXT: `M5-W18-R` deep research and replication blueprint for Obsidian + dbx + zvec-grep. Product-code implementation is frozen until A0 accepts the consolidated blueprint and opens W19.
+> Current mainline: `master` at `78d2cfb` — W17/BUG-HUNT fixes are pushed and W18 has been reset to research-first delivery.
+> Current mainline chain: `61cff56` (BUG-HUNT + scheduler safety) -> `e3b6b40` (ACL rebuild) -> `8e67ab0` (debug-only IPC origin isolation) -> `12a09b8` (W18 lane isolation) -> `78d2cfb` (research-first reset). Runtime authority remains LOCKED. A0 is the controller and the only lane that integrates or pushes; the external agents are A1-A11.
+> Current NEXT: `M5-W18-R2` evidence closure. First-round reports are drafts, not implementation authorization. Product-code implementation stays frozen until every R2 exit gate passes and A0 opens W19 in writing.
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
@@ -14,7 +14,7 @@ This file is the coordination board for 11 parallel agents plus A0 integration. 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-WORKDIR=/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3；继续 Lane AX，先读取 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，再切到板上指定的独立 worktree；按当前 M5-W18-R Research and Replication Blueprint Dispatch 做彻底研究，只交研究报告/复刻蓝图，不写产品代码，不 push。
+继续 Lane AX：读取主仓库 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，切到 `/home/ainfinit/.codex/worktrees/m5-w18-aN/mvp-browser-os-v3` 的 `codex/m5-w18-aN`（N=lane 数字），rebase `origin/master`，按最新 M5-W18-R2 Evidence Closure Dispatch 补齐证据并提交到自己的 lane 分支；只改自己的研究报告/checkpoint，不写产品代码，不 push。
 ```
 
 Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
@@ -1435,3 +1435,50 @@ NEXT=<missing research input or proposed W19 slice>
 ```
 
 Replace only `AX` with `A1` through `A11`. The lane number also determines `aN` in the worktree and branch path.
+
+## M5-W18-R2 Evidence Closure Dispatch
+
+> Added by A0 after reviewing all eleven first-round branches. This is the only active dispatch. R1 reports are preserved as drafts, but their conclusions are not implementation authority. Read `logs/checkpoints/A0-M5-W18-R1-audit-20260908.md` before continuing.
+
+### R2 common evidence contract
+
+1. Rebase the lane branch onto the latest `origin/master`. Work only in the assigned lane worktree and commit locally; never edit the canonical master working copy and never push.
+2. Do not modify product code, manifests, lockfiles, production scripts, capabilities, ACLs, or the user's Obsidian vault. R2 output is limited to the lane's existing `logs/research/M5-W18/A<N>-*` files and lane checkpoint.
+3. Every factual claim must identify one of `CURRENT_PRODUCT`, `REFERENCE_SOURCE`, `OBSERVED_BEHAVIOR`, `OFFICIAL_DOC`, `EXECUTED_SYNTHETIC_TEST`, or `INFERENCE`, with exact path/symbol/line or command/result. Do not present inference as observed behavior.
+4. Add a correction section that explicitly retracts or replaces every R1 statement named in the A0 audit. Preserve history; do not silently rewrite a false claim without noting the correction.
+5. The final blueprint must name exact current destination files/symbols, proposed additions, dependency closure, data flow, lifecycle, capacity, stable errors, tests, migration, rollback, and hard stops. “Add a store/component/service” without mapping the current target is insufficient.
+6. `COPY` means legally and technically eligible for a later reviewed transplant. It does not authorize copying in R2. Each COPY item needs upstream file + symbol + transitive local dependencies + external crates/packages + copied tests + required attribution + target destination. Otherwise classify it `ADAPT` or `REIMPLEMENT_FROM_BEHAVIOR`.
+7. A report may be `PASS` only when it has no unresolved question that would force a W19 coding lane to rediscover architecture. Otherwise use `PASS_WITH_DEBT` and name the exact blocker.
+
+### R2 lane assignments
+
+| Lane | R1 verdict | R2 evidence-closure package |
+|---|---|---|
+| A1 | REWORK | Re-run the current-product inventory from `origin/master`. Record the exact 135/135/46 command facts, 29-Python/50-total policy counting rules, current Rust/frontend test inventory, real stores/components, build-size gate, locked authorities, and current duplicate `DbValue` definitions. Produce a machine-checkable fact appendix and a corrected gap list; remove stale W17 assumptions. |
+| A2 | REWORK | Complete Obsidian semantics using read-only local-vault samples plus official Obsidian documentation. Build synthetic fixtures and expected outputs for wikilinks, path disambiguation, aliases, headings, block IDs, embeds, tags/frontmatter, attachments, unresolved links, rename/delete, case sensitivity, ignored files, backlinks/outgoing links, orphan detection, and duplicate basenames. Mark every rule observed/documented/inferred and never expose private vault content in the report. |
+| A3 | REWORK | Consume A2 via `git show codex/m5-w18-a2:<path>`. Reconcile global/local graph, group/filter/orphan/unresolved semantics and distinguish verified behavior from design choice. Map every screen/state to the actual current `GraphPanel.vue`, graph store/types/bridge, layout navigation, and existing UI checks. Deliver exact component/state/event deltas, accessibility/keyboard/narrow-window behavior, and acceptance screenshots as a future test plan, not fabricated evidence. |
+| A4 | REWORK | Correct the product baseline by reading current `database.rs`, `domain.rs`, `bridge.rs`, `main.rs`, ACL and all database tests. For each dbx COPY/ADAPT candidate, trace the complete function-level call/dependency closure, feature flags, async/runtime assumptions, Send/Sync constraints, error types, persistence schema, tests, and expected binary-size impact. Produce a minimal target diff against the existing database module, not a greenfield design. |
+| A5 | REWORK | Re-inventory the real frontend (`useDatabaseStore.ts`, `DatabasePanel.vue`, `dbUi.ts`, `bridge.ts`, `types.ts`, layout lazy-loading and package dependencies). Remove nonexistent `useConnectionStore` and stale contract references. Compare each desired dbx behavior to current UI, then provide a minimum-change Vue component plan, exact state transitions, keyboard/accessibility/responsive behavior, empty/loading/error/cancel states, and bundle-cost alternatives. Do not select CodeMirror or another dependency without measured need and footprint. |
+| A6 | REWORK | Draw source-to-sink credential flows for both current product and dbx: form/JS argument/Tauri serialization/Rust memory/pool/keyring or file secret store/log/error/audit/shutdown. Verify actual dbx `FileSecretStore`, encrypted-state, `save_password=false` session store, migration and cleanup call paths. Add cancellation/timeout/write-confirmation race timelines and mandatory fail-closed tests. Correct the false “never enters JS memory” claim. |
+| A7 | REWORK | Resolve `@zvec/zvec@0.7.0` instead of leaving it open. In a disposable `/tmp/m5-w18-a7-zvec` workspace only, inspect the pinned npm tarball/native binding package, exported API, supported platforms, install scripts, ABI, license/NOTICE, and whether a public Rust crate/source or stable on-disk format exists. Prove or reject format/API compatibility. Then define a watcher-free, bounded, explicitly triggered first ingestion slice separately from later watcher/reconciliation work. |
+| A8 | REWORK | Keep the useful managed-ripgrep test, fix the product license, and execute the missing route evidence on synthetic non-secret data. A0 authorizes dependency installation/model download only inside disposable `/tmp/m5-w18-a8-zvec`, using the pinned zvec-grep lock and local-only models; record package/model versions, hashes, disk size, peak RSS, cold/warm latency, indexing time, index size, result quality, stale-index and unavailable-model behavior. No daemon, MCP, remote embedding, user data, or product dependency changes. If a native/platform blocker occurs, capture the exact reproducible failure and benchmark every remaining executable route. |
+| A9 | REWORK | Reconcile A7/A8 findings with the trust model. Correct COPY/REIMPLEMENT inconsistencies, inspect local daemon/socket/filesystem permissions and multi-user threats, trace all egress fields for remote embedding, verify API-key and grant storage/migration/logging, model-download integrity, MCP toolset boundaries, shutdown and denial behavior. Produce a target Rust/Tauri trust-boundary design with default-disabled authorities and exact policy tests. |
+| A10 | REWORK | Verify the product MulanPSL-2.0 license and Apache-2.0 inbound compatibility/obligations. Consume A2/A4/A7/A8/A9 branch reports directly with `git show`; do not finalize while any is missing or superseded. Replace module-level COPY guesses with function-level provenance/dependency/test closures, reconcile all classification conflicts, identify native/package/bundle impact, and draft exact NOTICE/attribution/modified-file requirements. End with ACCEPT/REJECT per transplant unit, not a blanket “ready for W19”. |
+| A11 | REWORK | Consume A1-A10 final R2 reports directly with `git show` and rebuild the verification architecture from corrected facts. Give exact synthetic corpora, unit/integration/security/performance/native-GUI/debug-release/migration/rollback cases, commands and expected assertions. Resolve the policy-count, DbValue and zvec-route contradictions. Propose only implementation slices whose prerequisites, destination files, merge order, rollback and stop criteria are fully known; issue final GO/NO-GO per slice. |
+
+### R2 sequencing and exit gate
+
+- A1-A9 start immediately. A3 must re-read A2 before finalizing. A9 must re-read A7/A8 before finalizing.
+- A10 starts its own verification immediately but may finalize only after A2/A4/A7/A8/A9 R2 commits exist.
+- A11 starts its matrix immediately but may finalize only after A1-A10 R2 commits exist.
+- Agents read peer outputs from local branch refs with `git show`; they must not merge, cherry-pick, or edit peer files.
+- A0 accepts R2 only when all eleven branches are clean, every correction is explicit, A10's ledger and A11's matrix agree, and no unresolved item would change the first implementation slice.
+- Until A0 records `W19=OPEN`, all product-code work remains forbidden.
+
+### R2 one-line prompt
+
+```text
+继续 Lane AX：读取主仓库 WORKSPACE_IDENTITY.md、PARALLEL_COMMAND_BOARD.md 和 A0-M5-W18-R1-audit-20260908.md，切到 `/home/ainfinit/.codex/worktrees/m5-w18-aN/mvp-browser-os-v3` 的 `codex/m5-w18-aN`（N=lane 数字），rebase `origin/master`，按最新 M5-W18-R2 Evidence Closure Dispatch 修正并补齐自己的研究报告，提交到本 lane 分支；不改产品代码，不 push。
+```
+
+Replace only `AX` and `N` with the same lane number from A1 through A11.
