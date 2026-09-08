@@ -1,19 +1,19 @@
 # Parallel Command Board
 
-> Updated: 2026-09-08 11:44 CST
+> Updated: 2026-09-08 15:07 CST
 > Controller: A0; external lanes: A1-A11
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
 > Evidence baseline: `master` at `d6127c4`; obtain the current HEAD with git before starting. This dispatch changes documentation only.
 > Baseline chain: `61cff56` (BUG-HUNT + scheduler safety) -> `e3b6b40` (ACL rebuild) -> `8e67ab0` (debug-only IPC origin isolation) -> `12a09b8` (W18 lane isolation) -> `78d2cfb` (research-first reset) -> `d6127c4` (R2 evidence dispatch). Runtime authority remains LOCKED. A0 is the controller and the only lane that integrates or pushes; the external agents are A1-A11.
-> Current NEXT: `M5-W18-R3-UX`. The first IDEA-shell prototype was rejected by the user. Preserve the current Chrome-like content-first shell and redesign it with IDEA-style progressive disclosure, complete context menus, and a full Git workflow using `DetachHead/rebased` as the primary behavior reference. `W19=CLOSED`.
+> Current NEXT: `M5-W18-R3B`. R3 research is integrated but A0 returned it for targeted closure. Preserve the Chrome-like content-first shell, reconcile the frozen layout semantics, complete the 14-unit Git prototype and accessibility evidence, then present it to the user. `W19=CLOSED`.
 
 ## Current Dispatch Entry
 
-Read [R3 UX task cards](M5-W18-R3-UX-TASKS-20260908.md), [rejected prototype review](M5-W18-PROTOTYPE-REVIEW-20260908.md), [A0 integration audit](logs/checkpoints/A0-M5-W18-R2B-integration-audit-20260908.md), and [workbench blueprint](WORKBENCH_BLUEPRINT-20260908.md).
+Read [R3B correction task cards](M5-W18-R3B-CORRECTION-TASKS-20260908.md), [A0 R3 acceptance audit](logs/checkpoints/A0-M5-W18-R3-acceptance-audit-20260908.md), [R3 UX task cards](M5-W18-R3-UX-TASKS-20260908.md), and [workbench blueprint](WORKBENCH_BLUEPRINT-20260908.md).
 
-This entry supersedes conflicting historical NEXT, directory, model, and lane instructions below. R2B domain research remains accepted. R3 reopens only interaction research and prototype work: no product source, dependencies, capabilities, ACLs, native runtime, or user data may change.
+This entry supersedes conflicting historical NEXT, directory, model, and lane instructions below. R2B domain research remains accepted. R3B is a targeted prototype correction wave: no product source, dependencies, capabilities, ACLs, native runtime, or user data may change.
 
-Runtime authority remains locked. A1 owns the consolidated prototype; A2-A9 provide bounded design evidence; A10 independently reviews; A11 packages acceptance. A0 alone integrates and pushes.
+Runtime authority remains locked. A2-A9 correct bounded evidence, A1 consolidates, A10 independently reviews, and A11 packages acceptance. A0 alone integrates and pushes. Exact assignments and merge order are in `M5-W18-R3B-CORRECTION-TASKS-20260908.md`.
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
@@ -22,7 +22,7 @@ This file is the coordination board for 11 parallel agents plus A0 integration. 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-LANE=A1；读取 /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3/WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按当前派发入口推导本lane目录/分支并进入，完成自己的整包任务；沿用已有成果，按卡自检并提交本lane，不改范围外文件、不push。
+LANE=A1；读取主仓库 /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3/WORKSPACE_IDENTITY.md、PARALLEL_COMMAND_BOARD.md 和 M5-W18-R3B-CORRECTION-TASKS-20260908.md，推导并进入本lane的 m5-w18-aN 工作树与 codex/m5-w18-aN 分支，确认工作树干净后 fetch 并 rebase origin/master，按 R3B 卡完成整包修订、自检并提交本lane；不改产品代码、不改他lane文件、不push。
 ```
 
 Replace only the first `A1` with the assigned lane id. Lowercase that one identity to derive both directory and branch using the current task card. Existing lane conversations may resume with "continue"; new conversations must declare the lane.

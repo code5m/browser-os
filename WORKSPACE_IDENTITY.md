@@ -9,14 +9,14 @@ This directory is the canonical V3 main working copy. Agents should use this fil
 
 ### Current Dispatch
 
-- NEXT: `M5-W18-R3-UX`; W19: `CLOSED`.
-- All A1-A11 R/R2/R2B research commits have been integrated into canonical `master`. The first shell prototype was rejected. Read `PARALLEL_COMMAND_BOARD.md` Current Dispatch Entry and `M5-W18-R3-UX-TASKS-20260908.md`.
+- NEXT: `M5-W18-R3B`; W19: `CLOSED`.
+- A1-A11 R3 research is integrated. A0 verdict is `REVISE_TARGETED`: read `logs/checkpoints/A0-M5-W18-R3-acceptance-audit-20260908.md` and `M5-W18-R3B-CORRECTION-TASKS-20260908.md`. Product code remains locked until the corrected prototype is accepted by the user.
 - Product direction: `WORKBENCH_BLUEPRINT-20260908.md`; substitute-controller/model routing: `A0-HANDOFF-LOW-COST-20260908.md`.
 - Current entries override historical NEXT/dispatch statements elsewhere. A new prompt declares LANE once; the current card derives its exact worktree and branch. An agent may enter its already-provisioned matching worktree after verification.
 
 ### Historical W18 lane exception
 
-The controller-provisioned M5-W18 lane set is active for R3 research/prototype files only:
+The controller-provisioned M5-W18 lane set is active for R3B research/prototype files only:
 
 - Path pattern: `/home/ainfinit/.codex/worktrees/m5-w18-aN/mvp-browser-os-v3`
 - Branch pattern: `codex/m5-w18-aN`

@@ -66,7 +66,8 @@ def check_file(path):
     for code, rx, desc in RULES:
         hits = []
         for m in rx.finditer(text):
-            frag = (m.group(1) or m.group(2) or m.group(0)).strip()
+            captured = next((group for group in m.groups() if group), m.group(0))
+            frag = captured.strip()
             if code == "PROTO_NO_NETWORK" and frag.startswith(NETWORK_ALLOW):
                 continue
             lineno = text.count("\n", 0, m.start()) + 1
