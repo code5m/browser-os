@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
+import { Plus, X, Square, ChevronLeft, ChevronRight, RefreshCw } from '@lucide/vue';
 import { useDatabaseStore } from "../../stores/useDatabaseStore";
 import { useLayoutStore } from "../../stores/useLayoutStore";
+import { useWorkbenchStore } from "../../stores/useWorkbenchStore";
 import {
   databaseFieldLabel,
   defaultPortFor,
@@ -17,10 +19,23 @@ import {
 
 const db = useDatabaseStore();
 const layout = useLayoutStore();
+const workbench = useWorkbenchStore();
 
 // 密码只作**组件本地瞬时态**：不进 store、不进表单模型、不持久化（F2）。
 const password = ref("");
 const copied = ref(false);
+const page = ref(0);
+const filter = ref('');
+const sortColumn = ref(-1);
+const sortAscending = ref(true);
+const showConnection = ref(true);
+const pageSize = 50;
+const filteredRows = computed(() => {
+  const rows = (db.result?.rows || []).filter(row => row.some(cell => cell.toLowerCase().includes(filter.value.toLowerCase())));
+  return sortColumn.value < 0 ? rows : [...rows].sort((a,b) => (a[sortColumn.value] || '').localeCompare(b[sortColumn.value] || '', undefined, {numeric:true}) * (sortAscending.value ? 1 : -1));
+});
+watch(() => [db.activeDocument,db.result,filter.value], () => page.value = 0);
+function sort(column:number) { sortAscending.value = column === sortColumn.value ? !sortAscending.value : true; sortColumn.value = column; }
 /** 仅限制 DOM 渲染行数（首期无虚拟滚动）；与后端取数上限 DB_MAX_ROWS=1000 是两回事，UI 须说清。 */
 const DISPLAY_ROW_CAP = 200;
 
@@ -30,7 +45,7 @@ const portPlaceholder = computed(() => {
   const p = defaultPortFor(db.form.kind);
   return p ? String(p) : "默认端口";
 });
-const displayRows = computed(() => (db.result?.rows ?? []).slice(0, DISPLAY_ROW_CAP));
+const displayRows = computed(() => filteredRows.value.slice(page.value * pageSize, (page.value+1)*pageSize));
 const hiddenRows = computed(() => Math.max(0, (db.result?.rowCount ?? 0) - displayRows.value.length));
 const multiStatementHint = computed(() => looksLikeMultipleStatements(db.sql));
 
@@ -47,7 +62,7 @@ async function doConnect() {
 
 async function copyCsv() {
   if (!db.result) return;
-  const text = toCsv(db.result.columns, db.result.rows);
+  const text = toCsv(db.document.raw?.columns || db.result.columns, db.document.raw?.rows || db.result.rows);
   try {
     await navigator.clipboard.writeText(text);
     copied.value = true;
@@ -61,13 +76,15 @@ async function copyCsv() {
 <template>
   <div class="side-inner db-panel">
     <div class="tabs">
-      <span>🗄️ 数据库</span>
+      <button @click="showConnection = !showConnection">连接 / 对象</button>
+      <span>数据库 · {{ db.connections.find(c => c.id === db.activeId)?.name || '未连接' }}</span>
       <button class="close" @click="layout.sidebarOpen = false">✕</button>
     </div>
 
     <div v-if="!db.backendReady" class="gate">后端数据库命令未就绪，连接与查询暂不可用</div>
 
-    <section class="conn">
+    <div class="db-workspace">
+    <section v-if="showConnection && !workbench.collapsed" class="conn">
       <div class="conn-head">
         <span class="sec-title">连接</span>
         <span v-if="db.connected" class="badge on">已连接 · {{ db.activeId }}</span>
@@ -87,7 +104,9 @@ async function copyCsv() {
         <label>名称<input v-model="db.form.name" placeholder="如 local-sqlite" /></label>
         <label>驱动
           <select :value="db.form.kind" @change="(e) => db.setKind(((e.target as HTMLSelectElement).value) as DbKind)">
-            <option v-for="k in (['sqlite', 'mysql', 'postgres'] as DbKind[])" :key="k" :value="k">{{ kindLabel(k) }}</option>
+            <option value="sqlite">SQLite</option>
+            <option value="mysql" disabled>MySQL（查询尚未接通）</option>
+            <option value="postgres" disabled>PostgreSQL（查询尚未接通）</option>
           </select>
         </label>
         <label v-if="fields.host">主机<input v-model="db.form.host" placeholder="127.0.0.1" /></label>
@@ -125,20 +144,26 @@ async function copyCsv() {
           <button :disabled="db.busy" @click="db.resetForm()">重置</button>
         </div>
       </div>
+      <div class="schema-head"><strong>表 / 视图</strong><button title="刷新对象" :disabled="db.schemaBusy || !db.connected" @click="db.refreshSchema()"><RefreshCw :size="14"/></button></div>
+      <button v-for="table in db.schema" :key="table.name" class="schema-row" @click="db.previewTable(table.name)">{{ table.name }} <small>{{ table.type }}</small></button>
+      <p v-if="!db.schema.length" class="hint">{{ db.schemaBusy ? '读取对象中' : '没有可显示对象' }}</p>
     </section>
 
     <section class="query">
+      <div class="sql-documents" role="tablist"><div v-for="doc in db.documents" :key="doc.id" :class="{active:doc.id === db.activeDocument}"><button role="tab" :aria-selected="doc.id === db.activeDocument" @click="db.activeDocument = doc.id">{{ doc.name }}{{ doc.busy ? ' …' : doc.sql.trim() ? ' *' : '' }}</button><button title="关闭查询" :disabled="doc.busy" @click="db.closeDocument(doc.id)"><X :size="12"/></button></div><button title="新建查询" @click="db.newDocument()"><Plus :size="16"/></button></div>
+      <div v-if="db.closePending" class="confirm">此查询有未保存的 SQL。<button @click="db.closeDocument(db.closePending!, true)">丢弃并关闭</button><button @click="db.closePending = null">取消</button></div>
       <div class="query-head">
         <span class="sec-title">查询</span>
         <span class="tag" :class="db.risk">{{ riskLabel(db.risk) }}</span>
         <span class="tag warn" v-if="db.verdict !== 'NonProduction'">{{ productionLabel(db.verdict) }}</span>
       </div>
 
-      <textarea v-model="db.sql" rows="5" class="sql" placeholder="SELECT * FROM table LIMIT 10" spellcheck="false"></textarea>
+      <textarea v-model="db.sql" rows="7" class="sql" aria-label="SQL 编辑器" placeholder="SELECT 1" spellcheck="false" :disabled="db.document.busy || db.confirmOpen" @keydown.ctrl.enter.prevent="db.requestRun()"></textarea>
       <p v-if="multiStatementHint" class="hint">检测到多条语句，后端会拒绝执行</p>
 
       <div class="form-actions">
         <button class="primary" :disabled="db.busy || !db.runGate.ok" @click="db.requestRun()">运行</button>
+        <button :disabled="!db.document.busy" @click="db.cancelQuery()"><Square :size="12"/>取消查询</button>
         <button :disabled="!db.result" @click="copyCsv">复制 CSV</button>
         <button :disabled="!db.result && !db.error" @click="db.clearResult()">清空结果</button>
       </div>
@@ -164,11 +189,12 @@ async function copyCsv() {
         <ul v-if="db.result.warnings.length" class="warn-list">
           <li v-for="(w, i) in db.result.warnings" :key="i">⚠ {{ w }}</li>
         </ul>
+        <div class="result-paging"><input v-model="filter" aria-label="筛选结果" placeholder="筛选当前结果"/><button title="上一页" :disabled="page === 0" @click="page--"><ChevronLeft :size="14"/></button><span>{{ page+1 }} / {{ Math.max(1,Math.ceil(filteredRows.length/pageSize)) }} · {{ filteredRows.length }} 行</span><button title="下一页" :disabled="(page+1)*pageSize >= filteredRows.length" @click="page++"><ChevronRight :size="14"/></button></div>
         <div class="grid-wrap">
           <table v-if="db.result.columns.length">
             <thead>
               <tr>
-                <th v-for="(c, i) in db.result.columns" :key="i">{{ c }}</th>
+                <th v-for="(c, i) in db.result.columns" :key="i"><button @click="sort(i)">{{ c }}{{ sortColumn === i ? sortAscending ? ' ↑' : ' ↓' : '' }}</button></th>
               </tr>
             </thead>
             <tbody>
@@ -179,15 +205,16 @@ async function copyCsv() {
           </table>
           <div v-else class="empty">无列信息</div>
         </div>
-        <p v-if="hiddenRows > 0" class="hint">为控制渲染开销仅显示前 {{ DISPLAY_ROW_CAP }} 行，另有 {{ hiddenRows }} 行未渲染（数据未丢失）</p>
         <p v-if="copied" class="hint">已复制</p>
       </div>
     </section>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.db-panel { display: flex; flex-direction: column; height: 100%; overflow: auto; }
+.db-panel { display: flex; flex-direction: column; height: 100%; overflow: hidden; background:#fff; color:#293944; }
+.db-workspace{display:flex;flex:1;min-height:0}.db-workspace>.conn{flex:0 0 260px;overflow:auto;border-right:1px solid #d8dfe4;box-sizing:border-box}.db-workspace>.query{flex:1;min-width:0;overflow:auto}.sql-documents{display:flex;gap:4px;overflow:auto;margin-bottom:8px}.sql-documents>div{display:flex;flex:none;border-bottom:2px solid transparent}.sql-documents .active{border-color:#198163}.sql-documents button{border:0;background:#f0f4f5;padding:5px;color:inherit;cursor:pointer}.schema-head,.result-paging{display:flex;align-items:center;gap:6px;margin:12px 0 6px;font-size:12px}.schema-row{display:block;width:100%;text-align:left;padding:6px;border:0;background:#f2f6f4;cursor:pointer;overflow-wrap:anywhere}.schema-row small{color:#728681}.result-paging input{min-width:0;flex:1;padding:5px}.result-paging button{display:grid;place-items:center}.result-paging span{white-space:nowrap}.grid-wrap th button{border:0;background:none;font:inherit;color:inherit;cursor:pointer}.query .grid-wrap{max-height:calc(100vh - 430px);min-height:120px}@media(max-width:1000px){.db-workspace>.conn{flex-basis:210px}}
 .gate { margin: 6px 8px; padding: 6px 8px; border-radius: 5px; background: #fff7e6; color: #b7791f; font-size: 12px; }
 .conn, .query { padding: 8px; border-bottom: 1px solid #e5e6eb; }
 .conn-head, .query-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }

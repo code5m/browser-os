@@ -310,6 +310,54 @@ impl TabManager {
         webview.eval(js)?;
         Ok(())
     }
+
+    /// Native return channel; never grants the remote document an IPC permission.
+    #[allow(deprecated)] // Supports WebKitGTK 2.22 as well as 2.40+.
+    pub fn eval_result(
+        &self,
+        id: &TabId,
+        js: String,
+        callback: impl FnOnce(std::result::Result<String, String>) + Send + 'static,
+    ) -> Result<()> {
+        let webview = self
+            .tabs
+            .read()
+            .get(id)
+            .cloned()
+            .ok_or_else(|| BrowserTabError::TabNotFound(id.clone()))?;
+        #[cfg(target_os = "linux")]
+        webview.with_webview(move |native| {
+            use java_script_core::ValueExt;
+            use webkit2gtk::WebViewExt;
+            native.inner().run_javascript(
+                &js,
+                None::<&webkit2gtk::gio::Cancellable>,
+                move |result| {
+                    let value = result
+                        .map_err(|_| "GRID_EXTRACT_FAILED".to_string())
+                        .and_then(|r| {
+                            r.js_value()
+                                .map(|v| v.to_str().to_string())
+                                .ok_or_else(|| "GRID_NO_RESULT".into())
+                        })
+                        .and_then(|s| {
+                            if s.len() <= 512 * 1024 {
+                                Ok(s)
+                            } else {
+                                Err("GRID_RESULT_LIMIT".into())
+                            }
+                        });
+                    callback(value);
+                },
+            );
+        })?;
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (webview, js);
+            callback(Err("GRID_PLATFORM_UNSUPPORTED".into()));
+        }
+        Ok(())
+    }
 }
 
 /// Shared state type for Tauri commands and host-app integration.

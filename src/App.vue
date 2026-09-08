@@ -12,6 +12,9 @@ import { useLayoutStore } from "./stores/useLayoutStore";
 import { useSettingsStore } from "./stores/useSettingsStore";
 
 import ActivityBar from "./components/layout/ActivityBar.vue";
+import UnifiedTabBar from './components/layout/UnifiedTabBar.vue';
+import WorkbenchCommands from './components/layout/WorkbenchCommands.vue';
+import WorkbenchRail from './components/layout/WorkbenchRail.vue';
 import MainArea from "./components/layout/MainArea.vue";
 import StatusBar from "./components/layout/StatusBar.vue";
 import ConfirmModal from "./components/shared/ConfirmModal.vue";
@@ -46,7 +49,7 @@ const appHeight = ref<string>("100vh");
 async function syncWindowSize() {
   try {
     const size = await getCurrentWindow().innerSize();
-    appHeight.value = `${size.height}px`;
+    appHeight.value = `${size.height / (await getCurrentWindow().scaleFactor())}px`;
     // eslint-disable-next-line no-console
     console.log(
       "[app] tauri innerSize=",
@@ -67,6 +70,7 @@ async function syncWindowSize() {
 
 onMounted(async () => {
   try {
+  if (!(window as any).__TAURI_INTERNALS__) return;
   await syncWindowSize();
   const unlisten = await getCurrentWindow().onResized(syncWindowSize);
   window.addEventListener("beforeunload", unlisten);
@@ -161,7 +165,7 @@ onMounted(async () => {
   }
 
   function onGlobalKeydown(e: KeyboardEvent) {
-    if (system.m0Cfg?.driver) return;
+    if (system.m0Cfg?.driver || e.isComposing) return;
     // 输入框/文本域内不触发全局快捷键
     const t = e.target as HTMLElement;
     if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)
@@ -190,7 +194,7 @@ onMounted(async () => {
     } else if (matchKey(e, km.grid)) {
       e.preventDefault();
       layout.openModule("grid");
-      browser.buildGrid();
+      if (browser.gridOpen) browser.layoutGrid(); else browser.buildGrid();
     } else if (matchKey(e, km.home)) {
       e.preventDefault();
       layout.openModule("home");
@@ -237,8 +241,11 @@ onMounted(async () => {
     </div>
     <template v-else>
       <!-- 精简模式：整行工具栏隐藏，网页占满（由 MainArea 的 ☰ 悬浮钮退出） -->
+      <UnifiedTabBar v-show="!layout.compactMode" />
       <ActivityBar v-show="!layout.compactMode" />
+      <WorkbenchCommands />
       <div class="body">
+        <WorkbenchRail v-show="!layout.compactMode" />
         <AINavPanel />
         <MainArea />
       </div>

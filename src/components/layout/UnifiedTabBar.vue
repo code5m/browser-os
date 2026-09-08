@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../stores/useBrowserStore";
+import { ref } from "vue";
 import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
 import { useSystemStore } from "../../stores/useSystemStore";
 
@@ -10,10 +11,20 @@ const layout = useLayoutStore();
 const browser = useBrowserStore();
 const ws = useWorkspaceStore();
 const system = useSystemStore();
+const context = ref<{ id: string; kind: 'web' | 'module' } | null>(null);
+async function closeContext(others = false) {
+  const target = context.value;
+  context.value = null;
+  if (!target) return;
+  if (target.kind === 'web') await browser.tabClose(target.id);
+  else {
+    const ids = others ? layout.modTabs.filter(t => t.id !== target.id).map(t => t.id) : [target.id];
+    for (const id of ids) layout.closeModTab(id);
+  }
+}
 
 async function activateWeb(id: string) {
   if (system.m0Cfg?.driver) return;
-  if (browser.gridOpen) await browser.closeGridAll();
   if (!layout.isBrowserView()) layout.setView("browser");
   await browser.tabSwitch(id);
 }
@@ -32,7 +43,7 @@ function activateMod(t: { id: string; view: string; path?: string }) {
   if (t.view === "apps") system.loadApps();
   if (t.path) ws.enterDir(t.path);
   // 宫格页签被关闭后重新激活时，必须重建宫格 webview 内容
-  if (t.view === "grid") browser.buildGrid();
+  if (t.view === "grid") { if (browser.gridOpen) browser.layoutGrid(); else browser.buildGrid(); }
 }
 </script>
 
@@ -44,6 +55,7 @@ function activateMod(t: { id: string; view: string; path?: string }) {
       :key="t.id"
       :class="['tab', { active: isActiveWeb(t.id) }]"
       @click="activateWeb(t.id)"
+      @contextmenu.prevent="context = { id: t.id, kind: 'web' }"
       :title="t.url"
     >
       <span class="tab-ic">🌐</span>
@@ -56,6 +68,7 @@ function activateMod(t: { id: string; view: string; path?: string }) {
       :key="t.id"
       :class="['tab', { active: isActiveMod(t.id) }]"
       @click="activateMod(t)"
+      @contextmenu.prevent="context = { id: t.id, kind: 'module' }"
       :title="t.path || t.label"
     >
       <span class="tab-ic">{{ t.icon }}</span>
@@ -64,9 +77,15 @@ function activateMod(t: { id: string; view: string; path?: string }) {
     </div>
     <button class="tab-new" @click="browser.tabNew()" title="新建页签">＋</button>
   </div>
+  <div v-if="context" class="tab-actions" role="menu" @keydown.esc="context = null">
+    <button role="menuitem" @click="closeContext()">关闭页签</button>
+    <button role="menuitem" :disabled="context.kind === 'web'" @click="closeContext(true)">关闭其他模块页签</button>
+    <button role="menuitem" @click="context = null">取消</button>
+  </div>
 </template>
 
 <style scoped>
+.tab-actions { display:flex; flex:none; gap:8px; padding:4px 8px; background:#f2f4f6; }
 .unified {
   display: flex;
   align-items: center;

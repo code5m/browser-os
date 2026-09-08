@@ -648,6 +648,27 @@ pub(crate) fn query_sqlite_with_deadline(
 ) -> Result<DbQueryResult, DbError> {
     let started = Instant::now();
 
+    // Interrupt inside SQLite's VM, including aggregations with no returned rows yet.
+    let flag = cancel.clone();
+    let expires = deadline.start + deadline.soft;
+    conn.progress_handler(
+        1000,
+        Some(move || flag.is_cancelled() || Instant::now() >= expires),
+    )
+    .map_err(|_| {
+        DbError::new(
+            DbErrorCode::QueryFailed,
+            "Cannot install cancellation handler",
+        )
+    })?;
+    struct ResetProgress<'a>(&'a rusqlite::Connection);
+    impl Drop for ResetProgress<'_> {
+        fn drop(&mut self) {
+            let _ = self.0.progress_handler(0, None::<fn() -> bool>);
+        }
+    }
+    let _reset = ResetProgress(conn);
+
     if sql.trim().is_empty() {
         return Err(DbError::new(DbErrorCode::SqlEmpty, "SQL 为空"));
     }
@@ -711,6 +732,12 @@ pub(crate) fn query_sqlite_with_deadline(
         }
 
         let next = rows.next().map_err(|e| {
+            if cancel.is_cancelled() {
+                return DbError::new(DbErrorCode::Cancelled, "Query cancelled");
+            }
+            if deadline.soft_reached() {
+                return DbError::new(DbErrorCode::Timeout, "Query timed out");
+            }
             DbError::new(
                 DbErrorCode::QueryFailed,
                 format!("读取行失败: {}", sanitize_message(&e.to_string())),
@@ -757,6 +784,40 @@ pub(crate) fn query_sqlite_with_deadline(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workbench_cancel_interrupts_before_first_aggregate_row() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let cancel = QueryCancel::new();
+        let signal = cancel.clone();
+        let worker = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            signal.cancel();
+        });
+        let deadline = QueryDeadline::new(Duration::from_secs(3));
+        let error = query_sqlite_with_deadline(&conn,
+            "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<100000000) SELECT sum(x) FROM n",
+            &cancel, &deadline, "cancel-test").unwrap_err();
+        worker.join().unwrap();
+        assert_eq!(error.code, DbErrorCode::Cancelled);
+        assert!(deadline.start.elapsed() < Duration::from_secs(2));
+        assert_eq!(
+            conn.query_row("SELECT 42", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            42
+        );
+    }
+
+    #[test]
+    fn workbench_deadline_interrupts_before_first_aggregate_row() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let deadline = QueryDeadline::new(Duration::from_millis(5));
+        let error = query_sqlite_with_deadline(&conn,
+            "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<100000000) SELECT sum(x) FROM n",
+            &QueryCancel::new(), &deadline, "timeout-test").unwrap_err();
+        assert_eq!(error.code, DbErrorCode::Timeout);
+        assert!(deadline.start.elapsed() < Duration::from_secs(2));
+    }
     use crate::domain::DbSslMode;
     use std::fs;
     use std::sync::atomic::Ordering as AtomicOrdering;

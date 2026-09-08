@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { onMounted } from "vue";
 import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
+import { useWorkbenchStore } from "../../stores/useWorkbenchStore";
 import FileTreeNode from "./FileTreeNode.vue";
 
 // ide=true：左树右编辑（文件主视图）；ide=false：纯树（浏览视图右侧 Dock 窄栏）
 const props = withDefaults(defineProps<{ ide?: boolean }>(), { ide: false });
 const ws = useWorkspaceStore();
+const workbench = useWorkbenchStore();
 
 onMounted(() => {
   if (!ws.treeRoots.length) ws.loadTree();
@@ -15,7 +17,7 @@ onMounted(() => {
 <template>
   <div class="file-ide" :class="{ 'with-edit': props.ide }">
     <!-- 左：文件夹树（VSCode 资源管理器式） -->
-    <div class="ftree">
+    <div v-show="!workbench.collapsed" class="ftree">
       <div class="ftree-head">
         <span class="ftree-title">📂 文件</span>
         <button title="刷新" @click="ws.refreshTree">⟳</button>

@@ -21,7 +21,7 @@ const KNOWN_VIEWS: Record<string, string> = {
   clip: "剪贴板", repo: "仓库", apps: "应用", audit: "审计", scripts: "脚本库",
   commands: "命令库", tools: "工具箱", db: "数据库", tasks: "定时任务",
   plugin: "插件", skills: "技能", agents: "智能体", graph: "知识图谱",
-  settings: "设置", term: "终端", editor: "编辑器",
+  settings: "设置", term: "终端", editor: "编辑器", vault: "Vault",
 };
 const viewLabel = computed(() => KNOWN_VIEWS[layout.mainView] ?? "");
 const viewUnknown = computed(
@@ -32,6 +32,7 @@ const tabCount = computed(() => browser.tabs.length);
 const auditCount = computed(() => ws.audit.length);
 const termReady = computed(() => system.terminalOpen && !!system.termId);
 const repoReady = computed(() => ws.repos.length > 0);
+const nativeReady = computed(() => Boolean((window as any).__TAURI_INTERNALS__));
 
 // ===== 资源监控（常驻）：系统内存 / 应用占用 / 内存预算 / 页签休眠 =====
 const stats = ref<ResourceStats | null>(null);
@@ -77,7 +78,8 @@ const budgetLow = computed(
 
 <template>
   <footer class="status">
-    <span class="ok">● 已连接</span>
+    <span v-if="nativeReady" class="ok">● 已连接</span>
+    <span v-else class="dim">● 预览模式</span>
     <span v-if="viewLabel" class="viewchip">当前：{{ viewLabel }}</span>
     <span v-else-if="viewUnknown" class="viewchip warn" role="alert">⚠ 未知视图：{{ layout.mainView }}</span>
     <span>页签 {{ tabCount }}</span>
@@ -133,7 +135,7 @@ const budgetLow = computed(
 
 <style scoped>
 .status {
-  height: 26px;
+  height: 24px;
   background: #1f2733;
   color: #9aa4b2;
   font-size: 11px;

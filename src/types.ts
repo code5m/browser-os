@@ -602,6 +602,9 @@ export type DbQueryState = "completed" | "cancelled" | "timeout" | "failed";
 // 导致数据库面板每个带标签单元格都落进 decodeDbValue 兜底分支、被渲染成原始 JSON。
 export type DbValue =
   | "null"
+  | { i64: number }
+  | { f64: number }
+  | { binary: { bytes: number } }
   | { bool: boolean }
   | { int: number }
   | { float: number }
@@ -638,9 +641,9 @@ export interface DbQueryResult {
   row_count: number;
   truncated: boolean;
   field_truncated: boolean;
-  limit_hit: DbLimitKind | null;
+  limit_hit?: DbLimitKind | null;
   elapsed_ms: number;
-  state: DbQueryState;
+  state?: DbQueryState;
 }
 
 // ====== M5-4 / M5-5 / M5-6 Agent/Skill UI 类型（前端 DTO 镜像；与 src-tauri/src/domain.rs 同义）======

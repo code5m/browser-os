@@ -7,7 +7,7 @@ import BrowserHost from "../browser/BrowserHost.vue";
 import BookmarkPanel from "../browser/BookmarkPanel.vue";
 import ResourceWaterfall from "../browser/ResourceWaterfall.vue";
 import SessionPanel from "../browser/SessionPanel.vue";
-import UnifiedTabBar from "./UnifiedTabBar.vue";
+import VaultPanel from '../workspace/VaultPanel.vue';
 import FileEditor from "../workspace/FileEditor.vue";
 
 import FilePanel from "../workspace/FilePanel.vue";
@@ -122,7 +122,6 @@ watch(
 <template>
   <main class="main">
     <!-- 统一页签条：网页/目录/模块页签混排，所有视图常驻 -->
-    <UnifiedTabBar v-show="!layout.compactMode" />
 
     <!-- ===== 主页（快捷图标墙：网页/应用，可自定义编辑） ===== -->
     <div v-if="layout.mainView === 'home'" class="modview">
@@ -218,6 +217,7 @@ watch(
       <DatabasePanel />
     </div>
 
+    <div v-else-if="layout.mainView === 'vault'" class="modview"><VaultPanel /></div>
     <!-- ===== 定时任务（M4-8） ===== -->
     <div v-else-if="layout.mainView === 'tasks'" class="modview">
       <TaskPanel />
@@ -256,7 +256,7 @@ watch(
       v-if="![
         'home', 'browser', 'grid', 'files', 'arts', 'clip', 'repo', 'apps', 'audit',
         'scripts', 'commands', 'tools', 'db', 'tasks', 'plugin', 'skills', 'agents',
-        'graph', 'settings', 'term', 'editor'
+        'graph', 'settings', 'term', 'editor', 'vault'
       ].includes(layout.mainView)"
       class="modview panel-state"
       role="alert"

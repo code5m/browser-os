@@ -375,11 +375,18 @@ export const bridge = {
   dbConnect: (cfg: DbConnectionConfig, password: string) =>
     invoke<DbConnectResult>("db_connect", { cfg, password: password || null }),
 
-  dbQuery: (p: { conn_id: string; sql: string; timeout_secs?: number | null; confirm_write: boolean }) =>
-    invoke<DbQueryResult>("db_query", p),
+  dbQuery: (p: { conn_id: string; sql: string; timeout_secs?: number | null; confirm_write: boolean; query_id?: string }) =>
+    invoke<DbQueryResult>("db_query", { connId: p.conn_id, sql: p.sql, timeoutSecs: p.timeout_secs ?? null, confirmWrite: p.confirm_write, queryId: p.query_id ?? null }),
 
   // 后端 db_disconnect 返回 Result<(), String>，Tauri 序列化为 null。
-  dbDisconnect: (conn_id: string) => invoke<null>("db_disconnect", { conn_id }),
+  dbDisconnect: (conn_id: string) => invoke<null>("db_disconnect", { connId: conn_id }),
+  dbListConnections: () => invoke<DbConnectionConfig[]>("db_list_connections"),
+  dbCancel: (queryId: string) => invoke<boolean>("db_cancel", { queryId }),
+  vaultOpen: (path: string) => invoke<{ root: string; notes: { path: string; text: string }[]; skipped: number; truncated: boolean }>("vault_open", { path }),
+  gridReadReplies: (index: number) => invoke<{ provider?: string; replies: string[]; error?: string; truncated?: boolean }>("grid_read_replies", { index }),
+  archiveReplies: (path: string, items: { label: string; markdown: string }[], tags: string[]) => invoke<{ label: string; path?: string; error?: string }[]>("archive_replies", { path, items, tags }),
+  gitLog: (repoId: string) => invoke<{ oid: string; parents: string[]; summary: string; author: string; time: number }[]>("git_log", { repoId }),
+  gitCommitDiff: (repoId: string, oid: string) => invoke<string>("git_commit_diff", { repoId, oid }),
 
   // 说明：A6 §6 / F-A6-7 明确**没有** task_history / task_cancel 两条命令——
   // 历史由 task_list 附带返回，取消复用既有 cancel_script(run_id)。

@@ -115,54 +115,68 @@ export const useGitStore = defineStore("git", () => {
   }
 
   // ===== 只读加载 =====
+  let statusGeneration = 0;
+  let branchGeneration = 0;
+  let diffGeneration = 0;
+  let writeRequestGeneration = 0;
+  let writeRequestInFlight = false;
   async function loadStatus() {
     if (!repoId.value) return;
+    const id = repoId.value; const generation = ++statusGeneration;
     statusLoading.value = true;
     statusError.value = null;
     try {
-      const list = await bridge.gitStatus({ repoId: repoId.value });
+      const list = await bridge.gitStatus({ repoId: id });
+      if (repoId.value !== id || generation !== statusGeneration) return;
       status.value = list;
       // 已消失的路径不应继续留在勾选集里（写操作会拿它去后端校验）
       const alive = new Set(list.map((f) => f.path));
       for (const p of [...selected]) if (!alive.has(p)) selected.delete(p);
     } catch (e) {
+      if (repoId.value !== id || generation !== statusGeneration) return;
       status.value = [];
       statusError.value = redactSecrets(e);
     } finally {
-      statusLoading.value = false;
+      if (repoId.value === id && generation === statusGeneration) statusLoading.value = false;
     }
   }
 
   async function loadBranches() {
     if (!repoId.value) return;
+    const id = repoId.value; const generation = ++branchGeneration;
     branchLoading.value = true;
     branchError.value = null;
     try {
-      branches.value = await bridge.gitBranchList({ repoId: repoId.value });
+      const data = await bridge.gitBranchList({ repoId: id });
+      if (repoId.value === id && generation === branchGeneration) branches.value = data;
     } catch (e) {
+      if (repoId.value !== id || generation !== branchGeneration) return;
       branches.value = [];
       branchError.value = redactSecrets(e);
     } finally {
-      branchLoading.value = false;
+      if (repoId.value === id && generation === branchGeneration) branchLoading.value = false;
     }
   }
 
   /** path 为 null/undefined 表示拉取整仓 diff（受后端硬上限截断保护）。 */
   async function loadDiff(path?: string | null) {
     if (!repoId.value) return;
+    const id = repoId.value; const generation = ++diffGeneration;
     if (path !== undefined) activePath.value = path;
     diffLoading.value = true;
     diffError.value = null;
     try {
-      diff.value = await bridge.gitDiff({
-        repoId: repoId.value,
+      const data = await bridge.gitDiff({
+        repoId: id,
         path: activePath.value ?? undefined,
       });
+      if (repoId.value === id && generation === diffGeneration) diff.value = data;
     } catch (e) {
+      if (repoId.value !== id || generation !== diffGeneration) return;
       diff.value = null;
       diffError.value = redactSecrets(e);
     } finally {
-      diffLoading.value = false;
+      if (repoId.value === id && generation === diffGeneration) diffLoading.value = false;
     }
   }
 
@@ -173,6 +187,9 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function selectRepo(id: string | null) {
+    if (busy.value) return;
+    ++statusGeneration; ++branchGeneration; ++diffGeneration;
+    statusLoading.value = false; branchLoading.value = false; diffLoading.value = false;
     // 切仓库等于放弃上一次待确认任务（任务本身在后端 5 分钟后自然过期）
     cancelWrite();
     repoId.value = id;
@@ -243,6 +260,10 @@ export const useGitStore = defineStore("git", () => {
       toast("上一个 Git 写操作仍在执行中");
       return;
     }
+    if (writeRequestInFlight) {
+      toast("正在生成 Git 操作预览");
+      return;
+    }
     if (preview.value) {
       toast("已有一个待确认的 Git 写任务，请先确认或取消");
       return;
@@ -256,8 +277,10 @@ export const useGitStore = defineStore("git", () => {
     }
     writeError.value = null;
     dangerousAck.value = false;
+    const requestGeneration = ++writeRequestGeneration;
+    writeRequestInFlight = true;
     try {
-      preview.value = await bridge.requestGitWrite({
+      const nextPreview = await bridge.requestGitWrite({
         repoId: repoId.value,
         op,
         paths: opts.paths,
@@ -265,7 +288,11 @@ export const useGitStore = defineStore("git", () => {
         branch: opts.branch,
         checkout: opts.checkout,
       });
+      writeRequestInFlight = false;
+      if (requestGeneration === writeRequestGeneration && repoId.value) preview.value = nextPreview;
     } catch (e) {
+      writeRequestInFlight = false;
+      if (requestGeneration !== writeRequestGeneration) return;
       preview.value = null;
       writeError.value = redactSecrets(e);
       toast(`${GIT_OP_LABEL[op]}被拒绝: ${writeError.value}`);
@@ -301,6 +328,8 @@ export const useGitStore = defineStore("git", () => {
   }
 
   function cancelWrite() {
+    ++writeRequestGeneration;
+    writeRequestInFlight = false;
     preview.value = null;
     dangerousAck.value = false;
   }

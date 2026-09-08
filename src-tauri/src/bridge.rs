@@ -5989,12 +5989,14 @@ use uuid::Uuid;
 /// 数据库连接配置登记簿（不含非 Send 的池句柄）。注册为 Tauri managed state。
 pub struct DbConnectionRegistry {
     pub configs: Mutex<HashMap<String, DbConnectionConfig>>,
+    pub queries: Mutex<HashMap<String, (String, QueryCancel)>>,
 }
 
 impl Default for DbConnectionRegistry {
     fn default() -> Self {
         DbConnectionRegistry {
             configs: Mutex::new(HashMap::new()),
+            queries: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -6006,6 +6008,198 @@ pub struct DbConnectResult {
 }
 
 #[tauri::command]
+pub fn db_list_connections(
+    app: AppHandle,
+    webview: tauri::Webview,
+) -> Result<Vec<DbConnectionConfig>, String> {
+    check_invocation_source(&webview, "db_list_connections", None, &app)?;
+    let mut configs: Vec<_> = app
+        .state::<DbConnectionRegistry>()
+        .configs
+        .lock()
+        .unwrap()
+        .values()
+        .cloned()
+        .collect();
+    configs.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(configs)
+}
+
+#[tauri::command]
+pub fn db_cancel(
+    app: AppHandle,
+    webview: tauri::Webview,
+    query_id: String,
+) -> Result<bool, String> {
+    check_invocation_source(&webview, "db_cancel", None, &app)?;
+    let reg = app.state::<DbConnectionRegistry>();
+    let queries = reg.queries.lock().unwrap();
+    if let Some((_, cancel)) = queries.get(&query_id) {
+        cancel.cancel();
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+#[tauri::command]
+pub async fn vault_open(
+    app: AppHandle,
+    webview: tauri::Webview,
+    path: String,
+) -> Result<crate::workbench::VaultSnapshot, String> {
+    check_invocation_source(&webview, "vault_open", None, &app)?;
+    let root = crate::security_policy::check_path_within_roots(&path, &allowed_roots(&app))
+        .map_err(|_| "VAULT_PATH_DENIED")?;
+    tauri::async_runtime::spawn_blocking(move || crate::workbench::read_vault(&root))
+        .await
+        .map_err(|_| "VAULT_WORKER_FAILED")?
+}
+
+#[tauri::command]
+pub async fn grid_read_replies(
+    app: AppHandle,
+    webview: tauri::Webview,
+    index: u32,
+) -> Result<serde_json::Value, String> {
+    check_invocation_source(&webview, "grid_read_replies", None, &app)?;
+    if index >= 12 {
+        return Err("GRID_INDEX_INVALID".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let text = app.state::<AppState>().grid_manager.read_replies(index)?;
+        if text.len() > crate::workbench::MAX_NOTE_BYTES as usize {
+            return Err("GRID_RESULT_LIMIT".into());
+        }
+        serde_json::from_str(&text).map_err(|_| "GRID_RESULT_INVALID".into())
+    })
+    .await
+    .map_err(|_| "GRID_WORKER_FAILED")?
+}
+
+#[tauri::command]
+pub async fn archive_replies(
+    app: AppHandle,
+    webview: tauri::Webview,
+    path: String,
+    items: Vec<crate::workbench::ArchiveItem>,
+    tags: Vec<String>,
+) -> Result<Vec<crate::workbench::ArchiveResult>, String> {
+    check_invocation_source(&webview, "archive_replies", None, &app)?;
+    let root = crate::security_policy::check_path_within_roots(&path, &allowed_roots(&app))
+        .map_err(|_| "ARCHIVE_PATH_DENIED")?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        crate::workbench::save_archives(&root, items, &tags)
+    })
+    .await
+    .map_err(|_| "ARCHIVE_WORKER_FAILED")??;
+    workspace::log_audit(
+        &app,
+        "archive.save",
+        format!(
+            "count={} saved={}",
+            result.len(),
+            result.iter().filter(|r| r.path.is_some()).count()
+        ),
+    );
+    Ok(result)
+}
+
+#[derive(serde::Serialize)]
+pub struct GitLogEntry {
+    pub oid: String,
+    pub parents: Vec<String>,
+    pub summary: String,
+    pub author: String,
+    pub time: i64,
+}
+
+#[tauri::command]
+pub fn git_log(
+    app: AppHandle,
+    webview: tauri::Webview,
+    repo_id: String,
+) -> Result<Vec<GitLogEntry>, String> {
+    check_invocation_source(&webview, "git_log", None, &app)?;
+    let repo = sync::open_readonly(&app, &repo_id)?;
+    if repo.is_empty().unwrap_or(false) {
+        return Ok(vec![]);
+    }
+    let mut walk = repo.revwalk().map_err(|_| "GIT_LOG_FAILED")?;
+    walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)
+        .map_err(|_| "GIT_LOG_FAILED")?;
+    walk.push_head().map_err(|_| "GIT_LOG_FAILED")?;
+    walk.take(200)
+        .map(|id| {
+            let commit = repo
+                .find_commit(id.map_err(|_| "GIT_LOG_FAILED")?)
+                .map_err(|_| "GIT_LOG_FAILED")?;
+            let author = commit
+                .author()
+                .name()
+                .unwrap_or("")
+                .chars()
+                .take(128)
+                .collect();
+            Ok(GitLogEntry {
+                oid: commit.id().to_string(),
+                parents: commit.parent_ids().map(|id| id.to_string()).collect(),
+                summary: commit.summary().unwrap_or("").chars().take(1024).collect(),
+                author,
+                time: commit.time().seconds(),
+            })
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub fn git_commit_diff(
+    app: AppHandle,
+    webview: tauri::Webview,
+    repo_id: String,
+    oid: String,
+) -> Result<String, String> {
+    check_invocation_source(&webview, "git_commit_diff", None, &app)?;
+    let repo = sync::open_readonly(&app, &repo_id)?;
+    let oid = git2::Oid::from_str(&oid).map_err(|_| "GIT_INVALID_OID")?;
+    let commit = repo.find_commit(oid).map_err(|_| "GIT_COMMIT_MISSING")?;
+    let tree = commit.tree().map_err(|_| "GIT_DIFF_FAILED")?;
+    let parent = if commit.parent_count() > 0 {
+        Some(
+            commit
+                .parent(0)
+                .and_then(|p| p.tree())
+                .map_err(|_| "GIT_DIFF_FAILED")?,
+        )
+    } else {
+        None
+    };
+    let diff = repo
+        .diff_tree_to_tree(parent.as_ref(), Some(&tree), None)
+        .map_err(|_| "GIT_DIFF_FAILED")?;
+    let mut out = String::new();
+    let mut truncated = false;
+    let printed = diff.print(git2::DiffFormat::Patch, |_, _, line| {
+        let text = String::from_utf8_lossy(line.content());
+        if out.len() + text.len() > 256 * 1024 {
+            truncated = true;
+            return false;
+        }
+        if matches!(line.origin(), '+' | '-' | ' ') {
+            out.push(line.origin());
+        }
+        out.push_str(&text);
+        true
+    });
+    if !truncated {
+        printed.map_err(|_| "GIT_DIFF_FAILED")?;
+    }
+    if truncated {
+        out.push_str("\n[Diff truncated at 256 KiB]\n");
+    }
+    Ok(out)
+}
+
+#[tauri::command]
 pub fn db_connect(
     app: AppHandle,
     webview: tauri::Webview,
@@ -6013,6 +6207,21 @@ pub fn db_connect(
     password: Option<String>,
 ) -> Result<DbConnectResult, String> {
     check_invocation_source(&webview, "db_connect", None, &app)?;
+    {
+        let reg = app.state::<DbConnectionRegistry>();
+        if reg.configs.lock().unwrap().len() >= 64 {
+            return Err("DB_CONNECTION_LIMIT".into());
+        }
+        if reg
+            .queries
+            .lock()
+            .unwrap()
+            .values()
+            .any(|(id, _)| id == &cfg.id)
+        {
+            return Err("DB_QUERY_BUSY".into());
+        }
+    }
     // 实际打通一次以校验配置/凭据/可达性；连接不驻留全局（非 Send），校验后即弃。
     let roots = allowed_roots(&app);
     let kind = cfg.kind;
@@ -6037,13 +6246,14 @@ pub fn db_connect(
 }
 
 #[tauri::command]
-pub fn db_query(
+pub async fn db_query(
     app: AppHandle,
     webview: tauri::Webview,
     conn_id: String,
     sql: String,
     timeout_secs: Option<u64>,
     confirm_write: bool,
+    query_id: Option<String>,
 ) -> Result<crate::database::DbQueryResult, String> {
     use crate::security_policy as sp;
     check_invocation_source(&webview, "db_query", None, &app)?;
@@ -6058,39 +6268,62 @@ pub fn db_query(
             .ok_or_else(|| "DB_NOT_CONNECTED".to_string())?
     };
 
-    // SQLite 不需要密码；其余从密钥库取（键 = db:<conn_id>）。
-    let password = if cfg.kind == SupportedDb::Sqlite {
-        None
-    } else {
-        KeyringStore::get_token(&crate::database::credential_key(&conn_id)).ok()
-    };
-
-    let roots = allowed_roots(&app);
-    let mut pool = DbPool::connect(&cfg, password.as_deref(), &roots)
-        .map_err(|e| format!("{}: {}", e.code_str(), e.message))?;
-
-    // ===== 安全闸门（A3 的 query 不判写，全链路归此处）=====
-    let encrypted = pool.encrypted();
-    sp::evaluate_db_query_gate(&sql, &cfg, encrypted, confirm_write)
-        .map_err(|code| code.as_str().to_string())?;
-
-    // 执行取数。
+    let query_id = query_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    Uuid::parse_str(&query_id).map_err(|_| "DB_INVALID_QUERY_ID")?;
     let cancel = QueryCancel::new();
-    let query_id = Uuid::new_v4().to_string();
-    let result = pool
-        .query(&sql, &cancel, timeout_secs, &query_id)
-        .map_err(|e| format!("{}: {}", e.code_str(), e.message))?;
+    {
+        let registry = app.state::<DbConnectionRegistry>();
+        let mut queries = registry.queries.lock().unwrap();
+        if queries.len() >= 4 || queries.contains_key(&query_id) {
+            return Err("DB_QUERY_BUSY".into());
+        }
+        queries.insert(query_id.clone(), (conn_id.clone(), cancel.clone()));
+    }
+    let worker_app = app.clone();
+    let worker_id = query_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let app = worker_app;
+        let query_id = worker_id;
+        // SQLite 不需要密码；其余从密钥库取（键 = db:<conn_id>）。
+        let password = if cfg.kind == SupportedDb::Sqlite {
+            None
+        } else {
+            KeyringStore::get_token(&crate::database::credential_key(&conn_id)).ok()
+        };
 
-    // 审计 detail 禁含 SQL 原文与凭据（G-3）：只记连接标识与截断标记。
-    workspace::log_audit(
-        &app,
-        "db.query",
-        format!(
-            "conn_id={} rows={} truncated={} field_truncated={}",
-            conn_id, result.row_count, result.truncated, result.field_truncated
-        ),
-    );
-    Ok(result)
+        let roots = allowed_roots(&app);
+        let mut pool = DbPool::connect(&cfg, password.as_deref(), &roots)
+            .map_err(|e| format!("{}: {}", e.code_str(), e.message))?;
+
+        // ===== 安全闸门（A3 的 query 不判写，全链路归此处）=====
+        let encrypted = pool.encrypted();
+        sp::evaluate_db_query_gate(&sql, &cfg, encrypted, confirm_write)
+            .map_err(|code| code.as_str().to_string())?;
+
+        // 执行取数。
+        let result = pool
+            .query(&sql, &cancel, timeout_secs, &query_id)
+            .map_err(|e| format!("{}: {}", e.code_str(), e.message))?;
+
+        // 审计 detail 禁含 SQL 原文与凭据（G-3）：只记连接标识与截断标记。
+        workspace::log_audit(
+            &app,
+            "db.query",
+            format!(
+                "conn_id={} rows={} truncated={} field_truncated={}",
+                conn_id, result.row_count, result.truncated, result.field_truncated
+            ),
+        );
+        Ok(result)
+    })
+    .await
+    .map_err(|_| "DB_WORKER_FAILED".to_string());
+    app.state::<DbConnectionRegistry>()
+        .queries
+        .lock()
+        .unwrap()
+        .remove(&query_id);
+    result?
 }
 
 #[tauri::command]
@@ -6100,6 +6333,16 @@ pub fn db_disconnect(
     conn_id: String,
 ) -> Result<(), String> {
     check_invocation_source(&webview, "db_disconnect", None, &app)?;
+    if app
+        .state::<DbConnectionRegistry>()
+        .queries
+        .lock()
+        .unwrap()
+        .values()
+        .any(|(id, _)| id == &conn_id)
+    {
+        return Err("DB_QUERY_BUSY".into());
+    }
     let removed = {
         let reg = app.state::<DbConnectionRegistry>();
         let mut guard = reg.configs.lock().unwrap();

@@ -4344,6 +4344,7 @@ name = "tauri-plugin-browser-tabs"
 version = "0.1.0"
 dependencies = [
  "gtk",
+ "javascriptcore-rs",
  "log",
  "parking_lot",
  "serde",

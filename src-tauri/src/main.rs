@@ -24,6 +24,9 @@ mod sync;
 mod tasks;
 mod terminal;
 mod tools;
+mod workbench;
+#[cfg(debug_assertions)]
+mod workbench_smoke;
 mod workspace;
 
 // M5-W10 A3：MCP stdio-prep 骨架（feature-gated，默认构建不编译）。
@@ -297,6 +300,37 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
         loop {
             match grid_ipc::read_wire(&mut reader) {
                 Ok(Some(grid_ipc::Wire::Request { seq, cmd })) => {
+                    if let grid_ipc::GridCmd::ReadReplies { ref id } = cmd {
+                        let reply_writer = writer.clone();
+                        let result = app
+                            .state::<tauri_plugin_browser_tabs::TabManagerState>()
+                            .eval_result(
+                                id,
+                                include_str!("../injected/extract-replies.js").to_string(),
+                                move |value| {
+                                    let response = match value {
+                                        Ok(data) => grid_ipc::Wire::Response {
+                                            seq,
+                                            ok: true,
+                                            err: None,
+                                            data: Some(data),
+                                        },
+                                        Err(e) => grid_ipc::Wire::err(seq, e),
+                                    };
+                                    let _ = grid_ipc::write_wire(
+                                        &mut *reply_writer.lock().unwrap(),
+                                        &response,
+                                    );
+                                },
+                            );
+                        if result.is_err() {
+                            let _ = grid_ipc::write_wire(
+                                &mut *writer.lock().unwrap(),
+                                &grid_ipc::Wire::err(seq, "GRID_NOT_OPEN"),
+                            );
+                        }
+                        continue;
+                    }
                     let resp = match dispatch_grid_cmd(&app, &host_label, cmd) {
                         Ok(()) => grid_ipc::Wire::ok(seq),
                         Err(e) => grid_ipc::Wire::err(seq, e),
@@ -427,6 +461,7 @@ fn dispatch_grid_cmd(
             }
         }
         GridCmd::Ping => Ok(()),
+        GridCmd::ReadReplies { .. } => Err("GRID_ASYNC_ONLY".into()),
     }
 }
 
@@ -1313,6 +1348,10 @@ fn main() {
             if std::env::var("GRID_SELFTEST").is_ok() {
                 run_grid_selftest(app.handle().clone());
             }
+            #[cfg(debug_assertions)]
+            if std::env::var("MVP_WORKBENCH_SMOKE").is_ok() {
+                workbench_smoke::start(app.handle().clone()).map_err(std::io::Error::other)?;
+            }
             // GRID_GUI_REGRESSION=1：M0-6.c 九项 GUI 回归驱动。由外层脚本提供本地
             // AI mock 与证据目录，驱动真实 Tauri 主窗、宫格子进程、页签与 PTY。
             if std::env::var("GRID_GUI_REGRESSION").is_ok() {
@@ -1473,6 +1512,13 @@ fn main() {
             bridge::skill_validate,
             bridge::skill_permission_preview,
             bridge::db_connect,
+            bridge::db_list_connections,
+            bridge::db_cancel,
+            bridge::vault_open,
+            bridge::grid_read_replies,
+            bridge::archive_replies,
+            bridge::git_log,
+            bridge::git_commit_diff,
             bridge::db_query,
             bridge::db_disconnect,
             bridge::mcp_capability_preview,

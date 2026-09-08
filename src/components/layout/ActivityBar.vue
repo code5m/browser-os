@@ -12,6 +12,10 @@ import { useSystemStore } from "../../stores/useSystemStore";
 import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
 import BookmarkStar from "../browser/BookmarkStar.vue";
 import { redactSecrets } from "../../utils/redact";
+import { Search, PanelLeftClose, PanelLeftOpen } from "@lucide/vue";
+import { useWorkbenchStore } from "../../stores/useWorkbenchStore";
+import GridArchiveBar from "../browser/GridArchiveBar.vue";
+const workbench = useWorkbenchStore();
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
@@ -21,7 +25,7 @@ const ws = useWorkspaceStore();
 // 一级入口与 ☰ 菜单分节统一来自 useLayoutStore（W17 导航真源），
 // 窄窗口按 navTopViews 从尾部裁剪，被裁掉的入口在 ☰ 菜单中仍可达。
 const menuSections = NAV_MENU_SECTIONS;
-const topItems = computed(() => TOP_NAV_ITEMS.filter((i) => layout.navTopViews.includes(i.view)));
+const topItems = computed(() => TOP_NAV_ITEMS.filter((i) => layout.navTopViews.includes(i.view) && ['home','browser'].includes(i.view)));
 
 // 宫格设置扩展行数据
 const gridLayouts = [
@@ -136,7 +140,6 @@ async function onItem(v: string) {
   layout.navSection = "";
   // 离开宫格视图时自动关闭宫格：gridOpen 悬挂为 true 会让浏览视图的定位
   // 走错分支（tab 不复位、宫格被拉回可视区），且在非浏览器视图空转重试
-  if (v !== "grid" && browser.gridOpen) await browser.closeGridAll();
   if (v === "apps") system.loadApps();
   if (v === "grid") {
     // 默认 AI 模式：点宫格直接出底部统一输入框（在 buildGrid 前设置，
@@ -146,7 +149,7 @@ async function onItem(v: string) {
     layout.openModule("grid");
     // 总是重建宫格：buildGrid 内部 createGrid 会先 close_grid 再重建（幂等），
     // 避免 gridOpen 标志与后端宫格 webview 实际状态脱节导致的"有工具条没宫格"。
-    browser.buildGrid();
+    if (browser.gridOpen) browser.layoutGrid(); else browser.buildGrid();
     return;
   }
   // 浏览器主视图不是模块页签，直接切视图即可
@@ -213,7 +216,6 @@ async function openDirCenter() {
     layout.showToast("请输入目录路径");
     return;
   }
-  if (browser.gridOpen) await browser.closeGridAll();
   layout.browserDockOpen = false;
   layout.openDirTab(p);
   layout.leftTab = "files";
@@ -279,6 +281,8 @@ async function openDirCenter() {
         <span class="lab">菜单</span>
       </button>
 
+      <button class="tbtn" title="统一命令" aria-label="统一命令" @click="workbench.commandOpen = !workbench.commandOpen"><Search :size="16" /></button>
+      <button class="tbtn" :title="workbench.collapsed ? '恢复工具窗' : '折叠工具窗'" aria-label="折叠或恢复工具窗" @click="workbench.toggleTools()"><PanelLeftOpen v-if="workbench.collapsed" :size="16"/><PanelLeftClose v-else :size="16"/></button>
       <!-- 中：智能地址栏 -->
       <div class="addr-mid">
         <template v-if="layout.mainView === 'browser' || layout.mainView === 'grid'">
@@ -334,7 +338,7 @@ async function openDirCenter() {
          走"内联扩展行撑高工具栏"的可靠模式（与宫格设置行同机制），
          宫格原生窗口随 viewport 下移，从机制上零遮挡——
          不要做成 viewport 底部栏，会被宫格 webview 盖住 -->
-    <div v-if="browser.gridOpen && browser.gridMode === 'ai'" class="expand-row ai-send-row">
+    <div v-if="browser.gridOpen && layout.mainView === 'grid' && browser.gridMode === 'ai'" class="expand-row ai-send-row">
       <span class="er-label">🤖 群发</span>
       <input
         v-model="browser.gridAiInput"
@@ -345,6 +349,7 @@ async function openDirCenter() {
       <button class="er-primary" @click="browser.gridSendAi">发送</button>
     </div>
 
+    <GridArchiveBar v-if="browser.gridOpen && layout.mainView === 'grid'" />
     <!-- 宫格设置扩展行 -->
     <div v-if="layout.navSection === 'grid'" id="nav-grid-row" class="expand-row">
       <span class="er-label">模式</span>
@@ -453,6 +458,11 @@ async function openDirCenter() {
 .tbar {
   flex-shrink: 0;
 }
+.activity{height:30px;box-sizing:border-box;background:#f5f7f8;color:#314651;border-bottom:1px solid #d9e0e3;gap:3px;padding:2px 6px}
+.activity button{color:#425b68;background:transparent;border-radius:4px}
+.activity button.active,.activity button.go{background:#e0eee8;color:#135b48}
+.activity .addr-mid{flex:1;min-width:0}.activity .omni-wrap input{background:#fff;border:1px solid #d5dfe3;height:24px;color:#293c47}
+.activity .collect{background:none}.activity .lab{display:none}
 .caret-btn {
   min-width: 16px;
   padding: 2px 3px 2px 0;

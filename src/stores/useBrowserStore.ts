@@ -144,7 +144,7 @@ export const useBrowserStore = defineStore("browser", () => {
 
   const activeTab = computed(() => tabs.find((t) => t.id === activeTabId.value));
   const isBrowserVisible = computed(
-    () => !gridOpen.value && layout.mainView === "browser"
+    () => layout.mainView === "browser"
   );
   const aiFiltered = computed(() =>
     aiFilter.value === "全部"
@@ -515,7 +515,6 @@ export const useBrowserStore = defineStore("browser", () => {
     await openBrowser();
   }
   async function openBrowser() {
-    if (gridOpen.value) await closeGridAll();
     const target = url.value.trim() || "https://www.baidu.com";
     useWorkspaceStore().addRecentUrl(target);
     layout.mainView = "browser";
@@ -595,13 +594,13 @@ export const useBrowserStore = defineStore("browser", () => {
   function syncFreeze() {
     const inBrowserView = layout.mainView === "browser" || layout.mainView === "grid";
     for (const t of tabs) {
-      const visible = inBrowserView && !gridOpen.value && t.id === activeTabId.value;
+      const visible = layout.mainView === "browser" && t.id === activeTabId.value;
       bridge.evalInTab(t.id, visible ? UNFREEZE_JS : FREEZE_JS).catch(() => {});
     }
     if (gridOpen.value) {
       // 宫格打开时所有格子都可见
       for (let i = 0; i < gridCount.value; i++) {
-        bridge.evalInTab(`grid-${i}`, inBrowserView ? UNFREEZE_JS : FREEZE_JS).catch(() => {});
+        bridge.evalInTab(`grid-${i}`, layout.mainView === 'grid' ? UNFREEZE_JS : FREEZE_JS).catch(() => {});
       }
     }
   }
@@ -619,9 +618,10 @@ export const useBrowserStore = defineStore("browser", () => {
   }
 
   // 按当前视图同步子 webview 显隐：browser/grid 视图重新定位显示，其它视图移出屏幕
-  function syncViewVisibility() {
+  async function syncViewVisibility() {
     bridge.debugLog(`syncViewVisibility view=${layout.mainView}`);
     if (layout.mainView === "browser" || layout.mainView === "grid") {
+      await bridge.hideAllWebviews().catch(() => {});
       relocate();
     } else {
       hideAllWebviews();

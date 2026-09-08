@@ -38,6 +38,9 @@ pub enum GridCmd {
         id: String,
         js: String,
     },
+    ReadReplies {
+        id: String,
+    },
     /// 宫格 webview 导航到 url。
     Navigate {
         id: String,
@@ -67,6 +70,8 @@ pub enum Wire {
         seq: u64,
         ok: bool,
         err: Option<String>,
+        #[serde(default)]
+        data: Option<String>,
     },
     /// 子进程 → 主进程 异步事件（导航完成/新窗口请求/桥命令事件转发）。
     Event {
@@ -81,6 +86,7 @@ impl Wire {
             seq,
             ok: true,
             err: None,
+            data: None,
         }
     }
     pub fn err(seq: u64, e: impl Into<String>) -> Self {
@@ -88,6 +94,7 @@ impl Wire {
             seq,
             ok: false,
             err: Some(e.into()),
+            data: None,
         }
     }
 }

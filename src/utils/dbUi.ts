@@ -278,6 +278,10 @@ export function decodeDbValue(value: unknown): DbScalar {
   if (typeof value === "object") {
     const rec = value as Record<string, unknown>;
     if (typeof rec.text === "string") return rec.text;
+    // database::DbValue is the live query DTO; domain's older int/float shape remains readable.
+    if (typeof rec.i64 === "number") return rec.i64;
+    if (typeof rec.f64 === "number") return rec.f64;
+    if (rec.binary && typeof rec.binary === 'object' && typeof (rec.binary as {bytes?:unknown}).bytes === 'number') return `<binary ${formatBytes((rec.binary as {bytes:number}).bytes)}>`;
     if (typeof rec.int === "number") return rec.int;
     if (typeof rec.float === "number") return rec.float;
     if (typeof rec.bool === "boolean") return rec.bool;

@@ -37,8 +37,9 @@ from pathlib import Path
 BASELINE_SHA256 = {
     # M2-4.e 裁定移除未使用的 @tauri-apps/plugin-shell，刷新 package 指纹；
     # 本门禁仍守住 M2-2.b 之后不得新增前端依赖。
-    "package.json": "9c567f34a78d5f38a9d347b215282edd0fce81359cb2d77361680cb135599ec4",
-    "package-lock.json": "16103828ece143a50ac0203348e1e021de898c7c8cde80d15accdc9f7c13d7c6",
+    # A0 workbench: reviewed icons / Markdown parser / sanitizer / converter; no other dependency changes.
+    "package.json": "6c1c5121d3dc9fa40f3adf15fe1c1d2c523abd34a8d7f5b810446bffd4390e7a",
+    "package-lock.json": "63e0cd1caf12920f60a203cf2b5d94d07c9bd6625b75c94c8edb821b42e744f1",
     "src-tauri/permissions/remote-collect.toml": (
         "cc35e0edc7933c2a43fd6e0c9271667db483aa5aa206d7e08d98a21b832f05da"
     ),

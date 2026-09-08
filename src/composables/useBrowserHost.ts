@@ -1,4 +1,4 @@
-import { ref, onMounted, onBeforeUnmount, nextTick } from "vue";
+import { ref, onMounted, onBeforeUnmount, nextTick, watch } from "vue";
 import { bridge } from "../bridge";
 import { useBrowserStore } from "../stores/useBrowserStore";
 import { useLayoutStore } from "../stores/useLayoutStore";
@@ -18,13 +18,14 @@ export function useBrowserHost() {
   const layout = useLayoutStore();
   const browserHost = ref<HTMLElement | null>(null);
   let ro: ResizeObserver | null = null;
+  watch(() => layout.mainView, () => { lastGridSent.clear(); lastHiddenTab = ''; lastKey = ''; });
 
   function schedulePosition() {
     if (positionRaf) return; // 合并同一帧内多次请求
     positionRaf = requestAnimationFrame(() => {
       positionRaf = requestAnimationFrame(() => {
         positionRaf = null;
-        if (browser.gridOpen) {
+        if (browser.gridOpen && layout.mainView === 'grid') {
           scheduleGrid();
           return;
         }
@@ -95,7 +96,7 @@ export function useBrowserHost() {
 
   function scheduleGrid() {
     bridge.debugLog(`scheduleGrid entry gridOpen=${browser.gridOpen}`);
-    if (!browser.gridOpen) return;
+    if (!browser.gridOpen || layout.mainView !== 'grid') return;
     nextTick(() => {
       requestAnimationFrame(() => layoutGridNow(0));
     });
@@ -105,7 +106,7 @@ export function useBrowserHost() {
   // 覆盖"工具条刚展开/视图刚切换，布局尚未稳定"的时序窗口——之前直接 return
   // 导致宫格永不定位（灰底空白、无格子、无标题栏）。
   function layoutGridNow(retry: number) {
-    if (!browser.gridOpen) return;
+    if (!browser.gridOpen || layout.mainView !== 'grid') return;
     const host = browserHost.value;
     const r = host?.getBoundingClientRect();
     if (retry === 0) {

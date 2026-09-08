@@ -27,7 +27,7 @@ use crate::grid_ipc::{GridCmd, IpcRect, Wire};
 /// 单个子进程的通信通道（跨重启复用：writer 随连接替换，seq 单调递增）。
 pub struct ChildComms {
     writer: Mutex<Option<UnixStream>>,
-    pending: Mutex<HashMap<u64, mpsc::Sender<Result<(), String>>>>,
+    pending: Mutex<HashMap<u64, mpsc::Sender<Result<Option<String>, String>>>>,
     seq: AtomicU64,
     connected: AtomicBool,
 }
@@ -164,11 +164,11 @@ impl GridProcessManager {
                         let mut r = BufReader::new(reader);
                         loop {
                             match crate::grid_ipc::read_wire(&mut r) {
-                                Ok(Some(Wire::Response { seq, ok, err })) => {
+                                Ok(Some(Wire::Response { seq, ok, err, data })) => {
                                     let tx = comms_reader.pending.lock().unwrap().remove(&seq);
                                     if let Some(tx) = tx {
                                         let _ = tx.send(if ok {
-                                            Ok(())
+                                            Ok(data)
                                         } else {
                                             Err(err.unwrap_or_else(|| "子进程执行失败".into()))
                                         });
@@ -314,14 +314,29 @@ impl GridProcessManager {
                     index, first
                 );
                 let comms = self.wait_connected(index, 8000)?;
-                self.request_once_with(comms, &cmd, timeout_ms)
+                self.request_once_with(comms, &cmd, timeout_ms).map(|_| ())
             }
         }
     }
 
     fn request_once(&self, index: u32, cmd: &GridCmd, timeout_ms: u64) -> Result<(), String> {
         let comms = self.wait_connected(index, 15000)?;
-        self.request_once_with(comms, cmd, timeout_ms)
+        self.request_once_with(comms, cmd, timeout_ms).map(|_| ())
+    }
+
+    pub fn read_replies(&self, index: u32) -> Result<String, String> {
+        if !self.children.lock().unwrap().contains_key(&index) {
+            return Err("GRID_NOT_OPEN".into());
+        }
+        let comms = self.wait_connected(index, 500)?;
+        self.request_once_with(
+            comms,
+            &GridCmd::ReadReplies {
+                id: format!("grid-{index}"),
+            },
+            5000,
+        )?
+        .ok_or_else(|| "GRID_NO_RESULT".into())
     }
 
     fn request_once_with(
@@ -329,7 +344,7 @@ impl GridProcessManager {
         comms: Arc<ChildComms>,
         cmd: &GridCmd,
         timeout_ms: u64,
-    ) -> Result<(), String> {
+    ) -> Result<Option<String>, String> {
         let seq = comms.seq.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = mpsc::channel();
         comms.pending.lock().unwrap().insert(seq, tx);

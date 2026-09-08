@@ -22,7 +22,9 @@ export type MainView =
   | "agents"
   | "graph"
   | "plugin"
-  | "editor";
+  | "editor"
+  | "settings"
+  | "vault";
 
 // ===== M5-W17（Lane A6）客户端导航契约 =====
 // ActivityBar 的唯一真源：一级入口、☰ 菜单分节、窄窗口密度、键盘漫游索引。
@@ -43,6 +45,7 @@ export const NAV_MENU_SECTIONS = [
     title: "工作区",
     items: [
       { view: "files", icon: "📂", label: "文件" },
+      { view: "vault", icon: "◇", label: "笔记 Vault" },
       { view: "clip", icon: "📋", label: "剪贴板" },
       { view: "arts", icon: "📚", label: "知识库" },
     ],
@@ -112,6 +115,8 @@ export const MODULE_META: Record<string, { icon: string; label: string }> = {
   home: { icon: "🏠", label: "主页" },
   grid: { icon: "🗂️", label: "宫格" },
   files: { icon: "📂", label: "文件" },
+  vault: { icon: "◇", label: "笔记 Vault" },
+  db: { icon: "▤", label: "数据库" },
   clip: { icon: "📋", label: "剪贴板" },
   arts: { icon: "📚", label: "知识库" },
   apps: { icon: "🚀", label: "应用" },
