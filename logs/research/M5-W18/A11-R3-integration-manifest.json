@@ -1,0 +1,346 @@
+{
+  "manifest_version": 1,
+  "wave": "M5-W18-R3-UX",
+  "lane": "A11",
+  "role": "prototype acceptance package (integration manifest + user-review checklist)",
+  "generated_at": "2026-09-08T13:14+0800",
+  "base": {
+    "ref": "origin/master",
+    "short": "200f0f1",
+    "sha": "200f0f1cc032eb7dbd0229ab53a711a5ff1e3d6f"
+  },
+  "status": "PROVISIONAL_PENDING_A5_A10_A1_REVISED",
+  "finalize_blockers": [
+    "A5 has no R3 commit on codex/m5-w18-a5 (database-in-shell report/prototype absent) -> J2 and database-mode items are NOT_RUN.",
+    "A10 has no R3 commit on codex/m5-w18-a10 (independent UX/reference review absent) -> card requires A10 before A11 finalizes.",
+    "A1 published a DRAFT prototype (6470fce) and declared it will consume A2-A9 + A10 for the final revision; the consolidated final prototype is not yet published."
+  ],
+  "scope_boundary": {
+    "product_code_changed": false,
+    "dependencies_changed": false,
+    "acl_or_capability_changed": false,
+    "native_runtime_changed": false,
+    "user_data_touched": false,
+    "pushed": false,
+    "artifact_roots": [
+      "logs/research/M5-W18/",
+      "logs/checkpoints/"
+    ]
+  },
+  "gates": {
+    "sizes": ["1920x1080", "1440x900", "1366x768", "1024x720"],
+    "collapsed_content_height_pct_min": 85.0,
+    "collapsed_content_width_pct_min": 92.0,
+    "top_chrome_rows_max": 2,
+    "top_chrome_px_max": 80,
+    "tool_window_ops": ["open", "close", "collapse all", "restore previous layout", "expand active", "pin", "unpin", "auto-hide", "resize"],
+    "tree_ops": ["collapse all", "expand one level", "bounded expand all"],
+    "states_required": ["empty", "loading", "error", "disabled", "context-menu"],
+    "divergence_tolerance_pp": 2.0
+  },
+  "reference_pins": [
+    {
+      "id": "rebased",
+      "repo": "DetachHead/rebased",
+      "identity": "Git client on the IntelliJ platform, fork of JetBrains/intellij-community",
+      "pinned_revision": "cee14e9",
+      "version": "v1.1.15",
+      "license": "root LICENSE.txt = JetBrains Open-Source Build Terms; bundled OSS (incl. git4idea) Apache-2.0; NOTICE.txt attributes IntelliJ IDEA",
+      "default_classification": "REIMPLEMENT_FROM_BEHAVIOR",
+      "source": "A7-R3-git-workflow-reference-map.md 0",
+      "file_level_provenance": "NOT_RECORDED - A10 gate must complete before any W19 adoption"
+    },
+    {
+      "id": "sourcegit",
+      "repo": "sourcegit-scm/sourcegit",
+      "license": "MIT",
+      "role": "secondary gap challenge"
+    },
+    {
+      "id": "slio-git",
+      "license": "MIT / Apache-2.0",
+      "role": "secondary gap challenge"
+    }
+  ],
+  "lanes": {
+    "A1": {
+      "branch": "codex/m5-w18-a1",
+      "head": "6470fce",
+      "status": "DRAFT_DELIVERED_AWAITING_REVISION",
+      "deliverables": [
+        "logs/research/M5-W18/A1-R3-browser-workbench.md",
+        "logs/research/M5-W18/A1-R3-prototype.html",
+        "logs/research/M5-W18/A1-R3-checkpoint.md"
+      ],
+      "consumed_by_a11": true
+    },
+    "A2": {
+      "branch": "codex/m5-w18-a2",
+      "head": "63b0a6e",
+      "status": "DELIVERED",
+      "deliverables": [
+        "logs/research/M5-W18/A2-R3-shell-density-audit.md",
+        "logs/research/M5-W18/A2-R3-density-replica.html",
+        "logs/research/M5-W18/A2-R3-measure.py",
+        "logs/research/M5-W18/A2-R3-run-20260908.out"
+      ],
+      "consumed_by_a11": true
+    },
+    "A3": {
+      "branch": "codex/m5-w18-a3",
+      "head": "0258c5b",
+      "status": "DELIVERED",
+      "deliverables": [
+        "logs/research/M5-W18/A3-R3-toolwindow-disclosure-20260908.md",
+        "logs/research/M5-W18/A3-R3-toolwindow-state-machine.mjs",
+        "logs/research/M5-W18/A3-R3-toolwindow-prototype.html",
+        "logs/research/M5-W18/A3-checkpoint-R3-20260908.md"
+      ],
+      "consumed_by_a11": true
+    },
+    "A4": {
+      "branch": "codex/m5-w18-a4",
+      "head": "8e77799",
+      "status": "DELIVERED",
+      "deliverables": [
+        "logs/research/M5-W18/A4-R3-shell-state-persistence-contract.md",
+        "logs/research/M5-W18/A4-R3-shell-state-prototype.mjs",
+        "logs/research/M5-W18/A4-R3-checkpoint.md"
+      ],
+      "consumed_by_a11": true
+    },
+    "A5": {
+      "branch": "codex/m5-w18-a5",
+      "head": "200f0f1",
+      "status": "NOT_DELIVERED",
+      "deliverables": [],
+      "consumed_by_a11": false,
+      "blocking": true
+    },
+    "A6": {
+      "branch": "codex/m5-w18-a6",
+      "head": "d5eb144",
+      "status": "DELIVERED",
+      "deliverables": [
+        "logs/research/M5-W18/A6-R3-context-menu-command-registry.md",
+        "logs/research/M5-W18/A6-R3-checkpoint.md"
+      ],
+      "consumed_by_a11": true
+    },
+    "A7": {
+      "branch": "codex/m5-w18-a7",
+      "head": "6e1f2ba",
+      "status": "DELIVERED",
+      "deliverables": [
+        "logs/research/M5-W18/A7-R3-git-workflow-reference-map.md",
+        "logs/research/M5-W18/A7-R3-lane-checkpoint.md"
+      ],
+      "consumed_by_a11": true
+    },
+    "A8": {
+      "branch": "codex/m5-w18-a8",
+      "head": "0db481a",
+      "status": "DELIVERED",
+      "deliverables": [
+        "logs/research/M5-W18/A8-R3-visual-density-design.md",
+        "logs/research/M5-W18/A8-R3-visual-density-frames.html",
+        "logs/checkpoints/A8-M5-W18-R3-checkpoint.md"
+      ],
+      "consumed_by_a11": true
+    },
+    "A9": {
+      "branch": "codex/m5-w18-a9",
+      "head": "23d12cd",
+      "status": "DELIVERED",
+      "deliverables": [
+        "logs/research/M5-W18/A9-R3-interaction-safety.md",
+        "logs/research/M5-W18/A9-R3-checkpoint.md"
+      ],
+      "consumed_by_a11": true
+    },
+    "A10": {
+      "branch": "codex/m5-w18-a10",
+      "head": "200f0f1",
+      "status": "NOT_DELIVERED",
+      "deliverables": [],
+      "consumed_by_a11": false,
+      "blocking": true
+    },
+    "A11": {
+      "branch": "codex/m5-w18-a11",
+      "head": "<pending commit>",
+      "status": "PROVISIONAL",
+      "deliverables": [
+        "logs/research/M5-W18/A11-R3-integration-manifest.json",
+        "logs/research/M5-W18/A11-R3-acceptance-checklist.md",
+        "logs/research/M5-W18/A11-R3-progress.md",
+        "logs/research/M5-W18/A11-R3-acceptance-matrix.py",
+        "logs/research/M5-W18/A11-R3-run-20260908.out",
+        "logs/research/M5-W18/A11-R3-checkpoint.md"
+      ],
+      "consumed_by_a11": true
+    }
+  },
+  "gate_measurements": [
+    {"metric": "collapsed_content_height_pct", "size": "1440x900", "lane": "A1", "value": 93.0, "min": 85.0, "baseline_of": "prototype", "source": "A1-R3-browser-workbench.md 4"},
+    {"metric": "collapsed_content_width_pct", "size": "1440x900", "lane": "A1", "value": 96.0, "min": 92.0, "baseline_of": "prototype", "source": "A1-R3-browser-workbench.md 4"},
+    {"metric": "collapsed_content_height_pct", "size": "1440x900", "lane": "A3", "value": 92.4, "min": 85.0, "baseline_of": "prototype", "source": "A3 state-machine self-test output"},
+    {"metric": "collapsed_content_width_pct", "size": "1440x900", "lane": "A3", "value": 100.0, "min": 92.0, "baseline_of": "prototype", "source": "A3 state-machine self-test output"},
+    {"metric": "collapsed_content_height_pct", "size": "1440x900", "lane": "A8", "value": 93.3, "min": 85.0, "baseline_of": "prototype", "source": "A8-R3-visual-density-design.md 5"},
+    {"metric": "collapsed_content_width_pct", "size": "1440x900", "lane": "A8", "value": 100.0, "min": 92.0, "baseline_of": "prototype", "source": "A8-R3-visual-density-design.md 5"},
+    {"metric": "top_chrome_px", "size": "1440x900", "lane": "A1", "value": 68.0, "max": 80.0, "baseline_of": "prototype", "source": "A1-R3-browser-workbench.md 2.1"},
+    {"metric": "top_chrome_px", "size": "1440x900", "lane": "A8", "value": 65.0, "max": 80.0, "baseline_of": "prototype", "source": "A8-R3-visual-density-design.md 5"},
+    {"metric": "top_chrome_px", "size": "1440x900", "lane": "A2", "value": 60.0, "max": 80.0, "baseline_of": "proposed_budget", "source": "A2-R3-shell-density-audit.md 6.1"},
+    {"metric": "content_height_pct", "size": "1440x900", "lane": "A2", "value": 90.1, "min": 85.0, "baseline_of": "current_product", "state": "quiet", "source": "A2-R3-run-20260908.out"},
+    {"metric": "content_height_pct", "size": "1440x900", "lane": "A2", "value": 83.2, "min": 85.0, "expect_fail": true, "baseline_of": "current_product", "state": "omnibox focused", "source": "A2-R3-run-20260908.out"},
+    {"metric": "content_height_pct", "size": "1440x900", "lane": "A2", "value": 81.9, "min": 85.0, "expect_fail": true, "baseline_of": "current_product", "state": "grid AI row", "source": "A2-R3-run-20260908.out"},
+    {"metric": "content_height_pct", "size": "1440x900", "lane": "A2", "value": 75.3, "min": 85.0, "expect_fail": true, "baseline_of": "current_product", "state": "worst (4 rows)", "source": "A2-R3-run-20260908.out"},
+    {"metric": "content_width_pct", "size": "1440x900", "lane": "A2", "value": 75.0, "min": 92.0, "expect_fail": true, "baseline_of": "current_product", "state": "right dock open", "source": "A2-R3-run-20260908.out"},
+    {"metric": "content_width_pct", "size": "1440x900", "lane": "A2", "value": 41.7, "min": 92.0, "expect_fail": true, "baseline_of": "current_product", "state": "three sides open", "source": "A2-R3-run-20260908.out"}
+  ],
+  "findings": [
+    {
+      "id": "F-A11-1",
+      "severity": "high",
+      "title": "A4 and A3 contradict each other on whether collapse-all skips pinned tool windows",
+      "detail": "A4-R3 7.5 collapseAll sets every non-pinned window to hidden (pinned survive). A3-R3 D-A3-7 takes the opposite reading: collapse everything together with one-click restore. R3 global constraints list both 'collapse all' and 'pin/unpin' without resolving the interaction.",
+      "impact": "A persistence contract and a state machine would encode different restored layouts; W19 would ship whichever lane A0 integrates last.",
+      "owner": "A10 ruling, then A3 + A4 reconcile, A1 prototype shows the chosen behaviour",
+      "status": "OPEN"
+    },
+    {
+      "id": "F-A11-2",
+      "severity": "high",
+      "title": "A5 delivered nothing, so the database daily loop (J2) has no R3 acceptance evidence",
+      "detail": "codex/m5-w18-a5 is still at origin/master 200f0f1. No database-in-shell report, no revised DB prototype. A1's database mode is therefore unvalidated against A5's own design lane.",
+      "impact": "J2 and database-mode acceptance items cannot be exercised at any target size.",
+      "owner": "A5, then A1 revision, then A11 re-run",
+      "status": "OPEN"
+    },
+    {
+      "id": "F-A11-3",
+      "severity": "medium",
+      "title": "The consolidated prototype demonstrates only part of the 14-unit Git workflow",
+      "detail": "A1-R3-prototype.html contains hunk/stash/cherry-pick/branch/log/graph but has no occurrence of worktree, blame, amend, reset, revert, conflict, patch, command-log or diff. Those units exist only in A1-R3-browser-workbench.md 7 table. A7 requires all 14 units to be demonstrable at the four sizes plus failure/empty/conflict states.",
+      "impact": "The user-review checklist cannot be completed for 9 of 14 Git units from the prototype alone.",
+      "owner": "A1 (final revision); A11 re-probes",
+      "status": "OPEN"
+    },
+    {
+      "id": "F-A11-4",
+      "severity": "medium",
+      "title": "Collapsed-mode geometry is reported under three different measurement conventions",
+      "detail": "1440x900 collapsed: A1 93.0% H / 96.0% W; A3 92.4% H / 100.0% W; A8 93.3% H / 100.0% W. All three pass the 85/92 gate, but width differs by 4.0pp because A1 reserves an edge strip and A3/A8 do not, and A8 subtracts a 32px OS titlebar first.",
+      "impact": "A future W19 assertion script would encode one convention and silently contradict the other two reports.",
+      "owner": "A0 to freeze one post-titlebar definition; A2 owns the measuring method",
+      "status": "OPEN"
+    },
+    {
+      "id": "F-A11-5",
+      "severity": "medium",
+      "title": "Top-chrome height budget is quoted three ways (68 / 65 / 60 px)",
+      "detail": "A1 measures nav row + tab strip = 68px; A8 counts 32px activity bar and 65px with one expand row; A2 proposes a 60px budget that reserves 15px for a desktop scrollbar. All are <= 80px, so the gate passes, but the definitions are not interchangeable.",
+      "impact": "Same as F-A11-4 for an automated chrome-height assertion.",
+      "owner": "A0, using A2's measurement method",
+      "status": "OPEN"
+    },
+    {
+      "id": "F-A11-6",
+      "severity": "medium",
+      "title": "The consolidated prototype carries no accessibility attributes",
+      "detail": "A1-R3-prototype.html has zero occurrences of 'aria-' or 'role='. A6-R3 11 requires role=menuitem / aria-disabled / focus moves into menu / Esc returns focus, A8-R3 3 requires a 2px focus ring, and A3's prototype does implement aria/role. The A1 draft therefore cannot demonstrate the accessibility acceptance items.",
+      "impact": "Accessibility rows of the user-review checklist are not executable against the current consolidated prototype.",
+      "owner": "A1 (final revision), verified by A10",
+      "status": "OPEN"
+    },
+    {
+      "id": "F-A11-7",
+      "severity": "low",
+      "title": "Command-entry shortcut is not frozen: A1 uses Ctrl+Shift+P, A2's budget frame uses Ctrl+K",
+      "detail": "A1-R3-browser-workbench.md 2.1/3.8 binds Ctrl+Shift+P; A2-R3-shell-density-audit.md 7.3 draws 'Ctrl+K'. One must be chosen before the palette is implemented.",
+      "impact": "Minor, but it would ship as an inconsistency in the first W19 shell slice.",
+      "owner": "A0 ruling; A6 registers the binding",
+      "status": "OPEN"
+    },
+    {
+      "id": "F-A11-8",
+      "severity": "low",
+      "title": "800x600 is in the workbench blueprint but unreachable in the current product",
+      "detail": "A2 measured that main.rs min_inner_size(900,600) makes 800x600 impossible; the R3 card lists four sizes and does not include 800x600. A2 asks A0 to decide between changing the minimum window size (product code) or dropping the size.",
+      "impact": "Acceptance scope ambiguity; A11 keeps 800x600 as a deferred decision item rather than a checklist row.",
+      "owner": "A0",
+      "status": "OPEN"
+    }
+  ],
+  "checklist": [
+    {"id": "S-01", "group": "sizes", "title": "1920x1080 frame present", "how_to_verify": "Open A1-R3-prototype.html and confirm a 1920x1080 frame for normal mode.", "evidence": "A1-R3-prototype.html", "probe": {"file": "A1-R3-prototype.html", "tokens": ["1920\u00d71080"]}, "expect": "covered", "owner": "A1"},
+    {"id": "S-02", "group": "sizes", "title": "1440x900 frame present (primary size)", "how_to_verify": "Same file, 1440x900 frame; this is the size used by the 85/92 gate.", "evidence": "A1-R3-prototype.html", "probe": {"file": "A1-R3-prototype.html", "tokens": ["1440\u00d7900"]}, "expect": "covered", "owner": "A1"},
+    {"id": "S-03", "group": "sizes", "title": "1366x768 frame present", "how_to_verify": "Same file, 1366x768 frame.", "evidence": "A1-R3-prototype.html", "probe": {"file": "A1-R3-prototype.html", "tokens": ["1366\u00d7768"]}, "expect": "covered", "owner": "A1"},
+    {"id": "S-04", "group": "sizes", "title": "1024x720 frame present", "how_to_verify": "Same file, 1024x720 frame.", "evidence": "A1-R3-prototype.html", "probe": {"file": "A1-R3-prototype.html", "tokens": ["1024\u00d7720"]}, "expect": "covered", "owner": "A1"},
+    {"id": "S-05", "group": "sizes", "title": "800x600 scope decision", "how_to_verify": "A0 decides: shrink min_inner_size (product code, W19) or drop 800x600 from the acceptance set.", "evidence": "A2-R3-shell-density-audit.md 3.1", "probe": null, "expect": "deferred", "owner": "A0"},
+
+    {"id": "M-01", "group": "modes", "title": "Collapsed mode hides tool windows and edge strip", "how_to_verify": "Switch the prototype to collapsed; every tool window and the edge strip disappear and the content region grows.", "evidence": "A1-R3-prototype.html", "probe": {"file": "A1-R3-prototype.html", "tokens": ["mode-collapsed"]}, "expect": "covered", "owner": "A1"},
+    {"id": "M-02", "group": "modes", "title": "Focus mode hides all chrome and keeps one obvious return action", "how_to_verify": "Enter focus mode; tab strip, address bar, tool windows and status bar are gone and one return affordance remains.", "evidence": "A1-R3-browser-workbench.md 3.3", "probe": {"file": "A1-R3-browser-workbench.md", "tokens": ["focus mode", "\u8fd4\u56de"]}, "expect": "covered", "owner": "A1"},
+    {"id": "M-03", "group": "modes", "title": "Restore previous layout", "how_to_verify": "Collapse everything, then restore; the prior layout returns exactly.", "evidence": "A3-R3-toolwindow-prototype.html", "probe": {"file": "A3-R3-toolwindow-prototype.html", "tokens": ["\u6062\u590d"]}, "expect": "covered", "owner": "A3"},
+    {"id": "M-04", "group": "modes", "title": "Collapse all", "how_to_verify": "One action collapses every tool window; pinned handling follows the A10 ruling on F-A11-1.", "evidence": "A3-R3-toolwindow-disclosure-20260908.md", "probe": {"file": "A3-R3-toolwindow-disclosure-20260908.md", "tokens": ["\u5168\u90e8\u6536\u8d77"]}, "expect": "covered", "owner": "A3"},
+    {"id": "M-05", "group": "modes", "title": "Expand active (maximize) tool window", "how_to_verify": "Maximize the active tool window and restore it again.", "evidence": "A1-R3-prototype.html", "probe": {"file": "A1-R3-prototype.html", "tokens": ["\u6700\u5927\u5316"]}, "expect": "covered", "owner": "A1"},
+    {"id": "M-06", "group": "modes", "title": "Pin / unpin a tool window", "how_to_verify": "Pin a window, open another on the same edge, confirm the pinned one is not replaced.", "evidence": "A3-R3-toolwindow-disclosure-20260908.md", "probe": {"file": "A3-R3-toolwindow-disclosure-20260908.md", "tokens": ["\u56fa\u5b9a"]}, "expect": "covered", "owner": "A3"},
+    {"id": "M-07", "group": "modes", "title": "Auto-hide tool window", "how_to_verify": "Enable auto-hide, move focus away, the window collapses to the edge strip.", "evidence": "A3-R3-toolwindow-prototype.html", "probe": {"file": "A3-R3-toolwindow-prototype.html", "tokens": ["\u81ea\u52a8\u9690\u85cf"]}, "expect": "covered", "owner": "A3"},
+    {"id": "M-08", "group": "modes", "title": "Resize tool window with clamped splitter", "how_to_verify": "Drag the splitter past its minimum and maximum; it clamps with visible feedback.", "evidence": "A3-R3-toolwindow-disclosure-20260908.md", "probe": {"file": "A3-R3-toolwindow-disclosure-20260908.md", "tokens": ["\u62d6\u62fd"]}, "expect": "covered", "owner": "A3"},
+    {"id": "M-09", "group": "modes", "title": "Open / close tool window from the edge strip", "how_to_verify": "Click an edge icon; the window opens over or beside the content and closes again without losing state.", "evidence": "A1-R3-prototype.html", "probe": {"file": "A1-R3-prototype.html", "tokens": ["tool-win", "edge-strip"]}, "expect": "covered", "owner": "A1"},
+    {"id": "M-10", "group": "modes", "title": "One primary tool window per edge by default", "how_to_verify": "Open a second window on the same edge; it replaces the first unless the first is pinned.", "evidence": "A4-R3-shell-state-persistence-contract.md 7.3", "probe": {"file": "A4-R3-shell-state-persistence-contract.md", "tokens": ["enforceedgeinvariant"]}, "expect": "covered", "owner": "A4"},
+    {"id": "M-11", "group": "modes", "title": "Keyboard focus model for tool windows", "how_to_verify": "Move focus into and out of a tool window with the keyboard; focus returns to the document on close.", "evidence": "A3-R3-toolwindow-disclosure-20260908.md", "probe": {"file": "A3-R3-toolwindow-disclosure-20260908.md", "tokens": ["\u7126\u70b9"]}, "expect": "covered", "owner": "A3"},
+
+    {"id": "C-01", "group": "context-menu", "title": "Scope: browser tab / page", "how_to_verify": "Right-click a tab and a page; menus differ and are scoped to the object under the pointer.", "evidence": "A6-R3-context-menu-command-registry.md 4.1", "probe": {"file": "A6-R3-context-menu-command-registry.md", "tokens": ["browser.tab"]}, "expect": "covered", "owner": "A6"},
+    {"id": "C-02", "group": "context-menu", "title": "Scope: workspace file / tree", "how_to_verify": "Right-click a file and empty tree area.", "evidence": "A6-R3-context-menu-command-registry.md 4.2", "probe": {"file": "A6-R3-context-menu-command-registry.md", "tokens": ["workspace.file"]}, "expect": "covered", "owner": "A6"},
+    {"id": "C-03", "group": "context-menu", "title": "Scope: note / link / graph node", "how_to_verify": "Right-click a note, a wikilink and a graph node.", "evidence": "A6-R3-context-menu-command-registry.md 4.3", "probe": {"file": "A6-R3-context-menu-command-registry.md", "tokens": ["graph.node"]}, "expect": "covered", "owner": "A6"},
+    {"id": "C-04", "group": "context-menu", "title": "Scope: db connection / schema / table / cell / result", "how_to_verify": "Right-click each database object; blocked until A5 delivers.", "evidence": "A6-R3-context-menu-command-registry.md 4.4", "probe": {"file": "A6-R3-context-menu-command-registry.md", "tokens": ["db.cell"]}, "expect": "covered", "owner": "A6"},
+    {"id": "C-05", "group": "context-menu", "title": "Scope: git repo / branch / commit / file / hunk", "how_to_verify": "Right-click each Git object; exact ids await A7 freeze.", "evidence": "A6-R3-context-menu-command-registry.md 4.5", "probe": {"file": "A6-R3-context-menu-command-registry.md", "tokens": ["git.hunk"]}, "expect": "covered", "owner": "A6"},
+    {"id": "C-06", "group": "context-menu", "title": "Scope: terminal", "how_to_verify": "Right-click the terminal surface.", "evidence": "A6-R3-context-menu-command-registry.md 4.6", "probe": {"file": "A6-R3-context-menu-command-registry.md", "tokens": ["term.clear"]}, "expect": "covered", "owner": "A6"},
+    {"id": "C-07", "group": "context-menu", "title": "Scope: tool window", "how_to_verify": "Right-click a tool window header.", "evidence": "A6-R3-context-menu-command-registry.md 4.7", "probe": {"file": "A6-R3-context-menu-command-registry.md", "tokens": ["tw.collapseall"]}, "expect": "covered", "owner": "A6"},
+    {"id": "C-08", "group": "context-menu", "title": "Every menu action carries registry identity, disabled reason, keyboard path and safety class", "how_to_verify": "Inspect one disabled item per scope: greyed, with a reason, a shortcut or palette entry, and a safety class.", "evidence": "A6-R3-context-menu-command-registry.md 3", "probe": {"file": "A6-R3-context-menu-command-registry.md", "tokens": ["disabledreason", "safetyclass"]}, "expect": "covered", "owner": "A6"},
+
+    {"id": "J-01", "group": "workflows", "title": "J1 open and resume a project", "how_to_verify": "Open a file, edit, use the terminal, switch to a web page, return to the file; focus/scroll/selection survive; restart restores documents and layout.", "evidence": "A4-R3-shell-state-persistence-contract.md 2.1", "probe": {"file": "A4-R3-shell-state-persistence-contract.md", "tokens": ["documents", "active_document_id"]}, "expect": "covered", "owner": "A1/A4"},
+    {"id": "J-02", "group": "workflows", "title": "J2 database daily loop", "how_to_verify": "Connection tree, two SQL docs with independent text/connection/state/result, run, cancel, bounded grid, NULL/binary/truncation.", "evidence": "A5 not delivered", "probe": null, "expect": "deferred", "owner": "A5"},
+    {"id": "J-03", "group": "workflows", "title": "J3 read, note and relate", "how_to_verify": "Open a note, follow a link, inspect backlinks/local graph, return to the previous position.", "evidence": "A1-R3-prototype.html", "probe": {"file": "A1-R3-prototype.html", "tokens": ["\u7b14\u8bb0", "\u53cd\u94fe"]}, "expect": "covered", "owner": "A1"},
+    {"id": "J-04", "group": "workflows", "title": "J4 unified search and command entry", "how_to_verify": "Open the command entry, search files/text/notes/actions, see source, scope and truncation, jump to the hit.", "evidence": "A1-R3-prototype.html", "probe": {"file": "A1-R3-prototype.html", "tokens": ["\u547d\u4ee4\u9762\u677f"]}, "expect": "covered", "owner": "A1"},
+    {"id": "J-05", "group": "workflows", "title": "J5 automation and run observation", "how_to_verify": "Start a supported task, watch running state, cancel or inspect result, retry explicitly.", "evidence": "not dispatched in the R3 card; existing TaskPanel regression item", "probe": null, "expect": "deferred", "owner": "A0"},
+    {"id": "J-06", "group": "workflows", "title": "J6 clean exit and abnormal recovery", "how_to_verify": "Unsaved document + close request -> save/discard/cancel; crash-safe persistence; corrupt file -> fresh default, never silent wipe.", "evidence": "A4-R3-shell-state-persistence-contract.md 6", "probe": {"file": "A4-R3-shell-state-persistence-contract.md", "tokens": ["crash", "atomic"]}, "expect": "covered", "owner": "A4"},
+
+    {"id": "G-01", "group": "git", "title": "status", "how_to_verify": "Repo status with staged/unstaged split.", "evidence": "A7-R3-git-workflow-reference-map.md 2.1", "probe": {"file": "A7-R3-git-workflow-reference-map.md", "tokens": ["status"]}, "expect": "covered", "owner": "A7"},
+    {"id": "G-02", "group": "git", "title": "hunk staging", "how_to_verify": "Stage/unstage a single hunk or line.", "evidence": "A7-R3-git-workflow-reference-map.md 2.2", "probe": {"file": "A7-R3-git-workflow-reference-map.md", "tokens": ["hunk staging"]}, "expect": "covered", "owner": "A7"},
+    {"id": "G-03", "group": "git", "title": "diff (unified / side-by-side)", "how_to_verify": "Toggle unified and side-by-side diff.", "evidence": "A7-R3-git-workflow-reference-map.md 2.3", "probe": {"file": "A7-R3-git-workflow-reference-map.md", "tokens": ["diff"]}, "expect": "covered", "owner": "A7"},
+    {"id": "G-04", "group": "git", "title": "log / graph with reversible placement", "how_to_verify": "Show the commit graph either as central document or as bottom tool window and switch back.", "evidence": "A7-R3-git-workflow-reference-map.md 2.4", "probe": {"file": "A7-R3-git-workflow-reference-map.md", "tokens": ["log graph"]}, "expect": "covered", "owner": "A7"},
+    {"id": "G-05", "group": "git", "title": "branches", "how_to_verify": "List, create, checkout, rename, delete, compare.", "evidence": "A7-R3-git-workflow-reference-map.md 2.5", "probe": {"file": "A7-R3-git-workflow-reference-map.md", "tokens": ["branches"]}, "expect": "covered", "owner": "A7"},
+    {"id": "G-06", "group": "git", "title": "worktrees", "how_to_verify": "List, add, remove worktrees.", "evidence": "A7-R3-git-workflow-reference-map.md 2.6", "probe": {"file": "A7-R3-git-workflow-reference-map.md", "tokens": ["worktrees"]}, "expect": "covered", "owner": "A7"},
+    {"id": "G-07", "group": "git", "title": "stash", "how_to_verify": "Push, pop, apply, drop, list.", "evidence": "A7-R3-git-workflow-reference-map.md 2.7", "probe": {"file": "A7-R3-git-workflow-reference-map.md", "tokens": ["stash"]}, "expect": "covered", "owner": "A7"},
+    {"id": "G-08", "group": "git", "title": "merge", "how_to_verify": "Merge a branch, resolve or abort.", "evidence": "A7-R3-git-workflow-reference-map.md 2.8", "probe": {"file": "A7-R3-git-workflow-reference-map.md", "tokens": ["merge"]}, "expect": "covered", "owner": "A7"},
+    {"id": "G-09", "group": "git", "title": "rebase / interactive rebase", "how_to_verify": "Rebase with a todo list, continue/abort/skip.", "evidence": "A7-R3-git-workflow-reference-map.md 2.9", "probe": {"file": "A7-R3-git-workflow-reference-map.md", "tokens": ["rebase"]}, "expect": "covered", "owner": "A7"},
+    {"id": "G-10", "group": "git", "title": "cherry-pick", "how_to_verify": "Pick one or more commits.", "evidence": "A7-R3-git-workflow-reference-map.md 2.10", "probe": {"file": "A7-R3-git-workflow-reference-map.md", "tokens": ["cherry-pick"]}, "expect": "covered", "owner": "A7"},
+    {"id": "G-11", "group": "git", "title": "conflict resolution", "how_to_verify": "Three-way resolution UI, mark resolved, continue.", "evidence": "A7-R3-git-workflow-reference-map.md 2.11", "probe": {"file": "A7-R3-git-workflow-reference-map.md", "tokens": ["conflicts"]}, "expect": "covered", "owner": "A7"},
+    {"id": "G-12", "group": "git", "title": "history / blame", "how_to_verify": "Annotate a file and list the commits that touched it.", "evidence": "A7-R3-git-workflow-reference-map.md 2.12", "probe": {"file": "A7-R3-git-workflow-reference-map.md", "tokens": ["blame"]}, "expect": "covered", "owner": "A7"},
+    {"id": "G-13", "group": "git", "title": "patch", "how_to_verify": "Export with format-patch, import with apply/am.", "evidence": "A7-R3-git-workflow-reference-map.md 2.13", "probe": {"file": "A7-R3-git-workflow-reference-map.md", "tokens": ["patch"]}, "expect": "covered", "owner": "A7"},
+    {"id": "G-14", "group": "git", "title": "command log", "how_to_verify": "Review every executed git command with output, redacted.", "evidence": "A7-R3-git-workflow-reference-map.md 2.14", "probe": {"file": "A7-R3-git-workflow-reference-map.md", "tokens": ["command log"]}, "expect": "covered", "owner": "A7"},
+    {"id": "G-15", "group": "git", "title": "All 14 units visible in the consolidated prototype (not only in the report)", "how_to_verify": "Walk the 14 units in A1-R3-prototype.html. Today worktree/blame/amend/reset/revert/conflict/patch/command-log/diff appear only in the markdown table.",
+      "evidence": "A1-R3-prototype.html", "probe": {"file": "A1-R3-prototype.html", "tokens": ["worktree", "blame", "amend"]}, "expect": "gap", "owner": "A1", "finding": "F-A11-3"},
+
+    {"id": "A-01", "group": "accessibility", "title": "Command-palette parity for every action", "how_to_verify": "Pick three menu actions and reach each from the palette.", "evidence": "A6-R3-context-menu-command-registry.md 9", "probe": {"file": "A6-R3-context-menu-command-registry.md", "tokens": ["palette"]}, "expect": "covered", "owner": "A6"},
+    {"id": "A-02", "group": "accessibility", "title": "Menu items expose role=menuitem, aria-disabled and disabled reason", "how_to_verify": "Inspect a disabled item with a screen-reader or the accessibility tree.", "evidence": "A6-R3-context-menu-command-registry.md 11", "probe": {"file": "A6-R3-context-menu-command-registry.md", "tokens": ["aria-disabled", "menuitem"]}, "expect": "covered", "owner": "A6"},
+    {"id": "A-03", "group": "accessibility", "title": "Keyboard focus is visible (2px focus ring)", "how_to_verify": "Tab through the shell; focus is always visible, never outline:none.", "evidence": "A8-R3-visual-density-design.md 4", "probe": {"file": "A8-R3-visual-density-design.md", "tokens": ["outline", "2px"]}, "expect": "covered", "owner": "A8"},
+    {"id": "A-04", "group": "accessibility", "title": "Hit target >= 24px", "how_to_verify": "Measure the smallest clickable control in the densest row.", "evidence": "A8-R3-visual-density-design.md 2", "probe": {"file": "A8-R3-visual-density-design.md", "tokens": ["24px"]}, "expect": "covered", "owner": "A8"},
+    {"id": "A-05", "group": "accessibility", "title": "Esc closes a menu and returns focus to the origin", "how_to_verify": "Open a context menu, press Esc, focus is back on the invoking element.", "evidence": "A6-R3-context-menu-command-registry.md 11", "probe": {"file": "A6-R3-context-menu-command-registry.md", "tokens": ["esc"]}, "expect": "covered", "owner": "A6"},
+    {"id": "A-06", "group": "accessibility", "title": "Consolidated prototype carries aria/role attributes", "how_to_verify": "Search A1-R3-prototype.html for aria- and role=. Today: none.",
+      "evidence": "A1-R3-prototype.html", "probe": {"file": "A1-R3-prototype.html", "tokens": ["aria-", "role="]}, "expect": "gap", "owner": "A1", "finding": "F-A11-6"},
+
+    {"id": "F-01", "group": "failure-states", "title": "Empty state", "how_to_verify": "Open a scope with no content; an explicit empty state with a next action is shown.", "evidence": "A1-R3-prototype.html", "probe": {"file": "A1-R3-prototype.html", "tokens": ["empty"]}, "expect": "covered", "owner": "A1"},
+    {"id": "F-02", "group": "failure-states", "title": "Loading state", "how_to_verify": "Trigger a slow load; a busy state appears without layout shift.", "evidence": "A1-R3-prototype.html", "probe": {"file": "A1-R3-prototype.html", "tokens": ["loading"]}, "expect": "covered", "owner": "A1"},
+    {"id": "F-03", "group": "failure-states", "title": "Error state with recovery", "how_to_verify": "Force a failure; an error with a retry path is shown.", "evidence": "A1-R3-prototype.html", "probe": {"file": "A1-R3-prototype.html", "tokens": ["error"]}, "expect": "covered", "owner": "A1"},
+    {"id": "F-04", "group": "failure-states", "title": "Disabled state with a reason", "how_to_verify": "Find a disabled action; it is greyed and states why.", "evidence": "A6-R3-context-menu-command-registry.md 3", "probe": {"file": "A6-R3-context-menu-command-registry.md", "tokens": ["disabledreason"]}, "expect": "covered", "owner": "A6"},
+    {"id": "F-05", "group": "failure-states", "title": "Context-menu state rendered at every size", "how_to_verify": "Open a menu at 1024x720; it stays inside the viewport.", "evidence": "A8-R3-visual-density-frames.html", "probe": {"file": "A8-R3-visual-density-frames.html", "tokens": ["context-menu"]}, "expect": "covered", "owner": "A8"},
+
+    {"id": "T-01", "group": "safety", "title": "Five safety classes attached to every action", "how_to_verify": "Confirm SAFE / MUTATES_LOCAL / DESTRUCTIVE_SOFT / DESTRUCTIVE_HARD / EXTERNAL_EGRESS exist per action.", "evidence": "A9-R3-interaction-safety.md 1.1", "probe": {"file": "A9-R3-interaction-safety.md", "tokens": ["destructive_hard", "external_egress"]}, "expect": "covered", "owner": "A9"},
+    {"id": "T-02", "group": "safety", "title": "Confirmation tiers T0-T4", "how_to_verify": "Trigger one action per tier; focus starts on Cancel for T3/T4.", "evidence": "A9-R3-interaction-safety.md 1.2", "probe": {"file": "A9-R3-interaction-safety.md", "tokens": ["t4"]}, "expect": "covered", "owner": "A9"},
+    {"id": "T-03", "group": "safety", "title": "Dirty-tree gate and protected-branch policy", "how_to_verify": "Attempt an amend with a dirty tree and a force-push to the mainline.", "evidence": "A9-R3-interaction-safety.md 1.3/1.4", "probe": {"file": "A9-R3-interaction-safety.md", "tokens": ["force", "dirty"]}, "expect": "covered", "owner": "A9"},
+    {"id": "T-04", "group": "safety", "title": "Audit redaction and keyring-only credentials", "how_to_verify": "Run a write action; the audit record carries no secret, full SQL value or file body.", "evidence": "A9-R3-interaction-safety.md 1.7", "probe": {"file": "A9-R3-interaction-safety.md", "tokens": ["keyring"]}, "expect": "covered", "owner": "A9"}
+  ]
+}
