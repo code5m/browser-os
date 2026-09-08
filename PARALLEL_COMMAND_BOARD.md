@@ -5,7 +5,7 @@
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
 > Evidence baseline: `master` at `d6127c4`; obtain the current HEAD with git before starting. This dispatch changes documentation only.
 > Baseline chain: `61cff56` (BUG-HUNT + scheduler safety) -> `e3b6b40` (ACL rebuild) -> `8e67ab0` (debug-only IPC origin isolation) -> `12a09b8` (W18 lane isolation) -> `78d2cfb` (research-first reset) -> `d6127c4` (R2 evidence dispatch). Runtime authority remains LOCKED. A0 is the controller and the only lane that integrates or pushes; the external agents are A1-A11.
-> Current NEXT: `M5-W18-R3-UX`. The first IDEA-shell prototype was rejected by the user. Preserve the current Chrome-like content-first shell and redesign it with IDEA-style progressive disclosure, complete context menus, and a full Git workflow inspired by open-source Git clients. `W19=CLOSED`.
+> Current NEXT: `M5-W18-R3-UX`. The first IDEA-shell prototype was rejected by the user. Preserve the current Chrome-like content-first shell and redesign it with IDEA-style progressive disclosure, complete context menus, and a full Git workflow using `DetachHead/rebased` as the primary behavior reference. `W19=CLOSED`.
 
 ## Current Dispatch Entry
 
