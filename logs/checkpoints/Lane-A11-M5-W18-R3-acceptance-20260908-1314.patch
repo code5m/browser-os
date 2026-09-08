@@ -1,6 +1,6 @@
 diff --git a/logs/checkpoints/A11-M5-W18-R3-20260908.md b/logs/checkpoints/A11-M5-W18-R3-20260908.md
 new file mode 100644
-index 0000000..7bde6bb
+index 0000000..83d0034
 --- /dev/null
 +++ b/logs/checkpoints/A11-M5-W18-R3-20260908.md
 @@ -0,0 +1,71 @@
@@ -11,7 +11,7 @@ index 0000000..7bde6bb
 +```text
 +CONTROLLER=A0
 +LANE=A11
-+STATUS=PROVISIONAL_PENDING_A1_REVISED
++STATUS=FINAL
 +WORKDIR=/home/ainfinit/.codex/worktrees/m5-w18-a11/mvp-browser-os-v3
 +BRANCH=codex/m5-w18-a11
 +BASE=200f0f1cc032eb7dbd0229ab53a711a5ff1e3d6f
@@ -24,8 +24,8 @@ index 0000000..7bde6bb
 +## 1. A0 只需要知道的四件事
 +
 +1. **可以集成**：本 lane 只新增 `logs/research/M5-W18/A11-R3-*` 与两个 checkpoint/补丁文件，零产品代码，`git diff --check` 干净。
-+2. **不能定稿**：R3 卡要求 A11 在 A10 复核与 A1 终稿之后定稿；A10 已交付 `3a86834`（参照/许可/可行性复核 + 验收前检 G1–G8），但 A1 自述为草案、终稿未出。故 `STATUS=PROVISIONAL_PENDING_A1_REVISED`。
-+3. **硬冲突已定位并部分消解**：F-A11-1（A3 与 A4 对"全部收起是否跳过固定窗口"结论相反）仍为 A0/A10 终裁；F-A11-2（A5 零交付 → J2 无法验收）已消解——A5 交付 `6bc4942`，J2 探针 PASS，仅剩并入 A1 整合原型的收尾。新增 F-A11-9：A7 钉 `cee14e9` 与 A10 钉 `2896562e` 不一致。
++2. **已定稿**：R3 卡要求 A11 在 A10 复核与 A1 终稿之后定稿——二者现已齐备：A10 `3a86834`（参照/许可/可行性复核 + 验收前检 G1–G8）已消费；A1 `ee2b8fd` 终稿整合原型（消费 A2–A10，含 DB 模式与更多 Git 单元）已交付并被 A11 消费。故 `STATUS=FINAL`。8 项发现（F-A11-1/3/4/5/6/7/8/9）转交 A0 作为 W19 采纳前的裁决项，不再阻塞 A11 定稿。
++3. **硬冲突已定位并部分消解**：F-A11-1（A3 与 A4 对"全部收起是否跳过固定窗口"结论相反）仍为 A0/A10 终裁（A10 的 R3 交付为 preflight 非终裁）；F-A11-2（A5 零交付 → J2 无法验收）已 **RESOLVED**——A5 交付 `6bc4942`，J2 探针 PASS，且 A1 终稿 `ee2b8fd` 已把 DB 模式并入整合原型。F-A11-3 收窄：A1 终稿原型现含 8/14 Git 单元，仍缺 worktree/amend/reset/revert/conflict/patch/命令日志（~6 单元仅报告表格）。新增 F-A11-9：A7 钉 `cee14e9` 与 A10 钉 `2896562e` 不一致。
 +4. **口径分歧已做成可复算断言**：F-A11-4（折叠态宽度 96% vs 100%）与 F-A11-5（顶部 chrome 68/65/60px）暂记 `WARN`；A0 冻结口径后把清单里 `gates.divergence_tolerance_pp` 收敛即可自动转 PASS，无需改脚本。
 +
 +## 2. 交付物（6 个研究产物 + 2 个收口文件）
@@ -66,7 +66,7 @@ index 0000000..7bde6bb
 +| 命令入口快捷键（Ctrl+Shift+P vs Ctrl+K） | A0 → A6 | S1 首次落地即固化 |
 +| 800×600 去留 vs `min_inner_size(900,600)` | A0 | 决定验收尺寸集合 |
 +| J5（自动化与运行观察）原型无人派发 | A0 | 账本该项长期停在 `设计就绪=NO` |
-+| A1 整合原型终稿 | A1 | A11 定稿的唯一剩余前置（A5 `6bc4942`、A10 `3a86834` 已交付并消费） |
++| A1 整合原型终稿 | A1 | 已交付 `ee2b8fd` 并被 A11 消费 → A11 定稿条件满足 |
 +| F-A11-1（固定窗口与全部收起） | A0/A10 终裁 → A3/A4 | 两条持久化/状态机契约当前互斥（A10 的 R3 交付为 preflight） |
 +| F-A11-9（rebased 钉版不一致） | A0/A10 终裁 | 统一为 `2896562e` 前不得 W19 采用 COPY/ADAPT |
 +
@@ -221,10 +221,10 @@ index 0000000..2f0a275
 +- `未覆盖` 项（S-05、J-02、J-05）不算通过，须由 A0 明确派发或删除。
 diff --git a/logs/research/M5-W18/A11-R3-acceptance-matrix.py b/logs/research/M5-W18/A11-R3-acceptance-matrix.py
 new file mode 100644
-index 0000000..d06f167
+index 0000000..bb26bb4
 --- /dev/null
 +++ b/logs/research/M5-W18/A11-R3-acceptance-matrix.py
-@@ -0,0 +1,328 @@
+@@ -0,0 +1,333 @@
 +#!/usr/bin/env python3
 +"""A11 R3 acceptance matrix verifier.
 +
@@ -373,8 +373,13 @@ index 0000000..d06f167
 +                 "rebased pinned=" + str(manifest["reference_pins"][0].get("pinned_revision", "?"))))
 +
 +    blocking = [n for n, l in manifest["lanes"].items() if l.get("blocking")]
-+    rows.append(("lanes.blocking_flagged", "PASS" if blocking else "FAIL",
-+                 "blocking: " + ",".join(blocking) if blocking else "none flagged"))
++    status = manifest.get("status", "")
++    if status.startswith("PROVISIONAL"):
++        rows.append(("lanes.blocking_flagged", "PASS" if blocking else "FAIL",
++                     "blocking: " + ",".join(blocking) if blocking else "none flagged (PROVISIONAL requires a blocking lane)"))
++    else:
++        rows.append(("lanes.blocking_flagged", "PASS" if not blocking else "FAIL",
++                     "none flagged (final)" if not blocking else "lanes still flagged blocking: " + ",".join(blocking)))
 +    return rows
 +
 +
@@ -555,7 +560,7 @@ index 0000000..d06f167
 +    sys.exit(main())
 diff --git a/logs/research/M5-W18/A11-R3-checkpoint.md b/logs/research/M5-W18/A11-R3-checkpoint.md
 new file mode 100644
-index 0000000..c2958b2
+index 0000000..2ba87b9
 --- /dev/null
 +++ b/logs/research/M5-W18/A11-R3-checkpoint.md
 @@ -0,0 +1,112 @@
@@ -564,18 +569,18 @@ index 0000000..c2958b2
 +```text
 +LANE=A11
 +DISPATCH=M5-W18-R3-UX
-+STATUS=PROVISIONAL_PENDING_A5_A10_A1_REVISED
++STATUS=FINAL
 +WORKDIR=/home/ainfinit/.codex/worktrees/m5-w18-a11/mvp-browser-os-v3
 +BRANCH=codex/m5-w18-a11
 +BASE=200f0f1cc032eb7dbd0229ab53a711a5ff1e3d6f (origin/master)
-+HEAD=b920920
-+CONSUMED_PEERS=A1 6470fce, A2 63b0a6e, A3 0258c5b, A4 8e77799, A5 6bc4942, A6 d5eb144, A7 6e1f2ba, A8 0db481a, A9 23d12cd, A10 3a86834
-+NOT_CONSUMED=none (A5 + A10 delivered 13:47; only A1's revised consolidated prototype still pending)
++HEAD=dc8bbb1
++CONSUMED_PEERS=A1 ee2b8fd, A2 63b0a6e, A3 0258c5b, A4 8e77799, A5 6bc4942, A6 d5eb144, A7 6e1f2ba, A8 0db481a, A9 23d12cd, A10 3a86834
++NOT_CONSUMED=none (all 11 peers delivered and consumed; A11 finalizes)
 +FILES=logs/research/M5-W18/A11-R3-{integration-manifest.json,acceptance-checklist.md,progress.md,acceptance-matrix.py,run-20260908.out,checkpoint.md}
 +      logs/checkpoints/A11-M5-W18-R3-20260908.md
 +      logs/checkpoints/Lane-A11-M5-W18-R3-acceptance-20260908-1314.patch
 +VERIFY=A11-R3 ACCEPTANCE MATRIX: 56 PASS / 0 FAIL / 2 NOT_RUN / 2 GAP_CONFIRMED / 0 GAP_CLOSED / 2 WARN ; GATE: PASS
-+FINDINGS=F-A11-1..F-A11-9 (9; F-A11-2 resolved-pending-A1-consolidation, 8 open)
++FINDINGS=F-A11-1..F-A11-9 (9; F-A11-2 RESOLVED, 8 open -> escalated to A0 for W19 gating)
 +NO_PRODUCT_CODE=true
 +NO_PEER_FILE_EDIT=true
 +NO_PUSH=true
@@ -648,8 +653,8 @@ index 0000000..c2958b2
 +| ID | 级别 | 归属 |
 +|---|---|---|
 +| F-A11-1 | high | A10 终裁定 → A3/A4 对齐 → A1 原型体现（**A4 说固定窗口在"全部收起"中保留，A3 说一起收起再一键恢复，二者直接冲突**；A10 的 R3 交付是 preflight 而非终裁） |
-+| F-A11-2 | high → RESOLVED_PENDING_A1 | A5 已交付 `6bc4942`（DB 闭环原型+壳层文档，J2 探针 PASS）；剩 A1 整合原型须并入 DB 模式 |
-+| F-A11-3 | medium | A1 终稿（原型只见 hunk/stash/cherry/branch/log/graph；worktree/blame/amend/reset/revert/conflict/patch/命令日志/diff 仅存在于报告表格） |
++| F-A11-2 | high → RESOLVED | A5 交付 `6bc4942`（DB 闭环原型+壳层文档，J2 探针 PASS）；A1 终稿 `ee2b8fd` 已把 DB 模式并入整合原型（SQL/result/NULL 出现）→ J2 设计就绪 YES |
++| F-A11-3 | medium | A1 终稿 `ee2b8fd` 原型现含 status/hunk/diff/branch/log/graph/stash/cherry/merge/rebase/blame；仍缺 worktree/amend/reset/revert/conflict/patch/命令日志（~6/14 仅在报告表格，F-A11-3 收窄）→ 转 A0/W19 |
 +| F-A11-4 | medium | A0 冻结"后标题栏"口径（A2 拥有测量方法） |
 +| F-A11-5 | medium | A0 冻结顶部 chrome 定义与预算 |
 +| F-A11-6 | medium | A1 终稿补 aria/role，A10 复核 |
@@ -673,7 +678,7 @@ index 0000000..c2958b2
 +- `W19` 仍 `CLOSED`；本 lane 不开启任何编码片。
 diff --git a/logs/research/M5-W18/A11-R3-integration-manifest.json b/logs/research/M5-W18/A11-R3-integration-manifest.json
 new file mode 100644
-index 0000000..e2e5a70
+index 0000000..dc88ed9
 --- /dev/null
 +++ b/logs/research/M5-W18/A11-R3-integration-manifest.json
 @@ -0,0 +1,372 @@
@@ -688,10 +693,10 @@ index 0000000..e2e5a70
 +    "short": "200f0f1",
 +    "sha": "200f0f1cc032eb7dbd0229ab53a711a5ff1e3d6f"
 +  },
-+  "status": "PROVISIONAL_PENDING_A1_REVISED",
++  "status": "FINAL",
 +  "finalize_blockers": [
-+    "A1 published a DRAFT prototype (6470fce) and declared it will consume A2-A9 + A10 for the final revision; the consolidated final prototype is not yet published. R3 card: A11 finalizes only after A10 and A1's revised prototype. A10 is now delivered (3a86834); A1 revision still pending.",
-+    "Rebased pinned revision mismatch: A7 mapped COPY/ADAPT against cee14e9; A10's reference/license review fixed the canonical pin at 2896562e (2026-09-06). A0/A10 must reconcile before W19 adoption (F-A11-9)."
++    "RESOLVED: A1 published the consolidated final prototype (ee2b8fd) consuming A2-A10, and A10 delivered its reference/license + preflight review (3a86834). R3 card gate ('A11 finalizes only after A10 and A1's revised prototype') is now satisfied -> A11 finalizes.",
++    "Remaining gating for W19 (NOT A11 blockers, escalated to A0): F-A11-1 (collapse vs fixed-window, A10 preflight not final), F-A11-3 (Git 14-unit coverage in prototype still missing worktree/amend/reset/revert/conflict/patch/command-log), F-A11-4/5 (geometry convention freeze), F-A11-6 (no aria/role), F-A11-7 (Ctrl+Shift+P vs Ctrl+K), F-A11-8 (800x600), F-A11-9 (rebased pin cee14e9 vs 2896562e)."
 +  ],
 +  "scope_boundary": {
 +    "product_code_changed": false,
@@ -746,15 +751,15 @@ index 0000000..e2e5a70
 +  "lanes": {
 +    "A1": {
 +      "branch": "codex/m5-w18-a1",
-+      "head": "6470fce",
-+      "status": "DRAFT_DELIVERED_AWAITING_REVISION",
++      "head": "ee2b8fd",
++      "status": "DELIVERED",
 +      "deliverables": [
 +        "logs/research/M5-W18/A1-R3-browser-workbench.md",
 +        "logs/research/M5-W18/A1-R3-prototype.html",
 +        "logs/research/M5-W18/A1-R3-checkpoint.md"
 +      ],
 +      "consumed_by_a11": true,
-+      "blocking": true
++      "blocking": false
 +    },
 +    "A2": {
 +      "branch": "codex/m5-w18-a2",
@@ -909,17 +914,17 @@ index 0000000..e2e5a70
 +      "severity": "high",
 +      "title": "A5 delivered nothing, so the database daily loop (J2) has no R3 acceptance evidence",
 +      "detail": "codex/m5-w18-a5 is still at origin/master 200f0f1. No database-in-shell report, no revised DB prototype. A1's database mode is therefore unvalidated against A5's own design lane.",
-+      "impact": "RESOLVED: A5 delivered codex/m5-w18-a5 6bc4942 (A5-R3-prototype.html covers connection / sql / result / cancel / bounded grid / null-truncation at the four sizes); J2 probe re-enabled below. Remaining: A5's DB mode must still be folded into A1's consolidated prototype.",
-+      "owner": "A5; A11 re-probe PASS; A1 revision still needed to fold DB mode into the consolidated prototype",
-+      "status": "RESOLVED_PENDING_A1_CONSOLIDATION"
++      "impact": "RESOLVED: A5 delivered codex/m5-w18-a5 6bc4942 (A5-R3-prototype.html covers connection / sql / result / cancel / bounded grid / null-truncation at the four sizes). A1's final consolidated prototype (ee2b8fd) folds DB mode in (SQL/result/NULL/database tokens present). J2 is now covered at the prototype level.",
++      "owner": "A5 (delivered 6bc4942) + A1 (folded DB mode into ee2b8fd); J2 probe PASS",
++      "status": "RESOLVED"
 +    },
 +    {
 +      "id": "F-A11-3",
 +      "severity": "medium",
 +      "title": "The consolidated prototype demonstrates only part of the 14-unit Git workflow",
-+      "detail": "A1-R3-prototype.html contains hunk/stash/cherry-pick/branch/log/graph but has no occurrence of worktree, blame, amend, reset, revert, conflict, patch, command-log or diff. Those units exist only in A1-R3-browser-workbench.md 7 table. A7 requires all 14 units to be demonstrable at the four sizes plus failure/empty/conflict states.",
-+      "impact": "The user-review checklist cannot be completed for 9 of 14 Git units from the prototype alone.",
-+      "owner": "A1 (final revision); A11 re-probes",
++      "detail": "A1-R3-prototype.html (ee2b8fd) now contains status/hunk/diff/branch/log/graph/stash/cherry-pick/merge/rebase/blame, but still has no occurrence of worktree, amend, reset, revert, conflict or a redacted command-log. Those units exist only in A1-R3-browser-workbench.md 7 table. A7 requires all 14 units to be demonstrable at the four sizes plus failure/empty/conflict states.",
++      "impact": "The user-review checklist cannot be completed for ~6 of 14 Git units from the prototype alone.",
++      "owner": "A1 final delivered; gap remained -> escalated to A0/W19 scope",
 +      "status": "OPEN"
 +    },
 +    {
@@ -944,16 +949,16 @@ index 0000000..e2e5a70
 +      "id": "F-A11-6",
 +      "severity": "medium",
 +      "title": "The consolidated prototype carries no accessibility attributes",
-+      "detail": "A1-R3-prototype.html has zero occurrences of 'aria-' or 'role='. A6-R3 11 requires role=menuitem / aria-disabled / focus moves into menu / Esc returns focus, A8-R3 3 requires a 2px focus ring, and A3's prototype does implement aria/role. The A1 draft therefore cannot demonstrate the accessibility acceptance items.",
-+      "impact": "Accessibility rows of the user-review checklist are not executable against the current consolidated prototype.",
-+      "owner": "A1 (final revision), verified by A10",
++      "detail": "A1-R3-prototype.html (ee2b8fd) still has zero occurrences of 'aria-' or 'role=' (grep count = 0). A6-R3 11 requires role=menuitem / aria-disabled / focus moves into menu / Esc returns focus, A8-R3 3 requires a 2px focus ring, and A3's prototype does implement aria/role. The A1 final therefore cannot demonstrate the accessibility acceptance items.",
++      "impact": "Accessibility rows of the user-review checklist are not executable against the consolidated prototype; escalated to A0/W19.",
++      "owner": "A1 final delivered without aria; escalated to A0/A10 for W19",
 +      "status": "OPEN"
 +    },
 +    {
 +      "id": "F-A11-7",
 +      "severity": "low",
 +      "title": "Command-entry shortcut is not frozen: A1 uses Ctrl+Shift+P, A2's budget frame uses Ctrl+K",
-+      "detail": "A1-R3-browser-workbench.md 2.1/3.8 binds Ctrl+Shift+P; A2-R3-shell-density-audit.md 7.3 draws 'Ctrl+K'. One must be chosen before the palette is implemented.",
++      "detail": "A1-R3-browser-workbench.md 2.1/3.8 binds Ctrl+Shift+P (the ee2b8fd prototype shows 8 occurrences of 'Ctrl+Shift+P'); A2-R3-shell-density-audit.md 7.3 draws 'Ctrl+K'. A1 final did not converge on a single binding, so the inconsistency persists.",
 +      "impact": "Minor, but it would ship as an inconsistency in the first W19 shell slice.",
 +      "owner": "A0 ruling; A6 registers the binding",
 +      "status": "OPEN"
@@ -1026,8 +1031,8 @@ index 0000000..e2e5a70
 +    {"id": "G-12", "group": "git", "title": "history / blame", "how_to_verify": "Annotate a file and list the commits that touched it.", "evidence": "A7-R3-git-workflow-reference-map.md 2.12", "probe": {"file": "A7-R3-git-workflow-reference-map.md", "tokens": ["blame"]}, "expect": "covered", "owner": "A7"},
 +    {"id": "G-13", "group": "git", "title": "patch", "how_to_verify": "Export with format-patch, import with apply/am.", "evidence": "A7-R3-git-workflow-reference-map.md 2.13", "probe": {"file": "A7-R3-git-workflow-reference-map.md", "tokens": ["patch"]}, "expect": "covered", "owner": "A7"},
 +    {"id": "G-14", "group": "git", "title": "command log", "how_to_verify": "Review every executed git command with output, redacted.", "evidence": "A7-R3-git-workflow-reference-map.md 2.14", "probe": {"file": "A7-R3-git-workflow-reference-map.md", "tokens": ["command log"]}, "expect": "covered", "owner": "A7"},
-+    {"id": "G-15", "group": "git", "title": "All 14 units visible in the consolidated prototype (not only in the report)", "how_to_verify": "Walk the 14 units in A1-R3-prototype.html. Today worktree/blame/amend/reset/revert/conflict/patch/command-log/diff appear only in the markdown table.",
-+      "evidence": "A1-R3-prototype.html", "probe": {"file": "A1-R3-prototype.html", "tokens": ["worktree", "blame", "amend"]}, "expect": "gap", "owner": "A1", "finding": "F-A11-3"},
++    {"id": "G-15", "group": "git", "title": "All 14 units visible in the consolidated prototype (not only in the report)", "how_to_verify": "Walk the 14 units in A1-R3-prototype.html (ee2b8fd). Present: status/hunk/diff/branch/log/graph/stash/cherry-pick/merge/rebase/blame. Still only in the markdown table: worktree/amend/reset/revert/conflict/patch/command-log.",
++      "evidence": "A1-R3-prototype.html", "probe": {"file": "A1-R3-prototype.html", "tokens": ["worktree", "amend", "reset", "revert", "conflict", "patch"]}, "expect": "gap", "owner": "A1", "finding": "F-A11-3"},
 +
 +    {"id": "A-01", "group": "accessibility", "title": "Command-palette parity for every action", "how_to_verify": "Pick three menu actions and reach each from the palette.", "evidence": "A6-R3-context-menu-command-registry.md 9", "probe": {"file": "A6-R3-context-menu-command-registry.md", "tokens": ["palette"]}, "expect": "covered", "owner": "A6"},
 +    {"id": "A-02", "group": "accessibility", "title": "Menu items expose role=menuitem, aria-disabled and disabled reason", "how_to_verify": "Inspect a disabled item with a screen-reader or the accessibility tree.", "evidence": "A6-R3-context-menu-command-registry.md 11", "probe": {"file": "A6-R3-context-menu-command-registry.md", "tokens": ["aria-disabled", "menuitem"]}, "expect": "covered", "owner": "A6"},
@@ -1051,10 +1056,10 @@ index 0000000..e2e5a70
 +}
 diff --git a/logs/research/M5-W18/A11-R3-progress.md b/logs/research/M5-W18/A11-R3-progress.md
 new file mode 100644
-index 0000000..cccf6af
+index 0000000..38bc607
 --- /dev/null
 +++ b/logs/research/M5-W18/A11-R3-progress.md
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,52 @@
 +# A11 · M5-W18-R3 场景进度账本
 +
 +> `WORKBENCH_BLUEPRINT-20260908.md` §9 指定 A11 维护
@@ -1075,12 +1080,12 @@ index 0000000..cccf6af
 +| 场景 | 现有能力 | 设计就绪 | 代码完成 | 原生验收 | 用户试用 | 证据 |
 +|---|---|---|---|---|---|---|
 +| J1 打开并接续项目 | `PARTIAL` | `YES` | `NO` | `NOT_RUN` | `NOT_RUN` | 现有：页签/终端/浏览器在，但无文档身份与恢复契约；A2 实测平静态内容 90.1%/100%，最坏态 75.3% 已违 ≥85%。设计：A4 文档 DTO + A1/A3 原型 |
-+| J2 数据库日常闭环 | `PARTIAL` | `PARTIAL` | `NO` | `NOT_RUN` | `NOT_RUN` | 现有：`DatabasePanel`/`useDatabaseStore` 在，但 DbValue 三重真源未修（A0 R2B 裁定 #3、A0 R3 未重开）。设计：A5 交付 `6bc4942`（`A5-R3-prototype.html` 覆盖连接树/SQL/结果/取消/有界网格/NULL 截断，四尺寸）；仍须并入 A1 整合原型（F-A11-2 已 RESOLVED_PENDING_A1_CONSOLIDATION） |
++| J2 数据库日常闭环 | `PARTIAL` | `YES` | `NO` | `NOT_RUN` | `NOT_RUN` | 现有：`DatabasePanel`/`useDatabaseStore` 在，但 DbValue 三重真源未修（A0 R2B 裁定 #3、A0 R3 未重开）。设计：A5 `6bc4942`（`A5-R3-prototype.html` 覆盖连接树/SQL/结果/取消/有界网格/NULL 截断，四尺寸）+ A1 终稿 `ee2b8fd` 已把 DB 模式并入整合原型（SQL/result/NULL 出现）；F-A11-2 → **RESOLVED** |
 +| J3 阅读、记录、关联 | `PARTIAL` | `PARTIAL` | `NO` | `NOT_RUN` | `NOT_RUN` | 现有：图谱/笔记/文件编辑器在（M4/M5 已落）。设计：A1 知识模式原型（反链 + 局部图谱），语义细节归 A2/A3 R2B |
 +| J4 统一检索 / 命令入口 | `NO` | `PARTIAL` | `NO` | `NOT_RUN` | `NOT_RUN` | 现有：A2 实测 `grep -iE "palette|命令面板|CommandRegistry" src` 零命中。设计：A6 注册表契约 + A1 命令面板原型；检索后端属 R2B（ripgrep 优先，zvec 延后） |
 +| J5 自动化与运行观察 | `YES` | `NO` | `PARTIAL` | `NOT_RUN` | `NOT_RUN` | 现有：TaskPanel / scheduler 已落（M4）。设计：R3 卡未给 A1–A10 任何 lane 派发 J5 原型 |
 +| J6 正常退出与异常恢复 | `PARTIAL` | `YES` | `NO` | `NOT_RUN` | `NOT_RUN` | 设计：A4 原子写（tmp+rename）、`schema_version`、损坏回退默认态、15 条纯函数断言（T1–T15） |
-+| Git 完整工作流 | `PARTIAL` | `YES` | `NO` | `NOT_RUN` | `NOT_RUN` | A7 实测：14 单元中 5 ADAPT（status/diff/branches/merge，其中 merge 仅自动同步）、9 REIMPLEMENT 全部缺失；**rebased 固定修订 A7=`cee14e9` 与 A10=`2896562e` 不一致（F-A11-9）**，COPY=0 |
++| Git 完整工作流 | `PARTIAL` | `YES` | `NO` | `NOT_RUN` | `NOT_RUN` | A7 实测：14 单元中 5 ADAPT（status/diff/branches/merge，其中 merge 仅自动同步）、9 REIMPLEMENT 全部缺失；A1 终稿原型 `ee2b8fd` 现含 8 单元（status/hunk/diff/branch/log/graph/stash/cherry/merge/rebase/blame），仍 6 单元（worktree/amend/reset/revert/conflict/patch/命令日志）仅见于报告表格（F-A11-3 收窄）；**rebased 固定修订 A7=`cee14e9` 与 A10=`2896562e` 不一致（F-A11-9）**，COPY=0 |
 +| 工具窗口渐进披露 | `PARTIAL` | `YES` | `NO` | `NOT_RUN` | `NOT_RUN` | 现有：只有开/关，宽度硬编码，`SidebarResizer.vue` 未被 `App.vue` 使用（A2）。设计：A3 状态机 58 断言 + A4 持久化字段 |
 +| 右键菜单 / 命令注册表 | `NO` | `YES` | `NO` | `NOT_RUN` | `NOT_RUN` | 现有：两处手写 `ctx-menu`（`FilePanel.vue`、`ArtifactPanel.vue`），无注册表面。设计：A6 契约（7 作用域 + 安全分级 + 审计类） |
 +| 视觉密度与主题 | `PARTIAL` | `YES` | `NO` | `NOT_RUN` | `NOT_RUN` | 现有：无间距/字号标尺（A8 §2）。设计：A8 令牌 + 4 尺寸标注帧，折叠态 91.6%–94.5% 高 / 100% 宽 |
@@ -1103,16 +1108,20 @@ index 0000000..cccf6af
 +| 2026-09-08 13:47 | J2 | 设计就绪 `NO → PARTIAL`（A5 交付 DB 闭环原型与壳层文档） | `A5-R3-prototype.html` 探针 PASS；F-A11-2 → RESOLVED_PENDING_A1_CONSOLIDATION |
 +| 2026-09-08 13:47 | Git 完整工作流 | rebased 固定修订 A7=`cee14e9` 与 A10=`2896562e` 冲突 | F-A11-9（A11 采纳 A10 权威钉版） |
 +| 2026-09-08 13:47 | 状态 | `PROVISIONAL_PENDING_A5_A10_A1_REVISED → PROVISIONAL_PENDING_A1_REVISED` | 仅 A1 草案终稿待出 |
++| 2026-09-08 14:10 | A1 | `DRAFT_DELIVERED_AWAITING_REVISION → DELIVERED`（`ee2b8fd`，整合原型消费 A2-A10） | `git show codex/m5-w18-a1` |
++| 2026-09-08 14:10 | J2 | 设计就绪 `PARTIAL → YES`；DB 模式已并入 A1 整合原型 | F-A11-2 → **RESOLVED** |
++| 2026-09-08 14:10 | Git 完整工作流 | A1 原型新增 rebase/blame/merge/stash/cherry/diff；仍缺 worktree/amend/reset/revert/conflict/patch/命令日志 | F-A11-3 收窄（~6/14 仅在报告） |
++| 2026-09-08 14:10 | 状态 | `PROVISIONAL_PENDING_A1_REVISED → FINAL`（A10 复核 + A1 终稿均到，R3 卡定稿条件满足） | 8 项发现转交 A0 裁决，不阻塞 A11 定稿 |
 diff --git a/logs/research/M5-W18/A11-R3-run-20260908.out b/logs/research/M5-W18/A11-R3-run-20260908.out
 new file mode 100644
-index 0000000..255f519
+index 0000000..5bf3f1e
 --- /dev/null
 +++ b/logs/research/M5-W18/A11-R3-run-20260908.out
-@@ -0,0 +1,180 @@
+@@ -0,0 +1,179 @@
 +A11-R3 acceptance matrix
 +  manifest      : logs/research/M5-W18/A11-R3-integration-manifest.json
 +  base          : 200f0f1 (origin/master)
-+  status        : PROVISIONAL_PENDING_A1_REVISED
++  status        : FINAL
 +  rebased pin   : 2896562e (REIMPLEMENT_FROM_BEHAVIOR)
 +
 +[1] structural checks
@@ -1123,7 +1132,7 @@ index 0000000..255f519
 +  PASS checklist.expect_valid           covered/gap/deferred only
 +  PASS findings.references_resolve      9 findings, 2 referenced
 +  PASS reference_pins.pinned            rebased pinned=2896562e
-+  PASS lanes.blocking_flagged           blocking: A1
++  PASS lanes.blocking_flagged           none flagged (final)
 +
 +[2] checklist probes (60 items)
 +  PASS           S-01  sizes          tokens 1920×1080
@@ -1214,7 +1223,7 @@ index 0000000..255f519
 +                 evidence: git:codex/m5-w18-a7:logs/research/M5-W18/A7-R3-git-workflow-reference-map.md
 +  PASS           G-14  git            tokens command log
 +                 evidence: git:codex/m5-w18-a7:logs/research/M5-W18/A7-R3-git-workflow-reference-map.md
-+  GAP_CONFIRMED  G-15  git            absent worktree|blame|amend
++  GAP_CONFIRMED  G-15  git            absent worktree|amend|reset|revert|conflict|patch
 +                 evidence: git:codex/m5-w18-a1:logs/research/M5-W18/A1-R3-prototype.html
 +  PASS           A-01  accessibility  tokens palette
 +                 evidence: git:codex/m5-w18-a6:logs/research/M5-W18/A6-R3-context-menu-command-registry.md
@@ -1277,15 +1286,14 @@ index 0000000..255f519
 +
 +  findings recorded: 9 (open: 8)
 +    F-A11-1 [high  ] A4 and A3 contradict each other on whether collapse-all skips pinned tool windows -> A10 ruling, then A3 + A4 reconcile, A1 prototype shows the chosen behaviour
-+    F-A11-2 [high  ] A5 delivered nothing, so the database daily loop (J2) has no R3 acceptance evidence -> A5; A11 re-probe PASS; A1 revision still needed to fold DB mode into the consolidated prototype
-+    F-A11-3 [medium] The consolidated prototype demonstrates only part of the 14-unit Git workflow -> A1 (final revision); A11 re-probes
++    F-A11-2 [high  ] A5 delivered nothing, so the database daily loop (J2) has no R3 acceptance evidence -> A5 (delivered 6bc4942) + A1 (folded DB mode into ee2b8fd); J2 probe PASS
++    F-A11-3 [medium] The consolidated prototype demonstrates only part of the 14-unit Git workflow -> A1 final delivered; gap remained -> escalated to A0/W19 scope
 +    F-A11-4 [medium] Collapsed-mode geometry is reported under three different measurement conventions -> A0 to freeze one post-titlebar definition; A2 owns the measuring method
 +    F-A11-5 [medium] Top-chrome height budget is quoted three ways (68 / 65 / 60 px) -> A0, using A2's measurement method
-+    F-A11-6 [medium] The consolidated prototype carries no accessibility attributes -> A1 (final revision), verified by A10
++    F-A11-6 [medium] The consolidated prototype carries no accessibility attributes -> A1 final delivered without aria; escalated to A0/A10 for W19
 +    F-A11-7 [low   ] Command-entry shortcut is not frozen: A1 uses Ctrl+Shift+P, A2's budget frame uses Ctrl+K -> A0 ruling; A6 registers the binding
 +    F-A11-8 [low   ] 800x600 is in the workbench blueprint but unreachable in the current product -> A0
 +    F-A11-9 [medium] Rebased pinned revision disagrees between A7 (cee14e9) and A10 (2896562e) -> A0 / A10 (final reconciliation); A11 manifest now adopts A10's authoritative pin
 +
 +A11-R3 ACCEPTANCE MATRIX: 56 PASS / 0 FAIL / 2 NOT_RUN / 2 GAP_CONFIRMED / 0 GAP_CLOSED / 2 WARN
 +GATE: PASS
-+NOTE: PROVISIONAL - A11 may finalize only after A10 review and A1's revised prototype.
