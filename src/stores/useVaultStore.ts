@@ -42,6 +42,16 @@ export const useVaultStore = defineStore('vault', () => {
     } catch { if (generation === request) error.value = '无法打开 Vault，请检查目录位置和读取权限。'; }
     finally { if (generation === request) busy.value = false; }
   }
+  async function pickDirectory() {
+    error.value = '';
+    try {
+      const picked = await bridge.vaultPickDirectory(path.value);
+      if (picked) {
+        path.value = picked;
+        await open();
+      }
+    } catch { error.value = '无法打开目录选择器，请检查客户端权限。'; }
+  }
   function select(path: string, row = 1) { selected.value = path; line.value = row; anchor.value = ''; choices.value = []; error.value = ''; if (row > 1) sourceMode.value = true; }
   function follow(target: string) {
     const matches = resolveNote(target, selected.value, notes.value.map(n => n.path));
@@ -49,5 +59,5 @@ export const useVaultStore = defineStore('vault', () => {
     else if (matches.length > 1) choices.value = matches;
     else error.value = '链接目标不存在或不在本 Vault 内。';
   }
-  return { path, root, notes, selected, query, line, anchor, busy, error, warning, choices, sourceMode, current, results, edges, backlinks, open, select, follow };
+  return { path, root, notes, selected, query, line, anchor, busy, error, warning, choices, sourceMode, current, results, edges, backlinks, open, pickDirectory, select, follow };
 });

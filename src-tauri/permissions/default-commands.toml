@@ -136,6 +136,6 @@ commands.allow = [
     "plugin_keys_add",
     "plugin_keys_list",
     "plugin_keys_remove",
-    "db_list_connections", "db_cancel", "vault_open", "grid_read_replies", "archive_replies", "git_log", "git_commit_diff",
+    "db_list_connections", "db_cancel", "vault_open", "vault_pick_directory", "grid_read_replies", "archive_replies", "git_log", "git_commit_diff",
     "list_artifact_images"
 ]

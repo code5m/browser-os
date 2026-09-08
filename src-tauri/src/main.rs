@@ -1146,6 +1146,7 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         // 浏览器页签/宫格子 webview 统一由 browser-tabs 插件创建与定位
         .plugin(tauri_plugin_browser_tabs::init())
         // M1-4：单实例——应用已运行时再次 xdg-open（第二实例）把 argv 中的
@@ -1515,6 +1516,7 @@ fn main() {
             bridge::db_list_connections,
             bridge::db_cancel,
             bridge::vault_open,
+            bridge::vault_pick_directory,
             bridge::grid_read_replies,
             bridge::archive_replies,
             bridge::git_log,
