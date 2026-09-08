@@ -7,6 +7,13 @@ This directory is the canonical V3 main working copy. Agents should use this fil
 - Role: final integration, verification, commits, and pushes
 - Do not confuse this directory with `/home/ainfinit/.codex/worktrees/*/mvp-browser-os-v3`
 
+### Current Dispatch
+
+- NEXT: `M5-W18-R2B`; W19: `CLOSED`.
+- Read `PARALLEL_COMMAND_BOARD.md` Current Dispatch Entry, then `M5-W18-R2B-TASKS-20260908.md`.
+- Product direction: `WORKBENCH_BLUEPRINT-20260908.md`; substitute-controller/model routing: `A0-HANDOFF-LOW-COST-20260908.md`.
+- Current entries override historical NEXT/dispatch statements elsewhere. A new prompt declares LANE once; the current card derives its exact worktree and branch. An agent may enter its already-provisioned matching worktree after verification.
+
 ### Active W18 lane exception
 
 The only current exception is the controller-provisioned M5-W18 lane set:
@@ -15,7 +22,7 @@ The only current exception is the controller-provisioned M5-W18 lane set:
 - Branch pattern: `codex/m5-w18-aN`
 - Valid lane ids: `N=1..11`, with path, branch, and assigned `Lane AN` required to match exactly.
 - Role: W18-R isolated research/design only. A lane may commit its own research reports but must not edit product code or push.
-- Source of truth: the latest `M5-W18-R Research and Replication Blueprint Dispatch` in `PARALLEL_COMMAND_BOARD.md`.
+- Source of truth: the Current Dispatch Entry in `PARALLEL_COMMAND_BOARD.md` and its R2B task-card link. Original R2 evidence corrections remain required.
 
 This exception does not make arbitrary `.codex/worktrees/*` valid. Any other worktree remains a hard stop unless the user or A0 explicitly assigns it.
 

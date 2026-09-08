@@ -1,11 +1,19 @@
 # Parallel Command Board
 
-> Updated: 2026-09-08 09:05 CST
-> Controller: main integration agent
+> Updated: 2026-09-08 10:31 CST
+> Controller: A0; external lanes: A1-A11
 > Canonical directory: `/home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3`
-> Current mainline: `master` at `78d2cfb` — W17/BUG-HUNT fixes are pushed and W18 has been reset to research-first delivery.
-> Current mainline chain: `61cff56` (BUG-HUNT + scheduler safety) -> `e3b6b40` (ACL rebuild) -> `8e67ab0` (debug-only IPC origin isolation) -> `12a09b8` (W18 lane isolation) -> `78d2cfb` (research-first reset). Runtime authority remains LOCKED. A0 is the controller and the only lane that integrates or pushes; the external agents are A1-A11.
-> Current NEXT: `M5-W18-R2` evidence closure. First-round reports are drafts, not implementation authorization. Product-code implementation stays frozen until every R2 exit gate passes and A0 opens W19 in writing.
+> Evidence baseline: `master` at `d6127c4`; obtain the current HEAD with git before starting. This dispatch changes documentation only.
+> Baseline chain: `61cff56` (BUG-HUNT + scheduler safety) -> `e3b6b40` (ACL rebuild) -> `8e67ab0` (debug-only IPC origin isolation) -> `12a09b8` (W18 lane isolation) -> `78d2cfb` (research-first reset) -> `d6127c4` (R2 evidence dispatch). Runtime authority remains LOCKED. A0 is the controller and the only lane that integrates or pushes; the external agents are A1-A11.
+> Current NEXT: `M5-W18-R2B`, the second workbench research/design package supplementing R2. `W19=CLOSED`. Only an explicit A0 slice-opening record authorizes product code.
+
+## Current Dispatch Entry
+
+Read [M5-W18-R2B task cards](M5-W18-R2B-TASKS-20260908.md), [workbench blueprint](WORKBENCH_BLUEPRINT-20260908.md), [A0 low-cost handoff](A0-HANDOFF-LOW-COST-20260908.md), and [current evidence checkpoint](logs/checkpoints/A0-M5-W18-R2B-dispatch-20260908.md).
+
+This entry supersedes conflicting historical NEXT, directory, model, and lane instructions below. R2 corrections remain required. A1 owns the workbench-shell design; A4/A9 finish outstanding R2 work; A10 performs independent review; A11 prepares the integration manifest and short A0 brief. A7/A8 reconcile native-binding and benchmark claims. All lanes retain isolated research-only scopes.
+
+Runtime authority remains locked. Reports and synthetic research assets can advance immediately; the candidate S0-S5 cards are not coding authorization. Preserve existing research commits and amend findings explicitly. A0 alone integrates and pushes.
 
 This file is the coordination board for 11 parallel agents plus A0 integration. Do not rely on chat history as the source of truth. Read `WORKSPACE_IDENTITY.md`, then read this file before making changes.
 
@@ -14,14 +22,14 @@ This file is the coordination board for 11 parallel agents plus A0 integration. 
 Use this when assigning a Trae/WorkBuddy agent:
 
 ```text
-继续 Lane AX：读取主仓库 WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，切到 `/home/ainfinit/.codex/worktrees/m5-w18-aN/mvp-browser-os-v3` 的 `codex/m5-w18-aN`（N=lane 数字），rebase `origin/master`，按最新 M5-W18-R2 Evidence Closure Dispatch 补齐证据并提交到自己的 lane 分支；只改自己的研究报告/checkpoint，不写产品代码，不 push。
+LANE=A1；读取 /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3/WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按当前派发入口推导本lane目录/分支并进入，完成自己的整包任务；沿用已有成果，按卡自检并提交本lane，不改范围外文件、不push。
 ```
 
-Replace only `AX` with the lane id. The lane-specific work is defined below; do not paste long prompts unless the lane reports ambiguity.
+Replace only the first `A1` with the assigned lane id. Lowercase that one identity to derive both directory and branch using the current task card. Existing lane conversations may resume with "continue"; new conversations must declare the lane.
 
 ## Batch Implementation Rule
 
-To save A0 integration time and avoid tiny partial drops, every coding lane must work in **batch mode**:
+Historical coding-wave rules follow. For the active research wave, the R2B task card overrides pull/patch/scope instructions; do not run a pull on a lane branch with local research commits. Once a coding slice is explicitly opened, deliver a complete tested package:
 
 1. Start with `git fetch origin` and `git pull --ff-only` when possible.
 2. If local changes already exist, inspect them first; keep your own lane changes, do not overwrite another lane.
@@ -41,10 +49,9 @@ git diff --binary > logs/checkpoints/Lane-AX-<task>-<YYYYMMDD-HHMM>.patch
 
 ## Startup Gate
 
-Every agent must run:
+First read canonical identity/dispatch without editing it. Then enter the existing worktree derived from the single assigned LANE in the R2B card. In that directory run:
 
 ```bash
-cd /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3
 cat .workspace-identity
 pwd
 git status --short --branch
@@ -62,7 +69,7 @@ Hard stop if:
 
 If an instruction says `You are Lane A3` but later says `follow Lane A1`, treat it as a prompt typo. Do not blend scopes. Stop and report the conflict unless the controller has already corrected the lane in `PARALLEL_COMMAND_BOARD.md`.
 
-If the only blocker is an unfinished predecessor lane, do not edit product code. Produce a read-only assist note under `logs/assist/` with findings, risks, likely files, and exact unblock condition.
+If the only blocker is an unfinished predecessor, complete independent research in the lane-owned scope, then record the precise dependency there. Do not write shared assist files or product code outside the current card.
 
 ## Merge Rule
 
@@ -1349,13 +1356,13 @@ Replace only `AX` with `A1` through `A11`.
 
 ## M5-W18-R Research and Replication Blueprint Dispatch
 
-> Reset by A0 after the user required research before implementation. This is the only active dispatch. A0 is the controller; A1-A11 are research lanes. Earlier W18 implementation assignments are superseded and must not be executed.
+> Historical W18-R foundation, extended by R2 and the current R2B task cards. A0 is the controller; A1-A11 are research lanes. Earlier W18 implementation assignments remain superseded.
 
 ### Pinned reference inputs
 
 - Obsidian behavior/configuration reference: `/home/ainfinit/Documents/Knowledge-Base/secondBrain/.obsidian` (`graph.json`, `app.json`, `core-plugins.json`) and Markdown content under the same vault. Borrow vault, wikilink, backlink/outgoing-link, orphan, filter, and local-graph interaction semantics; Obsidian itself is not an open-source code dependency.
 - dbx implementation reference: `/home/ainfinit/Documents/极智简单/V3/research/dbx-src`; local unversioned snapshot with `Cargo.lock` SHA-256 `c0a7be12c05d8dffe867f1a70d4b82e881dec2da3bb622b5d3e3410c3d10e3a7`, Apache-2.0. Existing analysis lives in `/home/ainfinit/Documents/极智简单/V3/dbx-study/`.
-- zvec-grep implementation reference: `/home/ainfinit/Documents/极智简单/V3/research/zvec-grep-src`, upstream `zvec-ai/zvec-grep` pinned at `52653951b24617762f4ab0c71c34d594e5001617` (Apache-2.0). Borrow workspace scoping, ignore rules, incremental freshness, exact/BM25/vector route separation, compact results, and explicit remote-embedding authorization. Do not start a daemon, expose MCP, download a model, send content remotely, or add the dependency in this wave without A0 approval after A3's adoption verdict.
+- zvec-grep implementation reference: `/home/ainfinit/Documents/极智简单/V3/research/zvec-grep-src`, upstream `zvec-ai/zvec-grep` pinned at `52653951b24617762f4ab0c71c34d594e5001617` (Apache-2.0). Borrow workspace scoping, ignore rules, incremental freshness, exact/BM25/vector route separation, compact results, and explicit remote-embedding authorization. A0 decides adoption after A7/A8/A9 evidence and A10/A11 review; A3 owns UX, not engine authority. R2's explicit A7/A8 sandbox exceptions remain narrow research exceptions.
 
 Reference code is evidence, not yet the product contract. W18-R exists to make later reuse mechanical and safe: identify exact source modules/functions/tests that can be transplanted, document required adaptations, and reject incompatible pieces before writing product code.
 
@@ -1431,14 +1438,14 @@ NEXT=<missing research input or proposed W19 slice>
 ### One-line prompt for all 11 agents
 
 ```text
-继续 Lane AX：先读取主仓库 WORKSPACE_IDENTITY.md 与 PARALLEL_COMMAND_BOARD.md，再切到板上指定的独立 worktree并 rebase origin/master；按最新 “M5-W18-R Research and Replication Blueprint Dispatch” 做彻底研究，只写 logs/research/M5-W18/ 下自己的报告和 checkpoint，不改任何产品代码，不 push。
+LANE=A1；读取 /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3/WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按当前派发入口推导本lane目录/分支并进入，完成自己的整包任务；沿用已有成果，按卡自检并提交本lane，不改范围外文件、不push。
 ```
 
-Replace only `AX` with `A1` through `A11`. The lane number also determines `aN` in the worktree and branch path.
+Replace only the declared lane value. Directory/branch derivation is specified once in the active R2B card.
 
 ## M5-W18-R2 Evidence Closure Dispatch
 
-> Added by A0 after reviewing all eleven first-round branches. This is the only active dispatch. R1 reports are preserved as drafts, but their conclusions are not implementation authority. Read `logs/checkpoints/A0-M5-W18-R1-audit-20260908.md` before continuing.
+> Added after reviewing all eleven first-round branches. R2 evidence obligations remain required, supplemented by the current R2B cards. R1/R2 reports are inputs awaiting review, not implementation authority. Read `logs/checkpoints/A0-M5-W18-R1-audit-20260908.md` and the current R2B checkpoint.
 
 ### R2 common evidence contract
 
@@ -1478,7 +1485,7 @@ Replace only `AX` with `A1` through `A11`. The lane number also determines `aN` 
 ### R2 one-line prompt
 
 ```text
-继续 Lane AX：读取主仓库 WORKSPACE_IDENTITY.md、PARALLEL_COMMAND_BOARD.md 和 A0-M5-W18-R1-audit-20260908.md，切到 `/home/ainfinit/.codex/worktrees/m5-w18-aN/mvp-browser-os-v3` 的 `codex/m5-w18-aN`（N=lane 数字），rebase `origin/master`，按最新 M5-W18-R2 Evidence Closure Dispatch 修正并补齐自己的研究报告，提交到本 lane 分支；不改产品代码，不 push。
+LANE=A1；读取 /home/ainfinit/Documents/极智简单/V3/mvp-browser-os-v3/WORKSPACE_IDENTITY.md 和 PARALLEL_COMMAND_BOARD.md，按当前派发入口推导本lane目录/分支并进入，完成自己的整包任务；沿用已有成果，按卡自检并提交本lane，不改范围外文件、不push。
 ```
 
-Replace only `AX` and `N` with the same lane number from A1 through A11.
+Replace only the first declared `A1` with the assigned lane. Do not manually edit a second path or branch placeholder.
