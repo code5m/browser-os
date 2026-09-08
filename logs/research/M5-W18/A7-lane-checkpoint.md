@@ -4,7 +4,7 @@
 LANE=A7
 STATUS=PASS
 BASE=78d2cfb8e90d323d35df920e9807d32189f867cd
-HEAD=<lane research commit sha — see below after commit>
+HEAD=bd8bd52edc02dd869e595639e4316e602a9a43e0
 REFERENCE_EVIDENCE=/home/ainfinit/Documents/极智简单/V3/research/zvec-grep-src (upstream zvec-ai/zvec-grep @ 52653951b24617762f4ab0c71c34d594e5001617; snapshot HEAD 5265395, version 0.2.1, Apache-2.0); product gap verified via read-only grep of mvp-browser-os-v3 src/ + src-tauri/ + scripts/.
 FILES=logs/research/M5-W18/A7-zvec-grep-ingestion-index-architecture.md, logs/research/M5-W18/A7-lane-checkpoint.md
 SOURCE_MAP=scanner/index.ts (scanRootPaths/scanFilePath/DEFAULT_IGNORE_RULES/MAX_GITIGNORE_CACHE_ENTRIES), authorization/types.ts + store.ts/manager.ts (RemoteEmbeddingWorkspaceGrant/HMAC/AsyncLocalStorage guard), extraction/* (extractForIndexing/CodeExtractor/DEFAULT_CODE_CHUNK_CHARS=3600), storage/layout.ts (files.zvec/index.zvec) + zvec.ts (ZVEC_UPSERT_BATCH_SIZE=1024/ZVEC_MAX_QUERY_TOPK=100000), pipeline/indexing/index.ts + input-budget.ts (DEFAULT_CHARS_PER_100_TOKENS=185/CHUNK_OVERLAP_PERCENT=15), daemon/change-set.ts (maxChangedPaths=1000/forceFullReconcile), daemon/watch-manager.ts (debounce 750/maxWait 5000/reconcile 60min/resume 90s), daemon/backend.ts (rebuild gate), engine/service/zvec-grep.ts (RRF_K=60), pipeline/search/index.ts (DEFAULT_LIMIT=7/RRF_K=60/RECALL_MAX_DEPTH=2000).
