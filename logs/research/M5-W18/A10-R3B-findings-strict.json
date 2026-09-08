@@ -1,8 +1,8 @@
 {
   "tool": "A10-R3B-closure-audit",
-  "strict_sizes": false,
+  "strict_sizes": true,
   "base": "/home/ainfinit/.codex/worktrees/m5-w18-a10/mvp-browser-os-v3/logs/research/M5-W18",
-  "generated_at": "2026-09-08T17:36:56",
+  "generated_at": "2026-09-08T17:37:09",
   "gate": "FAIL",
   "probes": {
     "total": 9,
@@ -10,7 +10,7 @@
     "failed": 9
   },
   "findings": {
-    "high": 17,
+    "high": 21,
     "medium": 18,
     "low_info": 0,
     "items": [
@@ -68,6 +68,34 @@
         "probe": "P3",
         "message": "A1 has no size-evidence file",
         "evidence": "A1-R3B-prototype.html",
+        "line": null
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P3",
+        "message": "A2 evidence does not cover mandated acceptance size(s) (all six sizes)",
+        "evidence": "1200x800  [group: A2-R3-shell-density-audit.md, A2-R3-measure.py, A2-R3-run-20260908.out]",
+        "line": null
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P3",
+        "message": "A3 evidence does not cover mandated acceptance size(s) (all six sizes)",
+        "evidence": "1200x800, 900x600  [group: A3-R3-toolwindow-prototype.html, A3-R3-toolwindow-disclosure-20260908.md]",
+        "line": null
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P3",
+        "message": "A8 evidence does not cover mandated acceptance size(s) (all six sizes)",
+        "evidence": "1200x800, 900x600  [group: A8-R3-visual-density-frames.html, A8-R3-visual-density-design.md]",
+        "line": null
+      },
+      {
+        "severity": "HIGH",
+        "probe": "P3",
+        "message": "A5 evidence does not cover mandated acceptance size(s) (all six sizes)",
+        "evidence": "1200x800, 900x600  [group: A5-R3-prototype.html, A5-R3-database-shell.md]",
         "line": null
       },
       {
@@ -275,7 +303,7 @@
     {
       "probe": "P3",
       "status": "FAIL",
-      "count": 15
+      "count": 19
     },
     {
       "probe": "P4",
