@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // A5 · M5-W18-R3 数据库工作台（浏览器优先外壳内）合成状态/布局模型
 // ---------------------------------------------------------------------------
-// 派发：M5-W18-R3-UX（`M5-W18-R3-UX-TASKS-20260908.md` §A5），MODE=RESEARCH_AND_PROTOTYPE，W19=CLOSED。
+// 派发：M5-W18-R3B（`M5-W18-R3B-CORRECTION-TASKS-20260908.md` §A5），MODE=RESEARCH_AND_PROTOTYPE，W19=CLOSED。
+// 本波为 R3B 收口：对齐 A0 裁决的规范几何（top chrome 60 / status 24 / activity strip 28）；
+// 采纳六个验收尺寸（含 900×600 产品最小窗、1200×800）；Collapse All 含固定窗口、Restore 还原可见/尺寸/固定态（A3/A4 裁决）。
 // 性质：纯研究资产。不 import 任何 src/ 代码、不发 IPC、不读用户数据、不改产品代码。
 //
 // 本文件是 A5-R3 的**规范源（normative source）**：
@@ -30,8 +32,8 @@ export const CHROME = {
   tabStrip: 28,
   /** 行 2：导航 / 地址 / 全局搜索行。 */
   navRow: 32,
-  /** 底部状态栏（含各边工具窗口开关，收起态下是「恢复」入口之一）。 */
-  statusBar: 22,
+  /** 底部状态栏（含各边工具窗口开关，收起态下是「恢复」入口之一）。A0 裁决：24px。 */
+  statusBar: 24,
   /** 左侧工具图标细条（收起态仍在，作为唯一常驻工具入口）。 */
   railLeft: 28,
   /** 数据库文档内部的 SQL 子标签条：仅当 SQL 文档数 ≥2 时占位。 */
@@ -53,12 +55,14 @@ export const TOOLS = {
 /** 层级视图（连接/库表树、属性树）展开上限。 */
 export const TREE_LIMITS = { maxVisibleNodes: 250, maxDepth: 6 };
 
-/** 验收目标尺寸（任务卡 §Global acceptance constraints）。 */
+/** 验收目标尺寸（R3B A0 裁决：1920×1080 / 1440×900 / 1366×768 / 1200×800 / 1024×720 / 900×600；800×600 低于产品最小窗，弃用）。 */
 export const TARGET_SIZES = [
   { label: "1920×1080", width: 1920, height: 1080 },
   { label: "1440×900", width: 1440, height: 900 },
   { label: "1366×768", width: 1366, height: 768 },
+  { label: "1200×800", width: 1200, height: 800 },
   { label: "1024×720", width: 1024, height: 720 },
+  { label: "900×600", width: 900, height: 600 },
 ];
 
 /** 预算红线：仅 1440×900 收起态被任务卡显式约束，其余尺寸按同一红线自查。 */
@@ -265,6 +269,9 @@ export function computeLayout(size, shell) {
     contentWidthPct: pct(contentWidth, size.width),
     activeHeightPct: pct(activeHeight, postTitlebarHeight),
     activeWidthPct: pct(activeWidth, size.width),
+    // A0 规范几何：collapsed active height = (H-60-24)/H；active width = (W-28)/W。
+    canonicalHeightPct: pct(contentHeight, size.height),
+    canonicalWidthPct: pct(contentWidth, size.width),
   };
 }
 
@@ -589,20 +596,24 @@ group("G1 顶部 chrome（≤2 行 / ≤80px）");
   check("行 1（标签条）与行 2（导航行）都是紧凑行 ≤32px", CHROME.tabStrip <= 32 && CHROME.navRow <= 32);
 }
 
-// --- G2 收起态视口预算（四尺寸） ---
-group("G2 收起态活动内容预算（≥85% 后标题栏高度 / ≥92% 宽度）");
+// --- G2 收起态视口预算（六尺寸，对齐 A0 规范几何公式） ---
+// 规范几何（A0 裁决）：collapsed active height = (innerH - 60 - 24)/innerH；active width = (innerW - 28)/innerW。
+// 本模型 computeLayout 的 canonicalHeightPct/canonicalWidthPct 即该规范值（statusBar=24 时 contentHeight = H-84）。
+group("G2 收起态活动面预算（≥85% 高 / ≥92% 宽，规范公式，六尺寸）");
 for (const size of TARGET_SIZES) {
   const shell = collapseAll(createShell());
   shell.docCount = 2; // 最不利：多文档，子标签条占位
   const l = computeLayout(size, shell);
   check(
-    `${size.label} 收起态 严格活动面高度 ${l.activeHeight}px = ${l.activeHeightPct}% ≥ 85%`,
-    l.activeHeightPct >= BUDGET.minHeightPct,
+    `${size.label} 收起态 活动面高 ${l.contentHeight}px = ${l.canonicalHeightPct}% ≥ 85%（规范 (H-60-24)/H）`,
+    l.canonicalHeightPct >= BUDGET.minHeightPct,
   );
   check(
-    `${size.label} 收起态 严格活动面宽度 ${l.activeWidth}px = ${l.activeWidthPct}% ≥ 92%`,
-    l.activeWidthPct >= BUDGET.minWidthPct,
+    `${size.label} 收起态 活动面宽 ${l.contentWidth}px = ${l.canonicalWidthPct}% ≥ 92%（规范 (W-28)/W）`,
+    l.canonicalWidthPct >= BUDGET.minWidthPct,
   );
+  // 严格内部量测（再扣文档内子标签条 + 控制台状态行）仅作信息打印，不计入红线门槛。
+  console.log("       · 严格活动面（扣文档内 chrome）:" + l.activeHeight + "px = " + l.activeHeightPct + "%");
 }
 
 // --- G3 专注态归还全视口 ---
@@ -806,7 +817,7 @@ group("G8 原型同步（A5-R3-prototype.html 与本规范源一致）");
         new RegExp(`def:\\s*${TOOLS.bottom.def}`).test(html),
     );
     check("树上限常量一致", new RegExp(`maxVisibleNodes\\s*:\\s*${TREE_LIMITS.maxVisibleNodes}`).test(html) && new RegExp(`maxDepth\\s*:\\s*${TREE_LIMITS.maxDepth}`).test(html));
-    check("四个目标尺寸全部提供预设", TARGET_SIZES.every((s) => html.includes(s.label)));
+    check("六个目标尺寸全部提供预设", TARGET_SIZES.every((s) => html.includes(s.label)));
 
     const reg = buildDbCommandRegistry();
     const ids = reg.flatMap((s) => s.actions.map((a) => a.id));
@@ -821,7 +832,55 @@ group("G8 原型同步（A5-R3-prototype.html 与本规范源一致）");
     check(`布局动作齐备（${modes.join(" / ")}）`, modes.every((s) => html.includes(s)));
     check("原型内含实测视口占比读数（DOM 量测）", /offsetWidth/.test(html) && /offsetHeight/.test(html) && /85/.test(html) && /92/.test(html));
     check("原型不含 tauri invoke / fetch / localStorage 等运行时通道", !/invoke\(|__TAURI__|fetch\(|localStorage/.test(html));
+    // R3B-02：原型 UI 不得出现捐赠方品牌字体/名称（报告可引用，原型文本不可见）。
+    check("原型不含捐赠方品牌字体/名称（JetBrains/DataGrip/IntelliJ/Rebased）", !/(JetBrains|DataGrip|IntelliJ|Rebased)/.test(html));
   }
+}
+
+// --- G9 R3B 收起/恢复语义（对齐 A0/A3/A4 裁决） ---
+group("G9 R3B 收起全部含固定窗口 / 恢复还原可见+尺寸+固定态 / 快照确定性");
+{
+  // A0 裁决：Collapse All hides every tool window, including pinned；Restore Layout restores visibility, sizes AND pin states。
+  let s = createShell();
+  pinTool(s, "left");
+  pinTool(s, "bottom");
+  resizeTool(s, "left", 360);
+  const pre = JSON.stringify({ view: s.view, edges: s.edges });
+  collapseAll(s);
+  check("收起全部后，已固定的左边窗口也被隐藏", s.edges.left.mode === "hidden" && s.edges.left.pinned.length === 1);
+  check("收起全部后，已固定的底边窗口也被隐藏", s.edges.bottom.mode === "hidden" && s.edges.bottom.pinned.length === 1);
+  check("收起态所有边均 hidden（含已固定窗口）", Object.values(s.edges).every((e) => e.mode === "hidden"));
+  restorePreviousLayout(s);
+  check("恢复后左边回到 docked 且自定义尺寸 360 还原", s.edges.left.mode === "docked" && s.edges.left.size === 360);
+  check("恢复后左边固定态还原（pinned 含 1 项）", s.edges.left.pinned.length === 1);
+  check("恢复后底边固定态还原（pinned 含 1 项）", s.edges.bottom.pinned.length === 1);
+  check("恢复后布局逐字段等于收起前快照", JSON.stringify({ view: s.view, edges: s.edges }) === pre);
+  check("快照消费后清空（不可重复恢复）", s.previousLayout === null);
+
+  // A4 裁决：快照只含 view + edges，不持久化瞬时字段（focusReturnAction/expandedFrom/hover/overlay）。
+  let s2 = createShell();
+  s2.focusReturnAction = { id: "x" };
+  s2.expandedFrom = { edge: "bottom", size: 240 };
+  collapseAll(s2);
+  check("快照仅含 view/edges（不含 focusReturnAction/expandedFrom 等瞬时字段）", JSON.stringify(Object.keys(s2.previousLayout).sort()) === JSON.stringify(["edges", "view"]));
+
+  // 确定性往返：collapse -> restore -> collapse -> restore 结果一致（A4 要求确定性）。
+  let s3 = createShell();
+  pinTool(s3, "right");
+  resizeTool(s3, "right", 400);
+  const a = JSON.stringify(s3.edges);
+  collapseAll(s3);
+  restorePreviousLayout(s3);
+  collapseAll(s3);
+  restorePreviousLayout(s3);
+  check("collapse/restore 往返确定性（两次后布局一致）", JSON.stringify(s3.edges) === a);
+
+  // 专注模式退出后活动文档/结果面回到正常停靠（focus mode restores the active editor/result surface）。
+  let s4 = createShell();
+  enterFocus(s4);
+  check("专注态无任何工具 chrome（activity strip 以外）", toolChromeVisible(s4) === false);
+  exitFocus(s4);
+  check("退出专注恢复到 normal 且左/底停靠回位（活动编辑/结果面还原）", s4.view === "normal" && s4.edges.left.mode === "docked" && s4.edges.bottom.mode === "docked");
 }
 
 console.log(

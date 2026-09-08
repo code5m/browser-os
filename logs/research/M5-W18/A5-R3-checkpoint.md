@@ -1,23 +1,34 @@
 # Lane A5 — M5-W18-R3 Database Workbench (inside browser-first shell) · Checkpoint
 
 - **Role:** RESEARCH / Replication Blueprint (per `PARALLEL_COMMAND_BOARD.md` Active Lanes table, A5 = RESEARCH)
-- **Dispatch:** `M5-W18-R3-UX-TASKS-20260908.md` §A5 — revise the database prototype so connection tree, SQL documents, result grid, history and properties appear on demand and collapse cleanly; active result/editor regains full viewport in focus mode; include multi-document, cancel, truncation, error and right-click states.
-- **Verdict source:** `M5-W18-PROTOTYPE-REVIEW-20260908.md` → REVISE: reject the first IDEA-style shell prototype, keep the Chrome-like browser-first model. This lane therefore builds the database workbench *inside* the browser-first shell (top chrome + nav + left rail + edges), not as a separate IDEA shell.
+- **Dispatch:** `M5-W18-R3B-CORRECTION-TASKS-20260908.md` §A5 — Database mode closure: reconcile the database prototype with canonical geometry (A2 formula + A0 SSOT) and A3/A4 state semantics; remove donor font/branding; verify connection tree / multi-SQL-documents / results / history / properties remain discoverable via tool windows + scoped context menus while focus mode restores the active editor/result surface; add 900×600 evidence; rerun the 78-check model.
+- **Verdict source:** `A0-M5-W18-R3-acceptance-audit-20260908.md` → `REVISE_TARGETED` (R3B-02 捐赠方字体、R3B-03 折叠语义、R3B-05 几何、R3B-08 最小窗). This lane therefore reconciles the R3 prototype to the A0 rulings.
 - **Hard constraints honored:** no product code changes, no other-lane file edits, no `git push`. Only `logs/research/M5-W18/A5-R3-*` added.
 
 ## Worktree / Branch
 - Path: `/home/ainfinit/.codex/worktrees/m5-w18-a5/mvp-browser-os-v3`
 - Branch: `codex/m5-w18-a5`
-- BASE: `200f0f1` (rebased onto `origin/master`)
-- Rebase note: A5's 4 prior R2B commits were byte-identical to what A0 already integrated into `origin/master`, so `git rebase origin/master` cleanly skipped them (`skipped previously applied commit`), leaving the branch at `200f0f1` with zero other-lane dirty files.
+- BASE: `d96b9b5` (= `origin/master`，A0 已集成各 lane R3/R3B 研究)
+- Rebase note: 本 R3B 提交直接 rebase 到 `origin/master` 之上；R3 原提交 `6bc4942` 已由 A0 以 `b950afa` 合入 master，故用 `--onto origin/master 6bc4942` 仅重放本 R3B 提交，无重复、无产品代码改动、无他 lane 文件。
 
 ## Deliverables (all under `logs/research/M5-W18/`)
 | File | Purpose | Verification |
 |---|---|---|
-| `A5-R3-state-model.mjs` | Normative source: layout constants, shell/tool-window state machine, multi-doc model, command registry (62 actions / 13 scopes), 78 assertions G1–G8 | `node A5-R3-state-model.mjs` → **ALL_PASS (78 checks)** |
+| `A5-R3-state-model.mjs` | Normative source: layout constants, shell/tool-window state machine, multi-doc model, command registry (62 actions / 13 scopes), 95 assertions G1–G9 | `node A5-R3-state-model.mjs` → **ALL_PASS (95 checks)** |
 | `A5-R3-prototype.html` | Self-contained clickable prototype (no IPC/network/persistence): 2-row chrome + nav, left rail, synthetic 400-table connection/structure tree, multi-SQL-doc subtabs, result grid (NULL/trunc/bin/error states), history, messages, properties tool windows, scoped right-click menus, focus-mode pill, live viewport readout | `node --check` syntax OK; G8 consistency vs state-model verified |
 | `A5-R3-database-shell.md` | 15-section design report: R2B→R3 revision log (M1–M9), layout contract w/ measured budget table, tool-window state machine, on-demand/collapse, tree behavior, multi-doc, state matrix, command-registry table, feasibility ledger of 6 missing commands + 1 backend-rejected action, migration gaps w/ `file:line` cites, cross-lane handoffs, open questions Q1–Q5, proposed W19 gates | markdown, cited |
 | `A5-R3-checkpoint.md` | This file | — |
+
+## R3B reconciliation (2026-09-08)
+
+Per `A0-M5-W18-R3-acceptance-audit-20260908.md` rulings, this wave reconciles the R3 database prototype without touching product code:
+
+- **Geometry SSOT (R3B-05 / R3B-08):** `statusBar` 22→**24px**; six acceptance sizes now include **1200×800** and **900×600** (product minimum), dropping 800×600. Budget asserts the A0 canonical formula `(H-60-24)/H` (height) and `(W-28)/W` (width). `900×600` → **86.00%** height / **96.89%** width; all six sizes pass (≥85% / ≥92%).
+- **Collapse / restore semantics (R3B-03 + A4):** Collapse All hides every tool window **including pinned**; Restore Layout restores visibility, sizes and pin state from the one snapshot; snapshot holds only `{view, edges}` (no transient `focusReturnAction`/`expandedFrom`). New **G9** (12 assertions) locks this down + deterministic round-trip.
+- **Donor branding (R3B-02):** removed `JetBrains Mono` from `--mono`; new G8 negative assertion forbids `JetBrains/DataGrip/IntelliJ/Rebased` in the prototype UI.
+- **Focus-mode restore:** `exitFocus` returns the active editor/result surface to normal docked full viewport (G3/G9 verified).
+- **Lightweight ARIA (R3B-04):** `role="tree"` / `tablist`+`tab` / `grid`+`gridcell` / `log` added; context-menu disabled-reasons remain visible.
+- **Assert count 78 → 95**; `node A5-R3-state-model.mjs` → `ALL_PASS (95 checks)`.
 
 ## Key results
 - **Layout budget (collapsed mode, strict active area) passes at all 4 required sizes** with the 2-doc worst case:
@@ -52,4 +63,4 @@
 - ✅ No product code edited (zero `.rs`/`.vue`/`.ts`/`.toml` changes).
 - ✅ No other-lane files edited (only `logs/research/M5-W18/A5-R3-*` added).
 - ✅ No `git push` performed (commit only; A0 is the sole integrator/pusher per board).
-- ✅ Rebased onto `origin/master`; branch starts at `200f0f1`, ahead by this single commit.
+- ✅ Rebased onto `origin/master` (`d96b9b5`); 单一 R3B 提交直接居于 master 之上，零产品代码 / 他 lane 文件改动。
