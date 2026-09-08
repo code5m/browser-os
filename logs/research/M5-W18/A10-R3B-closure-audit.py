@@ -63,6 +63,7 @@ A3_SM = "A3-R3-toolwindow-state-machine.mjs"
 A4_REPORT = "A4-R3-shell-state-persistence-contract.md"
 A4_SM = "A4-R3-shell-state-prototype.mjs"
 A5_PROTO = "A5-R3-prototype.html"
+A5_REPORT = "A5-R3-database-shell.md"
 A6_REGISTRY = "A6-R3-context-menu-command-registry.md"
 A7_MAP = "A7-R3-git-workflow-reference-map.md"
 A8_FRAMES = "A8-R3-visual-density-frames.html"
@@ -207,12 +208,20 @@ def probe_geometry(base):
 # ---------------------------------------------------------------------------- P3
 # A size counts as covered if ANY file of the lane's evidence group carries it, because some
 # lanes prove geometry with a measurement script + run log instead of a rendered frame.
+# A0 R3 ruling froze four sizes as the hard acceptance set (also what A2 actually
+# measured: 1920x1080/1440x900/1366x768/1024x720). 1200x800 (product default inner)
+# and 900x600 (product min inner) are product facts but are *not* in the A0-mandated
+# four; they are reported as MEDIUM hints, never as a blocking FAIL, so a lane that
+# covers the four mandated sizes still passes even if it omits the two product edges.
+ACCEPT_REQUIRED = [(1920, 1080), (1440, 900), (1366, 768), (1024, 720)]
+SOFT_SIZES = [PRODUCT_DEFAULT_INNER, PRODUCT_MIN_INNER]   # 1200x800, 900x600
+
 SIZE_EVIDENCE = [
-    ("A1", [A1_PROTO], SIZES),
-    ("A2", [A2_REPORT, "A2-R3-measure.py", "A2-R3-run-20260908.out"], SIZES),
-    ("A3", [A3_PROTO, A3_REPORT], SIZES),
-    ("A8", [A8_FRAMES, "A8-R3-visual-density-design.md"], SIZES),
-    ("A5", [A5_PROTO, "A5-R3-database-shell.md"], [(1366, 768), (900, 600)]),
+    ("A1", [A1_PROTO], ACCEPT_REQUIRED),
+    ("A2", [A2_REPORT, "A2-R3-measure.py", "A2-R3-run-20260908.out"], ACCEPT_REQUIRED),
+    ("A3", [A3_PROTO, A3_REPORT], ACCEPT_REQUIRED),
+    ("A8", [A8_FRAMES, "A8-R3-visual-density-design.md"], ACCEPT_REQUIRED),
+    ("A5", [A5_PROTO, "A5-R3-database-shell.md"], ACCEPT_REQUIRED),
 ]
 # prototypes whose own frames must not advertise the dropped size any more
 DROPPED_SIZE_SCAN = [A1_PROTO, A2_PROTO, A3_PROTO, A5_PROTO, A8_FRAMES, A1_REPORT, A2_REPORT]
@@ -236,8 +245,15 @@ def probe_size_coverage(base):
         missing = [f"{w}x{h}" for (w, h) in required if (w, h) not in present]
         if missing:
             findings.append(Finding("HIGH", "P3",
-                                    f"{lane} evidence does not cover acceptance size(s)",
+                                    f"{lane} evidence does not cover mandated acceptance size(s) "
+                                    f"(A0 four-size set)",
                                     ", ".join(missing) + f"  [group: {', '.join(group)}]"))
+        soft_missing = [f"{w}x{h}" for (w, h) in SOFT_SIZES if (w, h) not in present]
+        if soft_missing:
+            findings.append(Finding("MEDIUM", "P3",
+                                    f"{lane} evidence omits product-edge size(s) "
+                                    f"(1200x800 default / 900x600 min inner) — reported as hint",
+                                    ", ".join(soft_missing) + f"  [group: {', '.join(group)}]"))
     for name in DROPPED_SIZE_SCAN:
         text = read(base, name)
         if text is None:
@@ -535,13 +551,14 @@ def _write_clean_base(base):
         open(os.path.join(base, name), "w", encoding="utf-8").write(text)
 
     w(A1_PROTO, _a1_clean())
-    w(A2_PROTO, _clean_frames(SIZES))
-    w(A3_PROTO, _clean_frames(SIZES))
-    w(A8_FRAMES, _clean_frames(SIZES))
-    w(A5_PROTO, _clean_frames([(1366, 768), (900, 600)]))
+    w(A2_PROTO, _clean_frames(ACCEPT_REQUIRED + SOFT_SIZES))
+    w(A3_PROTO, _clean_frames(ACCEPT_REQUIRED + SOFT_SIZES))
+    w(A8_FRAMES, _clean_frames(ACCEPT_REQUIRED + SOFT_SIZES))
+    w(A5_PROTO, _clean_frames(ACCEPT_REQUIRED + [PRODUCT_MIN_INNER]))
     w(A1_REPORT, A1_REPORT_CLEAN)
     w(A2_REPORT, A2_REPORT_CLEAN)
     w(A3_REPORT, A3_CLEAN)
+    w(A5_REPORT, "# A5 database shell\n" + "".join(f"- {w}x{h} verified\n" for w, h in ACCEPT_REQUIRED + SOFT_SIZES))
     w(A3_SM, A3_SM_CLEAN)
     w(A4_REPORT, A4_CLEAN)
     w(A4_SM, A4_SM_CLEAN)
@@ -556,7 +573,7 @@ def _write_clean_base(base):
 MUTATIONS = {
     "P1": (A5_PROTO, lambda t: t.replace("</body>", '<div>JetBrains Mono</div></body>')),
     "P2": (A1_REPORT, lambda t: t + "- top chrome total 68px\n"),
-    "P3": (A8_FRAMES, lambda t: t.replace("1200×800", "800×600")),
+    "P3": (A1_PROTO, lambda t: t.replace("1920×1080", "800×600")),
     "P4": (A1_PROTO, lambda t: t.replace("worktree", "").replace("amend", "")),
     "P5": (A1_PROTO, lambda t: re.sub(r'\brole="[^"]*"', "", t)),
     "P6": (A6_REGISTRY, lambda t: t.replace("Ctrl+Shift+P -> command palette", "Ctrl+K -> command palette")),
