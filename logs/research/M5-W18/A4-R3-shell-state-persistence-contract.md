@@ -1,5 +1,12 @@
 # A4 · R3 Shell State & Persistence Contract
 
+> **R3B SUPERSEDED (2026-09-08):** This R3 report's collapse/restore semantics are overridden by
+> `A4-R3B-persistence-contract.md` per the A0 R3 acceptance ruling (R3B-03). In particular the
+> claim "Collapse All keeps pinned windows open" and the per-workspace snapshot lifecycle /
+> crash recovery / transient-state exclusion are corrected there. The companion `A4-R3-shell-state-prototype.mjs`
+> still runs 15/15 but its **T14 is VOID** (it asserts the pre-R3B behavior); the authoritative suite is
+> `A4-R3B-shell-state-prototype.mjs` (29/29 PASS).
+
 ```text
 LANE=A4
 DISPATCH=M5-W18-R3-UX (RESEARCH_AND_PROTOTYPE)

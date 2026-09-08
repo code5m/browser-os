@@ -5,6 +5,11 @@
 //
 // This file is a RESEARCH PROTOTYPE. It is NOT wired into the app and must not be
 // imported by any product source. W19 ports these functions 1:1 into src/stores.
+//
+// >> R3B SUPERSEDED (2026-09-08): T14 below asserts the PRE-R3B behavior (Collapse All keeps
+//    pinned open) and is VOID per the A0 R3 acceptance ruling (R3B-03). The authoritative,
+//    corrected suite is A4-R3B-shell-state-prototype.mjs (29/29 PASS). Keep this file only as
+//    historical R3 evidence.
 
 // ---------- constants ----------
 const SCHEMA_VERSION = 1;
