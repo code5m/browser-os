@@ -1,0 +1,957 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>A5 · M5-W18-R3 数据库工作台原型（合成数据 · 零 IPC）</title>
+<style>
+  :root{
+    --tabStrip:28px; --navRow:32px; --statusBar:22px; --railLeft:28px; --subTabs:26px; --consoleStatus:22px;
+    --bg:#1e1f22; --bg2:#2b2d30; --bg3:#35373b; --line:#43454a; --fg:#dfe1e5; --fg2:#9aa0a6;
+    --acc:#3574f0; --warn:#e2a336; --err:#e05252; --ok:#4a9d5a;
+    --mono:ui-monospace,"JetBrains Mono","Cascadia Mono",Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#141517;color:var(--fg);font:12px/1.45 system-ui,"Noto Sans CJK SC",sans-serif}
+  a{color:var(--acc)}
+  .doc{padding:10px 14px;border-bottom:1px solid var(--line);background:#101113}
+  .doc h1{font-size:14px;margin:0 0 4px}
+  .doc p{margin:2px 0;color:var(--fg2)}
+  .bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 14px;border-bottom:1px solid var(--line);background:#17181b}
+  .bar b{color:var(--fg2);font-weight:600;margin-right:2px}
+  button{background:var(--bg3);color:var(--fg);border:1px solid var(--line);border-radius:3px;padding:3px 7px;font-size:11px;cursor:pointer}
+  button:hover{background:#41444a}
+  button[aria-pressed="true"]{background:var(--acc);border-color:var(--acc)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .readout{display:flex;flex-wrap:wrap;gap:10px;padding:6px 14px;background:#101113;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:11px}
+  .readout span{color:var(--fg2)}
+  .readout var{font-style:normal;color:var(--fg)}
+  .pass{color:var(--ok)} .fail{color:var(--err)}
+  .stagewrap{padding:14px;overflow:auto}
+  #stage{position:relative;transform-origin:top left;background:var(--bg);border:1px solid #000;
+         display:flex;flex-direction:column;overflow:hidden;font-size:11.5px;box-shadow:0 6px 24px rgba(0,0,0,.6)}
+
+  /* ---- 行 1：统一标签条（兼作标题栏基准） ---- */
+  .tabstrip{height:var(--tabStrip);min-height:var(--tabStrip);display:flex;align-items:stretch;gap:2px;
+            background:#191a1c;border-bottom:1px solid var(--line);padding:0 4px}
+  .stab{display:flex;align-items:center;gap:5px;padding:0 8px;border-radius:4px 4px 0 0;color:var(--fg2);max-width:180px;white-space:nowrap;overflow:hidden}
+  .stab.on{background:var(--bg2);color:var(--fg)}
+  .stab i{font-style:normal;opacity:.8}
+  .tabstrip .grow{flex:1}
+  /* ---- 行 2：导航 / 地址行 ---- */
+  .navrow{height:var(--navRow);min-height:var(--navRow);display:flex;align-items:center;gap:6px;
+          padding:0 6px;background:var(--bg2);border-bottom:1px solid var(--line)}
+  .navrow .omni{flex:1;height:20px;background:#1c1d20;border:1px solid var(--line);border-radius:10px;
+                display:flex;align-items:center;padding:0 8px;color:var(--fg2);font-family:var(--mono);font-size:10.5px}
+  .iconbtn{width:20px;height:20px;display:grid;place-items:center;border-radius:3px;color:var(--fg2);cursor:pointer;border:1px solid transparent;background:none;padding:0}
+  .iconbtn:hover{background:var(--bg3);color:var(--fg)}
+  /* ---- 主体 ---- */
+  .body{flex:1;display:flex;min-height:0}
+  .rail{width:var(--railLeft);min-width:var(--railLeft);background:#191a1c;border-right:1px solid var(--line);
+        display:flex;flex-direction:column;align-items:center;gap:2px;padding-top:4px}
+  .rail button{width:22px;height:22px;padding:0;font-size:11px;background:none;border:1px solid transparent;color:var(--fg2)}
+  .rail button[aria-pressed="true"]{background:var(--acc);color:#fff;border-color:var(--acc)}
+  .rail .sp{flex:1}
+  .col{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}
+  .tw{background:var(--bg2);display:flex;flex-direction:column;min-width:0;min-height:0}
+  .tw.left{border-right:1px solid var(--line)}
+  .tw.right{border-left:1px solid var(--line)}
+  .tw.bottom{border-top:1px solid var(--line)}
+  .tw.overlay{position:absolute;z-index:20;box-shadow:0 8px 26px rgba(0,0,0,.65);border:1px solid var(--acc)}
+  .twhead{height:22px;min-height:22px;display:flex;align-items:center;gap:4px;padding:0 4px 0 7px;
+          background:#242629;border-bottom:1px solid var(--line);color:var(--fg2);font-size:10.5px}
+  .twhead .t{font-weight:600;color:var(--fg);text-transform:none}
+  .twhead .grow{flex:1}
+  .twtabs{display:flex;gap:3px}
+  .twtabs .tt{padding:0 5px;border-radius:3px;cursor:pointer}
+  .twtabs .tt.on{background:var(--bg3);color:var(--fg)}
+  .twbody{flex:1;overflow:auto;min-height:0}
+  .twbar{display:flex;align-items:center;gap:4px;padding:3px 5px;border-bottom:1px solid var(--line);background:#212326}
+  .split{height:4px;cursor:row-resize;background:#000;opacity:.35}
+  .splitv{width:4px;cursor:col-resize;background:#000;opacity:.35}
+  /* ---- 中央文档 ---- */
+  .subtabs{height:var(--subTabs);min-height:var(--subTabs);display:flex;align-items:stretch;gap:2px;
+           background:#212326;border-bottom:1px solid var(--line);padding:0 4px}
+  .subtab{display:flex;align-items:center;gap:5px;padding:0 8px;color:var(--fg2);cursor:pointer;border-bottom:2px solid transparent}
+  .subtab.on{color:var(--fg);border-bottom-color:var(--acc);background:var(--bg)}
+  .subtab .dot{width:6px;height:6px;border-radius:50%;background:var(--warn)}
+  .docbody{flex:1;display:flex;flex-direction:column;min-height:0;background:var(--bg);outline:none}
+  .editor{flex:1;min-height:0;width:100%;resize:none;border:0;background:var(--bg);color:#c9d1d9;
+          font-family:var(--mono);font-size:11.5px;padding:6px 8px;outline:none}
+  .inline{flex:1;min-height:0;overflow:auto;border-top:1px dashed var(--line)}
+  .cstatus{height:var(--consoleStatus);min-height:var(--consoleStatus);display:flex;align-items:center;gap:6px;
+           padding:0 6px;background:#212326;border-top:1px solid var(--line);color:var(--fg2);font-family:var(--mono);font-size:10.5px}
+  .cstatus button{padding:1px 6px;font-size:10.5px}
+  .statusbar{height:var(--statusBar);min-height:var(--statusBar);display:flex;align-items:center;gap:8px;
+             padding:0 8px;background:#191a1c;border-top:1px solid var(--line);color:var(--fg2);font-size:10.5px}
+  .statusbar button{padding:0 5px;font-size:10.5px;background:none;border:1px solid transparent;color:var(--fg2)}
+  .statusbar button[aria-pressed="true"]{color:#fff;background:var(--acc);border-color:var(--acc)}
+  /* ---- 树 ---- */
+  .tree{padding:2px 0;font-size:11px}
+  .node{display:flex;align-items:center;gap:4px;padding:1px 6px;white-space:nowrap;cursor:default}
+  .node:hover{background:#33363b}
+  .node.sel{background:#2d4b73}
+  .node .tw-arrow{width:10px;color:var(--fg2)}
+  .node .ic{opacity:.85}
+  .notice{margin:4px 6px;padding:4px 6px;border-left:2px solid var(--warn);background:#2e2a22;color:#e8d5ad;font-size:10.5px}
+  /* ---- 结果网格 ---- */
+  table.grid{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:10.5px}
+  table.grid th,table.grid td{border:1px solid #3a3d42;padding:1px 5px;text-align:left;white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis}
+  table.grid th{background:#2f3237;position:sticky;top:0}
+  table.grid td.gut,table.grid th.gut{background:#2a2c30;color:var(--fg2);text-align:right;width:34px}
+  .nullv{color:#7d8590;font-style:italic}
+  .trunc{color:var(--warn)}
+  .bin{color:#a48ce0}
+  .banner{margin:0;padding:4px 8px;font-size:10.5px;border-bottom:1px solid var(--line)}
+  .banner.w{background:#2e2a22;color:#e8d5ad}
+  .banner.e{background:#332224;color:#f0b3b3}
+  .empty{padding:14px;color:var(--fg2);text-align:center}
+  .empty b{display:block;color:var(--fg);margin-bottom:3px;font-size:12px}
+  .spin{display:inline-block;width:10px;height:10px;border:2px solid var(--fg2);border-top-color:transparent;border-radius:50%;animation:sp .8s linear infinite;vertical-align:-1px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .kv{width:100%;border-collapse:collapse;font-size:10.5px}
+  .kv td{border-bottom:1px solid #33363b;padding:2px 6px}
+  .kv td.k{color:var(--fg2);width:44%;font-family:var(--mono)}
+  .hist{list-style:none;margin:0;padding:0}
+  .hist li{padding:3px 7px;border-bottom:1px solid #2f3236;cursor:default;display:flex;gap:6px;align-items:baseline}
+  .hist li:hover{background:#33363b}
+  .hist code{font-family:var(--mono);font-size:10.5px;color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+  .hist .ms{color:var(--fg2);font-family:var(--mono)}
+  .chip{border:1px solid var(--line);border-radius:8px;padding:0 5px;font-size:9.5px;color:var(--fg2)}
+  .chip.r{color:#8fb7f0;border-color:#31527f}
+  .chip.l{color:#9aa0a6}
+  .chip.w{color:#e2a336;border-color:#6a5220}
+  .chip.d{color:#f08a8a;border-color:#7a3436}
+  .chip.des{color:#e0b0ff;border-color:#5a3d72}
+  /* ---- 专注模式返回 ---- */
+  .focuspill{position:absolute;z-index:40;right:10px;top:34px;display:flex;align-items:center;gap:6px;
+             background:rgba(53,116,240,.92);color:#fff;border-radius:12px;padding:3px 10px;font-size:11px;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+  .focuspill button{background:rgba(255,255,255,.16);border-color:transparent;color:#fff}
+  /* ---- 右键菜单 ---- */
+  #menu{position:fixed;z-index:200;min-width:246px;max-width:340px;background:#2b2d30;border:1px solid #55585e;
+        border-radius:4px;padding:3px;box-shadow:0 10px 30px rgba(0,0,0,.66);display:none}
+  #menu .mhead{padding:3px 8px 4px;color:var(--fg2);font-size:10px;border-bottom:1px solid var(--line);margin-bottom:3px}
+  #menu .mi{display:flex;align-items:center;gap:8px;padding:3px 8px;border-radius:3px;cursor:default;outline:none}
+  #menu .mi .lbl{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #menu .mi .kb{color:var(--fg2);font-family:var(--mono);font-size:10px}
+  #menu .mi:focus,#menu .mi:hover{background:var(--acc);color:#fff}
+  #menu .mi.dis{opacity:.5}
+  #menu .mi.dis:focus,#menu .mi.dis:hover{background:#3a3d42;color:var(--fg)}
+  #menu .why{padding:0 8px 4px 8px;color:#e8d5ad;font-size:10px;display:none}
+  #menu .mi.dis:focus + .why,#menu .mi.dis:hover + .why{display:block}
+  .legend{padding:10px 14px;color:var(--fg2);border-top:1px solid var(--line);background:#101113}
+  .legend code{color:#c9d1d9;font-family:var(--mono)}
+  .legend li{margin:2px 0}
+</style>
+</head>
+<body>
+<div class="doc">
+  <h1>A5 · M5-W18-R3 数据库工作台原型 — 浏览器优先外壳内的按需工具窗口</h1>
+  <p>全部数据为<b>合成数据</b>；本页<b>零 IPC</b>、无网络、无任何持久化写入，仅为交互形态与视口预算的可点原型。</p>
+  <p>规范源 = <code>A5-R3-state-model.mjs</code>（常量/状态机/命令注册表在该脚本内被断言，并逐项校验本页一致性）。</p>
+</div>
+
+<div class="bar">
+  <b>窗口尺寸</b>
+  <button data-size="1920x1080">1920×1080</button>
+  <button data-size="1440x900" aria-pressed="true">1440×900</button>
+  <button data-size="1366x768">1366×768</button>
+  <button data-size="1024x720">1024×720</button>
+  <span style="width:12px"></span>
+  <b>布局</b>
+  <button id="btnCollapse">收起全部工具窗口</button>
+  <button id="btnRestore">恢复上次布局</button>
+  <button id="btnExpand">展开活动窗口</button>
+  <button id="btnFocus">专注模式</button>
+  <span style="width:12px"></span>
+  <b>结果状态</b>
+  <button data-state="ok" aria-pressed="true">正常</button>
+  <button data-state="trunc">已截断</button>
+  <button data-state="loading">加载中</button>
+  <button data-state="empty">空结果</button>
+  <button data-state="error">错误</button>
+  <button data-state="disconnected">禁用（未连接）</button>
+</div>
+
+<div class="readout" id="readout"></div>
+
+<div class="stagewrap">
+  <div id="stage" role="application" aria-label="数据库工作台原型">
+    <!-- 行 1：统一标签条（浏览器页 + 模块文档），兼作标题栏基准 -->
+    <div class="tabstrip">
+      <div class="stab"><i>◧</i>主页</div>
+      <div class="stab"><i>◈</i>文档站</div>
+      <div class="stab on"><i>▤</i>数据库<i style="opacity:.55">✕</i></div>
+      <button class="iconbtn" title="新建标签">＋</button>
+      <div class="grow"></div>
+      <span style="color:var(--fg2);padding:0 6px">合成外壳 · 无真实 IPC</span>
+    </div>
+    <!-- 行 2：导航 / 地址行 -->
+    <div class="navrow" id="navrow">
+      <button class="iconbtn" title="后退">‹</button>
+      <button class="iconbtn" title="前进">›</button>
+      <button class="iconbtn" title="刷新">⟳</button>
+      <div class="omni">db://local-sqlite/main — 输入 SQL 对象名或网址</div>
+      <button class="iconbtn" id="navFocus" title="专注模式 F11">⛶</button>
+    </div>
+    <!-- 主体 -->
+    <div class="body">
+      <div class="rail" id="rail"></div>
+      <div id="leftHost"></div>
+      <div class="col">
+        <div class="subtabs" id="subtabs"></div>
+        <div class="docbody" id="docBody" tabindex="0" aria-label="活动 SQL 文档"></div>
+        <div class="cstatus" id="cstatus"></div>
+        <div id="bottomHost"></div>
+      </div>
+      <div id="rightHost"></div>
+    </div>
+    <div class="statusbar" id="statusbar"></div>
+  </div>
+</div>
+
+<div class="legend">
+  <b>阅读说明</b>
+  <ul>
+    <li>右键任意对象（连接 / 模式 / 表 / 列 / 文档标签 / 编辑器 / 单元格 / 列头 / 行 / 结果窗口 / 工具窗口标题栏 / 历史条目 / 属性行）会弹出<b>仅属于该对象</b>的菜单；键盘路径 <code>Shift+F10</code> → <code>↑/↓</code> → <code>Enter</code>，<code>Esc</code> 关闭。</li>
+    <li>禁用项不隐藏：聚焦/悬停即显示<b>禁用原因</b>；依赖未注册后端命令的动作标注 <code>DESIGN_ONLY</code>。</li>
+    <li>安全分级：<span class="chip r">读</span> <span class="chip l">本地</span> <span class="chip w">写库</span> <span class="chip d">危险</span>（写库=单次确认，危险=键入确认+审计）。</li>
+    <li>顶部读数条实时用 <code>offsetWidth/offsetHeight</code> 量测活动文档面，红线：收起态 ≥85% 后标题栏高度、≥92% 宽度。</li>
+  </ul>
+</div>
+
+<div id="menu" role="menu" aria-label="上下文菜单"></div>
+<script>
+/* =====================================================================
+   §1 常量（与 A5-R3-state-model.mjs 逐值一致，G8 断言校验）
+   ===================================================================== */
+const CHROME = { tabStrip: 28, navRow: 32, statusBar: 22, railLeft: 28, subTabs: 26, consoleStatus: 22 };
+const TOOLS = {
+  left: { def: 260, min: 180, max: 480 },
+  right: { def: 280, min: 200, max: 420 },
+  bottom: { def: 240, min: 120, maxRatio: 0.8 }
+};
+const TREE_LIMITS = { maxVisibleNodes: 250, maxDepth: 6 };
+const BUDGET = { minHeightPct: 85, minWidthPct: 92, maxTopChromePx: 80 };
+const FROZEN = ["db_connect", "db_query", "db_disconnect"];
+const DB_LIMITS = { maxRows: 1000, maxResultBytes: 4 * 1024 * 1024, maxTextFieldBytes: 64 * 1024, timeoutSecs: 30 };
+
+const TOOL_META = {
+  "db.tool.connections": { edge: "left",   icon: "▤", title: "连接" },
+  "db.tool.schema":      { edge: "left",   icon: "⊞", title: "结构" },
+  "db.tool.result":      { edge: "bottom", icon: "▦", title: "结果" },
+  "db.tool.history":     { edge: "bottom", icon: "◷", title: "历史" },
+  "db.tool.messages":    { edge: "bottom", icon: "✉", title: "消息" },
+  "db.tool.properties":  { edge: "right",  icon: "ⓘ", title: "属性" }
+};
+
+/* =====================================================================
+   §2 命令注册表（作用域内聚；id/键盘/安全分级/禁用原因/后端依赖）
+   A=[id, 标签, 键盘, 安全, 确认, 后端, 禁用原因]
+   ===================================================================== */
+const SAFE = { READ: ["读", "r"], LOCAL: ["本地", "l"], DB_WRITE: ["写库", "w"], DESTRUCTIVE: ["危险", "d"] };
+const REGISTRY = {
+  "db.connection": ["连接节点", [
+    ["db.connection.connect", "连接", "Enter", "READ", "none", "db_connect", "连接已禁用或已处于连接态"],
+    ["db.connection.disconnect", "断开", "", "LOCAL", "none", "db_disconnect", "当前未连接，无可断开的会话"],
+    ["db.connection.newConsole", "新建 SQL 控制台", "Ctrl/Cmd+Alt+N", "LOCAL", "none", "", "未选中连接，无法确定控制台归属"],
+    ["db.connection.edit", "编辑连接", "F2", "LOCAL", "none", "", "该连接有查询在途，先取消或等待完成"],
+    ["db.connection.toggleWrite", "切换写权限", "", "DB_WRITE", "single", "", "生产判定为生产或未知（未知按生产处理），禁止开启写权限"],
+    ["db.connection.refreshSchema", "刷新结构", "F5", "READ", "none", "MISSING:db_list_schema", "依赖未注册命令 db_list_schema，当前无法枚举库表"],
+    ["db.connection.copyLabel", "复制连接标签（脱敏）", "Ctrl/Cmd+C", "READ", "none", "", "未选中连接"],
+    ["db.connection.remove", "移除连接", "Delete", "DESTRUCTIVE", "typed", "MISSING:db_list_connections", "依赖未注册命令 db_list_connections（连接登记簿仅在后端，前端无增删通道）"]
+  ]],
+  "db.schema": ["库 / 模式节点", [
+    ["db.schema.expandOneLevel", "展开一层", "→", "READ", "none", "", "该节点无子节点或已达最大层级 6"],
+    ["db.schema.collapseAll", "全部折叠", "Ctrl/Cmd+-", "READ", "none", "", "树已全部折叠"],
+    ["db.schema.expandAllBounded", "有界全展开", "Ctrl/Cmd+Shift+=", "READ", "none", "", "子树超过 250 节点上限，仅能逐层展开"],
+    ["db.schema.newConsole", "在此模式打开控制台", "", "LOCAL", "none", "", "所属连接未连接"],
+    ["db.schema.copyName", "复制名称", "Ctrl/Cmd+C", "READ", "none", "", "未选中节点"]
+  ]],
+  "db.table": ["表 / 视图节点", [
+    ["db.table.previewRows", "预览前 100 行", "Enter", "READ", "none", "db_query", "未连接或已有查询在途"],
+    ["db.table.generateSelect", "生成 SELECT 到控制台", "", "LOCAL", "none", "", "无可写入的控制台文档"],
+    ["db.table.showProperties", "查看属性", "Ctrl/Cmd+I", "READ", "none", "MISSING:db_list_schema", "依赖未注册命令 db_list_schema，属性只能显示结果集列元数据"],
+    ["db.table.copyQualifiedName", "复制限定名", "Ctrl/Cmd+Shift+C", "READ", "none", "", "未选中表/视图"],
+    ["db.table.truncate", "清空表", "", "DESTRUCTIVE", "typed", "db_query", "TRUNCATE 属 DDL，后端对 Ddl/Admin 一律 WriteDenied（security_policy.rs:1218），与写权限开关无关"]
+  ]],
+  "db.column": ["列节点", [
+    ["db.column.copyName", "复制列名", "Ctrl/Cmd+C", "READ", "none", "", "未选中列"],
+    ["db.column.generateWhere", "生成 WHERE 条件", "", "LOCAL", "none", "", "无活动 SQL 文档"],
+    ["db.column.showProperties", "查看列属性", "Ctrl/Cmd+I", "READ", "none", "MISSING:db_list_schema", "依赖未注册命令 db_list_schema"]
+  ]],
+  "db.console": ["SQL 文档标签", [
+    ["db.console.run", "运行", "Ctrl/Cmd+Enter", "READ", "none", "db_query", "未连接 / SQL 为空或超 64KiB / 已有查询在途"],
+    ["db.console.cancel", "取消查询", "Ctrl/Cmd+F2", "READ", "none", "MISSING:db_cancel", "依赖未注册命令 db_cancel；当前只能等默认超时 30s 或断开连接"],
+    ["db.console.close", "关闭文档", "Ctrl/Cmd+W", "LOCAL", "single", "", "查询在途，先取消再关闭"],
+    ["db.console.closeOthers", "关闭其它文档", "", "LOCAL", "single", "", "仅一个文档，或其它文档有查询在途"],
+    ["db.console.rename", "重命名文档", "F2", "LOCAL", "none", "", "未选中文档标签"],
+    ["db.console.duplicate", "复制为新文档", "", "LOCAL", "none", "", "未选中文档标签"],
+    ["db.console.switchConnection", "切换连接", "Ctrl/Cmd+Alt+K", "LOCAL", "none", "", "查询在途，切换连接会使结果归属不明"]
+  ]],
+  "db.editor": ["SQL 编辑器 / 选区", [
+    ["db.editor.runSelection", "运行选中片段", "Ctrl/Cmd+Enter", "READ", "none", "db_query", "无选区或未连接"],
+    ["db.editor.copy", "复制", "Ctrl/Cmd+C", "READ", "none", "", "编辑器内无非空选区"],
+    ["db.editor.commentLines", "注释 / 取消注释", "Ctrl/Cmd+/", "LOCAL", "none", "", "焦点不在编辑器"],
+    ["db.editor.insertTableName", "插入选中表名", "", "LOCAL", "none", "", "树中未选中表"]
+  ]],
+  "db.grid.cell": ["结果单元格", [
+    ["db.grid.cell.copy", "复制单元格", "Ctrl/Cmd+C", "READ", "none", "", "未选中单元格"],
+    ["db.grid.cell.viewFull", "查看完整值", "Shift+Enter", "READ", "none", "", "该字段已被 64.00 KiB 单字段上限截断，完整值不在前端"],
+    ["db.grid.cell.edit", "编辑值", "", "DB_WRITE", "single", "MISSING:db_row_write", "首片不做结果集写回（蓝图 §4 排除全表编辑），且无行级写命令 db_row_write"]
+  ]],
+  "db.grid.column": ["结果列头", [
+    ["db.grid.column.sortAsc", "按此列升序（仅已加载行）", "", "LOCAL", "none", "", "结果为空"],
+    ["db.grid.column.sortDesc", "按此列降序（仅已加载行）", "", "LOCAL", "none", "", "结果为空"],
+    ["db.grid.column.copyColumn", "复制整列（已加载行）", "", "READ", "none", "", "结果为空"],
+    ["db.grid.column.hide", "隐藏此列", "", "LOCAL", "none", "", "仅剩一列，不能全部隐藏"]
+  ]],
+  "db.grid.row": ["结果行", [
+    ["db.grid.row.copyRowCsv", "复制该行为 CSV", "Ctrl/Cmd+Shift+C", "READ", "none", "", "未选中行"],
+    ["db.grid.row.openInProperties", "在属性中查看该行", "", "READ", "none", "", "未选中行"],
+    ["db.grid.row.delete", "删除该行", "", "DESTRUCTIVE", "typed", "MISSING:db_row_write", "依赖未注册命令 db_row_write；首片不开放结果集写回"]
+  ]],
+  "db.result": ["结果工具窗口", [
+    ["db.result.copyAllCsv", "复制全部为 CSV", "Ctrl/Cmd+Shift+C", "READ", "none", "", "结果为空"],
+    ["db.result.exportFile", "导出为文件", "", "READ", "none", "MISSING:db_export_result", "依赖未注册命令 db_export_result（16MiB 导出上限当前无消费方）"],
+    ["db.result.clear", "清空结果", "", "LOCAL", "none", "", "无结果可清空"],
+    ["db.result.rerun", "重新执行本文档", "Ctrl/Cmd+Enter", "READ", "none", "db_query", "未连接或查询在途"]
+  ]],
+  "db.toolwindow": ["工具窗口标题栏", [
+    ["db.toolwindow.pin", "固定", "", "LOCAL", "none", "", "该边无可见工具窗口，或已固定"],
+    ["db.toolwindow.unpin", "取消固定", "", "LOCAL", "none", "", "该边可见窗口未固定"],
+    ["db.toolwindow.autoHide", "自动隐藏（悬浮）", "", "LOCAL", "none", "", "已固定的窗口不参与自动隐藏（先取消固定）"],
+    ["db.toolwindow.close", "关闭", "Shift+Esc", "LOCAL", "none", "", "该边无可见工具窗口"],
+    ["db.toolwindow.expandActive", "展开活动窗口", "Ctrl/Cmd+Shift+'", "LOCAL", "none", "", "悬浮或隐藏的窗口无停靠尺寸可展开"],
+    ["db.toolwindow.resize", "调整大小", "Alt+←/→/↑/↓", "LOCAL", "none", "", "悬浮或隐藏的窗口不可调整停靠尺寸"],
+    ["db.toolwindow.collapseAll", "收起全部工具窗口", "Ctrl/Cmd+Shift+F12", "LOCAL", "none", "", "已全部收起"],
+    ["db.toolwindow.restoreLayout", "恢复上次布局", "Ctrl/Cmd+Alt+F12", "LOCAL", "none", "", "没有可恢复的布局快照"],
+    ["db.toolwindow.focusMode", "专注模式 / 退出专注", "F11（退出 Esc）", "LOCAL", "none", "", "无活动文档，专注模式无内容可放大"]
+  ]],
+  "db.history": ["查询历史条目", [
+    ["db.history.openInConsole", "在控制台打开", "Enter", "LOCAL", "none", "", "未选中历史条目"],
+    ["db.history.copySql", "复制 SQL", "Ctrl/Cmd+C", "READ", "none", "", "未选中历史条目"],
+    ["db.history.rerun", "重新执行", "", "READ", "single", "db_query", "未连接、原连接已不存在，或查询在途"],
+    ["db.history.clear", "清空历史", "", "LOCAL", "single", "", "历史为空"],
+    ["db.history.persistToggle", "持久化历史（默认关）", "", "LOCAL", "single", "MISSING:db_query_history", "依赖未注册命令 db_query_history；SQL 全文默认不落盘"]
+  ]],
+  "db.properties": ["属性工具窗口", [
+    ["db.properties.copyValue", "复制属性值", "Ctrl/Cmd+C", "READ", "none", "", "未选中属性行"],
+    ["db.properties.refresh", "刷新属性", "F5", "READ", "none", "MISSING:db_list_schema", "依赖未注册命令 db_list_schema；属性仅来自结果集列元数据"]
+  ]]
+};
+
+/* 作用域 → 宿主元素属性（右键命中靠 closest([data-scope])，就近对象胜出） */
+const SCOPE_ATTR = {
+  conn:       'data-scope="db.connection"',
+  schema:     'data-scope="db.schema"',
+  table:      'data-scope="db.table"',
+  column:     'data-scope="db.column"',
+  console:    'data-scope="db.console"',
+  editor:     'data-scope="db.editor"',
+  cell:       'data-scope="db.grid.cell"',
+  colhead:    'data-scope="db.grid.column"',
+  row:        'data-scope="db.grid.row"',
+  result:     'data-scope="db.result"',
+  toolwindow: 'data-scope="db.toolwindow"',
+  history:    'data-scope="db.history"',
+  properties: 'data-scope="db.properties"'
+};
+
+/* =====================================================================
+   §3 状态
+   ===================================================================== */
+const state = {
+  size: { w: 1440, h: 900 },
+  view: "normal",                       // normal | collapsed | focus
+  edges: {
+    left:   { members: ["db.tool.connections"], visible: "db.tool.connections", mode: "docked", size: TOOLS.left.def,   pinned: [] },
+    right:  { members: [],                      visible: null,                  mode: "hidden", size: TOOLS.right.def,  pinned: [] },
+    bottom: { members: ["db.tool.result"],      visible: "db.tool.result",      mode: "docked", size: TOOLS.bottom.def, pinned: [] }
+  },
+  previousLayout: null,
+  expandedFrom: null,
+  focusReturn: null,
+  docs: [
+    { id: "d1", title: "orders.sql", conn: "prod-replica", dirty: true,  status: "idle", sql: "-- 只读副本（写权限默认关闭）\nselect o.id, o.buyer, o.amount, o.note, o.payload, o.created_at\nfrom public.orders o\nwhere o.created_at > now() - interval '7 days'\norder by o.created_at desc;" },
+    { id: "d2", title: "users-report.sql", conn: "local-sqlite", dirty: false, status: "idle", sql: "select count(*) as total, status\nfrom main.users\ngroup by status;" }
+  ],
+  activeDoc: 0,
+  result: "ok",
+  running: false, cancelling: false, execId: null, elapsed: 0,
+  tree: { expanded: new Set(["root", "conn.replica"]), depth: 2, notice: "" },
+  selected: null,
+  history: [
+    { sql: "select o.id, o.buyer, o.amount from public.orders o where o.created_at > now() - interval '7 days'", ms: 812, rows: 1000, state: "truncated" },
+    { sql: "select count(*) as total, status from main.users group by status", ms: 14, rows: 3, state: "ok" },
+    { sql: "select * from public.orders where payload like '%draft%'", ms: 30000, rows: 0, state: "timeout" },
+    { sql: "update public.orders set note = 'x' where id = 1", ms: 0, rows: 0, state: "blocked" }
+  ]
+};
+
+/* 合成树：prod-replica.public 刻意放 400 张表，用于演示有界展开的截断提示 */
+function makeTree() {
+  const cols = (n) => [
+    { id: n + ".id", kind: "column", label: "id · integer · PK" },
+    { id: n + ".buyer", kind: "column", label: "buyer · varchar(64)" },
+    { id: n + ".amount", kind: "column", label: "amount · numeric(12,2)" },
+    { id: n + ".payload", kind: "column", label: "payload · blob" }
+  ];
+  const many = Array.from({ length: 400 }, (_, i) => ({ id: "t" + i, kind: "table", label: "table_" + i, children: cols("t" + i) }));
+  return {
+    id: "root", kind: "schema", label: "数据源", children: [
+      { id: "conn.local", kind: "conn", label: "local-sqlite · 非生产 · 只读", children: [
+        { id: "conn.local.main", kind: "schema", label: "main", children: [
+          { id: "conn.local.main.t", kind: "schema", label: "表 (3)", children: [
+            { id: "users", kind: "table", label: "users", children: cols("users") },
+            { id: "sessions", kind: "table", label: "sessions", children: cols("sessions") },
+            { id: "audit", kind: "table", label: "audit_log", children: cols("audit") }
+          ] },
+          { id: "conn.local.main.v", kind: "schema", label: "视图 (0)", children: [] }
+        ] }
+      ] },
+      { id: "conn.replica", kind: "conn", label: "prod-replica · 生产判定=生产 · 写已拒绝", children: [
+        { id: "conn.replica.public", kind: "schema", label: "public", children: [
+          { id: "conn.replica.public.t", kind: "schema", label: "表 (400)", children: many }
+        ] },
+        { id: "conn.replica.info", kind: "schema", label: "information_schema", children: [] }
+      ] }
+    ]
+  };
+}
+const TREE = makeTree();
+
+/* =====================================================================
+   §4 布局状态机（与规范源同语义）
+   ===================================================================== */
+const clone = (o) => JSON.parse(JSON.stringify(o));
+function openTool(edge, id) {
+  const e = state.edges[edge], cur = e.visible;
+  if (cur && cur !== id && !e.pinned.includes(cur)) e.members = e.members.filter((m) => m !== cur);
+  if (!e.members.includes(id)) e.members.push(id);
+  e.visible = id;
+  if (e.mode === "hidden") e.mode = "docked";
+  if (state.view === "collapsed") state.view = "normal";
+}
+function closeEdge(edge) {
+  const e = state.edges[edge];
+  if (!e || !e.visible) return;
+  e.members = e.members.filter((m) => m !== e.visible);
+  e.pinned = e.pinned.filter((m) => m !== e.visible);
+  e.visible = e.members.length ? e.members[e.members.length - 1] : null;
+  if (!e.visible) e.mode = "hidden";
+}
+function collapseAll() {
+  state.previousLayout = { view: state.view, edges: clone(state.edges) };
+  Object.keys(state.edges).forEach((k) => (state.edges[k].mode = "hidden"));
+  state.view = "collapsed";
+}
+function restoreLayout() {
+  if (!state.previousLayout) return;
+  state.edges = clone(state.previousLayout.edges);
+  state.view = state.previousLayout.view;
+  state.previousLayout = null;
+  state.focusReturn = null;
+}
+function contentRegionH() { return state.size.h - CHROME.tabStrip - CHROME.navRow - CHROME.statusBar; }
+function expandActive(edge) {
+  const e = state.edges[edge];
+  if (!e || !e.visible || e.mode !== "docked") return;
+  state.expandedFrom = { edge, size: e.size };
+  e.size = edge === "bottom" ? Math.floor(contentRegionH() * TOOLS.bottom.maxRatio) : TOOLS[edge].max;
+}
+function shrinkActive() {
+  if (!state.expandedFrom) return;
+  state.edges[state.expandedFrom.edge].size = state.expandedFrom.size;
+  state.expandedFrom = null;
+}
+function enterFocus() {
+  state.previousLayout = { view: state.view, edges: clone(state.edges) };
+  Object.keys(state.edges).forEach((k) => (state.edges[k].mode = "hidden"));
+  state.view = "focus";
+  state.focusReturn = { id: "db.toolwindow.focusMode", label: "退出专注", keyboard: "Esc / F11" };
+}
+function activeEdge() {
+  return ["bottom", "left", "right"].find((k) => state.edges[k].mode === "docked" && state.edges[k].visible) || null;
+}
+function resizeEdge(edge, next) {
+  const e = state.edges[edge];
+  if (edge === "bottom") {
+    const max = Math.max(Math.floor(contentRegionH() * TOOLS.bottom.maxRatio), TOOLS.bottom.min);
+    e.size = Math.min(Math.max(next, TOOLS.bottom.min), max);
+  } else e.size = Math.min(Math.max(next, TOOLS[edge].min), TOOLS[edge].max);
+}
+
+/* =====================================================================
+   §5 结果 / 层级视图数据
+   ===================================================================== */
+const COLS = ["id", "buyer", "amount", "note", "payload", "created_at"];
+const ROWS = [
+  ["1001", "北京·甲", "1280.00", "尾款，备注很长很长很长很长很长很长很长很长很长很长很长", "<bin>", "2026-09-01 10:22:31"],
+  ["1002", "上海·乙", "99.90", null, "<bin>", "2026-09-01 11:03:02"],
+  ["1003", "广州·丙", "0.00", "test", null, "2026-09-02 08:41:55"],
+  ["1004", "深圳·丁", "24500.00", "分批发货", "<bin>", "2026-09-02 09:15:07"],
+  ["1005", "杭州·戊", "310.50", null, "<bin>", "2026-09-03 20:00:00"]
+];
+function boundedExpandAll() {
+  const expanded = new Set(); let visible = 1, truncated = false;
+  const q = [{ n: TREE, d: 0 }];
+  while (q.length) {
+    const { n, d } = q.shift();
+    if (d >= TREE_LIMITS.maxDepth) { if (n.children && n.children.length) truncated = true; continue; }
+    const kids = n.children || [];
+    if (!kids.length) continue;
+    if (visible + kids.length > TREE_LIMITS.maxVisibleNodes) { truncated = true; continue; }
+    expanded.add(n.id); visible += kids.length;
+    kids.forEach((c) => q.push({ n: c, d: d + 1 }));
+  }
+  state.tree.expanded = expanded; state.tree.depth = TREE_LIMITS.maxDepth;
+  state.tree.notice = truncated
+    ? "已展开 " + visible + " 个节点，达到 " + TREE_LIMITS.maxVisibleNodes + " 上限；未完全展开（逐个节点继续展开）"
+    : "";
+}
+function expandOneLevel() {
+  if (state.tree.depth >= TREE_LIMITS.maxDepth) { state.tree.notice = "已达最大层级 " + TREE_LIMITS.maxDepth + "，未继续展开"; return; }
+  const ex = new Set(state.tree.expanded);
+  (function walk(n, d) { if (d <= state.tree.depth) ex.add(n.id); if (d < state.tree.depth) (n.children || []).forEach((c) => walk(c, d + 1)); })(TREE, 0);
+  state.tree.expanded = ex; state.tree.depth++; state.tree.notice = "";
+}
+function collapseAllNodes() { state.tree.expanded = new Set(); state.tree.depth = 0; state.tree.notice = ""; }
+
+/* =====================================================================
+   §6 渲染
+   ===================================================================== */
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const doc = () => state.docs[state.activeDoc];
+
+function renderRail() {
+  const focus = state.view === "focus";
+  $("rail").style.display = focus ? "none" : "flex";
+  $("rail").innerHTML = Object.entries(TOOL_META).map(([id, m]) => {
+    const e = state.edges[m.edge];
+    const on = e.visible === id && e.mode !== "hidden";
+    return '<button data-open="' + id + '" aria-pressed="' + on + '" title="' + m.title + '（' + m.edge + ' 边）">' + m.icon + "</button>";
+  }).join("") + '<div class="sp"></div>';
+}
+
+function twHeader(edge) {
+  const e = state.edges[edge], id = e.visible, pinned = e.pinned.includes(id);
+  const tabs = e.members.map((m) => '<span class="tt' + (m === id ? " on" : "") + '" data-vis="' + edge + "|" + m + '">' + TOOL_META[m].title + "</span>").join("");
+  return '<div class="twhead" ' + SCOPE_ATTR.toolwindow + ' data-edge="' + edge + '" tabindex="0">' +
+    '<span class="t">' + TOOL_META[id].title + "</span>" +
+    '<span class="twtabs">' + (e.members.length > 1 ? tabs : "") + "</span>" +
+    '<span class="grow"></span>' +
+    (e.mode === "overlay" ? '<span class="chip">悬浮</span>' : "") +
+    (pinned ? '<span class="chip r">已固定</span>' : "") +
+    '<button class="iconbtn" data-act="db.toolwindow.' + (pinned ? "unpin" : "pin") + '" data-edge="' + edge + '" title="' + (pinned ? "取消固定" : "固定") + '">' + (pinned ? "📍" : "📌") + "</button>" +
+    '<button class="iconbtn" data-act="db.toolwindow.autoHide" data-edge="' + edge + '" title="自动隐藏（悬浮）">⇥</button>' +
+    '<button class="iconbtn" data-act="db.toolwindow.expandActive" data-edge="' + edge + '" title="展开活动窗口">⤢</button>' +
+    '<button class="iconbtn" data-act="db.toolwindow.close" data-edge="' + edge + '" title="关闭 Shift+Esc">✕</button>' +
+    "</div>";
+}
+
+function treeHtml() {
+  const rows = [];
+  const kindAttr = { conn: SCOPE_ATTR.conn, schema: SCOPE_ATTR.schema, table: SCOPE_ATTR.table, column: SCOPE_ATTR.column };
+  const icon = { conn: "🖧", schema: "▤", table: "▦", column: "•" };
+  let count = 0;
+  (function walk(n, d) {
+    if (count > TREE_LIMITS.maxVisibleNodes + 20) return;
+    const kids = n.children || [];
+    const open = state.tree.expanded.has(n.id);
+    if (n.id !== "root") {
+      count++;
+      rows.push('<div class="node' + (state.selected === n.id ? " sel" : "") + '" ' + kindAttr[n.kind] +
+        ' data-node="' + n.id + '" tabindex="-1" style="padding-left:' + (d * 11) + 'px">' +
+        '<span class="tw-arrow">' + (kids.length ? (open ? "▾" : "▸") : "") + "</span>" +
+        '<span class="ic">' + icon[n.kind] + "</span><span>" + esc(n.label) + "</span></div>");
+    }
+    if (open || n.id === "root") kids.forEach((c) => walk(c, n.id === "root" ? 0 : d + 1));
+  })(TREE, 0);
+  return '<div class="twbar">' +
+    '<button data-act="db.schema.collapseAll" title="Ctrl/Cmd+-">全部折叠</button>' +
+    '<button data-act="db.schema.expandOneLevel" title="→">展开一层</button>' +
+    '<button data-act="db.schema.expandAllBounded" title="Ctrl/Cmd+Shift+=">有界全展开</button>' +
+    '<span style="flex:1"></span><span class="chip">层级 ' + state.tree.depth + "/" + TREE_LIMITS.maxDepth + "</span></div>" +
+    (state.tree.notice ? '<div class="notice">⚠ ' + esc(state.tree.notice) + "</div>" : "") +
+    '<div class="tree">' + rows.join("") + "</div>";
+}
+
+function gridHtml() {
+  const cells = (r, ri) => r.map((v, ci) => {
+    if (v === null) return "<td " + SCOPE_ATTR.cell + ' data-c="' + ci + '" data-r="' + ri + '"><span class="nullv">NULL</span></td>';
+    if (v === "<bin>") return "<td " + SCOPE_ATTR.cell + ' data-c="' + ci + '" data-r="' + ri + '"><span class="bin">&lt;二进制 65,536 B · 已达 64.00 KiB 上限&gt;</span></td>';
+    const long = v.length > 24;
+    return "<td " + SCOPE_ATTR.cell + ' data-c="' + ci + '" data-r="' + ri + '" title="' + esc(v) + '">' +
+      esc(long ? v.slice(0, 24) : v) + (long ? '<span class="trunc"> …⚠</span>' : "") + "</td>";
+  }).join("");
+  return '<table class="grid"><thead><tr><th class="gut">#</th>' +
+    COLS.map((c, i) => "<th " + SCOPE_ATTR.colhead + ' data-c="' + i + '">' + c + "</th>").join("") +
+    "</tr></thead><tbody>" +
+    ROWS.map((r, ri) => "<tr>" + '<td class="gut" ' + SCOPE_ATTR.row + ' data-r="' + ri + '">' + (ri + 1) + "</td>" + cells(r, ri) + "</tr>").join("") +
+    "</tbody></table>";
+}
+
+function resultBody() {
+  const bar = '<div class="twbar" ' + SCOPE_ATTR.result + '>' +
+    '<button data-act="db.result.copyAllCsv">复制全部为 CSV</button>' +
+    '<button data-act="db.result.exportFile" disabled title="依赖未注册命令 db_export_result">导出为文件 · DESIGN_ONLY</button>' +
+    '<button data-act="db.result.clear">清空结果</button>' +
+    '<button data-act="db.result.rerun">重新执行</button>' +
+    '<span style="flex:1"></span><span class="chip">游标不落盘 · 上限 1000 行 / 4.00 MiB</span></div>';
+  if (state.result === "loading" || state.running) {
+    return bar + '<div class="empty"><b><span class="spin"></span> 加载中</b>已发起查询 ' + (state.execId || "exec-1") +
+      "，超时上限 " + DB_LIMITS.timeoutSecs + "s；" + (state.cancelling ? "正在取消…" : "可取消（见下方状态行）") + "</div>";
+  }
+  if (state.result === "empty") return bar + '<div class="empty"><b>空结果</b>查询成功但返回 0 行；不是错误，也不代表被截断。</div>';
+  if (state.result === "disconnected") return bar + '<div class="empty"><b>禁用（未连接）</b>当前文档未绑定活动连接：先在左侧连接树执行 <code>db.connection.connect</code>。所有取数动作按未连接禁用并给出原因。</div>';
+  if (state.result === "error") {
+    return bar + '<div class="banner e">✕ 查询执行失败，结果不完整：<b>syntax error at or near "slect"</b>（位置 1）· 已脱敏，不含连接串/凭据</div>' +
+      '<div class="empty">修正 SQL 后 <code>Ctrl/Cmd+Enter</code> 重跑；错误文案来自后端 <code>DbError</code> 的 <code>sanitize_message</code> 口径。</div>';
+  }
+  const warn = state.result === "trunc"
+    ? '<div class="banner w">⚠ 结果已被截断（命中行数上限：' + DB_LIMITS.maxRows + ' 行 / 4.00 MiB），展示的不是完整结果集；存在超过 64.00 KiB 的长字段被截断</div>'
+    : "";
+  return bar + warn + gridHtml();
+}
+
+function historyBody() {
+  const badge = { ok: '<span class="chip r">成功</span>', truncated: '<span class="chip w">已截断</span>', timeout: '<span class="chip d">超时</span>', blocked: '<span class="chip d">写已拒绝</span>' };
+  return '<div class="twbar" ' + SCOPE_ATTR.history + '>' +
+    '<button data-act="db.history.clear">清空历史</button>' +
+    '<button data-act="db.history.persistToggle" disabled title="依赖未注册命令 db_query_history">持久化历史（默认关）· DESIGN_ONLY</button>' +
+    '<span style="flex:1"></span><span class="chip">仅本次会话 · SQL 全文不落盘</span></div>' +
+    '<ul class="hist">' + state.history.map((h, i) =>
+      "<li " + SCOPE_ATTR.history + ' data-h="' + i + '" tabindex="-1">' + badge[h.state] +
+      "<code>" + esc(h.sql) + '</code><span class="ms">' + h.ms + "ms · " + h.rows + " 行</span></li>").join("") + "</ul>";
+}
+
+function messagesBody() {
+  return '<div class="twbar"><span class="chip">执行日志（合成）· 审计文案已脱敏</span></div>' +
+    '<div style="padding:4px 8px;font-family:var(--mono);font-size:10.5px;line-height:1.6">' +
+    "<div>10:22:31 connect ok · local-sqlite · 非生产 · 写权限=关</div>" +
+    "<div>10:22:44 query exec-7 · 812ms · 1000 行 · <span class=\"trunc\">truncated=true</span></div>" +
+    "<div>10:23:02 query exec-8 · 30000ms · <span class=\"trunc\">timeout</span>（默认上限 30s）</div>" +
+    "<div>10:23:40 write rejected · prod-replica · 生产判定=生产 · 缺写权限</div></div>";
+}
+
+function propertiesBody() {
+  const kv = [["对象", "public.orders"], ["来源", "结果集列元数据（非 information_schema）"], ["列数", COLS.length + " / 上限 512"],
+    ["行数", state.result === "trunc" ? "1000（已达上限，非全量）" : "5"], ["字节", "1.87 MiB / 4.00 MiB"],
+    ["长字段", "payload 命中 64.00 KiB 单字段上限"], ["写权限", "关（生产判定=生产）"], ["结构枚举", "不可用 · 依赖 db_list_schema"]];
+  return '<div class="twbar"><button data-act="db.properties.refresh" disabled title="依赖未注册命令 db_list_schema">刷新属性 · DESIGN_ONLY</button></div>' +
+    '<table class="kv">' + kv.map(([k, v]) => "<tr " + SCOPE_ATTR.properties + ' tabindex="-1"><td class="k">' + k + "</td><td>" + esc(v) + "</td></tr>").join("") + "</table>";
+}
+
+function toolBody(id) {
+  if (id === "db.tool.connections" || id === "db.tool.schema") return treeHtml();
+  if (id === "db.tool.result") return resultBody();
+  if (id === "db.tool.history") return historyBody();
+  if (id === "db.tool.messages") return messagesBody();
+  return propertiesBody();
+}
+
+function renderEdge(edge, host) {
+  const e = state.edges[edge], focus = state.view === "focus";
+  if (focus || e.mode === "hidden" || !e.visible) { host.innerHTML = ""; host.style.display = "none"; return; }
+  host.style.display = "block";
+  const overlay = e.mode === "overlay";
+  const side = edge === "bottom" ? "bottom" : edge;
+  const sizeCss = edge === "bottom" ? "height:" + e.size + "px;" : "width:" + e.size + "px;";
+  let pos = "";
+  if (overlay) {
+    pos = edge === "left" ? "left:" + CHROME.railLeft + "px;top:" + (CHROME.tabStrip + CHROME.navRow) + "px;bottom:" + CHROME.statusBar + "px;"
+      : edge === "right" ? "right:0;top:" + (CHROME.tabStrip + CHROME.navRow) + "px;bottom:" + CHROME.statusBar + "px;"
+      : "left:" + CHROME.railLeft + "px;right:0;bottom:" + CHROME.statusBar + "px;";
+  }
+  const splitter = edge === "bottom" ? '<div class="split" data-drag="bottom"></div>' : "";
+  const vsplit = '<div class="splitv" data-drag="' + edge + '"></div>';
+  const win = '<div class="tw ' + side + (overlay ? " overlay" : "") + '" style="' + sizeCss + pos + '">' +
+    twHeader(edge) + '<div class="twbody">' + toolBody(e.visible) + "</div></div>";
+  host.innerHTML = overlay ? win
+    : edge === "bottom" ? splitter + win
+    : edge === "left" ? '<div style="display:flex;height:100%">' + win + vsplit + "</div>"
+    : '<div style="display:flex;height:100%">' + vsplit + win + "</div>";
+  if (overlay) { host.style.display = "contents"; }
+}
+
+function renderSubtabs() {
+  const el = $("subtabs"), multi = state.docs.length >= 2 && state.view !== "focus";
+  el.style.display = multi ? "flex" : "none";
+  if (!multi) return;
+  el.innerHTML = state.docs.map((d, i) =>
+    '<div class="subtab' + (i === state.activeDoc ? " on" : "") + '" ' + SCOPE_ATTR.console + ' data-doc="' + i + '" tabindex="0">' +
+    (d.dirty ? '<span class="dot" title="未保存"></span>' : "") + esc(d.title) +
+    '<span class="chip">' + esc(d.conn) + "</span>" +
+    (d.status === "running" ? '<span class="chip w">运行中</span>' : "") +
+    '<span style="opacity:.55">✕</span></div>').join("") +
+    '<button class="iconbtn" data-act="db.connection.newConsole" title="新建 SQL 控制台 Ctrl/Cmd+Alt+N">＋</button>';
+}
+
+function renderDocBody() {
+  const d = doc(), inlineResult = state.edges.bottom.mode === "hidden" || state.view === "focus";
+  $("docBody").innerHTML =
+    '<textarea class="editor" ' + SCOPE_ATTR.editor + ' spellcheck="false" aria-label="SQL 编辑器">' + esc(d.sql) + "</textarea>" +
+    (inlineResult && state.view === "focus" && state.result !== "disconnected"
+      ? '<div class="inline">' + resultBody() + "</div>" : "");
+  const ta = $("docBody").querySelector("textarea");
+  if (ta) ta.addEventListener("input", () => { doc().sql = ta.value; doc().dirty = true; });
+}
+
+function renderCStatus() {
+  const d = doc(), el = $("cstatus");
+  el.style.display = state.view === "focus" ? "none" : "flex";
+  el.innerHTML =
+    '<button data-act="db.console.run">▶ 运行 Ctrl/Cmd+Enter</button>' +
+    '<button data-act="db.console.cancel" disabled title="依赖未注册命令 db_cancel；当前只能等默认超时 30s 或断开连接">■ 取消 · DESIGN_ONLY</button>' +
+    '<button data-act="sim.cancel">■ 模拟取消（设计态）</button>' +
+    '<span class="chip">' + esc(d.conn) + "</span>" +
+    '<span class="chip ' + (d.conn === "prod-replica" ? "d" : "l") + '">' + (d.conn === "prod-replica" ? "生产判定=生产 · 写已拒绝" : "非生产 · 写=关") + "</span>" +
+    "<span>" + (state.running ? (state.cancelling ? "取消中…" : "运行中 " + state.elapsed + "ms") : d.status === "cancelled" ? "已取消（结果不完整）" : "空闲") + "</span>" +
+    "<span>" + (state.execId ? "execId=" + state.execId : "execId=—") + "</span>" +
+    '<span style="flex:1"></span><span>SQL ' + d.sql.length + " B / 上限 64 KiB · 超时 " + DB_LIMITS.timeoutSecs + "s</span>";
+}
+
+function renderStatusbar() {
+  const el = $("statusbar");
+  el.style.display = state.view === "focus" ? "none" : "flex";
+  const t = (edge, id) => {
+    const e = state.edges[edge];
+    return '<button data-open="' + id + '" aria-pressed="' + (e.visible === id && e.mode !== "hidden") + '">' + TOOL_META[id].title + "</button>";
+  };
+  el.innerHTML = '<span>' + (state.view === "collapsed" ? "收起态" : "正常态") + "</span>" +
+    t("bottom", "db.tool.result") + t("bottom", "db.tool.history") + t("bottom", "db.tool.messages") + t("right", "db.tool.properties") +
+    '<span style="flex:1"></span>' +
+    '<button data-act="db.toolwindow.collapseAll">收起全部工具窗口</button>' +
+    '<button data-act="db.toolwindow.restoreLayout"' + (state.previousLayout ? "" : " disabled title=\"没有可恢复的布局快照\"") + ">恢复上次布局</button>" +
+    '<button data-act="db.toolwindow.focusMode">专注模式 F11</button>';
+}
+
+function renderFocusPill() {
+  const old = document.querySelector(".focuspill");
+  if (old) old.remove();
+  if (state.view !== "focus") return;
+  const div = document.createElement("div");
+  div.className = "focuspill";
+  div.innerHTML = "<span>专注模式 · 活动文档占满全视口</span><button data-act=\"db.toolwindow.focusMode\">退出专注 · Esc</button>";
+  $("stage").appendChild(div);
+}
+
+function measure() {
+  const body = $("docBody");
+  const postTitlebar = state.size.h - CHROME.tabStrip;
+  const w = body.offsetWidth, h = body.offsetHeight;
+  const wp = Math.round((w / state.size.w) * 10000) / 100, hp = Math.round((h / postTitlebar) * 10000) / 100;
+  const strict = state.view === "collapsed" || state.view === "focus";
+  const okW = wp >= BUDGET.minWidthPct, okH = hp >= BUDGET.minHeightPct;
+  $("readout").innerHTML =
+    "<span>模式 <var>" + ({ normal: "正常", collapsed: "收起全部", focus: "专注" }[state.view]) + "</var></span>" +
+    "<span>顶部 chrome <var>2 行 / " + (CHROME.tabStrip + CHROME.navRow) + "px</var>（上限 " + BUDGET.maxTopChromePx + "px）</span>" +
+    "<span>后标题栏高 <var>" + postTitlebar + "px</var></span>" +
+    "<span>活动文档面 <var>" + w + "×" + h + "</var></span>" +
+    "<span>宽占比 <var class='" + (okW ? "pass" : "fail") + "'>" + wp + "%</var>（红线 " + BUDGET.minWidthPct + "%）</span>" +
+    "<span>高占比 <var class='" + (okH ? "pass" : "fail") + "'>" + hp + "%</var>（红线 " + BUDGET.minHeightPct + "%）</span>" +
+    "<span>" + (strict ? (okW && okH ? "<var class='pass'>预算 PASS</var>" : "<var class='fail'>预算 FAIL</var>") : "<span>（红线仅约束收起/专注态）</span>") + "</span>";
+}
+
+function render() {
+  const st = $("stage");
+  st.style.width = state.size.w + "px";
+  st.style.height = state.size.h + "px";
+  const avail = document.querySelector(".stagewrap").clientWidth - 28;
+  const scale = Math.min(1, avail / state.size.w);
+  st.style.transform = "scale(" + scale + ")";
+  document.querySelector(".stagewrap").style.height = (state.size.h * scale + 28) + "px";
+  $("navrow").style.display = state.view === "focus" ? "none" : "flex";
+  renderRail();
+  renderEdge("left", $("leftHost"));
+  renderEdge("right", $("rightHost"));
+  renderEdge("bottom", $("bottomHost"));
+  renderSubtabs(); renderDocBody(); renderCStatus(); renderStatusbar(); renderFocusPill();
+  measure();
+}
+
+/* =====================================================================
+   §7 右键菜单（作用域 = 指针下最近的 data-scope 宿主）
+   ===================================================================== */
+let menuScope = null;
+function actionEnabled(a) {
+  const [id, , , , , backend] = a;
+  if ((backend || "").startsWith("MISSING:")) return false;
+  if (id === "db.toolwindow.restoreLayout") return !!state.previousLayout;
+  if (id === "db.toolwindow.collapseAll") return state.view !== "collapsed";
+  if (id === "db.console.closeOthers") return state.docs.length >= 2;
+  if (id === "db.result.copyAllCsv" || id === "db.grid.column.sortAsc" || id === "db.grid.column.sortDesc" || id === "db.grid.column.copyColumn")
+    return state.result === "ok" || state.result === "trunc";
+  if (id === "db.grid.cell.viewFull") return state.result !== "trunc";
+  if (id === "db.connection.disconnect") return state.result !== "disconnected";
+  if (id === "db.table.truncate") return false;
+  if (id === "db.console.run" || id === "db.editor.runSelection" || id === "db.table.previewRows" || id === "db.result.rerun" || id === "db.history.rerun")
+    return state.result !== "disconnected" && !state.running;
+  return true;
+}
+function openMenu(scope, x, y, objLabel) {
+  const entry = REGISTRY[scope];
+  if (!entry) return;
+  menuScope = scope;
+  const m = $("menu");
+  m.innerHTML = '<div class="mhead">' + esc(entry[0]) + (objLabel ? " · " + esc(objLabel) : "") + " · <code>" + scope + "</code></div>" +
+    entry[1].map((a) => {
+      const [id, label, kb, safety, confirm, backend, why] = a;
+      const on = actionEnabled(a);
+      const chip = '<span class="chip ' + SAFE[safety][1] + '">' + SAFE[safety][0] + "</span>";
+      const cf = confirm === "typed" ? '<span class="chip d">键入确认</span>' : confirm === "single" ? '<span class="chip w">需确认</span>' : "";
+      const dep = (backend || "").startsWith("MISSING:") ? '<span class="chip des">DESIGN_ONLY</span>' : backend ? '<span class="chip">' + backend + "</span>" : "";
+      return '<div class="mi' + (on ? "" : " dis") + '" role="menuitem" tabindex="-1" data-cmd="' + id + '" aria-disabled="' + !on + '">' +
+        '<span class="lbl">' + esc(label) + "</span>" + chip + cf + dep + '<span class="kb">' + esc(kb || "Shift+F10") + "</span></div>" +
+        '<div class="why">禁用原因：' + esc(why) + "</div>";
+    }).join("");
+  m.style.display = "block";
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.min(x, innerWidth - r.width - 6) + "px";
+  m.style.top = Math.min(y, innerHeight - r.height - 6) + "px";
+  const first = m.querySelector(".mi");
+  if (first) first.focus();
+}
+function closeMenu() { $("menu").style.display = "none"; menuScope = null; }
+
+/* =====================================================================
+   §8 交互
+   ===================================================================== */
+function runQuery() {
+  if (state.result === "disconnected" || state.running) return;
+  state.running = true; state.cancelling = false; state.elapsed = 0;
+  state.execId = "exec-" + (Math.floor(Math.random() * 900) + 100);
+  doc().status = "running";
+  openTool("bottom", "db.tool.result"); // 结果窗口「按需出现」：运行即打开，不常驻
+  render();
+  const t = setInterval(() => {
+    state.elapsed += 120;
+    if (!state.running) { clearInterval(t); return; }
+    if (state.elapsed >= 840) {
+      clearInterval(t); state.running = false; doc().status = "idle";
+      if (state.result === "loading") state.result = "trunc";
+    }
+    render();
+  }, 120);
+}
+function simulateCancel() {
+  if (!state.running) return;
+  state.cancelling = true; render();
+  setTimeout(() => { state.running = false; state.cancelling = false; doc().status = "cancelled"; state.result = "error"; render(); }, 360);
+}
+
+document.addEventListener("click", (ev) => {
+  const t = ev.target.closest("[data-size],[data-state],[data-open],[data-act],[data-doc],[data-node],[data-vis],#btnCollapse,#btnRestore,#btnExpand,#btnFocus,#navFocus,.mi");
+  if (!$("menu").contains(ev.target)) closeMenu();
+  if (!t) return;
+  if (t.classList.contains("mi")) {
+    if (t.getAttribute("aria-disabled") === "true") return;
+    const cmd = t.dataset.cmd;
+    closeMenu();
+    dispatch(cmd);
+    return;
+  }
+  if (t.dataset.size) { const [w, h] = t.dataset.size.split("x").map(Number); state.size = { w, h };
+    document.querySelectorAll("[data-size]").forEach((b) => b.setAttribute("aria-pressed", b === t)); render(); return; }
+  if (t.dataset.state) { state.result = t.dataset.state; state.running = false;
+    document.querySelectorAll("[data-state]").forEach((b) => b.setAttribute("aria-pressed", b === t));
+    if (state.result !== "disconnected") openTool("bottom", "db.tool.result"); render(); return; }
+  if (t.dataset.vis) { const [edge, id] = t.dataset.vis.split("|"); state.edges[edge].visible = id; render(); return; }
+  if (t.dataset.open) {
+    const id = t.dataset.open, edge = TOOL_META[id].edge, e = state.edges[edge];
+    if (e.visible === id && e.mode !== "hidden") closeEdge(edge); else openTool(edge, id);
+    render(); return;
+  }
+  if (t.dataset.doc !== undefined) { state.activeDoc = Number(t.dataset.doc); render(); return; }
+  if (t.dataset.node) { state.selected = t.dataset.node;
+    const ex = state.tree.expanded; ex.has(t.dataset.node) ? ex.delete(t.dataset.node) : ex.add(t.dataset.node); render(); return; }
+  if (t.id === "btnCollapse") return dispatch("db.toolwindow.collapseAll");
+  if (t.id === "btnRestore") return dispatch("db.toolwindow.restoreLayout");
+  if (t.id === "btnExpand") return dispatch("db.toolwindow.expandActive");
+  if (t.id === "btnFocus" || t.id === "navFocus") return dispatch("db.toolwindow.focusMode");
+  if (t.dataset.act) return dispatch(t.dataset.act, t.dataset.edge);
+});
+
+function dispatch(cmd, edge) {
+  switch (cmd) {
+    case "db.toolwindow.collapseAll": collapseAll(); break;
+    case "db.toolwindow.restoreLayout": restoreLayout(); break;
+    case "db.toolwindow.expandActive": state.expandedFrom ? shrinkActive() : expandActive(edge || activeEdge()); break;
+    case "db.toolwindow.focusMode": state.view === "focus" ? restoreLayout() : enterFocus(); break;
+    case "db.toolwindow.pin": { const e = state.edges[edge || activeEdge()]; if (e && e.visible && !e.pinned.includes(e.visible)) { e.pinned.push(e.visible); if (e.mode === "overlay") e.mode = "docked"; } break; }
+    case "db.toolwindow.unpin": { const e = state.edges[edge || activeEdge()]; if (e) e.pinned = e.pinned.filter((m) => m !== e.visible); break; }
+    case "db.toolwindow.autoHide": { const e = state.edges[edge || activeEdge()]; if (e && e.visible && !e.pinned.includes(e.visible)) e.mode = "overlay"; break; }
+    case "db.toolwindow.close": closeEdge(edge || activeEdge()); break;
+    case "db.schema.collapseAll": collapseAllNodes(); break;
+    case "db.schema.expandOneLevel": expandOneLevel(); break;
+    case "db.schema.expandAllBounded": boundedExpandAll(); break;
+    case "db.connection.newConsole": case "db.console.duplicate":
+      state.docs.push({ id: "d" + (state.docs.length + 1), title: "console-" + (state.docs.length + 1) + ".sql", conn: "local-sqlite", dirty: false, status: "idle", sql: "select 1;" });
+      state.activeDoc = state.docs.length - 1; break;
+    case "db.console.close": if (state.docs.length > 1) { state.docs.splice(state.activeDoc, 1); state.activeDoc = 0; } break;
+    case "db.console.closeOthers": state.docs = [doc()]; state.activeDoc = 0; break;
+    case "db.console.run": case "db.editor.runSelection": case "db.table.previewRows": case "db.result.rerun": case "db.history.rerun": runQuery(); break;
+    case "sim.cancel": simulateCancel(); break;
+    case "db.result.clear": state.result = "empty"; break;
+    case "db.tool.history": openTool("bottom", "db.tool.history"); break;
+    default: break; /* 其余动作在原型内为形态占位：不改数据、不发 IPC */
+  }
+  render();
+}
+
+$("stage").addEventListener("contextmenu", (ev) => {
+  ev.preventDefault();
+  const host = ev.target.closest("[data-scope]");
+  if (!host) { closeMenu(); return; }
+  const label = host.dataset.node ? (host.textContent || "").trim().slice(0, 28) : "";
+  openMenu(host.dataset.scope, ev.clientX, ev.clientY, label);
+});
+
+document.addEventListener("keydown", (ev) => {
+  const m = $("menu"), open = m.style.display === "block";
+  if (open) {
+    const items = [...m.querySelectorAll(".mi")];
+    const idx = items.indexOf(document.activeElement);
+    if (ev.key === "Escape") { closeMenu(); ev.preventDefault(); return; }
+    if (ev.key === "ArrowDown") { items[(idx + 1 + items.length) % items.length].focus(); ev.preventDefault(); return; }
+    if (ev.key === "ArrowUp") { items[(idx - 1 + items.length) % items.length].focus(); ev.preventDefault(); return; }
+    if (ev.key === "Enter" && idx >= 0) { items[idx].click(); ev.preventDefault(); return; }
+    return;
+  }
+  if (ev.key === "F10" && ev.shiftKey) {
+    const host = (document.activeElement || $("docBody")).closest("[data-scope]") || $("docBody").querySelector("[data-scope]");
+    if (host) { const r = host.getBoundingClientRect(); openMenu(host.dataset.scope, r.left + 12, r.bottom); ev.preventDefault(); }
+    return;
+  }
+  if (ev.key === "F11") { dispatch("db.toolwindow.focusMode"); ev.preventDefault(); return; }
+  if (ev.key === "Escape" && state.view === "focus") { dispatch("db.toolwindow.focusMode"); ev.preventDefault(); return; }
+  if (ev.key === "Escape" && ev.shiftKey === false && state.view === "normal") return;
+  if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { dispatch("db.console.run"); ev.preventDefault(); return; }
+  if (ev.altKey && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(ev.key)) {
+    const e = activeEdge(); if (!e) return;
+    const step = ev.key === "ArrowLeft" || ev.key === "ArrowUp" ? -20 : 20;
+    resizeEdge(e, state.edges[e].size + (e === "bottom" ? -step : step)); render(); ev.preventDefault();
+  }
+});
+
+/* 拖拽调整（鼠标路径；键盘路径为 Alt+方向键，见 db.toolwindow.resize） */
+let drag = null;
+document.addEventListener("mousedown", (ev) => {
+  const h = ev.target.closest("[data-drag]");
+  if (!h) return;
+  drag = { edge: h.dataset.drag, x: ev.clientX, y: ev.clientY, size: state.edges[h.dataset.drag].size };
+  ev.preventDefault();
+});
+document.addEventListener("mousemove", (ev) => {
+  if (!drag) return;
+  const d = drag.edge === "bottom" ? drag.y - ev.clientY : drag.edge === "left" ? ev.clientX - drag.x : drag.x - ev.clientX;
+  resizeEdge(drag.edge, drag.size + d); render();
+});
+document.addEventListener("mouseup", () => { drag = null; });
+addEventListener("resize", render);
+render();
+</script>
+</body>
+</html>
+
