@@ -168,7 +168,7 @@
     },
     "A11": {
       "branch": "codex/m5-w18-a11",
-      "head": "<pending commit>",
+      "head": "b920920",
       "status": "PROVISIONAL",
       "deliverables": [
         "logs/research/M5-W18/A11-R3-integration-manifest.json",
