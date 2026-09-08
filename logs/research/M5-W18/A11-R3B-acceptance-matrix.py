@@ -205,15 +205,17 @@ def run_a10_checker(a10_path: str | None) -> dict:
     result = {"available": False, "summary": "not run", "detail": ""}
     if not a10_path:
         return result
+    cleanup_tmp = None
     if not os.path.isfile(a10_path):
         content, _ = resolve(os.path.basename(a10_path))
         if content is None:
             return result
-        tmp = os.path.join(repo_root(), "logs", "research", "M5-W18",
-                           "_a10_tmp_check.py")
-        with open(tmp, "w", encoding="utf-8") as fh:
+        import tempfile
+        fd, tmp = tempfile.mkstemp(suffix=".py", prefix="_a10_")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(content)
         a10_path = tmp
+        cleanup_tmp = tmp
     try:
         out = subprocess.run([sys.executable, a10_path],
                              capture_output=True, text=True, cwd=repo_root(),
@@ -221,6 +223,9 @@ def run_a10_checker(a10_path: str | None) -> dict:
     except OSError as e:
         result["detail"] = f"run error: {e}"
         return result
+    finally:
+        if cleanup_tmp and os.path.isfile(cleanup_tmp):
+            os.remove(cleanup_tmp)
     result["available"] = True
     result["summary"] = "exit=%d" % out.returncode
     result["detail"] = (out.stdout + out.stderr)[-1500:]
