@@ -197,15 +197,17 @@ R1 原文在附录 A。下表把 A0 审计里与 A11 相关的每一条 retract 
 
 ---
 
-## 10. 阻塞项与停止准则（R2 终稿门禁）
+## 10. 本件定位与 R2 终稿门禁（更新于 R2B，2026-09-08）
 
-**R2 终稿被以下门禁阻断（dispatch：“A11 终稿仅在 A1–A10 R2 commit 全部存在后”）**：
+> 本 §10 为 R2-provisional 的阶段性说明。**R2B 整包已接替本件作为 A11 权威交付**，见 `A11-R2B-progress.md` / `A11-R2B-integration-manifest.json` / `A11-R2B-A0-brief.md` / `A11-R2B-S0-S5-task-cards.md`。
 
-1. **A9 分支 `c5bfc88` 仍未 rebase 到 `d6127c4`**（仍基于 `78d2cfb`），且为 R1 内容 → A9 既无 R2、也不在最新基线上。
-2. **A1–A10 均无任何 R2 commit**：本次实测各 lane tip 均为 R1 draft（A2/A8 为“preserve draft”恢复提交，A1/A3/A4/A5/A6/A7/A10 为 R1 内容 rebase 到 d6127c4）。A0 审计要求“claim-level evidence、resolve contradictions、A10 ledger 与 A11 matrix 一致”均未达。
-3. A10 ledger（R1）与 A11 matrix（本件）**尚未经 A0 裁定一致**。
+R2-provisional 原门禁（dispatch：“A11 终稿仅在 A1–A10 R2 commit 全部存在后”）**已被 R2B 进度包解除并替代**：
 
-**因此 STATUS=PASS_WITH_DEBT**，本件为 **R2-provisional**；在 A0 集成 peer R2 并裁定前，**不宣布 W18 完成**（dispatch L1405）。
+1. **A9 当前 tip `28a934a`** 已基于 `d6127c4`/origin/master 且含 R2 threat-model（`A9-threat-model.md`/`A9-source-map.md`）；原 `c5bfc88` 已过时。
+2. **A1–A10 现已全部存在 R2 证据闭环提交**：A1 `526e2ef`、A2 `bcdfc3b`、A3 `ab455c1d`、A5 `a42b915`、A6 `38faa2d`、A7 `07fda2f`、A8 `f4a4f3b`、A9 `28a934a`、A10 `b81fa69`。**缺口两项**（R2B 的 `WAITING_DEPENDENCY`）：**A4 `b737e5d` 仍停留在 R1 架构图，无 R2 证据闭环提交**；**A10 仍 HOLD，`A10-R2B-review-findings.md` 尚未产出**（peer R2 现已齐，A10 应重读后产出）。
+3. A10 ledger 与 A11 matrix 一致性由 R2B 包的 `CONSUMED_PEERS` + 跨 lane 差异清单承接（见 R2B 进度包 §跨 lane 待 A0 裁决）。
+
+**本件保留为 R2-provisional 历史**；A11 当前权威状态以 R2B 包（`STATUS=WAITING_DEPENDENCY`）为准，不在此宣布 W18 完成。
 
 **立即停止 / 阻断 W19 的条件**（不变）：体积无解且未获 A0 书面重基线；或 S5 未决却上 vector；或任何片引入 daemon/MCP/远程嵌入/模型下载。
 

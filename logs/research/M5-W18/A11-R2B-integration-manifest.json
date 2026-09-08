@@ -1,0 +1,207 @@
+{
+  "manifest_version": "M5-W18-R2B/A11",
+  "generated_at": "2026-09-08",
+  "author": "A11 (codex/m5-w18-a11)",
+  "base_sha": "434e63f",
+  "base_desc": "origin/master: docs(M5-W18): define daily workbench and second research dispatch",
+  "a0_integration_order": ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10", "A11", "A0"],
+  "lanes": {
+    "A1": {
+      "sha": "526e2ef628c0f10617a816c7783a9b3ef72de3ad",
+      "status": "PASS_WITH_DEBT",
+      "files": [
+        "logs/research/M5-W18/A1-product-baseline-R2-20260908.md",
+        "logs/research/M5-W18/A1-checkpoint-R2-20260908.md"
+      ],
+      "scope": "current-product baseline, gap inventory, R1->R2 corrections (6), machine-checkable facts",
+      "merge_after": [],
+      "deps_open": ["W17-D1~D5", "DbValue G4", "frontend test net G5"],
+      "notes": "first in integration order; feeds A2-A11"
+    },
+    "A2": {
+      "sha": "bcdfc3bca922c398422f8efd652900896eb1652e",
+      "status": "PASS_WITH_DEBT",
+      "files": [
+        "logs/research/M5-W18/A2-obsidian-vault-semantics.md",
+        "logs/research/M5-W18/A2-fixtures.md",
+        "logs/checkpoints/A2-M5-W18-R-20260908.md"
+      ],
+      "scope": "Obsidian vault semantics reverse-engineering, synthetic fixtures 20/20",
+      "merge_after": ["A1"],
+      "deps_open": ["B1: 8370>GRAPH_MAX_NODES=5000 (A1 capacity decision)", "B2: heading/block/embed unobservable"],
+      "notes": "feeds A3 graph UX, A9 workspace grant, A10 parser ledger, A11 test matrix"
+    },
+    "A3": {
+      "sha": "ab455c1db9d3fe732cdff1aa95a2dff9c51955e6",
+      "status": "R2B_PASS_WITH_DEBT",
+      "files": [
+        "logs/research/M5-W18/A3-R2B-graph-note-nav-20260908.md",
+        "logs/research/M5-W18/A3-obsidian-graph-search-ux-20260908-0759.md",
+        "logs/checkpoints/A3-M5-W18-R2B-20260908.md"
+      ],
+      "scope": "graph/note joint UX and navigation design; check-graph-ui-logic 113 pass",
+      "merge_after": ["A2", "A1"],
+      "deps_open": ["A2 W19 zero-change接入", "A1 G1"],
+      "notes": "does NOT hold zvec engine adoption verdict"
+    },
+    "A4": {
+      "sha": "b737e5d4cc285ceea507154cc6e0f261e2e8c01e",
+      "status": "R1_ONLY__R2_CLOSURE_MISSING",
+      "files": [
+        "logs/research/M5-W18/A4-dbx-backend-architecture-map.md",
+        "logs/research/M5-W18/A4-checkpoint.md"
+      ],
+      "scope": "dbx backend architecture map (R1-era; no R2 evidence closure commit)",
+      "merge_after": ["A1"],
+      "deps_open": ["R2 evidence closure required by dispatch (DbValue contract, reference identity)"],
+      "notes": "WAITING_DEPENDENCY: A4 must produce R2 evidence-closure commit before A11 finalizes"
+    },
+    "A5": {
+      "sha": "a42b9154a8e2524a13f64d26f7a9815cc1345515",
+      "status": "PASS_WITH_DEBT",
+      "files": [
+        "logs/research/M5-W18/A5-workbench-ux-map.md",
+        "logs/research/M5-W18/A5-replication-blueprint.md",
+        "logs/research/M5-W18/A5-checkpoint.md"
+      ],
+      "scope": "database workbench UX map, R1->R2 corrections (8), check-database-ui-logic 119 pass",
+      "merge_after": ["A4", "A6", "A3"],
+      "deps_open": ["A4 DTO freeze", "A6 credential/cancel lifecycle", "A3 connection bridge"],
+      "notes": "size redline 25.2% (margin ~345B) constrains all UI changes"
+    },
+    "A6": {
+      "sha": "38faa2da7d521840966c83575cf152a573a68f91",
+      "status": "PASS_WITH_DEBT",
+      "r2_verdict": "REWORK_CLOSED",
+      "files": [
+        "logs/research/M5-W18/A6-security-lifecycle-audit.md",
+        "logs/research/M5-W18/A6-checkpoint.md"
+      ],
+      "scope": "credential source-to-sink audit, race timelines, fail-closed assertions",
+      "merge_after": ["A4"],
+      "deps_open": ["A4 source-map consistency"],
+      "notes": "corrected 'never enters JS memory' myth"
+    },
+    "A7": {
+      "sha": "07fda2f87c319f6731d065f69da1e00dae944a00",
+      "status": "PASS",
+      "head_inner": "8ec92bbf5baace5df3a499169816e6c95293a121",
+      "files": [
+        "logs/research/M5-W18/A7-zvec-grep-R2-evidence-closure.md",
+        "logs/research/M5-W18/A7-zvec-grep-ingestion-index-architecture.md",
+        "logs/research/M5-W18/A7-lane-checkpoint.md"
+      ],
+      "scope": "zvec-grep native binding, ingestion/index architecture",
+      "merge_after": ["A10", "A9"],
+      "deps_open": [
+        "A0 review: cross-binding interop unproven (WAL/lock interchange)",
+        "A0 review: cache namespace conflict (.zvec-grep root cleanup)",
+        "A10 vendored-libzvec_c_api provenance + hermetic build",
+        "A9 local workspace-scope authorization gate (product currently has none)"
+      ],
+      "notes": "W19 first slice = FTS-only (no watcher/daemon/model/network)"
+    },
+    "A8": {
+      "sha": "f4a4f3bab71df7322a96c499facf201e35ffd441",
+      "status": "PASS_WITH_DEBT",
+      "files": [
+        "logs/research/M5-W18/A8-zvec-grep-retrieval.md",
+        "logs/research/M5-W18/A8-benchmark-ripgrep.mjs",
+        "logs/research/M5-W18/A8-benchmark-routes.mjs",
+        "logs/research/M5-W18/A8-checkpoint.md"
+      ],
+      "scope": "zvec-grep retrieval routes; real benchmark execution; COPY=0 (N-API only sidecar)",
+      "merge_after": ["A1", "A3", "A10"],
+      "deps_open": [
+        "A0 review: metric naming (vRecall/fRecall denominator)",
+        "A0 review: perf boundary (RSS/duration != full OS peak/p95)",
+        "A3 retrieval landing decision",
+        "A10 Apache-2.0 inbound obligation ledger"
+      ],
+      "notes": "recommend W19 first ADAPT managed-ripgrep; FTS/vector via sidecar, local-only default"
+    },
+    "A9": {
+      "sha": "28a934add0e09e26d42cd4759438e29f1300cba3",
+      "status": "PASS",
+      "files": [
+        "logs/research/M5-W18/A9-threat-model.md",
+        "logs/research/M5-W18/A9-source-map.md",
+        "logs/research/M5-W18/A9-checkpoint.md"
+      ],
+      "scope": "zvec-grep trust boundary; remote-embedding egress gate strong",
+      "merge_after": ["A3"],
+      "deps_open": [
+        "B2: daemon bearer token optional -> must be mandatory (fail-closed)",
+        "B3: apiKey plaintext -> OS keychain, never in workspace",
+        "B7: local model download no integrity check -> checksum + pinned mirror or disabled"
+      ],
+      "notes": "no dependency until A0 approval after A3"
+    },
+    "A10": {
+      "sha": "b81fa690e9ae3d4e12267cbabc8548ab1095e96f",
+      "status": "PASS_WITH_DEBT__HOLD",
+      "files": [
+        "logs/research/M5-W18/A10-dependency-bom.md",
+        "logs/research/M5-W18/A10-source-transplant-ledger.md",
+        "logs/research/M5-W18/A10-notice-and-review-gate.md",
+        "logs/research/M5-W18/A10-checkpoint.md"
+      ],
+      "scope": "dependency BOM, source-transplant ledger, NOTICE/review-gate (R2)",
+      "merge_after": ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9"],
+      "deps_open": [
+        "A10-R2B-review-findings.md NOT YET PRODUCED (peer R2 now present; A10 should re-read and finalize)",
+        "A4 R2 closure still missing (see A4)"
+      ],
+      "notes": "WAITING_DEPENDENCY: A10 must produce R2B independent review findings"
+    },
+    "A11": {
+      "sha": "abbbf63cb2f8b180f63d59571fead7381209ad68",
+      "status": "R2B_READY_FOR_REVIEW",
+      "files": [
+        "logs/research/M5-W18/A11-R2B-progress.md",
+        "logs/research/M5-W18/A11-R2B-integration-manifest.json",
+        "logs/research/M5-W18/A11-R2B-A0-brief.md",
+        "logs/research/M5-W18/A11-R2B-S0-S5-task-cards.md",
+        "logs/checkpoints/A11-M5-W18-R2B-20260908.md"
+      ],
+      "scope": "integration manifest, progress/acceptance package, S0-S5 task cards, A0 brief",
+      "merge_after": ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10"],
+      "deps_open": ["A4 R2 closure", "A10 R2B review-findings"],
+      "notes": "does not merge other lanes; A0 integrates"
+    }
+  },
+  "consumed_peers": [
+    {"lane": "A1", "sha": "526e2ef628c0f10617a816c7783a9b3ef72de3ad"},
+    {"lane": "A2", "sha": "bcdfc3bca922c398422f8efd652900896eb1652e"},
+    {"lane": "A3", "sha": "ab455c1db9d3fe732cdff1aa95a2dff9c51955e6"},
+    {"lane": "A4", "sha": "b737e5d4cc285ceea507154cc6e0f261e2e8c01e"},
+    {"lane": "A5", "sha": "a42b9154a8e2524a13f64d26f7a9815cc1345515"},
+    {"lane": "A6", "sha": "38faa2da7d521840966c83575cf152a573a68f91"},
+    {"lane": "A7", "sha": "07fda2f87c319f6731d065f69da1e00dae944a00"},
+    {"lane": "A8", "sha": "f4a4f3bab71df7322a96c499facf201e35ffd441"},
+    {"lane": "A9", "sha": "28a934add0e09e26d42cd4759438e29f1300cba3"},
+    {"lane": "A10", "sha": "b81fa690e9ae3d4e12267cbabc8548ab1095e96f"},
+    {"lane": "A0", "ref": "origin/master 434e63f", "docs": [
+      "WORKBENCH_BLUEPRINT-20260908.md",
+      "A0-HANDOFF-LOW-COST-20260908.md",
+      "A0-M5-W18-R2B-dispatch-20260908.md",
+      "M5-W18-R2B-TASKS-20260908.md",
+      "PARALLEL_COMMAND_BOARD.md",
+      "WORKSPACE_IDENTITY.md"
+    ]}
+  ],
+  "open_decisions_for_a0": [
+    "A2 alias/同名/大小写 inference unverified -> confirm vs official doc or mark design choice (A2/A3)",
+    "A7 cross-binding interop + cache namespace conflict -> A7/A9/A10 reconcile",
+    "A8 metric naming (vRecall/fRecall) and perf boundary -> A8 correct",
+    "A7/A8 not reconciled (npm vs Rust binding) -> A0 adjudicate",
+    "dbx reference identity (t8y2/dbx) != necessarily user IDEA feature -> A4/A5",
+    "product LICENSE = MulanPSL-2.0 (not Apache-2.0); dbx = Apache-2.0 -> A10 attribution"
+  ],
+  "waiting_dependency": {
+    "A4": "R2 evidence-closure commit missing (tip b737e5d is R1-era)",
+    "A10": "A10-R2B-review-findings.md not produced (peer R2 now present)"
+  },
+  "no_product_code": true,
+  "no_push": true
+}
