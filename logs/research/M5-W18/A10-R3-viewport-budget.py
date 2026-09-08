@@ -10,6 +10,14 @@
 #
 # The script only does arithmetic. It does NOT measure a running GUI (no native run was
 # performed for this report), so every pixel input is an explicit assumption printed in the output.
+#
+# SUPERSEDED IN PART (A10, R3B 2026-09-08): the titlebar sweep and the "<=80px top chrome"
+# budget below were R3 exploration. A0's R3 acceptance audit froze a single convention:
+# geometry is measured on the app INNER viewport (OS titlebar excluded), top chrome is
+# exactly 60px (2 x 30px rows), the status bar is exactly 24px, and the acceptance sizes
+# are 1920x1080 / 1440x900 / 1366x768 / 1200x800 / 1024x720 / 900x600 (800x600 dropped).
+# The canonical, frozen arithmetic now lives in A10-R3B-closure-audit.py (probe P2);
+# this file is kept unmodified as the R3 derivation record.
 
 TARGETS = [(1920, 1080), (1440, 900), (1366, 768), (1024, 720)]
 HEIGHT_SHARE = 0.85

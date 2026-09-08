@@ -33,7 +33,8 @@
 
 - `ActivityBar`：主行 + 最多三个扩展行（`grid`/`more`/`omni`），`.omni-row { max-height: 74px }`
 - `UnifiedTabBar`（`MainArea.vue:125`）：`v-show=!layout.compactMode`
-- `StatusBar`（`StatusBar.vue:136` `height: 26px`）：约 10 段信息（连接态、当前视图、页签数、终端就绪、仓库配置、审计计数、内存 3 项、grid 分组 RSS）
+- `StatusBar`（`StatusBar.vue:136` `height: 26px` **当前产品实测**；R3B 冻结口径统一为 **24px**，见 A0 R3 终裁 / `A10-R3B-closure-audit.py` 的 `STATUS_PX=24`）：约 10 段信息（连接态、当前视图、页签数、终端就绪、仓库配置、审计计数、内存 3 项、grid 分组 RSS）
+- **R3B 口径对齐**：A0 终裁的几何 SSOT 为「内视口（排除 OS 标题栏）= 顶部 2×30px=60px + 状态栏 24px + 折叠竖条 28px」；此处 26px/108px 为**裁决前的产品实测**，仅供差分对照，不作为 R3 验收几何。A2/A3/A8 的验收报告须改用 60/24，不得再写 68/65/89/94px（审计 P2 已强制）。
 - 精简模式 `layout.compactMode`：`App.vue` 中 `ActivityBar` 与 `MainArea` 内 `UnifiedTabBar` 一并 `v-show=false`
 
 ### 1.4 与用户裁决的对照（"去掉常驻功能按钮、默认更简单更宽敞"）
