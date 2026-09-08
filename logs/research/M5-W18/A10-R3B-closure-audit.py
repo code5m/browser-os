@@ -46,6 +46,7 @@ HEIGHT_SHARE = 0.85
 WIDTH_SHARE = 0.92
 SIZES = [(1920, 1080), (1440, 900), (1366, 768), (1200, 800), (1024, 720), (900, 600)]
 DROPPED_SIZE = (800, 600)
+SIZES_NO_DROPPED = [(w, h) for (w, h) in SIZES if (w, h) != DROPPED_SIZE]
 
 # product facts that anchor the ruling (src-tauri/src/main.rs)
 PRODUCT_MIN_INNER = (900, 600)
@@ -53,8 +54,8 @@ PRODUCT_DEFAULT_INNER = (1200, 800)
 PRODUCT_STATUS_PX_TODAY = 26                    # src/components/layout/StatusBar.vue
 
 # ---------------------------------------------------------------- artifacts
-A1_PROTO = "A1-R3-prototype.html"
-A1_REPORT = "A1-R3-browser-workbench.md"
+A1_PROTO = "A1-R3B-prototype.html"
+A1_REPORT = "A1-R3B-browser-workbench.md"
 A2_REPORT = "A2-R3-shell-density-audit.md"
 A2_PROTO = "A2-R3-density-replica.html"
 A3_REPORT = "A3-R3-toolwindow-disclosure-20260908.md"
@@ -141,11 +142,16 @@ def read(base, name):
 
 
 def lines_of(text, rx):
-    """Return [(lineno, stripped_line)] for every line matching rx."""
+    """Return [(lineno, stripped_line)] for every line matching rx.
+
+    The full stripped line is returned (no truncation) so downstream
+    exclusion checks can see markers that appear late in long lines
+    (e.g. "800x600 dropped" at the end of a one-line corrections summary).
+    """
     out = []
     for i, line in enumerate(text.splitlines(), 1):
         if rx.search(line):
-            out.append((i, line.strip()[:120]))
+            out.append((i, line.strip()))
     return out
 
 
@@ -284,6 +290,13 @@ def probe_size_coverage(base):
         if text is None:
             continue
         for ln, body in lines_of(text, re.compile(r"800\s*[x×X*]\s*600")):
+            # legit exclusion markers: the dropped size is shown only to say it is
+            # dropped (~~strikethrough~~ or 「剔除」). A1's R3B-08 fix does exactly
+            # this and must not be flagged.
+            if (re.search(r"~~[^~]*800\s*[x×X*]\s*600[^~]*~~", body) or "剔除" in body
+                    or "dropped" in body.lower() or "未覆盖" in body or "uncovered" in body.lower()
+                    or "不应出现" in body or "should not appear" in body.lower()):
+                continue
             findings.append(Finding("MEDIUM", "P3",
                                     f"{name} still references the dropped {DROPPED_SIZE[0]}x{DROPPED_SIZE[1]} size",
                                     f"{name} L{ln}: {body}"))
@@ -335,7 +348,10 @@ def probe_accessibility(base):
 
 
 # ---------------------------------------------------------------------------- P6
-PALETTE_RX = r"palette|命令面板|command\s*palette"
+# Match a *command-palette* mention, not the `palette-item` / `palette-cat` CSS
+# classes used to render palette rows. A1 correctly binds Ctrl+K to address/search
+# and Ctrl+Shift+P to the palette; we must not flag the styling class as a collision.
+PALETTE_RX = r"(?<!\w)(?:command\s*palette|命令面板|open\s+palette|palette\b(?!-(?:item|cat)))"
 
 
 def probe_shortcuts(base):
@@ -380,7 +396,13 @@ def probe_reference_pins(base):
             if re.search(r"\|\s*COPY\s*\|", body):
                 findings.append(Finding("HIGH", "P7", f"{A7_MAP} classifies a unit as COPY (A0 ruled COPY=0)",
                                         f"L{ln}: {body}"))
-    for name in sorted(f for f in os.listdir(base) if f.endswith(".md")):
+    # Scan only A1-A9 lane deliverables; A10/A11's own review docs legitimately
+    # cite the research snapshot pin (2896562) and are not subject to this gate.
+    lane_md = sorted(
+        f for f in os.listdir(base)
+        if f.endswith(".md") and re.match(r"A[1-9]-R3", f)
+    )
+    for name in lane_md:
         text = read(base, name)
         if text is None or PIN_SNAPSHOT not in text:
             continue
@@ -600,10 +622,11 @@ def _write_clean_base(base):
     def w(name, text):
         open(os.path.join(base, name), "w", encoding="utf-8").write(text)
 
-    # clean corpus always carries all six sizes, so both default and --strict-sizes
-    # self-tests pass; the mutation tests still prove each probe detects a miss.
+    # clean corpus carries all six sizes except the dropped 800x600 (so P3's
+    # dropped-size scan stays quiet on the clean set), letting both default and
+    # --strict-sizes self-tests pass; mutation tests still prove detection.
     w(A1_PROTO, _a1_clean())
-    w(A2_PROTO, _clean_frames(SIZES))
+    w(A2_PROTO, _clean_frames(SIZES_NO_DROPPED))
     w(A3_PROTO, _clean_frames(SIZES))
     w(A8_FRAMES, _clean_frames(SIZES))
     w(A5_PROTO, _clean_frames(SIZES))
