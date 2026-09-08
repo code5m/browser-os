@@ -1,33 +1,85 @@
-# A6 · M5-W18-R Lane Checkpoint
+# A6 · M5-W18-R2 Lane Checkpoint（Evidence Closure）
 
-## Required lane output (per PARALLEL_COMMAND_BOARD.md §Required lane output)
+## Required lane output (per PARALLEL_COMMAND_BOARD.md §M5-W18-R2)
 
 ```
 LANE=A6
 STATUS=PASS_WITH_DEBT
 BASE=78d2cfb
-HEAD=0d072de7fcd9e612a7ec7a7960c2ff096801a3e4
-REFERENCE_EVIDENCE=/home/ainfinit/Documents/极智简单/V3/research/dbx-src (Apache-2.0, Cargo.lock SHA-256 c0a7be12c05d8dffe867f1a70d4b82e881dec2da3bb622b5d3e3410c3d10e3a7); /home/ainfinit/Documents/极智简单/V3/dbx-study/dbx-借鉴分析.md (V5); current product = mvp-browser-os-v3 worktree m5-w18-a6 @ 78d2cfb
+HEAD=<set on commit>
+R2_VERDICT=REWORK_CLOSED  (原 R1=REWORK；本波按 A0 R1 审计第4/41条逐条纠正并补齐 R2 证据)
+REFERENCE_EVIDENCE=/home/ainfinit/Documents/极智简单/V3/research/dbx-src (Apache-2.0, Cargo.lock SHA-256 c0a7be12c05d8dffe867f1a70d4b82e881dec2da3bb622b5d3e3410c3d10e3a7，已复核一致); /home/ainfinit/Documents/极智简单/V3/dbx-study/dbx-借鉴分析.md (V5); 当前产品 = mvp-browser-os-v3 worktree m5-w18-a6 @ 78d2cfb
 FILES=logs/research/M5-W18/A6-security-lifecycle-audit.md, logs/research/M5-W18/A6-checkpoint.md
-SOURCE_MAP=dbx: connection_secrets.rs:37/97/127, state_persistence.rs:476-547, production_safety.rs:98/110/184, sql_risk.rs:686/703, agent_tools.rs:19/28/31/34/78/90/111/699, models/connection.rs:206/296/961/1509/2138, query_result_export.rs:48/1261/1392, runtime_config.rs:51/66, storage.rs:332/1000/1029/1039/1098/926, export_download.rs:9/972, app_settings.rs:83; current: core/keyring_store.rs:5-27, security_policy.rs:1046/1100/1106/1146/1206/1240/1250/1269, database.rs:38-58/156-158/168/184-192/230/263/369/384/400-409/413/422/468/476, check-database-policy.py (15 codes), shutdown.rs, bridge.rs:780/6020/6069
-CLASSIFICATION=COPY=3 (OS keyring; result limit constants+truncated flag; ShutdownCoordinator) | ADAPT=4 (verify_confirmed_target SQL-text match; cross-DB production verdict + production_databases; config persistence atomic + cred retain; encrypted fallback EncryptedPayload) | REIMPLEMENT_FROM_BEHAVIOR=3 (server-side kill_query cancel; connect/idle timeout + driver floor; DSN/debug redaction breadth) | DEFER=2 (Mongo $out/$merge verdict; DB_POOL_SHUTDOWN_CLEANUP on pool intro) | REJECT=2 (dbx plaintext FileSecretStore JSON; JDBC sidecar)
-VERIFY=read-only source audit only (no product code executed); cross-checked current guards against dbx evidence; dbx Cargo.lock SHA-256 verified against pinned value
-CHECKPOINT=logs/research/M5-W18/A6-checkpoint.md
-MERGE_NOTES=depends on A4 (security_policy.rs/domain.rs) for G1/G2, A3 (database.rs) for G3/G5/G6/G7, A5 UI for G1 confirm UX; W19 mandatory codes G1-G10 handed to A10 ledger + A11 acceptance matrix; no product edits in this lane
-NEXT=W19 implementation cards for G1-G10 (await A0 architecture freeze); open questions: Mongo/Spanner drivers, confirm-SQL UX, history storage medium, SQLite cancel feasibility
 ```
 
-## Summary
+## R2 证据闭环（board L1462 要求逐条落实）
 
-A6 完成 M5-W18-R 安全与生命周期审计：将 dbx 的 10 个安全/生命周期主题逐条比对当前产品（M4 A3/A4 守卫），
-形成精确源映射与 10 项强制 W19 策略/测试码位（G1–G10）。研究确认当前产品在凭据存储（OS keyring）、
-结果上限、`ShutdownCoordinator` 上**优于** dbx 默认路径；但在「确认 SQL 文本比对、跨库生产判定、服务端取消、
-连接配置/历史持久化脱敏、导出净化、超时下限、DSN 脱敏广度、加密兜底」上存在可补强差距。
+1. **凭据 source-to-sink 全链路（双方）**：已画。当前产品：`useDatabaseStore.connect(password)`(ts:86) → `bridge.dbConnect(cfg,password)`(bridge.ts:375) → IPC `db_connect(password:Option<String>)`(bridge.rs:6003) → `DbPool::connect`(bridge.rs:6017) → `KeyringStore::save_token(db:<conn_id>,p)`(bridge.rs:6024) → 查询时 `get_token`(bridge.rs:6065) → 断开 `delete_token` 但 `let _ =` 吞错(bridge.rs:6109)。dbx：`save_connection_config`→`persist_secret_in_tx`→SQLite 明文 `connection_secrets` 表(storage.rs:326/4147/2374)；`save_password=false`→`SessionCredentialStore`(session_credentials.rs:109)；断开 `release_runtime_config_on_disconnect`→`clear_connection`(runtime_config.rs:66)。
+2. **纠正「never enters JS memory」伪命题**：已确认密码**瞬时进入 JS**（函数参数 + IPC 实参），但**不持久化**于 Pinia/配置 DTO/日志。审计报告 §0 显式纠正。
+3. **dbx 真实活路径（非 FileSecretStore）**：已核实 `FileSecretStore::new` 零调用（死代码）；`EncryptedPayload` 零生产调用（仅自带测试）；活路径 = SQLite 明文 `connection_secrets` 表 + 内存 `SessionCredentialStore`。分类与 MERGE_NOTES 已修订，并消解与 A4 源映射的跨 lane 矛盾。
+4. **竞态时间线 + 强制 fail-closed 测试**：§4 新增写确认(G1)/取消(G3)/超时(G7)三条时间线与每条 ≥5 条 fail-closed 验收断言。
 
-全部为 RESEARCH ONLY：未修改任何产品代码，未 push，仅在 `logs/research/M5-W18/` 写入报告与 checkpoint。
+## 源映射（修订后，逐条源码核实）
 
-## Debt / 遗留
+```
+SOURCE_MAP=
+当前产品:
+  src/stores/useDatabaseStore.ts:83/86/99/101,
+  src/bridge.ts:375-376,
+  src-tauri/src/bridge.rs:6003/6017/6024/6065/6109,
+  src-tauri/src/core/keyring_store.rs:5-27,
+  src-tauri/src/database.rs:17/65/68/225-233/263/369/423/444/490-497/578,
+  src-tauri/src/security_policy.rs:1106/1146/1206/1269,
+  src-tauri/src/domain.rs:821/908,
+  src-tauri/src/shutdown.rs, src-tauri/src/bridge.rs:780,
+  check-database-policy.py (DB_* 门禁码位)
+dbx (Apache-2.0, 已钉版):
+  crates/dbx-core/src/storage.rs:326/4147/2374-2380/332/1000/1029/926,
+  crates/dbx-core/src/connection_secrets.rs:37(死)/335-365(迁移清理),
+  crates/dbx-core/src/session_credentials.rs:109/set/clear_connection,
+  crates/dbx-core/src/runtime_config.rs:51/66,
+  crates/dbx-core/src/state_persistence.rs:460-547(死,仅测试),
+  crates/dbx-core/src/query_cancel.rs:18/84 + register_interrupt/cancel,
+  crates/dbx-core/src/query_result_export.rs:48/1261/1392,
+  crates/dbx-core/src/production_safety.rs:98/110/184,
+  crates/dbx-core/src/agent_tools.rs:90/111/699,
+  crates/dbx-core/src/models/connection.rs:206/296/961/1509/2138,
+  crates/dbx-web/src/routes/connection.rs:36/59/505/609/625/640/679/706
+```
 
-- 本波只研究，不落地产品代码；G1–G10 为 W19 强制项，须由 A0 开档时转为实现卡 + 策略门禁。
-- `DB_PERSIST_NOT_ATOMIC`（现有 PENDING）随 G5 落地后转 ACTIVE。
-- 许可：dbx Apache-2.0；任何移植单元须保留 NOTICE 与修改声明（交 A10 ledger）。
+## 分类（修订后）
+
+```
+CLASSIFICATION=
+  COPY=3 (OS keyring db:<conn_id>; 结果上限常量+truncated; ShutdownCoordinator 幂等关闭)
+  ADAPT=4 (verify_confirmed_target 确认SQL文本比对 G1; 跨库生产判定+production_databases G2;
+           连接配置原子写+凭据保留/清理 G4/G5; 加密兜底 EncryptedPayload G10[注明零生产调用])
+  REIMPLEMENT_FROM_BEHAVIOR=3 (服务端取消 kill_query G3; connect/idle 超时+驱动下限 G7; DSN/调试脱敏扩展 G9)
+  DEFER=2 (Mongo $out/$merge 生产判定 G2子项; DB_POOL_SHUTDOWN_CLEANUP G8)
+  REJECT=2 (dbx SQLite 明文 connection_secrets 表[替代已死 FileSecretStore]; JDBC 侧车)
+```
+
+## 验证
+
+```
+VERIFY=read-only source audit only（零产品代码执行）；
+  当前产品守卫与 dbx 证据逐行交叉核对；
+  dbx Cargo.lock SHA-256 复核一致（c0a7be12...）；
+  FileSecretStore::new / EncryptedPayload 生产调用方以 grep 复核为 0；
+  SQLite connection_secrets 表与 persist_secret_in_tx 调用点已定位（storage.rs:326/4147/2374）。
+```
+
+## 未解决（交 A0 / W19）
+
+```
+NEXT=W19 实现卡 G1–G10（待 A0 架构冻结）；
+OPEN:
+  - keyring 删除 `let _ =` 吞错 + 孤儿 `db:` 键清理 → G4 必补（bridge.rs:6109）
+  - 跨 lane 矛盾已消解：A4 与 A6 统一 REJECT 对象为 SQLite 明文表（非死代码 FileSecretStore）
+  - Mongo/Spanner 驱动依赖 W19 范围裁决（G2/G7）
+  - 确认 SQL 文本比对 UX 需 A5 配合（G1）
+```
+
+## 声明
+
+全部 RESEARCH ONLY：未修改任何产品代码，未 push，仅在 `logs/research/M5-W18/` 写入/修订报告与 checkpoint。
