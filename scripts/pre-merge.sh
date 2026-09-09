@@ -364,6 +364,10 @@ run_pre_merge() {
   (cd "$ROOT" && node "$SCRIPT_DIR/check-terminal-ui-logic.mjs") >/dev/null 2>&1 \
     || pm_fail "check-terminal-ui-logic.mjs（临时历史 40 条 / resize 静默窗口回归）"
 
+  pm_log "窗口拖动单一事件路径与主窗口权限回归（不替代桌面验收）…"
+  (cd "$ROOT" && node "$SCRIPT_DIR/check-window-drag.mjs") >/dev/null 2>&1 \
+    || pm_fail "check-window-drag.mjs（拖动事件重复或权限回归）"
+
   pm_log "M2-6.d 命令片段库 UI 逻辑层自动化测试（headless，加载真实 snippetUi.ts）…"
   (cd "$ROOT" && node "$SCRIPT_DIR/check-command-ui-logic.mjs") >/dev/null 2>&1 \
     || pm_fail "check-command-ui-logic.mjs（命令片段库前端逻辑回归）"

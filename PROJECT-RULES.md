@@ -70,6 +70,14 @@
 
 ---
 
+## 规则 3.7 窗口拖动与旧实例验收（2026-09-09）
+
+- `UnifiedTabBar.vue` 只保留一个 `mousedown` 入口；左键且非页签/按钮/输入控件时，单击调用一次 `startDragging`，双击调用 `toggleMaximize`，阻止默认选择与事件向 document 冒泡。不得叠加 `pointerdown`、`data-tauri-drag-region` 或 Chromium 专用拖动 CSS。
+- 开发/发布主窗口必须保留 `core:window:allow-start-dragging`；不向远程网页扩大权限。权限变更需要重新编译并启动新进程，Vite 热更新不更新原生权限。
+- 应用为单实例：安装新包、再次启动不等于旧进程已被替换。验收前正常关闭旧主窗口，核对主进程 PID、`/proc/<PID>/exe` 及启动时间；不要只看 `.deb` 时间或安装成功提示，不要批量强杀其他进程。
+- `node scripts/check-window-drag.mjs` 仅证明事件与权限契约。原生接口成功不代表窗口移动；必须另做真实鼠标桌面验收。Wayland/XWayland 多屏下自动鼠标坐标可能失真，不能据此伪造通过或失败。
+- 本轮用户在新 debug 客户端实测确认“现在可以移动”。新打包产物还需独立验收，不能继承 debug 的验收结论。
+
 ## 规则 4 修改"已验证正确"代码的流程（防止再次翻车）
 
 当要修改本文件中标注【锁定】的代码时，必须：

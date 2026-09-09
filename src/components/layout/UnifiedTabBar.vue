@@ -32,14 +32,16 @@ async function startWindowDrag(event: MouseEvent) {
   if (event.button !== 0) return;
   const target = event.target as HTMLElement | null;
   if (target?.closest("button, .tab, input, select, textarea, a")) return;
-  try { await getCurrentWindow().startDragging(); } catch { /* browser preview */ }
-}
-
-async function startWindowDragFromPointer(event: PointerEvent) {
-  if (event.pointerType !== "mouse" || event.button !== 0) return;
-  const target = event.target as HTMLElement | null;
-  if (target?.closest("button, .tab, input, select, textarea, a")) return;
-  try { await getCurrentWindow().startDragging(); } catch { /* browser preview */ }
+  // One native request per press. Do not also register pointerdown or Tauri's
+  // document-level data-tauri-drag-region handler on this titlebar.
+  event.preventDefault();
+  event.stopPropagation();
+  try {
+    if (event.detail === 2) await getCurrentWindow().toggleMaximize();
+    else await getCurrentWindow().startDragging();
+  } catch {
+    layout.showToast("窗口拖动失败，请完全退出旧客户端后重新启动");
+  }
 }
 async function closeContext(others = false) {
   const target = context.value;
@@ -77,7 +79,7 @@ function activateMod(t: { id: string; view: string; path?: string }) {
 </script>
 
 <template>
-  <div class="tabbar unified" data-tauri-drag-region @mousedown.left="startWindowDrag" @pointerdown.left="startWindowDragFromPointer">
+  <div class="tabbar unified" @mousedown="startWindowDrag">
     <!-- 网页页签 -->
     <div
       v-for="t in browser.tabs"
@@ -105,7 +107,7 @@ function activateMod(t: { id: string; view: string; path?: string }) {
       <button class="tab-close" @click.stop="layout.closeModTab(t.id)" title="关闭">✕</button>
     </div>
     <button class="tab-new" @click="browser.tabNew()" title="新建页签">＋</button>
-    <div class="titlebar-drag" data-tauri-drag-region aria-hidden="true"></div>
+    <div class="titlebar-drag" aria-hidden="true"></div>
     <div class="window-controls" aria-label="窗口控制">
       <button title="最小化" @click.stop="minimizeWindow">−</button>
       <button title="最大化或还原" @click.stop="toggleWindowMaximize">□</button>
@@ -131,9 +133,7 @@ function activateMod(t: { id: string; view: string; path?: string }) {
   flex-shrink: 0;
   overflow-x: auto;
   min-height: 32px;
-  -webkit-app-region: drag;
 }
-.unified button, .unified .tab, .unified input, .unified select, .unified textarea { -webkit-app-region: no-drag; }
 .titlebar-drag { flex: 1; min-width: 24px; align-self: stretch; cursor: move; }
 .window-controls { display: flex; flex: none; align-items: stretch; margin: -3px -6px 0 0; }
 .window-controls button { width: 34px; border: 0; border-radius: 0; background: transparent; display: grid; place-items: center; color: #667085; cursor: pointer; }
