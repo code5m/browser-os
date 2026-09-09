@@ -124,8 +124,10 @@ function activateMod(t: { id: string; view: string; path?: string }) {
   flex-shrink: 0;
   overflow-x: auto;
   min-height: 32px;
+  -webkit-app-region: drag;
 }
-.titlebar-drag { flex: 1; min-width: 24px; align-self: stretch; cursor: default; }
+.unified button, .unified .tab, .unified input, .unified select, .unified textarea { -webkit-app-region: no-drag; }
+.titlebar-drag { flex: 1; min-width: 24px; align-self: stretch; cursor: move; }
 .window-controls { display: flex; flex: none; align-items: stretch; margin: -3px -6px 0 0; }
 .window-controls button { width: 34px; border: 0; border-radius: 0; background: transparent; display: grid; place-items: center; color: #667085; cursor: pointer; }
 .window-controls button:hover { background: #dfe5ed; color: #1d2939; }
