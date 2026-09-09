@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onErrorCaptured, ref } from "vue";
+import { onMounted, onErrorCaptured, ref, watch, nextTick } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { bridge } from "./bridge";
 import { useBrowserStore } from "./stores/useBrowserStore";
@@ -31,6 +31,23 @@ const git = useGitStore();
 const system = useSystemStore();
 const layout = useLayoutStore();
 const settings = useSettingsStore();
+
+watch(() => session.closeDialogOpen, async (open) => {
+  layout.webviewsSuspended = open;
+  if (open) {
+    try {
+      await bridge.hideAllWebviews();
+    } catch {
+      layout.showToast("暂时无法显示关闭确认，请取消后重试");
+    }
+  }
+  // A late hide completion must restore the page after a quick cancellation.
+  if (!layout.webviewsSuspended) {
+    await nextTick();
+    if (layout.mainView === "grid") browser.forceGridRelayout();
+    else browser.relocate();
+  }
+}, { flush: "sync" });
 
 // W17(A7): 外壳级兜底状态——启动遮罩与渲染错误兜底（纯展示，不引入运行时行为）。
 const ready = ref(false);

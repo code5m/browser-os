@@ -152,6 +152,7 @@ export const useLayoutStore = defineStore("layout", () => {
   const addrMode = ref<"url" | "dir">("url");
   // 浏览器精简模式：隐藏地址栏+页签栏，给网页更大空间（类谷歌沉浸式）
   const compactMode = ref(false);
+  const webviewsSuspended = ref(false);
   // M5-W17：客户端窗口宽度（px）→ 导航密度；ActivityBar 随 resize 上报
   const windowWidth = ref(NAV_DENSITY_FULL_PX);
   // M5-W17：活动条扩展行（宫格设置 / ☰ 菜单 / 最近与常用），同一时刻只开一个
@@ -336,6 +337,7 @@ export const useLayoutStore = defineStore("layout", () => {
     browserDockTab,
     addrMode,
     compactMode,
+    webviewsSuspended,
     windowWidth,
     navSection,
     navDensity,

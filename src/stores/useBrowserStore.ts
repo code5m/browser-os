@@ -160,7 +160,6 @@ export const useBrowserStore = defineStore("browser", () => {
     tabs.push(t);
     activeTabId.value = t.id;
     url.value = t.url;
-    layout.showToast("已新建页签: " + t.title);
     await nextTick();
     schedulePosition();
     syncFreeze();
@@ -620,6 +619,10 @@ export const useBrowserStore = defineStore("browser", () => {
   // 按当前视图同步子 webview 显隐：browser/grid 视图重新定位显示，其它视图移出屏幕
   async function syncViewVisibility() {
     bridge.debugLog(`syncViewVisibility view=${layout.mainView}`);
+    if (layout.webviewsSuspended) {
+      await bridge.hideAllWebviews();
+      return;
+    }
     if (layout.mainView === "browser" || layout.mainView === "grid") {
       await bridge.hideAllWebviews().catch(() => {});
       relocate();

@@ -15,7 +15,7 @@ pub mod linux;
 pub fn ensure_native_layout<R: Runtime>(webview: &Webview<R>) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
-        let size = webview.size()?;
+        let size = webview.window().inner_size()?;
         linux::ensure_physical_size(webview, size.width, size.height)?;
     }
     #[cfg(not(target_os = "linux"))]

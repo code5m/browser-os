@@ -25,6 +25,7 @@ export function useBrowserHost() {
     positionRaf = requestAnimationFrame(() => {
       positionRaf = requestAnimationFrame(() => {
         positionRaf = null;
+        if (layout.webviewsSuspended) return;
         if (browser.gridOpen && layout.mainView === 'grid') {
           scheduleGrid();
           return;
@@ -106,6 +107,7 @@ export function useBrowserHost() {
   // 覆盖"工具条刚展开/视图刚切换，布局尚未稳定"的时序窗口——之前直接 return
   // 导致宫格永不定位（灰底空白、无格子、无标题栏）。
   function layoutGridNow(retry: number) {
+    if (layout.webviewsSuspended) return;
     if (!browser.gridOpen || layout.mainView !== 'grid') return;
     const host = browserHost.value;
     const r = host?.getBoundingClientRect();

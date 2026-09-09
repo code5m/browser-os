@@ -651,6 +651,11 @@ pub fn start_layout_enforcer(app: AppHandle) {
         if state.shutdown_requested.load(Ordering::SeqCst) {
             break;
         }
+        // GTK can redistribute the main widget when a native tab is added or
+        // removed. Keep the shell viewport full-sized as well as the tabs.
+        if let Some(main) = app.get_webview("main") {
+            let _ = tauri_plugin_browser_tabs::ensure_native_layout(&main);
+        }
         let layouts = state.child_layouts.lock().unwrap().clone();
         if layouts.is_empty() {
             continue;

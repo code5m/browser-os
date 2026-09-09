@@ -104,13 +104,11 @@ pub fn ensure_physical_size<R: Runtime>(
             // size_allocate 刷新 CSS 视口。不 queue_resize（避免无谓的布局重算）。
             let gtk_webview = platform_webview.inner();
             let a = gtk_webview.allocation();
-            if a.width() != width as i32 || a.height() != height as i32 {
-                gtk_webview.size_allocate(&gtk::Allocation::new(
-                    a.x(),
-                    a.y(),
-                    width as i32,
-                    height as i32,
-                ));
+            let scale = gtk_webview.scale_factor().max(1) as u32;
+            let width = (width / scale) as i32;
+            let height = (height / scale) as i32;
+            if a.x() != 0 || a.y() != 0 || a.width() != width || a.height() != height {
+                gtk_webview.size_allocate(&gtk::Allocation::new(0, 0, width, height));
                 gtk_webview.queue_draw();
             }
         })
