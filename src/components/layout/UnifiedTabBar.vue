@@ -30,6 +30,8 @@ async function closeWindow() {
 
 async function startWindowDrag(event: MouseEvent) {
   if (event.button !== 0) return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest("button, .tab, input, select, textarea, a")) return;
   try { await getCurrentWindow().startDragging(); } catch { /* browser preview */ }
 }
 async function closeContext(others = false) {
@@ -68,7 +70,7 @@ function activateMod(t: { id: string; view: string; path?: string }) {
 </script>
 
 <template>
-  <div class="tabbar unified">
+  <div class="tabbar unified" data-tauri-drag-region @mousedown="startWindowDrag">
     <!-- 网页页签 -->
     <div
       v-for="t in browser.tabs"
@@ -96,7 +98,7 @@ function activateMod(t: { id: string; view: string; path?: string }) {
       <button class="tab-close" @click.stop="layout.closeModTab(t.id)" title="关闭">✕</button>
     </div>
     <button class="tab-new" @click="browser.tabNew()" title="新建页签">＋</button>
-    <div class="titlebar-drag" data-tauri-drag-region aria-hidden="true" @mousedown="startWindowDrag"></div>
+    <div class="titlebar-drag" data-tauri-drag-region aria-hidden="true"></div>
     <div class="window-controls" aria-label="窗口控制">
       <button title="最小化" @click.stop="minimizeWindow">−</button>
       <button title="最大化或还原" @click.stop="toggleWindowMaximize">□</button>
