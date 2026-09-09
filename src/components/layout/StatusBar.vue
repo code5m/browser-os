@@ -128,9 +128,8 @@ const budgetLow = computed(
       页签休眠：{{ stats.hibernation_enabled ? `开启（已休眠 ${stats.hibernated_count} 个页签）` : "关闭（可在设置 → 性能中开启）" }}
     </div>
   </div>
-  <!-- 全局醒目 toast：固定在工具栏下方右上（此区域永不被宫格/页签原生窗口覆盖），
-       之前只在状态栏角落显示 11px 小字 2 秒即消失，用户完全看不到 -->
-  <div v-if="layout.msg" class="toast-pop">{{ layout.msg }}</div>
+  <!-- 浏览器内容是原生子 WebView，会盖住 HTML 内的 fixed 浮层。提示仅在本状态栏
+       展示：既不会遮住网页，也不会被原生 WebView 反向遮住。 -->
 </template>
 
 <style scoped>
@@ -199,19 +198,5 @@ const budgetLow = computed(
 }
 .rd-row .warn {
   margin-left: 8px;
-}
-.toast-pop {
-  position: fixed;
-  top: 46px;
-  right: 14px;
-  z-index: 99999;
-  background: rgba(15, 23, 42, 0.92);
-  color: #fff;
-  font-size: 14px;
-  padding: 10px 18px;
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-  max-width: 60vw;
-  pointer-events: none;
 }
 </style>

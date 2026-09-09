@@ -31,6 +31,9 @@ function inspect(node) {
 inspect(template);
 assert.equal(presses, 1, "Exactly one titlebar press binding");
 assert.ok(!source.includes("-webkit-app-region"), "Do not rely on Chromium drag CSS in WebKitGTK");
+assert.match(source, /overflow-x:\s*auto/);
+assert.match(source, /scrollbar-width:\s*none/);
+assert.match(source, /\.unified::\-webkit-scrollbar\s*\{\s*display:\s*none/);
 
 const require = createRequire(import.meta.url);
 const messages = [];

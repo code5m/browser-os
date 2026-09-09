@@ -368,6 +368,10 @@ run_pre_merge() {
   (cd "$ROOT" && node "$SCRIPT_DIR/check-window-drag.mjs") >/dev/null 2>&1 \
     || pm_fail "check-window-drag.mjs（拖动事件重复或权限回归）"
 
+  pm_log "原生网页子窗口提示遮挡回归…"
+  (cd "$ROOT" && node "$SCRIPT_DIR/check-native-webview-overlay.mjs") >/dev/null 2>&1 \
+    || pm_fail "check-native-webview-overlay.mjs（提示浮层会被原生网页遮挡）"
+
   pm_log "M2-6.d 命令片段库 UI 逻辑层自动化测试（headless，加载真实 snippetUi.ts）…"
   (cd "$ROOT" && node "$SCRIPT_DIR/check-command-ui-logic.mjs") >/dev/null 2>&1 \
     || pm_fail "check-command-ui-logic.mjs（命令片段库前端逻辑回归）"

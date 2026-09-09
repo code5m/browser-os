@@ -132,8 +132,13 @@ function activateMod(t: { id: string; view: string; path?: string }) {
   border-bottom: 1px solid #e5e6eb;
   flex-shrink: 0;
   overflow-x: auto;
+  overflow-y: hidden;
+  /* 页签超出时仍支持滚轮/触控板横向滚动，但不显示系统横向轨道。 */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   min-height: 32px;
 }
+.unified::-webkit-scrollbar { display: none; }
 .titlebar-drag { flex: 1; min-width: 24px; align-self: stretch; cursor: move; }
 .window-controls { display: flex; flex: none; align-items: stretch; margin: -3px -6px 0 0; }
 .window-controls button { width: 34px; border: 0; border-radius: 0; background: transparent; display: grid; place-items: center; color: #667085; cursor: pointer; }
