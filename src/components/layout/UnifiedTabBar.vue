@@ -34,6 +34,13 @@ async function startWindowDrag(event: MouseEvent) {
   if (target?.closest("button, .tab, input, select, textarea, a")) return;
   try { await getCurrentWindow().startDragging(); } catch { /* browser preview */ }
 }
+
+async function startWindowDragFromPointer(event: PointerEvent) {
+  if (event.pointerType !== "mouse" || event.button !== 0) return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest("button, .tab, input, select, textarea, a")) return;
+  try { await getCurrentWindow().startDragging(); } catch { /* browser preview */ }
+}
 async function closeContext(others = false) {
   const target = context.value;
   context.value = null;
@@ -70,7 +77,7 @@ function activateMod(t: { id: string; view: string; path?: string }) {
 </script>
 
 <template>
-  <div class="tabbar unified" data-tauri-drag-region @mousedown="startWindowDrag">
+  <div class="tabbar unified" data-tauri-drag-region @mousedown.left="startWindowDrag" @pointerdown.left="startWindowDragFromPointer">
     <!-- 网页页签 -->
     <div
       v-for="t in browser.tabs"
