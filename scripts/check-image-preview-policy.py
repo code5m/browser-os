@@ -38,7 +38,8 @@ BASELINE_SHA256 = {
     # M2-4.e 裁定移除未使用的 @tauri-apps/plugin-shell，刷新 package 指纹；
     # 本门禁仍守住 M2-2.b 之后不得新增前端依赖。
     # M5-W20：纳入修复 Vault 卡死所需的官方异步 dialog 插件；其他依赖仍禁止漂移。
-    "package.json": "ad5215097fd4ccb0a01dde3afef64fdbee8a0392ed02b299242accad87f4cf7a",
+    # Phase 03 (11-ci)：新增 npm run check/doctor 脚本（零依赖变更），刷新 package 指纹。
+    "package.json": "1e460d3bd054e1a386605f8693b76d9b279dd535586c735ecf5e04eb8ca6977f",
     "package-lock.json": "d071ce3ff265297834c96eb9d53e5db79ce37c6cc2f8e16daa7f838a7c002dad",
     "src-tauri/permissions/remote-collect.toml": (
         "cc35e0edc7933c2a43fd6e0c9271667db483aa5aa206d7e08d98a21b832f05da"
