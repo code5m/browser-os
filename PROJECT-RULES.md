@@ -1,4 +1,20 @@
 # 项目规范（锁定规则，禁止随意改动）
+[CURRENT]          当前真实实现
+[APPROVED_TARGET]  已批准但尚未实现
+[PENDING]          等待你决定
+[DEPRECATED]       已废弃，不得恢复
+
+[CURRENT]
+关闭页签仍使用 SessionCloseDialog 三选一确认框。
+
+[APPROVED_TARGET]
+尚未批准，不得写。
+
+[PENDING]
+关闭页签是否改为自动保存并直接关闭。
+
+[DEPRECATED]
+新建页签后显示"已新建页签"Toast。
 
 > 本文件记录**已经过实测验证的正确做法**。凡标注【锁定】的规则，改动前必须先有充分的实测证据（日志 + 截图），并回滚验证，否则一律拒绝。
 > 背景：本仓库曾因"凭猜测修改已验证的正确代码"导致回退性 bug，故建立本规范。
@@ -76,7 +92,7 @@
 - 开发/发布主窗口必须保留 `core:window:allow-start-dragging`；不向远程网页扩大权限。权限变更需要重新编译并启动新进程，Vite 热更新不更新原生权限。
 - 应用为单实例：安装新包、再次启动不等于旧进程已被替换。验收前正常关闭旧主窗口，核对主进程 PID、`/proc/<PID>/exe` 及启动时间；不要只看 `.deb` 时间或安装成功提示，不要批量强杀其他进程。
 - `node scripts/check-window-drag.mjs` 仅证明事件与权限契约。原生接口成功不代表窗口移动；必须另做真实鼠标桌面验收。Wayland/XWayland 多屏下自动鼠标坐标可能失真，不能据此伪造通过或失败。
-- 本轮用户在新 debug 客户端实测确认“现在可以移动”。新打包产物还需独立验收，不能继承 debug 的验收结论。
+- 本轮用户在新 debug 客户端实测确认"现在可以移动"。新打包产物还需独立验收，不能继承 debug 的验收结论。
 
 ## 规则 3.8 原生网页与 HTML 浮层（2026-09-09）
 
@@ -105,6 +121,34 @@
 - 真正要警惕的是：**网页视觉没撑满 / 不能点击 / 前进后退失效**——这些才是回退信号，而非日志刷屏。
 
 ---
+
+[APPROVED] 继续使用自定义无边框窗口，不恢复系统标题栏。
+
+[APPROVED] 成功操作不显示 Toast 或浮动提示。
+
+[APPROVED] 错误和状态只显示在状态栏或独立布局面板。
+
+[APPROVED] HTML 浮层禁止覆盖原生浏览器 WebView 区域。
+
+[APPROVED] 独立面板必须参与正常布局，打开面板时缩小 WebView，
+           不得通过 position: fixed + z-index 覆盖网页。
+
+[APPROVED] Vue 前端保留，后续改造成 WebView-aware Shell，
+           不因为 WebView 问题直接换掉 Vue。
+
+[APPROVED] 原生 WebView 的层级问题不能使用无限增大 z-index 解决。
+
+[APPROVED] 原生 GUI 行为未经真实桌面验收，不得写为 PASS。
+
+
+[APPROVED] 关闭页签可配置：新增 auto_save_on_close（默认关闭）。开启后关闭页签自动 sessionSave 并直接关闭，不再弹三选一确认框；默认保持现状（三选一确认）。
+
+[APPROVED] 新增"最近关闭的页签"能力：内存栈上限 20，并支持 Ctrl+Shift+T 恢复最近关闭页签。
+
+[PENDING] 原生 WebView 是继续一个页签一个，
+          还是只为当前可见页面创建 1～4 个。
+
+[PENDING] Vue Shell 是增量迁移还是整体重新编写。
 
 ## 附：本仓库的实测正确版本基准
 
