@@ -517,6 +517,15 @@ run_pre_merge() {
     pm_fail "cannot resolve base ref for branch-range diff check (set M0_BASE_REF)"
   fi
 
+  # Phase 03 checker gate (added by 11-ci). Wires the five boundary checkers + doctor
+  # into the pre-merge gate WITHOUT weakening any existing M0-1.c check above.
+  pm_log "Phase 03 checker gate (architecture/ui/native/runtime/task-boundary + doctor)…"
+  for c in check-architecture check-ui check-native check-browser-runtime check-task-boundary doctor; do
+    if ! (cd "$ROOT" && node "$SCRIPT_DIR/$c.mjs") >/dev/null 2>&1; then
+      pm_fail "phase03 $c.mjs"
+    fi
+  done
+
   echo ""
   if [ "$PM_RC" -eq 0 ]; then
     pm_log "PRE_MERGE_RESULT=ALL_PASS"

@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "check": "node scripts/check-architecture.mjs && node scripts/check-ui.mjs && node scripts/check-native.mjs && node scripts/check-browser-runtime.mjs && node scripts/check-task-boundary.mjs",
+    "doctor": "node scripts/doctor.mjs"
   },
   "dependencies": {
     "@lucide/vue": "^1.42.0",
