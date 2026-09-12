@@ -27,7 +27,9 @@ assert.doesNotMatch(app, /SessionCloseDialog/);
 
 assert.match(css, /html, body, #app\s*\{[^}]*overflow:\s*hidden/);
 
-// WebView 可见性仍受保护（modal 期间不被 JS 误隐藏）
-assert.match(host, /if \(layout\.webviewsSuspended\) return;/);
+// M6-S1：webviewsSuspended 死开关已删除（全仓从未被赋 true，原 SessionCloseDialog
+// watcher 已随 2026-09-12 裁决撤销）。守卫转为反向断言：定位路径不得再引入
+// 任何"暂停定位"旁路，防止该死开关复活。
+assert.doesNotMatch(host, /webviewsSuspended/);
 
 console.log("NATIVE_WEBVIEW_OVERLAY_CHECK=PASS (overlay guards hold; native desktop QA separate)");
