@@ -300,6 +300,12 @@ export interface SessionPolicy {
   auto_save_on_exit: boolean;
 }
 
+// Phase 04：最近关闭页签（前端内存栈，封顶 20；不落盘、不含正文/凭据）
+export interface RecentlyClosedEntry {
+  url: string;
+  title: string;
+}
+
 // flush 结果（关闭路径的确定性行为报告）
 export interface SessionFlushReport {
   persisted: number;

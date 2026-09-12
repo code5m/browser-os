@@ -41,6 +41,10 @@ async function toggleAutoSave() {
   await session.setPolicy(undefined, !session.policy.auto_save_on_exit);
 }
 
+async function toggleAutoSaveOnClose() {
+  session.setAutoSaveOnClose(!session.autoSaveOnClose);
+}
+
 onMounted(async () => {
   await session.loadPolicy();
   await session.loadSessions();
@@ -63,12 +67,32 @@ onMounted(async () => {
         <input type="checkbox" :checked="session.policy.auto_save_on_exit" @change="toggleAutoSave" />
         退出自动保存
       </label>
+      <label class="sp-toggle" title="关闭页签时自动保存并直接关闭，不弹确认框（默认关）">
+        <input type="checkbox" :checked="session.autoSaveOnClose" @change="toggleAutoSaveOnClose" />
+        关闭时自动保存
+      </label>
     </div>
 
     <div class="sp-actions">
       <button class="sp-btn primary" :disabled="!browser.activeTabId" @click="saveActive">
         保存当前页签
       </button>
+    </div>
+
+    <div v-if="browser.recentlyClosed.length" class="sp-recent">
+      <div class="sp-recent-head">最近关闭（Ctrl+Shift+T 恢复）</div>
+      <ul class="sp-recent-list">
+        <li
+          v-for="(item, i) in browser.recentlyClosed"
+          :key="i"
+          class="sp-recent-item"
+          :title="item.title || item.url"
+          @click="browser.tabNew(item.url)"
+        >
+          <span class="sp-recent-title">{{ item.title || item.url }}</span>
+          <span class="sp-recent-url">{{ displayUrl(item.url) }}</span>
+        </li>
+      </ul>
     </div>
 
     <div v-if="session.error" class="sp-banner">{{ session.error }}</div>
@@ -160,6 +184,44 @@ onMounted(async () => {
 .sp-actions {
   padding: 6px 8px;
   border-bottom: 1px solid var(--border, #333);
+}
+.sp-recent {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border, #333);
+}
+.sp-recent-head {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.sp-recent-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.sp-recent-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.sp-recent-item:hover {
+  background: rgba(128, 128, 128, 0.1);
+}
+.sp-recent-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sp-recent-url {
+  color: #7ec8ff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .sp-btn {
   background: none;

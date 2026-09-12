@@ -223,6 +223,9 @@ onMounted(async () => {
       const inp = document.querySelector(".omni-wrap input") as HTMLInputElement;
       inp?.focus();
       inp?.select();
+    } else if (matchKey(e, km.recentlyClosed)) {
+      e.preventDefault();
+      browser.restoreRecent();
     }
   }
   window.addEventListener("keydown", onGlobalKeydown);

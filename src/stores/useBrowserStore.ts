@@ -3,7 +3,7 @@ import { ref, reactive, computed, nextTick, watch } from "vue";
 import { bridge } from "../bridge";
 import { useLayoutStore } from "./useLayoutStore";
 import { useWorkspaceStore } from "./useWorkspaceStore";
-import type { TabRecoveryEvent } from "../types";
+import type { RecentlyClosedEntry, TabRecoveryEvent } from "../types";
 
 export interface AISite {
   name: string;
@@ -42,6 +42,9 @@ export const useBrowserStore = defineStore("browser", () => {
   const resources = ref<BrowserResources | null>(null);
   const aiNavOpen = ref(false);
   const aiFilter = ref<"全部" | "国内" | "海外">("全部");
+  // Phase 04：最近关闭页签内存栈（封顶 20，不落盘；恢复时按 URL 重开）
+  const RECENTLY_CLOSED_CAP = 20;
+  const recentlyClosed = ref<RecentlyClosedEntry[]>([]);
 
   const aiSites: AISite[] = [
     { name: "豆包", url: "https://www.doubao.com", region: "国内" },
@@ -188,6 +191,7 @@ export const useBrowserStore = defineStore("browser", () => {
   // 真正执行关闭（协议弹窗确认后由 useSessionStore.resolveClose 调用；
   // 无协议/协议关闭时与旧 tabClose 行为完全一致）
   async function closeTabNow(id: string) {
+    recordClose(id);
     const idx = tabs.findIndex((t) => t.id === id);
     if (idx < 0) return;
     await bridge.tabClose(id);
@@ -204,6 +208,24 @@ export const useBrowserStore = defineStore("browser", () => {
     await nextTick();
     schedulePosition();
     syncFreeze();
+  }
+  // Phase 04：记录被关闭的页签（在真正拆除前读取 url/title）
+  function recordClose(id: string) {
+    const t = tabs.find((x) => x.id === id);
+    if (!t) return;
+    recentlyClosed.value.unshift({ url: t.url, title: t.title || t.url });
+    if (recentlyClosed.value.length > RECENTLY_CLOSED_CAP) {
+      recentlyClosed.value = recentlyClosed.value.slice(0, RECENTLY_CLOSED_CAP);
+    }
+  }
+  // Phase 04：恢复最近关闭的页签（Ctrl+Shift+T）；栈空则提示
+  async function restoreRecent() {
+    const item = recentlyClosed.value.shift();
+    if (!item) {
+      layout.showToast("没有可恢复的页签");
+      return;
+    }
+    await tabNew(item.url);
   }
   async function tabReload(id: string) {
     const t = tabs.find((x) => x.id === id);
@@ -665,6 +687,9 @@ export const useBrowserStore = defineStore("browser", () => {
     tabSwitch,
     tabClose,
     closeTabNow,
+    recentlyClosed,
+    recordClose,
+    restoreRecent,
     bindCloseInterceptor,
     tabReload,
     tabNavigate,

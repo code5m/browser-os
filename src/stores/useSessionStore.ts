@@ -25,6 +25,8 @@ export const useSessionStore = defineStore("session", () => {
   const detail = ref<BrowserSession | null>(null);
   const detailId = ref<string>("");
   const policy = ref<SessionPolicy>({ close_prompt: true, auto_save_on_exit: false });
+  // Phase 04：关闭页签自动保存并直接关闭（前端态、默认关、不落后端，零后端改动）
+  const autoSaveOnClose = ref(false);
   const loading = ref(false);
   const error = ref("");
 
@@ -75,15 +77,16 @@ export const useSessionStore = defineStore("session", () => {
     detailId.value = "";
   }
 
-  // 保存当前页签为会话（立即落盘）
-  async function saveTab(tabId: string, preview?: string): Promise<SessionSummary | null> {
+  // 保存当前页签为会话（立即落盘）。silent=true 时不弹 Toast（自动保存关闭等场景，
+  // 遵循「成功操作不显示提示」约定）
+  async function saveTab(tabId: string, preview?: string, silent = false): Promise<SessionSummary | null> {
     try {
       const summary = await bridge.sessionSave(tabId, preview ?? "");
       await loadSessions();
-      layout.showToast("✅ 会话已保存");
+      if (!silent) layout.showToast("✅ 会话已保存");
       return summary;
     } catch (e) {
-      layout.showToast("⚠️ 会话保存失败");
+      if (!silent) layout.showToast("⚠️ 会话保存失败");
       return null;
     }
   }
@@ -137,9 +140,21 @@ export const useSessionStore = defineStore("session", () => {
     }
   }
 
+  // Phase 04：自动保存并直接关闭（不弹确认框，复用既有 closeTabNow 安全拆除路径）
+  async function autoSaveAndClose(tabId: string) {
+    const preview = await capturePreview(tabId);
+    await saveTab(tabId, preview, true);
+    await useBrowserStore().closeTabNow(tabId);
+  }
+
   // ===== 关闭协议 =====
-  // 返回 true 表示已接管（弹窗等待用户决定），false 表示走默认直接关闭。
+  // 返回 true 表示已接管（弹窗等待用户决定，或自动保存后直接关闭），false 表示走默认直接关闭。
   function requestClose(tabId: string): boolean {
+    // Phase 04：开启自动保存关闭 → 静默保存并直接关闭，不弹确认框
+    if (autoSaveOnClose.value) {
+      autoSaveAndClose(tabId);
+      return true;
+    }
     if (!policy.value.close_prompt) return false;
     const browser = useBrowserStore();
     const tab = browser.tabs.find((t) => t.id === tabId);
@@ -168,11 +183,16 @@ export const useSessionStore = defineStore("session", () => {
     await browser.closeTabNow(tabId);
   }
 
+  function setAutoSaveOnClose(v: boolean) {
+    autoSaveOnClose.value = v;
+  }
+
   return {
     sessions,
     detail,
     detailId,
     policy,
+    autoSaveOnClose,
     loading,
     error,
     pendingCloseTabId,
@@ -180,6 +200,7 @@ export const useSessionStore = defineStore("session", () => {
     closeDialogOpen,
     loadPolicy,
     setPolicy,
+    setAutoSaveOnClose,
     loadSessions,
     openDetail,
     closeDetail,

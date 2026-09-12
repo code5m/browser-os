@@ -16,6 +16,7 @@ const KEYMAP_SCHEMES: Record<KeymapScheme, Record<string, string>> = {
     home: "Ctrl+Shift+H",
     reload: "Ctrl+R",
     focusAddr: "Ctrl+L",
+    recentlyClosed: "Ctrl+Shift+T",
   },
   idea: {
     newTab: "Ctrl+T",
@@ -27,6 +28,7 @@ const KEYMAP_SCHEMES: Record<KeymapScheme, Record<string, string>> = {
     home: "Ctrl+Shift+H",
     reload: "Ctrl+F5",
     focusAddr: "Ctrl+L",
+    recentlyClosed: "Ctrl+Shift+T",
   },
   eclipse: {
     newTab: "Ctrl+T",
@@ -38,6 +40,7 @@ const KEYMAP_SCHEMES: Record<KeymapScheme, Record<string, string>> = {
     home: "Ctrl+Shift+H",
     reload: "F5",
     focusAddr: "Ctrl+L",
+    recentlyClosed: "Ctrl+Shift+T",
   },
 };
 
@@ -51,6 +54,7 @@ const ACTION_LABELS: Record<string, string> = {
   home: "打开主页",
   reload: "刷新页面",
   focusAddr: "聚焦地址栏",
+  recentlyClosed: "恢复最近关闭",
 };
 
 const STORAGE_KEY = "browser-os-settings";
