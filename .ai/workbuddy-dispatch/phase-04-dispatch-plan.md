@@ -132,3 +132,17 @@ Result: CLOSED
   `package.json` 指纹（`0d885…`）不一致，属**基线漂移**；`git diff HEAD -- package.json` 为空，确认与 Phase 04
   改动无关（6 个改动文件均未碰 `package.json` / 该检查器）。建议由 Phase 03 hardening 负责人按 6bc6491 / 554be5a
   同范式 rebaseline 该指纹，不属本阶段范围。
+
+## Phase 04 裁决反转（Task B，2026-09-12）
+
+Owner 最终产品裁决推翻原 `auto_save_on_close` 决策：
+
+- 普通 Tab 关闭 = **不弹确认框 + 不持久化 + 直接关闭**（仅写入 `recentlyClosed` 内存栈 → `closeTabNow`）。
+- `auto_save_on_close` 已撤销并移除（state / `requestClose` 自动保存分支 / `SessionPanel` 开关 / 相关死代码）。
+- 原关闭协议（`SessionCloseDialog` 三选一）从普通 Tab 关闭路径移除，组件已删除；相关 checker 同步改为新裁决门禁。
+- `recentlyClosed` 内存栈（≤20、仅 {url,title}、不落盘、Ctrl+Shift+T 恢复）与手动「保存会话」能力保留，且解耦于关闭。
+- 应用退出保存策略（`auto_save_on_exit`）保持不变（独立生命周期，本次不触碰）。
+
+配套提交：实现提交（src）+ 门禁/规则提交（scripts + PROJECT-RULES.md）。确定性门禁
+`check-session-logic.mjs` / `check-session-persistence-policy.py` / `check-native-webview-overlay.mjs`
+已更新为：普通关闭若重新触发 prompt 或 `sessionSave`，必然 FAIL。

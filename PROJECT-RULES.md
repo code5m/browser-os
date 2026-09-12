@@ -5,16 +5,20 @@
 [DEPRECATED]       已废弃，不得恢复
 
 [CURRENT]
-关闭页签仍使用 SessionCloseDialog 三选一确认框。
+普通 Tab 关闭 = 不弹确认框 + 不持久化 + 直接关闭。
+关闭流程：写入 recentlyClosed 内存栈（仅 {url,title}） → 调用既有 closeTabNow 完成 WebView 生命周期关闭。
+禁止：close tab → prompt；禁止：close tab → sessionSave；禁止：close tab → sessionSave → closeTabNow。
 
 [APPROVED_TARGET]
 尚未批准，不得写。
 
 [PENDING]
-关闭页签是否改为自动保存并直接关闭。
+（原"关闭页签是否改为自动保存并直接关闭"已由 Owner 最终裁决否决，此处不再挂起。）
 
 [DEPRECATED]
-新建页签后显示"已新建页签"Toast。
+- 关闭页签走 SessionCloseDialog 三选一确认框（原默认行为；2026-09-12 Owner 最终裁决撤销，普通 Tab 关闭不得再弹确认框）。
+- auto_save_on_close：Phase 04 曾批准 opt-in；2026-09-12 Owner 最终裁决撤销（"auto_save_on_close = 撤销"），不得恢复。
+- 新建页签后显示"已新建页签"Toast。
 
 > 本文件记录**已经过实测验证的正确做法**。凡标注【锁定】的规则，改动前必须先有充分的实测证据（日志 + 截图），并回滚验证，否则一律拒绝。
 > 背景：本仓库曾因"凭猜测修改已验证的正确代码"导致回退性 bug，故建立本规范。
@@ -141,7 +145,7 @@
 [APPROVED] 原生 GUI 行为未经真实桌面验收，不得写为 PASS。
 
 
-[APPROVED] 关闭页签可配置：新增 auto_save_on_close（默认关闭）。开启后关闭页签自动 sessionSave 并直接关闭，不再弹三选一确认框；默认保持现状（三选一确认）。
+[DEPRECATED] auto_save_on_close：原 Phase 04 [APPROVED]（opt-in 关闭页签自动 sessionSave 并直接关闭）。2026-09-12 Owner 最终裁决撤销（"auto_save_on_close = 撤销"），不得恢复；普通 Tab 关闭不得触发 sessionSave 或确认框。
 
 [APPROVED] 新增"最近关闭的页签"能力：内存栈上限 20，并支持 Ctrl+Shift+T 恢复最近关闭页签。
 

@@ -3,7 +3,7 @@
 
 M1-9 把会话存档（BrowserSession）与关闭协议接入既有 M1-8 资源瀑布。本脚本守住：
 
-  后端（Rust）
+  后端（Rust）—— 与会话持久化安全相关，不受前端关闭语义改动影响：
   - BrowserSession/SessionDraft 持久化白名单：不得含 token/cookie/authorization/
     headers/body/raw 等字段（黑名单字段结构性不存在）
   - 落盘前 URL 必须经 `redact_sensitive_url`；预览必须经 `scrub_preview` 脱敏+截断
@@ -12,15 +12,17 @@ M1-9 把会话存档（BrowserSession）与关闭协议接入既有 M1-8 资源�
   - ACL（permissions/default-commands.toml）与 invoke_handler 同步
   - 生命周期：create_tab 建草稿、close_tab 清草稿、flush-sessions 注册在
     close-tabs 之前、启动时 prune_tmp_files（异常退出恢复边界）
-  - 默认策略：close_prompt=true（关闭不可静默丢弃）、auto_save_on_exit=false
-    （不静默保存），写死于 main.rs setup 与 SessionPolicy::default
+  - 默认策略：close_prompt=true（后端契约保留）、auto_save_on_exit=false
 
-  前端（TS/Vue）
-  - 除 bridge.ts 外不得直接 invoke 会话命令
-  - 关闭协议不可绕过：tabClose 必须走 closeInterceptor，真正关闭只经 closeTabNow
-  - App.vue 必须绑定拦截器并全局挂载 SessionCloseDialog
-  - resolveClose 必须区分 save/discard/cancel 三分支
-  - 会话 UI 文件零凭据标识符（token/cookie/authorization）
+  前端（TS/Vue）—— Owner 最终裁决（2026-09-12）后：
+  - 普通 Tab 关闭 = 不弹确认框 + 不持久化 + 直接关闭。
+  - 关闭入口只把 {url,title} 写入 recentlyClosed 内存栈，再调 closeTabNow
+    完成 WebView 生命周期关闭。
+  - 原关闭协议（SessionCloseDialog / bindCloseInterceptor / requestClose /
+    resolveClose / pendingCloseTabId / closeDialogOpen）必须已撤销、不得残留
+    （防止普通关闭再次触发 prompt 或 sessionSave 的确定性门禁）。
+  - 手动"保存会话"（saveTab）仍独立存在、与关闭解耦。
+  - recentlyClosed 内存栈 + restoreRecent（Ctrl+Shift+T）必须存在。
 
 默认模式：全部不变量成立 → EXIT 0；任一被破坏 → 打印违规码并 EXIT 1。
 """
@@ -115,9 +117,9 @@ def detect_violations(files: dict[str, str]) -> list[str]:
     browser_store = files.get("browser_store", "")
     session_store = files.get("session_store", "")
     panel = files.get("panel", "")
-    dialog = files.get("dialog", "")
     app_vue = files.get("app_vue", "")
     bridge_ts = files.get("bridge_ts", "")
+    types_ts = files.get("types_ts", "")
 
     # ---- 1) 持久化白名单：DTO 不得含黑名单字段 ----
     for struct_name in ("BrowserSession", "SessionDraft"):
@@ -194,7 +196,7 @@ def detect_violations(files: dict[str, str]) -> list[str]:
     if "prune_tmp_files" not in main_rs:
         v.append("SP_STARTUP_PRUNE_MISSING")
 
-    # ---- 7) 默认策略（不静默丢弃 + 不静默保存） ----
+    # ---- 7) 后端默认策略（契约保留：close_prompt=true / auto_save_on_exit=false） ----
     policy_body = rust_struct_body(domain, "SessionPolicy")
     default_body = re.search(r"impl Default for SessionPolicy \{[^}]*\}", domain, re.DOTALL)
     if not default_body:
@@ -208,39 +210,37 @@ def detect_violations(files: dict[str, str]) -> list[str]:
     if not re.search(r"session_close_prompt\s*\n?\s*\.store\(true", main_rs):
         v.append("SP_CLOSE_PROMPT_SETUP_MISSING")
 
-    # ---- 8) 前端关闭协议不可绕过 ----
-    if "bindCloseInterceptor" not in browser_store:
-        v.append("SP_INTERCEPTOR_MISSING")
-    if "closeTabNow" not in browser_store:
-        v.append("SP_CLOSE_NOW_MISSING")
+    # ---- 8) 普通 Tab 关闭：直接关闭，不得挂接任何关闭拦截器 / 确认框 ----
+    # Owner 最终裁决（2026-09-12）：普通关闭不得走 prompt / sessionSave。
+    # 任何残留的关闭协议符号都必须判违规（确定性门禁）。
+    if "bindCloseInterceptor" in browser_store:
+        v.append("SP_INTERCEPTOR_STILL_PRESENT")
+    if "closeInterceptor" in browser_store:
+        v.append("SP_INTERCEPTOR_STATE_STILL_PRESENT")
     tab_close_body = rust_fn_body(browser_store, "tabClose")
     if not tab_close_body:
         v.append("SP_TAB_CLOSE_MISSING")
     else:
-        if "closeInterceptor" not in tab_close_body:
-            v.append("SP_TAB_CLOSE_BYPASSES_PROTOCOL")
-        if "bridge.tabClose" in tab_close_body:
-            v.append("SP_TAB_CLOSE_DIRECT_CLOSE")
-    if "bindCloseInterceptor" not in app_vue:
-        v.append("SP_INTERCEPTOR_NOT_BOUND")
-    if "SessionCloseDialog" not in app_vue:
-        v.append("SP_DIALOG_NOT_MOUNTED")
+        for sym in ("closeInterceptor", "requestClose", "resolveClose",
+                    "pendingCloseTabId", "closeDialogOpen"):
+            if sym in tab_close_body:
+                v.append(f"SP_TAB_CLOSE_REFERENCES_PROTOCOL: {sym}")
+        if "closeTabNow" not in tab_close_body:
+            v.append("SP_TAB_CLOSE_NO_CLOSE_NOW")
+    if "SessionCloseDialog" in app_vue:
+        v.append("SP_DIALOG_STILL_MOUNTED")
+    if "bindCloseInterceptor" in app_vue:
+        v.append("SP_INTERCEPTOR_STILL_BOUND")
 
-    # ---- 9) resolveClose 三分支 ----
+    # ---- 9) 原关闭协议 resolveClose 必须已撤销；手动保存仍独立存在 ----
     resolve_body = rust_fn_body(session_store, "resolveClose")
-    if not resolve_body:
-        v.append("SP_RESOLVE_CLOSE_MISSING")
-    else:
-        for branch in ('"save"', '"discard"', '"cancel"'):
-            if branch not in resolve_body:
-                v.append(f"SP_RESOLVE_BRANCH_MISSING: {branch}")
-        # save 分支必须落盘（saveTab 包装或直连 sessionSave 均可）；discard 分支必须调 sessionDiscard
-        if (
-            "saveTab" not in resolve_body and "sessionSave" not in resolve_body
-        ) or "sessionDiscard" not in resolve_body:
-            v.append("SP_RESOLVE_INCOMPLETE")
-        if "closeTabNow" not in resolve_body:
-            v.append("SP_RESOLVE_NO_CLOSE")
+    if resolve_body:
+        v.append("SP_RESOLVE_CLOSE_STILL_PRESENT")
+    save_tab_body = rust_fn_body(session_store, "saveTab")
+    if not save_tab_body:
+        v.append("SP_SAVE_TAB_MISSING")
+    elif "sessionSave" not in save_tab_body:
+        v.append("SP_SAVE_TAB_NO_PERSIST")
 
     # ---- 10) 前端不得绕过 bridge.ts 直连会话命令 ----
     direct = re.compile(r"invoke[<(]\s*[\"'](?:%s)[\"']" % "|".join(SESSION_COMMANDS))
@@ -251,15 +251,13 @@ def detect_violations(files: dict[str, str]) -> list[str]:
             v.append(f"SP_FRONTEND_DIRECT_INVOKE: {extra_path}")
 
     # ---- 11) 会话 UI 零凭据标识符 ----
-    for key, text in (("session_store", session_store), ("panel", panel), ("dialog", dialog)):
+    for key, text in (("session_store", session_store), ("panel", panel)):
         code = strip_line_comments(text)
         for bad in ("token", "cookie", "authorization"):
             if re.search(rf"\b{bad}\b", code, re.IGNORECASE):
                 v.append(f"SP_FRONTEND_CREDENTIAL_TOKEN: {key}.{bad}")
 
-    # ---- 12) 前端接线完整性 ----
-    if "SessionCloseChoice" not in files.get("types_ts", ""):
-        v.append("SP_TYPES_MISSING")
+    # ---- 12) 前端接线完整性（保留手动保存能力 + recentlyClosed 内存栈） ----
     for method in (
         "sessionSave",
         "sessionDiscard",
@@ -276,6 +274,12 @@ def detect_violations(files: dict[str, str]) -> list[str]:
             v.append(f"SP_BRIDGE_TS_MISSING: {method}")
     if "flushSessions" not in app_vue:
         v.append("SP_FLUSH_ON_UNLOAD_MISSING")
+    # recentlyClosed 内存栈 + 恢复入口必须存在（Ctrl+Shift+T）
+    if "recentlyClosed" not in browser_store:
+        v.append("SP_RECENTLY_CLOSED_MISSING")
+    if "restoreRecent" not in browser_store:
+        v.append("SP_RESTORE_RECENT_MISSING")
+    # 前端类型契约不再要求已撤销的 SessionCloseChoice
 
     return v
 
@@ -290,7 +294,6 @@ def scan_repository(root: Path) -> list[str]:
         "browser_store": root / "src/stores/useBrowserStore.ts",
         "session_store": root / "src/stores/useSessionStore.ts",
         "panel": root / "src/components/browser/SessionPanel.vue",
-        "dialog": root / "src/components/browser/SessionCloseDialog.vue",
         "app_vue": root / "src/App.vue",
         "bridge_ts": root / "src/bridge.ts",
         "types_ts": root / "src/types.ts",
@@ -457,40 +460,33 @@ commands.allow = [
 """
 
 GOOD_BROWSER_STORE = """
-let closeInterceptor: ((id: string) => boolean) | null = null;
-function bindCloseInterceptor(fn: (id: string) => boolean) { closeInterceptor = fn; }
-async function tabClose(id: string) {
-  if (closeInterceptor && closeInterceptor(id)) return;
+const recentlyClosed = [];
+async function tabClose(id) {
   await closeTabNow(id);
 }
-async function closeTabNow(id: string) {
+async function closeTabNow(id) {
+  recordClose(id);
   await bridge.tabClose(id);
+}
+async function restoreRecent() {
+  const item = recentlyClosed.shift();
+  if (item) await tabNew(item.url);
 }
 """
 
 GOOD_SESSION_STORE = """
-async function resolveClose(choice: SessionCloseChoice) {
-  const tabId = pendingCloseTabId.value;
-  if (!tabId || choice === "cancel") return;
-  if (choice === "save") {
-    await bridge.sessionSave(tabId, "");
-  } else if (choice === "discard") {
-    await bridge.sessionDiscard(tabId);
-  }
-  await browser.closeTabNow(tabId);
+async function saveTab(tabId, preview) {
+  await bridge.sessionSave(tabId, preview);
 }
 """
 
 GOOD_PANEL = "<button @click=\"session.saveTab('tab-1')\">保存</button>"
-GOOD_DIALOG = "<button @click=\"session.resolveClose('save')\">保存并关闭</button>"
 
 GOOD_APP_VUE = """
-browser.bindCloseInterceptor((id) => session.requestClose(id));
 window.addEventListener("beforeunload", () => bridge.flushSessions().catch(() => {}));
-<SessionCloseDialog />
 """
 
-GOOD_TYPES_TS = 'export type SessionCloseChoice = "save" | "discard" | "cancel";'
+GOOD_TYPES_TS = "export interface RecentlyClosedEntry { url: string; title: string; }"
 
 GOOD_BRIDGE_TS = """
 sessionSave: (tabId: string, preview?: string) => invoke<SessionSummary>("session_save", { tabId, preview: preview ?? null }),
@@ -521,7 +517,6 @@ def run_self_test() -> int:
         "browser_store": GOOD_BROWSER_STORE,
         "session_store": GOOD_SESSION_STORE,
         "panel": GOOD_PANEL,
-        "dialog": GOOD_DIALOG,
         "app_vue": GOOD_APP_VUE,
         "bridge_ts": GOOD_BRIDGE_TS,
         "types_ts": GOOD_TYPES_TS,
@@ -560,24 +555,27 @@ def run_self_test() -> int:
         ("create_tab 不建草稿",
          {"bridge": GOOD_BRIDGE.replace("upsert_session_draft(&app, &id, &target, &title0);", "")},
          "SP_DRAFT_ON_CREATE_MISSING"),
-        ("关闭弹窗默认关",
+        ("关闭弹窗默认关（后端契约）",
          {"domain": GOOD_DOMAIN.replace("close_prompt: true", "close_prompt: false")},
          "SP_CLOSE_PROMPT_DEFAULT_OFF"),
-        ("退出自动保存默认开",
+        ("退出自动保存默认开（后端契约）",
          {"domain": GOOD_DOMAIN.replace("auto_save_on_exit: false", "auto_save_on_exit: true")},
          "SP_AUTO_SAVE_DEFAULT_ON"),
-        ("tabClose 绕过协议直关",
-         {"browser_store": GOOD_BROWSER_STORE.replace("if (closeInterceptor && closeInterceptor(id)) return;\n  ", "")},
-         "SP_TAB_CLOSE_BYPASSES_PROTOCOL"),
-        ("拦截器未绑定",
-         {"app_vue": GOOD_APP_VUE.replace("browser.bindCloseInterceptor((id) => session.requestClose(id));", "")},
-         "SP_INTERCEPTOR_NOT_BOUND"),
-        ("弹窗未挂载",
-         {"app_vue": GOOD_APP_VUE.replace("<SessionCloseDialog />", "")},
-         "SP_DIALOG_NOT_MOUNTED"),
-        ("resolveClose 缺 cancel 分支",
-         {"session_store": GOOD_SESSION_STORE.replace('choice === "cancel"', 'choice === "noop"')},
-         "SP_RESOLVE_BRANCH_MISSING"),
+        # ===== 新裁决门禁：不得残留关闭协议 =====
+        ("tabClose 仍挂接 bindCloseInterceptor",
+         {"browser_store": GOOD_BROWSER_STORE + "\nfunction bindCloseInterceptor(fn) {}\n"},
+         "SP_INTERCEPTOR_STILL_PRESENT"),
+        ("tabClose 仍引用关闭协议符号",
+         {"browser_store": GOOD_BROWSER_STORE.replace(
+             "async function tabClose(id) {\n  await closeTabNow(id);\n}",
+             "async function tabClose(id) {\n  if (requestClose(id)) return;\n  await closeTabNow(id);\n}")},
+         "SP_TAB_CLOSE_REFERENCES_PROTOCOL"),
+        ("App 仍挂载 SessionCloseDialog",
+         {"app_vue": GOOD_APP_VUE + "\n<SessionCloseDialog />\n"},
+         "SP_DIALOG_STILL_MOUNTED"),
+        ("resolveClose 仍存在",
+         {"session_store": GOOD_SESSION_STORE + '\nasync function resolveClose(choice) {\n  await browser.closeTabNow("x");\n}'},
+         "SP_RESOLVE_CLOSE_STILL_PRESENT"),
         ("前端绕过 bridge 直连",
          {"src_files": GOOD_SRC_FILES + [("src/components/X.vue", 'invoke("session_save", { tabId })')]},
          "SP_FRONTEND_DIRECT_INVOKE"),
@@ -587,6 +585,12 @@ def run_self_test() -> int:
         ("beforeunload 未 flush",
          {"app_vue": GOOD_APP_VUE.replace("bridge.flushSessions()", "bridge.closeBrowser()")},
          "SP_FLUSH_ON_UNLOAD_MISSING"),
+        ("saveTab 缺失（手动保存能力被误删）",
+         {"session_store": "async function loadSessions() {}\n"},
+         "SP_SAVE_TAB_MISSING"),
+        ("recentlyClosed 内存栈缺失",
+         {"browser_store": "async function tabClose(id) {\n  await closeTabNow(id);\n}\nasync function closeTabNow(id) {\n  await bridge.tabClose(id);\n}\n"},
+         "SP_RECENTLY_CLOSED_MISSING"),
     ]
 
     for label, overrides, expected in cases:
