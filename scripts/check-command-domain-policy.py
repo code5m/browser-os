@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import re
 import sys
 from pathlib import Path
@@ -47,13 +48,82 @@ RUN_COMMANDS = ("run_command",)
 # 写/删命令必须做 id 形态校验（读命令无 id 入参）
 ID_COMMANDS = ("snippet_update", "snippet_remove", "run_command")
 
-BASELINE_SHA256 = {
-    # 与 check-script-domain-policy.py 同源：M2-4.e 刷新后的指纹，
-    # 本门禁守住 M2-6 全周期不得新增前端依赖。
-    # M5-W20：纳入修复 Vault 卡死所需的官方异步 dialog 插件；其他依赖仍禁止漂移。
-    "package.json": "ad5215097fd4ccb0a01dde3afef64fdbee8a0392ed02b299242accad87f4cf7a",
-    "package-lock.json": "d071ce3ff265297834c96eb9d53e5db79ce37c6cc2f8e16daa7f838a7c002dad",
+# ---- npm 依赖冻结基线（M2-6：之后不得新增前端依赖） ----
+# 历史：M2-4.e 移除未使用的 @tauri-apps/plugin-shell；M5-W20 纳入官方异步 dialog 插件
+# (@tauri-apps/plugin-dialog)。以上均为经评审的受控变更，已并入下方冻结集合。
+#
+# 采用「结构化依赖对象比对」而非 package.json 整文件 SHA256：仅比较
+# dependencies / devDependencies / optionalDependencies / peerDependencies 四个
+# 受保护集合。新增/修改 scripts、description 等非依赖字段不再误报
+# CMD_NPM_DEP_ADDED（M0 复盘：Phase 03 仅加 npm run check/doctor 脚本即触发假阳性）。
+# 真实依赖新增/删除/改版本/跨集合移动仍会被抓住（结构不等即 FAIL）。
+BASELINE_DEPS = {
+    "dependencies": {
+        "@lucide/vue": "^1.42.0",
+        "@tauri-apps/api": "^2.0.0",
+        "@tauri-apps/plugin-dialog": "^2.7.3",
+        "@xterm/addon-fit": "^0.11.0",
+        "@xterm/xterm": "^6.0.0",
+        "dompurify": "^3.4.15",
+        "marked": "^18.0.12",
+        "pinia": "^2.3.1",
+        "turndown": "^7.2.4",
+        "vue": "^3.4.0",
+    },
+    "devDependencies": {
+        "@tauri-apps/cli": "^2.0.0",
+        "@vitejs/plugin-vue": "^5.0.0",
+        "vite": "^5.2.0",
+    },
+    "optionalDependencies": {},
+    "peerDependencies": {},
 }
+
+# package-lock.json 仍用整文件 SHA256 锚定（lock 不随 script 变更而变，无脆性）。
+BASELINE_SHA256_LOCK = "d071ce3ff265297834c96eb9d53e5db79ce37c6cc2f8e16daa7f838a7c002dad"
+
+# 受追踪的 npm 清单文件（read_repo 读取用）。
+NPM_MANIFESTS = ("package.json", "package-lock.json")
+
+# 受保护依赖字段（顺序无关，缺省视为空集合）。
+PROTECTED_DEP_FIELDS = ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies")
+
+
+def extract_deps(pkg_text: str) -> dict:
+    """从 package.json 文本结构化提取受保护依赖集合（顺序无关，缺省为空 dict）。"""
+    try:
+        data = json.loads(pkg_text)
+    except Exception:
+        return {"__parse_error__": True}
+    out: dict = {}
+    for field in PROTECTED_DEP_FIELDS:
+        deps = data.get(field) or {}
+        out[field] = {k: str(v) for k, v in deps.items()}
+    return out
+
+
+def _mutate_pkg(pkg_text: str, **ops) -> str:
+    """对 package.json 文本做受控变异，返回新 JSON 文本。"""
+    d = json.loads(pkg_text)
+    if "add_dep" in ops:
+        field, name, ver = ops["add_dep"]
+        d.setdefault(field, {})[name] = ver
+    if "bump_dep" in ops:
+        field, name, ver = ops["bump_dep"]
+        d[field][name] = ver
+    if "drop_dep" in ops:
+        field, name = ops["drop_dep"]
+        d[field].pop(name, None)
+    if "move_dep" in ops:
+        name, src, dst = ops["move_dep"]
+        d.setdefault(dst, {})[name] = d[src].pop(name)
+    if "add_script" in ops:
+        name, cmd = ops["add_script"]
+        d.setdefault("scripts", {})[name] = cmd
+    if "add_field" in ops:
+        name, val = ops["add_field"]
+        d[name] = val
+    return json.dumps(d, indent=2)
 
 # 审计格式串中禁止出现的片段（argv / 参数值 / 命令行明文）
 AUDIT_FORBIDDEN = ("argv", "value", "values", "line", "content", "param")
@@ -316,12 +386,18 @@ def detect_violations(files: dict) -> list[str]:
                 v.append(f"CMD_FRONTEND_DIRECT_INVOKE:{path}:{cmd}")
 
     # ---- 15) 零新增 npm 依赖 ----
-    for rel in ("package.json", "package-lock.json"):
-        got = files.get(rel)
-        if got is None:
-            v.append(f"CMD_NPM_DEP_ADDED:{rel} 缺失")
-        elif sha256_text(got) != BASELINE_SHA256[rel]:
-            v.append(f"CMD_NPM_DEP_ADDED:{rel}")
+    # package.json：结构化依赖比对（仅受保护四集合），非依赖字段变更不再误报；
+    # package-lock.json：整文件 SHA256（lock 不随 script 变更而变，无脆性）。
+    pkg_got = files.get("package.json")
+    if pkg_got is None:
+        v.append("CMD_NPM_DEP_ADDED:package.json 缺失")
+    elif extract_deps(pkg_got) != BASELINE_DEPS:
+        v.append("CMD_NPM_DEP_ADDED:package.json")
+    lock_got = files.get("package-lock.json")
+    if lock_got is None:
+        v.append("CMD_NPM_DEP_ADDED:package-lock.json 缺失")
+    elif sha256_text(lock_got) != BASELINE_SHA256_LOCK:
+        v.append("CMD_NPM_DEP_ADDED:package-lock.json")
 
     # ---- 16) 凭据字面量赋值（不拦标识符）----
     for label, src in (
@@ -339,7 +415,7 @@ def detect_violations(files: dict) -> list[str]:
 
 def read_repo(root: Path) -> dict:
     out: dict = {}
-    for rel in list(BASELINE_SHA256) + [
+    for rel in list(NPM_MANIFESTS) + [
         "src-tauri/src/domain.rs",
         "src-tauri/src/snippets.rs",
         "src-tauri/src/bridge.rs",
@@ -500,6 +576,26 @@ def run_self_test(root: Path) -> int:
             "if CommandSnippet::placeholder_of(&s.argv[0]).is_some() {", "if false {", 1)),
         "snippets", "CMD_ARGV0_PLACEHOLDER_RULE_MISSING")
 
+    # 16. 新增 npm 依赖（dependencies）
+    add("package.json 新增 dependencies 依赖",
+        mutate(**{"package.json": _mutate_pkg(good["package.json"], add_dep=("dependencies", "some-gallery-lib", "^1.0.0"))}),
+        "package.json", "CMD_NPM_DEP_ADDED")
+
+    # 17. 修改依赖版本
+    add("package.json 修改 vue 版本",
+        mutate(**{"package.json": _mutate_pkg(good["package.json"], bump_dep=("dependencies", "vue", "^3.5.0"))}),
+        "package.json", "CMD_NPM_DEP_ADDED")
+
+    # 18. 删除依赖
+    add("package.json 删除 pinia 依赖",
+        mutate(**{"package.json": _mutate_pkg(good["package.json"], drop_dep=("dependencies", "pinia"))}),
+        "package.json", "CMD_NPM_DEP_ADDED")
+
+    # 19. 依赖在 dependencies/devDependencies 间移动
+    add("package.json 将 vue 从 dependencies 移到 devDependencies",
+        mutate(**{"package.json": _mutate_pkg(good["package.json"], move_dep=("vue", "dependencies", "devDependencies"))}),
+        "package.json", "CMD_NPM_DEP_ADDED")
+
     failures = 0
     for desc, mutated, expect in samples:
         got = detect_violations(mutated)
@@ -507,10 +603,25 @@ def run_self_test(root: Path) -> int:
             print(f"self-test FAIL: 坏样本「{desc}」未检出 {expect}（实得 {got}）")
             failures += 1
 
+    # ---- 良性变更不得误报（positive tests）----
+    good_samples = [
+        ("package.json 仅新增 script 不误报",
+         mutate(**{"package.json": _mutate_pkg(good["package.json"], add_script=("phase04_probe", "echo ok"))}),
+         "CMD_NPM_DEP_ADDED"),
+        ("package.json 仅增 description 字段不误报",
+         mutate(**{"package.json": _mutate_pkg(good["package.json"], add_field=("description", "probe"))}),
+         "CMD_NPM_DEP_ADDED"),
+    ]
+    for label, files, not_expected in good_samples:
+        found = detect_violations(files)
+        if any(f.startswith(not_expected) for f in found):
+            failures += 1
+            print(f"self-test FAIL: 好样本「{label}」误报 {not_expected}（实得 {found}）")
+
     if failures:
         return 1
 
-    print(f"self-test OK: 好样本零违规 + {len(samples)} 个坏样本全部检出（含变异防呆）")
+    print(f"self-test OK: 好样本零违规 + {len(samples)} 个坏样本全部检出 + {len(good_samples)} 个良性样本无误报（含变异防呆）")
     return 0
 
 
