@@ -176,20 +176,15 @@ export const useBrowserStore = defineStore("browser", () => {
     schedulePosition();
     syncFreeze();
   }
-  // ===== M1-9 关闭协议 =====
-  // 关闭拦截器（由 useSessionStore 在 App.vue 挂载时注入）：返回 true 表示
-  // 已接管（弹「保存/删除/取消」），false 表示走默认直接关闭。
-  // 单向依赖：本 store 不 import useSessionStore，避免循环 import。
-  let closeInterceptor: ((id: string) => boolean) | null = null;
-  function bindCloseInterceptor(fn: (id: string) => boolean) {
-    closeInterceptor = fn;
-  }
+  // ===== 普通 Tab 关闭 =====
+  // Owner 最终裁决（2026-09-12）：普通 Tab 关闭 = 不弹确认框 + 不持久化 + 直接关闭。
+  // 直接走 closeTabNow（其内部先 recordClose 写入 recentlyClosed 内存栈，再完成
+  // WebView 生命周期关闭）。不再挂接任何关闭拦截器 / 确认框（M1-9 关闭协议已撤销）。
   async function tabClose(id: string) {
-    if (closeInterceptor && closeInterceptor(id)) return;
     await closeTabNow(id);
   }
-  // 真正执行关闭（协议弹窗确认后由 useSessionStore.resolveClose 调用；
-  // 无协议/协议关闭时与旧 tabClose 行为完全一致）
+  // 真正执行关闭：先 recordClose 写入 recentlyClosed 内存栈，再完成 WebView 生命周期关闭。
+  // 普通 Tab 关闭（tabClose）与手动恢复入口均复用此路径，无可绕过。
   async function closeTabNow(id: string) {
     recordClose(id);
     const idx = tabs.findIndex((t) => t.id === id);
@@ -690,7 +685,6 @@ export const useBrowserStore = defineStore("browser", () => {
     recentlyClosed,
     recordClose,
     restoreRecent,
-    bindCloseInterceptor,
     tabReload,
     tabNavigate,
     goBack,

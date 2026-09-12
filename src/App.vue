@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onErrorCaptured, ref, watch, nextTick } from "vue";
+import { onMounted, onErrorCaptured, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { bridge } from "./bridge";
 import { useBrowserStore } from "./stores/useBrowserStore";
@@ -19,7 +19,6 @@ import MainArea from "./components/layout/MainArea.vue";
 import StatusBar from "./components/layout/StatusBar.vue";
 import ConfirmModal from "./components/shared/ConfirmModal.vue";
 import GitWriteConfirmDialog from "./components/workspace/GitWriteConfirmDialog.vue";
-import SessionCloseDialog from "./components/browser/SessionCloseDialog.vue";
 import ImageLightbox from "./components/shared/ImageLightbox.vue";
 import AINavPanel from "./components/browser/AINavPanel.vue";
 
@@ -31,23 +30,6 @@ const git = useGitStore();
 const system = useSystemStore();
 const layout = useLayoutStore();
 const settings = useSettingsStore();
-
-watch(() => session.closeDialogOpen, async (open) => {
-  layout.webviewsSuspended = open;
-  if (open) {
-    try {
-      await bridge.hideAllWebviews();
-    } catch {
-      layout.showToast("暂时无法显示关闭确认，请取消后重试");
-    }
-  }
-  // A late hide completion must restore the page after a quick cancellation.
-  if (!layout.webviewsSuspended) {
-    await nextTick();
-    if (layout.mainView === "grid") browser.forceGridRelayout();
-    else browser.relocate();
-  }
-}, { flush: "sync" });
 
 // W17(A7): 外壳级兜底状态——启动遮罩与渲染错误兜底（纯展示，不引入运行时行为）。
 const ready = ref(false);
@@ -121,9 +103,9 @@ onMounted(async () => {
   // M1-8：资源瀑布实时事件（payload 已是后端脱敏 DTO）。订阅放全局，
   // 保证 Dock 面板未挂载时记录也不丢。
   bridge.onResourceReceived((r) => resources.applyReceived(r));
-  // M1-9 关闭协议：tabClose 统一走拦截器（弹「保存/删除/取消」），
-  // 用户决定后由 useSessionStore.resolveClose 调 browser.closeTabNow 真正关闭。
-  browser.bindCloseInterceptor((id) => session.requestClose(id));
+  // 普通 Tab 关闭（Owner 最终裁决 2026-09-12）：不弹确认框、不持久化、直接关闭。
+  // 关闭入口统一走 browser.tabClose → closeTabNow（内部写入 recentlyClosed 内存栈）。
+  // 不再挂接任何关闭拦截器 / 确认框（旧的关闭确认弹窗已撤销）。
   bridge.onTabRecovery((d) => browser.handleTabRecovery(d));
   bridge.onNewTabRequest((u) => {
     setTimeout(() => browser.tabNew(u.url), 0);
@@ -273,8 +255,8 @@ onMounted(async () => {
       <ConfirmModal />
       <!-- M1-7 Git 写确认闸门：全局挂载，保证任何视图下待确认任务都能被看到/处理 -->
       <GitWriteConfirmDialog />
-      <!-- M1-9 关闭协议弹窗：关闭页签时全局可见（保存/删除/取消） -->
-      <SessionCloseDialog />
+      <!-- 最近关闭页签恢复入口见 SessionPanel；普通关闭不再弹确认框 -->
+
       <!-- M2-2.b 图片灯箱：全局挂载，任何视图点开画廊都能放大预览 -->
       <ImageLightbox />
     </template>

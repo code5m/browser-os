@@ -294,7 +294,8 @@ export interface SessionSummary {
 
 // 会话策略（会话内生效，不持久化）
 export interface SessionPolicy {
-  // 关闭 tab 时是否弹「保存 / 删除」（默认开：关闭不可静默丢弃）
+  // [DEPRECATED] 普通 Tab 关闭不再弹确认框（Owner 最终裁决 2026-09-12）。
+  // 该字段仅保留为后端契约兼容，前端关闭路径不再读取（见 useSessionStore）。
   close_prompt: boolean;
   // 退出应用前是否自动保存仍打开的 tab（默认关：不静默保存）
   auto_save_on_exit: boolean;

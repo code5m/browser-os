@@ -33,16 +33,8 @@ async function saveActive() {
   await session.saveTab(id, preview);
 }
 
-async function toggleClosePrompt() {
-  await session.setPolicy(!session.policy.close_prompt, undefined);
-}
-
 async function toggleAutoSave() {
   await session.setPolicy(undefined, !session.policy.auto_save_on_exit);
-}
-
-async function toggleAutoSaveOnClose() {
-  session.setAutoSaveOnClose(!session.autoSaveOnClose);
 }
 
 onMounted(async () => {
@@ -59,17 +51,9 @@ onMounted(async () => {
     </div>
 
     <div class="sp-policy">
-      <label class="sp-toggle" title="关闭页签时弹「保存/删除」选择">
-        <input type="checkbox" :checked="session.policy.close_prompt" @change="toggleClosePrompt" />
-        关闭时询问
-      </label>
       <label class="sp-toggle" title="退出应用前自动保存仍打开的页签（默认关）">
         <input type="checkbox" :checked="session.policy.auto_save_on_exit" @change="toggleAutoSave" />
         退出自动保存
-      </label>
-      <label class="sp-toggle" title="关闭页签时自动保存并直接关闭，不弹确认框（默认关）">
-        <input type="checkbox" :checked="session.autoSaveOnClose" @change="toggleAutoSaveOnClose" />
-        关闭时自动保存
       </label>
     </div>
 
@@ -97,7 +81,7 @@ onMounted(async () => {
 
     <div v-if="session.error" class="sp-banner">{{ session.error }}</div>
     <div v-else-if="!session.sessions.length" class="sp-empty">
-      暂无历史会话。关闭页签时选择「保存」，或点上方「保存当前页签」。
+      暂无历史会话。点上方「保存当前页签」可手动保存当前浏览会话。
     </div>
 
     <!-- 详情视图 -->

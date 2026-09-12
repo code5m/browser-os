@@ -5,16 +5,17 @@ import { useBrowserStore } from "./useBrowserStore";
 import { useLayoutStore } from "./useLayoutStore";
 import type {
   BrowserSession,
-  SessionCloseChoice,
   SessionPolicy,
   SessionSummary,
 } from "../types";
 
-// M1-9 会话存档与关闭协议状态层。
+// 历史会话存档状态层（M1-9 会话存档，不含关闭协议）。
 //
-// 关闭协议（不可静默丢）：关闭 tab 时不直接关闭，先弹「保存 / 删除 / 取消」。
-// 通过 browser.bindCloseInterceptor 挂接（单向依赖：本 store 依赖 browser store，
-// browser store 不反向依赖本 store，避免循环 import）。
+// Owner 最终裁决（2026-09-12）：普通 Tab 关闭 = 不弹确认框 + 不持久化 + 直接关闭。
+// 关闭入口只把 {url,title} 写入 recentlyClosed 内存栈（见 useBrowserStore），再调
+// browser.closeTabNow 完成 WebView 生命周期关闭。本 store 不再参与关闭拦截；
+// "保存会话"仅为用户主动触发的能力（saveTab），与关闭 Tab 完全解耦。
+// 原关闭协议（SessionCloseDialog 三选一：保存/删除/取消）已撤销。
 //
 // 隐私：预览文本与 URL 均由后端二次脱敏；前端不持久化任何会话数据。
 
@@ -24,16 +25,10 @@ export const useSessionStore = defineStore("session", () => {
   const sessions = ref<SessionSummary[]>([]);
   const detail = ref<BrowserSession | null>(null);
   const detailId = ref<string>("");
+  // close_prompt 仅保留为后端契约兼容字段，前端关闭路径不再读取（见 types.ts 备注）。
   const policy = ref<SessionPolicy>({ close_prompt: true, auto_save_on_exit: false });
-  // Phase 04：关闭页签自动保存并直接关闭（前端态、默认关、不落后端，零后端改动）
-  const autoSaveOnClose = ref(false);
   const loading = ref(false);
   const error = ref("");
-
-  // 关闭协议：待用户决定的 tab（非空 = 弹窗打开）
-  const pendingCloseTabId = ref<string>("");
-  const pendingCloseTitle = ref<string>("");
-  const closeDialogOpen = computed(() => pendingCloseTabId.value !== "");
 
   async function loadPolicy() {
     try {
@@ -77,8 +72,8 @@ export const useSessionStore = defineStore("session", () => {
     detailId.value = "";
   }
 
-  // 保存当前页签为会话（立即落盘）。silent=true 时不弹 Toast（自动保存关闭等场景，
-  // 遵循「成功操作不显示提示」约定）
+  // 用户主动保存当前页签为会话（立即落盘）。
+  // silent=true 时不弹 Toast（遵循「成功操作不显示提示」约定）。
   async function saveTab(tabId: string, preview?: string, silent = false): Promise<SessionSummary | null> {
     try {
       const summary = await bridge.sessionSave(tabId, preview ?? "");
@@ -140,67 +135,15 @@ export const useSessionStore = defineStore("session", () => {
     }
   }
 
-  // Phase 04：自动保存并直接关闭（不弹确认框，复用既有 closeTabNow 安全拆除路径）
-  async function autoSaveAndClose(tabId: string) {
-    const preview = await capturePreview(tabId);
-    await saveTab(tabId, preview, true);
-    await useBrowserStore().closeTabNow(tabId);
-  }
-
-  // ===== 关闭协议 =====
-  // 返回 true 表示已接管（弹窗等待用户决定，或自动保存后直接关闭），false 表示走默认直接关闭。
-  function requestClose(tabId: string): boolean {
-    // Phase 04：开启自动保存关闭 → 静默保存并直接关闭，不弹确认框
-    if (autoSaveOnClose.value) {
-      autoSaveAndClose(tabId);
-      return true;
-    }
-    if (!policy.value.close_prompt) return false;
-    const browser = useBrowserStore();
-    const tab = browser.tabs.find((t) => t.id === tabId);
-    if (!tab) return false;
-    pendingCloseTabId.value = tabId;
-    pendingCloseTitle.value = tab.title || tab.url;
-    return true;
-  }
-
-  async function resolveClose(choice: SessionCloseChoice) {
-    const tabId = pendingCloseTabId.value;
-    pendingCloseTabId.value = "";
-    pendingCloseTitle.value = "";
-    if (!tabId || choice === "cancel") return;
-    const browser = useBrowserStore();
-    if (choice === "save") {
-      const preview = await capturePreview(tabId);
-      await saveTab(tabId, preview);
-    } else if (choice === "discard") {
-      try {
-        await bridge.sessionDiscard(tabId);
-      } catch {
-        // 丢弃失败不阻断关闭
-      }
-    }
-    await browser.closeTabNow(tabId);
-  }
-
-  function setAutoSaveOnClose(v: boolean) {
-    autoSaveOnClose.value = v;
-  }
-
   return {
     sessions,
     detail,
     detailId,
     policy,
-    autoSaveOnClose,
     loading,
     error,
-    pendingCloseTabId,
-    pendingCloseTitle,
-    closeDialogOpen,
     loadPolicy,
     setPolicy,
-    setAutoSaveOnClose,
     loadSessions,
     openDetail,
     closeDetail,
@@ -209,7 +152,5 @@ export const useSessionStore = defineStore("session", () => {
     deleteSession,
     restoreSession,
     exportSession,
-    requestClose,
-    resolveClose,
   };
 });
