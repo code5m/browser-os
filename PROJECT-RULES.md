@@ -149,10 +149,13 @@
 
 [APPROVED] 新增"最近关闭的页签"能力：内存栈上限 20，并支持 Ctrl+Shift+T 恢复最近关闭页签。
 
-[PENDING] 原生 WebView 是继续一个页签一个，
-          还是只为当前可见页面创建 1～4 个。
+[APPROVED] 原生 WebView：1 tab = 1 WebView（一个页签一个原生 WebView）。
+           只为当前可见页面创建 1～4 个的 slot pool = FUTURE / SEPARATE_DECISION，本阶段禁止。
+           依据：2026-09-12 Owner 裁决（M6-A0-governance-decision-record.md §5）；
+           2026-09-13 M6-0 Spike 裁决 GO_WITH_REDUCED_SCOPE 未推翻本条。
 
-[PENDING] Vue Shell 是增量迁移还是整体重新编写。
+[APPROVED] Vue Shell：增量迁移（incremental migration），整体重新编写 = REJECTED。
+           依据：2026-09-12 Owner 裁决（M6-A0-governance-decision-record.md §6）。
 
 ## 附：本仓库的实测正确版本基准
 

@@ -39,6 +39,8 @@
 
 **依赖关系记录**：R3B 依赖 M6 的 `WebViewSafeShell` / `BrowserViewportAnchor`（R3B-09 原生 WebView 焦点/遮挡/resize 悬置的根因）；M6 不依赖 R3B。因此先做 M6 对 R3B 是纯收益。
 
+- **2026-09-13 复核确认**：R3B **继续 `DEFERRED`**——不废弃、不假装 ACCEPT、不因 M6 Reduced Scope 而改变。M6-0 裁决仅授权局部重构，**不构成为 M6 接受 R3B UI 的理由**。
+
 ---
 
 ## 3. Product Code LOCK 治理（关键）

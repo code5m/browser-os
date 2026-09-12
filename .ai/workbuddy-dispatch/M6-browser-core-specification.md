@@ -1,5 +1,13 @@
 # M6 — Browser Core Abstraction · Specification
 
+> ## STATUS: DEFERRED (2026-09-13 Owner 裁决 GO_WITH_REDUCED_SCOPE)
+>
+> **本文件保留为未来设计参考，本轮不实施。**
+> - 不实施：`BrowserRuntime` / `BrowserScene` / `syncScene` / `MockRuntime`（M6-A ~ M6-H 整条完整 Runtime 路线）
+> - 降级原因：`logs/research/M6/M6-0-spike-result-20260913.md`
+> - 本轮实际执行：M6 Reduced Scope（S1~S5，局部重构，零 Rust 改动、不改产品语义）
+> - 下文 §2 APPROVED_TARGET / §4 各层职责 / §5 实施顺序 A–H **均为设计参考，不构成派发依据**
+
 > Version: 2026-09-12
 > Owner / Chief Architect Decision（见 `M6-A0-governance-decision-record.md`）
 > Status: SPECIFICATION — 本轮只做规划与治理收口，不启动大规模源码迁移

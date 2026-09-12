@@ -11,6 +11,12 @@ This directory is the canonical V3 main working copy. Agents should use this fil
 
 - NEXT: `M5-W18-R3B`; W19: `CLOSED`.
 - A1-A11 R3 research is integrated. A0 verdict is `REVISE_TARGETED`: read `logs/checkpoints/A0-M5-W18-R3-acceptance-audit-20260908.md` and `M5-W18-R3B-CORRECTION-TASKS-20260908.md`. Product code remains locked until the corrected prototype is accepted by the user.
+  > Scope note (2026-09-13 Owner ruling): this lock applies ONLY to the W18/W19/R3B
+  > workbench product-redesign route. It does NOT block M6 Reduced Scope
+  > (local refactor of useBrowserHost / browserLayout / browserSync), because that
+  > work preserves product semantics and does not touch src-tauri/** or
+  > tauri-browser-tabs/**. See M6-A0-governance-decision-record.md §3.3 Option A.
+  > M6 Reduced Scope is authorized under this carve-out.
 - Product direction: `WORKBENCH_BLUEPRINT-20260908.md`; substitute-controller/model routing: `A0-HANDOFF-LOW-COST-20260908.md`.
 - Current entries override historical NEXT/dispatch statements elsewhere. A new prompt declares LANE once; the current card derives its exact worktree and branch. An agent may enter its already-provisioned matching worktree after verification.
 
