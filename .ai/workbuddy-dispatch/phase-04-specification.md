@@ -1,5 +1,6 @@
 # Phase 04 Specification — 自动保存关闭页签 (Auto-Save on Tab Close)
 
+> **Status: CLOSED (2026-09-12)** — 实现已提交（`acf4add`），验收通过；详情见 `phase-04-dispatch-plan.md`。
 > 产品路线图 `PLANS.md` Phase 4 = 自动保存关闭页签。
 > 本规格为权威裁定文档；`PROJECT-RULES.md` 的对应 `[PENDING]` 由本文件裁定（见末尾决策记录）。
 > 治理约定见 `.ai/workbuddy-dispatch/autonomous-execution-policy.md`（No Ask Unless Blocked）。

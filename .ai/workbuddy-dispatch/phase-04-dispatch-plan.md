@@ -1,5 +1,7 @@
 # Phase 04 Dispatch Plan
 
+**Status: CLOSED (2026-09-12)** — 实现已提交并通过验收；见末尾 `CHIEF_ARCHITECT_ACCEPTANCE`。
+
 ## Chief Architect Decision
 
 Phase 03 CLOSED（2026-09-12）。Pre-Phase-04 Guardrail Hardening（npm 依赖结构化检测）已合并，整文件 SHA256 脆性消除。Phase 04（产品路线图 Phase 4：自动保存关闭页签）可启动。
@@ -109,3 +111,24 @@ Result: CLOSED
 
 - 自动执行（不询问）：进入下一 Batch、提交已验证文件、`git diff --check` / `--self-test` / `--json` 验证、P3 / WARN 非阻塞项按注释处理、commit message 措辞、生成下一阶段派发卡。
 - 必须阻塞：P1 / BLOCKER、Conflict Report、需改 forbidden 区、改变已批准架构 / 产品决策、破坏性 / 不可逆操作、两种合法方案均影响产品方向。
+
+## Phase 04 Result
+
+```text
+CHIEF_ARCHITECT_ACCEPTANCE
+Phase: 04
+Status: ACCEPTED
+Result: CLOSED
+```
+
+- 实现提交：`acf4add`（6 文件，+127 / -6）
+- 规则更新提交：`4e87eb1`（PROJECT-RULES.md PENDING→APPROVED）
+- 验收（Batch D）：`npm run build` ✓；volume gate ✓（基线 `build-metrics-052b18a.json`，增量 ≤ 25.2%）；
+  Phase 03 五件套（architecture / ui / native / runtime / task-boundary）+ `npm run check` + `npm run doctor` ✓；
+  `check-session-logic.mjs`（M1-9 会话关闭协议）✓；`git diff --check` ✓；`src-tauri/**` 零改动；
+  无新 npm 依赖；无新运行时权限；`closeTabNow` 的 WebView 生命周期原样复用。
+- 已知既有问题（**非 Phase 04 引入，不构成 Stop Condition**）：`pre-merge.sh` 在 `check-command-domain-policy.py`
+  （M2-6.a）报 `CMD_NPM_DEP_ADDED:package.json`——检查器内嵌的 `package.json` 指纹基线（`ad521…`）与已提交
+  `package.json` 指纹（`0d885…`）不一致，属**基线漂移**；`git diff HEAD -- package.json` 为空，确认与 Phase 04
+  改动无关（6 个改动文件均未碰 `package.json` / 该检查器）。建议由 Phase 03 hardening 负责人按 6bc6491 / 554be5a
+  同范式 rebaseline 该指纹，不属本阶段范围。
