@@ -164,7 +164,7 @@ export const useBrowserStore = defineStore("browser", () => {
     activeTabId.value = t.id;
     url.value = t.url;
     await nextTick();
-    schedulePosition();
+    relocate();
     syncFreeze();
   }
   async function tabSwitch(id: string) {
@@ -173,7 +173,7 @@ export const useBrowserStore = defineStore("browser", () => {
     if (t) url.value = t.url;
     await bridge.tabActivate(id);
     await nextTick();
-    schedulePosition();
+    relocate();
     syncFreeze();
   }
   // ===== 普通 Tab 关闭 =====
@@ -201,7 +201,7 @@ export const useBrowserStore = defineStore("browser", () => {
     }
     if (!tabs.length) layout.mainView = "browser";
     await nextTick();
-    schedulePosition();
+    relocate();
     syncFreeze();
   }
   // Phase 04：记录被关闭的页签（在真正拆除前读取 url/title）
@@ -228,7 +228,7 @@ export const useBrowserStore = defineStore("browser", () => {
     await bridge.tabOpen(id, t.url);
     if (activeTabId.value === id) url.value = t.url;
     await nextTick();
-    schedulePosition();
+    relocate();
   }
   async function tabNavigate(id: string) {
     const t = tabs.find((x) => x.id === id);
@@ -238,7 +238,7 @@ export const useBrowserStore = defineStore("browser", () => {
     if (activeTabId.value === id) url.value = u;
     layout.showToast("页签导航: " + u);
     await nextTick();
-    schedulePosition();
+    relocate();
   }
   async function goBack() {
     if (!activeTabId.value) return;
@@ -253,12 +253,12 @@ export const useBrowserStore = defineStore("browser", () => {
     await bridge.tabReload(activeTabId.value);
     layout.showToast("已刷新当前页签");
     await nextTick();
-    schedulePosition();
+    relocate();
   }
   function setTitle(t: TabInfo) {
     const existing = tabs.find((x) => x.id === t.id);
     if (existing && t.title) existing.title = t.title;
-    if (t.id === activeTabId.value) nextTick(schedulePosition);
+    if (t.id === activeTabId.value) nextTick(relocate);
   }
   // 子 webview 内导航完成（点链接/前进/后退/刷新）：同步页签 URL 与地址栏
   function setNavigated(id: string, navUrl: string) {
@@ -271,7 +271,7 @@ export const useBrowserStore = defineStore("browser", () => {
       `tabRecovery id=${event.id} status=${event.status} attempt=${event.attempt}/${event.max_attempts} reason=${event.reason}`
     );
     if (event.status === "recovered") {
-      if (event.id === activeTabId.value) nextTick(schedulePosition);
+      if (event.id === activeTabId.value) nextTick(relocate);
       layout.showToast(`页签已自动恢复: ${event.id}`);
     } else if (event.status === "budget-exhausted") {
       layout.showToast(`页签恢复次数已用尽: ${event.id}`);
@@ -496,8 +496,8 @@ export const useBrowserStore = defineStore("browser", () => {
     // 宫格关闭后激活页签重新可见 → 解冻
     syncFreeze();
     // 兜底重定位活动页签 webview：此刻 gridOpen 已 false、mainView 若为 browser，
-    // schedulePosition 会真正下发 tabPosition；mainView 的 watch 下个 tick 也会再做一次。
-    schedulePosition();
+    // relocate 会真正下发 tabPosition；mainView 的 watch 下个 tick 也会再做一次。
+    relocate();
     layout.showToast("已关闭宫格");
   }
   // 关闭单个宫格：销毁对应子 webview，其余保留，并按剩余数量重排
