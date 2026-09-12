@@ -34,12 +34,10 @@ import sys
 from pathlib import Path
 
 # ---------------- 基线指纹（M2-2.a 冻结时刻，b 卡不得改动这些文件） ----------------
+# package.json 依赖集合采用「结构化比对」（见 BASELINE_DEPS / extract_deps），
+# 不再用整文件 SHA256，避免 scripts/description 等良性变更误报 IMG_PREV_NPM_DEP_ADDED。
 BASELINE_SHA256 = {
-    # M2-4.e 裁定移除未使用的 @tauri-apps/plugin-shell，刷新 package 指纹；
-    # 本门禁仍守住 M2-2.b 之后不得新增前端依赖。
-    # M5-W20：纳入修复 Vault 卡死所需的官方异步 dialog 插件；其他依赖仍禁止漂移。
-    # Phase 03 (11-ci)：新增 npm run check/doctor 脚本（零依赖变更），刷新 package 指纹。
-    "package.json": "1e460d3bd054e1a386605f8693b76d9b279dd535586c735ecf5e04eb8ca6977f",
+    # package-lock.json 仍用整文件 SHA256 锚定（lock 不随 script 变更而变，无脆性）。
     "package-lock.json": "d071ce3ff265297834c96eb9d53e5db79ce37c6cc2f8e16daa7f838a7c002dad",
     "src-tauri/permissions/remote-collect.toml": (
         "cc35e0edc7933c2a43fd6e0c9271667db483aa5aa206d7e08d98a21b832f05da"
@@ -48,6 +46,72 @@ BASELINE_SHA256 = {
         "6299bdd7108553daded3bb964f6dd14cb01da7e39eb00537a60241c58c0ad40b"
     ),
 }
+
+# npm 依赖冻结基线（M2-2.b：之后不得新增前端依赖）。
+# 历史：M2-4.e 移除 @tauri-apps/plugin-shell；M5-W20 纳入官方异步 dialog 插件
+# (@tauri-apps/plugin-dialog)。仅比较受保护依赖集合，scripts 等变更不再误报。
+BASELINE_DEPS = {
+    "dependencies": {
+        "@lucide/vue": "^1.42.0",
+        "@tauri-apps/api": "^2.0.0",
+        "@tauri-apps/plugin-dialog": "^2.7.3",
+        "@xterm/addon-fit": "^0.11.0",
+        "@xterm/xterm": "^6.0.0",
+        "dompurify": "^3.4.15",
+        "marked": "^18.0.12",
+        "pinia": "^2.3.1",
+        "turndown": "^7.2.4",
+        "vue": "^3.4.0",
+    },
+    "devDependencies": {
+        "@tauri-apps/cli": "^2.0.0",
+        "@vitejs/plugin-vue": "^5.0.0",
+        "vite": "^5.2.0",
+    },
+    "optionalDependencies": {},
+    "peerDependencies": {},
+}
+
+# 受追踪的 npm 清单文件（read_repo 读取用）。
+NPM_MANIFESTS = ("package.json", "package-lock.json")
+PROTECTED_DEP_FIELDS = ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies")
+
+
+def extract_deps(pkg_text: str) -> dict:
+    """从 package.json 文本结构化提取受保护依赖集合（顺序无关，缺省为空 dict）。"""
+    try:
+        data = json.loads(pkg_text)
+    except Exception:
+        return {"__parse_error__": True}
+    out: dict = {}
+    for field in PROTECTED_DEP_FIELDS:
+        deps = data.get(field) or {}
+        out[field] = {k: str(v) for k, v in deps.items()}
+    return out
+
+
+def _mutate_pkg(pkg_text: str, **ops) -> str:
+    """对 package.json 文本做受控变异，返回新 JSON 文本。"""
+    d = json.loads(pkg_text)
+    if "add_dep" in ops:
+        field, name, ver = ops["add_dep"]
+        d.setdefault(field, {})[name] = ver
+    if "bump_dep" in ops:
+        field, name, ver = ops["bump_dep"]
+        d[field][name] = ver
+    if "drop_dep" in ops:
+        field, name = ops["drop_dep"]
+        d[field].pop(name, None)
+    if "move_dep" in ops:
+        name, src, dst = ops["move_dep"]
+        d.setdefault(dst, {})[name] = d[src].pop(name)
+    if "add_script" in ops:
+        name, cmd = ops["add_script"]
+        d.setdefault("scripts", {})[name] = cmd
+    if "add_field" in ops:
+        name, val = ops["add_field"]
+        d[name] = val
+    return json.dumps(d, indent=2)
 
 # `tauri.conf.json` 的 assetProtocol.scope 基线（顺序敏感：重排也视为变化）
 BASELINE_ASSET_SCOPE = [
@@ -126,13 +190,18 @@ def detect_violations(files: dict[str, str]) -> list[str]:
     elif scope != BASELINE_ASSET_SCOPE:
         v.append(f"IMG_PREV_SCOPE_EXPANDED:{scope}")
 
-    # ---- 2) 零新增 npm 依赖（哈希锚定，任何改动都需另开检查点评审） ----
-    for rel in ("package.json", "package-lock.json"):
+    # ---- 2) 零新增 npm 依赖（结构化依赖集合比对；scripts 等良性变更不再误报） ----
+    for rel in NPM_MANIFESTS:
         got = files.get(rel)
         if got is None:
             v.append(f"IMG_PREV_NPM_DEP_ADDED:{rel} 缺失")
-        elif sha256_text(got) != BASELINE_SHA256[rel]:
-            v.append(f"IMG_PREV_NPM_DEP_ADDED:{rel}")
+            continue
+        if rel == "package.json":
+            if extract_deps(got) != BASELINE_DEPS:
+                v.append(f"IMG_PREV_NPM_DEP_ADDED:{rel}")
+        else:
+            if sha256_text(got) != BASELINE_SHA256[rel]:
+                v.append(f"IMG_PREV_NPM_DEP_ADDED:{rel}")
 
     # ---- 3) 收集侧安全边界不得被本卡触碰 ----
     for rel in (
@@ -222,7 +291,7 @@ def detect_violations(files: dict[str, str]) -> list[str]:
 
 def read_repo(root: Path) -> dict[str, str]:
     out: dict[str, str] = {}
-    for rel in list(BASELINE_SHA256) + [
+    for rel in list(BASELINE_SHA256) + list(NPM_MANIFESTS) + [
         "src-tauri/tauri.conf.json",
         "src-tauri/src/bridge.rs",
         "src-tauri/src/main.rs",
@@ -367,6 +436,26 @@ def run_self_test(root: Path) -> int:
                                           + "\nexport const TOKEN = 1;\n"}),
                     "IMG_PREV_CREDENTIAL_TOKEN"))
 
+    # 16. 修改依赖版本
+    samples.append(("package.json 修改 vue 版本",
+                    mutate(**{"package.json": _mutate_pkg(good["package.json"], bump_dep=("dependencies", "vue", "^3.5.0"))}),
+                    "IMG_PREV_NPM_DEP_ADDED"))
+    # 17. 删除依赖
+    samples.append(("package.json 删除 pinia 依赖",
+                    mutate(**{"package.json": _mutate_pkg(good["package.json"], drop_dep=("dependencies", "pinia"))}),
+                    "IMG_PREV_NPM_DEP_ADDED"))
+    # 18. 依赖在 dependencies/devDependencies 间移动
+    samples.append(("package.json 将 vue 从 dependencies 移到 devDependencies",
+                    mutate(**{"package.json": _mutate_pkg(good["package.json"], move_dep=("vue", "dependencies", "devDependencies"))}),
+                    "IMG_PREV_NPM_DEP_ADDED"))
+
+    # 新增：良性变更不得误报（positive tests）
+    good_samples = [
+        ("package.json 仅新增 script 不误报",
+         mutate(**{"package.json": _mutate_pkg(good["package.json"], add_script=("phase04_probe", "echo ok"))}),
+         "IMG_PREV_NPM_DEP_ADDED"),
+    ]
+
     failures = 0
     for label, files, expected in samples:
         found = detect_violations(prepare(files))
@@ -376,10 +465,18 @@ def run_self_test(root: Path) -> int:
             failures += 1
             print(f"  X   {label} 未检出（期望 {expected}，实际 {found}）")
 
+    for label, files, not_expected in good_samples:
+        found = detect_violations(prepare(files))
+        if any(f.startswith(not_expected) for f in found):
+            failures += 1
+            print(f"  X   {label} 误报（不应出现 {not_expected}，实际 {found}）")
+        else:
+            print(f"  ok  {label} 未误报 {not_expected}")
+
     if failures:
-        print(f"\nself-test: FAIL（{failures}/{len(samples)} 个坏样本漏检）")
+        print(f"\nself-test: FAIL（{failures} 项未通过）")
         return 1
-    print(f"\nself-test: ok（1 好样本 + {len(samples)} 坏样本全部检出）")
+    print(f"\nself-test: ok（1 好样本 + {len(samples)} 坏样本全部检出 + {len(good_samples)} 良性样本零误报）")
     return 0
 
 
