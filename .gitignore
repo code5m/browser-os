@@ -25,3 +25,8 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# AI 工具本机状态（禁止入库，避免泄露/污染工作树）
+.ai/
+.codeartsdoer/
+.opencode/

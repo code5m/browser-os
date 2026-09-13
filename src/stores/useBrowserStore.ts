@@ -163,6 +163,11 @@ export const useBrowserStore = defineStore("browser", () => {
     tabs.push(t);
     activeTabId.value = t.id;
     url.value = t.url;
+    // 黑闪修复：新 webview 创建后后端默认落在初始 bounds（深色背景），在 relocate
+    // 下发正确 rect 前的若干帧会闪现一帧黑块。此处先把新 webview 移到离屏
+    // （保持非零尺寸，仅移 x 出屏幕，避免 1x1 触发的 WebKit reflow deadlock），
+    // 等 schedulePosition 用真实 host rect 把它定位回屏幕内时再显示，消除黑闪。
+    bridge.tabPosition(t.id, { x: -30000, y: 0, width: 100, height: 100 }).catch(() => {});
     await nextTick();
     relocate();
     syncFreeze();

@@ -138,6 +138,8 @@ export const useLayoutStore = defineStore("layout", () => {
   const mainView = ref<MainView>("home");
   const sidebarOpen = ref(true);
   const sidebarWidth = ref(300);
+  // 文件夹目录树（FilePanel .ftree）宽度，可由鼠标拖拽调整
+  const fileTreeWidth = ref(260);
   const leftTab = ref<"files" | "artifacts">("files");
   const gridToolbarOpen = ref(false);
   const clipOpen = ref(false);
@@ -214,6 +216,10 @@ export const useLayoutStore = defineStore("layout", () => {
 
   function setSidebarWidth(w: number) {
     sidebarWidth.value = Math.min(560, Math.max(180, w));
+  }
+
+  function setFileTreeWidth(w: number) {
+    fileTreeWidth.value = Math.min(560, Math.max(160, w));
   }
 
   // 切换地址栏模式（🌐网址 / 📁目录）
@@ -325,6 +331,7 @@ export const useLayoutStore = defineStore("layout", () => {
     mainView,
     sidebarOpen,
     sidebarWidth,
+    fileTreeWidth,
     leftTab,
     gridToolbarOpen,
     clipOpen,
@@ -350,6 +357,7 @@ export const useLayoutStore = defineStore("layout", () => {
     toggleClipboard,
     toggleGridToolbar,
     setSidebarWidth,
+    setFileTreeWidth,
     toggleBrowserDock,
     toggleAddrMode,
     toggleCompact,

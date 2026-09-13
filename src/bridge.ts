@@ -486,6 +486,13 @@ export const bridge = {
   // 用系统文件管理器定位到成果所在目录
   revealArtifact: (id: string) => invoke("reveal_artifact", { id }),
 
+  // 用系统文件管理器打开指定路径（文件树右键"资源管理器打开"）
+  revealPath: (path: string) => invoke("reveal_path", { path }),
+
+  // 跨目录移动文件/目录（文件树拖拽移动）
+  movePath: (src: string, dstDir: string) =>
+    invoke("move_path", { src, dst_dir: dstDir }),
+
   // 用系统默认浏览器打开成果来源 URL
   openSource: (url: string) => invoke("open_source", { url }),
 

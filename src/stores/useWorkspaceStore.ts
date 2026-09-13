@@ -1,7 +1,8 @@
 import { defineStore } from "pinia";
-import { ref, reactive, computed } from "vue";
+import { ref, reactive, computed, watch } from "vue";
 import { bridge } from "../bridge";
 import { useLayoutStore } from "./useLayoutStore";
+import { useSystemStore } from "./useSystemStore";
 import { renderMd } from "../utils/markdown";
 import { withToast } from "../utils/error";
 import {
@@ -284,6 +285,34 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
     closeFileCtx();
   }
+  // 头部快捷新建：基于当前打开文件所在目录（无打开文件则用首根目录）
+  function currentBaseDir(): string {
+    if (filePath.value) {
+      const i = filePath.value.lastIndexOf("/");
+      return i > 0 ? filePath.value.slice(0, i) : "/";
+    }
+    return treeRoots[0]?.path || "/";
+  }
+  async function quickNew(kind: "file" | "dir") {
+    const base = currentBaseDir();
+    const def = kind === "file" ? "新建文件.txt" : "新建文件夹";
+    const label = kind === "file" ? "新文件名" : "新目录名";
+    const name = (prompt(`${label}（将创建于 ${base}）：`, def) || "").trim();
+    if (!name) return;
+    try {
+      if (kind === "file") {
+        await bridge.createFile(base.replace(/\/$/, "") + "/" + name, "");
+        layout.showToast("已新建文件: " + name);
+      } else {
+        await bridge.createDir(base.replace(/\/$/, "") + "/" + name);
+        layout.showToast("已新建目录: " + name);
+      }
+      treeExpanded.add(base);
+      await refreshTree();
+    } catch (e: any) {
+      layout.showToast("新建失败: " + (e?.message ?? e));
+    }
+  }
   async function ctxDelete(entry: DirEntry) {
     if (!confirm(`删除「${entry.name}」？此操作不可恢复`)) {
       closeFileCtx();
@@ -313,6 +342,35 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       layout.showToast("重命名失败: " + (e?.message ?? e));
     }
     closeFileCtx();
+  }
+
+  // 文件树右键：新标签打开（目录→目录页签；文件→行内编辑/预览）
+  function ctxOpenInNewTab(entry: DirEntry) {
+    closeFileCtx();
+    if (entry.is_dir) {
+      layout.openDirTab(entry.path);
+    } else {
+      openFileInline(entry);
+    }
+  }
+  // 文件树右键：系统文件管理器定位（资源管理器打开）
+  async function ctxOpenInExplorer(entry: DirEntry) {
+    closeFileCtx();
+    try {
+      await bridge.revealPath(entry.path);
+    } catch (e: any) {
+      layout.showToast("打开失败: " + (e?.message ?? e));
+    }
+  }
+  // 文件树右键：终端打开并 cd 到该路径
+  async function ctxOpenInTerminal(entry: DirEntry) {
+    closeFileCtx();
+    const dir = entry.is_dir
+      ? entry.path
+      : entry.path.lastIndexOf("/") > 0
+        ? entry.path.slice(0, entry.path.lastIndexOf("/"))
+        : "/";
+    await useSystemStore().openTerminalAt(dir);
   }
 
   // 采集当前网页选中内容（对应 prototype 的「＋ 采集选中内容」）
@@ -457,6 +515,133 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
     for (const p of [...treeExpanded]) await ensureTreeChildren(p);
   }
+
+  // ===== 文件树：定位（IDEA 式“在项目中定位到当前打开位置”）=====
+  // 高亮定位目标（区别于打开文件时的 inlineFile 高亮）
+  const locateTarget = ref("");
+  // 拖拽移动相关状态
+  const dragSource = ref("");
+  const dropTarget = ref("");
+  const moveConfirm = reactive({ show: false, src: "", dst: "", name: "" });
+
+  // 当前“打开的本地位置”：优先激活的目录/文件页签，其次行内打开的文件，再次当前浏览目录
+  const currentLocalPath = computed(() => {
+    const mod = layout.modTabs.find((t) => t.id === layout.activeModTab);
+    if (mod?.path) return mod.path;
+    if (inlineFile.value) return inlineFile.value;
+    if (filePath.value) return filePath.value;
+    return "";
+  });
+
+  // 展开 root → targetPath 的祖先链并高亮该节点
+  async function locateTo(targetPath: string) {
+    if (!targetPath) return;
+    if (!startDirs.value.length) {
+      try {
+        await loadStartDirs();
+      } catch {
+        return;
+      }
+    }
+    const dirs = (startDirs.value || []).map((d) => d.path).filter(Boolean);
+    let root = "";
+    for (const d of dirs) {
+      if (targetPath.startsWith(d) && d.length > root.length) root = d;
+    }
+    if (!root) {
+      // 不在任何起始目录内：仅高亮（若树中已存在）
+      locateTarget.value = targetPath;
+      return;
+    }
+    // 若当前是单根(filePath)模式且根不是目标所在 root，切回 startDirs 多根
+    if (
+      treeRoots.value.length === 1 &&
+      filePath.value &&
+      treeRoots.value[0].path === filePath.value &&
+      filePath.value !== root
+    ) {
+      treeRoots.value = startDirs.value;
+    }
+    const segs = targetPath.split("/").filter(Boolean);
+    let cur = "";
+    for (const s of segs) {
+      cur += "/" + s;
+      treeExpanded.add(cur);
+      await ensureTreeChildren(cur);
+    }
+    locateTarget.value = targetPath;
+  }
+
+  // 准星按钮：定位到“当前打开位置”
+  function locateCurrent() {
+    const p = currentLocalPath.value;
+    if (p) locateTo(p);
+  }
+
+  // ===== 文件树：拖拽移动 =====
+  function startDrag(path: string, ev: DragEvent) {
+    dragSource.value = path;
+    if (ev.dataTransfer) {
+      ev.dataTransfer.setData("text/plain", path);
+      ev.dataTransfer.effectAllowed = "move";
+    }
+  }
+  function onDirDragOver(path: string, ev: DragEvent) {
+    if (!dragSource.value) return;
+    dropTarget.value = path;
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+  }
+  function onDirDragLeave(path: string) {
+    if (dropTarget.value === path) dropTarget.value = "";
+  }
+  function onDirDrop(path: string, ev: DragEvent) {
+    const src =
+      dragSource.value ||
+      (ev.dataTransfer ? ev.dataTransfer.getData("text/plain") : "");
+    dropTarget.value = "";
+    dragSource.value = "";
+    if (!src || !path) return;
+    if (src === path) return;
+    if (path.startsWith(src + "/")) {
+      layout.showToast("不能移动到自身子目录内");
+      return;
+    }
+    requestMove(src, path);
+  }
+
+  function requestMove(src: string, dstDir: string) {
+    const name = src.split("/").filter(Boolean).pop() || src;
+    moveConfirm.src = src;
+    moveConfirm.dst = dstDir;
+    moveConfirm.name = name;
+    moveConfirm.show = true;
+  }
+  function cancelMove() {
+    moveConfirm.show = false;
+    moveConfirm.src = "";
+    moveConfirm.dst = "";
+  }
+  async function confirmMove() {
+    const src = moveConfirm.src;
+    const dst = moveConfirm.dst;
+    moveConfirm.show = false;
+    try {
+      await bridge.movePath(src, dst);
+      layout.showToast("已移动: " + (dst.split("/").filter(Boolean).pop() || dst));
+      await refreshTree();
+    } catch (e: any) {
+      layout.showToast("移动失败: " + (e?.message ?? e));
+    }
+  }
+
+  // 打开软件 / 切换本地位置后，侧边栏树自动定位到当前打开位置
+  watch(
+    currentLocalPath,
+    (p) => {
+      if (p) locateTo(p);
+    },
+    { immediate: true }
+  );
 
   // ===== 行内文件预览/编辑（IDE 右栏；与 overlay 编辑器的 filePath/fileContent 完全隔离） =====
   const inlineFile = ref("");
@@ -720,6 +905,19 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     loadTree,
     toggleTreeDir,
     refreshTree,
+    locateTarget,
+    dragSource,
+    dropTarget,
+    moveConfirm,
+    locateTo,
+    locateCurrent,
+    startDrag,
+    onDirDragOver,
+    onDirDragLeave,
+    onDirDrop,
+    requestMove,
+    confirmMove,
+    cancelMove,
     inlineFile,
     inlineText,
     inlineIsMd,
@@ -733,8 +931,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     closeFileCtx,
     ctxNewFile,
     ctxNewDir,
+    quickNew,
     ctxDelete,
     ctxRename,
+    ctxOpenInNewTab,
+    ctxOpenInExplorer,
+    ctxOpenInTerminal,
     goUp,
     goPath,
     openFile,

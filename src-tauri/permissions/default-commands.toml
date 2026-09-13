@@ -30,6 +30,7 @@ commands.allow = [
     "write_file",
     "get_start_dirs",
     "reveal_artifact",
+    "reveal_path",
     "open_source",
     "create_file",
     "create_dir",

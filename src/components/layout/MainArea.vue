@@ -17,6 +17,7 @@ import AuditPanel from "../workspace/AuditPanel.vue";
 import RepoPanel from "../workspace/RepoPanel.vue";
 import AppPanel from "../system/AppPanel.vue";
 import TerminalPane from "../system/TerminalPane.vue";
+import { useSystemStore } from "../../stores/useSystemStore";
 import HomePanel from "../home/HomePanel.vue";
 import SettingsPanel from "../system/SettingsPanel.vue";
 import ScriptPanel from "../workspace/ScriptPanel.vue";
@@ -90,16 +91,22 @@ const PluginManager = defineAsyncComponent({
 const layout = useLayoutStore();
 const browser = useBrowserStore();
 const bookmarks = useBookmarkStore();
+const system = useSystemStore();
+
+// 终端宫格布局 class（单 / 2 / 4 / 9）
+const gridClass = computed(() => {
+  if (!system.termGrid) return "grid-off";
+  return "grid-on cols-" + system.termGridCount;
+});
 
 // 收藏夹侧栏只在浏览器视图展开（宫格视图定位链路更敏感，不纳入本次改动范围）
 const bmPanelOpen = computed(() => bookmarks.panelOpen && layout.mainView === "browser");
 
-// 终端只挂载一次：首次进入后保持存活，避免切视图销毁 xterm 导致内容丢失
-const termMounted = ref(false);
+// 进入终端视图时确保至少有一个终端实例（多实例宫格共享 termPanes）
 watch(
   () => layout.mainView,
   (v) => {
-    if (v === "term") termMounted.value = true;
+    if (v === "term") system.ensureTerm();
   },
   { immediate: true }
 );
@@ -161,8 +168,15 @@ watch(
           <ResourceWaterfall v-else-if="layout.browserDockTab === 'net'" />
           <!-- M1-9 历史会话：保存/回看/恢复/删除，挂 Dock 第四 Tab -->
           <SessionPanel v-else-if="layout.browserDockTab === 'session'" />
-          <!-- .terminal 是 absolute inset:0，需相对定位容器约束在 tab 栏之下 -->
-          <div v-else class="dock-term-wrap"><TerminalPane /></div>
+          <!-- 浏览时右侧 Dock 终端：与终端视图共享同一组实例（dock 内竖向堆叠） -->
+          <div v-else class="dock-term-wrap">
+            <div class="term-grid dock-grid" v-if="system.termPanes.length">
+              <TerminalPane v-for="pane in system.termPanes" :key="pane.id" :paneId="pane.id" small />
+            </div>
+            <div v-else class="term-empty">
+              <button @click="system.addTermPane()">＋ 新建终端</button>
+            </div>
+          </div>
         </aside>
       </div>
     </template>
@@ -242,9 +256,24 @@ watch(
       <SettingsPanel />
     </div>
 
-    <!-- ===== 终端（全屏模块视图，首次打开后保持挂载） ===== -->
+    <!-- ===== 终端（全屏模块视图，多实例宫格） ===== -->
     <div v-show="layout.mainView === 'term'" class="modview term-mod">
-      <TerminalPane v-if="termMounted" />
+      <div class="term-toolbar">
+        <span class="term-toolbar-title">终端</span>
+        <button :class="{ active: !system.termGrid }" @click="system.setTermGrid(false)">单</button>
+        <button :class="{ active: system.termGrid && system.termGridCount === 2 }" @click="system.setTermGridCount(2); system.setTermGrid(true)">2</button>
+        <button :class="{ active: system.termGrid && system.termGridCount === 4 }" @click="system.setTermGridCount(4); system.setTermGrid(true)">4</button>
+        <button :class="{ active: system.termGrid && system.termGridCount === 9 }" @click="system.setTermGridCount(9); system.setTermGrid(true)">9</button>
+        <span class="term-toolbar-spacer"></span>
+        <button @click="system.addTermPane()" title="新建终端（追加一个实例）">＋ 终端</button>
+      </div>
+      <div class="term-grid" :class="gridClass" v-if="system.termPanes.length">
+        <TerminalPane v-for="pane in system.termPanes" :key="pane.id" :paneId="pane.id" />
+      </div>
+      <div v-else class="term-empty">
+        <p>还没有终端</p>
+        <button @click="system.addTermPane()">＋ 新建终端</button>
+      </div>
     </div>
 
     <!-- ===== 文件编辑器 / Markdown 预览（覆盖层） ===== -->
@@ -288,6 +317,104 @@ watch(
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.term-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: #252526;
+  border-bottom: 1px solid #1b1b1b;
+  flex-shrink: 0;
+}
+.term-toolbar-title {
+  color: #ccc;
+  font-size: 12px;
+  margin-right: 4px;
+}
+.term-toolbar-spacer {
+  flex: 1;
+}
+.term-toolbar button {
+  border: none;
+  background: #3a3a3a;
+  color: #ccc;
+  cursor: pointer;
+  padding: 2px 10px;
+  border-radius: 3px;
+  font-size: 12px;
+  margin-left: 2px;
+}
+.term-toolbar button.active {
+  background: #0e639c;
+  color: #fff;
+}
+.term-toolbar button:hover {
+  background: #4a4a4a;
+}
+.term-toolbar button.active:hover {
+  background: #1177bb;
+}
+.term-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  gap: 1px;
+  padding: 1px;
+  background: #252526;
+}
+.term-grid.grid-off {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+.term-grid.grid-on.cols-2 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr;
+}
+.term-grid.grid-on.cols-4 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+.term-grid.grid-on.cols-9 {
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: 1fr 1fr 1fr;
+}
+.term-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #9aa4b2;
+}
+.term-empty button {
+  border: 1px solid #3a3a3a;
+  background: #2d2d2d;
+  color: #ccc;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.term-empty button:hover {
+  background: #3a3a3a;
+}
+/* Dock 内终端：竖向堆叠，避免在小空间挤成宫格 */
+.dock-term-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.dock-term-wrap .term-grid.dock-grid {
+  display: flex;
+  flex-direction: column;
+}
+.dock-term-wrap .term-grid.dock-grid .terminal-xterm {
+  min-height: 120px;
 }
 .panel-error {
   color: #ff7a7a;

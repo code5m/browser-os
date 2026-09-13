@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../stores/useBrowserStore";
-import { ref } from "vue";
+import { ref, computed } from "vue";
 import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
 import { useSystemStore } from "../../stores/useSystemStore";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -52,6 +52,96 @@ async function closeContext(others = false) {
     const ids = others ? layout.modTabs.filter(t => t.id !== target.id).map(t => t.id) : [target.id];
     for (const id of ids) layout.closeModTab(id);
   }
+}
+
+// 取右键目标所处的页签列表（web 与 module 各用各的列表，互不串）
+function listFor(kind: 'web' | 'module') {
+  return kind === 'web' ? browser.tabs : layout.modTabs;
+}
+
+async function closeMany(kind: 'web' | 'module', ids: string[]) {
+  for (const id of ids) {
+    if (kind === 'web') await browser.tabClose(id);
+    else layout.closeModTab(id);
+  }
+}
+
+// 关闭当前页签左侧的所有页签
+async function closeLeft() {
+  const c = context.value;
+  context.value = null;
+  if (!c) return;
+  const list = listFor(c.kind);
+  const idx = list.findIndex((t) => t.id === c.id);
+  if (idx <= 0) return;
+  await closeMany(c.kind, list.slice(0, idx).map((t) => t.id));
+}
+
+// 关闭当前页签右侧的所有页签
+async function closeRight() {
+  const c = context.value;
+  context.value = null;
+  if (!c) return;
+  const list = listFor(c.kind);
+  const idx = list.findIndex((t) => t.id === c.id);
+  if (idx < 0) return;
+  await closeMany(c.kind, list.slice(idx + 1).map((t) => t.id));
+}
+
+// 关闭除当前页签外的所有页签
+async function closeOthers() {
+  const c = context.value;
+  context.value = null;
+  if (!c) return;
+  const list = listFor(c.kind);
+  await closeMany(c.kind, list.filter((t) => t.id !== c.id).map((t) => t.id));
+}
+
+// 当前右键页签若是本地目录/文件（module 类且带 path），返回其绝对路径，否则 null
+const contextPath = computed(() => {
+  const c = context.value;
+  if (!c || c.kind !== 'module') return null;
+  const t = layout.modTabs.find((x) => x.id === c.id);
+  return t?.path ?? null;
+});
+
+// 相对路径：相对到命中的最长“起始目录”前缀；无匹配时退化为文件名
+function relativeOf(abs: string): string {
+  const dirs = (ws.startDirs || []).map((d) => d.path || "").filter(Boolean);
+  let best = "";
+  for (const d of dirs) {
+    if (abs.startsWith(d) && d.length > best.length) best = d;
+  }
+  if (best) return abs.slice(best.length).replace(/^\/+/, "");
+  const parts = abs.split("/");
+  return parts[parts.length - 1] || abs;
+}
+
+async function revealHere() {
+  const p = contextPath.value;
+  context.value = null;
+  if (!p) return;
+  try {
+    await bridge.revealPath(p);
+  } catch (e: any) {
+    layout.showToast("打开目录失败：" + (e?.message ?? e));
+  }
+}
+
+async function copyAbsPath() {
+  const p = contextPath.value;
+  context.value = null;
+  if (!p) return;
+  await bridge.clipboardWrite(p);
+  layout.showToast("已复制绝对路径");
+}
+
+async function copyRelPath() {
+  const p = contextPath.value;
+  context.value = null;
+  if (!p) return;
+  await bridge.clipboardWrite(relativeOf(p));
+  layout.showToast("已复制相对路径");
 }
 
 async function activateWeb(id: string) {
@@ -115,14 +205,26 @@ function activateMod(t: { id: string; view: string; path?: string }) {
     </div>
   </div>
   <div v-if="context" class="tab-actions" role="menu" @keydown.esc="context = null">
+    <button role="menuitem" @click="closeLeft">关闭左侧页签</button>
+    <button role="menuitem" @click="closeRight">关闭右侧页签</button>
+    <button role="menuitem" @click="closeOthers">关闭其他页签</button>
     <button role="menuitem" @click="closeContext()">关闭页签</button>
-    <button role="menuitem" :disabled="context.kind === 'web'" @click="closeContext(true)">关闭其他模块页签</button>
+    <template v-if="contextPath">
+      <span class="tab-actions-sep" aria-hidden="true"></span>
+      <button role="menuitem" @click="revealHere">在文件管理器中显示</button>
+      <button role="menuitem" @click="copyAbsPath">复制绝对路径</button>
+      <button role="menuitem" @click="copyRelPath">复制相对路径</button>
+    </template>
     <button role="menuitem" @click="context = null">取消</button>
   </div>
 </template>
 
 <style scoped>
-.tab-actions { display:flex; flex:none; gap:8px; padding:4px 8px; background:#f2f4f6; }
+.tab-actions { display:flex; flex-wrap:wrap; align-items:center; flex:none; gap:6px; padding:4px 8px; background:#f2f4f6; border-bottom:1px solid #e5e6eb; }
+.tab-actions button { border:1px solid #d5dbe7; background:#fff; color:#4e5969; font-size:12px; padding:3px 8px; border-radius:5px; cursor:pointer; }
+.tab-actions button:hover { background:#eef1f6; color:#2b6cb0; }
+.tab-actions button:disabled { color:#bbb; cursor:not-allowed; }
+.tab-actions-sep { width:1px; align-self:stretch; background:#d5dbe7; margin:0 2px; }
 .unified {
   display: flex;
   align-items: center;

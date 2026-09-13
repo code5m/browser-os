@@ -30,7 +30,7 @@ const viewUnknown = computed(
 
 const tabCount = computed(() => browser.tabs.length);
 const auditCount = computed(() => ws.audit.length);
-const termReady = computed(() => system.terminalOpen && !!system.termId);
+const termReady = computed(() => system.terminalOpen && system.termPanes.length > 0);
 const repoReady = computed(() => ws.repos.length > 0);
 const nativeReady = computed(() => Boolean((window as any).__TAURI_INTERNALS__));
 

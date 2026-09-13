@@ -3,6 +3,7 @@
 mod agent;
 mod agent_memory;
 mod bridge;
+mod fs_cmds;
 mod crashlog;
 mod database;
 mod domain;
@@ -1422,6 +1423,8 @@ fn main() {
             bridge::write_file,
             bridge::get_start_dirs,
             bridge::reveal_artifact,
+            fs_cmds::reveal_path,
+            fs_cmds::move_path,
             bridge::open_source,
             bridge::create_file,
             bridge::create_dir,
