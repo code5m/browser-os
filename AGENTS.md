@@ -138,7 +138,7 @@ npm run verify:client
 npm run release:install
 ```
 
-该命令会构建 deb、停止已核对的本项目旧实例、调用 `sudo apt install` 安装最新包，再继续做安装后校验和真实冷启动检查。sudo 密码由用户在终端输入；Agent 不得索要或记录密码。
+该命令会构建 deb、停止已核对的本项目旧实例、调用 `sudo apt install --reinstall` 强制覆盖同版本本地包，再继续做安装后校验和真实冷启动检查。sudo 密码由用户在终端输入；Agent 不得索要或记录密码。
 
 ### 9.1 打包铁律（任何 Agent 都必须遵守，禁止发布开发模式产物）
 
@@ -173,10 +173,10 @@ npm run release:install
 **① 普通升级安装（推荐，自动覆盖旧版，无需先卸载）：**
 
 ```bash
-sudo apt install -y ./src-tauri/target/release/bundle/deb/mvp-browser-os_0.1.0_amd64.deb
+sudo apt install --reinstall -y ./src-tauri/target/release/bundle/deb/mvp-browser-os_0.1.0_amd64.deb
 ```
 
-> 用 `apt` 而非 `dpkg -i`：`apt` 会自动补齐系统依赖（WebKitGTK 等运行库）；
+> 用 `apt --reinstall` 而非普通 `apt install`：开发期版本号常保持 `0.1.0`，普通 apt 可能判断“已是最新版”而不覆盖；`--reinstall` 会强制覆盖同版本本地 deb，并保留依赖处理能力（WebKitGTK 等运行库）。
 > `dpkg -i` 不解析依赖，缺库时安装会停在「未配置」状态，需再 `sudo apt -f install`。
 
 **② 仍出现旧行为时：**先检查旧实例、入口和实际加载地址。不得用删除用户数据代替诊断；确需隔离配置时先备份，并在测试后恢复。

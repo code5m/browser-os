@@ -160,11 +160,11 @@ if [[ "$INSTALL" -eq 1 ]]; then
   else
     stop_existing_instances
     if [[ "$FAILURES" -eq 0 ]]; then
-      if sudo apt install -y "$DEB_PATH"; then
+      if sudo apt install --reinstall -y "$DEB_PATH"; then
         ok "Deb package installed."
       else
         fail "Deb package install failed."
-        hint "If sudo asked for a password, run the same command in a terminal: sudo apt install -y '$DEB_PATH'"
+        hint "If sudo asked for a password, run the same command in a terminal: sudo apt install --reinstall -y '$DEB_PATH'"
       fi
     fi
   fi
@@ -205,13 +205,13 @@ if [[ -x "$INSTALLED_BIN" && -x "$EXTRACTED_BIN" ]]; then
       fail "Installed /usr/bin binary still does not match the deb package after install."
     else
       fail "Installed /usr/bin binary does not match the deb package."
-      hint "Install the new package: sudo apt install -y '$DEB_PATH'"
+      hint "Install the new package: sudo apt install --reinstall -y '$DEB_PATH'"
     fi
     hint "The apt '_apt sandbox' warning for a local deb is usually not an install failure; compare hashes after install."
   fi
 elif [[ -x "$EXTRACTED_BIN" ]]; then
   warn "Installed binary is not present at $INSTALLED_BIN."
-  hint "Install it with: sudo apt install -y '$DEB_PATH'"
+  hint "Install it with: sudo apt install --reinstall -y '$DEB_PATH'"
 fi
 
 DESKTOP_FILE="/usr/share/applications/$APP_NAME.desktop"
