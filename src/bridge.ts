@@ -479,6 +479,8 @@ export const bridge = {
 
   readFile: (path: string) => invoke<string>("read_file", { path }),
 
+  readImageDataUrl: (path: string) => invoke<string>("read_image_data_url", { path }),
+
   writeFile: (path: string, content: string) => invoke("write_file", { path, content }),
 
   getStartDirs: () => invoke<DirEntry[]>("get_start_dirs"),

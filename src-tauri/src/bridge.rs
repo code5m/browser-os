@@ -3547,6 +3547,44 @@ pub fn read_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
+fn image_mime_from_path(path: &std::path::Path) -> Option<&'static str> {
+    match path.extension()?.to_string_lossy().to_ascii_lowercase().as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "webp" => Some("image/webp"),
+        "gif" => Some("image/gif"),
+        "bmp" => Some("image/bmp"),
+        "svg" => Some("image/svg+xml"),
+        _ => None,
+    }
+}
+
+/// 读取本地图片为 data URL（仅主窗口文件预览使用，不扩大 asset:// 读盘范围）
+#[tauri::command]
+pub fn read_image_data_url(path: String) -> Result<String, String> {
+    use base64::Engine;
+    const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
+
+    let p = std::path::PathBuf::from(&path);
+    if !p.exists() {
+        return Err("图片不存在".into());
+    }
+    if !p.is_file() {
+        return Err("不是图片文件".into());
+    }
+    let mime = image_mime_from_path(&p).ok_or_else(|| "不支持的图片格式".to_string())?;
+    let meta = std::fs::metadata(&p).map_err(|e| e.to_string())?;
+    if meta.len() > MAX_IMAGE_BYTES {
+        return Err("图片超过 8MB，暂不生成缩略图".into());
+    }
+    let bytes = std::fs::read(&p).map_err(|e| e.to_string())?;
+    Ok(format!(
+        "data:{};base64,{}",
+        mime,
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
+}
+
 /// 写入文本文件（创建或覆盖）。M0-3.c：路径必须落在允许根目录内。
 #[tauri::command]
 pub fn write_file(app: AppHandle, path: String, content: String) -> Result<(), String> {

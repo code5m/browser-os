@@ -9,11 +9,15 @@ const ws = useWorkspaceStore();
 const expanded = computed(() => ws.treeExpanded.has(props.entry.path));
 const loading = computed(() => ws.treeLoading.has(props.entry.path));
 const children = computed(() => ws.treeChildren.get(props.entry.path) || []);
+const error = computed(() => ws.treeErrors.get(props.entry.path) || "");
 const isMd = computed(() => /\.(md|markdown)$/i.test(props.entry.name));
 const indent = computed(() => 8 + props.depth * 14 + "px");
 
 function onClick() {
-  if (props.entry.is_dir) ws.toggleTreeDir(props.entry.path);
+  if (props.entry.is_dir) {
+    ws.toggleTreeDir(props.entry.path);
+    if (props.ide) ws.openDirPreview(props.entry);
+  }
   else if (props.ide) ws.openFileInline(props.entry);
   else ws.openFile(props.entry); // Dock 窄栏：走 overlay 编辑器
 }
@@ -67,6 +71,9 @@ function onDrop(ev: DragEvent) {
     <div v-if="loading" class="tnode" :style="{ paddingLeft: 8 + (depth + 1) * 14 + 'px' }">
       <span class="fname dim">加载中…</span>
     </div>
+    <div v-else-if="error" class="tnode" :style="{ paddingLeft: 8 + (depth + 1) * 14 + 'px' }">
+      <span class="fname warn">{{ error }}</span>
+    </div>
     <FileTreeNode
       v-for="c in children"
       :key="c.path"
@@ -75,7 +82,7 @@ function onDrop(ev: DragEvent) {
       :ide="ide"
     />
     <div
-      v-if="!loading && !children.length"
+      v-if="!loading && !error && !children.length"
       class="tnode"
       :style="{ paddingLeft: 8 + (depth + 1) * 14 + 'px' }"
     >
@@ -110,5 +117,8 @@ function onDrop(ev: DragEvent) {
 .tnode.drop {
   background: #d6f5d6;
   outline: 1px dashed #2e9e2e;
+}
+.fname.warn {
+  color: #b45309;
 }
 </style>

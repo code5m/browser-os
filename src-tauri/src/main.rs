@@ -1420,6 +1420,7 @@ fn main() {
             bridge::remove_bookmark,
             bridge::list_dir,
             bridge::read_file,
+            bridge::read_image_data_url,
             bridge::write_file,
             bridge::get_start_dirs,
             bridge::reveal_artifact,

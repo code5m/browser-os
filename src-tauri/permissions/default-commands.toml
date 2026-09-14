@@ -27,6 +27,7 @@ commands.allow = [
     "remove_bookmark",
     "list_dir",
     "read_file",
+    "read_image_data_url",
     "write_file",
     "get_start_dirs",
     "reveal_artifact",

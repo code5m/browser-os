@@ -68,8 +68,11 @@ async function syncWindowSize() {
 }
 
 onMounted(async () => {
+  ready.value = true;
   try {
-  if (!(window as any).__TAURI_INTERNALS__) return;
+  if (!(window as any).__TAURI_INTERNALS__) {
+    return;
+  }
   await syncWindowSize();
   const unlisten = await getCurrentWindow().onResized(syncWindowSize);
   window.addEventListener("beforeunload", unlisten);
@@ -223,8 +226,10 @@ onMounted(async () => {
   // M1-4 冷启动兜底：进程启动时 argv 带入的 URL 已在后端队列，
   // 挂载完成后首次拉取（此后经 onOpenUrlPending 提示增量拉取）。
   drainPendingOpenUrls();
-  } finally {
-    ready.value = true;
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error("[app] startup init failed:", e);
+    shellError.value = "客户端初始化遇到问题，请查看日志。";
   }
 });
 </script>
@@ -243,11 +248,11 @@ onMounted(async () => {
     </div>
     <template v-else>
       <!-- 精简模式：整行工具栏隐藏，网页占满（由 MainArea 的 ☰ 悬浮钮退出） -->
-      <UnifiedTabBar v-show="!layout.compactMode" />
-      <ActivityBar v-show="!layout.compactMode" />
+      <UnifiedTabBar v-if="!layout.compactMode" />
+      <ActivityBar v-if="!layout.compactMode" />
       <WorkbenchCommands />
       <div class="body">
-        <WorkbenchRail v-show="!layout.compactMode" />
+        <WorkbenchRail v-if="!layout.compactMode" />
         <AINavPanel />
         <MainArea />
       </div>

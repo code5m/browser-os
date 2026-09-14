@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref, reactive, computed, watch } from "vue";
+import { ref, reactive, computed, watch, nextTick } from "vue";
 import { bridge } from "../bridge";
 import { useLayoutStore } from "./useLayoutStore";
 import { useSystemStore } from "./useSystemStore";
@@ -27,6 +27,10 @@ const TEXT_EXTS = [
   "txt","json","js","ts","vue","rs","html","css","xml","yaml","yml","toml",
   "csv","log","sh","py","java","go","c","cpp","h","sql","env","gitignore",
 ];
+const IMAGE_EXTS = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"];
+const PREVIEW_IMAGE_CONCURRENCY = 4;
+const PREVIEW_IMAGE_CACHE_LIMIT = 80;
+const COMPARE_IMAGE_LIMIT = 12;
 
 export interface RecentItem {
   type: "url" | "file";
@@ -53,6 +57,15 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const mdPreview = ref(false);
   const mdHtml = ref("");
   const startDirs = ref<DirEntry[]>([]);
+  const previewDir = ref("");
+  const previewEntries = ref<DirEntry[]>([]);
+  const previewImages = ref<Record<string, string>>({});
+  const previewImageErrors = ref<Record<string, string>>({});
+  const previewLoading = ref(false);
+  const previewError = ref("");
+  const previewTileSize = ref(132);
+  const compareImages = ref<DirEntry[]>([]);
+  const inlineFile = ref("");
 
   const repos = ref<RepoConfig[]>([]);
   const form = reactive({
@@ -475,16 +488,20 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const treeChildren = reactive<Map<string, DirEntry[]>>(new Map());
   const treeExpanded = reactive<Set<string>>(new Set());
   const treeLoading = reactive<Set<string>>(new Set());
+  const treeErrors = reactive<Map<string, string>>(new Map());
 
   async function ensureTreeChildren(path: string) {
     if (treeChildren.has(path) || treeLoading.has(path)) return;
     treeLoading.add(path);
+    treeErrors.delete(path);
     try {
       treeChildren.set(path, await bridge.listDir(path));
-    } catch {
-      treeChildren.set(path, []);
+    } catch (e: any) {
+      treeChildren.delete(path);
+      treeErrors.set(path, e?.message ?? String(e));
+    } finally {
+      treeLoading.delete(path);
     }
-    treeLoading.delete(path);
   }
   // 树根：已进入某目录则以它为根（自动展开），否则展示起始目录集合
   async function loadTree() {
@@ -507,6 +524,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   // 刷新：保留展开状态，重新拉取所有已展开目录
   async function refreshTree() {
     treeChildren.clear();
+    treeErrors.clear();
     if (filePath.value) {
       const name = filePath.value.split("/").filter(Boolean).pop() || "/";
       treeRoots.value = [{ name, path: filePath.value, is_dir: true, size: 0 }];
@@ -514,6 +532,23 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       treeRoots.value = await bridge.getStartDirs();
     }
     for (const p of [...treeExpanded]) await ensureTreeChildren(p);
+  }
+  function collapseAllTree() {
+    treeExpanded.clear();
+    locateTarget.value = "";
+    layout.showToast("已全部折叠");
+  }
+  async function expandTreeEntry(entry: DirEntry, depth = 0) {
+    if (!entry.is_dir || depth > 4) return;
+    treeExpanded.add(entry.path);
+    await ensureTreeChildren(entry.path);
+    const children = treeChildren.get(entry.path) || [];
+    for (const child of children) await expandTreeEntry(child, depth + 1);
+  }
+  async function expandAllTree() {
+    if (!treeRoots.value.length) await loadTree();
+    for (const root of treeRoots.value) await expandTreeEntry(root);
+    layout.showToast("已全部展开");
   }
 
   // ===== 文件树：定位（IDEA 式“在项目中定位到当前打开位置”）=====
@@ -526,9 +561,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   // 当前“打开的本地位置”：优先激活的目录/文件页签，其次行内打开的文件，再次当前浏览目录
   const currentLocalPath = computed(() => {
+    if (inlineFile.value) return inlineFile.value;
+    if (previewDir.value) return previewDir.value;
     const mod = layout.modTabs.find((t) => t.id === layout.activeModTab);
     if (mod?.path) return mod.path;
-    if (inlineFile.value) return inlineFile.value;
     if (filePath.value) return filePath.value;
     return "";
   });
@@ -570,6 +606,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       await ensureTreeChildren(cur);
     }
     locateTarget.value = targetPath;
+    await nextTick();
+    const selectorPath = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(targetPath) : targetPath.replace(/"/g, '\\"');
+    document.querySelector(`[data-path="${selectorPath}"]`)?.scrollIntoView({ block: "center" });
   }
 
   // 准星按钮：定位到“当前打开位置”
@@ -644,7 +683,6 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   );
 
   // ===== 行内文件预览/编辑（IDE 右栏；与 overlay 编辑器的 filePath/fileContent 完全隔离） =====
-  const inlineFile = ref("");
   const inlineText = ref("");
   const inlineIsMd = ref(false);
   const inlineEdit = ref(false);
@@ -653,6 +691,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   async function openFileInline(entry: DirEntry) {
     if (entry.is_dir) {
       toggleTreeDir(entry.path);
+      openDirPreview(entry);
       return;
     }
     const ext = entry.name.split(".").pop()?.toLowerCase() || "";
@@ -664,6 +703,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     try {
       const text = await bridge.readFile(entry.path);
       inlineFile.value = entry.path;
+      filePath.value = entry.path.lastIndexOf("/") > 0 ? entry.path.slice(0, entry.path.lastIndexOf("/")) : "/";
+      pathInput.value = filePath.value;
       inlineText.value = text;
       inlineIsMd.value = isMd;
       inlineEdit.value = !isMd; // md 默认预览，其它文本直接编辑
@@ -685,6 +726,123 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
   function closeInline() {
     inlineFile.value = "";
+  }
+
+  function isImageEntry(entry: DirEntry) {
+    return !entry.is_dir && IMAGE_EXTS.includes(entry.name.split(".").pop()?.toLowerCase() || "");
+  }
+  let previewRequest = 0;
+  let previewImageGeneration = 0;
+  let previewImageActive = 0;
+  const previewImageQueue: string[] = [];
+  const previewImagePending = new Set<string>();
+  const previewImageCache = new Map<string, string>();
+
+  function rememberPreviewImage(path: string, src: string) {
+    previewImageCache.delete(path);
+    previewImageCache.set(path, src);
+    while (previewImageCache.size > PREVIEW_IMAGE_CACHE_LIMIT) {
+      const oldest = previewImageCache.keys().next().value;
+      if (!oldest) break;
+      previewImageCache.delete(oldest);
+    }
+  }
+
+  function putPreviewImage(path: string, src: string) {
+    rememberPreviewImage(path, src);
+    previewImages.value = { ...previewImages.value, [path]: src };
+  }
+
+  function putPreviewImageError(path: string, message: string) {
+    previewImageErrors.value = { ...previewImageErrors.value, [path]: message };
+  }
+
+  function clearPreviewImageQueue() {
+    previewImageGeneration += 1;
+    previewImageQueue.splice(0);
+    previewImagePending.clear();
+    previewImageActive = 0;
+  }
+
+  function drainPreviewImageQueue(generation = previewImageGeneration) {
+    if (generation !== previewImageGeneration) return;
+    while (previewImageActive < PREVIEW_IMAGE_CONCURRENCY && previewImageQueue.length) {
+      const path = previewImageQueue.shift()!;
+      previewImagePending.delete(path);
+      if (previewImages.value[path] || previewImageErrors.value[path]) continue;
+      previewImageActive += 1;
+      bridge.readImageDataUrl(path)
+        .then((src) => {
+          if (generation === previewImageGeneration) putPreviewImage(path, src);
+        })
+        .catch((e: any) => {
+          if (generation === previewImageGeneration) putPreviewImageError(path, e?.message ?? String(e));
+        })
+        .finally(() => {
+          if (generation !== previewImageGeneration) return;
+          previewImageActive = Math.max(0, previewImageActive - 1);
+          drainPreviewImageQueue(generation);
+        });
+    }
+  }
+
+  function loadPreviewImage(entry: DirEntry) {
+    if (!isImageEntry(entry)) return;
+    if (previewImages.value[entry.path] || previewImageErrors.value[entry.path] || previewImagePending.has(entry.path)) return;
+    const cached = previewImageCache.get(entry.path);
+    if (cached) {
+      previewImages.value = { ...previewImages.value, [entry.path]: cached };
+      return;
+    }
+    previewImagePending.add(entry.path);
+    previewImageQueue.push(entry.path);
+    drainPreviewImageQueue();
+  }
+
+  async function openDirPreview(entry: DirEntry) {
+    if (!entry.is_dir) return;
+    const request = ++previewRequest;
+    clearPreviewImageQueue();
+    previewDir.value = entry.path;
+    previewEntries.value = [];
+    previewImages.value = {};
+    previewImageErrors.value = {};
+    compareImages.value = [];
+    previewError.value = "";
+    previewLoading.value = true;
+    inlineFile.value = "";
+    try {
+      const entries = await bridge.listDir(entry.path);
+      if (request !== previewRequest) return;
+      previewEntries.value = entries;
+    } catch (e: any) {
+      if (request === previewRequest) previewError.value = e?.message ?? String(e);
+    } finally {
+      if (request === previewRequest) previewLoading.value = false;
+    }
+  }
+  function setPreviewTileSize(size: number) {
+    previewTileSize.value = Math.min(260, Math.max(72, Math.round(size)));
+  }
+  function toggleCompareImage(entry: DirEntry) {
+    const i = compareImages.value.findIndex((img) => img.path === entry.path);
+    if (i >= 0) {
+      compareImages.value.splice(i, 1);
+      return;
+    }
+    compareImages.value.push(entry);
+    if (compareImages.value.length > COMPARE_IMAGE_LIMIT) compareImages.value.shift();
+    loadPreviewImage(entry);
+  }
+  function moveCompareImage(path: string, delta: number) {
+    const i = compareImages.value.findIndex((img) => img.path === path);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= compareImages.value.length) return;
+    const [item] = compareImages.value.splice(i, 1);
+    compareImages.value.splice(j, 0, item);
+  }
+  function clearCompareImages() {
+    compareImages.value = [];
   }
 
   // ===== 文件浏览器 =====
@@ -864,6 +1022,14 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     mdPreview,
     mdHtml,
     startDirs,
+    previewDir,
+    previewEntries,
+    previewImages,
+    previewImageErrors,
+    previewLoading,
+    previewError,
+    previewTileSize,
+    compareImages,
     repos,
     form,
     preview,
@@ -902,9 +1068,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     treeChildren,
     treeExpanded,
     treeLoading,
+    treeErrors,
     loadTree,
     toggleTreeDir,
     refreshTree,
+    expandAllTree,
+    collapseAllTree,
     locateTarget,
     dragSource,
     dropTarget,
@@ -927,6 +1096,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     inlineToggleEdit,
     saveInline,
     closeInline,
+    isImageEntry,
+    openDirPreview,
+    loadPreviewImage,
+    setPreviewTileSize,
+    toggleCompareImage,
+    moveCompareImage,
+    clearCompareImages,
     onFileContext,
     closeFileCtx,
     ctxNewFile,

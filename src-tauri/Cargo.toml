@@ -43,6 +43,7 @@ chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
 url = "2"
 urlencoding = "2"
+base64 = "0.22"
 # M0-4.a：原 gtk/wry 直接依赖是为「方案 C3（gtk::Overlay + gtk::Fixed 承载内嵌子 webview）」
 # 准备的，实际实现走的是方案 D（Window::add_child），源码中零 `gtk::` / `wry::` 引用，
 # 属于会被误读为「已有原生内嵌层」的死亡依赖，已连同过时 C3 注释一并移除。

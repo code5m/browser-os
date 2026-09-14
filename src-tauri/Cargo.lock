@@ -2503,6 +2503,7 @@ name = "mvp-browser-os"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "base64 0.22.1",
  "chrono",
  "freedesktop-icons",
  "git2",

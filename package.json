@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "check": "node scripts/check-architecture.mjs && node scripts/check-ui.mjs && node scripts/check-native.mjs && node scripts/check-browser-runtime.mjs && node scripts/check-task-boundary.mjs",
-    "doctor": "node scripts/doctor.mjs"
+    "doctor": "node scripts/doctor.mjs",
+    "verify:client": "bash scripts/verify-installed-client.sh --build",
+    "release:install": "bash scripts/verify-installed-client.sh --install"
   },
   "dependencies": {
     "@lucide/vue": "^1.42.0",
