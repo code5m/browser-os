@@ -126,6 +126,20 @@ export const useSystemStore = defineStore("system", () => {
   const termGrid = ref(false); // 宫格模式（多终端并排）
   const termGridCount = ref(4); // 宫格数（默认 4 = 2×2）
   const activeTermId = ref(""); // 当前聚焦的终端
+  // 终端对账 probe（默认关闭）：开关由后端按 MVP_TERMINAL_PROBE=1 经 spawn 响应下发。
+  // 只记录元数据（序号/UTF-8 字节数/累计/去向），绝不记录终端正文。
+  const termProbeOn = ref(false);
+  const probeRecv = new Map<string, { seq: number; bytes: number }>();
+  const probeEncoder = new TextEncoder();
+  function probeFeRecv(id: string, data: string, sink: "xterm" | "buffer" | "exit") {
+    if (!termProbeOn.value) return;
+    const s = probeRecv.get(id) ?? { seq: 0, bytes: 0 };
+    s.seq += 1;
+    const b = probeEncoder.encode(data).length;
+    s.bytes += b;
+    probeRecv.set(id, s);
+    bridge.debugLog(`[TERM_PROBE] fe.recv id=${id} seq=${s.seq} bytes=${b} cum=${s.bytes} sink=${sink}`);
+  }
   // per-pane 运行时状态（替代旧的单 termId 全局态）
   const termWriters = new Map<string, (data: string) => void>();
   const termHistories = new Map<string, string[]>();
@@ -197,6 +211,7 @@ export const useSystemStore = defineStore("system", () => {
       const ch = bridge.createTermChannel((msg) => onTermChannelMsg(msg));
       const r = await bridge.termSpawnChannel(ch);
       const id = r.id;
+      termProbeOn.value = !!r.probe;
       termPanes.value.push({ id, cwd });
       termHistories.set(id, []);
       termBuffers.set(id, []);
@@ -312,14 +327,17 @@ export const useSystemStore = defineStore("system", () => {
       return;
     }
     if (msg.kind === "exit") {
+      probeFeRecv(id, data, "exit");
       if (termWriters.has(id)) termWriters.get(id)!(data);
       return;
     }
     const w = termWriters.get(id);
     if (w) {
+      probeFeRecv(id, data, "xterm");
       pushTermHistory(id, data);
       w(data);
     } else {
+      probeFeRecv(id, data, "buffer");
       const b = termBuffers.get(id) ?? [];
       b.push(data);
       termBuffers.set(id, b);
@@ -338,6 +356,7 @@ export const useSystemStore = defineStore("system", () => {
     termGrid,
     termGridCount,
     activeTermId,
+    termProbeOn,
     droppedChunks,
     droppedBytes,
     resetDroppedStats,

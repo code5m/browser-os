@@ -4747,7 +4747,14 @@ pub fn term_resize(app: AppHandle, id: String, cols: u16, rows: u16) -> Result<(
     let state = app.state::<AppState>();
     let mut terms = state.terminals.lock().unwrap();
     let session = terms.get_mut(&id).ok_or("终端不存在")?;
-    terminal::resize(session, cols, rows)
+    let result = terminal::resize(session, cols, rows);
+    if terminal::probe_enabled() {
+        eprintln!(
+            "[TERM_PROBE] term.resize id={id} cols={cols} rows={rows} ok={}",
+            result.is_ok()
+        );
+    }
+    result
 }
 
 /// 关闭终端：置 stop → 回收进程组 → 回收 worker/pump 线程（F6/F7）。

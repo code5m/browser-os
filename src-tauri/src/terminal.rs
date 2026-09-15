@@ -15,9 +15,9 @@
 //! 零新依赖：只用 `std::sync::mpsc` + `std::thread` + 既有 `libc`（F9）。
 
 use std::io::Read;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -57,6 +57,39 @@ pub const TERM_GROUP_GRACE_MS: u64 = 2_000;
 pub const TERM_GROUP_POLL_INTERVAL_MS: u64 = 50;
 /// 线程回收等待上限（F7）；超时不 join，避免阻塞退出路径。
 pub const TERM_THREAD_JOIN_GRACE_MS: u64 = 2_000;
+
+// ----------------------------- 诊断 Probe（默认关闭） -----------------------------
+//
+// 开关：`MVP_TERMINAL_PROBE=1`（进程启动时读一次并缓存）。
+// 只记录元数据（序号/字节数/行列/计数/水位），绝不记录终端正文、命令或任何凭据。
+// 输出走 stderr 的 `[TERM_PROBE]` 前缀，与前端 `debug_log`（`[FE]` 前缀）同流，
+// dev 模式下可对账五层：PTY read → 队列 → flush(utf8) → Channel send → 前端/xterm。
+
+/// probe 开关：进程级缓存（热路径零 env 读取开销）。
+pub fn probe_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("MVP_TERMINAL_PROBE").as_deref() == Ok("1"))
+}
+
+/// 每终端元数据计数（worker/pump 共享；无正文）。
+#[derive(Default)]
+pub struct TermProbe {
+    pub read_chunks: AtomicU64,
+    pub read_bytes: AtomicU64,
+    pub enq_chunks: AtomicU64,
+    pub enq_bytes: AtomicU64,
+    pub drop_chunks: AtomicU64,
+    pub drop_bytes: AtomicU64,
+    pub queue_full: AtomicU64,
+    /// 队列占用近似水位（enqueue +1 / dequeue -1），用于 high watermark。
+    pub gauge: AtomicI64,
+    pub high_watermark: AtomicI64,
+    pub flush_seq: AtomicU64,
+    pub flush_bytes: AtomicU64,
+    pub send_ok: AtomicU64,
+    pub send_fail: AtomicU64,
+    pub send_bytes: AtomicU64,
+}
 
 // ----------------------------- 输出契约 -----------------------------
 
@@ -216,6 +249,7 @@ pub fn start_pipeline(
     flush_interval_ms: u64,
     lossy: bool,
     on_channel_dead: Option<Arc<dyn Fn() + Send + Sync>>,
+    probe: Arc<TermProbe>,
 ) -> TerminalHandles {
     let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(capacity);
     let drops = Arc::new(Mutex::new(DropCounter::default()));
@@ -223,9 +257,12 @@ pub fn start_pipeline(
     let w_tx: SyncSender<Vec<u8>> = tx;
     let w_stop = Arc::clone(&stop);
     let w_drops = Arc::clone(&drops);
+    let w_id = id.clone();
+    let w_probe = Arc::clone(&probe);
     let worker = thread::spawn(move || {
         let mut reader = reader;
         let mut buf = [0u8; TERM_READ_BUF_BYTES];
+        let probe_on = probe_enabled();
         loop {
             if w_stop.load(Ordering::Relaxed) {
                 break;
@@ -233,12 +270,32 @@ pub fn start_pipeline(
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
+                    if probe_on {
+                        let seq = w_probe.read_chunks.fetch_add(1, Ordering::Relaxed) + 1;
+                        let cum =
+                            w_probe.read_bytes.fetch_add(n as u64, Ordering::Relaxed) + n as u64;
+                        eprintln!("[TERM_PROBE] {w_id} pty.read seq={seq} bytes={n} cum={cum}");
+                    }
                     let chunk = buf[..n].to_vec();
                     if lossy {
                         // F1/F2：worker 永不阻塞；队列满即丢弃当前块并计数。
                         match w_tx.try_send(chunk) {
-                            Ok(()) => {}
+                            Ok(()) => {
+                                if probe_on {
+                                    w_probe.enq_chunks.fetch_add(1, Ordering::Relaxed);
+                                    w_probe.enq_bytes.fetch_add(n as u64, Ordering::Relaxed);
+                                    let g = w_probe.gauge.fetch_add(1, Ordering::Relaxed) + 1;
+                                    w_probe.high_watermark.fetch_max(g, Ordering::Relaxed);
+                                }
+                            }
                             Err(TrySendError::Full(dropped)) => {
+                                if probe_on {
+                                    w_probe.queue_full.fetch_add(1, Ordering::Relaxed);
+                                    w_probe.drop_chunks.fetch_add(1, Ordering::Relaxed);
+                                    w_probe
+                                        .drop_bytes
+                                        .fetch_add(dropped.len() as u64, Ordering::Relaxed);
+                                }
                                 // 是否上报由 pump 侧的 notify_drops 定时取走决定。
                                 let _ = w_drops.lock().map(|mut g| g.record(dropped.len()));
                             }
@@ -246,6 +303,11 @@ pub fn start_pipeline(
                         }
                     } else if w_tx.send(chunk).is_err() {
                         break;
+                    } else if probe_on {
+                        w_probe.enq_chunks.fetch_add(1, Ordering::Relaxed);
+                        w_probe.enq_bytes.fetch_add(n as u64, Ordering::Relaxed);
+                        let g = w_probe.gauge.fetch_add(1, Ordering::Relaxed) + 1;
+                        w_probe.high_watermark.fetch_max(g, Ordering::Relaxed);
                     }
                 }
                 Err(_) => break,
@@ -255,6 +317,7 @@ pub fn start_pipeline(
 
     let p_stop = Arc::clone(&stop);
     let p_drops = Arc::clone(&drops);
+    let p_probe = Arc::clone(&probe);
     let pump = thread::spawn(move || {
         run_pump(
             rx,
@@ -264,6 +327,7 @@ pub fn start_pipeline(
             p_drops,
             flush_interval_ms,
             on_channel_dead,
+            p_probe,
         );
     });
 
@@ -278,20 +342,25 @@ fn run_pump(
     drops: Arc<Mutex<DropCounter>>,
     flush_interval_ms: u64,
     on_channel_dead: Option<Arc<dyn Fn() + Send + Sync>>,
+    probe: Arc<TermProbe>,
 ) {
     // 测量模式窗口为 0；recv_timeout(0) 会忙轮询，故下限取 1 ms。
     let wait = Duration::from_millis(flush_interval_ms.max(1));
     let mut batch: Vec<u8> = Vec::with_capacity(TERM_BATCH_MAX_BYTES);
     let mut last_flush = Instant::now();
     let mut ok = true;
+    let probe_on = probe_enabled();
 
     loop {
         match rx.recv_timeout(wait) {
             Ok(chunk) => {
+                if probe_on {
+                    probe.gauge.fetch_sub(1, Ordering::Relaxed);
+                }
                 batch.extend_from_slice(&chunk);
                 let elapsed = last_flush.elapsed().as_millis() as u64;
                 if should_flush(batch.len(), elapsed, flush_interval_ms) {
-                    if !flush_batch(&out, &id, &mut batch, &mut last_flush) {
+                    if !flush_batch(&out, &id, &mut batch, &mut last_flush, &probe) {
                         ok = false;
                         break;
                     }
@@ -300,10 +369,13 @@ fn run_pump(
             Err(RecvTimeoutError::Timeout) => {
                 // 窗口到点：先排空队列，再冲刷残余，避免小块滞留。
                 while let Ok(chunk) = rx.try_recv() {
+                    if probe_on {
+                        probe.gauge.fetch_sub(1, Ordering::Relaxed);
+                    }
                     batch.extend_from_slice(&chunk);
                 }
                 notify_drops(&out, &id, &drops);
-                if !flush_batch(&out, &id, &mut batch, &mut last_flush) {
+                if !flush_batch(&out, &id, &mut batch, &mut last_flush, &probe) {
                     ok = false;
                     break;
                 }
@@ -313,12 +385,28 @@ fn run_pump(
             }
             Err(RecvTimeoutError::Disconnected) => {
                 notify_drops(&out, &id, &drops);
-                if !flush_batch(&out, &id, &mut batch, &mut last_flush) {
+                if !flush_batch(&out, &id, &mut batch, &mut last_flush, &probe) {
                     ok = false;
                 }
                 break;
             }
         }
+    }
+
+    if probe_on {
+        eprintln!(
+            "[TERM_PROBE] {id} summary pty_bytes={} enq_bytes={} drop_chunks={} drop_bytes={} queue_full={} high_watermark={} flush_bytes={} send_ok={} send_fail={} send_bytes={}",
+            probe.read_bytes.load(Ordering::Relaxed),
+            probe.enq_bytes.load(Ordering::Relaxed),
+            probe.drop_chunks.load(Ordering::Relaxed),
+            probe.drop_bytes.load(Ordering::Relaxed),
+            probe.queue_full.load(Ordering::Relaxed),
+            probe.high_watermark.load(Ordering::Relaxed),
+            probe.flush_bytes.load(Ordering::Relaxed),
+            probe.send_ok.load(Ordering::Relaxed),
+            probe.send_fail.load(Ordering::Relaxed),
+            probe.send_bytes.load(Ordering::Relaxed),
+        );
     }
 
     let reason = if ok {
@@ -341,14 +429,27 @@ fn flush_batch(
     id: &str,
     batch: &mut Vec<u8>,
     last_flush: &mut Instant,
+    probe: &Arc<TermProbe>,
 ) -> bool {
     if batch.is_empty() {
         return true;
     }
+    let probe_on = probe_enabled();
+    let raw_len = batch.len();
+    let utf8_valid = std::str::from_utf8(batch).is_ok();
     let text = String::from_utf8_lossy(batch).to_string();
     batch.clear();
     *last_flush = Instant::now();
-    send_with_backoff(out, id, TermMessage::Data(text))
+    if probe_on {
+        let repl = text.matches('\u{FFFD}').count();
+        let seq = probe.flush_seq.fetch_add(1, Ordering::Relaxed) + 1;
+        let cum = probe.flush_bytes.fetch_add(raw_len as u64, Ordering::Relaxed) + raw_len as u64;
+        eprintln!(
+            "[TERM_PROBE] {id} flush seq={seq} raw_bytes={raw_len} cum={cum} utf8_valid={utf8_valid} replacement_count={repl} enc_bytes={}",
+            text.len()
+        );
+    }
+    send_with_backoff(out, id, TermMessage::Data(text), probe)
 }
 
 fn notify_drops(out: &Arc<dyn TermOutput>, id: &str, drops: &Arc<Mutex<DropCounter>>) {
@@ -375,17 +476,41 @@ fn notify_drops(out: &Arc<dyn TermOutput>, id: &str, drops: &Arc<Mutex<DropCount
     let _ = out.send(&value);
 }
 
-fn send_with_backoff(out: &Arc<dyn TermOutput>, id: &str, msg: TermMessage) -> bool {
+fn send_with_backoff(
+    out: &Arc<dyn TermOutput>,
+    id: &str,
+    msg: TermMessage,
+    probe: &Arc<TermProbe>,
+) -> bool {
+    let payload_bytes = match &msg {
+        TermMessage::Data(d) => d.len(),
+        _ => 0,
+    };
     let value = msg.to_value(id);
     let mut failures: u32 = 0;
     let started = Instant::now();
+    let probe_on = probe_enabled();
     loop {
         match out.send(&value) {
-            Ok(()) => return true,
+            Ok(()) => {
+                if probe_on {
+                    let seq = probe.send_ok.fetch_add(1, Ordering::Relaxed) + 1;
+                    let cum = probe.send_bytes.fetch_add(payload_bytes as u64, Ordering::Relaxed)
+                        + payload_bytes as u64;
+                    eprintln!(
+                        "[TERM_PROBE] {id} chan.send seq={seq} ok=true bytes={payload_bytes} cum={cum}"
+                    );
+                }
+                return true;
+            }
             Err(error) => {
                 let elapsed = started.elapsed().as_millis() as u64;
                 if !within_retry_budget(elapsed) {
                     eprintln!("[terminal] {id} 输出发送失败且退避超预算: {error}");
+                    if probe_on {
+                        probe.send_fail.fetch_add(1, Ordering::Relaxed);
+                        eprintln!("[TERM_PROBE] {id} chan.send ok=false budget_exceeded");
+                    }
                     return false;
                 }
                 let backoff = next_backoff_ms(TERM_RETRY_BASE_MS, failures);
@@ -401,6 +526,8 @@ fn send_with_backoff(out: &Arc<dyn TermOutput>, id: &str, msg: TermMessage) -> b
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TermInfo {
     pub id: String,
+    /// 诊断 probe 是否开启（`MVP_TERMINAL_PROBE=1`）；前端据此启用对账打点。
+    pub probe: bool,
 }
 
 /// 终端会话：持有 PTY 写入端、master（resize）、子进程、进程组与两个线程句柄。
@@ -422,6 +549,9 @@ pub fn spawn_terminal(
     measure: bool,
 ) -> Result<(TermInfo, TerminalSession), String> {
     let id = format!("term-{}", uuid::Uuid::new_v4());
+    if probe_enabled() {
+        eprintln!("[TERM_PROBE] {id} pty.openpty cols=100 rows=24");
+    }
     let pair = native_pty_system()
         .openpty(PtySize {
             rows: 24,
@@ -436,6 +566,8 @@ pub fn spawn_terminal(
     // xterm.js 是完整终端模拟器，需要正常 TERM 与 ANSI 序列，不能过滤。
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+    cmd.env("TERM_PROGRAM", "mvp-browser-os");
+    cmd.env("CLICOLOR_FORCE", "1");
 
     let mut child = pair
         .slave
@@ -474,6 +606,7 @@ pub fn spawn_terminal(
         Arc::new(move || kill_group(pgid, libc::SIGKILL)) as Arc<dyn Fn() + Send + Sync>
     });
 
+    let probe = Arc::new(TermProbe::default());
     let handles = start_pipeline(
         reader,
         out,
@@ -483,6 +616,7 @@ pub fn spawn_terminal(
         flush_interval_ms,
         !measure,
         on_dead,
+        probe,
     );
 
     // 触发初始提示符
@@ -490,7 +624,10 @@ pub fn spawn_terminal(
     let _ = writer.flush();
 
     Ok((
-        TermInfo { id },
+        TermInfo {
+            id,
+            probe: probe_enabled(),
+        },
         TerminalSession {
             writer,
             master,
@@ -726,6 +863,7 @@ mod tests {
             TERM_FLUSH_INTERVAL_MS,
             true,
             None,
+            Arc::new(TermProbe::default()),
         );
 
         writer.write_all(b"echo __T_OK__\n").expect("write to pty");

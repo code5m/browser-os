@@ -14,17 +14,30 @@ let term: Terminal | null = null;
 let fit: FitAddon | null = null;
 let resizeObserver: ResizeObserver | null = null;
 
+// 终端对账 probe（默认关闭，开关经 spawn 响应下发）：只记元数据，不记终端正文。
+const probeEncoder = new TextEncoder();
+let probeWriteSeq = 0;
+let probeSubmitBytes = 0;
+let probeDoneSeq = 0;
+let probeDoneBytes = 0;
+
 // M3.c（WBS M3-4 · E2，沿用 M3.a F5 的真实行列上报）：
 // - 前端 `fit()` **每次都调**，渲染实时跟随容器；
 // - 后端 `term_resize` 走静默窗口：尺寸去重 + 140 ms 静默 + 500 ms 硬上界。
 const resize = useTerminalResize((cols, rows) => {
   if (!term || !props.paneId) return;
+  if (system.termProbeOn) {
+    bridge.debugLog(`[TERM_PROBE] termResize.req pane=${props.paneId} cols=${cols} rows=${rows}`);
+  }
   bridge.termResize(props.paneId, cols, rows).catch(() => {});
 });
 
 function onContainerResize() {
   if (!term || !fit) return;
   const dims = fit.proposeDimensions();
+  if (system.termProbeOn) {
+    bridge.debugLog(`[TERM_PROBE] resize.evt pane=${props.paneId} cw=${termEl.value?.clientWidth ?? -1} ch=${termEl.value?.clientHeight ?? -1} proposed=${dims ? `${dims.cols}x${dims.rows}` : "null"} term=${term.cols}x${term.rows} buf=${term.buffer.active.type}`);
+  }
   if (!dims || dims.cols <= 0 || dims.rows <= 0) return;
   if (term.cols !== dims.cols || term.rows !== dims.rows) fit.fit();
   resize.notify(dims.cols, dims.rows);
@@ -159,7 +172,26 @@ onMounted(() => {
 
     // 后端 PTY 输出 → xterm（M0-0.b 吞吐钩子在此拦截）
     system.bindTermWriter(props.paneId, (data) => {
-      term?.write(data, () => m0TrackRendered(data));
+      if (system.m0Cfg?.run_id) {
+        bridge.debugLog(`[TerminalProbe] received chars=${data.length}`);
+      }
+      if (system.termProbeOn) {
+        probeWriteSeq += 1;
+        const b = probeEncoder.encode(data).length;
+        probeSubmitBytes += b;
+        bridge.debugLog(`[TERM_PROBE] xterm.write pane=${props.paneId} seq=${probeWriteSeq} bytes=${b} cum=${probeSubmitBytes} cols=${term?.cols} rows=${term?.rows} buf=${term?.buffer.active.type}`);
+      }
+      term?.write(data, () => {
+        m0TrackRendered(data);
+        if (system.m0Cfg?.run_id) {
+          bridge.debugLog(`[TerminalProbe] rendered chars=${data.length} buffer=${term?.buffer.active.type}`);
+        }
+        if (system.termProbeOn) {
+          probeDoneSeq += 1;
+          probeDoneBytes += probeEncoder.encode(data).length;
+          bridge.debugLog(`[TERM_PROBE] xterm.done pane=${props.paneId} seq=${probeDoneSeq} cum=${probeDoneBytes} cols=${term?.cols} rows=${term?.rows} buf=${term?.buffer.active.type}`);
+        }
+      });
     });
     system.bindM0ThroughputStart(m0Prepare);
     // M3.c（WBS M3-4 · E1）：面板重建（切 Dock / 切回）时回放最近 40 条输出，
@@ -171,6 +203,9 @@ onMounted(() => {
     resizeObserver.observe(termEl.value);
 
     bridge.debugLog("[TerminalPane] pane ready");
+    if (system.termProbeOn) {
+      bridge.debugLog(`[TERM_PROBE] pane.mounted pane=${props.paneId} cw=${termEl.value.clientWidth} ch=${termEl.value.clientHeight} cols=${term.cols} rows=${term.rows} buf=${term.buffer.active.type}`);
+    }
     term.focus();
   } catch (e) {
     bridge.debugLog(`[TerminalPane] init error: ${e}`);
@@ -186,6 +221,9 @@ function closePane() {
 }
 
 onBeforeUnmount(() => {
+  if (system.termProbeOn) {
+    bridge.debugLog(`[TERM_PROBE] pane.unmounted pane=${props.paneId} submitted=${probeSubmitBytes} completed=${probeDoneBytes}`);
+  }
   m0FrameSampling = false;
   resize.dispose();
   resizeObserver?.disconnect();

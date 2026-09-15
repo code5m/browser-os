@@ -631,8 +631,9 @@ export const bridge = {
 
   // 注意：invoke 的 key 必须与 Rust 命令参数名一致（snake_case = "channel"），
   // 否则 Tauri 反射不到参数。Channel 由 Tauri 序列化为 IPC 句柄自动传参。
+  // probe 字段：后端按 MVP_TERMINAL_PROBE=1 注入，前端据此启用终端对账打点
   termSpawnChannel: (channel: Channel<TermMessage>) =>
-    invoke<{ id: string }>("term_spawn_channel", { channel }),
+    invoke<{ id: string; probe?: boolean }>("term_spawn_channel", { channel }),
 
   termWrite: (id: string, data: string) => invoke("term_write", { id, data }),
 
