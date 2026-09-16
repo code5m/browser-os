@@ -356,6 +356,22 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
     closeFileCtx();
   }
+  async function ctxFavorite(entry: DirEntry) {
+    if (!entry.is_dir) return;
+    const { useHomeStore } = await import("./useHomeStore");
+    useHomeStore().favoriteDirectory(entry.path);
+    closeFileCtx();
+  }
+  async function copyPath(entry: DirEntry, relative: boolean) {
+    let value = entry.path;
+    if (relative) {
+      const root = treeRoots.value.find((item) => entry.path === item.path || entry.path.startsWith(item.path.replace(/\/$/, "") + "/"));
+      value = root ? entry.path.slice(root.path.length).replace(/^\//, "") || "." : entry.name;
+    }
+    await bridge.clipboardWrite(value);
+    layout.showToast(relative ? "已复制相对路径" : "已复制绝对路径");
+    closeFileCtx();
+  }
 
   // 文件树右键：新标签打开（目录→目录页签；文件→行内编辑/预览）
   function ctxOpenInNewTab(entry: DirEntry) {
@@ -1110,6 +1126,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     quickNew,
     ctxDelete,
     ctxRename,
+    ctxFavorite,
+    copyPath,
     ctxOpenInNewTab,
     ctxOpenInExplorer,
     ctxOpenInTerminal,

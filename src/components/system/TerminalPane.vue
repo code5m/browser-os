@@ -242,6 +242,9 @@ onBeforeUnmount(() => {
     <div class="term-head">
       <span>终端</span>
       <div>
+        <label class="term-auto" title="仅自动确认 CodeArts CLI 的 True Color 兼容性提示">
+          <input :checked="system.autoConfirmCli" type="checkbox" @change="system.setAutoConfirmCli(($event.target as HTMLInputElement).checked)" /> 自动确认 CLI
+        </label>
         <span v-if="system.droppedBytes > 0" class="term-drop" title="输出过快，已丢弃的字节数">
           已丢弃 {{ system.droppedBytes }} B
         </span>
@@ -295,6 +298,8 @@ onBeforeUnmount(() => {
   margin-right: 6px;
   white-space: nowrap;
 }
+.term-auto { color: #bbb; font-size: 11px; margin-right: 6px; cursor: pointer; }
+.term-auto input { vertical-align: middle; margin: 0 3px 0 0; }
 .term-head button {
   border: none;
   background: transparent;

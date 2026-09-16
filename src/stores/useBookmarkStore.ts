@@ -154,25 +154,37 @@ export const useBookmarkStore = defineStore("bookmark", () => {
 
   async function importFile(file: File): Promise<number> {
     const text = await file.text();
-    const imported: { url: string; title: string }[] = [];
+    const imported: { url: string; title: string; category: string }[] = [];
     if (/\.(html?|HTML?)$/.test(file.name)) {
       const doc = new DOMParser().parseFromString(text, "text/html");
-      doc.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((a) => {
-        if (/^https?:\/\//i.test(a.href)) imported.push({ url: a.href, title: a.textContent?.trim() || a.href });
-      });
+      const walkHtml = (node: Element, folders: string[]): void => {
+        let pendingFolder = "";
+        for (const child of Array.from(node.children)) {
+          if (child.tagName === "H3") pendingFolder = child.textContent?.trim() || "";
+          else if (child.tagName === "A") {
+            const a = child as HTMLAnchorElement;
+            if (/^https?:\/\//i.test(a.href)) imported.push({ url: a.href, title: a.textContent?.trim() || a.href, category: folders.join("/") || DEFAULT_CATEGORY });
+          } else if (child.tagName === "DL") {
+            walkHtml(child, pendingFolder ? [...folders, pendingFolder] : folders);
+            pendingFolder = "";
+          } else walkHtml(child, folders);
+        }
+      };
+      walkHtml(doc.body, []);
     } else {
-      const walk = (node: unknown): void => {
+      const walk = (node: unknown, folders: string[] = []): void => {
         if (!node || typeof node !== "object") return;
         const value = node as Record<string, unknown>;
-        if (typeof value.url === "string" && /^https?:\/\//i.test(value.url)) imported.push({ url: value.url, title: typeof value.name === "string" ? value.name : value.url });
-        if (Array.isArray(value.children)) value.children.forEach(walk);
-        if (value.roots && typeof value.roots === "object") Object.values(value.roots as Record<string, unknown>).forEach(walk);
+        const nextFolders = typeof value.name === "string" && Array.isArray(value.children) ? [...folders, value.name] : folders;
+        if (typeof value.url === "string" && /^https?:\/\//i.test(value.url)) imported.push({ url: value.url, title: typeof value.name === "string" ? value.name : value.url, category: folders.join("/") || DEFAULT_CATEGORY });
+        if (Array.isArray(value.children)) value.children.forEach((child) => walk(child, nextFolders));
+        if (value.roots && typeof value.roots === "object") Object.values(value.roots as Record<string, unknown>).forEach((child) => walk(child, []));
       };
       walk(JSON.parse(text));
     }
     const unique = [...new Map(imported.map((item) => [normalizeUrl(item.url), item])).values()];
     let count = 0;
-    for (const item of unique) if (await add(item.url, item.title)) count += 1;
+    for (const item of unique) if (await add(item.url, item.title, item.category)) count += 1;
     layout.showToast(`已导入 ${count} 条收藏${unique.length !== count ? `（跳过 ${unique.length - count} 条）` : ""}`);
     return count;
   }

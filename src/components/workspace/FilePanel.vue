@@ -229,6 +229,9 @@ onMounted(async () => {
           <div class="ctx-item" @click="ws.ctxOpenInNewTab(ws.fileCtx.entry)">📑 新标签打开</div>
           <div class="ctx-item" @click="ws.ctxOpenInExplorer(ws.fileCtx.entry)">🗂 资源管理器打开</div>
           <div class="ctx-item" @click="ws.ctxOpenInTerminal(ws.fileCtx.entry)">💻 命令行终端打开</div>
+          <div v-if="ws.fileCtx.entry.is_dir" class="ctx-item" @click="ws.ctxFavorite(ws.fileCtx.entry)">☆ 收藏到主页</div>
+          <div class="ctx-item" @click="ws.copyPath(ws.fileCtx.entry, true)">复制相对路径</div>
+          <div class="ctx-item" @click="ws.copyPath(ws.fileCtx.entry, false)">复制绝对路径</div>
           <div class="ctx-sep"></div>
           <div class="ctx-item" @click="ws.ctxRename(ws.fileCtx.entry)">✏ 重命名</div>
           <div class="ctx-item danger" @click="ws.ctxDelete(ws.fileCtx.entry)">🗑 删除</div>
