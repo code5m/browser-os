@@ -19,6 +19,13 @@ impl KeyringStore {
             .map_err(|e| format!("凭据缺失: {e}（请重新配置仓库）"))
     }
 
+    /// 原始 keyring 结果（调用方自行决定错误映射）。
+    /// 用于需要区分 `NoEntry`（条目被外部删除）与密钥库不可读的场景。
+    pub fn get_token_result(repo_id: &str) -> Result<String, keyring::Error> {
+        let entry = Entry::new(SERVICE, repo_id)?;
+        entry.get_password()
+    }
+
     #[allow(dead_code)]
     pub fn delete_token(repo_id: &str) -> Result<(), String> {
         let entry = Entry::new(SERVICE, repo_id).map_err(|e: Error| e.to_string())?;

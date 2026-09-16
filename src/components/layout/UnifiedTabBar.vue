@@ -146,7 +146,10 @@ async function copyRelPath() {
 
 async function activateWeb(id: string) {
   if (system.m0Cfg?.driver) return;
-  if (!layout.isBrowserView()) layout.setView("browser");
+  // 本函数语义是"切到普通浏览器页签"：必须精确判断是否已处于 browser 视图。
+  // 不能用 isBrowserView()（它把 grid 也算作 browser-like），否则宫格视图下
+  // mainView 会停留在 grid、schedulePosition 走宫格分支，点击的页签不显示。
+  if (layout.mainView !== "browser") layout.setView("browser");
   await browser.tabSwitch(id);
 }
 
@@ -205,10 +208,8 @@ function activateMod(t: { id: string; view: string; path?: string }) {
     </div>
   </div>
   <div v-if="context" class="tab-actions" role="menu" @keydown.esc="context = null">
-    <button role="menuitem" @click="closeLeft">关闭左侧页签</button>
-    <button role="menuitem" @click="closeRight">关闭右侧页签</button>
-    <button role="menuitem" @click="closeOthers">关闭其他页签</button>
-    <button role="menuitem" @click="closeContext()">关闭页签</button>
+    <button role="menuitem" @click="closeContext()">关闭</button>
+    <button role="menuitem" @click="closeContext(true)">关闭其他</button>
     <template v-if="contextPath">
       <span class="tab-actions-sep" aria-hidden="true"></span>
       <button role="menuitem" @click="revealHere">在文件管理器中显示</button>

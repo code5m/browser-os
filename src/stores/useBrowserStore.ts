@@ -156,7 +156,7 @@ export const useBrowserStore = defineStore("browser", () => {
   );
 
   async function tabNew(target?: string) {
-    const u = target ?? url.value.trim() ?? "";
+    const u = target === undefined ? "about:blank" : target.trim() || "about:blank";
     // 网页内 target=_blank / window.open 触发的新页签：若当前不在浏览器视图则切过去
     if (!layout.isBrowserView()) layout.mainView = "browser";
     const t = await bridge.tabNew(u);
@@ -238,7 +238,7 @@ export const useBrowserStore = defineStore("browser", () => {
   async function tabNavigate(id: string) {
     const t = tabs.find((x) => x.id === id);
     if (!t) return;
-    const u = t.url.trim() || "https://www.baidu.com";
+    const u = t.url.trim() || "about:blank";
     await bridge.tabOpen(id, u);
     if (activeTabId.value === id) url.value = u;
     layout.showToast("页签导航: " + u);
@@ -301,9 +301,17 @@ export const useBrowserStore = defineStore("browser", () => {
     const n = gridCount.value;
     gridSession.value += 1;
     bridge.debugLog(`buildGrid start n=${n} mainView=${layout.mainView}`);
+    // 每格首导航 URL：优先格子自身配置，其次当前地址栏；未配置用 about:blank 占位。
+    // 严禁回退第三方站点（如百度）——子 webview 首导航即目标服务，消除"先百度再跳真实服务"双导航。
+    const urls: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const u = (gridUrls[i] || url.value || "").trim() || "about:blank";
+      gridUrls[i] = u;
+      urls.push(u);
+    }
     // createGrid 内部会先 close_grid 再重建，幂等，可安全重复调用。
     // 返回实际创建格数：内存预算守卫在可用内存不足时自动降级（保底 2 格）
-    const created = await bridge.createGrid(n);
+    const created = await bridge.createGrid(n, urls);
     // 降级提示存起来，最后用一条 toast 展示（showToast 单条覆盖，先发的会被吞掉）
     const degraded = created < n;
     if (degraded) gridCount.value = created;
@@ -314,11 +322,7 @@ export const useBrowserStore = defineStore("browser", () => {
     if (layout.mainView !== "grid" && layout.mainView !== "browser") {
       layout.mainView = "grid";
     }
-    for (let i = 0; i < created; i++) {
-      const u = gridUrls[i] || url.value || "https://www.baidu.com";
-      gridUrls[i] = u;
-      await bridge.gridOpen(i, u);
-    }
+    // 子 webview 已由 create_grid 按上述 urls 完成首次导航，无需再逐个 gridOpen。
     // 等 DOM/子 webview 就绪后重排（scheduleGrid 内部会把激活页签移出屏幕）
     await nextTick();
     bridge.debugLog("buildGrid 导航完成，触发 layoutGrid");

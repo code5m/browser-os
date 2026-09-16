@@ -134,6 +134,19 @@ function setGridCount(n: number) {
   if (browser.gridOpen) browser.buildGrid();
 }
 
+// 收藏夹入口：任意视图点击都应"打开"收藏夹，而不是简单取反。
+// 非 browser 视图先切回 browser（面板挂载条件要求 mainView === "browser"），
+// 再确保 panelOpen 为 true：此时若已是 true 不能再 toggle（否则会被关掉）。
+// store 未显式提供 openPanel，故用最小条件 toggle，不改动 store。
+function onToggleBookmarkPanel(): void {
+  if (layout.mainView !== "browser") {
+    layout.setView("browser");
+    if (!bookmarks.panelOpen) bookmarks.togglePanel();
+    return;
+  }
+  bookmarks.togglePanel();
+}
+
 async function onItem(v: string) {
   if (system.m0Cfg?.driver) {
     bridge.debugLog(`[M0] ignore activity item ${v} while driver=${system.m0Cfg.driver}`);
@@ -311,10 +324,11 @@ async function openDirCenter() {
       </div>
 
       <!-- 右：浏览辅助 + 采集 + 设置 -->
+      <!-- 收藏夹：任意视图均可打开，故移出下面的 browser-only 模板 -->
+      <button class="tbtn bookmark-entry" :class="{ active: bookmarks.panelOpen }" aria-label="收藏夹" @click="onToggleBookmarkPanel" title="打开收藏夹">📑 <span>收藏夹</span></button>
       <template v-if="layout.mainView === 'browser'">
         <button class="tbtn" aria-label="边浏览边管理文件" @click="layout.toggleBrowserDock('files')" title="边浏览边管理文件">🗂</button>
         <button class="tbtn" aria-label="边浏览边开终端" @click="layout.toggleBrowserDock('term')" title="边浏览边开终端">💻</button>
-        <button class="tbtn bookmark-entry" :class="{ active: bookmarks.panelOpen }" aria-label="收藏夹" @click="bookmarks.togglePanel" title="打开收藏夹">📑 <span>收藏夹</span></button>
         <button class="tbtn" aria-label="精简模式" @click="layout.toggleCompact" title="精简模式：隐藏工具栏给网页更大空间">⛶</button>
       </template>
       <span class="sep"></span>

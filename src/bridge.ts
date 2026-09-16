@@ -17,6 +17,8 @@ import type {
   AuditEntry,
   WorkspaceTree,
   Bookmark,
+  BrowserCredentialItem,
+  AutofillResult,
   DirEntry,
   BrowserResources,
   TabInfo,
@@ -473,6 +475,17 @@ export const bridge = {
     invoke<Bookmark>("add_bookmark", p),
   bookmarkList: () => invoke<Bookmark[]>("list_bookmarks"),
   bookmarkRemove: (id: string) => invoke("remove_bookmark", { id }),
+  importBrowserCredentials: (rows: { url: string; username: string; password: string }[]) =>
+    invoke<number>("import_browser_credentials", { rows }),
+  // 已导入账号列表（只读）：只返回 url / username / has_password，后端绝不返回密码
+  listBrowserCredentials: () => invoke<BrowserCredentialItem[]>("list_browser_credentials"),
+  // 用户主动触发的一次性填充：只传不透明句柄 + 页签 id，密码不出 Rust，
+  // 返回值只是非敏感状态码（AutofillResult）
+  fillBrowserCredential: (credentialId: string, tabId: string) =>
+    invoke<AutofillResult>("fill_browser_credential", {
+      credentialId,
+      tabId,
+    }),
 
   // 本地文件浏览器
   listDir: (path: string) => invoke<DirEntry[]>("list_dir", { path }),
@@ -516,7 +529,10 @@ export const bridge = {
 
   // ====== 宫格浏览器 ======
   // 返回实际创建的格数：内存预算守卫在可用内存不足时会自动降级（保底 2）
-  createGrid: (n: number) => invoke<number>("create_grid", { n }),
+  // urls：每格首导航 URL（长度 ≥ n），由后端 create_grid 直接用于创建子 webview，
+  // 避免"先占位再二次导航"的双导航；未配置的格子传 "about:blank"。
+  createGrid: (n: number, urls: string[]) =>
+    invoke<number>("create_grid", { n, urls }),
 
   closeGrid: () => invoke("close_grid"),
 

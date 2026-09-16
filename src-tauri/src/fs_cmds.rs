@@ -1,7 +1,7 @@
 // 文件系统相关命令（独立于 bridge.rs，避免触碰 IPC 命令面 danger-zone）。
 // 文件树右键"资源管理器打开"：用系统文件管理器打开指定路径。
-use tauri::AppHandle;
 use crate::security_policy as sp;
+use tauri::AppHandle;
 
 /// 用系统文件管理器打开指定路径（文件树右键"资源管理器打开"）
 #[tauri::command]

@@ -3,10 +3,10 @@
 mod agent;
 mod agent_memory;
 mod bridge;
-mod fs_cmds;
 mod crashlog;
 mod database;
 mod domain;
+mod fs_cmds;
 mod graph;
 mod grid_ipc;
 mod grid_process;
@@ -496,7 +496,7 @@ fn run_grid_selftest(app: tauri::AppHandle) {
         // 1) 创建 2 宫格（spawn 2 子进程 + UDS CreateTab）
         step(
             "create_grid(2)",
-            bridge::create_grid(app.clone(), 2).map(|_| ()),
+            bridge::create_grid(app.clone(), 2, vec!["about:blank".to_string(); 2]).map(|_| ()),
         );
         // 2) 导航 + 定位 + eval
         step(
@@ -696,16 +696,18 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
 
         step(
             "scenario-1-single-ai-broadcast",
-            bridge::create_grid(app.clone(), 4).and_then(|created| {
-                if created < 4 {
-                    return Err(format!("created {created} grids, need 4"));
-                }
-                open_grid("1", 0)?;
-                position_grid(0, 40.0, 110.0, 620.0, 450.0)?;
-                sleep_ms(1200);
-                eval_grid("1", 0, "single_broadcast")?;
-                Ok("single grid command path exercised with local AI mock".to_string())
-            }),
+            bridge::create_grid(app.clone(), 4, vec!["about:blank".to_string(); 4]).and_then(
+                |created| {
+                    if created < 4 {
+                        return Err(format!("created {created} grids, need 4"));
+                    }
+                    open_grid("1", 0)?;
+                    position_grid(0, 40.0, 110.0, 620.0, 450.0)?;
+                    sleep_ms(1200);
+                    eval_grid("1", 0, "single_broadcast")?;
+                    Ok("single grid command path exercised with local AI mock".to_string())
+                },
+            ),
         );
 
         step(
@@ -1050,14 +1052,16 @@ fn run_m0_driver(app: tauri::AppHandle, cfg: bridge::M0Config) {
             let opened_resource = match cfg.driver.as_str() {
                 "tab" => bridge::tab_new(app.clone(), "about:blank".into())
                     .map(|tab| OpenedResource::Tab(tab.id)),
-                "grid" => match bridge::create_grid(app.clone(), 4) {
-                    Ok(4) => Ok(OpenedResource::Grid),
-                    Ok(created) => {
-                        let _ = bridge::close_grid(app.clone());
-                        Err(format!("grid degraded to {created} (need 4)"))
+                "grid" => {
+                    match bridge::create_grid(app.clone(), 4, vec!["about:blank".to_string(); 4]) {
+                        Ok(4) => Ok(OpenedResource::Grid),
+                        Ok(created) => {
+                            let _ = bridge::close_grid(app.clone());
+                            Err(format!("grid degraded to {created} (need 4)"))
+                        }
+                        Err(error) => Err(error),
                     }
-                    Err(error) => Err(error),
-                },
+                }
                 "terminal" => bridge::term_spawn(app.clone()).map(|term| {
                     log(&format!("cycle {n}: term_spawn ok id={}", term.id));
                     OpenedResource::Terminal(term.id)
@@ -1517,6 +1521,9 @@ fn main() {
             bridge::skill_parse,
             bridge::skill_validate,
             bridge::skill_permission_preview,
+            bridge::import_browser_credentials,
+            bridge::list_browser_credentials,
+            bridge::fill_browser_credential,
             bridge::db_connect,
             bridge::db_list_connections,
             bridge::db_cancel,

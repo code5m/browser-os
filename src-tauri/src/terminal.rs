@@ -443,7 +443,10 @@ fn flush_batch(
     if probe_on {
         let repl = text.matches('\u{FFFD}').count();
         let seq = probe.flush_seq.fetch_add(1, Ordering::Relaxed) + 1;
-        let cum = probe.flush_bytes.fetch_add(raw_len as u64, Ordering::Relaxed) + raw_len as u64;
+        let cum = probe
+            .flush_bytes
+            .fetch_add(raw_len as u64, Ordering::Relaxed)
+            + raw_len as u64;
         eprintln!(
             "[TERM_PROBE] {id} flush seq={seq} raw_bytes={raw_len} cum={cum} utf8_valid={utf8_valid} replacement_count={repl} enc_bytes={}",
             text.len()
@@ -495,7 +498,9 @@ fn send_with_backoff(
             Ok(()) => {
                 if probe_on {
                     let seq = probe.send_ok.fetch_add(1, Ordering::Relaxed) + 1;
-                    let cum = probe.send_bytes.fetch_add(payload_bytes as u64, Ordering::Relaxed)
+                    let cum = probe
+                        .send_bytes
+                        .fetch_add(payload_bytes as u64, Ordering::Relaxed)
                         + payload_bytes as u64;
                     eprintln!(
                         "[TERM_PROBE] {id} chan.send seq={seq} ok=true bytes={payload_bytes} cum={cum}"

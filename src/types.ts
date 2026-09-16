@@ -171,6 +171,34 @@ export interface Bookmark {
   created_at: string;
 }
 
+// 已导入浏览器账号（只读列表项）。
+// 安全红线：这里**绝不允许**出现 password / secret / token / credential key 字段，
+// 后端只返回 url、username、has_password 三项。
+export interface BrowserCredentialItem {
+  url: string;
+  username: string;
+  has_password: boolean;
+  // 不透明句柄（会话级，每次列表重新生成）：只用于指认「用户选了哪一条」，
+  // 既不是 password，也不是 keyring 的 credential key。
+  credential_id: string;
+  // 精确 origin（scheme://host[:port]），用于与当前网页做同源判断
+  origin: string;
+}
+
+// 填充结果码（全部非敏感，可直接展示或做文案映射）
+export type AutofillResult =
+  | "FILLED"
+  | "ORIGIN_MISMATCH"
+  | "TAB_NOT_FOUND"
+  | "WEBVIEW_NOT_FOUND"
+  | "NO_PASSWORD_FIELD"
+  | "NO_USERNAME_FIELD"
+  | "AMBIGUOUS_FORM"
+  | "CROSS_ORIGIN_IFRAME_UNSUPPORTED"
+  | "KEYRING_READ_FAILED"
+  | "CREDENTIAL_NOT_FOUND"
+  | "FILL_FAILED";
+
 // 工作区目录树
 export interface WorkspaceTree {
   nodes: DomainNode[];

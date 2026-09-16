@@ -126,6 +126,9 @@ export const useSystemStore = defineStore("system", () => {
   const termGrid = ref(false); // 宫格模式（多终端并排）
   const termGridCount = ref(4); // 宫格数（默认 4 = 2×2）
   const activeTermId = ref(""); // 当前聚焦的终端
+  const autoConfirmCli = ref(localStorage.getItem("terminal-auto-confirm-cli") !== "0");
+  const confirmScans = new Map<string, string>();
+  const lastAutoConfirmAt = new Map<string, number>();
   // 终端对账 probe（默认关闭）：开关由后端按 MVP_TERMINAL_PROBE=1 经 spawn 响应下发。
   // 只记录元数据（序号/UTF-8 字节数/累计/去向），绝不记录终端正文。
   const termProbeOn = ref(false);
@@ -198,6 +201,26 @@ export const useSystemStore = defineStore("system", () => {
   function bindTermWriter(id: string, fn: ((data: string) => void) | null) {
     if (fn) termWriters.set(id, fn);
     else termWriters.delete(id);
+  }
+
+  function setAutoConfirmCli(enabled: boolean) {
+    autoConfirmCli.value = enabled;
+    localStorage.setItem("terminal-auto-confirm-cli", enabled ? "1" : "0");
+  }
+
+  function maybeAutoConfirmCli(id: string, data: string) {
+    const last = lastAutoConfirmAt.get(id) ?? 0;
+    if (!autoConfirmCli.value || !id || Date.now() - last < 3000) return;
+    const scan = ((confirmScans.get(id) ?? "") + data.replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, "")).slice(-1600);
+    confirmScans.set(id, scan);
+    const isCodeArtsCompatibility = scan.includes("兼容性提示") && scan.includes("True Color");
+    // CodeArts 26.8 prints this warning unconditionally and continues after 1s.
+    // Only an explicit compatibility confirmation may receive input.
+    const asksToContinue = /(?:按.*回车.*继续|press.*enter.*continue)/i.test(scan);
+    if (!isCodeArtsCompatibility || !asksToContinue) return;
+    lastAutoConfirmAt.set(id, Date.now());
+    confirmScans.set(id, "");
+    window.setTimeout(() => bridge.termWrite(id, "\r").catch(() => {}), 120);
   }
 
   function bindM0ThroughputStart(fn: (() => void) | null) {
@@ -309,6 +332,7 @@ export const useSystemStore = defineStore("system", () => {
     if (w) {
       pushTermHistory(d.id, d.data);
       w(d.data);
+      maybeAutoConfirmCli(d.id, d.data);
     } else {
       const b = termBuffers.get(d.id) ?? [];
       b.push(d.data);
@@ -336,6 +360,7 @@ export const useSystemStore = defineStore("system", () => {
       probeFeRecv(id, data, "xterm");
       pushTermHistory(id, data);
       w(data);
+      maybeAutoConfirmCli(id, data);
     } else {
       probeFeRecv(id, data, "buffer");
       const b = termBuffers.get(id) ?? [];
@@ -356,6 +381,7 @@ export const useSystemStore = defineStore("system", () => {
     termGrid,
     termGridCount,
     activeTermId,
+    autoConfirmCli,
     termProbeOn,
     droppedChunks,
     droppedBytes,
@@ -389,6 +415,7 @@ export const useSystemStore = defineStore("system", () => {
     onTermChannelMsg,
     openTerminalAt,
     bindTermWriter,
+    setAutoConfirmCli,
     replayTermHistory,
     clearTermHistory,
   };

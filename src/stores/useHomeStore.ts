@@ -213,8 +213,8 @@ export const useHomeStore = defineStore("home", () => {
     });
   }
 
-  function favoriteCurrentDir() {
-    const target = (layout.mainView === "files" ? workspace.filePath : browser.url).trim();
+  function favoriteDirectory(path: string) {
+    const target = path.trim();
     if (!target || !looksLikeDir(target)) {
       layout.showToast("当前没有可收藏目录");
       return;
@@ -225,6 +225,10 @@ export const useHomeStore = defineStore("home", () => {
       target,
       icon: "📁",
     });
+  }
+
+  function favoriteCurrentDir() {
+    favoriteDirectory((layout.mainView === "files" ? workspace.filePath : browser.url).trim());
   }
 
   // 打开快捷方式：url → 内嵌浏览器；app → 启动系统应用；dir → 文件视图（IDE 树）
@@ -335,6 +339,7 @@ export const useHomeStore = defineStore("home", () => {
     seedDirShortcuts,
     favoriteCurrentPage,
     favoriteCurrentDir,
+    favoriteDirectory,
     startAdd,
     startEdit,
     cancelEdit,
