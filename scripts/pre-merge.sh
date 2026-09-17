@@ -484,6 +484,14 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/check-graph-policy.py" >/dev/null 2>&1 \
     || pm_fail "check-graph-policy.py（M5-7/8 图谱安全不变量被破坏：常量缺失/隐私未扫值/容量未接/遍历无界/id 非十六进制/第二执行路径）"
 
+  # Phase 0 命令集三源一致性（Rust 注册 ∩ 主窗 ACL ∩ 前端 invoke）。
+  # 守 not-allowed 漂移 / 死 ACL / 死调用；KNOWN 仅容纳已裁决的契约占位漂移。
+  pm_log "Phase 0 命令集三源一致性（IPC）…"
+  python3 "$SCRIPT_DIR/check-command-set-consistency.py" --self-test >/dev/null 2>&1 \
+    || pm_fail "check-command-set-consistency.py --self-test"
+  python3 "$SCRIPT_DIR/check-command-set-consistency.py" >/dev/null 2>&1 \
+    || pm_fail "check-command-set-consistency.py（命令集三源漂移：已注册命令未放行/死 ACL/死调用）"
+
   # M5-10/11（Lane A9）：插件 manifest/生命周期策略不变量夹具（PLUGIN_* 码位）。
   # 守能力单一真源 / 无第二执行路径 / 无内联 shell / 无签名旁路 / 仅形态③ / 无凭据字段。
   pm_log "M5-10/11 插件 manifest/生命周期策略不变量夹具（PLUGIN_* 码位）…"
@@ -520,7 +528,7 @@ run_pre_merge() {
   # Phase 03 checker gate (added by 11-ci). Wires the five boundary checkers + doctor
   # into the pre-merge gate WITHOUT weakening any existing M0-1.c check above.
   pm_log "Phase 03 checker gate (architecture/ui/native/runtime/task-boundary + doctor)…"
-  for c in check-architecture check-ui check-native check-browser-runtime check-task-boundary doctor; do
+  for c in check-architecture check-ui check-native check-browser-runtime check-task-boundary check-grid-close doctor; do
     if ! (cd "$ROOT" && node "$SCRIPT_DIR/$c.mjs") >/dev/null 2>&1; then
       pm_fail "phase03 $c.mjs"
     fi
@@ -639,6 +647,11 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/check-graph-policy.py" ] || { echo "FAIL: check-graph-policy.py missing"; rc=1; }
   if ! python3 "$SCRIPT_DIR/check-graph-policy.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-graph-policy.py --self-test"; rc=1
+  fi
+  # Phase 0：命令集三源一致性夹具自检。
+  [ -f "$SCRIPT_DIR/check-command-set-consistency.py" ] || { echo "FAIL: check-command-set-consistency.py missing"; rc=1; }
+  if ! python3 "$SCRIPT_DIR/check-command-set-consistency.py" --self-test >/dev/null 2>&1; then
+    echo "FAIL: check-command-set-consistency.py --self-test"; rc=1
   fi
   # M5-10/11（Lane A9）：插件策略夹具自检。
   [ -f "$SCRIPT_DIR/check-plugin-policy.py" ] || { echo "FAIL: check-plugin-policy.py missing"; rc=1; }
