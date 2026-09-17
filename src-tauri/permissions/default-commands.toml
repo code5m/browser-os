@@ -37,6 +37,7 @@ commands.allow = [
     "create_dir",
     "delete_path",
     "rename_path",
+    "move_path",
     "clipboard_read",
     "clipboard_write",
     "create_grid",
