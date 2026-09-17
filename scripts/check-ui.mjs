@@ -34,7 +34,6 @@ const ALLOWED_FIXED = [
   { file: "src/App.vue", selector: ".boot-overlay", reason: "启动遮罩，应用就绪前显示，此时无 WebView" },
   { file: "src/App.vue", selector: ".shell-error", reason: "外壳错误兜底，子树渲染失败时显示，此时无 WebView" },
   { file: "src/components/layout/StatusBar.vue", selector: ".res-detail", reason: "状态栏区域浮层（bottom:32px），不在浏览器视口上" },
-  { file: "src/components/browser/SessionCloseDialog.vue", selector: ".sc-mask", reason: "CURRENT 关闭协议（PROJECT-RULES [CURRENT]），webviewsSuspended 时显示" },
   { file: "src/styles/global.css", selector: ".modal-mask", reason: "通用 modal 遮罩（ConfirmModal/GitWriteConfirmDialog/ImageLightbox）" },
   { file: "src/styles/global.css", selector: ".ctx-menu", reason: "右键菜单" },
   { file: "src/styles/global.css", selector: ".home-modal-mask", reason: "主页编辑弹窗" },
@@ -50,7 +49,6 @@ const ALLOWED_HIGH_ZINDEX = [
   { file: "src/App.vue", selector: ".boot-overlay", reason: "启动遮罩，无 WebView 时显示" },
   { file: "src/App.vue", selector: ".shell-error", reason: "外壳错误兜底，无 WebView 时显示" },
   { file: "src/components/layout/StatusBar.vue", selector: ".res-detail", reason: "状态栏区域浮层，不在浏览器视口上" },
-  { file: "src/components/browser/SessionCloseDialog.vue", selector: ".sc-mask", reason: "CURRENT 关闭协议，WebView 暂停时显示" },
 ];
 
 const HIGH_ZINDEX_THRESHOLD = 1000;
@@ -193,7 +191,6 @@ function scanCssFile(content, rel) {
 
 function structuralChecks(findings, warnings) {
   const statusBarPath = join(SRC_DIR, "components/layout/StatusBar.vue");
-  const sessionClosePath = join(SRC_DIR, "components/browser/SessionCloseDialog.vue");
   const globalCssPath = join(SRC_DIR, "styles/global.css");
 
   // 1. StatusBar.vue 必须使用状态栏模式
@@ -219,30 +216,7 @@ function structuralChecks(findings, warnings) {
     }
   }
 
-  // 2. SessionCloseDialog.vue 必须是 CURRENT 关闭协议
-  if (existsSync(sessionClosePath)) {
-    const sc = readFileSync(sessionClosePath, "utf8");
-    if (!/session\.closeDialogOpen/.test(sc)) {
-      findings.push({
-        severity: "P1",
-        file: "src/components/browser/SessionCloseDialog.vue",
-        line: 0,
-        message: "SessionCloseDialog 必须保留 session.closeDialogOpen 条件渲染",
-        rule: "PROJECT-RULES.md [CURRENT] 关闭页签仍使用 SessionCloseDialog",
-      });
-    }
-    if (!/position:\s*fixed/.test(sc) || !/z-index:\s*1200/.test(sc)) {
-      findings.push({
-        severity: "P1",
-        file: "src/components/browser/SessionCloseDialog.vue",
-        line: 0,
-        message: "SessionCloseDialog 必须保留 position:fixed + z-index:1200（CURRENT 关闭协议）",
-        rule: "PROJECT-RULES.md [CURRENT]",
-      });
-    }
-  }
-
-  // 3. global.css 的 html, body, #app 必须 overflow: hidden
+  // 2. global.css 的 html, body, #app 必须 overflow: hidden
   if (existsSync(globalCssPath)) {
     const css = readFileSync(globalCssPath, "utf8");
     if (!/html,\s*body,\s*#app\s*\{[^}]*overflow:\s*hidden/.test(css)) {
@@ -406,7 +380,6 @@ function printHelp() {
   position: fixed         新的 fixed 浮层覆盖浏览器区域（P2）
   高 z-index (>=1000)     新的高 z-index 覆盖原生 WebView（P2）
   StatusBar 结构          状态栏模式不变量（P1）
-  SessionCloseDialog 结构 CURRENT 关闭协议不变量（P1）
   global.css 结构         html/body/#app overflow:hidden 不变量（P1）
 
 退出码: 0 = PASS；1 = FAIL；2 = USAGE_ERROR`);
