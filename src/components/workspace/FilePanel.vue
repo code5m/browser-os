@@ -242,7 +242,7 @@ onMounted(async () => {
     <!-- 移动确认 -->
     <div
       v-if="ws.moveConfirm.show"
-      class="move-confirm"
+      class="modal-mask"
       @click="ws.cancelMove"
       @contextmenu.prevent
     >
@@ -277,14 +277,7 @@ onMounted(async () => {
 .ftree-resizer:hover {
   background: rgba(91, 157, 255, 0.45);
 }
-.move-confirm {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.25);
-  display: grid;
-  place-items: center;
-  z-index: 50;
-}
+/* 移动确认：复用全局 .modal-mask（已批准固定浮层模式），本组件内不再使用 position: fixed */
 .move-confirm-box {
   background: #fff;
   border-radius: 8px;
