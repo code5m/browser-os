@@ -116,7 +116,7 @@ HEAD: 88f898707fa9e02d7f84f088356ed7b272ced876
 进程干净，但**文件层面存在残留**：
 
 - 本次实例 `grid-633914-0..3.sock`（`06:07` 创建）在应用退出后**未被 unlink**，仍留在 `~/.local/share/com.jizhijiandan.mvp/sock/`。
-- 该目录**累计残留 134 个** `grid-<pid>-<n>.sock` 文件，最早可追溯到 `2026-08-25`。
+- 该目录**累计残留** `grid-<pid>-<n>.sock` 文件：第一次观测（06:11）为 **134** 个，第二次观测（用户验证关闭后）为 **138** 个（见 §10），最早可追溯到 `2026-08-25`。
 
 | 属性 | 判断 |
 |---|---|
@@ -151,8 +151,18 @@ R7_SHUTDOWN_NO_RESIDUE: PASS（Agent 两次验证）
 READY_FOR_FINAL_TAG: YES
 ```
 
-用户在桌面完成 R1–R6 人工验收并确认通过后，已创建 annotated tag
-**`semantic-phase1-browser-grid-pass`**（本地，**未推送**）。
+用户在桌面完成 R1–R6 人工验收并确认通过后，已创建 annotated tag：
+
+```text
+semantic-phase1-browser-grid-pass
+  -> 7e8d86771f24133780b6637117166e88624df005      （本地，未推送）
+
+semantic-phase1-browser-grid-code-pass
+  -> a30fd573091fac50513ad2e23bde26ee5e0ab6aa      （代码 + 静态门禁通过点）
+```
+
+被测代码 HEAD 为 `88f8987`（= Phase 1 实现 `a30fd57` + 运行时 harness `ad587bc` + 恢复层）；
+最终 tag 指向其后的验收记录提交 `7e8d867` —— 两者代码语义完全一致，后续提交仅新增文档与工具，未改任何产品代码。
 
 遗留（不影响本次通过，挂账）：
 
