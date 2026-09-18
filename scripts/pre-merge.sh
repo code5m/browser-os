@@ -528,7 +528,7 @@ run_pre_merge() {
   # Phase 03 checker gate (added by 11-ci). Wires the five boundary checkers + doctor
   # into the pre-merge gate WITHOUT weakening any existing M0-1.c check above.
   pm_log "Phase 03 checker gate (architecture/ui/native/runtime/task-boundary + doctor)…"
-  for c in check-architecture check-ui check-native check-browser-runtime check-task-boundary check-grid-close doctor; do
+  for c in check-architecture check-ui check-native check-browser-runtime check-task-boundary check-grid-close check-view-intent doctor; do
     if ! (cd "$ROOT" && node "$SCRIPT_DIR/$c.mjs") >/dev/null 2>&1; then
       pm_fail "phase03 $c.mjs"
     fi
@@ -652,6 +652,11 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/check-command-set-consistency.py" ] || { echo "FAIL: check-command-set-consistency.py missing"; rc=1; }
   if ! python3 "$SCRIPT_DIR/check-command-set-consistency.py" --self-test >/dev/null 2>&1; then
     echo "FAIL: check-command-set-consistency.py --self-test"; rc=1
+  fi
+  # Phase 1：Browser/Grid 单一语义门禁自检（view intent / 状态模型 / 生命周期）。
+  [ -f "$SCRIPT_DIR/check-view-intent.mjs" ] || { echo "FAIL: check-view-intent.mjs missing"; rc=1; }
+  if ! (cd "$ROOT" && node "$SCRIPT_DIR/check-view-intent.mjs" --self-test) >/dev/null 2>&1; then
+    echo "FAIL: check-view-intent.mjs --self-test"; rc=1
   fi
   # M5-10/11（Lane A9）：插件策略夹具自检。
   [ -f "$SCRIPT_DIR/check-plugin-policy.py" ] || { echo "FAIL: check-plugin-policy.py missing"; rc=1; }

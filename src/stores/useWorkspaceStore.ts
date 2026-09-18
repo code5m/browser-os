@@ -909,7 +909,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     editingFile.value = true;
     mdPreview.value = false;
     layout.fileEditorOpen = true;
-    layout.mainView = "editor";
+    layout.setView("editor");
     layout.showToast(`已加载: ${entry.name} (${entry.size.toLocaleString()} bytes)`);
   }
   async function openMd(entry: DirEntry) {
@@ -921,7 +921,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     mdPreview.value = true;
     editingFile.value = false;
     layout.fileEditorOpen = true;
-    layout.mainView = "editor";
+    layout.setView("editor");
     return true;
   }
   async function saveFile() {

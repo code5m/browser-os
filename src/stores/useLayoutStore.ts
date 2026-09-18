@@ -190,6 +190,7 @@ export const useLayoutStore = defineStore("layout", () => {
   }
 
   // 仅做 UI 状态切换；需要触发 bridge 的地方委托给其他 store 的 action
+  // Phase 1：这是 mainView 的**唯一**写入点；组件禁止直接写 layout.mainView。
   function setView(v: MainView) {
     mainView.value = v;
     // 进入模块视图时关闭文件编辑器覆盖层
@@ -197,6 +198,18 @@ export const useLayoutStore = defineStore("layout", () => {
     // M5-W17：视图一变就收起活动条扩展行，避免"换了视图还挂着上一视图的菜单"
     navSection.value = "";
   }
+
+  // ===== Phase 1 canonical View Intent API（View Navigation owner）=====
+  // 一个用户意图 = 一个语义化入口；组件只表达意图，不拼 mainView，不做生命周期决策。
+  // 这些是**纯视图导航**意图，不含 Grid 资源生命周期（后者归 useBrowserStore）。
+  function activateView(v: MainView) { setView(v); }
+  function activateBrowser() { setView("browser"); }
+  function activateHome() { setView("home"); }
+  function activateFiles() { setView("files"); }
+  function activateTerm() { setView("term"); }
+  function activateEditor() { setView("editor"); }
+  // 语义别名：Workspace = 文件工作区视图
+  function activateWorkspace() { setView("files"); }
 
   function toggleSidebar() {
     sidebarOpen.value = !sidebarOpen.value;
@@ -210,8 +223,9 @@ export const useLayoutStore = defineStore("layout", () => {
   function toggleGridToolbar() {
     gridToolbarOpen.value = !gridToolbarOpen.value;
     const browser = useBrowserStore();
-    if (gridToolbarOpen.value && !browser.gridOpen) browser.buildGrid();
-    if (!gridToolbarOpen.value && browser.gridOpen) browser.closeGridAll();
+    // 走 canonical intent：openGrid 只建资源、closeGrid 只销毁资源（均不导航）
+    if (gridToolbarOpen.value && !browser.gridOpen) browser.openGrid();
+    if (!gridToolbarOpen.value && browser.gridOpen) browser.closeGrid();
   }
 
   function setSidebarWidth(w: number) {
@@ -353,6 +367,14 @@ export const useLayoutStore = defineStore("layout", () => {
     showToast,
     isBrowserView,
     setView,
+    // Phase 1 canonical View Intent API
+    activateView,
+    activateBrowser,
+    activateHome,
+    activateFiles,
+    activateTerm,
+    activateEditor,
+    activateWorkspace,
     toggleSidebar,
     toggleClipboard,
     toggleGridToolbar,

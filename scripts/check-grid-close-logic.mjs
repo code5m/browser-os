@@ -71,9 +71,11 @@ function runGridChecks(storeSrc, hostSrc) {
     fail("closeGridAll 函数存在", "useBrowserStore.ts 未找到 async function closeGridAll");
   } else {
     // 1) 核心：关闭宫格时把 mainView 复位为浏览器视图（非空白的关键）
-    if (/layout\.mainView\s*=\s*"browser"/.test(closeGridAll))
+    //    Phase 1：复位统一经 setView（mainView 的唯一写入点），不再直接赋值。
+    //    两种写法都接受，避免把"改用 canonical 入口"误判为回归。
+    if (/layout\.(?:mainView\s*=\s*"browser"|setView\(\s*"browser"\s*\))/.test(closeGridAll))
       ok("closeGridAll 将 mainView 复位为 'browser'（消除空白关键）");
-    else fail("closeGridAll 未复位 mainView", "缺少 layout.mainView = \"browser\"");
+    else fail("closeGridAll 未复位 mainView", "缺少 layout.setView(\"browser\")");
 
     // 2) 仅在当前确为 grid 视图时复位，不打扰其它视图（files/term 等）
     if (/layout\.mainView\s*===\s*"grid"/.test(closeGridAll))

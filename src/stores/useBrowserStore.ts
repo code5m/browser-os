@@ -149,6 +149,19 @@ export const useBrowserStore = defineStore("browser", () => {
   const isBrowserVisible = computed(
     () => layout.mainView === "browser"
   );
+  // ===== Phase 1 Visibility Controller（纯派生，非第二状态源）=====
+  // 由 (mainView, gridOpen) 推导各原生视图期望可见性；native 显隐只是执行结果。
+  // 唯一冻结公式：desiredGridVisibility = gridOpen && mainView === "grid"
+  // （mainView==="browser" 时 Grid 资源仍存活但隐藏，不得可见）。
+  function computeDesiredVisibility(mv: string, go: boolean) {
+    return {
+      browserVisible: mv === "browser",
+      gridVisible: go && mv === "grid",
+    };
+  }
+  const desiredGridVisibility = computed(
+    () => computeDesiredVisibility(layout.mainView, gridOpen.value).gridVisible
+  );
   const aiFiltered = computed(() =>
     aiFilter.value === "全部"
       ? aiSites
@@ -158,7 +171,7 @@ export const useBrowserStore = defineStore("browser", () => {
   async function tabNew(target?: string) {
     const u = target === undefined ? "about:blank" : target.trim() || "about:blank";
     // 网页内 target=_blank / window.open 触发的新页签：若当前不在浏览器视图则切过去
-    if (!layout.isBrowserView()) layout.mainView = "browser";
+    if (!layout.isBrowserView()) layout.setView("browser");
     const t = await bridge.tabNew(u);
     tabs.push(t);
     activeTabId.value = t.id;
@@ -204,7 +217,7 @@ export const useBrowserStore = defineStore("browser", () => {
         await bridge.tabActivate(next.id);
       }
     }
-    if (!tabs.length) layout.mainView = "browser";
+    if (!tabs.length) layout.setView("browser");
     await nextTick();
     relocate();
     syncFreeze();
@@ -319,8 +332,9 @@ export const useBrowserStore = defineStore("browser", () => {
     gridOpen.value = true;
     // 注意：不要在这里覆盖 mainView。由调用方（onItem/grid 工具条）决定切到 grid 视图，
     // 避免 "grid"->"browser" 的二次覆盖打乱 watch 时序导致宫格不显示/页签残留。
+    // 资源已就绪后，若当前不在浏览器/宫格类视图，则切到 grid 视图（经 setView，单一变更入口）。
     if (layout.mainView !== "grid" && layout.mainView !== "browser") {
-      layout.mainView = "grid";
+      layout.setView("grid");
     }
     // 子 webview 已由 create_grid 按上述 urls 完成首次导航，无需再逐个 gridOpen。
     // 等 DOM/子 webview 就绪后重排（scheduleGrid 内部会把激活页签移出屏幕）
@@ -500,7 +514,7 @@ export const useBrowserStore = defineStore("browser", () => {
       await bridge.tabActivate(activeTabId.value).catch(() => {});
     }
     if (layout.mainView === "grid") {
-      layout.mainView = "browser";
+      layout.setView("browser");
     }
     // 宫格关闭后激活页签重新可见 → 解冻
     syncFreeze();
@@ -526,6 +540,50 @@ export const useBrowserStore = defineStore("browser", () => {
     layout.showToast(`已关闭宫格 ${i + 1}`);
   }
 
+  // ===== Phase 1 canonical Intent API（Browser/Grid Resource Lifecycle owner）=====
+  // 组件只调以下语义化入口，禁止手拼 buildGrid/closeGridAll/gridCloseOne 与 mainView。
+  // openGrid：仅确保 Grid 资源存在（不导航）；已存在则不重建。
+  function openGrid() {
+    if (!gridOpen.value) return buildGrid();
+  }
+  // rebuildGrid：按当前 gridCount/gridLayout **重建**资源（格数/布局变更必须走它）。
+  // 与 openGrid 的区别：后端 webview 数量须与 gridCount 一致，只重排会对不存在的
+  // grid-N 发定位（tab not found），故改格数/切四分必须真重建而非 no-op。
+  function rebuildGrid() {
+    return buildGrid();
+  }
+  // closeGrid：仅销毁整个 Grid resource（不导航、不隐藏）。
+  // 若当前 mainView==="grid"，视图收敛由下方 invariant guard 自动派生 activateBrowser。
+  function closeGrid() {
+    return closeGridAll();
+  }
+  // closeGridCell：关闭单个宫格（销毁该子窗，其余保留）。
+  function closeGridCell(i: number) {
+    return closeGridOne(i);
+  }
+  // activateGrid：进入 Grid 主表面（资源已存在则重排，否则创建）。
+  // 与历史行为一致：openModule("grid") + (gridOpen ? layoutGrid : buildGrid)。
+  function activateGrid() {
+    layout.openModule("grid");
+    if (gridOpen.value) layoutGrid();
+    else openGrid();
+  }
+
+  // 状态不变量自动收敛（唯一 reconciliation owner）：
+  // mainView === "grid" 必须 ⇒ gridOpen === true。
+  // 仅在 Grid 资源**消失**（close，gridOpen true→false）而视图仍在 grid 时收敛。
+  // ⚠️ 创建中 mainView 先切到 grid、gridOpen 仍为 false 是**合法中间态**
+  // （buildGrid 的 createGrid 是异步 IPC，gridOpen 在其 resolve 后才置 true）；
+  // 若仅按当前值收敛，首次打开宫格会被弹回 browser、宫格不显示（须点两次）。
+  // 故用 gridOpen 的**前值**区分"正在创建"与"资源已消失"。
+  watch(
+    () => [layout.mainView, gridOpen.value] as const,
+    ([mv, go], prev) => {
+      const prevGo = prev ? prev[1] : false;
+      if (mv === "grid" && !go && prevGo) layout.setView("browser");
+    }
+  );
+
   // ===== 资源扫描（按 id 更新，不覆盖其他页签） =====
   function setResources(r: BrowserResources) {
     resources.value = r;
@@ -542,7 +600,7 @@ export const useBrowserStore = defineStore("browser", () => {
   async function openBrowser() {
     const target = url.value.trim() || "https://www.baidu.com";
     useWorkspaceStore().addRecentUrl(target);
-    layout.mainView = "browser";
+    layout.setView("browser");
     await tabNew(target);
     layout.showToast("已打开。在网页右键 → 保存选区/整页");
   }
@@ -644,8 +702,14 @@ export const useBrowserStore = defineStore("browser", () => {
 
   // 按当前视图同步子 webview 显隐：browser/grid 视图重新定位显示，其它视图移出屏幕
   async function syncViewVisibility() {
-    bridge.debugLog(`syncViewVisibility view=${layout.mainView}`);
-    if (layout.mainView === "browser" || layout.mainView === "grid") {
+    const vis = computeDesiredVisibility(layout.mainView, gridOpen.value);
+    bridge.debugLog(
+      `syncViewVisibility view=${layout.mainView} browserVisible=${vis.browserVisible} gridVisible=${vis.gridVisible}`
+    );
+    // Visibility Controller 输出：browser/grid 视图 → 重定位显示；其它视图 → 移出屏幕。
+    // gridVisible=false（mainView!=grid 或 gridOpen=false）时，宫格子窗被 hideAllWebviews
+    // 移出屏幕但不销毁，符合 "VIEW SWITCH != RESOURCE DESTROY / HIDE != CLOSE"。
+    if (vis.browserVisible || vis.gridVisible) {
       await bridge.hideAllWebviews().catch(() => {});
       relocate();
     } else {
@@ -704,6 +768,14 @@ export const useBrowserStore = defineStore("browser", () => {
     gridSendAi,
     closeGridAll,
     closeGridOne,
+    // Phase 1 canonical Intent API（Browser/Grid resource lifecycle）
+    openGrid,
+    rebuildGrid,
+    closeGrid,
+    closeGridCell,
+    activateGrid,
+    desiredGridVisibility,
+    computeDesiredVisibility,
     gridCols,
     setResources,
     clearResources,

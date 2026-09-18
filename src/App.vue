@@ -79,7 +79,7 @@ onMounted(async () => {
   // M0-0.b 终端吞吐（契约 §6.3）：测量模式下自动挂载终端面板（前端驱动 10 MiB 负载）
   system.loadM0Config().then(() => {
     if (system.m0Cfg?.driver === "term-throughput") {
-      layout.setView("term");
+      layout.activateTerm();
     }
   });
   ws.loadRecents();
@@ -139,7 +139,7 @@ onMounted(async () => {
     if (layout.mainView === "browser") {
       layout.toggleBrowserDock("term");
     } else {
-      layout.setView("term");
+      layout.activateTerm();
     }
     layout.showToast("💻 已打开终端");
   });
@@ -192,11 +192,10 @@ onMounted(async () => {
     } else if (matchKey(e, km.terminal)) {
       e.preventDefault();
       if (layout.mainView === "browser") layout.toggleBrowserDock("term");
-      else layout.setView("term");
+      else layout.activateTerm();
     } else if (matchKey(e, km.grid)) {
       e.preventDefault();
-      layout.openModule("grid");
-      if (browser.gridOpen) browser.layoutGrid(); else browser.buildGrid();
+      browser.activateGrid();
     } else if (matchKey(e, km.home)) {
       e.preventDefault();
       layout.openModule("home");

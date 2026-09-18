@@ -44,9 +44,9 @@ const LAUNCHERS: Launcher[] = [
 //   2) 浏览器主视图不是模块页签，直接切视图
 //   3) 应用列表按需加载后走模块页签（同视图去重复用，不会点出一排重复标签）
 async function openArea(view: MainView) {
-  if (view !== "grid" && browser.gridOpen) await browser.closeGridAll();
+  if (view !== "grid" && browser.gridOpen) await browser.closeGrid();
   if (view === "browser") {
-    layout.setView("browser");
+    layout.activateBrowser();
     return;
   }
   if (view === "apps") system.loadApps();

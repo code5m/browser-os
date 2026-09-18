@@ -18,7 +18,7 @@ const layout = useLayoutStore();
     />
     <button class="primary" @click="browser.openBrowser">打开浏览</button>
     <button @click="browser.tabNew()" title="新建页签">＋ 页签</button>
-    <button v-if="layout.mainView === 'editor'" @click="layout.mainView = 'browser'; browser.relocate()" title="返回浏览器">🌐 浏览器</button>
+    <button v-if="layout.mainView === 'editor'" @click="layout.setView('browser'); browser.relocate()" title="返回浏览器">🌐 浏览器</button>
     <span class="msg">{{ layout.msg }}</span>
   </header>
 </template>

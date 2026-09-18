@@ -8,7 +8,7 @@ const layout = useLayoutStore();
 const browser = useBrowserStore();
 
 function closeEditor() {
-  layout.mainView = "browser";
+  layout.setView("browser");
   browser.relocate();
 }
 </script>

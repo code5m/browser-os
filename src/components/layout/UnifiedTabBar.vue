@@ -149,7 +149,7 @@ async function activateWeb(id: string) {
   // 本函数语义是"切到普通浏览器页签"：必须精确判断是否已处于 browser 视图。
   // 不能用 isBrowserView()（它把 grid 也算作 browser-like），否则宫格视图下
   // mainView 会停留在 grid、schedulePosition 走宫格分支，点击的页签不显示。
-  if (layout.mainView !== "browser") layout.setView("browser");
+  if (layout.mainView !== "browser") layout.activateBrowser();
   await browser.tabSwitch(id);
 }
 
@@ -167,7 +167,7 @@ function activateMod(t: { id: string; view: string; path?: string }) {
   if (t.view === "apps") system.loadApps();
   if (t.path) ws.enterDir(t.path);
   // 宫格页签被关闭后重新激活时，必须重建宫格 webview 内容
-  if (t.view === "grid") { if (browser.gridOpen) browser.layoutGrid(); else browser.buildGrid(); }
+  if (t.view === "grid") { if (browser.gridOpen) browser.layoutGrid(); else browser.openGrid(); }
 }
 </script>
 

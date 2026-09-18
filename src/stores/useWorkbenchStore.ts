@@ -19,7 +19,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     if (view === 'browser') layout.setView('browser');
     else if (view in MODULE_META) layout.openModule(view as MainView);
     if (view === 'grid') {
-      if (browser.gridOpen) browser.layoutGrid(); else void browser.buildGrid();
+      void browser.activateGrid();
     }
   }
   function toggleTools() {

@@ -120,7 +120,7 @@ function setGridLayout(mode: (typeof gridLayouts)[number]["key"]) {
   browser.gridLayout = mode;
   if (mode === "quad") browser.gridCount = 4;
   if (!browser.gridOpen) return;
-  if (countChanged) browser.buildGrid();
+  if (countChanged) browser.rebuildGrid();
   else browser.layoutGrid();
 }
 
@@ -131,7 +131,7 @@ function setGridCount(n: number) {
   if (n !== 4 && browser.gridLayout === "quad") {
     browser.gridLayout = "grid";
   }
-  if (browser.gridOpen) browser.buildGrid();
+  if (browser.gridOpen) browser.rebuildGrid();
 }
 
 // 收藏夹入口：任意视图点击都应"打开"收藏夹，而不是简单取反。
@@ -140,7 +140,7 @@ function setGridCount(n: number) {
 // store 未显式提供 openPanel，故用最小条件 toggle，不改动 store。
 function onToggleBookmarkPanel(): void {
   if (layout.mainView !== "browser") {
-    layout.setView("browser");
+    layout.activateBrowser();
     if (!bookmarks.panelOpen) bookmarks.togglePanel();
     return;
   }
@@ -153,23 +153,22 @@ async function onItem(v: string) {
     return;
   }
   layout.navSection = "";
-  // 离开宫格视图时自动关闭宫格：gridOpen 悬挂为 true 会让浏览视图的定位
-  // 走错分支（tab 不复位、宫格被拉回可视区），且在非浏览器视图空转重试
+  // 离开宫格视图**不再**自动关闭宫格（新语义 HIDE ≠ CLOSE）：资源存活但隐藏。
+  // 历史曾因 gridOpen 悬挂为 true 导致浏览视图定位走错分支（tab 不复位、宫格被拉回
+  // 可视区、非浏览器视图空转重试），现已由 syncViewVisibility 的 Visibility Controller
+  // 按 desiredGridVisibility 统一收敛，不再依赖"离开即销毁"。
   if (v === "apps") system.loadApps();
   if (v === "grid") {
     // 默认 AI 模式：点宫格直接出底部统一输入框（在 buildGrid 前设置，
     // 让输入框先于宫格定位渲染，首次布局即按"已缩矮"的 viewport 计算）
     browser.gridMode = "ai";
-    // 宫格也走模块页签（去重复用），同时重建宫格内容
-    layout.openModule("grid");
-    // 总是重建宫格：buildGrid 内部 createGrid 会先 close_grid 再重建（幂等），
-    // 避免 gridOpen 标志与后端宫格 webview 实际状态脱节导致的"有工具条没宫格"。
-    if (browser.gridOpen) browser.layoutGrid(); else browser.buildGrid();
+    // canonical intent：activateGrid = openModule("grid") + (已开则重排 / 未开则创建)
+    browser.activateGrid();
     return;
   }
   // 浏览器主视图不是模块页签，直接切视图即可
   if (v === "browser") {
-    layout.setView("browser");
+    layout.activateBrowser();
     return;
   }
   // 菜单功能与浏览器一致：点一个就新建/复用一个标签
@@ -395,7 +394,7 @@ async function openDirCenter() {
       </button>
       <button :class="{ active: urlsOpen }" aria-label="编辑各格网址" title="编辑各格网址" @click="urlsOpen = !urlsOpen">网址</button>
       <button :class="{ active: resOpen }" aria-label="查看内存占用" title="查看内存占用" @click="toggleRes">资源</button>
-      <button class="er-danger" aria-label="关闭宫格" @click="layout.navSection = ''; browser.closeGridAll()">关闭宫格</button>
+      <button class="er-danger" aria-label="关闭宫格" @click="layout.navSection = ''; browser.closeGrid()">关闭宫格</button>
       <button class="er-close" aria-label="收起宫格设置" @click="layout.navSection = ''" title="收起">✕</button>
     </div>
     <!-- 资源监控行：主进程 + 每宫格子进程树 RSS（2s 自动刷新） -->

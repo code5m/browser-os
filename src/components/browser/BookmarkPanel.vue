@@ -51,7 +51,7 @@ function hostOf(u: string): string {
 // 侧栏点击一律开内嵌页签：openBrowser 走 bridge.tabNew，不会触发系统默认浏览器
 async function openItem(b: Bookmark) {
   browser.url = b.url;
-  layout.setView("browser");
+  layout.activateBrowser();
   await browser.openBrowser();
 }
 

@@ -117,7 +117,7 @@ export const useSessionStore = defineStore("session", () => {
       const browser = useBrowserStore();
       browser.tabs.push(tab);
       browser.activeTabId = tab.id;
-      layout.mainView = "browser";
+      layout.setView("browser");
       layout.showToast("已恢复会话（部分页面可能需要重新登录）");
     } catch (e) {
       layout.showToast("⚠️ 会话恢复失败");
