@@ -90,7 +90,31 @@ node scripts/check-semantic-registry.mjs --json        # 机器可读
 - R5 默认仅提示，不阻断；需要严格时用 `--strict`。
 - 需要人工判断的（是否真属重复语义）**不强行自动化** —— checker 只报"疑似"，裁决在 SCR/Reviewer。
 
-## 7. 与既有门禁的关系
+## 7. 防退化闭环（已接入 pre-merge）
+
+```text
+Agent / 开发者 修改代码
+        ↓
+读取 Semantic Registry（states / intents / owners / side-effects）
+        ↓
+检查语义冲突（是否与既有语义重复 / 越权 / 副作用未声明）
+        ↓
+pre-merge 门禁（scripts/pre-merge.sh）
+        ↓
+阻止重复语义进入代码
+```
+
+接入点（两处，均为新增，未削弱任何既有检查）：
+
+| 位置 | 行为 |
+|---|---|
+| 正式门禁 `run_pre_merge` | `check-semantic-registry` 已加入 Phase 03 checker 循环，默认模式运行；**仅 fail 阻塞**，warn 不阻塞 |
+| 自检 `run_self_test` | 校验脚本存在 + `--self-test` 必须 ALL_PASS |
+
+验证结果：`bash scripts/pre-merge.sh --self-test` 中本项 PASS（未新增失败；
+仍存在的 `check-terminal-policy.py` / `check-terminal-ui-logic.mjs` 失败为既有债 Debt-004，与本层无关）。
+
+## 8. 与既有门禁的关系
 
 | 门禁 | 职责 |
 |---|---|
@@ -98,4 +122,4 @@ node scripts/check-semantic-registry.mjs --json        # 机器可读
 | `check-semantic-registry.mjs` | 跨语义的重复/越界/副作用防退化（本 Registry 驱动） |
 
 两者互补：前者钉住 Phase 1 结论，后者防止未来语义漂移。
-本 checker 尚未接入 `npm run check`（接入需单独任务，不得顺手改 `package.json`）。
+本 checker **未**接入 `npm run check`（那需要改 `package.json`，属独立改动，不在本阶段范围）。

@@ -528,7 +528,7 @@ run_pre_merge() {
   # Phase 03 checker gate (added by 11-ci). Wires the five boundary checkers + doctor
   # into the pre-merge gate WITHOUT weakening any existing M0-1.c check above.
   pm_log "Phase 03 checker gate (architecture/ui/native/runtime/task-boundary + doctor)…"
-  for c in check-architecture check-ui check-native check-browser-runtime check-task-boundary check-grid-close check-view-intent doctor; do
+  for c in check-architecture check-ui check-native check-browser-runtime check-task-boundary check-grid-close check-view-intent check-semantic-registry doctor; do
     if ! (cd "$ROOT" && node "$SCRIPT_DIR/$c.mjs") >/dev/null 2>&1; then
       pm_fail "phase03 $c.mjs"
     fi
@@ -657,6 +657,11 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/check-view-intent.mjs" ] || { echo "FAIL: check-view-intent.mjs missing"; rc=1; }
   if ! (cd "$ROOT" && node "$SCRIPT_DIR/check-view-intent.mjs" --self-test) >/dev/null 2>&1; then
     echo "FAIL: check-view-intent.mjs --self-test"; rc=1
+  fi
+  # Phase 1.5：Semantic Registry 语义门禁自检（重复状态 / 重复 Intent / Owner 越界 / 副作用误判）。
+  [ -f "$SCRIPT_DIR/check-semantic-registry.mjs" ] || { echo "FAIL: check-semantic-registry.mjs missing"; rc=1; }
+  if ! (cd "$ROOT" && node "$SCRIPT_DIR/check-semantic-registry.mjs" --self-test) >/dev/null 2>&1; then
+    echo "FAIL: check-semantic-registry.mjs --self-test"; rc=1
   fi
   # M5-10/11（Lane A9）：插件策略夹具自检。
   [ -f "$SCRIPT_DIR/check-plugin-policy.py" ] || { echo "FAIL: check-plugin-policy.py missing"; rc=1; }
