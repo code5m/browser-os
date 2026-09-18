@@ -68,16 +68,16 @@ HEAD: 88f898707fa9e02d7f84f088356ed7b272ced876
 
 | 场景 | 状态 | 执行方 |
 |---|---|---|
-| R1 打开宫格 | 未执行（需点击+视觉确认） | 用户 |
-| R2 宫格 → 浏览器 | 未执行 | 用户 |
-| R3 浏览器 → 宫格（状态保留） | 未执行 | 用户 |
-| R4 连续切换 ≥10 次 | 未执行 | 用户 |
-| R5 缩放窗口 | 未执行 | 用户 |
-| R6 最大化 / 还原 | 未执行 | 用户 |
-| **R7 关闭无残留** | **PASS** | **Agent（已验证，见 §8）** |
+| R1 打开宫格 | **PASS** | 用户（人工验收） |
+| R2 宫格 → 浏览器 | **PASS** | 用户（人工验收） |
+| R3 浏览器 → 宫格（状态保留） | **PASS** | 用户（人工验收） |
+| R4 连续切换 ≥10 次 | **PASS** | 用户（人工验收） |
+| R5 缩放窗口 | **PASS** | 用户（人工验收） |
+| R6 最大化 / 还原 | **PASS** | 用户（人工验收） |
+| **R7 关闭无残留** | **PASS** | **Agent（已验证，见 §8 / §9）** |
 | 启动与渲染（附加） | PASS | Agent |
 
-R1–R6 未由 Agent 执行的原因：Agent 无屏幕可见性、无可靠点击能力；且本机 `wmctrl`（物理像素）与 `xdotool`（逻辑像素）存在 **2 倍坐标差**，坐标点击不安全；相关判据（无白屏、无偏移、布局正确）本质为视觉判断，不可由 Agent 断言。
+**R1–R6 的依据声明（重要）**：这六项判据本质为视觉判断（无白屏、无偏移、布局正确、宫格不被覆盖、页面不重新登录），Agent 无屏幕可见性、无可靠点击能力，且本机 `wmctrl`（物理像素）与 `xdotool`（逻辑像素）存在 **2 倍坐标差**，坐标点击不安全。因此 **R1–R6 的 PASS 来自用户在真实桌面的人工验收确认，而非 Agent 自动化证据**。Agent 提供的旁证仅限于：应用在当前 Phase 1 代码下正常启动渲染、宫格子进程被创建并正常关闭、全程无 panic、无进程残留。
 
 ## 7. 已验证：真实桌面启动与渲染
 
@@ -127,15 +127,34 @@ R1–R6 未由 Agent 执行的原因：Agent 无屏幕可见性、无可靠点�
 
 > 注意：本次实例虽未点击宫格，日志显示启动时即创建了 4 个 grid child 与对应 socket，故仍会留下 4 个文件。
 
-## 10. 结论
+## 10. 用户关闭后的 R7 复查（第二次）
+
+用户在桌面完成 R1–R6 并关闭应用后，Agent 再次复查：
+
+| 检查项 | 结果 |
+|---|---|
+| 应用主进程残留 | **无** —— `ps` 精确匹配 `target/debug/mvp-browser-os` 为空 ✅ |
+| 误报说明 | `pgrep -f` 曾命中 pid 681077，但其父进程为 Electron utility 进程（IDE），仅命令行含该路径字符串，**非本应用残留** |
+| 僵尸进程 | 0 ✅ |
+| panic / SIGSEGV | 0 ✅ |
+| 关闭日志 | `[shutdown] completed ok=true already_shutdown=false executed=7`，宫格子进程全部 shutdown ✅ |
+| socket 残留 | 本次 4 个；`sock/` 累计 **138** 个（既有债务，见 §9，非 Phase 1 引入） |
+
+## 11. 结论
 
 ```text
 DATA_MODIFIED: NO
 SYSTEM_INSTALL_MODIFIED: NO
 INSTALLED_VERSION_UNCHANGED: YES (96ebcbd0…)
-R7_SHUTDOWN_NO_RESIDUE: PASS
-R1–R6: NOT_RUN（需用户桌面交互）
-READY_FOR_FINAL_TAG: NO
+R1–R6: PASS（用户人工验收）
+R7_SHUTDOWN_NO_RESIDUE: PASS（Agent 两次验证）
+READY_FOR_FINAL_TAG: YES
 ```
 
-`semantic-phase1-browser-grid-pass` **未创建** —— R1–R6 未执行，创建即为假通过。待用户完成 R1–R6 并确认后，方可创建该 annotated tag（不推送）。
+用户在桌面完成 R1–R6 人工验收并确认通过后，已创建 annotated tag
+**`semantic-phase1-browser-grid-pass`**（本地，**未推送**）。
+
+遗留（不影响本次通过，挂账）：
+
+- 宫格 UDS socket 文件退出时不清理，`sock/` 累计 138 个（自 2026-08-25，非 Phase 1 引入）。
+- R1–R6 无自动化回归覆盖（视觉判据不可自动化）；后续若要机器守护，需补 DOM/进程级探针。
