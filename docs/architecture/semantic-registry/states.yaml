@@ -1,0 +1,227 @@
+# ============================================================
+# Semantic State Registry — 第一批：Browser/Grid + View Navigation
+#
+# 状态分类（README.md 定义）：
+#   ACCEPTED_ADR     已裁决并冻结的语义
+#   CURRENT_FACT     代码中真实存在、已确认，但尚未走 ADR 的事实
+#   OBSERVED_NOT_GOVERNED  真实存在但本批不治理（需 SCR 才能纳入治理）
+#   PROPOSED_CHANGE  拟议，**代码中不存在**，不得当作现状使用
+#
+# 每个受治理状态必须回答：
+#   表达什么 / 不表达什么 / 谁拥有 / 谁能写 / 谁不能写 / 是否派生 / 是否需 ADR
+# ============================================================
+
+version: 1
+registry_scope: Browser/Grid + View Navigation（Phase 1 已确认语义）
+
+# Rule 2（未注册状态）只在这些文件内生效，避免全项目误报
+governed_files:
+  - src/stores/useLayoutStore.ts
+  - src/stores/useBrowserStore.ts
+  - src/composables/useBrowserHost.ts
+
+states:
+
+  # ---------------- View Navigation ----------------
+  mainView:
+    owner: useLayoutStore
+    meaning: 当前用户希望看到的 Main Surface
+    not_meaning:
+      - Grid resource existence
+      - native visibility
+      - lifecycle state
+      - Grid overlay dimension
+    kind: stored
+    derived: false
+    allowed_values:
+      - home
+      - browser
+      - files
+      - clip
+      - arts
+      - grid
+      - apps
+      - term
+      - repo
+      - audit
+      - scripts
+      - commands
+      - tools
+      - db
+      - tasks
+      - skills
+      - agents
+      - graph
+      - plugin
+      - editor
+      - settings
+      - vault
+    canonical_writer:
+      - useLayoutStore.setView
+    forbidden_writers:
+      - components/**
+      - useBrowserStore
+      - any other store or composable
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-1
+    status: ACCEPTED_ADR
+    note: 取值共 22 个，实际名为 term（不是 terminal）
+
+  gridToolbarOpen:
+    owner: useLayoutStore
+    meaning: 宫格工具条是否展开（UI 入口开关）
+    not_meaning:
+      - Grid resource existence
+      - Grid visibility
+    kind: stored
+    derived: false
+    allowed_values:
+      - true
+      - false
+    canonical_writer:
+      - useLayoutStore.toggleGridToolbar
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: toggleGridToolbar 本身是 dead code（Debt-002），但状态语义仍归 layout
+
+  # ---------------- Browser/Grid Resource ----------------
+  gridOpen:
+    owner: useBrowserStore
+    meaning: Grid resource 是否存在（原生窗是否创建）
+    not_meaning:
+      - Grid visibility
+      - Grid 是否可见（需 mainView 参与）
+      - lifecycle enum
+    kind: stored
+    derived: false
+    allowed_values:
+      - true
+      - false
+    canonical_writer:
+      - useBrowserStore.buildGrid
+      - useBrowserStore.closeGridAll
+    forbidden_writers:
+      - components/**
+      - useLayoutStore
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-2
+    status: ACCEPTED_ADR
+
+  activeTabId:
+    owner: useBrowserStore
+    meaning: 当前激活的浏览器页签 id
+    not_meaning:
+      - 视图（view）
+      - 激活的宫格格子
+    kind: stored
+    derived: false
+    allowed_values:
+      - string (tab id)
+      - empty string
+    canonical_writer:
+      - useBrowserStore.tabSwitch
+      - useBrowserStore.tabNew
+      - useBrowserStore.closeTabNow
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: 另有派生 activeTab（computed），见 observed_not_governed
+
+  # ---------------- Derived（禁止存储） ----------------
+  desiredGridVisibility:
+    owner: useBrowserStore
+    meaning: Grid 是否应可见 = gridOpen && mainView === "grid"
+    not_meaning:
+      - 独立状态（纯派生，无独立自由度）
+    kind: derived
+    derived: true
+    derived_from:
+      - gridOpen
+      - mainView
+    formula: gridOpen && mainView === "grid"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone（派生量禁止写入）
+    duplicate_names:
+      - gridVisible
+      - gridVisibility
+      - isGridVisible
+      - gridShown
+    adr_required: true
+    adr: ADR-P1A-3
+    status: ACCEPTED_ADR
+    note: 上述 duplicate_names 若被声明为 ref/computed/reactive 存储即违规；作为对象字段名（gridVisible:）不违规
+
+  isBrowserVisible:
+    owner: useBrowserStore
+    meaning: 浏览器 webview 是否可见 = mainView === "browser"
+    not_meaning:
+      - gridOpen 的耦合（禁止回退到 !gridOpen && mainView==="browser"）
+    kind: derived
+    derived: true
+    derived_from:
+      - mainView
+    formula: mainView === "browser"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone（派生量禁止写入）
+    duplicate_names:
+      - browserVisible
+      - isBrowserShown
+    adr_required: true
+    adr: ADR-P1A-10
+    status: ACCEPTED_ADR
+
+# ------------------------------------------------------------
+# 已观察到但本批不治理（真实存在的声明；新增治理需走 SCR）
+# checker 对它们只报 INFO，不算失败。目的：显式登记，不静默消失。
+# ------------------------------------------------------------
+observed_not_governed:
+
+  useBrowserStore:
+    - url
+    - tabs
+    - activeTab
+    - gridSession
+    - gridCount
+    - gridUrl
+    - gridUrls
+    - gridLayout
+    - gridMode
+    - gridAiInput
+    - gridRects
+    - resources
+    - aiNavOpen
+    - aiFilter
+    - aiFiltered
+    - recentlyClosed
+
+  useLayoutStore:
+    - modTabs
+    - activeModTab
+    - leftTab
+    - addrMode
+    - compactMode
+    - browserDockOpen
+    - browserDockTab
+    - clipOpen
+    - fileEditorOpen
+    - fileTreeWidth
+    - sidebarOpen
+    - sidebarWidth
+    - windowWidth
+    - navSection
+    - navDensity
+    - navTopViews
+    - leftResizing
+    - msg
+
+  useBrowserHost:
+    - browserHost

@@ -1,0 +1,110 @@
+# ============================================================
+# Semantic Owner Registry
+#
+# 目的：防止 Component 直接修改生命周期，防止 store 跨界写别人的状态。
+# Rule 3（OWNER_VIOLATION）据此判定。
+# ============================================================
+
+version: 1
+registry_scope: Browser/Grid + View Navigation（Phase 1 已确认语义）
+
+owners:
+
+  view_navigation:
+    owner: useLayoutStore
+    owns:
+      - mainView
+      - gridToolbarOpen
+    owner_only_api:
+      - setView
+      - activateView
+      - activateBrowser
+      - activateHome
+      - activateFiles
+      - activateTerm
+      - activateEditor
+      - activateWorkspace
+      - openModule
+    forbidden_callers:
+      - components/**（不得直写 mainView）
+      - useBrowserStore（不得直写 mainView，须经 layout.setView）
+    may_call:
+      - useBrowserStore（可调 setView / openModule 等被授权的导航入口）
+    rationale: 通用导航 store；若兼管 Grid 资源生命周期会反向依赖 useBrowserStore 形成循环
+    status: ACCEPTED_ADR
+
+  browser_grid_lifecycle:
+    owner: useBrowserStore
+    owns:
+      - gridOpen
+      - grid lifecycle
+      - desiredGridVisibility (derived)
+      - isBrowserVisible (derived)
+    owner_only_api:
+      - buildGrid
+      - closeGridAll
+      - closeGridOne
+    public_intent_api:
+      - activateGrid
+      - openGrid
+      - rebuildGrid
+      - closeGrid
+      - closeGridCell
+    forbidden_callers:
+      - components/**（不得直调生命周期原语）
+      - 任何非授权 store / composable
+    authorized_callers:
+      - useBrowserStore（owner 自身）
+      - useLayoutStore（经授权入口，如 toggleGridToolbar 调 openGrid / closeGrid）
+    rationale: 资源生命周期归母属 store；useLayoutStore 退为视图状态执行点
+    status: ACCEPTED_ADR
+
+  native_execution:
+    owner: bridge
+    owner_alt: Rust
+    owns:
+      - bounds
+      - visibility effect
+      - webview position
+    owner_only_api:
+      - gridPosition
+      - tabPosition
+      - hideWebview
+      - hideAllWebviews
+      - createGrid
+      - closeGrid
+    forbidden_callers:
+      - 任何把 native 结果当作域真源回读的模块
+    rationale: native 显隐是执行结果，单向派生，禁止回读为真相（ADR-P1A-4）
+    status: ACCEPTED_ADR
+
+  browser_tabs:
+    owner: useBrowserStore
+    owns:
+      - activeTabId
+      - tabs (reactive)
+      - url
+    owner_only_api:
+      - tabSwitch
+      - closeTabNow
+      - tabNew
+    forbidden_callers:
+      - components/**（不得直写 activeTabId）
+    status: CURRENT_FACT
+
+# ------------------------------------------------------------
+# 越界判定补充
+# ------------------------------------------------------------
+violation_patterns:
+  - id: COMPONENT_WRITES_MAINVIEW
+    desc: 组件直接写 mainView（layout.mainView = ... / .mainView = ...）
+    severity: fail
+  - id: COMPONENT_CALLS_LIFECYCLE_PRIMITIVE
+    desc: 组件直接调 buildGrid / closeGridAll / gridCloseOne 等原语
+    severity: fail
+  - id: NON_OWNER_CALLS_LIFECYCLE_INTENT
+    desc: 非 owner 文件调用 openGrid / rebuildGrid / closeGrid / closeGridCell
+    severity: fail
+  - id: NON_OWNER_CALLS_NATIVE_DESTROY
+    desc: 非 owner（useBrowserStore）文件调用 bridge.closeGrid
+    severity: fail

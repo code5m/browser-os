@@ -1,0 +1,175 @@
+# ============================================================
+# Semantic Intent Registry — 一个用户意图 = 一个 canonical 入口
+#
+# 禁止注册已被 ADR 否决的多义入口（exitGrid(mode) 等）。
+# 状态分类见 README.md；PROPOSED_CHANGE 表示代码中尚不存在。
+# ============================================================
+
+version: 1
+registry_scope: Browser/Grid + View Navigation（Phase 1 已确认语义）
+
+intents:
+
+  # ---------------- View Navigation（owner: useLayoutStore）----------------
+  activateView:
+    meaning: 通用视图导航（切到指定 Main Surface）
+    owner: useLayoutStore
+    allowed_effects:
+      - mainView = v
+    forbidden_effects:
+      - destroy any resource
+      - create any resource
+    duplicate_names: []
+    status: ACCEPTED_ADR
+
+  activateBrowser:
+    meaning: 切到浏览器主表面
+    owner: useLayoutStore
+    allowed_effects:
+      - mainView = browser
+    forbidden_effects:
+      - destroy Grid resource
+      - closeGrid
+    duplicate_names:
+      - showBrowserView
+      - enterBrowser
+      - gotoBrowser
+    status: ACCEPTED_ADR
+
+  activateHome:
+    meaning: 切到主页
+    owner: useLayoutStore
+    allowed_effects:
+      - mainView = home
+    forbidden_effects:
+      - destroy Grid resource
+    duplicate_names: []
+    status: ACCEPTED_ADR
+
+  # ---------------- Browser/Grid Lifecycle（owner: useBrowserStore）----------------
+  activateGrid:
+    meaning: 进入 Grid 主表面（资源已存在则重排，否则创建）
+    owner: useBrowserStore
+    allowed_effects:
+      - ensure grid exists (openGrid)
+      - mainView = grid
+      - layout grid
+    forbidden_effects:
+      - destroy grid
+      - reload existing grid
+      - recreate existing grid
+    duplicate_names:
+      - showGridView
+      - enterGrid
+      - openGridPage
+      - gotoGrid
+    status: ACCEPTED_ADR
+    note: 内部经 layout.openModule("grid")，再按 gridOpen 决定 layoutGrid 或 openGrid
+
+  openGrid:
+    meaning: 确保 Grid 资源存在（不导航）
+    owner: useBrowserStore
+    allowed_effects:
+      - create grid if absent (buildGrid)
+    forbidden_effects:
+      - navigate / change mainView
+      - rebuild existing grid（改格数/布局必须走 rebuildGrid）
+    duplicate_names:
+      - ensureGrid
+      - createGridIfNeeded
+    status: ACCEPTED_ADR
+    note: 与 rebuildGrid 语义分离，禁止合并（Regression B）
+
+  rebuildGrid:
+    meaning: 按当前 gridCount/gridLayout 真重建 Grid 资源
+    owner: useBrowserStore
+    allowed_effects:
+      - destroy and recreate grid webviews
+      - gridSession += 1
+    forbidden_effects:
+      - navigate / change mainView
+    duplicate_names:
+      - recreateGrid
+      - resetGrid
+    status: ACCEPTED_ADR
+    note: 改格数/切布局必须走它；openGrid 是 no-op 不能替代（Regression B）
+
+  closeGrid:
+    meaning: 销毁 Grid 资源（显式关闭）
+    owner: useBrowserStore
+    allowed_effects:
+      - gridOpen = false
+      - bridge.closeGrid
+      - 若 mainView==="grid" 派生收敛为 browser（由不变量守卫，非本入口直写）
+    forbidden_effects:
+      - 承担普通视图切换语义（view switch 是 hide only）
+      - 直接写 mainView（由 owner 守卫派生）
+    duplicate_names:
+      - destroyGrid
+      - shutdownGrid
+      - exitGrid
+    status: ACCEPTED_ADR
+    note: App shutdown 与产品级 closeGrid 意图分离，底层可复用 destroy 原语但语义不得混同
+
+  closeGridCell:
+    meaning: 关闭单个宫格（销毁该子窗，其余保留并重排）
+    owner: useBrowserStore
+    allowed_effects:
+      - bridge.gridCloseOne
+      - 剩余格子重排
+      - 剩 1 格时整体 closeGrid
+    forbidden_effects:
+      - navigate
+    duplicate_names: []
+    status: CURRENT_FACT
+    note: 当前无 UI 调用方（Debt-003，orphan API）
+
+  tabSwitch:
+    meaning: 切换到指定页签并激活
+    owner: useBrowserStore
+    allowed_effects:
+      - activeTabId = id
+      - url = tab.url
+      - bridge.tabActivate
+    forbidden_effects:
+      - create or destroy tab
+      - change mainView
+    duplicate_names:
+      - switchTab
+      - activateTab
+      - selectTab
+    status: CURRENT_FACT
+    note: 真实入口名为 tabSwitch；清单中的 switchTab 在代码中不存在（PROPOSED_CHANGE）
+
+  closeTabNow:
+    meaning: 关闭指定页签（立即，不经确认）
+    owner: useBrowserStore
+    allowed_effects:
+      - bridge.tabClose
+      - 维护 recentlyClosed
+      - 无页签时 setView("browser")
+    forbidden_effects:
+      - 销毁浏览器 webview 资源
+    duplicate_names:
+      - closeTab
+      - removeTab
+    status: CURRENT_FACT
+    note: 真实入口名为 closeTabNow；清单中的 closeTab 在代码中不存在（PROPOSED_CHANGE）
+
+# ------------------------------------------------------------
+# 已否决：禁止注册 / 禁止出现在代码中
+# ------------------------------------------------------------
+rejected_intents:
+
+  exitGrid:
+    reason: 多义万能 API（一个动词承担 hide/destroy/切视图），mode 参数易误用
+    rejected_by: phase1-browser-grid/07-ALTERNATIVES.md §2
+    status: REJECTED
+    action: 代码中出现即 SEMANTIC_INTENT_DUPLICATE（阻断级）
+
+# ------------------------------------------------------------
+# 拟议但代码中不存在（不得当作现状引用）
+# ------------------------------------------------------------
+proposed_not_present:
+  - switchTab
+  - closeTab

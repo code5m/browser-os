@@ -1,0 +1,91 @@
+# ============================================================
+# Semantic Side Effect Registry
+#
+# 记录**真实行为**，而不是函数名字。
+# 目的：防止 AI / 开发者看到 position() 误认为"只是移动"。
+# ============================================================
+
+version: 1
+registry_scope: Browser/Grid + View Navigation（Phase 1 已确认语义）
+
+# Rule 5 的声明方式：调用点所在函数体内（或调用行上下 6 行内）
+# 出现 awareness marker 注释即视为"已知晓该副作用"。
+awareness_marker: "side-effect"
+awareness_window_lines: 6
+
+side_effects:
+
+  gridPosition:
+    declared: position
+    actual:
+      - set_bounds
+      - resize
+      - show
+    warning: position has visibility side effect —— 在屏 bounds 即 show，离屏即 hide
+    call_sites: bridge.gridPosition
+    requires_declaration: true
+    status: ACCEPTED_ADR
+    note: Rust 侧无 show_* 命令，显示=在屏定位（position → show 契约，不拆分）
+
+  tabPosition:
+    declared: position
+    actual:
+      - set_bounds
+      - resize
+      - show
+    warning: position has visibility side effect —— 在屏 bounds 即 show，离屏即 hide
+    call_sites: bridge.tabPosition
+    requires_declaration: true
+    status: ACCEPTED_ADR
+
+  closeGrid:
+    declared: destroy grid
+    actual:
+      - destroy native webviews
+      - release grid child processes
+    warning: 这是 DESTROY，不是 hide；不可用于普通视图切换
+    call_sites: bridge.closeGrid
+    requires_declaration: true
+    status: ACCEPTED_ADR
+    note: 仅 owner（useBrowserStore）可调用
+
+  hideWebview:
+    declared: hide one webview
+    actual:
+      - move offscreen
+      - 资源仍存活
+    warning: hide ≠ destroy；资源存活，可重新定位回屏
+    call_sites: bridge.hideWebview
+    requires_declaration: false
+    status: ACCEPTED_ADR
+
+  hideAllWebviews:
+    declared: hide all webviews
+    actual:
+      - move all offscreen
+      - 资源全部存活
+    warning: hide ≠ destroy；这是视图切换时的正确动作（HIDE ONLY）
+    call_sites: bridge.hideAllWebviews
+    requires_declaration: false
+    status: ACCEPTED_ADR
+
+  rebuildGrid:
+    declared: rebuild grid
+    actual:
+      - destroy existing grid webviews
+      - create new grid webviews
+      - gridSession += 1
+      - 定位缓存失效
+    warning: 真重建（有 destroy），不是重排；改格数/布局才可用
+    call_sites: rebuildGrid
+    requires_declaration: true
+    status: ACCEPTED_ADR
+
+# ------------------------------------------------------------
+# 清单中列出但代码中不存在的项（如实标注，不得当作现状）
+# ------------------------------------------------------------
+not_found:
+  sync_browser_scene:
+    reason: 全仓 grep 无命中（src/ 与 src-tauri/src/ 均无）
+    status: NOT_FOUND
+    action: 不纳入 registry；若将来出现须先走 SCR 登记其真实副作用
