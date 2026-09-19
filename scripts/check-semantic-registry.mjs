@@ -400,7 +400,105 @@ function rule8(files, reg) {
   return out;
 }
 
-const RULES = [rule1, rule2, rule3, rule4, rule5, rule6, rule7, rule8];
+// ============================ R9：受治理状态唯一写者（Writer Enforcement）========================
+// Phase 6B — 把“Owner 唯一”提升为“Owner 唯一 + Writer 唯一 + Checker 可证明”。
+// 仅对 registry 中 `single_owner_required === true` 且声明了 `canonical_writer` 的**存储态**强制：
+//   a) owner 文件内：写入必须发生在 canonical_writer 列出的函数体内；函数外或错误函数内写入 = FAIL。
+//   b) 非 owner 文件（含组件 / 其它 store / composable）：任何 `state.value =` 直写 = FAIL。
+// 区分读取与写入：写入 = `.value` 后接 `=` / `+=`；读取（`.value` 后非赋值，如 `===` / 取值）不误报。
+// 真源：states.yaml 的 canonical_writer / forbidden_writers / owner；不硬编码 allow-list（遵守 §6 原则）。
+function findFunctionRanges(code) {
+  const fns = [];
+  const declRe = /(?:async\s+)?function\s+([A-Za-z_$][\w$]*)|(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;{]*?)?\s*=\s*(?:async\s+)?(?:function\s*)?\(/g;
+  let m;
+  while ((m = declRe.exec(code))) {
+    const name = m[1] || m[2];
+    const p = code.indexOf("(", m.index);
+    if (p < 0) continue;
+    let depth = 0, bodyStart = -1;
+    for (let j = p; j < code.length; j++) {
+      const c = code[j];
+      if (c === "(") depth++;
+      else if (c === ")") {
+        depth--;
+        if (depth === 0) {
+          let k = j + 1;
+          while (k < code.length && /\s/.test(code[k])) k++;
+          if (code[k] === "{") bodyStart = k;
+          break;
+        }
+      }
+    }
+    if (bodyStart < 0) continue;
+    let d = 0, bodyEnd = -1;
+    for (let j = bodyStart; j < code.length; j++) {
+      const c = code[j];
+      if (c === "{") d++;
+      else if (c === "}") {
+        d--;
+        if (d === 0) { bodyEnd = j; break; }
+      }
+    }
+    if (bodyEnd >= 0) fns.push({ name, start: bodyStart, end: bodyEnd });
+  }
+  return fns;
+}
+function enclosingFunction(fns, idx) {
+  let best = null;
+  for (const fn of fns) {
+    if (idx >= fn.start && idx <= fn.end) {
+      if (!best || (fn.end - fn.start) < (best.end - best.start)) best = fn;
+    }
+  }
+  return best ? best.name : null;
+}
+
+function rule9(files, reg) {
+  const out = [];
+  const states = (reg.states && reg.states.states) || {};
+  const OWNER_FILE = {
+    useBrowserStore: "src/stores/useBrowserStore.ts",
+    useLayoutStore: "src/stores/useLayoutStore.ts",
+    useWorkspaceStore: "src/stores/useWorkspaceStore.ts",
+    useBookmarkStore: "src/stores/useBookmarkStore.ts",
+    useSystemStore: "src/stores/useSystemStore.ts",
+  };
+  for (const [key, def] of Object.entries(states)) {
+    if (!def) continue;
+    if (def.single_owner_required !== true) continue; // 仅对显式要求唯一 owner（Phase 6B 范围）的状态强制
+    if (def.derived === true) continue;               // 派生态由 R6 守护，不在此重复
+    const cw = asList(def.canonical_writer).map(String).map((s) => String(s).split(".").pop());
+    if (!cw.length) continue;                          // 未声明 canonical_writer 则跳过（避免误报，不硬编码）
+    const owner = String(def.owner || "");
+    const ownerFile = OWNER_FILE[owner];
+    if (!ownerFile) continue;                          // credential 等 Rust 侧 owner 无文件映射，跳过
+    const NAME = key;
+    const writeRe = new RegExp("\\b" + NAME + "\\.value\\s*(?:\\+=|=(?![=>]))", "g");
+    for (const f of files) {
+      const code = stripComments(f.src);
+      const fns = findFunctionRanges(code);
+      let m;
+      while ((m = writeRe.exec(code))) {
+        const idx = m.index;
+        const lineIdx = code.slice(0, idx).split("\n").length - 1;
+        const isOwnerFile = f.path === ownerFile;
+        if (isOwnerFile) {
+          const enc = enclosingFunction(fns, idx);
+          if (!enc) {
+            out.push({ rule: "R9", code: "SEMANTIC_STATE_WRITER_VIOLATION", file: f.path, line: lineIdx + 1, detail: `"${NAME}"（owner=${owner}）在 owner 文件 ${ownerFile} 顶层（函数外）被写入，必须位于 canonical_writer 函数之一（${cw.join(" / ")}）`, severity: "fail" });
+          } else if (!cw.includes(enc)) {
+            out.push({ rule: "R9", code: "SEMANTIC_STATE_WRITER_VIOLATION", file: f.path, line: lineIdx + 1, detail: `"${NAME}" 在 owner 文件 ${ownerFile} 内由非 canonical 函数 "${enc}" 写入（允许：${cw.join(" / ")}）`, severity: "fail" });
+          }
+        } else {
+          out.push({ rule: "R9", code: "SEMANTIC_STATE_WRITER_VIOLATION", file: f.path, line: lineIdx + 1, detail: `"${NAME}"（owner=${owner}）在非 owner 文件 ${f.path} 被直接写入 .value=（违反 canonical_writer：${cw.join(" / ")}）；仅 owner 文件内的 canonical_writer 函数可写`, severity: "fail" });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+const RULES = [rule1, rule2, rule3, rule4, rule5, rule6, rule7, rule8, rule9];
 
 function analyze(files, reg) {
   const findings = [];
@@ -428,6 +526,7 @@ function printHelp() {
   R6 SEMANTIC_DERIVED_STATE_STORED 派生状态（derived:true）被存为 ref/reactive 或被 .value= 赋值（第二真源）
   R7 SENSITIVE_INPUT_LEAK        敏感输入（sensitive:true 状态）流入 console/localStorage/export 泄露汇（须走安全凭据流 db.connect）
   R8 SEMANTIC_STATE_MULTI_OWNER  受治理存储态在 owner 文件之外被声明（第二真源）；派生面板在 store 中被存为态
+  R9 SEMANTIC_STATE_WRITER_VIOLATION  受治理存储态的写入点越权（非 owner 文件直写；或 owner 文件内写在非 canonical_writer 函数）
 
 真源: docs/architecture/semantic-registry/{states,intents,owners,side-effects}.yaml`);
 }
@@ -456,6 +555,8 @@ async function rebuildGrid() { /* side-effect: destroy+create webviews */ await 
   { path: "src/stores/__fx_ws_derived.ts", src: `const currentLocalPath = computed(() => inlineFile.value || filePath.value);` },
   { path: "src/stores/__fx_bm_derived.ts", src: `const sorted = computed(() => items.value.slice());` },
   { path: "src/components/workspace/DatabasePanel.vue", src: `const password = ref(""); await db.connect(password.value); password.value = "";` },
+  // R9 false-positive：读取 .value（含 === 比较）不得误报为写入
+  { path: "src/stores/__fx_r9_fp.ts", src: `const x = gridSession.value; if (gridSession.value === 0) { const y = gridSession.value; }` },
 ];
 const POS_FILES = [
   {
@@ -469,6 +570,8 @@ async function closeGridAll() { gridOpen.value = false; await bridge.closeGrid()
   },
   { path: "src/components/x/A.vue", src: `layout.activateBrowser(); browser.activateGrid();` },
   { path: "src/components/browser/CredentialList.vue", src: `bridge.fillBrowserCredential(credentialId, tabId); bridge.listBrowserCredentials();` },
+  // R9 positive：owner 文件内 canonical_writer 函数写 gridSession（合法，不误报）
+  { path: "src/stores/useBrowserStore.ts", src: `const gridSession = ref(0);\nasync function buildGrid() { gridSession.value += 1; }\nfunction forceGridRelayout() { gridSession.value += 1; }` },
 ];
 // 每条 negative fixture 声明期望级别：R5 是提示级(warn)，其余是阻断级(fail)
 const NEG_FILES = {
@@ -483,6 +586,14 @@ const NEG_FILES = {
     { path: "src/stores/useLayoutStore.ts", src: `const aiNavOpen = ref(false);` },
     { path: "src/stores/__fx_bookmark_derived_bad.ts", src: `const bmPanelOpen = ref(false);` },
     { path: "src/stores/__fx_owner_bad.ts", src: `const gridSession = ref(0);` },
+  ] },
+  R9: { expect: "fail", files: [
+    // 非 owner store（useLayoutStore）跨域直写 gridSession
+    { path: "src/stores/useLayoutStore.ts", src: `function strayGridSession() { gridSession.value = 1; }` },
+    // 组件直写（非 owner 文件）
+    { path: "src/components/browser/BadGrid.vue", src: `function onX() { browser.gridSession.value += 1; }` },
+    // owner 文件内写在非 canonical 函数
+    { path: "src/stores/useBrowserStore.ts", src: `const gridSession = ref(0);\nasync function buildGrid() { gridSession.value += 1; }\nfunction forceGridRelayout() { gridSession.value += 1; }\nfunction rogueWriter() { gridSession.value += 1; }` },
   ] },
 };
 
