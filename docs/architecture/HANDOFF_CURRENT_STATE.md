@@ -439,6 +439,43 @@ tag: capability-phase8a-physical-foundation-pass
 
 ---
 
+## 4q. Phase 8B 阻塞点（Bookmark 无法自动达到 C3 —— 需人工裁决）
+
+```text
+【结论】Bookmark 的物理迁移遇到 Semantic Governance 硬约束，触发 HARD STOP #7/#9，
+       已停止自动推进，等待人工裁决。未为了凑成熟度而改动任何语义。
+
+【证据链】
+1) Shell 现状依赖（grep 实测）：
+   MainArea.vue     import useBookmarkStore + BookmarkPanel.vue；<BookmarkPanel v-if="bmPanelOpen"/>
+   ActivityBar.vue  import useBookmarkStore + BookmarkStar.vue；
+                    读 bookmarks.panelOpen、@click onToggleBookmarkPanel
+
+2) Phase 6A 冻结的闭包契约（check-semantic-closure-logic.mjs 断言）：
+   bmPanelOpen = bookmarks.panelOpen && layout.mainView === 'browser'
+   → bookmark store 的 panelOpen 是「派生真源」的一部分
+
+3) 因此形成死锁：
+   要达到 C3（Shell 不知道 Bookmark store）必须移除 MainArea/ActivityBar 对
+   useBookmarkStore 的依赖 → 但 bmPanelOpen 依赖 panelOpen → 必须迁移 panelOpen 归属
+   → 迁移 owner = 改变 Semantic Registry 已冻结语义 → 须走 SCR + Reviewer 裁决
+
+【可选路径（均未擅自执行）】
+  A) 接受 Bookmark 停在 C2（物理隔离成立，但 Shell 仍静态依赖 public entry）
+  B) 走 SCR：将 panelOpen 归属迁到 useLayoutStore，改动 Semantic Registry + closure 断言
+  C) Shell 改异步 slot（dynamic import）但不改 panelOpen 归属 → 仍读 panelOpen，C3 存疑
+
+【已确认可安全做且未做】
+  物理移动 store/UI 到 src/capabilities/bookmark/（机械改动，build 可验证，达 C2）
+  —— 因需同步更新 semantic-registry governed_files 路径，且本轮预算/验证能力有限，
+     未在无人值守下强行执行。
+```
+
+> **教训沉淀**：`governed_files` 是按路径治理的；物理模块化与冻结语义存在结构性耦合。
+> 后续 Phase（8C/8D/8E）都会撞到同一问题，必须先由人裁决「移动是否连带更新路径」的原则。
+
+---
+
 ## 5. Current Task Status
 
 ```text
