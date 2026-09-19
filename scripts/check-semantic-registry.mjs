@@ -321,7 +321,43 @@ function rule6(files, reg) {
   return out;
 }
 
-const RULES = [rule1, rule2, rule3, rule4, rule5, rule6];
+// ============================ R7：敏感输入不得泄露 ============================
+// 依据 states.yaml 中 sensitive: true 的状态（如 databaseCredentialInput，frontend_ident: password）。
+// 任何前端文件若把该敏感标识符流入泄露汇（console.log/error/warn/debug/info、
+// localStorage/sessionStorage.setItem、或 export 出原始值）即阻断。
+// 允许：db.connect(password.value)（安全凭据流）、password.value=""（清空）、redactSecrets(password)（脱敏）。
+function rule7(files, reg) {
+  const out = [];
+  const states = (reg.states && reg.states.states) || {};
+  const idents = [];
+  for (const [, d] of Object.entries(states)) {
+    if (d && d.sensitive === true) idents.push(...asList(d.frontend_ident).map(String));
+  }
+  if (!idents.length) return out;
+  for (const f of files) {
+    if (!f.path.endsWith(".ts") && !f.path.endsWith(".vue")) continue;
+    const code = stripComments(f.src);
+    const rawLines = f.src.split(/\r?\n/);
+    for (const ident of idents) {
+      const word = new RegExp("\\b" + ident + "\\b");
+      if (!word.test(code)) continue;
+      for (const line of rawLines) {
+        const s = stripComments(line);
+        if (!word.test(s)) continue;
+        const isConsole = /\bconsole\.(?:log|error|warn|debug|info)\s*\(/.test(s);
+        const isStorage = /(?:\blocalStorage|\bsessionStorage)\s*(?:\.\s*setItem\s*\(|\[)/.test(s);
+        const isExport = /\bexport\b\s+(?:const|let|var)\s+\w+\s*=\s*[^;]*\b/.test(s) && word.test(s);
+        if (!isConsole && !isStorage && !isExport) continue;
+        if (/db\.connect\s*\(|redactSecrets\s*\(|password\.value\s*=\s*""/.test(s)) continue;
+        out.push({ rule: "R7", code: "SENSITIVE_INPUT_LEAK", file: f.path, detail: `敏感输入「${ident}」流入泄露汇（console/localStorage/export），违反 sensitiveInput 契约（须走安全凭据流 db.connect）`, severity: "fail" });
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+const RULES = [rule1, rule2, rule3, rule4, rule5, rule6, rule7];
 
 function analyze(files, reg) {
   const findings = [];
@@ -347,6 +383,7 @@ function printHelp() {
   R4 SEMANTIC_INTENT_DUPLICATE     重复 Intent（含已否决 exitGrid）
   R5 SEMANTIC_SIDE_EFFECT_UNKNOWN  调用带副作用 API 未声明认知（默认提示）
   R6 SEMANTIC_DERIVED_STATE_STORED 派生状态（derived:true）被存为 ref/reactive 或被 .value= 赋值（第二真源）
+  R7 SENSITIVE_INPUT_LEAK        敏感输入（sensitive:true 状态）流入 console/localStorage/export 泄露汇（须走安全凭据流 db.connect）
 
 真源: docs/architecture/semantic-registry/{states,intents,owners,side-effects}.yaml`);
 }
@@ -395,6 +432,7 @@ const NEG_FILES = {
   R2: { expect: "fail", files: [{ path: "src/stores/useBrowserStore.ts", src: `const activeSurface = ref("browser");` }, { path: "src/stores/useBookmarkStore.ts", src: `const extraBookmarks = ref<Bookmark[]>([]);` }, { path: "src/stores/useSystemStore.ts", src: `const extraPanes = ref<{id:string;cwd?:string}[]>([]);` }] },
   R3: { expect: "fail", files: [{ path: "src/components/x/B.vue", src: `browser.closeGrid(); layout.mainView = "browser";` }, { path: "src/components/browser/BadCred.vue", src: `KeyringStore.save_token("repo", token);` }] },
   R4: { expect: "fail", files: [{ path: "src/stores/useBrowserStore.ts", src: `function showGridView() { setView("grid"); }` }, { path: "src/composables/__fx_term.ts", src: `function newTerm(){ return 0; }` }, { path: "src/composables/__fx_cred.ts", src: `function exposePassword(){ return readKeyring(); }` }] },
+  R7: { expect: "fail", files: [{ path: "src/components/workspace/Leak.vue", src: `const password = ref(""); console.log("pw", password.value);` }] },
   R5: { expect: "warn", files: [{ path: "src/composables/useBrowserHost.ts", src: `bridge.tabPosition(id, rect);` }] },
   R6: { expect: "fail", files: [{ path: "src/stores/__fx_ws_derived_bad.ts", src: `const currentLocalPath = ref("");\ncurrentLocalPath.value = "/x";` }] },
 };

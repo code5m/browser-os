@@ -144,6 +144,23 @@ side_effects:
     status: CURRENT_FACT
     note: Phase 5 文档级登记（requires_declaration=false，同 keyringWrite 口径）
 
+  sensitiveInput:
+    declared: sensitive credential input handling
+    actual:
+      - 密码/密钥等敏感输入只经安全凭据流（db.connect(password) → keyring）
+      - 提交后立即从内存清空（password.value = ""）
+    warning: 敏感输入禁止写入 console / localStorage / sessionStorage / 普通 store / export；只走安全凭据流
+    forbidden:
+      - log（console.log/error/warn/... 含敏感输入）
+      - plainStorage（localStorage / sessionStorage.setItem）
+      - export（export const x = <敏感输入>）
+    allowed:
+      - secureCredentialFlow（db.connect(password.value) 后清空）
+    call_sites: db.connect（password 作为瞬时入参）
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: Phase 5.1-B 登记（Debt-5-1 收口）；R7 据此对 sensitive:true 状态的 frontend_ident（password）做泄露汇扫描，允许 db.connect 安全流与 redactSecrets 脱敏
+
 # ------------------------------------------------------------
 # 清单中列出但代码中不存在的项（如实标注，不得当作现状）
 # ------------------------------------------------------------

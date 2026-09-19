@@ -612,6 +612,27 @@ states:
     status: CURRENT_FACT
     note: 安全红线（CredentialList.vue）：密码不进组件、不进 store、不进 localStorage/日志、不显示/复制/导出
 
+  # ---------------- Credential Security（Phase 5.1-B：敏感输入护栏，收口 Debt-5-1）----------------
+  databaseCredentialInput:
+    owner: credential
+    meaning: 数据库认证密码（瞬时表单输入），提交即经安全凭据流入 keyring，不落本地/不进 store
+    not_meaning:
+      - 持久化的密码（密码只在 DB 连接提交的瞬时入参中存在，立即入 keyring，组件/store 不留存）
+    sensitive: true
+    frontend_ident:
+      - password
+    kind: form_input
+    derived: false
+    frontend_mirror: local_transient（仅组件本地 ref，提交即清空）
+    canonical_writer:
+      - KeyringStore.save_token（经 bridge db_connect 写入 keyring，键 db:<conn_id>）
+    forbidden_writers:
+      - 任何把 password 写入 localStorage / sessionStorage / 普通 store / console / export 的路径
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: 安全红线（DatabasePanel.vue）：password 只作组件本地瞬时态，db.connect(password.value) 后立刻清空；R7 静态护栏禁止其流入泄露汇（console/localStorage/export）
+
 # ------------------------------------------------------------
 # 已观察到但本批不治理（真实存在的声明；新增治理需走 SCR）
 # checker 对它们只报 INFO，不算失败。目的：显式登记，不静默消失。
@@ -711,6 +732,3 @@ observed_not_governed:
     - apps
     - appFilter
     - filteredApps
-
-  DatabasePanel.vue:
-    - password   # Debt-5-1：DB 连接密码表单字段（瞬时 input，提交即入 keyring）；当前未受静态护栏约束，登记待后续 hardening
