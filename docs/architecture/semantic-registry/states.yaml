@@ -2,6 +2,7 @@
 # Semantic State Registry — 第一批：Browser/Grid + View Navigation
 #                         + Workspace/FilePanel（Phase 2）
 #                         + Bookmark（Phase 3）
+#                         + Terminal Lifecycle（Phase 4）
 #
 # 状态分类（README.md 定义）：
 #   ACCEPTED_ADR     已裁决并冻结的语义
@@ -14,7 +15,7 @@
 # ============================================================
 
 version: 1
-registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）已确认语义
+registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）+ Terminal Lifecycle（Phase 4）已确认语义
 
 # Rule 2（未注册状态）只在这些文件内生效，避免全项目误报
 governed_files:
@@ -24,6 +25,7 @@ governed_files:
   - src/stores/useWorkspaceStore.ts
   - src/components/workspace/FilePanel.vue
   - src/stores/useBookmarkStore.ts
+  - src/stores/useSystemStore.ts
 
 states:
 
@@ -391,6 +393,169 @@ states:
     status: CURRENT_FACT
     note: 类比 desiredGridVisibility / currentLocalPath；R6 强制其为 computed 且禁止 .value =
 
+  # ---------------- Terminal Lifecycle（Phase 4）----------------
+  terminalOpen:
+    owner: useSystemStore
+    meaning: 终端面板是否可见（toggle；打开且 0 面板时自动 spawnTerm）
+    not_meaning:
+      - 视图导航（见 useLayoutStore.mainView="term"）
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useSystemStore.toggleTerminal
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  termPanes:
+    owner: useSystemStore
+    meaning: 终端面板注册表（唯一真源）[{id, cwd}]；spawn→push，kill→filter
+    not_meaning:
+      - 视图导航
+      - 第二份面板列表（禁止）
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useSystemStore.addTermPane
+      - useSystemStore.killTerm
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: INV-4-1 唯一面板注册表；addTermPane/killTerm 是唯一增删入口
+
+  termGrid:
+    owner: useSystemStore
+    meaning: 宫格模式（多终端并排）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useSystemStore.toggleTermGrid
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  termGridCount:
+    owner: useSystemStore
+    meaning: 终端宫格数（默认 4 = 2×2）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useSystemStore.setTermGridCount
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  activeTermId:
+    owner: useSystemStore
+    meaning: 当前聚焦面板 id（必须 ∈ termPanes.id；kill 后重置为首剩余）
+    not_meaning:
+      - 悬空 id（killTerm 同步重置，禁止悬空）
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useSystemStore.setActiveTerm
+      - useSystemStore.killTerm
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: INV-4-2 activeTermId 必须始终 ∈ termPanes.id
+
+  autoConfirmCli:
+    owner: useSystemStore
+    meaning: 自动确认 CLI True Color 提示（来自 localStorage）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useSystemStore.setAutoConfirmCli
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  termProbeOn:
+    owner: useSystemStore
+    meaning: 终端对账 probe 开关
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useSystemStore.toggleTermProbe
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  m0Cfg:
+    owner: useSystemStore
+    meaning: M0 吞吐测量配置（null=未启用）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useSystemStore.bindM0ThroughputStart
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  m0StartTs:
+    owner: useSystemStore
+    meaning: M0 测量起始时间戳
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useSystemStore.bindM0ThroughputStart
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  droppedChunks:
+    owner: useSystemStore
+    meaning: 过快输出丢弃的 chunk 数（遥测）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useSystemStore.pushTermHistory
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  droppedBytes:
+    owner: useSystemStore
+    meaning: 过快输出丢弃的字节数（遥测）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useSystemStore.pushTermHistory
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
 # ------------------------------------------------------------
 # 已观察到但本批不治理（真实存在的声明；新增治理需走 SCR）
 # checker 对它们只报 INFO，不算失败。目的：显式登记，不静默消失。
@@ -481,3 +646,12 @@ observed_not_governed:
 
   useBrowserHost:
     - browserHost
+
+  useBookmarkStore: []
+
+  useSystemStore:
+    - clipText
+    - clipHistory
+    - apps
+    - appFilter
+    - filteredApps

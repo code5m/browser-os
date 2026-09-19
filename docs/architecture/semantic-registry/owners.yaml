@@ -6,7 +6,7 @@
 # ============================================================
 
 version: 1
-registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）已确认语义
+registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）+ Terminal Lifecycle（Phase 4）已确认语义
 
 owners:
 
@@ -154,6 +154,47 @@ owners:
     rationale: 收藏夹列表唯一真源（后端持久化）；任何第二份 Bookmark[] 或裸 url 判定都会与 items 漂移
     status: CURRENT_FACT
 
+  terminal:
+    owner: useSystemStore
+    owns:
+      - terminalOpen
+      - termPanes
+      - termGrid
+      - termGridCount
+      - activeTermId
+      - autoConfirmCli
+      - termProbeOn
+      - m0Cfg
+      - m0StartTs
+      - droppedChunks
+      - droppedBytes
+    owner_only_api:
+      - addTermPane
+      - killTerm
+      - termWrite
+      - setActiveTerm
+      - restartTerm
+      - bindTermWriter
+      - replayTermHistory
+      - spawnTerm
+      - pushTermHistory
+    public_intent_api:
+      - addTermPane
+      - killTerm
+      - termWrite
+      - setActiveTerm
+      - restartTerm
+      - bindTermWriter
+      - replayTermHistory
+    forbidden_callers:
+      - components/**（TerminalPane.vue 只能调 store action，不得直写 termPanes/activeTermId/terminalOpen）
+    authorized_callers:
+      - useSystemStore（owner 自身）
+      - useLayoutStore（仅导航 setView("term")）
+      - TerminalPane.vue（消费 store，不持有第二列表）
+    rationale: 终端面板注册表唯一真源（termPanes）；任何第二份 {id,cwd}[] 或裸 activeTermId 直写都会漂移
+    status: CURRENT_FACT
+
 # ------------------------------------------------------------
 # 越界判定补充
 # ------------------------------------------------------------
@@ -175,4 +216,7 @@ violation_patterns:
     severity: fail
   - id: COMPONENT_WRITES_BOOKMARK
     desc: 组件直接写 items / panelOpen（owner: useBookmarkStore）；或维护第二份 Bookmark[]
+    severity: fail
+  - id: COMPONENT_WRITES_TERMINAL
+    desc: 组件直接写 termPanes / activeTermId / terminalOpen（owner: useSystemStore）；或维护第二份面板列表
     severity: fail

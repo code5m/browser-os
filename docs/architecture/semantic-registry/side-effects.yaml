@@ -6,7 +6,7 @@
 # ============================================================
 
 version: 1
-registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）已确认语义
+registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）+ Terminal Lifecycle（Phase 4）已确认语义
 
 # Rule 5 的声明方式：调用点所在函数体内（或调用行上下 6 行内）
 # 出现 awareness marker 注释即视为"已知晓该副作用"。
@@ -108,6 +108,19 @@ side_effects:
     status: CURRENT_FACT
     note: Phase 3 文档级登记（requires_declaration=false，同 writeFile 口径）；
           与主页快捷方式（localStorage）隔离，不共享写入路径（rejected mergeBookmarksIntoHome）
+
+  termProcess:
+    declared: spawn / kill / write PTY
+    actual:
+      - spawn OS PTY process (spawnTerm)
+      - destroy OS PTY process (closeTerm)
+      - write input to PTY (termWrite)
+    warning: 创建/销毁 OS 进程（资源）；kill 必须释放 PTY，否则进程泄漏
+    call_sites: bridge.spawnTerm
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: Phase 4 文档级登记（requires_declaration=false，同 writeFile/bookmarkPersist 口径）；
+          Rust 端 spawn/kill 资源策略由 check-terminal-policy.py(29) 覆盖（Debt-004 自检 FAIL，既有债，本 Phase 不修）
 
 # ------------------------------------------------------------
 # 清单中列出但代码中不存在的项（如实标注，不得当作现状）

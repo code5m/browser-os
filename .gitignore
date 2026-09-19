@@ -30,3 +30,7 @@ Thumbs.db
 .ai/
 .codeartsdoer/
 .opencode/
+
+# 本地快照 / 诊断产物（Phase 1.7 恢复层本机产出，禁止入库）
+.snapshots/
+diagnostics/

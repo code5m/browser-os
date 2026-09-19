@@ -6,7 +6,7 @@
 # ============================================================
 
 version: 1
-registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）已确认语义
+registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）+ Terminal Lifecycle（Phase 4）已确认语义
 
 intents:
 
@@ -263,7 +263,7 @@ intents:
     allowed_effects:
       - 内部路由到 remove / add
     forbidden_effects:
-      - 直写 items（必须经 findByUrl 判定）
+      - 直写 items（须经 findByUrl 判定）
     duplicate_names:
       - toggleBookmark
       - starUrl
@@ -293,6 +293,91 @@ intents:
       - showBookmarkPanel
     status: CURRENT_FACT
 
+  # ---------------- Terminal Lifecycle（owner: useSystemStore，Phase 4）----------------
+  addTermPane:
+    meaning: 新建终端面板（spawn）
+    owner: useSystemStore
+    allowed_effects:
+      - termPanes = push({id,cwd})
+      - activeTermId = id
+      - spawnTerm IPC
+    forbidden_effects:
+      - 维护第二份面板列表
+    duplicate_names:
+      - spawnTermPane
+      - newTerm
+      - openTerm
+    status: CURRENT_FACT
+
+  killTerm:
+    meaning: 按 id 关闭面板（filter + 重置 activeTermId）
+    owner: useSystemStore
+    allowed_effects:
+      - bridge.closeTerm(id)
+      - termPanes = filter(!=id)
+      - activeTermId = termPanes[0]?.id ?? ""（INV-4-2）
+    forbidden_effects: []
+    duplicate_names:
+      - closeTerm
+      - removeTerm
+      - terminateTerm
+    status: CURRENT_FACT
+
+  termWrite:
+    meaning: 向 PTY 写入（用户输入 / 自动确认）
+    owner: useSystemStore
+    allowed_effects:
+      - bridge.termWrite(input)
+    forbidden_effects:
+      - change termPanes
+    duplicate_names:
+      - sendTerm
+      - writeTerm
+    status: CURRENT_FACT
+
+  setActiveTerm:
+    meaning: 聚焦某面板（activeTermId = id，必须 ∈ termPanes）
+    owner: useSystemStore
+    allowed_effects:
+      - activeTermId = id
+    forbidden_effects:
+      - 写入悬空 id
+    duplicate_names:
+      - focusTerm
+    status: CURRENT_FACT
+    note: 拒绝用 activateTerm 作重复名（useLayoutStore.activateTerm 是导航 setView("term")，语义不同）
+
+  restartTerm:
+    meaning: 重启面板（killTerm + addTermPane）
+    owner: useSystemStore
+    allowed_effects:
+      - killTerm(id) + addTermPane()
+    forbidden_effects: []
+    duplicate_names:
+      - restartTerminal
+    status: CURRENT_FACT
+
+  bindTermWriter:
+    meaning: 注册面板输出 sink（PTY→xterm）
+    owner: useSystemStore
+    allowed_effects:
+      - 绑定 writer（PTY 输出 → xterm.write）
+    forbidden_effects: []
+    duplicate_names:
+      - setTermWriter
+    status: CURRENT_FACT
+
+  replayTermHistory:
+    meaning: 面板重建时回放会话内历史（≤40 条，不落盘）
+    owner: useSystemStore
+    allowed_effects:
+      - 回放 termHistory 到 xterm
+    forbidden_effects:
+      - 写入磁盘
+    duplicate_names:
+      - replayTerm
+    status: CURRENT_FACT
+
 # ------------------------------------------------------------
 # 已否决：禁止注册 / 禁止出现在代码中
 # ------------------------------------------------------------
@@ -315,6 +400,12 @@ rejected_intents:
     rejected_by: phase3-bookmark/Phase3-design.md §2
     status: REJECTED
     action: 二者必须保持独立源；BookmarkStar 只调 bookmark store，不读 useHomeStore 收藏
+
+  componentWritesTermPanes:
+    reason: 组件直写 termPanes/activeTermId 会破坏 INV-4-1/4-2（第二注册表 / 悬空 activeTermId）
+    rejected_by: phase4-terminal/Phase4-design.md §2
+    status: REJECTED
+    action: 面板增删只经 store action（addTermPane/killTerm）；activeTermId 只经 setActiveTerm
 
 # ------------------------------------------------------------
 # 拟议但代码中不存在（不得当作现状引用）
@@ -345,3 +436,15 @@ proposed_not_present:
   - importBookmarks
   - openBookmarkPanel
   - showBookmarkPanel
+  - spawnTermPane
+  - newTerm
+  - openTerm
+  - closeTerm
+  - removeTerm
+  - terminateTerm
+  - sendTerm
+  - writeTerm
+  - focusTerm
+  - restartTerminal
+  - setTermWriter
+  - replayTerm
