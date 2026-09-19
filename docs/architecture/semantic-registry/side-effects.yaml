@@ -144,6 +144,25 @@ side_effects:
     status: CURRENT_FACT
     note: Phase 5 文档级登记（requires_declaration=false，同 keyringWrite 口径）
 
+  keyringRead:
+    declared: read credential from OS keyring
+    actual:
+      - read secret from system keychain
+      - 语义依赖 OS 后端
+    level: critical
+    owner: credential
+    warning: 读出的密钥禁止返回前端 / 写入日志 / 复制到剪贴板（前端只持不透明 metadata：credential_id / has_password）
+    forbidden:
+      - frontend_return（返回原始 password/token/secret 到网页）
+      - log（console/println/tracing 含密钥）
+      - clipboard（copyPassword 类复制到剪贴板）
+    allowed:
+      - injectViaCredentialId（Rust 读 keyring 后注入登录表单，组件不接触密码）
+    call_sites: KeyringStore.get_token
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: Phase 5.1-C 登记（Debt-5-3 收口）；check-sensitive-side-effects.mjs 据此做 S1/S2 数据流护栏
+
   sensitiveInput:
     declared: sensitive credential input handling
     actual:

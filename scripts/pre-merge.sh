@@ -528,7 +528,7 @@ run_pre_merge() {
   # Phase 03 checker gate (added by 11-ci). Wires the five boundary checkers + doctor
   # into the pre-merge gate WITHOUT weakening any existing M0-1.c check above.
   pm_log "Phase 03 checker gate (architecture/ui/native/runtime/task-boundary + doctor)…"
-  for c in check-architecture check-ui check-native check-browser-runtime check-task-boundary check-grid-close check-view-intent check-semantic-registry doctor; do
+  for c in check-architecture check-ui check-native check-browser-runtime check-task-boundary check-grid-close check-view-intent check-semantic-registry check-sensitive-side-effects doctor; do
     if ! (cd "$ROOT" && node "$SCRIPT_DIR/$c.mjs") >/dev/null 2>&1; then
       pm_fail "phase03 $c.mjs"
     fi
@@ -669,6 +669,11 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/check-semantic-registry.mjs" ] || { echo "FAIL: check-semantic-registry.mjs missing"; rc=1; }
   if ! (cd "$ROOT" && node "$SCRIPT_DIR/check-semantic-registry.mjs" --self-test) >/dev/null 2>&1; then
     echo "FAIL: check-semantic-registry.mjs --self-test"; rc=1
+  fi
+  # Phase 5.1-C：Sensitive Side Effect Contract 自检（keyring 数据流 / 已否决泄露意图）。
+  [ -f "$SCRIPT_DIR/check-sensitive-side-effects.mjs" ] || { echo "FAIL: check-sensitive-side-effects.mjs missing"; rc=1; }
+  if ! (cd "$ROOT" && node "$SCRIPT_DIR/check-sensitive-side-effects.mjs" --self-test) >/dev/null 2>&1; then
+    echo "FAIL: check-sensitive-side-effects.mjs --self-test"; rc=1
   fi
   # Phase 1.7：Git 对象完整性门禁自检（注入损坏检出 + 干净通过，夹具在 /tmp）。
   [ -f "$SCRIPT_DIR/check-git-repo-integrity.sh" ] || { echo "FAIL: check-git-repo-integrity.sh missing"; rc=1; }
