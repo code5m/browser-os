@@ -1,5 +1,6 @@
 # ============================================================
 # Semantic State Registry — 第一批：Browser/Grid + View Navigation
+#                         + Workspace/FilePanel（Phase 2）
 #
 # 状态分类（README.md 定义）：
 #   ACCEPTED_ADR     已裁决并冻结的语义
@@ -12,13 +13,15 @@
 # ============================================================
 
 version: 1
-registry_scope: Browser/Grid + View Navigation（Phase 1 已确认语义）
+registry_scope: Browser/Grid + View Navigation（Phase 1 已确认语义）+ Workspace/FilePanel（Phase 2 已确认语义）
 
 # Rule 2（未注册状态）只在这些文件内生效，避免全项目误报
 governed_files:
   - src/stores/useLayoutStore.ts
   - src/stores/useBrowserStore.ts
   - src/composables/useBrowserHost.ts
+  - src/stores/useWorkspaceStore.ts
+  - src/components/workspace/FilePanel.vue
 
 states:
 
@@ -179,11 +182,158 @@ states:
     adr: ADR-P1A-10
     status: ACCEPTED_ADR
 
+  # ---------------- Workspace / FilePanel（Phase 2）----------------
+  filePath:
+    owner: useWorkspaceStore
+    meaning: 文件浏览器/覆盖编辑器当前激活位置（地址真源）
+    not_meaning:
+      - 行内编辑器当前文件（见 inlineFile）
+      - 目录预览当前目录（见 previewDir）
+      - 派生“当前位置”（见 currentLocalPath）
+    kind: stored
+    derived: false
+    allowed_values:
+      - string (absolute path)
+      - ""
+    canonical_writer:
+      - useWorkspaceStore.enterDir
+      - useWorkspaceStore.openFile
+      - useWorkspaceStore.openFileInline
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: overloaded —— 编辑器模式值为“当前文件”，浏览器模式值为“当前目录”（Debt-2-1）
+
+  inlineFile:
+    owner: useWorkspaceStore
+    meaning: 行内编辑器（IDE 右栏）当前打开的文件路径
+    not_meaning:
+      - 覆盖编辑器当前文件（见 filePath，二者隔离）
+    kind: stored
+    derived: false
+    allowed_values:
+      - string (absolute path)
+      - ""
+    canonical_writer:
+      - useWorkspaceStore.openFileInline
+      - useWorkspaceStore.closeInline
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  previewDir:
+    owner: useWorkspaceStore
+    meaning: 目录预览（图片画廊）当前预览的目录路径
+    not_meaning:
+      - 文件浏览器当前目录（见 filePath）
+    kind: stored
+    derived: false
+    allowed_values:
+      - string (absolute path)
+      - ""
+    canonical_writer:
+      - useWorkspaceStore.openDirPreview
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  pathInput:
+    owner: useWorkspaceStore
+    meaning: 地址栏 UI 缓冲（镜像 filePath；仅输入态，非真源）
+    not_meaning:
+      - 地址真源（见 filePath）
+    kind: stored
+    derived: false
+    allowed_values:
+      - string (absolute path)
+      - ""
+    canonical_writer:
+      - useWorkspaceStore.goPath
+      - useWorkspaceStore.enterDir
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: 与 filePath 单向镜像；UI 输入态，确认后写回 filePath
+
+  currentLocalPath:
+    owner: useWorkspaceStore
+    meaning: 当前“打开的本地位置”派生量 = inlineFile || previewDir || layout.modTabs.path || filePath
+    not_meaning:
+      - 独立存储状态（纯派生，禁止第二真源）
+    kind: derived
+    derived: true
+    derived_from:
+      - inlineFile
+      - previewDir
+      - layout.modTabs.path
+      - filePath
+    formula: inlineFile || previewDir || modTabs.path || filePath
+    canonical_writer: []
+    forbidden_writers:
+      - everyone（派生量禁止写入；R6 护栏）
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+    note: 类比 desiredGridVisibility；R6 强制其为 computed 且禁止 .value =
+
 # ------------------------------------------------------------
 # 已观察到但本批不治理（真实存在的声明；新增治理需走 SCR）
 # checker 对它们只报 INFO，不算失败。目的：显式登记，不静默消失。
 # ------------------------------------------------------------
 observed_not_governed:
+
+  useWorkspaceStore:
+    - tree
+    - current
+    - editTitle
+    - editTags
+    - editText
+    - fileEntries
+    - fileContent
+    - editingFile
+    - mdPreview
+    - mdHtml
+    - startDirs
+    - previewEntries
+    - previewLoading
+    - previewError
+    - previewTileSize
+    - compareImages
+    - repos
+    - form
+    - preview
+    - busy
+    - job
+    - audit
+    - scripts
+    - scriptForm
+    - snippets
+    - snippetForm
+    - recents
+    - flatArtifacts
+    - treeRoots
+    - locateTarget
+    - dragSource
+    - dropTarget
+    - moveConfirm
+    - inlineText
+    - inlineIsMd
+    - inlineEdit
+    - inlineHtml
+    - fileCtx
+    - ctxMenu
+
+  FilePanel.vue:
+    - ftreeBody
 
   useBrowserStore:
     - url

@@ -6,7 +6,7 @@
 # ============================================================
 
 version: 1
-registry_scope: Browser/Grid + View Navigation（Phase 1 已确认语义）
+registry_scope: Browser/Grid + View Navigation（Phase 1 已确认语义）+ Workspace/FilePanel（Phase 2 已确认语义）
 
 intents:
 
@@ -156,6 +156,80 @@ intents:
     status: CURRENT_FACT
     note: 真实入口名为 closeTabNow；清单中的 closeTab 在代码中不存在（PROPOSED_CHANGE）
 
+  # ---------------- Workspace / FilePanel（owner: useWorkspaceStore，Phase 2）----------------
+  openFile:
+    meaning: 在覆盖编辑器打开文件（overlay editor）
+    owner: useWorkspaceStore
+    allowed_effects:
+      - filePath = entry.path
+      - editingFile = true
+      - mainView = editor（经 layout.setView）
+    forbidden_effects:
+      - destroy any resource
+      - change inlineFile（行内编辑器隔离）
+    duplicate_names:
+      - openLocalFile
+      - viewFile
+      - editFile
+      - showFile
+    status: CURRENT_FACT
+    note: 与 openFileInline 两条独立 UX 路径，禁止合并（类比 openGrid≠rebuildGrid）
+
+  openFileInline:
+    meaning: 在行内编辑器打开文件（IDE 右栏）
+    owner: useWorkspaceStore
+    allowed_effects:
+      - inlineFile = entry.path
+      - filePath = parent dir（同步，隔离不混用）
+    forbidden_effects:
+      - change mainView
+      - change editingFile（覆盖编辑器隔离）
+    duplicate_names:
+      - openInlineFile
+    status: CURRENT_FACT
+
+  enterDir:
+    meaning: 进入目录（文件浏览器导航，单一地址真源）
+    owner: useWorkspaceStore
+    allowed_effects:
+      - filePath = path
+    forbidden_effects:
+      - change inlineFile
+      - change previewDir
+    duplicate_names:
+      - openDir
+      - gotoDir
+      - cdDir
+      - navigateDir
+    status: CURRENT_FACT
+
+  saveFile:
+    meaning: 持久化当前文件内容到磁盘
+    owner: useWorkspaceStore
+    allowed_effects:
+      - bridge.writeFile(filePath, fileContent)
+    forbidden_effects:
+      - change mainView
+      - navigate
+    duplicate_names:
+      - writeFileContent
+      - persistFile
+    status: CURRENT_FACT
+
+  closeFileEditor:
+    meaning: 关闭覆盖编辑器（不销毁任何资源）
+    owner: useWorkspaceStore
+    allowed_effects:
+      - editingFile = false
+      - layout.fileEditorOpen = false
+    forbidden_effects:
+      - destroy any resource
+      - change filePath / inlineFile
+    duplicate_names:
+      - dismissFileEditor
+    status: CURRENT_FACT
+    note: rejected 重复名 closeEditor（已被 FileEditor.vue / useTaskStore 定义，禁止作为本域重复入口）
+
 # ------------------------------------------------------------
 # 已否决：禁止注册 / 禁止出现在代码中
 # ------------------------------------------------------------
@@ -167,9 +241,27 @@ rejected_intents:
     status: REJECTED
     action: 代码中出现即 SEMANTIC_INTENT_DUPLICATE（阻断级）
 
+  mergeOpenFileIntoOpenFileInline:
+    reason: 覆盖编辑器 vs 行内编辑器是两条独立 UX 路径，合并会丢失隔离并引入第二位置真源
+    rejected_by: phase2-workspace/Phase2-design.md §2
+    status: REJECTED
+    action: 二者必须保持独立意图入口
+
 # ------------------------------------------------------------
 # 拟议但代码中不存在（不得当作现状引用）
 # ------------------------------------------------------------
 proposed_not_present:
   - switchTab
   - closeTab
+  - openLocalFile
+  - viewFile
+  - editFile
+  - showFile
+  - openInlineFile
+  - openDir
+  - gotoDir
+  - cdDir
+  - navigateDir
+  - writeFileContent
+  - persistFile
+  - dismissFileEditor

@@ -6,7 +6,7 @@
 # ============================================================
 
 version: 1
-registry_scope: Browser/Grid + View Navigation（Phase 1 已确认语义）
+registry_scope: Browser/Grid + View Navigation（Phase 1 已确认语义）+ Workspace/FilePanel（Phase 2 已确认语义）
 
 owners:
 
@@ -92,6 +92,36 @@ owners:
       - components/**（不得直写 activeTabId）
     status: CURRENT_FACT
 
+  workspace_filepanel:
+    owner: useWorkspaceStore
+    owns:
+      - filePath
+      - inlineFile
+      - previewDir
+      - pathInput
+      - currentLocalPath (derived)
+    owner_only_api:
+      - enterDir
+      - openFile
+      - openFileInline
+      - saveFile
+      - closeFileEditor
+      - refreshTree
+      - locateTo
+    public_intent_api:
+      - openFile
+      - openFileInline
+      - enterDir
+      - saveFile
+      - closeFileEditor
+    forbidden_callers:
+      - components/**（不得直写 filePath / inlineFile / previewDir / pathInput）
+    authorized_callers:
+      - useWorkspaceStore（owner 自身）
+      - useLayoutStore（经 setView 切到 editor/files 视图）
+    rationale: 文件导航状态（当前位置真源 + 派生位置）归母属 store；组件只渲染，不得直写
+    status: CURRENT_FACT
+
 # ------------------------------------------------------------
 # 越界判定补充
 # ------------------------------------------------------------
@@ -107,4 +137,7 @@ violation_patterns:
     severity: fail
   - id: NON_OWNER_CALLS_NATIVE_DESTROY
     desc: 非 owner（useBrowserStore）文件调用 bridge.closeGrid
+    severity: fail
+  - id: COMPONENT_WRITES_WORKSPACE_PATH
+    desc: 组件直接写 filePath / inlineFile / previewDir / pathInput（owner: useWorkspaceStore）
     severity: fail

@@ -84,7 +84,7 @@ node scripts/check-semantic-registry.mjs --json        # 机器可读
 
 ## 6. 边界（避免过度冻结）
 
-- 本 Registry **只登记第一批**（Browser/Grid + View Navigation），不冻结全部业务设计。
+- 本 Registry **登记两批**：第一批 Browser/Grid + View Navigation（Phase 1）；第二批 Workspace/FilePanel（Phase 2，useWorkspaceStore.ts + FilePanel.vue），不冻结全部业务设计。
 - 治理域外的状态**不判失败**（避免误报、避免阻止合理扩展）。
 - `observed_not_governed` 是**显式登记**，不是绕过用的 allow-list：它们只报 info，纳入治理仍需 SCR。
 - R5 默认仅提示，不阻断；需要严格时用 `--strict`。

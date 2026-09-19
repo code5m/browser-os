@@ -6,7 +6,7 @@
 # ============================================================
 
 version: 1
-registry_scope: Browser/Grid + View Navigation（Phase 1 已确认语义）
+registry_scope: Browser/Grid + View Navigation（Phase 1 已确认语义）+ Workspace/FilePanel（Phase 2 已确认语义）
 
 # Rule 5 的声明方式：调用点所在函数体内（或调用行上下 6 行内）
 # 出现 awareness marker 注释即视为"已知晓该副作用"。
@@ -80,6 +80,21 @@ side_effects:
     call_sites: rebuildGrid
     requires_declaration: true
     status: ACCEPTED_ADR
+
+  writeFile:
+    declared: persist / mutate filesystem
+    actual:
+      - create file (createFile)
+      - delete path (deletePath)
+      - rename path (renamePath)
+      - move path (movePath)
+      - overwrite content (writeFile)
+    warning: 文件系统变更，影响磁盘真实数据；非纯 UI 操作
+    call_sites: bridge.writeFile
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: Phase 2 文档级登记（requires_declaration=false，避免对既有合法调用产生 R5 噪声）；
+          若需收紧，改本条目为 true 并在 useWorkspaceStore 调用点加 `side-effect:` 标记（业务代码改动）
 
 # ------------------------------------------------------------
 # 清单中列出但代码中不存在的项（如实标注，不得当作现状）

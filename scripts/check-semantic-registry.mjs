@@ -283,7 +283,30 @@ function rule5(files, reg) {
   return out;
 }
 
-const RULES = [rule1, rule2, rule3, rule4, rule5];
+// ============================ R6：派生状态禁止存储 ============================
+// 任何 registry 中 derived: true 的状态（Phase 1: desiredGridVisibility / isBrowserVisible；
+// Phase 2: currentLocalPath）禁止：a) 被声明为 ref/reactive/shallowRef 存储态；b) 被 .value = 赋值。
+// 直接固化“派生量禁止成为第二真源”的红线（类比 ADR-P1A-3）。
+function rule6(files, reg) {
+  const out = [];
+  const states = (reg.states && reg.states.states) || {};
+  const derived = Object.entries(states).filter(([, d]) => d && d.derived === true);
+  for (const f of files) {
+    const code = stripComments(f.src);
+    for (const [key] of derived) {
+      const declRe = new RegExp(
+        "(?:const|let|var)\\s+" + key + "\\s*(?::[^=;]+)?=\\s*(?:ref|shallowRef|reactive)\\s*(?:<[^>]*>)?\\s*\\("
+      );
+      if (declRe.test(code))
+        out.push({ rule: "R6", code: "SEMANTIC_DERIVED_STATE_STORED", file: f.path, detail: `"${key}" 在 registry 标记为 derived（禁止存储），却被声明为 ref/reactive/shallowRef 存储态`, severity: "fail" });
+      if (new RegExp("\\b" + key + "\\.value\\s*=").test(code))
+        out.push({ rule: "R6", code: "SEMANTIC_DERIVED_STATE_STORED", file: f.path, detail: `"${key}" 是派生状态，禁止写入 .value =（第二真源）`, severity: "fail" });
+    }
+  }
+  return out;
+}
+
+const RULES = [rule1, rule2, rule3, rule4, rule5, rule6];
 
 function analyze(files, reg) {
   const findings = [];
@@ -308,6 +331,7 @@ function printHelp() {
   R3 SEMANTIC_OWNER_VIOLATION      Owner 越界（组件/非授权直调生命周期）
   R4 SEMANTIC_INTENT_DUPLICATE     重复 Intent（含已否决 exitGrid）
   R5 SEMANTIC_SIDE_EFFECT_UNKNOWN  调用带副作用 API 未声明认知（默认提示）
+  R6 SEMANTIC_DERIVED_STATE_STORED 派生状态（derived:true）被存为 ref/reactive 或被 .value= 赋值（第二真源）
 
 真源: docs/architecture/semantic-registry/{states,intents,owners,side-effects}.yaml`);
 }
@@ -333,6 +357,7 @@ async function rebuildGrid() { /* side-effect: destroy+create webviews */ await 
   { path: "src/stores/useLayoutStore.ts", src: `function toggleGridToolbar() { browser.openGrid(); browser.closeGrid(); }` },
   { path: "src/components/x/Other.vue", src: `const activeSurface = ref("browser"); // 治理域外，不算未登记` },
   { path: "src/composables/useBrowserHost.ts", src: `function scheduleGrid(){ bridge.gridPosition(i, rect); } // side-effect: bounds+show` },
+  { path: "src/stores/__fx_ws_derived.ts", src: `const currentLocalPath = computed(() => inlineFile.value || filePath.value);` },
 ];
 const POS_FILES = [
   {
@@ -353,6 +378,7 @@ const NEG_FILES = {
   R3: { expect: "fail", files: [{ path: "src/components/x/B.vue", src: `browser.closeGrid(); layout.mainView = "browser";` }] },
   R4: { expect: "fail", files: [{ path: "src/stores/useBrowserStore.ts", src: `function showGridView() { setView("grid"); }` }] },
   R5: { expect: "warn", files: [{ path: "src/composables/useBrowserHost.ts", src: `bridge.tabPosition(id, rect);` }] },
+  R6: { expect: "fail", files: [{ path: "src/stores/__fx_ws_derived_bad.ts", src: `const currentLocalPath = ref("");\ncurrentLocalPath.value = "/x";` }] },
 };
 
 function runSelfTest() {
