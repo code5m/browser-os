@@ -143,7 +143,6 @@ export const useLayoutStore = defineStore("layout", () => {
   const leftTab = ref<"files" | "artifacts">("files");
   const gridToolbarOpen = ref(false);
   const clipOpen = ref(false);
-  const aiNavOpen = ref(false);
   const fileEditorOpen = ref(false); // 文件编辑器/Markdown 预览覆盖层
   const msg = ref("");
   const leftResizing = ref(false);
@@ -349,7 +348,6 @@ export const useLayoutStore = defineStore("layout", () => {
     leftTab,
     gridToolbarOpen,
     clipOpen,
-    aiNavOpen,
     fileEditorOpen,
     msg,
     leftResizing,

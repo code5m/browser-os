@@ -142,6 +142,27 @@ states:
     status: CURRENT_FACT
     note: 另有派生 activeTab（computed），见 observed_not_governed
 
+  # ---------------- Browser/Grid AI 导航面板（Phase 6A 收口）----------------
+  aiNavOpen:
+    owner: useBrowserStore
+    meaning: AI 导航面板（AINavPanel）开关；唯一真源
+    not_meaning:
+      - 视图导航（见 mainView）
+      - 收藏夹 / 剪贴板 / 文件编辑器等其它面板开关
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useBrowserStore.toggleAiNav
+      - useBrowserStore.gotoAI
+    forbidden_writers:
+      - useLayoutStore（曾重复声明 aiNavOpen 死代码，Phase 6A 已删除；见 ADR-SEM-P6A-1）
+      - components/**（应经 toggleAiNav；AINavPanel 关闭按钮直写 = false 为 owner 字段内写，可接受）
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-SEM-P6A-1
+    status: CURRENT_FACT
+    note: Phase 6A 收口——删除 useLayoutStore 中的重复声明，确认唯一 owner = useBrowserStore（browser_grid_lifecycle）
+
   # ---------------- Derived（禁止存储） ----------------
   desiredGridVisibility:
     owner: useBrowserStore
@@ -696,7 +717,6 @@ observed_not_governed:
     - gridAiInput
     - gridRects
     - resources
-    - aiNavOpen
     - aiFilter
     - aiFiltered
     - recentlyClosed

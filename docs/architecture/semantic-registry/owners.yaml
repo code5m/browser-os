@@ -40,6 +40,7 @@ owners:
       - grid lifecycle
       - desiredGridVisibility (derived)
       - isBrowserVisible (derived)
+      - aiNavOpen (Phase 6A 收口；useLayoutStore 死重复已删)
     owner_only_api:
       - buildGrid
       - closeGridAll

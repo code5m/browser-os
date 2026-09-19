@@ -597,6 +597,11 @@ export const useBrowserStore = defineStore("browser", () => {
     url.value = site.url;
     await openBrowser();
   }
+  // Phase 6A：AI 导航面板开关唯一写入点（owner: useBrowserStore；见 ADR-SEM-P6A-1）。
+  // 此前 useLayoutStore 曾重复声明 aiNavOpen（死代码），已删除，唯一真源在此。
+  function toggleAiNav() {
+    aiNavOpen.value = !aiNavOpen.value;
+  }
   async function openBrowser() {
     const target = url.value.trim() || "https://www.baidu.com";
     useWorkspaceStore().addRecentUrl(target);
@@ -780,6 +785,7 @@ export const useBrowserStore = defineStore("browser", () => {
     setResources,
     clearResources,
     gotoAI,
+    toggleAiNav,
     openBrowser,
     bindPositionScheduler,
     bindGridScheduler,

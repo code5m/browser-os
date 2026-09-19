@@ -337,7 +337,7 @@ async function openDirCenter() {
         :class="{ active: browser.aiNavOpen }"
         aria-label="AI 导航"
         title="AI 导航"
-        @click="browser.aiNavOpen = !browser.aiNavOpen"
+        @click="browser.toggleAiNav()"
       >
         <span class="ic">🤖</span>
       </button>
