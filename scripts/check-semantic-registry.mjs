@@ -377,7 +377,7 @@ const NEG_FILES = {
   R1: { expect: "fail", files: [{ path: "src/stores/useBrowserStore.ts", src: `const gridVisible = ref(false);` }] },
   R2: { expect: "fail", files: [{ path: "src/stores/useBrowserStore.ts", src: `const activeSurface = ref("browser");` }, { path: "src/stores/useBookmarkStore.ts", src: `const extraBookmarks = ref<Bookmark[]>([]);` }, { path: "src/stores/useSystemStore.ts", src: `const extraPanes = ref<{id:string;cwd?:string}[]>([]);` }] },
   R3: { expect: "fail", files: [{ path: "src/components/x/B.vue", src: `browser.closeGrid(); layout.mainView = "browser";` }] },
-  R4: { expect: "fail", files: [{ path: "src/stores/useBrowserStore.ts", src: `function showGridView() { setView("grid"); }` }, { path: "src/composables/__fx_term.ts", src: `function newTerm(){ return 0; }` }] },
+  R4: { expect: "fail", files: [{ path: "src/stores/useBrowserStore.ts", src: `function showGridView() { setView("grid"); }` }, { path: "src/composables/__fx_term.ts", src: `function newTerm(){ return 0; }` }, { path: "src/composables/__fx_cred.ts", src: `function exposePassword(){ return readKeyring(); }` }] },
   R5: { expect: "warn", files: [{ path: "src/composables/useBrowserHost.ts", src: `bridge.tabPosition(id, rect);` }] },
   R6: { expect: "fail", files: [{ path: "src/stores/__fx_ws_derived_bad.ts", src: `const currentLocalPath = ref("");\ncurrentLocalPath.value = "/x";` }] },
 };

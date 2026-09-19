@@ -6,7 +6,7 @@
 # ============================================================
 
 version: 1
-registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）+ Terminal Lifecycle（Phase 4）已确认语义
+registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）+ Terminal Lifecycle（Phase 4）+ Credential Security（Phase 5）已确认语义
 
 # Rule 5 的声明方式：调用点所在函数体内（或调用行上下 6 行内）
 # 出现 awareness marker 注释即视为"已知晓该副作用"。
@@ -121,6 +121,28 @@ side_effects:
     status: CURRENT_FACT
     note: Phase 4 文档级登记（requires_declaration=false，同 writeFile/bookmarkPersist 口径）；
           Rust 端 spawn/kill 资源策略由 check-terminal-policy.py(29) 覆盖（Debt-004 自检 FAIL，既有债，本 Phase 不修）
+
+  keyringWrite:
+    declared: write credential to OS keyring
+    actual:
+      - persist secret in system keychain / credential-manager / secret-service
+      - 语义依赖 OS 后端（macOS Keychain / Windows Credential Manager / Linux secret-service）
+    warning: 写入系统密钥库（敏感凭据落地）；前端绝不经手原始值；命名空间隔离（repo.id / db:<conn_id> / cred.key）
+    call_sites: KeyringStore.save_token
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: Phase 5 文档级登记（requires_declaration=false，同 writeFile/termProcess/bookmarkPersist 口径）；
+          调用均经 bridge（已 check_invocation_source）后落 keyring，不新增 R5 噪声
+
+  keyringDelete:
+    declared: delete credential from OS keyring
+    actual:
+      - remove secret from system keychain
+    warning: 撤销凭据（如 db_disconnect 一并撤销 db:<conn_id>）；与 git 命名空间隔离
+    call_sites: KeyringStore.delete_token
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: Phase 5 文档级登记（requires_declaration=false，同 keyringWrite 口径）
 
 # ------------------------------------------------------------
 # 清单中列出但代码中不存在的项（如实标注，不得当作现状）

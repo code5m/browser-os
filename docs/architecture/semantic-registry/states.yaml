@@ -3,6 +3,7 @@
 #                         + Workspace/FilePanel（Phase 2）
 #                         + Bookmark（Phase 3）
 #                         + Terminal Lifecycle（Phase 4）
+#                         + Credential Security（Phase 5）
 #
 # 状态分类（README.md 定义）：
 #   ACCEPTED_ADR     已裁决并冻结的语义
@@ -15,7 +16,7 @@
 # ============================================================
 
 version: 1
-registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）+ Terminal Lifecycle（Phase 4）已确认语义
+registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）+ Terminal Lifecycle（Phase 4）+ Credential Security（Phase 5）已确认语义
 
 # Rule 2（未注册状态）只在这些文件内生效，避免全项目误报
 governed_files:
@@ -556,6 +557,61 @@ states:
     adr_required: false
     status: CURRENT_FACT
 
+  # ---------------- Credential Security（Phase 5）----------------
+  # 凭据真源 = 系统密钥库（OS keyring），不在应用内存；前端只持不透明 metadata。
+  gitRepoToken:
+    owner: credential
+    meaning: git 仓库访问 token，存系统密钥库，键=repo.id
+    not_meaning:
+      - 前端可见的 token 值（frontend_mirror: none，绝不进入网页 JS 内存/网络/日志）
+    kind: keyring
+    derived: false
+    key_namespace: repo.id
+    frontend_mirror: none
+    canonical_writer:
+      - KeyringStore.save_token（经 bridge 配置仓库凭据入口，仅 Rust 侧）
+    forbidden_writers:
+      - 任何前端 store / component（token 不得出现在前端 reactive 状态）
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: KeyringStore 是 OS keyring 薄封装；token 真源在系统密钥库，不在应用内存
+
+  dbCredential:
+    owner: credential
+    meaning: DB 连接密码，存系统密钥库，键=db:<conn_id>（与 git 命名空间隔离）
+    not_meaning:
+      - 前端可见密码（frontend_mirror: none）
+    kind: keyring
+    derived: false
+    key_namespace: "db:<conn_id>"
+    frontend_mirror: none
+    canonical_writer:
+      - KeyringStore.save_token（db_connect 写入；db_disconnect 撤销）
+    forbidden_writers:
+      - 前端（密码仅在 db_connect 入参短暂存在，立即入 keyring）
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  browserCredential:
+    owner: credential
+    meaning: 浏览器自动填充凭据（站点/用户名/密码），存系统密钥库，键=cred.key
+    not_meaning:
+      - 前端可见密码（前端仅持 BrowserCredentialItem 元数据：id/username/origin/has_password）
+    kind: keyring
+    derived: false
+    key_namespace: cred.key
+    frontend_mirror: metadata_only（BrowserCredentialItem，绝不含量 password）
+    canonical_writer:
+      - KeyringStore.save_token（凭据导入入口）
+    forbidden_writers:
+      - CredentialList.vue（只经 bridge.fillBrowserCredential 让 Rust 读 keyring 注入，组件不接触密码）
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: 安全红线（CredentialList.vue）：密码不进组件、不进 store、不进 localStorage/日志、不显示/复制/导出
+
 # ------------------------------------------------------------
 # 已观察到但本批不治理（真实存在的声明；新增治理需走 SCR）
 # checker 对它们只报 INFO，不算失败。目的：显式登记，不静默消失。
@@ -655,3 +711,6 @@ observed_not_governed:
     - apps
     - appFilter
     - filteredApps
+
+  DatabasePanel.vue:
+    - password   # Debt-5-1：DB 连接密码表单字段（瞬时 input，提交即入 keyring）；当前未受静态护栏约束，登记待后续 hardening

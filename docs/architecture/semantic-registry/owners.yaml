@@ -6,7 +6,7 @@
 # ============================================================
 
 version: 1
-registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）+ Terminal Lifecycle（Phase 4）已确认语义
+registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）+ Terminal Lifecycle（Phase 4）+ Credential Security（Phase 5）已确认语义
 
 owners:
 
@@ -195,6 +195,30 @@ owners:
     rationale: 终端面板注册表唯一真源（termPanes）；任何第二份 {id,cwd}[] 或裸 activeTermId 直写都会漂移
     status: CURRENT_FACT
 
+  credential:
+    owner: KeyringStore（core/keyring_store.rs，Rust 侧 OS keyring 薄封装）
+    owns:
+      - gitRepoToken
+      - dbCredential
+      - browserCredential
+    owner_only_api:
+      - save_token
+      - get_token
+      - delete_token
+    public_intent_api:
+      - saveCredential
+      - getCredential
+      - deleteCredential
+      - fillBrowserCredential
+      - listBrowserCredentials
+    forbidden_callers:
+      - 任何前端 store / component（凭据值不得进入前端；组件只经 bridge.fillBrowserCredential 发 credential_id）
+    authorized_callers:
+      - KeyringStore（owner 自身，Rust）
+      - bridge（经 check_invocation_source 校验来源后调 KeyringStore）
+    rationale: 凭据真源=系统密钥库；前端只持不透明 metadata（credential_id / has_password），绝不持原始值；R3 当前未通用化到本 owner（见 Debt-5-2）
+    status: CURRENT_FACT
+
 # ------------------------------------------------------------
 # 越界判定补充
 # ------------------------------------------------------------
@@ -219,4 +243,10 @@ violation_patterns:
     severity: fail
   - id: COMPONENT_WRITES_TERMINAL
     desc: 组件直接写 termPanes / activeTermId / terminalOpen（owner: useSystemStore）；或维护第二份面板列表
+    severity: fail
+  - id: FRONTEND_CREDENTIAL_LEAK
+    desc: 前端 reactive 状态（ref/reactive/shallowRef/computed）持有原始凭据值（password/token/secret/api_key）
+    severity: fail
+  - id: CREDENTIAL_DISPLAYED_OR_EXPORTED
+    desc: 代码中出现 exposePassword / copyPassword / exportCredential 等已否决意图（凭据泄露）
     severity: fail
