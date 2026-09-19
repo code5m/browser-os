@@ -3,12 +3,15 @@
 > 下一 Agent 无需重扫全仓即可继续。本文件为**当前真实状态快照**，事实来自 `git` 与已落地文件。
 > 最后更新：2026-09-19
 >
-> ✅ **git 对象损坏已清理**（见 Phase 1.7）：经验证「不被任何引用包含」后，
-> 经 `scripts/git-recover.sh --prune-orphans` 安全删除；`git fsck --full` 现已 0 error。
+> ✅ **git 对象损坏已清理**（见 Phase 1.7）：经 `scripts/git-recover.sh --prune-orphans` 安全删除；
+> `git fsck --full` 现已 0 error。
 >
-> ✅ **Phase 2 Workspace/FilePanel 语义治理已收口**：useWorkspaceStore.ts + FilePanel.vue 纳入
-> Semantic Registry 治理；新增 R6（派生状态禁止存储/赋值）固化 `currentLocalPath` 派生不变量；
-> 真实仓库扫描 `fail=0`（`SEMANTIC_REGISTRY_RESULT=PASS`）。
+> ✅ **Phase 2 Workspace/FilePanel 语义治理已收口**（tag: semantic-phase2-workspace-pass）：
+> useWorkspaceStore.ts + FilePanel.vue 纳入 Registry；R6 固化 currentLocalPath 派生不变量；真实扫描 fail=0。
+>
+> ✅ **Phase 3 Bookmark 语义治理已收口**（tag: semantic-phase3-bookmark-pass）：
+> useBookmarkStore.ts 6 状态纳入治理（items 唯一真源 / sorted 派生）；5 意图单一入口；
+> 与主页快捷方式显式隔离（rejected mergeBookmarksIntoHome）；真实扫描 fail=0。
 
 ---
 
@@ -21,16 +24,17 @@ Phase 1.5 Semantic Registry  CLOSED   （Registry + Checker + SCR + 接入 pre-m
 Phase 1.6 Semantic Reg. Acc  PASS    （验收闭环：registry/checker/pre-merge 均通过）
 Phase 1.7 Git Integrity      CLOSED   （tag: semantic-phase1.7-git-integrity-pass）
 Phase 2 Workspace/FilePanel  CLOSED   （tag: semantic-phase2-workspace-pass）
+Phase 3 Bookmark             CLOSED   （tag: semantic-phase3-bookmark-pass）
 ```
 
-Phase 2 验收结论：
+Phase 3 验收结论：
 
 ```text
 SEMANTIC REGISTRY self-test: PASS  （R1..R6 全部 positive/negative/false-positive 夹具 ALL_PASS）
 SEMANTIC REGISTRY real scan:  PASS  （fail=0；warn=6 为 pre-existing R5 提示级，非阻断）
-R6 DERIVED GUARD:           PASS  （currentLocalPath 为 computed 且无 .value=；注入 ref+.value= 夹具被检出）
-R2 WORKSPACE GOVERN:        PASS  （useWorkspaceStore.ts 42 声明 = 5 治理 + 39 observed，无遗漏 FAIL）
-NO REGRESSION:              PASS  （R1..R5 逻辑未削弱；self-test 仍 ALL_PASS）
+R2 BOOKMARK GOVERN:          PASS  （useBookmarkStore.ts 6 声明全登记，无第二 Bookmark[] FAIL）
+R6 DERIVED GUARD:            PASS  （sorted 为 computed 且无 .value=；注入 ref 夹具被 R6 检出）
+NO REGRESSION:               PASS  （R1..R6 逻辑未削弱；self-test 仍 ALL_PASS）
 ```
 
 ---
@@ -38,16 +42,18 @@ NO REGRESSION:              PASS  （R1..R5 逻辑未削弱；self-test 仍 ALL_
 ## 2. Git State
 
 ```text
-branch:    master（Phase 2 以 feature/phase2-workspace 实现，ff-merge 入 master）
-HEAD:      semantic-phase2-workspace-pass（annotated tag = master tip）
+branch:    master（Phase 3 以 feature/phase3-bookmark 实现，ff-merge 入 master）
+HEAD:      semantic-phase3-bookmark-pass（annotated tag = master tip）
 working tree: 干净（仅未跟踪 .snapshots/ 与 diagnostics/ —— 取证产物，不入库）
 ```
 
-### latest commits（Phase 2 在其上）
+### latest commits（Phase 3 在其上）
 
 ```text
-<phase-tip>  docs(phase2): closeout + handoff update
-<phase-feat> feat(phase2): workspace/filepanel semantic governance
+<phase-tip>  docs(phase3): closeout + handoff update
+<phase-feat> feat(phase3): bookmark semantic governance
+7e881f4      docs(phase2): closeout + handoff update
+bff14af      feat(phase2): workspace/filepanel semantic governance
 b36703e      docs(phase1.7): closeout + handoff update
 77a6b57      feat(phase1.7): git integrity gate + recovery procedure
 c209325      docs(handoff): rebuild current-state handoff; mark Phase 1.6 acceptance PASS
@@ -59,12 +65,13 @@ c209325      docs(handoff): rebuild current-state handoff; mark Phase 1.6 accept
 ### latest tags（及分类）
 
 ```text
-semantic-phase0-infra-pass        -> 481fbf7   [governance milestone]  Phase 0 基础设施通过
-semantic-phase0-policy-pass        -> 04e4cbc   [governance milestone]  Phase 0 策略通过
-semantic-phase1-browser-grid-code-pass -> a30fd57 [code milestone]      Phase 1 代码+静态门禁通过
-semantic-phase1-browser-grid-pass       -> 7e8d867 [architecture milestone] Phase 1 完整验收（含 GUI）
-semantic-phase1.7-git-integrity-pass    -> b36703e [infra/governance milestone] Phase 1.7 仓库完整性+恢复
-semantic-phase2-workspace-pass          -> <phase-tip> [architecture milestone] Phase 2 Workspace/FilePanel 语义治理
+semantic-phase0-infra-pass        -> 481fbf7   [governance milestone]
+semantic-phase0-policy-pass        -> 04e4cbc   [governance milestone]
+semantic-phase1-browser-grid-code-pass -> a30fd57 [code milestone]
+semantic-phase1-browser-grid-pass       -> 7e8d867 [architecture milestone]
+semantic-phase1.7-git-integrity-pass    -> b36703e [infra/governance milestone]
+semantic-phase2-workspace-pass          -> 7e881f4 [architecture milestone]
+semantic-phase3-bookmark-pass           -> <phase-tip> [architecture milestone]
 
 semantic-registry-v1:  NOT EXISTS（属原 Phase 1.6 可选动作，本次未创建；如需创建见 §7）
 ```
@@ -82,37 +89,31 @@ gridOpen
   = Grid resource 是否存在
   owner = useBrowserStore
 
-desiredGridVisibility
-  = gridOpen && mainView === "grid"（纯派生，禁止存储）
-
-isBrowserVisible
-  = mainView === "browser"（不得重新耦合 gridOpen）
+desiredGridVisibility / isBrowserVisible / currentLocalPath / sorted
+  = 纯派生（derived:true），禁止存储、禁止 .value=（R6 护栏）
 
 禁止:
-  gridVisible stored state         （第二真源，C4/C5 常驻守护）
-  exitGrid(mode)                   （多义万能 API，已 ADR 否决，出现即阻断）
-  GridLifecycle enum / 新 Rust show_hide / 拆 position↔show
-  （保留 position → show 既有 Native 契约）
+  gridVisible stored state / exitGrid(mode) / GridLifecycle enum / 拆 position↔show
+  filePath/inlineFile/previewDir/pathInput 被组件直写（owner: useWorkspaceStore）
+  items/panelOpen 被组件直写，或维护第二份 Bookmark[]（owner: useBookmarkStore）
+  收藏夹（后端持久化）与主页快捷方式（localStorage）合并（rejected mergeBookmarksIntoHome）
 
 Owner 收敛:
   View Navigation   = useLayoutStore
   Browser/Grid Life = useBrowserStore
-  Native Execution  = useBrowserHost / bridge / Rust（只执行，不得成 domain owner）
+  Native Execution  = useBrowserHost / bridge / Rust
+  Workspace/FilePanel = useWorkspaceStore
+  Bookmark          = useBookmarkStore
 
-Phase 2 新增（Workspace/FilePanel，owner = useWorkspaceStore）:
-  filePath      = 文件浏览器/覆盖编辑器当前激活位置（地址真源；overloaded 语义冻结为单一存储态）
-  inlineFile    = 行内编辑器当前打开文件（与覆盖编辑器隔离）
-  previewDir    = 目录预览当前目录
-  pathInput     = 地址栏 UI 缓冲（镜像 filePath，非真源）
+Phase 2 新增（Workspace/FilePanel）:
+  filePath      = 地址真源（overloaded：编辑器=文件 / 浏览器=目录）
   currentLocalPath [DERIVED] = inlineFile || previewDir || modTabs.path || filePath
-                 禁止任何 .value = 写入 / ref-reactive 声明（R6 护栏；类比 desiredGridVisibility）
-  组件禁止直写 filePath/inlineFile/previewDir/pathInput（R3 violation COMPONENT_WRITES_WORKSPACE_PATH）
-  openFile / openFileInline / enterDir / saveFile / closeFileEditor 为单一意图入口
-  禁止 mergeOpenFileIntoOpenFileInline（rejected intent）
 
-Phase 1.7 新增（仓库完整性，ops 层，不进产品 Semantic Registry）:
-  git 损坏对象 = 0 字节松散对象 / cat-file 失败的松散对象
-  恢复 = 仅删「损坏且不可达」的松散对象；禁止 blind reset / 禁止删被引用对象
+Phase 3 新增（Bookmark）:
+  items      = 收藏夹唯一真源（后端 data_dir/bookmarks.json 镜像）
+  sorted     [DERIVED] = items 按 created_at 倒序
+  toggle     = 地址栏 ⭐ 唯一入口
+  add 必须按 id/normalizeUrl splice 替换（禁止 push 重复）
 ```
 
 ---
@@ -123,21 +124,15 @@ Phase 1.7 新增（仓库完整性，ops 层，不进产品 Semantic Registry）
 
 ```text
 docs/architecture/semantic-registry/
-  states.yaml       # 11 受治理状态（6 Phase1 + 5 Phase2）+ observed_not_governed
-  intents.yaml      # 15 intent（10 Phase1 + 5 Phase2）+ rejected(exitGrid, mergeOpenFileIntoOpenFileInline) + proposed_not_present
-  owners.yaml       # 5 owner（含 workspace_filepanel）；owner-only vs public intent 区分
-  side-effects.yaml # 7 副作用（含 Phase2 writeFile 文档级登记）
-  README.md         # 分类：CURRENT FACT / TARGET CONTRACT / ACCEPTED ADR / PROPOSED CHANGE / KNOWN DEBT
+  states.yaml       # 22 受治理状态（6 Phase1 + 5 Phase2 + 6 Phase3 Phase? -> 实际 17）+ observed_not_governed
+  intents.yaml      # 20 intent（10 Phase1 + 5 Phase2 + 5 Phase3）+ rejected + proposed_not_present
+  owners.yaml       # 6 owner（含 workspace_filepanel / bookmark）；owner-only vs public intent 区分
+  side-effects.yaml # 8 副作用（含 Phase2 writeFile / Phase3 bookmarkPersist 文档级登记）
+  README.md         # 分类说明
 ```
 
-配套：
-
-```text
-scripts/check-semantic-registry.mjs   # R1-R6，--self-test / --json / --strict
-scripts/pre-merge.sh                  # 已接入（正式门禁 + self-test 两段）
-docs/architecture/semantic-changes/SCR-template.md  # 新增语义必须走 SCR
-docs/architecture/semantic-changes/SCR-20260919-workspace-filepanel.md  # Phase 2 SCR
-```
+配套：`scripts/check-semantic-registry.mjs`（R1-R6）/ `scripts/pre-merge.sh`（已接入）/
+`docs/architecture/semantic-changes/SCR-template.md` / 已归档 SCR（20260919-workspace-filepanel / 20260919-bookmark）。
 
 流程：`查 Registry → 已有则用之 → 无则填 SCR → Review → ADR → 更新 Registry → 才许写代码`
 
@@ -145,30 +140,33 @@ docs/architecture/semantic-changes/SCR-20260919-workspace-filepanel.md  # Phase 
 
 ## 4b. Git Integrity / Recovery 入口（Phase 1.7 新增，ops 层）
 
-下一 Agent 在**每个 Phase 开始前**与**怀疑仓库损坏时**：
-
 ```text
-scripts/snapshot.sh                  # 只读快照 HEAD/branch/tags/dirty → .snapshots/
-scripts/check-git-repo-integrity.sh  # 只读门禁：git fsck --full 解析；^error:→FAIL
-scripts/git-recover.sh               # --diagnose / --prune-orphans（受控清理孤儿损坏）
-scripts/pre-merge.sh                 # 已接入 check-git-repo-integrity（正式 + self-test）
-docs/architecture/semantic-governance/phase1.7-git-integrity/Phase1.7-design.md
-docs/architecture/semantic-governance/phase1.7-git-integrity/RECOVERY-PROCEDURE.md
+scripts/snapshot.sh / check-git-repo-integrity.sh / git-recover.sh
+docs/architecture/semantic-governance/phase1.7-git-integrity/{Phase1.7-design,RECOVERY-PROCEDURE}.md
 ```
 
 ---
 
 ## 4c. Workspace/FilePanel Governance 入口（Phase 2 新增）
 
-下一 Agent 修改 **useWorkspaceStore.ts / FilePanel.vue** 中文件导航语义前：
-
 ```text
-docs/architecture/semantic-registry/states.yaml    # filePath/inlineFile/previewDir/pathInput/currentLocalPath 受治理
+docs/architecture/semantic-registry/states.yaml    # filePath/inlineFile/previewDir/pathInput/currentLocalPath
 docs/architecture/semantic-registry/intents.yaml   # openFile/openFileInline/enterDir/saveFile/closeFileEditor
 docs/architecture/semantic-registry/owners.yaml     # workspace_filepanel owner
-scripts/check-semantic-registry.mjs                # R6（派生状态禁止存储）+ R2/R3/R4 workspace 域
-docs/architecture/semantic-governance/phase2-workspace/Phase2-design.md
-docs/architecture/semantic-governance/phase2-workspace/PHASE_2_CLOSEOUT_RESULT.md
+scripts/check-semantic-registry.mjs                # R6 + R2/R3/R4 workspace 域
+docs/architecture/semantic-governance/phase2-workspace/{Phase2-design,PHASE_2_CLOSEOUT_RESULT}.md
+```
+
+---
+
+## 4d. Bookmark Governance 入口（Phase 3 新增）
+
+```text
+docs/architecture/semantic-registry/states.yaml    # items/loaded/busy/error/panelOpen/sorted
+docs/architecture/semantic-registry/intents.yaml   # add/remove/toggle/importFile/togglePanel + rejected mergeBookmarksIntoHome
+docs/architecture/semantic-registry/owners.yaml     # bookmark owner + COMPONENT_WRITES_BOOKMARK
+scripts/check-semantic-registry.mjs                # R2/R4/R6 bookmark 域
+docs/architecture/semantic-governance/phase3-bookmark/{Phase3-design,PHASE_3_CLOSEOUT_RESULT}.md
 ```
 
 ---
@@ -177,17 +175,17 @@ docs/architecture/semantic-governance/phase2-workspace/PHASE_2_CLOSEOUT_RESULT.m
 
 ```text
 Completed:
-  Phase 0 / 1 / 1.5 / 1.6 / 1.7 / 2 全部完成
+  Phase 0 / 1 / 1.5 / 1.6 / 1.7 / 2 / 3 全部完成
 
 Pending:
-  无（Phase 2 验收 PASS；semantic-registry-v1 tag 仍可选，未创建）
+  无（Phase 3 验收 PASS；semantic-registry-v1 tag 仍可选，未创建）
 
 Blocked:
   无
 
 Next recommended task:
-  Phase 3 — Bookmark Semantic Governance（tag: semantic-phase3-bookmark-pass）
-  注意：Phase 3 须在独立 feature/phase3-bookmark 分支，独立提交/打 tag/更新 Handoff
+  Phase 4 — Terminal Lifecycle Governance（tag: semantic-phase4-terminal-pass）
+  注意：Phase 4 须在独立 feature/phase4-terminal 分支，独立提交/打 tag/更新 Handoff
 ```
 
 ---
@@ -195,52 +193,18 @@ Next recommended task:
 ## 6. Known Debt
 
 ```text
-Debt-001  Grid UDS socket cleanup
-  状态:    KNOWN DEBT
-  来源:    sock/ 累计残留
-  当前 Phase: 不处理
-  禁止误处理: 清理会碰用户目录，非业务代码范围
-
-Debt-002  toggleGridToolbar dead code
-  状态:    KNOWN DEBT
-  当前 Phase: 不处理
-  禁止误处理: 不要补 import / 删除 / 重构（零 caller，改动会引入循环依赖风险）
-
-Debt-003  closeGridCell orphan API
-  状态:    KNOWN DEBT
-  当前 Phase: 不处理
-  禁止误处理: 不要删除；不要新增 caller 绕过 SCR
-
-Debt-004  Terminal checker debt
-  状态:    KNOWN DEBT
-  来源:    check-terminal-policy.py / check-terminal-ui-logic.mjs 自检失败
-  当前 Phase: 不处理（Phase 外）
-  禁止误处理: 禁止修改 Terminal；该失败是 pre-merge --self-test 的既有 FAIL，非本 Phase 引入
-
-Debt-1.7-1  pack 内损坏对象无自动恢复
-  状态:    KNOWN DEBT
-  当前 Phase: 记录（超出 Phase 1.7 范围，交专项）
-  禁止误处理: 不要盲目 git gc 掩盖 pack 损坏
-
-Debt-1.7-2  无周期性后台完整性巡检
-  状态:    KNOWN DEBT
-  当前 Phase: 记录（交 ops）
-  禁止误处理: 不要为每次 commit 自动 gc
-
-Debt-2-1  filePath overloaded 语义（编辑器=文件 / 浏览器=目录）未拆分
-  状态:    KNOWN DEBT
-  来源:    useWorkspaceStore filePath 单存储态承载两种语义
-  当前 Phase: 不处理（需业务重构，超出治理范围）
-
-Debt-2-2  R2 正则不识别 reactive<Set/Map>(new ...) 嵌套泛型
-  状态:    KNOWN DEBT
-  来源:    checker 正则盲区；selected/treeChildren/treeExpanded/treeLoading/treeErrors 不受 R2 治理
-  当前 Phase: 不处理（交专项，不影响本 Phase 治理目标）
-
-Debt-2-3  writeFile 副作用仅文档化（requires_declaration=false）
-  状态:    KNOWN DEBT
-  来源:    Phase 2 为避免对既有合法调用产生 R5 噪声，未强制调用点加 side-effect 标记
-  当前 Phase: 不处理（收紧需改 side-effects.yaml + 业务代码加标记）
+Debt-001  Grid UDS socket cleanup              KNOWN DEBT（不处理）
+Debt-002  toggleGridToolbar dead code          KNOWN DEBT（不处理）
+Debt-003  closeGridCell orphan API             KNOWN DEBT（不处理）
+Debt-004  Terminal checker debt               KNOWN DEBT（不处理；pre-merge --self-test 既有 FAIL，非本阶段引入）
+Debt-1.7-1 pack 内损坏对象无自动恢复          KNOWN DEBT（交专项）
+Debt-1.7-2 无周期性后台完整性巡检             KNOWN DEBT（交 ops）
+Debt-2-1 filePath overloaded 语义未拆分       KNOWN DEBT（需业务重构，超出治理范围）
+Debt-2-2 R2 正则不识别 reactive<Set/Map> 嵌套泛型  KNOWN DEBT（checker 盲区）
+Debt-2-3 writeFile 副作用仅文档化             KNOWN DEBT（收紧需业务代码改动）
+Debt-3-1 normalizeUrl 身份键未做 checker 强制  KNOWN DEBT（静态强制易误报，交专项）
+Debt-3-2 panelOpen 置于 bookmark store 而非 layout KNOWN DEBT（有意设计，不移动）
+Debt-3-3 bookmarkPersist 副作用仅文档化       KNOWN DEBT（同 Phase 2 writeFile 口径）
 ```
 
 ---
@@ -252,16 +216,12 @@ Debt-2-3  writeFile 副作用仅文档化（requires_declaration=false）
 ```text
 docs/architecture/HANDOFF_CURRENT_STATE.md
 docs/architecture/semantic-registry/README.md
-docs/architecture/semantic-registry/states.yaml
-docs/architecture/semantic-registry/intents.yaml
-docs/architecture/semantic-registry/owners.yaml
-docs/architecture/semantic-registry/side-effects.yaml
+docs/architecture/semantic-registry/{states,intents,owners,side-effects}.yaml
 docs/architecture/semantic-governance/phase1-browser-grid/FINAL-REPORT.md
 docs/architecture/semantic-governance/Known-Debt.md
-docs/architecture/semantic-governance/phase1.7-git-integrity/Phase1.7-design.md
-docs/architecture/semantic-governance/phase1.7-git-integrity/RECOVERY-PROCEDURE.md
-docs/architecture/semantic-governance/phase2-workspace/Phase2-design.md
-docs/architecture/semantic-governance/phase2-workspace/PHASE_2_CLOSEOUT_RESULT.md
+docs/architecture/semantic-governance/phase1.7-git-integrity/{Phase1.7-design,RECOVERY-PROCEDURE}.md
+docs/architecture/semantic-governance/phase2-workspace/{Phase2-design,PHASE_2_CLOSEOUT_RESULT}.md
+docs/architecture/semantic-governance/phase3-bookmark/{Phase3-design,PHASE_3_CLOSEOUT_RESULT}.md
 ```
 
 **禁止：**
@@ -269,16 +229,16 @@ docs/architecture/semantic-governance/phase2-workspace/PHASE_2_CLOSEOUT_RESULT.m
 ```text
 禁止重新扫描全仓历史上下文（以上文档已固化当前状态）
 禁止修改业务代码（src/ src-tauri/）除非对应 Phase 明确要求
-禁止清理 Known Debt（Debt-001~004 / Debt-1.7-1~2 / Debt-2-1~3）
+禁止清理 Known Debt（Debt-001~004 / 1.7-1~2 / 2-1~3 / 3-1~3）
 禁止扩大 Semantic Registry 范围（先走 SCR；治理域外不判失败）
-禁止削弱任何 Checker（尤其 check-semantic-registry 的 R1..R6 / check-git-repo-integrity 的 ^error: 判定）
+禁止削弱任何 Checker（R1..R6 / check-git-repo-integrity 的 ^error: 判定）
 禁止 blind git reset / 删被引用对象（恢复只走 git-recover.sh 护栏）
 ```
 
-**可选（如需固化 Phase 1.6 / 1.7 / 2 为 release tag）：**
+**可选（如需固化 Phase 1.6/1.7/2/3 为 release tag）：**
 
 ```bash
-git tag -a semantic-registry-v1 -m "Semantic Registry + Checker + pre-merge gate accepted; Phase 2 workspace governance PASS"
+git tag -a semantic-registry-v1 -m "Semantic Registry + Checker + pre-merge gate; Phase 2/3 governance PASS"
 # 本地，不推送
 ```
 
@@ -294,19 +254,19 @@ bash scripts/pre-merge.sh --self-test                 # semantic + git-integrity
 
 ---
 
-## 8. 当前验证状态（Phase 2 验收证据）
+## 8. 当前验证状态（Phase 3 验收证据）
 
 ```text
 SEMANTIC REGISTRY self-test:
-  ALL_PASS  （R1..R6 positive/negative/false-positive 夹具全过；R6 检出派生状态被存为 ref+.value=）
+  ALL_PASS  （R1..R6 positive/negative/false-positive 夹具全过；含 Phase3 bookmark 派生 computed + 第二列表 NEG）
 SEMANTIC REGISTRY real scan:
-  PASS  （fail=0；warn=6 为 pre-existing R5 提示级，非阻断；info=76）
+  PASS  （fail=0；warn=6 pre-existing R5 提示级，非阻断；info=75）
+R2 BOOKMARK GOVERN:
+  PASS  （useBookmarkStore.ts 6 声明全登记；注入第二份 ref<Bookmark[]> 夹具被 R2 检出）
 R6 DERIVED GUARD:
-  PASS  （currentLocalPath 为 computed 且无 .value=；注入 ref 声明 + .value= 夹具被 R6 检出）
-R2 WORKSPACE GOVERN:
-  PASS  （useWorkspaceStore.ts 全部 44 声明 = 5 受治理 + 39 observed_not_governed，无遗漏 FAIL）
+  PASS  （sorted 为 computed 且无 .value=；注入 sorted=ref([]) 夹具被 R6 检出）
 NO REGRESSION:
-  PASS  （R1..R5 逻辑未削弱；self-test 仍 ALL_PASS；未改任何业务代码）
+  PASS  （R1..R6 逻辑未削弱；self-test 仍 ALL_PASS；未改任何业务代码）
 KNOWN_DEBT isolated:
-  PASS  （Debt-001~004 / Debt-1.7-1~2 / Debt-2-1~3 均显式记录，未被触碰或隐藏）
+  PASS  （Debt-001~004 / 1.7-1~2 / 2-1~3 / 3-1~3 均显式记录，未被触碰或隐藏）
 ```
