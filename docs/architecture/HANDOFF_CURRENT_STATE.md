@@ -419,6 +419,26 @@ tag: capability-phase7e-resource-pass
 
 ---
 
+## 4p. Physical Foundation（Phase 8A — 物理边界）
+
+```text
+成熟度口径（本轮唯一）:
+  C0 REGISTERED / C1 WRAPPED / C2 ISOLATED / C3 OPTIONAL / C4 RUNTIME_CONTROLLABLE /
+  C5 RESOURCE_RELEASABLE —— 只有 C3+ 计入 CURRENTLY_COMPOSABLE
+docs/architecture/capability-platform/phase8a-physical-foundation/BOUNDARY-RULES.md
+  目录约定: index.ts / manifest.ts / contracts/** = public；state|services|ui|lifecycle|
+           resource|internal = internal
+scripts/check-capability-boundaries.mjs  CB-01..CB-07 + --help/--self-test/--json/--strict
+  自检 12/12 PASS（3 positive + 6 negative + 3 false-positive 夹具）
+  核心 analyze(files, deps) 接受虚拟文件表 → 自检与真实扫描同一套逻辑
+重要约束: Semantic Registry 的 governed_files 是按**路径**判定治理范围的。
+  物理移动 store 文件必须同步更新 governed_files，否则 R2/R8/R9 静默失去覆盖。
+  （语义 owner/writer 不变，只改路径）
+tag: capability-phase8a-physical-foundation-pass
+```
+
+---
+
 ## 5. Current Task Status
 
 ```text
