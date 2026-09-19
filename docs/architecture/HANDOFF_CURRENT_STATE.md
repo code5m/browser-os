@@ -5,8 +5,8 @@
 >
 > ✅ **git 对象损坏已清理**（Phase 1.7）：`git fsck --full` 现已 0 error。
 >
-> ✅ **Phase 2/3/4 语义治理已收口**：Workspace/FilePanel（tag phase2）、Bookmark（tag phase3）、
-> Terminal Lifecycle（tag phase4）均纳入 Semantic Registry；真实扫描 fail=0。
+> ✅ **Phase 2/3/4/5 语义治理已收口**：Workspace/FilePanel（tag phase2）、Bookmark（tag phase3）、
+> Terminal Lifecycle（tag phase4）、Credential Security（tag phase5）均纳入 Semantic Registry；真实扫描 fail=0。
 
 ---
 
@@ -21,6 +21,7 @@ Phase 1.7 Git Integrity      CLOSED   （tag: semantic-phase1.7-git-integrity-pa
 Phase 2 Workspace/FilePanel  CLOSED   （tag: semantic-phase2-workspace-pass）
 Phase 3 Bookmark             CLOSED   （tag: semantic-phase3-bookmark-pass）
 Phase 4 Terminal Lifecycle   CLOSED   （tag: semantic-phase4-terminal-pass）
+Phase 5 Credential Security    CLOSED   （tag: semantic-phase5-credential-pass）
 ```
 
 Phase 4 验收结论：
@@ -31,6 +32,16 @@ SEMANTIC REGISTRY real scan:  PASS  （fail=0；warn=6 pre-existing R5 非阻断
 R2 TERMINAL GOVERN:           PASS  （useSystemStore.ts 16 声明全登记，无第二面板列表 FAIL）
 R4 TERMINAL INTENT:           PASS  （terminal 重复名 newTerm 等未定义；注入 newTerm 定义被 R4 检出）
 NO REGRESSION:                PASS  （R1..R6 未削弱；self-test 仍 ALL_PASS）
+
+Phase 5 验收结论：
+
+```text
+SEMANTIC REGISTRY self-test: PASS  （R1..R6 全部夹具 ALL_PASS）
+SEMANTIC REGISTRY real scan:  PASS  （fail=0；warn=6 pre-existing R5 非阻断；info=80）
+R4 CREDENTIAL REJECT:          PASS  （注入 exposePassword 定义被 R4 检出；代码无泄露意图）
+CREDENTIAL REGISTRY:           PASS  （states 3 / intents 5+rejected 3 / owner 1 / side-effects 2 全登记）
+NO REGRESSION:                 PASS  （R1..R6 未削弱；未改业务代码）
+```
 ```
 
 ---
@@ -38,16 +49,18 @@ NO REGRESSION:                PASS  （R1..R6 未削弱；self-test 仍 ALL_PASS
 ## 2. Git State
 
 ```text
-branch:    master（Phase 4 以 feature/phase4-terminal 实现，ff-merge 入 master）
-HEAD:      semantic-phase4-terminal-pass（annotated tag = master tip）
+branch:    master（Phase 5 以 feature/phase5-credential 实现，ff-merge 入 master）
+HEAD:      semantic-phase5-credential-pass（annotated tag = master tip）
 working tree: 干净（仅未跟踪 .snapshots/ 与 diagnostics/ —— 取证产物，不入库）
 ```
 
 ### latest commits（Phase 4 在其上）
 
 ```text
-<phase-tip>  docs(phase4): closeout + handoff update
-<phase-feat> feat(phase4): terminal lifecycle semantic governance
+<phase-tip>  docs(phase5): closeout + handoff update
+<phase-feat> feat(phase5): credential security semantic governance
+<phase-tip4> docs(phase4): closeout + handoff update
+<phase-feat4> feat(phase4): terminal lifecycle semantic governance
 793c2c3      docs(phase3): closeout + handoff update
 145854a      feat(phase3): bookmark semantic governance
 7e881f4      docs(phase2): closeout + handoff update
@@ -68,7 +81,8 @@ semantic-phase1-browser-grid-pass       -> 7e8d867
 semantic-phase1.7-git-integrity-pass    -> b36703e
 semantic-phase2-workspace-pass          -> 7e881f4
 semantic-phase3-bookmark-pass           -> 793c2c3
-semantic-phase4-terminal-pass           -> <phase-tip>
+semantic-phase4-terminal-pass           -> <phase-tip4>
+semantic-phase5-credential-pass          -> <phase-tip>
 
 semantic-registry-v1:  NOT EXISTS（属原 Phase 1.6 可选动作，本次未创建；如需创建见 §7）
 ```
@@ -97,6 +111,13 @@ Owner 收敛:
   Workspace/FilePanel = useWorkspaceStore
   Bookmark          = useBookmarkStore
   Terminal          = useSystemStore
+  Credential         = KeyringStore（Rust 侧 OS keyring 薄封装）
+
+Phase 5 新增（Credential Security）：
+  gitRepoToken / dbCredential / browserCredential = 凭据三命名空间（repo.id / db:<conn_id> / cred.key），真源=系统密钥库
+  saveCredential/getCredential/deleteCredential/fillBrowserCredential/listBrowserCredentials 单一入口
+  前端只持不透明 metadata（credential_id / has_password），绝不持原始密码/token
+  已否决：exposePassword / copyPassword / exportCredential（R4 阻断级，凭据泄露红线）
 
 Phase 4 新增（Terminal）：
   termPanes = 面板注册表唯一真源（spawn→push，kill→filter）
@@ -160,18 +181,32 @@ docs/architecture/semantic-governance/phase4-terminal/{Phase4-design,PHASE_4_CLO
 
 ---
 
+## 4f. Credential Security Governance（Phase 5）
+
+```text
+docs/architecture/semantic-registry/states.yaml（gitRepoToken/dbCredential/browserCredential）
+docs/architecture/semantic-registry/intents.yaml（save/get/delete/fill/listBrowserCredentials + rejected expose/copy/exportPassword）
+docs/architecture/semantic-registry/owners.yaml（credential owner + FRONTEND_CREDENTIAL_LEAK）
+docs/architecture/semantic-registry/side-effects.yaml（keyringWrite / keyringDelete）
+scripts/check-semantic-registry.mjs（R4 凭据泄露意图夹具）
+docs/architecture/semantic-governance/phase5-credential/{Phase5-design,PHASE_5_CLOSEOUT_RESULT}.md
+```
+
+---
+
 ## 5. Current Task Status
 
 ```text
-Completed: Phase 0 / 1 / 1.5 / 1.6 / 1.7 / 2 / 3 / 4 全部完成
+Completed: Phase 0 / 1 / 1.5 / 1.6 / 1.7 / 2 / 3 / 4 / 5 全部完成
 
 Pending: 无
 
 Blocked: 无
 
 Next recommended task:
-  Phase 5 — Credential Security Governance（tag: semantic-phase5-credential-pass）
-  注意：Phase 5 须在独立 feature/phase5-credential 分支，独立提交/打 tag/更新 Handoff
+  语义治理主线（Phase 1.7→2→3→4→5）已全部收口。
+  可选：semantic-registry-v1 release tag（见 §7）
+  或按用户新指令开启新治理域（须先走 SCR）
 ```
 
 ---
@@ -194,6 +229,9 @@ Debt-3-3 bookmarkPersist 副作用仅文档化       KNOWN DEBT
 Debt-4-1 termPanes 第二注册表护栏限于 R2（spawn/kill 资源策略在 check-terminal-policy.py，未并入 Registry） KNOWN DEBT
 Debt-4-2 R3 不扫描组件直写 termPanes/activeTermId（R3 为 browser 专用） KNOWN DEBT
 Debt-4-3 termProcess 副作用仅文档化           KNOWN DEBT
+Debt-5-1 DatabasePanel.password 表单字段未受静态护栏  KNOWN DEBT（已登记 observed_not_governed）
+Debt-5-2 R3 未通用化到 credential owner（FRONTEND_CREDENTIAL_LEAK 未武装） KNOWN DEBT（待 R7）
+Debt-5-3 keyringWrite/keyringDelete 副作用仅文档化   KNOWN DEBT
 ```
 
 ---
@@ -212,6 +250,7 @@ docs/architecture/semantic-governance/phase1.7-git-integrity/{Phase1.7-design,RE
 docs/architecture/semantic-governance/phase2-workspace/{Phase2-design,PHASE_2_CLOSEOUT_RESULT}.md
 docs/architecture/semantic-governance/phase3-bookmark/{Phase3-design,PHASE_3_CLOSEOUT_RESULT}.md
 docs/architecture/semantic-governance/phase4-terminal/{Phase4-design,PHASE_4_CLOSEOUT_RESULT}.md
+docs/architecture/semantic-governance/phase5-credential/{Phase5-design,PHASE_5_CLOSEOUT_RESULT}.md
 ```
 
 **禁止：**
@@ -251,5 +290,11 @@ SEMANTIC REGISTRY real scan: PASS（fail=0；warn=6 pre-existing R5；info=80）
 R2 TERMINAL GOVERN: PASS（useSystemStore.ts 16 声明全登记；注入第二份 ref<{id,cwd}[]> 被 R2 检出）
 R4 TERMINAL INTENT: PASS（terminal 重复名未定义；注入 newTerm 定义被 R4 检出）
 NO REGRESSION: PASS（R1..R6 未削弱；未改业务代码）
-KNOWN_DEBT isolated: PASS（Debt-001~004 / 1.7-1~2 / 2-1~3 / 3-1~3 / 4-1~3 均显式记录）
+KNOWN_DEBT isolated: PASS（Debt-001~004 / 1.7-1~2 / 2-1~3 / 3-1~3 / 4-1~3 / 5-1~3 均显式记录）
+
+Phase 5 验收证据（2026-09-19）：
+  SEMANTIC REGISTRY self-test: ALL_PASS（R1..R6；+credential 泄露意图 exposePassword R4 NEG）
+  SEMANTIC REGISTRY real scan: PASS（fail=0；warn=6 pre-existing R5；info=80）
+  R4 CREDENTIAL REJECT: PASS（rejected 意图无代码出现；注入定义被检出）
+  NO REGRESSION: PASS（R1..R6 未削弱；未改业务代码）
 ```
