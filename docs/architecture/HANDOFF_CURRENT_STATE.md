@@ -381,6 +381,25 @@ tag: capability-phase7c-runtime-pass
 
 ---
 
+## 4n. Pilot Integration（Phase 7D — Bookmark 试点）
+
+```text
+试点: Bookmark（唯一同时满足「已登记 Owner + 无 native + LIGHT + UI 简单」）
+src/capability/capabilities/bookmark.ts   manifest + 空 lifecycle 钩子（适配器）
+                                          不 import / 不读写 useBookmarkStore
+src/capability/index.ts                   bootstrapCapabilityRuntime（幂等，失败不打断启动）
+src/main.ts                               +11 行附加调用（不改既有逻辑）
+scripts/check-capability-pilot.mjs        PLT-01..PLT-08 → 8/8 PASS
+npm run build                             通过
+未改动: src/stores/useBookmarkStore.ts 与 src/components/home/**（git 断言证明）
+状态: Bookmark = COMPATIBILITY_WRAPPED（非物理卸载）；其余 17 个 = NOT_INTEGRATED
+修复: ESM 误用 require；PLT-05 断言误报（先剥离注释再匹配真实 import）——未放宽约束
+债务: Debt-7D-1 非物理卸载 · Debt-7D-2 无 UI 呈现 · Debt-7D-3 仅 1 个能力接入
+tag: capability-phase7d-pilot-pass
+```
+
+---
+
 ## 5. Current Task Status
 
 ```text

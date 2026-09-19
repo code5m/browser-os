@@ -3,9 +3,20 @@ import { createPinia } from "pinia";
 import App from "./App.vue";
 import "./styles/global.css";
 import { bridge } from "./bridge";
+import { bootstrapCapabilityRuntime } from "./capability";
 
 document.documentElement.style.background = "#fff";
 document.body.style.background = "#fff";
+
+// Capability Runtime 启动（Phase 7D 试点）——纯编排层，失败不影响既有功能。
+try {
+  const boot = bootstrapCapabilityRuntime();
+  bridge.debugLog(
+    `[capability] bootstrap activated=${boot.activated} error=${boot.error ?? "none"}`
+  );
+} catch (e) {
+  bridge.debugLog("[capability] bootstrap failed: " + (e instanceof Error ? e.message : String(e)));
+}
 
 // 存活标记：webview 一加载就打到后端终端，用于确认前端跑的是哪份代码。
 // 改这行的时间戳即可验证"看到的 UI 是不是最新代码"。

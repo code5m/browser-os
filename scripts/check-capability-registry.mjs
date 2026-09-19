@@ -26,7 +26,7 @@
 
 import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const REG_DIR = join(ROOT, 'docs/architecture/capability-registry')
@@ -559,4 +559,9 @@ function main() {
   return 0
 }
 
-process.exit(main())
+// 仅当作为主模块运行时才执行 CLI；被 import 时只导出能力（供其它门禁复用解析器）
+const isMain =
+  process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])
+if (isMain) process.exit(main())
+
+export { parseYaml, validate, loadRegistry, REG_DIR }
