@@ -363,6 +363,24 @@ tag: capability-phase7b-contract-pass
 
 ---
 
+## 4m. Capability Runtime（Phase 7C — 最小运行时）
+
+```text
+src/capability/runtime.ts   createCapabilityRuntime(): register/resolve/enable/disable/
+                            activate/suspend/inspect/reset
+                            关键拒绝: activate 要求 status=COMPATIBILITY_WRAPPED 且 activatable=true
+                            → 从机制上杜绝"把 TARGET/NOT_INTEGRATED 当已实现"
+                            disable 仅允许"已治理 + 非常驻"能力
+scripts/check-capability-runtime.mjs   RT-01..RT-15，esbuild 转译真实 TS 后测试 → 15/15 PASS
+边界: Runtime 只持有 id/definition/state/enabled（编排元数据），
+      不含 tabs/termPanes/items/credential/gridSession（RT-13 静态断言强制）
+未引入: DI 容器 / 反射加载 / God Runtime
+债务: Debt-7C-1 无物理卸载(destroy/hibernate 未实现) · Debt-7C-2 无能力间通信 · Debt-7C-3 inspect 无实测
+tag: capability-phase7c-runtime-pass
+```
+
+---
+
 ## 5. Current Task Status
 
 ```text
