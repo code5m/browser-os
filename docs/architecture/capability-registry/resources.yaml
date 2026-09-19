@@ -1,0 +1,168 @@
+# Capability Registry — resources.yaml
+#
+# 用途：资源分类与资源生命周期策略。
+# 口径：全部为 DECLARED RESOURCE CLASS（声明式分类）—— 本项目当前没有按能力的实测机制。
+#       严禁把 DECLARED 写成 MEASURED。
+
+version: 1
+
+resource_classes:
+  LIGHT: 纯内存状态，无 native 资源、无长驻进程
+  MEDIUM: 有中等内存或磁盘 IO，无 native 进程
+  HEAVY: 持有 native webview 或较大常驻内存
+  VERY_HEAVY: 持有多个 native webview
+  MULTI_WEBVIEW: 多 webview 实例
+  NATIVE: 依赖 native 模块 / 动态库
+  PROCESS: 会派生操作系统进程
+  PTY: 伪终端
+  WEBVIEW: 持有 webview 实例
+  NETWORK: 会发起网络请求
+  BACKGROUND: 有后台定时 / 调度活动
+  SECRET: 持有连接串 / 口令类材料
+  SECURITY_SENSITIVE: 持有凭据或密钥材料
+
+resource_lifecycle:
+  - ACTIVE
+  - BACKGROUND
+  - SUSPENDED
+  - HIBERNATED
+  - DESTROYED
+
+# 每个能力必须有一条 policy（由 check-capability-registry.mjs 校验）
+policies:
+
+  - id: browser
+    class: [HEAVY, WEBVIEW, NATIVE]
+    suspendable: false
+    destroyable: false
+    resident: true
+    release_note: 释放 native webview —— TARGET，当前不可物理卸载
+
+  - id: grid
+    class: [VERY_HEAVY, MULTI_WEBVIEW, NATIVE]
+    suspendable: false
+    destroyable: false
+    resident: true
+    release_note: 释放 N 个 native webview —— TARGET，资源治理最大收益点，当前不可
+
+  - id: workspace
+    class: [LIGHT]
+    suspendable: true
+    destroyable: false
+    resident: false
+    release_note: 仅释放轻量状态，收益很小
+
+  - id: terminal
+    class: [PROCESS, PTY]
+    suspendable: false
+    destroyable: true
+    resident: false
+    release_note: 终止 PTY 子进程 —— TARGET，当前不可（PTY 不能安全冻结）
+
+  - id: bookmark
+    class: [LIGHT]
+    suspendable: true
+    destroyable: true
+    resident: false
+    release_note: 仅释放少量内存状态 —— 本身极轻，收益有限（今晚唯一真实可编排试点）
+
+  - id: credential
+    class: [SECURITY_SENSITIVE]
+    suspendable: false
+    destroyable: false
+    resident: true
+    release_note: 不可释放（keyring 句柄常驻，安全边界）
+
+  - id: database
+    class: [NETWORK, SECRET]
+    suspendable: true
+    destroyable: true
+    resident: false
+    release_note: 断开连接、释放连接池 —— TARGET
+
+  - id: git
+    class: [MEDIUM, NETWORK]
+    suspendable: true
+    destroyable: true
+    resident: false
+    release_note: 释放工作区索引与远程连接 —— TARGET
+
+  - id: agent
+    class: [MEDIUM, NETWORK]
+    suspendable: true
+    destroyable: true
+    resident: false
+    release_note: 停止会话与网络请求 —— TARGET
+
+  - id: skill
+    class: [LIGHT]
+    suspendable: true
+    destroyable: true
+    resident: false
+    release_note: 仅释放轻量状态
+
+  - id: plugin
+    class: [HEAVY, NATIVE]
+    suspendable: false
+    destroyable: false
+    resident: false
+    release_note: runtime LOCKED，不支持释放
+
+  - id: knowledge_graph
+    class: [MEDIUM]
+    suspendable: true
+    destroyable: true
+    resident: false
+    release_note: 释放图索引内存 —— TARGET
+
+  - id: notes
+    class: [LIGHT]
+    suspendable: true
+    destroyable: true
+    resident: false
+    release_note: 仅释放轻量状态
+
+  - id: resource_collection
+    class: [MEDIUM, BACKGROUND]
+    suspendable: true
+    destroyable: false
+    resident: false
+    release_note: 停止后台采集 —— TARGET
+
+  - id: task
+    class: [BACKGROUND]
+    suspendable: true
+    destroyable: true
+    resident: false
+    release_note: 停止后台调度，消除定时唤醒 —— TARGET
+
+  - id: session
+    class: [LIGHT]
+    suspendable: false
+    destroyable: false
+    resident: true
+    release_note: 不可释放（关停链路）
+
+  - id: script
+    class: [PROCESS]
+    suspendable: false
+    destroyable: true
+    resident: false
+    release_note: 终止脚本进程 —— TARGET
+
+  - id: workbench
+    class: [MEDIUM]
+    suspendable: true
+    destroyable: false
+    resident: false
+    release_note: 释放汇总视图状态 —— TARGET
+
+# ── 测量现状（诚实声明） ────────────────────────────────────────────────
+measurement_status:
+  measured_memory_per_capability: NOT_AVAILABLE
+  measured_cpu_per_capability: NOT_AVAILABLE
+  webview_instance_count: NOT_MEASURED
+  declared_resource_class: AVAILABLE
+  note: >
+    项目当前没有按能力的资源实测机制。Capability Resource Report 只能给出 DECLARED 口径，
+    不得编造性能数字（登记为 Debt-7A-1）。

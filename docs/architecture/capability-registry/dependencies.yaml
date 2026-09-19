@@ -1,0 +1,80 @@
+# Capability Registry — dependencies.yaml
+#
+# 用途：声明能力之间的依赖边、共享基础设施节点，以及「谁不能依赖谁」的硬约束。
+# 依赖边必须与 capabilities.yaml 的 dependsOn/optionalDependencies 一致（由 checker 校验）。
+
+version: 1
+
+# ── 共享基础设施节点（不是能力，不可卸载，任何能力都可依赖） ──────────────
+shared_infrastructure:
+  - id: bridge
+    kind: ADAPTER
+    evidence: src/bridge.ts（48 处 invoke）
+    note: 唯一 Native 通道；绕过即违规
+  - id: pinia
+    kind: INFRASTRUCTURE
+    evidence: src/main.ts
+    note: 状态容器宿主
+  - id: security_policy
+    kind: INFRASTRUCTURE
+    evidence: src-tauri/src/security_policy.rs
+    note: 安全边界（程序黑名单 / 敏感数据）
+  - id: shell
+    kind: INFRASTRUCTURE
+    evidence: src/App.vue + useLayoutStore
+    note: 窗口 / 布局 / 导航
+
+# ── 硬约束：禁止出现的依赖方向 ─────────────────────────────────────────
+forbidden_edges:
+  - from: credential
+    to: browser
+    reason: 凭据层不得反向依赖 UI 能力
+  - from: credential
+    to: terminal
+    reason: 凭据层不得反向依赖进程能力
+  - from: session
+    to: browser
+    reason: 关停链路不得依赖具体业务能力（避免关闭顺序耦合）
+  - from: session
+    to: grid
+    reason: 同上
+
+# ── 依赖边（与 capabilities.yaml 对齐） ────────────────────────────────
+edges:
+  - { from: browser,   to: bridge,   kind: required }
+  - { from: grid,      to: browser,  kind: required }
+  - { from: grid,      to: bridge,   kind: required }
+  - { from: workspace, to: bridge,   kind: required }
+  - { from: terminal,  to: bridge,   kind: required }
+  - { from: bookmark,  to: bridge,   kind: optional }
+  - { from: credential,to: bridge,   kind: required }
+  - { from: database,  to: credential, kind: required }
+  - { from: database,  to: bridge,   kind: required }
+  - { from: git,       to: credential, kind: required }
+  - { from: git,       to: workspace,  kind: required }
+  - { from: git,       to: bridge,   kind: required }
+  - { from: agent,     to: bridge,   kind: required }
+  - { from: agent,     to: knowledge_graph, kind: optional }
+  - { from: skill,     to: agent,    kind: required }
+  - { from: skill,     to: bridge,   kind: required }
+  - { from: plugin,    to: bridge,   kind: required }
+  - { from: knowledge_graph, to: bridge, kind: required }
+  - { from: knowledge_graph, to: agent,   kind: optional }
+  - { from: notes,     to: bridge,   kind: required }
+  - { from: resource_collection, to: bridge, kind: required }
+  - { from: task,      to: bridge,   kind: required }
+  - { from: task,      to: script,   kind: optional }
+  - { from: session,   to: bridge,   kind: required }
+  - { from: script,    to: bridge,   kind: required }
+  - { from: workbench, to: bridge,   kind: required }
+
+# ── 已知耦合（登记为债务，不是依赖边） ──────────────────────────────────
+known_coupling:
+  - id: Debt-7A-2
+    between: [terminal, clipboard]
+    via: useSystemStore
+    note: 同一个 store 同时是 Terminal 与 Clipboard 的 Owner，二者无法独立编排；拆分需先走 SCR
+  - id: Debt-7B-1
+    between: [browser, grid]
+    via: gridSession / grid_process.rs
+    note: Grid 与 Browser 深度耦合，暂不拆（用户已认可的稳定基线）

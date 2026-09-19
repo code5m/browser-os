@@ -340,6 +340,29 @@ tag: capability-phase7a-architecture-pass
 
 ---
 
+## 4l. Capability Registry（Phase 7B — 契约与登记表）
+
+```text
+docs/architecture/capability-registry/
+  capabilities.yaml   18 个 CAPABILITY 的 manifest（id/name/category/provides/dependsOn/
+                      optionalDependencies/lifecycle/resources/permissions/persistence/entrypoint）
+  dependencies.yaml   依赖边 + 共享基础设施(bridge/pinia/security_policy/shell) + 禁止边 + 已知耦合
+  resources.yaml      Resource Class(13) / Resource Lifecycle(5) / 每能力 policy + 测量现状
+  README.md           manifest 字段契约 + 硬规则 R-A..R-H + Capability SDK 最小接口
+
+src/capability/types.ts   CapabilityDefinition / CapabilityLifecycle /
+                          CapabilityContext / CapabilityResourcePolicy（仅类型，无实现、无 DI）
+scripts/check-capability-registry.mjs   C1..C10，--help/--self-test/--json/--strict
+  自检 13/13 PASS（1 positive + 9 negative + 3 false-positive 夹具）
+  真实扫描 fail=0 warn=0；--strict 亦 PASS
+
+未登记 Owner（activatable 强制 false）: skill / notes / script  → governanceStatus OWNER_PENDING_SCR
+LOCKED: plugin（runtime 冻结，不可装配）
+tag: capability-phase7b-contract-pass
+```
+
+---
+
 ## 5. Current Task Status
 
 ```text

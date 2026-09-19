@@ -72,14 +72,17 @@
 ## 4. 统计
 
 ```text
-CAPABILITY            15   (Browser, Grid, Workspace, Terminal, Bookmark, Credential,
-                            Database, Git, Agent, Skill, Plugin, KnowledgeGraph,
-                            Notes, ResourceCollection, Task, Session, Script, Workbench)
-SUB_CAPABILITY         6   (Files, FilePreview, Vault, Snippet, Clipboard, Home*)
-UI_COMPONENT           1   (Home)
-SERVICE                2   (Tools, Images*)
-ADAPTER                2   (bridge/MCP)
-INFRASTRUCTURE         3   (Settings, Sync, Layout/Shell)
-IMPLEMENTATION_DETAIL  1   (gridSession 内部)
+CAPABILITY            18   Browser, Grid, Workspace, Terminal, Bookmark, Credential,
+                           Database, Git, Agent, Skill, Plugin, KnowledgeGraph,
+                           Notes, ResourceCollection, Task, Session, Script, Workbench
+SUB_CAPABILITY         5   Files, FilePreview, Vault, Snippet, Clipboard
+UI_COMPONENT           1   Home
+SERVICE                2   Tools, Images
+ADAPTER                1   MCP（另：bridge.ts 属 INFRA 通道）
+INFRASTRUCTURE         3   Settings, Sync, Layout/Shell
+IMPLEMENTATION_DETAIL  1   gridSession 内部
+─────────────────────────
+合计                  31
 ```
-> 精确计数以 §2 表格为准；上述为按分类归并的概览（Images 归 SERVICE、Home 归 UI_COMPONENT）。
+> 修正记录：初稿 §4 误写 CAPABILITY=15，实为 18（以 §2 表格逐行数为准）。此处已更正。
+> 精确计数以 §2 表格为准；Images 归 SERVICE、Home 归 UI_COMPONENT。

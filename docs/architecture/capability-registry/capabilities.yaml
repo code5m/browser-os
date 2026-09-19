@@ -1,0 +1,542 @@
+# Capability Registry — capabilities.yaml
+#
+# 用途：回答「这个能力提供什么、依赖什么、生命周期与资源策略是什么」
+#       —— 语义（这个状态/意图是什么意思、谁拥有、谁能写）归 Semantic Registry，此处只引用不重复。
+#
+# 铁律：
+#   - semanticOwner 必须是 Semantic Registry 已登记的 owner；未登记则填 null + governanceStatus: OWNER_PENDING_SCR
+#   - governanceStatus = OWNER_PENDING_SCR / LOCKED 的能力，lifecycle.activatable 必须为 false
+#   - 新增语义必须走 SCR 更新 Semantic Registry 后，才能在此引用
+#
+# status 取值（禁止把目标写成现状）：
+#   NOT_INTEGRATED          仅登记，未接入 Runtime
+#   COMPATIBILITY_WRAPPED   经 Adapter 接入 Runtime，底层仍是既有系统
+#   TARGET_COMPOSABLE       目标态，尚未实现
+
+version: 1
+
+capabilities:
+
+  - id: browser
+    name: Browser
+    category: CAPABILITY
+    semanticOwner: useBrowserStore
+    governanceStatus: GOVERNED
+    status: NOT_INTEGRATED
+    provides:
+      - browser.navigate
+      - browser.tab.open
+      - browser.tab.close
+    dependsOn:
+      - bridge
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE]
+      default: ACTIVE
+      activatable: false
+      resident: true
+    resources:
+      class: [HEAVY, WEBVIEW, NATIVE]
+      suspendable: false
+      destroyable: false
+    permissions:
+      - webview.create
+    persistence:
+      scope: session
+      sensitive: false
+    entrypoint: src/components/browser
+
+  - id: grid
+    name: Grid
+    category: CAPABILITY
+    semanticOwner: useBrowserStore
+    governanceStatus: GOVERNED
+    status: NOT_INTEGRATED
+    provides:
+      - grid.open
+      - grid.layout
+      - grid.archive
+    dependsOn:
+      - browser
+      - bridge
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE]
+      default: ACTIVE
+      activatable: false
+      resident: true
+    resources:
+      class: [VERY_HEAVY, MULTI_WEBVIEW, NATIVE]
+      suspendable: false
+      destroyable: false
+    permissions:
+      - webview.create
+      - process.spawn
+    persistence:
+      scope: disk
+      sensitive: false
+    entrypoint: src/components/browser
+
+  - id: workspace
+    name: Workspace
+    category: CAPABILITY
+    semanticOwner: useWorkspaceStore
+    governanceStatus: GOVERNED
+    status: NOT_INTEGRATED
+    provides:
+      - workspace.open
+      - workspace.tree
+    dependsOn:
+      - bridge
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE, SUSPENDED]
+      default: ACTIVE
+      activatable: false
+      resident: false
+    resources:
+      class: [LIGHT]
+      suspendable: true
+      destroyable: false
+    permissions:
+      - fs.read
+    persistence:
+      scope: session
+      sensitive: false
+    entrypoint: src/components/workspace
+
+  - id: terminal
+    name: Terminal
+    category: CAPABILITY
+    semanticOwner: useSystemStore
+    governanceStatus: GOVERNED
+    status: NOT_INTEGRATED
+    provides:
+      - terminal.spawn
+      - terminal.write
+      - terminal.kill
+    dependsOn:
+      - bridge
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE]
+      default: ACTIVE
+      activatable: false
+      resident: false
+    resources:
+      class: [PROCESS, PTY]
+      suspendable: false
+      destroyable: true
+    permissions:
+      - process.spawn
+    persistence:
+      scope: session
+      sensitive: false
+    entrypoint: src/components/system/TerminalPane.vue
+
+  - id: bookmark
+    name: Bookmark
+    category: CAPABILITY
+    semanticOwner: useBookmarkStore
+    governanceStatus: GOVERNED
+    status: NOT_INTEGRATED
+    provides:
+      - bookmark.list
+      - bookmark.add
+      - bookmark.remove
+      - bookmark.togglePanel
+    dependsOn: []
+    optionalDependencies:
+      - bridge
+    lifecycle:
+      supported: [ACTIVE, SUSPENDED]
+      default: ACTIVE
+      activatable: true
+      resident: false
+    resources:
+      class: [LIGHT]
+      suspendable: true
+      destroyable: true
+    permissions: []
+    persistence:
+      scope: disk
+      sensitive: false
+    entrypoint: src/stores/useBookmarkStore.ts
+
+  - id: credential
+    name: Credential
+    category: CAPABILITY
+    semanticOwner: KeyringStore
+    governanceStatus: GOVERNED
+    status: NOT_INTEGRATED
+    provides:
+      - credential.save
+      - credential.get
+      - credential.delete
+    dependsOn:
+      - bridge
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE]
+      default: ACTIVE
+      activatable: false
+      resident: true
+    resources:
+      class: [SECURITY_SENSITIVE]
+      suspendable: false
+      destroyable: false
+    permissions:
+      - keyring.access
+    persistence:
+      scope: os_keyring
+      sensitive: true
+    entrypoint: src-tauri/src/security_policy.rs
+
+  - id: database
+    name: Database
+    category: CAPABILITY
+    semanticOwner: useDatabaseStore
+    governanceStatus: GOVERNED
+    status: NOT_INTEGRATED
+    provides:
+      - database.connect
+      - database.query
+      - database.cancel
+    dependsOn:
+      - credential
+      - bridge
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE, SUSPENDED]
+      default: ACTIVE
+      activatable: false
+      resident: false
+    resources:
+      class: [NETWORK, SECRET]
+      suspendable: true
+      destroyable: true
+    permissions:
+      - network.connect
+      - keyring.access
+    persistence:
+      scope: disk
+      sensitive: true
+    entrypoint: src/components/workspace/DatabasePanel.vue
+
+  - id: git
+    name: Git
+    category: CAPABILITY
+    semanticOwner: useGitStore
+    governanceStatus: GOVERNED
+    status: NOT_INTEGRATED
+    provides:
+      - git.status
+      - git.diff
+      - git.log
+      - git.commit
+    dependsOn:
+      - credential
+      - workspace
+      - bridge
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE, SUSPENDED]
+      default: ACTIVE
+      activatable: false
+      resident: false
+    resources:
+      class: [MEDIUM, NETWORK]
+      suspendable: true
+      destroyable: true
+    permissions:
+      - fs.read
+      - fs.write
+      - keyring.access
+    persistence:
+      scope: disk
+      sensitive: false
+    entrypoint: src/components/workspace/GitPanel.vue
+
+  - id: agent
+    name: Agent
+    category: CAPABILITY
+    semanticOwner: useAgentStore
+    governanceStatus: GOVERNED
+    status: NOT_INTEGRATED
+    provides:
+      - agent.chat
+      - agent.run
+      - agent.memory
+    dependsOn:
+      - bridge
+    optionalDependencies:
+      - knowledge_graph
+    lifecycle:
+      supported: [ACTIVE, SUSPENDED]
+      default: ACTIVE
+      activatable: false
+      resident: false
+    resources:
+      class: [MEDIUM, NETWORK]
+      suspendable: true
+      destroyable: true
+    permissions:
+      - network.connect
+    persistence:
+      scope: disk
+      sensitive: false
+    entrypoint: src/components/workspace/AgentChatPanel.vue
+
+  - id: skill
+    name: Skill
+    category: CAPABILITY
+    semanticOwner: null
+    governanceStatus: OWNER_PENDING_SCR
+    status: NOT_INTEGRATED
+    provides:
+      - skill.list
+      - skill.invoke
+    dependsOn:
+      - agent
+      - bridge
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE, SUSPENDED]
+      default: ACTIVE
+      activatable: false
+      resident: false
+    resources:
+      class: [LIGHT]
+      suspendable: true
+      destroyable: true
+    permissions: []
+    persistence:
+      scope: disk
+      sensitive: false
+    entrypoint: src/components/workspace/SkillManagerPanel.vue
+
+  - id: plugin
+    name: Plugin
+    category: CAPABILITY
+    semanticOwner: usePluginStore
+    governanceStatus: LOCKED
+    status: NOT_INTEGRATED
+    provides:
+      - plugin.list
+      - plugin.manifest
+    dependsOn:
+      - bridge
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE]
+      default: ACTIVE
+      activatable: false
+      resident: false
+    resources:
+      class: [HEAVY, NATIVE]
+      suspendable: false
+      destroyable: false
+    permissions: []
+    persistence:
+      scope: disk
+      sensitive: false
+    entrypoint: src/components/plugin
+
+  - id: knowledge_graph
+    name: KnowledgeGraph
+    category: CAPABILITY
+    semanticOwner: useGraphStore
+    governanceStatus: GOVERNED
+    status: NOT_INTEGRATED
+    provides:
+      - graph.query
+      - graph.node.get
+      - graph.stats
+    dependsOn:
+      - bridge
+    optionalDependencies:
+      - agent
+    lifecycle:
+      supported: [ACTIVE, SUSPENDED]
+      default: ACTIVE
+      activatable: false
+      resident: false
+    resources:
+      class: [MEDIUM]
+      suspendable: true
+      destroyable: true
+    permissions: []
+    persistence:
+      scope: disk
+      sensitive: false
+    entrypoint: src/components/graph
+
+  - id: notes
+    name: Notes
+    category: CAPABILITY
+    semanticOwner: null
+    governanceStatus: OWNER_PENDING_SCR
+    status: NOT_INTEGRATED
+    provides:
+      - note.save
+      - note.collect
+    dependsOn:
+      - bridge
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE, SUSPENDED]
+      default: ACTIVE
+      activatable: false
+      resident: false
+    resources:
+      class: [LIGHT]
+      suspendable: true
+      destroyable: true
+    permissions:
+      - fs.write
+    persistence:
+      scope: disk
+      sensitive: false
+    entrypoint: src/utils/vault.mjs
+
+  - id: resource_collection
+    name: ResourceCollection
+    category: CAPABILITY
+    semanticOwner: useResourceStore
+    governanceStatus: GOVERNED
+    status: NOT_INTEGRATED
+    provides:
+      - resource.capture
+      - resource.settings
+    dependsOn:
+      - bridge
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE, BACKGROUND]
+      default: ACTIVE
+      activatable: false
+      resident: false
+    resources:
+      class: [MEDIUM, BACKGROUND]
+      suspendable: true
+      destroyable: false
+    permissions:
+      - fs.write
+      - network.connect
+    persistence:
+      scope: disk
+      sensitive: false
+    entrypoint: src/stores/useResourceStore.ts
+
+  - id: task
+    name: Task
+    category: CAPABILITY
+    semanticOwner: useTaskStore
+    governanceStatus: GOVERNED
+    status: NOT_INTEGRATED
+    provides:
+      - task.schedule
+      - task.run
+      - task.cancel
+    dependsOn:
+      - bridge
+    optionalDependencies:
+      - script
+    lifecycle:
+      supported: [ACTIVE, BACKGROUND]
+      default: ACTIVE
+      activatable: false
+      resident: false
+    resources:
+      class: [BACKGROUND]
+      suspendable: true
+      destroyable: true
+    permissions:
+      - process.spawn
+    persistence:
+      scope: disk
+      sensitive: false
+    entrypoint: src/stores/useTaskStore.ts
+
+  - id: session
+    name: Session
+    category: CAPABILITY
+    semanticOwner: useSessionStore
+    governanceStatus: GOVERNED
+    status: NOT_INTEGRATED
+    provides:
+      - session.persist
+      - session.restore
+    dependsOn:
+      - bridge
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE]
+      default: ACTIVE
+      activatable: false
+      resident: true
+    resources:
+      class: [LIGHT]
+      suspendable: false
+      destroyable: false
+    permissions:
+      - fs.write
+    persistence:
+      scope: disk
+      sensitive: false
+    entrypoint: src/stores/useSessionStore.ts
+
+  - id: script
+    name: Script
+    category: CAPABILITY
+    semanticOwner: null
+    governanceStatus: OWNER_PENDING_SCR
+    status: NOT_INTEGRATED
+    provides:
+      - script.run
+      - script.snippet
+    dependsOn:
+      - bridge
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE]
+      default: ACTIVE
+      activatable: false
+      resident: false
+    resources:
+      class: [PROCESS]
+      suspendable: false
+      destroyable: true
+    permissions:
+      - process.spawn
+    persistence:
+      scope: disk
+      sensitive: false
+    entrypoint: src/components/workspace/ScriptPanel.vue
+
+  - id: workbench
+    name: Workbench
+    category: CAPABILITY
+    semanticOwner: useWorkbenchStore
+    governanceStatus: GOVERNED
+    status: NOT_INTEGRATED
+    provides:
+      - workbench.summary
+      - workbench.artifact
+    dependsOn:
+      - bridge
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE, SUSPENDED]
+      default: ACTIVE
+      activatable: false
+      resident: false
+    resources:
+      class: [MEDIUM]
+      suspendable: true
+      destroyable: false
+    permissions: []
+    persistence:
+      scope: disk
+      sensitive: false
+    entrypoint: src/stores/useWorkbenchStore.ts
