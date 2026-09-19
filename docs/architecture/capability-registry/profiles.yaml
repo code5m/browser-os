@@ -1,0 +1,83 @@
+# Capability Registry — profiles.yaml
+#
+# 用途：Composition Profile（组合配置）+ 每个能力的"可组合性"真实状态。
+#
+# 铁律：禁止把目标态写成已实现。三种状态必须区分清楚：
+#   CURRENTLY_COMPOSABLE   已能真正独立启停（今晚：无）
+#   COMPATIBILITY_WRAPPED  经 Adapter 接入 Runtime，底层仍是既有系统（今晚：仅 bookmark）
+#   TARGET_COMPOSABLE      目标态，尚未实现
+#   NOT_COMPOSABLE_BY_DESIGN  设计上不参与组合（安全/常驻/锁定）
+
+version: 1
+
+composability:
+  bookmark: COMPATIBILITY_WRAPPED
+  workspace: TARGET_COMPOSABLE
+  notes: TARGET_COMPOSABLE
+  skill: TARGET_COMPOSABLE
+  knowledge_graph: TARGET_COMPOSABLE
+  resource_collection: TARGET_COMPOSABLE
+  workbench: TARGET_COMPOSABLE
+  database: TARGET_COMPOSABLE
+  git: TARGET_COMPOSABLE
+  agent: TARGET_COMPOSABLE
+  task: TARGET_COMPOSABLE
+  script: TARGET_COMPOSABLE
+  terminal: TARGET_COMPOSABLE
+  browser: TARGET_COMPOSABLE
+  grid: TARGET_COMPOSABLE
+  credential: NOT_COMPOSABLE_BY_DESIGN
+  session: NOT_COMPOSABLE_BY_DESIGN
+  plugin: NOT_COMPOSABLE_BY_DESIGN
+
+profiles:
+
+  - id: minimal
+    name: Minimal
+    description: 最小可用集合 —— 只保留文件工作区与书签
+    capabilities:
+      - workspace
+      - bookmark
+    note: 其中仅 bookmark 是 COMPATIBILITY_WRAPPED，workspace 仍为 TARGET_COMPOSABLE
+
+  - id: developer
+    name: Developer
+    description: 开发向集合 —— 工作区 + 浏览器 + 终端 + 版本控制 + 数据库
+    capabilities:
+      - workspace
+      - browser
+      - terminal
+      - git
+      - database
+      - bookmark
+    note: 除 bookmark 外均为 TARGET_COMPOSABLE；今晚不能真正按需装配
+
+  - id: full
+    name: Full
+    description: 全部已登记能力
+    capabilities:
+      - workspace
+      - browser
+      - grid
+      - terminal
+      - bookmark
+      - credential
+      - database
+      - git
+      - agent
+      - skill
+      - plugin
+      - knowledge_graph
+      - notes
+      - resource_collection
+      - task
+      - session
+      - script
+      - workbench
+    note: 演示口径；credential/session/plugin 为 NOT_COMPOSABLE_BY_DESIGN
+
+# 演示时必须声明的事实
+demo_disclaimer: >
+  三个 Profile 是"组合配置的设计口径"，不是今晚已实现的按需装配能力。
+  今晚真正接入 Capability Runtime 的只有 bookmark（COMPATIBILITY_WRAPPED），
+  其余能力的启停仍为 TARGET_COMPOSABLE。禁止在演示中声称"可以一键切换 Profile"。

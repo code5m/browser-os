@@ -400,6 +400,25 @@ tag: capability-phase7d-pilot-pass
 
 ---
 
+## 4o. Resource Governance（Phase 7E）
+
+```text
+docs/architecture/capability-registry/profiles.yaml
+  Minimal / Developer / Full + composability（每能力可组合性真实状态）
+  CURRENTLY_COMPOSABLE=无 · COMPATIBILITY_WRAPPED=bookmark
+  TARGET_COMPOSABLE=其余14 · NOT_COMPOSABLE_BY_DESIGN=credential/session/plugin
+scripts/capability-resource-report.mjs  报告生成器 --out/--json/--self-test/--help
+  RPT-01..08 自检 8/8 PASS（RPT-02/03/05 为防编造护栏：禁实测数字、禁声称可组合）
+.../phase7e-resource-governance/Capability-Resource-Report.md  由真源生成（非手写）
+口径: DECLARED RESOURCE CLASS；measurement_status = NOT_AVAILABLE（不编造）
+answer「关闭某功能省什么」: 最大收益点在 Grid/Browser/Terminal，但今晚不可物理卸载；
+  Bookmark 可编排但收益有限 → 今晚交付的是"分类体系与可见性"，不是一键省内存
+债务: Debt-7E-1 Profile 切换未实现 · Debt-7E-2 HIBERNATED 未实现 · Debt-7E-3 收益未实测
+tag: capability-phase7e-resource-pass
+```
+
+---
+
 ## 5. Current Task Status
 
 ```text
