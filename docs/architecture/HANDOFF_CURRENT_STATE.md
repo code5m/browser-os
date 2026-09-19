@@ -25,10 +25,12 @@
 > （既有 canonical_writer/forbidden_writers/owner/derived/single_owner_required 已齐备，无需扩 YAML）；
 > 真实扫描 fail=0、self-test ALL_PASS（R1..R9）、closure-logic 27/27。
 
-> ✅ **Semantic Governance v1 Final Acceptance 已收口**（tag `semantic-governance-v1`）：
+> ✅ **Semantic Governance v1 Final Acceptance 已收口并发布（RELEASED）**（tag `semantic-governance-v1` → commit `316130d`；master 已快进至该提交并 `git push origin master`，tag 已 `git push origin semantic-governance-v1`）：
 > Registry（State/Intent/Owner/Writer/SideEffect 四源）+ Checker（R1–R9 + closure + sensitive-side-effect）
 > + Gate（pre-merge Phase 03）+ Recovery（snapshot/diagnostics/rollback/git-integrity）四支柱齐备；
 > 全 13 个语义治理阶段 = CLOSED。纯验收文档交付（`docs/delivery/`），未改业务代码、未扩大治理域。
+>
+> 🔒 **RELEASED / FROZEN**（2026-09-19 远程发布确认）：`master == origin/master == 316130d`；tag `semantic-governance-v1` 已 push（`a4131de` 即该 tag 对象自身，解引用为 `316130d`）。Remote = PUSHED。下一步：**Product Evolution / New Feature Development**。禁止移动或删除该 tag；新功能在已治理语义骨架上复用 canonical intent / owner。
 
 ---
 
@@ -47,7 +49,7 @@ Phase 5 Credential Security    CLOSED   （tag: semantic-phase5-credential-pass�
 Phase 5.1 Credential Hardening  CLOSED   （tag: semantic-phase5.1-credential-hardening-pass）
 Phase 6A Core Closure（迁移）  CLOSED   （tag: semantic-phase6a-core-closure-pass）
 Phase 6B Writer Enforcement        CLOSED   （tag: semantic-phase6b-writer-enforcement-pass）
-Semantic Governance v1      CLOSED   （tag: semantic-governance-v1）
+Semantic Governance v1      CLOSED / RELEASED   （tag: semantic-governance-v1, Baseline: 316130d, Remote: PUSHED）
 ```
 
 Phase 4 验收结论：
@@ -84,8 +86,10 @@ NO REGRESSION:                 PASS  （R1..R7 + 新门禁均未削弱既有规�
 ## 2. Git State
 
 ```text
-branch:    feature/phase6b-writer-enforcement（Phase 6B 实现分支；Semantic Governance v1 验收在此分支追加 docs/delivery/）
-HEAD:      <gov-v1-tip>（docs(delivery): Semantic Governance v1 acceptance + handoff）
+branch:    master（已快进至 Semantic Governance v1 验收点；feature/phase6b-writer-enforcement 现已并入 master 历史）
+HEAD:      316130d（docs(delivery): Semantic Governance v1 final acceptance + handoff）
+remote:    origin/master == 316130d（已 PUSHED；fast-forward e05160a..316130d）
+tag:      semantic-governance-v1 已 push origin（-> 316130d；a4131de 为该 tag 对象本身）
 working tree: 干净（仅未跟踪 .snapshots/ 与 diagnostics/ —— 取证产物，不入库）
 ```
 
