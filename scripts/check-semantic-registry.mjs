@@ -357,7 +357,50 @@ function rule7(files, reg) {
   return out;
 }
 
-const RULES = [rule1, rule2, rule3, rule4, rule5, rule6, rule7];
+// ============================ R8：受治理状态唯一 owner（防第二真源）========================
+// 每个受治理「存储态」（derived !== true）必须在 owner 对应的 store 文件中声明一次；
+// 若在任何非 owner store 文件中被声明为 ref/reactive/shallowRef，即破坏唯一真源（R8）。
+// 另：派生面板（如 bmPanelOpen）严禁在 store 中声明为存储态，必须留在组件 computed。
+function rule8(files, reg) {
+  const out = [];
+  const states = (reg.states && reg.states.states) || {};
+  const OWNER_FILE = {
+    useBrowserStore: "src/stores/useBrowserStore.ts",
+    useLayoutStore: "src/stores/useLayoutStore.ts",
+    useWorkspaceStore: "src/stores/useWorkspaceStore.ts",
+    useBookmarkStore: "src/stores/useBookmarkStore.ts",
+    useSystemStore: "src/stores/useSystemStore.ts",
+  };
+  // 存储声明（ref/shallowRef/reactive；**不含 computed** —— computed 正是派生的正确形态）
+  const STORED_DECL = (name) =>
+    new RegExp("(?:const|let|var)\\s+" + name + "\\s*(?::\\s*[^=;]+)?=\\s*(?:ref|shallowRef|reactive)\\s*(?:<[^>]*>)?\\s*\\(");
+  // 只在 store 文件内判定：避免组件局部 ref / props 误报；generic 名（items/busy/error）域内复用合法
+  const isStoreFile = (p) => p.includes("/stores/");
+  // 派生面板：必须保持组件 computed（= panelOpen && mainView==="browser"），禁止在 store 中存为态
+  const DERIVED_ONLY = ["bmPanelOpen"];
+  for (const f of files) {
+    if (!isStoreFile(f.path)) continue;
+    const code = stripComments(f.src);
+    for (const name of DERIVED_ONLY) {
+      if (STORED_DECL(name).test(code))
+        out.push({ rule: "R8", code: "SEMANTIC_DERIVED_PANEL_STORED", file: f.path, detail: `"${name}" 必须保持为组件 computed 派生量（= panelOpen && mainView==='browser'），禁止在 store 中声明为存储态（第二真源）`, severity: "fail" });
+    }
+  }
+  for (const [key, def] of Object.entries(states)) {
+    if (!def || def.derived === true) continue; // 只查存储态；派生态由 R6 守护
+    if (def.single_owner_required !== true) continue; // 仅对显式要求唯一 owner 的状态强制（避免 generic 名域内复用误报）
+    const owner = String(def.owner || "");
+    const ownerFile = OWNER_FILE[owner];
+    if (!ownerFile) continue; // credential 等 Rust 侧 owner 跳过文件判定
+    const re = STORED_DECL(key); // stateless（无 g 标志）
+    const outside = files.filter((f) => isStoreFile(f.path) && f.path !== ownerFile && re.test(stripComments(f.src))).map((f) => f.path);
+    if (outside.length)
+      out.push({ rule: "R8", code: "SEMANTIC_STATE_MULTI_OWNER", file: outside.join(", "), detail: `治理状态 "${key}"（owner=${owner}）在 owner 文件 ${ownerFile} 之外被声明：${outside.join(", ")} —— 破坏唯一真源`, severity: "fail" });
+  }
+  return out;
+}
+
+const RULES = [rule1, rule2, rule3, rule4, rule5, rule6, rule7, rule8];
 
 function analyze(files, reg) {
   const findings = [];
@@ -384,6 +427,7 @@ function printHelp() {
   R5 SEMANTIC_SIDE_EFFECT_UNKNOWN  调用带副作用 API 未声明认知（默认提示）
   R6 SEMANTIC_DERIVED_STATE_STORED 派生状态（derived:true）被存为 ref/reactive 或被 .value= 赋值（第二真源）
   R7 SENSITIVE_INPUT_LEAK        敏感输入（sensitive:true 状态）流入 console/localStorage/export 泄露汇（须走安全凭据流 db.connect）
+  R8 SEMANTIC_STATE_MULTI_OWNER  受治理存储态在 owner 文件之外被声明（第二真源）；派生面板在 store 中被存为态
 
 真源: docs/architecture/semantic-registry/{states,intents,owners,side-effects}.yaml`);
 }
@@ -435,6 +479,11 @@ const NEG_FILES = {
   R7: { expect: "fail", files: [{ path: "src/components/workspace/Leak.vue", src: `const password = ref(""); console.log("pw", password.value);` }] },
   R5: { expect: "warn", files: [{ path: "src/composables/useBrowserHost.ts", src: `bridge.tabPosition(id, rect);` }] },
   R6: { expect: "fail", files: [{ path: "src/stores/__fx_ws_derived_bad.ts", src: `const currentLocalPath = ref("");\ncurrentLocalPath.value = "/x";` }] },
+  R8: { expect: "fail", files: [
+    { path: "src/stores/useLayoutStore.ts", src: `const aiNavOpen = ref(false);` },
+    { path: "src/stores/__fx_bookmark_derived_bad.ts", src: `const bmPanelOpen = ref(false);` },
+    { path: "src/stores/__fx_owner_bad.ts", src: `const gridSession = ref(0);` },
+  ] },
 };
 
 function runSelfTest() {

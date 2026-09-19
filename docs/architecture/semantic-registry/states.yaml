@@ -102,6 +102,7 @@ states:
   #   必须保持组件 computed，禁止在 store 中声明为存储态（R8 守护）。
   sidebarOpen:
     owner: useLayoutStore
+    single_owner_required: true
     meaning: 左侧通用侧栏开关（与收藏夹侧栏 panelOpen 区分）
     not_meaning:
       - 收藏夹侧栏（见 bookmark.panelOpen）
@@ -117,6 +118,7 @@ states:
 
   clipOpen:
     owner: useLayoutStore
+    single_owner_required: true
     meaning: 剪贴板面板开关（与 setView("clip") 联动）
     not_meaning:
       - 视图导航（见 mainView="clip"）
@@ -132,6 +134,7 @@ states:
 
   fileEditorOpen:
     owner: useLayoutStore
+    single_owner_required: true
     meaning: 文件编辑器/Markdown 预览覆盖层开关（setView("editor") 时关闭）
     not_meaning:
       - 行内编辑器（见 useWorkspaceStore.inlineFile）
@@ -147,6 +150,7 @@ states:
 
   browserDockOpen:
     owner: useLayoutStore
+    single_owner_required: true
     meaning: 浏览器视图右侧 Dock（文件/终端/资源/会话）开关
     not_meaning:
       - Grid resource（见 gridOpen）
@@ -162,6 +166,7 @@ states:
 
   browserDockTab:
     owner: useLayoutStore
+    single_owner_required: true
     meaning: 右侧 Dock 当前子页签（files/term/net/session）
     not_meaning: []
     kind: stored
@@ -201,6 +206,7 @@ states:
   # ---------------- Browser/Grid 定位缓存失效纪元（Phase 6A-3）----------------
   gridSession:
     owner: useBrowserStore
+    single_owner_required: true
     meaning: 宫格定位缓存失效纪元（buildGrid / forceGridRelayout 自增 +1）；供 useBrowserHost 识别 webview 已重建、旧 rect 发送缓存作废必须重发
     not_meaning:
       - Grid resource existence（见 gridOpen）
@@ -247,6 +253,7 @@ states:
   # ---------------- Browser/Grid AI 导航面板（Phase 6A 收口）----------------
   aiNavOpen:
     owner: useBrowserStore
+    single_owner_required: true
     meaning: AI 导航面板（AINavPanel）开关；唯一真源
     not_meaning:
       - 视图导航（见 mainView）
