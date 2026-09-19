@@ -534,6 +534,13 @@ run_pre_merge() {
     fi
   done
 
+  # Phase 1.7：Git repository object integrity gate（corrupt/missing loose objects）。
+  # Read-only; blocks merge when fsck reports errors. Does not weaken any above check.
+  pm_log "Phase 1.7 Git repository object integrity gate…"
+  if ! bash "$SCRIPT_DIR/check-git-repo-integrity.sh" >/dev/null 2>&1; then
+    pm_fail "check-git-repo-integrity.sh（仓库对象损坏：corrupt/missing；先 git-recover.sh --prune-orphans）"
+  fi
+
   echo ""
   if [ "$PM_RC" -eq 0 ]; then
     pm_log "PRE_MERGE_RESULT=ALL_PASS"
@@ -662,6 +669,11 @@ run_self_test() {
   [ -f "$SCRIPT_DIR/check-semantic-registry.mjs" ] || { echo "FAIL: check-semantic-registry.mjs missing"; rc=1; }
   if ! (cd "$ROOT" && node "$SCRIPT_DIR/check-semantic-registry.mjs" --self-test) >/dev/null 2>&1; then
     echo "FAIL: check-semantic-registry.mjs --self-test"; rc=1
+  fi
+  # Phase 1.7：Git 对象完整性门禁自检（注入损坏检出 + 干净通过，夹具在 /tmp）。
+  [ -f "$SCRIPT_DIR/check-git-repo-integrity.sh" ] || { echo "FAIL: check-git-repo-integrity.sh missing"; rc=1; }
+  if ! bash "$SCRIPT_DIR/check-git-repo-integrity.sh" --self-test >/dev/null 2>&1; then
+    echo "FAIL: check-git-repo-integrity.sh --self-test"; rc=1
   fi
   # M5-10/11（Lane A9）：插件策略夹具自检。
   [ -f "$SCRIPT_DIR/check-plugin-policy.py" ] || { echo "FAIL: check-plugin-policy.py missing"; rc=1; }
