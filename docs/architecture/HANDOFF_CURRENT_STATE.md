@@ -321,6 +321,25 @@ scripts/pre-merge.sh（Phase 03 gate 含上述三语义 Checker；exit 0/1）
 
 ---
 
+## 4k. Capability Platform（Phase 7A — 审计与设计）
+
+```text
+分支: feature/capability-platform-v1（基线 semantic-governance-v1 / 316130d；开工点 c0069b7）
+文档: docs/architecture/capability-platform/phase7a-capability-architecture/
+      {Capability-Inventory,Dependency-Graph,Lifecycle-Model,
+       Resource-Model,Shell-Boundary,Migration-Plan,FINAL-REPORT}.md
+试点选择: Bookmark（LIGHT · 无 native · 已登记 Owner useBookmarkStore）
+今晚真实状态: COMPATIBILITY_WRAPPED —— 无能力可物理启停（不可写成 TARGET 已实现）
+推迟: Browser / Grid / Terminal / Plugin / Agent / Skill = TARGET_COMPOSABLE（需单独 ADR/SCR）
+资源口径: DECLARED RESOURCE CLASS（无按能力实测，Debt-7A-1）
+边界: Runtime 只做编排，绝不成为业务状态 Owner；Capability Registry 不得重复 Semantic Registry 事实
+tag: capability-phase7a-architecture-pass
+```
+
+> Semantic Governance v1 仍是**冻结基线**：新 State/Intent/Owner/Writer/SideEffect 必须先走 SCR。
+
+---
+
 ## 5. Current Task Status
 
 ```text
