@@ -23,7 +23,7 @@
 // 用法: node scripts/check-semantic-registry.mjs [--help|--self-test|--json|--strict]
 // ---------------------------------------------------------------------------
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -163,14 +163,15 @@ function rule1(files, reg) {
   return out;
 }
 
-function rule2(files, reg) {
+function rule2(files, reg, loc) {
   const out = [];
   const states = reg.states.states || {};
-  const governed = asList(reg.states.governed_files);
+  const governedExtra = asList(reg.states.governed_files);
+  const governedSet = new Set([...governedExtra, ...Object.values((loc && loc.resolved) || {})]);
   const observed = new Set();
   for (const arr of Object.values(reg.states.observed_not_governed || {})) for (const n of asList(arr)) observed.add(String(n));
   for (const f of files) {
-    if (!governed.some((g) => f.path === String(g))) continue;
+    if (!governedSet.has(f.path)) continue;
     const code = stripComments(f.src);
     const re = /(?:const|let|var)\s+([A-Za-z_]\w*)\s*(?::\s*[^=;]+)?=\s*(?:ref|shallowRef|computed|reactive)\s*(?:<[^>]*>)?\s*\(/g;
     let m;
@@ -187,7 +188,7 @@ function rule2(files, reg) {
   return out;
 }
 
-function rule3(files, reg) {
+function rule3(files, reg, loc) {
   const out = [];
   const owners = reg.owners.owners || {};
   const lifecycle = owners.browser_grid_lifecycle || {};
@@ -202,7 +203,7 @@ function rule3(files, reg) {
   for (const f of files) {
     const code = stripComments(f.src);
     const isVue = f.path.endsWith(".vue");
-    const isOwner = f.path.includes("useBrowserStore.ts");
+    const isOwner = f.path === (loc.resolved && loc.resolved.useBrowserStore);
     // a) 组件直写 mainView
     if (isVue && /\.mainView\s*=\s*[^=]/.test(code))
       out.push({ rule: "R3", code: "SEMANTIC_OWNER_VIOLATION", file: f.path, detail: "组件直写 mainView（owner: useLayoutStore，唯一写入口 setView）", severity: "fail" });
@@ -223,7 +224,7 @@ function rule3(files, reg) {
     const cred = owners.credential;
     if (cred) {
       const credApi = asList(cred.owner_only_api); // save_token / get_token / delete_token
-      const isFrontend = isVue || f.path.includes("/stores/") || f.path.includes("/composables/");
+      const isFrontend = isVue || /\/(stores|composables)\//.test(f.path) || /\/capabilities\/[^\/]+\/(state|services|intents|adapters|lifecycle)\//.test(f.path);
       if (isFrontend) {
         for (const m of credApi) {
           if (new RegExp("\\b" + m + "\\s*\\(").test(code))
@@ -361,25 +362,20 @@ function rule7(files, reg) {
 // 每个受治理「存储态」（derived !== true）必须在 owner 对应的 store 文件中声明一次；
 // 若在任何非 owner store 文件中被声明为 ref/reactive/shallowRef，即破坏唯一真源（R8）。
 // 另：派生面板（如 bmPanelOpen）严禁在 store 中声明为存储态，必须留在组件 computed。
-function rule8(files, reg) {
+function rule8(files, reg, loc) {
   const out = [];
   const states = (reg.states && reg.states.states) || {};
-  const OWNER_FILE = {
-    useBrowserStore: "src/stores/useBrowserStore.ts",
-    useLayoutStore: "src/stores/useLayoutStore.ts",
-    useWorkspaceStore: "src/stores/useWorkspaceStore.ts",
-    useBookmarkStore: "src/stores/useBookmarkStore.ts",
-    useSystemStore: "src/stores/useSystemStore.ts",
-  };
+  const resolved = (loc && loc.resolved) || {};
   // 存储声明（ref/shallowRef/reactive；**不含 computed** —— computed 正是派生的正确形态）
   const STORED_DECL = (name) =>
     new RegExp("(?:const|let|var)\\s+" + name + "\\s*(?::\\s*[^=;]+)?=\\s*(?:ref|shallowRef|reactive)\\s*(?:<[^>]*>)?\\s*\\(");
-  // 只在 store 文件内判定：避免组件局部 ref / props 误报；generic 名（items/busy/error）域内复用合法
-  const isStoreFile = (p) => p.includes("/stores/");
+  // store-like 文件：/stores/ 或 capability 的 state/services/intents 目录（物理迁移后也能识别）
+  const isStoreLikeFile = (p) =>
+    /\/(stores)\//.test(p) || /\/capabilities\/[^\/]+\/(state|services|intents)\//.test(p);
   // 派生面板：必须保持组件 computed（= panelOpen && mainView==="browser"），禁止在 store 中存为态
   const DERIVED_ONLY = ["bmPanelOpen"];
   for (const f of files) {
-    if (!isStoreFile(f.path)) continue;
+    if (f.path !== resolved.useBookmarkStore) continue; // 派生面板只在该 owner 文件内检查
     const code = stripComments(f.src);
     for (const name of DERIVED_ONLY) {
       if (STORED_DECL(name).test(code))
@@ -390,10 +386,10 @@ function rule8(files, reg) {
     if (!def || def.derived === true) continue; // 只查存储态；派生态由 R6 守护
     if (def.single_owner_required !== true) continue; // 仅对显式要求唯一 owner 的状态强制（避免 generic 名域内复用误报）
     const owner = String(def.owner || "");
-    const ownerFile = OWNER_FILE[owner];
+    const ownerFile = resolved[owner];
     if (!ownerFile) continue; // credential 等 Rust 侧 owner 跳过文件判定
     const re = STORED_DECL(key); // stateless（无 g 标志）
-    const outside = files.filter((f) => isStoreFile(f.path) && f.path !== ownerFile && re.test(stripComments(f.src))).map((f) => f.path);
+    const outside = files.filter((f) => isStoreLikeFile(f.path) && f.path !== ownerFile && re.test(stripComments(f.src))).map((f) => f.path);
     if (outside.length)
       out.push({ rule: "R8", code: "SEMANTIC_STATE_MULTI_OWNER", file: outside.join(", "), detail: `治理状态 "${key}"（owner=${owner}）在 owner 文件 ${ownerFile} 之外被声明：${outside.join(", ")} —— 破坏唯一真源`, severity: "fail" });
   }
@@ -453,16 +449,10 @@ function enclosingFunction(fns, idx) {
   return best ? best.name : null;
 }
 
-function rule9(files, reg) {
+function rule9(files, reg, loc) {
   const out = [];
   const states = (reg.states && reg.states.states) || {};
-  const OWNER_FILE = {
-    useBrowserStore: "src/stores/useBrowserStore.ts",
-    useLayoutStore: "src/stores/useLayoutStore.ts",
-    useWorkspaceStore: "src/stores/useWorkspaceStore.ts",
-    useBookmarkStore: "src/stores/useBookmarkStore.ts",
-    useSystemStore: "src/stores/useSystemStore.ts",
-  };
+  const resolved = (loc && loc.resolved) || {};
   for (const [key, def] of Object.entries(states)) {
     if (!def) continue;
     if (def.single_owner_required !== true) continue; // 仅对显式要求唯一 owner（Phase 6B 范围）的状态强制
@@ -470,7 +460,7 @@ function rule9(files, reg) {
     const cw = asList(def.canonical_writer).map(String).map((s) => String(s).split(".").pop());
     if (!cw.length) continue;                          // 未声明 canonical_writer 则跳过（避免误报，不硬编码）
     const owner = String(def.owner || "");
-    const ownerFile = OWNER_FILE[owner];
+    const ownerFile = resolved[owner];
     if (!ownerFile) continue;                          // credential 等 Rust 侧 owner 无文件映射，跳过
     const NAME = key;
     const writeRe = new RegExp("\\b" + NAME + "\\.value\\s*(?:\\+=|=(?![=>]))", "g");
@@ -500,10 +490,90 @@ function rule9(files, reg) {
 
 const RULES = [rule1, rule2, rule3, rule4, rule5, rule6, rule7, rule8, rule9];
 
+// owner 符号 → 首个磁盘存在的候选路径；无命中 = UNRESOLVED，多命中 = DUPLICATE
+// 这是 Phase 8A.1 的核心：物理路径可以迁移，但 loader 必须仍能解析到实现，否则 FAIL（防静默失守）。
+function resolveOwnerFiles(reg, existingPaths) {
+  const impls = (reg.states && reg.states.owner_implementations) || {};
+  const resolved = {};
+  const errors = [];
+  for (const [symbol, def] of Object.entries(impls)) {
+    const paths = asList(def && def.paths != null ? def.paths : def);
+    const hits = paths.filter((p) => existingPaths.has(String(p)));
+    if (hits.length === 0) errors.push({ symbol, kind: "UNRESOLVED" });
+    else if (hits.length > 1) errors.push({ symbol, kind: "DUPLICATE", paths: hits });
+    else resolved[symbol] = hits[0];
+  }
+  return { resolved, errors };
+}
+
+function ruleImplementationLocator(loc) {
+  const out = [];
+  for (const e of loc.errors) {
+    if (e.kind === "UNRESOLVED")
+      out.push({ rule: "RI", code: "SEMANTIC_IMPLEMENTATION_UNRESOLVED", file: "(registry:owner_implementations)", detail: `受治理 owner "${e.symbol}" 无法通过 implementation locator 解析到任何真实文件（候选路径均不存在）；物理迁移必须同步更新 locator，否则治理静默失守`, severity: "fail" });
+    else
+      out.push({ rule: "RI", code: "SEMANTIC_IMPLEMENTATION_DUPLICATE", file: e.paths.join(", "), detail: `受治理 owner "${e.symbol}" 解析到多份实现：${e.paths.join(", ")}（禁止第二真源）`, severity: "fail" });
+  }
+  return out;
+}
+
 function analyze(files, reg) {
+  const loc = resolveOwnerFiles(reg, new Set(files.map((f) => f.path)));
   const findings = [];
-  for (const r of RULES) findings.push(...r(files, reg));
+  findings.push(...ruleImplementationLocator(loc));
+  for (const r of RULES) findings.push(...r(files, reg, loc));
   return findings;
+}
+
+// Phase 8A.1 locator 迁移测试（CASE A–E）。不依赖真实代码，纯 fixture 证明"迁移不绕过治理"。
+function runLocatorSelfTest() {
+  let bad = 0;
+  const buildReg = (impl) => {
+    const reg = loadRegistry();
+    reg.states = { ...reg.states, owner_implementations: impl };
+    return reg;
+  };
+  const resolveOf = (reg, files) => resolveOwnerFiles(reg, new Set(files.map((f) => f.path)));
+  const bm = (paths) => ({ useBookmarkStore: { symbol: "useBookmarkStore", paths } });
+  // CASE A: 旧路径存在 → 解析成功（identity 不依赖路径）
+  {
+    const reg = buildReg(bm(["src/stores/useBookmarkStore.ts", "src/capabilities/bookmark/state/useBookmarkStore.ts"]));
+    const loc = resolveOf(reg, [{ path: "src/stores/useBookmarkStore.ts", src: "const panelOpen = ref(false);" }]);
+    if (loc.errors.length || loc.resolved.useBookmarkStore !== "src/stores/useBookmarkStore.ts") { bad++; console.log("  ✗ CASE A 旧路径应解析成功"); }
+    else console.log("  ✓ CASE A 旧路径解析成功（语义 identity 不依赖物理路径）");
+  }
+  // CASE B: 新路径存在 + locator 已更新 → 解析成功（迁移后命中新位置）
+  {
+    const reg = buildReg(bm(["src/capabilities/bookmark/state/useBookmarkStore.ts", "src/stores/useBookmarkStore.ts"]));
+    const loc = resolveOf(reg, [{ path: "src/capabilities/bookmark/state/useBookmarkStore.ts", src: "const panelOpen = ref(false);" }]);
+    if (loc.errors.length || loc.resolved.useBookmarkStore !== "src/capabilities/bookmark/state/useBookmarkStore.ts") { bad++; console.log("  ✗ CASE B 新路径（locator 已更新）应解析成功"); }
+    else console.log("  ✓ CASE B 新路径解析成功（迁移后 locator 命中新位置）");
+  }
+  // CASE C: 文件移到新路径，但 locator 未更新 → UNRESOLVED（防静默失守）
+  {
+    const reg = buildReg(bm(["src/stores/useBookmarkStore.ts"]));
+    const loc = resolveOf(reg, [{ path: "src/capabilities/bookmark/state/useBookmarkStore.ts", src: "const panelOpen = ref(false);" }]);
+    if (!loc.errors.some((e) => e.kind === "UNRESOLVED" && e.symbol === "useBookmarkStore")) { bad++; console.log("  ✗ CASE C 迁移未更新 locator 必须 UNRESOLVED FAIL"); }
+    else console.log("  ✓ CASE C 迁移未更新 locator → UNRESOLVED（防静默失守）");
+  }
+  // CASE D: symbol 对应路径不存在 → UNRESOLVED
+  {
+    const reg = buildReg(bm(["src/nowhere/useBookmarkStore.ts"]));
+    const loc = resolveOf(reg, []);
+    if (!loc.errors.some((e) => e.kind === "UNRESOLVED")) { bad++; console.log("  ✗ CASE D symbol 无实现必须 UNRESOLVED FAIL"); }
+    else console.log("  ✓ CASE D 实现不存在 → UNRESOLVED");
+  }
+  // CASE E: 两份实现同时存在 → DUPLICATE（防第二真源）
+  {
+    const reg = buildReg(bm(["src/stores/useBookmarkStore.ts", "src/capabilities/bookmark/state/useBookmarkStore.ts"]));
+    const loc = resolveOf(reg, [
+      { path: "src/stores/useBookmarkStore.ts", src: "const panelOpen = ref(false);" },
+      { path: "src/capabilities/bookmark/state/useBookmarkStore.ts", src: "const panelOpen = ref(false);" },
+    ]);
+    if (!loc.errors.some((e) => e.kind === "DUPLICATE" && e.symbol === "useBookmarkStore")) { bad++; console.log("  ✗ CASE E 两份实现必须 DUPLICATE FAIL"); }
+    else console.log("  ✓ CASE E 两份实现 → DUPLICATE（防第二真源）");
+  }
+  return bad;
 }
 
 // ============================ CLI ============================
@@ -597,25 +667,39 @@ const NEG_FILES = {
   ] },
 };
 
+// owner store 锚点文件：让 implementation locator 在自检中能解析到真实实现，
+// 否则 RI 规则会对所有 owner 报 UNRESOLVED 而误 FAIL。内容仅含已登记 minimal 声明，不触发其它规则。
+const ANCHOR_FILES = [
+  { path: "src/stores/useLayoutStore.ts", src: `const gridToolbarOpen = ref(false); const sidebarOpen = ref(false); const clipOpen = ref(false);` },
+  { path: "src/stores/useBrowserStore.ts", src: `const gridSession = ref(0); const aiNavOpen = ref(false);` },
+  { path: "src/stores/useWorkspaceStore.ts", src: `const filePath = ref("");` },
+  { path: "src/stores/useBookmarkStore.ts", src: `const panelOpen = ref(false); const items = ref([]);` },
+  { path: "src/stores/useSystemStore.ts", src: `const termPanes = ref([]);` },
+];
+const ALL = (arr) => [...ANCHOR_FILES, ...arr];
+
 function runSelfTest() {
   const reg = loadRegistry();
   let bad = 0;
   // 阻断信号 = fail + warn（info 仅为"已登记未治理"提示，不算问题）
   const blocking = (fs) => analyze(fs, reg).filter((x) => x.severity !== "info");
 
-  const pos = blocking(POS_FILES);
+  const pos = blocking(ALL(POS_FILES));
   if (pos.length) { bad++; console.log("  ✗ positive fixture 应 0 fail/warn，实际:", pos.map((p) => p.code + ":" + p.detail).join(" | ")); }
   else console.log("  ✓ positive fixture: 0 fail/warn（合法语义不报错）");
 
   for (const [r, spec] of Object.entries(NEG_FILES)) {
-    const f = analyze(spec.files, reg).filter((x) => x.severity === spec.expect && x.rule === r);
+    const f = analyze(ALL(spec.files), reg).filter((x) => x.severity === spec.expect && x.rule === r);
     if (!f.length) { bad++; console.log(`  ✗ negative fixture ${r} 未被检出（期望 ${spec.expect}）`); }
     else console.log(`  ✓ negative fixture ${r}: 检出 ${f[0].code} (${spec.expect})`);
   }
 
-  const fp = blocking(FP_FILES);
+  const fp = blocking(ALL(FP_FILES));
   if (fp.length) { bad++; console.log("  ✗ false-positive fixture 误报:", fp.map((p) => p.rule + ":" + p.detail).join(" | ")); }
   else console.log("  ✓ false-positive fixture: 0 fail/warn（派生字段名/注释/治理域外/授权调用均不误报）");
+
+  // Phase 8A.1：implementation locator 迁移测试（CASE A–E）
+  bad += runLocatorSelfTest();
 
   console.log("");
   console.log(bad === 0 ? "SELF_TEST_RESULT=ALL_PASS" : `SELF_TEST_RESULT=FAIL(${bad})`);
@@ -652,4 +736,19 @@ function main() {
   process.exit(blocking.length ? 1 : 0);
 }
 
-main();
+// 供其它 checker（如 closure）复用：语义 owner 符号 → 首个磁盘存在的物理路径。
+// 物理迁移后只要 owner_implementations 同步更新，调用方即可命中新路径，无需硬编码。
+export function resolveOwnerFile(owner) {
+  const reg = loadRegistry();
+  const impls = (reg.states && reg.states.owner_implementations) || {};
+  const def = impls[owner];
+  if (!def) return null;
+  for (const p of asList(def.paths != null ? def.paths : def)) {
+    if (existsSync(join(ROOT, p))) return p;
+  }
+  return null;
+}
+
+// 仅当作为主模块运行时执行 CLI（允许被其它 checker import 复用 resolveOwnerFile）
+const isMain = process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+if (isMain) main();

@@ -439,11 +439,36 @@ tag: capability-phase8a-physical-foundation-pass
 
 ---
 
-## 4q. Phase 8B 阻塞点（Bookmark 无法自动达到 C3 —— 需人工裁决）
+## 4r. Semantic Governance Identity Decoupling（Phase 8A.1 — 治理与物理路径解耦）
 
 ```text
-【结论】Bookmark 的物理迁移遇到 Semantic Governance 硬约束，触发 HARD STOP #7/#9，
-       已停止自动推进，等待人工裁决。未为了凑成熟度而改动任何语义。
+人工裁决接收（DOMAIN STATE OWNERSHIP != CAPABILITY COMPOSITION STATE）：
+  禁止迁移 panelOpen owner；采用 Contribution/Slot 模型解耦 Shell 与 Bookmark。
+docs/architecture/semantic-governance/phase8a1-governance-identity/01-PATH-COUPLING-AUDIT.md
+states.yaml 新增 owner_implementations（owner 符号 → 候选物理路径，首项=现路径）：
+  governed_files 缩减为「非 owner 固定文件」；owner store 治理域改由 locator 解析
+check-semantic-registry.mjs 新增：
+  resolveOwnerFiles() + ruleImplementationLocator()（RI 规则）
+  RI-UNRESOLVED  owner 无法解析到实现 → FAIL（防静默失守核心闸门）
+  RI-DUPLICATE    owner 解析到 ≥2 份实现 → FAIL（防第二真源）
+  R2/R3/R8/R9 全部改用 loc.resolved[owner] 取代硬编码路径/glob/owner 符号
+check-semantic-closure-logic.mjs 改用 resolveOwnerFile() 取代硬编码 readFileSync/import 路径
+self-test 新增 locator 迁移 CASE A–E（旧路径/新路径更新/迁移未更新/无实现/两份实现）
+result: 真实扫描 fail=0 warn=6 info=72；self-test ALL_PASS；closure 27/27；CASE A-E 全绿
+tag: capability-phase8a1-governance-identity-pass
+债务: 无新增（Debt-8A-1/2/3 结转；本阶段未引入下降约束）
+```
+
+---
+
+## 4q. Phase 8B 阻塞点（Bookmark 无法自动达到 C3 —— 人工裁决已 RESOLVED）
+
+```text
+【结论】该 HARD STOP 已由人工裁决 RESOLVED（见 4r / 01-PATH-COUPLING-AUDIT.md）：
+       DOMAIN STATE OWNERSHIP != CAPABILITY COMPOSITION STATE；panelOpen owner 保持不变，
+       不迁移到 useLayoutStore / Runtime / Shell；采用 Contribution/Slot 模型解耦 Shell；
+       并先完成 Phase 8A.1（governed_files 解耦）确保物理迁移时语义治理不失守。
+       已据此继续 Phase 8B（Bookmark >= C3，Shell 经 generic contribution 而非直接 import store）。
 
 【证据链】
 1) Shell 现状依赖（grep 实测）：

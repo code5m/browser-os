@@ -18,15 +18,44 @@
 version: 1
 registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）+ Terminal Lifecycle（Phase 4）+ Credential Security（Phase 5）已确认语义
 
-# Rule 2（未注册状态）只在这些文件内生效，避免全项目误报
+# Rule 2（未注册状态）治理域 = 「非 owner 固定文件」+ 各 owner store 经 implementation
+# locator 解析出的真实文件。owner store 的物理路径由 owner_implementations 解析
+# （物理迁移只需更新 locator，不破坏 R2/R8/R9；若 locator 解析不到实现 →
+# SEMANTIC_IMPLEMENTATION_UNRESOLVED 阻断，避免静默失守）。
 governed_files:
-  - src/stores/useLayoutStore.ts
-  - src/stores/useBrowserStore.ts
   - src/composables/useBrowserHost.ts
-  - src/stores/useWorkspaceStore.ts
   - src/components/workspace/FilePanel.vue
-  - src/stores/useBookmarkStore.ts
-  - src/stores/useSystemStore.ts
+
+# Implementation Locator：语义 identity（owner 符号）与物理路径解耦。
+# 物理迁移时：把新路径加到候选列表首项，旧路径保留作回滚；checker 取首个磁盘存在的候选。
+# 禁止：文件移走却不同步更新此处 → 解析失败（RI-UNRESOLVED）；两份候选同时存在 → RI-DUPLICATE。
+# 见 docs/architecture/semantic-governance/phase8a1-governance-identity/01-PATH-COUPLING-AUDIT.md
+owner_implementations:
+  useLayoutStore:
+    symbol: useLayoutStore
+    paths:
+      - src/stores/useLayoutStore.ts
+      - src/capabilities/layout/state/useLayoutStore.ts
+  useBrowserStore:
+    symbol: useBrowserStore
+    paths:
+      - src/stores/useBrowserStore.ts
+      - src/capabilities/browser/state/useBrowserStore.ts
+  useWorkspaceStore:
+    symbol: useWorkspaceStore
+    paths:
+      - src/stores/useWorkspaceStore.ts
+      - src/capabilities/workspace/state/useWorkspaceStore.ts
+  useBookmarkStore:
+    symbol: useBookmarkStore
+    paths:
+      - src/stores/useBookmarkStore.ts
+      - src/capabilities/bookmark/state/useBookmarkStore.ts
+  useSystemStore:
+    symbol: useSystemStore
+    paths:
+      - src/stores/useSystemStore.ts
+      - src/capabilities/system/state/useSystemStore.ts
 
 states:
 

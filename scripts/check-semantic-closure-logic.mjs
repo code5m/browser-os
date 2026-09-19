@@ -107,8 +107,16 @@ function enclosingFunction(fns, idx) {
   return best ? best.name : null;
 }
 
-const browserSrc = readFileSync(`${ROOT}src/stores/useBrowserStore.ts`, "utf8");
-const layoutSrc = readFileSync(`${ROOT}src/stores/useLayoutStore.ts`, "utf8");
+const { resolveOwnerFile } = await import(`${ROOT}scripts/check-semantic-registry.mjs`);
+const browserPath = resolveOwnerFile("useBrowserStore");
+const layoutPath = resolveOwnerFile("useLayoutStore");
+const bookmarkPath = resolveOwnerFile("useBookmarkStore");
+if (!browserPath || !layoutPath || !bookmarkPath) {
+  console.error("closure: owner_implementations 无法解析 store 路径（物理迁移后须同步更新 locator）");
+  process.exit(1);
+}
+const browserSrc = readFileSync(`${ROOT}${browserPath}`, "utf8");
+const layoutSrc = readFileSync(`${ROOT}${layoutPath}`, "utf8");
 const mainAreaSrc = readFileSync(`${ROOT}src/components/layout/MainArea.vue`, "utf8");
 
 // ============================ 静态：aiNavOpen 唯一 owner ============================
@@ -148,9 +156,9 @@ let browser, layout, bookmark;
 try {
   const { createPinia, setActivePinia } = await import(`${ROOT}node_modules/pinia/dist/pinia.mjs`);
   setActivePinia(createPinia());
-  ({ useBrowserStore } = await import(`${ROOT}src/stores/useBrowserStore.ts`));
-  ({ useLayoutStore } = await import(`${ROOT}src/stores/useLayoutStore.ts`));
-  ({ useBookmarkStore } = await import(`${ROOT}src/stores/useBookmarkStore.ts`));
+  ({ useBrowserStore } = await import(`${ROOT}${browserPath}`));
+  ({ useLayoutStore } = await import(`${ROOT}${layoutPath}`));
+  ({ useBookmarkStore } = await import(`${ROOT}${bookmarkPath}`));
   browser = useBrowserStore();
   layout = useLayoutStore();
   bookmark = useBookmarkStore();
