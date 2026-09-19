@@ -11,6 +11,12 @@
 > ✅ **Phase 5.1 Credential Security Hardening 已收口**（tag semantic-phase5.1-credential-hardening-pass）：
 > Owner 通用化（R3）+ 敏感输入护栏（R7）+ Keyring 副作用契约门禁（check-sensitive-side-effects.mjs）；
 > Debt-5-1/5-2/5-3 全部收口；真实扫描 fail=0。
+>
+> ✅ **Phase 6A Semantic Migration Core Closure 已收口**（tag semantic-phase6a-core-closure-pass）：
+> 三项最小语义迁移——M2-a `aiNavOpen` 唯一 owner（删 useLayoutStore 死重复）、M2-b 面板边界收敛
+> （5 个面板开关升 GOVERNED，`bmPanelOpen` 定为派生 implementation-detail）、M2-c `gridSession` owner 澄清
+> （内存缓存失效纪元）；新增 checker **R8**（SEMANTIC_STATE_MULTI_OWNER）+ `check-semantic-closure-logic.mjs`；
+> 真实扫描 fail=0（`SEMANTIC_REGISTRY_RESULT=PASS`）。
 
 ---
 
@@ -27,6 +33,7 @@ Phase 3 Bookmark             CLOSED   （tag: semantic-phase3-bookmark-pass）
 Phase 4 Terminal Lifecycle   CLOSED   （tag: semantic-phase4-terminal-pass）
 Phase 5 Credential Security    CLOSED   （tag: semantic-phase5-credential-pass）
 Phase 5.1 Credential Hardening  CLOSED   （tag: semantic-phase5.1-credential-hardening-pass）
+Phase 6A Core Closure（迁移）  CLOSED   （tag: semantic-phase6a-core-closure-pass）
 ```
 
 Phase 4 验收结论：
@@ -159,7 +166,7 @@ Phase 4 新增（Terminal）：
 
 ```text
 docs/architecture/semantic-registry/{states,intents,owners,side-effects}.yaml
-scripts/check-semantic-registry.mjs（R1-R6）/ scripts/pre-merge.sh（已接入）
+scripts/check-semantic-registry.mjs（R1-R8）/ scripts/pre-merge.sh（已接入）
 docs/architecture/semantic-changes/SCR-template.md
 已归档 SCR：20260919-workspace-filepanel / 20260919-bookmark / 20260919-terminal
 ```
@@ -236,17 +243,31 @@ docs/architecture/semantic-governance/phase5.1-credential-hardening/{FINAL-REPOR
 
 ---
 
+## 4h. Phase 6A Core Closure（Semantic Migration）
+
+```text
+docs/architecture/semantic-registry/states.yaml（aiNavOpen / gridSession / sidebarOpen / clipOpen / fileEditorOpen / browserDockOpen / browserDockTab 升 GOVERNED；observed 对应移除）
+docs/architecture/semantic-registry/owners.yaml（browser_grid_lifecycle + aiNavOpen / gridSession）
+scripts/check-semantic-registry.mjs（R8 SEMANTIC_STATE_MULTI_OWNER / SEMANTIC_DERIVED_PANEL_STORED + fixtures）
+scripts/check-semantic-closure-logic.mjs（Phase 6A 静态+真实 store 功能测试，26 断言）
+scripts/pre-merge.sh（Phase 03 gate 接入 check-semantic-closure-logic）
+docs/architecture/semantic-governance/phase6a-core-closure/{ADR,panel-state-decision,MIGRATION-REPORT,CHECKER-REPORT,TEST-REPORT,FINAL-REPORT}.md
+```
+
+---
+
 ## 5. Current Task Status
 
 ```text
-Completed: Phase 0 / 1 / 1.5 / 1.6 / 1.7 / 2 / 3 / 4 / 5 / 5.1 全部完成
+Completed: Phase 0 / 1 / 1.5 / 1.6 / 1.7 / 2 / 3 / 4 / 5 / 5.1 / 6A 全部完成
 
 Pending: 无
 
 Blocked: 无
 
 Next recommended task:
-  语义治理主线（Phase 1.7→2→3→4→5）已全部收口。
+  语义治理主线（Phase 1.7→2→3→4→5）+ Semantic Closure Audit v1 + Phase 6A Core Closure 已全部收口。
+  Phase 6A 停止条件已达成：**等待人工确认 Migration Plan，不进入 M4、不扩大迁移范围**。
   可选：semantic-registry-v1 release tag（见 §7）
   或按用户新指令开启新治理域（须先走 SCR）
 ```
@@ -274,6 +295,9 @@ Debt-4-3 termProcess 副作用仅文档化           KNOWN DEBT
 Debt-5-1 DatabasePanel.password 表单字段未受静态护栏  CLOSED（Phase 5.1-B：databaseCredentialInput sensitive + R7 护栏；已从 observed 移除）
 Debt-5-2 R3 未通用化到 credential owner（FRONTEND_CREDENTIAL_LEAK 未武装） CLOSED（Phase 5.1-A：R3 通用化 credential owner）
 Debt-5-3 keyringWrite/keyringDelete 副作用仅文档化   CLOSED（Phase 5.1-C：check-sensitive-side-effects.mjs S1/S2 机器约束）
+Debt-6A-1 M4 其余 14 域仍为 observed_not_governed   KNOWN DEBT（Phase 6A 范围外；须另派 SCR/迁移，非本阶段目标）
+Debt-6A-2 gridSession “函数级”单写者未机器强制     KNOWN DEBT（R8 仅保证声明级唯一 owner；函数级单写者规则脆弱易误报，未武装）
+Debt-6A-3 R8 声明形态仅识别 const X = ref/reactive  KNOWN DEBT（与 R2 同源盲区：解构/动态声明不识别；登记于 Known-Debt）
 ```
 
 ---
@@ -303,7 +327,7 @@ docs/architecture/semantic-governance/phase5.1-credential-hardening/{FINAL-REPOR
 禁止修改业务代码（src/ src-tauri/）除非对应 Phase 明确要求
 禁止清理 Known Debt
 禁止扩大 Semantic Registry 范围（先走 SCR；治理域外不判失败）
-禁止削弱任何 Checker（R1..R6 / check-git-repo-integrity 的 ^error: 判定）
+禁止削弱任何 Checker（R1..R8 / check-git-repo-integrity 的 ^error: 判定）
 禁止 blind git reset / 删被引用对象（恢复只走 git-recover.sh 护栏）
 ```
 
@@ -317,8 +341,9 @@ git tag -a semantic-registry-v1 -m "Semantic Registry + Checker + pre-merge gate
 **快速自查：**
 
 ```bash
-node scripts/check-semantic-registry.mjs --self-test   # ALL_PASS（R1..R7）
+node scripts/check-semantic-registry.mjs --self-test   # ALL_PASS（R1..R8）
 node scripts/check-semantic-registry.mjs              # fail=0（warn 非阻断）
+node scripts/check-semantic-closure-logic.mjs          # SEMANTIC_CLOSURE_LOGIC_RESULT=PASS (26/26)
 node scripts/check-sensitive-side-effects.mjs --self-test  # ALL_PASS（S1/S2）
 node scripts/check-sensitive-side-effects.mjs             # fail=0
 bash scripts/check-git-repo-integrity.sh --self-test  # SELF_TEST: PASS
@@ -352,4 +377,14 @@ Phase 5.1 验收证据（2026-09-19）：
   R7 SENSITIVE INPUT: PASS（DatabasePanel.password 仅 db.connect+清空；注入 password→console.log 被检出）
   NO REGRESSION: PASS（R1..R7 + 新门禁未削弱既有规则；未改业务代码）
   KNOWN_DEBT: Debt-5-1/5-2/5-3 CLOSED（Phase 5.1 收口，非隐藏）
+
+Phase 6A 验收证据（2026-09-19）：
+  SEMANTIC REGISTRY self-test: ALL_PASS（R1..R8；+R8 第二 owner / 派生面板存态 / 非 owner 声明 NEG）
+  SEMANTIC REGISTRY real scan: PASS（fail=0；warn=6 pre-existing R5；info=72）
+  SEMANTIC_CLOSURE_LOGIC: PASS（26/26；aiNavOpen 打开关闭 writer 唯一 / 5 面板独立不误合并 / gridSession 自增+非持久化）
+  aiNavOpen: PASS（useBrowserStore 唯一声明；useLayoutStore 死重复已删；toggleAiNav 唯一 toggle 入口）
+  Panel: PASS（5 面板各单一 owner；bmPanelOpen 保持 MainArea computed 派生）
+  gridSession: PASS（useBrowserStore 唯一 owner；仅 buildGrid/forceGridRelayout 写入；不落盘）
+  NO REGRESSION: PASS（R1..R7 未削弱；未改语义行为；lint 0 error；git diff --check 干净）
+  KNOWN_DEBT: Debt-6A-1/6A-2/6A-3 显式登记（M4 其余 14 域 / 函数级单写者 / R8 声明形态盲区）
 ```
