@@ -25,6 +25,11 @@
 > （既有 canonical_writer/forbidden_writers/owner/derived/single_owner_required 已齐备，无需扩 YAML）；
 > 真实扫描 fail=0、self-test ALL_PASS（R1..R9）、closure-logic 27/27。
 
+> ✅ **Semantic Governance v1 Final Acceptance 已收口**（tag `semantic-governance-v1`）：
+> Registry（State/Intent/Owner/Writer/SideEffect 四源）+ Checker（R1–R9 + closure + sensitive-side-effect）
+> + Gate（pre-merge Phase 03）+ Recovery（snapshot/diagnostics/rollback/git-integrity）四支柱齐备；
+> 全 13 个语义治理阶段 = CLOSED。纯验收文档交付（`docs/delivery/`），未改业务代码、未扩大治理域。
+
 ---
 
 ## 1. Current Milestone
@@ -42,6 +47,7 @@ Phase 5 Credential Security    CLOSED   （tag: semantic-phase5-credential-pass�
 Phase 5.1 Credential Hardening  CLOSED   （tag: semantic-phase5.1-credential-hardening-pass）
 Phase 6A Core Closure（迁移）  CLOSED   （tag: semantic-phase6a-core-closure-pass）
 Phase 6B Writer Enforcement        CLOSED   （tag: semantic-phase6b-writer-enforcement-pass）
+Semantic Governance v1      CLOSED   （tag: semantic-governance-v1）
 ```
 
 Phase 4 验收结论：
@@ -78,8 +84,8 @@ NO REGRESSION:                 PASS  （R1..R7 + 新门禁均未削弱既有规�
 ## 2. Git State
 
 ```text
-branch:    feature/phase6b-writer-enforcement（Phase 6B 实现分支；基于 Phase 6A 基线）
-HEAD:      <phase6b-tip>（docs(phase6b): closeout + handoff update）
+branch:    feature/phase6b-writer-enforcement（Phase 6B 实现分支；Semantic Governance v1 验收在此分支追加 docs/delivery/）
+HEAD:      <gov-v1-tip>（docs(delivery): Semantic Governance v1 acceptance + handoff）
 working tree: 干净（仅未跟踪 .snapshots/ 与 diagnostics/ —— 取证产物，不入库）
 ```
 
@@ -119,8 +125,9 @@ semantic-phase5-credential-pass          -> <phase-tip>
 semantic-phase5.1-credential-hardening-pass -> <phase51-tip>
 semantic-phase6a-core-closure-pass        -> <phase6a-tip>
 semantic-phase6b-writer-enforcement-pass   -> <phase6b-tip>
+semantic-governance-v1               -> <gov-v1-tip>（Semantic Governance v1 总验收基线：Registry+Checker+Gate+Recovery）
 
-semantic-registry-v1:  NOT EXISTS（属原 Phase 1.6 可选动作，本次未创建；如需创建见 §7）
+semantic-registry-v1:  NOT EXISTS（原 Phase 1.6 可选动作；本次改以 semantic-governance-v1 作为总验收 tag，见 §4j）
 ```
 
 ---
@@ -176,7 +183,7 @@ Phase 4 新增（Terminal）：
 
 ```text
 docs/architecture/semantic-registry/{states,intents,owners,side-effects}.yaml
-scripts/check-semantic-registry.mjs（R1-R8）/ scripts/pre-merge.sh（已接入）
+scripts/check-semantic-registry.mjs（R1-R9）/ scripts/pre-merge.sh（已接入）
 docs/architecture/semantic-changes/SCR-template.md
 已归档 SCR：20260919-workspace-filepanel / 20260919-bookmark / 20260919-terminal
 ```
@@ -287,19 +294,43 @@ R9 判定手段（registry 驱动，不硬编码）：
 
 ---
 
+## 4j. Semantic Governance v1 Final Acceptance
+
+```text
+docs/delivery/SEMANTIC_GOVERNANCE_V1_ACCEPTANCE.md（全局架构验收：五模型/四链路/Checker/Gate/Recovery）
+docs/delivery/PHASE_ACCEPTANCE_MATRIX.md（Phase 0 → 6B + v1 验收矩阵 + tag）
+docs/delivery/KNOWN_DEBT_V1.md（已知债务总表：已关闭 5 条 / 保留 7 条语义内 + 产品级债）
+docs/delivery/{README,01-PROJECT-OVERVIEW,02-ARCHITECTURE-EVOLUTION,03-SEMANTIC-GOVERNANCE,
+              04-PHASE-RESULTS,05-CHECKER-QUALITY,06-RECOVERY-CAPABILITY,07-KNOWN-DEBT,08-ROADMAP}.md
+scripts/check-semantic-registry.mjs（R1-R9，self-test ALL_PASS）
+scripts/check-semantic-closure-logic.mjs（27 断言）
+scripts/check-sensitive-side-effects.mjs（R5/R7）
+scripts/pre-merge.sh（Phase 03 gate 含上述三语义 Checker；exit 0/1）
+```
+
+四支柱验收结论：
+  - Registry：states/intents/owners/side-effects 四 YAML 均被 Checker 解析（self-test ALL_PASS），格式有效无漂移。
+  - Checker：R1-R9 全在 check-semantic-registry.mjs；closure 27/27；sensitive-side-effect 独立脚本。
+  - Gate：pre-merge Phase 03 循环含 check-semantic-registry / check-semantic-closure-logic / check-sensitive-side-effects；违规 exit 1、通过 exit 0。
+  - Recovery：.snapshots/ + diagnostics/ + phase1.7-git-integrity/RECOVERY-PROCEDURE.md + git-recover.sh；git fsck 演练已闭环。
+  - 性质：纯文档/验收交付，未改业务代码（src/ src-tauri/）、未新增治理域、未扩大 M4。
+
+---
+
 ## 5. Current Task Status
 
 ```text
-Completed: Phase 0 / 1 / 1.5 / 1.6 / 1.7 / 2 / 3 / 4 / 5 / 5.1 / 6A / 6B 全部完成
+Completed: Phase 0 / 1 / 1.5 / 1.6 / 1.7 / 2 / 3 / 4 / 5 / 5.1 / 6A / 6B / Semantic Governance v1 全部完成
 
 Pending: 无
 
 Blocked: 无
 
 Next recommended task:
-  语义治理主线（Phase 1.7→2→3→4→5）+ Semantic Closure Audit v1 + Phase 6A + Phase 6B 全部收口。
-  Phase 6B 停止条件已达成：**未进入 M4、未扩大治理范围，等待下一阶段**。
-  可选：semantic-registry-v1 release tag（见 §7）
+  Semantic Governance v1 已 CLOSED（tag semantic-governance-v1）。
+  语义治理主线（Phase 1.7→2→3→4→5）+ Closure Audit v1 + Phase 6A + Phase 6B + v1 验收全部收口。
+  停止条件已达成：**未进入新治理域、未开始新业务开发，等待下一阶段**。
+  Next: Product Evolution / New Feature Development（在已治理语义骨架上做新功能，复用 canonical intent / owner）
   或按用户新指令开启新治理域（须先走 SCR）
 ```
 
@@ -359,7 +390,7 @@ docs/architecture/semantic-governance/phase5.1-credential-hardening/{FINAL-REPOR
 禁止修改业务代码（src/ src-tauri/）除非对应 Phase 明确要求
 禁止清理 Known Debt
 禁止扩大 Semantic Registry 范围（先走 SCR；治理域外不判失败）
-禁止削弱任何 Checker（R1..R8 / check-git-repo-integrity 的 ^error: 判定）
+禁止削弱任何 Checker（R1..R9 / check-git-repo-integrity 的 ^error: 判定）
 禁止 blind git reset / 删被引用对象（恢复只走 git-recover.sh 护栏）
 ```
 
@@ -375,7 +406,7 @@ git tag -a semantic-registry-v1 -m "Semantic Registry + Checker + pre-merge gate
 ```bash
 node scripts/check-semantic-registry.mjs --self-test   # ALL_PASS（R1..R9）
 node scripts/check-semantic-registry.mjs              # fail=0（warn 非阻断）
-node scripts/check-semantic-closure-logic.mjs          # SEMANTIC_CLOSURE_LOGIC_RESULT=PASS (26/26)
+node scripts/check-semantic-closure-logic.mjs          # SEMANTIC_CLOSURE_LOGIC_RESULT=PASS (27/27)
 node scripts/check-sensitive-side-effects.mjs --self-test  # ALL_PASS（S1/S2）
 node scripts/check-sensitive-side-effects.mjs             # fail=0
 bash scripts/check-git-repo-integrity.sh --self-test  # SELF_TEST: PASS
@@ -429,4 +460,17 @@ Phase 6B 验收证据（2026-09-19）：
   R9_CHECKER: PASS（registry 驱动 + 函数作用域 + 读/写区分；不硬编码 allow-list）
   NO REGRESSION: PASS（R1..R8 未削弱；未改业务代码；node --check 两脚本语法 OK；git diff --check 干净）
   KNOWN_DEBT: Debt-6A-2 CLOSED（R9 机器化）；Debt-6A-1/6A-3 保留；新增 Debt-6B-1（parenless 箭头盲区，未触发误报）
+
+Semantic Governance v1 验收证据（2026-09-19）：
+  REGISTRY self-test: ALL_PASS（R1..R9 全部 positive/negative/false-positive 夹具）
+  REGISTRY real scan: PASS（fail=0；warn=6 pre-existing R5；info=72）
+  CLOSURE_LOGIC: PASS（27/27）
+  SENSITIVE_SIDE_EFFECT self-test: PASS（S1/S2）
+  SENSITIVE_SIDE_EFFECT real scan: PASS（fail=0）
+  GATE: pre-merge Phase 03 含 check-semantic-registry / check-semantic-closure-logic / check-sensitive-side-effects；exit 0 通过 / exit 1 阻断
+  RECOVERY: .snapshots/ + diagnostics/ + RECOVERY-PROCEDURE.md + git-recover.sh；git fsck 演练闭环
+  DELIVERY DOCS: docs/delivery/{SEMANTIC_GOVERNANCE_V1_ACCEPTANCE,PHASE_ACCEPTANCE_MATRIX,KNOWN_DEBT_V1,README,01..08}.md 全交付
+  NO CODE MODIFIED: 未改 src/ src-tauri/；未新增治理域；未扩大 M4
+  KNOWN_DEBT: 已关闭 Debt-5-1/5-2/5-3/6A-aiNavOpen/6A-2；保留 Debt-001~004/6A-1/6A-3/6B-1 + 产品级债（见 KNOWN_DEBT_V1.md）
+  SEMANTIC_GOVERNANCE_V1_RESULT: PASS（tag semantic-governance-v1）
 ```
