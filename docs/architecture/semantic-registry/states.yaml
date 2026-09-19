@@ -1,6 +1,7 @@
 # ============================================================
 # Semantic State Registry — 第一批：Browser/Grid + View Navigation
 #                         + Workspace/FilePanel（Phase 2）
+#                         + Bookmark（Phase 3）
 #
 # 状态分类（README.md 定义）：
 #   ACCEPTED_ADR     已裁决并冻结的语义
@@ -13,7 +14,7 @@
 # ============================================================
 
 version: 1
-registry_scope: Browser/Grid + View Navigation（Phase 1 已确认语义）+ Workspace/FilePanel（Phase 2 已确认语义）
+registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）已确认语义
 
 # Rule 2（未注册状态）只在这些文件内生效，避免全项目误报
 governed_files:
@@ -22,6 +23,7 @@ governed_files:
   - src/composables/useBrowserHost.ts
   - src/stores/useWorkspaceStore.ts
   - src/components/workspace/FilePanel.vue
+  - src/stores/useBookmarkStore.ts
 
 states:
 
@@ -284,6 +286,110 @@ states:
     adr: ADR-P1A-3
     status: CURRENT_FACT
     note: 类比 desiredGridVisibility；R6 强制其为 computed 且禁止 .value =
+
+  # ---------------- Bookmark（Phase 3）----------------
+  items:
+    owner: useBookmarkStore
+    meaning: 收藏夹列表（唯一真源；后端 data_dir/bookmarks.json 的前端镜像）
+    not_meaning:
+      - 主页快捷方式（useHomeStore，localStorage，独立源 —— rejected mergeBookmarksIntoHome）
+      - 裸 url 收藏判定（必须用 normalizeUrl 派生，禁止第二份 Bookmark[]）
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useBookmarkStore.add
+      - useBookmarkStore.remove
+      - useBookmarkStore.importFile
+      - useBookmarkStore.load
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: add 必须按 id/normalizeUrl splice 替换，禁止 push 重复（INV-3-1）
+
+  loaded:
+    owner: useBookmarkStore
+    meaning: 是否已从后端加载过（避免重复 load）
+    not_meaning:
+      - 加载中（见 busy）
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useBookmarkStore.load
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  busy:
+    owner: useBookmarkStore
+    meaning: 异步操作进行中（add/remove/import/toggle）
+    not_meaning:
+      - 加载完成态（见 loaded）
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useBookmarkStore.add
+      - useBookmarkStore.remove
+      - useBookmarkStore.importFile
+      - useBookmarkStore.toggle
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  error:
+    owner: useBookmarkStore
+    meaning: 最近一次收藏 IPC 失败信息（必须可见，否则 ⭐ 点了无反馈）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useBookmarkStore.add
+      - useBookmarkStore.remove
+      - useBookmarkStore.importFile
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  panelOpen:
+    owner: useBookmarkStore
+    meaning: 收藏夹侧栏开关（刻意不进 useLayoutStore）
+    not_meaning:
+      - 通用侧栏（见 useLayoutStore.sidebarOpen）
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useBookmarkStore.togglePanel
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  sorted:
+    owner: useBookmarkStore
+    meaning: items 按 created_at 倒序稳定视图（同时间戳按 url 排序）
+    not_meaning:
+      - 独立存储列表（纯派生，禁止第二真源）
+    kind: derived
+    derived: true
+    derived_from:
+      - items
+    formula: "items.slice().sort((a,b)=>(b.created_at||'').localeCompare(a.created_at||'')||(a.url||'').localeCompare(b.url||''))"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone（派生量禁止写入；R6 护栏）
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+    note: 类比 desiredGridVisibility / currentLocalPath；R6 强制其为 computed 且禁止 .value =
 
 # ------------------------------------------------------------
 # 已观察到但本批不治理（真实存在的声明；新增治理需走 SCR）

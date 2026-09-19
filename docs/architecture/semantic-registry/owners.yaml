@@ -6,7 +6,7 @@
 # ============================================================
 
 version: 1
-registry_scope: Browser/Grid + View Navigation（Phase 1 已确认语义）+ Workspace/FilePanel（Phase 2 已确认语义）
+registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）已确认语义
 
 owners:
 
@@ -122,6 +122,38 @@ owners:
     rationale: 文件导航状态（当前位置真源 + 派生位置）归母属 store；组件只渲染，不得直写
     status: CURRENT_FACT
 
+  bookmark:
+    owner: useBookmarkStore
+    owns:
+      - items
+      - loaded
+      - busy
+      - error
+      - panelOpen
+      - sorted (derived)
+    owner_only_api:
+      - add
+      - remove
+      - toggle
+      - importFile
+      - togglePanel
+      - load
+      - findByUrl
+    public_intent_api:
+      - add
+      - remove
+      - toggle
+      - importFile
+      - togglePanel
+    forbidden_callers:
+      - components/**（不得直写 items / panelOpen；只能调 store action）
+    authorized_callers:
+      - useBookmarkStore（owner 自身）
+      - useLayoutStore（仅切视图）
+      - BookmarkStar / BookmarkPanel（消费 store，不持有第二列表）
+    rationale: 收藏夹列表唯一真源（后端持久化）；任何第二份 Bookmark[] 或裸 url 判定都会与 items 漂移
+    status: CURRENT_FACT
+
 # ------------------------------------------------------------
 # 越界判定补充
 # ------------------------------------------------------------
@@ -140,4 +172,7 @@ violation_patterns:
     severity: fail
   - id: COMPONENT_WRITES_WORKSPACE_PATH
     desc: 组件直接写 filePath / inlineFile / previewDir / pathInput（owner: useWorkspaceStore）
+    severity: fail
+  - id: COMPONENT_WRITES_BOOKMARK
+    desc: 组件直接写 items / panelOpen（owner: useBookmarkStore）；或维护第二份 Bookmark[]
     severity: fail

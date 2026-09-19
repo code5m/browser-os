@@ -6,7 +6,7 @@
 # ============================================================
 
 version: 1
-registry_scope: Browser/Grid + View Navigation（Phase 1 已确认语义）+ Workspace/FilePanel（Phase 2 已确认语义）
+registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）已确认语义
 
 intents:
 
@@ -230,6 +230,69 @@ intents:
     status: CURRENT_FACT
     note: rejected 重复名 closeEditor（已被 FileEditor.vue / useTaskStore 定义，禁止作为本域重复入口）
 
+  # ---------------- Bookmark（owner: useBookmarkStore，Phase 3）----------------
+  add:
+    meaning: 新增/更新收藏（同 URL 视为更新，保留 id/created_at）
+    owner: useBookmarkStore
+    allowed_effects:
+      - items = splice 替换（按 id/normalizeUrl，禁止 push 重复）
+      - bridge.bookmarkAdd
+    forbidden_effects:
+      - 维护第二份 Bookmark[]（纯 derived）
+    duplicate_names:
+      - bookmarkAdd
+      - createBookmark
+      - saveBookmark
+    status: CURRENT_FACT
+
+  remove:
+    meaning: 取消收藏（按 id）
+    owner: useBookmarkStore
+    allowed_effects:
+      - items = filter 移除 id
+      - bridge.bookmarkRemove
+    forbidden_effects: []
+    duplicate_names:
+      - deleteBookmark
+      - removeBookmark
+    status: CURRENT_FACT
+
+  toggle:
+    meaning: 地址栏 ⭐ 唯一入口：已收藏→按 id 移除，未收藏→写入
+    owner: useBookmarkStore
+    allowed_effects:
+      - 内部路由到 remove / add
+    forbidden_effects:
+      - 直写 items（必须经 findByUrl 判定）
+    duplicate_names:
+      - toggleBookmark
+      - starUrl
+      - bookmarkToggle
+    status: CURRENT_FACT
+    note: 地址栏星标唯一入口（BookmarkStar 仅调 toggle，不另起函数）
+
+  importFile:
+    meaning: 从 HTML/JSON 书签文件批量导入（按 normalizeUrl 去重）
+    owner: useBookmarkStore
+    allowed_effects:
+      - 解析 → 逐条 add（后端去重兜底）
+    forbidden_effects: []
+    duplicate_names:
+      - importBookmarks
+    status: CURRENT_FACT
+
+  togglePanel:
+    meaning: 切换收藏夹侧栏显隐
+    owner: useBookmarkStore
+    allowed_effects:
+      - panelOpen = !panelOpen
+    forbidden_effects:
+      - change items
+    duplicate_names:
+      - openBookmarkPanel
+      - showBookmarkPanel
+    status: CURRENT_FACT
+
 # ------------------------------------------------------------
 # 已否决：禁止注册 / 禁止出现在代码中
 # ------------------------------------------------------------
@@ -246,6 +309,12 @@ rejected_intents:
     rejected_by: phase2-workspace/Phase2-design.md §2
     status: REJECTED
     action: 二者必须保持独立意图入口
+
+  mergeBookmarksIntoHome:
+    reason: 收藏夹（后端持久化、可导入导出）与主页快捷方式（localStorage、仅本机）生命周期不同，合并引入数据错位与第二真源
+    rejected_by: phase3-bookmark/Phase3-design.md §2
+    status: REJECTED
+    action: 二者必须保持独立源；BookmarkStar 只调 bookmark store，不读 useHomeStore 收藏
 
 # ------------------------------------------------------------
 # 拟议但代码中不存在（不得当作现状引用）
@@ -265,3 +334,14 @@ proposed_not_present:
   - writeFileContent
   - persistFile
   - dismissFileEditor
+  - bookmarkAdd
+  - createBookmark
+  - saveBookmark
+  - deleteBookmark
+  - removeBookmark
+  - toggleBookmark
+  - starUrl
+  - bookmarkToggle
+  - importBookmarks
+  - openBookmarkPanel
+  - showBookmarkPanel

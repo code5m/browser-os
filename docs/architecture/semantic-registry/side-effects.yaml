@@ -6,7 +6,7 @@
 # ============================================================
 
 version: 1
-registry_scope: Browser/Grid + View Navigation（Phase 1 已确认语义）+ Workspace/FilePanel（Phase 2 已确认语义）
+registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）已确认语义
 
 # Rule 5 的声明方式：调用点所在函数体内（或调用行上下 6 行内）
 # 出现 awareness marker 注释即视为"已知晓该副作用"。
@@ -95,6 +95,19 @@ side_effects:
     status: CURRENT_FACT
     note: Phase 2 文档级登记（requires_declaration=false，避免对既有合法调用产生 R5 噪声）；
           若需收紧，改本条目为 true 并在 useWorkspaceStore 调用点加 `side-effect:` 标记（业务代码改动）
+
+  bookmarkPersist:
+    declared: persist bookmarks
+    actual:
+      - write backend data_dir/bookmarks.json (bookmarkAdd)
+      - delete backend entry (bookmarkRemove)
+      - 跨会话持久化
+    warning: 后端持久化（与 useHomeStore 主页快捷方式的 localStorage 完全隔离）
+    call_sites: bridge.bookmarkAdd
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: Phase 3 文档级登记（requires_declaration=false，同 writeFile 口径）；
+          与主页快捷方式（localStorage）隔离，不共享写入路径（rejected mergeBookmarksIntoHome）
 
 # ------------------------------------------------------------
 # 清单中列出但代码中不存在的项（如实标注，不得当作现状）

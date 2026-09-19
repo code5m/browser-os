@@ -358,6 +358,7 @@ async function rebuildGrid() { /* side-effect: destroy+create webviews */ await 
   { path: "src/components/x/Other.vue", src: `const activeSurface = ref("browser"); // 治理域外，不算未登记` },
   { path: "src/composables/useBrowserHost.ts", src: `function scheduleGrid(){ bridge.gridPosition(i, rect); } // side-effect: bounds+show` },
   { path: "src/stores/__fx_ws_derived.ts", src: `const currentLocalPath = computed(() => inlineFile.value || filePath.value);` },
+  { path: "src/stores/__fx_bm_derived.ts", src: `const sorted = computed(() => items.value.slice());` },
 ];
 const POS_FILES = [
   {
@@ -374,7 +375,7 @@ async function closeGridAll() { gridOpen.value = false; await bridge.closeGrid()
 // 每条 negative fixture 声明期望级别：R5 是提示级(warn)，其余是阻断级(fail)
 const NEG_FILES = {
   R1: { expect: "fail", files: [{ path: "src/stores/useBrowserStore.ts", src: `const gridVisible = ref(false);` }] },
-  R2: { expect: "fail", files: [{ path: "src/stores/useBrowserStore.ts", src: `const activeSurface = ref("browser");` }] },
+  R2: { expect: "fail", files: [{ path: "src/stores/useBrowserStore.ts", src: `const activeSurface = ref("browser");` }, { path: "src/stores/useBookmarkStore.ts", src: `const extraBookmarks = ref<Bookmark[]>([]);` }] },
   R3: { expect: "fail", files: [{ path: "src/components/x/B.vue", src: `browser.closeGrid(); layout.mainView = "browser";` }] },
   R4: { expect: "fail", files: [{ path: "src/stores/useBrowserStore.ts", src: `function showGridView() { setView("grid"); }` }] },
   R5: { expect: "warn", files: [{ path: "src/composables/useBrowserHost.ts", src: `bridge.tabPosition(id, rect);` }] },
