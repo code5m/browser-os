@@ -79,6 +79,33 @@ function countWrites(src, name) {
   const re = new RegExp("\\b" + name + "\\.value\\s*(\\+=|=)", "g");
   return (src.match(re) || []).length;
 }
+// 函数作用域分析（与 check-semantic-registry.mjs R9 同口径）：返回各函数体区间，给出写入点的 enclosing 函数名。
+function findFunctionRanges(code) {
+  const fns = [];
+  const declRe = /(?:async\s+)?function\s+([A-Za-z_$][\w$]*)|(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;{]*?)?\s*=\s*(?:async\s+)?(?:function\s*)?\(/g;
+  let m;
+  while ((m = declRe.exec(code))) {
+    const name = m[1] || m[2];
+    const p = code.indexOf("(", m.index);
+    if (p < 0) continue;
+    let depth = 0, bodyStart = -1;
+    for (let j = p; j < code.length; j++) {
+      const c = code[j];
+      if (c === "(") depth++;
+      else if (c === ")") { depth--; if (depth === 0) { let k = j + 1; while (k < code.length && /\s/.test(code[k])) k++; if (code[k] === "{") bodyStart = k; break; } }
+    }
+    if (bodyStart < 0) continue;
+    let d = 0, bodyEnd = -1;
+    for (let j = bodyStart; j < code.length; j++) { const c = code[j]; if (c === "{") d++; else if (c === "}") { d--; if (d === 0) { bodyEnd = j; break; } } }
+    if (bodyEnd >= 0) fns.push({ name, start: bodyStart, end: bodyEnd });
+  }
+  return fns;
+}
+function enclosingFunction(fns, idx) {
+  let best = null;
+  for (const fn of fns) if (idx >= fn.start && idx <= fn.end) if (!best || (fn.end - fn.start) < (best.end - best.start)) best = fn;
+  return best ? best.name : null;
+}
 
 const browserSrc = readFileSync(`${ROOT}src/stores/useBrowserStore.ts`, "utf8");
 const layoutSrc = readFileSync(`${ROOT}src/stores/useLayoutStore.ts`, "utf8");
@@ -94,6 +121,16 @@ check("源码无 layout.aiNavOpen 第二真源", !/layout\.aiNavOpen/.test(brows
 console.log("[static] gridSession 唯一 owner");
 check("gridSession 在 useBrowserStore 中恰好声明 1 次", countDecl(browserSrc, "gridSession") === 1);
 check("gridSession 仅由 buildGrid/forceGridRelayout 写入（2 处）", countWrites(browserSrc, "gridSession") === 2, `writes=${countWrites(browserSrc, "gridSession")}`);
+// Phase 6B：函数级 writer 唯一（Writer Enforcement）——两处写入均在 canonical_writer 函数体内
+{
+  const ws = [...browserSrc.matchAll(/\bgridSession\.value\s*(?:\+=|=(?![=>]))/g)];
+  const ranges = findFunctionRanges(browserSrc);
+  const allCanonical = ws.length === 2 && ws.every((mm) => {
+    const enc = enclosingFunction(ranges, mm.index);
+    return enc === "buildGrid" || enc === "forceGridRelayout";
+  });
+  check("gridSession 两处写入均在 canonical_writer 函数（buildGrid / forceGridRelayout）内（Writer 唯一）", allCanonical, `enclosing=${ws.map((mm) => enclosingFunction(ranges, mm.index)).join(",")}`);
+}
 check("gridSession 不入 localStorage（非持久化）", !/gridSession/.test(JSON.stringify(lsWrites.map(([k]) => k))));
 
 // ============================ 静态：面板开关各自单一声明 ============================
