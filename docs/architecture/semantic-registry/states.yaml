@@ -96,6 +96,84 @@ states:
     status: CURRENT_FACT
     note: toggleGridToolbar 本身是 dead code（Debt-002），但状态语义仍归 layout
 
+  # ---------------- View Navigation 面板开关（Phase 6A-2 边界收敛）----------------
+  # 说明：以下面板开关**各自是独立 UI 表面/域**，不合并（Bookmark 见 bookmark.panelOpen）。
+  # bmPanelOpen（MainArea.vue 内 computed = panelOpen && mainView==="browser"）是派生量，
+  #   必须保持组件 computed，禁止在 store 中声明为存储态（R8 守护）。
+  sidebarOpen:
+    owner: useLayoutStore
+    meaning: 左侧通用侧栏开关（与收藏夹侧栏 panelOpen 区分）
+    not_meaning:
+      - 收藏夹侧栏（见 bookmark.panelOpen）
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useLayoutStore.toggleSidebar
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  clipOpen:
+    owner: useLayoutStore
+    meaning: 剪贴板面板开关（与 setView("clip") 联动）
+    not_meaning:
+      - 视图导航（见 mainView="clip"）
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useLayoutStore.toggleClipboard
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  fileEditorOpen:
+    owner: useLayoutStore
+    meaning: 文件编辑器/Markdown 预览覆盖层开关（setView("editor") 时关闭）
+    not_meaning:
+      - 行内编辑器（见 useWorkspaceStore.inlineFile）
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useLayoutStore.setView
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  browserDockOpen:
+    owner: useLayoutStore
+    meaning: 浏览器视图右侧 Dock（文件/终端/资源/会话）开关
+    not_meaning:
+      - Grid resource（见 gridOpen）
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useLayoutStore.toggleBrowserDock
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  browserDockTab:
+    owner: useLayoutStore
+    meaning: 右侧 Dock 当前子页签（files/term/net/session）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useLayoutStore.toggleBrowserDock
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
   # ---------------- Browser/Grid Resource ----------------
   gridOpen:
     owner: useBrowserStore
@@ -119,6 +197,30 @@ states:
     adr_required: true
     adr: ADR-P1A-2
     status: ACCEPTED_ADR
+
+  # ---------------- Browser/Grid 定位缓存失效纪元（Phase 6A-3）----------------
+  gridSession:
+    owner: useBrowserStore
+    meaning: 宫格定位缓存失效纪元（buildGrid / forceGridRelayout 自增 +1）；供 useBrowserHost 识别 webview 已重建、旧 rect 发送缓存作废必须重发
+    not_meaning:
+      - Grid resource existence（见 gridOpen）
+      - 视图导航（见 mainView）
+      - 持久化恢复状态（仅内存运行时计数器，绝不落盘）
+      - 资源 id / 会话恢复句柄
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useBrowserStore.buildGrid
+      - useBrowserStore.forceGridRelayout
+    forbidden_writers:
+      - components/**
+      - useLayoutStore
+      - useBrowserHost（只读消费方，不得写）
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-SEM-P6A-3
+    status: CURRENT_FACT
+    note: 纯内存 runtime 计数器（非持久化）；重建后 rect 可能与新 webview 1x1 初始态相同，故需 +1 使缓存作废；见 ADR-SEM-P6A-3
 
   activeTabId:
     owner: useBrowserStore
@@ -708,7 +810,6 @@ observed_not_governed:
     - url
     - tabs
     - activeTab
-    - gridSession
     - gridCount
     - gridUrl
     - gridUrls
@@ -727,12 +828,7 @@ observed_not_governed:
     - leftTab
     - addrMode
     - compactMode
-    - browserDockOpen
-    - browserDockTab
-    - clipOpen
-    - fileEditorOpen
     - fileTreeWidth
-    - sidebarOpen
     - sidebarWidth
     - windowWidth
     - navSection

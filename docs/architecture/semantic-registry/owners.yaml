@@ -38,6 +38,7 @@ owners:
     owns:
       - gridOpen
       - grid lifecycle
+      - gridSession (Phase 6A 收口；见 ADR-SEM-P6A-3)
       - desiredGridVisibility (derived)
       - isBrowserVisible (derived)
       - aiNavOpen (Phase 6A 收口；useLayoutStore 死重复已删)
