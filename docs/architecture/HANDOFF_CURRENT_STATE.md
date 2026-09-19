@@ -439,6 +439,11 @@ Capability Preview v1:
             sha256 8126e05883fb96fa73a53726439e38c96f13a3899771cfb2c76a145dc4c23cf8
   SYSTEM_INSTALL_MODIFIED: NO（未 sudo/dpkg/apt，未覆盖 /usr/bin/mvp-browser-os）
   USER_DATA_MODIFIED: NO
+  Master merge: 暂不合并 —— pre-merge --self-test = FAIL
+    （check-terminal-policy.py / check-terminal-ui-logic.mjs，既有债 Debt-004）
+    归因: git diff semantic-governance-v1..HEAD 未触及任何 terminal/pty 文件（NO_TERMINAL_FILES_CHANGED）
+    依据 §22「pre-merge PASS 才允许 ff-only merge」→ 保留 feature 分支，待人工验收+
+    terminal 债裁决后再由用户/A0 合并
 
 Next recommended task:
   明天由用户执行 GUI 验收（见 docs/delivery/capability-preview-v1/07-HUMAN-ACCEPTANCE.md）。

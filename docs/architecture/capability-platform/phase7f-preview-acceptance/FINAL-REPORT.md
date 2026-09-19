@@ -95,10 +95,38 @@ docs/delivery/capability-preview-v1/
 
 ---
 
-## 6. 结论
+## 6. Master 合并决定：**暂不合并**
+
+`scripts/pre-merge.sh --self-test` 结果为 `SELF_TEST_RESULT=FAIL`，失败项两项：
+
+```text
+FAIL: check-terminal-policy.py --self-test
+FAIL: check-terminal-ui-logic.mjs
+```
+
+**归因验证（不靠猜测）**：
+
+```text
+git diff --name-only semantic-governance-v1 HEAD | grep -iE "terminal|pty"
+→ NO_TERMINAL_FILES_CHANGED
+```
+
+本次改动文件共 35 个，全部为 docs / 新增 scripts / 新增 src/capability/ / src/main.ts(+11 行) / .gitignore，
+**未触及任何 terminal/pty 相关文件**。该失败是既有债 **Debt-004**（HANDOFF 已记录"与本层无关"），非本次引入。
+
+**决定**：按 §22「ff-only merge master」的前提是 `pre-merge PASS`，当前前提未满足 →
+**不合并到 master，保留 feature/capability-platform-v1 分支**。
+待人工 GUI 验收通过、且 terminal 既有债经裁决（修复或显式豁免）后，再由用户/A0 执行 ff-only 合并。
+
+> 本决定不改变 `capability-preview-v1-code-pass` 标签位置（仍固定在 `c749426`）。
+
+---
+
+## 7. 结论
 
 ```text
 CAPABILITY_PREVIEW_V1_RESULT: CODE_PASS（自动验证全通过，等人工 GUI）
 HUMAN_GUI_ACCEPTANCE:         PENDING
 READY_FOR_LEADER_ACCEPTANCE:  YES
+MASTER_MERGED:                NO（pre-merge 前提未满足，保留 feature 分支）
 ```
