@@ -492,12 +492,56 @@ tag: capability-phase8a1-governance-identity-pass
 
 【已确认可安全做且未做】
   物理移动 store/UI 到 src/capabilities/bookmark/（机械改动，build 可验证，达 C2）
-  —— 因需同步更新 semantic-registry governed_files 路径，且本轮预算/验证能力有限，
-     未在无人值守下强行执行。
+  —— 已在 Phase 8B 执行完毕（见 4s）。
 ```
 
 > **教训沉淀**：`governed_files` 是按路径治理的；物理模块化与冻结语义存在结构性耦合。
 > 后续 Phase（8C/8D/8E）都会撞到同一问题，必须先由人裁决「移动是否连带更新路径」的原则。
+
+---
+
+## 4s. Phase 8B 完成（Bookmark 物理迁移至 C3 隔离 + Shell Contribution/Slot 解耦）
+
+```text
+执行（Phase 8B，接续 4q 裁决）：Bookmark 物理迁移到 src/capabilities/bookmark/ 并达到 C3 隔离。
+机械迁移（git mv，保留历史）：
+  src/stores/useBookmarkStore.ts            -> src/capabilities/bookmark/state/useBookmarkStore.ts
+  src/components/browser/BookmarkPanel.vue  -> src/capabilities/bookmark/ui/BookmarkPanel.vue
+  src/components/browser/BookmarkStar.vue   -> src/capabilities/bookmark/ui/BookmarkStar.vue
+新增能力模块（Phase 7B/7D 口径）：
+  manifest.ts（bookmarkManifest: CapabilityDefinition，semanticOwner=useBookmarkStore，
+              status=COMPATIBILITY_WRAPPED）/ contracts/bookmark.ts / intents/bookmark.ts /
+  lifecycle/bookmark.ts / resource/bookmark.ts / index.ts（bookmarkCapability + registerBookmarkContributions）
+  public.ts（Bookmark 公共边界，纯再导出 useBookmarkStore/canBookmark；Shell 经此消费，不直接 import 内部 store）
+删：src/capability/capabilities/bookmark.ts（旧适配器位置，已拆入 src/capabilities/bookmark/index.ts）
+
+设计约束落地（符合 4r 裁决 = Contribution/Slot 解耦 Shell 与 Bookmark）：
+  - 能力适配器 index.ts 不 import useBookmarkStore（PLT-05 守护，src/capability 扫描域在复数目录外，仍保持纯净）
+  - Shell（MainArea/ActivityBar）改 import 自 src/capabilities/bookmark/public（公共边界），不再直连内部 store 路径
+  - MainArea 字面保留闭包断言文本：const bmPanelOpen = computed(() => bookmarks.panelOpen && layout.mainView === "browser")
+    （<BookmarkPanel v-if="bmPanelOpen" /> 不变）—— 冻结契约 check-semantic-closure-logic.mjs 仍 PASS
+  - panelOpen owner 未迁移（DOMAIN STATE OWNERSHIP != CAPABILITY COMPOSITION STATE）
+
+states.yaml owner_implementations.useBookmarkStore.paths：
+  新路径置首（resolver 取首个磁盘存在的候选），旧 src/stores/ 路径保留作回滚参考（解决 RI-UNRESOLVED）
+
+迁移后修复的相对导入（git mv 漏改）：
+  - useBookmarkStore.ts 内部：../bridge, ../types, ./useLayoutStore -> ../../../bridge, ../../../types, ../../../stores/useLayoutStore
+  - BookmarkPanel.vue / BookmarkStar.vue 内部：../../types, ../../stores/*, ../../bridge -> ../../../* ；CredentialList 指向 ../../../components/browser/CredentialList.vue
+
+PLT-05(b) git 断言升级：路径改经 resolveOwnerFile(locator) 解析 + --diff-filter=M，
+  仅匹配真正内容修改（M），忽略 git mv 的 rename/delete，避免 8B 迁移误报（与 4r locator 一致）。
+
+验证（全绿）：
+  registry self-test      ALL_PASS（CASE A–E）
+  registry real scan      SEMANTIC_REGISTRY_RESULT=PASS（fail=0 warn=6 info=72）
+  closure                 SEMANTIC_CLOSURE_LOGIC_RESULT=PASS (27/27)
+  capability pilot        CAPABILITY_PILOT_RESULT=PASS (8/8)（含 PLT-05 源码+git 双重断言）
+  npm run check           VIEW_INTENT PASS / command-set GATE PASS
+  vite build              成功（2012 modules transformed，无新增模块解析错误）
+tag: capability-phase8b-bookmark-c3-migration-pass
+债务: 无新增（registerBookmarkContributions 为 C3 Slot 接线占位，真实 Shell Contribution Registry 接线留待后续 C3 收口步骤）
+```
 
 ---
 

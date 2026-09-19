@@ -10,12 +10,12 @@ import {
 import { useBrowserStore } from "../../stores/useBrowserStore";
 import { useSystemStore } from "../../stores/useSystemStore";
 import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
-import BookmarkStar from "../browser/BookmarkStar.vue";
+import BookmarkStar from "../../capabilities/bookmark/ui/BookmarkStar.vue";
 import { redactSecrets } from "../../utils/redact";
 import { Search, PanelLeftClose, PanelLeftOpen } from "@lucide/vue";
 import { useWorkbenchStore } from "../../stores/useWorkbenchStore";
 import GridArchiveBar from "../browser/GridArchiveBar.vue";
-import { useBookmarkStore } from "../../stores/useBookmarkStore";
+import { useBookmarkStore } from "../../capabilities/bookmark/public";
 const workbench = useWorkbenchStore();
 
 const layout = useLayoutStore();

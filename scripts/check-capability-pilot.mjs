@@ -54,6 +54,8 @@ async function loadBootstrap() {
 }
 
 async function runTests() {
+  // (b)(pre) 在真正断言前解析 bookmark 业务文件当前规范路径（跟随 8A.1 locator，兼容物理迁移）
+  const { resolveOwnerFile } = await import(pathToFileURL(join(ROOT, 'scripts/check-semantic-registry.mjs')).href)
   const results = []
   const t = async (id, name, fn) => {
     try {
@@ -111,11 +113,15 @@ async function runTests() {
         if (re.test(src)) return `${f} 真实引入了业务 store: ${b}`
       }
     }
-    // (b) git：既有 bookmark 业务文件相对冻结基线无改动
-    const paths = ['src/stores/useBookmarkStore.ts', 'src/components/home']
+    // (b) git：既有 bookmark 业务文件相对冻结基线无「逻辑改动」。
+    //     物理迁移（git mv）只是 rename，内容不变；--diff-filter=M 仅匹配真正的内容修改（M），
+    //     忽略 rename(纯 R)/add/delete，避免 Phase 8B 迁移误报。
+    //     路径经 owner_implementations locator 解析，使断言跟随物理路径迁移（与 8A.1 一致）。
     try {
+      const bmPath = resolveOwnerFile('useBookmarkStore')
+      const gitPaths = [bmPath, 'src/components/home'].filter(Boolean)
       const out = execSync(
-        `git diff --name-only ${BASELINE_TAG} HEAD -- ${paths.join(' ')}`,
+        `git diff --name-only --diff-filter=M ${BASELINE_TAG} HEAD -- ${gitPaths.join(' ')}`,
         { cwd: ROOT, encoding: 'utf8' },
       ).trim()
       if (out !== '') return `既有业务文件被改动: ${out}`

@@ -7,7 +7,7 @@
 //   3. 不引入 DI、不做动态加载
 
 import { createCapabilityRuntime, type CapabilityRuntime } from './runtime'
-import { bookmarkCapability, BOOKMARK_CAPABILITY_ID } from './capabilities/bookmark'
+import { bookmarkCapability, BOOKMARK_CAPABILITY_ID } from '../capabilities/bookmark'
 
 let runtime: CapabilityRuntime | null = null
 let lastError: string | null = null

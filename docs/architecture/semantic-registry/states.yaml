@@ -49,8 +49,9 @@ owner_implementations:
   useBookmarkStore:
     symbol: useBookmarkStore
     paths:
-      - src/stores/useBookmarkStore.ts
+      # Phase 8B 物理迁移：新路径置首（首个磁盘存在的候选被 resolver 选中），旧路径保留作回滚参考
       - src/capabilities/bookmark/state/useBookmarkStore.ts
+      - src/stores/useBookmarkStore.ts
   useSystemStore:
     symbol: useSystemStore
     paths:

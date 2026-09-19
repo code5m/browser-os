@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from "vue";
-import { useBrowserStore } from "../../stores/useBrowserStore";
-import { useBookmarkStore, canBookmark } from "../../stores/useBookmarkStore";
+import { useBrowserStore } from "../../../stores/useBrowserStore";
+import { useBookmarkStore, canBookmark } from "../state/useBookmarkStore";
 
 // 地址栏 ⭐ 收藏按钮（M1-3）：挂在智能地址栏右侧，消费 bridge.bookmarkAdd/Remove。
 // 与 M1-0 的 useHomeStore「收藏当前网页到主页」是两套独立机制：

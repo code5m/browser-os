@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import type { Bookmark } from "../../types";
-import { useBrowserStore } from "../../stores/useBrowserStore";
-import { useBookmarkStore } from "../../stores/useBookmarkStore";
-import { useLayoutStore } from "../../stores/useLayoutStore";
-import { bridge } from "../../bridge";
-import CredentialList from "./CredentialList.vue";
+import type { Bookmark } from "../../../types";
+import { useBrowserStore } from "../../../stores/useBrowserStore";
+import { useBookmarkStore } from "../state/useBookmarkStore";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
+import { bridge } from "../../../bridge";
+import CredentialList from "../../../components/browser/CredentialList.vue";
 
 // 收藏夹侧栏（M1-3）：按 created_at 倒序展示 bridge.bookmarkList()，
 // 点项在内嵌浏览器打开（不走系统默认浏览器，那是 M1-4），按 id 删除。

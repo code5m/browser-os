@@ -1,8 +1,8 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
-import { bridge } from "../bridge";
-import type { Bookmark } from "../types";
-import { useLayoutStore } from "./useLayoutStore";
+import { bridge } from "../../../bridge";
+import type { Bookmark } from "../../../types";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
 
 // M1-3：收藏夹前端状态。只消费 M1-2 已交付的 add/list/remove_bookmark 契约，
 // 不新增 IPC、不改后端。与 M1-0 的 useHomeStore（主页快捷方式）完全独立：

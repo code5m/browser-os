@@ -2,9 +2,9 @@
 import { computed, ref, watch, nextTick, defineAsyncComponent, h } from "vue";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../stores/useBrowserStore";
-import { useBookmarkStore } from "../../stores/useBookmarkStore";
+import { useBookmarkStore } from "../../capabilities/bookmark/public";
 import BrowserHost from "../browser/BrowserHost.vue";
-import BookmarkPanel from "../browser/BookmarkPanel.vue";
+import BookmarkPanel from "../../capabilities/bookmark/ui/BookmarkPanel.vue";
 import ResourceWaterfall from "../browser/ResourceWaterfall.vue";
 import SessionPanel from "../browser/SessionPanel.vue";
 import VaultPanel from '../workspace/VaultPanel.vue';
