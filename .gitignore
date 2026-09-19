@@ -4,6 +4,9 @@ node_modules/
 # 前端构建产物
 dist/
 
+# 发布候选产物（tar/deb；仅本地，不入库）
+artifacts/
+
 # Rust / Tauri 构建产物
 src-tauri/target/
 src-tauri/gen/

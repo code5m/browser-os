@@ -423,17 +423,28 @@ tag: capability-phase7e-resource-pass
 
 ```text
 Completed: Phase 0 / 1 / 1.5 / 1.6 / 1.7 / 2 / 3 / 4 / 5 / 5.1 / 6A / 6B / Semantic Governance v1 全部完成
+           Capability Preview v1：Phase 7A / 7B / 7C / 7D / 7E / 7F（自动验证全通过）
 
-Pending: 无
+Pending:  **人工 GUI 验收**（明天）
 
-Blocked: 无
+Blocked: 无（等待人工验收，非阻塞性缺陷）
+
+Capability Preview v1:
+  CODE COMPLETE（分支 feature/capability-platform-v1）
+  Human GUI: PENDING
+  Latest code tag: capability-preview-v1-code-pass
+  Rollback: semantic-governance-v1 (316130d)
+            以及 capability-phase7a/7b/7c/7d/7e-*-pass 各阶段 tag
+  Artifact: artifacts/capability-preview-v1-dist.tar.gz
+            sha256 8126e05883fb96fa73a53726439e38c96f13a3899771cfb2c76a145dc4c23cf8
+  SYSTEM_INSTALL_MODIFIED: NO（未 sudo/dpkg/apt，未覆盖 /usr/bin/mvp-browser-os）
+  USER_DATA_MODIFIED: NO
 
 Next recommended task:
-  Semantic Governance v1 已 CLOSED（tag semantic-governance-v1）。
-  语义治理主线（Phase 1.7→2→3→4→5）+ Closure Audit v1 + Phase 6A + Phase 6B + v1 验收全部收口。
-  停止条件已达成：**未进入新治理域、未开始新业务开发，等待下一阶段**。
-  Next: Product Evolution / New Feature Development（在已治理语义骨架上做新功能，复用 canonical intent / owner）
-  或按用户新指令开启新治理域（须先走 SCR）
+  明天由用户执行 GUI 验收（见 docs/delivery/capability-preview-v1/07-HUMAN-ACCEPTANCE.md）。
+  通过后才打 capability-preview-v1-pass；未通过则保留 code-pass 并修复后重验。
+  验收通过后，A0/用户可 ff-only merge feature/capability-platform-v1 → master。
+  之后：Product Evolution / New Feature Development（在能力骨架上逐步接入 Browser/Terminal 等）
 ```
 
 ---
