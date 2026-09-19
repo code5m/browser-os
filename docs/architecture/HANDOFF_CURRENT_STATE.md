@@ -17,6 +17,13 @@
 > （5 个面板开关升 GOVERNED，`bmPanelOpen` 定为派生 implementation-detail）、M2-c `gridSession` owner 澄清
 > （内存缓存失效纪元）；新增 checker **R8**（SEMANTIC_STATE_MULTI_OWNER）+ `check-semantic-closure-logic.mjs`；
 > 真实扫描 fail=0（`SEMANTIC_REGISTRY_RESULT=PASS`）。
+>
+> ✅ **Phase 6B Semantic Writer Enforcement 已收口**（tag semantic-phase6b-writer-enforcement-pass）：
+> 把「Owner 唯一」提升为「Owner 唯一 + Writer 唯一 + Checker 可证明」；新增 checker **R9**
+> （SEMANTIC_STATE_WRITER_VIOLATION，registry 驱动 + 函数作用域 + 读/写区分），机器化 `gridSession`
+> 函数级单写者（Debt-6A-2 收口）；覆盖全部 7 个 `single_owner_required` 状态；Registry schema 零改动
+> （既有 canonical_writer/forbidden_writers/owner/derived/single_owner_required 已齐备，无需扩 YAML）；
+> 真实扫描 fail=0、self-test ALL_PASS（R1..R9）、closure-logic 27/27。
 
 ---
 
@@ -34,6 +41,7 @@ Phase 4 Terminal Lifecycle   CLOSED   （tag: semantic-phase4-terminal-pass）
 Phase 5 Credential Security    CLOSED   （tag: semantic-phase5-credential-pass）
 Phase 5.1 Credential Hardening  CLOSED   （tag: semantic-phase5.1-credential-hardening-pass）
 Phase 6A Core Closure（迁移）  CLOSED   （tag: semantic-phase6a-core-closure-pass）
+Phase 6B Writer Enforcement        CLOSED   （tag: semantic-phase6b-writer-enforcement-pass）
 ```
 
 Phase 4 验收结论：
@@ -70,8 +78,8 @@ NO REGRESSION:                 PASS  （R1..R7 + 新门禁均未削弱既有规�
 ## 2. Git State
 
 ```text
-branch:    master（Phase 5.1 以 feature/phase5.1-credential-hardening 实现，ff-merge 入 master）
-HEAD:      semantic-phase5.1-credential-hardening-pass（annotated tag = master tip）
+branch:    feature/phase6b-writer-enforcement（Phase 6B 实现分支；基于 Phase 6A 基线）
+HEAD:      <phase6b-tip>（docs(phase6b): closeout + handoff update）
 working tree: 干净（仅未跟踪 .snapshots/ 与 diagnostics/ —— 取证产物，不入库）
 ```
 
@@ -109,6 +117,8 @@ semantic-phase3-bookmark-pass           -> 793c2c3
 semantic-phase4-terminal-pass           -> <phase-tip4>
 semantic-phase5-credential-pass          -> <phase-tip>
 semantic-phase5.1-credential-hardening-pass -> <phase51-tip>
+semantic-phase6a-core-closure-pass        -> <phase6a-tip>
+semantic-phase6b-writer-enforcement-pass   -> <phase6b-tip>
 
 semantic-registry-v1:  NOT EXISTS（属原 Phase 1.6 可选动作，本次未创建；如需创建见 §7）
 ```
@@ -256,18 +266,39 @@ docs/architecture/semantic-governance/phase6a-core-closure/{ADR,panel-state-deci
 
 ---
 
+## 4i. Phase 6B Writer Enforcement（Semantic Writer Enforcement）
+
+```text
+docs/architecture/semantic-registry/states.yaml（gridSession canonical_writer/buildGrid/forceGridRelayout 已在 Phase 6A 登记；本阶段零改动 schema）
+docs/architecture/semantic-registry/{owners,intents,side-effects}.yaml（未被修改）
+scripts/check-semantic-registry.mjs（R9 SEMANTIC_STATE_WRITER_VIOLATION / findFunctionRanges / enclosingFunction + 夹具）
+scripts/check-semantic-closure-logic.mjs（gridSession 函数级 writer 唯一静态断言，27 断言）
+scripts/pre-merge.sh（Phase 03 gate 已含 check-semantic-registry / check-semantic-closure-logic，自动覆盖 R9）
+docs/architecture/semantic-governance/phase6b-writer-enforcement/{ADR,FINAL-REPORT,CHECKER-REPORT,TEST-REPORT,MIGRATION-REPORT}.md
+```
+
+R9 判定手段（registry 驱动，不硬编码）：
+  - 仅对 single_owner_required === true 且声明 canonical_writer 的存储态强制（7 个：aiNavOpen / gridSession / sidebarOpen / clipOpen / fileEditorOpen / browserDockOpen / browserDockTab）。
+  - owner 文件内：写入须位于 canonical_writer 函数体内（brace 配对取最内层 enclosing 函数）；否则 FAIL。
+  - 非 owner 文件（组件 / 其它 store / composable）：任何 .value= 直写 = FAIL。
+  - 读取（.value 后非赋值，含 === / =>）不误报。
+  - Terminal/Bookmark/credential 等无 single_owner_required 标志 → 自动跳过（不扩大范围）。
+```
+
+---
+
 ## 5. Current Task Status
 
 ```text
-Completed: Phase 0 / 1 / 1.5 / 1.6 / 1.7 / 2 / 3 / 4 / 5 / 5.1 / 6A 全部完成
+Completed: Phase 0 / 1 / 1.5 / 1.6 / 1.7 / 2 / 3 / 4 / 5 / 5.1 / 6A / 6B 全部完成
 
 Pending: 无
 
 Blocked: 无
 
 Next recommended task:
-  语义治理主线（Phase 1.7→2→3→4→5）+ Semantic Closure Audit v1 + Phase 6A Core Closure 已全部收口。
-  Phase 6A 停止条件已达成：**等待人工确认 Migration Plan，不进入 M4、不扩大迁移范围**。
+  语义治理主线（Phase 1.7→2→3→4→5）+ Semantic Closure Audit v1 + Phase 6A + Phase 6B 全部收口。
+  Phase 6B 停止条件已达成：**未进入 M4、未扩大治理范围，等待下一阶段**。
   可选：semantic-registry-v1 release tag（见 §7）
   或按用户新指令开启新治理域（须先走 SCR）
 ```
@@ -296,8 +327,9 @@ Debt-5-1 DatabasePanel.password 表单字段未受静态护栏  CLOSED（Phase 5
 Debt-5-2 R3 未通用化到 credential owner（FRONTEND_CREDENTIAL_LEAK 未武装） CLOSED（Phase 5.1-A：R3 通用化 credential owner）
 Debt-5-3 keyringWrite/keyringDelete 副作用仅文档化   CLOSED（Phase 5.1-C：check-sensitive-side-effects.mjs S1/S2 机器约束）
 Debt-6A-1 M4 其余 14 域仍为 observed_not_governed   KNOWN DEBT（Phase 6A 范围外；须另派 SCR/迁移，非本阶段目标）
-Debt-6A-2 gridSession “函数级”单写者未机器强制     KNOWN DEBT（R8 仅保证声明级唯一 owner；函数级单写者规则脆弱易误报，未武装）
+Debt-6A-2 gridSession “函数级”单写者未机器强制     CLOSED（Phase 6B：R9 机器化 writer 约束，buildGrid/forceGridRelayout 为唯一合法 writer）
 Debt-6A-3 R8 声明形态仅识别 const X = ref/reactive  KNOWN DEBT（与 R2 同源盲区：解构/动态声明不识别；登记于 Known-Debt）
+Debt-6B-1 R9 brace 配对对“无参 parenless 箭头”函数不识别  KNOWN DEBT（仅影响极少数 `const f = x => {...}` 写法；真实代码写入点均为 `function NAME()` 形式，未触发误报；若未来出现 parenless 箭头 writer 需补识别）
 ```
 
 ---
@@ -341,7 +373,7 @@ git tag -a semantic-registry-v1 -m "Semantic Registry + Checker + pre-merge gate
 **快速自查：**
 
 ```bash
-node scripts/check-semantic-registry.mjs --self-test   # ALL_PASS（R1..R8）
+node scripts/check-semantic-registry.mjs --self-test   # ALL_PASS（R1..R9）
 node scripts/check-semantic-registry.mjs              # fail=0（warn 非阻断）
 node scripts/check-semantic-closure-logic.mjs          # SEMANTIC_CLOSURE_LOGIC_RESULT=PASS (26/26)
 node scripts/check-sensitive-side-effects.mjs --self-test  # ALL_PASS（S1/S2）
@@ -387,4 +419,14 @@ Phase 6A 验收证据（2026-09-19）：
   gridSession: PASS（useBrowserStore 唯一 owner；仅 buildGrid/forceGridRelayout 写入；不落盘）
   NO REGRESSION: PASS（R1..R7 未削弱；未改语义行为；lint 0 error；git diff --check 干净）
   KNOWN_DEBT: Debt-6A-1/6A-2/6A-3 显式登记（M4 其余 14 域 / 函数级单写者 / R8 声明形态盲区）
+
+Phase 6B 验收证据（2026-09-19）：
+  SEMANTIC REGISTRY self-test: ALL_PASS（R1..R9；+R9 positive / Negative R9a(跨store) / R9b(组件) / R9c(owner内非canonical) / 读取 false-positive 夹具）
+  SEMANTIC REGISTRY real scan: PASS（fail=0；warn=6 pre-existing R5；info=72）—— R9 零新增失败
+  SEMANTIC_CLOSURE_LOGIC: PASS（27/27；gridSession 两处写入均在 canonical_writer 函数 buildGrid/forceGridRelayout 内）
+  aiNavOpen: PASS（owner=useBrowserStore；writer=toggleAiNav/gotoAI 均 canonical；R9 不误报）
+  gridSession: PASS（owner=useBrowserStore；writer=buildGrid/forceGridRelayout 均 canonical；非 owner 直写被 R9 拦）
+  R9_CHECKER: PASS（registry 驱动 + 函数作用域 + 读/写区分；不硬编码 allow-list）
+  NO REGRESSION: PASS（R1..R8 未削弱；未改业务代码；node --check 两脚本语法 OK；git diff --check 干净）
+  KNOWN_DEBT: Debt-6A-2 CLOSED（R9 机器化）；Debt-6A-1/6A-3 保留；新增 Debt-6B-1（parenless 箭头盲区，未触发误报）
 ```
