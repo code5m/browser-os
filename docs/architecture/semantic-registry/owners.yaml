@@ -201,6 +201,11 @@ owners:
       - gitRepoToken
       - dbCredential
       - browserCredential
+    manages:
+      - gitRepoToken
+      - dbCredential
+      - browserCredential
+      - keyring lifecycle（save_token / get_token / delete_token / keyringRead）
     owner_only_api:
       - save_token
       - get_token
@@ -216,7 +221,7 @@ owners:
     authorized_callers:
       - KeyringStore（owner 自身，Rust）
       - bridge（经 check_invocation_source 校验来源后调 KeyringStore）
-    rationale: 凭据真源=系统密钥库；前端只持不透明 metadata（credential_id / has_password），绝不持原始值；R3 当前未通用化到本 owner（见 Debt-5-2）
+    rationale: 凭据真源=系统密钥库；前端只持不透明 metadata（credential_id / has_password），绝不持原始值。R3 已通用化到本 owner（Phase 5.1-A）：前端任何文件直调 owner_only_api（save_token/get_token/delete_token）或引用 KeyringStore 即 SEMANTIC_OWNER_VIOLATION；组件只经 bridge 意图入口。Debt-5-2 已收口。
     status: CURRENT_FACT
 
 # ------------------------------------------------------------

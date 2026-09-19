@@ -218,6 +218,21 @@ function rule3(files, reg) {
     // d) 非 owner 调 bridge.closeGrid（native destroy）
     if (!isOwner && /bridge\.closeGrid\s*\(/.test(code))
       out.push({ rule: "R3", code: "SEMANTIC_OWNER_VIOLATION", file: f.path, detail: "非 owner 调用 bridge.closeGrid（native destroy 仅 useBrowserStore 可调）", severity: "fail" });
+
+    // --- Phase 5.1-A：Credential Owner 通用化（registry 驱动，不削弱既有 Browser 检查）---
+    const cred = owners.credential;
+    if (cred) {
+      const credApi = asList(cred.owner_only_api); // save_token / get_token / delete_token
+      const isFrontend = isVue || f.path.includes("/stores/") || f.path.includes("/composables/");
+      if (isFrontend) {
+        for (const m of credApi) {
+          if (new RegExp("\\b" + m + "\\s*\\(").test(code))
+            out.push({ rule: "R3", code: "SEMANTIC_OWNER_VIOLATION", file: f.path, detail: `前端直接调用凭据原语 ${m}()（owner: ${String(cred.owner).split("（")[0]}；凭据值不得进入前端，须经 bridge 意图入口）`, severity: "fail" });
+        }
+        if (/\bKeyringStore\s*[.(]/.test(code))
+          out.push({ rule: "R3", code: "SEMANTIC_OWNER_VIOLATION", file: f.path, detail: "前端直接引用 KeyringStore（凭据真源=系统密钥库，组件不得触碰；须经 bridge 意图入口）", severity: "fail" });
+      }
+    }
   }
   return out;
 }
@@ -359,6 +374,7 @@ async function rebuildGrid() { /* side-effect: destroy+create webviews */ await 
   { path: "src/composables/useBrowserHost.ts", src: `function scheduleGrid(){ bridge.gridPosition(i, rect); } // side-effect: bounds+show` },
   { path: "src/stores/__fx_ws_derived.ts", src: `const currentLocalPath = computed(() => inlineFile.value || filePath.value);` },
   { path: "src/stores/__fx_bm_derived.ts", src: `const sorted = computed(() => items.value.slice());` },
+  { path: "src/components/workspace/DatabasePanel.vue", src: `const password = ref(""); await db.connect(password.value); password.value = "";` },
 ];
 const POS_FILES = [
   {
@@ -371,12 +387,13 @@ async function closeGridAll() { gridOpen.value = false; await bridge.closeGrid()
 `,
   },
   { path: "src/components/x/A.vue", src: `layout.activateBrowser(); browser.activateGrid();` },
+  { path: "src/components/browser/CredentialList.vue", src: `bridge.fillBrowserCredential(credentialId, tabId); bridge.listBrowserCredentials();` },
 ];
 // 每条 negative fixture 声明期望级别：R5 是提示级(warn)，其余是阻断级(fail)
 const NEG_FILES = {
   R1: { expect: "fail", files: [{ path: "src/stores/useBrowserStore.ts", src: `const gridVisible = ref(false);` }] },
   R2: { expect: "fail", files: [{ path: "src/stores/useBrowserStore.ts", src: `const activeSurface = ref("browser");` }, { path: "src/stores/useBookmarkStore.ts", src: `const extraBookmarks = ref<Bookmark[]>([]);` }, { path: "src/stores/useSystemStore.ts", src: `const extraPanes = ref<{id:string;cwd?:string}[]>([]);` }] },
-  R3: { expect: "fail", files: [{ path: "src/components/x/B.vue", src: `browser.closeGrid(); layout.mainView = "browser";` }] },
+  R3: { expect: "fail", files: [{ path: "src/components/x/B.vue", src: `browser.closeGrid(); layout.mainView = "browser";` }, { path: "src/components/browser/BadCred.vue", src: `KeyringStore.save_token("repo", token);` }] },
   R4: { expect: "fail", files: [{ path: "src/stores/useBrowserStore.ts", src: `function showGridView() { setView("grid"); }` }, { path: "src/composables/__fx_term.ts", src: `function newTerm(){ return 0; }` }, { path: "src/composables/__fx_cred.ts", src: `function exposePassword(){ return readKeyring(); }` }] },
   R5: { expect: "warn", files: [{ path: "src/composables/useBrowserHost.ts", src: `bridge.tabPosition(id, rect);` }] },
   R6: { expect: "fail", files: [{ path: "src/stores/__fx_ws_derived_bad.ts", src: `const currentLocalPath = ref("");\ncurrentLocalPath.value = "/x";` }] },
