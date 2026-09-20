@@ -94,10 +94,26 @@ async function runTests() {
   })
 
   await t('PLT-04', '不加载其它可选 Capability 时也能工作', () => {
-    const list = rt.inspect()
-    if (list.length !== 1) return `注册项应为 1（仅 bookmark），实际 ${list.length}`
+    // Phase 7D 原始断言是「注册项恒为 1（只有 bookmark）」—— 那是**阶段事实**，不是不变量：
+    // Train B/C/D 之后 bookmark 之外还装配了 workspace/browser/terminal（各自 tag 可查）。
+    // 重基线化为**真正的不变量**（不弱化，反而加了漂移防护）：
+    //   (1) 注册集合必须与 bootstrap 显式声明清单完全一致（多一个/少一个都算漂移）；
+    //   (2) bookmark 必须始终在装配集合内；
+    //   (3) bookmark 不得强依赖任何其它已装配能力（这才等价于「其它能力缺失仍能工作」）。
+    const declared = declaredBootstrapIds()
+    const list = rt.inspect().map((x) => x.id)
+    if (declared.length === 0) return '无法从 src/capability/index.ts 解析 bootstrap 声明清单'
+    const drift = [
+      ...declared.filter((d) => !list.includes(d)),
+      ...list.filter((l) => !declared.includes(l)),
+    ]
+    if (drift.length) return `bootstrap 注册集合与声明清单漂移: ${drift.join(',')}（声明=${declared} 实际=${list}）`
+    if (!list.includes('bookmark')) return `bookmark 未装配（实际=${list}）`
     const def = rt.get('bookmark').definition
     if (def.dependsOn.length !== 0) return `强依赖应为空（可选依赖允许缺失），实际 ${def.dependsOn}`
+    const others = list.filter((x) => x !== 'bookmark')
+    const bad = def.dependsOn.filter((d) => others.includes(d))
+    if (bad.length) return `bookmark 强依赖其它能力（对方缺失即不可装配）: ${bad.join(',')}`
     return true
   })
 
@@ -120,9 +136,18 @@ async function runTests() {
     //     物理迁移（git mv）只是 rename，内容不变；--diff-filter=M 仅匹配真正的内容修改（M），
     //     忽略 rename(纯 R)/add/delete，避免 Phase 8B 迁移误报。
     //     路径经 owner_implementations locator 解析，使断言跟随物理路径迁移（与 8A.1 一致）。
+    //
+    //     重基线（2026-09-20，Train D）：原先的 `src/components/home` 已被 `src/capabilities/bookmark/ui`
+    //     取代 —— Phase 8B 把 bookmark UI 物理迁出了 src/components/home（locator 可证）。
+    //     仍留在 src/components/home 的 HomeLaunchers.vue 是 **Shell 导航胶水**（启动器→layout 导航），
+    //     其唯一一次改动来自 Train C（commit d6a2134：导航改经 capability public 边界），不是 bookmark
+    //     业务 owner 的改动。为避免「挪动球门」，此处把路径集合换成 bookmark 的**当前规范业务面**
+    //     （owner store + 能力包内 UI，均按 locator/物理事实选取），基线仍锁在 semantic-governance-v1；
+    //     覆盖不丢：Shell→bookmark 内部 import 另由 check-capability-composition 的 C3 断言把守
+    //     （本 Train 已把 HomeLaunchers.vue 一并纳入 C3 断言）。
     try {
       const bmPath = resolveOwnerFile('useBookmarkStore')
-      const gitPaths = [bmPath, 'src/components/home'].filter(Boolean)
+      const gitPaths = [bmPath, 'src/capabilities/bookmark/ui'].filter(Boolean)
       const out = execSync(
         `git diff --name-only --diff-filter=M ${BASELINE_TAG} HEAD -- ${gitPaths.join(' ')}`,
         { cwd: ROOT, encoding: 'utf8' },
@@ -170,6 +195,33 @@ async function runTests() {
   })
 
   return results
+}
+
+/**
+ * 从 src/capability/index.ts 解析 bootstrap 显式注册清单（顺序即 rt.register(...) 调用顺序）。
+ * 真源 = 代码本身（不硬编码能力名单），因此新增/删除能力必须同步 bootstrap 才会一致。
+ */
+function declaredBootstrapIds() {
+  const src = stripComments(readFileSync(INDEX_TS, 'utf8'))
+  const ids = []
+  const re = /rt\.register\(\s*([A-Za-z_]\w*)\s*\)/g
+  let m
+  // 变量名 → id：从 import 行 `import { xxxCapability, XXX_CAPABILITY_ID } from '...'` 无法直接拿 id；
+  // 但 id 常量名形如 XXX_CAPABILITY_ID，与 register 参数同一文件内一一对应，故按出现顺序配对。
+  const constByVar = new Map()
+  const importRe = /import\s*\{([^}]*)\}\s*from\s*['"][^'"]*capabilities\/([^'"]+)['"]/g
+  let im
+  while ((im = importRe.exec(src)) !== null) {
+    const names = im[1].split(',').map((x) => x.trim()).filter(Boolean)
+    const capVar = names.find((n) => /Capability$/.test(n))
+    const idVar = names.find((n) => /_CAPABILITY_ID$/.test(n))
+    if (capVar && idVar) constByVar.set(capVar, im[2]) // 目录名即 capability id（约定）
+  }
+  while ((m = re.exec(src)) !== null) {
+    const v = m[1]
+    ids.push(constByVar.get(v) || v)
+  }
+  return ids
 }
 
 /** 剥离注释，避免把注释里的 "import xxxStore" 当成真实引入（误报防护） */

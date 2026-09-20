@@ -10,6 +10,7 @@ import { createCapabilityRuntime, type CapabilityRuntime } from './runtime'
 import { bookmarkCapability, BOOKMARK_CAPABILITY_ID } from '../capabilities/bookmark'
 import { workspaceCapability, WORKSPACE_CAPABILITY_ID } from '../capabilities/workspace'
 import { browserCapability, BROWSER_CAPABILITY_ID } from '../capabilities/browser'
+import { terminalCapability, TERMINAL_CAPABILITY_ID } from '../capabilities/terminal'
 
 let runtime: CapabilityRuntime | null = null
 let lastError: string | null = null
@@ -40,6 +41,9 @@ export function bootstrapCapabilityRuntime(): BootstrapResult {
     rt.register(browserCapability)
     rt.resolve(BROWSER_CAPABILITY_ID)
     rt.activate(BROWSER_CAPABILITY_ID)
+    rt.register(terminalCapability)
+    rt.resolve(TERMINAL_CAPABILITY_ID)
+    rt.activate(TERMINAL_CAPABILITY_ID)
     activated = true
   } catch (e) {
     lastError = e instanceof Error ? `${e.code}: ${e.message}` : String(e)

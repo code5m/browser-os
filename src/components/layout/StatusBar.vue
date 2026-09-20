@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useBrowserStore } from "../../capabilities/browser/public";
-import { useSystemStore } from "../../stores/useSystemStore";
+import { useTerminalStore } from "../../capabilities/terminal/public";
 import { useWorkspaceStore } from "../../capabilities/workspace/public";
 import { useRepoStore } from "../../capabilities/workspace/public";
 import { useLayoutStore } from "../../stores/useLayoutStore";
@@ -10,7 +10,7 @@ import { bridge } from "../../bridge";
 import type { ResourceStats } from "../../types";
 
 const browser = useBrowserStore();
-const system = useSystemStore();
+const term = useTerminalStore();
 const ws = useWorkspaceStore();
 const rp = useRepoStore();
 const layout = useLayoutStore();
@@ -32,7 +32,7 @@ const viewUnknown = computed(
 
 const tabCount = computed(() => browser.tabs.length);
 const auditCount = computed(() => ws.audit.length);
-const termReady = computed(() => system.terminalOpen && system.termPanes.length > 0);
+const termReady = computed(() => term.terminalOpen && term.termPanes.length > 0);
 const repoReady = computed(() => rp.repos.length > 0);
 const nativeReady = computed(() => Boolean((window as any).__TAURI_INTERNALS__));
 

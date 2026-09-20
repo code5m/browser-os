@@ -11,6 +11,7 @@ import { useRepoStore } from "./capabilities/workspace/public";
 import { useFileStore } from "./capabilities/workspace/public";
 import { useGitStore } from "./stores/useGitStore";
 import { useSystemStore } from "./stores/useSystemStore";
+import { useTerminalStore } from "./capabilities/terminal/public";
 import { useLayoutStore } from "./stores/useLayoutStore";
 import { useSettingsStore } from "./stores/useSettingsStore";
 
@@ -34,6 +35,7 @@ const rp = useRepoStore();
 const fs = useFileStore();
 const git = useGitStore();
 const system = useSystemStore();
+const term = useTerminalStore();
 const layout = useLayoutStore();
 const settings = useSettingsStore();
 
@@ -83,8 +85,8 @@ onMounted(async () => {
   const unlisten = await getCurrentWindow().onResized(syncWindowSize);
   window.addEventListener("beforeunload", unlisten);
   // M0-0.b 终端吞吐（契约 §6.3）：测量模式下自动挂载终端面板（前端驱动 10 MiB 负载）
-  system.loadM0Config().then(() => {
-    if (system.m0Cfg?.driver === "term-throughput") {
+  term.loadM0Config().then(() => {
+    if (term.m0Cfg?.driver === "term-throughput") {
       layout.activateTerm();
     }
   });
@@ -139,7 +141,7 @@ onMounted(async () => {
   bridge.onOpenUrlRejected(() => {
     layout.showToast("⚠️ 已拒绝非 http/https 链接");
   });
-  bridge.onTermData((d) => system.onTermData(d));
+  bridge.onTermData((d) => term.onTermData(d));
   // 子 webview 右键"打开终端"：浏览器视图下优先开右侧 Dock（不离开网页），否则切全屏终端视图
   bridge.onOpenTerminal(() => {
     if (layout.mainView === "browser") {
@@ -173,7 +175,7 @@ onMounted(async () => {
   }
 
   function onGlobalKeydown(e: KeyboardEvent) {
-    if (system.m0Cfg?.driver || e.isComposing) return;
+    if (term.m0Cfg?.driver || e.isComposing) return;
     // 输入框/文本域内不触发全局快捷键
     const t = e.target as HTMLElement;
     if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)

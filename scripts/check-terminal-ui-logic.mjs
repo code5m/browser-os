@@ -1,18 +1,20 @@
 #!/usr/bin/env node
 // ---------------------------------------------------------------------------
-// M3.c（WBS M3-4）终端体验项前端逻辑层自动化测试（headless，无 GUI 依赖）
+// Terminal 前端逻辑层自动化测试（headless，无 GUI 依赖）
 //
-// 直接加载**真实的** `src/stores/useSystemStore.ts` 与
-// `src/composables/useTerminalResize.ts`，只把 `src/bridge.ts` 的终端方法替换为
-// 记录型 mock（不 mock store / composable 自身逻辑）：下面每条断言反映的都是
+// Phase 8E / Train D 重基线：本脚本原对接 M3.c 时期的**单终端** store API
+// （startShell / termId / termHistory / killShell / bindTermWriter(fn)），
+// 而 commit 2a96cb1 已把 store 改为**多面板（per-pane）**语义，之后本脚本一直未被同步
+// —— 属 PRE_EXISTING CHECKER DEBT（证据见
+// docs/architecture/capability-modularization/phase8e/TRAIN-D-TERMINAL-AUDIT.md §6.1）。
+// 本次把断言重新对接到 per-pane 真实 API，并**新增**若干断言（不删断言、不放宽不变量）：
+//   - 历史/回放/清理改为 per-pane（每个 pane 独立 40 条，互不串味）
+//   - 新增「killTerm 后该 pane 回放为空」「重启后的新 pane 无旧会话残影」
+//
+// 直接加载**真实的** `src/capabilities/terminal/state/useTerminalStore.ts` 与
+// `src/capabilities/terminal/ui/useTerminalResize.ts`，只把 `src/bridge.ts` 的终端方法
+// 替换为记录型 mock（不 mock store / composable 自身逻辑）：下面每条断言反映的都是
 // **产品代码**的行为，而非测试替身的行为。
-//
-// 覆盖：
-//   E1 临时历史 40 条 —— 上限生效、只留最新、面板重建回放、会话结束清空、
-//                        flow/exit 帧不进历史、**不落盘/不审计**。
-//   E2 resize 静默窗口 —— 去重（尺寸未变零下发）、静默窗口（连续 resize 只发一次）、
-//                        500ms 硬上界（持续慢拖仍会下发）、dispose 清定时器、
-//                        reset 后同尺寸可再次下发、非有限值忽略。
 //
 // 用法: node scripts/check-terminal-ui-logic.mjs
 // 退出码: 0 = 全部通过；1 = 有断言失败
@@ -54,6 +56,7 @@ const storageWrites = [];
 globalThis.window = {
   setTimeout: (fn, ms) => setTimeout(fn, ms),
   clearTimeout: (h) => clearTimeout(h),
+  addEventListener: () => {},
 };
 globalThis.localStorage = {
   getItem: () => null,
@@ -64,16 +67,19 @@ globalThis.localStorage = {
 const ROOT = new URL("..", import.meta.url).pathname;
 
 const { bridge } = await import(`${ROOT}src/bridge.ts`);
-const { useSystemStore } = await import(`${ROOT}src/stores/useSystemStore.ts`);
+const { useTerminalStore } = await import(
+  `${ROOT}src/capabilities/terminal/state/useTerminalStore.ts`
+);
 const { useTerminalResize, TERM_RESIZE_QUIET_MS, TERM_RESIZE_MAX_WAIT_MS } = await import(
-  `${ROOT}src/composables/useTerminalResize.ts`
+  `${ROOT}src/capabilities/terminal/ui/useTerminalResize.ts`
 );
 const { createPinia, setActivePinia } = await import(`${ROOT}node_modules/pinia/dist/pinia.mjs`);
 
 // ---------- mock bridge（只替换终端相关方法，记录调用） ----------
 const calls = [];
+let spawnSeq = 0;
 bridge.createTermChannel = () => ({ __channel: true });
-bridge.termSpawnChannel = async () => ({ id: "term-m3c" });
+bridge.termSpawnChannel = async () => ({ id: `term-${++spawnSeq}` });
 bridge.termSpawn = async () => {
   throw new Error("前端不得调用 term_spawn（Event 广播）");
 };
@@ -86,6 +92,8 @@ bridge.termResize = async (id, cols, rows) => {
 bridge.termKill = async (id) => {
   calls.push(["kill", id]);
 };
+bridge.debugLog = () => {};
+bridge.m0Config = async () => null;
 
 let passed = 0;
 const failures = [];
@@ -99,75 +107,111 @@ function assert(cond, label) {
 }
 
 setActivePinia(createPinia());
-const system = useSystemStore();
+const terminal = useTerminalStore();
+
+/** 采集某 pane 重建时的回放内容（模拟面板重新挂载）。 */
+function replayOf(id) {
+  const out = [];
+  terminal.bindTermWriter(id, (d) => out.push(d));
+  terminal.replayTermHistory(id);
+  return out;
+}
 
 // ===========================================================================
-// E1 临时历史 40 条
+// E1 per-pane 临时历史 40 条
 // ===========================================================================
 
 // T1：还没有 writer 时回放不得抛错（面板未挂载的边界）。
-system.replayTermHistory();
-assert(true, "E1-T1 replayTermHistory 在无 writer 时安全 no-op");
+terminal.replayTermHistory("not-exist");
+assert(true, "E1-T1 replayTermHistory 在无 writer / 未知 pane 时安全 no-op");
 
-const captured = [];
-system.bindTermWriter((data) => captured.push(data));
-
-await system.startShell();
-assert(system.termId === "term-m3c", "E1-T2 startShell 后 termId 就绪");
-captured.length = 0;
-
-// T3：灌入 100 条输出 → 历史上限 40，且保留的是**最新**的 40 条。
-for (let i = 1; i <= 100; i += 1) {
-  system.onTermChannelMsg({ id: "term-m3c", kind: "data", data: `OUT-${String(i).padStart(4, "0")}` });
-}
-assert(system.termHistory.length === 40, `E1-T3a 历史上限生效（期望 40，实得 ${system.termHistory.length}）`);
+const p1 = await terminal.spawnTerm();
+assert(p1 === "term-1", `E1-T2a spawnTerm 返回 pane id（实得 ${p1}）`);
 assert(
-  system.termHistory[0] === "OUT-0061" && system.termHistory[39] === "OUT-0100",
-  "E1-T3b 超限后保留最新 40 条（丢弃最旧的）"
+  terminal.termPanes.length === 1 && terminal.activeTermId === "term-1",
+  "E1-T2b 首个 pane 自动成为 activeTermId（INV-4-2）"
+);
+
+// T3：灌入 100 条输出 → 该 pane 历史上限 40，且保留的是**最新**的 40 条。
+const live = [];
+terminal.bindTermWriter(p1, (d) => live.push(d));
+for (let i = 1; i <= 100; i += 1) {
+  terminal.onTermChannelMsg({ id: p1, kind: "data", data: `OUT-${String(i).padStart(4, "0")}` });
+}
+assert(live.length === 100, `E1-T3a 100 条输出全部实时投递（实得 ${live.length}）`);
+terminal.bindTermWriter(p1, null);
+const r1 = replayOf(p1);
+assert(r1.length === 40, `E1-T3b 历史上限生效（期望 40，实得 ${r1.length}）`);
+assert(
+  r1[0] === "OUT-0061" && r1[39] === "OUT-0100",
+  "E1-T3c 超限后保留最新 40 条（丢弃最旧的）"
 );
 
 // T4：flow / exit 帧不进历史（只有 PTY 输出块才算历史）。
-const before = system.termHistory.length;
-system.onTermChannelMsg({ id: "term-m3c", kind: "flow", dropped_chunks: 3, dropped_bytes: 30 });
-system.onTermChannelMsg({ id: "term-m3c", kind: "exit", reason: "eof", data: "\r\n[终端已退出]\r\n" });
-assert(system.termHistory.length === before, "E1-T4 flow/exit 帧不写入临时历史");
+const before = replayOf(p1).length;
+terminal.onTermChannelMsg({ id: p1, kind: "flow", dropped_chunks: 3, dropped_bytes: 30 });
+terminal.onTermChannelMsg({ id: p1, kind: "exit", reason: "eof", data: "\r\n[终端已退出]\r\n" });
+assert(replayOf(p1).length === before, "E1-T4 flow/exit 帧不写入临时历史");
+assert(
+  terminal.droppedChunks === 3 && terminal.droppedBytes === 30,
+  "E1-T4b flow 帧进丢弃遥测（droppedChunks/droppedBytes）"
+);
 
 // T5：面板重建（旧 writer 解绑 → 新 writer 绑定）后回放，内容等于历史且**不自喂**。
-system.bindTermWriter(null);
-const replayed = [];
-system.bindTermWriter((data) => replayed.push(data));
-system.replayTermHistory();
+const replayed = replayOf(p1);
 assert(replayed.length === 40, `E1-T5a 重建后回放 40 条（实得 ${replayed.length}）`);
 assert(
-  replayed.join("") === system.termHistory.join(""),
+  replayed.join("") === r1.join(""),
   "E1-T5b 回放内容与历史一致"
 );
-assert(system.termHistory.length === 40, "E1-T5c 回放不回写历史（长度不翻倍）");
+assert(replayOf(p1).length === 40, "E1-T5c 回放不回写历史（长度不翻倍）");
 
-// T6：killShell 后历史清空（会话结束即消亡，不残留到下一段会话）。
-await system.killShell();
-assert(system.termHistory.length === 0, "E1-T6a killShell 清空临时历史");
-replayed.length = 0;
-system.replayTermHistory();
-assert(replayed.length === 0, "E1-T6b 会话结束后回放为空");
-
-// T7：重启（startShell(true)）同样清空，旧会话输出不得作为残影回放到新终端。
-await system.startShell();
-for (let i = 0; i < 5; i += 1) {
-  system.onTermChannelMsg({ id: "term-m3c", kind: "data", data: `OLD-${i}` });
+// T5d：per-pane 隔离 —— 第二个 pane 的历史不含第一个 pane 的内容。
+const p2 = await terminal.spawnTerm();
+assert(terminal.termPanes.length === 2 && terminal.activeTermId === p1, "E1-T5d 第二个 pane 不夺焦");
+for (let i = 1; i <= 5; i += 1) {
+  terminal.onTermChannelMsg({ id: p2, kind: "data", data: `P2-${i}` });
 }
-assert(system.termHistory.length === 5, "E1-T7a 旧会话历史已累积");
-await system.startShell(true);
-assert(system.termHistory.length === 0, "E1-T7b 重启新会话清空历史（无跨会话残影）");
+const p2replay = replayOf(p2);
+assert(
+  p2replay.length === 5 && p2replay.every((d) => d.startsWith("P2-")),
+  `E1-T5e per-pane 历史互不串味（实得 ${JSON.stringify(p2replay)}）`
+);
+assert(replayOf(p1).length === 40, "E1-T5f 新 pane 的输出不影响旧 pane 历史");
 
-// T8：不落盘 / 不审计 —— 全流程跑完后，所有 localStorage 写入都不得含终端输出内容，
+// T6：killTerm 后该 pane 历史清空（会话结束即消亡，不残留到下一段会话）。
+await terminal.killTerm(p2);
+assert(!terminal.termPanes.some((p) => p.id === p2), "E1-T6a killTerm 从注册表移除");
+assert(
+  terminal.activeTermId === p1,
+  `E1-T6b activeTermId 不悬空（实得 ${terminal.activeTermId}）`
+);
+assert(replayOf(p2).length === 0, "E1-T6c 被杀 pane 回放为空（无跨会话残影）");
+
+// T7：重启（kill + spawn）后新 pane 同样空，旧会话输出不得作为残影回放到新终端。
+terminal.onTermChannelMsg({ id: p1, kind: "data", data: "OLD-RESIDUE" });
+const afterResidue = replayOf(p1);
+assert(
+  afterResidue.length === 40 && afterResidue[afterResidue.length - 1] === "OLD-RESIDUE",
+  "E1-T7a 旧会话历史已累积且上限仍生效（保留最新）"
+);
+await terminal.killTerm(p1);
+const p3 = await terminal.spawnTerm();
+assert(replayOf(p3).length === 0, "E1-T7b 重启新 pane 历史为空（无跨会话残影）");
+
+// T8：不落盘 —— 全流程跑完后，所有 localStorage 写入都不得含终端输出内容，
 //     也不得出现终端历史键（历史只存在于内存）。
 for (let i = 0; i < 60; i += 1) {
-  system.onTermChannelMsg({ id: "term-m3c", kind: "data", data: `SECRET-${i}-sk-abc` });
+  terminal.onTermChannelMsg({ id: p3, kind: "data", data: `SECRET-${i}-sk-abc` });
 }
-await system.killShell();
+await terminal.killTerm(p3);
 const leaked = storageWrites.filter(
-  ([k, v]) => k.toLowerCase().includes("term") || v.includes("OUT-") || v.includes("SECRET-") || v.includes("OLD-")
+  ([k, v]) =>
+    k.toLowerCase().includes("term") ||
+    v.includes("OUT-") ||
+    v.includes("SECRET-") ||
+    v.includes("P2-") ||
+    v.includes("OLD-RESIDUE")
 );
 assert(leaked.length === 0, `E1-T8 终端输出/历史零落盘（泄漏 ${leaked.length} 条）`);
 

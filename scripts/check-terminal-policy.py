@@ -8,6 +8,14 @@ M3.a 是 #9（fileterm 借鉴）的**内核收口**：PTY 输出不能再是「�
 emit 一次全局事件」，必须是 worker → sync_channel → pump → sink 的三段式管道，
 且 resize 真实生效、进程组整体回收、退避有停止条件。
 
+Phase 8E / Train D（Terminal capability 隔离）同步：
+  - 前端读取路径随物理迁移更新：useSystemStore → capabilities/terminal/state/useTerminalStore.ts；
+    TerminalPane.vue / useTerminalResize.ts → capabilities/terminal/ui/**。
+  - `TERM_HISTORY_CLEAR_MISSING` 检测器重基线化：原实现统计 `clearTermHistory()` 文本出现 ≥3 次，
+    而 per-pane 重构（commit 2a96cb1）后真实清理点是 `clearTermHistory(id)`（调用）
+    + `termHistories.delete(id)`（移除桶）。新检测要求**两者同在**，比原文本计数更严（不变量未放宽）。
+    行为级证明见 scripts/check-terminal-owners.mjs（真实 store：killTerm → 回放为空）。
+
 默认模式：全部不变量成立 → EXIT 0；任一被破坏 → 打印违规码并 EXIT 1。
 --self-test：好样本零违规 + 每个不变量至少一个变异坏样本被检出（含变异防呆）。
 """
@@ -134,7 +142,9 @@ def detect_violations(files: dict) -> list[str]:
         v.append("TERM_HANDLER_MISSING:main.rs 未注册 term_spawn_channel")
 
     # ---- F10：前端 resize 静默窗口（M3.c 由防抖升级为「去重 + 静默 + 硬上界」）----
-    if "termResize" not in pane:
+    # 精确到**调用形态**（`termResize(`）：probe 打点里的 `termResize.req` 是标签字符串，
+    # 不构成「已上报 resize」的证据，不得让它掩盖真实调用被移除。
+    if re.search(r"\btermResize\s*\(", pane) is None:
         v.append("TERM_PANE_RESIZE_MISSING:TerminalPane 未调用 termResize（F5 前端侧）")
     if "useTerminalResize" not in pane:
         v.append("TERM_RESIZE_QUIET_WIRING:TerminalPane 未接线 useTerminalResize（静默窗口不可绕过）")
@@ -157,9 +167,16 @@ def detect_violations(files: dict) -> list[str]:
         v.append("TERM_HISTORY_RECORD_MISSING:useSystemStore 未登记输出进临时历史（历史上限形同虚设）")
     if "replayTermHistory" not in pane:
         v.append("TERM_HISTORY_REPLAY_MISSING:TerminalPane 未回放临时历史（面板重建后一片空白）")
-    # 会话结束必须清空，否则旧会话输出会作为残影回放到新终端
-    if store.count("clearTermHistory()") < 3:
-        v.append("TERM_HISTORY_CLEAR_MISSING:临时历史未在会话结束/重启时清空（跨会话残影）")
+    # 会话结束必须清空，否则旧会话输出会作为残影回放到新终端。
+    # per-pane 语义（2a96cb1 起）：清理 = 调用 clearTermHistory(<id>) 置空该 pane 的历史
+    # + termHistories.delete(<id>) 移除该 pane 的桶。要求两者同在（缺任一即视为未清理）。
+    _clear_call = re.search(r"clearTermHistory\(\s*[A-Za-z_]\w*\s*\)", store)
+    _bucket_drop = re.search(r"termHistories\.delete\(", store)
+    if _clear_call is None or _bucket_drop is None:
+        v.append(
+            "TERM_HISTORY_CLEAR_MISSING:临时历史未在会话结束/重启时清空（跨会话残影）"
+            f"［clearTermHistory(id)={bool(_clear_call)} termHistories.delete(id)={bool(_bucket_drop)}］"
+        )
     # 隐私红线：仅内存，不落盘、不进审计、后端不留存
     for line in store.splitlines():
         if "localStorage" in line and "termHistory" in line:
@@ -188,9 +205,10 @@ def read_repo(root: Path) -> dict:
         "cargo_toml": read("src-tauri/Cargo.toml"),
         "acl_toml": read("src-tauri/permissions/default-commands.toml"),
         "bridge_ts": read("src/bridge.ts"),
-        "system_store_ts": read("src/stores/useSystemStore.ts"),
-        "terminal_pane_vue": read("src/components/system/TerminalPane.vue"),
-        "terminal_resize_ts": read("src/composables/useTerminalResize.ts"),
+        # Phase 8E/Train D：Terminal 域迁入能力包（owner 与 UI 均换路径）
+        "system_store_ts": read("src/capabilities/terminal/state/useTerminalStore.ts"),
+        "terminal_pane_vue": read("src/capabilities/terminal/ui/TerminalPane.vue"),
+        "terminal_resize_ts": read("src/capabilities/terminal/ui/useTerminalResize.ts"),
     }
 
 
@@ -281,12 +299,14 @@ def run_self_test(root: Path) -> int:
     )
 
     # 7. resize 回到空实现
+    #     锚点随真实代码校正（bridge.rs 现为 `let result = terminal::resize(session, cols, rows);`）；
+    #     只替换调用表达式本身，保证「变异确实改动内容」且仍触发 TERM_RESIZE_STUB。
     add(
         "term_resize 回到空实现",
         mutate(
             bridge_rs=good["bridge_rs"].replace(
-                "    terminal::resize(session, cols, rows)",
-                "    let _ = (app, id, cols, rows);\n    let _ = session;\n    Ok(())",
+                "terminal::resize(session, cols, rows)",
+                "{ let _ = (app, id, cols, rows); let _ = session; Ok(()) }",
             )
         ),
         "bridge_rs",
@@ -494,10 +514,21 @@ def run_self_test(root: Path) -> int:
     )
 
     # 26. 会话结束未清历史（旧会话输出成为新终端残影）
+    #     per-pane 语义下真实清理点是 clearTermHistory(id) 调用（2a96cb1 起）。
     add(
         "会话结束未清空临时历史",
         mutate(
-            system_store_ts=good["system_store_ts"].replace("    clearTermHistory();\n", "", 1)
+            system_store_ts=good["system_store_ts"].replace("    clearTermHistory(id);\n", "", 1)
+        ),
+        "system_store_ts",
+        "TERM_HISTORY_CLEAR_MISSING",
+    )
+
+    # 26b. 只置空不移除桶（内存泄漏 + 桶残留）
+    add(
+        "会话结束只清空不移除历史桶",
+        mutate(
+            system_store_ts=good["system_store_ts"].replace("    termHistories.delete(id);\n", "", 1)
         ),
         "system_store_ts",
         "TERM_HISTORY_CLEAR_MISSING",

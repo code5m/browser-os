@@ -679,7 +679,11 @@ const ANCHOR_FILES = [
   { path: "src/capabilities/workspace/state/useScriptStore.ts", src: `const scripts = ref([]);` },
   { path: "src/capabilities/workspace/state/useSnippetStore.ts", src: `const snippets = ref([]);` },
   { path: "src/stores/useBookmarkStore.ts", src: `const panelOpen = ref(false); const items = ref([]);` },
-  { path: "src/stores/useSystemStore.ts", src: `const termPanes = ref([]);` },
+  // Phase 8E/Train D：Terminal owner 已迁入能力包；锚点须跟随 locator，否则 RI 会对
+  // useTerminalStore 报 UNRESOLVED（自检误 FAIL）。
+  { path: "src/capabilities/terminal/state/useTerminalStore.ts", src: `const terminalOpen = ref(false); const termPanes = ref([]);` },
+  // useSystemStore 仍是 Clipboard/Apps 的 owner（locator 候选仍指向该路径）
+  { path: "src/stores/useSystemStore.ts", src: `const clipText = ref(""); const apps = ref([]);` },
 ];
 const ALL = (arr) => [...ANCHOR_FILES, ...arr];
 

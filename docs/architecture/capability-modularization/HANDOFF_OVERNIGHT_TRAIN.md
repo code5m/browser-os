@@ -18,12 +18,35 @@
 | A | Workspace 单体分解（8C-0A..0E） | **PASS** | capability-phase8c0-workspace-decomposition-pass |
 | B | Workspace 物理 capability 隔离 + C3 | **PASS** | capability-phase8c-workspace-composable-pass (9074b57) |
 | C | Browser/Grid 隔离 + C3 | **PASS** | capability-phase8d-browser-composable-code-pass (d6a2134) |
-| D | Terminal 隔离 + C3 | **NOT_REACHED**（下一步） | — |
-| E | Developer family（Database/Git） | NOT_REACHED | — |
+| D | Terminal 隔离 + C3 | **PASS**（Terminal = C3；CURRENTLY_COMPOSABLE 3→4） | capability-phase8e-terminal-composable-code-pass |
+| E | Developer family（Database/Git） | **NEXT** | — |
 | F | Resource Governor + Profiles | NOT_REACHED | — |
 | G | Final acceptance + red team | NOT_REACHED | — |
 
-**CURRENTLY_COMPOSABLE = 3**（Bookmark C3 + Workspace C3 + Browser C3）。目标 ≥4（差 Terminal）。
+**CURRENTLY_COMPOSABLE = 4**（Bookmark C3 + Workspace C3 + Browser C3 + Terminal C3）。目标已达成（≥4），继续 E/F/G。
+
+### Train D 摘要（PASS，Terminal = C3）
+
+- **owner 迁移**（走 AUDIT → SCR → REGISTRY → CODE → CHECKER → TEST）：`terminal` 的 owner 符号由
+  `useSystemStore`（Terminal+Clipboard+Apps 混居，Debt-7A-2）抽为 **`useTerminalStore`**
+  （`src/capabilities/terminal/state/useTerminalStore.ts`）。11 个 state / 7 个 intent **零语义变更**。
+  `useSystemStore` 收敛为 **Clipboard + Apps**（剩余共居 = Debt-8E-1，显式未静默）。
+- **物理结构**：`src/capabilities/terminal/{manifest,public,index}.ts` + `state/useTerminalStore.ts` +
+  `ui/{TerminalPane,TerminalView,TerminalDockPanel}.vue` + `ui/useTerminalResize.ts`。
+  未建 `adapters/`（与 bookmark/workspace/browser 形态一致；Debt-8E-2）。
+- **贡献**：`terminal.main.term` → **新通用槽 `workbench-main-resident`**（常驻主视图，显隐由能力自管，
+  保住「切走不卸载 xterm」）；`terminal.dock.term` → `browser-dock`。
+- **Shell 零 Terminal 知识**：MainArea 删掉 TerminalPane / 终端视图 / Dock 终端硬编码 / `ensureTerm` watch；
+  StatusBar / App / UnifiedTabBar / ActivityBar 经 `capabilities/terminal/public` 只读消费；
+  Workspace 的「在终端打开」走 shared 窄缝 `src/composables/terminalNav.ts`（不新增 workspace→terminal 依赖边）。
+- **C3 ABSENT 真证明**：PTY 出生点唯一 = `ui/TerminalView.vue`（挂载即 `ensureTerm`）；
+  absent → 槽为空 → 组件不挂载 → 零 `term_spawn_channel` invoke。新门禁 `check-terminal-owners.mjs`
+  给出静态 8 条 + 真实 bootstrap 冒烟 3 条 + 真实 store 行为 9 条 = **20/20**。
+- **门禁**：composition 22→**33/33**；新 terminal-owners **20/20**；terminal-policy 自检 29→**30 变异**且
+  默认门禁由 **FAIL→PASS**（既有检测器失配修复）；terminal-ui-logic 由**崩溃→32 断言 PASS**；
+  pilot PLT-04/05 重基线 8/8；semantic registry `fail=0 warn=6 info=72` 与迁移前逐位一致。
+- **成熟度**：Terminal = **C3**（C4 无物理 suspend、C5 未做真机资源释放实测 → **不高报**）。
+- 债务：Debt-7A-2 **CLOSED**；新增 Debt-8E-1/2/3/4（显式）。
 
 ## 已成 capability 的形态（Bookmark / Workspace / Browser 同一模式，可直接复用）
 

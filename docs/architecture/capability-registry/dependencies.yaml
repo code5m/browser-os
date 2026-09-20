@@ -48,6 +48,9 @@ edges:
   - { from: grid,      to: bridge,   kind: required }
   - { from: workspace, to: bridge,   kind: required }
   - { from: terminal,  to: bridge,   kind: required }
+  # 注意：workspace 的「在终端打开」**不**声明 workspace→terminal 依赖边，
+  # 而是经 shared 窄缝 src/composables/terminalNav.ts（与 browserNav/recentsNav 同族）。
+  # 理由：声明 required 边会让 Terminal 缺失时 Workspace 无法装配，破坏「absent 可启动」。
   - { from: bookmark,  to: bridge,   kind: optional }
   - { from: credential,to: bridge,   kind: required }
   - { from: database,  to: credential, kind: required }
@@ -74,8 +77,15 @@ edges:
 known_coupling:
   - id: Debt-7A-2
     between: [terminal, clipboard]
+    via: useSystemStore →（Phase 8E/Train D 已解耦）
+    status: CLOSED
+    note: Train D 已按 SCR-20260920-terminal-owner-extraction 把 Terminal 抽为专属 owner
+          useTerminalStore（src/capabilities/terminal/state/），Terminal 现可独立缺失（absent → 无 PTY）。
+          Clipboard 与 Apps 仍同处 useSystemStore（剩余共居记为 Debt-8E-1，未静默消失）。
+  - id: Debt-8E-1
+    between: [clipboard, apps]
     via: useSystemStore
-    note: 同一个 store 同时是 Terminal 与 Clipboard 的 Owner，二者无法独立编排；拆分需先走 SCR
+    note: 二者仍共处同一 store（无独立 owner 符号）；不属 Terminal 范围，拆分需另走 SCR
   - id: Debt-7B-1
     between: [browser, grid]
     via: gridSession / grid_process.rs

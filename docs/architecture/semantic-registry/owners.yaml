@@ -353,7 +353,8 @@ owners:
     status: CURRENT_FACT
 
   terminal:
-    owner: useSystemStore
+    # Phase 8E/Train D：owner 由 useSystemStore（Terminal+Clipboard+Apps 混居）迁为专属 owner。
+    owner: useTerminalStore
     owns:
       - terminalOpen
       - termPanes
@@ -384,13 +385,18 @@ owners:
       - restartTerm
       - bindTermWriter
       - replayTermHistory
+      - toggleTerminal
+      - closeTerminal
+      - openTerminalAt
     forbidden_callers:
-      - components/**（TerminalPane.vue 只能调 store action，不得直写 termPanes/activeTermId/terminalOpen）
+      - components/**（终端组件只能调 store action，不得直写 termPanes/activeTermId/terminalOpen）
+      - non-terminal-capability/**（Shell 与其它能力不得 import terminal 内部；Shell 经 public 边界只读展示）
     authorized_callers:
-      - useSystemStore（owner 自身）
+      - useTerminalStore（owner 自身）
       - useLayoutStore（仅导航 setView("term")）
-      - TerminalPane.vue（消费 store，不持有第二列表）
-    rationale: 终端面板注册表唯一真源（termPanes）；任何第二份 {id,cwd}[] 或裸 activeTermId 直写都会漂移
+      - TerminalPane.vue / TerminalView.vue / TerminalDockPanel.vue（能力包内消费 store，不持有第二列表）
+      - src/composables/terminalNav.ts（窄缝：Workspace「在终端打开」经 Terminal public 边界）
+    rationale: 终端面板注册表唯一真源（termPanes）；任何第二份 {id,cwd}[] 或裸 activeTermId 直写都会漂移。PTY 出生点只在 Terminal 能力 UI 内（absent → 无 PTY）
     status: CURRENT_FACT
 
   credential:
@@ -487,7 +493,7 @@ violation_patterns:
     desc: 组件直接写 items / panelOpen（owner: useBookmarkStore）；或维护第二份 Bookmark[]
     severity: fail
   - id: COMPONENT_WRITES_TERMINAL
-    desc: 组件直接写 termPanes / activeTermId / terminalOpen（owner: useSystemStore）；或维护第二份面板列表
+    desc: 组件直接写 termPanes / activeTermId / terminalOpen（owner: useTerminalStore）；或维护第二份面板列表
     severity: fail
   - id: FRONTEND_CREDENTIAL_LEAK
     desc: 前端 reactive 状态（ref/reactive/shallowRef/computed）持有原始凭据值（password/token/secret/api_key）

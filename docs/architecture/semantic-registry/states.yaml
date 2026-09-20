@@ -16,7 +16,7 @@
 # ============================================================
 
 version: 1
-registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）+ Terminal Lifecycle（Phase 4）+ Credential Security（Phase 5）已确认语义
+registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel（Phase 2）+ Bookmark（Phase 3）+ Terminal Lifecycle（Phase 4）+ Credential Security（Phase 5）已确认语义 + Phase 8E/Train D（Terminal owner 抽取：useSystemStore → useTerminalStore，零语义变更）
 
 # Rule 2（未注册状态）治理域 = 「非 owner 固定文件」+ 各 owner store 经 implementation
 # locator 解析出的真实文件。owner store 的物理路径由 owner_implementations 解析
@@ -82,6 +82,12 @@ owner_implementations:
     paths:
       - src/stores/useSystemStore.ts
       - src/capabilities/system/state/useSystemStore.ts
+  useTerminalStore:
+    # Phase 8E/Train D：Terminal 域从 useSystemStore（Terminal+Clipboard+Apps 混居）抽为专属 owner。
+    # 旧路径**不**作为候选（否则会解析到已不含 terminal 状态的文件 → RI 误报 / 静默失守）。
+    symbol: useTerminalStore
+    paths:
+      - src/capabilities/terminal/state/useTerminalStore.ts
 
 states:
 
@@ -580,15 +586,18 @@ states:
     note: 类比 desiredGridVisibility / currentLocalPath；R6 强制其为 computed 且禁止 .value =
 
   # ---------------- Terminal Lifecycle（Phase 4）----------------
+  # Phase 8E/Train D：owner 符号由 useSystemStore 迁为 useTerminalStore（SCR-20260920-terminal-owner-extraction）。
+  # 11 个状态语义**零变更**；仅归属（owner）与物理实现路径变更；canonical_writer 函数名按真实代码校正。
   terminalOpen:
-    owner: useSystemStore
+    owner: useTerminalStore
     meaning: 终端面板是否可见（toggle；打开且 0 面板时自动 spawnTerm）
     not_meaning:
       - 视图导航（见 useLayoutStore.mainView="term"）
     kind: stored
     derived: false
     canonical_writer:
-      - useSystemStore.toggleTerminal
+      - useTerminalStore.toggleTerminal
+      - useTerminalStore.closeTerminal
     forbidden_writers:
       - components/**
     duplicate_names: []
@@ -596,7 +605,7 @@ states:
     status: CURRENT_FACT
 
   termPanes:
-    owner: useSystemStore
+    owner: useTerminalStore
     meaning: 终端面板注册表（唯一真源）[{id, cwd}]；spawn→push，kill→filter
     not_meaning:
       - 视图导航
@@ -604,8 +613,9 @@ states:
     kind: stored
     derived: false
     canonical_writer:
-      - useSystemStore.addTermPane
-      - useSystemStore.killTerm
+      - useTerminalStore.spawnTerm
+      - useTerminalStore.addTermPane
+      - useTerminalStore.killTerm
     forbidden_writers:
       - components/**
     duplicate_names: []
@@ -614,13 +624,13 @@ states:
     note: INV-4-1 唯一面板注册表；addTermPane/killTerm 是唯一增删入口
 
   termGrid:
-    owner: useSystemStore
+    owner: useTerminalStore
     meaning: 宫格模式（多终端并排）
     not_meaning: []
     kind: stored
     derived: false
     canonical_writer:
-      - useSystemStore.toggleTermGrid
+      - useTerminalStore.setTermGrid
     forbidden_writers:
       - components/**
     duplicate_names: []
@@ -628,13 +638,13 @@ states:
     status: CURRENT_FACT
 
   termGridCount:
-    owner: useSystemStore
+    owner: useTerminalStore
     meaning: 终端宫格数（默认 4 = 2×2）
     not_meaning: []
     kind: stored
     derived: false
     canonical_writer:
-      - useSystemStore.setTermGridCount
+      - useTerminalStore.setTermGridCount
     forbidden_writers:
       - components/**
     duplicate_names: []
@@ -642,15 +652,16 @@ states:
     status: CURRENT_FACT
 
   activeTermId:
-    owner: useSystemStore
+    owner: useTerminalStore
     meaning: 当前聚焦面板 id（必须 ∈ termPanes.id；kill 后重置为首剩余）
     not_meaning:
       - 悬空 id（killTerm 同步重置，禁止悬空）
     kind: stored
     derived: false
     canonical_writer:
-      - useSystemStore.setActiveTerm
-      - useSystemStore.killTerm
+      - useTerminalStore.spawnTerm
+      - useTerminalStore.setActiveTerm
+      - useTerminalStore.killTerm
     forbidden_writers:
       - components/**
     duplicate_names: []
@@ -659,13 +670,13 @@ states:
     note: INV-4-2 activeTermId 必须始终 ∈ termPanes.id
 
   autoConfirmCli:
-    owner: useSystemStore
+    owner: useTerminalStore
     meaning: 自动确认 CLI True Color 提示（来自 localStorage）
     not_meaning: []
     kind: stored
     derived: false
     canonical_writer:
-      - useSystemStore.setAutoConfirmCli
+      - useTerminalStore.setAutoConfirmCli
     forbidden_writers:
       - components/**
     duplicate_names: []
@@ -673,13 +684,13 @@ states:
     status: CURRENT_FACT
 
   termProbeOn:
-    owner: useSystemStore
+    owner: useTerminalStore
     meaning: 终端对账 probe 开关
     not_meaning: []
     kind: stored
     derived: false
     canonical_writer:
-      - useSystemStore.toggleTermProbe
+      - useTerminalStore.spawnTerm
     forbidden_writers:
       - components/**
     duplicate_names: []
@@ -687,13 +698,13 @@ states:
     status: CURRENT_FACT
 
   m0Cfg:
-    owner: useSystemStore
+    owner: useTerminalStore
     meaning: M0 吞吐测量配置（null=未启用）
     not_meaning: []
     kind: stored
     derived: false
     canonical_writer:
-      - useSystemStore.bindM0ThroughputStart
+      - useTerminalStore.loadM0Config
     forbidden_writers:
       - components/**
     duplicate_names: []
@@ -701,13 +712,13 @@ states:
     status: CURRENT_FACT
 
   m0StartTs:
-    owner: useSystemStore
+    owner: useTerminalStore
     meaning: M0 测量起始时间戳
     not_meaning: []
     kind: stored
     derived: false
     canonical_writer:
-      - useSystemStore.bindM0ThroughputStart
+      - useTerminalStore.maybeRunM0Throughput
     forbidden_writers:
       - components/**
     duplicate_names: []
@@ -715,13 +726,14 @@ states:
     status: CURRENT_FACT
 
   droppedChunks:
-    owner: useSystemStore
+    owner: useTerminalStore
     meaning: 过快输出丢弃的 chunk 数（遥测）
     not_meaning: []
     kind: stored
     derived: false
     canonical_writer:
-      - useSystemStore.pushTermHistory
+      - useTerminalStore.onTermChannelMsg
+      - useTerminalStore.resetDroppedStats
     forbidden_writers:
       - components/**
     duplicate_names: []
@@ -729,13 +741,14 @@ states:
     status: CURRENT_FACT
 
   droppedBytes:
-    owner: useSystemStore
+    owner: useTerminalStore
     meaning: 过快输出丢弃的字节数（遥测）
     not_meaning: []
     kind: stored
     derived: false
     canonical_writer:
-      - useSystemStore.pushTermHistory
+      - useTerminalStore.onTermChannelMsg
+      - useTerminalStore.resetDroppedStats
     forbidden_writers:
       - components/**
     duplicate_names: []

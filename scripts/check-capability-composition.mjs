@@ -5,8 +5,11 @@
 // 证明 Bookmark = C3（OPTIONAL / 可组合）所需的组合性事实：
 //   C1. 通用 Contribution Registry 存在且行为正确（register / getBySlot / 空槽返回 []）
 //   C2. Bookmark 经通用 Registry 注册贡献（surface + navigation），不直连 Shell
-//   C3. Shell（MainArea / ActivityBar）**不 import** src/capabilities/bookmark 任何内部文件
+//   C3. Shell（MainArea / ActivityBar / HomeLaunchers）**不 import** src/capabilities/bookmark 任何内部文件
 //       —— 即 Bookmark 缺失时 Shell 仍可编译/启动（absent-boot 的静态证据）
+//   C5-TERM-*  Terminal（Train D）：Shell 不 import terminal 内部 + 适配器经通用 Registry 注册贡献
+//   C6-TERMINAL-ABSENT  Terminal absent：两个槽（workbench-main-resident / browser-dock）为空
+//       —— Shell 不渲染终端 DOM，**且没有任何 PTY 出生点**（资源不产生，非仅隐藏按钮）
 //   C4. Bookmark absent → 对应 slot 为空，Shell 按 slot 遍历渲染空集不崩溃
 //       —— absent-boot 的动态证据（registry 空槽 = []）
 //
@@ -28,7 +31,8 @@ const REGISTRY_TS = join(ROOT, "src/capability/contribution/registry.ts");
 const BOOKMARK_INDEX_TS = join(ROOT, "src/capabilities/bookmark/index.ts");
 const WORKSPACE_INDEX_TS = join(ROOT, "src/capabilities/workspace/index.ts");
 const MAINAREA_VUE = join(ROOT, "src/components/layout/MainArea.vue");
-const ACTIVITYBAR_VUE = join(ROOT, "src/components/layout/ActivityBar.vue");
+const ACTIVITYBAR_VUE = join(ROOT, "src/components/layout/ActivityBar.vue")
+const TERMINAL_INDEX_TS = join(ROOT, "src/capabilities/terminal/index.ts");
 
 const IMPORT_RE =
   /(?:^|[\s;{}])(?:import|export)\s+(?:[\s\S]*?\sfrom\s+)?['"]([^'"]+)['"]|import\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
@@ -107,6 +111,21 @@ function browserRegistersContributions() {
   const combined = indexSrc + "\n" + typesSrc;
   const slots = [];
   for (const slot of ["browser-host", "browser-dock"]) {
+    if (new RegExp(`["']${slot}["']`).test(combined)) slots.push(slot);
+  }
+  const usesGeneric = /contributionRegistry\s*\.\s*registerContribution/.test(indexSrc);
+  return { exists: true, slots, usesGenericRegistry: usesGeneric };
+}
+
+/** 静态：terminal 适配器是否向通用 Registry 注册贡献（槽名可能定义在 contribution/types.ts） */
+function terminalRegistersContributions() {
+  if (!existsSync(TERMINAL_INDEX_TS)) return { exists: false, slots: [], usesGenericRegistry: false };
+  const indexSrc = readFileSync(TERMINAL_INDEX_TS, "utf8");
+  const typesTs = join(ROOT, "src/capability/contribution/types.ts");
+  const typesSrc = existsSync(typesTs) ? readFileSync(typesTs, "utf8") : "";
+  const combined = indexSrc + "\n" + typesSrc;
+  const slots = [];
+  for (const slot of ["workbench-main-resident", "browser-dock"]) {
     if (new RegExp(`["']${slot}["']`).test(combined)) slots.push(slot);
   }
   const usesGeneric = /contributionRegistry\s*\.\s*registerContribution/.test(indexSrc);
@@ -222,6 +241,36 @@ async function runDynamicTests() {
     return true;
   });
 
+  await t("C6-TERMINAL-ABSENT", "Terminal absent：workbench-main-resident / browser-dock(term) 槽为空（无终端 DOM、无 PTY 出生点）", () => {
+    const fresh = reg.createContributionRegistry();
+    const resident = fresh.getSurfaceContributions("workbench-main-resident");
+    const dockTerm = fresh.getSurfaceContributions("browser-dock").filter((c) => c.view === "term");
+    if (resident.length !== 0 || dockTerm.length !== 0)
+      return `absent 时不应有 terminal 贡献: resident=${resident.length} dockTerm=${dockTerm.length}`;
+    return true;
+  });
+
+  await t("C6-TERMINAL-NO-SHELL-PTY", "Terminal absent：Shell 中不存在任何 PTY 出生点（无 ensureTerm/spawnTerm/addTermPane 调用）", () => {
+    const shells = [
+      "src/components/layout/MainArea.vue",
+      "src/components/layout/ActivityBar.vue",
+      "src/components/layout/StatusBar.vue",
+      "src/components/layout/UnifiedTabBar.vue",
+      "src/components/home/HomeLaunchers.vue",
+      "src/App.vue",
+    ];
+    const hits = [];
+    for (const f of shells) {
+      const abs = join(ROOT, f);
+      if (!existsSync(abs)) continue;
+      const src = readFileSync(abs, "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/(^|[^:])\/\/.*$/gm, "$1");
+      if (/\b(spawnTerm|ensureTerm|addTermPane)\s*\(/.test(src)) hits.push(f);
+    }
+    return hits.length === 0 ? true : `Shell 仍持有 PTY 出生点: ${hits.join(", ")}`;
+  });
+
   return results;
 }
 
@@ -234,8 +283,10 @@ function runStaticChecks() {
   // C3：Shell 不 import bookmark 内部
   const ma = shellImportsBookmark("src/components/layout/MainArea.vue");
   const ab = shellImportsBookmark("src/components/layout/ActivityBar.vue");
+  const hl = shellImportsBookmark("src/components/home/HomeLaunchers.vue");
   t("C3-MAINAREA", "MainArea 不 import src/capabilities/bookmark 内部", ma.imports.length === 0, `imports=${ma.imports.join(",")}`);
   t("C3-ACTIVITYBAR", "ActivityBar 不 import src/capabilities/bookmark 内部", ab.imports.length === 0, `imports=${ab.imports.join(",")}`);
+  t("C3-HOMELAUNCHERS", "HomeLaunchers 不 import src/capabilities/bookmark 内部", hl.imports.length === 0, `imports=${hl.imports.join(",")}`);
 
   // C2：Bookmark 适配器向通用 Registry 注册
   const reg2 = bookmarkRegistersContributions();
@@ -269,6 +320,24 @@ function runStaticChecks() {
   const brReg = browserRegistersContributions();
   t("C5-BR-ADAPTER", "Browser 适配器使用 contributionRegistry.registerContribution", brReg.exists && brReg.usesGenericRegistry, `exists=${brReg.exists} usesGeneric=${brReg.usesGenericRegistry}`);
   t("C5-BR-SLOTS", "Browser 注册 browser-host + browser-dock 槽", brReg.slots.length === 2, `slots=${brReg.slots.join(",")}`);
+
+  // ── Terminal C3（Train D） ──
+  const TERM_RE = /(?:^|\/)src\/capabilities\/terminal\/(?:state|ui|services|lifecycle|resource|internal|adapters)\//;
+  for (const f of [
+    "src/components/layout/MainArea.vue",
+    "src/components/layout/ActivityBar.vue",
+    "src/components/layout/StatusBar.vue",
+    "src/components/layout/UnifiedTabBar.vue",
+    "src/components/home/HomeLaunchers.vue",
+    "src/App.vue",
+  ]) {
+    const hits = shellImportsInto(f, TERM_RE);
+    const id = "C5-TERM-" + f.split("/").pop().replace(/\.vue$/, "").toUpperCase();
+    t(id, `${f.split("/").pop()} 不 import src/capabilities/terminal 内部`, hits.length === 0, `imports=${hits.join(",")}`);
+  }
+  const termReg = terminalRegistersContributions();
+  t("C5-TERM-ADAPTER", "Terminal 适配器使用 contributionRegistry.registerContribution", termReg.exists && termReg.usesGenericRegistry, `exists=${termReg.exists} usesGeneric=${termReg.usesGenericRegistry}`);
+  t("C5-TERM-SLOTS", "Terminal 注册 workbench-main-resident + browser-dock 槽", termReg.slots.length === 2, `slots=${termReg.slots.join(",")}`);
 
   return results;
 }

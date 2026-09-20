@@ -139,6 +139,12 @@ semantic-phase6b-writer-enforcement-pass   -> <phase6b-tip>
 semantic-governance-v1               -> <gov-v1-tip>（Semantic Governance v1 总验收基线：Registry+Checker+Gate+Recovery）
 
 semantic-registry-v1:  NOT EXISTS（原 Phase 1.6 可选动作；本次改以 semantic-governance-v1 作为总验收 tag，见 §4j）
+
+# ===== Overnight Release Train（Capability Platform v1，分支 feature/capability-platform-v1） =====
+capability-phase8b-bookmark-composable-code-pass   -> <8b>（Bookmark C3）
+capability-phase8d-browser-composable-code-pass     -> d6a2134（Browser/Grid C3）
+capability-phase8e-terminal-composable-code-pass    -> <Train D HEAD>（Terminal C3；CURRENTLY_COMPOSABLE=4）
+  （上述 tag 均仅本地，未 push；硬约束）
 ```
 
 ---
@@ -232,14 +238,28 @@ docs/architecture/semantic-governance/phase3-bookmark/{Phase3-design,PHASE_3_CLO
 
 ---
 
-## 4e. Terminal Lifecycle Governance（Phase 4）
+## 4e. Terminal Lifecycle Governance（Phase 4 → Phase 8E/Train D 迁 owner）
 
 ```text
 docs/architecture/semantic-registry/states.yaml（terminalOpen/termPanes/termGrid/termGridCount/activeTermId/autoConfirmCli/termProbeOn/m0Cfg/m0StartTs/droppedChunks/droppedBytes）
-docs/architecture/semantic-registry/intents.yaml（addTermPane/killTerm/termWrite/setActiveTerm/restartTerm/bindTermWriter/replayTermHistory）
-docs/architecture/semantic-registry/owners.yaml（terminal owner + COMPONENT_WRITES_TERMINAL）
-scripts/check-semantic-registry.mjs（R2/R4 terminal 域 + 夹具）
+  —— owner: useTerminalStore（Phase 8E/Train D 由 useSystemStore 迁出；11 状态零语义变更）
+docs/architecture/semantic-registry/intents.yaml（addTermPane/killTerm/termWrite/setActiveTerm/restartTerm/bindTermWriter/replayTermHistory + closeTerminal）
+docs/architecture/semantic-registry/owners.yaml（terminal owner=useTerminalStore + COMPONENT_WRITES_TERMINAL）
+scripts/check-semantic-registry.mjs（R2/R4 terminal 域 + 夹具；owner_implementations 含 useTerminalStore）
 docs/architecture/semantic-governance/phase4-terminal/{Phase4-design,PHASE_4_CLOSEOUT_RESULT}.md
+docs/architecture/semantic-changes/SCR-20260920-terminal-owner-extraction.md（owner 迁移 SCR）
+
+Phase 8E / Train D（Terminal Capability Isolation）：
+  src/capabilities/terminal/{index,manifest,public}.ts
+  src/capabilities/terminal/state/useTerminalStore.ts（owner）
+  src/capabilities/terminal/ui/{TerminalPane,TerminalView,TerminalDockPanel}.vue + useTerminalResize.ts
+  src/composables/terminalNav.ts（shared 窄缝：Workspace「在终端打开」）
+  scripts/check-terminal-owners.mjs（20 断言：TERM-01..08 + 静态 + 真实 bootstrap 冒烟）
+  scripts/check-terminal-policy.py（30 变异；后端管道/进程组/退避/隐私红线）
+  scripts/check-terminal-ui-logic.mjs（32 断言：per-pane 历史/回放/清理/零落盘）
+  scripts/check-capability-composition.mjs（C5-TERM-* 6 条 + C6-TERMINAL-ABSENT/NO-SHELL-PTY）
+  docs/architecture/capability-modularization/phase8e/TRAIN-D-{AUDIT,CLOSEOUT}.md
+  maturity: Terminal = C3 OPTIONAL（absent → 0 PTY / 0 child process；present → 正常；C4/C5 未达，不高报）
 ```
 
 ---
@@ -569,31 +589,37 @@ Completed: Phase 0 / 1 / 1.5 / 1.6 / 1.7 / 2 / 3 / 4 / 5 / 5.1 / 6A / 6B / Seman
            Capability Preview v1：Phase 7A / 7B / 7C / 7D / 7E / 7F（自动验证全通过）
            Capability Modularization：Phase 8A / 8A.1 / 8B（机械迁移，Bookmark C2）/ 8B.1（C3 OPTIONAL 已验收）
 
-Pending:  **人工 GUI 验收**（明天）
+Pending:  **人工 GUI 验收**（终端/xterm 交互、Dock 终端、宫格切换的视觉确认仍由用户完成）
 
-Blocked: 无（等待人工验收，非阻塞性缺陷）
+Blocked: 无
 
-Capability Preview v1:
-  CODE COMPLETE（分支 feature/capability-platform-v1）
-  Human GUI: PENDING
-  Latest code tag: capability-preview-v1-code-pass
-  Rollback: semantic-governance-v1 (316130d)
-            以及 capability-phase7a/7b/7c/7d/7e-*-pass 各阶段 tag
-  Artifact: artifacts/capability-preview-v1-dist.tar.gz
-            sha256 8126e05883fb96fa73a53726439e38c96f13a3899771cfb2c76a145dc4c23cf8
+Capability Platform v1（Overnight Release Train，分支 feature/capability-platform-v1）：
+  TRAIN A  Workspace decomposition         PASS（commit/未 push）
+  TRAIN B  Workspace C3                    PASS（commit/未 push）
+  TRAIN C  Browser/Grid C3                 PASS（tag capability-phase8d-browser-composable-code-pass @ d6a2134）
+  TRAIN D  Terminal C3                     PASS（tag capability-phase8e-terminal-composable-code-pass；见下方）
+  TRAIN E  Developer family（Database/Git）  NEXT
+  TRAIN F  Resource Governor + Profiles      NOT_REACHED
+  TRAIN G  Final automated acceptance       NOT_REACHED
+  CURRENTLY_COMPOSABLE = 4（Bookmark C3 + Workspace C3 + Browser C3 + Terminal C3）
+
+  Latest code tag: capability-phase8e-terminal-composable-code-pass
+  Rollback: semantic-governance-v1（冻结治理基线，未 push）；以及 phase7a/7b/7c/7d/7e、phase8b、phase8d 各阶段 tag
   SYSTEM_INSTALL_MODIFIED: NO（未 sudo/dpkg/apt，未覆盖 /usr/bin/mvp-browser-os）
   USER_DATA_MODIFIED: NO
-  Master merge: 暂不合并 —— pre-merge --self-test = FAIL
-    （check-terminal-policy.py / check-terminal-ui-logic.mjs，既有债 Debt-004）
-    归因: git diff semantic-governance-v1..HEAD 未触及任何 terminal/pty 文件（NO_TERMINAL_FILES_CHANGED）
-    依据 §22「pre-merge PASS 才允许 ff-only merge」→ 保留 feature 分支，待人工验收+
-    terminal 债裁决后再由用户/A0 合并
+  Master merge: 暂不合并 —— 按 HARD STOP 约束，全部 train（含 E/F/G）完成后由用户/A0 统一合并 feature 分支
 
-Next recommended task:
-  明天由用户执行 GUI 验收（见 docs/delivery/capability-preview-v1/07-HUMAN-ACCEPTANCE.md）。
-  通过后才打 capability-preview-v1-pass；未通过则保留 code-pass 并修复后重验。
-  验收通过后，A0/用户可 ff-only merge feature/capability-platform-v1 → master。
-  之后：Bookmark C3 已达成（2026-09-20 验收），进入 Phase 8C（复用 Contribution Model）
+Terminal（Train D）验收要点：
+  - owner 由 useSystemStore（Terminal+Clipboard+Apps 混居，Debt-7A-2）迁为专属 useTerminalStore
+  - 11 状态 / 7 意图零语义变更；PTY 出生点唯一 = ui/TerminalView.vue（absent → 槽空 → 0 PTY）
+  - 真实 bootstrap 冒烟：4 能力全 ACTIVE；门槛 20/20 + composition 33/33 + policy 30 变异 + ui-logic 32
+  - 成熟度: Terminal = **C3**（C4 无物理 suspend、C5 未做真机资源释放实测 → 不高报）
+  - 债 Debt-7A-2 CLOSED；新增 Debt-8E-1..4（显式，交 Train F/E 边界裁决）
+
+Next recommended task（AUTONOMOUS）：
+  继续 TRAIN E —— Developer Capability Family（Database / Git），边界审计与能力化；
+  原则：Repo Context ≠ Git Operations；Database/Git/Terminal 不得合并为 DeveloperStore；
+  Credential 只经 reference/authorized API；真实成熟度不足允许停在 C0/C1/C2，不强拆。
 ```
 
 ---
@@ -604,7 +630,7 @@ Next recommended task:
 Debt-001  Grid UDS socket cleanup              KNOWN DEBT（不处理）
 Debt-002  toggleGridToolbar dead code          KNOWN DEBT（不处理）
 Debt-003  closeGridCell orphan API             KNOWN DEBT（不处理）
-Debt-004  Terminal checker self-test FAIL      KNOWN DEBT（不处理；pre-merge --self-test 既有 FAIL，非本阶段引入）
+Debt-004  Terminal checker self-test FAIL      CLOSED（Phase 8E/Train D：check-terminal-policy.py 30 变异全检出、check-terminal-ui-logic.mjs 由崩溃→32 断言 PASS；既有的两类 FAIL 均属 PRE_EXISTING CHECKER DEBT 已修，非架构违规）
 Debt-1.7-1 pack 内损坏对象无自动恢复          KNOWN DEBT（交专项）
 Debt-1.7-2 无周期性后台完整性巡检             KNOWN DEBT（交 ops）
 Debt-2-1 filePath overloaded 语义未拆分       KNOWN DEBT
@@ -626,6 +652,13 @@ Debt-6B-1 R9 brace 配对对“无参 parenless 箭头”函数不识别  KNOWN 
 Debt-8B-1 registerBookmarkContributions 为兼容占位     MECHANICS-DONE / ACCEPTANCE-PENDING（WIP 已接真实 Registry 注册 3 条贡献；未提交+未打 tag，待验收收口）
 Debt-8B-2 未证 capability absent 时 Shell 可启动      MECHANICS-DONE / ACCEPTANCE-PENDING（composition C4-ABSENT 实跑 PASS；未提交+未打 tag）
 Debt-8B-3 Shell 仍持有 Bookmark 专属知识（直连 public.ts/ui/*）  MECHANICS-DONE / ACCEPTANCE-PENDING（WIP 中 Shell 改经 contribution/registry，零 import bookmark 内部；closure 静态断言 PASS；未提交+未打 tag）
+
+# ===== Phase 8E / Train D 新增债务（显式，未静默消失） =====
+Debt-8E-1 Clipboard≡Apps 共居 useSystemStore          KNOWN DEBT（Terminal 已迁出，但 Clipboard/Apps 仍共用同一 store；无独立 owner 符号；拆分需另走 SCR，不属 Terminal 范围）
+Debt-8E-2 Terminal 无 adapters/ 层                    KNOWN DEBT（与 bookmark/workspace/browser 形态一致：bridge 直接调用；可选补全，非阻塞）
+Debt-8E-3 terminal-auto-confirm-cli 仍写 localStorage    KNOWN DEBT（UI 偏好非敏感；不落盘终端输出/历史，但偏好键仍在本地位；若后续要合规可迁 Keyring）
+Debt-8E-4 历史清空检测器重基线化记录                   DOC-ONLY（check-terminal-policy.py 的 TERM_HISTORY_CLEAR_MISSING 由「文本计数≥3」改为「clearTermHistory(id) + termHistories.delete(id) 同在」，更严；行为级证明见 check-terminal-owners.mjs TERM-08b/08c）
+Debt-7A-2 Terminal↔Clipboard 无法拆分                CLOSED（Train D：Terminal 已抽为专属 owner useTerminalStore；见 capabilities.yaml/dependencies.yaml）
 ```
 
 ---

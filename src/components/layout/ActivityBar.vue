@@ -9,6 +9,7 @@ import {
 } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../capabilities/browser/public";
 import { useSystemStore } from "../../stores/useSystemStore";
+import { useTerminalStore } from "../../capabilities/terminal/public";
 import { useWorkspaceStore } from "../../capabilities/workspace/public";
 import { useArtifactStore } from "../../capabilities/workspace/public";
 import { useFileStore } from "../../capabilities/workspace/public";
@@ -23,6 +24,7 @@ const workbench = useWorkbenchStore();
 const layout = useLayoutStore();
 const browser = useBrowserStore();
 const system = useSystemStore();
+const term = useTerminalStore();
 const ws = useWorkspaceStore();
 const art = useArtifactStore();
 const fs = useFileStore();
@@ -147,8 +149,8 @@ function setGridCount(n: number) {
 }
 
 async function onItem(v: string) {
-  if (system.m0Cfg?.driver) {
-    bridge.debugLog(`[M0] ignore activity item ${v} while driver=${system.m0Cfg.driver}`);
+  if (term.m0Cfg?.driver) {
+    bridge.debugLog(`[M0] ignore activity item ${v} while driver=${term.m0Cfg.driver}`);
     return;
   }
   layout.navSection = "";

@@ -27,6 +27,12 @@ export interface ContributionSlots {
   readonly ACTIVITY_BAR_TRAILING: "activity-bar-trailing"
   /** 主工作区视图槽：能力按 `view`（=layout.mainView 值）认领一个主视图；Shell 只按 view 渲染 */
   readonly WORKBENCH_MAIN: "workbench-main"
+  /**
+   * 常驻主视图槽：能力提供的组件**始终挂载**（Shell 不按 view 卸载），显隐由能力组件内部
+   * 自管（如绑定 layout.mainView）。用于「切走不得卸载」的视图（终端 xterm 实例保活）。
+   * Shell 仍不持有任何能力专属知识：槽为空即不渲染任何东西。
+   */
+  readonly WORKBENCH_MAIN_RESIDENT: "workbench-main-resident"
   /** 浏览器原生宿主槽：能力提供 webview 宿主组件（native 定位容器），Shell 只按槽渲染 */
   readonly BROWSER_HOST: "browser-host"
   /** 浏览器右侧 Dock 面板槽：能力按 `view` 认领一个 Dock 页签面板 */
@@ -38,6 +44,7 @@ export const CONTRIBUTION_SLOTS = {
   ADDRESS_BAR_ACTIONS: "address-bar-actions",
   ACTIVITY_BAR_TRAILING: "activity-bar-trailing",
   WORKBENCH_MAIN: "workbench-main",
+  WORKBENCH_MAIN_RESIDENT: "workbench-main-resident",
   BROWSER_HOST: "browser-host",
   BROWSER_DOCK: "browser-dock",
 } as const satisfies ContributionSlots

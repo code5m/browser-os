@@ -293,10 +293,10 @@ intents:
       - showBookmarkPanel
     status: CURRENT_FACT
 
-  # ---------------- Terminal Lifecycle（owner: useSystemStore，Phase 4）----------------
+  # ---------------- Terminal Lifecycle（owner: useTerminalStore，Phase 4；owner 于 Phase 8E/Train D 迁移）----------------
   addTermPane:
     meaning: 新建终端面板（spawn）
-    owner: useSystemStore
+    owner: useTerminalStore
     allowed_effects:
       - termPanes = push({id,cwd})
       - activeTermId = id
@@ -311,7 +311,7 @@ intents:
 
   killTerm:
     meaning: 按 id 关闭面板（filter + 重置 activeTermId）
-    owner: useSystemStore
+    owner: useTerminalStore
     allowed_effects:
       - bridge.closeTerm(id)
       - termPanes = filter(!=id)
@@ -319,13 +319,15 @@ intents:
     forbidden_effects: []
     duplicate_names:
       - closeTerm
+  - hideTerminal
+  - dismissTerminal
       - removeTerm
       - terminateTerm
     status: CURRENT_FACT
 
   termWrite:
     meaning: 向 PTY 写入（用户输入 / 自动确认）
-    owner: useSystemStore
+    owner: useTerminalStore
     allowed_effects:
       - bridge.termWrite(input)
     forbidden_effects:
@@ -337,7 +339,7 @@ intents:
 
   setActiveTerm:
     meaning: 聚焦某面板（activeTermId = id，必须 ∈ termPanes）
-    owner: useSystemStore
+    owner: useTerminalStore
     allowed_effects:
       - activeTermId = id
     forbidden_effects:
@@ -349,7 +351,7 @@ intents:
 
   restartTerm:
     meaning: 重启面板（killTerm + addTermPane）
-    owner: useSystemStore
+    owner: useTerminalStore
     allowed_effects:
       - killTerm(id) + addTermPane()
     forbidden_effects: []
@@ -357,9 +359,21 @@ intents:
       - restartTerminal
     status: CURRENT_FACT
 
+  closeTerminal:
+    meaning: 隐藏终端面板（terminalOpen = false 的 canonical 入口；面板内 ✕ 走此入口）
+    owner: useTerminalStore
+    allowed_effects:
+      - terminalOpen = false
+    forbidden_effects:
+      - 销毁任何 PTY / 面板
+    duplicate_names:
+      - hideTerminal
+      - dismissTerminal
+    status: CURRENT_FACT
+
   bindTermWriter:
     meaning: 注册面板输出 sink（PTY→xterm）
-    owner: useSystemStore
+    owner: useTerminalStore
     allowed_effects:
       - 绑定 writer（PTY 输出 → xterm.write）
     forbidden_effects: []
@@ -369,7 +383,7 @@ intents:
 
   replayTermHistory:
     meaning: 面板重建时回放会话内历史（≤40 条，不落盘）
-    owner: useSystemStore
+    owner: useTerminalStore
     allowed_effects:
       - 回放 termHistory 到 xterm
     forbidden_effects:

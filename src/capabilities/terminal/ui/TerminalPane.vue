@@ -3,12 +3,12 @@ import { ref, onMounted, onBeforeUnmount } from "vue";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import { bridge } from "../../bridge";
-import { useSystemStore } from "../../stores/useSystemStore";
-import { useTerminalResize } from "../../composables/useTerminalResize";
+import { bridge } from "../../../bridge";
+import { useTerminalStore } from "../state/useTerminalStore";
+import { useTerminalResize } from "./useTerminalResize";
 
 const props = withDefaults(defineProps<{ paneId: string; small?: boolean }>(), { small: false });
-const system = useSystemStore();
+const terminal = useTerminalStore();
 const termEl = ref<HTMLElement | null>(null);
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
@@ -26,7 +26,7 @@ let probeDoneBytes = 0;
 // - 后端 `term_resize` 走静默窗口：尺寸去重 + 140 ms 静默 + 500 ms 硬上界。
 const resize = useTerminalResize((cols, rows) => {
   if (!term || !props.paneId) return;
-  if (system.termProbeOn) {
+  if (terminal.termProbeOn) {
     bridge.debugLog(`[TERM_PROBE] termResize.req pane=${props.paneId} cols=${cols} rows=${rows}`);
   }
   bridge.termResize(props.paneId, cols, rows).catch(() => {});
@@ -35,7 +35,7 @@ const resize = useTerminalResize((cols, rows) => {
 function onContainerResize() {
   if (!term || !fit) return;
   const dims = fit.proposeDimensions();
-  if (system.termProbeOn) {
+  if (terminal.termProbeOn) {
     bridge.debugLog(`[TERM_PROBE] resize.evt pane=${props.paneId} cw=${termEl.value?.clientWidth ?? -1} ch=${termEl.value?.clientHeight ?? -1} proposed=${dims ? `${dims.cols}x${dims.rows}` : "null"} term=${term.cols}x${term.rows} buf=${term.buffer.active.type}`);
   }
   if (!dims || dims.cols <= 0 || dims.rows <= 0) return;
@@ -87,7 +87,7 @@ function m0ReportAfterPaint() {
     const begin_seen = m0BeginSeen;
     const end_seen = m0EndSeen;
     const end_ts_ms = Date.now();
-    const start_ts_ms = system.m0StartTs;
+    const start_ts_ms = terminal.m0StartTs;
     m0Frames = [];
     m0Bytes = 0;
     bridge
@@ -167,15 +167,15 @@ onMounted(() => {
 
     // 用户输入 → 后端 PTY
     term.onData((data) => {
-      system.termWrite(props.paneId, data);
+      terminal.termWrite(props.paneId, data);
     });
 
     // 后端 PTY 输出 → xterm（M0-0.b 吞吐钩子在此拦截）
-    system.bindTermWriter(props.paneId, (data) => {
-      if (system.m0Cfg?.run_id) {
+    terminal.bindTermWriter(props.paneId, (data) => {
+      if (terminal.m0Cfg?.run_id) {
         bridge.debugLog(`[TerminalProbe] received chars=${data.length}`);
       }
-      if (system.termProbeOn) {
+      if (terminal.termProbeOn) {
         probeWriteSeq += 1;
         const b = probeEncoder.encode(data).length;
         probeSubmitBytes += b;
@@ -183,27 +183,27 @@ onMounted(() => {
       }
       term?.write(data, () => {
         m0TrackRendered(data);
-        if (system.m0Cfg?.run_id) {
+        if (terminal.m0Cfg?.run_id) {
           bridge.debugLog(`[TerminalProbe] rendered chars=${data.length} buffer=${term?.buffer.active.type}`);
         }
-        if (system.termProbeOn) {
+        if (terminal.termProbeOn) {
           probeDoneSeq += 1;
           probeDoneBytes += probeEncoder.encode(data).length;
           bridge.debugLog(`[TERM_PROBE] xterm.done pane=${props.paneId} seq=${probeDoneSeq} cum=${probeDoneBytes} cols=${term?.cols} rows=${term?.rows} buf=${term?.buffer.active.type}`);
         }
       });
     });
-    system.bindM0ThroughputStart(m0Prepare);
+    terminal.bindM0ThroughputStart(m0Prepare);
     // M3.c（WBS M3-4 · E1）：面板重建（切 Dock / 切回）时回放最近 40 条输出，
     // 避免会话还活着但终端一片空白。历史仅会话内内存持有，不落盘。
-    system.replayTermHistory(props.paneId);
+    terminal.replayTermHistory(props.paneId);
 
     // 容器尺寸变化时 fit + 静默上报真实行列（M3.a F5 / M3.c E2）
     resizeObserver = new ResizeObserver(() => onContainerResize());
     resizeObserver.observe(termEl.value);
 
     bridge.debugLog("[TerminalPane] pane ready");
-    if (system.termProbeOn) {
+    if (terminal.termProbeOn) {
       bridge.debugLog(`[TERM_PROBE] pane.mounted pane=${props.paneId} cw=${termEl.value.clientWidth} ch=${termEl.value.clientHeight} cols=${term.cols} rows=${term.rows} buf=${term.buffer.active.type}`);
     }
     term.focus();
@@ -213,44 +213,44 @@ onMounted(() => {
 });
 
 function restart() {
-  system.killTerm(props.paneId);
-  system.addTermPane();
+  terminal.killTerm(props.paneId);
+  terminal.addTermPane();
 }
 function closePane() {
-  system.killTerm(props.paneId);
+  terminal.killTerm(props.paneId);
 }
 
 onBeforeUnmount(() => {
-  if (system.termProbeOn) {
+  if (terminal.termProbeOn) {
     bridge.debugLog(`[TERM_PROBE] pane.unmounted pane=${props.paneId} submitted=${probeSubmitBytes} completed=${probeDoneBytes}`);
   }
   m0FrameSampling = false;
   resize.dispose();
   resizeObserver?.disconnect();
   term?.dispose();
-  system.bindTermWriter(props.paneId, null);
-  system.bindM0ThroughputStart(null);
+  terminal.bindTermWriter(props.paneId, null);
+  terminal.bindM0ThroughputStart(null);
 });
 </script>
 
 <template>
   <section
     class="terminal-xterm"
-    @mousedown="system.setActiveTerm(props.paneId)"
-    @focusin="system.setActiveTerm(props.paneId)"
+    @mousedown="terminal.setActiveTerm(props.paneId)"
+    @focusin="terminal.setActiveTerm(props.paneId)"
   >
     <div class="term-head">
       <span>终端</span>
       <div>
         <label class="term-auto" title="仅自动确认 CodeArts CLI 的 True Color 兼容性提示">
-          <input :checked="system.autoConfirmCli" type="checkbox" @change="system.setAutoConfirmCli(($event.target as HTMLInputElement).checked)" /> 自动确认 CLI
+          <input :checked="terminal.autoConfirmCli" type="checkbox" @change="terminal.setAutoConfirmCli(($event.target as HTMLInputElement).checked)" /> 自动确认 CLI
         </label>
-        <span v-if="system.droppedBytes > 0" class="term-drop" title="输出过快，已丢弃的字节数">
-          已丢弃 {{ system.droppedBytes }} B
+        <span v-if="terminal.droppedBytes > 0" class="term-drop" title="输出过快，已丢弃的字节数">
+          已丢弃 {{ terminal.droppedBytes }} B
         </span>
         <button v-if="!props.small" @click="restart" title="重启">↻</button>
         <button v-if="!props.small" @click="closePane" title="关闭进程">⏹</button>
-        <button @click="system.terminalOpen = false" title="隐藏">✕</button>
+        <button @click="terminal.closeTerminal()" title="隐藏">✕</button>
       </div>
     </div>
     <div ref="termEl" class="term-container"></div>

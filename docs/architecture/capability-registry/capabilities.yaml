@@ -116,20 +116,24 @@ capabilities:
   - id: terminal
     name: Terminal
     category: CAPABILITY
-    semanticOwner: useSystemStore
+    # Phase 8E/Train D：owner 由 useSystemStore（混居）迁为专属 owner useTerminalStore
+    # （SCR-20260920-terminal-owner-extraction；11 状态 7 意图零语义变更）。
+    semanticOwner: useTerminalStore
     governanceStatus: GOVERNED
-    status: NOT_INTEGRATED
+    status: COMPATIBILITY_WRAPPED
     provides:
       - terminal.spawn
       - terminal.write
       - terminal.kill
+      - terminal.resize
+      - terminal.grid
     dependsOn:
       - bridge
     optionalDependencies: []
     lifecycle:
-      supported: [ACTIVE]
+      supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
-      activatable: false
+      activatable: true
       resident: false
     resources:
       class: [PROCESS, PTY]
@@ -140,7 +144,7 @@ capabilities:
     persistence:
       scope: session
       sensitive: false
-    entrypoint: src/components/system/TerminalPane.vue
+    entrypoint: src/capabilities/terminal
 
   - id: bookmark
     name: Bookmark

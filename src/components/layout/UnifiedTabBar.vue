@@ -4,6 +4,7 @@ import { useBrowserStore } from "../../capabilities/browser/public";
 import { ref, computed } from "vue";
 import { useFileStore } from "../../capabilities/workspace/public";
 import { useSystemStore } from "../../stores/useSystemStore";
+import { useTerminalStore } from "../../capabilities/terminal/public";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 // 统一页签条：浏览器网页页签 + 目录页签 + 模块页签（终端/文件等）混排在同一条，
@@ -12,6 +13,7 @@ const layout = useLayoutStore();
 const browser = useBrowserStore();
 const fs = useFileStore();
 const system = useSystemStore();
+const term = useTerminalStore();
 const context = ref<{ id: string; kind: 'web' | 'module' } | null>(null);
 
 // Resolve the native window only after an explicit user action so a browser/dev
@@ -145,7 +147,7 @@ async function copyRelPath() {
 }
 
 async function activateWeb(id: string) {
-  if (system.m0Cfg?.driver) return;
+  if (term.m0Cfg?.driver) return;
   // 本函数语义是"切到普通浏览器页签"：必须精确判断是否已处于 browser 视图。
   // 不能用 isBrowserView()（它把 grid 也算作 browser-like），否则宫格视图下
   // mainView 会停留在 grid、schedulePosition 走宫格分支，点击的页签不显示。
@@ -162,7 +164,7 @@ function isActiveMod(id: string) {
 }
 
 function activateMod(t: { id: string; view: string; path?: string }) {
-  if (system.m0Cfg?.driver) return;
+  if (term.m0Cfg?.driver) return;
   layout.activateModTab(t.id);
   if (t.view === "apps") system.loadApps();
   if (t.path) fs.enterDir(t.path);

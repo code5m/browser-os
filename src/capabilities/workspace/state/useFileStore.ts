@@ -2,7 +2,7 @@ import { defineStore } from "pinia";
 import { ref, reactive, computed, watch, nextTick } from "vue";
 import { bridge } from "../../../bridge";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
-import { useSystemStore } from "../../../stores/useSystemStore";
+import { openTerminalAt } from "../../../composables/terminalNav";
 import { renderMd } from "../../../utils/markdown";
 
 // ============================================================
@@ -248,7 +248,7 @@ export const useFileStore = defineStore("files", () => {
       : entry.path.lastIndexOf("/") > 0
         ? entry.path.slice(0, entry.path.lastIndexOf("/"))
         : "/";
-    await useSystemStore().openTerminalAt(dir);
+    await openTerminalAt(dir);
   }
 
   // ===== IDE 文件树（左树右编辑） =====
