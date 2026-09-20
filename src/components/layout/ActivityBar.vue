@@ -10,19 +10,27 @@ import {
 import { useBrowserStore } from "../../stores/useBrowserStore";
 import { useSystemStore } from "../../stores/useSystemStore";
 import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
-import BookmarkStar from "../../capabilities/bookmark/ui/BookmarkStar.vue";
 import { redactSecrets } from "../../utils/redact";
 import { Search, PanelLeftClose, PanelLeftOpen } from "@lucide/vue";
 import { useWorkbenchStore } from "../../stores/useWorkbenchStore";
 import GridArchiveBar from "../browser/GridArchiveBar.vue";
-import { useBookmarkStore } from "../../capabilities/bookmark/public";
+import { contributionRegistry } from "../../capability/contribution/registry";
+import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
 const workbench = useWorkbenchStore();
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
 const system = useSystemStore();
 const ws = useWorkspaceStore();
-const bookmarks = useBookmarkStore();
+
+// 收藏夹等贡献：经通用 Contribution Registry 按 slot 遍历渲染。
+// Shell 不持有 Bookmark 专属知识（不 import 其 store / ui），C3 关键（8B.1）。
+const addressBarActions = contributionRegistry.getNavigationContributions(
+  CONTRIBUTION_SLOTS.ADDRESS_BAR_ACTIONS,
+);
+const trailingActions = contributionRegistry.getNavigationContributions(
+  CONTRIBUTION_SLOTS.ACTIVITY_BAR_TRAILING,
+);
 
 // 一级入口与 ☰ 菜单分节统一来自 useLayoutStore（W17 导航真源），
 // 窄窗口按 navTopViews 从尾部裁剪，被裁掉的入口在 ☰ 菜单中仍可达。
@@ -132,19 +140,6 @@ function setGridCount(n: number) {
     browser.gridLayout = "grid";
   }
   if (browser.gridOpen) browser.rebuildGrid();
-}
-
-// 收藏夹入口：任意视图点击都应"打开"收藏夹，而不是简单取反。
-// 非 browser 视图先切回 browser（面板挂载条件要求 mainView === "browser"），
-// 再确保 panelOpen 为 true：此时若已是 true 不能再 toggle（否则会被关掉）。
-// store 未显式提供 openPanel，故用最小条件 toggle，不改动 store。
-function onToggleBookmarkPanel(): void {
-  if (layout.mainView !== "browser") {
-    layout.activateBrowser();
-    if (!bookmarks.panelOpen) bookmarks.togglePanel();
-    return;
-  }
-  bookmarks.togglePanel();
 }
 
 async function onItem(v: string) {
@@ -316,15 +311,19 @@ async function openDirCenter() {
             @keyup.enter="onAddrGo"
             @focus="layout.navSection = 'omni'"
           />
-          <!-- M1-3：⭐ 收藏当前网页 + 📑 展开收藏夹侧栏 -->
-          <BookmarkStar v-if="layout.mainView === 'browser'" />
+          <!-- M1-3：⭐ 收藏当前网页 + 📑 展开收藏夹侧栏（经通用 Contribution Registry 渲染） -->
+          <template v-for="c in addressBarActions" :key="c.id">
+            <component :is="c.component" />
+          </template>
         </div>
         <button class="go" @click="onAddrGo">前往</button>
       </div>
 
       <!-- 右：浏览辅助 + 采集 + 设置 -->
-      <!-- 收藏夹：任意视图均可打开，故移出下面的 browser-only 模板 -->
-      <button class="tbtn bookmark-entry" :class="{ active: bookmarks.panelOpen }" aria-label="收藏夹" @click="onToggleBookmarkPanel" title="打开收藏夹">📑 <span>收藏夹</span></button>
+      <!-- 收藏夹：任意视图均可打开；经通用 Contribution Registry 渲染（Shell 零 Bookmark 专属知识） -->
+      <template v-for="c in trailingActions" :key="c.id">
+        <component :is="c.component" />
+      </template>
       <template v-if="layout.mainView === 'browser'">
         <button class="tbtn" aria-label="边浏览边管理文件" @click="layout.toggleBrowserDock('files')" title="边浏览边管理文件">🗂</button>
         <button class="tbtn" aria-label="边浏览边开终端" @click="layout.toggleBrowserDock('term')" title="边浏览边开终端">💻</button>

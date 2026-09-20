@@ -2,10 +2,10 @@
 import { computed, ref, watch, nextTick, defineAsyncComponent, h } from "vue";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../stores/useBrowserStore";
-import { useBookmarkStore } from "../../capabilities/bookmark/public";
 import BrowserHost from "../browser/BrowserHost.vue";
-import BookmarkPanel from "../../capabilities/bookmark/ui/BookmarkPanel.vue";
 import ResourceWaterfall from "../browser/ResourceWaterfall.vue";
+import { contributionRegistry } from "../../capability/contribution/registry";
+import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
 import SessionPanel from "../browser/SessionPanel.vue";
 import VaultPanel from '../workspace/VaultPanel.vue';
 import FileEditor from "../workspace/FileEditor.vue";
@@ -90,17 +90,19 @@ const PluginManager = defineAsyncComponent({
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
-const bookmarks = useBookmarkStore();
 const system = useSystemStore();
+
+// 收藏夹等「浏览器侧栏」贡献：经通用 Contribution Registry 按 slot 遍历渲染。
+// Shell 不持有 Bookmark 专属知识（不 import 其 store / ui），C3 关键（8B.1）。
+const sidebarContributions = contributionRegistry.getSurfaceContributions(
+  CONTRIBUTION_SLOTS.BROWSER_SIDEBAR,
+);
 
 // 终端宫格布局 class（单 / 2 / 4 / 9）
 const gridClass = computed(() => {
   if (!system.termGrid) return "grid-off";
   return "grid-on cols-" + system.termGridCount;
 });
-
-// 收藏夹侧栏只在浏览器视图展开（宫格视图定位链路更敏感，不纳入本次改动范围）
-const bmPanelOpen = computed(() => bookmarks.panelOpen && layout.mainView === "browser");
 
 // 进入终端视图时确保至少有一个终端实例（多实例宫格共享 termPanes）
 watch(
@@ -145,9 +147,11 @@ watch(
         title="退出精简模式"
       >☰</button>
       <div class="browser-body">
-        <!-- M1-3 收藏夹侧栏：位于 viewport 左侧，撑窄 viewport 后由 BrowserHost 的
-             ResizeObserver 自动重定位子 webview，无需手动 relocate -->
-        <BookmarkPanel v-if="bmPanelOpen" />
+        <!-- M1-3 收藏夹侧栏：经通用 Contribution Registry 按 slot 渲染（Shell 零能力专属知识）。
+             可见性由贡献组件自身按 panelOpen 控制（能力包内）。 -->
+        <template v-for="c in sidebarContributions" :key="c.id">
+          <component :is="c.component" />
+        </template>
         <div class="viewport" :class="{ 'grid-mode': browser.gridOpen }">
           <!-- BrowserHost 在 browser/grid 视图都要参与布局（有 rect 供宫格定位），
                其内部用 visibility 控制显隐（isBrowserVisible），不能用 v-show=display:none，

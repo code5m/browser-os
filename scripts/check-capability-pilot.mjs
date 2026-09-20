@@ -37,6 +37,9 @@ async function loadBootstrap() {
     format: 'esm',
     platform: 'neutral',
     target: 'es2020',
+    // .vue 是能力内部 UI 组件，经 defineAsyncComponent 懒加载；pilot 仅做 import 扫描，
+    // 不解析/不执行 .vue，故标记为 external（与 vite 的 .vue 解析解耦，不弱化 PLT 检查）。
+    external: ['*.vue'],
     write: false,
   })
   const code = res.outputFiles[0].text

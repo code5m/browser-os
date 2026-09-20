@@ -121,6 +121,10 @@ async function importPasswords(event: Event) {
 </script>
 
 <template>
+  <!-- 收藏夹侧栏可见性：panelOpen（owner=useBookmarkStore）+ 浏览器视图。
+       原由 Shell(MainArea) 派生 bmPanelOpen 控制，现下沉到能力自身 UI：
+       Shell 经通用 Contribution Registry 按 slot 渲染，零 Bookmark 专属知识（8B.1 / C3）。 -->
+  <template v-if="bookmarks.panelOpen && layout.mainView === 'browser'">
   <aside class="bookmark-side">
     <div class="tabs">
       <span class="bm-title">📑 收藏夹</span>
@@ -157,6 +161,7 @@ async function importPasswords(event: Event) {
       </div>
     </div>
   </aside>
+  </template>
 </template>
 
 <style scoped>

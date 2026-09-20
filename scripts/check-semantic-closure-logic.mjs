@@ -118,6 +118,7 @@ if (!browserPath || !layoutPath || !bookmarkPath) {
 const browserSrc = readFileSync(`${ROOT}${browserPath}`, "utf8");
 const layoutSrc = readFileSync(`${ROOT}${layoutPath}`, "utf8");
 const mainAreaSrc = readFileSync(`${ROOT}src/components/layout/MainArea.vue`, "utf8");
+const bookmarkPanelSrc = readFileSync(`${ROOT}src/capabilities/bookmark/ui/BookmarkPanel.vue`, "utf8");
 
 // ============================ 静态：aiNavOpen 唯一 owner ============================
 console.log("[static] aiNavOpen 唯一 owner");
@@ -146,9 +147,16 @@ console.log("[static] 面板开关各自单一 owner");
 for (const p of ["sidebarOpen", "clipOpen", "fileEditorOpen", "browserDockOpen", "browserDockTab"]) {
   check(`面板 ${p} 在 useLayoutStore 中恰好声明 1 次`, countDecl(layoutSrc, p) === 1, `decl=${countDecl(layoutSrc, p)}`);
 }
-// 派生面板 bmPanelOpen 必须保持组件 computed（= panelOpen && mainView==="browser"），禁止 store 存为态
-check("bmPanelOpen 在 MainArea 中是 computed 派生量", /const\s+bmPanelOpen\s*=\s*computed/.test(mainAreaSrc));
-check("bmPanelOpen 派生自 panelOpen && mainView==='browser'", /bookmarks\.panelOpen/.test(mainAreaSrc) && /mainView\s*===\s*["']browser["']/.test(mainAreaSrc));
+// 派生面板 bmPanelOpen 必须保持组件 derived（= panelOpen && mainView==="browser"），禁止 store 存为态。
+// Phase 8B.1：该派生已下沉到 Bookmark 能力自身 UI（BookmarkPanel.vue），Shell(MainArea) 不再持有该知识。
+//   - panelOpen owner 仍是 useBookmarkStore（能力包内读取，owner 未迁移，符合 §5-A 冻结）。
+//   - Shell 经通用 Contribution Registry 按 slot 渲染，不直接 import 能力内部 store / ui（C3 关键）。
+check("bmPanelOpen 派生量已由 BookmarkPanel 自身承载（能力包内读取 panelOpen，不存为态）",
+  /bookmarks\.panelOpen/.test(bookmarkPanelSrc) && /mainView\s*===\s*["']browser["']/.test(bookmarkPanelSrc));
+check("MainArea 不再持有 Bookmark 专属知识（无 bookmarks. / useBookmarkStore / 直连能力内部 import）",
+  !/bookmarks\./.test(mainAreaSrc) &&
+  !/useBookmarkStore/.test(mainAreaSrc) &&
+  !/capabilities\/bookmark\//.test(mainAreaSrc));
 
 // ============================ 功能：加载真实 store ============================
 console.log("[runtime] 加载真实 store 并验证行为");
