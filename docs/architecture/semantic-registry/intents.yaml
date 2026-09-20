@@ -156,10 +156,10 @@ intents:
     status: CURRENT_FACT
     note: 真实入口名为 closeTabNow；清单中的 closeTab 在代码中不存在（PROPOSED_CHANGE）
 
-  # ---------------- Workspace / FilePanel（owner: useWorkspaceStore，Phase 2）----------------
+  # ---------------- Workspace / FilePanel（owner: useFileStore，Phase 8C-0A 起）----------------
   openFile:
     meaning: 在覆盖编辑器打开文件（overlay editor）
-    owner: useWorkspaceStore
+    owner: useFileStore
     allowed_effects:
       - filePath = entry.path
       - editingFile = true
@@ -177,7 +177,7 @@ intents:
 
   openFileInline:
     meaning: 在行内编辑器打开文件（IDE 右栏）
-    owner: useWorkspaceStore
+    owner: useFileStore
     allowed_effects:
       - inlineFile = entry.path
       - filePath = parent dir（同步，隔离不混用）
@@ -190,7 +190,7 @@ intents:
 
   enterDir:
     meaning: 进入目录（文件浏览器导航，单一地址真源）
-    owner: useWorkspaceStore
+    owner: useFileStore
     allowed_effects:
       - filePath = path
     forbidden_effects:
@@ -205,7 +205,7 @@ intents:
 
   saveFile:
     meaning: 持久化当前文件内容到磁盘
-    owner: useWorkspaceStore
+    owner: useFileStore
     allowed_effects:
       - bridge.writeFile(filePath, fileContent)
     forbidden_effects:
@@ -218,7 +218,7 @@ intents:
 
   closeFileEditor:
     meaning: 关闭覆盖编辑器（不销毁任何资源）
-    owner: useWorkspaceStore
+    owner: useFileStore
     allowed_effects:
       - editingFile = false
       - layout.fileEditorOpen = false

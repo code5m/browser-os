@@ -94,34 +94,106 @@ owners:
       - components/**（不得直写 activeTabId）
     status: CURRENT_FACT
 
-  workspace_filepanel:
-    owner: useWorkspaceStore
+  files:
+    owner: useFileStore
     owns:
       - filePath
       - inlineFile
       - previewDir
       - pathInput
       - currentLocalPath (derived)
+      - fileEntries
+      - fileContent
+      - editingFile
+      - mdPreview
+      - mdHtml
+      - startDirs
+      - previewEntries
+      - previewImages
+      - previewImageErrors
+      - previewLoading
+      - previewError
+      - previewTileSize
+      - compareImages
+      - treeRoots
+      - treeChildren
+      - treeExpanded
+      - treeLoading
+      - treeErrors
+      - locateTarget
+      - dragSource
+      - dropTarget
+      - moveConfirm
+      - fileCtx
+      - inlineText
+      - inlineIsMd
+      - inlineEdit
+      - inlineHtml
     owner_only_api:
       - enterDir
       - openFile
       - openFileInline
+      - openDirPreview
       - saveFile
-      - closeFileEditor
+      - closeInline
       - refreshTree
       - locateTo
+      - toggleTreeDir
+      - ensureTreeChildren
+      - loadTree
+      - expandAllTree
+      - collapseAllTree
+      - loadStartDirs
+      - goUp
+      - goPath
+      - openMd
+      - ctxNewFile
+      - ctxNewDir
+      - ctxDelete
+      - ctxRename
+      - ctxFavorite
+      - copyPath
+      - ctxOpenInNewTab
+      - ctxOpenInExplorer
+      - ctxOpenInTerminal
+      - startDrag
+      - onDirDragOver
+      - onDirDragLeave
+      - onDirDrop
+      - requestMove
+      - confirmMove
+      - cancelMove
+      - inlineToggleEdit
+      - saveInline
+      - isImageEntry
+      - loadPreviewImage
+      - setPreviewTileSize
+      - toggleCompareImage
+      - moveCompareImage
+      - clearCompareImages
+      - onFileContext
+      - closeFileCtx
+      - setFileContent
+      - setInlineText
+      - setEditorView
+      - clearDragSource
     public_intent_api:
       - openFile
       - openFileInline
       - enterDir
       - saveFile
-      - closeFileEditor
+      - openDirPreview
+      - closeInline
     forbidden_callers:
-      - components/**（不得直写 filePath / inlineFile / previewDir / pathInput）
+      - components/**（不得直写 filePath / inlineFile / previewDir / pathInput / fileContent / inlineText 等 Files 状态；须经 canonical writer）
     authorized_callers:
-      - useWorkspaceStore（owner 自身）
-      - useLayoutStore（经 setView 切到 editor/files 视图）
-    rationale: 文件导航状态（当前位置真源 + 派生位置）归母属 store；组件只渲染，不得直写
+      - useFileStore（owner 自身）
+      - useLayoutStore（经 setView / openDirTab 切到 editor/files 视图）
+      - useWorkspaceStore（跨域编排：openRecent → openFile）
+    rationale: |
+      Phase 8C-0A 将文件浏览 / 行内+覆盖编辑器 / 文件夹树 / 目录图片预览 / 文件右键菜单 / 拖拽移动
+      从 useWorkspaceStore（God Store）抽出为独立 owner（useFileStore）。Workspace Core 不再持有文件域状态，
+      只保留跨域编排（openRecent 调 useFileStore.openFile）。组件只渲染，不得直写 Files 内部状态。
     status: CURRENT_FACT
 
   bookmark:
@@ -242,8 +314,26 @@ violation_patterns:
   - id: NON_OWNER_CALLS_NATIVE_DESTROY
     desc: 非 owner（useBrowserStore）文件调用 bridge.closeGrid
     severity: fail
-  - id: COMPONENT_WRITES_WORKSPACE_PATH
-    desc: 组件直接写 filePath / inlineFile / previewDir / pathInput（owner: useWorkspaceStore）
+  - id: COMPONENT_WRITES_FILES_PATH
+    desc: 组件直接写 filePath / inlineFile / previewDir / pathInput / fileContent / inlineText 等文件域状态（owner: useFileStore）；须经 canonical writer
+    severity: fail
+  - id: WS_OWNER_01
+    desc: useWorkspaceStore 不得再声明 Files-owned state（ref/reactive/computed）；文件域状态唯一真源已迁 useFileStore（8C-0A）
+    severity: fail
+  - id: WS_OWNER_02
+    desc: Files 状态只能由 useFileStore canonical writer 写；组件/其它 store 不得直写（须经 setFileContent / setInlineText / setEditorView / enterDir / openFile 等）
+    severity: fail
+  - id: WS_OWNER_03
+    desc: Editor-owned state 不得存回 Workspace（编辑器缓冲隔离）；useWorkspaceStore 不得持有 editingFile / mdPreview 等文件态
+    severity: fail
+  - id: WS_OWNER_04
+    desc: Repo/Git 与 Files 不得交叉保存第二份身份/状态；仅 useWorkspaceStore 持有 repo 态，useFileStore 不得复制
+    severity: fail
+  - id: WS_FACADE_01
+    desc: 若保留兼容性 facade，不得存储第二份状态（8C-0A 采取真实抽取，无 facade）
+    severity: fail
+  - id: WS_FACADE_02
+    desc: 禁止新增旧 Workspace API 消费点；已抽出的文件态须经 useFileStore，不得再经 useWorkspaceStore 访问
     severity: fail
   - id: COMPONENT_WRITES_BOOKMARK
     desc: 组件直接写 items / panelOpen（owner: useBookmarkStore）；或维护第二份 Bookmark[]

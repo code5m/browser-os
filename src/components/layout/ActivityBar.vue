@@ -10,6 +10,7 @@ import {
 import { useBrowserStore } from "../../stores/useBrowserStore";
 import { useSystemStore } from "../../stores/useSystemStore";
 import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
+import { useFileStore } from "../../stores/useFileStore";
 import { redactSecrets } from "../../utils/redact";
 import { Search, PanelLeftClose, PanelLeftOpen } from "@lucide/vue";
 import { useWorkbenchStore } from "../../stores/useWorkbenchStore";
@@ -22,6 +23,7 @@ const layout = useLayoutStore();
 const browser = useBrowserStore();
 const system = useSystemStore();
 const ws = useWorkspaceStore();
+const fs = useFileStore();
 
 // 收藏夹等贡献：经通用 Contribution Registry 按 slot 遍历渲染。
 // Shell 不持有 Bookmark 专属知识（不 import 其 store / ui），C3 关键（8B.1）。
@@ -228,7 +230,7 @@ async function openDirCenter() {
   layout.browserDockOpen = false;
   layout.openDirTab(p);
   layout.leftTab = "files";
-  await ws.enterDir(p);
+  await fs.enterDir(p);
   recordRecentDir(p);
   layout.showToast("📁 " + p);
 }
@@ -455,11 +457,11 @@ async function openDirCenter() {
       <template v-if="omniShowHistory && recentDirs.length">
         <button v-for="d in recentDirs" :key="'d' + d" class="chip" :title="safeLabel(d)" @click="pickDir(d)">📁 {{ safeLabel(d) }}</button>
       </template>
-      <template v-if="omniShowCommon && ws.startDirs.length">
-        <button v-for="d in ws.startDirs" :key="'s' + d.path" class="chip" :title="safeLabel(d.path)" @click="pickDir(d.path)">📂 {{ d.name }}</button>
+      <template v-if="omniShowCommon && fs.startDirs.length">
+        <button v-for="d in fs.startDirs" :key="'s' + d.path" class="chip" :title="safeLabel(d.path)" @click="pickDir(d.path)">📂 {{ d.name }}</button>
       </template>
       <span
-        v-if="(omniShowHistory && !ws.recents.length && !recentDirs.length) && (omniShowCommon && !ws.startDirs.length)"
+        v-if="(omniShowHistory && !ws.recents.length && !recentDirs.length) && (omniShowCommon && !fs.startDirs.length)"
         class="er-label"
       >
         暂无记录：输入网址或 / 开头的目录路径，回车即自动识别

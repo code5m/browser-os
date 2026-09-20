@@ -3,7 +3,7 @@ import { reactive, computed, ref } from "vue";
 import { bridge } from "../bridge";
 import { useBrowserStore } from "./useBrowserStore";
 import { useLayoutStore } from "./useLayoutStore";
-import { useWorkspaceStore } from "./useWorkspaceStore";
+import { useFileStore } from "./useFileStore";
 import {
   HOME_APP_SESSION_ONLY_NOTICE,
   HOME_MAX_RECENTS,
@@ -39,7 +39,7 @@ const DIRS_SEEDED_KEY = "browser-os-home-dirs-seeded-v2";
 export const useHomeStore = defineStore("home", () => {
   const browser = useBrowserStore();
   const layout = useLayoutStore();
-  const workspace = useWorkspaceStore();
+  const fs = useFileStore();
 
   const shortcuts = reactive<HomeShortcut[]>(load());
   // M5-W17 A3：最近访问（有界 + 载入即校验，脏数据绝不进 UI）。
@@ -228,7 +228,7 @@ export const useHomeStore = defineStore("home", () => {
   }
 
   function favoriteCurrentDir() {
-    favoriteDirectory((layout.mainView === "files" ? workspace.filePath : browser.url).trim());
+    favoriteDirectory((layout.mainView === "files" ? fs.filePath : browser.url).trim());
   }
 
   // 打开快捷方式：url → 内嵌浏览器；app → 启动系统应用；dir → 文件视图（IDE 树）
@@ -240,10 +240,10 @@ export const useHomeStore = defineStore("home", () => {
     } else if (s.type === "dir") {
       // M0-4.b：改为静态引入。useWorkspaceStore 已被 App.vue 等十余处静态引入，
       // 这里的动态 import 既不会分包（Vite 会报 mix 告警），也不构成循环依赖。
-      const ws = useWorkspaceStore();
+      // Files owner 接管 enterDir（见 useFileStore）；useWorkspaceStore 已不含文件态
       browser.url = s.target; // 地址栏同步显示目录路径
       layout.openDirTab(s.target);
-      await ws.enterDir(s.target); // enterDir 内部会同步文件树根
+      await fs.enterDir(s.target); // enterDir 内部会同步文件树根
       layout.showToast("📁 " + s.name);
     } else {
       try {

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
+import { useFileStore } from "../../stores/useFileStore";
 
 // 递归树节点：文件夹点击展开/收起（懒加载子级），文件点击打开
 const props = defineProps<{ entry: DirEntry; depth: number; ide: boolean }>();
-const ws = useWorkspaceStore();
+const ws = useFileStore();
 
 const expanded = computed(() => ws.treeExpanded.has(props.entry.path));
 const loading = computed(() => ws.treeLoading.has(props.entry.path));
@@ -27,7 +27,7 @@ function onDragStart(ev: DragEvent) {
   ws.startDrag(props.entry.path, ev);
 }
 function onDragEnd() {
-  ws.dragSource = "";
+  ws.clearDragSource();
 }
 function onDragOver(ev: DragEvent) {
   if (!props.entry.is_dir) return; // 只有目录可作为放置目标

@@ -46,6 +46,11 @@ owner_implementations:
     paths:
       - src/stores/useWorkspaceStore.ts
       - src/capabilities/workspace/state/useWorkspaceStore.ts
+  useFileStore:
+    symbol: useFileStore
+    paths:
+      - src/stores/useFileStore.ts
+      - src/capabilities/workspace/files/state/useFileStore.ts
   useBookmarkStore:
     symbol: useBookmarkStore
     paths:
@@ -167,7 +172,7 @@ states:
     single_owner_required: true
     meaning: 文件编辑器/Markdown 预览覆盖层开关（setView("editor") 时关闭）
     not_meaning:
-      - 行内编辑器（见 useWorkspaceStore.inlineFile）
+      - 行内编辑器（见 useFileStore.inlineFile）
     kind: stored
     derived: false
     canonical_writer:
@@ -349,7 +354,7 @@ states:
 
   # ---------------- Workspace / FilePanel（Phase 2）----------------
   filePath:
-    owner: useWorkspaceStore
+    owner: useFileStore
     meaning: 文件浏览器/覆盖编辑器当前激活位置（地址真源）
     not_meaning:
       - 行内编辑器当前文件（见 inlineFile）
@@ -361,9 +366,9 @@ states:
       - string (absolute path)
       - ""
     canonical_writer:
-      - useWorkspaceStore.enterDir
-      - useWorkspaceStore.openFile
-      - useWorkspaceStore.openFileInline
+      - useFileStore.enterDir
+      - useFileStore.openFile
+      - useFileStore.openFileInline
     forbidden_writers:
       - components/**
     duplicate_names: []
@@ -372,7 +377,7 @@ states:
     note: overloaded —— 编辑器模式值为“当前文件”，浏览器模式值为“当前目录”（Debt-2-1）
 
   inlineFile:
-    owner: useWorkspaceStore
+    owner: useFileStore
     meaning: 行内编辑器（IDE 右栏）当前打开的文件路径
     not_meaning:
       - 覆盖编辑器当前文件（见 filePath，二者隔离）
@@ -382,8 +387,8 @@ states:
       - string (absolute path)
       - ""
     canonical_writer:
-      - useWorkspaceStore.openFileInline
-      - useWorkspaceStore.closeInline
+      - useFileStore.openFileInline
+      - useFileStore.closeInline
     forbidden_writers:
       - components/**
     duplicate_names: []
@@ -391,7 +396,7 @@ states:
     status: CURRENT_FACT
 
   previewDir:
-    owner: useWorkspaceStore
+    owner: useFileStore
     meaning: 目录预览（图片画廊）当前预览的目录路径
     not_meaning:
       - 文件浏览器当前目录（见 filePath）
@@ -401,7 +406,7 @@ states:
       - string (absolute path)
       - ""
     canonical_writer:
-      - useWorkspaceStore.openDirPreview
+      - useFileStore.openDirPreview
     forbidden_writers:
       - components/**
     duplicate_names: []
@@ -409,7 +414,7 @@ states:
     status: CURRENT_FACT
 
   pathInput:
-    owner: useWorkspaceStore
+    owner: useFileStore
     meaning: 地址栏 UI 缓冲（镜像 filePath；仅输入态，非真源）
     not_meaning:
       - 地址真源（见 filePath）
@@ -419,8 +424,8 @@ states:
       - string (absolute path)
       - ""
     canonical_writer:
-      - useWorkspaceStore.goPath
-      - useWorkspaceStore.enterDir
+      - useFileStore.goPath
+      - useFileStore.enterDir
     forbidden_writers:
       - components/**
     duplicate_names: []
@@ -429,7 +434,7 @@ states:
     note: 与 filePath 单向镜像；UI 输入态，确认后写回 filePath
 
   currentLocalPath:
-    owner: useWorkspaceStore
+    owner: useFileStore
     meaning: 当前“打开的本地位置”派生量 = inlineFile || previewDir || layout.modTabs.path || filePath
     not_meaning:
       - 独立存储状态（纯派生，禁止第二真源）
@@ -805,17 +810,6 @@ observed_not_governed:
     - editTitle
     - editTags
     - editText
-    - fileEntries
-    - fileContent
-    - editingFile
-    - mdPreview
-    - mdHtml
-    - startDirs
-    - previewEntries
-    - previewLoading
-    - previewError
-    - previewTileSize
-    - compareImages
     - repos
     - form
     - preview
@@ -828,17 +822,36 @@ observed_not_governed:
     - snippetForm
     - recents
     - flatArtifacts
+    - ctxMenu
+
+  useFileStore:
+    - fileEntries
+    - fileContent
+    - editingFile
+    - mdPreview
+    - mdHtml
+    - startDirs
+    - previewEntries
+    - previewImages
+    - previewImageErrors
+    - previewLoading
+    - previewError
+    - previewTileSize
+    - compareImages
     - treeRoots
+    - treeChildren
+    - treeExpanded
+    - treeLoading
+    - treeErrors
     - locateTarget
     - dragSource
     - dropTarget
     - moveConfirm
+    - fileCtx
     - inlineText
     - inlineIsMd
     - inlineEdit
     - inlineHtml
-    - fileCtx
-    - ctxMenu
 
   FilePanel.vue:
     - ftreeBody

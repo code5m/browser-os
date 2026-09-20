@@ -6,6 +6,7 @@ import { useBrowserStore } from "./stores/useBrowserStore";
 import { useResourceStore } from "./stores/useResourceStore";
 import { useSessionStore } from "./stores/useSessionStore";
 import { useWorkspaceStore } from "./stores/useWorkspaceStore";
+import { useFileStore } from "./stores/useFileStore";
 import { useGitStore } from "./stores/useGitStore";
 import { useSystemStore } from "./stores/useSystemStore";
 import { useLayoutStore } from "./stores/useLayoutStore";
@@ -26,6 +27,7 @@ const browser = useBrowserStore();
 const resources = useResourceStore();
 const session = useSessionStore();
 const ws = useWorkspaceStore();
+const fs = useFileStore();
 const git = useGitStore();
 const system = useSystemStore();
 const layout = useLayoutStore();
@@ -86,10 +88,10 @@ onMounted(async () => {
   system.loadClipHistory();
   system.startClipWatch();
   await ws.refresh();
-  await ws.loadStartDirs();
-  if (ws.startDirs.length > 0) {
-    const wsDir = ws.startDirs.find((d) => d.name.includes("成果工作区"));
-    ws.enterDir(wsDir ? wsDir.path : ws.startDirs[0].path);
+  await fs.loadStartDirs();
+  if (fs.startDirs.length > 0) {
+    const wsDir = fs.startDirs.find((d) => d.name.includes("成果工作区"));
+    fs.enterDir(wsDir ? wsDir.path : fs.startDirs[0].path);
   }
 
   bridge.onSyncCompleted((j) => ws.onSyncCompleted(j));
@@ -220,8 +222,8 @@ onMounted(async () => {
   window.addEventListener("click", ws.closeCtx);
   window.addEventListener("scroll", ws.closeCtx, true);
   // 文件树右键菜单同样需要点空白/滚动时关闭
-  window.addEventListener("click", ws.closeFileCtx);
-  window.addEventListener("scroll", ws.closeFileCtx, true);
+  window.addEventListener("click", fs.closeFileCtx);
+  window.addEventListener("scroll", fs.closeFileCtx, true);
   // M1-4 冷启动兜底：进程启动时 argv 带入的 URL 已在后端队列，
   // 挂载完成后首次拉取（此后经 onOpenUrlPending 提示增量拉取）。
   drainPendingOpenUrls();

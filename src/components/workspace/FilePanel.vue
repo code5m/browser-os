@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
-import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
+import { useFileStore } from "../../stores/useFileStore";
 import { useWorkbenchStore } from "../../stores/useWorkbenchStore";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import FileTreeNode from "./FileTreeNode.vue";
@@ -8,7 +8,7 @@ import { Crosshair, ChevronsDownUp, ChevronsUpDown, FilePlus, FolderPlus, Refres
 
 // ide=true：左树右编辑（文件主视图）；ide=false：纯树（浏览视图右侧 Dock 窄栏）
 const props = withDefaults(defineProps<{ ide?: boolean }>(), { ide: false });
-const ws = useWorkspaceStore();
+const ws = useFileStore();
 const workbench = useWorkbenchStore();
 const layout = useLayoutStore();
 
@@ -114,7 +114,7 @@ onMounted(async () => {
         ></div>
         <textarea
           v-else
-          v-model="ws.inlineText"
+          :value="ws.inlineText" @input="ws.setInlineText(($event.target as HTMLTextAreaElement).value)"
           class="file-editor fedit-body"
           spellcheck="false"
           placeholder="文件内容..."

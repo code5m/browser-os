@@ -2,7 +2,7 @@
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../stores/useBrowserStore";
 import { ref, computed } from "vue";
-import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
+import { useFileStore } from "../../stores/useFileStore";
 import { useSystemStore } from "../../stores/useSystemStore";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -10,7 +10,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 // 不区分类型 —— 点击即切换对应视图，行为与浏览器标签一致。
 const layout = useLayoutStore();
 const browser = useBrowserStore();
-const ws = useWorkspaceStore();
+const fs = useFileStore();
 const system = useSystemStore();
 const context = ref<{ id: string; kind: 'web' | 'module' } | null>(null);
 
@@ -107,7 +107,7 @@ const contextPath = computed(() => {
 
 // 相对路径：相对到命中的最长“起始目录”前缀；无匹配时退化为文件名
 function relativeOf(abs: string): string {
-  const dirs = (ws.startDirs || []).map((d) => d.path || "").filter(Boolean);
+  const dirs = (fs.startDirs || []).map((d) => d.path || "").filter(Boolean);
   let best = "";
   for (const d of dirs) {
     if (abs.startsWith(d) && d.length > best.length) best = d;
@@ -165,7 +165,7 @@ function activateMod(t: { id: string; view: string; path?: string }) {
   if (system.m0Cfg?.driver) return;
   layout.activateModTab(t.id);
   if (t.view === "apps") system.loadApps();
-  if (t.path) ws.enterDir(t.path);
+  if (t.path) fs.enterDir(t.path);
   // 宫格页签被关闭后重新激活时，必须重建宫格 webview 内容
   if (t.view === "grid") { if (browser.gridOpen) browser.layoutGrid(); else browser.openGrid(); }
 }
