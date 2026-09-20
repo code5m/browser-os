@@ -1,0 +1,45 @@
+// Capability Composition Profiles（Phase 8E / Train F）
+//
+// 真实注册/加载 profile（不是 UI hide）：bootstrap 只注册 profile 列出的能力。
+// 真源在此（不硬编码进 bootstrap）；未列出的能力**不注册** → 其贡献槽为空 →
+// 绝不加载其内部 store / 不创建其重资源（如 Terminal 的 PTY）。
+//
+// 分类（诚实）：
+//   minimal   = bookmark + workspace            （无 browser / 无 terminal → 无 WebView / 无 PTY）
+//   developer = bookmark + workspace + browser + terminal（开发者全家，lifecycle 按需）
+//   full      = bookmark + workspace + browser + terminal（当前 4 个能力，与 developer 同集；
+//               预留：未来新增能力时 full 吸纳全部 allowed）
+//
+// 注意：browser / terminal 当前为 OPTIONAL（C3）。minimal 不注册它们即证明「absent → 零重资源」
+// 是可组合性的端到端证据，而非仅隐藏按钮。
+
+import { BOOKMARK_CAPABILITY_ID } from '../capabilities/bookmark'
+import { WORKSPACE_CAPABILITY_ID } from '../capabilities/workspace'
+import { BROWSER_CAPABILITY_ID } from '../capabilities/browser'
+import { TERMINAL_CAPABILITY_ID } from '../capabilities/terminal'
+
+export type CapabilityProfileId = 'minimal' | 'developer' | 'full'
+
+export const CAPABILITY_PROFILES: Record<CapabilityProfileId, string[]> = {
+  minimal: [BOOKMARK_CAPABILITY_ID, WORKSPACE_CAPABILITY_ID],
+  developer: [BOOKMARK_CAPABILITY_ID, WORKSPACE_CAPABILITY_ID, BROWSER_CAPABILITY_ID, TERMINAL_CAPABILITY_ID],
+  full: [BOOKMARK_CAPABILITY_ID, WORKSPACE_CAPABILITY_ID, BROWSER_CAPABILITY_ID, TERMINAL_CAPABILITY_ID],
+}
+
+export const DEFAULT_PROFILE: CapabilityProfileId = 'full'
+
+export function resolveProfile(input?: string | null): CapabilityProfileId {
+  const v = (input || '').trim().toLowerCase()
+  if (v === 'minimal' || v === 'developer' || v === 'full') return v
+  return DEFAULT_PROFILE
+}
+
+/** 从运行环境读取 profile（Vite 注入 / 构建期常量 / 默认值） */
+export function profileFromEnv(): CapabilityProfileId {
+  const raw =
+    (typeof import.meta !== 'undefined' &&
+      // @ts-expect-error Vite 注入
+      (import.meta.env?.VITE_CAPABILITY_PROFILE as string | undefined)) ||
+    undefined
+  return resolveProfile(raw)
+}

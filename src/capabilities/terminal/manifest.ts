@@ -20,7 +20,9 @@ export const terminalManifest: CapabilityDefinition = {
   dependsOn: [],
   optionalDependencies: [],
   lifecycle: {
-    supported: ["ACTIVE", "SUSPENDED"],
+    // Train F 诚实裁决：Terminal 的 PTY/子进程在 suspend 时**不**释放（onSuspend 未实现资源回收），
+    // 故 supported 仅 ACTIVE；与 resources.suspendable:false 一致，避免「声明可 suspend 却不释放」的误报。
+    supported: ["ACTIVE"],
     default: "ACTIVE",
     activatable: true,
     resident: false,

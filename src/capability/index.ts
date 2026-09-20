@@ -11,45 +11,58 @@ import { bookmarkCapability, BOOKMARK_CAPABILITY_ID } from '../capabilities/book
 import { workspaceCapability, WORKSPACE_CAPABILITY_ID } from '../capabilities/workspace'
 import { browserCapability, BROWSER_CAPABILITY_ID } from '../capabilities/browser'
 import { terminalCapability, TERMINAL_CAPABILITY_ID } from '../capabilities/terminal'
+import { CAPABILITY_PROFILES, DEFAULT_PROFILE, type CapabilityProfileId, profileFromEnv, resolveProfile } from './profiles'
+
+const ALL_CAPABILITIES = [
+  { id: BOOKMARK_CAPABILITY_ID, def: bookmarkCapability },
+  { id: WORKSPACE_CAPABILITY_ID, def: workspaceCapability },
+  { id: BROWSER_CAPABILITY_ID, def: browserCapability },
+  { id: TERMINAL_CAPABILITY_ID, def: terminalCapability },
+]
 
 let runtime: CapabilityRuntime | null = null
 let lastError: string | null = null
+let lastProfile: CapabilityProfileId = DEFAULT_PROFILE
 
 export interface BootstrapResult {
   runtime: CapabilityRuntime
   activated: boolean
   error: string | null
+  profile: CapabilityProfileId
 }
 
-export function bootstrapCapabilityRuntime(): BootstrapResult {
+/**
+ * 按 profile 真实注册能力（不是 UI hide）。
+ * @param profile 可选；缺省读运行环境（VITE_CAPABILITY_PROFILE）或默认 full。
+ *   未列出的能力**不注册** → 其贡献槽为空 → 不加载其内部 store / 不创建重资源。
+ */
+export function bootstrapCapabilityRuntime(profile?: CapabilityProfileId | string | null): BootstrapResult {
   if (runtime) {
     return {
       runtime,
       activated: runtime.get(BOOKMARK_CAPABILITY_ID)?.state === 'ACTIVE',
       error: lastError,
+      profile: lastProfile,
     }
   }
+  const pid = typeof profile === 'string' ? resolveProfile(profile) : (profile ?? profileFromEnv())
+  lastProfile = pid
+  const allowed = new Set(CAPABILITY_PROFILES[pid])
   const rt = createCapabilityRuntime()
   let activated = false
   try {
-    rt.register(bookmarkCapability)
-    rt.resolve(BOOKMARK_CAPABILITY_ID)
-    rt.activate(BOOKMARK_CAPABILITY_ID)
-    rt.register(workspaceCapability)
-    rt.resolve(WORKSPACE_CAPABILITY_ID)
-    rt.activate(WORKSPACE_CAPABILITY_ID)
-    rt.register(browserCapability)
-    rt.resolve(BROWSER_CAPABILITY_ID)
-    rt.activate(BROWSER_CAPABILITY_ID)
-    rt.register(terminalCapability)
-    rt.resolve(TERMINAL_CAPABILITY_ID)
-    rt.activate(TERMINAL_CAPABILITY_ID)
+    for (const { id, def } of ALL_CAPABILITIES) {
+      if (!allowed.has(id)) continue // profile 未列出 → 跳过注册（absent 语义）
+      rt.register(def)
+      rt.resolve(id)
+      rt.activate(id)
+    }
     activated = true
   } catch (e) {
     lastError = e instanceof Error ? `${e.code}: ${e.message}` : String(e)
   }
   runtime = rt
-  return { runtime: rt, activated, error: lastError }
+  return { runtime: rt, activated, error: lastError, profile: pid }
 }
 
 export function getCapabilityRuntime(): CapabilityRuntime | null {

@@ -131,7 +131,7 @@ capabilities:
       - bridge
     optionalDependencies: []
     lifecycle:
-      supported: [ACTIVE, SUSPENDED]
+      supported: [ACTIVE]
       default: ACTIVE
       activatable: true
       resident: false
