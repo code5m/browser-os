@@ -787,3 +787,33 @@ Semantic Governance v1 验收证据（2026-09-19）：
   KNOWN_DEBT: 已关闭 Debt-5-1/5-2/5-3/6A-aiNavOpen/6A-2；保留 Debt-001~004/6A-1/6A-3/6B-1 + 产品级债（见 KNOWN_DEBT_V1.md）
   SEMANTIC_GOVERNANCE_V1_RESULT: PASS（tag semantic-governance-v1）
 ```
+
+---
+
+## Overnight Train — Universal Hot-Plug Capability Platform v1（接续本文件之前的状态）
+
+- 详细交接：**`docs/architecture/capability-platform/HANDOFF_HOTPLUG_PLATFORM.md`**（唯一权威）
+- 交付文档：`docs/delivery/universal-capability-platform-v1/`（01~17）
+- 本次在 `feature/capability-platform-v1` 上完成，未 push、未 merge master、未改用户数据。
+
+### 新增（均有命令可复现）
+
+- Building Block Contract v1 + Capability Catalog（4 个能力具备 v1 契约）
+- Dependency Resolver + Assembly Engine（deterministic，负例全部「启动前拒绝」）
+- Runtime Lifecycle 8 态模型
+- Hot-Plug：**Bookmark 达 HP1+HP2**（运行时 register/unregister 真实生效）
+- Leader CLI Demo：`node scripts/capability-demo.mjs demo`
+- 新门禁：`scripts/check-capability-platform.mjs`（29/29 PASS，已接入 `npm run check`）
+
+### 诚实未达成
+
+- Browser/Terminal 仍为 **HP0**（WebView/PTY 停用释放未验证）
+- **HP3 未做**（需动态加载外部包，明确延后）
+- 物理多包：**DEFERRED**（单 Vite 应用，边界靠 checker 而非构建）
+- Shell 仍直连约 10 个未积木化面板 + 硬编码 Dock 页签名（债务 D-1/D-10）
+- 进程级资源测量今晚为 **UNKNOWN**（无运行实例），不估算
+
+### Tag
+
+- `universal-capability-platform-core-v1-pass` → 平台内核稳定点
+- 受保护 tag `capability-modularization-v1-code-pass` 未移动
