@@ -51,6 +51,11 @@ owner_implementations:
     paths:
       - src/stores/useFileStore.ts
       - src/capabilities/workspace/files/state/useFileStore.ts
+  useArtifactStore:
+    symbol: useArtifactStore
+    paths:
+      - src/stores/useArtifactStore.ts
+      - src/capabilities/workspace/artifact/state/useArtifactStore.ts
   useBookmarkStore:
     symbol: useBookmarkStore
     paths:
@@ -805,11 +810,6 @@ states:
 observed_not_governed:
 
   useWorkspaceStore:
-    - tree
-    - current
-    - editTitle
-    - editTags
-    - editText
     - repos
     - form
     - preview
@@ -821,6 +821,14 @@ observed_not_governed:
     - snippets
     - snippetForm
     - recents
+
+  useArtifactStore:
+    - tree
+    - current
+    - editTitle
+    - editTags
+    - editText
+    - selected
     - flatArtifacts
     - ctxMenu
 

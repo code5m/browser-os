@@ -10,6 +10,7 @@ import {
 import { useBrowserStore } from "../../stores/useBrowserStore";
 import { useSystemStore } from "../../stores/useSystemStore";
 import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
+import { useArtifactStore } from "../../stores/useArtifactStore";
 import { useFileStore } from "../../stores/useFileStore";
 import { redactSecrets } from "../../utils/redact";
 import { Search, PanelLeftClose, PanelLeftOpen } from "@lucide/vue";
@@ -23,6 +24,7 @@ const layout = useLayoutStore();
 const browser = useBrowserStore();
 const system = useSystemStore();
 const ws = useWorkspaceStore();
+const art = useArtifactStore();
 const fs = useFileStore();
 
 // 收藏夹等贡献：经通用 Contribution Registry 按 slot 遍历渲染。
@@ -342,7 +344,7 @@ async function openDirCenter() {
       >
         <span class="ic">🤖</span>
       </button>
-      <button class="collect" data-nav-item aria-label="采集选中内容" :title="'采集选中内容'" @click="ws.collectSelection">
+      <button class="collect" data-nav-item aria-label="采集选中内容" :title="'采集选中内容'" @click="art.collectSelection">
         <span class="ic">📥</span>
         <span class="lab">采集</span>
       </button>

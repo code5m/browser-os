@@ -674,6 +674,7 @@ const ANCHOR_FILES = [
   { path: "src/stores/useBrowserStore.ts", src: `const gridSession = ref(0); const aiNavOpen = ref(false);` },
   { path: "src/stores/useWorkspaceStore.ts", src: `const recents = ref([]);` },
   { path: "src/stores/useFileStore.ts", src: `const filePath = ref("");` },
+  { path: "src/stores/useArtifactStore.ts", src: `const current = ref(null);` },
   { path: "src/stores/useBookmarkStore.ts", src: `const panelOpen = ref(false); const items = ref([]);` },
   { path: "src/stores/useSystemStore.ts", src: `const termPanes = ref([]);` },
 ];

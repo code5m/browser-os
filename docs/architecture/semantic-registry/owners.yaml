@@ -196,6 +196,50 @@ owners:
       只保留跨域编排（openRecent 调 useFileStore.openFile）。组件只渲染，不得直写 Files 内部状态。
     status: CURRENT_FACT
 
+  artifact:
+    owner: useArtifactStore
+    owns:
+      - tree
+      - current
+      - editTitle
+      - editTags
+      - editText
+      - selected
+      - flatArtifacts (derived)
+      - ctxMenu
+    owner_only_api:
+      - loadTree
+      - openArtifact
+      - saveEdit
+      - removeArtifact
+      - onArtifactContext
+      - closeCtx
+      - ctxReveal
+      - ctxOpenSource
+      - ctxRemove
+      - toggle
+      - collectSelection
+      - setEditTitle
+      - setEditTags
+      - setEditText
+    public_intent_api:
+      - openArtifact
+      - saveEdit
+      - removeArtifact
+      - toggle
+      - collectSelection
+    forbidden_callers:
+      - components/**（不得直写 tree / current / editTitle / editTags / editText / selected / ctxMenu；须经 canonical writer / action）
+    authorized_callers:
+      - useArtifactStore（owner 自身）
+      - useWorkspaceStore（跨域编排：refresh 调 loadTree；requestSync 读 selected）
+      - useLayoutStore（仅导航 setView）
+    rationale: |
+      Phase 8C-0B 将成果树 / 当前编辑 / 多选 / 右键菜单 / 采集从 useWorkspaceStore（God Store）
+      抽出为独立 owner（useArtifactStore），后端持久化（browseWorkspace/readArtifact/updateArtifact/deleteArtifact）。
+      Workspace Core 不再持有 artifact 状态；refresh 编排改调本 store.loadTree()，requestSync 跨域读 selected。
+    status: CURRENT_FACT
+
   bookmark:
     owner: useBookmarkStore
     owns:
@@ -334,6 +378,12 @@ violation_patterns:
     severity: fail
   - id: WS_FACADE_02
     desc: 禁止新增旧 Workspace API 消费点；已抽出的文件态须经 useFileStore，不得再经 useWorkspaceStore 访问
+    severity: fail
+  - id: WS_OWNER_05
+    desc: useWorkspaceStore 不得再声明 Artifact-owned state（tree/current/editTitle/editTags/editText/selected/flatArtifacts/ctxMenu）；已迁 useArtifactStore（8C-0B）
+    severity: fail
+  - id: WS_OWNER_06
+    desc: Artifact 状态只能由 useArtifactStore canonical writer/action 写；组件/其它 store 不得直写（须经 setEditTitle/setEditTags/setEditText/openArtifact/toggle 等）
     severity: fail
   - id: COMPONENT_WRITES_BOOKMARK
     desc: 组件直接写 items / panelOpen（owner: useBookmarkStore）；或维护第二份 Bookmark[]

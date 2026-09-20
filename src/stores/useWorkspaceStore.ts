@@ -1,9 +1,10 @@
 import { defineStore } from "pinia";
-import { ref, reactive, computed } from "vue";
+import { ref, reactive } from "vue";
 import { bridge } from "../bridge";
 import { useLayoutStore } from "./useLayoutStore";
 import { useBrowserStore } from "./useBrowserStore";
 import { useFileStore } from "./useFileStore";
+import { useArtifactStore } from "./useArtifactStore";
 import {
   emptyScriptForm,
   loadFormFromMeta,
@@ -30,23 +31,20 @@ export interface RecentItem {
 }
 
 // ============================================================
-// Phase 8C-0A — Workspace Core（God Store 收敛）
+// Phase 8C-0 — Workspace Core（God Store 逐步收敛）
 //
-// 本 store 不再拥有 Files 子域状态（已迁至 useFileStore，见 docs/.../phase8c0/01-...）。
-// 仍持有：知识库(Vault/Artifact)、脚本库、片段库、仓库同步、审计、最近访问(跨域)。
-// 设计约束（接管指令 §15）：只保留 Workspace 自身语义 + 跨域编排，禁止回存文件树/编辑器/预览内部状态。
+//   8C-0A：Files 子域      → useFileStore
+//   8C-0B：Artifact 子域   → useArtifactStore
+//
+// 仍持有：REPO（仓库同步）/ SCRIPT / SNIPPET / AUDIT / recents（跨域）。
+// 设计约束（接管指令 §5）：只保留 Workspace 自身语义 + 跨域编排（refresh / openRecent），
+// 禁止回存 Files / Artifact / Repo / Script 子域内部状态（WS_OWNER_* 门禁守护）。
 // ============================================================
 
 export const useWorkspaceStore = defineStore("workspace", () => {
   const layout = useLayoutStore();
 
-  const tree = ref<WorkspaceTree>({ nodes: [] });
-  const current = ref<Artifact | null>(null);
-  const editTitle = ref("");
-  const editTags = ref("");
-  const editText = ref("");
-  const selected = reactive<Set<string>>(new Set());
-
+  // ===== 仓库同步（REPO 域）=====
   const repos = ref<RepoConfig[]>([]);
   const form = reactive({
     name: "",
@@ -60,6 +58,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const busy = ref(false);
   const job = ref<SyncJob | null>(null);
 
+  // ===== 审计（AUDIT 域）=====
   const audit = ref<AuditEntry[]>([]);
 
   // ===== 脚本库 CRUD（M2-5.a，纯前端，复用 M2-3 四条命令） =====
@@ -199,109 +198,15 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   const recents = reactive<RecentItem[]>([]);
 
-  // 成果右键菜单状态
-  const ctxMenu = reactive<{
-    show: boolean;
-    x: number;
-    y: number;
-    item: Artifact | null;
-  }>({ show: false, x: 0, y: 0, item: null });
-
-  // 采集当前网页选中内容（对应 prototype 的「＋ 采集选中内容」）
-  async function collectSelection() {
-    try {
-      const sel = (window.getSelection?.()?.toString?.() || "").trim();
-      const url = useBrowserStore().url || "about:blank";
-      const title = useBrowserStore().activeTab?.title || url;
-      const text = sel || "";
-      const art = await bridge.collectSelection({ url, title, html: "", text });
-      await refresh();
-      layout.showToast("✅ 已保存: " + (art.title || text.slice(0, 18) || "选中内容"));
-    } catch (e: any) {
-      layout.showToast("采集失败: " + (e?.message ?? e));
-    }
-  }
-
-  const flatArtifacts = computed(() => tree.value.nodes.flatMap((n) => n.items));
-
+  // ===== 跨域编排（Workspace Core 职责：聚合各子域 load，不持有子域内部状态）=====
   async function refresh() {
-    const [t, r, a] = await Promise.all([
-      bridge.browseWorkspace(),
+    const [, r, a] = await Promise.all([
+      useArtifactStore().loadTree(),
       bridge.listRepos(),
       bridge.auditLog(),
     ]);
-    tree.value = t;
     repos.value = r;
     audit.value = a;
-  }
-
-  // ===== 成果 =====
-  async function openArtifact(item: DomainItem) {
-    const art = await bridge.readArtifact(item.id);
-    current.value = art;
-    editTitle.value = art.title;
-    editTags.value = art.tags.join(", ");
-    editText.value = art.text;
-  }
-  async function saveEdit() {
-    if (!current.value) return;
-    const tags = editTags.value
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    await bridge.updateArtifact({
-      id: current.value.id,
-      title: editTitle.value,
-      text: editText.value,
-      tags,
-    });
-    await refresh();
-    layout.showToast("已保存编辑");
-  }
-  async function removeArtifact(item: DomainItem) {
-    if (!confirm(`删除「${item.title}」？`)) return;
-    await bridge.deleteArtifact(item.id);
-    if (current.value?.id === item.id) current.value = null;
-    await refresh();
-  }
-  function onArtifactContext(e: MouseEvent, art: Artifact) {
-    e.preventDefault();
-    ctxMenu.show = true;
-    ctxMenu.x = e.clientX;
-    ctxMenu.y = e.clientY;
-    ctxMenu.item = art;
-  }
-  function closeCtx() {
-    ctxMenu.show = false;
-    ctxMenu.item = null;
-  }
-  async function ctxReveal() {
-    if (!ctxMenu.item) return;
-    try {
-      await bridge.revealArtifact(ctxMenu.item.id);
-      layout.showToast("已在文件管理器中定位");
-    } catch (e: any) {
-      layout.showToast("打开目录失败: " + (e?.message ?? e));
-    }
-    closeCtx();
-  }
-  async function ctxOpenSource() {
-    if (!ctxMenu.item) return;
-    try {
-      await bridge.openSource(ctxMenu.item.source_url);
-    } catch (e: any) {
-      layout.showToast("打开链接失败: " + (e?.message ?? e));
-    }
-    closeCtx();
-  }
-  async function ctxRemove() {
-    if (!ctxMenu.item) return;
-    await removeArtifact({ id: ctxMenu.item.id, title: ctxMenu.item.title } as DomainItem);
-    closeCtx();
-  }
-  function toggle(id: string) {
-    if (selected.has(id)) selected.delete(id);
-    else selected.add(id);
   }
 
   // ===== 同步 =====
@@ -328,7 +233,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     layout.showToast("仓库已保存（token 仅存密钥库）");
   }
   async function requestSync(repoId: string) {
-    const ids = [...selected];
+    // 跨域读：同步消费 Artifact 多选（selection 真源归 useArtifactStore）
+    const ids = [...useArtifactStore().selected];
     if (!ids.length) {
       layout.showToast("请先勾选要同步的成果");
       return;
@@ -396,12 +302,6 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   return {
-    tree,
-    current,
-    editTitle,
-    editTags,
-    editText,
-    selected,
     repos,
     form,
     preview,
@@ -421,18 +321,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     saveSnippet,
     removeSnippet,
     recents,
-    ctxMenu,
-    flatArtifacts,
     refresh,
-    openArtifact,
-    saveEdit,
-    removeArtifact,
-    toggle,
-    onArtifactContext,
-    closeCtx,
-    ctxReveal,
-    ctxOpenSource,
-    ctxRemove,
     saveRepo,
     requestSync,
     confirmSync,
@@ -442,6 +331,5 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     addRecentUrl,
     addRecentFile,
     openRecent,
-    collectSelection,
   };
 });

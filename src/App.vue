@@ -6,6 +6,7 @@ import { useBrowserStore } from "./stores/useBrowserStore";
 import { useResourceStore } from "./stores/useResourceStore";
 import { useSessionStore } from "./stores/useSessionStore";
 import { useWorkspaceStore } from "./stores/useWorkspaceStore";
+import { useArtifactStore } from "./stores/useArtifactStore";
 import { useFileStore } from "./stores/useFileStore";
 import { useGitStore } from "./stores/useGitStore";
 import { useSystemStore } from "./stores/useSystemStore";
@@ -27,6 +28,7 @@ const browser = useBrowserStore();
 const resources = useResourceStore();
 const session = useSessionStore();
 const ws = useWorkspaceStore();
+const art = useArtifactStore();
 const fs = useFileStore();
 const git = useGitStore();
 const system = useSystemStore();
@@ -219,8 +221,8 @@ onMounted(async () => {
   window.addEventListener("beforeunload", () => bridge.closeBrowser().catch(() => {}));
   // M1-9：前端卸载前 flush（与后端 ShutdownCoordinator 的 flush-sessions 双保险）
   window.addEventListener("beforeunload", () => bridge.flushSessions().catch(() => {}));
-  window.addEventListener("click", ws.closeCtx);
-  window.addEventListener("scroll", ws.closeCtx, true);
+  window.addEventListener("click", art.closeCtx);
+  window.addEventListener("scroll", art.closeCtx, true);
   // 文件树右键菜单同样需要点空白/滚动时关闭
   window.addEventListener("click", fs.closeFileCtx);
   window.addEventListener("scroll", fs.closeFileCtx, true);
