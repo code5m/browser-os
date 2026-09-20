@@ -198,28 +198,50 @@ async function runTests() {
 }
 
 /**
- * 从 src/capability/index.ts 解析 bootstrap 显式注册清单（顺序即 rt.register(...) 调用顺序）。
+ * 从 src/capability/index.ts 解析 bootstrap 显式注册清单（顺序即注册顺序）。
  * 真源 = 代码本身（不硬编码能力名单），因此新增/删除能力必须同步 bootstrap 才会一致。
+ * 兼容两种写法：
+ *   (a) 显式 `rt.register(bookmarkCapability)`（早期形态）
+ *   (b) `ALL_CAPABILITIES = [{ id: BOOKMARK_CAPABILITY_ID, def: bookmarkCapability }, ...]` 循环注册（Train F 起）
+ * id 字符串值从同文件 `const XXX_CAPABILITY_ID = "xxx"` 取，不依赖目录名推断。
  */
 function declaredBootstrapIds() {
   const src = stripComments(readFileSync(INDEX_TS, 'utf8'))
   const ids = []
-  const re = /rt\.register\(\s*([A-Za-z_]\w*)\s*\)/g
-  let m
-  // 变量名 → id：从 import 行 `import { xxxCapability, XXX_CAPABILITY_ID } from '...'` 无法直接拿 id；
-  // 但 id 常量名形如 XXX_CAPABILITY_ID，与 register 参数同一文件内一一对应，故按出现顺序配对。
-  const constByVar = new Map()
-  const importRe = /import\s*\{([^}]*)\}\s*from\s*['"][^'"]*capabilities\/([^'"]+)['"]/g
-  let im
-  while ((im = importRe.exec(src)) !== null) {
-    const names = im[1].split(',').map((x) => x.trim()).filter(Boolean)
-    const capVar = names.find((n) => /Capability$/.test(n))
-    const idVar = names.find((n) => /_CAPABILITY_ID$/.test(n))
-    if (capVar && idVar) constByVar.set(capVar, im[2]) // 目录名即 capability id（约定）
+
+  // 1) id 常量 → 字符串值（同文件内 const 声明；若从能力包 import 则走下方 import 推断）
+  const idConst = new Map()
+  for (const m of src.matchAll(/const\s+([A-Za-z_]\w*_CAPABILITY_ID)\s*=\s*["']([^"']+)["']/g)) {
+    idConst.set(m[1], m[2])
   }
-  while ((m = re.exec(src)) !== null) {
-    const v = m[1]
-    ids.push(constByVar.get(v) || v)
+  // 1b) import { ..., X_CAPABILITY_ID } from '../capabilities/<dir>' → id 常量名 → 目录名(=id 约定)
+  const idConstFromImport = new Map()
+  for (const im of src.matchAll(/import\s*\{([^}]*)\}\s*from\s*['"][^'"]*capabilities\/([^'"]+)['"]/g)) {
+    for (const n of im[1].split(',').map((x) => x.trim()).filter(Boolean)) {
+      if (/_CAPABILITY_ID$/.test(n)) idConstFromImport.set(n, im[2])
+    }
+  }
+  const resolveId = (name) => idConst.get(name) || idConstFromImport.get(name) || name
+
+  // 2) ALL_CAPABILITIES 数组形态（Train F）
+  const arr = src.match(/ALL_CAPABILITIES\s*=\s*\[([\s\S]*?)\]/)
+  if (arr) {
+    for (const e of arr[1].matchAll(/id:\s*([A-Za-z_]\w*_CAPABILITY_ID)/g)) {
+      ids.push(resolveId(e[1]))
+    }
+  }
+
+  // 3) 兜底：显式 rt.register(xxxCapability) 形态（按 def 变量名 → 目录名推断 id）
+  if (ids.length === 0) {
+    const re = /rt\.register\(\s*([A-Za-z_]\w*)\s*\)/g
+    const constByVar = new Map()
+    for (const im of src.matchAll(/import\s*\{([^}]*)\}\s*from\s*['"][^'"]*capabilities\/([^'"]+)['"]/g)) {
+      const names = im[1].split(',').map((x) => x.trim()).filter(Boolean)
+      const capVar = names.find((n) => /Capability$/.test(n))
+      if (capVar) constByVar.set(capVar, im[2])
+    }
+    let m
+    while ((m = re.exec(src)) !== null) ids.push(constByVar.get(m[1]) || m[1])
   }
   return ids
 }
