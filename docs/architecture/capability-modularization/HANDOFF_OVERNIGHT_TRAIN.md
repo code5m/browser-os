@@ -94,8 +94,10 @@ src/capabilities/<id>/
 
 ## Train D 实施前预读（已执行，保留作历史切片）
 
-> 状态：**Train A–G 全部完成**。FINAL tag = `capability-modularization-v1-code-pass`。
-> CURRENTLY_COMPOSABLE = 4；Database/Git = C1（边界固化）。Human GUI 验收仍由用户完成。
+> 状态：**Train A–G 全部完成，CODE_PASS 已冻结**。FINAL tag = `capability-modularization-v1-code-pass`（→ `04d794b`，本地未 push）。
+> CURRENTLY_COMPOSABLE = 4；Database/Git = C1（边界固化，未强拆 C3）。
+> **下一阶段 = Human Acceptance（人工 GUI 验收，不写代码）**，清单见 `phase8e/HUMAN-ACCEPTANCE.md`。
+> 架构开发到此停止：不做 C4/C5、不拆 Database/Git、不在验收里夹带修 pre-merge RED（那属独立 `Pre-Merge Historical Debt Closure` 专项）。
 
 ### Train F/G 摘要（PASS）
 

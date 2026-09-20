@@ -619,15 +619,20 @@ Terminal（Train D）验收要点：
   - 成熟度: Terminal = **C3**（C4 无物理 suspend、C5 未做真机资源释放实测 → 不高报）
   - 债 Debt-7A-2 CLOSED；新增 Debt-8E-1..4（显式，交 Train F/E 边界裁决）
 
-Next recommended task（用户侧，非 autonomous train）：
-  Train A–G 全部 PASS，FINAL tag = capability-modularization-v1-code-pass。
-  剩余事项（由用户/A0 完成）：
-  1. Human GUI 验收（终端 xterm 交互 / Dock 终端 / 宫格 / 浏览器 webview / 各能力面板视觉确认）。
-  2. feature/capability-platform-v1 全部 train 完成后，由用户/A0 统一 ff-only merge 到 master。
-  3. Debt-8E-1..6（Clipboard≡Apps 共居、Terminal 无 adapters 层、偏好落盘、历史清空重基线记录、
-     Database/Git 抽可选能力包达 C3）显式登记，交后续 train。
-  4. pre-merge 历史 RED（Capability-Resource-Report.md 尾随空白 + check-grid-close.mjs）属 M4/M5 债，
-     非本系列 train 引入，未掩盖，留专项。
+Next phase（用户侧，非 autonomous train）：CODE_PASS 已于 2026-09-20 冻结（commit 04d794b /
+tag capability-modularization-v1-code-pass）。架构开发停止，进入人工验收。
+
+  Step 1 — Human Acceptance（人工，不写代码）：真实 GUI/runtime 验收清单见
+          docs/architecture/capability-modularization/phase8e/HUMAN-ACCEPTANCE.md（A–H 八节；
+          Grid/Terminal 高优先）。重点验 WebView/GTK/PTY 真实行为，不再跑 checker。
+  Step 2 — Release Closeout（Human GUI PASS 后）：更新 acceptance 文档 → 打最终 tag
+          capability-modularization-v1-pass → 确认 master 无意外变化 → ff-only merge
+          feature/capability-platform-v1 → master → 重跑最终 gates → 用户授权后 push。
+  Step 3 — Pre-Merge Historical Debt Closure（独立专项，不混入本验收）：修 M4/M5 历史 RED
+          （Capability-Resource-Report.md 尾随空白 + check-grid-close.mjs FAIL）。明确不在此验收期
+          间夹带修改，以免污染验收基线。
+  Deferred（后续 train，不在本阶段）：C4/C5（Terminal 物理 suspend / 真机资源释放实测）；
+          Database/Git 抽可选能力包达 C3（Debt-8E-5/6）；Debt-8E-1..4 其余项。
 ```
 
 ---
