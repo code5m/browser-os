@@ -13,54 +13,62 @@
 
 ## 进度
 
-| Train | 范围 | 状态 | tag |
-|-------|------|------|-----|
+| Train | 范围 | 状态 | tag / HEAD |
+|-------|------|------|-----------|
 | A | Workspace 单体分解（8C-0A..0E） | **PASS** | capability-phase8c0-workspace-decomposition-pass |
-| B | Workspace 物理 capability 隔离 + C3 | **PASS** | capability-phase8c-workspace-composable-pass |
-| C | Browser/Grid 隔离 + C3 | 进行中/待做 | — |
-| D | Terminal 隔离 + C3 | 待做 | — |
-| E | Developer family（Database/Git） | 待做 | — |
-| F | Resource Governor + Profiles | 待做 | — |
-| G | Final acceptance + red team | 待做 | — |
+| B | Workspace 物理 capability 隔离 + C3 | **PASS** | capability-phase8c-workspace-composable-pass (9074b57) |
+| C | Browser/Grid 隔离 + C3 | **PASS** | capability-phase8d-browser-composable-code-pass (d6a2134) |
+| D | Terminal 隔离 + C3 | **NOT_REACHED**（下一步） | — |
+| E | Developer family（Database/Git） | NOT_REACHED | — |
+| F | Resource Governor + Profiles | NOT_REACHED | — |
+| G | Final acceptance + red team | NOT_REACHED | — |
 
-**CURRENTLY_COMPOSABLE = 2**（Bookmark C3 + Workspace C3）。目标 ≥4。
+**CURRENTLY_COMPOSABLE = 3**（Bookmark C3 + Workspace C3 + Browser C3）。目标 ≥4（差 Terminal）。
 
-## Train A 摘要（PASS）
+## 已成 capability 的形态（Bookmark / Workspace / Browser 同一模式，可直接复用）
 
-`useWorkspaceStore`（God Store）→ `useFileStore` / `useArtifactStore` / `useRepoStore` / `useScriptStore` / `useSnippetStore` + Workspace Core（audit+recents+refresh）。UNKNOWN=0 / SECOND_TRUTHS=0。详见 `phase8c0/04-WORKSPACE-CORE-CLOSEOUT.md`。
+```
+src/capabilities/<id>/
+  manifest.ts   CapabilityDefinition（semanticOwner=已冻结 owner；status=COMPATIBILITY_WRAPPED；activatable=true；dependsOn 只列 TS 运行时可解析的已注册能力）
+  public.ts     纯再导出（外部/Shell 经此消费，不 import 内部）——注意 check-capability-boundaries 的 PUBLIC_FILES 已含 public.ts
+  index.ts      defineAsyncComponent + contributionRegistry.registerContribution(...) + <id>Capability（onActivate=register...）
+  state/        owner store（物理迁入；owner_implementations locator 首候选指向此处）
+  ui/           能力 UI 组件（Shell 经 contribution 渲染，不 import）
+```
 
-## Train B 摘要（PASS，Workspace = C3）
+- 通用 Contribution 契约：`src/capability/contribution/types.ts`（slots: browser-sidebar/address-bar-actions/activity-bar-trailing/**workbench-main**/**browser-host**/**browser-dock**；Contribution.view 用于按 layout.mainView 认领视图）。
+- bootstrap：`src/capability/index.ts` 依次 register/resolve/activate bookmark → workspace → browser。
+- Shell host：`src/components/layout/MainArea.vue` 用 `viewOf(view)`/`dockOf(view)`/`browserHostComp` 渲染。
+- 门禁：`scripts/check-capability-composition.mjs`（Bookmark C1-C4 + Workspace C5-WS-*/C6-WORKSPACE-ABSENT + Browser C5-BR-*/C6-BROWSER-ABSENT，22/22）、`check-capability-boundaries.mjs`、`check-capability-registry.mjs`、`check-workspace-owners.mjs`、`check-semantic-registry.mjs`。
 
-- 物理隔离：`src/capabilities/workspace/{state/,ui/,manifest.ts,public.ts,index.ts}`。6 个 owner store 物理迁入 `state/`；9 个 workspace 面板迁入 `ui/`。
-- 公共边界：`public.ts`（纯再导出，Shell 与外部消费经此）。
-- 通用贡献：`index.ts` 经 `contributionRegistry.registerContribution` 注册 `workbench-main`（view=files/arts/repo/scripts/commands/audit/editor）+ `browser-dock`（view=files）。
-- Contribution 契约扩展：新增 `view?` 字段 + `CONTRIBUTION_SLOTS.WORKBENCH_MAIN` / `BROWSER_DOCK`。
-- Shell 解耦：`MainArea.vue` 用 `viewOf(view)`/`dockOf(view)` 按贡献渲染，不再 import Workspace 内部；App/ActivityBar/StatusBar/UnifiedTabBar 经 `capabilities/workspace/public`。
-- C3 ABSENT：`check-capability-composition.mjs` 新增 C5-WS-* + C6-WORKSPACE-ABSENT（16/16 PASS）。
-- 回归修复：`GitPanel.vue` 的 `ws.repos` → `useRepoStore().repos`（8C-0C 遗留）；删除死组件 `Sidebar.vue`。
-- 门禁：build PASS；runtime `bootstrap activated=true / vue mounted / view=files 渲染`；semantic PASS(+self-test)；cap boundaries PASS(0 fail)+self-test 12/12；cap registry PASS(0 fail)+self-test 13/13；composition 16/16；npm run check PASS；closure 27/27。
+## Train C 摘要（PASS，Browser = C3）
 
-## 关键恢复点（annotated tags，最新在上）
+- `useBrowserStore` → `state/`；`BrowserHost`（原生宿主）+ `ResourceWaterfall` + `SessionPanel` → `ui/`。
+- 贡献：`browser-host`（原生宿主，absent → 不创建 webview）+ `browser-dock`（net/session）。
+- Shell→`capabilities/browser/public`；MainArea 经贡献渲染。
+- **双向耦合解法**：浏览器 ↔ workspace 互读（浏览器写 recents、workspace 读浏览器 url）。用 `src/composables/{browserNav,recentsNav}.ts` 窄缝（shared，门禁不判跨能力）打断直接依赖；方向依赖 = `bookmark→browser`、`workspace→browser`（required），`browser→bridge`。**无环**（CB-04 仅剩历史 optional 环 agent↔knowledge_graph）。
+- Grid 保持 Browser heavy 子资源面（未强制独立 capability；冻结语义 ADR-P1A-1/2/3/10、ADR-SEM-P6A-1/3 未改）。
+- 多 checker 的 `src/stores/useBrowserStore.ts` 路径已统一迁移（scripts/ 内 sed）。
+- 验收：build PASS；runtime `bootstrap activated=true(3 能力) / vue mounted / 0 真实 error`；semantic PASS+ALL_PASS；boundaries PASS(0 fail)+self-test 12/12；registry PASS(0 fail)；composition 22/22(+self-test 3/3)；closure 27/27；npm run check PASS。
 
-- `capability-phase8c-workspace-composable-pass` (9074b57) — Train B / Workspace C3
-- `capability-phase8c0-workspace-decomposition-pass` (eb172d4) — Train A
-- `capability-phase8c0d-script-snippet-owner-pass` (1388166)
-- `capability-phase8c0c-repo-owner-pass` (a6ddf34)
-- `capability-phase8c0b-artifact-owner-pass` (a6ca383)
-- `v8c0a-files-owner` (aef8620)
-- （历史）`capability-phase8b-bookmark-composable-pass`
+## 下一步（Train D: Terminal → C3，达成 CURRENTLY_COMPOSABLE=4）
 
-## 下一步（Train C: Browser/Grid → C3）
+前置：复读 Terminal 冻结语义（states.yaml `terminalOpen/termPanes/termGrid/termGridCount/activeTermId/autoConfirmCli/termProbeOn/m0Cfg/m0StartTs/droppedChunks/droppedBytes`；owners.yaml `terminal`；intents.yaml terminal 段）。
 
-先**复读 Phase 1 冻结语义**（`docs/architecture/semantic-registry/{states,owners,intents,side-effects}.yaml` 中 Browser/Grid 段；ADR-P1A-1/2/3/10、ADR-SEM-P6A-1/3）。冻结项：`mainView` / `gridOpen` / `desiredGridVisibility` / `isBrowserVisible` / `gridSession` / `aiNavOpen` / HIDE-vs-DESTROY / `closeGrid` 语义——不得重新设计。
+**已知耦合（必须显式处理，不得 blanket ignore）**：
+- Debt-7A-2：`useSystemStore` 同时是 **Terminal 与 Clipboard** 的 owner（clipText/clipHistory/apps/appFilter/filteredApps 也在其中）。→ 移动整个 store 到 `capabilities/terminal/state/` 时，clipboard 状态**不属** Terminal 语义；建议：Terminal 只声明 terminal* 状态归属，clipboard 状态登记为「同文件内的异域状态」债务（或本阶段就把 clipboard 拆到 `useClipboardStore`——属 Train E/后续）。
+- PTY 子进程由 `bridge.term_spawn_channel`（前端唯一入口）+ Rust `term_*` 命令驱动；`TerminalPane.vue` 挂载即 spawn。
 
-建议路径（保持每步 green）：
-1. 新建 `src/capabilities/browser/`（manifest/public/index/ui/state/adapters）。Browser=CAPABILITY，Grid=其 heavy 子资源面（**先证伪再拆**）。
-2. `src/stores/useBrowserStore.ts` → `state/`（更新 owner_implementations locator + governed_files）。
-3. Browser UI（BrowserHost/ResourceWaterfall/SessionPanel/TopBar 的浏览器部分/GridArchiveBar 等）→ `ui/`；Shell 经 contribution（新槽如 `browser-surface` / 复用 workbench-main view=browser/grid）渲染。
-4. 原生 webview 调用集中到 `adapters/`（bridge），满足 CB-07 精神；Runtime 不得持 webview 业务态。
-5. C3 ABSENT：Browser 未注册 → Shell 启动、不创建 webview；Workspace/Bookmark 仍成立。
-6. 成熟度：最低 Browser=C3；若真实 runtime release 证明 → C4/C5（禁止推测）。tag `capability-phase8d-browser-composable-code-pass`。
+建议切片（每步 green）：
+1. `git mv src/stores/useSystemStore.ts src/capabilities/terminal/state/`（或先拆分 clipboard）。
+2. `git mv` TerminalPane（+ 终端宫格相关）→ `capabilities/terminal/ui/`；MainArea 终端视图 + dock 终端改经贡献（workbench-main view=term / browser-dock view=term）。
+3. manifest/public/index；贡献 `terminal-host` 或复用 workbench-main view=term。
+4. Shell（App/ActivityBar/StatusBar/MainArea）→ `capabilities/terminal/public`。
+5. registry：states locator（useSystemStore 路径）、capabilities.yaml(terminal COMPATIBILITY_WRAPPED/activatable)、dependencies.yaml、composition 增加 Terminal C5/C6（absent → 不创建 PTY 子进程）。
+6. 验收：**absent → 不创建 PTY / destroy → child cleanup**（C3；若真实证明 release → C4/C5，禁止推测）。
+7. tag `capability-phase8e-terminal-composable-code-pass`。
+
+随后 Train E（Database/Git，credential 边界只经 reference）、Train F（Resource Governor + Minimal/Developer/Full profiles，真实测量）、Train G（终检 + 红队 + delivery docs）。
 
 ## 速查命令
 
@@ -78,4 +86,4 @@ bash scripts/pre-merge.sh   # 全门禁（含 cargo，较重）
 ## 继承约束
 
 - owner 变更：AUDIT → ADR/SCR → REGISTRY → IMPL → CHECKER → TEST，禁止静默迁移。
-- 禁止 wrapper / 第二状态真源 / shared 垃圾桶 / facade 永久化；禁止降低门禁换 PASS。
+- 禁止 wrapper / 第二状态真源 / shared 垃圾桶（窄缝如 browserNav/recentsNav 属合法 shared 接口，非垃圾桶）/ facade 永久化；禁止降低门禁换 PASS。
