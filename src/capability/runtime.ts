@@ -26,6 +26,7 @@ export type CapabilityRuntimeErrorCode =
   | 'SUSPEND_NOT_SUPPORTED'
   | 'INVALID_TRANSITION'
   | 'UNSAFE_OPERATION'
+  | 'DEPENDENT_PRESENT'
 
 export class CapabilityRuntimeError extends Error {
   code: CapabilityRuntimeErrorCode
@@ -63,6 +64,8 @@ export interface CapabilityRuntime {
   suspend(id: string): CapabilityRecord
   enable(id: string): CapabilityRecord
   disable(id: string): CapabilityRecord
+  /** HP2：从 runtime 移除能力记录（此前必须已 DISABLED；存在强依赖方则拒绝） */
+  unregister(id: string): void
   get(id: string): CapabilityRecord | undefined
   inspect(): CapabilityInspectionEntry[]
   /** 仅供测试：清空注册表 */
@@ -198,6 +201,25 @@ export function createCapabilityRuntime(
       rec.enabled = false
       log(`disable: ${id}`)
       return rec
+    },
+
+    unregister(id) {
+      const rec = must(id)
+      if (rec.definition.lifecycle.resident === true) {
+        throw new CapabilityRuntimeError('UNSAFE_OPERATION', `常驻能力不可移除: ${id}`)
+      }
+      if (rec.state === 'ACTIVE') {
+        throw new CapabilityRuntimeError('INVALID_TRANSITION', `ACTIVE 状态不可直接移除，请先停用: ${id}`)
+      }
+      const dependents = [...records.values()]
+        .filter((r) => r.id !== id && (r.definition.dependsOn || []).includes(id) && r.enabled)
+        .map((r) => r.id)
+        .sort()
+      if (dependents.length > 0) {
+        throw new CapabilityRuntimeError('DEPENDENT_PRESENT', `存在强依赖方，拒绝移除: ${dependents.join(', ')}`)
+      }
+      records.delete(id)
+      log(`unregister: ${id}`)
     },
 
     get(id) {

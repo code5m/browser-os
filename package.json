@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "check": "node scripts/check-architecture.mjs && node scripts/check-ui.mjs && node scripts/check-native.mjs && node scripts/check-browser-runtime.mjs && node scripts/check-task-boundary.mjs && node scripts/check-grid-close-logic.mjs && node scripts/check-view-intent.mjs && node scripts/check-capability-boundaries.mjs && node scripts/check-capability-composition.mjs && node scripts/check-composition-profiles.mjs && node scripts/check-terminal-owners.mjs && node scripts/check-developer-owners.mjs && python3 scripts/check-command-set-consistency.py",
+    "check": "node scripts/check-architecture.mjs && node scripts/check-ui.mjs && node scripts/check-native.mjs && node scripts/check-browser-runtime.mjs && node scripts/check-task-boundary.mjs && node scripts/check-grid-close-logic.mjs && node scripts/check-view-intent.mjs && node scripts/check-capability-boundaries.mjs && node scripts/check-capability-composition.mjs && node scripts/check-composition-profiles.mjs && node scripts/check-terminal-owners.mjs && node scripts/check-developer-owners.mjs && node scripts/check-capability-platform.mjs && python3 scripts/check-command-set-consistency.py",
     "doctor": "node scripts/doctor.mjs",
     "verify:client": "bash scripts/verify-installed-client.sh --build",
     "release:install": "bash scripts/verify-installed-client.sh --install"

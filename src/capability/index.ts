@@ -12,6 +12,8 @@ import { workspaceCapability, WORKSPACE_CAPABILITY_ID } from '../capabilities/wo
 import { browserCapability, BROWSER_CAPABILITY_ID } from '../capabilities/browser'
 import { terminalCapability, TERMINAL_CAPABILITY_ID } from '../capabilities/terminal'
 import { CAPABILITY_PROFILES, DEFAULT_PROFILE, type CapabilityProfileId, profileFromEnv, resolveProfile } from './profiles'
+import { CAPABILITY_CATALOG, CAPABILITY_DEFINITIONS } from './platform/catalog'
+import { assemble } from './platform/assembly'
 
 const ALL_CAPABILITIES = [
   { id: BOOKMARK_CAPABILITY_ID, def: bookmarkCapability },
@@ -63,6 +65,40 @@ export function bootstrapCapabilityRuntime(profile?: CapabilityProfileId | strin
   }
   runtime = rt
   return { runtime: rt, activated, error: lastError, profile: pid }
+}
+
+/**
+ * Assembly Engine 驱动的真实装配入口（§14）。
+ *
+ * 与 profile 的区别：profile 只是**预设**；这里接受任意合法能力集合（custom assembly），
+ * 由 Dependency Resolver 决定 resolved / activationOrder，并按该顺序真实 register+activate。
+ * 请求非法（强依赖缺失/环/冲突/未知）→ deterministic 抛错，绝不「启动后才 undefined」。
+ *
+ * 注意：本函数返回独立 runtime，不写 app 级单例（避免污染线上 bootstrap）。
+ */
+export function bootstrapAssembly(capabilityIds: string[]): BootstrapResult {
+  const report = assemble(CAPABILITY_CATALOG, { capabilities: capabilityIds ?? [] })
+  if (!report.ok) {
+    throw new Error(
+      `装配失败: ${report.rejections.map((r) => `${r.code}(${r.message})`).join('; ')}`,
+    )
+  }
+  const rt = createCapabilityRuntime()
+  let activated = false
+  let error: string | null = null
+  for (const id of report.activationOrder) {
+    const def = CAPABILITY_DEFINITIONS[id]
+    if (!def) continue
+    try {
+      rt.register(def)
+      rt.resolve(id)
+      rt.activate(id)
+      activated = true
+    } catch (e) {
+      error = e instanceof Error ? `${e instanceof Error ? String((e as { code?: string }).code ?? '') : ''}: ${e.message}` : String(e)
+    }
+  }
+  return { runtime: rt, activated, error, profile: 'custom' as CapabilityProfileId }
 }
 
 export function getCapabilityRuntime(): CapabilityRuntime | null {

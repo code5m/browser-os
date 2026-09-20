@@ -8,6 +8,8 @@
 //
 // 与 docs/architecture/capability-registry/README.md §5 一致。
 
+import type { CapabilityManifestV1 } from "./platform/contract"
+
 export type CapabilityCategory =
   | 'CAPABILITY'
   | 'SUB_CAPABILITY'
@@ -88,6 +90,8 @@ export interface CapabilityDefinition {
   semanticOwner: string | null
   governanceStatus: GovernanceStatus
   status: IntegrationStatus
+  /** Building Block Contract v1：与能力定义内联同一对象，杜绝第二真源（可选以兼容既有能力） */
+  v1?: CapabilityManifestV1
 }
 
 /**
