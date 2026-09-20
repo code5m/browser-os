@@ -557,6 +557,7 @@ LATEST_RELEVANT_TAGS（实查）：
 
 债务：Debt-8B-1/2/3 = CLOSED（8B.1 验收收口）
 NEXT_TASK: Phase 8C — Workspace / Files Physical Modularization（复用 Contribution Model）
+8C 范围判定与分阶段计划见 `capability-modularization/HANDOFF_PHASE8C.md`（2026-09-20 判定：先单体 store 分解 8C-0，再迁 Files 子能力；禁止 wrapper 式 re-export）
 ```
 
 ---
