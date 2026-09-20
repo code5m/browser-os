@@ -41,9 +41,16 @@ const FILES_WRITE = [
 const ARTIFACT_ALL = ["tree", "current", "editTitle", "editTags", "editText", "selected", "flatArtifacts", "ctxMenu"];
 const ARTIFACT_WRITE = ["editTitle", "editTags", "editText"];
 
+// ---- Repo 域（8C-0C）----
+// form 为 reactive 表单对象（v-model 于字段，类比 fileCtx/ctxMenu，属可接受 UI 态）；
+// write 仅守护 preview（曾由 ConfirmModal 直写 ws.preview = null，已改 clearPreview）。
+const REPO_ALL = ["repos", "form", "preview", "busy", "job"];
+const REPO_WRITE = ["preview"];
+
 const DOMAINS = [
-  { name: "files", storeName: "useFileStore", storeFile: join(SRC, "stores", "useFileStore.ts"), all: FILES_ALL, write: FILES_WRITE, rule: "WS-OWNER-02" },
-  { name: "artifact", storeName: "useArtifactStore", storeFile: join(SRC, "stores", "useArtifactStore.ts"), all: ARTIFACT_ALL, write: ARTIFACT_WRITE, rule: "WS-OWNER-03" },
+  { name: "files", storeName: "useFileStore", storeFile: join(SRC, "stores", "useFileStore.ts"), all: FILES_ALL, write: FILES_WRITE, rule: "WS_OWNER_02" },
+  { name: "artifact", storeName: "useArtifactStore", storeFile: join(SRC, "stores", "useArtifactStore.ts"), all: ARTIFACT_ALL, write: ARTIFACT_WRITE, rule: "WS_OWNER_06" },
+  { name: "repo", storeName: "useRepoStore", storeFile: join(SRC, "stores", "useRepoStore.ts"), all: REPO_ALL, write: REPO_WRITE, rule: "WS_OWNER_08" },
 ];
 
 const MOVED_OUT = [...new Set(DOMAINS.flatMap((d) => d.all))];

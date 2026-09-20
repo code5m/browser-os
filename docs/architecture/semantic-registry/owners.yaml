@@ -240,6 +240,39 @@ owners:
       Workspace Core 不再持有 artifact 状态；refresh 编排改调本 store.loadTree()，requestSync 跨域读 selected。
     status: CURRENT_FACT
 
+  repo:
+    owner: useRepoStore
+    owns:
+      - repos
+      - form
+      - preview
+      - busy
+      - job
+    owner_only_api:
+      - loadRepos
+      - saveRepo
+      - requestSync
+      - confirmSync
+      - clearPreview
+      - onSyncCompleted
+      - loadGiteeExample
+    public_intent_api:
+      - saveRepo
+      - requestSync
+      - confirmSync
+      - clearPreview
+      - loadGiteeExample
+    forbidden_callers:
+      - components/**（不得直写 repos / form / preview / busy / job；preview 关闭须经 clearPreview）
+    authorized_callers:
+      - useRepoStore（owner 自身）
+      - useArtifactStore（跨域读：requestSync 读 selected）
+      - useLayoutStore（仅导航 setView）
+    rationale: |
+      Phase 8C-0C 将仓库配置 + 同步（repos/form/preview/busy/job）从 useWorkspaceStore 抽出为独立 owner（useRepoStore）。
+      Git 版本操作不在此域（GitPanel 走 bridge / useGitStore）——REPO context ≠ GIT operation；token 走 keyring（credential owner）。
+    status: CURRENT_FACT
+
   bookmark:
     owner: useBookmarkStore
     owns:
@@ -384,6 +417,12 @@ violation_patterns:
     severity: fail
   - id: WS_OWNER_06
     desc: Artifact 状态只能由 useArtifactStore canonical writer/action 写；组件/其它 store 不得直写（须经 setEditTitle/setEditTags/setEditText/openArtifact/toggle 等）
+    severity: fail
+  - id: WS_OWNER_07
+    desc: useWorkspaceStore 不得再声明 Repo-owned state（repos/form/preview/busy/job）；已迁 useRepoStore（8C-0C）
+    severity: fail
+  - id: WS_OWNER_08
+    desc: Repo 状态只能由 useRepoStore action/canonical writer 写；组件不得直写（preview 关闭须经 clearPreview）
     severity: fail
   - id: COMPONENT_WRITES_BOOKMARK
     desc: 组件直接写 items / panelOpen（owner: useBookmarkStore）；或维护第二份 Bookmark[]

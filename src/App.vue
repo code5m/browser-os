@@ -7,6 +7,7 @@ import { useResourceStore } from "./stores/useResourceStore";
 import { useSessionStore } from "./stores/useSessionStore";
 import { useWorkspaceStore } from "./stores/useWorkspaceStore";
 import { useArtifactStore } from "./stores/useArtifactStore";
+import { useRepoStore } from "./stores/useRepoStore";
 import { useFileStore } from "./stores/useFileStore";
 import { useGitStore } from "./stores/useGitStore";
 import { useSystemStore } from "./stores/useSystemStore";
@@ -29,6 +30,7 @@ const resources = useResourceStore();
 const session = useSessionStore();
 const ws = useWorkspaceStore();
 const art = useArtifactStore();
+const rp = useRepoStore();
 const fs = useFileStore();
 const git = useGitStore();
 const system = useSystemStore();
@@ -96,7 +98,7 @@ onMounted(async () => {
     fs.enterDir(wsDir ? wsDir.path : fs.startDirs[0].path);
   }
 
-  bridge.onSyncCompleted((j) => ws.onSyncCompleted(j));
+  bridge.onSyncCompleted((j) => rp.onSyncCompleted(j));
   // M1-7：Git 写任务完成（成功/失败）→ 刷新 status/diff/branch；
   // 订阅放全局，保证切换视图/面板卸载后仍能收到完成事件并刷新状态。
   bridge.onGitWriteCompleted((j) => git.onWriteCompleted(j));

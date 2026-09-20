@@ -56,6 +56,11 @@ owner_implementations:
     paths:
       - src/stores/useArtifactStore.ts
       - src/capabilities/workspace/artifact/state/useArtifactStore.ts
+  useRepoStore:
+    symbol: useRepoStore
+    paths:
+      - src/stores/useRepoStore.ts
+      - src/capabilities/workspace/repo/state/useRepoStore.ts
   useBookmarkStore:
     symbol: useBookmarkStore
     paths:
@@ -810,11 +815,6 @@ states:
 observed_not_governed:
 
   useWorkspaceStore:
-    - repos
-    - form
-    - preview
-    - busy
-    - job
     - audit
     - scripts
     - scriptForm
@@ -831,6 +831,13 @@ observed_not_governed:
     - selected
     - flatArtifacts
     - ctxMenu
+
+  useRepoStore:
+    - repos
+    - form
+    - preview
+    - busy
+    - job
 
   useFileStore:
     - fileEntries

@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useBrowserStore } from "../../stores/useBrowserStore";
 import { useSystemStore } from "../../stores/useSystemStore";
 import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
+import { useRepoStore } from "../../stores/useRepoStore";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useSettingsStore } from "../../stores/useSettingsStore";
 import { bridge } from "../../bridge";
@@ -11,6 +12,7 @@ import type { ResourceStats } from "../../types";
 const browser = useBrowserStore();
 const system = useSystemStore();
 const ws = useWorkspaceStore();
+const rp = useRepoStore();
 const layout = useLayoutStore();
 const settings = useSettingsStore();
 
@@ -31,7 +33,7 @@ const viewUnknown = computed(
 const tabCount = computed(() => browser.tabs.length);
 const auditCount = computed(() => ws.audit.length);
 const termReady = computed(() => system.terminalOpen && system.termPanes.length > 0);
-const repoReady = computed(() => ws.repos.length > 0);
+const repoReady = computed(() => rp.repos.length > 0);
 const nativeReady = computed(() => Boolean((window as any).__TAURI_INTERNALS__));
 
 // ===== 资源监控（常驻）：系统内存 / 应用占用 / 内存预算 / 页签休眠 =====
