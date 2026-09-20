@@ -20,10 +20,10 @@
 | C | Browser/Grid 隔离 + C3 | **PASS** | capability-phase8d-browser-composable-code-pass (d6a2134) |
 | D | Terminal 隔离 + C3 | **PASS**（Terminal = C3；CURRENTLY_COMPOSABLE 3→4） | capability-phase8e-terminal-composable-code-pass |
 | E | Developer family（Database/Git）边界审计 + 能力化 | **PASS**（边界固化；Database/Git = C1，未强拆 C3） | capability-phase8e-developer-family-audit-pass |
-| F | Resource Governor + Profiles | NEXT | — |
-| G | Final acceptance + red team | NOT_REACHED | — |
+| F | Resource Governor + Profiles | **PASS**（真实 profile minimal 零 PTY/零 WebView；Governor 薄层；测量 UNKNOWN 不估算） | capability-phase8e-resource-governor-profiles-pass |
+| G | Final acceptance + red team | **PASS**（全门禁+自检绿；红队无 HARD STOP） | capability-modularization-v1-code-pass |
 
-**CURRENTLY_COMPOSABLE = 4**（Bookmark C3 + Workspace C3 + Browser C3 + Terminal C3）。目标已达成（≥4），继续 E/F/G。
+**CURRENTLY_COMPOSABLE = 4**（Bookmark C3 + Workspace C3 + Browser C3 + Terminal C3）。目标已达成（≥4）。Database/Git = C1（边界固化，未强拆 C3）。**Train A–G 全部 PASS，FINAL tag 已打。**
 
 ### Train D 摘要（PASS，Terminal = C3）
 
@@ -94,7 +94,24 @@ src/capabilities/<id>/
 
 ## Train D 实施前预读（已执行，保留作历史切片）
 
-> 状态：Train D / Train E 均已完成。当前 NEXT = **Train F**（Resource Governor + 真实 Minimal/Developer/Full profile + 真实资源测量）。CURRENTLY_COMPOSABLE = 4。
+> 状态：**Train A–G 全部完成**。FINAL tag = `capability-modularization-v1-code-pass`。
+> CURRENTLY_COMPOSABLE = 4；Database/Git = C1（边界固化）。Human GUI 验收仍由用户完成。
+
+### Train F/G 摘要（PASS）
+
+- **Train F（Resource Governor + 真实 Profile）**：`src/capability/profiles.ts` 定义单源
+  `CAPABILITY_PROFILES`（minimal=bookmark+workspace / developer|full=+browser+terminal）；
+  `bootstrapCapabilityRuntime(profile)` 只注册列出的能力 → minimal 端到端零 PTY/零 WebView（真实
+  profile，非 UI hide）。`src/capability/resourceGovernor.ts` 为薄协调层（只持 runtime 引用，零业务
+  state），activate/background/suspend/hibernate/destroy 全委托 rt 公共 API，不绕过 owner。Terminal
+  生命周期诚实改为 `supported: [ACTIVE]`（suspendable:false），suspend 抛 SUSPEND_NOT_SUPPORTED →
+  不谎报 C4/C5。新增 `check-composition-profiles.mjs`（11/11）。`measure-resources.mjs` 真实 /proc 测量，
+  分类 MEASURED/DECLARED/UNKNOWN（headless 无实例 → UNKNOWN，不估算）。
+- **Train G（终检 + 红队）**：全门禁 + 自检绿（semantic fail=0 warn=6；composition 33/33；
+  terminal-owners 20/20；terminal-policy 30 变异；terminal-ui-logic 32；developer-owners 11/11；
+  composition-profiles 11/11；pilot 8/8；npm run check/build PASS；git diff --check clean；fsck clean）。
+  红队 §16 攻击项逐项无 HARD STOP。`check-capability-pilot` PLT-04 解析器修复（Train F 引入的回归）。
+  已知 pre-merge RED（尾随空白 + grid-close checker）= M4/M5 历史债，非本系列引入，未掩盖。
 
 前置：复读 Terminal 冻结语义（states.yaml `terminalOpen/termPanes/termGrid/termGridCount/activeTermId/autoConfirmCli/termProbeOn/m0Cfg/m0StartTs/droppedChunks/droppedBytes`；owners.yaml `terminal`；intents.yaml terminal 段）。
 

@@ -145,6 +145,8 @@ capability-phase8b-bookmark-composable-code-pass   -> <8b>（Bookmark C3）
 capability-phase8d-browser-composable-code-pass     -> d6a2134（Browser/Grid C3）
 capability-phase8e-terminal-composable-code-pass    -> <Train D HEAD>（Terminal C3；CURRENTLY_COMPOSABLE=4）
 capability-phase8e-developer-family-audit-pass       -> <Train E HEAD>（Database/Git 边界固化；成熟度 C1）
+capability-phase8e-resource-governor-profiles-pass   -> <Train F HEAD>（真实 profile + Governor 薄层）
+capability-modularization-v1-code-pass                -> <Train G HEAD>（FINAL；全门禁+自检绿；红队无 HARD STOP）
   （上述 tag 均仅本地，未 push；硬约束）
 ```
 
@@ -600,8 +602,8 @@ Capability Platform v1（Overnight Release Train，分支 feature/capability-pla
   TRAIN C  Browser/Grid C3                 PASS（tag capability-phase8d-browser-composable-code-pass @ d6a2134）
   TRAIN D  Terminal C3                     PASS（tag capability-phase8e-terminal-composable-code-pass；见下方）
   TRAIN E  Developer family（Database/Git）边界审计 + 能力化  PASS（边界固化；Database/Git = C1，未强拆 C3；tag capability-phase8e-developer-family-audit-pass）
-  TRAIN F  Resource Governor + Profiles      NOT_REACHED
-  TRAIN G  Final automated acceptance       NOT_REACHED
+  TRAIN F  Resource Governor + Profiles      PASS（minimal 端到端零 PTY/零 WebView；Governor 薄层；tag capability-phase8e-resource-governor-profiles-pass）
+  TRAIN G  Final automated acceptance       PASS（全门禁+自检绿；红队无 HARD STOP；FINAL tag capability-modularization-v1-code-pass）
   CURRENTLY_COMPOSABLE = 4（Bookmark C3 + Workspace C3 + Browser C3 + Terminal C3）
 
   Latest code tag: capability-phase8e-terminal-composable-code-pass
@@ -617,10 +619,15 @@ Terminal（Train D）验收要点：
   - 成熟度: Terminal = **C3**（C4 无物理 suspend、C5 未做真机资源释放实测 → 不高报）
   - 债 Debt-7A-2 CLOSED；新增 Debt-8E-1..4（显式，交 Train F/E 边界裁决）
 
-Next recommended task（AUTONOMOUS）：
-  继续 TRAIN E —— Developer Capability Family（Database / Git），边界审计与能力化；
-  原则：Repo Context ≠ Git Operations；Database/Git/Terminal 不得合并为 DeveloperStore；
-  Credential 只经 reference/authorized API；真实成熟度不足允许停在 C0/C1/C2，不强拆。
+Next recommended task（用户侧，非 autonomous train）：
+  Train A–G 全部 PASS，FINAL tag = capability-modularization-v1-code-pass。
+  剩余事项（由用户/A0 完成）：
+  1. Human GUI 验收（终端 xterm 交互 / Dock 终端 / 宫格 / 浏览器 webview / 各能力面板视觉确认）。
+  2. feature/capability-platform-v1 全部 train 完成后，由用户/A0 统一 ff-only merge 到 master。
+  3. Debt-8E-1..6（Clipboard≡Apps 共居、Terminal 无 adapters 层、偏好落盘、历史清空重基线记录、
+     Database/Git 抽可选能力包达 C3）显式登记，交后续 train。
+  4. pre-merge 历史 RED（Capability-Resource-Report.md 尾随空白 + check-grid-close.mjs）属 M4/M5 债，
+     非本系列 train 引入，未掩盖，留专项。
 ```
 
 ---
