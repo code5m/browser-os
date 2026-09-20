@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "note": "产品装配配置（Assembly Configuration）。这里的 preset 只是 PRESET ASSEMBLY，不是产品架构边界；CLI 也支持直接传能力 id 做 custom assembly。",
+  "products": [
+    {
+      "id": "framework-only",
+      "displayName": "Framework Core Only",
+      "description": "零能力的最小底座：只有 Shell + Runtime + Registry + Contribution 基础设施。",
+      "capabilities": []
+    },
+    {
+      "id": "workspace-only",
+      "displayName": "Workspace Only",
+      "description": "只有工作区（文件/产物/仓库/脚本/命令/审计）。",
+      "capabilities": ["workspace"]
+    },
+    {
+      "id": "browser",
+      "displayName": "Browser Product",
+      "description": "浏览器 + 工作区 + 收藏夹（无终端）。",
+      "capabilities": ["bookmark", "workspace", "browser"]
+    },
+    {
+      "id": "developer",
+      "displayName": "Developer Product",
+      "description": "工作区 + 浏览器 + 终端 + 收藏夹。",
+      "capabilities": ["bookmark", "workspace", "browser", "terminal"]
+    },
+    {
+      "id": "workspace-terminal",
+      "displayName": "Custom: Workspace + Terminal",
+      "description": "自定义装配示例：不含浏览器，验证「任意合法组合」而非固定套装。",
+      "capabilities": ["workspace", "terminal"]
+    },
+    {
+      "id": "invalid-missing-dependency",
+      "displayName": "Illegal fixture: unknown capability",
+      "description": "负例配置：请求不存在的能力，用于演示启动前确定性拒绝（不是崩溃）。",
+      "capabilities": ["not-exist"],
+      "expectReject": true
+    }
+  ]
+}
