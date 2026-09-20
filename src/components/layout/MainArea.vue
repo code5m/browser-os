@@ -232,8 +232,11 @@ watch(
     <!-- ===== 终端主视图：已迁入 Terminal 能力（workbench-main-resident 槽），
          由 capabilities/terminal/ui/TerminalView.vue 自管挂载/显隐与 PTY 出生点。 -->
 
-    <!-- ===== 文件编辑器 / Markdown 预览（覆盖层）：经贡献渲染 ===== -->
-    <component :is="viewOf('editor')" v-if="viewOf('editor')" />
+    <!-- ===== 文件编辑器 / Markdown 预览（覆盖层）：经贡献渲染。
+         仅在编辑视图激活(mainView==='editor')时挂载——否则 home/其它视图下会与主区并列、
+         作为块级元素落到下方占半屏（既有布局 bug：编辑器贡献常驻却未判激活态）。
+         Shell 仍只按槽渲染、零能力专属知识；关闭由 closeEditor() 切走视图触发。 -->
+    <component :is="viewOf('editor')" v-if="viewOf('editor') && layout.mainView === 'editor'" />
     <!-- ===== W17(A7) 兜底：未知/空视图时主区不得空白或死区 ===== -->
     <!-- This is intentionally independent from FileEditor; an adjacent v-else
          would bind to the editor v-if and render during every normal view. -->
