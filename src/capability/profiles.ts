@@ -18,19 +18,24 @@ import { WORKSPACE_CAPABILITY_ID } from '../capabilities/workspace'
 import { BROWSER_CAPABILITY_ID } from '../capabilities/browser'
 import { TERMINAL_CAPABILITY_ID } from '../capabilities/terminal'
 
-export type CapabilityProfileId = 'minimal' | 'developer' | 'full'
+// 注意：preset 只是「预设」，不是产品边界。任意合法组合走 VITE_CAPABILITY_ASSEMBLY（见 index.ts）。
+export type CapabilityProfileId = 'framework' | 'minimal' | 'developer' | 'full' | 'custom'
 
 export const CAPABILITY_PROFILES: Record<CapabilityProfileId, string[]> = {
+  // framework-only：零能力，只有底座（验证「Shell 不依赖任何能力也能起来」）
+  framework: [],
   minimal: [BOOKMARK_CAPABILITY_ID, WORKSPACE_CAPABILITY_ID],
   developer: [BOOKMARK_CAPABILITY_ID, WORKSPACE_CAPABILITY_ID, BROWSER_CAPABILITY_ID, TERMINAL_CAPABILITY_ID],
   full: [BOOKMARK_CAPABILITY_ID, WORKSPACE_CAPABILITY_ID, BROWSER_CAPABILITY_ID, TERMINAL_CAPABILITY_ID],
+  // custom 的清单不在此处：由运行时 VITE_CAPABILITY_ASSEMBLY 决定（这里必须是同一 Record 的一分子）
+  custom: [],
 }
 
 export const DEFAULT_PROFILE: CapabilityProfileId = 'full'
 
 export function resolveProfile(input?: string | null): CapabilityProfileId {
   const v = (input || '').trim().toLowerCase()
-  if (v === 'minimal' || v === 'developer' || v === 'full') return v
+  if (v === 'framework' || v === 'minimal' || v === 'developer' || v === 'full' || v === 'custom') return v
   return DEFAULT_PROFILE
 }
 

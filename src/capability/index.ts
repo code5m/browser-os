@@ -26,6 +26,17 @@ let runtime: CapabilityRuntime | null = null
 let lastError: string | null = null
 let lastProfile: CapabilityProfileId = DEFAULT_PROFILE
 
+/**
+ * 自由装配源（非 preset）：VITE_CAPABILITY_ASSEMBLY="workspace,terminal"
+ * 顺序无关——真正的解析/排序交给 Assembly Engine；未设置则返回 null（走 profile preset）。
+ */
+function customAssemblyFromEnv(): string[] | null {
+  // @ts-expect-error Vite 注入
+  const raw = typeof import.meta !== 'undefined' ? (import.meta.env?.VITE_CAPABILITY_ASSEMBLY as string | undefined) : undefined
+  if (typeof raw !== 'string') return null
+  return raw.split(',').map((s) => s.trim()).filter(Boolean)
+}
+
 export interface BootstrapResult {
   runtime: CapabilityRuntime
   activated: boolean
@@ -45,6 +56,23 @@ export function bootstrapCapabilityRuntime(profile?: CapabilityProfileId | strin
       activated: runtime.get(BOOKMARK_CAPABILITY_ID)?.state === 'ACTIVE',
       error: lastError,
       profile: lastProfile,
+    }
+  }
+  // 自由装配优先：设置 VITE_CAPABILITY_ASSEMBLY 时按任意组合装配（不是 preset）。
+  // 非法组合由 Assembly Engine 在启动前确定性拒绝——这里只记录错误 + 以零能力启动，绝不崩溃。
+  const customIds = customAssemblyFromEnv()
+  if (profile == null && customIds) {
+    try {
+      const built = bootstrapAssembly(customIds)
+      runtime = built.runtime
+      lastProfile = 'custom'
+      lastError = built.error
+      return { runtime, activated: built.activated, error: lastError, profile: 'custom' }
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e)
+      const empty = createCapabilityRuntime()
+      runtime = empty
+      return { runtime: empty, activated: false, error: lastError, profile: 'custom' }
     }
   }
   const pid = typeof profile === 'string' ? resolveProfile(profile) : (profile ?? profileFromEnv())
