@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { useBrowserStore } from "../../stores/useBrowserStore";
-import { useBrowserHost } from "../../composables/useBrowserHost";
+import { useBrowserStore } from "../state/useBrowserStore";
+import { useBrowserHost } from "../../../composables/useBrowserHost";
 
 const browser = useBrowserStore();
 const { browserHost } = useBrowserHost();

@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import type { BrowserCredentialItem, AutofillResult } from "../../types";
 import { bridge } from "../../bridge";
-import { useBrowserStore } from "../../stores/useBrowserStore";
+import { useBrowserStore } from "../../capabilities/browser/public";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 
 // 已导入账号列表 + 用户主动触发的一次性填充。

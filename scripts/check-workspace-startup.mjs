@@ -11,7 +11,7 @@ registerHooks({ resolve(specifier, context, next) {
 } });
 globalThis.window = { setTimeout };
 const { createPinia, setActivePinia } = await import('pinia');
-const { useWorkspaceStore } = await import('../src/stores/useWorkspaceStore.ts');
+const { useWorkspaceStore } = await import('../src/capabilities/workspace/state/useWorkspaceStore.ts');
 setActivePinia(createPinia());
 const workspace = useWorkspaceStore();
 assert.equal(workspace.inlineFile, '');

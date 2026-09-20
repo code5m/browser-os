@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useLayoutStore } from "../../stores/useLayoutStore";
-import { useBrowserStore } from "../../stores/useBrowserStore";
+import { useBrowserStore } from "../../capabilities/browser/public";
 import { ref, computed } from "vue";
 import { useFileStore } from "../../capabilities/workspace/public";
 import { useSystemStore } from "../../stores/useSystemStore";

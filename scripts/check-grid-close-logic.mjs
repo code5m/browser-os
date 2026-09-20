@@ -29,7 +29,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const STORE_PATH = join(ROOT, "src/stores/useBrowserStore.ts");
+const STORE_PATH = join(ROOT, "src/capabilities/browser/state/useBrowserStore.ts");
 const HOST_PATH = join(ROOT, "src/composables/useBrowserHost.ts");
 
 let passed = 0;

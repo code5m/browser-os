@@ -1,6 +1,6 @@
 import { ref, onMounted, onBeforeUnmount, nextTick, watch } from "vue";
 import { bridge } from "../bridge";
-import { useBrowserStore } from "../stores/useBrowserStore";
+import { useBrowserStore } from "../capabilities/browser/public";
 import { useLayoutStore } from "../stores/useLayoutStore";
 import {
   GRID_GAP,

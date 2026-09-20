@@ -39,8 +39,8 @@ owner_implementations:
   useBrowserStore:
     symbol: useBrowserStore
     paths:
-      - src/stores/useBrowserStore.ts
       - src/capabilities/browser/state/useBrowserStore.ts
+      - src/stores/useBrowserStore.ts
   useWorkspaceStore:
     symbol: useWorkspaceStore
     paths:

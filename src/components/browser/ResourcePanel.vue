@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { useBrowserStore } from "../../stores/useBrowserStore";
+import { useBrowserStore } from "../../capabilities/browser/public";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 
 const browser = useBrowserStore();

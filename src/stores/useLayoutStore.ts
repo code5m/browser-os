@@ -304,7 +304,7 @@ export const useLayoutStore = defineStore("layout", () => {
     // 已在 checkpoint `M0-4.b` 记录，不要为了消除告警把它改成静态引入。
     if (t.path) {
       const p = t.path;
-      import("./useBrowserStore").then(({ useBrowserStore }) => {
+      import("../capabilities/browser/public").then(({ useBrowserStore }) => {
         useBrowserStore().url = p;
       });
     }

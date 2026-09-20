@@ -7,7 +7,7 @@ import {
   isNavActive,
   nextNavIndex,
 } from "../../stores/useLayoutStore";
-import { useBrowserStore } from "../../stores/useBrowserStore";
+import { useBrowserStore } from "../../capabilities/browser/public";
 import { useSystemStore } from "../../stores/useSystemStore";
 import { useWorkspaceStore } from "../../capabilities/workspace/public";
 import { useArtifactStore } from "../../capabilities/workspace/public";

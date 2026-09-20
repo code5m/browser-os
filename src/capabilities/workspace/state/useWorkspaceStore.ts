@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { ref, reactive } from "vue";
 import { bridge } from "../../../bridge";
-import { useBrowserStore } from "../../../stores/useBrowserStore";
+import { navigateBrowser } from "../../../composables/browserNav";
 import { useFileStore } from "./useFileStore";
 import { useArtifactStore } from "./useArtifactStore";
 import { useRepoStore } from "./useRepoStore";
@@ -72,9 +72,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
   function openRecent(r: RecentItem) {
     if (r.type === "url") {
-      const browser = useBrowserStore();
-      browser.url = r.path;
-      browser.openBrowser();
+      navigateBrowser(r.path);
     } else {
       // 文件侧打开逻辑已归 Files owner（useFileStore）
       useFileStore().openFile({ name: r.title, path: r.path, is_dir: false, size: 0 });

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted } from "vue";
-import { useBrowserStore } from "../../../stores/useBrowserStore";
+import { useBrowserStore } from "../../browser/public";
 import { useBookmarkStore, canBookmark } from "../state/useBookmarkStore";
 
 // 地址栏 ⭐ 收藏按钮（M1-3）：挂在智能地址栏右侧，消费 bridge.bookmarkAdd/Remove。

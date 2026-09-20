@@ -42,6 +42,8 @@ forbidden_edges:
 # ── 依赖边（与 capabilities.yaml 对齐） ────────────────────────────────
 edges:
   - { from: browser,   to: bridge,   kind: required }
+  - { from: bookmark,  to: browser, kind: required }
+  - { from: workspace, to: browser, kind: required }
   - { from: grid,      to: browser,  kind: required }
   - { from: grid,      to: bridge,   kind: required }
   - { from: workspace, to: bridge,   kind: required }

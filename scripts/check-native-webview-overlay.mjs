@@ -15,7 +15,7 @@ assert.doesNotMatch(status, /toast-pop/);
 assert.doesNotMatch(status, /position:\s*fixed;\s*top:/);
 
 const app = readFileSync("src/App.vue", "utf8");
-const browser = readFileSync("src/stores/useBrowserStore.ts", "utf8");
+const browser = readFileSync("src/capabilities/browser/state/useBrowserStore.ts", "utf8");
 const host = readFileSync("src/composables/useBrowserHost.ts", "utf8");
 const css = readFileSync("src/styles/global.css", "utf8");
 

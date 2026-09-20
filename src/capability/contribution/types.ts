@@ -27,6 +27,8 @@ export interface ContributionSlots {
   readonly ACTIVITY_BAR_TRAILING: "activity-bar-trailing"
   /** 主工作区视图槽：能力按 `view`（=layout.mainView 值）认领一个主视图；Shell 只按 view 渲染 */
   readonly WORKBENCH_MAIN: "workbench-main"
+  /** 浏览器原生宿主槽：能力提供 webview 宿主组件（native 定位容器），Shell 只按槽渲染 */
+  readonly BROWSER_HOST: "browser-host"
   /** 浏览器右侧 Dock 面板槽：能力按 `view` 认领一个 Dock 页签面板 */
   readonly BROWSER_DOCK: "browser-dock"
 }
@@ -36,6 +38,7 @@ export const CONTRIBUTION_SLOTS = {
   ADDRESS_BAR_ACTIONS: "address-bar-actions",
   ACTIVITY_BAR_TRAILING: "activity-bar-trailing",
   WORKBENCH_MAIN: "workbench-main",
+  BROWSER_HOST: "browser-host",
   BROWSER_DOCK: "browser-dock",
 } as const satisfies ContributionSlots
 

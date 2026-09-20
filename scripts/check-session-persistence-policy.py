@@ -291,7 +291,7 @@ def scan_repository(root: Path) -> list[str]:
         "bridge": root / "src-tauri/src/bridge.rs",
         "main_rs": root / "src-tauri/src/main.rs",
         "acl": root / "src-tauri/permissions/default-commands.toml",
-        "browser_store": root / "src/stores/useBrowserStore.ts",
+        "browser_store": root / "src/capabilities/browser/state/useBrowserStore.ts",
         "session_store": root / "src/stores/useSessionStore.ts",
         "panel": root / "src/components/browser/SessionPanel.vue",
         "app_vue": root / "src/App.vue",

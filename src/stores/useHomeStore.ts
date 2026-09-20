@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { reactive, computed, ref } from "vue";
 import { bridge } from "../bridge";
-import { useBrowserStore } from "./useBrowserStore";
+import { useBrowserStore } from "../capabilities/browser/public";
 import { useLayoutStore } from "./useLayoutStore";
 import { useFileStore } from "../capabilities/workspace/public";
 import {

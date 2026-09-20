@@ -3,7 +3,7 @@ import { computed, ref } from 'vue';
 import TurndownService from 'turndown';
 import DOMPurify from 'dompurify';
 import { bridge } from '../bridge';
-import { useBrowserStore } from './useBrowserStore';
+import { useBrowserStore } from "../capabilities/browser/public";
 
 type Reply = { index:number; label:string; selected:boolean; markdown:string; state:'pending'|'reading'|'ready'|'failed'; error:string; saved:string };
 const failures: Record<string,string> = { UNSUPPORTED_SITE:'此站点暂无回复适配器', REPLY_STREAMING:'回复还在生成，请稍后重试', NO_ASSISTANT_REPLY:'未找到 AI 回复', GRID_NOT_OPEN:'窗口已关闭', GRID_RESULT_LIMIT:'回复超过容量上限' };

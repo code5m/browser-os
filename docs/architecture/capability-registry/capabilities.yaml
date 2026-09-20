@@ -22,19 +22,21 @@ capabilities:
     category: CAPABILITY
     semanticOwner: useBrowserStore
     governanceStatus: GOVERNED
-    status: NOT_INTEGRATED
+    status: COMPATIBILITY_WRAPPED
     provides:
       - browser.navigate
       - browser.tab.open
       - browser.tab.close
+      - browser.host
+      - browser.grid
     dependsOn:
       - bridge
     optionalDependencies: []
     lifecycle:
-      supported: [ACTIVE]
+      supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
-      activatable: false
-      resident: true
+      activatable: true
+      resident: false
     resources:
       class: [HEAVY, WEBVIEW, NATIVE]
       suspendable: false
@@ -44,7 +46,7 @@ capabilities:
     persistence:
       scope: session
       sensitive: false
-    entrypoint: src/components/browser
+    entrypoint: src/capabilities/browser
 
   - id: grid
     name: Grid
@@ -91,6 +93,7 @@ capabilities:
       - workspace.snippet
       - workspace.main-view
     dependsOn:
+      - browser
       - bridge
     optionalDependencies: []
     lifecycle:
@@ -150,7 +153,8 @@ capabilities:
       - bookmark.add
       - bookmark.remove
       - bookmark.togglePanel
-    dependsOn: []
+    dependsOn:
+      - browser
     optionalDependencies:
       - bridge
     lifecycle:

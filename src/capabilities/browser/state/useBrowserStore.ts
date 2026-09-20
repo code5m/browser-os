@@ -1,9 +1,9 @@
 import { defineStore } from "pinia";
 import { ref, reactive, computed, nextTick, watch } from "vue";
-import { bridge } from "../bridge";
-import { useLayoutStore } from "./useLayoutStore";
-import { useWorkspaceStore } from "../capabilities/workspace/public";
-import type { RecentlyClosedEntry, TabRecoveryEvent } from "../types";
+import { bridge } from "../../../bridge";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
+import { recordRecentUrl } from "../../../composables/recentsNav";
+import type { RecentlyClosedEntry, TabRecoveryEvent } from "../../../types";
 
 export interface AISite {
   name: string;
@@ -604,7 +604,7 @@ export const useBrowserStore = defineStore("browser", () => {
   }
   async function openBrowser() {
     const target = url.value.trim() || "https://www.baidu.com";
-    useWorkspaceStore().addRecentUrl(target);
+    recordRecentUrl(target);
     layout.setView("browser");
     await tabNew(target);
     layout.showToast("已打开。在网页右键 → 保存选区/整页");

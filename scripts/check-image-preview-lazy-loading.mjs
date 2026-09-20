@@ -14,7 +14,7 @@ globalThis.window = { setTimeout };
 
 const { bridge } = await import('../src/bridge.ts');
 const { createPinia, setActivePinia } = await import('pinia');
-const { useWorkspaceStore } = await import('../src/stores/useWorkspaceStore.ts');
+const { useWorkspaceStore } = await import('../src/capabilities/workspace/state/useWorkspaceStore.ts');
 
 const entries = Array.from({ length: 20 }, (_, i) => ({
   name: `image-${String(i).padStart(2, '0')}.jpg`,

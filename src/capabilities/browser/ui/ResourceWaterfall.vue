@@ -3,15 +3,15 @@
 // 展示字段全部来自后端脱敏 DTO：URL 敏感查询参数已替换为 ***；
 // status/mime/size 为 null 时显示 "-"（平台未提供，降级不伪造）。
 import { computed, onMounted, watch } from "vue";
-import { useBrowserStore } from "../../stores/useBrowserStore";
-import { useLayoutStore } from "../../stores/useLayoutStore";
+import { useBrowserStore } from "../state/useBrowserStore";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
 import {
   RESOURCE_FILTERS,
   displayUrl,
   formatDuration,
   formatSize,
   useResourceStore,
-} from "../../stores/useResourceStore";
+} from "../../../stores/useResourceStore";
 
 const browser = useBrowserStore();
 const layout = useLayoutStore();

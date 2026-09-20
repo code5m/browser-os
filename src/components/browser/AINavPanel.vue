@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { useBrowserStore } from "../../stores/useBrowserStore";
+import { useBrowserStore } from "../../capabilities/browser/public";
 
 const browser = useBrowserStore();
 const aiFiltered = computed(() => browser.aiFiltered);

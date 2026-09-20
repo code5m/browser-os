@@ -2,7 +2,7 @@
 import { onMounted, onErrorCaptured, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { bridge } from "./bridge";
-import { useBrowserStore } from "./stores/useBrowserStore";
+import { useBrowserStore } from "./capabilities/browser/public";
 import { useResourceStore } from "./stores/useResourceStore";
 import { useSessionStore } from "./stores/useSessionStore";
 import { useWorkspaceStore } from "./capabilities/workspace/public";

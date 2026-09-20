@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
 import { useLayoutStore, MODULE_META, type MainView } from './useLayoutStore';
-import { useBrowserStore } from './useBrowserStore';
+import { useBrowserStore } from "../capabilities/browser/public";
 
 export const useWorkbenchStore = defineStore('workbench', () => {
   const commandOpen = ref(false);

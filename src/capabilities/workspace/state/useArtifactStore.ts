@@ -2,7 +2,7 @@ import { defineStore } from "pinia";
 import { ref, reactive, computed } from "vue";
 import { bridge } from "../../../bridge";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
-import { useBrowserStore } from "../../../stores/useBrowserStore";
+import { currentBrowserUrl, currentBrowserTitle } from "../../../composables/browserNav";
 
 // ============================================================
 // Phase 8C-0B — Artifact（Knowledge / 笔记 Vault）域 owner
@@ -111,8 +111,8 @@ export const useArtifactStore = defineStore("artifact", () => {
   async function collectSelection() {
     try {
       const sel = (window.getSelection?.()?.toString?.() || "").trim();
-      const url = useBrowserStore().url || "about:blank";
-      const title = useBrowserStore().activeTab?.title || url;
+      const url = currentBrowserUrl();
+      const title = currentBrowserTitle();
       const text = sel || "";
       const art = await bridge.collectSelection({ url, title, html: "", text });
       await loadTree();

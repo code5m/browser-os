@@ -5,7 +5,7 @@
 // 每个已抽出的子域都必须：Workspace Core 不再声明其状态；其状态不得被 owner store 之外的文件直写。
 //
 // 规则：
-//   WS-OWNER-01: src/stores/useWorkspaceStore.ts 不得再声明任何已抽出子域的 state
+//   WS-OWNER-01: src/capabilities/workspace/state/useWorkspaceStore.ts 不得再声明任何已抽出子域的 state
 //   WS-OWNER-02: Files 核心态不得被 useFileStore.ts 之外的文件直写
 //   WS-OWNER-03: Artifact 核心态不得被 useArtifactStore.ts 之外的文件直写
 //

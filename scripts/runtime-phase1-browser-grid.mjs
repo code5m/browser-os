@@ -54,7 +54,7 @@ const stubPlugin = {
 const res = await build({
   stdin: {
     contents:
-      'export { useBrowserStore } from "./src/stores/useBrowserStore.ts";\n' +
+      'export { useBrowserStore } from "./src/capabilities/browser/state/useBrowserStore.ts";\n' +
       'export { useLayoutStore } from "./src/stores/useLayoutStore.ts";\n' +
       'export { createPinia, setActivePinia } from "pinia";\n',
     resolveDir: ROOT,

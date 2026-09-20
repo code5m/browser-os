@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import type { Bookmark } from "../../../types";
-import { useBrowserStore } from "../../../stores/useBrowserStore";
+import { useBrowserStore } from "../../browser/public";
 import { useBookmarkStore } from "../state/useBookmarkStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { bridge } from "../../../bridge";

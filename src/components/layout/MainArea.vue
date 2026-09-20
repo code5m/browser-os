@@ -1,12 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick, defineAsyncComponent, h } from "vue";
 import { useLayoutStore } from "../../stores/useLayoutStore";
-import { useBrowserStore } from "../../stores/useBrowserStore";
-import BrowserHost from "../browser/BrowserHost.vue";
-import ResourceWaterfall from "../browser/ResourceWaterfall.vue";
+import { useBrowserStore } from "../../capabilities/browser/public";
 import { contributionRegistry } from "../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
-import SessionPanel from "../browser/SessionPanel.vue";
 import VaultPanel from '../workspace/VaultPanel.vue';
 import ClipboardPanel from "../system/ClipboardPanel.vue";
 import AppPanel from "../system/AppPanel.vue";
@@ -104,6 +101,10 @@ const browserDockContributions = contributionRegistry.getSurfaceContributions(
 function dockOf(view: string) {
   return browserDockContributions.find((c) => c.view === view)?.component;
 }
+// Browser 原生宿主：经 CONTRIBUTION_SLOTS.BROWSER_HOST 渲染；Browser absent → undefined → 不创建 webview。
+const browserHostComp = contributionRegistry.getSurfaceContributions(
+  CONTRIBUTION_SLOTS.BROWSER_HOST,
+)[0]?.component;
 
 // 终端宫格布局 class（单 / 2 / 4 / 9）
 const gridClass = computed(() => {
@@ -163,7 +164,7 @@ watch(
           <!-- BrowserHost 在 browser/grid 视图都要参与布局（有 rect 供宫格定位），
                其内部用 visibility 控制显隐（isBrowserVisible），不能用 v-show=display:none，
                否则 grid 视图 rect=0 导致宫格定位全跳过、激活页签不移出。 -->
-          <BrowserHost v-show="layout.mainView === 'browser' || layout.mainView === 'grid'" />
+          <component :is="browserHostComp" v-show="layout.mainView === 'browser' || layout.mainView === 'grid'" />
         </div>
         <!-- 右侧 Dock：浏览网页的同时操作文件管理 / 终端 -->
         <aside v-if="layout.browserDockOpen && layout.mainView === 'browser'" class="browser-dock">
@@ -176,9 +177,9 @@ watch(
           </div>
           <component :is="dockOf('files')" v-if="layout.browserDockTab === 'files'" />
           <!-- M1-8 资源瀑布：请求/响应列表（脱敏 DTO），挂 Dock 第三 Tab -->
-          <ResourceWaterfall v-else-if="layout.browserDockTab === 'net'" />
+          <component :is="dockOf('net')" v-else-if="layout.browserDockTab === 'net'" />
           <!-- M1-9 历史会话：保存/回看/恢复/删除，挂 Dock 第四 Tab -->
-          <SessionPanel v-else-if="layout.browserDockTab === 'session'" />
+          <component :is="dockOf('session')" v-else-if="layout.browserDockTab === 'session'" />
           <!-- 浏览时右侧 Dock 终端：与终端视图共享同一组实例（dock 内竖向堆叠） -->
           <div v-else class="dock-term-wrap">
             <div class="term-grid dock-grid" v-if="system.termPanes.length">

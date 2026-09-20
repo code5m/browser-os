@@ -3,10 +3,10 @@
 // 列表 + 详情（含已脱敏资源瀑布）+ 恢复/删除/导出 + 会话策略开关。
 // 全部数据来自后端脱敏存档；详情中的资源记录与 M1-8 瀑布同构。
 import { computed, onMounted } from "vue";
-import { useBrowserStore } from "../../stores/useBrowserStore";
-import { useLayoutStore } from "../../stores/useLayoutStore";
-import { useSessionStore } from "../../stores/useSessionStore";
-import { displayUrl, formatDuration, formatSize } from "../../stores/useResourceStore";
+import { useBrowserStore } from "../state/useBrowserStore";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
+import { useSessionStore } from "../../../stores/useSessionStore";
+import { displayUrl, formatDuration, formatSize } from "../../../stores/useResourceStore";
 
 const browser = useBrowserStore();
 const layout = useLayoutStore();

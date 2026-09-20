@@ -97,6 +97,22 @@ function workspaceRegistersContributions() {
   return { exists: true, slots, usesGenericRegistry: usesGeneric };
 }
 
+const BROWSER_INDEX_TS = join(ROOT, "src/capabilities/browser/index.ts");
+/** 静态：browser 适配器是否向通用 Registry 注册贡献 */
+function browserRegistersContributions() {
+  if (!existsSync(BROWSER_INDEX_TS)) return { exists: false, slots: [], usesGenericRegistry: false };
+  const indexSrc = readFileSync(BROWSER_INDEX_TS, "utf8");
+  const typesTs = join(ROOT, "src/capability/contribution/types.ts");
+  const typesSrc = existsSync(typesTs) ? readFileSync(typesTs, "utf8") : "";
+  const combined = indexSrc + "\n" + typesSrc;
+  const slots = [];
+  for (const slot of ["browser-host", "browser-dock"]) {
+    if (new RegExp(`["']${slot}["']`).test(combined)) slots.push(slot);
+  }
+  const usesGeneric = /contributionRegistry\s*\.\s*registerContribution/.test(indexSrc);
+  return { exists: true, slots, usesGenericRegistry: usesGeneric };
+}
+
 /** 静态：某 Shell 文件是否 import 了给定能力内部（正则） */
 function shellImportsInto(fileRel, re) {
   const abs = join(ROOT, fileRel);
@@ -199,6 +215,13 @@ async function runDynamicTests() {
     return true;
   });
 
+  await t("C6-BROWSER-ABSENT", "Browser absent：browser-host 槽为空（Shell 不创建 webview，不崩溃）", () => {
+    const fresh = reg.createContributionRegistry();
+    const host = fresh.getSurfaceContributions("browser-host");
+    if (host.length !== 0) return `absent 时不应有 browser-host 贡献: ${host.length}`;
+    return true;
+  });
+
   return results;
 }
 
@@ -234,6 +257,18 @@ function runStaticChecks() {
   const wsReg = workspaceRegistersContributions();
   t("C5-WS-ADAPTER", "Workspace 适配器使用 contributionRegistry.registerContribution", wsReg.exists && wsReg.usesGenericRegistry, `exists=${wsReg.exists} usesGeneric=${wsReg.usesGenericRegistry}`);
   t("C5-WS-SLOTS", "Workspace 注册 workbench-main + browser-dock 槽", wsReg.slots.length === 2, `slots=${wsReg.slots.join(",")}`);
+
+  // ── Browser C3（Train C） ──
+  const BR_RE = /(?:^|\/)src\/capabilities\/browser\/(?:state|ui|services|lifecycle|resource|internal)\//;
+  const maBr = shellImportsInto("src/components/layout/MainArea.vue", BR_RE);
+  const tbBr = shellImportsInto("src/components/layout/TopBar.vue", BR_RE);
+  const utbBr = shellImportsInto("src/components/layout/UnifiedTabBar.vue", BR_RE);
+  t("C5-BR-MAINAREA", "MainArea 不 import src/capabilities/browser 内部", maBr.length === 0, `imports=${maBr.join(",")}`);
+  t("C5-BR-TOPBAR", "TopBar 不 import src/capabilities/browser 内部", tbBr.length === 0, `imports=${tbBr.join(",")}`);
+  t("C5-BR-TABBAR", "UnifiedTabBar 不 import src/capabilities/browser 内部", utbBr.length === 0, `imports=${utbBr.join(",")}`);
+  const brReg = browserRegistersContributions();
+  t("C5-BR-ADAPTER", "Browser 适配器使用 contributionRegistry.registerContribution", brReg.exists && brReg.usesGenericRegistry, `exists=${brReg.exists} usesGeneric=${brReg.usesGenericRegistry}`);
+  t("C5-BR-SLOTS", "Browser 注册 browser-host + browser-dock 槽", brReg.slots.length === 2, `slots=${brReg.slots.join(",")}`);
 
   return results;
 }

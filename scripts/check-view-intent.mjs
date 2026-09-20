@@ -24,7 +24,7 @@ import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOT = process.cwd();
-const STORE = "src/stores/useBrowserStore.ts";
+const STORE = "src/capabilities/browser/state/useBrowserStore.ts";
 const LAYOUT = "src/stores/useLayoutStore.ts";
 
 let failures = 0;
