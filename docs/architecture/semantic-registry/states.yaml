@@ -61,6 +61,16 @@ owner_implementations:
     paths:
       - src/stores/useRepoStore.ts
       - src/capabilities/workspace/repo/state/useRepoStore.ts
+  useScriptStore:
+    symbol: useScriptStore
+    paths:
+      - src/stores/useScriptStore.ts
+      - src/capabilities/workspace/script/state/useScriptStore.ts
+  useSnippetStore:
+    symbol: useSnippetStore
+    paths:
+      - src/stores/useSnippetStore.ts
+      - src/capabilities/workspace/snippet/state/useSnippetStore.ts
   useBookmarkStore:
     symbol: useBookmarkStore
     paths:
@@ -816,10 +826,6 @@ observed_not_governed:
 
   useWorkspaceStore:
     - audit
-    - scripts
-    - scriptForm
-    - snippets
-    - snippetForm
     - recents
 
   useArtifactStore:
@@ -838,6 +844,14 @@ observed_not_governed:
     - preview
     - busy
     - job
+
+  useScriptStore:
+    - scripts
+    - scriptForm
+
+  useSnippetStore:
+    - snippets
+    - snippetForm
 
   useFileStore:
     - fileEntries

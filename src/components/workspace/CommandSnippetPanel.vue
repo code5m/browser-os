@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
-import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
+import { useSnippetStore } from "../../stores/useSnippetStore";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import {
   buildSnippetCategoryTree,
@@ -13,7 +13,7 @@ import type { CommandSnippet } from "../../types";
 import ScriptParamForm from "./ScriptParamForm.vue";
 import ScriptRunDialog from "./ScriptRunDialog.vue";
 
-const ws = useWorkspaceStore();
+const sn = useSnippetStore();
 const layout = useLayoutStore();
 
 const selectedId = ref<string | null>(null);
@@ -25,22 +25,22 @@ const favVersion = ref(0);
 
 const tree = computed(() => {
   favVersion.value;
-  return buildSnippetCategoryTree(ws.snippets, query.value, favoritesOnly.value);
+  return buildSnippetCategoryTree(sn.snippets, query.value, favoritesOnly.value);
 });
-const issues = computed(() => validateSnippetForm(ws.snippetForm));
+const issues = computed(() => validateSnippetForm(sn.snippetForm));
 
 onMounted(() => {
-  ws.loadSnippets();
+  sn.loadSnippets();
 });
 
 function newSnippet() {
-  ws.openSnippetForm(null);
+  sn.openSnippetForm(null);
   editing.value = true;
   selectedId.value = null;
 }
 function editSnippet(m: CommandSnippet) {
   selectedId.value = m.id;
-  ws.openSnippetForm(m);
+  sn.openSnippetForm(m);
   editing.value = true;
 }
 function backToList() {
@@ -52,7 +52,7 @@ async function save() {
     layout.showToast("表单校验未通过：" + issues.value[0].message);
     return;
   }
-  await ws.saveSnippet();
+  await sn.saveSnippet();
   editing.value = false;
   selectedId.value = null;
 }
@@ -62,7 +62,7 @@ async function remove(m: CommandSnippet) {
     return;
   }
   if (!confirm(`删除命令「${m.name}」？此操作不可恢复`)) return;
-  await ws.removeSnippet(m);
+  await sn.removeSnippet(m);
 }
 function toggleFav(id: string) {
   toggleSnippetFavorite(id);
@@ -111,27 +111,27 @@ function openRun(m: CommandSnippet) {
     <div v-else class="edit-pane">
       <button class="back" @click="backToList">← 返回列表</button>
       <form @submit.prevent="save">
-        <label>名称<input v-model="ws.snippetForm.name" placeholder="命令名（字母数字 _ - . 空格）" /></label>
-        <label>分类<input v-model="ws.snippetForm.category" placeholder="如 general / ops" /></label>
+        <label>名称<input v-model="sn.snippetForm.name" placeholder="命令名（字母数字 _ - . 空格）" /></label>
+        <label>分类<input v-model="sn.snippetForm.category" placeholder="如 general / ops" /></label>
         <label>解释器
-          <select v-model="ws.snippetForm.interpreter">
+          <select v-model="sn.snippetForm.interpreter">
             <option value="bash">bash</option>
             <option value="sh">sh</option>
             <option value="python3">python3</option>
             <option value="node">node</option>
           </select>
         </label>
-        <label>描述<textarea v-model="ws.snippetForm.description" rows="2" placeholder="可选"></textarea></label>
+        <label>描述<textarea v-model="sn.snippetForm.description" rows="2" placeholder="可选"></textarea></label>
         <label>argv（一行一个元素）
-          <textarea v-model="ws.snippetForm.argvText" rows="7" class="argv" placeholder="df&#10;-h&#10;{PATH}"></textarea>
+          <textarea v-model="sn.snippetForm.argvText" rows="7" class="argv" placeholder="df&#10;-h&#10;{PATH}"></textarea>
         </label>
-        <label>超时(秒，0=全局默认)<input type="number" min="0" v-model.number="ws.snippetForm.timeout_secs" /></label>
+        <label>超时(秒，0=全局默认)<input type="number" min="0" v-model.number="sn.snippetForm.timeout_secs" /></label>
         <div class="checks">
-          <label><input type="checkbox" v-model="ws.snippetForm.enabled" /> 启用</label>
-          <label><input type="checkbox" v-model="ws.snippetForm.dangerous" /> 高风险运行前确认</label>
+          <label><input type="checkbox" v-model="sn.snippetForm.enabled" /> 启用</label>
+          <label><input type="checkbox" v-model="sn.snippetForm.dangerous" /> 高风险运行前确认</label>
         </div>
 
-        <ScriptParamForm v-model:params="ws.snippetForm.params" />
+        <ScriptParamForm v-model:params="sn.snippetForm.params" />
 
         <ul v-if="issues.length" class="errors">
           <li v-for="(it, i) in issues" :key="i">⚠ {{ it.message }}</li>

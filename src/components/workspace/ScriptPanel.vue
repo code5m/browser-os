@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
-import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
+import { useScriptStore } from "../../stores/useScriptStore";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { buildCategoryTree, validateScriptForm, canDeleteScript } from "../../utils/scriptUi";
 import type { ScriptMeta } from "../../types";
@@ -8,7 +8,7 @@ import ScriptParamForm from "./ScriptParamForm.vue";
 import ScriptRunDialog from "./ScriptRunDialog.vue";
 import ScriptRunHistory from "./ScriptRunHistory.vue";
 
-const ws = useWorkspaceStore();
+const sc = useScriptStore();
 const layout = useLayoutStore();
 
 const selectedId = ref<string | null>(null);
@@ -17,21 +17,21 @@ const running = ref<ScriptMeta | null>(null);
 // M2-5.c 运行历史 tab：'list' 列表（CRUD） / 'history' 历史
 const viewTab = ref<"list" | "history">("list");
 
-const tree = computed(() => buildCategoryTree(ws.scripts));
-const issues = computed(() => validateScriptForm(ws.scriptForm));
+const tree = computed(() => buildCategoryTree(sc.scripts));
+const issues = computed(() => validateScriptForm(sc.scriptForm));
 
 onMounted(() => {
-  ws.loadScripts();
+  sc.loadScripts();
 });
 
 function newScript() {
-  ws.openScriptForm(null);
+  sc.openScriptForm(null);
   editing.value = true;
   selectedId.value = null;
 }
 function editScript(m: ScriptMeta) {
   selectedId.value = m.id;
-  ws.openScriptForm(m);
+  sc.openScriptForm(m);
   editing.value = true;
 }
 function backToList() {
@@ -43,7 +43,7 @@ async function save() {
     layout.showToast("表单校验未通过：" + issues.value[0].message);
     return;
   }
-  await ws.saveScript();
+  await sc.saveScript();
   editing.value = false;
   selectedId.value = null;
 }
@@ -54,7 +54,7 @@ async function remove(m: ScriptMeta) {
   }
   // 删除二次确认（U4/U5）
   if (!confirm(`删除脚本「${m.name}」？此操作不可恢复`)) return;
-  await ws.removeScript(m);
+  await sc.removeScript(m);
 }
 function openRun(m: ScriptMeta) {
   running.value = m;
@@ -78,7 +78,7 @@ function openRun(m: ScriptMeta) {
 
       <template v-if="viewTab === 'list'">
         <button class="new-btn" @click="newScript">+ 新建脚本</button>
-        <div v-if="!ws.scripts.length" class="empty">暂无脚本，点「新建脚本」添加一个</div>
+        <div v-if="!sc.scripts.length" class="empty">暂无脚本，点「新建脚本」添加一个</div>
         <div v-for="node in tree" :key="node.category" class="cat">
           <div class="cat-title">{{ node.category }}（{{ node.scripts.length }}）</div>
           <ul>
@@ -103,10 +103,10 @@ function openRun(m: ScriptMeta) {
       <button class="back" @click="backToList">← 返回列表</button>
       <!-- 后端调用统一经 bridge.ts，组件不直接 invoke -->
       <form @submit.prevent="save">
-        <label>名称<input v-model="ws.scriptForm.name" placeholder="脚本名（字母数字 _ - . 空格）" /></label>
-        <label>分类<input v-model="ws.scriptForm.category" placeholder="如 general / ops" /></label>
+        <label>名称<input v-model="sc.scriptForm.name" placeholder="脚本名（字母数字 _ - . 空格）" /></label>
+        <label>分类<input v-model="sc.scriptForm.category" placeholder="如 general / ops" /></label>
         <label>解释器
-          <select v-model="ws.scriptForm.interpreter">
+          <select v-model="sc.scriptForm.interpreter">
             <option value="bash">bash</option>
             <option value="sh">sh</option>
             <option value="python3">python3</option>
@@ -114,15 +114,15 @@ function openRun(m: ScriptMeta) {
             <option value="shebang">shebang</option>
           </select>
         </label>
-        <label>描述<textarea v-model="ws.scriptForm.description" rows="2" placeholder="可选"></textarea></label>
+        <label>描述<textarea v-model="sc.scriptForm.description" rows="2" placeholder="可选"></textarea></label>
         <label>正文
           <!-- 前端只传正文，路径由后端按 <id>.<ext> 生成 -->
-          <textarea v-model="ws.scriptForm.body" rows="8" placeholder="脚本正文" class="body"></textarea>
+          <textarea v-model="sc.scriptForm.body" rows="8" placeholder="脚本正文" class="body"></textarea>
         </label>
-        <label>超时(秒，0=全局默认)<input type="number" min="0" v-model.number="ws.scriptForm.timeout_secs" /></label>
-        <label class="chk"><input type="checkbox" v-model="ws.scriptForm.enabled" /> 启用</label>
+        <label>超时(秒，0=全局默认)<input type="number" min="0" v-model.number="sc.scriptForm.timeout_secs" /></label>
+        <label class="chk"><input type="checkbox" v-model="sc.scriptForm.enabled" /> 启用</label>
 
-        <ScriptParamForm v-model:params="ws.scriptForm.params" />
+        <ScriptParamForm v-model:params="sc.scriptForm.params" />
 
         <ul v-if="issues.length" class="errors">
           <li v-for="(it, i) in issues" :key="i">⚠ {{ it.message }}</li>

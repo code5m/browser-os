@@ -4,7 +4,7 @@
 // 数据源 = bridge.scriptRunsList()，仅打开时取一次；运行态由 RunPanel（b 卡）负责。
 import { ref, computed, onMounted } from "vue";
 import { bridge } from "../../bridge";
-import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
+import { useScriptStore } from "../../stores/useScriptStore";
 import {
   filterRuns,
   groupRunsByDay,
@@ -17,7 +17,7 @@ import {
 } from "../../utils/scriptUi";
 import type { ScriptRunRecord } from "../../types";
 
-const ws = useWorkspaceStore();
+const ws = useScriptStore();
 
 const records = ref<ScriptRunRecord[]>([]);
 const loading = ref(false);

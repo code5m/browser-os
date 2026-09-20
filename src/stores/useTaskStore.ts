@@ -30,7 +30,8 @@ import {
   type TaskIssue,
   type TaskTargetOption,
 } from "../utils/taskUi";
-import { useWorkspaceStore } from "./useWorkspaceStore";
+import { useScriptStore } from "./useScriptStore";
+import { useSnippetStore } from "./useSnippetStore";
 
 export const useTaskStore = defineStore("tasks", () => {
   const tasks = ref<TaskDef[]>([]);
@@ -69,18 +70,19 @@ export const useTaskStore = defineStore("tasks", () => {
   /// 目标候选：脚本库（script）+ 命令片段库（command）。
   /// 二者都来自既有 store，不新增读取通道。
   async function loadTargets(): Promise<void> {
-    const ws = useWorkspaceStore();
-    if (ws.scripts.length === 0) await ws.loadScripts();
-    if (ws.snippets.length === 0) await ws.loadSnippets();
+    const ss = useScriptStore();
+    const sn = useSnippetStore();
+    if (ss.scripts.length === 0) await ss.loadScripts();
+    if (sn.snippets.length === 0) await sn.loadSnippets();
     targets.value = [
-      ...ws.scripts.map((s) => ({
+      ...ss.scripts.map((s) => ({
         id: s.id,
         name: s.name,
         kind: "script" as const,
         params: s.params ?? [],
         dangerous: false,
       })),
-      ...ws.snippets.map((s) => ({
+      ...sn.snippets.map((s) => ({
         id: s.id,
         name: s.name,
         kind: "command" as const,

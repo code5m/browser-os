@@ -47,10 +47,17 @@ const ARTIFACT_WRITE = ["editTitle", "editTags", "editText"];
 const REPO_ALL = ["repos", "form", "preview", "busy", "job"];
 const REPO_WRITE = ["preview"];
 
+// ---- Script / Snippet 域（8C-0D）----
+// 状态 = 列表 ref + reactive 表单对象；表单经 v-model 于字段（可接受 UI 态）→ write 为空（仅 WS-OWNER-01 守护声明）。
+const SCRIPT_ALL = ["scripts", "scriptForm"];
+const SNIPPET_ALL = ["snippets", "snippetForm"];
+
 const DOMAINS = [
   { name: "files", storeName: "useFileStore", storeFile: join(SRC, "stores", "useFileStore.ts"), all: FILES_ALL, write: FILES_WRITE, rule: "WS_OWNER_02" },
   { name: "artifact", storeName: "useArtifactStore", storeFile: join(SRC, "stores", "useArtifactStore.ts"), all: ARTIFACT_ALL, write: ARTIFACT_WRITE, rule: "WS_OWNER_06" },
   { name: "repo", storeName: "useRepoStore", storeFile: join(SRC, "stores", "useRepoStore.ts"), all: REPO_ALL, write: REPO_WRITE, rule: "WS_OWNER_08" },
+  { name: "script", storeName: "useScriptStore", storeFile: join(SRC, "stores", "useScriptStore.ts"), all: SCRIPT_ALL, write: [], rule: "WS_OWNER_10" },
+  { name: "snippet", storeName: "useSnippetStore", storeFile: join(SRC, "stores", "useSnippetStore.ts"), all: SNIPPET_ALL, write: [], rule: "WS_OWNER_12" },
 ];
 
 const MOVED_OUT = [...new Set(DOMAINS.flatMap((d) => d.all))];
@@ -89,6 +96,7 @@ if (existsSync(WS_STORE)) {
 const files = existsSync(SRC) ? walk(SRC) : [];
 for (const d of DOMAINS) {
   if (!existsSync(d.storeFile)) continue;
+  if (d.write.length === 0) continue; // 无直写防护（表单态 v-model 于字段，属可接受 UI 态）
   const WORD = d.write.join("|");
   const assignRe = new RegExp("\\b(" + STORE_ALIASES.join("|") + ")\\.(" + WORD + ")\\s*=(?!=)", "g");
   const vmodelRe = new RegExp("v-model\\s*=\\s*[\"'][^\"']*\\.(" + WORD + ")\\b", "g");

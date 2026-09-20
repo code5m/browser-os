@@ -273,6 +273,53 @@ owners:
       Git 版本操作不在此域（GitPanel 走 bridge / useGitStore）——REPO context ≠ GIT operation；token 走 keyring（credential owner）。
     status: CURRENT_FACT
 
+  script:
+    owner: useScriptStore
+    owns:
+      - scripts
+      - scriptForm
+    owner_only_api:
+      - loadScripts
+      - openScriptForm
+      - saveScript
+      - removeScript
+    public_intent_api:
+      - loadScripts
+      - saveScript
+      - removeScript
+    forbidden_callers:
+      - components/**（不得直写 scripts；表单 scriptForm 经 v-model 于字段可接受，增删改只经 action）
+    authorized_callers:
+      - useScriptStore（owner 自身）
+      - useTaskStore（只读 targets 候选：scripts）
+    rationale: |
+      Phase 8C-0D 将脚本库 CRUD 从 useWorkspaceStore 抽出为独立 owner（useScriptStore），后端持久化（scriptList/Add/Update/Remove）。
+    status: CURRENT_FACT
+
+  snippet:
+    owner: useSnippetStore
+    owns:
+      - snippets
+      - snippetForm
+    owner_only_api:
+      - loadSnippets
+      - openSnippetForm
+      - saveSnippet
+      - removeSnippet
+    public_intent_api:
+      - loadSnippets
+      - saveSnippet
+      - removeSnippet
+    forbidden_callers:
+      - components/**（不得直写 snippets；表单 snippetForm 经 v-model 于字段可接受，增删改只经 action）
+    authorized_callers:
+      - useSnippetStore（owner 自身）
+      - useTaskStore（只读 targets 候选：snippets）
+    rationale: |
+      Phase 8C-0D 将命令片段库 CRUD 从 useWorkspaceStore 抽出为独立 owner（useSnippetStore），后端持久化（snippetList/Add/Update/Remove）。
+      与 SCRIPT 独立（不同后端命令/表），二者同属 Developer 家族但不合并。
+    status: CURRENT_FACT
+
   bookmark:
     owner: useBookmarkStore
     owns:
@@ -423,6 +470,18 @@ violation_patterns:
     severity: fail
   - id: WS_OWNER_08
     desc: Repo 状态只能由 useRepoStore action/canonical writer 写；组件不得直写（preview 关闭须经 clearPreview）
+    severity: fail
+  - id: WS_OWNER_09
+    desc: useWorkspaceStore 不得再声明 Script-owned state（scripts/scriptForm）；已迁 useScriptStore（8C-0D）
+    severity: fail
+  - id: WS_OWNER_10
+    desc: Script 增删改只能经 useScriptStore action；组件不得直写 scripts
+    severity: fail
+  - id: WS_OWNER_11
+    desc: useWorkspaceStore 不得再声明 Snippet-owned state（snippets/snippetForm）；已迁 useSnippetStore（8C-0D）
+    severity: fail
+  - id: WS_OWNER_12
+    desc: Snippet 增删改只能经 useSnippetStore action；组件不得直写 snippets
     severity: fail
   - id: COMPONENT_WRITES_BOOKMARK
     desc: 组件直接写 items / panelOpen（owner: useBookmarkStore）；或维护第二份 Bookmark[]
