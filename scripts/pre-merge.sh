@@ -528,7 +528,7 @@ run_pre_merge() {
   # Phase 03 checker gate (added by 11-ci). Wires the five boundary checkers + doctor
   # into the pre-merge gate WITHOUT weakening any existing M0-1.c check above.
   pm_log "Phase 03 checker gate (architecture/ui/native/runtime/task-boundary + capability + doctor)…"
-  for c in check-architecture check-ui check-native check-browser-runtime check-task-boundary check-grid-close check-view-intent check-capability-boundaries check-capability-composition check-terminal-owners check-semantic-registry check-semantic-closure-logic check-workspace-owners check-sensitive-side-effects doctor; do
+  for c in check-architecture check-ui check-native check-browser-runtime check-task-boundary check-grid-close check-view-intent check-capability-boundaries check-capability-composition check-terminal-owners check-developer-owners check-semantic-registry check-semantic-closure-logic check-workspace-owners check-sensitive-side-effects doctor; do
     if ! (cd "$ROOT" && node "$SCRIPT_DIR/$c.mjs") >/dev/null 2>&1; then
       pm_fail "phase03 $c.mjs"
     fi

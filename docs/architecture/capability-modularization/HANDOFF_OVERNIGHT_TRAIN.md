@@ -19,8 +19,8 @@
 | B | Workspace 物理 capability 隔离 + C3 | **PASS** | capability-phase8c-workspace-composable-pass (9074b57) |
 | C | Browser/Grid 隔离 + C3 | **PASS** | capability-phase8d-browser-composable-code-pass (d6a2134) |
 | D | Terminal 隔离 + C3 | **PASS**（Terminal = C3；CURRENTLY_COMPOSABLE 3→4） | capability-phase8e-terminal-composable-code-pass |
-| E | Developer family（Database/Git） | **NEXT** | — |
-| F | Resource Governor + Profiles | NOT_REACHED | — |
+| E | Developer family（Database/Git）边界审计 + 能力化 | **PASS**（边界固化；Database/Git = C1，未强拆 C3） | capability-phase8e-developer-family-audit-pass |
+| F | Resource Governor + Profiles | NEXT | — |
 | G | Final acceptance + red team | NOT_REACHED | — |
 
 **CURRENTLY_COMPOSABLE = 4**（Bookmark C3 + Workspace C3 + Browser C3 + Terminal C3）。目标已达成（≥4），继续 E/F/G。
@@ -48,6 +48,24 @@
 - **成熟度**：Terminal = **C3**（C4 无物理 suspend、C5 未做真机资源释放实测 → **不高报**）。
 - 债务：Debt-7A-2 **CLOSED**；新增 Debt-8E-1/2/3/4（显式）。
 
+### Train E 摘要（PASS，Developer family 边界审计 + 能力化；Database/Git = C1）
+
+- **审计结论**：Database（`useDatabaseStore`）、Git（`useGitStore`）、Repo（`useRepoStore`）三 owner
+  **物理分离**，无合并 `DeveloperStore`；Repo Context ≠ Git Operation；Credential 只经后端密钥库
+  引用（前端零持久化）。三者此前已在 Semantic/Capability Registry 登记为独立 owner 的 CAPABILITY。
+- **边界机器固化**：新增 `scripts/check-developer-owners.mjs`（**11/11 PASS**）：
+  DEV-01 三 owner 分离 / DEV-02 各 owner 声明自身状态 / DEV-02b 无 `useDeveloperStore` /
+  DEV-02c 无第二真源 / DEV-03 凭据只经引用 / DEV-04 Repo≠Git / DEV-05 跨能力不互相 import 内部。
+  已接入 `npm run check` 与 `pre-merge.sh` Phase 03。
+- **成熟度诚实裁决（不高报）**：Database / Git 当前是 **always-loaded Workspace 面板**
+  （DatabasePanel/GitPanel 在 `src/components/workspace/`），connect 即建真实 DB 连接、操作即 spawn
+  git 子进程（重资源），**非 absent-composable**，故记为 **C1**。未强行抽为可选能力包（避免触碰
+  Workspace 表面 + 稀释边界清晰度的无语义迁移）。CURRENTLY_COMPOSABLE 仍为 **4**（未新增）。
+  物理抽取为可选能力包达到 C3 = **Debt-8E-5（Database）/ Debt-8E-6（Git）**，交后续 train。
+- 既有 `check-database-policy.py` / `check-database-ui-logic.mjs` 的失配（pre-merge 历史 FAIL）属 DB
+  后端管道语义，独立于能力边界，本 Train 未强行修复（不归并以稀释 Terminal 债已修的清晰度），
+  仅以 DEV 门禁在边界维度补位。
+
 ## 已成 capability 的形态（Bookmark / Workspace / Browser 同一模式，可直接复用）
 
 ```
@@ -74,7 +92,9 @@ src/capabilities/<id>/
 - 多 checker 的 `src/stores/useBrowserStore.ts` 路径已统一迁移（scripts/ 内 sed）。
 - 验收：build PASS；runtime `bootstrap activated=true(3 能力) / vue mounted / 0 真实 error`；semantic PASS+ALL_PASS；boundaries PASS(0 fail)+self-test 12/12；registry PASS(0 fail)；composition 22/22(+self-test 3/3)；closure 27/27；npm run check PASS。
 
-## 下一步（Train D: Terminal → C3，达成 CURRENTLY_COMPOSABLE=4）
+## Train D 实施前预读（已执行，保留作历史切片）
+
+> 状态：Train D / Train E 均已完成。当前 NEXT = **Train F**（Resource Governor + 真实 Minimal/Developer/Full profile + 真实资源测量）。CURRENTLY_COMPOSABLE = 4。
 
 前置：复读 Terminal 冻结语义（states.yaml `terminalOpen/termPanes/termGrid/termGridCount/activeTermId/autoConfirmCli/termProbeOn/m0Cfg/m0StartTs/droppedChunks/droppedBytes`；owners.yaml `terminal`；intents.yaml terminal 段）。
 

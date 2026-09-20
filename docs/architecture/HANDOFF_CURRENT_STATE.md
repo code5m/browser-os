@@ -144,6 +144,7 @@ semantic-registry-v1:  NOT EXISTS（原 Phase 1.6 可选动作；本次改以 se
 capability-phase8b-bookmark-composable-code-pass   -> <8b>（Bookmark C3）
 capability-phase8d-browser-composable-code-pass     -> d6a2134（Browser/Grid C3）
 capability-phase8e-terminal-composable-code-pass    -> <Train D HEAD>（Terminal C3；CURRENTLY_COMPOSABLE=4）
+capability-phase8e-developer-family-audit-pass       -> <Train E HEAD>（Database/Git 边界固化；成熟度 C1）
   （上述 tag 均仅本地，未 push；硬约束）
 ```
 
@@ -598,7 +599,7 @@ Capability Platform v1（Overnight Release Train，分支 feature/capability-pla
   TRAIN B  Workspace C3                    PASS（commit/未 push）
   TRAIN C  Browser/Grid C3                 PASS（tag capability-phase8d-browser-composable-code-pass @ d6a2134）
   TRAIN D  Terminal C3                     PASS（tag capability-phase8e-terminal-composable-code-pass；见下方）
-  TRAIN E  Developer family（Database/Git）  NEXT
+  TRAIN E  Developer family（Database/Git）边界审计 + 能力化  PASS（边界固化；Database/Git = C1，未强拆 C3；tag capability-phase8e-developer-family-audit-pass）
   TRAIN F  Resource Governor + Profiles      NOT_REACHED
   TRAIN G  Final automated acceptance       NOT_REACHED
   CURRENTLY_COMPOSABLE = 4（Bookmark C3 + Workspace C3 + Browser C3 + Terminal C3）
@@ -658,6 +659,8 @@ Debt-8E-1 Clipboard≡Apps 共居 useSystemStore          KNOWN DEBT（Terminal 
 Debt-8E-2 Terminal 无 adapters/ 层                    KNOWN DEBT（与 bookmark/workspace/browser 形态一致：bridge 直接调用；可选补全，非阻塞）
 Debt-8E-3 terminal-auto-confirm-cli 仍写 localStorage    KNOWN DEBT（UI 偏好非敏感；不落盘终端输出/历史，但偏好键仍在本地位；若后续要合规可迁 Keyring）
 Debt-8E-4 历史清空检测器重基线化记录                   DOC-ONLY（check-terminal-policy.py 的 TERM_HISTORY_CLEAR_MISSING 由「文本计数≥3」改为「clearTermHistory(id) + termHistories.delete(id) 同在」，更严；行为级证明见 check-terminal-owners.mjs TERM-08b/08c）
+Debt-8E-5 Database 抽为可选能力包（达 C3）            KNOWN DEBT（Train E：当前 always-loaded Workspace 面板，connect 即建真实 DB 连接，非 absent-composable；抽取为可选能力包使 absent → 不挂载面板/不建连接为后续工作）
+Debt-8E-6 Git 抽为可选能力包（达 C3）                KNOWN DEBT（Train E：当前 always-loaded Workspace 面板，操作即 spawn git 子进程，非 absent-composable；抽取为可选能力包使 absent → 不挂载面板/不 spawn 为后续工作）
 Debt-7A-2 Terminal↔Clipboard 无法拆分                CLOSED（Train D：Terminal 已抽为专属 owner useTerminalStore；见 capabilities.yaml/dependencies.yaml）
 ```
 

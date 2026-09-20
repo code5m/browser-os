@@ -210,7 +210,12 @@ capabilities:
     category: CAPABILITY
     semanticOwner: useDatabaseStore
     governanceStatus: GOVERNED
+    # Phase 8E/Train E 成熟度裁决：registered+governed 但 NOT_INTEGRATED（非 absent-composable）。
+    # 物理仍是 always-loaded Workspace 面板（DatabasePanel 在 workspace/ui），connect 即建真实 DB 连接
+    # （重资源 NETWORK+SECRET）。达到 C3 需抽为可选能力包（absent → 不挂载面板/不建连接），记为 Debt-8E-5。
+    # 边界由 scripts/check-developer-owners.mjs (DEV-*) 机器固化（无合并 store / 凭据只经 Keyring）。
     status: NOT_INTEGRATED
+    maturity: C1
     provides:
       - database.connect
       - database.query
@@ -241,7 +246,12 @@ capabilities:
     category: CAPABILITY
     semanticOwner: useGitStore
     governanceStatus: GOVERNED
+    # Phase 8E/Train E 成熟度裁决：registered+governed 但 NOT_INTEGRATED（非 absent-composable）。
+    # 物理仍是 always-loaded Workspace 面板（GitPanel 在 workspace/ui），操作即 spawn git 子进程（重资源）。
+    # 达到 C3 需抽为可选能力包（absent → 不挂载面板/不 spawn），记为 Debt-8E-6。
+    # 边界由 scripts/check-developer-owners.mjs (DEV-*) 机器固化。
     status: NOT_INTEGRATED
+    maturity: C1
     provides:
       - git.status
       - git.diff
