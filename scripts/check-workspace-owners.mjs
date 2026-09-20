@@ -18,7 +18,8 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
 const SRC = join(ROOT, "src");
-const WS_STORE = join(SRC, "stores", "useWorkspaceStore.ts");
+const WS_STORE = join(SRC, "capabilities", "workspace", "state", "useWorkspaceStore.ts");
+const WS_STORE_REL = "src/capabilities/workspace/state/useWorkspaceStore.ts";
 
 // ---- Files 域（8C-0A）----
 const FILES_ALL = [
@@ -53,11 +54,11 @@ const SCRIPT_ALL = ["scripts", "scriptForm"];
 const SNIPPET_ALL = ["snippets", "snippetForm"];
 
 const DOMAINS = [
-  { name: "files", storeName: "useFileStore", storeFile: join(SRC, "stores", "useFileStore.ts"), all: FILES_ALL, write: FILES_WRITE, rule: "WS_OWNER_02" },
-  { name: "artifact", storeName: "useArtifactStore", storeFile: join(SRC, "stores", "useArtifactStore.ts"), all: ARTIFACT_ALL, write: ARTIFACT_WRITE, rule: "WS_OWNER_06" },
-  { name: "repo", storeName: "useRepoStore", storeFile: join(SRC, "stores", "useRepoStore.ts"), all: REPO_ALL, write: REPO_WRITE, rule: "WS_OWNER_08" },
-  { name: "script", storeName: "useScriptStore", storeFile: join(SRC, "stores", "useScriptStore.ts"), all: SCRIPT_ALL, write: [], rule: "WS_OWNER_10" },
-  { name: "snippet", storeName: "useSnippetStore", storeFile: join(SRC, "stores", "useSnippetStore.ts"), all: SNIPPET_ALL, write: [], rule: "WS_OWNER_12" },
+  { name: "files", storeName: "useFileStore", storeFile: join(SRC, "capabilities", "workspace", "state", "useFileStore.ts"), all: FILES_ALL, write: FILES_WRITE, rule: "WS_OWNER_02" },
+  { name: "artifact", storeName: "useArtifactStore", storeFile: join(SRC, "capabilities", "workspace", "state", "useArtifactStore.ts"), all: ARTIFACT_ALL, write: ARTIFACT_WRITE, rule: "WS_OWNER_06" },
+  { name: "repo", storeName: "useRepoStore", storeFile: join(SRC, "capabilities", "workspace", "state", "useRepoStore.ts"), all: REPO_ALL, write: REPO_WRITE, rule: "WS_OWNER_08" },
+  { name: "script", storeName: "useScriptStore", storeFile: join(SRC, "capabilities", "workspace", "state", "useScriptStore.ts"), all: SCRIPT_ALL, write: [], rule: "WS_OWNER_10" },
+  { name: "snippet", storeName: "useSnippetStore", storeFile: join(SRC, "capabilities", "workspace", "state", "useSnippetStore.ts"), all: SNIPPET_ALL, write: [], rule: "WS_OWNER_12" },
 ];
 
 const MOVED_OUT = [...new Set(DOMAINS.flatMap((d) => d.all))];
@@ -86,7 +87,7 @@ if (existsSync(WS_STORE)) {
   for (const m of src.matchAll(re)) {
     problems.push({
       rule: "WS-OWNER-01",
-      file: "src/stores/useWorkspaceStore.ts",
+      file: WS_STORE_REL,
       detail: `useWorkspaceStore 重新声明了已抽出子域 state "${m[1]}"（应仅由对应 owner store 持有）`,
     });
   }

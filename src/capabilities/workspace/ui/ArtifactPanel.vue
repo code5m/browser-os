@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { useArtifactStore } from "../../stores/useArtifactStore";
-import ImageGallery from "../shared/ImageGallery.vue";
+import { useArtifactStore } from "../state/useArtifactStore";
+import ImageGallery from "../../../components/shared/ImageGallery.vue";
 
 const art = useArtifactStore();
 </script>

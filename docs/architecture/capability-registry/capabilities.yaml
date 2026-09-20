@@ -82,28 +82,33 @@ capabilities:
     category: CAPABILITY
     semanticOwner: useWorkspaceStore
     governanceStatus: GOVERNED
-    status: NOT_INTEGRATED
+    status: COMPATIBILITY_WRAPPED
     provides:
-      - workspace.open
-      - workspace.tree
+      - workspace.files
+      - workspace.artifact
+      - workspace.repo
+      - workspace.script
+      - workspace.snippet
+      - workspace.main-view
     dependsOn:
       - bridge
     optionalDependencies: []
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
-      activatable: false
+      activatable: true
       resident: false
     resources:
-      class: [LIGHT]
-      suspendable: true
+      class: [LIGHT, MEDIUM]
+      suspendable: false
       destroyable: false
     permissions:
       - fs.read
+      - fs.write
     persistence:
-      scope: session
+      scope: disk
       sensitive: false
-    entrypoint: src/components/workspace
+    entrypoint: src/capabilities/workspace
 
   - id: terminal
     name: Terminal

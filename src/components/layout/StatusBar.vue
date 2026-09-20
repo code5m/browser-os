@@ -2,8 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useBrowserStore } from "../../stores/useBrowserStore";
 import { useSystemStore } from "../../stores/useSystemStore";
-import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
-import { useRepoStore } from "../../stores/useRepoStore";
+import { useWorkspaceStore } from "../../capabilities/workspace/public";
+import { useRepoStore } from "../../capabilities/workspace/public";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useSettingsStore } from "../../stores/useSettingsStore";
 import { bridge } from "../../bridge";

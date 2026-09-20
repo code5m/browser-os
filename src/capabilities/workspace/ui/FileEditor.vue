@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { useFileStore } from "../../stores/useFileStore";
-import { useLayoutStore } from "../../stores/useLayoutStore";
-import { useBrowserStore } from "../../stores/useBrowserStore";
+import { useFileStore } from "../state/useFileStore";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
+import { useBrowserStore } from "../../../stores/useBrowserStore";
 
 const ws = useFileStore();
 const layout = useLayoutStore();

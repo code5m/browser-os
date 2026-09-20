@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
-import { useLayoutStore } from "../../stores/useLayoutStore";
+import { useWorkspaceStore } from "../state/useWorkspaceStore";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
 const ws = useWorkspaceStore();
 const layout = useLayoutStore();
 </script>

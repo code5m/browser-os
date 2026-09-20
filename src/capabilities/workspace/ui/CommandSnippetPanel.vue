@@ -1,17 +1,17 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
-import { useSnippetStore } from "../../stores/useSnippetStore";
-import { useLayoutStore } from "../../stores/useLayoutStore";
+import { useSnippetStore } from "../state/useSnippetStore";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
 import {
   buildSnippetCategoryTree,
   canDeleteSnippet,
   isFavoriteSnippet,
   toggleSnippetFavorite,
   validateSnippetForm,
-} from "../../utils/snippetUi";
-import type { CommandSnippet } from "../../types";
-import ScriptParamForm from "./ScriptParamForm.vue";
-import ScriptRunDialog from "./ScriptRunDialog.vue";
+} from "../../../utils/snippetUi";
+import type { CommandSnippet } from "../../../types";
+import ScriptParamForm from "../../../components/workspace/ScriptParamForm.vue";
+import ScriptRunDialog from "../../../components/workspace/ScriptRunDialog.vue";
 
 const sn = useSnippetStore();
 const layout = useLayoutStore();

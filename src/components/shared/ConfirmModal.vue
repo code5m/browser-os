@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { useRepoStore } from "../../stores/useRepoStore";
+import { useRepoStore } from "../../capabilities/workspace/public";
 import { useModalFocus } from "../../composables/useModalFocus";
 const rp = useRepoStore();
 const root = ref<HTMLElement | null>(null);

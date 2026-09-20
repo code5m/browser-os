@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { ref, reactive } from "vue";
-import { bridge } from "../bridge";
-import { useLayoutStore } from "./useLayoutStore";
+import { bridge } from "../../../bridge";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { useArtifactStore } from "./useArtifactStore";
 
 // ============================================================

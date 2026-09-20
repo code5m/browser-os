@@ -2,7 +2,7 @@
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../stores/useBrowserStore";
 import { ref, computed } from "vue";
-import { useFileStore } from "../../stores/useFileStore";
+import { useFileStore } from "../../capabilities/workspace/public";
 import { useSystemStore } from "../../stores/useSystemStore";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 

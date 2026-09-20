@@ -8,6 +8,7 @@
 
 import { createCapabilityRuntime, type CapabilityRuntime } from './runtime'
 import { bookmarkCapability, BOOKMARK_CAPABILITY_ID } from '../capabilities/bookmark'
+import { workspaceCapability, WORKSPACE_CAPABILITY_ID } from '../capabilities/workspace'
 
 let runtime: CapabilityRuntime | null = null
 let lastError: string | null = null
@@ -32,6 +33,9 @@ export function bootstrapCapabilityRuntime(): BootstrapResult {
     rt.register(bookmarkCapability)
     rt.resolve(BOOKMARK_CAPABILITY_ID)
     rt.activate(BOOKMARK_CAPABILITY_ID)
+    rt.register(workspaceCapability)
+    rt.resolve(WORKSPACE_CAPABILITY_ID)
+    rt.activate(WORKSPACE_CAPABILITY_ID)
     activated = true
   } catch (e) {
     lastError = e instanceof Error ? `${e.code}: ${e.message}` : String(e)

@@ -672,12 +672,12 @@ const NEG_FILES = {
 const ANCHOR_FILES = [
   { path: "src/stores/useLayoutStore.ts", src: `const gridToolbarOpen = ref(false); const sidebarOpen = ref(false); const clipOpen = ref(false);` },
   { path: "src/stores/useBrowserStore.ts", src: `const gridSession = ref(0); const aiNavOpen = ref(false);` },
-  { path: "src/stores/useWorkspaceStore.ts", src: `const recents = ref([]);` },
-  { path: "src/stores/useFileStore.ts", src: `const filePath = ref("");` },
-  { path: "src/stores/useArtifactStore.ts", src: `const current = ref(null);` },
-  { path: "src/stores/useRepoStore.ts", src: `const preview = ref(null);` },
-  { path: "src/stores/useScriptStore.ts", src: `const scripts = ref([]);` },
-  { path: "src/stores/useSnippetStore.ts", src: `const snippets = ref([]);` },
+  { path: "src/capabilities/workspace/state/useWorkspaceStore.ts", src: `const recents = ref([]);` },
+  { path: "src/capabilities/workspace/state/useFileStore.ts", src: `const filePath = ref("");` },
+  { path: "src/capabilities/workspace/state/useArtifactStore.ts", src: `const current = ref(null);` },
+  { path: "src/capabilities/workspace/state/useRepoStore.ts", src: `const preview = ref(null);` },
+  { path: "src/capabilities/workspace/state/useScriptStore.ts", src: `const scripts = ref([]);` },
+  { path: "src/capabilities/workspace/state/useSnippetStore.ts", src: `const snippets = ref([]);` },
   { path: "src/stores/useBookmarkStore.ts", src: `const panelOpen = ref(false); const items = ref([]);` },
   { path: "src/stores/useSystemStore.ts", src: `const termPanes = ref([]);` },
 ];

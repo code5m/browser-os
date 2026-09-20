@@ -25,12 +25,18 @@ export interface ContributionSlots {
   readonly ADDRESS_BAR_ACTIONS: "address-bar-actions"
   /** 顶部工具栏尾部（收藏夹入口按钮等） */
   readonly ACTIVITY_BAR_TRAILING: "activity-bar-trailing"
+  /** 主工作区视图槽：能力按 `view`（=layout.mainView 值）认领一个主视图；Shell 只按 view 渲染 */
+  readonly WORKBENCH_MAIN: "workbench-main"
+  /** 浏览器右侧 Dock 面板槽：能力按 `view` 认领一个 Dock 页签面板 */
+  readonly BROWSER_DOCK: "browser-dock"
 }
 
 export const CONTRIBUTION_SLOTS = {
   BROWSER_SIDEBAR: "browser-sidebar",
   ADDRESS_BAR_ACTIONS: "address-bar-actions",
   ACTIVITY_BAR_TRAILING: "activity-bar-trailing",
+  WORKBENCH_MAIN: "workbench-main",
+  BROWSER_DOCK: "browser-dock",
 } as const satisfies ContributionSlots
 
 /** 一条能力贡献 */
@@ -42,6 +48,12 @@ export interface Contribution {
   type: ContributionType
   /** 槽名：决定 Shell 在哪里渲染它 */
   slot: string
+  /**
+   * 视图认领键（仅 WORKBENCH_MAIN / BROWSER_DOCK 槽使用）：
+   * 能力声明自己服务哪个视图（值 = layout.mainView 的取值，如 files/arts/repo/...）。
+   * Shell 只按此键匹配渲染，不持有能力专属知识。
+   */
+  view?: string
   /** Vue 组件或异步组件加载器（由能力提供） */
   component?: Component | (() => Promise<Component>)
   /** 同槽多贡献排序（小在前） */

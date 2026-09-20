@@ -3,7 +3,7 @@ import { reactive, computed, ref } from "vue";
 import { bridge } from "../bridge";
 import { useBrowserStore } from "./useBrowserStore";
 import { useLayoutStore } from "./useLayoutStore";
-import { useFileStore } from "./useFileStore";
+import { useFileStore } from "../capabilities/workspace/public";
 import {
   HOME_APP_SESSION_ONLY_NOTICE,
   HOME_MAX_RECENTS,

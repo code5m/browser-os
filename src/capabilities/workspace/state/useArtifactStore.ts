@@ -1,8 +1,8 @@
 import { defineStore } from "pinia";
 import { ref, reactive, computed } from "vue";
-import { bridge } from "../bridge";
-import { useLayoutStore } from "./useLayoutStore";
-import { useBrowserStore } from "./useBrowserStore";
+import { bridge } from "../../../bridge";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
+import { useBrowserStore } from "../../../stores/useBrowserStore";
 
 // ============================================================
 // Phase 8C-0B — Artifact（Knowledge / 笔记 Vault）域 owner

@@ -26,6 +26,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 const REGISTRY_TS = join(ROOT, "src/capability/contribution/registry.ts");
 const BOOKMARK_INDEX_TS = join(ROOT, "src/capabilities/bookmark/index.ts");
+const WORKSPACE_INDEX_TS = join(ROOT, "src/capabilities/workspace/index.ts");
 const MAINAREA_VUE = join(ROOT, "src/components/layout/MainArea.vue");
 const ACTIVITYBAR_VUE = join(ROOT, "src/components/layout/ActivityBar.vue");
 
@@ -79,6 +80,34 @@ function bookmarkRegistersContributions() {
   }
   const usesGeneric = /contributionRegistry\s*\.\s*registerContribution/.test(indexSrc);
   return { exists: true, slots, usesGenericRegistry: usesGeneric };
+}
+
+/** 静态：workspace 适配器是否向通用 Registry 注册贡献（槽名可能定义在 contribution/types.ts） */
+function workspaceRegistersContributions() {
+  if (!existsSync(WORKSPACE_INDEX_TS)) return { exists: false, slots: [], usesGenericRegistry: false };
+  const indexSrc = readFileSync(WORKSPACE_INDEX_TS, "utf8");
+  const typesTs = join(ROOT, "src/capability/contribution/types.ts");
+  const typesSrc = existsSync(typesTs) ? readFileSync(typesTs, "utf8") : "";
+  const combined = indexSrc + "\n" + typesSrc;
+  const slots = [];
+  for (const slot of ["workbench-main", "browser-dock"]) {
+    if (new RegExp(`["']${slot}["']`).test(combined)) slots.push(slot);
+  }
+  const usesGeneric = /contributionRegistry\s*\.\s*registerContribution/.test(indexSrc);
+  return { exists: true, slots, usesGenericRegistry: usesGeneric };
+}
+
+/** 静态：某 Shell 文件是否 import 了给定能力内部（正则） */
+function shellImportsInto(fileRel, re) {
+  const abs = join(ROOT, fileRel);
+  if (!existsSync(abs)) return [];
+  const content = readFileSync(abs, "utf8");
+  const hits = [];
+  for (const spec of extractImports(content)) {
+    const norm = normalizeSpec(fileRel, spec);
+    if (norm && re.test(norm)) hits.push(spec);
+  }
+  return hits;
 }
 
 async function bundleModule(entryContent, resolveDir) {
@@ -162,6 +191,14 @@ async function runDynamicTests() {
     return true;
   });
 
+  await t("C6-WORKSPACE-ABSENT", "Workspace absent：workbench-main / browser-dock 槽为空（Shell 仍渲染，不崩溃）", () => {
+    const fresh = reg.createContributionRegistry();
+    const main = fresh.getSurfaceContributions("workbench-main");
+    const dock = fresh.getSurfaceContributions("browser-dock");
+    if (main.length !== 0 || dock.length !== 0) return `absent 时不应有贡献: main=${main.length} dock=${dock.length}`;
+    return true;
+  });
+
   return results;
 }
 
@@ -181,6 +218,22 @@ function runStaticChecks() {
   const reg2 = bookmarkRegistersContributions();
   t("C2-ADAPTER", "Bookmark 适配器使用 contributionRegistry.registerContribution", reg2.exists && reg2.usesGenericRegistry, `exists=${reg2.exists} usesGeneric=${reg2.usesGenericRegistry}`);
   t("C2-SLOTS", "Bookmark 注册 3 个槽（browser-sidebar/address-bar-actions/activity-bar-trailing）", reg2.slots.length === 3, `slots=${reg2.slots.join(",")}`);
+
+  // ── Workspace C3（Train B） ──
+  const WS_RE = /(?:^|\/)src\/capabilities\/workspace\/(?:state|ui|services|lifecycle|resource|internal|adapters)\//;
+  const maWs = shellImportsInto("src/components/layout/MainArea.vue", WS_RE);
+  const abWs = shellImportsInto("src/components/layout/ActivityBar.vue", WS_RE);
+  const sbWs = shellImportsInto("src/components/layout/StatusBar.vue", WS_RE);
+  const tbWs = shellImportsInto("src/components/layout/UnifiedTabBar.vue", WS_RE);
+  const appWs = shellImportsInto("src/App.vue", WS_RE);
+  t("C5-WS-MAINAREA", "MainArea 不 import src/capabilities/workspace 内部", maWs.length === 0, `imports=${maWs.join(",")}`);
+  t("C5-WS-ACTIVITYBAR", "ActivityBar 不 import src/capabilities/workspace 内部", abWs.length === 0, `imports=${abWs.join(",")}`);
+  t("C5-WS-STATUSBAR", "StatusBar 不 import src/capabilities/workspace 内部", sbWs.length === 0, `imports=${sbWs.join(",")}`);
+  t("C5-WS-TABBAR", "UnifiedTabBar 不 import src/capabilities/workspace 内部", tbWs.length === 0, `imports=${tbWs.join(",")}`);
+  t("C5-WS-APP", "App.vue 不 import src/capabilities/workspace 内部", appWs.length === 0, `imports=${appWs.join(",")}`);
+  const wsReg = workspaceRegistersContributions();
+  t("C5-WS-ADAPTER", "Workspace 适配器使用 contributionRegistry.registerContribution", wsReg.exists && wsReg.usesGenericRegistry, `exists=${wsReg.exists} usesGeneric=${wsReg.usesGenericRegistry}`);
+  t("C5-WS-SLOTS", "Workspace 注册 workbench-main + browser-dock 槽", wsReg.slots.length === 2, `slots=${wsReg.slots.join(",")}`);
 
   return results;
 }

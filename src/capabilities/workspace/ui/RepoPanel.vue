@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { useRepoStore } from "../../stores/useRepoStore";
-import { useLayoutStore } from "../../stores/useLayoutStore";
-import GitPanel from "./GitPanel.vue";
-import GitHistory from './GitHistory.vue';
+import { useRepoStore } from "../state/useRepoStore";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
+import GitPanel from "../../../components/workspace/GitPanel.vue";
+import GitHistory from "../../../components/workspace/GitHistory.vue";
 
 const rp = useRepoStore();
 const layout = useLayoutStore();

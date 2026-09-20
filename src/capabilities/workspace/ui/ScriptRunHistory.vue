@@ -3,8 +3,8 @@
 // M2-5.c 运行历史视图：列表 + 状态筛选 + 行展开 output_tail（纯文本插值，禁 XSS）
 // 数据源 = bridge.scriptRunsList()，仅打开时取一次；运行态由 RunPanel（b 卡）负责。
 import { ref, computed, onMounted } from "vue";
-import { bridge } from "../../bridge";
-import { useScriptStore } from "../../stores/useScriptStore";
+import { bridge } from "../../../bridge";
+import { useScriptStore } from "../state/useScriptStore";
 import {
   filterRuns,
   groupRunsByDay,
@@ -14,8 +14,8 @@ import {
   summarizeRuns,
   tailPreview,
   type RunStatusFilter,
-} from "../../utils/scriptUi";
-import type { ScriptRunRecord } from "../../types";
+} from "../../../utils/scriptUi";
+import type { ScriptRunRecord } from "../../../types";
 
 const ws = useScriptStore();
 

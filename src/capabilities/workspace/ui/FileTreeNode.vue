@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { useFileStore } from "../../stores/useFileStore";
+import { useFileStore } from "../state/useFileStore";
 
 // 递归树节点：文件夹点击展开/收起（懒加载子级），文件点击打开
 const props = defineProps<{ entry: DirEntry; depth: number; ide: boolean }>();

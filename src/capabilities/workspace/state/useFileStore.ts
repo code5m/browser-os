@@ -1,9 +1,9 @@
 import { defineStore } from "pinia";
 import { ref, reactive, computed, watch, nextTick } from "vue";
-import { bridge } from "../bridge";
-import { useLayoutStore } from "./useLayoutStore";
-import { useSystemStore } from "./useSystemStore";
-import { renderMd } from "../utils/markdown";
+import { bridge } from "../../../bridge";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
+import { useSystemStore } from "../../../stores/useSystemStore";
+import { renderMd } from "../../../utils/markdown";
 
 // ============================================================
 // Phase 8C-0A — Files Domain Owner
@@ -208,7 +208,7 @@ export const useFileStore = defineStore("files", () => {
   }
   async function ctxFavorite(entry: DirEntry) {
     if (!entry.is_dir) return;
-    const { useHomeStore } = await import("./useHomeStore");
+    const { useHomeStore } = await import("../../../stores/useHomeStore");
     useHomeStore().favoriteDirectory(entry.path);
     closeFileCtx();
   }

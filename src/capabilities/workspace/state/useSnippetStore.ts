@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { ref, reactive } from "vue";
-import { bridge } from "../bridge";
-import { useLayoutStore } from "./useLayoutStore";
+import { bridge } from "../../../bridge";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
 import {
   emptySnippetForm,
   loadSnippetForm,
@@ -9,8 +9,8 @@ import {
   serializeSnippetForm,
   canDeleteSnippet,
   type SnippetForm,
-} from "../utils/snippetUi";
-import type { CommandSnippet } from "../types";
+} from "../../../utils/snippetUi";
+import type { CommandSnippet } from "../../../types";
 
 // ============================================================
 // Phase 8C-0D — Snippet（命令片段库 CRUD）域 owner

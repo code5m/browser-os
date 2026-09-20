@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
-import { useScriptStore } from "../../stores/useScriptStore";
-import { useLayoutStore } from "../../stores/useLayoutStore";
-import { buildCategoryTree, validateScriptForm, canDeleteScript } from "../../utils/scriptUi";
-import type { ScriptMeta } from "../../types";
-import ScriptParamForm from "./ScriptParamForm.vue";
-import ScriptRunDialog from "./ScriptRunDialog.vue";
+import { useScriptStore } from "../state/useScriptStore";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
+import { buildCategoryTree, validateScriptForm, canDeleteScript } from "../../../utils/scriptUi";
+import type { ScriptMeta } from "../../../types";
+import ScriptParamForm from "../../../components/workspace/ScriptParamForm.vue";
+import ScriptRunDialog from "../../../components/workspace/ScriptRunDialog.vue";
 import ScriptRunHistory from "./ScriptRunHistory.vue";
 
 const sc = useScriptStore();

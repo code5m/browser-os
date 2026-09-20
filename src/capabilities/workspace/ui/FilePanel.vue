@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
-import { useFileStore } from "../../stores/useFileStore";
-import { useWorkbenchStore } from "../../stores/useWorkbenchStore";
-import { useLayoutStore } from "../../stores/useLayoutStore";
+import { useFileStore } from "../state/useFileStore";
+import { useWorkbenchStore } from "../../../stores/useWorkbenchStore";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
 import FileTreeNode from "./FileTreeNode.vue";
 import { Crosshair, ChevronsDownUp, ChevronsUpDown, FilePlus, FolderPlus, RefreshCw } from "@lucide/vue";
 

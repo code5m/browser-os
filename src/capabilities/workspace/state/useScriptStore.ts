@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { ref, reactive } from "vue";
-import { bridge } from "../bridge";
-import { useLayoutStore } from "./useLayoutStore";
+import { bridge } from "../../../bridge";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
 import {
   emptyScriptForm,
   loadFormFromMeta,
@@ -9,8 +9,8 @@ import {
   serializeScriptForm,
   canDeleteScript,
   type ScriptForm,
-} from "../utils/scriptUi";
-import type { ScriptMeta } from "../types";
+} from "../../../utils/scriptUi";
+import type { ScriptMeta } from "../../../types";
 
 // ============================================================
 // Phase 8C-0D — Script（脚本库 CRUD）域 owner

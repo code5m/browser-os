@@ -8,21 +8,13 @@ import { contributionRegistry } from "../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
 import SessionPanel from "../browser/SessionPanel.vue";
 import VaultPanel from '../workspace/VaultPanel.vue';
-import FileEditor from "../workspace/FileEditor.vue";
-
-import FilePanel from "../workspace/FilePanel.vue";
-import ArtifactPanel from "../workspace/ArtifactPanel.vue";
 import ClipboardPanel from "../system/ClipboardPanel.vue";
-import AuditPanel from "../workspace/AuditPanel.vue";
-import RepoPanel from "../workspace/RepoPanel.vue";
 import AppPanel from "../system/AppPanel.vue";
 import TerminalPane from "../system/TerminalPane.vue";
 import { useSystemStore } from "../../stores/useSystemStore";
 import HomePanel from "../home/HomePanel.vue";
 import SettingsPanel from "../system/SettingsPanel.vue";
-import ScriptPanel from "../workspace/ScriptPanel.vue";
 import ToolBox from "../workspace/ToolBox.vue";
-import CommandSnippetPanel from "../workspace/CommandSnippetPanel.vue";
 // M4-4 数据库面板：懒加载（defineAsyncComponent），将其 15KB+ 纯逻辑(dbUi.ts)、
 // store(useDatabaseStore.ts) 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
 // 仅在 mainView==='db' 首次渲染时才拉取该 chunk，不破坏其它视图。
@@ -98,6 +90,21 @@ const sidebarContributions = contributionRegistry.getSurfaceContributions(
   CONTRIBUTION_SLOTS.BROWSER_SIDEBAR,
 );
 
+// Workspace 主视图 / Dock 贡献：经通用 Contribution Registry 按 view 认领渲染。
+// Shell 不持有 Workspace 专属知识（不 import 其 store / ui），C3 关键（Train B）。
+const workbenchMainContributions = contributionRegistry.getSurfaceContributions(
+  CONTRIBUTION_SLOTS.WORKBENCH_MAIN,
+);
+function viewOf(view: string) {
+  return workbenchMainContributions.find((c) => c.view === view)?.component;
+}
+const browserDockContributions = contributionRegistry.getSurfaceContributions(
+  CONTRIBUTION_SLOTS.BROWSER_DOCK,
+);
+function dockOf(view: string) {
+  return browserDockContributions.find((c) => c.view === view)?.component;
+}
+
 // 终端宫格布局 class（单 / 2 / 4 / 9）
 const gridClass = computed(() => {
   if (!system.termGrid) return "grid-off";
@@ -167,7 +174,7 @@ watch(
             <button :class="{ active: layout.browserDockTab === 'session' }" @click="layout.browserDockTab = 'session'">💾 会话</button>
             <button class="close" @click="layout.browserDockOpen = false" title="收起">✕</button>
           </div>
-          <FilePanel v-if="layout.browserDockTab === 'files'" />
+          <component :is="dockOf('files')" v-if="layout.browserDockTab === 'files'" />
           <!-- M1-8 资源瀑布：请求/响应列表（脱敏 DTO），挂 Dock 第三 Tab -->
           <ResourceWaterfall v-else-if="layout.browserDockTab === 'net'" />
           <!-- M1-9 历史会话：保存/回看/恢复/删除，挂 Dock 第四 Tab -->
@@ -185,14 +192,9 @@ watch(
       </div>
     </template>
 
-    <!-- ===== 文件（IDE 布局：左文件夹树，右预览/编辑） ===== -->
-    <div v-else-if="layout.mainView === 'files'" class="modview">
-      <FilePanel :ide="true" />
-    </div>
-
-    <!-- ===== 知识库（原成果） ===== -->
-    <div v-else-if="layout.mainView === 'arts'" class="modview">
-      <ArtifactPanel />
+    <!-- ===== 工作区主视图（Files/Arts/Repo/Scripts/Commands/Audit）：经通用 Contribution 按 view 渲染 ===== -->
+    <div v-else-if="viewOf(layout.mainView)" class="modview">
+      <component :is="viewOf(layout.mainView)" />
     </div>
 
     <!-- ===== 剪贴板 ===== -->
@@ -200,29 +202,9 @@ watch(
       <ClipboardPanel />
     </div>
 
-    <!-- ===== 自有仓库（含 Git 两步闸门） ===== -->
-    <div v-else-if="layout.mainView === 'repo'" class="modview">
-      <RepoPanel />
-    </div>
-
     <!-- ===== 系统应用 ===== -->
     <div v-else-if="layout.mainView === 'apps'" class="modview">
       <AppPanel />
-    </div>
-
-    <!-- ===== 审计日志 ===== -->
-    <div v-else-if="layout.mainView === 'audit'" class="modview">
-      <AuditPanel />
-    </div>
-
-    <!-- ===== 脚本库（M2-5.a） ===== -->
-    <div v-else-if="layout.mainView === 'scripts'" class="modview">
-      <ScriptPanel />
-    </div>
-
-    <!-- ===== 命令库（M2-6.d） ===== -->
-    <div v-else-if="layout.mainView === 'commands'" class="modview">
-      <CommandSnippetPanel />
     </div>
 
     <!-- ===== 工具箱（M2-8） ===== -->
@@ -280,8 +262,8 @@ watch(
       </div>
     </div>
 
-    <!-- ===== 文件编辑器 / Markdown 预览（覆盖层） ===== -->
-    <FileEditor v-if="layout.mainView === 'editor'" />
+    <!-- ===== 文件编辑器 / Markdown 预览（覆盖层）：经贡献渲染 ===== -->
+    <component :is="viewOf('editor')" v-if="viewOf('editor')" />
     <!-- ===== W17(A7) 兜底：未知/空视图时主区不得空白或死区 ===== -->
     <!-- This is intentionally independent from FileEditor; an adjacent v-else
          would bind to the editor v-if and render during every normal view. -->

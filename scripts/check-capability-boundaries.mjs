@@ -24,7 +24,7 @@ import { loadRegistry } from './check-capability-registry.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CAP_ROOT = 'src/capabilities'
-const PUBLIC_FILES = new Set(['index.ts', 'manifest.ts'])
+const PUBLIC_FILES = new Set(['index.ts', 'manifest.ts', 'public.ts'])
 const PUBLIC_DIRS = new Set(['contracts'])
 const INTERNAL_DIRS = new Set(['state', 'services', 'ui', 'lifecycle', 'resource', 'internal'])
 

@@ -9,9 +9,9 @@ import {
 } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../stores/useBrowserStore";
 import { useSystemStore } from "../../stores/useSystemStore";
-import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
-import { useArtifactStore } from "../../stores/useArtifactStore";
-import { useFileStore } from "../../stores/useFileStore";
+import { useWorkspaceStore } from "../../capabilities/workspace/public";
+import { useArtifactStore } from "../../capabilities/workspace/public";
+import { useFileStore } from "../../capabilities/workspace/public";
 import { redactSecrets } from "../../utils/redact";
 import { Search, PanelLeftClose, PanelLeftOpen } from "@lucide/vue";
 import { useWorkbenchStore } from "../../stores/useWorkbenchStore";

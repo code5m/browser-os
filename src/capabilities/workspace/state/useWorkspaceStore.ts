@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { ref, reactive } from "vue";
-import { bridge } from "../bridge";
-import { useBrowserStore } from "./useBrowserStore";
+import { bridge } from "../../../bridge";
+import { useBrowserStore } from "../../../stores/useBrowserStore";
 import { useFileStore } from "./useFileStore";
 import { useArtifactStore } from "./useArtifactStore";
 import { useRepoStore } from "./useRepoStore";

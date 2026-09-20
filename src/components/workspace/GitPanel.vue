@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { useWorkspaceStore } from "../../stores/useWorkspaceStore";
+import { useRepoStore } from "../../capabilities/workspace/public";
 import { useGitStore, PUSH_NOTICE } from "../../stores/useGitStore";
 import GitDiffViewer from "./GitDiffViewer.vue";
 
 // M1-7 Git UI 主面板：仓库选择 + 状态列表 + diff 预览 + 分支信息 + 写操作入口。
 // 仓库数据复用既有 useWorkspaceStore.repos（不新造 repo 存储）；
 // 所有写操作都经 useGitStore 的双阶段闸门（request → confirm），本组件无直写路径。
-const ws = useWorkspaceStore();
+const ws = useRepoStore();
 const git = useGitStore();
 
 const targetBranch = ref("");

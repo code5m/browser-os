@@ -24,7 +24,7 @@ registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel
 # SEMANTIC_IMPLEMENTATION_UNRESOLVED 阻断，避免静默失守）。
 governed_files:
   - src/composables/useBrowserHost.ts
-  - src/components/workspace/FilePanel.vue
+  - src/capabilities/workspace/ui/FilePanel.vue
 
 # Implementation Locator：语义 identity（owner 符号）与物理路径解耦。
 # 物理迁移时：把新路径加到候选列表首项，旧路径保留作回滚；checker 取首个磁盘存在的候选。
@@ -44,33 +44,33 @@ owner_implementations:
   useWorkspaceStore:
     symbol: useWorkspaceStore
     paths:
-      - src/stores/useWorkspaceStore.ts
       - src/capabilities/workspace/state/useWorkspaceStore.ts
+      - src/stores/useWorkspaceStore.ts
   useFileStore:
     symbol: useFileStore
     paths:
+      - src/capabilities/workspace/state/useFileStore.ts
       - src/stores/useFileStore.ts
-      - src/capabilities/workspace/files/state/useFileStore.ts
   useArtifactStore:
     symbol: useArtifactStore
     paths:
+      - src/capabilities/workspace/state/useArtifactStore.ts
       - src/stores/useArtifactStore.ts
-      - src/capabilities/workspace/artifact/state/useArtifactStore.ts
   useRepoStore:
     symbol: useRepoStore
     paths:
+      - src/capabilities/workspace/state/useRepoStore.ts
       - src/stores/useRepoStore.ts
-      - src/capabilities/workspace/repo/state/useRepoStore.ts
   useScriptStore:
     symbol: useScriptStore
     paths:
+      - src/capabilities/workspace/state/useScriptStore.ts
       - src/stores/useScriptStore.ts
-      - src/capabilities/workspace/script/state/useScriptStore.ts
   useSnippetStore:
     symbol: useSnippetStore
     paths:
+      - src/capabilities/workspace/state/useSnippetStore.ts
       - src/stores/useSnippetStore.ts
-      - src/capabilities/workspace/snippet/state/useSnippetStore.ts
   useBookmarkStore:
     symbol: useBookmarkStore
     paths:

@@ -2,7 +2,7 @@ import { defineStore } from "pinia";
 import { ref, reactive, computed, nextTick, watch } from "vue";
 import { bridge } from "../bridge";
 import { useLayoutStore } from "./useLayoutStore";
-import { useWorkspaceStore } from "./useWorkspaceStore";
+import { useWorkspaceStore } from "../capabilities/workspace/public";
 import type { RecentlyClosedEntry, TabRecoveryEvent } from "../types";
 
 export interface AISite {
