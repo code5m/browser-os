@@ -219,12 +219,24 @@ export const useLayoutStore = defineStore("layout", () => {
     if (clipOpen.value) setView("clip");
   }
 
+  // ===== H-G RELEASE BLOCKER 修复：Shell 只持有 UI 偏好，不做资源生命周期 =====
+  //
+  // 旧实现在此处直接 `useBrowserStore()` 并调 openGrid()/closeGrid()，
+  // 造成两个真实架构缺陷：
+  //   PROBLEM A：Framework Core（本 store）反向依赖 Browser Capability 内部实现；
+  //   PROBLEM B：把「持久化 UI 偏好 gridToolbarOpen」当成「立刻创建 Grid 重资源」的许可。
+  //
+  // 另注：该旧实现还存在一处潜伏缺陷 —— 本文件从未 import useBrowserStore，
+  // 只要 toggleGridToolbar() 被调用就会抛 ReferenceError（死代码故未暴露）。
+  //
+  // 纠正后：gridToolbarOpen 只是「当相关 Capability 可用时，用户希望该 toolbar
+  // surface 处于某状态」的**纯 UI 偏好**；是否真的创建/销毁 Grid 重资源，
+  // 由 Browser Capability 自己按 availability + activation 决定（见
+  // useBrowserStore 中对该偏好的单向 watch，且先过 isBrowserResourceAllowed 闸）。
+  //
+  // 本文件因此不再 import / 调用任何 Browser 内部（LEGACY_COUPLING → 已解除）。
   function toggleGridToolbar() {
     gridToolbarOpen.value = !gridToolbarOpen.value;
-    const browser = useBrowserStore();
-    // 走 canonical intent：openGrid 只建资源、closeGrid 只销毁资源（均不导航）
-    if (gridToolbarOpen.value && !browser.gridOpen) browser.openGrid();
-    if (!gridToolbarOpen.value && browser.gridOpen) browser.closeGrid();
   }
 
   function setSidebarWidth(w: number) {

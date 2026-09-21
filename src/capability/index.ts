@@ -14,6 +14,9 @@ import { terminalCapability, TERMINAL_CAPABILITY_ID } from '../capabilities/term
 import { CAPABILITY_PROFILES, DEFAULT_PROFILE, type CapabilityProfileId, profileFromEnv, resolveProfile } from './profiles'
 import { CAPABILITY_CATALOG, CAPABILITY_DEFINITIONS } from './platform/catalog'
 import { assemble } from './platform/assembly'
+// H-G 修复：把 Runtime 单例发布到叶子模块，供能力内部在**调用时**判定
+// 「本能力是否获准创建自己 owned 的重资源」。不这样做就会形成 ESM 循环。
+import { setCapabilityRuntime, peekCapabilityRuntime } from './runtimeSingleton'
 
 const ALL_CAPABILITIES = [
   { id: BOOKMARK_CAPABILITY_ID, def: bookmarkCapability },
@@ -65,6 +68,7 @@ export function bootstrapCapabilityRuntime(profile?: CapabilityProfileId | strin
     try {
       const built = bootstrapAssembly(customIds)
       runtime = built.runtime
+      setCapabilityRuntime(runtime)
       lastProfile = 'custom'
       lastError = built.error
       return { runtime, activated: built.activated, error: lastError, profile: 'custom' }
@@ -72,6 +76,7 @@ export function bootstrapCapabilityRuntime(profile?: CapabilityProfileId | strin
       lastError = e instanceof Error ? e.message : String(e)
       const empty = createCapabilityRuntime()
       runtime = empty
+      setCapabilityRuntime(runtime)
       return { runtime: empty, activated: false, error: lastError, profile: 'custom' }
     }
   }
@@ -92,6 +97,7 @@ export function bootstrapCapabilityRuntime(profile?: CapabilityProfileId | strin
     lastError = e instanceof Error ? `${e.code}: ${e.message}` : String(e)
   }
   runtime = rt
+  setCapabilityRuntime(runtime)
   return { runtime: rt, activated, error: lastError, profile: pid }
 }
 
@@ -130,8 +136,14 @@ export function bootstrapAssembly(capabilityIds: string[]): BootstrapResult {
 }
 
 export function getCapabilityRuntime(): CapabilityRuntime | null {
-  return runtime
+  // 单例真源在 runtimeSingleton（叶子模块），本地 `runtime` 变量是其镜像。
+  // 保持二者一致：能力内部读 runtimeSingleton，应用侧读本函数。
+  return peekCapabilityRuntime() ?? runtime
 }
+
+// 能力的重资源准入判定复用叶子模块的同一份实现（见 runtimeSingleton.isCapabilityActive），
+// 此处 re-export 仅为应用侧/诊断提供只读入口，避免各处再写一份判定造成第二真源。
+export { isCapabilityActive } from './runtimeSingleton'
 
 /** 供 UI / 诊断读取能力清单（只读编排元数据） */
 export function inspectCapabilities() {

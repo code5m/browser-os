@@ -19,6 +19,7 @@ import { ref } from "vue";
 import { bridge, type M0Config } from "../../../bridge";
 import type { TermMessage } from "../../../types";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
+import { isTerminalResourceAllowed } from "../resource/guard";
 
 export const useTerminalStore = defineStore("terminal", () => {
   const layout = useLayoutStore();
@@ -134,6 +135,12 @@ export const useTerminalStore = defineStore("terminal", () => {
 
   // 新建一个终端实例（PTY）。cwd 可选，传入则打开后 cd 到该目录。
   async function spawnTerm(cwd?: string): Promise<string> {
+    // H-G 同类防护：PTY 是 Terminal capability-owned 重资源，
+    // 只能由 Terminal Capability 受控生命周期创建。Terminal absent → 0 PTY。
+    // 与 Browser/Grid 的 buildGrid 闸同构（同一份编排真源，同一 fail-closed 口径）。
+    if (!isTerminalResourceAllowed()) {
+      return "";
+    }
     try {
       // M3.a：每终端独立 Channel 单播（F4），替代全局 `term-data` 事件广播。
       const ch = bridge.createTermChannel((msg) => onTermChannelMsg(msg));

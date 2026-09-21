@@ -170,7 +170,12 @@ async function bundleStore() {
   const entry = `
     import { useTerminalStore } from '${join(ROOT, "src/capabilities/terminal/state/useTerminalStore.ts").replace(/\\/g, "/")}';
     import { bridge } from '${join(ROOT, "src/bridge.ts").replace(/\\/g, "/")}';
-    export { useTerminalStore, bridge };
+    // H-G：Terminal 的 PTY 出生点现在受「能力可用性 + 激活态」闸保护，
+    // 因此行为断言必须像真实应用一样先 bootstrap 能力运行时（main.ts 在 mount 前做同一件事）。
+    // 关键：bootstrap 必须与 store 在**同一个 bundle 实例**内导出，
+    // 否则 runtimeSingleton 会被 esbuild 复制成两份，闸永远读到 null（假 FAIL）。
+    import { bootstrapCapabilityRuntime } from '${join(ROOT, "src/capability/index.ts").replace(/\\/g, "/")}';
+    export { useTerminalStore, bridge, bootstrapCapabilityRuntime };
   `;
   const res = await build({
     stdin: { contents: entry, resolveDir: ROOT, loader: "ts" },
@@ -180,7 +185,8 @@ async function bundleStore() {
     target: "es2020",
     // 框架依赖保持 external（由 Node 原生解析 node_modules），与 bundling 无关；
     // 打包的只有**产品代码**（store + useLayoutStore），断言对象因此是真实逻辑。
-    external: ["pinia", "vue", "@vue/*"],
+    // *.vue 必须 external：bootstrap 会拉到能力入口的 defineAsyncComponent（无 .vue loader）。
+    external: ["pinia", "vue", "@vue/*", "*.vue"],
     write: false,
   });
   const tmp = join(ROOT, ".tmp-terminal-owners.mjs");
@@ -266,7 +272,10 @@ async function runBehavioral() {
   };
 
   const mod = await bundleStore();
-  const { bridge, useTerminalStore } = mod;
+  const { bridge, useTerminalStore, bootstrapCapabilityRuntime } = mod;
+  // 与真实应用一致：先 bootstrap 能力运行时（default profile = full → terminal ACTIVE），
+  // 再实例化 store。这样「PTY 出生点」才能通过能力闸；absent 场景由 runBootstrapSmoke 覆盖。
+  bootstrapCapabilityRuntime();
   const spawnCalls = [];
   const killCalls = [];
   let spawnSeq = 0;

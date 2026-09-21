@@ -1,0 +1,11 @@
+TIMESTAMP=2026-09-22T07:32:21+08:00
+COMMAND=VITE_CAPABILITY_PROFILE=framework npm run tauri dev
+APP_PID=3804378
+GRID_CHILD_COUNT=0
+MAIN_WINDOW_WEBKIT=9
+--- direct children ---
+3805316 WebKitNetworkPr
+3805325 WebKitWebProces
+[FE] [capability] bootstrap activated=true error=none
+[FE] [FE] vue mounted
+[FE] [FE] first-paint probe readyState=complete root=ok body=1854x1048 app=1854x1048 bodyBg=rgb(255, 255, 255) appBg=rgba(0, 0, 0, 0) text="＋−□×🏠主页📁浏览🗂️宫格▾☰菜单前往🤖📥采集⚙️🏠主页 ☆ 收藏网页  📁 收藏目录 ＋ 新增↺ 默认主要工作区🌐浏览📂文件💻终端📋剪"

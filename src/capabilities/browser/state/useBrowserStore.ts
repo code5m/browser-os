@@ -3,6 +3,7 @@ import { ref, reactive, computed, nextTick, watch } from "vue";
 import { bridge } from "../../../bridge";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { recordRecentUrl } from "../../../composables/recentsNav";
+import { isBrowserResourceAllowed } from "../resource/guard";
 import type { RecentlyClosedEntry, TabRecoveryEvent } from "../../../types";
 
 export interface AISite {
@@ -311,6 +312,22 @@ export const useBrowserStore = defineStore("browser", () => {
     return 6;
   }
   async function buildGrid() {
+    // ===== H-G RELEASE BLOCKER 修复：capability-owned 重资源准入闸 =====
+    // Grid 资源（宫格子进程 + 原生 WebView）是 Browser capability-owned 重资源，
+    // 只能由 Browser Capability 受控的生命周期路径创建。
+    // 这是全仓**唯一**的 createGrid 调用点，故在此处收口即可覆盖任何调用来源
+    // （已知入口、历史遗留入口、未来新增入口），而不是逐个调用方打补丁。
+    //
+    // 判定输入只有「能力可用性 + 激活态」一份编排真源：
+    //   preference(UI 偏好) ≠ availability ≠ activation ≠ resource existence
+    // Browser absent（framework-only）→ 直接拒绝，grid-child 恒为 0。
+    // 禁止改写成 profile 名判断 / 环境变量判断 / browser 布尔第二真源。
+    if (!isBrowserResourceAllowed()) {
+      bridge.debugLog(
+        "buildGrid refused: browser capability not ACTIVE (resource isolation gate)"
+      );
+      return;
+    }
     const n = gridCount.value;
     gridSession.value += 1;
     bridge.debugLog(`buildGrid start n=${n} mainView=${layout.mainView}`);
@@ -581,6 +598,34 @@ export const useBrowserStore = defineStore("browser", () => {
     ([mv, go], prev) => {
       const prevGo = prev ? prev[1] : false;
       if (mv === "grid" && !go && prevGo) layout.setView("browser");
+    }
+  );
+
+  // ===== Shell UI preference → Capability 资源生命周期（依赖方向纠正）=====
+  //
+  // 背景（H-G blocker 根因之一）：
+  //   旧实现把「Shell 的 gridToolbarOpen 偏好」直接翻译成
+  //   `browser.openGrid()` / `browser.closeGrid()`，写在 Core 层 useLayoutStore 里，
+  //   形成 Framework Core → Browser internal lifecycle 的反向业务依赖，
+  //   并把「持久化 UI 偏好」错误地当成「资源创建许可」。
+  //
+  // 纠正后的依赖方向：
+  //   Shell（useLayoutStore）只持有 gridToolbarOpen 这一份**纯 UI 偏好**，
+  //   不再 import / 调用任何 Browser 内部；
+  //   Browser（本 store，能力侧）**单向**读取该公开偏好，并由能力自己决定
+  //   是否把它翻译成资源生命周期 —— 且必须先过 isBrowserResourceAllowed() 闸。
+  //
+  // 语义边界（缺一即复发）：
+  //   preference（本 watch 的输入）≠ availability ≠ activation ≠ resource existence
+  //   Browser absent → 闸为 false → 偏好再怎么是 true 也不创建资源（CASE A/B）。
+  //   Browser present → 沿用原 toggle 语义（CASE C/D）。
+  //   能力变不可用 → 闸为 false → 绝不重建（CASE E）。
+  watch(
+    () => layout.gridToolbarOpen,
+    (open) => {
+      if (!isBrowserResourceAllowed()) return;
+      if (open && !gridOpen.value) void openGrid();
+      else if (!open && gridOpen.value) void closeGrid();
     }
   );
 
