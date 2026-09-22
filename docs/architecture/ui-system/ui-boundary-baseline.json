@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "generated_at": "2026-09-23",
+  "generated_from_head": "3f57a92e5fb7d9a6bc978f1572964d3c14fb8caf",
+  "note": "UI-1 边界门禁的**显式基线**。原则：LEGACY_COUPLING 不是立即删除，但绝不允许静默洗绿。任何新增耦合必须 FAIL；任何消除必须显式更新本文件并在 commit 说明原因。",
+  "policy": {
+    "on_new_coupling": "FAIL",
+    "on_removed_coupling": "FAIL (baseline 必须与现实一致，消除即更新)",
+    "on_vacuous_gate": "REPORT_AS_VACUOUS（不得伪装成完整治理 PASS）"
+  },
+  "shared_ui": {
+    "status": "NOT_CREATED",
+    "path": "src/shared/ui",
+    "note": "当前不存在 shared/ui 目录。UI-01/UI-02/UI-08 因此为 VACUOUS PASS —— 门禁会显式标记，绝不伪装成『已治理』。"
+  },
+  "shell_files": [
+    "src/App.vue",
+    "src/components/layout/ActivityBar.vue",
+    "src/components/layout/MainArea.vue",
+    "src/components/layout/UnifiedTabBar.vue",
+    "src/components/layout/StatusBar.vue",
+    "src/components/layout/WorkbenchCommands.vue",
+    "src/components/layout/WorkbenchRail.vue",
+    "src/components/layout/TopBar.vue",
+    "src/components/layout/SidebarResizer.vue"
+  ],
+  "business_component_dirs": [
+    "src/components/workspace",
+    "src/components/graph",
+    "src/components/plugin",
+    "src/components/browser"
+  ],
+  "ui03_shell_renders_business_baseline": [
+    { "shell": "src/App.vue", "line": 269, "component": "GitWriteConfirmDialog", "domain": "GIT" },
+    { "shell": "src/App.vue", "line": 263, "component": "AINavPanel", "domain": "BROWSER" },
+    { "shell": "src/components/layout/MainArea.vue", "line": 207, "component": "VaultPanel", "domain": "VAULT" },
+    { "shell": "src/components/layout/MainArea.vue", "line": 199, "component": "ToolBox", "domain": "WORKSPACE_TOOLS" },
+    { "shell": "src/components/layout/MainArea.vue", "line": 204, "component": "DatabasePanel", "domain": "DATABASE" },
+    { "shell": "src/components/layout/MainArea.vue", "line": 210, "component": "TaskPanel", "domain": "TASK" },
+    { "shell": "src/components/layout/MainArea.vue", "line": 218, "component": "SkillManagerPanel", "domain": "SKILL" },
+    { "shell": "src/components/layout/MainArea.vue", "line": 221, "component": "AgentManagerPanel", "domain": "AGENT" },
+    { "shell": "src/components/layout/MainArea.vue", "line": 224, "component": "GraphPanel", "domain": "GRAPH" },
+    { "shell": "src/components/layout/MainArea.vue", "line": 215, "component": "PluginManager", "domain": "PLUGIN" },
+    { "shell": "src/components/layout/ActivityBar.vue", "line": 373, "component": "GridArchiveBar", "domain": "BROWSER_GRID" }
+  ],
+  "ui03_shell_business_stores_baseline": [
+    { "shell": "src/App.vue", "store": "useBrowserStore", "from": "src/capabilities/browser/public" },
+    { "shell": "src/App.vue", "store": "useWorkspaceStore", "from": "src/capabilities/workspace/public" },
+    { "shell": "src/App.vue", "store": "useArtifactStore", "from": "src/capabilities/workspace/public" },
+    { "shell": "src/App.vue", "store": "useRepoStore", "from": "src/capabilities/workspace/public" },
+    { "shell": "src/App.vue", "store": "useFileStore", "from": "src/capabilities/workspace/public" },
+    { "shell": "src/App.vue", "store": "useTerminalStore", "from": "src/capabilities/terminal/public" },
+    { "shell": "src/App.vue", "store": "useGitStore", "from": "src/stores/useGitStore" },
+    { "shell": "src/components/layout/ActivityBar.vue", "store": "useBrowserStore", "from": "src/capabilities/browser/public" },
+    { "shell": "src/components/layout/ActivityBar.vue", "store": "useTerminalStore", "from": "src/capabilities/terminal/public" },
+    { "shell": "src/components/layout/ActivityBar.vue", "store": "useWorkspaceStore", "from": "src/capabilities/workspace/public" },
+    { "shell": "src/components/layout/ActivityBar.vue", "store": "useArtifactStore", "from": "src/capabilities/workspace/public" },
+    { "shell": "src/components/layout/ActivityBar.vue", "store": "useFileStore", "from": "src/capabilities/workspace/public" },
+    { "shell": "src/components/layout/MainArea.vue", "store": "useBrowserStore", "from": "src/capabilities/browser/public" },
+    { "shell": "src/components/layout/UnifiedTabBar.vue", "store": "useBrowserStore", "from": "src/capabilities/browser/public" },
+    { "shell": "src/components/layout/UnifiedTabBar.vue", "store": "useFileStore", "from": "src/capabilities/workspace/public" },
+    { "shell": "src/components/layout/UnifiedTabBar.vue", "store": "useTerminalStore", "from": "src/capabilities/terminal/public" },
+    { "shell": "src/components/layout/StatusBar.vue", "store": "useBrowserStore", "from": "src/capabilities/browser/public" },
+    { "shell": "src/components/layout/StatusBar.vue", "store": "useTerminalStore", "from": "src/capabilities/terminal/public" },
+    { "shell": "src/components/layout/StatusBar.vue", "store": "useWorkspaceStore", "from": "src/capabilities/workspace/public" },
+    { "shell": "src/components/layout/StatusBar.vue", "store": "useRepoStore", "from": "src/capabilities/workspace/public" },
+    { "shell": "src/components/layout/TopBar.vue", "store": "useBrowserStore", "from": "src/capabilities/browser/public" },
+    { "shell": "src/components/layout/SidebarResizer.vue", "store": "useBrowserStore", "from": "src/capabilities/browser/public" }
+  ],
+  "ui05_position_fixed_baseline": [
+    { "file": "src/styles/global.css", "line": 78, "selector": ".ctx-menu", "reason": "右键菜单必须 fixed（既有 architecture rule 允许）" },
+    { "file": "src/styles/global.css", "line": 137, "selector": ".home-modal-mask", "reason": "模态遮罩（既有）" },
+    { "file": "src/styles/global.css", "line": 203, "selector": ".modal-mask", "reason": "模态遮罩（既有）" },
+    { "file": "src/App.vue", "line": 290, "selector": "boot-overlay", "reason": "启动遮罩（既有）" },
+    { "file": "src/App.vue", "line": 316, "selector": "shell-error", "reason": "外壳错误遮罩（既有）" },
+    { "file": "src/capabilities/workspace/ui/FilePanel.vue", "line": 280, "selector": "拖拽移动确认浮层", "reason": "既有" },
+    { "file": "src/components/home/HomeShortcutEditor.vue", "line": 124, "selector": "home-modal-mask", "reason": "既有" },
+    { "file": "src/components/layout/StatusBar.vue", "line": 182, "selector": "资源明细浮层", "reason": "既有" },
+    { "file": "src/components/plugin/PluginManager.vue", "line": 405, "selector": "modal-mask", "reason": "既有" },
+    { "file": "src/components/workspace/PermissionPreviewModal.vue", "line": 45, "selector": "modal-mask", "reason": "既有" },
+    { "file": "src/components/workspace/RunHistoryModal.vue", "line": 38, "selector": "modal-mask", "reason": "既有" },
+    { "file": "src/components/workspace/ScriptRunDialog.vue", "line": 176, "selector": "modal-mask", "reason": "既有" }
+  ],
+  "ui06_deprecated_patterns": [
+    { "pattern": "toast-pop", "reason": "PROJECT-RULES 规则 3.8：禁止恢复覆盖浏览器区域的固定浮层" },
+    { "pattern": "已新建页签", "reason": "PROJECT-RULES [DEPRECATED]：新建页签成功不显示提示" }
+  ],
+  "ui07_app_native_commands_baseline": [
+    "onSyncCompleted", "onGitWriteCompleted", "onBrowserResources", "onArtifactCollected",
+    "onTabTitle", "onTabNavigated", "onResourceReceived", "onTabRecovery", "onNewTabRequest",
+    "takePendingOpenUrls", "onOpenUrlPending", "onOpenUrlRejected", "onTermData", "onOpenTerminal",
+    "onNoteSaved", "closeBrowser", "flushSessions"
+  ],
+  "ui09_host_hardcoded_views_baseline": [
+    "home", "browser", "grid", "clip", "apps", "tools", "db", "vault", "tasks",
+    "plugin", "skills", "agents", "graph", "settings", "editor", "files", "arts",
+    "repo", "scripts", "commands", "audit",
+    "net", "session", "term"
+  ],
+  "ui04b_cross_capability_public_baseline": [
+    "src/capabilities/bookmark/ui/BookmarkStar.vue",
+    "src/capabilities/bookmark/ui/BookmarkPanel.vue",
+    "src/capabilities/workspace/ui/FileEditor.vue"
+  ],
+  "ui04b_undeclared_cross_capability_baseline": [
+    {
+      "file": "src/capabilities/workspace/ui/FileEditor.vue",
+      "line": 4,
+      "imports": "src/capabilities/browser/public",
+      "declared_in_manifest": false,
+      "severity": "WARN",
+      "note": "全仓唯一的真实边界瑕疵：workspace manifest 未声明 browser 依赖。不得静默忽略。"
+    }
+  ]
+}
