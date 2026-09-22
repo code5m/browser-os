@@ -131,6 +131,13 @@ export function scanDeprecatedPatterns(file, content) {
 function gateSharedUi(base) {
   const exists = existsSync(SHARED_UI_DIR);
   const status = base?.shared_ui?.status ?? "NOT_CREATED";
+  // §13：shared/ui 已声明建立却不存在 → 不得退回 VACUOUS，直接 FAIL（防止 baseline 洗绿）
+  if (!exists && status === "CREATED") {
+    for (const g of ["UI-01", "UI-02", "UI-08"]) {
+      bad(g, `baseline 声明 shared_ui.status=CREATED 但 ${rel(SHARED_UI_DIR)} 不存在 → 禁止退回 VACUOUS`);
+    }
+    return;
+  }
   if (!exists) {
     // 显式标记 VACUOUS：绝不伪装成「已治理」
     vacuous("UI-01", `shared/ui 尚未创建（baseline status=${status}）→ VACUOUS，非治理 PASS`);
@@ -263,18 +270,21 @@ function gateCapabilityCrossImports(base) {
 }
 
 function gatePositionFixed(base) {
-  const baseSet = new Set(
-    (base.ui05_position_fixed_baseline ?? []).map((x) => `${x.file}:${x.line}`)
-  );
+  // 基线以「文件 + 规则文本」为键，**不以行号为键**：
+  // 行号会因任意一处插入/删除而整体漂移，导致假 FAIL（本次 pilot 加 import 即触发）。
+  // 以文本为键仍可精确识别「新增的 fixed 浮层」。
+  const norm = (s) => (s || "").replace(/\s+/g, "");
+  const keyOf = (x) => `${x.file}|${norm(x.text)}`;
+  const baseSet = new Set((base.ui05_position_fixed_baseline ?? []).map(keyOf));
   const found = [];
   for (const f of [join(ROOT, "src/styles/global.css"), ...walk(join(ROOT, "src"), [".vue"])]) {
     const lines = read(f).split("\n");
     lines.forEach((line, i) => {
-      if (/position:\s*fixed/.test(line)) found.push({ file: rel(f), line: i + 1, text: line.trim().slice(0, 60) });
+      if (/position:\s*fixed/.test(line)) found.push({ file: rel(f), line: i + 1, text: line.trim().slice(0, 80) });
     });
   }
-  const newOnes = found.filter((x) => !baseSet.has(`${x.file}:${x.line}`));
-  const gone = [...baseSet].filter((k) => !found.some((x) => `${x.file}:${x.line}` === k));
+  const newOnes = found.filter((x) => !baseSet.has(keyOf(x)));
+  const gone = [...baseSet].filter((k) => !found.some((x) => keyOf(x) === k));
   if (newOnes.length === 0 && gone.length === 0) {
     ok("UI-05", `position:fixed 与基线一致（${baseSet.size} 处既有浮层，未新增）`);
   } else {
