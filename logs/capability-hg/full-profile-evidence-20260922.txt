@@ -1,0 +1,7 @@
+TESTED_HEAD=3f57a92e5fb7d9a6bc978f1572964d3c14fb8caf
+PROFILE=full (default)
+APP_PID=3900957
+BOOTSTRAP=[FE] [capability] bootstrap activated=true error=none
+FIRST_PAINT=[FE] [FE] first-paint probe readyState=complete root=ok body=3774x2128 app=3774x2128 bodyBg=rgb(255, 255, 255) appBg=rgba(0, 0, 0, 0) text="＋−□×🏠主页📁浏览🗂️宫格▾☰菜单前�
+STARTUP_GRID_CHILD=0
+STARTUP_PTMX=0
