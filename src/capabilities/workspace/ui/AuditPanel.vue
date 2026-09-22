@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { EmptyState } from "../../../shared/ui";
 import { useWorkspaceStore } from "../state/useWorkspaceStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 const ws = useWorkspaceStore();
@@ -19,7 +20,7 @@ const layout = useLayoutStore();
         </div>
         <div class="det">{{ e.detail }}</div>
       </li>
-      <li v-if="!ws.audit.length" class="empty" role="status" aria-live="polite">暂无记录</li>
+      <EmptyState v-if="!ws.audit.length" as="li" live text="暂无记录" />
     </ul>
   </div>
 </template>

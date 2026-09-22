@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { EmptyState } from "../../../shared/ui";
 import { ref } from "vue";
 import { useRepoStore } from "../state/useRepoStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
@@ -45,7 +46,7 @@ const tab = ref<"git" | "history" | "config">("git");
           </div>
           <button @click="rp.requestSync(r.id)">推送</button>
         </li>
-        <li v-if="!rp.repos.length" class="empty">还没配置仓库</li>
+        <EmptyState v-if="!rp.repos.length" as="li" text="还没配置仓库" />
       </ul>
     </div>
   </div>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { EmptyState } from "../../shared/ui";
 import { computed, onMounted, ref, watch } from "vue";
 import { Plus, X, Square, ChevronLeft, ChevronRight, RefreshCw } from '@lucide/vue';
 import { useDatabaseStore } from "../../stores/useDatabaseStore";
@@ -203,7 +204,7 @@ async function copyCsv() {
               </tr>
             </tbody>
           </table>
-          <div v-else class="empty">无列信息</div>
+          <EmptyState v-else text="无列信息" />
         </div>
         <p v-if="copied" class="hint">已复制</p>
       </div>

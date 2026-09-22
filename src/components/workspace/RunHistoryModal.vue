@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { EmptyState } from "../../shared/ui";
 import { computed } from "vue";
 import type { AgentRunRecord, SkillRunRecord } from "../../types";
 import { runStatusUi } from "../../utils/agentSkillUi";
@@ -19,7 +20,7 @@ const items = computed(() => props.records ?? []);
         <h3>{{ title ?? "运行历史" }}</h3>
         <button class="close" @click="emit('close')">×</button>
       </header>
-      <div v-if="items.length === 0" class="empty" role="status" aria-live="polite">暂无运行记录。</div>
+      <EmptyState v-if="items.length === 0" live text="暂无运行记录。" />
       <ul v-else class="records">
         <li v-for="r in items" :key="r.runId" class="rec">
           <span class="tag" :class="runStatusUi(r.status).cls">{{ runStatusUi(r.status).label }}</span>

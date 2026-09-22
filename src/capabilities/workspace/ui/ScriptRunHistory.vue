@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { EmptyState } from "../../../shared/ui";
 // src/components/workspace/ScriptRunHistory.vue
 // M2-5.c 运行历史视图：列表 + 状态筛选 + 行展开 output_tail（纯文本插值，禁 XSS）
 // 数据源 = bridge.scriptRunsList()，仅打开时取一次；运行态由 RunPanel（b 卡）负责。
@@ -90,11 +91,11 @@ onMounted(refresh);
 
     <div v-if="errorMsg" class="error">⚠ {{ errorMsg }}</div>
 
-    <div v-else-if="!records.length" class="empty">
+    <EmptyState v-else-if="!records.length">
       暂无运行历史，去运行一个脚本试试
-    </div>
+    </EmptyState>
 
-    <div v-else-if="!grouped.length" class="empty">该筛选下没有记录</div>
+    <EmptyState v-else-if="!grouped.length" text="该筛选下没有记录" />
 
     <div v-else class="groups">
       <div v-for="g in grouped" :key="g.day" class="day-group">

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { EmptyState } from "../../shared/ui";
 import { useSystemStore } from "../../stores/useSystemStore";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { redactSecrets } from "../../utils/redact";
@@ -35,7 +36,7 @@ const layout = useLayoutStore();
           <span class="clip-text">{{ redactSecrets(item.text) }}</span>
           <button class="clip-copy" @click.stop="system.copyClipItem(item)">📋</button>
         </div>
-        <div v-if="!system.clipHistory.length" class="empty">暂无历史记录，复制内容后会自动收集</div>
+        <EmptyState v-if="!system.clipHistory.length" text="暂无历史记录，复制内容后会自动收集" />
       </div>
     </div>
   </div>

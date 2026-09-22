@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { EmptyState } from "../../shared/ui";
 import { computed, ref } from "vue";
 import { useBrowserStore } from "../../capabilities/browser/public";
 import { useLayoutStore } from "../../stores/useLayoutStore";
@@ -43,7 +44,7 @@ const resFiltered = computed(() => {
           <span class="rtag">{{ r.res_type }}</span>
           <a class="rabs" :href="r.absolute" target="_blank" :title="r.absolute">{{ r.absolute }}</a>
         </li>
-        <li v-if="!resFiltered.length" class="empty">无匹配资源</li>
+        <EmptyState v-if="!resFiltered.length" as="li" text="无匹配资源" />
       </ul>
     </div>
   </div>

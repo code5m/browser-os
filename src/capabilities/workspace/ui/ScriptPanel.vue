@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { EmptyState } from "../../../shared/ui";
 import { ref, computed, onMounted } from "vue";
 import { useScriptStore } from "../state/useScriptStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
@@ -78,7 +79,7 @@ function openRun(m: ScriptMeta) {
 
       <template v-if="viewTab === 'list'">
         <button class="new-btn" @click="newScript">+ 新建脚本</button>
-        <div v-if="!sc.scripts.length" class="empty">暂无脚本，点「新建脚本」添加一个</div>
+        <EmptyState v-if="!sc.scripts.length" text="暂无脚本，点「新建脚本」添加一个" />
         <div v-for="node in tree" :key="node.category" class="cat">
           <div class="cat-title">{{ node.category }}（{{ node.scripts.length }}）</div>
           <ul>

@@ -9,9 +9,9 @@
     "on_vacuous_gate": "REPORT_AS_VACUOUS（不得伪装成完整治理 PASS）"
   },
   "shared_ui": {
-    "status": "NOT_CREATED",
+    "status": "CREATED",
     "path": "src/shared/ui",
-    "note": "当前不存在 shared/ui 目录。UI-01/UI-02/UI-08 因此为 VACUOUS PASS —— 门禁会显式标记，绝不伪装成『已治理』。"
+    "note": "UI-2 pilot 已创建 shared/ui（EmptyState.vue + public entry index.ts）。UI-01/UI-02/UI-08 自此必须为 REAL PASS；若仍报 VACUOUS 则视为门禁失败。"
   },
   "shell_files": [
     "src/App.vue",
@@ -31,71 +31,289 @@
     "src/components/browser"
   ],
   "ui03_shell_renders_business_baseline": [
-    { "shell": "src/App.vue", "line": 269, "component": "GitWriteConfirmDialog", "domain": "GIT" },
-    { "shell": "src/App.vue", "line": 263, "component": "AINavPanel", "domain": "BROWSER" },
-    { "shell": "src/components/layout/MainArea.vue", "line": 207, "component": "VaultPanel", "domain": "VAULT" },
-    { "shell": "src/components/layout/MainArea.vue", "line": 199, "component": "ToolBox", "domain": "WORKSPACE_TOOLS" },
-    { "shell": "src/components/layout/MainArea.vue", "line": 204, "component": "DatabasePanel", "domain": "DATABASE" },
-    { "shell": "src/components/layout/MainArea.vue", "line": 210, "component": "TaskPanel", "domain": "TASK" },
-    { "shell": "src/components/layout/MainArea.vue", "line": 218, "component": "SkillManagerPanel", "domain": "SKILL" },
-    { "shell": "src/components/layout/MainArea.vue", "line": 221, "component": "AgentManagerPanel", "domain": "AGENT" },
-    { "shell": "src/components/layout/MainArea.vue", "line": 224, "component": "GraphPanel", "domain": "GRAPH" },
-    { "shell": "src/components/layout/MainArea.vue", "line": 215, "component": "PluginManager", "domain": "PLUGIN" },
-    { "shell": "src/components/layout/ActivityBar.vue", "line": 373, "component": "GridArchiveBar", "domain": "BROWSER_GRID" }
+    {
+      "shell": "src/App.vue",
+      "line": 269,
+      "component": "GitWriteConfirmDialog",
+      "domain": "GIT"
+    },
+    {
+      "shell": "src/App.vue",
+      "line": 263,
+      "component": "AINavPanel",
+      "domain": "BROWSER"
+    },
+    {
+      "shell": "src/components/layout/MainArea.vue",
+      "line": 207,
+      "component": "VaultPanel",
+      "domain": "VAULT"
+    },
+    {
+      "shell": "src/components/layout/MainArea.vue",
+      "line": 199,
+      "component": "ToolBox",
+      "domain": "WORKSPACE_TOOLS"
+    },
+    {
+      "shell": "src/components/layout/MainArea.vue",
+      "line": 204,
+      "component": "DatabasePanel",
+      "domain": "DATABASE"
+    },
+    {
+      "shell": "src/components/layout/MainArea.vue",
+      "line": 210,
+      "component": "TaskPanel",
+      "domain": "TASK"
+    },
+    {
+      "shell": "src/components/layout/MainArea.vue",
+      "line": 218,
+      "component": "SkillManagerPanel",
+      "domain": "SKILL"
+    },
+    {
+      "shell": "src/components/layout/MainArea.vue",
+      "line": 221,
+      "component": "AgentManagerPanel",
+      "domain": "AGENT"
+    },
+    {
+      "shell": "src/components/layout/MainArea.vue",
+      "line": 224,
+      "component": "GraphPanel",
+      "domain": "GRAPH"
+    },
+    {
+      "shell": "src/components/layout/MainArea.vue",
+      "line": 215,
+      "component": "PluginManager",
+      "domain": "PLUGIN"
+    },
+    {
+      "shell": "src/components/layout/ActivityBar.vue",
+      "line": 373,
+      "component": "GridArchiveBar",
+      "domain": "BROWSER_GRID"
+    }
   ],
   "ui03_shell_business_stores_baseline": [
-    { "shell": "src/App.vue", "store": "useBrowserStore", "from": "src/capabilities/browser/public" },
-    { "shell": "src/App.vue", "store": "useWorkspaceStore", "from": "src/capabilities/workspace/public" },
-    { "shell": "src/App.vue", "store": "useArtifactStore", "from": "src/capabilities/workspace/public" },
-    { "shell": "src/App.vue", "store": "useRepoStore", "from": "src/capabilities/workspace/public" },
-    { "shell": "src/App.vue", "store": "useFileStore", "from": "src/capabilities/workspace/public" },
-    { "shell": "src/App.vue", "store": "useTerminalStore", "from": "src/capabilities/terminal/public" },
-    { "shell": "src/App.vue", "store": "useGitStore", "from": "src/stores/useGitStore" },
-    { "shell": "src/components/layout/ActivityBar.vue", "store": "useBrowserStore", "from": "src/capabilities/browser/public" },
-    { "shell": "src/components/layout/ActivityBar.vue", "store": "useTerminalStore", "from": "src/capabilities/terminal/public" },
-    { "shell": "src/components/layout/ActivityBar.vue", "store": "useWorkspaceStore", "from": "src/capabilities/workspace/public" },
-    { "shell": "src/components/layout/ActivityBar.vue", "store": "useArtifactStore", "from": "src/capabilities/workspace/public" },
-    { "shell": "src/components/layout/ActivityBar.vue", "store": "useFileStore", "from": "src/capabilities/workspace/public" },
-    { "shell": "src/components/layout/MainArea.vue", "store": "useBrowserStore", "from": "src/capabilities/browser/public" },
-    { "shell": "src/components/layout/UnifiedTabBar.vue", "store": "useBrowserStore", "from": "src/capabilities/browser/public" },
-    { "shell": "src/components/layout/UnifiedTabBar.vue", "store": "useFileStore", "from": "src/capabilities/workspace/public" },
-    { "shell": "src/components/layout/UnifiedTabBar.vue", "store": "useTerminalStore", "from": "src/capabilities/terminal/public" },
-    { "shell": "src/components/layout/StatusBar.vue", "store": "useBrowserStore", "from": "src/capabilities/browser/public" },
-    { "shell": "src/components/layout/StatusBar.vue", "store": "useTerminalStore", "from": "src/capabilities/terminal/public" },
-    { "shell": "src/components/layout/StatusBar.vue", "store": "useWorkspaceStore", "from": "src/capabilities/workspace/public" },
-    { "shell": "src/components/layout/StatusBar.vue", "store": "useRepoStore", "from": "src/capabilities/workspace/public" },
-    { "shell": "src/components/layout/TopBar.vue", "store": "useBrowserStore", "from": "src/capabilities/browser/public" },
-    { "shell": "src/components/layout/SidebarResizer.vue", "store": "useBrowserStore", "from": "src/capabilities/browser/public" }
+    {
+      "shell": "src/App.vue",
+      "store": "useBrowserStore",
+      "from": "src/capabilities/browser/public"
+    },
+    {
+      "shell": "src/App.vue",
+      "store": "useWorkspaceStore",
+      "from": "src/capabilities/workspace/public"
+    },
+    {
+      "shell": "src/App.vue",
+      "store": "useArtifactStore",
+      "from": "src/capabilities/workspace/public"
+    },
+    {
+      "shell": "src/App.vue",
+      "store": "useRepoStore",
+      "from": "src/capabilities/workspace/public"
+    },
+    {
+      "shell": "src/App.vue",
+      "store": "useFileStore",
+      "from": "src/capabilities/workspace/public"
+    },
+    {
+      "shell": "src/App.vue",
+      "store": "useTerminalStore",
+      "from": "src/capabilities/terminal/public"
+    },
+    {
+      "shell": "src/App.vue",
+      "store": "useGitStore",
+      "from": "src/stores/useGitStore"
+    },
+    {
+      "shell": "src/components/layout/ActivityBar.vue",
+      "store": "useBrowserStore",
+      "from": "src/capabilities/browser/public"
+    },
+    {
+      "shell": "src/components/layout/ActivityBar.vue",
+      "store": "useTerminalStore",
+      "from": "src/capabilities/terminal/public"
+    },
+    {
+      "shell": "src/components/layout/ActivityBar.vue",
+      "store": "useWorkspaceStore",
+      "from": "src/capabilities/workspace/public"
+    },
+    {
+      "shell": "src/components/layout/ActivityBar.vue",
+      "store": "useArtifactStore",
+      "from": "src/capabilities/workspace/public"
+    },
+    {
+      "shell": "src/components/layout/ActivityBar.vue",
+      "store": "useFileStore",
+      "from": "src/capabilities/workspace/public"
+    },
+    {
+      "shell": "src/components/layout/MainArea.vue",
+      "store": "useBrowserStore",
+      "from": "src/capabilities/browser/public"
+    },
+    {
+      "shell": "src/components/layout/UnifiedTabBar.vue",
+      "store": "useBrowserStore",
+      "from": "src/capabilities/browser/public"
+    },
+    {
+      "shell": "src/components/layout/UnifiedTabBar.vue",
+      "store": "useFileStore",
+      "from": "src/capabilities/workspace/public"
+    },
+    {
+      "shell": "src/components/layout/UnifiedTabBar.vue",
+      "store": "useTerminalStore",
+      "from": "src/capabilities/terminal/public"
+    },
+    {
+      "shell": "src/components/layout/StatusBar.vue",
+      "store": "useBrowserStore",
+      "from": "src/capabilities/browser/public"
+    },
+    {
+      "shell": "src/components/layout/StatusBar.vue",
+      "store": "useTerminalStore",
+      "from": "src/capabilities/terminal/public"
+    },
+    {
+      "shell": "src/components/layout/StatusBar.vue",
+      "store": "useWorkspaceStore",
+      "from": "src/capabilities/workspace/public"
+    },
+    {
+      "shell": "src/components/layout/StatusBar.vue",
+      "store": "useRepoStore",
+      "from": "src/capabilities/workspace/public"
+    },
+    {
+      "shell": "src/components/layout/TopBar.vue",
+      "store": "useBrowserStore",
+      "from": "src/capabilities/browser/public"
+    },
+    {
+      "shell": "src/components/layout/SidebarResizer.vue",
+      "store": "useBrowserStore",
+      "from": "src/capabilities/browser/public"
+    }
   ],
   "ui05_position_fixed_baseline": [
-    { "file": "src/styles/global.css", "line": 78, "selector": ".ctx-menu", "reason": "右键菜单必须 fixed（既有 architecture rule 允许）" },
-    { "file": "src/styles/global.css", "line": 137, "selector": ".home-modal-mask", "reason": "模态遮罩（既有）" },
-    { "file": "src/styles/global.css", "line": 203, "selector": ".modal-mask", "reason": "模态遮罩（既有）" },
-    { "file": "src/App.vue", "line": 290, "selector": "boot-overlay", "reason": "启动遮罩（既有）" },
-    { "file": "src/App.vue", "line": 316, "selector": "shell-error", "reason": "外壳错误遮罩（既有）" },
-    { "file": "src/capabilities/workspace/ui/FilePanel.vue", "line": 280, "selector": "拖拽移动确认浮层", "reason": "既有" },
-    { "file": "src/components/home/HomeShortcutEditor.vue", "line": 124, "selector": "home-modal-mask", "reason": "既有" },
-    { "file": "src/components/layout/StatusBar.vue", "line": 182, "selector": "资源明细浮层", "reason": "既有" },
-    { "file": "src/components/plugin/PluginManager.vue", "line": 405, "selector": "modal-mask", "reason": "既有" },
-    { "file": "src/components/workspace/PermissionPreviewModal.vue", "line": 45, "selector": "modal-mask", "reason": "既有" },
-    { "file": "src/components/workspace/RunHistoryModal.vue", "line": 38, "selector": "modal-mask", "reason": "既有" },
-    { "file": "src/components/workspace/ScriptRunDialog.vue", "line": 176, "selector": "modal-mask", "reason": "既有" }
+    {
+      "file": "src/styles/global.css",
+      "text": ".ctx-menu { position: fixed; z-index: 999; background: #fff; border: 1px solid #"
+    },
+    {
+      "file": "src/styles/global.css",
+      "text": ".home-modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.35); displ"
+    },
+    {
+      "file": "src/styles/global.css",
+      "text": ".modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: fl"
+    },
+    {
+      "file": "src/App.vue",
+      "text": "position: fixed;"
+    },
+    {
+      "file": "src/App.vue",
+      "text": "position: fixed;"
+    },
+    {
+      "file": "src/capabilities/workspace/ui/FilePanel.vue",
+      "text": "/* 移动确认：复用全局 .modal-mask（已批准固定浮层模式），本组件内不再使用 position: fixed */"
+    },
+    {
+      "file": "src/components/layout/StatusBar.vue",
+      "text": "position: fixed;"
+    },
+    {
+      "file": "src/components/plugin/PluginManager.vue",
+      "text": "position: fixed;"
+    },
+    {
+      "file": "src/components/workspace/PermissionPreviewModal.vue",
+      "text": ".modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: f"
+    },
+    {
+      "file": "src/components/workspace/RunHistoryModal.vue",
+      "text": ".modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: f"
+    },
+    {
+      "file": "src/components/workspace/ScriptRunDialog.vue",
+      "text": "position: fixed;"
+    },
+    {
+      "file": "src/components/home/HomeShortcutEditor.vue",
+      "text": "position: fixed;"
+    }
   ],
   "ui06_deprecated_patterns": [
-    { "pattern": "toast-pop", "reason": "PROJECT-RULES 规则 3.8：禁止恢复覆盖浏览器区域的固定浮层" },
-    { "pattern": "已新建页签", "reason": "PROJECT-RULES [DEPRECATED]：新建页签成功不显示提示" }
+    {
+      "pattern": "toast-pop",
+      "reason": "PROJECT-RULES 规则 3.8：禁止恢复覆盖浏览器区域的固定浮层"
+    },
+    {
+      "pattern": "已新建页签",
+      "reason": "PROJECT-RULES [DEPRECATED]：新建页签成功不显示提示"
+    }
   ],
   "ui07_app_native_commands_baseline": [
-    "onSyncCompleted", "onGitWriteCompleted", "onBrowserResources", "onArtifactCollected",
-    "onTabTitle", "onTabNavigated", "onResourceReceived", "onTabRecovery", "onNewTabRequest",
-    "takePendingOpenUrls", "onOpenUrlPending", "onOpenUrlRejected", "onTermData", "onOpenTerminal",
-    "onNoteSaved", "closeBrowser", "flushSessions"
+    "onSyncCompleted",
+    "onGitWriteCompleted",
+    "onBrowserResources",
+    "onArtifactCollected",
+    "onTabTitle",
+    "onTabNavigated",
+    "onResourceReceived",
+    "onTabRecovery",
+    "onNewTabRequest",
+    "takePendingOpenUrls",
+    "onOpenUrlPending",
+    "onOpenUrlRejected",
+    "onTermData",
+    "onOpenTerminal",
+    "onNoteSaved",
+    "closeBrowser",
+    "flushSessions"
   ],
   "ui09_host_hardcoded_views_baseline": [
-    "home", "browser", "grid", "clip", "apps", "tools", "db", "vault", "tasks",
-    "plugin", "skills", "agents", "graph", "settings", "editor", "files", "arts",
-    "repo", "scripts", "commands", "audit",
-    "net", "session", "term"
+    "home",
+    "browser",
+    "grid",
+    "clip",
+    "apps",
+    "tools",
+    "db",
+    "vault",
+    "tasks",
+    "plugin",
+    "skills",
+    "agents",
+    "graph",
+    "settings",
+    "editor",
+    "files",
+    "arts",
+    "repo",
+    "scripts",
+    "commands",
+    "audit",
+    "net",
+    "session",
+    "term"
   ],
   "ui04b_cross_capability_public_baseline": [
     "src/capabilities/bookmark/ui/BookmarkStar.vue",

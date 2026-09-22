@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { EmptyState } from "../../shared/ui";
 import type { ScriptParam, ParamType } from "../../types";
 
 const props = defineProps<{ params: ScriptParam[] }>();
@@ -74,7 +75,7 @@ function setOptions(idx: number, text: string) {
       </label>
       <button type="button" class="del" @click="removeParam(idx)">删除该参数</button>
     </div>
-    <p v-if="!params.length" class="empty">暂无参数</p>
+    <EmptyState v-if="!params.length" as="p" text="暂无参数" />
   </div>
 </template>
 

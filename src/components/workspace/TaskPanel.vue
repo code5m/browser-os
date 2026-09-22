@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { EmptyState } from "../../shared/ui";
 // src/components/workspace/TaskPanel.vue
 // M4-8 定时任务面板：列表 + 启用开关 + 下次/上次执行 + 立即执行 + 编辑 + 删除确认 + 历史。
 //
@@ -110,9 +111,9 @@ const selectedTargetRuns = computed(() =>
     </div>
     <div v-if="tasks.error" class="banner err-banner">{{ tasks.error }}</div>
 
-    <div v-if="tasks.tasks.length === 0" class="empty">
+    <EmptyState v-if="tasks.tasks.length === 0">
       暂无定时任务。{{ tasks.backendReady ? "点击「新建任务」创建。" : "" }}
-    </div>
+    </EmptyState>
 
     <ul v-else class="task-list">
       <li v-for="def in tasks.tasks" :key="def.id" class="task-row">

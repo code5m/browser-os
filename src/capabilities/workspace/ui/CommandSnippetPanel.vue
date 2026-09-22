@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { EmptyState } from "../../../shared/ui";
 import { ref, computed, onMounted } from "vue";
 import { useSnippetStore } from "../state/useSnippetStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
@@ -88,7 +89,7 @@ function openRun(m: CommandSnippet) {
         <button class="new-btn" @click="newSnippet">+ 新建</button>
       </div>
 
-      <div v-if="!tree.length" class="empty">暂无匹配命令</div>
+      <EmptyState v-if="!tree.length" text="暂无匹配命令" />
       <div v-for="node in tree" :key="node.category" class="cat">
         <div class="cat-title">{{ node.category }}（{{ node.snippets.length }}）</div>
         <ul>

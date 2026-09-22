@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { EmptyState } from "../../../shared/ui";
 import { useArtifactStore } from "../state/useArtifactStore";
 import ImageGallery from "../../../components/shared/ImageGallery.vue";
 
@@ -26,7 +27,7 @@ const art = useArtifactStore();
         <button class="del" @click.stop="art.removeArtifact(item)">✕</button>
       </div>
     </div>
-    <div v-if="!art.flatArtifacts.length" class="empty">暂无成果。打开浏览器 → 右键 → 保存选区/整页</div>
+    <EmptyState v-if="!art.flatArtifacts.length" text="暂无成果。打开浏览器 → 右键 → 保存选区/整页" />
 
     <!-- 成果右键菜单 -->
     <div
