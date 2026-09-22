@@ -8,7 +8,7 @@
 
 version: 1
 generated_from_head: 3f57a92e5fb7d9a6bc978f1572964d3c14fb8caf
-total: 65
+total: 68
 
 components:
 
@@ -81,7 +81,9 @@ components:
   - { id: graph.edge-detail, name: EdgeDetail, layer: CAPABILITY_UI, owner: knowledge_graph_unregistered, file: src/components/graph/EdgeDetail.vue, public: false, business_semantics: "边详情", capability_specific: true, dependencies: [useGraphStore, utils/graphUi], consumers: [GraphPanel.vue:90], status: OBSERVED }
   - { id: plugin.manager, name: PluginManager, layer: CAPABILITY_UI, owner: plugin_unregistered, file: src/components/plugin/PluginManager.vue, public: false, business_semantics: "插件管理(store含17处bridge)", capability_specific: true, dependencies: [usePluginStore, utils/pluginUi], consumers: [MainArea.vue:215], status: OBSERVED }
 
-  # ---------- SHARED (3) ----------
+  # ---------- SHARED (5) ----------
+  - { id: shared.context-menu, name: ContextMenu, layer: SHARED_PRIMITIVE, owner: shared, file: src/shared/ui/ContextMenu.vue, public: true, business_semantics: "无(右键菜单容器)", capability_specific: false, dependencies: [global .ctx-menu], consumers: [ArtifactPanel, FilePanel], status: CANONICAL }
+  - { id: shared.context-menu-item, name: ContextMenuItem, layer: SHARED_PRIMITIVE, owner: shared, file: src/shared/ui/ContextMenuItem.vue, public: true, business_semantics: "无(菜单项;danger=危险样式)", capability_specific: false, dependencies: [global .ctx-item], consumers: [ArtifactPanel, FilePanel], status: CANONICAL }
   - { id: shared.empty-state, name: EmptyState, layer: SHARED_PRIMITIVE, owner: shared, file: src/shared/ui/EmptyState.vue, public: true, business_semantics: "无(纯文本空态展示)", capability_specific: false, dependencies: [global .empty token], consumers: [DatabasePanel, ScriptParamForm, RunHistoryModal, TaskPanel, ResourcePanel, ClipboardPanel, AuditPanel, ScriptRunHistory x2, RepoPanel, ScriptPanel, ArtifactPanel, CommandSnippetPanel], status: CANONICAL }
   - { id: shared.image-lightbox, name: ImageLightbox, layer: SHARED_PRIMITIVE, owner: shared, file: src/components/shared/ImageLightbox.vue, public: true, business_semantics: "无(纯看图交互)", capability_specific: false, dependencies: [useImagePreviewStore, convertFileSrc], consumers: [App.vue:273], status: OBSERVED }
   - { id: shared.image-gallery, name: ImageGallery, layer: SHARED_PATTERN, owner: shared, file: src/components/shared/ImageGallery.vue, public: true, business_semantics: "弱(依赖领域类型ImageRef)", capability_specific: false, dependencies: [useImagePreviewStore, convertFileSrc], consumers: [ArtifactPanel.vue:50], status: OBSERVED }

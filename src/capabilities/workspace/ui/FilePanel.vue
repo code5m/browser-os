@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ContextMenu, ContextMenuItem } from "../../../shared/ui";
 import { onMounted, ref, watch } from "vue";
 import { useFileStore } from "../state/useFileStore";
 import { useWorkbenchStore } from "../../../stores/useWorkbenchStore";
@@ -201,11 +202,10 @@ onMounted(async () => {
     </div>
 
     <!-- 文件右键菜单 -->
-    <div
+    <ContextMenu
       v-if="ws.fileCtx.show"
-      class="ctx-menu"
-      :style="{ left: ws.fileCtx.x + 'px', top: ws.fileCtx.y + 'px' }"
-      @click.stop
+      :x="ws.fileCtx.x"
+      :y="ws.fileCtx.y"
       @contextmenu.prevent
     >
       <template v-if="ws.fileCtx.making">
@@ -216,28 +216,27 @@ onMounted(async () => {
           :placeholder="ws.fileCtx.making === 'file' ? '文件名' : '目录名'"
           @keyup.enter="ws.fileCtx.making === 'file' ? ws.ctxNewFile() : ws.ctxNewDir()"
         />
-        <div
-          class="ctx-item"
+        <ContextMenuItem
           @click="ws.fileCtx.making === 'file' ? ws.ctxNewFile() : ws.ctxNewDir()"
-        >✅ 确认    </div>
+        >✅ 确认    </ContextMenuItem>
       </template>
       <template v-else>
-        <div class="ctx-item" @click="ws.fileCtx.making = 'file'">📄 新建文件</div>
-        <div class="ctx-item" @click="ws.fileCtx.making = 'dir'">📁 新建目录</div>
+        <ContextMenuItem @click="ws.fileCtx.making = 'file'">📄 新建文件</ContextMenuItem>
+        <ContextMenuItem @click="ws.fileCtx.making = 'dir'">📁 新建目录</ContextMenuItem>
         <template v-if="ws.fileCtx.entry">
           <div class="ctx-sep"></div>
-          <div class="ctx-item" @click="ws.ctxOpenInNewTab(ws.fileCtx.entry)">📑 新标签打开</div>
-          <div class="ctx-item" @click="ws.ctxOpenInExplorer(ws.fileCtx.entry)">🗂 资源管理器打开</div>
-          <div class="ctx-item" @click="ws.ctxOpenInTerminal(ws.fileCtx.entry)">💻 命令行终端打开</div>
-          <div v-if="ws.fileCtx.entry.is_dir" class="ctx-item" @click="ws.ctxFavorite(ws.fileCtx.entry)">☆ 收藏到主页</div>
-          <div class="ctx-item" @click="ws.copyPath(ws.fileCtx.entry, true)">复制相对路径</div>
-          <div class="ctx-item" @click="ws.copyPath(ws.fileCtx.entry, false)">复制绝对路径</div>
+          <ContextMenuItem @click="ws.ctxOpenInNewTab(ws.fileCtx.entry)">📑 新标签打开</ContextMenuItem>
+          <ContextMenuItem @click="ws.ctxOpenInExplorer(ws.fileCtx.entry)">🗂 资源管理器打开</ContextMenuItem>
+          <ContextMenuItem @click="ws.ctxOpenInTerminal(ws.fileCtx.entry)">💻 命令行终端打开</ContextMenuItem>
+          <ContextMenuItem v-if="ws.fileCtx.entry.is_dir" @click="ws.ctxFavorite(ws.fileCtx.entry)">☆ 收藏到主页</ContextMenuItem>
+          <ContextMenuItem @click="ws.copyPath(ws.fileCtx.entry, true)">复制相对路径</ContextMenuItem>
+          <ContextMenuItem @click="ws.copyPath(ws.fileCtx.entry, false)">复制绝对路径</ContextMenuItem>
           <div class="ctx-sep"></div>
-          <div class="ctx-item" @click="ws.ctxRename(ws.fileCtx.entry)">✏ 重命名</div>
-          <div class="ctx-item danger" @click="ws.ctxDelete(ws.fileCtx.entry)">🗑 删除</div>
+          <ContextMenuItem @click="ws.ctxRename(ws.fileCtx.entry)">✏ 重命名</ContextMenuItem>
+          <ContextMenuItem danger @click="ws.ctxDelete(ws.fileCtx.entry)">🗑 删除</ContextMenuItem>
         </template>
       </template>
-    </div>
+    </ContextMenu>
 
     <!-- 移动确认 -->
     <div

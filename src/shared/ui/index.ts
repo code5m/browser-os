@@ -11,3 +11,5 @@
  * 以上由 scripts/check-ui-boundaries.mjs 的 UI-01 / UI-02 / UI-08 机器校验。
  */
 export { default as EmptyState } from "./EmptyState.vue";
+export { default as ContextMenu } from "./ContextMenu.vue";
+export { default as ContextMenuItem } from "./ContextMenuItem.vue";

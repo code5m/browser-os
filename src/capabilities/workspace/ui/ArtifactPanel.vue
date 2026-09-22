@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { EmptyState } from "../../../shared/ui";
+import { ContextMenu, ContextMenuItem, EmptyState } from "../../../shared/ui";
 import { useArtifactStore } from "../state/useArtifactStore";
 import ImageGallery from "../../../components/shared/ImageGallery.vue";
 
@@ -30,16 +30,11 @@ const art = useArtifactStore();
     <EmptyState v-if="!art.flatArtifacts.length" text="暂无成果。打开浏览器 → 右键 → 保存选区/整页" />
 
     <!-- 成果右键菜单 -->
-    <div
-      v-if="art.ctxMenu.show"
-      class="ctx-menu"
-      :style="{ left: art.ctxMenu.x + 'px', top: art.ctxMenu.y + 'px' }"
-      @click.stop
-    >
-      <div class="ctx-item" @click="art.ctxReveal">📂 打开所在目录</div>
-      <div class="ctx-item" @click="art.ctxOpenSource">🔗 在浏览器打开来源</div>
-      <div class="ctx-item danger" @click="art.ctxRemove">🗑 删除</div>
-    </div>
+    <ContextMenu v-if="art.ctxMenu.show" :x="art.ctxMenu.x" :y="art.ctxMenu.y">
+      <ContextMenuItem @click="art.ctxReveal">📂 打开所在目录</ContextMenuItem>
+      <ContextMenuItem @click="art.ctxOpenSource">🔗 在浏览器打开来源</ContextMenuItem>
+      <ContextMenuItem danger @click="art.ctxRemove">🗑 删除</ContextMenuItem>
+    </ContextMenu>
 
     <!-- 编辑区 -->
     <div v-if="art.current" class="editor">
