@@ -1121,3 +1121,49 @@ SECOND_TRUTHS: 0   NEW_RESOURCE_LEAKS: 0
   3. Clipboard 面板开合态 `clipOpen` 仍在 useLayoutStore（视图态）；Apps 图标/扫描为 Rust 侧。
   4. HomeLaunchers 不在 UI-03b 扫描域（Shell 持有 store 的既有盲区）。
 - Next task: STAGE I — Workbench Decoupling。
+
+## Release Train — STOP 记录（STAGE I = HARD STOP，需用户裁决）
+
+```text
+TRAIN STATE:  STAGE F / G / H = DONE（均已 tag）
+              STAGE I（Workbench Decoupling）= BLOCKED（结构性前置，非机械迁移可解）
+              STAGE J（vNext Closeout）= 依赖 I，未开始
+STOP 类型:    HARD STOP（治理/设计决策，超出自主迁移范围）
+```
+
+已完成 tag（本地，未 push）：
+`capability-skill-c1-pass` / `capability-plugin-c2-pass` / `capability-task-graph-c2-pass` / `capability-system-tools-c2-pass`。
+
+### STAGE I 的三处结构性阻塞（实测证据）
+
+MainArea 剩余硬编码业务面板 = HomePanel(home) / VaultPanel(vault) / SettingsPanel(settings)。逐一分析：
+
+1. **notes（VaultPanel）—— 需 SCR，阻塞**
+   - `capabilities.yaml` notes 块：`semanticOwner: null` + `governanceStatus: OWNER_PENDING_SCR` + `entrypoint: src/utils/vault.mjs`。
+   - VaultPanel 实际 owner 是 `useVaultStore`（`src/stores/`），但注册表**未登记**该 owner。
+   - 升格为受治理能力必须先做 **SCR（semantic owner 注册）**——`check-capability-registry` C7
+     （`CAP_UNGOVERNED_ACTIVATABLE`）要求 activatable⇒GOVERNED，即 owner 必须先登记。
+   - 结论：属**治理决策**，不应由迁移隐式代劳（set - 会污染 Semantic Registry 权威性）。
+
+2. **home（HomePanel）—— 跨能力 + 门禁整目录扫描，阻塞**
+   - `useHomeStore` 被**其它能力**消费：`src/capabilities/workspace/state/useFileStore.ts`、`src/capabilities/bookmark/{state/useBookmarkStore.ts,ui/BookmarkStar.vue}`。
+   - `src/components/home/**`（HomePanel + HomeLaunchers + HomeRecents + HomeShortcuts + HomeShortcutEditor）
+     被 `check-home-ui-logic.mjs` 与 `check-home-client-policy.py` **整目录**扫描；仅移 HomePanel 会漏扫并破坏门禁断言。
+   - 结论：需先设计「home 域与 workspace/bookmark 的读取边界 + 门禁扫描域迁移」，属**设计决策**。
+
+3. **settings（SettingsPanel）—— Shell 持有 store，阻塞**
+   - `useSettingsStore` 被 Shell 消费：`src/App.vue`、`src/components/layout/StatusBar.vue`。
+   - 迁移会新增 Shell→能力耦合，需一并设计 Shell 服务边界（且 settings 未登记能力）。
+
+### 建议的安全推进路径（交用户裁决后执行）
+
+- **notes**：先出 SCR（`semanticOwner: useVaultStore`，更新 states.yaml owner_implementations + 注册表），再按
+  F/G/H 同一范式迁移 VaultPanel → `capabilities/notes/{manifest,index,public,state,ui}`。
+- **home**：先把 `useHomeStore` 从 workspace/bookmark 的**直接消费**改为经 `capabilities/home/public`
+  （或把 home 域设计为 Shell 服务），并把 `check-home-*` 门禁扫描域迁至 `capabilities/home/**`。
+- **settings**：明确 settings 是「Shell 服务」还是「能力」；若为能力，需设计 Shell 消费 `settings/public` 的边界与基线。
+- 三项完成后 MainArea 将**零硬编码业务分支**（纯贡献驱动），再执行 STAGE J Closeout。
+
+### 未做（诚实，不静默）
+HomePanel / VaultPanel / SettingsPanel 仍为 MainArea 硬编码分支（未迁移）；`useHomeStore` / `useSettingsStore` /
+`useVaultStore` 仍物理在 `src/stores/`。**未做任何半迁移**，工作树干净、全部门禁绿。
