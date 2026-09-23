@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { useGraphStore } from "../../stores/useGraphStore";
-import { summarizeEdge } from "../../utils/graphUi";
-import type { GraphEdge } from "../../types";
+import { useGraphStore } from "../state/useGraphStore";
+import { summarizeEdge } from "../../../utils/graphUi";
+import type { GraphEdge } from "../../../types";
 
 const props = defineProps<{ edge: GraphEdge | null }>();
 const summary = computed(() => (props.edge ? summarizeEdge(props.edge) : null));

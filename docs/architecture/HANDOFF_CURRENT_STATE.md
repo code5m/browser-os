@@ -1029,3 +1029,49 @@ SECOND_TRUTHS: 0   NEW_RESOURCE_LEAKS: 0
   3. mainView='plugin' 导航项硬编码（未贡献驱动）。
   4. `check-plugin-ui-logic.mjs` 未接线到 `pre-merge.sh`。
 - Next task: STAGE G — Task / Graph。
+
+## STAGE G — Task / Graph Capability Closeout（DONE）
+
+```text
+HEAD:        <commit-after-this-stage>  (feature/capability-platform-v1)
+TAG:         capability-task-graph-c2-pass  (annotated)
+MATURITY:   Graph = C2 ISOLATED  (id 由 knowledge_graph 统一为 graph)
+            Task  = C2 ISOLATED  (治理 GOVERNED；后端调度线程为 app 级单例)
+HOTPLUG:     HP0 STATIC（两者）
+FULL_STACK:  docs/architecture/capabilities/graph/FULL-STACK-BOUNDARY.md
+             docs/architecture/capabilities/task/FULL-STACK-BOUNDARY.md
+GATES:       npm run check 全绿（CAPABILITY_BOUNDARIES fail=0 warn=1[CB-04]、CAPABILITY_COMPOSITION 33/33、
+            COMPOSITION_PROFILES 11/11[full=11 能力]、check-capability-platform 29/0、RUNTIME_RESOURCE_ABSENCE 12/12、
+            UI-10 catalog 68/68、UI_BOUNDARIES vacuous=0）；check-capability-registry PASS(fail=0 warn=0)；
+            check-semantic-registry PASS；graph/task 专属门禁全绿（check-graph-policy / check-graph-ui-logic 113 /
+            check-scheduler-policy / check-scheduler-ui-policy 17 码 / check-scheduler-ui-logic 105）；vite build OK
+SECOND_TRUTHS: 0   NEW_RESOURCE_LEAKS: 0
+```
+
+- 交付：Graph 与 Task 升格为 full-stack Capability——各自 `capabilities/<id>/{manifest,index,public}.ts`
+  + `state/<store>.ts`（迁入）+ `ui/*.vue`（迁入）；经 **通用 Contribution Registry** 的 `WORKBENCH_MAIN` 槽
+  （view='graph' / 'tasks'）贡献给 MainArea（不再静态 import）。语义 owner `useGraphStore` / `useTaskStore` 唯一。
+- **命名修正**：知识图谱能力 id 由 registry 旧名 `knowledge_graph` 统一为 **`graph`**（下划线不满足 Building Block
+  Contract 的 id 规则 `^[a-z][a-z0-9.]*$`）；同步更新 `agent` 的 optionalDependencies、dependencies.yaml、resources.yaml、
+  profiles.yaml、ui-components.yaml。
+- **资源与安全审计**：
+  - Graph：**只读**内存快照（`graph.json` 启动期只读载入）；无 worker/子进程/webview/写盘（`GRAPH_NO_SECOND_PATH`）；
+    K7 双闸（后端删 props + 前端 viewTo* 白名单）。`v1.resources=[]`。
+  - Task：后端 5 命令 + 进程内**唯一**调度线程（`scheduler.rs`，tick=1s，OnceLock 单例）；执行复用 `script_runner`
+    （非第二路径）；权限 `process.spawn`；持久化 `tasks.json`/`task-runs.json`（atomic_write）；前端**零浏览器存储**。
+    `v1.resources=[{BACKGROUND_TASK, owned}]`。
+- **Absence（实测探针）**：framework/minimal/developer 无 `view='graph'`/`'tasks'`；full 有。
+  absent → 零 bridge.graph*/task* invoke。**诚实边界**：Task 的 Rust 调度线程随 app 启动，不随前端能力激活，
+  前端不谎称能控制后端线程生命周期。
+- **STAGE F 治理修正（顺带）**：plugin 语义 owner 已登记 → `governanceStatus` 由 `LOCKED` 改为 `GOVERNED`
+  （满足 `CAP_UNGOVERNED_ACTIVATABLE`；运行时锁定由 maturity C2 + HP0 + `PLUGIN_NO_EXEC_SURFACE` 表达）；
+  移除 STAGE E 遗留的 `skill → agent` 依赖边（消除 `CAP_DEPENDENCY_MISMATCH` WARN）。
+- Changed files（摘要）：`src/capabilities/{graph,task}/{manifest,index,public}.ts`(新) + `{graph,task}/state/*`（迁入）
+  + `{graph,task}/ui/*`（迁入）+ `src/components/layout/MainArea.vue` + `src/capability/{index.ts,profiles.ts,platform/catalog.ts}`
+  + `src/capabilities/{agent,plugin}/manifest.ts` + `src/capability/platform/contract.ts`(未改)
+  + `scripts/{check-scheduler-ui-policy.py,check-scheduler-ui-logic.mjs}` + `docs/architecture/**`（registry ×5、ui-system ×2、inventory、2×FULL-STACK-BOUNDARY）。
+- Known debt（诚实不谎报）:
+  1. 无 graph/task 专属 absence 运行时门禁。
+  2. mainView='graph'/'tasks' 导航项硬编码（未贡献驱动）。
+  3. 旧文档中 `knowledge_graph` 历史名保留（历史记录）。
+- Next task: STAGE H — Clipboard / Apps / Tools。

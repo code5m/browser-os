@@ -16,6 +16,8 @@ import { databaseCapability, DATABASE_CAPABILITY_ID } from '../capabilities/data
 import { agentCapability, AGENT_CAPABILITY_ID } from '../capabilities/agent'
 import { skillCapability, SKILL_CAPABILITY_ID } from '../capabilities/skill'
 import { pluginCapability, PLUGIN_CAPABILITY_ID } from '../capabilities/plugin'
+import { graphCapability, KNOWLEDGE_GRAPH_CAPABILITY_ID } from '../capabilities/graph'
+import { taskCapability, TASK_CAPABILITY_ID } from '../capabilities/task'
 import { CAPABILITY_PROFILES, DEFAULT_PROFILE, type CapabilityProfileId, profileFromEnv, resolveProfile } from './profiles'
 import { CAPABILITY_CATALOG, CAPABILITY_DEFINITIONS } from './platform/catalog'
 import { assemble } from './platform/assembly'
@@ -37,6 +39,8 @@ export const ALL_CAPABILITIES = [
   { id: AGENT_CAPABILITY_ID, def: agentCapability },
   { id: SKILL_CAPABILITY_ID, def: skillCapability },
   { id: PLUGIN_CAPABILITY_ID, def: pluginCapability },
+  { id: KNOWLEDGE_GRAPH_CAPABILITY_ID, def: graphCapability },
+  { id: TASK_CAPABILITY_ID, def: taskCapability },
 ]
 
 let runtime: CapabilityRuntime | null = null

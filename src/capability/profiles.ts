@@ -27,6 +27,8 @@ import { DATABASE_CAPABILITY_ID } from '../capabilities/database'
 import { AGENT_CAPABILITY_ID } from '../capabilities/agent'
 import { SKILL_CAPABILITY_ID } from '../capabilities/skill'
 import { PLUGIN_CAPABILITY_ID } from '../capabilities/plugin'
+import { KNOWLEDGE_GRAPH_CAPABILITY_ID } from '../capabilities/graph'
+import { TASK_CAPABILITY_ID } from '../capabilities/task'
 
 // 注意：preset 只是「预设」，不是产品边界。任意合法组合走 VITE_CAPABILITY_ASSEMBLY（见 index.ts）。
 export type CapabilityProfileId = 'framework' | 'minimal' | 'developer' | 'full' | 'custom'
@@ -53,6 +55,8 @@ export const CAPABILITY_PROFILES: Record<CapabilityProfileId, string[]> = {
     AGENT_CAPABILITY_ID,
     SKILL_CAPABILITY_ID,
     PLUGIN_CAPABILITY_ID,
+    KNOWLEDGE_GRAPH_CAPABILITY_ID,
+    TASK_CAPABILITY_ID,
   ],
   // custom 的清单不在此处：由运行时 VITE_CAPABILITY_ASSEMBLY 决定（这里必须是同一 Record 的一分子）
   custom: [],

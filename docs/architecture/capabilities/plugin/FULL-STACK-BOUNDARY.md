@@ -7,12 +7,12 @@
 
 ## 成熟度（诚实，不谎报）
 
-**C2 ISOLATED**（status=`COMPATIBILITY_WRAPPED`，manifest.v1.maturity=`C2`；governanceStatus=`LOCKED`）。
+**C2 ISOLATED**（status=`COMPATIBILITY_WRAPPED`，manifest.v1.maturity=`C2`；governanceStatus=`GOVERNED`）。
 
 评级依据（按本项目 `C0..C5` 标度）：
 - **C2 ISOLATED 达成**：实现经明确边界隔离——`manifest.ts` / `public.ts` / `index.ts` / `state/` / `ui/` 五段边界；
   语义 owner `usePluginStore` 唯一（无第二真源）；MainArea 不再静态 import PluginManager（贡献驱动）。
-- **非 C3**：① `governanceStatus=LOCKED`——plugin 运行时（loader/执行）**设计上未实现且不可组合启停**；
+- **非 C3**：① `governanceStatus=GOVERNED`——plugin 运行时（loader/执行）**设计上未实现且不可组合启停**；
   ② 无 plugin 专属 absence 运行时门禁（依赖 profile 预设 + 贡献缺席，缺自动化断言）；
   ③ `mainView='plugin'` 导航项仍硬编码于 `useLayoutStore`/`homeUi`/`HomeLaunchers`（未贡献驱动）。
 - **非 C4/C5**：无运行时 enable/disable 真实装配、无资源可释放（Stage-I 从不创建 load 实例）。

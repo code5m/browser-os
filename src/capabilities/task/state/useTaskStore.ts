@@ -10,13 +10,13 @@
 
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import { TASK_COMMANDS_AVAILABLE, bridge } from "../bridge";
+import { TASK_COMMANDS_AVAILABLE, bridge } from "../../../bridge";
 import type {
   RunSnapshot,
   ScriptRunRecord,
   TaskDef,
   TaskRunRecord,
-} from "../types";
+} from "../../../types";
 import {
   emptyTaskDraft,
   loadTaskDraft,
@@ -29,9 +29,9 @@ import {
   type TaskDraft,
   type TaskIssue,
   type TaskTargetOption,
-} from "../utils/taskUi";
-import { useScriptStore } from "../capabilities/workspace/public";
-import { useSnippetStore } from "../capabilities/workspace/public";
+} from "../../../utils/taskUi";
+import { useScriptStore } from "../../workspace/public";
+import { useSnippetStore } from "../../workspace/public";
 
 export const useTaskStore = defineStore("tasks", () => {
   const tasks = ref<TaskDef[]>([]);

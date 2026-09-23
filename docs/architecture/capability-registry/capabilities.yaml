@@ -303,7 +303,7 @@ capabilities:
     dependsOn:
       - bridge
     optionalDependencies:
-      - knowledge_graph
+      - graph
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
@@ -351,13 +351,13 @@ capabilities:
 
   # Capability Library Expansion v1（STAGE F）：Plugin 物理迁入 capabilities/plugin/（manifest/public/index/ui/state）。
   # 诚实边界（Stage-I 登记簿）：后端 plugin_list/get/install/enable/disable/keys_* 已实现（本地登记簿 + 状态机 + 信任指纹），
-  #   但无 plugin 运行时（不解包/不真验签/不动态加载/不执行/不联网）→ governanceStatus=LOCKED，无 owned 资源实例。
+  #   但无 plugin 运行时（不解包/不真验签/不动态加载/不执行/不联网）→ 无 owned 资源实例，maturity C2（运行时 LOCKED）。
   # 五态分别判定（AVAILABLE/INSTALLED/ENABLED/ACTIVE/RESOURCE_EXISTS），禁止合并成单一 boolean（§18）。
   - id: plugin
     name: Plugin
     category: CAPABILITY
     semanticOwner: usePluginStore
-    governanceStatus: LOCKED
+    governanceStatus: GOVERNED
     status: COMPATIBILITY_WRAPPED
     maturity: C2
     provides:
@@ -381,12 +381,16 @@ capabilities:
       sensitive: false
     entrypoint: src/capabilities/plugin/index.ts
 
-  - id: knowledge_graph
+  # Capability Library Expansion v1（STAGE G）：知识图谱能力 id 由 `knowledge_graph` 统一为 `graph`
+  # （下划线不满足 Building Block Contract 的 id 规则 ^[a-z][a-z0-9.]*$）；物理迁入 capabilities/graph/。
+  # 后端 graph_query/graph_node_get/graph_stats 已实现（只读内存快照）；无 worker/webview/写盘。
+  - id: graph
     name: KnowledgeGraph
     category: CAPABILITY
     semanticOwner: useGraphStore
     governanceStatus: GOVERNED
-    status: NOT_INTEGRATED
+    status: COMPATIBILITY_WRAPPED
+    maturity: C2
     provides:
       - graph.query
       - graph.node.get
@@ -398,7 +402,7 @@ capabilities:
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
-      activatable: false
+      activatable: true
       resident: false
     resources:
       class: [MEDIUM]
@@ -408,7 +412,7 @@ capabilities:
     persistence:
       scope: disk
       sensitive: false
-    entrypoint: src/components/graph
+    entrypoint: src/capabilities/graph/index.ts
 
   - id: notes
     name: Notes
@@ -467,24 +471,28 @@ capabilities:
       sensitive: false
     entrypoint: src/stores/useResourceStore.ts
 
+  # Capability Library Expansion v1（STAGE G）：Task 物理迁入 capabilities/task/（manifest/public/index/ui/state）。
+  # 后端 task_list/add/update/remove/run_now 已实现；进程内唯一调度线程（scheduler.rs）驱动，执行复用 script_runner。
   - id: task
     name: Task
     category: CAPABILITY
     semanticOwner: useTaskStore
     governanceStatus: GOVERNED
-    status: NOT_INTEGRATED
+    status: COMPATIBILITY_WRAPPED
+    maturity: C2
     provides:
       - task.schedule
       - task.run
       - task.cancel
     dependsOn:
+      - workspace
       - bridge
     optionalDependencies:
       - script
     lifecycle:
       supported: [ACTIVE, BACKGROUND]
       default: ACTIVE
-      activatable: false
+      activatable: true
       resident: false
     resources:
       class: [BACKGROUND]
@@ -495,7 +503,7 @@ capabilities:
     persistence:
       scope: disk
       sensitive: false
-    entrypoint: src/stores/useTaskStore.ts
+    entrypoint: src/capabilities/task/index.ts
 
   - id: session
     name: Session

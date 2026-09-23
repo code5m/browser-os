@@ -42,9 +42,10 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 TASK_UI = "src/utils/taskUi.ts"
-TASK_STORE = "src/stores/useTaskStore.ts"
-TASK_PANEL = "src/components/workspace/TaskPanel.vue"
-TASK_DIALOG = "src/components/workspace/TaskEditDialog.vue"
+TASK_STORE = "src/capabilities/task/state/useTaskStore.ts"
+TASK_PANEL = "src/capabilities/task/ui/TaskPanel.vue"
+TASK_DIALOG = "src/capabilities/task/ui/TaskEditDialog.vue"
+TASK_INDEX = "src/capabilities/task/index.ts"
 BRIDGE = "src/bridge.ts"
 MAIN_AREA = "src/components/layout/MainArea.vue"
 
@@ -62,7 +63,7 @@ PENDING_CODES: set[str] = set()
 
 
 def read_repo() -> dict[str, str]:
-    files = [TASK_UI, TASK_STORE, TASK_PANEL, TASK_DIALOG, BRIDGE, MAIN_AREA]
+    files = [TASK_UI, TASK_STORE, TASK_PANEL, TASK_DIALOG, TASK_INDEX, BRIDGE, MAIN_AREA]
     out: dict[str, str] = {}
     for rel in files:
         path = os.path.join(ROOT, rel)
@@ -176,12 +177,12 @@ def check(files: dict[str, str]) -> list[str]:
         violations.append("SCHEDUI_TASK_UPDATE_WRAPPED")
 
     # --- SCHEDUI_PANEL_LAZY：定时任务面板必须懒加载（defineAsyncComponent），不进主 chunk ---
-    if 'import TaskPanel from "../workspace/TaskPanel.vue";' in mainarea:
+    # STAGE G：面板已升格 capabilities/task/，懒加载迁至 task/index.ts（贡献驱动）；
+    # MainArea 与 task 适配器均不得静态 import TaskPanel。
+    task_index = files.get(TASK_INDEX, "")
+    if "import TaskPanel from" in mainarea or "import TaskPanel from" in task_index:
         violations.append("SCHEDUI_PANEL_LAZY")
-    lazy_loader_ok = (
-        'defineAsyncComponent(() => import("../workspace/TaskPanel.vue"))' in mainarea
-        or 'loader: () => import("../workspace/TaskPanel.vue")' in mainarea
-    )
+    lazy_loader_ok = 'loader: () => import("./ui/TaskPanel.vue")' in task_index
     if not lazy_loader_ok:
         violations.append("SCHEDUI_PANEL_LAZY")
 
@@ -299,9 +300,9 @@ BAD_SAMPLES: list[tuple[str, str, str, str]] = [
     ),
     (
         "SCHEDUI_PANEL_LAZY",
-        MAIN_AREA,
-        'loader: () => import("../workspace/TaskPanel.vue"),',
-        'import TaskPanel from "../workspace/TaskPanel.vue";',
+        TASK_INDEX,
+        'loader: () => import("./ui/TaskPanel.vue"),',
+        'import TaskPanel from "./ui/TaskPanel.vue";',
     ),
 ]
 

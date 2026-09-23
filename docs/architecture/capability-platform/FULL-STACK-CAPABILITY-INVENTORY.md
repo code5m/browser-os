@@ -28,8 +28,8 @@
 | agent | `src/capabilities/agent` | COMPATIBILITY_WRAPPED | C1 WRAPPED (运行时未实现) | MEDIUM/NETWORK | COMPATIBILITY_WRAPPED |
 | skill | `src/capabilities/skill` | COMPATIBILITY_WRAPPED | C1 WRAPPED (运行时未实现) | LIGHT | COMPATIBILITY_WRAPPED |
 | plugin | `src/capabilities/plugin` | COMPATIBILITY_WRAPPED | C2 ISOLATED (运行时 LOCKED 无执行) | HEAVY/NATIVE | COMPATIBILITY_WRAPPED |
-| knowledge_graph | `src/components/graph` | NOT_INTEGRATED | C1 (live query) | MEDIUM | TARGET_COMPOSABLE |
-| task | `src/stores/useTaskStore.ts` | NOT_INTEGRATED | C1 (live) | BACKGROUND/PROCESS | TARGET_COMPOSABLE |
+| graph | `src/capabilities/graph` | COMPATIBILITY_WRAPPED | C2 ISOLATED (只读) | MEDIUM | COMPATIBILITY_WRAPPED |
+| task | `src/capabilities/task` | COMPATIBILITY_WRAPPED | C2 ISOLATED (live, 调度线程) | BACKGROUND/PROCESS | COMPATIBILITY_WRAPPED |
 | session | `src/stores/useSessionStore.ts` | NOT_INTEGRATED | C1 (live) | LIGHT | NOT_COMPOSABLE_BY_DESIGN |
 | script | `src/capabilities/workspace/state` | NOT_INTEGRATED | C1 (live, spawns) | PROCESS | TARGET_COMPOSABLE |
 | notes | `src/stores/useVaultStore.ts` | NOT_INTEGRATED | C1 | LIGHT | TARGET_COMPOSABLE |
@@ -173,25 +173,25 @@
 
 ### knowledge_graph — C1（live query）
 - 用户目的：图谱查询 / 节点获取 / 统计。
-- UI owner：`src/components/graph/GraphPanel.vue`。
-- State owner：`useGraphStore`（`src/stores/useGraphStore.ts`）。
+- UI owner：`src/capabilities/graph/ui/GraphPanel.vue`。
+- State owner：`useGraphStore`（`src/capabilities/graph/state/useGraphStore.ts`）。
 - Intent owner：`useGraphStore`（loadGraph/loadNode/loadStats）。
 - Native owner：`bridge.graphQuery/graphNodeGet/graphStats` → Rust `graph_query`(7710)/`graph_node_get`(7729)/`graph_stats`(7746)（graph.rs 实现）；`GRAPH_COMMANDS_AVAILABLE=true`。
 - Resource owner：无（只读查询既有图存储）。
 - Credential：无。
 - Dependencies：`bridge`，可选 `agent`。
-- 评级：C1（live）。目标 C3。
+- 评级：C2 ISOLATED（STAGE G 迁移后，贡献驱动，只读 live query）。非 C3：无 graph absence 门禁 + nav 硬编码。详见 `docs/architecture/capabilities/graph/FULL-STACK-BOUNDARY.md`。
 
 ### task — C1（live）
 - 用户目的：定时任务调度 / 运行 / 取消。
-- UI owner：`src/components/workspace/TaskPanel.vue`。
-- State owner：`useTaskStore`（`src/stores/useTaskStore.ts`，id=tasks）。
+- UI owner：`src/capabilities/task/ui/TaskPanel.vue`。
+- State owner：`useTaskStore`（`src/capabilities/task/state/useTaskStore.ts`，id=tasks）。
 - Intent owner：`useTaskStore`（schedule/run/cancel/setEnabled）。
 - Native owner：`bridge.task*` → Rust `task_list/add/update/remove/run_now`（bridge.rs:1004-1148）；`TASK_COMMANDS_AVAILABLE=true`。`task_run_now` 经 script_runner spawn 子进程。
 - Resource owner：BACKGROUND/PROCESS（spawn）。
 - Credential：无（secret 参数不持久化）。
 - Dependencies：`bridge`，可选 `script`。
-- 评级：C1（live）。目标 C3。
+- 评级：C2 ISOLATED（STAGE G 迁移后，贡献驱动，live）。非 C3：无 task absence 门禁 + nav 硬编码；调度线程为 app 级单例。详见 `docs/architecture/capabilities/task/FULL-STACK-BOUNDARY.md`。
 
 ### session — C1（live）
 - 用户目的：会话持久化 / 恢复。

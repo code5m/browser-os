@@ -59,14 +59,14 @@ edges:
   - { from: git,       to: workspace,  kind: required }
   - { from: git,       to: bridge,   kind: required }
   - { from: agent,     to: bridge,   kind: required }
-  - { from: agent,     to: knowledge_graph, kind: optional }
-  - { from: skill,     to: agent,    kind: required }
+  - { from: agent,     to: graph, kind: optional }
   - { from: skill,     to: bridge,   kind: required }
   - { from: plugin,    to: bridge,   kind: required }
-  - { from: knowledge_graph, to: bridge, kind: required }
-  - { from: knowledge_graph, to: agent,   kind: optional }
+  - { from: graph, to: bridge, kind: required }
+  - { from: graph, to: agent,   kind: optional }
   - { from: notes,     to: bridge,   kind: required }
   - { from: resource_collection, to: bridge, kind: required }
+  - { from: task,      to: workspace, kind: required }
   - { from: task,      to: bridge,   kind: required }
   - { from: task,      to: script,   kind: optional }
   - { from: session,   to: bridge,   kind: required }

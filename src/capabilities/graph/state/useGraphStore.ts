@@ -20,13 +20,13 @@
 
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import { GRAPH_COMMANDS_AVAILABLE, bridge } from "../bridge";
+import { GRAPH_COMMANDS_AVAILABLE, bridge } from "../../../bridge";
 import type {
   GraphEdge,
   GraphNode,
   GraphNodeKind,
   GraphQueryRequest,
-} from "../types";
+} from "../../../types";
 import {
   applyGraphErrorView,
   boundedInsert,
@@ -47,7 +47,7 @@ import {
   viewToNode,
   viewToQueryResult,
   type GraphFilterState,
-} from "../utils/graphUi";
+} from "../../../utils/graphUi";
 
 export const useGraphStore = defineStore("graph", () => {
   const nodes = ref<Map<string, GraphNode>>(new Map());

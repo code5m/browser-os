@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { useGraphStore } from "../../stores/useGraphStore";
+import { useGraphStore } from "../state/useGraphStore";
 import {
   clampRender,
   edgeKey,
@@ -10,7 +10,7 @@ import {
   nodeKindLabel,
   RENDER_EDGE_CAP,
   RENDER_NODE_CAP,
-} from "../../utils/graphUi";
+} from "../../../utils/graphUi";
 
 const store = useGraphStore();
 

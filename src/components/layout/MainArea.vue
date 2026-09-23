@@ -24,14 +24,9 @@ const panelError = {
     h("div", { class: "modview panel-state panel-error", role: "alert" }, "该面板暂时无法显示"),
 };
 
-// M4-8 定时任务面板同样懒加载：其纯逻辑(taskUi.ts)、store(useTaskStore.ts) 一并拆出主 chunk。
-const TaskPanel = defineAsyncComponent({
-  loader: () => import("../workspace/TaskPanel.vue"),
-  loadingComponent: panelLoading,
-  errorComponent: panelError,
-  delay: 80,
-  timeout: 10000,
-});
+// Task 面板已升格为 capabilities/task/ 能力：经 WORKBENCH_MAIN 贡献（view='tasks'）懒加载注册，
+// MainArea 只按槽渲染（见下方通用 viewOf 分支），不再静态 import 本能力内部（C3 关键）。
+// 懒加载仍保留在 capabilities/task/index.ts 的 defineAsyncComponent 中。
 // Database 面板已升格为 capabilities/database/ 能力：经 WORKBENCH_MAIN 贡献（view='db'）懒加载注册，
 // MainArea 只按槽渲染（见下方通用 viewOf 分支），不再静态 import 本能力内部（C3 关键）。
 // 懒加载仍保留在 capabilities/database/index.ts 的 defineAsyncComponent 中（15KB+ dbUi + store 拆主 chunk）。
@@ -39,15 +34,9 @@ const TaskPanel = defineAsyncComponent({
 // MainArea 只按槽渲染（见下方通用 viewOf 分支），不再静态 import 本能力内部（C3 关键）。
 // Agent 面板已升格为 capabilities/agent/ 能力：经 WORKBENCH_MAIN 贡献（view='agents'）懒加载注册，
 // MainArea 只按槽渲染（见下方通用 viewOf 分支），不再静态 import 本能力内部（C3 关键）。
-// M5-9 图谱面板：懒加载（defineAsyncComponent），将其纯逻辑(graphUi.ts)、store(useGraphStore.ts)
-// 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
-const GraphPanel = defineAsyncComponent({
-  loader: () => import("../graph/GraphPanel.vue"),
-  loadingComponent: panelLoading,
-  errorComponent: panelError,
-  delay: 80,
-  timeout: 10000,
-});
+// Graph 面板已升格为 capabilities/graph/ 能力：经 WORKBENCH_MAIN 贡献（view='graph'）懒加载注册，
+// MainArea 只按槽渲染（见下方通用 viewOf 分支），不再静态 import 本能力内部（C3 关键）。
+// 懒加载仍保留在 capabilities/graph/index.ts 的 defineAsyncComponent 中。
 // Plugin 面板已升格为 capabilities/plugin/ 能力：经 WORKBENCH_MAIN 贡献（view='plugin'）懒加载注册，
 // MainArea 只按槽渲染（见下方通用 viewOf 分支），不再静态 import 本能力内部（C3 关键）。
 // 懒加载仍保留在 capabilities/plugin/index.ts 的 defineAsyncComponent 中（pluginUi + store 拆主 chunk）。
@@ -201,17 +190,12 @@ watch(
     <!-- ===== 数据库（M4-4）：已升格 capabilities/database/，经 WORKBENCH_MAIN 贡献 view='db' 渲染（由上方通用 viewOf 分支处理） ===== -->
 
     <div v-else-if="layout.mainView === 'vault'" class="modview"><VaultPanel /></div>
-    <!-- ===== 定时任务（M4-8） ===== -->
-    <div v-else-if="layout.mainView === 'tasks'" class="modview">
-      <TaskPanel />
-    </div>
+    <!-- ===== 定时任务（M4-8）：已升格 capabilities/task/，经 WORKBENCH_MAIN 贡献 view='tasks' 渲染（由上方通用 viewOf 分支处理） ===== -->
 
     <!-- ===== 插件管理器（M5-W14）：已升格 capabilities/plugin/，经 WORKBENCH_MAIN 贡献 view='plugin' 渲染（由上方通用 viewOf 分支处理） ===== -->
     <!-- ===== 技能（Skill）：已升格 capabilities/skill/，经 WORKBENCH_MAIN 贡献 view='skills' 渲染（由通用 viewOf 分支处理） ===== -->
     <!-- ===== 智能体（Agent）：已升格 capabilities/agent/，经 WORKBENCH_MAIN 贡献 view='agents' 渲染（由通用 viewOf 分支处理） ===== -->
-    <div v-else-if="layout.mainView === 'graph'" class="modview" role="region" aria-label="知识图谱">
-      <GraphPanel />
-    </div>
+    <!-- ===== 知识图谱（M5-9）：已升格 capabilities/graph/，经 WORKBENCH_MAIN 贡献 view='graph' 渲染（由上方通用 viewOf 分支处理） ===== -->
 
     <!-- ===== 系统设置 ===== -->
     <div v-else-if="layout.mainView === 'settings'" class="modview">

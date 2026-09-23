@@ -9,7 +9,7 @@
 //   - 敏感参数输入框禁用：secret 参数值不落 tasks.json（A6 §3.3 R-3）；
 //   - catch_up_limit 仅 CatchUp 策略下可编辑（A6 §3.2，防「看似可配实则 no-op」）。
 import { computed } from "vue";
-import { useTaskStore } from "../../stores/useTaskStore";
+import { useTaskStore } from "../state/useTaskStore";
 import {
   CRON_FIELD_COUNT,
   MAX_ATTEMPTS,
@@ -19,7 +19,7 @@ import {
   MIN_INTERVAL_SECS,
   isCatchUpLimitEditable,
   missedPolicyLabel,
-} from "../../utils/taskUi";
+} from "../../../utils/taskUi";
 
 const tasks = useTaskStore();
 

@@ -26,7 +26,6 @@
   ],
   "business_component_dirs": [
     "src/components/workspace",
-    "src/components/graph",
     "src/components/browser"
   ],
   "ui03_shell_renders_business_baseline": [
@@ -47,20 +46,6 @@
       "line": 199,
       "component": "ToolBox",
       "domain": "WORKSPACE_TOOLS"
-    },
-    {
-      "shell": "src/components/layout/MainArea.vue",
-      "line": 210,
-      "component": "TaskPanel",
-      "domain": "TASK"
-    },
-
-
-    {
-      "shell": "src/components/layout/MainArea.vue",
-      "line": 224,
-      "component": "GraphPanel",
-      "domain": "GRAPH"
     },
     {
       "shell": "src/components/layout/ActivityBar.vue",
@@ -302,7 +287,8 @@
     "src/capabilities/bookmark/ui/BookmarkStar.vue",
     "src/capabilities/bookmark/ui/BookmarkPanel.vue",
     "src/capabilities/workspace/ui/FileEditor.vue",
-    "src/capabilities/git/ui/GitPanel.vue"
+    "src/capabilities/git/ui/GitPanel.vue",
+    "src/capabilities/task/state/useTaskStore.ts"
   ],
   "ui04b_undeclared_cross_capability_baseline": [
     {

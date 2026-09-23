@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { EmptyState } from "../../shared/ui";
+import { EmptyState } from "../../../shared/ui";
 // src/components/workspace/TaskPanel.vue
 // M4-8 定时任务面板：列表 + 启用开关 + 下次/上次执行 + 立即执行 + 编辑 + 删除确认 + 历史。
 //
@@ -8,8 +8,8 @@ import { EmptyState } from "../../shared/ui";
 // 真正跑起来的是后端既有的 script_runner（A6 F6：不另起执行路径）。
 // 下文的 30s 定时器仅用于刷新相对时间文案，**从不触发任何执行**。
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { useTaskStore } from "../../stores/useTaskStore";
-import type { TaskDef } from "../../types";
+import { useTaskStore } from "../state/useTaskStore";
+import type { TaskDef } from "../../../types";
 import {
   formatRelative,
   formatTrigger,
@@ -19,8 +19,8 @@ import {
   skipReasonLabel,
   triggerLabelOf,
   statusLabel,
-} from "../../utils/taskUi";
-import { runStatusClass } from "../../utils/scriptUi";
+} from "../../../utils/taskUi";
+import { runStatusClass } from "../../../utils/scriptUi";
 import TaskEditDialog from "./TaskEditDialog.vue";
 
 const tasks = useTaskStore();

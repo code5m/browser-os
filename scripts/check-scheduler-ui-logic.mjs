@@ -67,7 +67,7 @@ const ROOT = new URL("..", import.meta.url).pathname;
 
 const { bridge } = await import(`${ROOT}src/bridge.ts`);
 const taskUi = await import(`${ROOT}src/utils/taskUi.ts`);
-const { useTaskStore } = await import(`${ROOT}src/stores/useTaskStore.ts`);
+const { useTaskStore } = await import(`${ROOT}src/capabilities/task/state/useTaskStore.ts`);
 const { createPinia, setActivePinia } = await import(`${ROOT}node_modules/pinia/dist/pinia.mjs`);
 
 const {

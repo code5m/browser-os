@@ -19,7 +19,7 @@ export const agentManifest: CapabilityDefinition = {
     "agent.memory",
   ],
   dependsOn: ["bridge"],
-  optionalDependencies: ["knowledge_graph"],
+  optionalDependencies: ["graph"],
   lifecycle: {
     supported: ["ACTIVE", "SUSPENDED"],
     default: "ACTIVE",
@@ -50,7 +50,7 @@ export const agentManifest: CapabilityDefinition = {
     maturity: "C1",
     maturityEvidence: ["scripts/check-developer-owners.mjs"],
     dependencies: ["bridge"],
-    optionalDependencies: ["knowledge_graph"],
+    optionalDependencies: ["graph"],
     conflicts: [],
     provides: ["agent.chat", "agent.run", "agent.memory"],
     requires: [],

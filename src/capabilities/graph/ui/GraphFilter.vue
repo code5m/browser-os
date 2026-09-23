@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { useGraphStore } from "../../stores/useGraphStore";
-import { GRAPH_NODE_KINDS, nodeKindLabel } from "../../utils/graphUi";
+import { useGraphStore } from "../state/useGraphStore";
+import { GRAPH_NODE_KINDS, nodeKindLabel } from "../../../utils/graphUi";
 
 const store = useGraphStore();
 const kindOptions = GRAPH_NODE_KINDS.map((k) => ({ value: k, label: nodeKindLabel(k) }));

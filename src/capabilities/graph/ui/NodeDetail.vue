@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { useGraphStore } from "../../stores/useGraphStore";
-import { summarizeNode } from "../../utils/graphUi";
-import type { GraphNode } from "../../types";
+import { useGraphStore } from "../state/useGraphStore";
+import { summarizeNode } from "../../../utils/graphUi";
+import type { GraphNode } from "../../../types";
 
 const props = defineProps<{ node: GraphNode | null }>();
 const summary = computed(() => (props.node ? summarizeNode(props.node) : null));

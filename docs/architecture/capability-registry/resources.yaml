@@ -108,7 +108,7 @@ policies:
     resident: false
     release_note: runtime LOCKED，不支持释放
 
-  - id: knowledge_graph
+  - id: graph
     class: [MEDIUM]
     suspendable: true
     destroyable: true

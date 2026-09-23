@@ -8,7 +8,8 @@ import type { CapabilityDefinition } from "../../capability/types"
 //   - 后端 `plugin_list/get/install/enable/disable/keys_add/keys_list/keys_remove` 命令**已实现**：
 //     本地登记簿 + 生命周期状态机 + 受信任公钥指纹，落盘 `plugins.json` / `trusted-pubkeys.json`（atomic_write）。
 //   - **但无 plugin 运行时**：不解包、不真验签（仅结构校验）、不动态加载、不执行、不下载、不联网。
-//     `governanceStatus=LOCKED`，门禁 `check-plugin-policy.py` 的 `PLUGIN_NO_EXEC_SURFACE` 强制无执行面。
+//     （语义 owner 已登记 ⇒ governanceStatus=GOVERNED；运行时锁定由 maturity=C2 + HP0 + 门禁
+//      `check-plugin-policy.py` 的 `PLUGIN_NO_EXEC_SURFACE` 强制无执行面来表达。）
 //   - **五态分别判定，禁止合并成单一 boolean**（§18）：
 //       AVAILABLE（可发现，Stage-I 无 discovery 源 → 恒 false）
 //       INSTALLED（登记簿存在且 state≠uninstalled）
@@ -48,7 +49,9 @@ export const pluginManifest: CapabilityDefinition = {
   },
   entrypoint: "index.ts",
   semanticOwner: "usePluginStore",
-  governanceStatus: "LOCKED",
+  // 语义 owner 已登记 ⇒ GOVERNED（允许装配）；plugin **运行时**（loader/执行）仍 LOCKED/未实现——
+  // 该事实由 maturity=C2 + hotPlug HP0 + 门禁 PLUGIN_NO_EXEC_SURFACE 表达，不由 governanceStatus 表达。
+  governanceStatus: "GOVERNED",
   status: "COMPATIBILITY_WRAPPED",
   // Building Block Contract v1（§9）。
   v1: {

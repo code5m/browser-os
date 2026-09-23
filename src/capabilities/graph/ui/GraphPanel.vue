@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref } from "vue";
-import { useGraphStore } from "../../stores/useGraphStore";
+import { useGraphStore } from "../state/useGraphStore";
 import {
   GRAPH_DEBOUNCE_MS,
   GRAPH_MAX_EDGES,
   GRAPH_MAX_NODES,
   GRAPH_TRUNCATION_NOTICE,
-} from "../../utils/graphUi";
+} from "../../../utils/graphUi";
 import GraphFilter from "./GraphFilter.vue";
 import GraphViewer from "./GraphViewer.vue";
 import NodeDetail from "./NodeDetail.vue";
