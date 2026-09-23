@@ -817,3 +817,29 @@ Semantic Governance v1 验收证据（2026-09-19）：
 
 - `universal-capability-platform-core-v1-pass` → 平台内核稳定点
 - 受保护 tag `capability-modularization-v1-code-pass` 未移动
+
+---
+
+## UI COMPONENT SYSTEM（UI-0 ~ UI-6）
+
+当前稳定点：见 `docs/architecture/ui-system/HANDOFF_UI_SYSTEM.md`
+
+- UI-0/1/2/3/4/5 全部 PASS，逐阶段 annotated tag：
+  `ui-system-phase0-inventory-pass` → `...phase1-governance-pass` →
+  `...phase2-pilot-pass` → `...phase3-shared-foundation-pass` →
+  `...phase4-workbench-decoupling-pass` → `...phase5-token-foundation-pass`
+- UI-6 收口 tag：`ui-component-system-v1-code-pass`
+  （**未创建** `ui-component-system-v1-pass` —— Final Human Visual Acceptance 未执行）
+- 68 个 UI 全部有 owner 与 layer，UNKNOWN = 0；shared/ui 相关门禁 VACUOUS = 0
+- shared/ui：3 个组件，均 ≥2 真实 consumer，SSR 证明 DOM 逐字节等价
+- Design Token v1：6 个语义 token，取值逐字等同原字面量（computed 不变）
+- Shell 硬编码 Dock 页签 4 → 0（贡献驱动，absent capability 不再留死页签）
+- 剩余债：11 处 Shell→业务直渲、22 处 Shell 持业务 store（全部显式 baseline）
+- **HUMAN_VISUAL = PENDING**
+
+### 新增门禁（已接入 `npm run check`）
+
+- `scripts/check-ui-boundaries.mjs`（UI-01..UI-10）
+- `scripts/verify-ui-pilot.mjs`（SSR 结构等价）
+- `scripts/verify-dock-contribution.mjs`（Dock 贡献）
+- `scripts/verify-design-tokens.mjs`（token 不变量）
