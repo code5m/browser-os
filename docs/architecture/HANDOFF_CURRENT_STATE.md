@@ -987,7 +987,7 @@ SECOND_TRUTHS: 0
 ## STAGE F — Plugin Capability Closeout（DONE）
 
 ```text
-HEAD:        <commit-after-this-stage>  (feature/capability-platform-v1)
+HEAD:        2f60f69  (feature/capability-platform-v1)
 TAG:         capability-plugin-c2-pass  (annotated)
 MATURITY:   C2 ISOLATED  (manifest.v1.maturity="C2"; status=COMPATIBILITY_WRAPPED; governanceStatus=LOCKED)
             诚实功能缺口：plugin 运行时（loader/解包/真验签/动态加载/执行）未实现，仅 Stage-I 登记簿
