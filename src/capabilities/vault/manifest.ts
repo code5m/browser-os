@@ -11,7 +11,7 @@ export const vaultManifest: CapabilityDefinition = {
   category: "CAPABILITY",
   provides: ["vault.open", "vault.search", "vault.follow"],
   dependsOn: ["bridge"],
-  optionalDependencies: [],
+  optionalDependencies: ["browser"],
   lifecycle: {
     supported: ["ACTIVE", "SUSPENDED"],
     default: "ACTIVE",

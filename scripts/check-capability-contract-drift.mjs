@@ -107,6 +107,12 @@ function parseManifest(text) {
   return out
 }
 
+// §13：Capability Dependency ≠ Infrastructure Dependency。
+// bridge（及同类）是 SHARED_INFRASTRUCTURE（见 dependencies.yaml shared_infrastructure），
+// 不是 capability，不在 CAPABILITY_CATALOG 中。能力依赖比较时两侧都归一化掉 ——
+// 这不是隐藏漂移：基础设施依赖的真源是 dependencies.yaml，由别的门禁消费。
+const SHARED_INFRA = new Set(['bridge'])
+const dropInfra = (l) => (l || []).filter((x) => !SHARED_INFRA.has(x))
 const normEntry = (s) => String(s || '').trim().replace(/\/index\.ts$/, '').replace(/\/+$/, '')
 const eqList = (a, b) => {
   const A = [...(a || [])].sort()
@@ -128,17 +134,19 @@ function run({ registryText, manifests }) {
     }
     if (m.v1Id && m.v1Id !== id) push('DRIFT-01', `${id}: v1.id=${m.v1Id} 与目录/registry id 不一致`)
     // dependsOn：顶层与 v1.dependencies 任一与 registry 不一致即漂移
-    if (m.dependsOn && !eqList(m.dependsOn, r.dependsOn)) {
-      push('DRIFT-02', `${id}: manifest.dependsOn=${show(m.dependsOn)} ≠ registry.dependsOn=${show(r.dependsOn)}`)
+    const rDeps = dropInfra(r.dependsOn)
+    const rOpt = dropInfra(r.optionalDependencies)
+    if (m.dependsOn && !eqList(dropInfra(m.dependsOn), rDeps)) {
+      push('DRIFT-02', `${id}: manifest.dependsOn=${show(m.dependsOn)} ≠ registry.dependsOn=${show(r.dependsOn)}（已归一化 shared infra）`)
     }
-    if (m.v1Dependencies && !eqList(m.v1Dependencies, r.dependsOn)) {
-      push('DRIFT-02', `${id}: v1.dependencies=${show(m.v1Dependencies)} ≠ registry.dependsOn=${show(r.dependsOn)}`)
+    if (m.v1Dependencies && !eqList(dropInfra(m.v1Dependencies), rDeps)) {
+      push('DRIFT-02', `${id}: v1.dependencies=${show(m.v1Dependencies)} ≠ registry.dependsOn=${show(r.dependsOn)}（已归一化 shared infra）`)
     }
-    if (m.optionalDependencies && !eqList(m.optionalDependencies, r.optionalDependencies)) {
-      push('DRIFT-03', `${id}: manifest.optionalDependencies=${show(m.optionalDependencies)} ≠ registry=${show(r.optionalDependencies)}`)
+    if (m.optionalDependencies && !eqList(dropInfra(m.optionalDependencies), rOpt)) {
+      push('DRIFT-03', `${id}: manifest.optionalDependencies=${show(m.optionalDependencies)} ≠ registry=${show(r.optionalDependencies)}（已归一化 shared infra）`)
     }
-    if (m.v1OptionalDependencies && !eqList(m.v1OptionalDependencies, r.optionalDependencies)) {
-      push('DRIFT-03', `${id}: v1.optionalDependencies=${show(m.v1OptionalDependencies)} ≠ registry=${show(r.optionalDependencies)}`)
+    if (m.v1OptionalDependencies && !eqList(dropInfra(m.v1OptionalDependencies), rOpt)) {
+      push('DRIFT-03', `${id}: v1.optionalDependencies=${show(m.v1OptionalDependencies)} ≠ registry=${show(r.optionalDependencies)}（已归一化 shared infra）`)
     }
     if (m.v1Entrypoint && normEntry(m.v1Entrypoint) !== normEntry(r.entrypoint)) {
       push('DRIFT-04', `${id}: v1.entrypoint=${m.v1Entrypoint} ≠ registry.entrypoint=${r.entrypoint}`)

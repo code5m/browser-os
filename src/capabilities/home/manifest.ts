@@ -42,7 +42,7 @@ export const homeManifest: CapabilityDefinition = {
       "默认工作台表面：主页快捷方式（网页/应用/目录）、最近访问、主要工作区启动器；经 WORKBENCH_MAIN 贡献 view='home' 渲染，跨能力仅暴露窄 public 契约。",
     maturity: "C2",
     maturityEvidence: ["scripts/check-home-ui-logic.mjs", "scripts/check-home-client-policy.py", "scripts/check-capability-platform.mjs"],
-    dependencies: [],
+    dependencies: ["browser", "workspace", "apps", "bridge"],
     optionalDependencies: [],
     conflicts: [],
     provides: ["home.shortcut", "home.recent", "home.launch", "home.favorite"],

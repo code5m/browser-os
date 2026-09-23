@@ -10,7 +10,7 @@ export const bookmarkManifest: CapabilityDefinition = {
   category: "UI_COMPONENT",
   provides: ["bookmark.storage", "bookmark.panel", "bookmark.navigation"],
   dependsOn: [],
-  optionalDependencies: [],
+  optionalDependencies: ["browser"],
   lifecycle: {
     supported: ["REGISTERED", "ACTIVE", "SUSPENDED"],
     default: "REGISTERED",
