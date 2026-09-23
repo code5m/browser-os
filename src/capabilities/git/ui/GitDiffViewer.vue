@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { useGitStore } from "../../stores/useGitStore";
+import { useGitStore } from "../public";
 
 // diff 预览：只读展示 git_diff 结果。
 // 后端已做双级截断（单文件 min(max_bytes,256KB) 标 truncated；总量触顶标 more），

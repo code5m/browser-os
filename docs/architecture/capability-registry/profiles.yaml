@@ -19,7 +19,7 @@ composability:
   resource_collection: TARGET_COMPOSABLE
   workbench: TARGET_COMPOSABLE
   database: TARGET_COMPOSABLE
-  git: TARGET_COMPOSABLE
+  git: COMPATIBILITY_WRAPPED
   agent: TARGET_COMPOSABLE
   task: TARGET_COMPOSABLE
   script: TARGET_COMPOSABLE

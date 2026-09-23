@@ -7,8 +7,8 @@ import {
   PUSH_NOTICE,
   DISCARD_NOTICE,
   GIT_PREVIEW_SHOWN_PATHS,
-} from "../../stores/useGitStore";
-import { useModalFocus } from "../../composables/useModalFocus";
+} from "../public";
+import { useModalFocus } from "../../../composables/useModalFocus";
 
 // 写操作确认闸门（阶段二入口）。
 // 只展示后端 request_git_write 返回的 preview（summary / affected_paths /

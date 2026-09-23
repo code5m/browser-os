@@ -11,6 +11,7 @@ import { bookmarkCapability, BOOKMARK_CAPABILITY_ID } from '../capabilities/book
 import { workspaceCapability, WORKSPACE_CAPABILITY_ID } from '../capabilities/workspace'
 import { browserCapability, BROWSER_CAPABILITY_ID } from '../capabilities/browser'
 import { terminalCapability, TERMINAL_CAPABILITY_ID } from '../capabilities/terminal'
+import { gitCapability, GIT_CAPABILITY_ID } from '../capabilities/git'
 import { CAPABILITY_PROFILES, DEFAULT_PROFILE, type CapabilityProfileId, profileFromEnv, resolveProfile } from './profiles'
 import { CAPABILITY_CATALOG, CAPABILITY_DEFINITIONS } from './platform/catalog'
 import { assemble } from './platform/assembly'
@@ -18,7 +19,10 @@ import { assemble } from './platform/assembly'
 // 「本能力是否获准创建自己 owned 的重资源」。不这样做就会形成 ESM 循环。
 import { setCapabilityRuntime, peekCapabilityRuntime } from './runtimeSingleton'
 
-const ALL_CAPABILITIES = [
+// 导出：保证任何打包器（esbuild / Rollup）都不会把「仅被 bootstrapCapabilityRuntime 内部
+// 引用的能力入口」摇树删除——否则新增能力（如 git）会在组合测试甚至生产包中凭空消失。
+export const ALL_CAPABILITIES = [
+  { id: GIT_CAPABILITY_ID, def: gitCapability },
   { id: BOOKMARK_CAPABILITY_ID, def: bookmarkCapability },
   { id: WORKSPACE_CAPABILITY_ID, def: workspaceCapability },
   { id: BROWSER_CAPABILITY_ID, def: browserCapability },

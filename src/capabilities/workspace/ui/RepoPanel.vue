@@ -3,13 +3,21 @@ import { EmptyState } from "../../../shared/ui";
 import { ref } from "vue";
 import { useRepoStore } from "../state/useRepoStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
-import GitPanel from "../../../components/workspace/GitPanel.vue";
 import GitHistory from "../../../components/workspace/GitHistory.vue";
+import { contributionRegistry } from "../../../capability/contribution/registry";
+import { CONTRIBUTION_SLOTS } from "../../../capability/contribution/types";
 
 const rp = useRepoStore();
 const layout = useLayoutStore();
 // M1-7：默认进「状态」Tab（Git UI）；「配置」仍是既有仓库配置表单（含 token 录入）。
 const tab = ref<"git" | "history" | "config">("git");
+
+// Git 面板经通用 Contribution Registry 的 REPO_SUBVIEW 槽贡献：RepoPanel 只按槽渲染，
+// 不 import Git 能力内部（C3 关键，且避免 workspace→git 反向依赖环）。
+// Git absent（未注册/未 activate）→ 槽为空 → git 页签不渲染 GitPanel（能力模型一致）。
+const gitPanelComp = contributionRegistry.getSurfaceContributions(
+  CONTRIBUTION_SLOTS.REPO_SUBVIEW,
+)[0]?.component;
 </script>
 
 <template>
@@ -20,7 +28,7 @@ const tab = ref<"git" | "history" | "config">("git");
       <button :class="{ active: tab === 'config' }" @click="tab = 'config'">⚙️ 配置</button>
       <button class="close" @click="layout.sidebarOpen = false">✕</button>
     </div>
-    <GitPanel v-if="tab === 'git'" />
+    <component :is="gitPanelComp" v-if="tab === 'git' && gitPanelComp" />
     <GitHistory v-else-if="tab === 'history'" />
     <div v-else class="repo-panel">
       <div class="form">

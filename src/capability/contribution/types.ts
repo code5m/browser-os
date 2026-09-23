@@ -37,6 +37,11 @@ export interface ContributionSlots {
   readonly BROWSER_HOST: "browser-host"
   /** 浏览器右侧 Dock 面板槽：能力按 `view` 认领一个 Dock 页签面板 */
   readonly BROWSER_DOCK: "browser-dock"
+  /**
+   * 仓库主视图内子视图槽：能力（如 git）向 RepoPanel 贡献面板。
+   * RepoPanel 只按槽渲染、不 import 能力内部，避免 workspace→git 反向依赖环（C3 关键）。
+   */
+  readonly REPO_SUBVIEW: "repo-subview"
 }
 
 export const CONTRIBUTION_SLOTS = {
@@ -47,6 +52,7 @@ export const CONTRIBUTION_SLOTS = {
   WORKBENCH_MAIN_RESIDENT: "workbench-main-resident",
   BROWSER_HOST: "browser-host",
   BROWSER_DOCK: "browser-dock",
+  REPO_SUBVIEW: "repo-subview",
 } as const satisfies ContributionSlots
 
 /** 一条能力贡献 */

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { useRepoStore } from "../../capabilities/workspace/public";
-import { useGitStore, PUSH_NOTICE } from "../../stores/useGitStore";
+import { useRepoStore } from "../../workspace/public";
+import { useGitStore, PUSH_NOTICE } from "../public";
 import GitDiffViewer from "./GitDiffViewer.vue";
 
 // M1-7 Git UI 主面板：仓库选择 + 状态列表 + diff 预览 + 分支信息 + 写操作入口。

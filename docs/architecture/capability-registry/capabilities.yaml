@@ -246,17 +246,19 @@ capabilities:
     category: CAPABILITY
     semanticOwner: useGitStore
     governanceStatus: GOVERNED
-    # Phase 8E/Train E 成熟度裁决：registered+governed 但 NOT_INTEGRATED（非 absent-composable）。
-    # 物理仍是 always-loaded Workspace 面板（GitPanel 在 workspace/ui），操作即 spawn git 子进程（重资源）。
-    # 达到 C3 需抽为可选能力包（absent → 不挂载面板/不 spawn），记为 Debt-8E-6。
+    # Capability Library Expansion v1：Git 升格为独立 Capability（不再内嵌于 Workspace 的 RepoPanel）。
+    # 物理：GitPanel/GitDiffViewer/GitWriteConfirmDialog 迁入 src/capabilities/git/ui，
+    # 经通用 Contribution Registry 的 REPO_SUBVIEW 槽贡献给 RepoPanel（RepoPanel 只按槽渲染，不 import 内部）。
+    # 写操作仍 spawn git 子进程（重资源）；absent 态不挂载面板、不 spawn（C3 一致）。
     # 边界由 scripts/check-developer-owners.mjs (DEV-*) 机器固化。
-    status: NOT_INTEGRATED
-    maturity: C1
+    status: COMPATIBILITY_WRAPPED
+    maturity: C2
     provides:
       - git.status
       - git.diff
       - git.log
       - git.commit
+      - git.write
     dependsOn:
       - credential
       - workspace
@@ -265,7 +267,7 @@ capabilities:
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
-      activatable: false
+      activatable: true
       resident: false
     resources:
       class: [MEDIUM, NETWORK]
@@ -278,7 +280,7 @@ capabilities:
     persistence:
       scope: disk
       sensitive: false
-    entrypoint: src/components/workspace/GitPanel.vue
+    entrypoint: src/capabilities/git/index.ts
 
   - id: agent
     name: Agent

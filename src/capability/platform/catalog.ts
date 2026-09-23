@@ -8,6 +8,7 @@ import { bookmarkManifest } from "../../capabilities/bookmark/manifest";
 import { workspaceManifest } from "../../capabilities/workspace/manifest";
 import { browserManifest } from "../../capabilities/browser/manifest";
 import { terminalManifest } from "../../capabilities/terminal/manifest";
+import { gitManifest } from "../../capabilities/git/manifest";
 import type { CapabilityManifestV1 } from "./contract";
 
 /** 已具备 Building Block Contract v1 的能力清单（未声明 v1 的能力不进 catalog） */
@@ -16,6 +17,7 @@ export const CATALOG_SOURCES = [
   workspaceManifest,
   browserManifest,
   terminalManifest,
+  gitManifest,
 ] as const;
 
 export function buildCatalog(): Record<string, CapabilityManifestV1> {

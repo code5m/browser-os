@@ -22,7 +22,7 @@ import WorkbenchRail from './components/layout/WorkbenchRail.vue';
 import MainArea from "./components/layout/MainArea.vue";
 import StatusBar from "./components/layout/StatusBar.vue";
 import ConfirmModal from "./components/shared/ConfirmModal.vue";
-import GitWriteConfirmDialog from "./components/workspace/GitWriteConfirmDialog.vue";
+import { GitWriteConfirmDialog } from "./capabilities/git/public";
 import ImageLightbox from "./components/shared/ImageLightbox.vue";
 import AINavPanel from "./components/browser/AINavPanel.vue";
 
