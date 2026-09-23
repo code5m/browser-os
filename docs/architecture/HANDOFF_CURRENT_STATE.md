@@ -940,3 +940,46 @@ SECOND_TRUTHS: 0
   3. 无 agent 专属 absence 运行时门禁。
   4. mainView='agents' 导航项硬编码（未贡献驱动）。
 - Next task: STAGE E Skill Capability Migration（处理 Agent↔Skill 纠缠：skill 无专属 store）。
+
+## STAGE E — Skill Capability Closeout（DONE）
+
+```text
+HEAD:        <commit-after-this-stage>  (feature/capability-platform-v1)
+TAG:         capability-skill-c1-pass  (annotated)
+MATURITY:   C1 WRAPPED  (manifest.v1.maturity="C1"; status=COMPATIBILITY_WRAPPED)
+            诚实功能缺口：执行后端 skill_run/install/list 未实现，仅只读壳
+HOTPLUG:     HP0 STATIC
+FULL_STACK:  docs/architecture/capabilities/skill/FULL-STACK-BOUNDARY.md
+GATES:       npm run check 全绿（CAPABILITY_BOUNDARIES fail=0 warn=1[CB-04 既有可选环]、
+            CAPABILITY_COMPOSITION 33/33、check-capability-platform 29/0、RUNTIME_RESOURCE_ABSENCE 12/12、
+            UI-10 catalog 68/68、UI_BOUNDARIES vacuous=0）；vite build OK；git diff --check 干净；git fsck 0 error
+SECOND_TRUTHS: 0
+```
+
+- 关键解耦（§21）：Skill truth 从 `useAgentStore` 完全迁出至专属 `useSkillStore`（`src/capabilities/skill/state/`），
+  Skill 不再被 Agent 偷偷持有。Agent 仅保留 agent truth。
+- 中性安装/确认协调器：`useInstallConfirmStore`（`src/stores/`）抽出 Agent/Skill 共用的二段式闸门
+  （`setPending` / `ackConfirm`，按 action 派发 `bridge.confirmSkill` / `bridge.confirmAgent`）。
+  **CB-05 修复**：协调器不 import 任何 Capability store；列表重载由各自能力 store 的 `ackConfirm`
+  delegate 后完成（`useSkillStore.ackConfirm` reload skill、`useAgentStore.ackConfirm` reload agent）。
+- Changed files:
+  - 新：`src/capabilities/skill/{manifest,index,public}.ts` + `src/capabilities/skill/state/useSkillStore.ts`
+    + `src/stores/useInstallConfirmStore.ts` + `docs/architecture/capabilities/skill/FULL-STACK-BOUNDARY.md`。
+  - 迁入（git mv）：`src/components/workspace/SkillManagerPanel.vue` → `src/capabilities/skill/ui/SkillManagerPanel.vue`。
+  - 改：`src/stores/useAgentStore.ts`（剔除全部 skill 状态函数，installAgent/ackConfirm 走协调器）、
+    `src/components/layout/MainArea.vue`（移除 skill 静态分支，改由 viewOf('skills') 贡献渲染）、
+    `src/capability/{index.ts,platform/catalog.ts}`（注册 skill 能力）、
+    `docs/architecture/capability-registry/{capabilities.yaml,profiles.yaml}`（skill 块 → COMPATIBILITY_WRAPPED/C1/owner=useSkillStore/dependsOn=[bridge]）、
+    `docs/architecture/ui-system/{ui-boundary-baseline.json,ui-components.yaml}`（skill.manager-panel → owner=skill、新 file/dependencies/consumers）。
+- Semantic owner: `useSkillStore` (id="skill") —— 专属，不再与 Agent 纠缠（§21 满足）。
+- Dependencies: `bridge`（manifest 已声明）。**不再依赖 `agent`**（纠缠解除）。
+- Resource owner: 当前无执行资源（后端未实现）；凭据/secret 纵深脱敏（与 Agent 同口径）。
+- Absence: 确定性（profile 未列 skill → `registerSkillContributions` 不运行 → WORKBENCH_MAIN 槽无 view='skills'
+  → MainArea 不渲染；Shell 不崩溃）。
+- Shell coupling 下降：MainArea 不再静态 import SkillManagerPanel（7→6 直渲，仅剩贡献驱动分支）。
+- Known debt（诚实不谎报）:
+  1. 执行后端（skill_run/install/list）Rust 未实现 —— 真实功能缺口。
+  2. `useSkillStore` 物理在 `src/capabilities/skill/state/`；`useAgentStore` 仍物理在 `src/stores`（已退出 skill 状态）。
+  3. 无 skill 专属 absence 运行时门禁。
+  4. mainView='skills' 导航项硬编码于 `useLayoutStore`/`homeUi`/`HomeLaunchers`（未贡献驱动）。
+- Next task: STAGE F（按既定计划，未在本次窗口请求）。

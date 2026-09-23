@@ -323,14 +323,15 @@ capabilities:
   - id: skill
     name: Skill
     category: CAPABILITY
-    semanticOwner: null
-    governanceStatus: OWNER_PENDING_SCR
-    status: NOT_INTEGRATED
+    semanticOwner: useSkillStore
+    governanceStatus: GOVERNED
+    status: COMPATIBILITY_WRAPPED
+    maturity: C1
     provides:
       - skill.list
-      - skill.invoke
+      - skill.run
+      - skill.install
     dependsOn:
-      - agent
       - bridge
     optionalDependencies: []
     lifecycle:
@@ -346,7 +347,7 @@ capabilities:
     persistence:
       scope: disk
       sensitive: false
-    entrypoint: src/components/workspace/SkillManagerPanel.vue
+    entrypoint: src/capabilities/skill/index.ts
 
   - id: plugin
     name: Plugin

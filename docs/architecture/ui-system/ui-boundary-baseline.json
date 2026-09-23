@@ -55,12 +55,7 @@
       "component": "TaskPanel",
       "domain": "TASK"
     },
-    {
-      "shell": "src/components/layout/MainArea.vue",
-      "line": 218,
-      "component": "SkillManagerPanel",
-      "domain": "SKILL"
-    },
+
 
     {
       "shell": "src/components/layout/MainArea.vue",

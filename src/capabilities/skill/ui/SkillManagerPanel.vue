@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted } from "vue";
-import { useAgentStore } from "../../stores/useAgentStore";
-import { aclLabel, aclTone, execSummary, renderCapabilityList, panelState } from "../../utils/agentSkillUi";
-import type { SkillDef } from "../../types";
-import PermissionPreviewModal from "./PermissionPreviewModal.vue";
+import { useSkillStore } from "../../../capabilities/skill/state/useSkillStore";
+import { aclLabel, aclTone, execSummary, renderCapabilityList, panelState } from "../../../utils/agentSkillUi";
+import type { SkillDef } from "../../../types";
+import PermissionPreviewModal from "../../../components/workspace/PermissionPreviewModal.vue";
 
 // 后端能力单一真源（SKILL_CAPABILITY_V1）W4 尚未落齐 → 传空白名单，
 // 列表统一标 unknown（不谎报已授权）。
 const whitelist = computed(() => [] as string[]);
 
-const store = useAgentStore();
+const store = useSkillStore();
 const previewTarget = computed(() => store.selectedSkill);
 
 const state = computed(() =>

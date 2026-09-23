@@ -14,6 +14,7 @@ import { terminalCapability, TERMINAL_CAPABILITY_ID } from '../capabilities/term
 import { gitCapability, GIT_CAPABILITY_ID } from '../capabilities/git'
 import { databaseCapability, DATABASE_CAPABILITY_ID } from '../capabilities/database'
 import { agentCapability, AGENT_CAPABILITY_ID } from '../capabilities/agent'
+import { skillCapability, SKILL_CAPABILITY_ID } from '../capabilities/skill'
 import { CAPABILITY_PROFILES, DEFAULT_PROFILE, type CapabilityProfileId, profileFromEnv, resolveProfile } from './profiles'
 import { CAPABILITY_CATALOG, CAPABILITY_DEFINITIONS } from './platform/catalog'
 import { assemble } from './platform/assembly'
@@ -31,6 +32,7 @@ export const ALL_CAPABILITIES = [
   { id: TERMINAL_CAPABILITY_ID, def: terminalCapability },
   { id: DATABASE_CAPABILITY_ID, def: databaseCapability },
   { id: AGENT_CAPABILITY_ID, def: agentCapability },
+  { id: SKILL_CAPABILITY_ID, def: skillCapability },
 ]
 
 let runtime: CapabilityRuntime | null = null
