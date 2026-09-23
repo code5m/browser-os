@@ -217,3 +217,39 @@ Shared seams（非能力，CB 豁免）：`src/composables/{browserNav,recentsNa
 - STAGE J（Platform vNext Closeout）**PASS_WITH_DEBT**（本文件）。
 - 允许创建 **`capability-platform-vnext-code-pass`**（CODE PASS）。
 - **禁止**创建 `capability-platform-vnext-pass`（Final Human Acceptance 未执行）。
+
+---
+
+## 11. 并发写入治理 / 单写入者确认（2026-09-23，人工验收前置）
+
+### 11.1 事实
+
+- 本分支 `feature/capability-platform-v1` 上**只有主 worktree** 处于该分支
+  （其余 15 个 worktree 分别位于 `codex/m5-w18-a1..a11`、`feature-M0-baseline`、detached HEAD，
+  均**不**指向本分支）→ **结构性单写入者：是**。
+- 但**进程层面存在并发写入者**：活跃进程 `codex`（pid 1376454，已运行约 5 小时）。
+  提交 `5810a29`（2026-09-23 17:45:31）即由该并发源写入 —— 它位于本会话
+  `858d6ba`（STAGE I 收口）之上，早于我的 `701b354`（17:45:56，STAGE J 审计）25 秒，
+  并抢先创建了 canonical tag `capability-platform-vnext-code-pass`。
+
+### 11.2 治理决定（不越权）
+
+- **不** kill / 不干扰其它进程（安全边界：不改他人进程与用户数据）。
+- **不**移动、不删除已存在的 tag（含并发源创建的 `capability-platform-vnext-code-pass`）。
+- 已核验：并发提交**未破坏**本会话成果 —— STAGE I 收口段落完整保留于
+  `HANDOFF_CURRENT_STATE.md`（§1171 起，NOTES/HOME/SETTINGS/WORKBENCH_COUPLING 四节均在）；
+  vault / home / settings 三个能力包与各自 tag 均完整；HEAD 全量门禁 PASS。
+
+### 11.3 单写入者守卫（人工验收与后续小修必须遵守）
+
+1. 目视前先确认 HEAD 未被并发源推进：
+   `git log --oneline -1` 应等于你开始目视时记录的 commit。
+2. 目视/小修期间若 HEAD 发生变化 → **立即停止**，重新 `npm run build` 并从 H01 重新目视
+   （代码已变，旧目视结论失效）。
+3. 建议在人工验收与后续小修全程**保持单一写入者**：暂停或退出其它 agent 会话
+   （尤其 codex lane），直至最终 tag 完成。
+4. 任何小修提交前先 `git status --porcelain` 确认无他人残留改动混入。
+
+### 11.4 验收入口
+
+人工目视清单见：`docs/architecture/capability-platform/STAGE-J-HUMAN-ACCEPTANCE-H01-H10.md`。
