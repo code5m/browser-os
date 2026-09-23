@@ -32,16 +32,9 @@ const TaskPanel = defineAsyncComponent({
   delay: 80,
   timeout: 10000,
 });
-// M4-4 数据库面板：懒加载（defineAsyncComponent），将其 15KB+ 纯逻辑(dbUi.ts)、
-// store(useDatabaseStore.ts) 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
-// 仅在 mainView==='db' 首次渲染时才拉取该 chunk，不破坏其它视图。
-const DatabasePanel = defineAsyncComponent({
-  loader: () => import("../workspace/DatabasePanel.vue"),
-  loadingComponent: panelLoading,
-  errorComponent: panelError,
-  delay: 80,
-  timeout: 10000,
-});
+// Database 面板已升格为 capabilities/database/ 能力：经 WORKBENCH_MAIN 贡献（view='db'）懒加载注册，
+// MainArea 只按槽渲染（见下方通用 viewOf 分支），不再静态 import 本能力内部（C3 关键）。
+// 懒加载仍保留在 capabilities/database/index.ts 的 defineAsyncComponent 中（15KB+ dbUi + store 拆主 chunk）。
 const SkillManagerPanel = defineAsyncComponent({
   loader: () => import("../workspace/SkillManagerPanel.vue"),
   loadingComponent: panelLoading,
@@ -221,10 +214,7 @@ watch(
       <ToolBox />
     </div>
 
-    <!-- ===== 数据库（M4-4） ===== -->
-    <div v-else-if="layout.mainView === 'db'" class="modview">
-      <DatabasePanel />
-    </div>
+    <!-- ===== 数据库（M4-4）：已升格 capabilities/database/，经 WORKBENCH_MAIN 贡献 view='db' 渲染（由上方通用 viewOf 分支处理） ===== -->
 
     <div v-else-if="layout.mainView === 'vault'" class="modview"><VaultPanel /></div>
     <!-- ===== 定时任务（M4-8） ===== -->

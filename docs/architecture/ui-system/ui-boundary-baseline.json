@@ -51,12 +51,6 @@
     },
     {
       "shell": "src/components/layout/MainArea.vue",
-      "line": 204,
-      "component": "DatabasePanel",
-      "domain": "DATABASE"
-    },
-    {
-      "shell": "src/components/layout/MainArea.vue",
       "line": 210,
       "component": "TaskPanel",
       "domain": "TASK"

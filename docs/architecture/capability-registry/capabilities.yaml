@@ -210,12 +210,15 @@ capabilities:
     category: CAPABILITY
     semanticOwner: useDatabaseStore
     governanceStatus: GOVERNED
-    # Phase 8E/Train E 成熟度裁决：registered+governed 但 NOT_INTEGRATED（非 absent-composable）。
-    # 物理仍是 always-loaded Workspace 面板（DatabasePanel 在 workspace/ui），connect 即建真实 DB 连接
-    # （重资源 NETWORK+SECRET）。达到 C3 需抽为可选能力包（absent → 不挂载面板/不建连接），记为 Debt-8E-5。
-    # 边界由 scripts/check-developer-owners.mjs (DEV-*) 机器固化（无合并 store / 凭据只经 Keyring）。
-    status: NOT_INTEGRATED
-    maturity: C1
+    # Capability Library Expansion v1：Database 升格为独立 Capability（不再内嵌于 Workspace 的 DatabasePanel）。
+    # 物理：DatabasePanel 迁入 src/capabilities/database/ui，经通用 Contribution Registry 的 WORKBENCH_MAIN 槽
+    # （view='db'）贡献给 MainArea；MainArea 只按槽渲染、不 import 内部（C3 关键）。
+    # 资源法（§18）：连接资源由 Rust 在 connect/query 时瞬态建连即弃，不驻留全局；前端零明文凭据（仅 keyring id）。
+    # absent → 无面板挂载 → 无 connect → 无 keyring 读、无 DbPool（§18 满足）。
+    # 仍遗留（诚实，不谎报）：useDatabaseStore 物理在 src/stores（未迁入 capabilities/database/state）；
+    # 无 database 专属 absence 运行时门禁；mainView='db' 导航项仍硬编码于 LayoutStore/Home（未贡献驱动）。
+    status: COMPATIBILITY_WRAPPED
+    maturity: C2
     provides:
       - database.connect
       - database.query

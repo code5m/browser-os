@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { EmptyState } from "../../shared/ui";
+import { EmptyState } from "../../../shared/ui";
 import { computed, onMounted, ref, watch } from "vue";
 import { Plus, X, Square, ChevronLeft, ChevronRight, RefreshCw } from '@lucide/vue';
-import { useDatabaseStore } from "../../stores/useDatabaseStore";
-import { useLayoutStore } from "../../stores/useLayoutStore";
-import { useWorkbenchStore } from "../../stores/useWorkbenchStore";
+import { useDatabaseStore } from "../../../stores/useDatabaseStore";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
+import { useWorkbenchStore } from "../../../stores/useWorkbenchStore";
 import {
   databaseFieldLabel,
   defaultPortFor,
@@ -16,7 +16,7 @@ import {
   truncateText,
   visibleFields,
   type DbKind,
-} from "../../utils/dbUi";
+} from "../../../utils/dbUi";
 
 const db = useDatabaseStore();
 const layout = useLayoutStore();
