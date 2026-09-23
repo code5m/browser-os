@@ -1079,7 +1079,7 @@ SECOND_TRUTHS: 0   NEW_RESOURCE_LEAKS: 0
 ## STAGE H — Clipboard / Apps / Tools Capability Closeout（DONE）
 
 ```text
-HEAD:        <commit-after-this-stage>  (feature/capability-platform-v1)
+HEAD:        fd74ffe  (feature/capability-platform-v1)
 TAG:         capability-system-tools-c2-pass  (annotated)
 MATURITY:   Clipboard / Apps / Tools = C2 ISOLATED（三者均贡献驱动）
 HOTPLUG:     HP0 STATIC（三者）
