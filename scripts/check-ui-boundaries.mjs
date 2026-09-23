@@ -273,8 +273,13 @@ function gatePositionFixed(base) {
   // 基线以「文件 + 规则文本」为键，**不以行号为键**：
   // 行号会因任意一处插入/删除而整体漂移，导致假 FAIL（本次 pilot 加 import 即触发）。
   // 以文本为键仍可精确识别「新增的 fixed 浮层」。
+  // 以「文件 + 选择器」为键：
+  //  - 不用行号（任何插入都会让行号漂移）
+  //  - 不用整条规则文本（UI-5 token 化会把 #fff 改成 var(--ui-surface)，属合法变更）
+  // 选择器能稳定标识「哪个浮层存在」，同时仍能精确发现新增的 fixed 浮层。
   const norm = (s) => (s || "").replace(/\s+/g, "");
-  const keyOf = (x) => `${x.file}|${norm(x.text)}`;
+  const selectorOf = (t) => norm((t || "").split("{")[0]);
+  const keyOf = (x) => `${x.file}|${selectorOf(x.text ?? x.selector)}`;
   const baseSet = new Set((base.ui05_position_fixed_baseline ?? []).map(keyOf));
   const found = [];
   for (const f of [join(ROOT, "src/styles/global.css"), ...walk(join(ROOT, "src"), [".vue"])]) {

@@ -142,3 +142,36 @@
 - `TOKEN_AUDIT = CREATED`
 - `DESIGN_TOKEN_DUPLICATION`：**高**（0 token 层，45+ 硬编码色值，5 组近重复簇，4 处真实冲突）
 - `UNKNOWN` 项：2（`#ccc` vs `#e5e6eb` 是否有意区分；`.f0f1f3`/`.eef0f3` 是否 CAPABILITY_SPECIFIC）
+
+---
+
+## 10. 冲突调查结论（UI-5 / §24）
+
+规则：**只修 BUG / VERIFIED DRIFT**；`INTENTIONAL_VARIANT` 与 `UNKNOWN` 不动。
+
+| # | 冲突 | 分类 | 证据 | 处置 |
+|---|---|---|---|---|
+| 1 | `.app-name` 13px(L281) vs 11px(L308) | **LEGACY_DRIFT**（确认泄漏） | 两条都是**裸 `.app-name`** 选择器，L308 后写胜出，因此列表视图 `.app-item .app-name` 也被强加 11px / `#444` / 截断 / `width:100%` | **暂不修**。修正会改变列表视图字号与颜色 → 属视觉变更，需人工视觉验收后单独批次处理。已登记为已知债。 |
+| 2 | `.path-bar` 重复（L41/L42 vs L291/L292） | **LEGACY_DRIFT**（死规则） | 同名同属性，后者完全覆盖前者；`.path-bar .path`(L43) **无**后续覆盖 | ✅ **已删** L41/L42（被完全覆盖 → computed value 不变）；保留 `.path-bar .path`。验证见 `verify-design-tokens.mjs` T5/T5b。 |
+| 3 | modal 遮罩 `.home-modal-mask`(rgba .35 / z-index 100) vs `.modal-mask`(rgba .4 / z-index 999)，另 2 个组件有 scoped `.modal-mask`(rgba .35 / z-index 50) | **INTENTIONAL_VARIANT / UNKNOWN** | 不同 z-index 代表不同层叠需求；无法在无视觉验收下判定哪一个是"正确" | ❌ **不统一**。这也是 `ModalShell` 不在 UI-2/UI-3 提炼的直接原因（统一必然改变视觉）。验证见 T6。 |
+| 4 | `.form`(L169) vs `.repo-panel .form`(L269) | **INTENTIONAL_VARIANT** | 后者为作用域限定（更高特异性），是同一模式在仓库面板内的重声明 | ❌ 不动。 |
+
+### Design Token Foundation v1（已建立）
+
+`src/styles/tokens.css`，语义命名，**取值逐字等于所替换的硬编码字面量**：
+
+| token | 值 | 替换位置 |
+|---|---|---|
+| `--ui-surface` | `#fff` | `.ctx-menu` background |
+| `--ui-text` | `#333` | `.ctx-item` color |
+| `--ui-text-muted` | `#bbb` | `.empty` color |
+| `--ui-danger` | `#c33` | `.ctx-item.danger` color |
+| `--ui-hover-bg` | `#eef3ff` | `.ctx-item:hover` background |
+| `--ui-danger-bg` | `#ffeaea` | `.ctx-item.danger:hover` background |
+
+**范围刻意很小**：只覆盖 shared/ui 已消费的样式。其余 45+ 硬编码色值原样保留，
+待后续批次 + 人工视觉验收后再扩（避免 Big Bang replace）。
+
+不变量由 `scripts/verify-design-tokens.mjs` 机器校验：
+token 声明值 = 原始字面量（T1）、语义命名无编号（T2）、规则确实用 var()（T3）、
+tokens.css 已引入（T4）、死规则已删且未覆盖规则保留（T5）、真冲突未统一（T6）。

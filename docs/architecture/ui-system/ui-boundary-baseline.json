@@ -212,52 +212,64 @@
   ],
   "ui05_position_fixed_baseline": [
     {
-      "file": "src/styles/global.css",
-      "text": ".ctx-menu { position: fixed; z-index: 999; background: #fff; border: 1px solid #"
-    },
-    {
-      "file": "src/styles/global.css",
-      "text": ".home-modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.35); displ"
-    },
-    {
-      "file": "src/styles/global.css",
-      "text": ".modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: fl"
-    },
-    {
       "file": "src/App.vue",
+      "selector": "position: fixed;",
       "text": "position: fixed;"
     },
     {
       "file": "src/App.vue",
+      "selector": "position: fixed;",
       "text": "position: fixed;"
     },
     {
       "file": "src/capabilities/workspace/ui/FilePanel.vue",
+      "selector": "/* 移动确认：复用全局 .modal-mask（已批准固定浮层模式），本组件内不再使用 position: fixed */",
       "text": "/* 移动确认：复用全局 .modal-mask（已批准固定浮层模式），本组件内不再使用 position: fixed */"
     },
     {
+      "file": "src/components/home/HomeShortcutEditor.vue",
+      "selector": "position: fixed;",
+      "text": "position: fixed;"
+    },
+    {
       "file": "src/components/layout/StatusBar.vue",
+      "selector": "position: fixed;",
       "text": "position: fixed;"
     },
     {
       "file": "src/components/plugin/PluginManager.vue",
+      "selector": "position: fixed;",
       "text": "position: fixed;"
     },
     {
       "file": "src/components/workspace/PermissionPreviewModal.vue",
+      "selector": ".modal-mask",
       "text": ".modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: f"
     },
     {
       "file": "src/components/workspace/RunHistoryModal.vue",
+      "selector": ".modal-mask",
       "text": ".modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: f"
     },
     {
       "file": "src/components/workspace/ScriptRunDialog.vue",
+      "selector": "position: fixed;",
       "text": "position: fixed;"
     },
     {
-      "file": "src/components/home/HomeShortcutEditor.vue",
-      "text": "position: fixed;"
+      "file": "src/styles/global.css",
+      "selector": ".ctx-menu",
+      "text": ".ctx-menu { position: fixed; z-index: 999; background: var(--ui-surface); border"
+    },
+    {
+      "file": "src/styles/global.css",
+      "selector": ".home-modal-mask",
+      "text": ".home-modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.35); displ"
+    },
+    {
+      "file": "src/styles/global.css",
+      "selector": ".modal-mask",
+      "text": ".modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: fl"
     }
   ],
   "ui06_deprecated_patterns": [
