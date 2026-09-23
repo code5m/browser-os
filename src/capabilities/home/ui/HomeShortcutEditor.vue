@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from "vue";
-import { useHomeStore } from "../../stores/useHomeStore";
+import { useHomeStore } from "../state/useHomeStore";
 import {
   FOCUSABLE_SELECTOR,
   ariaRoleForVariant,
   shouldCloseOnEscape,
-} from "../../utils/modalA11y";
+} from "../../../utils/modalA11y";
 
 const home = useHomeStore();
 

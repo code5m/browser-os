@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { useHomeStore } from "../../stores/useHomeStore";
-import type { HomeRecent } from "../../stores/useHomeStore";
+import { useHomeStore } from "../state/useHomeStore";
+import type { HomeRecent } from "../state/useHomeStore";
 
 const home = useHomeStore();
 

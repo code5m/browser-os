@@ -139,7 +139,8 @@ async function runTests() {
     //
     //     重基线（2026-09-20，Train D）：原先的 `src/components/home` 已被 `src/capabilities/bookmark/ui`
     //     取代 —— Phase 8B 把 bookmark UI 物理迁出了 src/components/home（locator 可证）。
-    //     仍留在 src/components/home 的 HomeLaunchers.vue 是 **Shell 导航胶水**（启动器→layout 导航），
+    //     STAGE I-B（2026-09-23）：home 剩余 UI 亦已物理迁入 `src/capabilities/home/ui`（含 HomeLaunchers.vue），
+    //     故本处路径同步更新；HomeLaunchers.vue 是 **Shell 导航胶水**（启动器→layout 导航），
     //     其唯一一次改动来自 Train C（commit d6a2134：导航改经 capability public 边界），不是 bookmark
     //     业务 owner 的改动。为避免「挪动球门」，此处把路径集合换成 bookmark 的**当前规范业务面**
     //     （owner store + 能力包内 UI，均按 locator/物理事实选取），基线仍锁在 semantic-governance-v1；

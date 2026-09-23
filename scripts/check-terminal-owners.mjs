@@ -115,7 +115,7 @@ function runStatic() {
 
   // TERM-03b：Shell 目录不得 import terminal 内部（public 边界允许）
   const TERM_INTERNAL = /(?:^|\/)src\/capabilities\/terminal\/(?:state|ui|services|lifecycle|resource|internal|adapters)\//;
-  const shellDirs = ["src/components/layout", "src/components/home"];
+  const shellDirs = ["src/components/layout", "src/capabilities/home/ui"];
   const shellHits = [];
   for (const d of shellDirs) {
     for (const f of walk(join(ROOT, d))) {

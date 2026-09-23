@@ -40,7 +40,7 @@ const ALLOWED_FIXED = [
   { file: "src/components/workspace/PermissionPreviewModal.vue", selector: ".modal-mask", reason: "权限预览 modal" },
   { file: "src/components/workspace/RunHistoryModal.vue", selector: ".modal-mask", reason: "运行历史 modal" },
   { file: "src/components/workspace/ScriptRunDialog.vue", selector: ".run-mask", reason: "脚本运行对话框" },
-  { file: "src/components/home/HomeShortcutEditor.vue", selector: ".hs-mask", reason: "主页快捷键编辑器" },
+  { file: "src/capabilities/home/ui/HomeShortcutEditor.vue", selector: ".hs-mask", reason: "主页快捷键编辑器" },
   { file: "src/capabilities/plugin/ui/PluginManager.vue", selector: ".pm-modal", reason: "插件管理 modal" },
 ];
 

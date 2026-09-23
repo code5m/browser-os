@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { useHomeStore } from "../../stores/useHomeStore";
-import type { HomeShortcut } from "../../stores/useHomeStore";
+import { useHomeStore } from "../state/useHomeStore";
+import type { HomeShortcut } from "../state/useHomeStore";
 
 const home = useHomeStore();
 

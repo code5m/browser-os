@@ -33,6 +33,7 @@ composability:
   apps: COMPATIBILITY_WRAPPED
   tools: COMPATIBILITY_WRAPPED
   settings: NOT_COMPOSABLE_BY_DESIGN
+  home: COMPATIBILITY_WRAPPED
 
 profiles:
 
@@ -56,7 +57,8 @@ profiles:
       - database
       - bookmark
       - settings
-    note: 除 bookmark 外均为 TARGET_COMPOSABLE；今晚不能真正按需装配；settings 为常驻框架 SERVICE
+      - home
+    note: 除 bookmark 外均为 TARGET_COMPOSABLE；今晚不能真正按需装配；settings 为常驻框架 SERVICE；home 取代 Shell 静态渲染（贡献驱动）
 
   - id: full
     name: Full
@@ -84,7 +86,8 @@ profiles:
       - script
       - workbench
       - settings
-    note: 演示口径；credential/session/settings 为 NOT_COMPOSABLE_BY_DESIGN
+      - home
+    note: 演示口径；credential/session/settings 为 NOT_COMPOSABLE_BY_DESIGN；home/vault 为贡献驱动的默认工作台表面
 
 # 演示时必须声明的事实
 demo_disclaimer: >

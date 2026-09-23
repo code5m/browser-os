@@ -185,6 +185,13 @@ policies:
     resident: true
     release_note: 框架偏好 store（theme/keymap/tabHibernation），无原生资源；常驻不释放（STAGE I-C 判定为 SERVICE，非用户可组合能力）
 
+  - id: home
+    class: [LIGHT]
+    suspendable: true
+    destroyable: true
+    resident: false
+    release_note: 释放主页快捷方式/最近访问内存态（localStorage 持久，可重建）—— TARGET
+
 # ── 测量现状（诚实声明） ────────────────────────────────────────────────
 measurement_status:
   measured_memory_per_capability: NOT_AVAILABLE

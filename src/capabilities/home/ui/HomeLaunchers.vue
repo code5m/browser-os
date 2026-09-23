@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { useLayoutStore } from "../../stores/useLayoutStore";
-import type { MainView } from "../../stores/useLayoutStore";
-import { useBrowserStore } from "../../capabilities/browser/public";
-import { useAppsStore } from "../../capabilities/apps/public";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
+import type { MainView } from "../../../stores/useLayoutStore";
+import { useBrowserStore } from "../../browser/public";
+import { useAppsStore } from "../../apps/public";
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();

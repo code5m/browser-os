@@ -20,6 +20,7 @@ import { appsManifest } from "../../capabilities/apps/manifest";
 import { toolsManifest } from "../../capabilities/tools/manifest";
 import { vaultManifest } from "../../capabilities/vault/manifest";
 import { settingsManifest } from "../../settings/manifest";
+import { homeManifest } from "../../capabilities/home/manifest";
 import type { CapabilityManifestV1 } from "./contract";
 
 /** 已具备 Building Block Contract v1 的能力清单（未声明 v1 的能力不进 catalog） */
@@ -40,6 +41,7 @@ export const CATALOG_SOURCES = [
   toolsManifest,
   vaultManifest,
   settingsManifest,
+  homeManifest,
 ] as const;
 
 export function buildCatalog(): Record<string, CapabilityManifestV1> {

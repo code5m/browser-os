@@ -24,8 +24,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import os from "node:os";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const HOME_DIR = join(ROOT, "src/components/home");
-const STORE_PATH = join(ROOT, "src/stores/useHomeStore.ts");
+const HOME_DIR = join(ROOT, "src/capabilities/home/ui");
+const STORE_PATH = join(ROOT, "src/capabilities/home/state/useHomeStore.ts");
 
 let passed = 0;
 let failed = 0;
@@ -81,7 +81,7 @@ const allHomeText = components.map((c) => c.text).join("\n");
 console.log("[G1] home actions (A5 首页动作)");
 
 if (components.length === 0) {
-  fail("src/components/home 存在 .vue 组件", "目录为空");
+  fail("src/capabilities/home/ui 存在 .vue 组件", "目录为空");
 } else {
   const needActions = [
     ["favoriteCurrentPage", "收藏当前网页动作"],

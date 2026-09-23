@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted } from "vue";
-import { useHomeStore } from "../../stores/useHomeStore";
+import { useHomeStore } from "../state/useHomeStore";
 import HomeLaunchers from "./HomeLaunchers.vue";
 import HomeRecents from "./HomeRecents.vue";
 import HomeShortcuts from "./HomeShortcuts.vue";

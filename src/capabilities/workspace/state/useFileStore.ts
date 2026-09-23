@@ -208,8 +208,10 @@ export const useFileStore = defineStore("files", () => {
   }
   async function ctxFavorite(entry: DirEntry) {
     if (!entry.is_dir) return;
-    const { useHomeStore } = await import("../../../stores/useHomeStore");
-    useHomeStore().favoriteDirectory(entry.path);
+    // STAGE I-B：经 shared 窄缝 src/composables/homeNav.ts 触发 Home 公开意图，
+    // 避免 workspace→home 的必须依赖（会与 home→workspace 构成 CB-04 必须依赖环）。
+    const { favoriteHomeDirectory } = await import("../../../composables/homeNav");
+    favoriteHomeDirectory(entry.path);
     closeFileCtx();
   }
   async function copyPath(entry: DirEntry, relative: boolean) {

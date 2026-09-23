@@ -4,7 +4,8 @@ import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../capabilities/browser/public";
 import { contributionRegistry } from "../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
-import HomePanel from "../home/HomePanel.vue";
+// STAGE I-B：Home 已升格为能力（capabilities/home/）。HomePanel 经 WORKBENCH_MAIN 贡献
+// view='home' 渲染（见下方通用 viewOf 分支）；跨域「收藏」意图经 capabilities/home/public.ts 契约暴露。
 // M4-4 数据库面板：懒加载（defineAsyncComponent），将其 15KB+ 纯逻辑(dbUi.ts)、
 // store(useDatabaseStore.ts) 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
 // 仅在 mainView==='db' 首次渲染时才拉取该 chunk，不破坏其它视图。
@@ -117,13 +118,12 @@ watch(
          例：终端 xterm 切走不得卸载，故其主视图走本槽。槽为空 → 不渲染任何东西。 -->
     <component v-for="c in residentMainContributions" :key="c.id" :is="c.component" />
 
-    <!-- ===== 主页（快捷图标墙：网页/应用，可自定义编辑） ===== -->
-    <div v-if="layout.mainView === 'home'" class="modview">
-      <HomePanel />
-    </div>
+    <!-- ===== 主页（快捷图标墙）：STAGE I-B 已升格 capabilities/home/，经 WORKBENCH_MAIN 贡献
+         view='home' 渲染（由下方通用 viewOf 分支处理）。原先此处为 Shell 静态 import 的 v-if 链头，
+         迁移后链头改由浏览器主视图承担。 ===== -->
 
     <!-- ===== 浏览器主视图（地址栏已合并进顶部全局工具栏，页签走统一页签条） ===== -->
-    <template v-else-if="layout.mainView === 'browser' || layout.mainView === 'grid'">
+    <template v-if="layout.mainView === 'browser' || layout.mainView === 'grid'">
       <!-- 精简模式悬浮按钮：点击退出精简，恢复工具栏 -->
       <button
         v-if="layout.compactMode && layout.mainView === 'browser'"

@@ -186,7 +186,7 @@
       "text": "/* 移动确认：复用全局 .modal-mask（已批准固定浮层模式），本组件内不再使用 position: fixed */"
     },
     {
-      "file": "src/components/home/HomeShortcutEditor.vue",
+      "file": "src/capabilities/home/ui/HomeShortcutEditor.vue",
       "selector": "position: fixed;",
       "text": "position: fixed;"
     },
@@ -291,7 +291,9 @@
     "src/capabilities/bookmark/ui/BookmarkPanel.vue",
     "src/capabilities/workspace/ui/FileEditor.vue",
     "src/capabilities/git/ui/GitPanel.vue",
-    "src/capabilities/task/state/useTaskStore.ts"
+    "src/capabilities/task/state/useTaskStore.ts",
+    "src/capabilities/home/state/useHomeStore.ts",
+    "src/capabilities/home/ui/HomeLaunchers.vue"
   ],
   "ui04b_undeclared_cross_capability_baseline": [
     {

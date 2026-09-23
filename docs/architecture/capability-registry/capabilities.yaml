@@ -710,3 +710,38 @@ capabilities:
       scope: disk
       sensitive: false
     entrypoint: src/settings/index.ts
+
+  # STAGE I-B：home 升格为 CAPABILITY。语义 owner = useHomeStore（主页快捷方式/最近访问/
+  # 启动器元数据）。跨能力仅经 src/capabilities/home/public.ts 的窄契约（favoriteDirectory）。
+  - id: home
+    name: 主页
+    category: CAPABILITY
+    semanticOwner: useHomeStore
+    governanceStatus: GOVERNED
+    status: COMPATIBILITY_WRAPPED
+    provides:
+      - home.shortcut
+      - home.recent
+      - home.launch
+      - home.favorite
+    dependsOn:
+      - browser
+      - workspace
+      - apps
+      - bridge
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE, SUSPENDED]
+      default: ACTIVE
+      activatable: true
+      resident: false
+    resources:
+      class: [LIGHT]
+      suspendable: true
+      destroyable: true
+    permissions:
+      - fs.read
+    persistence:
+      scope: disk
+      sensitive: false
+    entrypoint: src/capabilities/home/index.ts

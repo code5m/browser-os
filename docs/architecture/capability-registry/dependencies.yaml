@@ -75,6 +75,14 @@ edges:
   - { from: session,   to: bridge,   kind: required }
   - { from: script,    to: bridge,   kind: required }
   - { from: workbench, to: bridge,   kind: required }
+  - { from: home,      to: browser,   kind: required }
+  - { from: home,      to: workspace, kind: required }
+  - { from: home,      to: apps,      kind: required }
+  - { from: home,      to: bridge,    kind: required }
+  # STAGE I-B：workspace 的「收藏目录」意图**不**声明 workspace→home 依赖边，
+  # 而是经 shared 窄缝 src/composables/homeNav.ts（与 terminalNav/browserNav 同族）。
+  # 理由：home→workspace 已是必须依赖，若再声明 workspace→home 将构成 CB-04 必须依赖环。
+  # 该缝内部经 Home 的 public 边界访问，Workspace 侧不直接 import Home。
 
 # ── 已知耦合（登记为债务，不是依赖边） ──────────────────────────────────
 known_coupling:

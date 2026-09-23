@@ -1,9 +1,9 @@
 import { defineStore } from "pinia";
 import { reactive, computed, ref } from "vue";
-import { bridge } from "../bridge";
-import { useBrowserStore } from "../capabilities/browser/public";
-import { useLayoutStore } from "./useLayoutStore";
-import { useFileStore } from "../capabilities/workspace/public";
+import { bridge } from "../../../bridge";
+import { useBrowserStore } from "../../browser/public";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
+import { useFileStore } from "../../workspace/public";
 import {
   HOME_APP_SESSION_ONLY_NOTICE,
   HOME_MAX_RECENTS,
@@ -26,11 +26,11 @@ import {
   type HomeAreaView,
   type HomeRecent,
   type HomeShortcut,
-} from "../utils/homeUi";
+} from "../../../utils/homeUi";
 
 // M5-W17 A3：类型与默认值的**单一真源**迁到 `src/utils/homeUi.ts`（纯逻辑层，可 headless 直测）。
 // 此处原样再导出，保证既有消费方（HomePanel.vue / A5）的 import 路径与字段语义不变。
-export type { HomeShortcut, HomeRecent, HomeArea, HomeAreaView } from "../utils/homeUi";
+export type { HomeShortcut, HomeRecent, HomeArea, HomeAreaView } from "../../../utils/homeUi";
 
 const STORAGE_KEY = "browser-os-home-shortcuts";
 const RECENTS_KEY = "browser-os-home-recents-v1";

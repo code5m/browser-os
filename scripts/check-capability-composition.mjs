@@ -256,7 +256,7 @@ async function runDynamicTests() {
       "src/components/layout/ActivityBar.vue",
       "src/components/layout/StatusBar.vue",
       "src/components/layout/UnifiedTabBar.vue",
-      "src/components/home/HomeLaunchers.vue",
+      "src/capabilities/home/ui/HomeLaunchers.vue",
       "src/App.vue",
     ];
     const hits = [];
@@ -283,7 +283,7 @@ function runStaticChecks() {
   // C3：Shell 不 import bookmark 内部
   const ma = shellImportsBookmark("src/components/layout/MainArea.vue");
   const ab = shellImportsBookmark("src/components/layout/ActivityBar.vue");
-  const hl = shellImportsBookmark("src/components/home/HomeLaunchers.vue");
+  const hl = shellImportsBookmark("src/capabilities/home/ui/HomeLaunchers.vue");
   t("C3-MAINAREA", "MainArea 不 import src/capabilities/bookmark 内部", ma.imports.length === 0, `imports=${ma.imports.join(",")}`);
   t("C3-ACTIVITYBAR", "ActivityBar 不 import src/capabilities/bookmark 内部", ab.imports.length === 0, `imports=${ab.imports.join(",")}`);
   t("C3-HOMELAUNCHERS", "HomeLaunchers 不 import src/capabilities/bookmark 内部", hl.imports.length === 0, `imports=${hl.imports.join(",")}`);
@@ -328,7 +328,7 @@ function runStaticChecks() {
     "src/components/layout/ActivityBar.vue",
     "src/components/layout/StatusBar.vue",
     "src/components/layout/UnifiedTabBar.vue",
-    "src/components/home/HomeLaunchers.vue",
+    "src/capabilities/home/ui/HomeLaunchers.vue",
     "src/App.vue",
   ]) {
     const hits = shellImportsInto(f, TERM_RE);

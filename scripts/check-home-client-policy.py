@@ -84,8 +84,8 @@ ALL_CODES: tuple[str, ...] = ACTIVE_CODES + PENDING_CODES
 
 # ----------------------------- 判定目标 -----------------------------
 
-HOME_STORE = "src/stores/useHomeStore.ts"
-HOME_DIR = "src/components/home"
+HOME_STORE = "src/capabilities/home/state/useHomeStore.ts"
+HOME_DIR = "src/capabilities/home/ui"
 STARTUP_SCRIPT = "run-gui.sh"
 ACL_FILE = "src-tauri/permissions/default-commands.toml"
 MAIN_RS = "src-tauri/src/main.rs"
@@ -328,7 +328,7 @@ def run_self_test(root: Path) -> int:
 
     good = {
         HOME_STORE: _good_store(),
-        "src/components/home/HomePanel.vue": _good_panel(),
+        "src/capabilities/home/ui/HomePanel.vue": _good_panel(),
         STARTUP_SCRIPT: _good_startup(),
         ACL_FILE: (root / ACL_FILE).read_text(encoding="utf-8", errors="ignore")
         if (root / ACL_FILE).is_file()
@@ -367,7 +367,7 @@ def run_self_test(root: Path) -> int:
         (
             "HOME_NO_SENSITIVE_TARGET_RENDER（title 暴露 target 原文）",
             {
-                "src/components/home/HomePanel.vue": '<div class="home-card" :title="s.target" @click="onOpen(s)"></div>'
+                "src/capabilities/home/ui/HomePanel.vue": '<div class="home-card" :title="s.target" @click="onOpen(s)"></div>'
             },
             "HOME_NO_SENSITIVE_TARGET_RENDER",
         ),

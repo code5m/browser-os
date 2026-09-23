@@ -260,7 +260,7 @@ check(
   "无敏感字面量",
   !/sk-[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{8,}|Bearer\s+[A-Za-z0-9]{8,}|password=|api_key=/.test(barSrc)
 );
-check("未触碰 home 组件", !barSrc.includes("components/home"));
+check("未触碰 home 组件", !barSrc.includes("components/home") && !barSrc.includes("capabilities/home"));
 check("未触碰 MainArea", !barSrc.includes("MainArea"));
 check("store 不依赖 bridge/后端", !storeSrc.includes("../../bridge") && !/bridge\./.test(storeSrc));
 
