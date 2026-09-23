@@ -48,15 +48,9 @@ const GraphPanel = defineAsyncComponent({
   delay: 80,
   timeout: 10000,
 });
-// M5-W14 插件管理器面板：懒加载（defineAsyncComponent），将其纯逻辑(pluginUi.ts)、
-// store(usePluginStore.ts) 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
-const PluginManager = defineAsyncComponent({
-  loader: () => import("../plugin/PluginManager.vue"),
-  loadingComponent: panelLoading,
-  errorComponent: panelError,
-  delay: 80,
-  timeout: 10000,
-});
+// Plugin 面板已升格为 capabilities/plugin/ 能力：经 WORKBENCH_MAIN 贡献（view='plugin'）懒加载注册，
+// MainArea 只按槽渲染（见下方通用 viewOf 分支），不再静态 import 本能力内部（C3 关键）。
+// 懒加载仍保留在 capabilities/plugin/index.ts 的 defineAsyncComponent 中（pluginUi + store 拆主 chunk）。
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
@@ -212,10 +206,7 @@ watch(
       <TaskPanel />
     </div>
 
-    <!-- ===== 插件管理器（M5-W14） ===== -->
-    <div v-else-if="layout.mainView === 'plugin'" class="modview">
-      <PluginManager />
-    </div>
+    <!-- ===== 插件管理器（M5-W14）：已升格 capabilities/plugin/，经 WORKBENCH_MAIN 贡献 view='plugin' 渲染（由上方通用 viewOf 分支处理） ===== -->
     <!-- ===== 技能（Skill）：已升格 capabilities/skill/，经 WORKBENCH_MAIN 贡献 view='skills' 渲染（由通用 viewOf 分支处理） ===== -->
     <!-- ===== 智能体（Agent）：已升格 capabilities/agent/，经 WORKBENCH_MAIN 贡献 view='agents' 渲染（由通用 viewOf 分支处理） ===== -->
     <div v-else-if="layout.mainView === 'graph'" class="modview" role="region" aria-label="知识图谱">

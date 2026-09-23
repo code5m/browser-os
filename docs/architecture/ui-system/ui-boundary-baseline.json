@@ -27,7 +27,6 @@
   "business_component_dirs": [
     "src/components/workspace",
     "src/components/graph",
-    "src/components/plugin",
     "src/components/browser"
   ],
   "ui03_shell_renders_business_baseline": [
@@ -62,12 +61,6 @@
       "line": 224,
       "component": "GraphPanel",
       "domain": "GRAPH"
-    },
-    {
-      "shell": "src/components/layout/MainArea.vue",
-      "line": 215,
-      "component": "PluginManager",
-      "domain": "PLUGIN"
     },
     {
       "shell": "src/components/layout/ActivityBar.vue",
@@ -215,7 +208,7 @@
       "text": "position: fixed;"
     },
     {
-      "file": "src/components/plugin/PluginManager.vue",
+      "file": "src/capabilities/plugin/ui/PluginManager.vue",
       "selector": "position: fixed;",
       "text": "position: fixed;"
     },

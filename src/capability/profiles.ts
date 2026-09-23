@@ -6,17 +6,27 @@
 //
 // 分类（诚实）：
 //   minimal   = bookmark + workspace            （无 browser / 无 terminal → 无 WebView / 无 PTY）
-//   developer = bookmark + workspace + browser + terminal（开发者全家，lifecycle 按需）
-//   full      = bookmark + workspace + browser + terminal（当前 4 个能力，与 developer 同集；
-//               预留：未来新增能力时 full 吸纳全部 allowed）
+//   developer = bookmark + workspace + browser + terminal + git + database（开发向全家）
+//   full      = 全部已登记（含 git/database/agent/skill/plugin）—— 与 CAPABILITY_CATALOG 对齐
 //
 // 注意：browser / terminal 当前为 OPTIONAL（C3）。minimal 不注册它们即证明「absent → 零重资源」
 // 是可组合性的端到端证据，而非仅隐藏按钮。
+//
+// STAGE F 修正（Capability Library Expansion v1）：`full` 曾仅列 4 个能力，导致 STAGE C/D/E
+// 已迁入 capabilities/* 的 database/agent/skill（及本次 plugin）**贡献在运行期未注册** →
+// MainArea 的 viewOf('db'/'agents'/'skills'/'plugin') 返回 undefined → 面板不渲染（静默 UI 回归）。
+// 现 `full` 吸纳全部已登记能力，恢复 UI（UI_PRESERVATION）。git/database/agent/skill/plugin 均为
+// read-only/薄封装，激活只注册贡献，不创建重资源（RUNTIME_RESOURCE_ABSENCE 不受影响）。
 
 import { BOOKMARK_CAPABILITY_ID } from '../capabilities/bookmark'
 import { WORKSPACE_CAPABILITY_ID } from '../capabilities/workspace'
 import { BROWSER_CAPABILITY_ID } from '../capabilities/browser'
 import { TERMINAL_CAPABILITY_ID } from '../capabilities/terminal'
+import { GIT_CAPABILITY_ID } from '../capabilities/git'
+import { DATABASE_CAPABILITY_ID } from '../capabilities/database'
+import { AGENT_CAPABILITY_ID } from '../capabilities/agent'
+import { SKILL_CAPABILITY_ID } from '../capabilities/skill'
+import { PLUGIN_CAPABILITY_ID } from '../capabilities/plugin'
 
 // 注意：preset 只是「预设」，不是产品边界。任意合法组合走 VITE_CAPABILITY_ASSEMBLY（见 index.ts）。
 export type CapabilityProfileId = 'framework' | 'minimal' | 'developer' | 'full' | 'custom'
@@ -25,8 +35,25 @@ export const CAPABILITY_PROFILES: Record<CapabilityProfileId, string[]> = {
   // framework-only：零能力，只有底座（验证「Shell 不依赖任何能力也能起来」）
   framework: [],
   minimal: [BOOKMARK_CAPABILITY_ID, WORKSPACE_CAPABILITY_ID],
-  developer: [BOOKMARK_CAPABILITY_ID, WORKSPACE_CAPABILITY_ID, BROWSER_CAPABILITY_ID, TERMINAL_CAPABILITY_ID],
-  full: [BOOKMARK_CAPABILITY_ID, WORKSPACE_CAPABILITY_ID, BROWSER_CAPABILITY_ID, TERMINAL_CAPABILITY_ID],
+  developer: [
+    BOOKMARK_CAPABILITY_ID,
+    WORKSPACE_CAPABILITY_ID,
+    BROWSER_CAPABILITY_ID,
+    TERMINAL_CAPABILITY_ID,
+    GIT_CAPABILITY_ID,
+    DATABASE_CAPABILITY_ID,
+  ],
+  full: [
+    BOOKMARK_CAPABILITY_ID,
+    WORKSPACE_CAPABILITY_ID,
+    BROWSER_CAPABILITY_ID,
+    TERMINAL_CAPABILITY_ID,
+    GIT_CAPABILITY_ID,
+    DATABASE_CAPABILITY_ID,
+    AGENT_CAPABILITY_ID,
+    SKILL_CAPABILITY_ID,
+    PLUGIN_CAPABILITY_ID,
+  ],
   // custom 的清单不在此处：由运行时 VITE_CAPABILITY_ASSEMBLY 决定（这里必须是同一 Record 的一分子）
   custom: [],
 }

@@ -1,14 +1,14 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import { bridge } from "../bridge";
+import { bridge } from "../../../bridge";
 import type {
   PluginState,
   PluginSummary,
   PluginDetail,
   TrustedKeyRecord,
   PluginManifest,
-} from "../types";
-import { enabledActionsFor, parseManifestInput } from "../utils/pluginUi";
+} from "../../../types";
+import { enabledActionsFor, parseManifestInput } from "../../../utils/pluginUi";
 
 // M5-W14 插件管理器 store。
 // 红线（承 W14 Hard Stops）：

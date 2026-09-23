@@ -72,6 +72,18 @@ export interface CapabilityRuntime {
   reset(): void
 }
 
+/**
+ * 外部基础设施依赖（**非 Capability**）：一律视为「壳已提供」，不参与能力注册校验。
+ * - `bridge`：native IPC 适配层（各能力 FULL-STACK 文档记为 PUBLIC_DEPENDENCY），随壳恒存在；
+ * - `credential`：OS keyring 基础设施（registry 标记 NOT_COMPOSABLE_BY_DESIGN 的常驻安全能力），随壳恒存在。
+ *
+ * 背景：manifest 的 `dependsOn` 同时承载「能力依赖」（如 git→workspace）与「基础设施前置」
+ * （bridge/credential）。后者不是可注册能力，若按能力严格校验会导致跨能力 capability 永远
+ * 无法激活（MISSING_DEPENDENCY），其 contribution 永不注册 → Shell 视图静默空白。
+ * 本集合仅豁免基础设施；真正的能力依赖（workspace 等）仍严格校验（缺失即 MISSING_DEPENDENCY）。
+ */
+const EXTERNAL_INFRA_DEPS = new Set(['bridge', 'credential'])
+
 function assertDefinition(def: CapabilityDefinition): void {
   if (!def || typeof def.id !== 'string' || def.id === '') {
     throw new CapabilityRuntimeError('INVALID_DEFINITION', 'capability id 必须为非空字符串')
@@ -123,7 +135,10 @@ export function createCapabilityRuntime(
 
     resolve(id) {
       const rec = must(id)
-      const missing = (rec.definition.dependsOn || []).filter((d) => !records.has(d))
+      // 外部基础设施（bridge/credential）非能力，豁免；能力依赖仍严格校验。
+      const missing = (rec.definition.dependsOn || []).filter(
+        (d) => !records.has(d) && !EXTERNAL_INFRA_DEPS.has(d),
+      )
       if (missing.length > 0) {
         throw new CapabilityRuntimeError(
           'MISSING_DEPENDENCY',

@@ -983,3 +983,49 @@ SECOND_TRUTHS: 0
   3. 无 skill 专属 absence 运行时门禁。
   4. mainView='skills' 导航项硬编码于 `useLayoutStore`/`homeUi`/`HomeLaunchers`（未贡献驱动）。
 - Next task: STAGE F（按既定计划，未在本次窗口请求）。
+
+## STAGE F — Plugin Capability Closeout（DONE）
+
+```text
+HEAD:        <commit-after-this-stage>  (feature/capability-platform-v1)
+TAG:         capability-plugin-c2-pass  (annotated)
+MATURITY:   C2 ISOLATED  (manifest.v1.maturity="C2"; status=COMPATIBILITY_WRAPPED; governanceStatus=LOCKED)
+            诚实功能缺口：plugin 运行时（loader/解包/真验签/动态加载/执行）未实现，仅 Stage-I 登记簿
+HOTPLUG:     HP0 STATIC
+FULL_STACK:  docs/architecture/capabilities/plugin/FULL-STACK-BOUNDARY.md
+GATES:       npm run check 全绿（CAPABILITY_BOUNDARIES fail=0 warn=1[CB-04 既有可选环]、
+            CAPABILITY_COMPOSITION 33/33、COMPOSITION_PROFILES 11/11、check-capability-platform 29/0、
+            RUNTIME_RESOURCE_ABSENCE 12/12、UI-10 catalog 68/68、UI_BOUNDARIES vacuous=0）；
+            plugin 专属门禁全绿（check-plugin-policy / check-plugin-privacy / check-plugin-ui-privacy /
+            check-plugin-ui-logic 70 断言）；vite build OK
+SECOND_TRUTHS: 0   NEW_RESOURCE_LEAKS: 0
+```
+
+- 关键交付：Plugin 升格为完整 full-stack Capability——`src/capabilities/plugin/{manifest,index,public}.ts`
+  + `state/usePluginStore.ts`（迁入）+ `ui/PluginManager.vue`（迁入）；经 **通用 Contribution Registry** 的
+  `WORKBENCH_MAIN` 槽（view='plugin'）贡献给 MainArea（不再静态 import）。语义 owner `usePluginStore` 唯一。
+- **五态模型（§18，禁止合并成单一 boolean）**：AVAILABLE / INSTALLED / ENABLED / ACTIVE / RESOURCE_EXISTS
+  由 `utils/pluginUi.ts::pluginFacets()` **派生投影**（非第二真源），UI 逐项展示。Stage-I 中
+  AVAILABLE/ACTIVE/RESOURCE_EXISTS 恒 false（无 discovery/loader）；**ENABLED ≠ ACTIVE** 由门禁断言守护。
+- **安全边界（显式审计）**：无 native loader/动态加载/执行/网络（`PLUGIN_NO_EXEC_SURFACE`）；filesystem 仅
+  `check_path_within_roots` 取布尔；凭据/签名原文/公钥原文均不入库（仅指纹）；能力白名单 fail-closed 空集。
+- **STAGE F 顺带修复的运行期回归（重要，跨 STAGE C/D/E）**：
+  - 发现：`src/capability/profiles.ts` 的 TS 运行时真源 `full` 仅列 4 能力，而 C/D/E 已把
+    database/agent/skill 改为贡献驱动并移除 MainArea 硬编码分支 → 其贡献**运行期未注册** → 面板静默空白。
+  - 根因：这些能力 manifest 的 `dependsOn` 混合「能力依赖」与「基础设施前置」（bridge/credential），
+    `Runtime.resolve` 一并当能力校验 → `MISSING_DEPENDENCY` → bootstrap 循环中断。
+  - 修复：① `runtime.ts` 显式 `EXTERNAL_INFRA_DEPS={bridge,credential}` 豁免（能力依赖仍严格）；
+    ② `ALL_CAPABILITIES` 改为依赖安全顺序；③ `profiles.ts` 的 `full` 吸纳全部已登记能力、`developer` 补 git/database。
+  - 实测：`full` 注册 9 能力，`WORKBENCH_MAIN` 视图含 `db/agents/skills/plugin` → **UI 恢复（UI_PRESERVATION）**。
+- Absence（实测探针）：framework/minimal/developer 无 `view='plugin'` 贡献；full 有。absent → 零 bridge.plugin* invoke。
+- Changed files：`src/capabilities/plugin/{manifest,index,public}.ts`(新) + `src/capabilities/plugin/{state/usePluginStore.ts,ui/PluginManager.vue}`(迁入)
+  + `src/utils/pluginUi.ts`(+pluginFacets) + `src/components/layout/MainArea.vue` + `src/capability/{index.ts,profiles.ts,runtime.ts,platform/catalog.ts}`
+  + `scripts/{check-plugin-ui-logic.mjs,check-plugin-ui-privacy.py,check-ui.mjs}`
+  + `docs/architecture/capability-registry/{capabilities,profiles}.yaml` + `docs/architecture/ui-system/{ui-boundary-baseline.json,ui-components.yaml,UI-DUPLICATION-MAP.md}`
+  + `docs/architecture/capability-platform/FULL-STACK-CAPABILITY-INVENTORY.md` + `docs/architecture/capabilities/plugin/FULL-STACK-BOUNDARY.md`。
+- Known debt（诚实不谎报）:
+  1. plugin 运行时（loader/执行）未实现 —— 真实功能缺口（governanceStatus=LOCKED）。
+  2. 无 plugin 专属 absence 运行时门禁。
+  3. mainView='plugin' 导航项硬编码（未贡献驱动）。
+  4. `check-plugin-ui-logic.mjs` 未接线到 `pre-merge.sh`。
+- Next task: STAGE G — Task / Graph。

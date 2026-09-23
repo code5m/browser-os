@@ -24,10 +24,10 @@
 | terminal | `src/capabilities/terminal` | COMPATIBILITY_WRAPPED | C3 OPTIONAL* | PTY/PROCESS | TARGET_COMPOSABLE |
 | bookmark | `src/capabilities/bookmark` | NOT_INTEGRATED | C2 (C3 PENDING)** | LIGHT | COMPATIBILITY_WRAPPED |
 | git | `src/capabilities/git` | COMPATIBILITY_WRAPPED | C2 ISOLATED | MEDIUM/NETWORK(瞬态) | COMPATIBILITY_WRAPPED |
-| database | `src/components/workspace/DatabasePanel.vue` | NOT_INTEGRATED | C1 | NETWORK+SECRET(重) | TARGET_COMPOSABLE |
-| agent | `src/components/workspace/AgentChatPanel.vue` | NOT_INTEGRATED | C0 (运行时未实现) | MEDIUM/NETWORK | TARGET_COMPOSABLE |
-| skill | `src/components/workspace/SkillManagerPanel.vue` | NOT_INTEGRATED | C0 (OWNER_PENDING) | LIGHT | TARGET_COMPOSABLE |
-| plugin | `src/components/plugin` | NOT_INTEGRATED | C1 (LOCKED 无执行) | HEAVY/NATIVE | NOT_COMPOSABLE_BY_DESIGN |
+| database | `src/capabilities/database` | COMPATIBILITY_WRAPPED | C2 ISOLATED | NETWORK+SECRET(重) | COMPATIBILITY_WRAPPED |
+| agent | `src/capabilities/agent` | COMPATIBILITY_WRAPPED | C1 WRAPPED (运行时未实现) | MEDIUM/NETWORK | COMPATIBILITY_WRAPPED |
+| skill | `src/capabilities/skill` | COMPATIBILITY_WRAPPED | C1 WRAPPED (运行时未实现) | LIGHT | COMPATIBILITY_WRAPPED |
+| plugin | `src/capabilities/plugin` | COMPATIBILITY_WRAPPED | C2 ISOLATED (运行时 LOCKED 无执行) | HEAVY/NATIVE | COMPATIBILITY_WRAPPED |
 | knowledge_graph | `src/components/graph` | NOT_INTEGRATED | C1 (live query) | MEDIUM | TARGET_COMPOSABLE |
 | task | `src/stores/useTaskStore.ts` | NOT_INTEGRATED | C1 (live) | BACKGROUND/PROCESS | TARGET_COMPOSABLE |
 | session | `src/stores/useSessionStore.ts` | NOT_INTEGRATED | C1 (live) | LIGHT | NOT_COMPOSABLE_BY_DESIGN |
@@ -159,16 +159,17 @@
 - Dependencies：`agent`,`bridge`。
 - 评级：C0。需先定 semanticOwner（SCR）+ 实现 skill_list/run 后端。
 
-### plugin — C1（LOCKED 无执行）
-- 用户目的：插件清单 / manifest / 密钥。
-- UI owner：`src/components/plugin/*`。
-- State owner：`usePluginStore`（`src/stores/usePluginStore.ts`）。
+### plugin — C2 ISOLATED（运行时 LOCKED 无执行）
+- 用户目的：插件清单 / manifest 生命周期登记 / 受信任密钥指纹。
+- UI owner：`src/capabilities/plugin/ui/PluginManager.vue`（经 WORKBENCH_MAIN 贡献 view='plugin'）。
+- State owner：`usePluginStore`（`src/capabilities/plugin/state/usePluginStore.ts`）。
 - Intent owner：`usePluginStore`（list/get/install/enable/disable/keys*）。
-- Native owner：`bridge.plugin*` → Rust `plugin_install/enable/disable/list/get/keys_*`(bridge.rs:7834-7992)；**无 plugin_run/invoke**。
-- Resource owner：无执行（governanceStatus=LOCKED）。
+- Native owner：`bridge.plugin*` → Rust `plugin_install/enable/disable/list/get/keys_*`(bridge.rs:7833-7991)；**无 plugin_run/invoke**。
+- Resource owner：**无**（Stage-I 不创建 load 实例；`v1.resources=[]`；governanceStatus=LOCKED）。
 - Credential：无 OS keyring；仅可信公钥指纹（16-hex，不暴露原始密钥）。
-- Dependencies：`bridge`。
-- 评级：C1（registered + governed + LOCKED）。目标：保持 LOCKED 或明确 runtime 边界后评 C2；**禁止 installed==enabled==active==resource 混淆**。
+- Dependencies：`bridge`（外部基础设施，runtime 豁免，不作能力校验）。
+- 五态：AVAILABLE/INSTALLED/ENABLED/ACTIVE/RESOURCE_EXISTS **分别判定，禁止合并成单一 boolean**（§18）；Stage-I 中 AVAILABLE/ACTIVE/RESOURCE_EXISTS 恒 false（无 discovery/loader）。
+- 评级：C2 ISOLATED（边界隔离 manifest/public/index/ui/state + 贡献驱动）。非 C3：设计 LOCKED 不可组合启停 + 无 absence 门禁 + mainView='plugin' nav 硬编码。详见 `docs/architecture/capabilities/plugin/FULL-STACK-BOUNDARY.md`。
 
 ### knowledge_graph — C1（live query）
 - 用户目的：图谱查询 / 节点获取 / 统计。

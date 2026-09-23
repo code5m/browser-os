@@ -15,6 +15,7 @@ import { gitCapability, GIT_CAPABILITY_ID } from '../capabilities/git'
 import { databaseCapability, DATABASE_CAPABILITY_ID } from '../capabilities/database'
 import { agentCapability, AGENT_CAPABILITY_ID } from '../capabilities/agent'
 import { skillCapability, SKILL_CAPABILITY_ID } from '../capabilities/skill'
+import { pluginCapability, PLUGIN_CAPABILITY_ID } from '../capabilities/plugin'
 import { CAPABILITY_PROFILES, DEFAULT_PROFILE, type CapabilityProfileId, profileFromEnv, resolveProfile } from './profiles'
 import { CAPABILITY_CATALOG, CAPABILITY_DEFINITIONS } from './platform/catalog'
 import { assemble } from './platform/assembly'
@@ -24,15 +25,18 @@ import { setCapabilityRuntime, peekCapabilityRuntime } from './runtimeSingleton'
 
 // 导出：保证任何打包器（esbuild / Rollup）都不会把「仅被 bootstrapCapabilityRuntime 内部
 // 引用的能力入口」摇树删除——否则新增能力（如 git）会在组合测试甚至生产包中凭空消失。
+// 顺序 = **依赖安全顺序**：bootstrap 逐条 register→resolve→activate，故能力依赖必须先行注册
+// （如 git 依赖 workspace）。bridge/credential 为外部基础设施，由 runtime 豁免，不在此列。
 export const ALL_CAPABILITIES = [
-  { id: GIT_CAPABILITY_ID, def: gitCapability },
   { id: BOOKMARK_CAPABILITY_ID, def: bookmarkCapability },
   { id: WORKSPACE_CAPABILITY_ID, def: workspaceCapability },
   { id: BROWSER_CAPABILITY_ID, def: browserCapability },
   { id: TERMINAL_CAPABILITY_ID, def: terminalCapability },
+  { id: GIT_CAPABILITY_ID, def: gitCapability },
   { id: DATABASE_CAPABILITY_ID, def: databaseCapability },
   { id: AGENT_CAPABILITY_ID, def: agentCapability },
   { id: SKILL_CAPABILITY_ID, def: skillCapability },
+  { id: PLUGIN_CAPABILITY_ID, def: pluginCapability },
 ]
 
 let runtime: CapabilityRuntime | null = null

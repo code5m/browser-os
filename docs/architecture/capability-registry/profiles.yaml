@@ -4,7 +4,7 @@
 #
 # 铁律：禁止把目标态写成已实现。三种状态必须区分清楚：
 #   CURRENTLY_COMPOSABLE   已能真正独立启停（今晚：无）
-#   COMPATIBILITY_WRAPPED  经 Adapter 接入 Runtime，底层仍是既有系统（今晚：仅 bookmark）
+#   COMPATIBILITY_WRAPPED  经 Adapter 接入 Runtime，底层仍是既有系统（bookmark/git/database/agent/skill/plugin）
 #   TARGET_COMPOSABLE      目标态，尚未实现
 #   NOT_COMPOSABLE_BY_DESIGN  设计上不参与组合（安全/常驻/锁定）
 
@@ -28,7 +28,7 @@ composability:
   grid: TARGET_COMPOSABLE
   credential: NOT_COMPOSABLE_BY_DESIGN
   session: NOT_COMPOSABLE_BY_DESIGN
-  plugin: NOT_COMPOSABLE_BY_DESIGN
+  plugin: COMPATIBILITY_WRAPPED
 
 profiles:
 
@@ -74,12 +74,12 @@ profiles:
       - session
       - script
       - workbench
-    note: 演示口径；credential/session/plugin 为 NOT_COMPOSABLE_BY_DESIGN
+    note: 演示口径；credential/session 为 NOT_COMPOSABLE_BY_DESIGN
 
 # 演示时必须声明的事实
 demo_disclaimer: >
   三个 Profile 是"组合配置的设计口径"，不是今晚已实现的按需装配能力。
   今晚已接入 Capability Runtime 并经通用 Contribution Registry 解耦的有
-  bookmark / git / database / agent / skill（均为 COMPATIBILITY_WRAPPED）；
+  bookmark / git / database / agent / skill / plugin（均为 COMPATIBILITY_WRAPPED）；
   其启停仍由 profile 预设驱动，未实现 runtime 按需装配（CURRENTLY_COMPOSABLE = 0）。
   其余能力的启停仍为 TARGET_COMPOSABLE。禁止在演示中声称"可以一键切换 Profile"。

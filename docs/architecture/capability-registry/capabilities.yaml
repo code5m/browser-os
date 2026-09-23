@@ -349,12 +349,17 @@ capabilities:
       sensitive: false
     entrypoint: src/capabilities/skill/index.ts
 
+  # Capability Library Expansion v1（STAGE F）：Plugin 物理迁入 capabilities/plugin/（manifest/public/index/ui/state）。
+  # 诚实边界（Stage-I 登记簿）：后端 plugin_list/get/install/enable/disable/keys_* 已实现（本地登记簿 + 状态机 + 信任指纹），
+  #   但无 plugin 运行时（不解包/不真验签/不动态加载/不执行/不联网）→ governanceStatus=LOCKED，无 owned 资源实例。
+  # 五态分别判定（AVAILABLE/INSTALLED/ENABLED/ACTIVE/RESOURCE_EXISTS），禁止合并成单一 boolean（§18）。
   - id: plugin
     name: Plugin
     category: CAPABILITY
     semanticOwner: usePluginStore
     governanceStatus: LOCKED
-    status: NOT_INTEGRATED
+    status: COMPATIBILITY_WRAPPED
+    maturity: C2
     provides:
       - plugin.list
       - plugin.manifest
@@ -364,7 +369,7 @@ capabilities:
     lifecycle:
       supported: [ACTIVE]
       default: ACTIVE
-      activatable: false
+      activatable: true
       resident: false
     resources:
       class: [HEAVY, NATIVE]
@@ -374,7 +379,7 @@ capabilities:
     persistence:
       scope: disk
       sensitive: false
-    entrypoint: src/components/plugin
+    entrypoint: src/capabilities/plugin/index.ts
 
   - id: knowledge_graph
     name: KnowledgeGraph

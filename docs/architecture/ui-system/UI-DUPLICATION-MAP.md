@@ -48,8 +48,8 @@
 | `graph/NodeDetail.vue:23` | 选择一个节点查看详情 | `.detail.empty` |
 | `system/ClipboardPanel.vue:38` | 暂无历史记录… | `.empty` |
 | `bookmark/ui/BookmarkPanel.vue:160` | 还没有收藏：点地址栏 ☆… | — |
-| `plugin/PluginManager.vue:140` | 暂无插件… | `.pm-empty` |
-| `plugin/PluginManager.vue:164` | 暂无登记密钥 | `.pm-empty` |
+| `capabilities/plugin/ui/PluginManager.vue:145` | 暂无插件… | `.pm-empty` |
+| `capabilities/plugin/ui/PluginManager.vue:169` | 暂无登记密钥 | `.pm-empty` |
 | `browser/ui/SessionPanel.vue:84` | 暂无历史会话。点上方… | — |
 | `capabilities/workspace/ui/FilePanel.vue` | `.ftree-empty` / `.fedit-empty` | 两套 |
 

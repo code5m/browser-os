@@ -1,20 +1,25 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
-import { usePluginStore } from "../../stores/usePluginStore";
-import type { PluginState } from "../../types";
+import { usePluginStore } from "../state/usePluginStore";
+import type { PluginState } from "../../../types";
 import {
   PLUGIN_STATES,
   aclLevelClass,
   aclLevelLabel,
   isDangerousGate,
   pluginStateLabel,
+  pluginFacets,
   redactDetail,
-} from "../../utils/pluginUi";
+} from "../../../utils/pluginUi";
 
 const store = usePluginStore();
 
 // 选中插件详情 → 强制走脱敏投影（即使后端将来误带敏感字段，UI 也不渲染）。
 const display = computed(() => (store.detail ? redactDetail(store.detail) : null));
+
+// 生命周期/资源五态投影：AVAILABLE / INSTALLED / ENABLED / ACTIVE / RESOURCE_EXISTS
+// 分别派生、分别展示——禁止合并成单一 boolean（§18）。
+const facets = computed(() => (display.value ? pluginFacets(display.value.state) : null));
 
 const filterOptions = computed(() => [
   { value: null as PluginState | null, label: "全部状态" },
@@ -197,6 +202,15 @@ onMounted(() => {
           <li>声明 Hash：{{ display.resource.declared_hash }}</li>
           <li>已提供路径：{{ display.resource.path_provided ? "是" : "否" }}</li>
           <li>已校验：{{ display.resource.verified ? "是" : "否" }}</li>
+        </ul>
+
+        <div class="pm-sub">生命周期/资源五态（分别判定，不合并）</div>
+        <ul class="pm-sig">
+          <li>AVAILABLE（可发现）：{{ facets?.available ? "是" : "否" }}</li>
+          <li>INSTALLED（已登记）：{{ facets?.installed ? "是" : "否" }}</li>
+          <li>ENABLED（已启用，≠运行）：{{ facets?.enabled ? "是" : "否" }}</li>
+          <li>ACTIVE（运行中）：{{ facets?.active ? "是" : "否" }}</li>
+          <li>RESOURCE_EXISTS（活资源）：{{ facets?.resourceExists ? "是" : "否" }}</li>
         </ul>
 
         <div class="pm-sub">能力（逐项展示，禁折叠）</div>

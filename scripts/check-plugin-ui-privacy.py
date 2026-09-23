@@ -8,8 +8,8 @@
 - 错误渲染只能展示稳定码（`error_code` 产出），禁止展示原始消息体 / manifest 字段。
 
 判定对象（A6 产物，gated：文件不存在时全部为 no-op，不阻塞批次）：
-- `src/stores/usePluginStore.ts`
-- `src/components/plugin/**`（任意前端源文件）
+- `src/capabilities/plugin/state/usePluginStore.ts`
+- `src/capabilities/plugin/ui/**`（任意前端源文件）
 
 与既有夹具不重叠：
 - `check-plugin-policy.py`（A9）：查 Rust DTO 是否有 `password/secret/token` 字段名。
@@ -64,8 +64,8 @@ SECRET_RENDER_TOKENS = (
 )
 
 UI_GLOB_DIRS = (
-    ("src/stores/usePluginStore.ts", False),
-    ("src/components/plugin", True),
+    ("src/capabilities/plugin/state/usePluginStore.ts", False),
+    ("src/capabilities/plugin/ui", True),
 )
 
 

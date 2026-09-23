@@ -46,6 +46,7 @@ const {
   redactSummary,
   redactKeyRecord,
   parseManifestInput,
+  pluginFacets,
 } = await import("../src/utils/pluginUi.ts");
 
 let pass = 0;
@@ -172,8 +173,30 @@ ok(parseManifestInput(JSON.stringify({ id: "x" })).ok === false, "缺字段失�
 ok(parseManifestInput(JSON.stringify({ id: "x", version: "1", display_name: "d", description: "d", min_app_version: "0.1", hash: "h", signature: { algorithm: "E" }, capabilities: [], entry: "bad" })).ok === false, "entry 非法失败");
 
 // ---- 9. Pinia setup-store 属性已自动解包，模板不得再取 .value ----
-const panelSource = await readFile(new URL("../src/components/plugin/PluginManager.vue", import.meta.url), "utf8");
+const panelSource = await readFile(new URL("../src/capabilities/plugin/ui/PluginManager.vue", import.meta.url), "utf8");
 ok(!/store\.(?:busy|filterState|list|detail|manifestText|resourcePath|keys|actionsFor|error)\.value/.test(panelSource), "PluginManager 不重复解包 Pinia store ref");
+
+// ---- 10. 资源/生命周期五态投影：AVAILABLE/INSTALLED/ENABLED/ACTIVE/RESOURCE_EXISTS 必须分别判定 ----
+{
+  const keys = ["available", "installed", "enabled", "active", "resourceExists"];
+  const loaded = pluginFacets("loaded");
+  ok(keys.every((k) => typeof loaded[k] === "boolean"), "pluginFacets 返回五个独立布尔字段（不合并）");
+  ok(loaded.installed === true && loaded.enabled === false, "loaded: INSTALLED=true, ENABLED=false");
+
+  const enabled = pluginFacets("enabled");
+  ok(enabled.enabled === true, "enabled: ENABLED=true");
+  // 关键不变量：ENABLED ≠ ACTIVE（Stage-I 无 loader，启用不等于运行）
+  ok(enabled.active === false, "enabled: ENABLED=true 但 ACTIVE=false（绝不合并 ENABLED/ACTIVE）");
+  ok(enabled.resourceExists === false, "enabled: RESOURCE_EXISTS=false（无 loader 实例）");
+
+  const uninstalled = pluginFacets("uninstalled");
+  ok(uninstalled.installed === false && uninstalled.enabled === false, "uninstalled: INSTALLED=false, ENABLED=false");
+
+  // 五态中 available/active/resourceExists 在 Stage-I 恒 false（诚实缺口），且与 installed/enabled 相互独立
+  ok(pluginFacets("loaded").available === false, "Stage-I 无 discovery 源：AVAILABLE 恒 false（诚实）");
+  ok(pluginFacets("loaded").active === false, "Stage-I 无 loader：ACTIVE 恒 false（诚实）");
+  ok(pluginFacets("loaded").resourceExists === false, "Stage-I 无 load 实例：RESOURCE_EXISTS 恒 false（诚实）");
+}
 
 console.log(`check-plugin-ui-logic: ${pass} 断言通过, ${fail} 失败`);
 if (fail > 0) {

@@ -69,6 +69,41 @@ export function enabledActionsFor(state: PluginState): PluginActionGate {
   };
 }
 
+// ---------------------------------------------------------------------------
+// 资源/生命周期五态投影（§18：绝不可合并成单一 boolean）
+// ---------------------------------------------------------------------------
+//
+// AVAILABLE / INSTALLED / ENABLED / ACTIVE / RESOURCE_EXISTS 是**五个不同事实**。
+// 后端真源 = 单枚举 `PluginState`（8 态）+ `PluginResourceMeta`；本层只做**派生投影**，
+// 不新增任何状态（非第二真源）。禁止把它们坍缩成一个 `installed`/`enabled` 布尔。
+//   AVAILABLE       = 出现在「可发现目录」中（Stage-I 只有本地登记簿，无 discovery 源 → 恒 false）
+//   INSTALLED       = 本地登记簿存在且 state ≠ uninstalled
+//   ENABLED         = state === enabled（仅生命周期开关，**不等于**运行）
+//   ACTIVE          = 运行时实例已加载并运行（Stage-I 无 loader/runtime → 恒 false）
+//   RESOURCE_EXISTS = 存在**活的**本地资源实例（Stage-I 无 loader → 恒 false）
+// 注意：`resource.path_provided` / `resource.verified` 描述的是「声明的资源路径是否在允许根内」，
+// 与 RESOURCE_EXISTS（活资源）**不是**同一件事，故本函数不据其推导 resourceExists。
+export interface PluginFacets {
+  available: boolean;
+  installed: boolean;
+  enabled: boolean;
+  active: boolean;
+  resourceExists: boolean;
+}
+
+export function pluginFacets(state: PluginState): PluginFacets {
+  return {
+    // 无 discovery 源：Stage-I 只有本地登记簿，没有「远端可发现目录」概念。
+    available: false,
+    installed: state !== "uninstalled",
+    enabled: state === "enabled",
+    // 无 loader/runtime：ENABLED 仅为生命周期开关，绝不等于 ACTIVE。
+    active: false,
+    // 无运行时实例：本层从不创建/持有本地资源；path_provided/verified 非活资源。
+    resourceExists: false,
+  };
+}
+
 /** 状态中文标签（清晰生命周期状态；不得暗示运行时执行）。 */
 const STATE_LABELS: Record<PluginState, string> = {
   discovered: "已发现",
