@@ -1,8 +1,8 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
-import { bridge } from '../bridge';
-import { noteLinks, resolveNote, searchNotes } from '../utils/vault.mjs';
+import { bridge } from '../../../bridge';
+import { noteLinks, resolveNote, searchNotes } from '../../../utils/vault.mjs';
 export const useVaultStore = defineStore('vault', () => {
   const path = ref('');
   const root = ref('');
@@ -16,9 +16,9 @@ export const useVaultStore = defineStore('vault', () => {
   const warning = ref('');
   const choices = ref<string[]>([]);
   const sourceMode = ref(false);
-  const current = computed(() => notes.value.find(n => n.path === selected.value));
-  const results = computed(() => searchNotes(notes.value, query.value));
-  const edges = computed(() => {
+  const vaultCurrent = computed(() => notes.value.find(n => n.path === selected.value));
+  const vaultResults = computed(() => searchNotes(notes.value, query.value));
+  const vaultEdges = computed(() => {
     const paths = notes.value.map(n => n.path);
     const result: {from:string; to:string}[] = [];
     for (const note of notes.value) for (const target of noteLinks(note.text)) {
@@ -28,7 +28,7 @@ export const useVaultStore = defineStore('vault', () => {
     }
     return result;
   });
-  const backlinks = computed(() => [...new Set(edges.value.filter(e => e.to === selected.value).map(e => e.from))]);
+  const vaultBacklinks = computed(() => [...new Set(vaultEdges.value.filter(e => e.to === selected.value).map(e => e.from))]);
   let generation = 0;
   async function open() {
     const request = ++generation;
@@ -65,5 +65,5 @@ export const useVaultStore = defineStore('vault', () => {
     else if (matches.length > 1) choices.value = matches;
     else error.value = '链接目标不存在或不在本 Vault 内。';
   }
-  return { path, root, notes, selected, query, line, anchor, busy, error, warning, choices, sourceMode, current, results, edges, backlinks, open, pickDirectory, select, follow };
+  return { path, root, notes, selected, query, line, anchor, busy, error, warning, choices, sourceMode, vaultCurrent, vaultResults, vaultEdges, vaultBacklinks, open, pickDirectory, select, follow };
 });

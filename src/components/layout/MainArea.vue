@@ -4,7 +4,6 @@ import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../capabilities/browser/public";
 import { contributionRegistry } from "../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
-import VaultPanel from '../workspace/VaultPanel.vue';
 import HomePanel from "../home/HomePanel.vue";
 import SettingsPanel from "../system/SettingsPanel.vue";
 // M4-4 数据库面板：懒加载（defineAsyncComponent），将其 15KB+ 纯逻辑(dbUi.ts)、
@@ -175,7 +174,7 @@ watch(
 
     <!-- ===== 数据库（M4-4）：已升格 capabilities/database/，经 WORKBENCH_MAIN 贡献 view='db' 渲染（由上方通用 viewOf 分支处理） ===== -->
 
-    <div v-else-if="layout.mainView === 'vault'" class="modview"><VaultPanel /></div>
+    <!-- ===== 笔记库（Vault，STAGE I-A）：已升格 capabilities/vault/，经 WORKBENCH_MAIN 贡献 view='vault' 渲染（由上方通用 viewOf 分支处理） ===== -->
     <!-- ===== 定时任务（M4-8）：已升格 capabilities/task/，经 WORKBENCH_MAIN 贡献 view='tasks' 渲染（由上方通用 viewOf 分支处理） ===== -->
 
     <!-- ===== 插件管理器（M5-W14）：已升格 capabilities/plugin/，经 WORKBENCH_MAIN 贡献 view='plugin' 渲染（由上方通用 viewOf 分支处理） ===== -->

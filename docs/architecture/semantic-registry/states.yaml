@@ -99,6 +99,11 @@ owner_implementations:
     symbol: useTerminalStore
     paths:
       - src/capabilities/terminal/state/useTerminalStore.ts
+  useVaultStore:
+    # STAGE I-A：Vault 域从 src/stores 迁入专属 owner（capabilities/vault/state）。
+    symbol: useVaultStore
+    paths:
+      - src/capabilities/vault/state/useVaultStore.ts
 
 states:
 
@@ -596,6 +601,211 @@ states:
     status: CURRENT_FACT
     note: 类比 desiredGridVisibility / currentLocalPath；R6 强制其为 computed 且禁止 .value =
 
+  # ---------------- Vault（STAGE I-A）----------------
+  path:
+    owner: useVaultStore
+    meaning: 当前打开的 Vault 目录路径（用户选择）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useVaultStore.pickDirectory
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+  root:
+    owner: useVaultStore
+    meaning: Vault 根目录（notes 解析基准）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useVaultStore.open
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+  notes:
+    owner: useVaultStore
+    meaning: 当前 Vault 的笔记快照列表（只读目录镜像，非第二真源）
+    not_meaning:
+      - 后端持久化（仅前端内存态）
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useVaultStore.open
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+  selected:
+    owner: useVaultStore
+    meaning: 当前选中笔记路径
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useVaultStore.select
+      - useVaultStore.follow
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+  query:
+    owner: useVaultStore
+    meaning: 笔记搜索关键字
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useVaultStore (查询框双向绑定)
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+  line:
+    owner: useVaultStore
+    meaning: 选中笔记的滚动/锚点行
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useVaultStore.select
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+  anchor:
+    owner: useVaultStore
+    meaning: 跟随跳转后的标题锚点
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useVaultStore.follow
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+  warning:
+    owner: useVaultStore
+    meaning: Vault 读取的非致命提示（截断/跳过）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useVaultStore.open
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+  choices:
+    owner: useVaultStore
+    meaning: 同名笔记歧义时的候选列表
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useVaultStore.follow
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+  sourceMode:
+    owner: useVaultStore
+    meaning: 原文/阅读视图切换
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useVaultStore.select
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+  vaultCurrent:
+    owner: useVaultStore
+    meaning: 当前选中笔记对象（notes + selected 派生，命名空间化避免与 graph/artifact 的 current 冲突）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - notes
+      - selected
+    formula: "notes.find(n => n.path === selected)"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+    note: 派生量禁止写入（R6 护栏）
+  vaultResults:
+    owner: useVaultStore
+    meaning: 搜索过滤后的笔记列表（notes + query 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - notes
+      - query
+    formula: "searchNotes(notes, query)"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+    note: 派生量禁止写入（R6 护栏）
+  vaultEdges:
+    owner: useVaultStore
+    meaning: 笔记链接图边（notes 文本解析 wikilink 派生，命名空间化避免与 graph 的 edges 冲突）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - notes
+    formula: "noteLinks(notes) 解析 wikilink 并经 resolveNote 命中"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+    note: 派生量禁止写入（R6 护栏）
+  vaultBacklinks:
+    owner: useVaultStore
+    meaning: 当前笔记的反向链接（vaultEdges + selected 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - vaultEdges
+      - selected
+    formula: "vaultEdges.filter(e => e.to === selected).map(e => e.from)"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+    note: 派生量禁止写入（R6 护栏）
+
   # ---------------- Terminal Lifecycle（Phase 4）----------------
   # Phase 8E/Train D：owner 符号由 useSystemStore 迁为 useTerminalStore（SCR-20260920-terminal-owner-extraction）。
   # 11 个状态语义**零变更**；仅归属（owner）与物理实现路径变更；canonical_writer 函数名按真实代码校正。
@@ -956,3 +1166,19 @@ observed_not_governed:
     - tools
     - builtin
     - user
+
+  useVaultStore:
+    # STAGE I-A：Vault owner 已登记（owner_implementations）。以下为 Vault 能力本地 UI 状态，
+    # 非跨切面语义，按 clipboard/apps/tools 同构处理：observed_not_governed（不治理，仅观测）。
+    - path
+    - root
+    - notes
+    - query
+    - line
+    - anchor
+    - warning
+    - choices
+    - sourceMode
+    - results
+    - edges
+    - backlinks

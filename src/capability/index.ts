@@ -21,6 +21,7 @@ import { taskCapability, TASK_CAPABILITY_ID } from '../capabilities/task'
 import { clipboardCapability, CLIPBOARD_CAPABILITY_ID } from '../capabilities/clipboard'
 import { appsCapability, APPS_CAPABILITY_ID } from '../capabilities/apps'
 import { toolsCapability, TOOLS_CAPABILITY_ID } from '../capabilities/tools'
+import { vaultCapability } from '../capabilities/vault'
 import { CAPABILITY_PROFILES, DEFAULT_PROFILE, type CapabilityProfileId, profileFromEnv, resolveProfile } from './profiles'
 import { CAPABILITY_CATALOG, CAPABILITY_DEFINITIONS } from './platform/catalog'
 import { assemble } from './platform/assembly'
@@ -47,6 +48,7 @@ export const ALL_CAPABILITIES = [
   { id: CLIPBOARD_CAPABILITY_ID, def: clipboardCapability },
   { id: APPS_CAPABILITY_ID, def: appsCapability },
   { id: TOOLS_CAPABILITY_ID, def: toolsCapability },
+  { id: 'vault', def: vaultCapability },
 ]
 
 let runtime: CapabilityRuntime | null = null

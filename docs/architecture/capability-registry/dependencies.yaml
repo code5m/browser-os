@@ -64,7 +64,7 @@ edges:
   - { from: plugin,    to: bridge,   kind: required }
   - { from: graph, to: bridge, kind: required }
   - { from: graph, to: agent,   kind: optional }
-  - { from: notes,     to: bridge,   kind: required }
+  - { from: vault,     to: bridge,   kind: required }
   - { from: resource_collection, to: bridge, kind: required }
   - { from: task,      to: workspace, kind: required }
   - { from: task,      to: bridge,   kind: required }

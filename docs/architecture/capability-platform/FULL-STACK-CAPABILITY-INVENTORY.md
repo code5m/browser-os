@@ -35,7 +35,7 @@
 | task | `src/capabilities/task` | COMPATIBILITY_WRAPPED | C2 ISOLATED (live, 调度线程) | BACKGROUND/PROCESS | COMPATIBILITY_WRAPPED |
 | session | `src/stores/useSessionStore.ts` | NOT_INTEGRATED | C1 (live) | LIGHT | NOT_COMPOSABLE_BY_DESIGN |
 | script | `src/capabilities/workspace/state` | NOT_INTEGRATED | C1 (live, spawns) | PROCESS | TARGET_COMPOSABLE |
-| notes | `src/stores/useVaultStore.ts` | NOT_INTEGRATED | C1 | LIGHT | TARGET_COMPOSABLE |
+| vault | `src/capabilities/vault` | COMPATIBILITY_WRAPPED | C2 ISOLATED (只读 Markdown 目录快照，无原生资源) | LIGHT | COMPATIBILITY_WRAPPED |
 | resource_collection | `src/stores/useResourceStore.ts` | NOT_INTEGRATED | C1 (live, 后台捕获) | MEDIUM/BACKGROUND | TARGET_COMPOSABLE |
 | credential | `src-tauri/src/core/keyring_store.rs` | NOT_INTEGRATED | C1 (安全边界) | SECURITY_SENSITIVE | NOT_COMPOSABLE_BY_DESIGN |
 | workbench | `src/stores/useWorkbenchStore.ts` | NOT_INTEGRATED | 框架/Shell（非后端能力） | — | TARGET_COMPOSABLE |
@@ -218,15 +218,16 @@
 - Dependencies：`bridge`。
 - 评级：C1（live）。目标 C2/C3。
 
-### notes — C1
-- 用户目的：笔记 / 收藏（vault）。
-- UI owner：`src/components/workspace/VaultPanel.vue`。
-- State owner：`useVaultStore`（`src/stores/useVaultStore.ts`，id=vault）—— registry `semanticOwner:null` 与实际 store 不符（已知偏差）。
-- Intent owner：`useVaultStore`（open/select/follow）。
-- Native owner：`bridge.saveNote/vaultOpen` → Rust `save_note`(2055)/`vault_open`(6150)。
-- Resource owner：LIGHT（磁盘 markdown）。
+### vault — C2 ISOLATED
+- 用户目的：笔记库 / 收藏（Obsidian Markdown 目录浏览、笔记链接图）。
+- UI owner：`src/capabilities/vault/ui/VaultPanel.vue`（2026-09-23 自 `src/components/workspace/` 物理迁入能力包，业务 UI 零改动）。
+- State owner：`useVaultStore`（`src/capabilities/vault/state/useVaultStore.ts`，id=vault）—— 单一语义 owner，registry `semanticOwner:useVaultStore` 已统一，消除原 owner 偏差债务。
+- Intent owner：`useVaultStore`（open/select/follow/pickDirectory）。
+- Native owner：`bridge.vaultOpen` → Rust `vault_open`(6150)；`bridge.saveNote` 仅在用户显式保存时调用（当前 VaultPanel 为只读浏览，无保存动作）。
+- Resource owner：LIGHT（磁盘 Markdown 目录只读快照，无原生 webview/进程）。
 - Credential：无。
-- Dependencies：`bridge`。
+- Dependencies：`bridge`（required）。
+- 评级：C2（物理隔离：manifest + public + state + ui + contribution 均已就位）。absence 经 profile 实现（minimal/developer 不含 vault → 不注册贡献 → 不挂载面板）。C3 资源释放证据受限于本项目无按能力实测机制（登记为资源治理 Debt）。
 - 评级：C1。需把 registry semanticOwner 从 null 改为 useVaultStore（SCR 对齐）。
 
 ### resource_collection — C1（live, 后台捕获）
@@ -266,7 +267,7 @@
 ## 框架 vs 能力 分类裁定（section 15）
 
 - **框架/Core 保留**：Workbench Shell、布局容器、通用导航、通用 contribution 宿主、theme、窗口控制、Capability Center、Settings 框架、通用命令基础设施、恢复、诊断、Semantic Governance。
-- **能力（真实后端/状态边界）**：browser/grid/workspace/terminal/bookmark/git/database/agent/skill/plugin/knowledge_graph/task/session/script/notes/resource_collection/credential。
+- **能力（真实后端/状态边界）**：browser/grid/workspace/terminal/bookmark/git/database/agent/skill/plugin/knowledge_graph/task/session/script/vault/resource_collection/credential。
 - **降级为框架**：workbench（无原生命令，纯编排）。
 - **安全边界（非 optional）**：credential（keyring 核心）。
 
@@ -275,7 +276,7 @@
 1. **bookmark 成熟度漂移**：registry `status: NOT_INTEGRATED` 与 phase8b tag（C3）冲突；HANDOFF 已更正为官方 C2 / C3 PENDING。需统一 registry 状态。
 2. **agent/skill 运行时未实现**：前端 store + 只读后端命令存在，但 `agent_chat`/`skill_list`/`skill_run` 等 Rust 命令缺失 → 真实能力为 C0 壳。
 3. **skill 无专属 owner**：状态寄居 `useAgentStore.skills`，需 SCR 定 semanticOwner 后抽离。
-4. **notes registry owner 偏差**：`semanticOwner:null` 但实际 `useVaultStore` 存在。
+4. ~~**notes registry owner 偏差**~~：已消除（2026-09-23 STAGE I-A 将 capability id 由 `notes` 统一为 `vault`，`semanticOwner:useVaultStore` 已登记，物理迁入 `src/capabilities/vault/`）。
 5. **credential provides 动词偏差**：`credential.save/get/delete` 未离散实现；仅 browser-credential 路径 + 内部 keyring。
 6. **database 未可组合**：always-loaded 面板，达到 C3 需抽可选能力包（Debt-8E-5）。
 7. **git 物理状态未迁入**：`useGitStore` 仍在 `src/stores/`；App.vue 静态直连写闸门（阻断 C3）。

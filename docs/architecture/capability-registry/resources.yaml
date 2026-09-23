@@ -115,12 +115,12 @@ policies:
     resident: false
     release_note: 释放图索引内存 —— TARGET
 
-  - id: notes
+  - id: vault
     class: [LIGHT]
     suspendable: true
     destroyable: true
     resident: false
-    release_note: 仅释放轻量状态
+    release_note: 仅释放轻量状态（笔记库为只读 Markdown 目录快照，无原生资源）
 
   - id: resource_collection
     class: [MEDIUM, BACKGROUND]

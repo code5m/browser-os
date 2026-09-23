@@ -36,12 +36,6 @@
       "domain": "BROWSER"
     },
     {
-      "shell": "src/components/layout/MainArea.vue",
-      "line": 207,
-      "component": "VaultPanel",
-      "domain": "VAULT"
-    },
-    {
       "shell": "src/components/layout/ActivityBar.vue",
       "line": 373,
       "component": "GridArchiveBar",

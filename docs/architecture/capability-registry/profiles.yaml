@@ -13,7 +13,7 @@ version: 1
 composability:
   bookmark: COMPATIBILITY_WRAPPED
   workspace: TARGET_COMPOSABLE
-  notes: TARGET_COMPOSABLE
+  vault: TARGET_COMPOSABLE
   skill: COMPATIBILITY_WRAPPED
   graph: COMPATIBILITY_WRAPPED
   resource_collection: TARGET_COMPOSABLE
@@ -74,7 +74,7 @@ profiles:
       - clipboard
       - apps
       - tools
-      - notes
+      - vault
       - resource_collection
       - task
       - session
