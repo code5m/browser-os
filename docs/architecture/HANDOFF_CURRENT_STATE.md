@@ -1244,3 +1244,78 @@ git fsck --full                     无损坏（仅 dangling 对象，正常）
 4. settings 无专属 absence 运行时门禁（常驻框架服务，absent 语义不适用）。
 
 ### Next task: STAGE J — Capability Platform vNext Closeout
+
+---
+
+## STAGE I — Workbench Capability Decoupling（2026-09-23，autonomous Release Train）
+
+> 本段为 STAGE I 收口快照。三段迁移均以「先裁决语义 owner，再物理迁移 UI」为序，
+> 每段独立 commit + annotated tag，全部门禁 PASS。
+
+### 子阶段与 tag
+
+| 子阶段 | 主题 | commit | tag |
+|---|---|---|---|
+| I-A | notes → vault（能力物理隔离 + owner 登记） | f500fcf | `capability-vault-c2-pass` |
+| I-C | settings 判定为框架 SERVICE + Shell 契约化 | a3b23e3 | `capability-settings-service-pass` |
+| I-B | home 升格能力 + shared 缝解环 | b1d49db | `capability-home-c2-pass` |
+| 收口 | Workbench 解耦收口 | (本 commit) | `capability-stage-i-workbench-decoupling-pass` |
+
+### NOTES_DECISION（STAGE I-A）
+
+- 裁决：`notes` 与 `vault` 为**同一语义**（Obsidian Markdown 目录浏览 / 笔记链接图 / 跟随跳转）；无第二个同样合理的 owner。
+  capability id 由 `notes` 统一为 **`vault`**（id == store id == MainArea view == 面板）。
+- OWNER：`useVaultStore`（`src/capabilities/vault/state/useVaultStore.ts`），唯一 writer、唯一消费者（VaultPanel），无跨能力消费者。
+- SCR：`docs/architecture/semantic-changes/SCR-notes-vault-owner-20260923.md`（CURRENT_FACT，非提案）。
+- MIGRATION：`src/stores/useVaultStore.ts` + `src/components/workspace/VaultPanel.vue` → `src/capabilities/vault/{state,ui}`；
+  MainArea 去静态 import，改经 WORKBENCH_MAIN 贡献 `view='vault'`。
+- MATURITY：C2 ISOLATED（manifest + public + state + ui + contribution 齐备；只读 Markdown 快照，无原生资源）。
+- 语义注册：`states.yaml` 登记 useVaultStore 的 14 个状态；派生状态命名空间化
+  （vaultEdges/vaultCurrent/vaultResults/vaultBacklinks）以消除与 graph/artifact 的全局名冲突。
+
+### HOME_DECISION（STAGE I-B）
+
+- 裁决：主页快捷方式（url/app/dir）+ 最近访问 + 启动器元数据**确属 Home 语义** → owner = `useHomeStore`；
+  不迁回 browser/workspace（那是「收藏动作的触发方」，不是数据 owner）。
+- PUBLIC CONTRACT：**窄契约** `src/capabilities/home/public.ts`（仅具名意图，不 re-export store / 无 getHomeStore / 无 event bus）。
+- CROSS_CAPABILITY_INTERNAL_DEPENDENCIES：BEFORE = 1（workspace `useFileStore` 直连 `components/home/public`）；
+  AFTER = 0（改经 shared 缝 `src/composables/homeNav.ts`）。
+- MIGRATION：`src/stores/useHomeStore.ts` → `capabilities/home/state/`；`src/components/home/*` → `capabilities/home/ui/`；
+  MainArea 去静态 import（原 v-if 链头改为浏览器分支），改经 WORKBENCH_MAIN 贡献 `view='home'`。
+- 依赖：home dependsOn `[browser, workspace, apps, bridge]`；workspace **不**声明 home（经 shared 缝），避免 CB-04 必须依赖环。
+- 门禁覆盖：check-home-ui-logic / check-home-client-policy / check-home-store-logic / check-ui /
+  check-terminal-owners / check-capability-composition 的路径全部同步到 `capabilities/home/ui|state`（无 INVALID PASS）。
+- 副作用：主 chunk 184→169 kB（HomePanel 及其子组件转为懒加载）。
+
+### SETTINGS_DECISION（STAGE I-C）
+
+- CLASSIFICATION：主题 / 键位 / 页签休眠 = **框架偏好** → `SERVICE`（**非**产品 CAPABILITY），常驻（NOT_COMPOSABLE_BY_DESIGN）。
+- OWNER：`useSettingsStore`（框架 store，留 `src/stores/`，未强制迁入 capabilities）。
+- SHELL_ACCESS：Shell（App.vue / StatusBar.vue）与 SettingsPanel 一律经**显式契约** `src/settings/public.ts` 访问。
+- DECISION：SettingsPanel 经 WORKBENCH_MAIN 贡献 `view='settings'` 解耦；MainArea 去静态 import。
+  `useSettingsStore` **不**纳入 semantic locator（框架偏好非跨切面语义），避免污染语义注册表。
+
+### WORKBENCH_COUPLING（BEFORE → AFTER）
+
+| 指标 | BEFORE | AFTER | 说明 |
+|---|---|---|---|
+| SHELL_DIRECT_BUSINESS_RENDER（MainArea 静态渲染能力面板） | 3（HomePanel/VaultPanel/SettingsPanel） | **0** | 三者均转为 WORKBENCH_MAIN 贡献 |
+| SHELL_BUSINESS_STORE_READ（UI-03b 基线） | 25 | 25 | 导航/布局胶水，本阶段未变化（JUSTIFIED_REMAINDER） |
+| SHELL_BUSINESS_STORE_WRITE | 0 | 0 | Shell 不写能力真源（保持） |
+| RESOURCE_LIFECYCLE_VIOLATION | 0 | 0 | framework grid-child=0 / PTY=0 |
+| INTERNAL_CROSS_CAPABILITY_IMPORT（CB-01） | 0 | 0 | 无内部越界 |
+| UNDECLARED_DEPENDENCY（UI-04b-U） | 1 | 1 | 既有债务（workspace FileEditor→browser），非本阶段引入 |
+| CROSS_CAPABILITY_PUBLIC_IMPORT（UI-04b） | 5 | 7 | 新增项均经 public 出口（home→browser/workspace/apps） |
+
+**JUSTIFIED_REMAINDER**：
+- UI-03（2 处）：`App.vue → AINavPanel`、`ActivityBar → GridArchiveBar` —— 既有 Shell 导航部件，未能力化，登记债务。
+- UI-03b（25 处）：Shell 持有浏览器/剪贴板/应用等 public store（导航胶水），经 public 出口，属框架职责。
+- UI-04b（7 处）：全部经 capability public 出口的已声明跨能力依赖。
+- UI-04b-U（1 处）：workspace FileEditor 未声明 browser 依赖（既有债务，不静默忽略）。
+
+### 不变量核对
+
+- SECOND_TRUTHS = 0（新 owner 均为单真源；派生状态显式登记且命名空间化）。
+- RESOURCE_REGRESSION = 0（RUNTIME_RESOURCE_ABSENCE 12/12、CAPABILITY_RESOURCE_BOUNDARY 12/12 PASS）。
+- UI_PRESERVATION = STRUCTURAL_PASS（home/vault 业务 UI 零改动，仅 import 路径与归属变更）。
+- HUMAN_VISUAL = **PENDING**（本阶段未做人工目视）。
