@@ -843,3 +843,31 @@ Semantic Governance v1 验收证据（2026-09-19）：
 - `scripts/verify-ui-pilot.mjs`（SSR 结构等价）
 - `scripts/verify-dock-contribution.mjs`（Dock 贡献）
 - `scripts/verify-design-tokens.mjs`（token 不变量）
+
+---
+
+# ===== Capability Library Expansion + Workbench Decoupling v1（2026-09-23 启动） =====
+
+## STAGE A — Git Capability Closeout（DONE）
+
+```text
+HEAD:        fcf65d4  (feature/capability-platform-v1)
+TAG:         capability-git-c2-pass  (annotated)
+MATURITY:    C2 ISOLATED  (manifest.v1.maturity="C2"; status=COMPATIBILITY_WRAPPED)
+HOTPLUG:     HP0 STATIC  (installPolicy=static, hotPlug.enable=false)
+FULL_STACK:  docs/architecture/capabilities/git/FULL-STACK-BOUNDARY.md
+GATES:       npm run check 13/13 PASS; vite build OK; git diff --check clean; git fsck 0 error
+SECOND_TRUTHS: 0 (Git 内)
+```
+
+- Changed files: `src/capabilities/git/{manifest,index,public}.ts`(新) + `src/capabilities/git/ui/{GitPanel,GitDiffViewer,GitWriteConfirmDialog}.vue`(从 components/workspace 迁入) + `src/capability/{index.ts,platform/catalog.ts,contribution/types.ts}` + `src/App.vue` + `src/capabilities/workspace/ui/RepoPanel.vue` + `docs/architecture/capability-registry/{capabilities,profiles}.yaml` + `docs/architecture/ui-system/{ui-boundary-baseline.json,ui-components.yaml}`。
+- State owner: `useGitStore` (id="git", Pinia) — 语义唯一 owner；**物理仍在 `src/stores/`**（债务，未迁入 capabilities/git/state）。
+- Dependencies: `credential` / `workspace` / `bridge`（manifest.dependsOn 已声明；git→workspace 跨能力 public 依赖已入 ui04b baseline）。
+- Resource owner: git 无长驻重资源；写操作瞬态 spawn git 子进程 + Rust 写任务门 5 分钟过期。
+- Absence: 确定性（profile 未列 git → 不注册 → REPO_SUBVIEW 槽空 → RepoPanel 不渲染 GitPanel）。**尚无 git 专属 absence 运行时门禁**（债务）。
+- Known debt（诚实不谎报）:
+  1. App.vue 仍静态 `import { GitWriteConfirmDialog } from "./capabilities/git/public"` → Shell 直连能力公共面，阻断 C3。
+  2. useGitStore 物理位置未迁入 capabilities/git/。
+  3. 缺 git 专属 absence 自动化断言。
+  4. HP0 STATIC，无 C4 运行时启停 / C5 资源释放（git 无长驻资源，故不评 C5）。
+- Next task: STAGE B 全产品 Full-Stack Capability Inventory → STAGE C Database。
