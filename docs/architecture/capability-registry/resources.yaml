@@ -136,6 +136,27 @@ policies:
     resident: false
     release_note: 停止后台调度，消除定时唤醒 —— TARGET
 
+  - id: clipboard
+    class: [LIGHT]
+    suspendable: true
+    destroyable: true
+    resident: false
+    release_note: 清空会话剪贴板历史（内存态，不落盘）—— TARGET
+
+  - id: apps
+    class: [LIGHT, PROCESS]
+    suspendable: true
+    destroyable: true
+    resident: false
+    release_note: 停止应用枚举；已启动的 detached 子进程不由本能力管理 —— TARGET
+
+  - id: tools
+    class: [MEDIUM, WEBVIEW]
+    suspendable: true
+    destroyable: true
+    resident: false
+    release_note: 关闭工具子 webview（tool://）—— TARGET
+
   - id: session
     class: [LIGHT]
     suspendable: false

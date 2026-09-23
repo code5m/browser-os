@@ -1,49 +1,28 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from "vue";
-import { bridge } from "../../bridge";
-import type { ToolMeta } from "../../types";
+import { onMounted } from "vue";
+import { useToolsStore } from "../state/useToolsStore";
 
-const tools = ref<ToolMeta[]>([]);
-const error = ref<string | null>(null);
-
-const builtin = computed(() => tools.value.filter((t) => t.source === "builtin"));
-const user = computed(() => tools.value.filter((t) => t.source === "user"));
-
-async function load() {
-  error.value = null;
-  try {
-    tools.value = await bridge.listTools();
-  } catch (e) {
-    error.value = String(e);
-  }
-}
-
-function open(t: ToolMeta) {
-  bridge
-    .openTool(t.id)
-    .catch((e) => (error.value = `打开失败：${String(e)}`));
-}
-
-onMounted(load);
+const store = useToolsStore();
+onMounted(store.load);
 </script>
 
 <template>
   <div class="toolbox">
     <header class="tb-head">
       <h2>工具箱</h2>
-      <button class="tb-reload" @click="load">刷新</button>
+      <button class="tb-reload" @click="store.load">刷新</button>
     </header>
-    <p v-if="error" class="tb-err">{{ error }}</p>
+    <p v-if="store.error" class="tb-err">{{ store.error }}</p>
 
-    <section v-if="builtin.length">
+    <section v-if="store.builtin.length">
       <h3>内置工具</h3>
       <div class="tb-grid">
         <button
-          v-for="t in builtin"
+          v-for="t in store.builtin"
           :key="t.id"
           class="tb-card"
           :title="t.description || t.id"
-          @click="open(t)"
+          @click="store.open(t)"
         >
           <span class="tb-name">{{ t.name }}</span>
           <span class="tb-cat">{{ t.category }}</span>
@@ -51,15 +30,15 @@ onMounted(load);
       </div>
     </section>
 
-    <section v-if="user.length">
+    <section v-if="store.user.length">
       <h3>我的工具（workspace/tools）</h3>
       <div class="tb-grid">
         <button
-          v-for="t in user"
+          v-for="t in store.user"
           :key="t.id"
           class="tb-card"
           :title="t.description || t.id"
-          @click="open(t)"
+          @click="store.open(t)"
         >
           <span class="tb-name">{{ t.name }}</span>
           <span class="tb-cat">{{ t.category }}</span>
@@ -68,7 +47,7 @@ onMounted(load);
     </section>
 
     <p
-      v-if="!builtin.length && !user.length && !error"
+      v-if="!store.builtin.length && !store.user.length && !store.error"
       class="tb-empty"
     >
       暂无工具

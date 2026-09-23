@@ -1075,3 +1075,49 @@ SECOND_TRUTHS: 0   NEW_RESOURCE_LEAKS: 0
   2. mainView='graph'/'tasks' 导航项硬编码（未贡献驱动）。
   3. 旧文档中 `knowledge_graph` 历史名保留（历史记录）。
 - Next task: STAGE H — Clipboard / Apps / Tools。
+
+## STAGE H — Clipboard / Apps / Tools Capability Closeout（DONE）
+
+```text
+HEAD:        <commit-after-this-stage>  (feature/capability-platform-v1)
+TAG:         capability-system-tools-c2-pass  (annotated)
+MATURITY:   Clipboard / Apps / Tools = C2 ISOLATED（三者均贡献驱动）
+HOTPLUG:     HP0 STATIC（三者）
+FULL_STACK:  docs/architecture/capabilities/{clipboard,apps,tools}/FULL-STACK-BOUNDARY.md
+GATES:       npm run check 全绿（CAPABILITY_BOUNDARIES fail=0 warn=1[CB-04 agent↔graph 可选环]、
+            CAPABILITY_COMPOSITION 33/33、COMPOSITION_PROFILES 11/11[full=14 能力]、check-capability-platform 29/0、
+            TERMINAL_OWNERS 20/20、RUNTIME_RESOURCE_ABSENCE 12/12、UI-10 catalog 68/68、UI_BOUNDARIES vacuous=0）；
+            check-capability-registry PASS(fail=0 warn=0)；check-semantic-registry PASS(fail=0)；
+            clipboard/home 门禁全绿（check-clipboard-persistence-logic 16 / check-home-ui-logic 41 / check-home-client-policy）；
+            vite build OK
+SECOND_TRUTHS: 0   NEW_RESOURCE_LEAKS: 0
+```
+
+- 交付：Clipboard / Apps / Tools 升格为 full-stack Capability——各自 `capabilities/<id>/{manifest,index,public}.ts`
+  + `state/<store>.ts` + `ui/<Panel>.vue`；经通用 Contribution Registry 的 `WORKBENCH_MAIN` 槽
+  （view='clip' / 'apps' / 'tools'）贡献给 MainArea（不再静态 import）。
+- **Debt-8E-1 关闭（关键解耦）**：`src/stores/useSystemStore.ts` **已删除**——
+  Clipboard 域 → 新建 `useClipboardStore`（id="clipboard"）；Apps 域 → 新建 `useAppsStore`（id="apps"）；
+  Tools → 新建 `useToolsStore`（id="tools"，原为 ToolBox 组件内状态，无 owner）。
+  `dependencies.yaml` Debt-8E-1 → `status: CLOSED`。
+- **消费者重接线**：App.vue → `capabilities/clipboard/public`（loadClipHistory/startClipWatch）；
+  ActivityBar / UnifiedTabBar / HomeLaunchers → `capabilities/apps/public`（loadApps）。
+  （Shell 持有业务 store 已显式登记进 `ui03_shell_business_stores_baseline`。）
+- **治理联动（避免静默失守）**：`semantic-registry/states.yaml` owner_implementations 由 `useSystemStore`
+  改为 `useClipboardStore`/`useAppsStore`/`useToolsStore`（含状态清单拆分）；`check-terminal-owners.mjs`
+  TERM-02c 由「旧 useSystemStore 零 terminal 状态」改指向**三个继任 owner**（否则会因文件消失静默少一项检查，20→19）。
+- **安全审计**：
+  - Clipboard：历史**不落盘**（`scope: session`，B11-1）；渲染经 `redactSecrets`。
+  - Apps：`check_launch_target` 白名单式解析（禁 `sh -c`）+ 审计；app 命令体禁落浏览器存储。
+  - Tools：工具在**独立子 webview**（`tool://`）运行，零能力隔离；路径越权防御 + 2 MiB 上限；种子离线零外链。
+- **Absence（实测探针）**：framework/minimal/developer 无 `view='clip'/'apps'/'tools'`；full（14 能力）有。
+- Changed files（摘要）：`src/capabilities/{clipboard,apps,tools}/**`(新+迁入) + 删除 `src/stores/useSystemStore.ts`
+  + `src/App.vue` + `src/components/layout/{ActivityBar,UnifiedTabBar,MainArea}.vue` + `src/components/home/HomeLaunchers.vue`
+  + `src/capability/{index.ts,profiles.ts,platform/catalog.ts}` + `scripts/{check-clipboard-persistence-logic.mjs,check-terminal-owners.mjs}`
+  + `docs/architecture/**`（registry ×4、ui-system ×2、semantic-registry/states.yaml、inventory、3×FULL-STACK-BOUNDARY）。
+- Known debt（诚实不谎报）:
+  1. 三者均无专属 absence 运行时门禁。
+  2. mainView='clip'/'apps'/'tools' 导航项硬编码（未贡献驱动）。
+  3. Clipboard 面板开合态 `clipOpen` 仍在 useLayoutStore（视图态）；Apps 图标/扫描为 Rust 侧。
+  4. HomeLaunchers 不在 UI-03b 扫描域（Shell 持有 store 的既有盲区）。
+- Next task: STAGE I — Workbench Decoupling。

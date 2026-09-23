@@ -77,11 +77,22 @@ owner_implementations:
       # Phase 8B 物理迁移：新路径置首（首个磁盘存在的候选被 resolver 选中），旧路径保留作回滚参考
       - src/capabilities/bookmark/state/useBookmarkStore.ts
       - src/stores/useBookmarkStore.ts
-  useSystemStore:
-    symbol: useSystemStore
+  useClipboardStore:
+    # STAGE H：Clipboard 域从 useSystemStore 拆为专属 owner（解除 Debt-8E-1）。
+    # useSystemStore 已删除，旧路径**不**作为候选。
+    symbol: useClipboardStore
     paths:
-      - src/stores/useSystemStore.ts
-      - src/capabilities/system/state/useSystemStore.ts
+      - src/capabilities/clipboard/state/useClipboardStore.ts
+  useAppsStore:
+    # STAGE H：Apps 域从 useSystemStore 拆为专属 owner（解除 Debt-8E-1）。
+    symbol: useAppsStore
+    paths:
+      - src/capabilities/apps/state/useAppsStore.ts
+  useToolsStore:
+    # STAGE H：Tools 新建专属 owner（原 ToolBox 组件内状态）。
+    symbol: useToolsStore
+    paths:
+      - src/capabilities/tools/state/useToolsStore.ts
   useTerminalStore:
     # Phase 8E/Train D：Terminal 域从 useSystemStore（Terminal+Clipboard+Apps 混居）抽为专属 owner。
     # 旧路径**不**作为候选（否则会解析到已不含 terminal 状态的文件 → RI 误报 / 静默失守）。
@@ -934,9 +945,14 @@ observed_not_governed:
 
   useBookmarkStore: []
 
-  useSystemStore:
+  useClipboardStore:
     - clipText
     - clipHistory
+  useAppsStore:
     - apps
     - appFilter
     - filteredApps
+  useToolsStore:
+    - tools
+    - builtin
+    - user

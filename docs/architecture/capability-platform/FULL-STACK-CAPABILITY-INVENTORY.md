@@ -28,6 +28,9 @@
 | agent | `src/capabilities/agent` | COMPATIBILITY_WRAPPED | C1 WRAPPED (运行时未实现) | MEDIUM/NETWORK | COMPATIBILITY_WRAPPED |
 | skill | `src/capabilities/skill` | COMPATIBILITY_WRAPPED | C1 WRAPPED (运行时未实现) | LIGHT | COMPATIBILITY_WRAPPED |
 | plugin | `src/capabilities/plugin` | COMPATIBILITY_WRAPPED | C2 ISOLATED (运行时 LOCKED 无执行) | HEAVY/NATIVE | COMPATIBILITY_WRAPPED |
+| clipboard | `src/capabilities/clipboard` | COMPATIBILITY_WRAPPED | C2 ISOLATED (会话内存态，不落盘) | LIGHT | COMPATIBILITY_WRAPPED |
+| apps | `src/capabilities/apps` | COMPATIBILITY_WRAPPED | C2 ISOLATED (live, spawn) | LIGHT/PROCESS | COMPATIBILITY_WRAPPED |
+| tools | `src/capabilities/tools` | COMPATIBILITY_WRAPPED | C2 ISOLATED (子 webview) | MEDIUM/WEBVIEW | COMPATIBILITY_WRAPPED |
 | graph | `src/capabilities/graph` | COMPATIBILITY_WRAPPED | C2 ISOLATED (只读) | MEDIUM | COMPATIBILITY_WRAPPED |
 | task | `src/capabilities/task` | COMPATIBILITY_WRAPPED | C2 ISOLATED (live, 调度线程) | BACKGROUND/PROCESS | COMPATIBILITY_WRAPPED |
 | session | `src/stores/useSessionStore.ts` | NOT_INTEGRATED | C1 (live) | LIGHT | NOT_COMPOSABLE_BY_DESIGN |

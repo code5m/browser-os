@@ -29,6 +29,9 @@ composability:
   credential: NOT_COMPOSABLE_BY_DESIGN
   session: NOT_COMPOSABLE_BY_DESIGN
   plugin: COMPATIBILITY_WRAPPED
+  clipboard: COMPATIBILITY_WRAPPED
+  apps: COMPATIBILITY_WRAPPED
+  tools: COMPATIBILITY_WRAPPED
 
 profiles:
 
@@ -68,6 +71,9 @@ profiles:
       - skill
       - plugin
       - graph
+      - clipboard
+      - apps
+      - tools
       - notes
       - resource_collection
       - task

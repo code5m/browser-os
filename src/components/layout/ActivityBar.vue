@@ -8,7 +8,7 @@ import {
   nextNavIndex,
 } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../capabilities/browser/public";
-import { useSystemStore } from "../../stores/useSystemStore";
+import { useAppsStore } from "../../capabilities/apps/public";
 import { useTerminalStore } from "../../capabilities/terminal/public";
 import { useWorkspaceStore } from "../../capabilities/workspace/public";
 import { useArtifactStore } from "../../capabilities/workspace/public";
@@ -23,7 +23,7 @@ const workbench = useWorkbenchStore();
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
-const system = useSystemStore();
+const appsStore = useAppsStore();
 const term = useTerminalStore();
 const ws = useWorkspaceStore();
 const art = useArtifactStore();
@@ -158,7 +158,7 @@ async function onItem(v: string) {
   // 历史曾因 gridOpen 悬挂为 true 导致浏览视图定位走错分支（tab 不复位、宫格被拉回
   // 可视区、非浏览器视图空转重试），现已由 syncViewVisibility 的 Visibility Controller
   // 按 desiredGridVisibility 统一收敛，不再依赖"离开即销毁"。
-  if (v === "apps") system.loadApps();
+  if (v === "apps") appsStore.loadApps();
   if (v === "grid") {
     // 默认 AI 模式：点宫格直接出底部统一输入框（在 buildGrid 前设置，
     // 让输入框先于宫格定位渲染，首次布局即按"已缩矮"的 viewport 计算）

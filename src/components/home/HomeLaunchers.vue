@@ -2,11 +2,11 @@
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import type { MainView } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../capabilities/browser/public";
-import { useSystemStore } from "../../stores/useSystemStore";
+import { useAppsStore } from "../../capabilities/apps/public";
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
-const system = useSystemStore();
+const appsStore = useAppsStore();
 
 // 主页启动器：只覆盖「主要工作区」入口，不含主页自身、编辑器覆盖层与设置。
 //
@@ -49,7 +49,7 @@ async function openArea(view: MainView) {
     layout.activateBrowser();
     return;
   }
-  if (view === "apps") system.loadApps();
+  if (view === "apps") appsStore.loadApps();
   layout.openModule(view);
 }
 </script>

@@ -2,8 +2,8 @@
 // ---------------------------------------------------------------------------
 // M5 BUG-HUNT（Lane A6）剪贴板持久化/脱敏逻辑层自动化测试（headless）。
 //
-// 加载**真实**的 src/stores/useSystemStore.ts（pinia 真实实例）与 src/utils/redact.ts
-// 真实实现，并对 src/components/system/ClipboardPanel.vue 做源码级断言。
+// 加载**真实**的 src/capabilities/clipboard/state/useClipboardStore.ts（pinia 真实实例）与 src/utils/redact.ts
+// 真实实现，并对 src/capabilities/clipboard/ui/ClipboardPanel.vue 做源码级断言。
 // 每条运行时断言都反映产品代码行为；bridge 以最小桩注入（避免引入 Tauri 运行时）。
 //
 // 覆盖（对应 B11-1 · P0 明文落盘 / 明文展示）：
@@ -92,7 +92,7 @@ const { createPinia, setActivePinia } = await import(
 );
 setActivePinia(createPinia());
 
-const { useSystemStore } = await import(`${ROOT}src/stores/useSystemStore.ts`);
+const { useClipboardStore } = await import(`${ROOT}src/capabilities/clipboard/state/useClipboardStore.ts`);
 const { redactSecrets } = await import(`${ROOT}src/utils/redact.ts`);
 
 // ---------------------------------------------------------------------------
@@ -110,13 +110,13 @@ function check(name, cond, detail) {
   }
 }
 
-const system = useSystemStore();
+const clipboard = useClipboardStore();
 const EXPECTED_CAP = 30;
 
 // G1：通过公共动作写入历史，断言不写 localStorage
 for (let i = 0; i < 5; i++) {
-  system.clipText = "clip-" + i;
-  await system.clipCopy();
+  clipboard.clipText = "clip-" + i;
+  await clipboard.clipCopy();
 }
 check(
   "G1 写入历史不落 localStorage",
@@ -127,8 +127,8 @@ check(
 // G2：loadClipHistory 为无副作用（预置脏数据也不被读入）
 const seed = JSON.stringify([{ text: "SECRET-TOKEN-XYZ", at: 999 }]);
 localStorage.setItem("browser-os-clipboard", seed);
-system.loadClipHistory();
-const loadedSeeded = system.clipHistory.some((c) => c.text.includes("SECRET-TOKEN-XYZ"));
+clipboard.loadClipHistory();
+const loadedSeeded = clipboard.clipHistory.some((c) => c.text.includes("SECRET-TOKEN-XYZ"));
 check("G2 loadClipHistory 不从 localStorage 载入明文", !loadedSeeded);
 // 该 key 此后只可能存在测试自身写入的 seed，产品代码不得再写它
 const clipWrites = lsWrites.filter(([k]) => k === "browser-os-clipboard");
@@ -140,20 +140,20 @@ check(
 
 // G3：内存有界（通过公共动作持续写入后由 saveClipHistory 裁剪）
 for (let i = 0; i < 40; i++) {
-  system.clipText = "cap-" + i;
-  await system.clipCopy();
+  clipboard.clipText = "cap-" + i;
+  await clipboard.clipCopy();
 }
 check(
   `G3 clipHistory 上限 = ${EXPECTED_CAP}`,
-  system.clipHistory.length <= EXPECTED_CAP,
-  `len=${system.clipHistory.length}`
+  clipboard.clipHistory.length <= EXPECTED_CAP,
+  `len=${clipboard.clipHistory.length}`
 );
 
 // G4：clearClipHistory 不写 localStorage
 const writesBeforeClear = lsWrites.length;
-system.clearClipHistory();
+clipboard.clearClipHistory();
 check("G4 clearClipHistory 不写 localStorage", lsWrites.length === writesBeforeClear);
-check("G4b 清空后历史为空", system.clipHistory.length === 0);
+check("G4b 清空后历史为空", clipboard.clipHistory.length === 0);
 
 // G5：redactSecrets 运行时脱敏（凭据不展示）
 const r1 = redactSecrets("https://user:pwd@example.com/path?access_token=abc123XYZ");
@@ -163,7 +163,7 @@ const r2 = redactSecrets("token ghp_aBcDeFgHiJkLmNoPqRsT");
 check("G5b GitHub token 前缀被掩码", r2.includes("***") && !r2.includes("ghp_aBcD"));
 
 // G6：ClipboardPanel.vue 源码——不再以原始 item.text 明文渲染
-const panelSrc = readFileSync(`${ROOT}src/components/system/ClipboardPanel.vue`, "utf8");
+const panelSrc = readFileSync(`${ROOT}src/capabilities/clipboard/ui/ClipboardPanel.vue`, "utf8");
 check("G6 模板不使用原始 :title=\"item.text\"", !/:title="item\.text"/.test(panelSrc));
 check("G6b 模板不使用原始 {{ item.text }} 渲染", !/\{\{\s*item\.text\s*\}\}/.test(panelSrc));
 check("G6c 模板对历史条目走 redactSecrets", /redactSecrets\(item\.text\)/.test(panelSrc));
@@ -172,8 +172,8 @@ check(
   /仅本次会话|不写入磁盘/.test(panelSrc)
 );
 
-// G7：useSystemStore.ts 源码——已无剪贴板持久化
-const storeSrc = readFileSync(`${ROOT}src/stores/useSystemStore.ts`, "utf8");
+// G7：useClipboardStore.ts 源码——已无剪贴板持久化
+const storeSrc = readFileSync(`${ROOT}src/capabilities/clipboard/state/useClipboardStore.ts`, "utf8");
 check(
   "G7 无 localStorage.setItem(CLIP_KEY …)",
   !/localStorage\.setItem\(\s*CLIP_KEY/.test(storeSrc)

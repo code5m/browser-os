@@ -42,12 +42,6 @@
       "domain": "VAULT"
     },
     {
-      "shell": "src/components/layout/MainArea.vue",
-      "line": 199,
-      "component": "ToolBox",
-      "domain": "WORKSPACE_TOOLS"
-    },
-    {
       "shell": "src/components/layout/ActivityBar.vue",
       "line": 373,
       "component": "GridArchiveBar",
@@ -59,6 +53,21 @@
       "shell": "src/App.vue",
       "store": "useBrowserStore",
       "from": "src/capabilities/browser/public"
+    },
+    {
+      "shell": "src/App.vue",
+      "store": "useClipboardStore",
+      "from": "src/capabilities/clipboard/public"
+    },
+    {
+      "shell": "src/components/layout/ActivityBar.vue",
+      "store": "useAppsStore",
+      "from": "src/capabilities/apps/public"
+    },
+    {
+      "shell": "src/components/layout/UnifiedTabBar.vue",
+      "store": "useAppsStore",
+      "from": "src/capabilities/apps/public"
     },
     {
       "shell": "src/App.vue",

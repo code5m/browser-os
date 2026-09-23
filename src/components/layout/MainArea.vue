@@ -5,11 +5,8 @@ import { useBrowserStore } from "../../capabilities/browser/public";
 import { contributionRegistry } from "../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
 import VaultPanel from '../workspace/VaultPanel.vue';
-import ClipboardPanel from "../system/ClipboardPanel.vue";
-import AppPanel from "../system/AppPanel.vue";
 import HomePanel from "../home/HomePanel.vue";
 import SettingsPanel from "../system/SettingsPanel.vue";
-import ToolBox from "../workspace/ToolBox.vue";
 // M4-4 数据库面板：懒加载（defineAsyncComponent），将其 15KB+ 纯逻辑(dbUi.ts)、
 // store(useDatabaseStore.ts) 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
 // 仅在 mainView==='db' 首次渲染时才拉取该 chunk，不破坏其它视图。
@@ -172,20 +169,9 @@ watch(
       <component :is="viewOf(layout.mainView)" />
     </div>
 
-    <!-- ===== 剪贴板 ===== -->
-    <div v-else-if="layout.mainView === 'clip'" class="modview">
-      <ClipboardPanel />
-    </div>
-
-    <!-- ===== 系统应用 ===== -->
-    <div v-else-if="layout.mainView === 'apps'" class="modview">
-      <AppPanel />
-    </div>
-
-    <!-- ===== 工具箱（M2-8） ===== -->
-    <div v-else-if="layout.mainView === 'tools'" class="modview">
-      <ToolBox />
-    </div>
+    <!-- ===== 剪贴板：已升格 capabilities/clipboard/，经 WORKBENCH_MAIN 贡献 view='clip' 渲染（由通用 viewOf 分支处理） ===== -->
+    <!-- ===== 系统应用：已升格 capabilities/apps/，经 WORKBENCH_MAIN 贡献 view='apps' 渲染（由通用 viewOf 分支处理） ===== -->
+    <!-- ===== 工具箱：已升格 capabilities/tools/，经 WORKBENCH_MAIN 贡献 view='tools' 渲染（由通用 viewOf 分支处理） ===== -->
 
     <!-- ===== 数据库（M4-4）：已升格 capabilities/database/，经 WORKBENCH_MAIN 贡献 view='db' 渲染（由上方通用 viewOf 分支处理） ===== -->
 

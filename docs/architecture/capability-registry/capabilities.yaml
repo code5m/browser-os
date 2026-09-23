@@ -505,6 +505,98 @@ capabilities:
       sensitive: false
     entrypoint: src/capabilities/task/index.ts
 
+  # Capability Library Expansion v1（STAGE H）：Clipboard 从 useSystemStore 拆出（解除 Debt-8E-1）。
+  # 后端 clipboard_read/clipboard_write 已实现（arboard）；剪贴板历史不落盘（session 内存态，B11-1）。
+  - id: clipboard
+    name: Clipboard
+    category: CAPABILITY
+    semanticOwner: useClipboardStore
+    governanceStatus: GOVERNED
+    status: COMPATIBILITY_WRAPPED
+    maturity: C2
+    provides:
+      - clipboard.read
+      - clipboard.write
+      - clipboard.history
+    dependsOn:
+      - bridge
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE, SUSPENDED]
+      default: ACTIVE
+      activatable: true
+      resident: false
+    resources:
+      class: [LIGHT]
+      suspendable: true
+      destroyable: true
+    permissions: []
+    persistence:
+      scope: session
+      sensitive: false
+    entrypoint: src/capabilities/clipboard/index.ts
+
+  # Capability Library Expansion v1（STAGE H）：Apps 从 useSystemStore 拆出（解除 Debt-8E-1）。
+  # 后端 list_apps/launch_app 已实现；launch_app 经 security_policy::check_launch_target 白名单式解析（禁 sh -c）+ 审计。
+  - id: apps
+    name: Apps
+    category: CAPABILITY
+    semanticOwner: useAppsStore
+    governanceStatus: GOVERNED
+    status: COMPATIBILITY_WRAPPED
+    maturity: C2
+    provides:
+      - apps.list
+      - apps.launch
+    dependsOn:
+      - bridge
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE, SUSPENDED]
+      default: ACTIVE
+      activatable: true
+      resident: false
+    resources:
+      class: [LIGHT, PROCESS]
+      suspendable: true
+      destroyable: true
+    permissions:
+      - process.spawn
+    persistence:
+      scope: runtime_only
+      sensitive: false
+    entrypoint: src/capabilities/apps/index.ts
+
+  # Capability Library Expansion v1（STAGE H）：Tools 新建专属 owner（原 ToolBox 组件内状态）。
+  # 后端 list_tools/open_tool 已实现；工具在独立子 webview（tool:// 协议）运行，零能力隔离。
+  - id: tools
+    name: Tools
+    category: CAPABILITY
+    semanticOwner: useToolsStore
+    governanceStatus: GOVERNED
+    status: COMPATIBILITY_WRAPPED
+    maturity: C2
+    provides:
+      - tools.list
+      - tools.open
+    dependsOn:
+      - bridge
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE, SUSPENDED]
+      default: ACTIVE
+      activatable: true
+      resident: false
+    resources:
+      class: [MEDIUM, WEBVIEW]
+      suspendable: true
+      destroyable: true
+    permissions: []
+    persistence:
+      scope: runtime_only
+      sensitive: false
+    entrypoint: src/capabilities/tools/index.ts
+
   - id: session
     name: Session
     category: CAPABILITY

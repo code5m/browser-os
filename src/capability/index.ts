@@ -18,6 +18,9 @@ import { skillCapability, SKILL_CAPABILITY_ID } from '../capabilities/skill'
 import { pluginCapability, PLUGIN_CAPABILITY_ID } from '../capabilities/plugin'
 import { graphCapability, KNOWLEDGE_GRAPH_CAPABILITY_ID } from '../capabilities/graph'
 import { taskCapability, TASK_CAPABILITY_ID } from '../capabilities/task'
+import { clipboardCapability, CLIPBOARD_CAPABILITY_ID } from '../capabilities/clipboard'
+import { appsCapability, APPS_CAPABILITY_ID } from '../capabilities/apps'
+import { toolsCapability, TOOLS_CAPABILITY_ID } from '../capabilities/tools'
 import { CAPABILITY_PROFILES, DEFAULT_PROFILE, type CapabilityProfileId, profileFromEnv, resolveProfile } from './profiles'
 import { CAPABILITY_CATALOG, CAPABILITY_DEFINITIONS } from './platform/catalog'
 import { assemble } from './platform/assembly'
@@ -41,6 +44,9 @@ export const ALL_CAPABILITIES = [
   { id: PLUGIN_CAPABILITY_ID, def: pluginCapability },
   { id: KNOWLEDGE_GRAPH_CAPABILITY_ID, def: graphCapability },
   { id: TASK_CAPABILITY_ID, def: taskCapability },
+  { id: CLIPBOARD_CAPABILITY_ID, def: clipboardCapability },
+  { id: APPS_CAPABILITY_ID, def: appsCapability },
+  { id: TOOLS_CAPABILITY_ID, def: toolsCapability },
 ]
 
 let runtime: CapabilityRuntime | null = null

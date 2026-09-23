@@ -151,13 +151,24 @@ function runStatic() {
   if (!existsSync(join(ROOT, VIEW_REL))) bad("TERM-05b", "Terminal 主视图组件存在", VIEW_REL);
   else ok("TERM-05b", "Terminal 主视图组件存在（absent 时不挂载 → 无 PTY）");
 
-  // TERM-02c：旧 owner 文件不得再出现 terminal 状态
-  if (existsSync(join(ROOT, LEGACY_REL))) {
-    const legacy = stripComments(readFileSync(join(ROOT, LEGACY_REL), "utf8"));
-    const leaked = TERMINAL_STATES.filter((n) => DECL(n).test(legacy));
-    if (leaked.length) bad("TERM-02c", "useSystemStore 不再声明 terminal 状态", leaked.join(","));
-    else ok("TERM-02c", "useSystemStore（Clipboard/Apps owner）零 terminal 状态");
+  // TERM-02c：非 terminal owner（Clipboard/Apps/Tools，STAGE H 从 useSystemStore 拆分后）
+  // 不得声明任何 terminal 状态。原 useSystemStore 已删除，本检查改指向其三个继任 owner。
+  const NON_TERMINAL_OWNERS = [
+    "src/capabilities/clipboard/state/useClipboardStore.ts",
+    "src/capabilities/apps/state/useAppsStore.ts",
+    "src/capabilities/tools/state/useToolsStore.ts",
+  ];
+  const leakedAll = [];
+  for (const rel of NON_TERMINAL_OWNERS) {
+    if (!existsSync(join(ROOT, rel))) {
+      leakedAll.push(`MISSING:${rel}`);
+      continue;
+    }
+    const s = stripComments(readFileSync(join(ROOT, rel), "utf8"));
+    for (const n of TERMINAL_STATES) if (DECL(n).test(s)) leakedAll.push(`${rel}:${n}`);
   }
+  if (leakedAll.length) bad("TERM-02c", "非 terminal owner 不得声明 terminal 状态", leakedAll.join(", "));
+  else ok("TERM-02c", "非 terminal owner（clipboard/apps/tools）零 terminal 状态");
 }
 
 // ─────────────────────────── 行为断言（真实 store + 假 bridge） ───────────────────────────

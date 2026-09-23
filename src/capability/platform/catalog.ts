@@ -15,6 +15,9 @@ import { skillManifest } from "../../capabilities/skill/manifest";
 import { pluginManifest } from "../../capabilities/plugin/manifest";
 import { graphManifest } from "../../capabilities/graph/manifest";
 import { taskManifest } from "../../capabilities/task/manifest";
+import { clipboardManifest } from "../../capabilities/clipboard/manifest";
+import { appsManifest } from "../../capabilities/apps/manifest";
+import { toolsManifest } from "../../capabilities/tools/manifest";
 import type { CapabilityManifestV1 } from "./contract";
 
 /** 已具备 Building Block Contract v1 的能力清单（未声明 v1 的能力不进 catalog） */
@@ -30,6 +33,9 @@ export const CATALOG_SOURCES = [
   pluginManifest,
   graphManifest,
   taskManifest,
+  clipboardManifest,
+  appsManifest,
+  toolsManifest,
 ] as const;
 
 export function buildCatalog(): Record<string, CapabilityManifestV1> {

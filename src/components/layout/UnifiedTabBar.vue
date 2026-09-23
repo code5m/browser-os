@@ -3,7 +3,7 @@ import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../capabilities/browser/public";
 import { ref, computed } from "vue";
 import { useFileStore } from "../../capabilities/workspace/public";
-import { useSystemStore } from "../../stores/useSystemStore";
+import { useAppsStore } from "../../capabilities/apps/public";
 import { useTerminalStore } from "../../capabilities/terminal/public";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -12,7 +12,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 const layout = useLayoutStore();
 const browser = useBrowserStore();
 const fs = useFileStore();
-const system = useSystemStore();
+const appsStore = useAppsStore();
 const term = useTerminalStore();
 const context = ref<{ id: string; kind: 'web' | 'module' } | null>(null);
 
@@ -166,7 +166,7 @@ function isActiveMod(id: string) {
 function activateMod(t: { id: string; view: string; path?: string }) {
   if (term.m0Cfg?.driver) return;
   layout.activateModTab(t.id);
-  if (t.view === "apps") system.loadApps();
+  if (t.view === "apps") appsStore.loadApps();
   if (t.path) fs.enterDir(t.path);
   // 宫格页签被关闭后重新激活时，必须重建宫格 webview 内容
   if (t.view === "grid") { if (browser.gridOpen) browser.layoutGrid(); else browser.openGrid(); }

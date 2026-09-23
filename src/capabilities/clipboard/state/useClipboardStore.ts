@@ -1,29 +1,26 @@
-// 系统杂项 Owner —— Phase 8E / Train D 之后**只**拥有 Clipboard 与 Apps 两个域。
+// src/capabilities/clipboard/state/useClipboardStore.ts
+// Clipboard 能力语义 owner（Capability Library Expansion v1，STAGE H）。
 //
-// 历史：本文件曾是 Terminal + Clipboard + Apps 三域混居（Debt-7A-2）。
-// Train D（SCR-20260920-terminal-owner-extraction）把 Terminal 域整体抽到
-// `src/capabilities/terminal/state/useTerminalStore.ts`，本文件不再声明任何 terminal 状态
-// （由 scripts/check-terminal-owners.mjs 机器强制）。
+// 从 src/stores/useSystemStore.ts 拆出（解除 Debt-8E-1：Clipboard 与 Apps 曾共居一个 store，
+// 二者 owner 同名）。拆分后：Clipboard 域归本 store，Apps 域归 capabilities/apps/state。
 //
-// 显式债务 Debt-8E-1：Clipboard 与 Apps 仍共处本文件（二者 owner 同为 useSystemStore）；
-// 拆分不属 Train D 范围，未静默处理。
-
+// 红线（承 B11-1 修复）：
+//   - 剪贴板历史**不落盘**：仅会话内存、上限 CLIP_CAP 条；关闭应用即清空，绝不写 localStorage / 磁盘。
+//   - 原生调用一律经 bridge.ts；事件驱动（无轮询）。
 import { defineStore } from "pinia";
-import { ref, reactive, computed } from "vue";
-import { bridge } from "../bridge";
-import { useLayoutStore } from "./useLayoutStore";
+import { reactive, ref } from "vue";
+import { bridge } from "../../../bridge";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
 
 export interface ClipItem {
   text: string;
   at: number;
 }
 
-export const useSystemStore = defineStore("system", () => {
+export const useClipboardStore = defineStore("clipboard", () => {
   const layout = useLayoutStore();
 
   // ===== 剪贴板（事件驱动，无轮询） =====
-  // B11-1 修复（P0 明文落盘）：默认**不持久化**剪贴板历史。
-  // 历史只保留在会话内存、上限 CLIP_CAP 条；关闭应用即清空，绝不写入 localStorage / 磁盘。
   const clipText = ref("");
   const clipHistory = reactive<ClipItem[]>([]);
   const CLIP_CAP = 30;
@@ -98,43 +95,9 @@ export const useSystemStore = defineStore("system", () => {
     clipReadSilent();
   }
 
-  // ===== 系统应用 =====
-  const apps = ref<AppEntry[]>([]);
-  const appFilter = ref("");
-  const brokenIcons = ref<Set<string>>(new Set());
-  async function loadApps() {
-    try {
-      apps.value = await bridge.listApps();
-      brokenIcons.value.clear();
-    } catch (e: any) {
-      layout.showToast("读取应用列表失败: " + (e?.message ?? e));
-    }
-  }
-  const filteredApps = computed(() => {
-    const f = appFilter.value.trim().toLowerCase();
-    if (!f) return apps.value;
-    return apps.value.filter((a) => a.name.toLowerCase().includes(f));
-  });
-  async function launchApp(app: AppEntry) {
-    try {
-      layout.showToast("正在启动: " + app.name);
-      await bridge.launchApp(app.exec);
-      layout.showToast("已启动: " + app.name);
-    } catch (e: any) {
-      layout.showToast("启动失败: " + app.name + " - " + (e?.message ?? e));
-    }
-  }
-  function onAppImgError(exec: string) {
-    brokenIcons.value.add(exec);
-  }
-
   return {
     clipText,
     clipHistory,
-    apps,
-    appFilter,
-    brokenIcons,
-    filteredApps,
     loadClipHistory,
     clipReadSilent,
     clipCopy,
@@ -143,8 +106,5 @@ export const useSystemStore = defineStore("system", () => {
     copyClipItem,
     clearClipHistory,
     startClipWatch,
-    loadApps,
-    launchApp,
-    onAppImgError,
   };
 });

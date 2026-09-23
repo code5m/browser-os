@@ -10,7 +10,7 @@ import { useArtifactStore } from "./capabilities/workspace/public";
 import { useRepoStore } from "./capabilities/workspace/public";
 import { useFileStore } from "./capabilities/workspace/public";
 import { useGitStore } from "./stores/useGitStore";
-import { useSystemStore } from "./stores/useSystemStore";
+import { useClipboardStore } from "./capabilities/clipboard/public";
 import { useTerminalStore } from "./capabilities/terminal/public";
 import { useLayoutStore } from "./stores/useLayoutStore";
 import { useSettingsStore } from "./stores/useSettingsStore";
@@ -34,7 +34,7 @@ const art = useArtifactStore();
 const rp = useRepoStore();
 const fs = useFileStore();
 const git = useGitStore();
-const system = useSystemStore();
+const clipboardStore = useClipboardStore();
 const term = useTerminalStore();
 const layout = useLayoutStore();
 const settings = useSettingsStore();
@@ -91,8 +91,8 @@ onMounted(async () => {
     }
   });
   ws.loadRecents();
-  system.loadClipHistory();
-  system.startClipWatch();
+  clipboardStore.loadClipHistory();
+  clipboardStore.startClipWatch();
   await ws.refresh();
   await fs.loadStartDirs();
   if (fs.startDirs.length > 0) {

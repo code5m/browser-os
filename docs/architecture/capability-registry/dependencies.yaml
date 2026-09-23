@@ -69,6 +69,9 @@ edges:
   - { from: task,      to: workspace, kind: required }
   - { from: task,      to: bridge,   kind: required }
   - { from: task,      to: script,   kind: optional }
+  - { from: clipboard,  to: bridge,   kind: required }
+  - { from: apps,       to: bridge,   kind: required }
+  - { from: tools,      to: bridge,   kind: required }
   - { from: session,   to: bridge,   kind: required }
   - { from: script,    to: bridge,   kind: required }
   - { from: workbench, to: bridge,   kind: required }
@@ -84,8 +87,10 @@ known_coupling:
           Clipboard 与 Apps 仍同处 useSystemStore（剩余共居记为 Debt-8E-1，未静默消失）。
   - id: Debt-8E-1
     between: [clipboard, apps]
-    via: useSystemStore
-    note: 二者仍共处同一 store（无独立 owner 符号）；不属 Terminal 范围，拆分需另走 SCR
+    via: （STAGE H 已解耦）
+    status: CLOSED
+    note: STAGE H（Capability Library Expansion v1）把 Clipboard 抽为 useClipboardStore、
+          Apps 抽为 useAppsStore，src/stores/useSystemStore.ts 已删除；二者现为独立能力与独立 semantic owner。
   - id: Debt-7B-1
     between: [browser, grid]
     via: gridSession / grid_process.rs
