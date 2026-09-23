@@ -626,11 +626,15 @@ capabilities:
       sensitive: false
     entrypoint: src/stores/useSessionStore.ts
 
+  # STAGE H-A —— Script 语义收口（SCR-20260923-script-owner）。
+  # 分类：Workspace 子能力（与 artifact/repo/snippet 同宿于 src/capabilities/workspace/，
+  # 由 workspace 贡献 view='scripts' 渲染）。独立语义 owner = useScriptStore。
+  # 保留条目而非并入 workspace：script.run 真实派生进程（PROCESS + process.spawn），需独立治理。
   - id: script
     name: Script
     category: CAPABILITY
-    semanticOwner: null
-    governanceStatus: OWNER_PENDING_SCR
+    semanticOwner: useScriptStore
+    governanceStatus: GOVERNED
     status: NOT_INTEGRATED
     provides:
       - script.run

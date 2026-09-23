@@ -222,7 +222,8 @@ onMounted(async () => {
   }
   window.addEventListener("keydown", onGlobalKeydown);
 
-  window.addEventListener("beforeunload", () => bridge.closeBrowser().catch(() => {}));
+  // STAGE H-C：改走 browser 能力 public 动作，Shell 不再直连 native 销毁重资源（NATIVE-03）。
+  window.addEventListener("beforeunload", () => browser.closeBrowser().catch(() => {}));
   // M1-9：前端卸载前 flush（与后端 ShutdownCoordinator 的 flush-sessions 双保险）
   window.addEventListener("beforeunload", () => bridge.flushSessions().catch(() => {}));
   window.addEventListener("click", art.closeCtx);

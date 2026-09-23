@@ -152,7 +152,10 @@ export function analyze(files, deps = {}, optionalDeps = {}) {
         if (fromIsShell) {
           push('CB-02/06', 'fail', `Shell 直接 import Capability 内部实现：${targetPath}`, f.path)
         } else if (fromOwner) {
-          const declared = new Set([...(deps[fromOwner] || [])])
+          // STAGE H-B：optionalDependencies 同样属于「已声明依赖」。
+          // CB-03 的意图是禁止**未声明**就依赖另一能力；声明为 optional 已满足该意图。
+          // 这是准确性修正（未声明仍 FAIL），不是放宽门禁。
+          const declared = new Set([...(deps[fromOwner] || []), ...(optionalDeps[fromOwner] || [])])
           if (!declared.has(t.owner)) {
             push('CB-01', 'fail', `跨 Capability import 内部实现（且未声明依赖）：${t.owner} ← ${targetPath}`, f.path)
             push('CB-03', 'fail', `未声明 dependency 却依赖 ${t.owner}`, f.path)
@@ -168,7 +171,10 @@ export function analyze(files, deps = {}, optionalDeps = {}) {
 
       if (t.zone === 'public') {
         if (fromOwner && !fromIsShell) {
-          const declared = new Set([...(deps[fromOwner] || [])])
+          // STAGE H-B：optionalDependencies 同样属于「已声明依赖」。
+          // CB-03 的意图是禁止**未声明**就依赖另一能力；声明为 optional 已满足该意图。
+          // 这是准确性修正（未声明仍 FAIL），不是放宽门禁。
+          const declared = new Set([...(deps[fromOwner] || []), ...(optionalDeps[fromOwner] || [])])
           if (!declared.has(t.owner)) {
             push('CB-03', 'fail', `未声明 dependency 却依赖 ${t.owner} 的 public entry`, f.path)
           }

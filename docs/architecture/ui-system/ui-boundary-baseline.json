@@ -257,7 +257,6 @@
     "onTermData",
     "onOpenTerminal",
     "onNoteSaved",
-    "closeBrowser",
     "flushSessions"
   ],
   "ui09_host_hardcoded_views_baseline": [

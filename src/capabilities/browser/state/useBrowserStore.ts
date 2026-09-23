@@ -558,6 +558,13 @@ export const useBrowserStore = defineStore("browser", () => {
   }
 
   // ===== Phase 1 canonical Intent API（Browser/Grid Resource Lifecycle owner）=====
+  // STAGE H-C：应用退出时销毁浏览器原生 webview 的**语义化入口**。
+  // 此前 Shell（App.vue beforeunload）直接 bridge.closeBrowser()，绕过能力 public 边界
+  // 直接销毁能力重资源（NATIVE-03）。统一经本动作后，browser 成为 webview 生命周期唯一 owner。
+  async function closeBrowser() {
+    await bridge.closeBrowser();
+  }
+
   // 组件只调以下语义化入口，禁止手拼 buildGrid/closeGridAll/gridCloseOne 与 mainView。
   // openGrid：仅确保 Grid 资源存在（不导航）；已存在则不重建。
   function openGrid() {
@@ -818,6 +825,7 @@ export const useBrowserStore = defineStore("browser", () => {
     gridSendAi,
     closeGridAll,
     closeGridOne,
+    closeBrowser,
     // Phase 1 canonical Intent API（Browser/Grid resource lifecycle）
     openGrid,
     rebuildGrid,
