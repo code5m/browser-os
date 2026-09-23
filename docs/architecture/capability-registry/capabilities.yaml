@@ -151,7 +151,7 @@ capabilities:
     category: CAPABILITY
     semanticOwner: useBookmarkStore
     governanceStatus: GOVERNED
-    status: NOT_INTEGRATED
+    status: COMPATIBILITY_WRAPPED
     provides:
       - bookmark.list
       - bookmark.add
@@ -174,7 +174,7 @@ capabilities:
     persistence:
       scope: disk
       sensitive: false
-    entrypoint: src/stores/useBookmarkStore.ts
+    entrypoint: src/capabilities/bookmark/index.ts
 
   - id: credential
     name: Credential
@@ -242,7 +242,7 @@ capabilities:
     persistence:
       scope: disk
       sensitive: true
-    entrypoint: src/components/workspace/DatabasePanel.vue
+    entrypoint: src/capabilities/database/index.ts
 
   - id: git
     name: Git
@@ -652,7 +652,7 @@ capabilities:
     persistence:
       scope: disk
       sensitive: false
-    entrypoint: src/components/workspace/ScriptPanel.vue
+    entrypoint: src/capabilities/workspace/ui/ScriptPanel.vue
 
   - id: workbench
     name: Workbench

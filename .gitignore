@@ -39,3 +39,6 @@ Thumbs.db
 diagnostics/
 __pycache__/
 *.pyc
+
+# vite 构建临时文件
+vite.config.ts.timestamp-*

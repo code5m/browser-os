@@ -1168,85 +1168,6 @@ MainArea 剩余硬编码业务面板 = HomePanel(home) / VaultPanel(vault) / Set
 HomePanel / VaultPanel / SettingsPanel 仍为 MainArea 硬编码分支（未迁移）；`useHomeStore` / `useSettingsStore` /
 `useVaultStore` 仍物理在 `src/stores/`。**未做任何半迁移**，工作树干净、全部门禁绿。
 
-## Release Train — RESUME / STAGE I = DONE（用户裁决后无人值守执行）
-
-```text
-TRAIN STATE:  STAGE F / G / H = DONE
-              STAGE I（Workbench Decoupling）= DONE（三处阻塞全部按用户裁决收口）
-              STAGE J（vNext Closeout）= 进行中
-裁决来源:     用户在 STAGE I HARD STOP 后授权：不预设架构结论、先审计真实代码；
-              证据支持才行动；普通 build/test/checker 失败自行修复；仅核心语义冲突才再停。
-```
-
-已完成 tag（本地，未 push）：
-`capability-vault-c2-pass`（I-A）/ `capability-settings-service-pass`（I-C）/ `capability-stage-i-workbench-decoupling-pass`（STAGE I 收口）。
-
-### I-A — notes → vault（已提交 `f500fcf`，tag `capability-vault-c2-pass`）
-- **真实审计**：`useVaultStore` 为该域**唯一 owner**（独占全部 vault state/intent；无第二 owner 冲突）⇒ 无 HARD STOP，
-  按 `SCR → Semantic Registry → 迁移 → Contribution → Gates` 执行。
-- **SCR**：`docs/architecture/semantic-changes/SCR-notes-vault-owner-20260923.md`；`capabilities.yaml` 块 `notes→vault`，
-  `semanticOwner: useVaultStore` + `governanceStatus: GOVERNED`（原为 `null`/`OWNER_PENDING_SCR`）。
-- **物理迁移**：`VaultPanel.vue → src/capabilities/vault/ui/`；`useVaultStore.ts → src/capabilities/vault/state/`（纯迁移，仅修相对路径）。
-- **贡献**：`capabilities/vault/index.ts` 注册 WORKBENCH_MAIN `view='vault'`（defineAsyncComponent）；
-  MainArea 移除 VaultPanel 静态 import + 硬编码分支，改由通用 `viewOf('vault')` 渲染（C2+C3）。
-- **语义登记**：`states.yaml` owner_implementations + vault 本地状态（path/root/notes/query/line/anchor/warning/choices/sourceMode/results/edges/backlinks）与
-  intents（open/pickDirectory/select/follow）GOVERNED。
-
-### I-B — home 解耦（本次收口）
-- **真实审计**（用户裁决：先审计、不预设）：`useHomeStore` 唯一**真实**跨域消费者是
-  `src/capabilities/workspace/state/useFileStore.ts`（`ctxFavorite → favoriteDirectory`）；
-  `bookmark`（`BookmarkStar.vue` / `useBookmarkStore.ts`）**仅注释提及**，无实际 import。MainArea 渲染 HomePanel（Shell 渲染默认工作台表面）。
-- **裁决**：属 Home 的意图经**最小 public contract** 暴露；**不**预设 `capabilities/home`、**不**暴露整个 useHomeStore、
-  不引入 God facade / service locator / global event bus。
-- **落地**：新建 `src/components/home/public.ts`（仅具名导出 `favoriteDirectory/favoriteCurrentPage/favoriteCurrentDir`
-  动作包装器，**不 re-export store、不 re-export .vue**——后者会把 .vue 静态依赖注入 capability 运行时打包图，破坏 `check-terminal-owners`）；
-  `useFileStore.ctxFavorite` 改经 `../../../components/home/public`（PUBLIC_INTENT；动态 import 保留以免静态循环）。
-  HomePanel 仍为 Shell 渲染组件（home 非 Capability，不构成 CB 违规）。
-- **未移动** `src/components/home/**`：`check-home-ui-logic.mjs` / `check-home-client-policy.py` 整目录扫描域不变，门禁真实覆盖不受影响（非"假 PASS"）。
-
-### I-C — settings 判定为框架 SERVICE（已提交 `a3b23e3`，tag `capability-settings-service-pass`）
-- **裁决落地**：settings 本质属 Framework/Workbench ⇒ 保留，但建立显式 public contract。
-  `capabilities.yaml` 新增 `id: settings`（`category: SERVICE`，非产品 CAPABILITY；`semanticOwner: useSettingsStore`，GOVERNED）。
-- **契约**：`src/settings/public.ts`（`export { useSettingsStore }` + types）；`src/settings/manifest.ts`（SERVICE，`publicContract.locator`）。
-- **贡献**：`src/settings/index.ts` 注册 WORKBENCH_MAIN `view='settings'`（defineAsyncComponent SettingsPanel）。
-- **消费者重接线**：`App.vue` / `StatusBar.vue` / `SettingsPanel.vue` 由 `stores/useSettingsStore` → `settings/public`；
-  MainArea 移除 SettingsPanel 硬编码分支，改由 `viewOf('settings')` 渲染。
-- 未搬 store（`useSettingsStore` 仍在 `src/stores/`，`status: COMPATIBILITY_WRAPPED`，诚实登记）。
-
-### STAGE I 不变量（Independent Red Team 复核）
-- **SECOND_TRUTHS=0**：三域各唯一 owner；无 `asset_graph_truth/visual_graph_store` 类第二真源；无 UI 造关系。
-- **跨 Capability internal import=0**：`workspace→home` 已改经 public 契约；旧 `stores/useVaultStore`、`stores/useSettingsStore`
-  的外部直连归零（仅契约自身 re-export / 注释 / manifest evidence 引用）。
-- **Semantic Governance PASS**：`check-semantic-registry` real scan `fail=0`（warn=6 pre-existing R5）；
-  closure `27/27`；sensitive `fail=0`；capability-registry `fail=0`。
-- **UI / Resource / Capability Boundaries / Composition / Profiles**：全 PASS。
-- **未洗绿**：未降低任何 checker、未扩大 allowlist、未更新 baseline（本次仅改业务代码 + 新建契约文件）。
-
-### Gates（真实运行，全部 PASS）
-```text
-npm run check                       EXIT=0（零 FAIL；既有 WARN：UI-04b-U / CB-04，非本次引入）
-npm run build                       EXIT=0（VaultPanel / SettingsPanel 独立分块）
-check-semantic-registry.mjs         PASS（fail=0 warn=6 info=75）
-check-semantic-closure-logic.mjs    PASS（27/27）
-check-sensitive-side-effects.mjs    PASS（fail=0）
-check-capability-registry.mjs       PASS（fail=0 warn=0）
-check-home-ui-logic.mjs             PASS（41/0）
-check-home-store-logic.mjs          PASS（105/0）
-check-home-client-policy.py         PASS（invariants hold, ACTIVE=6）
-git diff --check                    干净
-git fsck --full                     无损坏（仅 dangling 对象，正常）
-```
-
-### 剩余债务（诚实，不静默）
-1. `useHomeStore` / `useSettingsStore` 仍物理在 `src/stores/`（settings manifest 记为 `COMPATIBILITY_WRAPPED`）。
-2. MainArea 仍有 `view==='home'` 一个 Shell 渲染分支（Home 为默认工作台表面、非 Capability；按用户裁决允许保留）。
-3. `mainView` 导航项（含 vault/settings/home）仍非贡献驱动（历史债务，STAGE H 已登记）。
-4. settings 无专属 absence 运行时门禁（常驻框架服务，absent 语义不适用）。
-
-### Next task: STAGE J — Capability Platform vNext Closeout
-
----
-
 ## STAGE I — Workbench Capability Decoupling（2026-09-23，autonomous Release Train）
 
 > 本段为 STAGE I 收口快照。三段迁移均以「先裁决语义 owner，再物理迁移 UI」为序，
@@ -1319,3 +1240,51 @@ git fsck --full                     无损坏（仅 dangling 对象，正常）
 - RESOURCE_REGRESSION = 0（RUNTIME_RESOURCE_ABSENCE 12/12、CAPABILITY_RESOURCE_BOUNDARY 12/12 PASS）。
 - UI_PRESERVATION = STRUCTURAL_PASS（home/vault 业务 UI 零改动，仅 import 路径与归属变更）。
 - HUMAN_VISUAL = **PENDING**（本阶段未做人工目视）。
+
+---
+
+## STAGE J — Capability Platform vNext Closeout（2026-09-23，autonomous Release Train）
+
+> 本段为 STAGE J 收口快照：把 capability 注册表与已迁移能力的**真实物理入口**对齐，消除历史陈旧登记。
+
+### 登记对齐（capabilities.yaml）
+
+- `bookmark`：`status: NOT_INTEGRATED → COMPATIBILITY_WRAPPED`；`entrypoint: src/stores/useBookmarkStore.ts → src/capabilities/bookmark/index.ts`。
+- `database`：`entrypoint: src/components/workspace/DatabasePanel.vue → src/capabilities/database/index.ts`。
+- `script`：`entrypoint: src/components/workspace/ScriptPanel.vue → src/capabilities/workspace/ui/ScriptPanel.vue`。
+- 校验：以上入口文件均**真实存在**（`ls` 证实）；`check-capability-registry` 仍 `fail=0 warn=0`。
+
+### 故意未对齐（诚实，非陈旧）
+
+以下 entrypoint 指向 `src/stores/*` 或 `src/components/*`，**故意保留**——对应能力尚未物理迁移（`status: NOT_INTEGRATED`），
+登记即当前事实，不虚报为已隔离：
+
+- `resource_collection` → `src/stores/useResourceStore.ts`
+- `session` → `src/stores/useSessionStore.ts`
+- `workbench` → `src/stores/useWorkbenchStore.ts`
+- `browser` → `src/components/browser`（原生宿主组件，未迁入 capabilities）
+
+### 仓库卫生
+
+- `.gitignore`：新增忽略 vite 构建临时文件 `vite.config.ts.timestamp-*`。
+
+### Gates（真实运行，全部 PASS）
+
+```text
+npm run check                    EXIT=0
+check-capability-registry.mjs    PASS（fail=0 warn=0）
+check-capability-composition.mjs PASS（33/33，见 npm run check）
+check-composition-profiles.mjs   PASS（11/11，见 npm run check）
+```
+
+### Tag
+
+- `capability-platform-vnext-code-pass`（annotated；**非** Human PASS tag）。
+- 未 push；未 merge master；未修改系统安装；未修改用户数据。
+
+### Remaining debt（诚实）
+
+1. 未迁移能力（resource_collection / session / workbench / browser 宿主）仍持 `src/stores` / `src/components` 入口。
+2. `mainView` 导航项（含 home/vault/settings）仍非贡献驱动（历史债务）。
+3. HUMAN_VISUAL = PENDING（未做人工目视）。
+
