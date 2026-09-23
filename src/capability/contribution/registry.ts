@@ -20,6 +20,14 @@ export interface ContributionRegistry {
   getSurfaceContributions(slot: string): Contribution[]
   /** 取某槽的 navigation 类贡献 */
   getNavigationContributions(slot: string): Contribution[]
+  /**
+   * 取某槽的**可认领页签**贡献（UI-4 DockContribution）。
+   *
+   * 只返回带 `view` 的 surface 贡献，按 order 升序。
+   * 可用性（availability）是**隐式**的：能力未注册/未激活时其贡献根本不在表里，
+   * 因此 absent capability 不会留下死页签 —— Shell 无需知道任何能力名。
+   */
+  getDockTabContributions(slot: string): Contribution[]
   /** 清空（供测试隔离使用） */
   clear(): void
 }
@@ -55,6 +63,13 @@ export function createContributionRegistry(): ContributionRegistry {
       return sortByOrder(
         [...contributions.values()].filter(
           (c) => c.slot === slot && (c.type as ContributionType) === "navigation",
+        ),
+      )
+    },
+    getDockTabContributions(slot) {
+      return sortByOrder(
+        [...contributions.values()].filter(
+          (c) => c.slot === slot && (c.type as ContributionType) === "surface" && !!c.view,
         ),
       )
     },

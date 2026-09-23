@@ -68,4 +68,14 @@ export interface Contribution {
   component?: Component | (() => Promise<Component>)
   /** 同槽多贡献排序（小在前） */
   order?: number
+  /**
+   * 页签/导航项的**展示名**（UI-4 DockContribution）。
+   * 纯展示字符串，不含业务语义；Shell 只做渲染，不理解其含义。
+   */
+  label?: string
+  /**
+   * 页签/导航项的**图标**（UI-4 DockContribution）。
+   * 当前为 emoji 字符（与现有 Dock 一致），纯展示。
+   */
+  icon?: string
 }

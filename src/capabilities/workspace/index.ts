@@ -56,6 +56,9 @@ export function registerWorkspaceContributions(): void {
     slot: CONTRIBUTION_SLOTS.BROWSER_DOCK,
     view: "files",
     component: FilePanel,
+    label: "文件",
+    icon: "📂",
+    order: 10,
   })
 }
 

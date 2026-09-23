@@ -39,6 +39,9 @@ export function registerTerminalContributions(): void {
     slot: CONTRIBUTION_SLOTS.BROWSER_DOCK,
     view: "term",
     component: TerminalDockPanel,
+    label: "终端",
+    icon: "💻",
+    order: 20,
   })
 }
 

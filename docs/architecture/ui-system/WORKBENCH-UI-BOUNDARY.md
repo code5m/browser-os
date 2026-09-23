@@ -14,7 +14,7 @@
 | Navigation 容器 | `ActivityBar.vue` 一级入口 + ☰菜单 + 🔍命令 | ✅ 已有 |
 | Toolbar 容器 | `ActivityBar` 扩展行机制 | ✅ 已有 |
 | Main Surface 容器 | `MainArea.vue` + `workbench-main` 槽 | ✅ 已有 |
-| Dock 容器 | `MainArea.vue:162-178` + `browser-dock` 槽 | ⚠️ 有槽但 Tab 硬编码 |
+| Dock 容器 | `MainArea.vue` + `browser-dock` 槽 | ✅ **UI-4 已改为贡献驱动**（页签由 Contribution 声明 label/icon/order；absent capability → 页签消失，修复死页签） |
 | ActivityBar / Rail 容器 | `WorkbenchRail.vue` | ✅ 已有 |
 | Status Bar | `StatusBar.vue` | ✅ 已有 |
 | Home framework | `HomePanel` + Launchers/Recents/Shortcuts | ✅ 已有 |

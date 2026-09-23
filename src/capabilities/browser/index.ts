@@ -37,6 +37,10 @@ export function registerBrowserContributions(): void {
     slot: CONTRIBUTION_SLOTS.BROWSER_DOCK,
     view: "net",
     component: ResourceWaterfall,
+    // Dock 页签展示元数据（保持与迁移前完全一致的图标/文案/顺序）
+    label: "资源",
+    icon: "🌊",
+    order: 30,
   })
   contributionRegistry.registerContribution({
     id: "browser.dock.session",
@@ -45,6 +49,9 @@ export function registerBrowserContributions(): void {
     slot: CONTRIBUTION_SLOTS.BROWSER_DOCK,
     view: "session",
     component: SessionPanel,
+    label: "会话",
+    icon: "💾",
+    order: 40,
   })
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { watch, nextTick, defineAsyncComponent, h } from "vue";
+import { watch, nextTick, defineAsyncComponent, h, computed } from "vue";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../capabilities/browser/public";
 import { contributionRegistry } from "../../capability/contribution/registry";
@@ -99,6 +99,30 @@ function dockOf(view: string) {
   return browserDockContributions.find((c) => c.view === view)?.component;
 }
 
+// ===== UI-4 DockContribution：Dock 页签改为「贡献驱动」，不再硬编码 =====
+// 旧实现把 4 个页签（文件/终端/资源/会话）的图标、文案、顺序、可用 view 集合
+// 全部写死在 Shell 模板里，导致：
+//   1) 能力无法新增 Dock 页签（加了贡献也渲染不出来）；
+//   2) Terminal absent 时「💻 终端」按钮仍在，点进去渲染空 —— 死页签。
+// 改为按贡献渲染后：absent capability 的贡献根本不在表里 → 页签自动消失，无死页签。
+// Shell 依旧不知道任何能力名，只认 slot + view + 展示元数据。
+const dockTabs = contributionRegistry
+  .getDockTabContributions(CONTRIBUTION_SLOTS.BROWSER_DOCK)
+  .map((c) => ({
+    id: c.id,
+    view: c.view as string,
+    // 未声明展示元数据时退化为 view 名，保证渲染不炸（不引入 undefined 文案）
+    label: c.label ?? c.view ?? "",
+    icon: c.icon ?? "",
+  }));
+
+// 当前选中页签：若持久化的 tab 已不存在（能力缺席/被卸载），回退到第一个可用页签。
+// full profile 下 files 恒在 → 行为与迁移前完全一致。
+const activeDockTab = computed(() => {
+  const t = layout.browserDockTab;
+  return dockTabs.some((d) => d.view === t) ? t : (dockTabs[0]?.view ?? "");
+});
+
 // 常驻主视图贡献：Shell 只按槽渲染，显隐由能力组件自管（如终端保持 xterm 挂载）。
 // Terminal absent → 槽为空 → 不渲染任何东西，更不会有 PTY 出生点（C3 ABSENT 关键）。
 const residentMainContributions = contributionRegistry.getSurfaceContributions(
@@ -161,20 +185,18 @@ watch(
         <!-- 右侧 Dock：浏览网页的同时操作文件管理 / 终端 -->
         <aside v-if="layout.browserDockOpen && layout.mainView === 'browser'" class="browser-dock">
           <div class="tabs">
-            <button :class="{ active: layout.browserDockTab === 'files' }" @click="layout.browserDockTab = 'files'">📂 文件</button>
-            <button :class="{ active: layout.browserDockTab === 'term' }" @click="layout.browserDockTab = 'term'">💻 终端</button>
-            <button :class="{ active: layout.browserDockTab === 'net' }" @click="layout.browserDockTab = 'net'">🌊 资源</button>
-            <button :class="{ active: layout.browserDockTab === 'session' }" @click="layout.browserDockTab = 'session'">💾 会话</button>
+            <!-- UI-4：页签来自能力贡献（顺序/图标/文案由贡献声明，与迁移前一致） -->
+            <button
+              v-for="t in dockTabs"
+              :key="t.id"
+              :class="{ active: layout.browserDockTab === t.view }"
+              @click="layout.browserDockTab = t.view"
+            >{{ t.icon + " " + t.label }}</button>
             <button class="close" @click="layout.browserDockOpen = false" title="收起">✕</button>
           </div>
-          <component :is="dockOf('files')" v-if="layout.browserDockTab === 'files'" />
-          <!-- M1-8 资源瀑布：请求/响应列表（脱敏 DTO），挂 Dock 第三 Tab -->
-          <component :is="dockOf('net')" v-else-if="layout.browserDockTab === 'net'" />
-          <!-- M1-9 历史会话：保存/回看/恢复/删除，挂 Dock 第四 Tab -->
-          <component :is="dockOf('session')" v-else-if="layout.browserDockTab === 'session'" />
-          <!-- 浏览时右侧 Dock 终端：与终端视图共享同一组实例（能力贡献组件内部自管）。
-               Terminal absent → 该 slot 为空 → 此分支渲染空集（不创建 PTY）。 -->
-          <component :is="dockOf('term')" v-else-if="layout.browserDockTab === 'term'" />
+          <!-- UI-4：单一动态渲染点。Dock 面板仍由能力提供（文件/终端/资源/会话）。
+               Terminal absent → term 贡献不在 → 页签消失、此处无 PTY 出生点。 -->
+          <component :is="dockOf(activeDockTab)" v-if="activeDockTab" />
         </aside>
       </div>
     </template>

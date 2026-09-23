@@ -148,7 +148,11 @@ export const useLayoutStore = defineStore("layout", () => {
   const leftResizing = ref(false);
   // 浏览器视图右侧 Dock：边浏览网页边操作文件/终端
   const browserDockOpen = ref(false);
-  const browserDockTab = ref<"files" | "term" | "net" | "session">("files");
+  // UI-4：Dock 页签由**能力贡献**动态提供（见 ContributionRegistry.getDockTabContributions），
+  // 因此这里不再硬编码 files/term/net/session 联合类型 —— 那是把「有哪些 Dock 面板」
+  // 这份业务知识放进了 Shell。Shell 只持「当前选中哪个 view」这一份 UI 选择状态。
+  // owner 不变（仍为 useLayoutStore.toggleBrowserDock），语义真源唯一。
+  const browserDockTab = ref<string>("files");
   // 地址栏模式：🌐网址（默认）/ 📁目录（输入本地路径浏览目录）
   const addrMode = ref<"url" | "dir">("url");
   // 浏览器精简模式：隐藏地址栏+页签栏，给网页更大空间（类谷歌沉浸式）
@@ -339,7 +343,7 @@ export const useLayoutStore = defineStore("layout", () => {
   }
 
   // 浏览器视图右侧 Dock：指定 tab 时做"切到该 tab/再点收起"语义
-  function toggleBrowserDock(tab?: "files" | "term" | "net" | "session") {
+  function toggleBrowserDock(tab?: string) {
     if (tab) {
       if (browserDockOpen.value && browserDockTab.value === tab) {
         browserDockOpen.value = false;
