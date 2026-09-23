@@ -871,3 +871,46 @@ SECOND_TRUTHS: 0 (Git 内)
   3. 缺 git 专属 absence 自动化断言。
   4. HP0 STATIC，无 C4 运行时启停 / C5 资源释放（git 无长驻资源，故不评 C5）。
 - Next task: STAGE B 全产品 Full-Stack Capability Inventory → STAGE C Database。
+
+## STAGE B — Full Product Capability Inventory（DONE）
+
+```text
+HEAD:        da56ff7  (feature/capability-platform-v1)
+TAG:         capability-inventory-pass  (annotated)
+SCOPE:       18 个能力全栈核验（src/ + src-tauri/src + capabilities.yaml）
+UNKNOWN:     0（所有疑问均解析或记为已知债务，无悬空 UNKNOWN）
+```
+
+- 产物：`docs/architecture/capability-platform/FULL-STACK-CAPABILITY-INVENTORY.md`
+- 每个能力记录：UI/State/Intent owner、Native owner、Resource owner、Credential usage、Persistence、Dependencies、
+  Contribution、Current/Target maturity、Legacy coupling、Unknowns。
+- 分类裁定：workbench 降级为框架/Shell 编排（无原生命令，非后端能力）；credential 定为安全边界（NOT_COMPOSABLE_BY_DESIGN）。
+- 成熟度快照：git/browser/terminal/workspace = C2~C3；database = C2（本 stage 后升格）；
+  agent(C0 运行时未实现)/skill(C0 OWNER_PENDING)/plugin(C1 LOCKED 无执行)/graph/task/session/script/notes/resource_collection/credential = C1。
+- 已知债务（诚实）：bookmark 成熟度漂移、agent/skill 运行时未实现、skill 无专属 owner、notes/credential registry owner 偏差、
+  database 未可组合（本 stage 已修）、git 物理状态未迁入、profiles.yaml 组合态保守。
+
+## STAGE C — Database Capability Closeout（DONE）
+
+```text
+HEAD:        38f4ae9  (feature/capability-platform-v1)
+TAG:         capability-database-c2-pass  (annotated)
+MATURITY:    C2 ISOLATED  (manifest.v1.maturity="C2"; status=COMPATIBILITY_WRAPPED)
+HOTPLUG:     HP0 STATIC  (installPolicy=static, hotPlug.enable=false)
+FULL_STACK:  docs/architecture/capabilities/database/FULL-STACK-BOUNDARY.md
+GATES:       npm run check 全绿（UI-10 68/68、CAPABILITY_COMPOSITION 33/33、RUNTIME_RESOURCE_ABSENCE 12/12、check-capability-platform 29/0）；vite build OK（DatabasePanel 拆 20.59kB）；git diff --check 干净；git fsck 0 error
+SECOND_TRUTHS: 0 (Database 内)
+```
+
+- Changed files: `src/capabilities/database/{manifest,index,public}.ts`(新) + `src/capabilities/database/ui/DatabasePanel.vue`(从 components/workspace 迁入) + `src/capability/{index.ts,platform/catalog.ts}` + `src/components/layout/MainArea.vue` + `docs/architecture/capability-registry/{capabilities,profiles}.yaml` + `docs/architecture/ui-system/{ui-boundary-baseline.json,ui-components.yaml}` + `docs/architecture/capabilities/database/FULL-STACK-BOUNDARY.md`。
+- State owner: `useDatabaseStore` (id="database", Pinia) — 语义唯一 owner；**物理仍在 `src/stores/`**（债务）。
+- Dependencies: `credential` / `bridge`（manifest.dependsOn 已声明）。
+- Resource owner: 连接资源（DbPool）由 Rust 在 connect/query 时瞬态建连即弃（不驻留全局）；前端零明文凭据（仅 keyring id `db:<conn_id>`）。
+- Absence: 确定性（profile 未列 database → 不注册 → WORKBENCH_MAIN 槽无 view='db' 贡献 → MainArea viewOf('db') 返回 undefined → 不渲染；connect 仅用户触发 → 无 connect → 无 keyring 读/无 DbPool）。§18 满足。
+- Shell coupling 下降：MainArea 不再静态 import DatabasePanel（9→8 直渲）。
+- Known debt（诚实不谎报）:
+  1. useDatabaseStore 物理位置未迁入 capabilities/database/state。
+  2. 无 database 专属 absence 运行时门禁（依赖 profile 预设 + 贡献缺席）。
+  3. mainView='db' 导航项硬编码于 useLayoutStore/homeUi/HomeLaunchers（未贡献驱动 → absent 点该导航落空视图，不崩溃）。
+  4. HP0 STATIC，无 C4/C5（连接瞬态，无长驻资源）。
+- Next task: STAGE D Agent Capability Migration。
