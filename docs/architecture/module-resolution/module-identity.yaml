@@ -1,0 +1,63 @@
+# Runtime Resolution Governance — Canonical Module Identity
+# 单一语义：ONE MEANING / ONE OWNER / ONE WRITER / ONE IMPLEMENTATION /
+#           ONE RUNTIME BINDING / ONE RESOURCE LIFECYCLE
+#
+# 消费方：scripts/check-canonical-module-location.mjs (R10)
+# 真源：本文件。新增/修改 governed module 改此处，不走脚本硬编码。
+#
+# runtimeLoader 取值（与 capability-registry 不重复，仅标注加载方式）：
+#   capability-contribution : capabilities/<owner>/index.ts 中
+#                             defineAsyncComponent(() => import("./ui/<X>.vue"))
+#   parent-relative-import  : 父组件 HomePanel.vue 中 import X from "./<X>.vue"
+schemaVersion: 1
+governedBy: R10
+modules:
+  - moduleId: home.panel
+    owner: home
+    category: UI_COMPONENT
+    canonicalImplementation: src/capabilities/home/ui/HomePanel.vue
+    runtimeLoader: capability-contribution
+    oldLocations:
+      - src/components/home/HomePanel.vue
+  - moduleId: home.launchers
+    owner: home
+    category: UI_COMPONENT
+    canonicalImplementation: src/capabilities/home/ui/HomeLaunchers.vue
+    runtimeLoader: parent-relative-import
+    oldLocations:
+      - src/components/home/HomeLaunchers.vue
+  - moduleId: home.shortcuts
+    owner: home
+    category: UI_COMPONENT
+    canonicalImplementation: src/capabilities/home/ui/HomeShortcuts.vue
+    runtimeLoader: parent-relative-import
+    oldLocations:
+      - src/components/home/HomeShortcuts.vue
+  - moduleId: home.recents
+    owner: home
+    category: UI_COMPONENT
+    canonicalImplementation: src/capabilities/home/ui/HomeRecents.vue
+    runtimeLoader: parent-relative-import
+    oldLocations:
+      - src/components/home/HomeRecents.vue
+  - moduleId: home.shortcut-editor
+    owner: home
+    category: UI_COMPONENT
+    canonicalImplementation: src/capabilities/home/ui/HomeShortcutEditor.vue
+    runtimeLoader: parent-relative-import
+    oldLocations:
+      - src/components/home/HomeShortcutEditor.vue
+  - moduleId: vault.panel
+    owner: vault
+    category: UI_COMPONENT
+    canonicalImplementation: src/capabilities/vault/ui/VaultPanel.vue
+    runtimeLoader: capability-contribution
+    oldLocations:
+      - src/components/workspace/VaultPanel.vue
+  - moduleId: tools.panel
+    owner: tools
+    category: UI_COMPONENT
+    canonicalImplementation: src/capabilities/tools/ui/ToolBox.vue
+    runtimeLoader: capability-contribution
+    oldLocations:
+      - src/components/workspace/ToolBox.vue

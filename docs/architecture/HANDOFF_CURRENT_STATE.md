@@ -1288,3 +1288,69 @@ check-composition-profiles.mjs   PASS（11/11，见 npm run check）
 2. `mainView` 导航项（含 home/vault/settings）仍非贡献驱动（历史债务）。
 3. HUMAN_VISUAL = PENDING（未做人工目视）。
 
+---
+
+## H01 BLOCKER REPAIR + RUNTIME RESOLUTION GOVERNANCE（2026-09-24）
+
+> 在 STAGE J 的 code-pass tag 之上，FINAL HUMAN ACCEPTANCE 的 H01 被用户真实 GUI 判定 BLOCKING FAIL。
+> 本轮自主完成：根因 → 最小修复 → 运行时解析治理（R10/R11/R12）→ 复测。
+
+### H01 FAIL（基线）
+
+- 现象：full profile `npm run tauri dev` 启动后，Vite error overlay 覆盖主界面；浏览器请求已删除的旧模块路径
+  `src/components/home/{HomePanel,HomeLaunchers,HomeShortcuts,HomeRecents,HomeShortcutEditor}.vue`、
+  `src/components/workspace/{VaultPanel,ToolBox}.vue` → ENOENT（7 条）。
+- 机器门禁（build / check）全 PASS，但 dev 运行时 FAIL ⇒ **BUILD PASS ≠ DEV RUNTIME PASS**。
+
+### ROOT CAUSE
+
+- 类别：**WEBVIEW_DEV_CACHE**（触发：git mv 迁移发生在同一 dev 生命周期内 → HMR_MIGRATION_STALE）。
+- 证据链（L1–L4）：
+  - L1：全仓静态 grep 旧路径字面量 = 0；capabilities/*/index.ts 与 HomePanel.vue 均用正确相对 `./ui/` 路径。
+  - L2：`npm run build` PASS（产物含新路径 chunk）。
+  - L3/L4：`~/.local/share/com.jizhijiandan.mvp/WebKitCache` 命中 **461 条**旧路径缓存记录；运行 vite 对 `/src/main.ts` 返回
+    `Cache-Control: no-cache` 且 `date=2026-09-23 22:59` 的**陈旧响应**（当前已是 9-24）→ webview 执行迁移前旧模块 → 旧相对 import → ENOENT。
+  - 端口 1421 是 fresh vite；旧路径请求来自 webview 缓存的旧模块图，非当前源码。
+- 结论：`Cache-Control: no-cache` 不足以让 WebKitGTK 失效；dev 模块被 webview 持久化是根因。
+
+### 最小修复（非假修复）
+
+- `vite.config.ts`：`server.headers` 由 `no-cache` 升级为 **`no-store`** ⇒ dev 模块永不持久化，每次取最新。
+- **禁止**的假修复均已规避：未重建旧目录 / 未建 compatibility wrapper / 未加 alias / 未复制第二实现 / 未关 overlay / 未清用户数据 / 未降 checker。
+
+### Runtime Resolution Governance（新增治理域，单一职责）
+
+- 新目录 `docs/architecture/module-resolution/`：`module-identity.yaml`（R10 真源）+ `module-migrations.yaml`（R11 tombstone，R12 派生 TOMBSTONED 列表）+ `README.md`。
+- 语义升级（在 State/Intent/Owner/Writer/SideEffect/Resource 之上新增）：**Module + RuntimeBinding**，原则
+  ONE MEANING / ONE OWNER / ONE WRITER / ONE IMPLEMENTATION / ONE RUNTIME BINDING / ONE RESOURCE LIFECYCLE。
+- R10 Canonical Module Location（`scripts/check-canonical-module-location.mjs`）：每个 governed module 只能有一个 canonical implementation；旧地址不得再作为真实文件存在；src 内同 basename 只能一份。
+- R11 Stale Module Reference（`scripts/check-stale-module-reference.mjs`）：读取 tombstone，扫描可执行引用面（src/scripts/src-tauri/根配置），任何 executable reference 不得再指向 tombstoned `from`。
+- R12 Fresh Dev Runtime（`scripts/check-dev-runtime-startup.mjs`）：fresh vite dev 真实爬取模块图，证 VITE_ENOENT=0 / TRANSFORM_ERROR=0 / TOMBSTONED_MODULE_REQUEST=0 / no-store 生效 / 缺失模块 negative fixture 有区分力。
+- 接线：`npm run check`（静态，含 R10/R11）；`npm run check:runtime`（R12）。
+- 区分力：`--self-test` 注入「canonical 缺失 / 第二实现 / tombstoned 引用」均必须 FAIL；当前真树 R10/R11/R12 全 PASS。
+
+### Validation（四层证据）
+
+- L1 SOURCE = PASS（R11 扫描可执行面旧路径命中 = 0）
+- L2 BUILD_GRAPH = PASS（`npm run build`）
+- L3 DEV_MODULE_GRAPH = PASS（R12A：194 模块 0 失败）
+- L4 RUNTIME = PASS（R12B：真实 tauri dev 日志 ENOENT=0 / TOMBSTONED_REQUEST=0）
+- `npm run check` EXIT=0（末段 R10/R11 PASS）；`npm run build` PASS；R12 PASS。
+- CARGO = NOT_REQUIRED（本轮未改 Rust）。
+
+### Red Team（RT-RR-01..15）
+
+- BLOCKER = 0。逐项：非仅清缓存（no-store+治理双修）；未重建旧目录；未建兼容壳；无第二实现；未加 alias；未关 overlay；非仅 grep（R12 真实爬图）；未把 build 当 runtime；R10 有 negative fixture；R11 真消费 tombstone；R12 能抓不存在 lazy 模块；未删用户数据；未降 checker；无第二 truth（module-resolution 为单一职责域）；module-resolution 非 God Registry。
+
+### Git / Tag
+
+- 独立 commit：`fix(runtime): close stale module resolution after capability migration + add R10/R11/R12 governance`。
+- 新 tag：`capability-platform-vnext-final-rc2-code-pass`（annotated）。
+- 旧 tag `capability-platform-vnext-final-rc-code-pass` **永久保留**为 H01 FAILED RC，未移动、未 push、未 merge master。
+
+### H01 状态
+
+- H01_MACHINE_RETEST = PASS（R10/R11/R12/npm check/build/tauri dev 全绿）。
+- H01_HUMAN_RETEST = **PENDING**（GUI 目视由用户执行，Agent 不代判）。
+- H02_H15 = NOT_RUN（H01 曾 BLOCKING FAIL；修复后尚未恢复验收）。
+

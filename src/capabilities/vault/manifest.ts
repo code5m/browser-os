@@ -2,8 +2,8 @@ import type { CapabilityDefinition } from "../../../capability/types"
 
 // Vault 能力 Manifest（STAGE I-A — 物理隔离）
 // semanticOwner 指向 Semantic Registry 已登记的 owner：useVaultStore（id=vault）。
-// 物理迁移（src/stores/useVaultStore.ts → src/capabilities/vault/state/useVaultStore.ts，
-// src/components/workspace/VaultPanel.vue → src/capabilities/vault/ui/VaultPanel.vue）
+// 物理迁移（store 与面板均已迁入本能力包；旧 components/workspace 目录已不再持有 VaultPanel，
+// 详见 docs/architecture/module-resolution/module-migrations.yaml）。
 // 不改变该语义 owner；governed_files 经由 owner_implementations locator 解析新路径。
 export const vaultManifest: CapabilityDefinition = {
   id: "vault",

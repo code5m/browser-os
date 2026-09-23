@@ -1,0 +1,69 @@
+# Migration Tombstone — machine-consumable
+#
+# from = TOMBSTONED。任何 executable / runtime reference 再指向 `from` → R11 FAIL。
+#
+# 允许出现 `from` 的位置（NON_EXECUTABLE_HISTORY，R11 不扫描这些面）：
+#   - 本仓库历史 Markdown 文档（docs/** 整体被 R11 排除）
+#   - 本 tombstone 文件自身 + module-identity.yaml（治理元数据）
+#   - 门禁 fixture（scripts 内以 __fixture__ 命名的临时文件，运行期生成后删除）
+#
+# 消费方：scripts/check-stale-module-reference.mjs (R11)
+# 派生消费：scripts/check-dev-runtime-startup.mjs (R12) 读取 from 作为 TOMBSTONED 列表
+#
+# ROOT CAUSE（H01）：components/* → capabilities/*/ui/ 的物理迁移发生在同一 dev 生命周期内，
+#   WebKitGTK 磁盘缓存保留了迁移前的旧模块；重载时 webview 执行旧模块 → 旧相对 import →
+#   命中已删除路径 → Vite ENOENT。证据：WebKitCache 461 条旧路径记录；运行 vite 返回
+#   date=2026-09-23 22:59 的陈旧 main.ts（原 no-cache 不足以让 WebKitGTK 失效）。
+# 修复：vite.config.ts server.headers 改 no-store（dev 模块永不持久化）。
+schemaVersion: 1
+governedBy: R11
+migrations:
+  - id: MIG-HOME-PANEL
+    owner: home
+    from: src/components/home/HomePanel.vue
+    to: src/capabilities/home/ui/HomePanel.vue
+    migration_status: TOMBSTONED
+    trigger: git mv within live dev lifecycle
+    runtime_policy: stale-reference-must-fail
+  - id: MIG-HOME-LAUNCHERS
+    owner: home
+    from: src/components/home/HomeLaunchers.vue
+    to: src/capabilities/home/ui/HomeLaunchers.vue
+    migration_status: TOMBSTONED
+    trigger: git mv within live dev lifecycle
+    runtime_policy: stale-reference-must-fail
+  - id: MIG-HOME-SHORTCUTS
+    owner: home
+    from: src/components/home/HomeShortcuts.vue
+    to: src/capabilities/home/ui/HomeShortcuts.vue
+    migration_status: TOMBSTONED
+    trigger: git mv within live dev lifecycle
+    runtime_policy: stale-reference-must-fail
+  - id: MIG-HOME-RECENTS
+    owner: home
+    from: src/components/home/HomeRecents.vue
+    to: src/capabilities/home/ui/HomeRecents.vue
+    migration_status: TOMBSTONED
+    trigger: git mv within live dev lifecycle
+    runtime_policy: stale-reference-must-fail
+  - id: MIG-HOME-SHORTCUT-EDITOR
+    owner: home
+    from: src/components/home/HomeShortcutEditor.vue
+    to: src/capabilities/home/ui/HomeShortcutEditor.vue
+    migration_status: TOMBSTONED
+    trigger: git mv within live dev lifecycle
+    runtime_policy: stale-reference-must-fail
+  - id: MIG-VAULT-PANEL
+    owner: vault
+    from: src/components/workspace/VaultPanel.vue
+    to: src/capabilities/vault/ui/VaultPanel.vue
+    migration_status: TOMBSTONED
+    trigger: git mv within live dev lifecycle
+    runtime_policy: stale-reference-must-fail
+  - id: MIG-TOOLS-PANEL
+    owner: tools
+    from: src/components/workspace/ToolBox.vue
+    to: src/capabilities/tools/ui/ToolBox.vue
+    migration_status: TOMBSTONED
+    trigger: git mv within live dev lifecycle
+    runtime_policy: stale-reference-must-fail
