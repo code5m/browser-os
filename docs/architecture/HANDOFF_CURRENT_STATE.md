@@ -914,3 +914,29 @@ SECOND_TRUTHS: 0 (Database 内)
   3. mainView='db' 导航项硬编码于 useLayoutStore/homeUi/HomeLaunchers（未贡献驱动 → absent 点该导航落空视图，不崩溃）。
   4. HP0 STATIC，无 C4/C5（连接瞬态，无长驻资源）。
 - Next task: STAGE D Agent Capability Migration。
+
+## STAGE D — Agent Capability Closeout（DONE）
+
+```text
+HEAD:        4ca9fc8  (feature/capability-platform-v1)
+TAG:         capability-agent-c1-pass  (annotated)
+MATURITY:    C1 WRAPPED  (manifest.v1.maturity="C1"; status=COMPATIBILITY_WRAPPED)
+             诚实功能缺口：执行后端 agent_chat/run/install 未实现，仅只读壳
+HOTPLUG:     HP0 STATIC
+FULL_STACK:  docs/architecture/capabilities/agent/FULL-STACK-BOUNDARY.md
+GATES:       npm run check 全绿（UI-10 68/68、CAPABILITY_COMPOSITION 33/33、RUNTIME_RESOURCE_ABSENCE 12/12、check-capability-platform 29/0）；vite build OK；git diff --check 干净；git fsck 0 error
+SECOND_TRUTHS: 0
+```
+
+- Changed files: `src/capabilities/agent/{manifest,index,public}.ts`(新) + `src/capabilities/agent/ui/{AgentManagerPanel,AgentChatPanel}.vue`(迁入) + `src/capability/{index.ts,platform/catalog.ts}` + `src/components/layout/MainArea.vue` + `docs/architecture/capability-registry/{capabilities,profiles}.yaml` + `docs/architecture/ui-system/{ui-boundary-baseline.json,ui-components.yaml}` + `docs/architecture/capabilities/agent/FULL-STACK-BOUNDARY.md`。
+- State owner: `useAgentStore` (id="agent") — 同时持有 skill 状态（skill 无专属 store，STAGE E 处理）。
+- Dependencies: `bridge`（manifest 已声明），可选 `knowledge_graph`。
+- Resource owner: 当前无执行资源（后端未实现）；凭据已脱敏。
+- Absence: 确定性（profile 未列 agent → 不注册 → WORKBENCH_MAIN 槽无 view='agents' → MainArea 不渲染）。
+- Shell coupling 下降：MainArea 不再静态 import AgentManagerPanel（8→7 直渲）。
+- Known debt（诚实不谎报）:
+  1. 执行后端（agent_chat/run/install）Rust 未实现 —— 真实功能缺口。
+  2. useAgentStore 物理在 src/stores；同时持有 skill 状态（STAGE E 拆分）。
+  3. 无 agent 专属 absence 运行时门禁。
+  4. mainView='agents' 导航项硬编码（未贡献驱动）。
+- Next task: STAGE E Skill Capability Migration（处理 Agent↔Skill 纠缠：skill 无专属 store）。
