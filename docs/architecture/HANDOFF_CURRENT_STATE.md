@@ -1033,7 +1033,7 @@ SECOND_TRUTHS: 0   NEW_RESOURCE_LEAKS: 0
 ## STAGE G — Task / Graph Capability Closeout（DONE）
 
 ```text
-HEAD:        <commit-after-this-stage>  (feature/capability-platform-v1)
+HEAD:        987cf38  (feature/capability-platform-v1)
 TAG:         capability-task-graph-c2-pass  (annotated)
 MATURITY:   Graph = C2 ISOLATED  (id 由 knowledge_graph 统一为 graph)
             Task  = C2 ISOLATED  (治理 GOVERNED；后端调度线程为 app 级单例)
