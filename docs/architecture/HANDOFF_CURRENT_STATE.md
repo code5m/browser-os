@@ -944,7 +944,7 @@ SECOND_TRUTHS: 0
 ## STAGE E — Skill Capability Closeout（DONE）
 
 ```text
-HEAD:        <commit-after-this-stage>  (feature/capability-platform-v1)
+HEAD:        a0ac7ba  (feature/capability-platform-v1)
 TAG:         capability-skill-c1-pass  (annotated)
 MATURITY:   C1 WRAPPED  (manifest.v1.maturity="C1"; status=COMPATIBILITY_WRAPPED)
             诚实功能缺口：执行后端 skill_run/install/list 未实现，仅只读壳
