@@ -680,3 +680,33 @@ capabilities:
       scope: disk
       sensitive: false
     entrypoint: src/stores/useWorkbenchStore.ts
+
+  # STAGE I-C：settings 判定为框架/平台 SERVICE（非产品 CAPABILITY）。
+  # 主题/键位/tab 休眠属框架偏好，不归属任何单一能力；SettingsPanel 经
+  # WORKBENCH_MAIN 贡献（view='settings'）解耦，Shell 经 src/settings/public.ts 访问。
+  - id: settings
+    name: Settings
+    category: SERVICE
+    semanticOwner: useSettingsStore
+    governanceStatus: GOVERNED
+    status: COMPATIBILITY_WRAPPED
+    provides:
+      - settings.theme
+      - settings.keymapScheme
+      - settings.tabHibernation
+    dependsOn: []
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE]
+      default: ACTIVE
+      activatable: false
+      resident: true
+    resources:
+      class: [LIGHT]
+      suspendable: false
+      destroyable: false
+    permissions: []
+    persistence:
+      scope: disk
+      sensitive: false
+    entrypoint: src/settings/index.ts

@@ -22,6 +22,7 @@ import { clipboardCapability, CLIPBOARD_CAPABILITY_ID } from '../capabilities/cl
 import { appsCapability, APPS_CAPABILITY_ID } from '../capabilities/apps'
 import { toolsCapability, TOOLS_CAPABILITY_ID } from '../capabilities/tools'
 import { vaultCapability } from '../capabilities/vault'
+import { settingsCapability } from '../settings'
 import { CAPABILITY_PROFILES, DEFAULT_PROFILE, type CapabilityProfileId, profileFromEnv, resolveProfile } from './profiles'
 import { CAPABILITY_CATALOG, CAPABILITY_DEFINITIONS } from './platform/catalog'
 import { assemble } from './platform/assembly'
@@ -49,6 +50,7 @@ export const ALL_CAPABILITIES = [
   { id: APPS_CAPABILITY_ID, def: appsCapability },
   { id: TOOLS_CAPABILITY_ID, def: toolsCapability },
   { id: 'vault', def: vaultCapability },
+  { id: 'settings', def: settingsCapability },
 ]
 
 let runtime: CapabilityRuntime | null = null

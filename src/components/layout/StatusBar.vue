@@ -5,7 +5,7 @@ import { useTerminalStore } from "../../capabilities/terminal/public";
 import { useWorkspaceStore } from "../../capabilities/workspace/public";
 import { useRepoStore } from "../../capabilities/workspace/public";
 import { useLayoutStore } from "../../stores/useLayoutStore";
-import { useSettingsStore } from "../../stores/useSettingsStore";
+import { useSettingsStore } from "../../settings/public";
 import { bridge } from "../../bridge";
 import type { ResourceStats } from "../../types";
 

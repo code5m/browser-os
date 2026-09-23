@@ -13,7 +13,7 @@ import { useGitStore } from "./stores/useGitStore";
 import { useClipboardStore } from "./capabilities/clipboard/public";
 import { useTerminalStore } from "./capabilities/terminal/public";
 import { useLayoutStore } from "./stores/useLayoutStore";
-import { useSettingsStore } from "./stores/useSettingsStore";
+import { useSettingsStore } from "./settings/public";
 
 import ActivityBar from "./components/layout/ActivityBar.vue";
 import UnifiedTabBar from './components/layout/UnifiedTabBar.vue';

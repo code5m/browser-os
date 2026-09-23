@@ -32,6 +32,7 @@ composability:
   clipboard: COMPATIBILITY_WRAPPED
   apps: COMPATIBILITY_WRAPPED
   tools: COMPATIBILITY_WRAPPED
+  settings: NOT_COMPOSABLE_BY_DESIGN
 
 profiles:
 
@@ -41,7 +42,8 @@ profiles:
     capabilities:
       - workspace
       - bookmark
-    note: 其中仅 bookmark 是 COMPATIBILITY_WRAPPED，workspace 仍为 TARGET_COMPOSABLE
+      - settings
+    note: 其中仅 bookmark 是 COMPATIBILITY_WRAPPED，workspace 仍为 TARGET_COMPOSABLE；settings 为常驻框架 SERVICE（NOT_COMPOSABLE_BY_DESIGN）
 
   - id: developer
     name: Developer
@@ -53,7 +55,8 @@ profiles:
       - git
       - database
       - bookmark
-    note: 除 bookmark 外均为 TARGET_COMPOSABLE；今晚不能真正按需装配
+      - settings
+    note: 除 bookmark 外均为 TARGET_COMPOSABLE；今晚不能真正按需装配；settings 为常驻框架 SERVICE
 
   - id: full
     name: Full
@@ -80,7 +83,8 @@ profiles:
       - session
       - script
       - workbench
-    note: 演示口径；credential/session 为 NOT_COMPOSABLE_BY_DESIGN
+      - settings
+    note: 演示口径；credential/session/settings 为 NOT_COMPOSABLE_BY_DESIGN
 
 # 演示时必须声明的事实
 demo_disclaimer: >

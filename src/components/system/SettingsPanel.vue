@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { bridge } from "../../bridge";
-import { useSettingsStore } from "../../stores/useSettingsStore";
+import { useSettingsStore } from "../../settings/public";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 
 const settings = useSettingsStore();

@@ -5,7 +5,6 @@ import { useBrowserStore } from "../../capabilities/browser/public";
 import { contributionRegistry } from "../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
 import HomePanel from "../home/HomePanel.vue";
-import SettingsPanel from "../system/SettingsPanel.vue";
 // M4-4 数据库面板：懒加载（defineAsyncComponent），将其 15KB+ 纯逻辑(dbUi.ts)、
 // store(useDatabaseStore.ts) 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
 // 仅在 mainView==='db' 首次渲染时才拉取该 chunk，不破坏其它视图。
@@ -182,10 +181,7 @@ watch(
     <!-- ===== 智能体（Agent）：已升格 capabilities/agent/，经 WORKBENCH_MAIN 贡献 view='agents' 渲染（由通用 viewOf 分支处理） ===== -->
     <!-- ===== 知识图谱（M5-9）：已升格 capabilities/graph/，经 WORKBENCH_MAIN 贡献 view='graph' 渲染（由上方通用 viewOf 分支处理） ===== -->
 
-    <!-- ===== 系统设置 ===== -->
-    <div v-else-if="layout.mainView === 'settings'" class="modview">
-      <SettingsPanel />
-    </div>
+    <!-- ===== 系统设置（STAGE I-C）：已升格 src/settings/，经 WORKBENCH_MAIN 贡献 view='settings' 渲染（由上方通用 viewOf 分支处理） ===== -->
 
     <!-- ===== 终端主视图：已迁入 Terminal 能力（workbench-main-resident 槽），
          由 capabilities/terminal/ui/TerminalView.vue 自管挂载/显隐与 PTY 出生点。 -->
