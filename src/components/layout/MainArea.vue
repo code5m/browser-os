@@ -42,13 +42,8 @@ const SkillManagerPanel = defineAsyncComponent({
   delay: 80,
   timeout: 10000,
 });
-const AgentManagerPanel = defineAsyncComponent({
-  loader: () => import("../workspace/AgentManagerPanel.vue"),
-  loadingComponent: panelLoading,
-  errorComponent: panelError,
-  delay: 80,
-  timeout: 10000,
-});
+// Agent 面板已升格为 capabilities/agent/ 能力：经 WORKBENCH_MAIN 贡献（view='agents'）懒加载注册，
+// MainArea 只按槽渲染（见下方通用 viewOf 分支），不再静态 import 本能力内部（C3 关键）。
 // M5-9 图谱面板：懒加载（defineAsyncComponent），将其纯逻辑(graphUi.ts)、store(useGraphStore.ts)
 // 与组件从主 chunk 拆出，压低首屏 JS 体积（IF-2 构建体积闸门）。
 const GraphPanel = defineAsyncComponent({
@@ -229,9 +224,7 @@ watch(
     <div v-else-if="layout.mainView === 'skills'" class="modview">
       <SkillManagerPanel />
     </div>
-    <div v-else-if="layout.mainView === 'agents'" class="modview">
-      <AgentManagerPanel />
-    </div>
+    <!-- ===== 智能体（Agent）：已升格 capabilities/agent/，经 WORKBENCH_MAIN 贡献 view='agents' 渲染（由通用 viewOf 分支处理） ===== -->
     <div v-else-if="layout.mainView === 'graph'" class="modview" role="region" aria-label="知识图谱">
       <GraphPanel />
     </div>

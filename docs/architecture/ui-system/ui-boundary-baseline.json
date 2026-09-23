@@ -61,12 +61,7 @@
       "component": "SkillManagerPanel",
       "domain": "SKILL"
     },
-    {
-      "shell": "src/components/layout/MainArea.vue",
-      "line": 221,
-      "component": "AgentManagerPanel",
-      "domain": "AGENT"
-    },
+
     {
       "shell": "src/components/layout/MainArea.vue",
       "line": 224,

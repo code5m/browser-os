@@ -290,7 +290,12 @@ capabilities:
     category: CAPABILITY
     semanticOwner: useAgentStore
     governanceStatus: GOVERNED
-    status: NOT_INTEGRATED
+    # Capability Library Expansion v1：Agent 升格为独立 Capability（AgentManagerPanel 迁入 capabilities/agent/ui）。
+    # 诚实缺口：执行后端（agent_chat/run/install）Rust 未实现（AGENT_SKILL_COMMANDS_AVAILABLE=false），
+    # 仅 agent_parse/validate/permission_preview 只读命令就绪 → 当前为只读壳，maturity C1。
+    # useAgentStore 同时持有 skill 状态（skill 无专属 store），STAGE E 处理 skill 拆分。
+    status: COMPATIBILITY_WRAPPED
+    maturity: C1
     provides:
       - agent.chat
       - agent.run
@@ -302,7 +307,7 @@ capabilities:
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
-      activatable: false
+      activatable: true
       resident: false
     resources:
       class: [MEDIUM, NETWORK]
@@ -313,7 +318,7 @@ capabilities:
     persistence:
       scope: disk
       sensitive: false
-    entrypoint: src/components/workspace/AgentChatPanel.vue
+    entrypoint: src/capabilities/agent/index.ts
 
   - id: skill
     name: Skill

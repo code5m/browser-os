@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted } from "vue";
-import { useAgentStore } from "../../stores/useAgentStore";
-import { a2aSummary, dialectLabel, renderCapabilityList, panelState } from "../../utils/agentSkillUi";
-import type { AgentDef } from "../../types";
-import PermissionPreviewModal from "./PermissionPreviewModal.vue";
+import { useAgentStore } from "../../../stores/useAgentStore";
+import { a2aSummary, dialectLabel, renderCapabilityList, panelState } from "../../../utils/agentSkillUi";
+import type { AgentDef } from "../../../types";
+import PermissionPreviewModal from "../../../components/workspace/PermissionPreviewModal.vue";
 import AgentChatPanel from "./AgentChatPanel.vue";
 
 const whitelist = computed(() => [] as string[]);

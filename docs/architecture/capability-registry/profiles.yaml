@@ -20,7 +20,7 @@ composability:
   workbench: TARGET_COMPOSABLE
   database: COMPATIBILITY_WRAPPED
   git: COMPATIBILITY_WRAPPED
-  agent: TARGET_COMPOSABLE
+  agent: COMPATIBILITY_WRAPPED
   task: TARGET_COMPOSABLE
   script: TARGET_COMPOSABLE
   terminal: TARGET_COMPOSABLE
@@ -80,6 +80,6 @@ profiles:
 demo_disclaimer: >
   三个 Profile 是"组合配置的设计口径"，不是今晚已实现的按需装配能力。
   今晚已接入 Capability Runtime 并经通用 Contribution Registry 解耦的有
-  bookmark / git / database（均为 COMPATIBILITY_WRAPPED）；
+  bookmark / git / database / agent（均为 COMPATIBILITY_WRAPPED）；
   其启停仍由 profile 预设驱动，未实现 runtime 按需装配（CURRENTLY_COMPOSABLE = 0）。
   其余能力的启停仍为 TARGET_COMPOSABLE。禁止在演示中声称"可以一键切换 Profile"。

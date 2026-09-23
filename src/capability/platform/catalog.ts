@@ -10,6 +10,7 @@ import { browserManifest } from "../../capabilities/browser/manifest";
 import { terminalManifest } from "../../capabilities/terminal/manifest";
 import { gitManifest } from "../../capabilities/git/manifest";
 import { databaseManifest } from "../../capabilities/database/manifest";
+import { agentManifest } from "../../capabilities/agent/manifest";
 import type { CapabilityManifestV1 } from "./contract";
 
 /** 已具备 Building Block Contract v1 的能力清单（未声明 v1 的能力不进 catalog） */
@@ -20,6 +21,7 @@ export const CATALOG_SOURCES = [
   terminalManifest,
   gitManifest,
   databaseManifest,
+  agentManifest,
 ] as const;
 
 export function buildCatalog(): Record<string, CapabilityManifestV1> {

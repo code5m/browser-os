@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { useAgentStore } from "../../stores/useAgentStore";
-import { chunksToText } from "../../utils/agentSkillUi";
+import { useAgentStore } from "../../../stores/useAgentStore";
+import { chunksToText } from "../../../utils/agentSkillUi";
 
 // 对话壳：仅渲染既有会话（只读视图）。执行通道（agent_chat / runAgent）在 W10 尚未开放，
 // 此处不提供发送/输入控件（W10 A6：no execution buttons）。
