@@ -727,6 +727,8 @@ const ANCHOR_FILES = [
   { path: "src/stores/useDatabaseStore.ts", src: `const connections = ref([]);` },
   { path: "src/stores/useGitStore.ts", src: `const status = ref([]);` },
   { path: "src/capabilities/skill/state/useSkillStore.ts", src: `const skills = ref([]);` },
+  // SG-4：task 域专属 owner（owner_implementations 已登记）；锚点跟随 locator，否则 RI 报 UNRESOLVED。
+  { path: "src/capabilities/task/state/useTaskStore.ts", src: `const tasks = ref([]); const runs = ref([]); const targets = ref([]);` },
 ];
 const ALL = (arr) => [...ANCHOR_FILES, ...arr];
 

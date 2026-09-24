@@ -294,6 +294,47 @@ side_effects:
     status: CURRENT_FACT
     note: SG-C 登记；与 skillChat 同源
 
+  # ---------------- SG-4：task 原生副作用（requires_declaration=false，文档级登记）----------------
+  taskAdd:
+    declared: create scheduled task
+    actual:
+      - 写定时任务定义到 Rust 后端（task_add）
+    warning: 新建任务；guard 未就绪时前端 no-op 且零 invoke（LIMITED START 口径）
+    call_sites: bridge.taskAdd
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG-4 登记；与 agentInstall/skillInstall 同源（后端命令未落地前为只读壳）
+
+  taskUpdate:
+    declared: update scheduled task
+    actual:
+      - 更新定时任务定义到 Rust 后端（task_update，含 enabled 切换）
+    warning: 编辑/启用禁用；覆盖变更字段，保留服务端时间戳
+    call_sites: bridge.taskUpdate
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG-4 登记
+
+  taskRemove:
+    declared: delete scheduled task
+    actual:
+      - 删除定时任务定义（task_remove）
+    warning: 删除后前端过滤本地列表；选中态联动清空
+    call_sites: bridge.taskRemove
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG-4 登记
+
+  taskRunNow:
+    declared: trigger task execution immediately
+    actual:
+      - 手工触发一次执行（task_run_now），后端落盘持久历史
+    warning: 会话内仅把快照并入 runs 供即时展示；持久历史仍由后端
+    call_sites: bridge.taskRunNow
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG-4 登记
+
 # ------------------------------------------------------------
 # 清单中列出但代码中不存在的项（如实标注，不得当作现状）
 # ------------------------------------------------------------

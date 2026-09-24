@@ -19,7 +19,7 @@
 | clipboard | 剪贴板 | useClipboardStore | partial(locator only) | no | no | no | no | yes | info-only | yes | **OWNER_DECLARED_ONLY** |
 | apps | 应用 | useAppsStore | partial(locator only) | no | no | no | no | yes | info-only | yes | **OWNER_DECLARED_ONLY** |
 | tools | 工具箱 | useToolsStore | partial(locator only) | no | no | no | no | yes | info-only | yes | **OWNER_DECLARED_ONLY** |
-| task | 定时任务 | useTaskStore | partial(manifest+locator缺失) | no | no | no | no | no(locator未列) | no | yes | **OWNER_DECLARED_ONLY** |
+| task | 定时任务 | useTaskStore | yes | yes | yes | yes | yes | yes | yes(R1-R5) | yes | **FULLY_GOVERNED** |
 | graph | 图谱 | (Rust GraphStore，无前端 store) | no | no | no | no | no | n/a | no | yes | **OWNER_DECLARED_ONLY** |
 | agent | 智能体 | useAgentStore (src/stores/) | no | no | no | no | no | n/a | no | yes | **OWNER_DECLARED_ONLY** |
 | database | 数据库 | useDatabaseStore (src/stores/) | no | no | no | no | no | n/a | no | yes | **OWNER_DECLARED_ONLY** |
@@ -43,9 +43,9 @@
 
 ## C. 覆盖率汇总（14 模块）
 
-- FULLY_GOVERNED: 3 (bookmark, browser, terminal)
+- FULLY_GOVERNED: 4 (bookmark, browser, terminal, task)
 - PARTIALLY_GOVERNED: 1 (vault)
-- OWNER_DECLARED_ONLY: 10 (clipboard, apps, tools, task, graph, agent, database, home, plugin, settings)
+- OWNER_DECLARED_ONLY: 9 (clipboard, apps, tools, graph, agent, database, home, plugin, settings)
 - REGISTRY_DECLARED_ONLY: 0
 - OWNER_PENDING_SCR: 0
 - UNGOVERNED: 0
@@ -59,7 +59,7 @@
 | `02-STATE-SOURCES.md` 引 `useSystemStore`(终端旧主)/`useGridArchiveStore`(grid)/`useWorkbenchStore`(aiNavOpen) | STALE_DOCUMENTATION | 该文件是 Agent A 只读审计快照（页首标明 READ-ONLY），活动真源是 states/owners YAML；建议加页眉“已被 semantic-registry/* 取代”，不改写审计结论 |
 | 02-STATE-SOURCES 引 `activeTermId` owner=useSystemStore | STALE_DOCUMENTATION | 终端 owner 已迁 useTerminalStore（Phase 8E/Train D，states.yaml 已更新）；registry 为准 |
 | home/apps/settings/vault/agent/database 不在 states.yaml | MISSING_REGISTRY_ENTRY（非 bug） | 这些是 OWNER_DECLARED_ONLY；须走 SCR 纳入或判 NOT_APPLICABLE，禁止静默 |
-| `task` 的 `useTaskStore` 不在 `owner_implementations` locator 表 | MISSING_OWNER_LOCATOR | 建议补 locator（路径 `src/capabilities/task/state/useTaskStore.ts`）；当前不影响 checker（task 未治理），但登记更完整 |
+| `task` 的 `useTaskStore` locator / states / owners / intents / side-effects 已全部登记（SG-4） | RESOLVED | task 已升格为 FULLY_GOVERNED（checker self-test ALL_PASS + real scan fail=0）；原 MISSING_OWNER_LOCATOR 已消除 |
 | `clipboard`/`apps`/`tools` 在 `owner_implementations` 但不在 `owners.yaml` 的 `owners:` | PARTIAL_REGISTRY（locator 有、owner 条目缺） | 与 task 同类；SCR 纳入时一并补 owners 条目 |
 | `useGridArchiveStore`(gridOpen/gridSession 读者) 仍在 src/stores | STALE_LOCATOR（物理债务，非语义缺陷） | 属 browser 物理债务（D3 README §8 已登记）；影响的是 state 物理位置，非 registry 真值 |
 | checker 解析 `src/stores/useLayoutStore.ts` 与 `src/capabilities/workspace/state/useScriptStore.ts` 无 RI-UNRESOLVED | VALID_NOT_APPLICABLE | locator 首候选存在即命中，无漂移失败 |

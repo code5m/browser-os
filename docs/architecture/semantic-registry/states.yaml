@@ -130,6 +130,12 @@ owner_implementations:
     paths:
       - src/capabilities/skill/state/useSkillStore.ts
 
+  useTaskStore:
+    # M4-8 定时任务面板状态机；组件一律经 bridge，后端命令未就绪时 guard 拦截所有 invoke（零 invoke 口径）。
+    symbol: useTaskStore
+    paths:
+      - src/capabilities/task/state/useTaskStore.ts
+
 states:
 
   # ---------------- View Navigation ----------------
@@ -2391,6 +2397,191 @@ states:
     duplicate_names: []
     adr_required: false
     status: CURRENT_FACT
+
+  # ---------------- Task（owner: useTaskStore，M4-8 定时任务面板状态机）----------------
+  # 约束：组件不得直 invoke，一切经 bridge；backendReady 为假时所有动作 no-op 且零 invoke。
+  # backendReady 为跨域共享就绪态（useAgentStore 已登记、single_owner_required:false），本域不重复声明。
+  # error 为跨域共享 observed 态（已登记于他处），本域只消费、不重复建键。
+
+  tasks:
+    owner: useTaskStore
+    meaning: 定时任务定义列表（task_list 返回的任务集合）
+    not_meaning:
+      - 执行历史（见 runs）
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useTaskStore.applyTaskList
+      - useTaskStore.removeTask
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  runs:
+    owner: useTaskStore
+    meaning: 任务执行记录列表（task_list 返回附带 / runNow 会话内并入）
+    not_meaning:
+      - 目标执行历史（见 targetRuns，按 target_id 过滤的 script-runs）
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useTaskStore.applyTaskList
+      - useTaskStore.runNow
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  targets:
+    owner: useTaskStore
+    meaning: 定时任务目标候选（script + snippet，来自既有 store，不新增读取通道）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useTaskStore.loadTargets
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  selectedTaskId:
+    owner: useTaskStore
+    meaning: 当前选中任务（用于执行历史抽屉）；为空表示未选中
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useTaskStore.selectTask
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  targetRuns:
+    owner: useTaskStore
+    meaning: 选中目标的执行历史（读 script_runs_list 按 target_id 过滤）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useTaskStore.loadTargetRuns
+      - useTaskStore.selectTask
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  loading:
+    owner: useTaskStore
+    meaning: 任务面板异步载入标志（observed）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useTaskStore.loadAll
+      - useTaskStore.saveDraft
+      - useTaskStore.setEnabled
+      - useTaskStore.removeTask
+      - useTaskStore.runNow
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  draft:
+    owner: useTaskStore
+    meaning: 任务编辑草稿（新建/编辑共用，序列化后传出）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useTaskStore.openCreate
+      - useTaskStore.openEdit
+      - useTaskStore.saveDraft
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  issues:
+    owner: useTaskStore
+    meaning: 任务草稿校验问题列表（前端即时反馈）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useTaskStore.validate
+      - useTaskStore.openCreate
+      - useTaskStore.openEdit
+      - useTaskStore.closeEditor
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  editorOpen:
+    owner: useTaskStore
+    meaning: 任务编辑抽屉开关
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useTaskStore.openCreate
+      - useTaskStore.openEdit
+      - useTaskStore.closeEditor
+      - useTaskStore.saveDraft
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  sortedRuns:
+    owner: useTaskStore
+    meaning: runs 按时间倒序稳定视图（纯派生）
+    not_meaning:
+      - 独立存储列表（禁止第二份）
+    kind: derived
+    derived: true
+    derived_from:
+      - runs
+    formula: "sortRuns(runs.value)"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone（派生量禁止写入；R6 护栏）
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+    note: 派生量禁止写入（R6 护栏）
+
+  enabledCount:
+    owner: useTaskStore
+    meaning: 启用中任务数量（tasks 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - tasks
+    formula: "tasks.value.filter(t => t.enabled).length"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+    note: 派生量禁止写入（R6 护栏）
 
 # ------------------------------------------------------------
 # 已观察到但本批不治理（真实存在的声明；新增治理需走 SCR）

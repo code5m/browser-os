@@ -762,6 +762,55 @@ owners:
     rationale: STAGE E 从 agent 拆出独立 owner；与 agent 同口径：只读校验消费态与 install/run 就绪态解耦，backendReady 闸门，secret 纵深脱敏
     status: CURRENT_FACT
 
+  task:
+    owner: useTaskStore
+    owns:
+      - tasks
+      - runs
+      - targets
+      - selectedTaskId
+      - targetRuns
+      - loading (observed)
+      - error (observed, 共享)
+      - draft
+      - issues
+      - editorOpen
+      - sortedRuns (derived)
+      - enabledCount (derived)
+      - backendReady (observed, 共享; useAgentStore 已登记 single_owner_required:false)
+    owner_only_api:
+      - applyTaskList
+      - loadTargets
+      - openCreate
+      - openEdit
+      - closeEditor
+      - validate
+      - saveDraft
+      - setEnabled
+      - removeTask
+      - runNow
+      - selectTask
+      - loadTargetRuns
+      - loadAll
+    public_intent_api:
+      - loadAll
+      - createTask (saveDraft 新建 → bridge.taskAdd)
+      - updateTask (saveDraft 编辑 → bridge.taskUpdate)
+      - removeTask
+      - runTaskNow (bridge.taskRunNow)
+      - setTaskEnabled (bridge.taskUpdate)
+      - selectTask
+      - openCreate
+      - openEdit
+      - closeEditor
+    forbidden_callers:
+      - components/**（不得直写 tasks/runs/targets/draft/issues/editorOpen 等）
+    authorized_callers:
+      - useTaskStore（owner 自身）
+      - TaskPanel.vue / TaskEditor.vue（消费 + 触发 intent）
+    rationale: M4-8 定时任务面板状态机；组件一律经 bridge，后端 5 命令未就绪时 guard() 拦截所有 invoke（零 invoke 口径）；新建任务默认 enabled=false（A6 裁定）；secret 不进前端持久化
+    status: CURRENT_FACT
+
 # ------------------------------------------------------------
 # 越界判定补充
 # ------------------------------------------------------------

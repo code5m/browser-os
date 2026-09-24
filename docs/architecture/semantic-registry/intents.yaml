@@ -844,6 +844,62 @@ rejected_intents:
     status: REJECTED
     action: 代码中出现即 SEMANTIC_INTENT_DUPLICATE（阻断级）
 
+  # ---------------- Task（owner: useTaskStore，M4-8 定时任务面板）----------------
+  loadTasks:
+    meaning: 加载定时任务列表 + 执行历史 + 目标候选
+    owner: useTaskStore
+    allowed_effects:
+      - bridge.taskList → tasks/runs
+      - bridge.scriptRunsList/snippet 列表 → targets
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  createTask:
+    meaning: 新建定时任务（序列化整包传出）
+    owner: useTaskStore
+    allowed_effects:
+      - bridge.taskAdd（guard 未就绪则 no-op 零 invoke）
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  updateTask:
+    meaning: 编辑/启用禁用定时任务（覆盖变更字段，保留服务端时间戳）
+    owner: useTaskStore
+    allowed_effects:
+      - bridge.taskUpdate（含 setEnabled 改 enabled）
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  removeTask:
+    meaning: 删除定时任务
+    owner: useTaskStore
+    allowed_effects:
+      - bridge.taskRemove → tasks 过滤
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  runTaskNow:
+    meaning: 手工立即触发一次执行（会话内并入 runs 供即时展示）
+    owner: useTaskStore
+    allowed_effects:
+      - bridge.taskRunNow → runs
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  selectTask:
+    meaning: 选中任务并加载其目标执行历史
+    owner: useTaskStore
+    allowed_effects:
+      - useTaskStore.selectTask → selectedTaskId + loadTargetRuns
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
 # ------------------------------------------------------------
 # 拟议但代码中不存在（不得当作现状引用）
 # ------------------------------------------------------------
