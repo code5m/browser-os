@@ -313,9 +313,12 @@ function rule6(files, reg) {
       const declRe = new RegExp(
         "(?:const|let|var)\\s+" + key + "\\s*(?::[^=;]+)?=\\s*(?:ref|shallowRef|reactive)\\s*(?:<[^>]*>)?\\s*\\("
       );
-      if (declRe.test(code))
+      // 仅当该派生量被声明为独立存储态（ref/reactive/shallowRef）时才构成“第二真源”违规；
+      // 写穿式 computed({get,set}) 的 .value = 落到真源（如 document.connId），不产生第二真源，属合法，不判。
+      const declaredStored = declRe.test(code);
+      if (declaredStored)
         out.push({ rule: "R6", code: "SEMANTIC_DERIVED_STATE_STORED", file: f.path, detail: `"${key}" 在 registry 标记为 derived（禁止存储），却被声明为 ref/reactive/shallowRef 存储态`, severity: "fail" });
-      if (new RegExp("\\b" + key + "\\.value\\s*=").test(code))
+      if (declaredStored && new RegExp("\\b" + key + "\\.value\\s*=").test(code))
         out.push({ rule: "R6", code: "SEMANTIC_DERIVED_STATE_STORED", file: f.path, detail: `"${key}" 是派生状态，禁止写入 .value =（第二真源）`, severity: "fail" });
     }
   }
@@ -576,6 +579,32 @@ function runLocatorSelfTest() {
   return bad;
 }
 
+// R6 写穿式 computed setter 回归：派生量若以 computed({get,set}) 写穿到真源（如 document），其 .value = 不构成第二真源，不误报；
+// 但若派生量被声明为 ref/reactive 存储态并写入，仍判 SEMANTIC_DERIVED_STATE_STORED。
+function runR6SelfTest() {
+  let bad = 0;
+  const reg = { states: { states: {
+    r6WtComputed: { derived: true, kind: "derived" },
+    r6WtRef: { derived: true, kind: "derived" },
+  } } };
+  // 写穿式 computed：get 读真源、set 写回真源；.value = 合法，不判
+  const wt = { path: "src/stores/useDatabaseStore.ts", src:
+    `const document = ref({ connId: null, sql: "" });\n` +
+    `const r6WtComputed = computed({ get: () => document.value.connId, set: (v) => { document.value.connId = v; } });\n` +
+    `r6WtComputed.value = "x";` };
+  const wtOut = rule6([wt], reg).filter((x) => x.rule === "R6");
+  if (wtOut.length !== 0) { bad++; console.log("  ✗ R6 写穿式 computed setter 误报:", wtOut.map((x) => x.code).join(",")); }
+  else console.log("  ✓ R6: 写穿式 computed({get,set}) .value = 落真源，不误报（非第二真源）");
+  // 存储态谎报为派生：ref 声明 + .value = 必须判失败
+  const refF = { path: "src/stores/useXStore.ts", src:
+    `const r6WtRef = ref("");\n` +
+    `r6WtRef.value = "x";` };
+  const refOut = rule6([refF], reg).filter((x) => x.rule === "R6");
+  if (refOut.length < 1) { bad++; console.log("  ✗ R6 存储态谎报为派生（ref + .value=）至少应判 1 失败，实际:", refOut.length); }
+  else console.log("  ✓ R6: 派生量被存为 ref 且写入 → 仍判 SEMANTIC_DERIVED_STATE_STORED（" + refOut.length + " 条）");
+  return bad;
+}
+
 // ============================ CLI ============================
 function printHelp() {
   console.log(`check-semantic-registry.mjs — Semantic Gate (Phase 1.5)
@@ -693,6 +722,11 @@ const ANCHOR_FILES = [
   { path: "src/capabilities/vault/state/useVaultStore.ts", src: `const path = ref("");` },
   // Capability Library Expansion v1：Home 域专属 owner（owner_implementations 已登记）；锚点跟随 locator。
   { path: "src/capabilities/home/state/useHomeStore.ts", src: `const shortcuts = reactive([]); const recents = reactive([]);` },
+  // SG-C Medium：agent/database/git/skill 专属 owner；锚点跟随 locator。
+  { path: "src/stores/useAgentStore.ts", src: `const agents = ref([]);` },
+  { path: "src/stores/useDatabaseStore.ts", src: `const connections = ref([]);` },
+  { path: "src/stores/useGitStore.ts", src: `const status = ref([]);` },
+  { path: "src/capabilities/skill/state/useSkillStore.ts", src: `const skills = ref([]);` },
 ];
 const ALL = (arr) => [...ANCHOR_FILES, ...arr];
 
@@ -718,6 +752,9 @@ function runSelfTest() {
 
   // Phase 8A.1：implementation locator 迁移测试（CASE A–E）
   bad += runLocatorSelfTest();
+
+  // R6 写穿式 computed setter 回归：derived + computed({get,set}) 写穿真源 不误报；derived + ref 存储态写入 仍判失败。
+  bad += runR6SelfTest();
 
   console.log("");
   console.log(bad === 0 ? "SELF_TEST_RESULT=ALL_PASS" : `SELF_TEST_RESULT=FAIL(${bad})`);

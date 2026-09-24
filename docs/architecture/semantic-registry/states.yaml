@@ -109,6 +109,26 @@ owner_implementations:
     symbol: useHomeStore
     paths:
       - src/capabilities/home/state/useHomeStore.ts
+  useAgentStore:
+    # 真实领域 + 原生副作用（前端镜像 Rust agent_*）；STAGE E 同源。
+    symbol: useAgentStore
+    paths:
+      - src/stores/useAgentStore.ts
+  useDatabaseStore:
+    # 真实领域 + 强原生副作用（外部 DB 连接 / SQL 执行）。
+    symbol: useDatabaseStore
+    paths:
+      - src/stores/useDatabaseStore.ts
+  useGitStore:
+    # 真实领域 + 双段写闸门（requestGitWrite / confirmGitWrite）。
+    symbol: useGitStore
+    paths:
+      - src/stores/useGitStore.ts
+  useSkillStore:
+    # STAGE E 从 agent 拆出的独立 owner。
+    symbol: useSkillStore
+    paths:
+      - src/capabilities/skill/state/useSkillStore.ts
 
 states:
 
@@ -1316,6 +1336,1060 @@ states:
     duplicate_names: []
     adr_required: true
     adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  # ---------------- Agent（owner: useAgentStore，STAGE E 同源，SG-C）----------------
+  agents:
+    owner: useAgentStore
+    meaning: 已安装 Agent 清单（bridge.agentList 镜像；install 后刷新）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useAgentStore.loadAgents
+      - useAgentStore.installAgent
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  agentInstalls:
+    owner: useAgentStore
+    meaning: Agent 安装态记录（id → 安装/待确认态）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useAgentStore.installAgent
+      - useAgentStore.ackConfirm
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  sessions:
+    owner: useAgentStore
+    meaning: 流式 Agent 会话壳（仅 UI 展示，不落盘）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useAgentStore.runAgent
+      - useAgentStore.endSession
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  selectedAgentId:
+    owner: useAgentStore
+    meaning: 当前选中 Agent
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useAgentStore.selectAgent
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  agentValidation:
+    owner: useAgentStore
+    meaning: W9 只读校验消费态（不持原始输入）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useAgentStore.validateAgent
+      - useAgentStore.clearValidation
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  agentParseDef:
+    owner: useAgentStore
+    meaning: 解析后的 Agent 定义（只读展示）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useAgentStore.validateAgent
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  agentPreview:
+    owner: useAgentStore
+    meaning: Agent 权限预览（只读展示）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useAgentStore.validateAgent
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  selectedAgent:
+    owner: useAgentStore
+    meaning: 选中 Agent 对象（selectedAgentId 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - agents
+      - selectedAgentId
+    formula: "agents.find(a => a.id === selectedAgentId) || null"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  agentStatus:
+    owner: useAgentStore
+    meaning: Agent 面板四态（empty/loading/ok/error）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - agents
+      - loading
+      - error
+    formula: "agents.length===0 ? 'empty' : loading ? 'loading' : error ? 'error' : 'ok'"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  boundedAgentPreview:
+    owner: useAgentStore
+    meaning: 能力预览有界（agentPreview 脱敏后）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - agentPreview
+    formula: "boundCaps(agentPreview?.capabilities)"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  # ---------------- Skill（owner: useSkillStore，STAGE E 从 agent 拆出，SG-C）----------------
+  skills:
+    owner: useSkillStore
+    meaning: 已安装 Skill 清单（bridge.skillList 镜像；install 后刷新）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useSkillStore.loadSkills
+      - useSkillStore.installSkill
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  skillInstalls:
+    owner: useSkillStore
+    meaning: Skill 安装态记录（id → 安装/待确认态）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useSkillStore.installSkill
+      - useSkillStore.ackConfirm
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  selectedSkillId:
+    owner: useSkillStore
+    meaning: 当前选中 Skill
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useSkillStore.selectSkill
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  skillValidation:
+    owner: useSkillStore
+    meaning: W9 只读校验消费态（不持原始输入）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useSkillStore.validateSkill
+      - useSkillStore.clearValidation
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  skillParseDef:
+    owner: useSkillStore
+    meaning: 解析后的 Skill 定义（只读展示）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useSkillStore.validateSkill
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  skillPreview:
+    owner: useSkillStore
+    meaning: Skill 权限预览（只读展示）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useSkillStore.validateSkill
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  selectedSkill:
+    owner: useSkillStore
+    meaning: 选中 Skill 对象（selectedSkillId 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - skills
+      - selectedSkillId
+    formula: "skills.find(s => s.id === selectedSkillId) || null"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  skillStatus:
+    owner: useSkillStore
+    meaning: Skill 面板四态（empty/loading/ok/error）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - skills
+      - loading
+      - error
+    formula: "skills.length===0 ? 'empty' : loading ? 'loading' : error ? 'error' : 'ok'"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  boundedPreview:
+    owner: useSkillStore
+    meaning: 能力预览有界（skillPreview 脱敏后）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - skillPreview
+    formula: "boundCaps(skillPreview?.capabilities)"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  # ---------------- Database（owner: useDatabaseStore，SG-C）----------------
+  form:
+    owner: useDatabaseStore
+    meaning: 数据库连接表单（password 不进 form/store，瞬时参数）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useDatabaseStore.resetForm
+      - useDatabaseStore.setKind
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  connections:
+    owner: useDatabaseStore
+    meaning: 数据库连接列表（bridge.dbListConnections 镜像）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useDatabaseStore.refreshConnections
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  configs:
+    owner: useDatabaseStore
+    meaning: 连接配置列表（含 allow_write 闸门位）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useDatabaseStore.refreshConnections
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  documents:
+    owner: useDatabaseStore
+    meaning: 多查询页签（最多 12）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useDatabaseStore.newDocument
+      - useDatabaseStore.closeDocument
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  activeDocument:
+    owner: useDatabaseStore
+    meaning: 当前页签 id
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useDatabaseStore.newDocument
+      - useDatabaseStore.closeDocument
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  connecting:
+    owner: useDatabaseStore
+    meaning: 连接进行中标志
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useDatabaseStore.connect
+      - useDatabaseStore.disconnect
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  schema:
+    owner: useDatabaseStore
+    meaning: 当前连接 schema 快照
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useDatabaseStore.refreshSchema
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  schemaBusy:
+    owner: useDatabaseStore
+    meaning: schema 加载态
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useDatabaseStore.refreshSchema
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  closePending:
+    owner: useDatabaseStore
+    meaning: 关闭页签待确认
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useDatabaseStore.closeDocument
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  risk:
+    owner: useDatabaseStore
+    meaning: 后端回带的 SQL 风险等级（fail-closed 兜底）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useDatabaseStore.confirmRun
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  verdict:
+    owner: useDatabaseStore
+    meaning: 后端回带的生产环境判定（fail-closed 兜底）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useDatabaseStore.confirmRun
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  document:
+    owner: useDatabaseStore
+    meaning: 当前页签对象投影（documents/activeDocument 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - documents
+      - activeDocument
+    formula: "documents.find(d => d.id === activeDocument) || null"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  activeId:
+    owner: useDatabaseStore
+    meaning: 当前连接 id（document.connId 投影）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - document
+    formula: "document?.connId ?? null"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  sql:
+    owner: useDatabaseStore
+    meaning: 当前页签 SQL（document.sql 投影，写回经 document）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - document
+    formula: "document?.sql ?? ''"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  result:
+    owner: useDatabaseStore
+    meaning: 当前页签结果视图（document.result 投影）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - document
+    formula: "document?.result ?? null"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  pendingSql:
+    owner: useDatabaseStore
+    meaning: 待确认 SQL（document.pending 投影）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - document
+    formula: "document?.pending ?? null"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  connected:
+    owner: useDatabaseStore
+    meaning: 是否已连接（activeId 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - activeId
+    formula: "!!activeId"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  formIssues:
+    owner: useDatabaseStore
+    meaning: 连接表单校验（form 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - form
+    formula: "validateConnectionForm(form)"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  runGate:
+    owner: useDatabaseStore
+    meaning: 是否允许发起查询（能力 + 表单 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - connected
+      - formIssues
+    formula: "connected && !formIssues"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  requiresConfirm:
+    owner: useDatabaseStore
+    meaning: 当前连接是否需二次确认（configs[activeId].allow_write）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - configs
+      - activeId
+    formula: "configs.find(c => c.id === activeId)?.allow_write ?? true"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  confirmOpen:
+    owner: useDatabaseStore
+    meaning: 确认弹窗是否打开（pendingSql 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - pendingSql
+    formula: "pendingSql !== null"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  # ---------------- Git（owner: useGitStore，双段写闸门，SG-C）----------------
+  # 注册键对齐真实代码符号（此前误用 git 前缀语义名，导致 R2 失配 / 漂移，已按 Phase D Locator Repair 纠正）。
+  repoId:
+    owner: useGitStore
+    meaning: 当前仓库 id
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGitStore.selectRepo
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  status:
+    owner: useGitStore
+    meaning: 工作区文件状态（bridge.gitStatus 镜像）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGitStore.loadStatus
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  branches:
+    owner: useGitStore
+    meaning: 分支列表（bridge.gitBranchList 镜像）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGitStore.loadBranches
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  diff:
+    owner: useGitStore
+    meaning: 选中文件 diff（bridge.gitDiff 镜像）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGitStore.loadDiff
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  activePath:
+    owner: useGitStore
+    meaning: 当前选中文件路径
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGitStore.toggleSelect
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  selected:
+    owner: useGitStore
+    meaning: 勾选路径集合（reactive Set）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGitStore.toggleSelect
+      - useGitStore.selectAll
+      - useGitStore.clearSelection
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  commitMessage:
+    owner: useGitStore
+    meaning: 提交信息输入缓冲
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer: []
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  branchName:
+    owner: useGitStore
+    meaning: 新分支名输入缓冲
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer: []
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  createCheckout:
+    owner: useGitStore
+    meaning: 创建并切换新分支开关
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer: []
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  preview:
+    owner: useGitStore
+    meaning: 待确认写预览（requestGitWrite 生成）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGitStore.requestWrite
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  dangerousAck:
+    owner: useGitStore
+    meaning: 危险操作二次确认勾选
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGitStore.confirmWrite
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  lastJob:
+    owner: useGitStore
+    meaning: 最近一次写任务
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGitStore.confirmWrite
+      - useGitStore.onWriteCompleted
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  writeError:
+    owner: useGitStore
+    meaning: 写操作错误
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGitStore.confirmWrite
+      - useGitStore.cancelWrite
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  statusLoading:
+    owner: useGitStore
+    meaning: 状态加载中
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGitStore.loadStatus
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  branchLoading:
+    owner: useGitStore
+    meaning: 分支加载中
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGitStore.loadBranches
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  diffLoading:
+    owner: useGitStore
+    meaning: diff 加载中
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGitStore.loadDiff
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  statusError:
+    owner: useGitStore
+    meaning: 状态加载错误
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGitStore.loadStatus
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  branchError:
+    owner: useGitStore
+    meaning: 分支加载错误
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGitStore.loadBranches
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  diffError:
+    owner: useGitStore
+    meaning: diff 加载错误
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGitStore.loadDiff
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  currentBranch:
+    owner: useGitStore
+    meaning: 当前分支名（branches 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - branches
+    formula: "branches.find(b => !b.is_remote && b.is_current)?.name ?? null"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  localBranches:
+    owner: useGitStore
+    meaning: 本地分支列表（branches 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - branches
+    formula: "branches.filter(b => !b.is_remote)"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  remoteBranches:
+    owner: useGitStore
+    meaning: 远端分支列表（branches 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - branches
+    formula: "branches.filter(b => b.is_remote)"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  selectedPaths:
+    owner: useGitStore
+    meaning: 勾选路径数组（selected 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - selected
+    formula: "[...selected]"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  hasStatus:
+    owner: useGitStore
+    meaning: 是否有文件状态（status.length 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - status
+    formula: "status.length > 0"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  isDangerous:
+    owner: useGitStore
+    meaning: 本次写是否危险（discard/push）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - preview
+    formula: "preview?.dangerous ?? false"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  previewRisk:
+    owner: useGitStore
+    meaning: 预览风险等级（preview 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - preview
+    formula: "preview?.risk ?? null"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  canConfirm:
+    owner: useGitStore
+    meaning: 是否可确认（非危险 或 已二次确认）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - preview
+      - dangerousAck
+    formula: "!preview?.dangerous || dangerousAck"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  # backendReady：后端 agent/db 命令可用性就绪标志。
+  # useAgentStore 为真实存储 ref；useDatabaseStore 为派生镜像 computed（同名跨 store 的独立标志，非第二真源）。
+  # 按 Phase F 仅注册一次（presence 满足 R2），不强制 single_owner。
+  backendReady:
+    owner: useAgentStore
+    meaning: 后端 agent/db 命令可用性就绪（agent 真实存储 ref；database 派生镜像）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer: []
+    forbidden_writers:
+      - components/**
+    single_owner_required: false
+    duplicate_names: []
+    adr_required: false
     status: CURRENT_FACT
 
 # ------------------------------------------------------------

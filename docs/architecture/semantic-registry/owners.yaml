@@ -568,6 +568,200 @@ owners:
     rationale: STAGE I-A 从 src/stores 迁入专属 owner；Vault 只读目录镜像（后端 vaultOpen 快照），派生量禁止写入（R6 护栏）
     status: CURRENT_FACT
 
+  # ---------------- Capability Library Expansion v1（SG-C Medium：agent/database/git/skill）----------------
+  agent:
+    owner: useAgentStore
+    owns:
+      - agents
+      - agentInstalls
+      - agentSessions
+      - selectedAgentId
+      - agentValidation
+      - agentParseDef
+      - agentPreview
+      - selectedAgent (derived)
+      - agentStatus (derived)
+      - boundedAgentPreview (derived)
+      - loading (observed)
+      - error (observed)
+      - backendReady (observed)
+    owner_only_api:
+      - loadAgents
+      - installAgent
+      - runAgent
+      - cancelRun
+      - validateAgent
+      - clearValidation
+    public_intent_api:
+      - loadAgents
+      - selectAgent
+      - installAgent
+      - runAgent
+      - cancelRun
+      - validateAgent
+    forbidden_callers:
+      - components/**（不得直写 agents/agentInstalls/agentSessions 等）
+    authorized_callers:
+      - useAgentStore（owner 自身）
+      - useInstallConfirmStore（installAgent/ackConfirm 委托中性协调器 → confirm_agent_install）
+    rationale: 真实领域 + owner + 原生副作用；前端镜像 Rust agent_*；secret 不进 store（纵深脱敏）；backendReady 闸门保证未就绪零 invoke
+    status: CURRENT_FACT
+
+  database:
+    owner: useDatabaseStore
+    owns:
+      - form
+      - connections
+      - configs
+      - documents
+      - activeDocument
+      - connecting
+      - schema
+      - schemaBusy
+      - closePending
+      - risk
+      - verdict
+      - document (derived)
+      - activeId (derived)
+      - sql (derived)
+      - result (derived)
+      - pendingSql (derived)
+      - connected (derived)
+      - formIssues (derived)
+      - runGate (derived)
+      - requiresConfirm (derived)
+      - confirmOpen (derived)
+      - busy (observed)
+      - error (observed)
+      - backendReady (observed)
+    owner_only_api:
+      - refreshConnections
+      - connect
+      - disconnect
+      - requestRun
+      - confirmRun
+      - cancelConfirm
+    public_intent_api:
+      - refreshConnections
+      - newDocument
+      - closeDocument
+      - cancelQuery
+      - refreshSchema
+      - previewTable
+      - connect
+      - disconnect
+      - requestRun
+      - confirmRun
+    forbidden_callers:
+      - components/**（不得直写 connections/documents/sql/result 等）
+    authorized_callers:
+      - useDatabaseStore（owner 自身）
+      - DatabasePanel.vue（消费）
+    rationale: 真实领域 + 强原生副作用；db_connect 建外部连接、db_query 执行语句，高风险写经 requiresConfirm 二次确认闸门（前端按连接能力触发，后端逐句分类）；password 瞬时传入不持久化（F2 红线）
+    status: CURRENT_FACT
+
+  git:
+    owner: useGitStore
+    owns:
+      - repoId
+      - status
+      - branches
+      - diff
+      - activePath
+      - selected
+      - commitMessage
+      - branchName
+      - createCheckout
+      - preview
+      - dangerousAck
+      - lastJob
+      - writeError
+      - statusLoading (observed)
+      - branchLoading (observed)
+      - diffLoading (observed)
+      - statusError (observed)
+      - branchError (observed)
+      - diffError (observed)
+      - busy (observed)
+      - currentBranch (derived)
+      - localBranches (derived)
+      - remoteBranches (derived)
+      - selectedPaths (derived)
+      - hasStatus (derived)
+      - isDangerous (derived)
+      - previewRisk (derived)
+      - canConfirm (derived)
+    owner_only_api:
+      - loadStatus
+      - loadBranches
+      - loadDiff
+      - requestWrite
+      - confirmWrite
+      - cancelWrite
+      - stage
+      - unstage
+      - discard
+      - commit
+      - createBranch
+      - checkoutBranch
+      - push
+    public_intent_api:
+      - loadStatus
+      - loadBranches
+      - loadDiff
+      - refreshAll
+      - selectRepo
+      - requestWrite
+      - confirmWrite
+      - cancelWrite
+      - stage
+      - unstage
+      - discard
+      - commit
+      - createBranch
+      - checkoutBranch
+      - push
+    forbidden_callers:
+      - components/**（不得直写 status/branches/diff/selected 等）
+    authorized_callers:
+      - useGitStore（owner 自身）
+      - GitPanel.vue / GitWriteConfirmDialog.vue / App.vue（消费 + 全局写完成事件）
+    rationale: 真实领域 + 强原生写副作用；双段闸门：requestWrite 只生成待确认预览，dangerous（discard/push）须本地二次确认勾选后 confirm 才发；无 watch 自动写；凭据不进前端
+    status: CURRENT_FACT
+
+  skill:
+    owner: useSkillStore
+    owns:
+      - skills
+      - skillInstalls
+      - selectedSkillId
+      - skillValidation
+      - skillParseDef
+      - skillPreview
+      - selectedSkill (derived)
+      - skillStatus (derived)
+      - boundedPreview (derived)
+      - loading (observed)
+      - error (observed)
+      - backendReady (observed)
+    owner_only_api:
+      - loadSkills
+      - installSkill
+      - validateSkill
+      - clearValidation
+    public_intent_api:
+      - loadSkills
+      - selectSkill
+      - installSkill
+      - validateSkill
+    forbidden_callers:
+      - components/**（不得直写 skills/skillInstalls/skillValidation 等）
+    authorized_callers:
+      - useSkillStore（owner 自身）
+      - useInstallConfirmStore（installSkill/ackConfirm 委托中性协调器 → confirm_skill_install）
+    rationale: STAGE E 从 agent 拆出独立 owner；与 agent 同口径：只读校验消费态与 install/run 就绪态解耦，backendReady 闸门，secret 纵深脱敏
+    status: CURRENT_FACT
+
 # ------------------------------------------------------------
 # 越界判定补充
 # ------------------------------------------------------------

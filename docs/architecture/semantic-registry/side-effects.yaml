@@ -233,6 +233,67 @@ side_effects:
     status: CURRENT_FACT
     note: STAGE I-A 登记；派生量 vault* 由 R6 护栏禁止写入
 
+  # ---------------- SG-C：agent/database/git/skill 原生副作用（requires_declaration=false）----------------
+  agentInstall:
+    declared: install agent to runtime
+    actual:
+      - 写 Agent 定义到 Rust 后端（agent_install）
+    warning: Agent 安装；installAgent 先写 pending 到中性协调器，确认窗 → confirm_agent_install
+    call_sites: bridge.agentInstall
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG-C 登记；与 agentChat 同源
+
+  agentChat:
+    declared: run agent (execute)
+    actual:
+      - Agent 执行（agent_chat，流式会话壳在前端）
+    warning: Agent 执行；secret 不进 store（纵深脱敏）
+    call_sites: bridge.agentChat
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG-C 登记
+
+  dbConnect:
+    declared: establish external database connection
+    actual:
+      - 与外部数据库建立连接（db_connect，凭据瞬时传入不持久化）
+    warning: 外部连接建立；password 只作组件本地瞬时态，连接后立刻清空（F2 红线）
+    call_sites: bridge.dbConnect
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG-C 登记
+
+  dbQuery:
+    declared: execute SQL
+    actual:
+      - 执行 SQL（db_query；写语句经 requiresConfirm 二次确认闸门）
+    warning: SQL 执行；前端按连接 allow_write 触发确认，后端逐句分类（classify_sql_risk / is_production_database）
+    call_sites: bridge.dbQuery
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG-C 登记
+
+  gitWrite:
+    declared: stage/unstage/discard/commit/push
+    actual:
+      - 真正写文件 / 分支 / 推送（confirm_git_write）
+    warning: 双段闸门：requestGitWrite 只生成预览，dangerous 须本地二次确认勾选后 confirm 才发；无 watch 自动写
+    call_sites: bridge.confirmGitWrite
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG-C 登记；requestGitWrite 无副作用（仅预览）
+
+  skillInstall:
+    declared: install skill to runtime
+    actual:
+      - 写 Skill 定义到 Rust 后端（skill_install）
+    warning: Skill 安装；installSkill 先写 pending 到中性协调器，确认窗 → confirm_skill_install
+    call_sites: bridge.skillInstall
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG-C 登记；与 skillChat 同源
+
 # ------------------------------------------------------------
 # 清单中列出但代码中不存在的项（如实标注，不得当作现状）
 # ------------------------------------------------------------

@@ -646,6 +646,157 @@ intents:
     duplicate_names: []
     status: CURRENT_FACT
 
+  # ---------------- Agent（owner: useAgentStore，STAGE E 同源）----------------
+  loadAgents:
+    meaning: 加载 Agent 清单
+    owner: useAgentStore
+    allowed_effects:
+      - bridge.agentList → agents
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  selectAgent:
+    meaning: 选中 Agent
+    owner: useAgentStore
+    allowed_effects:
+      - selectedAgentId = id
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  installAgent:
+    meaning: 安装 Agent（写 pending 到中性协调器，确认后 confirm_agent_install）
+    owner: useAgentStore
+    allowed_effects:
+      - bridge.agentInstall（确认后）
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  runAgent:
+    meaning: 运行 Agent（建会话壳 + agentChat 执行）
+    owner: useAgentStore
+    allowed_effects:
+      - bridge.agentChat（执行）
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  cancelRun:
+    meaning: 取消 Agent 运行
+    owner: useAgentStore
+    allowed_effects:
+      - bridge.agentRunCancel
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  validateAgent:
+    meaning: W9 只读校验（不写 Agent 定义）
+    owner: useAgentStore
+    allowed_effects:
+      - bridge.agentValidate / agentParse / agentPermissionPreview → agentValidation/agentParseDef/agentPreview
+    forbidden_effects:
+      - 写 Agent 定义
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  # ---------------- Database（owner: useDatabaseStore）----------------
+  refreshConnections:
+    meaning: 刷新数据库连接列表
+    owner: useDatabaseStore
+    allowed_effects:
+      - bridge.dbListConnections → connections/configs
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  connectDatabase:
+    meaning: 建立外部数据库连接（高风险）
+    owner: useDatabaseStore
+    allowed_effects:
+      - bridge.dbConnect(cfg, password)
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  queryDatabase:
+    meaning: 执行 SQL（高风险，写语句经 requiresConfirm 闸门）
+    owner: useDatabaseStore
+    allowed_effects:
+      - bridge.dbQuery（连接能力触发二次确认）
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  disconnectDatabase:
+    meaning: 断开外部数据库连接
+    owner: useDatabaseStore
+    allowed_effects:
+      - bridge.dbDisconnect
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  # ---------------- Git（owner: useGitStore，双段写闸门）----------------
+  requestGitWrite:
+    meaning: 阶段一：生成待确认预览（precheck 失败连请求都不发）
+    owner: useGitStore
+    allowed_effects:
+      - bridge.requestGitWrite → preview
+    forbidden_effects:
+      - 真写文件/分支/推送
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  confirmGitWrite:
+    meaning: 阶段二：dangerous 未二次确认则 confirm 命令根本不发（真正写文件/分支/推送）
+    owner: useGitStore
+    allowed_effects:
+      - bridge.confirmGitWrite（stage/unstage/discard/commit/push）
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  loadGitStatus:
+    meaning: 加载 Git 文件状态
+    owner: useGitStore
+    allowed_effects:
+      - bridge.gitStatus → status
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  # ---------------- Skill（owner: useSkillStore，STAGE E 从 agent 拆出）----------------
+  loadSkills:
+    meaning: 加载 Skill 清单
+    owner: useSkillStore
+    allowed_effects:
+      - bridge.skillList → skills
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  installSkill:
+    meaning: 安装 Skill（写 pending 到中性协调器，确认后 confirm_skill_install）
+    owner: useSkillStore
+    allowed_effects:
+      - bridge.skillInstall（确认后）
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  validateSkill:
+    meaning: W9 只读校验（不写 Skill 定义）
+    owner: useSkillStore
+    allowed_effects:
+      - bridge.skillValidate / skillParse / skillPermissionPreview → skillValidation/skillParseDef/skillPreview
+    forbidden_effects:
+      - 写 Skill 定义
+    duplicate_names: []
+    status: CURRENT_FACT
+
 # ------------------------------------------------------------
 # 已否决：禁止注册 / 禁止出现在代码中
 # ------------------------------------------------------------
