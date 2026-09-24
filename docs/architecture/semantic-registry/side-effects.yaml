@@ -180,6 +180,59 @@ side_effects:
     status: CURRENT_FACT
     note: Phase 5.1-B 登记（Debt-5-1 收口）；R7 据此对 sensitive:true 状态的 frontend_ident（password）做泄露汇扫描，允许 db.connect 安全流与 redactSecrets 脱敏
 
+  # ---------------- STAGE H / I-A / Home 新增副作用（requires_declaration=false 口径，同 writeFile/termProcess）----------------
+  clipboardWrite:
+    declared: copy to system clipboard
+    actual:
+      - write system clipboard via Tauri clipboard plugin
+    warning: 系统剪贴板写入；历史仅内存（B11-1 红线，禁止落盘）
+    call_sites: bridge.clipboardWrite
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: STAGE H 登记；避免对既有合法调用产生 R5 噪声
+
+  clipboardRead:
+    declared: read from system clipboard
+    actual:
+      - read system clipboard via Tauri clipboard plugin
+    warning: 系统剪贴板读取；同步到 clipText（内存）
+    call_sites: bridge.clipboardRead
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: STAGE H 登记；事件驱动（焦点/粘贴），无轮询
+
+  appLaunch:
+    declared: launch installed application
+    actual:
+      - spawn OS process (launch_app)
+      - security_policy::check_launch_target 白名单解析（禁 sh -c）
+    warning: 进程启动；exec 经 Rust 侧白名单校验，前端不得传任意命令
+    call_sites: bridge.launchApp
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: apps/home 共用同一桥；W18-R 安全红线（TOOL_CAPABILITY_LEAK / SEED_CAPABILITY_LEAK 同源）
+
+  toolOpen:
+    declared: open tool in sub-webview
+    actual:
+      - 创建 tool:// 子 webview（零能力隔离，ACL 拒绝工具内 invoke）
+    warning: 子 webview 创建；工具 HTML 即便调用 invoke() 亦被 ACL 拒
+    call_sites: bridge.openTool
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: STAGE H 登记
+
+  vaultOpen:
+    declared: open vault directory
+    actual:
+      - read directory + parse notes (filesystem read)
+      - 返回 root/notes 快照（有界 1000 文件 / 16 MiB）
+    warning: 文件系统读取；前端仅持内存快照，不解析凭据
+    call_sites: bridge.vaultOpen
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: STAGE I-A 登记；派生量 vault* 由 R6 护栏禁止写入
+
 # ------------------------------------------------------------
 # 清单中列出但代码中不存在的项（如实标注，不得当作现状）
 # ------------------------------------------------------------

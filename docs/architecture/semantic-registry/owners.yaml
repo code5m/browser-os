@@ -428,6 +428,146 @@ owners:
     rationale: 凭据真源=系统密钥库；前端只持不透明 metadata（credential_id / has_password），绝不持原始值。R3 已通用化到本 owner（Phase 5.1-A）：前端任何文件直调 owner_only_api（save_token/get_token/delete_token）或引用 KeyringStore 即 SEMANTIC_OWNER_VIOLATION；组件只经 bridge 意图入口。Debt-5-2 已收口。
     status: CURRENT_FACT
 
+  # ---------------- Capability Library Expansion v1（STAGE H / I-A / Home）----------------
+  clipboard:
+    owner: useClipboardStore
+    owns:
+      - clipText
+      - clipHistory
+    owner_only_api:
+      - clipCopy
+      - clipPaste
+      - clipReadSilent
+      - useClipItem
+      - copyClipItem
+      - clearClipHistory
+    public_intent_api:
+      - copyClipboard
+      - pasteClipboard
+      - readClipboardSilent
+      - useClipItem
+      - clearClipHistory
+    forbidden_callers:
+      - components/**（不得直写 clipText/clipHistory；须经 canonical writer）
+    authorized_callers:
+      - useClipboardStore（owner 自身）
+      - useLayoutStore（仅导航 setView("clip") / clipOpen 面板开关）
+    rationale: STAGE H 从 useSystemStore 拆出的专属 owner；剪贴板历史仅会话内存（B11-1 红线禁止落盘），系统剪贴板经 bridge.clipboardRead/clipboardWrite 同步
+    status: CURRENT_FACT
+
+  apps:
+    owner: useAppsStore
+    owns:
+      - apps
+      - appFilter
+      - brokenIcons
+      - filteredApps (derived)
+    owner_only_api:
+      - loadApps
+      - onAppImgError
+    public_intent_api:
+      - loadApps
+      - launchApp
+    forbidden_callers:
+      - components/**（不得直写 apps/appFilter/brokenIcons；filteredApps 派生只读）
+    authorized_callers:
+      - useAppsStore（owner 自身）
+      - useLayoutStore（launchApp 经 bridge.launchApp → security_policy::check_launch_target）
+    rationale: STAGE H 拆出的专属 owner；应用启动经安全策略白名单解析（禁 sh -c）
+    status: CURRENT_FACT
+
+  tools:
+    owner: useToolsStore
+    owns:
+      - tools
+      - builtin (derived)
+      - user (derived)
+      - error (observed)
+    owner_only_api:
+      - load
+      - open
+    public_intent_api:
+      - loadTools
+      - openTool
+    forbidden_callers:
+      - components/**（不得直写 tools）
+    authorized_callers:
+      - useToolsStore（owner 自身）
+    rationale: STAGE H 新建 owner；工具在独立子 webview 打开，零能力隔离（ACL 拒绝工具内 invoke）
+    status: CURRENT_FACT
+
+  home:
+    owner: useHomeStore
+    owns:
+      - shortcuts
+      - recents
+      - editing
+      - has (derived)
+      - hasRecents (derived)
+      - panelState (derived)
+      - loading (observed)
+      - error (observed)
+    owner_only_api:
+      - saveEdit
+      - remove
+      - resetDefault
+      - seedDirShortcuts
+      - favoriteDirectory
+      - favoriteCurrentPage
+      - favoriteCurrentDir
+    public_intent_api:
+      - openShortcut
+      - favoriteCurrentPage
+      - favoriteCurrentDir
+      - saveShortcut
+      - removeShortcut
+      - clearRecents
+      - seedDirShortcuts
+    forbidden_callers:
+      - components/**（不得直写 shortcuts/recents/editing）
+    authorized_callers:
+      - useHomeStore（owner 自身）
+      - useLayoutStore（仅导航 setView）
+    rationale: 主页索引域；快捷方式 localStorage 前端真源，与 Bookmark 后端持久化隔离（rejected mergeBookmarksIntoHome）；唯一真实原生副作用是 launchApp（经 bridge.launchApp）
+    status: CURRENT_FACT
+
+  vault:
+    owner: useVaultStore
+    owns:
+      - path
+      - root
+      - notes
+      - selected
+      - query
+      - line
+      - anchor
+      - warning
+      - choices
+      - sourceMode
+      - vaultCurrent (derived)
+      - vaultResults (derived)
+      - vaultEdges (derived)
+      - vaultBacklinks (derived)
+      - busy (observed)
+      - error (observed)
+    owner_only_api:
+      - open
+      - pickDirectory
+      - select
+      - follow
+    public_intent_api:
+      - openVault
+      - pickVaultDirectory
+      - selectNote
+      - followLink
+    forbidden_callers:
+      - components/**（不得直写 path/notes/selected/query 等；须经 canonical writer）
+    authorized_callers:
+      - useVaultStore（owner 自身）
+      - useLayoutStore（仅导航 setView("vault")）
+    rationale: STAGE I-A 从 src/stores 迁入专属 owner；Vault 只读目录镜像（后端 vaultOpen 快照），派生量禁止写入（R6 护栏）
+    status: CURRENT_FACT
+
 # ------------------------------------------------------------
 # 越界判定补充
 # ------------------------------------------------------------

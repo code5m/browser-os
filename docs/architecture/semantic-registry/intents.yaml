@@ -455,6 +455,197 @@ intents:
     duplicate_names: []
     status: CURRENT_FACT
 
+  # ---------------- Clipboard（owner: useClipboardStore，STAGE H）----------------
+  copyClipboard:
+    meaning: 把当前 clipText 复制到系统剪贴板
+    owner: useClipboardStore
+    allowed_effects:
+      - bridge.clipboardWrite(clipText)
+    forbidden_effects:
+      - 持久化历史（仅内存上限裁剪）
+    duplicate_names:
+      - copyToClipboard
+    status: CURRENT_FACT
+
+  pasteClipboard:
+    meaning: 从系统剪贴板读入 clipText
+    owner: useClipboardStore
+    allowed_effects:
+      - bridge.clipboardRead → clipText
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  readClipboardSilent:
+    meaning: 焦点事件驱动静默同步系统剪贴板到 clipText（不弹 toast）
+    owner: useClipboardStore
+    allowed_effects:
+      - bridge.clipboardRead → clipText
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  useClipItem:
+    meaning: 取用历史条目作为当前 clipText
+    owner: useClipboardStore
+    allowed_effects:
+      - clipText = item.text
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  clearClipHistory:
+    meaning: 清空会话内剪贴板历史
+    owner: useClipboardStore
+    allowed_effects:
+      - clipHistory.splice(0)
+    forbidden_effects:
+      - 写入磁盘
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  # ---------------- Apps（owner: useAppsStore，STAGE H）----------------
+  loadApps:
+    meaning: 加载已安装应用列表
+    owner: useAppsStore
+    allowed_effects:
+      - bridge.listApps → apps
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  launchApp:
+    meaning: 启动指定应用（exec 经 security_policy::check_launch_target 白名单解析，禁 sh -c）
+    owner: useAppsStore
+    allowed_effects:
+      - bridge.launchApp(exec)
+    forbidden_effects:
+      - 任意命令执行（仅声明 exec，Rust 侧白名单）
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  # ---------------- Tools（owner: useToolsStore，STAGE H）----------------
+  loadTools:
+    meaning: 加载工具清单（builtin/user 派生）
+    owner: useToolsStore
+    allowed_effects:
+      - bridge.listTools → tools
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  openTool:
+    meaning: 在独立子 webview（tool:// 协议）打开工具
+    owner: useToolsStore
+    allowed_effects:
+      - bridge.openTool(id)
+    forbidden_effects:
+      - 跨能力调用 invoke（ACL 拒绝工具内 invoke）
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  # ---------------- Home（owner: useHomeStore，Capability Library Expansion v1）----------------
+  openShortcut:
+    meaning: 按快捷方式类型路由打开（url→浏览器 / dir→文件树 / app→启动）
+    owner: useHomeStore
+    allowed_effects:
+      - 路由到 browser.openBrowser / fs.enterDir / bridge.launchApp
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  favoriteCurrentPage:
+    meaning: 收藏当前浏览器页为快捷方式
+    owner: useHomeStore
+    allowed_effects:
+      - shortcuts = splice 替换（by id）
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  favoriteCurrentDir:
+    meaning: 收藏当前目录为快捷方式
+    owner: useHomeStore
+    allowed_effects:
+      - shortcuts = splice 替换（by id）
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  saveShortcut:
+    meaning: 新增/更新快捷方式（同 id 视为更新）
+    owner: useHomeStore
+    allowed_effects:
+      - shortcuts = splice 替换
+    forbidden_effects:
+      - 维护第二份列表
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  removeShortcut:
+    meaning: 删除快捷方式（by id）
+    owner: useHomeStore
+    allowed_effects:
+      - shortcuts = filter 移除 id
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  clearRecents:
+    meaning: 清空最近访问
+    owner: useHomeStore
+    allowed_effects:
+      - recents.splice(0)
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  seedDirShortcuts:
+    meaning: 首次播种常用目录快捷方式
+    owner: useHomeStore
+    allowed_effects:
+      - bridge.getStartDirs → shortcuts 播种
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  # ---------------- Vault（owner: useVaultStore，STAGE I-A，升级 FULLY）----------------
+  openVault:
+    meaning: 打开 Vault 目录并加载笔记快照
+    owner: useVaultStore
+    allowed_effects:
+      - bridge.vaultOpen(path) → root/notes
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  pickVaultDirectory:
+    meaning: 选择 Vault 目录（系统对话框）
+    owner: useVaultStore
+    allowed_effects:
+      - openDialog(directory)
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  selectNote:
+    meaning: 选中笔记（含行/源视图切换）
+    owner: useVaultStore
+    allowed_effects:
+      - selected = path; line = row; sourceMode 条件置 true
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  followLink:
+    meaning: 跟随 wikilink 跳转（歧义时给候选）
+    owner: useVaultStore
+    allowed_effects:
+      - resolveNote → select / choices
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
 # ------------------------------------------------------------
 # 已否决：禁止注册 / 禁止出现在代码中
 # ------------------------------------------------------------

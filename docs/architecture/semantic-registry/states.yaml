@@ -104,6 +104,11 @@ owner_implementations:
     symbol: useVaultStore
     paths:
       - src/capabilities/vault/state/useVaultStore.ts
+  useHomeStore:
+    # Capability Library Expansion v1：Home 域专属 owner（capabilities/home/state）。
+    symbol: useHomeStore
+    paths:
+      - src/capabilities/home/state/useHomeStore.ts
 
 states:
 
@@ -1052,6 +1057,267 @@ states:
     status: CURRENT_FACT
     note: 安全红线（DatabasePanel.vue）：password 只作组件本地瞬时态，db.connect(password.value) 后立刻清空；R7 静态护栏禁止其流入泄露汇（console/localStorage/export）
 
+  # ---------------- Clipboard（STAGE H：专属 owner，治理 clipText/clipHistory）----------------
+  clipText:
+    owner: useClipboardStore
+    meaning: 当前剪贴板文本（系统剪贴板镜像）
+    not_meaning:
+      - 剪贴板历史（见 clipHistory）
+      - 持久化状态（仅会话内存，B11-1 红线禁止落盘）
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useClipboardStore.clipReadSilent
+      - useClipboardStore.clipCopy
+      - useClipboardStore.clipPaste
+      - useClipboardStore.useClipItem
+      - useClipboardStore.copyClipItem
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: 经 bridge.clipboardRead/clipboardWrite 同步；不进 localStorage
+
+  clipHistory:
+    owner: useClipboardStore
+    meaning: 会话内剪贴板历史（reactive 数组，上限 CLIP_CAP=30，仅内存）
+    not_meaning:
+      - 持久化列表（关闭应用即清空，B11-1 红线）
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useClipboardStore.clipReadSilent
+      - useClipboardStore.clipCopy
+      - useClipboardStore.copyClipItem
+      - useClipboardStore.clearClipHistory
+      - useClipboardStore.saveClipHistory
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: reactive 数组；saveClipHistory 仅内存上限裁剪，绝不 localStorage.setItem
+
+  # ---------------- Apps（STAGE H）----------------
+  apps:
+    owner: useAppsStore
+    meaning: 已安装系统应用列表（bridge.listApps 镜像；launch 经 security_policy::check_launch_target 白名单解析）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useAppsStore.loadApps
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  appFilter:
+    owner: useAppsStore
+    meaning: 应用列表筛选输入缓冲（UI 双向绑定，非真源）
+    not_meaning:
+      - 过滤结果（见 filteredApps 派生）
+    kind: stored
+    derived: false
+    canonical_writer: []
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: 与 filePath/pathInput 同口径的 UI 缓冲
+
+  brokenIcons:
+    owner: useAppsStore
+    meaning: 图标加载失败集合（exec → 标记，前端降级）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useAppsStore.onAppImgError
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  filteredApps:
+    owner: useAppsStore
+    meaning: apps 按 appFilter 过滤后的视图（纯派生）
+    not_meaning:
+      - 独立存储列表（禁止第二份）
+    kind: derived
+    derived: true
+    derived_from:
+      - apps
+      - appFilter
+    formula: "apps.filter(a => a.name.toLowerCase().includes(appFilter.trim().toLowerCase()))"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  # ---------------- Tools（STAGE H）----------------
+  tools:
+    owner: useToolsStore
+    meaning: 工具清单（bridge.listTools 镜像；builtin/user 派生）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useToolsStore.load
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  builtin:
+    owner: useToolsStore
+    meaning: 内置工具子集（tools 按 source==="builtin" 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - tools
+    formula: "tools.filter(t => t.source === 'builtin')"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  user:
+    owner: useToolsStore
+    meaning: 用户工具子集（tools 按 source==="user" 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - tools
+    formula: "tools.filter(t => t.source === 'user')"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  # ---------------- Home（Capability Library Expansion v1）----------------
+  shortcuts:
+    owner: useHomeStore
+    meaning: 主页快捷方式（localStorage browser-os-home-shortcuts 前端真源；与 Bookmark 后端持久化隔离，rejected mergeBookmarksIntoHome）
+    not_meaning:
+      - 收藏夹（见 bookmark.items，后端持久化）
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useHomeStore.saveEdit
+      - useHomeStore.remove
+      - useHomeStore.resetDefault
+      - useHomeStore.seedDirShortcuts
+      - useHomeStore.favoriteDirectory
+      - useHomeStore.favoriteCurrentPage
+      - useHomeStore.favoriteCurrentDir
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  recents:
+    owner: useHomeStore
+    meaning: 主页最近访问（localStorage，有界 HOME_MAX_RECENTS）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useHomeStore.open
+      - useHomeStore.removeRecent
+      - useHomeStore.clearRecents
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  editing:
+    owner: useHomeStore
+    meaning: 快捷方式编辑器表单态（open/id/type/name/target/icon）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useHomeStore.startEdit
+      - useHomeStore.cancelEdit
+      - useHomeStore.saveEdit
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  has:
+    owner: useHomeStore
+    meaning: 是否存在快捷方式（shortcuts.length>0 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - shortcuts
+    formula: "shortcuts.length > 0"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  hasRecents:
+    owner: useHomeStore
+    meaning: 是否存在最近访问（recents.length>0 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - recents
+    formula: "recents.length > 0"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  panelState:
+    owner: useHomeStore
+    meaning: 主页面板三态（载入/空/就绪/错误，由 loading/error/shortcuts 派生）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - loading
+      - error
+      - shortcuts
+    formula: "loading ? 'loading' : error ? 'error' : shortcuts.length ? 'ready' : 'empty'"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+
 # ------------------------------------------------------------
 # 已观察到但本批不治理（真实存在的声明；新增治理需走 SCR）
 # checker 对它们只报 INFO，不算失败。目的：显式登记，不静默消失。
@@ -1155,14 +1421,13 @@ observed_not_governed:
 
   useBookmarkStore: []
 
-  useClipboardStore:
-    - clipText
-    - clipHistory
-  useAppsStore:
-    - apps
-    - appFilter
-    - filteredApps
+  useHomeStore:
+    - loading
+    - error
+
+  useVaultStore:
+    - busy
+    - error
+
   useToolsStore:
-    - tools
-    - builtin
-    - user
+    - error
