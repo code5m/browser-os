@@ -684,6 +684,15 @@ const ANCHOR_FILES = [
   { path: "src/capabilities/terminal/state/useTerminalStore.ts", src: `const terminalOpen = ref(false); const termPanes = ref([]);` },
   // useSystemStore 仍是 Clipboard/Apps 的 owner（locator 候选仍指向该路径）
   { path: "src/stores/useSystemStore.ts", src: `const clipText = ref(""); const apps = ref([]);` },
+  // STAGE H：Clipboard/Apps/Tools 已拆为专属 owner（owner_implementations 新增条目）；
+  // 锚点须跟随 locator，否则 RI 会对它们报 UNRESOLVED（自检误 FAIL）。
+  { path: "src/capabilities/clipboard/state/useClipboardStore.ts", src: `const clipText = ref(""); const clipHistory = reactive([]);` },
+  { path: "src/capabilities/apps/state/useAppsStore.ts", src: `const apps = ref([]); const appFilter = ref("");` },
+  { path: "src/capabilities/tools/state/useToolsStore.ts", src: `const tools = ref([]);` },
+  // STAGE I-A：Vault 迁入 capabilities/vault/state（owner_implementations 已登记）；锚点跟随 locator。
+  { path: "src/capabilities/vault/state/useVaultStore.ts", src: `const path = ref("");` },
+  // Capability Library Expansion v1：Home 域专属 owner（owner_implementations 已登记）；锚点跟随 locator。
+  { path: "src/capabilities/home/state/useHomeStore.ts", src: `const shortcuts = reactive([]); const recents = reactive([]);` },
 ];
 const ALL = (arr) => [...ANCHOR_FILES, ...arr];
 
