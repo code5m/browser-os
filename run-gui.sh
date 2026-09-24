@@ -76,6 +76,23 @@ trap 'cleanup' EXIT
 trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
 
+# 重启前先扫地：清掉旧的 GUI 二进制与占用 1421 的残留 vite，
+# 避免新旧窗口并存、或 webview 连到陈旧 dev server（这正是反复"卡死"的主因：孤儿 vite）。
+# 注意：只杀 GUI 二进制 + 1421/vite，不含 cargo，避免误杀正在进行的构建。
+sweep_stale() {
+  # 用相对路径片段匹配，兼容旧进程的绝对/相对两种 cmdline（旧进程常以相对路径启动，
+  # 用完整绝对路径反而匹配不到，导致清不干净）。
+  # 该片段只命中真正的二进制，不会误伤 run-gui.sh / mvp-start.sh 启动壳。
+  local bin_pat="target/debug/mvp-browser-os"
+  for p in $(pgrep -f "$bin_pat" 2>/dev/null || true); do
+    [[ "$p" == "$$" ]] && continue
+    kill "$p" 2>/dev/null || true
+  done
+  bash "$APP_DIR/mvp-stop.sh" >/dev/null 2>&1 || true
+  sleep 1
+}
+sweep_stale
+
 if [[ "$NO_BUILD" == "1" ]]; then
   if [[ ! -x "$BIN" ]]; then
     echo "[run-gui][ERROR] --no-build 但未找到二进制：$BIN" >&2

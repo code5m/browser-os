@@ -49,10 +49,10 @@ fi
 
 # ---- 启动 ----
 if [ "$MODE" = "tauri" ]; then
-  echo "[start] 以 Tauri 桌面模式启动 (需要图形会话) ..."
-  export WEBKIT_DISABLE_DMABUF_RENDERER=1
-  export GDK_BACKEND=x11
-  exec npm run tauri dev
+  echo "[start] 以 Tauri 桌面模式启动（委托 run-gui.sh 统一入口，自动清理残留）..."
+  # 单一 GUI 入口：run-gui.sh 已内置 WebKit 环境变量与"启动前清场"，
+  # 不再走 npm run tauri dev 的另一套 vite 所有权模型，避免孤儿 vite / 双入口混乱。
+  exec bash "$APP_DIR/run-gui.sh"
 else
   echo "[start] 启动 Vite 开发服务器 -> http://localhost:$PORT/"
   # 后台启动, 日志写入 LOG_FILE

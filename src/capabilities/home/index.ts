@@ -55,3 +55,9 @@ export const homeCapability: Capability = {
     });
   },
 };
+
+// 模块加载即注册主页贡献（与 apps/tools/vault 等能力一致）：
+// runtime.activate 不会调用 def.registerContributions（见 src/capability/runtime.ts），
+// 故能力贡献必须靠模块加载时自注册；否则贡献注册表无 view='home' 条目，
+// MainArea 的 viewOf('home') 为 undefined → 主区空白（首页不渲染）。
+registerHomeContributions();

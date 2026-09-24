@@ -55,3 +55,8 @@ export const vaultCapability: Capability = {
     });
   },
 };
+
+// 模块加载即注册 Vault 贡献（与 home 同模式：runtime.activate 不调 def.registerContributions，
+// 且本能力对象未展开 manifest，故不能走 onActivate 路径）。否则贡献注册表无 view='vault' 条目
+// → MainArea 的 viewOf('vault') 为 undefined → VaultPanel 不渲染（STAGE I-A 迁移遗漏）。
+registerVaultContributions();
