@@ -352,7 +352,7 @@ bridge.onGitWriteCompleted((j) => git.onWriteCompleted(j));
 
 GOOD_SRC_FILES = [
     ("src/bridge.ts", 'invoke<GitWritePreview>("request_git_write", p)'),
-    ("src/stores/useGitStore.ts", "bridge.requestGitWrite"),
+    ("src/capabilities/git/state/useGitStore.ts", "bridge.requestGitWrite"),
     ("src/App.vue", "bridge.onGitWriteCompleted"),
 ]
 

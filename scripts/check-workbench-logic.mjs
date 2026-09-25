@@ -23,8 +23,8 @@ assert.equal(searchNotes(Array.from({length:120},(_,i)=>({path:`${i}.md`,text:'n
 
 const { createPinia,setActivePinia } = await import('pinia');
 const { bridge } = await import('../src/bridge.ts');
-const { useDatabaseStore } = await import('../src/stores/useDatabaseStore.ts');
-const { useGitStore } = await import('../src/stores/useGitStore.ts');
+const { useDatabaseStore } = await import('../src/capabilities/database/state/useDatabaseStore.ts');
+const { useGitStore } = await import('../src/capabilities/git/state/useGitStore.ts');
 setActivePinia(createPinia());
 const cfg = {id:'local',name:'Local',kind:'sqlite',database:'/home/user/test.db',host:null,port:null,username:null,ssl_mode:'disable',allow_write:false,production_hint:false,enabled:true,created_at:'',updated_at:''};
 bridge.dbListConnections = async () => [cfg];

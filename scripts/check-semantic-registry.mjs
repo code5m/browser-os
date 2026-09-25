@@ -588,7 +588,7 @@ function runR6SelfTest() {
     r6WtRef: { derived: true, kind: "derived" },
   } } };
   // 写穿式 computed：get 读真源、set 写回真源；.value = 合法，不判
-  const wt = { path: "src/stores/useDatabaseStore.ts", src:
+  const wt = { path: "src/capabilities/database/state/useDatabaseStore.ts", src:
     `const document = ref({ connId: null, sql: "" });\n` +
     `const r6WtComputed = computed({ get: () => document.value.connId, set: (v) => { document.value.connId = v; } });\n` +
     `r6WtComputed.value = "x";` };
@@ -723,9 +723,9 @@ const ANCHOR_FILES = [
   // Capability Library Expansion v1：Home 域专属 owner（owner_implementations 已登记）；锚点跟随 locator。
   { path: "src/capabilities/home/state/useHomeStore.ts", src: `const shortcuts = reactive([]); const recents = reactive([]);` },
   // SG-C Medium：agent/database/git/skill 专属 owner；锚点跟随 locator。
-  { path: "src/stores/useAgentStore.ts", src: `const agents = ref([]);` },
-  { path: "src/stores/useDatabaseStore.ts", src: `const connections = ref([]);` },
-  { path: "src/stores/useGitStore.ts", src: `const status = ref([]);` },
+  { path: "src/capabilities/agent/state/useAgentStore.ts", src: `const agents = ref([]);` },
+  { path: "src/capabilities/database/state/useDatabaseStore.ts", src: `const connections = ref([]);` },
+  { path: "src/capabilities/git/state/useGitStore.ts", src: `const status = ref([]);` },
   { path: "src/capabilities/skill/state/useSkillStore.ts", src: `const skills = ref([]);` },
   // SG-4：task 域专属 owner（owner_implementations 已登记）；锚点跟随 locator，否则 RI 报 UNRESOLVED。
   { path: "src/capabilities/task/state/useTaskStore.ts", src: `const tasks = ref([]); const runs = ref([]); const targets = ref([]);` },

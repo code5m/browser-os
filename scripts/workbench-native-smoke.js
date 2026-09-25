@@ -8,7 +8,7 @@
     const { bridge } = await import('/src/bridge.ts');
     const { useVaultStore } = await import('/src/stores/useVaultStore.ts');
     const { useLayoutStore } = await import('/src/stores/useLayoutStore.ts');
-    const { useDatabaseStore } = await import('/src/stores/useDatabaseStore.ts');
+    const { useDatabaseStore } = await import('/src/capabilities/database/state/useDatabaseStore.ts');
     const layout=useLayoutStore();const vault=useVaultStore();
     layout.openModule('vault');vault.path=root;await vault.open();
     assert(vault.notes.length===2,'native vault reads 2 notes');

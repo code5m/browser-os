@@ -2,7 +2,7 @@
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { RefreshCw, Copy } from '@lucide/vue';
 import { bridge } from '../../bridge';
-import { useGitStore } from '../../stores/useGitStore';
+import { useGitStore } from '../../capabilities/git/public';
 import { redactSecrets } from '../../utils/redact';
 const git = useGitStore();
 const commits = ref<Awaited<ReturnType<typeof bridge.gitLog>>>([]);

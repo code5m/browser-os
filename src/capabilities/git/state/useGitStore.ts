@@ -1,8 +1,8 @@
 import { defineStore } from "pinia";
 import { computed, reactive, ref } from "vue";
-import { bridge } from "../bridge";
-import { useLayoutStore } from "./useLayoutStore";
-import { redactSecrets } from "../utils/redact";
+import { bridge } from "../../../bridge";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
+import { redactSecrets } from "../../../utils/redact";
 import type {
   GitBranch,
   GitDiffResult,
@@ -11,7 +11,7 @@ import type {
   GitWriteOp,
   GitWritePreview,
   GitWriteRisk,
-} from "../types";
+} from "../../../types";
 
 // ---------------------------------------------------------------------------
 // M1-7 Git UI 状态层：消费 M1-5 只读能力（git_status / git_diff / git_branch_list）

@@ -52,7 +52,7 @@ globalThis.window = { setTimeout: (fn, ms) => setTimeout(fn, ms) };
 const ROOT = new URL("..", import.meta.url).pathname;
 
 const { bridge } = await import(`${ROOT}src/bridge.ts`);
-const { useGitStore } = await import(`${ROOT}src/stores/useGitStore.ts`);
+const { useGitStore } = await import(`${ROOT}src/capabilities/git/state/useGitStore.ts`);
 const { redactSecrets } = await import(`${ROOT}src/utils/redact.ts`);
 const { createPinia, setActivePinia } = await import(`${ROOT}node_modules/pinia/dist/pinia.mjs`);
 

@@ -1,8 +1,8 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import { bridge } from "../bridge";
-import type { DbConnectionConfig, DbQueryResult } from "../types";
-import { redactSecrets } from '../utils/redact';
+import { bridge } from "../../../bridge";
+import type { DbConnectionConfig, DbQueryResult } from "../../../types";
+import { redactSecrets } from '../../../utils/redact';
 import {
   buildConnectPayload,
   buildResultView,
@@ -17,7 +17,7 @@ import {
   type DbResultView,
   type DbRiskLevel,
   type ProductionVerdict,
-} from "../utils/dbUi";
+} from "../../../utils/dbUi";
 
 // M4-4 live wiring：A4 已在 bridge.rs / main.rs / ACL 落地 db_connect / db_query / db_disconnect，
 // 且 A4 检查点明确「前端 wiring 归 A5」，故此处直接调用 src/bridge.ts 的类型化封装，

@@ -2,7 +2,7 @@
 import { EmptyState } from "../../../shared/ui";
 import { computed, onMounted, ref, watch } from "vue";
 import { Plus, X, Square, ChevronLeft, ChevronRight, RefreshCw } from '@lucide/vue';
-import { useDatabaseStore } from "../../../stores/useDatabaseStore";
+import { useDatabaseStore } from "../state/useDatabaseStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { useWorkbenchStore } from "../../../stores/useWorkbenchStore";
 import {

@@ -118,12 +118,12 @@ owner_implementations:
     # 真实领域 + 强原生副作用（外部 DB 连接 / SQL 执行）。
     symbol: useDatabaseStore
     paths:
-      - src/stores/useDatabaseStore.ts
+      - src/capabilities/database/state/useDatabaseStore.ts
   useGitStore:
     # 真实领域 + 双段写闸门（requestGitWrite / confirmGitWrite）。
     symbol: useGitStore
     paths:
-      - src/stores/useGitStore.ts
+      - src/capabilities/git/state/useGitStore.ts
   useSkillStore:
     # STAGE E 从 agent 拆出的独立 owner。
     symbol: useSkillStore

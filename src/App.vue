@@ -9,7 +9,7 @@ import { useWorkspaceStore } from "./capabilities/workspace/public";
 import { useArtifactStore } from "./capabilities/workspace/public";
 import { useRepoStore } from "./capabilities/workspace/public";
 import { useFileStore } from "./capabilities/workspace/public";
-import { useGitStore } from "./stores/useGitStore";
+import { useGitStore } from "./capabilities/git/public";
 import { useClipboardStore } from "./capabilities/clipboard/public";
 import { useTerminalStore } from "./capabilities/terminal/public";
 import { useLayoutStore } from "./stores/useLayoutStore";
