@@ -900,6 +900,216 @@ rejected_intents:
     duplicate_names: []
     status: CURRENT_FACT
 
+  # ---------------- Graph（owner: useGraphStore，M5-9/W6/W11/W12 图谱面板）----------------
+  loadGraph:
+    meaning: 载入图谱（start_id + 有界投影缓存 nodes/edges）
+    owner: useGraphStore
+    allowed_effects:
+      - bridge.graphQuery → nodes/edges（删 props）
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  loadNode:
+    meaning: 载入单节点详情视图
+    owner: useGraphStore
+    allowed_effects:
+      - bridge.graphNodeGet → selectedNode
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  loadStats:
+    meaning: 载入容量统计（truncated 信号）
+    owner: useGraphStore
+    allowed_effects:
+      - bridge.graphStats → truncated/capacity
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  refreshGraph:
+    meaning: 重新载入图谱 + 统计
+    owner: useGraphStore
+    allowed_effects:
+      - useGraphStore.refresh → loadGraph + loadStats
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  selectNode:
+    meaning: 选中节点（确定性 id）
+    owner: useGraphStore
+    allowed_effects:
+      - useGraphStore.selectNode → selectedNodeId
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  selectEdge:
+    meaning: 选中边（稳定 key from|to|kind）
+    owner: useGraphStore
+    allowed_effects:
+      - useGraphStore.selectEdge → selectedEdgeKey
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  setGraphFilter:
+    meaning: 设置面板过滤（query + kinds）
+    owner: useGraphStore
+    allowed_effects:
+      - useGraphStore.setFilter → filter
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  toggleGraphKind:
+    meaning: 切换 kind 过滤
+    owner: useGraphStore
+    allowed_effects:
+      - useGraphStore.toggleKind → filter
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  clearGraphFilter:
+    meaning: 清空过滤
+    owner: useGraphStore
+    allowed_effects:
+      - useGraphStore.clearFilter → filter
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  cancelGraphInFlight:
+    meaning: 取消在途请求（丢弃乱序回包）
+    owner: useGraphStore
+    allowed_effects:
+      - useGraphStore.cancelInFlight → inFlightRequestId
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  # ---------------- Plugin（owner: usePluginStore，M5-W14 插件管理器）----------------
+  refreshPluginList:
+    meaning: 刷新插件列表投影
+    owner: usePluginStore
+    allowed_effects:
+      - bridge.pluginList → list
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  getPluginDetail:
+    meaning: 读取插件详情（五态投影）
+    owner: usePluginStore
+    allowed_effects:
+      - bridge.pluginGet → detail
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  installPlugin:
+    meaning: 安装/更新插件（manifest + 资源路径；成功即清空瞬时输入）
+    owner: usePluginStore
+    allowed_effects:
+      - bridge.pluginInstall（红线：不持久化/不回显签名原文、公钥原文、资源路径、metadata 正文、凭据、请求/响应体、stdout/stderr）
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  enablePlugin:
+    meaning: 启用插件（按 detail.state 五态门控）
+    owner: usePluginStore
+    allowed_effects:
+      - bridge.pluginEnable
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  disablePlugin:
+    meaning: 禁用插件
+    owner: usePluginStore
+    allowed_effects:
+      - bridge.pluginDisable
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  refreshPluginKeys:
+    meaning: 刷新受信任密钥投影（仅 16-hex 指纹）
+    owner: usePluginStore
+    allowed_effects:
+      - bridge.pluginKeysList → keys
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  addPluginKey:
+    meaning: 添加受信任密钥（仅指纹，无原文）
+    owner: usePluginStore
+    allowed_effects:
+      - bridge.pluginKeysAdd
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  removePluginKey:
+    meaning: 移除受信任密钥
+    owner: usePluginStore
+    allowed_effects:
+      - bridge.pluginKeysRemove
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  # ---------------- Workspace Core（owner: useWorkspaceStore，8C-0 收敛后）----------------
+  refreshWorkspace:
+    meaning: 跨域编排刷新（loadTree + loadRepos + auditLog）
+    owner: useWorkspaceStore
+    allowed_effects:
+      - useArtifactStore.loadTree + useRepoStore.loadRepos + bridge.auditLog → audit
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  loadRecents:
+    meaning: 载入跨域 recents（localStorage 有界 30）
+    owner: useWorkspaceStore
+    allowed_effects:
+      - useWorkspaceStore.loadRecents → recents
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  addRecentUrl:
+    meaning: 追加 url 最近访问
+    owner: useWorkspaceStore
+    allowed_effects:
+      - useWorkspaceStore.addRecentUrl → recents
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  addRecentFile:
+    meaning: 追加 file 最近访问（受控跨域写，由 useFileStore 调用）
+    owner: useWorkspaceStore
+    allowed_effects:
+      - useWorkspaceStore.addRecentFile → recents
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
+  openRecent:
+    meaning: 打开最近项
+    owner: useWorkspaceStore
+    allowed_effects:
+      - useWorkspaceStore.openRecent
+    forbidden_effects: []
+    duplicate_names: []
+    status: CURRENT_FACT
+
 # ------------------------------------------------------------
 # 拟议但代码中不存在（不得当作现状引用）
 # ------------------------------------------------------------

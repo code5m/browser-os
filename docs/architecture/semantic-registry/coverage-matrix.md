@@ -20,10 +20,10 @@
 | terminal | terminal | useTerminalStore | yes | 11 | 8 | yes (spawn) | yes | yes | FULLY_GOVERNED |
 | tools | tools | useToolsStore | yes | 3 | 2 | yes (toolOpen) | yes | yes | FULLY_GOVERNED |
 | vault | vault | useVaultStore | yes | 14 | 4 | yes (vaultOpen) | yes | yes | FULLY_GOVERNED |
-| graph | graph | — | **no** | 0 | 0 | 0 | n/a | n/a | OWNER_PENDING_SCR（LOCKED，边界待 SCR） |
-| plugin | plugin | — | **no** | 0 | 0 | 0 | n/a | n/a | OWNER_PENDING_SCR（LOCKED，边界待 SCR） |
+| graph | graph | useGraphStore | yes | 19 (8 stored + 11 derived; nodes/edges 为 graph.rs 投影缓存) | 10 | yes (graphQuery/graphNodeGet/graphStats 读型) | yes | yes | FULLY_GOVERNED（SCR-Final-3：真实 capability；数据真源 graph.rs，前端投影缓存） |
+| plugin | plugin | usePluginStore | yes | 7 (6 stored + 1 derived; busy 为 useBookmarkStore 共享键) | 9 | yes (pluginList/Get/Install/Enable/Disable/Keys*) | yes | yes | FULLY_GOVERNED（SCR-Final-3：五态机真源在原生，前端投影） |
 | task | task | useTaskStore | yes | 11 | 6 | yes (taskAdd/taskUpdate/taskRemove/taskRunNow) | yes | yes | FULLY_GOVERNED |
-| workspace | workspace | — | **no** | 0 | 0 | 0 | n/a | n/a | OWNER_PENDING_SCR（无 useWorkspaceStore，边界待查） |
+| workspace | workspace | useWorkspaceStore | yes | 1 (audit; recents 与 home.recents 同名碰撞，留 observed) | 5 | yes (auditLog 读型) | yes | yes | FULLY_GOVERNED（SCR-Final-3：Core 仅 audit+recents+编排，子域各自 owner，防 God Store 回归） |
 
 ## Framework / Service 域（非 capability 模块，但已注册）
 
@@ -48,15 +48,15 @@
 ## 计数汇总（audit baseline）
 
 - TOTAL_MODULES（capability + framework）：16 + 15 = 31
-- FULLY_GOVERNED：13（capability）+ 10（framework，不含 settings/session/resource/workbench 4 个 NOT_APPLICABLE）= 23
-- OWNER_PENDING_SCR：graph、plugin、workspace = 3
+- FULLY_GOVERNED：16（capability）+ 10（framework，不含 settings/session/resource/workbench 4 个 NOT_APPLICABLE）= 26
+- OWNER_PENDING_SCR：0（graph/plugin/workspace 已据实裁决 FULLY_GOVERNED）
 - UNGOVERNED：0
 - NOT_APPLICABLE：settings、session、resource、workbench = 4
 - UNKNOWN：0
-- REGISTERED_STATES：按 owner 聚合（去重后）≈ 177（含 legacy/file/repo/script/snippet/artifact/credential + task 11）
-- REGISTERED_INTENTS：82（含 task 6）
-- REGISTERED_OWNERS：22（含 task）
-- REGISTERED_SIDE_EFFECTS：29（call_sites 归属，含 task 4）
+- REGISTERED_STATES：按 owner 聚合（去重后）≈ 204（含 graph 19 + plugin 7 + workspace 1 + 历史）
+- REGISTERED_INTENTS：106（含 graph 10 + plugin 9 + workspace 5）
+- REGISTERED_OWNERS：25（含 graph/plugin/workspace）
+- REGISTERED_SIDE_EFFECTS：42（call_sites 归属，含 graph 3 + plugin 9 + workspace 1）
 - INVALID_IMPLEMENTATION_LOCATORS：0（self-test + real scan fail=0）
 - DUPLICATE_STATES / OWNERS / WRITERS / INTENTS：待 Phase G 审计
 - DERIVED_STORED：0（R6 真实扫描 fail=0）
@@ -72,5 +72,7 @@
 ## 下一步
 
 1. Phase D：漂移审计（02-STATE-SOURCES.md 旧 useBrowserStore 引用；home/apps/settings/vault/agent/database locator 差异）。
-2. Phase F/G：task 域已完成真实治理（11 states + 6 intents + 4 side-effects，checker self-test ALL_PASS + real scan fail=0）；graph/plugin/workspace 走 SCR 裁定边界（OWNER_PENDING_SCR 不伪造）。
-3. Phase K 红队 + Phase M 最终报告。
+2. Phase F/G：Final 3 SCR 已完成（graph/plugin/workspace 据实裁决 FULLY_GOVERNED，详见 scr/FINAL-3-SCR.md）；UNGOVERNED=0、OWNER_PENDING_SCR=0；checker self-test ALL_PASS + real scan fail=0。
+3. Phase B：语义治理冻结（独立红队 21 攻击）+ tag `semantic-governance-v2-full-coverage-pass`。
+4. Phase C：物理边界整改（store 迁移 capabilities/*/state/ + UI 归位 + shared/ui canonical root）。
+5. Phase D：M2 package pilot（1 前端 + 1 native）。

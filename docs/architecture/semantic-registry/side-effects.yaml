@@ -335,6 +335,129 @@ side_effects:
     status: CURRENT_FACT
     note: SG-4 登记
 
+  # ---------------- SG Final-3：graph 原生副作用（requires_declaration=false，文档级登记）----------------
+  graphQuery:
+    declared: read graph nodes/edges (bounded projection)
+    actual:
+      - 从 graph.rs 有界投影读取图谱拓扑（删 props 第三闸）
+    warning: graph.rs 为原生真源；前端仅缓存，不制造第二真源
+    call_sites: bridge.graphQuery
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG Final-3 登记；读型副作用
+
+  graphNodeGet:
+    declared: read single graph node detail
+    actual:
+      - 从 graph.rs 读取单节点详情
+    warning: 原生真源读取
+    call_sites: bridge.graphNodeGet
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG Final-3 登记；读型副作用
+
+  graphStats:
+    declared: read graph capacity/stats
+    actual:
+      - 从 graph.rs 读取容量统计（truncated 信号）
+    warning: 原生真源读取
+    call_sites: bridge.graphStats
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG Final-3 登记；读型副作用
+
+  # ---------------- SG Final-3：plugin 原生副作用（requires_declaration=false）----------------
+  pluginList:
+    declared: list installed plugins (projection)
+    actual:
+      - 读取插件列表投影（无原文持久化）
+    warning: 详情五态机真源在原生
+    call_sites: bridge.pluginList
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG Final-3 登记
+
+  pluginGet:
+    declared: get plugin detail
+    actual:
+      - 读取插件详情（detail.state 五态投影）
+    warning: 不持久化/不回显签名原文、公钥原文、metadata 正文
+    call_sites: bridge.pluginGet
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG Final-3 登记
+
+  pluginInstall:
+    declared: install/update plugin
+    actual:
+      - 安装/更新插件（manifest + 资源路径）
+    warning: 红线：不持久化/不回显签名原文、公钥原文、资源路径、metadata 正文、凭据、请求/响应体、stdout/stderr；瞬时输入成功即清空
+    call_sites: bridge.pluginInstall
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG Final-3 登记
+
+  pluginEnable:
+    declared: enable plugin
+    actual:
+      - 启用插件（按 detail.state 五态门控）
+    warning: 五态机真源在原生
+    call_sites: bridge.pluginEnable
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG Final-3 登记
+
+  pluginDisable:
+    declared: disable plugin
+    actual:
+      - 禁用插件
+    warning: 五态机真源在原生
+    call_sites: bridge.pluginDisable
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG Final-3 登记
+
+  pluginKeysList:
+    declared: list trusted keys (fingerprints only)
+    actual:
+      - 读取受信任密钥列表（仅 16-hex 指纹，无原文）
+    warning: 仅指纹，不持有公钥原文
+    call_sites: bridge.pluginKeysList
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG Final-3 登记
+
+  pluginKeysAdd:
+    declared: add trusted key (fingerprint only)
+    actual:
+      - 添加受信任密钥（仅指纹）
+    warning: 不持有公钥原文
+    call_sites: bridge.pluginKeysAdd
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG Final-3 登记
+
+  pluginKeysRemove:
+    declared: remove trusted key
+    actual:
+      - 移除受信任密钥
+    warning: 仅指纹操作
+    call_sites: bridge.pluginKeysRemove
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG Final-3 登记
+
+  # ---------------- SG Final-3：workspace 原生副作用（requires_declaration=false）----------------
+  auditLog:
+    declared: read governance audit log (projection)
+    actual:
+      - 读取 Governance AUDIT 镜像（bridge.auditLog）
+    warning: 归 Governance 域，8C-0 不动；前端仅镜像
+    call_sites: bridge.auditLog
+    requires_declaration: false
+    status: CURRENT_FACT
+    note: SG Final-3 登记；读型副作用
+
 # ------------------------------------------------------------
 # 清单中列出但代码中不存在的项（如实标注，不得当作现状）
 # ------------------------------------------------------------

@@ -136,6 +136,18 @@ owner_implementations:
     paths:
       - src/capabilities/task/state/useTaskStore.ts
 
+  useGraphStore:
+    # M5-9/W6/W11/W12 图谱面板状态机；nodes/edges 为 graph.rs 有界投影缓存，非真源。
+    symbol: useGraphStore
+    paths:
+      - src/capabilities/graph/state/useGraphStore.ts
+
+  usePluginStore:
+    # M5-W14 插件管理器状态机；五态机真源在原生，前端 detail.state 为投影。
+    symbol: usePluginStore
+    paths:
+      - src/capabilities/plugin/state/usePluginStore.ts
+
 states:
 
   # ---------------- View Navigation ----------------
@@ -2583,6 +2595,466 @@ states:
     status: CURRENT_FACT
     note: 派生量禁止写入（R6 护栏）
 
+  # ---------------- Graph（owner: useGraphStore，M5-9/W6/W11/W12 图谱面板状态机）----------------
+  # 约束：组件一律经 bridge；后端 graph_* 未落地时 backendReady=false → 零 invoke（只读壳）。
+  # nodes/edges 为 Rust graph.rs 原生真源的有界投影缓存（删 props 第三闸），非第二真源（derived_from 标注）。
+  # 注：state 键名与代码变量精确一致（R2 按变量名比对）；generic 同名（loading/error/backendReady）已在全局 observed/registered。
+  nodes:
+    owner: useGraphStore
+    meaning: 图谱节点有界投影缓存（graphQuery 窄视图，删 props；GRAPH_MAX_NODES 上限）
+    not_meaning:
+      - 图谱数据真源（在 src-tauri/src/graph.rs GraphStore）
+    kind: stored
+    derived: false
+    derived_from: graph.rs（前端仅缓存，非真源）
+    canonical_writer:
+      - useGraphStore.loadGraph
+      - useGraphStore.loadNode
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: 投影缓存，真源 graph.rs，不制造第二真源（Phase B 红线 #20）
+
+  edges:
+    owner: useGraphStore
+    meaning: 图谱边有界投影缓存（graphQuery 窄视图，删 props；GRAPH_MAX_EDGES 上限）
+    not_meaning:
+      - 图谱数据真源（在 graph.rs GraphStore）
+    kind: stored
+    derived: false
+    derived_from: graph.rs（前端仅缓存，非真源）
+    canonical_writer:
+      - useGraphStore.loadGraph
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: 投影缓存，真源 graph.rs，不制造第二真源（Phase B 红线 #20）
+
+  selectedNodeId:
+    owner: useGraphStore
+    meaning: 当前选中节点 id（确定性选择；切换经 selectNode 切换）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGraphStore.selectNode
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  selectedEdgeKey:
+    owner: useGraphStore
+    meaning: 当前选中边稳定标识（from|to|kind）；过滤变化不随索引漂移
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGraphStore.selectEdge
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  startId:
+    owner: useGraphStore
+    meaning: 当前已载入 start_id（refresh / 诊断用）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGraphStore.loadGraph
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  truncated:
+    owner: useGraphStore
+    meaning: 容量截断信号（与 A7 §4 truncated/applied 配套；接近容量触发 banner）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGraphStore.loadGraph
+      - useGraphStore.loadStats
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  inFlightRequestId:
+    owner: useGraphStore
+    meaning: 在途请求 id（乱序回包丢弃用；A7 §5；不持有 Promise 本身）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGraphStore.loadGraph
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  filter:
+    owner: useGraphStore
+    meaning: 面板过滤受控状态（query + kinds）；UI 受控输入
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGraphStore.setFilter
+      - useGraphStore.toggleKind
+      - useGraphStore.clearFilter
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  nodeList:
+    owner: useGraphStore
+    meaning: nodes Map → 数组视图
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - nodes
+    formula: "[...nodes.value.values()]"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone（派生量禁止写入；R6 护栏）
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+    note: 派生量禁止写入（R6 护栏）
+
+  edgeList:
+    owner: useGraphStore
+    meaning: edges Map → 数组视图
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - edges
+    formula: "[...edges.value.values()]"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+    note: 派生量禁止写入（R6 护栏）
+
+  visibleNodes:
+    owner: useGraphStore
+    meaning: filterNodes(nodeList, filter) 过滤视图
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - nodeList
+      - filter
+    formula: "filterNodes(nodeList.value, filter.value)"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+    note: 派生量禁止写入（R6 护栏）
+
+  visibleEdges:
+    owner: useGraphStore
+    meaning: filterEdges(edgeList, nodeList, filter) 过滤视图
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - edgeList
+      - nodeList
+      - filter
+    formula: "filterEdges(edgeList.value, nodeList.value, filter.value)"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+    note: 派生量禁止写入（R6 护栏）
+
+  capacity:
+    owner: useGraphStore
+    meaning: 容量估算（nodes/edges 数量推导）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - nodes
+      - edges
+    formula: "estimateCapacity(nodes.value.size, edges.value.size)"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+    note: 派生量禁止写入（R6 护栏）
+
+  capState:
+    owner: useGraphStore
+    meaning: 容量状态（OK/NEAR/WARN）派生
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - capacity
+    formula: "capacityState(capacity.value)"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+    note: 派生量禁止写入（R6 护栏）
+
+  readOnly:
+    owner: useGraphStore
+    meaning: 只读壳标志 = !backendReady
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - backendReady
+    formula: "!backendReady.value"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+    note: 派生量禁止写入（R6 护栏）
+
+  selectionText:
+    owner: useGraphStore
+    meaning: 当前选择 aria-live 确定性播报
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - selectedNode
+      - selectedEdge
+    formula: "selectedNode/selectedEdge 摘要拼接"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+    note: 派生量禁止写入（R6 护栏）
+
+  selectedNode:
+    owner: useGraphStore
+    meaning: selectedNodeId → nodes 查询视图（确定性，不随索引漂移）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - nodes
+      - selectedNodeId
+    formula: "nodes.value.get(selectedNodeId.value) ?? null"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+    note: 派生量禁止写入（R6 护栏）
+
+  selectedEdge:
+    owner: useGraphStore
+    meaning: selectedEdgeKey → visibleEdges 稳定解析视图（resolveEdgeByKey 单一真源）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - visibleEdges
+      - selectedEdgeKey
+    formula: "resolveEdgeByKey(visibleEdges.value, selectedEdgeKey.value)"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+    note: 派生量禁止写入（R6 护栏）
+
+  state:
+    owner: useGraphStore
+    meaning: 面板组合状态（loading/count/error/backendReady）派生
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - loading
+      - nodes
+      - error
+      - backendReady
+    formula: "panelStateGraph({loading,count,error,backendReady})"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+    note: 派生量禁止写入（R6 护栏）
+
+  # ---------------- Plugin（owner: usePluginStore，M5-W14 插件管理器状态机）----------------
+  # 五态机（AVAILABLE/INSTALLED/ENABLED/ACTIVE/RESOURCE_EXISTS）真源在后端/原生；前端 detail.state 为只读投影。
+  # 红线：不持久化/不回显签名原文、公钥原文、资源路径、metadata 正文、凭据、请求/响应体、stdout/stderr。
+  # busy 为跨域通用态（已注册于 useBookmarkStore 键），本域复用全局键，不重复建键（见矩阵债务）。
+  list:
+    owner: usePluginStore
+    meaning: 插件列表投影缓存（pluginList 返回）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - usePluginStore.refreshList
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  detail:
+    owner: usePluginStore
+    meaning: 当前插件详情投影（含 state=五态投影；不持久化原文）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - usePluginStore.getDetail
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  keys:
+    owner: usePluginStore
+    meaning: 受信任密钥列表投影（pluginKeysList 返回；仅 16-hex 指纹，无原文）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - usePluginStore.refreshKeys
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  filterState:
+    owner: usePluginStore
+    meaning: 列表过滤状态（PluginState | null）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - usePluginStore.refreshList
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  manifestText:
+    owner: usePluginStore
+    meaning: 安装表单 manifest 瞬时输入（含签名原文）；成功后清空，不回显/不持久化
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - usePluginStore.install
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: ephemeral input；成功即清空
+
+  resourcePath:
+    owner: usePluginStore
+    meaning: 安装表单资源路径瞬时输入；成功后清空，不回显/不持久化
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - usePluginStore.install
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: ephemeral input；成功即清空
+
+  actionsFor:
+    owner: usePluginStore
+    meaning: 详情视图下 enable/disable/uninstall 按钮可用性（按 detail.state 状态机门控）
+    not_meaning: []
+    kind: derived
+    derived: true
+    derived_from:
+      - detail
+    formula: "enabledActionsFor(detail.value.state)"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: true
+    adr: ADR-P1A-3
+    status: CURRENT_FACT
+    note: 派生量禁止写入（R6 护栏）
+
+  # ---------------- Workspace Core（owner: useWorkspaceStore，Phase 8C-0 God Store 收敛后）----------------
+  # 仅持有 audit 镜像 + recents（跨域 url+file，与 home.recents 同名碰撞，见矩阵债务）+ 跨域编排 refresh。
+  # 子域（Files/Artifact/Repo/Script/Snippet）状态由各自 owner 拥有，本 Core 不吸收（防 God Store 回归）。
+  # recents 因与 home.recents 同名碰撞，留在 observed_not_governed（建议 Phase C 改名 workspaceRecents）。
+  audit:
+    owner: useWorkspaceStore
+    meaning: Governance AUDIT 镜像（bridge.auditLog 投影；归 Governance 域，8C-0 不动）
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useWorkspaceStore.refresh
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
 # ------------------------------------------------------------
 # 已观察到但本批不治理（真实存在的声明；新增治理需走 SCR）
 # checker 对它们只报 INFO，不算失败。目的：显式登记，不静默消失。
@@ -2590,7 +3062,6 @@ states:
 observed_not_governed:
 
   useWorkspaceStore:
-    - audit
     - recents
 
   useArtifactStore:

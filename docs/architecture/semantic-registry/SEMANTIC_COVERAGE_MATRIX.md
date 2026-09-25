@@ -1,5 +1,7 @@
 # Semantic Coverage Matrix（Phase · Semantic Governance Coverage Remediation）
 
+> ⚠️ **本文件是 D3 基线快照（仅 14 模块），已过时。** 当前权威矩阵为 `coverage-matrix.md`（31 模块，SG-C/SG-4/Final-3 后 FULLY_GOVERNED=26、OWNER_PENDING_SCR=0、UNKNOWN=0）。本文件仅供历史对照，不用于现状裁决。
+
 > 机器真源：`docs/architecture/semantic-registry/{states,owners,intents,side-effects}.yaml` + 各 `capabilities/<id>/manifest.ts` 的 `semanticOwner`。
 > 本矩阵是**现状快照**，非第二真源。评级定义见各 YAML / README。
 >
@@ -20,11 +22,11 @@
 | apps | 应用 | useAppsStore | partial(locator only) | no | no | no | no | yes | info-only | yes | **OWNER_DECLARED_ONLY** |
 | tools | 工具箱 | useToolsStore | partial(locator only) | no | no | no | no | yes | info-only | yes | **OWNER_DECLARED_ONLY** |
 | task | 定时任务 | useTaskStore | yes | yes | yes | yes | yes | yes | yes(R1-R5) | yes | **FULLY_GOVERNED** |
-| graph | 图谱 | (Rust GraphStore，无前端 store) | no | no | no | no | no | n/a | no | yes | **OWNER_DECLARED_ONLY** |
+| graph | 图谱 | useGraphStore | yes | yes | yes | yes | yes | yes | yes(R1-R5) | yes | **FULLY_GOVERNED**（SCR-Final-3；nodes/edges 为 graph.rs 投影缓存，前端非第二真源） |
 | agent | 智能体 | useAgentStore (src/stores/) | no | no | no | no | no | n/a | no | yes | **OWNER_DECLARED_ONLY** |
 | database | 数据库 | useDatabaseStore (src/stores/) | no | no | no | no | no | n/a | no | yes | **OWNER_DECLARED_ONLY** |
 | home | 主页 | useHomeStore | no | no | no | no | no | n/a | no | yes | **OWNER_DECLARED_ONLY** |
-| plugin | 插件 | (manifest semanticOwner) | no | no | no | no | no | n/a | no | yes | **OWNER_DECLARED_ONLY** |
+| plugin | 插件 | usePluginStore | yes | yes | yes | yes | yes | yes | yes(R1-R5) | yes | **FULLY_GOVERNED**（SCR-Final-3；五态机真源在原生，前端 detail.state 投影） |
 | settings | 框架偏好(SERVICE) | useSettingsStore (src/stores/) | no | no | no | no | no | n/a | no | yes | **OWNER_DECLARED_ONLY** (framework) |
 
 > 注：mainView / gridToolbarOpen / sidebarOpen / clipOpen / fileEditorOpen / browserDockOpen / browserDockTab 属 `view_navigation` 域（owner=useLayoutStore），不在 14 模块之列，但已在 registry 治理（见 §B）。
@@ -43,9 +45,9 @@
 
 ## C. 覆盖率汇总（14 模块）
 
-- FULLY_GOVERNED: 4 (bookmark, browser, terminal, task)
+- FULLY_GOVERNED: 6 (bookmark, browser, terminal, task, graph, plugin)（D3 基线；当前 31 模块权威见 coverage-matrix.md）
 - PARTIALLY_GOVERNED: 1 (vault)
-- OWNER_DECLARED_ONLY: 9 (clipboard, apps, tools, graph, agent, database, home, plugin, settings)
+- OWNER_DECLARED_ONLY: 7 (clipboard, apps, tools, agent, database, home, settings)（D3 基线；graph/plugin 已升格）
 - REGISTRY_DECLARED_ONLY: 0
 - OWNER_PENDING_SCR: 0
 - UNGOVERNED: 0

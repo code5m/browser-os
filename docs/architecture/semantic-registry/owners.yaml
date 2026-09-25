@@ -811,6 +811,127 @@ owners:
     rationale: M4-8 定时任务面板状态机；组件一律经 bridge，后端 5 命令未就绪时 guard() 拦截所有 invoke（零 invoke 口径）；新建任务默认 enabled=false（A6 裁定）；secret 不进前端持久化
     status: CURRENT_FACT
 
+  graph:
+    owner: useGraphStore
+    owns:
+      - nodes
+      - edges
+      - selectedNodeId
+      - selectedEdgeKey
+      - startId
+      - truncated
+      - inFlightRequestId
+      - filter
+      - nodeList (derived)
+      - edgeList (derived)
+      - visibleNodes (derived)
+      - visibleEdges (derived)
+      - capacity (derived)
+      - capState (derived)
+      - readOnly (derived)
+      - selectionText (derived)
+      - selectedNode (derived)
+      - selectedEdge (derived)
+      - state (derived)
+      - loading (observed, 共享)
+      - error (observed, 共享)
+      - backendReady (observed, 共享; useAgentStore 已登记 single_owner_required:false)
+    owner_only_api:
+      - loadGraph
+      - loadNode
+      - loadStats
+      - refresh
+      - selectNode
+      - selectEdge
+      - setFilter
+      - toggleKind
+      - clearFilter
+      - cancelInFlight
+    public_intent_api:
+      - loadGraph
+      - loadNode
+      - loadStats
+      - refresh
+      - selectNode
+      - selectEdge
+      - setFilter
+      - toggleKind
+      - clearFilter
+    forbidden_callers:
+      - components/**（不得直写 nodes/edges/selectedNodeId 等）
+    authorized_callers:
+      - useGraphStore（owner 自身）
+      - GraphPanel.vue / GraphViewer.vue / NodeDetail.vue / EdgeDetail.vue / GraphFilter.vue
+    rationale: 图谱面板状态机；nodes/edges 为 graph.rs 有界投影缓存（删 props 第三闸），前端不持第二真源；graph_* 未落地时 backendReady=false → 零 invoke 只读壳；loading/error/backendReady 为共享 observed 态
+    status: CURRENT_FACT
+
+  plugin:
+    owner: usePluginStore
+    owns:
+      - list
+      - detail
+      - keys
+      - filterState
+      - manifestText (ephemeral)
+      - resourcePath (ephemeral)
+      - actionsFor (derived)
+      - busy (observed, 共享 useBookmarkStore 键)
+      - error (observed, 共享)
+      - backendReady (observed, 共享; computed)
+    owner_only_api:
+      - refreshList
+      - getDetail
+      - install
+      - enable
+      - disable
+      - refreshKeys
+      - addKey
+      - removeKey
+      - selectFromList
+      - clearError
+    public_intent_api:
+      - refreshList
+      - getDetail
+      - install
+      - enable
+      - disable
+      - refreshKeys
+      - addKey
+      - removeKey
+    forbidden_callers:
+      - components/**（不得直写 list/detail/keys/manifestText/resourcePath 等）
+    authorized_callers:
+      - usePluginStore（owner 自身）
+      - PluginManager.vue（消费 + 触发 intent）
+    rationale: 插件管理器状态机；五态机（AVAILABLE/INSTALLED/ENABLED/ACTIVE/RESOURCE_EXISTS）真源在原生，前端 detail.state 为只读投影；红线不持久化/不回显签名原文、公钥原文、资源路径、metadata 正文、凭据、请求/响应体、stdout/stderr
+    status: CURRENT_FACT
+
+  workspace:
+    owner: useWorkspaceStore
+    owns:
+      - audit
+      - recents (observed, 与 home.recents 同名碰撞; 建议 Phase C 改名 workspaceRecents)
+    owner_only_api:
+      - refresh
+      - loadRecents
+      - addRecentUrl
+      - addRecentFile
+      - openRecent
+    public_intent_api:
+      - refresh
+      - loadRecents
+      - addRecentUrl
+      - addRecentFile
+      - openRecent
+    forbidden_callers:
+      - components/**（不得回存 Files/Artifact/Repo/Script/Snippet 子域内部状态）
+    authorized_callers:
+      - useWorkspaceStore（owner 自身）
+      - useFileStore（跨域写 recents.file，受控协作）
+      - AuditPanel.vue / ActivityBar.vue / recentsNav.ts
+    rationale: Workspace Core（Phase 8C-0 God Store 收敛后）= AGGREGATE/ORCHESTRATOR；仅持 audit 镜像 + recents（跨域）+ 跨域编排 refresh；子域状态由各自 owner 拥有，不吸收（防 God Store 回归）
+    status: CURRENT_FACT
+
 # ------------------------------------------------------------
 # 越界判定补充
 # ------------------------------------------------------------

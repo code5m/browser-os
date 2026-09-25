@@ -729,6 +729,10 @@ const ANCHOR_FILES = [
   { path: "src/capabilities/skill/state/useSkillStore.ts", src: `const skills = ref([]);` },
   // SG-4：task 域专属 owner（owner_implementations 已登记）；锚点跟随 locator，否则 RI 报 UNRESOLVED。
   { path: "src/capabilities/task/state/useTaskStore.ts", src: `const tasks = ref([]); const runs = ref([]); const targets = ref([]);` },
+  // Final-3：graph 域 owner；锚点声明全部领域专属变量（loading/error/backendReady 为全局 observed/registered，不重复）。
+  { path: "src/capabilities/graph/state/useGraphStore.ts", src: `const nodes = ref(new Map()); const edges = ref(new Map()); const selectedNodeId = ref(null); const selectedEdgeKey = ref(null); const startId = ref(null); const truncated = ref(false); const inFlightRequestId = ref(null); const filter = ref({query:"",kinds:[]}); const nodeList = computed(()=>[]); const edgeList = computed(()=>[]); const visibleNodes = computed(()=>[]); const visibleEdges = computed(()=>[]); const capacity = computed(()=>({pct:0,nodes:0,edges:0})); const capState = computed(()=>({state:"OK",pct:0})); const readOnly = computed(()=>true); const selectionText = computed(()=>""); const selectedNode = computed(()=>null); const selectedEdge = computed(()=>null); const state = computed(()=>({}));` },
+  // Final-3：plugin 域 owner；busy 为跨域通用态（useBookmarkStore 键），不在此声明。
+  { path: "src/capabilities/plugin/state/usePluginStore.ts", src: `const list = ref([]); const detail = ref(null); const keys = ref([]); const filterState = ref(null); const manifestText = ref(""); const resourcePath = ref(""); const actionsFor = computed(()=>({enable:false,disable:false,uninstall:false}));` },
 ];
 const ALL = (arr) => [...ANCHOR_FILES, ...arr];
 
