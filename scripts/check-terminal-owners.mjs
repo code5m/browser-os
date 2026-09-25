@@ -197,7 +197,7 @@ async function bundleStore() {
     // 框架依赖保持 external（由 Node 原生解析 node_modules），与 bundling 无关；
     // 打包的只有**产品代码**（store + useLayoutStore），断言对象因此是真实逻辑。
     // *.vue 必须 external：bootstrap 会拉到能力入口的 defineAsyncComponent（无 .vue loader）。
-    external: ["pinia", "vue", "@vue/*", "*.vue"],
+    external: ["pinia", "vue", "@vue/*", "*.vue", "turndown", "dompurify", "marked"],
     write: false,
   });
   const tmp = join(ROOT, ".tmp-terminal-owners.mjs");
@@ -226,7 +226,7 @@ async function runBootstrapSmoke() {
     format: "esm",
     platform: "neutral",
     target: "es2020",
-    external: ["pinia", "vue", "@vue/*", "*.vue"],
+    external: ["pinia", "vue", "@vue/*", "*.vue", "turndown", "dompurify", "marked"],
     write: false,
   });
   const tmp = join(ROOT, ".tmp-terminal-bootstrap.mjs");

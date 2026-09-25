@@ -54,6 +54,16 @@
       "from": "src/capabilities/clipboard/public"
     },
     {
+      "shell": "src/App.vue",
+      "store": "useResourceStore",
+      "from": "src/capabilities/browser/public"
+    },
+    {
+      "shell": "src/App.vue",
+      "store": "useSessionStore",
+      "from": "src/capabilities/browser/public"
+    },
+    {
       "shell": "src/components/layout/ActivityBar.vue",
       "store": "useAppsStore",
       "from": "src/capabilities/apps/public"

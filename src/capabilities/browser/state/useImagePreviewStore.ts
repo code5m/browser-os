@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import { bridge } from "../bridge";
-import type { ImageRef } from "../types";
+import { bridge } from "../../../bridge";
+import type { ImageRef } from "../../../types";
 import {
   buildPreviewItems,
   bumpRetry,
@@ -19,7 +19,7 @@ import {
   scaleForDoubleClick,
   scaleForWheel,
   type PreviewItem,
-} from "../utils/imagePreview";
+} from "../../../utils/imagePreview";
 
 // M2-2.b 图片预览状态（画廊 → 灯箱的唯一数据源）。
 //

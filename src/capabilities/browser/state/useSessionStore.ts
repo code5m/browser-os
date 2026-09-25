@@ -1,13 +1,13 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import { bridge } from "../bridge";
-import { useBrowserStore } from "../capabilities/browser/public";
-import { useLayoutStore } from "./useLayoutStore";
+import { bridge } from "../../../bridge";
+import { useBrowserStore } from "../../../capabilities/browser/public";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
 import type {
   BrowserSession,
   SessionPolicy,
   SessionSummary,
-} from "../types";
+} from "../../../types";
 
 // 历史会话存档状态层（M1-9 会话存档，不含关闭协议）。
 //

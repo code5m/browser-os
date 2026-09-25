@@ -2,7 +2,7 @@
 
 > 文档性质：machine truth 的引用者，非第二真源。评级真源：`src/settings/manifest.ts`。
 > **重要**：settings 当前是 **framework/service candidate**（`manifest.category = "SERVICE"`），**不是产品 CAPABILITY**，**不得擅自升格为 Capability**。本文件是候选文档，供未来决定是否升格时参考。
-> 诚实声明：物理位置分散（store 在 `src/stores/`，UI 在 `src/components/system/`），属框架级物理债务。
+> 诚实声明：store 已迁入 `src/settings/state/`（store 物理债务解除）；UI 仍在 `src/components/system/SettingsPanel.vue`（UI 物理债务未解除）。settings 仍为 SERVICE 候选，未升格 Capability。
 
 ---
 
@@ -30,16 +30,16 @@
 
 ## 6. Domain Model
 - 聚合根：框架偏好集合（由 `useSettingsStore` 管理）。
-- 物理位置：**`src/stores/useSettingsStore.ts`**（不在 `src/settings/` 内 —— 物理债务）。
+- 物理位置：**`src/settings/state/useSettingsStore.ts`**（不在 `src/settings/` 内 —— 物理债务）。
 
 ## 7. Invariants
 - 偏好为框架级，不随任何业务能力的 absent 而改变（常驻）。
 - `useSettingsStore` 是唯一前端真源。
 
 ## 8. State Ownership
-- **CURRENT PHYSICAL LOCATION**：`src/stores/useSettingsStore.ts`（`defineStore("settings")`）。
+- **CURRENT PHYSICAL LOCATION**：`src/settings/state/useSettingsStore.ts`（`defineStore("settings")`）。
 - **semanticOwner**：`useSettingsStore`（manifest + public 登记）。
-- **TARGET / KNOWN DEBT**：settings 当前是候选，**不应**擅自升格 Capability 并迁入 `src/settings/state/`；但若未来升格，store 应迁入 `src/settings/state/`，UI 应从 `src/components/system/SettingsPanel.vue` 迁入 `src/settings/ui/`。当前二者均在 capability 体系外。
+- **TARGET / KNOWN DEBT**：store 已迁入 `src/settings/state/`（物理位置债务解除）；settings 仍为 SERVICE 候选，未升格 Capability；UI 仍在 `src/components/system/SettingsPanel.vue`（UI 物理债务未解除）。若未来升格为 Capability，UI 应迁入 `src/settings/ui/`。
 
 ## 9. Commands / Intents
 - 业务 action：偏好读写（具体见 `useSettingsStore`）。
@@ -77,7 +77,7 @@
 
 ## 18. Resources
 - `resources.class: ["LIGHT"]`；`suspendable: false`；`destroyable: false`（常驻）。
-- `v1.resources: [{kind:"CACHE", owned, evidence:"src/stores/useSettingsStore.ts"}]`（**证据路径指向 src/stores，反映物理债务**）。
+- `v1.resources: [{kind:"CACHE", owned, evidence:"src/settings/state/useSettingsStore.ts"}]`（**证据路径已指向 src/settings/state/useSettingsStore.ts，store 物理债务已解除**）。
 
 ## 19. Side Effects
 - 写框架偏好（disk 持久化，具体机制见 `useSettingsStore`）。
@@ -107,7 +107,7 @@
 - `scripts/check-capability-registry.mjs`、`scripts/check-capability-composition.mjs`（manifest `maturityEvidence` 引用，为通用 registry/组合门禁，未特指 settings）。
 
 ## 28. Review Guide
-- 入口：`manifest.ts` → `public.ts` → `src/stores/useSettingsStore.ts` → `src/components/system/SettingsPanel.vue`。
+- 入口：`manifest.ts` → `public.ts` → `src/settings/state/useSettingsStore.ts` → `src/components/system/SettingsPanel.vue`。
 - 关注点：候选身份（禁止升格）、物理债务、框架偏好与业务偏好的边界。
 
 ## 29. AI Modification Guide
@@ -117,13 +117,13 @@
 
 ## 30. Known Debt
 - **候选身份**：`SERVICE` 分类，非 CAPABILITY，不得擅自升格。
-- **物理债务**：store 在 `src/stores/useSettingsStore.ts`（非 `src/settings/`）；UI 在 `src/components/system/SettingsPanel.vue`（非 `src/settings/ui/`）。
-- `v1.resources` 的 evidence 路径 `src/stores/useSettingsStore.ts` 反映此债务。
+- **物理债务（仅 UI）**：store 已迁入 `src/settings/state/useSettingsStore.ts`（store 物理债务解除）；UI 仍在 `src/components/system/SettingsPanel.vue`（非 `src/settings/ui/`，UI 物理债务未解除）。
+- `v1.resources` 的 evidence 路径 `src/settings/state/useSettingsStore.ts` 反映此债务。
 
 ## 31. C / HP / M / RV / D
 - **C = C2**：`manifest.v1.maturity="C2"`，有 registry/组合门禁；作为 SERVICE 候选，成熟度含义以框架服务计。
 - **HP = HP2**：`manifest.v1.hotPlug.level="HP2"`（enable/disable/register/unregister=true；install/uninstall=false），由 `check-capability-platform.mjs` 验证；HP3 本夜不做。
-- **M = M0（逻辑级候选）**：settings 不是独立物理 capability 包；物理位置分散在 `src/stores/` 与 `src/components/system/`，目录隔离未达成（`src/settings/` 仅含 manifest/public/index，非完整能力边界）。无独立 npm 包（非 M2）。
+- **M = M1（部分物理隔离）**：store 已迁入 `src/settings/state/`（store 物理隔离达成）；UI 仍在 `src/components/system/SettingsPanel.vue`（UI 未迁入 `src/settings/ui/`，目录隔离未完全达成）。无独立 npm 包（非 M2）。
 - **RV = RV1 + RV2（间接） + RV3（否）**：owner 已登记（RV1）；maturityEvidence 为通用门禁（RV2 间接）；无 vitest（RV3 否）。
 - **D = D3**：本 README 满足 D3（含候选身份与物理债务诚实记录）。文档化前为 D0。
 
@@ -134,7 +134,7 @@
 ## 33. Source of Truth
 - manifest：`src/settings/manifest.ts`
 - public：`src/settings/public.ts`
-- state（**物理债务·在 src/stores**）：`src/stores/useSettingsStore.ts`
+- state（**已内迁 src/settings/state**）：`src/settings/state/useSettingsStore.ts`
 - UI（**物理债务·在 components/system**）：`src/components/system/SettingsPanel.vue`
 - semantic owner：manifest `semanticOwner: "useSettingsStore"`
 - gates：`scripts/check-capability-registry.mjs`、`scripts/check-capability-composition.mjs`（见 §27）

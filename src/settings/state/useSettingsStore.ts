@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
-import { bridge } from "../bridge";
+import { bridge } from "../../bridge";
 
 export type KeymapScheme = "vscode" | "idea" | "eclipse";
 export type Theme = "light" | "dark";

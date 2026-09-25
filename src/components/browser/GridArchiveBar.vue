@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Copy, Download, RefreshCw, ChevronDown, ChevronUp } from '@lucide/vue';
-import { useGridArchiveStore } from '../../stores/useGridArchiveStore';
+import { useGridArchiveStore } from '../../capabilities/browser/public';
 const archive = useGridArchiveStore();
 </script>
 <template>

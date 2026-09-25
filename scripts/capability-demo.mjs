@@ -46,7 +46,7 @@ async function loadMod() {
     format: "esm",
     platform: "neutral",
     target: "es2020",
-    external: ["pinia", "vue", "@vue/*", "*.vue"],
+    external: ["pinia", "vue", "@vue/*", "*.vue", "turndown", "dompurify", "marked"],
     write: false,
   });
   const tmp = join(ROOT, `.tmp-demo-${tmpSeq++}.mjs`);

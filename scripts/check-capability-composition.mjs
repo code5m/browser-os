@@ -152,7 +152,7 @@ async function bundleModule(entryContent, resolveDir) {
     format: "esm",
     platform: "neutral",
     target: "es2020",
-    external: ['*.vue'],
+    external: ['*.vue', 'turndown', 'dompurify', 'marked'],
     write: false,
   });
   const tmp = join(ROOT, ".tmp-capability-composition.mjs");

@@ -11,7 +11,7 @@ import {
   formatDuration,
   formatSize,
   useResourceStore,
-} from "../../../stores/useResourceStore";
+} from "../state/useResourceStore";
 
 const browser = useBrowserStore();
 const layout = useLayoutStore();

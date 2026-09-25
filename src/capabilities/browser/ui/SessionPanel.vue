@@ -5,8 +5,8 @@
 import { computed, onMounted } from "vue";
 import { useBrowserStore } from "../state/useBrowserStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
-import { useSessionStore } from "../../../stores/useSessionStore";
-import { displayUrl, formatDuration, formatSize } from "../../../stores/useResourceStore";
+import { useSessionStore } from "../state/useSessionStore";
+import { displayUrl, formatDuration, formatSize } from "../state/useResourceStore";
 
 const browser = useBrowserStore();
 const layout = useLayoutStore();

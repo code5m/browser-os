@@ -93,7 +93,7 @@ async function loadBundle(tag, { mutant = false } = {}) {
     format: 'esm',
     platform: 'neutral',
     target: 'es2020',
-    external: ['pinia', 'vue', '@vue/*', '*.vue'],
+    external: ['pinia', 'vue', '@vue/*', '*.vue', 'turndown', 'dompurify', 'marked'],
     plugins: mutant ? [ALWAYS_ALLOW_GUARD] : [],
     write: false,
   })

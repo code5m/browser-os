@@ -1,11 +1,11 @@
 import { defineStore } from "pinia";
 import { computed, reactive, ref } from "vue";
-import { bridge } from "../bridge";
+import { bridge } from "../../../bridge";
 import type {
   ResourceCaptureSettings,
   ResourceKind,
   ResourceReceived,
-} from "../types";
+} from "../../../types";
 
 // M1-8 资源瀑布状态层。
 // 数据全部来自后端脱敏 DTO（不含 headers/body，敏感查询参数值为 ***）；

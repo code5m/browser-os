@@ -148,6 +148,32 @@ owner_implementations:
     paths:
       - src/capabilities/plugin/state/usePluginStore.ts
 
+  useResourceStore:
+    # Browser 子域：资源瀑布（M1-8）。owner = browser capability（capabilities/browser）。
+    symbol: useResourceStore
+    paths:
+      - src/capabilities/browser/state/useResourceStore.ts
+  useSessionStore:
+    # Browser 子域：历史会话存档（M1-9）。owner = browser capability。
+    symbol: useSessionStore
+    paths:
+      - src/capabilities/browser/state/useSessionStore.ts
+  useGridArchiveStore:
+    # Browser 子域：宫格回复归档（M2-2.a）。owner = browser capability。
+    symbol: useGridArchiveStore
+    paths:
+      - src/capabilities/browser/state/useGridArchiveStore.ts
+  useImagePreviewStore:
+    # Browser 子域：图片预览（M2-2.b）。owner = browser capability。
+    symbol: useImagePreviewStore
+    paths:
+      - src/capabilities/browser/state/useImagePreviewStore.ts
+  useSettingsStore:
+    # 框架/平台 SERVICE：用户偏好（快捷键/主题）。owner = settings module（src/settings）。
+    symbol: useSettingsStore
+    paths:
+      - src/settings/state/useSettingsStore.ts
+
 states:
 
   # ---------------- View Navigation ----------------

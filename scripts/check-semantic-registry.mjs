@@ -726,6 +726,12 @@ const ANCHOR_FILES = [
   { path: "src/capabilities/agent/state/useAgentStore.ts", src: `const agents = ref([]);` },
   { path: "src/capabilities/database/state/useDatabaseStore.ts", src: `const connections = ref([]);` },
   { path: "src/capabilities/git/state/useGitStore.ts", src: `const status = ref([]);` },
+  // Phase C：Browser 子域 + Settings（owner = browser / settings capability）。锚点跟随 locator。
+  { path: "src/capabilities/browser/state/useResourceStore.ts", src: `const resources = ref([]); const filter = ref("all");` },
+  { path: "src/capabilities/browser/state/useSessionStore.ts", src: `const sessions = ref([]); const detail = ref(null);` },
+  { path: "src/capabilities/browser/state/useGridArchiveStore.ts", src: `const rows = ref([]); const busy = ref(false);` },
+  { path: "src/capabilities/browser/state/useImagePreviewStore.ts", src: `const items = ref([]); const open = ref(false);` },
+  { path: "src/settings/state/useSettingsStore.ts", src: `const keymap = ref("vscode"); const theme = ref("dark");` },
   { path: "src/capabilities/skill/state/useSkillStore.ts", src: `const skills = ref([]);` },
   // SG-4：task 域专属 owner（owner_implementations 已登记）；锚点跟随 locator，否则 RI 报 UNRESOLVED。
   { path: "src/capabilities/task/state/useTaskStore.ts", src: `const tasks = ref([]); const runs = ref([]); const targets = ref([]);` },

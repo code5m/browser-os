@@ -53,7 +53,7 @@ async function bootstrapUnder(profile) {
     format: "esm",
     platform: "neutral",
     target: "es2020",
-    external: ["pinia", "vue", "@vue/*", "*.vue"],
+    external: ["pinia", "vue", "@vue/*", "*.vue", "turndown", "dompurify", "marked"],
     write: false,
   });
   // 每个 profile 用独立模块实例（bootstrap 是 app 级单例，测试需模拟「以不同 profile 启动」）
@@ -158,7 +158,7 @@ async function loadGovernor() {
   const res = await build({
     stdin: { contents: entry, resolveDir: ROOT, loader: "ts" },
     bundle: true, format: "esm", platform: "neutral", target: "es2020",
-    external: ["pinia", "vue", "@vue/*", "*.vue"], write: false,
+    external: ["pinia", "vue", "@vue/*", "*.vue", "turndown", "dompurify", "marked"], write: false,
   });
   const tmp = join(ROOT, ".tmp-gov.mjs");
   writeFileSync(tmp, res.outputFiles[0].text, "utf8");

@@ -40,9 +40,9 @@
 
 ## 8. State Ownership
 - **CURRENT PHYSICAL LOCATION（canonical）**：`src/capabilities/browser/state/useBrowserStore.ts`（`defineStore("browser")`）。
-- **CURRENT PHYSICAL LOCATION（并行/第二真源·待裁决）**：`src/stores/useGridArchiveStore.ts` —— 属 browser 域的 grid 归档状态，物理上不在 capability 内，且直接读写 `useBrowserStore` 的 `gridSession`/`gridOpen`/`gridCount`。语义 registry `02-STATE-SOURCES.md` 已将其列为 writer（MULTIPLE_WRITERS / S2 风险）。
+- **CURRENT PHYSICAL LOCATION（并行/第二真源·已内迁）**：`src/capabilities/browser/state/useGridArchiveStore.ts` —— 属 browser 域的 grid 归档状态，物理位置已迁入 capability 内；仍直接读写 `useBrowserStore` 的 `gridSession`/`gridOpen`/`gridCount`（MULTIPLE_WRITERS / S2 风险，待收敛）。语义 registry `02-STATE-SOURCES.md` 已将其列为 writer。
 - **semanticOwner**：`useBrowserStore`（manifest 登记）。
-- **TARGET / KNOWN DEBT**：`useGridArchiveStore` 应迁入 `src/capabilities/browser/state/` 并收敛 grid 状态写入者，消除 MULTIPLE_WRITERS；当前**位置与 owner 待裁决**。
+- **TARGET / KNOWN DEBT**：位置已内迁至 `src/capabilities/browser/state/`；剩余债务为收敛 grid 状态写入者、消除 MULTIPLE_WRITERS（writer 收敛与 owner 待裁决）。
 
 ## 9. Commands / Intents
 - 业务 action：`tabNew` / `tabSwitch` / `tabClose` / `restoreRecent` / `tabReload` / `tabNavigate` / `goBack` / `goForward` / `buildGrid` / `aiAdapterFor`。
@@ -69,12 +69,12 @@
 - 被大量 Shell 组件经 public 消费（App.vue、layout 系列、composables）。
 
 ## 15. Dependents
-- 消费 `capabilities/browser/public` 的：`App.vue`、`components/browser/*`（直连 store）、`components/layout/*`、`composables/useBrowserHost.ts`/`browserNav.ts`、`stores/useGridArchiveStore.ts`/`useSessionStore.ts`/`useWorkbenchStore.ts`/`useLayoutStore.ts`（动态 import）。
+- 消费 `capabilities/browser/public` 的：`App.vue`、`components/browser/*`（直连 store）、`components/layout/*`、`composables/useBrowserHost.ts`/`browserNav.ts`、`src/capabilities/browser/state/useGridArchiveStore.ts`/`useSessionStore.ts`/`useWorkbenchStore.ts`/`useLayoutStore.ts`（动态 import；gridArchive/session 已内迁 browser/state，workbench/layout 仍在 `src/stores` 待裁决）。
 
 ## 16. Frontend Boundary
 - 贡献组件：`BrowserHost.vue`（BROWSER_HOST）、`ResourceWaterfall.vue`（BROWSER_DOCK view=net）、`SessionPanel.vue`（BROWSER_DOCK view=session）。
 - **CURRENT PHYSICAL LOCATION（已隔离）**：`src/capabilities/browser/ui/` 下 3 个组件。
-- **CURRENT PHYSICAL LOCATION（物理债务）**：以下 4 个 .vue 仍在 `src/components/browser/`，未迁入 `ui/`：`AINavPanel.vue`、`CredentialList.vue`、`GridArchiveBar.vue`、`ResourcePanel.vue`。其中 `GridArchiveBar.vue` 直连 `src/stores/useGridArchiveStore`（与 §8 债务形成跨两处非 capability 目录的债务链）。
+- **CURRENT PHYSICAL LOCATION（物理债务）**：以下 4 个 .vue 仍在 `src/components/browser/`，未迁入 `ui/`：`AINavPanel.vue`、`CredentialList.vue`、`GridArchiveBar.vue`、`ResourcePanel.vue`。其中 `GridArchiveBar.vue` 直连 `src/capabilities/browser/state/useGridArchiveStore`（该 store 已内迁 browser/state，债务链收窄为"state 在 capability 内、UI 仍在 components/browser"两处，非跨非 capability 目录）。
 
 ## 17. Native Boundary
 - 原生命令真源：`src-tauri/src/bridge.rs`（grid/tab/resource/credential/AI 归档命令）+ `src-tauri/src/main.rs` `generate_handler!` 注册。
@@ -126,7 +126,7 @@
 - `scripts/check-canonical-module-location.mjs`（R10 单实现检查）**未登记** `useGridArchiveStore`/`useBrowserStore` → browser 物理债务无 checker 兜底。
 
 ## 28. Review Guide
-- 入口：`manifest.ts` → `public.ts` → `state/useBrowserStore.ts` → `ui/*` + （债务）`src/components/browser/*` + `src/stores/useGridArchiveStore.ts`。
+- 入口：`manifest.ts` → `public.ts` → `state/useBrowserStore.ts` → `ui/*` + （债务）`src/components/browser/*` + `src/capabilities/browser/state/useGridArchiveStore.ts`。
 - 关注点：MULTIPLE_WRITERS 风险、WebView 资源回收、grid 状态真源收敛。
 
 ## 29. AI Modification Guide
@@ -135,7 +135,7 @@
 - 迁移 `src/components/browser/*` 到 `ui/` 时同步所有 import。
 
 ## 30. Known Debt
-- **物理债务①**：`useGridArchiveStore` 在 `src/stores/`（非 capability），且列为 `gridOpen`/`gridSession` 的 writer（MULTIPLE_WRITERS / S2 风险），位置与 owner 待裁决。
+- **物理债务①（位置已解除，writer 未收敛）**：`useGridArchiveStore` 已迁入 `src/capabilities/browser/state/`（物理债务解除），但仍列为 `gridOpen`/`gridSession` 的 writer（MULTIPLE_WRITERS / S2 风险），writer 收敛与 owner 待裁决。
 - **物理债务②**：4 个 .vue 在 `src/components/browser/`（非 `ui/`）：`AINavPanel`/`CredentialList`/`GridArchiveBar`/`ResourcePanel`。
 - **物理债务③**：`GridArchiveBar.vue` ↔ `useGridArchiveStore` 跨两处非 capability 目录。
 - **语义漂移**：`02-STATE-SOURCES.md` 仍引用旧路径 `src/stores/useBrowserStore.ts`（实已迁至 `capabilities/browser/state/`）。
@@ -156,7 +156,7 @@
 - manifest：`src/capabilities/browser/manifest.ts`
 - public：`src/capabilities/browser/public.ts`
 - state（canonical）：`src/capabilities/browser/state/useBrowserStore.ts`
-- state（**物理债务·并行真源**）：`src/stores/useGridArchiveStore.ts`
+- state（**并行真源·位置已内迁**）：`src/capabilities/browser/state/useGridArchiveStore.ts`
 - UI（已隔离）：`src/capabilities/browser/ui/`
 - UI（**物理债务**）：`src/components/browser/`（AINavPanel/CredentialList/GridArchiveBar/ResourcePanel）
 - native：`src-tauri/src/bridge.rs`、`src-tauri/src/main.rs`、`src/bridge.ts`

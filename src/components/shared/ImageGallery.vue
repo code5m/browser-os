@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { ImageRef } from "../../types";
-import { useImagePreviewStore } from "../../stores/useImagePreviewStore";
+import { useImagePreviewStore } from "../../capabilities/browser/public";
 import {
   buildPreviewItems,
   galleryState,
