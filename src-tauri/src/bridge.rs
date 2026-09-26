@@ -3798,20 +3798,6 @@ pub fn rename_path(app: AppHandle, path: String, new_name: String) -> Result<(),
 
 // ====== 剪贴板 ======
 
-/// 读取系统剪贴板文本。
-#[tauri::command]
-pub fn clipboard_read() -> Result<String, String> {
-    let mut cb = arboard::Clipboard::new().map_err(|e| format!("无法访问剪贴板: {e}"))?;
-    cb.get_text().map_err(|e| format!("读取失败: {e}"))
-}
-
-/// 写入系统剪贴板文本。
-#[tauri::command]
-pub fn clipboard_write(text: String) -> Result<(), String> {
-    let mut cb = arboard::Clipboard::new().map_err(|e| format!("无法访问剪贴板: {e}"))?;
-    cb.set_text(text).map_err(|e| format!("写入失败: {e}"))
-}
-
 // ====== 宫格浏览器：多网页并排对比 =====
 //
 // 多进程架构（Phase 2 起）：每个宫格 grid-N 由独立子进程承载（崩溃隔离），

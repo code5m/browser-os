@@ -8,6 +8,7 @@ mod grid_ipc;
 mod grid_process;
 mod shared {
     pub mod images;
+    pub mod clipboard;
 }
 mod mcp;
 mod security_policy;
@@ -56,6 +57,11 @@ pub use crate::capabilities::script::snippets;
 // Native Physical Boundary Pilot 4 (images): re-export shim so existing
 // `crate::images::` call sites keep resolving without per-call-site edits.
 pub use crate::shared::images;
+
+// Native Physical Boundary Pilot 15 (clipboard): 与 images 同属 SHARED_NATIVE_INFRASTRUCTURE。
+// 命令体从 bridge.rs 迁入 shared/clipboard.rs，crate 根再导出 `clipboard` 模块，
+// 于是 generate_handler! 可直接以 `clipboard::clipboard_read` / `clipboard::clipboard_write` 注册。
+pub use crate::shared::clipboard;
 
 // Native Physical Boundary Pilot 5 (plugin): re-export shim so existing
 // `crate::plugin::` call sites keep resolving without per-call-site edits.
@@ -1498,8 +1504,8 @@ fn main() {
             bridge::create_dir,
             bridge::delete_path,
             bridge::rename_path,
-            bridge::clipboard_read,
-            bridge::clipboard_write,
+            clipboard::clipboard_read,
+            clipboard::clipboard_write,
             bridge::create_grid,
             bridge::close_grid,
             bridge::grid_open,
