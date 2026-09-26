@@ -421,7 +421,7 @@ def read_repo(root: Path) -> dict:
         "src-tauri/src/bridge.rs",
         # M2-6-fix1（复核 P1-3）：执行层纳入扫描
         "src-tauri/src/script_runner.rs",
-        "src-tauri/src/workspace.rs",
+        "src-tauri/src/capabilities/workspace/workspace.rs",
         "src-tauri/src/main.rs",
         "src-tauri/permissions/default-commands.toml",
         "src/bridge.ts",
@@ -441,7 +441,7 @@ def read_repo(root: Path) -> dict:
         "snippets": out["src-tauri/src/capabilities/script/snippets.rs"],
         "bridge": out["src-tauri/src/bridge.rs"],
         "script_runner": out["src-tauri/src/script_runner.rs"],
-        "workspace": out["src-tauri/src/workspace.rs"],
+        "workspace": out["src-tauri/src/capabilities/workspace/workspace.rs"],
         "main_rs": out["src-tauri/src/main.rs"],
         "acl": out["src-tauri/permissions/default-commands.toml"],
         "bridge_ts": out["src/bridge.ts"],

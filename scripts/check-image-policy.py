@@ -252,7 +252,7 @@ def read_repo(root: Path) -> dict[str, str]:
         "bridge": read("src-tauri/src/bridge.rs"),
         "main_rs": read("src-tauri/src/main.rs"),
         "acl": read("src-tauri/permissions/default-commands.toml"),
-        "workspace": read("src-tauri/src/workspace.rs"),
+        "workspace": read("src-tauri/src/capabilities/workspace/workspace.rs"),
         "types_ts": read("src/types.ts"),
         "bridge_ts": read("src/bridge.ts"),
         "image_ts": read("src/utils/image.ts"),

@@ -607,7 +607,7 @@ def read_repo(root: Path) -> dict:
         "scheduler_rs": _glob_concat(root, "scheduler*.rs"),
         "bridge_rs": _read(root / "src-tauri/src/bridge.rs"),
         "main_rs": _read(root / "src-tauri/src/main.rs"),
-        "workspace_rs": _read(root / "src-tauri/src/workspace.rs"),
+        "workspace_rs": _read(root / "src-tauri/src/capabilities/workspace/workspace.rs"),
         "acl_toml": _read(root / "src-tauri/permissions/default-commands.toml"),
         # 依赖形态只看**直接依赖**（Cargo.lock 里本来就有 tokio 传递依赖）
         "cargo_toml": _read(root / "src-tauri/Cargo.toml"),

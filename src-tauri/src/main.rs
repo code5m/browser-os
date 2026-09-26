@@ -23,6 +23,7 @@ mod capabilities {
     pub mod script;
     pub mod plugin;
     pub mod graph;
+    pub mod workspace;
 }
 mod sync;
 mod tasks;
@@ -31,7 +32,6 @@ mod tools;
 mod workbench;
 #[cfg(debug_assertions)]
 mod workbench_smoke;
-mod workspace;
 
 // M5-W10 A3：MCP stdio-prep 骨架（feature-gated，默认构建不编译）。
 // 仅 `--features mcp` 才纳入；以 `--mcp-stdio` 启动时不进入 Tauri 主流程，
@@ -67,6 +67,12 @@ pub use crate::capabilities::plugin::plugin;
 // `crate::graph::` call sites (GraphState / load_snapshot / *_impl helpers,
 // referenced by bridge.rs + main.rs) keep resolving without per-call-site edits.
 pub use crate::capabilities::graph::graph;
+
+// Native Physical Boundary Pilot 7 (workspace): re-export shim so existing
+// `crate::workspace::` call sites (32 across scheduler/tasks/plugin/scripts/
+// tools/bridge/workbench_smoke + `use crate::workspace;` in sync/bridge/tools)
+// keep resolving without per-call-site edits.
+pub use crate::capabilities::workspace::workspace;
 
 use bridge::AppState;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
