@@ -110,9 +110,10 @@ owner_implementations:
       - src/capabilities/home/state/useHomeStore.ts
   useAgentStore:
     # 真实领域 + 原生副作用（前端镜像 Rust agent_*）；STAGE E 同源。
+    # Store Physical Remediation：物理迁移到 capabilities/agent/state，同步 locator（旧路径 src/stores/useAgentStore.ts 已删除）。
     symbol: useAgentStore
     paths:
-      - src/stores/useAgentStore.ts
+      - src/capabilities/agent/state/useAgentStore.ts
   useDatabaseStore:
     # 真实领域 + 强原生副作用（外部 DB 连接 / SQL 执行）。
     symbol: useDatabaseStore
@@ -3078,6 +3079,239 @@ states:
       - components/**
     duplicate_names: []
     adr_required: false
+    status: CURRENT_FACT
+
+  # ---------------- Browser 子域 + Settings + Agent（Store Physical Remediation 对齐） ----------------
+  # 这些状态随 store 物理迁移（src/stores → capabilities/*/state）被纳入 R2 治理域（owner_implementations 已同步新路径），
+  # 现补登其字段真名，使 Semantic Registry 与物理实现一致（SEMANTIC_AFTER_PHYSICAL_RECONCILIATION）。
+  # 仅登记字段真名 + owner，不重新设计语义、不声明 canonical_writer / single_owner_required（避免未验证的治理断言）。
+
+  # --- useGridArchiveStore（browser/grid 回复归档）---
+  rows:
+    owner: useGridArchiveStore
+    meaning: 宫格回复归档行（Reply 列表投影）
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  saving:
+    owner: useGridArchiveStore
+    meaning: 归档保存进行中
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  expanded:
+    owner: useGridArchiveStore
+    meaning: 归档面板展开态
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  mode:
+    owner: useGridArchiveStore
+    meaning: 归档查询模式（latest / all）
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  tags:
+    owner: useGridArchiveStore
+    meaning: 归档标签筛选
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  message:
+    owner: useGridArchiveStore
+    meaning: 归档备注信息
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  success:
+    owner: useGridArchiveStore
+    meaning: 已就绪且被选中的回复（派生自 rows）
+    kind: derived
+    derived: true
+    status: CURRENT_FACT
+  failed:
+    owner: useGridArchiveStore
+    meaning: 失败的回复（派生自 rows）
+    kind: derived
+    derived: true
+    status: CURRENT_FACT
+
+  # --- useImagePreviewStore（browser 图片预览）---
+  dir:
+    owner: useImagePreviewStore
+    meaning: 预览目录路径
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  dirLoading:
+    owner: useImagePreviewStore
+    meaning: 目录加载中
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  dirError:
+    owner: useImagePreviewStore
+    meaning: 目录加载错误
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  index:
+    owner: useImagePreviewStore
+    meaning: 当前预览项索引
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  open:
+    owner: useImagePreviewStore
+    meaning: 预览覆盖层开关
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  scale:
+    owner: useImagePreviewStore
+    meaning: 缩放比例
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  tx:
+    owner: useImagePreviewStore
+    meaning: 平移 X 偏移
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  ty:
+    owner: useImagePreviewStore
+    meaning: 平移 Y 偏移
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  dragging:
+    owner: useImagePreviewStore
+    meaning: 拖拽中
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  dragOrigin:
+    owner: useImagePreviewStore
+    meaning: 拖拽起点快照
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  count:
+    owner: useImagePreviewStore
+    meaning: 预览项数量（派生自 items.length）
+    kind: derived
+    derived: true
+    status: CURRENT_FACT
+  canDrag:
+    owner: useImagePreviewStore
+    meaning: 是否允许拖拽（派生自 scale）
+    kind: derived
+    derived: true
+    status: CURRENT_FACT
+  zoomLabel:
+    owner: useImagePreviewStore
+    meaning: 缩放百分比标签（派生）
+    kind: derived
+    derived: true
+    status: CURRENT_FACT
+
+  # --- useResourceStore（browser 资源瀑布）---
+  settings:
+    owner: useResourceStore
+    meaning: 资源捕获设置
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  enabled:
+    owner: useResourceStore
+    meaning: 资源捕获是否启用（派生自 settings）
+    kind: derived
+    derived: true
+    status: CURRENT_FACT
+  maxPerTab:
+    owner: useResourceStore
+    meaning: 每页签资源上限（派生自 settings）
+    kind: derived
+    derived: true
+    status: CURRENT_FACT
+
+  # --- useSessionStore（browser 历史会话）---
+  detailId:
+    owner: useSessionStore
+    meaning: 当前查看的会话详情 id
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  policy:
+    owner: useSessionStore
+    meaning: 会话关闭/保存策略
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+
+  # --- useSettingsStore（框架偏好）---
+  theme:
+    owner: useSettingsStore
+    meaning: 主题（light / dark）
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  keymapScheme:
+    owner: useSettingsStore
+    meaning: 快捷键方案
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  tabHibernation:
+    owner: useSettingsStore
+    meaning: 页签休眠开关
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  currentKeymap:
+    owner: useSettingsStore
+    meaning: 当前快捷键映射（派生自 keymapScheme）
+    kind: derived
+    derived: true
+    status: CURRENT_FACT
+
+  # --- useAgentStore（agent 半迁移收口）---
+  agentValidation:
+    owner: useAgentStore
+    meaning: agent 定义校验报告
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  agentParseDef:
+    owner: useAgentStore
+    meaning: 正在解析的 agent 定义
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  agentPreview:
+    owner: useAgentStore
+    meaning: agent 权限预览
+    kind: stored
+    derived: false
+    status: CURRENT_FACT
+  selectedAgent:
+    owner: useAgentStore
+    meaning: 当前选中的 agent（派生自 agents + selectedAgentId）
+    kind: derived
+    derived: true
+    status: CURRENT_FACT
+  agentStatus:
+    owner: useAgentStore
+    meaning: agent 面板状态机（派生）
+    kind: derived
+    derived: true
+    status: CURRENT_FACT
+  boundedAgentPreview:
+    owner: useAgentStore
+    meaning: 有界权限预览（派生自 agentPreview）
+    kind: derived
+    derived: true
     status: CURRENT_FACT
 
 # ------------------------------------------------------------
