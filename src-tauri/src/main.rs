@@ -24,9 +24,9 @@ mod capabilities {
     pub mod task;
     pub mod terminal;
     pub mod git;
+    pub mod tools;
 }
 mod tasks;
-mod tools;
 mod workbench;
 #[cfg(debug_assertions)]
 mod workbench_smoke;
@@ -102,6 +102,12 @@ pub use crate::capabilities::git::sync;
 // `fs_cmds::` call sites (reveal_path / move_path in generate_handler!) keep
 // resolving without per-call-site edits.
 pub use crate::capabilities::workspace::fs_cmds;
+
+// Native Physical Boundary Pilot 14 (tools): re-export shim so existing
+// `crate::tools::` call sites (tool_html in main.rs) + `tools::list_tools` /
+// `tools::open_tool` in generate_handler! keep resolving without per-call-site
+// edits.
+pub use crate::capabilities::tools::tools;
 
 use bridge::AppState;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
