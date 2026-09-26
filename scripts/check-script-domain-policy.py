@@ -367,7 +367,7 @@ def read_repo(root: Path) -> dict:
     out: dict = {}
     for rel in list(NPM_MANIFESTS) + [
         "src-tauri/src/domain.rs",
-        "src-tauri/src/scripts.rs",
+        "src-tauri/src/capabilities/script/scripts.rs",
         "src-tauri/src/bridge.rs",
         "src-tauri/src/workspace.rs",
         "src-tauri/src/main.rs",
@@ -384,7 +384,7 @@ def read_repo(root: Path) -> dict:
 
     return {
         "domain": out["src-tauri/src/domain.rs"],
-        "scripts": out["src-tauri/src/scripts.rs"],
+        "scripts": out["src-tauri/src/capabilities/script/scripts.rs"],
         "bridge": out["src-tauri/src/bridge.rs"],
         "workspace": out["src-tauri/src/workspace.rs"],
         "main_rs": out["src-tauri/src/main.rs"],

@@ -13,7 +13,7 @@ M2-6.a 只做「命令片段**契约冻结**」——**不做持久化（b）、
   - **无正文文件**：`CommandSnippet` 不得出现 `path` 字段（脚本库才有 `<id>.sh`）
 
   安全（沿用 `M2-4` 四条 P0 红线）
-  - 命令片段定义层（`domain.rs` / `snippets.rs`）不得出现
+  - 命令片段定义层（`domain.rs` / `capabilities/script/snippets.rs`）不得出现
     `sh -c` / `bash -c` / `Command::new` / `std::process::Command`
   - argv 值不得被单引号包裹（`M2-4.b-VERDICT §3.1`：加引号会把单引号作字面量）
   - `interpreter` 必须是 `ScriptInterpreter` 枚举白名单，不得退化为自由字符串
@@ -27,7 +27,7 @@ M2-6.a 只做「命令片段**契约冻结**」——**不做持久化（b）、
 
 默认模式：全部不变量成立 → EXIT 0；任一被破坏 → 打印违规码并 EXIT 1。
 
-关于「若不存在则跳过」：`snippets.rs` / `snippet_*` / `run_command` / 前端组件在
+关于「若不存在则跳过」：`capabilities/script/snippets.rs` / `snippet_*` / `run_command` / 前端组件在
 a 卡阶段尚不存在（分别归 b / c / d 卡），相关检测采用「存在才判」，
 故本夹具在 b/c/d 落地后仍长期有效，无需改码位。
 """
@@ -417,7 +417,7 @@ def read_repo(root: Path) -> dict:
     out: dict = {}
     for rel in list(NPM_MANIFESTS) + [
         "src-tauri/src/domain.rs",
-        "src-tauri/src/snippets.rs",
+        "src-tauri/src/capabilities/script/snippets.rs",
         "src-tauri/src/bridge.rs",
         # M2-6-fix1（复核 P1-3）：执行层纳入扫描
         "src-tauri/src/script_runner.rs",
@@ -438,7 +438,7 @@ def read_repo(root: Path) -> dict:
 
     return {
         "domain": out["src-tauri/src/domain.rs"],
-        "snippets": out["src-tauri/src/snippets.rs"],
+        "snippets": out["src-tauri/src/capabilities/script/snippets.rs"],
         "bridge": out["src-tauri/src/bridge.rs"],
         "script_runner": out["src-tauri/src/script_runner.rs"],
         "workspace": out["src-tauri/src/workspace.rs"],

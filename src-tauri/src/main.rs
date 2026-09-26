@@ -14,15 +14,14 @@ mod mcp;
 mod plugin;
 mod scheduler;
 mod script_runner;
-mod scripts;
 mod security_policy;
 mod session;
 mod shutdown;
 mod capabilities {
     pub mod skill;
     pub mod agent;
+    pub mod script;
 }
-mod snippets;
 mod sync;
 mod tasks;
 mod terminal;
@@ -47,6 +46,12 @@ mod mcp_server;
 // `CORE_SHIM_CONFLICT` 守门）。
 pub use mvp_core::core::seam;
 pub use mvp_core::keyring_store;
+
+// Native Physical Boundary Pilot 3 (script): re-export shim so existing
+// `crate::scripts::` / `crate::snippets::` call sites keep resolving without
+// per-call-site edits (mirrors M5-1 mvp_core shim).
+pub use crate::capabilities::script::scripts;
+pub use crate::capabilities::script::snippets;
 
 use bridge::AppState;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};

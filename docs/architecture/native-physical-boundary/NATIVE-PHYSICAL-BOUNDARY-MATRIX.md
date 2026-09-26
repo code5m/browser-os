@@ -79,7 +79,7 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 | `database.rs` | CAPABILITY_NATIVE | database 运行时基座（rusqlite + mysql/postgres stub） | mysql/postgres 显式 `DB_NOT_SUPPORTED` | `useDatabaseStore` | database | `src-tauri/src/` | `src-tauri/src/capabilities/database/` | sqlite（bundled rusqlite）；凭据经 keyring `db:<conn_id>` | `domain`/`security_policy` | 中（后续接 DB 持久化/历史） | 高 |
 | `graph.rs` | CAPABILITY_NATIVE | 知识图谱 core（校验/容量/脱敏/bounded store/query） | 无 worker/webview/写盘 | `useGraphStore` | graph | `src-tauri/src/` | `src-tauri/src/capabilities/graph/` | 文件系统（graph.json 只读快照）；bounded 内存 store（RwLock） | `domain` | 中（GraphState 被 main.rs manage + 3 命令引用） | 高 |
 | `scheduler.rs` | CAPABILITY_NATIVE | 调度循环/重试/关机收口（task 触发引擎，执行委托 script_runner） | 不执行脚本 | `useTaskStore` | task | `src-tauri/src/` | `src-tauri/src/capabilities/task/` | 后台线程（调度循环） | `bridge::AppState`（line 28、648 allowed_roots）；`domain`/`script_runner`/`tasks` | 中（依赖 AppState hub） | 高 |
-| `script_runner.rs` | CAPABILITY_NATIVE | 脚本执行进程组 + 生命周期内核 | 不含纯验证 | `useScriptStore` | script | `src-tauri/src/` | `src-tauri/src/capabilities/script/` | 子进程（`setsid`/`killpg`）、后台线程 | `domain`/`scripts`/`security_policy` | 中 | 高 |
+| `script_runner.rs` | CAPABILITY_NATIVE | 脚本执行进程组 + 生命周期内核 | 不含纯验证 | `useScriptStore` | script | `src-tauri/src/capabilities/script/` | `src-tauri/src/capabilities/script/` | 子进程（`setsid`/`killpg`）、后台线程 | `domain`/`scripts`/`security_policy` | 中 | 高 |
 | `terminal.rs` | CAPABILITY_NATIVE | 终端输出管道 + 生命周期内核（PTY） | 不含调度 | `useTerminalStore` | terminal | `src-tauri/src/` | `src-tauri/src/capabilities/terminal/` | PTY（`portable_pty`）、子进程、后台线程 | `script_runner` | 中 | 高 |
 | `plugin.rs` | CAPABILITY_NATIVE | 插件 manifest + 生命周期策略（纯函数，无运行时） | 不解包/不验签/不执行 | `usePluginStore` | plugin | `src-tauri/src/` | `src-tauri/src/capabilities/plugin/` | 无（纯策略） | `domain`/`security_policy` | 低 | 高（但 bridge.rs 大量 `crate::plugin::` 调用，需 re-export shim 或改引用） |
 | `skills.rs` | CAPABILITY_NATIVE | Skill 解析/校验（纯） | 不执行 | `useSkillStore` | skill | `src-tauri/src/` | `src-tauri/src/capabilities/skill/` | 无（纯） | `domain`/`security_policy` | **极低（无命令、零跨引用）** | **高（首选 Pilot）** |
@@ -87,8 +87,8 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 | `agent_memory.rs` | CAPABILITY_NATIVE | Agent 记忆 KV 契约层（纯存储 + 策略） | 不含执行 | `useAgentStore` | agent | `src-tauri/src/` | `src-tauri/src/capabilities/agent/` | 文件系统（KV JSON 持久化） | `domain`/`mvp_core::core::seam::PathResolver` | 低 | 高 |
 | `sync.rs` | CAPABILITY_NATIVE | Git 同步（把 artifacts 推到配置仓库） | 不持有 git 能力语义 | `useGitStore` | git | `src-tauri/src/` | `src-tauri/src/capabilities/git/` | 文件系统（git repo dir）、OS keyring（token）、`git2` | `domain`/`keyring_store`/`workspace` | 中 | 高 |
 | `tasks.rs` | CAPABILITY_NATIVE | 定时任务纯函数（校验/cron/持久化） | 不含调度循环 | `useTaskStore` | task | `src-tauri/src/` | `src-tauri/src/capabilities/task/` | 文件系统（`tasks.json` 原子写） | `domain` | 低 | 高 |
-| `scripts.rs` | CAPABILITY_NATIVE | 脚本领域纯函数（校验/脱敏，无执行） | 不含执行内核 | `useScriptStore` | script | `src-tauri/src/` | `src-tauri/src/capabilities/script/` | 无（纯） | `domain` | 低 | 高（bridge.rs 多 `crate::scripts::` 调用） |
-| `snippets.rs` | CAPABILITY_NATIVE | 命令片段纯函数（校验） | 不含执行 | `useScriptStore` | script | `src-tauri/src/` | `src-tauri/src/capabilities/script/` | 无（纯） | `domain`/`scripts` | 低 | 高（bridge.rs 多 `crate::snippets::` 调用） |
+| `scripts.rs` | CAPABILITY_NATIVE | 脚本领域纯函数（校验/脱敏，无执行） | 不含执行内核 | `useScriptStore` | script | `src-tauri/src/capabilities/script/` | `src-tauri/src/capabilities/script/` | 无（纯） | `domain` | 低 | 高（bridge.rs 多 `crate::scripts::` 调用） |
+| `snippets.rs` | CAPABILITY_NATIVE | 命令片段纯函数（校验） | 不含执行 | `useScriptStore` | script | `src-tauri/src/capabilities/script/` | `src-tauri/src/capabilities/script/` | 无（纯） | `domain`/`scripts` | 低 | 高（bridge.rs 多 `crate::snippets::` 调用） |
 | `workspace.rs` | CAPABILITY_NATIVE | 应用数据目录持久化原语（artifacts/repos/bookmarks/audit/scripts/snippets/tasks JSON + 原子写） | 不含业务能力语义 | `useWorkspaceStore` | workspace | `src-tauri/src/` | `src-tauri/src/capabilities/workspace/` | 文件系统（JSON 持久化） | `domain`；内联 `crate::session::atomic_write` | 中 | 高 |
 | `fs_cmds.rs` | CAPABILITY_NATIVE(workspace) | 文件系统命令（独立于 bridge IPC 危险区） | 不含全能力文件语义 | `useWorkspaceStore` | workspace | `src-tauri/src/` | `src-tauri/src/capabilities/workspace/` | 文件系统；系统文件管理器（`open::that`） | `security_policy`（as sp）；`crate::bridge::allowed_roots` | 中（引用 bridge hub allowed_roots） | 高（仅 2 命令 reveal_path/move_path） |
 | `tools.rs` | CAPABILITY_NATIVE | 工具清单与打包（内嵌 5 内置 HTML，list/open） | 不含执行能力 | `useToolsStore` | tools | `src-tauri/src/` | `src-tauri/src/capabilities/tools/` | 文件系统（读用户 tools/*.html）、`tool://` 协议、隔离 WebviewWindow | `domain`/`workspace` | 中（2 命令 + tool_html） | 高 |
@@ -226,5 +226,17 @@ Pilot 执行清单（对齐用户 Pilot 规范）：
 
 ### 8.3 下一批候选
 - `scripts.rs` + `snippets.rs`（bridge.rs 有 `crate::scripts/snippets::` 调用 → 需 re-export shim `pub use crate::capabilities::script::...`，沿用 M5-1 `mvp_core` 同款模式）。
+- 之后：`images.rs`（bridge.rs 调用，shim）→ `plugin.rs`/`graph.rs`/`workspace.rs`/`database.rs`/`scheduler.rs`/`script_runner.rs`/`terminal.rs`/`sync.rs`/`fs_cmds.rs`/`tools.rs`。
+- 最后才处理 `bridge.rs` 逐 command 拆分 + `AppState` 下沉（最高风险，见 §4）。
+
+### 8.4 Native Pilot 3 — `script`（`scripts.rs` + `snippets.rs`）
+- 迁移：`src-tauri/src/scripts.rs` + `src-tauri/src/snippets.rs` → `src-tauri/src/capabilities/script/`（`mod.rs` + `README.md`）。两文件合并入同一 `script` 能力目录（矩阵 §2.3 同为 `CAPABILITY_NATIVE(script)`）。
+- `main.rs`：删顶层 `mod scripts;` / `mod snippets;`；`mod capabilities` 内新增 `pub mod script;`；顶部加 re-export shim `pub use crate::capabilities::script::{scripts, snippets};`（沿用 M5-1 `mvp_core` 同款 shim，既有 `crate::scripts::` / `crate::snippets::` 调用点——bridge.rs ×9/×10、script_runner.rs、tasks.rs、snippets.rs 内部——无需逐处改写即解析）。
+- **关键修复（Pilot 1 同款沉默跳过回归）：** `scripts/check-script-domain-policy.py` 与 `scripts/check-command-domain-policy.py` 的旧路径常量（`src-tauri/src/scripts.rs` / `src-tauri/src/snippets.rs`）已改为 `src-tauri/src/capabilities/script/scripts.rs` / `snippets.rs`；两脚本以 `p.exists() else ""` 读文件，不改会**静默跳过**扫描。改后默认扫描与自测均 PASS。
+- 门禁：`cargo check` 0 新增告警（仅 grid_process.rs 2 条既有 dead_code）；`cargo test capabilities::script` 37/37（scripts 22 + snippets 15）；`cargo test` 全量 462/0（2 ignored 既有）；`check-script-domain-policy.py` 默认扫描 PASS + 自测（1 好 + 20 坏 + 2 良性）；`check-command-domain-policy.py` 默认扫描 PASS + 自测（好 + 19 坏 + 2 良性，含变异防呆）；`check-core-boundary.py` 自测 PASS（ACTIVE=7）；`npm run build` OK。
+- 既有 FAIL（非本批回归，矩阵 §2.4 LEGACY_MIXED_MODULE 残核）：`UI_CHECK` 前端 fixed 浮层、`NATIVE-02` bridge.rs 跨能力直调。
+- 未触碰：TS 侧 `src/capabilities/agent/` WIP（unstaged，隔离）；`phantom-yili` 仓库（DO_NOT_TOUCH）。
+
+### 8.5 下一批候选（更新自 §8.3，已落地 script）
 - 之后：`images.rs`（bridge.rs 调用，shim）→ `plugin.rs`/`graph.rs`/`workspace.rs`/`database.rs`/`scheduler.rs`/`script_runner.rs`/`terminal.rs`/`sync.rs`/`fs_cmds.rs`/`tools.rs`。
 - 最后才处理 `bridge.rs` 逐 command 拆分 + `AppState` 下沉（最高风险，见 §4）。
