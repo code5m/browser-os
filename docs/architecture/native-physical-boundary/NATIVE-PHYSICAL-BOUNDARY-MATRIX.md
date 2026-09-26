@@ -85,7 +85,7 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 | `skills.rs` | CAPABILITY_NATIVE | Skill 解析/校验（纯） | 不执行 | `useSkillStore` | skill | `src-tauri/src/` | `src-tauri/src/capabilities/skill/` | 无（纯） | `domain`/`security_policy` | **极低（无命令、零跨引用）** | **高（首选 Pilot）** |
 | `agent.rs` | CAPABILITY_NATIVE | Agent 解析/校验（纯，只读壳） | 不执行 chat/run | `useAgentStore` | agent | `src-tauri/src/` | `src-tauri/src/capabilities/agent/` | 无（纯） | `domain`/`security_policy` | 低 | 高 |
 | `agent_memory.rs` | CAPABILITY_NATIVE | Agent 记忆 KV 契约层（纯存储 + 策略） | 不含执行 | `useAgentStore` | agent | `src-tauri/src/` | `src-tauri/src/capabilities/agent/` | 文件系统（KV JSON 持久化） | `domain`/`mvp_core::core::seam::PathResolver` | 低 | 高 |
-| `sync.rs` | CAPABILITY_NATIVE | Git 同步（把 artifacts 推到配置仓库） | 不持有 git 能力语义 | `useGitStore` | git | `src-tauri/src/` | `src-tauri/src/capabilities/git/` | 文件系统（git repo dir）、OS keyring（token）、`git2` | `domain`/`keyring_store`/`workspace` | 中 | 高 |
+| `sync.rs` | CAPABILITY_NATIVE | Git 同步（把 artifacts 推到配置仓库） | 不持有 git 能力语义 | `useGitStore` | git | `src-tauri/src/capabilities/git/` | `src-tauri/src/capabilities/git/` | 文件系统（git repo dir）、OS keyring（token）、`git2` | `domain`/`keyring_store`/`workspace` | 中 | 高 |
 | `tasks.rs` | CAPABILITY_NATIVE | 定时任务纯函数（校验/cron/持久化） | 不含调度循环 | `useTaskStore` | task | `src-tauri/src/` | `src-tauri/src/capabilities/task/` | 文件系统（`tasks.json` 原子写） | `domain` | 低 | 高 |
 | `scripts.rs` | CAPABILITY_NATIVE | 脚本领域纯函数（校验/脱敏，无执行） | 不含执行内核 | `useScriptStore` | script | `src-tauri/src/capabilities/script/` | `src-tauri/src/capabilities/script/` | 无（纯） | `domain` | 低 | 高（bridge.rs 多 `crate::scripts::` 调用） |
 | `snippets.rs` | CAPABILITY_NATIVE | 命令片段纯函数（校验） | 不含执行 | `useScriptStore` | script | `src-tauri/src/capabilities/script/` | `src-tauri/src/capabilities/script/` | 无（纯） | `domain`/`scripts` | 低 | 高（bridge.rs 多 `crate::snippets::` 调用） |
@@ -321,3 +321,12 @@ Pilot 执行清单（对齐用户 Pilot 规范）：
 - 门禁：`cargo check` 0 新增告警（仅 grid_process.rs 2 条既有 dead_code）；`cargo test capabilities::terminal` 8/8（PTY 真实输出 / resize / 进程组击杀）；`cargo test` 全量 462/0（2 ignored 既有）；`check-terminal-policy.py` 默认扫描 PASS + 自测（好零违规 + 30 坏全检）；`npm run build` OK。
 - 既有 FAIL（非本批回归，矩阵 §2.4 LEGACY_MIXED_MODULE 残核）：`UI_CHECK` 前端 fixed 浮层、`NATIVE-02` bridge.rs 跨能力直调。
 - 未触碰：TS 侧 `src/capabilities/agent/` WIP（unstaged，隔离）；`phantom-yili` 仓库（DO_NOT_TOUCH）。
+
+### 8.15 Native Pilot 12 — `sync`（CAPABILITY_NATIVE(git)，Git 同步内核）
+- 迁移：`src-tauri/src/sync.rs` → `src-tauri/src/capabilities/git/sync.rs`（`mod.rs` + `README.md`，目录 `capabilities/git/`）。
+- **§7 解耦评估结论**：`sync.rs` 经 grep 确认**不含 `#[tauri::command]`**（同步命令 `request_sync`/`confirm_sync` 注册在 `bridge.rs` 经 `generate_handler!`）;grep 确认 sync.rs **零 `bridge::AppState` 耦合**—— 无 AppState 字段、无 hub 债务。仅有 1 处 `crate::sync::` 调用点（workbench_smoke.rs：`repo_dir`）。本模块为**纯 Git 同步内核**，owner 一致 = git 能力，沿用 pure-module Pilot 模式，无需逐 command 拆 owner;命令体 bridge 分解留待 §8 末段。
+- `main.rs`：删顶层 `mod sync;`（line 28）;`mod capabilities` 内新增 `pub mod git;`（新增 `capabilities/git/mod.rs` 暴露 `pub mod sync;`）;顶部加 re-export shim `pub use crate::capabilities::git::sync;`（既有 1 处 `crate::sync::` 调用点无需逐处改写即解析）。
+- **关键修复（Pilot 1/7/9/10/11 同款沉默跳过回归，此处是直接 read_text 缺失 → 崩溃而非静默）：** `scripts/check-git-write-policy.py` 的 `(src / "sync.rs").read_text(...)`（line 318）改 `(src / "capabilities" / "git" / "sync.rs")`。该脚本对缺失文件 `read_text()` 会抛 FileNotFoundError → 崩溃（不是静默跳过，但会让 pre-merge 门禁失败）;改后默认扫描仍 PASS（无静默跳过）。
+- 门禁：`cargo check` 0 新增告警（仅 grid_process.rs 2 条既有 dead_code）;`cargo test capabilities::git` 36/36（readonly/git_write 双模）;`cargo test` 全量 462/0（2 ignored 既有）;`check-git-write-policy.py` 默认扫描 PASS（Git write invariants hold）;`npm run build` OK。
+- 既有 FAIL（非本批回归，矩阵 §2.4 LEGACY_MIXED_MODULE 残核）：`UI_CHECK` 前端 fixed 浮层、`NATIVE-02` bridge.rs 跨能力直调。
+- 未触碰：TS 侧 `src/capabilities/agent/` WIP（unstaged，隔离）;`phantom-yili` 仓库（DO_NOT_TOUCH）。

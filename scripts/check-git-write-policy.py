@@ -315,7 +315,7 @@ def scan_repository(root: Path) -> list[str]:
     permissions = sorted((root / "src-tauri" / "permissions").glob("*.toml"))
     acl_source = "\n".join(p.read_text(encoding="utf-8") for p in permissions)
     return detect_violations(
-        (src / "sync.rs").read_text(encoding="utf-8"),
+        (src / "capabilities" / "git" / "sync.rs").read_text(encoding="utf-8"),
         (src / "domain.rs").read_text(encoding="utf-8"),
         (src / "bridge.rs").read_text(encoding="utf-8"),
         (src / "main.rs").read_text(encoding="utf-8"),

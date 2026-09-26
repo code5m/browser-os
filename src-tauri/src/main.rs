@@ -24,8 +24,8 @@ mod capabilities {
     pub mod database;
     pub mod task;
     pub mod terminal;
+    pub mod git;
 }
-mod sync;
 mod tasks;
 mod tools;
 mod workbench;
@@ -93,6 +93,11 @@ pub use crate::capabilities::script::script_runner;
 // `crate::terminal::` call sites (ChannelSink / EventSink / TermInfo /
 // TerminalSession, in bridge.rs) keep resolving without per-call-site edits.
 pub use crate::capabilities::terminal::terminal;
+
+// Native Physical Boundary Pilot 12 (sync): re-export shim so existing
+// `crate::sync::` call sites (repo_dir; workbench_smoke.rs ×1) keep resolving
+// without per-call-site edits.
+pub use crate::capabilities::git::sync;
 
 use bridge::AppState;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
