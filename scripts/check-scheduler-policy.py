@@ -595,7 +595,10 @@ def _read(path: Path) -> str:
 
 
 def _glob_concat(root: Path, pattern: str) -> str:
-    parts = [_read(p) for p in sorted((root / "src-tauri/src").glob(pattern)) if p.is_file()]
+    # 递归 glob：scheduler/tasks 已迁入 src-tauri/src/capabilities/task/ 子目录，
+    # 非递归 glob 会找不到 → scheduler_exists 误判为 False → 静默跳过全部 SCHED_* 检查。
+    # 见 Native Pilot 9 §5 修复（同 Pilot 1/7 沉默跳过回归，此处是 glob 而非固定路径）。
+    parts = [_read(p) for p in sorted((root / "src-tauri/src").rglob(pattern)) if p.is_file()]
     return "\n".join(parts)
 
 

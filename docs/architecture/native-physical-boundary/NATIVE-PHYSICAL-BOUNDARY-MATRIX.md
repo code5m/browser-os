@@ -78,7 +78,7 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | `database.rs` | CAPABILITY_NATIVE | database 运行时基座（rusqlite + mysql/postgres stub） | mysql/postgres 显式 `DB_NOT_SUPPORTED` | `useDatabaseStore` | database | `src-tauri/src/capabilities/database/` | `src-tauri/src/capabilities/database/` | sqlite（bundled rusqlite）；凭据经 keyring `db:<conn_id>` | `domain`/`security_policy` | 中（后续接 DB 持久化/历史） | 高 |
 | `graph.rs` | CAPABILITY_NATIVE | 知识图谱 core（校验/容量/脱敏/bounded store/query） | 无 worker/webview/写盘 | `useGraphStore` | graph | `src-tauri/src/capabilities/graph/` | `src-tauri/src/capabilities/graph/` | 文件系统（graph.json 只读快照）；bounded 内存 store（RwLock） | `domain` | 中（GraphState 被 main.rs manage + 3 命令引用） | 高 |
-| `scheduler.rs` | CAPABILITY_NATIVE | 调度循环/重试/关机收口（task 触发引擎，执行委托 script_runner） | 不执行脚本 | `useTaskStore` | task | `src-tauri/src/` | `src-tauri/src/capabilities/task/` | 后台线程（调度循环） | `bridge::AppState`（line 28、648 allowed_roots）；`domain`/`script_runner`/`tasks` | 中（依赖 AppState hub） | 高 |
+| `scheduler.rs` | CAPABILITY_NATIVE | 调度循环/重试/关机收口（task 触发引擎，执行委托 script_runner） | 不执行脚本 | `useTaskStore` | task | `src-tauri/src/capabilities/task/` | `src-tauri/src/capabilities/task/` | 后台线程（调度循环） | `bridge::AppState`（line 28、648 allowed_roots）；`domain`/`script_runner`/`tasks` | 中（依赖 AppState hub） | 高 |
 | `script_runner.rs` | CAPABILITY_NATIVE | 脚本执行进程组 + 生命周期内核 | 不含纯验证 | `useScriptStore` | script | `src-tauri/src/capabilities/script/` | `src-tauri/src/capabilities/script/` | 子进程（`setsid`/`killpg`）、后台线程 | `domain`/`scripts`/`security_policy` | 中 | 高 |
 | `terminal.rs` | CAPABILITY_NATIVE | 终端输出管道 + 生命周期内核（PTY） | 不含调度 | `useTerminalStore` | terminal | `src-tauri/src/` | `src-tauri/src/capabilities/terminal/` | PTY（`portable_pty`）、子进程、后台线程 | `script_runner` | 中 | 高 |
 | `plugin.rs` | CAPABILITY_NATIVE | 插件 manifest + 生命周期策略（纯函数，无运行时） | 不解包/不验签/不执行 | `usePluginStore` | plugin | `src-tauri/src/capabilities/plugin/` | `src-tauri/src/capabilities/plugin/` | 无（纯策略） | `domain`/`security_policy` | 低 | 高（但 bridge.rs 大量 `crate::plugin::` 调用，需 re-export shim 或改引用） |
@@ -285,3 +285,21 @@ Pilot 执行清单（对齐用户 Pilot 规范）：
 - 门禁：`cargo check` 0 新增告警（仅 grid_process.rs 2 条既有 dead_code）；`cargo test capabilities::database` 25/25（建表 fixture / 多语句检出 / 凭据脱敏 / 超时分层 / 错误码闭合）；`cargo test` 全量 462/0（2 ignored 既有）；`check-database-policy.py` 默认扫描 PASS + 自测；`npm run build` OK。
 - 既有 FAIL（非本批回归，矩阵 §2.4 LEGACY_MIXED_MODULE 残核）：`UI_CHECK` 前端 fixed 浮层、`NATIVE-02` bridge.rs 跨能力直调。
 - 未触碰：TS 侧 `src/capabilities/agent/` WIP（unstaged，隔离）；`phantom-yili` 仓库（DO_NOT_TOUCH）。
+
+### 8.11 Native Pilot 9 — `scheduler`（CAPABILITY_NATIVE，调度引擎）
+- 迁移：`src-tauri/src/scheduler.rs` → `src-tauri/src/capabilities/task/scheduler.rs`（`mod.rs` + `README.md`，目录 `capabilities/task/` 与后续 `tasks.rs` 同能力）。
+- **§7 解耦评估结论**：`scheduler.rs` 经 grep 确认**不含 `#[tauri::command]`**（命令体 `start_scheduler`/`stop_scheduler`/`fire_task_now`/`create_task`/... 注册在 `bridge.rs` 经 `generate_handler!`）；仅有 4 处 `crate::scheduler::` 调用点（bridge.rs ×3：`request_stop`/`cancel_in_flight`/`fire_now`；main.rs ×1：`start`）。本模块为**纯触发引擎**（执行委托 `script_runner`），owner 一致 = task 能力，沿用 pure-module Pilot 模式，无需逐 command 拆 owner；命令体 bridge 分解留待 §8 末段。本模块**无 SchedulerState AppState 字段**，但 `use crate::bridge::AppState;`（line 28/648）—— 属 §9 AppState 阶段待下沉的 hub 耦合债务（非本批回归）。
+- `main.rs`：删顶层 `mod scheduler;`（line 14）；`mod capabilities` 内新增 `pub mod task;`（新增 `capabilities/task/mod.rs` 暴露 `pub mod scheduler;`）；顶部加 re-export shim `pub use crate::capabilities::task::scheduler;`（既有 4 处 `crate::scheduler::` 调用点无需逐处改写即解析）。
+- **关键修复（Pilot 1/7 同款沉默跳过回归，本次是 glob 而非固定路径）：** `scripts/check-scheduler-policy.py` 的 `_glob_concat` 原用非递归 `Path.glob("scheduler*.rs")`（line 598），且 `scheduler_exists = "mod scheduler" in main_rs or bool(sched.strip())`（line 470）。本批移除顶层 `mod scheduler;` 且文件迁入子目录 → 非递归 glob 找不到 → `scheduler_exists=False` → **全部 SCHED_* 检查静默跳过（FALSE GREEN）**。改为 `(root/"src-tauri/src").rglob(pattern)`（递归），`tasks*.rs` 同受其益（待 tasks.rs 迁入子目录）。改后默认扫描与自测仍 PASS，且 23 个真实仓库变异仍全检出（证明文件被真实扫描、无静默跳过）。
+- 门禁：`cargo check` 0 新增告警（仅 grid_process.rs 2 条既有 dead_code）；`cargo test capabilities::task` 10/10；`cargo test` 全量 462/0（2 ignored 既有）；`check-scheduler-policy.py` 默认扫描 PASS + 自测（ACTIVE=23）；`npm run build` OK。
+- 既有 FAIL（非本批回归，矩阵 §2.4 LEGACY_MIXED_MODULE 残核）：`UI_CHECK` 前端 fixed 浮层、`NATIVE-02` bridge.rs 跨能力直调。
+- 未触碰：TS 侧 `src/capabilities/agent/` WIP（unstaged，隔离）；`phantom-yili` 仓库（DO_NOT_TOUCH）。
+
+### 8.12 SHIM_AUDIT（after Pilot 9，协议新增要求 A）
+- **SHIM_TOTAL = 8**：`script`×2 / `shared::images` / `plugin` / `graph` / `workspace` / `database` / `task::scheduler`（main.rs line 55/56/60/64/69/75/80/新增）。
+- **STILL_REQUIRED = 8**（pending 专用移除 pass）。
+- **REMOVABLE_NOW = 0**（deferred，理由见下）。
+- **HIDES_OLD_ARCHITECTURE = 8**：每个 shim 保留一个 `crate::X` 顶层别名，掩盖旧顶层物理位置。
+- **SECOND_TRUTH_RISK = LOW**：每个 shim 都是对「唯一已移动实现」的 re-export，无第二实现、无重复逻辑（符合协议 §6 条件 1/2）。
+- **移除条件（逐条记录）**：所有 shim 的调用方高度集中在 `bridge.rs`（graph/workspace/database/plugin/script/images 的命令体 + scheduler 引擎调用均在 bridge.rs），而 `bridge.rs` 是下一阶段（§8 末段）的逐 command 分解目标——届时 bridge.rs 命令体将被重写为 `crate::capabilities::X::X::...` 全路径，恰可**同 commit 删除 shim**，避免对 bridge.rs 的双重改动。故规划：**在 bridge.rs 分解前插入一个专用 SHIM_REMOVAL Pilot**，一次重写全部 `crate::X::` 调用方到 `crate::capabilities::X::X::` 并删除 8 个 shim。先例：`skill`/`agent` 在 Pilot 1/2 即 shim-free 迁移（调用方直接改全路径），证明该路径可行。
+- 证据：`crate::scheduler::` 4 处、`crate::database::` 5 处、`crate::graph::` 13 处、`crate::workspace::` 32 处、`crate::plugin::` 见 `plugin.rs` 调用方、`crate::script::`/`crate::snippets::` 见 `script.rs`/`snippets.rs` 调用方、`crate::shared::images` 见 `images.rs` 调用方——全部可在 SHIM_REMOVAL 阶段机械化改写。

@@ -11,7 +11,6 @@ mod shared {
     pub mod images;
 }
 mod mcp;
-mod scheduler;
 mod script_runner;
 mod security_policy;
 mod session;
@@ -24,6 +23,7 @@ mod capabilities {
     pub mod graph;
     pub mod workspace;
     pub mod database;
+    pub mod task;
 }
 mod sync;
 mod tasks;
@@ -78,6 +78,11 @@ pub use crate::capabilities::workspace::workspace;
 // `crate::database::` call sites (DbPool / QueryCancel / credential_key /
 // DbQueryResult, all in bridge.rs) keep resolving without per-call-site edits.
 pub use crate::capabilities::database::database;
+
+// Native Physical Boundary Pilot 9 (scheduler): re-export shim so existing
+// `crate::scheduler::` call sites (request_stop / cancel_in_flight / fire_now in
+// bridge.rs; start in main.rs) keep resolving without per-call-site edits.
+pub use crate::capabilities::task::scheduler;
 
 use bridge::AppState;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
