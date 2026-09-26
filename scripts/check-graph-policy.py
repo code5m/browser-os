@@ -40,7 +40,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-GRAPH = "src-tauri/src/graph.rs"
+GRAPH = "src-tauri/src/capabilities/graph/graph.rs"
 DOMAIN = "src-tauri/src/domain.rs"
 
 

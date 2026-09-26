@@ -77,7 +77,7 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 | 模块 | 分类 | DDD 责任 | 非责任 | Semantic Owner | Capability Owner | 当前 | 目标 | 关键资源 | 跨模块依赖 | 风险 | 就绪 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | `database.rs` | CAPABILITY_NATIVE | database 运行时基座（rusqlite + mysql/postgres stub） | mysql/postgres 显式 `DB_NOT_SUPPORTED` | `useDatabaseStore` | database | `src-tauri/src/` | `src-tauri/src/capabilities/database/` | sqlite（bundled rusqlite）；凭据经 keyring `db:<conn_id>` | `domain`/`security_policy` | 中（后续接 DB 持久化/历史） | 高 |
-| `graph.rs` | CAPABILITY_NATIVE | 知识图谱 core（校验/容量/脱敏/bounded store/query） | 无 worker/webview/写盘 | `useGraphStore` | graph | `src-tauri/src/` | `src-tauri/src/capabilities/graph/` | 文件系统（graph.json 只读快照）；bounded 内存 store（RwLock） | `domain` | 中（GraphState 被 main.rs manage + 3 命令引用） | 高 |
+| `graph.rs` | CAPABILITY_NATIVE | 知识图谱 core（校验/容量/脱敏/bounded store/query） | 无 worker/webview/写盘 | `useGraphStore` | graph | `src-tauri/src/capabilities/graph/` | `src-tauri/src/capabilities/graph/` | 文件系统（graph.json 只读快照）；bounded 内存 store（RwLock） | `domain` | 中（GraphState 被 main.rs manage + 3 命令引用） | 高 |
 | `scheduler.rs` | CAPABILITY_NATIVE | 调度循环/重试/关机收口（task 触发引擎，执行委托 script_runner） | 不执行脚本 | `useTaskStore` | task | `src-tauri/src/` | `src-tauri/src/capabilities/task/` | 后台线程（调度循环） | `bridge::AppState`（line 28、648 allowed_roots）；`domain`/`script_runner`/`tasks` | 中（依赖 AppState hub） | 高 |
 | `script_runner.rs` | CAPABILITY_NATIVE | 脚本执行进程组 + 生命周期内核 | 不含纯验证 | `useScriptStore` | script | `src-tauri/src/capabilities/script/` | `src-tauri/src/capabilities/script/` | 子进程（`setsid`/`killpg`）、后台线程 | `domain`/`scripts`/`security_policy` | 中 | 高 |
 | `terminal.rs` | CAPABILITY_NATIVE | 终端输出管道 + 生命周期内核（PTY） | 不含调度 | `useTerminalStore` | terminal | `src-tauri/src/` | `src-tauri/src/capabilities/terminal/` | PTY（`portable_pty`）、子进程、后台线程 | `script_runner` | 中 | 高 |
@@ -256,5 +256,14 @@ Pilot 执行清单（对齐用户 Pilot 规范）：
 - `main.rs`：删顶层 `mod plugin;`；`mod capabilities` 内加 `pub mod plugin;`（新增 `capabilities/plugin/mod.rs` 暴露 `pub mod plugin;`）；顶部加 re-export shim `pub use crate::capabilities::plugin::plugin;`（既有 `crate::plugin::` 调用点无需逐处改写即解析）。
 - **关键修复（Pilot 1 同款沉默跳过回归）：** 三个门禁脚本的路径常量全部改为 `src-tauri/src/capabilities/plugin/plugin.rs`——`check-plugin-policy.py`（71/140）、`check-plugin-privacy.py`（86）、`check-agent-skill-policy.py`（106 文档 / 114 / 387 / 667-670 自测变异）。其中 `check-agent-skill-policy.py` 的 `repo` 由真实文件系统 glob 生成，故 114/387 硬编码旧路径必须同步改，否则 `AGSK_PLUGIN_*` 会丢失对新 plugin.rs 的扫描。
 - 门禁：`cargo check` 0 新增告警（仅 grid_process.rs 2 条既有 dead_code）；`cargo test` 462/0（2 ignored 既有）；`check-plugin-policy.py` 默认扫描 PASS + 自测（ACTIVE=7/PENDING=5）；`check-plugin-privacy.py` 默认扫描 PASS + 自测（ACTIVE=2/PENDING=5）；`check-agent-skill-policy.py` 默认扫描 PASS + 自测（ACTIVE=3/PENDING=10）；`check-core-boundary.py` 自测 PASS（ACTIVE=7）；`npm run build` OK。
+- 既有 FAIL（非本批回归，矩阵 §2.4 LEGACY_MIXED_MODULE 残核）：`UI_CHECK` 前端 fixed 浮层、`NATIVE-02` bridge.rs 跨能力直调。
+- 未触碰：TS 侧 `src/capabilities/agent/` WIP（unstaged，隔离）；`phantom-yili` 仓库（DO_NOT_TOUCH）。
+
+### 8.8 Native Pilot 6 — `graph`（CAPABILITY_NATIVE，纯逻辑切片）
+- 迁移：`src-tauri/src/graph.rs` → `src-tauri/src/capabilities/graph/graph.rs`（`mod.rs` + `README.md`）。
+- **§7 解耦评估结论**：`graph.rs` 经 grep 确认**不含 `#[tauri::command]`**（命令体 `graph_query`/`graph_node_get`/`graph_stats` 注册在 `bridge.rs` 经 `generate_handler!`，命令体内部委托本模块纯函数 `graph_query_impl`/`graph_node_get_impl`/`graph_stats_impl`/`validate_id_public`/`GraphState`/`load_snapshot`）。故本模块属**纯逻辑**，沿用前 5 个 pure-module Pilot 模式，无需逐 command 拆 owner；命令体本身的 bridge 分解留待矩阵 §8 末段 bridge.rs 阶段。
+- `main.rs`：删顶层 `mod graph;`；`mod capabilities` 内新增 `pub mod graph;`（新增 `capabilities/graph/mod.rs` 暴露 `pub mod graph;`）；顶部加 re-export shim `pub use crate::capabilities::graph::graph;`（既有 `crate::graph::` 调用点——bridge.rs ×10 + main.rs 启动加载 ×3——无需逐处改写即解析；`GraphState` 作为 AppState 字段经 shim 解析，owner 不变）。
+- **关键修复（Pilot 1 同款沉默跳过回归）：** `scripts/check-graph-policy.py` 的 `GRAPH = "src-tauri/src/graph.rs"`（line 43）改为 `src-tauri/src/capabilities/graph/graph.rs`；该脚本 `_read()` 在文件缺失时返回 `None`，不改会**静默跳过**扫描。改后默认扫描与自测均 PASS（ACTIVE=8，含 W8 新增 `GRAPH_OUTPUT_NO_PROPS`）。
+- 门禁：`cargo check` 0 新增告警（仅 grid_process.rs 2 条既有 dead_code）；`cargo test capabilities::graph` 15/15；`cargo test` 全量 462/0（2 ignored 既有）；`check-graph-policy.py` 默认扫描 PASS + 自测（ACTIVE=8）；`npm run build` OK。
 - 既有 FAIL（非本批回归，矩阵 §2.4 LEGACY_MIXED_MODULE 残核）：`UI_CHECK` 前端 fixed 浮层、`NATIVE-02` bridge.rs 跨能力直调。
 - 未触碰：TS 侧 `src/capabilities/agent/` WIP（unstaged，隔离）；`phantom-yili` 仓库（DO_NOT_TOUCH）。

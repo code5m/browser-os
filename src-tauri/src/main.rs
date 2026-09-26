@@ -6,7 +6,6 @@ mod crashlog;
 mod database;
 mod domain;
 mod fs_cmds;
-mod graph;
 mod grid_ipc;
 mod grid_process;
 mod shared {
@@ -23,6 +22,7 @@ mod capabilities {
     pub mod agent;
     pub mod script;
     pub mod plugin;
+    pub mod graph;
 }
 mod sync;
 mod tasks;
@@ -62,6 +62,11 @@ pub use crate::shared::images;
 // Native Physical Boundary Pilot 5 (plugin): re-export shim so existing
 // `crate::plugin::` call sites keep resolving without per-call-site edits.
 pub use crate::capabilities::plugin::plugin;
+
+// Native Physical Boundary Pilot 6 (graph): re-export shim so existing
+// `crate::graph::` call sites (GraphState / load_snapshot / *_impl helpers,
+// referenced by bridge.rs + main.rs) keep resolving without per-call-site edits.
+pub use crate::capabilities::graph::graph;
 
 use bridge::AppState;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
