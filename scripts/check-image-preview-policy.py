@@ -125,8 +125,8 @@ BASELINE_ASSET_SCOPE = [
 PREVIEW_FILES = (
     "src/utils/imagePreview.ts",
     "src/stores/useImagePreviewStore.ts",
-    "src/components/shared/ImageGallery.vue",
-    "src/components/shared/ImageLightbox.vue",
+    "src/capabilities/browser/ui/ImageGallery.vue",
+    "src/capabilities/browser/ui/ImageLightbox.vue",
 )
 
 CREDENTIAL_TOKENS = ("token", "cookie", "authorization", "password", "secret")
@@ -408,25 +408,25 @@ def run_self_test(root: Path) -> int:
                     "IMG_PREV_HANDLER_NOT_REGISTERED"))
     # 11. 组件直接 invoke
     samples.append(("画廊组件直接 invoke",
-                    mutate(components={"src/components/shared/ImageGallery.vue":
-                                       good["components"]["src/components/shared/ImageGallery.vue"]
+                    mutate(components={"src/capabilities/browser/ui/ImageLightbox.vue":
+                                       good["preview_files"]["src/capabilities/browser/ui/ImageLightbox.vue"]
                                        + '\nconst x = await invoke("workspace_images_dir");\n'}),
                     "IMG_PREV_DIRECT_INVOKE"))
     # 12. 渲染 source_url 原文
     samples.append(("灯箱渲染 source_url 原文",
-                    mutate(preview_files={"src/components/shared/ImageLightbox.vue":
-                                          good["preview_files"]["src/components/shared/ImageLightbox.vue"]
+                    mutate(preview_files={"src/capabilities/browser/ui/ImageLightbox.vue":
+                                          good["preview_files"]["src/capabilities/browser/ui/ImageLightbox.vue"]
                                           + '\n<div>{{ img.source_url }}</div>\n'}),
                     "IMG_PREV_RAW_URL_RENDERED"))
     # 13. keydown 无条件绑定（绕过 createKeyBinder）
-    lb = good["preview_files"]["src/components/shared/ImageLightbox.vue"]
+    lb = good["preview_files"]["src/capabilities/browser/ui/ImageLightbox.vue"]
     samples.append(("keydown 绕过 createKeyBinder 直接绑定",
-                    mutate(preview_files={"src/components/shared/ImageLightbox.vue":
+                    mutate(preview_files={"src/capabilities/browser/ui/ImageLightbox.vue":
                                           lb.replace("createKeyBinder", "rawBinderHelper")}),
                     "IMG_PREV_LISTENER_LEAK"))
     # 14. 卸载时未解绑
     samples.append(("卸载时未解绑键盘监听",
-                    mutate(preview_files={"src/components/shared/ImageLightbox.vue":
+                    mutate(preview_files={"src/capabilities/browser/ui/ImageLightbox.vue":
                                           lb.replace("onBeforeUnmount", "onMountedTwice")}),
                     "IMG_PREV_LISTENER_LEAK"))
     # 15. 预览文件出现凭据标识符

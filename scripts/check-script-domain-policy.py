@@ -506,7 +506,7 @@ def run_self_test(root: Path) -> int:
             'format!(\n            "id={id} name={} interpreter={:?} param_count={} body={body}",')),
         "SCR_AUDIT_LEAKS_ARG_VALUE"))
     # 15. 组件直接 invoke
-    gal = "src/components/shared/ImageGallery.vue"
+    gal = "src/components/layout/ActivityBar.vue"
     samples.append((
         "组件直接 invoke script_add",
         mutate(components={gal: good["components"][gal]

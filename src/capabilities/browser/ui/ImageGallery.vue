@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { ImageRef } from "../../types";
-import { useImagePreviewStore } from "../../capabilities/browser/public";
+import type { ImageRef } from "../../../types";
+import { useImagePreviewStore } from "../public";
 import {
   buildPreviewItems,
   galleryState,
   gridColumns,
   type PreviewItem,
-} from "../../utils/imagePreview";
+} from "../../../utils/imagePreview";
 
 // M2-2.b 图片画廊（共用组件，成果库挂点 `ArtifactPanel`）。
 //

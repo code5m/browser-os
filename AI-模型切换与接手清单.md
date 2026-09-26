@@ -463,11 +463,11 @@ READ=logs/checkpoints/M2-2.a-<ts>.md（冻结裁定书，唯一契约依据）�
      logs/checkpoints/M2-2-20260903-1340.md §4~§6（契约/测试矩阵/违规码），
      src/types.ts（ImageRef）、src/utils/image.ts（展示逻辑复用）、src/bridge.ts、
      src/components/workspace/ArtifactPanel.vue（挂点）、src/App.vue（全局弹窗范式）、
-     src/components/shared/ConfirmModal.vue（modal-mask 层级范式）、
+     src/capabilities/git/ui/ConfirmModal.vue（modal-mask 层级范式）、
      src/stores/useWorkspaceStore.ts（current/openArtifact），
      src-tauri/src/bridge.rs（save_image/list_artifact_images 邻近实现）、
      src-tauri/permissions/default-commands.toml、src-tauri/src/main.rs（invoke_handler）
-WRITE=src/components/shared/ImageGallery.vue, src/components/shared/ImageLightbox.vue,
+WRITE=src/capabilities/browser/ui/ImageGallery.vue, src/capabilities/browser/ui/ImageLightbox.vue,
       src/utils/imagePreview.ts, src/stores/（如确需新 store；优先并入现有 store 需说明）,
       src/App.vue（全局挂载灯箱）, src/components/workspace/ArtifactPanel.vue（挂点）,
       src/bridge.ts（workspaceImagesDir 封装）, src/types.ts（如需补类型）,

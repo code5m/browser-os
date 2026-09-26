@@ -122,7 +122,7 @@
 
 | COMPONENT_ID | FILE | 行数 | 判定 |
 |---|---|---|---|
-| `git.sync-confirm` | `components/shared/ConfirmModal.vue` | 27 | **名为 shared，实为 Git 专属**：`L3 import useRepoStore from capabilities/workspace/public`，UI 硬编码仓库名/远程地址/成果清单（`L14-19`）。→ **CAPABILITY_UI（GIT），应迁出 shared/** |
+| `git.sync-confirm` | `src/capabilities/git/ui/ConfirmModal.vue` | 27 | **Git 专属（已迁 git/ui）**：`L4 import useRepoStore from capabilities/workspace/public`（git→workspace 跨能力 store 依赖，见 UI-04b 基线），UI 硬编码仓库名/远程地址/成果清单。 |
 
 ---
 
@@ -130,8 +130,8 @@
 
 | COMPONENT_ID | FILE | 行数 | 业务语义 | 判定 |
 |---|---|---|---|---|
-| `shared.image-lightbox` | `components/shared/ImageLightbox.vue` | 329 | **无**（纯看图：缩放/切换/拖拽/键盘） | SHARED_PRIMITIVE 候选。问题：全局单例直接读 `useImagePreviewStore`，无 props 接口 → 提炼前需 props 化 |
-| `shared.image-gallery` | `components/shared/ImageGallery.vue` | 240 | **弱**（依赖领域类型 `ImageRef`） | SHARED_PATTERN 候选。已有 `defineProps<{images, loading?}>`，被 `ArtifactPanel.vue:50` 消费 |
+| `browser.image-lightbox` | `src/capabilities/browser/ui/ImageLightbox.vue` | 329 | **无**（纯看图：缩放/切换/拖拽/键盘） | browser 能力所属（非 shared）。直接读 `useImagePreviewStore` |
+| `browser.image-gallery` | `src/capabilities/browser/ui/ImageGallery.vue` | 240 | **弱**（依赖领域类型 `ImageRef`） | browser 能力所属（非 shared）。已有 `defineProps<{images, loading?}>`，被 `ArtifactPanel.vue:50` 消费 |
 
 ---
 

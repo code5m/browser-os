@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { useRepoStore } from "../../capabilities/workspace/public";
-import { useModalFocus } from "../../composables/useModalFocus";
+import { useRepoStore } from "../../../capabilities/workspace/public";
+import { useModalFocus } from "../../../composables/useModalFocus";
 const rp = useRepoStore();
 const root = ref<HTMLElement | null>(null);
 // 确认类对话框：打开时焦点移入、焦点陷阱、关闭时归还焦点、ESC 关闭（M5-W15 A6）

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ContextMenu, ContextMenuItem, EmptyState } from "../../../shared/ui";
 import { useArtifactStore } from "../state/useArtifactStore";
-import ImageGallery from "../../../components/shared/ImageGallery.vue";
+import ImageGallery from "../../browser/ui/ImageGallery.vue";
 
 const art = useArtifactStore();
 </script>
