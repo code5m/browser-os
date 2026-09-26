@@ -204,3 +204,27 @@ Pilot 执行清单（对齐用户 Pilot 规范）：
 - 当 `capabilities/<name>/` 内模块成熟（mod + public + contract + state + tests 齐备），可提级为独立 crate（`mvp-<name>`），最后按需独立项目。
 - `bridge.rs` 留作 shared/framework 残核（tab/webview/grid/m0/intent/url/resource-stats/debug + `AppState`），其命令在 `AppState` 下沉后逐 command 迁出。
 - 终态：`DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Module → 独立 Crate → 必要时独立项目`，前后端每个模块可独立审核、独立发展。
+
+---
+
+## 8. Execution Log（迁移地图的落地账本）
+
+> 每批 Pilot 落地后在此追加，保证矩阵与真实代码同节拍。
+
+### 8.1 Native Pilot 1 — `skill`（commit `c7f18f8`，tag `native-physical-pilot-skill-pass`）
+- 迁移：`src-tauri/src/skills.rs` → `src-tauri/src/capabilities/skill/`（`mod.rs` + `README.md`）。
+- `main.rs`：`mod skills;` → `mod capabilities { pub mod skill; }`。
+- 门禁：`cargo check` 0 新增告警；`cargo test skills` 6/6；`check-core-boundary.py` 7/7；`check-command-set-consistency.py` PASS；`check-capability-platform.mjs` 29/0；R10/R11 PASS；`npm run build` OK。
+- 副作用修复：`check-agent-skill-policy.py` 的 `src-tauri/src/skills.rs` 路径已失准（Pilot 1 前已搬），本轮同步改为 `capabilities/skill/skills.rs`（self-test PASS：ACTIVE=3/PENDING=10）。
+
+### 8.2 Native Pilot 2 — `agent`（`agent.rs` + `agent_memory.rs`）
+- 迁移：`src-tauri/src/agent.rs` + `agent_memory.rs` → `src-tauri/src/capabilities/agent/`（`mod.rs` + `README.md`）。
+- `main.rs`：`mod agent;`/`mod agent_memory;` → `mod capabilities { pub mod agent; }`（agent_memory 经 `capabilities/agent/mod.rs` 声明，不误置顶层）。
+- 配套修复：`check-agent-skill-policy.py`（`src-tauri/src/agent.rs` → `capabilities/agent/agent.rs`，self-test PASS）与 `check-agent-memory-policy.py`（`AGENT_MEMORY` 常量 → `capabilities/agent/agent_memory.rs`，self-test PASS：ACTIVE=5）。
+- 门禁：`cargo check` 0 新增告警（仅 grid_process.rs 2 条既有 dead_code）；`cargo test capabilities::agent` 15/15（agent.rs 4 + agent_memory.rs 11）；46 bridge 测试全过；`check-core-boundary.py` 7/7；`npm run build` OK。
+- 既有 FAIL（非本批回归，矩阵 §2.4 LEGACY_MIXED_MODULE 残核）：`UI_CHECK` 前端 fixed 浮层、`NATIVE-02` bridge.rs 跨能力直调。
+
+### 8.3 下一批候选
+- `scripts.rs` + `snippets.rs`（bridge.rs 有 `crate::scripts/snippets::` 调用 → 需 re-export shim `pub use crate::capabilities::script::...`，沿用 M5-1 `mvp_core` 同款模式）。
+- 之后：`images.rs`（bridge.rs 调用，shim）→ `plugin.rs`/`graph.rs`/`workspace.rs`/`database.rs`/`scheduler.rs`/`script_runner.rs`/`terminal.rs`/`sync.rs`/`fs_cmds.rs`/`tools.rs`。
+- 最后才处理 `bridge.rs` 逐 command 拆分 + `AppState` 下沉（最高风险，见 §4）。

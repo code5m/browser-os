@@ -4,7 +4,7 @@
 契约来源（均来自本仓库既有交付，非本脚本发明）：
 - `logs/checkpoints/M5-20260906/M5-3-a2a-bidir-agent-kv.md`（A1 M5-3 卡 §4）
 - `logs/assist/A4-M5-a2a-memory-20260906-1410-w3-delta.md`（A4 W3 delta，含 C-5/C-6 修正）
-- `src-tauri/src/agent_memory.rs`（本切片实现，落点在 W4 Lane A4）
+- `src-tauri/src/capabilities/agent/agent_memory.rs`（本切片实现，落点在 W4 Lane A4）
 
 本脚本的定位（对齐 A2 的 `check-core-boundary.py` / A3 的 `check-mcp-policy.py`）：
 - 它是**准入门禁脚本**，不是 KV 运行时代码；只读取既有文件做静态断言。
@@ -32,7 +32,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-AGENT_MEMORY = "src-tauri/src/agent_memory.rs"
+AGENT_MEMORY = "src-tauri/src/capabilities/agent/agent_memory.rs"
 DOMAIN = "src-tauri/src/domain.rs"
 
 

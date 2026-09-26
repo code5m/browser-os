@@ -1,7 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod agent;
-mod agent_memory;
+// (capabilities/agent + capabilities/skill declared under `mod capabilities` below)
 mod bridge;
 mod crashlog;
 mod database;
@@ -21,6 +20,7 @@ mod session;
 mod shutdown;
 mod capabilities {
     pub mod skill;
+    pub mod agent;
 }
 mod snippets;
 mod sync;

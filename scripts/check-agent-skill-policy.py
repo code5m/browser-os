@@ -67,14 +67,14 @@ def _agent_skill_present(repo: dict[str, str]) -> bool:
     """Agent/Skill 域已开建的依据（任一即真）：
     - `src-tauri/src/domain.rs` 出现 `pub enum SkillDef` / `pub struct SkillDef`
     - `src-tauri/src/security_policy.rs` 出现 `SKILL_CAPABILITY_V1` 常量定义
-    - 存在 `src-tauri/src/skills.rs` 或 `src-tauri/src/agent.rs`
+    - 存在 `src-tauri/src/capabilities/skill/skills.rs` 或 `src-tauri/src/capabilities/agent/agent.rs`
     """
     for rel, text in repo.items():
         if rel == "src-tauri/src/domain.rs" and re.search(r"\b(?:pub enum|pub struct)\s+SkillDef\b", text):
             return True
         if rel == "src-tauri/src/security_policy.rs" and re.search(r"\bSKILL_CAPABILITY_V1\s*[=:]", text):
             return True
-        if rel in ("src-tauri/src/skills.rs", "src-tauri/src/agent.rs"):
+        if rel in ("src-tauri/src/capabilities/skill/skills.rs", "src-tauri/src/capabilities/agent/agent.rs"):
             return True
     return False
 
@@ -140,8 +140,8 @@ _CODE_REX = {
 
 def _is_agent_skill_file(rel: str) -> bool:
     return rel in (
-        "src-tauri/src/skills.rs",
-        "src-tauri/src/agent.rs",
+        "src-tauri/src/capabilities/skill/skills.rs",
+        "src-tauri/src/capabilities/agent/agent.rs",
         "src-tauri/src/domain.rs",
     )
 
@@ -205,9 +205,9 @@ def c_capability_drift(rel, text, repo):
 def c_second_path(rel, text, repo):
     if not _agent_skill_present(repo):
         return None
-    # 第二执行路径只查 Agent/Skill 解析/运行时模块（skills.rs/agent.rs）；
+    # 第二执行路径只查 Agent/Skill 解析/运行时模块（capabilities/skill/skills.rs / capabilities/agent/agent.rs）；
     # domain.rs 是共享 DTO 容器，含历史 Command::new 注释，不在此扫。
-    if rel in ("src-tauri/src/skills.rs", "src-tauri/src/agent.rs"):
+    if rel in ("src-tauri/src/capabilities/skill/skills.rs", "src-tauri/src/capabilities/agent/agent.rs"):
         if _CODE_REX["AGSK_SECOND_PATH"].search(_strip_line_comments(text)):
             return ["Agent/Skill 模块出现第二执行路径形态（std::process/Command::new/\"-c\"/tokio::spawn），违反 AGSK_1"]
     return None
@@ -223,10 +223,10 @@ def c_inline_shell(rel, text, repo):
 
 
 def c_no_inline_exec_variant(rel, text, repo):
-    """AGSK_3 补充：skills.rs/agent.rs 不得出现 `InlineScript`/`RawShell` 标识符。"""
+    """AGSK_3 补充：capabilities/skill/skills.rs / capabilities/agent/agent.rs 不得出现 `InlineScript`/`RawShell` 标识符。"""
     if not _agent_skill_present(repo):
         return None
-    if rel in ("src-tauri/src/skills.rs", "src-tauri/src/agent.rs"):
+    if rel in ("src-tauri/src/capabilities/skill/skills.rs", "src-tauri/src/capabilities/agent/agent.rs"):
         if _CODE_REX["AGSK_INLINE_SHELL"].search(_strip_line_comments(text)):
             return ["Agent/Skill 解析层引用内联 shell 标识符，违反 K6"]
     return None
@@ -550,11 +550,11 @@ def _baseline_repo() -> dict[str, str]:
             "pub struct SkillDef { id: String, acl: AclLevel, exec: SkillExec }\n"
             "pub struct AgentDef { id: String, system_prompt: String }\n"
         ),
-        "src-tauri/src/skills.rs": (
+        "src-tauri/src/capabilities/skill/skills.rs": (
             "use crate::domain::SkillDef;\n"
             "impl SkillDef { pub fn validate(&self) -> Result<(), PolicyError> { Ok(()) } }\n"
         ),
-        "src-tauri/src/agent.rs": (
+        "src-tauri/src/capabilities/agent/agent.rs": (
             "use crate::domain::AgentDef;\n"
             "impl AgentDef { pub fn validate(&self) -> Result<(), PolicyError> { Ok(()) } }\n"
         ),
@@ -605,15 +605,15 @@ def _run_self_test() -> int:
 
     # PENDING 坏样本（Agent/Skill 域已存在，gate 生效）
     add("AGSK_SECOND_PATH", "skills.rs 出现 std::process::Command",
-        mutate(**{"src-tauri/src/skills.rs": "fn run() { let _ = std::process::Command::new(\"sh\"); }\n"}),
-        "src-tauri/src/skills.rs")
+        mutate(**{"src-tauri/src/capabilities/skill/skills.rs": "fn run() { let _ = std::process::Command::new(\"sh\"); }\n"}),
+        "src-tauri/src/capabilities/skill/skills.rs")
     add("AGSK_INLINE_SHELL_ENUM", "SkillExec 含 InlineScript 变体",
         mutate(**{"src-tauri/src/domain.rs":
                   good["src-tauri/src/domain.rs"] + "pub enum X { InlineScript }\n"}),
         "src-tauri/src/domain.rs")
     add("AGSK_INLINE_SHELL_REF", "agent.rs 引用 RawShell",
-        mutate(**{"src-tauri/src/agent.rs": "fn f() { let _ = RawShell; }\n"}),
-        "src-tauri/src/agent.rs")
+        mutate(**{"src-tauri/src/capabilities/agent/agent.rs": "fn f() { let _ = RawShell; }\n"}),
+        "src-tauri/src/capabilities/agent/agent.rs")
     add("AGSK_COMMAND_PARITY", "bridge.rs 暴露 skill_install 但不在 ACL/bridge.ts",
         mutate(**{"src-tauri/src/bridge.rs": "pub fn skill_install(app: AppHandle) {}\n"}),
         "src-tauri/src/bridge.rs")
