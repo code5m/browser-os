@@ -68,7 +68,7 @@ PENDING_CODES = {
 EXPECTED_PENDING = set(PENDING_CODES.keys())
 
 # 插件逻辑模块（纯函数所在）；门禁只扫它，避免 domain.rs 等其他文件误伤。
-PLUGIN_MODULE = os.path.join(ROOT, "src-tauri", "src", "plugin.rs")
+PLUGIN_MODULE = os.path.join(ROOT, "src-tauri", "src", "capabilities", "plugin", "plugin.rs")
 
 VIOLATION_PATTERNS = {
     "PLUGIN_SECOND_PATH": r"std::process|Command::new|tokio::spawn|\bspawn\b",
@@ -137,7 +137,7 @@ def _repo_files():
     base = os.path.join(ROOT, "src-tauri")
     return {
         "bridge": _read(os.path.join(base, "src", "bridge.rs")),
-        "plugin": _read(os.path.join(base, "src", "plugin.rs")),
+        "plugin": _read(os.path.join(base, "src", "capabilities", "plugin", "plugin.rs")),
         "main": _read(os.path.join(base, "src", "main.rs")),
         "domain": _read(os.path.join(base, "src", "domain.rs")),
         "acl": _read(os.path.join(base, "permissions", "default-commands.toml")),

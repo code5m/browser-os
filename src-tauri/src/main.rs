@@ -13,7 +13,6 @@ mod shared {
     pub mod images;
 }
 mod mcp;
-mod plugin;
 mod scheduler;
 mod script_runner;
 mod security_policy;
@@ -23,6 +22,7 @@ mod capabilities {
     pub mod skill;
     pub mod agent;
     pub mod script;
+    pub mod plugin;
 }
 mod sync;
 mod tasks;
@@ -58,6 +58,10 @@ pub use crate::capabilities::script::snippets;
 // Native Physical Boundary Pilot 4 (images): re-export shim so existing
 // `crate::images::` call sites keep resolving without per-call-site edits.
 pub use crate::shared::images;
+
+// Native Physical Boundary Pilot 5 (plugin): re-export shim so existing
+// `crate::plugin::` call sites keep resolving without per-call-site edits.
+pub use crate::capabilities::plugin::plugin;
 
 use bridge::AppState;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};

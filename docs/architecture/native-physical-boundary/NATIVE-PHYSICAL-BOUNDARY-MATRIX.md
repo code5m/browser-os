@@ -81,7 +81,7 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 | `scheduler.rs` | CAPABILITY_NATIVE | 调度循环/重试/关机收口（task 触发引擎，执行委托 script_runner） | 不执行脚本 | `useTaskStore` | task | `src-tauri/src/` | `src-tauri/src/capabilities/task/` | 后台线程（调度循环） | `bridge::AppState`（line 28、648 allowed_roots）；`domain`/`script_runner`/`tasks` | 中（依赖 AppState hub） | 高 |
 | `script_runner.rs` | CAPABILITY_NATIVE | 脚本执行进程组 + 生命周期内核 | 不含纯验证 | `useScriptStore` | script | `src-tauri/src/capabilities/script/` | `src-tauri/src/capabilities/script/` | 子进程（`setsid`/`killpg`）、后台线程 | `domain`/`scripts`/`security_policy` | 中 | 高 |
 | `terminal.rs` | CAPABILITY_NATIVE | 终端输出管道 + 生命周期内核（PTY） | 不含调度 | `useTerminalStore` | terminal | `src-tauri/src/` | `src-tauri/src/capabilities/terminal/` | PTY（`portable_pty`）、子进程、后台线程 | `script_runner` | 中 | 高 |
-| `plugin.rs` | CAPABILITY_NATIVE | 插件 manifest + 生命周期策略（纯函数，无运行时） | 不解包/不验签/不执行 | `usePluginStore` | plugin | `src-tauri/src/` | `src-tauri/src/capabilities/plugin/` | 无（纯策略） | `domain`/`security_policy` | 低 | 高（但 bridge.rs 大量 `crate::plugin::` 调用，需 re-export shim 或改引用） |
+| `plugin.rs` | CAPABILITY_NATIVE | 插件 manifest + 生命周期策略（纯函数，无运行时） | 不解包/不验签/不执行 | `usePluginStore` | plugin | `src-tauri/src/capabilities/plugin/` | `src-tauri/src/capabilities/plugin/` | 无（纯策略） | `domain`/`security_policy` | 低 | 高（但 bridge.rs 大量 `crate::plugin::` 调用，需 re-export shim 或改引用） |
 | `skills.rs` | CAPABILITY_NATIVE | Skill 解析/校验（纯） | 不执行 | `useSkillStore` | skill | `src-tauri/src/` | `src-tauri/src/capabilities/skill/` | 无（纯） | `domain`/`security_policy` | **极低（无命令、零跨引用）** | **高（首选 Pilot）** |
 | `agent.rs` | CAPABILITY_NATIVE | Agent 解析/校验（纯，只读壳） | 不执行 chat/run | `useAgentStore` | agent | `src-tauri/src/` | `src-tauri/src/capabilities/agent/` | 无（纯） | `domain`/`security_policy` | 低 | 高 |
 | `agent_memory.rs` | CAPABILITY_NATIVE | Agent 记忆 KV 契约层（纯存储 + 策略） | 不含执行 | `useAgentStore` | agent | `src-tauri/src/` | `src-tauri/src/capabilities/agent/` | 文件系统（KV JSON 持久化） | `domain`/`mvp_core::core::seam::PathResolver` | 低 | 高 |
@@ -248,5 +248,13 @@ Pilot 执行清单（对齐用户 Pilot 规范）：
 - **关键修复（Pilot 1 同款沉默跳过回归）：** `scripts/check-image-policy.py` 路径常量 `src-tauri/src/images.rs` → `src-tauri/src/shared/images.rs`（其 `read()` 以 `p.exists() else ""` 读文件，不改会静默跳过扫描）。改后默认扫描 + 自测均 PASS（1 好 + 17 坏）。
 - 门禁：`cargo check` 0 新增告警（仅 grid_process.rs 2 条既有 dead_code）；`cargo test` 462/0（2 ignored 既有）；`check-image-policy.py` 默认扫描 PASS + 自测（1 好 + 17 坏）；`npm run build` OK。
 - 既有 flaky（非本批回归，已实测独立）：`script_runner::script_runner_tests::d4_real_output_is_captured_and_persisted` 为真实子进程/PTY 计时竞态，与 `images.rs` 零耦合（script_runner 无 `crate::images` 引用）；重跑 4/4 通过。
+- 既有 FAIL（非本批回归，矩阵 §2.4 LEGACY_MIXED_MODULE 残核）：`UI_CHECK` 前端 fixed 浮层、`NATIVE-02` bridge.rs 跨能力直调。
+- 未触碰：TS 侧 `src/capabilities/agent/` WIP（unstaged，隔离）；`phantom-yili` 仓库（DO_NOT_TOUCH）。
+
+### 8.7 Native Pilot 5 — `plugin`（CAPABILITY_NATIVE，纯策略切片）
+- 迁移：`src-tauri/src/plugin.rs` → `src-tauri/src/capabilities/plugin/plugin.rs`（`mod.rs` + `README.md`）。注意：本模块是**纯策略切片**（M5-10/W6），无 Tauri 命令、无 AppState、无运行时，仅 20 处 `crate::plugin::` 调用点（bridge.rs 插件命令体）。
+- `main.rs`：删顶层 `mod plugin;`；`mod capabilities` 内加 `pub mod plugin;`（新增 `capabilities/plugin/mod.rs` 暴露 `pub mod plugin;`）；顶部加 re-export shim `pub use crate::capabilities::plugin::plugin;`（既有 `crate::plugin::` 调用点无需逐处改写即解析）。
+- **关键修复（Pilot 1 同款沉默跳过回归）：** 三个门禁脚本的路径常量全部改为 `src-tauri/src/capabilities/plugin/plugin.rs`——`check-plugin-policy.py`（71/140）、`check-plugin-privacy.py`（86）、`check-agent-skill-policy.py`（106 文档 / 114 / 387 / 667-670 自测变异）。其中 `check-agent-skill-policy.py` 的 `repo` 由真实文件系统 glob 生成，故 114/387 硬编码旧路径必须同步改，否则 `AGSK_PLUGIN_*` 会丢失对新 plugin.rs 的扫描。
+- 门禁：`cargo check` 0 新增告警（仅 grid_process.rs 2 条既有 dead_code）；`cargo test` 462/0（2 ignored 既有）；`check-plugin-policy.py` 默认扫描 PASS + 自测（ACTIVE=7/PENDING=5）；`check-plugin-privacy.py` 默认扫描 PASS + 自测（ACTIVE=2/PENDING=5）；`check-agent-skill-policy.py` 默认扫描 PASS + 自测（ACTIVE=3/PENDING=10）；`check-core-boundary.py` 自测 PASS（ACTIVE=7）；`npm run build` OK。
 - 既有 FAIL（非本批回归，矩阵 §2.4 LEGACY_MIXED_MODULE 残核）：`UI_CHECK` 前端 fixed 浮层、`NATIVE-02` bridge.rs 跨能力直调。
 - 未触碰：TS 侧 `src/capabilities/agent/` WIP（unstaged，隔离）；`phantom-yili` 仓库（DO_NOT_TOUCH）。

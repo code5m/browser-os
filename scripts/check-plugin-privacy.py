@@ -83,7 +83,7 @@ def read_repo(root: Path) -> dict[str, str]:
         return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
 
     return {
-        "plugin": rd("src-tauri/src/plugin.rs"),
+        "plugin": rd("src-tauri/src/capabilities/plugin/plugin.rs"),
         "sp": rd("src-tauri/src/security_policy.rs"),
         "bridge": rd("src-tauri/src/bridge.rs"),
         "main": rd("src-tauri/src/main.rs"),

@@ -103,7 +103,7 @@ def _is_plugin_ui(rel: str) -> bool:
 
 def _plugin_lifecycle_present(repo: dict[str, str]) -> bool:
     """W13 插件生命周期产物已存在的依据（任一即真）：
-    - 存在 `src-tauri/src/plugin.rs`（W6 已落地的纯策略切片）
+    - 存在 `src-tauri/src/capabilities/plugin/plugin.rs`（W6 已落地的纯策略切片）
     - 任一 `plugin_*` 生命周期命令出现在 `bridge.rs` / `main.rs`
     - 存在插件生命周期 UI 文件
 
@@ -111,7 +111,7 @@ def _plugin_lifecycle_present(repo: dict[str, str]) -> bool:
     A9 一旦落地 manifest 生命周期代码或插件 UI，码位自动生效。
     """
     for rel, text in repo.items():
-        if rel == "src-tauri/src/plugin.rs":
+        if rel == "src-tauri/src/capabilities/plugin/plugin.rs":
             return True
         if _is_plugin_ui(rel):
             return True
@@ -384,7 +384,7 @@ def c_plugin_manifest_agent_cap(rel, text, repo):
     """
     if not _plugin_lifecycle_present(repo):
         return None
-    if rel not in ("src-tauri/src/plugin.rs", "src-tauri/src/domain.rs",
+    if rel not in ("src-tauri/src/capabilities/plugin/plugin.rs", "src-tauri/src/domain.rs",
                    "src-tauri/src/security_policy.rs", "src/types.ts"):
         return None
     m = _PLUGIN_EXEC_CAP_REX.search(_strip_line_comments(text))
@@ -664,10 +664,10 @@ def _run_self_test() -> int:
         "src-tauri/src/main.rs")
     # W13 插件生命周期 × Agent/Skill 执行锁定（gate = 插件产物存在，故坏样本需含插件文件）
     add("AGSK_PLUGIN_MANIFEST_AGENT_CAP", "plugin.rs 声明 agent.execute 执行能力",
-        mutate(**{"src-tauri/src/plugin.rs": "pub const X: &[&str] = &[\"agent.execute\"];\n"}),
-        "src-tauri/src/plugin.rs")
+        mutate(**{"src-tauri/src/capabilities/plugin/plugin.rs": "pub const X: &[&str] = &[\"agent.execute\"];\n"}),
+        "src-tauri/src/capabilities/plugin/plugin.rs")
     add("AGSK_PLUGIN_CMD_NOT_EXEC", "main.rs 注册 plugin_invoke（插件执行面解锁）",
-        mutate(**{"src-tauri/src/plugin.rs": "pub struct PluginManifest {}\n",
+        mutate(**{"src-tauri/src/capabilities/plugin/plugin.rs": "pub struct PluginManifest {}\n",
                   "src-tauri/src/main.rs": "bridge::plugin_invoke,\n"}),
         "src-tauri/src/main.rs")
     add("AGSK_PLUGIN_UI_EXEC_AFFORDANCE", "插件 UI 出现「运行插件」执行按钮",

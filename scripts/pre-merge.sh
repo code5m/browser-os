@@ -405,7 +405,7 @@ run_pre_merge() {
     || pm_fail "check-database-policy.py --expect-pending（有 pending 码位已实现，应转入默认判定）"
 
   # M5-W13（Lane A4）：插件隐私不变量夹具（错误不回显 / 审计只用 ids+计数+哈希前缀）。
-  # 只接 --self-test 与默认门禁：pending 通道当前有意报红（plugin.rs 潜伏回显缺陷，
+  # 只接 --self-test 与默认门禁：pending 通道当前有意报红（capabilities/plugin/plugin.rs 潜伏回显缺陷，
   # 待 A9 在 W13 接线前修复），接入 --expect-pending 会阻塞整批，故暂不接。
   python3 "$SCRIPT_DIR/check-plugin-privacy.py" --self-test >/dev/null 2>&1 \
     || pm_fail "check-plugin-privacy.py --self-test"
