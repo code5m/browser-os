@@ -97,7 +97,7 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 
 | 模块 | 分类 | DDD 责任 | 非责任 | Semantic Owner | Capability Owner | 当前 | 目标 | 关键资源 | 跨模块依赖 | 风险 | 就绪 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `bridge.rs` | LEGACY_MIXED_MODULE | **中央 Tauri 命令 hub + `AppState` 共享态**（耦合枢纽） | — | 混合（框架 + 全能力） | 混合 | `src-tauri/src/` | 拆分为：少量真正 shared/framework bridge + 各 capability-owned 命令模块 | webview/browser tabs、grid 子进程、PTY、sqlite、OS keyring、文件系统、UDS、后台线程 | `domain`/`grid_ipc`/`keyring_store`/`mcp`/`script_runner`/`seam`/`sync`/`terminal`/`workspace`；内联 `security_policy`/`database` | **最高（147 命令、generate_handler、AppState hub）** | 低（须逐 command adjudication，禁止整体搬） |
+| `bridge.rs` | LEGACY_MIXED_MODULE | **中央 Tauri 命令 hub + `AppState` 共享态**（耦合枢纽） | — | 混合（框架 + 全能力） | 混合 | `src-tauri/src/` | 拆分为：少量真正 shared/framework bridge + 各 capability-owned 命令模块 | webview/browser tabs、grid 子进程、PTY、sqlite、OS keyring、文件系统、UDS、后台线程 | `domain`/`grid_ipc`/`keyring_store`/`mcp`/`script_runner`/`seam`/`sync`/`terminal`/`workspace`；内联 `security_policy`/`database` | **最高（148 命令、generate_handler、AppState hub）** | 低（须逐 command adjudication，禁止整体搬） |
 
 ---
 
@@ -140,7 +140,11 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 **汇总**：字段总数 = 26；CAPABILITY_NATIVE 字段 = 23（git×2 / browser×9 / grid×4 / terminal×1 / resource×2 / session×3 / credential×1 / script×1）；FRAMEWORK 字段 = 3（`m0_config` / `shutdown_requested` / `frontend_ready`）；**UNKNOWN_OWNER = 0**。
 **启示**：bridge.rs 逐 command 分解时，命令体按「其读取/写入的 AppState 字段归属」归位到对应 `capabilities/<cap>/commands.rs`（real-owner 判定，非机械函数块）；FRAMEWORK 字段（`m0_config` / `shutdown_requested` / `frontend_ready`）由组合根保留，不迁入产品能力。
 
-## 3. 命令级矩阵（147 个 `bridge::` + 2 `fs_cmds::` + 2 `tools::`）
+> **FREEZE STATUS: `FROZEN_FOR_BRIDGE_DECOMPOSITION`** — 冻结于 2026-09-26，经 `scripts/check-native-command-inventory.mjs` 机器三方对账：REGISTERED = DEFINED = REGISTRY = 148（零漂移，原矩阵误记 `147+2+2=151`，实测 `144 bridge + 2 fs_cmds + 2 tools = 148`），AppState STRUCT 26 / MATRIX 26（零漂移）。冻结四条件 `COMMAND_UNKNOWN=0`、`COMMAND_REGISTRY_DRIFT=0`、`APPSTATE_UNKNOWN=0`、`DUPLICATE_COMMAND=0` 全部满足。解冻必须重跑本审计且全绿。
+
+> **PROCESS_FINDING（标签纪律）: `TAG_CREATED_BEFORE_COMMIT_COMPLETENESS_PROOF`** — Pilot 14 曾发生「commit 漏 `main.rs`、working tree 因含未提交修改而单测仍过」事故。后续任何 Pilot 必须遵守 `commit → clean-tree verify → tag`，禁止 `working tree 绿 → tag → 补 commit → 移动 tag`。本次审计已用 detached clean worktree 证明 `native-physical-pilot-tools-pass`（→ `c17a667`）自身 `cargo check` / `cargo test` / `npm run build` 全绿。
+
+## 3. 命令级矩阵（144 个 `bridge::` + 2 `fs_cmds::` + 2 `tools::` = 148）
 
 > 注册位置：主进程 `main.rs:1402-1553`（`generate_handler!`）；grid 子进程 `main.rs:116-122`（5 命令）。
 > Callers：全部由前端 `bridge.ts`（`invoke`）调用；grid 子进程命令由 `collect.js` 调用。
