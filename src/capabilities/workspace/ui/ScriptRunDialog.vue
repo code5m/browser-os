@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted } from "vue";
-import { bridge } from "../../bridge";
+import { bridge } from "../../../bridge";
 import type {
   CommandSnippet,
   ScriptMeta,
   RunStatus,
   ScriptOutputEvent,
   ScriptFinishedEvent,
-} from "../../types";
+} from "../../../types";
 
 const props = withDefaults(defineProps<{ script: ScriptMeta | CommandSnippet; kind?: "script" | "command" }>(), {
   kind: "script",

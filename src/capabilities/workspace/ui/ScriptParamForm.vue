@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { EmptyState } from "../../shared/ui";
-import type { ScriptParam, ParamType } from "../../types";
+import { EmptyState } from "../../../shared/ui";
+import type { ScriptParam, ParamType } from "../../../types";
 
 const props = defineProps<{ params: ScriptParam[] }>();
 const emit = defineEmits<{ "update:params": [ScriptParam[]] }>();

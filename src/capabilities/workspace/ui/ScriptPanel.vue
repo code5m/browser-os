@@ -5,8 +5,8 @@ import { useScriptStore } from "../state/useScriptStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { buildCategoryTree, validateScriptForm, canDeleteScript } from "../../../utils/scriptUi";
 import type { ScriptMeta } from "../../../types";
-import ScriptParamForm from "../../../components/workspace/ScriptParamForm.vue";
-import ScriptRunDialog from "../../../components/workspace/ScriptRunDialog.vue";
+import ScriptParamForm from "./ScriptParamForm.vue";
+import ScriptRunDialog from "./ScriptRunDialog.vue";
 import ScriptRunHistory from "./ScriptRunHistory.vue";
 
 const sc = useScriptStore();

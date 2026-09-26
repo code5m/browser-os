@@ -3,7 +3,7 @@ import { EmptyState } from "../../../shared/ui";
 import { ref } from "vue";
 import { useRepoStore } from "../state/useRepoStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
-import GitHistory from "../../../components/workspace/GitHistory.vue";
+import GitHistory from "../../git/ui/GitHistory.vue";
 import { contributionRegistry } from "../../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../../capability/contribution/types";
 

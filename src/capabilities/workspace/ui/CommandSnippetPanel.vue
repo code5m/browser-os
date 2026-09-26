@@ -11,8 +11,8 @@ import {
   validateSnippetForm,
 } from "../../../utils/snippetUi";
 import type { CommandSnippet } from "../../../types";
-import ScriptParamForm from "../../../components/workspace/ScriptParamForm.vue";
-import ScriptRunDialog from "../../../components/workspace/ScriptRunDialog.vue";
+import ScriptParamForm from "./ScriptParamForm.vue";
+import ScriptRunDialog from "./ScriptRunDialog.vue";
 
 const sn = useSnippetStore();
 const layout = useLayoutStore();

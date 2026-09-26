@@ -25,7 +25,6 @@
     "src/components/layout/SidebarResizer.vue"
   ],
   "business_component_dirs": [
-    "src/components/workspace",
     "src/capabilities/browser/ui"
   ],
   "ui03_shell_renders_business_baseline": [
@@ -211,17 +210,12 @@
       "text": "position: fixed;"
     },
     {
-      "file": "src/components/workspace/PermissionPreviewModal.vue",
+      "file": "src/shared/ui/PermissionPreviewModal.vue",
       "selector": ".modal-mask",
       "text": ".modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: f"
     },
     {
-      "file": "src/components/workspace/RunHistoryModal.vue",
-      "selector": ".modal-mask",
-      "text": ".modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: f"
-    },
-    {
-      "file": "src/components/workspace/ScriptRunDialog.vue",
+      "file": "src/capabilities/workspace/ui/ScriptRunDialog.vue",
       "selector": "position: fixed;",
       "text": "position: fixed;"
     },
