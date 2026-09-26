@@ -35,7 +35,6 @@ owner_implementations:
     symbol: useLayoutStore
     paths:
       - src/stores/useLayoutStore.ts
-      - src/capabilities/layout/state/useLayoutStore.ts
   useBrowserStore:
     symbol: useBrowserStore
     paths:
