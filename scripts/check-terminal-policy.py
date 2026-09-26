@@ -199,7 +199,7 @@ def read_repo(root: Path) -> dict:
             return ""
 
     return {
-        "terminal_rs": read("src-tauri/src/terminal.rs"),
+        "terminal_rs": read("src-tauri/src/capabilities/terminal/terminal.rs"),
         "bridge_rs": read("src-tauri/src/bridge.rs"),
         "main_rs": read("src-tauri/src/main.rs"),
         "cargo_toml": read("src-tauri/Cargo.toml"),
