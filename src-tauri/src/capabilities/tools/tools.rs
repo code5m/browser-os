@@ -38,11 +38,11 @@ const BUILTIN_TOOLS: &[(&str, &str, &str, &str)] = &[
 /// 全部内置字节只在此处嵌入一份（单一真源），M2-8 不得再 `include_str!` 或读盘。
 pub fn builtin_tool_html(id: &str) -> Option<&'static str> {
     match id {
-        "json" => Some(include_str!("tools/json-tool.html")),
-        "base64" => Some(include_str!("tools/base64-tool.html")),
-        "timestamp" => Some(include_str!("tools/timestamp-tool.html")),
-        "regex" => Some(include_str!("tools/regex-tool.html")),
-        "cron" => Some(include_str!("tools/cron-tool.html")),
+        "json" => Some(include_str!("json-tool.html")),
+        "base64" => Some(include_str!("base64-tool.html")),
+        "timestamp" => Some(include_str!("timestamp-tool.html")),
+        "regex" => Some(include_str!("regex-tool.html")),
+        "cron" => Some(include_str!("cron-tool.html")),
         _ => None,
     }
 }

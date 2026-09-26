@@ -101,7 +101,7 @@ def detect_violations(files: dict) -> list[str]:
             sid = name.replace("-tool.html", "")
             if f'"{sid}"' not in table:
                 v.append(f"SEED_TABLE_MISMATCH:BUILTIN_TOOLS 缺 {sid}")
-            if f'"{sid}" => Some(include_str!("tools/{name}"))' not in tools:
+            if f'"{sid}" => Some(include_str!("{name}"))' not in tools:
                 v.append(f"SEED_EMBED_MISMATCH:builtin_tool_html 缺 {name} 嵌入臂")
 
     # ---- F3/F4：每份种子零外链、零 bridge 写原语 ----
@@ -134,12 +134,12 @@ def detect_violations(files: dict) -> list[str]:
 
 
 def read_repo(root: Path) -> dict:
-    tools_rs = root / "src-tauri/src/tools.rs"
+    tools_rs = root / "src-tauri/src/capabilities/tools/tools.rs"
     out = {
         "tools_rs": tools_rs.read_text(encoding="utf-8") if tools_rs.exists() else "",
         "seeds": {},
     }
-    seeds_dir = root / "src-tauri/src/tools"
+    seeds_dir = root / "src-tauri/src/capabilities/tools"
     if seeds_dir.is_dir():
         for f in sorted(seeds_dir.iterdir()):
             if f.suffix == ".html":

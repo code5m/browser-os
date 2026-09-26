@@ -17,7 +17,7 @@ M2-7 覆盖「清单与打包」；M2-8 覆盖「工具箱 UI + 子 webview 打�
   打包（F8）
   - `build.rs` 保持极简：**不得**出现 `include_dir` / `IncludeDir`（禁用）
   - 内置种子必须经 `include_str!` 嵌入（tools.rs 内 `include_str!` 计数 ≥ 5）
-  - 5 个种子 HTML 必须存在于 src-tauri/src/tools/
+  - 5 个种子 HTML 必须存在于 src-tauri/src/capabilities/tools/
 
   命令与 ACL（F5）
   - `list_tools` 命令必须存在（tools.rs），且为只读：不得含 `log_audit`
@@ -153,7 +153,7 @@ def detect_violations(files: dict) -> list[str]:
     # ---- 8) 5 个种子 HTML 必须存在 ----
     tools_dir = files.get("tools_dir")
     if tools_dir is None:
-        v.append("TOOL_SEED_DIR_MISSING:src-tauri/src/tools 目录不可用")
+        v.append("TOOL_SEED_DIR_MISSING:src-tauri/src/capabilities/tools 目录不可用")
     else:
         for name in SEED_HTML:
             if not (tools_dir / name).is_file():
@@ -212,7 +212,7 @@ def detect_violations(files: dict) -> list[str]:
 def read_repo(root: Path) -> dict:
     paths = {
         "domain": "src-tauri/src/domain.rs",
-        "tools": "src-tauri/src/tools.rs",
+        "tools": "src-tauri/src/capabilities/tools/tools.rs",
         "main_rs": "src-tauri/src/main.rs",
         "build_rs": "src-tauri/build.rs",
         "acl": "src-tauri/permissions/default-commands.toml",
@@ -221,7 +221,7 @@ def read_repo(root: Path) -> dict:
         k: (root / p).read_text(encoding="utf-8") if (root / p).exists() else ""
         for k, p in paths.items()
     }
-    out["tools_dir"] = root / "src-tauri/src/tools"
+    out["tools_dir"] = root / "src-tauri/src/capabilities/tools"
     # M2-8 隔离：扫描全部 capability，拼接其文本（用于检测 tool-* 窗口是否被授予权限）
     caps_text = ""
     caps_dir = root / "src-tauri/capabilities"
@@ -326,10 +326,10 @@ def run_self_test(root: Path) -> int:
         "tools.rs 减少 include_str! 到 1",
         mutate(
             tools=good["tools"]
-            .replace('include_str!("tools/base64-tool.html")', '""', 1)
-            .replace('include_str!("tools/timestamp-tool.html")', '""', 1)
-            .replace('include_str!("tools/regex-tool.html")', '""', 1)
-            .replace('include_str!("tools/cron-tool.html")', '""', 1)
+            .replace('include_str!("base64-tool.html")', '""', 1)
+            .replace('include_str!("timestamp-tool.html")', '""', 1)
+            .replace('include_str!("regex-tool.html")', '""', 1)
+            .replace('include_str!("cron-tool.html")', '""', 1)
         ),
         "tools",
         "TOOL_EMBED_MISSING",

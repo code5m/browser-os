@@ -1495,7 +1495,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   list_tools:
-    file: "src-tauri/src/tools.rs"
+    file: "src-tauri/src/capabilities/tools/tools.rs"
     owner: "tools"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/tools/**"
@@ -1505,7 +1505,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   open_tool:
-    file: "src-tauri/src/tools.rs"
+    file: "src-tauri/src/capabilities/tools/tools.rs"
     owner: "tools"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/tools/**"
