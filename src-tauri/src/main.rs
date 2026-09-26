@@ -9,7 +9,9 @@ mod fs_cmds;
 mod graph;
 mod grid_ipc;
 mod grid_process;
-mod images;
+mod shared {
+    pub mod images;
+}
 mod mcp;
 mod plugin;
 mod scheduler;
@@ -52,6 +54,10 @@ pub use mvp_core::keyring_store;
 // per-call-site edits (mirrors M5-1 mvp_core shim).
 pub use crate::capabilities::script::scripts;
 pub use crate::capabilities::script::snippets;
+
+// Native Physical Boundary Pilot 4 (images): re-export shim so existing
+// `crate::images::` call sites keep resolving without per-call-site edits.
+pub use crate::shared::images;
 
 use bridge::AppState;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};

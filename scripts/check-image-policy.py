@@ -248,7 +248,7 @@ def read_repo(root: Path) -> dict[str, str]:
     )
     return {
         "domain": read("src-tauri/src/domain.rs"),
-        "images": read("src-tauri/src/images.rs"),
+        "images": read("src-tauri/src/shared/images.rs"),
         "bridge": read("src-tauri/src/bridge.rs"),
         "main_rs": read("src-tauri/src/main.rs"),
         "acl": read("src-tauri/permissions/default-commands.toml"),

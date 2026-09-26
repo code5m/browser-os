@@ -56,7 +56,7 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 | `shutdown.rs` | SHARED | 幂等关机协调器（ShutdownCoordinator） | 不持有资源实例 | — | 全部（grid/PTY/tab/线程） | `src-tauri/src/` | `src-tauri/src/shared/` | 编排关机 | std only | 低 | 高 |
 | `session.rs` | SHARED | 原子写原语（tmp+rename）+ 容量裁剪 + 脱敏 | 不持有会话语义 | — | 被 workspace/tasks/graph 复用 | `src-tauri/src/` | `src-tauri/src/shared/` | 文件系统（JSON 原子写） | `domain` | 低 | 高 |
 | `grid_ipc.rs` | SHARED | Grid UDS 线协议（Request/Response/Event/Wire/GridCmd/IpcRect） | 不开 socket、不持有资源 | — | 主进程 + grid 子进程共享 | `src-tauri/src/` | `src-tauri/src/shared/` | 仅协议定义 | 无（leaf） | 低 | 高 |
-| `images.rs` | SHARED | 图像字节校验（容量/类型 fail-closed） | 不渲染、不持久化自己 | — | resource_collection / browser 复用 | `src-tauri/src/` | `src-tauri/src/shared/` | 文件系统（校验上下文） | `domain` | 低 | 高 |
+| `images.rs` | SHARED | 图像字节校验（容量/类型 fail-closed） | 不渲染、不持久化自己 | — | resource_collection / browser 复用 | `src-tauri/src/shared/` | `src-tauri/src/shared/` | 文件系统（校验上下文） | `domain` | 低 | 高 |
 
 ### 2.2 FRAMEWORK_NATIVE_SERVICE
 
@@ -237,6 +237,16 @@ Pilot 执行清单（对齐用户 Pilot 规范）：
 - 既有 FAIL（非本批回归，矩阵 §2.4 LEGACY_MIXED_MODULE 残核）：`UI_CHECK` 前端 fixed 浮层、`NATIVE-02` bridge.rs 跨能力直调。
 - 未触碰：TS 侧 `src/capabilities/agent/` WIP（unstaged，隔离）；`phantom-yili` 仓库（DO_NOT_TOUCH）。
 
-### 8.5 下一批候选（更新自 §8.3，已落地 script）
-- 之后：`images.rs`（bridge.rs 调用，shim）→ `plugin.rs`/`graph.rs`/`workspace.rs`/`database.rs`/`scheduler.rs`/`script_runner.rs`/`terminal.rs`/`sync.rs`/`fs_cmds.rs`/`tools.rs`。
+### 8.5 下一批候选（更新自 §8.3，已落地 script + images）
+- 已落地：`images.rs`（Pilot 4，见 §8.6）。
+- 之后：`plugin.rs`/`graph.rs`/`workspace.rs`/`database.rs`/`scheduler.rs`/`script_runner.rs`/`terminal.rs`/`sync.rs`/`fs_cmds.rs`/`tools.rs`（各自先做"解耦 bridge hub"评估，再决定是否整文件迁或仅拔命令）。
 - 最后才处理 `bridge.rs` 逐 command 拆分 + `AppState` 下沉（最高风险，见 §4）。
+
+### 8.6 Native Pilot 4 — `images`（SHARED）
+- 迁移：`src-tauri/src/images.rs` → `src-tauri/src/shared/images.rs`（首个迁入 `shared/` 的 SHARED_NATIVE_INFRASTRUCTURE 模块；`shared/README.md` 记录）。
+- `main.rs`：顶层 `mod images;` → 内联 `mod shared { pub mod images; }`；顶部加 re-export shim `pub use crate::shared::images;`（既有 19 处 `crate::images::` 调用点——bridge/workspace/tasks/scheduler/scripts（已迁 capabilities/script）——无需逐处改写即解析）。
+- **关键修复（Pilot 1 同款沉默跳过回归）：** `scripts/check-image-policy.py` 路径常量 `src-tauri/src/images.rs` → `src-tauri/src/shared/images.rs`（其 `read()` 以 `p.exists() else ""` 读文件，不改会静默跳过扫描）。改后默认扫描 + 自测均 PASS（1 好 + 17 坏）。
+- 门禁：`cargo check` 0 新增告警（仅 grid_process.rs 2 条既有 dead_code）；`cargo test` 462/0（2 ignored 既有）；`check-image-policy.py` 默认扫描 PASS + 自测（1 好 + 17 坏）；`npm run build` OK。
+- 既有 flaky（非本批回归，已实测独立）：`script_runner::script_runner_tests::d4_real_output_is_captured_and_persisted` 为真实子进程/PTY 计时竞态，与 `images.rs` 零耦合（script_runner 无 `crate::images` 引用）；重跑 4/4 通过。
+- 既有 FAIL（非本批回归，矩阵 §2.4 LEGACY_MIXED_MODULE 残核）：`UI_CHECK` 前端 fixed 浮层、`NATIVE-02` bridge.rs 跨能力直调。
+- 未触碰：TS 侧 `src/capabilities/agent/` WIP（unstaged，隔离）；`phantom-yili` 仓库（DO_NOT_TOUCH）。
