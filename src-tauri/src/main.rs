@@ -4,7 +4,6 @@
 mod bridge;
 mod crashlog;
 mod domain;
-mod fs_cmds;
 mod grid_ipc;
 mod grid_process;
 mod shared {
@@ -98,6 +97,11 @@ pub use crate::capabilities::terminal::terminal;
 // `crate::sync::` call sites (repo_dir; workbench_smoke.rs ×1) keep resolving
 // without per-call-site edits.
 pub use crate::capabilities::git::sync;
+
+// Native Physical Boundary Pilot 13 (fs_cmds): re-export shim so existing
+// `fs_cmds::` call sites (reveal_path / move_path in generate_handler!) keep
+// resolving without per-call-site edits.
+pub use crate::capabilities::workspace::fs_cmds;
 
 use bridge::AppState;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};

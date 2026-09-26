@@ -29,6 +29,8 @@
 
 **本模块无命令。** workspace 相关命令（`browse_workspace` / `workspace_images_dir`）归属 workspace 能力，命令体注册在 `bridge.rs`（经 `generate_handler!`），命令体调用本模块目录助手。命令体在 **bridge.rs 逐 command 分解阶段**迁移至 `capabilities/workspace/commands.rs`。
 
+> **注意（Pilot 13 迁入 `fs_cmds.rs`）：** 同能力目录下的 `fs_cmds.rs` **自带 2 个 `#[tauri::command]`**——`reveal_path`（文件树"资源管理器打开"，`open::that` 调系统文件管理器）/ `move_path`（文件树拖拽移动，经 `crate::bridge::allowed_roots` + `security_policy::check_path_within_roots` 做根目录边界校验）。这 2 个命令**独立于 `bridge.rs` IPC 命令面 danger-zone**，命令体即住在 `fs_cmds.rs` 内（不在 `bridge.rs`），详见 §14。
+
 ## 4. Resources
 
 - **文件系统**：所有持久化落于 `data_dir` 下的 JSON（原子写）；正文文件落于各元数据相邻目录。
@@ -91,3 +93,26 @@
 - **高。** 纯持久化原语、零命令、零 AppState 字段、跨模块依赖仅 SHARED（`domain` / `session`）+ 标准库 + `tauri` AppHandle。
 - 达到阈值后可随 `workspace` 能力提级为 crate `mvp-workspace-rust`（不改领域语义）。
 - 同能力下一个低风险同批候选：workspace 命令体 `commands.rs`（需先解除对 `bridge` hub 的耦合，见矩阵 §4 / 协议 §8）。
+
+## 14. `fs_cmds.rs`（Pilot 13，自带命令的物理模块）
+
+> 迁移自 `src-tauri/src/fs_cmds.rs`（Native Physical Boundary Matrix Pilot 13，见
+> `docs/architecture/native-physical-boundary/NATIVE-PHYSICAL-BOUNDARY-MATRIX.md` §8.16）。
+> 分类：**CAPABILITY_NATIVE(workspace)**（矩阵 §2.3，target `src-tauri/src/capabilities/workspace/`）。
+
+### 14.1 职责
+
+- `reveal_path(app, path)`：用系统文件管理器打开指定路径（文件树右键"资源管理器打开"）；文件取其父目录，目录直接打开；`open::that(target)`。
+- `move_path(app, src, dst_dir)`：将文件/目录移动到目标目录（文件树拖拽移动）；源与目标都须在允许根目录内，禁止移动到自身或自身子目录内。
+
+### 14.2 命令面与耦合
+
+- **自带 `#[tauri::command]`**（与 `workspace.rs` 的"零命令"不同）：命令体即住本文件，`generate_handler!` 中以 `fs_cmds::reveal_path` / `fs_cmds::move_path` 注册，**独立于 `bridge.rs` IPC 命令面 danger-zone**。
+- 依赖：`crate::security_policy as sp`（`check_path_within_roots` 根目录边界校验）；`crate::bridge::allowed_roots(&app)`（中耦合，保留——属矩阵 §9 AppState/bridge hub 阶段待下沉的债务）。
+- 无 `WorkspaceState` AppState 字段；命令取 `&AppHandle` 即时解析。
+
+### 14.3 迁移要点
+
+- `main.rs` 删除顶层 `mod fs_cmds;`，顶部加 re-export shim `pub use crate::capabilities::workspace::fs_cmds;`，`generate_handler!` 中 `fs_cmds::*` 调用点无需逐处改写即解析。
+- 无门禁脚本钉死 `fs_cmds.rs`（0 脚本引用），无需 §5 路径修正。
+- 命令名在 Tauri v2 ACL 中按名授权（非路径），迁移不改 ACL 条目。

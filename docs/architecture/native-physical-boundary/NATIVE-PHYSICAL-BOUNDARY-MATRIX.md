@@ -330,3 +330,21 @@ Pilot 执行清单（对齐用户 Pilot 规范）：
 - 门禁：`cargo check` 0 新增告警（仅 grid_process.rs 2 条既有 dead_code）;`cargo test capabilities::git` 36/36（readonly/git_write 双模）;`cargo test` 全量 462/0（2 ignored 既有）;`check-git-write-policy.py` 默认扫描 PASS（Git write invariants hold）;`npm run build` OK。
 - 既有 FAIL（非本批回归，矩阵 §2.4 LEGACY_MIXED_MODULE 残核）：`UI_CHECK` 前端 fixed 浮层、`NATIVE-02` bridge.rs 跨能力直调。
 - 未触碰：TS 侧 `src/capabilities/agent/` WIP（unstaged，隔离）;`phantom-yili` 仓库（DO_NOT_TOUCH）。
+
+### 8.16 Native Pilot 13 — `fs_cmds`（CAPABILITY_NATIVE(workspace)，自带命令的物理模块）
+- 迁移：`src-tauri/src/fs_cmds.rs` → `src-tauri/src/capabilities/workspace/fs_cmds.rs`（复用既有 `capabilities/workspace/` 目录，`mod.rs` 加 `pub mod fs_cmds;`，README 加 §14）。
+- **§4/§7 评估结论**：与前面 4 个 pure-engine Pilot（scheduler/script_runner/terminal/sync）**不同**——`fs_cmds.rs` **自带 2 个 `#[tauri::command]`**（`reveal_path` line 7 / `move_path` line 20），命令体即住本文件，`generate_handler!` 中以 `fs_cmds::reveal_path` / `fs_cmds::move_path` 注册，**独立于 `bridge.rs` IPC 命令面 danger-zone**。grep 确认 `crate::fs_cmds::` 调用点 = **0**（仅 `main.rs` 内 `generate_handler!` 以 sibling 路径 `fs_cmds::*` 引用）；命令体依赖 `crate::security_policy as sp`（`check_path_within_roots`）+ `crate::bridge::allowed_roots(&app)`（中耦合，保留，属 §9 bridge hub 待下沉债务）。owner 一致 = workspace 能力，沿用整文件迁 + shim 模式（非逐 command 拆，因为命令本就不在 bridge.rs）。
+- `main.rs`：删顶层 `mod fs_cmds;`（原 line 7）；顶部加 re-export shim `pub use crate::capabilities::workspace::fs_cmds;`（generate_handler! 中 `fs_cmds::*` 调用点无需逐处改写即解析）。
+- **§5 沉默跳过回归核查**：`grep -rln "fs_cmds" scripts/` = **无**（0 门禁脚本钉死 `fs_cmds.rs`），故**无需 §5 路径修正**，无 FALSE GREEN 风险。ACL 为 Tauri v2 命令名授权（非路径），迁移不改 ACL 条目。
+- 门禁：`cargo check` 0 新增告警（仅 grid_process.rs 2 条既有 dead_code）；`cargo test` 全量 462/0（2 ignored 既有，无回归，fs_cmds 无专属测试）；`npm run build` OK。无 fs_cmds 专属门禁脚本，checker 自测/实扫不适用。
+- 既有 FAIL（非本批回归，矩阵 §2.4 LEGACY_MIXED_MODULE 残核）：`UI_CHECK` 前端 fixed 浮层、`NATIVE-02` bridge.rs 跨能力直调。
+- 未触碰：TS 侧 `src/capabilities/agent/` WIP（unstaged，隔离）;`phantom-yili` 仓库（DO_NOT_TOUCH）。
+
+### 8.17 SHIM_AUDIT（after Pilot 13，协议新增要求 A）
+- **SHIM_TOTAL = 12**：`script`×2（scripts/snippets）/ `script_runner` / `shared::images` / `plugin` / `graph` / `workspace` / `database` / `task::scheduler` / `terminal` / `git::sync` / `workspace::fs_cmds`（main.rs line 54/55/59/63/68/74/79/84/90/95/100/新增 fs_cmds）。
+- **STILL_REQUIRED = 12**（pending 专用移除 pass）。
+- **REMOVABLE_NOW = 0**（deferred，理由见下）。
+- **HIDES_OLD_ARCHITECTURE = 12**：每个 shim 保留一个 `crate::X` 顶层别名，掩盖旧顶层物理位置（含本次新增的 `fs_cmds`）。
+- **SECOND_TRUTH_RISK = LOW**：每个 shim 都是对「唯一已移动实现」的 re-export，无第二实现、无重复逻辑（符合协议 §6 条件 1/2）。
+- **移除条件（沿用 §8.12 决策，逐条记录）**：所有 shim 的调用方高度集中在 `bridge.rs`（graph/workspace/database/plugin/script/images 的命令体 + scheduler 引擎调用）+ `generate_handler!` 宏（`fs_cmds` 的 2 处 + 其余命令体）。`bridge.rs` 是下一阶段（§8 末段）的逐 command 分解目标——届时 bridge.rs 命令体将被重写为 `crate::capabilities::X::X::...` 全路径，恰可**同 commit 删除 shim**，避免对 bridge.rs 的双重改动。故规划：**在 bridge.rs 分解前插入一个专用 SHIM_REMOVAL Pilot**，一次重写全部 `crate::X::` 调用方到 `crate::capabilities::X::X::` 并删除 12 个 shim。`fs_cmds` 虽命令不在 bridge.rs 而在 generate_handler!，其 2 处调用点同样在该统一改写批次内，故一并延迟移除。先例：`skill`/`agent` 在 Pilot 1/2 即 shim-free 迁移（调用方直接改全路径），证明该路径可行。
+- 证据：`crate::scheduler::` 4 处、`crate::database::` 5 处、`crate::graph::` 13 处、`crate::workspace::` 32 处、`crate::plugin::` 见 `plugin.rs` 调用方、`crate::script::`/`crate::snippets::`/`crate::script_runner::` 见 `script.rs`/`snippets.rs`/`script_runner.rs` 调用方、`crate::shared::images` 见 `images.rs` 调用方、`crate::terminal::` 2 处、`crate::sync::` 1 处、`crate::fs_cmds::` 0 处（仅 generate_handler! sibling 路径）——全部可在 SHIM_REMOVAL 阶段机械化改写。
