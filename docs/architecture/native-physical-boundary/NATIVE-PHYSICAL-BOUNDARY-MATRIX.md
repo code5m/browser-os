@@ -101,6 +101,45 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 
 ---
 
+### 2.5 AppState 字段归属矩阵（bridge.rs 拆分前冻结，UNKNOWN=0）
+
+> 冻结时点：Pilot 14 之后、bridge.rs 逐 command 分解之前（协议 req B）。
+> 真源：`src-tauri/src/bridge.rs:255` `pub struct AppState`（共 26 字段）。
+> 原则：每个字段映射到唯一 owning Capability 或 FRAMEWORK（组合根 / 启动 / 关闭等横切态）；
+> 不得出现 UNKNOWN（无法判定则归 FRAMEWORK 并标注待 §9 下沉）。
+
+| AppState 字段 | 类型 | 语义 | 归属 Capability | 分类 | 下沉后载体 |
+|---|---|---|---|---|---|
+| `pending_jobs` | `Mutex<HashMap<String, SyncJob>>` | 同步作业队列 | git | CAPABILITY_NATIVE(git) | `capabilities/git/` |
+| `pending_git_jobs` | `Mutex<HashMap<String, GitWriteJob>>` | Git 写作业队列 | git | CAPABILITY_NATIVE(git) | `capabilities/git/` |
+| `m0_config` | `Mutex<M0Config>` | 全局配置（非单一能力） | FRAMEWORK（config） | FRAMEWORK_NATIVE_SERVICE | `main.rs` / shared config |
+| `browser_scanner_started` | `AtomicBool` | 浏览器扫描启动标记 | browser | CAPABILITY_NATIVE(browser) | `capabilities/browser/` |
+| `shutdown_requested` | `Arc<AtomicBool>` | 关闭协调 | FRAMEWORK（shutdown） | FRAMEWORK_NATIVE_SERVICE | `shutdown` 模块 |
+| `tabs` | `Mutex<HashMap<String, TabInfo>>` | 浏览器标签页 | browser | CAPABILITY_NATIVE(browser) | `capabilities/browser/` |
+| `active_tab` | `Mutex<Option<String>>` | 当前激活标签 | browser | CAPABILITY_NATIVE(browser) | `capabilities/browser/` |
+| `tab_counter` | `Arc<Mutex<u32>>` | 标签计数器 | browser | CAPABILITY_NATIVE(browser) | `capabilities/browser/` |
+| `child_layouts` | `Mutex<HashMap<String, (f64,f64,f64,f64)>>` | 宫格子窗口布局 | grid | CAPABILITY_NATIVE(grid) | `capabilities/grid/` |
+| `last_position_at` | `Mutex<HashMap<String, (Instant,f64,f64,f64,f64)>>` | 窗口位置记忆 | grid | CAPABILITY_NATIVE(grid) | `capabilities/grid/` |
+| `grid_zooms` | `Mutex<HashMap<String, f64>>` | 宫格缩放 | grid | CAPABILITY_NATIVE(grid) | `capabilities/grid/` |
+| `terminals` | `Mutex<HashMap<String, TerminalSession>>` | 终端会话 | terminal | CAPABILITY_NATIVE(terminal) | `capabilities/terminal/` |
+| `grid_manager` | `crate::grid_process::GridProcessManager` | 宫格进程管理 | grid | CAPABILITY_NATIVE(grid) | `capabilities/grid/` |
+| `hibernation_enabled` | `AtomicBool` | 标签休眠开关 | browser | CAPABILITY_NATIVE(browser) | `capabilities/browser/` |
+| `tab_idle_since` | `Mutex<HashMap<String, Instant>>` | 标签空闲计时 | browser | CAPABILITY_NATIVE(browser) | `capabilities/browser/` |
+| `hibernated_tabs` | `Mutex<HashSet<String>>` | 已休眠标签 | browser | CAPABILITY_NATIVE(browser) | `capabilities/browser/` |
+| `tab_recovery` | `Mutex<HashMap<String, TabRecoveryBudget>>` | 标签恢复预算 | browser | CAPABILITY_NATIVE(browser) | `capabilities/browser/` |
+| `pending_open_urls` | `Mutex<Vec<String>>` | 待打开 URL | browser | CAPABILITY_NATIVE(browser) | `capabilities/browser/` |
+| `frontend_ready` | `AtomicBool` | 前端就绪握手 | FRAMEWORK（启动） | FRAMEWORK_NATIVE_SERVICE | `main.rs` |
+| `resource_buffer` | `Mutex<ResourceBuffer>` | 资源缓冲 | resource_collection | CAPABILITY_NATIVE(resource) | `capabilities/resource/` |
+| `resource_capture` | `Mutex<ResourceCaptureSettings>` | 资源采集设置 | resource_collection | CAPABILITY_NATIVE(resource) | `capabilities/resource/` |
+| `session_drafts` | `Mutex<HashMap<String, SessionDraft>>` | 会话草稿 | session | CAPABILITY_NATIVE(session) | `capabilities/session/` |
+| `session_close_prompt` | `AtomicBool` | 关闭会话提示 | session | CAPABILITY_NATIVE(session) | `capabilities/session/` |
+| `session_auto_save_on_exit` | `AtomicBool` | 退出自动保存 | session | CAPABILITY_NATIVE(session) | `capabilities/session/` |
+| `credential_handles` | `Mutex<HashMap<String, BrowserCredentialMeta>>` | 凭据句柄 | credential | CAPABILITY_NATIVE(credential) | `capabilities/credential/` |
+| `script_runs` | `Arc<ScriptProcessTable>` | 脚本运行表 | script | CAPABILITY_NATIVE(script) | `capabilities/script/` |
+
+**汇总**：字段总数 = 26；CAPABILITY_NATIVE 字段 = 23（git×2 / browser×9 / grid×4 / terminal×1 / resource×2 / session×3 / credential×1 / script×1）；FRAMEWORK 字段 = 3（`m0_config` / `shutdown_requested` / `frontend_ready`）；**UNKNOWN_OWNER = 0**。
+**启示**：bridge.rs 逐 command 分解时，命令体按「其读取/写入的 AppState 字段归属」归位到对应 `capabilities/<cap>/commands.rs`（real-owner 判定，非机械函数块）；FRAMEWORK 字段（`m0_config` / `shutdown_requested` / `frontend_ready`）由组合根保留，不迁入产品能力。
+
 ## 3. 命令级矩阵（147 个 `bridge::` + 2 `fs_cmds::` + 2 `tools::`）
 
 > 注册位置：主进程 `main.rs:1402-1553`（`generate_handler!`）；grid 子进程 `main.rs:116-122`（5 命令）。
