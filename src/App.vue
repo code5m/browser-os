@@ -24,7 +24,7 @@ import StatusBar from "./components/layout/StatusBar.vue";
 import ConfirmModal from "./components/shared/ConfirmModal.vue";
 import { GitWriteConfirmDialog } from "./capabilities/git/public";
 import ImageLightbox from "./components/shared/ImageLightbox.vue";
-import AINavPanel from "./components/browser/AINavPanel.vue";
+import AINavPanel from "./capabilities/browser/ui/AINavPanel.vue";
 
 const browser = useBrowserStore();
 const resources = useResourceStore();

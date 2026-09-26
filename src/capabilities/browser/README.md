@@ -69,12 +69,12 @@
 - 被大量 Shell 组件经 public 消费（App.vue、layout 系列、composables）。
 
 ## 15. Dependents
-- 消费 `capabilities/browser/public` 的：`App.vue`、`components/browser/*`（直连 store）、`components/layout/*`、`composables/useBrowserHost.ts`/`browserNav.ts`、`src/capabilities/browser/state/useGridArchiveStore.ts`/`useSessionStore.ts`/`useWorkbenchStore.ts`/`useLayoutStore.ts`（动态 import；gridArchive/session 已内迁 browser/state，workbench/layout 仍在 `src/stores` 待裁决）。
+- 消费 `capabilities/browser/public` 的：`App.vue`、`capabilities/browser/ui/*`（直连 store）、`components/layout/*`、`composables/useBrowserHost.ts`/`browserNav.ts`、`src/capabilities/browser/state/useGridArchiveStore.ts`/`useSessionStore.ts`/`useWorkbenchStore.ts`/`useLayoutStore.ts`（动态 import；gridArchive/session 已内迁 browser/state，workbench/layout 仍在 `src/stores` 待裁决）。
 
 ## 16. Frontend Boundary
 - 贡献组件：`BrowserHost.vue`（BROWSER_HOST）、`ResourceWaterfall.vue`（BROWSER_DOCK view=net）、`SessionPanel.vue`（BROWSER_DOCK view=session）。
-- **CURRENT PHYSICAL LOCATION（已隔离）**：`src/capabilities/browser/ui/` 下 3 个组件。
-- **CURRENT PHYSICAL LOCATION（物理债务）**：以下 4 个 .vue 仍在 `src/components/browser/`，未迁入 `ui/`：`AINavPanel.vue`、`CredentialList.vue`、`GridArchiveBar.vue`、`ResourcePanel.vue`。其中 `GridArchiveBar.vue` 直连 `src/capabilities/browser/state/useGridArchiveStore`（该 store 已内迁 browser/state，债务链收窄为"state 在 capability 内、UI 仍在 components/browser"两处，非跨非 capability 目录）。
+- **CURRENT PHYSICAL LOCATION（已隔离）**：`src/capabilities/browser/ui/` 下 7 个组件（BrowserHost/ResourceWaterfall/SessionPanel + 迁入的 AINavPanel/CredentialList/GridArchiveBar/ResourcePanel）。
+- **CURRENT PHYSICAL LOCATION（已收口）**：Browser UI 已全部迁入 `src/capabilities/browser/ui/`（`AINavPanel`/`CredentialList`/`GridArchiveBar`/`ResourcePanel`）；`src/components/browser/` 目录已清除。跨 capability 引用（如 `BookmarkPanel` 引用 `CredentialList`）经 `../../browser/ui/` 收敛；`GridArchiveBar.vue` 直连 `src/capabilities/browser/state/useGridArchiveStore`，债务链收窄为单 capability 内。
 
 ## 17. Native Boundary
 - 原生命令真源：`src-tauri/src/bridge.rs`（grid/tab/resource/credential/AI 归档命令）+ `src-tauri/src/main.rs` `generate_handler!` 注册。
@@ -126,7 +126,7 @@
 - `scripts/check-canonical-module-location.mjs`（R10 单实现检查）**未登记** `useGridArchiveStore`/`useBrowserStore` → browser 物理债务无 checker 兜底。
 
 ## 28. Review Guide
-- 入口：`manifest.ts` → `public.ts` → `state/useBrowserStore.ts` → `ui/*` + （债务）`src/components/browser/*` + `src/capabilities/browser/state/useGridArchiveStore.ts`。
+- 入口：`manifest.ts` → `public.ts` → `state/useBrowserStore.ts` → `ui/*`（全部 Browser UI 已迁入 `src/capabilities/browser/ui/`，`src/components/browser/` 物理债务已收口）+ `src/capabilities/browser/state/useGridArchiveStore.ts`。
 - 关注点：MULTIPLE_WRITERS 风险、WebView 资源回收、grid 状态真源收敛。
 
 ## 29. AI Modification Guide
@@ -136,20 +136,20 @@
 
 ## 30. Known Debt
 - **物理债务①（位置已解除，writer 未收敛）**：`useGridArchiveStore` 已迁入 `src/capabilities/browser/state/`（物理债务解除），但仍列为 `gridOpen`/`gridSession` 的 writer（MULTIPLE_WRITERS / S2 风险），writer 收敛与 owner 待裁决。
-- **物理债务②**：4 个 .vue 在 `src/components/browser/`（非 `ui/`）：`AINavPanel`/`CredentialList`/`GridArchiveBar`/`ResourcePanel`。
-- **物理债务③**：`GridArchiveBar.vue` ↔ `useGridArchiveStore` 跨两处非 capability 目录。
+- **物理债务②（已收口）**：4 个 .vue 已迁入 `src/capabilities/browser/ui/`。
+- **物理债务③（已收口）**：`GridArchiveBar.vue`（现 `capabilities/browser/ui/`）与 `useGridArchiveStore`（现 `capabilities/browser/state/`）同处 browser 能力内，债务链收窄为单 capability 内。
 - **语义漂移**：`02-STATE-SOURCES.md` 仍引用旧路径 `src/stores/useBrowserStore.ts`（实已迁至 `capabilities/browser/state/`）。
 - HP0 限制理由：WebView 生命周期未验证真正 GRACEFUL 停用。
 
 ## 31. C / HP / M / RV / D
 - **C = C3**：目录隔离 + 贡献驱动 + 资源测量（`manifest.v1.maturity="C3"`）；但物理债务使 C3 的实现完整度打折（state 主体已内迁，grid 并行 store 未归一）。
 - **HP = HP0**：WebView 生命周期未验证 GRACEFUL（`manifest.v1.hotPlug.level="HP0"`，全 false）。
-- **M = M1（带物理债务）**：`src/capabilities/browser/` 目录隔离达成；`useGridArchiveStore` 与 4 个 .vue 在 capability 外（M1 不完整，待迁入）。无独立 npm 包（非 M2）。
+- **M = M1（带物理债务）**：`src/capabilities/browser/` 目录隔离达成；`useGridArchiveStore` 已内迁 browser/state，4 个 .vue 已迁入 `ui/`（UI 物理债务已收口）。无独立 npm 包（非 M2）。
 - **RV = RV1（路径漂移） + RV2（弱）**：`semanticOwner` 已登记但 `02-STATE-SOURCES.md` 路径旧；`check-browser-runtime.mjs` 为通用边界检查非定向（RV2 弱）；RV3=不成立（无 vitest）。
 - **D = D3**：本 README 满足 D3（含物理债务诚实记录）。文档化前为 D0。
 
 ## 32. Extraction Readiness
-- 阻塞项：grid 状态 MULTIPLE_WRITERS、UI 未迁入 `ui/`、语义 registry 路径漂移、无 vitest。
+- 阻塞项：grid 状态 MULTIPLE_WRITERS、语义 registry 路径漂移、无 vitest（UI 迁入 `ui/` 已完成）。
 - 完成物理债务收敛后可达 M2 候选。
 
 ## 33. Source of Truth
@@ -158,7 +158,7 @@
 - state（canonical）：`src/capabilities/browser/state/useBrowserStore.ts`
 - state（**并行真源·位置已内迁**）：`src/capabilities/browser/state/useGridArchiveStore.ts`
 - UI（已隔离）：`src/capabilities/browser/ui/`
-- UI（**物理债务**）：`src/components/browser/`（AINavPanel/CredentialList/GridArchiveBar/ResourcePanel）
+- UI（**已收口**）：`src/capabilities/browser/ui/` 下全部 Browser UI 组件（含 AINavPanel/CredentialList/GridArchiveBar/ResourcePanel）。
 - native：`src-tauri/src/bridge.rs`、`src-tauri/src/main.rs`、`src/bridge.ts`
 - semantic owner：manifest `semanticOwner: "useBrowserStore"`
 - gates：`scripts/check-browser-runtime.mjs`、`scripts/check-canonical-module-location.mjs`（见 §27）

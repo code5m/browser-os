@@ -26,7 +26,7 @@
   ],
   "business_component_dirs": [
     "src/components/workspace",
-    "src/components/browser"
+    "src/capabilities/browser/ui"
   ],
   "ui03_shell_renders_business_baseline": [
     {

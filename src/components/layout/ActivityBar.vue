@@ -16,7 +16,7 @@ import { useFileStore } from "../../capabilities/workspace/public";
 import { redactSecrets } from "../../utils/redact";
 import { Search, PanelLeftClose, PanelLeftOpen } from "@lucide/vue";
 import { useWorkbenchStore } from "../../stores/useWorkbenchStore";
-import GridArchiveBar from "../browser/GridArchiveBar.vue";
+import GridArchiveBar from "../../capabilities/browser/ui/GridArchiveBar.vue";
 import { contributionRegistry } from "../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
 const workbench = useWorkbenchStore();

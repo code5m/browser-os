@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { EmptyState } from "../../shared/ui";
+import { EmptyState } from "../../../shared/ui";
 import { computed, ref } from "vue";
-import { useBrowserStore } from "../../capabilities/browser/public";
-import { useLayoutStore } from "../../stores/useLayoutStore";
+import { useBrowserStore } from "../../../capabilities/browser/public";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
 
 const browser = useBrowserStore();
 const layout = useLayoutStore();
