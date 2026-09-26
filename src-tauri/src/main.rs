@@ -11,7 +11,6 @@ mod shared {
     pub mod images;
 }
 mod mcp;
-mod script_runner;
 mod security_policy;
 mod session;
 mod shutdown;
@@ -83,6 +82,12 @@ pub use crate::capabilities::database::database;
 // `crate::scheduler::` call sites (request_stop / cancel_in_flight / fire_now in
 // bridge.rs; start in main.rs) keep resolving without per-call-site edits.
 pub use crate::capabilities::task::scheduler;
+
+// Native Physical Boundary Pilot 10 (script_runner): re-export shim so existing
+// `crate::script_runner::` call sites (ScriptProcessTable / start_run /
+// start_command / kill_all_running / process_group_alive; bridge 6 / tasks 2 /
+// terminal 1 / scheduler 3) keep resolving without per-call-site edits.
+pub use crate::capabilities::script::script_runner;
 
 use bridge::AppState;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};

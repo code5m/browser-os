@@ -296,10 +296,19 @@ Pilot 执行清单（对齐用户 Pilot 规范）：
 - 未触碰：TS 侧 `src/capabilities/agent/` WIP（unstaged，隔离）；`phantom-yili` 仓库（DO_NOT_TOUCH）。
 
 ### 8.12 SHIM_AUDIT（after Pilot 9，协议新增要求 A）
-- **SHIM_TOTAL = 8**：`script`×2 / `shared::images` / `plugin` / `graph` / `workspace` / `database` / `task::scheduler`（main.rs line 55/56/60/64/69/75/80/新增）。
+- **SHIM_TOTAL = 9**：`script`×3（scripts/snippets/script_runner）/ `shared::images` / `plugin` / `graph` / `workspace` / `database` / `task::scheduler`（main.rs line 55/56/60/64/69/75/80/新增 script_runner）。
 - **STILL_REQUIRED = 8**（pending 专用移除 pass）。
 - **REMOVABLE_NOW = 0**（deferred，理由见下）。
 - **HIDES_OLD_ARCHITECTURE = 8**：每个 shim 保留一个 `crate::X` 顶层别名，掩盖旧顶层物理位置。
 - **SECOND_TRUTH_RISK = LOW**：每个 shim 都是对「唯一已移动实现」的 re-export，无第二实现、无重复逻辑（符合协议 §6 条件 1/2）。
 - **移除条件（逐条记录）**：所有 shim 的调用方高度集中在 `bridge.rs`（graph/workspace/database/plugin/script/images 的命令体 + scheduler 引擎调用均在 bridge.rs），而 `bridge.rs` 是下一阶段（§8 末段）的逐 command 分解目标——届时 bridge.rs 命令体将被重写为 `crate::capabilities::X::X::...` 全路径，恰可**同 commit 删除 shim**，避免对 bridge.rs 的双重改动。故规划：**在 bridge.rs 分解前插入一个专用 SHIM_REMOVAL Pilot**，一次重写全部 `crate::X::` 调用方到 `crate::capabilities::X::X::` 并删除 8 个 shim。先例：`skill`/`agent` 在 Pilot 1/2 即 shim-free 迁移（调用方直接改全路径），证明该路径可行。
-- 证据：`crate::scheduler::` 4 处、`crate::database::` 5 处、`crate::graph::` 13 处、`crate::workspace::` 32 处、`crate::plugin::` 见 `plugin.rs` 调用方、`crate::script::`/`crate::snippets::` 见 `script.rs`/`snippets.rs` 调用方、`crate::shared::images` 见 `images.rs` 调用方——全部可在 SHIM_REMOVAL 阶段机械化改写。
+- 证据：`crate::scheduler::` 4 处、`crate::database::` 5 处、`crate::graph::` 13 处、`crate::workspace::` 32 处、`crate::plugin::` 见 `plugin.rs` 调用方、`crate::script::`/`crate::snippets::`/`crate::script_runner::` 见 `script.rs`/`snippets.rs`/`script_runner.rs` 调用方、`crate::shared::images` 见 `images.rs` 调用方——全部可在 SHIM_REMOVAL 阶段机械化改写。
+
+### 8.13 Native Pilot 10 — `script_runner`（CAPABILITY_NATIVE，执行内核）
+- 迁移：`src-tauri/src/script_runner.rs` → `src-tauri/src/capabilities/script/script_runner.rs`（加 `pub mod script_runner;` 到 `capabilities/script/mod.rs`；同目录已有 `scripts.rs`/`snippets.rs`）。
+- **§7 解耦评估结论**：`script_runner.rs` 文件头注释（line 6）显式声明**只做进程/生命周期，不含 `#[tauri::command]`**（命令层归 M2-4.c，命令体 `run_script`/`run_command`/`kill_script`/... 注册在 `bridge.rs`）；grep 确认模块内**零 `#[tauri::command]`**。共 12 处 `crate::script_runner::` 调用点（bridge 6 / tasks 2 / terminal 1 / scheduler 3）。`ScriptProcessTable` 是 **AppState 字段类型**（`AppState.script_runs`，非独立 managed 类型）；本模块 owner 一致 = script 能力，沿用 pure-module Pilot 模式，无需逐 command 拆 owner；命令体 bridge 分解留待 §8 末段。
+- `main.rs`：删顶层 `mod script_runner;`（line 14）；顶部加 re-export shim `pub use crate::capabilities::script::script_runner;`（既有 12 处 `crate::script_runner::` 调用点无需逐处改写即解析）。
+- **关键修复（Pilot 1/7/9 同款沉默跳过回归）：** 两个门禁脚本钉死旧路径必须改——`check-script-exec-policy.py` 的 `RUNNER = .../"script_runner.rs"`（line 35，固定路径，`read()` 缺失返回 `""` → 静默跳过）改 `src-tauri/src/capabilities/script/script_runner.rs`；`check-command-domain-policy.py` 的 `src-tauri/src/script_runner.rs`（line 423 文件清单 + 443 dict，双处，`read_text() if exists() else ""`）改同路径。两脚本自测（23 坏 + 1 好 / 19 坏 + 2 良性）与默认扫描均 PASS，且真实文件被扫（无静默跳过）。
+- 门禁：`cargo check` 0 新增告警（仅 grid_process.rs 2 条既有 dead_code）；`cargo test capabilities::script` 58/58（含进程组取消/超时/子树击杀）；`cargo test` 全量 462/0（2 ignored 既有）；`check-script-exec-policy.py` 默认扫描 PASS + 自测（23 码位）；`check-command-domain-policy.py` 默认扫描 PASS + 自测；`npm run build` OK。
+- 既有 FAIL（非本批回归，矩阵 §2.4 LEGACY_MIXED_MODULE 残核）：`UI_CHECK` 前端 fixed 浮层、`NATIVE-02` bridge.rs 跨能力直调。
+- 未触碰：TS 侧 `src/cabilities/agent/` WIP（unstaged，隔离）；`phantom-yili` 仓库（DO_NOT_TOUCH）。

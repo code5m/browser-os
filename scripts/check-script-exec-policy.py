@@ -32,7 +32,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNNER = ROOT / "src-tauri" / "src" / "script_runner.rs"
+RUNNER = ROOT / "src-tauri" / "src" / "capabilities" / "script" / "script_runner.rs"
 DOMAIN_RS = ROOT / "src-tauri" / "src" / "domain.rs"
 MAIN_RS = ROOT / "src-tauri" / "src" / "main.rs"
 BRIDGE_RS = ROOT / "src-tauri" / "src" / "bridge.rs"

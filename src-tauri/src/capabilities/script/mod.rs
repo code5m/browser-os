@@ -18,5 +18,14 @@
 //! `docs/architecture/native-physical-boundary/NATIVE-PHYSICAL-BOUNDARY-MATRIX.md` §8.3）。
 //! 既有 `crate::scripts::` / `crate::snippets::` 调用点经 `main.rs` 顶部 re-export
 //! shim 解析，无需逐处改写。
+//!
+//! `script_runner.rs`（M2-4.c 脚本执行进程组 + 生命周期内核）在 Pilot 10 迁入同目录：
+//! 本模块**只做进程/生命周期**，不含 `#[tauri::command]`（命令层在 `bridge.rs`）；
+//! 定义 `ScriptProcessTable`（AppState 字段 `script_runs` 的类型）、`RunSnapshot` /
+//! `ScriptRunRecord` / `ScriptOutputEvent` / `ScriptFinishedEvent` / `start_run` /
+//! `start_command` / `kill_all_running` / `process_group_alive`。既有 `crate::script_runner::`
+//! 调用点（bridge 6 / tasks 2 / terminal 1 / scheduler 3）经 `main.rs` 顶部
+//! `pub use crate::capabilities::script::script_runner;` shim 解析。
 pub mod scripts;
 pub mod snippets;
+pub mod script_runner;
