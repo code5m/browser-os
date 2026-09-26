@@ -19,7 +19,9 @@ mod scripts;
 mod security_policy;
 mod session;
 mod shutdown;
-mod skills;
+mod capabilities {
+    pub mod skill;
+}
 mod snippets;
 mod sync;
 mod tasks;
