@@ -3,7 +3,6 @@
 // (capabilities/agent + capabilities/skill declared under `mod capabilities` below)
 mod bridge;
 mod crashlog;
-mod database;
 mod domain;
 mod fs_cmds;
 mod grid_ipc;
@@ -24,6 +23,7 @@ mod capabilities {
     pub mod plugin;
     pub mod graph;
     pub mod workspace;
+    pub mod database;
 }
 mod sync;
 mod tasks;
@@ -73,6 +73,11 @@ pub use crate::capabilities::graph::graph;
 // tools/bridge/workbench_smoke + `use crate::workspace;` in sync/bridge/tools)
 // keep resolving without per-call-site edits.
 pub use crate::capabilities::workspace::workspace;
+
+// Native Physical Boundary Pilot 8 (database): re-export shim so existing
+// `crate::database::` call sites (DbPool / QueryCancel / credential_key /
+// DbQueryResult, all in bridge.rs) keep resolving without per-call-site edits.
+pub use crate::capabilities::database::database;
 
 use bridge::AppState;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};

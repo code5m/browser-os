@@ -76,7 +76,7 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 
 | 模块 | 分类 | DDD 责任 | 非责任 | Semantic Owner | Capability Owner | 当前 | 目标 | 关键资源 | 跨模块依赖 | 风险 | 就绪 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `database.rs` | CAPABILITY_NATIVE | database 运行时基座（rusqlite + mysql/postgres stub） | mysql/postgres 显式 `DB_NOT_SUPPORTED` | `useDatabaseStore` | database | `src-tauri/src/` | `src-tauri/src/capabilities/database/` | sqlite（bundled rusqlite）；凭据经 keyring `db:<conn_id>` | `domain`/`security_policy` | 中（后续接 DB 持久化/历史） | 高 |
+| `database.rs` | CAPABILITY_NATIVE | database 运行时基座（rusqlite + mysql/postgres stub） | mysql/postgres 显式 `DB_NOT_SUPPORTED` | `useDatabaseStore` | database | `src-tauri/src/capabilities/database/` | `src-tauri/src/capabilities/database/` | sqlite（bundled rusqlite）；凭据经 keyring `db:<conn_id>` | `domain`/`security_policy` | 中（后续接 DB 持久化/历史） | 高 |
 | `graph.rs` | CAPABILITY_NATIVE | 知识图谱 core（校验/容量/脱敏/bounded store/query） | 无 worker/webview/写盘 | `useGraphStore` | graph | `src-tauri/src/capabilities/graph/` | `src-tauri/src/capabilities/graph/` | 文件系统（graph.json 只读快照）；bounded 内存 store（RwLock） | `domain` | 中（GraphState 被 main.rs manage + 3 命令引用） | 高 |
 | `scheduler.rs` | CAPABILITY_NATIVE | 调度循环/重试/关机收口（task 触发引擎，执行委托 script_runner） | 不执行脚本 | `useTaskStore` | task | `src-tauri/src/` | `src-tauri/src/capabilities/task/` | 后台线程（调度循环） | `bridge::AppState`（line 28、648 allowed_roots）；`domain`/`script_runner`/`tasks` | 中（依赖 AppState hub） | 高 |
 | `script_runner.rs` | CAPABILITY_NATIVE | 脚本执行进程组 + 生命周期内核 | 不含纯验证 | `useScriptStore` | script | `src-tauri/src/capabilities/script/` | `src-tauri/src/capabilities/script/` | 子进程（`setsid`/`killpg`）、后台线程 | `domain`/`scripts`/`security_policy` | 中 | 高 |
@@ -274,5 +274,14 @@ Pilot 执行清单（对齐用户 Pilot 规范）：
 - `main.rs`：删顶层 `mod workspace;`；`mod capabilities` 内新增 `pub mod workspace;`（新增 `capabilities/workspace/mod.rs` 暴露 `pub mod workspace;`）；顶部加 re-export shim `pub use crate::capabilities::workspace::workspace;`（既有 `crate::workspace::` 调用点 32 处 + `use crate::workspace;`（sync/bridge/tools）无需逐处改写即解析）。
 - **关键修复（Pilot 1 同款沉默跳过回归）：** 四个门禁脚本的路径常量全部改为 `src-tauri/src/capabilities/workspace/workspace.rs`——`check-command-domain-policy.py`（424/444）、`check-script-domain-policy.py`（372/389）、`check-image-policy.py`（255）、`check-scheduler-policy.py`（610）。其中 command/script 两脚本以 `read_text() if exists() else ""` 读文件、scheduler 以 `_read()` 缺失返回 `None`、image 以 `read()` 缺失返回 `""`——任一不改都会**静默跳过**扫描。改后默认扫描与自测均 PASS。
 - 门禁：`cargo check` 0 新增告警（仅 grid_process.rs 2 条既有 dead_code）；`cargo test capabilities::workspace` 8/8（B4 原子持久化 + 损坏备份）；`cargo test` 全量 462/0（2 ignored 既有）；`check-command-domain-policy.py` 默认扫描 PASS + 自测（好 + 19 坏 + 2 良性）；`check-script-domain-policy.py` 默认扫描 PASS + 自测（1 好 + 20 坏 + 2 良性）；`check-image-policy.py` 默认扫描 PASS + 自测（1 好 + 17 坏）；`check-scheduler-policy.py` 默认扫描 PASS + 自测（ACTIVE=23）；`npm run build` OK。
+- 既有 FAIL（非本批回归，矩阵 §2.4 LEGACY_MIXED_MODULE 残核）：`UI_CHECK` 前端 fixed 浮层、`NATIVE-02` bridge.rs 跨能力直调。
+- 未触碰：TS 侧 `src/capabilities/agent/` WIP（unstaged，隔离）；`phantom-yili` 仓库（DO_NOT_TOUCH）。
+
+### 8.10 Native Pilot 8 — `database`（CAPABILITY_NATIVE，运行时基座）
+- 迁移：`src-tauri/src/database.rs` → `src-tauri/src/capabilities/database/database.rs`（`mod.rs` + `README.md`）。
+- **§7 解耦评估结论**：`database.rs` 文件头注释（line 11）显式声明**只做运行时基础，不做命令层**（`#[tauri::command]` 归 A4/M4-3，命令体 `db_query`/`db_connect`/`db_disconnect` 注册在 `bridge.rs` 经 `generate_handler!`）；grep 确认模块内**零 `#[tauri::command]`**。仅有 5 处 `crate::database::` 调用点（全在 `bridge.rs`：`DbPool`/`QueryCancel`/`credential_key`/`DbQueryResult`）。本模块**无 AppState 字段**（连接池由 bridge 命令体按需创建，main.rs 未 `.manage`）。沿用前 7 个 pure-module Pilot 模式，无需逐 command 拆 owner；命令体本身的 bridge 分解留待矩阵 §8 末段 bridge.rs 阶段。
+- `main.rs`：删顶层 `mod database;`（line 6）；`mod capabilities` 内新增 `pub mod database;`（新增 `capabilities/database/mod.rs` 暴露 `pub mod database;`）；顶部加 re-export shim `pub use crate::capabilities::database::database;`（既有 5 处 `crate::database::` 调用点无需逐处改写即解析）。
+- **门禁脚本路径审计结论（§5）：** 经全仓精确路径 grep（`src-tauri/src/database.rs`），**0 处功能引用**——`check-database-policy.py` 扫的是 `bridge.rs` 命令层（line 181 注释明确「扫 database.rs 会恒真误报」），`check-core-boundary.py`(line 133)/`pre-merge.sh`(line 397) 仅为 docstring/注释。故本批**无需**改任何 checker 路径，亦**无静默跳过风险**；改后 `check-database-policy.py` 默认扫描 + 自测仍 PASS。
+- 门禁：`cargo check` 0 新增告警（仅 grid_process.rs 2 条既有 dead_code）；`cargo test capabilities::database` 25/25（建表 fixture / 多语句检出 / 凭据脱敏 / 超时分层 / 错误码闭合）；`cargo test` 全量 462/0（2 ignored 既有）；`check-database-policy.py` 默认扫描 PASS + 自测；`npm run build` OK。
 - 既有 FAIL（非本批回归，矩阵 §2.4 LEGACY_MIXED_MODULE 残核）：`UI_CHECK` 前端 fixed 浮层、`NATIVE-02` bridge.rs 跨能力直调。
 - 未触碰：TS 侧 `src/capabilities/agent/` WIP（unstaged，隔离）；`phantom-yili` 仓库（DO_NOT_TOUCH）。
