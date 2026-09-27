@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { bridge } from '../../../bridge';
-import { noteLinks, resolveNote, searchNotes } from '../../../utils/vault.mjs';
+import { noteLinks, resolveNote, searchNotes } from '../internal/vault.mjs';
 export const useVaultStore = defineStore('vault', () => {
   const path = ref('');
   const root = ref('');

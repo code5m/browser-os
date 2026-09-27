@@ -1,3 +1,17 @@
+// src/capabilities/vault/internal/vault.mjs
+// Vault 能力**内部**领域逻辑（Frontend M2 Package Pilot — 物理下沉至能力包）。
+//
+// 语义 owner = vault 能力：noteLinks / resolveNote / searchNotes 是笔记链接图、
+// 链接解析与全文搜索的**唯一实现**，不存在第二份。
+//
+// 变更前：本逻辑位于 src/utils/vault.mjs —— 能力域逻辑散落在能力包之外
+//   （能力外部无法从图书/权限角度识别它是 vault 私有实现）。
+// 变更后：下沉至 capabilities/vault/internal/，**逻辑逐字节不变**，仅归属与路径修正。
+//
+// PRIVATE INTERNAL（禁止外部直接 import）：
+//   仅本能力内的 state/useVaultStore.ts 可引用；
+//   能力外部（含 App.vue / shell / 其它 capability）必须经 public.ts 暴露的语义，
+//   不得越过 public.ts 直接引用本文件。
 import { marked } from 'marked';
 
 export function resolveNote(target, current, paths) {

@@ -1,7 +1,7 @@
 # vault 模块 README（Phase D3 · 高质量文档化）
 
 > 文档性质：machine truth 的引用者，非第二真源。评级真源：`src/capabilities/vault/manifest.ts`。
-> 诚实边界：仅 `vault.open` 有原生命令；`vault.search`/`vault.follow` 由前端 `utils/vault.mjs` 计算（无对应后端）；HP2 由 bookmark 试点背书，vault 自身无专属 checker。
+> 诚实边界：仅 `vault.open` 有原生命令；`vault.search`/`vault.follow` 由本能力包内的 `internal/vault.mjs` 计算（无对应后端）；HP2 由 bookmark 试点背书，vault 已有专属边界门禁 `scripts/check-vault-boundary.mjs`（VB-01..VB-10，含 10 条 self-test）。
 
 ---
 
@@ -35,12 +35,12 @@
 
 ## 7. Invariants
 - `open` 必须含 generation 竞态防护（避免陈旧结果覆盖新结果）。
-- search/follow 由前端 `utils/vault.mjs` 计算，无后端命令依赖。
+- search/follow 由本能力包内的 `internal/vault.mjs` 计算，无后端命令依赖。
 - 链接图边上限 5000（防爆炸）。
 
 ## 8. State Ownership
 - **CURRENT PHYSICAL LOCATION**：`src/capabilities/vault/state/useVaultStore.ts`（`defineStore("vault")`）。
-- **CURRENT PHYSICAL LOCATION（搜索逻辑）**：`src/utils/vault.mjs`（`noteLinks`/`resolveNote`/`searchNotes`，前端计算）。
+- **CURRENT PHYSICAL LOCATION（搜索逻辑）**：`src/capabilities/vault/internal/vault.mjs`（`noteLinks`/`resolveNote`/`searchNotes`，前端计算）。
 - **semanticOwner**：`useVaultStore`（manifest + public 登记）。
 - **TARGET / KNOWN DEBT**：无物理债务（state/ui 均在包内）；无 MULTIPLE_WRITERS。
 
@@ -116,25 +116,25 @@
 
 ## 27. Gates
 - `scripts/check-capability-platform.mjs`、`scripts/check-capability-composition.mjs`（**通用平台/组合门禁**，全文未出现 `vault`/`笔记库` 字符串）。
-- **HP2 能力由 bookmark 试点演示**（`check-capability-platform.mjs` PLT2-14 register/unregister bookmark），vault 自身无专属 checker（RV2 间接/弱）。
+- **HP2 能力由 bookmark 试点演示**（`check-capability-platform.mjs` PLT2-14 register/unregister bookmark），vault 已有专属边界门禁 `scripts/check-vault-boundary.mjs`（VB-01..VB-10，含 10 条 self-test）（RV2 间接/弱）。
 
 ## 28. Review Guide
-- 入口：`manifest.ts` → `public.ts` → `state/useVaultStore.ts` → `ui/VaultPanel.vue` → `src/utils/vault.mjs`。
+- 入口：`manifest.ts` → `public.ts` → `state/useVaultStore.ts` → `ui/VaultPanel.vue` → `src/capabilities/vault/internal/vault.mjs`。
 - 关注点：persistence 口径漂移、maturityEvidence 漂移、search/follow 前端计算无后端。
 
 ## 29. AI Modification Guide
-- 改搜索/链接逻辑：必须同步 `src/utils/vault.mjs` 与门禁（若有）。
+- 改搜索/链接逻辑：必须同步 `src/capabilities/vault/internal/vault.mjs` 与门禁（若有）。
 - 禁止：用裸 `invoke`、把 store 移出时不同步 manifest、新增 UI 不进 Contribution Registry。
 - 若需后端化 search/follow，须新增 `vault_search`/`vault_follow` 命令并注册 + ACL + 门禁。
 
 ## 30. Known Debt
 - **persistence 漂移**：顶层 `persistence.scope="none"` 与 v1 `persistenceScope="runtime_only"` 不一致 —— 无磁盘持久化但内存态属运行时态，两处口径需对齐。
-- **maturityEvidence 漂移**：两个证据脚本为通用平台/组合门禁，未特指 vault；HP2 由 bookmark 试点背书，vault 自身缺专属 checker（RV2 间接/弱）。
+- **maturityEvidence 漂移**：两个证据脚本为通用平台/组合门禁，未特指 vault；HP2 由 bookmark 试点背书，vault 已有专属边界门禁 `scripts/check-vault-boundary.mjs`（VB-01..VB-10，含 10 条 self-test）（RV2 间接/弱）。
 - `deactivationPolicy=manual`（与 task/terminal/tools 的 `graceful` 不同，设计如此）。
 
 ## 31. C / HP / M / RV / D
 - **C = C2**：`manifest.v1.maturity="C2"`；有通用平台/组合门禁；自身无 absence 门禁 + nav 硬编码（非 C3）。
-- **HP = HP2**：`manifest.v1.hotPlug.level="HP2"`（enable/disable/register/unregister=true；install/uninstall=false），由 `check-capability-platform.mjs` 验证；但 vault 自身无专属 checker（间接证据）。
+- **HP = HP2**：`manifest.v1.hotPlug.level="HP2"`（enable/disable/register/unregister=true；install/uninstall=false），由 `check-capability-platform.mjs` 验证；但 vault 已有专属边界门禁 `scripts/check-vault-boundary.mjs`（VB-01..VB-10，含 10 条 self-test）（间接证据）。
 - **M = M1（完全）**：`src/capabilities/vault/` 目录隔离（state/ui 均在包内）。无独立 npm 包（非 M2）。
 - **RV = RV1 + RV2（间接/弱） + RV3（否）**：owner 已登记（RV1）；maturityEvidence 为通用门禁、HP2 由 bookmark 试点背书（RV2 间接/弱）；无 vitest（RV3 否）。
 - **D = D3**：本 README 满足 D3。文档化前为 D0。
@@ -148,7 +148,7 @@
 - public：`src/capabilities/vault/public.ts`
 - state：`src/capabilities/vault/state/useVaultStore.ts`
 - UI：`src/capabilities/vault/ui/`
-- search logic：`src/utils/vault.mjs`
+- search logic：`src/capabilities/vault/internal/vault.mjs`
 - native：`src-tauri/src/bridge.rs`、`src-tauri/src/main.rs`、`src/bridge.ts`
 - semantic owner：manifest `semanticOwner: "useVaultStore"`
 - gates：`scripts/check-capability-platform.mjs`、`scripts/check-capability-composition.mjs`（见 §27）

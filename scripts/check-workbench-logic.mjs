@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
-import { resolveNote, noteLinks, searchNotes } from '../src/utils/vault.mjs';
+import { resolveNote, noteLinks, searchNotes } from '../src/capabilities/vault/internal/vault.mjs';
 registerHooks({ resolve(specifier, context, next) {
   try { return next(specifier,context); } catch(e) {
     for (const ext of ['.ts','.mjs','.js']) { try { return next(specifier+ext,context); } catch {} }
