@@ -351,7 +351,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   git_status:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/capabilities/git/commands.rs"
     owner: "git"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/git/**"
@@ -361,7 +361,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   git_diff:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/capabilities/git/commands.rs"
     owner: "git"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/git/**"
@@ -371,7 +371,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   git_branch_list:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/capabilities/git/commands.rs"
     owner: "git"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/git/**"
@@ -381,7 +381,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   request_git_write:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/capabilities/git/commands.rs"
     owner: "git"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/git/**"
@@ -391,7 +391,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   confirm_git_write:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/capabilities/git/commands.rs"
     owner: "git"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/git/**"
@@ -401,7 +401,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   request_sync:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/capabilities/git/commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useRepoStore.ts"
@@ -411,7 +411,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   confirm_sync:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/capabilities/git/commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useRepoStore.ts"
@@ -1195,7 +1195,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   git_log:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/capabilities/git/commands.rs"
     owner: "git"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/git/**"
@@ -1205,7 +1205,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   git_commit_diff:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/capabilities/git/commands.rs"
     owner: "git"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/git/**"
