@@ -65,7 +65,6 @@ edges:
   - { from: graph, to: bridge, kind: required }
   - { from: graph, to: agent,   kind: optional }
   - { from: vault,     to: bridge,   kind: required }
-  - { from: resource_collection, to: bridge, kind: required }
   - { from: task,      to: workspace, kind: required }
   - { from: task,      to: bridge,   kind: required }
   - { from: task,      to: script,   kind: optional }

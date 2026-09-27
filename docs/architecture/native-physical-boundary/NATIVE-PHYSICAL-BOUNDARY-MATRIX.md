@@ -129,15 +129,15 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 | `tab_recovery` | `Mutex<HashMap<String, TabRecoveryBudget>>` | 标签恢复预算 | browser | CAPABILITY_NATIVE(browser) | `capabilities/browser/` |
 | `pending_open_urls` | `Mutex<Vec<String>>` | 待打开 URL | browser | CAPABILITY_NATIVE(browser) | `capabilities/browser/` |
 | `frontend_ready` | `AtomicBool` | 前端就绪握手 | FRAMEWORK（启动） | FRAMEWORK_NATIVE_SERVICE | `main.rs` |
-| `resource_buffer` | `Mutex<ResourceBuffer>` | 资源缓冲 | resource_collection | CAPABILITY_NATIVE(resource) | `capabilities/resource/` |
-| `resource_capture` | `Mutex<ResourceCaptureSettings>` | 资源采集设置 | resource_collection | CAPABILITY_NATIVE(resource) | `capabilities/resource/` |
+| `resource_buffer` | `Mutex<ResourceBuffer>` | 资源缓冲 | browser（PHASE A 和解，原 resource_collection 已删） | CAPABILITY_NATIVE(browser) | `capabilities/browser/`（物理仍驻 bridge.rs AppState，标记 PHYSICAL_DEBT） |
+| `resource_capture` | `Mutex<ResourceCaptureSettings>` | 资源采集设置 | browser（PHASE A 和解，原 resource_collection 已删） | CAPABILITY_NATIVE(browser) | `capabilities/browser/`（物理仍驻 bridge.rs AppState，标记 PHYSICAL_DEBT） |
 | `session_drafts` | `Mutex<HashMap<String, SessionDraft>>` | 会话草稿 | session | CAPABILITY_NATIVE(session) | `capabilities/session/` |
 | `session_close_prompt` | `AtomicBool` | 关闭会话提示 | session | CAPABILITY_NATIVE(session) | `capabilities/session/` |
 | `session_auto_save_on_exit` | `AtomicBool` | 退出自动保存 | session | CAPABILITY_NATIVE(session) | `capabilities/session/` |
 | `credential_handles` | `Mutex<HashMap<String, BrowserCredentialMeta>>` | 凭据句柄 | credential | CAPABILITY_NATIVE(credential) | `capabilities/credential/` |
 | `script_runs` | `Arc<ScriptProcessTable>` | 脚本运行表 | script | CAPABILITY_NATIVE(script) | `capabilities/script/` |
 
-**汇总**：字段总数 = 26；CAPABILITY_NATIVE 字段 = 23（git×2 / browser×9 / grid×4 / terminal×1 / resource×2 / session×3 / credential×1 / script×1）；FRAMEWORK 字段 = 3（`m0_config` / `shutdown_requested` / `frontend_ready`）；**UNKNOWN_OWNER = 0**。
+**汇总**：字段总数 = 26；CAPABILITY_NATIVE 字段 = 23（git×2 / browser×11 / grid×4 / terminal×1 / session×3 / credential×1 / script×1；resource×2 已于 PHASE A 和解至 browser，resource_collection 能力条目已删除）；FRAMEWORK 字段 = 3（`m0_config` / `shutdown_requested` / `frontend_ready`）；**UNKNOWN_OWNER = 0**；**SECOND_OWNER = 0**（resource_buffer/resource_capture 仅 browser 语义 owner，bridge 仅做生命周期清理，非第二 owner）。
 **启示**：bridge.rs 逐 command 分解时，命令体按「其读取/写入的 AppState 字段归属」归位到对应 `capabilities/<cap>/commands.rs`（real-owner 判定，非机械函数块）；FRAMEWORK 字段（`m0_config` / `shutdown_requested` / `frontend_ready`）由组合根保留，不迁入产品能力。
 
 > **FREEZE STATUS: `FROZEN_FOR_BRIDGE_DECOMPOSITION`** — 冻结于 2026-09-26，经 `scripts/check-native-command-inventory.mjs` 机器三方对账：REGISTERED = DEFINED = REGISTRY = 148（零漂移，原矩阵误记 `147+2+2=151`，实测 `144 bridge + 2 fs_cmds + 2 tools = 148`），AppState STRUCT 26 / MATRIX 26（零漂移）。冻结四条件 `COMMAND_UNKNOWN=0`、`COMMAND_REGISTRY_DRIFT=0`、`APPSTATE_UNKNOWN=0`、`DUPLICATE_COMMAND=0` 全部满足。解冻必须重跑本审计且全绿。
@@ -152,6 +152,12 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 > - 残余：AppState 字段 `resource_buffer`/`resource_capture` 物理仍驻 `bridge.rs`，其命令消费者已迁 browser；字段所有权随 resource_collection 能力解散需后续下沉（不在 PHASE A 范围，诚实记录）。
 > - `resource_collection` 能力条目保留（被 `dependencies.yaml`/`profiles.yaml`/`resources.yaml` 引用），但命令承载角色实质解散，标记为孤儿。
 > **结果**：PHASE A 后 `NATIVE_CAPABILITY_BOUNDARY_RESULT=PASS`（fail=0，warn=0），`NATIVE_COMMAND_INVENTORY` GATE_PASS=YES（COMMAND_REGISTRY_DRIFT=0，148 命令），`cargo check` 仅 2 预存 `grid_process.rs` 警告。
+
+> **FINAL CLOSEOUT CURRENT STATE（2026-09-27，冻结前快照）**：
+> - `resource_collection` 能力条目已从 `capabilities.yaml`/`resources.yaml`/`dependencies.yaml`/`profiles.yaml` **删除**（历史 registry 债务 E：其命令在 Native Boundary SECOND_TRUTH 中 0 条 owner=resource_collection —— 7 条归 workspace、1 条归 vault、4 条资源命令归 browser）。删除前已确认 scripts/ 与 src/ 无任何代码/checker 引用，删除后 capability 全部 gate（registry/composition/resource-boundary/platform/contract-drift）仍 PASS（fail=0），无 dangling reference。
+> - `check-resource-capture-policy.py` 已修：原 hard-coded `bridge.rs` 扫描 4 个已迁命令 + `src/stores/useResourceStore.ts` / `src/components/browser/ResourceWaterfall.vue` / `MainArea.vue` 旧路径 → 改为扫描 `capabilities/browser/commands.rs` / `src/capabilities/browser/state/useResourceStore.ts` / `src/capabilities/browser/ui/ResourceWaterfall.vue` / `src/capabilities/browser/index.ts`；注册路径检查兼容 `crate::capabilities::browser::commands::{cmd}` 与 legacy `bridge::{cmd}`。self-test + real scan 均 PASS。
+> - AppState `resource_buffer`/`resource_capture`：semantic owner = browser（资源命令消费者），physical = bridge.rs AppState；bridge 仅做 close_tab/shutdown 生命周期清理，非第二 owner；字段下沉标记 PHYSICAL_DEBT（待后续能力化）。
+> - 全部 99 个残留 bridge.rs 命令均有 SECOND_TRUTH owner（UNKNOWN_OWNER=0）；re-export shim 均有真实调用点（UNJUSTIFIED_SHIM=0，SHIM_HIDES_LEGACY_ARCHITECTURE=0）。
 
 ## 3. 命令级矩阵（144 个 `bridge::` + 2 `fs_cmds::` + 2 `tools::` = 148）
 

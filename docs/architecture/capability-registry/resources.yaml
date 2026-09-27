@@ -122,13 +122,6 @@ policies:
     resident: false
     release_note: 仅释放轻量状态（笔记库为只读 Markdown 目录快照，无原生资源）
 
-  - id: resource_collection
-    class: [MEDIUM, BACKGROUND]
-    suspendable: true
-    destroyable: false
-    resident: false
-    release_note: 停止后台采集 —— TARGET
-
   - id: task
     class: [BACKGROUND]
     suspendable: true

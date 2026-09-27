@@ -438,35 +438,6 @@ capabilities:
       sensitive: false
     entrypoint: src/capabilities/vault/index.ts
 
-  - id: resource_collection
-    name: ResourceCollection
-    category: CAPABILITY
-    semanticOwner: useResourceStore
-    governanceStatus: GOVERNED
-    status: NOT_INTEGRATED
-    provides:
-      - resource.capture
-      - resource.settings
-    dependsOn:
-      - bridge
-    optionalDependencies: []
-    lifecycle:
-      supported: [ACTIVE, BACKGROUND]
-      default: ACTIVE
-      activatable: false
-      resident: false
-    resources:
-      class: [MEDIUM, BACKGROUND]
-      suspendable: true
-      destroyable: false
-    permissions:
-      - fs.write
-      - network.connect
-    persistence:
-      scope: disk
-      sensitive: false
-    entrypoint: src/stores/useResourceStore.ts
-
   # Capability Library Expansion v1（STAGE G）：Task 物理迁入 capabilities/task/（manifest/public/index/ui/state）。
   # 后端 task_list/add/update/remove/run_now 已实现；进程内唯一调度线程（scheduler.rs）驱动，执行复用 script_runner。
   - id: task

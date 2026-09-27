@@ -19,7 +19,7 @@ M1-8 资源瀑布把 WebKitGTK 原生资源信号接入前端瀑布视图。本�
   前端（TS / Vue）
   - 除 bridge.ts 外不得直接 invoke 4 个资源命令
   - store / 组件不得出现 token/cookie/authorization 标识符（展示层零凭据）
-  - MainArea 必须挂载 ResourceWaterfall；App.vue 必须订阅 resource-received
+  - browser 能力 index.ts 必须注册 ResourceWaterfall（BROWSER_DOCK view=net）；App.vue 必须订阅 resource-received
 
 默认模式：全部不变量成立 → EXIT 0；任一被破坏 → 打印违规码并 EXIT 1。
 """
@@ -105,6 +105,7 @@ def detect_violations(files: dict[str, str]) -> list[str]:
     domain = files.get("domain", "")
     security = files.get("security", "")
     bridge = files.get("bridge", "")
+    browser_commands = files.get("browser_commands", "")
     main_rs = files.get("main_rs", "")
     acl = files.get("acl", "")
     plugin_models = files.get("plugin_models", "")
@@ -170,8 +171,10 @@ def detect_violations(files: dict[str, str]) -> list[str]:
         v.append("RC_SHUTDOWN_CLEANUP_MISSING")
 
     # ---- 6) 命令来源校验 + 审计不含 URL ----
+    # 注：4 个资源命令已于 PHASE A 从 bridge.rs 迁移至 capabilities/browser/commands.rs，
+    # 此处扫描 browser_commands（真实物理位置），不再误扫 bridge.rs。
     for cmd in RESOURCE_COMMANDS:
-        body = rust_fn_body(bridge, cmd)
+        body = rust_fn_body(browser_commands, cmd)
         if not body:
             v.append(f"RC_COMMAND_MISSING: {cmd}")
             continue
@@ -191,7 +194,12 @@ def detect_violations(files: dict[str, str]) -> list[str]:
 
     # ---- 8) invoke_handler 注册 + main.rs 不直接转发原始 payload ----
     for cmd in RESOURCE_COMMANDS:
-        if f"bridge::{cmd}" not in main_rs:
+        # 注册路径可能为 legacy `bridge::{cmd}` 或 PHASE A 后
+        # `crate::capabilities::browser::commands::{cmd}`，二者任一即视为已注册。
+        if (
+            f"bridge::{cmd}" not in main_rs
+            and f"crate::capabilities::browser::commands::{cmd}" not in main_rs
+        ):
             v.append(f"RC_HANDLER_NOT_REGISTERED: {cmd}")
     if '"resourceReceived"' not in main_rs:
         v.append("RC_EVENT_ARM_MISSING")
@@ -253,6 +261,7 @@ def scan_repository(root: Path) -> list[str]:
         "domain": root / "src-tauri/src/domain.rs",
         "security": root / "src-tauri/src/security_policy.rs",
         "bridge": root / "src-tauri/src/bridge.rs",
+        "browser_commands": root / "src-tauri/src/capabilities/browser/commands.rs",
         "main_rs": root / "src-tauri/src/main.rs",
         "acl": root / "src-tauri/permissions/default-commands.toml",
         "plugin_models": root
@@ -261,9 +270,9 @@ def scan_repository(root: Path) -> list[str]:
         / "tauri-browser-tabs/crates/tauri-plugin-browser-tabs/src/commands.rs",
         "types_ts": root / "src/types.ts",
         "bridge_ts": root / "src/bridge.ts",
-        "store": root / "src/stores/useResourceStore.ts",
-        "waterfall": root / "src/components/browser/ResourceWaterfall.vue",
-        "mainarea": root / "src/components/layout/MainArea.vue",
+        "store": root / "src/capabilities/browser/state/useResourceStore.ts",
+        "waterfall": root / "src/capabilities/browser/ui/ResourceWaterfall.vue",
+        "mainarea": root / "src/capabilities/browser/index.ts",
         "app_vue": root / "src/App.vue",
     }
     files: dict[str, str] = {}
@@ -317,6 +326,10 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
     state.resource_buffer.lock().unwrap().clear_all();
     Ok(())
 }
+"""
+
+# 4 个资源命令已于 PHASE A 从 bridge.rs 迁移至 capabilities/browser/commands.rs
+GOOD_BROWSER_COMMANDS = """
 pub fn list_tab_resources(app: AppHandle, webview: tauri::Webview, tab_id: String) -> Result<TabResourceList, String> {
     check_invocation_source(&webview, "list_tab_resources", None, &app)?;
     Ok(x)
@@ -344,10 +357,10 @@ Some("resourceReceived") => {
         Err(_) => {}
     }
 }
-bridge::list_tab_resources,
-bridge::clear_tab_resources,
-bridge::get_resource_capture_settings,
-bridge::set_resource_capture_settings,
+crate::capabilities::browser::commands::list_tab_resources,
+crate::capabilities::browser::commands::clear_tab_resources,
+crate::capabilities::browser::commands::get_resource_capture_settings,
+crate::capabilities::browser::commands::set_resource_capture_settings,
 """
 
 GOOD_ACL = """
@@ -417,6 +430,7 @@ def run_self_test() -> int:
         "domain": GOOD_DOMAIN,
         "security": GOOD_SECURITY,
         "bridge": GOOD_BRIDGE,
+        "browser_commands": GOOD_BROWSER_COMMANDS,
         "main_rs": GOOD_MAIN_RS,
         "acl": GOOD_ACL,
         "plugin_models": GOOD_PLUGIN_MODELS,
@@ -459,16 +473,16 @@ def run_self_test() -> int:
          {"bridge": GOOD_BRIDGE.replace("state.resource_buffer.lock().unwrap().clear_all();", "")},
          "RC_SHUTDOWN_CLEANUP_MISSING"),
         ("命令缺来源校验",
-         {"bridge": GOOD_BRIDGE.replace('check_invocation_source(&webview, "list_tab_resources", None, &app)?;\n    ', "")},
+         {"browser_commands": GOOD_BROWSER_COMMANDS.replace('check_invocation_source(&webview, "list_tab_resources", None, &app)?;\n    ', "")},
          "RC_SOURCE_CHECK_MISSING"),
         ("审计含 URL",
-         {"bridge": GOOD_BRIDGE.replace('format!("tab_id={tab_id} removed={removed}")', 'format!("url={url}")')},
+         {"browser_commands": GOOD_BROWSER_COMMANDS.replace('format!("tab_id={tab_id} removed={removed}")', 'format!("url={url}")')},
          "RC_AUDIT_LEAKS_URL"),
         ("ACL 缺命令",
          {"acl": GOOD_ACL.replace('"list_tab_resources",\n    ', "")},
          "RC_ACL_MISSING"),
         ("handler 未注册",
-         {"main_rs": GOOD_MAIN_RS.replace("bridge::list_tab_resources,\n", "")},
+         {"main_rs": GOOD_MAIN_RS.replace("crate::capabilities::browser::commands::list_tab_resources,\n", "")},
          "RC_HANDLER_NOT_REGISTERED"),
         ("main 直接转发原始事件",
          {"main_rs": GOOD_MAIN_RS + 'let _ = forward.emit("resource-received", payload);'},
