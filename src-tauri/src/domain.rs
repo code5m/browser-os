@@ -473,10 +473,16 @@ pub struct SessionSummary {
     pub updated_at: DateTime<Utc>,
 }
 
-/// 内存草稿：打开 tab 即建立，**落盘前绝不写磁盘**。
-/// 只有两条路径会落盘：① 用户显式 `session_save`（关闭弹窗选「保存」或面板保存）；
-/// ② 退出路径且用户开启了 `auto_save_on_exit`。除此之外草稿随进程消失——
-/// 这是「不静默保存」红线的实现方式：未经用户同意的浏览痕迹一律不落盘。
+/// 会话草稿（Session-owned 持久化状态，见矩阵 §2.5，目标 `capabilities/session/`）。
+///
+/// 架构裁决（native-physical-batch 决策）：Browser 创建/导航 tab 时**不再**写入草稿，
+/// 以消除 Browser→Session 反向写造成的 capability 循环依赖。会话持久化改为在 Session 边界
+/// （`session_save` / `auto_save_on_exit`）直接从 Browser 权威的 `tabs` 表派生
+/// （`build_session_for_tab` 回退到 `tabs`，`build_session` 统一脱敏）。
+///
+/// 过渡期保留本类型与 `AppState::session_drafts` 字段以维持矩阵 `APPSTATE_n_FIELDS` 不漂移；
+/// 后续 Session 批次确认不再需要时应删除本结构体与字段并同步更新矩阵 §2.5。
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct SessionDraft {
     pub tab_id: String,

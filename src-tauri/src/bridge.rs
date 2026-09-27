@@ -777,8 +777,6 @@ fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
     });
     eprintln!("[create_tab] run_on_main_thread 已排队 label={}", id);
 
-    // M1-9：建立会话草稿（仅内存，落盘需用户显式选择）
-    upsert_session_draft(&app, &id, &target, &title0);
     start_resource_scanner(app.clone());
     eprintln!("[create_tab] 页签已创建 label={} url={}", id, target);
     Ok(info)
@@ -1374,27 +1372,6 @@ pub fn set_resource_capture_settings(
 // ---------------------------------------------------------------------------
 
 /// 建立/刷新某 tab 的会话草稿（打开 tab 与导航时调用；仅内存）。
-fn upsert_session_draft(app: &AppHandle, tab_id: &str, url: &str, title: &str) {
-    let state = app.state::<AppState>();
-    let mut drafts = state.session_drafts.lock().unwrap();
-    let safe_url = crate::security_policy::redact_sensitive_url(url);
-    if let Some(d) = drafts.get_mut(tab_id) {
-        d.url = safe_url;
-        if !title.is_empty() {
-            d.title = title.to_string();
-        }
-    } else {
-        drafts.insert(
-            tab_id.to_string(),
-            SessionDraft {
-                tab_id: tab_id.to_string(),
-                url: safe_url,
-                title: title.to_string(),
-            },
-        );
-    }
-}
-
 fn drop_session_draft(app: &AppHandle, tab_id: &str) {
     app.state::<AppState>()
         .session_drafts
@@ -1590,16 +1567,10 @@ pub fn flush_sessions_inner(app: &AppHandle) -> SessionFlushReport {
 
     let mut persisted = 0usize;
     if auto_save {
-        let drafts: Vec<SessionDraft> = state
-            .session_drafts
-            .lock()
-            .unwrap()
-            .values()
-            .cloned()
-            .collect();
-        for draft in drafts {
+        let tab_ids: Vec<String> = state.tabs.lock().unwrap().keys().cloned().collect();
+        for tab_id in tab_ids {
             if let Some(session) =
-                build_session_for_tab(app, &draft.tab_id, "", CLOSE_REASON_SHUTDOWN)
+                build_session_for_tab(app, &tab_id, "", CLOSE_REASON_SHUTDOWN)
             {
                 if persist_session(app, &session).is_ok() {
                     persisted += 1;
@@ -3384,8 +3355,6 @@ pub fn tab_open(app: AppHandle, id: String, url: String) -> Result<(), String> {
     if let Some(t) = app.state::<AppState>().tabs.lock().unwrap().get_mut(&id) {
         t.url = target.clone();
     }
-    // M1-9：草稿 URL 跟随导航（脱敏由 upsert 内部完成）
-    upsert_session_draft(&app, &id, &target, "");
     Ok(())
 }
 
