@@ -714,12 +714,6 @@ pub fn start_layout_enforcer(app: AppHandle) {
     });
 }
 
-/// 前端链路追踪：把前端关键步骤打到后端终端，定位"请求在哪一步丢失"。
-#[tauri::command]
-pub fn debug_log(msg: String) {
-    eprintln!("[FE] {msg}");
-}
-
 /// 创建一个浏览器页签（独立子窗口，方案 B），返回其信息并设为激活页签。
 fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
     let target = normalize_url(url);
@@ -2754,11 +2748,6 @@ pub fn confirm_sync(app: AppHandle, job_id: String) -> Result<SyncJob, String> {
     Ok(running)
 }
 
-#[tauri::command]
-pub fn audit_log(app: AppHandle) -> Vec<AuditEntry> {
-    workspace::load_audit(&app)
-}
-
 /// 读取单个成果完整内容（预览/编辑用）
 #[tauri::command]
 pub fn read_artifact(app: AppHandle, id: String) -> Result<Artifact, String> {
@@ -4207,31 +4196,6 @@ pub fn list_apps() -> Vec<AppEntry> {
     }
     apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     apps
-}
-
-#[tauri::command]
-pub fn launch_app(app: AppHandle, exec: String) -> Result<(), String> {
-    use crate::security_policy as sp;
-    let cmd = exec.trim();
-    if cmd.is_empty() {
-        return Err("没有可执行命令".into());
-    }
-    // M0-3.d：不再用 `sh -c` 执行任意字符串。改为解析成 (程序, 参数) 直接 spawn：
-    // 元字符一律拒绝、shell 解释器禁为启动目标、程序必须能解析到可执行文件。
-    let (program, args) = sp::check_launch_target(cmd).map_err(|e| e.to_string())?;
-    crate::workspace::log_audit(
-        &app,
-        "launch",
-        format!("{program} {}", args.join(" ")).trim().to_string(),
-    );
-    std::process::Command::new(&program)
-        .args(&args)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| format!("启动失败: {e}"))?;
-    Ok(())
 }
 
 // ====== 浏览器页签命令（供前端页签栏调用） ======

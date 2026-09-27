@@ -11,6 +11,10 @@ mod shared {
     pub mod clipboard;
     pub mod invocation;
 }
+
+mod framework {
+    pub mod commands;
+}
 mod mcp;
 mod security_policy;
 mod session;
@@ -191,7 +195,7 @@ fn run_grid_child(index: u32) {
             bridge::save_note,
             bridge::request_open_terminal,
             bridge::report_grid_load_failed,
-            bridge::debug_log,
+            crate::framework::commands::debug_log,
         ])
         .setup(move |app| {
             let window = WebviewWindowBuilder::new(
@@ -1487,7 +1491,7 @@ fn main() {
             bridge::list_repos,
             bridge::request_sync,
             bridge::confirm_sync,
-            bridge::audit_log,
+            crate::framework::commands::audit_log,
             bridge::read_artifact,
             bridge::update_artifact,
             bridge::delete_artifact,
@@ -1518,9 +1522,9 @@ fn main() {
             bridge::grid_close_one,
             bridge::hide_all_webviews,
             bridge::hide_webview,
-            bridge::debug_log,
+            crate::framework::commands::debug_log,
             bridge::list_apps,
-            bridge::launch_app,
+            crate::framework::commands::launch_app,
             bridge::tab_new,
             bridge::tab_close,
             bridge::tab_open,
