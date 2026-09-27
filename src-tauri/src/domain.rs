@@ -405,6 +405,15 @@ pub struct TabResourceList {
     pub enabled: bool,
 }
 
+/// 单条上报资源项（`report_resources` 入参；前端经 invoke 回传的页面子资源）。
+/// 原定义于 bridge.rs，随 resource_collection → browser 子域收口迁至 domain（DDD 类型归位，消除能力模块反向依赖 bridge）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceItem {
+    pub res_type: String, // script / stylesheet / image / svg / iframe / media / font / css-asset / other
+    pub url: String,
+    pub absolute: String,
+}
+
 // ---------------------------------------------------------------------------
 // M1-9 浏览器会话存档（#14：请求/资源可见 + 关闭保存删除）
 //

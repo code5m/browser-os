@@ -144,6 +144,15 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 
 > **PROCESS_FINDING（标签纪律）: `TAG_CREATED_BEFORE_COMMIT_COMPLETENESS_PROOF`** — Pilot 14 曾发生「commit 漏 `main.rs`、working tree 因含未提交修改而单测仍过」事故。后续任何 Pilot 必须遵守 `commit → clean-tree verify → tag`，禁止 `working tree 绿 → tag → 补 commit → 移动 tag`。本次审计已用 detached clean worktree 证明 `native-physical-pilot-tools-pass`（→ `c17a667`）自身 `cargo check` / `cargo test` / `npm run build` 全绿。
 
+> **PHASE A ADJUDICATION（2026-09-27，owner 和解，非物理重排）** — 真实扫描得到的 6 个 native-boundary 失败项经 `check-native-capability-boundaries.mjs` 复核，全部以「窄 cross-capability 契约 / owner 和解」收口，避免危险的 bridge.rs 物理搬移：
+> - **browser → resource_collection ×5**（NATIVE-02，`report_resources`/`list_tab_resources`/`clear_tab_resources`/`get_resource_capture_settings`/`set_resource_capture_settings`）：owner 和解为 `browser`；命令体迁 `capabilities/browser/commands.rs`；`ResourceItem` 类型下沉 `domain.rs`（消除 capability→bridge 反向依赖）；`main.rs` `generate_handler!` 重注册；`bridge.rs` 仅保留 `resource_stats` 内部调用点。
+> - **browser → workspace ×1**（NATIVE-02，`workspace_images_dir`）：owner 和解为 `workspace`，加窄契约 `allowed_callers: [browser]`（浏览器图片预览单向只读读 workspace 图片目录路径）。
+> - **NATIVE-04 ×1**（`launch_app`）：owner 和解为 `apps`（其已声明 `resources.class: [LIGHT, PROCESS]` 满足 CHILD_PROCESS），避免改 `capabilities.yaml` 触发 RPT-04/composability gate 失败。
+> - `resource_stats`：保留 `bridge.rs`（与 `create_grid` 共享 `mem_available_mb`），owner 分类 FRAMEWORK（NATIVE-02 豁免）。
+> - 残余：AppState 字段 `resource_buffer`/`resource_capture` 物理仍驻 `bridge.rs`，其命令消费者已迁 browser；字段所有权随 resource_collection 能力解散需后续下沉（不在 PHASE A 范围，诚实记录）。
+> - `resource_collection` 能力条目保留（被 `dependencies.yaml`/`profiles.yaml`/`resources.yaml` 引用），但命令承载角色实质解散，标记为孤儿。
+> **结果**：PHASE A 后 `NATIVE_CAPABILITY_BOUNDARY_RESULT=PASS`（fail=0，warn=0），`NATIVE_COMMAND_INVENTORY` GATE_PASS=YES（COMMAND_REGISTRY_DRIFT=0，148 命令），`cargo check` 仅 2 预存 `grid_process.rs` 警告。
+
 ## 3. 命令级矩阵（144 个 `bridge::` + 2 `fs_cmds::` + 2 `tools::` = 148）
 
 > 注册位置：主进程 `main.rs:1402-1553`（`generate_handler!`）；grid 子进程 `main.rs:116-122`（5 命令）。
@@ -160,7 +169,8 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 | `create_grid` `close_grid` `grid_open` `grid_position` `grid_set_zoom` `grid_close_one` `grid_read_replies` `archive_replies` `report_grid_load_failed` | grid（Capability 候选） | `capabilities/grid/` | 子进程、UDS、WebviewWindow | 随 grid 生命周期 | 无 | 中高（跨进程） |
 | `m0_ready` `m0_term_report` `m0_config` | FRAMEWORK（M0 测量） | 保留 shared/framework | 文件标记协议 | 临时 | 无 | 低 |
 | `issue_intent` `audit_log` | FRAMEWORK（安全/意图） | 保留 shared/framework（security_policy 衔接） | 无 | 瞬时 | 审计日志（session 原子写） | 低 |
-| `resource_stats` `report_resources` | FRAMEWORK（资源监控） | 保留 shared/framework | 进程树/PTY/webview 读 | 瞬时 | 无 | 低 |
+| `resource_stats` | FRAMEWORK（资源监控） | 保留 `bridge.rs`（与 `create_grid` 共享 `mem_available_mb`） | 进程树/PTY/webview 读 | 瞬时 | 无 | 低（NATIVE-02 豁免：bridge 内部调用方保留） |
+| `report_resources` `list_tab_resources` `clear_tab_resources` `get_resource_capture_settings` `set_resource_capture_settings` | browser（PHASE A 裁决） | `capabilities/browser/commands.rs` | webview 资源读 | 瞬时 | 无 | 低（原 `resource_collection`，PHASE A owner 和解至 browser） |
 | `take_pending_open_urls` `get_default_browser` `set_default_browser` | FRAMEWORK（URL/默认浏览器） | 保留 shared/framework | 无 | 瞬时 | 默认浏览器偏好 | 低 |
 | `debug_log` | FRAMEWORK（debug） | 保留 shared/framework | 无 | 瞬时 | 无 | 低 |
 
@@ -168,8 +178,8 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 
 | Capability | Commands | 目标 Module | Resource Owner | Lifecycle | Persistence | 风险 |
 |---|---|---|---|---|---|---|
-| workspace | `browse_workspace` `list_dir` `read_file` `read_image_data_url` `write_file` `get_start_dirs` `reveal_artifact` `open_source` `create_file` `create_dir` `delete_path` `rename_path` `configure_repo` `list_repos` `fs_cmds::reveal_path` `fs_cmds::move_path` | `capabilities/workspace/` | 文件系统；系统文件管理器 | 瞬时/文件 IO | 应用数据 JSON（workspace.rs 原语） | 中 |
-| resource_collection | `collect_selection` `list_artifacts` `read_artifact` `update_artifact` `delete_artifact` `save_note` `save_image` `list_artifact_images` `workspace_images_dir` `list_tab_resources` `clear_tab_resources` `get_resource_capture_settings` `set_resource_capture_settings` | `capabilities/resource/` | 文件系统（artifact/images） | 瞬时/采集 | 应用数据 JSON | 中 |
+| workspace | `browse_workspace` `list_dir` `read_file` `read_image_data_url` `write_file` `get_start_dirs` `reveal_artifact` `open_source` `create_file` `create_dir` `delete_path` `rename_path` `configure_repo` `list_repos` `fs_cmds::reveal_path` `fs_cmds::move_path` `workspace_images_dir`（PHASE A 裁决：owner 和解至 workspace，`allowed_callers=[browser]` 单向只读） | `capabilities/workspace/` | 文件系统；系统文件管理器 | 瞬时/文件 IO | 应用数据 JSON（workspace.rs 原语） | 中 |
+| resource_collection | `collect_selection` `list_artifacts` `read_artifact` `update_artifact` `delete_artifact` `save_note` `save_image` `list_artifact_images` | `capabilities/resource/`（仅残余采集命令；采集设置/标签页资源命令已于 PHASE A 迁移至 browser） | 文件系统（artifact/images） | 瞬时/采集 | 应用数据 JSON | 中（能力实质解散，孤儿保留：被 `dependencies.yaml`/`profiles.yaml`/`resources.yaml` 引用，不得删除） |
 | bookmark | `add_bookmark` `list_bookmarks` `remove_bookmark` | `capabilities/bookmark/` | 无 | 随 bookmark 生命周期 | 书签 JSON | 低 |
 | git | `git_status` `git_diff` `git_branch_list` `request_git_write` `confirm_git_write` `git_log` `git_commit_diff` `request_sync` `confirm_sync` | `capabilities/git/` | git2 子进程 / OS keyring（token） | 随 git 生命周期 | git repo dir、凭据 keyring | 中（spawn git） |
 | session | `session_save` `session_discard` `session_list` `session_get` `session_delete` `session_export` `session_restore` `flush_sessions` `get_session_policy` `set_session_policy` | `capabilities/session/` | 文件系统（会话 JSON 原子写） | 随 session 生命周期 | 会话 JSON | 中 |
@@ -188,7 +198,7 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 | tools | `tools::list_tools` `tools::open_tool` | `capabilities/tools/` | 隔离 WebviewWindow（`tool://`）；文件系统（用户 tools/*.html） | 瞬时/窗口 | 无 | 中 |
 | mcp | `mcp_capability_preview` `mcp_policy_get` `mcp_registry_list` | `capabilities/mcp/`（独立协议面，非产品能力） | 无（只读注册表/策略） | 瞬时 | 无 | 低（FRAMEWORK/协议面，登记为独立） |
 
-> UNKNOWN_OWNER = **0**：`mcp_*` 归为框架协议面（无产品 Capability 候选），`request_sync`/`confirm_sync` 归 git，`save_image`/`list_artifact_images`/`workspace_images_dir` 归 resource_collection。无无法判定项。
+> UNKNOWN_OWNER = **0**：`mcp_*` 归为框架协议面（无产品 Capability 候选），`request_sync`/`confirm_sync` 归 git，`save_image`/`list_artifact_images` 归 resource_collection（残余），`workspace_images_dir` 归 workspace（PHASE A 裁决，`allowed_callers=[browser]` 单向只读），`report_resources`/`list_tab_resources`/`clear_tab_resources`/`get_resource_capture_settings`/`set_resource_capture_settings` 归 browser（PHASE A 裁决），`launch_app` 归 apps（NATIVE-04 裁决）。无无法判定项。
 
 ---
 

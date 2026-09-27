@@ -13,7 +13,7 @@ use crate::mcp::{McpDecisionView, McpRegistryEntryView};
 use crate::script_runner::{RunError, RunSnapshot, ScriptProcessTable, ScriptRunRecord};
 use crate::seam::{PathResolver, Progress, ProgressSink, RootsProvider};
 use crate::terminal::{self, ChannelSink, EventSink};
-use crate::shared::invocation::{check_invocation_source, check_tab_id};
+use crate::shared::invocation::check_invocation_source;
 use crate::workspace;
 
 /// 宫格 label（grid-N）→ 子进程 index；页签 tab-N 返回 None（页签仍在主进程）。
@@ -763,13 +763,6 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
 //
 
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
-pub struct ResourceItem {
-    pub res_type: String, // script / stylesheet / image / svg / iframe / media / font / css-asset / other
-    pub url: String,
-    pub absolute: String,
-}
-
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(dead_code)]
 struct ResourceScanResult {
@@ -820,29 +813,9 @@ impl<'a> RootsProvider for TauriRootsProvider<'a> {
     }
 }
 
-/// M0-3.b：远程上报入口的统一来源校验。未登记/伪造 label（含残留的 `browser`）一律拒绝。
-#[tauri::command]
-pub fn report_resources(
-    app: AppHandle,
-    webview: tauri::Webview,
-    page_url: String,
-    items: Vec<ResourceItem>,
-) -> Result<(), String> {
-    use crate::security_policy as sp;
-    // 上报类命令无副作用，只做来源校验与载荷边界（防事件洪水与内存放大）。
-    check_invocation_source(&webview, "report_resources", None, &app)?;
-    sp::check_text_field("page_url", &page_url, sp::MAX_TEXT_FIELD_BYTES)
-        .map_err(|e| e.to_string())?;
-    sp::check_items_count(items.len(), sp::MAX_RESOURCE_ITEMS).map_err(|e| e.to_string())?;
-    let _ = app.emit(
-        "browser-resources",
-        serde_json::json!({ "page_url": page_url, "items": items }),
-    );
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// M1-8 资源瀑布（请求拦截与瀑布）
+// M1-8 资源瀑布（请求拦截与瀑布）——命令组收口说明：
+//   report_resources 已迁移至 capabilities/browser/commands.rs（resource_collection → browser 子域收口）。
+//   其余资源瀑布采集/脱敏/转发函数（on_resource_received 等）属 framework/infra，仍留本文件。
 //
 // 链路：插件 WebKitGTK 原生信号（resource-load-started/finished/failed）
 //   → browser-tabs://event(type=resourceReceived)（原始 URL，仅进程内）
@@ -1080,91 +1053,8 @@ pub fn on_resource_received(app: &AppHandle, tab_id: &str, raw: RawResourceEvent
 /// 背景（M1-ACCEPT 审计挂账项）：`session_get/delete/export/restore` 的 id 会被直接
 
 
-/// 查询某 tab 的资源瀑布记录（含容量驱逐计数）。
-#[tauri::command]
-pub fn list_tab_resources(
-    app: AppHandle,
-    webview: tauri::Webview,
-    tab_id: String,
-) -> Result<TabResourceList, String> {
-    check_invocation_source(&webview, "list_tab_resources", None, &app)?;
-    check_tab_id(&tab_id)?;
-    let state = app.state::<AppState>();
-    let enabled = state.resource_capture.lock().unwrap().enabled;
-    let buf = state.resource_buffer.lock().unwrap();
-    Ok(TabResourceList {
-        records: buf.records(&tab_id),
-        evicted: buf.evicted_of(&tab_id),
-        enabled,
-    })
-}
-
-/// 清空某 tab 的资源瀑布记录。审计只记 tab_id 与计数，不记任何 URL。
-#[tauri::command]
-pub fn clear_tab_resources(
-    app: AppHandle,
-    webview: tauri::Webview,
-    tab_id: String,
-) -> Result<(), String> {
-    check_invocation_source(&webview, "clear_tab_resources", None, &app)?;
-    check_tab_id(&tab_id)?;
-    let removed = app
-        .state::<AppState>()
-        .resource_buffer
-        .lock()
-        .unwrap()
-        .clear_tab(&tab_id);
-    workspace::log_audit(
-        &app,
-        "resource_clear",
-        format!("tab_id={tab_id} removed={removed}"),
-    );
-    Ok(())
-}
-
-/// 查询资源采集设置。
-#[tauri::command]
-pub fn get_resource_capture_settings(
-    app: AppHandle,
-    webview: tauri::Webview,
-) -> Result<ResourceCaptureSettings, String> {
-    check_invocation_source(&webview, "get_resource_capture_settings", None, &app)?;
-    Ok(app
-        .state::<AppState>()
-        .resource_capture
-        .lock()
-        .unwrap()
-        .clone())
-}
-
-/// 设置资源采集开关与每 tab 容量（会话内生效，不持久化；max_total/url 上限
-/// 不开放调整，防绕过容量红线）。开启/关闭/调整均写审计（不含 URL）。
-#[tauri::command]
-pub fn set_resource_capture_settings(
-    app: AppHandle,
-    webview: tauri::Webview,
-    enabled: bool,
-    max_per_tab: Option<usize>,
-) -> Result<ResourceCaptureSettings, String> {
-    check_invocation_source(&webview, "set_resource_capture_settings", None, &app)?;
-    // max_per_tab 合法区间 [10, 1000]：过小无意义，过大失去容量保护
-    let clamped = max_per_tab.map(|n| n.clamp(10, 1000));
-    let snapshot = {
-        let state = app.state::<AppState>();
-        let mut s = state.resource_capture.lock().unwrap();
-        s.enabled = enabled;
-        if let Some(n) = clamped {
-            s.max_per_tab = n.min(s.max_total);
-        }
-        s.clone()
-    };
-    workspace::log_audit(
-        &app,
-        "resource_capture",
-        format!("enabled={enabled} max_per_tab={:?}", snapshot.max_per_tab),
-    );
-    Ok(snapshot)
-}
+// M1-8 tab 资源命令组（list/clear_tab_resources、get/set_resource_capture_settings）
+// 已迁移至 capabilities/browser/commands.rs（owner 收口为 browser，resource_collection 子域归并）。
 
 /// 由子窗口内 JS 经 invoke 回传的真实页面标题，转成 tab-title 事件推给前端。
 #[tauri::command]
@@ -3689,6 +3579,7 @@ pub fn m0_config(app: AppHandle) -> Option<serde_json::Value> {
 #[cfg(test)]
 mod resource_capture_tests {
     use super::*;
+    use crate::shared::invocation::check_tab_id;
 
     fn raw(
         url: &str,

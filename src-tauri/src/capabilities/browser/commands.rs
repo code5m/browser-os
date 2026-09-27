@@ -3,7 +3,7 @@
 //! PHASE 2 从 bridge.rs 物理迁移（native-physical-batch-browser-create-tab）。
 //! 仅做模块归属，不改任何行为；WebView/Grid 生命周期、active tab 权威、
 //! session persistence 派生（从 Browser 权威 tabs 表）等冻结语义均不变。
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use url::Url;
 use crate::domain::*;
 
@@ -183,4 +183,120 @@ pub fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
 
     eprintln!("[create_tab] 页签已创建 label={} url={}", id, target);
     Ok(info)
+}
+
+// ---------------------------------------------------------------------------
+// Native Physical Boundary closeout: resource_collection commands migrated from bridge.rs.
+// These are browser tab/resource-waterfall inspection + capture settings + browser-resources
+// event reporting — i.e. Browser subdomain, not an independent capability (see closeout).
+// Owner reconciled to `browser`; no allowed_callers, no second truth.
+use crate::invocation::{check_invocation_source, check_tab_id};
+use crate::workspace;
+use crate::AppState;
+
+/// 查询某 tab 的资源瀑布记录（含容量驱逐计数）。
+#[tauri::command]
+pub fn list_tab_resources(
+    app: AppHandle,
+    webview: tauri::Webview,
+    tab_id: String,
+) -> Result<TabResourceList, String> {
+    check_invocation_source(&webview, "list_tab_resources", None, &app)?;
+    check_tab_id(&tab_id)?;
+    let state = app.state::<AppState>();
+    let enabled = state.resource_capture.lock().unwrap().enabled;
+    let buf = state.resource_buffer.lock().unwrap();
+    Ok(TabResourceList {
+        records: buf.records(&tab_id),
+        evicted: buf.evicted_of(&tab_id),
+        enabled,
+    })
+}
+
+/// 清空某 tab 的资源瀑布记录。审计只记 tab_id 与计数，不记任何 URL。
+#[tauri::command]
+pub fn clear_tab_resources(
+    app: AppHandle,
+    webview: tauri::Webview,
+    tab_id: String,
+) -> Result<(), String> {
+    check_invocation_source(&webview, "clear_tab_resources", None, &app)?;
+    check_tab_id(&tab_id)?;
+    let removed = app
+        .state::<AppState>()
+        .resource_buffer
+        .lock()
+        .unwrap()
+        .clear_tab(&tab_id);
+    workspace::log_audit(
+        &app,
+        "resource_clear",
+        format!("tab_id={tab_id} removed={removed}"),
+    );
+    Ok(())
+}
+
+/// 查询资源采集设置。
+#[tauri::command]
+pub fn get_resource_capture_settings(
+    app: AppHandle,
+    webview: tauri::Webview,
+) -> Result<ResourceCaptureSettings, String> {
+    check_invocation_source(&webview, "get_resource_capture_settings", None, &app)?;
+    Ok(app
+        .state::<AppState>()
+        .resource_capture
+        .lock()
+        .unwrap()
+        .clone())
+}
+
+/// 设置资源采集开关与每 tab 容量（会话内生效，不持久化；max_total/url 上限
+/// 不开放调整，防绕过容量红线）。开启/关闭/调整均写审计（不含 URL）。
+#[tauri::command]
+pub fn set_resource_capture_settings(
+    app: AppHandle,
+    webview: tauri::Webview,
+    enabled: bool,
+    max_per_tab: Option<usize>,
+) -> Result<ResourceCaptureSettings, String> {
+    check_invocation_source(&webview, "set_resource_capture_settings", None, &app)?;
+    // max_per_tab 合法区间 [10, 1000]：过小无意义，过大失去容量保护
+    let clamped = max_per_tab.map(|n| n.clamp(10, 1000));
+    let snapshot = {
+        let state = app.state::<AppState>();
+        let mut s = state.resource_capture.lock().unwrap();
+        s.enabled = enabled;
+        if let Some(n) = clamped {
+            s.max_per_tab = n.min(s.max_total);
+        }
+        s.clone()
+    };
+    workspace::log_audit(
+        &app,
+        "resource_capture",
+        format!("enabled={enabled} max_per_tab={:?}", snapshot.max_per_tab),
+    );
+    Ok(snapshot)
+}
+
+/// M0-3.b：远程上报入口的统一来源校验。未登记/伪造 label（含残留的 `browser`）一律拒绝。
+#[tauri::command]
+pub fn report_resources(
+    app: AppHandle,
+    webview: tauri::Webview,
+    page_url: String,
+    items: Vec<ResourceItem>,
+) -> Result<(), String> {
+    use crate::security_policy as sp;
+    // 上报类命令无副作用，只做来源校验与载荷边界（防事件洪水与内存放大）。
+    check_invocation_source(&webview, "report_resources", None, &app)?;
+    sp::check_text_field("page_url", &page_url, sp::MAX_TEXT_FIELD_BYTES)
+        .map_err(|e| e.to_string())?;
+    sp::check_items_count(items.len(), sp::MAX_RESOURCE_ITEMS).map_err(|e| e.to_string())?;
+    let _ = app.emit(
+        "browser-resources",
+        serde_json::json!({ "page_url": page_url, "items": items }),
+    );
+    Ok(())
 }
