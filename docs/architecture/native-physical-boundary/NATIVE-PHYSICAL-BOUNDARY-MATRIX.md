@@ -424,3 +424,14 @@ Pilot 执行清单（对齐用户 Pilot 规范）：
 - `crate::bridge::create_tab` 引用 = 0（无 compatibility wrapper）；`bridge.rs` 仅保留 `use crate::capabilities::browser::commands::*;` 与测试 mod `normalize_url_tests` 改引 `crate::capabilities::browser::commands::normalize_url`。
 - 未触碰：TS 侧 `src/capabilities/agent/` WIP（unstaged，隔离）;`phantom-yili` 仓库（DO_NOT_TOUCH）。
 - 迁移辅助脚本：`scripts/_phase2_browser_migrate.py`（文本手术提取，仅本批使用）。
+
+### 8.21 Native Batch — `session` 命令物理迁移（native-physical-batch-session）
+- 迁移：`src-tauri/src/bridge.rs` 的 14 个 session 命令/helper（`session_save`/`session_discard`/`session_list`/`session_get`/`session_delete`/`session_export`/`session_restore`/`flush_sessions`/`get_session_policy`/`set_session_policy` + `flush_sessions_inner`/`build_session_for_tab`/`drop_session_draft`/`persist_session`）→ `src-tauri/src/capabilities/session/commands.rs`（`mod.rs` + `commands.rs`）；`main.rs` `mod capabilities` 加 `pub mod session;`，`generate_handler!` 10 条注册由 `bridge::` 改 `capabilities::session::commands::`。
+- **消除 session→bridge 耦合**：`check_tab_id` 从 `bridge.rs` 本地定义迁至 `crate::shared::invocation`（与 `check_invocation_source` 同处），`bridge.rs` 改 `use crate::shared::invocation::{check_invocation_source, check_tab_id};`；session 命令体经共享窄契约引用，绝不反向依赖 `crate::bridge`。
+- **Session→Browser 窄契约**：`session_restore` 建 tab 改为直接 `use crate::capabilities::browser::commands::create_tab`（已脱敏 URL），单向、无环；彻底消除「session→bridge→browser」回路。
+- **共享 DTO / 字段**：`TabInfo`（domain.rs）、`SessionDraft`/`AppState.session_drafts` 字段保留（矩阵 §2.5 真源），无 SECOND_TRUTH；AppState STRUCT/MATRIX = 26/26 零漂移。
+- **ShutdownCoordinator**：`bridge.rs` 内 flush 任务改调 `crate::capabilities::session::commands::flush_sessions_inner(&app)`，与命令共用同一 inner，两路径行为一致。
+- 门禁：`cargo check` 0 新增告警（仅 grid_process.rs 2 条既有 dead_code）；`cargo test` 全量 462/0（2 ignored 既有，无回归）；命令清单 `check-native-command-inventory.mjs` GATE_PASS=YES（REGISTERED=DEFINED=REGISTRY=148，DRIFT=0）。
+- **NATIVE-02 = 6 FAIL（NATIVE_02_AFTER_SESSION）**：原 13 NATIVE-02 中 `browser`→`session`×8 已通过 `native-commands.yaml` 的 `allowed_callers: "browser"` + `allowed_rationale` 清零；残留 4 `browser`→`resource_collection` + 1 `browser`→`workspace`（属各自批次）+ 1 NATIVE-04（`launch_app` owner framework 缺 resources.class，既有）。
+- `crate::bridge::session_*` 引用 = 0（无 compatibility wrapper）；`_phase3_*` 文本手术脚本 2 个（提取 + yaml 更新，仅本批使用）。
+- 未触碰：TS 侧 `src/capabilities/agent/` WIP（unstaged，隔离）;`phantom-yili` 仓库（DO_NOT_TOUCH）。

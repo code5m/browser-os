@@ -33,6 +33,7 @@ mod capabilities {
     pub mod git;
     pub mod tools;
     pub mod browser;
+    pub mod session;
 }
 mod tasks;
 mod workbench;
@@ -1568,16 +1569,16 @@ fn main() {
             bridge::clear_tab_resources,
             bridge::get_resource_capture_settings,
             bridge::set_resource_capture_settings,
-            bridge::session_save,
-            bridge::session_discard,
-            bridge::session_list,
-            bridge::session_get,
-            bridge::session_delete,
-            bridge::session_export,
-            bridge::session_restore,
-            bridge::flush_sessions,
-            bridge::get_session_policy,
-            bridge::set_session_policy,
+            capabilities::session::commands::session_save,
+            capabilities::session::commands::session_discard,
+            capabilities::session::commands::session_list,
+            capabilities::session::commands::session_get,
+            capabilities::session::commands::session_delete,
+            capabilities::session::commands::session_export,
+            capabilities::session::commands::session_restore,
+            capabilities::session::commands::flush_sessions,
+            capabilities::session::commands::get_session_policy,
+            capabilities::session::commands::set_session_policy,
             bridge::save_image,
             bridge::list_artifact_images,
             bridge::workspace_images_dir,
