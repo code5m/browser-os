@@ -1611,9 +1611,9 @@ fn main() {
             bridge::mcp_policy_get,
             bridge::mcp_registry_list,
             // M5-W12（Lane A7）：图谱只读 live-query 命令（见 bridge.rs）。
-            bridge::graph_query,
-            bridge::graph_node_get,
-            bridge::graph_stats,
+            crate::capabilities::graph::commands::graph_query,
+            crate::capabilities::graph::commands::graph_node_get,
+            crate::capabilities::graph::commands::graph_stats,
             // M5-W13（Lane A9）：插件 manifest 生命周期 Stage-I（仅本地状态，无执行）。
             bridge::plugin_install,
             bridge::plugin_enable,

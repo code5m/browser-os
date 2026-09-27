@@ -19,3 +19,4 @@
 //! 既有 `crate::graph::` 调用点（bridge.rs 图谱命令体 ×10 + main.rs 启动加载 ×3）
 //! 经 `main.rs` 顶部 re-export shim 解析，无需逐处改写。
 pub mod graph;
+pub mod commands;
