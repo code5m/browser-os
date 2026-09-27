@@ -6146,61 +6146,29 @@ pub fn git_commit_diff(
     Ok(out)
 }
 
-// ===== M5-W7（Lane A5）：Agent/Skill 只读命令桥 =====
+// ===== M5-W7（Lane A5）：Agent 只读命令桥 =====
 // 仅 parse / validate / permission_preview，绝不执行/安装/联网/持久化写。
 // 每个命令首行做 source check（防前端裸 invoke）；返回类型可序列化供前端消费。
-// 命名与 A6 M5-6 UI 冻结的 agent_*/skill_* 前缀一致，但本波仅「只读」子集，不含 M5-5 运行时命令。
+// 命名与 A6 M5-6 UI 冻结的 agent_* 前缀一致，但本波仅「只读」子集，不含 M5-5 运行时命令。
+// Skill 只读命令已迁 `capabilities/skill/commands.rs`（native-physical-batch-skill）。
+// 通用体积守卫 `reject_oversized_def` 与校验报告 `ValidationReport` 已迁
+// `shared/validation.rs`（agent/skill 共用，属 SHARED_NATIVE_INFRASTRUCTURE）。
 
-/// 校验报告（agent_validate / skill_validate 返回）。
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ValidationReport {
-    pub valid: bool,
-    pub errors: Vec<String>,
-}
-
-impl ValidationReport {
-    fn ok() -> Self {
-        ValidationReport {
-            valid: true,
-            errors: Vec::new(),
-        }
-    }
-    fn with_errors(errors: Vec<String>) -> Self {
-        ValidationReport {
-            valid: errors.is_empty(),
-            errors,
-        }
-    }
-}
-
-// M5-W8（A5）硬化：解析/校验/预览输入上限，防超大 payload DoS（A4 W7 评审 R5-2 / F2）。
-// Agent/Skill 定义为小结构，256 KiB 已留足余量；超出在来源校验之后直接拒绝。
-const AGENT_DEF_MAX_BYTES: usize = 256 * 1024;
-const SKILL_DEF_MAX_BYTES: usize = 256 * 1024;
-
-fn reject_oversized_def(text: &str, max: usize, kind: &str) -> Result<(), String> {
-    if text.len() > max {
-        return Err(format!(
-            "{kind} 定义超出大小上限（{} 字节），已拒绝解析",
-            max
-        ));
-    }
-    Ok(())
-}
-
-fn agent_validate_inner(text: &str) -> ValidationReport {
-    if text.len() > AGENT_DEF_MAX_BYTES {
-        return ValidationReport::with_errors(vec![format!(
+fn agent_validate_inner(text: &str) -> crate::shared::validation::ValidationReport {
+    if text.len() > crate::shared::validation::AGENT_DEF_MAX_BYTES {
+        return crate::shared::validation::ValidationReport::with_errors(vec![format!(
             "Agent 定义超出大小上限（{} 字节），已拒绝解析",
-            AGENT_DEF_MAX_BYTES
+            crate::shared::validation::AGENT_DEF_MAX_BYTES
         )]);
     }
     match crate::domain::AgentDef::parse(text) {
         Ok(def) => match def.validate() {
-            Ok(()) => ValidationReport::ok(),
-            Err(e) => ValidationReport::with_errors(vec![format!("{e}")]),
+            Ok(()) => crate::shared::validation::ValidationReport::ok(),
+            Err(e) => {
+                crate::shared::validation::ValidationReport::with_errors(vec![format!("{e}")])
+            }
         },
-        Err(e) => ValidationReport::with_errors(vec![e]),
+        Err(e) => crate::shared::validation::ValidationReport::with_errors(vec![e]),
     }
 }
 
@@ -6219,7 +6187,7 @@ pub fn agent_validate(
     app: AppHandle,
     webview: tauri::Webview,
     text: String,
-) -> Result<ValidationReport, String> {
+) -> Result<crate::shared::validation::ValidationReport, String> {
     check_invocation_source(&webview, "agent_validate", None, &app)?;
     Ok(agent_validate_inner(&text))
 }
@@ -6234,72 +6202,23 @@ pub fn agent_permission_preview(
     agent_permission_preview_inner(&text)
 }
 
-fn skill_validate_inner(text: &str) -> ValidationReport {
-    if text.len() > SKILL_DEF_MAX_BYTES {
-        return ValidationReport::with_errors(vec![format!(
-            "Skill 定义超出大小上限（{} 字节），已拒绝解析",
-            SKILL_DEF_MAX_BYTES
-        )]);
-    }
-    match crate::domain::SkillDef::parse(text) {
-        Ok(def) => match def.validate() {
-            Ok(()) => ValidationReport::ok(),
-            Err(e) => ValidationReport::with_errors(vec![format!("{e}")]),
-        },
-        Err(e) => ValidationReport::with_errors(vec![e]),
-    }
-}
-
 fn agent_parse_inner(text: &str) -> Result<crate::domain::AgentDef, String> {
-    reject_oversized_def(text, AGENT_DEF_MAX_BYTES, "Agent")?;
+    crate::shared::validation::reject_oversized_def(
+        text,
+        crate::shared::validation::AGENT_DEF_MAX_BYTES,
+        "Agent",
+    )?;
     crate::domain::AgentDef::parse(text)
 }
 
-fn skill_parse_inner(text: &str) -> Result<crate::domain::SkillDef, String> {
-    reject_oversized_def(text, SKILL_DEF_MAX_BYTES, "Skill")?;
-    crate::domain::SkillDef::parse(text)
-}
-
 fn agent_permission_preview_inner(text: &str) -> Result<crate::domain::PermissionPreview, String> {
-    reject_oversized_def(text, AGENT_DEF_MAX_BYTES, "Agent")?;
+    crate::shared::validation::reject_oversized_def(
+        text,
+        crate::shared::validation::AGENT_DEF_MAX_BYTES,
+        "Agent",
+    )?;
     let def = crate::domain::AgentDef::parse(text)?;
     Ok(def.permission_preview())
-}
-
-fn skill_permission_preview_inner(text: &str) -> Result<crate::domain::PermissionPreview, String> {
-    reject_oversized_def(text, SKILL_DEF_MAX_BYTES, "Skill")?;
-    let def = crate::domain::SkillDef::parse(text)?;
-    Ok(def.permission_preview())
-}
-
-#[tauri::command]
-pub fn skill_parse(
-    app: AppHandle,
-    webview: tauri::Webview,
-    text: String,
-) -> Result<crate::domain::SkillDef, String> {
-    check_invocation_source(&webview, "skill_parse", None, &app)?;
-    skill_parse_inner(&text)
-}
-
-#[tauri::command]
-pub fn skill_validate(
-    app: AppHandle,
-    webview: tauri::Webview,
-    text: String,
-) -> Result<ValidationReport, String> {
-    check_invocation_source(&webview, "skill_validate", None, &app)?;
-    Ok(skill_validate_inner(&text))
-}
-
-#[tauri::command]
-pub fn skill_permission_preview(
-    app: AppHandle,
-    webview: tauri::Webview,
-    text: String,
-) -> Result<crate::domain::PermissionPreview, String> {
-    check_invocation_source(&webview, "skill_permission_preview", None, &app)?;
-    skill_permission_preview_inner(&text)
 }
 
 // ====== 浏览器凭据导入（CSV → 内存 → 系统密钥库）======
@@ -7057,7 +6976,7 @@ mod browser_credential_tests {
 #[cfg(test)]
 mod agent_skill_bridge_tests {
     use super::*;
-    use crate::domain::{AclLevel, AgentDialect, SkillExec};
+    use crate::domain::{AclLevel, AgentDialect};
     use serde_json;
 
     fn good_agent_json() -> String {
@@ -7076,25 +6995,6 @@ mod agent_skill_bridge_tests {
             metadata: serde_json::json!({}),
         };
         serde_json::to_string(&a).unwrap()
-    }
-
-    fn good_skill_json() -> String {
-        let s = crate::domain::SkillDef {
-            id: "demo".into(),
-            version: "1.0.0".into(),
-            display_name: "Demo".into(),
-            description: "a safe demo".into(),
-            acl: AclLevel::Safe,
-            exec: SkillExec::ScriptRef {
-                script_id: "s1".into(),
-                params: serde_json::json!({}),
-            },
-            inputs: vec![],
-            capabilities: vec![],
-            tests: vec![],
-            metadata: serde_json::json!({}),
-        };
-        serde_json::to_string(&s).unwrap()
     }
 
     #[test]
@@ -7125,81 +7025,22 @@ mod agent_skill_bridge_tests {
     }
 
     #[test]
-    fn validate_inner_accepts_good_skill() {
-        assert!(skill_validate_inner(&good_skill_json()).valid);
-    }
-
-    #[test]
-    fn validate_inner_rejects_skill_credential() {
-        let mut s: crate::domain::SkillDef = serde_json::from_str(&good_skill_json()).unwrap();
-        s.description = "token sk-abc123".into();
-        let r = skill_validate_inner(&serde_json::to_string(&s).unwrap());
-        assert!(!r.valid);
-    }
-
-    #[test]
-    fn report_ok_and_err() {
-        assert!(ValidationReport::ok().valid);
-        assert!(!ValidationReport::with_errors(vec!["x".into()]).valid);
-    }
-
-    // ---- M5-W8 硬化：校验错误形状 + 边界用例 ----
-
-    #[test]
-    fn report_ok_has_empty_errors() {
-        let r = ValidationReport::ok();
-        assert!(r.valid);
-        assert!(r.errors.is_empty());
-    }
-
-    #[test]
-    fn report_with_errors_shape() {
-        let r = ValidationReport::with_errors(vec!["e1".into(), "e2".into()]);
-        assert!(!r.valid);
-        assert_eq!(r.errors.len(), 2);
-    }
-
-    #[test]
-    fn reject_oversized_def_guard() {
-        assert!(reject_oversized_def("small", AGENT_DEF_MAX_BYTES, "Agent").is_ok());
-        let huge = "x".repeat(AGENT_DEF_MAX_BYTES + 1);
-        let e = reject_oversized_def(&huge, AGENT_DEF_MAX_BYTES, "Agent").unwrap_err();
-        assert!(
-            e.contains("大小上限") || e.to_lowercase().contains("limit"),
-            "got {e}"
-        );
-    }
-
-    #[test]
     fn agent_validate_inner_rejects_oversized() {
-        let huge = "x".repeat(AGENT_DEF_MAX_BYTES + 1);
+        let huge = "x".repeat(crate::shared::validation::AGENT_DEF_MAX_BYTES + 1);
         let r = agent_validate_inner(&huge);
         assert!(!r.valid);
         assert!(!r.errors.is_empty());
     }
 
     #[test]
-    fn skill_validate_inner_rejects_oversized() {
-        let huge = "x".repeat(SKILL_DEF_MAX_BYTES + 1);
-        let r = skill_validate_inner(&huge);
-        assert!(!r.valid);
-    }
-
-    #[test]
     fn agent_parse_inner_rejects_oversized() {
-        let huge = "x".repeat(AGENT_DEF_MAX_BYTES + 1);
+        let huge = "x".repeat(crate::shared::validation::AGENT_DEF_MAX_BYTES + 1);
         assert!(agent_parse_inner(&huge).is_err());
     }
 
     #[test]
     fn agent_parse_inner_rejects_malformed() {
         assert!(agent_parse_inner("not json {{{").is_err());
-    }
-
-    #[test]
-    fn skill_parse_inner_rejects_oversized() {
-        let huge = "x".repeat(SKILL_DEF_MAX_BYTES + 1);
-        assert!(skill_parse_inner(&huge).is_err());
     }
 
     #[test]
@@ -7210,18 +7051,6 @@ mod agent_skill_bridge_tests {
         assert!(
             !r.valid,
             "invalid dialect type must invalidate, got {:?}",
-            r.errors
-        );
-    }
-
-    #[test]
-    fn skill_validate_rejects_invalid_acl() {
-        let mut v: serde_json::Value = serde_json::from_str(&good_skill_json()).unwrap();
-        v["acl"] = serde_json::json!(123); // 非枚举字符串 → 解析失败
-        let r = skill_validate_inner(&v.to_string());
-        assert!(
-            !r.valid,
-            "invalid acl type must invalidate, got {:?}",
             r.errors
         );
     }
@@ -7239,16 +7068,6 @@ mod agent_skill_bridge_tests {
     #[test]
     fn agent_permission_preview_inner_rejects_malformed() {
         assert!(agent_permission_preview_inner("bad").is_err());
-    }
-
-    #[test]
-    fn skill_permission_preview_inner_shape() {
-        let p = skill_permission_preview_inner(&good_skill_json()).unwrap();
-        assert!(matches!(
-            p.gate,
-            AclLevel::Safe | AclLevel::Confirm | AclLevel::Dangerous
-        ));
-        assert!(p.capabilities.is_empty());
     }
 
     // ---- M5-W9 聚焦测试：脱敏校验错误 + 解析/权限预览边界（A4 W8 F-W8-1 闭环） ----
@@ -7278,51 +7097,10 @@ mod agent_skill_bridge_tests {
     }
 
     #[test]
-    fn skill_validate_redacts_credential_leak() {
-        let mut v: serde_json::Value = serde_json::from_str(&good_skill_json()).unwrap();
-        v["description"] = serde_json::json!("desc with sk-abc123XYZsecret in it");
-        let r = skill_validate_inner(&v.to_string());
-        assert!(!r.valid, "credential leak 必须使校验失败");
-        let msg = r.errors.concat();
-        assert!(!msg.contains("sk-abc123XYZ"), "校验错误不得回显密文: {msg}");
-        assert!(
-            msg.contains("<redacted>") || msg.contains("凭据") || msg.contains("密钥"),
-            "必须指示泄露但不含密文: {msg}"
-        );
-    }
-
-    #[test]
     fn agent_permission_preview_gate_is_confirm() {
         // Agent 默认需确认（A2A 委派场景），权限预览闸门恒为 Confirm
         let p = agent_permission_preview_inner(&good_agent_json()).unwrap();
         assert_eq!(p.gate, AclLevel::Confirm);
-    }
-
-    #[test]
-    fn skill_permission_preview_gate_maps_acl() {
-        for (acl, expected) in [
-            ("safe", AclLevel::Safe),
-            ("confirm", AclLevel::Confirm),
-            ("dangerous", AclLevel::Dangerous),
-        ] {
-            let mut v: serde_json::Value = serde_json::from_str(&good_skill_json()).unwrap();
-            v["acl"] = serde_json::json!(acl);
-            let p = skill_permission_preview_inner(&v.to_string()).unwrap();
-            assert_eq!(p.gate, expected, "acl={acl} 映射错误");
-        }
-    }
-
-    #[test]
-    fn skill_permission_preview_reflects_declared_capabilities() {
-        // 预览能力来自定义声明的 capabilities（上游 validate 已按白名单校验），
-        // 这里确认预览原样透出，不臆造、不遗漏。
-        let mut v: serde_json::Value = serde_json::from_str(&good_skill_json()).unwrap();
-        v["capabilities"] = serde_json::json!([{"id": "cap_a"}, {"id": "cap_b"}]);
-        let p = skill_permission_preview_inner(&v.to_string()).unwrap();
-        assert_eq!(
-            p.capabilities,
-            vec!["cap_a".to_string(), "cap_b".to_string()]
-        );
     }
 
     #[test]
@@ -7331,11 +7109,6 @@ mod agent_skill_bridge_tests {
         assert!(agent_parse_inner("   ").is_err());
     }
 
-    #[test]
-    fn skill_parse_inner_rejects_empty() {
-        assert!(skill_parse_inner("").is_err());
-        assert!(skill_parse_inner("   ").is_err());
-    }
 }
 
 // ====== M5-2 MCP 只读注册表/策略桥命令（W7）======

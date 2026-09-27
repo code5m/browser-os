@@ -1275,7 +1275,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   skill_parse:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/capabilities/skill/commands.rs"
     owner: "skill"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/skill/**"
@@ -1285,7 +1285,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   skill_validate:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/capabilities/skill/commands.rs"
     owner: "skill"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/skill/**"
@@ -1295,7 +1295,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   skill_permission_preview:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/capabilities/skill/commands.rs"
     owner: "skill"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/skill/**"

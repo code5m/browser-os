@@ -10,6 +10,7 @@ mod shared {
     pub mod images;
     pub mod clipboard;
     pub mod invocation;
+    pub mod validation;
 }
 
 mod framework {
@@ -70,6 +71,9 @@ pub use crate::shared::clipboard;
 // Native Physical Boundary (invocation): 共享的来源校验 helper，crate 根再导出，
 // 供各 capability 命令体以 `crate::invocation::check_invocation_source` 直接引用（原在 bridge.rs）。
 pub use crate::shared::invocation;
+// Native Physical Boundary (validation): 跨能力共享的输入校验原语（体积上限守卫 +
+// 校验报告），crate 根再导出，供 agent/skill 命令体以 `crate::validation::` 直接引用。
+pub use crate::shared::validation;
 
 // Native Physical Boundary Pilot 5 (plugin): re-export shim so existing
 // `crate::plugin::` call sites keep resolving without per-call-site edits.
@@ -1595,9 +1599,9 @@ fn main() {
             bridge::agent_parse,
             bridge::agent_validate,
             bridge::agent_permission_preview,
-            bridge::skill_parse,
-            bridge::skill_validate,
-            bridge::skill_permission_preview,
+            crate::capabilities::skill::commands::skill_parse,
+            crate::capabilities::skill::commands::skill_validate,
+            crate::capabilities::skill::commands::skill_permission_preview,
             bridge::import_browser_credentials,
             bridge::list_browser_credentials,
             bridge::fill_browser_credential,
