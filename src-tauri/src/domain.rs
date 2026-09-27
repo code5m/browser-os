@@ -492,6 +492,16 @@ pub struct SessionDraft {
     pub title: String,
 }
 
+/// 浏览器页签信息（由 `crate::capabilities::browser::commands::create_tab` 返回，并写入
+/// `AppState::tabs`）。置于 domain 作为共享 DTO，避免 bridge 与 browser 能力对页签类型
+/// 产生第二真源（SECOND_TRUTH=0）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TabInfo {
+    pub id: String,
+    pub url: String,
+    pub title: String,
+}
+
 /// M1-9 会话策略（会话内生效，不持久化）。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionPolicy {

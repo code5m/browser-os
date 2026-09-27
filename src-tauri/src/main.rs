@@ -32,6 +32,7 @@ mod capabilities {
     pub mod terminal;
     pub mod git;
     pub mod tools;
+    pub mod browser;
 }
 mod tasks;
 mod workbench;
@@ -240,6 +241,10 @@ fn run_grid_child(index: u32) {
             // 子进程 layout enforcer：每 400ms 按 child_layouts 重放 update_rect，
             // 纠正 GTK 布局循环导致的宫格 webview 漂移（与主进程页签同款机制）
             bridge::start_layout_enforcer(app.handle().clone());
+            // PHASE 2：资源扫描器是 Browser 全局基础设施，于启动期统一启动（幂等），
+            // 覆盖 open_browser / tab_new / session_restore 全部建 tab 路径，避免 create_tab
+            // 反向写 Session（保持 Browser→Session 零依赖）。
+            bridge::start_resource_scanner(app.handle().clone());
             Ok(())
         })
         .run(tauri::generate_context!())

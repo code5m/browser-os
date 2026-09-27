@@ -6,6 +6,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use url::Url;
 
 use crate::domain::*;
+use crate::capabilities::browser::commands::*;
 use crate::grid_ipc::GridCmd;
 use crate::keyring_store::KeyringStore;
 use crate::mcp::{McpDecisionView, McpRegistryEntryView};
@@ -93,45 +94,6 @@ pub fn report_tab_load_failed(app: &AppHandle, id: &str, url: &str, message: &st
         return;
     }
     emit_tab_recovery_event(app, id, url, "loadFailed", "load-failed", 0, message);
-}
-
-/// 在主窗口内创建一个子 Webview（方案 D：同窗口多 webview）。
-/// 底层已迁移到 tauri-plugin-browser-tabs：全链路 Logical(CSS) 坐标，
-/// Linux 下由插件强制触发 WebKitGTK size_allocate，修复子 webview 卡初始尺寸问题。
-/// window.open / target="_blank" 由插件统一拦截为 browser-tabs://event，
-/// 再在 main.rs 转发为前端既有的 new-tab-request。
-/// label 全局唯一（页签 tab-N / 宫格 grid-N）。
-fn spawn_child_window(
-    app: &AppHandle,
-    label: &str,
-    url: &str,
-    css_x: f64,
-    css_y: f64,
-    css_w: f64,
-    css_h: f64,
-) -> Result<(), String> {
-    use tauri_plugin_browser_tabs::{CreateTabOptions, LogicalRect, TabManagerState};
-    let init_script = include_str!("../injected/collect.js");
-    let manager = app.state::<TabManagerState>();
-    manager
-        .create_tab(CreateTabOptions {
-            id: label.to_string(),
-            url: url.to_string(),
-            rect: LogicalRect::new(
-                css_x.round().max(0.0),
-                css_y.round().max(0.0),
-                css_w.round().max(1.0),
-                css_h.round().max(1.0),
-            ),
-            visible: false, // 前端随后 tab_position 时再 show
-            auto_resize: true,
-            user_agent: None,
-            transparent: false,
-            initialization_script: Some(init_script.to_string()),
-        })
-        .map_err(|e| format!("创建子 webview 失败: {e}"))?;
-    eprintln!("[spawn_child_window] 子 webview 已创建 label={}", label);
-    Ok(())
 }
 
 /// 在插件管理的子 webview 中执行 JS。
@@ -227,15 +189,6 @@ fn recover_tab_webview(
     Ok(())
 }
 
-/// 记住某个子窗口的内容区布局矩形（CSS 坐标），供 move/resize 时重定位。
-fn remember_layout(app: &AppHandle, id: &str, x: f64, y: f64, w: f64, h: f64) {
-    app.state::<AppState>()
-        .child_layouts
-        .lock()
-        .unwrap()
-        .insert(id.to_string(), (x, y, w, h));
-}
-
 /// M0-0.b 测量钩子配置：由 M0 采集脚本经环境变量注入（日常运行全 None，零影响）。
 /// 契约 `logs/m0-baseline-contract-v1.md` §6.1/§6.3。
 #[derive(Default, Clone)]
@@ -318,46 +271,6 @@ pub struct AppState {
 /// 终端会话与输出内核（M3.a：mpsc+pump 管道、进程组回收、Channel 单播）。
 pub use crate::terminal::{TermInfo, TerminalSession};
 
-/// 浏览器页签信息（id 即子 webview 的 label）。
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
-pub struct TabInfo {
-    pub id: String,
-    pub url: String,
-    pub title: String,
-}
-
-/// 归一化用户输入的网址：支持以下写法
-/// - 空 -> 默认引导页（百度）
-/// - www.baidu.com / baidu.com / example.com -> 自动补 https://
-/// - http://... https://... -> 原样
-/// - 带路径 baidu.com/s?wd=x -> 自动补 https://
-/// - 非 URL 的单词（如 "天气"）-> 走搜索引擎
-fn normalize_url(input: &str) -> String {
-    let s = input.trim();
-    if s.is_empty() {
-        return "https://www.baidu.com".to_string();
-    }
-    // 已带协议
-    if s.starts_with("http://") || s.starts_with("https://") || s.starts_with("file://") {
-        return s.to_string();
-    }
-    // 含协议分隔但非 http（ftp 等），以及不含 :// 的 about: URL 原样。
-    if s.contains("://") || s.starts_with("about:") {
-        return s.to_string();
-    }
-    // 像搜索词（含空格、中文、或不是 域名.后缀 形态）-> 搜索引擎
-    let looks_like_domain = s.contains('.')
-        && !s.contains(' ')
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_');
-    if !looks_like_domain {
-        // 百度搜索
-        return format!("https://www.baidu.com/s?wd={}", urlencoding::encode(s));
-    }
-    // 裸域名：补 https://
-    format!("https://{}", s)
-}
-
 /// 宫格子 webview 的初始 URL 解析：
 /// - 已配置真实服务 URL（含 http(s)://、about: 等）→ 归一化后原样使用；
 /// - 未配置 / 显式为空 → 使用 `about:blank` 作为本地占位页。
@@ -373,9 +286,10 @@ fn initial_grid_url(raw: &str) -> String {
 #[cfg(test)]
 mod normalize_url_tests {
     use super::{
-        initial_grid_url, is_tab_label, normalize_url, reserve_tab_recovery_attempt,
+        initial_grid_url, is_tab_label, reserve_tab_recovery_attempt,
         TabRecoveryBudget, TAB_RECOVERY_WINDOW_SECS,
     };
+    use crate::capabilities::browser::commands::normalize_url;
 
     #[test]
     fn preserves_about_blank_for_offline_browser_scenarios() {
@@ -563,39 +477,6 @@ fn apply_bounds_inner(
     Ok(())
 }
 
-/// 把子窗口移出可视区（隐藏态），用于非激活页签/宫格。
-/// 注意：不能用 manager.set_visible(false)（即 webview.hide()）——对正在渲染的
-/// WebKitGTK 子 webview 调 hide 会阻塞主线程事件循环导致死锁（实测新建第二个
-/// 页签时卡在 hide(tab-1)）。改为把子 webview 移到屏幕外（等价隐藏，不卡死）。
-fn hide_bounds(app: &AppHandle, id: &str) {
-    use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
-    let manager = app.state::<TabManagerState>();
-    // 隐藏 = 只移到屏幕外，【保持原尺寸不变】。
-    // 关键教训：对正在渲染的 WebKitGTK 子 webview，把尺寸缩到 1x1 会触发 WebKit
-    // 视口重布局，与主线程死锁（实测卡死）。只移动位置（视口尺寸不变）则安全。
-    // 坐标用 -30000（X11 int16 安全范围 -32768~32767 内）。
-    let cur = app
-        .state::<AppState>()
-        .child_layouts
-        .lock()
-        .unwrap()
-        .get(id)
-        .copied();
-    if let Some((_x, y, w, h)) = cur {
-        // 诊断：移出失败（TabNotFound 等）时留日志，排查"切视图后残留"问题
-        if let Err(e) = manager.update_rect(&id.to_string(), LogicalRect::new(-30000.0, y, w, h)) {
-            eprintln!("[hide_bounds] id={} 移出失败: {e}", id);
-        }
-        // 记住【隐藏态】坐标（-30000），不是原坐标：
-        // 布局守护线程每 400ms 按 child_layouts 重放纠偏，GTK 布局循环会把子 webview
-        // 漂回"自然位置"（实测 (0,400,1200,400) 下半屏）。若这里记原坐标，守护线程会
-        // 把已隐藏的 webview 拉回可视区造成残留。恢复显示由前端随后重新定位完成。
-        remember_layout(app, id, -30000.0, y, w, h);
-    } else {
-        eprintln!("[hide_bounds] id={} 无布局记录，跳过（可能从未定位过）", id);
-    }
-}
-
 /// 强制隐藏所有子 webview（页签 + 宫格）。
 /// 关键：【不能走 grid_position/apply_bounds】——它有 50ms 去重，宫格刚定位后
 /// 50ms 内的"移出屏幕"请求会被去重丢弃，导致宫格仍留在屏幕上（实测切主页仍看到
@@ -711,75 +592,6 @@ pub fn start_layout_enforcer(app: AppHandle) {
             let _ = manager.update_rect(&id, LogicalRect::new(x, y, w.max(1.0), h.max(1.0)));
         }
     });
-}
-
-/// 创建一个浏览器页签（独立子窗口，方案 B），返回其信息并设为激活页签。
-fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
-    let target = normalize_url(url);
-    let _ = Url::parse(&target).map_err(|e| format!("无效网址: {e}"))?;
-
-    // 生成唯一 id
-    let state0 = app.state::<AppState>();
-    let mut counter = state0.tab_counter.lock().unwrap();
-    *counter += 1;
-    let id = format!("tab-{}", *counter);
-    drop(counter);
-
-    let title0 = match Url::parse(&target) {
-        Ok(u) => u.host_str().unwrap_or(&target).to_string(),
-        Err(_) => target.clone(),
-    };
-
-    // 方案 B：异步创建独立子窗口（提交到主线程事件循环，避开同步创建第二个
-    // webview 卡死主线程）。窗口真正建好后由前端 tab_position 放大显示。
-    spawn_child_window(&app, &id, &target, 0.0, 0.0, 1.0, 1.0)?;
-    eprintln!(
-        "[create_tab] 子窗口已提交创建 label={} init=(1x1) visible=false",
-        id
-    );
-
-    let info = TabInfo {
-        id: id.clone(),
-        url: target.clone(),
-        title: title0.clone(),
-    };
-    app.state::<AppState>()
-        .tabs
-        .lock()
-        .unwrap()
-        .insert(id.clone(), info.clone());
-    *app.state::<AppState>().active_tab.lock().unwrap() = Some(id.clone());
-    // 休眠计时：新页签激活，旧页签从 now 起算 idle
-    {
-        let state = app.state::<AppState>();
-        let mut idle = state.tab_idle_since.lock().unwrap();
-        idle.remove(&id);
-        let now = std::time::Instant::now();
-        for k in state.tabs.lock().unwrap().keys() {
-            if *k != id {
-                idle.entry(k.clone()).or_insert(now);
-            }
-        }
-    }
-
-    // 非激活页签异步隐藏（必须走主线程，且不能在当前 command 同步等待，否则与
-    // 队列里的 webview build 互相等待死锁）。这里用 run_on_main_thread 排队执行。
-    let app_hide = app.clone();
-    let active_id = id.clone();
-    let _ = app.run_on_main_thread(move || {
-        let st = app_hide.state::<AppState>();
-        let ids: Vec<String> = st.tabs.lock().unwrap().keys().cloned().collect();
-        for k in ids {
-            if k != active_id {
-                hide_bounds(&app_hide, &k);
-            }
-        }
-    });
-    eprintln!("[create_tab] run_on_main_thread 已排队 label={}", id);
-
-    start_resource_scanner(app.clone());
-    eprintln!("[create_tab] 页签已创建 label={} url={}", id, target);
-    Ok(info)
 }
 
 /// 关闭指定页签，并清理状态。
@@ -1690,7 +1502,7 @@ fn scan_resources(app: &AppHandle, id: &str) -> Result<(), String> {
 }
 
 /// 启动进程级唯一后台线程：每 2 秒扫描一次当前激活页签的资源。
-fn start_resource_scanner(app: AppHandle) {
+pub(crate) fn start_resource_scanner(app: AppHandle) {
     let state = app.state::<AppState>();
     if state.browser_scanner_started.swap(true, Ordering::SeqCst) {
         return;
