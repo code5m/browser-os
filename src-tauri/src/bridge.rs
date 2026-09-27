@@ -13,6 +13,7 @@ use crate::script_runner::{RunError, RunSnapshot, ScriptProcessTable, ScriptRunR
 use crate::seam::{PathResolver, Progress, ProgressSink, RootsProvider};
 use crate::sync;
 use crate::terminal::{self, ChannelSink, EventSink};
+use crate::shared::invocation::check_invocation_source;
 use crate::workspace;
 
 /// 宫格 label（grid-N）→ 子进程 index；页签 tab-N 返回 None（页签仍在主进程）。
@@ -1235,18 +1236,6 @@ impl<'a> RootsProvider for TauriRootsProvider<'a> {
 }
 
 /// M0-3.b：远程上报入口的统一来源校验。未登记/伪造 label（含残留的 `browser`）一律拒绝。
-fn check_invocation_source(
-    webview: &tauri::Webview,
-    scope: &str,
-    intent: Option<&str>,
-    app: &AppHandle,
-) -> Result<(), String> {
-    use crate::security_policy as sp;
-    let registry = app.state::<sp::IntentRegistry>();
-    sp::check_remote_invocation(webview.label(), scope, intent, &registry)
-        .map_err(|e| e.to_string())
-}
-
 #[tauri::command]
 pub fn report_resources(
     app: AppHandle,

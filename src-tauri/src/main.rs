@@ -9,6 +9,7 @@ mod grid_process;
 mod shared {
     pub mod images;
     pub mod clipboard;
+    pub mod invocation;
 }
 mod mcp;
 mod security_policy;
@@ -62,6 +63,9 @@ pub use crate::shared::images;
 // 命令体从 bridge.rs 迁入 shared/clipboard.rs，crate 根再导出 `clipboard` 模块，
 // 于是 generate_handler! 可直接以 `clipboard::clipboard_read` / `clipboard::clipboard_write` 注册。
 pub use crate::shared::clipboard;
+// Native Physical Boundary (invocation): 共享的来源校验 helper，crate 根再导出，
+// 供各 capability 命令体以 `crate::invocation::check_invocation_source` 直接引用（原在 bridge.rs）。
+pub use crate::shared::invocation;
 
 // Native Physical Boundary Pilot 5 (plugin): re-export shim so existing
 // `crate::plugin::` call sites keep resolving without per-call-site edits.
