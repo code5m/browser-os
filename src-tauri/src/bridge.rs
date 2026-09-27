@@ -1165,27 +1165,6 @@ struct ResourceScanResult {
     items: Vec<ResourceItem>,
 }
 
-/// M0-3.c：写/删类命令的允许根目录。
-///
-/// 取值与 `get_start_dirs` 对外承诺的入口保持一致（主目录 / 桌面 / 文档 / 下载 /
-/// 成果工作区 / 笔记目录），否则文件管理器会出现「能列出来却写不进去」的不一致。
-/// 效果是：仍可在这些用户目录内正常增删改名，但 `../` 逃逸、符号链接逃逸、
-/// 以及写到 `/etc`、`/usr`、其他用户目录等均被拒绝。
-pub fn allowed_roots(app: &AppHandle) -> Vec<std::path::PathBuf> {
-    let mut roots: Vec<std::path::PathBuf> = Vec::new();
-    if let Ok(home) = app.path().home_dir() {
-        roots.push(home.clone());
-        for sub in ["Desktop", "Documents", "Downloads"] {
-            roots.push(home.join(sub));
-        }
-    }
-    roots.push(crate::workspace::workspace_dir(app));
-    roots.push(crate::workspace::notes_dir(app));
-    roots.sort();
-    roots.dedup();
-    roots
-}
-
 // ── M5-1.b 切片 1：B 类模块搬入 core 的 Tauri 侧 seam 实现 ───────────────────────
 // 这些实现是切片 2（B 类模块实际搬入并注入 trait）的注入目标；切片 1 仅声明 trait，
 // 此处实现尚未被消费，故 `#[allow(dead_code)]` 避免新增 warning。
@@ -1225,7 +1204,7 @@ pub struct TauriRootsProvider<'a> {
 #[allow(dead_code)]
 impl<'a> RootsProvider for TauriRootsProvider<'a> {
     fn allowed_roots(&self) -> Vec<std::path::PathBuf> {
-        allowed_roots(self.app)
+        crate::workspace::allowed_roots(self.app)
     }
 }
 
@@ -3277,7 +3256,7 @@ pub fn run_command(
     check_id(&id, "命令片段 id")?;
     let snippet = get_enabled_snippet(&app, &id)?;
     let count = snippet.params.len();
-    let roots = allowed_roots(&app);
+    let roots = crate::workspace::allowed_roots(&app);
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     let table = Arc::clone(&app.state::<AppState>().script_runs);
     let start = crate::script_runner::start_command(
@@ -3327,7 +3306,7 @@ pub fn run_script(
     check_invocation_source(&webview, "run_script", None, &app)?;
     let script = get_enabled_script(&app, &id)?;
     let script_path = workspace::script_body_path(&app, &script.path)?;
-    let roots = allowed_roots(&app);
+    let roots = crate::workspace::allowed_roots(&app);
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     let table = Arc::clone(&app.state::<AppState>().script_runs);
     let start = crate::script_runner::start_run(
@@ -3618,7 +3597,7 @@ pub fn read_image_data_url(path: String) -> Result<String, String> {
 pub fn write_file(app: AppHandle, path: String, content: String) -> Result<(), String> {
     use crate::security_policy as sp;
     let canonical =
-        sp::check_path_within_roots(&path, &allowed_roots(&app)).map_err(|e| e.to_string())?;
+        sp::check_path_within_roots(&path, &crate::workspace::allowed_roots(&app)).map_err(|e| e.to_string())?;
     sp::check_text_field("content", &content, sp::MAX_HTML_BYTES).map_err(|e| e.to_string())?;
     std::fs::write(&canonical, &content).map_err(|e| e.to_string())
 }
@@ -3691,7 +3670,7 @@ pub fn create_file(app: AppHandle, path: String, content: Option<String>) -> Res
         .unwrap_or_default();
     sp::check_path_component(&file_name).map_err(|e| e.to_string())?;
     // 父目录可能尚不存在，无法直接 canonicalize：先校验已存在的祖先，再校验目标。
-    let roots = allowed_roots(&app);
+    let roots = crate::workspace::allowed_roots(&app);
     let mut anchor = p.clone();
     while !anchor.exists() {
         match anchor.parent() {
@@ -3717,7 +3696,7 @@ pub fn create_dir(app: AppHandle, path: String) -> Result<(), String> {
     if p.exists() {
         return Err("已存在同名文件/目录".into());
     }
-    let roots = allowed_roots(&app);
+    let roots = crate::workspace::allowed_roots(&app);
     let mut anchor = p.clone();
     while !anchor.exists() {
         match anchor.parent() {
@@ -3744,7 +3723,7 @@ pub fn delete_path(app: AppHandle, path: String) -> Result<(), String> {
     }
     // 递归删除最危险：必须在允许根目录内，且不允许删根目录本身。
     let canonical =
-        sp::check_delete_target(&path, &allowed_roots(&app)).map_err(|e| e.to_string())?;
+        sp::check_delete_target(&path, &crate::workspace::allowed_roots(&app)).map_err(|e| e.to_string())?;
     if canonical.is_dir() {
         std::fs::remove_dir_all(&canonical).map_err(|e| e.to_string())?;
     } else {
@@ -3763,7 +3742,7 @@ pub fn rename_path(app: AppHandle, path: String, new_name: String) -> Result<(),
     }
     // 新名称必须是不含分隔符的单一分量，否则 `parent.join(new_name)` 会变成跨目录移动。
     sp::check_path_component(&new_name).map_err(|e| e.to_string())?;
-    let roots = allowed_roots(&app);
+    let roots = crate::workspace::allowed_roots(&app);
     let canonical = sp::check_path_within_roots(&path, &roots).map_err(|e| e.to_string())?;
     let parent = canonical.parent().ok_or("无法取得父目录")?;
     let dst = parent.join(new_name.trim());
@@ -6009,82 +5988,6 @@ mod snippet_execution_gate_tests {
     }
 }
 
-// ===========================================================================
-// M4-3 / M4-2.s（Lane A4）：数据库命令层
-//
-// 安全闸门接线（A3 的 `DbPool::query` 不判写，写闸门全链路归本层）：
-//   `db_query` 在**任何语句实际执行前**必须过 `security_policy::evaluate_db_query_gate`，
-//   任一步拒绝即短路返回，绝不降级放行（F1 / F4 / 契约 G-4 / G-5）。
-//
-// 连接模型：因 `DbPool` 包裹的驱动句柄（rusqlite::Connection 等）非 `Send`，
-// 不能驻留于 Tauri 全局 managed state，故采用「按需重连」模型——
-// `db_connect` 仅打通一次以校验可达性/凭据，并把配置登记进 `DbConnectionRegistry`、
-// 凭据写入系统密钥库（键 = `db:<conn_id>`）；`db_query` 每次从登记簿取配置 +
-// 从密钥库取凭据即时建连执行；`db_disconnect` 撤销登记并删除密钥。
-// SQLite 为文件级、MySQL/PostgreSQL 取数通道尚未实现（D27），故该模型对当前
-// 可验证路径完全成立。
-//
-// 凭据：password 永不进 `DbConnectionConfig`（F2），不进审计 detail（G-1 / G-3）。
-// ===========================================================================
-
-use crate::database::{DbPool, QueryCancel};
-use uuid::Uuid;
-
-/// 数据库连接配置登记簿（不含非 Send 的池句柄）。注册为 Tauri managed state。
-pub struct DbConnectionRegistry {
-    pub configs: Mutex<HashMap<String, DbConnectionConfig>>,
-    pub queries: Mutex<HashMap<String, (String, QueryCancel)>>,
-}
-
-impl Default for DbConnectionRegistry {
-    fn default() -> Self {
-        DbConnectionRegistry {
-            configs: Mutex::new(HashMap::new()),
-            queries: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct DbConnectResult {
-    pub conn_id: String,
-    pub kind: SupportedDb,
-}
-
-#[tauri::command]
-pub fn db_list_connections(
-    app: AppHandle,
-    webview: tauri::Webview,
-) -> Result<Vec<DbConnectionConfig>, String> {
-    check_invocation_source(&webview, "db_list_connections", None, &app)?;
-    let mut configs: Vec<_> = app
-        .state::<DbConnectionRegistry>()
-        .configs
-        .lock()
-        .unwrap()
-        .values()
-        .cloned()
-        .collect();
-    configs.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(configs)
-}
-
-#[tauri::command]
-pub fn db_cancel(
-    app: AppHandle,
-    webview: tauri::Webview,
-    query_id: String,
-) -> Result<bool, String> {
-    check_invocation_source(&webview, "db_cancel", None, &app)?;
-    let reg = app.state::<DbConnectionRegistry>();
-    let queries = reg.queries.lock().unwrap();
-    if let Some((_, cancel)) = queries.get(&query_id) {
-        cancel.cancel();
-        return Ok(true);
-    }
-    Ok(false)
-}
-
 #[tauri::command]
 pub async fn vault_open(
     app: AppHandle,
@@ -6092,7 +5995,7 @@ pub async fn vault_open(
     path: String,
 ) -> Result<crate::workbench::VaultSnapshot, String> {
     check_invocation_source(&webview, "vault_open", None, &app)?;
-    let root = crate::security_policy::check_path_within_roots(&path, &allowed_roots(&app))
+    let root = crate::security_policy::check_path_within_roots(&path, &crate::workspace::allowed_roots(&app))
         .map_err(|_| "VAULT_PATH_DENIED")?;
     tauri::async_runtime::spawn_blocking(move || crate::workbench::read_vault(&root))
         .await
@@ -6129,7 +6032,7 @@ pub async fn archive_replies(
     tags: Vec<String>,
 ) -> Result<Vec<crate::workbench::ArchiveResult>, String> {
     check_invocation_source(&webview, "archive_replies", None, &app)?;
-    let root = crate::security_policy::check_path_within_roots(&path, &allowed_roots(&app))
+    let root = crate::security_policy::check_path_within_roots(&path, &crate::workspace::allowed_roots(&app))
         .map_err(|_| "ARCHIVE_PATH_DENIED")?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         crate::workbench::save_archives(&root, items, &tags)
@@ -6241,169 +6144,6 @@ pub fn git_commit_diff(
         out.push_str("\n[Diff truncated at 256 KiB]\n");
     }
     Ok(out)
-}
-
-#[tauri::command]
-pub fn db_connect(
-    app: AppHandle,
-    webview: tauri::Webview,
-    cfg: DbConnectionConfig,
-    password: Option<String>,
-) -> Result<DbConnectResult, String> {
-    check_invocation_source(&webview, "db_connect", None, &app)?;
-    {
-        let reg = app.state::<DbConnectionRegistry>();
-        if reg.configs.lock().unwrap().len() >= 64 {
-            return Err("DB_CONNECTION_LIMIT".into());
-        }
-        if reg
-            .queries
-            .lock()
-            .unwrap()
-            .values()
-            .any(|(id, _)| id == &cfg.id)
-        {
-            return Err("DB_QUERY_BUSY".into());
-        }
-    }
-    // 实际打通一次以校验配置/凭据/可达性；连接不驻留全局（非 Send），校验后即弃。
-    let roots = allowed_roots(&app);
-    let kind = cfg.kind;
-    let conn_id = cfg.id.clone();
-    let _probe = DbPool::connect(&cfg, password.as_deref(), &roots)
-        .map_err(|e| format!("{}: {}", e.code_str(), e.message))?;
-    // G-1：凭据（若有）写入系统密钥库，键必须带 `db:` 前缀，与 git 的 repo_id 命名空间隔离。
-    if let Some(p) = password {
-        KeyringStore::save_token(&crate::database::credential_key(&conn_id), &p)?;
-    }
-    {
-        let reg = app.state::<DbConnectionRegistry>();
-        reg.configs.lock().unwrap().insert(conn_id.clone(), cfg);
-    }
-    // 审计 detail 禁含 SQL/凭据（G-3）：只记连接标识与类型。
-    workspace::log_audit(
-        &app,
-        "db.connect",
-        format!("conn_id={} kind={:?}", conn_id, kind),
-    );
-    Ok(DbConnectResult { conn_id, kind })
-}
-
-#[tauri::command]
-pub async fn db_query(
-    app: AppHandle,
-    webview: tauri::Webview,
-    conn_id: String,
-    sql: String,
-    timeout_secs: Option<u64>,
-    confirm_write: bool,
-    query_id: Option<String>,
-) -> Result<crate::database::DbQueryResult, String> {
-    use crate::security_policy as sp;
-    check_invocation_source(&webview, "db_query", None, &app)?;
-
-    // 取登记配置（db_connect 未登记即视为未连接）。
-    let cfg = {
-        let reg = app.state::<DbConnectionRegistry>();
-        let guard = reg.configs.lock().unwrap();
-        guard
-            .get(&conn_id)
-            .cloned()
-            .ok_or_else(|| "DB_NOT_CONNECTED".to_string())?
-    };
-
-    let query_id = query_id.unwrap_or_else(|| Uuid::new_v4().to_string());
-    Uuid::parse_str(&query_id).map_err(|_| "DB_INVALID_QUERY_ID")?;
-    let cancel = QueryCancel::new();
-    {
-        let registry = app.state::<DbConnectionRegistry>();
-        let mut queries = registry.queries.lock().unwrap();
-        if queries.len() >= 4 || queries.contains_key(&query_id) {
-            return Err("DB_QUERY_BUSY".into());
-        }
-        queries.insert(query_id.clone(), (conn_id.clone(), cancel.clone()));
-    }
-    let worker_app = app.clone();
-    let worker_id = query_id.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let app = worker_app;
-        let query_id = worker_id;
-        // SQLite 不需要密码；其余从密钥库取（键 = db:<conn_id>）。
-        let password = if cfg.kind == SupportedDb::Sqlite {
-            None
-        } else {
-            KeyringStore::get_token(&crate::database::credential_key(&conn_id)).ok()
-        };
-
-        let roots = allowed_roots(&app);
-        let mut pool = DbPool::connect(&cfg, password.as_deref(), &roots)
-            .map_err(|e| format!("{}: {}", e.code_str(), e.message))?;
-
-        // ===== 安全闸门（A3 的 query 不判写，全链路归此处）=====
-        let encrypted = pool.encrypted();
-        sp::evaluate_db_query_gate(&sql, &cfg, encrypted, confirm_write)
-            .map_err(|code| code.as_str().to_string())?;
-
-        // 执行取数。
-        let result = pool
-            .query(&sql, &cancel, timeout_secs, &query_id)
-            .map_err(|e| format!("{}: {}", e.code_str(), e.message))?;
-
-        // 审计 detail 禁含 SQL 原文与凭据（G-3）：只记连接标识与截断标记。
-        workspace::log_audit(
-            &app,
-            "db.query",
-            format!(
-                "conn_id={} rows={} truncated={} field_truncated={}",
-                conn_id, result.row_count, result.truncated, result.field_truncated
-            ),
-        );
-        Ok(result)
-    })
-    .await
-    .map_err(|_| "DB_WORKER_FAILED".to_string());
-    app.state::<DbConnectionRegistry>()
-        .queries
-        .lock()
-        .unwrap()
-        .remove(&query_id);
-    result?
-}
-
-#[tauri::command]
-pub fn db_disconnect(
-    app: AppHandle,
-    webview: tauri::Webview,
-    conn_id: String,
-) -> Result<(), String> {
-    check_invocation_source(&webview, "db_disconnect", None, &app)?;
-    if app
-        .state::<DbConnectionRegistry>()
-        .queries
-        .lock()
-        .unwrap()
-        .values()
-        .any(|(id, _)| id == &conn_id)
-    {
-        return Err("DB_QUERY_BUSY".into());
-    }
-    let removed = {
-        let reg = app.state::<DbConnectionRegistry>();
-        let mut guard = reg.configs.lock().unwrap();
-        guard.remove(&conn_id).is_some()
-    };
-    // 一并撤销密钥库中的凭据（G-1：命名空间隔离，不影响 git 的 repo_id）。
-    let _ = KeyringStore::delete_token(&crate::database::credential_key(&conn_id));
-    workspace::log_audit(
-        &app,
-        "db.disconnect",
-        format!("conn_id={} removed={}", conn_id, removed),
-    );
-    if removed {
-        Ok(())
-    } else {
-        Err("DB_NOT_CONNECTED".to_string())
-    }
 }
 
 // ===== M5-W7（Lane A5）：Agent/Skill 只读命令桥 =====
@@ -7631,7 +7371,7 @@ pub fn mcp_capability_preview(
     raw_path: Option<String>,
 ) -> Result<McpDecisionView, String> {
     check_invocation_source(&webview, "mcp_capability_preview", None, &app)?;
-    let roots = allowed_roots(&app);
+    let roots = crate::workspace::allowed_roots(&app);
     Ok(McpDecisionView::from_decision(
         crate::mcp::evaluate_mcp_command(&capability, raw_path.as_deref(), &roots),
     ))
@@ -7731,7 +7471,7 @@ pub fn plugin_install(
     // 资源路径（可选）：必须在允许根目录内；**只取「是否通过」布尔，绝不落盘路径**。
     let resource_ok = match resource_path.as_deref().map(str::trim) {
         Some(p) if !p.is_empty() => {
-            let roots = allowed_roots(&app);
+            let roots = crate::workspace::allowed_roots(&app);
             if let Err(e) = crate::security_policy::check_path_within_roots(p, &roots) {
                 let code = crate::plugin::error_code(&e);
                 workspace::log_audit(&app, "plugin.install", format!("result=err code={code}"));

@@ -27,7 +27,7 @@ pub fn move_path(app: AppHandle, src: String, dst_dir: String) -> Result<(), Str
     if !dst_p.is_dir() {
         return Err("目标必须是目录".into());
     }
-    let roots = crate::bridge::allowed_roots(&app);
+    let roots = crate::workspace::allowed_roots(&app);
     let src_canon = sp::check_path_within_roots(&src, &roots).map_err(|e| e.to_string())?;
     let dst_canon = sp::check_path_within_roots(&dst_dir, &roots).map_err(|e| e.to_string())?;
     // 禁止移动到自身或自身子目录内（否则源会凭空消失）

@@ -1473,7 +1473,7 @@ fn main() {
         // M0-3.b：一次性用户意图令牌登记表（外部页面发起副作用调用时校验）。
         .manage(security_policy::IntentRegistry::new())
         // M4-3（Lane A4）：数据库连接配置登记簿（不含非 Send 的池句柄，按需重连）。
-        .manage(bridge::DbConnectionRegistry::default())
+        .manage(crate::capabilities::database::commands::DbConnectionRegistry::default())
         // M5-W12（Lane A7）：图谱只读托管状态（载入期写一次，运行期只读）。
         .manage(crate::graph::GraphState::default())
         .invoke_handler(tauri::generate_handler![
@@ -1601,16 +1601,16 @@ fn main() {
             bridge::import_browser_credentials,
             bridge::list_browser_credentials,
             bridge::fill_browser_credential,
-            bridge::db_connect,
-            bridge::db_list_connections,
-            bridge::db_cancel,
+            crate::capabilities::database::commands::db_connect,
+            crate::capabilities::database::commands::db_list_connections,
+            crate::capabilities::database::commands::db_cancel,
+            crate::capabilities::database::commands::db_query,
+            crate::capabilities::database::commands::db_disconnect,
             bridge::vault_open,
             bridge::grid_read_replies,
             bridge::archive_replies,
             bridge::git_log,
             bridge::git_commit_diff,
-            bridge::db_query,
-            bridge::db_disconnect,
             bridge::mcp_capability_preview,
             bridge::mcp_policy_get,
             bridge::mcp_registry_list,

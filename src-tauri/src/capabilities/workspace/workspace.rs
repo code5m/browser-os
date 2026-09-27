@@ -101,6 +101,31 @@ pub fn notes_dir(app: &AppHandle) -> PathBuf {
     d
 }
 
+/// M0-3.c：写/删类命令的允许根目录。
+///
+/// 取值与 `get_start_dirs` 对外承诺的入口保持一致（主目录 / 桌面 / 文档 / 下载 /
+/// 成果工作区 / 笔记目录），否则文件管理器会出现「能列出来却写不进去」的不一致。
+/// 效果是：仍可在这些用户目录内正常增删改名，但 `../` 逃逸、符号链接逃逸、
+/// 以及写到 `/etc`、`/usr`、其他用户目录等均被拒绝。
+///
+/// 从 `bridge.rs` 迁入本 workspace 能力模块（Native Physical Boundary 分解）：
+/// 本函数依赖 `workspace_dir` / `notes_dir`（同模块），故归属 workspace 而非共享层，
+/// 避免 shared → workspace 反向依赖。
+pub fn allowed_roots(app: &AppHandle) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Ok(home) = app.path().home_dir() {
+        roots.push(home.clone());
+        for sub in ["Desktop", "Documents", "Downloads"] {
+            roots.push(home.join(sub));
+        }
+    }
+    roots.push(workspace_dir(app));
+    roots.push(notes_dir(app));
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
 pub fn save_artifact(app: &AppHandle, art: &Artifact) -> Result<PathBuf, String> {
     let dir = workspace_dir(app);
     let file = dir.join(format!("{}.json", art.id));

@@ -645,7 +645,7 @@ fn fire(
     if stop_requested(app) {
         return FireOutcome::Skipped(SKIP_STOPPING);
     }
-    let roots = crate::bridge::allowed_roots(app);
+    let roots = crate::workspace::allowed_roots(app);
     let home = match app.path().home_dir() {
         Ok(h) => h,
         Err(_) => return FireOutcome::Reject("HOME_UNAVAILABLE"),

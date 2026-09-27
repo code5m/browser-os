@@ -5,9 +5,11 @@
 //! `sanitize_message` / `DbErrorCode`（18 码闭合）/ 上限常量 / 超时分层 / 多语句
 //! 静态检出。
 //!
-//! **本模块不做命令层**（`#[tauri::command]` 归 A4/M4-3，命令体在 `bridge.rs` 经
-//! `generate_handler!` 注册 `db_query` 等，命令体委托本模块 `DbPool`/`QueryCancel`）；
-//! 不做 SQL 风险分类 / 生产判定（落 `security_policy.rs`，零 db 依赖）。
+//! 命令层 `commands.rs`（Native Physical Boundary 分解迁入）：`#[tauri::command]`
+//! `db_connect` / `db_list_connections` / `db_cancel` / `db_query` / `db_disconnect`，
+//! 委托本模块 `DbPool`/`QueryCancel`/`credential_key`；安全闸门（`evaluate_db_query_gate`）
+//! 与连接登记簿（`DbConnectionRegistry`）归命令层。不做 SQL 风险分类 / 生产判定
+//! （落 `security_policy.rs`，零 db 依赖）。
 //!
 //! 三条硬红线（承 M4-1.a~d 冻结契约）：
 //! 1. 多语句：SQLite 走 `prepare`（禁 `execute_batch`）+ 进入驱动前第二道静态检出；
@@ -23,4 +25,5 @@
 //! `credential_key`/`DbQueryResult`）经 `main.rs` 顶部 re-export shim 解析，无需逐处改写。
 //! 注：本模块**无**门禁脚本钉死旧路径（`check-database-policy.py` 扫 `bridge.rs` 命令层
 //! 而非本文件），故本批**无需**改 checker 路径。
+pub mod commands;
 pub mod database;
