@@ -255,6 +255,16 @@ pub fn validate_id(id: &str) -> Result<(), ImageError> {
     Ok(())
 }
 
+/// id 形态校验的薄封装：所有「拿 id 拼路径」的入口（会话/成果/图片/脚本/片段/任务/运行）
+/// 都先过这里，缺形态校验时理论上可借 `../` 逃逸出目标目录（纵深防御）。
+///
+/// 实际校验委托 [`validate_id`]，这里只把 `ImageError` 包成中文错误文案，便于命令体
+/// 直接向用户/前端返回可读信息。跨能力复用，与 [`validate_id`] 同置本模块
+/// （属 `SHARED_NATIVE_INFRASTRUCTURE`）。
+pub fn check_id(id: &str, what: &str) -> Result<(), String> {
+    validate_id(id).map_err(|_| format!("非法 {what}"))
+}
+
 /// `rel_path` 校验：只允许 `[a-zA-Z0-9_/-]`，不含 `..`、不以 `/` 开头、
 /// 不含单独的 `.` 段、不含 `\` 与 NUL、不以 `/` 结尾。
 pub fn validate_rel_path(rel: &str) -> Result<(), ImageError> {

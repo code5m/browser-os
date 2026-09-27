@@ -952,204 +952,7 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
 // `trigger` / `count` / `reason` / `error_code`，**不含**参数值、命令正文、
 // 脚本正文、输出或任何凭据（契约 §7 + F5）。
 //
-// 触发语义归 `scheduler.rs`：本层只做 CRUD 与「立即跑一次」的入口，
-// 执行唯一入口仍是 `script_runner`（F6）。
-// ---------------------------------------------------------------------------
 
-/// 触发方式的审计标签。**不含**用户输入的表达式正文（避免把任意字符串塞进审计）。
-fn task_trigger_label(trigger: &TaskTrigger) -> &'static str {
-    match trigger {
-        TaskTrigger::Cron { .. } => "cron",
-        TaskTrigger::Interval { .. } => "interval",
-    }
-}
-
-/// 取目标（脚本 / 命令片段）的参数定义，用于 R-3 / R-4 校验。
-fn task_target_params(
-    app: &AppHandle,
-    kind: TaskKind,
-    target_id: &str,
-) -> Result<Vec<ScriptParam>, String> {
-    match kind {
-        TaskKind::Script => {
-            let script = workspace::load_scripts(app)
-                .into_iter()
-                .find(|s| s.id == target_id)
-                .ok_or_else(|| crate::tasks::TASK_TARGET_NOT_FOUND.to_string())?;
-            if !script.enabled {
-                return Err("SCRIPT_DISABLED".to_string());
-            }
-            Ok(script.params)
-        }
-        TaskKind::Command => {
-            let snippet = workspace::load_snippets(app)
-                .into_iter()
-                .find(|s| s.id == target_id)
-                .ok_or_else(|| crate::tasks::TASK_TARGET_NOT_FOUND.to_string())?;
-            if !snippet.enabled {
-                return Err("SNIPPET_DISABLED".to_string());
-            }
-            Ok(snippet.params)
-        }
-    }
-}
-
-/// 任务列表。**不含** secret 参数值 —— secret 参数在定义期即被拒绝落盘（契约 §3.3 R-3）。
-#[tauri::command]
-pub fn task_list(app: AppHandle, webview: tauri::Webview) -> Result<Vec<TaskDef>, String> {
-    check_invocation_source(&webview, "task_list", None, &app)?;
-    let _store_guard = crate::tasks::task_store_lock();
-    let list = crate::tasks::load_tasks_at(&crate::tasks::tasks_file(&app));
-    let count = list.len();
-    workspace::log_audit(&app, "task.runs.list", format!("count={count}"));
-    Ok(list)
-}
-
-/// 新建任务。默认 **不启用**（裁定 R-A6-1：自动执行必须是显式动作）；
-/// 创建时即计算并落盘 `next_run_at`，便于 UI 展示「下次执行时间」。
-#[allow(clippy::too_many_arguments)]
-#[tauri::command]
-pub fn task_add(
-    app: AppHandle,
-    webview: tauri::Webview,
-    name: String,
-    kind: TaskKind,
-    target_id: String,
-    trigger: TaskTrigger,
-    params: Option<HashMap<String, String>>,
-    missed_run_policy: Option<MissedRunPolicy>,
-    catch_up_limit: Option<u32>,
-    misfire_grace_secs: Option<u64>,
-    retry: Option<RetryPolicy>,
-    timeout_secs: Option<u32>,
-    enabled: Option<bool>,
-) -> Result<TaskDef, String> {
-    check_invocation_source(&webview, "task_add", None, &app)?;
-    let _store_guard = crate::tasks::task_store_lock();
-    let supplied = params.unwrap_or_default();
-    let path = crate::tasks::tasks_file(&app);
-    let mut list = crate::tasks::load_tasks_at(&path);
-    crate::tasks::check_capacity(list.len()).map_err(|e| e.code().to_string())?;
-    let meta = task_target_params(&app, kind, &target_id)?;
-    crate::tasks::validate_params(&meta, &supplied).map_err(|e| e.code().to_string())?;
-
-    let now = chrono::Utc::now();
-    let mut task = TaskDef {
-        id: uuid::Uuid::new_v4().to_string(),
-        name,
-        kind,
-        target_id,
-        params: supplied,
-        enabled: enabled.unwrap_or(false),
-        trigger,
-        missed_run_policy: missed_run_policy.unwrap_or_default(),
-        catch_up_limit: catch_up_limit.unwrap_or(3),
-        misfire_grace_secs: misfire_grace_secs.unwrap_or(60),
-        retry: retry.unwrap_or_default(),
-        timeout_secs: timeout_secs.unwrap_or(0),
-        last_fired_at: None,
-        next_run_at: None,
-        created_at: now,
-        updated_at: now,
-    };
-    crate::tasks::validate_task(&task).map_err(|e| e.code().to_string())?;
-    task.next_run_at = crate::tasks::next_fire_after(&task.trigger, now);
-    list.push(task.clone());
-    crate::tasks::save_tasks_at(&path, &list)
-        .map_err(|_| crate::tasks::TASK_PERSIST_FAILED.to_string())?;
-
-    let kind_label = task.kind.as_str();
-    let trig_label = task_trigger_label(&task.trigger);
-    let id = task.id.clone();
-    workspace::log_audit(
-        &app,
-        "task.add",
-        format!("id={id} kind={kind_label} trigger={trig_label}"),
-    );
-    Ok(task)
-}
-
-/// 全量更新（按 id 替换）。`created_at` 由服务端保留，不可被前端改写；
-/// 改 `trigger` 后重算 `next_run_at`（契约 §5.4）。
-#[tauri::command]
-pub fn task_update(
-    app: AppHandle,
-    webview: tauri::Webview,
-    task: TaskDef,
-) -> Result<TaskDef, String> {
-    check_invocation_source(&webview, "task_update", None, &app)?;
-    let _store_guard = crate::tasks::task_store_lock();
-    let path = crate::tasks::tasks_file(&app);
-    let mut list = crate::tasks::load_tasks_at(&path);
-    let index = list
-        .iter()
-        .position(|t| t.id == task.id)
-        .ok_or_else(|| crate::tasks::TASK_NOT_FOUND.to_string())?;
-    // A10 R-4：参数校验在**更新期同样复跑** —— 防止脚本事后把参数改标 secret，
-    // 而既有任务仍持有明文值。
-    let meta = task_target_params(&app, task.kind, &task.target_id)?;
-    crate::tasks::validate_params(&meta, &task.params).map_err(|e| e.code().to_string())?;
-    crate::tasks::validate_task(&task).map_err(|e| e.code().to_string())?;
-
-    let created_at = list[index].created_at;
-    let mut next = task;
-    next.created_at = created_at;
-    next.updated_at = chrono::Utc::now();
-    next.next_run_at = crate::tasks::next_fire_after(&next.trigger, next.updated_at);
-    list[index] = next.clone();
-    crate::tasks::save_tasks_at(&path, &list)
-        .map_err(|_| crate::tasks::TASK_PERSIST_FAILED.to_string())?;
-
-    let kind_label = next.kind.as_str();
-    let trig_label = task_trigger_label(&next.trigger);
-    let id = next.id.clone();
-    workspace::log_audit(
-        &app,
-        "task.update",
-        format!("id={id} kind={kind_label} trigger={trig_label}"),
-    );
-    Ok(next)
-}
-
-/// 删除任务：**先取消该任务的在飞运行**，再删持久化条目（契约 §5.4）。
-/// `task-runs.json` 的历史**保留**（审计与排障需要），不随任务删除。
-/// 幂等：id 不存在返回稳定错误码，不 panic。
-#[tauri::command]
-pub fn task_remove(app: AppHandle, webview: tauri::Webview, id: String) -> Result<bool, String> {
-    check_invocation_source(&webview, "task_remove", None, &app)?;
-    let _store_guard = crate::tasks::task_store_lock();
-    check_id(&id, "任务 id")?;
-    let path = crate::tasks::tasks_file(&app);
-    let mut list = crate::tasks::load_tasks_at(&path);
-    let before = list.len();
-    let cancelled = crate::scheduler::cancel_in_flight(&app, &id);
-    list.retain(|t| t.id != id);
-    if list.len() == before {
-        return Err(crate::tasks::TASK_NOT_FOUND.to_string());
-    }
-    crate::tasks::save_tasks_at(&path, &list)
-        .map_err(|_| crate::tasks::TASK_PERSIST_FAILED.to_string())?;
-    workspace::log_audit(
-        &app,
-        "task.remove",
-        format!("id={id} cancelled={cancelled}"),
-    );
-    Ok(true)
-}
-
-/// 立即触发一次（`trigger = Manual`）。**不推进** `last_fired_at` / `next_run_at`；
-/// 同样受「同任务 in_flight」与全局并发约束，冲突时返回 `TASK_ALREADY_RUNNING`。
-#[tauri::command]
-pub fn task_run_now(
-    app: AppHandle,
-    webview: tauri::Webview,
-    id: String,
-) -> Result<RunSnapshot, String> {
-    check_invocation_source(&webview, "task_run_now", None, &app)?;
-    let _store_guard = crate::tasks::task_store_lock();
-    check_id(&id, "任务 id")?;
-    crate::scheduler::fire_now(&app, &id)
-}
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct ResourceItem {
@@ -1473,12 +1276,7 @@ fn check_tab_id(tab_id: &str) -> Result<(), String> {
 /// id 形态校验：只允许 `[A-Za-z0-9_-]`，长度 ≤ `IMAGE_ID_MAX_LEN`。
 ///
 /// 背景（M1-ACCEPT 审计挂账项）：`session_get/delete/export/restore` 的 id 会被直接
-/// 拼进文件名（`dir.join(format!("{id}.json"))`），缺形态校验时理论上可借 `../` 逃逸出
-/// 会话目录。主窗口本就在信任边界内（持有全部 invoke 能力），但纵深防御要求
-/// 所有「拿 id 拼路径」的入口先过这里——会话/成果/图片一律适用。
-fn check_id(id: &str, what: &str) -> Result<(), String> {
-    crate::images::validate_id(id).map_err(|_| format!("非法 {what}"))
-}
+
 
 /// 查询某 tab 的资源瀑布记录（含容量驱逐计数）。
 #[tauri::command]
@@ -1715,7 +1513,7 @@ pub fn session_get(
     id: String,
 ) -> Result<BrowserSession, String> {
     check_invocation_source(&webview, "session_get", None, &app)?;
-    check_id(&id, "会话 id")?;
+    crate::images::check_id(&id, "会话 id")?;
     crate::session::load_session(&workspace::sessions_dir(&app), &id)
 }
 
@@ -1723,7 +1521,7 @@ pub fn session_get(
 #[tauri::command]
 pub fn session_delete(app: AppHandle, webview: tauri::Webview, id: String) -> Result<bool, String> {
     check_invocation_source(&webview, "session_delete", None, &app)?;
-    check_id(&id, "会话 id")?;
+    crate::images::check_id(&id, "会话 id")?;
     let removed = crate::session::delete_session(&workspace::sessions_dir(&app), &id)?;
     workspace::log_audit(&app, "session_delete", format!("id={id} removed={removed}"));
     Ok(removed)
@@ -1738,7 +1536,7 @@ pub fn session_export(
     id: String,
 ) -> Result<String, String> {
     check_invocation_source(&webview, "session_export", None, &app)?;
-    check_id(&id, "会话 id")?;
+    crate::images::check_id(&id, "会话 id")?;
     let session = crate::session::load_session(&workspace::sessions_dir(&app), &id)?;
     let json = serde_json::to_string_pretty(&session).map_err(|e| e.to_string())?;
     workspace::log_audit(
@@ -1759,7 +1557,7 @@ pub fn session_restore(
     id: String,
 ) -> Result<TabInfo, String> {
     check_invocation_source(&webview, "session_restore", None, &app)?;
-    check_id(&id, "会话 id")?;
+    crate::images::check_id(&id, "会话 id")?;
     let session = crate::session::load_session(&workspace::sessions_dir(&app), &id)?;
     let tab = create_tab(app.clone(), &session.url)?;
     workspace::log_audit(
@@ -2793,7 +2591,7 @@ pub fn save_image(
     caption: Option<String>,
 ) -> Result<ImageRef, String> {
     check_invocation_source(&webview, "save_image", None, &app)?;
-    check_id(&artifact_id, "成果 id")?;
+    crate::images::check_id(&artifact_id, "成果 id")?;
 
     // IPC 载荷入口先卡一次上限，避免把超大内容带进内存后才判超限
     if data.is_empty() {
@@ -2835,7 +2633,7 @@ pub fn list_artifact_images(
     artifact_id: String,
 ) -> Result<Vec<ImageRef>, String> {
     check_invocation_source(&webview, "list_artifact_images", None, &app)?;
-    check_id(&artifact_id, "成果 id")?;
+    crate::images::check_id(&artifact_id, "成果 id")?;
     let art = workspace::load_artifacts(&app)
         .into_iter()
         .find(|a| a.id == artifact_id)
@@ -2966,7 +2764,7 @@ pub fn script_update(
     body: Option<String>,
 ) -> Result<ScriptMeta, String> {
     check_invocation_source(&webview, "script_update", None, &app)?;
-    check_id(&id, "脚本 id")?;
+    crate::images::check_id(&id, "脚本 id")?;
 
     let mut list = workspace::load_scripts(&app);
     let existing = list
@@ -3018,7 +2816,7 @@ pub fn script_update(
 #[tauri::command]
 pub fn script_remove(app: AppHandle, webview: tauri::Webview, id: String) -> Result<(), String> {
     check_invocation_source(&webview, "script_remove", None, &app)?;
-    check_id(&id, "脚本 id")?;
+    crate::images::check_id(&id, "脚本 id")?;
 
     let mut list = workspace::load_scripts(&app);
     let existing = list
@@ -3139,7 +2937,7 @@ pub fn snippet_update(
     timeout_secs: Option<u32>,
 ) -> Result<CommandSnippet, String> {
     check_invocation_source(&webview, "snippet_update", None, &app)?;
-    check_id(&id, "命令片段 id")?;
+    crate::images::check_id(&id, "命令片段 id")?;
     // M2-6.e：内置片段（id 带 `builtin:` 前缀）不可经用户接口修改，防命名空间冲突。
     if id.starts_with(crate::snippets::BUILTIN_SNIPPET_ID_PREFIX) {
         return Err("内置片段不可修改".to_string());
@@ -3187,7 +2985,7 @@ pub fn snippet_update(
 #[tauri::command]
 pub fn snippet_remove(app: AppHandle, webview: tauri::Webview, id: String) -> Result<(), String> {
     check_invocation_source(&webview, "snippet_remove", None, &app)?;
-    check_id(&id, "命令片段 id")?;
+    crate::images::check_id(&id, "命令片段 id")?;
 
     let mut list = workspace::load_snippets(&app);
     let existing = list
@@ -3218,7 +3016,7 @@ fn map_run_error(e: RunError) -> String {
 }
 
 fn get_enabled_script(app: &AppHandle, id: &str) -> Result<ScriptMeta, String> {
-    check_id(id, "脚本 id")?;
+    crate::images::check_id(id, "脚本 id")?;
     let script = workspace::load_scripts(app)
         .into_iter()
         .find(|s| s.id == id)
@@ -3231,7 +3029,7 @@ fn get_enabled_script(app: &AppHandle, id: &str) -> Result<ScriptMeta, String> {
 }
 
 fn get_enabled_snippet(app: &AppHandle, id: &str) -> Result<CommandSnippet, String> {
-    check_id(id, "命令片段 id")?;
+    crate::images::check_id(id, "命令片段 id")?;
     let snippet = workspace::load_snippets(app)
         .into_iter()
         .find(|s| s.id == id)
@@ -3253,7 +3051,7 @@ pub fn run_command(
     values: HashMap<String, String>,
 ) -> Result<RunSnapshot, String> {
     check_invocation_source(&webview, "run_command", None, &app)?;
-    check_id(&id, "命令片段 id")?;
+    crate::images::check_id(&id, "命令片段 id")?;
     let snippet = get_enabled_snippet(&app, &id)?;
     let count = snippet.params.len();
     let roots = crate::workspace::allowed_roots(&app);
@@ -3358,7 +3156,7 @@ pub fn cancel_script(
     run_id: String,
 ) -> Result<(), String> {
     check_invocation_source(&webview, "cancel_script", None, &app)?;
-    check_id(&run_id, "运行 id")?;
+    crate::images::check_id(&run_id, "运行 id")?;
     let table = Arc::clone(&app.state::<AppState>().script_runs);
     table.cancel(&run_id).map_err(map_run_error)?;
     workspace::log_audit(&app, "script.run.cancel", format!("run_id={run_id}"));
@@ -3373,7 +3171,7 @@ pub fn script_status(
     run_id: String,
 ) -> Result<RunSnapshot, String> {
     check_invocation_source(&webview, "script_status", None, &app)?;
-    check_id(&run_id, "运行 id")?;
+    crate::images::check_id(&run_id, "运行 id")?;
     let snapshot = app
         .state::<AppState>()
         .script_runs
@@ -3402,7 +3200,7 @@ pub fn script_runs_list(
     let path = workspace::script_runs_file(&app);
     let mut records = crate::script_runner::load_run_records(&path);
     if let Some(sid) = script_id.as_deref() {
-        check_id(sid, "脚本 id")?;
+        crate::images::check_id(sid, "脚本 id")?;
         records.retain(|r| r.script_id == sid);
     }
     // 审计 detail 只含 count + 可选 script_id，不含任何参数值（沿用 M2-4.b-VERDICT
@@ -5691,10 +5489,10 @@ mod session_gate_tests {
     #[test]
     fn session_id_must_be_path_safe() {
         let uuid = uuid::Uuid::new_v4().to_string();
-        assert!(check_id(&uuid, "会话 id").is_ok());
+        assert!(crate::images::check_id(&uuid, "会话 id").is_ok());
         for bad in ["../../etc/passwd", "/etc/passwd", "..", "", "a/b", "a\\b"] {
             assert!(
-                check_id(bad, "会话 id").is_err(),
+                crate::images::check_id(bad, "会话 id").is_err(),
                 "必须拒绝非法会话 id: {bad:?}"
             );
         }
@@ -5730,9 +5528,9 @@ mod image_gate_tests {
     #[test]
     fn artifact_id_must_be_path_safe() {
         let uuid = uuid::Uuid::new_v4().to_string();
-        assert!(check_id(&uuid, "成果 id").is_ok());
+        assert!(crate::images::check_id(&uuid, "成果 id").is_ok());
         for bad in ["../../etc/passwd", "/etc", "..", "", "a/b"] {
-            assert!(check_id(bad, "成果 id").is_err(), "必须拒绝: {bad:?}");
+            assert!(crate::images::check_id(bad, "成果 id").is_err(), "必须拒绝: {bad:?}");
         }
     }
 

@@ -71,7 +71,7 @@ commands:
     current_boundary: "framework/commands.rs（Native Physical Boundary 分解迁入）"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   task_list:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/capabilities/task/commands.rs"
     owner: "task"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/task/**"
@@ -81,7 +81,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   task_add:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/capabilities/task/commands.rs"
     owner: "task"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/task/**"
@@ -91,7 +91,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   task_update:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/capabilities/task/commands.rs"
     owner: "task"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/task/**"
@@ -101,7 +101,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   task_remove:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/capabilities/task/commands.rs"
     owner: "task"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/task/**"
@@ -111,7 +111,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   task_run_now:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/capabilities/task/commands.rs"
     owner: "task"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/task/**"

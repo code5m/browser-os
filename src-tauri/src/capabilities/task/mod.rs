@@ -5,10 +5,14 @@
 //!   `script_runner::start_run` / `start_command`，禁止第二套进程 / spawn 路径）。
 //! - `tasks.rs`（后续 Pilot 迁入同目录）：定时任务纯函数（校验 / cron / 持久化）。
 //!
-//! 命令层（`start_scheduler` / `stop_scheduler` / `fire_task_now` / `create_task` /
-//! `update_task` / `delete_task` / `toggle_task` / `list_tasks` / `get_task` /
-//! `list_task_runs` / `get_task_run` 等）注册在 `bridge.rs` 经 `generate_handler!`，
-//! 命令体内部委托本模块引擎 / 纯函数。本模块本身**不含 `#[tauri::command]`**。
+//! 命令层：本目录现含两个子模块——
+//! - `commands.rs`：`task_list` / `task_add` / `task_update` / `task_remove` /
+//!   `task_run_now` 五个命令及其私有 helper（CAPABILITY_NATIVE_ADAPTER），
+//!   迁移自 `bridge.rs`（native-physical-batch-task）。
+//! - `scheduler.rs`：调度引擎（`start_scheduler` / `stop_scheduler` / `fire_now` 等
+//!   命令仍注册在 `bridge.rs`，命令体委托本引擎）。
+//! 命令体内部委托本模块引擎 / 纯函数；能力目录不含散落的 `#[tauri::command]` 于
+//! `scheduler.rs` 之外。
 //!
 //! 迁移自 `src-tauri/src/scheduler.rs`
 //! （Native Physical Boundary Matrix Pilot 9，见
@@ -20,3 +24,4 @@
 //! （scheduler.rs line 28 / 648），耦合 bridge hub 的全局 AppState；属矩阵 §9
 //! AppState Field Ownership Matrix 待下沉项。
 pub mod scheduler;
+pub mod commands;
