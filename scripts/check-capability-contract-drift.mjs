@@ -180,6 +180,16 @@ function loadReal() {
     const id = d.startsWith('src/capabilities/') ? d.split('/')[2] : 'settings'
     manifests[id] = parseManifest(readFileSync(p, 'utf8'))
   }
+  // M2 包：manifest 已迁入 packages/capability-<id>/src/manifest.ts（原 src/capabilities/<id>/manifest.ts
+  // 在 M2(B) 删除）。DRIFT-05 必须识别包内 manifest，否则误报「registry 有条目但无 manifest.ts」。
+  // id 由包名 capability-<id> 推导（与 capabilityId 一致）。
+  for (const d of readdirSync(join(ROOT, 'packages'))) {
+    if (!d.startsWith('capability-')) continue
+    const p = join(ROOT, 'packages', d, 'src', 'manifest.ts')
+    if (!existsSync(p)) continue
+    const id = d.slice('capability-'.length)
+    manifests[id] = parseManifest(readFileSync(p, 'utf8'))
+  }
   return { registryText, manifests }
 }
 
