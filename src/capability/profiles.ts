@@ -32,6 +32,7 @@ import { TASK_CAPABILITY_ID } from '../capabilities/task'
 import { CLIPBOARD_CAPABILITY_ID } from '../capabilities/clipboard'
 import { APPS_CAPABILITY_ID } from '../capabilities/apps'
 import { TOOLS_CAPABILITY_ID } from '../capabilities/tools'
+import { HOME_CAPABILITY_ID } from '../capabilities/home'
 
 // 注意：preset 只是「预设」，不是产品边界。任意合法组合走 VITE_CAPABILITY_ASSEMBLY（见 index.ts）。
 export type CapabilityProfileId = 'framework' | 'minimal' | 'developer' | 'full' | 'custom'
@@ -63,6 +64,7 @@ export const CAPABILITY_PROFILES: Record<CapabilityProfileId, string[]> = {
     CLIPBOARD_CAPABILITY_ID,
     APPS_CAPABILITY_ID,
     TOOLS_CAPABILITY_ID,
+    HOME_CAPABILITY_ID,
   ],
   // custom 的清单不在此处：由运行时 VITE_CAPABILITY_ASSEMBLY 决定（这里必须是同一 Record 的一分子）
   custom: [],

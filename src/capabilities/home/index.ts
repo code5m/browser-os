@@ -2,7 +2,6 @@ import { defineAsyncComponent, h } from "vue";
 import { homeManifest } from "./manifest";
 import { contributionRegistry } from "../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
-import type { Capability } from "../../capability/types";
 
 export const HOME_CAPABILITY_ID = "home";
 
@@ -39,25 +38,14 @@ export function registerHomeContributions(): void {
   });
 }
 
-export const homeCapability: Capability = {
-  id: HOME_CAPABILITY_ID,
-  manifest: homeManifest,
-  registerContributions(reg) {
-    reg.registerContribution({
-      id: "home.main",
-      capabilityId: HOME_CAPABILITY_ID,
-      type: "surface",
-      slot: CONTRIBUTION_SLOTS.WORKBENCH_MAIN,
-      view: "home",
-      label: "主页",
-      icon: "🏠",
-      component: HomePanel,
-    });
+// Home 采用与 apps/tools/bookmark 一致的显式注册模式：
+// 能力描述自己的贡献（registerHomeContributions），由 Host 在能力激活时（lifecycle.onActivate）调用，
+// 不再依赖模块加载副作用。Home 已纳入 full profile（见 src/capability/profiles.ts），
+// 激活路径与贡献注册一一对应，absent 能力不会污染贡献注册表。
+export const homeCapability = {
+  ...homeManifest,
+  lifecycle: {
+    ...homeManifest.lifecycle,
+    onActivate: registerHomeContributions,
   },
 };
-
-// 模块加载即注册主页贡献（与 apps/tools/vault 等能力一致）：
-// runtime.activate 不会调用 def.registerContributions（见 src/capability/runtime.ts），
-// 故能力贡献必须靠模块加载时自注册；否则贡献注册表无 view='home' 条目，
-// MainArea 的 viewOf('home') 为 undefined → 主区空白（首页不渲染）。
-registerHomeContributions();
