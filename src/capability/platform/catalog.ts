@@ -18,7 +18,7 @@ import { taskManifest } from "../../capabilities/task/manifest";
 import { clipboardManifest } from "../../capabilities/clipboard/manifest";
 import { appsManifest } from "../../capabilities/apps/manifest";
 import { toolsManifest } from "../../capabilities/tools/manifest";
-import { vaultManifest } from "@browser-os/capability-vault";
+import { vaultManifest } from "@browser-os/capability-vault/manifest";
 import { settingsManifest } from "../../settings/manifest";
 import { homeManifest } from "../../capabilities/home/manifest";
 import type { CapabilityManifestV1 } from "./contract";
