@@ -58,6 +58,50 @@ const SPECS = {
       forbiddenInPackage: [],
     },
   },
+  // 预置：Bookmark 为 §9 选定的第三个 M2 sample（LOWEST_RISK + HIGH_INFORMATION_VALUE，
+  // 纯能力无 native 命令、规模小、验证 Contribution/Slot 模型）。以下 spec 为按 Vault 干净模式
+  // 投影的初值；真正打包成 packages/capability-bookmark/ 时须按实际公共符号/下沉 symbol 校正。
+  // 包未提交前 → --all 自动 SKIP（不误报）。
+  bookmark: {
+    packageRoot: "packages/capability-bookmark",
+    packageName: "@browser-os/capability-bookmark",
+    capabilityId: "bookmark",
+    manifestSubpath: "src/manifest.ts",
+    publicEntry: "src/index.ts",
+    expectedExports: [".", "./manifest"],
+    contributionId: "bookmark.main",
+    storeId: "bookmark",
+    oldImplementationPaths: ["src/capabilities/bookmark", "src/stores/useBookmarkStore.ts"],
+    specialRules: {
+      sunkSymbols: [],
+      publicSymbols: ["createBookmarkCapability", "bookmarkContribution", "BOOKMARK_PORTS_KEY"],
+      uiDir: "ui",
+      contributionDescriptorName: "bookmarkContribution",
+      forbiddenInPackage: [],
+    },
+  },
+  // 第三个 M2 样本候选（§9 评估选定 bookmark）。包目前仍是 M1 形态
+  // （src/capabilities/bookmark/，public.ts 再导出），尚未升格为 npm 包。
+  // 一旦按 Vault 干净模式升格为 packages/capability-bookmark/，本 spec 即生效，
+  // 无需新建脚本。下方特殊规则值为按 Vault 模式投影，升格时按真实命名校准。
+  bookmark: {
+    packageRoot: "packages/capability-bookmark",
+    packageName: "@browser-os/capability-bookmark",
+    capabilityId: "bookmark",
+    manifestSubpath: "src/manifest.ts",
+    publicEntry: "src/index.ts",
+    expectedExports: [".", "./manifest"],
+    contributionId: "bookmark.main",
+    storeId: "bookmark",
+    oldImplementationPaths: ["src/capabilities/bookmark", "src/stores/useBookmarkStore.ts"],
+    specialRules: {
+      sunkSymbols: [],
+      publicSymbols: ["createBookmarkCapability", "bookmarkContribution", "BOOKMARK_PORTS_KEY"],
+      uiDir: "ui",
+      contributionDescriptorName: "bookmarkContribution",
+      forbiddenInPackage: [],
+    },
+  },
   // 预置：Clipboard M2 包当前在主工作树为 WORKTREE_VERIFIED_UNCOMMITTED（DO_NOT_TOUCH）。
   // 一旦其包提交进某 worktree，本 checker 即可用同一参数化逻辑验证，无需新建脚本。
   clipboard: {
