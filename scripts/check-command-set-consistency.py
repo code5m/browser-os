@@ -90,7 +90,12 @@ def registered_commands(src=None):
     names = set()
     # 捕获每一个 generate_handler![ ... ] 块（不止第一个）。
     for blk in re.finditer(r"generate_handler!\s*\[(.*?)\]", src, re.S):
-        for m in re.finditer(r"(\w+)::(\w+)", blk.group(1)):
+        # 命令名是 generate_handler! 条目的「最后一段」标识符。
+        # 重构后的 main.rs 用多段路径注册（如 crate::capabilities::git::commands::request_sync、
+        # crate::framework::commands::debug_log），若只取首个 :: 对会误捕中间模块名
+        # （capabilities/framework），造成「已注册命令」集合失真、大量假阳性漂移。
+        # 锚定条目终止符（逗号/右括号）以捕获真正的命令名。
+        for m in re.finditer(r"(\w+)::(\w+)\s*[,)\]]", blk.group(1)):
             names.add(m.group(2))
     return names
 

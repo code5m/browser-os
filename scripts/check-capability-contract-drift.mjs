@@ -205,6 +205,9 @@ function runSelfTest() {
     }
   }
   const regOk = '  - id: demo\n    dependsOn:\n      - bridge\n    optionalDependencies: []\n    entrypoint: src/capabilities/demo\n'
+  // DRIFT-02 必须用「真实 capability 依赖」触发：bridge 是 SHARED_INFRA，dropInfra 两侧都会归一化掉，
+  // 用它做 fixture 会让「manifest 丢了依赖」这种漂移被漏检（self-test 假绿）。改用 git（真实能力）才能验证 DRIFT-02。
+  const regDepGit = '  - id: demo\n    dependsOn:\n      - git\n    optionalDependencies: []\n    entrypoint: src/capabilities/demo\n'
   t('POSITIVE: 完全一致', [], {
     registryText: regOk,
     manifests: {
@@ -217,7 +220,7 @@ function runSelfTest() {
     },
   })
   t('DRIFT-02: dependsOn 漂移', ['DRIFT-02'], {
-    registryText: regOk,
+    registryText: regDepGit,
     manifests: {
       demo: {
         id: 'demo', v1Id: 'demo',
