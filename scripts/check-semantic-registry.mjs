@@ -718,8 +718,8 @@ const ANCHOR_FILES = [
   { path: "src/capabilities/clipboard/state/useClipboardStore.ts", src: `const clipText = ref(""); const clipHistory = reactive([]);` },
   { path: "src/capabilities/apps/state/useAppsStore.ts", src: `const apps = ref([]); const appFilter = ref("");` },
   { path: "src/capabilities/tools/state/useToolsStore.ts", src: `const tools = ref([]);` },
-  // STAGE I-A：Vault 迁入 capabilities/vault/state（owner_implementations 已登记）；锚点跟随 locator。
-  { path: "src/capabilities/vault/state/useVaultStore.ts", src: `const path = ref("");` },
+  // Frontend M2：Vault 升级为 packages/capability-vault（owner_implementations 锚点跟随 locator）。
+  { path: "packages/capability-vault/src/state/useVaultStore.ts", src: `const path = ref("");` },
   // Capability Library Expansion v1：Home 域专属 owner（owner_implementations 已登记）；锚点跟随 locator。
   { path: "src/capabilities/home/state/useHomeStore.ts", src: `const shortcuts = reactive([]); const recents = reactive([]);` },
   // SG-C Medium：agent/database/git/skill 专属 owner；锚点跟随 locator。

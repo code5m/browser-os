@@ -1,0 +1,36 @@
+{
+  "name": "@browser-os/capability-vault",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Vault capability package — M2 isolated capability boundary (Frontend M2 Pilot)",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./manifest": {
+      "types": "./src/manifest.ts",
+      "import": "./src/manifest.ts"
+    }
+  },
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "check": "tsc --noEmit && node scripts/check-package.mjs && node scripts/check-vault-logic.mjs"
+  },
+  "dependencies": {
+    "@lucide/vue": "^1.42.0",
+    "@tauri-apps/plugin-dialog": "^2.7.3",
+    "dompurify": "^3.4.15",
+    "marked": "^18.0.12",
+    "pinia": "^2.3.1",
+    "vue": "^3.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  },
+  "peerDependencies": {
+    "vue": ">=3.4.0"
+  }
+}

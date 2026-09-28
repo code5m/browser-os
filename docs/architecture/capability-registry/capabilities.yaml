@@ -436,7 +436,7 @@ capabilities:
     persistence:
       scope: none
       sensitive: false
-    entrypoint: src/capabilities/vault/index.ts
+    entrypoint: packages/capability-vault/src/index.ts
 
   # Capability Library Expansion v1（STAGE G）：Task 物理迁入 capabilities/task/（manifest/public/index/ui/state）。
   # 后端 task_list/add/update/remove/run_now 已实现；进程内唯一调度线程（scheduler.rs）驱动，执行复用 script_runner。

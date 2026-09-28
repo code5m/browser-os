@@ -193,10 +193,10 @@ function checkTauriDevLog(logPath, tombstoned) {
     // 4) 关键 capability 入口 + 真实组件文件必须是合法 JS 模块
     const mustBeModules = [
       "/src/capabilities/home/index.ts",
-      "/src/capabilities/vault/index.ts",
+      "/packages/capability-vault/src/index.ts",
       "/src/capabilities/tools/index.ts",
       "/src/capabilities/home/ui/HomePanel.vue",
-      "/src/capabilities/vault/ui/VaultPanel.vue",
+      "/packages/capability-vault/src/ui/VaultPanel.vue",
       "/src/capabilities/tools/ui/ToolBox.vue",
     ];
     for (const m of mustBeModules) {

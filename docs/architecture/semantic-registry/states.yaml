@@ -99,10 +99,10 @@ owner_implementations:
     paths:
       - src/capabilities/terminal/state/useTerminalStore.ts
   useVaultStore:
-    # STAGE I-A：Vault 域从 src/stores 迁入专属 owner（capabilities/vault/state）。
+    # Frontend M2：Vault 升级为 packages/capability-vault（state owner 仍在包内）。
     symbol: useVaultStore
     paths:
-      - src/capabilities/vault/state/useVaultStore.ts
+      - packages/capability-vault/src/state/useVaultStore.ts
   useHomeStore:
     # Capability Library Expansion v1：Home 域专属 owner（capabilities/home/state）。
     symbol: useHomeStore

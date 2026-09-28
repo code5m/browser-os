@@ -56,7 +56,7 @@ migrations:
   - id: MIG-VAULT-PANEL
     owner: vault
     from: src/components/workspace/VaultPanel.vue
-    to: src/capabilities/vault/ui/VaultPanel.vue
+    to: packages/capability-vault/src/ui/VaultPanel.vue
     migration_status: TOMBSTONED
     trigger: git mv within live dev lifecycle
     runtime_policy: stale-reference-must-fail

@@ -50,7 +50,7 @@ modules:
   - moduleId: vault.panel
     owner: vault
     category: UI_COMPONENT
-    canonicalImplementation: src/capabilities/vault/ui/VaultPanel.vue
+    canonicalImplementation: packages/capability-vault/src/ui/VaultPanel.vue
     runtimeLoader: capability-contribution
     oldLocations:
       - src/components/workspace/VaultPanel.vue
