@@ -21,7 +21,11 @@ import { taskCapability, TASK_CAPABILITY_ID } from '../capabilities/task'
 import { clipboardCapability, CLIPBOARD_CAPABILITY_ID } from '../capabilities/clipboard'
 import { appsCapability, APPS_CAPABILITY_ID } from '../capabilities/apps'
 import { toolsCapability, TOOLS_CAPABILITY_ID } from '../capabilities/tools'
-import { vaultCapability } from '../capabilities/vault'
+import { createVaultCapability, vaultContribution, VAULT_PORTS_KEY, type VaultPorts } from '@browser-os/capability-vault'
+import { bridge } from '../bridge'
+import { useWorkbenchStore } from '../stores/useWorkbenchStore'
+import { layoutPositions } from '../utils/graphUi'
+import { contributionRegistry } from './contribution/registry'
 import { settingsCapability } from '../settings'
 import { homeCapability } from '../capabilities/home'
 import { CAPABILITY_PROFILES, DEFAULT_PROFILE, type CapabilityProfileId, profileFromEnv, resolveProfile } from './profiles'
@@ -35,6 +39,20 @@ import { setCapabilityRuntime, peekCapabilityRuntime } from './runtimeSingleton'
 // 引用的能力入口」摇树删除——否则新增能力（如 git）会在组合测试甚至生产包中凭空消失。
 // 顺序 = **依赖安全顺序**：bootstrap 逐条 register→resolve→activate，故能力依赖必须先行注册
 // （如 git 依赖 workspace）。bridge/credential 为外部基础设施，由 runtime 豁免，不在此列。
+// === Vault M2 package wiring（Host 侧适配）===
+// 窄 Host Contract 显式提供：桥接 bridge.vaultOpen / 工作区折叠 / 图布局。
+// 包本身不 import 这些 host 内部（满足 PKG-06）；仅 Host 在此组装。
+const vaultInstancePorts: VaultPorts = {
+  native: { openVault: (path: string) => bridge.vaultOpen(path) },
+  shell: { isWorkbenchCollapsed: () => useWorkbenchStore().collapsed.value },
+  graphLayout: { layoutGraph: (nodes, edges) => layoutPositions(nodes as any, edges as any) },
+};
+const vault = createVaultCapability(vaultInstancePorts);
+// Host 负责注册贡献（避免 Vault → Host registry 反向依赖）：onActivate 时注册包导出的描述符。
+vault.vaultCapability.lifecycle.onActivate = () => contributionRegistry.register(vaultContribution as any);
+/** 供 main.ts 经 app.provide(VAULT_PORTS_KEY, vaultPorts) 注入表现层契约 */
+export const vaultPorts = vaultInstancePorts;
+
 export const ALL_CAPABILITIES = [
   { id: BOOKMARK_CAPABILITY_ID, def: bookmarkCapability },
   { id: WORKSPACE_CAPABILITY_ID, def: workspaceCapability },
@@ -50,7 +68,7 @@ export const ALL_CAPABILITIES = [
   { id: CLIPBOARD_CAPABILITY_ID, def: clipboardCapability },
   { id: APPS_CAPABILITY_ID, def: appsCapability },
   { id: TOOLS_CAPABILITY_ID, def: toolsCapability },
-  { id: 'vault', def: vaultCapability },
+  { id: 'vault', def: vault.vaultCapability },
   { id: 'settings', def: settingsCapability },
   { id: 'home', def: homeCapability },
 ]

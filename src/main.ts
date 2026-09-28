@@ -4,7 +4,8 @@ import App from "./App.vue";
 import "./styles/tokens.css";
 import "./styles/global.css";
 import { bridge } from "./bridge";
-import { bootstrapCapabilityRuntime } from "./capability";
+import { bootstrapCapabilityRuntime, vaultPorts } from "./capability";
+import { VAULT_PORTS_KEY } from "@browser-os/capability-vault";
 
 document.documentElement.style.background = "#fff";
 document.body.style.background = "#fff";
@@ -54,6 +55,8 @@ function mountApp() {
       bridge.debugLog(`[FE] Vue error ${info}: ${error instanceof Error ? error.stack || error.message : String(error)}`);
     };
     app.use(createPinia()).mount(rootEl);
+    // Vault M2：注入 Host 表现层契约（窄 port），供包内组件经 inject 取用，不反向依赖 Host。
+    app.provide(VAULT_PORTS_KEY, vaultPorts);
     bridge.debugLog("[FE] vue mounted");
   } catch (e) {
     bridge.debugLog("[FE] vue mount failed: " + (e instanceof Error ? e.message : String(e)));
