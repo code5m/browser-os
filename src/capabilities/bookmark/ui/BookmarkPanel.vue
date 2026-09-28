@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, type ComponentPublicInstance } from "vue";
 import type { Bookmark } from "../../../types";
 import { useBrowserStore } from "../../browser/public";
 import { useBookmarkStore } from "../state/useBookmarkStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { bridge } from "../../../bridge";
-import CredentialList from "../../browser/ui/CredentialList.vue";
+import { contributionRegistry } from "../../../capability/contribution/registry";
+import { CONTRIBUTION_SLOTS } from "../../../capability/contribution/types";
 
 // 收藏夹侧栏（M1-3）：按 created_at 倒序展示 bridge.bookmarkList()，
 // 点项在内嵌浏览器打开（不走系统默认浏览器，那是 M1-4），按 id 删除。
@@ -17,7 +18,11 @@ const passwordInput = ref<HTMLInputElement>();
 const expanded = ref(new Set<string>());
 // 「账号」视图：查看已导入的浏览器账号（只读，绝不显示密码）
 const showCredentials = ref(false);
-const credList = ref<InstanceType<typeof CredentialList> | null>(null);
+// 凭证列表：经通用 Contribution Registry 由 browser 贡献，BookmarkPanel 不 import browser 内部 UI（C3 关键）。
+const credentialListComp = contributionRegistry.getSurfaceContributions(
+  CONTRIBUTION_SLOTS.BOOKMARK_CREDENTIALS,
+)[0]?.component
+const credList = ref<ComponentPublicInstance | null>(null);
 
 // 侧栏可能先于 ⭐ 按钮挂载（如刷新后直接展开），这里兜底加载一次
 onMounted(() => {
@@ -111,7 +116,7 @@ async function importPasswords(event: Event) {
     layout.showToast(`已安全导入 ${count} 条账号密码`);
     // 导入后切到「账号」视图，让结果可见；已挂载则显式刷新，未挂载时组件挂载会自行加载
     showCredentials.value = true;
-    if (credList.value) credList.value.load();
+    if (credList.value) (credList.value as unknown as { load: () => void }).load();
   } catch (error) {
     layout.showToast("账号密码导入失败: " + String((error as Error)?.message || error));
   } finally {
@@ -138,7 +143,7 @@ async function importPasswords(event: Event) {
       <input ref="passwordInput" class="hidden-file" type="file" accept=".csv,text/csv" @change="importPasswords" />
     </div>
     <div v-if="bookmarks.error" class="bm-error">{{ bookmarks.error }}</div>
-    <CredentialList v-if="showCredentials" ref="credList" />
+    <component :is="credentialListComp" v-if="showCredentials" ref="credList" />
     <div v-else class="bm-list">
       <template v-if="total">
         <section v-for="[category, entries] in groups" :key="category" class="bm-group">

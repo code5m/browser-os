@@ -15,10 +15,11 @@ import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types"
 export const GIT_CAPABILITY_ID = "git"
 
 const GitPanel = defineAsyncComponent(() => import("./ui/GitPanel.vue"))
+const GitHistory = defineAsyncComponent(() => import("./ui/GitHistory.vue"))
 
 /**
- * 注册 Git 对 RepoPanel 的贡献（REPO_SUBVIEW 槽）。
- * Git absent → 槽为空 → RepoPanel 的 git 页签不渲染 GitPanel（能力模型一致：能力缺席即无面板）。
+ * 注册 Git 对 RepoPanel 的贡献（REPO_SUBVIEW 槽，按 view 认领两个子页签）。
+ * Git absent → 槽为空 → RepoPanel 的 git 页签不渲染 GitPanel / GitHistory（能力模型一致：能力缺席即无面板）。
  */
 export function registerGitContributions(): void {
   contributionRegistry.registerContribution({
@@ -26,7 +27,16 @@ export function registerGitContributions(): void {
     capabilityId: GIT_CAPABILITY_ID,
     type: "surface",
     slot: CONTRIBUTION_SLOTS.REPO_SUBVIEW,
+    view: "git",
     component: GitPanel,
+  })
+  contributionRegistry.registerContribution({
+    id: "git.repo.history",
+    capabilityId: GIT_CAPABILITY_ID,
+    type: "surface",
+    slot: CONTRIBUTION_SLOTS.REPO_SUBVIEW,
+    view: "history",
+    component: GitHistory,
   })
 }
 

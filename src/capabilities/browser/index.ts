@@ -17,6 +17,11 @@ export const BROWSER_CAPABILITY_ID = "browser"
 const BrowserHost = defineAsyncComponent(() => import("./ui/BrowserHost.vue"))
 const ResourceWaterfall = defineAsyncComponent(() => import("./ui/ResourceWaterfall.vue"))
 const SessionPanel = defineAsyncComponent(() => import("./ui/SessionPanel.vue"))
+const ImageLightbox = defineAsyncComponent(() => import("./ui/ImageLightbox.vue"))
+const AINavPanel = defineAsyncComponent(() => import("./ui/AINavPanel.vue"))
+const GridArchiveBar = defineAsyncComponent(() => import("./ui/GridArchiveBar.vue"))
+const CredentialList = defineAsyncComponent(() => import("./ui/CredentialList.vue"))
+const ImageGallery = defineAsyncComponent(() => import("./ui/ImageGallery.vue"))
 
 /**
  * 注册 Browser 对 Shell 的贡献（Contribution/Slot 模型）。
@@ -52,6 +57,42 @@ export function registerBrowserContributions(): void {
     label: "会话",
     icon: "💾",
     order: 40,
+  })
+  // 以下组件经通用 Contribution Registry 贡献给 Shell / 宿主面板，browser 内部 UI 不暴露于能力边界之外。
+  contributionRegistry.registerContribution({
+    id: "browser.image-lightbox",
+    capabilityId: BROWSER_CAPABILITY_ID,
+    type: "surface",
+    slot: CONTRIBUTION_SLOTS.GLOBAL_OVERLAY,
+    component: ImageLightbox,
+  })
+  contributionRegistry.registerContribution({
+    id: "browser.ai-nav-panel",
+    capabilityId: BROWSER_CAPABILITY_ID,
+    type: "surface",
+    slot: CONTRIBUTION_SLOTS.AI_NAV_PANEL,
+    component: AINavPanel,
+  })
+  contributionRegistry.registerContribution({
+    id: "browser.grid-archive-bar",
+    capabilityId: BROWSER_CAPABILITY_ID,
+    type: "surface",
+    slot: CONTRIBUTION_SLOTS.ACTIVITY_BAR_GRID_ARCHIVE,
+    component: GridArchiveBar,
+  })
+  contributionRegistry.registerContribution({
+    id: "browser.credential-list",
+    capabilityId: BROWSER_CAPABILITY_ID,
+    type: "surface",
+    slot: CONTRIBUTION_SLOTS.BOOKMARK_CREDENTIALS,
+    component: CredentialList,
+  })
+  contributionRegistry.registerContribution({
+    id: "browser.image-gallery",
+    capabilityId: BROWSER_CAPABILITY_ID,
+    type: "surface",
+    slot: CONTRIBUTION_SLOTS.ARTIFACT_IMAGE_GALLERY,
+    component: ImageGallery,
   })
 }
 

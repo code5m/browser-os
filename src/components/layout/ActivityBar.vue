@@ -16,7 +16,6 @@ import { useFileStore } from "../../capabilities/workspace/public";
 import { redactSecrets } from "../../utils/redact";
 import { Search, PanelLeftClose, PanelLeftOpen } from "@lucide/vue";
 import { useWorkbenchStore } from "../../stores/useWorkbenchStore";
-import GridArchiveBar from "../../capabilities/browser/ui/GridArchiveBar.vue";
 import { contributionRegistry } from "../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
 const workbench = useWorkbenchStore();
@@ -370,7 +369,7 @@ async function openDirCenter() {
       <button class="er-primary" @click="browser.gridSendAi">发送</button>
     </div>
 
-    <GridArchiveBar v-if="browser.gridOpen && layout.mainView === 'grid'" />
+    <component :is="gridArchiveBarComp" v-if="browser.gridOpen && layout.mainView === 'grid'" />
     <!-- 宫格设置扩展行 -->
     <div v-if="layout.navSection === 'grid'" id="nav-grid-row" class="expand-row">
       <span class="er-label">模式</span>

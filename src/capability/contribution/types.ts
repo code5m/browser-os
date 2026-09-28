@@ -42,6 +42,17 @@ export interface ContributionSlots {
    * RepoPanel 只按槽渲染、不 import 能力内部，避免 workspace→git 反向依赖环（C3 关键）。
    */
   readonly REPO_SUBVIEW: "repo-subview"
+  /** 全局浮层槽：能力向 Shell 贡献顶层模态/灯箱（ConfirmModal / ImageLightbox 等）。
+   * Shell 只按槽渲染，不 import 能力内部 UI（C3 关键）。 */
+  readonly GLOBAL_OVERLAY: "global-overlay"
+  /** AI 导航面板槽：browser 向 Shell 贡献 AINavPanel。 */
+  readonly AI_NAV_PANEL: "ai-nav-panel"
+  /** 活动栏宫格归档条槽：browser 向 ActivityBar 贡献 GridArchiveBar。 */
+  readonly ACTIVITY_BAR_GRID_ARCHIVE: "activity-bar-grid-archive"
+  /** 收藏夹凭证列表槽：browser 向 BookmarkPanel 贡献 CredentialList。 */
+  readonly BOOKMARK_CREDENTIALS: "bookmark-credentials"
+  /** 成果图库槽：browser 向 ArtifactPanel 贡献 ImageGallery。 */
+  readonly ARTIFACT_IMAGE_GALLERY: "artifact-image-gallery"
 }
 
 export const CONTRIBUTION_SLOTS = {
@@ -53,6 +64,11 @@ export const CONTRIBUTION_SLOTS = {
   BROWSER_HOST: "browser-host",
   BROWSER_DOCK: "browser-dock",
   REPO_SUBVIEW: "repo-subview",
+  GLOBAL_OVERLAY: "global-overlay",
+  AI_NAV_PANEL: "ai-nav-panel",
+  ACTIVITY_BAR_GRID_ARCHIVE: "activity-bar-grid-archive",
+  BOOKMARK_CREDENTIALS: "bookmark-credentials",
+  ARTIFACT_IMAGE_GALLERY: "artifact-image-gallery",
 } as const satisfies ContributionSlots
 
 /** 一条能力贡献 */

@@ -16,7 +16,7 @@ export const workspaceManifest: CapabilityDefinition = {
     "workspace.main-view",
   ],
   dependsOn: [],
-  optionalDependencies: ["browser"],
+  optionalDependencies: ["browser", "git"],
   lifecycle: {
     supported: ["ACTIVE", "SUSPENDED"],
     default: "ACTIVE",
@@ -46,7 +46,7 @@ export const workspaceManifest: CapabilityDefinition = {
     maturity: "C3",
     maturityEvidence: ["scripts/check-capability-pilot.mjs", "scripts/check-composition-profiles.mjs"],
     dependencies: [],
-    optionalDependencies: ["browser"],
+    optionalDependencies: ["browser", "git"],
     conflicts: [],
     provides: [
       "workspace.files",

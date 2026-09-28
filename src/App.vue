@@ -21,10 +21,9 @@ import WorkbenchCommands from './components/layout/WorkbenchCommands.vue';
 import WorkbenchRail from './components/layout/WorkbenchRail.vue';
 import MainArea from "./components/layout/MainArea.vue";
 import StatusBar from "./components/layout/StatusBar.vue";
-import ConfirmModal from "./capabilities/git/ui/ConfirmModal.vue";
 import { GitWriteConfirmDialog } from "./capabilities/git/public";
-import ImageLightbox from "./capabilities/browser/ui/ImageLightbox.vue";
-import AINavPanel from "./capabilities/browser/ui/AINavPanel.vue";
+import { contributionRegistry } from "./capability/contribution/registry";
+import { CONTRIBUTION_SLOTS } from "./capability/contribution/types";
 
 const browser = useBrowserStore();
 const resources = useResourceStore();
@@ -38,6 +37,17 @@ const clipboardStore = useClipboardStore();
 const term = useTerminalStore();
 const layout = useLayoutStore();
 const settings = useSettingsStore();
+
+// 全局浮层 / AI 导航面板经通用 Contribution Registry 渲染，Shell 不 import 能力内部 UI（C3 关键）。
+const confirmModalComp = contributionRegistry
+  .getSurfaceContributions(CONTRIBUTION_SLOTS.GLOBAL_OVERLAY)
+  .find((c) => c.id === "git.confirm-modal")?.component
+const imageLightboxComp = contributionRegistry
+  .getSurfaceContributions(CONTRIBUTION_SLOTS.GLOBAL_OVERLAY)
+  .find((c) => c.id === "browser.image-lightbox")?.component
+const aiNavPanelComp = contributionRegistry.getSurfaceContributions(
+  CONTRIBUTION_SLOTS.AI_NAV_PANEL,
+)[0]?.component
 
 // W17(A7): 外壳级兜底状态——启动遮罩与渲染错误兜底（纯展示，不引入运行时行为）。
 const ready = ref(false);
@@ -261,17 +271,17 @@ onMounted(async () => {
       <WorkbenchCommands />
       <div class="body">
         <WorkbenchRail v-if="!layout.compactMode" />
-        <AINavPanel />
+        <component :is="aiNavPanelComp" />
         <MainArea />
       </div>
       <StatusBar />
-      <ConfirmModal />
+      <component :is="confirmModalComp" />
       <!-- M1-7 Git 写确认闸门：全局挂载，保证任何视图下待确认任务都能被看到/处理 -->
       <GitWriteConfirmDialog />
       <!-- 最近关闭页签恢复入口见 SessionPanel；普通关闭不再弹确认框 -->
 
       <!-- M2-2.b 图片灯箱：全局挂载，任何视图点开画廊都能放大预览 -->
-      <ImageLightbox />
+      <component :is="imageLightboxComp" />
     </template>
   </div>
 </template>
