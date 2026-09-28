@@ -76,3 +76,16 @@
 - **不触碰 main dirty tree**：bookmark 不在 main 树当前 WIP 清单（Clipboard + Agent），可安全在 Train worktree 升格；若升格中发现与 main WIP 重叠，按 directive §6 停手并标注冲突。
 - **共享契约（§10）推迟**：third sample 完成后才进入 Three-Package Contract Review；当前 `SHARED_PACKAGE_NEEDED = NO`（RULE_OF_TWO 即时候选 SECOND_REAL_PACKAGE_CONSUMER 仍=0，待 bookmark 真正建包后再 just-in-time 评估）。
 - **Runtime Package（§11）= NO**：Host runtime 保持 Host-owned，不抽 `capability-runtime`。
+
+## 5. 当前状态（2026-09-28，Train 复核）
+
+- **P4 选择已完成**：bookmark 选定（LOWEST_RISK + HIGH_INFORMATION_VALUE），预置 spec 已写入 `scripts/check-capability-package.mjs` SPECS.bookmark（`--all` 自动 SKIP，不误报）。
+- **打包被真实阻塞，非过度谨慎**：删除旧 `src/capabilities/bookmark/` 会破坏 `npm run check`。以下 5 个架构 checker 对 `src/capabilities/bookmark` 有**硬依赖**（虚拟模块 import / `CAPABILITY_CATALOG.bookmark` / `resolveOwnerFile('useBookmarkStore')` / `readFileSync(BookmarkPanel.vue)` / `capabilities.yaml` bookmark 条目），并非仅测试夹具：
+  - `scripts/check-capability-platform.mjs`（L40 虚拟 import + L174–333 `CAPABILITY_CATALOG.bookmark`）
+  - `scripts/check-capability-composition.mjs`（L75 `existsSync` 守卫，缺失即 FAIL）
+  - `scripts/check-capability-pilot.mjs`（L41 虚拟 import + L150 locator + L167 yaml）
+  - `scripts/check-semantic-closure-logic.mjs`（L113 locator + L121 readFileSync）
+  - `scripts/capability-demo.mjs`（L41 虚拟 import）
+- **根因 = P3 工作面**：上述耦合正是「Generic Package Checker consolidation」要解耦的对象。按 P3 触发条件（Vault + Clipboard 两个 committed M2），Clipboard 当前在主工作树为 **uncommitted WIP（冻结，DO_NOT_TOUCH）**，故 P3 未触发 → bookmark 打包因此受阻。
+- **决策**：**不强行打包**（避免回归 root gate）。待 Clipboard 成为 committed M2 后，由 P3 统一把 5 个 checker 解耦为「按 capability 注册表/清单驱动、不硬编码 `src/capabilities/<id>` 物理路径」，再回头执行 §3 打包步骤。
+- **Train 去重**：`scripts/check-capability-package.mjs` 中 SPECS.bookmark 曾重复出现两次（identical block），已合并为单块（行为不变，`--all` 仍 SKIP）。
