@@ -110,10 +110,11 @@ owner_implementations:
       - src/capabilities/home/state/useHomeStore.ts
   useAgentStore:
     # 真实领域 + 原生副作用（前端镜像 Rust agent_*）；STAGE E 同源。
-    # Store Physical Remediation：物理迁移到 capabilities/agent/state，同步 locator（旧路径 src/stores/useAgentStore.ts 已删除）。
+    # 物理位置仍是 src/stores/useAgentStore.ts（capabilities/agent/state 迁移未完成，
+    # 与 states.yaml 注释所述不一致）；locator 必须指向真实存在的文件，否则治理静默失守。
     symbol: useAgentStore
     paths:
-      - src/capabilities/agent/state/useAgentStore.ts
+      - src/stores/useAgentStore.ts
   useDatabaseStore:
     # 真实领域 + 强原生副作用（外部 DB 连接 / SQL 执行）。
     symbol: useDatabaseStore
