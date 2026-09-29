@@ -18,7 +18,9 @@ import { skillCapability, SKILL_CAPABILITY_ID } from '../capabilities/skill'
 import { pluginCapability, PLUGIN_CAPABILITY_ID } from '../capabilities/plugin'
 import { graphCapability, KNOWLEDGE_GRAPH_CAPABILITY_ID } from '../capabilities/graph'
 import { taskCapability, TASK_CAPABILITY_ID } from '../capabilities/task'
-import { clipboardCapability, CLIPBOARD_CAPABILITY_ID } from '../capabilities/clipboard'
+import { CLIPBOARD_CAPABILITY_ID, createClipboardCapability, clipboardContribution, CLIPBOARD_PORTS_KEY, type ClipboardPorts } from '@browser-os/capability-clipboard'
+import { useLayoutStore } from '../stores/useLayoutStore'
+import { redactSecrets } from '../utils/redact'
 import { appsCapability, APPS_CAPABILITY_ID } from '../capabilities/apps'
 import { toolsCapability, TOOLS_CAPABILITY_ID } from '../capabilities/tools'
 import { createVaultCapability, vaultContribution, VAULT_PORTS_KEY, type VaultPorts } from '@browser-os/capability-vault'
@@ -55,6 +57,30 @@ vault.vaultCapability.lifecycle.onActivate = () => contributionRegistry.register
 /** 供 main.ts 经 app.provide(VAULT_PORTS_KEY, vaultPorts) 注入表现层契约 */
 export const vaultPorts = vaultInstancePorts;
 
+// === Clipboard M2 package wiring（Host 侧适配）===
+// 窄 Host Contract 显式提供：桥接 clipboardRead/Write、showToast、requestClose(关面板)、redactSecrets。
+// 包本身不 import 这些 host 内部（满足 PKG-06）；仅 Host 在此组装。
+// 注：EmptyState 不进端口——本模块会被 check-capability-platform 等 node 侧 checker 经 esbuild 打包，
+// 而 *.vue 被 external 后 node 无法加载；为与 Vault 一致，面板自渲染最小空态，避免端口引入 .vue。
+const clipboardInstancePorts: ClipboardPorts = {
+  native: {
+    clipboardRead: () => bridge.clipboardRead(),
+    clipboardWrite: (text: string) => bridge.clipboardWrite(text),
+  },
+  ui: {
+    showToast: (message: string) => useLayoutStore().showToast(message),
+    requestClose: () => {
+      useLayoutStore().clipOpen = false;
+    },
+    redactSecrets: (text: string) => redactSecrets(text),
+  },
+}
+const clipboard = createClipboardCapability(clipboardInstancePorts)
+// Host 负责注册贡献（避免 Clipboard → Host registry 反向依赖）：onActivate 时注册包导出的描述符。
+clipboard.clipboardCapability.lifecycle.onActivate = () => contributionRegistry.registerContribution(clipboardContribution as any)
+/** 供 main.ts 经 app.provide(CLIPBOARD_PORTS_KEY, clipboardPorts) 注入表现层契约 */
+export const clipboardPorts = clipboardInstancePorts;
+
 export const ALL_CAPABILITIES = [
   { id: BOOKMARK_CAPABILITY_ID, def: bookmarkCapability },
   { id: WORKSPACE_CAPABILITY_ID, def: workspaceCapability },
@@ -67,7 +93,7 @@ export const ALL_CAPABILITIES = [
   { id: PLUGIN_CAPABILITY_ID, def: pluginCapability },
   { id: KNOWLEDGE_GRAPH_CAPABILITY_ID, def: graphCapability },
   { id: TASK_CAPABILITY_ID, def: taskCapability },
-  { id: CLIPBOARD_CAPABILITY_ID, def: clipboardCapability },
+  { id: CLIPBOARD_CAPABILITY_ID, def: clipboard.clipboardCapability },
   { id: APPS_CAPABILITY_ID, def: appsCapability },
   { id: TOOLS_CAPABILITY_ID, def: toolsCapability },
   { id: 'vault', def: vault.vaultCapability },

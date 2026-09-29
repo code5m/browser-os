@@ -143,7 +143,7 @@
 ### agent — C0（运行时未实现）
 - 用户目的：Agent 对话 / 运行 / 记忆。
 - UI owner：`src/components/workspace/AgentChatPanel.vue` + `AgentManagerPanel.vue`。
-- State owner：`useAgentStore`（`src/stores/useAgentStore.ts`）。
+- State owner：`useAgentStore`（`src/capabilities/agent/state/useAgentStore.ts`）。
 - Intent owner：`useAgentStore`（chat/run/install/validate…）。
 - Native owner：**仅只读命令实现**（`agent_parse`/`agent_validate`/`agent_permission_preview`，bridge.rs:6529/6539/6549）；`agent_chat`/`agent_list`/`agent_install` 等**Rust 中不存在**。`backendReady = AGENT_SKILL_COMMANDS_AVAILABLE = false`（bridge.ts:102）→ 前端 `guard()` 拦下，永不 invoke。
 - Resource owner：无（运行时未接）。

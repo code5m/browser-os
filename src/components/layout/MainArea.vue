@@ -167,7 +167,7 @@ watch(
       <component :is="viewOf(layout.mainView)" />
     </div>
 
-    <!-- ===== 剪贴板：已升格 capabilities/clipboard/，经 WORKBENCH_MAIN 贡献 view='clip' 渲染（由通用 viewOf 分支处理） ===== -->
+    <!-- ===== 剪贴板（Frontend M2）：已升级为独立 capability package @browser-os/capability-clipboard，经 WORKBENCH_MAIN 贡献 view='clip' 渲染（由通用 viewOf 分支处理） ===== -->
     <!-- ===== 系统应用：已升格 capabilities/apps/，经 WORKBENCH_MAIN 贡献 view='apps' 渲染（由通用 viewOf 分支处理） ===== -->
     <!-- ===== 工具箱：已升格 capabilities/tools/，经 WORKBENCH_MAIN 贡献 view='tools' 渲染（由通用 viewOf 分支处理） ===== -->
 

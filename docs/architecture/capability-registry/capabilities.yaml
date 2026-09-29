@@ -489,10 +489,10 @@ capabilities:
       - bridge
     optionalDependencies: []
     lifecycle:
-      supported: [ACTIVE, SUSPENDED]
-      default: ACTIVE
+      supported: [ACTIVE, BACKGROUND]
+      default: BACKGROUND
       activatable: true
-      resident: false
+      resident: true
     resources:
       class: [LIGHT]
       suspendable: true
@@ -501,7 +501,7 @@ capabilities:
     persistence:
       scope: session
       sensitive: false
-    entrypoint: src/capabilities/clipboard/index.ts
+    entrypoint: packages/capability-clipboard/src/index.ts
 
   # Capability Library Expansion v1（STAGE H）：Apps 从 useSystemStore 拆出（解除 Debt-8E-1）。
   # 后端 list_apps/launch_app 已实现；launch_app 经 security_policy::check_launch_target 白名单式解析（禁 sh -c）+ 审计。

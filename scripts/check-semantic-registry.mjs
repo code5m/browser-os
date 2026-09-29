@@ -721,7 +721,7 @@ const ANCHOR_FILES = [
   { path: "src/stores/useSystemStore.ts", src: `const clipText = ref(""); const apps = ref([]);` },
   // STAGE H：Clipboard/Apps/Tools 已拆为专属 owner（owner_implementations 新增条目）；
   // 锚点须跟随 locator，否则 RI 会对它们报 UNRESOLVED（自检误 FAIL）。
-  { path: "src/capabilities/clipboard/state/useClipboardStore.ts", src: `const clipText = ref(""); const clipHistory = reactive([]);` },
+  { path: "packages/capability-clipboard/src/state/useClipboardStore.ts", src: `const clipText = ref(""); const clipHistory = reactive([]);` },
   { path: "src/capabilities/apps/state/useAppsStore.ts", src: `const apps = ref([]); const appFilter = ref("");` },
   { path: "src/capabilities/tools/state/useToolsStore.ts", src: `const tools = ref([]);` },
   // Frontend M2：Vault 升级为 packages/capability-vault（owner_implementations 锚点跟随 locator）。
@@ -729,9 +729,9 @@ const ANCHOR_FILES = [
   // Capability Library Expansion v1：Home 域专属 owner（owner_implementations 已登记）；锚点跟随 locator。
   { path: "src/capabilities/home/state/useHomeStore.ts", src: `const shortcuts = reactive([]); const recents = reactive([]);` },
   // SG-C Medium：agent/database/git/skill 专属 owner；锚点跟随 locator。
-  // useAgentStore 真实物理位置为 src/stores/useAgentStore.ts（states.yaml locator 已同步），
+  // useAgentStore 真实物理位置为 capabilities/agent/state（states.yaml locator 已同步），
   // 锚点须与 locator 一致，否则自检 RI 会误报 UNRESOLVED。
-  { path: "src/stores/useAgentStore.ts", src: `const agents = ref([]);` },
+  { path: "src/capabilities/agent/state/useAgentStore.ts", src: `const agents = ref([]);` },
   { path: "src/capabilities/database/state/useDatabaseStore.ts", src: `const connections = ref([]);` },
   { path: "src/capabilities/git/state/useGitStore.ts", src: `const status = ref([]);` },
   // Phase C：Browser 子域 + Settings（owner = browser / settings capability）。锚点跟随 locator。

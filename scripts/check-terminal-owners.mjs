@@ -154,7 +154,7 @@ function runStatic() {
   // TERM-02c：非 terminal owner（Clipboard/Apps/Tools，STAGE H 从 useSystemStore 拆分后）
   // 不得声明任何 terminal 状态。原 useSystemStore 已删除，本检查改指向其三个继任 owner。
   const NON_TERMINAL_OWNERS = [
-    "src/capabilities/clipboard/state/useClipboardStore.ts",
+    "packages/capability-clipboard/src/state/useClipboardStore.ts",
     "src/capabilities/apps/state/useAppsStore.ts",
     "src/capabilities/tools/state/useToolsStore.ts",
   ];

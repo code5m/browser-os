@@ -36,11 +36,6 @@
     },
     {
       "shell": "src/App.vue",
-      "store": "useClipboardStore",
-      "from": "src/capabilities/clipboard/public"
-    },
-    {
-      "shell": "src/App.vue",
       "store": "useResourceStore",
       "from": "src/capabilities/browser/public"
     },

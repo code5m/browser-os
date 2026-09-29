@@ -78,10 +78,10 @@ owner_implementations:
       - src/stores/useBookmarkStore.ts
   useClipboardStore:
     # STAGE H：Clipboard 域从 useSystemStore 拆为专属 owner（解除 Debt-8E-1）。
-    # useSystemStore 已删除，旧路径**不**作为候选。
+    # 已升级为 packages/capability-clipboard（与 Vault 同形态），物理路径随之迁移。
     symbol: useClipboardStore
     paths:
-      - src/capabilities/clipboard/state/useClipboardStore.ts
+      - packages/capability-clipboard/src/state/useClipboardStore.ts
   useAppsStore:
     # STAGE H：Apps 域从 useSystemStore 拆为专属 owner（解除 Debt-8E-1）。
     symbol: useAppsStore
@@ -110,11 +110,10 @@ owner_implementations:
       - src/capabilities/home/state/useHomeStore.ts
   useAgentStore:
     # 真实领域 + 原生副作用（前端镜像 Rust agent_*）；STAGE E 同源。
-    # 物理位置仍是 src/stores/useAgentStore.ts（capabilities/agent/state 迁移未完成，
-    # 与 states.yaml 注释所述不一致）；locator 必须指向真实存在的文件，否则治理静默失守。
+    # owner 已迁入 capabilities/agent/state；locator 必须指向真实存在的文件，否则治理静默失守。
     symbol: useAgentStore
     paths:
-      - src/stores/useAgentStore.ts
+      - src/capabilities/agent/state/useAgentStore.ts
   useDatabaseStore:
     # 真实领域 + 强原生副作用（外部 DB 连接 / SQL 执行）。
     symbol: useDatabaseStore

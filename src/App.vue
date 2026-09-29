@@ -10,7 +10,7 @@ import { useArtifactStore } from "./capabilities/workspace/public";
 import { useRepoStore } from "./capabilities/workspace/public";
 import { useFileStore } from "./capabilities/workspace/public";
 import { useGitStore } from "./capabilities/git/public";
-import { useClipboardStore } from "./capabilities/clipboard/public";
+import { useClipboardStore } from "@browser-os/capability-clipboard";
 import { useTerminalStore } from "./capabilities/terminal/public";
 import { useLayoutStore } from "./stores/useLayoutStore";
 import { useSettingsStore } from "./settings/public";

@@ -174,10 +174,18 @@ function loadReal() {
     ...readdirSync(join(ROOT, 'src/capabilities')).map((d) => `src/capabilities/${d}`),
     'src/settings',
   ]
+  // 包形态能力（@browser-os/capability-*）：manifest 位于 packages/capability-<id>/src/manifest.ts
+  // （与 src/capabilities/<id>/manifest.ts 同构，只是物理位置不同；contribution 单点注册由 Host 完成）。
+  for (const d of readdirSync(join(ROOT, 'packages'))) {
+    if (/^capability-/.test(d)) dirs.push(`packages/${d}/src`)
+  }
   for (const d of dirs) {
     const p = join(ROOT, d, 'manifest.ts')
     if (!existsSync(p)) continue
-    const id = d.startsWith('src/capabilities/') ? d.split('/')[2] : 'settings'
+    let id
+    if (d.startsWith('src/capabilities/')) id = d.split('/')[2]
+    else if (d.startsWith('packages/capability-')) id = d.split('/')[1].replace(/^capability-/, '')
+    else id = 'settings'
     manifests[id] = parseManifest(readFileSync(p, 'utf8'))
   }
   // M2 包：manifest 已迁入 packages/capability-<id>/src/manifest.ts（原 src/capabilities/<id>/manifest.ts
@@ -204,17 +212,16 @@ function runSelfTest() {
       console.log(`  ✗ ${name} — expect [${expect}] got [${got}]`)
     }
   }
-  const regOk = '  - id: demo\n    dependsOn:\n      - bridge\n    optionalDependencies: []\n    entrypoint: src/capabilities/demo\n'
-  // DRIFT-02 必须用「真实 capability 依赖」触发：bridge 是 SHARED_INFRA，dropInfra 两侧都会归一化掉，
-  // 用它做 fixture 会让「manifest 丢了依赖」这种漂移被漏检（self-test 假绿）。改用 git（真实能力）才能验证 DRIFT-02。
+  const regOk = '  - id: demo\n    dependsOn:\n      - workspace\n    optionalDependencies: []\n    entrypoint: src/capabilities/demo\n'
+  // DRIFT-02 使用真实 capability 依赖，避免 shared infrastructure 被归一化后造成假绿。
   const regDepGit = '  - id: demo\n    dependsOn:\n      - git\n    optionalDependencies: []\n    entrypoint: src/capabilities/demo\n'
   t('POSITIVE: 完全一致', [], {
     registryText: regOk,
     manifests: {
       demo: {
         id: 'demo', v1Id: 'demo',
-        dependsOn: ['bridge'], optionalDependencies: [],
-        v1Dependencies: ['bridge'], v1OptionalDependencies: [],
+        dependsOn: ['workspace'], optionalDependencies: [],
+        v1Dependencies: ['workspace'], v1OptionalDependencies: [],
         v1Entrypoint: 'src/capabilities/demo/index.ts',
       },
     },
@@ -235,8 +242,8 @@ function runSelfTest() {
     manifests: {
       demo: {
         id: 'demo', v1Id: 'demo',
-        dependsOn: ['bridge'], optionalDependencies: [],
-        v1Dependencies: ['bridge'], v1OptionalDependencies: [],
+        dependsOn: ['workspace'], optionalDependencies: [],
+        v1Dependencies: ['workspace'], v1OptionalDependencies: [],
         v1Entrypoint: 'src/capabilities/other/index.ts',
       },
     },

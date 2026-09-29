@@ -15,7 +15,7 @@ import { skillManifest } from "../../capabilities/skill/manifest";
 import { pluginManifest } from "../../capabilities/plugin/manifest";
 import { graphManifest } from "../../capabilities/graph/manifest";
 import { taskManifest } from "../../capabilities/task/manifest";
-import { clipboardManifest } from "../../capabilities/clipboard/manifest";
+import { clipboardManifest } from "@browser-os/capability-clipboard/manifest";
 import { appsManifest } from "../../capabilities/apps/manifest";
 import { toolsManifest } from "../../capabilities/tools/manifest";
 import { vaultManifest } from "@browser-os/capability-vault/manifest";

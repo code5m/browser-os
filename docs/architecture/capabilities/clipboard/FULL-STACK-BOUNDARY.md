@@ -1,8 +1,8 @@
 # Clipboard Capability — Full-Stack Boundary（Capability Library Expansion v1, STAGE H）
 
-> STAGE H 产物。物理：ClipboardPanel 迁入 `src/capabilities/clipboard/ui/`；语义 owner **新建**
-> `useClipboardStore`（`src/capabilities/clipboard/state/`），由 `useSystemStore` 拆分而来（解除 **Debt-8E-1**）。
-> 经通用 Contribution Registry 的 `WORKBENCH_MAIN` 槽（view='clip'）贡献给 MainArea。最后更新：2026-09-23。
+> STAGE H 产物，已进一步升级为 workspace 包 `@browser-os/capability-clipboard`。物理：ClipboardPanel 位于 `packages/capability-clipboard/src/ui/`；语义 owner **新建**
+> `useClipboardStore`（`packages/capability-clipboard/src/state/`），由 `useSystemStore` 拆分而来（解除 **Debt-8E-1**）。
+> 经通用 Contribution Registry 的 `WORKBENCH_MAIN` 槽（view='clip'）贡献给 MainArea。最后更新：2026-09-28（包形态）。
 
 ## 成熟度（诚实，不谎报）
 
@@ -14,7 +14,7 @@
 ## 十七段契约
 
 ```text
-Clipboard UI (capabilities/clipboard/ui/ClipboardPanel.vue)
+Clipboard UI (packages/capability-clipboard/src/ui/ClipboardPanel.vue)
   ↓ OWNED_BY_CAPABILITY（经 public.ts）
 State Owner: useClipboardStore (id="clipboard")
   ↓ intents：clipReadSilent / clipCopy / clipPaste / useClipItem / copyClipItem / clearClipHistory / startClipWatch
@@ -26,22 +26,22 @@ src-tauri/src/bridge.rs: clipboard_read / clipboard_write（arboard）—— 无
 
 | 段 | 事实 |
 |---|---|
-| Identity/Manifest | `capabilities/clipboard/manifest.ts`（id=clipboard，C2，HP0） |
-| Public Contract | `public.ts`（仅再导出 `useClipboardStore`） |
+| Identity/Manifest | `packages/capability-clipboard/src/manifest.ts`（id=clipboard，C2，HP0） |
+| Public Contract | `packages/capability-clipboard/src/public.ts`（再导出语义 owner + 创建器/贡献/端口键/CLIPBOARD_CAPABILITY_ID/CLIPBOARD_PORTS_KEY） |
 | Dependencies | `bridge`（外部基础设施） |
 | State Owner | `useClipboardStore`（唯一） |
 | Canonical Writers | 仅 store action 写 `clipText`/`clipHistory`；组件只读经 public |
 | Application Logic | 内联于 store（事件驱动、去重、上限裁剪） |
-| UI | `capabilities/clipboard/ui/ClipboardPanel.vue`（懒加载，贡献注册） |
+| UI | `packages/capability-clipboard/src/ui/ClipboardPanel.vue`（懒加载，贡献注册） |
 | Contributions | `clipboard.main.panel`（workbench-main, view='clip'） |
 | Side Effects | 经 `bridge.clipboard*`；UI 零裸 invoke |
 | Adapter/Native | `bridge.ts` → Rust `clipboard_read/write` |
 | Permissions | 无 |
 | **Persistence** | **`session`（仅内存会话态，绝不落盘）**——B11-1 红线；前端零浏览器存储 |
 | Resource Ownership | `v1.resources=[]`（无资源创建） |
-| Lifecycle | ACTIVE/SUSPENDED（无可释放资源） |
+| Lifecycle | COMPATIBILITY_WRAPPED；supported=[ACTIVE,BACKGROUND]，resident:true（随构建静态编入，无可释放资源） |
 | Absence | 见下 |
-| Tests/Gates | `check-clipboard-persistence-logic.mjs`（16 断言）+ `npm run check` |
+| Tests/Gates | 包内 `check-package.mjs` / `check-clipboard-logic.mjs` / `check-clipboard-persistence-logic.mjs` + Host `npm run check` |
 
 ## 安全（B11-1）
 

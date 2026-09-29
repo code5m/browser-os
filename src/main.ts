@@ -4,8 +4,9 @@ import App from "./App.vue";
 import "./styles/tokens.css";
 import "./styles/global.css";
 import { bridge } from "./bridge";
-import { bootstrapCapabilityRuntime, vaultPorts } from "./capability";
+import { bootstrapCapabilityRuntime, vaultPorts, clipboardPorts } from "./capability";
 import { VAULT_PORTS_KEY } from "@browser-os/capability-vault";
+import { CLIPBOARD_PORTS_KEY } from "@browser-os/capability-clipboard";
 
 document.documentElement.style.background = "#fff";
 document.body.style.background = "#fff";
@@ -58,6 +59,7 @@ function mountApp() {
     // Vault M2：注入 Host 表现层契约（窄 port），供包内组件经 inject 取用，不反向依赖 Host。
     // provide 必须在 mount 之前调用，否则已挂载组件树 inject 不到。
     app.provide(VAULT_PORTS_KEY, vaultPorts);
+    app.provide(CLIPBOARD_PORTS_KEY, clipboardPorts);
     app.mount(rootEl);
     bridge.debugLog("[FE] vue mounted");
   } catch (e) {
