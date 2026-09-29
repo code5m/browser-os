@@ -24,6 +24,7 @@ export type MainView =
   | "plugin"
   | "editor"
   | "settings"
+  | "capability-manager"
   | "vault";
 
 // ===== M5-W17（Lane A6）客户端导航契约 =====

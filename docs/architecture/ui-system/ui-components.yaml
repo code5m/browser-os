@@ -12,6 +12,8 @@ total: 68
 
 components:
 
+  - { id: capability.manager, name: CapabilityManagerPanel, layer: WORKBENCH, owner: capability-platform, file: src/components/system/CapabilityManagerPanel.vue, public: false, business_semantics: "Capability discovery/configuration/runtime state manager", capability_specific: false, dependencies: [capability runtime, catalog], consumers: [SettingsPanel.vue], status: OBSERVED }
+
   # ---------- WORKBENCH (17) ----------
   - { id: shell.root, name: App, layer: WORKBENCH, owner: shell, file: src/App.vue, public: false, business_semantics: "外壳骨架 + 全局事件宿主 + 业务耦合", capability_specific: false, dependencies: [12 stores, bridge, getCurrentWindow], consumers: [src/main.ts], status: OBSERVED }
   - { id: shell.activity-bar, name: ActivityBar, layer: WORKBENCH, owner: shell, file: src/components/layout/ActivityBar.vue, public: false, business_semantics: "导航 + 智能地址栏 + 内联扩展行 + 宫格仪式", capability_specific: false, dependencies: [8 stores, bridge.resourceStats, contributionRegistry], consumers: [src/App.vue], status: OBSERVED }

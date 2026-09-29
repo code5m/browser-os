@@ -119,6 +119,14 @@ onMounted(refreshDefaultBrowser);
     </div>
 
     <div class="settings-section">
+      <div class="section-title">模块管理</div>
+      <div class="setting-item">
+        <span class="setting-desc">查看能力依赖、运行状态并停用可选模块。</span>
+        <button class="default-btn" @click="layout.setView('capability-manager')">打开 Capability Manager</button>
+      </div>
+    </div>
+
+    <div class="settings-section">
       <div class="section-title">关于</div>
       <div class="setting-item">
         <label>版本</label>

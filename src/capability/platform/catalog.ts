@@ -22,6 +22,7 @@ import { vaultManifest } from "@browser-os/capability-vault/manifest";
 import { settingsManifest } from "../../settings/manifest";
 import { homeManifest } from "../../capabilities/home/manifest";
 import type { CapabilityManifestV1 } from "./contract";
+import { discoverCapabilities } from "./discovery";
 
 /** 已具备 Building Block Contract v1 的能力清单（未声明 v1 的能力不进 catalog） */
 export const CATALOG_SOURCES = [
@@ -45,12 +46,11 @@ export const CATALOG_SOURCES = [
 ] as const;
 
 export function buildCatalog(): Record<string, CapabilityManifestV1> {
-  const out: Record<string, CapabilityManifestV1> = {};
-  for (const def of CATALOG_SOURCES) {
-    if (!def?.v1) continue;
-    out[def.v1.id] = def.v1;
-  }
-  return out;
+  const result = discoverCapabilities(CATALOG_SOURCES.filter((def) => !!def?.v1).map((def) => ({
+    manifest: def.v1!, source: def.entrypoint,
+  })));
+  if (result.errors.length) throw new Error(`Capability discovery failed: ${result.errors.join('; ')}`);
+  return result.catalog;
 }
 
 export const CAPABILITY_CATALOG: Record<string, CapabilityManifestV1> = buildCatalog();

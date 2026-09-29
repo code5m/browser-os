@@ -10,6 +10,7 @@ import type { CapabilityManifestV1 } from "./contract"
 import type { CapabilityEnabledConfig } from "./config"
 import { resolveCapabilityConfig } from "./config"
 import { validateManifestV1 } from "./contract"
+import { inspectCapabilities, type CapabilitySnapshot } from "./inspector"
 
 export interface PluggableRuntimeOptions {
   catalog: Record<string, CapabilityManifestV1>
@@ -24,6 +25,7 @@ export interface PluggableRuntime {
   activate(): void
   deactivate(id: string): void
   inspectConfig(id: string): { values: Record<string, unknown>; errors: string[] }
+  inspect(): CapabilitySnapshot[]
 }
 
 const slots = Object.values(CONTRIBUTION_SLOTS)
@@ -95,5 +97,9 @@ export function createPluggableRuntime(options: PluggableRuntimeOptions): Plugga
     return resolvedConfigs.get(id) ?? { values: {}, errors: [`未知 capability: ${id}`] }
   }
 
-  return { runtime, assembly, activate, deactivate, inspectConfig }
+  function inspect() {
+    return inspectCapabilities(options.catalog, runtime, registry, inspectConfig)
+  }
+
+  return { runtime, assembly, activate, deactivate, inspectConfig, inspect }
 }

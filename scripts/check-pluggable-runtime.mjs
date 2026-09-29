@@ -83,6 +83,7 @@ try {
   if (registry.getBySlot("workbench-main").length !== 2) throw new Error("activate 未注册全部 contribution");
   app.deactivate("feature");
   if (registry.getBySlot("workbench-main").some((x) => x.capabilityId === "feature")) throw new Error("deactivate 未摘除 contribution");
+  if (!app.inspect().some((x) => x.id === "feature" && x.state === "SUSPENDED" && x.contributions.length === 0)) throw new Error("Runtime inspector 未反映停用状态");
   let dependentRejected = false;
   app.runtime.enable("feature");
   app.runtime.suspend("core");
