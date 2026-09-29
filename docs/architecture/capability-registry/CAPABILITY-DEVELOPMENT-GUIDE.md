@@ -15,6 +15,8 @@ Manifest 负责身份、版本、`runtimeApiVersion`、依赖约束、配置 sch
 
 `npm run generate:capability-registry` 会在构建前扫描约定目录并生成 `src/capability/platform/generated-registry.ts`；`npm run check:generated-registry` 拒绝过期或漏收集的 registry。新增普通能力不需要手工追加中央 Manifest 列表。
 
+旧能力迁移期间，真实 Native/UI 端口可以暂时由稳定 Host Adapter 提供。Adapter 必须从 `host-services.ts` 获取通用服务，不能继续增加按 Capability ID 分支；`check:legacy-capability-wiring` 会同时报告中央 wiring、Capability-specific wiring 和 Host infrastructure port 数量。
+
 ## 接入边界
 
 普通 Capability 不直接修改 `App.vue`、`MainArea.vue`、`SettingsPanel.vue`、Runtime 核心或其他 Capability 的 `state/ui`。需要出现在 Shell 时，向 Contribution Registry 注册 `commands`、`menus`、`sidebar`、`panels`、`settings` 或 `workbench` 贡献；Shell 只消费 slot，不判断能力 ID。

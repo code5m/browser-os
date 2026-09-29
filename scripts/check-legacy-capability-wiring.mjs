@@ -12,6 +12,8 @@ const counts = {
   capabilityBranches: (text.match(/if\s*\([^\n]*(?:capability|mainView)[^\n]*\)|switch\s*\([^)]*(?:capability|mainView)/g) ?? []).length,
   manualContributions: (text.match(/register(?:Settings|[A-Z]\w*)Contributions/g) ?? []).length,
   centralManifestReferences: (text.match(/Manifest/g) ?? []).length,
+  capabilitySpecificHostWiring: (text.match(/(?:vaultInstancePorts|clipboardInstancePorts|createVaultCapability|createClipboardCapability)/g) ?? []).length,
+  hostInfrastructurePortCount: (fs.readFileSync(path.join(root, 'src/capability/platform/host-services.ts'), 'utf8').match(/'[^']+'/g) ?? []).length,
 }
 console.log(`LEGACY_CAPABILITY_MANUAL_WIRING_COUNT=${Object.values(counts).reduce((a, b) => a + b, 0)}`)
 console.log(JSON.stringify(counts, null, 2))
