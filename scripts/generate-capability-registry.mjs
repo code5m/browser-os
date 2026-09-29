@@ -20,7 +20,7 @@ const entries = files.map((file) => {
   const match = fs.readFileSync(file, 'utf8').match(/export const (\w+Manifest)\s*:/)
   if (!match) return null
   const index = path.join(path.dirname(file), 'index.ts')
-  const capability = fs.existsSync(index) ? fs.readFileSync(index, 'utf8').match(/export const (\w+Capability)\s*:/)?.[1] : null
+  const capability = fs.existsSync(index) ? fs.readFileSync(index, 'utf8').match(/export const (\w+Capability)\s*(?::|=)/)?.[1] : null
   return { file: './' + path.relative(path.dirname(output), file).replaceAll(path.sep, '/').replace(/\.ts$/, ''), name: match[1], index: capability ? './' + path.relative(path.dirname(output), index).replaceAll(path.sep, '/').replace(/\.ts$/, '') : null, capability }
 }).filter(Boolean).sort((a, b) => a.file.localeCompare(b.file))
 const imports = entries.map((entry, index) => `import { ${entry.name} as manifest${index} } from '${entry.file}'`).join('\n')
