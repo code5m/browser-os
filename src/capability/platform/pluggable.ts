@@ -76,6 +76,11 @@ export function createPluggableRuntime(options: PluggableRuntimeOptions): Plugga
           events.emit({ type: 'capability.failed', capabilityId: id, error: error instanceof Error ? error.message : String(error), at: Date.now() })
           throw error
         }
+        if (registry) {
+          for (const contribution of options.catalog[id]?.contributions ?? []) {
+            registry.registerContribution({ ...contribution, capabilityId: id, type: contribution.type as 'surface' | 'navigation' })
+          }
+        }
         events.emit({ type: 'capability.activated', capabilityId: id, at: Date.now() })
         started.push(id)
       }
