@@ -1,9 +1,15 @@
 <script setup lang="ts">
 import { ContextMenu, ContextMenuItem, EmptyState } from "../../../shared/ui";
 import { useArtifactStore } from "../state/useArtifactStore";
-import ImageGallery from "../../browser/ui/ImageGallery.vue";
+import { contributionRegistry } from "../../../capability/contribution/registry";
+import { CONTRIBUTION_SLOTS } from "../../../capability/contribution/types";
 
 const art = useArtifactStore();
+
+// 图片画廊：经通用 Contribution Registry 由 browser 贡献，ArtifactPanel 不 import browser 内部 UI（C3 关键）。
+const imageGalleryComp = contributionRegistry.getSurfaceContributions(
+  CONTRIBUTION_SLOTS.ARTIFACT_IMAGE_GALLERY,
+)[0]?.component
 </script>
 
 <template>
@@ -43,7 +49,7 @@ const art = useArtifactStore();
       <input :value="art.editTags" @input="art.setEditTags(($event.target as HTMLInputElement).value)" placeholder="标签（逗号分隔）" />
       <textarea :value="art.editText" @input="art.setEditText(($event.target as HTMLTextAreaElement).value)" placeholder="正文"></textarea>
       <!-- M2-2.b 图片画廊挂点：只预览已落盘的图片附件（inline 图不在本卡范围） -->
-      <ImageGallery :images="art.current.images ?? []" />
+      <component :is="imageGalleryComp" :images="art.current.images ?? []" />
       <div class="src">来源：<a :href="art.current.source_url" target="_blank">{{ art.current.source_url }}</a></div>
       <div class="src">溯源哈希：{{ art.current.hash.slice(0, 16) }}</div>
       <button class="primary" @click="art.saveEdit">保存编辑</button>

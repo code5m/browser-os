@@ -26,7 +26,7 @@ import { bridge } from '../bridge'
 import { useWorkbenchStore } from '../stores/useWorkbenchStore'
 import { layoutPositions } from '../utils/graphUi'
 import { contributionRegistry } from './contribution/registry'
-import { settingsCapability } from '../settings'
+import { settingsCapability, registerSettingsContributions } from '../settings'
 import { homeCapability } from '../capabilities/home'
 import { CAPABILITY_PROFILES, DEFAULT_PROFILE, type CapabilityProfileId, profileFromEnv, resolveProfile } from './profiles'
 import { CAPABILITY_CATALOG, CAPABILITY_DEFINITIONS } from './platform/catalog'
@@ -49,7 +49,9 @@ const vaultInstancePorts: VaultPorts = {
 };
 const vault = createVaultCapability(vaultInstancePorts);
 // Host 负责注册贡献（避免 Vault → Host registry 反向依赖）：onActivate 时注册包导出的描述符。
-vault.vaultCapability.lifecycle.onActivate = () => contributionRegistry.register(vaultContribution as any);
+// 注意：registry 方法名是 registerContribution（非 register），此前误写 register 导致 onActivate 抛错、
+// 激活循环中断、其后的能力（home 等）一并无法注册（真实执行已复现）。
+vault.vaultCapability.lifecycle.onActivate = () => contributionRegistry.registerContribution(vaultContribution as any);
 /** 供 main.ts 经 app.provide(VAULT_PORTS_KEY, vaultPorts) 注入表现层契约 */
 export const vaultPorts = vaultInstancePorts;
 
@@ -109,6 +111,12 @@ export function bootstrapCapabilityRuntime(profile?: CapabilityProfileId | strin
       profile: lastProfile,
     }
   }
+  // 框架常驻 SERVICE（settings）贡献无条件注册：不依赖 profile、不经 runtime 激活
+  // （settingsManifest.activatable=false，走 profile 循环会被运行时拒激活）。
+  // 与 Vault 同为 Host 显式注册（PKG-06：包/模块不反向依赖 Host registry），
+  // 但 settings 属 framework SERVICE，故在 bootstrap 首次初始化时直接注册其贡献。
+  // 幂等：contributionRegistry.registerContribution 以 id 为键覆盖，重复调用安全。
+  registerSettingsContributions()
   // 自由装配优先：设置 VITE_CAPABILITY_ASSEMBLY 时按任意组合装配（不是 preset）。
   // 非法组合由 Assembly Engine 在启动前确定性拒绝——这里只记录错误 + 以零能力启动，绝不崩溃。
   const customIds = customAssemblyFromEnv()

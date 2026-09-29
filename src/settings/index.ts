@@ -2,7 +2,7 @@ import { defineAsyncComponent, h } from "vue";
 import { settingsManifest } from "./manifest";
 import { contributionRegistry } from "../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../capability/contribution/types";
-import type { Capability } from "../capability/types";
+import type { CapabilityDefinition } from "../capability/types";
 
 export const SETTINGS_CAPABILITY_ID = "settings";
 
@@ -40,19 +40,6 @@ export function registerSettingsContributions(): void {
   });
 }
 
-export const settingsCapability: Capability = {
-  id: SETTINGS_CAPABILITY_ID,
-  manifest: settingsManifest,
-  registerContributions(reg) {
-    reg.registerContribution({
-      id: "settings.main",
-      capabilityId: SETTINGS_CAPABILITY_ID,
-      type: "surface",
-      slot: CONTRIBUTION_SLOTS.WORKBENCH_MAIN,
-      view: "settings",
-      label: "设置",
-      icon: "⚙️",
-      component: SettingsPanel,
-    });
-  },
+export const settingsCapability: CapabilityDefinition = {
+  ...settingsManifest,
 };

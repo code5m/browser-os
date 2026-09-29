@@ -6,13 +6,13 @@ import { VAULT_PORTS_KEY, type VaultPorts } from "../ports";
 
 // 领域层只经 inject(VAULT_PORTS_KEY) 取得 Host 提供的原生契约；不直接 import src/bridge.ts。
 // 缺失则 fail-fast（见 createVaultCapability assertVaultPorts + 此处守卫）。
-const injectedPorts = inject(VAULT_PORTS_KEY);
-if (!injectedPorts) {
-  throw new Error("[vault] VAULT_PORTS_KEY 未提供 —— M2 边界违反：Host 必须 app.provide(VAULT_PORTS_KEY, ports)");
-}
-const ports: VaultPorts = injectedPorts;
-
+// 注意：inject 必须在 setup 上下文内调用；模块顶层无组件实例，inject 恒为 undefined，故守卫移入 store setup。
 export const useVaultStore = defineStore("vault", () => {
+  const injectedPorts = inject(VAULT_PORTS_KEY);
+  if (!injectedPorts) {
+    throw new Error("[vault] VAULT_PORTS_KEY 未提供 —— M2 边界违反：Host 必须 app.provide(VAULT_PORTS_KEY, ports)");
+  }
+  const ports: VaultPorts = injectedPorts;
   const path = ref("");
   const root = ref("");
   const notes = ref<{ path: string; text: string }[]>([]);

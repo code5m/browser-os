@@ -27,26 +27,7 @@
   "business_component_dirs": [
     "src/capabilities/browser/ui"
   ],
-  "ui03_shell_renders_business_baseline": [
-    {
-      "shell": "src/App.vue",
-      "line": 263,
-      "component": "AINavPanel",
-      "domain": "BROWSER"
-    },
-    {
-      "shell": "src/components/layout/ActivityBar.vue",
-      "line": 373,
-      "component": "GridArchiveBar",
-      "domain": "BROWSER_GRID"
-    },
-    {
-      "shell": "src/App.vue",
-      "line": 274,
-      "component": "ImageLightbox",
-      "domain": "BROWSER"
-    }
-  ],
+  "ui03_shell_renders_business_baseline": [],
   "ui03_shell_business_stores_baseline": [
     {
       "shell": "src/App.vue",

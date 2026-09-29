@@ -631,7 +631,13 @@ function printHelp() {
 }
 
 function loadRealFiles() {
-  return walk(join(ROOT, "src"), [".ts", ".vue"]).map((p) => ({ path: rel(p), src: readFileSync(p, "utf8") }));
+  // 扫描 src/ 与 packages/*/src（workspace 能力包，如 capability-vault 的 state owner
+  // 位于包内而非 src/）。owner_implementations locator 指向包内路径时也必须能被解析，
+  // 否则 RI 规则会把已物理迁移到包内的 owner 误报 UNRESOLVED（治理静默失守）。
+  const out = [];
+  out.push(...walk(join(ROOT, "src"), [".ts", ".vue"]));
+  out.push(...walk(join(ROOT, "packages"), [".ts", ".vue"]));
+  return out.map((p) => ({ path: rel(p), src: readFileSync(p, "utf8") }));
 }
 
 // ---------------------------- fixtures ----------------------------
@@ -723,7 +729,9 @@ const ANCHOR_FILES = [
   // Capability Library Expansion v1：Home 域专属 owner（owner_implementations 已登记）；锚点跟随 locator。
   { path: "src/capabilities/home/state/useHomeStore.ts", src: `const shortcuts = reactive([]); const recents = reactive([]);` },
   // SG-C Medium：agent/database/git/skill 专属 owner；锚点跟随 locator。
-  { path: "src/capabilities/agent/state/useAgentStore.ts", src: `const agents = ref([]);` },
+  // useAgentStore 真实物理位置为 src/stores/useAgentStore.ts（states.yaml locator 已同步），
+  // 锚点须与 locator 一致，否则自检 RI 会误报 UNRESOLVED。
+  { path: "src/stores/useAgentStore.ts", src: `const agents = ref([]);` },
   { path: "src/capabilities/database/state/useDatabaseStore.ts", src: `const connections = ref([]);` },
   { path: "src/capabilities/git/state/useGitStore.ts", src: `const status = ref([]);` },
   // Phase C：Browser 子域 + Settings（owner = browser / settings capability）。锚点跟随 locator。

@@ -54,9 +54,11 @@ function mountApp() {
     app.config.errorHandler = (error, _instance, info) => {
       bridge.debugLog(`[FE] Vue error ${info}: ${error instanceof Error ? error.stack || error.message : String(error)}`);
     };
-    app.use(createPinia()).mount(rootEl);
+    app.use(createPinia());
     // Vault M2：注入 Host 表现层契约（窄 port），供包内组件经 inject 取用，不反向依赖 Host。
+    // provide 必须在 mount 之前调用，否则已挂载组件树 inject 不到。
     app.provide(VAULT_PORTS_KEY, vaultPorts);
+    app.mount(rootEl);
     bridge.debugLog("[FE] vue mounted");
   } catch (e) {
     bridge.debugLog("[FE] vue mount failed: " + (e instanceof Error ? e.message : String(e)));

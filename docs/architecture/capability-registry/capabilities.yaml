@@ -93,7 +93,7 @@ capabilities:
       - workspace.snippet
       - workspace.main-view
     dependsOn: []
-    optionalDependencies: [browser]
+    optionalDependencies: [browser, git]
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
       default: ACTIVE

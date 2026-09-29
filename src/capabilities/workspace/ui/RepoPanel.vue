@@ -3,7 +3,6 @@ import { EmptyState } from "../../../shared/ui";
 import { ref } from "vue";
 import { useRepoStore } from "../state/useRepoStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
-import GitHistory from "../../git/ui/GitHistory.vue";
 import { contributionRegistry } from "../../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../../capability/contribution/types";
 
@@ -15,9 +14,15 @@ const tab = ref<"git" | "history" | "config">("git");
 // Git 面板经通用 Contribution Registry 的 REPO_SUBVIEW 槽贡献：RepoPanel 只按槽渲染，
 // 不 import Git 能力内部（C3 关键，且避免 workspace→git 反向依赖环）。
 // Git absent（未注册/未 activate）→ 槽为空 → git 页签不渲染 GitPanel（能力模型一致）。
-const gitPanelComp = contributionRegistry.getSurfaceContributions(
-  CONTRIBUTION_SLOTS.REPO_SUBVIEW,
-)[0]?.component;
+// Git 面板经通用 Contribution Registry 的 REPO_SUBVIEW 槽贡献（git.repo.panel=状态页签 / git.repo.history=提交历史页签）。
+// RepoPanel 只按 view 认领渲染，不 import Git 能力内部（C3 关键，且避免 workspace→git 反向依赖环）。
+// Git absent（未注册/未 activate）→ 槽为空 → 对应页签不渲染（能力模型一致）。
+const gitPanelComp = contributionRegistry
+  .getSurfaceContributions(CONTRIBUTION_SLOTS.REPO_SUBVIEW)
+  .find((c) => c.view === "git")?.component
+const gitHistoryComp = contributionRegistry
+  .getSurfaceContributions(CONTRIBUTION_SLOTS.REPO_SUBVIEW)
+  .find((c) => c.view === "history")?.component
 </script>
 
 <template>
@@ -29,7 +34,7 @@ const gitPanelComp = contributionRegistry.getSurfaceContributions(
       <button class="close" @click="layout.sidebarOpen = false">✕</button>
     </div>
     <component :is="gitPanelComp" v-if="tab === 'git' && gitPanelComp" />
-    <GitHistory v-else-if="tab === 'history'" />
+    <component :is="gitHistoryComp" v-else-if="tab === 'history' && gitHistoryComp" />
     <div v-else class="repo-panel">
       <div class="form">
         <input v-model="rp.form.name" placeholder="仓库名" />
