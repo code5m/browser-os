@@ -177,7 +177,7 @@ function loadReal() {
   // 包形态能力（@browser-os/capability-*）：manifest 位于 packages/capability-<id>/src/manifest.ts
   // （与 src/capabilities/<id>/manifest.ts 同构，只是物理位置不同；contribution 单点注册由 Host 完成）。
   for (const d of readdirSync(join(ROOT, 'packages'))) {
-    if (/^capability-/.test(d)) dirs.push(`packages/${d}/src`)
+    if (/^capability-/.test(d) && d !== 'capability-demo') dirs.push(`packages/${d}/src`)
   }
   for (const d of dirs) {
     const p = join(ROOT, d, 'manifest.ts')
@@ -193,6 +193,7 @@ function loadReal() {
   // id 由包名 capability-<id> 推导（与 capabilityId 一致）。
   for (const d of readdirSync(join(ROOT, 'packages'))) {
     if (!d.startsWith('capability-')) continue
+    if (d === 'capability-demo') continue // generated-registry fixture; validated by zero-central-touch gate
     const p = join(ROOT, 'packages', d, 'src', 'manifest.ts')
     if (!existsSync(p)) continue
     const id = d.slice('capability-'.length)

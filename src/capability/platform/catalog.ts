@@ -23,6 +23,7 @@ import { settingsManifest } from "../../settings/manifest";
 import { homeManifest } from "../../capabilities/home/manifest";
 import type { CapabilityManifestV1 } from "./contract";
 import { discoverCapabilities } from "./discovery";
+import { GENERATED_DEFINITIONS, GENERATED_MANIFESTS } from "./generated-registry";
 
 /** 已具备 Building Block Contract v1 的能力清单（未声明 v1 的能力不进 catalog） */
 export const CATALOG_SOURCES = [
@@ -46,8 +47,8 @@ export const CATALOG_SOURCES = [
 ] as const;
 
 export function buildCatalog(): Record<string, CapabilityManifestV1> {
-  const result = discoverCapabilities(CATALOG_SOURCES.filter((def) => !!def?.v1).map((def) => ({
-    manifest: def.v1!, source: def.entrypoint,
+  const result = discoverCapabilities(GENERATED_MANIFESTS.map((manifest) => ({
+    manifest, source: manifest.entrypoint,
   })));
   if (result.errors.length) throw new Error(`Capability discovery failed: ${result.errors.join('; ')}`);
   return result.catalog;
@@ -57,7 +58,7 @@ export const CAPABILITY_CATALOG: Record<string, CapabilityManifestV1> = buildCat
 
 /** 真实能力定义（同一对象即含 v1，零复制 → 无漂移；供 runtime.register / hotplug 使用） */
 export const CAPABILITY_DEFINITIONS: Record<string, (typeof CATALOG_SOURCES)[number]> = Object.fromEntries(
-  CATALOG_SOURCES.map((d) => [d.id, d]),
+  [...CATALOG_SOURCES.map((d) => [d.id, d] as const), ...Object.entries(GENERATED_DEFINITIONS)],
 );
 
 /** 尚未具备 Building Block Contract v1 的能力（诚实暴露，不得静默忽略） */
