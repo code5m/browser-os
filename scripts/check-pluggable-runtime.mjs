@@ -79,9 +79,11 @@ try {
   const app = createPluggableRuntime({ catalog, definitions, config: { enabled: { feature: true } }, contributions: registry });
   if (app.assembly.activationOrder.join(",") !== "core,feature") throw new Error("依赖激活顺序错误");
   app.activate();
+  if (!app.events.history().some((event) => event.type === "capability.activated" && event.capabilityId === "feature")) throw new Error("生命周期事件未发布");
   if (app.runtime.inspect().filter((x) => x.state === "ACTIVE").length !== 2) throw new Error("enabled 配置未激活完整依赖闭包");
   if (registry.getBySlot("workbench-main").length !== 2) throw new Error("activate 未注册全部 contribution");
   app.deactivate("feature");
+  if (!app.events.history().some((event) => event.type === "capability.deactivated" && event.capabilityId === "feature")) throw new Error("停用事件未发布");
   if (registry.getBySlot("workbench-main").some((x) => x.capabilityId === "feature")) throw new Error("deactivate 未摘除 contribution");
   if (!app.inspect().some((x) => x.id === "feature" && x.state === "SUSPENDED" && x.contributions.length === 0)) throw new Error("Runtime inspector 未反映停用状态");
   let dependentRejected = false;

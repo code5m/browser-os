@@ -78,6 +78,10 @@ export interface PublicContractEntry {
 export interface CapabilityManifestV1 {
   id: string;
   version: string;
+  /** Runtime protocol compatibility, distinct from the capability release version. */
+  runtimeApiVersion?: string;
+  /** Structured dependency constraints reserved for future version resolution. */
+  dependencyConstraints?: Record<string, string>;
   displayName: string;
   description: string;
 

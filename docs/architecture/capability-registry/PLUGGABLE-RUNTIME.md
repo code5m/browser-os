@@ -46,6 +46,8 @@ kind: core | feature | optional
 config: defaults + properties + additionalProperties
 ```
 
+Manifest 还预留 `runtimeApiVersion` 与 `dependencyConstraints`，用于未来兼容性解析；当前不引入复杂包管理器。新增能力应遵循 [Capability 开发约定](./CAPABILITY-DEVELOPMENT-GUIDE.md)。
+
 `enabled` 只决定是否装配，`config` 只承载该能力自己的参数。两者不会混为一个开关对象；未知配置项、类型错误、枚举值错误和必填项缺失会在激活前拒绝。
 
 停用语义是 Disable：代码仍在 catalog 中，贡献被摘除，持久化数据保留。Remove/Purge 不由本运行时伪装实现；真正移除前必须通过 `check:capability-removal`，确认没有反向依赖、持久化残留或治理引用。
@@ -59,4 +61,4 @@ npm run check:pluggable-runtime
 npm run check:capability-removal
 ```
 
-门禁覆盖：Manifest 校验、配置 schema、配置解析、依赖自动补齐、确定性激活顺序、`enabled=false`、缺失依赖拒绝、反向依赖保护、激活回滚、Contribution 注册与摘除、移除前置检查。
+门禁覆盖：Manifest 校验、配置 schema、Discovery、边界约束、配置解析、依赖自动补齐、确定性激活顺序、`enabled=false`、缺失依赖拒绝、反向依赖保护、生命周期事件、激活回滚、Contribution 注册与摘除、移除前置检查。
