@@ -7,29 +7,15 @@
 //   3. 不引入 DI、不做动态加载
 
 import { createCapabilityRuntime, type CapabilityRuntime } from './runtime'
-import { bookmarkCapability, BOOKMARK_CAPABILITY_ID } from '../capabilities/bookmark'
-import { workspaceCapability, WORKSPACE_CAPABILITY_ID } from '../capabilities/workspace'
-import { browserCapability, BROWSER_CAPABILITY_ID } from '../capabilities/browser'
-import { terminalCapability, TERMINAL_CAPABILITY_ID } from '../capabilities/terminal'
-import { gitCapability, GIT_CAPABILITY_ID } from '../capabilities/git'
-import { databaseCapability, DATABASE_CAPABILITY_ID } from '../capabilities/database'
-import { agentCapability, AGENT_CAPABILITY_ID } from '../capabilities/agent'
-import { skillCapability, SKILL_CAPABILITY_ID } from '../capabilities/skill'
-import { pluginCapability, PLUGIN_CAPABILITY_ID } from '../capabilities/plugin'
-import { graphCapability, KNOWLEDGE_GRAPH_CAPABILITY_ID } from '../capabilities/graph'
-import { taskCapability, TASK_CAPABILITY_ID } from '../capabilities/task'
 import { CLIPBOARD_CAPABILITY_ID, createClipboardCapability, clipboardContribution, CLIPBOARD_PORTS_KEY, type ClipboardPorts } from '@browser-os/capability-clipboard'
 import { useLayoutStore } from '../stores/useLayoutStore'
 import { redactSecrets } from '../utils/redact'
-import { appsCapability, APPS_CAPABILITY_ID } from '../capabilities/apps'
-import { toolsCapability, TOOLS_CAPABILITY_ID } from '../capabilities/tools'
 import { createVaultCapability, vaultContribution, VAULT_PORTS_KEY, type VaultPorts } from '@browser-os/capability-vault'
 import { bridge } from '../bridge'
 import { useWorkbenchStore } from '../stores/useWorkbenchStore'
 import { layoutPositions } from '../utils/graphUi'
 import { contributionRegistry } from './contribution/registry'
-import { settingsCapability, registerSettingsContributions } from '../settings'
-import { homeCapability } from '../capabilities/home'
+import { registerSettingsContributions } from '../settings'
 import { CAPABILITY_PROFILES, DEFAULT_PROFILE, type CapabilityProfileId, profileFromEnv, resolveProfile } from './profiles'
 import { CAPABILITY_CATALOG, CAPABILITY_DEFINITIONS } from './platform/catalog'
 import { assemble } from './platform/assembly'
@@ -89,25 +75,10 @@ clipboard.clipboardCapability.lifecycle.onActivate = () => contributionRegistry.
 /** 供 main.ts 经 app.provide(CLIPBOARD_PORTS_KEY, clipboardPorts) 注入表现层契约 */
 export const clipboardPorts = clipboardInstancePorts;
 
-export const ALL_CAPABILITIES = [
-  { id: BOOKMARK_CAPABILITY_ID, def: bookmarkCapability },
-  { id: WORKSPACE_CAPABILITY_ID, def: workspaceCapability },
-  { id: BROWSER_CAPABILITY_ID, def: browserCapability },
-  { id: TERMINAL_CAPABILITY_ID, def: terminalCapability },
-  { id: GIT_CAPABILITY_ID, def: gitCapability },
-  { id: DATABASE_CAPABILITY_ID, def: databaseCapability },
-  { id: AGENT_CAPABILITY_ID, def: agentCapability },
-  { id: SKILL_CAPABILITY_ID, def: skillCapability },
-  { id: PLUGIN_CAPABILITY_ID, def: pluginCapability },
-  { id: KNOWLEDGE_GRAPH_CAPABILITY_ID, def: graphCapability },
-  { id: TASK_CAPABILITY_ID, def: taskCapability },
-  { id: CLIPBOARD_CAPABILITY_ID, def: clipboard.clipboardCapability },
-  { id: APPS_CAPABILITY_ID, def: appsCapability },
-  { id: TOOLS_CAPABILITY_ID, def: toolsCapability },
-  { id: 'vault', def: vault.vaultCapability },
-  { id: 'settings', def: settingsCapability },
-  { id: 'home', def: homeCapability },
-]
+export const ALL_CAPABILITIES = Object.entries(CAPABILITY_DEFINITIONS)
+  .map(([id, def]) => ({ id, def }))
+  .map((entry) => entry.id === CLIPBOARD_CAPABILITY_ID ? { id: entry.id, def: clipboard.clipboardCapability } : entry)
+  .map((entry) => entry.id === 'vault' ? { id: entry.id, def: vault.vaultCapability } : entry)
 
 let runtime: CapabilityRuntime | null = null
 let lastError: string | null = null
