@@ -22,6 +22,7 @@
     "generate:capability-registry": "node scripts/generate-capability-registry.mjs",
     "check:generated-registry": "node scripts/generate-capability-registry.mjs --check",
     "check:capability-zero-central-touch": "node scripts/check-capability-zero-central-touch.mjs",
+    "check:legacy-capability-wiring": "node scripts/check-legacy-capability-wiring.mjs",
     "verify:client": "bash scripts/verify-installed-client.sh --build",
     "release:install": "bash scripts/verify-installed-client.sh --install"
   },
