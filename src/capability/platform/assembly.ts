@@ -38,7 +38,9 @@ export interface ConflictHit {
 
 export interface AssemblyInput {
   /** 请求的 capability id 列表（允许空集 = framework-only） */
-  capabilities: string[];
+  capabilities?: string[];
+  /** 配置驱动的启用表；true 表示请求，false 表示不请求。 */
+  enabled?: Record<string, boolean>;
 }
 
 export interface AssemblyResult {
@@ -139,7 +141,9 @@ export function assemble(
   input: AssemblyInput,
 ): AssemblyResult {
   const catalog = toCatalogMap(catalogInput);
-  const requestedRaw = input.capabilities ?? [];
+  const requestedRaw = input.capabilities ?? Object.entries(input.enabled ?? {})
+    .filter(([, enabled]) => enabled)
+    .map(([id]) => id);
   const requested = uniqSorted(requestedRaw);
 
   const result: AssemblyResult = {

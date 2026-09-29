@@ -33,6 +33,8 @@ import { homeCapability } from '../capabilities/home'
 import { CAPABILITY_PROFILES, DEFAULT_PROFILE, type CapabilityProfileId, profileFromEnv, resolveProfile } from './profiles'
 import { CAPABILITY_CATALOG, CAPABILITY_DEFINITIONS } from './platform/catalog'
 import { assemble } from './platform/assembly'
+import { configFromEnv, type CapabilityEnabledConfig } from './platform/config'
+import { createPluggableRuntime } from './platform/pluggable'
 // H-G 修复：把 Runtime 单例发布到叶子模块，供能力内部在**调用时**判定
 // 「本能力是否获准创建自己 owned 的重资源」。不这样做就会形成 ESM 循环。
 import { setCapabilityRuntime, peekCapabilityRuntime } from './runtimeSingleton'
@@ -116,6 +118,12 @@ function customAssemblyFromEnv(): string[] | null {
   return raw.split(',').map((s) => s.trim()).filter(Boolean)
 }
 
+function enabledConfigFromEnv(): CapabilityEnabledConfig | null {
+  // @ts-expect-error Vite 注入
+  const env = typeof import.meta !== 'undefined' ? (import.meta.env ?? {}) : {}
+  return configFromEnv(env as Record<string, unknown>)
+}
+
 export interface BootstrapResult {
   runtime: CapabilityRuntime
   activated: boolean
@@ -143,6 +151,20 @@ export function bootstrapCapabilityRuntime(profile?: CapabilityProfileId | strin
   // 但 settings 属 framework SERVICE，故在 bootstrap 首次初始化时直接注册其贡献。
   // 幂等：contributionRegistry.registerContribution 以 id 为键覆盖，重复调用安全。
   registerSettingsContributions()
+  const envConfig = enabledConfigFromEnv()
+  if (profile == null && envConfig) {
+    try {
+      const built = bootstrapConfiguredCapabilityRuntime(envConfig)
+      lastProfile = 'custom'
+      return { runtime: built.runtime, activated: built.activated, error: built.error, profile: 'custom' }
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e)
+      const empty = createCapabilityRuntime()
+      runtime = empty
+      setCapabilityRuntime(runtime)
+      return { runtime: empty, activated: false, error: lastError, profile: 'custom' }
+    }
+  }
   // 自由装配优先：设置 VITE_CAPABILITY_ASSEMBLY 时按任意组合装配（不是 preset）。
   // 非法组合由 Assembly Engine 在启动前确定性拒绝——这里只记录错误 + 以零能力启动，绝不崩溃。
   const customIds = customAssemblyFromEnv()
@@ -215,6 +237,33 @@ export function bootstrapAssembly(capabilityIds: string[]): BootstrapResult {
     }
   }
   return { runtime: rt, activated, error, profile: 'custom' as CapabilityProfileId }
+}
+
+/**
+ * Manifest + enabled 配置驱动的真实装配入口。
+ * 依赖由 Manifest 自动补齐，注册/激活顺序由拓扑排序决定。
+ */
+export function bootstrapConfiguredCapabilityRuntime(
+  config?: CapabilityEnabledConfig,
+): BootstrapResult {
+  const fallback = config ?? configFromEnv(import.meta.env ?? {}) ?? {
+    enabled: Object.fromEntries(CAPABILITY_PROFILES[DEFAULT_PROFILE].map((id) => [id, true])),
+  }
+  const built = createPluggableRuntime({
+    catalog: CAPABILITY_CATALOG,
+    definitions: CAPABILITY_DEFINITIONS,
+    config: fallback,
+    contributions: contributionRegistry,
+  })
+  built.activate()
+  runtime = built.runtime
+  setCapabilityRuntime(runtime)
+  return {
+    runtime,
+    activated: built.runtime.inspect().some((entry) => entry.state === 'ACTIVE'),
+    error: null,
+    profile: 'custom',
+  }
 }
 
 export function getCapabilityRuntime(): CapabilityRuntime | null {

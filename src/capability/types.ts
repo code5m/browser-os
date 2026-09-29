@@ -67,6 +67,7 @@ export interface CapabilityLifecycle {
   resident: boolean
   onActivate?: () => void | Promise<void>
   onSuspend?: () => void | Promise<void>
+  onDeactivate?: () => void | Promise<void>
 }
 
 export interface CapabilityPersistence {
