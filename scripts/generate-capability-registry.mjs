@@ -4,6 +4,18 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const output = path.join(root, 'src/capability/platform/generated-registry.ts')
+function moduleSpecifier(file) {
+  const relative = path.relative(root, file).replaceAll(path.sep, '/')
+  if (!relative.startsWith('packages/')) return './' + path.relative(path.dirname(output), file).replaceAll(path.sep, '/').replace(/\.ts$/, '')
+  const [, packageDir, ...rest] = relative.split('/')
+  const packageJsonPath = path.join(root, 'packages', packageDir, 'package.json')
+  if (!fs.existsSync(packageJsonPath)) return './' + path.relative(path.dirname(output), file).replaceAll(path.sep, '/').replace(/\.ts$/, '')
+  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'))
+  const subpath = rest.join('/').replace(/\.ts$/, '')
+  if (subpath === 'src/index') return packageJson.name
+  if (subpath === 'src/manifest') return `${packageJson.name}/manifest`
+  return `${packageJson.name}/${subpath.replace(/^src\//, '')}`
+}
 const files = []
 function walk(dir) {
   if (!fs.existsSync(dir)) return
@@ -21,7 +33,7 @@ const entries = files.map((file) => {
   if (!match) return null
   const index = path.join(path.dirname(file), 'index.ts')
   const capability = fs.existsSync(index) ? fs.readFileSync(index, 'utf8').match(/export const (\w+Capability)\s*(?::|=)/)?.[1] : null
-  return { file: './' + path.relative(path.dirname(output), file).replaceAll(path.sep, '/').replace(/\.ts$/, ''), name: match[1], index: capability ? './' + path.relative(path.dirname(output), index).replaceAll(path.sep, '/').replace(/\.ts$/, '') : null, capability }
+  return { file: moduleSpecifier(file), name: match[1], index: capability ? moduleSpecifier(index) : null, capability }
 }).filter(Boolean).sort((a, b) => a.file.localeCompare(b.file))
 const imports = entries.map((entry, index) => `import { ${entry.name} as manifest${index} } from '${entry.file}'`).join('\n')
 let definitionIndex = 0

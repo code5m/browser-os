@@ -7,14 +7,8 @@
 //   3. 不引入 DI、不做动态加载
 
 import { createCapabilityRuntime, type CapabilityRuntime } from './runtime'
-import { CLIPBOARD_CAPABILITY_ID, createClipboardCapability, clipboardContribution, CLIPBOARD_PORTS_KEY, type ClipboardPorts } from '@browser-os/capability-clipboard'
-import { useLayoutStore } from '../stores/useLayoutStore'
-import { redactSecrets } from '../utils/redact'
-import { createVaultCapability, vaultContribution, VAULT_PORTS_KEY, type VaultPorts } from '@browser-os/capability-vault'
-import { bridge } from '../bridge'
-import { useWorkbenchStore } from '../stores/useWorkbenchStore'
-import { layoutPositions } from '../utils/graphUi'
-import { contributionRegistry } from './contribution/registry'
+import { CLIPBOARD_CAPABILITY_ID } from '@browser-os/capability-clipboard'
+import { createLegacyHostAdapters } from './platform/legacy-host-adapters'
 import { registerSettingsContributions } from '../settings'
 import { CAPABILITY_PROFILES, DEFAULT_PROFILE, type CapabilityProfileId, profileFromEnv, resolveProfile } from './profiles'
 import { CAPABILITY_CATALOG, CAPABILITY_DEFINITIONS } from './platform/catalog'
@@ -30,50 +24,11 @@ import { hostServices } from './platform/host-services'
 // 引用的能力入口」摇树删除——否则新增能力（如 git）会在组合测试甚至生产包中凭空消失。
 // 顺序 = **依赖安全顺序**：bootstrap 逐条 register→resolve→activate，故能力依赖必须先行注册
 // （如 git 依赖 workspace）。bridge/credential 为外部基础设施，由 runtime 豁免，不在此列。
-// === Vault M2 package wiring（Host 侧适配）===
-// 窄 Host Contract 显式提供：桥接 bridge.vaultOpen / 工作区折叠 / 图布局。
-// 包本身不 import 这些 host 内部（满足 PKG-06）；仅 Host 在此组装。
-hostServices.register('bridge', bridge)
-hostServices.register('layout', useLayoutStore)
-hostServices.register('workbench', useWorkbenchStore)
-hostServices.register('graph-layout', (nodes: unknown[], edges: unknown[]) => layoutPositions(nodes as any, edges as any))
-hostServices.register('redact-secrets', redactSecrets)
-const vaultInstancePorts: VaultPorts = {
-  native: { openVault: (path: string) => hostServices.require<typeof bridge>('bridge').vaultOpen(path) },
-  shell: { isWorkbenchCollapsed: () => hostServices.require<typeof useWorkbenchStore>('workbench')().collapsed.value },
-  graphLayout: { layoutGraph: (nodes, edges) => hostServices.require<(nodes: unknown[], edges: unknown[]) => unknown>('graph-layout')(nodes as any, edges as any) },
-};
-const vault = createVaultCapability(vaultInstancePorts);
-// Host 负责注册贡献（避免 Vault → Host registry 反向依赖）：onActivate 时注册包导出的描述符。
-// 注意：registry 方法名是 registerContribution（非 register），此前误写 register 导致 onActivate 抛错、
-// 激活循环中断、其后的能力（home 等）一并无法注册（真实执行已复现）。
-vault.vaultCapability.lifecycle.onActivate = () => contributionRegistry.registerContribution(vaultContribution as any);
-/** 供 main.ts 经 app.provide(VAULT_PORTS_KEY, vaultPorts) 注入表现层契约 */
-export const vaultPorts = vaultInstancePorts;
-
-// === Clipboard M2 package wiring（Host 侧适配）===
-// 窄 Host Contract 显式提供：桥接 clipboardRead/Write、showToast、requestClose(关面板)、redactSecrets。
-// 包本身不 import 这些 host 内部（满足 PKG-06）；仅 Host 在此组装。
-// 注：EmptyState 不进端口——本模块会被 check-capability-platform 等 node 侧 checker 经 esbuild 打包，
-// 而 *.vue 被 external 后 node 无法加载；为与 Vault 一致，面板自渲染最小空态，避免端口引入 .vue。
-const clipboardInstancePorts: ClipboardPorts = {
-  native: {
-    clipboardRead: () => hostServices.require<typeof bridge>('bridge').clipboardRead(),
-    clipboardWrite: (text: string) => hostServices.require<typeof bridge>('bridge').clipboardWrite(text),
-  },
-  ui: {
-    showToast: (message: string) => hostServices.require<ReturnType<typeof useLayoutStore>>('layout')().showToast(message),
-    requestClose: () => {
-      hostServices.require<ReturnType<typeof useLayoutStore>>('layout')().clipOpen = false;
-    },
-    redactSecrets: (text: string) => hostServices.require<(text: string) => string>('redact-secrets')(text),
-  },
-}
-const clipboard = createClipboardCapability(clipboardInstancePorts)
-// Host 负责注册贡献（避免 Clipboard → Host registry 反向依赖）：onActivate 时注册包导出的描述符。
-clipboard.clipboardCapability.lifecycle.onActivate = () => contributionRegistry.registerContribution(clipboardContribution as any)
-/** 供 main.ts 经 app.provide(CLIPBOARD_PORTS_KEY, clipboardPorts) 注入表现层契约 */
-export const clipboardPorts = clipboardInstancePorts;
+const legacyAdapters = createLegacyHostAdapters(hostServices)
+const vault = legacyAdapters.vault
+const clipboard = legacyAdapters.clipboard
+export const vaultPorts = legacyAdapters.vaultPorts
+export const clipboardPorts = legacyAdapters.clipboardPorts
 
 export const ALL_CAPABILITIES = Object.entries(CAPABILITY_DEFINITIONS)
   .map(([id, def]) => ({ id, def }))
