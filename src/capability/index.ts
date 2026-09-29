@@ -38,6 +38,7 @@ import { createPluggableRuntime } from './platform/pluggable'
 // H-G 修复：把 Runtime 单例发布到叶子模块，供能力内部在**调用时**判定
 // 「本能力是否获准创建自己 owned 的重资源」。不这样做就会形成 ESM 循环。
 import { setCapabilityRuntime, peekCapabilityRuntime } from './runtimeSingleton'
+import { hostServices } from './platform/host-services'
 
 // 导出：保证任何打包器（esbuild / Rollup）都不会把「仅被 bootstrapCapabilityRuntime 内部
 // 引用的能力入口」摇树删除——否则新增能力（如 git）会在组合测试甚至生产包中凭空消失。
@@ -46,10 +47,15 @@ import { setCapabilityRuntime, peekCapabilityRuntime } from './runtimeSingleton'
 // === Vault M2 package wiring（Host 侧适配）===
 // 窄 Host Contract 显式提供：桥接 bridge.vaultOpen / 工作区折叠 / 图布局。
 // 包本身不 import 这些 host 内部（满足 PKG-06）；仅 Host 在此组装。
+hostServices.register('bridge', bridge)
+hostServices.register('layout', useLayoutStore)
+hostServices.register('workbench', useWorkbenchStore)
+hostServices.register('graph-layout', (nodes: unknown[], edges: unknown[]) => layoutPositions(nodes as any, edges as any))
+hostServices.register('redact-secrets', redactSecrets)
 const vaultInstancePorts: VaultPorts = {
-  native: { openVault: (path: string) => bridge.vaultOpen(path) },
-  shell: { isWorkbenchCollapsed: () => useWorkbenchStore().collapsed.value },
-  graphLayout: { layoutGraph: (nodes, edges) => layoutPositions(nodes as any, edges as any) },
+  native: { openVault: (path: string) => hostServices.require<typeof bridge>('bridge').vaultOpen(path) },
+  shell: { isWorkbenchCollapsed: () => hostServices.require<typeof useWorkbenchStore>('workbench')().collapsed.value },
+  graphLayout: { layoutGraph: (nodes, edges) => hostServices.require<(nodes: unknown[], edges: unknown[]) => unknown>('graph-layout')(nodes as any, edges as any) },
 };
 const vault = createVaultCapability(vaultInstancePorts);
 // Host 负责注册贡献（避免 Vault → Host registry 反向依赖）：onActivate 时注册包导出的描述符。
@@ -66,15 +72,15 @@ export const vaultPorts = vaultInstancePorts;
 // 而 *.vue 被 external 后 node 无法加载；为与 Vault 一致，面板自渲染最小空态，避免端口引入 .vue。
 const clipboardInstancePorts: ClipboardPorts = {
   native: {
-    clipboardRead: () => bridge.clipboardRead(),
-    clipboardWrite: (text: string) => bridge.clipboardWrite(text),
+    clipboardRead: () => hostServices.require<typeof bridge>('bridge').clipboardRead(),
+    clipboardWrite: (text: string) => hostServices.require<typeof bridge>('bridge').clipboardWrite(text),
   },
   ui: {
-    showToast: (message: string) => useLayoutStore().showToast(message),
+    showToast: (message: string) => hostServices.require<ReturnType<typeof useLayoutStore>>('layout')().showToast(message),
     requestClose: () => {
-      useLayoutStore().clipOpen = false;
+      hostServices.require<ReturnType<typeof useLayoutStore>>('layout')().clipOpen = false;
     },
-    redactSecrets: (text: string) => redactSecrets(text),
+    redactSecrets: (text: string) => hostServices.require<(text: string) => string>('redact-secrets')(text),
   },
 }
 const clipboard = createClipboardCapability(clipboardInstancePorts)

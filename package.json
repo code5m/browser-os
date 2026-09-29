@@ -23,6 +23,8 @@
     "check:generated-registry": "node scripts/generate-capability-registry.mjs --check",
     "check:capability-zero-central-touch": "node scripts/check-capability-zero-central-touch.mjs",
     "check:legacy-capability-wiring": "node scripts/check-legacy-capability-wiring.mjs",
+    "check:host-service-registry": "node scripts/check-host-service-registry.mjs",
+    "check:legacy-definition-growth": "node scripts/check-legacy-definition-growth.mjs",
     "verify:client": "bash scripts/verify-installed-client.sh --build",
     "release:install": "bash scripts/verify-installed-client.sh --install"
   },
