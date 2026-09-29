@@ -1,4 +1,4 @@
-// src/stores/useAgentStore.ts
+// src/capabilities/agent/state/useAgentStore.ts
 // M5-6 Agent 面板状态机。
 //
 // STAGE E（Capability Library Expansion v1）：
@@ -17,16 +17,16 @@ import {
   AGENT_SKILL_COMMANDS_AVAILABLE,
   AGENT_SKILL_READONLY_COMMANDS_AVAILABLE,
   bridge,
-} from "../bridge";
+} from "../../../bridge";
 import type {
   AgentDef,
   AgentSessionUI,
   PermissionPreview,
   StreamChunk,
   ValidationReport,
-} from "../types";
-import { appendChunk } from "../utils/agentSkillUi";
-import { useInstallConfirmStore } from "./useInstallConfirmStore";
+} from "../../../types";
+import { appendChunk } from "../../../utils/agentSkillUi";
+import { useInstallConfirmStore } from "../../../stores/useInstallConfirmStore";
 
 // 纯函数：secret 纵深脱敏（与 useSkillStore 同口径，兜底后端 CredentialLeak Display 脱敏）。
 const SECRET_REDACT_PATTERNS: RegExp[] = [
@@ -122,7 +122,7 @@ export const useAgentStore = defineStore("agent", () => {
     try {
       const result = (await bridge.agentInstall(id)) as { request_id?: string } | void;
       if (result && result.request_id) {
-        useInstallConfirmStore().setPending("install_agent", { id });
+        useInstallConfirmStore().setPending("install_agent", result.request_id, { id });
       }
       await loadAgents();
       return true;

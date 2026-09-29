@@ -15,14 +15,14 @@
   （`bridge.ts: AGENT_SKILL_COMMANDS_AVAILABLE=false` → `guard()` 返回 false，前端绝不 invoke）。
   仅只读命令就绪：`agent_parse` / `agent_validate` / `agent_permission_preview`（bridge.rs:6529/6539/6549）。
   故当前 Agent 为「只读壳 + 解析/校验/权限预览」，chat/run 不可执行。
-- 非 C3：同 database 债务（useAgentStore 物理在 src/stores；无 agent 专属 absence 门禁；mainView='agents' 导航硬编码）。
+- 非 C3：同 database 债务（无 agent 专属 absence 门禁；mainView='agents' 导航硬编码）。
 
 ## Full-Stack Trace
 
 ```text
 Agent UI (capabilities/agent/ui/AgentManagerPanel.vue + AgentChatPanel.vue 子视图)
   ↓ OWNED_BY_CAPABILITY（经 public.ts 消费语义 owner）
-Agent State Owner: useAgentStore (id="agent", src/stores/useAgentStore.ts)
+Agent State Owner: useAgentStore (id="agent", src/capabilities/agent/state/useAgentStore.ts)
   ↓ 意图（intents）
   chat() / run() / install() / validate() / parse() / permissionPreview()
   ↓ PUBLIC_DEPENDENCY（bridge，AGENT_SKILL_COMMANDS_AVAILABLE=false）

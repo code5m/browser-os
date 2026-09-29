@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted } from "vue";
-import { useAgentStore } from "../../../stores/useAgentStore";
+import { useAgentStore } from "../state/useAgentStore";
 import { a2aSummary, dialectLabel, renderCapabilityList, panelState } from "../../../utils/agentSkillUi";
 import type { AgentDef } from "../../../types";
 import PermissionPreviewModal from "../../../shared/ui/PermissionPreviewModal.vue";

@@ -2,7 +2,7 @@
 // ---------------------------------------------------------------------------
 // M5-6（Agent/Skill UI）前端逻辑层自动化测试（headless，无 GUI 依赖）
 //
-// 直接加载**真实的** `src/utils/agentSkillUi.ts` 与 `src/stores/useAgentStore.ts`，
+// 直接加载**真实的** `src/utils/agentSkillUi.ts` 与 `src/capabilities/agent/state/useAgentStore.ts`，
 // 只把 `src/bridge.ts` 的 skill_*/agent_* 方法替换为记录型 mock（不 mock 逻辑层与 store 自身）：
 // 每条断言反映的都是**产品代码**的行为。
 //
@@ -64,7 +64,9 @@ const ROOT = new URL("..", import.meta.url).pathname;
 
 const { bridge } = await import(`${ROOT}src/bridge.ts`);
 const ui = await import(`${ROOT}src/utils/agentSkillUi.ts`);
-const { useAgentStore } = await import(`${ROOT}src/stores/useAgentStore.ts`);
+const { useAgentStore } = await import(`${ROOT}src/capabilities/agent/state/useAgentStore.ts`);
+const { useSkillStore } = await import(`${ROOT}src/capabilities/skill/state/useSkillStore.ts`);
+const { useInstallConfirmStore } = await import(`${ROOT}src/stores/useInstallConfirmStore.ts`);
 const { createPinia, setActivePinia } = await import(`${ROOT}node_modules/pinia/dist/pinia.mjs`);
 
 const {
@@ -101,7 +103,7 @@ const skillDef = {
   displayName: "清理缓存",
   description: "清理临时缓存",
   acl: "confirm",
-  exec: { kind: "script_ref", scriptId: "scr-9", params: {} },
+  exec: { kind: "script_ref", script_id: "scr-9", params: {} },
   inputs: [
     { name: "DAYS", required: true, description: "天数" },
     { name: "TOKEN", required: false, description: "令牌" },
@@ -116,9 +118,9 @@ const agentDef = {
   displayName: "问答助手",
   description: "通用问答",
   dialect: "open_ai_compatible",
-  systemPrompt: "你是一个助手",
+  system_prompt: "你是一个助手",
   defaultCapabilities: [{ id: "net:http" }],
-  a2a: { delegateTo: true, delegatedFrom: false },
+  a2a: { delegate_to: true, delegated_from: false },
   metadata: {},
 };
 
@@ -197,7 +199,38 @@ function assert(cond, label) {
 }
 
 setActivePinia(createPinia());
-const store = useAgentStore();
+const agentStore = useAgentStore();
+const skillStore = useSkillStore();
+const confirmStore = useInstallConfirmStore();
+const skillKeys = new Set([
+  "skills", "skillInstalls", "selectedSkillId", "selectedSkill", "skillValidation",
+  "skillParseDef", "skillPreview", "skillStatus", "boundedPreview", "loadSkills",
+  "selectSkill", "installSkill", "validateSkill",
+]);
+const store = new Proxy(agentStore, {
+  get(target, prop, receiver) {
+    if (prop === "pendingConfirms") return confirmStore.pendingConfirms;
+    if (prop === "clearValidation") return () => {
+      skillStore.clearValidation();
+      agentStore.clearValidation();
+    };
+    if (skillKeys.has(String(prop))) return skillStore[prop];
+    return Reflect.get(target, prop, receiver);
+  },
+  set(target, prop, value, receiver) {
+    if (prop === "backendReady" || prop === "loading" || prop === "error") {
+      skillStore[prop] = value;
+      agentStore[prop] = value;
+      confirmStore.backendReady = value;
+      return true;
+    }
+    if (skillKeys.has(String(prop))) {
+      skillStore[prop] = value;
+      return true;
+    }
+    return Reflect.set(target, prop, value, receiver);
+  },
+});
 
 // ===========================================================================
 // 1. 展示标签
@@ -206,9 +239,9 @@ assert(aclLabel("safe") === "安全", "L-1 aclLabel safe");
 assert(aclLabel("dangerous") === "高危", "L-2 aclLabel dangerous");
 assert(aclTone("dangerous") === "danger", "L-3 aclTone dangerous");
 assert(dialectLabel("open_ai_compatible") === "OpenAI 兼容", "L-4 dialectLabel open_ai_compatible");
-assert(a2aSummary({ delegateTo: true, delegatedFrom: false }) === "可委派他人", "L-5 a2aSummary delegateTo");
-assert(a2aSummary({ delegateTo: false, delegatedFrom: false }) === "不可委派", "L-6 a2aSummary none");
-assert(execSummary({ kind: "script_ref", scriptId: "scr-9", params: {} }) === "脚本 #scr-9", "L-7 execSummary script_ref");
+assert(a2aSummary({ delegate_to: true, delegated_from: false }) === "可委派他人", "L-5 a2aSummary delegate_to");
+assert(a2aSummary({ delegate_to: false, delegated_from: false }) === "不可委派", "L-6 a2aSummary none");
+assert(execSummary({ kind: "script_ref", script_id: "scr-9", params: {} }) === "脚本 #scr-9", "L-7 execSummary script_id");
 assert(execSummary({ kind: "sequence", steps: [{}, {}] }) === "串联 2 步", "L-8 execSummary sequence");
 assert(capabilityLabel("fs:read") === "文件系统读", "L-9 capabilityLabel known");
 assert(capabilityLabel("weird:cap") === "weird:cap", "L-10 capabilityLabel unknown 回显原 id");
@@ -488,7 +521,7 @@ assert(store.boundedPreview.total === 100, "W9-16 总数仍为 100（不丢信�
 // 11.6 agent 对称路径 + 解析 def 中 prompt-secret 不进前端状态
 bridge.agentParse = async () => ({
   ...agentDef,
-  systemPrompt: "你是一个助手，内部 token=sk-ZZZ99999999999",
+  system_prompt: "你是一个助手，内部 token=sk-ZZZ99999999999",
 });
 resetCalls();
 await store.validateAgent("AGENT_JSON_TEXT");
@@ -499,8 +532,8 @@ assert(
   "W9-19 agent 权限预览（safe 档）",
 );
 assert(
-  store.agentParseDef && !store.agentParseDef.systemPrompt.includes("sk-ZZZ99999999999"),
-  "W9-20 解析出的 AgentDef.systemPrompt 中 secret 已脱敏（不进前端状态）",
+  store.agentParseDef && !store.agentParseDef.system_prompt.includes("sk-ZZZ99999999999"),
+  "W9-20 解析出的 AgentDef.system_prompt 中 secret 已脱敏（不进前端状态）",
 );
 
 // 11.7 收尾：回到空态，避免影响后续（如若有）断言

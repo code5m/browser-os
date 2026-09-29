@@ -4,6 +4,6 @@
 // 不创建 runtime.agentOpen / agentVisible 之类镜像状态。调用方一律经此路径消费 Agent 状态与意图。
 // 注意：useAgentStore 同时持有 skill 状态（skill 无专属 store），STAGE E 将处理 skill 拆分；
 // 此处仅再导出，不复制状态。
-export { useAgentStore } from "../../stores/useAgentStore"
+export { useAgentStore } from "./state/useAgentStore"
 export { agentManifest } from "./manifest"
 export type { AgentDef } from "../../types"

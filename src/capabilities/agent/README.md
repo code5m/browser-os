@@ -32,7 +32,7 @@
 
 ## 6. Domain Model
 - 聚合根：Agent 定义集合（由 `useAgentStore` 管理 `agents` / `agentInstalls` / `sessions`）。
-- 关键 state：`agents` / `agentInstalls` / `sessions` / `selectedAgentId` / `loading` / `error` / `backendReady` / `agentValidation` / `agentParseDef` / `agentPreview`（`src/stores/useAgentStore.ts`）。
+- 关键 state：`agents` / `agentInstalls` / `sessions` / `selectedAgentId` / `loading` / `error` / `backendReady` / `agentValidation` / `agentParseDef` / `agentPreview`（`src/capabilities/agent/state/useAgentStore.ts`）。
 - 校验/预览结果：`agentValidation` / `agentParseDef` / `agentPreview`。
 
 ## 7. Invariants
@@ -41,9 +41,9 @@
 - 只读命令（`parse/validate/permission_preview`）可安全调用；执行命令一律禁止。
 
 ## 8. State Ownership
-- **CURRENT PHYSICAL LOCATION**：`src/stores/useAgentStore.ts`（`defineStore("agent")`）。
+- **CURRENT PHYSICAL LOCATION**：`src/capabilities/agent/state/useAgentStore.ts`（`defineStore("agent")`）。
 - **semanticOwner**：`useAgentStore`（manifest + public 登记）。
-- **TARGET / KNOWN DEBT**：store 应迁入 `src/capabilities/agent/state/`（与 bookmark 对齐），当前仍在 `src/stores/`，属物理债务（见 §30）。UI 组件亦直连 `src/stores/useAgentStore`（非经 public.ts）。
+- **PUBLIC ACCESS**：Agent store 已迁入 `src/capabilities/agent/state/`；UI 组件在能力内部读取 state，跨能力消费经 `public.ts`。
 
 ## 9. Commands / Intents
 - 业务 action：`loadAgents` / `selectAgent` / `installAgent` / `ackConfirm` / `runAgent`（拦截）/ `cancelRun` / `pushChunk` / `endSession` / `validateAgent` / `clearValidation`。
@@ -77,7 +77,7 @@
 ## 16. Frontend Boundary
 - 贡献组件：`AgentManagerPanel.vue`（WORKBENCH_MAIN，view=`agents`），含子视图 `AgentChatPanel.vue`。
 - 注册：`src/capabilities/agent/index.ts` `registerAgentContributions()`，懒加载 `defineAsyncComponent`。
-- **CURRENT PHYSICAL LOCATION**：UI 在 `src/capabilities/agent/ui/`（已隔离）；但 UI 内部直连 `src/stores/useAgentStore`。
+- **CURRENT PHYSICAL LOCATION**：UI 在 `src/capabilities/agent/ui/`（已隔离），state owner 位于 `src/capabilities/agent/state/`。
 
 ## 17. Native Boundary
 - 原生命令真源：`src-tauri/src/agent.rs` 仅含纯逻辑（`AgentDef::parse/validate/permission_preview`，非 `#[tauri::command]`）。
@@ -109,7 +109,7 @@
 
 ## 23. Capability Absence
 - Absent 时：`registerAgentContributions` 未执行 → WORKBENCH_MAIN 无 view=`agents` → MainArea 不渲染。
-- 但 `src/stores/useAgentStore` 仍被其他 import 点引用（见 §8 物理债务），absent 不保证该 store 完全不实例化。
+- Agent store 已无旧路径残留；absent 结论仍受 Agent 专属 absence 门禁缺失约束。
 
 ## 24. Runtime Lifecycle
 - `lifecycle.supported: ["ACTIVE","SUSPENDED"]`；`default: "ACTIVE"`；`activatable: true`；`resident: false`。
@@ -127,8 +127,8 @@
 - `scripts/check-developer-owners.mjs`（被 manifest `maturityEvidence` 引用，但 grep 实际**不覆盖 agent** → 引用名实不符）。
 
 ## 28. Review Guide
-- 入口：`manifest.ts` → `public.ts` → `src/stores/useAgentStore.ts` → `ui/AgentManagerPanel.vue`。
-- 关注点：执行后端是否仍缺失、`guard()` 是否覆盖所有执行入口、store 物理位置债务。
+- 入口：`manifest.ts` → `public.ts` → `src/capabilities/agent/state/useAgentStore.ts` → `ui/AgentManagerPanel.vue`。
+- 关注点：执行后端是否仍缺失、`guard()` 是否覆盖所有执行入口、UI 是否绕过 capability public contract。
 
 ## 29. AI Modification Guide
 - 实现执行后端前：先实现 Rust 命令并注册 main.rs + 补 default ACL + 设 `AGENT_SKILL_COMMANDS_AVAILABLE=true`，再放开 `guard()`。
@@ -137,7 +137,7 @@
 
 ## 30. Known Debt
 - **执行后端未实现**：`AGENT_SKILL_COMMANDS_AVAILABLE=false`，`agent_list/install/chat/cancel` 未注册 → 最大功能缺口（manifest 诚实声明 C1/HP0）。
-- **物理债务**：`useAgentStore` 仍在 `src/stores/`，未迁入 `src/capabilities/agent/state/`；UI 直连 `src/stores/useAgentStore`（非经 public.ts）。
+- **物理债务**：Agent state owner 的物理迁移已完成；剩余债务是 absence 门禁与导航硬编码。
 - **maturityEvidence 引用陈旧**：引 `check-developer-owners.mjs` 但实际不覆盖 agent（应改引 `check-agent-skill-ui-logic.mjs`）。
 
 ## 31. C / HP / M / RV / D
@@ -154,7 +154,7 @@
 ## 33. Source of Truth
 - manifest：`src/capabilities/agent/manifest.ts`
 - public：`src/capabilities/agent/public.ts`
-- state（**物理债务位置**）：`src/stores/useAgentStore.ts`
+- state：`src/capabilities/agent/state/useAgentStore.ts`
 - UI：`src/capabilities/agent/ui/`
 - native：`src-tauri/src/agent.rs`、`src-tauri/src/main.rs`、`src/bridge.ts`
 - semantic owner：manifest `semanticOwner: "useAgentStore"`

@@ -107,7 +107,7 @@ export const useSkillStore = defineStore("skill", () => {
     try {
       const result = (await bridge.skillInstall(id)) as { request_id?: string } | void;
       if (result && result.request_id) {
-        useInstallConfirmStore().setPending("install_skill", { id });
+        useInstallConfirmStore().setPending("install_skill", result.request_id, { id });
       }
       await loadSkills();
       return true;

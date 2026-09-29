@@ -18,22 +18,23 @@ import { isConfirmExpired, makePendingConfirm, type PendingConfirmAction } from 
 
 export const useInstallConfirmStore = defineStore("install-confirm", () => {
   const pendingConfirms = ref<Map<string, ReturnType<typeof makePendingConfirm>>>(new Map());
+  const backendReady = ref<boolean>(AGENT_SKILL_COMMANDS_AVAILABLE);
 
   const pendingConfirmList = computed(() =>
     [...pendingConfirms.value.values()].filter((c) => !isConfirmExpired(c)),
   );
 
-  function setPending(action: PendingConfirmAction, payload: unknown): string {
+  function setPending(action: PendingConfirmAction, requestId: string, payload: unknown): string {
     const c = makePendingConfirm(action, payload);
     const m = new Map(pendingConfirms.value);
-    m.set(c.payload as string, c); // 临时 key；确认后由 ackConfirm 用真实 request_id 覆盖
+    m.set(requestId, c);
     pendingConfirms.value = m;
-    return c.payload as string;
+    return requestId;
   }
 
   async function ackConfirm(requestId: string, decision: "approve" | "deny"): Promise<boolean> {
     // 后端命令未就绪（A5 W4 仅落地 domain + policy）→ 一条 invoke 都不发。
-    if (!AGENT_SKILL_COMMANDS_AVAILABLE) return false;
+    if (!backendReady.value) return false;
     const c = pendingConfirms.value.get(requestId);
     if (!c || isConfirmExpired(c)) return false;
     try {
@@ -50,5 +51,5 @@ export const useInstallConfirmStore = defineStore("install-confirm", () => {
     }
   }
 
-  return { pendingConfirms, pendingConfirmList, setPending, ackConfirm };
+  return { pendingConfirms, pendingConfirmList, backendReady, setPending, ackConfirm };
 });
