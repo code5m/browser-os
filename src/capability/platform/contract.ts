@@ -14,6 +14,19 @@ export type MaturityLevel = "C0" | "C1" | "C2" | "C3" | "C4" | "C5";
 
 /** §19/§40 热插拔等级（不得与成熟度混淆：C4 ≠ HP2） */
 export type HotPlugLevel = "HP0" | "HP1" | "HP2" | "HP3";
+export type CapabilityKind = "core" | "feature" | "optional";
+
+export type CapabilityConfigValue = string | number | boolean | null;
+export interface CapabilityConfigProperty {
+  type: "string" | "number" | "boolean";
+  required?: boolean;
+  enum?: CapabilityConfigValue[];
+}
+export interface CapabilityConfigSchema {
+  defaults: Record<string, CapabilityConfigValue>;
+  properties: Record<string, CapabilityConfigProperty>;
+  additionalProperties: boolean;
+}
 
 /** §26 资源归属：以真实代码为准 */
 export type ResourceKind =
@@ -96,6 +109,10 @@ export interface CapabilityManifestV1 {
 
   entrypoint: string;
   semanticOwner: string | null;
+  /** Runtime metadata SSOT. Optional keeps historical manifests readable; normalized manifests always have it. */
+  kind?: CapabilityKind;
+  /** enabled is intentionally separate from this per-module configuration. */
+  config?: CapabilityConfigSchema;
 }
 
 export interface ManifestViolation {
@@ -181,6 +198,21 @@ export function validateManifestV1(m: CapabilityManifestV1): ManifestViolation[]
   }
   if (typeof m.entrypoint !== "string" || m.entrypoint.length === 0) push("CAP-ENTRY", "entrypoint 缺失");
   if (m.semanticOwner !== null && typeof m.semanticOwner !== "string") push("CAP-OWNER", "semanticOwner 类型非法");
+  if (m.kind !== undefined && !["core", "feature", "optional"].includes(m.kind)) {
+    push("CAP-KIND", `kind 非法：${String(m.kind)}`);
+  }
+  if (m.config) {
+    if (!m.config.defaults || !m.config.properties || typeof m.config.additionalProperties !== "boolean") {
+      push("CAP-CONFIG-SCHEMA", "config schema 必须包含 defaults/properties/additionalProperties");
+    }
+    for (const [key, value] of Object.entries(m.config.defaults ?? {})) {
+      const property = m.config.properties?.[key];
+      if (!property) push("CAP-CONFIG-DEFAULT", `默认配置没有对应属性：${key}`);
+      else if (property.type === "string" && typeof value !== "string") push("CAP-CONFIG-TYPE", `配置类型错误：${key}`);
+      else if (property.type === "number" && typeof value !== "number") push("CAP-CONFIG-TYPE", `配置类型错误：${key}`);
+      else if (property.type === "boolean" && typeof value !== "boolean") push("CAP-CONFIG-TYPE", `配置类型错误：${key}`);
+    }
+  }
 
   return v;
 }

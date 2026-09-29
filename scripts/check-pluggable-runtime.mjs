@@ -52,6 +52,8 @@ try {
     publicContract: [],
     entrypoint: `src/capabilities/${id}/index.ts`,
     semanticOwner: null,
+    kind: "feature",
+    config: { defaults: { enabledMode: "standard" }, properties: { enabledMode: { type: "string", enum: ["standard", "safe"] } }, additionalProperties: false },
   });
   const definition = (id, dep = []) => ({
     id,
@@ -81,6 +83,16 @@ try {
   if (registry.getBySlot("workbench-main").length !== 2) throw new Error("activate 未注册全部 contribution");
   app.deactivate("feature");
   if (registry.getBySlot("workbench-main").some((x) => x.capabilityId === "feature")) throw new Error("deactivate 未摘除 contribution");
+  let dependentRejected = false;
+  app.runtime.enable("feature");
+  app.runtime.suspend("core");
+  try { app.runtime.disable("core"); } catch (error) { dependentRejected = error.code === "DEPENDENT_PRESENT"; }
+  if (!dependentRejected) throw new Error("仍有依赖方时允许禁用 core");
+
+  let configRejected = false;
+  try { createPluggableRuntime({ catalog, definitions, config: { enabled: { core: true }, config: { core: { unknown: true } } } }); }
+  catch { configRejected = true; }
+  if (!configRejected) throw new Error("未知配置项未拒绝");
 
   const disabled = createPluggableRuntime({ catalog, definitions, config: { enabled: { core: true, feature: false } } });
   if (disabled.assembly.resolved.join(",") !== "core") throw new Error("enabled=false 未排除能力");

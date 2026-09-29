@@ -19,6 +19,11 @@ export type ContributionType = "surface" | "navigation"
  * Shell 只认槽名，不认能力；能力把组件挂到槽上。
  */
 export interface ContributionSlots {
+  readonly COMMANDS: "commands"
+  readonly MENUS: "menus"
+  readonly SIDEBAR: "sidebar"
+  readonly PANELS: "panels"
+  readonly SETTINGS: "settings"
   /** 浏览器主视图左侧栏（收藏夹侧栏等） */
   readonly BROWSER_SIDEBAR: "browser-sidebar"
   /** 地址栏操作区（⭐ 收藏按钮等） */
@@ -56,6 +61,11 @@ export interface ContributionSlots {
 }
 
 export const CONTRIBUTION_SLOTS = {
+  COMMANDS: "commands",
+  MENUS: "menus",
+  SIDEBAR: "sidebar",
+  PANELS: "panels",
+  SETTINGS: "settings",
   BROWSER_SIDEBAR: "browser-sidebar",
   ADDRESS_BAR_ACTIONS: "address-bar-actions",
   ACTIVITY_BAR_TRAILING: "activity-bar-trailing",

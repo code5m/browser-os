@@ -213,6 +213,12 @@ export function createCapabilityRuntime(
       if (rec.state === 'ACTIVE') {
         throw new CapabilityRuntimeError('INVALID_TRANSITION', `ACTIVE 状态不可直接停用，请先 suspend: ${id}`)
       }
+      const dependents = [...records.values()]
+        .filter((candidate) => candidate.id !== id && candidate.enabled && candidate.definition.dependsOn.includes(id))
+        .map((candidate) => candidate.id)
+      if (dependents.length > 0) {
+        throw new CapabilityRuntimeError('DEPENDENT_PRESENT', `仍有能力依赖 ${id}：${dependents.join(', ')}`)
+      }
       rec.enabled = false
       log(`disable: ${id}`)
       return rec

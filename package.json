@@ -16,6 +16,7 @@
     "doctor": "node scripts/doctor.mjs",
     "check:capability-package": "node scripts/check-capability-package.mjs --all",
     "check:pluggable-runtime": "node scripts/check-pluggable-runtime.mjs",
+    "check:capability-removal": "node scripts/check-capability-removal-audit.mjs",
     "verify:client": "bash scripts/verify-installed-client.sh --build",
     "release:install": "bash scripts/verify-installed-client.sh --install"
   },

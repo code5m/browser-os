@@ -72,7 +72,10 @@ export function toCatalogMap(
 ): Record<string, CapabilityManifestV1> {
   if (Array.isArray(input)) {
     const out: Record<string, CapabilityManifestV1> = {};
-    for (const m of input) out[m.id] = m;
+    for (const m of input) {
+      if (out[m.id]) throw new Error(`重复 capability id：${m.id}`);
+      out[m.id] = m;
+    }
     return out;
   }
   return input;
