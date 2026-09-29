@@ -15,5 +15,8 @@ const counts = {
   capabilitySpecificHostWiring: (text.match(/(?:vaultInstancePorts|clipboardInstancePorts|createVaultCapability|createClipboardCapability)/g) ?? []).length,
   hostInfrastructurePortCount: (fs.readFileSync(path.join(root, 'src/capability/platform/host-services.ts'), 'utf8').match(/'[^']+'/g) ?? []).length,
 }
-console.log(`LEGACY_CAPABILITY_MANUAL_WIRING_COUNT=${Object.values(counts).reduce((a, b) => a + b, 0)}`)
+const legacyTotal = counts.centralImports + counts.capabilityBranches + counts.manualContributions + counts.centralManifestReferences
+console.log(`LEGACY_CAPABILITY_MANUAL_WIRING_COUNT=${legacyTotal}`)
+console.log(`CAPABILITY_SPECIFIC_HOST_WIRING_COUNT=${counts.capabilitySpecificHostWiring}`)
+console.log(`HOST_INFRASTRUCTURE_PORT_COUNT=${counts.hostInfrastructurePortCount}`)
 console.log(JSON.stringify(counts, null, 2))
