@@ -4,47 +4,13 @@
 //      绝不 import 其 index.ts / state / ui —— 保证 framework-only 装配时
 //      不会加载任何能力内部代码，也不会有任何重资源被创建（absent 语义前提）。
 
-import { bookmarkManifest } from "../../capabilities/bookmark/manifest";
-import { workspaceManifest } from "../../capabilities/workspace/manifest";
-import { browserManifest } from "../../capabilities/browser/manifest";
-import { terminalManifest } from "../../capabilities/terminal/manifest";
-import { gitManifest } from "../../capabilities/git/manifest";
-import { databaseManifest } from "../../capabilities/database/manifest";
-import { agentManifest } from "../../capabilities/agent/manifest";
-import { skillManifest } from "../../capabilities/skill/manifest";
-import { pluginManifest } from "../../capabilities/plugin/manifest";
-import { graphManifest } from "../../capabilities/graph/manifest";
-import { taskManifest } from "../../capabilities/task/manifest";
-import { clipboardManifest } from "@browser-os/capability-clipboard/manifest";
-import { appsManifest } from "../../capabilities/apps/manifest";
-import { toolsManifest } from "../../capabilities/tools/manifest";
-import { vaultManifest } from "@browser-os/capability-vault/manifest";
-import { settingsManifest } from "../../settings/manifest";
-import { homeManifest } from "../../capabilities/home/manifest";
 import type { CapabilityManifestV1 } from "./contract";
 import { discoverCapabilities } from "./discovery";
 import { GENERATED_DEFINITIONS, GENERATED_MANIFESTS } from "./generated-registry";
+import { LEGACY_DEFINITION_SOURCES } from './legacy-definitions';
 
 /** 已具备 Building Block Contract v1 的能力清单（未声明 v1 的能力不进 catalog） */
-export const CATALOG_SOURCES = [
-  bookmarkManifest,
-  workspaceManifest,
-  browserManifest,
-  terminalManifest,
-  gitManifest,
-  databaseManifest,
-  agentManifest,
-  skillManifest,
-  pluginManifest,
-  graphManifest,
-  taskManifest,
-  clipboardManifest,
-  appsManifest,
-  toolsManifest,
-  vaultManifest,
-  settingsManifest,
-  homeManifest,
-] as const;
+export const CATALOG_SOURCES = LEGACY_DEFINITION_SOURCES;
 
 export function buildCatalog(): Record<string, CapabilityManifestV1> {
   const result = discoverCapabilities(GENERATED_MANIFESTS.map((manifest) => ({

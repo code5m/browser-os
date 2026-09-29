@@ -1,0 +1,20 @@
+// Compatibility adapter. New capabilities are aggregated by generated-registry.ts.
+import { bookmarkManifest } from '../../capabilities/bookmark/manifest'
+import { workspaceManifest } from '../../capabilities/workspace/manifest'
+import { browserManifest } from '../../capabilities/browser/manifest'
+import { terminalManifest } from '../../capabilities/terminal/manifest'
+import { gitManifest } from '../../capabilities/git/manifest'
+import { databaseManifest } from '../../capabilities/database/manifest'
+import { agentManifest } from '../../capabilities/agent/manifest'
+import { skillManifest } from '../../capabilities/skill/manifest'
+import { pluginManifest } from '../../capabilities/plugin/manifest'
+import { graphManifest } from '../../capabilities/graph/manifest'
+import { taskManifest } from '../../capabilities/task/manifest'
+import { clipboardManifest } from '@browser-os/capability-clipboard/manifest'
+import { appsManifest } from '../../capabilities/apps/manifest'
+import { toolsManifest } from '../../capabilities/tools/manifest'
+import { vaultManifest } from '@browser-os/capability-vault/manifest'
+import { settingsManifest } from '../../settings/manifest'
+import { homeManifest } from '../../capabilities/home/manifest'
+
+export const LEGACY_DEFINITION_SOURCES = [bookmarkManifest, workspaceManifest, browserManifest, terminalManifest, gitManifest, databaseManifest, agentManifest, skillManifest, pluginManifest, graphManifest, taskManifest, clipboardManifest, appsManifest, toolsManifest, vaultManifest, settingsManifest, homeManifest] as const
