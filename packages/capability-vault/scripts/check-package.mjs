@@ -186,7 +186,7 @@ function realScan() {
 // SELF-TEST（合成 fixture 证明检出能力）
 // --------------------------------------------------------------------------
 const BASE = (() => {
-  const j = { name: "@browser-os/capability-vault", version: "0.1.0", private: true, type: "module", exports: { ".": "./src/index.ts", "./manifest": "./src/manifest.ts" }, scripts: { check: "tsc --noEmit" }, dependencies: { vue: "^3.4.0", pinia: "^2.3.1", marked: "^18.0.12", "@tauri-apps/plugin-dialog": "^2.7.3" } };
+  const j = { name: "@browser-os/capability-vault", version: "0.1.0", private: true, type: "module", exports: { ".": "./src/index.ts", "./manifest": "./src/manifest.ts" }, scripts: { check: "tsc --noEmit" }, dependencies: { vue: "^3.4.0", pinia: "^2.3.1", "@tauri-apps/plugin-dialog": "^2.7.3" } };
   const m = new Map();
   m.set(`${SRC_REL}/index.ts`, "export { createVaultCapability, vaultContribution, VAULT_PORTS_KEY } from './ports';\nexport const vaultManifest = {};\n");
   m.set(`${SRC_REL}/ports/index.ts`, "export const VAULT_PORTS_KEY = Symbol('vaultPorts');\nexport function createVaultCapability(){}\n");

@@ -27,6 +27,15 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
+          // Browser 的 public.ts 会同时被外壳和多个懒加载能力消费。若让 Rollup
+          // 自动把 public 再导出与各 Store 拆到不同 chunk，会形成 public ↔ store
+          // 的跨 chunk 循环。公共出口与其状态实现必须作为同一运行时单元发布。
+          if (
+            id.includes("/src/capabilities/browser/public.ts") ||
+            id.includes("/src/capabilities/browser/state/")
+          ) {
+            return "browser-runtime";
+          }
           if (!id.includes("node_modules")) {
             return undefined;
           }

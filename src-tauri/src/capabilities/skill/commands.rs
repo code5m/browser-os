@@ -42,11 +42,7 @@ fn skill_permission_preview_inner(text: &str) -> Result<crate::domain::Permissio
 }
 
 #[tauri::command]
-pub fn skill_parse(
-    app: AppHandle,
-    webview: Webview,
-    text: String,
-) -> Result<SkillDef, String> {
+pub fn skill_parse(app: AppHandle, webview: Webview, text: String) -> Result<SkillDef, String> {
     check_invocation_source(&webview, "skill_parse", None, &app)?;
     skill_parse_inner(&text)
 }

@@ -7,8 +7,8 @@ mod domain;
 mod grid_ipc;
 mod grid_process;
 mod shared {
-    pub mod images;
     pub mod clipboard;
+    pub mod images;
     pub mod invocation;
     pub mod validation;
 }
@@ -21,19 +21,19 @@ mod security_policy;
 mod session;
 mod shutdown;
 mod capabilities {
-    pub mod skill;
     pub mod agent;
-    pub mod script;
-    pub mod plugin;
-    pub mod graph;
-    pub mod workspace;
+    pub mod browser;
     pub mod database;
+    pub mod git;
+    pub mod graph;
+    pub mod plugin;
+    pub mod script;
+    pub mod session;
+    pub mod skill;
     pub mod task;
     pub mod terminal;
-    pub mod git;
     pub mod tools;
-    pub mod browser;
-    pub mod session;
+    pub mod workspace;
 }
 mod tasks;
 mod workbench;

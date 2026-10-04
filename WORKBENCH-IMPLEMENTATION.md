@@ -41,4 +41,4 @@
 
 ## 依赖变更裁定
 
-本轮使用 `@lucide/vue`（标准图标）、`marked`（Markdown 解析）、`dompurify`（不可信 Markdown HTML 清理）、`turndown`（回复 HTML 转 Markdown）。不引入网络抓取服务，不执行笔记插件；不复制闭源产品代码。已移除弃用的 `lucide-vue-next`。三份旧 M2 门禁的 package 指纹随此明确依赖清单更新，继续精确检查包文件，未删除任何反例测试。图片 ACL 末条保持原样，避免旧夹具依赖末条格式失效。
+本轮仅保留 `@lucide/vue` 作为标准图标依赖。Vault Markdown 安全渲染与回复 HTML 转 Markdown 已收口为仓库内纯函数，并由 XSS、危险标签、链接协议和常用结构测试保护；不引入网络抓取服务，不执行笔记插件，也不复制闭源产品代码。已移除未再使用的 `marked`、`dompurify`、`turndown` 与弃用的 `lucide-vue-next`。三份旧 M2 门禁的 package 指纹随此明确依赖清单更新，继续精确检查包文件，未删除任何反例测试。图片 ACL 末条保持原样，避免旧夹具依赖末条格式失效。

@@ -26,6 +26,6 @@
 //! `start_command` / `kill_all_running` / `process_group_alive`。既有 `crate::script_runner::`
 //! 调用点（bridge 6 / tasks 2 / terminal 1 / scheduler 3）经 `main.rs` 顶部
 //! `pub use crate::capabilities::script::script_runner;` shim 解析。
+pub mod script_runner;
 pub mod scripts;
 pub mod snippets;
-pub mod script_runner;

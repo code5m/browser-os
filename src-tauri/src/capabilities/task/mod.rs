@@ -23,5 +23,5 @@
 //! 已知债务（AppState 阶段处理，非本批回归）：本模块 `use crate::bridge::AppState;`
 //! （scheduler.rs line 28 / 648），耦合 bridge hub 的全局 AppState；属矩阵 §9
 //! AppState Field Ownership Matrix 待下沉项。
-pub mod scheduler;
 pub mod commands;
+pub mod scheduler;

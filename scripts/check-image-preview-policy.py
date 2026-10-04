@@ -37,9 +37,9 @@ from pathlib import Path
 # package.json 依赖集合采用「结构化比对」（见 BASELINE_DEPS / extract_deps），
 # 不再用整文件 SHA256，避免 scripts/description 等良性变更误报 IMG_PREV_NPM_DEP_ADDED。
 BASELINE_SHA256 = {
-    # ea62872：核对 f0733c2→5b4738f→ea62872，仅增加两个本地能力包及 TypeScript 开发依赖。
-    # 仍校验整文件，不能以本轮工作树内容自动更新基线。
-    "package-lock.json": "097d63bddf24347654d9bfb194714d848590e9d7da7d8f3c26c61d63189c4003",
+    # 2026-10-04：以本地安全转换器替代 marked/dompurify/turndown 后删除三项依赖。
+    # 仍校验整文件，后续不能以工作树内容自动更新基线。
+    "package-lock.json": "1c56f6c9e30046c3ace5e213f094371df3170b72a7dd97e51228d18646aeb114",
     "src-tauri/permissions/remote-collect.toml": (
         "cc35e0edc7933c2a43fd6e0c9271667db483aa5aa206d7e08d98a21b832f05da"
     ),
@@ -58,10 +58,7 @@ BASELINE_DEPS = {
         "@tauri-apps/plugin-dialog": "^2.7.3",
         "@xterm/addon-fit": "^0.11.0",
         "@xterm/xterm": "^6.0.0",
-        "dompurify": "^3.4.15",
-        "marked": "^18.0.12",
         "pinia": "^2.3.1",
-        "turndown": "^7.2.4",
         "vue": "^3.4.0",
     },
     "devDependencies": {

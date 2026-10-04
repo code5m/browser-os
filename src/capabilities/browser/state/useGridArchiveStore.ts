@@ -1,9 +1,8 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
-import TurndownService from 'turndown';
-import DOMPurify from 'dompurify';
 import { bridge } from '../../../bridge';
-import { useBrowserStore } from "../../../capabilities/browser/public";
+import { htmlToMarkdown } from '../../../utils/htmlToMarkdown';
+import { useBrowserStore } from "./useBrowserStore";
 
 type Reply = { index:number; label:string; selected:boolean; markdown:string; state:'pending'|'reading'|'ready'|'failed'; error:string; saved:string };
 const failures: Record<string,string> = { UNSUPPORTED_SITE:'此站点暂无回复适配器', REPLY_STREAMING:'回复还在生成，请稍后重试', NO_ASSISTANT_REPLY:'未找到 AI 回复', GRID_NOT_OPEN:'窗口已关闭', GRID_RESULT_LIMIT:'回复超过容量上限' };
@@ -30,8 +29,6 @@ export const useGridArchiveStore = defineStore('gridArchive', () => {
   const message = ref('');
   const success = computed(() => rows.value.filter(r => r.state === 'ready' && r.selected));
   const failed = computed(() => rows.value.filter(r => r.state === 'failed'));
-  const converter = new TurndownService({ codeBlockStyle:'fenced', headingStyle:'atx', bulletListMarker:'-' });
-  converter.remove(['script','style','button','img','iframe']);
   async function extract(retry = false) {
     if (busy.value || saving.value) return;
     const browser = useBrowserStore();
@@ -49,7 +46,7 @@ export const useGridArchiveStore = defineStore('gridArchive', () => {
           if (data.error) throw new Error(data.error);
           if (!Array.isArray(data.replies) || !data.replies.length) throw new Error('NO_ASSISTANT_REPLY');
           const replies = requestedMode === 'latest' ? data.replies.slice(-1) : data.replies;
-          row.markdown = replies.map(html => converter.turndown(DOMPurify.sanitize(html, { FORBID_TAGS:['img','iframe','object','form'] }))).join('\n\n---\n\n');
+          row.markdown = replies.map(htmlToMarkdown).join('\n\n---\n\n');
           // Preserve reply text in full; error redaction truncates to 300 chars and is not a content converter.
           row.markdown = redactReplyUrls(row.markdown);
           row.label = `A${row.index+1}-${data.provider || 'AI'}`;

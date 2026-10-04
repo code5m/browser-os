@@ -23,5 +23,5 @@
 //! 既有 `crate::workspace::` 调用点（32 处：scheduler/tasks/plugin/scripts/tools/
 //! bridge/workbench_smoke，及 `use crate::workspace;` 在 sync/bridge/tools）+ `crate::fs_cmds::`
 //! （generate_handler! 中 `reveal_path`/`move_path`）经 `main.rs` 顶部 re-export shim 解析，无需逐处改写。
-pub mod workspace;
 pub mod fs_cmds;
+pub mod workspace;

@@ -5,15 +5,15 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 use url::Url;
 
-use crate::domain::*;
 use crate::capabilities::browser::commands::*;
+use crate::domain::*;
 use crate::grid_ipc::GridCmd;
 use crate::keyring_store::KeyringStore;
 use crate::mcp::{McpDecisionView, McpRegistryEntryView};
 use crate::script_runner::{RunError, RunSnapshot, ScriptProcessTable, ScriptRunRecord};
 use crate::seam::{PathResolver, Progress, ProgressSink, RootsProvider};
-use crate::terminal::{self, ChannelSink, EventSink};
 use crate::shared::invocation::check_invocation_source;
+use crate::terminal::{self, ChannelSink, EventSink};
 use crate::workspace;
 
 /// 宫格 label（grid-N）→ 子进程 index；页签 tab-N 返回 None（页签仍在主进程）。
@@ -286,8 +286,8 @@ fn initial_grid_url(raw: &str) -> String {
 #[cfg(test)]
 mod normalize_url_tests {
     use super::{
-        initial_grid_url, is_tab_label, reserve_tab_recovery_attempt,
-        TabRecoveryBudget, TAB_RECOVERY_WINDOW_SECS,
+        initial_grid_url, is_tab_label, reserve_tab_recovery_attempt, TabRecoveryBudget,
+        TAB_RECOVERY_WINDOW_SECS,
     };
     use crate::capabilities::browser::commands::normalize_url;
 
@@ -762,7 +762,6 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
 // 脚本正文、输出或任何凭据（契约 §7 + F5）。
 //
 
-
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(dead_code)]
 struct ResourceScanResult {
@@ -1052,7 +1051,6 @@ pub fn on_resource_received(app: &AppHandle, tab_id: &str, raw: RawResourceEvent
 ///
 /// 背景（M1-ACCEPT 审计挂账项）：`session_get/delete/export/restore` 的 id 会被直接
 
-
 // M1-8 tab 资源命令组（list/clear_tab_resources、get/set_resource_capture_settings）
 // 已迁移至 capabilities/browser/commands.rs（owner 收口为 browser，resource_collection 子域归并）。
 
@@ -1283,7 +1281,6 @@ pub fn configure_repo(app: AppHandle, config: RepoConfig, token: String) -> Resu
 pub fn list_repos(app: AppHandle) -> Vec<RepoConfig> {
     workspace::load_repos(&app)
 }
-
 
 /// 读取单个成果完整内容（预览/编辑用）
 #[tauri::command]
@@ -2154,8 +2151,8 @@ pub fn read_image_data_url(path: String) -> Result<String, String> {
 #[tauri::command]
 pub fn write_file(app: AppHandle, path: String, content: String) -> Result<(), String> {
     use crate::security_policy as sp;
-    let canonical =
-        sp::check_path_within_roots(&path, &crate::workspace::allowed_roots(&app)).map_err(|e| e.to_string())?;
+    let canonical = sp::check_path_within_roots(&path, &crate::workspace::allowed_roots(&app))
+        .map_err(|e| e.to_string())?;
     sp::check_text_field("content", &content, sp::MAX_HTML_BYTES).map_err(|e| e.to_string())?;
     std::fs::write(&canonical, &content).map_err(|e| e.to_string())
 }
@@ -2280,8 +2277,8 @@ pub fn delete_path(app: AppHandle, path: String) -> Result<(), String> {
         return Err("路径不存在".into());
     }
     // 递归删除最危险：必须在允许根目录内，且不允许删根目录本身。
-    let canonical =
-        sp::check_delete_target(&path, &crate::workspace::allowed_roots(&app)).map_err(|e| e.to_string())?;
+    let canonical = sp::check_delete_target(&path, &crate::workspace::allowed_roots(&app))
+        .map_err(|e| e.to_string())?;
     if canonical.is_dir() {
         std::fs::remove_dir_all(&canonical).map_err(|e| e.to_string())?;
     } else {
@@ -3575,7 +3572,6 @@ pub fn m0_config(app: AppHandle) -> Option<serde_json::Value> {
     }))
 }
 
-
 #[cfg(test)]
 mod resource_capture_tests {
     use super::*;
@@ -4083,7 +4079,10 @@ mod image_gate_tests {
         let uuid = uuid::Uuid::new_v4().to_string();
         assert!(crate::images::check_id(&uuid, "成果 id").is_ok());
         for bad in ["../../etc/passwd", "/etc", "..", "", "a/b"] {
-            assert!(crate::images::check_id(bad, "成果 id").is_err(), "必须拒绝: {bad:?}");
+            assert!(
+                crate::images::check_id(bad, "成果 id").is_err(),
+                "必须拒绝: {bad:?}"
+            );
         }
     }
 
@@ -4346,8 +4345,11 @@ pub async fn vault_open(
     path: String,
 ) -> Result<crate::workbench::VaultSnapshot, String> {
     check_invocation_source(&webview, "vault_open", None, &app)?;
-    let root = crate::security_policy::check_path_within_roots(&path, &crate::workspace::allowed_roots(&app))
-        .map_err(|_| "VAULT_PATH_DENIED")?;
+    let root = crate::security_policy::check_path_within_roots(
+        &path,
+        &crate::workspace::allowed_roots(&app),
+    )
+    .map_err(|_| "VAULT_PATH_DENIED")?;
     tauri::async_runtime::spawn_blocking(move || crate::workbench::read_vault(&root))
         .await
         .map_err(|_| "VAULT_WORKER_FAILED")?
@@ -4383,8 +4385,11 @@ pub async fn archive_replies(
     tags: Vec<String>,
 ) -> Result<Vec<crate::workbench::ArchiveResult>, String> {
     check_invocation_source(&webview, "archive_replies", None, &app)?;
-    let root = crate::security_policy::check_path_within_roots(&path, &crate::workspace::allowed_roots(&app))
-        .map_err(|_| "ARCHIVE_PATH_DENIED")?;
+    let root = crate::security_policy::check_path_within_roots(
+        &path,
+        &crate::workspace::allowed_roots(&app),
+    )
+    .map_err(|_| "ARCHIVE_PATH_DENIED")?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         crate::workbench::save_archives(&root, items, &tags)
     })
@@ -5364,7 +5369,6 @@ mod agent_skill_bridge_tests {
         assert!(agent_parse_inner("").is_err());
         assert!(agent_parse_inner("   ").is_err());
     }
-
 }
 
 // ====== M5-2 MCP 只读注册表/策略桥命令（W7）======

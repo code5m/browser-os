@@ -3,9 +3,9 @@
 //! PHASE 2 从 bridge.rs 物理迁移（native-physical-batch-browser-create-tab）。
 //! 仅做模块归属，不改任何行为；WebView/Grid 生命周期、active tab 权威、
 //! session persistence 派生（从 Browser 权威 tabs 表）等冻结语义均不变。
+use crate::domain::*;
 use tauri::{AppHandle, Emitter, Manager};
 use url::Url;
-use crate::domain::*;
 
 /// 在主窗口内创建一个子 Webview（方案 D：同窗口多 webview）。
 /// 底层已迁移到 tauri-plugin-browser-tabs：全链路 Logical(CSS) 坐标，

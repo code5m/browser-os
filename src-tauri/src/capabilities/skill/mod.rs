@@ -12,5 +12,5 @@
 //! - 执行层在调用方经 `script_runner` 委托，而非在此处直接执行。
 //! - 迁移自 `src-tauri/src/skills.rs`（Native Physical Boundary Matrix Pilot，见
 //!   `docs/architecture/native-physical-boundary/NATIVE-PHYSICAL-BOUNDARY-MATRIX.md` §6）。
-pub mod skills;
 pub mod commands;
+pub mod skills;

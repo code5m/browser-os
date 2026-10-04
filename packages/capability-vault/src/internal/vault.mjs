@@ -8,8 +8,6 @@
 //   仅本包内的 state/useVaultStore.ts 可引用；
 //   包外部（含 App.vue / shell / 其它 capability）必须经包 public 契约（index.ts），
 //   不得越过 exports 直接引用本文件（PKG-04 / PKG-05）。
-import { marked } from 'marked';
-
 export function resolveNote(target, current, paths) {
   let decoded;
   try { decoded = decodeURIComponent(target.split('|')[0]); } catch { return []; }
@@ -35,12 +33,14 @@ export function resolveNote(target, current, paths) {
 
 export function noteLinks(text) {
   const links = new Set();
-  marked.walkTokens(marked.lexer(text), token => {
-    if (token.type === 'link') links.add(token.href);
-    if (token.type === 'text') {
-      for (const match of token.text.matchAll(/\[\[([^\]\n]+)\]\]/g)) links.add(match[1].split('|')[0]);
-    }
-  });
+  let inCode = false;
+  for (const line of text.replace(/\r\n/g, '\n').split('\n')) {
+    if (line.trimStart().startsWith('```')) { inCode = !inCode; continue; }
+    if (inCode) continue;
+    const visible = line.replace(/`[^`]*`/g, '');
+    for (const match of visible.matchAll(/!?\[[^\]]*\]\(([^)\s]+)(?:\s+['"][^'"]*['"])?\)/g)) links.add(match[1]);
+    for (const match of visible.matchAll(/\[\[([^\]\n]+)\]\]/g)) links.add(match[1].split('|')[0]);
+  }
   return [...links].slice(0, 256);
 }
 

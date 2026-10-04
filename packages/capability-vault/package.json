@@ -22,8 +22,6 @@
   "dependencies": {
     "@lucide/vue": "^1.42.0",
     "@tauri-apps/plugin-dialog": "^2.7.3",
-    "dompurify": "^3.4.15",
-    "marked": "^18.0.12",
     "pinia": "^2.3.1",
     "vue": "^3.4.0"
   },

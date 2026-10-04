@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, watch } from "vue";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { useImagePreviewStore } from "../public";
+import { useImagePreviewStore } from "../state/useImagePreviewStore";
 import { createKeyBinder, keyAction } from "../../../utils/imagePreview";
 
 // M2-2.b 图片灯箱（共用组件，全局挂在 `App.vue`，供成果库/后续工具箱与会话复用）。

@@ -38,7 +38,7 @@ declared_resource_class: AVAILABLE
 | script | PROCESS | ⬜ | ✅ | ⬜ | TARGET_COMPOSABLE | 终止脚本进程 —— TARGET |
 | workbench | MEDIUM | ✅ | ⬜ | ⬜ | TARGET_COMPOSABLE | 释放汇总视图状态 —— TARGET |
 
-图例：`CURRENTLY_COMPOSABLE`（真正可独立启停）/ `COMPATIBILITY_WRAPPED`（兼容包装）/ 
+图例：`CURRENTLY_COMPOSABLE`（真正可独立启停）/ `COMPATIBILITY_WRAPPED`（兼容包装）/
 `TARGET_COMPOSABLE`（目标态未实现）/ `NOT_COMPOSABLE_BY_DESIGN`（安全或常驻，设计上不参与组合）。
 
 ## 3. Composition Profiles（演示口径）

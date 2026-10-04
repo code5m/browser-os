@@ -308,6 +308,12 @@ run_pre_merge() {
   (cd "$ROOT" && node "$SCRIPT_DIR/check-image-preview-logic.mjs") >/dev/null 2>&1 \
     || pm_fail "check-image-preview-logic.mjs（画廊/灯箱/缩放逻辑回归）"
 
+  pm_log "Markdown 安全渲染与回复归档转换…"
+  (cd "$ROOT" && node "$SCRIPT_DIR/check-markdown-xss-logic.mjs") >/dev/null 2>&1 \
+    || pm_fail "check-markdown-xss-logic.mjs"
+  (cd "$ROOT" && node "$SCRIPT_DIR/check-html-to-markdown.mjs") >/dev/null 2>&1 \
+    || pm_fail "check-html-to-markdown.mjs"
+
   pm_log "M2-3.b 脚本领域与持久化不变量夹具（边界/路径/命令三处同步/审计脱敏）…"
   python3 "$SCRIPT_DIR/check-script-domain-policy.py" --self-test >/dev/null 2>&1 \
     || pm_fail "check-script-domain-policy.py --self-test"

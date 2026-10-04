@@ -1353,4 +1353,3 @@ check-composition-profiles.mjs   PASS（11/11，见 npm run check）
 - H01_MACHINE_RETEST = PASS（R10/R11/R12/npm check/build/tauri dev 全绿）。
 - H01_HUMAN_RETEST = **PENDING**（GUI 目视由用户执行，Agent 不代判）。
 - H02_H15 = NOT_RUN（H01 曾 BLOCKING FAIL；修复后尚未恢复验收）。
-

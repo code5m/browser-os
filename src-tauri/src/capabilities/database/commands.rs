@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
-use crate::database::{credential_key, DbPool, QueryCancel, DbQueryResult};
+use crate::database::{credential_key, DbPool, DbQueryResult, QueryCancel};
 use crate::domain::{DbConnectionConfig, SupportedDb};
 use crate::keyring_store::KeyringStore;
 use crate::security_policy as sp;

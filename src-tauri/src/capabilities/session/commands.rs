@@ -8,13 +8,12 @@
 //!     两路径行为一致、可审计。
 //!   - Session→Browser 仅经窄契约 `crate::capabilities::browser::commands::create_tab`
 //!     （session_restore 用已脱敏 URL 建 tab），绝不反向依赖 bridge。
+use crate::capabilities::browser::commands::create_tab;
+use crate::domain::*;
+use crate::shared::invocation::{check_invocation_source, check_tab_id};
+use crate::workspace;
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Manager};
-use crate::domain::*;
-use crate::workspace;
-use crate::shared::invocation::{check_invocation_source, check_tab_id};
-use crate::capabilities::browser::commands::create_tab;
-
 
 /// 建立/刷新某 tab 的会话草稿（打开 tab 与导航时调用；仅内存）。
 fn drop_session_draft(app: &AppHandle, tab_id: &str) {
@@ -214,9 +213,7 @@ pub fn flush_sessions_inner(app: &AppHandle) -> SessionFlushReport {
     if auto_save {
         let tab_ids: Vec<String> = state.tabs.lock().unwrap().keys().cloned().collect();
         for tab_id in tab_ids {
-            if let Some(session) =
-                build_session_for_tab(app, &tab_id, "", CLOSE_REASON_SHUTDOWN)
-            {
+            if let Some(session) = build_session_for_tab(app, &tab_id, "", CLOSE_REASON_SHUTDOWN) {
                 if persist_session(app, &session).is_ok() {
                     persisted += 1;
                 }

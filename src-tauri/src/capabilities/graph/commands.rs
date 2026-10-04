@@ -10,7 +10,9 @@
 use tauri::{AppHandle, Manager};
 
 use crate::domain::{GraphNodeView, GraphQueryRequest, GraphQueryResult, GraphStats};
-use crate::graph::{graph_node_get_impl, graph_query_impl, graph_stats_impl, validate_id_public, GraphState};
+use crate::graph::{
+    graph_node_get_impl, graph_query_impl, graph_stats_impl, validate_id_public, GraphState,
+};
 use crate::shared::invocation::check_invocation_source;
 
 #[tauri::command]

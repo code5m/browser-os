@@ -13,9 +13,7 @@ use std::collections::HashMap;
 
 use tauri::{AppHandle, Webview};
 
-use crate::domain::{
-    MissedRunPolicy, RetryPolicy, ScriptParam, TaskDef, TaskKind, TaskTrigger,
-};
+use crate::domain::{MissedRunPolicy, RetryPolicy, ScriptParam, TaskDef, TaskKind, TaskTrigger};
 use crate::images::check_id;
 use crate::script_runner::RunSnapshot;
 use crate::shared::invocation::check_invocation_source;
@@ -137,11 +135,7 @@ pub fn task_add(
 /// 全量更新（按 id 替换）。`created_at` 由服务端保留，不可被前端改写；
 /// 改 `trigger` 后重算 `next_run_at`（契约 §5.4）。
 #[tauri::command]
-pub fn task_update(
-    app: AppHandle,
-    webview: Webview,
-    task: TaskDef,
-) -> Result<TaskDef, String> {
+pub fn task_update(app: AppHandle, webview: Webview, task: TaskDef) -> Result<TaskDef, String> {
     check_invocation_source(&webview, "task_update", None, &app)?;
     let _store_guard = crate::tasks::task_store_lock();
     let path = crate::tasks::tasks_file(&app);
@@ -205,11 +199,7 @@ pub fn task_remove(app: AppHandle, webview: Webview, id: String) -> Result<bool,
 /// 立即触发一次（`trigger = Manual`）。**不推进** `last_fired_at` / `next_run_at`；
 /// 同样受「同任务 in_flight」与全局并发约束，冲突时返回 `TASK_ALREADY_RUNNING`。
 #[tauri::command]
-pub fn task_run_now(
-    app: AppHandle,
-    webview: Webview,
-    id: String,
-) -> Result<RunSnapshot, String> {
+pub fn task_run_now(app: AppHandle, webview: Webview, id: String) -> Result<RunSnapshot, String> {
     check_invocation_source(&webview, "task_run_now", None, &app)?;
     let _store_guard = crate::tasks::task_store_lock();
     check_id(&id, "任务 id")?;

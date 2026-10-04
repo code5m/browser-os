@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { bridge } from "../../../bridge";
-import { useBrowserStore } from "../../../capabilities/browser/public";
+import { useBrowserStore } from "./useBrowserStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import type {
   BrowserSession,

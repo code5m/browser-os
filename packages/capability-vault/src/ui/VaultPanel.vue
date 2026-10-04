@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, ref, watch } from 'vue';
-import { Marked } from 'marked';
-import DOMPurify from 'dompurify';
 import { FolderOpen, RefreshCw, Network, PanelLeftClose, PanelLeftOpen } from '@lucide/vue';
 import { useVaultStore } from '../state/useVaultStore';
+import { renderVaultMarkdown } from '../internal/markdown.mjs';
 import { VAULT_PORTS_KEY } from '../ports';
 // 表现层契约：经 inject 取得 Host 提供的 shell 折叠状态与图布局投影，不反向依赖 Host 内部。
 const ports = inject(VAULT_PORTS_KEY);
@@ -21,12 +20,7 @@ const collapsed = ref(new Set<string>());
 const folders = computed(() => [...new Set(vault.vaultResults.map(n => n.path.split('/').slice(0,-1).join('/') || '/'))].sort());
 const group = (folder:string) => vault.vaultResults.filter(n => (n.path.split('/').slice(0,-1).join('/') || '/') === folder);
 function toggleFolder(folder:string) { const next = new Set(collapsed.value); next.has(folder) ? next.delete(folder) : next.add(folder); collapsed.value = next; }
-const escape = (s:string) => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
-const parser = new Marked({ extensions: [{ name:'wiki', level:'inline', start:src => src.indexOf('[['), tokenizer(src) {
-  const m = /^\[\[([^\]\n]+)\]\]/.exec(src);
-  if (m) return { type:'wiki', raw:m[0], target:m[1].split('|')[0], text:m[1].split('|')[1] || m[1] };
-}, renderer(token:any) { return `<a href="${escape(encodeURI(token.target))}">${escape(token.text)}</a>`; } }] });
-const html = computed(() => DOMPurify.sanitize(parser.parse(vault.vaultCurrent?.text || '') as string, { FORBID_TAGS:['img','iframe','object','form'], FORBID_ATTR:['style'] }));
+const html = computed(() => renderVaultMarkdown(vault.vaultCurrent?.text || ''));
 const near = computed(() => new Set([vault.selected, ...vault.vaultEdges.filter(e => e.from === vault.selected || e.to === vault.selected).flatMap(e => [e.from,e.to])]));
 const graphNodes = computed(() => [...near.value].filter(Boolean).slice(0,40).map(id => ({ id, kind:'note', label:id.split('/').pop()?.replace(/\.md$/i,'') || id })));
 const graphEdges = computed(() => vault.vaultEdges.filter(e => graphNodes.value.some(n => n.id === e.from) && graphNodes.value.some(n => n.id === e.to)).map(e => ({ ...e, kind:'link' })));

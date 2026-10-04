@@ -64,10 +64,7 @@ BASELINE_DEPS = {
         "@tauri-apps/plugin-dialog": "^2.7.3",
         "@xterm/addon-fit": "^0.11.0",
         "@xterm/xterm": "^6.0.0",
-        "dompurify": "^3.4.15",
-        "marked": "^18.0.12",
         "pinia": "^2.3.1",
-        "turndown": "^7.2.4",
         "vue": "^3.4.0",
     },
     "devDependencies": {
@@ -80,9 +77,9 @@ BASELINE_DEPS = {
 }
 
 # package-lock.json 仍用整文件 SHA256 锚定（lock 不随 script 变更而变，无脆性）。
-# ea62872：核对 f0733c2→5b4738f→ea62872，仅增加两个本地能力包及 TypeScript 开发依赖。
-# 仍校验整文件，不能以本轮工作树内容自动更新基线。
-BASELINE_SHA256_LOCK = "097d63bddf24347654d9bfb194714d848590e9d7da7d8f3c26c61d63189c4003"
+# 2026-10-04：以本地安全转换器替代 marked/dompurify/turndown 后删除三项依赖。
+# 仍校验整文件，后续不能以工作树内容自动更新基线。
+BASELINE_SHA256_LOCK = "1c56f6c9e30046c3ace5e213f094371df3170b72a7dd97e51228d18646aeb114"
 
 # 受追踪的 npm 清单文件（read_repo 读取用）。
 NPM_MANIFESTS = ("package.json", "package-lock.json")
