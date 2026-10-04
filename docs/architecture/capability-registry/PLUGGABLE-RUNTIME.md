@@ -89,7 +89,7 @@ npm run check:capability-removal
 
 能力平台检查 47/47、Runtime 检查 16/16、三轮生命周期测试、统一检查、构建和 pre-merge 均通过。Rust 只做了格式整理，历史文档空白已修复。构建体积通过移除不再需要的 Markdown/HTML 大依赖和收口 Browser 分块循环降至约 990 KB；没有修改阈值或基线。Workspace 编辑器最后一处未声明 Browser store 依赖已改为共享窄意图缝，UI 边界 warn=0；能力 Registry/Dependency 元数据也已对齐至 warn=0。
 
-生成的 deb、desktop 入口、解包内容和解包 release 冷启动均已验证。系统当前 `/usr/bin/mvp-browser-os` 仍是旧二进制；覆盖安装需要用户直接输入 sudo 密码。因此 release-package GUI 已有证据，但 installed-client 仍必须保持 `GUI_PENDING`，不能把解包执行文件冒充已安装入口。
+生成的 deb、desktop 入口、解包内容和解包 release 冷启动均已验证。2026-10-05 已完成交互式 apt 覆盖安装；`/usr/bin/mvp-browser-os` 与 deb 解包二进制 SHA-256 一致，统一安装版脚本 0 fail / 0 warn。真实 `/usr/bin` 已完成窗口像素、暂停/恢复、暂停/停用、刷新保持、进程重启保持和重新启用验收，结论为 `GUI_PASS`，证据见 `logs/acceptance/installed-client-20261005/README.md`。
 
 ### 后续优化顺序
 
@@ -99,5 +99,5 @@ npm run check:capability-removal
 4. 已实施：核对 `f0733c2 → 5b4738f → ea62872` 的锁文件差异，仅增加 Vault/Clipboard 两个本地能力包及 TypeScript 开发依赖，现有第三方运行依赖未变化。三个依赖检查同步至已核对的 `ea62872` 固定哈希，继续拦截后续漂移；本轮没有新增依赖或改锁文件。
 5. 已实施：消除 Browser public/store 跨 chunk 循环，移除空 vendor chunk；以本地安全转换器替换只用于窄场景的重量 Markdown/HTML 依赖，配套 XSS、HTML→Markdown 和 Vault 逻辑测试。项目体积回到既有 25.2% 门禁以内，未改基线。
 6. 已实施：Workspace 关闭编辑器改走 `browserNav` 窄意图缝，清除最后一个 UI 未声明跨能力依赖；Registry/Dependency 清单按真实 bridge 与 optional 关系对齐。
-7. 待安装版最后一步：交互式安装生成的 deb 后，重新运行安装版验收脚本并以 `/usr/bin/mvp-browser-os` 完成冷启动/像素/生命周期短回归。只有这一步通过才升级 installed-client 为 `GUI_PASS`。
+7. 已实施：交互式安装生成的 deb；安装版脚本通过，并以 `/usr/bin/mvp-browser-os` 完成冷启动、像素、生命周期和进程重启回归，installed-client 已升级为 `GUI_PASS`。
 8. 后续模块化顺序与逐能力证据见 `../capability-platform/FINAL-MODULARITY-AUDIT-20261004.md`；不得把 Bookmark 试点的成功外推成所有能力均可安全停用。

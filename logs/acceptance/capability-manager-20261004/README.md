@@ -7,7 +7,7 @@
 - Package SHA-256: `f0fca529d96cd3e2dd322ea8927728660943998018ee51b463ea58fa41ef547c`.
 - Release GUI executable: the exact binary extracted from that deb by `verify-installed-client.sh`.
 - The GUI run used an isolated XDG data/config/cache directory, so it did not mutate the user's installed-client profile.
-- This is valid release-package GUI evidence. It is **not** presented as installed `/usr/bin` evidence: the installed binary still has a different hash and replacement requires interactive sudo authentication.
+- This directory records the release-package run. The subsequently installed `/usr/bin` acceptance is recorded separately in `../installed-client-20261005/README.md`.
 
 ## Result
 
@@ -35,12 +35,12 @@ The test process was stopped after capture so it cannot intercept a later deskto
 | [05-manager-disabled-after-restart.png](05-manager-disabled-after-restart.png) | Disabled state and contribution absence survive process restart. |
 | [06-manager-enabled-final.png](06-manager-enabled-final.png) | Enable restores the contribution exactly once after restart. |
 
-## Installed-client blocker
+## Installed-client closure
 
-`npm run verify:client` completed the release build, deb extraction, desktop-entry inspection, geometry check, and extracted-release cold start. Its only failure was the expected installed-binary mismatch:
+The first `npm run verify:client` run completed the release build, deb extraction, desktop-entry inspection, geometry check, and extracted-release cold start, but correctly reported the then-old installed binary. After interactive apt installation:
 
 - generated deb binary: `24048434eb2f26eb166733582a2047a8e4a8f4bec153a01b6d3c6ebb1f828b48`
-- installed `/usr/bin/mvp-browser-os`: `96ebcbd03cf7355113aa2fc500605c7ba9df77298eed1f26f6aa2b8fdbc2b6e4`
+- installed `/usr/bin/mvp-browser-os`: `24048434eb2f26eb166733582a2047a8e4a8f4bec153a01b6d3c6ebb1f828b48`
 - desktop entry: `Exec=mvp-browser-os`
 
-Replacing `/usr/bin/mvp-browser-os` is a system installation action and requires the user to enter the sudo password directly. Until that is done and the installed entry is cold-started, the truthful installed-client status remains `GUI_PENDING`.
+The installed hash now matches the deb, `verify-installed-client.sh` passes with 0 failures and 0 warnings, and the real `/usr/bin` GUI lifecycle/restart acceptance is `GUI_PASS`.

@@ -128,9 +128,7 @@ These are registered domain concepts but remain physically embedded, share anoth
 
 ### P0 — finish installed-client truth
 
-1. Install the generated deb with interactive sudo authentication.
-2. Re-run `verify:client` and cold-start `/usr/bin/mvp-browser-os` from the desktop entry.
-3. Repeat the short bookmark lifecycle smoke test against the installed binary, then record `GUI_PASS` only if hashes, geometry and pixels all match.
+Completed on 2026-10-05: the generated deb was installed with interactive sudo authentication; hashes, desktop entry, geometry and pixels matched; `verify-installed-client.sh` passed with 0 failures and 0 warnings; the installed `/usr/bin` lifecycle/restart smoke test passed. Evidence: `logs/acceptance/installed-client-20261005/README.md`.
 
 ### P1 — expand the proven pluggable set without touching native-heavy cores
 
