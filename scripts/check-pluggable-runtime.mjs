@@ -10,6 +10,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const entry = `
   export * from '${join(ROOT, "src/capability/platform/pluggable.ts").replace(/\\/g, "/")}';
   export * from '${join(ROOT, "src/capability/platform/config.ts").replace(/\\/g, "/")}';
+  export * from '${join(ROOT, "src/capability/platform/persistence.ts").replace(/\\/g, "/")}';
   export * from '${join(ROOT, "src/capability/contribution/registry.ts").replace(/\\/g, "/")}';
 `;
 const built = await build({
@@ -25,7 +26,7 @@ const temp = join(ROOT, ".tmp-pluggable-runtime.mjs");
 writeFileSync(temp, built.outputFiles[0].text, "utf8");
 
 try {
-  const { createPluggableRuntime, configFromEnv, createContributionRegistry } =
+  const { createPluggableRuntime, configFromEnv, createContributionRegistry, loadCapabilityConfig, saveCapabilityConfig, CAPABILITY_CONFIG_STORAGE_KEY } =
     await import(pathToFileURL(temp).href);
   const contribution = (id) => ({ id: `${id}.panel`, capabilityId: id, type: "surface", slot: "workbench-main" });
   const manifest = (id, dependencies = []) => ({
@@ -102,6 +103,56 @@ try {
 
   const env = configFromEnv({ VITE_CAPABILITY_ENABLED: "feature,core", VITE_CAPABILITY_DISABLED: "feature" });
   if (!env || env.enabled.feature !== false || env.enabled.core !== true) throw new Error("环境配置解析错误");
+
+  const malformed = loadCapabilityConfig({ getItem: () => "{" });
+  if (malformed !== null) throw new Error("损坏的持久化配置未安全忽略");
+  const legacy = loadCapabilityConfig({ getItem: () => JSON.stringify({}) });
+  if (!legacy || Object.keys(legacy.enabled).length !== 0) throw new Error("旧版空配置未安全归一化");
+  const normalized = loadCapabilityConfig({ getItem: () => JSON.stringify({
+    enabled: { feature: false, broken: "yes" },
+    config: { feature: { mode: "safe", retries: 2, nested: { rejected: true } } },
+  }) });
+  if (!normalized || normalized.enabled.feature !== false || "broken" in normalized.enabled
+    || normalized.config?.feature.mode !== "safe" || "nested" in (normalized.config?.feature ?? {})) {
+    throw new Error("持久化配置归一化错误");
+  }
+  for (const raw of ["null", "false", "42", '"config"', "[]"]) {
+    if (loadCapabilityConfig({ getItem: () => raw }) !== null) throw new Error(`非法顶层配置未安全忽略：${raw}`);
+  }
+  const invalidSections = loadCapabilityConfig({ getItem: () => JSON.stringify({ enabled: [false], config: { feature: ["safe"] } }) });
+  if (!invalidSections || Object.keys(invalidSections.enabled).length || invalidSections.config) throw new Error("非法配置分区未安全忽略");
+  if (loadCapabilityConfig({ getItem: () => { throw new Error("read denied"); } }) !== null) throw new Error("存储读取异常未安全忽略");
+
+  const hostile = loadCapabilityConfig({ getItem: () => '{"enabled":{"__proto__":false,"constructor":true,"feature":false},"config":{"__proto__":{"polluted":true},"feature":{"__proto__":null,"constructor":"unsafe","prototype":"unsafe","mode":"safe"}}}' });
+  const hostileMaps = [hostile?.enabled, hostile?.config, hostile?.config?.feature];
+  if (hostileMaps.some((value) => !value || Object.getPrototypeOf(value) !== Object.prototype
+    || ["__proto__", "constructor", "prototype"].some((key) => Object.hasOwn(value, key)))
+    || hostile?.enabled.feature !== false || hostile?.config?.feature.mode !== "safe"
+    || Object.prototype.polluted !== undefined) {
+    throw new Error("不可信配置改变对象原型或保留危险键");
+  }
+
+  const persisted = new Map();
+  const storage = { getItem: (key) => persisted.get(key) ?? null, setItem: (key, value) => persisted.set(key, value) };
+  if (saveCapabilityConfig(normalized, storage) !== true || !persisted.has(CAPABILITY_CONFIG_STORAGE_KEY)
+    || JSON.stringify(loadCapabilityConfig(storage)) !== JSON.stringify(normalized)) throw new Error("持久化成功状态或往返配置错误");
+  if (saveCapabilityConfig(normalized, { setItem: () => { throw new Error("quota exceeded"); } }) !== false) throw new Error("存储写入失败未返回 false");
+  const circularConfig = { enabled: {} };
+  circularConfig.config = circularConfig;
+  if (saveCapabilityConfig(circularConfig, storage) !== false) throw new Error("不可序列化配置未返回 false");
+
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  try {
+    Object.defineProperty(globalThis, "window", { configurable: true, value: undefined });
+    if (loadCapabilityConfig() !== null || saveCapabilityConfig(normalized) !== false) throw new Error("无浏览器存储时返回状态错误");
+    Object.defineProperty(globalThis, "window", { configurable: true, value: {
+      get localStorage() { throw new Error("storage blocked"); },
+    } });
+    if (loadCapabilityConfig() !== null || saveCapabilityConfig(normalized) !== false) throw new Error("localStorage getter 异常未安全处理");
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else delete globalThis.window;
+  }
 
   let rejected = false;
   try { createPluggableRuntime({ catalog: { feature: manifest("feature", ["missing"]) }, definitions, config: { enabled: { feature: true } } }); }

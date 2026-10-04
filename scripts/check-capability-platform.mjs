@@ -15,6 +15,7 @@ import { build } from "esbuild";
 import { readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { computed } from "vue";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const fails = [];
@@ -36,7 +37,8 @@ async function loadRuntime() {
     export { validateManifestV1 } from '${join(ROOT, "src/capability/platform/contract.ts").replace(/\\/g, "/")}';
     export { canTransition, nextStates, assertTransition } from '${join(ROOT, "src/capability/platform/lifecycle.ts").replace(/\\/g, "/")}';
     export { createOrchestrator } from '${join(ROOT, "src/capability/platform/orchestrator.ts").replace(/\\/g, "/")}';
-    export { bootstrapAssembly } from '${join(ROOT, "src/capability/index.ts").replace(/\\/g, "/")}';
+    export { transitionCapability } from '${join(ROOT, "src/capability/platform/manager.ts").replace(/\\/g, "/")}';
+    export { bootstrapAssembly, bootstrapCapabilityRuntime, bootstrapConfiguredCapabilityRuntime } from '${join(ROOT, "src/capability/index.ts").replace(/\\/g, "/")}';
     export { registerBookmarkContributions } from '${join(ROOT, "src/capabilities/bookmark/index.ts").replace(/\\/g, "/")}';
     export { registerWorkspaceContributions } from '${join(ROOT, "src/capabilities/workspace/index.ts").replace(/\\/g, "/")}';
     export { registerBrowserContributions } from '${join(ROOT, "src/capabilities/browser/index.ts").replace(/\\/g, "/")}';
@@ -360,6 +362,151 @@ async function main() {
       if (hp.level === "HP2" && !(hp.enable && hp.register && hp.unregister)) problems.push(`${id} HP2 声明不自洽`);
     }
     expect(problems.length === 0, "PLT2-18", "Hot-Plug 等级声明自洽且有诚实限制说明", problems.join("; "));
+  }
+
+  // ---- PLT2-20 Manager 停用闭环 + 持久化重载 ---------------------------
+  {
+    contributionRegistry.clear();
+    const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        localStorage: {
+          getItem(key) {
+            return key === "browser-os-capability-config"
+              ? JSON.stringify({ enabled: { bookmark: false, demo: true, tools: false, home: false, vault: false } })
+              : null;
+          },
+        },
+      },
+    });
+    try {
+      const boot = M.bootstrapCapabilityRuntime();
+      const bookmark = boot.runtime.get("bookmark");
+      expect(bookmark?.enabled === false && bookmark.state === "READY", "PLT2-20a",
+        "持久化停用在重载启动时生效（Bookmark 保留可再启用记录）",
+        `enabled=${bookmark?.enabled} state=${bookmark?.state}`);
+      expect(countContributions(contributionRegistry, "bookmark") === 0, "PLT2-20b",
+        "持久化停用后 Bookmark 零贡献（无死入口）");
+      expect(!boot.runtime.get("demo") && boot.runtime.get("tools")?.state === "ACTIVE"
+        && boot.runtime.get("home")?.state === "ACTIVE" && boot.runtime.get("vault")?.state === "ACTIVE",
+      "PLT2-20c", "未装配能力不越权加入，HP0/C2 停用请求被安全忽略");
+
+      const enabled = await M.transitionCapability(boot.runtime, contributionRegistry, "bookmark", "enable");
+      expect(enabled.persistedEnabled === true && boot.runtime.get("bookmark")?.state === "ACTIVE"
+        && countContributions(contributionRegistry, "bookmark") === CAPABILITY_CATALOG.bookmark.contributions.length,
+      "PLT2-20d", "Manager 启用后恢复运行时和全部贡献");
+
+      await M.transitionCapability(boot.runtime, contributionRegistry, "bookmark", "pause");
+      await M.transitionCapability(boot.runtime, contributionRegistry, "bookmark", "resume");
+      expect(bookmark.state === "ACTIVE" && countContributions(contributionRegistry, "bookmark") === CAPABILITY_CATALOG.bookmark.contributions.length,
+        "PLT2-20g", "暂停后可直接恢复且无重复贡献");
+      await M.transitionCapability(boot.runtime, contributionRegistry, "bookmark", "pause");
+      const disabled = await M.transitionCapability(boot.runtime, contributionRegistry, "bookmark", "disable");
+      expect(disabled.persistedEnabled === false && boot.runtime.get("bookmark")?.enabled === false
+        && countContributions(contributionRegistry, "bookmark") === 0,
+      "PLT2-20e", "Manager 暂停→停用后贡献全部清理并返回持久化意图");
+
+      let immatureRejected = false;
+      try { await M.transitionCapability(boot.runtime, contributionRegistry, "home", "pause"); }
+      catch (error) { immatureRejected = /C3\/HP1/.test(error.message); }
+      expect(immatureRejected && boot.runtime.get("home")?.state === "ACTIVE", "PLT2-20f",
+        "Manager 拒绝停用尚有 Shell 固定入口的 C2 能力");
+      let repeated;
+      try { repeated = M.bootstrapCapabilityRuntime(); } catch { /* assertion below */ }
+      expect(repeated?.runtime === boot.runtime && repeated?.activated === boot.activated && repeated?.error === null,
+        "PLT2-20h", "重复 bootstrap 幂等，不依赖已停用 Bookmark 状态");
+    } finally {
+      if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+      else delete globalThis.window;
+    }
+  }
+
+  // ---- PLT2-22 Manager 失败/并发/依赖边界（真实 Runtime + Registry） ----
+  {
+    const rt = createCapabilityRuntime();
+    const registry = M.createContributionRegistry();
+    let activationFails = false;
+    let pauseFails = false;
+    let cleanupFails = false;
+    let releaseCleanup;
+    let cleanupWait;
+    const panel = { id: "probe.panel", capabilityId: "probe", type: "surface", slot: "custom-slot", component: { name: "Probe" } };
+    const definition = {
+      ...CAPABILITY_DEFINITIONS.bookmark, id: "probe", dependsOn: [],
+      v1: { ...CAPABILITY_CATALOG.bookmark, id: "probe" },
+      lifecycle: {
+        ...CAPABILITY_DEFINITIONS.bookmark.lifecycle,
+        async onActivate() {
+          registry.registerContribution(panel);
+          await Promise.resolve();
+          if (activationFails) throw new Error("activation failed");
+        },
+        async onSuspend() { if (pauseFails) throw new Error("pause failed"); },
+        async onDeactivate() {
+          registry.unregisterCapability("probe");
+          if (cleanupWait) await cleanupWait;
+          if (cleanupFails) throw new Error("cleanup failed");
+        },
+      },
+    };
+    const record = rt.register(definition);
+    rt.resolve("probe");
+    rt.disable("probe");
+    const act = (action) => M.transitionCapability(rt, registry, "probe", action);
+    const rejected = async (operation, pattern) => {
+      try { await operation(); return false; } catch (error) { return pattern.test(error.message); }
+    };
+    activationFails = true;
+    expect(await rejected(() => act("enable"), /activation failed/) && !record.enabled && record.state === "READY"
+      && registry.getBySlot("custom-slot").length === 0, "PLT2-22a", "异步启用失败恢复禁用并清理部分贡献");
+    activationFails = false;
+    await act("enable");
+    pauseFails = true;
+    expect(await rejected(() => act("pause"), /pause failed/) && record.state === "ACTIVE", "PLT2-22b", "异步暂停失败仍保持 ACTIVE");
+    pauseFails = false;
+    await act("pause");
+    cleanupFails = true;
+    expect(await rejected(() => act("disable"), /cleanup failed/) && record.enabled && record.state === "SUSPENDED"
+      && registry.getBySlot("custom-slot")[0] === panel, "PLT2-22c", "清理失败恢复暂停状态与原贡献，可重试");
+    cleanupFails = false;
+    cleanupWait = new Promise((resolve) => { releaseCleanup = resolve; });
+    const disabling = act("disable");
+    expect(await rejected(() => act("enable"), /进行中/), "PLT2-22d", "异步停用期间拒绝并发启用");
+    releaseCleanup();
+    await disabling;
+    cleanupWait = undefined;
+    await act("enable");
+    expect(record.state === "ACTIVE" && record.enabled && registry.getBySlot("custom-slot").length === 1,
+      "PLT2-22e", "失败重试及并发拒绝后仍可完整启用");
+    expect(await rejected(() => act("disable"), /先暂停/) && record.state === "ACTIVE", "PLT2-22f", "显式动作拒绝陈旧状态请求，不跳过暂停");
+    const dependent = rt.register({ ...definition, id: "dependent", dependsOn: ["probe"] });
+    expect(await rejected(() => act("pause"), /依赖/) && record.state === "ACTIVE", "PLT2-22g", "服务层也保护启用中的强依赖方");
+    rt.disable(dependent.id);
+    await act("pause");
+    activationFails = true;
+    expect(await rejected(() => act("resume"), /activation failed/) && record.enabled && record.state === "SUSPENDED"
+      && registry.getBySlot("custom-slot")[0] === panel, "PLT2-22h", "恢复失败保留原暂停态和贡献");
+    activationFails = false;
+    await act("resume");
+  }
+
+  // ---- PLT2-21 Registry 变更对 Vue consumer 可观察 ----------------------------
+  {
+    const isolated = await loadRuntime();
+    const empty = isolated.bootstrapConfiguredCapabilityRuntime({ enabled: {} });
+    const repeated = isolated.bootstrapCapabilityRuntime();
+    expect(repeated.runtime === empty.runtime && repeated.activated === empty.activated && repeated.profile === empty.profile,
+      "PLT2-20i", "空自定义装配重复启动保留原始结果与 profile");
+  }
+  {
+    const registry = M.createContributionRegistry();
+    const visible = computed(() => registry.getBySlot("panels").map((entry) => entry.id));
+    registry.registerContribution({ id: "probe.panel", capabilityId: "probe", type: "surface", slot: "panels" });
+    const appeared = visible.value.includes("probe.panel");
+    registry.unregisterCapability("probe");
+    expect(appeared && visible.value.length === 0, "PLT2-21",
+      "Contribution Registry 注册/停用可被 Vue computed 立即观察");
   }
 
   // 汇总

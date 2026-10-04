@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { EmptyState } from "../../../shared/ui";
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useRepoStore } from "../state/useRepoStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { contributionRegistry } from "../../../capability/contribution/registry";
@@ -17,12 +17,12 @@ const tab = ref<"git" | "history" | "config">("git");
 // Git 面板经通用 Contribution Registry 的 REPO_SUBVIEW 槽贡献（git.repo.panel=状态页签 / git.repo.history=提交历史页签）。
 // RepoPanel 只按 view 认领渲染，不 import Git 能力内部（C3 关键，且避免 workspace→git 反向依赖环）。
 // Git absent（未注册/未 activate）→ 槽为空 → 对应页签不渲染（能力模型一致）。
-const gitPanelComp = contributionRegistry
+const gitPanelComp = computed(() => contributionRegistry
   .getSurfaceContributions(CONTRIBUTION_SLOTS.REPO_SUBVIEW)
-  .find((c) => c.view === "git")?.component
-const gitHistoryComp = contributionRegistry
+  .find((c) => c.view === "git")?.component)
+const gitHistoryComp = computed(() => contributionRegistry
   .getSurfaceContributions(CONTRIBUTION_SLOTS.REPO_SUBVIEW)
-  .find((c) => c.view === "history")?.component
+  .find((c) => c.view === "history")?.component)
 </script>
 
 <template>

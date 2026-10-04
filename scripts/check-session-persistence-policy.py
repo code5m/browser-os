@@ -174,13 +174,21 @@ def detect_violations(files: dict[str, str]) -> list[str]:
     for cmd in SESSION_COMMANDS:
         if f'"{cmd}"' not in acl:
             v.append(f"SP_ACL_MISSING: {cmd}")
-        if f"bridge::{cmd}" not in main_rs:
+        if not any(f"{owner}::{cmd}" in main_rs for owner in ("bridge", "capabilities::session::commands")):
             v.append(f"SP_HANDLER_NOT_REGISTERED: {cmd}")
 
-    # ---- 6) 生命周期接线 ----
+    # ---- 6) 生命周期接线（4f6f338 已批准 Browser→Session 解耦） ----
     create_body = rust_fn_body(bridge, "create_tab")
-    if "upsert_session_draft" not in create_body:
-        v.append("SP_DRAFT_ON_CREATE_MISSING")
+    if not create_body:
+        v.append("SP_CREATE_TAB_MISSING")
+    if "upsert_session_draft" in strip_line_comments(bridge):
+        v.append("SP_BROWSER_WRITES_SESSION_DRAFT")
+    session_builder = rust_fn_body(bridge, "build_session_for_tab")
+    if not all(anchor in session_builder for anchor in ("state.tabs", "tabs.get(tab_id)", "build_session(")):
+        v.append("SP_SESSION_TAB_SOURCE_MISSING")
+    flush_body = rust_fn_body(bridge, "flush_sessions_inner")
+    if not all(anchor in flush_body for anchor in ("session_auto_save_on_exit", "if auto_save", "state.tabs", ".keys()", "build_session_for_tab(", "persist_session(")):
+        v.append("SP_AUTO_SAVE_TAB_SOURCE_MISSING")
     close_body = rust_fn_body(bridge, "close_tab")
     if "session_drafts" not in close_body or "remove" not in close_body:
         v.append("SP_DRAFT_ON_CLOSE_MISSING")
@@ -292,8 +300,8 @@ def scan_repository(root: Path) -> list[str]:
         "main_rs": root / "src-tauri/src/main.rs",
         "acl": root / "src-tauri/permissions/default-commands.toml",
         "browser_store": root / "src/capabilities/browser/state/useBrowserStore.ts",
-        "session_store": root / "src/stores/useSessionStore.ts",
-        "panel": root / "src/components/browser/SessionPanel.vue",
+        "session_store": root / "src/capabilities/browser/state/useSessionStore.ts",
+        "panel": root / "src/capabilities/browser/ui/SessionPanel.vue",
         "app_vue": root / "src/App.vue",
         "bridge_ts": root / "src/bridge.ts",
         "types_ts": root / "src/types.ts",
@@ -303,6 +311,8 @@ def scan_repository(root: Path) -> list[str]:
         if not path.exists():
             return [f"SP_FILE_MISSING: {path.relative_to(root)}"]
         files[key] = path.read_text(encoding="utf-8")
+    for owner in ("session", "browser"):
+        files["bridge"] += "\n" + (root / f"src-tauri/src/capabilities/{owner}/commands.rs").read_text(encoding="utf-8")
     src_files: list[tuple[str, str]] = []
     for path in sorted((root / "src").rglob("*")):
         if path.is_file() and path.suffix in {".ts", ".vue"}:
@@ -363,8 +373,23 @@ pub fn prune_tmp_files(dir: &Path) -> usize { 0 }
 
 GOOD_BRIDGE = """
 fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
-    upsert_session_draft(&app, &id, &target, &title0);
     Ok(info)
+}
+fn build_session_for_tab(app: &AppHandle, tab_id: &str) -> Option<BrowserSession> {
+    let tabs = state.tabs.lock().unwrap();
+    let tab = tabs.get(tab_id)?;
+    Some(crate::session::build_session(tab_id, &tab.url, &tab.title))
+}
+fn flush_sessions_inner(app: &AppHandle) -> SessionFlushReport {
+    let auto_save = state.session_auto_save_on_exit.load(Ordering::SeqCst);
+    if auto_save {
+        let tab_ids = state.tabs.lock().unwrap().keys().cloned().collect();
+        for tab_id in tab_ids {
+            let session = build_session_for_tab(app, &tab_id);
+            persist_session(app, &session);
+        }
+    }
+    report()
 }
 fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
     state.session_drafts.lock().unwrap().remove(id);
@@ -552,9 +577,18 @@ def run_self_test() -> int:
         ("flush 注册在 close-tabs 之后",
          {"bridge": GOOD_BRIDGE.replace('coordinator.register("flush-sessions", move || {\n        let report = flush_sessions_inner(&app);\n        Ok(())\n    })?;\n    coordinator.register("close-tabs"', 'coordinator.register("close-tabs", move || { Ok(()) })?;\n    coordinator.register("flush-sessions", move || {\n        let report = flush_sessions_inner(&app);\n        Ok(())\n    })?;\n    coordinator.register("close-tabs-x"')},
          "SP_FLUSH_AFTER_CLOSE_TABS"),
-        ("create_tab 不建草稿",
-         {"bridge": GOOD_BRIDGE.replace("upsert_session_draft(&app, &id, &target, &title0);", "")},
-         "SP_DRAFT_ON_CREATE_MISSING"),
+        ("Browser 重新直写 Session 草稿",
+         {"bridge": GOOD_BRIDGE.replace("Ok(info)", "upsert_session_draft(&app, &id, &target, &title0); Ok(info)")},
+         "SP_BROWSER_WRITES_SESSION_DRAFT"),
+        ("手动保存不再读取真实页签",
+         {"bridge": GOOD_BRIDGE.replace("tabs.get(tab_id)", "drafts.get(tab_id)")},
+         "SP_SESSION_TAB_SOURCE_MISSING"),
+        ("退出自动保存只迭代旧草稿",
+         {"bridge": GOOD_BRIDGE.replace("state.tabs.lock().unwrap().keys()", "state.session_drafts.lock().unwrap().keys()")},
+         "SP_AUTO_SAVE_TAB_SOURCE_MISSING"),
+        ("退出自动保存绕过开关",
+         {"bridge": GOOD_BRIDGE.replace("if auto_save", "if true")},
+         "SP_AUTO_SAVE_TAB_SOURCE_MISSING"),
         ("关闭弹窗默认关（后端契约）",
          {"domain": GOOD_DOMAIN.replace("close_prompt: true", "close_prompt: false")},
          "SP_CLOSE_PROMPT_DEFAULT_OFF"),

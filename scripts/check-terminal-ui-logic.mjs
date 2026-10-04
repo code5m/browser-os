@@ -74,6 +74,9 @@ const { useTerminalResize, TERM_RESIZE_QUIET_MS, TERM_RESIZE_MAX_WAIT_MS } = awa
   `${ROOT}src/capabilities/terminal/ui/useTerminalResize.ts`
 );
 const { createPinia, setActivePinia } = await import(`${ROOT}node_modules/pinia/dist/pinia.mjs`);
+const { createCapabilityRuntime } = await import(`${ROOT}src/capability/runtime.ts`);
+const { setCapabilityRuntime } = await import(`${ROOT}src/capability/runtimeSingleton.ts`);
+const { terminalManifest } = await import(`${ROOT}src/capabilities/terminal/manifest.ts`);
 
 // ---------- mock bridge（只替换终端相关方法，记录调用） ----------
 const calls = [];
@@ -124,6 +127,14 @@ function replayOf(id) {
 // T1：还没有 writer 时回放不得抛错（面板未挂载的边界）。
 terminal.replayTermHistory("not-exist");
 assert(true, "E1-T1 replayTermHistory 在无 writer / 未知 pane 时安全 no-op");
+
+assert(await terminal.spawnTerm() === "" && spawnSeq === 0, "E1-T1b 未装配 Terminal 时不得创建 PTY");
+// 与产品启动顺序一致，使用真实 Runtime 和 Manifest 打开资源闸；不 mock 守门逻辑。
+const runtime = createCapabilityRuntime();
+runtime.register(terminalManifest);
+runtime.resolve("terminal");
+runtime.activate("terminal");
+setCapabilityRuntime(runtime);
 
 const p1 = await terminal.spawnTerm();
 assert(p1 === "term-1", `E1-T2a spawnTerm 返回 pane id（实得 ${p1}）`);

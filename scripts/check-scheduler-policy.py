@@ -507,7 +507,7 @@ def detect_hits(files: dict) -> dict[str, list[str]]:
             hit("SCHED_CMD_NOT_REGISTERED", f"{cmd}:缺 check_invocation_source")
         if f'"{cmd}"' not in acl:
             hit("SCHED_CMD_NOT_REGISTERED", f"{cmd}:缺 ACL 条目")
-        if f"bridge::{cmd}" not in main_rs:
+        if not any(f"{owner}::{cmd}" in main_rs for owner in ("bridge", "crate::capabilities::task::commands")):
             hit("SCHED_CMD_NOT_REGISTERED", f"{cmd}:缺 main.rs handler 注册")
 
     # ---- ACTIVE 16) ACL 顺序：必须插在 list_artifact_images 之前 ----
@@ -608,7 +608,7 @@ def read_repo(root: Path) -> dict:
         # 实现归 M4-6 / M4-7：文件可能不存在（→ 空串 → 存在才判）
         "tasks_rs": _glob_concat(root, "tasks*.rs"),
         "scheduler_rs": _glob_concat(root, "scheduler*.rs"),
-        "bridge_rs": _read(root / "src-tauri/src/bridge.rs"),
+        "bridge_rs": _read(root / "src-tauri/src/bridge.rs") + "\n" + _read(root / "src-tauri/src/capabilities/task/commands.rs"),
         "main_rs": _read(root / "src-tauri/src/main.rs"),
         "workspace_rs": _read(root / "src-tauri/src/capabilities/workspace/workspace.rs"),
         "acl_toml": _read(root / "src-tauri/permissions/default-commands.toml"),

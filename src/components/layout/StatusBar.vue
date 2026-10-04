@@ -7,6 +7,8 @@ import { useRepoStore } from "../../capabilities/workspace/public";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useSettingsStore } from "../../settings/public";
 import { bridge } from "../../bridge";
+import { contributionRegistry } from "../../capability/contribution/registry";
+import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
 import type { ResourceStats } from "../../types";
 
 const browser = useBrowserStore();
@@ -25,10 +27,13 @@ const KNOWN_VIEWS: Record<string, string> = {
   plugin: "插件", skills: "技能", agents: "智能体", graph: "知识图谱",
   settings: "设置", term: "终端", editor: "编辑器", vault: "Vault",
 };
-const viewLabel = computed(() => KNOWN_VIEWS[layout.mainView] ?? "");
-const viewUnknown = computed(
-  () => !!layout.mainView && !(layout.mainView in KNOWN_VIEWS)
-);
+const contributedViewLabels = computed(() => Object.fromEntries(
+  contributionRegistry.getSurfaceContributions(CONTRIBUTION_SLOTS.WORKBENCH_MAIN)
+    .filter((contribution) => contribution.view)
+    .map((contribution) => [contribution.view as string, contribution.label ?? contribution.view as string]),
+));
+const viewLabel = computed(() => contributedViewLabels.value[layout.mainView] ?? KNOWN_VIEWS[layout.mainView] ?? "");
+const viewUnknown = computed(() => !!layout.mainView && !viewLabel.value);
 
 const tabCount = computed(() => browser.tabs.length);
 const auditCount = computed(() => ws.audit.length);

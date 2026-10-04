@@ -74,7 +74,7 @@ pre-merge.sh — M0-1.c 本地 pre-merge 门禁（M0-1 脚本合并前检查入�
   lifecycle fixture             check-lifecycle-contract.py --self-test / --expect-current-gaps / 默认门禁
   security fixture              check-security-policy.py --self-test / --expect-current-gaps
                                 （默认模式按设计 EXIT=1，见 logs/m0-security-threat-matrix-v1.md）
-  build metrics                 measure-build-metrics.py --self-test / --compare（总体积 ≤15%、
+  build metrics                 measure-build-metrics.py --self-test / --compare（总体积遵循脚本当前上限、
                                 warning 不增加；指标存 logs/m0-build-metrics/）
   GUI regression harness        m0-6c-gui-regression.py --self-test（不启动 GUI）
   git write policy fixture      check-git-write-policy.py --self-test / 默认门禁
@@ -528,7 +528,7 @@ run_pre_merge() {
   # Phase 03 checker gate (added by 11-ci). Wires the five boundary checkers + doctor
   # into the pre-merge gate WITHOUT weakening any existing M0-1.c check above.
   pm_log "Phase 03 checker gate (architecture/ui/native/runtime/task-boundary + capability + doctor)…"
-  for c in check-architecture check-ui check-native check-native-command-inventory check-browser-runtime check-task-boundary check-grid-close check-view-intent check-capability-boundaries check-capability-composition check-composition-profiles check-terminal-owners check-developer-owners check-semantic-registry check-semantic-closure-logic check-workspace-owners check-sensitive-side-effects doctor; do
+  for c in check-architecture check-ui check-native check-native-command-inventory check-browser-runtime check-task-boundary check-grid-close-logic check-view-intent check-capability-boundaries check-capability-composition check-composition-profiles check-capability-platform check-capability-runtime check-pluggable-runtime check-pluggable-lifecycle check-terminal-owners check-developer-owners check-semantic-registry check-semantic-closure-logic check-workspace-owners check-sensitive-side-effects doctor; do
     if ! (cd "$ROOT" && node "$SCRIPT_DIR/$c.mjs") >/dev/null 2>&1; then
       pm_fail "phase03 $c.mjs"
     fi

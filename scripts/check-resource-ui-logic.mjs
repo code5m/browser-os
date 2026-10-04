@@ -2,7 +2,7 @@
 // ---------------------------------------------------------------------------
 // M1-8 资源瀑布前端逻辑层自动化测试（headless，无 GUI 依赖）
 //
-// 直接加载**真实的** `src/stores/useResourceStore.ts`，只把 `src/bridge.ts` 的
+// 直接加载**真实的** `src/capabilities/browser/state/useResourceStore.ts`，只把 `src/bridge.ts` 的
 // 资源相关方法替换为记录型 mock（不 mock store 自身逻辑）：
 // 因此下面每一条断言反映的都是**产品代码**的行为，而非测试替身的行为。
 //
@@ -56,7 +56,7 @@ const {
   formatSize,
   formatDuration,
   RESOURCE_FILTERS,
-} = await import(`${ROOT}src/stores/useResourceStore.ts`);
+} = await import(`${ROOT}src/capabilities/browser/state/useResourceStore.ts`);
 const { createPinia, setActivePinia } = await import(
   `${ROOT}node_modules/pinia/dist/pinia.mjs`
 );

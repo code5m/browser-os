@@ -249,7 +249,7 @@ def read_repo(root: Path) -> dict[str, str]:
     return {
         "domain": read("src-tauri/src/domain.rs"),
         "images": read("src-tauri/src/shared/images.rs"),
-        "bridge": read("src-tauri/src/bridge.rs"),
+        "bridge": read("src-tauri/src/bridge.rs") + "\n" + read("src-tauri/src/capabilities/session/commands.rs"),
         "main_rs": read("src-tauri/src/main.rs"),
         "acl": read("src-tauri/permissions/default-commands.toml"),
         "workspace": read("src-tauri/src/capabilities/workspace/workspace.rs"),
@@ -362,7 +362,7 @@ def run_self_test(root: Path) -> int:
     samples.append((
         "session_get 去掉 id 校验",
         mutate(bridge=good["bridge"].replace(
-            'check_invocation_source(&webview, "session_get", None, &app)?;\n    check_id(&id, "会话 id")?;',
+            'check_invocation_source(&webview, "session_get", None, &app)?;\n    crate::images::check_id(&id, "会话 id")?;',
             'check_invocation_source(&webview, "session_get", None, &app)?;')),
         "IMG_SESSION_ID_CHECK_MISSING:session_get",
     ))
@@ -384,6 +384,10 @@ def run_self_test(root: Path) -> int:
 
     failures = 0
     for label, files, expected in samples:
+        if files == good:
+            failures += 1
+            print(f"  ✗   {label} 未改动样本（变异失配）")
+            continue
         found = detect_violations(files)
         if any(f.startswith(expected) for f in found):
             print(f"  ok  {label} → {expected}")

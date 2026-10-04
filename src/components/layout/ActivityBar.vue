@@ -30,12 +30,12 @@ const fs = useFileStore();
 
 // 收藏夹等贡献：经通用 Contribution Registry 按 slot 遍历渲染。
 // Shell 不持有 Bookmark 专属知识（不 import 其 store / ui），C3 关键（8B.1）。
-const addressBarActions = contributionRegistry.getNavigationContributions(
+const addressBarActions = computed(() => contributionRegistry.getNavigationContributions(
   CONTRIBUTION_SLOTS.ADDRESS_BAR_ACTIONS,
-);
-const trailingActions = contributionRegistry.getNavigationContributions(
+));
+const trailingActions = computed(() => contributionRegistry.getNavigationContributions(
   CONTRIBUTION_SLOTS.ACTIVITY_BAR_TRAILING,
-);
+));
 
 // 一级入口与 ☰ 菜单分节统一来自 useLayoutStore（W17 导航真源），
 // 窄窗口按 navTopViews 从尾部裁剪，被裁掉的入口在 ☰ 菜单中仍可达。

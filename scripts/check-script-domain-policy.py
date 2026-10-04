@@ -76,8 +76,9 @@ BASELINE_DEPS = {
     "peerDependencies": {},
 }
 
-# package-lock.json 仍用整文件 SHA256 锚定（lock 不随 script 变更而变，无脆性）。
-BASELINE_SHA256_LOCK = "d071ce3ff265297834c96eb9d53e5db79ce37c6cc2f8e16daa7f838a7c002dad"
+# ea62872：核对 f0733c2→5b4738f→ea62872，仅增加两个本地能力包及 TypeScript 开发依赖。
+# 仍校验整文件，不能以本轮工作树内容自动更新基线。
+BASELINE_SHA256_LOCK = "097d63bddf24347654d9bfb194714d848590e9d7da7d8f3c26c61d63189c4003"
 
 # 受追踪的 npm 清单文件（read_repo 读取用）。
 NPM_MANIFESTS = ("package.json", "package-lock.json")
@@ -464,7 +465,7 @@ def run_self_test(root: Path) -> int:
         "script_remove 去掉 id 形态校验",
         mutate(bridge=good["bridge"].replace(
             'check_invocation_source(&webview, "script_remove", None, &app)?;\n'
-            '    check_id(&id, "脚本 id")?;',
+            '    crate::images::check_id(&id, "脚本 id")?;',
             'check_invocation_source(&webview, "script_remove", None, &app)?;')),
         "SCR_ID_VALIDATION_MISSING"))
     # 9. ACL 漏登记

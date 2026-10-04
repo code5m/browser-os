@@ -14,7 +14,7 @@ globalThis.window = { setTimeout };
 
 const { bridge } = await import('../src/bridge.ts');
 const { createPinia, setActivePinia } = await import('pinia');
-const { useWorkspaceStore } = await import('../src/capabilities/workspace/state/useWorkspaceStore.ts');
+const { useFileStore } = await import('../src/capabilities/workspace/state/useFileStore.ts');
 
 const entries = Array.from({ length: 20 }, (_, i) => ({
   name: `image-${String(i).padStart(2, '0')}.jpg`,
@@ -37,19 +37,19 @@ bridge.readImageDataUrl = async (path) => {
 };
 
 setActivePinia(createPinia());
-const workspace = useWorkspaceStore();
+const files = useFileStore();
 
-await workspace.openDirPreview({ name: 'images', path: '/tmp/images', is_dir: true, size: 0 });
+await files.openDirPreview({ name: 'images', path: '/tmp/images', is_dir: true, size: 0 });
 assert.equal(reads, 0, 'opening a directory must not eagerly read image data URLs');
 
-for (const entry of entries.slice(0, 10)) workspace.loadPreviewImage(entry);
+for (const entry of entries.slice(0, 10)) files.loadPreviewImage(entry);
 
 for (let i = 0; i < 80; i += 1) {
-  if (Object.keys(workspace.previewImages).length === 10) break;
+  if (Object.keys(files.previewImages).length === 10) break;
   await new Promise((resolve) => setTimeout(resolve, 5));
 }
 
-assert.equal(Object.keys(workspace.previewImages).length, 10, 'lazy image loads should complete');
+assert.equal(Object.keys(files.previewImages).length, 10, 'lazy image loads should complete');
 assert.ok(maxActive <= 4, `image preview concurrency exceeded: ${maxActive}`);
 
 console.log('IMAGE_PREVIEW_LAZY_LOADING=PASS');

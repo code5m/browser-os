@@ -283,9 +283,12 @@ def c_readonly_command_parity(rel, text, repo):
     bts = repo.get("src/bridge.ts", "")
     missing = []
     for c in _READONLY_CMDS:
-        in_handler = (f"bridge::{c}" in bridge_rs) or (f"pub fn {c}" in bridge_rs)
-        has_source_check = f'check_invocation_source(&webview, "{c}"' in bridge_rs
-        parity_ok = in_handler and c in main_rs and c in acl and c in bts
+        owner = c.split("_", 1)[0]
+        qualified = f"crate::capabilities::{owner}::commands::{c}"
+        handler = repo.get(f"src-tauri/src/capabilities/{owner}/commands.rs", "") if qualified in main_rs else bridge_rs
+        in_handler = f"pub fn {c}" in handler
+        has_source_check = f'check_invocation_source(&webview, "{c}"' in handler
+        parity_ok = in_handler and (qualified in main_rs or f"bridge::{c}" in main_rs) and c in acl and c in bts
         if not (parity_ok and has_source_check):
             missing.append(c)
     if missing:
@@ -589,6 +592,21 @@ def _run_self_test() -> int:
     good_hits = detect_hits(good)
     if good_hits:
         failures.append(f"好样本误报：{good_hits}")
+
+    migrated = dict(good)
+    migrated["src-tauri/src/main.rs"] = "\n".join(f"crate::capabilities::{c.split('_', 1)[0]}::commands::{c}," for c in _READONLY_CMDS)
+    migrated["src/bridge.ts"] = "\n".join(_READONLY_CMDS)
+    migrated["src-tauri/permissions/default-commands.toml"] = "\n".join(_READONLY_CMDS)
+    for owner in ("agent", "skill"):
+        migrated[f"src-tauri/src/capabilities/{owner}/commands.rs"] = "\n".join(
+            f'pub fn {c}() {{ check_invocation_source(&webview, "{c}", None, &app)?; }}'
+            for c in _READONLY_CMDS if c.startswith(owner + "_"))
+    if c_readonly_command_parity("src-tauri/src/main.rs", "", migrated):
+        failures.append("迁移后的命令仍须通过四件套和来源校验")
+    broken = dict(migrated)
+    broken["src-tauri/src/capabilities/skill/commands.rs"] = broken["src-tauri/src/capabilities/skill/commands.rs"].replace("check_invocation_source", "missing_check")
+    if not c_readonly_command_parity("src-tauri/src/main.rs", "", broken):
+        failures.append("迁移后的命令缺来源校验必须检出")
 
     def mutate(**kw):
         d = dict(good)

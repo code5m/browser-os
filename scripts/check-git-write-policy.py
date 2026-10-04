@@ -273,7 +273,7 @@ def check_gate(bridge_source: str) -> list[str]:
 def check_registration(main_source: str, acl_source: str) -> list[str]:
     violations: list[str] = []
     for command in GATE_COMMANDS:
-        if f"bridge::{command}" not in main_source:
+        if not any(f"{owner}::{command}" in main_source for owner in ("bridge", "crate::capabilities::git::commands")):
             violations.append("GIT_WRITE_COMMAND_NOT_REGISTERED")
         if f'"{command}"' not in acl_source:
             violations.append("GIT_WRITE_COMMAND_NOT_IN_ACL")
@@ -317,7 +317,7 @@ def scan_repository(root: Path) -> list[str]:
     return detect_violations(
         (src / "capabilities" / "git" / "sync.rs").read_text(encoding="utf-8"),
         (src / "domain.rs").read_text(encoding="utf-8"),
-        (src / "bridge.rs").read_text(encoding="utf-8"),
+        (src / "capabilities/git/commands.rs").read_text(encoding="utf-8"),
         (src / "main.rs").read_text(encoding="utf-8"),
         acl_source,
     )
@@ -454,6 +454,11 @@ def run_self_test() -> int:
     good = detect_violations(GOOD_SYNC, GOOD_DOMAIN, GOOD_BRIDGE, GOOD_MAIN, GOOD_ACL)
     if good:
         failures.append(f"good fixture should be clean, got {good}")
+    migrated_main = GOOD_MAIN.replace("bridge::", "crate::capabilities::git::commands::")
+    if detect_violations(GOOD_SYNC, GOOD_DOMAIN, GOOD_BRIDGE, migrated_main, GOOD_ACL):
+        failures.append("capability-owned command registration should remain protected and valid")
+    if not check_registration(migrated_main.replace("::git::", "::unknown::"), GOOD_ACL):
+        failures.append("unrecognized command owner must be rejected")
 
     cases: list[tuple[str, dict[str, str], str]] = [
         (

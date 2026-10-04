@@ -181,6 +181,10 @@ def load_policy_source(root: Path) -> str:
 
 def scan_repository(root: Path) -> list[str]:
     bridge_source = (root / "src-tauri" / "src" / "bridge.rs").read_text(encoding="utf-8")
+    # launch_app 已迁入 framework；继续校验真实实现，不把迁移误判成保护缺失。
+    framework = root / "src-tauri/src/framework/commands.rs"
+    if framework.is_file():
+        bridge_source += "\n" + framework.read_text(encoding="utf-8")
     return detect_gaps(
         bridge_source,
         load_capability_sources(root),
@@ -331,6 +335,23 @@ pub fn check_launch_target(line: &str) -> Result<(String, Vec<String>), PolicyEr
         )
         if sorted(scan_repository(root)) != sorted(legacy_gaps):
             print("self-test: repository scan mismatch", file=sys.stderr)
+            return 1
+
+        # 模块迁移后也须扫描实际 handler；删除其保护调用仍必须被检出。
+        launch_definition = resolved_bridge.split("pub fn write_file", 1)[0]
+        (root / "src-tauri/src/bridge.rs").write_text(resolved_bridge.replace(launch_definition, ""), encoding="utf-8")
+        (root / "src-tauri/src/framework").mkdir()
+        framework = root / "src-tauri/src/framework/commands.rs"
+        framework.write_text(launch_definition, encoding="utf-8")
+        (root / "src-tauri/src/security_policy.rs").write_text(resolved_policy, encoding="utf-8")
+        (root / "src-tauri/capabilities/default.json").write_text(resolved_capabilities, encoding="utf-8")
+        (root / "src-tauri/permissions/remote-collect.toml").write_text(resolved_permissions, encoding="utf-8")
+        if scan_repository(root):
+            print("self-test: migrated framework handler should be protected", file=sys.stderr)
+            return 1
+        framework.write_text(launch_definition.replace("check_launch_target", "missing_check"), encoding="utf-8")
+        if "LAUNCH_APP_WITHOUT_TARGET_POLICY" not in scan_repository(root):
+            print("self-test: migrated handler missing protection must fail", file=sys.stderr)
             return 1
 
     # capability JSON 必须可被解析，避免夹具只做字符串匹配而放过坏 JSON。

@@ -42,23 +42,23 @@ const browser = useBrowserStore();
 
 // 收藏夹等「浏览器侧栏」贡献：经通用 Contribution Registry 按 slot 遍历渲染。
 // Shell 不持有 Bookmark 专属知识（不 import 其 store / ui），C3 关键（8B.1）。
-const sidebarContributions = contributionRegistry.getSurfaceContributions(
+const sidebarContributions = computed(() => contributionRegistry.getSurfaceContributions(
   CONTRIBUTION_SLOTS.BROWSER_SIDEBAR,
-);
+));
 
 // Workspace 主视图 / Dock 贡献：经通用 Contribution Registry 按 view 认领渲染。
 // Shell 不持有 Workspace 专属知识（不 import 其 store / ui），C3 关键（Train B）。
-const workbenchMainContributions = contributionRegistry.getSurfaceContributions(
+const workbenchMainContributions = computed(() => contributionRegistry.getSurfaceContributions(
   CONTRIBUTION_SLOTS.WORKBENCH_MAIN,
-);
+));
 function viewOf(view: string) {
-  return workbenchMainContributions.find((c) => c.view === view)?.component;
+  return workbenchMainContributions.value.find((c) => c.view === view)?.component;
 }
-const browserDockContributions = contributionRegistry.getSurfaceContributions(
+const browserDockContributions = computed(() => contributionRegistry.getSurfaceContributions(
   CONTRIBUTION_SLOTS.BROWSER_DOCK,
-);
+));
 function dockOf(view: string) {
-  return browserDockContributions.find((c) => c.view === view)?.component;
+  return browserDockContributions.value.find((c) => c.view === view)?.component;
 }
 
 // ===== UI-4 DockContribution：Dock 页签改为「贡献驱动」，不再硬编码 =====
@@ -68,7 +68,7 @@ function dockOf(view: string) {
 //   2) Terminal absent 时「💻 终端」按钮仍在，点进去渲染空 —— 死页签。
 // 改为按贡献渲染后：absent capability 的贡献根本不在表里 → 页签自动消失，无死页签。
 // Shell 依旧不知道任何能力名，只认 slot + view + 展示元数据。
-const dockTabs = contributionRegistry
+const dockTabs = computed(() => contributionRegistry
   .getDockTabContributions(CONTRIBUTION_SLOTS.BROWSER_DOCK)
   .map((c) => ({
     id: c.id,
@@ -76,24 +76,24 @@ const dockTabs = contributionRegistry
     // 未声明展示元数据时退化为 view 名，保证渲染不炸（不引入 undefined 文案）
     label: c.label ?? c.view ?? "",
     icon: c.icon ?? "",
-  }));
+  })));
 
 // 当前选中页签：若持久化的 tab 已不存在（能力缺席/被卸载），回退到第一个可用页签。
 // full profile 下 files 恒在 → 行为与迁移前完全一致。
 const activeDockTab = computed(() => {
   const t = layout.browserDockTab;
-  return dockTabs.some((d) => d.view === t) ? t : (dockTabs[0]?.view ?? "");
+  return dockTabs.value.some((d) => d.view === t) ? t : (dockTabs.value[0]?.view ?? "");
 });
 
 // 常驻主视图贡献：Shell 只按槽渲染，显隐由能力组件自管（如终端保持 xterm 挂载）。
 // Terminal absent → 槽为空 → 不渲染任何东西，更不会有 PTY 出生点（C3 ABSENT 关键）。
-const residentMainContributions = contributionRegistry.getSurfaceContributions(
+const residentMainContributions = computed(() => contributionRegistry.getSurfaceContributions(
   CONTRIBUTION_SLOTS.WORKBENCH_MAIN_RESIDENT,
-);
+));
 // Browser 原生宿主：经 CONTRIBUTION_SLOTS.BROWSER_HOST 渲染；Browser absent → undefined → 不创建 webview。
-const browserHostComp = contributionRegistry.getSurfaceContributions(
+const browserHostComp = computed(() => contributionRegistry.getSurfaceContributions(
   CONTRIBUTION_SLOTS.BROWSER_HOST,
-)[0]?.component;
+)[0]?.component);
 
 // 精简模式切换后，工具栏显隐导致 viewport 尺寸变化，需重新定位子 webview
 watch(
@@ -195,11 +195,8 @@ watch(
     <!-- This is intentionally independent from FileEditor; an adjacent v-else
          would bind to the editor v-if and render during every normal view. -->
     <div
-      v-if="![
-        'home', 'browser', 'grid', 'files', 'arts', 'clip', 'repo', 'apps', 'audit',
-        'scripts', 'commands', 'tools', 'db', 'tasks', 'plugin', 'skills', 'agents',
-        'graph', 'settings', 'term', 'editor', 'vault'
-      ].includes(layout.mainView)"
+      v-if="layout.mainView !== 'browser' && layout.mainView !== 'grid'
+        && layout.mainView !== 'term' && !viewOf(layout.mainView)"
       class="modview panel-state"
       role="alert"
       aria-live="polite"

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { ContextMenu, ContextMenuItem, EmptyState } from "../../../shared/ui";
 import { useArtifactStore } from "../state/useArtifactStore";
 import { contributionRegistry } from "../../../capability/contribution/registry";
@@ -7,9 +8,9 @@ import { CONTRIBUTION_SLOTS } from "../../../capability/contribution/types";
 const art = useArtifactStore();
 
 // 图片画廊：经通用 Contribution Registry 由 browser 贡献，ArtifactPanel 不 import browser 内部 UI（C3 关键）。
-const imageGalleryComp = contributionRegistry.getSurfaceContributions(
+const imageGalleryComp = computed(() => contributionRegistry.getSurfaceContributions(
   CONTRIBUTION_SLOTS.ARTIFACT_IMAGE_GALLERY,
-)[0]?.component
+)[0]?.component)
 </script>
 
 <template>

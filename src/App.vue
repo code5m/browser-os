@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onErrorCaptured, ref } from "vue";
+import { computed, onMounted, onErrorCaptured, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { bridge } from "./bridge";
 import { useBrowserStore } from "./capabilities/browser/public";
@@ -39,15 +39,15 @@ const layout = useLayoutStore();
 const settings = useSettingsStore();
 
 // 全局浮层 / AI 导航面板经通用 Contribution Registry 渲染，Shell 不 import 能力内部 UI（C3 关键）。
-const confirmModalComp = contributionRegistry
+const confirmModalComp = computed(() => contributionRegistry
   .getSurfaceContributions(CONTRIBUTION_SLOTS.GLOBAL_OVERLAY)
-  .find((c) => c.id === "git.confirm-modal")?.component
-const imageLightboxComp = contributionRegistry
+  .find((c) => c.id === "git.confirm-modal")?.component)
+const imageLightboxComp = computed(() => contributionRegistry
   .getSurfaceContributions(CONTRIBUTION_SLOTS.GLOBAL_OVERLAY)
-  .find((c) => c.id === "browser.image-lightbox")?.component
-const aiNavPanelComp = contributionRegistry.getSurfaceContributions(
+  .find((c) => c.id === "browser.image-lightbox")?.component)
+const aiNavPanelComp = computed(() => contributionRegistry.getSurfaceContributions(
   CONTRIBUTION_SLOTS.AI_NAV_PANEL,
-)[0]?.component
+)[0]?.component)
 
 // W17(A7): 外壳级兜底状态——启动遮罩与渲染错误兜底（纯展示，不引入运行时行为）。
 const ready = ref(false);

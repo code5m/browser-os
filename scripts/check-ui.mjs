@@ -191,6 +191,9 @@ function scanCssFile(content, rel) {
 
 function structuralChecks(findings, warnings) {
   const statusBarPath = join(SRC_DIR, "components/layout/StatusBar.vue");
+  const mainAreaPath = join(SRC_DIR, "components/layout/MainArea.vue");
+  const activityBarPath = join(SRC_DIR, "components/layout/ActivityBar.vue");
+  const contributionRegistryPath = join(SRC_DIR, "capability/contribution/registry.ts");
   const globalCssPath = join(SRC_DIR, "styles/global.css");
 
   // 1. StatusBar.vue 必须使用状态栏模式
@@ -214,9 +217,68 @@ function structuralChecks(findings, warnings) {
         rule: "PROJECT-RULES.md 规则 3.8",
       });
     }
+    if (!/contributionRegistry\.getSurfaceContributions\(CONTRIBUTION_SLOTS\.WORKBENCH_MAIN\)/.test(sb)) {
+      findings.push({
+        severity: "P1",
+        file: "src/components/layout/StatusBar.vue",
+        line: 0,
+        message: "StatusBar 的视图名称必须包含 WORKBENCH_MAIN 贡献，禁止仅靠硬编码视图表判定未知视图",
+        rule: "Contribution/Slot 可插拔视图契约",
+      });
+    }
   }
 
-  // 2. global.css 的 html, body, #app 必须 overflow: hidden
+  // 2. MainArea 未知视图兜底必须以贡献解析结果为准，避免新增贡献同时显示“当前视图不可用”。
+  if (existsSync(mainAreaPath)) {
+    const mainArea = readFileSync(mainAreaPath, "utf8");
+    if (!/!viewOf\(layout\.mainView\)/.test(mainArea)) {
+      findings.push({
+        severity: "P1",
+        file: "src/components/layout/MainArea.vue",
+        line: 0,
+        message: "MainArea 未知视图兜底必须检查 viewOf(layout.mainView) 的贡献解析结果",
+        rule: "Contribution/Slot 可插拔视图契约",
+      });
+    }
+    if (!/const\s+workbenchMainContributions\s*=\s*computed\(/.test(mainArea)) {
+      findings.push({
+        severity: "P1",
+        file: "src/components/layout/MainArea.vue",
+        line: 0,
+        message: "MainArea 必须响应 Contribution Registry 运行时增删",
+        rule: "Capability 停用后贡献必须即时从 UI 消失",
+      });
+    }
+  }
+
+  if (existsSync(activityBarPath)) {
+    const activityBar = readFileSync(activityBarPath, "utf8");
+    if (!/const\s+addressBarActions\s*=\s*computed\(/.test(activityBar)
+      || !/const\s+trailingActions\s*=\s*computed\(/.test(activityBar)) {
+      findings.push({
+        severity: "P1",
+        file: "src/components/layout/ActivityBar.vue",
+        line: 0,
+        message: "ActivityBar 的能力入口必须响应运行时增删",
+        rule: "Capability 停用后不得残留死入口",
+      });
+    }
+  }
+
+  if (existsSync(contributionRegistryPath)) {
+    const registry = readFileSync(contributionRegistryPath, "utf8");
+    if (!/shallowReactive\(new Map/.test(registry)) {
+      findings.push({
+        severity: "P1",
+        file: "src/capability/contribution/registry.ts",
+        line: 0,
+        message: "Contribution Registry 必须保持 Vue 可观察性",
+        rule: "Capability 贡献运行时增删契约",
+      });
+    }
+  }
+
+  // 3. global.css 的 html, body, #app 必须 overflow: hidden
   if (existsSync(globalCssPath)) {
     const css = readFileSync(globalCssPath, "utf8");
     if (!/html,\s*body,\s*#app\s*\{[^}]*overflow:\s*hidden/.test(css)) {

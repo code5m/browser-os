@@ -13,8 +13,11 @@ import { registerSettingsContributions } from '../settings'
 import { CAPABILITY_PROFILES, DEFAULT_PROFILE, type CapabilityProfileId, profileFromEnv, resolveProfile } from './profiles'
 import { CAPABILITY_CATALOG, CAPABILITY_DEFINITIONS } from './platform/catalog'
 import { assemble } from './platform/assembly'
-import { configFromEnv, type CapabilityEnabledConfig } from './platform/config'
+import { configFromEnv, mergeConfig, type CapabilityEnabledConfig } from './platform/config'
 import { createPluggableRuntime } from './platform/pluggable'
+import { contributionRegistry } from './contribution/registry'
+import { loadCapabilityConfig } from './platform/persistence'
+import { isCapabilityToggleSafe } from './platform/manager'
 // H-G 修复：把 Runtime 单例发布到叶子模块，供能力内部在**调用时**判定
 // 「本能力是否获准创建自己 owned 的重资源」。不这样做就会形成 ESM 循环。
 import { setCapabilityRuntime, peekCapabilityRuntime } from './runtimeSingleton'
@@ -38,6 +41,7 @@ export const ALL_CAPABILITIES = Object.entries(CAPABILITY_DEFINITIONS)
 let runtime: CapabilityRuntime | null = null
 let lastError: string | null = null
 let lastProfile: CapabilityProfileId = DEFAULT_PROFILE
+let lastActivated = false
 
 /**
  * 自由装配源（非 preset）：VITE_CAPABILITY_ASSEMBLY="workspace,terminal"
@@ -72,7 +76,7 @@ export function bootstrapCapabilityRuntime(profile?: CapabilityProfileId | strin
   if (runtime) {
     return {
       runtime,
-      activated: runtime.get(BOOKMARK_CAPABILITY_ID)?.state === 'ACTIVE',
+      activated: lastActivated,
       error: lastError,
       profile: lastProfile,
     }
@@ -85,6 +89,7 @@ export function bootstrapCapabilityRuntime(profile?: CapabilityProfileId | strin
   registerSettingsContributions()
   const envConfig = enabledConfigFromEnv()
   if (profile == null && envConfig) {
+    lastProfile = 'custom'
     try {
       const built = bootstrapConfiguredCapabilityRuntime(envConfig)
       lastProfile = 'custom'
@@ -101,12 +106,14 @@ export function bootstrapCapabilityRuntime(profile?: CapabilityProfileId | strin
   // 非法组合由 Assembly Engine 在启动前确定性拒绝——这里只记录错误 + 以零能力启动，绝不崩溃。
   const customIds = customAssemblyFromEnv()
   if (profile == null && customIds) {
+    lastProfile = 'custom'
     try {
       const built = bootstrapAssembly(customIds)
       runtime = built.runtime
       setCapabilityRuntime(runtime)
       lastProfile = 'custom'
       lastError = built.error
+      lastActivated = built.activated
       return { runtime, activated: built.activated, error: lastError, profile: 'custom' }
     } catch (e) {
       lastError = e instanceof Error ? e.message : String(e)
@@ -122,17 +129,42 @@ export function bootstrapCapabilityRuntime(profile?: CapabilityProfileId | strin
   const rt = createCapabilityRuntime()
   let activated = false
   try {
-    for (const { id, def } of ALL_CAPABILITIES) {
-      if (!allowed.has(id)) continue // profile 未列出 → 跳过注册（absent 语义）
-      rt.register(def)
-      rt.resolve(id)
-      rt.activate(id)
+    const base = { enabled: Object.fromEntries([...allowed].map((id) => [id, true])) }
+    const persisted = profile == null ? loadCapabilityConfig() : null
+    const safePersisted = persisted ? {
+      enabled: Object.fromEntries(Object.entries(persisted.enabled ?? {}).filter(([id, enabled]) =>
+        allowed.has(id) && (enabled || isCapabilityToggleSafe(CAPABILITY_CATALOG[id])))),
+      config: persisted.config,
+    } : null
+    const configured = mergeConfig(base, safePersisted)
+    const definitions = new Map(ALL_CAPABILITIES.map(({ id, def }) => [id, def]))
+    const ordered = ALL_CAPABILITIES.filter(({ id }) => allowed.has(id))
+    const activeIds = new Set([...allowed].filter((id) => configured.enabled[id] !== false))
+    let dependenciesAdded = true
+    while (dependenciesAdded) {
+      dependenciesAdded = false
+      for (const id of [...activeIds]) {
+        for (const dependency of definitions.get(id)?.dependsOn ?? []) {
+          if (allowed.has(dependency) && !activeIds.has(dependency)) {
+            activeIds.add(dependency)
+            dependenciesAdded = true
+          }
+        }
+      }
+    }
+
+    for (const { def } of ordered) rt.register(def)
+    for (const { id } of ordered) rt.resolve(id)
+    for (const { id } of ordered) {
+      if (activeIds.has(id)) rt.activate(id)
+      else rt.disable(id)
     }
     activated = true
   } catch (e) {
     lastError = e instanceof Error ? `${e.code}: ${e.message}` : String(e)
   }
   runtime = rt
+  lastActivated = activated
   setCapabilityRuntime(runtime)
   return { runtime: rt, activated, error: lastError, profile: pid }
 }
@@ -190,9 +222,12 @@ export function bootstrapConfiguredCapabilityRuntime(
   built.activate()
   runtime = built.runtime
   setCapabilityRuntime(runtime)
+  lastProfile = 'custom'
+  lastError = null
+  lastActivated = built.runtime.inspect().some((entry) => entry.state === 'ACTIVE')
   return {
     runtime,
-    activated: built.runtime.inspect().some((entry) => entry.state === 'ACTIVE'),
+    activated: lastActivated,
     error: null,
     profile: 'custom',
   }

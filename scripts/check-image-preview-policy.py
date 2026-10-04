@@ -37,8 +37,9 @@ from pathlib import Path
 # package.json 依赖集合采用「结构化比对」（见 BASELINE_DEPS / extract_deps），
 # 不再用整文件 SHA256，避免 scripts/description 等良性变更误报 IMG_PREV_NPM_DEP_ADDED。
 BASELINE_SHA256 = {
-    # package-lock.json 仍用整文件 SHA256 锚定（lock 不随 script 变更而变，无脆性）。
-    "package-lock.json": "d071ce3ff265297834c96eb9d53e5db79ce37c6cc2f8e16daa7f838a7c002dad",
+    # ea62872：核对 f0733c2→5b4738f→ea62872，仅增加两个本地能力包及 TypeScript 开发依赖。
+    # 仍校验整文件，不能以本轮工作树内容自动更新基线。
+    "package-lock.json": "097d63bddf24347654d9bfb194714d848590e9d7da7d8f3c26c61d63189c4003",
     "src-tauri/permissions/remote-collect.toml": (
         "cc35e0edc7933c2a43fd6e0c9271667db483aa5aa206d7e08d98a21b832f05da"
     ),

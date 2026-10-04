@@ -20,6 +20,7 @@
 //   RT-12 inspect 只返回编排元数据，不含业务状态
 //   RT-13 Runtime 不持有业务状态（无 store/业务字段）
 //   RT-14 unregistered 操作 → NOT_FOUND
+//   RT-16 suspend → disable → enable → activate 闭环保持编排真源一致
 //
 // 用法：
 //   node scripts/check-capability-runtime.mjs [--self-test] [--json] [--help]
@@ -214,6 +215,18 @@ async function runTests() {
     rt.activate('bookmark')
     rt.suspend('bookmark')
     return rt.activate('bookmark').state === 'ACTIVE'
+  })
+
+  t('RT-16', 'suspend → disable → enable → activate 生命周期闭环', () => {
+    const rt = createCapabilityRuntime()
+    rt.register(cap())
+    rt.resolve('bookmark')
+    rt.activate('bookmark')
+    rt.suspend('bookmark')
+    rt.disable('bookmark')
+    if (rt.get('bookmark')?.enabled !== false) return false
+    rt.enable('bookmark')
+    return rt.activate('bookmark').state === 'ACTIVE' && rt.get('bookmark')?.enabled === true
   })
 
   return results

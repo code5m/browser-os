@@ -103,7 +103,7 @@ def detect_violations(files: dict) -> list[str]:
     v: list[str] = []
     domain = files.get("domain", "")
     tools = files.get("tools", "")
-    main_rs = files.get("main_rs", "")
+    main_rs = strip_comments(files.get("main_rs", ""))
     acl = files.get("acl", "")
     build_rs = files.get("build_rs", "")
 

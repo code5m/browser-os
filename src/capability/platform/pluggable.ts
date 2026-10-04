@@ -4,7 +4,6 @@ import type { CapabilityDefinition } from "../types"
 import type { CapabilityRuntime } from "../runtime"
 import { createCapabilityRuntime } from "../runtime"
 import type { ContributionRegistry } from "../contribution/registry"
-import { CONTRIBUTION_SLOTS } from "../contribution/types"
 import { assemble, type AssemblyResult } from "./assembly"
 import type { CapabilityManifestV1 } from "./contract"
 import type { CapabilityEnabledConfig } from "./config"
@@ -28,16 +27,6 @@ export interface PluggableRuntime {
   inspectConfig(id: string): { values: Record<string, unknown>; errors: string[] }
   inspect(): CapabilitySnapshot[]
   events: CapabilityEventBus
-}
-
-const slots = Object.values(CONTRIBUTION_SLOTS)
-
-function removeContributions(registry: ContributionRegistry, id: string): void {
-  for (const slot of slots) {
-    for (const contribution of registry.getBySlot(slot)) {
-      if (contribution.capabilityId === id) registry.unregisterContribution(contribution.id)
-    }
-  }
 }
 
 export function createPluggableRuntime(options: PluggableRuntimeOptions): PluggableRuntime {
@@ -78,7 +67,10 @@ export function createPluggableRuntime(options: PluggableRuntimeOptions): Plugga
         }
         if (registry) {
           for (const contribution of options.catalog[id]?.contributions ?? []) {
-            registry.registerContribution({ ...contribution, capabilityId: id, type: contribution.type as 'surface' | 'navigation' })
+            // Lifecycle registrations contain the actual component and UI metadata.
+            if (!registry.getBySlot(contribution.slot).some((entry) => entry.id === contribution.id)) {
+              registry.registerContribution({ ...contribution, capabilityId: id, type: contribution.type as 'surface' | 'navigation' })
+            }
           }
         }
         events.emit({ type: 'capability.activated', capabilityId: id, at: Date.now() })
@@ -96,16 +88,17 @@ export function createPluggableRuntime(options: PluggableRuntimeOptions): Plugga
   function deactivate(id: string): void {
     const record = runtime.get(id)
     if (!record) return
+    if (!record.enabled) {
+      registry?.unregisterCapability(id)
+      return
+    }
     events.emit({ type: 'capability.deactivating', capabilityId: id, at: Date.now() })
     if (record.state === "ACTIVE") runtime.suspend(id)
     if (record.state === "SUSPENDED") {
       runtime.disable(id)
       record.definition.lifecycle.onDeactivate?.()
-    } else if (record.state === "DISABLED" && registry) {
-      // idempotent cleanup: repeated deactivation must not re-run lifecycle hooks
-      removeContributions(registry, id)
     }
-    if (registry) removeContributions(registry, id)
+    registry?.unregisterCapability(id)
     events.emit({ type: 'capability.deactivated', capabilityId: id, at: Date.now() })
   }
 

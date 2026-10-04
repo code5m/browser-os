@@ -19,9 +19,9 @@ const expanded = ref(new Set<string>());
 // 「账号」视图：查看已导入的浏览器账号（只读，绝不显示密码）
 const showCredentials = ref(false);
 // 凭证列表：经通用 Contribution Registry 由 browser 贡献，BookmarkPanel 不 import browser 内部 UI（C3 关键）。
-const credentialListComp = contributionRegistry.getSurfaceContributions(
+const credentialListComp = computed(() => contributionRegistry.getSurfaceContributions(
   CONTRIBUTION_SLOTS.BOOKMARK_CREDENTIALS,
-)[0]?.component
+)[0]?.component)
 const credList = ref<ComponentPublicInstance | null>(null);
 
 // 侧栏可能先于 ⭐ 按钮挂载（如刷新后直接展开），这里兜底加载一次

@@ -62,6 +62,9 @@ export interface CapabilityRuntime {
   resolve(id: string): CapabilityRecord
   activate(id: string): CapabilityRecord
   suspend(id: string): CapabilityRecord
+  /** 交互式编排等待异步 hook 完成后才提交状态；既有同步启动入口保持不变。 */
+  activateAsync(id: string): Promise<CapabilityRecord>
+  suspendAsync(id: string): Promise<CapabilityRecord>
   enable(id: string): CapabilityRecord
   disable(id: string): CapabilityRecord
   /** HP2：从 runtime 移除能力记录（此前必须已 DISABLED；存在强依赖方则拒绝） */
@@ -116,6 +119,31 @@ export function createCapabilityRuntime(
     return rec
   }
 
+  function activatable(id: string): CapabilityRecord {
+    const rec = must(id)
+    if (!rec.enabled) {
+      throw new CapabilityRuntimeError('INVALID_TRANSITION', `能力已停用，无法激活: ${id}`)
+    }
+    if (rec.state !== 'READY' && rec.state !== 'SUSPENDED') {
+      throw new CapabilityRuntimeError('INVALID_TRANSITION', `当前状态 ${rec.state} 不可激活（须 READY 或 SUSPENDED）: ${id}`)
+    }
+    if (rec.definition.status !== 'COMPATIBILITY_WRAPPED' || rec.definition.lifecycle.activatable !== true) {
+      throw new CapabilityRuntimeError('NOT_ACTIVATABLE', `能力未声明可激活（status=${rec.definition.status}, activatable=${rec.definition.lifecycle.activatable}）: ${id}`)
+    }
+    return rec
+  }
+
+  function suspendable(id: string): CapabilityRecord {
+    const rec = must(id)
+    if (rec.state !== 'ACTIVE') {
+      throw new CapabilityRuntimeError('INVALID_TRANSITION', `当前状态 ${rec.state} 不可暂停: ${id}`)
+    }
+    if (!rec.definition.lifecycle.supported.includes('SUSPENDED') || rec.definition.resources?.suspendable !== true) {
+      throw new CapabilityRuntimeError('SUSPEND_NOT_SUPPORTED', `能力未声明支持 suspend: ${id}`)
+    }
+    return rec
+  }
+
   return {
     register(definition) {
       assertDefinition(definition)
@@ -151,23 +179,7 @@ export function createCapabilityRuntime(
     },
 
     activate(id) {
-      const rec = must(id)
-      if (!rec.enabled) {
-        throw new CapabilityRuntimeError('INVALID_TRANSITION', `能力已停用，无法激活: ${id}`)
-      }
-      if (rec.state !== 'READY' && rec.state !== 'SUSPENDED') {
-        throw new CapabilityRuntimeError(
-          'INVALID_TRANSITION',
-          `当前状态 ${rec.state} 不可激活（须 READY 或 SUSPENDED）: ${id}`,
-        )
-      }
-      // 只有「已接入 Runtime 的兼容包装」能力才允许激活；TARGET/NOT_INTEGRATED 一律拒绝
-      if (rec.definition.status !== 'COMPATIBILITY_WRAPPED' || rec.definition.lifecycle.activatable !== true) {
-        throw new CapabilityRuntimeError(
-          'NOT_ACTIVATABLE',
-          `能力未声明可激活（status=${rec.definition.status}, activatable=${rec.definition.lifecycle.activatable}）: ${id}`,
-        )
-      }
+      const rec = activatable(id)
       const ctx = makeContext(rec, log)
       rec.definition.lifecycle.onActivate?.call(null)
       void ctx
@@ -177,18 +189,24 @@ export function createCapabilityRuntime(
     },
 
     suspend(id) {
-      const rec = must(id)
-      if (rec.state !== 'ACTIVE') {
-        throw new CapabilityRuntimeError('INVALID_TRANSITION', `当前状态 ${rec.state} 不可暂停: ${id}`)
-      }
-      const supported = rec.definition.lifecycle.supported || []
-      if (!supported.includes('SUSPENDED') || rec.definition.resources?.suspendable !== true) {
-        throw new CapabilityRuntimeError(
-          'SUSPEND_NOT_SUPPORTED',
-          `能力未声明支持 suspend: ${id}`,
-        )
-      }
+      const rec = suspendable(id)
       rec.definition.lifecycle.onSuspend?.call(null)
+      rec.state = 'SUSPENDED'
+      log(`suspend: ${id}`)
+      return rec
+    },
+
+    async activateAsync(id) {
+      const rec = activatable(id)
+      await rec.definition.lifecycle.onActivate?.call(null)
+      rec.state = 'ACTIVE'
+      log(`activate: ${id}`)
+      return rec
+    },
+
+    async suspendAsync(id) {
+      const rec = suspendable(id)
+      await rec.definition.lifecycle.onSuspend?.call(null)
       rec.state = 'SUSPENDED'
       log(`suspend: ${id}`)
       return rec

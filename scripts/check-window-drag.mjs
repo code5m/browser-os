@@ -59,6 +59,13 @@ runInNewContext(code, {
     };
     const store = id.match(/\/use(\w+)Store$/);
     if (store) return { [`use${store[1]}Store`]: () => ({ showToast: (text) => messages.push(text) }) };
+    const publicStore = {
+      "../../capabilities/browser/public": "useBrowserStore",
+      "../../capabilities/workspace/public": "useFileStore",
+      "../../capabilities/apps/public": "useAppsStore",
+      "../../capabilities/terminal/public": "useTerminalStore",
+    }[id];
+    if (publicStore) return { [publicStore]: () => ({}) };
     throw new Error(`Unexpected dependency: ${id}`);
   },
 });

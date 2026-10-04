@@ -232,7 +232,16 @@ def detect_violations(files: dict[str, object]) -> list[str]:
         violations.append("GIT_UI_DIFF_NOT_MOUNTED")
 
     # ---- 9) 挂载与事件订阅 ----
-    if not re.search(r"<GitPanel\b", repo):
+    git_entry = str(files.get("git_entry", ""))
+    contribution_mounted = (
+        'import("./ui/GitPanel.vue")' in git_entry
+        and re.search(r'registerContribution\(\{[^}]*slot:\s*CONTRIBUTION_SLOTS.REPO_SUBVIEW[^}]*view:\s*"git"[^}]*component:\s*GitPanel', git_entry)
+        and "onActivate: registerGitContributions" in git_entry
+        and ".getSurfaceContributions(CONTRIBUTION_SLOTS.REPO_SUBVIEW)" in repo
+        and re.search(r'\.find\([^\n]*c.view === "git"\)\?\.component', repo)
+        and re.search(r'<component\s+:is="gitPanelComp"', repo)
+    )
+    if not re.search(r"<GitPanel\b", repo) and not contribution_mounted:
         violations.append("GIT_UI_NOT_MOUNTED")
     if "onGitWriteCompleted" not in app:
         violations.append("GIT_UI_EVENT_NOT_SUBSCRIBED")
@@ -256,13 +265,14 @@ def detect_violations(files: dict[str, object]) -> list[str]:
 def scan_repository(root: Path) -> list[str]:
     src = root / "src"
     mapping = {
-        "store": src / "stores" / "useGitStore.ts",
-        "panel": src / "components" / "workspace" / "GitPanel.vue",
-        "diff": src / "components" / "workspace" / "GitDiffViewer.vue",
-        "dialog": src / "components" / "workspace" / "GitWriteConfirmDialog.vue",
+        "store": src / "capabilities" / "git" / "state" / "useGitStore.ts",
+        "panel": src / "capabilities" / "git" / "ui" / "GitPanel.vue",
+        "diff": src / "capabilities" / "git" / "ui" / "GitDiffViewer.vue",
+        "dialog": src / "capabilities" / "git" / "ui" / "GitWriteConfirmDialog.vue",
         "redact": src / "utils" / "redact.ts",
-        "repo": src / "components" / "workspace" / "RepoPanel.vue",
+        "repo": src / "capabilities" / "workspace" / "ui" / "RepoPanel.vue",
         "app": src / "App.vue",
+        "git_entry": src / "capabilities" / "git" / "index.ts",
     }
     files: dict[str, object] = {}
     for key, path in mapping.items():
@@ -372,6 +382,25 @@ def run_self_test() -> int:
     baseline = detect_violations(good)
     if baseline:
         failures.append(f"good fixture should be clean, got {baseline}")
+
+    contributed = dict(good, repo='''
+const gitPanelComp = computed(() => contributionRegistry.getSurfaceContributions(CONTRIBUTION_SLOTS.REPO_SUBVIEW)
+  .find((c) => c.view === "git")?.component)
+<component :is="gitPanelComp" />
+''', git_entry='''
+const GitPanel = defineAsyncComponent(() => import("./ui/GitPanel.vue"))
+function registerGitContributions() {
+  contributionRegistry.registerContribution({slot: CONTRIBUTION_SLOTS.REPO_SUBVIEW, view: "git", component: GitPanel})
+}
+const lifecycle = {onActivate: registerGitContributions}
+''')
+    if detect_violations(contributed):
+        failures.append("registered Git contribution and consumer should be accepted")
+    for key, anchor in (("repo", ':is="gitPanelComp"'), ("git_entry", "component: GitPanel"), ("git_entry", "onActivate: registerGitContributions")):
+        broken = dict(contributed)
+        broken[key] = broken[key].replace(anchor, "removed")
+        if "GIT_UI_NOT_MOUNTED" not in detect_violations(broken):
+            failures.append(f"missing contribution wiring must be detected: {anchor}")
 
     cases: list[tuple[str, dict, str]] = [
         ("绕过闸门直连 invoke", {"src_files": [("src/views/X.vue", 'invoke("confirm_git_write")')]},
