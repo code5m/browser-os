@@ -2,9 +2,9 @@
 
 ## Scope and truth boundary
 
-- Source commit under test: `2487f56` plus the final dependency-boundary cleanup in the working tree.
+- Source commit under test: `fa7131b`.
 - Release package: `src-tauri/target/release/bundle/deb/mvp-browser-os_0.1.0_amd64.deb`.
-- Package SHA-256: `6f7b239c909184f35d1beecf986e2e2e560b535fcac75af506c44d5f0a0df28f`.
+- Package SHA-256: `f0fca529d96cd3e2dd322ea8927728660943998018ee51b463ea58fa41ef547c`.
 - Release GUI executable: the exact binary extracted from that deb by `verify-installed-client.sh`.
 - The GUI run used an isolated XDG data/config/cache directory, so it did not mutate the user's installed-client profile.
 - This is valid release-package GUI evidence. It is **not** presented as installed `/usr/bin` evidence: the installed binary still has a different hash and replacement requires interactive sudo authentication.
@@ -39,7 +39,7 @@ The test process was stopped after capture so it cannot intercept a later deskto
 
 `npm run verify:client` completed the release build, deb extraction, desktop-entry inspection, geometry check, and extracted-release cold start. Its only failure was the expected installed-binary mismatch:
 
-- generated deb binary: `3698eb98e9480c863f58b44f4cae5acdf128ab8ead9b841d6d3d57cdf4ca3c22`
+- generated deb binary: `24048434eb2f26eb166733582a2047a8e4a8f4bec153a01b6d3c6ebb1f828b48`
 - installed `/usr/bin/mvp-browser-os`: `96ebcbd03cf7355113aa2fc500605c7ba9df77298eed1f26f6aa2b8fdbc2b6e4`
 - desktop entry: `Exec=mvp-browser-os`
 
