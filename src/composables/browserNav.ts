@@ -20,3 +20,11 @@ export function navigateBrowser(url: string): void {
   browser.url = url
   browser.openBrowser()
 }
+
+/**
+ * 请求 Browser Host 在 Shell 布局切换后重新同步原生 WebView 矩形。
+ * Workspace 只表达布局意图，不直接持有 Browser store。
+ */
+export function relocateBrowser(): void {
+  useBrowserStore().relocate()
+}

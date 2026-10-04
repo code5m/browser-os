@@ -1,15 +1,14 @@
 <script setup lang="ts">
 import { useFileStore } from "../state/useFileStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
-import { useBrowserStore } from "../../browser/public";
+import { relocateBrowser } from "../../../composables/browserNav";
 
 const ws = useFileStore();
 const layout = useLayoutStore();
-const browser = useBrowserStore();
 
 function closeEditor() {
   layout.setView("browser");
-  browser.relocate();
+  relocateBrowser();
 }
 </script>
 

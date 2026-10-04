@@ -42,16 +42,16 @@ forbidden_edges:
 # ── 依赖边（与 capabilities.yaml 对齐） ────────────────────────────────
 edges:
   - { from: browser,   to: bridge,   kind: required }
-  - { from: bookmark,  to: browser, kind: required }
-  - { from: workspace, to: browser, kind: required }
+  - { from: bookmark,  to: browser, kind: optional }
+  - { from: workspace, to: browser, kind: optional }
+  - { from: bookmark,  to: bridge,   kind: required }
+  - { from: workspace, to: bridge,   kind: required }
   - { from: grid,      to: browser,  kind: required }
   - { from: grid,      to: bridge,   kind: required }
-  - { from: workspace, to: bridge,   kind: required }
   - { from: terminal,  to: bridge,   kind: required }
   # 注意：workspace 的「在终端打开」**不**声明 workspace→terminal 依赖边，
   # 而是经 shared 窄缝 src/composables/terminalNav.ts（与 browserNav/recentsNav 同族）。
   # 理由：声明 required 边会让 Terminal 缺失时 Workspace 无法装配，破坏「absent 可启动」。
-  - { from: bookmark,  to: bridge,   kind: optional }
   - { from: credential,to: bridge,   kind: required }
   - { from: database,  to: credential, kind: required }
   - { from: database,  to: bridge,   kind: required }
@@ -65,6 +65,7 @@ edges:
   - { from: graph, to: bridge, kind: required }
   - { from: graph, to: agent,   kind: optional }
   - { from: vault,     to: bridge,   kind: required }
+  - { from: vault,     to: browser,  kind: optional }
   - { from: task,      to: workspace, kind: required }
   - { from: task,      to: bridge,   kind: required }
   - { from: task,      to: script,   kind: optional }

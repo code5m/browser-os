@@ -17,7 +17,7 @@ export const terminalManifest: CapabilityDefinition = {
     "terminal.resize",
     "terminal.grid",
   ],
-  dependsOn: [],
+  dependsOn: ["bridge"],
   optionalDependencies: [],
   lifecycle: {
     // Train F 诚实裁决：Terminal 的 PTY/子进程在 suspend 时**不**释放（onSuspend 未实现资源回收），

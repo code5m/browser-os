@@ -92,8 +92,8 @@ capabilities:
       - workspace.script
       - workspace.snippet
       - workspace.main-view
-    dependsOn: []
-    optionalDependencies: [browser, git]
+    dependsOn: [bridge]
+    optionalDependencies: [browser]
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
@@ -155,7 +155,7 @@ capabilities:
       - bookmark.add
       - bookmark.remove
       - bookmark.togglePanel
-    dependsOn: []
+    dependsOn: [bridge]
     optionalDependencies: [browser]
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
@@ -694,7 +694,7 @@ capabilities:
       - home.recent
       - home.launch
       - home.favorite
-    dependsOn: [browser, workspace, apps]
+    dependsOn: [browser, workspace, apps, bridge]
     optionalDependencies: []
     lifecycle:
       supported: [ACTIVE, SUSPENDED]

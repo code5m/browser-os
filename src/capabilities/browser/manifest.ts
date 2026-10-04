@@ -14,7 +14,7 @@ export const browserManifest: CapabilityDefinition = {
     "browser.host",
     "browser.grid",
   ],
-  dependsOn: [],
+  dependsOn: ["bridge"],
   optionalDependencies: [],
   lifecycle: {
     supported: ["ACTIVE", "SUSPENDED"],

@@ -274,21 +274,11 @@
   "ui04b_cross_capability_public_baseline": [
     "src/capabilities/bookmark/ui/BookmarkStar.vue",
     "src/capabilities/bookmark/ui/BookmarkPanel.vue",
-    "src/capabilities/workspace/ui/FileEditor.vue",
     "src/capabilities/git/ui/GitPanel.vue",
     "src/capabilities/task/state/useTaskStore.ts",
     "src/capabilities/home/state/useHomeStore.ts",
     "src/capabilities/home/ui/HomeLaunchers.vue",
     "src/capabilities/git/ui/ConfirmModal.vue"
   ],
-  "ui04b_undeclared_cross_capability_baseline": [
-    {
-      "file": "src/capabilities/workspace/ui/FileEditor.vue",
-      "line": 4,
-      "imports": "src/capabilities/browser/public",
-      "declared_in_manifest": false,
-      "severity": "WARN",
-      "note": "全仓唯一的真实边界瑕疵：workspace manifest 未声明 browser 依赖。不得静默忽略。"
-    }
-  ]
+  "ui04b_undeclared_cross_capability_baseline": []
 }

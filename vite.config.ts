@@ -48,7 +48,7 @@ export default defineConfig({
           if (id.includes("@tauri-apps")) {
             return "tauri-vendor";
           }
-          return "vendor";
+          return undefined;
         },
       },
     },

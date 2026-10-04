@@ -85,15 +85,11 @@ npm run check:capability-removal
 
 ### 验收范围
 
-正式前端构建的浏览器页面已逐项验证 Manager 打开、暂停、恢复、停用、完整重载后仍停用、重新启用和入口去重；未再出现缺失面板提示。浏览器预览不具备 Tauri 原生接口，不能代替 GTK 子 WebView、桌面安装入口或真实资源释放验收。当前真实桌面结论仍为 GUI_PENDING。
+正式前端构建和真实 release deb 解包执行文件均已逐项验证 Manager 打开、暂停、恢复、停用、完整重载后仍停用、进程重启后仍停用、重新启用和入口去重；未再出现缺失面板提示。真实截图与边界说明见 `logs/acceptance/capability-manager-20261004/README.md`。
 
-截至本轮收尾，能力平台检查 47/47、Runtime 检查 16/16、三轮构建页面启停测试通过，统一前端检查及构建通过。pre-merge 失败项由 25 项降到 3 项，整体仍未通过。安全基线检查通过只表示已知缺口集合一致，既有只读浏览路径策略、远程 IPC 通配和脚本注入来源检查缺口并未在本轮消除。
+能力平台检查 47/47、Runtime 检查 16/16、三轮生命周期测试、统一检查、构建和 pre-merge 均通过。Rust 只做了格式整理，历史文档空白已修复。构建体积通过移除不再需要的 Markdown/HTML 大依赖和收口 Browser 分块循环降至约 990 KB；没有修改阈值或基线。Workspace 编辑器最后一处未声明 Browser store 依赖已改为共享窄意图缝，UI 边界 warn=0；能力 Registry/Dependency 元数据也已对齐至 warn=0。
 
-剩余三个阻断项：
-
-- 原生 Rust 格式检查失败，包含受保护的 `src-tauri/src/bridge.rs`；本轮未修改原生文件，需要单独授权格式整理。
-- 构建总体积超过历史上限。同一依赖环境独立构建修改前的 `fe1a32f`，产物为 1,066,454 字节；本轮为 1,072,604 字节，增加 6,150 字节（0.58%）。两者相对 795,517 字节旧基线分别增长 34.06% 和 34.83%，均超过 25.2% 上限。没有更新体积基线或放宽阈值。两次构建均报告 Browser 公共导出与 Store 之间的跨 chunk 循环警告，仍须专项收口。
-- 当前分支历史提交中两份文档有空白问题：`HANDOFF_CURRENT_STATE.md` 文件尾空行，以及 `phase7e-resource-governance/Capability-Resource-Report.md` 行尾空格。本轮工作树 `git diff --check` 通过，但分支相对基线的检查仍失败；未经授权没有提交或重写历史。
+生成的 deb、desktop 入口、解包内容和解包 release 冷启动均已验证。系统当前 `/usr/bin/mvp-browser-os` 仍是旧二进制；覆盖安装需要用户直接输入 sudo 密码。因此 release-package GUI 已有证据，但 installed-client 仍必须保持 `GUI_PENDING`，不能把解包执行文件冒充已安装入口。
 
 ### 后续优化顺序
 
@@ -101,5 +97,7 @@ npm run check:capability-removal
 2. 已实施：修复重构后失效的测试入口、模块路径和测试初始化，恢复资源、会话、终端、Git、脚本 UI、图片与命令安全检查的有效覆盖。
 3. 已实施：追溯 `4f6f338` 及原生物理边界记录，确认创建页签时已移除 Session 草稿写入，保存直接读取真实页签。检查同步为禁止重新引入耦合、保证手动保存读取页签、保证退出保存尊重自动保存开关，并补齐对应反例；没有改动冻结的原生实现。
 4. 已实施：核对 `f0733c2 → 5b4738f → ea62872` 的锁文件差异，仅增加 Vault/Clipboard 两个本地能力包及 TypeScript 开发依赖，现有第三方运行依赖未变化。三个依赖检查同步至已核对的 `ea62872` 固定哈希，继续拦截后续漂移；本轮没有新增依赖或改锁文件。
-5. 后续优化：先收口构建中 Browser 公共导出与 Store 的循环分块，再检查重复打包和可延后加载内容。每次修改对比同依赖环境的产物体积，并重跑 Store 启动、完整构建页面和核心功能回归；不能仅通过重新设基线消除超限。原生格式及历史提交空白清理需单独授权，未完成前维持 BLOCKED。
-6. 待桌面验收：具备原生操作条件并获安装授权后，运行安装版验收脚本，完成真实窗口、入口、离线启动和 Browser/Grid/Session 回归；只有证据齐全才升级结论。
+5. 已实施：消除 Browser public/store 跨 chunk 循环，移除空 vendor chunk；以本地安全转换器替换只用于窄场景的重量 Markdown/HTML 依赖，配套 XSS、HTML→Markdown 和 Vault 逻辑测试。项目体积回到既有 25.2% 门禁以内，未改基线。
+6. 已实施：Workspace 关闭编辑器改走 `browserNav` 窄意图缝，清除最后一个 UI 未声明跨能力依赖；Registry/Dependency 清单按真实 bridge 与 optional 关系对齐。
+7. 待安装版最后一步：交互式安装生成的 deb 后，重新运行安装版验收脚本并以 `/usr/bin/mvp-browser-os` 完成冷启动/像素/生命周期短回归。只有这一步通过才升级 installed-client 为 `GUI_PASS`。
+8. 后续模块化顺序与逐能力证据见 `../capability-platform/FINAL-MODULARITY-AUDIT-20261004.md`；不得把 Bookmark 试点的成功外推成所有能力均可安全停用。

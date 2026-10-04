@@ -9,7 +9,7 @@ export const bookmarkManifest: CapabilityDefinition = {
   name: "收藏夹",
   category: "UI_COMPONENT",
   provides: ["bookmark.storage", "bookmark.panel", "bookmark.navigation"],
-  dependsOn: [],
+  dependsOn: ["bridge"],
   optionalDependencies: ["browser"],
   lifecycle: {
     supported: ["REGISTERED", "ACTIVE", "SUSPENDED"],
