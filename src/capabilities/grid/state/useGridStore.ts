@@ -450,8 +450,6 @@ export const useGridStore = defineStore("grid", () => {
   // 与历史行为一致：openModule("grid") + (gridOpen ? layoutGrid : buildGrid)。
   function activateGrid() {
     layout.openModule("grid");
-    if (gridOpen.value) layoutGrid();
-    else openGrid();
   }
 
   // 状态不变量自动收敛（唯一 reconciliation owner）：
@@ -511,7 +509,10 @@ export const useGridStore = defineStore("grid", () => {
 
   watch(
     () => layout.mainView,
-    () => nextTick(syncGridVisibility),
+    (view) => {
+      if (view === "grid" && !gridOpen.value && isGridResourceAllowed()) void openGrid();
+      nextTick(syncGridVisibility);
+    },
   );
 
   return {
