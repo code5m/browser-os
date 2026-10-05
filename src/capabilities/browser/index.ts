@@ -16,7 +16,6 @@ export const BROWSER_CAPABILITY_ID = "browser"
 
 const BrowserHost = defineAsyncComponent(() => import("./ui/BrowserHost.vue"))
 const ResourceWaterfall = defineAsyncComponent(() => import("./ui/ResourceWaterfall.vue"))
-const SessionPanel = defineAsyncComponent(() => import("./ui/SessionPanel.vue"))
 const ImageLightbox = defineAsyncComponent(() => import("./ui/ImageLightbox.vue"))
 const AINavPanel = defineAsyncComponent(() => import("./ui/AINavPanel.vue"))
 const GridArchiveBar = defineAsyncComponent(() => import("./ui/GridArchiveBar.vue"))
@@ -46,17 +45,6 @@ export function registerBrowserContributions(): void {
     label: "资源",
     icon: "🌊",
     order: 30,
-  })
-  contributionRegistry.registerContribution({
-    id: "browser.dock.session",
-    capabilityId: BROWSER_CAPABILITY_ID,
-    type: "surface",
-    slot: CONTRIBUTION_SLOTS.BROWSER_DOCK,
-    view: "session",
-    component: SessionPanel,
-    label: "会话",
-    icon: "💾",
-    order: 40,
   })
   // 以下组件经通用 Contribution Registry 贡献给 Shell / 宿主面板，browser 内部 UI 不暴露于能力边界之外。
   contributionRegistry.registerContribution({
