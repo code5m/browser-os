@@ -1,13 +1,13 @@
 import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
 import { useLayoutStore, MODULE_META, type MainView } from '../../../stores/useLayoutStore';
-import { useBrowserStore } from "../../browser/public";
+import { hostServices, type BrowserContextPort } from "../../../capability/platform/host-services";
 
 export const useWorkbenchStore = defineStore('workbench', () => {
   const commandOpen = ref(false);
   const collapsed = ref(false);
   const layout = useLayoutStore();
-  const browser = useBrowserStore();
+  const browser = hostServices.require<BrowserContextPort>("browser-context");
   let snapshot = { sidebar: true, dock: false, ai: false };
   let previous: MainView = 'home';
   try { collapsed.value = JSON.parse(localStorage.getItem('workbench-layout-v1') || '{}').collapsed === true; } catch {}
@@ -26,10 +26,10 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     if (!collapsed.value) {
       snapshot = { sidebar: layout.sidebarOpen, dock: layout.browserDockOpen, ai: browser.aiNavOpen };
       previous = layout.mainView;
-      layout.sidebarOpen = false; layout.browserDockOpen = false; browser.aiNavOpen = false;
+      layout.sidebarOpen = false; layout.browserDockOpen = false; browser.setAiNavOpen(false);
       layout.navSection = '';
     } else {
-      layout.sidebarOpen = snapshot.sidebar; layout.browserDockOpen = snapshot.dock; browser.aiNavOpen = snapshot.ai;
+      layout.sidebarOpen = snapshot.sidebar; layout.browserDockOpen = snapshot.dock; browser.setAiNavOpen(snapshot.ai);
     }
     collapsed.value = !collapsed.value;
   }
