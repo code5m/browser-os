@@ -82,10 +82,11 @@ async function loadBundle(tag, { mutant = false } = {}) {
   const entry = `
     import { bootstrapCapabilityRuntime } from '${p('src/capability/index.ts')}';
     import { useBrowserStore } from '${p('src/capabilities/browser/state/useBrowserStore.ts')}';
+    import { useGridStore } from '${p('src/capabilities/grid/state/useGridStore.ts')}';
     import { useTerminalStore } from '${p('src/capabilities/terminal/state/useTerminalStore.ts')}';
     import { useLayoutStore } from '${p('src/stores/useLayoutStore.ts')}';
     import { bridge } from '${p('src/bridge.ts')}';
-    export { bootstrapCapabilityRuntime, useBrowserStore, useTerminalStore, useLayoutStore, bridge };
+    export { bootstrapCapabilityRuntime, useBrowserStore, useGridStore, useTerminalStore, useLayoutStore, bridge };
   `
   const res = await build({
     stdin: { contents: entry, resolveDir: ROOT, loader: 'ts' },
@@ -131,7 +132,7 @@ function installGlobals() {
 async function boot(tag, profile, opts = {}) {
   installGlobals()
   const mod = await loadBundle(tag, opts)
-  const { bootstrapCapabilityRuntime, useBrowserStore, useTerminalStore, useLayoutStore, bridge } =
+  const { bootstrapCapabilityRuntime, useBrowserStore, useGridStore, useTerminalStore, useLayoutStore, bridge } =
     mod
 
   const counter = { createGrid: 0, closeGrid: 0, termSpawn: 0, evalInTab: 0 }
@@ -174,6 +175,7 @@ async function boot(tag, profile, opts = {}) {
     counter,
     bootRes,
     browser: useBrowserStore(),
+    grid: useGridStore(),
     terminal: useTerminalStore(),
     layout: useLayoutStore(),
   }
@@ -181,7 +183,7 @@ async function boot(tag, profile, opts = {}) {
 
 async function runFramework() {
   console.log('--- framework profile（Browser/Terminal absent）---')
-  const { counter, browser, terminal, layout, bootRes } = await boot('framework', 'framework')
+  const { counter, grid, terminal, layout, bootRes } = await boot('framework', 'framework')
 
   if (bootRes.profile === 'framework') ok('RRA-00', 'framework profile 装配成功（零能力注册）')
   else bad('RRA-00', 'framework profile 装配', `profile=${bootRes.profile}`)
@@ -191,24 +193,24 @@ async function runFramework() {
   // 注意：偏好必须写在 **Shell（layout）** 上 —— gridToolbarOpen 的 owner 是 useLayoutStore。
   layout.gridToolbarOpen = true
   await tick()
-  await browser.activateGrid()
+  grid.activateGrid()
   await tick()
-  await browser.openGrid()
+  await grid.openGrid()
   await tick()
 
   if (counter.createGrid === 0) {
     ok(
       'RRA-01',
-      'Browser absent：偏好true + activateGrid + openGrid → createGrid 0 次（grid-child ≡ 0）'
+      'Grid absent：偏好true + activateGrid + openGrid → createGrid 0 次（grid-child ≡ 0）'
     )
   } else {
-    bad('RRA-01', 'Browser absent 不得创建 Grid 资源', `createGrid=${counter.createGrid}`)
+    bad('RRA-01', 'Grid absent 不得创建 Grid 资源', `createGrid=${counter.createGrid}`)
   }
 
-  if (browser.gridOpen === false) {
-    ok('RRA-02', 'Browser absent：gridOpen 恒 false（资源不存在，非「看不见」）')
+  if (grid.gridOpen === false) {
+    ok('RRA-02', 'Grid absent：gridOpen 恒 false（资源不存在，非「看不见」）')
   } else {
-    bad('RRA-02', 'Browser absent 时 gridOpen 应为 false', `gridOpen=${browser.gridOpen}`)
+    bad('RRA-02', 'Grid absent 时 gridOpen 应为 false', `gridOpen=${grid.gridOpen}`)
   }
 
   await terminal.ensureTerm()
@@ -222,7 +224,7 @@ async function runFramework() {
 
 async function runFull() {
   console.log('--- full profile（Browser/Terminal present）---')
-  const { counter, browser, terminal, layout, bootRes } = await boot('full', 'full')
+  const { counter, grid, terminal, layout, bootRes } = await boot('full', 'full')
 
   if (bootRes.profile === 'full') ok('RRA-10', 'full profile 装配成功（4 能力 ACTIVE）')
   else bad('RRA-10', 'full profile 装配', `profile=${bootRes.profile}`)
@@ -231,50 +233,50 @@ async function runFull() {
   layout.gridToolbarOpen = true
   await tick()
 
-  if (counter.createGrid === 1 && browser.gridOpen === true) {
-    ok('RRA-04', 'Browser present：偏好驱动 → createGrid 恰好 1 次 + gridOpen=true（原行为保留）')
+  if (counter.createGrid === 1 && grid.gridOpen === true) {
+    ok('RRA-04', 'Grid present：偏好驱动 → createGrid 恰好 1 次 + gridOpen=true（原行为保留）')
   } else {
     bad(
       'RRA-04',
-      'Browser present 应正常创建 Grid',
-      `createGrid=${counter.createGrid} gridOpen=${browser.gridOpen}`
+      'Grid present 应正常创建 Grid',
+      `createGrid=${counter.createGrid} gridOpen=${grid.gridOpen}`
     )
   }
 
   // 冻结语义：mainView==="grid" ⇒ gridOpen===true
-  browser.activateGrid()
+  grid.activateGrid()
   await tick()
-  if (browser.gridOpen === true) {
+  if (grid.gridOpen === true) {
     ok('RRA-05', 'mainView="grid" ⇒ gridOpen=true（冻结语义不回归）')
   } else {
-    bad('RRA-05', 'grid 视图下 gridOpen 应为 true', `gridOpen=${browser.gridOpen}`)
+    bad('RRA-05', 'grid 视图下 gridOpen 应为 true', `gridOpen=${grid.gridOpen}`)
   }
 
   // HIDE 语义：切走视图（Grid → Browser）只隐藏，不销毁
   const closeBeforeHide = counter.closeGrid
   layout.activateBrowser()
   await tick()
-  if (counter.closeGrid === closeBeforeHide && browser.gridOpen === true) {
+  if (counter.closeGrid === closeBeforeHide && grid.gridOpen === true) {
     ok('RRA-06', 'Grid → Browser 视图切换 = HIDE ONLY（close_grid 0 次，gridOpen 仍 true）')
   } else {
     bad(
       'RRA-06',
       '视图切换不得销毁 Grid',
-      `closeGrid=${counter.closeGrid}（前 ${closeBeforeHide}） gridOpen=${browser.gridOpen}`
+      `closeGrid=${counter.closeGrid}（前 ${closeBeforeHide}） gridOpen=${grid.gridOpen}`
     )
   }
 
   // DESTROY 语义：只有显式 closeGrid 才销毁
   const closeBeforeDestroy = counter.closeGrid
-  await browser.closeGrid()
+  await grid.closeGrid()
   await tick()
-  if (counter.closeGrid === closeBeforeDestroy + 1 && browser.gridOpen === false) {
+  if (counter.closeGrid === closeBeforeDestroy + 1 && grid.gridOpen === false) {
     ok('RRA-07', '显式 closeGrid = DESTROY（close_grid 1 次 + gridOpen=false）')
   } else {
     bad(
       'RRA-07',
       '显式 closeGrid 必须销毁资源',
-      `closeGrid=${counter.closeGrid} gridOpen=${browser.gridOpen}`
+      `closeGrid=${counter.closeGrid} gridOpen=${grid.gridOpen}`
     )
   }
 
@@ -295,7 +297,8 @@ function stripComments(src) {
 /** 源码级断言：闸的输入不得是 profile 名 / 环境变量 / 第二真源 */
 function runSourceAssertions() {
   const guard = stripComments(
-    readFileSync(join(ROOT, 'src/capabilities/browser/resource/guard.ts'), 'utf8')
+    readFileSync(join(ROOT, 'src/capabilities/browser/resource/guard.ts'), 'utf8') +
+    readFileSync(join(ROOT, 'src/capabilities/grid/resource/guard.ts'), 'utf8')
   )
   const forbidden = [
     [/VITE_CAPABILITY_PROFILE/, '环境变量 profile 判断'],
@@ -306,7 +309,7 @@ function runSourceAssertions() {
   ]
   const hits = forbidden.filter(([re]) => re.test(guard)).map(([, name]) => name)
   if (hits.length === 0) {
-    ok('RRA-09', 'Browser 资源闸输入只有「能力可用性+激活态」，无 profile 名/环境变量/第二真源')
+    ok('RRA-09', 'Browser/Grid 资源闸输入只有「能力可用性+激活态」，无 profile 名/环境变量/第二真源')
   } else {
     bad('RRA-09', '资源闸不得依赖非编排真源', hits.join(', '))
   }
@@ -316,31 +319,31 @@ function runSourceAssertions() {
   // 那是 PUBLIC_CONTRACT_USAGE，不是本条要抓的「直接创建/销毁重资源」。
   const shell = stripComments(readFileSync(join(ROOT, 'src/stores/useLayoutStore.ts'), 'utf8'))
   const lifecycle = [
-    [/browser\s*\.\s*openGrid\s*\(/, 'openGrid'],
-    [/browser\s*\.\s*closeGrid\s*\(/, 'closeGrid'],
-    [/browser\s*\.\s*buildGrid\s*\(/, 'buildGrid'],
-    [/browser\s*\.\s*rebuildGrid\s*\(/, 'rebuildGrid'],
-    [/browser\s*\.\s*activateGrid\s*\(/, 'activateGrid'],
+    [/grid\s*\.\s*openGrid\s*\(/, 'openGrid'],
+    [/grid\s*\.\s*closeGrid\s*\(/, 'closeGrid'],
+    [/grid\s*\.\s*buildGrid\s*\(/, 'buildGrid'],
+    [/grid\s*\.\s*rebuildGrid\s*\(/, 'rebuildGrid'],
+    [/grid\s*\.\s*activateGrid\s*\(/, 'activateGrid'],
     [/\bopenGrid\s*\(/, '裸 openGrid'],
     [/\bcloseGrid\s*\(/, '裸 closeGrid'],
   ]
   const lifecycleHits = lifecycle.filter(([re]) => re.test(shell)).map(([, name]) => name)
   if (lifecycleHits.length === 0) {
-    ok('RRA-11', 'useLayoutStore 不再触发 Browser 资源生命周期（PROBLEM A/B 已解除）')
+    ok('RRA-11', 'useLayoutStore 不再触发 Grid 资源生命周期（PROBLEM A/B 已解除）')
   } else {
-    bad('RRA-11', 'Shell 仍直接触发 Browser 资源生命周期', lifecycleHits.join(', '))
+    bad('RRA-11', 'Shell 仍直接触发 Grid 资源生命周期', lifecycleHits.join(', '))
   }
 }
 
 async function selfTest() {
   const src = readFileSync(
-    join(ROOT, 'src/capabilities/browser/state/useBrowserStore.ts'),
+    join(ROOT, 'src/capabilities/grid/state/useGridStore.ts'),
     'utf8'
   )
   // 正例：闸存在，且位于唯一 createGrid 调用点之前
-  const guarded = /isBrowserResourceAllowed\(\)[\s\S]{0,2000}?bridge\.createGrid/.test(src)
+  const guarded = /isGridResourceAllowed\(\)[\s\S]{0,2000}?bridge\.createGrid/.test(src)
   if (guarded) {
-    ok('SELF-01', '正例：唯一 createGrid 调用点前存在 isBrowserResourceAllowed() 闸')
+    ok('SELF-01', '正例：唯一 createGrid 调用点前存在 isGridResourceAllowed() 闸')
   } else {
     bad('SELF-01', 'createGrid 调用点未受能力闸保护')
   }
@@ -357,7 +360,9 @@ async function selfTest() {
   // framework profile（Browser absent）下若断言有区分力，必须观测到 createGrid ≥ 1
   // —— 即「泄漏被复现」。若仍是 0，说明断言恒真、门禁形同虚设。
   const mutant = await boot('mutant', 'framework', { mutant: true })
-  await mutant.browser.activateGrid()
+  mutant.grid.activateGrid()
+  await tick()
+  await mutant.grid.openGrid()
   await tick()
   const leaked = mutant.counter.createGrid
   if (leaked >= 1) {
