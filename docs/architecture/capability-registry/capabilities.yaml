@@ -568,17 +568,18 @@ capabilities:
     category: CAPABILITY
     semanticOwner: useSessionStore
     governanceStatus: GOVERNED
-    status: NOT_INTEGRATED
+    status: COMPATIBILITY_WRAPPED
+    maturity: C2
     provides:
       - session.persist
       - session.restore
     dependsOn:
       - bridge
-    optionalDependencies: []
+    optionalDependencies: [browser]
     lifecycle:
       supported: [ACTIVE]
       default: ACTIVE
-      activatable: false
+      activatable: true
       resident: true
     resources:
       class: [LIGHT]
@@ -589,7 +590,7 @@ capabilities:
     persistence:
       scope: disk
       sensitive: false
-    entrypoint: src/stores/useSessionStore.ts
+    entrypoint: src/capabilities/session/index.ts
 
   # STAGE H-A —— Script 语义收口（SCR-20260923-script-owner）。
   # 分类：Workspace 子能力（与 artifact/repo/snippet 同宿于 src/capabilities/workspace/，
