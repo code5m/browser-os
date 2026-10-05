@@ -19,7 +19,6 @@ const ResourceWaterfall = defineAsyncComponent(() => import("./ui/ResourceWaterf
 const ImageLightbox = defineAsyncComponent(() => import("./ui/ImageLightbox.vue"))
 const AINavPanel = defineAsyncComponent(() => import("./ui/AINavPanel.vue"))
 const GridArchiveBar = defineAsyncComponent(() => import("./ui/GridArchiveBar.vue"))
-const CredentialList = defineAsyncComponent(() => import("./ui/CredentialList.vue"))
 const ImageGallery = defineAsyncComponent(() => import("./ui/ImageGallery.vue"))
 
 /**
@@ -67,13 +66,6 @@ export function registerBrowserContributions(): void {
     type: "surface",
     slot: CONTRIBUTION_SLOTS.ACTIVITY_BAR_GRID_ARCHIVE,
     component: GridArchiveBar,
-  })
-  contributionRegistry.registerContribution({
-    id: "browser.credential-list",
-    capabilityId: BROWSER_CAPABILITY_ID,
-    type: "surface",
-    slot: CONTRIBUTION_SLOTS.BOOKMARK_CREDENTIALS,
-    component: CredentialList,
   })
   contributionRegistry.registerContribution({
     id: "browser.image-gallery",
