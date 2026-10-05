@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { useBrowserStore } from "../state/useBrowserStore";
 import { useBrowserHost } from "../../../composables/useBrowserHost";
+import { useGridHost } from "../../grid/composables/useGridHost";
 
 const browser = useBrowserStore();
 const { browserHost } = useBrowserHost();
+useGridHost(browserHost);
 </script>
 
 <template>
