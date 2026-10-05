@@ -42,13 +42,11 @@ export const credentialManifest: CapabilityDefinition = {
     requires: [],
     contributions: [{ id: "credential.list", slot: "bookmark-credentials", type: "surface" }],
     permissions: ["keyring.access"],
-    resources: [
-      { kind: "KEYRING", ownership: "owned", evidence: "src-tauri/src/security_policy.rs" },
-    ],
+    resources: [],
     persistenceScope: "os_keyring",
     persistenceSensitive: true,
     activationPolicy: "auto",
-    deactivationPolicy: "resident",
+    deactivationPolicy: "reject",
     installPolicy: "static",
     uninstallPolicy: "static",
     hotPlug: {
