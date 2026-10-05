@@ -2,6 +2,7 @@
 import { watch, nextTick, defineAsyncComponent, h, computed } from "vue";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../capabilities/browser/public";
+import { useGridStore } from "../../capabilities/grid/public";
 import { contributionRegistry } from "../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
 // STAGE I-B：Home 已升格为能力（capabilities/home/）。HomePanel 经 WORKBENCH_MAIN 贡献
@@ -39,6 +40,7 @@ const panelError = {
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
+const grid = useGridStore();
 
 // 收藏夹等「浏览器侧栏」贡献：经通用 Contribution Registry 按 slot 遍历渲染。
 // Shell 不持有 Bookmark 专属知识（不 import 其 store / ui），C3 关键（8B.1）。
@@ -104,8 +106,8 @@ watch(
 // AI 模式开关会改变 browser-body 布局（底部多一条统一输入框，viewport 变矮），
 // 宫格是原生窗口压在 HTML 之上，必须立即强制重排把输入框区域让出来
 watch(
-  () => browser.gridMode,
-  () => nextTick(() => browser.forceGridRelayout())
+  () => grid.gridMode,
+  () => nextTick(() => grid.forceGridRelayout())
 );
 
 </script>
@@ -137,7 +139,7 @@ watch(
         <template v-for="c in sidebarContributions" :key="c.id">
           <component :is="c.component" />
         </template>
-        <div class="viewport" :class="{ 'grid-mode': browser.gridOpen }">
+        <div class="viewport" :class="{ 'grid-mode': grid.gridOpen }">
           <!-- BrowserHost 在 browser/grid 视图都要参与布局（有 rect 供宫格定位），
                其内部用 visibility 控制显隐（isBrowserVisible），不能用 v-show=display:none，
                否则 grid 视图 rect=0 导致宫格定位全跳过、激活页签不移出。 -->
