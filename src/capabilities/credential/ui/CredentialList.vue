@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import type { BrowserCredentialItem, AutofillResult } from "../../../types";
 import { credentialPublicApi } from "../public";
-import { useBrowserStore } from "../../browser/public";
+import { hostServices, type BrowserContextPort } from "../../../capability/platform/host-services";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 
 // 已导入账号列表 + 用户主动触发的一次性填充。
@@ -14,7 +14,7 @@ import { useLayoutStore } from "../../../stores/useLayoutStore";
 //   - 只有与当前网页 **exact origin** 匹配的账号才出现「填充」；
 //   - 不做自动填充、自动提交、自动登录。
 
-const browser = useBrowserStore();
+const browser = hostServices.require<BrowserContextPort>("browser-context");
 const layout = useLayoutStore();
 
 const items = ref<BrowserCredentialItem[]>([]);
@@ -24,7 +24,7 @@ const fillingId = ref("");
 
 // 当前网页 origin（与 Rust 的 credential_origin 同口径：scheme://host[:port]）
 const pageOrigin = computed(() => {
-  const u = browser.activeTab?.url || browser.url;
+  const u = browser.activeUrl;
   if (!u) return "";
   try {
     return new URL(u).origin;
