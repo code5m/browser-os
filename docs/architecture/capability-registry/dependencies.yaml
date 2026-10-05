@@ -99,5 +99,6 @@ known_coupling:
           Apps 抽为 useAppsStore，src/stores/useSystemStore.ts 已删除；二者现为独立能力与独立 semantic owner。
   - id: Debt-7B-1
     between: [browser, grid]
-    via: gridSession / grid_process.rs
-    note: Grid 与 Browser 深度耦合，暂不拆（用户已认可的稳定基线）
+    via: public contract + host scheduler
+    status: CLOSED
+    note: V2 final extraction moves Grid state/UI/native ownership to useGridStore; Grid only depends on Browser public contract.
