@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { bridge } from "../../../bridge";
-import { useBrowserStore } from "../../browser/public";
+import { hostServices, type BrowserContextPort } from "../../../capability/platform/host-services";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import type {
   BrowserSession,
@@ -114,10 +114,7 @@ export const useSessionStore = defineStore("session", () => {
   async function restoreSession(id: string) {
     try {
       const tab = await bridge.sessionRestore(id);
-      const browser = useBrowserStore();
-      browser.tabs.push(tab);
-      browser.activeTabId = tab.id;
-      layout.setView("browser");
+      hostServices.require<BrowserContextPort>("browser-context").adoptRestoredTab(tab);
       layout.showToast("已恢复会话（部分页面可能需要重新登录）");
     } catch (e) {
       layout.showToast("⚠️ 会话恢复失败");
