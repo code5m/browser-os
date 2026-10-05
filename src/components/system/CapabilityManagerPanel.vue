@@ -67,12 +67,30 @@ function unavailableReason(manifest: typeof CAPABILITY_CATALOG[string], record: 
 
 const rows = computed(() => {
   void refresh.value
-  return Object.values(CAPABILITY_CATALOG).sort((a, b) => a.id.localeCompare(b.id)).map((manifest) => ({
-    manifest,
-    record: runtime?.get(manifest.id),
-    kindLabel: manifest.kind || (CAPABILITY_DEFINITIONS[manifest.id]?.category === "SERVICE" ? "service" : "feature"),
-    dependent: Object.values(CAPABILITY_CATALOG).filter((candidate) => candidate.dependencies.includes(manifest.id)).map((candidate) => candidate.id),
-  }))
+  return Object.values(CAPABILITY_CATALOG).sort((a, b) => a.id.localeCompare(b.id)).map((manifest) => {
+    const record = runtime?.get(manifest.id)
+    const definition = record?.definition ?? CAPABILITY_DEFINITIONS[manifest.id]
+    const dependent = Object.values(CAPABILITY_CATALOG)
+      .filter((candidate) => candidate.dependencies.includes(manifest.id))
+      .map((candidate) => candidate.id)
+    const contributions = contributionRegistry.getByCapability(manifest.id)
+    const blockedReason = unavailableReason(manifest, record)
+    return {
+      manifest,
+      record,
+      definition,
+      kindLabel: manifest.kind || (definition?.category === "SERVICE" ? "service" : "feature"),
+      dependent,
+      contributions,
+      blockedReason,
+      persistenceState: stored.enabled[manifest.id] === undefined
+        ? "default"
+        : stored.enabled[manifest.id] ? "enabled" : "disabled",
+      sourceOwnership: manifest.entrypoint || definition?.entrypoint || "unknown",
+      suspendable: !!record && isSuspendable(record),
+      disableable: !!record && !blockedReason && isCapabilityToggleSafe(manifest),
+    }
+  })
 })
 
 async function transition(id: string, action: CapabilityManagerAction) {
@@ -104,12 +122,24 @@ async function transition(id: string, action: CapabilityManagerAction) {
       <article v-for="row in rows" :key="row.manifest.id" class="capability-row" :data-capability-id="row.manifest.id">
         <div class="capability-main"><strong>{{ row.manifest.displayName }}</strong><small>{{ row.manifest.id }} · v{{ row.manifest.version }} · {{ row.kindLabel }}</small></div>
         <span class="capability-state">{{ stateLabel(row.manifest, row.record) }}</span>
-        <span class="capability-deps">依赖：{{ row.manifest.dependencies.join(", ") || "无" }}</span>
+        <div class="capability-diagnostics">
+          <span>分类：{{ row.kindLabel }} · 成熟度：{{ row.manifest.maturity }}</span>
+          <span>Owner：{{ row.manifest.semanticOwner || row.definition?.semanticOwner || "未登记" }}</span>
+          <span>依赖：{{ row.manifest.dependencies.join(", ") || "无" }}</span>
+          <span>可选依赖：{{ row.manifest.optionalDependencies.join(", ") || "无" }}</span>
+          <span>被依赖：{{ row.dependent.join(", ") || "无" }}</span>
+          <span>贡献：{{ row.contributions.map((item) => item.id).join(", ") || "无" }}</span>
+          <span>可暂停：{{ row.suspendable ? "是" : "否" }} · 可停用：{{ row.disableable ? "是" : "否" }}</span>
+          <span>激活耗时：{{ row.record?.activationDurationMs ?? "—" }} ms · 持久化：{{ row.persistenceState }}</span>
+          <span>来源：{{ row.sourceOwnership }}</span>
+          <span>最近错误：{{ row.record?.lastError || "无" }}</span>
+          <span v-if="row.blockedReason">阻塞原因：{{ row.blockedReason }}</span>
+        </div>
         <div class="capability-actions">
           <button v-if="row.record?.enabled && row.record.state === 'SUSPENDED'" :disabled="actionDisabled(row.manifest, row.record, 'resume')" @click="transition(row.manifest.id, 'resume')">恢复</button>
           <button :disabled="actionDisabled(row.manifest, row.record)" :title="unavailableReason(row.manifest, row.record)" @click="transition(row.manifest.id, nextAction(row.record))">{{ actionLabel(row.manifest, row.record) }}</button>
         </div>
-        <small v-if="unavailableReason(row.manifest, row.record)">{{ unavailableReason(row.manifest, row.record) }}</small><small v-else-if="row.dependent.length">被依赖：{{ row.dependent.join(", ") }}</small>
+        <small v-if="row.blockedReason">{{ row.blockedReason }}</small>
       </article>
     </div>
   </section>
@@ -119,7 +149,7 @@ async function transition(id: string, action: CapabilityManagerAction) {
 .capability-manager { padding: 24px; color: var(--ui-text, #222); max-width: 980px; }
 .manager-header { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:20px; }
 .manager-header h2 { margin:0 0 6px; }.manager-header p { margin:0; color:var(--ui-muted,#777); }
-.capability-list { display:grid; gap:8px; }.capability-row { display:grid; grid-template-columns:minmax(180px,1.4fr) 110px minmax(120px,1fr) auto; gap:12px; align-items:center; padding:12px; border:1px solid var(--ui-border,#ddd); border-radius:6px; }
-.capability-main { display:grid; gap:4px; }.capability-main small,.capability-deps,.capability-row > small { color:var(--ui-muted,#777); font-size:12px; }.capability-state { font-family:monospace; }.capability-row button { min-width:64px; }.capability-row button:disabled { opacity:.55; }
+.capability-list { display:grid; gap:8px; }.capability-row { display:grid; grid-template-columns:minmax(180px,1.1fr) 110px minmax(280px,2fr) auto; gap:12px; align-items:start; padding:12px; border:1px solid var(--ui-border,#ddd); border-radius:6px; }
+.capability-main,.capability-diagnostics { display:grid; gap:4px; }.capability-main small,.capability-diagnostics,.capability-row > small { color:var(--ui-muted,#777); font-size:12px; }.capability-state { font-family:monospace; }.capability-row button { min-width:64px; }.capability-row button:disabled { opacity:.55; }
 .capability-actions { display:flex; gap:8px; }
 </style>
