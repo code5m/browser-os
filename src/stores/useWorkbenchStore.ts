@@ -1,1 +1,2 @@
-// Compatibility seam: business state is owned by the Workbench capability.\nexport { useWorkbenchStore } from "../capabilities/workbench/public"\n
+// Compatibility seam: business state is owned by the Workbench capability.
+export { useWorkbenchStore } from "../capabilities/workbench/public"
