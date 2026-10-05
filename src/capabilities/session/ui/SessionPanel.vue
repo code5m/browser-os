@@ -3,15 +3,29 @@
 // 列表 + 详情（含已脱敏资源瀑布）+ 恢复/删除/导出 + 会话策略开关。
 // 全部数据来自后端脱敏存档；详情中的资源记录与 M1-8 瀑布同构。
 import { computed, onMounted } from "vue";
-import { useBrowserStore, displayUrl, formatDuration, formatSize } from "../../browser/public";
+import { hostServices, type BrowserContextPort } from "../../../capability/platform/host-services";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { useSessionStore } from "../state/useSessionStore";
 
-const browser = useBrowserStore();
+const browser = hostServices.require<BrowserContextPort>("browser-context");
 const layout = useLayoutStore();
 const session = useSessionStore();
 
 const detailResources = computed(() => session.detail?.resources ?? []);
+
+function displayUrl(value: string): string {
+  try { return new URL(value).toString(); } catch { return value; }
+}
+function formatDuration(ms: number | null | undefined): string {
+  if (ms == null) return "-";
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+function formatSize(bytes: number | null | undefined): string {
+  if (bytes == null) return "-";
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
 
 const CLOSE_REASON_LABEL: Record<string, string> = {
   user_saved: "手动保存",
@@ -70,7 +84,7 @@ onMounted(async () => {
           :key="i"
           class="sp-recent-item"
           :title="item.title || item.url"
-          @click="browser.tabNew(item.url)"
+          @click="browser.openTab(item.url)"
         >
           <span class="sp-recent-title">{{ item.title || item.url }}</span>
           <span class="sp-recent-url">{{ displayUrl(item.url) }}</span>
