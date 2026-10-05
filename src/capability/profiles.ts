@@ -29,6 +29,7 @@ import { SKILL_CAPABILITY_ID } from '../capabilities/skill'
 import { PLUGIN_CAPABILITY_ID } from '../capabilities/plugin'
 import { KNOWLEDGE_GRAPH_CAPABILITY_ID } from '../capabilities/graph'
 import { TASK_CAPABILITY_ID } from '../capabilities/task'
+import { SCRIPT_CAPABILITY_ID } from '../capabilities/script'
 import { CLIPBOARD_CAPABILITY_ID } from '@browser-os/capability-clipboard'
 import { APPS_CAPABILITY_ID } from '../capabilities/apps'
 import { TOOLS_CAPABILITY_ID } from '../capabilities/tools'
@@ -62,6 +63,7 @@ export const CAPABILITY_PROFILES: Record<CapabilityProfileId, string[]> = {
     PLUGIN_CAPABILITY_ID,
     KNOWLEDGE_GRAPH_CAPABILITY_ID,
     TASK_CAPABILITY_ID,
+    SCRIPT_CAPABILITY_ID,
     CLIPBOARD_CAPABILITY_ID,
     APPS_CAPABILITY_ID,
     TOOLS_CAPABILITY_ID,
