@@ -2,7 +2,7 @@ import { createClipboardCapability, clipboardContribution, type ClipboardPorts }
 import { createVaultCapability, vaultContribution, type VaultPorts } from '@browser-os/capability-vault'
 import { bridge } from '../../bridge'
 import { useLayoutStore } from '../../stores/useLayoutStore'
-import { useWorkbenchStore } from '../../stores/useWorkbenchStore'
+import { useWorkbenchStore } from '../../capabilities/workbench/public'
 import { layoutPositions } from '../../utils/graphUi'
 import { redactSecrets } from '../../utils/redact'
 import { contributionRegistry, type ContributionRegistry } from '../contribution/registry'
