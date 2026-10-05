@@ -4,6 +4,7 @@ import { bridge } from '../../bridge'
 import { useLayoutStore } from '../../stores/useLayoutStore'
 import { useWorkbenchStore } from '../../capabilities/workbench/public'
 import { useBrowserStore } from '../../capabilities/browser/public'
+import { useGridStore } from '../../capabilities/grid/public'
 import { layoutPositions } from '../../utils/graphUi'
 import { redactSecrets } from '../../utils/redact'
 import { contributionRegistry, type ContributionRegistry } from '../contribution/registry'
@@ -39,7 +40,7 @@ export function createLegacyHostAdapters(
       )
       return typeof text === 'string' ? text : ''
     },
-    activateGrid() { return useBrowserStore().activateGrid() },
+    activateGrid() { return useGridStore().activateGrid() },
     setAiNavOpen(value: boolean) { useBrowserStore().aiNavOpen = value },
     adoptRestoredTab(tab: unknown) {
       const browser = useBrowserStore()
