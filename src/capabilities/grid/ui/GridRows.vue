@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { ResourceStats } from "../../../types";
 import { bridge } from "../../../bridge";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
@@ -12,6 +12,7 @@ const grid = useGridStore();
 const hostElement = ref<HTMLElement | null>(null);
 useGridHost(hostElement);
 onMounted(() => { hostElement.value = document.querySelector<HTMLElement>(".browser-host"); });
+watch(() => grid.gridMode, () => nextTick(() => grid.forceGridRelayout()));
 const gridLayouts = [
   { key: "grid", label: "▦ 宫格", title: "自动宫格平铺" },
   { key: "quad", label: "⊞ 四分", title: "四分 2×2" },
