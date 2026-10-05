@@ -117,7 +117,8 @@ for (const [name, path] of [
 
 if (/from:\s*credential[^\n}]*to:\s*browser/.test(dependencies)) fail("credential->browser dependency edge is forbidden");
 if (/from:\s*session[^\n}]*to:\s*browser/.test(dependencies)) fail("session->browser dependency edge is forbidden");
-if (!/from:\s*workbench[^\n}]*to:\s*browser/.test(dependencies)) fail("workbench->browser dependency edge missing");
+if (/from:\s*workbench[^\n}]*to:\s*browser/.test(dependencies)) fail("workbench->browser dependency edge is forbidden after Host Service decoupling");
+if (!/from:\s*workbench[^\n}]*to:\s*bridge/.test(dependencies)) fail("workbench->bridge infrastructure edge missing");
 
 const compat = read("src/stores/useWorkbenchStore.ts");
 if (!compat.includes('export { useWorkbenchStore } from "../capabilities/workbench/public"')) {
