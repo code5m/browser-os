@@ -2,7 +2,6 @@ import type { CapabilityDefinition } from "../../capability/types"
 
 // Browser 能力 Manifest（Phase 8D Train C — 物理隔离）
 // 语义 owner = useBrowserStore（Semantic Registry 已冻结 ADR-P1A-1/2/3/10、ADR-SEM-P6A-1/3）。
-// Grid 作为 Browser 的 heavy 子资源面（同一 store / 同一原生面），本阶段不强制拆成独立 capability。
 export const browserManifest: CapabilityDefinition = {
   id: "browser",
   name: "浏览器",
@@ -12,7 +11,6 @@ export const browserManifest: CapabilityDefinition = {
     "browser.tab.open",
     "browser.tab.close",
     "browser.host",
-    "browser.grid",
   ],
   dependsOn: ["bridge"],
   optionalDependencies: [],
@@ -41,13 +39,13 @@ export const browserManifest: CapabilityDefinition = {
     id: "browser",
     version: "1.0.0",
     displayName: "浏览器",
-    description: "多页签浏览器宿主、网络资源瀑布与 Grid heavy 子资源面；Session 已独立为可选展示能力。",
+    description: "多页签浏览器宿主与网络资源能力；Grid / Session 已独立。",
     maturity: "C3",
     maturityEvidence: ["scripts/check-browser-runtime.mjs", "scripts/check-composition-profiles.mjs", "scripts/measure-resources.mjs"],
     dependencies: [],
     optionalDependencies: [],
     conflicts: [],
-    provides: ["browser.navigate", "browser.tab.open", "browser.tab.close", "browser.host", "browser.grid"],
+    provides: ["browser.navigate", "browser.tab.open", "browser.tab.close", "browser.host"],
     requires: [],
     contributions: [
       { id: "browser.host", slot: "browser-host", type: "surface" },
