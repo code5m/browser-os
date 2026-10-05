@@ -6,7 +6,7 @@ export const credentialManifest: CapabilityDefinition = {
   category: "CAPABILITY",
   provides: ["credential.save", "credential.get", "credential.delete"],
   dependsOn: ["bridge"],
-  optionalDependencies: ["browser"],
+  optionalDependencies: [],
   lifecycle: {
     supported: ["ACTIVE"],
     default: "ACTIVE",
@@ -36,7 +36,7 @@ export const credentialManifest: CapabilityDefinition = {
       "scripts/check-native-capability-boundaries.mjs",
     ],
     dependencies: ["bridge"],
-    optionalDependencies: ["browser"],
+    optionalDependencies: [],
     conflicts: [],
     provides: ["credential.save", "credential.get", "credential.delete"],
     requires: [],
