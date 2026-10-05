@@ -630,27 +630,28 @@ capabilities:
     category: CAPABILITY
     semanticOwner: useWorkbenchStore
     governanceStatus: GOVERNED
-    status: NOT_INTEGRATED
+    status: COMPATIBILITY_WRAPPED
+    maturity: C2
     provides:
-      - workbench.summary
-      - workbench.artifact
+      - workbench.navigation
+      - workbench.commands
     dependsOn:
-      - bridge
+      - browser
     optionalDependencies: []
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
-      activatable: false
-      resident: false
+      activatable: true
+      resident: true
     resources:
       class: [MEDIUM]
-      suspendable: true
+      suspendable: false
       destroyable: false
     permissions: []
     persistence:
       scope: disk
       sensitive: false
-    entrypoint: src/stores/useWorkbenchStore.ts
+    entrypoint: src/capabilities/workbench/index.ts
 
   # STAGE I-C：settings 判定为框架/平台 SERVICE（非产品 CAPABILITY）。
   # 主题/键位/tab 休眠属框架偏好，不归属任何单一能力；SettingsPanel 经
