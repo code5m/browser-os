@@ -28,7 +28,6 @@ capabilities:
       - browser.tab.open
       - browser.tab.close
       - browser.host
-      - browser.grid
     dependsOn:
       - bridge
     optionalDependencies: []
@@ -51,9 +50,10 @@ capabilities:
   - id: grid
     name: Grid
     category: CAPABILITY
-    semanticOwner: useBrowserStore
+    semanticOwner: useGridStore
     governanceStatus: GOVERNED
-    status: NOT_INTEGRATED
+    status: COMPATIBILITY_WRAPPED
+    maturity: C2
     provides:
       - grid.open
       - grid.layout
@@ -65,19 +65,19 @@ capabilities:
     lifecycle:
       supported: [ACTIVE]
       default: ACTIVE
-      activatable: false
-      resident: true
+      activatable: true
+      resident: false
     resources:
       class: [VERY_HEAVY, MULTI_WEBVIEW, NATIVE]
       suspendable: false
-      destroyable: false
+      destroyable: true
     permissions:
       - webview.create
       - process.spawn
     persistence:
       scope: disk
       sensitive: false
-    entrypoint: src/components/browser
+    entrypoint: src/capabilities/grid/index.ts
 
   - id: workspace
     name: Workspace
