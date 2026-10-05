@@ -3,7 +3,7 @@ import { gridManifest } from "./manifest";
 
 export const GRID_CAPABILITY_ID = "grid";
 
-export const gridCapability = withLazyContributions(gridManifest, [
+const contributedGridCapability = withLazyContributions(gridManifest, [
   {
     id: "grid.nav",
     type: "surface",
@@ -17,3 +17,14 @@ export const gridCapability = withLazyContributions(gridManifest, [
     load: () => import("./ui/GridRows.vue"),
   },
 ]);
+
+export const gridCapability = {
+  ...contributedGridCapability,
+  lifecycle: {
+    ...contributedGridCapability.lifecycle,
+    async onDeactivate() {
+      const { useGridStore } = await import("./state/useGridStore");
+      await useGridStore().closeGrid();
+    },
+  },
+};
