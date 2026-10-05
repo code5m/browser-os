@@ -8,7 +8,7 @@
 
 version: 1
 generated_from_head: 3f57a92e5fb7d9a6bc978f1572964d3c14fb8caf
-total: 68
+total: 70
 
 components:
 
@@ -57,7 +57,9 @@ components:
   # ---------- CAPABILITY_UI 语义属于能力但物理仍在 legacy (26) ----------
   - { id: browser.ai-nav, name: AINavPanel, layer: CAPABILITY_UI, owner: browser, file: src/capabilities/browser/ui/AINavPanel.vue, public: false, business_semantics: "AI 导航侧栏(未注册contribution)", capability_specific: true, dependencies: [useBrowserStore], consumers: [App.vue:263], status: OBSERVED }
   - { id: browser.credential-list, name: CredentialList, layer: CAPABILITY_UI, owner: credential, file: src/capabilities/credential/ui/CredentialList.vue, public: false, business_semantics: "已导入账号(由 credential capability 贡献给 bookmark-credentials 槽)", capability_specific: true, dependencies: [credentialPublicApi, browser-context, useLayoutStore], consumers: [BookmarkPanel.vue:141], status: OBSERVED }
-  - { id: browser.grid-archive-bar, name: GridArchiveBar, layer: CAPABILITY_UI, owner: browser, file: src/capabilities/browser/ui/GridArchiveBar.vue, public: false, business_semantics: "宫格归档条", capability_specific: true, dependencies: [useGridArchiveStore, lucide], consumers: [ActivityBar.vue:373], status: OBSERVED }
+  - { id: grid.archive-bar, name: GridArchiveBar, layer: CAPABILITY_UI, owner: grid, file: src/capabilities/grid/ui/GridArchiveBar.vue, public: false, business_semantics: "Grid 回复归档条", capability_specific: true, dependencies: [useGridArchiveStore, lucide], consumers: [GridRows.vue], status: OBSERVED }
+  - { id: grid.nav, name: GridNav, layer: CAPABILITY_UI, owner: grid, file: src/capabilities/grid/ui/GridNav.vue, public: false, business_semantics: "Grid ActivityBar 导航贡献", capability_specific: true, dependencies: [useGridStore, useLayoutStore], consumers: [ActivityBar generic activity-bar-nav slot], status: OBSERVED }
+  - { id: grid.rows, name: GridRows, layer: CAPABILITY_UI, owner: grid, file: src/capabilities/grid/ui/GridRows.vue, public: false, business_semantics: "Grid 模式/布局/网址/AI群发/资源扩展行", capability_specific: true, dependencies: [useGridStore, useGridHost, useLayoutStore], consumers: [ActivityBar generic activity-bar-rows slot], status: OBSERVED }
   - { id: browser.resource-panel, name: ResourcePanel, layer: CAPABILITY_UI, owner: browser, file: src/capabilities/browser/ui/ResourcePanel.vue, public: false, business_semantics: "网页资源(已被ResourceWaterfall取代)", capability_specific: true, dependencies: [useBrowserStore, useLayoutStore], consumers: [], status: DEPRECATED }
   - { id: git.panel, name: GitPanel, layer: CAPABILITY_UI, owner: git, file: src/capabilities/git/ui/GitPanel.vue, public: false, business_semantics: "Git 状态(经 REPO_SUBVIEW 贡献给 RepoPanel)", capability_specific: true, dependencies: [useRepoStore, useGitStore], consumers: [RepoPanel.vue via contribution], status: OBSERVED }
   - { id: git.history, name: GitHistory, layer: CAPABILITY_UI, owner: git, file: src/capabilities/git/ui/GitHistory.vue, public: false, business_semantics: "Git 提交历史", capability_specific: true, dependencies: [bridge.gitLog, bridge.gitCommitDiff, useGitStore], consumers: [RepoPanel.vue:23], status: OBSERVED }
