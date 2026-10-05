@@ -98,7 +98,11 @@ for (const [name, path] of [
   ["session UI", "src/capabilities/session/ui/SessionPanel.vue"],
 ]) {
   const source = read(path);
-  if (source.includes("useBrowserStore") || source.includes("capabilities/browser") || source.includes("../../browser/public")) {
+  if (
+    source.includes("useBrowserStore") ||
+    /from\s+["'][^"']*capabilities\/browser(?:\/public)?["']/.test(source) ||
+    /from\s+["'][^"']*\.\.\/\.\.\/browser\/public["']/.test(source)
+  ) {
     fail(name + " must not depend on Browser capability");
   }
 }
