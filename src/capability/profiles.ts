@@ -24,6 +24,7 @@ import { BROWSER_CAPABILITY_ID } from '../capabilities/browser'
 import { TERMINAL_CAPABILITY_ID } from '../capabilities/terminal'
 import { GIT_CAPABILITY_ID } from '../capabilities/git'
 import { DATABASE_CAPABILITY_ID } from '../capabilities/database'
+import { CREDENTIAL_CAPABILITY_ID } from '../capabilities/credential'
 import { AGENT_CAPABILITY_ID } from '../capabilities/agent'
 import { SKILL_CAPABILITY_ID } from '../capabilities/skill'
 import { PLUGIN_CAPABILITY_ID } from '../capabilities/plugin'
@@ -48,6 +49,8 @@ export const CAPABILITY_PROFILES: Record<CapabilityProfileId, string[]> = {
     WORKSPACE_CAPABILITY_ID,
     BROWSER_CAPABILITY_ID,
     TERMINAL_CAPABILITY_ID,
+    CREDENTIAL_CAPABILITY_ID,
+    CREDENTIAL_CAPABILITY_ID,
     GIT_CAPABILITY_ID,
     DATABASE_CAPABILITY_ID,
   ],
