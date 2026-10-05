@@ -31,6 +31,7 @@ export function createLegacyHostAdapters(
     get recentlyClosed() { return useBrowserStore().recentlyClosed },
     get aiNavOpen() { return useBrowserStore().aiNavOpen },
     openTab(url: string) { return useBrowserStore().tabNew(url) },
+    evalInTab(tabId: string, script: string) { return bridge.evalInTab(tabId, script) },
     async captureTextPreview(tabId: string) {
       const text = await bridge.evalInTab(
         tabId,
