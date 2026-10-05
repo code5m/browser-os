@@ -43,6 +43,10 @@ export interface CapabilityRecord {
   definition: CapabilityDefinition
   state: CapabilityState
   enabled: boolean
+  /** Last successful/failed activation hook duration; runtime diagnostic only. */
+  activationDurationMs: number | null
+  /** Last lifecycle error observed by the runtime; never a business-state mirror. */
+  lastError: string | null
 }
 
 export interface CapabilityInspectionEntry {
@@ -55,6 +59,8 @@ export interface CapabilityInspectionEntry {
   status: string
   resourceClass: string[]
   resident: boolean
+  activationDurationMs: number | null
+  lastError: string | null
 }
 
 export interface CapabilityRuntime {
@@ -155,6 +161,8 @@ export function createCapabilityRuntime(
         definition,
         state: 'DEFINED',
         enabled: true,
+        activationDurationMs: null,
+        lastError: null,
       }
       records.set(definition.id, rec)
       log(`register: ${definition.id}`)
@@ -181,11 +189,20 @@ export function createCapabilityRuntime(
     activate(id) {
       const rec = activatable(id)
       const ctx = makeContext(rec, log)
-      rec.definition.lifecycle.onActivate?.call(null)
-      void ctx
-      rec.state = 'ACTIVE'
-      log(`activate: ${id}`)
-      return rec
+      const startedAt = Date.now()
+      try {
+        rec.definition.lifecycle.onActivate?.call(null)
+        void ctx
+        rec.state = 'ACTIVE'
+        rec.activationDurationMs = Date.now() - startedAt
+        rec.lastError = null
+        log(`activate: ${id}`)
+        return rec
+      } catch (error) {
+        rec.activationDurationMs = Date.now() - startedAt
+        rec.lastError = error instanceof Error ? error.message : String(error)
+        throw error
+      }
     },
 
     suspend(id) {
@@ -198,10 +215,19 @@ export function createCapabilityRuntime(
 
     async activateAsync(id) {
       const rec = activatable(id)
-      await rec.definition.lifecycle.onActivate?.call(null)
-      rec.state = 'ACTIVE'
-      log(`activate: ${id}`)
-      return rec
+      const startedAt = Date.now()
+      try {
+        await rec.definition.lifecycle.onActivate?.call(null)
+        rec.state = 'ACTIVE'
+        rec.activationDurationMs = Date.now() - startedAt
+        rec.lastError = null
+        log(`activate: ${id}`)
+        return rec
+      } catch (error) {
+        rec.activationDurationMs = Date.now() - startedAt
+        rec.lastError = error instanceof Error ? error.message : String(error)
+        throw error
+      }
     },
 
     async suspendAsync(id) {
@@ -276,6 +302,8 @@ export function createCapabilityRuntime(
         status: r.definition.status,
         resourceClass: r.definition.resources?.class || [],
         resident: r.definition.lifecycle.resident === true,
+        activationDurationMs: r.activationDurationMs,
+        lastError: r.lastError,
       }))
     },
 
