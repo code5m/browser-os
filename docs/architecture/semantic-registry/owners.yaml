@@ -33,15 +33,13 @@ owners:
     rationale: 通用导航 store；若兼管 Grid 资源生命周期会反向依赖 useBrowserStore 形成循环
     status: ACCEPTED_ADR
 
-  browser_grid_lifecycle:
-    owner: useBrowserStore
+  grid_lifecycle:
+    owner: useGridStore
     owns:
       - gridOpen
       - grid lifecycle
-      - gridSession (Phase 6A 收口；见 ADR-SEM-P6A-3)
+      - gridSession
       - desiredGridVisibility (derived)
-      - isBrowserVisible (derived)
-      - aiNavOpen (Phase 6A 收口；useLayoutStore 死重复已删)
     owner_only_api:
       - buildGrid
       - closeGridAll
@@ -54,11 +52,10 @@ owners:
       - closeGridCell
     forbidden_callers:
       - components/**（不得直调生命周期原语）
-      - 任何非授权 store / composable
+      - useBrowserStore（Browser 不得反向拥有 Grid 生命周期）
     authorized_callers:
-      - useBrowserStore（owner 自身）
-      - useLayoutStore（经授权入口，如 toggleGridToolbar 调 openGrid / closeGrid）
-    rationale: 资源生命周期归母属 store；useLayoutStore 退为视图状态执行点
+      - useGridStore（owner 自身）
+    rationale: Grid V2 独立 owner；Browser 仅通过 public contract 被 Grid 单向依赖
     status: ACCEPTED_ADR
 
   native_execution:
