@@ -396,7 +396,7 @@ export const useGridStore = defineStore("grid", () => {
     // 仅当当前确处于宫格视图时复位，不打扰其它视图（如正在看 files/term）。
     // 重激活活动页签（后端聚焦），确保关闭宫格后它就是可见页签；无活动页签则跳过。
     if (browser.activeTabId) {
-      await bridge.tabActivate(browser.activeTabId).catch(() => {});
+      await browser.tabSwitch(browser.activeTabId).catch(() => {});
     }
     if (layout.mainView === "grid") {
       layout.setView("browser");
@@ -505,10 +505,7 @@ export const useGridStore = defineStore("grid", () => {
   }
 
   async function syncGridVisibility() {
-    if (desiredGridVisibility.value) {
-      await bridge.hideAllWebviews().catch(() => {});
-      layoutGrid();
-    }
+    if (desiredGridVisibility.value) layoutGrid();
     syncGridFreeze();
   }
 
