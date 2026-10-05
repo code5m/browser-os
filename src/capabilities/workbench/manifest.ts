@@ -5,7 +5,7 @@ export const workbenchManifest: CapabilityDefinition = {
   name: "工作台",
   category: "CAPABILITY",
   provides: ["workbench.navigation", "workbench.commands"],
-  dependsOn: ["browser"],
+  dependsOn: ["bridge"],
   optionalDependencies: [],
   lifecycle: {
     supported: ["ACTIVE"],
@@ -35,7 +35,7 @@ export const workbenchManifest: CapabilityDefinition = {
       "scripts/check-workbench-ui.cjs",
       "scripts/check-contribution-registration.mjs",
     ],
-    dependencies: ["browser"],
+    dependencies: ["bridge"],
     optionalDependencies: [],
     conflicts: [],
     provides: ["workbench.navigation", "workbench.commands"],
