@@ -1,6 +1,7 @@
 import { ref, onMounted, onBeforeUnmount, nextTick, watch } from "vue";
 import { bridge } from "../bridge";
 import { useBrowserStore } from "../capabilities/browser/public";
+import { useGridStore } from "../capabilities/grid/public";
 import { useLayoutStore } from "../stores/useLayoutStore";
 import {
   GRID_GAP,
@@ -51,6 +52,7 @@ invalidation.register(() => hiddenIntent.reset());
 
 export function useBrowserHost() {
   const browser = useBrowserStore();
+  const grid = useGridStore();
   const layout = useLayoutStore();
   const browserHost = ref<HTMLElement | null>(null);
   let ro: ResizeObserver | null = null;
@@ -61,7 +63,7 @@ export function useBrowserHost() {
     positionRaf = requestAnimationFrame(() => {
       positionRaf = requestAnimationFrame(() => {
         positionRaf = null;
-        if (browser.gridOpen && layout.mainView === 'grid') {
+        if (grid.gridOpen && layout.mainView === 'grid') {
           scheduleGrid();
           return;
         }
@@ -95,8 +97,8 @@ export function useBrowserHost() {
   }
 
   function scheduleGrid() {
-    bridge.debugLog(`scheduleGrid entry gridOpen=${browser.gridOpen}`);
-    if (!browser.gridOpen || layout.mainView !== 'grid') return;
+    bridge.debugLog(`scheduleGrid entry gridOpen=${grid.gridOpen}`);
+    if (!grid.gridOpen || layout.mainView !== 'grid') return;
     nextTick(() => {
       requestAnimationFrame(() => layoutGridNow(0));
     });
@@ -106,7 +108,7 @@ export function useBrowserHost() {
   // 覆盖"工具条刚展开/视图刚切换，布局尚未稳定"的时序窗口——之前直接 return
   // 导致宫格永不定位（灰底空白、无格子、无标题栏）。
   function layoutGridNow(retry: number) {
-    if (!browser.gridOpen || layout.mainView !== 'grid') return;
+    if (!grid.gridOpen || layout.mainView !== 'grid') return;
     const host = browserHost.value;
     const r = host?.getBoundingClientRect();
     if (retry === 0) {
@@ -121,18 +123,18 @@ export function useBrowserHost() {
       return;
     }
     // 会话切换（buildGrid 重建）时清空发送缓存与隐藏记录
-    if (gridCache.syncSession(browser.gridSession)) {
+    if (gridCache.syncSession(grid.gridSession)) {
       hiddenIntent.reset();
     }
-    const n = browser.gridCount;
-    const mode = browser.gridLayout as GridLayoutMode;
+    const n = grid.gridCount;
+    const mode = grid.gridLayout as GridLayoutMode;
     // 自适应缩放：以 host 满宽为参考 —— 每格都按比例缩小，完整页面缩进格宽
     const refWidth = r.width;
     // 同步每格相对 host 的 rect
-    browser.gridRects.splice(0, browser.gridRects.length);
+    grid.gridRects.splice(0, grid.gridRects.length);
     for (let i = 0; i < n; i++) {
-      const cell = gridCellRect(mode, i, n, r.width, r.height, GRID_GAP, browser.gridCols(n));
-      browser.gridRects.push({ x: cell.x, y: cell.y, w: cell.w, h: cell.h });
+      const cell = gridCellRect(mode, i, n, r.width, r.height, GRID_GAP, grid.gridCols(n));
+      grid.gridRects.push({ x: cell.x, y: cell.y, w: cell.w, h: cell.h });
       // 1) 定位（不含 zoom，避免每次定位都触发整页重排卡顿）。
       //    同会话同 rect 去重，失败则清除缓存下轮重发。
       const rect = gridCellHostRect(r, cell);
@@ -163,7 +165,7 @@ export function useBrowserHost() {
   onMounted(() => {
     // 把调度器注入 store，供 store 的 tab 操作回调
     browser.bindPositionScheduler(schedulePosition);
-    browser.bindGridScheduler(scheduleGrid);
+    grid.bindGridScheduler(scheduleGrid);
     // 首次挂载时也同步显隐。主页/文件等非浏览器视图可能已经恢复了
     // 浏览器页签，但此时还没有发生 mainView 变化，旧 webview 会保留尺寸并
     // 漂移到主界面上方，形成白色遮挡。
