@@ -8,14 +8,14 @@ export const scriptManifest: CapabilityDefinition = {
   dependsOn: ["bridge"],
   optionalDependencies: [],
   lifecycle: {
-    supported: ["ACTIVE", "SUSPENDED"],
+    supported: ["ACTIVE"],
     default: "ACTIVE",
     activatable: true,
     resident: false,
   },
   resources: {
     class: ["PROCESS"],
-    suspendable: true,
+    suspendable: false,
     destroyable: true,
   },
   permissions: ["process.spawn"],
