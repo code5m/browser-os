@@ -17,8 +17,6 @@ import { useSettingsStore } from "./settings/public";
 
 import ActivityBar from "./components/layout/ActivityBar.vue";
 import UnifiedTabBar from './components/layout/UnifiedTabBar.vue';
-import WorkbenchCommands from './components/layout/WorkbenchCommands.vue';
-import WorkbenchRail from './components/layout/WorkbenchRail.vue';
 import MainArea from "./components/layout/MainArea.vue";
 import StatusBar from "./components/layout/StatusBar.vue";
 import { GitWriteConfirmDialog } from "./capabilities/git/public";
