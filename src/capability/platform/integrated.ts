@@ -21,6 +21,7 @@ interface IntegratedCapabilitySpec {
   maturityEvidence?: string[]
   supported?: CapabilityState[]
   provides: string[]
+  dependencies?: string[]
   optionalDependencies?: string[]
   resident: boolean
   resourceClass: ResourceClass[]
@@ -38,7 +39,7 @@ interface IntegratedCapabilitySpec {
 }
 
 export function defineIntegratedCapability(spec: IntegratedCapabilitySpec): CapabilityDefinition {
-  const dependencies = ["bridge"]
+  const dependencies = spec.dependencies ?? ["bridge"]
   const optionalDependencies = spec.optionalDependencies ?? []
   const permissions = spec.permissions ?? []
   const v1: CapabilityManifestV1 = {
