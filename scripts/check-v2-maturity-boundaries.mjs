@@ -16,11 +16,15 @@ const promoted = {
       "src/capabilities/script/index.ts",
       "src/capabilities/script/public.ts",
       "src/capabilities/script/state/useScriptStore.ts",
+      "src/capabilities/script/state/useSnippetStore.ts",
       "src/capabilities/script/ui/ScriptPanel.vue",
+      "src/capabilities/script/ui/CommandSnippetPanel.vue",
     ],
     forbidden: [
       "src/capabilities/workspace/state/useScriptStore.ts",
+      "src/capabilities/workspace/state/useSnippetStore.ts",
       "src/capabilities/workspace/ui/ScriptPanel.vue",
+      "src/capabilities/workspace/ui/CommandSnippetPanel.vue",
     ],
   },
   credential: {
