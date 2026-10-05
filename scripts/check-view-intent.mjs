@@ -24,7 +24,8 @@ import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOT = process.cwd();
-const STORE = "src/capabilities/browser/state/useBrowserStore.ts";
+const BROWSER_STORE = "src/capabilities/browser/state/useBrowserStore.ts";
+const GRID_STORE = "src/capabilities/grid/state/useGridStore.ts";
 const LAYOUT = "src/stores/useLayoutStore.ts";
 
 let failures = 0;
@@ -128,7 +129,7 @@ function c3(ctx) {
       detail: "setView 含 closeGrid/gridOpen=false/bridge.closeGrid",
     };
   }
-  const sync = extractFn(ctx.storeSrc, "syncViewVisibility");
+  const sync = extractFn(ctx.browserStoreSrc, "syncViewVisibility");
   if (!sync) {
     return { pass: false, msg: "C3 syncViewVisibility 存在", detail: "useBrowserStore.ts 未找到 syncViewVisibility" };
   }
@@ -157,13 +158,13 @@ function c4(ctx) {
 // 不只要"声明存在"，还要求：computed 实际消费纯派生 helper，且 helper 内为冻结公式。
 // （否则把 computed 改成 computed(() => gridOpen.value) 也能骗过旧版检查）
 function c5(ctx) {
-  const hasComputed = /const\s+desiredGridVisibility\s*=\s*computed\(/.test(ctx.storeSrc);
+  const hasComputed = /const\s+desiredGridVisibility\s*=\s*computed\(/.test(ctx.gridStoreSrc);
   const usesHelper =
-    /const\s+desiredGridVisibility[\s\S]{0,200}?computeDesiredVisibility/.test(ctx.storeSrc) ||
-    /computeDesiredVisibility\([\s\S]{0,160}?\.gridVisible/.test(ctx.storeSrc);
+    /const\s+desiredGridVisibility[\s\S]{0,200}?computeDesiredVisibility/.test(ctx.gridStoreSrc) ||
+    /computeDesiredVisibility\([\s\S]{0,160}?\.gridVisible/.test(ctx.gridStoreSrc);
   const formula =
-    /gridVisible:\s*go\s*&&\s*mv\s*===\s*["']grid["']/.test(ctx.storeSrc) ||
-    /gridVisible:\s*gridOpen\.value\s*&&\s*layout\.mainView\s*===\s*["']grid["']/.test(ctx.storeSrc);
+    /gridVisible:\s*go\s*&&\s*mv\s*===\s*["']grid["']/.test(ctx.gridStoreSrc) ||
+    /gridVisible:\s*gridOpen\.value\s*&&\s*layout\.mainView\s*===\s*["']grid["']/.test(ctx.gridStoreSrc);
   return {
     pass: hasComputed && usesHelper && formula,
     msg: "C5 desiredGridVisibility = gridOpen && mainView === \"grid\"（公式已冻结且确由纯派生 helper 产出）",
@@ -173,7 +174,7 @@ function c5(ctx) {
 
 // C6 closeGrid 销毁资源 + owner 收敛视图 + 状态不变量守卫
 function c6(ctx) {
-  const cg = extractFn(ctx.storeSrc, "closeGridAll");
+  const cg = extractFn(ctx.gridStoreSrc, "closeGridAll");
   if (!cg) return { pass: false, msg: "C6 closeGridAll 存在", detail: "未找到" };
   if (!/gridOpen\.value\s*=\s*false/.test(cg)) {
     return { pass: false, msg: "C6 closeGrid 确实销毁资源", detail: "缺 gridOpen.value = false" };
@@ -181,7 +182,7 @@ function c6(ctx) {
   if (!/layout\.(?:mainView\s*=\s*"browser"|setView\(\s*"browser"\s*\))/.test(cg)) {
     return { pass: false, msg: "C6 closeGrid 由 owner 收敛视图", detail: "缺 setView(\"browser\") 复位" };
   }
-  if (!/mv\s*===\s*["']grid["']\s*&&\s*!go/.test(ctx.storeSrc)) {
+  if (!/mv\s*===\s*["']grid["']\s*&&\s*!go/.test(ctx.gridStoreSrc)) {
     return { pass: false, msg: "C6 存在状态不变量守卫", detail: "缺 invariant watch（mainView===\"grid\" ⇒ gridOpen）" };
   }
   return { pass: true, msg: "C6 closeGrid 销毁资源 + owner 收敛视图 + 不变量守卫齐备" };
@@ -189,7 +190,7 @@ function c6(ctx) {
 
 // C7 isBrowserVisible 公式（不得重新耦合 gridOpen）
 function c7(ctx) {
-  const m = ctx.storeSrc.match(/const isBrowserVisible = computed\(\s*\(\)\s*=>\s*([\s\S]*?)\);/);
+  const m = ctx.browserStoreSrc.match(/const isBrowserVisible = computed\(\s*\(\)\s*=>\s*([\s\S]*?)\);/);
   if (!m) return { pass: false, msg: "C7 isBrowserVisible 公式存在", detail: "未找到" };
   const f = m[1].trim();
   return {
@@ -216,10 +217,10 @@ function c8(ctx) {
 // C9 canonical Intent API 齐备
 function c9(ctx) {
   const need = [
-    ["openGrid", ctx.storeSrc],
-    ["closeGrid", ctx.storeSrc],
-    ["closeGridCell", ctx.storeSrc],
-    ["activateGrid", ctx.storeSrc],
+    ["openGrid", ctx.gridStoreSrc],
+    ["closeGrid", ctx.gridStoreSrc],
+    ["closeGridCell", ctx.gridStoreSrc],
+    ["activateGrid", ctx.gridStoreSrc],
     ["activateBrowser", ctx.layoutSrc],
     ["activateHome", ctx.layoutSrc],
     ["activateFiles", ctx.layoutSrc],
@@ -252,12 +253,12 @@ function c10(ctx) {
 function c11(ctx) {
   const bad = [];
   for (const f of ctx.codeFiles) {
-    if (f.path === STORE) continue;
+    if (f.path === GRID_STORE) continue;
     if (/bridge\.closeGrid\s*\(/.test(f.src)) bad.push(f.path);
   }
   return {
     pass: bad.length === 0,
-    msg: "C11 bridge.closeGrid 只由 owner（useBrowserStore）调用",
+    msg: "C11 bridge.closeGrid 只由 owner（useGridStore）调用",
     detail: bad.join(", "),
   };
 }
@@ -310,7 +311,7 @@ function reportApiUsage(ctx) {
   const api = ["openGrid", "rebuildGrid", "closeGrid", "closeGridCell", "activateGrid", "desiredGridVisibility"];
   // 统计 store 之外（组件 / 其它 store）的引用，判断是否真的被接线
   const outside = ctx.codeFiles
-    .filter((f) => f.path !== STORE)
+    .filter((f) => f.path !== GRID_STORE)
     .map((f) => f.src)
     .join("\n");
   const unused = api.filter((n) => !new RegExp("\\b" + n + "\\b").test(outside));
@@ -329,19 +330,21 @@ function runChecks(ctx, label) {
 
 // ============================ 真实仓库 ============================
 function buildCtx() {
-  const storePath = join(ROOT, STORE);
+  const browserStorePath = join(ROOT, BROWSER_STORE);
+  const gridStorePath = join(ROOT, GRID_STORE);
   const layoutPath = join(ROOT, LAYOUT);
-  const storeSrc = existsSync(storePath) ? readFileSync(storePath, "utf8") : "";
+  const browserStoreSrc = existsSync(browserStorePath) ? readFileSync(browserStorePath, "utf8") : "";
+  const gridStoreSrc = existsSync(gridStorePath) ? readFileSync(gridStorePath, "utf8") : "";
   const layoutSrc = existsSync(layoutPath) ? readFileSync(layoutPath, "utf8") : "";
   const vueFiles = walk(join(ROOT, "src"), [".vue"]).map((p) => ({ path: rel(p), src: readFileSync(p, "utf8") }));
   const codeFiles = walk(join(ROOT, "src"), [".ts", ".vue"]).map((p) => ({ path: rel(p), src: readFileSync(p, "utf8") }));
   const rustFiles = walk(join(ROOT, "src-tauri", "src"), [".rs"]).map((p) => ({ path: rel(p), src: readFileSync(p, "utf8") }));
-  return { storeSrc, layoutSrc, vueFiles, codeFiles, rustFiles };
+  return { browserStoreSrc, gridStoreSrc, layoutSrc, vueFiles, codeFiles, rustFiles };
 }
 
 function runReal() {
-  if (!existsSync(join(ROOT, STORE)) || !existsSync(join(ROOT, LAYOUT))) {
-    fail("源码文件存在", "未找到 useBrowserStore.ts / useLayoutStore.ts（需在仓库根运行）");
+  if (!existsSync(join(ROOT, BROWSER_STORE)) || !existsSync(join(ROOT, GRID_STORE)) || !existsSync(join(ROOT, LAYOUT))) {
+    fail("源码文件存在", "未找到 useBrowserStore.ts / useGridStore.ts / useLayoutStore.ts（需在仓库根运行）");
     return;
   }
   const ctx = buildCtx();
@@ -356,8 +359,11 @@ function runReal() {
 // ============================ 自检（双向：好样本 PASS / 坏样本必被抓） ============================
 function goodCtx() {
   return {
-    storeSrc: `
+    browserStoreSrc: `
 const isBrowserVisible = computed(() => layout.mainView === "browser");
+async function syncViewVisibility() { hideAllWebviews(); }
+`,
+    gridStoreSrc: `
 function computeDesiredVisibility(mv, go) {
   return { browserVisible: mv === "browser", gridVisible: go && mv === "grid" };
 }
@@ -367,7 +373,6 @@ async function closeGridAll() {
   if (layout.mainView === "grid") { layout.setView("browser"); }
   await bridge.closeGrid();
 }
-async function syncViewVisibility() { hideAllWebviews(); }
 function openGrid() {}
 function closeGrid() {}
 function closeGridCell(i) {}
@@ -411,11 +416,11 @@ function runSelfTest() {
       2,
     ],
     ["C4 新增 gridVisible 存储态", (c) => ({ ...c, codeFiles: [{ path: "G.ts", src: "const gridVisible = ref(false);" }] }), 3],
-    ["C5 公式被改动", (c) => ({ ...c, storeSrc: c.storeSrc.replace('gridVisible: go && mv === "grid"', 'gridVisible: go') }), 4],
-    ["C6 closeGrid 不销毁", (c) => ({ ...c, storeSrc: c.storeSrc.replace("gridOpen.value = false;", "") }), 5],
-    ["C7 isBrowserVisible 耦合 gridOpen", (c) => ({ ...c, storeSrc: c.storeSrc.replace('computed(() => layout.mainView === "browser")', 'computed(() => layout.mainView === "browser" && !gridOpen.value)') }), 6],
+    ["C5 公式被改动", (c) => ({ ...c, gridStoreSrc: c.gridStoreSrc.replace('gridVisible: go && mv === "grid"', 'gridVisible: go') }), 4],
+    ["C6 closeGrid 不销毁", (c) => ({ ...c, gridStoreSrc: c.gridStoreSrc.replace("gridOpen.value = false;", "") }), 5],
+    ["C7 isBrowserVisible 耦合 gridOpen", (c) => ({ ...c, browserStoreSrc: c.browserStoreSrc.replace('computed(() => layout.mainView === "browser")', 'computed(() => layout.mainView === "browser" && !gridOpen.value)') }), 6],
     ["C8 新增 Rust show_grid", (c) => ({ ...c, rustFiles: [{ path: "z.rs", src: "#[tauri::command]\nfn show_grid() {}" }] }), 7],
-    ["C9 Intent API 缺失", (c) => ({ ...c, storeSrc: c.storeSrc.replace("function activateGrid() {}", "") }), 8],
+    ["C9 Intent API 缺失", (c) => ({ ...c, gridStoreSrc: c.gridStoreSrc.replace("function activateGrid() {}", "") }), 8],
     ["C10 exitGrid(mode)", (c) => ({ ...c, codeFiles: [{ path: "Z.ts", src: 'exitGrid("hide");' }] }), 9],
     ["C11 非 owner 调销毁原语", (c) => ({ ...c, codeFiles: [{ path: "W.ts", src: "bridge.closeGrid();" }] }), 10],
   ];
