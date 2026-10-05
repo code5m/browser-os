@@ -2,6 +2,7 @@ import type {
   CapabilityCategory,
   CapabilityDefinition,
   CapabilityPersistence,
+  CapabilityState,
   ResourceClass,
 } from "../types"
 import type {
@@ -16,6 +17,9 @@ interface IntegratedCapabilitySpec {
   name: string
   semanticOwner: string
   maturity: "C2"
+  version?: string
+  maturityEvidence?: string[]
+  supported?: CapabilityState[]
   provides: string[]
   optionalDependencies?: string[]
   resident: boolean
@@ -39,11 +43,11 @@ export function defineIntegratedCapability(spec: IntegratedCapabilitySpec): Capa
   const permissions = spec.permissions ?? []
   const v1: CapabilityManifestV1 = {
     id: spec.id,
-    version: "2.0.0",
+    version: spec.version ?? "2.0.0",
     displayName: spec.name,
     description: spec.description ?? spec.name,
     maturity: spec.maturity,
-    maturityEvidence: ["scripts/check-v2-maturity-boundaries.mjs"],
+    maturityEvidence: spec.maturityEvidence ?? ["scripts/check-v2-maturity-boundaries.mjs"],
     dependencies,
     optionalDependencies,
     conflicts: [],
@@ -80,7 +84,7 @@ export function defineIntegratedCapability(spec: IntegratedCapabilitySpec): Capa
     dependsOn: dependencies,
     optionalDependencies,
     lifecycle: {
-      supported: ["ACTIVE"],
+      supported: spec.supported ?? ["ACTIVE"],
       default: "ACTIVE",
       activatable: true,
       resident: spec.resident,
