@@ -229,11 +229,12 @@ run_pre_merge() {
   baseline_file="$(ls -1 "$ROOT"/logs/m0-build-metrics/build-metrics-*.json 2>/dev/null | sort | head -1 || true)"
   if [ -n "$baseline_file" ]; then
     # 复用上一步 npm run build 的产物，不重复构建。
-    if python3 "$SCRIPT_DIR/measure-build-metrics.py" --compare "$baseline_file" --skip-build \
-      >/dev/null 2>&1; then
-      pm_log "build metrics 未回归（基线 ${baseline_file#"$ROOT/"}）"
+    local metrics_output
+    if metrics_output="$(python3 "$SCRIPT_DIR/measure-build-metrics.py" --compare "$baseline_file" --skip-build 2>&1)"; then
+      pm_log "build metrics 未回归（基线 ${baseline_file#"$ROOT"/}）"
     else
-      pm_fail "build metrics regression vs ${baseline_file#"$ROOT/"}"
+      printf '%s\n' "$metrics_output"
+      pm_fail "build metrics regression vs ${baseline_file#"$ROOT"/}"
     fi
   else
     pm_log "无构建指标基线，跳过对比"
