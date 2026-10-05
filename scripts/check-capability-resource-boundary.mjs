@@ -65,7 +65,16 @@ const CAPABILITIES = [
     guardFn: 'isBrowserResourceAllowed',
     // 已知生命周期入口（创建重资源的调用）：文件 → 入口函数 → 出生点调用
     entrypoints: [
-      { file: 'src/capabilities/browser/state/useBrowserStore.ts', fn: 'buildGrid', birth: 'bridge.createGrid' },
+      { file: 'src/capabilities/browser/state/useBrowserStore.ts', fn: 'tabNew', birth: 'bridge.tabNew' },
+    ],
+  },
+  {
+    id: 'grid',
+    manifest: 'src/capabilities/grid/manifest.ts',
+    guard: 'src/capabilities/grid/resource/guard.ts',
+    guardFn: 'isGridResourceAllowed',
+    entrypoints: [
+      { file: 'src/capabilities/grid/state/useGridStore.ts', fn: 'buildGrid', birth: 'bridge.createGrid' },
     ],
   },
   {
@@ -180,7 +189,7 @@ function checkGuardPurity(cap) {
 
 // BR-01 / BR-02：Shell/Core 不得 import 能力内部；不得绕过能力契约直触资源出生点
 function checkShellBoundary() {
-  const internalImport = /from\s+["'][^"']*capabilities\/(browser|terminal|workspace|bookmark)\/state\//
+  const internalImport = /from\s+["'][^"']*capabilities\/(browser|grid|terminal|workspace|bookmark)\/state\//
   const importViolations = []
   const lifecycleViolations = []
   let scanned = 0
@@ -267,10 +276,10 @@ function negativeFixtures() {
   else bad('BR-06b', '公开意图入口被误判为违规，会逼使 Shell 绕过能力')
 
   // 负例 B：把出生点的闸摘掉 → BR-03 必须能检出
-  const cap = CAPABILITIES[0]
+  const cap = CAPABILITIES.find((x) => x.id === 'grid')
   const ep = cap.entrypoints[0]
   const storeSrc = stripComments(read(ep.file))
-  const removed = storeSrc.replace(/if \(!isBrowserResourceAllowed\(\)\) \{[\s\S]*?\n  \}\n/, '')
+  const removed = storeSrc.replace(/if \(!isGridResourceAllowed\(\)\) \{[\s\S]*?\n    \}\n/, '')
   const gIdx = removed.indexOf(`${cap.guardFn}()`)
   const bIdx = removed.indexOf(ep.birth)
   const stillGuarded = gIdx >= 0 && gIdx < bIdx
