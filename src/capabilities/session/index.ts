@@ -28,4 +28,3 @@ export const sessionCapability = {
   },
 }
 
-export { useSessionStore } from "./state/useSessionStore"
