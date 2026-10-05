@@ -63,12 +63,12 @@ owner_implementations:
   useScriptStore:
     symbol: useScriptStore
     paths:
-      - src/capabilities/workspace/state/useScriptStore.ts
+      - src/capabilities/script/state/useScriptStore.ts
       - src/stores/useScriptStore.ts
   useSnippetStore:
     symbol: useSnippetStore
     paths:
-      - src/capabilities/workspace/state/useSnippetStore.ts
+      - src/capabilities/script/state/useSnippetStore.ts
       - src/stores/useSnippetStore.ts
   useBookmarkStore:
     symbol: useBookmarkStore
@@ -157,7 +157,7 @@ owner_implementations:
     # Browser 子域：历史会话存档（M1-9）。owner = browser capability。
     symbol: useSessionStore
     paths:
-      - src/capabilities/browser/state/useSessionStore.ts
+      - src/capabilities/session/state/useSessionStore.ts
   useGridArchiveStore:
     # Browser 子域：宫格回复归档（M2-2.a）。owner = browser capability。
     symbol: useGridArchiveStore
