@@ -6,7 +6,7 @@ export const credentialManifest: CapabilityDefinition = {
   category: "CAPABILITY",
   provides: ["credential.save", "credential.get", "credential.delete"],
   dependsOn: ["bridge"],
-  optionalDependencies: [],
+  optionalDependencies: ["browser"],
   lifecycle: {
     supported: ["ACTIVE"],
     default: "ACTIVE",
@@ -36,11 +36,11 @@ export const credentialManifest: CapabilityDefinition = {
       "scripts/check-native-capability-boundaries.mjs",
     ],
     dependencies: ["bridge"],
-    optionalDependencies: [],
+    optionalDependencies: ["browser"],
     conflicts: [],
     provides: ["credential.save", "credential.get", "credential.delete"],
     requires: [],
-    contributions: [],
+    contributions: [{ id: "credential.list", slot: "bookmark-credentials", type: "surface" }],
     permissions: ["keyring.access"],
     resources: [
       { kind: "KEYRING", ownership: "owned", evidence: "src-tauri/src/security_policy.rs" },
