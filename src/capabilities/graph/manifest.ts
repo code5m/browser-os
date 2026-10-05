@@ -25,7 +25,7 @@ export const graphManifest: CapabilityDefinition = {
     "graph.stats",
   ],
   dependsOn: ["bridge"],
-  optionalDependencies: ["agent"],
+  // Agent ids are graph payload data; Graph does not depend on Agent runtime code.\n  optionalDependencies: [],
   lifecycle: {
     supported: ["ACTIVE", "SUSPENDED"],
     default: "ACTIVE",
@@ -56,7 +56,7 @@ export const graphManifest: CapabilityDefinition = {
     maturity: "C2",
     maturityEvidence: ["scripts/check-graph-policy.py", "scripts/check-graph-ui-logic.mjs"],
     dependencies: ["bridge"],
-    optionalDependencies: ["agent"],
+    optionalDependencies: [],
     conflicts: [],
     provides: ["graph.query", "graph.node.get", "graph.stats"],
     requires: [],
