@@ -3,7 +3,6 @@ import { computed, onMounted, onErrorCaptured, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { bridge } from "./bridge";
 import { useBrowserStore } from "./capabilities/browser/public";
-import { useGridStore } from "./capabilities/grid/public";
 import { useResourceStore } from "./capabilities/browser/public";
 import { useSessionStore } from "./capabilities/session/public";
 import { useWorkspaceStore } from "./capabilities/workspace/public";
@@ -25,7 +24,6 @@ import { contributionRegistry } from "./capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "./capability/contribution/types";
 
 const browser = useBrowserStore();
-const grid = useGridStore();
 const resources = useResourceStore();
 const session = useSessionStore();
 const ws = useWorkspaceStore();
@@ -217,7 +215,7 @@ onMounted(async () => {
       else layout.activateTerm();
     } else if (matchKey(e, km.grid)) {
       e.preventDefault();
-      grid.activateGrid();
+      layout.openModule("grid");
     } else if (matchKey(e, km.home)) {
       e.preventDefault();
       layout.openModule("home");
@@ -237,7 +235,7 @@ onMounted(async () => {
   window.addEventListener("keydown", onGlobalKeydown);
 
   // STAGE H-C：改走 browser 能力 public 动作，Shell 不再直连 native 销毁重资源（NATIVE-03）。
-  window.addEventListener("beforeunload", () => { void grid.closeGrid().catch(() => {}); void browser.closeBrowser().catch(() => {}); });
+  window.addEventListener("beforeunload", () => browser.closeBrowser().catch(() => {}));
   // M1-9：前端卸载前 flush（与后端 ShutdownCoordinator 的 flush-sessions 双保险）
   window.addEventListener("beforeunload", () => bridge.flushSessions().catch(() => {}));
   window.addEventListener("click", art.closeCtx);
