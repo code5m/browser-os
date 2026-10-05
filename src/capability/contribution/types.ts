@@ -30,6 +30,8 @@ export interface ContributionSlots {
   readonly ADDRESS_BAR_ACTIONS: "address-bar-actions"
   /** 顶部工具栏尾部（收藏夹入口按钮等） */
   readonly ACTIVITY_BAR_TRAILING: "activity-bar-trailing"
+  readonly ACTIVITY_BAR_NAV: "activity-bar-nav"
+  readonly ACTIVITY_BAR_ROWS: "activity-bar-rows"
   /** 主工作区视图槽：能力按 `view`（=layout.mainView 值）认领一个主视图；Shell 只按 view 渲染 */
   readonly WORKBENCH_MAIN: "workbench-main"
   /**
@@ -69,6 +71,8 @@ export const CONTRIBUTION_SLOTS = {
   BROWSER_SIDEBAR: "browser-sidebar",
   ADDRESS_BAR_ACTIONS: "address-bar-actions",
   ACTIVITY_BAR_TRAILING: "activity-bar-trailing",
+  ACTIVITY_BAR_NAV: "activity-bar-nav",
+  ACTIVITY_BAR_ROWS: "activity-bar-rows",
   WORKBENCH_MAIN: "workbench-main",
   WORKBENCH_MAIN_RESIDENT: "workbench-main-resident",
   BROWSER_HOST: "browser-host",
