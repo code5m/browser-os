@@ -31,6 +31,13 @@ export function createLegacyHostAdapters(
     get recentlyClosed() { return useBrowserStore().recentlyClosed },
     get aiNavOpen() { return useBrowserStore().aiNavOpen },
     openTab(url: string) { return useBrowserStore().tabNew(url) },
+    async captureTextPreview(tabId: string) {
+      const text = await bridge.evalInTab(
+        tabId,
+        "(document.body && document.body.innerText ? document.body.innerText.slice(0, 2000) : '')",
+      )
+      return typeof text === 'string' ? text : ''
+    },
     activateGrid() { return useBrowserStore().activateGrid() },
     setAiNavOpen(value: boolean) { useBrowserStore().aiNavOpen = value },
     adoptRestoredTab(tab: unknown) {
