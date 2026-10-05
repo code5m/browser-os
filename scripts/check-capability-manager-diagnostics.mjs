@@ -12,7 +12,7 @@ const requireText = (needle, label) => { if (!panel.includes(needle)) failures.p
 requireText("CAPABILITY_CATALOG", "Manager must read canonical catalog");
 requireText("CAPABILITY_DEFINITIONS", "Manager must read runtime definitions");
 requireText("contributionRegistry", "Manager must read live contributions");
-requireText("getCapabilityRuntime", "Manager must read live runtime");
+requireText("peekCapabilityRuntime", "Manager must read live runtime");
 requireText("manifest.id", "missing capability id diagnostic");
 requireText("manifest.displayName", "missing display name diagnostic");
 requireText("manifest.maturity", "missing maturity diagnostic");
