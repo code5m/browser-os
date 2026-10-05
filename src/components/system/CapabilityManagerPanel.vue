@@ -97,7 +97,6 @@ const rows = computed(() => {
     ]
     return { manifest, record, definition, kindLabel, dependent, contributions, blockedReason,
       persistenceState, sourceOwnership, suspendable, disableable, diagnostics }
-  }
   })
 })
 
