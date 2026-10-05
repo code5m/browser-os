@@ -4,8 +4,11 @@ export interface BrowserContextPort {
   readonly activeTabId: string
   readonly activeUrl: string
   readonly recentlyClosed: readonly { url: string; title?: string }[]
+  readonly aiNavOpen: boolean
   openTab(url: string): Promise<unknown>
   adoptRestoredTab(tab: unknown): void
+  activateGrid(): Promise<void>
+  setAiNavOpen(value: boolean): void
 }
 
 export interface HostServiceRegistry {
