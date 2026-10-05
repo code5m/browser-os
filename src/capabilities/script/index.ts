@@ -33,4 +33,3 @@ export const scriptCapability = {
     onActivate: registerScriptContributions,
   },
 }
-
