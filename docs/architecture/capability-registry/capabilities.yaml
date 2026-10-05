@@ -185,7 +185,7 @@ capabilities:
       - credential.delete
     dependsOn:
       - bridge
-    optionalDependencies: []
+    optionalDependencies: [browser]
     lifecycle:
       supported: [ACTIVE]
       default: ACTIVE
