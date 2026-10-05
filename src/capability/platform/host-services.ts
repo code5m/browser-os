@@ -6,6 +6,7 @@ export interface BrowserContextPort {
   readonly recentlyClosed: readonly { url: string; title?: string }[]
   readonly aiNavOpen: boolean
   openTab(url: string): Promise<unknown>
+  captureTextPreview(tabId: string): Promise<string>
   adoptRestoredTab(tab: unknown): void
   activateGrid(): Promise<void>
   setAiNavOpen(value: boolean): void
