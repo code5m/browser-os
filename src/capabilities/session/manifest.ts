@@ -6,7 +6,7 @@ export const sessionManifest: CapabilityDefinition = {
   category: "CAPABILITY",
   provides: ["session.persist", "session.restore"],
   dependsOn: ["bridge"],
-  optionalDependencies: ["browser"],
+  optionalDependencies: [],
   lifecycle: {
     supported: ["ACTIVE"],
     default: "ACTIVE",
@@ -36,7 +36,7 @@ export const sessionManifest: CapabilityDefinition = {
       "scripts/check-native-capability-boundaries.mjs",
     ],
     dependencies: ["bridge"],
-    optionalDependencies: ["browser"],
+    optionalDependencies: [],
     conflicts: [],
     provides: ["session.persist", "session.restore"],
     requires: [],
