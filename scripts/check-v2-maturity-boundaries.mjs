@@ -51,6 +51,23 @@ const promoted = {
       "src/capabilities/browser/ui/SessionPanel.vue",
     ],
   },
+  grid: {
+    owner: "useGridStore",
+    required: [
+      "src/capabilities/grid/manifest.ts",
+      "src/capabilities/grid/index.ts",
+      "src/capabilities/grid/public.ts",
+      "src/capabilities/grid/state/useGridStore.ts",
+      "src/capabilities/grid/state/useGridArchiveStore.ts",
+      "src/capabilities/grid/ui/GridNav.vue",
+      "src/capabilities/grid/ui/GridRows.vue",
+      "src/capabilities/grid/composables/useGridHost.ts",
+    ],
+    forbidden: [
+      "src/capabilities/browser/state/useGridArchiveStore.ts",
+      "src/capabilities/browser/ui/GridArchiveBar.vue",
+    ],
+  },
   workbench: {
     owner: "useWorkbenchStore",
     required: [
@@ -117,8 +134,19 @@ for (const [name, path] of [
 
 if (/from:\s*credential[^\n}]*to:\s*browser/.test(dependencies)) fail("credential->browser dependency edge is forbidden");
 if (/from:\s*session[^\n}]*to:\s*browser/.test(dependencies)) fail("session->browser dependency edge is forbidden");
+if (!/from:\s*grid[^\n}]*to:\s*browser/.test(dependencies)) fail("grid->browser public dependency edge missing");
+if (!/from:\s*grid[^\n}]*to:\s*bridge/.test(dependencies)) fail("grid->bridge infrastructure edge missing");
+if (/from:\s*browser[^\n}]*to:\s*grid/.test(dependencies)) fail("browser->grid reverse dependency edge is forbidden");
 if (/from:\s*workbench[^\n}]*to:\s*browser/.test(dependencies)) fail("workbench->browser dependency edge is forbidden after Host Service decoupling");
 if (!/from:\s*workbench[^\n}]*to:\s*bridge/.test(dependencies)) fail("workbench->bridge infrastructure edge missing");
+
+const browserStore = read("src/capabilities/browser/state/useBrowserStore.ts");
+for (const forbidden of ["gridOpen", "gridSession", "gridCount", "gridUrls", "gridLayout", "gridMode", "buildGrid", "closeGridAll", "activateGrid"]) {
+  if (browserStore.includes(forbidden)) fail("browser store still owns Grid symbol: " + forbidden);
+}
+const gridStore = read("src/capabilities/grid/state/useGridStore.ts");
+if (!gridStore.includes('from "../../browser/public"')) fail("grid must depend on Browser through public contract");
+if (/from\s+["'][^"']*browser\/(?:state|ui|resource)/.test(gridStore)) fail("grid must not import Browser internals");
 
 const compat = read("src/stores/useWorkbenchStore.ts");
 if (!compat.includes('export { useWorkbenchStore } from "../capabilities/workbench/public"')) {
@@ -133,4 +161,4 @@ if (failures.length) {
   console.error("V2_P0_MATURITY_BOUNDARY_RESULT=FAIL");
   process.exit(1);
 }
-console.log("V2_P0_MATURITY_BOUNDARY_RESULT=PASS promoted=script,credential,session,workbench");
+console.log("V2_P0_MATURITY_BOUNDARY_RESULT=PASS promoted=script,credential,session,workbench,grid");
