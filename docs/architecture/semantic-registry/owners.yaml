@@ -317,7 +317,7 @@ owners:
       - useSnippetStore（owner 自身）
       - useTaskStore（只读 targets 候选：snippets）
     rationale: |
-      Phase 8C-0D 将命令片段库 CRUD 从 useWorkspaceStore 抽出为独立 owner（useSnippetStore），后端持久化（snippetList/Add/Update/Remove）。
+      Phase 8C-0D 将命令片段库 CRUD 从 useWorkspaceStore 抽出为独立 owner（useSnippetStore）；Capability Platform v2 将该 owner/UI 物理迁入 src/capabilities/script/，与 script.snippet 契约一致。
       与 SCRIPT 独立（不同后端命令/表），二者同属 Developer 家族但不合并。
     status: CURRENT_FACT
 
