@@ -6,7 +6,7 @@
 
 import type { CapabilityManifestV1 } from "./contract";
 import { discoverCapabilities } from "./discovery";
-import { GENERATED_DEFINITIONS, GENERATED_MANIFESTS } from "./generated-registry";
+import { GENERATED_CANONICAL_METADATA, GENERATED_DEFINITIONS, GENERATED_MANIFESTS } from "./generated-registry";
 import { LEGACY_DEFINITION_SOURCES } from './legacy-definitions';
 
 /** 已具备 Building Block Contract v1 的能力清单（未声明 v1 的能力不进 catalog） */
@@ -43,3 +43,6 @@ export function ownersOfResource(kind: string): string[] {
     .map((m) => m.id)
     .sort();
 }
+
+/** V2 canonical metadata view. Source of truth remains each capability manifest.ts. */
+export const CANONICAL_CAPABILITY_METADATA = GENERATED_CANONICAL_METADATA;
