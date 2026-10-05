@@ -42,13 +42,11 @@ export const sessionManifest: CapabilityDefinition = {
     requires: [],
     contributions: [{ id: "session.dock", slot: "browser-dock", type: "surface", view: "session" }],
     permissions: ["fs.write"],
-    resources: [
-      { kind: "PERSISTENCE", ownership: "owned", evidence: "src-tauri/src/capabilities/session/commands.rs" },
-    ],
+    resources: [],
     persistenceScope: "disk",
     persistenceSensitive: false,
     activationPolicy: "auto",
-    deactivationPolicy: "resident",
+    deactivationPolicy: "reject",
     installPolicy: "static",
     uninstallPolicy: "static",
     hotPlug: {
