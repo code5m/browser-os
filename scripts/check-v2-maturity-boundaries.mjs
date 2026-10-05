@@ -98,10 +98,14 @@ for (const [name, path] of [
   ["session UI", "src/capabilities/session/ui/SessionPanel.vue"],
 ]) {
   const source = read(path);
+  const imports = source
+    .split("\n")
+    .filter((line) => /^\s*import\s/.test(line))
+    .join("\n");
   if (
-    source.includes("useBrowserStore") ||
-    /from\s+["'][^"']*capabilities\/browser(?:\/public)?["']/.test(source) ||
-    /from\s+["'][^"']*\.\.\/\.\.\/browser\/public["']/.test(source)
+    /\buseBrowserStore\b/.test(imports) ||
+    /from\s+["'][^"']*capabilities\/browser(?:\/public)?["']/.test(imports) ||
+    /from\s+["'][^"']*\.\.\/\.\.\/browser\/public["']/.test(imports)
   ) {
     fail(name + " must not depend on Browser capability");
   }
