@@ -21,6 +21,7 @@
 import { BOOKMARK_CAPABILITY_ID } from '../capabilities/bookmark'
 import { WORKSPACE_CAPABILITY_ID } from '../capabilities/workspace'
 import { BROWSER_CAPABILITY_ID } from '../capabilities/browser'
+import { SESSION_CAPABILITY_ID } from '../capabilities/session'
 import { TERMINAL_CAPABILITY_ID } from '../capabilities/terminal'
 import { GIT_CAPABILITY_ID } from '../capabilities/git'
 import { DATABASE_CAPABILITY_ID } from '../capabilities/database'
@@ -48,6 +49,7 @@ export const CAPABILITY_PROFILES: Record<CapabilityProfileId, string[]> = {
     BOOKMARK_CAPABILITY_ID,
     WORKSPACE_CAPABILITY_ID,
     BROWSER_CAPABILITY_ID,
+    SESSION_CAPABILITY_ID,
     TERMINAL_CAPABILITY_ID,
     CREDENTIAL_CAPABILITY_ID,
     CREDENTIAL_CAPABILITY_ID,
@@ -58,6 +60,7 @@ export const CAPABILITY_PROFILES: Record<CapabilityProfileId, string[]> = {
     BOOKMARK_CAPABILITY_ID,
     WORKSPACE_CAPABILITY_ID,
     BROWSER_CAPABILITY_ID,
+    SESSION_CAPABILITY_ID,
     TERMINAL_CAPABILITY_ID,
     GIT_CAPABILITY_ID,
     DATABASE_CAPABILITY_ID,
