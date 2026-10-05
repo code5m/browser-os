@@ -148,6 +148,23 @@ const gridStore = read("src/capabilities/grid/state/useGridStore.ts");
 if (!gridStore.includes('from "../../browser/public"')) fail("grid must depend on Browser through public contract");
 if (/from\s+["'][^"']*browser\/(?:state|ui|resource)/.test(gridStore)) fail("grid must not import Browser internals");
 
+
+const gridIndex = read("src/capabilities/grid/index.ts");
+if (!gridIndex.includes('slot: "activity-bar-nav"')) fail("grid navigation contribution slot missing");
+if (!gridIndex.includes('slot: "activity-bar-rows"')) fail("grid rows contribution slot missing");
+const activityBar = read("src/components/layout/ActivityBar.vue");
+if (activityBar.includes("useGridStore") || /from\s+["'][^"']*capabilities\/grid/.test(activityBar)) {
+  fail("Shell ActivityBar must consume generic slots, not Grid internals");
+}
+const mainArea = read("src/components/layout/MainArea.vue");
+if (mainArea.includes("useGridStore") || /from\s+["'][^"']*capabilities\/grid/.test(mainArea)) {
+  fail("Shell MainArea must not import Grid capability");
+}
+const appShell = read("src/App.vue");
+if (appShell.includes("useGridStore") || /from\s+["'][^"']*capabilities\/grid/.test(appShell)) {
+  fail("Shell App must not import Grid capability");
+}
+
 const compat = read("src/stores/useWorkbenchStore.ts");
 if (!compat.includes('export { useWorkbenchStore } from "../capabilities/workbench/public"')) {
   fail("legacy workbench store path must be a pure public re-export");
