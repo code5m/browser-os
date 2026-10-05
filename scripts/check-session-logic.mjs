@@ -58,6 +58,7 @@ const ROOT = new URL("..", import.meta.url).pathname;
 const { bridge } = await import(`${ROOT}src/bridge.ts`);
 const { useSessionStore } = await import(`${ROOT}src/capabilities/session/state/useSessionStore.ts`);
 const { useBrowserStore } = await import(`${ROOT}src/capabilities/browser/state/useBrowserStore.ts`);
+const { hostServices } = await import(`${ROOT}src/capability/platform/host-services.ts`);
 const { createPinia, setActivePinia } = await import(
   `${ROOT}node_modules/pinia/dist/pinia.mjs`
 );
@@ -169,6 +170,20 @@ function callOrder() {
 setActivePinia(createPinia());
 const session = useSessionStore();
 const browser = useBrowserStore();
+hostServices.register("browser-context", {
+  get activeTabId() { return browser.activeTabId; },
+  get activeUrl() { return browser.activeTab?.url || browser.url || ""; },
+  get recentlyClosed() { return browser.recentlyClosed; },
+  get aiNavOpen() { return browser.aiNavOpen; },
+  openTab(url) { return browser.tabNew(url); },
+  evalInTab(tabId, script) { return bridge.evalInTab(tabId, script); },
+  adoptRestoredTab(tab) {
+    browser.tabs.push(tab);
+    browser.activeTabId = tab.id;
+  },
+  activateGrid() { return browser.activateGrid(); },
+  setAiNavOpen(value) { browser.aiNavOpen = value; },
+});
 
 // ================= 0) 确定性门禁：已撤销的关闭协议表面必须不存在 =================
 // 任何重新引入这些符号的代码都必须让本组断言 FAIL（防止普通关闭再次触发 prompt/save）。
