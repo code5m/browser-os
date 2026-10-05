@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ref, reactive, computed, nextTick, watch } from "vue";
 import { bridge } from "../../../bridge";
+import { isBrowserResourceAllowed } from "../resource/guard";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { recordRecentUrl } from "../../../composables/recentsNav";
 import type { RecentlyClosedEntry, TabRecoveryEvent } from "../../../types";
@@ -52,6 +53,10 @@ export const useBrowserStore = defineStore("browser", () => {
   );
 
   async function tabNew(target?: string) {
+    if (!isBrowserResourceAllowed()) {
+      bridge.debugLog("tabNew refused: browser capability not ACTIVE");
+      return;
+    }
     const u = target === undefined ? "about:blank" : target.trim() || "about:blank";
     // 网页内 target=_blank / window.open 触发的新页签：若当前不在浏览器视图则切过去
     if (!layout.isBrowserView()) layout.setView("browser");
