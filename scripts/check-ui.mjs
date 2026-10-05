@@ -39,7 +39,7 @@ const ALLOWED_FIXED = [
   { file: "src/styles/global.css", selector: ".home-modal-mask", reason: "主页编辑弹窗" },
   { file: "src/shared/ui/PermissionPreviewModal.vue", selector: ".modal-mask", reason: "权限预览 modal" },
   { file: "src/components/workspace/RunHistoryModal.vue", selector: ".modal-mask", reason: "运行历史 modal" },
-  { file: "src/capabilities/workspace/ui/ScriptRunDialog.vue", selector: ".run-mask", reason: "脚本运行对话框" },
+  { file: "src/capabilities/script/ui/ScriptRunDialog.vue", selector: ".run-mask", reason: "脚本运行对话框（V2 物理迁移，批准数量不变）" },
   { file: "src/capabilities/home/ui/HomeShortcutEditor.vue", selector: ".hs-mask", reason: "主页快捷键编辑器" },
   { file: "src/capabilities/plugin/ui/PluginManager.vue", selector: ".pm-modal", reason: "插件管理 modal" },
 ];
