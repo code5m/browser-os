@@ -1,6 +1,5 @@
 import { nextTick, type Ref } from "vue";
 import { bridge } from "../../../bridge";
-import { useBrowserStore } from "../../browser/public";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { useGridStore } from "../public";
 import {
@@ -12,18 +11,15 @@ import {
 } from "../../../utils/browserLayout";
 import {
   createGridSendCache,
-  createHiddenIntent,
   createBoundedRetrier,
   gridPositionSignature,
   hasNonZeroSize,
 } from "../../../utils/browserSync";
 
 const gridCache = createGridSendCache();
-const hiddenIntent = createHiddenIntent();
 const gridRetrier = createBoundedRetrier();
 
 export function useGridHost(browserHost: Ref<HTMLElement | null>) {
-  const browser = useBrowserStore();
   const grid = useGridStore();
   const layout = useLayoutStore();
 
@@ -43,7 +39,7 @@ export function useGridHost(browserHost: Ref<HTMLElement | null>) {
       }
       return;
     }
-    if (gridCache.syncSession(grid.gridSession)) hiddenIntent.reset();
+    gridCache.syncSession(grid.gridSession);
     const n = grid.gridCount;
     const mode = grid.gridLayout as GridLayoutMode;
     const refWidth = r.width;
@@ -60,9 +56,6 @@ export function useGridHost(browserHost: Ref<HTMLElement | null>) {
         });
       }
       bridge.gridSetZoom(i, normalizeZoom(cell.w, refWidth)).catch(() => {});
-    }
-    if (browser.activeTabId && hiddenIntent.shouldHide(browser.activeTabId)) {
-      bridge.hideWebview(browser.activeTabId).catch(() => {});
     }
   }
 
