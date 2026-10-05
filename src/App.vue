@@ -49,11 +49,9 @@ const aiNavPanelComp = computed(() => contributionRegistry.getSurfaceContributio
   CONTRIBUTION_SLOTS.AI_NAV_PANEL,
 )[0]?.component)
 const workbenchCommandsComp = computed(() => contributionRegistry
-  .getSurfaceContributions(CONTRIBUTION_SLOTS.COMMANDS)
-  .find((c) => c.id === "workbench.commands")?.component)
+  .getSurfaceContributions(CONTRIBUTION_SLOTS.COMMANDS)[0]?.component)
 const workbenchRailComp = computed(() => contributionRegistry
-  .getSurfaceContributions(CONTRIBUTION_SLOTS.SIDEBAR)
-  .find((c) => c.id === "workbench.rail")?.component)
+  .getSurfaceContributions(CONTRIBUTION_SLOTS.SIDEBAR)[0]?.component)
 
 // W17(A7): 外壳级兜底状态——启动遮罩与渲染错误兜底（纯展示，不引入运行时行为）。
 const ready = ref(false);
