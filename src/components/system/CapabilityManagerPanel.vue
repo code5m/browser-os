@@ -75,21 +75,29 @@ const rows = computed(() => {
       .map((candidate) => candidate.id)
     const contributions = contributionRegistry.getByCapability(manifest.id)
     const blockedReason = unavailableReason(manifest, record)
-    return {
-      manifest,
-      record,
-      definition,
-      kindLabel: manifest.kind || (definition?.category === "SERVICE" ? "service" : "feature"),
-      dependent,
-      contributions,
-      blockedReason,
-      persistenceState: stored.enabled[manifest.id] === undefined
-        ? "default"
-        : stored.enabled[manifest.id] ? "enabled" : "disabled",
-      sourceOwnership: manifest.entrypoint || definition?.entrypoint || "unknown",
-      suspendable: !!record && isSuspendable(record),
-      disableable: !!record && !blockedReason && isCapabilityToggleSafe(manifest),
-    }
+    const kindLabel = manifest.kind || (definition?.category === "SERVICE" ? "service" : "feature")
+    const persistenceState = stored.enabled[manifest.id] === undefined
+      ? "default"
+      : stored.enabled[manifest.id] ? "enabled" : "disabled"
+    const sourceOwnership = manifest.entrypoint || definition?.entrypoint || "unknown"
+    const suspendable = !!record && isSuspendable(record)
+    const disableable = !!record && !blockedReason && isCapabilityToggleSafe(manifest)
+    const diagnostics = [
+      `分类：${kindLabel} · 成熟度：${manifest.maturity}`,
+      `Owner：${manifest.semanticOwner || definition?.semanticOwner || "未登记"}`,
+      `依赖：${manifest.dependencies.join(", ") || "无"}`,
+      `可选依赖：${manifest.optionalDependencies.join(", ") || "无"}`,
+      `被依赖：${dependent.join(", ") || "无"}`,
+      `贡献：${contributions.map((item) => item.id).join(", ") || "无"}`,
+      `可暂停：${suspendable ? "是" : "否"} · 可停用：${disableable ? "是" : "否"}`,
+      `激活耗时：${record?.activationDurationMs ?? "—"} ms · 持久化：${persistenceState}`,
+      `来源：${sourceOwnership}`,
+      `最近错误：${record?.lastError || "无"}`,
+      ...(blockedReason ? [`阻塞原因：${blockedReason}`] : []),
+    ]
+    return { manifest, record, definition, kindLabel, dependent, contributions, blockedReason,
+      persistenceState, sourceOwnership, suspendable, disableable, diagnostics }
+  }
   })
 })
 
@@ -123,23 +131,12 @@ async function transition(id: string, action: CapabilityManagerAction) {
         <div class="capability-main"><strong>{{ row.manifest.displayName }}</strong><small>{{ row.manifest.id }} · v{{ row.manifest.version }} · {{ row.kindLabel }}</small></div>
         <span class="capability-state">{{ stateLabel(row.manifest, row.record) }}</span>
         <div class="capability-diagnostics">
-          <span>分类：{{ row.kindLabel }} · 成熟度：{{ row.manifest.maturity }}</span>
-          <span>Owner：{{ row.manifest.semanticOwner || row.definition?.semanticOwner || "未登记" }}</span>
-          <span>依赖：{{ row.manifest.dependencies.join(", ") || "无" }}</span>
-          <span>可选依赖：{{ row.manifest.optionalDependencies.join(", ") || "无" }}</span>
-          <span>被依赖：{{ row.dependent.join(", ") || "无" }}</span>
-          <span>贡献：{{ row.contributions.map((item) => item.id).join(", ") || "无" }}</span>
-          <span>可暂停：{{ row.suspendable ? "是" : "否" }} · 可停用：{{ row.disableable ? "是" : "否" }}</span>
-          <span>激活耗时：{{ row.record?.activationDurationMs ?? "—" }} ms · 持久化：{{ row.persistenceState }}</span>
-          <span>来源：{{ row.sourceOwnership }}</span>
-          <span>最近错误：{{ row.record?.lastError || "无" }}</span>
-          <span v-if="row.blockedReason">阻塞原因：{{ row.blockedReason }}</span>
+          <span v-for="item in row.diagnostics" :key="item">{{ item }}</span>
         </div>
         <div class="capability-actions">
           <button v-if="row.record?.enabled && row.record.state === 'SUSPENDED'" :disabled="actionDisabled(row.manifest, row.record, 'resume')" @click="transition(row.manifest.id, 'resume')">恢复</button>
           <button :disabled="actionDisabled(row.manifest, row.record)" :title="unavailableReason(row.manifest, row.record)" @click="transition(row.manifest.id, nextAction(row.record))">{{ actionLabel(row.manifest, row.record) }}</button>
         </div>
-        <small v-if="row.blockedReason">{{ row.blockedReason }}</small>
       </article>
     </div>
   </section>
