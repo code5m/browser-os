@@ -89,11 +89,7 @@ export const useSessionStore = defineStore("session", () => {
   // 采集页面最小文本预览（失败回退空串，后端兜底脱敏与截断）
   async function capturePreview(tabId: string): Promise<string> {
     try {
-      const text = await bridge.evalInTab(
-        tabId,
-        "(document.body && document.body.innerText ? document.body.innerText.slice(0, 2000) : '')"
-      );
-      return typeof text === "string" ? text : "";
+      return await hostServices.require<BrowserContextPort>("browser-context").captureTextPreview(tabId);
     } catch {
       return "";
     }
