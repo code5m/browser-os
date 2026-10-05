@@ -18,6 +18,6 @@ export const graphManifest: CapabilityDefinition = defineIntegratedCapability({
   contributions: [{ id: "graph.main.panel", slot: "workbench-main", type: "surface", view: "graph" }],
   publicContract: [{ name: "publicApi", locator: "src/capabilities/graph/public.ts" }],
   deactivationPolicy: "graceful",
-  description: "图谱查询 / 节点获取 / 容量概览（只读）。后端 graph_query/graph_node_get/graph_stats 已实现；无 worker/webview/写盘。",
-  limitationReason: "HP0(STATIC)：图存储为启动期只读载入的内存快照，无独立生命周期可装卸；未验证 absent 无残留前不宣称 HP1。",
+  description: "只读图谱查询、节点获取与容量概览。",
+  limitationReason: "HP0：启动期图快照尚无独立装卸生命周期。",
 })
