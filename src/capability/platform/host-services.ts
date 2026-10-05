@@ -1,4 +1,12 @@
-export type HostServiceId = 'bridge' | 'layout' | 'workbench' | 'graph-layout' | 'redact-secrets'
+export type HostServiceId = 'bridge' | 'layout' | 'workbench' | 'graph-layout' | 'redact-secrets' | 'browser-context'
+
+export interface BrowserContextPort {
+  readonly activeTabId: string
+  readonly activeUrl: string
+  readonly recentlyClosed: readonly { url: string; title?: string }[]
+  openTab(url: string): Promise<unknown>
+  adoptRestoredTab(tab: unknown): void
+}
 
 export interface HostServiceRegistry {
   register<T>(id: HostServiceId, service: T): void
