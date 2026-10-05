@@ -29,7 +29,10 @@ export function createLegacyHostAdapters(
     get activeTabId() { return useBrowserStore().activeTabId },
     get activeUrl() { return useBrowserStore().activeTab?.url || useBrowserStore().url || '' },
     get recentlyClosed() { return useBrowserStore().recentlyClosed },
+    get aiNavOpen() { return useBrowserStore().aiNavOpen },
     openTab(url: string) { return useBrowserStore().tabNew(url) },
+    activateGrid() { return useBrowserStore().activateGrid() },
+    setAiNavOpen(value: boolean) { useBrowserStore().aiNavOpen = value },
     adoptRestoredTab(tab: unknown) {
       const browser = useBrowserStore()
       const restored = tab as { id: string; url?: string }
