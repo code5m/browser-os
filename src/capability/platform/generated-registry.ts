@@ -38,3 +38,15 @@ import { settingsCapability as definition15 } from './../../settings/index'
 export const GENERATED_MANIFESTS: CapabilityManifestV1[] = [manifest0.v1 ?? manifest0, manifest1.v1 ?? manifest1, manifest2.v1 ?? manifest2, manifest3.v1 ?? manifest3, manifest4.v1 ?? manifest4, manifest5.v1 ?? manifest5, manifest6.v1 ?? manifest6, manifest7.v1 ?? manifest7, manifest8.v1 ?? manifest8, manifest9.v1 ?? manifest9, manifest10.v1 ?? manifest10, manifest11.v1 ?? manifest11, manifest12.v1 ?? manifest12, manifest13.v1 ?? manifest13, manifest14.v1 ?? manifest14, manifest15.v1 ?? manifest15, manifest16.v1 ?? manifest16, manifest17.v1 ?? manifest17]
 export const GENERATED_MANIFEST_SOURCES = ["./../../../packages/capability-demo/src/manifest","./../../capabilities/agent/manifest","./../../capabilities/apps/manifest","./../../capabilities/bookmark/manifest","./../../capabilities/browser/manifest","./../../capabilities/database/manifest","./../../capabilities/git/manifest","./../../capabilities/graph/manifest","./../../capabilities/home/manifest","./../../capabilities/plugin/manifest","./../../capabilities/skill/manifest","./../../capabilities/task/manifest","./../../capabilities/terminal/manifest","./../../capabilities/tools/manifest","./../../capabilities/workspace/manifest","./../../settings/manifest","@browser-os/capability-clipboard/manifest","@browser-os/capability-vault/manifest"] as const
 export const GENERATED_DEFINITIONS = { 'demo': definition0, 'agent': definition1, 'apps': definition2, 'bookmark': definition3, 'browser': definition4, 'database': definition5, 'git': definition6, 'graph': definition7, 'home': definition8, 'plugin': definition9, 'skill': definition10, 'task': definition11, 'terminal': definition12, 'tools': definition13, 'workspace': definition14, 'settings': definition15 } as const
+
+export const GENERATED_CANONICAL_METADATA = Object.fromEntries(
+  GENERATED_MANIFESTS.map((manifest) => [manifest.id, {
+    id: manifest.id,
+    displayName: manifest.displayName,
+    maturity: manifest.maturity,
+    dependencies: [...manifest.dependencies],
+    optionalDependencies: [...manifest.optionalDependencies],
+    semanticOwner: manifest.semanticOwner,
+    entrypoint: manifest.entrypoint,
+  }]),
+) as Record<string, Pick<CapabilityManifestV1, 'id' | 'displayName' | 'maturity' | 'dependencies' | 'optionalDependencies' | 'semanticOwner' | 'entrypoint'>>
