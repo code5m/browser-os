@@ -41,7 +41,7 @@ export const browserManifest: CapabilityDefinition = {
     id: "browser",
     version: "1.0.0",
     displayName: "浏览器",
-    description: "多页签浏览器宿主、网络资源瀑布与会话面板；持有最重资源（原生 WebView + 子进程）。",
+    description: "多页签浏览器宿主、网络资源瀑布与 Grid heavy 子资源面；Session 已独立为可选展示能力。",
     maturity: "C3",
     maturityEvidence: ["scripts/check-browser-runtime.mjs", "scripts/check-composition-profiles.mjs", "scripts/measure-resources.mjs"],
     dependencies: [],
@@ -52,7 +52,6 @@ export const browserManifest: CapabilityDefinition = {
     contributions: [
       { id: "browser.host", slot: "browser-host", type: "surface" },
       { id: "browser.dock.net", slot: "browser-dock", type: "surface", view: "net" },
-      { id: "browser.dock.session", slot: "browser-dock", type: "surface", view: "session" },
     ],
     permissions: ["webview.create"],
     resources: [
