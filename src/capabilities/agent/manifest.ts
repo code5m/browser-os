@@ -19,7 +19,8 @@ export const agentManifest: CapabilityDefinition = {
     "agent.memory",
   ],
   dependsOn: ["bridge"],
-  // Graph nodes may reference Agent ids as data; this is not a runtime dependency.\n  optionalDependencies: [],
+  // Graph nodes may reference Agent ids as data; this is not a runtime dependency.
+  optionalDependencies: [],
   lifecycle: {
     supported: ["ACTIVE", "SUSPENDED"],
     default: "ACTIVE",
