@@ -298,8 +298,7 @@ capabilities:
       - agent.memory
     dependsOn:
       - bridge
-    optionalDependencies:
-      - graph
+    optionalDependencies: []
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
@@ -393,8 +392,7 @@ capabilities:
       - graph.stats
     dependsOn:
       - bridge
-    optionalDependencies:
-      - agent
+    optionalDependencies: []
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
