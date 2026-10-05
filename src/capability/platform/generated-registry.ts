@@ -10,14 +10,15 @@ import { gitManifest as manifest6 } from './../../capabilities/git/manifest'
 import { graphManifest as manifest7 } from './../../capabilities/graph/manifest'
 import { homeManifest as manifest8 } from './../../capabilities/home/manifest'
 import { pluginManifest as manifest9 } from './../../capabilities/plugin/manifest'
-import { skillManifest as manifest10 } from './../../capabilities/skill/manifest'
-import { taskManifest as manifest11 } from './../../capabilities/task/manifest'
-import { terminalManifest as manifest12 } from './../../capabilities/terminal/manifest'
-import { toolsManifest as manifest13 } from './../../capabilities/tools/manifest'
-import { workspaceManifest as manifest14 } from './../../capabilities/workspace/manifest'
-import { settingsManifest as manifest15 } from './../../settings/manifest'
-import { clipboardManifest as manifest16 } from '@browser-os/capability-clipboard/manifest'
-import { vaultManifest as manifest17 } from '@browser-os/capability-vault/manifest'
+import { scriptManifest as manifest10 } from './../../capabilities/script/manifest'
+import { skillManifest as manifest11 } from './../../capabilities/skill/manifest'
+import { taskManifest as manifest12 } from './../../capabilities/task/manifest'
+import { terminalManifest as manifest13 } from './../../capabilities/terminal/manifest'
+import { toolsManifest as manifest14 } from './../../capabilities/tools/manifest'
+import { workspaceManifest as manifest15 } from './../../capabilities/workspace/manifest'
+import { settingsManifest as manifest16 } from './../../settings/manifest'
+import { clipboardManifest as manifest17 } from '@browser-os/capability-clipboard/manifest'
+import { vaultManifest as manifest18 } from '@browser-os/capability-vault/manifest'
 import { demoCapability as definition0 } from './../../../packages/capability-demo/src/index'
 import { agentCapability as definition1 } from './../../capabilities/agent/index'
 import { appsCapability as definition2 } from './../../capabilities/apps/index'
@@ -28,17 +29,17 @@ import { gitCapability as definition6 } from './../../capabilities/git/index'
 import { graphCapability as definition7 } from './../../capabilities/graph/index'
 import { homeCapability as definition8 } from './../../capabilities/home/index'
 import { pluginCapability as definition9 } from './../../capabilities/plugin/index'
-import { skillCapability as definition10 } from './../../capabilities/skill/index'
-import { taskCapability as definition11 } from './../../capabilities/task/index'
-import { terminalCapability as definition12 } from './../../capabilities/terminal/index'
-import { toolsCapability as definition13 } from './../../capabilities/tools/index'
-import { workspaceCapability as definition14 } from './../../capabilities/workspace/index'
-import { settingsCapability as definition15 } from './../../settings/index'
+import { scriptCapability as definition10 } from './../../capabilities/script/index'
+import { skillCapability as definition11 } from './../../capabilities/skill/index'
+import { taskCapability as definition12 } from './../../capabilities/task/index'
+import { terminalCapability as definition13 } from './../../capabilities/terminal/index'
+import { toolsCapability as definition14 } from './../../capabilities/tools/index'
+import { workspaceCapability as definition15 } from './../../capabilities/workspace/index'
+import { settingsCapability as definition16 } from './../../settings/index'
 
-export const GENERATED_MANIFESTS: CapabilityManifestV1[] = [manifest0.v1 ?? manifest0, manifest1.v1 ?? manifest1, manifest2.v1 ?? manifest2, manifest3.v1 ?? manifest3, manifest4.v1 ?? manifest4, manifest5.v1 ?? manifest5, manifest6.v1 ?? manifest6, manifest7.v1 ?? manifest7, manifest8.v1 ?? manifest8, manifest9.v1 ?? manifest9, manifest10.v1 ?? manifest10, manifest11.v1 ?? manifest11, manifest12.v1 ?? manifest12, manifest13.v1 ?? manifest13, manifest14.v1 ?? manifest14, manifest15.v1 ?? manifest15, manifest16.v1 ?? manifest16, manifest17.v1 ?? manifest17]
-export const GENERATED_MANIFEST_SOURCES = ["./../../../packages/capability-demo/src/manifest","./../../capabilities/agent/manifest","./../../capabilities/apps/manifest","./../../capabilities/bookmark/manifest","./../../capabilities/browser/manifest","./../../capabilities/database/manifest","./../../capabilities/git/manifest","./../../capabilities/graph/manifest","./../../capabilities/home/manifest","./../../capabilities/plugin/manifest","./../../capabilities/skill/manifest","./../../capabilities/task/manifest","./../../capabilities/terminal/manifest","./../../capabilities/tools/manifest","./../../capabilities/workspace/manifest","./../../settings/manifest","@browser-os/capability-clipboard/manifest","@browser-os/capability-vault/manifest"] as const
-export const GENERATED_DEFINITIONS = { 'demo': definition0, 'agent': definition1, 'apps': definition2, 'bookmark': definition3, 'browser': definition4, 'database': definition5, 'git': definition6, 'graph': definition7, 'home': definition8, 'plugin': definition9, 'skill': definition10, 'task': definition11, 'terminal': definition12, 'tools': definition13, 'workspace': definition14, 'settings': definition15 } as const
-
+export const GENERATED_MANIFESTS: CapabilityManifestV1[] = [manifest0.v1 ?? manifest0, manifest1.v1 ?? manifest1, manifest2.v1 ?? manifest2, manifest3.v1 ?? manifest3, manifest4.v1 ?? manifest4, manifest5.v1 ?? manifest5, manifest6.v1 ?? manifest6, manifest7.v1 ?? manifest7, manifest8.v1 ?? manifest8, manifest9.v1 ?? manifest9, manifest10.v1 ?? manifest10, manifest11.v1 ?? manifest11, manifest12.v1 ?? manifest12, manifest13.v1 ?? manifest13, manifest14.v1 ?? manifest14, manifest15.v1 ?? manifest15, manifest16.v1 ?? manifest16, manifest17.v1 ?? manifest17, manifest18.v1 ?? manifest18]
+export const GENERATED_MANIFEST_SOURCES = ["./../../../packages/capability-demo/src/manifest","./../../capabilities/agent/manifest","./../../capabilities/apps/manifest","./../../capabilities/bookmark/manifest","./../../capabilities/browser/manifest","./../../capabilities/database/manifest","./../../capabilities/git/manifest","./../../capabilities/graph/manifest","./../../capabilities/home/manifest","./../../capabilities/plugin/manifest","./../../capabilities/script/manifest","./../../capabilities/skill/manifest","./../../capabilities/task/manifest","./../../capabilities/terminal/manifest","./../../capabilities/tools/manifest","./../../capabilities/workspace/manifest","./../../settings/manifest","@browser-os/capability-clipboard/manifest","@browser-os/capability-vault/manifest"] as const
+export const GENERATED_DEFINITIONS = { 'demo': definition0, 'agent': definition1, 'apps': definition2, 'bookmark': definition3, 'browser': definition4, 'database': definition5, 'git': definition6, 'graph': definition7, 'home': definition8, 'plugin': definition9, 'script': definition10, 'skill': definition11, 'task': definition12, 'terminal': definition13, 'tools': definition14, 'workspace': definition15, 'settings': definition16 } as const
 export const GENERATED_CANONICAL_METADATA = Object.fromEntries(
   GENERATED_MANIFESTS.map((manifest) => [manifest.id, {
     id: manifest.id,
