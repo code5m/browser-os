@@ -636,7 +636,7 @@ capabilities:
       - workbench.navigation
       - workbench.commands
     dependsOn:
-      - browser
+      - bridge
     optionalDependencies: []
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
