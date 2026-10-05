@@ -1034,14 +1034,14 @@ commands:
     target_boundary: "capability-owned native adapter module (declare + gate)"
   eval_in_tab:
     file: "src-tauri/src/bridge.rs"
-    owner: "browser"
-    category: "CAPABILITY_NATIVE_ADAPTER"
-    callers: "src/capabilities/browser/**"
+    owner: "framework"
+    category: "FRAMEWORK_NATIVE_SERVICE"
+    callers: "src/capabilities/browser/** + src/capabilities/grid/** + src/capability/platform/legacy-host-adapters.ts"
     side_effect: "create/destroy/control native webview"
     resource: "WEBVIEW"
     permission: "-"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
-    target_boundary: "capability-owned native adapter module (declare + gate)"
+    target_boundary: "shared webview execution service; capability state remains owned by callers"
   tab_activate:
     file: "src-tauri/src/bridge.rs"
     owner: "browser"
