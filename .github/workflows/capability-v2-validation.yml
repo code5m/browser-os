@@ -1,0 +1,73 @@
+name: Capability Platform v2 validation
+
+on:
+  push:
+    branches:
+      - feature/capability-platform-v2-maturity
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: capability-v2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y             libwebkit2gtk-4.1-dev             libappindicator3-dev             librsvg2-dev             patchelf
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Capability and architecture checks
+        run: npm run check
+
+      - name: Runtime startup checks
+        run: npm run check:runtime
+
+      - name: Production build
+        run: npm run build
+
+      - name: Rust format
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
+          cargo fmt --manifest-path tauri-browser-tabs/Cargo.toml --all --check
+
+      - name: Rust check
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+      - name: Branch diff whitespace check
+        run: git diff --check origin/master...HEAD -- . ':(exclude)logs/m0-baseline/**'
+
+      - name: Full pre-merge gate
+        env:
+          M0_BASE_REF: origin/master
+        run: bash scripts/pre-merge.sh
