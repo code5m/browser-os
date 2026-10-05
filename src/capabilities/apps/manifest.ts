@@ -20,6 +20,6 @@ export const appsManifest: CapabilityDefinition = defineIntegratedCapability({
   manifestResources: [{ kind: "CHILD_PROCESS", ownership: "owned", evidence: "src-tauri/src/bridge.rs:launch_app (Command::spawn, detached)" }],
   publicContract: [{ name: "publicApi", locator: "src/capabilities/apps/public.ts" }],
   deactivationPolicy: "graceful",
-  description: "系统应用枚举（.desktop 扫描）与启动。启动经 security_policy::check_launch_target 白名单式解析（禁 sh -c）+ 审计。",
-  limitationReason: "HP0(STATIC)：启动的外部应用进程为 detached；无独立生命周期可装卸，未验证 absent 无残留前不宣称 HP1。",
+  description: "系统应用枚举与受策略保护的启动。",
+  limitationReason: "HP0：外部进程 detached，未纳入可逆生命周期。",
 })
