@@ -388,9 +388,12 @@ async function main() {
         `enabled=${bookmark?.enabled} state=${bookmark?.state}`);
       expect(countContributions(contributionRegistry, "bookmark") === 0, "PLT2-20b",
         "持久化停用后 Bookmark 零贡献（无死入口）");
-      expect(!boot.runtime.get("demo") && boot.runtime.get("tools")?.state === "ACTIVE"
-        && boot.runtime.get("home")?.state === "ACTIVE" && boot.runtime.get("vault")?.state === "ACTIVE",
-      "PLT2-20c", "未装配能力不越权加入，HP0/C2 停用请求被安全忽略");
+      expect(!boot.runtime.get("demo")
+        && boot.runtime.get("tools")?.state === "ACTIVE"
+        && boot.runtime.get("home")?.state === "ACTIVE"
+        && boot.runtime.get("vault")?.enabled === false
+        && boot.runtime.get("vault")?.state === "READY",
+      "PLT2-20c", "未装配能力不越权加入；C2 停用请求忽略，C3/HP2 Vault 持久化停用生效");
 
       const enabled = await M.transitionCapability(boot.runtime, contributionRegistry, "bookmark", "enable");
       expect(enabled.persistedEnabled === true && boot.runtime.get("bookmark")?.state === "ACTIVE"
