@@ -177,7 +177,8 @@ capabilities:
     category: CAPABILITY
     semanticOwner: KeyringStore
     governanceStatus: GOVERNED
-    status: NOT_INTEGRATED
+    status: COMPATIBILITY_WRAPPED
+    maturity: C2
     provides:
       - credential.save
       - credential.get
@@ -188,7 +189,7 @@ capabilities:
     lifecycle:
       supported: [ACTIVE]
       default: ACTIVE
-      activatable: false
+      activatable: true
       resident: true
     resources:
       class: [SECURITY_SENSITIVE]
@@ -199,7 +200,7 @@ capabilities:
     persistence:
       scope: os_keyring
       sensitive: true
-    entrypoint: src-tauri/src/security_policy.rs
+    entrypoint: src/capabilities/credential/index.ts
 
   - id: database
     name: Database
