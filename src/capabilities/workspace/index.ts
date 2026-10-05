@@ -18,7 +18,6 @@ export const WORKSPACE_CAPABILITY_ID = "workspace"
 const FileIdeView = defineAsyncComponent(() => import("./ui/FileIdeView.vue"))
 const ArtifactPanel = defineAsyncComponent(() => import("./ui/ArtifactPanel.vue"))
 const RepoPanel = defineAsyncComponent(() => import("./ui/RepoPanel.vue"))
-const CommandSnippetPanel = defineAsyncComponent(() => import("./ui/CommandSnippetPanel.vue"))
 const AuditPanel = defineAsyncComponent(() => import("./ui/AuditPanel.vue"))
 const FileEditor = defineAsyncComponent(() => import("./ui/FileEditor.vue"))
 const FilePanel = defineAsyncComponent(() => import("./ui/FilePanel.vue"))
@@ -36,7 +35,7 @@ function registerMainView(view: string, component: unknown): void {
 
 /**
  * 注册 Workspace 对 Shell 的主视图贡献（Contribution/Slot 模型）：
- *   - workbench-main  files/arts/repo/scripts/commands/audit/editor → 主工作区视图
+ *   - workbench-main  files/arts/repo/audit/editor → 主工作区视图
  *   - browser-dock    files                                        → 浏览器右侧 Dock 文件面板
  * 组件内部读取各自 store，Shell 零 Workspace 专属知识（C3 关键）。
  */
@@ -44,7 +43,6 @@ export function registerWorkspaceContributions(): void {
   registerMainView("files", FileIdeView)
   registerMainView("arts", ArtifactPanel)
   registerMainView("repo", RepoPanel)
-  registerMainView("commands", CommandSnippetPanel)
   registerMainView("audit", AuditPanel)
   registerMainView("editor", FileEditor)
   contributionRegistry.registerContribution({
