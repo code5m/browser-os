@@ -72,7 +72,7 @@ edges:
   - { from: tools,      to: bridge,   kind: required }
   - { from: session,   to: bridge,   kind: required }
   - { from: script,    to: bridge,   kind: required }
-  - { from: workbench, to: browser,  kind: required }
+  - { from: workbench, to: bridge,   kind: required }
   - { from: home,      to: browser,   kind: required }
   - { from: home,      to: workspace, kind: required }
   - { from: home,      to: apps,      kind: required }
