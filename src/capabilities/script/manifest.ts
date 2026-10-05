@@ -42,7 +42,10 @@ export const scriptManifest: CapabilityDefinition = {
     conflicts: [],
     provides: ["script.run", "script.snippet"],
     requires: [],
-    contributions: [{ id: "script.main.panel", slot: "workbench-main", type: "surface", view: "scripts" }],
+    contributions: [
+      { id: "script.main.panel", slot: "workbench-main", type: "surface", view: "scripts" },
+      { id: "script.commands.panel", slot: "workbench-main", type: "surface", view: "commands" },
+    ],
     permissions: ["process.spawn"],
     resources: [
       { kind: "CHILD_PROCESS", ownership: "owned", evidence: "src-tauri/src/capabilities/script/script_runner.rs" },
