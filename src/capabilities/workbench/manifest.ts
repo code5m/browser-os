@@ -45,11 +45,11 @@ export const workbenchManifest: CapabilityDefinition = {
       { id: "workbench.rail", slot: "sidebar", type: "surface" },
     ],
     permissions: [],
-    resources: [{ kind: "LAYOUT_STATE", ownership: "owned", evidence: "src/capabilities/workbench/state/useWorkbenchStore.ts" }],
+    resources: [{ kind: "CACHE", ownership: "owned", evidence: "src/capabilities/workbench/state/useWorkbenchStore.ts" }],
     persistenceScope: "disk",
     persistenceSensitive: false,
     activationPolicy: "auto",
-    deactivationPolicy: "resident",
+    deactivationPolicy: "reject",
     installPolicy: "static",
     uninstallPolicy: "static",
     hotPlug: {
