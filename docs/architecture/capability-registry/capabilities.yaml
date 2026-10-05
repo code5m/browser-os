@@ -185,7 +185,7 @@ capabilities:
       - credential.delete
     dependsOn:
       - bridge
-    optionalDependencies: [browser]
+    optionalDependencies: []
     lifecycle:
       supported: [ACTIVE]
       default: ACTIVE
@@ -575,7 +575,7 @@ capabilities:
       - session.restore
     dependsOn:
       - bridge
-    optionalDependencies: [browser]
+    optionalDependencies: []
     lifecycle:
       supported: [ACTIVE]
       default: ACTIVE
