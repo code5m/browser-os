@@ -25,7 +25,8 @@ export const graphManifest: CapabilityDefinition = {
     "graph.stats",
   ],
   dependsOn: ["bridge"],
-  // Agent ids are graph payload data; Graph does not depend on Agent runtime code.\n  optionalDependencies: [],
+  // Agent ids are graph payload data; Graph does not depend on Agent runtime code.
+  optionalDependencies: [],
   lifecycle: {
     supported: ["ACTIVE", "SUSPENDED"],
     default: "ACTIVE",
