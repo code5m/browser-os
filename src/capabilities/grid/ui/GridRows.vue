@@ -11,7 +11,14 @@ const layout = useLayoutStore();
 const grid = useGridStore();
 const hostElement = ref<HTMLElement | null>(null);
 useGridHost(hostElement);
-onMounted(() => { hostElement.value = document.querySelector<HTMLElement>(".browser-host"); });
+function bindHostAndRelayout() {
+  nextTick(() => {
+    hostElement.value = document.querySelector<HTMLElement>(".browser-host");
+    if (hostElement.value && grid.gridOpen) grid.forceGridRelayout();
+  });
+}
+onMounted(bindHostAndRelayout);
+watch(() => layout.mainView, (view) => { if (view === "grid") bindHostAndRelayout(); });
 watch(() => grid.gridMode, () => nextTick(() => grid.forceGridRelayout()));
 const gridLayouts = [
   { key: "grid", label: "▦ 宫格", title: "自动宫格平铺" },
