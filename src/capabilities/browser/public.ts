@@ -7,6 +7,5 @@
 // 语义 owner（useBrowserStore）与物理路径解耦，由 Semantic Registry 的 owner_implementations locator 解析。
 export { useBrowserStore } from "./state/useBrowserStore"
 export { useResourceStore, displayUrl, formatDuration, formatSize } from "./state/useResourceStore"
-export { useSessionStore } from "./state/useSessionStore"
 export { useGridArchiveStore } from "./state/useGridArchiveStore"
 export { useImagePreviewStore } from "./state/useImagePreviewStore"
