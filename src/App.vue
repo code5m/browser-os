@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { bridge } from "./bridge";
 import { useBrowserStore } from "./capabilities/browser/public";
 import { useResourceStore } from "./capabilities/browser/public";
-import { useSessionStore } from "./capabilities/browser/public";
+import { useSessionStore } from "./capabilities/session/public";
 import { useWorkspaceStore } from "./capabilities/workspace/public";
 import { useArtifactStore } from "./capabilities/workspace/public";
 import { useRepoStore } from "./capabilities/workspace/public";
