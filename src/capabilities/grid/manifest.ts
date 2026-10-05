@@ -25,7 +25,8 @@ export const gridManifest: CapabilityDefinition = defineIntegratedCapability({
     { id: "grid.rows", slot: "activity-bar-rows", type: "surface" },
   ],
   manifestResources: [
-    { kind: "GRID_CHILD", ownership: "owned", evidence: "src-tauri/src/bridge.rs:create_grid/close_grid/grid_*" },
+    { kind: "WEBVIEW", ownership: "owned", evidence: "src-tauri/src/bridge.rs:create_grid/close_grid/grid_*" },
+    { kind: "CHILD_PROCESS", ownership: "owned", evidence: "src-tauri/src/bridge.rs:create_grid/close_grid/grid_*" },
   ],
   publicContract: [{ name: "publicApi", locator: "src/capabilities/grid/public.ts" }],
   deactivationPolicy: "graceful",
