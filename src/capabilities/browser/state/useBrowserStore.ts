@@ -3,7 +3,6 @@ import { ref, reactive, computed, nextTick, watch } from "vue";
 import { bridge } from "../../../bridge";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { recordRecentUrl } from "../../../composables/recentsNav";
-import { isBrowserResourceAllowed } from "../resource/guard";
 import type { RecentlyClosedEntry, TabRecoveryEvent } from "../../../types";
 
 export interface AISite {
