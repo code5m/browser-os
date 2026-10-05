@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Protect the GitHub source of truth before a local push leaves this clone.
+# Git invokes this hook with: <remote-name> <remote-url>, followed by one
+# line per ref update on stdin: <local-ref> <local-sha> <remote-ref> <remote-sha>.
+set -euo pipefail
+
+remote_name="${1:?missing remote name}"
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+say() {
+  printf 'pre-push: %s\n' "$*" >&2
+}
+
+block() {
+  say "BLOCKED — $*"
+  exit 1
+}
+
+zero_oid='0000000000000000000000000000000000000000'
+
+# The repository deliberately has one writable source: origin (GitHub).
+# Gitee is updated from GitHub Actions, not by independent client-side pushes.
+if [[ "$remote_name" != "origin" ]]; then
+  block "direct pushes to remote '$remote_name' are disabled. Push to origin (GitHub); GitHub Actions mirrors safe refs to Gitee."
+fi
+
+say "refreshing GitHub refs before validating this push"
+if ! git fetch origin --prune --tags; then
+  block "could not refresh origin. Network or credentials must be fixed before pushing; no local changes were modified."
+fi
+
+while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
+  [[ -n "${local_ref:-}" ]] || continue
+
+  if [[ "$local_sha" == "$zero_oid" ]]; then
+    block "remote deletion requested for '$remote_ref'. Ref deletion is intentionally not automated."
+  fi
+
+  case "$remote_ref" in
+    refs/heads/*)
+      [[ "$local_ref" == refs/heads/* ]] || block "unsupported update '$local_ref' -> '$remote_ref'. Only branch and tag refs are accepted."
+      if ! git cat-file -e "${local_sha}^{commit}" 2>/dev/null; then
+        block "local branch object for '$local_ref' is not a commit."
+      fi
+
+      remote_line="$(git ls-remote --heads origin "$remote_ref" | head -n 1 || true)"
+      if [[ -z "$remote_line" ]]; then
+        say "allowing new GitHub branch '${remote_ref#refs/heads/}'"
+        continue
+      fi
+      current_remote_sha="${remote_line%%$'\t'*}"
+      if [[ "$current_remote_sha" == "$local_sha" ]]; then
+        say "branch '${remote_ref#refs/heads/}' already has the requested SHA; allowing no-op."
+        continue
+      fi
+      if ! git cat-file -e "${current_remote_sha}^{commit}" 2>/dev/null; then
+        block "could not inspect the current GitHub branch '$remote_ref' after fetch."
+      fi
+      if git merge-base --is-ancestor "$current_remote_sha" "$local_sha"; then
+        say "allowing fast-forward update of '${remote_ref#refs/heads/}'."
+        continue
+      fi
+      if git merge-base --is-ancestor "$local_sha" "$current_remote_sha"; then
+        block "remote branch '${remote_ref#refs/heads/}' contains newer commits. Fetch/pull the latest GitHub changes before pushing. No local changes were modified."
+      fi
+      block "local and GitHub histories have diverged for '${remote_ref#refs/heads/}'. Automatic reset, rebase, and merge were intentionally not performed."
+      ;;
+    refs/tags/*)
+      [[ "$local_ref" == refs/tags/* ]] || block "unsupported update '$local_ref' -> '$remote_ref'. Only branch and tag refs are accepted."
+      remote_line="$(git ls-remote --tags origin "$remote_ref" | head -n 1 || true)"
+      if [[ -z "$remote_line" ]]; then
+        say "allowing new GitHub tag '${remote_ref#refs/tags/}'."
+        continue
+      fi
+      current_remote_sha="${remote_line%%$'\t'*}"
+      if [[ "$current_remote_sha" == "$local_sha" ]]; then
+        say "tag '${remote_ref#refs/tags/}' already has the requested SHA; allowing no-op."
+        continue
+      fi
+      block "GitHub tag '${remote_ref#refs/tags/}' already exists with a different SHA. Tags are immutable; create a new tag instead."
+      ;;
+    *)
+      block "unsupported destination ref '$remote_ref'. Only refs/heads/* and refs/tags/* are accepted."
+      ;;
+  esac
+done
+
+say "all requested refs passed GitHub safety checks. GitHub performs the final concurrent-update check."
