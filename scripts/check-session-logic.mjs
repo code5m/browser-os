@@ -2,7 +2,7 @@
 // ---------------------------------------------------------------------------
 // 会话存档 / 页签关闭逻辑前端自动化测试（headless，无 GUI 依赖）
 //
-// 直接加载**真实的** `src/capabilities/browser/state/useSessionStore.ts` 与 `src/capabilities/browser/state/useBrowserStore.ts`，
+// 直接加载**真实的** `src/capabilities/session/state/useSessionStore.ts` 与 `src/capabilities/browser/state/useBrowserStore.ts`，
 // 只把 `src/bridge.ts` 的会话/页签相关方法替换为记录型 mock（不 mock store 自身逻辑）：
 // 因此下面每一条断言反映的都是**产品代码**的行为，而非测试替身的行为。
 //
@@ -56,7 +56,7 @@ globalThis.window = { setTimeout: (fn, ms) => setTimeout(fn, ms) };
 const ROOT = new URL("..", import.meta.url).pathname;
 
 const { bridge } = await import(`${ROOT}src/bridge.ts`);
-const { useSessionStore } = await import(`${ROOT}src/capabilities/browser/state/useSessionStore.ts`);
+const { useSessionStore } = await import(`${ROOT}src/capabilities/session/state/useSessionStore.ts`);
 const { useBrowserStore } = await import(`${ROOT}src/capabilities/browser/state/useBrowserStore.ts`);
 const { createPinia, setActivePinia } = await import(
   `${ROOT}node_modules/pinia/dist/pinia.mjs`
