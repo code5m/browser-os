@@ -28,71 +28,29 @@ export const useGridStore = defineStore("grid", () => {
 
   // ===== 各 AI 站点输入框/发送按钮适配表（按 hostname 匹配，数组内按优先级尝试） =====
   // 未命中的站点走通用兜底：textarea → contenteditable → input[type=text]，Enter 提交
+  const T = "textarea";
+  const CE = "div[contenteditable='true']";
+  const SEND = ["button[class*='send']", "button[class*='Send']"];
+  const ARIA_SEND = "button[aria-label*='Send']";
+  const ARIA_SUBMIT = "button[aria-label*='Submit']";
+  const NONE: string[] = [];
   const AI_SITE_ADAPTERS: Record<string, { inputs: string[]; sends: string[] }> = {
-    "www.doubao.com": {
-      inputs: ["textarea[data-testid='chat_input_input']", "textarea"],
-      sends: ["button[data-testid='chat_input_send_button']"],
-    },
-    "kimi.moonshot.cn": {
-      inputs: ["div.chat-input-editor[contenteditable='true']", "div[contenteditable='true']"],
-      sends: [], // 回车即发送
-    },
-    "www.kimi.com": {
-      inputs: ["div.chat-input-editor[contenteditable='true']", "div[contenteditable='true']"],
-      sends: [],
-    },
-    "chat.deepseek.com": {
-      inputs: ["#chat-input", "textarea"],
-      sends: [], // 回车即发送
-    },
-    "tongyi.aliyun.com": {
-      inputs: ["textarea"],
-      sends: ["button[class*='send']", "button[class*='Send']"],
-    },
-    "www.tongyi.com": {
-      inputs: ["textarea", "div[contenteditable='true']"],
-      sends: ["button[class*='send']", "button[class*='Send']"],
-    },
-    "yiyan.baidu.com": {
-      inputs: ["div[contenteditable='true']", "textarea"],
-      sends: [],
-    },
-    "chatglm.cn": {
-      inputs: ["textarea"],
-      sends: [],
-    },
-    "xinghuo.xfyun.cn": {
-      inputs: ["textarea"],
-      sends: [],
-    },
-    "chatgpt.com": {
-      inputs: ["#prompt-textarea", "div[contenteditable='true']"],
-      sends: ["button[data-testid='send-button']", "button[aria-label*='Send']"],
-    },
-    "claude.ai": {
-      inputs: ["div.ProseMirror[contenteditable='true']", "div[contenteditable='true']"],
-      sends: ["button[aria-label*='Send']"],
-    },
-    "gemini.google.com": {
-      inputs: ["div.ql-editor[contenteditable='true']", "div[contenteditable='true']"],
-      sends: ["button.send-button", "button[aria-label*='Send']", "button[aria-label*='发送']"],
-    },
-    "copilot.microsoft.com": {
-      inputs: ["textarea#userInput", "div[contenteditable='true']", "textarea"],
-      sends: ["button[aria-label*='提交']", "button[aria-label*='Submit']"],
-    },
-    "www.perplexity.ai": {
-      inputs: ["textarea"],
-      sends: ["button[aria-label*='Submit']"],
-    },
-    "grok.x.com": {
-      inputs: ["textarea", "div[contenteditable='true']"],
-      sends: ["button[type='submit']"],
-    },
-    "poe.com": {
-      inputs: ["textarea"],
-      sends: ["button[class*='ChatMessageSendButton']", "button[class*='send']"],
-    },
+    "www.doubao.com": { inputs: ["textarea[data-testid='chat_input_input']", T], sends: ["button[data-testid='chat_input_send_button']"] },
+    "kimi.moonshot.cn": { inputs: ["div.chat-input-editor[contenteditable='true']", CE], sends: NONE },
+    "www.kimi.com": { inputs: ["div.chat-input-editor[contenteditable='true']", CE], sends: NONE },
+    "chat.deepseek.com": { inputs: ["#chat-input", T], sends: NONE },
+    "tongyi.aliyun.com": { inputs: [T], sends: SEND },
+    "www.tongyi.com": { inputs: [T, CE], sends: SEND },
+    "yiyan.baidu.com": { inputs: [CE, T], sends: NONE },
+    "chatglm.cn": { inputs: [T], sends: NONE },
+    "xinghuo.xfyun.cn": { inputs: [T], sends: NONE },
+    "chatgpt.com": { inputs: ["#prompt-textarea", CE], sends: ["button[data-testid='send-button']", ARIA_SEND] },
+    "claude.ai": { inputs: ["div.ProseMirror[contenteditable='true']", CE], sends: [ARIA_SEND] },
+    "gemini.google.com": { inputs: ["div.ql-editor[contenteditable='true']", CE], sends: ["button.send-button", ARIA_SEND, "button[aria-label*='发送']"] },
+    "copilot.microsoft.com": { inputs: ["textarea#userInput", CE, T], sends: ["button[aria-label*='提交']", ARIA_SUBMIT] },
+    "www.perplexity.ai": { inputs: [T], sends: [ARIA_SUBMIT] },
+    "grok.x.com": { inputs: [T, CE], sends: ["button[type='submit']"] },
+    "poe.com": { inputs: [T], sends: ["button[class*='ChatMessageSendButton']", "button[class*='send']"] },
   };
   function aiAdapterFor(u: string): { inputs: string[]; sends: string[] } {
     try {
