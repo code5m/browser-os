@@ -51,6 +51,13 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Legacy UI safety checks
+        run: |
+          python3 scripts/check-git-ui-policy.py --self-test
+          python3 scripts/check-git-ui-policy.py
+          python3 scripts/check-scheduler-ui-policy.py --self-test
+          python3 scripts/check-scheduler-ui-policy.py
+
       - name: Capability and architecture checks
         run: npm run check
 
