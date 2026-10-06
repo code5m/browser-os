@@ -82,7 +82,12 @@ function bookmarkRegistersContributions() {
   for (const slot of ["browser-sidebar", "address-bar-actions", "activity-bar-trailing"]) {
     if (new RegExp(`["']${slot}["']`).test(combined)) slots.push(slot);
   }
-  const usesGeneric = /contributionRegistry\s*\.\s*registerContribution/.test(indexSrc);
+  const helperTs = join(ROOT, "src/capability/platform/contributed.ts");
+  const helperSrc = existsSync(helperTs) ? readFileSync(helperTs, "utf8") : "";
+  const usesGeneric =
+    /contributionRegistry\s*\.\s*registerContribution/.test(indexSrc) ||
+    (/createLazyContributionRegistrar/.test(indexSrc) &&
+      /contributionRegistry\s*\.\s*registerContribution/.test(helperSrc));
   return { exists: true, slots, usesGenericRegistry: usesGeneric };
 }
 
@@ -97,7 +102,12 @@ function workspaceRegistersContributions() {
   for (const slot of ["workbench-main", "browser-dock"]) {
     if (new RegExp(`["']${slot}["']`).test(combined)) slots.push(slot);
   }
-  const usesGeneric = /contributionRegistry\s*\.\s*registerContribution/.test(indexSrc);
+  const helperTs = join(ROOT, "src/capability/platform/contributed.ts");
+  const helperSrc = existsSync(helperTs) ? readFileSync(helperTs, "utf8") : "";
+  const usesGeneric =
+    /contributionRegistry\s*\.\s*registerContribution/.test(indexSrc) ||
+    (/createLazyContributionRegistrar/.test(indexSrc) &&
+      /contributionRegistry\s*\.\s*registerContribution/.test(helperSrc));
   return { exists: true, slots, usesGenericRegistry: usesGeneric };
 }
 
@@ -113,7 +123,12 @@ function browserRegistersContributions() {
   for (const slot of ["browser-host", "browser-dock"]) {
     if (new RegExp(`["']${slot}["']`).test(combined)) slots.push(slot);
   }
-  const usesGeneric = /contributionRegistry\s*\.\s*registerContribution/.test(indexSrc);
+  const helperTs = join(ROOT, "src/capability/platform/contributed.ts");
+  const helperSrc = existsSync(helperTs) ? readFileSync(helperTs, "utf8") : "";
+  const usesGeneric =
+    /contributionRegistry\s*\.\s*registerContribution/.test(indexSrc) ||
+    (/createLazyContributionRegistrar/.test(indexSrc) &&
+      /contributionRegistry\s*\.\s*registerContribution/.test(helperSrc));
   return { exists: true, slots, usesGenericRegistry: usesGeneric };
 }
 
@@ -128,7 +143,12 @@ function terminalRegistersContributions() {
   for (const slot of ["workbench-main-resident", "browser-dock"]) {
     if (new RegExp(`["']${slot}["']`).test(combined)) slots.push(slot);
   }
-  const usesGeneric = /contributionRegistry\s*\.\s*registerContribution/.test(indexSrc);
+  const helperTs = join(ROOT, "src/capability/platform/contributed.ts");
+  const helperSrc = existsSync(helperTs) ? readFileSync(helperTs, "utf8") : "";
+  const usesGeneric =
+    /contributionRegistry\s*\.\s*registerContribution/.test(indexSrc) ||
+    (/createLazyContributionRegistrar/.test(indexSrc) &&
+      /contributionRegistry\s*\.\s*registerContribution/.test(helperSrc));
   return { exists: true, slots, usesGenericRegistry: usesGeneric };
 }
 
