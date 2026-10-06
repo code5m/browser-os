@@ -74,6 +74,9 @@ jobs:
       - name: Packaged GUI cold-start acceptance
         run: dbus-run-session -- xvfb-run -a bash scripts/verify-installed-client.sh --build
 
+      - name: Full Tauri GUI regression
+        run: dbus-run-session -- xvfb-run -a python3 scripts/m0-6c-gui-regression.py --no-build --evidence-dir /tmp/m0-6c-v2
+
       - name: Branch diff whitespace check
         run: git diff --check origin/master...HEAD -- . ':(exclude)logs/m0-baseline/**'
 
