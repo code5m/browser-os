@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ref, reactive, computed, nextTick, watch } from "vue";
 import { bridge } from "../../../bridge";
+import { WEBVIEW_FREEZE_JS, WEBVIEW_UNFREEZE_JS } from "../../../utils/webviewFreeze";
 import { isBrowserResourceAllowed } from "../resource/guard";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { recordRecentUrl } from "../../../composables/recentsNav";
@@ -234,53 +235,11 @@ export const useBrowserStore = defineStore("browser", () => {
   // 子 webview 是独立进程，不会直接让主 webview 的终端崩溃，但隐藏中的网页
   // 仍在跑 JS 定时器/动画/视频，持续消耗 CPU/GPU。冻结=暂停媒体 + 暂停 CSS 动画
   // + requestAnimationFrame 节流至 1fps（页面脚本误以为仍在正常渲染，恢复时无缝续跑）
-  const FREEZE_JS = `
-    (function(){
-      if (window.__vibeFrozen) return;
-      window.__vibeFrozen = true;
-      try {
-        document.querySelectorAll('video,audio').forEach(function(m){
-          if (!m.paused) m.setAttribute('data-vibe-resume', '1');
-          m.pause();
-        });
-        if (!document.getElementById('__vibe-freeze-style')) {
-          var st = document.createElement('style');
-          st.id = '__vibe-freeze-style';
-          st.textContent = '*,*::before,*::after{animation-play-state:paused!important}';
-          (document.head || document.documentElement).appendChild(st);
-        }
-        if (!window.__vibeOrigRAF) {
-          window.__vibeOrigRAF = window.requestAnimationFrame.bind(window);
-          window.requestAnimationFrame = function(cb){
-            return setTimeout(function(){ try { cb(performance.now()); } catch(e){} }, 1000);
-          };
-        }
-      } catch(e) {}
-    })();
-  `;
-  const UNFREEZE_JS = `
-    (function(){
-      if (!window.__vibeFrozen) return;
-      window.__vibeFrozen = false;
-      try {
-        var st = document.getElementById('__vibe-freeze-style');
-        if (st) st.remove();
-        if (window.__vibeOrigRAF) {
-          window.requestAnimationFrame = window.__vibeOrigRAF;
-          window.__vibeOrigRAF = null;
-        }
-        document.querySelectorAll('video[data-vibe-resume],audio[data-vibe-resume]').forEach(function(m){
-          m.removeAttribute('data-vibe-resume');
-          m.play().catch(function(){});
-        });
-      } catch(e) {}
-    })();
-  `;
   // Browser only freezes ordinary tab WebViews; Grid owns grid-* processes.
   function syncFreeze() {
     for (const t of tabs) {
       const visible = layout.mainView === "browser" && t.id === activeTabId.value;
-      bridge.evalInTab(t.id, visible ? UNFREEZE_JS : FREEZE_JS).catch(() => {});
+      bridge.evalInTab(t.id, visible ? WEBVIEW_UNFREEZE_JS : WEBVIEW_FREEZE_JS).catch(() => {});
     }
   }
 
