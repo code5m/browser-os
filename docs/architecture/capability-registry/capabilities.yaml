@@ -68,7 +68,7 @@ capabilities:
       activatable: true
       resident: false
     resources:
-      class: [VERY_HEAVY, MULTI_WEBVIEW, NATIVE]
+      class: [HEAVY, MULTI_WEBVIEW, NATIVE]
       suspendable: false
       destroyable: true
     permissions:
