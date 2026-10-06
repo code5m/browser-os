@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ref, reactive, computed, nextTick, watch } from "vue";
 import { bridge } from "../../../bridge";
+import { WEBVIEW_FREEZE_JS, WEBVIEW_UNFREEZE_JS } from "../../../utils/webviewFreeze";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { useBrowserStore } from "../../browser/public";
 import { isGridResourceAllowed } from "../resource/guard";
@@ -118,53 +119,11 @@ export const useGridStore = defineStore("grid", () => {
   let scheduleGrid: () => void = () => {};
   function bindGridScheduler(fn: () => void) { scheduleGrid = fn; }
 
-  const FREEZE_JS = `
-    (function(){
-      if (window.__vibeFrozen) return;
-      window.__vibeFrozen = true;
-      try {
-        document.querySelectorAll('video,audio').forEach(function(m){
-          if (!m.paused) m.setAttribute('data-vibe-resume', '1');
-          m.pause();
-        });
-        if (!document.getElementById('__vibe-freeze-style')) {
-          var st = document.createElement('style');
-          st.id = '__vibe-freeze-style';
-          st.textContent = '*,*::before,*::after{animation-play-state:paused!important}';
-          (document.head || document.documentElement).appendChild(st);
-        }
-        if (!window.__vibeOrigRAF) {
-          window.__vibeOrigRAF = window.requestAnimationFrame.bind(window);
-          window.requestAnimationFrame = function(cb){
-            return setTimeout(function(){ try { cb(performance.now()); } catch(e){} }, 1000);
-          };
-        }
-      } catch(e) {}
-    })();
-  `;
-  const UNFREEZE_JS = `
-    (function(){
-      if (!window.__vibeFrozen) return;
-      window.__vibeFrozen = false;
-      try {
-        var st = document.getElementById('__vibe-freeze-style');
-        if (st) st.remove();
-        if (window.__vibeOrigRAF) {
-          window.requestAnimationFrame = window.__vibeOrigRAF;
-          window.__vibeOrigRAF = null;
-        }
-        document.querySelectorAll('video[data-vibe-resume],audio[data-vibe-resume]').forEach(function(m){
-          m.removeAttribute('data-vibe-resume');
-          m.play().catch(function(){});
-        });
-      } catch(e) {}
-    })();
-  `;
   // Grid 只负责自己的子 WebView 冻结；普通 tab 仍由 Browser owner 管理。
   function syncGridFreeze() {
     if (!gridOpen.value) return;
     for (let i = 0; i < gridCount.value; i++) {
-      bridge.evalInTab(`grid-${i}`, layout.mainView === "grid" ? UNFREEZE_JS : FREEZE_JS).catch(() => {});
+      bridge.evalInTab(`grid-${i}`, layout.mainView === "grid" ? WEBVIEW_UNFREEZE_JS : WEBVIEW_FREEZE_JS).catch(() => {});
     }
   }
 
