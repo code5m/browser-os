@@ -63,7 +63,7 @@ globalThis.localStorage = {
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 let pass = 0, fail = 0;
-let useBrowserStore, useLayoutStore, useBookmarkStore;
+let useBrowserStore, useGridStore, useLayoutStore, useBookmarkStore;
 const failures = [];
 function check(name, cond, detail) {
   if (cond) { pass++; console.log(`  ok   ${name}`); }
@@ -111,11 +111,13 @@ const { resolveOwnerFile } = await import(`${ROOT}scripts/check-semantic-registr
 const browserPath = resolveOwnerFile("useBrowserStore");
 const layoutPath = resolveOwnerFile("useLayoutStore");
 const bookmarkPath = resolveOwnerFile("useBookmarkStore");
-if (!browserPath || !layoutPath || !bookmarkPath) {
+const gridPath = resolveOwnerFile("useGridStore");
+if (!browserPath || !gridPath || !layoutPath || !bookmarkPath) {
   console.error("closure: owner_implementations 无法解析 store 路径（物理迁移后须同步更新 locator）");
   process.exit(1);
 }
 const browserSrc = readFileSync(`${ROOT}${browserPath}`, "utf8");
+const gridSrc = readFileSync(`${ROOT}${gridPath}`, "utf8");
 const layoutSrc = readFileSync(`${ROOT}${layoutPath}`, "utf8");
 const mainAreaSrc = readFileSync(`${ROOT}src/components/layout/MainArea.vue`, "utf8");
 const bookmarkPanelSrc = readFileSync(`${ROOT}src/capabilities/bookmark/ui/BookmarkPanel.vue`, "utf8");
@@ -128,12 +130,13 @@ check("源码无 layout.aiNavOpen 第二真源", !/layout\.aiNavOpen/.test(brows
 
 // ============================ 静态：gridSession writer 唯一 + 非持久化 ============================
 console.log("[static] gridSession 唯一 owner");
-check("gridSession 在 useBrowserStore 中恰好声明 1 次", countDecl(browserSrc, "gridSession") === 1);
-check("gridSession 仅由 buildGrid/forceGridRelayout 写入（2 处）", countWrites(browserSrc, "gridSession") === 2, `writes=${countWrites(browserSrc, "gridSession")}`);
-// Phase 6B：函数级 writer 唯一（Writer Enforcement）——两处写入均在 canonical_writer 函数体内
+check("gridSession 在 useGridStore 中恰好声明 1 次", countDecl(gridSrc, "gridSession") === 1);
+check("useBrowserStore 不再持有 gridSession", !/\bgridSession\b/.test(browserSrc));
+check("gridSession 仅由 buildGrid/forceGridRelayout 写入（2 处）", countWrites(gridSrc, "gridSession") === 2, `writes=${countWrites(gridSrc, "gridSession")}`);
+// Phase 6B：函数级 writer 唯一（Writer Enforcement）——两处写入均在 Grid canonical_writer 函数体内
 {
-  const ws = [...browserSrc.matchAll(/\bgridSession\.value\s*(?:\+=|=(?![=>]))/g)];
-  const ranges = findFunctionRanges(browserSrc);
+  const ws = [...gridSrc.matchAll(/\bgridSession\.value\s*(?:\+=|=(?![=>]))/g)];
+  const ranges = findFunctionRanges(gridSrc);
   const allCanonical = ws.length === 2 && ws.every((mm) => {
     const enc = enclosingFunction(ranges, mm.index);
     return enc === "buildGrid" || enc === "forceGridRelayout";
@@ -160,17 +163,19 @@ check("MainArea 不再持有 Bookmark 专属知识（无 bookmarks. / useBookmar
 
 // ============================ 功能：加载真实 store ============================
 console.log("[runtime] 加载真实 store 并验证行为");
-let browser, layout, bookmark;
+let browser, grid, layout, bookmark;
 try {
   const { createPinia, setActivePinia } = await import(`${ROOT}node_modules/pinia/dist/pinia.mjs`);
   setActivePinia(createPinia());
   ({ useBrowserStore } = await import(`${ROOT}${browserPath}`));
+  ({ useGridStore } = await import(`${ROOT}${gridPath}`));
   ({ useLayoutStore } = await import(`${ROOT}${layoutPath}`));
   ({ useBookmarkStore } = await import(`${ROOT}${bookmarkPath}`));
   browser = useBrowserStore();
+  grid = useGridStore();
   layout = useLayoutStore();
   bookmark = useBookmarkStore();
-  check("store 加载成功", !!browser && !!layout && !!bookmark);
+  check("store 加载成功", !!browser && !!grid && !!layout && !!bookmark);
 } catch (e) {
   check("store 加载成功", false, String(e && e.stack || e));
 }
@@ -186,12 +191,14 @@ if (browser) {
   try { browser.gotoAI({ name: "x", url: "https://example.com", region: "国内" }); } catch { /* openBrowser 触发 bridge 桩，aiNavOpen 已在入口同步置 false */ }
   check("gotoAI 关闭 aiNavOpen（writer 唯一）", browser.aiNavOpen === false);
 
-  // 6A-3 gridSession：打开(重建)自增 + 状态保持(内存)
-  const sess0 = browser.gridSession;
+}
+
+if (grid) {
+  // 6A-3 gridSession：Grid owner 内重排自增 + 状态保持(内存)
+  const sess0 = grid.gridSession;
   check("gridSession 初始为 0", sess0 === 0);
-  browser.forceGridRelayout();
-  check("forceGridRelayout 使 gridSession 自增 +1（缓存失效纪元）", browser.gridSession === sess0 + 1, `sess=${browser.gridSession}`);
-  // 状态保持：纯内存，不写入 localStorage
+  grid.forceGridRelayout();
+  check("forceGridRelayout 使 gridSession 自增 +1（缓存失效纪元）", grid.gridSession === sess0 + 1, `sess=${grid.gridSession}`);
   const persisted = lsWrites.some(([k]) => /gridSession/.test(k));
   check("gridSession 不落 localStorage（内存 runtime）", !persisted);
 }
