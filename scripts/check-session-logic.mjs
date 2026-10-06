@@ -59,6 +59,7 @@ const { bridge } = await import(`${ROOT}src/bridge.ts`);
 const { useSessionStore } = await import(`${ROOT}src/capabilities/session/state/useSessionStore.ts`);
 const { useBrowserStore } = await import(`${ROOT}src/capabilities/browser/state/useBrowserStore.ts`);
 const { hostServices } = await import(`${ROOT}src/capability/platform/host-services.ts`);
+const { setCapabilityRuntime } = await import(`${ROOT}src/capability/runtimeSingleton.ts`);
 const { createPinia, setActivePinia } = await import(
   `${ROOT}node_modules/pinia/dist/pinia.mjs`
 );
@@ -168,6 +169,8 @@ function callOrder() {
 }
 
 setActivePinia(createPinia());
+// Browser 真实资源闸 fail-closed；会话测试显式提供最小 ACTIVE Runtime，而不是绕过产品 guard。
+setCapabilityRuntime({ get: (id) => id === "browser" ? { state: "ACTIVE", enabled: true } : undefined });
 const session = useSessionStore();
 const browser = useBrowserStore();
 hostServices.register("browser-context", {
@@ -177,11 +180,15 @@ hostServices.register("browser-context", {
   get aiNavOpen() { return browser.aiNavOpen; },
   openTab(url) { return browser.tabNew(url); },
   evalInTab(tabId, script) { return bridge.evalInTab(tabId, script); },
+  async captureTextPreview(tabId) {
+    const text = await bridge.evalInTab(tabId, "(document.body && document.body.innerText ? document.body.innerText.slice(0, 2000) : '')");
+    return typeof text === "string" ? text : "";
+  },
   adoptRestoredTab(tab) {
     browser.tabs.push(tab);
     browser.activeTabId = tab.id;
   },
-  activateGrid() { return browser.activateGrid(); },
+  async activateGrid() {},
   setAiNavOpen(value) { browser.aiNavOpen = value; },
 });
 
