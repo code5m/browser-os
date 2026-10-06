@@ -140,6 +140,16 @@ bridge.tabClose = async (id) => {
 bridge.tabActivate = async (id) => {
   calls.push(["tabActivate", id]);
 };
+bridge.tabPosition = async (id, rect) => {
+  calls.push(["tabPosition", id, rect]);
+};
+bridge.hideAllWebviews = async () => {
+  calls.push(["hideAllWebviews"]);
+};
+bridge.hideWebview = async (id) => {
+  calls.push(["hideWebview", id]);
+};
+bridge.debugLog = () => {};
 bridge.tabNew = async (u) => {
   calls.push(["tabNew", u]);
   return { id: "tab-new-" + u, url: u, title: "" };
