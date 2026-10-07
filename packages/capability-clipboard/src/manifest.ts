@@ -33,8 +33,7 @@ export const clipboardManifest: CapabilityDefinition = {
     id: "clipboard",
     version: "1.0.0",
     displayName: "剪贴板",
-    description:
-      "复制/粘贴与剪贴板历史，自动收集系统剪贴板内容（仅内存，关闭应用即清空）。",
+    description: "剪贴板读写与内存历史。",
     maturity: "C3",
     maturityEvidence: [
       "scripts/check-package.mjs",
@@ -79,7 +78,7 @@ export const clipboardManifest: CapabilityDefinition = {
       install: false,
       uninstall: false,
       limitationReason:
-        "HP2：focus/Tauri listener 对称解绑；Harness 验证恢复与重启。",
+        "HP2：focus/Tauri listener 对称解绑；Harness 验证重启。",
     },
     publicContract: [
       {
