@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { watch, nextTick, defineAsyncComponent, h, computed } from "vue";
 import { useLayoutStore, type MainView } from "../../stores/useLayoutStore";
+import { resolveAvailableWorkbenchView } from "../../capability/platform/view-availability";
 import { useBrowserStore } from "../../capabilities/browser/public";
 import { contributionRegistry } from "../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
@@ -59,18 +60,17 @@ function viewOf(view: string) {
 // No capability names are encoded here: if the current workbench view disappears because its
 // contribution was disabled/unregistered, converge to Home when available, otherwise to the
 // first remaining workbench surface. Native Browser/Grid/Terminal views keep their own owners.
-const NATIVE_MAIN_VIEWS = new Set(["browser", "grid", "term"]);
 watch(
   () => [
     layout.mainView,
     workbenchMainContributions.value.map((c) => c.view ?? "").join("|"),
   ] as const,
   ([current]) => {
-    if (NATIVE_MAIN_VIEWS.has(current)) return;
-    if (viewOf(current)) return;
-    const fallback = workbenchMainContributions.value.find((c) => c.view === "home")?.view
-      ?? workbenchMainContributions.value.find((c) => !!c.view)?.view;
-    if (fallback && fallback !== current) layout.activateView(fallback as MainView);
+    const available = workbenchMainContributions.value
+      .map((c) => c.view)
+      .filter((view): view is string => !!view);
+    const fallback = resolveAvailableWorkbenchView(current, available);
+    if (fallback !== current) layout.activateView(fallback as MainView);
   },
   { immediate: true },
 );
