@@ -38,7 +38,6 @@ try {
     export { databaseManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/database/manifest.ts"))};
     export { credentialCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/credential/index.ts"))};
     export { registerDatabaseCleanup, databaseLifecycleSnapshot } from ${JSON.stringify(join(ROOT, "src/capabilities/database/lifecycle.ts"))};
-    export { appsCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/apps/index.ts"))};
     export { appsManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/apps/manifest.ts"))};
     export { appsLifecycleSnapshot } from ${JSON.stringify(join(ROOT, "src/capabilities/apps/lifecycle.ts"))};
     export { pluginCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/plugin/index.ts"))};
