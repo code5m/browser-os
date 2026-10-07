@@ -2,7 +2,7 @@
 // Runtime hooks operate before Pinia exists, so lifecycle ownership must stay store-agnostic.
 type Canceller = () => void
 
-let active = true
+let active = false
 let generation = 0
 const cancellers = new Set<Canceller>()
 
