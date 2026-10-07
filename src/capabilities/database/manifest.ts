@@ -47,8 +47,7 @@ export const databaseManifest: CapabilityDefinition = {
     id: "database",
     version: "1.0.0",
     displayName: "数据库",
-    description:
-      "连接数据库（凭据经 OS keyring，前端零明文）、执行只读/写查询、取消查询。连接资源由后端瞬态创建即弃，不驻留全局。",
+    description: "数据库连接/查询/取消；凭据走 keyring，连接资源瞬态。",
     maturity: "C3",
     maturityEvidence: ["scripts/check-developer-owners.mjs", "scripts/measure-resources.mjs", "scripts/check-hot-plug-acceptance.mjs"],
     dependencies: ["credential", "bridge"],
@@ -78,7 +77,7 @@ export const databaseManifest: CapabilityDefinition = {
       install: false,
       uninstall: false,
       limitationReason:
-        "HP2：查询瞬态；停用 cancel query_id + generation fence；Harness 验证重启。",
+        "HP2：停用 cancel query_id + generation fence；Harness 验证重启。",
     },
     publicContract: [{ name: "publicApi", locator: "src/capabilities/database/public.ts" }],
     entrypoint: "src/capabilities/database/index.ts",
