@@ -29,7 +29,6 @@ try {
     export { appsCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/apps/index.ts"))};
     export { graphCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/graph/index.ts"))};
     export { graphManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/graph/manifest.ts"))};
-    export { workspaceCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/workspace/index.ts"))};
     export { workspaceManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/workspace/manifest.ts"))};
   `;
   const built = await build({
