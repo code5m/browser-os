@@ -20,6 +20,7 @@ import { bridge, type M0Config } from "../../../bridge";
 import type { TermMessage } from "../../../types";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { isTerminalResourceAllowed } from "../resource/guard";
+import { registerTerminalLifecycleBinding } from "../lifecycle";
 
 export const useTerminalStore = defineStore("terminal", () => {
   const layout = useLayoutStore();
@@ -287,6 +288,16 @@ export const useTerminalStore = defineStore("terminal", () => {
       termBuffers.set(id, b);
     }
   }
+
+  registerTerminalLifecycleBinding({
+    canSuspend: () => termPanes.value.length === 0,
+    cleanup: () => {
+      terminalOpen.value = false;
+      activeTermId.value = "";
+      resetDroppedStats();
+      if (layout.mainView === "term") layout.setView("home");
+    },
+  });
 
   return {
     terminalOpen,
