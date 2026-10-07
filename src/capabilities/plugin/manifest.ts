@@ -11,7 +11,7 @@ export const pluginManifest: CapabilityDefinition = defineIntegratedCapability({
   provides: ["plugin.list", "plugin.manifest"],
   resident: false,
   supported: ["ACTIVE", "SUSPENDED"],
-  resourceClass: ["LIGHT"],
+  resourceClass: ["HEAVY", "NATIVE"],
   suspendable: true,
   destroyable: true,
   persistence: { scope: "disk", sensitive: false },
