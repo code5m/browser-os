@@ -50,10 +50,10 @@ try {
     export { toolsCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/tools/index.ts"))};
     export { toolsManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/tools/manifest.ts"))};
     export { registerToolsCleanup, toolsLifecycleSnapshot } from ${JSON.stringify(join(ROOT, "src/capabilities/tools/lifecycle.ts"))};
-    export { browserLifecycleSnapshot, registerBrowserLifecycleBinding } from ${JSON.stringify(join(ROOT, "src/capabilities/browser/lifecycle.ts"))};
+    export { browserLifecycleSnapshot, registerBrowserLifecycleBinding, suspendBrowserLifecycle } from ${JSON.stringify(join(ROOT, "src/capabilities/browser/lifecycle.ts"))};
     export { gridCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/grid/index.ts"))};
     export { gridManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/grid/manifest.ts"))};
-    export { gridLifecycleSnapshot, registerGridLifecycleBinding } from ${JSON.stringify(join(ROOT, "src/capabilities/grid/lifecycle.ts"))};
+    export { gridLifecycleSnapshot, registerGridLifecycleBinding, suspendGridLifecycle } from ${JSON.stringify(join(ROOT, "src/capabilities/grid/lifecycle.ts"))};
     export { terminalCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/terminal/index.ts"))};
     export { terminalManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/terminal/manifest.ts"))};
     export { registerTerminalLifecycleBinding, terminalLifecycleSnapshot, suspendTerminalLifecycle } from ${JSON.stringify(join(ROOT, "src/capabilities/terminal/lifecycle.ts"))};
@@ -382,6 +382,41 @@ try {
   M.trackScriptRun("hotplug-probe", () => true);
   await assert.rejects(() => M.suspendScriptLifecycle(), /runs still active/);
   M.completeScriptRun("hotplug-probe");
+
+  // Cleanup failures must not split owner-internal lifecycle state from Runtime.
+  // A rejected onSuspend leaves the Runtime record ACTIVE, so owner snapshots must
+  // also remain active until every cleanup completes successfully.
+  const unregisterPluginCleanupFailure = M.registerPluginLifecycleBinding({
+    canSuspend: () => true,
+    cleanup: () => { throw new Error("plugin cleanup failure probe"); },
+  });
+  await assert.rejects(() => M.suspendPluginLifecycle(), /plugin cleanup failure probe/);
+  assert.equal(M.pluginLifecycleSnapshot().active, true, "plugin cleanup failure keeps lifecycle active");
+  unregisterPluginCleanupFailure();
+
+  const unregisterBrowserCleanupFailure = M.registerBrowserLifecycleBinding({
+    suspend: () => { throw new Error("browser cleanup failure probe"); },
+    deactivate: () => {},
+  });
+  await assert.rejects(() => M.suspendBrowserLifecycle(), /browser cleanup failure probe/);
+  assert.equal(M.browserLifecycleSnapshot().active, true, "browser cleanup failure keeps lifecycle active");
+  unregisterBrowserCleanupFailure();
+
+  const unregisterGridCleanupFailure = M.registerGridLifecycleBinding({
+    suspend: () => { throw new Error("grid cleanup failure probe"); },
+    deactivate: () => {},
+  });
+  await assert.rejects(() => M.suspendGridLifecycle(), /grid cleanup failure probe/);
+  assert.equal(M.gridLifecycleSnapshot().active, true, "grid cleanup failure keeps lifecycle active");
+  unregisterGridCleanupFailure();
+
+  const unregisterTerminalCleanupFailure = M.registerTerminalLifecycleBinding({
+    canSuspend: () => true,
+    cleanup: () => { throw new Error("terminal cleanup failure probe"); },
+  });
+  await assert.rejects(() => M.suspendTerminalLifecycle(), /terminal cleanup failure probe/);
+  assert.equal(M.terminalLifecycleSnapshot().active, true, "terminal cleanup failure keeps lifecycle active");
+  unregisterTerminalCleanupFailure();
 
   console.log(JSON.stringify({ result: "PASS", capabilities: results }, null, 2));
   console.log("HOT_PLUG_ACCEPTANCE_RESULT=PASS");
