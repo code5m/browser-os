@@ -886,6 +886,10 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                 bridge::tab_close(app.clone(), first.id)?;
                 bridge::tab_close(app.clone(), second.id)?;
                 eval_grid("6", 0, "tabs_closed_grid_survives")?;
+                // eval() schedules the page's async /event fetch; keep this grid URL alive
+                // long enough for the evidence server to observe it before scenario 7 navigates.
+                // The Python assertion remains unchanged: this only removes a driver/evidence race.
+                sleep_ms(700);
                 Ok("normal tabs opened, switched, closed, and grid survived".to_string())
             })(),
         );
