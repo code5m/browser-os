@@ -10,6 +10,7 @@ export const pluginManifest: CapabilityDefinition = defineIntegratedCapability({
   maturityEvidence: ["scripts/check-plugin-policy.py", "scripts/check-plugin-ui-logic.mjs", "scripts/check-hot-plug-acceptance.mjs"],
   provides: ["plugin.list", "plugin.manifest"],
   resident: false,
+  supported: ["ACTIVE", "SUSPENDED"],
   resourceClass: ["LIGHT"],
   suspendable: true,
   destroyable: true,
