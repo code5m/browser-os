@@ -22,6 +22,11 @@ try {
     export { bookmarkManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/bookmark/manifest.ts"))};
     export { createVaultCapability, vaultContribution } from ${JSON.stringify(join(ROOT, "packages/capability-vault/src/index.ts"))};
     export { vaultManifest } from ${JSON.stringify(join(ROOT, "packages/capability-vault/src/manifest.ts"))};
+    export { homeCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/home/index.ts"))};
+    export { homeManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/home/manifest.ts"))};
+    export { browserCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/browser/index.ts"))};
+    export { workspaceCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/workspace/index.ts"))};
+    export { appsCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/apps/index.ts"))};
   `;
   const built = await build({
     stdin: { contents: entry, resolveDir: ROOT, loader: "ts" },
@@ -47,20 +52,35 @@ try {
   };
 
   const candidates = [
-    { id: "bookmark", definition: M.bookmarkCapability, manifest: M.bookmarkManifest },
-    { id: "vault", definition: vaultFactory.vaultCapability, manifest: M.vaultManifest },
+    { id: "bookmark", definition: M.bookmarkCapability, manifest: M.bookmarkManifest, dependencies: [] },
+    { id: "vault", definition: vaultFactory.vaultCapability, manifest: M.vaultManifest, dependencies: [] },
+    {
+      id: "home",
+      definition: M.homeCapability,
+      manifest: M.homeManifest,
+      dependencies: [M.browserCapability, M.workspaceCapability, M.appsCapability],
+    },
   ];
 
   async function accept(candidate) {
-    const { id, definition, manifest } = candidate;
+    const { id, definition, manifest, dependencies = [] } = candidate;
     const registry = M.contributionRegistry;
     registry.clear();
 
     const expectedContributions = manifest.v1.contributions.length;
-    const runtime = M.createCapabilityRuntime();
-    runtime.register(definition);
-    runtime.resolve(id);
-    runtime.activate(id);
+    const prepareRuntime = ({ activateCandidate = true } = {}) => {
+      const runtime = M.createCapabilityRuntime();
+      for (const dependency of dependencies) runtime.register(dependency);
+      runtime.register(definition);
+      for (const dependency of dependencies) {
+        runtime.resolve(dependency.id);
+        runtime.activate(dependency.id);
+      }
+      runtime.resolve(id);
+      if (activateCandidate) runtime.activate(id);
+      return runtime;
+    };
+    const runtime = prepareRuntime();
 
     const record = () => runtime.get(id);
     const contributionCount = () => registry.getByCapability(id).length;
@@ -117,18 +137,14 @@ try {
     // before activation, and prove no contribution is born. Then create another fresh Runtime
     // from persisted enabled state and prove the entry is restored exactly once.
     registry.clear();
-    const restartDisabled = M.createCapabilityRuntime();
-    restartDisabled.register(definition);
-    restartDisabled.resolve(id);
+    const restartDisabled = prepareRuntime({ activateCandidate: false });
     if (M.loadCapabilityConfig(storage)?.enabled[id] === false) restartDisabled.disable(id);
     assert.equal(restartDisabled.get(id)?.enabled, false, id + " restart keeps disabled");
     assert.equal(registry.getByCapability(id).length, 0, id + " restart-disabled has no stale contribution");
 
     M.saveCapabilityConfig({ enabled: { [id]: true } }, storage);
     registry.clear();
-    const restartEnabled = M.createCapabilityRuntime();
-    restartEnabled.register(definition);
-    restartEnabled.resolve(id);
+    const restartEnabled = prepareRuntime({ activateCandidate: false });
     if (M.loadCapabilityConfig(storage)?.enabled[id] !== false) restartEnabled.activate(id);
     assert.equal(restartEnabled.get(id)?.state, "ACTIVE", id + " restart restores ACTIVE");
     assert.equal(registry.getByCapability(id).length, expectedContributions, id + " restart restores one contribution set");
