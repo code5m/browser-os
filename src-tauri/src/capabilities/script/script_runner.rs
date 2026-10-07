@@ -643,10 +643,13 @@ fn supervise(
         st.output_tail = tail;
         st.truncated = truncated;
         let snapshot = st.clone();
-        drop(st);
+        // Publish terminal state atomically with persistence: snapshot() takes this same
+        // mutex, so observers cannot see Succeeded/Failed before the run record is durable.
+        // This removes the real D4 race where a terminal snapshot could precede atomic_write.
         if let Some(path) = &records_file {
             persist_run_record(path, &snapshot);
         }
+        drop(st);
         if let Some(app) = &app {
             let _ = app.emit("script-finished", ScriptFinishedEvent { snapshot });
         }

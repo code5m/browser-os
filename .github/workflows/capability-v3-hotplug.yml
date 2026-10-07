@@ -1,0 +1,30 @@
+name: Capability v3 hot-plug acceptance
+
+on:
+  push:
+    branches:
+      - feature/capability-platform-v3-low-risk-a
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: capability-v3-hotplug-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hot-plug:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Unified Hot-Plug Acceptance
+        run: node scripts/check-hot-plug-acceptance.mjs
