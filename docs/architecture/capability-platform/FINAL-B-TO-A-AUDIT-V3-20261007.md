@@ -106,4 +106,3 @@ The branch is mergeable only after the normal full repository validation remains
 - full Tauri GUI regression
 - diff check
 - full pre-merge
-
