@@ -2,9 +2,9 @@
 
 ## Verdict
 
-**PENDING_FINAL_GATES**
+**V3_FULL_SWEEP_PASS**
 
-This document closes the full B -> A engineering evaluation. It becomes `V3_FULL_SWEEP_PASS` only after the latest HEAD completes the full repository validation chain.
+This document closes the full B -> A engineering evaluation. The latest implementation HEAD completed the full repository validation chain successfully.
 
 ## Maturity target backed by implemented evidence
 
@@ -12,7 +12,7 @@ Before this sweep:
 
 `A=3, B=18, C=0, D=1`
 
-After this sweep, subject to final gates:
+After this sweep:
 
 `A=7, B=14, C=0, D=1`
 
@@ -55,19 +55,21 @@ The remaining 14 B capabilities all have final architectural decisions documente
 
 They are intentionally retained at B rather than left unevaluated.
 
-## Finalization rule
+## Final acceptance evidence
 
-Change this verdict to `V3_FULL_SWEEP_PASS` only after the latest branch HEAD reports all of:
+Validated on GitHub Actions run `37581886435` for implementation HEAD `e7a773894cc1155ca22dde6dbd9027e186ebb175`:
 
-- Hot-Plug Acceptance PASS
-- v3 A promotion gate PASS
-- hot-plug view fallback PASS
+
+- Hot-Plug Acceptance PASS (`HOT_PLUG_ACCEPTANCE_RESULT=PASS`)
+- v3 A promotion gate PASS (`V3_A_PROMOTION_RESULT=PASS A=7 ids=bookmark,vault,home,graph,workspace,clipboard,database`)
+- hot-plug view fallback PASS (`HOT_PLUG_VIEW_FALLBACK_RESULT=PASS`)
 - UI Safety PASS
 - architecture/capability PASS
 - Runtime startup PASS
 - Production Build PASS
-- Rust fmt/check/tests PASS
-- packaged GUI cold-start PASS
-- Full Tauri GUI Regression PASS
+- Rust fmt/check/tests PASS (Rust: `462 passed; 0 failed; 2 ignored`)
+- packaged GUI cold-start PASS (`PASSED: 0 failure(s), 2 warning(s)`; warnings are virtual-desktop portal/service availability)
+- Full Tauri GUI Regression PASS (`M0_6C_GUI_REGRESSION_RESULT=PASS`)
 - branch diff whitespace PASS
-- PRE_MERGE_RESULT=ALL_PASS
+- build metrics gate PASS without threshold/baseline changes
+- `PRE_MERGE_RESULT=ALL_PASS`
