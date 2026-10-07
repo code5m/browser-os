@@ -16,6 +16,7 @@ export const gridManifest: CapabilityDefinition = defineIntegratedCapability({
   provides: ["grid.open", "grid.layout", "grid.archive"],
   dependencies: ["browser", "bridge"],
   resident: false,
+  supported: ["ACTIVE", "SUSPENDED"],
   resourceClass: ["HEAVY", "MULTI_WEBVIEW", "NATIVE"],
   suspendable: true,
   destroyable: true,
