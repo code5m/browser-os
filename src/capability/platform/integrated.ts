@@ -40,6 +40,8 @@ interface IntegratedCapabilitySpec {
 }
 
 export function defineIntegratedCapability(spec: IntegratedCapabilitySpec): CapabilityDefinition {
+  const hotPlugLevel = spec.hotPlugLevel ?? "HP0"
+  const toggleable = hotPlugLevel !== "HP0"
   const dependencies = spec.dependencies ?? ["bridge"]
   const optionalDependencies = spec.optionalDependencies ?? []
   const permissions = spec.permissions ?? []
@@ -65,11 +67,11 @@ export function defineIntegratedCapability(spec: IntegratedCapabilitySpec): Capa
     installPolicy: "static",
     uninstallPolicy: "static",
     hotPlug: {
-      level: spec.hotPlugLevel ?? "HP0",
-      enable: (spec.hotPlugLevel ?? "HP0") !== "HP0",
-      disable: (spec.hotPlugLevel ?? "HP0") !== "HP0",
-      register: spec.hotPlugLevel === "HP2",
-      unregister: spec.hotPlugLevel === "HP2",
+      level: hotPlugLevel,
+      enable: toggleable,
+      disable: toggleable,
+      register: hotPlugLevel === "HP2",
+      unregister: hotPlugLevel === "HP2",
       install: false,
       uninstall: false,
       limitationReason: spec.limitationReason,
