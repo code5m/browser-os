@@ -82,7 +82,18 @@ jobs:
         run: dbus-run-session -- xvfb-run -a bash scripts/verify-installed-client.sh --build
 
       - name: Full Tauri GUI regression
-        run: dbus-run-session -- xvfb-run -a python3 scripts/m0-6c-gui-regression.py --no-build --evidence-dir /tmp/m0-6c-v2
+        shell: bash
+        run: |
+          set +e
+          dbus-run-session -- xvfb-run -a python3 scripts/m0-6c-gui-regression.py --no-build --evidence-dir /tmp/m0-6c-v2
+          status=$?
+          echo "===== M0-6.c GUI summary ====="
+          cat /tmp/m0-6c-v2/summary.md 2>/dev/null || true
+          echo "===== M0-6.c driver report ====="
+          cat /tmp/m0-6c-v2/driver-report.json 2>/dev/null || true
+          echo "===== M0-6.c app log tail ====="
+          tail -n 120 /tmp/m0-6c-v2/app.log 2>/dev/null || true
+          exit "$status"
 
       - name: Branch diff whitespace check
         run: git diff --check origin/master...HEAD -- . ':(exclude)logs/m0-baseline/**'
