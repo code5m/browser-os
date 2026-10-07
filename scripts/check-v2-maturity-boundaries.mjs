@@ -99,7 +99,17 @@ for (const [id, spec] of Object.entries(promoted)) {
   const manifest = read("src/capabilities/" + id + "/manifest.ts");
   if (!manifest.includes('id: "' + id + '"')) fail(id + " manifest id mismatch");
   if (!manifest.includes('semanticOwner: "' + spec.owner + '"')) fail(id + " semantic owner mismatch");
-  if (!manifest.includes('maturity: "C2"')) fail(id + " must remain at truthful C2/B-level contract");
+  const isC2 = manifest.includes('maturity: "C2"');
+  const isC3 = manifest.includes('maturity: "C3"');
+  if (!isC2 && !isC3) fail(id + " must remain at least C2 after v2 extraction");
+  if (isC3) {
+    if (!manifest.includes('hotPlugLevel: "HP2"') && !manifest.includes('level: "HP2"')) {
+      fail(id + " C3 promotion requires truthful HP2 contract");
+    }
+    if (!manifest.includes("scripts/check-hot-plug-acceptance.mjs")) {
+      fail(id + " C3 promotion requires unified Hot-Plug evidence");
+    }
+  }
   if (!manifest.includes("publicContract: [")) fail(id + " missing public contract");
   if (!generated.includes("/capabilities/" + id + "/manifest")) fail(id + " missing generated manifest registration");
   if (!generated.includes("'" + id + "': definition")) fail(id + " missing generated runtime definition");
