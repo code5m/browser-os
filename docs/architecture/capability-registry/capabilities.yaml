@@ -368,7 +368,7 @@ capabilities:
       activatable: true
       resident: false
     resources:
-      class: [LIGHT]
+      class: [HEAVY, NATIVE]
       suspendable: true
       destroyable: true
     permissions: []
@@ -523,7 +523,7 @@ capabilities:
       activatable: true
       resident: false
     resources:
-      class: [LIGHT]
+      class: [LIGHT, PROCESS]
       suspendable: true
       destroyable: true
     permissions:
