@@ -1,37 +1,15 @@
-type GridLifecycleBinding = {
-  resume?: () => void | Promise<void>
-  suspend: () => void | Promise<void>
-  deactivate: () => void | Promise<void>
-}
+import { createManagedHotPlugLifecycle, type HotPlugBinding } from "../../capability/platform/hot-plug-lifecycle"
 
-let active = false
-const bindings = new Set<GridLifecycleBinding>()
+type GridLifecycleBinding =
+  Required<Pick<HotPlugBinding, "suspend" | "deactivate">> &
+  Pick<HotPlugBinding, "resume">
 
-export function gridLifecycleSnapshot() {
-  return { active, bindingCount: bindings.size }
-}
+const lifecycle = createManagedHotPlugLifecycle()
 
+export const gridLifecycleSnapshot = lifecycle.snapshot
+export const activateGridLifecycle = lifecycle.activate
+export const suspendGridLifecycle = lifecycle.suspend
+export const deactivateGridLifecycle = lifecycle.deactivate
 export function registerGridLifecycleBinding(binding: GridLifecycleBinding): () => void {
-  bindings.add(binding)
-  if (active) void binding.resume?.()
-  return () => bindings.delete(binding)
-}
-
-export function activateGridLifecycle(): void {
-  active = true
-  for (const binding of bindings) void binding.resume?.()
-}
-
-export async function suspendGridLifecycle(): Promise<void> {
-  const results = await Promise.allSettled([...bindings].map((binding) => binding.suspend()))
-  const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
-  if (rejected) throw rejected.reason
-  active = false
-}
-
-export async function deactivateGridLifecycle(): Promise<void> {
-  const results = await Promise.allSettled([...bindings].map((binding) => binding.deactivate()))
-  const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
-  if (rejected) throw rejected.reason
-  active = false
+  return lifecycle.register(binding)
 }

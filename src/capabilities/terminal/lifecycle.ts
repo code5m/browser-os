@@ -1,30 +1,14 @@
-type TerminalLifecycleBinding = {
-  canSuspend: () => boolean
-  cleanup?: () => void | Promise<void>
-}
+import { createManagedHotPlugLifecycle, type HotPlugBinding } from "../../capability/platform/hot-plug-lifecycle"
 
-let active = false
-const bindings = new Set<TerminalLifecycleBinding>()
+type TerminalLifecycleBinding =
+  Required<Pick<HotPlugBinding, "canSuspend">> &
+  Pick<HotPlugBinding, "cleanup">
 
-export function terminalLifecycleSnapshot() {
-  return { active, bindingCount: bindings.size }
-}
+const lifecycle = createManagedHotPlugLifecycle("terminal has active PTY sessions")
 
+export const terminalLifecycleSnapshot = lifecycle.snapshot
+export const activateTerminalLifecycle = lifecycle.activate
+export const suspendTerminalLifecycle = lifecycle.suspend
 export function registerTerminalLifecycleBinding(binding: TerminalLifecycleBinding): () => void {
-  bindings.add(binding)
-  return () => bindings.delete(binding)
-}
-
-export function activateTerminalLifecycle(): void {
-  active = true
-}
-
-export async function suspendTerminalLifecycle(): Promise<void> {
-  if ([...bindings].some((binding) => !binding.canSuspend())) {
-    throw new Error("terminal has active PTY sessions")
-  }
-  const results = await Promise.allSettled([...bindings].map((binding) => binding.cleanup?.()))
-  const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
-  if (rejected) throw rejected.reason
-  active = false
+  return lifecycle.register(binding)
 }
