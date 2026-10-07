@@ -119,38 +119,39 @@ async function run() {
   if (!holdsState) ok("GOV-02", "ResourceGovernor 不持有任何业务 state（无 owner 符号/状态字段）");
   else bad("GOV-02", "ResourceGovernor 持有业务 state", "发现 owner 符号");
 
-  // suspend 诚实拒绝对 terminal（不谎报 C4）：full profile 下 suspend(terminal) 必须抛 SUSPEND_NOT_SUPPORTED
+  // v4：Terminal 在“空闲（无 PTY owner binding）”时可经 Governor 暂停；
+  // 活动 PTY 的拒绝由统一 Hot-Plug Harness 的 lifecycle blocker 负向测试覆盖。
   const { createResourceGovernor } = await loadGovernor();
   const fullBoot = await bootstrapUnder("full");
   const gov2 = createResourceGovernor(fullBoot.runtime);
-  let threw = null;
+  let suspendThrew = null;
   try {
     gov2.suspend("terminal");
   } catch (e) {
-    threw = e instanceof Error ? e.code || e.message : String(e);
+    suspendThrew = e instanceof Error ? e.code || e.message : String(e);
   }
-  if (threw && /SUSPEND_NOT_SUPPORTED/.test(threw)) ok("GOV-03", "terminal suspend 诚实拒绝（SUSPEND_NOT_SUPPORTED，不谎报 C4 资源释放）");
-  else bad("GOV-03", "terminal suspend 应拒绝", `threw=${threw}`);
+  if (!suspendThrew && fullBoot.runtime.get("terminal")?.state === "SUSPENDED") {
+    ok("GOV-03", "空闲 terminal 可经 Governor suspend；活动 PTY 拒绝由 HP2 blocker gate 覆盖");
+  } else {
+    bad("GOV-03", "空闲 terminal suspend 应成功", `threw=${suspendThrew} state=${fullBoot.runtime.get("terminal")?.state}`);
+  }
 
-  // destroy 不绕过 owner：只经 rt.disable（不直调 killTerm/浏览器 stop），且遵守运行时转换约束。
-  // Terminal 为 ACTIVE 且不可 suspend（suspendable:false）→ rt.disable 抛 INVALID_TRANSITION。
-  // 这正是诚实信号：v1 下 Terminal 无 lifecycle 拆解路径（C4/C5 未达），Governor 不绕过 owner 去强杀。
+  // destroy 仍只经 Runtime，不直接 import/call owner。先 suspend 后 disable 是合法转换。
   let destroyThrew = null;
   try {
     gov2.destroy("terminal");
   } catch (e) {
     destroyThrew = e instanceof Error ? e.code || e.message : String(e);
   }
-  if (destroyThrew && /INVALID_TRANSITION/.test(destroyThrew)) {
-    ok("GOV-04", "destroy 只经 rt.disable 且遵守运行时约束（ACTIVE 不可直接 disable；不绕过 owner 强杀 PTY）");
+  if (!destroyThrew && fullBoot.runtime.get("terminal")?.enabled === false) {
+    ok("GOV-04", "destroy 遵守 suspend→disable 转换，不绕过 Runtime");
   } else {
-    bad("GOV-04", "destroy 应尊重运行时转换约束", `threw=${destroyThrew}`);
+    bad("GOV-04", "destroy 应在已 suspend 后安全 disable", `threw=${destroyThrew}`);
   }
-  // 不变量：destroy 后 terminal 仍是 ACTIVE（未被 owner 资源操作），证明 Governor 未触碰 owner
-  if (fullBoot.runtime.get("terminal")?.state === "ACTIVE") {
-    ok("GOV-05", "destroy 未直触 owner 资源（terminal 仍 ACTIVE，PTY 归 owner 管）");
+  if (fullBoot.runtime.get("terminal")?.state === "SUSPENDED") {
+    ok("GOV-05", "Governor 不直触 owner 资源（仅更新 Runtime enabled 元数据）");
   } else {
-    bad("GOV-05", "destroy 不应直触 owner", `state=${fullBoot.runtime.get("terminal")?.state}`);
+    bad("GOV-05", "destroy 不应直接改写 owner 状态", `state=${fullBoot.runtime.get("terminal")?.state}`);
   }
 }
 
