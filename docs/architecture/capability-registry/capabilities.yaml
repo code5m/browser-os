@@ -23,6 +23,7 @@ capabilities:
     semanticOwner: useBrowserStore
     governanceStatus: GOVERNED
     status: COMPATIBILITY_WRAPPED
+    maturity: C3
     provides:
       - browser.navigate
       - browser.tab.open
@@ -38,8 +39,8 @@ capabilities:
       resident: false
     resources:
       class: [HEAVY, WEBVIEW, NATIVE]
-      suspendable: false
-      destroyable: false
+      suspendable: true
+      destroyable: true
     permissions:
       - webview.create
     persistence:
@@ -53,7 +54,7 @@ capabilities:
     semanticOwner: useGridStore
     governanceStatus: GOVERNED
     status: COMPATIBILITY_WRAPPED
-    maturity: C2
+    maturity: C3
     provides:
       - grid.open
       - grid.layout
@@ -63,13 +64,13 @@ capabilities:
       - bridge
     optionalDependencies: []
     lifecycle:
-      supported: [ACTIVE]
+      supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
       activatable: true
       resident: false
     resources:
       class: [HEAVY, MULTI_WEBVIEW, NATIVE]
-      suspendable: false
+      suspendable: true
       destroyable: true
     permissions:
       - webview.create
@@ -117,6 +118,7 @@ capabilities:
     semanticOwner: useTerminalStore
     governanceStatus: GOVERNED
     status: COMPATIBILITY_WRAPPED
+    maturity: C3
     provides:
       - terminal.spawn
       - terminal.write
@@ -127,13 +129,13 @@ capabilities:
       - bridge
     optionalDependencies: []
     lifecycle:
-      supported: [ACTIVE]
+      supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
       activatable: true
       resident: false
     resources:
       class: [PROCESS, PTY]
-      suspendable: false
+      suspendable: true
       destroyable: true
     permissions:
       - process.spawn
@@ -250,7 +252,7 @@ capabilities:
     # 写操作仍 spawn git 子进程（重资源）；absent 态不挂载面板、不 spawn（C3 一致）。
     # 边界由 scripts/check-developer-owners.mjs (DEV-*) 机器固化。
     status: COMPATIBILITY_WRAPPED
-    maturity: C2
+    maturity: C3
     provides:
       - git.status
       - git.diff
@@ -353,7 +355,7 @@ capabilities:
     semanticOwner: usePluginStore
     governanceStatus: GOVERNED
     status: COMPATIBILITY_WRAPPED
-    maturity: C2
+    maturity: C3
     provides:
       - plugin.list
       - plugin.manifest
@@ -361,14 +363,14 @@ capabilities:
       - bridge
     optionalDependencies: []
     lifecycle:
-      supported: [ACTIVE]
+      supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
       activatable: true
       resident: false
     resources:
-      class: [HEAVY, NATIVE]
-      suspendable: false
-      destroyable: false
+      class: [LIGHT]
+      suspendable: true
+      destroyable: true
     permissions: []
     persistence:
       scope: disk
@@ -508,7 +510,7 @@ capabilities:
     semanticOwner: useAppsStore
     governanceStatus: GOVERNED
     status: COMPATIBILITY_WRAPPED
-    maturity: C2
+    maturity: C3
     provides:
       - apps.list
       - apps.launch
@@ -521,7 +523,7 @@ capabilities:
       activatable: true
       resident: false
     resources:
-      class: [LIGHT, PROCESS]
+      class: [LIGHT]
       suspendable: true
       destroyable: true
     permissions:
@@ -539,7 +541,7 @@ capabilities:
     semanticOwner: useToolsStore
     governanceStatus: GOVERNED
     status: COMPATIBILITY_WRAPPED
-    maturity: C2
+    maturity: C3
     provides:
       - tools.list
       - tools.open
@@ -600,7 +602,7 @@ capabilities:
     semanticOwner: useScriptStore
     governanceStatus: GOVERNED
     status: COMPATIBILITY_WRAPPED
-    maturity: C2
+    maturity: C3
     provides:
       - script.run
       - script.snippet
@@ -608,13 +610,13 @@ capabilities:
       - bridge
     optionalDependencies: []
     lifecycle:
-      supported: [ACTIVE]
+      supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
       activatable: true
       resident: false
     resources:
       class: [PROCESS]
-      suspendable: false
+      suspendable: true
       destroyable: true
     permissions:
       - process.spawn
