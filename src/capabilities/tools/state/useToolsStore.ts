@@ -10,15 +10,19 @@ import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { bridge } from "../../../bridge";
 import type { ToolMeta } from "../../../types";
+import { registerToolsCleanup, toolsLifecycleSnapshot } from "../lifecycle";
 
 export const useToolsStore = defineStore("tools", () => {
   const tools = ref<ToolMeta[]>([]);
   const error = ref<string | null>(null);
+  registerToolsCleanup(() => bridge.closeTools());
+  const lifecycleReady = () => toolsLifecycleSnapshot().active;
 
   const builtin = computed(() => tools.value.filter((t) => t.source === "builtin"));
   const user = computed(() => tools.value.filter((t) => t.source === "user"));
 
   async function load() {
+    if (!lifecycleReady()) return;
     error.value = null;
     try {
       tools.value = await bridge.listTools();
@@ -28,6 +32,7 @@ export const useToolsStore = defineStore("tools", () => {
   }
 
   function open(t: ToolMeta) {
+    if (!lifecycleReady()) return;
     bridge.openTool(t.id).catch((e) => (error.value = `打开失败：${String(e)}`));
   }
 
