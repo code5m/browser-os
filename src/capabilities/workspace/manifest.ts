@@ -78,7 +78,7 @@ export const workspaceManifest: CapabilityDefinition = {
       unregister: true,
       install: false,
       uninstall: false,
-      limitationReason: "HP2：Workspace 仅拥有可逆 UI contributions；Shell 通用 availability 回退保证停用当前 Workspace 视图时不会留下死视图，统一 Harness 验证重复启停与 fresh Runtime。",
+      limitationReason: "HP2：贡献可逆；Shell availability 回退防死视图；Harness 验证重启。",
     },
     publicContract: [{ name: "publicApi", locator: "src/capabilities/workspace/public.ts" }],
     entrypoint: "src/capabilities/workspace/index.ts",
