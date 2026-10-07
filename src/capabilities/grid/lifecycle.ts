@@ -23,15 +23,15 @@ export function activateGridLifecycle(): void {
 }
 
 export async function suspendGridLifecycle(): Promise<void> {
-  active = false
   const results = await Promise.allSettled([...bindings].map((binding) => binding.suspend()))
   const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
   if (rejected) throw rejected.reason
+  active = false
 }
 
 export async function deactivateGridLifecycle(): Promise<void> {
-  active = false
   const results = await Promise.allSettled([...bindings].map((binding) => binding.deactivate()))
   const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
   if (rejected) throw rejected.reason
+  active = false
 }
