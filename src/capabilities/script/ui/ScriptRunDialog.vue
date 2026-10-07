@@ -8,6 +8,7 @@ import type {
   ScriptOutputEvent,
   ScriptFinishedEvent,
 } from "../../../types";
+import { completeScriptRun, trackScriptRun } from "../lifecycle";
 
 const props = withDefaults(defineProps<{ script: ScriptMeta | CommandSnippet; kind?: "script" | "command" }>(), {
   kind: "script",
@@ -47,6 +48,7 @@ function onFinished(e: ScriptFinishedEvent) {
   errorMsg.value = e.snapshot.error ?? null;
   truncated.value = e.snapshot.truncated;
   running.value = false;
+  completeScriptRun(e.snapshot.run_id);
 }
 
 // 在组件卸载时 unlisten 这两个订阅，否则多次运行会泄漏监听器
@@ -91,6 +93,11 @@ async function run() {
     runId.value = snap.run_id;
     running.value = true;
     status.value = snap.status;
+    trackScriptRun(snap.run_id, async () => {
+      const current = await bridge.scriptStatus(snap.run_id);
+      const normalized = String(current.status ?? "").toLowerCase().replace(/[_-]/g, "");
+      return !["succeeded", "failed", "cancelled", "canceled", "timedout", "timeout"].includes(normalized);
+    });
   } catch (e: unknown) {
     errorMsg.value = String(e);
     running.value = false;
