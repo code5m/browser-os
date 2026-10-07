@@ -8,6 +8,7 @@ export const scriptManifest: CapabilityDefinition = defineIntegratedCapability({
   maturity: "C3",
   provides: ["script.run", "script.snippet"],
   resident: false,
+  supported: ["ACTIVE", "SUSPENDED"],
   resourceClass: ["PROCESS"],
   suspendable: true,
   destroyable: true,
