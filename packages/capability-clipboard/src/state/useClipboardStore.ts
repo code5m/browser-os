@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ref, reactive, inject } from "vue";
 import { CLIPBOARD_PORTS_KEY, assertClipboardPorts } from "../ports";
+import { registerClipboardLifecycleBinding } from "../lifecycle";
 
 export interface ClipItem {
   id: string;
@@ -90,22 +91,52 @@ export const useClipboardStore = defineStore("clipboard", () => {
   }
 
   let focusHandler: (() => void) | null = null;
-  function bindClipFocus() {
+  let tauriUnlisten: (() => void) | null = null;
+  let tauriBindSeq = 0;
+  let lifecycleUnregister: (() => void) | null = null;
+
+  async function bindClipFocus() {
     if (focusHandler) return;
+    const seq = ++tauriBindSeq;
     focusHandler = () => {
-      clipReadSilent();
+      void clipReadSilent();
     };
     window.addEventListener("focus", focusHandler);
     try {
-      // @ts-ignore tauri focus 事件（HMR 场景可能未注入）
-      window.__TAURI__.event.listen("tauri://focus", () => clipReadSilent());
+      // @ts-ignore tauri focus 事件（HMR/Node 场景可能未注入）
+      const unlisten = await Promise.resolve(window.__TAURI__.event.listen("tauri://focus", () => void clipReadSilent()));
+      // suspend/disable 可能发生在异步 listen resolve 之前；晚到的 unlisten 必须立即执行。
+      if (seq !== tauriBindSeq || !focusHandler) {
+        if (typeof unlisten === "function") unlisten();
+        return;
+      }
+      if (typeof unlisten === "function") tauriUnlisten = unlisten;
     } catch (e) {
       // 非 Tauri 环境（如 node 校验）静默跳过
     }
   }
 
+  function unbindClipFocus() {
+    tauriBindSeq += 1;
+    if (focusHandler) window.removeEventListener("focus", focusHandler);
+    focusHandler = null;
+    const unlisten = tauriUnlisten;
+    tauriUnlisten = null;
+    if (unlisten) unlisten();
+  }
+
   function startClipWatch() {
-    bindClipFocus();
+    if (lifecycleUnregister) return;
+    lifecycleUnregister = registerClipboardLifecycleBinding({
+      start: () => void bindClipFocus(),
+      stop: unbindClipFocus,
+    });
+  }
+
+  function stopClipWatch() {
+    const unregister = lifecycleUnregister;
+    lifecycleUnregister = null;
+    unregister?.();
   }
 
   return {
@@ -120,5 +151,6 @@ export const useClipboardStore = defineStore("clipboard", () => {
     copyClipItem,
     clearClipHistory,
     startClipWatch,
+    stopClipWatch,
   };
 });
