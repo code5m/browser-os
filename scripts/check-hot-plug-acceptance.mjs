@@ -32,6 +32,9 @@ try {
     export { workspaceManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/workspace/manifest.ts"))};
     export { createClipboardCapability, clipboardContribution } from ${JSON.stringify(join(ROOT, "packages/capability-clipboard/src/index.ts"))};
     export { clipboardManifest } from ${JSON.stringify(join(ROOT, "packages/capability-clipboard/src/manifest.ts"))};
+    export { databaseCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/database/index.ts"))};
+    export { databaseManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/database/manifest.ts"))};
+    export { credentialCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/credential/index.ts"))};
   `;
   const built = await build({
     stdin: { contents: entry, resolveDir: ROOT, loader: "ts" },
@@ -77,6 +80,7 @@ try {
     { id: "graph", definition: M.graphCapability, manifest: M.graphManifest, dependencies: [] },
     { id: "workspace", definition: M.workspaceCapability, manifest: M.workspaceManifest, dependencies: [] },
     { id: "clipboard", definition: clipboardFactory.clipboardCapability, manifest: M.clipboardManifest, dependencies: [] },
+    { id: "database", definition: M.databaseCapability, manifest: M.databaseManifest, dependencies: [M.credentialCapability] },
   ];
 
   async function accept(candidate) {
