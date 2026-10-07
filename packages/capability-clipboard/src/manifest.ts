@@ -79,7 +79,7 @@ export const clipboardManifest: CapabilityDefinition = {
       install: false,
       uninstall: false,
       limitationReason:
-        "HP2：focus/Tauri focus listener 由 Clipboard 生命周期拥有并对称解绑；统一 Harness 验证贡献摘除、重复启停与 fresh Runtime。",
+        "HP2：focus/Tauri listener 对称解绑；Harness 验证恢复与重启。",
     },
     publicContract: [
       {
