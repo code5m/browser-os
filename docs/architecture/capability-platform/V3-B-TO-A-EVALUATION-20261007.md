@@ -20,7 +20,7 @@ A promotion requires all of the following:
 
 | Capability | Risk | Key evidence / blocker | Decision |
 | --- | --- | --- | --- |
-| home | LOW | Already HP2; LIGHT; non-resident; suspendable+destroyable; no native/background resource; one generic contribution | **PROMOTE if unified Hot-Plug Harness passes** |
+| home | LOW | Already HP2; LIGHT; non-resident; suspendable+destroyable; no native/background resource; one generic contribution | **PROMOTED — unified Hot-Plug Harness PASS** |
 | graph | MEDIUM-LOW | Non-resident and suspendable, but store owns debounce/AbortController/in-flight request state; needs explicit cancel-on-suspend/deactivate evidence | KEEP B |
 | skill | MEDIUM-LOW | LIGHT and non-resident, but maturity C1 and execution/install backend intentionally incomplete | KEEP B |
 | workspace | MEDIUM | C3 and no heavy native resource, but current resource policy says suspendable=false/destroyable=false and owns many Shell views | KEEP B |
@@ -72,7 +72,7 @@ Plus:
 - activation duration recorded;
 - no unsupported dynamic resource class.
 
-If any of these fail, Home remains B.
+Result: **PASS**. Home completed the unified harness alongside Bookmark and Vault, including repeated lifecycle cycles and fresh-Runtime persistence.
 
 ## Deferred next candidates
 
@@ -83,7 +83,7 @@ The next realistic candidates are Graph and Workspace, but neither is low-risk e
 
 They should be separate, evidence-driven follow-up promotions rather than bundled with Home.
 
-## Expected maturity if Home passes
+## Final maturity
 
 Before:
 
@@ -93,4 +93,4 @@ After:
 
 `A=3, B=18, C=0, D=1`
 
-No other capability is promoted in this pass unless it independently reaches the same evidence bar.
+No other capability is promoted in this pass. The remaining 18 B capabilities retain truthful blockers and are not relabeled.
