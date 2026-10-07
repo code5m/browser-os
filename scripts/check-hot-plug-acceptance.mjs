@@ -30,6 +30,8 @@ try {
     export { graphCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/graph/index.ts"))};
     export { graphManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/graph/manifest.ts"))};
     export { workspaceManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/workspace/manifest.ts"))};
+    export { createClipboardCapability, clipboardContribution } from ${JSON.stringify(join(ROOT, "packages/capability-clipboard/src/index.ts"))};
+    export { clipboardManifest } from ${JSON.stringify(join(ROOT, "packages/capability-clipboard/src/manifest.ts"))};
   `;
   const built = await build({
     stdin: { contents: entry, resolveDir: ROOT, loader: "ts" },
@@ -53,6 +55,15 @@ try {
   vaultFactory.vaultCapability.lifecycle.onActivate = () => {
     M.contributionRegistry.registerContribution(M.vaultContribution);
   };
+  const clipboardFactory = M.createClipboardCapability({
+    native: { clipboardRead: async () => "", clipboardWrite: async () => {} },
+    ui: { showToast: () => {}, requestClose: () => {}, redactSecrets: (text) => text },
+  });
+  const clipboardActivate = clipboardFactory.clipboardCapability.lifecycle.onActivate;
+  clipboardFactory.clipboardCapability.lifecycle.onActivate = async () => {
+    await clipboardActivate?.();
+    M.contributionRegistry.registerContribution(M.clipboardContribution);
+  };
 
   const candidates = [
     { id: "bookmark", definition: M.bookmarkCapability, manifest: M.bookmarkManifest, dependencies: [] },
@@ -65,6 +76,7 @@ try {
     },
     { id: "graph", definition: M.graphCapability, manifest: M.graphManifest, dependencies: [] },
     { id: "workspace", definition: M.workspaceCapability, manifest: M.workspaceManifest, dependencies: [] },
+    { id: "clipboard", definition: clipboardFactory.clipboardCapability, manifest: M.clipboardManifest, dependencies: [] },
   ];
 
   async function accept(candidate) {
