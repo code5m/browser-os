@@ -27,7 +27,6 @@ export function createManagedHotPlugLifecycle(blockedMessage = "capability resou
     if ([...bindings].some((binding) => binding.canSuspend && !binding.canSuspend())) {
       throw new Error(blockedMessage)
     }
-    active = false
     const calls = [...bindings].map((binding) => {
       const op = deactivate
         ? binding.deactivate ?? binding.cleanup ?? binding.suspend
@@ -37,6 +36,10 @@ export function createManagedHotPlugLifecycle(blockedMessage = "capability resou
     const results = await Promise.allSettled(calls)
     const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
     if (rejected) throw rejected.reason
+    // Commit internal lifecycle state only after every owner cleanup succeeds.
+    // Runtime keeps the record ACTIVE when onSuspend rejects, so changing this
+    // flag earlier would split the capability's internal state from Runtime.
+    active = false
   }
 
   return {
