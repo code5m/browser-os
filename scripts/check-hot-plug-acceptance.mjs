@@ -60,8 +60,8 @@ try {
     ui: { showToast: () => {}, requestClose: () => {}, redactSecrets: (text) => text },
   });
   const clipboardActivate = clipboardFactory.clipboardCapability.lifecycle.onActivate;
-  clipboardFactory.clipboardCapability.lifecycle.onActivate = async () => {
-    await clipboardActivate?.();
+  clipboardFactory.clipboardCapability.lifecycle.onActivate = () => {
+    clipboardActivate?.();
     M.contributionRegistry.registerContribution(M.clipboardContribution);
   };
 
