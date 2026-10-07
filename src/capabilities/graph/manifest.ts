@@ -20,5 +20,5 @@ export const graphManifest: CapabilityDefinition = defineIntegratedCapability({
   deactivationPolicy: "graceful",
   description: "只读图谱查询、节点获取与容量概览。",
   hotPlugLevel: "HP2",
-  limitationReason: "HP2：暂停/停用会取消 debounce 与 in-flight graph query，统一 Harness 验证贡献摘除、重复启停与 fresh Runtime 恢复。",
+  limitationReason: "HP2：停用取消 debounce/in-flight query；Harness 验证恢复与重启。",
 })
