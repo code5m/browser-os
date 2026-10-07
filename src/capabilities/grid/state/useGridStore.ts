@@ -5,6 +5,7 @@ import { WEBVIEW_FREEZE_JS, WEBVIEW_UNFREEZE_JS } from "../../../utils/webviewFr
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { useBrowserStore } from "../../browser/public";
 import { isGridResourceAllowed } from "../resource/guard";
+import { registerGridLifecycleBinding } from "../lifecycle";
 
 export const useGridStore = defineStore("grid", () => {
   const layout = useLayoutStore();
@@ -344,6 +345,30 @@ export const useGridStore = defineStore("grid", () => {
       nextTick(syncGridVisibility);
     },
   );
+
+  async function suspendGridResources() {
+    if (!gridOpen.value) return;
+    for (let i = 0; i < gridCount.value; i++) {
+      await bridge.evalInTab(`grid-${i}`, WEBVIEW_FREEZE_JS).catch(() => {});
+      await bridge.gridPosition(i, { x: -30000, y: 0, width: 100, height: 100 }).catch(() => {});
+    }
+    if (layout.mainView === "grid") layout.setView("browser");
+  }
+
+  async function resumeGridResources() {
+    if (!gridOpen.value) return;
+    if (layout.mainView === "grid") {
+      await nextTick();
+      layoutGrid();
+      syncGridFreeze();
+    }
+  }
+
+  registerGridLifecycleBinding({
+    resume: resumeGridResources,
+    suspend: suspendGridResources,
+    deactivate: closeGridAll,
+  });
 
   return {
     gridOpen,
