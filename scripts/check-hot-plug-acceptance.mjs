@@ -29,12 +29,15 @@ try {
     export { appsCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/apps/index.ts"))};
     export { graphCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/graph/index.ts"))};
     export { graphManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/graph/manifest.ts"))};
+    export { registerGraphCanceller, graphLifecycleSnapshot } from ${JSON.stringify(join(ROOT, "src/capabilities/graph/lifecycle.ts"))};
     export { workspaceManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/workspace/manifest.ts"))};
     export { createClipboardCapability, clipboardContribution } from ${JSON.stringify(join(ROOT, "packages/capability-clipboard/src/index.ts"))};
     export { clipboardManifest } from ${JSON.stringify(join(ROOT, "packages/capability-clipboard/src/manifest.ts"))};
+    export { registerClipboardLifecycleBinding, clipboardLifecycleSnapshot } from ${JSON.stringify(join(ROOT, "packages/capability-clipboard/src/lifecycle.ts"))};
     export { databaseCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/database/index.ts"))};
     export { databaseManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/database/manifest.ts"))};
     export { credentialCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/credential/index.ts"))};
+    export { registerDatabaseCleanup, databaseLifecycleSnapshot } from ${JSON.stringify(join(ROOT, "src/capabilities/database/lifecycle.ts"))};
   `;
   const built = await build({
     stdin: { contents: entry, resolveDir: ROOT, loader: "ts" },
@@ -68,6 +71,17 @@ try {
     M.contributionRegistry.registerContribution(M.clipboardContribution);
   };
 
+  let graphCleanupCount = 0;
+  let databaseCleanupCount = 0;
+  let clipboardStartCount = 0;
+  let clipboardStopCount = 0;
+  M.registerGraphCanceller(() => { graphCleanupCount += 1; });
+  M.registerDatabaseCleanup(async () => { databaseCleanupCount += 1; });
+  M.registerClipboardLifecycleBinding({
+    start: () => { clipboardStartCount += 1; },
+    stop: () => { clipboardStopCount += 1; },
+  });
+
   const candidates = [
     { id: "bookmark", definition: M.bookmarkCapability, manifest: M.bookmarkManifest, dependencies: [] },
     { id: "vault", definition: vaultFactory.vaultCapability, manifest: M.vaultManifest, dependencies: [] },
@@ -77,14 +91,39 @@ try {
       manifest: M.homeManifest,
       dependencies: [M.browserCapability, M.workspaceCapability, M.appsCapability],
     },
-    { id: "graph", definition: M.graphCapability, manifest: M.graphManifest, dependencies: [] },
+    {
+      id: "graph",
+      definition: M.graphCapability,
+      manifest: M.graphManifest,
+      dependencies: [],
+      verifyLifecycle: () => assert.ok(graphCleanupCount > 0, "graph suspend/deactivate triggers cleanup"),
+    },
     { id: "workspace", definition: M.workspaceCapability, manifest: M.workspaceManifest, dependencies: [] },
-    { id: "clipboard", definition: clipboardFactory.clipboardCapability, manifest: M.clipboardManifest, dependencies: [] },
-    { id: "database", definition: M.databaseCapability, manifest: M.databaseManifest, dependencies: [M.credentialCapability] },
+    {
+      id: "clipboard",
+      definition: clipboardFactory.clipboardCapability,
+      manifest: M.clipboardManifest,
+      dependencies: [],
+      verifyLifecycle: () => {
+        assert.ok(clipboardStartCount > 0, "clipboard activation starts lifecycle bindings");
+        assert.ok(clipboardStopCount > 0, "clipboard suspend/deactivate stops lifecycle bindings");
+        assert.equal(M.clipboardLifecycleSnapshot().active, true, "clipboard final lifecycle active");
+      },
+    },
+    {
+      id: "database",
+      definition: M.databaseCapability,
+      manifest: M.databaseManifest,
+      dependencies: [M.credentialCapability],
+      verifyLifecycle: () => {
+        assert.ok(databaseCleanupCount > 0, "database suspend/deactivate awaits cleanup");
+        assert.equal(M.databaseLifecycleSnapshot().active, true, "database final lifecycle active");
+      },
+    },
   ];
 
   async function accept(candidate) {
-    const { id, definition, manifest, dependencies = [] } = candidate;
+    const { id, definition, manifest, dependencies = [], verifyLifecycle } = candidate;
     const registry = M.contributionRegistry;
     registry.clear();
 
@@ -196,6 +235,7 @@ try {
     assert.equal(unsupportedOwnedKinds.length, 0, id + " has no untracked dynamic resource class");
     assert.ok(manifest.semanticOwner, id + " semantic owner");
 
+    verifyLifecycle?.();
     evidence.push(snapshot("FINAL_ACTIVE"));
     return { capability: id, result: "PASS", evidence };
   }
