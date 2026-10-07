@@ -1,5 +1,6 @@
 import { withLazyContributions } from "../../capability/platform/contributed";
 import { gridManifest } from "./manifest";
+import { activateGridLifecycle, deactivateGridLifecycle, suspendGridLifecycle } from "./lifecycle";
 
 export const GRID_CAPABILITY_ID = "grid";
 
@@ -22,9 +23,11 @@ export const gridCapability = {
   ...contributedGridCapability,
   lifecycle: {
     ...contributedGridCapability.lifecycle,
-    async onDeactivate() {
-      const { useGridStore } = await import("./state/useGridStore");
-      await useGridStore().closeGrid();
+    onActivate: () => {
+      activateGridLifecycle();
+      contributedGridCapability.lifecycle.onActivate?.();
     },
+    onSuspend: suspendGridLifecycle,
+    onDeactivate: deactivateGridLifecycle,
   },
 };
