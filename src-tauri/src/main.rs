@@ -1593,6 +1593,7 @@ fn main() {
             bridge::run_command,
             tools::list_tools,
             tools::open_tool,
+            tools::close_tools,
             bridge::run_script,
             bridge::cancel_script,
             bridge::script_status,
