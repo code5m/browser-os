@@ -1,30 +1,10 @@
-type GitLifecycleBinding = {
-  canSuspend: () => boolean
-  cleanup: () => void | Promise<void>
-}
+import { createManagedHotPlugLifecycle, type HotPlugBinding } from "../../capability/platform/hot-plug-lifecycle"
 
-let active = false
-const bindings = new Set<GitLifecycleBinding>()
+const lifecycle = createManagedHotPlugLifecycle("git write operation is still running")
 
-export function gitLifecycleSnapshot() {
-  return { active, bindingCount: bindings.size }
-}
-
-export function registerGitLifecycleBinding(binding: GitLifecycleBinding): () => void {
-  bindings.add(binding)
-  return () => bindings.delete(binding)
-}
-
-export function activateGitLifecycle(): void {
-  active = true
-}
-
-export async function suspendGitLifecycle(): Promise<void> {
-  if ([...bindings].some((binding) => !binding.canSuspend())) {
-    throw new Error("git write operation is still running")
-  }
-  active = false
-  const results = await Promise.allSettled([...bindings].map((binding) => binding.cleanup()))
-  const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
-  if (rejected) throw rejected.reason
+export const gitLifecycleSnapshot = lifecycle.snapshot
+export const activateGitLifecycle = lifecycle.activate
+export const suspendGitLifecycle = lifecycle.suspend
+export function registerGitLifecycleBinding(binding: Required<Pick<HotPlugBinding, "canSuspend" | "cleanup">>): () => void {
+  return lifecycle.register(binding)
 }
