@@ -1,30 +1,10 @@
-type PluginLifecycleBinding = {
-  canSuspend?: () => boolean
-  cleanup?: () => void | Promise<void>
-}
+import { createManagedHotPlugLifecycle, type HotPlugBinding } from "../../capability/platform/hot-plug-lifecycle"
 
-let active = false
-const bindings = new Set<PluginLifecycleBinding>()
+const lifecycle = createManagedHotPlugLifecycle("plugin operation is still in progress")
 
-export function pluginLifecycleSnapshot() {
-  return { active, bindingCount: bindings.size }
-}
-
-export function registerPluginLifecycleBinding(binding: PluginLifecycleBinding): () => void {
-  bindings.add(binding)
-  return () => bindings.delete(binding)
-}
-
-export function activatePluginLifecycle(): void {
-  active = true
-}
-
-export async function suspendPluginLifecycle(): Promise<void> {
-  if ([...bindings].some((binding) => binding.canSuspend && !binding.canSuspend())) {
-    throw new Error("plugin operation is still in progress")
-  }
-  active = false
-  const results = await Promise.allSettled([...bindings].map((binding) => binding.cleanup?.()))
-  const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
-  if (rejected) throw rejected.reason
+export const pluginLifecycleSnapshot = lifecycle.snapshot
+export const activatePluginLifecycle = lifecycle.activate
+export const suspendPluginLifecycle = lifecycle.suspend
+export function registerPluginLifecycleBinding(binding: Pick<HotPlugBinding, "canSuspend" | "cleanup">): () => void {
+  return lifecycle.register(binding)
 }
