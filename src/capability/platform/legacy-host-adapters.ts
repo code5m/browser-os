@@ -73,8 +73,8 @@ export function createLegacyHostAdapters(
   }
   const clipboard = createClipboardCapability(clipboardPorts)
   const clipboardActivate = clipboard.clipboardCapability.lifecycle.onActivate
-  clipboard.clipboardCapability.lifecycle.onActivate = async () => {
-    await clipboardActivate?.()
+  clipboard.clipboardCapability.lifecycle.onActivate = () => {
+    clipboardActivate?.()
     contributions.registerContribution(clipboardContribution as any)
   }
 
