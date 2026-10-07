@@ -22,6 +22,8 @@ interface IntegratedCapabilitySpec {
   supported?: CapabilityState[]
   provides: string[]
   dependencies?: string[]
+  /** Assembly/portable contract dependencies may exclude host infrastructure such as bridge. */
+  v1Dependencies?: string[]
   optionalDependencies?: string[]
   resident: boolean
   resourceClass: ResourceClass[]
@@ -52,7 +54,7 @@ export function defineIntegratedCapability(spec: IntegratedCapabilitySpec): Capa
     description: spec.description ?? spec.name,
     maturity: spec.maturity,
     maturityEvidence: spec.maturityEvidence ?? ["scripts/check-v2-maturity-boundaries.mjs"],
-    dependencies,
+    dependencies: spec.v1Dependencies ?? dependencies,
     optionalDependencies,
     conflicts: [],
     provides: spec.provides,
