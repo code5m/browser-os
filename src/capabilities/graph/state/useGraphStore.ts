@@ -21,6 +21,7 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { GRAPH_COMMANDS_AVAILABLE, bridge } from "../../../bridge";
+import { graphLifecycleSnapshot, registerGraphCanceller } from "../lifecycle";
 import type {
   GraphEdge,
   GraphNode,
@@ -116,7 +117,7 @@ export const useGraphStore = defineStore("graph", () => {
   /// 注意：不写入 `error`——"未就绪"是预期态（只读壳），不是失败；真正的错误才进 `error`，
   /// 以免把"尚未实现"误报成红色错误横幅（W9 修正：与 readOnly 标志分流）。
   function guard(): boolean {
-    return backendReady.value;
+    return backendReady.value && graphLifecycleSnapshot().active;
   }
 
   /// 错误落库：稳定码映射（`applyGraphErrorView`）→ 落 message。
@@ -129,6 +130,11 @@ export const useGraphStore = defineStore("graph", () => {
   // 单 in-flight 简化模型：上一个 token 取消，函数调度在 300ms debounce 后才真正调用。
   // debouncer 是单例（store 生命周期内）；组件调用 loadGraph/startId 变化时复用。
   const debouncer = makeAbortableDebouncer();
+  registerGraphCanceller(() => {
+    debouncer.cancelAll();
+    inFlightRequestId.value = null;
+    loading.value = false;
+  });
 
   /// 主动取消所有进行中的 query（W12 新增；组件 dispose / 切 Tab 时调用）
   function cancelInFlight(): void {
@@ -140,10 +146,13 @@ export const useGraphStore = defineStore("graph", () => {
   /// 缺失节点 → 返回 null（与 A7 §3.2 一致：Ok(None) 不报错）；非法 id → 错误落库。
   async function loadNode(id: string): Promise<void> {
     if (!guard()) return;
+    const lifecycle = graphLifecycleSnapshot();
     loading.value = true;
     error.value = null;
     try {
       const v = await bridge.graphNodeGet(id);
+      const current = graphLifecycleSnapshot();
+      if (!current.active || current.generation !== lifecycle.generation) return;
       // 节点存在则并入 store（有界）；不存在则不动 store、不报错
       if (v) {
         const n = viewToNode(v);
@@ -159,8 +168,11 @@ export const useGraphStore = defineStore("graph", () => {
   /// 容量概览（W12 新增；面板顶部 stats 行；接近 90% 触发 banner）
   async function loadStats(): Promise<void> {
     if (!guard()) return;
+    const lifecycle = graphLifecycleSnapshot();
     try {
       const s = await bridge.graphStats();
+      const current = graphLifecycleSnapshot();
+      if (!current.active || current.generation !== lifecycle.generation) return;
       // 仅更新容量相关派生信号（不直接修改 nodes/edges；truncated 留给 query 用）
       capacity.value; // computed 已就绪；本函数仅探活
       // 接近 90% 黄牌（A7 §3.3 字段）→ 暴露给 banner
@@ -184,6 +196,7 @@ export const useGraphStore = defineStore("graph", () => {
       return;
     }
     // 防抖 + 取消上一
+    const lifecycle = graphLifecycleSnapshot();
     const normalized = normalizeGraphQueryRequest({
       start_id: start,
       depth: req?.depth,
@@ -192,7 +205,8 @@ export const useGraphStore = defineStore("graph", () => {
     });
     inFlightRequestId.value = normalized.request_id;
     debouncer.schedule(async (token) => {
-      if (token.cancelled) return;
+      const currentBefore = graphLifecycleSnapshot();
+      if (token.cancelled || !currentBefore.active || currentBefore.generation !== lifecycle.generation) return;
       loading.value = true;
       error.value = null;
       try {
@@ -206,7 +220,9 @@ export const useGraphStore = defineStore("graph", () => {
           // 把 debouncer 的 AbortSignal 透传 — A7 §5 后端 stateless drop=no-op
           token.signal,
         );
-        // 乱序回包丢弃（A7 §5）
+        // 乱序/生命周期回包丢弃（A7 §5 + HP2）
+        const currentAfter = graphLifecycleSnapshot();
+        if (!currentAfter.active || currentAfter.generation !== lifecycle.generation) return;
         if (inFlightRequestId.value !== normalized.request_id) return;
         if (token.cancelled) return;
         const v = viewToQueryResult(res);

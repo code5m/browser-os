@@ -1,5 +1,6 @@
 import { databaseManifest } from "./manifest"
 import { createLazyContributionRegistrar } from "../../capability/platform/contributed"
+import { activateDatabaseLifecycle, suspendDatabaseLifecycle } from "./lifecycle"
 
 export const DATABASE_CAPABILITY_ID = "database"
 
@@ -10,5 +11,13 @@ export function registerDatabaseContributions(): void { registerDatabase() }
 
 export const databaseCapability = {
   ...databaseManifest,
-  lifecycle: { ...databaseManifest.lifecycle, onActivate: registerDatabaseContributions },
+  lifecycle: {
+    ...databaseManifest.lifecycle,
+    onActivate: () => {
+      activateDatabaseLifecycle()
+      registerDatabaseContributions()
+    },
+    onSuspend: suspendDatabaseLifecycle,
+    onDeactivate: suspendDatabaseLifecycle,
+  },
 }

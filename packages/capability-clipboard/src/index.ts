@@ -6,6 +6,7 @@ import {
   assertClipboardPorts,
   type ClipboardPorts,
 } from "./ports";
+import { activateClipboardLifecycle, suspendClipboardLifecycle } from "./lifecycle";
 
 export const CLIPBOARD_CAPABILITY_ID = "clipboard";
 
@@ -56,7 +57,12 @@ export function createClipboardCapability(ports: ClipboardPorts): {
   assertClipboardPorts(ports);
   const clipboardCapability: CapabilityDefinition = {
     ...clipboardManifest,
-    lifecycle: { ...clipboardManifest.lifecycle, onActivate: undefined },
+    lifecycle: {
+      ...clipboardManifest.lifecycle,
+      onActivate: activateClipboardLifecycle,
+      onSuspend: suspendClipboardLifecycle,
+      onDeactivate: suspendClipboardLifecycle,
+    },
   };
   return {
     clipboardCapability,

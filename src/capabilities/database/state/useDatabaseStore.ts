@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import { bridge } from "../../../bridge";
 import type { DbConnectionConfig, DbQueryResult } from "../../../types";
 import { redactSecrets } from '../../../utils/redact';
+import { databaseLifecycleSnapshot, registerDatabaseCleanup } from "../lifecycle";
 import {
   buildConnectPayload,
   buildResultView,
@@ -48,6 +49,23 @@ export const useDatabaseStore = defineStore("database", () => {
   const schemaBusy = ref(false);
   let schemaGeneration = 0;
   const closePending = ref<string|null>(null);
+  function lifecycleActive(): boolean {
+    return databaseLifecycleSnapshot().active;
+  }
+
+  registerDatabaseCleanup(async () => {
+    schemaGeneration += 1;
+    pendingSql.value = null;
+    connecting.value = false;
+    schemaBusy.value = false;
+    const queryIds = documents.value.map((doc) => doc.queryId).filter((id): id is string => !!id);
+    await Promise.allSettled(queryIds.map((id) => bridge.dbCancel(id)));
+    for (const doc of documents.value) {
+      doc.busy = false;
+      doc.queryId = null;
+      doc.pending = null;
+    }
+  });
   /** 风险等级由后端分类器给出（F4），前端只展示；未返回按 unknown 处理。 */
   const risk = ref<DbRiskLevel>("unknown");
   const verdict = ref<ProductionVerdict>("Unknown");
@@ -98,10 +116,18 @@ export const useDatabaseStore = defineStore("database", () => {
   }
 
   async function refreshConnections() {
+    if (!lifecycleActive()) return;
+    const lifecycle = databaseLifecycleSnapshot();
     try {
-      configs.value = await bridge.dbListConnections();
-      connections.value = configs.value.map(cfg => ({ id:cfg.id, name:cfg.name, kind:cfg.kind, label:connectionLabel(cfg), allowWrite:cfg.allow_write, enabled:cfg.enabled }));
-    } catch(e) { error.value = describeError(e); }
+      const next = await bridge.dbListConnections();
+      const current = databaseLifecycleSnapshot();
+      if (!current.active || current.generation !== lifecycle.generation) return;
+      configs.value = next;
+      connections.value = next.map(cfg => ({ id:cfg.id, name:cfg.name, kind:cfg.kind, label:connectionLabel(cfg), allowWrite:cfg.allow_write, enabled:cfg.enabled }));
+    } catch(e) {
+      const current = databaseLifecycleSnapshot();
+      if (current.active && current.generation === lifecycle.generation) error.value = describeError(e);
+    }
   }
 
   function newDocument() {
@@ -117,20 +143,31 @@ export const useDatabaseStore = defineStore("database", () => {
     if (activeDocument.value === id) activeDocument.value = documents.value[0].id;
   }
   async function cancelQuery() {
+    if (!lifecycleActive()) return;
     const doc = document.value; if (!doc.queryId) return;
     try { if (!await bridge.dbCancel(doc.queryId)) doc.error = '查询已完成或尚未开始'; }
     catch(e) { doc.error = describeError(e); }
   }
   async function refreshSchema() {
+    if (!lifecycleActive()) return;
+    const lifecycle = databaseLifecycleSnapshot();
     const id = activeId.value; schema.value = [];
     const generation = ++schemaGeneration;
     if (!id || configs.value.find(c => c.id === id)?.kind !== 'sqlite') return;
     schemaBusy.value = true;
     try {
       const data = await bridge.dbQuery({ conn_id:id, sql:"SELECT name, type FROM sqlite_schema WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY name", confirm_write:false });
-      if (activeId.value === id && generation === schemaGeneration) schema.value = data.rows.map(row => ({name:String(decodeDbValue(row[0])),type:String(decodeDbValue(row[1]))}));
-    } catch(e) { if (activeId.value === id && generation === schemaGeneration) error.value = describeError(e); }
-    finally { if (generation === schemaGeneration) schemaBusy.value = false; }
+      const current = databaseLifecycleSnapshot();
+      if (current.active && current.generation === lifecycle.generation && activeId.value === id && generation === schemaGeneration) {
+        schema.value = data.rows.map(row => ({name:String(decodeDbValue(row[0])),type:String(decodeDbValue(row[1]))}));
+      }
+    } catch(e) {
+      const current = databaseLifecycleSnapshot();
+      if (current.active && current.generation === lifecycle.generation && activeId.value === id && generation === schemaGeneration) error.value = describeError(e);
+    } finally {
+      const current = databaseLifecycleSnapshot();
+      if (current.active && current.generation === lifecycle.generation && generation === schemaGeneration) schemaBusy.value = false;
+    }
   }
   function previewTable(name:string) {
     if (documents.value.length >= 12) { error.value = '最多打开 12 个查询页签'; return; }
@@ -143,6 +180,8 @@ export const useDatabaseStore = defineStore("database", () => {
    * 绝不写入 form / store / localStorage（F2）。
    */
   async function connect(password: string) {
+    if (!lifecycleActive()) return false;
+    const lifecycle = databaseLifecycleSnapshot();
     const doc = document.value;
     if (connecting.value || doc.busy || doc.pending) return false;
     error.value = "";
@@ -160,6 +199,8 @@ export const useDatabaseStore = defineStore("database", () => {
       // 且结构性不含 password（F2）。密码只作为瞬时参数传入封装，不进 payload/store/表单。
       const cfg = buildConnectPayload(form.value) as unknown as DbConnectionConfig;
       const res = await bridge.dbConnect(cfg, password);
+      const current = databaseLifecycleSnapshot();
+      if (!current.active || current.generation !== lifecycle.generation) return false;
       doc.connId = res.conn_id;
       risk.value = "unknown";
       verdict.value = "Unknown";
@@ -168,15 +209,18 @@ export const useDatabaseStore = defineStore("database", () => {
       await refreshSchema();
       return !!activeId.value;
     } catch (e) {
-      error.value = describeError(e);
+      const current = databaseLifecycleSnapshot();
+      if (current.active && current.generation === lifecycle.generation) error.value = describeError(e);
       return false;
     } finally {
-      busy.value = false;
+      const current = databaseLifecycleSnapshot();
+      if (current.active && current.generation === lifecycle.generation) busy.value = false;
     }
   }
 
   async function disconnect() {
-    if (!activeId.value) return;
+    if (!lifecycleActive() || !activeId.value) return;
+    const lifecycle = databaseLifecycleSnapshot();
     error.value = "";
     const id = activeId.value;
     risk.value = "unknown";
@@ -188,14 +232,16 @@ export const useDatabaseStore = defineStore("database", () => {
       for (const doc of documents.value) if (doc.connId === id) { doc.connId = null; doc.pending = null; }
       schema.value = [];
     } catch (e) {
-      error.value = describeError(e);
+      const current = databaseLifecycleSnapshot();
+      if (current.active && current.generation === lifecycle.generation) error.value = describeError(e);
     } finally {
-      refreshConnections();
+      const current = databaseLifecycleSnapshot();
+      if (current.active && current.generation === lifecycle.generation) void refreshConnections();
     }
   }
 
   function requestRun() {
-    if (busy.value || confirmOpen.value) return;
+    if (!lifecycleActive() || busy.value || confirmOpen.value) return;
     const gate = runGate.value;
     if (!gate.ok) {
       error.value = gate.reason;
@@ -214,12 +260,15 @@ export const useDatabaseStore = defineStore("database", () => {
   }
 
   function confirmRun() {
+    if (!lifecycleActive()) return;
     const text = pendingSql.value;
     pendingSql.value = null;
     if (text) void execute(text, true);
   }
 
   async function execute(text: string, confirmed: boolean) {
+    if (!lifecycleActive()) return;
+    const lifecycle = databaseLifecycleSnapshot();
     const doc = document.value;
     if (!backendReady.value || !doc.connId || doc.busy) return;
     doc.busy = true; doc.error = ''; doc.queryId = crypto.randomUUID();
@@ -234,14 +283,20 @@ export const useDatabaseStore = defineStore("database", () => {
         query_id: doc.queryId,
       });
       // 风险等级与生产判定以后端回带为准；未回带时 buildResultView 已按 unknown / Unknown 兜底（fail-closed）
+      const current = databaseLifecycleSnapshot();
+      if (!current.active || current.generation !== lifecycle.generation) return;
       const view = buildResultView(res);
       doc.result = view; doc.raw = res;
       risk.value = view.risk;
       verdict.value = view.verdict;
     } catch (e) {
-      doc.error = describeError(e);
+      const current = databaseLifecycleSnapshot();
+      if (current.active && current.generation === lifecycle.generation) doc.error = describeError(e);
     } finally {
-      doc.busy = false; doc.queryId = null;
+      const current = databaseLifecycleSnapshot();
+      if (current.active && current.generation === lifecycle.generation) {
+        doc.busy = false; doc.queryId = null;
+      }
     }
   }
 

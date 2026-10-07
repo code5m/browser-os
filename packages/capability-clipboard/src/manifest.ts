@@ -10,10 +10,10 @@ export const clipboardManifest: CapabilityDefinition = {
   dependsOn: ["bridge"],
   optionalDependencies: [],
   lifecycle: {
-    supported: ["ACTIVE", "BACKGROUND"],
-    default: "BACKGROUND",
+    supported: ["ACTIVE", "SUSPENDED"],
+    default: "ACTIVE",
     activatable: true,
-    resident: true,
+    resident: false,
   },
   resources: {
     class: ["LIGHT"],
@@ -33,13 +33,13 @@ export const clipboardManifest: CapabilityDefinition = {
     id: "clipboard",
     version: "1.0.0",
     displayName: "剪贴板",
-    description:
-      "复制/粘贴与剪贴板历史，自动收集系统剪贴板内容（仅内存，关闭应用即清空）。",
-    maturity: "C2",
+    description: "剪贴板读写与内存历史。",
+    maturity: "C3",
     maturityEvidence: [
       "scripts/check-package.mjs",
       "scripts/check-clipboard-logic.mjs",
       "scripts/check-clipboard-persistence-logic.mjs",
+      "scripts/check-hot-plug-acceptance.mjs",
     ],
     dependencies: ["bridge"],
     optionalDependencies: [],
@@ -70,9 +70,15 @@ export const clipboardManifest: CapabilityDefinition = {
     installPolicy: {},
     uninstallPolicy: {},
     hotPlug: {
-      level: "HP0",
+      level: "HP2",
+      enable: true,
+      disable: true,
+      register: true,
+      unregister: true,
+      install: false,
+      uninstall: false,
       limitationReason:
-        "HP0：剪贴板为常驻静态能力（resident:true，随构建静态编入），无运行时动态加载/卸载/注册链路；其贡献 panel 经生命周期 onActivate 单点注册（scripts/check-package.mjs PKG-12 已验证仅注册一次），不引入 HP3 所需外部能力包动态沙箱安装。",
+        "HP2：focus/Tauri listener 对称解绑；Harness 验证重启。",
     },
     publicContract: [
       {
