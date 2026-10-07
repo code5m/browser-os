@@ -23,8 +23,8 @@ export async function suspendTerminalLifecycle(): Promise<void> {
   if ([...bindings].some((binding) => !binding.canSuspend())) {
     throw new Error("terminal has active PTY sessions")
   }
-  active = false
   const results = await Promise.allSettled([...bindings].map((binding) => binding.cleanup?.()))
   const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
   if (rejected) throw rejected.reason
+  active = false
 }
