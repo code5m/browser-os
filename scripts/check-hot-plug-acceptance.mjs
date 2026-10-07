@@ -27,6 +27,10 @@ try {
     export { browserCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/browser/index.ts"))};
     export { workspaceCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/workspace/index.ts"))};
     export { appsCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/apps/index.ts"))};
+    export { graphCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/graph/index.ts"))};
+    export { graphManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/graph/manifest.ts"))};
+    export { workspaceCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/workspace/index.ts"))};
+    export { workspaceManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/workspace/manifest.ts"))};
   `;
   const built = await build({
     stdin: { contents: entry, resolveDir: ROOT, loader: "ts" },
@@ -60,6 +64,8 @@ try {
       manifest: M.homeManifest,
       dependencies: [M.browserCapability, M.workspaceCapability, M.appsCapability],
     },
+    { id: "graph", definition: M.graphCapability, manifest: M.graphManifest, dependencies: [] },
+    { id: "workspace", definition: M.workspaceCapability, manifest: M.workspaceManifest, dependencies: [] },
   ];
 
   async function accept(candidate) {
