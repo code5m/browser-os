@@ -11,7 +11,7 @@ export const appsManifest: CapabilityDefinition = defineIntegratedCapability({
   provides: ["apps.list", "apps.launch"],
   resident: false,
   supported: ["ACTIVE", "SUSPENDED"],
-  resourceClass: ["LIGHT"],
+  resourceClass: ["LIGHT", "PROCESS"],
   suspendable: true,
   destroyable: true,
   permissions: ["process.spawn"],
