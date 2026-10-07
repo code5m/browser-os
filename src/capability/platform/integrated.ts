@@ -16,7 +16,7 @@ interface IntegratedCapabilitySpec {
   id: string
   name: string
   semanticOwner: string
-  maturity: "C2"
+  maturity: "C2" | "C3"
   version?: string
   maturityEvidence?: string[]
   supported?: CapabilityState[]
@@ -34,6 +34,7 @@ interface IntegratedCapabilitySpec {
   publicContract: PublicContractEntry[]
   deactivationPolicy?: CapabilityManifestV1["deactivationPolicy"]
   limitationReason: string
+  hotPlugLevel?: "HP0" | "HP1" | "HP2"
   description?: string
   category?: CapabilityCategory
 }
@@ -64,11 +65,11 @@ export function defineIntegratedCapability(spec: IntegratedCapabilitySpec): Capa
     installPolicy: "static",
     uninstallPolicy: "static",
     hotPlug: {
-      level: "HP0",
-      enable: false,
-      disable: false,
-      register: false,
-      unregister: false,
+      level: spec.hotPlugLevel ?? "HP0",
+      enable: (spec.hotPlugLevel ?? "HP0") !== "HP0",
+      disable: (spec.hotPlugLevel ?? "HP0") !== "HP0",
+      register: spec.hotPlugLevel === "HP2",
+      unregister: spec.hotPlugLevel === "HP2",
       install: false,
       uninstall: false,
       limitationReason: spec.limitationReason,
