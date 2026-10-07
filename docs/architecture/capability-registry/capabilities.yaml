@@ -89,8 +89,6 @@ capabilities:
       - workspace.files
       - workspace.artifact
       - workspace.repo
-      - workspace.script
-      - workspace.snippet
       - workspace.main-view
     dependsOn: [bridge]
     optionalDependencies: [browser]
@@ -101,8 +99,8 @@ capabilities:
       resident: false
     resources:
       class: [LIGHT, MEDIUM]
-      suspendable: false
-      destroyable: false
+      suspendable: true
+      destroyable: true
     permissions:
       - fs.read
       - fs.write
@@ -215,7 +213,7 @@ capabilities:
     # 仍遗留（诚实，不谎报）：useDatabaseStore 物理在 src/stores（未迁入 capabilities/database/state）；
     # 无 database 专属 absence 运行时门禁；mainView='db' 导航项仍硬编码于 LayoutStore/Home（未贡献驱动）。
     status: COMPATIBILITY_WRAPPED
-    maturity: C2
+    maturity: C3
     provides:
       - database.connect
       - database.query
@@ -227,7 +225,7 @@ capabilities:
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
-      activatable: false
+      activatable: true
       resident: false
     resources:
       class: [NETWORK, SECRET]
@@ -386,7 +384,7 @@ capabilities:
     semanticOwner: useGraphStore
     governanceStatus: GOVERNED
     status: COMPATIBILITY_WRAPPED
-    maturity: C2
+    maturity: C3
     provides:
       - graph.query
       - graph.node.get
@@ -479,7 +477,7 @@ capabilities:
     semanticOwner: useClipboardStore
     governanceStatus: GOVERNED
     status: COMPATIBILITY_WRAPPED
-    maturity: C2
+    maturity: C3
     provides:
       - clipboard.read
       - clipboard.write
@@ -488,10 +486,10 @@ capabilities:
       - bridge
     optionalDependencies: []
     lifecycle:
-      supported: [ACTIVE, BACKGROUND]
-      default: BACKGROUND
+      supported: [ACTIVE, SUSPENDED]
+      default: ACTIVE
       activatable: true
-      resident: true
+      resident: false
     resources:
       class: [LIGHT]
       suspendable: true
