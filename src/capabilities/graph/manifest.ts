@@ -18,7 +18,7 @@ export const graphManifest: CapabilityDefinition = defineIntegratedCapability({
   contributions: [{ id: "graph.main.panel", slot: "workbench-main", type: "surface", view: "graph" }],
   publicContract: [{ name: "publicApi", locator: "src/capabilities/graph/public.ts" }],
   deactivationPolicy: "graceful",
-  description: "只读图谱查询、节点获取与容量概览。",
+  description: "只读图谱查询与节点/容量概览。",
   hotPlugLevel: "HP2",
-  limitationReason: "HP2：停用取消 debounce/in-flight query；Harness 验证恢复与重启。",
+  limitationReason: "HP2：停用取消在途查询；Harness 验证恢复/重启。",
 })
