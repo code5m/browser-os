@@ -15,6 +15,7 @@ export const browserManifest: CapabilityDefinition = defineIntegratedCapability(
   ],
   provides: ["browser.navigate", "browser.tab.open", "browser.tab.close", "browser.host"],
   dependencies: ["bridge"],
+  v1Dependencies: [],
   resident: false,
   supported: ["ACTIVE", "SUSPENDED"],
   resourceClass: ["HEAVY", "WEBVIEW", "NATIVE"],
