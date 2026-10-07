@@ -1,5 +1,6 @@
 import { graphManifest } from "./manifest"
 import { createLazyContributionRegistrar } from "../../capability/platform/contributed"
+import { resumeGraphLifecycle, suspendGraphLifecycle } from "./lifecycle"
 
 export const KNOWLEDGE_GRAPH_CAPABILITY_ID = "graph"
 
@@ -10,5 +11,13 @@ export function registerGraphContributions(): void { registerGraph() }
 
 export const graphCapability = {
   ...graphManifest,
-  lifecycle: { ...graphManifest.lifecycle, onActivate: registerGraphContributions },
+  lifecycle: {
+    ...graphManifest.lifecycle,
+    onActivate: () => {
+      resumeGraphLifecycle()
+      registerGraphContributions()
+    },
+    onSuspend: suspendGraphLifecycle,
+    onDeactivate: suspendGraphLifecycle,
+  },
 }
