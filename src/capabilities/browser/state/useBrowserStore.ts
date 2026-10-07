@@ -5,6 +5,7 @@ import { WEBVIEW_FREEZE_JS, WEBVIEW_UNFREEZE_JS } from "../../../utils/webviewFr
 import { isBrowserResourceAllowed } from "../resource/guard";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { recordRecentUrl } from "../../../composables/recentsNav";
+import { registerBrowserLifecycleBinding } from "../lifecycle";
 import type { RecentlyClosedEntry, TabRecoveryEvent } from "../../../types";
 
 export interface AISite {
@@ -277,6 +278,36 @@ export const useBrowserStore = defineStore("browser", () => {
       nextTick(syncViewVisibility);
     }
   );
+
+  async function suspendBrowserResources() {
+    for (const tab of tabs) {
+      await bridge.evalInTab(tab.id, WEBVIEW_FREEZE_JS).catch(() => {});
+    }
+    await bridge.hideAllWebviews().catch(() => {});
+    if (layout.mainView === "browser") layout.setView("home");
+  }
+
+  async function resumeBrowserResources() {
+    await nextTick();
+    await syncViewVisibility();
+  }
+
+  async function deactivateBrowserResources() {
+    await bridge.hideAllWebviews().catch(() => {});
+    const ids = tabs.map((tab) => tab.id);
+    for (const id of ids) await bridge.tabClose(id).catch(() => {});
+    tabs.splice(0, tabs.length);
+    activeTabId.value = "";
+    resources.value = null;
+    url.value = "";
+    if (layout.mainView === "browser") layout.setView("home");
+  }
+
+  registerBrowserLifecycleBinding({
+    resume: resumeBrowserResources,
+    suspend: suspendBrowserResources,
+    deactivate: deactivateBrowserResources,
+  });
 
   return {
     url,
