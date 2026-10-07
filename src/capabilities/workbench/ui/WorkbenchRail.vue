@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Folder, Database, Notebook, GitBranch, Terminal, PanelLeftOpen } from '@lucide/vue';
-import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
-import { useLayoutStore } from '../../stores/useLayoutStore';
+import { useWorkbenchStore } from '../state/useWorkbenchStore';
+import { useLayoutStore } from '../../../stores/useLayoutStore';
 const workbench = useWorkbenchStore();
 const layout = useLayoutStore();
 const tools = [{ id:'files', name:'文件', icon:Folder },{ id:'db', name:'数据库', icon:Database },{ id:'vault', name:'笔记 Vault', icon:Notebook },{ id:'repo', name:'Git', icon:GitBranch },{ id:'term', name:'终端', icon:Terminal }];

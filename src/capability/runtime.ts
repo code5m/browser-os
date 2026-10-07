@@ -43,6 +43,10 @@ export interface CapabilityRecord {
   definition: CapabilityDefinition
   state: CapabilityState
   enabled: boolean
+  /** Last successful/failed activation hook duration; runtime diagnostic only. */
+  activationDurationMs: number | null
+  /** Last lifecycle error observed by the runtime; never a business-state mirror. */
+  lastError: string | null
 }
 
 export interface CapabilityInspectionEntry {
@@ -55,6 +59,8 @@ export interface CapabilityInspectionEntry {
   status: string
   resourceClass: string[]
   resident: boolean
+  activationDurationMs: number | null
+  lastError: string | null
 }
 
 export interface CapabilityRuntime {
@@ -78,14 +84,10 @@ export interface CapabilityRuntime {
 /**
  * 外部基础设施依赖（**非 Capability**）：一律视为「壳已提供」，不参与能力注册校验。
  * - `bridge`：native IPC 适配层（各能力 FULL-STACK 文档记为 PUBLIC_DEPENDENCY），随壳恒存在；
- * - `credential`：OS keyring 基础设施（registry 标记 NOT_COMPOSABLE_BY_DESIGN 的常驻安全能力），随壳恒存在。
- *
- * 背景：manifest 的 `dependsOn` 同时承载「能力依赖」（如 git→workspace）与「基础设施前置」
- * （bridge/credential）。后者不是可注册能力，若按能力严格校验会导致跨能力 capability 永远
- * 无法激活（MISSING_DEPENDENCY），其 contribution 永不注册 → Shell 视图静默空白。
- * 本集合仅豁免基础设施；真正的能力依赖（workspace 等）仍严格校验（缺失即 MISSING_DEPENDENCY）。
+ * V2: credential 已升级为正式 resident capability，不再作为外部豁免。
+ * 这里只保留真正随壳恒存在、没有独立生命周期的 bridge。
  */
-const EXTERNAL_INFRA_DEPS = new Set(['bridge', 'credential'])
+const EXTERNAL_INFRA_DEPS = new Set(['bridge'])
 
 function assertDefinition(def: CapabilityDefinition): void {
   if (!def || typeof def.id !== 'string' || def.id === '') {
@@ -155,6 +157,8 @@ export function createCapabilityRuntime(
         definition,
         state: 'DEFINED',
         enabled: true,
+        activationDurationMs: null,
+        lastError: null,
       }
       records.set(definition.id, rec)
       log(`register: ${definition.id}`)
@@ -181,11 +185,20 @@ export function createCapabilityRuntime(
     activate(id) {
       const rec = activatable(id)
       const ctx = makeContext(rec, log)
-      rec.definition.lifecycle.onActivate?.call(null)
-      void ctx
-      rec.state = 'ACTIVE'
-      log(`activate: ${id}`)
-      return rec
+      const startedAt = Date.now()
+      try {
+        rec.definition.lifecycle.onActivate?.call(null)
+        void ctx
+        rec.state = 'ACTIVE'
+        rec.activationDurationMs = Date.now() - startedAt
+        rec.lastError = null
+        log(`activate: ${id}`)
+        return rec
+      } catch (error) {
+        rec.activationDurationMs = Date.now() - startedAt
+        rec.lastError = error instanceof Error ? error.message : String(error)
+        throw error
+      }
     },
 
     suspend(id) {
@@ -198,10 +211,19 @@ export function createCapabilityRuntime(
 
     async activateAsync(id) {
       const rec = activatable(id)
-      await rec.definition.lifecycle.onActivate?.call(null)
-      rec.state = 'ACTIVE'
-      log(`activate: ${id}`)
-      return rec
+      const startedAt = Date.now()
+      try {
+        await rec.definition.lifecycle.onActivate?.call(null)
+        rec.state = 'ACTIVE'
+        rec.activationDurationMs = Date.now() - startedAt
+        rec.lastError = null
+        log(`activate: ${id}`)
+        return rec
+      } catch (error) {
+        rec.activationDurationMs = Date.now() - startedAt
+        rec.lastError = error instanceof Error ? error.message : String(error)
+        throw error
+      }
     },
 
     async suspendAsync(id) {
@@ -276,6 +298,8 @@ export function createCapabilityRuntime(
         status: r.definition.status,
         resourceClass: r.definition.resources?.class || [],
         resident: r.definition.lifecycle.resident === true,
+        activationDurationMs: r.activationDurationMs,
+        lastError: r.lastError,
       }))
     },
 

@@ -233,9 +233,19 @@ def detect_violations(files: dict[str, object]) -> list[str]:
 
     # ---- 9) 挂载与事件订阅 ----
     git_entry = str(files.get("git_entry", ""))
-    contribution_mounted = (
+    direct_contribution = (
         'import("./ui/GitPanel.vue")' in git_entry
         and re.search(r'registerContribution\(\{[^}]*slot:\s*CONTRIBUTION_SLOTS.REPO_SUBVIEW[^}]*view:\s*"git"[^}]*component:\s*GitPanel', git_entry)
+    )
+    lazy_contribution = (
+        "createLazyContributionRegistrar" in git_entry
+        and 'slot: "repo-subview"' in git_entry
+        and 'view: "git"' in git_entry
+        and 'load: () => import("./ui/GitPanel.vue")' in git_entry
+        and "registerGitContributions" in git_entry
+    )
+    contribution_mounted = (
+        (direct_contribution or lazy_contribution)
         and "onActivate: registerGitContributions" in git_entry
         and ".getSurfaceContributions(CONTRIBUTION_SLOTS.REPO_SUBVIEW)" in repo
         and re.search(r'\.find\([^\n]*c.view === "git"\)\?\.component', repo)

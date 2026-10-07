@@ -33,15 +33,13 @@ owners:
     rationale: 通用导航 store；若兼管 Grid 资源生命周期会反向依赖 useBrowserStore 形成循环
     status: ACCEPTED_ADR
 
-  browser_grid_lifecycle:
-    owner: useBrowserStore
+  grid_lifecycle:
+    owner: useGridStore
     owns:
       - gridOpen
       - grid lifecycle
-      - gridSession (Phase 6A 收口；见 ADR-SEM-P6A-3)
+      - gridSession
       - desiredGridVisibility (derived)
-      - isBrowserVisible (derived)
-      - aiNavOpen (Phase 6A 收口；useLayoutStore 死重复已删)
     owner_only_api:
       - buildGrid
       - closeGridAll
@@ -54,11 +52,10 @@ owners:
       - closeGridCell
     forbidden_callers:
       - components/**（不得直调生命周期原语）
-      - 任何非授权 store / composable
+      - useBrowserStore（Browser 不得反向拥有 Grid 生命周期）
     authorized_callers:
-      - useBrowserStore（owner 自身）
-      - useLayoutStore（经授权入口，如 toggleGridToolbar 调 openGrid / closeGrid）
-    rationale: 资源生命周期归母属 store；useLayoutStore 退为视图状态执行点
+      - useGridStore（owner 自身）
+    rationale: Grid V2 独立 owner；Browser 仅通过 public contract 被 Grid 单向依赖
     status: ACCEPTED_ADR
 
   native_execution:
@@ -293,7 +290,8 @@ owners:
       - useScriptStore（owner 自身）
       - useTaskStore（只读 targets 候选：scripts）
     rationale: |
-      Phase 8C-0D 将脚本库 CRUD 从 useWorkspaceStore 抽出为独立 owner（useScriptStore），后端持久化（scriptList/Add/Update/Remove）。
+      Phase 8C-0D 将脚本库 CRUD 从 useWorkspaceStore 抽出为独立 owner（useScriptStore）。
+      Capability Platform v2 进一步把 owner/UI 物理迁入 src/capabilities/script/，后端持久化与执行语义不变。
     status: CURRENT_FACT
 
   snippet:
@@ -316,7 +314,7 @@ owners:
       - useSnippetStore（owner 自身）
       - useTaskStore（只读 targets 候选：snippets）
     rationale: |
-      Phase 8C-0D 将命令片段库 CRUD 从 useWorkspaceStore 抽出为独立 owner（useSnippetStore），后端持久化（snippetList/Add/Update/Remove）。
+      Phase 8C-0D 将命令片段库 CRUD 从 useWorkspaceStore 抽出为独立 owner（useSnippetStore）；Capability Platform v2 将该 owner/UI 物理迁入 src/capabilities/script/，与 script.snippet 契约一致。
       与 SCRIPT 独立（不同后端命令/表），二者同属 Developer 家族但不合并。
     status: CURRENT_FACT
 
@@ -397,6 +395,71 @@ owners:
       - TerminalPane.vue / TerminalView.vue / TerminalDockPanel.vue（能力包内消费 store，不持有第二列表）
       - src/composables/terminalNav.ts（窄缝：Workspace「在终端打开」经 Terminal public 边界）
     rationale: 终端面板注册表唯一真源（termPanes）；任何第二份 {id,cwd}[] 或裸 activeTermId 直写都会漂移。PTY 出生点只在 Terminal 能力 UI 内（absent → 无 PTY）
+    status: CURRENT_FACT
+
+  session:
+    owner: useSessionStore
+    owns:
+      - sessions
+      - detail
+      - detailId
+      - policy
+      - loading
+      - error
+    owner_only_api:
+      - loadPolicy
+      - setPolicy
+      - loadSessions
+      - openDetail
+      - closeDetail
+      - saveTab
+      - capturePreview
+      - deleteSession
+      - restoreSession
+      - exportSession
+    public_intent_api:
+      - loadSessions
+      - saveTab
+      - deleteSession
+      - restoreSession
+      - exportSession
+    forbidden_callers:
+      - browser capability internals（不得重新持有 Session state/UI）
+      - components/**（不得绕过 useSessionStore 直写会话持久化状态）
+    authorized_callers:
+      - useSessionStore（owner 自身）
+      - SessionPanel.vue（能力包内消费 owner）
+      - browser-context Host Service（仅恢复页签/当前页签窄上下文，不成为状态真源）
+    rationale: |
+      Capability Platform v2 将历史会话 owner/UI 从 Browser 物理抽离到 src/capabilities/session/。
+      Session 持久化与 shutdown ordering 仍由 native session capability 管理；Browser 交互只走中立 Host Service。
+    status: CURRENT_FACT
+
+  workbench:
+    owner: useWorkbenchStore
+    owns:
+      - commandOpen
+      - collapsed
+      - workbench layout snapshot
+      - previous tool view
+    owner_only_api:
+      - open
+      - toggleTools
+      - returnToTool
+    public_intent_api:
+      - open
+      - toggleTools
+      - returnToTool
+    forbidden_callers:
+      - Shell 不得持有第二份 Workbench state
+      - components/layout/** 不得重新定义 WorkbenchRail / WorkbenchCommands 业务状态
+    authorized_callers:
+      - useWorkbenchStore（owner 自身）
+      - WorkbenchRail.vue / WorkbenchCommands.vue（能力包内）
+      - Host adapter（只读 collapsed，用于 Vault 表现层 port）
+    rationale: |
+      Capability Platform v2 将 Workbench 状态 owner 与 Rail/Command Center UI 从 Shell 物理抽离到
+      src/capabilities/workbench/；Shell 只消费通用 commands/sidebar contribution 槽。
     status: CURRENT_FACT
 
   credential:

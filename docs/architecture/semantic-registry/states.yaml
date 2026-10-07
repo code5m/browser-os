@@ -40,6 +40,10 @@ owner_implementations:
     paths:
       - src/capabilities/browser/state/useBrowserStore.ts
       - src/stores/useBrowserStore.ts
+  useGridStore:
+    symbol: useGridStore
+    paths:
+      - src/capabilities/grid/state/useGridStore.ts
   useWorkspaceStore:
     symbol: useWorkspaceStore
     paths:
@@ -63,12 +67,12 @@ owner_implementations:
   useScriptStore:
     symbol: useScriptStore
     paths:
-      - src/capabilities/workspace/state/useScriptStore.ts
+      - src/capabilities/script/state/useScriptStore.ts
       - src/stores/useScriptStore.ts
   useSnippetStore:
     symbol: useSnippetStore
     paths:
-      - src/capabilities/workspace/state/useSnippetStore.ts
+      - src/capabilities/script/state/useSnippetStore.ts
       - src/stores/useSnippetStore.ts
   useBookmarkStore:
     symbol: useBookmarkStore
@@ -157,12 +161,12 @@ owner_implementations:
     # Browser 子域：历史会话存档（M1-9）。owner = browser capability。
     symbol: useSessionStore
     paths:
-      - src/capabilities/browser/state/useSessionStore.ts
+      - src/capabilities/session/state/useSessionStore.ts
   useGridArchiveStore:
     # Browser 子域：宫格回复归档（M2-2.a）。owner = browser capability。
     symbol: useGridArchiveStore
     paths:
-      - src/capabilities/browser/state/useGridArchiveStore.ts
+      - src/capabilities/grid/state/useGridArchiveStore.ts
   useImagePreviewStore:
     # Browser 子域：图片预览（M2-2.b）。owner = browser capability。
     symbol: useImagePreviewStore
@@ -327,7 +331,7 @@ states:
 
   # ---------------- Browser/Grid Resource ----------------
   gridOpen:
-    owner: useBrowserStore
+    owner: useGridStore
     meaning: Grid resource 是否存在（原生窗是否创建）
     not_meaning:
       - Grid visibility
@@ -339,8 +343,8 @@ states:
       - true
       - false
     canonical_writer:
-      - useBrowserStore.buildGrid
-      - useBrowserStore.closeGridAll
+      - useGridStore.buildGrid
+      - useGridStore.closeGridAll
     forbidden_writers:
       - components/**
       - useLayoutStore
@@ -351,7 +355,7 @@ states:
 
   # ---------------- Browser/Grid 定位缓存失效纪元（Phase 6A-3）----------------
   gridSession:
-    owner: useBrowserStore
+    owner: useGridStore
     single_owner_required: true
     meaning: 宫格定位缓存失效纪元（buildGrid / forceGridRelayout 自增 +1）；供 useBrowserHost 识别 webview 已重建、旧 rect 发送缓存作废必须重发
     not_meaning:
@@ -362,12 +366,12 @@ states:
     kind: stored
     derived: false
     canonical_writer:
-      - useBrowserStore.buildGrid
-      - useBrowserStore.forceGridRelayout
+      - useGridStore.buildGrid
+      - useGridStore.forceGridRelayout
     forbidden_writers:
       - components/**
       - useLayoutStore
-      - useBrowserHost（只读消费方，不得写）
+      - useGridHost（只读消费方，不得写）
     duplicate_names: []
     adr_required: true
     adr: ADR-SEM-P6A-3
@@ -420,7 +424,7 @@ states:
 
   # ---------------- Derived（禁止存储） ----------------
   desiredGridVisibility:
-    owner: useBrowserStore
+    owner: useGridStore
     meaning: Grid 是否应可见 = gridOpen && mainView === "grid"
     not_meaning:
       - 独立状态（纯派生，无独立自由度）
@@ -3384,6 +3388,12 @@ observed_not_governed:
     - url
     - tabs
     - activeTab
+    - resources
+    - aiFilter
+    - aiFiltered
+    - recentlyClosed
+
+  useGridStore:
     - gridCount
     - gridUrl
     - gridUrls
@@ -3391,10 +3401,6 @@ observed_not_governed:
     - gridMode
     - gridAiInput
     - gridRects
-    - resources
-    - aiFilter
-    - aiFiltered
-    - recentlyClosed
 
   useLayoutStore:
     - modTabs

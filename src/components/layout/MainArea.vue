@@ -101,13 +101,6 @@ watch(
   () => nextTick(() => browser.relocate())
 );
 
-// AI 模式开关会改变 browser-body 布局（底部多一条统一输入框，viewport 变矮），
-// 宫格是原生窗口压在 HTML 之上，必须立即强制重排把输入框区域让出来
-watch(
-  () => browser.gridMode,
-  () => nextTick(() => browser.forceGridRelayout())
-);
-
 </script>
 
 <template>
@@ -137,7 +130,7 @@ watch(
         <template v-for="c in sidebarContributions" :key="c.id">
           <component :is="c.component" />
         </template>
-        <div class="viewport" :class="{ 'grid-mode': browser.gridOpen }">
+        <div class="viewport" :class="{ 'grid-mode': layout.mainView === 'grid' }">
           <!-- BrowserHost 在 browser/grid 视图都要参与布局（有 rect 供宫格定位），
                其内部用 visibility 控制显隐（isBrowserVisible），不能用 v-show=display:none，
                否则 grid 视图 rect=0 导致宫格定位全跳过、激活页签不移出。 -->

@@ -2,11 +2,13 @@ import { createClipboardCapability, clipboardContribution, type ClipboardPorts }
 import { createVaultCapability, vaultContribution, type VaultPorts } from '@browser-os/capability-vault'
 import { bridge } from '../../bridge'
 import { useLayoutStore } from '../../stores/useLayoutStore'
-import { useWorkbenchStore } from '../../stores/useWorkbenchStore'
+import { useWorkbenchStore } from '../../capabilities/workbench/public'
+import { useBrowserStore } from '../../capabilities/browser/public'
+import { useGridStore } from '../../capabilities/grid/public'
 import { layoutPositions } from '../../utils/graphUi'
 import { redactSecrets } from '../../utils/redact'
 import { contributionRegistry, type ContributionRegistry } from '../contribution/registry'
-import { hostServices, type HostServiceRegistry } from './host-services'
+import { hostServices, type BrowserContextPort, type HostServiceRegistry } from './host-services'
 
 export interface LegacyHostAdapters {
   vault: ReturnType<typeof createVaultCapability>
@@ -24,6 +26,31 @@ export function createLegacyHostAdapters(
   services.register('workbench', useWorkbenchStore)
   services.register('graph-layout', (nodes: unknown[], edges: unknown[]) => layoutPositions(nodes as any, edges as any))
   services.register('redact-secrets', redactSecrets)
+  const browserContext: BrowserContextPort = {
+    get activeTabId() { return useBrowserStore().activeTabId },
+    get activeUrl() { return useBrowserStore().activeTab?.url || useBrowserStore().url || '' },
+    get recentlyClosed() { return useBrowserStore().recentlyClosed },
+    get aiNavOpen() { return useBrowserStore().aiNavOpen },
+    openTab(url: string) { return useBrowserStore().tabNew(url) },
+    evalInTab(tabId: string, script: string) { return bridge.evalInTab(tabId, script) },
+    async captureTextPreview(tabId: string) {
+      const text = await bridge.evalInTab(
+        tabId,
+        "(document.body && document.body.innerText ? document.body.innerText.slice(0, 2000) : '')",
+      )
+      return typeof text === 'string' ? text : ''
+    },
+    activateGrid() { return useGridStore().activateGrid() },
+    setAiNavOpen(value: boolean) { useBrowserStore().aiNavOpen = value },
+    adoptRestoredTab(tab: unknown) {
+      const browser = useBrowserStore()
+      const restored = tab as { id: string; url?: string }
+      browser.tabs.push(restored as any)
+      browser.activeTabId = restored.id
+      useLayoutStore().setView('browser')
+    },
+  }
+  services.register('browser-context', browserContext)
 
   const vaultPorts: VaultPorts = {
     native: { openVault: (path: string) => services.require<typeof bridge>('bridge').vaultOpen(path) },

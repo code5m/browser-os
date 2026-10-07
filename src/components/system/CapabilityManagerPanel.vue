@@ -67,12 +67,37 @@ function unavailableReason(manifest: typeof CAPABILITY_CATALOG[string], record: 
 
 const rows = computed(() => {
   void refresh.value
-  return Object.values(CAPABILITY_CATALOG).sort((a, b) => a.id.localeCompare(b.id)).map((manifest) => ({
-    manifest,
-    record: runtime?.get(manifest.id),
-    kindLabel: manifest.kind || (CAPABILITY_DEFINITIONS[manifest.id]?.category === "SERVICE" ? "service" : "feature"),
-    dependent: Object.values(CAPABILITY_CATALOG).filter((candidate) => candidate.dependencies.includes(manifest.id)).map((candidate) => candidate.id),
-  }))
+  return Object.values(CAPABILITY_CATALOG).sort((a, b) => a.id.localeCompare(b.id)).map((manifest) => {
+    const record = runtime?.get(manifest.id)
+    const definition = record?.definition ?? CAPABILITY_DEFINITIONS[manifest.id]
+    const dependent = Object.values(CAPABILITY_CATALOG)
+      .filter((candidate) => candidate.dependencies.includes(manifest.id))
+      .map((candidate) => candidate.id)
+    const contributions = contributionRegistry.getByCapability(manifest.id)
+    const blockedReason = unavailableReason(manifest, record)
+    const kindLabel = manifest.kind || (definition?.category === "SERVICE" ? "service" : "feature")
+    const persistenceState = stored.enabled[manifest.id] === undefined
+      ? "default"
+      : stored.enabled[manifest.id] ? "enabled" : "disabled"
+    const sourceOwnership = manifest.entrypoint || definition?.entrypoint || "unknown"
+    const suspendable = !!record && isSuspendable(record)
+    const disableable = !!record && !blockedReason && isCapabilityToggleSafe(manifest)
+    const diagnostics = [
+      `分类：${kindLabel} · 成熟度：${manifest.maturity}`,
+      `Owner：${manifest.semanticOwner || definition?.semanticOwner || "未登记"}`,
+      `依赖：${manifest.dependencies.join(", ") || "无"}`,
+      `可选依赖：${manifest.optionalDependencies.join(", ") || "无"}`,
+      `被依赖：${dependent.join(", ") || "无"}`,
+      `贡献：${contributions.map((item) => item.id).join(", ") || "无"}`,
+      `可暂停：${suspendable ? "是" : "否"} · 可停用：${disableable ? "是" : "否"}`,
+      `激活耗时：${record?.activationDurationMs ?? "—"} ms · 持久化：${persistenceState}`,
+      `来源：${sourceOwnership}`,
+      `最近错误：${record?.lastError || "无"}`,
+      ...(blockedReason ? [`阻塞原因：${blockedReason}`] : []),
+    ]
+    return { manifest, record, definition, kindLabel, dependent, contributions, blockedReason,
+      persistenceState, sourceOwnership, suspendable, disableable, diagnostics }
+  })
 })
 
 async function transition(id: string, action: CapabilityManagerAction) {
@@ -104,12 +129,13 @@ async function transition(id: string, action: CapabilityManagerAction) {
       <article v-for="row in rows" :key="row.manifest.id" class="capability-row" :data-capability-id="row.manifest.id">
         <div class="capability-main"><strong>{{ row.manifest.displayName }}</strong><small>{{ row.manifest.id }} · v{{ row.manifest.version }} · {{ row.kindLabel }}</small></div>
         <span class="capability-state">{{ stateLabel(row.manifest, row.record) }}</span>
-        <span class="capability-deps">依赖：{{ row.manifest.dependencies.join(", ") || "无" }}</span>
+        <div class="capability-diagnostics">
+          <span v-for="item in row.diagnostics" :key="item">{{ item }}</span>
+        </div>
         <div class="capability-actions">
           <button v-if="row.record?.enabled && row.record.state === 'SUSPENDED'" :disabled="actionDisabled(row.manifest, row.record, 'resume')" @click="transition(row.manifest.id, 'resume')">恢复</button>
           <button :disabled="actionDisabled(row.manifest, row.record)" :title="unavailableReason(row.manifest, row.record)" @click="transition(row.manifest.id, nextAction(row.record))">{{ actionLabel(row.manifest, row.record) }}</button>
         </div>
-        <small v-if="unavailableReason(row.manifest, row.record)">{{ unavailableReason(row.manifest, row.record) }}</small><small v-else-if="row.dependent.length">被依赖：{{ row.dependent.join(", ") }}</small>
       </article>
     </div>
   </section>
@@ -119,7 +145,7 @@ async function transition(id: string, action: CapabilityManagerAction) {
 .capability-manager { padding: 24px; color: var(--ui-text, #222); max-width: 980px; }
 .manager-header { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:20px; }
 .manager-header h2 { margin:0 0 6px; }.manager-header p { margin:0; color:var(--ui-muted,#777); }
-.capability-list { display:grid; gap:8px; }.capability-row { display:grid; grid-template-columns:minmax(180px,1.4fr) 110px minmax(120px,1fr) auto; gap:12px; align-items:center; padding:12px; border:1px solid var(--ui-border,#ddd); border-radius:6px; }
-.capability-main { display:grid; gap:4px; }.capability-main small,.capability-deps,.capability-row > small { color:var(--ui-muted,#777); font-size:12px; }.capability-state { font-family:monospace; }.capability-row button { min-width:64px; }.capability-row button:disabled { opacity:.55; }
+.capability-list { display:grid; gap:8px; }.capability-row { display:grid; grid-template-columns:minmax(180px,1.1fr) 110px minmax(280px,2fr) auto; gap:12px; align-items:start; padding:12px; border:1px solid var(--ui-border,#ddd); border-radius:6px; }
+.capability-main,.capability-diagnostics { display:grid; gap:4px; }.capability-main small,.capability-diagnostics,.capability-row > small { color:var(--ui-muted,#777); font-size:12px; }.capability-state { font-family:monospace; }.capability-row button { min-width:64px; }.capability-row button:disabled { opacity:.55; }
 .capability-actions { display:flex; gap:8px; }
 </style>

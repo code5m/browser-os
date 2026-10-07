@@ -38,8 +38,8 @@ export const vaultManifest: CapabilityDefinition = {
     displayName: "笔记库",
     description:
       "Obsidian Markdown 目录浏览、笔记链接图与跟随跳转；物理隔离为独立 capability package，语义 owner 为 useVaultStore。",
-    maturity: "C2",
-    maturityEvidence: ["scripts/check-package.mjs", "scripts/check-vault-logic.mjs"],
+    maturity: "C3",
+    maturityEvidence: ["scripts/check-package.mjs", "scripts/check-vault-logic.mjs", "scripts/check-hot-plug-acceptance.mjs"],
     dependencies: [],
     // 笔记库为只读 Markdown 快照，可挂于 Browser 槽之外独立展示，但无强制依赖。
     optionalDependencies: ["browser"],

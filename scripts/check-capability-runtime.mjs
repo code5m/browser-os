@@ -192,7 +192,7 @@ async function runTests() {
     const keys = Object.keys(list[0]).sort().join(',')
     return (
       keys ===
-      'category,enabled,governanceStatus,id,name,resident,resourceClass,state,status'
+      'activationDurationMs,category,enabled,governanceStatus,id,lastError,name,resident,resourceClass,state,status'
     )
   })
 

@@ -191,7 +191,7 @@ function rule2(files, reg, loc) {
 function rule3(files, reg, loc) {
   const out = [];
   const owners = reg.owners.owners || {};
-  const lifecycle = owners.browser_grid_lifecycle || {};
+  const lifecycle = owners.grid_lifecycle || {};
   const api = asList(lifecycle.owner_only_api);
   const authorized = asList(lifecycle.authorized_callers);
   const isAuthorized = (path) =>
@@ -203,22 +203,22 @@ function rule3(files, reg, loc) {
   for (const f of files) {
     const code = stripComments(f.src);
     const isVue = f.path.endsWith(".vue");
-    const isOwner = f.path === (loc.resolved && loc.resolved.useBrowserStore);
+    const isOwner = f.path === (loc.resolved && loc.resolved.useGridStore);
     // a) 组件直写 mainView
     if (isVue && /\.mainView\s*=\s*[^=]/.test(code))
       out.push({ rule: "R3", code: "SEMANTIC_OWNER_VIOLATION", file: f.path, detail: "组件直写 mainView（owner: useLayoutStore，唯一写入口 setView）", severity: "fail" });
     // b) 组件直调生命周期原语
     for (const p of primitives)
       if (isVue && new RegExp("\\b" + p + "\\s*\\(").test(code))
-        out.push({ rule: "R3", code: "SEMANTIC_OWNER_VIOLATION", file: f.path, detail: `组件直调生命周期原语 ${p}()（owner: useBrowserStore）`, severity: "fail" });
+        out.push({ rule: "R3", code: "SEMANTIC_OWNER_VIOLATION", file: f.path, detail: `组件直调生命周期原语 ${p}()（owner: useGridStore）`, severity: "fail" });
     // c) 非 owner / 非授权文件调生命周期 intent
     if (!isOwner && !isAuthorized(f.path))
       for (const a of api)
         if (new RegExp("\\b" + a + "\\s*\\(").test(code))
-          out.push({ rule: "R3", code: "SEMANTIC_OWNER_VIOLATION", file: f.path, detail: `非授权文件调用 owner-only API ${a}()（owner: useBrowserStore）`, severity: "fail" });
+          out.push({ rule: "R3", code: "SEMANTIC_OWNER_VIOLATION", file: f.path, detail: `非授权文件调用 owner-only API ${a}()（owner: useGridStore）`, severity: "fail" });
     // d) 非 owner 调 bridge.closeGrid（native destroy）
     if (!isOwner && /bridge\.closeGrid\s*\(/.test(code))
-      out.push({ rule: "R3", code: "SEMANTIC_OWNER_VIOLATION", file: f.path, detail: "非 owner 调用 bridge.closeGrid（native destroy 仅 useBrowserStore 可调）", severity: "fail" });
+      out.push({ rule: "R3", code: "SEMANTIC_OWNER_VIOLATION", file: f.path, detail: "非 owner 调用 bridge.closeGrid（native destroy 仅 useGridStore 可调）", severity: "fail" });
 
     // --- Phase 5.1-A：Credential Owner 通用化（registry 驱动，不削弱既有 Browser 检查）---
     const cred = owners.credential;
@@ -644,7 +644,7 @@ function loadRealFiles() {
 // false-positive fixtures：合法代码，绝不能报错（专门验证"不误报"）
 const FP_FILES = [
   {
-    path: "src/capabilities/browser/state/useBrowserStore.ts", // 派生量作为对象字段名（合法，非存储）
+    path: "src/capabilities/grid/state/useGridStore.ts", // Grid 派生量 owner
     src: `
 function computeDesiredVisibility(mv: string, go: boolean) {
   return { browserVisible: mv === "browser", gridVisible: go && mv === "grid" };
@@ -654,9 +654,9 @@ const desiredGridVisibility = computed(() => computeDesiredVisibility(layout.mai
 async function rebuildGrid() { /* side-effect: destroy+create webviews */ await bridge.gridPosition(0, r); }
 `,
   },
-  { path: "src/stores/useLayoutStore.ts", src: `function toggleGridToolbar() { browser.openGrid(); browser.closeGrid(); }` },
+  { path: "src/capabilities/grid/state/useGridStore.ts", src: `function openGrid(){} function closeGrid(){}` },
   { path: "src/components/x/Other.vue", src: `const activeSurface = ref("browser"); // 治理域外，不算未登记` },
-  { path: "src/composables/useBrowserHost.ts", src: `function scheduleGrid(){ bridge.gridPosition(i, rect); } // side-effect: bounds+show` },
+  { path: "src/capabilities/grid/composables/useGridHost.ts", src: `function scheduleGrid(){ bridge.gridPosition(i, rect); } // side-effect: bounds+show` },
   { path: "src/stores/__fx_ws_derived.ts", src: `const currentLocalPath = computed(() => inlineFile.value || filePath.value);` },
   { path: "src/stores/__fx_bm_derived.ts", src: `const sorted = computed(() => items.value.slice());` },
   { path: "src/components/workspace/DatabasePanel.vue", src: `const password = ref(""); await db.connect(password.value); password.value = "";` },
@@ -665,7 +665,7 @@ async function rebuildGrid() { /* side-effect: destroy+create webviews */ await 
 ];
 const POS_FILES = [
   {
-    path: "src/capabilities/browser/state/useBrowserStore.ts",
+    path: "src/capabilities/grid/state/useGridStore.ts",
     src: `
 const gridOpen = ref(false);
 const desiredGridVisibility = computed(() => gridOpen.value && layout.mainView === "grid");
@@ -673,16 +673,16 @@ function openGrid() { if (!gridOpen.value) return buildGrid(); }
 async function closeGridAll() { gridOpen.value = false; await bridge.closeGrid(); } // side-effect: destroy webviews
 `,
   },
-  { path: "src/components/x/A.vue", src: `layout.activateBrowser(); browser.activateGrid();` },
+  { path: "src/components/x/A.vue", src: `layout.activateBrowser(); grid.activateGrid();` },
   { path: "src/components/browser/CredentialList.vue", src: `bridge.fillBrowserCredential(credentialId, tabId); bridge.listBrowserCredentials();` },
   // R9 positive：owner 文件内 canonical_writer 函数写 gridSession（合法，不误报）
-  { path: "src/capabilities/browser/state/useBrowserStore.ts", src: `const gridSession = ref(0);\nasync function buildGrid() { gridSession.value += 1; }\nfunction forceGridRelayout() { gridSession.value += 1; }` },
+  { path: "src/capabilities/grid/state/useGridStore.ts", src: `const gridSession = ref(0);\nasync function buildGrid() { gridSession.value += 1; }\nfunction forceGridRelayout() { gridSession.value += 1; }` },
 ];
 // 每条 negative fixture 声明期望级别：R5 是提示级(warn)，其余是阻断级(fail)
 const NEG_FILES = {
-  R1: { expect: "fail", files: [{ path: "src/capabilities/browser/state/useBrowserStore.ts", src: `const gridVisible = ref(false);` }] },
+  R1: { expect: "fail", files: [{ path: "src/capabilities/grid/state/useGridStore.ts", src: `const gridVisible = ref(false);` }] },
   R2: { expect: "fail", files: [{ path: "src/capabilities/browser/state/useBrowserStore.ts", src: `const activeSurface = ref("browser");` }, { path: "src/stores/useBookmarkStore.ts", src: `const extraBookmarks = ref<Bookmark[]>([]);` }, { path: "src/stores/useSystemStore.ts", src: `const extraPanes = ref<{id:string;cwd?:string}[]>([]);` }] },
-  R3: { expect: "fail", files: [{ path: "src/components/x/B.vue", src: `browser.closeGrid(); layout.mainView = "browser";` }, { path: "src/components/browser/BadCred.vue", src: `KeyringStore.save_token("repo", token);` }] },
+  R3: { expect: "fail", files: [{ path: "src/components/x/B.vue", src: `grid.closeGridAll(); layout.mainView = "browser";` }, { path: "src/components/browser/BadCred.vue", src: `KeyringStore.save_token("repo", token);` }] },
   R4: { expect: "fail", files: [{ path: "src/capabilities/browser/state/useBrowserStore.ts", src: `function showGridView() { setView("grid"); }` }, { path: "src/composables/__fx_term.ts", src: `function newTerm(){ return 0; }` }, { path: "src/composables/__fx_cred.ts", src: `function exposePassword(){ return readKeyring(); }` }] },
   R7: { expect: "fail", files: [{ path: "src/components/workspace/Leak.vue", src: `const password = ref(""); console.log("pw", password.value);` }] },
   R5: { expect: "warn", files: [{ path: "src/composables/useBrowserHost.ts", src: `bridge.tabPosition(id, rect);` }] },
@@ -696,9 +696,9 @@ const NEG_FILES = {
     // 非 owner store（useLayoutStore）跨域直写 gridSession
     { path: "src/stores/useLayoutStore.ts", src: `function strayGridSession() { gridSession.value = 1; }` },
     // 组件直写（非 owner 文件）
-    { path: "src/components/browser/BadGrid.vue", src: `function onX() { browser.gridSession.value += 1; }` },
+    { path: "src/components/grid/BadGrid.vue", src: `function onX() { grid.gridSession.value += 1; }` },
     // owner 文件内写在非 canonical 函数
-    { path: "src/capabilities/browser/state/useBrowserStore.ts", src: `const gridSession = ref(0);\nasync function buildGrid() { gridSession.value += 1; }\nfunction forceGridRelayout() { gridSession.value += 1; }\nfunction rogueWriter() { gridSession.value += 1; }` },
+    { path: "src/capabilities/grid/state/useGridStore.ts", src: `const gridSession = ref(0);\nasync function buildGrid() { gridSession.value += 1; }\nfunction forceGridRelayout() { gridSession.value += 1; }\nfunction rogueWriter() { gridSession.value += 1; }` },
   ] },
 };
 
@@ -706,7 +706,7 @@ const NEG_FILES = {
 // 否则 RI 规则会对所有 owner 报 UNRESOLVED 而误 FAIL。内容仅含已登记 minimal 声明，不触发其它规则。
 const ANCHOR_FILES = [
   { path: "src/stores/useLayoutStore.ts", src: `const gridToolbarOpen = ref(false); const sidebarOpen = ref(false); const clipOpen = ref(false);` },
-  { path: "src/capabilities/browser/state/useBrowserStore.ts", src: `const gridSession = ref(0); const aiNavOpen = ref(false);` },
+  { path: "src/capabilities/grid/state/useGridStore.ts", src: `const gridSession = ref(0); const aiNavOpen = ref(false);` },
   { path: "src/capabilities/workspace/state/useWorkspaceStore.ts", src: `const recents = ref([]);` },
   { path: "src/capabilities/workspace/state/useFileStore.ts", src: `const filePath = ref("");` },
   { path: "src/capabilities/workspace/state/useArtifactStore.ts", src: `const current = ref(null);` },

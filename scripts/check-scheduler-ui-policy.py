@@ -182,7 +182,7 @@ def check(files: dict[str, str]) -> list[str]:
     task_index = files.get(TASK_INDEX, "")
     if "import TaskPanel from" in mainarea or "import TaskPanel from" in task_index:
         violations.append("SCHEDUI_PANEL_LAZY")
-    lazy_loader_ok = 'loader: () => import("./ui/TaskPanel.vue")' in task_index
+    lazy_loader_ok = 'load: () => import("./ui/TaskPanel.vue")' in task_index
     if not lazy_loader_ok:
         violations.append("SCHEDUI_PANEL_LAZY")
 
@@ -301,7 +301,7 @@ BAD_SAMPLES: list[tuple[str, str, str, str]] = [
     (
         "SCHEDUI_PANEL_LAZY",
         TASK_INDEX,
-        'loader: () => import("./ui/TaskPanel.vue"),',
+        'load: () => import("./ui/TaskPanel.vue")',
         'import TaskPanel from "./ui/TaskPanel.vue";',
     ),
 ]

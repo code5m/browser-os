@@ -43,7 +43,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS_DIR = ROOT / "src" / "capabilities" / "workspace" / "ui"
+SCRIPTS_DIR = ROOT / "src" / "capabilities" / "script" / "ui"
 SCRIPT_PANEL = SCRIPTS_DIR / "ScriptPanel.vue"
 SCRIPT_PARAM_FORM = SCRIPTS_DIR / "ScriptParamForm.vue"
 LAYOUT_STORE = ROOT / "src" / "stores" / "useLayoutStore.ts"

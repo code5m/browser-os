@@ -1,0 +1,33 @@
+name: Capability v2 UI safety
+
+on:
+  push:
+    branches:
+      - feature/capability-platform-v2-maturity
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: capability-v2-ui-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ui-safety:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Git UI safety
+        run: |
+          python3 scripts/check-git-ui-policy.py --self-test
+          python3 scripts/check-git-ui-policy.py
+      - name: Scheduler UI safety
+        run: |
+          python3 scripts/check-scheduler-ui-policy.py --self-test
+          python3 scripts/check-scheduler-ui-policy.py

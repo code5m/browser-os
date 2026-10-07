@@ -31,6 +31,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE_PATH = join(ROOT, "docs/architecture/ui-system/ui-boundary-baseline.json");
 const CATALOG_PATH = join(ROOT, "docs/architecture/ui-system/ui-components.yaml");
+const CAPABILITY_REGISTRY_PATH = join(ROOT, "docs/architecture/capability-registry/capabilities.yaml");
 const SHARED_UI_DIR = join(ROOT, "src/shared/ui");
 
 const results = [];
@@ -220,6 +221,26 @@ function gateWorkbenchBoundary(base) {
   }
 }
 
+function declaredCapabilityDependencies() {
+  const map = new Map();
+  if (!existsSync(CAPABILITY_REGISTRY_PATH)) return map;
+  const text = read(CAPABILITY_REGISTRY_PATH);
+  const blocks = text.split(/\n(?=  - id: )/);
+  for (const block of blocks) {
+    const id = /^  - id:\s*([^\s#]+)/m.exec(block)?.[1];
+    if (!id) continue;
+    const deps = new Set();
+    for (const key of ["dependsOn", "optionalDependencies"]) {
+      const inline = new RegExp("^    " + key + ":\\s*\\[([^\\]]*)\\]", "m").exec(block)?.[1];
+      if (inline) for (const x of inline.split(",").map((v) => v.trim()).filter(Boolean)) deps.add(x);
+      const list = new RegExp("^    " + key + ":\\s*\\n((?:      - [^\\n]+\\n?)*)", "m").exec(block)?.[1] ?? "";
+      for (const m of list.matchAll(/^      -\s*([^\s#]+)/gm)) deps.add(m[1]);
+    }
+    map.set(id, deps);
+  }
+  return map;
+}
+
 function gateCapabilityCrossImports(base) {
   const capRoot = join(ROOT, "src/capabilities");
   const files = walk(capRoot, [".vue", ".ts"]);
@@ -247,25 +268,30 @@ function gateCapabilityCrossImports(base) {
   if (internal.length === 0) ok("UI-04", "Capability 之间无 internal（state/ui）直接 import");
   else bad("UI-04", "Capability 之间存在 internal import", internal.map((x) => `${x.from} → ${x.to}`).join("; "));
 
-  // UI-04b：跨能力 public import 必须与基线一致；其中「manifest 未声明」的部分显式 WARN，不得静默
-  const baseAll = new Set(base.ui04b_cross_capability_public_baseline ?? []);
+  // UI-04b：跨能力 public import 必须由 canonical capability dependency 声明支持。
+  // 历史 baseline 只保留“未声明但已知”的债务；新 declared dependency 不需要改 baseline。
+  const declared = declaredCapabilityDependencies();
   const baseUndeclared = base.ui04b_undeclared_cross_capability_baseline ?? [];
-  const found = new Set(crossPublic.map((x) => x.from));
-  const newOnes = [...found].filter((f) => !baseAll.has(f));
-  const gone = [...baseAll].filter((f) => !found.has(f));
-  if (newOnes.length === 0 && gone.length === 0) {
-    ok("UI-04b", `跨能力 public import 与基线一致（${baseAll.size} 处，全部走 public 出口）`);
+  const grandfathered = new Set(baseUndeclared.map((x) => x.file));
+  const undeclared = [];
+  const declaredRows = [];
+  for (const row of crossPublic) {
+    const other = row.to.split("/")[2];
+    if (declared.get(row.own)?.has(other)) declaredRows.push(row);
+    else if (!grandfathered.has(row.from)) undeclared.push(row);
+  }
+  if (undeclared.length === 0) {
+    ok("UI-04b", `跨能力 public import 均由 Manifest/Registry dependencies 声明（declared=${declaredRows.length}）`);
   } else {
     bad(
       "UI-04b",
-      "跨能力 public import 与基线不一致",
-      [newOnes.length ? `新增: ${newOnes.join(", ")}` : "",
-       gone.length ? `基线已失效需更新: ${gone.join(", ")}` : ""].filter(Boolean).join(" | ")
+      "发现未声明的跨能力 public import",
+      undeclared.map((x) => `${x.from} → ${x.to}（${x.own} 未声明依赖）`).join("; ")
     );
   }
-  // 已知未声明依赖：显式 WARN（这是当前全仓唯一真实边界瑕疵）
+  const found = new Set(crossPublic.map((x) => x.from));
   for (const u of baseUndeclared) {
-    if (found.has(u.file)) warn("UI-04b-U", `未声明的跨能力依赖（${u.severity}）`, `${u.file}: ${u.note}`);
+    if (found.has(u.file)) warn("UI-04b-U", `历史未声明跨能力依赖（${u.severity}）`, `${u.file}: ${u.note}`);
   }
 }
 

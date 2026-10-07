@@ -28,7 +28,6 @@ capabilities:
       - browser.tab.open
       - browser.tab.close
       - browser.host
-      - browser.grid
     dependsOn:
       - bridge
     optionalDependencies: []
@@ -51,9 +50,10 @@ capabilities:
   - id: grid
     name: Grid
     category: CAPABILITY
-    semanticOwner: useBrowserStore
+    semanticOwner: useGridStore
     governanceStatus: GOVERNED
-    status: NOT_INTEGRATED
+    status: COMPATIBILITY_WRAPPED
+    maturity: C2
     provides:
       - grid.open
       - grid.layout
@@ -65,19 +65,19 @@ capabilities:
     lifecycle:
       supported: [ACTIVE]
       default: ACTIVE
-      activatable: false
-      resident: true
+      activatable: true
+      resident: false
     resources:
-      class: [VERY_HEAVY, MULTI_WEBVIEW, NATIVE]
+      class: [HEAVY, MULTI_WEBVIEW, NATIVE]
       suspendable: false
-      destroyable: false
+      destroyable: true
     permissions:
       - webview.create
       - process.spawn
     persistence:
       scope: disk
       sensitive: false
-    entrypoint: src/components/browser
+    entrypoint: src/capabilities/grid/index.ts
 
   - id: workspace
     name: Workspace
@@ -177,18 +177,19 @@ capabilities:
     category: CAPABILITY
     semanticOwner: KeyringStore
     governanceStatus: GOVERNED
-    status: NOT_INTEGRATED
+    status: COMPATIBILITY_WRAPPED
+    maturity: C2
     provides:
       - credential.save
       - credential.get
       - credential.delete
     dependsOn:
       - bridge
-    optionalDependencies: []
+    optionalDependencies: [browser]
     lifecycle:
       supported: [ACTIVE]
       default: ACTIVE
-      activatable: false
+      activatable: true
       resident: true
     resources:
       class: [SECURITY_SENSITIVE]
@@ -199,7 +200,7 @@ capabilities:
     persistence:
       scope: os_keyring
       sensitive: true
-    entrypoint: src-tauri/src/security_policy.rs
+    entrypoint: src/capabilities/credential/index.ts
 
   - id: database
     name: Database
@@ -298,8 +299,7 @@ capabilities:
       - agent.memory
     dependsOn:
       - bridge
-    optionalDependencies:
-      - graph
+    optionalDependencies: []
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
@@ -393,8 +393,7 @@ capabilities:
       - graph.stats
     dependsOn:
       - bridge
-    optionalDependencies:
-      - agent
+    optionalDependencies: []
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
@@ -569,7 +568,8 @@ capabilities:
     category: CAPABILITY
     semanticOwner: useSessionStore
     governanceStatus: GOVERNED
-    status: NOT_INTEGRATED
+    status: COMPATIBILITY_WRAPPED
+    maturity: C2
     provides:
       - session.persist
       - session.restore
@@ -579,7 +579,7 @@ capabilities:
     lifecycle:
       supported: [ACTIVE]
       default: ACTIVE
-      activatable: false
+      activatable: true
       resident: true
     resources:
       class: [LIGHT]
@@ -590,7 +590,7 @@ capabilities:
     persistence:
       scope: disk
       sensitive: false
-    entrypoint: src/stores/useSessionStore.ts
+    entrypoint: src/capabilities/session/index.ts
 
   # STAGE H-A —— Script 语义收口（SCR-20260923-script-owner）。
   # 分类：Workspace 子能力（与 artifact/repo/snippet 同宿于 src/capabilities/workspace/，
@@ -601,7 +601,8 @@ capabilities:
     category: CAPABILITY
     semanticOwner: useScriptStore
     governanceStatus: GOVERNED
-    status: NOT_INTEGRATED
+    status: COMPATIBILITY_WRAPPED
+    maturity: C2
     provides:
       - script.run
       - script.snippet
@@ -611,7 +612,7 @@ capabilities:
     lifecycle:
       supported: [ACTIVE]
       default: ACTIVE
-      activatable: false
+      activatable: true
       resident: false
     resources:
       class: [PROCESS]
@@ -622,34 +623,35 @@ capabilities:
     persistence:
       scope: disk
       sensitive: false
-    entrypoint: src/capabilities/workspace/ui/ScriptPanel.vue
+    entrypoint: src/capabilities/script/index.ts
 
   - id: workbench
     name: Workbench
     category: CAPABILITY
     semanticOwner: useWorkbenchStore
     governanceStatus: GOVERNED
-    status: NOT_INTEGRATED
+    status: COMPATIBILITY_WRAPPED
+    maturity: C2
     provides:
-      - workbench.summary
-      - workbench.artifact
+      - workbench.navigation
+      - workbench.commands
     dependsOn:
       - bridge
     optionalDependencies: []
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
-      activatable: false
-      resident: false
+      activatable: true
+      resident: true
     resources:
       class: [MEDIUM]
-      suspendable: true
+      suspendable: false
       destroyable: false
     permissions: []
     persistence:
       scope: disk
       sensitive: false
-    entrypoint: src/stores/useWorkbenchStore.ts
+    entrypoint: src/capabilities/workbench/index.ts
 
   # STAGE I-C：settings 判定为框架/平台 SERVICE（非产品 CAPABILITY）。
   # 主题/键位/tab 休眠属框架偏好，不归属任何单一能力；SettingsPanel 经

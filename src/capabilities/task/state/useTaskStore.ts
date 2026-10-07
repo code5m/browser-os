@@ -30,8 +30,8 @@ import {
   type TaskIssue,
   type TaskTargetOption,
 } from "../../../utils/taskUi";
-import { useScriptStore } from "../../workspace/public";
-import { useSnippetStore } from "../../workspace/public";
+import { useScriptStore } from "../../script/public";
+import { useSnippetStore } from "../../script/public";
 
 export const useTaskStore = defineStore("tasks", () => {
   const tasks = ref<TaskDef[]>([]);

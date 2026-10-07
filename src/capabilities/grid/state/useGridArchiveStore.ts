@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { bridge } from '../../../bridge';
 import { htmlToMarkdown } from '../../../utils/htmlToMarkdown';
-import { useBrowserStore } from "./useBrowserStore";
+import { useGridStore } from "./useGridStore";
 
 type Reply = { index:number; label:string; selected:boolean; markdown:string; state:'pending'|'reading'|'ready'|'failed'; error:string; saved:string };
 const failures: Record<string,string> = { UNSUPPORTED_SITE:'此站点暂无回复适配器', REPLY_STREAMING:'回复还在生成，请稍后重试', NO_ASSISTANT_REPLY:'未找到 AI 回复', GRID_NOT_OPEN:'窗口已关闭', GRID_RESULT_LIMIT:'回复超过容量上限' };
@@ -31,18 +31,18 @@ export const useGridArchiveStore = defineStore('gridArchive', () => {
   const failed = computed(() => rows.value.filter(r => r.state === 'failed'));
   async function extract(retry = false) {
     if (busy.value || saving.value) return;
-    const browser = useBrowserStore();
+    const grid = useGridStore();
     expanded.value = true; busy.value = true; message.value = '';
-    const session = browser.gridSession;
+    const session = grid.gridSession;
     const requestedMode = mode.value;
-    if (!retry) rows.value = Array.from({length:Math.min(browser.gridCount,12)}, (_, index) => ({ index, label:`A${index+1}`, selected:true, markdown:'', state:'pending', error:'', saved:'' }));
+    if (!retry) rows.value = Array.from({length:Math.min(grid.gridCount,12)}, (_, index) => ({ index, label:`A${index+1}`, selected:true, markdown:'', state:'pending', error:'', saved:'' }));
     const queue = rows.value.filter(r => !retry || r.state === 'failed');
     await Promise.all(Array.from({length:Math.min(3,queue.length)}, async () => {
       while (queue.length) {
         const row = queue.shift()!; row.state = 'reading'; row.error = ''; row.saved = '';
         try {
           const data = await bridge.gridReadReplies(row.index);
-          if (browser.gridSession !== session || !browser.gridOpen) throw new Error('GRID_NOT_OPEN');
+          if (grid.gridSession !== session || !grid.gridOpen) throw new Error('GRID_NOT_OPEN');
           if (data.error) throw new Error(data.error);
           if (!Array.isArray(data.replies) || !data.replies.length) throw new Error('NO_ASSISTANT_REPLY');
           const replies = requestedMode === 'latest' ? data.replies.slice(-1) : data.replies;

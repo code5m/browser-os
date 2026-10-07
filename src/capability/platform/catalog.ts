@@ -43,3 +43,6 @@ export function ownersOfResource(kind: string): string[] {
     .map((m) => m.id)
     .sort();
 }
+
+/** V2 canonical metadata view. Source of truth remains each capability manifest.ts. */
+export const CANONICAL_CAPABILITY_METADATA = CAPABILITY_CATALOG;

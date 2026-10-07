@@ -38,7 +38,7 @@ export const bookmarkManifest: CapabilityDefinition = {
     displayName: "收藏夹",
     description: "浏览器侧栏收藏夹、地址栏收藏星标与工具栏入口；物理隔离至本能力包，语义 owner 不变。",
     maturity: "C3",
-    maturityEvidence: ["scripts/check-capability-pilot.mjs", "scripts/check-composition-profiles.mjs"],
+    maturityEvidence: ["scripts/check-capability-pilot.mjs", "scripts/check-composition-profiles.mjs", "scripts/check-hot-plug-acceptance.mjs"],
     dependencies: [],
     // 收藏贡献渲染于 Browser 槽：Browser 缺失时该能力仍成立但无展示面 → 降级而非拒绝（§13）。
     optionalDependencies: ["browser"],

@@ -197,7 +197,7 @@
       "text": ".modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: f"
     },
     {
-      "file": "src/capabilities/workspace/ui/ScriptRunDialog.vue",
+      "file": "src/capabilities/script/ui/ScriptRunDialog.vue",
       "selector": "position: fixed;",
       "text": "position: fixed;"
     },

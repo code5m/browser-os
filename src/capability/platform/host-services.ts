@@ -1,4 +1,17 @@
-export type HostServiceId = 'bridge' | 'layout' | 'workbench' | 'graph-layout' | 'redact-secrets'
+export type HostServiceId = 'bridge' | 'layout' | 'workbench' | 'graph-layout' | 'redact-secrets' | 'browser-context'
+
+export interface BrowserContextPort {
+  readonly activeTabId: string
+  readonly activeUrl: string
+  readonly recentlyClosed: readonly { url: string; title?: string }[]
+  readonly aiNavOpen: boolean
+  openTab(url: string): Promise<unknown>
+  evalInTab(tabId: string, script: string): Promise<unknown>
+  captureTextPreview(tabId: string): Promise<string>
+  adoptRestoredTab(tab: unknown): void
+  activateGrid(): Promise<void>
+  setAiNavOpen(value: boolean): void
+}
 
 export interface HostServiceRegistry {
   register<T>(id: HostServiceId, service: T): void

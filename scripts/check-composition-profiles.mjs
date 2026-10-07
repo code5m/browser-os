@@ -99,7 +99,11 @@ async function run() {
 
   // bootstrap 不抛错（能力层失败不应打断启动）
   if (minimal.activated && dev.activated && full.activated) ok("PROF-05", "各 profile bootstrap activated=true（无能力层异常）");
-  else bad("PROF-05", "bootstrap activated", `min=${minimal.activated} dev=${dev.activated} full=${full.activated}`);
+  else bad(
+    "PROF-05",
+    "bootstrap activated",
+    `min=${minimal.activated} dev=${dev.activated} full=${full.activated} fullError=${full.error ?? "none"}`,
+  );
 
   // ResourceGovernor 薄层：不 import 任何能力 owner/store/UI，只依赖 runtime + types
   const gov = readFileSync(join(ROOT, "src/capability/resourceGovernor.ts"), "utf8");

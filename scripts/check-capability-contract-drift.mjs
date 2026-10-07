@@ -13,6 +13,8 @@
 //   DRIFT-03 fail  optionalDependencies 不一致
 //   DRIFT-04 fail  entrypoint 不一致（归一化：去掉 /index.ts 与末尾斜杠后比较）
 //   DRIFT-05 fail  manifest 存在但 registry 缺对应条目（或反之）
+//   DRIFT-06 fail  semanticOwner 显式字段不一致
+//   DRIFT-07 fail  maturity 显式字段不一致
 //
 // 用法:
 //   node scripts/check-capability-contract-drift.mjs               真实扫描
@@ -37,7 +39,7 @@ function parseRegistry(text) {
     const mId = raw.match(/^ {2}- id:\s*([a-zA-Z_0-9]+)\s*$/)
     if (mId) {
       cur = mId[1]
-      out[cur] = { dependsOn: [], optionalDependencies: [], entrypoint: '', status: '' }
+      out[cur] = { dependsOn: [], optionalDependencies: [], entrypoint: '', status: '', semanticOwner: '', maturity: '' }
       field = null
       continue
     }
@@ -61,7 +63,7 @@ function parseRegistry(text) {
       out[cur][field].push(mItem[1])
       continue
     }
-    const mScalar = raw.match(/^ {4}(entrypoint|status):\s*(.+)\s*$/)
+    const mScalar = raw.match(/^ {4}(entrypoint|status|semanticOwner|maturity):\s*(.+)\s*$/)
     if (mScalar) {
       let v = mScalar[2].trim()
       if (v.startsWith('"') && v.endsWith('"')) v = v.slice(1, -1)
@@ -85,6 +87,9 @@ function parseManifest(text) {
     v1Dependencies: null,
     v1OptionalDependencies: null,
     v1Entrypoint: '',
+    semanticOwner: '',
+    v1SemanticOwner: '',
+    v1Maturity: '',
   }
   const listField = (re) => {
     const m = text.match(re)
@@ -104,6 +109,12 @@ function parseManifest(text) {
   if (v1id) out.v1Id = v1id[1]
   const ep = text.match(/^ {4}entrypoint:\s*"([^"]+)"/m)
   if (ep) out.v1Entrypoint = ep[1]
+  const owner = text.match(/^ {2}semanticOwner:\s*"([^"]+)"/m)
+  if (owner) out.semanticOwner = owner[1]
+  const v1Owner = text.match(/^ {4}semanticOwner:\s*"([^"]+)"/m)
+  if (v1Owner) out.v1SemanticOwner = v1Owner[1]
+  const maturity = text.match(/^ {4}maturity:\s*"([^"]+)"/m)
+  if (maturity) out.v1Maturity = maturity[1]
   return out
 }
 
@@ -150,6 +161,15 @@ function run({ registryText, manifests }) {
     }
     if (m.v1Entrypoint && normEntry(m.v1Entrypoint) !== normEntry(r.entrypoint)) {
       push('DRIFT-04', `${id}: v1.entrypoint=${m.v1Entrypoint} ≠ registry.entrypoint=${r.entrypoint}`)
+    }
+    if (r.semanticOwner && m.v1SemanticOwner && r.semanticOwner !== m.v1SemanticOwner) {
+      push('DRIFT-06', id + ': v1.semanticOwner=' + m.v1SemanticOwner + ' ≠ registry.semanticOwner=' + r.semanticOwner)
+    }
+    if (r.semanticOwner && m.semanticOwner && r.semanticOwner !== m.semanticOwner) {
+      push('DRIFT-06', id + ': manifest.semanticOwner=' + m.semanticOwner + ' ≠ registry.semanticOwner=' + r.semanticOwner)
+    }
+    if (r.maturity && m.v1Maturity && r.maturity !== m.v1Maturity) {
+      push('DRIFT-07', id + ': v1.maturity=' + m.v1Maturity + ' ≠ registry.maturity=' + r.maturity)
     }
   }
   // DRIFT-05：registry 有条目但无 manifest.ts。

@@ -2,7 +2,7 @@
 // ---------------------------------------------------------------------------
 // 会话存档 / 页签关闭逻辑前端自动化测试（headless，无 GUI 依赖）
 //
-// 直接加载**真实的** `src/capabilities/browser/state/useSessionStore.ts` 与 `src/capabilities/browser/state/useBrowserStore.ts`，
+// 直接加载**真实的** `src/capabilities/session/state/useSessionStore.ts` 与 `src/capabilities/browser/state/useBrowserStore.ts`，
 // 只把 `src/bridge.ts` 的会话/页签相关方法替换为记录型 mock（不 mock store 自身逻辑）：
 // 因此下面每一条断言反映的都是**产品代码**的行为，而非测试替身的行为。
 //
@@ -56,8 +56,10 @@ globalThis.window = { setTimeout: (fn, ms) => setTimeout(fn, ms) };
 const ROOT = new URL("..", import.meta.url).pathname;
 
 const { bridge } = await import(`${ROOT}src/bridge.ts`);
-const { useSessionStore } = await import(`${ROOT}src/capabilities/browser/state/useSessionStore.ts`);
+const { useSessionStore } = await import(`${ROOT}src/capabilities/session/state/useSessionStore.ts`);
 const { useBrowserStore } = await import(`${ROOT}src/capabilities/browser/state/useBrowserStore.ts`);
+const { hostServices } = await import(`${ROOT}src/capability/platform/host-services.ts`);
+const { setCapabilityRuntime } = await import(`${ROOT}src/capability/runtimeSingleton.ts`);
 const { createPinia, setActivePinia } = await import(
   `${ROOT}node_modules/pinia/dist/pinia.mjs`
 );
@@ -138,6 +140,16 @@ bridge.tabClose = async (id) => {
 bridge.tabActivate = async (id) => {
   calls.push(["tabActivate", id]);
 };
+bridge.tabPosition = async (id, rect) => {
+  calls.push(["tabPosition", id, rect]);
+};
+bridge.hideAllWebviews = async () => {
+  calls.push(["hideAllWebviews"]);
+};
+bridge.hideWebview = async (id) => {
+  calls.push(["hideWebview", id]);
+};
+bridge.debugLog = () => {};
 bridge.tabNew = async (u) => {
   calls.push(["tabNew", u]);
   return { id: "tab-new-" + u, url: u, title: "" };
@@ -167,8 +179,28 @@ function callOrder() {
 }
 
 setActivePinia(createPinia());
+// Browser 真实资源闸 fail-closed；会话测试显式提供最小 ACTIVE Runtime，而不是绕过产品 guard。
+setCapabilityRuntime({ get: (id) => id === "browser" ? { state: "ACTIVE", enabled: true } : undefined });
 const session = useSessionStore();
 const browser = useBrowserStore();
+hostServices.register("browser-context", {
+  get activeTabId() { return browser.activeTabId; },
+  get activeUrl() { return browser.activeTab?.url || browser.url || ""; },
+  get recentlyClosed() { return browser.recentlyClosed; },
+  get aiNavOpen() { return browser.aiNavOpen; },
+  openTab(url) { return browser.tabNew(url); },
+  evalInTab(tabId, script) { return bridge.evalInTab(tabId, script); },
+  async captureTextPreview(tabId) {
+    const text = await bridge.evalInTab(tabId, "(document.body && document.body.innerText ? document.body.innerText.slice(0, 2000) : '')");
+    return typeof text === "string" ? text : "";
+  },
+  adoptRestoredTab(tab) {
+    browser.tabs.push(tab);
+    browser.activeTabId = tab.id;
+  },
+  async activateGrid() {},
+  setAiNavOpen(value) { browser.aiNavOpen = value; },
+});
 
 // ================= 0) 确定性门禁：已撤销的关闭协议表面必须不存在 =================
 // 任何重新引入这些符号的代码都必须让本组断言 FAIL（防止普通关闭再次触发 prompt/save）。

@@ -20,15 +20,20 @@
 
 import { BOOKMARK_CAPABILITY_ID } from '../capabilities/bookmark'
 import { WORKSPACE_CAPABILITY_ID } from '../capabilities/workspace'
+import { WORKBENCH_CAPABILITY_ID } from '../capabilities/workbench'
 import { BROWSER_CAPABILITY_ID } from '../capabilities/browser'
+import { GRID_CAPABILITY_ID } from '../capabilities/grid'
+import { SESSION_CAPABILITY_ID } from '../capabilities/session'
 import { TERMINAL_CAPABILITY_ID } from '../capabilities/terminal'
 import { GIT_CAPABILITY_ID } from '../capabilities/git'
 import { DATABASE_CAPABILITY_ID } from '../capabilities/database'
+import { CREDENTIAL_CAPABILITY_ID } from '../capabilities/credential'
 import { AGENT_CAPABILITY_ID } from '../capabilities/agent'
 import { SKILL_CAPABILITY_ID } from '../capabilities/skill'
 import { PLUGIN_CAPABILITY_ID } from '../capabilities/plugin'
 import { KNOWLEDGE_GRAPH_CAPABILITY_ID } from '../capabilities/graph'
 import { TASK_CAPABILITY_ID } from '../capabilities/task'
+import { SCRIPT_CAPABILITY_ID } from '../capabilities/script'
 import { CLIPBOARD_CAPABILITY_ID } from '@browser-os/capability-clipboard'
 import { APPS_CAPABILITY_ID } from '../capabilities/apps'
 import { TOOLS_CAPABILITY_ID } from '../capabilities/tools'
@@ -46,7 +51,10 @@ export const CAPABILITY_PROFILES: Record<CapabilityProfileId, string[]> = {
     BOOKMARK_CAPABILITY_ID,
     WORKSPACE_CAPABILITY_ID,
     BROWSER_CAPABILITY_ID,
+    GRID_CAPABILITY_ID,
+    SESSION_CAPABILITY_ID,
     TERMINAL_CAPABILITY_ID,
+    CREDENTIAL_CAPABILITY_ID,
     GIT_CAPABILITY_ID,
     DATABASE_CAPABILITY_ID,
   ],
@@ -54,7 +62,11 @@ export const CAPABILITY_PROFILES: Record<CapabilityProfileId, string[]> = {
     BOOKMARK_CAPABILITY_ID,
     WORKSPACE_CAPABILITY_ID,
     BROWSER_CAPABILITY_ID,
+    GRID_CAPABILITY_ID,
+    SESSION_CAPABILITY_ID,
+    WORKBENCH_CAPABILITY_ID,
     TERMINAL_CAPABILITY_ID,
+    CREDENTIAL_CAPABILITY_ID,
     GIT_CAPABILITY_ID,
     DATABASE_CAPABILITY_ID,
     AGENT_CAPABILITY_ID,
@@ -62,6 +74,7 @@ export const CAPABILITY_PROFILES: Record<CapabilityProfileId, string[]> = {
     PLUGIN_CAPABILITY_ID,
     KNOWLEDGE_GRAPH_CAPABILITY_ID,
     TASK_CAPABILITY_ID,
+    SCRIPT_CAPABILITY_ID,
     CLIPBOARD_CAPABILITY_ID,
     APPS_CAPABILITY_ID,
     TOOLS_CAPABILITY_ID,

@@ -36,42 +36,18 @@ const addressBarActions = computed(() => contributionRegistry.getNavigationContr
 const trailingActions = computed(() => contributionRegistry.getNavigationContributions(
   CONTRIBUTION_SLOTS.ACTIVITY_BAR_TRAILING,
 ));
+const activityNavContributions = computed(() => contributionRegistry.getSurfaceContributions(
+  CONTRIBUTION_SLOTS.ACTIVITY_BAR_NAV,
+));
+const activityRowContributions = computed(() => contributionRegistry.getSurfaceContributions(
+  CONTRIBUTION_SLOTS.ACTIVITY_BAR_ROWS,
+));
 
 // 一级入口与 ☰ 菜单分节统一来自 useLayoutStore（W17 导航真源），
 // 窄窗口按 navTopViews 从尾部裁剪，被裁掉的入口在 ☰ 菜单中仍可达。
 const menuSections = NAV_MENU_SECTIONS;
 const topItems = computed(() => TOP_NAV_ITEMS.filter((i) => layout.navTopViews.includes(i.view) && ['home','browser'].includes(i.view)));
 
-// 宫格设置扩展行数据
-const gridLayouts = [
-  { key: "grid", label: "▦ 宫格", title: "自动宫格平铺" },
-  { key: "quad", label: "⊞ 四分", title: "四分 2×2" },
-  { key: "horizontal", label: "▭ 横向", title: "横向一排" },
-] as const;
-const gridCounts = [2, 3, 4, 6, 9];
-const urlsOpen = ref(false);
-
-// ===== 资源监控（D）：宫格设置行"资源"按钮，2s 轮询 =====
-import type { ResourceStats } from "../../types";
-import { bridge } from "../../bridge";
-const resOpen = ref(false);
-const resStats = ref<ResourceStats | null>(null);
-let resTimer: number | null = null;
-async function resRefresh() {
-  try {
-    resStats.value = await bridge.resourceStats();
-  } catch {}
-}
-function toggleRes() {
-  resOpen.value = !resOpen.value;
-  if (resOpen.value) {
-    resRefresh();
-    resTimer = window.setInterval(resRefresh, 2000);
-  } else if (resTimer) {
-    clearInterval(resTimer);
-    resTimer = null;
-  }
-}
 // ===== W17：窗口宽度上报（窄窗口密度）+ resize 监听清理 =====
 const navEl = ref<HTMLElement | null>(null);
 function syncWidth() {
@@ -83,12 +59,7 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   window.removeEventListener("resize", syncWidth);
-  if (resTimer) clearInterval(resTimer);
 });
-function fmtMb(mb: number) {
-  return mb >= 1024 ? (mb / 1024).toFixed(1) + "G" : Math.round(mb) + "M";
-}
-
 // 扩展行：grid=宫格设置 / more=功能菜单 / omni=最近+常用。
 // 关键设计：面板【不悬浮】——页签/宫格是原生 GTK 子窗口，永远压在 HTML 之上，
 // 悬浮下拉必然被网页盖住。内联扩展行把工具栏撑高、网页随 viewport 整体下移
@@ -126,27 +97,6 @@ function onEscape() {
   });
 }
 
-function setGridLayout(mode: (typeof gridLayouts)[number]["key"]) {
-  // 格数变化必须重建宫格（后端 webview 数量要与 gridCount 一致，
-  // 只重排会对不存在的 grid-N 发定位 → tab not found）
-  const countChanged = mode === "quad" && browser.gridCount !== 4;
-  browser.gridLayout = mode;
-  if (mode === "quad") browser.gridCount = 4;
-  if (!browser.gridOpen) return;
-  if (countChanged) browser.rebuildGrid();
-  else browser.layoutGrid();
-}
-
-function setGridCount(n: number) {
-  if (browser.gridCount === n) return;
-  browser.gridCount = n;
-  // 四分模式固定 4 格：选 2/3/6/9 格时自动切回自适应宫格，避免"2 格内容按 2×2 摆只显示上半"
-  if (n !== 4 && browser.gridLayout === "quad") {
-    browser.gridLayout = "grid";
-  }
-  if (browser.gridOpen) browser.rebuildGrid();
-}
-
 async function onItem(v: string) {
   if (term.m0Cfg?.driver) {
     bridge.debugLog(`[M0] ignore activity item ${v} while driver=${term.m0Cfg.driver}`);
@@ -158,14 +108,6 @@ async function onItem(v: string) {
   // 可视区、非浏览器视图空转重试），现已由 syncViewVisibility 的 Visibility Controller
   // 按 desiredGridVisibility 统一收敛，不再依赖"离开即销毁"。
   if (v === "apps") appsStore.loadApps();
-  if (v === "grid") {
-    // 默认 AI 模式：点宫格直接出底部统一输入框（在 buildGrid 前设置，
-    // 让输入框先于宫格定位渲染，首次布局即按"已缩矮"的 viewport 计算）
-    browser.gridMode = "ai";
-    // canonical intent：activateGrid = openModule("grid") + (已开则重排 / 未开则创建)
-    browser.activateGrid();
-    return;
-  }
   // 浏览器主视图不是模块页签，直接切视图即可
   if (v === "browser") {
     layout.activateBrowser();
@@ -257,28 +199,9 @@ async function openDirCenter() {
         <span class="lab">{{ it.label }}</span>
       </button>
 
-      <!-- 宫格：左键直达打开，右侧 ▾ 展开设置行 -->
-      <button
-        data-nav-item
-        :class="{ active: isNavActive(layout.mainView, 'grid') }"
-        aria-label="打开宫格"
-        title="打开宫格"
-        @click="onItem('grid')"
-      >
-        <span class="ic">🗂️</span>
-        <span class="lab">宫格</span>
-      </button>
-      <button
-        class="caret-btn"
-        data-nav-item
-        data-nav-toggle="grid"
-        :class="{ active: layout.navSection === 'grid' }"
-        aria-label="宫格设置"
-        :aria-expanded="layout.navSection === 'grid'"
-        aria-controls="nav-grid-row"
-        title="宫格设置"
-        @click.stop="toggleSection('grid')"
-      >▾</button>
+      <template v-for="c in activityNavContributions" :key="c.id">
+        <component :is="c.component" />
+      </template>
 
       <!-- ☰ 菜单：展开工作区/工具/同步 -->
       <button
@@ -354,75 +277,9 @@ async function openDirCenter() {
       </button>
     </nav>
 
-    <!-- AI 群发输入行：宫格打开且 AI 模式时常驻。
-         走"内联扩展行撑高工具栏"的可靠模式（与宫格设置行同机制），
-         宫格原生窗口随 viewport 下移，从机制上零遮挡——
-         不要做成 viewport 底部栏，会被宫格 webview 盖住 -->
-    <div v-if="browser.gridOpen && layout.mainView === 'grid' && browser.gridMode === 'ai'" class="expand-row ai-send-row">
-      <span class="er-label">🤖 群发</span>
-      <input
-        v-model="browser.gridAiInput"
-        class="ai-send-input"
-        placeholder="输入问题，同时发送给所有宫格中的 AI..."
-        @keyup.enter="browser.gridSendAi"
-      />
-      <button class="er-primary" @click="browser.gridSendAi">发送</button>
-    </div>
-
-    <component :is="gridArchiveBarComp" v-if="browser.gridOpen && layout.mainView === 'grid'" />
-    <!-- 宫格设置扩展行 -->
-    <div v-if="layout.navSection === 'grid'" id="nav-grid-row" class="expand-row">
-      <span class="er-label">模式</span>
-      <button aria-label="宫格浏览模式" :class="{ active: browser.gridMode === 'browse' }" @click="browser.gridMode = 'browse'">🌐 浏览</button>
-      <button aria-label="宫格 AI 模式" :class="{ active: browser.gridMode === 'ai' }" @click="browser.gridMode = 'ai'">🤖 AI</button>
-      <span class="er-sep"></span>
-      <span class="er-label">布局</span>
-      <button
-        v-for="l in gridLayouts"
-        :key="l.key"
-        :class="{ active: browser.gridLayout === l.key }"
-        :title="l.title"
-        @click="setGridLayout(l.key)"
-      >{{ l.label }}</button>
-      <span class="er-sep"></span>
-      <span class="er-label">格数</span>
-      <button
-        v-for="n in gridCounts"
-        :key="n"
-        :class="{ active: browser.gridCount === n }"
-        @click="setGridCount(n)"
-      >{{ n }}</button>
-      <span class="er-sep"></span>
-      <button class="er-primary" aria-label="重排或打开宫格" @click="browser.gridOpen ? browser.layoutGrid() : onItem('grid')">
-        {{ browser.gridOpen ? "重排" : "打开" }}
-      </button>
-      <button :class="{ active: urlsOpen }" aria-label="编辑各格网址" title="编辑各格网址" @click="urlsOpen = !urlsOpen">网址</button>
-      <button :class="{ active: resOpen }" aria-label="查看内存占用" title="查看内存占用" @click="toggleRes">资源</button>
-      <button class="er-danger" aria-label="关闭宫格" @click="layout.navSection = ''; browser.closeGrid()">关闭宫格</button>
-      <button class="er-close" aria-label="收起宫格设置" @click="layout.navSection = ''" title="收起">✕</button>
-    </div>
-    <!-- 资源监控行：主进程 + 每宫格子进程树 RSS（2s 自动刷新） -->
-    <div v-if="layout.navSection === 'grid' && resOpen && resStats" class="expand-row">
-      <span class="er-label">
-        系统可用 {{ fmtMb(resStats.mem_available_mb) }} / {{ fmtMb(resStats.mem_total_mb) }}
-      </span>
-      <span class="er-sep"></span>
-      <span class="er-label">应用共 {{ fmtMb(resStats.app_total_mb) }}</span>
-      <span class="er-label">主进程 {{ fmtMb(resStats.main.rss_mb) }}</span>
-      <span v-for="g in resStats.grids" :key="g.pid" class="er-label">
-        {{ g.name }} {{ fmtMb(g.rss_mb) }}
-      </span>
-      <span v-if="resStats.mem_available_mb < 1500" class="er-warn">
-        ⚠️ 可用内存偏低，建议减少格数或关闭其它应用
-      </span>
-    </div>
-    <div v-if="layout.navSection === 'grid' && urlsOpen" class="expand-row">
-      <span v-for="i in browser.gridCount" :key="i" class="er-url">
-        <span class="er-gidx">{{ i }}</span>
-        <input v-model="browser.gridUrls[i - 1]" :aria-label="'第 ' + i + ' 格网址'" placeholder="网址" @keyup.enter="browser.gridSetUrl(i - 1)" />
-        <button :aria-label="'刷新第 ' + i + ' 格'" @click="browser.gridSetUrl(i - 1)">↺</button>
-      </span>
-    </div>
+    <template v-for="c in activityRowContributions" :key="c.id">
+      <component :is="c.component" />
+    </template>
 
     <!-- 功能菜单扩展行 -->
     <div v-if="layout.navSection === 'more'" id="nav-more-row" class="expand-row">

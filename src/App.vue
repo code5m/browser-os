@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { bridge } from "./bridge";
 import { useBrowserStore } from "./capabilities/browser/public";
 import { useResourceStore } from "./capabilities/browser/public";
-import { useSessionStore } from "./capabilities/browser/public";
+import { useSessionStore } from "./capabilities/session/public";
 import { useWorkspaceStore } from "./capabilities/workspace/public";
 import { useArtifactStore } from "./capabilities/workspace/public";
 import { useRepoStore } from "./capabilities/workspace/public";
@@ -17,8 +17,6 @@ import { useSettingsStore } from "./settings/public";
 
 import ActivityBar from "./components/layout/ActivityBar.vue";
 import UnifiedTabBar from './components/layout/UnifiedTabBar.vue';
-import WorkbenchCommands from './components/layout/WorkbenchCommands.vue';
-import WorkbenchRail from './components/layout/WorkbenchRail.vue';
 import MainArea from "./components/layout/MainArea.vue";
 import StatusBar from "./components/layout/StatusBar.vue";
 import { GitWriteConfirmDialog } from "./capabilities/git/public";
@@ -48,6 +46,10 @@ const imageLightboxComp = computed(() => contributionRegistry
 const aiNavPanelComp = computed(() => contributionRegistry.getSurfaceContributions(
   CONTRIBUTION_SLOTS.AI_NAV_PANEL,
 )[0]?.component)
+const workbenchCommandsComp = computed(() => contributionRegistry
+  .getSurfaceContributions(CONTRIBUTION_SLOTS.COMMANDS)[0]?.component)
+const workbenchRailComp = computed(() => contributionRegistry
+  .getSurfaceContributions(CONTRIBUTION_SLOTS.SIDEBAR)[0]?.component)
 
 // W17(A7): 外壳级兜底状态——启动遮罩与渲染错误兜底（纯展示，不引入运行时行为）。
 const ready = ref(false);
@@ -213,7 +215,7 @@ onMounted(async () => {
       else layout.activateTerm();
     } else if (matchKey(e, km.grid)) {
       e.preventDefault();
-      browser.activateGrid();
+      layout.openModule("grid");
     } else if (matchKey(e, km.home)) {
       e.preventDefault();
       layout.openModule("home");
@@ -268,9 +270,9 @@ onMounted(async () => {
       <!-- 精简模式：整行工具栏隐藏，网页占满（由 MainArea 的 ☰ 悬浮钮退出） -->
       <UnifiedTabBar v-if="!layout.compactMode" />
       <ActivityBar v-if="!layout.compactMode" />
-      <WorkbenchCommands />
+      <component :is="workbenchCommandsComp" />
       <div class="body">
-        <WorkbenchRail v-if="!layout.compactMode" />
+        <component :is="workbenchRailComp" v-if="!layout.compactMode" />
         <component :is="aiNavPanelComp" />
         <MainArea />
       </div>

@@ -19,7 +19,8 @@ export const agentManifest: CapabilityDefinition = {
     "agent.memory",
   ],
   dependsOn: ["bridge"],
-  optionalDependencies: ["graph"],
+  // Graph nodes may reference Agent ids as data; this is not a runtime dependency.
+  optionalDependencies: [],
   lifecycle: {
     supported: ["ACTIVE", "SUSPENDED"],
     default: "ACTIVE",
@@ -50,7 +51,7 @@ export const agentManifest: CapabilityDefinition = {
     maturity: "C1",
     maturityEvidence: ["scripts/check-developer-owners.mjs"],
     dependencies: ["bridge"],
-    optionalDependencies: ["graph"],
+    optionalDependencies: [],
     conflicts: [],
     provides: ["agent.chat", "agent.run", "agent.memory"],
     requires: [],

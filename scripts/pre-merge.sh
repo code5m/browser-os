@@ -229,11 +229,12 @@ run_pre_merge() {
   baseline_file="$(ls -1 "$ROOT"/logs/m0-build-metrics/build-metrics-*.json 2>/dev/null | sort | head -1 || true)"
   if [ -n "$baseline_file" ]; then
     # 复用上一步 npm run build 的产物，不重复构建。
-    if python3 "$SCRIPT_DIR/measure-build-metrics.py" --compare "$baseline_file" --skip-build \
-      >/dev/null 2>&1; then
-      pm_log "build metrics 未回归（基线 ${baseline_file#"$ROOT/"}）"
+    local metrics_output
+    if metrics_output="$(python3 "$SCRIPT_DIR/measure-build-metrics.py" --compare "$baseline_file" --skip-build 2>&1)"; then
+      pm_log "build metrics 未回归（基线 ${baseline_file#"$ROOT"/}）"
     else
-      pm_fail "build metrics regression vs ${baseline_file#"$ROOT/"}"
+      printf '%s\n' "$metrics_output"
+      pm_fail "build metrics regression vs ${baseline_file#"$ROOT"/}"
     fi
   else
     pm_log "无构建指标基线，跳过对比"
@@ -285,8 +286,9 @@ run_pre_merge() {
     || pm_fail "check-session-persistence-policy.py（会话持久化/关闭协议不变量被破坏）"
 
   pm_log "M1-9 会话关闭协议前端逻辑层自动化测试（headless，mock 仅替换 bridge）…"
-  (cd "$ROOT" && node "$SCRIPT_DIR/check-session-logic.mjs") >/dev/null 2>&1 \
-    || pm_fail "check-session-logic.mjs（会话关闭协议前端逻辑回归）"
+  if ! (cd "$ROOT" && node "$SCRIPT_DIR/check-session-logic.mjs"); then
+    pm_fail "check-session-logic.mjs（会话关闭协议前端逻辑回归）"
+  fi
 
   pm_log "M2-1 图片领域与持久化不变量夹具…"
   python3 "$SCRIPT_DIR/check-image-policy.py" --self-test >/dev/null 2>&1 \
@@ -535,7 +537,7 @@ run_pre_merge() {
   # into the pre-merge gate WITHOUT weakening any existing M0-1.c check above.
   pm_log "Phase 03 checker gate (architecture/ui/native/runtime/task-boundary + capability + doctor)…"
   for c in check-architecture check-ui check-native check-native-command-inventory check-browser-runtime check-task-boundary check-grid-close-logic check-view-intent check-capability-boundaries check-capability-composition check-composition-profiles check-capability-platform check-capability-runtime check-pluggable-runtime check-pluggable-lifecycle check-terminal-owners check-developer-owners check-semantic-registry check-semantic-closure-logic check-workspace-owners check-sensitive-side-effects doctor; do
-    if ! (cd "$ROOT" && node "$SCRIPT_DIR/$c.mjs") >/dev/null 2>&1; then
+    if ! (cd "$ROOT" && node "$SCRIPT_DIR/$c.mjs"); then
       pm_fail "phase03 $c.mjs"
     fi
   done

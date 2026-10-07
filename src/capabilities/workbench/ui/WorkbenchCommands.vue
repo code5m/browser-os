@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { Search, X } from '@lucide/vue';
-import { MODULE_META } from '../../stores/useLayoutStore';
-import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
+import { MODULE_META } from '../../../stores/useLayoutStore';
+import { useWorkbenchStore } from '../state/useWorkbenchStore';
 const workbench = useWorkbenchStore();
 const input = ref<HTMLInputElement>();
 const query = ref('');

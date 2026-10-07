@@ -1,0 +1,181 @@
+#!/usr/bin/env node
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const failures = [];
+const fail = (message) => failures.push(message);
+const read = (path) => readFileSync(join(ROOT, path), "utf8");
+
+const promoted = {
+  script: {
+    owner: "useScriptStore",
+    required: [
+      "src/capabilities/script/manifest.ts",
+      "src/capabilities/script/index.ts",
+      "src/capabilities/script/public.ts",
+      "src/capabilities/script/state/useScriptStore.ts",
+      "src/capabilities/script/state/useSnippetStore.ts",
+      "src/capabilities/script/ui/ScriptPanel.vue",
+      "src/capabilities/script/ui/CommandSnippetPanel.vue",
+    ],
+    forbidden: [
+      "src/capabilities/workspace/state/useScriptStore.ts",
+      "src/capabilities/workspace/state/useSnippetStore.ts",
+      "src/capabilities/workspace/ui/ScriptPanel.vue",
+      "src/capabilities/workspace/ui/CommandSnippetPanel.vue",
+    ],
+  },
+  credential: {
+    owner: "KeyringStore",
+    required: [
+      "src/capabilities/credential/manifest.ts",
+      "src/capabilities/credential/index.ts",
+      "src/capabilities/credential/public.ts",
+      "src/capabilities/credential/ui/CredentialList.vue",
+    ],
+    forbidden: ["src/capabilities/browser/ui/CredentialList.vue"],
+  },
+  session: {
+    owner: "useSessionStore",
+    required: [
+      "src/capabilities/session/manifest.ts",
+      "src/capabilities/session/index.ts",
+      "src/capabilities/session/public.ts",
+      "src/capabilities/session/state/useSessionStore.ts",
+      "src/capabilities/session/ui/SessionPanel.vue",
+    ],
+    forbidden: [
+      "src/capabilities/browser/state/useSessionStore.ts",
+      "src/capabilities/browser/ui/SessionPanel.vue",
+    ],
+  },
+  grid: {
+    owner: "useGridStore",
+    required: [
+      "src/capabilities/grid/manifest.ts",
+      "src/capabilities/grid/index.ts",
+      "src/capabilities/grid/public.ts",
+      "src/capabilities/grid/state/useGridStore.ts",
+      "src/capabilities/grid/state/useGridArchiveStore.ts",
+      "src/capabilities/grid/ui/GridNav.vue",
+      "src/capabilities/grid/ui/GridRows.vue",
+      "src/capabilities/grid/composables/useGridHost.ts",
+    ],
+    forbidden: [
+      "src/capabilities/browser/state/useGridArchiveStore.ts",
+      "src/capabilities/browser/ui/GridArchiveBar.vue",
+    ],
+  },
+  workbench: {
+    owner: "useWorkbenchStore",
+    required: [
+      "src/capabilities/workbench/manifest.ts",
+      "src/capabilities/workbench/index.ts",
+      "src/capabilities/workbench/public.ts",
+      "src/capabilities/workbench/state/useWorkbenchStore.ts",
+      "src/capabilities/workbench/ui/WorkbenchRail.vue",
+      "src/capabilities/workbench/ui/WorkbenchCommands.vue",
+    ],
+    forbidden: [
+      "src/components/layout/WorkbenchRail.vue",
+      "src/components/layout/WorkbenchCommands.vue",
+    ],
+  },
+};
+
+const generated = read("src/capability/platform/generated-registry.ts");
+const capabilities = read("docs/architecture/capability-registry/capabilities.yaml");
+const dependencies = read("docs/architecture/capability-registry/dependencies.yaml");
+
+for (const [id, spec] of Object.entries(promoted)) {
+  for (const path of spec.required) {
+    if (!existsSync(join(ROOT, path))) fail(id + " missing required module file: " + path);
+  }
+  for (const path of spec.forbidden) {
+    if (existsSync(join(ROOT, path))) fail(id + " legacy physical owner still exists: " + path);
+  }
+  const manifest = read("src/capabilities/" + id + "/manifest.ts");
+  if (!manifest.includes('id: "' + id + '"')) fail(id + " manifest id mismatch");
+  if (!manifest.includes('semanticOwner: "' + spec.owner + '"')) fail(id + " semantic owner mismatch");
+  if (!manifest.includes('maturity: "C2"')) fail(id + " must remain at truthful C2/B-level contract");
+  if (!manifest.includes("publicContract: [")) fail(id + " missing public contract");
+  if (!generated.includes("/capabilities/" + id + "/manifest")) fail(id + " missing generated manifest registration");
+  if (!generated.includes("'" + id + "': definition")) fail(id + " missing generated runtime definition");
+  const marker = "\n  - id: " + id + "\n";
+  const start = capabilities.indexOf(marker);
+  if (start < 0) fail(id + " missing capability registry block");
+  else {
+    const next = capabilities.indexOf("\n  - id: ", start + marker.length);
+    const block = capabilities.slice(start, next < 0 ? capabilities.length : next);
+    if (!block.includes("status: COMPATIBILITY_WRAPPED")) fail(id + " registry status not integrated");
+  }
+}
+
+for (const [name, path] of [
+  ["credential UI", "src/capabilities/credential/ui/CredentialList.vue"],
+  ["session store", "src/capabilities/session/state/useSessionStore.ts"],
+  ["session UI", "src/capabilities/session/ui/SessionPanel.vue"],
+]) {
+  const source = read(path);
+  const imports = source
+    .split("\n")
+    .filter((line) => /^\s*import\s/.test(line))
+    .join("\n");
+  if (
+    /\buseBrowserStore\b/.test(imports) ||
+    /from\s+["'][^"']*capabilities\/browser(?:\/public)?["']/.test(imports) ||
+    /from\s+["'][^"']*\.\.\/\.\.\/browser\/public["']/.test(imports)
+  ) {
+    fail(name + " must not depend on Browser capability");
+  }
+}
+
+if (/from:\s*credential[^\n}]*to:\s*browser/.test(dependencies)) fail("credential->browser dependency edge is forbidden");
+if (/from:\s*session[^\n}]*to:\s*browser/.test(dependencies)) fail("session->browser dependency edge is forbidden");
+if (!/from:\s*grid[^\n}]*to:\s*browser/.test(dependencies)) fail("grid->browser public dependency edge missing");
+if (!/from:\s*grid[^\n}]*to:\s*bridge/.test(dependencies)) fail("grid->bridge infrastructure edge missing");
+if (/from:\s*browser[^\n}]*to:\s*grid/.test(dependencies)) fail("browser->grid reverse dependency edge is forbidden");
+if (/from:\s*workbench[^\n}]*to:\s*browser/.test(dependencies)) fail("workbench->browser dependency edge is forbidden after Host Service decoupling");
+if (!/from:\s*workbench[^\n}]*to:\s*bridge/.test(dependencies)) fail("workbench->bridge infrastructure edge missing");
+
+const browserStore = read("src/capabilities/browser/state/useBrowserStore.ts");
+for (const forbidden of ["gridOpen", "gridSession", "gridCount", "gridUrls", "gridLayout", "gridMode", "buildGrid", "closeGridAll", "activateGrid"]) {
+  if (browserStore.includes(forbidden)) fail("browser store still owns Grid symbol: " + forbidden);
+}
+const gridStore = read("src/capabilities/grid/state/useGridStore.ts");
+if (!gridStore.includes('from "../../browser/public"')) fail("grid must depend on Browser through public contract");
+if (/from\s+["'][^"']*browser\/(?:state|ui|resource)/.test(gridStore)) fail("grid must not import Browser internals");
+
+
+const gridIndex = read("src/capabilities/grid/index.ts");
+if (!gridIndex.includes('slot: "activity-bar-nav"')) fail("grid navigation contribution slot missing");
+if (!gridIndex.includes('slot: "activity-bar-rows"')) fail("grid rows contribution slot missing");
+const activityBar = read("src/components/layout/ActivityBar.vue");
+if (activityBar.includes("useGridStore") || /from\s+["'][^"']*capabilities\/grid/.test(activityBar)) {
+  fail("Shell ActivityBar must consume generic slots, not Grid internals");
+}
+const mainArea = read("src/components/layout/MainArea.vue");
+if (mainArea.includes("useGridStore") || /from\s+["'][^"']*capabilities\/grid/.test(mainArea)) {
+  fail("Shell MainArea must not import Grid capability");
+}
+const appShell = read("src/App.vue");
+if (appShell.includes("useGridStore") || /from\s+["'][^"']*capabilities\/grid/.test(appShell)) {
+  fail("Shell App must not import Grid capability");
+}
+
+const compat = read("src/stores/useWorkbenchStore.ts");
+if (!compat.includes('export { useWorkbenchStore } from "../capabilities/workbench/public"')) {
+  fail("legacy workbench store path must be a pure public re-export");
+}
+if (compat.includes("defineStore(") || compat.includes("ref(") || compat.includes("reactive(")) {
+  fail("legacy workbench store path must not retain business state");
+}
+
+if (failures.length) {
+  for (const failure of failures) console.error("[FAIL] " + failure);
+  console.error("V2_P0_MATURITY_BOUNDARY_RESULT=FAIL");
+  process.exit(1);
+}
+console.log("V2_P0_MATURITY_BOUNDARY_RESULT=PASS promoted=script,credential,session,workbench,grid");

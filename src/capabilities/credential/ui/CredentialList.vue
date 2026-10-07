@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import type { BrowserCredentialItem, AutofillResult } from "../../../types";
-import { bridge } from "../../../bridge";
-import { useBrowserStore } from "../state/useBrowserStore";
+import { credentialPublicApi } from "../public";
+import { hostServices, type BrowserContextPort } from "../../../capability/platform/host-services";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 
 // 已导入账号列表 + 用户主动触发的一次性填充。
@@ -14,7 +14,7 @@ import { useLayoutStore } from "../../../stores/useLayoutStore";
 //   - 只有与当前网页 **exact origin** 匹配的账号才出现「填充」；
 //   - 不做自动填充、自动提交、自动登录。
 
-const browser = useBrowserStore();
+const browser = hostServices.require<BrowserContextPort>("browser-context");
 const layout = useLayoutStore();
 
 const items = ref<BrowserCredentialItem[]>([]);
@@ -24,7 +24,7 @@ const fillingId = ref("");
 
 // 当前网页 origin（与 Rust 的 credential_origin 同口径：scheme://host[:port]）
 const pageOrigin = computed(() => {
-  const u = browser.activeTab?.url || browser.url;
+  const u = browser.activeUrl;
   if (!u) return "";
   try {
     return new URL(u).origin;
@@ -41,7 +41,7 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    items.value = await bridge.listBrowserCredentials();
+    items.value = await credentialPublicApi.listBrowserCredentials();
   } catch (e) {
     // 只透出后端返回的安全原因（后端保证错误信息不含任何凭据内容）
     error.value = "读取已导入账号失败：" + String((e as Error)?.message || e);
@@ -76,7 +76,7 @@ async function fill(item: BrowserCredentialItem) {
   }
   fillingId.value = item.credential_id;
   try {
-    const code: AutofillResult = await bridge.fillBrowserCredential(
+    const code: AutofillResult = await credentialPublicApi.fillBrowserCredential(
       item.credential_id,
       browser.activeTabId,
     );
