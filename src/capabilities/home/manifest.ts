@@ -40,8 +40,8 @@ export const homeManifest: CapabilityDefinition = {
     displayName: "主页",
     description:
       "默认工作台表面：主页快捷方式（网页/应用/目录）、最近访问、主要工作区启动器；经 WORKBENCH_MAIN 贡献 view='home' 渲染，跨能力仅暴露窄 public 契约。",
-    maturity: "C2",
-    maturityEvidence: ["scripts/check-home-ui-logic.mjs", "scripts/check-home-client-policy.py", "scripts/check-capability-platform.mjs"],
+    maturity: "C3",
+    maturityEvidence: ["scripts/check-home-ui-logic.mjs", "scripts/check-home-client-policy.py", "scripts/check-capability-platform.mjs", "scripts/check-hot-plug-acceptance.mjs"],
     dependencies: ["browser", "workspace", "apps", "bridge"],
     optionalDependencies: [],
     conflicts: [],
@@ -65,7 +65,7 @@ export const homeManifest: CapabilityDefinition = {
       install: false,
       uninstall: false,
       limitationReason:
-        "HP2：无重资源、无后台任务，运行时 register/unregister 已由 scripts/check-capability-platform.mjs 验证；HP3 需动态安装链路，本夜不做（禁止高风险动态代码加载）。",
+        "HP2：无重资源、无后台任务；统一 Hot-Plug Acceptance Harness 已验证 pause/resume、disable/enable、贡献摘除/恢复、重复循环与 fresh Runtime 持久化。HP3 需动态安装链路，不在本轮范围。",
     },
     publicContract: [{ name: "publicApi", locator: "src/capabilities/home/public.ts" }],
     entrypoint: "src/capabilities/home/index.ts",
