@@ -15,6 +15,7 @@ export const terminalManifest: CapabilityDefinition = defineIntegratedCapability
   ],
   provides: ["terminal.spawn", "terminal.write", "terminal.kill", "terminal.resize", "terminal.grid"],
   dependencies: ["bridge"],
+  v1Dependencies: [],
   resident: false,
   supported: ["ACTIVE", "SUSPENDED"],
   resourceClass: ["PROCESS", "PTY"],
