@@ -1,5 +1,6 @@
 import { appsManifest } from "./manifest"
 import { createLazyContributionRegistrar } from "../../capability/platform/contributed"
+import { activateAppsLifecycle, suspendAppsLifecycle } from "./lifecycle"
 
 export const APPS_CAPABILITY_ID = "apps"
 
@@ -10,5 +11,13 @@ export function registerAppsContributions(): void { registerApps() }
 
 export const appsCapability = {
   ...appsManifest,
-  lifecycle: { ...appsManifest.lifecycle, onActivate: registerAppsContributions },
+  lifecycle: {
+    ...appsManifest.lifecycle,
+    onActivate: () => {
+      activateAppsLifecycle()
+      registerAppsContributions()
+    },
+    onSuspend: suspendAppsLifecycle,
+    onDeactivate: suspendAppsLifecycle,
+  },
 }
