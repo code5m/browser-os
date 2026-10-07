@@ -25,6 +25,7 @@ try {
     export { homeCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/home/index.ts"))};
     export { homeManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/home/manifest.ts"))};
     export { browserCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/browser/index.ts"))};
+    export { browserManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/browser/manifest.ts"))};
     export { workspaceCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/workspace/index.ts"))};
     export { appsCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/apps/index.ts"))};
     export { graphCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/graph/index.ts"))};
@@ -243,6 +244,10 @@ try {
 
   async function accept(candidate) {
     const { id, definition, manifest, dependencies = [], verifyLifecycle } = candidate;
+    assert.ok(definition, id + " definition must be exported");
+    assert.ok(manifest, id + " manifest must be exported");
+    assert.equal(definition.id, id, id + " definition id");
+    assert.equal(manifest.id, id, id + " manifest id");
     const registry = M.contributionRegistry;
     registry.clear();
 
