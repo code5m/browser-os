@@ -78,7 +78,7 @@ export const databaseManifest: CapabilityDefinition = {
       install: false,
       uninstall: false,
       limitationReason:
-        "HP2：后端连接资源按请求瞬态创建；暂停/停用会取消全部已知 query_id 并失效 schema generation，统一 Harness 验证贡献摘除、重复启停与 fresh Runtime。",
+        "HP2：查询瞬态；停用 cancel query_id + generation fence；Harness 验证重启。",
     },
     publicContract: [{ name: "publicApi", locator: "src/capabilities/database/public.ts" }],
     entrypoint: "src/capabilities/database/index.ts",
