@@ -1,5 +1,6 @@
 import { browserManifest } from "./manifest"
 import { createLazyContributionRegistrar } from "../../capability/platform/contributed"
+import { activateBrowserLifecycle, deactivateBrowserLifecycle, suspendBrowserLifecycle } from "./lifecycle"
 export const BROWSER_CAPABILITY_ID = "browser"
 const registerBrowser = createLazyContributionRegistrar(browserManifest, [
   { id: "browser.host", type: "surface", slot: "browser-host", load: () => import("./ui/BrowserHost.vue") },
@@ -9,4 +10,15 @@ const registerBrowser = createLazyContributionRegistrar(browserManifest, [
   { id: "browser.image-gallery", type: "surface", slot: "artifact-image-gallery", load: () => import("./ui/ImageGallery.vue") },
 ])
 export function registerBrowserContributions(): void { registerBrowser() }
-export const browserCapability = { ...browserManifest, lifecycle: { ...browserManifest.lifecycle, onActivate: registerBrowserContributions } }
+export const browserCapability = {
+  ...browserManifest,
+  lifecycle: {
+    ...browserManifest.lifecycle,
+    onActivate: () => {
+      activateBrowserLifecycle()
+      registerBrowserContributions()
+    },
+    onSuspend: suspendBrowserLifecycle,
+    onDeactivate: deactivateBrowserLifecycle,
+  },
+}
