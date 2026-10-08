@@ -32,7 +32,7 @@ export const gridManifest: CapabilityDefinition = defineIntegratedCapability({
   ],
   publicContract: [{ name: "publicApi", locator: "src/capabilities/grid/public.ts" }],
   deactivationPolicy: "graceful",
-  description: "独立 Grid 多 WebView 生命周期、布局、AI 群发与回复归档能力。",
+  description: "Grid 多 WebView。",
   hotPlugLevel: "HP2",
-  limitationReason: "HP2：pause 冻结/移出 grid-* WebView；disable 调 close_grid 销毁 WebView/子进程；Harness 验证恢复与重启。",
+  limitationReason: "HP2：暂停冻结，停用销毁 Grid。",
 });
