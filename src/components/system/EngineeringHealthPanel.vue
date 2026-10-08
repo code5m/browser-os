@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import governance from "../../../docs/engineering/governance.json";
-import evidencePolicy from "../../../docs/engineering/evidence-policy.json";
+import governanceRaw from "../../../docs/engineering/governance.json?raw";
+import evidencePolicyRaw from "../../../docs/engineering/evidence-policy.json?raw";
 import { evaluateAll } from "./engineeringHealthModel.mjs";
 
 type Phase = "idle" | "loading" | "ready" | "error";
@@ -14,6 +14,8 @@ const errorMessage = ref("");
 const loadedAt = ref("");
 let activeController: AbortController | null = null;
 
+const governance = JSON.parse(governanceRaw);
+const evidencePolicy = JSON.parse(evidencePolicyRaw);
 const repository = "code5m/browser-os";
 const api = "https://api.github.com/repos/" + repository;
 const repoUrl = "https://github.com/" + repository;
