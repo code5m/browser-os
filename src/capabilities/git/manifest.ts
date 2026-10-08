@@ -30,7 +30,7 @@ export const gitManifest: CapabilityDefinition = defineIntegratedCapability({
   ],
   publicContract: [{ name: "publicApi", locator: "src/capabilities/git/public.ts" }],
   deactivationPolicy: "graceful",
-  description: "仓库状态、diff、历史与双阶段写操作；写任务运行时拒绝热停用。",
+  description: "Git 状态、历史与受控写操作。",
   hotPlugLevel: "HP2",
-  limitationReason: "HP2：有写任务时拒绝暂停；空闲时失效读请求与 preview，并支持恢复与重启。",
+  limitationReason: "HP2：写任务中拒绝暂停。",
 })
