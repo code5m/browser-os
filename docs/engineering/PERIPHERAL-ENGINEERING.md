@@ -9,11 +9,11 @@ Peripheral engineering is infrastructure outside normal feature code that can st
 - `scripts/sync-repo.sh` is the safe multi-machine sync entry.
 - Server protection is the final Git history boundary.
 
-## Gitee backup
+## Legacy Gitee mirror
 
-- `mirror-to-gitee.yml` mirrors GitHub branch/tag pushes with fast-forward safety.
-- Gitee is backup/distribution, never a second writable truth.
-- Mirror failure cannot roll back GitHub history.
+- Automatic Gitee branch/tag mirroring is retired.
+- `.github/workflows/mirror-to-gitee.yml` is retained as a manual-only historical placeholder so governance can track why mirroring is disabled.
+- Gitee must not gate GitHub `master`, roll back GitHub history, or become a second writable truth.
 
 ## Diagnostics and recovery
 
