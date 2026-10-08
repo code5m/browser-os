@@ -27,8 +27,10 @@ jobs:
       - name: Generate audit fix patch
         run: |
           set -euo pipefail
-          npm audit fix --package-lock-only
+          npm audit fix --package-lock-only || true
           echo '===== PACKAGE AUDIT FIX DIFF START ====='
           git diff -- package.json package-lock.json
           echo '===== PACKAGE AUDIT FIX DIFF END ====='
+          echo '===== PRODUCTION AUDIT AFTER FIX START ====='
           npm audit --omit=dev --audit-level=high
+          echo '===== PRODUCTION AUDIT AFTER FIX END ====='
