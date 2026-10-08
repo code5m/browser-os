@@ -8,8 +8,11 @@
 2. `PROJECT-RULES.md`
 3. 当前任务或阶段文件
 4. 与任务直接相关的源码和测试
+5. 若任务涉及 CI、门禁、Git Hook、发布、镜像、恢复、证据或工程规范，还必须阅读 `docs/engineering/README.md` 与 `docs/engineering/governance.json`
 
 不得把 `[PENDING]` 决策作为已批准需求实施。
+
+工程治理资产不得绕过 `npm run check:engineering-governance` 私自新增：新增/删除 GitHub Actions workflow 或版本化 Git Hook 时，必须在同一改动中更新 `docs/engineering/governance.json`。
 
 ## 2. 项目架构摘要
 
