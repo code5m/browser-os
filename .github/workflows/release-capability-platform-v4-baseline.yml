@@ -5,14 +5,13 @@ on:
     branches:
       - master
     paths:
-      - '.github/workflows/release-capability-platform-v4-baseline.yml'
+      - ".github/workflows/release-capability-platform-v4-baseline.yml"
 
 permissions:
   contents: write
 
 jobs:
   release:
-    if: github.event.head_commit.message == 'release: bootstrap Capability Platform v4 stable baseline'
     runs-on: ubuntu-latest
     env:
       TAG: capability-platform-v4-stable
@@ -30,32 +29,16 @@ jobs:
           git cat-file -e "$BASELINE_SHA^{commit}"
           test "$(git rev-parse "$BASELINE_SHA")" = "$BASELINE_SHA"
 
-      - name: Create immutable stable tag and GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Write release notes
         run: |
-          set -euo pipefail
-
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            printf 'Release %s already exists; refusing to recreate it.\n' "$TAG"
-            exit 0
-          fi
-
           cat > "$RUNNER_TEMP/release-notes.md" <<'EOF'
           # BrowserOS Capability Platform v4 Stable
 
-          This release freezes the accepted Capability Platform v4 baseline.
+          Frozen baseline commit: a6ff92674db98ffad964b784167fdb8c9a98f3cc
 
-          **Baseline commit:** `a6ff92674db98ffad964b784167fdb8c9a98f3cc`
+          Final maturity: A=15 / B=6 / C=0 / D=1
 
-          ## Final maturity
-
-          `A=15 / B=6 / C=0 / D=1`
-
-          v4 promotes the worthwhile runtime-hot-pluggable capabilities to the accepted A set while intentionally keeping platform infrastructure and incomplete execution backends at B.
-
-          ## v4 promotions
-
+          v4 promotions:
           - Apps
           - Plugin
           - Git
@@ -65,29 +48,35 @@ jobs:
           - Terminal
           - Script
 
-          ## Acceptance evidence
-
+          Acceptance:
           - UI Safety: PASS
           - Unified Hot-Plug Acceptance: PASS
           - Capability Runtime: PASS (16/16)
-          - Architecture / capability boundaries: PASS
+          - Architecture and capability boundaries: PASS
           - Runtime startup: PASS
           - Production build: PASS
-          - Existing build-metrics threshold and baseline: PASS without relaxation
-          - Rust fmt / check / tests: PASS
+          - Build metrics: PASS without threshold or baseline relaxation
+          - Rust fmt/check/tests: PASS
           - Rust tests: 462 passed / 0 failed / 2 ignored
           - Packaged GUI cold start: PASS
           - Full Tauri GUI Regression: PASS
           - Git integrity: PASS
-          - `PRE_MERGE_RESULT=ALL_PASS`
+          - PRE_MERGE_RESULT=ALL_PASS
 
-          ## Canonical audit
+          Canonical audit:
+          docs/architecture/capability-platform/FINAL-WORTHWHILE-HOTPLUG-AUDIT-V4-20261008.md
 
-          `docs/architecture/capability-platform/FINAL-WORTHWHILE-HOTPLUG-AUDIT-V4-20261008.md`
-
-          ## Release policy
-
-          This tag is the rollback/reference point for the accepted BrowserOS Capability Platform v4 state. Future work must advance from this baseline without rewriting frozen v1-v4 history.
+          This release is the rollback/reference point for the accepted BrowserOS Capability Platform v4 state.
+          Future work must advance from this baseline without rewriting frozen v1-v4 history.
           EOF
 
-          gh release create "$TAG"             --repo "$GITHUB_REPOSITORY"             --target "$BASELINE_SHA"             --title "$RELEASE_TITLE"             --notes-file "$RUNNER_TEMP/release-notes.md"
+      - name: Create immutable tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists."
+            exit 0
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$BASELINE_SHA" --title "$RELEASE_TITLE" --notes-file "$RUNNER_TEMP/release-notes.md"
