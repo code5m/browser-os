@@ -8,6 +8,8 @@ type LazyContribution = Omit<Contribution, "capabilityId" | "component"> & {
   panelState?: boolean
 }
 
+type LifecycleAction = () => void | Promise<void>
+
 const panelLoading = {
   render: () => h("div", { class: "modview panel-state", role: "status", "aria-live": "polite" }, "面板加载中…"),
 }
@@ -46,5 +48,30 @@ export function withLazyContributions(
       ...manifest.lifecycle,
       onActivate: registerContributions,
     },
+  }
+}
+
+export function createLifecycleContributionCapability(
+  manifest: CapabilityDefinition,
+  items: LazyContribution[],
+  activate: () => void,
+  suspend: LifecycleAction,
+  deactivate: LifecycleAction = suspend,
+) {
+  const register = createLazyContributionRegistrar(manifest, items)
+  return {
+    register,
+    capability: {
+      ...manifest,
+      lifecycle: {
+        ...manifest.lifecycle,
+        onActivate: () => {
+          activate()
+          register()
+        },
+        onSuspend: suspend,
+        onDeactivate: deactivate,
+      },
+    } satisfies CapabilityDefinition,
   }
 }

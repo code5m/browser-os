@@ -374,7 +374,7 @@ async function main() {
         localStorage: {
           getItem(key) {
             return key === "browser-os-capability-config"
-              ? JSON.stringify({ enabled: { bookmark: false, demo: true, tools: false, home: false, vault: false } })
+              ? JSON.stringify({ enabled: { bookmark: false, demo: true, skill: false, home: false, vault: false } })
               : null;
           },
         },
@@ -389,12 +389,12 @@ async function main() {
       expect(countContributions(contributionRegistry, "bookmark") === 0, "PLT2-20b",
         "持久化停用后 Bookmark 零贡献（无死入口）");
       expect(!boot.runtime.get("demo")
-        && boot.runtime.get("tools")?.state === "ACTIVE"
+        && boot.runtime.get("skill")?.state === "ACTIVE"
         && boot.runtime.get("home")?.enabled === false
         && boot.runtime.get("home")?.state === "READY"
         && boot.runtime.get("vault")?.enabled === false
         && boot.runtime.get("vault")?.state === "READY",
-      "PLT2-20c", "未装配能力不越权加入；C2 停用请求忽略，C3/HP2 Home/Vault 持久化停用生效");
+      "PLT2-20c", "未装配能力不越权加入；低于 C3 的停用请求忽略，C3/HP2 Home/Vault 持久化停用生效");
 
       const enabled = await M.transitionCapability(boot.runtime, contributionRegistry, "bookmark", "enable");
       expect(enabled.persistedEnabled === true && boot.runtime.get("bookmark")?.state === "ACTIVE"
@@ -412,10 +412,10 @@ async function main() {
       "PLT2-20e", "Manager 暂停→停用后贡献全部清理并返回持久化意图");
 
       let immatureRejected = false;
-      try { await M.transitionCapability(boot.runtime, contributionRegistry, "tools", "pause"); }
+      try { await M.transitionCapability(boot.runtime, contributionRegistry, "skill", "pause"); }
       catch (error) { immatureRejected = /C3\/HP1/.test(error.message); }
-      expect(immatureRejected && boot.runtime.get("tools")?.state === "ACTIVE", "PLT2-20f",
-        "Manager 拒绝停用尚未达到 C3/HP1 的 C2 能力");
+      expect(immatureRejected && boot.runtime.get("skill")?.state === "ACTIVE", "PLT2-20f",
+        "Manager 拒绝停用尚未达到 C3/HP1 的能力");
       let repeated;
       try { repeated = M.bootstrapCapabilityRuntime(); } catch { /* assertion below */ }
       expect(repeated?.runtime === boot.runtime && repeated?.activated === boot.activated && repeated?.error === null,

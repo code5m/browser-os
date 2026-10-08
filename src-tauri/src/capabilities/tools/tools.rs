@@ -98,6 +98,25 @@ pub fn list_tools(app: AppHandle) -> Vec<ToolMeta> {
     build_tool_list(&app)
 }
 
+/// 对称关闭 Tools 能力创建的全部子 WebView；只匹配 `tool-*` label。
+#[tauri::command]
+pub fn close_tools(app: AppHandle) -> Result<(), String> {
+    let mut errors = Vec::new();
+    for (label, window) in app.webview_windows() {
+        if !label.starts_with("tool-") {
+            continue;
+        }
+        if let Err(error) = window.close() {
+            errors.push(format!("{label}: {error}"));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("关闭工具窗口失败: {}", errors.join("; ")))
+    }
+}
+
 /// 打开一个工具到独立的子 webview 窗口（M2-8）。
 ///
 /// - label = `tool-<id>`，已存在则聚焦（去重，不重复开）。

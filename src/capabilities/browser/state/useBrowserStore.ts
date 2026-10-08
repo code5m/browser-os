@@ -5,6 +5,7 @@ import { WEBVIEW_FREEZE_JS, WEBVIEW_UNFREEZE_JS } from "../../../utils/webviewFr
 import { isBrowserResourceAllowed } from "../resource/guard";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { recordRecentUrl } from "../../../composables/recentsNav";
+import { registerBrowserLifecycleBinding } from "../lifecycle";
 import type { RecentlyClosedEntry, TabRecoveryEvent } from "../../../types";
 
 export interface AISite {
@@ -277,6 +278,24 @@ export const useBrowserStore = defineStore("browser", () => {
       nextTick(syncViewVisibility);
     }
   );
+
+  registerBrowserLifecycleBinding({
+    resume: () => nextTick(syncViewVisibility),
+    suspend: () => {
+      if (layout.mainView === "browser") layout.setView("home");
+      hideAllWebviews();
+      syncFreeze();
+    },
+    deactivate: async () => {
+      if (layout.mainView === "browser") layout.setView("home");
+      hideAllWebviews();
+      await Promise.all(tabs.map(({ id }) => bridge.tabClose(id).catch(() => {})));
+      tabs.splice(0);
+      activeTabId.value = "";
+      resources.value = null;
+      url.value = "";
+    },
+  });
 
   return {
     url,

@@ -1,15 +1,17 @@
 import type { CapabilityDefinition } from "../../capability/types"
 import { defineIntegratedCapability } from "../../capability/platform/integrated"
+// maturity evidence: scripts/check-hot-plug-acceptance.mjs
 
 export const scriptManifest: CapabilityDefinition = defineIntegratedCapability({
   id: "script",
   name: "脚本",
   semanticOwner: "useScriptStore",
-  maturity: "C2",
+  maturity: "C3",
   provides: ["script.run", "script.snippet"],
   resident: false,
+  supported: ["ACTIVE", "SUSPENDED"],
   resourceClass: ["PROCESS"],
-  suspendable: false,
+  suspendable: true,
   destroyable: true,
   permissions: ["process.spawn"],
   persistence: { scope: "disk", sensitive: false },
@@ -18,9 +20,11 @@ export const scriptManifest: CapabilityDefinition = defineIntegratedCapability({
     { id: "script.commands.panel", slot: "workbench-main", type: "surface", view: "commands" },
   ],
   manifestResources: [
-    { kind: "CHILD_PROCESS", ownership: "owned", evidence: "src-tauri/src/capabilities/script/script_runner.rs" },
+    { kind: "CHILD_PROCESS", ownership: "shared", evidence: "script_runner is shared with Task scheduler; Script UI tracks only manually started runs" },
   ],
   publicContract: [{ name: "publicApi", locator: "src/capabilities/script/public.ts" }],
   deactivationPolicy: "graceful",
-  limitationReason: "Child-process hot unplug is not proven.",
+  maturityEvidence: ["scripts/check-hot-plug-acceptance.mjs"],
+  hotPlugLevel: "HP2",
+  limitationReason: "HP2：手工运行中拒绝暂停。",
 })

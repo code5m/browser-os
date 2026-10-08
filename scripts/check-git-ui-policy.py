@@ -244,9 +244,16 @@ def detect_violations(files: dict[str, object]) -> list[str]:
         and 'load: () => import("./ui/GitPanel.vue")' in git_entry
         and "registerGitContributions" in git_entry
     )
+    activate_wires_git = (
+        "onActivate: registerGitContributions" in git_entry
+        or bool(re.search(
+            r'onActivate\s*:\s*\(\)\s*=>\s*\{[\s\S]*?registerGitContributions\(\)',
+            git_entry,
+        ))
+    )
     contribution_mounted = (
         (direct_contribution or lazy_contribution)
-        and "onActivate: registerGitContributions" in git_entry
+        and activate_wires_git
         and ".getSurfaceContributions(CONTRIBUTION_SLOTS.REPO_SUBVIEW)" in repo
         and re.search(r'\.find\([^\n]*c.view === "git"\)\?\.component', repo)
         and re.search(r'<component\s+:is="gitPanelComp"', repo)
@@ -406,6 +413,13 @@ const lifecycle = {onActivate: registerGitContributions}
 ''')
     if detect_violations(contributed):
         failures.append("registered Git contribution and consumer should be accepted")
+
+    wrapped = dict(contributed, git_entry=contributed["git_entry"].replace(
+        "onActivate: registerGitContributions",
+        "onActivate: () => { activateGitLifecycle(); registerGitContributions() }",
+    ))
+    if detect_violations(wrapped):
+        failures.append("wrapped Git lifecycle contribution wiring should be accepted")
     for key, anchor in (("repo", ':is="gitPanelComp"'), ("git_entry", "component: GitPanel"), ("git_entry", "onActivate: registerGitContributions")):
         broken = dict(contributed)
         broken[key] = broken[key].replace(anchor, "removed")

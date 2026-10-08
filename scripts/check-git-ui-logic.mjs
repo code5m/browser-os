@@ -53,6 +53,7 @@ const ROOT = new URL("..", import.meta.url).pathname;
 
 const { bridge } = await import(`${ROOT}src/bridge.ts`);
 const { useGitStore } = await import(`${ROOT}src/capabilities/git/state/useGitStore.ts`);
+const { activateGitLifecycle } = await import(`${ROOT}src/capabilities/git/lifecycle.ts`);
 const { redactSecrets } = await import(`${ROOT}src/utils/redact.ts`);
 const { createPinia, setActivePinia } = await import(`${ROOT}node_modules/pinia/dist/pinia.mjs`);
 
@@ -122,6 +123,9 @@ function section(name) {
 }
 
 setActivePinia(createPinia());
+// v4 Git store is lifecycle-gated. The headless test must model the real Runtime
+// activation that occurs before the contributed Git UI becomes usable.
+activateGitLifecycle();
 const git = useGitStore();
 
 // ---------- 1) 仓库选择 → 只读三连 ----------

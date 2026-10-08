@@ -25,6 +25,7 @@ try {
     export { homeCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/home/index.ts"))};
     export { homeManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/home/manifest.ts"))};
     export { browserCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/browser/index.ts"))};
+    export { browserManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/browser/manifest.ts"))};
     export { workspaceCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/workspace/index.ts"))};
     export { appsCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/apps/index.ts"))};
     export { graphCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/graph/index.ts"))};
@@ -38,6 +39,27 @@ try {
     export { databaseManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/database/manifest.ts"))};
     export { credentialCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/credential/index.ts"))};
     export { registerDatabaseCleanup, databaseLifecycleSnapshot } from ${JSON.stringify(join(ROOT, "src/capabilities/database/lifecycle.ts"))};
+    export { appsManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/apps/manifest.ts"))};
+    export { appsLifecycleSnapshot } from ${JSON.stringify(join(ROOT, "src/capabilities/apps/lifecycle.ts"))};
+    export { pluginCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/plugin/index.ts"))};
+    export { pluginManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/plugin/manifest.ts"))};
+    export { registerPluginLifecycleBinding, pluginLifecycleSnapshot, suspendPluginLifecycle } from ${JSON.stringify(join(ROOT, "src/capabilities/plugin/lifecycle.ts"))};
+    export { gitCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/git/index.ts"))};
+    export { gitManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/git/manifest.ts"))};
+    export { registerGitLifecycleBinding, gitLifecycleSnapshot, suspendGitLifecycle } from ${JSON.stringify(join(ROOT, "src/capabilities/git/lifecycle.ts"))};
+    export { toolsCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/tools/index.ts"))};
+    export { toolsManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/tools/manifest.ts"))};
+    export { registerToolsCleanup, toolsLifecycleSnapshot } from ${JSON.stringify(join(ROOT, "src/capabilities/tools/lifecycle.ts"))};
+    export { browserLifecycleSnapshot, registerBrowserLifecycleBinding, suspendBrowserLifecycle } from ${JSON.stringify(join(ROOT, "src/capabilities/browser/lifecycle.ts"))};
+    export { gridCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/grid/index.ts"))};
+    export { gridManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/grid/manifest.ts"))};
+    export { gridLifecycleSnapshot, registerGridLifecycleBinding, suspendGridLifecycle } from ${JSON.stringify(join(ROOT, "src/capabilities/grid/lifecycle.ts"))};
+    export { terminalCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/terminal/index.ts"))};
+    export { terminalManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/terminal/manifest.ts"))};
+    export { registerTerminalLifecycleBinding, terminalLifecycleSnapshot, suspendTerminalLifecycle } from ${JSON.stringify(join(ROOT, "src/capabilities/terminal/lifecycle.ts"))};
+    export { scriptCapability } from ${JSON.stringify(join(ROOT, "src/capabilities/script/index.ts"))};
+    export { scriptManifest } from ${JSON.stringify(join(ROOT, "src/capabilities/script/manifest.ts"))};
+    export { scriptLifecycleSnapshot, trackScriptRun, completeScriptRun, suspendScriptLifecycle } from ${JSON.stringify(join(ROOT, "src/capabilities/script/lifecycle.ts"))};
   `;
   const built = await build({
     stdin: { contents: entry, resolveDir: ROOT, loader: "ts" },
@@ -82,6 +104,28 @@ try {
     stop: () => { clipboardStopCount += 1; },
   });
 
+  let pluginCleanupCount = 0;
+  let gitCleanupCount = 0;
+  let toolsCleanupCount = 0;
+  let browserSuspendCount = 0;
+  let browserDeactivateCount = 0;
+  let gridSuspendCount = 0;
+  let gridDeactivateCount = 0;
+  let terminalCleanupCount = 0;
+
+  M.registerPluginLifecycleBinding({ canSuspend: () => true, cleanup: () => { pluginCleanupCount += 1; } });
+  M.registerGitLifecycleBinding({ canSuspend: () => true, cleanup: () => { gitCleanupCount += 1; } });
+  M.registerToolsCleanup(() => { toolsCleanupCount += 1; });
+  M.registerBrowserLifecycleBinding({
+    suspend: () => { browserSuspendCount += 1; },
+    deactivate: () => { browserDeactivateCount += 1; },
+  });
+  M.registerGridLifecycleBinding({
+    suspend: () => { gridSuspendCount += 1; },
+    deactivate: () => { gridDeactivateCount += 1; },
+  });
+  M.registerTerminalLifecycleBinding({ canSuspend: () => true, cleanup: () => { terminalCleanupCount += 1; } });
+
   const candidates = [
     { id: "bookmark", definition: M.bookmarkCapability, manifest: M.bookmarkManifest, dependencies: [] },
     { id: "vault", definition: vaultFactory.vaultCapability, manifest: M.vaultManifest, dependencies: [] },
@@ -120,10 +164,90 @@ try {
         assert.equal(M.databaseLifecycleSnapshot().active, true, "database final lifecycle active");
       },
     },
+    {
+      id: "apps",
+      definition: M.appsCapability,
+      manifest: M.appsManifest,
+      dependencies: [],
+      verifyLifecycle: () => assert.equal(M.appsLifecycleSnapshot().active, true, "apps final lifecycle active"),
+    },
+    {
+      id: "plugin",
+      definition: M.pluginCapability,
+      manifest: M.pluginManifest,
+      dependencies: [],
+      verifyLifecycle: () => {
+        assert.ok(pluginCleanupCount > 0, "plugin graceful cleanup executed");
+        assert.equal(M.pluginLifecycleSnapshot().active, true, "plugin final lifecycle active");
+      },
+    },
+    {
+      id: "git",
+      definition: M.gitCapability,
+      manifest: M.gitManifest,
+      dependencies: [M.credentialCapability, M.workspaceCapability],
+      verifyLifecycle: () => {
+        assert.ok(gitCleanupCount > 0, "git lifecycle cleanup executed");
+        assert.equal(M.gitLifecycleSnapshot().active, true, "git final lifecycle active");
+      },
+    },
+    {
+      id: "tools",
+      definition: M.toolsCapability,
+      manifest: M.toolsManifest,
+      dependencies: [],
+      verifyLifecycle: () => {
+        assert.ok(toolsCleanupCount > 0, "tools native cleanup hook executed");
+        assert.equal(M.toolsLifecycleSnapshot().active, true, "tools final lifecycle active");
+      },
+    },
+    {
+      id: "browser",
+      definition: M.browserCapability,
+      manifest: M.browserManifest,
+      dependencies: [],
+      verifyLifecycle: () => {
+        assert.ok(browserSuspendCount > 0, "browser suspend cleanup executed");
+        assert.ok(browserDeactivateCount > 0, "browser deactivate cleanup executed");
+        assert.equal(M.browserLifecycleSnapshot().active, true, "browser final lifecycle active");
+      },
+    },
+    {
+      id: "grid",
+      definition: M.gridCapability,
+      manifest: M.gridManifest,
+      dependencies: [M.browserCapability],
+      verifyLifecycle: () => {
+        assert.ok(gridSuspendCount > 0, "grid suspend cleanup executed");
+        assert.ok(gridDeactivateCount > 0, "grid deactivate cleanup executed");
+        assert.equal(M.gridLifecycleSnapshot().active, true, "grid final lifecycle active");
+      },
+    },
+    {
+      id: "terminal",
+      definition: M.terminalCapability,
+      manifest: M.terminalManifest,
+      dependencies: [],
+      verifyLifecycle: () => {
+        assert.ok(terminalCleanupCount > 0, "terminal idle cleanup executed");
+        assert.equal(M.terminalLifecycleSnapshot().active, true, "terminal final lifecycle active");
+      },
+    },
+    {
+      id: "script",
+      definition: M.scriptCapability,
+      manifest: M.scriptManifest,
+      dependencies: [],
+      verifyLifecycle: () => assert.equal(M.scriptLifecycleSnapshot().active, true, "script final lifecycle active"),
+    },
   ];
 
   async function accept(candidate) {
     const { id, definition, manifest, dependencies = [], verifyLifecycle } = candidate;
+    assert.ok(definition, id + " definition must be exported");
+    assert.ok(manifest, id + " manifest must be exported");
+    assert.equal(definition.id, id, id + " definition id");
+    assert.equal(manifest.id, id, id + " manifest id");
     const registry = M.contributionRegistry;
     registry.clear();
 
@@ -242,6 +366,58 @@ try {
 
   const results = [];
   for (const candidate of candidates) results.push(await accept(candidate));
+
+  const unregisterPluginBlocker = M.registerPluginLifecycleBinding({ canSuspend: () => false });
+  await assert.rejects(() => M.suspendPluginLifecycle(), /operation is still in progress/);
+  unregisterPluginBlocker();
+
+  const unregisterGitBlocker = M.registerGitLifecycleBinding({ canSuspend: () => false, cleanup: () => {} });
+  await assert.rejects(() => M.suspendGitLifecycle(), /write operation is still running/);
+  unregisterGitBlocker();
+
+  const unregisterTerminalBlocker = M.registerTerminalLifecycleBinding({ canSuspend: () => false });
+  await assert.rejects(() => M.suspendTerminalLifecycle(), /active PTY sessions/);
+  unregisterTerminalBlocker();
+
+  M.trackScriptRun("hotplug-probe", () => true);
+  await assert.rejects(() => M.suspendScriptLifecycle(), /runs still active/);
+  M.completeScriptRun("hotplug-probe");
+
+  // Cleanup failures must not split owner-internal lifecycle state from Runtime.
+  // A rejected onSuspend leaves the Runtime record ACTIVE, so owner snapshots must
+  // also remain active until every cleanup completes successfully.
+  const unregisterPluginCleanupFailure = M.registerPluginLifecycleBinding({
+    canSuspend: () => true,
+    cleanup: () => { throw new Error("plugin cleanup failure probe"); },
+  });
+  await assert.rejects(() => M.suspendPluginLifecycle(), /plugin cleanup failure probe/);
+  assert.equal(M.pluginLifecycleSnapshot().active, true, "plugin cleanup failure keeps lifecycle active");
+  unregisterPluginCleanupFailure();
+
+  const unregisterBrowserCleanupFailure = M.registerBrowserLifecycleBinding({
+    suspend: () => { throw new Error("browser cleanup failure probe"); },
+    deactivate: () => {},
+  });
+  await assert.rejects(() => M.suspendBrowserLifecycle(), /browser cleanup failure probe/);
+  assert.equal(M.browserLifecycleSnapshot().active, true, "browser cleanup failure keeps lifecycle active");
+  unregisterBrowserCleanupFailure();
+
+  const unregisterGridCleanupFailure = M.registerGridLifecycleBinding({
+    suspend: () => { throw new Error("grid cleanup failure probe"); },
+    deactivate: () => {},
+  });
+  await assert.rejects(() => M.suspendGridLifecycle(), /grid cleanup failure probe/);
+  assert.equal(M.gridLifecycleSnapshot().active, true, "grid cleanup failure keeps lifecycle active");
+  unregisterGridCleanupFailure();
+
+  const unregisterTerminalCleanupFailure = M.registerTerminalLifecycleBinding({
+    canSuspend: () => true,
+    cleanup: () => { throw new Error("terminal cleanup failure probe"); },
+  });
+  await assert.rejects(() => M.suspendTerminalLifecycle(), /terminal cleanup failure probe/);
+  assert.equal(M.terminalLifecycleSnapshot().active, true, "terminal cleanup failure keeps lifecycle active");
+  unregisterTerminalCleanupFailure();
+
   console.log(JSON.stringify({ result: "PASS", capabilities: results }, null, 2));
   console.log("HOT_PLUG_ACCEPTANCE_RESULT=PASS");
 } finally {

@@ -814,6 +814,9 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                 for i in 0..4 {
                     eval_grid("2", i, "concurrent_ai")?;
                 }
+                // eval_in_tab schedules the page-side fetch but does not await its Promise.
+                // Give the local evidence POST time to land before scenario 3 navigates grid-0.
+                sleep_ms(600);
                 Ok("four grid children opened, positioned, and evaluated".to_string())
             })(),
         );
@@ -886,6 +889,10 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                 bridge::tab_close(app.clone(), first.id)?;
                 bridge::tab_close(app.clone(), second.id)?;
                 eval_grid("6", 0, "tabs_closed_grid_survives")?;
+                // eval() schedules the page's async /event fetch; keep this grid URL alive
+                // long enough for the evidence server to observe it before scenario 7 navigates.
+                // The Python assertion remains unchanged: this only removes a driver/evidence race.
+                sleep_ms(700);
                 Ok("normal tabs opened, switched, closed, and grid survived".to_string())
             })(),
         );
@@ -1593,6 +1600,7 @@ fn main() {
             bridge::run_command,
             tools::list_tools,
             tools::open_tool,
+            tools::close_tools,
             bridge::run_script,
             bridge::cancel_script,
             bridge::script_status,

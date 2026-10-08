@@ -6,8 +6,8 @@
 // 诚实边界：
 //   - 本模块**不**释放资源（不 kill PTY、不关 webview、不碰密钥）。资源释放是各能力的
 //     onSuspend/onDestroy 职责（owner 所有）。Governor 只调用 rt 的 public 转换。
-//   - 若能力未声明支持 suspend（如 Terminal suspendable:false），rt.suspend 会抛
-//     SUSPEND_NOT_SUPPORTED —— Governor 原样透传，**不**假装已释放资源（故不谎报 C4）。
+//   - 若能力未声明支持 suspend，rt.suspend 会抛 SUSPEND_NOT_SUPPORTED；对于声明 HP2 的能力，
+//     owner 的 onSuspend 仍负责决定当前资源态是否允许暂停（例如活动 PTY 可拒绝）。
 //   - hibernate 在 v1 与 suspend 同义（运行时模型无独立 hibernate 态）；background 在能力
 //     不支持 suspend 时降级为 disable。这些降级都是显式的，不是静默的「假装释放」。
 //
@@ -28,7 +28,7 @@ export interface ResourceGovernor {
   activate(id: string): void
   /** 转入后台：优先 suspend（若能力支持），否则降级 disable。 */
   background(id: string): void
-  /** 暂停（若能力声明 suspendable）。不支持则抛 SUSPEND_NOT_SUPPORTED（透传）。 */
+  /** 暂停（若能力声明 suspendable）。owner hook 可按当前资源态拒绝。 */
   suspend(id: string): void
   /** 休眠（v1 == suspend 同义；运行时无独立 hibernate 态）。 */
   hibernate(id: string): void

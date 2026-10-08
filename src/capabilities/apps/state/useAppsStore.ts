@@ -8,6 +8,7 @@ import { computed, ref } from "vue";
 import { bridge } from "../../../bridge";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import type { AppEntry } from "../../../types";
+import { appsLifecycleSnapshot } from "../lifecycle";
 
 export const useAppsStore = defineStore("apps", () => {
   const layout = useLayoutStore();
@@ -17,6 +18,7 @@ export const useAppsStore = defineStore("apps", () => {
   const brokenIcons = ref<Set<string>>(new Set());
 
   async function loadApps() {
+    if (!appsLifecycleSnapshot().active) return;
     try {
       apps.value = await bridge.listApps();
       brokenIcons.value.clear();
@@ -30,6 +32,7 @@ export const useAppsStore = defineStore("apps", () => {
     return apps.value.filter((a) => a.name.toLowerCase().includes(f));
   });
   async function launchApp(app: AppEntry) {
+    if (!appsLifecycleSnapshot().active) return;
     try {
       layout.showToast("正在启动: " + app.name);
       await bridge.launchApp(app.exec);

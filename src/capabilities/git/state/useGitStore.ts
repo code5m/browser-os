@@ -3,6 +3,7 @@ import { computed, reactive, ref } from "vue";
 import { bridge } from "../../../bridge";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { redactSecrets } from "../../../utils/redact";
+import { gitLifecycleSnapshot, registerGitLifecycleBinding } from "../lifecycle";
 import type {
   GitBranch,
   GitDiffResult,
@@ -120,8 +121,21 @@ export const useGitStore = defineStore("git", () => {
   let diffGeneration = 0;
   let writeRequestGeneration = 0;
   let writeRequestInFlight = false;
+  const lifecycleReady = () => gitLifecycleSnapshot().active;
+  registerGitLifecycleBinding({
+    canSuspend: () => !busy.value,
+    cleanup: () => {
+      ++statusGeneration; ++branchGeneration; ++diffGeneration; ++writeRequestGeneration;
+      writeRequestInFlight = false;
+      statusLoading.value = false;
+      branchLoading.value = false;
+      diffLoading.value = false;
+      preview.value = null;
+      dangerousAck.value = false;
+    },
+  });
   async function loadStatus() {
-    if (!repoId.value) return;
+    if (!lifecycleReady() || !repoId.value) return;
     const id = repoId.value; const generation = ++statusGeneration;
     statusLoading.value = true;
     statusError.value = null;
@@ -142,7 +156,7 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function loadBranches() {
-    if (!repoId.value) return;
+    if (!lifecycleReady() || !repoId.value) return;
     const id = repoId.value; const generation = ++branchGeneration;
     branchLoading.value = true;
     branchError.value = null;
@@ -160,7 +174,7 @@ export const useGitStore = defineStore("git", () => {
 
   /** path 为 null/undefined 表示拉取整仓 diff（受后端硬上限截断保护）。 */
   async function loadDiff(path?: string | null) {
-    if (!repoId.value) return;
+    if (!lifecycleReady() || !repoId.value) return;
     const id = repoId.value; const generation = ++diffGeneration;
     if (path !== undefined) activePath.value = path;
     diffLoading.value = true;
@@ -181,13 +195,13 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function refreshAll() {
-    if (!repoId.value) return;
+    if (!lifecycleReady() || !repoId.value) return;
     await Promise.all([loadStatus(), loadBranches()]);
     await loadDiff();
   }
 
   async function selectRepo(id: string | null) {
-    if (busy.value) return;
+    if (!lifecycleReady() || busy.value) return;
     ++statusGeneration; ++branchGeneration; ++diffGeneration;
     statusLoading.value = false; branchLoading.value = false; diffLoading.value = false;
     // 切仓库等于放弃上一次待确认任务（任务本身在后端 5 分钟后自然过期）
@@ -252,6 +266,7 @@ export const useGitStore = defineStore("git", () => {
     op: GitWriteOp,
     opts: { paths?: string[]; message?: string; branch?: string; checkout?: boolean } = {}
   ) {
+    if (!lifecycleReady()) return;
     if (!repoId.value) {
       toast("请先选择一个仓库");
       return;
@@ -301,6 +316,7 @@ export const useGitStore = defineStore("git", () => {
 
   // ===== 写操作：阶段二 confirm =====
   async function confirmWrite() {
+    if (!lifecycleReady()) return;
     const pv = preview.value;
     if (!pv) return;
     if (busy.value) return;

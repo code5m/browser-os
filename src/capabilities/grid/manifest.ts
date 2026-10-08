@@ -1,22 +1,19 @@
 import type { CapabilityDefinition } from "../../capability/types";
-import { defineIntegratedCapability } from "../../capability/platform/integrated";
+import { defineIntegratedCapability } from "../../capability/platform/integrated"
+// maturity evidence: scripts/check-hot-plug-acceptance.mjs;
 
 export const gridManifest: CapabilityDefinition = defineIntegratedCapability({
   id: "grid",
   name: "Grid",
   semanticOwner: "useGridStore",
-  maturity: "C2",
+  maturity: "C3",
   version: "2.0.0",
-  maturityEvidence: [
-    "scripts/check-grid-close-logic.mjs",
-    "scripts/runtime-phase1-browser-grid.mjs",
-    "scripts/check-v2-maturity-boundaries.mjs",
-  ],
   provides: ["grid.open", "grid.layout", "grid.archive"],
   dependencies: ["browser", "bridge"],
   resident: false,
+  supported: ["ACTIVE", "SUSPENDED"],
   resourceClass: ["HEAVY", "MULTI_WEBVIEW", "NATIVE"],
-  suspendable: false,
+  suspendable: true,
   destroyable: true,
   permissions: ["webview.create", "process.spawn"],
   persistence: { scope: "disk", sensitive: false },
@@ -30,6 +27,6 @@ export const gridManifest: CapabilityDefinition = defineIntegratedCapability({
   ],
   publicContract: [{ name: "publicApi", locator: "src/capabilities/grid/public.ts" }],
   deactivationPolicy: "graceful",
-  description: "独立 Grid 多 WebView 生命周期、布局、AI 群发与回复归档能力。",
-  limitationReason: "B maturity：Grid 已独立装配并拥有重资源；尚未证明 suspend/resume 与 Hot-Plug Harness 全契约，因此保持 HP0。",
+  hotPlugLevel: "HP2",
+  limitationReason: "HP2：暂停冻结，停用销毁 Grid。",
 });

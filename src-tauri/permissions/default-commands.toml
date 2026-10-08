@@ -111,6 +111,7 @@ commands.allow = [
     "run_command",
     "list_tools",
     "open_tool",
+    "close_tools",
     "task_list",
     "task_add",
     "task_update",

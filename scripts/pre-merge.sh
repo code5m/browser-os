@@ -545,7 +545,11 @@ run_pre_merge() {
   # Phase 1.7：Git repository object integrity gate（corrupt/missing loose objects）。
   # Read-only; blocks merge when fsck reports errors. Does not weaken any above check.
   pm_log "Phase 1.7 Git repository object integrity gate…"
-  if ! bash "$SCRIPT_DIR/check-git-repo-integrity.sh" >/dev/null 2>&1; then
+  local git_integrity_output
+  if git_integrity_output="$(bash "$SCRIPT_DIR/check-git-repo-integrity.sh" 2>&1)"; then
+    printf '%s\n' "$git_integrity_output"
+  else
+    printf '%s\n' "$git_integrity_output"
     pm_fail "check-git-repo-integrity.sh（仓库对象损坏：corrupt/missing；先 git-recover.sh --prune-orphans）"
   fi
 
