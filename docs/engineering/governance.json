@@ -48,6 +48,12 @@
       "path": ".github/workflows/mirror-to-gitee.yml",
       "role": "non_blocking_backup_distribution",
       "scope": "GitHub to Gitee fast-forward-safe backup mirror"
+    },
+    {
+      "id": "supply-chain",
+      "path": ".github/workflows/supply-chain-assurance.yml",
+      "role": "blocking_supply_chain_gate",
+      "scope": "all branch pushes + PR to master; audits and Node/Rust SBOM"
     }
   ],
   "gitHooks": [
@@ -181,6 +187,35 @@
         "docs/operations/recovery/release-recovery.md",
         "docs/engineering/RELEASE-AND-RECOVERY.md"
       ]
+    },
+    {
+      "id": "native-semantic-closure",
+      "blocking": true,
+      "entrypoint": "npm run check:native-semantics",
+      "paths": [
+        "scripts/check-native-semantic-closure.mjs",
+        "docs/architecture/native-boundary/native-commands.yaml"
+      ]
+    },
+    {
+      "id": "evidence-lifecycle",
+      "blocking": true,
+      "entrypoint": "npm run check:evidence-lifecycle",
+      "paths": [
+        "scripts/check-evidence-lifecycle.mjs",
+        "docs/engineering/evidence-policy.json"
+      ]
+    },
+    {
+      "id": "supply-chain",
+      "blocking": true,
+      "entrypoint": "BrowserOS Supply Chain Assurance workflow",
+      "paths": [
+        ".github/workflows/supply-chain-assurance.yml",
+        "scripts/generate-sbom.mjs",
+        "package-lock.json",
+        "src-tauri/Cargo.lock"
+      ]
     }
   ],
   "standards": [
@@ -211,6 +246,18 @@
     {
       "id": "engineering-front-door",
       "path": "docs/engineering/README.md"
+    },
+    {
+      "id": "native-semantic-closure",
+      "path": "docs/engineering/NATIVE-SEMANTICS.md"
+    },
+    {
+      "id": "evidence-lifecycle",
+      "path": "docs/engineering/EVIDENCE-LIFECYCLE.md"
+    },
+    {
+      "id": "supply-chain",
+      "path": "docs/engineering/SUPPLY-CHAIN.md"
     }
   ],
   "assets": [
@@ -256,6 +303,13 @@
       "paths": [
         ".ai/workbuddy-dispatch",
         "AGENTS.md"
+      ]
+    },
+    {
+      "id": "supply-chain-sbom",
+      "kind": "ci_artifact",
+      "paths": [
+        "scripts/generate-sbom.mjs"
       ]
     }
   ],
@@ -324,6 +378,28 @@
     "docs/engineering/ASSET-CATALOG.md",
     "docs/engineering/STANDARDS-CATALOG.md",
     "docs/engineering/PERIPHERAL-ENGINEERING.md",
-    "docs/engineering/RELEASE-AND-RECOVERY.md"
-  ]
+    "docs/engineering/RELEASE-AND-RECOVERY.md",
+    "docs/engineering/NATIVE-SEMANTICS.md",
+    "docs/engineering/EVIDENCE-LIFECYCLE.md",
+    "docs/engineering/SUPPLY-CHAIN.md"
+  ],
+  "nativeSemantics": {
+    "status": "ACTIVE_BLOCKING",
+    "expectedRegisteredCommands": 149,
+    "expectedAppStateFields": 26,
+    "authority": "docs/architecture/native-boundary/native-commands.yaml",
+    "checker": "scripts/check-native-semantic-closure.mjs",
+    "linkedCrossLayerGate": "scripts/check-command-set-consistency.py"
+  },
+  "evidenceLifecycle": {
+    "status": "ACTIVE_BLOCKING",
+    "policy": "docs/engineering/evidence-policy.json",
+    "checker": "scripts/check-evidence-lifecycle.mjs"
+  },
+  "supplyChain": {
+    "status": "ACTIVE_BLOCKING",
+    "workflow": ".github/workflows/supply-chain-assurance.yml",
+    "sbom": "CycloneDX 1.6 Node + Rust",
+    "releaseSigning": "BLOCKED_NO_RELEASE_SIGNING_IDENTITY"
+  }
 }
