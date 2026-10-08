@@ -7,11 +7,6 @@ export const gitManifest: CapabilityDefinition = defineIntegratedCapability({
   semanticOwner: "useGitStore",
   maturity: "C3",
   version: "1.0.0",
-  maturityEvidence: [
-    "scripts/check-developer-owners.mjs",
-    "scripts/measure-resources.mjs",
-    "scripts/check-hot-plug-acceptance.mjs",
-  ],
   provides: ["git.status", "git.diff", "git.log", "git.commit", "git.write"],
   dependencies: ["credential", "workspace", "bridge"],
   resident: false,
@@ -30,7 +25,6 @@ export const gitManifest: CapabilityDefinition = defineIntegratedCapability({
   ],
   publicContract: [{ name: "publicApi", locator: "src/capabilities/git/public.ts" }],
   deactivationPolicy: "graceful",
-  description: "Git 状态、历史与受控写操作。",
   hotPlugLevel: "HP2",
   limitationReason: "HP2：写任务中拒绝暂停。",
 })
