@@ -1,0 +1,44 @@
+name: Temporary Repair Node Production Audit Lockfile
+
+on:
+  push:
+    branches:
+      - feature/engineering-assurance-one-pass
+    paths:
+      - '.github/workflows/repair-node-audit-lock.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/engineering-assurance-one-pass
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Repair lockfile and verify production audit
+        run: |
+          set -euo pipefail
+          npm audit fix --package-lock-only || true
+          npm audit --omit=dev --audit-level=high
+      - name: Commit repaired package lock
+        run: |
+          set -euo pipefail
+          git config user.name "code5m"
+          git config user.email "675379272@qq.com"
+          if git diff --quiet -- package-lock.json package.json; then
+            echo "No package lock changes."
+            exit 0
+          fi
+          git add package-lock.json package.json
+          git commit -m "chore: repair Node production audit lockfile"
+          git push origin HEAD:feature/engineering-assurance-one-pass
