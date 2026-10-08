@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "system": "BrowserOS Engineering Governance",
+  "repository": "code5m/browser-os",
+  "sourceOfTruth": {
+    "primary": "GitHub",
+    "repository": "code5m/browser-os",
+    "defaultBranch": "master",
+    "mirror": {
+      "provider": "Gitee",
+      "repository": "lizhx/browser-os",
+      "role": "non_authoritative_backup",
+      "workflow": ".github/workflows/mirror-to-gitee.yml"
+    }
+  },
+  "stableBaseline": {
+    "tag": "capability-platform-v4-stable",
+    "commit": "a6ff92674db98ffad964b784167fdb8c9a98f3cc",
+    "audit": "docs/architecture/capability-platform/FINAL-WORTHWHILE-HOTPLUG-AUDIT-V4-20261008.md"
+  },
+  "workflows": [
+    {"id":"ui-safety","path":".github/workflows/capability-v2-ui-safety.yml","role":"blocking_quality_gate","scope":"Git and scheduler UI safety"},
+    {"id":"full-validation","path":".github/workflows/capability-v2-validation.yml","role":"blocking_quality_gate","scope":"architecture, runtime, build, Rust, packaged GUI, full GUI and pre-merge"},
+    {"id":"hot-plug","path":".github/workflows/capability-v3-hotplug.yml","role":"blocking_quality_gate","scope":"unified Capability Hot-Plug acceptance"},
+    {"id":"engineering-governance","path":".github/workflows/engineering-governance.yml","role":"blocking_governance_gate","scope":"engineering governance registry and workflow drift"},
+    {"id":"gitee-mirror","path":".github/workflows/mirror-to-gitee.yml","role":"non_blocking_backup_distribution","scope":"GitHub to Gitee fast-forward-safe backup mirror"}
+  ],
+  "gitHooks": [
+    {"id":"pre-push","path":".githooks/pre-push","purpose":"GitHub source-of-truth and fast-forward safety"},
+    {"id":"pre-merge-commit","path":".githooks/pre-merge-commit","purpose":"local pre-merge gate entry"}
+  ],
+  "gateFamilies": [
+    {"id":"engineering-governance","blocking":true,"entrypoint":"npm run check:engineering-governance","paths":["scripts/check-engineering-governance.mjs","docs/engineering/governance.json"]},
+    {"id":"architecture-capability","blocking":true,"entrypoint":"npm run check","paths":["package.json","scripts/check-architecture.mjs","scripts/check-capability-boundaries.mjs","scripts/check-native-capability-boundaries.mjs"]},
+    {"id":"runtime-startup","blocking":true,"entrypoint":"npm run check:runtime","paths":["scripts/check-dev-runtime-startup.mjs","scripts/check-capability-runtime.mjs","scripts/runtime-resource-absence.mjs"]},
+    {"id":"hot-plug","blocking":true,"entrypoint":"node scripts/check-hot-plug-acceptance.mjs","paths":["scripts/check-hot-plug-acceptance.mjs","scripts/check-v4-worthwhile-promotions.mjs"]},
+    {"id":"ui-safety","blocking":true,"entrypoint":"python3 policy checkers","paths":["scripts/check-git-ui-policy.py","scripts/check-scheduler-ui-policy.py","scripts/check-ui-boundaries.mjs","scripts/check-native-webview-overlay.mjs"]},
+    {"id":"production-build","blocking":true,"entrypoint":"npm run build","paths":["package.json","vite.config.ts"]},
+    {"id":"rust-quality","blocking":true,"entrypoint":"cargo fmt/check/test","paths":["src-tauri/Cargo.toml","tauri-browser-tabs/Cargo.toml"]},
+    {"id":"packaged-gui","blocking":true,"entrypoint":"npm run verify:client","paths":["scripts/verify-installed-client.sh"]},
+    {"id":"full-gui-regression","blocking":true,"entrypoint":"python3 scripts/m0-6c-gui-regression.py","paths":["scripts/m0-6c-gui-regression.py"]},
+    {"id":"build-metrics","blocking":true,"entrypoint":"scripts/pre-merge.sh","paths":["scripts/measure-build-metrics.py","scripts/pre-merge.sh"]},
+    {"id":"git-integrity","blocking":true,"entrypoint":"scripts/pre-merge.sh","paths":["scripts/check-git-repo-integrity.sh","scripts/pre-merge.sh"]},
+    {"id":"whitespace-diff","blocking":true,"entrypoint":"git diff --check","paths":[".githooks/pre-push"]},
+    {"id":"release-baseline","blocking":true,"entrypoint":"tag + GitHub Release","paths":["docs/operations/recovery/release-recovery.md","docs/engineering/RELEASE-AND-RECOVERY.md"]}
+  ],
+  "standards": [
+    {"id":"agent-operating-rules","path":"AGENTS.md"},
+    {"id":"product-locked-rules","path":"PROJECT-RULES.md"},
+    {"id":"module-readme-standard","path":"docs/architecture/README-STANDARD.md"},
+    {"id":"gate-contract","path":"scripts/GATE-CONTRACT.md"},
+    {"id":"capability-granularity","path":"docs/architecture/capability-platform/CAPABILITY_GRANULARITY_RULES.md"},
+    {"id":"github-source-of-truth","path":"docs/operations/github-primary-sync.md"},
+    {"id":"engineering-front-door","path":"docs/engineering/README.md"}
+  ],
+  "assets": [
+    {"id":"architecture-registries","kind":"machine_truth","paths":["docs/architecture/capability-registry","docs/architecture/semantic-registry","docs/architecture/native-boundary"]},
+    {"id":"release-baselines","kind":"immutable_reference","paths":["BASELINE-认可版本基线.md","docs/architecture/capability-platform/FINAL-WORTHWHILE-HOTPLUG-AUDIT-V4-20261008.md"]},
+    {"id":"acceptance-evidence","kind":"evidence","paths":["logs/acceptance","logs/m0-baseline","logs/m0-build-metrics"]},
+    {"id":"diagnostics-and-recovery","kind":"operations","paths":["scripts/doctor.mjs","scripts/collect-diagnostics.sh","scripts/git-recover.sh","docs/operations/recovery"]},
+    {"id":"ai-operating-assets","kind":"agent_governance","paths":[".ai/workbuddy-dispatch","AGENTS.md"]}
+  ],
+  "peripheralEngineering": [
+    {"id":"source-control-safety","owner":"engineering","status":"active","paths":[".githooks/pre-push","scripts/sync-repo.sh","scripts/install-git-hooks.sh"]},
+    {"id":"backup-mirroring","owner":"engineering","status":"active_non_authoritative","paths":[".github/workflows/mirror-to-gitee.yml","docs/operations/github-primary-sync.md"]},
+    {"id":"release-freeze","owner":"engineering","status":"active","paths":["docs/engineering/RELEASE-AND-RECOVERY.md"]},
+    {"id":"recovery","owner":"engineering","status":"active","paths":["docs/operations/recovery","docs/delivery/06-RECOVERY-CAPABILITY.md"]},
+    {"id":"diagnostics","owner":"engineering","status":"active","paths":["scripts/doctor.mjs","scripts/collect-diagnostics.sh"]},
+    {"id":"evidence-retention","owner":"engineering","status":"active_with_debt","paths":["logs/acceptance","logs/m0-baseline","docs/engineering/ASSET-CATALOG.md"]}
+  ],
+  "requiredHumanDocs": [
+    "docs/engineering/README.md",
+    "docs/engineering/ENGINEERING-AUDIT-V1-20261008.md",
+    "docs/engineering/GATE-MATRIX.md",
+    "docs/engineering/WORKFLOW-CATALOG.md",
+    "docs/engineering/ASSET-CATALOG.md",
+    "docs/engineering/STANDARDS-CATALOG.md",
+    "docs/engineering/PERIPHERAL-ENGINEERING.md",
+    "docs/engineering/RELEASE-AND-RECOVERY.md"
+  ]
+}
