@@ -20,17 +20,13 @@ export function activateScriptLifecycle(): void {
 }
 
 export async function suspendScriptLifecycle(): Promise<void> {
-  const activeRuns: string[] = []
-  for (const [runId, probe] of [...runs]) {
-    let running = true
+  for (const [runId, probe] of runs) {
+    let stopped = false
     try {
-      running = await probe()
-    } catch {
-      running = true
-    }
-    if (running) activeRuns.push(runId)
-    else runs.delete(runId)
+      stopped = !(await probe())
+    } catch {}
+    if (!stopped) throw new Error("script runs still active: " + runId)
+    runs.delete(runId)
   }
-  if (activeRuns.length) throw new Error("script runs still active: " + activeRuns.join(","))
   active = false
 }

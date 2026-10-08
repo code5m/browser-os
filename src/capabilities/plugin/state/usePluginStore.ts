@@ -43,10 +43,9 @@ export const usePluginStore = defineStore("plugin", () => {
       resourcePath.value = "";
     },
   });
-  const lifecycleReady = () => pluginLifecycleSnapshot().active;
-
   const backendReady = computed(
     () =>
+      pluginLifecycleSnapshot().active &&
       typeof bridge.pluginList === "function" &&
       typeof bridge.pluginInstall === "function" &&
       typeof bridge.pluginEnable === "function" &&
@@ -63,7 +62,6 @@ export const usePluginStore = defineStore("plugin", () => {
   );
 
   async function refreshList() {
-    if (!lifecycleReady()) return;
     if (!backendReady.value) {
       error.value = "后端插件命令未就绪";
       return;
@@ -80,7 +78,6 @@ export const usePluginStore = defineStore("plugin", () => {
   }
 
   async function getDetail(id: string) {
-    if (!lifecycleReady()) return;
     if (!backendReady.value) {
       error.value = "后端插件命令未就绪";
       return;
@@ -98,14 +95,13 @@ export const usePluginStore = defineStore("plugin", () => {
 
   /** 安装（校验）一个供予的 manifest。manifestText 为瞬时入参，成功后清空。 */
   async function install(): Promise<boolean> {
-    if (!lifecycleReady()) return false;
+    if (!backendReady.value) {
+      error.value = "后端插件命令未就绪";
+      return false;
+    }
     const parsed = parseManifestInput(manifestText.value);
     if (!parsed.ok || !parsed.manifest) {
       error.value = parsed.error || "manifest 解析失败";
-      return false;
-    }
-    if (!backendReady.value) {
-      error.value = "后端插件命令未就绪";
       return false;
     }
     busy.value = true;
@@ -129,7 +125,6 @@ export const usePluginStore = defineStore("plugin", () => {
   }
 
   async function enable(id: string): Promise<boolean> {
-    if (!lifecycleReady()) return false;
     if (!backendReady.value) {
       error.value = "后端插件命令未就绪";
       return false;
@@ -150,7 +145,6 @@ export const usePluginStore = defineStore("plugin", () => {
   }
 
   async function disable(id: string): Promise<boolean> {
-    if (!lifecycleReady()) return false;
     if (!backendReady.value) {
       error.value = "后端插件命令未就绪";
       return false;
@@ -171,7 +165,6 @@ export const usePluginStore = defineStore("plugin", () => {
   }
 
   async function refreshKeys() {
-    if (!lifecycleReady()) return;
     if (!backendReady.value) {
       error.value = "后端插件命令未就绪";
       return;
@@ -186,7 +179,6 @@ export const usePluginStore = defineStore("plugin", () => {
 
   /** 增加受信任密钥。pubkey 为瞬时入参，后端仅回 16-hex 指纹，不持久化原文。 */
   async function addKey(keyId: string, pubkey: string, note: string): Promise<boolean> {
-    if (!lifecycleReady()) return false;
     if (!backendReady.value) {
       error.value = "后端插件命令未就绪";
       return false;
@@ -206,7 +198,6 @@ export const usePluginStore = defineStore("plugin", () => {
   }
 
   async function removeKey(keyId: string): Promise<boolean> {
-    if (!lifecycleReady()) return false;
     if (!backendReady.value) {
       error.value = "后端插件命令未就绪";
       return false;

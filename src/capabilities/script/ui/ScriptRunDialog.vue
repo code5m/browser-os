@@ -95,8 +95,9 @@ async function run() {
     status.value = snap.status;
     trackScriptRun(snap.run_id, async () => {
       const current = await bridge.scriptStatus(snap.run_id);
-      const normalized = String(current.status ?? "").toLowerCase().replace(/[_-]/g, "");
-      return !["succeeded", "failed", "cancelled", "canceled", "timedout", "timeout"].includes(normalized);
+      return !/^(succeeded|failed|cancell?ed|timed?out)$/.test(
+        String(current.status ?? "").toLowerCase().replace(/[_-]/g, ""),
+      );
     });
   } catch (e: unknown) {
     errorMsg.value = String(e);

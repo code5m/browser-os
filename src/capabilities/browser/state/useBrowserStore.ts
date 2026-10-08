@@ -279,34 +279,22 @@ export const useBrowserStore = defineStore("browser", () => {
     }
   );
 
-  async function suspendBrowserResources() {
-    for (const tab of tabs) {
-      await bridge.evalInTab(tab.id, WEBVIEW_FREEZE_JS).catch(() => {});
-    }
-    await bridge.hideAllWebviews().catch(() => {});
-    if (layout.mainView === "browser") layout.setView("home");
-  }
-
-  async function resumeBrowserResources() {
-    await nextTick();
-    await syncViewVisibility();
-  }
-
-  async function deactivateBrowserResources() {
-    await bridge.hideAllWebviews().catch(() => {});
-    const ids = tabs.map((tab) => tab.id);
-    for (const id of ids) await bridge.tabClose(id).catch(() => {});
-    tabs.splice(0, tabs.length);
-    activeTabId.value = "";
-    resources.value = null;
-    url.value = "";
-    if (layout.mainView === "browser") layout.setView("home");
-  }
-
   registerBrowserLifecycleBinding({
-    resume: resumeBrowserResources,
-    suspend: suspendBrowserResources,
-    deactivate: deactivateBrowserResources,
+    resume: () => nextTick(syncViewVisibility),
+    suspend: () => {
+      if (layout.mainView === "browser") layout.setView("home");
+      hideAllWebviews();
+      syncFreeze();
+    },
+    deactivate: async () => {
+      if (layout.mainView === "browser") layout.setView("home");
+      hideAllWebviews();
+      await Promise.all(tabs.map(({ id }) => bridge.tabClose(id).catch(() => {})));
+      tabs.splice(0);
+      activeTabId.value = "";
+      resources.value = null;
+      url.value = "";
+    },
   });
 
   return {
