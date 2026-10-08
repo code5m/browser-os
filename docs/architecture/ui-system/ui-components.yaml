@@ -8,10 +8,11 @@
 
 version: 1
 generated_from_head: 3f57a92e5fb7d9a6bc978f1572964d3c14fb8caf
-total: 70
+total: 71
 
 components:
 
+  - { id: engineering.health, name: EngineeringHealthPanel, layer: WORKBENCH, owner: settings, file: src/components/system/EngineeringHealthPanel.vue, public: false, business_semantics: "工程健康实时诊断，只读 GitHub Actions 状态", capability_specific: false, dependencies: [engineeringHealthModel, governance, evidencePolicy], consumers: [SettingsPanel.vue], status: OBSERVED }
   - { id: capability.manager, name: CapabilityManagerPanel, layer: WORKBENCH, owner: capability-platform, file: src/components/system/CapabilityManagerPanel.vue, public: false, business_semantics: "Capability discovery/configuration/runtime state manager", capability_specific: false, dependencies: [capability runtime, catalog], consumers: [SettingsPanel.vue], status: OBSERVED }
 
   # ---------- WORKBENCH (17) ----------
