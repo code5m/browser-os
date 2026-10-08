@@ -53,7 +53,7 @@ export function defineIntegratedCapability(spec: IntegratedCapabilitySpec): Capa
     displayName: spec.name,
     description: spec.description ?? spec.name,
     maturity: spec.maturity,
-    maturityEvidence: spec.maturityEvidence ?? ["scripts/check-v2-maturity-boundaries.mjs"],
+    maturityEvidence: spec.maturityEvidence ?? (hotPlugLevel === "HP2" ? ["scripts/check-hot-plug-acceptance.mjs"] : ["scripts/check-v2-maturity-boundaries.mjs"]),
     dependencies: spec.v1Dependencies ?? dependencies,
     optionalDependencies,
     conflicts: [],
