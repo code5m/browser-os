@@ -20,7 +20,7 @@ export const appsManifest: CapabilityDefinition = defineIntegratedCapability({
   manifestResources: [],
   publicContract: [{ name: "publicApi", locator: "src/capabilities/apps/public.ts" }],
   deactivationPolicy: "graceful",
-  description: "系统应用枚举与受策略保护的启动。",
+  description: "系统应用枚举与策略启动。",
   hotPlugLevel: "HP2",
-  limitationReason: "HP2：启动后的系统应用已交给 OS，不属于 capability-owned runtime resource；Harness 验证入口撤销/恢复。",
+  limitationReason: "HP2：已启动应用归 OS。",
 })
