@@ -1,5 +1,5 @@
 import type { CapabilityDefinition } from "../../capability/types"
-import { defineIntegratedCapability } from "../../capability/platform/integrated"
+import { defineIntegratedCapability } from "../../capability/platform/integrated"\n// maturity evidence: scripts/check-hot-plug-acceptance.mjs
 
 export const toolsManifest: CapabilityDefinition = defineIntegratedCapability({
   id: "tools",
