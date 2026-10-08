@@ -7,12 +7,6 @@ export const browserManifest: CapabilityDefinition = defineIntegratedCapability(
   semanticOwner: "useBrowserStore",
   maturity: "C3",
   version: "1.0.0",
-  maturityEvidence: [
-    "scripts/check-browser-runtime.mjs",
-    "scripts/check-composition-profiles.mjs",
-    "scripts/measure-resources.mjs",
-    "scripts/check-hot-plug-acceptance.mjs",
-  ],
   provides: ["browser.navigate", "browser.tab.open", "browser.tab.close", "browser.host"],
   dependencies: ["bridge"],
   v1Dependencies: [],
@@ -36,7 +30,6 @@ export const browserManifest: CapabilityDefinition = defineIntegratedCapability(
   ],
   publicContract: [{ name: "publicApi", locator: "src/capabilities/browser/public.ts" }],
   deactivationPolicy: "graceful",
-  description: "多页签浏览器宿主。",
   hotPlugLevel: "HP2",
   limitationReason: "HP2：暂停冻结，停用关闭页签。",
 })
