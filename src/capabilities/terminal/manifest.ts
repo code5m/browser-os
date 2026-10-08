@@ -33,7 +33,7 @@ export const terminalManifest: CapabilityDefinition = defineIntegratedCapability
   ],
   publicContract: [{ name: "publicApi", locator: "src/capabilities/terminal/public.ts" }],
   deactivationPolicy: "graceful",
-  description: "PTY 与子进程宿主；活动会话存在时拒绝暂停或停用。",
+  description: "PTY 与子进程宿主。",
   hotPlugLevel: "HP2",
-  limitationReason: "HP2：活动 PTY 时拒绝暂停；空闲时可撤销贡献并停用，不静默 kill 用户会话。",
+  limitationReason: "HP2：活动 PTY 拒绝暂停/停用。",
 })
