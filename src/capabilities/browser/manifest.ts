@@ -36,7 +36,7 @@ export const browserManifest: CapabilityDefinition = defineIntegratedCapability(
   ],
   publicContract: [{ name: "publicApi", locator: "src/capabilities/browser/public.ts" }],
   deactivationPolicy: "graceful",
-  description: "多页签浏览器宿主与网络资源能力；Grid / Session 已独立。",
+  description: "多页签浏览器宿主。",
   hotPlugLevel: "HP2",
-  limitationReason: "HP2：暂停冻结并隐藏 WebView；停用关闭全部页签资源，并支持恢复与重启。",
+  limitationReason: "HP2：暂停冻结，停用关闭页签。",
 })
