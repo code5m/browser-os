@@ -870,6 +870,10 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                 position_grid(0, 40.0, 110.0, 620.0, 450.0)?;
                 sleep_ms(800);
                 eval_grid("5", 0, "after_view_switch")?;
+                // eval() schedules an async page-side /event fetch. Keep grid-0 on
+                // scenario 5 long enough for the evidence POST to land before
+                // scenario 6 navigates it. The assertion remains unchanged.
+                sleep_ms(700);
                 bridge::tab_close(app.clone(), tab.id)?;
                 Ok("tab view and grid view switched without orphaned child windows".to_string())
             })(),
