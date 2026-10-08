@@ -7,12 +7,6 @@ export const terminalManifest: CapabilityDefinition = defineIntegratedCapability
   semanticOwner: "useTerminalStore",
   maturity: "C3",
   version: "1.0.0",
-  maturityEvidence: [
-    "scripts/check-terminal-owners.mjs",
-    "scripts/check-composition-profiles.mjs",
-    "scripts/measure-resources.mjs",
-    "scripts/check-hot-plug-acceptance.mjs",
-  ],
   provides: ["terminal.spawn", "terminal.write", "terminal.kill", "terminal.resize", "terminal.grid"],
   dependencies: ["bridge"],
   v1Dependencies: [],
@@ -33,7 +27,6 @@ export const terminalManifest: CapabilityDefinition = defineIntegratedCapability
   ],
   publicContract: [{ name: "publicApi", locator: "src/capabilities/terminal/public.ts" }],
   deactivationPolicy: "graceful",
-  description: "PTY 与子进程宿主。",
   hotPlugLevel: "HP2",
   limitationReason: "HP2：活动 PTY 拒绝暂停/停用。",
 })
