@@ -1,6 +1,6 @@
 # GitHub 主仓库与多端安全同步
 
-GitHub `origin` 是本仓库唯一主事实源。Gitee `gitee` 是由 GitHub Actions 更新的备份镜像；不要从 Gitee 反向覆盖 GitHub，也不要在日常开发时直接 push 到 Gitee。
+GitHub `origin` 是本仓库唯一主事实源。旧 Gitee 镜像不再自动同步；日常开发、验收、发布和回滚都以 GitHub `code5m/browser-os` / `master` 为准。
 
 ## 新电脑第一次使用
 
@@ -32,21 +32,16 @@ git push
 
 GitHub Web 修改直接进入主事实源，不依赖本机 Hook。其他电脑下次运行 `./scripts/sync-repo.sh` 即可安全发现或快进这些修改。
 
-## GitHub 到 Gitee 镜像
+## Gitee 镜像状态
 
-`.github/workflows/mirror-to-gitee.yml` 在 GitHub branch/tag push 后运行：
+`.github/workflows/mirror-to-gitee.yml` 已退役为 manual-only 历史占位，不再响应 branch/tag push。Gitee 不参与主线验收，不作为发布事实源，也不应反向覆盖 GitHub。
 
-- Gitee branch 仅在不存在、相同或可 fast-forward 时更新；落后以外的状态（Gitee 更前或分叉）会失败并保留两边 ref。
-- 新 tag 会创建；同 SHA tag 无操作；同名不同 SHA 会失败。
-- 不使用 force、`--mirror` 或删除 ref；GitHub 的 branch/tag 删除不会传播到 Gitee。
-- Gitee 暂时不可用只会使镜像 workflow 失败，不会回滚 GitHub。
+恢复自动镜像必须作为单独基础设施任务处理，并至少同时恢复：
 
-需要在 GitHub 仓库添加两个 Actions secrets 后镜像才能认证：
-
-1. `GITEE_USERNAME`：拥有 `lizhx/browser-os` 写权限的 Gitee 用户名。
-2. `GITEE_TOKEN`：该 Gitee 账户创建的、只用于仓库写入的最小权限个人访问令牌。
-
-在 GitHub 打开 `code5m/browser-os`，依次进入 **Settings → Secrets and variables → Actions → New repository secret**。不要把令牌发送到聊天、写入仓库或放入 `.env`。
+1. 明确的产品裁决；
+2. 可用的 Gitee 凭据与网络稳定性；
+3. fast-forward-only 保护；
+4. 更新后的 `docs/engineering/governance.json` 与工程文档。
 
 ## 服务端边界
 
