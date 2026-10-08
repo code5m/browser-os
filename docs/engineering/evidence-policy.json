@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "trackedHistoryBudgetBytes": 35000000,
+  "classes": {
+    "permanent": {
+      "locations": [
+        "logs/m0-baseline/",
+        "logs/m0-build-metrics/"
+      ],
+      "retention": "indefinite",
+      "newFiles": "allowed_when_gate_generated"
+    },
+    "releaseEvidence": {
+      "locations": [
+        "logs/acceptance/",
+        "logs/m0-6c-gui-evidence/"
+      ],
+      "retention": "indefinite_until_governed_migration"
+    },
+    "historicalFrozen": {
+      "locations": [
+        "logs/assist/",
+        "logs/checkpoints/",
+        "logs/research/"
+      ],
+      "retention": "preserve_existing",
+      "newFiles": "forbidden_use_ci_artifacts_or_docs"
+    },
+    "ciArtifact": {
+      "location": "GitHub Actions artifacts",
+      "retentionDays": 14
+    },
+    "localEphemeral": {
+      "locations": [
+        "diagnostics/",
+        "artifacts/"
+      ],
+      "retention": "local_only_gitignored"
+    }
+  },
+  "rule": "Preserve historical evidence; constrain growth rather than deleting proof."
+}
