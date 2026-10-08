@@ -22,6 +22,10 @@ function git(args) {
   return r.stdout.trim();
 }
 
+function gitUtf8(args) {
+  return git(["-c", "core.quotepath=false", ...args]);
+}
+
 if (process.argv.includes("--self-test")) {
   const tests = [
     ["logs/m0-baseline/x", "permanent"],
@@ -34,7 +38,7 @@ if (process.argv.includes("--self-test")) {
   process.exit(ok ? 0 : 1);
 }
 
-const tracked = git(["ls-files", "logs"]).split("\n").filter(Boolean);
+const tracked = gitUtf8(["ls-files", "logs"]).split("\n").filter(Boolean);
 const counts = {};
 const bytes = {};
 const missing = [];
@@ -56,7 +60,7 @@ const trackedBytes = Object.values(bytes).reduce((a, b) => a + b, 0);
 let addedFrozen = [];
 try {
   const base = process.env.GITHUB_BASE_REF ? `origin/${process.env.GITHUB_BASE_REF}` : "HEAD^";
-  const diff = git(["diff", "--name-status", base, "HEAD", "--", "logs"]);
+  const diff = gitUtf8(["diff", "--name-status", base, "HEAD", "--", "logs"]);
   addedFrozen = diff.split("\n").filter(Boolean).map((line) => line.split(/\s+/)).filter(([status, p]) =>
     status.startsWith("A") && classify(p) === "historicalFrozen"
   ).map(([, p]) => p);
