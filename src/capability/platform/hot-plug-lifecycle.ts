@@ -11,34 +11,26 @@ export function createManagedHotPlugLifecycle(blockedMessage = "capability resou
   const bindings = new Set<HotPlugBinding>()
 
   const snapshot = () => ({ active, bindingCount: bindings.size })
-
   const register = (binding: HotPlugBinding): (() => void) => {
     bindings.add(binding)
     if (active) void binding.resume?.()
     return () => bindings.delete(binding)
   }
-
   const activate = (): void => {
     active = true
     for (const binding of bindings) void binding.resume?.()
   }
-
   const transition = async (deactivate: boolean): Promise<void> => {
-    if ([...bindings].some((binding) => binding.canSuspend && !binding.canSuspend())) {
-      throw new Error(blockedMessage)
+    for (const binding of bindings) {
+      if (binding.canSuspend && !binding.canSuspend()) throw new Error(blockedMessage)
     }
-    const calls = [...bindings].map((binding) => {
+    for (const binding of bindings) {
       const op = deactivate
         ? binding.deactivate ?? binding.cleanup ?? binding.suspend
         : binding.suspend ?? binding.cleanup
-      return op?.()
-    })
-    const results = await Promise.allSettled(calls)
-    const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
-    if (rejected) throw rejected.reason
-    // Commit internal lifecycle state only after every owner cleanup succeeds.
-    // Runtime keeps the record ACTIVE when onSuspend rejects, so changing this
-    // flag earlier would split the capability's internal state from Runtime.
+      await op?.()
+    }
+    // Runtime remains ACTIVE if any hook throws, so only commit inactive after all cleanup succeeds.
     active = false
   }
 
