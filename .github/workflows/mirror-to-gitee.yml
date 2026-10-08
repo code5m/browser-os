@@ -1,92 +1,17 @@
-name: Mirror GitHub to Gitee
+name: Mirror GitHub to Gitee Retired
 
 on:
-  push:
-    branches:
-      - '**'
-    tags:
-      - '**'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  mirror:
-    # Deletions are intentionally not propagated to the backup remote.
-    if: github.event.deleted == false
+  mirror-retired:
     runs-on: ubuntu-latest
     steps:
-      - name: Check mirror credentials are configured
-        env:
-          GITEE_USERNAME: ${{ secrets.GITEE_USERNAME }}
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+      - name: Automatic Gitee mirror retired
         run: |
-          set -euo pipefail
-          test -n "$GITEE_USERNAME"
-          test -n "$GITEE_TOKEN"
-
-      - name: Check out the pushed GitHub ref
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Configure ephemeral Gitee authentication
-        env:
-          GITEE_USERNAME: ${{ secrets.GITEE_USERNAME }}
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-        run: |
-          set -euo pipefail
-          askpass="$RUNNER_TEMP/gitee-askpass.sh"
-          cat > "$askpass" <<'EOF'
-          #!/usr/bin/env sh
-          case "$1" in
-            *Username*) printf '%s\n' "$GITEE_USERNAME" ;;
-            *) printf '%s\n' "$GITEE_TOKEN" ;;
-          esac
-          EOF
-          chmod 700 "$askpass"
-          printf 'GIT_ASKPASS=%s\n' "$askpass" >> "$GITHUB_ENV"
-          printf 'GIT_TERMINAL_PROMPT=0\n' >> "$GITHUB_ENV"
-
-      - name: Mirror a branch with fast-forward safety
-        if: github.ref_type == 'branch'
-        env:
-          GITEE_USERNAME: ${{ secrets.GITEE_USERNAME }}
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-        run: |
-          set -euo pipefail
-          branch="${GITHUB_REF#refs/heads/}"
-          gitee_url="https://gitee.com/lizhx/browser-os.git"
-          remote_line="$(git ls-remote --heads "$gitee_url" "refs/heads/$branch" | head -n 1 || true)"
-          if [ -n "$remote_line" ]; then
-            gitee_sha="${remote_line%%$'\t'*}"
-            git fetch --no-tags "$gitee_url" "refs/heads/$branch:refs/remotes/gitee/$branch"
-            if ! git merge-base --is-ancestor "$gitee_sha" "$GITHUB_SHA"; then
-              printf 'Gitee branch %s is newer than or diverges from GitHub; refusing to rewrite it.\n' "$branch" >&2
-              exit 1
-            fi
-          fi
-          git push "$gitee_url" "$GITHUB_SHA:refs/heads/$branch"
-
-      - name: Mirror an immutable tag
-        if: github.ref_type == 'tag'
-        env:
-          GITEE_USERNAME: ${{ secrets.GITEE_USERNAME }}
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF#refs/tags/}"
-          gitee_url="https://gitee.com/lizhx/browser-os.git"
-          local_sha="$(git rev-parse "refs/tags/$tag")"
-          remote_line="$(git ls-remote --tags "$gitee_url" "refs/tags/$tag" | head -n 1 || true)"
-          if [ -n "$remote_line" ]; then
-            gitee_sha="${remote_line%%$'\t'*}"
-            if [ "$gitee_sha" != "$local_sha" ]; then
-              printf 'Gitee tag %s already exists with a different SHA; refusing to rewrite it.\n' "$tag" >&2
-              exit 1
-            fi
-            printf 'Gitee tag %s already matches GitHub; nothing to do.\n' "$tag"
-            exit 0
-          fi
-          git push "$gitee_url" "refs/tags/$tag:refs/tags/$tag"
+          echo "GITEE_MIRROR_RESULT=RETIRED"
+          echo "GitHub code5m/browser-os master is the only writable source of truth."
+          echo "Automatic branch/tag mirroring to Gitee is intentionally disabled."
