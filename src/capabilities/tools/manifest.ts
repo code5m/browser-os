@@ -7,7 +7,6 @@ export const toolsManifest: CapabilityDefinition = defineIntegratedCapability({
   semanticOwner: "useToolsStore",
   maturity: "C3",
   version: "1.0.0",
-  maturityEvidence: ["scripts/check-tools-policy.py", "scripts/check-seed-tools.py", "scripts/check-hot-plug-acceptance.mjs"],
   provides: ["tools.list", "tools.open"],
   resident: false,
   supported: ["ACTIVE", "SUSPENDED"],
@@ -19,7 +18,6 @@ export const toolsManifest: CapabilityDefinition = defineIntegratedCapability({
   manifestResources: [{ kind: "WEBVIEW", ownership: "owned", evidence: "src-tauri/src/tools.rs:open_tool (WebviewWindowBuilder, label=tool-<id>)" }],
   publicContract: [{ name: "publicApi", locator: "src/capabilities/tools/public.ts" }],
   deactivationPolicy: "graceful",
-  description: "工具枚举与 WebView。",
   hotPlugLevel: "HP2",
   limitationReason: "HP2：停用关闭 tool-*。",
 })
