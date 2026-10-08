@@ -21,10 +21,11 @@ At the pre-change master `58336477d24354254c4c2364c225d72485f24569`:
 ## P0 findings closed here
 
 1. No machine-readable engineering-system registry -> added `governance.json`.
-2. Core CI push triggers tied to old v2/v3 branches and not direct master pushes -> generalized to `master` + `feature/**`.
+2. Core CI push triggers tied to old v2/v3 branches and not direct master pushes -> generalized to every branch push, including `master`, `feature/**`, `fix/**`, `chore/**` and future branch conventions.
 3. No dedicated governance CI -> added `engineering-governance.yml`.
 4. No single front door for gates/workflows/assets/standards/peripheral engineering -> added `docs/engineering/`.
 5. Full GUI structured evidence vanished with CI runner -> upload short-retention Actions artifact.
+6. First post-merge master run exposed scenario-5 asynchronous evidence loss even though the driver passed -> keep the assertion unchanged and make the harness wait for the page-side evidence POST.
 
 ## P1 retained debt
 

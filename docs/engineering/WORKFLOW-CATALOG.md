@@ -4,13 +4,13 @@ Workflow registration is machine-enforced by `docs/engineering/governance.json`.
 
 | File | Role | Trigger policy |
 | --- | --- | --- |
-| `capability-v2-ui-safety.yml` | fast UI policy feedback | master + feature/** push, PR to master, manual |
-| `capability-v2-validation.yml` | full BrowserOS validation | master + feature/** push, PR to master, manual |
-| `capability-v3-hotplug.yml` | focused Hot-Plug acceptance | master + feature/** push, PR to master, manual |
-| `engineering-governance.yml` | governance drift | master + feature/** push, PR to master, manual |
+| `capability-v2-ui-safety.yml` | fast UI policy feedback | all branch pushes, PR to master, manual |
+| `capability-v2-validation.yml` | full BrowserOS validation | all branch pushes, PR to master, manual |
+| `capability-v3-hotplug.yml` | focused Hot-Plug acceptance | all branch pushes, PR to master, manual |
+| `engineering-governance.yml` | governance drift | all branch pushes, PR to master, manual |
 | `mirror-to-gitee.yml` | backup distribution only | branch/tag push |
 
-The v2/v3 filenames are retained to avoid unnecessary historical path churn. Their display names and triggers are version-neutral; they protect current BrowserOS.
+The v2/v3 filenames are retained to avoid unnecessary historical path churn. Their display names and triggers are version-neutral; they protect current BrowserOS. All branch pushes are covered so branch naming (`feature/**`, `fix/**`, `chore/**`, or another convention) cannot bypass the quality gates.
 
 ## Evidence
 
