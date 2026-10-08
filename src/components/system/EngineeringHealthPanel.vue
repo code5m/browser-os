@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import governanceRaw from "../../../docs/engineering/governance.json?raw";
-import evidencePolicyRaw from "../../../docs/engineering/evidence-policy.json?raw";
 import { evaluateAll } from "./engineeringHealthModel.mjs";
 
 type Phase = "idle" | "loading" | "ready" | "error";
@@ -14,15 +12,15 @@ const errorMessage = ref("");
 const loadedAt = ref("");
 let activeController: AbortController | null = null;
 
-const governance = JSON.parse(governanceRaw);
-const evidencePolicy = JSON.parse(evidencePolicyRaw);
+const governance = ref<any>(null);
+const evidencePolicy = ref<any>(null);
 const repository = "code5m/browser-os";
 const api = "https://api.github.com/repos/" + repository;
 const repoUrl = "https://github.com/" + repository;
 const checked = computed(() => phase.value === "ready" ? evaluateAll(branchSha.value, runs.value) : null);
-const gateCount = governance.gateFamilies.length;
-const native = governance.nativeSemantics;
-const evidence = evidencePolicy;
+const gateCount = computed(() => governance.value?.gateFamilies?.length ?? null);
+const native = computed(() => governance.value?.nativeSemantics ?? null);
+const evidence = computed(() => evidencePolicy.value ?? null);
 const labels: Record<string, string> = {
   PASS: "通过", FAIL: "失败", RUNNING: "运行中", STALE: "已过期", UNKNOWN: "未知",
 };
@@ -54,14 +52,22 @@ async function refresh() {
     const branch = await jsonRequest("/branches/master", controller.signal);
     const sha = branch?.commit?.sha;
     if (typeof sha !== "string" || !/^[a-f0-9]{40}$/i.test(sha)) throw new Error("GitHub 返回的 master SHA 无效");
-    const [runsData, tagData] = await Promise.all([
+    const rawUrl = "https://raw.githubusercontent.com/" + repository + "/" + encodeURIComponent(sha) + "/docs/engineering/";
+    const [runsData, tagData, govResponse, policyResponse] = await Promise.all([
       jsonRequest("/actions/runs?head_sha=" + encodeURIComponent(sha) + "&per_page=100", controller.signal),
       jsonRequest("/git/ref/tags/capability-platform-v4-stable", controller.signal),
+      fetch(rawUrl + "governance.json", { signal: controller.signal }),
+      fetch(rawUrl + "evidence-policy.json", { signal: controller.signal }),
     ]);
+    if (!govResponse.ok || !policyResponse.ok) throw new Error("无法读取当前 master 对应的工程治理配置");
+    const [liveGov, livePolicy] = await Promise.all([govResponse.json(), policyResponse.json()]);
+    if (liveGov?.repository !== repository || livePolicy?.schemaVersion !== 1) throw new Error("工程治理配置格式或仓库身份不匹配");
     if (!Array.isArray(runsData?.workflow_runs)) throw new Error("工作流数据格式无法识别");
+    governance.value = liveGov;
+    evidencePolicy.value = livePolicy;
     branchSha.value = sha;
     runs.value = runsData.workflow_runs;
-    tagMatches.value = tagData?.object?.sha === governance.stableBaseline.commit;
+    tagMatches.value = tagData?.object?.sha === liveGov.stableBaseline.commit;
     loadedAt.value = new Date().toLocaleString("zh-CN", { hour12: false });
     phase.value = "ready";
   } catch (error) {
@@ -108,7 +114,7 @@ onBeforeUnmount(() => activeController?.abort());
         <strong :class="tagMatches === true ? 'health-pass' : tagMatches === false ? 'health-fail' : 'health-unknown'">
           {{ tagMatches === true ? '校验一致' : tagMatches === false ? 'SHA 不一致' : '尚未核对' }}
         </strong>
-        <span>{{ governance.stableBaseline.tag }}</span>
+        <span>{{ governance?.stableBaseline?.tag || "尚未获取" }}</span>
       </div>
     </div>
 
@@ -124,8 +130,8 @@ onBeforeUnmount(() => activeController?.abort());
     <div v-if="phase !== 'ready'" role="status" class="health-note">当前未取得完整实时数据。请检查网络或前往 GitHub Actions，不能把历史通过当成现在通过。</div>
     <h3>语义与工程资产</h3>
     <div class="health-details">
-      <div><strong>Rust 原生语义</strong><p>登记目标：{{ native.expectedRegisteredCommands }} 个命令 / {{ native.expectedAppStateFields }} 个 AppState 字段。由完整验收中的机器门禁核对，静态计数不代表实时通过。</p></div>
-      <div><strong>治理与证据生命周期</strong><p>{{ gateCount }} 个登记门禁；Git 历史证据预算 {{ (evidence.trackedHistoryBudgetBytes / 1000000).toFixed(0) }} MB；CI 证据保留 {{ evidence.classes.ciArtifact.retentionDays }} 天。历史记录不自动删除。</p></div>
+      <div><strong>Rust 原生语义</strong><p>登记目标：{{ native?.expectedRegisteredCommands ?? "未知" }} 个命令 / {{ native?.expectedAppStateFields ?? "未知" }} 个 AppState 字段。由完整验收中的机器门禁核对，静态计数不代表实时通过。</p></div>
+      <div><strong>治理与证据生命周期</strong><p>{{ gateCount }} 个登记门禁；Git 历史证据预算 {{ evidence ? (evidence.trackedHistoryBudgetBytes / 1000000).toFixed(0) : "未知" }} MB；CI 证据保留 {{ evidence?.classes?.ciArtifact?.retentionDays ?? "未知" }} 天。历史记录不自动删除。</p></div>
       <div><strong>供应链与发布债务</strong><p>历史依赖漏洞仍按明确基线受控，并不代表零漏洞。软件物料清单和校验和不等于发布安装包签名；独立发布证明仍需要对应的真实制品。</p></div>
     </div>
     <p class="health-footnote">数据源：GitHub Actions、GitHub refs、仓库内治理机器清单。网络不可用时显示未知；Gitee 自动镜像已退役，不再作为验收门禁。</p>
