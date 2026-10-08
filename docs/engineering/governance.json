@@ -10,6 +10,8 @@
       "provider": "Gitee",
       "repository": "lizhx/browser-os",
       "role": "non_authoritative_backup",
+      "enabled": false,
+      "mode": "manual_retired_placeholder",
       "workflow": ".github/workflows/mirror-to-gitee.yml"
     }
   },
@@ -46,8 +48,8 @@
     {
       "id": "gitee-mirror",
       "path": ".github/workflows/mirror-to-gitee.yml",
-      "role": "non_blocking_backup_distribution",
-      "scope": "GitHub to Gitee fast-forward-safe backup mirror"
+      "role": "disabled_legacy_backup_distribution",
+      "scope": "manual-only retired placeholder; no branch/tag push trigger"
     },
     {
       "id": "supply-chain",
@@ -327,7 +329,7 @@
     {
       "id": "backup-mirroring",
       "owner": "engineering",
-      "status": "active_non_authoritative",
+      "status": "disabled_legacy",
       "paths": [
         ".github/workflows/mirror-to-gitee.yml",
         "docs/operations/github-primary-sync.md"
