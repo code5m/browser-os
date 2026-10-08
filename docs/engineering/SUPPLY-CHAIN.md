@@ -10,7 +10,7 @@ The supply-chain workflow performs:
 - deterministic Node/Rust CycloneDX SBOM generation;
 - SHA-256 checksum generation;
 - 14-day GitHub Actions artifact retention;
-- GitHub Dependency Review on pull requests where available.
+- GitHub Dependency Review on pull requests as a non-blocking support-gated signal when GitHub Dependency Graph is available.
 
 ## Current Node advisory baseline debt
 
@@ -26,5 +26,9 @@ Baselined packages as of 2026-10-08:
 | `postcss` | moderate | GHSA-fxqj-rqcc-2cmp |
 
 A dedicated dependency-upgrade task should retire this baseline by upgrading Vue and affected transitive packages, then removing the package allowlist from `.github/workflows/supply-chain-assurance.yml`.
+
+## Dependency Review support gating
+
+GitHub Dependency Review requires repository Dependency Graph support. If the repository does not support or enable that feature, the Dependency Review action is recorded as a non-blocking signal while the authoritative supply-chain gates remain `npm audit`, `cargo audit`, deterministic SBOM generation and checksum evidence.
 
 No release-signing identity/key is configured by this project. Governance records signing as `BLOCKED_NO_RELEASE_SIGNING_IDENTITY`; BrowserOS must not claim signed releases until a trusted identity/provenance path is deliberately configured. SBOM checksums are integrity evidence, not a substitute for signing.
