@@ -21,6 +21,10 @@ This directory is the engineering front door for BrowserOS: gates, CI workflows,
 | Change Git/mirror/release/recovery/diagnostics | [PERIPHERAL-ENGINEERING.md](./PERIPHERAL-ENGINEERING.md) |
 | Freeze or roll back release | [RELEASE-AND-RECOVERY.md](./RELEASE-AND-RECOVERY.md) |
 | Understand audit and roadmap | [ENGINEERING-AUDIT-V1-20261008.md](./ENGINEERING-AUDIT-V1-20261008.md) |
+| Check Rust native semantics | [NATIVE-SEMANTICS.md](./NATIVE-SEMANTICS.md) |
+| Check evidence lifecycle | [EVIDENCE-LIFECYCLE.md](./EVIDENCE-LIFECYCLE.md) |
+| Check supply chain | [SUPPLY-CHAIN.md](./SUPPLY-CHAIN.md) |
+| See small-reader health view | [ENGINEERING-HEALTH.md](./ENGINEERING-HEALTH.md) |
 
 ## Mandatory machine gate
 
