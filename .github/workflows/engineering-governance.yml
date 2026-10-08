@@ -1,4 +1,4 @@
-name: BrowserOS Hot-Plug Acceptance
+name: BrowserOS Engineering Governance
 
 on:
   push:
@@ -11,21 +11,24 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: browseros-hotplug-${{ github.ref }}
+  group: engineering-governance-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  hot-plug:
+  governance:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - name: Unified Hot-Plug Acceptance
-        run: node scripts/check-hot-plug-acceptance.mjs
+      - name: Engineering governance drift
+        run: node scripts/check-engineering-governance.mjs
+      - name: Governance diff hygiene
+        run: git diff --check

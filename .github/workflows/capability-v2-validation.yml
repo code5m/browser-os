@@ -1,16 +1,17 @@
-name: Capability Platform v2 validation
+name: BrowserOS Full Validation
 
 on:
   push:
     branches:
-      - feature/capability-platform-v2-maturity
+      - master
+      - 'feature/**'
   pull_request:
     branches:
       - master
   workflow_dispatch:
 
 concurrency:
-  group: capability-v2-${{ github.ref }}
+  group: browseros-full-validation-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -24,80 +25,69 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Legacy UI safety checks
         run: |
           python3 scripts/check-git-ui-policy.py --self-test
           python3 scripts/check-git-ui-policy.py
           python3 scripts/check-scheduler-ui-policy.py --self-test
           python3 scripts/check-scheduler-ui-policy.py
-
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            xvfb \
-            xauth \
-            dbus-x11
-
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb xauth dbus-x11
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-
       - name: Install frontend dependencies
         run: npm ci
-
-      - name: Capability and architecture checks
+      - name: Capability, architecture and engineering governance checks
         run: npm run check
-
       - name: Runtime startup checks
         run: npm run check:runtime
-
       - name: Production build
         run: npm run build
-
       - name: Rust format
         run: |
           cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
           cargo fmt --manifest-path tauri-browser-tabs/Cargo.toml --all --check
-
       - name: Rust check
         run: cargo check --manifest-path src-tauri/Cargo.toml --locked
-
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked
-
       - name: Packaged GUI cold-start acceptance
         run: dbus-run-session -- xvfb-run -a bash scripts/verify-installed-client.sh --build
-
       - name: Full Tauri GUI regression
         shell: bash
         run: |
           set +e
-          dbus-run-session -- xvfb-run -a python3 scripts/m0-6c-gui-regression.py --no-build --evidence-dir /tmp/m0-6c-v2
+          dbus-run-session -- xvfb-run -a python3 scripts/m0-6c-gui-regression.py --no-build --evidence-dir /tmp/m0-6c-browseros
           status=$?
           echo "===== M0-6.c GUI summary ====="
-          cat /tmp/m0-6c-v2/summary.md 2>/dev/null || true
+          cat /tmp/m0-6c-browseros/summary.md 2>/dev/null || true
           echo "===== M0-6.c driver report ====="
-          cat /tmp/m0-6c-v2/driver-report.json 2>/dev/null || true
+          cat /tmp/m0-6c-browseros/driver-report.json 2>/dev/null || true
           echo "===== M0-6.c app log tail ====="
-          tail -n 120 /tmp/m0-6c-v2/app.log 2>/dev/null || true
+          tail -n 120 /tmp/m0-6c-browseros/app.log 2>/dev/null || true
           exit "$status"
-
+      - name: Upload GUI regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-gui-evidence-${{ github.run_id }}
+          path: |
+            /tmp/m0-6c-browseros/summary.md
+            /tmp/m0-6c-browseros/driver-report.json
+            /tmp/m0-6c-browseros/app.log
+          if-no-files-found: warn
+          retention-days: 14
       - name: Branch diff whitespace check
         run: git diff --check origin/master...HEAD -- . ':(exclude)logs/m0-baseline/**'
-
       - name: Full pre-merge gate
         env:
           M0_BASE_REF: origin/master
