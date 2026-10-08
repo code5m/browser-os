@@ -42,11 +42,14 @@ for (const p of tracked) {
   const kind = classify(p);
   counts[kind] = (counts[kind] || 0) + 1;
   const abs = path.join(ROOT, p);
-  if (!fs.existsSync(abs)) {
+  try {
+    // Use lstat rather than exists/stat. Some historical evidence entries are
+    // symlinks; existsSync/stat follow the target and falsely report a tracked
+    // evidence object as missing when the target is intentionally absent in CI.
+    bytes[kind] = (bytes[kind] || 0) + fs.lstatSync(abs).size;
+  } catch {
     missing.push(p);
-    continue;
   }
-  bytes[kind] = (bytes[kind] || 0) + fs.statSync(abs).size;
 }
 const trackedBytes = Object.values(bytes).reduce((a, b) => a + b, 0);
 
@@ -73,7 +76,7 @@ const report = {
 };
 if (process.argv.includes("--json")) console.log(JSON.stringify(report, null, 2));
 const errors = [];
-if (missing.length) errors.push(`missing tracked evidence files: ${missing.length}`);
+if (missing.length) errors.push(`missing tracked evidence files: ${missing.length}: ${missing.slice(0, 10).join(", ")}`);
 if (trackedBytes > POLICY.trackedHistoryBudgetBytes) errors.push(`tracked evidence exceeds budget: ${trackedBytes} > ${POLICY.trackedHistoryBudgetBytes}`);
 if (addedFrozen.length) errors.push(`new files added to frozen historical evidence areas: ${addedFrozen.join(", ")}`);
 console.log(`EVIDENCE_LIFECYCLE_RESULT=${errors.length ? "FAIL" : "PASS"} files=${tracked.length} bytes=${trackedBytes}`);
