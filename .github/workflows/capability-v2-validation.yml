@@ -3,8 +3,7 @@ name: BrowserOS Full Validation
 on:
   push:
     branches:
-      - master
-      - 'feature/**'
+      - '**'
   pull_request:
     branches:
       - master

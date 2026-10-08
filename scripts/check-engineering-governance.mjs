@@ -108,8 +108,7 @@ const governanceWorkflow = path.join(root, ".github/workflows/engineering-govern
 if (fs.existsSync(governanceWorkflow)) {
   const source = fs.readFileSync(governanceWorkflow, "utf8");
   if (!source.includes("scripts/check-engineering-governance.mjs")) fail("engineering governance workflow must execute governance checker");
-  if (!source.includes("- master")) fail("engineering governance workflow must cover master pushes");
-  if (!source.includes("feature/**")) fail("engineering governance workflow must cover feature/** pushes");
+  if (!source.includes("- '**'")) fail("engineering governance workflow must cover every branch push");
 }
 
 for (const workflow of [
@@ -119,8 +118,7 @@ for (const workflow of [
 ]) {
   if (!exists(workflow)) continue;
   const source = fs.readFileSync(path.join(root, workflow), "utf8");
-  if (!source.includes("- master")) fail(`${workflow} must run on master pushes`);
-  if (!source.includes("feature/**")) fail(`${workflow} must cover feature/** pushes`);
+  if (!source.includes("- '**'")) fail(`${workflow} must cover every branch push`);
 }
 
 if (governance.stableBaseline?.tag !== "capability-platform-v4-stable") {
