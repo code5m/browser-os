@@ -7,7 +7,7 @@ This directory is the engineering front door for BrowserOS: gates, CI workflows,
 - Machine truth: `docs/engineering/governance.json`.
 - Human documents explain the registry and must not silently become a second registry.
 - GitHub `code5m/browser-os` / `master` is the only writable source of truth.
-- Gitee `lizhx/browser-os` is a non-authoritative backup mirror.
+- Gitee automatic mirroring is retired; the legacy workflow is manual-only and must not gate GitHub `master`.
 - Frozen Capability Platform v4 baseline: `capability-platform-v4-stable` -> `a6ff92674db98ffad964b784167fdb8c9a98f3cc`.
 
 ## Read by task
@@ -18,7 +18,7 @@ This directory is the engineering front door for BrowserOS: gates, CI workflows,
 | Change GitHub Actions | [WORKFLOW-CATALOG.md](./WORKFLOW-CATALOG.md) |
 | Locate evidence/registries/baselines | [ASSET-CATALOG.md](./ASSET-CATALOG.md) |
 | Change project standards | [STANDARDS-CATALOG.md](./STANDARDS-CATALOG.md) |
-| Change Git/mirror/release/recovery/diagnostics | [PERIPHERAL-ENGINEERING.md](./PERIPHERAL-ENGINEERING.md) |
+| Change Git/release/recovery/diagnostics | [PERIPHERAL-ENGINEERING.md](./PERIPHERAL-ENGINEERING.md) |
 | Freeze or roll back release | [RELEASE-AND-RECOVERY.md](./RELEASE-AND-RECOVERY.md) |
 | Understand audit and roadmap | [ENGINEERING-AUDIT-V1-20261008.md](./ENGINEERING-AUDIT-V1-20261008.md) |
 | Check Rust native semantics | [NATIVE-SEMANTICS.md](./NATIVE-SEMANTICS.md) |
