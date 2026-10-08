@@ -25,5 +25,5 @@ export const scriptManifest: CapabilityDefinition = defineIntegratedCapability({
   deactivationPolicy: "graceful",
   maturityEvidence: ["scripts/check-hot-plug-acceptance.mjs"],
   hotPlugLevel: "HP2",
-  limitationReason: "HP2：手工 run 未结束时拒绝暂停；共享 Task runner 不被 Script 生命周期误杀。",
+  limitationReason: "HP2：手工运行中拒绝暂停。",
 })
