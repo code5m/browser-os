@@ -47,7 +47,7 @@ jobs:
         run: npm ci
       - name: Capability, architecture and engineering governance checks
         run: npm run check
-      - name: Runtime startup checks
+      - name: Native semantic and evidence fixture tests\n        run: |\n          node scripts/check-native-semantic-closure.mjs --self-test\n          node scripts/check-evidence-lifecycle.mjs --self-test\n          node scripts/generate-sbom.mjs --self-test\n      - name: Runtime startup checks
         run: npm run check:runtime
       - name: Production build
         run: npm run build
