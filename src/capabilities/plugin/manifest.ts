@@ -7,7 +7,6 @@ export const pluginManifest: CapabilityDefinition = defineIntegratedCapability({
   semanticOwner: "usePluginStore",
   maturity: "C3",
   version: "1.0.0",
-  maturityEvidence: ["scripts/check-plugin-policy.py", "scripts/check-plugin-ui-logic.mjs", "scripts/check-hot-plug-acceptance.mjs"],
   provides: ["plugin.list", "plugin.manifest"],
   resident: false,
   supported: ["ACTIVE", "SUSPENDED"],
@@ -18,7 +17,6 @@ export const pluginManifest: CapabilityDefinition = defineIntegratedCapability({
   contributions: [{ id: "plugin.main.panel", slot: "workbench-main", type: "surface", view: "plugin" }],
   publicContract: [{ name: "publicApi", locator: "src/capabilities/plugin/public.ts" }],
   deactivationPolicy: "graceful",
-  description: "插件登记簿。",
   hotPlugLevel: "HP2",
   limitationReason: "HP2：管理操作中拒绝暂停。",
 })
