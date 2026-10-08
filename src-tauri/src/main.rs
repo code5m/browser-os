@@ -814,6 +814,9 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                 for i in 0..4 {
                     eval_grid("2", i, "concurrent_ai")?;
                 }
+                // eval_in_tab schedules the page-side fetch but does not await its Promise.
+                // Give the local evidence POST time to land before scenario 3 navigates grid-0.
+                sleep_ms(600);
                 Ok("four grid children opened, positioned, and evaluated".to_string())
             })(),
         );
