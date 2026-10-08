@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { defineAsyncComponent, onMounted, ref } from "vue";
+const EngineeringHealthPanel = defineAsyncComponent(() => import("./EngineeringHealthPanel.vue"));
 import { bridge } from "../../bridge";
 import { useSettingsStore } from "../../settings/public";
 import { useLayoutStore } from "../../stores/useLayoutStore";
 
 const settings = useSettingsStore();
+const healthOpen = ref(false);
 const layout = useLayoutStore();
 
 // M1-4：默认浏览器设置。硬约束：只有在用户点击按钮并二次确认后才调用
@@ -124,6 +126,18 @@ onMounted(refreshDefaultBrowser);
         <span class="setting-desc">查看能力依赖、运行状态并停用可选模块。</span>
         <button class="default-btn" @click="layout.setView('capability-manager')">打开 Capability Manager</button>
       </div>
+    </div>
+
+
+    <div class="settings-section">
+      <div class="section-title">工程健康 · 验证与证据</div>
+      <div class="setting-item">
+        <span class="setting-desc">查看当前 GitHub master 门禁、Rust 语义、供应链安全和证据资产。网络不可用时显示“未知”，不会假报通过。</span>
+        <button type="button" class="default-btn" aria-controls="engineering-health-region" :aria-expanded="healthOpen" @click="healthOpen = !healthOpen">
+          {{ healthOpen ? "收起工程健康" : "打开工程健康中心" }}
+        </button>
+      </div>
+      <div id="engineering-health-region" v-if="healthOpen"><EngineeringHealthPanel /></div>
     </div>
 
     <div class="settings-section">

@@ -1,41 +1,35 @@
-# Engineering Health
+# BrowserOS 工程健康中心
 
-This page is the small-reader entry for BrowserOS engineering status. It is intentionally static: the latest truth is always GitHub Actions, not a cached green badge in the repository.
+工程健康中心是**已嵌入桌面应用的中文只读面板**，不是静态 Markdown 表格。
 
-## Current stable baseline
+## 打开方式
 
-- Product/platform release: `capability-platform-v4-stable`
-- Frozen commit: `a6ff92674db98ffad964b784167fdb8c9a98f3cc`
-- Current engineering branch work must not move that tag.
+打开 BrowserOS → 设置 → 工程健康 · 验证与证据 → **打开工程健康中心**。按“刷新状态”可以再次查询 GitHub。
 
-## What must be green before merge
+## 数据真源和错误语义
 
-- BrowserOS Engineering Governance
-- BrowserOS UI Safety
-- BrowserOS Hot-Plug Acceptance
-- BrowserOS Supply Chain Assurance
-- BrowserOS Full Validation
-- Mirror GitHub to Gitee
+面板直接从 GitHub 公共 API 查询 \`master\` 的最新 SHA、对应 SHA 的五条工作流运行记录，以及 v4 stable tag SHA。仅在同一 SHA 的最新 push 运行成功且未超过 48 小时，才显示“通过”。
 
-Full Validation includes architecture/capability/governance, runtime startup, production build, Rust fmt/check/tests, packaged GUI cold start, Full Tauri GUI regression, GUI evidence artifact upload, diff hygiene and full pre-merge.
+- **通过**：当前 master SHA 对应 workflow 成功、证据不超过 48 小时。
+- **失败**：当前 master SHA 对应最近运行不成功。
+- **运行中**：最新运行尚未完成。
+- **已过期**：上次同 SHA 成功，但超过 48 小时。
+- **未知**：GitHub 不可达、API 限速、缺少运行结果、master SHA 无法核实。
 
-## Local quick checks
+未知、过期、运行中绝不算 PASS。静态的 Rust command/AppState 数量和 Git 证据预算只是配置值，不能替代 CI 的当前状态。Gitee 自动镜像已退役，不列入阻断门禁。
 
-```bash
-npm run check:engineering-governance
-npm run check:native-semantics
-npm run check:evidence-lifecycle
+完整验收包括 Architecture/Capability、Runtime、生产构建、Rust fmt/check/test、安装版冷启动、Full GUI、GUI Artifact、Git integrity/build metrics 和 pre-merge。具体证据以对应 Actions Run 为准。
+
+## 测试入口
+
+\`\`\`sh
+npm run check:engineering-health
 npm run check
 npm run build
-```
+\`\`\`
 
-## Machine facts
+测试覆盖新 SHA 不匹配、失败/运行中/过期/网络缺失不误报为通过。
 
-- Governance registry: `docs/engineering/governance.json`
-- Native semantic authority: `docs/architecture/native-boundary/native-commands.yaml`
-- Evidence lifecycle policy: `docs/engineering/evidence-policy.json`
-- Supply-chain workflow: `.github/workflows/supply-chain-assurance.yml`
+## 发布链
 
-## Known blocked item
-
-Release artifact signing/provenance is blocked until a trusted signing identity is deliberately configured. SBOM checksums are integrity evidence, not a signing substitute.
+GitHub CI 的 SBOM/校验和及制品来源证明不等于已向用户发布了签名安装包。没有真实发行制品与验证记录时，单独发布签名仍为 BLOCKED，不能假绿。
