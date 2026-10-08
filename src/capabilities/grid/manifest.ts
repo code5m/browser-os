@@ -7,12 +7,6 @@ export const gridManifest: CapabilityDefinition = defineIntegratedCapability({
   semanticOwner: "useGridStore",
   maturity: "C3",
   version: "2.0.0",
-  maturityEvidence: [
-    "scripts/check-grid-close-logic.mjs",
-    "scripts/runtime-phase1-browser-grid.mjs",
-    "scripts/check-v2-maturity-boundaries.mjs",
-    "scripts/check-hot-plug-acceptance.mjs",
-  ],
   provides: ["grid.open", "grid.layout", "grid.archive"],
   dependencies: ["browser", "bridge"],
   resident: false,
@@ -32,7 +26,6 @@ export const gridManifest: CapabilityDefinition = defineIntegratedCapability({
   ],
   publicContract: [{ name: "publicApi", locator: "src/capabilities/grid/public.ts" }],
   deactivationPolicy: "graceful",
-  description: "Grid 多 WebView。",
   hotPlugLevel: "HP2",
   limitationReason: "HP2：暂停冻结，停用销毁 Grid。",
 });
