@@ -19,7 +19,7 @@ export const toolsManifest: CapabilityDefinition = defineIntegratedCapability({
   manifestResources: [{ kind: "WEBVIEW", ownership: "owned", evidence: "src-tauri/src/tools.rs:open_tool (WebviewWindowBuilder, label=tool-<id>)" }],
   publicContract: [{ name: "publicApi", locator: "src/capabilities/tools/public.ts" }],
   deactivationPolicy: "graceful",
-  description: "工具枚举与独立 WebView 打开。",
+  description: "工具枚举与 WebView。",
   hotPlugLevel: "HP2",
-  limitationReason: "HP2：close_tools 关闭全部 tool-* WebView；Harness 验证资源 cleanup 与重启。",
+  limitationReason: "HP2：停用关闭 tool-*。",
 })
