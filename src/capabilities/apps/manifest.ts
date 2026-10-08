@@ -7,7 +7,6 @@ export const appsManifest: CapabilityDefinition = defineIntegratedCapability({
   semanticOwner: "useAppsStore",
   maturity: "C3",
   version: "1.0.0",
-  maturityEvidence: ["scripts/check-home-client-policy.py", "scripts/check-ui-boundaries.mjs", "scripts/check-hot-plug-acceptance.mjs"],
   provides: ["apps.list", "apps.launch"],
   resident: false,
   supported: ["ACTIVE", "SUSPENDED"],
@@ -20,7 +19,6 @@ export const appsManifest: CapabilityDefinition = defineIntegratedCapability({
   manifestResources: [],
   publicContract: [{ name: "publicApi", locator: "src/capabilities/apps/public.ts" }],
   deactivationPolicy: "graceful",
-  description: "系统应用枚举与策略启动。",
   hotPlugLevel: "HP2",
   limitationReason: "HP2：已启动应用归 OS。",
 })
