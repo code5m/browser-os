@@ -239,6 +239,18 @@
         "src-tauri/src/main.rs",
         "docs/architecture/native-physical-boundary/NATIVE-PHYSICAL-BOUNDARY-MATRIX.md"
       ]
+    },
+    {
+      "id": "rust-cross-layer-contracts",
+      "blocking": true,
+      "entrypoint": "npm run check:rust-contracts",
+      "paths": [
+        "scripts/generate-rust-crosslayer-contracts.py",
+        "src/bridge.ts",
+        "src-tauri/src/main.rs",
+        "docs/architecture/native-boundary/native-commands.yaml",
+        "docs/architecture/native-physical-boundary/NATIVE-PHYSICAL-BOUNDARY-MATRIX.md"
+      ]
     }
   ],
   "standards": [
@@ -285,6 +297,10 @@
     {
       "id": "engineering-health-ux",
       "path": "docs/engineering/ENGINEERING-HEALTH.md"
+    },
+    {
+      "id": "rust-cross-layer-contracts",
+      "path": "docs/engineering/RUST-CROSS-LAYER-CONTRACTS.md"
     }
   ],
   "assets": [
@@ -418,7 +434,8 @@
     "docs/engineering/NATIVE-SEMANTICS.md",
     "docs/engineering/EVIDENCE-LIFECYCLE.md",
     "docs/engineering/SUPPLY-CHAIN.md",
-    "docs/engineering/ENGINEERING-HEALTH.md"
+    "docs/engineering/ENGINEERING-HEALTH.md",
+    "docs/engineering/RUST-CROSS-LAYER-CONTRACTS.md"
   ],
   "nativeSemantics": {
     "status": "ACTIVE_BLOCKING",
@@ -428,7 +445,24 @@
     "checker": "scripts/check-native-semantic-closure.mjs",
     "linkedCrossLayerGate": "scripts/check-command-set-consistency.py",
     "observationChecker": "scripts/check-rust-runtime-semantics.mjs",
-    "typeEquivalence": "PARTIAL_OBSERVED_NOT_STRUCTURALLY_PROVEN"
+    "typeEquivalence": "GENERATED_WITH_EXPLICIT_PARTIALS",
+    "generatedCrossLayerContracts": {
+      "status": "ACTIVE_BLOCKING",
+      "generator": "scripts/generate-rust-crosslayer-contracts.py",
+      "typescriptOutput": "src/generated/native-contracts.ts",
+      "machineReport": "artifacts/native-contracts/generated-crosslayer-contracts.json",
+      "blocking": [
+        "registered_command_coverage",
+        "frontend_invoke_payload_keys",
+        "listener_unlisten_exposure"
+      ],
+      "partial": [
+        "complex_serde_tagged_enums",
+        "ambiguous_short_type_names",
+        "tauri_channel_transport",
+        "typescript_alias_structural_equivalence"
+      ]
+    }
   },
   "evidenceLifecycle": {
     "status": "ACTIVE_BLOCKING",
