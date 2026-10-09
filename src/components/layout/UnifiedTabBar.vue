@@ -267,6 +267,7 @@ function activateMod(t: { id: string; view: string; path?: string }) {
 }
 .tab.active {
   background: #fff;
+  border-color: #c9cede;
   color: #2b6cb0;
   font-weight: 600;
 }
