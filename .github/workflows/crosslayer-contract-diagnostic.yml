@@ -1,0 +1,19 @@
+name: BrowserOS Cross-Layer Contract Diagnostic
+
+on:
+  push:
+    branches: ["feature/rust-crosslayer-contract-final-closure"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Contract generator self-test and report
+        run: |
+          python3 scripts/generate-rust-crosslayer-contracts.py --self-test
+          python3 scripts/generate-rust-crosslayer-contracts.py --emit-log --diagnostic
