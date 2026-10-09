@@ -153,7 +153,7 @@ function looksLikeDir(s: string): boolean {
 function onAddrGo() {
   layout.navSection = "";
   if (looksLikeDir(browser.url)) openDirCenter();
-  else browser.openBrowser();
+  else void browser.navigateCurrent().catch(() => layout.showToast("网页导航失败，请检查网址"));
 }
 function pickDir(p: string) {
   layout.navSection = "";
@@ -163,7 +163,7 @@ function pickDir(p: string) {
 function pickUrl(u: string) {
   layout.navSection = "";
   browser.url = u;
-  browser.openBrowser();
+  void browser.navigateCurrent().catch(() => layout.showToast("网页导航失败，请检查网址"));
 }
 // 目录在中央主区展示（与网页同一套展示区域）
 async function openDirCenter() {
