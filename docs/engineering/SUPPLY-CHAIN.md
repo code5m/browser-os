@@ -1,34 +1,14 @@
-# Supply-Chain Assurance
+# BrowserOS Supply Chain — strict production advisory remediation
 
-BrowserOS uses lockfiles as the dependency baseline and generates deterministic CycloneDX 1.6 SBOMs directly from `package-lock.json` and `src-tauri/Cargo.lock`.
+The temporary baseline permit list has been removed from `.github/workflows/supply-chain-assurance.yml`.
+`npm audit --omit=dev --audit-level=moderate` is now blocking. Real GitHub Actions diagnostic showed all five previously baselined production issues had compatible fixes. The generated lockfile upgrades Vue/@vue packages to 3.5.43, nanoid to 3.3.20, PostCSS to 8.5.29 and source-map-js to 1.2.2, retaining the existing app-level semver constraints.
 
-The supply-chain workflow performs:
-- `npm ci` lockfile validation;
-- production `npm audit --omit=dev` evidence capture to `artifacts/sbom/npm-audit-prod.json`;
-- Node advisory baseline enforcement: critical advisories always fail, and any non-baselined moderate/high/critical advisory fails;
-- Rust advisory scan with `cargo audit`;
-- deterministic Node/Rust CycloneDX SBOM generation;
-- SHA-256 checksum generation;
-- 14-day GitHub Actions artifact retention;
-- GitHub Dependency Review on pull requests as a non-blocking support-gated signal when GitHub Dependency Graph is available.
+The original advisory diagnoses covered:
+- GHSA-g2v6-rqmx-r4w6 — Vue server renderer
+- GHSA-2v37-7h3g-55p8 — nanoid
+- GHSA-fxqj-rqcc-2cmp — PostCSS
+- GHSA-68fv-2mgg-jv7q — source-map-js
 
-## Current Node advisory baseline debt
+Neither npm dependency audit PASS nor CycloneDX SBOM + SHA-256 means release signatures exist. Rust cargo audit remains blocking in the supply-chain workflow. Dependency Review remains separately limited by repository graph permissions and must not be represented as an unconditional blocking proof.
 
-The Node audit baseline records historical production-audit debt already present when Supply-Chain Assurance was introduced. It is not a license to add new risk: the workflow fails on any new non-baselined moderate/high/critical package and on every critical advisory.
-
-Baselined packages as of 2026-10-08:
-
-| Package | Severity class observed | Advisory source |
-| --- | --- | --- |
-| `@vue/server-renderer` / `vue` | high | GHSA-g2v6-rqmx-r4w6 |
-| `nanoid` | high | GHSA-2v37-7h3g-55p8 |
-| `source-map-js` | high | GHSA-68fv-2mgg-jv7q |
-| `postcss` | moderate | GHSA-fxqj-rqcc-2cmp |
-
-A dedicated dependency-upgrade task should retire this baseline by upgrading Vue and affected transitive packages, then removing the package allowlist from `.github/workflows/supply-chain-assurance.yml`.
-
-## Dependency Review support gating
-
-GitHub Dependency Review requires repository Dependency Graph support. If the repository does not support or enable that feature, the Dependency Review action is recorded as a non-blocking signal while the authoritative supply-chain gates remain `npm audit`, `cargo audit`, deterministic SBOM generation and checksum evidence.
-
-No release-signing identity/key is configured by this project. Governance records signing as `BLOCKED_NO_RELEASE_SIGNING_IDENTITY`; BrowserOS must not claim signed releases until a trusted identity/provenance path is deliberately configured. SBOM checksums are integrity evidence, not a substitute for signing.
+Do not restore the historical package allowlist to greenwash future advisories. All security and build/test results must come from the checked commit SHA.
