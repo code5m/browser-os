@@ -3398,7 +3398,7 @@ fn ensure_desktop_entry() -> Result<String, String> {
     std::fs::create_dir_all(&user_dir).map_err(|e| format!("创建 {user_dir}: {e}"))?;
     let path = format!("{user_dir}/{DESKTOP_NAME}");
     let content = format!(
-        "[Desktop Entry]\nType=Application\nName=极智简单浏览器OS\nExec={} %u\nIcon=mvp-browser-os\nMimeType=x-scheme-handler/http;x-scheme-handler/https;\nCategories=Network;WebBrowser;\nNoDisplay=false\n",
+        "[Desktop Entry]\nType=Application\nName=BrowserOS\nExec={} %u\nIcon=mvp-browser-os\nMimeType=x-scheme-handler/http;x-scheme-handler/https;\nCategories=Network;WebBrowser;\nNoDisplay=false\n",
         exe.display()
     );
     std::fs::write(&path, content).map_err(|e| format!("写入 {path}: {e}"))?;
