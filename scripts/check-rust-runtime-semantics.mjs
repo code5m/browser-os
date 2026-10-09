@@ -48,7 +48,7 @@ function eventInventory(rust, bridge) {
   };
 }
 function ipcInventory(bridge, nativeInventory) {
- const registered=new Set(nativeInventory?.registered?.map(x=>x.name) ?? []);
+ const registered=new Set(nativeInventory?.registered ?? []);
  // check-native-command-inventory handles authority, this independent projection
  // checks only source-observed wrappers, not dynamically constructed commands.
  const invokes=literalCalls(bridge,/\binvoke(?:<[^(\n]*>)?\s*\(\s*"([^"]+)"/g).map(x=>x.name);
@@ -58,7 +58,7 @@ function ipcInventory(bridge, nativeInventory) {
 function selfTest() {
  const sample=eventInventory([["test.rs",'app.emit("ready",123); app.emit_to("window","done",())']], 'listen("ready",cb);listen("orphan",cb)');
  if(sample.emitted.join(",")!=="done,ready" || sample.both.join(",")!=="ready"||sample.listenerWithoutObservedRustEmit.join(",")!=="orphan") return false;
- const native={registered:[{name:"hello"}]};
+ const native={registered:["hello"]};
  const good=ipcInventory('invoke<string>("hello")',native);
  const bad=ipcInventory('invoke<number>("unknown")',native);
  return good.unregisteredLiteralInvocations.length===0&&bad.unregisteredLiteralInvocations[0]==="unknown";
@@ -73,7 +73,10 @@ try{native=JSON.parse(inventoryRun.stdout)}catch{console.error("RUST_RUNTIME_SEM
 const rust=filePaths("src-tauri/src",".rs").map(p=>[p,read(p)]);
 const bridge=read("src/bridge.ts");
 const events=eventInventory(rust,bridge);
-const ipc=ipcInventory(bridge,native);
+const rustMain=read("src-tauri/src/main.rs");
+const handlers=[...rustMain.matchAll(/generate_handler!\[([\s\S]*?)\]/g)]
+  .flatMap(x=>x[1].replace(/\/\/[^\n]*/g,"").split(",").map(s=>s.trim()).filter(s=>/^\w+(?:::\w+)*$/.test(s)).map(s=>s.split("::").at(-1)));
+const ipc=ipcInventory(bridge,{registered:[...new Set(handlers)]});
 const errors=[];
 if(!native.gate.PASS)errors.push("native inventory gate failed");
 if(ipc.unregisteredLiteralInvocations.length)errors.push("unregistered IPC commands: "+ipc.unregisteredLiteralInvocations.join(","));
