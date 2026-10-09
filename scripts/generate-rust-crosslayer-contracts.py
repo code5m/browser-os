@@ -75,7 +75,7 @@ def split_top_level(text: str, sep: str = ",") -> list[str]:
             if ch == quote:
                 quote = None
             continue
-        if ch in ("'", '"'):
+        if ch == '"':
             quote = ch
         elif ch == "(":
             round_depth += 1
@@ -120,7 +120,7 @@ def find_matching(text: str, start: int, opening: str, closing: str) -> int:
             if ch == quote:
                 quote = None
             continue
-        if ch in ("'", '"'):
+        if ch == '"':
             quote = ch
         elif ch == opening:
             depth += 1
@@ -247,7 +247,7 @@ def parse_rust_types(files: list[tuple[str, str]]) -> dict[str, RustTypeDef]:
 def parse_commands(files: list[tuple[str, str]]) -> list[RustCommand]:
     out: list[RustCommand] = []
     marker = re.compile(
-        r"#\[tauri::command([^\]]*)\]\s*(?:pub(?:\([^)]+\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_]\w*)\s*\(",
+        r"#\[tauri::command([^\]]*)\]\s*(?:#\[[^\]]+\]\s*)*(?:pub(?:\([^)]+\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_]\w*)\s*\(",
         re.MULTILINE,
     )
     for source, content in files:
