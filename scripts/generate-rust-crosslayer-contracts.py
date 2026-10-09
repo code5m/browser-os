@@ -16,7 +16,7 @@ RUST_ROOT = ROOT / "src-tauri" / "src"
 TS_ROOT = ROOT / "src"
 REGISTRY = ROOT / "docs" / "architecture" / "native-boundary" / "native-commands.yaml"
 TS_OUT = ROOT / "src" / "generated" / "native-contracts.ts"
-JSON_OUT = ROOT / "docs" / "architecture" / "native-boundary" / "generated-crosslayer-contracts.json"
+JSON_OUT = ROOT / "artifacts" / "native-contracts" / "generated-crosslayer-contracts.json"
 
 INJECTED_TYPES = ("AppHandle", "Webview", "WebviewWindow", "Window", "State<", "Manager<")
 
@@ -749,6 +749,18 @@ def build_model() -> dict[str, Any]:
     missing = sorted(handlers - parsed_active)
     if missing:
         errors.append("registered command signatures not parsed: " + ",".join(missing))
+    if len(active) != len(handlers):
+        errors.append(f"active command contract coverage drift: active={len(active)} registered={len(handlers)}")
+    if payload_mismatches:
+        errors.append("frontend invoke payload contract mismatch count=" + str(len(payload_mismatches)))
+    listener_cleanup_findings = [
+        {"event": event["name"], "source": listener["source"]}
+        for event in event_contracts
+        for listener in event["listeners"]
+        if listener.get("cleanupStatus") != "RETURNED_TO_CALLER"
+    ]
+    if listener_cleanup_findings:
+        errors.append("event listener cleanup is unverified count=" + str(len(listener_cleanup_findings)))
     impact = [
         {
             "command": item["name"],
@@ -808,6 +820,7 @@ def build_model() -> dict[str, Any]:
         "contractFindings": {
             "payloadMismatches": payload_mismatches,
             "returnMismatches": return_mismatches,
+            "listenerCleanupFindings": listener_cleanup_findings,
         },
         "unverified": sorted(unverified),
         "limitations": [
@@ -843,6 +856,17 @@ def render_ts(report: dict[str, Any]) -> str:
             "export type NativeEventName = "
             + (" | ".join(json.dumps(x["name"]) for x in report["events"]) if report["events"] else "never")
             + ";",
+            "export interface NativeEventContracts {",
+        ]
+    )
+    for event in report["events"]:
+        rust_types = event["rustPayloadTypes"]
+        payload = rust_types[0] if len(rust_types) == 1 and rust_types[0] in {"string", "number", "boolean", "null", "JsonValue"} else "unknown"
+        lines.append("  " + json.dumps(event["name"]) + ": { payload: " + payload + "; status: " + json.dumps(event["payloadStatus"]) + " };")
+    lines.extend(
+        [
+            "}",
+            'export type NativeEventPayload<K extends NativeEventName> = NativeEventContracts[K]["payload"];',
             "",
         ]
     )
@@ -873,12 +897,21 @@ def main() -> int:
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--emit-log", action="store_true")
     parser.add_argument("--diagnostic", action="store_true")
+    parser.add_argument("--command")
     args = parser.parse_args()
     if args.self_test:
         ok = self_test()
         print("RUST_CROSSLAYER_CONTRACT_SELF_TEST=" + ("PASS" if ok else "FAIL"))
         return 0 if ok else 1
     report = build_model()
+    if args.command:
+        command = next((item for item in report["commands"] if item["name"] == args.command), None)
+        impact = next((item for item in report["impactGraph"] if item["command"] == args.command), None)
+        if command is None:
+            print("NATIVE_IMPACT_RESULT=FAIL unknown command=" + args.command, file=sys.stderr)
+            return 1
+        print(json.dumps({"command": command, "impact": impact}, ensure_ascii=False, indent=2))
+        return 0
     ts = render_ts(report)
     json_text = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
     if args.generate:
@@ -890,7 +923,7 @@ def main() -> int:
         if not TS_OUT.exists() or TS_OUT.read_text(encoding="utf-8") != ts:
             report["errors"].append("src/generated/native-contracts.ts drift")
         if not JSON_OUT.exists() or JSON_OUT.read_text(encoding="utf-8") != json_text:
-            report["errors"].append("generated-crosslayer-contracts.json drift")
+            report["errors"].append("artifacts/native-contracts/generated-crosslayer-contracts.json drift")
     if args.emit_log:
         print("CROSSLAYER_SUMMARY=" + json.dumps(report["counts"], separators=(",", ":")))
         print("CROSSLAYER_ERRORS=" + json.dumps(report["errors"], separators=(",", ":")))
