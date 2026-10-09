@@ -642,6 +642,7 @@ def build_model() -> dict[str, Any]:
     registry_by_name = {x["name"]: x for x in registry}
     active = [c for c in commands if c.rust_name in handlers or c.name in handlers]
     invokes, listeners = parse_ts_observations(ts_files)
+    consumers = bridge_consumers(invokes, ts_files)
     events = parse_rust_events(rust_files)
     unverified: set[str] = set()
     contracts: list[dict[str, Any]] = []
@@ -660,6 +661,31 @@ def build_model() -> dict[str, Any]:
             unverified.add(command.name + ": " + item)
         observed = [x for x in invokes if x["name"] == command.name]
         reg = registry_by_name.get(command.name) or registry_by_name.get(command.rust_name)
+        expected_keys = set(args)
+        required_keys = {name for name, meta in args.items() if meta["required"]}
+        payload_findings: list[dict[str, Any]] = []
+        for call in observed:
+            keys = call.get("payloadKeys")
+            if keys is None:
+                continue
+            actual = set(keys)
+            missing_keys = sorted(required_keys - actual)
+            extra_keys = sorted(actual - expected_keys)
+            if missing_keys or extra_keys:
+                payload_findings.append({"source": call["source"], "missing": missing_keys, "extra": extra_keys})
+        return_hint = rust_return_hint(command.return_type)
+        return_findings: list[dict[str, str]] = []
+        if return_hint:
+            expected_return = normalize_ts_hint(return_hint)
+            for call in observed:
+                actual_return = normalize_ts_hint(call["tsReturn"])
+                if actual_return == "unknown":
+                    continue
+                simple = re.match(r"^(?:[A-Za-z_]\w*(?:\[\])?(?: \| null)?|string|number|boolean|null)$", actual_return)
+                if simple and actual_return != expected_return:
+                    return_findings.append({"source": call["source"], "expected": expected_return, "actual": actual_return})
+        wrappers = sorted({x["wrapper"] for x in observed if x.get("wrapper")})
+        consumer_files = sorted({p for wrapper in wrappers for p in consumers.get(wrapper, [])})
         contracts.append(
             {
                 "name": command.name,
@@ -667,6 +693,7 @@ def build_model() -> dict[str, Any]:
                 "source": command.source,
                 "args": args,
                 "result": result,
+                "returnHint": return_hint,
                 "registry": None
                 if not reg
                 else {
@@ -675,15 +702,19 @@ def build_model() -> dict[str, Any]:
                     "permission": reg.get("permission"),
                     "allowedCallers": reg.get("allowed_callers"),
                 },
+                "bridgeWrappers": wrappers,
                 "observedFrontendFiles": sorted({x["source"] for x in observed}),
+                "consumerFiles": consumer_files,
                 "observedCapabilities": sorted(
                     {
                         cap
-                        for cap in (capability_from_path(x["source"]) for x in observed)
+                        for cap in (capability_from_path(x) for x in consumer_files)
                         if cap is not None
                     }
                 ),
                 "observedTsReturnTypes": sorted({x["tsReturn"] for x in observed}),
+                "payloadFindings": payload_findings,
+                "returnFindings": return_findings,
             }
         )
     event_names = sorted({x["name"] for x in events} | {x["name"] for x in listeners})
