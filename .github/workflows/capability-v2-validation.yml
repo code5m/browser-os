@@ -71,7 +71,7 @@ jobs:
         if: needs.impact.outputs.mode != 'docs'
         run: npm ci
       - name: Capability, architecture and engineering governance checks
-        if: needs.impact.outputs.mode == 'full'
+        if: needs.impact.outputs.mode != 'docs'
         run: npm run check
       - name: Rust runtime semantic negative fixtures
         if: needs.impact.outputs.mode == 'full'
@@ -131,6 +131,8 @@ jobs:
           path: |
             /tmp/m0-6c-browseros/summary.md
             /tmp/m0-6c-browseros/driver-report.json
+            /tmp/m0-6c-browseros/mock-events.jsonl
+            /tmp/m0-6c-browseros/summary.json
             /tmp/m0-6c-browseros/app.log
           if-no-files-found: warn
           retention-days: 14
