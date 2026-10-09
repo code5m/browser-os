@@ -575,7 +575,7 @@ def self_test() -> bool:
     fixture = [
         (
             "fixture.rs",
-            '#[derive(Serialize, Deserialize)]\\n#[serde(rename_all = "camelCase")]\\npub struct UserInfo { pub user_id: String, pub enabled: bool }\\n#[tauri::command]\\npub fn load_user(user_id: String) -> Result<UserInfo, String> { todo!() }\\nfn e(app: tauri::AppHandle){ app.emit("ready", true).unwrap(); }',
+            '#[derive(Serialize, Deserialize)]\n#[serde(rename_all = "camelCase")]\npub struct UserInfo { pub user_id: String, pub enabled: bool }\n#[tauri::command]\npub fn load_user(user_id: String) -> Result<UserInfo, String> { todo!() }\nfn e(app: tauri::AppHandle){ app.emit("ready", true).unwrap(); }',
         )
     ]
     defs = parse_rust_types(fixture)
