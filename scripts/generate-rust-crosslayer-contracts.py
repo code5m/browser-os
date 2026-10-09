@@ -579,6 +579,59 @@ def capability_from_path(source: str) -> str | None:
     return m.group(1) if m else None
 
 
+def rust_return_hint(value: str) -> str | None:
+    value = normalize_rust_type(value)
+    base, args = unwrap_generic(value)
+    short = base.split("::")[-1]
+    if short == "Result" and args:
+        return rust_return_hint(args[0])
+    if short == "Option" and args:
+        inner = rust_return_hint(args[0])
+        return (inner + " | null") if inner else None
+    if short == "Vec" and args:
+        inner = rust_return_hint(args[0])
+        return (inner + "[]") if inner else None
+    if value == "()":
+        return "null"
+    if value in {"String", "str", "PathBuf", "Url", "url::Url"}:
+        return "string"
+    if value == "bool":
+        return "boolean"
+    if re.match(r"^(?:[ui](?:8|16|32|64|128|size)|f(?:32|64)|usize|isize)$", value):
+        return "number"
+    if re.match(r"^[A-Za-z_]\w*(?:::\w+)*$", value):
+        return value.split("::")[-1]
+    return None
+
+
+def normalize_ts_hint(value: str) -> str:
+    return re.sub(r"\s+", " ", value.strip()).replace("void", "null")
+
+
+def parse_appstate_matrix(text: str) -> list[dict[str, str]]:
+    start = text.find("### 2.5 AppState")
+    if start < 0:
+        return []
+    end = text.find("## 3.", start)
+    section = text[start : end if end >= 0 else None]
+    rows: list[dict[str, str]] = []
+    for line in section.splitlines():
+        if not line.startswith("| `"):
+            continue
+        cells = [x.strip().strip("`") for x in line.strip().strip("|").split("|")]
+        if len(cells) < 6 or cells[0] == "AppState 字段":
+            continue
+        rows.append({
+            "field": cells[0],
+            "rustType": cells[1],
+            "semantics": cells[2],
+            "owner": cells[3],
+            "classification": cells[4],
+            "sink": cells[5],
+        })
+    return rows
+
+
 def build_model() -> dict[str, Any]:
     rust_files = [(p.relative_to(ROOT).as_posix(), strip_rust_comments(read(p))) for p in walk_files(RUST_ROOT, (".rs",))]
     ts_files = [(p.relative_to(ROOT).as_posix(), read(p)) for p in walk_files(TS_ROOT, (".ts", ".vue"))]
