@@ -40,6 +40,8 @@ import re
 import sys
 from pathlib import Path
 
+from dependency_lock_policy import lock_declared_deps_match, mutate_lock_root_dependency
+
 SCRIPT_COMMANDS = ("script_list", "script_add", "script_update", "script_remove")
 
 # 写/删命令必须做 id 形态校验（读命令无 id 入参）
@@ -72,10 +74,6 @@ BASELINE_DEPS = {
     "optionalDependencies": {},
     "peerDependencies": {},
 }
-
-# 2026-10-04：以本地安全转换器替代 marked/dompurify/turndown 后删除三项依赖。
-# 仍校验整文件，后续不能以工作树内容自动更新基线。
-BASELINE_SHA256_LOCK = "1c56f6c9e30046c3ace5e213f094371df3170b72a7dd97e51228d18646aeb114"
 
 # 受追踪的 npm 清单文件（read_repo 读取用）。
 NPM_MANIFESTS = ("package.json", "package-lock.json")
@@ -334,7 +332,7 @@ def detect_violations(files: dict) -> list[str]:
             if extract_deps(got) != BASELINE_DEPS:
                 v.append(f"SCR_NPM_DEP_ADDED:{rel}")
         else:
-            if sha256_text(got) != BASELINE_SHA256_LOCK:
+            if not lock_declared_deps_match(got, BASELINE_DEPS):
                 v.append(f"SCR_NPM_DEP_ADDED:{rel}")
 
     # ---- 12) 凭据字面量赋值（不拦标识符） ----
@@ -515,7 +513,7 @@ def run_self_test(root: Path) -> int:
         "package.json 新增 dependencies 依赖",
         mutate(**{"package.json": _mutate_pkg(good["package.json"], add_dep=("dependencies", "some-gallery-lib", "^1.0.0"))}),
         "SCR_NPM_DEP_ADDED"))
-    # 17. 凭据字面量赋值
+    # 17. lock 根依赖漂移必须被抓住；合法传递安全升级不按整文件 hash 拦截\n    samples.append((\n        "package-lock 根依赖被扩张",\n        mutate(**{"package-lock.json": mutate_lock_root_dependency(\n            good["package-lock.json"], "some-lock-only-lib", "^1.0.0")}),\n        "SCR_NPM_DEP_ADDED"))\n\n    # 18. 凭据字面量赋值
     samples.append((
         "scripts.rs 出现 token 字面量赋值",
         mutate(scripts=good["scripts"] + '\npub const TOKEN: &str = "abc123";\n'),

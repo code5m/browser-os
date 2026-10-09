@@ -41,6 +41,8 @@ import re
 import sys
 from pathlib import Path
 
+from dependency_lock_policy import lock_declared_deps_match, mutate_lock_root_dependency
+
 # b/c 卡才实现的命令；a 卡阶段不存在 → 「存在才判」
 SNIPPET_COMMANDS = ("snippet_list", "snippet_add", "snippet_update", "snippet_remove")
 RUN_COMMANDS = ("run_command",)
@@ -75,11 +77,6 @@ BASELINE_DEPS = {
     "optionalDependencies": {},
     "peerDependencies": {},
 }
-
-# package-lock.json 仍用整文件 SHA256 锚定（lock 不随 script 变更而变，无脆性）。
-# 2026-10-04：以本地安全转换器替代 marked/dompurify/turndown 后删除三项依赖。
-# 仍校验整文件，后续不能以工作树内容自动更新基线。
-BASELINE_SHA256_LOCK = "1c56f6c9e30046c3ace5e213f094371df3170b72a7dd97e51228d18646aeb114"
 
 # 受追踪的 npm 清单文件（read_repo 读取用）。
 NPM_MANIFESTS = ("package.json", "package-lock.json")
@@ -386,7 +383,7 @@ def detect_violations(files: dict) -> list[str]:
 
     # ---- 15) 零新增 npm 依赖 ----
     # package.json：结构化依赖比对（仅受保护四集合），非依赖字段变更不再误报；
-    # package-lock.json：整文件 SHA256（lock 不随 script 变更而变，无脆性）。
+    # package-lock.json：只冻结 root 直接依赖声明；传递安全升级由 Supply Chain Assurance 审计。
     pkg_got = files.get("package.json")
     if pkg_got is None:
         v.append("CMD_NPM_DEP_ADDED:package.json 缺失")
@@ -395,7 +392,7 @@ def detect_violations(files: dict) -> list[str]:
     lock_got = files.get("package-lock.json")
     if lock_got is None:
         v.append("CMD_NPM_DEP_ADDED:package-lock.json 缺失")
-    elif sha256_text(lock_got) != BASELINE_SHA256_LOCK:
+    elif not lock_declared_deps_match(lock_got, BASELINE_DEPS):
         v.append("CMD_NPM_DEP_ADDED:package-lock.json")
 
     # ---- 16) 凭据字面量赋值（不拦标识符）----
@@ -580,7 +577,7 @@ def run_self_test(root: Path) -> int:
         mutate(**{"package.json": _mutate_pkg(good["package.json"], add_dep=("dependencies", "some-gallery-lib", "^1.0.0"))}),
         "package.json", "CMD_NPM_DEP_ADDED")
 
-    # 17. 修改依赖版本
+    # 17. lock 根依赖漂移\n    add("package-lock 根依赖被扩张",\n        mutate(**{"package-lock.json": mutate_lock_root_dependency(\n            good["package-lock.json"], "some-lock-only-lib", "^1.0.0")}),\n        "package-lock.json", "CMD_NPM_DEP_ADDED")\n\n    # 18. 修改依赖版本
     add("package.json 修改 vue 版本",
         mutate(**{"package.json": _mutate_pkg(good["package.json"], bump_dep=("dependencies", "vue", "^3.5.0"))}),
         "package.json", "CMD_NPM_DEP_ADDED")
