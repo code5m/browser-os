@@ -733,24 +733,37 @@ def build_model() -> dict[str, Any]:
                 "rustPayloadTypes": rust_types,
                 "tsPayloadTypes": ts_types,
                 "payloadStatus": "VERIFIED_PRIMITIVE" if verified else ("PARTIAL" if rust_types or ts_types else "UNVERIFIED"),
+                "cleanupStatuses": sorted({x.get("cleanupStatus", "UNVERIFIED") for x in listens}),
             }
         )
     errors: list[str] = []
+    payload_mismatches = [
+        {"command": item["name"], **finding}
+        for item in contracts for finding in item["payloadFindings"]
+    ]
+    return_mismatches = [
+        {"command": item["name"], **finding}
+        for item in contracts for finding in item["returnFindings"]
+    ]
     parsed_active = {c.rust_name for c in active} | {c.name for c in active}
     missing = sorted(handlers - parsed_active)
     if missing:
         errors.append("registered command signatures not parsed: " + ",".join(missing))
     impact = [
         {
-            "command": c["name"],
-            "owner": (c["registry"] or {}).get("owner"),
-            "resource": (c["registry"] or {}).get("resource"),
-            "permission": (c["registry"] or {}).get("permission"),
-            "frontendFiles": c["observedFrontendFiles"],
-            "frontendCapabilities": c["observedCapabilities"],
+            "command": item["name"],
+            "owner": (item["registry"] or {}).get("owner"),
+            "resource": (item["registry"] or {}).get("resource"),
+            "permission": (item["registry"] or {}).get("permission"),
+            "bridgeWrappers": item["bridgeWrappers"],
+            "frontendFiles": item["consumerFiles"],
+            "frontendCapabilities": item["observedCapabilities"],
         }
-        for c in contracts
+        for item in contracts
     ]
+    appstate = parse_appstate_matrix(
+        read(ROOT / "docs" / "architecture" / "native-physical-boundary" / "NATIVE-PHYSICAL-BOUNDARY-MATRIX.md")
+    )
     return {
         "schemaVersion": 1,
         "source": "code-derived",
@@ -770,10 +783,32 @@ def build_model() -> dict[str, Any]:
             "rustEventSites": len(events),
             "eventContracts": len(event_contracts),
             "unverifiedTypeEdges": len(unverified),
+            "payloadMismatches": len(payload_mismatches),
+            "returnMismatches": len(return_mismatches),
+            "appStateLifecycleFields": len(appstate),
         },
         "commands": contracts,
         "events": event_contracts,
         "impactGraph": impact,
+        "resourceLifecycle": {
+            "authority": "docs/architecture/native-physical-boundary/NATIVE-PHYSICAL-BOUNDARY-MATRIX.md",
+            "appStateFields": appstate,
+            "commandResources": sorted(
+                [
+                    {
+                        "command": item["name"],
+                        "owner": (item["registry"] or {}).get("owner"),
+                        "resource": (item["registry"] or {}).get("resource"),
+                    }
+                    for item in contracts
+                ],
+                key=lambda x: x["command"],
+            ),
+        },
+        "contractFindings": {
+            "payloadMismatches": payload_mismatches,
+            "returnMismatches": return_mismatches,
+        },
         "unverified": sorted(unverified),
         "limitations": [
             "Dynamic command/event names and opaque payload objects are not structurally proven.",
