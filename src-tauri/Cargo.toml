@@ -1,7 +1,7 @@
 [package]
 name = "mvp-browser-os"
 version = "0.1.0"
-description = "极智简单 · 浏览器OS融合 MVP"
+description = "BrowserOS desktop browser and local workbench"
 edition = "2021"
 
 # M5-1.a：纯逻辑库边界。阶段一采用「同 package 双 target」——lib 与 bin 共处本 package，
