@@ -293,14 +293,6 @@ button.ghost { background: #fff; }
 .path-bar { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
 .path-bar button { padding: 3px 8px; font-size: 12px; white-space: nowrap; }
 .path-input { flex: 1; min-width: 0; padding: 4px 8px; font-family: monospace; font-size: 11px; border: 1px solid #ccc; border-radius: 6px; }
-/* 浏览器页签栏 */
-.tabbar { display: flex; align-items: stretch; gap: 2px; padding: 4px 6px 0; background: #f3f4f8; border-bottom: 1px solid #e2e4ec; overflow-x: auto; }
-.tab { display: flex; align-items: center; gap: 4px; max-width: 180px; padding: 5px 8px; background: #e7e9f2; border: 1px solid #d9dce8; border-bottom: none; border-radius: 6px 6px 0 0; cursor: pointer; font-size: 12px; color: #555; }
-.tab.active { background: #fff; border-color: #c9cede; color: #222; font-weight: 600; }
-.tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tab-close { border: none; background: transparent; color: #999; padding: 0 2px; cursor: pointer; font-size: 11px; }
-.tab-close:hover { color: #c33; }
-.tab-new { border: none; background: transparent; color: #2b6; cursor: pointer; font-size: 16px; padding: 0 8px; }
 /* 系统应用图标网格 */
 .app-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 8px; flex: 1; overflow: auto; padding: 4px; align-content: start; grid-auto-rows: min-content; }
 .app-cell { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 4px; border-radius: 8px; cursor: pointer; text-align: center; }
