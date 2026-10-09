@@ -24,7 +24,7 @@ This directory is the engineering front door for BrowserOS: gates, CI workflows,
 | Check Rust native semantics | [NATIVE-SEMANTICS.md](./NATIVE-SEMANTICS.md) |
 | Check evidence lifecycle | [EVIDENCE-LIFECYCLE.md](./EVIDENCE-LIFECYCLE.md) |
 | Check supply chain | [SUPPLY-CHAIN.md](./SUPPLY-CHAIN.md) |
-| See small-reader health view | [ENGINEERING-HEALTH.md](./ENGINEERING-HEALTH.md) |
+| Open desktop engineering health center | [ENGINEERING-HEALTH.md](./ENGINEERING-HEALTH.md) |
 
 ## Mandatory machine gate
 

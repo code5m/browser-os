@@ -218,6 +218,16 @@
         "package-lock.json",
         "src-tauri/Cargo.lock"
       ]
+    },
+    {
+      "id": "engineering-health-ui",
+      "blocking": true,
+      "entrypoint": "npm run check:engineering-health",
+      "paths": [
+        "src/components/system/EngineeringHealthPanel.vue",
+        "src/components/system/engineeringHealthModel.mjs",
+        "scripts/check-engineering-health-ui.mjs"
+      ]
     }
   ],
   "standards": [
@@ -260,6 +270,10 @@
     {
       "id": "supply-chain",
       "path": "docs/engineering/SUPPLY-CHAIN.md"
+    },
+    {
+      "id": "engineering-health-ux",
+      "path": "docs/engineering/ENGINEERING-HEALTH.md"
     }
   ],
   "assets": [
@@ -370,6 +384,15 @@
         "logs/m0-baseline",
         "docs/engineering/ASSET-CATALOG.md"
       ]
+    },
+    {
+      "id": "health-diagnostics",
+      "owner": "engineering",
+      "status": "active_read_only",
+      "paths": [
+        "src/components/system/EngineeringHealthPanel.vue",
+        "docs/engineering/ENGINEERING-HEALTH.md"
+      ]
     }
   ],
   "requiredHumanDocs": [
@@ -383,7 +406,8 @@
     "docs/engineering/RELEASE-AND-RECOVERY.md",
     "docs/engineering/NATIVE-SEMANTICS.md",
     "docs/engineering/EVIDENCE-LIFECYCLE.md",
-    "docs/engineering/SUPPLY-CHAIN.md"
+    "docs/engineering/SUPPLY-CHAIN.md",
+    "docs/engineering/ENGINEERING-HEALTH.md"
   ],
   "nativeSemantics": {
     "status": "ACTIVE_BLOCKING",
