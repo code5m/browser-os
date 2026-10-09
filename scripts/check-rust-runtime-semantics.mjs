@@ -53,7 +53,13 @@ function ipcInventory(bridge, nativeInventory) {
  // checks only source-observed wrappers, not dynamically constructed commands.
  const invokes=literalCalls(bridge,/\binvoke(?:<[^(\n]*>)?\s*\(\s*"([^"]+)"/g).map(x=>x.name);
  const unique=[...new Set(invokes)].sort();
- return {observedLiteralInvocations:unique,occurrences:invokes.length,unregisteredLiteralInvocations:unique.filter(x=>!registered.has(x)),scope:"literal invokes in src/bridge.ts; generic TS types are NOT proof of Serde equivalence"};
+ const unresolved=unique.filter(x=>!registered.has(x));
+ const dormantFlag=/export\s+const\s+AGENT_SKILL_COMMANDS_AVAILABLE\s*=\s*false\b/.test(bridge);
+ const dormant=dormantFlag ? unresolved.filter(x=>/^(agent_|skill_|confirm_agent_|confirm_skill_)/.test(x)) : [];
+ const unregistered=unresolved.filter(x=>!dormant.includes(x));
+ return {observedLiteralInvocations:unique,occurrences:invokes.length,
+   intentionallyDisabled: dormant,unregisteredLiteralInvocations:unregistered,
+   scope:"literal invokes in src/bridge.ts; disabled Agent/Skill command family classified only if capability feature flag is false; generic TS types are NOT proof of Serde equivalence"};
 }
 function selfTest() {
  const sample=eventInventory([["test.rs",'app.emit("ready",123); app.emit_to("window","done",())']], 'listen("ready",cb);listen("orphan",cb)');
@@ -61,7 +67,8 @@ function selfTest() {
  const native={registered:["hello"]};
  const good=ipcInventory('invoke<string>("hello")',native);
  const bad=ipcInventory('invoke<number>("unknown")',native);
- return good.unregisteredLiteralInvocations.length===0&&bad.unregisteredLiteralInvocations[0]==="unknown";
+ const disabled=ipcInventory('export const AGENT_SKILL_COMMANDS_AVAILABLE = false;invoke("agent_chat")',native);
+ return good.unregisteredLiteralInvocations.length===0&&bad.unregisteredLiteralInvocations[0]==="unknown"&&disabled.intentionallyDisabled[0]==="agent_chat"&&disabled.unregisteredLiteralInvocations.length===0;
 }
 if(process.argv.includes("--self-test")){
  const ok=selfTest();console.log("RUST_RUNTIME_SEMANTIC_SELF_TEST="+(ok?"PASS":"FAIL"));process.exit(ok?0:1);
