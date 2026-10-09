@@ -1,5 +1,6 @@
 import { ref, onMounted, onBeforeUnmount, nextTick, watch } from "vue";
 import { bridge } from "../bridge";
+import { normalizeHostRect } from "../utils/browserLayout";
 import { useBrowserStore } from "../capabilities/browser/public";
 import { useLayoutStore } from "../stores/useLayoutStore";
 import {
@@ -65,11 +66,21 @@ export function useBrowserHost() {
         }
         // 纯 CSS 像素坐标，绝不乘 devicePixelRatio（规则 3 锁定）
         const { x, y, width, height } = normalizeHostRect(r);
-        const key = tabPositionKey(browser.activeTabId, x, y, width, height);
+        const tabId = browser.activeTabId;
+        const key = tabPositionKey(tabId, x, y, width, height);
         if (!deduper.shouldSend(key)) return;
-        bridge
-          .tabPosition(browser.activeTabId, { x, y, width, height })
-          .catch(() => {});
+        bridge.tabPosition(tabId, { x, y, width, height }).catch((error) => {
+          // A failed native placement is NOT a successful sync. Reset the cache so
+          // the same rect can be retried after WebView creation/activation settles.
+          if (layout.mainView !== "browser" || browser.activeTabId !== tabId) return;
+          deduper.reset();
+          bridge.debugLog(`tabPosition failed for ${tabId}: ${String(error)}`);
+          if (retry < 3) {
+            window.setTimeout(() => schedulePosition(retry + 1), 180);
+          } else {
+            layout.showToast("当前页签定位失败，请切换页签重试");
+          }
+        });
       });
     });
   }
@@ -98,6 +109,11 @@ export function useBrowserHost() {
 
   onBeforeUnmount(() => {
     window.removeEventListener("resize", positionBrowserNow);
+    window.removeEventListener("tauri://window-resized", positionBrowserNow as any);
+    if (positionRaf !== null) {
+      cancelAnimationFrame(positionRaf);
+      positionRaf = null;
+    }
     if (ro) ro.disconnect();
   });
 
