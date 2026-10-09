@@ -49,6 +49,12 @@ jobs:
         run: npm run check
       - name: Rust runtime semantic negative fixtures
         run: node scripts/check-rust-runtime-semantics.mjs --self-test
+      - name: Rust cross-layer contract fixtures and blocking gate
+        run: |
+          python3 scripts/generate-rust-crosslayer-contracts.py --self-test
+          npm run check:rust-contracts
+          npm run --silent analyze:native-impact -- --command db_query > /tmp/native-impact-db-query.json
+          python3 -m json.tool /tmp/native-impact-db-query.json >/dev/null
       - name: Native semantic and evidence fixture tests
         run: |
           node scripts/check-native-semantic-closure.mjs --self-test
