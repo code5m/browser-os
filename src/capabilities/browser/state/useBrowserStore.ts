@@ -66,11 +66,9 @@ export const useBrowserStore = defineStore("browser", () => {
     tabs.push(t);
     activeTabId.value = t.id;
     url.value = t.url;
-    // 黑闪修复：新 webview 创建后后端默认落在初始 bounds（深色背景），在 relocate
-    // 下发正确 rect 前的若干帧会闪现一帧黑块。此处先把新 webview 移到离屏
-    // （保持非零尺寸，仅移 x 出屏幕，避免 1x1 触发的 WebKit reflow deadlock），
-    // 等 schedulePosition 用真实 host rect 把它定位回屏幕内时再显示，消除黑闪。
-    bridge.tabPosition(t.id, { x: -30000, y: 0, width: 100, height: 100 }).catch(() => {});
+    // Native create_tab already starts hidden. Do not race an extra offscreen
+    // tabPosition against the first real viewport position: when it arrives last,
+    // the active tab stays offscreen (blank browser area).
     await nextTick();
     relocate();
     syncFreeze();
@@ -213,6 +211,23 @@ export const useBrowserStore = defineStore("browser", () => {
   function toggleAiNav() {
     aiNavOpen.value = !aiNavOpen.value;
   }
+  // Omnibox navigation is intentionally different from explicitly opening a
+  // NEW tab (tabNew/openBrowser). A current tab must retain its ID and WebView.
+  async function navigateCurrent() {
+    const target = url.value.trim() || "https://www.baidu.com";
+    recordRecentUrl(target);
+    layout.setView("browser");
+    const current = tabs.find((t) => t.id === activeTabId.value);
+    if (!current) {
+      await tabNew(target);
+      return;
+    }
+    await bridge.tabOpen(current.id, target);
+    current.url = target;
+    await nextTick();
+    relocate();
+  }
+
   async function openBrowser() {
     const target = url.value.trim() || "https://www.baidu.com";
     recordRecentUrl(target);
@@ -329,6 +344,7 @@ export const useBrowserStore = defineStore("browser", () => {
     gotoAI,
     toggleAiNav,
     openBrowser,
+    navigateCurrent,
     bindPositionScheduler,
     relocate,
   };
