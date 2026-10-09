@@ -42,3 +42,6 @@ __pycache__/
 
 # vite 构建临时文件
 vite.config.ts.timestamp-*
+
+# Rust -> TypeScript code-derived contract output (regenerated before dev/build/check)
+/src/generated/native-contracts.ts
