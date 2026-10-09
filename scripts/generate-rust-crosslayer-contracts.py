@@ -54,6 +54,60 @@ def read(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def strip_rust_comments(text: str) -> str:
+    """Strip Rust line/block comments while preserving strings and line count."""
+    out: list[str] = []
+    i = 0
+    block_depth = 0
+    in_string = False
+    escape = False
+    while i < len(text):
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+        if block_depth:
+            if ch == "/" and nxt == "*":
+                block_depth += 1
+                out.extend((" ", " "))
+                i += 2
+                continue
+            if ch == "*" and nxt == "/":
+                block_depth -= 1
+                out.extend((" ", " "))
+                i += 2
+                continue
+            out.append("\n" if ch == "\n" else " ")
+            i += 1
+            continue
+        if in_string:
+            out.append(ch)
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "/" and nxt == "/":
+            while i < len(text) and text[i] != "\n":
+                out.append(" ")
+                i += 1
+            continue
+        if ch == "/" and nxt == "*":
+            block_depth = 1
+            out.extend((" ", " "))
+            i += 2
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def walk_files(root: pathlib.Path, suffixes: tuple[str, ...]) -> list[pathlib.Path]:
     return sorted(p for p in root.rglob("*") if p.is_file() and p.suffix in suffixes)
 
@@ -430,11 +484,11 @@ def capability_from_path(source: str) -> str | None:
 
 
 def build_model() -> dict[str, Any]:
-    rust_files = [(p.relative_to(ROOT).as_posix(), read(p)) for p in walk_files(RUST_ROOT, (".rs",))]
+    rust_files = [(p.relative_to(ROOT).as_posix(), strip_rust_comments(read(p))) for p in walk_files(RUST_ROOT, (".rs",))]
     ts_files = [(p.relative_to(ROOT).as_posix(), read(p)) for p in walk_files(TS_ROOT, (".ts", ".vue"))]
     defs = parse_rust_types(rust_files)
     commands = parse_commands(rust_files)
-    handlers = parse_generate_handlers(read(RUST_ROOT / "main.rs"))
+    handlers = parse_generate_handlers(strip_rust_comments(read(RUST_ROOT / "main.rs")))
     registry = parse_registry(read(REGISTRY))
     registry_by_name = {x["name"]: x for x in registry}
     active = [c for c in commands if c.rust_name in handlers or c.name in handlers]
