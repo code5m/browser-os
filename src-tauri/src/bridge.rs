@@ -2328,6 +2328,8 @@ const MEM_RESERVE_MB: u64 = 700;
 /// 宫格下限：用户明确要求"最低保持 4 宫格"（2 格太少不可用）。
 /// 预算不足 4 格时仍强制 4 格并警告（用户接受卡顿风险）。
 const MIN_GRID: usize = 4;
+/// Keep enough memory for Browser, file manager and desktop shell.
+const CORE_MEMORY_RESERVE_MB: u64 = 1800;
 
 /// 读取 /proc/meminfo 的 MemAvailable（MB）。
 fn mem_available_mb() -> Option<u64> {
@@ -2354,8 +2356,14 @@ pub fn create_grid(app: AppHandle, n: usize, urls: Vec<String>) -> Result<usize,
     // 用户明确要求"最低保持 4 宫格"；预算 <4 时强制 4 格，风险由警告提示）
     let n = match mem_available_mb() {
         Some(avail) => {
-            let affordable = (avail.saturating_sub(MEM_RESERVE_MB) / GRID_MEM_MB) as usize;
-            let budgeted = affordable.clamp(MIN_GRID, MAX_GRID).min(n);
+            let affordable = (avail.saturating_sub(CORE_MEMORY_RESERVE_MB) / GRID_MEM_MB) as usize;
+            if affordable < MIN_GRID {
+                return Err(format!(
+                    "GRID_MEMORY_GUARD: 可用内存 {}MB，至少需要 {}MB 才能安全启动 {} 宫格并保护浏览器与文件管理器",
+                    avail, CORE_MEMORY_RESERVE_MB + MIN_GRID as u64 * GRID_MEM_MB, MIN_GRID
+                ));
+            }
+            let budgeted = affordable.min(MAX_GRID).min(n);
             if budgeted < n {
                 eprintln!(
                     "[create_grid] 内存预算守卫: 可用 {}MB，请求 {} 格 → 降级 {} 格",
