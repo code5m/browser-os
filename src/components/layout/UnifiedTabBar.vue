@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../capabilities/browser/public";
+import { bridge } from "../../bridge";
 import { ref, computed } from "vue";
 import { useFileStore } from "../../capabilities/workspace/public";
 import { useAppsStore } from "../../capabilities/apps/public";
@@ -156,7 +157,7 @@ async function activateWeb(id: string) {
 }
 
 function isActiveWeb(id: string) {
-  return layout.isBrowserView() && browser.activeTabId === id;
+  return layout.mainView === "browser" && browser.activeTabId === id;
 }
 
 function isActiveMod(id: string) {
@@ -168,8 +169,9 @@ function activateMod(t: { id: string; view: string; path?: string }) {
   layout.activateModTab(t.id);
   if (t.view === "apps") appsStore.loadApps();
   if (t.path) fs.enterDir(t.path);
-  // 宫格页签被关闭后重新激活时，必须重建宫格 webview 内容
-  if (t.view === "grid") { if (browser.gridOpen) browser.layoutGrid(); else browser.openGrid(); }
+  // Grid owns its lifecycle. Switching mainView to "grid" is sufficient:
+  // useGridStore observes this intent and reuses/repositions the existing cells.
+  // Browser store intentionally exposes no Grid lifecycle methods.
 }
 </script>
 
