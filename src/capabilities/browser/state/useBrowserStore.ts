@@ -61,7 +61,7 @@ export const useBrowserStore = defineStore("browser", () => {
     }
     const u = target === undefined ? "about:blank" : target.trim() || "about:blank";
     // 网页内 target=_blank / window.open 触发的新页签：若当前不在浏览器视图则切过去
-    if (!layout.isBrowserView()) layout.setView("browser");
+    if (layout.mainView !== "browser") layout.setView("browser");
     const t = await bridge.tabNew(u);
     tabs.push(t);
     activeTabId.value = t.id;
