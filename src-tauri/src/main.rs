@@ -792,6 +792,9 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                     position_grid(0, 40.0, 110.0, 620.0, 450.0)?;
                     sleep_ms(1200);
                     eval_grid("1", 0, "single_broadcast")?;
+                    // eval schedules an async page fetch; let its evidence reach the local mock
+                    // before scenario 2 navigates this grid away (same rule as scenario 2).
+                    sleep_ms(600);
                     Ok("single grid command path exercised with local AI mock".to_string())
                 },
             ),
