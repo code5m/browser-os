@@ -428,6 +428,57 @@ def parse_registry(text: str) -> list[dict[str, str]]:
     return out
 
 
+def find_matching_ts(text: str, start: int, opening: str = "(", closing: str = ")") -> int:
+    depth = 0
+    quote: str | None = None
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if quote:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"', "`"):
+            quote = ch
+        elif ch == opening:
+            depth += 1
+        elif ch == closing:
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def object_literal_keys(value: str) -> list[str] | None:
+    value = value.strip()
+    if not value:
+        return []
+    if not (value.startswith("{") and value.endswith("}")) or "..." in value:
+        return None
+    keys: list[str] = []
+    for part in split_top_level(value[1:-1]):
+        part = part.strip()
+        if not part:
+            continue
+        match = re.match(r"(?:[\"']([^\"']+)[\"']|([A-Za-z_$]\w*))\s*(?::|$)", part)
+        if not match:
+            return None
+        keys.append(match.group(1) or match.group(2))
+    return keys
+
+
+def bridge_wrapper_name(content: str, offset: int) -> str | None:
+    prefix = content[max(0, offset - 1400) : offset]
+    matches = list(re.finditer(r"(?m)^\s{2}([A-Za-z_$]\w*)\s*:\s*", prefix))
+    return matches[-1].group(1) if matches else None
+
+
 def parse_ts_observations(files: list[tuple[str, str]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     invokes: list[dict[str, Any]] = []
     listeners: list[dict[str, Any]] = []
@@ -435,11 +486,45 @@ def parse_ts_observations(files: list[tuple[str, str]]) -> tuple[list[dict[str, 
     listen_re = re.compile(r"\blisten(?:<([^>\n]+)>)?\s*\(\s*[\"']([^\"']+)[\"']")
     for source, content in files:
         for m in invoke_re.finditer(content):
-            invokes.append({"name": m.group(2), "source": source, "tsReturn": (m.group(1) or "unknown").strip()})
+            open_pos = content.rfind("(", m.start(), m.end())
+            close_pos = find_matching_ts(content, open_pos) if open_pos >= 0 else -1
+            args = split_top_level(content[open_pos + 1 : close_pos]) if close_pos > open_pos else []
+            payload = args[1].strip() if len(args) > 1 else ""
+            keys = object_literal_keys(payload)
+            invokes.append(
+                {
+                    "name": m.group(2),
+                    "source": source,
+                    "wrapper": bridge_wrapper_name(content, m.start()) if source == "src/bridge.ts" else None,
+                    "tsReturn": (m.group(1) or "unknown").strip(),
+                    "payloadKind": "none" if not payload else ("object" if keys is not None else "opaque"),
+                    "payloadKeys": keys,
+                }
+            )
         for m in listen_re.finditer(content):
-            listeners.append({"name": m.group(2), "source": source, "tsType": (m.group(1) or "unknown").strip()})
+            prefix = content[max(0, m.start() - 500) : m.start()]
+            cleanup = "RETURNED_TO_CALLER" if source == "src/bridge.ts" and "=>" in prefix else "UNVERIFIED"
+            listeners.append(
+                {
+                    "name": m.group(2),
+                    "source": source,
+                    "tsType": (m.group(1) or "unknown").strip(),
+                    "cleanupStatus": cleanup,
+                }
+            )
     return invokes, listeners
 
+
+def bridge_consumers(invokes: list[dict[str, Any]], files: list[tuple[str, str]]) -> dict[str, list[str]]:
+    wrappers = sorted({x["wrapper"] for x in invokes if x.get("wrapper")})
+    result: dict[str, list[str]] = {}
+    for wrapper in wrappers:
+        pattern = re.compile(r"\bbridge\." + re.escape(wrapper) + r"\b")
+        result[wrapper] = sorted(
+            source for source, content in files
+            if source != "src/bridge.ts" and pattern.search(content)
+        )
+    return result
 
 def classify_payload(expr: str) -> str:
     value = expr.strip()
