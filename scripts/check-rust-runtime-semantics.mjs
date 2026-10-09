@@ -29,7 +29,10 @@ function literalCalls(code, regexp) {return [...code.matchAll(regexp)].map(x=>({
 function eventInventory(rust, bridge) {
   const emitters=[];
   for(const [source,content] of rust) {
-    for(const m of literalCalls(content,/\bemit(?:_to|_filter)?\s*\(\s*"([^"]+)"/g)) {
+    for(const m of [
+       ...literalCalls(content,/\bemit\s*\(\s*"([^"]+)"/g),
+       ...literalCalls(content,/\bemit_to\s*\(\s*[^,]+,\s*"([^"]+)"/g),
+     ]) {
       emitters.push({name:m.name,source});
     }
   }
