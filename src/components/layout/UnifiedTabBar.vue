@@ -156,7 +156,7 @@ async function activateWeb(id: string) {
 }
 
 function isActiveWeb(id: string) {
-  return layout.isBrowserView() && browser.activeTabId === id;
+  return layout.mainView === "browser" && browser.activeTabId === id;
 }
 
 function isActiveMod(id: string) {
@@ -168,8 +168,9 @@ function activateMod(t: { id: string; view: string; path?: string }) {
   layout.activateModTab(t.id);
   if (t.view === "apps") appsStore.loadApps();
   if (t.path) fs.enterDir(t.path);
-  // 宫格页签被关闭后重新激活时，必须重建宫格 webview 内容
-  if (t.view === "grid") { if (browser.gridOpen) browser.layoutGrid(); else browser.openGrid(); }
+  // Grid owns its lifecycle. Switching mainView to "grid" is sufficient:
+  // useGridStore observes this intent and reuses/repositions the existing cells.
+  // Browser store intentionally exposes no Grid lifecycle methods.
 }
 </script>
 
@@ -266,6 +267,7 @@ function activateMod(t: { id: string; view: string; path?: string }) {
 }
 .tab.active {
   background: #fff;
+  border-color: #c9cede;
   color: #2b6cb0;
   font-weight: 600;
 }

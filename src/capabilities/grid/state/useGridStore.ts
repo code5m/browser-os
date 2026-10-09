@@ -97,7 +97,15 @@ export const useGridStore = defineStore("grid", () => {
     if (n <= 10) return 5;
     return 6;
   }
+  // The grid-view and toolbar watchers may both request creation in the same tick.
+  // A single in-flight lock prevents the second request from closing/restarting
+  // the first set of WebKit child processes halfway through startup.
+  let gridBuilding = false;
   async function buildGrid() {
+    if (gridBuilding) {
+      bridge.debugLog("buildGrid skipped: another grid creation is in flight");
+      return;
+    }
     // ===== H-G RELEASE BLOCKER 修复：capability-owned 重资源准入闸 =====
     // Grid 资源（宫格子进程 + 原生 WebView）是 Grid capability-owned 重资源，
     // 只能由 Grid Capability 受控的生命周期路径创建。
@@ -114,6 +122,8 @@ export const useGridStore = defineStore("grid", () => {
       );
       return;
     }
+    gridBuilding = true;
+    try {
     const n = gridCount.value;
     gridSession.value += 1;
     bridge.debugLog(`buildGrid start n=${n} mainView=${layout.mainView}`);
@@ -156,6 +166,13 @@ export const useGridStore = defineStore("grid", () => {
       );
     } else {
       layout.showToast(`已打开 ${created} 宫格对比`);
+    }
+    } catch (error) {
+      gridOpen.value = false;
+      bridge.debugLog(`buildGrid failed: ${String(error)}`);
+      layout.showToast("宫格启动失败，已停止继续创建子窗口");
+    } finally {
+      gridBuilding = false;
     }
   }
   function layoutGrid() {
