@@ -14,7 +14,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  impact:
+    runs-on: ubuntu-24.04
+    outputs:
+      mode: ${{ steps.detect.outputs.mode }}
+      supply_node: ${{ steps.detect.outputs.supply_node }}
+      supply_rust: ${{ steps.detect.outputs.supply_rust }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: detect
+        name: Determine changed-file risk (fail closed)
+        env:
+          CI_COMPARE_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          CI_COMPARE_HEAD: ${{ github.sha }}
+          CI_FORCE_FULL: ${{ vars.CI_FORCE_FULL }}
+        run: |
+          python3 scripts/ci-impact.py --self-test
+          python3 scripts/ci-impact.py --gha
   validate:
+    needs: impact
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -25,56 +45,72 @@ jobs:
         with:
           fetch-depth: 0
       - name: Legacy UI safety checks
+        if: needs.impact.outputs.mode != 'docs'
         run: |
           python3 scripts/check-git-ui-policy.py --self-test
           python3 scripts/check-git-ui-policy.py
           python3 scripts/check-scheduler-ui-policy.py --self-test
           python3 scripts/check-scheduler-ui-policy.py
       - name: Install Linux build dependencies
+        if: needs.impact.outputs.mode == 'full'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb xauth dbus-x11
       - name: Setup Node
+        if: needs.impact.outputs.mode != 'docs'
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - name: Setup Rust
+        if: needs.impact.outputs.mode == 'full'
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
       - name: Install frontend dependencies
+        if: needs.impact.outputs.mode != 'docs'
         run: npm ci
       - name: Capability, architecture and engineering governance checks
+        if: needs.impact.outputs.mode == 'full'
         run: npm run check
       - name: Rust runtime semantic negative fixtures
+        if: needs.impact.outputs.mode == 'full'
         run: node scripts/check-rust-runtime-semantics.mjs --self-test
       - name: Rust cross-layer contract fixtures and blocking gate
+        if: needs.impact.outputs.mode == 'full'
         run: |
           python3 scripts/generate-rust-crosslayer-contracts.py --self-test
           npm run check:rust-contracts
           npm run --silent analyze:native-impact -- --command db_query > /tmp/native-impact-db-query.json
           python3 -m json.tool /tmp/native-impact-db-query.json >/dev/null
       - name: Native semantic and evidence fixture tests
+        if: needs.impact.outputs.mode == 'full'
         run: |
           node scripts/check-native-semantic-closure.mjs --self-test
           node scripts/check-evidence-lifecycle.mjs --self-test
           node scripts/generate-sbom.mjs --self-test
       - name: Runtime startup checks
+        if: needs.impact.outputs.mode == 'full'
         run: npm run check:runtime
       - name: Production build
+        if: needs.impact.outputs.mode != 'docs'
         run: npm run build
       - name: Rust format
+        if: needs.impact.outputs.mode == 'full'
         run: |
           cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
           cargo fmt --manifest-path tauri-browser-tabs/Cargo.toml --all --check
       - name: Rust check
+        if: needs.impact.outputs.mode == 'full'
         run: cargo check --manifest-path src-tauri/Cargo.toml --locked
       - name: Rust tests
+        if: needs.impact.outputs.mode == 'full'
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked
       - name: Packaged GUI cold-start acceptance
+        if: needs.impact.outputs.mode == 'full'
         run: dbus-run-session -- xvfb-run -a bash scripts/verify-installed-client.sh --build
       - name: Full Tauri GUI regression
+        if: needs.impact.outputs.mode == 'full'
         shell: bash
         run: |
           set +e
@@ -88,7 +124,7 @@ jobs:
           tail -n 120 /tmp/m0-6c-browseros/app.log 2>/dev/null || true
           exit "$status"
       - name: Upload GUI regression evidence
-        if: always()
+        if: always() && needs.impact.outputs.mode == 'full'
         uses: actions/upload-artifact@v4
         with:
           name: browseros-gui-evidence-${{ github.run_id }}
@@ -99,8 +135,10 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - name: Branch diff whitespace check
+        if: needs.impact.outputs.mode == 'full'
         run: git diff --check origin/master...HEAD -- . ':(exclude)logs/m0-baseline/**'
       - name: Full pre-merge gate
+        if: needs.impact.outputs.mode == 'full'
         env:
           M0_BASE_REF: origin/master
         run: bash scripts/pre-merge.sh
