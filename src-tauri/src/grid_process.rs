@@ -73,9 +73,9 @@ struct SavedChildState {
 
 /// 单个宫格子进程句柄。
 pub struct GridChildHandle {
-    pub index: u32,
+    // index is the key in GridProcessManager::children;
+    // communication state is retained in GridProcessManager::listeners.
     pub child: Child,
-    pub comms: Arc<ChildComms>,
     /// 最近一次导航 url（崩溃重启重放用）
     pub last_url: Option<String>,
     /// 最近一次定位（CSS 坐标，相对主窗内容区；崩溃重启/主窗移动重放用）
@@ -100,10 +100,6 @@ pub struct GridProcessManager {
 }
 
 impl GridProcessManager {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// 主进程 setup 时注入 AppHandle（事件转发/重放/定位换算用）。
     pub fn set_app(&self, app: AppHandle) {
         *self.app.lock().unwrap() = Some(app);
@@ -240,7 +236,7 @@ impl GridProcessManager {
     /// spawn 并可携带崩溃前保存的状态（崩溃重启时保留 last_url/last_rect，
     /// 否则 replay 读不到历史 url 会跳过重放）。
     fn spawn_with_state(&self, index: u32, saved: Option<SavedChildState>) -> Result<(), String> {
-        let comms = self.ensure_listener(index)?;
+        self.ensure_listener(index)?;
         let exe = std::env::current_exe().map_err(|e| format!("获取当前可执行文件失败: {e}"))?;
         let child = Command::new(exe)
             .arg("--grid-child")
@@ -261,9 +257,7 @@ impl GridProcessManager {
         self.children.lock().unwrap().insert(
             index,
             GridChildHandle {
-                index,
                 child,
-                comms,
                 last_url: saved.last_url,
                 last_rect: saved.last_rect,
                 hidden: saved.hidden,

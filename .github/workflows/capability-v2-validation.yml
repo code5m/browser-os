@@ -106,6 +106,19 @@ jobs:
       - name: Rust tests
         if: needs.impact.outputs.mode == 'full'
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - name: Module and installer footprint evidence
+        if: needs.impact.outputs.mode == 'full'
+        run: |
+          python3 scripts/measure-capability-footprint.py --self-test
+          python3 scripts/measure-capability-footprint.py --out /tmp/browseros-footprint.json
+      - name: Upload footprint evidence
+        if: always() && needs.impact.outputs.mode == 'full'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-footprint-${{ github.run_id }}
+          path: /tmp/browseros-footprint.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Packaged GUI cold-start acceptance
         if: needs.impact.outputs.mode == 'full'
         run: dbus-run-session -- xvfb-run -a bash scripts/verify-installed-client.sh --build
