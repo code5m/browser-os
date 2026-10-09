@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../capabilities/browser/public";
-import { bridge } from "../../bridge";
 import { ref, computed } from "vue";
 import { useFileStore } from "../../capabilities/workspace/public";
 import { useAppsStore } from "../../capabilities/apps/public";
@@ -268,6 +267,7 @@ function activateMod(t: { id: string; view: string; path?: string }) {
 }
 .tab.active {
   background: #fff;
+  border-color: #c9cede;
   color: #2b6cb0;
   font-weight: 600;
 }
