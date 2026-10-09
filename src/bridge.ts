@@ -507,7 +507,7 @@ export const bridge = {
 
   // 跨目录移动文件/目录（文件树拖拽移动）
   movePath: (src: string, dstDir: string) =>
-    invoke("move_path", { src, dst_dir: dstDir }),
+    invoke("move_path", { src, dstDir }),
 
   // 用系统默认浏览器打开成果来源 URL
   openSource: (url: string) => invoke("open_source", { url }),
@@ -755,7 +755,7 @@ export const bridge = {
   pluginInstall: (p: { manifest: PluginManifest; resourcePath?: string | null }) =>
     invoke<PluginSummary>("plugin_install", {
       manifest: p.manifest,
-      resource_path: p.resourcePath ?? null,
+      resourcePath: p.resourcePath ?? null,
     }),
   pluginEnable: (id: string) => invoke<PluginSummary>("plugin_enable", { id }),
   pluginDisable: (id: string) => invoke<PluginSummary>("plugin_disable", { id }),
@@ -764,11 +764,11 @@ export const bridge = {
   pluginGet: (id: string) => invoke<PluginDetail>("plugin_get", { id }),
   pluginKeysAdd: (p: { keyId: string; pubkey: string; note?: string | null }) =>
     invoke<TrustedKeyRecord[]>("plugin_keys_add", {
-      key_id: p.keyId,
+      keyId: p.keyId,
       pubkey: p.pubkey,
       note: p.note ?? null,
     }),
   pluginKeysList: () => invoke<TrustedKeyRecord[]>("plugin_keys_list"),
   pluginKeysRemove: (keyId: string) =>
-    invoke<TrustedKeyRecord[]>("plugin_keys_remove", { key_id: keyId }),
+    invoke<TrustedKeyRecord[]>("plugin_keys_remove", { keyId }),
 };
