@@ -895,6 +895,17 @@ def main() -> int:
         print("CROSSLAYER_SUMMARY=" + json.dumps(report["counts"], separators=(",", ":")))
         print("CROSSLAYER_ERRORS=" + json.dumps(report["errors"], separators=(",", ":")))
         print("CROSSLAYER_UNVERIFIED_SAMPLE=" + json.dumps(report["unverified"][:50], separators=(",", ":")))
+        print("CROSSLAYER_PAYLOAD_FINDINGS=" + json.dumps(report["contractFindings"]["payloadMismatches"], separators=(",", ":")))
+        print("CROSSLAYER_RETURN_FINDINGS=" + json.dumps(report["contractFindings"]["returnMismatches"], separators=(",", ":")))
+        print("CROSSLAYER_EVENT_STATUS=" + json.dumps([
+            {"name": item["name"], "payloadStatus": item["payloadStatus"], "cleanupStatuses": item["cleanupStatuses"]}
+            for item in report["events"]
+        ], separators=(",", ":")))
+        print("CROSSLAYER_IMPACT_COVERAGE=" + json.dumps({
+            "withConsumers": sum(1 for item in report["impactGraph"] if item["frontendFiles"]),
+            "withCapabilities": sum(1 for item in report["impactGraph"] if item["frontendCapabilities"]),
+            "total": len(report["impactGraph"]),
+        }, separators=(",", ":")))
         print("CROSSLAYER_TS_B64=" + base64.b64encode(ts.encode()).decode())
         print("CROSSLAYER_JSON_B64=" + base64.b64encode(json_text.encode()).decode())
     print(
