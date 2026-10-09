@@ -40,7 +40,7 @@ function eventInventory(rust, bridge) {
   const rustNames=new Set(emitters.map(x=>x.name));
   const listeners=[...new Set(tsListeners)].sort();
   const observed=[...rustNames].sort();
-  return {emitted:observed,listened: listeners, 
+  return {emitted:observed,listened: listeners,
     rustEmitCallsites:emitters.length,
     both:observed.filter(e=>listeners.includes(e)),
     notObservedInBridge:observed.filter(e=>!listeners.includes(e)),
