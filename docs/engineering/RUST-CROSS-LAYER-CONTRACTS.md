@@ -1,6 +1,6 @@
 # Rust Cross-Layer Contracts
 
-> Status: ACTIVE / BLOCKING for command coverage, invoke payload keys, and listener cleanup.  
+> Status: ACTIVE / BLOCKING for command coverage, invoke payload keys, and listener cleanup.
 > Rust source remains the authority. Generated TypeScript and JSON are derived outputs, not handwritten truth.
 
 ## Why
