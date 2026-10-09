@@ -1,7 +1,7 @@
 # BrowserOS Supply Chain — strict production advisory remediation
 
 The temporary baseline permit list has been removed from `.github/workflows/supply-chain-assurance.yml`.
-`npm audit --omit=dev --audit-level=moderate` is now blocking. Real GitHub Actions diagnostic showed all five previously baselined production issues had compatible fixes. The generated lockfile upgrades Vue/@vue packages to 3.5.43, nanoid to 3.3.20, PostCSS to 8.5.29 and source-map-js to 1.2.2, retaining the existing app-level semver constraints.
+`npm audit --omit=dev --audit-level=moderate` is now blocking. Real GitHub Actions diagnostic showed all five previously baselined production issues had compatible fixes. The generated lockfile upgrades Vue/@vue packages to 3.5.42, nanoid to 3.3.20, PostCSS to 8.5.29 and source-map-js to 1.2.2, retaining the existing app-level semver constraints. Vue 3.5.42 was selected after a CI probe proved both strict production audit PASS and build growth 25.12%, below the frozen 25.2% budget.
 
 The original advisory diagnoses covered:
 - GHSA-g2v6-rqmx-r4w6 — Vue server renderer

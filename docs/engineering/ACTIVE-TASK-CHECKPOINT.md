@@ -21,12 +21,14 @@ Status: ACTIVE
 - Engineering Governance / UI Safety / Hot-Plug / Supply Chain passed at 524c9e4e.
 - Full Validation passed npm checks, Rust fmt/check/tests, packaged GUI cold start, Full Tauri GUI regression and diff whitespace.
 
-## Current blockers at 524c9e4e
-- pre-merge build metrics: rounded total_bytes_pct=25.2 but actual value is just over the frozen 25.2% limit.
-- three historical domain checkers reject the legitimate package-lock security remediation because they byte-hash the whole lockfile:
-  - check-image-preview-policy.py
-  - check-script-domain-policy.py
-  - check-command-domain-policy.py
+## Current blockers after audited lock-policy repair
+- Historical domain checker false positives are fixed by protecting direct dependency declarations instead of byte-hashing the entire lockfile.
+- Remaining blocker is build metrics only.
+- CI probe of Vue 3.5.42 proved:
+  - strict production npm audit: 0 vulnerabilities
+  - build total_bytes_pct: 25.12
+  - frozen limit: 25.2
+  - therefore 3.5.42 is the minimal secure/version-compatible choice for final validation.
 
 ## Repair in progress
 - Replace lockfile byte hash protection with root direct-dependency consistency; package.json direct dependency declarations remain frozen.
@@ -39,3 +41,8 @@ Status: ACTIVE
 - master: all mandatory workflows PASS
 - stable v4 tag unchanged
 - checkpoint updated to FINAL/ARCHIVED with evidence links
+
+
+## Latest implementation note
+- Final lockfile now pins the Vue runtime/compiler family to 3.5.42 while package.json remains ^3.4.0.
+- Temporary CI probe removed before final validation.

@@ -26,18 +26,6 @@ jobs:
       - name: Strict production advisory scan
         run: |
           npm audit --omit=dev --audit-level=moderate
-      - name: Temporary Vue 3.5.42 security and bundle probe
-        run: |
-          cp package-lock.json /tmp/package-lock.before-probe.json
-          npm install vue@3.5.42 --package-lock-only --ignore-scripts
-          npm audit --omit=dev --audit-level=moderate
-          npm ci
-          npm run build
-          python3 scripts/measure-build-metrics.py --skip-build --compare logs/m0-build-metrics/build-metrics-052b18a.json || true
-          echo "VUE_3542_LOCK_DIFF_START"
-          git diff -- package-lock.json
-          echo "VUE_3542_LOCK_DIFF_END"
-          cp /tmp/package-lock.before-probe.json package-lock.json
       - name: CycloneDX Node/Rust lockfile inventories
         run: |
           node scripts/generate-sbom.mjs --self-test
