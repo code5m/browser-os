@@ -47,6 +47,8 @@ jobs:
         run: npm ci
       - name: Capability, architecture and engineering governance checks
         run: npm run check
+      - name: Rust runtime semantic negative fixtures
+        run: node scripts/check-rust-runtime-semantics.mjs --self-test
       - name: Native semantic and evidence fixture tests
         run: |
           node scripts/check-native-semantic-closure.mjs --self-test

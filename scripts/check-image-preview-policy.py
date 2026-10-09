@@ -8,7 +8,7 @@
   通道与边界
   - `assetProtocol.scope` 相对基线不得有任何变化（图片目录已在
     `$HOME/.local/share/**` 内，b 卡严禁扩 scope）
-  - 依赖零新增：`package.json` / `package-lock.json` 内容哈希不变
+  - 依赖零新增：package.json 直接依赖集合冻结；package-lock 根依赖必须与其一致，允许供应链门禁验证后的传递安全升级
   - 收集侧安全边界不动：`remote-collect.toml` / `injected/collect.js` 哈希不变
   - `save_image` 的来源校验不得被放宽
 
@@ -33,13 +33,13 @@ import re
 import sys
 from pathlib import Path
 
+from dependency_lock_policy import lock_declared_deps_match, mutate_lock_root_dependency
+
 # ---------------- 基线指纹（M2-2.a 冻结时刻，b 卡不得改动这些文件） ----------------
 # package.json 依赖集合采用「结构化比对」（见 BASELINE_DEPS / extract_deps），
 # 不再用整文件 SHA256，避免 scripts/description 等良性变更误报 IMG_PREV_NPM_DEP_ADDED。
 BASELINE_SHA256 = {
     # 2026-10-04：以本地安全转换器替代 marked/dompurify/turndown 后删除三项依赖。
-    # 仍校验整文件，后续不能以工作树内容自动更新基线。
-    "package-lock.json": "1c56f6c9e30046c3ace5e213f094371df3170b72a7dd97e51228d18646aeb114",
     "src-tauri/permissions/remote-collect.toml": (
         "cc35e0edc7933c2a43fd6e0c9271667db483aa5aa206d7e08d98a21b832f05da"
     ),
@@ -198,7 +198,7 @@ def detect_violations(files: dict[str, str]) -> list[str]:
             if extract_deps(got) != BASELINE_DEPS:
                 v.append(f"IMG_PREV_NPM_DEP_ADDED:{rel}")
         else:
-            if sha256_text(got) != BASELINE_SHA256[rel]:
+            if not lock_declared_deps_match(got, BASELINE_DEPS):
                 v.append(f"IMG_PREV_NPM_DEP_ADDED:{rel}")
 
     # ---- 3) 收集侧安全边界不得被本卡触碰 ----
@@ -367,9 +367,10 @@ def run_self_test(root: Path) -> int:
     samples.append(("package.json 新增 npm 依赖",
                     mutate(**{"package.json": json.dumps(pkg, indent=2) + "\n"}),
                     "IMG_PREV_NPM_DEP_ADDED"))
-    # 4. package-lock.json 变动
-    samples.append(("package-lock.json 被改动",
-                    mutate(**{"package-lock.json": good["package-lock.json"] + "\n"}),
+    # 4. package-lock 根依赖被偷偷扩张（传递安全升级本身允许）
+    samples.append(("package-lock.json 根依赖被扩张",
+                    mutate(**{"package-lock.json": mutate_lock_root_dependency(
+                        good["package-lock.json"], "some-lock-only-lib", "^1.0.0")}),
                     "IMG_PREV_NPM_DEP_ADDED"))
     # 5. remote-collect.toml 变动
     samples.append(("remote-collect.toml 被改动",

@@ -228,6 +228,17 @@
         "src/components/system/engineeringHealthModel.mjs",
         "scripts/check-engineering-health-ui.mjs"
       ]
+    },
+    {
+      "id": "rust-runtime-observable-semantics",
+      "blocking": true,
+      "entrypoint": "npm run check:rust-runtime-semantics",
+      "paths": [
+        "scripts/check-rust-runtime-semantics.mjs",
+        "src/bridge.ts",
+        "src-tauri/src/main.rs",
+        "docs/architecture/native-physical-boundary/NATIVE-PHYSICAL-BOUNDARY-MATRIX.md"
+      ]
     }
   ],
   "standards": [
@@ -415,7 +426,9 @@
     "expectedAppStateFields": 26,
     "authority": "docs/architecture/native-boundary/native-commands.yaml",
     "checker": "scripts/check-native-semantic-closure.mjs",
-    "linkedCrossLayerGate": "scripts/check-command-set-consistency.py"
+    "linkedCrossLayerGate": "scripts/check-command-set-consistency.py",
+    "observationChecker": "scripts/check-rust-runtime-semantics.mjs",
+    "typeEquivalence": "PARTIAL_OBSERVED_NOT_STRUCTURALLY_PROVEN"
   },
   "evidenceLifecycle": {
     "status": "ACTIVE_BLOCKING",
@@ -426,6 +439,7 @@
     "status": "ACTIVE_BLOCKING",
     "workflow": ".github/workflows/supply-chain-assurance.yml",
     "sbom": "CycloneDX 1.6 Node + Rust",
-    "releaseSigning": "BLOCKED_NO_RELEASE_SIGNING_IDENTITY"
+    "releaseSigning": "BLOCKED_NO_RELEASE_SIGNING_IDENTITY",
+    "nodeAdvisoryPolicy": "STRICT_MODERATE_NO_BASELINE"
   }
 }
