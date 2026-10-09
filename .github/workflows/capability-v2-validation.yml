@@ -49,6 +49,10 @@ jobs:
         run: npm run check
       - name: Rust runtime semantic negative fixtures
         run: node scripts/check-rust-runtime-semantics.mjs --self-test
+      - name: Rust cross-layer contract diagnostic
+        run: |
+          python3 scripts/generate-rust-crosslayer-contracts.py --self-test
+          python3 scripts/generate-rust-crosslayer-contracts.py --emit-log --diagnostic
       - name: Native semantic and evidence fixture tests
         run: |
           node scripts/check-native-semantic-closure.mjs --self-test
