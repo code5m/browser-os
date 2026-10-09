@@ -395,23 +395,32 @@ def classify_payload(expr: str) -> str:
 
 def parse_rust_events(files: list[tuple[str, str]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    patterns = [
-        ("emit", re.compile(r"\.emit\s*\(\s*[\"']([^\"']+)[\"']\s*,\s*([^;\n]+)")),
-        ("emit_to", re.compile(r"\.emit_to\s*\(\s*[^,]+,\s*[\"']([^\"']+)[\"']\s*,\s*([^;\n]+)")),
-    ]
+    call_re = re.compile(r"\.(emit|emit_to)\s*\(")
     for source, content in files:
-        for kind, pattern in patterns:
-            for m in pattern.finditer(content):
-                expr = m.group(2).strip()
-                out.append(
-                    {
-                        "name": m.group(1),
-                        "source": source,
-                        "kind": kind,
-                        "payloadExpr": expr[:160],
-                        "payloadType": classify_payload(expr),
-                    }
-                )
+        for match in call_re.finditer(content):
+            kind = match.group(1)
+            open_pos = match.end() - 1
+            close_pos = find_matching(content, open_pos, "(", ")")
+            if close_pos < 0:
+                continue
+            args = split_top_level(content[open_pos + 1 : close_pos])
+            name_index = 0 if kind == "emit" else 1
+            payload_index = name_index + 1
+            if len(args) <= payload_index:
+                continue
+            quoted = re.match(r"^[\"']([^\"']+)[\"']$", args[name_index].strip())
+            if not quoted:
+                continue
+            expr = args[payload_index].strip()
+            out.append(
+                {
+                    "name": quoted.group(1),
+                    "source": source,
+                    "kind": kind,
+                    "payloadExpr": expr[:160],
+                    "payloadType": classify_payload(expr),
+                }
+            )
     return out
 
 
