@@ -73,6 +73,21 @@ jobs:
           );
           NODE
           echo "npm_audit_exit_status=${audit_status}"
+      - name: Production advisory remediation discovery (temporary diagnostic)
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const report=JSON.parse(fs.readFileSync("artifacts/sbom/npm-audit-prod.json","utf8"));
+          const data=Object.entries(report.vulnerabilities??{}).map(([name,v])=>({
+            name,severity:v.severity,range:v.range,fixAvailable:v.fixAvailable,
+            via:(v.via??[]).map(x=>typeof x==="string"?x:({name:x.name,source:x.source,title:x.title,range:x.range,severity:x.severity,url:x.url})),
+          }));
+          console.log("PROD_AUDIT_DETAIL="+JSON.stringify(data));
+          NODE
+          npm audit fix --omit=dev --package-lock-only --ignore-scripts || true
+          echo "NPM_LOCK_DIAG_START"
+          git diff -- package-lock.json
+          echo "NPM_LOCK_DIAG_END"
       - name: CycloneDX Node/Rust lockfile inventories
         run: |
           node scripts/generate-sbom.mjs --self-test
