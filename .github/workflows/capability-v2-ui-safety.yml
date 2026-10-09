@@ -35,7 +35,7 @@ jobs:
           python3 scripts/ci-impact.py --gha
   ui-safety:
     needs: impact
-    if: needs.impact.outputs.mode == 'full'
+    if: needs.impact.outputs.mode != 'docs'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
