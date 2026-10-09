@@ -53,6 +53,8 @@ jobs:
         run: |
           python3 scripts/generate-rust-crosslayer-contracts.py --self-test
           npm run check:rust-contracts
+          npm run analyze:native-impact -- --command db_query > /tmp/native-impact-db-query.json
+          python3 -m json.tool /tmp/native-impact-db-query.json >/dev/null
       - name: Native semantic and evidence fixture tests
         run: |
           node scripts/check-native-semantic-closure.mjs --self-test
