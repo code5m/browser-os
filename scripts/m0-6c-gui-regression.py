@@ -134,7 +134,7 @@ class MockHandler(BaseHTTPRequestHandler):
         cookie: document.cookie || "",
         text: document.getElementById("stream").innerText
       }});
-      fetch("/event?" + params.toString(), {{ credentials: "include" }}).catch(() => {{}});
+      fetch("/event?" + params.toString(), {{ credentials: "include", keepalive: true }}).catch(() => {{}});
     }}
     let chunks = ["AI mock ready", "\\nstream chunk 1", "\\nstream chunk 2", "\\nDONE"];
     let i = 0;
