@@ -95,7 +95,7 @@ pub struct GridProcessManager {
     app: Mutex<Option<AppHandle>>,
     monitor_started: AtomicBool,
     /// Crash budget per grid cell; normal user-triggered shutdown is not counted.
-    crash_history: Mutex<HashMap<u32, VecDeque<std::time::Instant>>>, 
+    crash_history: Mutex<HashMap<u32, VecDeque<std::time::Instant>>>,
     /// 子进程窗口焦点状态（子进程经 UDS Event 上报）：主窗 blur 时据此区分
     /// "用户点了宫格"（不隐藏）与"切到其它应用"（隐藏防幽灵浮层）
     child_focused: Mutex<HashMap<u32, bool>>,
@@ -609,7 +609,10 @@ impl GridProcessManager {
                         let mut history = manager.crash_history.lock().unwrap();
                         let events = history.entry(index).or_default();
                         let now = std::time::Instant::now();
-                        while events.front().is_some_and(|t| now.duration_since(*t).as_secs() > 120) {
+                        while events
+                            .front()
+                            .is_some_and(|t| now.duration_since(*t).as_secs() > 120)
+                        {
                             events.pop_front();
                         }
                         events.push_back(now);
@@ -623,7 +626,14 @@ impl GridProcessManager {
                         "[grid-manager] grid-child-{} 异常退出 code={}，自动重启",
                         index, code
                     );
-                    std::thread::sleep(std::time::Duration::from_millis(350 * manager.crash_history.lock().unwrap().get(&index).map_or(1, |h| h.len()) as u64));
+                    std::thread::sleep(std::time::Duration::from_millis(
+                        350 * manager
+                            .crash_history
+                            .lock()
+                            .unwrap()
+                            .get(&index)
+                            .map_or(1, |h| h.len()) as u64,
+                    ));
                     if let Err(e) = manager.spawn_with_state(index, Some(saved)) {
                         eprintln!("[grid-manager] grid-child-{} 重启失败: {e}", index);
                         continue;
