@@ -45,13 +45,28 @@ function setGridCount(n: number) {
   if (grid.gridOpen) void grid.rebuildGrid();
 }
 async function resRefresh() { try { resStats.value = await bridge.resourceStats(); } catch {} }
+function stopResourcePolling() {
+  if (resTimer !== null) clearInterval(resTimer);
+  resTimer = null;
+}
 function toggleRes() {
   resOpen.value = !resOpen.value;
-  if (resOpen.value) { void resRefresh(); resTimer = window.setInterval(resRefresh, 2000); }
-  else if (resTimer) { clearInterval(resTimer); resTimer = null; }
+  stopResourcePolling();
+  if (resOpen.value && layout.mainView === "grid" && layout.navSection === "grid") {
+    void resRefresh();
+    resTimer = window.setInterval(resRefresh, 2000);
+  }
 }
+// A hidden toolbar must not keep polling the native process tree.
+watch(() => [layout.mainView, layout.navSection] as const, ([view, section]) => {
+  if (view !== "grid" || section !== "grid") stopResourcePolling();
+  else if (resOpen.value && resTimer === null) {
+    void resRefresh();
+    resTimer = window.setInterval(resRefresh, 2000);
+  }
+});
 function fmtMb(mb: number) { return mb >= 1024 ? (mb / 1024).toFixed(1) + "G" : Math.round(mb) + "M"; }
-onBeforeUnmount(() => { if (resTimer) clearInterval(resTimer); });
+onBeforeUnmount(stopResourcePolling);
 </script>
 <template>
   <div v-if="grid.gridOpen && layout.mainView === 'grid' && grid.gridMode === 'ai'" class="expand-row ai-send-row">
