@@ -12,7 +12,7 @@
 //!   主进程 app.emit（tab-navigated / new-tab-request / open-terminal 等）。
 //! - socket 路径带主进程 pid，避免跨次运行撞名。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::BufReader;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -94,6 +94,8 @@ pub struct GridProcessManager {
     listeners: Mutex<HashMap<u32, Arc<ChildComms>>>,
     app: Mutex<Option<AppHandle>>,
     monitor_started: AtomicBool,
+    /// Crash budget per grid cell; normal user-triggered shutdown is not counted.
+    crash_history: Mutex<HashMap<u32, VecDeque<std::time::Instant>>>,
     /// 子进程窗口焦点状态（子进程经 UDS Event 上报）：主窗 blur 时据此区分
     /// "用户点了宫格"（不隐藏）与"切到其它应用"（隐藏防幽灵浮层）
     child_focused: Mutex<HashMap<u32, bool>>,
@@ -595,10 +597,37 @@ impl GridProcessManager {
                     }
                 }
                 for (index, code, saved) in exited {
+                    // Circuit breaker: repeated WebKit child crashes must not starve
+                    // Browser/File Manager by infinitely respawning expensive processes.
+                    let should_restart = {
+                        let mut history = manager.crash_history.lock().unwrap();
+                        let events = history.entry(index).or_default();
+                        let now = std::time::Instant::now();
+                        while events
+                            .front()
+                            .is_some_and(|t| now.duration_since(*t).as_secs() > 120)
+                        {
+                            events.pop_front();
+                        }
+                        events.push_back(now);
+                        events.len() <= 3
+                    };
+                    if !should_restart {
+                        eprintln!("[grid-manager] grid-child-{} crashed repeatedly; circuit open (3 restarts / 120s), no auto-respawn", index);
+                        continue;
+                    }
                     eprintln!(
                         "[grid-manager] grid-child-{} 异常退出 code={}，自动重启",
                         index, code
                     );
+                    std::thread::sleep(std::time::Duration::from_millis(
+                        350 * manager
+                            .crash_history
+                            .lock()
+                            .unwrap()
+                            .get(&index)
+                            .map_or(1, |h| h.len()) as u64,
+                    ));
                     if let Err(e) = manager.spawn_with_state(index, Some(saved)) {
                         eprintln!("[grid-manager] grid-child-{} 重启失败: {e}", index);
                         continue;
@@ -681,6 +710,7 @@ impl GridProcessManager {
     /// 主动关闭单个宫格子进程（grid_close_one/close_grid）：先移出表（监控不重启），
     /// 再 kill。返回是否存在。
     pub fn kill_child(&self, index: u32) -> bool {
+        self.crash_history.lock().unwrap().remove(&index);
         let removed = self.children.lock().unwrap().remove(&index);
         if let Some(mut h) = removed {
             let _ = h.child.kill();
@@ -747,6 +777,7 @@ impl GridProcessManager {
 
     /// 关闭所有宫格子进程（主进程退出前/close_grid 调用）。
     pub fn shutdown_all(&self) {
+        self.crash_history.lock().unwrap().clear();
         let mut children = self.children.lock().unwrap();
         for (index, h) in children.iter_mut() {
             let _ = h.child.kill();
