@@ -256,12 +256,23 @@ def parse_rust_types(files: list[tuple[str, str]]) -> dict[str, RustTypeDef]:
                 else:
                     body = content[pos + 1 : end]
                     if kind == "struct":
-                        field_re = re.compile(
-                            r"((?:#\[[^\]]+\]\s*)*)(?:pub(?:\([^)]+\))?\s+)?([A-Za-z_]\w*)\s*:\s*([^,\n]+(?:<[^;\n]+>)?)\s*,?",
-                            re.MULTILINE,
-                        )
-                        for fm in field_re.finditer(body):
-                            fattrs, rust_name, rust_type = fm.group(1) or "", fm.group(2), fm.group(3).strip()
+                        for raw_field in split_top_level(body):
+                            raw_field = raw_field.strip()
+                            field_attrs: list[str] = []
+                            while raw_field.startswith("#["):
+                                attr_end = raw_field.find("]")
+                                if attr_end < 0:
+                                    break
+                                field_attrs.append(raw_field[: attr_end + 1])
+                                raw_field = raw_field[attr_end + 1 :].strip()
+                            fm = re.match(
+                                r"(?:pub(?:\([^)]+\))?\s+)?([A-Za-z_]\w*)\s*:\s*([\s\S]+)$",
+                                raw_field,
+                            )
+                            if not fm:
+                                continue
+                            fattrs = " ".join(field_attrs)
+                            rust_name, rust_type = fm.group(1), fm.group(2).strip()
                             if re.search(r"serde\s*\([^)]*skip", fattrs):
                                 continue
                             explicit = attr_value(fattrs, "rename")
