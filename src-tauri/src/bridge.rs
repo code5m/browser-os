@@ -1060,22 +1060,28 @@ pub fn report_title(app: AppHandle, webview: tauri::Webview, title: String) -> R
     use crate::security_policy as sp;
     check_invocation_source(&webview, "report_title", None, &app)?;
     sp::check_text_field("title", &title, sp::MAX_TEXT_FIELD_BYTES).map_err(|e| e.to_string())?;
-    report_title_inner(app, title)
+    let id = webview.label().to_string();
+    if !is_tab_label(&id) {
+        return Err("page title must originate from a browser tab".to_string());
+    }
+    let page_url = webview.url().map_err(|e| e.to_string())?.to_string();
+    report_title_inner(app, id, page_url, title)
 }
 
-fn report_title_inner(app: AppHandle, title: String) -> Result<(), String> {
+fn report_title_inner(app: AppHandle, id: String, page_url: String, title: String) -> Result<(), String> {
     let t = title.trim().to_string();
     if t.is_empty() {
         return Ok(());
     }
-    // 找到当前激活页签（标题回传只针对激活页）
-    let id = app.state::<AppState>().active_tab.lock().unwrap().clone();
-    if let Some(id) = id {
-        let _ = app.emit(
-            "tab-title",
-            serde_json::json!({ "id": id, "url": "", "title": t }),
-        );
+    // Bind title to the invoking WebView, not whichever tab became active
+    // while this asynchronous IPC message was in flight.
+    if !app.state::<AppState>().tabs.lock().unwrap().contains_key(&id) {
+        return Ok(());
     }
+    let _ = app.emit(
+        "tab-title",
+        serde_json::json!({ "id": id, "url": page_url, "title": t }),
+    );
     Ok(())
 }
 
