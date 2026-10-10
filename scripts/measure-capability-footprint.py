@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Report physical build artifacts and source-only module inventory (no invented attribution)."""
 import argparse
+import tempfile
 import json
 import subprocess
 from pathlib import Path
@@ -12,9 +13,15 @@ CAPABILITY_ROOTS = [
     (ROOT / "packages", "workspace"),
 ]
 
-def files_under(path):
+EXCLUDED_SOURCE_DIRS = {"node_modules", "target", "dist", ".git", "__pycache__"}
+
+
+def files_under(path, excluded_dirs=EXCLUDED_SOURCE_DIRS):
+    """Exclude nested directories relative to the requested root, not root itself."""
+    if not path.is_dir():
+        return []
     return [p for p in path.rglob("*") if p.is_file() and not p.is_symlink()
-            and not any(x in {"node_modules", "target", "dist", ".git", "__pycache__"} for x in p.parts)]
+            and not any(part in excluded_dirs for part in p.relative_to(path).parts[:-1])]
 
 def measure() -> dict:
     modules = {}
@@ -30,7 +37,7 @@ def measure() -> dict:
             record[f"{layer}_source_bytes"] += sum(p.stat().st_size for p in files)
             record["source_files"] += len(files)
     dist = ROOT / "dist"
-    frontend = files_under(dist) if dist.is_dir() else []
+    frontend = files_under(dist, EXCLUDED_SOURCE_DIRS - {"dist"}) if dist.is_dir() else []
     binaries = [ROOT / "src-tauri/target/release/mvp-browser-os"]
     deb_dir = ROOT / "src-tauri/target/release/bundle/deb"
     packages = sorted(deb_dir.glob("*.deb")) if deb_dir.is_dir() else []
@@ -64,6 +71,19 @@ def main():
     if args.self_test:
         assert ROOT.is_dir()
         assert isinstance(measure()["modules"], dict)
+        with tempfile.TemporaryDirectory() as tmp:
+            sample = Path(tmp) / "dist"
+            sample.mkdir()
+            (sample / "index.html").write_bytes(b"index")
+            assets = sample / "assets"
+            assets.mkdir()
+            (assets / "runtime.js").write_bytes(b"console.log(1)")
+            excluded = sample / "node_modules"
+            excluded.mkdir()
+            (excluded / "large.js").write_bytes(b"excluded")
+            # Root named dist is not automatically excluded; nested dependencies are.
+            assert sum(f.stat().st_size for f in files_under(sample, EXCLUDED_SOURCE_DIRS - {"dist"})) == 19
+            assert len(files_under(sample)) == 2
         print("FOOTPRINT_INVENTORY_SELF_TEST=PASS")
         return
     data = measure()
