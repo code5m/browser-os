@@ -36,7 +36,7 @@ export const bookmarkManifest: CapabilityDefinition = {
     id: "bookmark",
     version: "1.0.0",
     displayName: "收藏夹",
-    description: "浏览器侧栏收藏夹、地址栏收藏星标与工具栏入口；物理隔离至本能力包，语义 owner 不变。",
+    description: "浏览器侧栏收藏夹与地址栏收藏入口；物理隔离至本能力包，语义 owner 不变。",
     maturity: "C3",
     maturityEvidence: ["scripts/check-capability-pilot.mjs", "scripts/check-composition-profiles.mjs", "scripts/check-hot-plug-acceptance.mjs"],
     dependencies: [],
@@ -48,7 +48,6 @@ export const bookmarkManifest: CapabilityDefinition = {
     contributions: [
       { id: "bookmark.sidebar", slot: "browser-sidebar", type: "surface" },
       { id: "bookmark.address-star", slot: "address-bar-actions", type: "navigation" },
-      { id: "bookmark.entry-button", slot: "activity-bar-trailing", type: "navigation" },
     ],
     permissions: [],
     resources: [{ kind: "CACHE", ownership: "owned", evidence: "src/capabilities/bookmark/state/useBookmarkStore.ts" }],

@@ -95,6 +95,23 @@ jobs:
       - name: Production build
         if: needs.impact.outputs.mode != 'docs'
         run: npm run build
+      - name: Semantic dependency and bundle evidence
+        if: needs.impact.outputs.mode == 'full'
+        run: |
+          node scripts/analyze-semantic-dependencies.mjs --self-test
+          node scripts/report-build-assets.mjs --self-test
+          npm run --silent analyze:semantic-dependencies > /tmp/browseros-semantic-dependencies.json
+          npm run --silent analyze:bundle > /tmp/browseros-build-assets.json
+      - name: Upload semantic and bundle evidence
+        if: always() && needs.impact.outputs.mode == 'full'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-semantic-footprint-${{ github.run_id }}
+          path: |
+            /tmp/browseros-semantic-dependencies.json
+            /tmp/browseros-build-assets.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Rust format
         if: needs.impact.outputs.mode == 'full'
         run: |
@@ -120,6 +137,14 @@ jobs:
         with:
           name: browseros-footprint-${{ github.run_id }}
           path: /tmp/browseros-footprint.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload one-shot native resource evidence
+        if: always() && needs.impact.outputs.mode == 'full'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-native-resource-${{ github.run_id }}
+          path: /tmp/browseros-native-resource.json
           if-no-files-found: warn
           retention-days: 14
       - name: Full Tauri GUI regression

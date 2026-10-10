@@ -275,6 +275,11 @@ if [[ "$START_CLIENT" -eq 1 ]]; then
     done
     if [[ "$FOUND" -eq 1 ]]; then
       ok "Extracted package reached Vue mount and first-paint probe."
+      # Real process-tree one-shot evidence after first paint, no additional daemon.
+      # Optional evidence must never turn a missing /proc permission into a fake zero.
+      if command -v node >/dev/null 2>&1; then
+        node "$ROOT/scripts/measure-app-resources.mjs" --pid "$OWN_PID" --interval-ms 1000 > "${TMPDIR:-/tmp}/browseros-native-resource.json" || warn "原生资源指标不可用（不报告伪测量）"
+      fi
       grep -E '\[main\] main window url=|\[FE\].*vue mounted|first-paint probe|\[M0\] m0_ready' "$LOG_FILE" | tail -n 8 | sed 's/^/       /'
     else
       fail "Extracted package did not report Vue mount + first-paint."

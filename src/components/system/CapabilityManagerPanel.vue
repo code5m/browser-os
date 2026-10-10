@@ -90,6 +90,7 @@ const rows = computed(() => {
       `被依赖：${dependent.join(", ") || "无"}`,
       `贡献：${contributions.map((item) => item.id).join(", ") || "无"}`,
       `可暂停：${suspendable ? "是" : "否"} · 可停用：${disableable ? "是" : "否"}`,
+      `交付：${manifest.hotPlug.install && manifest.installPolicy === "runtime" ? "支持运行时安装" : manifest.installPolicy === "static" ? "随安装包交付，非按需下载" : "禁止运行时安装"} · 安装级别：${manifest.hotPlug.level} · 运行时开关≠卸载二进制`,
       `激活耗时：${record?.activationDurationMs ?? "—"} ms · 持久化：${persistenceState}`,
       `来源：${sourceOwnership}`,
       `最近错误：${record?.lastError || "无"}`,
