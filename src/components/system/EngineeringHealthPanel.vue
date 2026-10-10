@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { evaluateAll } from "./engineeringHealthModel.mjs";
+import { bridge } from "../../bridge";
+import type { ResourceStats } from "../../types";
 const repo = "https://github.com/code5m/browser-os";
 const api = "https://api.github.com/repos/code5m/browser-os";
 const loading = ref(false), error = ref(""), sha = ref(""), checkedAt = ref(""), tag = ref<string | null>(null);
@@ -11,6 +13,23 @@ const summary = computed(() => sha.value && !error.value ? evaluateAll(sha.value
 // Browser WebView reports only resources visible to its own Performance API.
 // Other WebViews/native subprocesses, OS installation bytes and CPU remain unknown.
 const resourceSnapshot = ref<{observedJsBytes:number|null,observedJsCount:number,usedHeapBytes:number|null,resourceCount:number}|null>(null);
+const nativeSnapshot = ref<ResourceStats|null>(null);
+const nativeMeasurementError = ref("");
+const nativeMeasuring = ref(false);
+// One-shot measurement through the existing native resource_stats owner.
+// No extra polling timer; StatusBar owns the regular resource sampler.
+async function measureNativeOnce() {
+  nativeMeasurementError.value = "";
+  if (!(window as any).__TAURI_INTERNALS__) {
+    nativeMeasurementError.value = "预览模式没有原生进程统计";
+    return;
+  }
+  if (nativeMeasuring.value) return;
+  nativeMeasuring.value = true;
+  try { nativeSnapshot.value = await bridge.resourceStats(); }
+  catch (error) { nativeMeasurementError.value = "原生测量不可用："+String(error); }
+  finally { nativeMeasuring.value = false; }
+}
 function captureResourceSnapshot() {
   const entries = performance.getEntriesByType("resource") as PerformanceResourceTiming[];
   const scripts = entries.filter(e => /\.m?js(?:[?#]|$)/.test(e.name));
@@ -79,10 +98,14 @@ onMounted(() => { captureResourceSnapshot(); void refresh(); });
    <span>已观察 JS 网络传输：{{formatMiB(resourceSnapshot?.observedJsBytes)}} <small>已获得大小的 JS 资源 {{resourceSnapshot?.observedJsCount??0}} 项</small></span>
    <span>当前 JS 堆：{{formatMiB(resourceSnapshot?.usedHeapBytes)}} <small>WebKit 不提供时显示未测量</small></span>
    <span>安装包 / 安装后体积：未测量 <small>仅能从同版本打包 CI 产物获取</small></span>
-   <span>空闲 CPU / 全进程内存：未测量 <small>需目标机器 /proc 与隔离基准测试</small></span>
+   <span>BrowserOS 进程总内存：{{nativeSnapshot?formatMiB(nativeSnapshot.app_total_mb*1048576):"未测量"}} <small>经现有原生 resource_stats；不重复轮询</small></span>
+   <span>主进程树 RSS：{{nativeSnapshot?formatMiB(nativeSnapshot.main.rss_mb*1048576):"未测量"}} <small>原生采样，非全机运行内存</small></span>
+   <span>空闲 CPU / p95：未测量 <small>需同机隔离基准测试</small></span>
  </div>
  <p>首次加载与安装体积不能从 Resource Timing 直接推断。模块源码字节数也不等于模块安装体积。构建证据见 <a :href="repo+'/actions'" target="_blank" rel="noopener noreferrer">Actions 中的 footprint artifact ↗</a>。</p>
  <button type="button" @click="captureResourceSnapshot">重新采样本页</button>
+ <button type="button" :disabled="nativeMeasuring" @click="measureNativeOnce">{{nativeMeasuring?"测量中…":"采样原生进程"}}</button>
+ <p v-if="nativeMeasurementError" role="status">{{nativeMeasurementError}}</p>
  <h3>工程资产与债务</h3>
  <p>Rust 原生语义：{{meta?.nativeSemantics?.expectedRegisteredCommands??"未知"}} 命令 / {{meta?.nativeSemantics?.expectedAppStateFields??"未知"}} AppState 字段（登记基线，非实时通过）。</p>
  <p>证据预算：{{policy?.trackedHistoryBudgetBytes??"未知"}} bytes；CI Artifact 保留 {{policy?.classes?.ciArtifact?.retentionDays??"未知"}} 天。</p>
