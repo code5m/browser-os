@@ -391,6 +391,11 @@ onMounted(async () => {
 .focus-return { display:flex; flex:none; align-items:center; justify-content:flex-end; min-height:28px; padding:2px 10px; background:#eef1f6; border-bottom:1px solid #e1e7ee; }
 .focus-return button { border:1px solid #cad4e0; border-radius:6px; padding:4px 10px; background:#fff; color:#344054; cursor:pointer; font-size:12px; }
 .focus-return button:focus-visible { outline:2px solid #4c88cf; }
+
+/* 内容模式不引入复杂动效；缩窄时总是保持地址输入能用。 */
+.app.shell-compact .activity .auxiliary-tool { display:none; }
+.app.shell-compact .activity .addr-mid { margin-left:2px; margin-right:2px; }
+@media (prefers-reduced-motion: reduce) { .app * { scroll-behavior:auto; } }
 .app .body {
   flex: 1;
   display: flex;
