@@ -66,6 +66,7 @@ onErrorCaptured((err: unknown) => {
 
 const appHeight = ref<string>("100vh");
 let unlistenResize: (() => void) | null = null;
+let unlistenChildShortcut: (() => void) | null = null;
 let layoutBusy = false;
 
 // 唯一的系统全屏入口：仅模式涉及沉浸时才调用原生窗口。
@@ -116,6 +117,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("keydown", shellKeydown, true);
   window.removeEventListener("browseros:set-shell-mode", onShellModeRequest);
   unlistenResize?.();
+  unlistenChildShortcut?.();
 });
 
 async function syncWindowSize() {
@@ -141,6 +143,17 @@ onMounted(async () => {
   }
   await syncWindowSize();
   unlistenResize = await getCurrentWindow().onResized(syncWindowSize);
+  unlistenChildShortcut = await bridge.onChildShellShortcut((event) => {
+    // Native plugin controls this channel; ignore keyboard input from inactive tabs.
+    if (!event || event.id !== browser.activeTabId || layout.mainView !== "browser") return;
+    if (event.action === "immersive") {
+      void setShellMode(layout.shellMode === "immersive" ? "standard" : "immersive");
+    } else if (event.action === "compact") {
+      void setShellMode(layout.shellMode === "compact" ? "standard" : "compact");
+    } else if (event.action === "address") {
+      void focusAddress();
+    }
+  });
   // M0-0.b 终端吞吐（契约 §6.3）：测量模式下自动挂载终端面板（前端驱动 10 MiB 负载）
   term.loadM0Config().then(() => {
     if (term.m0Cfg?.driver === "term-throughput") {
