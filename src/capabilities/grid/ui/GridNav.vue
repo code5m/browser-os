@@ -6,7 +6,7 @@ const grid = useGridStore();
 function activate() {
   layout.navSection = "";
   grid.gridMode = "ai";
-  void grid.activateGrid();
+  void grid.activateGrid().catch(() => layout.showToast("打开宫格失败，请重试"));
 }
 </script>
 <template>
