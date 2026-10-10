@@ -66,6 +66,9 @@ onBeforeUnmount(() => {
 // （RO 触发重定位），零遮挡、零闪烁，也不需要"隐藏-恢复"的 hack。
 // 扩展行状态提升到 store（layout.navSection）：视图切换/关闭都由 store 统一收起，
 // 组件内不再自持一份，避免"换了视图扩展行还挂着"的状态分裂。
+function toggleImmersive() {
+  window.dispatchEvent(new Event("browseros:toggle-immersive"));
+}
 function toggleSection(key: "" | "grid" | "more" | "omni") {
   layout.toggleNavSection(key);
 }
@@ -256,7 +259,7 @@ async function openDirCenter() {
       <template v-if="layout.mainView === 'browser'">
         <button class="tbtn" aria-label="边浏览边管理文件" @click="layout.toggleBrowserDock('files')" title="边浏览边管理文件">🗂</button>
         <button class="tbtn auxiliary-tool" aria-label="边浏览边开终端" @click="layout.toggleBrowserDock('term')" title="边浏览边开终端">💻</button>
-        <button class="tbtn" aria-label="沉浸模式" @click="layout.toggleCompact" title="沉浸模式：F11 可返回">⛶</button>
+        <button class="tbtn" aria-label="沉浸模式" @click="toggleImmersive" title="沉浸模式：F11 可返回">⛶</button>
       </template>
       <span class="sep auxiliary-tool"></span>
       <button
