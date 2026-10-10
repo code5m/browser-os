@@ -6,6 +6,7 @@
 // 归属：shared（src/composables）——能力边界门禁对 shared 不判跨能力越界。
 
 import { useBrowserStore } from "../capabilities/browser/public"
+import { useLayoutStore, type MainView } from "../stores/useLayoutStore"
 
 export function currentBrowserUrl(): string {
   return useBrowserStore().url || "about:blank"
@@ -27,4 +28,10 @@ export function navigateBrowser(url: string): void {
  */
 export function relocateBrowser(): void {
   useBrowserStore().relocate()
+}
+
+/** Navigate to a module in the current empty tab, without closing visited sites. */
+export async function openModuleInCurrentTab(view: MainView): Promise<void> {
+  await useBrowserStore().consumeActiveBlankTab()
+  useLayoutStore().openModule(view)
 }
