@@ -257,7 +257,7 @@ async function openDirCenter() {
             <component :is="c.component" />
           </template>
         </div>
- 
+
       </div>
 
       <!-- Keep only one contextual file shortcut and one overflow action on the default chrome. -->
