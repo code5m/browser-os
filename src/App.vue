@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onBeforeUnmount, onErrorCaptured, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onBeforeUnmount, onErrorCaptured, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { bridge } from "./bridge";
 import { useBrowserStore } from "./capabilities/browser/public";
@@ -65,108 +65,68 @@ onErrorCaptured((err: unknown) => {
 });
 
 const appHeight = ref<string>("100vh");
-// Lazily resolve native APIs: browser-only previews must not query Tauri during setup.
-const nativeWindow = () => getCurrentWindow();
-const windowFullscreen = ref(false);
-let unlistenFullscreen: (() => void) | null = null;
 let unlistenResize: (() => void) | null = null;
 let layoutBusy = false;
-let focusTarget = false;
 
-// 只有这一个函数管理全屏窗口权限/状态：失败不切换为不可退出的隐藏顶栏。
+// 唯一的系统全屏入口：仅模式涉及沉浸时才调用原生窗口。
 async function setShellMode(mode: "standard" | "compact" | "immersive") {
   if (layoutBusy) return;
   layoutBusy = true;
   try {
-    if (mode === "immersive") {
-      if ((window as any).__TAURI_INTERNALS__) {
-        await nativeWindow().setFullscreen(true);
-        windowFullscreen.value = true;
-      }
-      layout.setShellMode("immersive");
-    } else {
-      if (windowFullscreen.value && (window as any).__TAURI_INTERNALS__) {
-        await nativeWindow().setFullscreen(false);
-        windowFullscreen.value = false;
-      }
-      layout.setShellMode(mode);
+    if ((window as any).__TAURI_INTERNALS__
+        && (layout.shellMode === "immersive" || mode === "immersive")) {
+      await getCurrentWindow().setFullscreen(mode === "immersive");
     }
-    await nextTick();
-    if (focusTarget) {
-      focusTarget = false;
-      const input = document.querySelector(".omni-wrap input") as HTMLInputElement | null;
-      input?.focus();
-      input?.select();
-    }
+    layout.setShellMode(mode);
   } catch {
-    layout.showToast("切换全屏失败；请检查窗口权限");
+    layout.showToast("切换全屏失败，请检查窗口权限");
   } finally {
     layoutBusy = false;
   }
 }
-function focusAddress() {
-  if (layout.shellMode === "immersive") {
-    focusTarget = true;
-    void setShellMode("standard");
-    return;
-  }
-  nextTick(() => {
-    const input = document.querySelector(".omni-wrap input") as HTMLInputElement | null;
-    input?.focus();
-    input?.select();
-  });
+async function focusAddress() {
+  if (layout.shellMode === "immersive") await setShellMode("standard");
+  await nextTick();
+  const input = document.querySelector<HTMLInputElement>(".omni-wrap input");
+  input?.focus();
+  input?.select();
 }
 function toggleImmersiveFromToolbar() {
   void setShellMode(layout.shellMode === "immersive" ? "standard" : "immersive");
 }
 function shellKeydown(e: KeyboardEvent) {
   if (e.isComposing || e.altKey || e.metaKey) return;
-  if (e.key === "F11" && !e.ctrlKey && !e.shiftKey) {
+  let mode: "standard" | "compact" | "immersive" | null = null;
+  if (e.key === "F11") {
+    if (!e.ctrlKey && !e.shiftKey) mode = layout.shellMode === "immersive" ? "standard" : "immersive";
+    else if (e.ctrlKey && e.shiftKey) mode = layout.shellMode === "compact" ? "standard" : "compact";
+  } else if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "l") {
     e.preventDefault();
-    void setShellMode(layout.shellMode === "immersive" ? "standard" : "immersive");
-  } else if (e.key === "F11" && e.ctrlKey && e.shiftKey) {
+    void focusAddress();
+  } else if (!e.ctrlKey && !e.shiftKey && e.key === "Escape" && layout.shellMode === "immersive") {
+    mode = "standard";
+  }
+  if (mode) {
     e.preventDefault();
-    void setShellMode(layout.shellMode === "compact" ? "standard" : "compact");
-  } else if (e.key.toLowerCase() === "l" && e.ctrlKey && !e.shiftKey) {
-    e.preventDefault();
-    focusAddress();
-  } else if (e.key === "Escape" && layout.shellMode === "immersive") {
-    e.preventDefault();
-    void setShellMode("standard");
+    void setShellMode(mode);
   }
 }
-watch(() => layout.shellMode, (mode) => {
-  // 旧入口可能直接调用 toggleCompact；统一在这里补齐真实窗口状态。
-  if (mode === "immersive" && !windowFullscreen.value && (window as any).__TAURI_INTERNALS__) {
-    void setShellMode("immersive");
-  }
-});
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", shellKeydown, true);
   window.removeEventListener("browseros:toggle-immersive", toggleImmersiveFromToolbar);
-  unlistenFullscreen?.();
   unlistenResize?.();
 });
 
 async function syncWindowSize() {
   try {
-    const size = await getCurrentWindow().innerSize();
-    appHeight.value = `${size.height / (await getCurrentWindow().scaleFactor())}px`;
-    // eslint-disable-next-line no-console
-    console.log(
-      "[app] tauri innerSize=",
-      size,
-      "window.innerHeight=",
-      window.innerHeight,
-      "devicePixelRatio=",
-      window.devicePixelRatio,
-      "appHeight=",
-      appHeight.value
-    );
-  } catch (e) {
+    const win = getCurrentWindow();
+    const size = await win.innerSize();
+    appHeight.value = `${size.height / (await win.scaleFactor())}px`;
+    if (layout.shellMode === "immersive" && !(await win.isFullscreen())) {
+      layout.setShellMode("standard");
+    }
+  } catch {
     appHeight.value = "100vh";
-    // eslint-disable-next-line no-console
-    console.log("[app] innerSize error", e);
   }
 }
 
@@ -179,14 +139,7 @@ onMounted(async () => {
     return;
   }
   await syncWindowSize();
-  unlistenResize = await nativeWindow().onResized(syncWindowSize);
-  unlistenFullscreen = await nativeWindow().onResized(async () => {
-    try {
-      const full = await nativeWindow().isFullscreen();
-      windowFullscreen.value = full;
-      if (!full && layout.shellMode === "immersive") layout.setShellMode("standard");
-    } catch { /* preview or closing */ }
-  });
+  unlistenResize = await getCurrentWindow().onResized(syncWindowSize);
   // M0-0.b 终端吞吐（契约 §6.3）：测量模式下自动挂载终端面板（前端驱动 10 MiB 负载）
   term.loadM0Config().then(() => {
     if (term.m0Cfg?.driver === "term-throughput") {
@@ -390,15 +343,13 @@ onMounted(async () => {
 .app.shell-standard, .app.shell-compact { background: #eef1f6; }
 .app.shell-compact .unified { min-height: 28px; padding-top: 1px; }
 .app.shell-compact .activity { height: 28px; }
-.app.shell-compact .activity .lab, .app.shell-compact .activity .go { display: none; }
+.app.shell-compact .activity .go { display: none; }
 .focus-return { display:flex; flex:none; align-items:center; justify-content:flex-end; min-height:28px; padding:2px 10px; background:#eef1f6; border-bottom:1px solid #e1e7ee; }
 .focus-return button { border:1px solid #cad4e0; border-radius:6px; padding:4px 10px; background:#fff; color:#344054; cursor:pointer; font-size:12px; }
 .focus-return button:focus-visible { outline:2px solid #4c88cf; }
 
-/* 内容模式不引入复杂动效；缩窄时总是保持地址输入能用。 */
+
 .app.shell-compact .activity .auxiliary-tool { display:none; }
-.app.shell-compact .activity .addr-mid { margin-left:2px; margin-right:2px; }
-@media (prefers-reduced-motion: reduce) { .app * { scroll-behavior:auto; } }
 .app .body {
   flex: 1;
   display: flex;
