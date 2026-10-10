@@ -92,7 +92,7 @@ function check(name, cond) {
 const TOP_VIEWS = TOP_NAV_ITEMS.map((i) => i.view);
 const MENU_VIEWS = NAV_MENU_SECTIONS.flatMap((s) => s.items.map((i) => i.view));
 // 宫格有独立的常驻按钮（不受窄窗口裁剪），其可达性由源码断言覆盖
-const ALWAYS_VIEWS = ["grid"];
+const ALWAYS_VIEWS = ["grid", "settings"];
 
 console.log("--- 1. 导航真源 ---");
 check(
@@ -124,7 +124,7 @@ check("源码可解析 MainView 联合类型", declaredViews.length >= 15);
 const reachable = new Set([...TOP_VIEWS, ...MENU_VIEWS, ...ALWAYS_VIEWS]);
 // editor 是文件编辑器覆盖层，不是导航目标；settings 走 ⚙️ 常驻按钮
 const orphans = declaredViews.filter(
-  (v) => v !== "editor" && v !== "settings" && !reachable.has(v)
+  (v) => v !== "editor" && !reachable.has(v)
 );
 check(
   `无孤儿模块（每个 MainView 都有导航入口）${orphans.length ? " 缺失:" + orphans : ""}`,
@@ -150,17 +150,17 @@ check(
 );
 check("宽窗口全部一级入口可见", navTopViewsForWidth(1280).length === TOP_NAV_ITEMS.length);
 check(
-  "compact 保留主页/浏览/终端",
+  "compact 保留双核心浏览/文件",
   (() => {
     const v = navTopViewsForWidth(1000);
-    return v.length === 3 && v.includes("home") && v.includes("browser") && v.includes("term");
+    return v.length === 2 && v.includes("files") && v.includes("browser");
   })()
 );
 check(
-  "icon 只保留主页/浏览",
+  "icon 只保留浏览/文件",
   (() => {
     const v = navTopViewsForWidth(600);
-    return v.length === 2 && v.includes("home") && v.includes("browser");
+    return v.length === 2 && v.includes("browser") && v.includes("files");
   })()
 );
 check(
@@ -211,7 +211,7 @@ check(
     layout.setWindowWidth(1280);
     const full = layout.navTopViews.length;
     layout.setWindowWidth(600);
-    return layout.navTopViews.length < full && layout.navTopViews.includes("home");
+    return layout.navTopViews.length < full && layout.navTopViews.includes("browser");
   })()
 );
 
