@@ -2,7 +2,7 @@
   "version": 1,
   "generated_at": "2026-09-23",
   "generated_from_head": "3f57a92e5fb7d9a6bc978f1572964d3c14fb8caf",
-  "note": "UI-1 边界门禁的**显式基线**。原则：LEGACY_COUPLING 不是立即删除，但绝不允许静默洗绿。任何新增耦合必须 FAIL；任何消除必须显式更新本文件并在 commit 说明原因。",
+  "note": "UI-1 边界门禁的**显式基线**。原则：LEGACY_COUPLING 不是立即删除，但绝不允许静默洗绿。任何新增耦合必须 FAIL；任何消除必须显式更新本文件并在 commit 说明原因。 2026-10-10 PR #17: StatusBar 已实际去除 Terminal/Workspace/Repo store 依赖以及固定浮层 CSS；显式销账三个 UI-03b 历史耦合和一个 UI-05 固定定位，不新增允许项、不变更门禁阈值。",
   "policy": {
     "on_new_coupling": "FAIL",
     "on_removed_coupling": "FAIL (baseline 必须与现实一致，消除即更新)",
@@ -135,21 +135,6 @@
       "from": "src/capabilities/browser/public"
     },
     {
-      "shell": "src/components/layout/StatusBar.vue",
-      "store": "useTerminalStore",
-      "from": "src/capabilities/terminal/public"
-    },
-    {
-      "shell": "src/components/layout/StatusBar.vue",
-      "store": "useWorkspaceStore",
-      "from": "src/capabilities/workspace/public"
-    },
-    {
-      "shell": "src/components/layout/StatusBar.vue",
-      "store": "useRepoStore",
-      "from": "src/capabilities/workspace/public"
-    },
-    {
       "shell": "src/components/layout/TopBar.vue",
       "store": "useBrowserStore",
       "from": "src/capabilities/browser/public"
@@ -178,11 +163,6 @@
     },
     {
       "file": "src/capabilities/home/ui/HomeShortcutEditor.vue",
-      "selector": "position: fixed;",
-      "text": "position: fixed;"
-    },
-    {
-      "file": "src/components/layout/StatusBar.vue",
       "selector": "position: fixed;",
       "text": "position: fixed;"
     },

@@ -10,7 +10,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const status = readFileSync("src/components/layout/StatusBar.vue", "utf8");
-assert.match(status, /<span v-if="layout\.msg" class="msg">/);
+// Preserve the status-bar message check; require its accessible status role explicitly.
+assert.match(status, /<span v-if="layout\.msg" class="msg" role="status">/);
 assert.doesNotMatch(status, /toast-pop/);
 assert.doesNotMatch(status, /position:\s*fixed;\s*top:/);
 
