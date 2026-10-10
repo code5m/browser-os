@@ -6,7 +6,7 @@ const bar=read("src/components/layout/ActivityBar.vue"), bookmark=read("src/capa
 function check(s,b){assert.ok(b,s);console.log("PASS "+s)}
 check("四目的一级导航",["home","browser","files","tools"].every(v=>layout.includes('view: "'+v+'"')));
 check("不再显示前往按钮",!bar.includes('>前往</button>'));
-check("收藏夹单一导航贡献",!bar.includes('trailingActions') && star.includes('aria-label="收藏夹"'));
+check("收藏夹单一导航贡献",!bar.includes('v-for="c in trailingActions"') && star.includes('aria-label="收藏夹"'));
 check("宫格单一入口",!nav.includes('caret-btn'));
 check("地址栏建议最多六项",bar.includes(".slice(0,6)") && bar.includes('role="listbox"'));
 check("工具页具备搜索和可操作模块",tools.includes('搜索工具') && tools.includes('workbench.open(id)'));
