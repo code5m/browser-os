@@ -14,6 +14,7 @@ import { useClipboardStore } from "@browser-os/capability-clipboard";
 import { useTerminalStore } from "./capabilities/terminal/public";
 import { useLayoutStore } from "./stores/useLayoutStore";
 import { openModuleInCurrentTab } from "./composables/browserNav";
+import { onChildShellShortcut } from "./composables/shellShortcuts";
 import { useSettingsStore } from "./settings/public";
 
 import ActivityBar from "./components/layout/ActivityBar.vue";
@@ -143,7 +144,7 @@ onMounted(async () => {
   }
   await syncWindowSize();
   unlistenResize = await getCurrentWindow().onResized(syncWindowSize);
-  unlistenChildShortcut = await bridge.onChildShellShortcut((event) => {
+  unlistenChildShortcut = await onChildShellShortcut((event) => {
     // Native plugin controls this channel; ignore keyboard input from inactive tabs.
     if (!event || event.id !== browser.activeTabId || layout.mainView !== "browser") return;
     if (event.action === "immersive") {
