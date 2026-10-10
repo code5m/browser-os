@@ -206,12 +206,12 @@ check("非法宽度钳位到 320", layout.windowWidth === 320);
 layout.setWindowWidth(99999);
 check("宽度上限钳位到 4096", layout.windowWidth === 4096);
 check(
-  "navTopViews 与宽度同步",
+  "双核心导航在窄窗口保持可见，密度按宽度自适应",
   (() => {
     layout.setWindowWidth(1280);
     const full = layout.navTopViews.length;
     layout.setWindowWidth(600);
-    return layout.navTopViews.length < full && layout.navTopViews.includes("browser");
+    return layout.navTopViews.length === full && layout.navTopViews.includes("browser") && layout.navTopViews.includes("files") && layout.navDensity === "icon";
   })()
 );
 
@@ -251,10 +251,10 @@ check("窄窗口密度样式存在", barSrc.includes(".nav-compact") && barSrc.i
 check("展示脱敏（不回显凭据查询串）", barSrc.includes("safeLabel") && barSrc.includes("redactSecrets"));
 check("无 raw Tauri invoke", !/\binvoke\(/.test(barSrc) && !barSrc.includes("@tauri-apps"));
 check(
-  "未引入新依赖（仅相对路径/vue/pinia）",
+  "不引入现有 Vue/Lucide 之外的新依赖",
   [...barSrc.matchAll(/^import[^"']*["']([^"']+)["']/gm)]
     .map((m) => m[1])
-    .every((s) => s.startsWith(".") || s === "vue" || s.startsWith("vue/"))
+    .every((s) => s.startsWith(".") || s === "vue" || s.startsWith("vue/") || s === "@lucide/vue")
 );
 check(
   "无敏感字面量",
