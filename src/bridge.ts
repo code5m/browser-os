@@ -247,6 +247,10 @@ export const bridge = {
   onBrowserResources: (cb: (r: BrowserResources) => void) =>
     listen<BrowserResources>("browser-resources", (e) => cb(e.payload)),
 
+  // Trusted browser-tabs plugin GTK shortcut; no remote page invokes Tauri IPC.
+  onChildShellShortcut: (cb: (event: { id: string; action: string }) => void) =>
+    listen<{ id: string; action: string }>("browser-tabs://shell-shortcut", (e) => cb(e.payload)),
+
   // 订阅成果保存成功事件（浏览器子 webview 中保存后自动刷新列表）
   onArtifactCollected: (cb: () => void) =>
     listen("artifact-collected", () => cb()),
