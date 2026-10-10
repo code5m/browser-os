@@ -151,7 +151,7 @@ watch(
           <component :is="browserHostComp" v-show="layout.mainView === 'browser' || layout.mainView === 'grid'" />
         </div>
         <!-- 右侧 Dock：浏览网页的同时操作文件管理 / 终端 -->
-        <aside v-if="layout.browserDockOpen && layout.mainView === 'browser'" class="browser-dock">
+        <aside v-if="layout.browserDockOpen && layout.mainView === 'browser' && layout.shellMode !== 'immersive'" class="browser-dock">
           <div class="tabs">
             <!-- UI-4：页签来自能力贡献（顺序/图标/文案由贡献声明，与迁移前一致） -->
             <button
