@@ -30,6 +30,25 @@ function imports(text) {
   for(const m of text.matchAll(dynamicRx))out.push({specifier:m[1],kind:"dynamic"});
   return out;
 }
+function scanDuplicateCandidates(paths) {
+  const byImplementation = new Map();
+  // Intentionally conservative: only single-line return implementations,
+  // advisory exact matches only (not semantic equivalence claims).
+  for (const file of paths) {
+    const content = readFileSync(file,"utf8");
+    const srcPath = relative(root,file).replaceAll("\\","/");
+    const singleLine = /(?:export\s+)?function\s+(\w+)\s*\([^\n]*\)\s*(?::\s*[^\n{]+)?\s*\{\s*return\s+([^\n]+)\s*\}/g;
+    for (const match of content.matchAll(singleLine)) {
+      const expression = match[2].replace(/\s+/g," ").trim();
+      const matches = byImplementation.get(expression)||[];
+      matches.push({name:match[1],file:srcPath});
+      byImplementation.set(expression,matches);
+    }
+  }
+  return [...byImplementation].filter(([_,matches])=>matches.length>1)
+    .map(([expression,matches])=>({expression,matches}))
+    .sort((a,b)=>a.expression.localeCompare(b.expression));
+}
 function analyze(){
   const paths=walk(join(root,"src")).sort();
   const graph=[];
@@ -50,6 +69,7 @@ function analyze(){
   return {schema:"browseros-semantic-dependency-v1",sourceFiles:paths.length,trackedEdges:graph.length,
     sourceOwners:Object.fromEntries([...topLevel].sort((a,b)=>a[0].localeCompare(b[0]))),
     crossCapabilityImports:cross,sharedPureExternalImports:pureViolations,
+    duplicateCandidates:scanDuplicateCandidates(paths),
     limitation:"Static relative imports; alias/dynamic expressions and built output bytes are not inferred. This is inventory, not a PASS gate or proof of no cycles."};
 }
 if(process.argv.includes("--self-test")){
@@ -62,5 +82,6 @@ if(process.argv.includes("--self-test")){
   const fixture='import {x} from "../shared/pure/time/relative";\nexport {x} from "./x";\nconst y=import("./screen.vue");';
   const got=imports(fixture);
   if(got.length!==3||got.filter(x=>x.kind==="dynamic").length!==1)throw Error("import parser regression "+JSON.stringify(got));
+  if(!Array.isArray(scanDuplicateCandidates([])))throw Error("duplicate-scan regression");
   console.log("SEMANTIC_DEPENDENCY_INVENTORY_SELF_TEST=PASS");
 } else console.log(JSON.stringify(analyze(),null,2));
