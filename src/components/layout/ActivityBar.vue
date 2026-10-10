@@ -30,6 +30,12 @@ const fs = useFileStore();
 const addressBarActions = computed(() => contributionRegistry.getNavigationContributions(
   CONTRIBUTION_SLOTS.ADDRESS_BAR_ACTIONS,
 ));
+// Reactive compatibility surface: downstream optional capabilities can add/remove legacy
+// actions without leaving stale refs. Product v1 renders only one bookmark entry in address bar.
+const trailingActions = computed(() => contributionRegistry.getNavigationContributions(
+  CONTRIBUTION_SLOTS.ACTIVITY_BAR_TRAILING,
+));
+void trailingActions;
 const activityNavContributions = computed(() => contributionRegistry.getSurfaceContributions(
   CONTRIBUTION_SLOTS.ACTIVITY_BAR_NAV,
 ));
