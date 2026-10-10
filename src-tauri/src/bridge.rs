@@ -1068,14 +1068,25 @@ pub fn report_title(app: AppHandle, webview: tauri::Webview, title: String) -> R
     report_title_inner(app, id, page_url, title)
 }
 
-fn report_title_inner(app: AppHandle, id: String, page_url: String, title: String) -> Result<(), String> {
+fn report_title_inner(
+    app: AppHandle,
+    id: String,
+    page_url: String,
+    title: String,
+) -> Result<(), String> {
     let t = title.trim().to_string();
     if t.is_empty() {
         return Ok(());
     }
     // Bind title to the invoking WebView, not whichever tab became active
     // while this asynchronous IPC message was in flight.
-    if !app.state::<AppState>().tabs.lock().unwrap().contains_key(&id) {
+    if !app
+        .state::<AppState>()
+        .tabs
+        .lock()
+        .unwrap()
+        .contains_key(&id)
+    {
         return Ok(());
     }
     let _ = app.emit(
