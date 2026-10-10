@@ -13,6 +13,7 @@ import { useGitStore } from "./capabilities/git/public";
 import { useClipboardStore } from "@browser-os/capability-clipboard";
 import { useTerminalStore } from "./capabilities/terminal/public";
 import { useLayoutStore } from "./stores/useLayoutStore";
+import { openModuleInCurrentTab } from "./composables/browserNav";
 import { useSettingsStore } from "./settings/public";
 
 import ActivityBar from "./components/layout/ActivityBar.vue";
@@ -215,7 +216,7 @@ onMounted(async () => {
       else layout.activateTerm();
     } else if (matchKey(e, km.grid)) {
       e.preventDefault();
-      layout.openModule("grid");
+      void openModuleInCurrentTab("grid").catch(() => layout.showToast("打开宫格失败，请重试"));
     } else if (matchKey(e, km.home)) {
       e.preventDefault();
       layout.openModule("home");
