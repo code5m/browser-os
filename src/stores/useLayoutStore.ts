@@ -295,7 +295,18 @@ export const useLayoutStore = defineStore("layout", () => {
   }
 
   // 目录页签：同路径去重复用（避免一排完全相同的目录标签），新路径新建
-  function openDirTab(path: string) {
+  function openDirTab(path: string, reuseCurrent = false) {
+    // Entering a second path in an already active DIRECTORY tab navigates it,
+    // while context-menu "Open in new tab" keeps its existing deduped semantics.
+    if (reuseCurrent && mainView.value === "files") {
+      const current = modTabs.find((t) => t.id === activeModTab.value && !!t.path);
+      if (current) {
+        current.path = path;
+        current.label = path.replace(/\/+$/, "").split("/").pop() || path;
+        setView("files");
+        return;
+      }
+    }
     const existing = modTabs.find((t) => t.path === path);
     if (existing) {
       activeModTab.value = existing.id;

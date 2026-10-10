@@ -152,13 +152,13 @@ function looksLikeDir(s: string): boolean {
 }
 function onAddrGo() {
   layout.navSection = "";
-  if (looksLikeDir(browser.url)) openDirCenter();
+  if (looksLikeDir(browser.url)) void openDirCenter().catch(() => layout.showToast("无法打开目录，请检查路径"));
   else void browser.navigateCurrent().catch(() => layout.showToast("网页导航失败，请检查网址"));
 }
 function pickDir(p: string) {
   layout.navSection = "";
   browser.url = p;
-  openDirCenter();
+  void openDirCenter().catch(() => layout.showToast("无法打开目录，请检查路径"));
 }
 function pickUrl(u: string) {
   layout.navSection = "";
@@ -172,10 +172,11 @@ async function openDirCenter() {
     layout.showToast("请输入目录路径");
     return;
   }
-  layout.browserDockOpen = false;
-  layout.openDirTab(p);
-  layout.leftTab = "files";
   await fs.enterDir(p);
+  await browser.consumeActiveBlankTab();
+  layout.browserDockOpen = false;
+  layout.openDirTab(p, true);
+  layout.leftTab = "files";
   recordRecentDir(p);
   layout.showToast("📁 " + p);
 }
