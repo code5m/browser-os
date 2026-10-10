@@ -89,11 +89,8 @@ export function navDensityForWidth(width: number): NavDensity {
 }
 
 // 双核心不会被宽度裁剪；低频能力在菜单中，宽度只决定导航标签密度。
-export function navTopViewsForWidth(width: number): string[] {
-  const d = navDensityForWidth(width);
-  if (d === "full") return TOP_NAV_ITEMS.map((i) => i.view);
-  if (d === "compact") return TOP_NAV_ITEMS.slice(0, 3).map((i) => i.view);
-  return TOP_NAV_ITEMS.slice(0, 2).map((i) => i.view);
+export function navTopViewsForWidth(_width: number): string[] {
+  return TOP_NAV_ITEMS.map((i) => i.view);
 }
 
 // 激活态唯一判定：只有当前视图与入口视图完全一致才算激活（不留"包含/前缀"歧义）

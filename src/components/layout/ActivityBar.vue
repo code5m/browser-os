@@ -66,8 +66,11 @@ onBeforeUnmount(() => {
 // （RO 触发重定位），零遮挡、零闪烁，也不需要"隐藏-恢复"的 hack。
 // 扩展行状态提升到 store（layout.navSection）：视图切换/关闭都由 store 统一收起，
 // 组件内不再自持一份，避免"换了视图扩展行还挂着"的状态分裂。
+function changeShellMode(mode: "standard" | "compact" | "immersive") {
+  window.dispatchEvent(new CustomEvent("browseros:set-shell-mode", { detail: mode }));
+}
 function toggleImmersive() {
-  window.dispatchEvent(new Event("browseros:toggle-immersive"));
+  changeShellMode("immersive");
 }
 function toggleSection(key: "" | "grid" | "more" | "omni") {
   layout.toggleNavSection(key);
@@ -239,7 +242,7 @@ async function openDirCenter() {
             data-nav-toggle="omni"
             :aria-expanded="layout.navSection === 'omni'"
             aria-controls="nav-omni-row"
-            placeholder="输入网址或目录路径（如 baidu.com 或 /home/you/Documents），回车前往"
+            placeholder="输入网址或目录路径，回车打开"
             @keyup.enter="onAddrGo"
             @focus="layout.navSection = 'omni'"
           />
@@ -259,6 +262,7 @@ async function openDirCenter() {
       <template v-if="layout.mainView === 'browser'">
         <button class="tbtn" aria-label="边浏览边管理文件" @click="layout.toggleBrowserDock('files')" title="边浏览边管理文件">🗂</button>
         <button class="tbtn auxiliary-tool" aria-label="边浏览边开终端" @click="layout.toggleBrowserDock('term')" title="边浏览边开终端">💻</button>
+        <button class="tbtn" aria-label="紧凑模式" @click="changeShellMode('compact')" title="紧凑模式：收起侧边工具栏">▤</button>
         <button class="tbtn" aria-label="沉浸模式" @click="toggleImmersive" title="沉浸模式：F11 可返回">⛶</button>
       </template>
       <span class="sep auxiliary-tool"></span>
@@ -340,10 +344,10 @@ async function openDirCenter() {
   flex-shrink: 0;
 }
 .activity{height:30px;box-sizing:border-box;background:#eef1f6;color:#314651;border-bottom:1px solid #d9e0e3;gap:3px;padding:2px 6px}
-.activity button{color:#425b68;background:transparent;border-radius:4px}
+.activity button{color:#425b68;border-radius:4px}
 .activity button.active,.activity button.go{background:#e0eee8;color:#135b48}
-.activity .addr-mid{flex:1;min-width:0}.activity .omni-wrap input{background:#fff;border:1px solid #d5dfe3;height:24px;color:#293c47}
-.activity .collect{background:none}.activity .lab{display:none}
+.activity .addr-mid{flex:1;min-width:0}
+
 /* 扩展行：浅色、横排、按钮紧凑 */
 .expand-row {
   display: flex;
@@ -364,10 +368,7 @@ async function openDirCenter() {
   cursor: pointer;
   white-space: nowrap;
 }
-.expand-row button:hover {
-  border-color: #2b6cb0;
-  color: #2b6cb0;
-}
+
 .expand-row button.active {
   background: #2b6cb0;
   border-color: #2b6cb0;
@@ -420,7 +421,6 @@ async function openDirCenter() {
   border-radius: 12px;
   padding: 0 12px;
   font-size: 12px;
-  outline: none;
   min-width: 0;
   background: #f4f6f9;
   color: #333;
@@ -443,9 +443,6 @@ async function openDirCenter() {
   min-width: 24px;
   height: 24px;
   border: none;
-  background: transparent;
-  color: #cbd5e0;
-  border-radius: 5px;
   cursor: pointer;
   font-size: 13px;
   display: flex;
@@ -453,10 +450,7 @@ async function openDirCenter() {
   justify-content: center;
   padding: 0 4px;
 }
-.tbtn:hover {
-  background: #2f3a47;
-  color: #fff;
-}
+
 /* W17 窄窗口密度：compact 先收文字标签，icon 再收次要按钮。
    裁剪掉的入口不会消失——它们仍在 ☰ 菜单里（由 store 的 navTopViews 保证）。 */
 .nav-compact .lab,
@@ -470,9 +464,7 @@ async function openDirCenter() {
 .nav-icon .addr-mid .go {
   display: none;
 }
-.nav-icon .omni-wrap input {
-  font-size: 11px;
-}
+
 </style>
 
 <style scoped>

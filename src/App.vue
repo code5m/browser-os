@@ -14,6 +14,7 @@ import { useClipboardStore } from "@browser-os/capability-clipboard";
 import { useTerminalStore } from "./capabilities/terminal/public";
 import { useLayoutStore } from "./stores/useLayoutStore";
 import { openModuleInCurrentTab } from "./composables/browserNav";
+import { onChildShellShortcut } from "./composables/shellShortcuts";
 import { useSettingsStore } from "./settings/public";
 
 import ActivityBar from "./components/layout/ActivityBar.vue";
@@ -66,6 +67,7 @@ onErrorCaptured((err: unknown) => {
 
 const appHeight = ref<string>("100vh");
 let unlistenResize: (() => void) | null = null;
+let unlistenChildShortcut: (() => void) | null = null;
 let layoutBusy = false;
 
 // 唯一的系统全屏入口：仅模式涉及沉浸时才调用原生窗口。
@@ -91,11 +93,12 @@ async function focusAddress() {
   input?.focus();
   input?.select();
 }
-function toggleImmersiveFromToolbar() {
-  void setShellMode(layout.shellMode === "immersive" ? "standard" : "immersive");
+function onShellModeRequest(e: Event) {
+  const mode = (e as CustomEvent<string>).detail;
+  if (mode === "standard" || mode === "compact" || mode === "immersive") void setShellMode(mode);
 }
 function shellKeydown(e: KeyboardEvent) {
-  if (e.isComposing || e.altKey || e.metaKey) return;
+  if (e.isComposing || e.altKey || e.metaKey || e.repeat || e.defaultPrevented) return;
   let mode: "standard" | "compact" | "immersive" | null = null;
   if (e.key === "F11") {
     if (!e.ctrlKey && !e.shiftKey) mode = layout.shellMode === "immersive" ? "standard" : "immersive";
@@ -103,7 +106,7 @@ function shellKeydown(e: KeyboardEvent) {
   } else if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "l") {
     e.preventDefault();
     void focusAddress();
-  } else if (!e.ctrlKey && !e.shiftKey && e.key === "Escape" && layout.shellMode === "immersive") {
+  } else if (!e.ctrlKey && !e.shiftKey && e.key === "Escape" && layout.shellMode === "immersive" && !layout.navSection) {
     mode = "standard";
   }
   if (mode) {
@@ -113,8 +116,9 @@ function shellKeydown(e: KeyboardEvent) {
 }
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", shellKeydown, true);
-  window.removeEventListener("browseros:toggle-immersive", toggleImmersiveFromToolbar);
+  window.removeEventListener("browseros:set-shell-mode", onShellModeRequest);
   unlistenResize?.();
+  unlistenChildShortcut?.();
 });
 
 async function syncWindowSize() {
@@ -133,13 +137,24 @@ async function syncWindowSize() {
 onMounted(async () => {
   ready.value = true;
   window.addEventListener("keydown", shellKeydown, true);
-  window.addEventListener("browseros:toggle-immersive", toggleImmersiveFromToolbar);
+  window.addEventListener("browseros:set-shell-mode", onShellModeRequest);
   try {
   if (!(window as any).__TAURI_INTERNALS__) {
     return;
   }
   await syncWindowSize();
   unlistenResize = await getCurrentWindow().onResized(syncWindowSize);
+  unlistenChildShortcut = await onChildShellShortcut((event) => {
+    // Native plugin controls this channel; ignore keyboard input from inactive tabs.
+    if (!event || event.id !== browser.activeTabId || layout.mainView !== "browser") return;
+    if (event.action === "immersive") {
+      void setShellMode(layout.shellMode === "immersive" ? "standard" : "immersive");
+    } else if (event.action === "compact") {
+      void setShellMode(layout.shellMode === "compact" ? "standard" : "compact");
+    } else if (event.action === "address") {
+      void focusAddress();
+    }
+  });
   // M0-0.b 终端吞吐（契约 §6.3）：测量模式下自动挂载终端面板（前端驱动 10 MiB 负载）
   term.loadM0Config().then(() => {
     if (term.m0Cfg?.driver === "term-throughput") {
@@ -266,9 +281,6 @@ onMounted(async () => {
     } else if (matchKey(e, km.reload)) {
       e.preventDefault();
       browser.reloadActive();
-    } else if (matchKey(e, km.focusAddr)) {
-      e.preventDefault();
-      focusAddress();
     } else if (matchKey(e, km.recentlyClosed)) {
       e.preventDefault();
       browser.restoreRecent();
