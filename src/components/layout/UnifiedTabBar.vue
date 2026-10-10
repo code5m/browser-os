@@ -243,9 +243,10 @@ function activateMod(t: { id: string; view: string; path?: string }) {
   scrollbar-width: none;
   -ms-overflow-style: none;
   min-height: 32px;
+  cursor: default;
 }
 .unified::-webkit-scrollbar { display: none; }
-.titlebar-drag { flex: 1; min-width: 24px; align-self: stretch; cursor: move; }
+.titlebar-drag { flex: 1; min-width: 24px; align-self: stretch; cursor: default; }
 .window-controls { display: flex; flex: none; align-items: stretch; margin: -3px -6px 0 0; }
 .window-controls button { width: 34px; border: 0; border-radius: 0; background: transparent; display: grid; place-items: center; color: #667085; cursor: pointer; }
 .window-controls button:hover { background: #dfe5ed; color: #1d2939; }
