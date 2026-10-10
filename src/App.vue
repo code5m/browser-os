@@ -113,6 +113,9 @@ function focusAddress() {
     input?.select();
   });
 }
+function toggleImmersiveFromToolbar() {
+  void setShellMode(layout.shellMode === "immersive" ? "standard" : "immersive");
+}
 function shellKeydown(e: KeyboardEvent) {
   if (e.isComposing || e.altKey || e.metaKey) return;
   if (e.key === "F11" && !e.ctrlKey && !e.shiftKey) {
@@ -137,6 +140,7 @@ watch(() => layout.shellMode, (mode) => {
 });
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", shellKeydown, true);
+  window.removeEventListener("browseros:toggle-immersive", toggleImmersiveFromToolbar);
   unlistenFullscreen?.();
   unlistenResize?.();
 });
@@ -166,6 +170,7 @@ async function syncWindowSize() {
 onMounted(async () => {
   ready.value = true;
   window.addEventListener("keydown", shellKeydown, true);
+  window.addEventListener("browseros:toggle-immersive", toggleImmersiveFromToolbar);
   try {
   if (!(window as any).__TAURI_INTERNALS__) {
     return;
