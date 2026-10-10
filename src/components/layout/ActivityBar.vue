@@ -3,7 +3,6 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import {
   useLayoutStore,
   TOP_NAV_ITEMS,
-  NAV_MENU_SECTIONS,
   isNavActive,
   nextNavIndex,
 } from "../../stores/useLayoutStore";
@@ -14,11 +13,8 @@ import { useWorkspaceStore } from "../../capabilities/workspace/public";
 import { useArtifactStore } from "../../capabilities/workspace/public";
 import { useFileStore } from "../../capabilities/workspace/public";
 import { redactSecrets } from "../../utils/redact";
-import { Search, PanelLeftClose, PanelLeftOpen } from "@lucide/vue";
-import { useWorkbenchStore } from "../../stores/useWorkbenchStore";
 import { contributionRegistry } from "../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
-const workbench = useWorkbenchStore();
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
@@ -33,9 +29,6 @@ const fs = useFileStore();
 const addressBarActions = computed(() => contributionRegistry.getNavigationContributions(
   CONTRIBUTION_SLOTS.ADDRESS_BAR_ACTIONS,
 ));
-const trailingActions = computed(() => contributionRegistry.getNavigationContributions(
-  CONTRIBUTION_SLOTS.ACTIVITY_BAR_TRAILING,
-));
 const activityNavContributions = computed(() => contributionRegistry.getSurfaceContributions(
   CONTRIBUTION_SLOTS.ACTIVITY_BAR_NAV,
 ));
@@ -45,8 +38,7 @@ const activityRowContributions = computed(() => contributionRegistry.getSurfaceC
 
 // 一级入口与 ☰ 菜单分节统一来自 useLayoutStore（W17 导航真源），
 // 窄窗口按 navTopViews 从尾部裁剪，被裁掉的入口在 ☰ 菜单中仍可达。
-const menuSections = NAV_MENU_SECTIONS;
-const topItems = computed(() => TOP_NAV_ITEMS.filter((i) => layout.navTopViews.includes(i.view) && ['browser','files'].includes(i.view)));
+const topItems = computed(() => TOP_NAV_ITEMS.filter((i) => layout.navTopViews.includes(i.view)));
 
 // ===== W17：窗口宽度上报（窄窗口密度）+ resize 监听清理 =====
 const navEl = ref<HTMLElement | null>(null);
@@ -127,8 +119,23 @@ async function onItem(v: string) {
 const RECENT_DIRS_KEY = "browser-os-recent-dirs";
 const recentDirs = ref<string[]>(loadRecentDirs());
 // 最近访问行的分节开关：历史（最近网址+最近目录）/ 常用（常用目录）可独立控制
-const omniShowHistory = ref(true);
-const omniShowCommon = ref(true);
+const omniIndex = ref(-1);
+const omniCandidates = computed(() => {
+  const seen = new Set<string>();
+  const needle = browser.url.trim().toLowerCase();
+  const candidates = [
+    ...ws.recents.filter(r => r.type === "url").map(r => ({ value:r.path, label:safeLabel(r.path), type:"网页" })),
+    ...recentDirs.value.map(value => ({ value, label:safeLabel(value), type:"最近目录" })),
+    ...fs.startDirs.map(d => ({ value:d.path, label:safeLabel(d.path), type:"常用目录" })),
+  ];
+  return candidates.filter(c => { if (seen.has(c.value)) return false; seen.add(c.value); return !needle || c.value.toLowerCase().includes(needle); }).slice(0,6);
+});
+function chooseSuggestion(value:string) { if (looksLikeDir(value)) pickDir(value); else pickUrl(value); }
+function onOmniKeydown(e:KeyboardEvent) {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); omniIndex.value = (omniIndex.value + (e.key === "ArrowDown" ? 1 : -1) + omniCandidates.value.length) % (omniCandidates.value.length || 1); }
+  else if (e.key === "Escape") { e.stopPropagation(); layout.closeNavSection(); omniIndex.value = -1; }
+  else if (e.key === "Enter") { e.preventDefault(); const match = omniCandidates.value[omniIndex.value]; omniIndex.value = -1; if (match) chooseSuggestion(match.value); else onAddrGo(); }
+}
 
 // W17：最近网址/目录只做展示脱敏（点击仍用原始值），避免把带凭据的
 // 查询串或 token 原样贴在活动条上。
@@ -210,14 +217,14 @@ async function openDirCenter() {
         <component :is="c.component" />
       </template>
 
-      <!-- ☰ 菜单：展开工作区/工具/同步 -->
+      <!-- 工具是唯一专业能力中心 -->
       <button
         data-nav-item
-        data-nav-toggle="more"
+ 
         :class="{ active: layout.navSection === 'more' || menuSections.some((s) => s.items.some((c) => isNavActive(layout.mainView, c.view))) }"
         aria-label="工具中心：更多功能"
-        :aria-expanded="layout.navSection === 'more'"
-        aria-controls="nav-more-row"
+ 
+ 
         title="工具中心：模块、设置和专业能力"
         @click.stop="toggleSection('more')"
       >
@@ -225,8 +232,8 @@ async function openDirCenter() {
         <span class="lab">工具</span>
       </button>
 
-      <button class="tbtn" title="统一命令" aria-label="统一命令" @click="workbench.commandOpen = !workbench.commandOpen"><Search :size="16" /></button>
-      <button class="tbtn auxiliary-tool" :title="workbench.collapsed ? '恢复工具窗' : '折叠工具窗'" aria-label="折叠或恢复工具窗" @click="workbench.toggleTools()"><PanelLeftOpen v-if="workbench.collapsed" :size="16"/><PanelLeftClose v-else :size="16"/></button>
+ 
+ 
       <!-- 中：智能地址栏 -->
       <div class="addr-mid">
         <template v-if="layout.mainView === 'browser' || layout.mainView === 'grid'">
@@ -243,22 +250,19 @@ async function openDirCenter() {
             :aria-expanded="layout.navSection === 'omni'"
             aria-controls="nav-omni-row"
             placeholder="输入网址或目录路径，回车打开"
-            @keyup.enter="onAddrGo"
-            @focus="layout.navSection = 'omni'"
+            @keydown="onOmniKeydown"
+            @focus="layout.navSection = 'omni'; omniIndex = -1"
           />
           <!-- M1-3：⭐ 收藏当前网页 + 📑 展开收藏夹侧栏（经通用 Contribution Registry 渲染） -->
           <template v-for="c in addressBarActions" :key="c.id">
             <component :is="c.component" />
           </template>
         </div>
-        <button class="go" @click="onAddrGo">前往</button>
+ 
       </div>
 
       <!-- 右：浏览辅助 + 采集 + 设置 -->
       <!-- 收藏夹：任意视图均可打开；经通用 Contribution Registry 渲染（Shell 零 Bookmark 专属知识） -->
-      <template v-for="c in trailingActions" :key="c.id">
-        <component :is="c.component" />
-      </template>
       <template v-if="layout.mainView === 'browser'">
         <button class="tbtn" aria-label="边浏览边管理文件" @click="layout.toggleBrowserDock('files')" title="边浏览边管理文件">🗂</button>
         <button class="tbtn auxiliary-tool" aria-label="边浏览边开终端" @click="layout.toggleBrowserDock('term')" title="边浏览边开终端">💻</button>
@@ -289,52 +293,14 @@ async function openDirCenter() {
       <component :is="c.component" />
     </template>
 
-    <!-- 功能菜单扩展行 -->
-    <div v-if="layout.navSection === 'more'" id="nav-more-row" class="expand-row">
-      <template v-for="s in menuSections" :key="s.title">
-        <span class="er-label">{{ s.title }}</span>
-        <button
-          v-for="c in s.items"
-          :key="c.view"
-          :class="{ active: isNavActive(layout.mainView, c.view) }"
-          :aria-label="c.label"
-          :aria-current="isNavActive(layout.mainView, c.view) ? 'page' : undefined"
-          @click="onItem(c.view)"
-        >
-          <span class="ic">{{ c.icon }}</span> {{ c.label }}
-        </button>
-        <span class="er-sep"></span>
-      </template>
-      <button class="er-close" aria-label="收起功能菜单" @click="layout.navSection = ''" title="收起">✕</button>
-    </div>
-
-    <!-- 最近网址 / 最近常用目录扩展行（历史/常用可独立开关） -->
-    <div v-if="layout.navSection === 'omni'" id="nav-omni-row" class="expand-row omni-row">
-      <button :class="{ active: omniShowHistory }" aria-label="显示或隐藏历史记录" title="显示/隐藏历史记录" @click="omniShowHistory = !omniShowHistory">🕒 历史</button>
-      <button :class="{ active: omniShowCommon }" aria-label="显示或隐藏常用目录" title="显示/隐藏常用目录" @click="omniShowCommon = !omniShowCommon">📂 常用</button>
-      <span class="er-sep"></span>
-      <template v-if="omniShowHistory && ws.recents.some((r) => r.type === 'url')">
-        <button
-          v-for="r in ws.recents.filter((r) => r.type === 'url').slice(0, 8)"
-          :key="'u' + r.path"
-          class="chip"
-          :title="safeLabel(r.path)"
-          @click="pickUrl(r.path)"
-        >🌐 {{ safeLabel(r.path) }}</button>
-      </template>
-      <template v-if="omniShowHistory && recentDirs.length">
-        <button v-for="d in recentDirs" :key="'d' + d" class="chip" :title="safeLabel(d)" @click="pickDir(d)">📁 {{ safeLabel(d) }}</button>
-      </template>
-      <template v-if="omniShowCommon && fs.startDirs.length">
-        <button v-for="d in fs.startDirs" :key="'s' + d.path" class="chip" :title="safeLabel(d.path)" @click="pickDir(d.path)">📂 {{ d.name }}</button>
-      </template>
-      <span
-        v-if="(omniShowHistory && !ws.recents.length && !recentDirs.length) && (omniShowCommon && !fs.startDirs.length)"
-        class="er-label"
-      >
-        暂无记录：输入网址或 / 开头的目录路径，回车即自动识别
-      </span>
-      <button class="er-close" aria-label="收起最近与常用" @click="layout.navSection = ''" title="收起">✕</button>
+    <!-- Native-safe suggestion surface: inline below the address bar, never above GTK WebView. -->
+    <div v-if="layout.navSection === 'omni'" id="nav-omni-row" class="suggestion-list" role="listbox" aria-label="地址建议">
+      <button v-for="(suggestion, i) in omniCandidates" :key="suggestion.value" role="option" :aria-selected="omniIndex === i"
+        class="suggestion-item" :class="{ selected: omniIndex === i }" @mousedown.prevent @click="chooseSuggestion(suggestion.value)">
+        <span class="suggestion-type">{{ suggestion.type === '网页' ? '🌐' : '📁' }}</span>
+        <span class="suggestion-main">{{ suggestion.label }}</span><span class="suggestion-sub">{{ suggestion.type }}</span>
+      </button>
+      <p v-if="!omniCandidates.length" class="suggestion-empty">按 Enter 打开网址或本地目录</p>
     </div>
   </div>
 </template>
@@ -390,10 +356,13 @@ async function openDirCenter() {
   background: transparent !important;
   color: #999 !important;
 }
-.omni-row {
-  max-height: 74px;
-  overflow-y: auto;
-}
+.suggestion-list { display:flex; flex-direction:column; max-height:220px; overflow-y:auto; background:#fff; border:1px solid #dce3eb; border-top:0; box-shadow:0 8px 20px #13233b12; border-radius:0 0 12px 12px; padding:5px; }
+.suggestion-item { display:flex; align-items:center; gap:12px; width:100%; padding:8px 12px; border:0; background:transparent; text-align:left; color:#243449; cursor:pointer; border-radius:7px; }
+.suggestion-item:hover,.suggestion-item.selected { background:#eef4fb; }
+.suggestion-type { width:20px; text-align:center; }
+.suggestion-main { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:12px; }
+.suggestion-sub { flex:none; font-size:11px; color:#667085; }
+.suggestion-empty { padding:5px 12px; color:#667085; font-size:12px; margin:0; }
 .chip {
   max-width: 220px;
   overflow: hidden;

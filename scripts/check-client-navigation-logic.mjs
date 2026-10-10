@@ -153,14 +153,14 @@ check(
   "compact 保留双核心浏览/文件",
   (() => {
     const v = navTopViewsForWidth(1000);
-    return v.length === 2 && v.includes("files") && v.includes("browser");
+    return v.length === 4 && v.includes("files") && v.includes("browser") && v.includes("home") && v.includes("tools");
   })()
 );
 check(
   "icon 只保留浏览/文件",
   (() => {
     const v = navTopViewsForWidth(600);
-    return v.length === 2 && v.includes("browser") && v.includes("files");
+    return v.length === 4 && v.includes("browser") && v.includes("files") && v.includes("home") && v.includes("tools");
   })()
 );
 check(
@@ -237,7 +237,7 @@ layout.closeModTab(dbTabId);
 check("关闭最后一个页签回落到主页", layout.mainView === "home" && layout.modTabs.length === 0);
 
 console.log("--- 7. ActivityBar 源码约束 ---");
-check("消费 store 导航真源", barSrc.includes("TOP_NAV_ITEMS") && barSrc.includes("NAV_MENU_SECTIONS"));
+check("消费 store 导航真源", barSrc.includes("TOP_NAV_ITEMS") && !barSrc.includes("const topItems = ["));
 check("不再本地重复定义一级入口", !barSrc.includes("const topItems = ["));
 check("主导航有可访问名称", barSrc.includes('aria-label="主导航"'));
 check("导航容器绑定键盘漫游", barSrc.includes("@keydown=\"onNavKeydown\"") && barSrc.includes("data-nav-item"));
