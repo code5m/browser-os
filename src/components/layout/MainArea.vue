@@ -115,9 +115,9 @@ const browserHostComp = computed(() => contributionRegistry.getSurfaceContributi
   CONTRIBUTION_SLOTS.BROWSER_HOST,
 )[0]?.component);
 
-// 精简模式切换后，工具栏显隐导致 viewport 尺寸变化，需重新定位子 webview
+// 所有模式变化经既有 Browser Host 定位路径重新测量，避免新增并发几何算法。
 watch(
-  () => layout.compactMode,
+  () => layout.shellMode,
   () => nextTick(() => browser.relocate())
 );
 
@@ -137,13 +137,7 @@ watch(
 
     <!-- ===== 浏览器主视图（地址栏已合并进顶部全局工具栏，页签走统一页签条） ===== -->
     <template v-if="layout.mainView === 'browser' || layout.mainView === 'grid'">
-      <!-- 精简模式悬浮按钮：点击退出精简，恢复工具栏 -->
-      <button
-        v-if="layout.compactMode && layout.mainView === 'browser'"
-        class="compact-exit"
-        @click="layout.toggleCompact"
-        title="退出精简模式"
-      >☰</button>
+      <!-- 沉浸恢复入口由 App 统一提供：浏览器、宫格和文件模块均可退出。 -->
       <div class="browser-body">
         <!-- M1-3 收藏夹侧栏：经通用 Contribution Registry 按 slot 渲染（Shell 零能力专属知识）。
              可见性由贡献组件自身按 panelOpen 控制（能力包内）。 -->
