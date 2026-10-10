@@ -24,7 +24,6 @@ export const BOOKMARK_CAPABILITY_ID = "bookmark"
 //   - 懒加载把面板/按钮拆出主 chunk，符合构建体积闸门（IF-2）。
 const BookmarkPanel = defineAsyncComponent(() => import("./ui/BookmarkPanel.vue"))
 const BookmarkStar = defineAsyncComponent(() => import("./ui/BookmarkStar.vue"))
-const BookmarkEntryButton = defineAsyncComponent(() => import("./ui/BookmarkEntryButton.vue"))
 
 /**
  * 注册 Bookmark 对 Shell 的 UI 贡献（Contribution/Slot 模型）。
@@ -48,13 +47,7 @@ export function registerBookmarkContributions(): void {
     slot: CONTRIBUTION_SLOTS.ADDRESS_BAR_ACTIONS,
     component: BookmarkStar,
   })
-  contributionRegistry.registerContribution({
-    id: "bookmark.entry-button",
-    capabilityId: BOOKMARK_CAPABILITY_ID,
-    type: "navigation",
-    slot: CONTRIBUTION_SLOTS.ACTIVITY_BAR_TRAILING,
-    component: BookmarkEntryButton,
-  })
+
 }
 
 export const bookmarkCapability = {

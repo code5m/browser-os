@@ -29,25 +29,9 @@ async function onStar() {
 </script>
 
 <template>
-  <button
-    class="star-btn"
-    :class="{ starred, disabled: !enabled }"
-    :disabled="!enabled || bookmarks.busy"
-    :title="
-      !enabled
-        ? '当前地址不可收藏（空页面或本地目录）'
-        : starred
-          ? '已收藏，点击取消收藏'
-          : '收藏当前网页'
-    "
-    @click="onStar"
-  >{{ starred ? "★" : "☆" }}</button>
-  <button
-    class="star-btn panel-btn"
-    :class="{ active: bookmarks.panelOpen }"
-    title="收藏夹"
-    @click="bookmarks.togglePanel"
-  >📑</button>
+  <button class="star-btn panel-btn" :class="{ active: bookmarks.panelOpen }"
+    aria-label="收藏夹" :aria-expanded="bookmarks.panelOpen" title="收藏夹"
+    @click="bookmarks.togglePanel">☆</button>
 </template>
 
 <style scoped>

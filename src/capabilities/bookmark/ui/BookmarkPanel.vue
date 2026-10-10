@@ -60,6 +60,13 @@ async function openItem(b: Bookmark) {
   await browser.openBrowser();
 }
 
+async function bookmarkCurrent() {
+  const url = (browser.activeTab?.url || browser.url || "").trim();
+  if (!/^https?:\/\//i.test(url)) { layout.showToast("当前页面不能收藏"); return; }
+  try { await bookmarks.toggle(url, browser.activeTab?.title || url); }
+  catch { layout.showToast("收藏失败"); }
+}
+
 async function removeItem(b: Bookmark) {
   if (bookmarks.busy) return;
   await bookmarks.remove(b.id);
@@ -134,6 +141,7 @@ async function importPasswords(event: Event) {
     <div class="tabs">
       <span class="bm-title">📑 收藏夹</span>
       <span class="bm-count">{{ total }}</span>
+      <button title="收藏当前网页" @click="bookmarkCurrent">☆ 收藏</button>
       <button title="刷新" @click="bookmarks.load()">↻</button>
       <button title="导入 Chrome/Firefox/HTML 收藏夹" @click="fileInput?.click()">导入</button>
       <button title="导入 Chrome/Edge 导出的账号密码 CSV，密码保存到系统密钥库" @click="passwordInput?.click()">密码</button>
