@@ -95,7 +95,7 @@ function toggleImmersiveFromToolbar() {
   void setShellMode(layout.shellMode === "immersive" ? "standard" : "immersive");
 }
 function shellKeydown(e: KeyboardEvent) {
-  if (e.isComposing || e.altKey || e.metaKey) return;
+  if (e.isComposing || e.altKey || e.metaKey || e.repeat || e.defaultPrevented) return;
   let mode: "standard" | "compact" | "immersive" | null = null;
   if (e.key === "F11") {
     if (!e.ctrlKey && !e.shiftKey) mode = layout.shellMode === "immersive" ? "standard" : "immersive";
@@ -103,7 +103,7 @@ function shellKeydown(e: KeyboardEvent) {
   } else if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "l") {
     e.preventDefault();
     void focusAddress();
-  } else if (!e.ctrlKey && !e.shiftKey && e.key === "Escape" && layout.shellMode === "immersive") {
+  } else if (!e.ctrlKey && !e.shiftKey && e.key === "Escape" && layout.shellMode === "immersive" && !layout.navSection) {
     mode = "standard";
   }
   if (mode) {
@@ -266,9 +266,6 @@ onMounted(async () => {
     } else if (matchKey(e, km.reload)) {
       e.preventDefault();
       browser.reloadActive();
-    } else if (matchKey(e, km.focusAddr)) {
-      e.preventDefault();
-      focusAddress();
     } else if (matchKey(e, km.recentlyClosed)) {
       e.preventDefault();
       browser.restoreRecent();
