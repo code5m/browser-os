@@ -2,12 +2,20 @@
 import { computed, onMounted } from "vue";
 import { useBrowserStore } from "../../browser/public";
 import { useBookmarkStore, canBookmark } from "../state/useBookmarkStore";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
 
 // 地址栏 ⭐ 收藏按钮（M1-3）：挂在智能地址栏右侧，消费 bridge.bookmarkAdd/Remove。
 // 与 M1-0 的 useHomeStore「收藏当前网页到主页」是两套独立机制：
 // 主页快捷方式存 localStorage，这里走后端 bookmarks.json，互不并入。
 const browser = useBrowserStore();
 const bookmarks = useBookmarkStore();
+const layout = useLayoutStore();
+function openBookmarkPanel() {
+  if (layout.mainView !== "browser") {
+    layout.activateBrowser();
+    if (!bookmarks.panelOpen) bookmarks.togglePanel();
+  } else bookmarks.togglePanel();
+}
 
 // 收藏判定用"激活页签 URL"，没有页签时退回地址栏输入值
 const currentUrl = computed(() =>
@@ -31,7 +39,7 @@ async function onStar() {
 <template>
   <button class="star-btn panel-btn" :class="{ active: bookmarks.panelOpen }"
     aria-label="收藏夹" :aria-expanded="bookmarks.panelOpen" title="收藏夹"
-    @click="bookmarks.togglePanel">☆</button>
+    @click="openBookmarkPanel">☆</button>
 </template>
 
 <style scoped>
