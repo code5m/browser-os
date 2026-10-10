@@ -170,7 +170,7 @@ async function importPasswords(event: Event) {
         </section>
       </template>
       <div v-else class="bm-empty">
-        {{ bookmarks.loaded ? "还没有收藏：点地址栏 ☆ 收藏当前网页" : "正在读取收藏夹…" }}
+        {{ bookmarks.loaded ? "还没有收藏：点击上方「☆ 收藏」保存当前网页" : "正在读取收藏夹…" }}
       </div>
     </div>
   </aside>

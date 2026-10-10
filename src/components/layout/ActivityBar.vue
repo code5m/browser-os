@@ -30,12 +30,6 @@ const fs = useFileStore();
 const addressBarActions = computed(() => contributionRegistry.getNavigationContributions(
   CONTRIBUTION_SLOTS.ADDRESS_BAR_ACTIONS,
 ));
-// Reactive compatibility surface: downstream optional capabilities can add/remove legacy
-// actions without leaving stale refs. Product v1 renders only one bookmark entry in address bar.
-const trailingActions = computed(() => contributionRegistry.getNavigationContributions(
-  CONTRIBUTION_SLOTS.ACTIVITY_BAR_TRAILING,
-));
-void trailingActions;
 const activityNavContributions = computed(() => contributionRegistry.getSurfaceContributions(
   CONTRIBUTION_SLOTS.ACTIVITY_BAR_NAV,
 ));
@@ -73,9 +67,6 @@ function changeShellMode(mode: "standard" | "compact" | "immersive") {
 }
 function toggleImmersive() {
   changeShellMode("immersive");
-}
-function toggleSection(key: "" | "grid" | "more" | "omni") {
-  layout.toggleNavSection(key);
 }
 
 // W17：活动条键盘漫游 —— ←/→ 在入口间环绕移动焦点，Home/End 直达首尾
@@ -305,51 +296,9 @@ async function openDirCenter() {
 }
 .activity{height:30px;box-sizing:border-box;background:#eef1f6;color:#314651;border-bottom:1px solid #d9e0e3;gap:3px;padding:2px 6px}
 .activity button{color:#425b68;border-radius:4px}
-.activity button.active,.activity button.go{background:#e0eee8;color:#135b48}
+.activity button.active{background:#e0eee8;color:#135b48}
 .activity .addr-mid{flex:1;min-width:0}
 
-/* 扩展行：浅色、横排、按钮紧凑 */
-.expand-row {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-wrap: wrap;
-  padding: 4px 8px;
-  background: #f4f6fb;
-  border-bottom: 1px solid #e3e7f5;
-}
-.expand-row button {
-  border: 1px solid #d5dbe7;
-  background: #fff;
-  color: #4e5969;
-  border-radius: 5px;
-  padding: 3px 9px;
-  font-size: 11px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.expand-row button.active {
-  background: #2b6cb0;
-  border-color: #2b6cb0;
-  color: #fff;
-}
-.er-label {
-  font-size: 11px;
-  color: #86909c;
-  user-select: none;
-}
-.er-sep {
-  width: 1px;
-  height: 16px;
-  background: #d5dbe7;
-}
-.er-close {
-  margin-left: auto;
-  border: none !important;
-  background: transparent !important;
-  color: #999 !important;
-}
 .more-actions { display:flex; gap:6px; flex-wrap:wrap; align-items:center; padding:7px 12px; background:#f8fafc; border-bottom:1px solid #e2e8f0; }
 .more-actions button { border:1px solid #d8e1eb; background:#fff; color:#344054; border-radius:7px; padding:5px 10px; font-size:12px; cursor:pointer; }
 .more-actions button:hover { background:#eaf2fb; }
@@ -365,11 +314,6 @@ async function openDirCenter() {
 .suggestion-main { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:12px; }
 .suggestion-sub { flex:none; font-size:11px; color:#667085; }
 .suggestion-empty { padding:5px 12px; color:#667085; font-size:12px; margin:0; }
-.chip {
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 /* 中部智能地址栏 */
 .addr-mid {
   flex: 1;
@@ -400,16 +344,6 @@ async function openDirCenter() {
   border-color: #2b6cb0;
   background: #fff;
 }
-.addr-mid .go {
-  background: #2b6cb0;
-  color: #fff;
-  border: none;
-  border-radius: 5px;
-  padding: 4px 12px;
-  cursor: pointer;
-  font-size: 12px;
-  white-space: nowrap;
-}
 .tbtn {
   min-width: 24px;
   height: 24px;
@@ -432,14 +366,9 @@ async function openDirCenter() {
 .nav-icon .activity button {
   padding: 2px 6px;
 }
-.nav-icon .addr-mid .go {
-  display: none;
-}
 
 </style>
 
 <style scoped>
-/* 宽度不足时低频快捷入口退出第一层，保留搜索、双核心和工具中心。 */
-@media (max-width: 950px) { .auxiliary-tool { display: none !important; } }
 .activity :focus-visible { outline: 2px solid #3983c9; outline-offset: -2px; }
 </style>

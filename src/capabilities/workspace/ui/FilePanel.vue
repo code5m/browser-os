@@ -27,6 +27,7 @@ function startResize(e: MouseEvent) {
 }
 
 const ftreeBody = ref<HTMLElement | null>(null);
+// Local presentation-only menu state; file operations remain owned by useFileStore.
 const fileActionsOpen = ref(false);
 
 const vLazyThumb = {

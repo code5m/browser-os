@@ -3383,6 +3383,7 @@ observed_not_governed:
 
   FilePanel.vue:
     - ftreeBody
+    - fileActionsOpen
 
   useBrowserStore:
     - url
