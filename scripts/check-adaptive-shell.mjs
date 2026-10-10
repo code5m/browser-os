@@ -21,7 +21,7 @@ const check = (description, expression) => {
 check("Three adaptive modes have a single state owner", layout.includes('ref<"standard" | "compact" | "immersive">("standard")') && layout.includes("function setShellMode("));
 check("Normal and compact retain tab and address bar", app.includes('layout.shellMode !== \'immersive\''));
 check("Immersive mode hides browser dock without destroying resources", main.includes("layout.shellMode !== 'immersive'") && main.includes("layout.browserDockOpen"));
-check("Compact mode has mouse-accessible action", bar.includes('aria-label="紧凑模式"') && bar.includes("changeShellMode('compact')"));
+check("Compact mode has mouse-accessible action", bar.includes('aria-label="更多操作"') && bar.includes('紧凑模式') && bar.includes("changeShellMode(layout.shellMode === 'compact' ? 'standard' : 'compact')"));
 check("Immersive mode has universal escape button", app.includes("focus-return") && app.includes("退出全屏"));
 check("Only one Ctrl+L handler", !app.includes("matchKey(e, km.focusAddr)") && app.includes('e.key.toLowerCase() === "l"'));
 check("Remote pages have no privileged keyboard shortcut IPC", plugin.includes("connect_key_press_event") && plugin.includes('browser-tabs://shell-shortcut') && !plugin.includes('window.__browser_os_shell'));
