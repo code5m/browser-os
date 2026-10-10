@@ -27,6 +27,7 @@ function startResize(e: MouseEvent) {
 }
 
 const ftreeBody = ref<HTMLElement | null>(null);
+const fileActionsOpen = ref(false);
 
 const vLazyThumb = {
   mounted(el: HTMLElement, binding: { value: () => void }) {
@@ -74,13 +75,16 @@ onMounted(async () => {
     <!-- 左：文件夹树（VSCode 资源管理器式） -->
     <div v-show="!workbench.collapsed" class="ftree" :style="{ width: layout.fileTreeWidth + 'px' }">
       <div class="ftree-head">
-        <span class="ftree-title">📂 文件</span>
-        <button title="刷新" aria-label="刷新" @click="ws.refreshTree"><RefreshCw :size="14" /></button>
-        <button title="定位到当前打开位置" aria-label="定位到当前打开位置" @click="ws.locateCurrent"><Crosshair :size="14" /></button>
-        <button title="全部展开" aria-label="全部展开" @click="ws.expandAllTree"><ChevronsUpDown :size="14" /></button>
-        <button title="全部折叠" aria-label="全部折叠" @click="ws.collapseAllTree"><ChevronsDownUp :size="14" /></button>
-        <button title="新建文件" aria-label="新建文件" @click="ws.quickNew('file')"><FilePlus :size="14" /></button>
-        <button title="新建目录" aria-label="新建目录" @click="ws.quickNew('dir')"><FolderPlus :size="14" /></button>
+        <span class="ftree-title">文件</span>
+        <button title="新建文件" aria-label="新建文件" @click="ws.quickNew('file')"><FilePlus :size="15" /></button>
+        <button title="刷新目录" aria-label="刷新目录" @click="ws.refreshTree"><RefreshCw :size="15" /></button>
+        <button title="更多文件操作" aria-label="更多文件操作" :aria-expanded="fileActionsOpen" aria-controls="file-actions" @click="fileActionsOpen=!fileActionsOpen">···</button>
+      </div>
+      <div v-if="fileActionsOpen" id="file-actions" class="file-actions" role="group" aria-label="文件操作">
+        <button @click="ws.quickNew('dir');fileActionsOpen=false"><FolderPlus :size="14" /> 新建文件夹</button>
+        <button @click="ws.locateCurrent();fileActionsOpen=false"><Crosshair :size="14" /> 定位当前目录</button>
+        <button @click="ws.expandAllTree();fileActionsOpen=false"><ChevronsUpDown :size="14" /> 全部展开</button>
+        <button @click="ws.collapseAllTree();fileActionsOpen=false"><ChevronsDownUp :size="14" /> 全部折叠</button>
       </div>
       <div class="ftree-body" ref="ftreeBody">
         <FileTreeNode
@@ -261,9 +265,12 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.ftree {
-  position: relative;
-}
+.ftree { position:relative; background:#fafcff; }
+.ftree-head { background:#f7f9fc; gap:5px; padding:7px; }
+.ftree-head button { border:0; background:transparent; padding:5px; border-radius:7px; }
+.file-actions { display:flex; flex-direction:column; padding:5px; border-bottom:1px solid #e4eaf2; }
+.file-actions button { display:flex; align-items:center; gap:8px; padding:7px 11px; text-align:left; border:0; background:transparent; color:#344054; border-radius:6px; font-size:12px; }
+.file-actions button:hover { background:#edf3fc; }
 .ftree-resizer {
   position: absolute;
   top: 0;
