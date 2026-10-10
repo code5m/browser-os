@@ -149,6 +149,7 @@ export const useBrowserStore = defineStore("browser", () => {
   async function tabReload(id: string) {
     const t = tabs.find((x) => x.id === id);
     if (!t) return;
+    t.title = t.url;
     await bridge.tabOpen(id, t.url);
     if (activeTabId.value === id) url.value = t.url;
     await nextTick();
@@ -158,6 +159,7 @@ export const useBrowserStore = defineStore("browser", () => {
     const t = tabs.find((x) => x.id === id);
     if (!t) return;
     const u = t.url.trim() || "about:blank";
+    t.title = u;
     await bridge.tabOpen(id, u);
     if (activeTabId.value === id) url.value = u;
     layout.showToast("页签导航: " + u);
@@ -174,6 +176,8 @@ export const useBrowserStore = defineStore("browser", () => {
   }
   async function reloadActive() {
     if (!activeTabId.value) return;
+    const current = tabs.find((t) => t.id === activeTabId.value);
+    if (current) current.title = current.url;
     await bridge.tabReload(activeTabId.value);
     layout.showToast("已刷新当前页签");
     await nextTick();
@@ -181,13 +185,18 @@ export const useBrowserStore = defineStore("browser", () => {
   }
   function setTitle(t: TabInfo) {
     const existing = tabs.find((x) => x.id === t.id);
-    if (existing && t.title) existing.title = t.title;
+    // Never apply a stale title from an earlier URL or another WebView.
+    if (!existing || !t.title || !t.url || existing.url !== t.url) return;
+    existing.title = t.title;
     if (t.id === activeTabId.value) nextTick(relocate);
   }
   // 子 webview 内导航完成（点链接/前进/后退/刷新）：同步页签 URL 与地址栏
   function setNavigated(id: string, navUrl: string) {
     const t = tabs.find((x) => x.id === id);
-    if (t) t.url = navUrl;
+    if (t && t.url !== navUrl) {
+      t.url = navUrl;
+      t.title = navUrl; // Placeholder until document.title arrives.
+    }
     if (id === activeTabId.value) url.value = navUrl;
   }
   function handleTabRecovery(event: TabRecoveryEvent) {
@@ -240,6 +249,7 @@ export const useBrowserStore = defineStore("browser", () => {
       await tabNew(target);
       return;
     }
+    current.title = target;
     await bridge.tabOpen(current.id, target);
     current.url = target;
     await nextTick();
