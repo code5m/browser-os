@@ -139,6 +139,14 @@ jobs:
       - name: Packaged GUI cold-start acceptance
         if: needs.impact.outputs.mode == 'full'
         run: dbus-run-session -- xvfb-run -a bash scripts/verify-installed-client.sh --build
+      - name: Upload one-shot native resource evidence
+        if: always() && needs.impact.outputs.mode == 'full'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-native-resource-${{ github.run_id }}
+          path: /tmp/browseros-native-resource.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Full Tauri GUI regression
         if: needs.impact.outputs.mode == 'full'
         shell: bash
