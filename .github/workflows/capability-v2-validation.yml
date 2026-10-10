@@ -106,6 +106,9 @@ jobs:
       - name: Rust tests
         if: needs.impact.outputs.mode == 'full'
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - name: Packaged GUI cold-start acceptance
+        if: needs.impact.outputs.mode == 'full'
+        run: dbus-run-session -- xvfb-run -a bash scripts/verify-installed-client.sh --build
       - name: Module and installer footprint evidence
         if: needs.impact.outputs.mode == 'full'
         run: |
@@ -119,9 +122,6 @@ jobs:
           path: /tmp/browseros-footprint.json
           if-no-files-found: warn
           retention-days: 14
-      - name: Packaged GUI cold-start acceptance
-        if: needs.impact.outputs.mode == 'full'
-        run: dbus-run-session -- xvfb-run -a bash scripts/verify-installed-client.sh --build
       - name: Full Tauri GUI regression
         if: needs.impact.outputs.mode == 'full'
         shell: bash
