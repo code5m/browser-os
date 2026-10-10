@@ -112,6 +112,42 @@ impl TabManager {
         let host = self.host_window()?;
         let webview = platform::create_child_webview(&host, builder, options.rect)?;
 
+        // Shell shortcuts belong to the trusted GTK host, not remote-page JS/IPC.
+        // Capture only three app-owned shortcuts from a focused child WebView.
+        #[cfg(target_os = "linux")]
+        {
+            let id_key = options.id.clone();
+            let app_key = self.app.clone();
+            let _ = webview.with_webview(move |native| {
+                use gtk::prelude::*;
+                let child = native.inner();
+                child.connect_key_press_event(move |_wv, event| {
+                    use gtk::gdk::ModifierType;
+                    let state = event.state();
+                    let ctrl = state.contains(ModifierType::CONTROL_MASK);
+                    let shift = state.contains(ModifierType::SHIFT_MASK);
+                    let alt = state.contains(ModifierType::MOD1_MASK);
+                    let meta = state.contains(ModifierType::META_MASK)
+                        || state.contains(ModifierType::SUPER_MASK);
+                    if alt || meta { return gtk::Inhibit(false); }
+                    let key = event.keyval().name().map(|n| n.to_string()).unwrap_or_default();
+                    let action = if key == "F11" && !ctrl {
+                        if shift { None } else { Some("immersive") }
+                    } else if key == "F11" && ctrl && shift {
+                        Some("compact")
+                    } else if (key == "l" || key == "L") && ctrl && !shift {
+                        Some("address")
+                    } else { None };
+                    if let Some(action) = action {
+                        let _ = app_key.emit("browser-tabs://shell-shortcut", serde_json::json!({
+                            "id": id_key, "action": action
+                        }));
+                        gtk::Inhibit(true)
+                    } else { gtk::Inhibit(false) }
+                });
+            });
+        }
+
         // 加载失败上报（Linux）：WebKit 内部错误页不注入用户脚本，前端无法感知
         // TLS/网络失败，必须连原生 load-failed / load-failed-with-tls-errors 信号。
         #[cfg(target_os = "linux")]
