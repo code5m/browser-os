@@ -10,6 +10,9 @@ assert.doesNotMatch(rust,/affordable\.clamp\(MIN_GRID/);
 assert.match(grid,/crash_history:\s*Mutex<HashMap<u32, VecDeque<std::time::Instant>>>/);
 assert.match(grid,/events\.len\(\) <= 3/);
 assert.match(grid,/if !should_restart/);
-assert.match(ui,/watch\(\(\) => \[layout\.mainView, layout\.navSection\]/);
+// Resource polling follows the actually visible advanced panel, not a stale global grid row.
+assert.match(ui,/watch\(\(\) => \[layout\.mainView, advancedOpen\.value\]/);
+assert.match(ui,/view !== "grid" \|\| !advancedOpen\.value/);
+assert.match(ui,/stopResourcePolling\(\)/);
 assert.match(ui,/onBeforeUnmount\(stopResourcePolling\)/);
 console.log("CORE_STABILITY_GUARDS=PASS (static contracts; native GUI evidence separate)");
