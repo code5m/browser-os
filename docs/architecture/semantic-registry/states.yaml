@@ -3408,6 +3408,7 @@ observed_not_governed:
     - leftTab
     - addrMode
     - compactMode
+    - shellMode
     - fileTreeWidth
     - sidebarWidth
     - windowWidth
