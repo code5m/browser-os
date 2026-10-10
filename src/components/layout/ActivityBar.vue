@@ -242,7 +242,7 @@ async function openDirCenter() {
             data-nav-toggle="omni"
             :aria-expanded="layout.navSection === 'omni'"
             aria-controls="nav-omni-row"
-            placeholder="输入网址或目录路径（如 baidu.com 或 /home/you/Documents），回车前往"
+            placeholder="输入网址或目录路径，回车打开"
             @keyup.enter="onAddrGo"
             @focus="layout.navSection = 'omni'"
           />
@@ -344,7 +344,7 @@ async function openDirCenter() {
   flex-shrink: 0;
 }
 .activity{height:30px;box-sizing:border-box;background:#eef1f6;color:#314651;border-bottom:1px solid #d9e0e3;gap:3px;padding:2px 6px}
-.activity button{color:#425b68;background:transparent;border-radius:4px}
+.activity button{color:#425b68;border-radius:4px}
 .activity button.active,.activity button.go{background:#e0eee8;color:#135b48}
 .activity .addr-mid{flex:1;min-width:0}
 
@@ -421,7 +421,6 @@ async function openDirCenter() {
   border-radius: 12px;
   padding: 0 12px;
   font-size: 12px;
-  outline: none;
   min-width: 0;
   background: #f4f6f9;
   color: #333;
@@ -444,9 +443,6 @@ async function openDirCenter() {
   min-width: 24px;
   height: 24px;
   border: none;
-  background: transparent;
-  color: #cbd5e0;
-  border-radius: 5px;
   cursor: pointer;
   font-size: 13px;
   display: flex;
