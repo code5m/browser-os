@@ -91,8 +91,9 @@ async function focusAddress() {
   input?.focus();
   input?.select();
 }
-function toggleImmersiveFromToolbar() {
-  void setShellMode(layout.shellMode === "immersive" ? "standard" : "immersive");
+function onShellModeRequest(e: Event) {
+  const mode = (e as CustomEvent<string>).detail;
+  if (mode === "standard" || mode === "compact" || mode === "immersive") void setShellMode(mode);
 }
 function shellKeydown(e: KeyboardEvent) {
   if (e.isComposing || e.altKey || e.metaKey || e.repeat || e.defaultPrevented) return;
@@ -113,7 +114,7 @@ function shellKeydown(e: KeyboardEvent) {
 }
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", shellKeydown, true);
-  window.removeEventListener("browseros:toggle-immersive", toggleImmersiveFromToolbar);
+  window.removeEventListener("browseros:set-shell-mode", onShellModeRequest);
   unlistenResize?.();
 });
 
@@ -133,7 +134,7 @@ async function syncWindowSize() {
 onMounted(async () => {
   ready.value = true;
   window.addEventListener("keydown", shellKeydown, true);
-  window.addEventListener("browseros:toggle-immersive", toggleImmersiveFromToolbar);
+  window.addEventListener("browseros:set-shell-mode", onShellModeRequest);
   try {
   if (!(window as any).__TAURI_INTERNALS__) {
     return;
