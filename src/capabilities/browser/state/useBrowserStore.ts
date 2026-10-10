@@ -186,7 +186,13 @@ export const useBrowserStore = defineStore("browser", () => {
   function setTitle(t: TabInfo) {
     const existing = tabs.find((x) => x.id === t.id);
     // Never apply a stale title from an earlier URL or another WebView.
-    if (!existing || !t.title || !t.url || existing.url !== t.url) return;
+    if (!existing || !t.title || !t.url) return;
+    // URL canonicalization accounts for a bare origin acquiring its trailing
+    // slash from WebKit while still rejecting a different navigation.
+    const canonical = (value: string) => {
+      try { return new URL(value).href; } catch { return value; }
+    };
+    if (canonical(existing.url) !== canonical(t.url)) return;
     existing.title = t.title;
     if (t.id === activeTabId.value) nextTick(relocate);
   }
