@@ -103,8 +103,8 @@ onBeforeUnmount(stopResourcePolling);
 <style scoped>
 .expand-row{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:4px 8px;background:#f4f6fb;border-bottom:1px solid #e3e7f5}
 .expand-row button{border:1px solid #d5dbe7;background:#fff;color:#4e5969;border-radius:5px;padding:3px 9px;font-size:11px;cursor:pointer;white-space:nowrap}
-.expand-row button.active{background:#2b6cb0;border-color:#2b6cb0;color:#fff}.er-label{font-size:11px;color:#86909c}.er-warn{font-size:11px;color:#c0392b}.er-sep{width:1px;height:16px;background:#d5dbe7}
-.er-primary{background:#2b6cb0!important;border-color:#2b6cb0!important;color:#fff!important}.er-danger{color:#c33!important}.er-close{margin-left:auto;border:none!important;background:transparent!important;color:#999!important}
+.er-label{font-size:11px;color:#86909c}.er-warn{font-size:11px;color:#c0392b}.er-sep{width:1px;height:16px;background:#d5dbe7}
+.er-primary{background:#2b6cb0!important;border-color:#2b6cb0!important;color:#fff!important}
 .er-url{display:inline-flex;align-items:center;gap:3px}.er-gidx{font-size:10px;color:#86909c}.er-url input{width:170px;height:22px;border:1px solid #d5dbe7;border-radius:4px;font-size:11px;padding:0 6px}
 .grid-context,.grid-advanced { display:flex; flex-wrap:wrap; align-items:center; gap:10px; min-height:34px; padding:4px 12px; background:#f8fafc; border-bottom:1px solid #e2e8f0; font-size:12px; }
 .grid-context [role=group] { display:inline-flex; border:1px solid #dbe4ef; border-radius:8px; overflow:hidden; }
