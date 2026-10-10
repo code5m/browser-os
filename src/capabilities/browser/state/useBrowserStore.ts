@@ -73,6 +73,24 @@ export const useBrowserStore = defineStore("browser", () => {
     relocate();
     syncFreeze();
   }
+  // A fresh about:blank tab is a disposable placeholder when the user chooses
+  // a different surface (directory/Grid). Never discard an occupied web page.
+  let blankTabReplacement: Promise<boolean> | null = null;
+  async function consumeActiveBlankTab(): Promise<boolean> {
+    if (blankTabReplacement) return blankTabReplacement;
+    if (layout.mainView !== "browser" || activeTab.value?.url !== "about:blank") return false;
+    const id = activeTabId.value;
+    blankTabReplacement = (async () => {
+      await tabClose(id);
+      return true;
+    })();
+    try {
+      return await blankTabReplacement;
+    } finally {
+      blankTabReplacement = null;
+    }
+  }
+
   async function tabSwitch(id: string) {
     activeTabId.value = id;
     const t = tabs.find((x) => x.id === id);
@@ -324,6 +342,7 @@ export const useBrowserStore = defineStore("browser", () => {
     isBrowserVisible,
     aiFiltered,
     tabNew,
+    consumeActiveBlankTab,
     tabSwitch,
     tabClose,
     closeTabNow,
