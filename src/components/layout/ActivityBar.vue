@@ -46,7 +46,7 @@ const activityRowContributions = computed(() => contributionRegistry.getSurfaceC
 // 一级入口与 ☰ 菜单分节统一来自 useLayoutStore（W17 导航真源），
 // 窄窗口按 navTopViews 从尾部裁剪，被裁掉的入口在 ☰ 菜单中仍可达。
 const menuSections = NAV_MENU_SECTIONS;
-const topItems = computed(() => TOP_NAV_ITEMS.filter((i) => layout.navTopViews.includes(i.view) && ['home','browser'].includes(i.view)));
+const topItems = computed(() => TOP_NAV_ITEMS.filter((i) => layout.navTopViews.includes(i.view) && ['browser','files'].includes(i.view)));
 
 // ===== W17：窗口宽度上报（窄窗口密度）+ resize 监听清理 =====
 const navEl = ref<HTMLElement | null>(null);
@@ -66,6 +66,9 @@ onBeforeUnmount(() => {
 // （RO 触发重定位），零遮挡、零闪烁，也不需要"隐藏-恢复"的 hack。
 // 扩展行状态提升到 store（layout.navSection）：视图切换/关闭都由 store 统一收起，
 // 组件内不再自持一份，避免"换了视图扩展行还挂着"的状态分裂。
+function toggleImmersive() {
+  window.dispatchEvent(new Event("browseros:toggle-immersive"));
+}
 function toggleSection(key: "" | "grid" | "more" | "omni") {
   layout.toggleNavSection(key);
 }
@@ -209,18 +212,18 @@ async function openDirCenter() {
         data-nav-item
         data-nav-toggle="more"
         :class="{ active: layout.navSection === 'more' || menuSections.some((s) => s.items.some((c) => isNavActive(layout.mainView, c.view))) }"
-        aria-label="更多功能"
+        aria-label="工具中心：更多功能"
         :aria-expanded="layout.navSection === 'more'"
         aria-controls="nav-more-row"
-        title="更多功能"
+        title="工具中心：模块、设置和专业能力"
         @click.stop="toggleSection('more')"
       >
         <span class="ic">☰</span>
-        <span class="lab">菜单</span>
+        <span class="lab">工具</span>
       </button>
 
       <button class="tbtn" title="统一命令" aria-label="统一命令" @click="workbench.commandOpen = !workbench.commandOpen"><Search :size="16" /></button>
-      <button class="tbtn" :title="workbench.collapsed ? '恢复工具窗' : '折叠工具窗'" aria-label="折叠或恢复工具窗" @click="workbench.toggleTools()"><PanelLeftOpen v-if="workbench.collapsed" :size="16"/><PanelLeftClose v-else :size="16"/></button>
+      <button class="tbtn auxiliary-tool" :title="workbench.collapsed ? '恢复工具窗' : '折叠工具窗'" aria-label="折叠或恢复工具窗" @click="workbench.toggleTools()"><PanelLeftOpen v-if="workbench.collapsed" :size="16"/><PanelLeftClose v-else :size="16"/></button>
       <!-- 中：智能地址栏 -->
       <div class="addr-mid">
         <template v-if="layout.mainView === 'browser' || layout.mainView === 'grid'">
@@ -255,12 +258,12 @@ async function openDirCenter() {
       </template>
       <template v-if="layout.mainView === 'browser'">
         <button class="tbtn" aria-label="边浏览边管理文件" @click="layout.toggleBrowserDock('files')" title="边浏览边管理文件">🗂</button>
-        <button class="tbtn" aria-label="边浏览边开终端" @click="layout.toggleBrowserDock('term')" title="边浏览边开终端">💻</button>
-        <button class="tbtn" aria-label="精简模式" @click="layout.toggleCompact" title="精简模式：隐藏工具栏给网页更大空间">⛶</button>
+        <button class="tbtn auxiliary-tool" aria-label="边浏览边开终端" @click="layout.toggleBrowserDock('term')" title="边浏览边开终端">💻</button>
+        <button class="tbtn" aria-label="沉浸模式" @click="toggleImmersive" title="沉浸模式：F11 可返回">⛶</button>
       </template>
-      <span class="sep"></span>
+      <span class="sep auxiliary-tool"></span>
       <button
-        class="sys"
+        class="sys auxiliary-tool"
         data-nav-item
         :class="{ active: browser.aiNavOpen }"
         aria-label="AI 导航"
@@ -269,11 +272,11 @@ async function openDirCenter() {
       >
         <span class="ic">🤖</span>
       </button>
-      <button class="collect" data-nav-item aria-label="采集选中内容" :title="'采集选中内容'" @click="art.collectSelection">
+      <button class="collect auxiliary-tool" data-nav-item aria-label="采集选中内容" :title="'采集选中内容'" @click="art.collectSelection">
         <span class="ic">📥</span>
         <span class="lab">采集</span>
       </button>
-      <button class="sys" data-nav-item aria-label="系统设置" title="系统设置" @click="onItem('settings')">
+      <button class="sys auxiliary-tool" data-nav-item aria-label="系统设置" title="系统设置" @click="onItem('settings')">
         <span class="ic">⚙️</span>
       </button>
     </nav>
@@ -336,20 +339,11 @@ async function openDirCenter() {
 .tbar {
   flex-shrink: 0;
 }
-.activity{height:30px;box-sizing:border-box;background:#f5f7f8;color:#314651;border-bottom:1px solid #d9e0e3;gap:3px;padding:2px 6px}
+.activity{height:30px;box-sizing:border-box;background:#eef1f6;color:#314651;border-bottom:1px solid #d9e0e3;gap:3px;padding:2px 6px}
 .activity button{color:#425b68;background:transparent;border-radius:4px}
 .activity button.active,.activity button.go{background:#e0eee8;color:#135b48}
 .activity .addr-mid{flex:1;min-width:0}.activity .omni-wrap input{background:#fff;border:1px solid #d5dfe3;height:24px;color:#293c47}
 .activity .collect{background:none}.activity .lab{display:none}
-.caret-btn {
-  min-width: 16px;
-  padding: 2px 3px 2px 0;
-  font-size: 9px;
-  color: #7d8794;
-}
-.caret-btn.active {
-  color: #fff;
-}
 /* 扩展行：浅色、横排、按钮紧凑 */
 .expand-row {
   display: flex;
@@ -384,47 +378,16 @@ async function openDirCenter() {
   color: #86909c;
   user-select: none;
 }
-.er-warn {
-  font-size: 11px;
-  color: #c0392b;
-  user-select: none;
-}
 .er-sep {
   width: 1px;
   height: 16px;
   background: #d5dbe7;
-}
-.er-primary {
-  background: #2b6cb0 !important;
-  border-color: #2b6cb0 !important;
-  color: #fff !important;
-}
-.er-danger {
-  color: #c33 !important;
 }
 .er-close {
   margin-left: auto;
   border: none !important;
   background: transparent !important;
   color: #999 !important;
-}
-.er-url {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-}
-.er-gidx {
-  font-size: 10px;
-  color: #86909c;
-}
-.er-url input {
-  width: 170px;
-  height: 22px;
-  border: 1px solid #d5dbe7;
-  border-radius: 4px;
-  font-size: 11px;
-  padding: 0 6px;
-  outline: none;
 }
 .omni-row {
   max-height: 74px;
@@ -510,4 +473,10 @@ async function openDirCenter() {
 .nav-icon .omni-wrap input {
   font-size: 11px;
 }
+</style>
+
+<style scoped>
+/* 宽度不足时低频快捷入口退出第一层，保留搜索、双核心和工具中心。 */
+@media (max-width: 950px) { .auxiliary-tool { display: none !important; } }
+.activity :focus-visible { outline: 2px solid #3983c9; outline-offset: -2px; }
 </style>

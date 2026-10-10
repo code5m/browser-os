@@ -235,14 +235,14 @@ function activateMod(t: { id: string; view: string; path?: string }) {
   gap: 3px;
   padding: 3px 6px 0;
   background: #eef1f6;
-  border-bottom: 1px solid #e5e6eb;
+  border-bottom: 0;
   flex-shrink: 0;
   overflow-x: auto;
   overflow-y: hidden;
   /* 页签超出时仍支持滚轮/触控板横向滚动，但不显示系统横向轨道。 */
   scrollbar-width: none;
   -ms-overflow-style: none;
-  min-height: 32px;
+  min-height: 30px;
   cursor: default;
 }
 .unified::-webkit-scrollbar { display: none; }

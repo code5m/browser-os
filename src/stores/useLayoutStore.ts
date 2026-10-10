@@ -33,19 +33,17 @@ export type MainView =
 //   1) 窄窗口从一级入口尾部裁剪，被裁掉的入口必须仍在 ☰ 菜单中可达；
 //   2) 激活态只由 mainView 决定，单一判定函数 isNavActive，避免多处各写一份 ===；
 //   3) 全部为纯函数，可在 Node 下直接加载测试，不触碰 bridge/后端。
+// 双核心是唯一默认一级入口：更多能力仍在菜单 / Contribution 中可达。
 export const TOP_NAV_ITEMS = [
-  { view: "home", icon: "🏠", label: "主页" },
-  { view: "browser", icon: "📁", label: "浏览" },
-  { view: "term", icon: "💻", label: "终端" },
-  { view: "clip", icon: "📋", label: "剪贴板" },
-  { view: "arts", icon: "📚", label: "知识库" },
+  { view: "browser", icon: "🌐", label: "浏览" },
+  { view: "files", icon: "📁", label: "文件" },
 ] as const;
 
 export const NAV_MENU_SECTIONS = [
   {
     title: "工作区",
     items: [
-      { view: "files", icon: "📂", label: "文件" },
+      { view: "home", icon: "🏠", label: "主页" },
       { view: "vault", icon: "◇", label: "笔记 Vault" },
       { view: "clip", icon: "📋", label: "剪贴板" },
       { view: "arts", icon: "📚", label: "知识库" },
@@ -66,6 +64,7 @@ export const NAV_MENU_SECTIONS = [
       { view: "agents", icon: "🤖", label: "智能体" },
       { view: "graph", icon: "🕸️", label: "图谱" },
       { view: "plugin", icon: "🔌", label: "插件" },
+      { view: "settings", icon: "⚙️", label: "设置" },
     ],
   },
   {
@@ -89,8 +88,7 @@ export function navDensityForWidth(width: number): NavDensity {
   return "icon";
 }
 
-// 窄窗口裁剪：full 全显示 → compact 保留前 3 个 → icon 只留主页+浏览。
-// 被裁掉的（终端/剪贴板/知识库）在 NAV_MENU_SECTIONS 中仍然可达。
+// 双核心不会被宽度裁剪；低频能力在菜单中，宽度只决定导航标签密度。
 export function navTopViewsForWidth(width: number): string[] {
   const d = navDensityForWidth(width);
   if (d === "full") return TOP_NAV_ITEMS.map((i) => i.view);
@@ -156,8 +154,10 @@ export const useLayoutStore = defineStore("layout", () => {
   const browserDockTab = ref<string>("files");
   // 地址栏模式：🌐网址（默认）/ 📁目录（输入本地路径浏览目录）
   const addrMode = ref<"url" | "dir">("url");
-  // 浏览器精简模式：隐藏地址栏+页签栏，给网页更大空间（类谷歌沉浸式）
-  const compactMode = ref(false);
+  // 三档自适应外壳：标准、紧凑、沉浸。只保存 UI 意图，不接管原生窗口生命周期。
+  const shellMode = ref<"standard" | "compact" | "immersive">("standard");
+  // 历史只读兼容：旧 MainArea 的“精简模式”现在专指沉浸状态。
+  const compactMode = computed(() => shellMode.value === "immersive");
   // M5-W17：客户端窗口宽度（px）→ 导航密度；ActivityBar 随 resize 上报
   const windowWidth = ref(NAV_DENSITY_FULL_PX);
   // M5-W17：活动条扩展行（宫格设置 / ☰ 菜单 / 最近与常用），同一时刻只开一个
@@ -257,9 +257,15 @@ export const useLayoutStore = defineStore("layout", () => {
     addrMode.value = addrMode.value === "url" ? "dir" : "url";
   }
 
-  // 切换浏览器精简模式
+  function setShellMode(mode: "standard" | "compact" | "immersive") {
+    if (shellMode.value === mode) return;
+    shellMode.value = mode;
+    navSection.value = "";
+  }
+
+  // 历史按钮和外部贡献的兼容入口；所有视图都可返回标准界面。
   function toggleCompact() {
-    compactMode.value = !compactMode.value;
+    setShellMode(shellMode.value === "immersive" ? "standard" : "immersive");
   }
 
   // ===== 模块页签：菜单功能与浏览器一致 —— 点一个就新建一个标签 =====
@@ -382,6 +388,7 @@ export const useLayoutStore = defineStore("layout", () => {
     browserDockOpen,
     browserDockTab,
     addrMode,
+    shellMode,
     compactMode,
     windowWidth,
     navSection,
@@ -408,6 +415,7 @@ export const useLayoutStore = defineStore("layout", () => {
     setFileTreeWidth,
     toggleBrowserDock,
     toggleAddrMode,
+    setShellMode,
     toggleCompact,
     modTabs,
     activeModTab,

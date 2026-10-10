@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onErrorCaptured, ref } from "vue";
+import { computed, nextTick, onMounted, onBeforeUnmount, onErrorCaptured, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { bridge } from "./bridge";
 import { useBrowserStore } from "./capabilities/browser/public";
@@ -65,38 +65,81 @@ onErrorCaptured((err: unknown) => {
 });
 
 const appHeight = ref<string>("100vh");
+let unlistenResize: (() => void) | null = null;
+let layoutBusy = false;
+
+// 唯一的系统全屏入口：仅模式涉及沉浸时才调用原生窗口。
+async function setShellMode(mode: "standard" | "compact" | "immersive") {
+  if (layoutBusy) return;
+  layoutBusy = true;
+  try {
+    if ((window as any).__TAURI_INTERNALS__
+        && (layout.shellMode === "immersive" || mode === "immersive")) {
+      await getCurrentWindow().setFullscreen(mode === "immersive");
+    }
+    layout.setShellMode(mode);
+  } catch {
+    layout.showToast("切换全屏失败，请检查窗口权限");
+  } finally {
+    layoutBusy = false;
+  }
+}
+async function focusAddress() {
+  if (layout.shellMode === "immersive") await setShellMode("standard");
+  await nextTick();
+  const input = document.querySelector<HTMLInputElement>(".omni-wrap input");
+  input?.focus();
+  input?.select();
+}
+function toggleImmersiveFromToolbar() {
+  void setShellMode(layout.shellMode === "immersive" ? "standard" : "immersive");
+}
+function shellKeydown(e: KeyboardEvent) {
+  if (e.isComposing || e.altKey || e.metaKey) return;
+  let mode: "standard" | "compact" | "immersive" | null = null;
+  if (e.key === "F11") {
+    if (!e.ctrlKey && !e.shiftKey) mode = layout.shellMode === "immersive" ? "standard" : "immersive";
+    else if (e.ctrlKey && e.shiftKey) mode = layout.shellMode === "compact" ? "standard" : "compact";
+  } else if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "l") {
+    e.preventDefault();
+    void focusAddress();
+  } else if (!e.ctrlKey && !e.shiftKey && e.key === "Escape" && layout.shellMode === "immersive") {
+    mode = "standard";
+  }
+  if (mode) {
+    e.preventDefault();
+    void setShellMode(mode);
+  }
+}
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", shellKeydown, true);
+  window.removeEventListener("browseros:toggle-immersive", toggleImmersiveFromToolbar);
+  unlistenResize?.();
+});
 
 async function syncWindowSize() {
   try {
-    const size = await getCurrentWindow().innerSize();
-    appHeight.value = `${size.height / (await getCurrentWindow().scaleFactor())}px`;
-    // eslint-disable-next-line no-console
-    console.log(
-      "[app] tauri innerSize=",
-      size,
-      "window.innerHeight=",
-      window.innerHeight,
-      "devicePixelRatio=",
-      window.devicePixelRatio,
-      "appHeight=",
-      appHeight.value
-    );
-  } catch (e) {
+    const win = getCurrentWindow();
+    const size = await win.innerSize();
+    appHeight.value = `${size.height / (await win.scaleFactor())}px`;
+    if (layout.shellMode === "immersive" && !(await win.isFullscreen())) {
+      layout.setShellMode("standard");
+    }
+  } catch {
     appHeight.value = "100vh";
-    // eslint-disable-next-line no-console
-    console.log("[app] innerSize error", e);
   }
 }
 
 onMounted(async () => {
   ready.value = true;
+  window.addEventListener("keydown", shellKeydown, true);
+  window.addEventListener("browseros:toggle-immersive", toggleImmersiveFromToolbar);
   try {
   if (!(window as any).__TAURI_INTERNALS__) {
     return;
   }
   await syncWindowSize();
-  const unlisten = await getCurrentWindow().onResized(syncWindowSize);
-  window.addEventListener("beforeunload", unlisten);
+  unlistenResize = await getCurrentWindow().onResized(syncWindowSize);
   // M0-0.b 终端吞吐（契约 §6.3）：测量模式下自动挂载终端面板（前端驱动 10 MiB 负载）
   term.loadM0Config().then(() => {
     if (term.m0Cfg?.driver === "term-throughput") {
@@ -225,9 +268,7 @@ onMounted(async () => {
       browser.reloadActive();
     } else if (matchKey(e, km.focusAddr)) {
       e.preventDefault();
-      const inp = document.querySelector(".omni-wrap input") as HTMLInputElement;
-      inp?.focus();
-      inp?.select();
+      focusAddress();
     } else if (matchKey(e, km.recentlyClosed)) {
       e.preventDefault();
       browser.restoreRecent();
@@ -256,7 +297,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="app" :style="{ height: appHeight }">
+  <div class="app" :class="'shell-' + layout.shellMode" :style="{ height: appHeight }">
     <!-- W17(A7): 启动遮罩——应用就绪前展示，避免首屏空白 -->
     <div v-if="!ready && !shellError" class="boot-overlay" role="status" aria-live="polite">
       <div class="boot-spinner" aria-hidden="true"></div>
@@ -268,16 +309,19 @@ onMounted(async () => {
       <div class="se-desc">{{ shellError }}</div>
     </div>
     <template v-else>
-      <!-- 精简模式：整行工具栏隐藏，网页占满（由 MainArea 的 ☰ 悬浮钮退出） -->
-      <UnifiedTabBar v-if="!layout.compactMode" />
-      <ActivityBar v-if="!layout.compactMode" />
+      <!-- 标准/紧凑共享外壳；沉浸模式不销毁原生网页。 -->
+      <UnifiedTabBar v-if="layout.shellMode !== 'immersive'" />
+      <ActivityBar v-if="layout.shellMode !== 'immersive'" />
+      <div v-if="layout.shellMode === 'immersive'" class="focus-return">
+        <button type="button" @click="setShellMode('standard')" title="退出沉浸模式 (F11)">退出全屏 · F11</button>
+      </div>
       <component :is="workbenchCommandsComp" />
       <div class="body">
-        <component :is="workbenchRailComp" v-if="!layout.compactMode" />
+        <component :is="workbenchRailComp" v-if="layout.shellMode === 'standard'" />
         <component :is="aiNavPanelComp" />
         <MainArea />
       </div>
-      <StatusBar />
+      <StatusBar v-if="layout.shellMode !== 'immersive'" />
       <component :is="confirmModalComp" />
       <!-- M1-7 Git 写确认闸门：全局挂载，保证任何视图下待确认任务都能被看到/处理 -->
       <GitWriteConfirmDialog />
@@ -295,6 +339,17 @@ onMounted(async () => {
   flex-direction: column;
   overflow: hidden;
 }
+/* 只合并视觉背景和边缘，不更改原生 WebView 拖拽事件路径。 */
+.app.shell-standard, .app.shell-compact { background: #eef1f6; }
+.app.shell-compact .unified { min-height: 28px; padding-top: 1px; }
+.app.shell-compact .activity { height: 28px; }
+.app.shell-compact .activity .go { display: none; }
+.focus-return { display:flex; flex:none; align-items:center; justify-content:flex-end; min-height:28px; padding:2px 10px; background:#eef1f6; border-bottom:1px solid #e1e7ee; }
+.focus-return button { border:1px solid #cad4e0; border-radius:6px; padding:4px 10px; background:#fff; color:#344054; cursor:pointer; font-size:12px; }
+.focus-return button:focus-visible { outline:2px solid #4c88cf; }
+
+
+.app.shell-compact .activity .auxiliary-tool { display:none; }
 .app .body {
   flex: 1;
   display: flex;

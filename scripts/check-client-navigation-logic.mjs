@@ -124,7 +124,7 @@ check("源码可解析 MainView 联合类型", declaredViews.length >= 15);
 const reachable = new Set([...TOP_VIEWS, ...MENU_VIEWS, ...ALWAYS_VIEWS]);
 // editor 是文件编辑器覆盖层，不是导航目标；settings 走 ⚙️ 常驻按钮
 const orphans = declaredViews.filter(
-  (v) => v !== "editor" && v !== "settings" && !reachable.has(v)
+  (v) => v !== "editor" && !reachable.has(v)
 );
 check(
   `无孤儿模块（每个 MainView 都有导航入口）${orphans.length ? " 缺失:" + orphans : ""}`,
@@ -150,17 +150,17 @@ check(
 );
 check("宽窗口全部一级入口可见", navTopViewsForWidth(1280).length === TOP_NAV_ITEMS.length);
 check(
-  "compact 保留主页/浏览/终端",
+  "compact 保留双核心浏览/文件",
   (() => {
     const v = navTopViewsForWidth(1000);
-    return v.length === 3 && v.includes("home") && v.includes("browser") && v.includes("term");
+    return v.length === 2 && v.includes("files") && v.includes("browser");
   })()
 );
 check(
-  "icon 只保留主页/浏览",
+  "icon 只保留浏览/文件",
   (() => {
     const v = navTopViewsForWidth(600);
-    return v.length === 2 && v.includes("home") && v.includes("browser");
+    return v.length === 2 && v.includes("browser") && v.includes("files");
   })()
 );
 check(
@@ -206,12 +206,12 @@ check("非法宽度钳位到 320", layout.windowWidth === 320);
 layout.setWindowWidth(99999);
 check("宽度上限钳位到 4096", layout.windowWidth === 4096);
 check(
-  "navTopViews 与宽度同步",
+  "双核心导航在窄窗口保持可见，密度按宽度自适应",
   (() => {
     layout.setWindowWidth(1280);
     const full = layout.navTopViews.length;
     layout.setWindowWidth(600);
-    return layout.navTopViews.length < full && layout.navTopViews.includes("home");
+    return layout.navTopViews.length === full && layout.navTopViews.includes("browser") && layout.navTopViews.includes("files") && layout.navDensity === "icon";
   })()
 );
 
@@ -246,15 +246,15 @@ check("扩展行有 aria-controls 关联", barSrc.includes("aria-controls"));
 check("当前项带 aria-current", barSrc.includes("aria-current"));
 check("Esc 可收起扩展行", barSrc.includes("@keydown.esc"));
 check("Esc 后焦点回到触发按钮", barSrc.includes("data-nav-toggle="));
-check("宫格常驻按钮存在（不随宽度裁剪）", barSrc.includes("onItem('grid')"));
+check("宫格与可选工具的导航贡献槽保留", barSrc.includes("activityNavContributions") && barSrc.includes("CONTRIBUTION_SLOTS.ACTIVITY_BAR_NAV"));
 check("窄窗口密度样式存在", barSrc.includes(".nav-compact") && barSrc.includes(".nav-icon"));
 check("展示脱敏（不回显凭据查询串）", barSrc.includes("safeLabel") && barSrc.includes("redactSecrets"));
 check("无 raw Tauri invoke", !/\binvoke\(/.test(barSrc) && !barSrc.includes("@tauri-apps"));
 check(
-  "未引入新依赖（仅相对路径/vue/pinia）",
+  "不引入现有 Vue/Lucide 之外的新依赖",
   [...barSrc.matchAll(/^import[^"']*["']([^"']+)["']/gm)]
     .map((m) => m[1])
-    .every((s) => s.startsWith(".") || s === "vue" || s.startsWith("vue/"))
+    .every((s) => s.startsWith(".") || s === "vue" || s.startsWith("vue/") || s === "@lucide/vue")
 );
 check(
   "无敏感字面量",
