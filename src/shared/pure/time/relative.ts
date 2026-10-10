@@ -19,4 +19,3 @@ export function formatRelative(iso: string | null | undefined, nowMs: number): s
   if (abs < 86400) return `${Math.floor(abs / 3600)} 小时${pad(Math.floor((abs % 3600) / 60))} 分${suffix}`;
   return `${Math.floor(abs / 86400)} 天${pad(Math.floor((abs % 86400) / 3600))} 小时${suffix}`;
 }
-
