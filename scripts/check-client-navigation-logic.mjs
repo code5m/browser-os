@@ -92,7 +92,7 @@ function check(name, cond) {
 const TOP_VIEWS = TOP_NAV_ITEMS.map((i) => i.view);
 const MENU_VIEWS = NAV_MENU_SECTIONS.flatMap((s) => s.items.map((i) => i.view));
 // 宫格有独立的常驻按钮（不受窄窗口裁剪），其可达性由源码断言覆盖
-const ALWAYS_VIEWS = ["grid", "settings"];
+const ALWAYS_VIEWS = ["grid"];
 
 console.log("--- 1. 导航真源 ---");
 check(
@@ -246,7 +246,7 @@ check("扩展行有 aria-controls 关联", barSrc.includes("aria-controls"));
 check("当前项带 aria-current", barSrc.includes("aria-current"));
 check("Esc 可收起扩展行", barSrc.includes("@keydown.esc"));
 check("Esc 后焦点回到触发按钮", barSrc.includes("data-nav-toggle="));
-check("宫格常驻按钮存在（不随宽度裁剪）", barSrc.includes("onItem('grid')"));
+check("宫格与可选工具的导航贡献槽保留", barSrc.includes("activityNavContributions") && barSrc.includes("CONTRIBUTION_SLOTS.ACTIVITY_BAR_NAV"));
 check("窄窗口密度样式存在", barSrc.includes(".nav-compact") && barSrc.includes(".nav-icon"));
 check("展示脱敏（不回显凭据查询串）", barSrc.includes("safeLabel") && barSrc.includes("redactSecrets"));
 check("无 raw Tauri invoke", !/\binvoke\(/.test(barSrc) && !barSrc.includes("@tauri-apps"));

@@ -65,7 +65,8 @@ onErrorCaptured((err: unknown) => {
 });
 
 const appHeight = ref<string>("100vh");
-const nativeWindow = getCurrentWindow();
+// Lazily resolve native APIs: browser-only previews must not query Tauri during setup.
+const nativeWindow = () => getCurrentWindow();
 const windowFullscreen = ref(false);
 let unlistenFullscreen: (() => void) | null = null;
 let unlistenResize: (() => void) | null = null;
@@ -79,13 +80,13 @@ async function setShellMode(mode: "standard" | "compact" | "immersive") {
   try {
     if (mode === "immersive") {
       if ((window as any).__TAURI_INTERNALS__) {
-        await nativeWindow.setFullscreen(true);
+        await nativeWindow().setFullscreen(true);
         windowFullscreen.value = true;
       }
       layout.setShellMode("immersive");
     } else {
       if (windowFullscreen.value && (window as any).__TAURI_INTERNALS__) {
-        await nativeWindow.setFullscreen(false);
+        await nativeWindow().setFullscreen(false);
         windowFullscreen.value = false;
       }
       layout.setShellMode(mode);
@@ -93,7 +94,9 @@ async function setShellMode(mode: "standard" | "compact" | "immersive") {
     await nextTick();
     if (focusTarget) {
       focusTarget = false;
-      (document.querySelector(".omni-wrap input") as HTMLInputElement | null)?.focus();
+      const input = document.querySelector(".omni-wrap input") as HTMLInputElement | null;
+      input?.focus();
+      input?.select();
     }
   } catch {
     layout.showToast("切换全屏失败；请检查窗口权限");
@@ -176,10 +179,10 @@ onMounted(async () => {
     return;
   }
   await syncWindowSize();
-  unlistenResize = await nativeWindow.onResized(syncWindowSize);
-  unlistenFullscreen = await nativeWindow.onResized(async () => {
+  unlistenResize = await nativeWindow().onResized(syncWindowSize);
+  unlistenFullscreen = await nativeWindow().onResized(async () => {
     try {
-      const full = await nativeWindow.isFullscreen();
+      const full = await nativeWindow().isFullscreen();
       windowFullscreen.value = full;
       if (!full && layout.shellMode === "immersive") layout.setShellMode("standard");
     } catch { /* preview or closing */ }
