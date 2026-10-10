@@ -26,7 +26,7 @@ import type {
   StreamChunk,
 } from "../types";
 import { runStatusClass, runStatusLabel } from "./scriptUi";
-import { formatRelative } from "./taskUi";
+import { formatRelative } from "../shared/pure/time/relative";
 
 // ====== 常量（与后端冻结值对齐，前端不得自行放宽） ======
 
