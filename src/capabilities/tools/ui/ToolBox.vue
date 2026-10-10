@@ -1,11 +1,19 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { MODULE_META } from "../../../stores/useLayoutStore";
-import { useWorkbenchStore } from "../../workbench/public";
+import { MODULE_META, useLayoutStore, type MainView } from "../../../stores/useLayoutStore";
+import { hostServices, type BrowserContextPort } from "../../../capability/platform/host-services";
 import { useToolsStore } from "../state/useToolsStore";
 
 const store = useToolsStore();
-const workbench = useWorkbenchStore();
+const layout = useLayoutStore();
+function openModule(id: string) {
+  if (id === "browser") { layout.activateBrowser(); return; }
+  layout.openModule(id as MainView);
+  if (id === "grid") {
+    const browser = hostServices.get<BrowserContextPort>("browser-context");
+    if (browser) void browser.activateGrid().catch(() => layout.showToast("宫格启动失败"));
+  }
+}
 const query = ref("");
 const groups = [
  { title: "日常工作", ids: ["browser","files","home","clip","apps"] },
@@ -23,7 +31,7 @@ onMounted(store.load);
     <header class="tb-hero"><div><span class="tb-eyebrow">WORKSPACE</span><h1>工具</h1><p>需要时再打开。浏览器和文件始终是工作中心。</p></div></header>
     <label class="tb-search"><span>查找工具</span><input v-model="query" type="search" placeholder="搜索终端、数据库、宫格、知识库…" aria-label="搜索工具" /></label>
     <section v-for="group in visibleGroups" :key="group.title" class="tb-section"><h2>{{ group.title }}</h2>
-      <div class="tb-grid"><button v-for="id in group.items" :key="id" class="tb-card" @click="workbench.open(id)"><strong>{{ MODULE_META[id]?.label || id }}</strong><small>打开工作区 <span aria-hidden="true">↗</span></small></button></div>
+      <div class="tb-grid"><button v-for="id in group.items" :key="id" class="tb-card" @click="openModule(id)"><strong>{{ MODULE_META[id]?.label || id }}</strong><small>打开工作区 <span aria-hidden="true">↗</span></small></button></div>
     </section>
     <section class="tb-section" v-if="visibleTools.length"><h2>内置与个人工具</h2><div class="tb-grid">
       <button v-for="t in visibleTools" :key="t.id" class="tb-card" :title="t.description || t.id" @click="store.open(t)"><strong>{{ t.name }}</strong><small>{{ t.category }}</small></button>
