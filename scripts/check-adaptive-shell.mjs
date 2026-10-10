@@ -10,6 +10,7 @@ const main = read("src/components/layout/MainArea.vue");
 const bar = read("src/components/layout/ActivityBar.vue");
 const plugin = read("tauri-browser-tabs/crates/tauri-plugin-browser-tabs/src/commands.rs");
 const bridge = read("src/bridge.ts");
+const adapter = read("src/composables/shellShortcuts.ts");
 const workflow = read(".github/workflows/capability-v2-validation.yml");
 const gates = read("package.json");
 
@@ -26,7 +27,7 @@ check("Only one Ctrl+L handler", !app.includes("matchKey(e, km.focusAddr)") && a
 check("Remote pages have no privileged keyboard shortcut IPC", plugin.includes("connect_key_press_event") && plugin.includes('browser-tabs://shell-shortcut') && !plugin.includes('window.__browser_os_shell'));
 check("Native shortcut input is bound to active browser tab", app.includes('event.id !== browser.activeTabId') && app.includes('layout.mainView !== "browser"'));
 check("Native shell shortcut listeners are cleaned", app.includes("unlistenChildShortcut?.()"));
-check("Bridge owns native shortcut subscription", bridge.includes("onChildShellShortcut"));
+check("Native event routed through adapter", bridge.includes("onChildShellShortcut") && adapter.includes("bridge.onChildShellShortcut") && app.includes("await onChildShellShortcut("));
 check("Real GUI workflow remains required", workflow.includes("Full Tauri GUI regression"));
 check("Shell contract included in npm check", gates.includes("check-adaptive-shell.mjs"));
 console.log("ADAPTIVE_SHELL_RESULT=PASS");
