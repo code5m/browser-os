@@ -13,6 +13,7 @@ import { useWorkspaceStore } from "../../capabilities/workspace/public";
 import { useArtifactStore } from "../../capabilities/workspace/public";
 import { useFileStore } from "../../capabilities/workspace/public";
 import { redactSecrets } from "../../utils/redact";
+import { bridge } from "../../bridge";
 import { contributionRegistry } from "../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
 
@@ -217,23 +218,6 @@ async function openDirCenter() {
         <component :is="c.component" />
       </template>
 
-      <!-- 工具是唯一专业能力中心 -->
-      <button
-        data-nav-item
- 
-        :class="{ active: layout.navSection === 'more' || menuSections.some((s) => s.items.some((c) => isNavActive(layout.mainView, c.view))) }"
-        aria-label="工具中心：更多功能"
- 
- 
-        title="工具中心：模块、设置和专业能力"
-        @click.stop="toggleSection('more')"
-      >
-        <span class="ic">☰</span>
-        <span class="lab">工具</span>
-      </button>
-
- 
- 
       <!-- 中：智能地址栏 -->
       <div class="addr-mid">
         <template v-if="layout.mainView === 'browser' || layout.mainView === 'grid'">
