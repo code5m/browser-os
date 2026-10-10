@@ -344,15 +344,6 @@ async function openDirCenter() {
 .activity button.active,.activity button.go{background:#e0eee8;color:#135b48}
 .activity .addr-mid{flex:1;min-width:0}.activity .omni-wrap input{background:#fff;border:1px solid #d5dfe3;height:24px;color:#293c47}
 .activity .collect{background:none}.activity .lab{display:none}
-.caret-btn {
-  min-width: 16px;
-  padding: 2px 3px 2px 0;
-  font-size: 9px;
-  color: #7d8794;
-}
-.caret-btn.active {
-  color: #fff;
-}
 /* 扩展行：浅色、横排、按钮紧凑 */
 .expand-row {
   display: flex;
@@ -387,47 +378,16 @@ async function openDirCenter() {
   color: #86909c;
   user-select: none;
 }
-.er-warn {
-  font-size: 11px;
-  color: #c0392b;
-  user-select: none;
-}
 .er-sep {
   width: 1px;
   height: 16px;
   background: #d5dbe7;
-}
-.er-primary {
-  background: #2b6cb0 !important;
-  border-color: #2b6cb0 !important;
-  color: #fff !important;
-}
-.er-danger {
-  color: #c33 !important;
 }
 .er-close {
   margin-left: auto;
   border: none !important;
   background: transparent !important;
   color: #999 !important;
-}
-.er-url {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-}
-.er-gidx {
-  font-size: 10px;
-  color: #86909c;
-}
-.er-url input {
-  width: 170px;
-  height: 22px;
-  border: 1px solid #d5dbe7;
-  border-radius: 4px;
-  font-size: 11px;
-  padding: 0 6px;
-  outline: none;
 }
 .omni-row {
   max-height: 74px;
