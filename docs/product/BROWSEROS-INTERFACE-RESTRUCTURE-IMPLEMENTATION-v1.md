@@ -87,4 +87,3 @@
 - [ ] P0 浏览与文件管理器保持可达，无原生 WebView 回归；
 - [ ] `npm run check` + `npm run build` + Full GUI + pre-merge 全 PASS；
 - [ ] 截图、前后工具密度与资源证据随 PR 存档。
-
