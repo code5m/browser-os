@@ -130,7 +130,7 @@ impl TabManager {
                     let meta = state.contains(ModifierType::META_MASK)
                         || state.contains(ModifierType::SUPER_MASK);
                     if alt || meta {
-                        return gtk::Inhibit(false);
+                        return gtk::glib::Propagation::Proceed;
                     }
                     let key = event
                         .keyval()
@@ -157,9 +157,9 @@ impl TabManager {
                                 "id": id_key, "action": action
                             }),
                         );
-                        gtk::Inhibit(true)
+                        gtk::glib::Propagation::Stop
                     } else {
-                        gtk::Inhibit(false)
+                        gtk::glib::Propagation::Proceed
                     }
                 });
             });
