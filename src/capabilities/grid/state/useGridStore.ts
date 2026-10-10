@@ -4,6 +4,7 @@ import { bridge } from "../../../bridge";
 import { WEBVIEW_FREEZE_JS, WEBVIEW_UNFREEZE_JS } from "../../../utils/webviewFreeze";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { useBrowserStore } from "../../browser/public";
+import { openModuleInCurrentTab } from "../../../composables/browserNav";
 import { isGridResourceAllowed } from "../resource/guard";
 import { registerGridLifecycleBinding } from "../lifecycle";
 
@@ -297,7 +298,7 @@ export const useGridStore = defineStore("grid", () => {
   // activateGrid：进入 Grid 主表面（资源已存在则重排，否则创建）。
   // 与历史行为一致：openModule("grid") + (gridOpen ? layoutGrid : buildGrid)。
   function activateGrid() {
-    layout.openModule("grid");
+    return openModuleInCurrentTab("grid");
   }
 
   // 状态不变量自动收敛（唯一 reconciliation owner）：
