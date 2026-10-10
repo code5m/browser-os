@@ -1,25 +1,16 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useBrowserStore } from "../../capabilities/browser/public";
-import { useTerminalStore } from "../../capabilities/terminal/public";
-import { useWorkspaceStore } from "../../capabilities/workspace/public";
-import { useRepoStore } from "../../capabilities/workspace/public";
 import { useLayoutStore } from "../../stores/useLayoutStore";
-import { useSettingsStore } from "../../settings/public";
 import { bridge } from "../../bridge";
 import { contributionRegistry } from "../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
 import type { ResourceStats } from "../../types";
 
 const browser = useBrowserStore();
-const term = useTerminalStore();
-const ws = useWorkspaceStore();
-const rp = useRepoStore();
 const layout = useLayoutStore();
-const settings = useSettingsStore();
 
-// W17(A7): 当前活动视图的可读名（纯展示，用于状态栏发现性；不引入运行时行为）。
-// mainView 为内部枚举键，非路径/URL/凭据，展示无敏感信息泄露风险。
+// 当前视图名称以动态 Capability 贡献为先，避免插件卸载后状态栏仍显示过期名称。
 const KNOWN_VIEWS: Record<string, string> = {
   home: "主页", browser: "浏览器", grid: "宫格", files: "文件", arts: "成果库",
   clip: "剪贴板", repo: "仓库", apps: "应用", audit: "审计", scripts: "脚本库",
@@ -35,175 +26,228 @@ const contributedViewLabels = computed(() => Object.fromEntries(
 const viewLabel = computed(() => contributedViewLabels.value[layout.mainView] ?? KNOWN_VIEWS[layout.mainView] ?? "");
 const viewUnknown = computed(() => !!layout.mainView && !viewLabel.value);
 
-const tabCount = computed(() => browser.tabs.length);
-const auditCount = computed(() => ws.audit.length);
-const termReady = computed(() => term.terminalOpen && term.termPanes.length > 0);
-const repoReady = computed(() => rp.repos.length > 0);
+// 页签真源是两类独立 store：浏览器网页 + 目录/模块。状态栏必须显示同一条页签栏的总数。
+const tabCount = computed(() => browser.tabs.length + layout.modTabs.length);
 const nativeReady = computed(() => Boolean((window as any).__TAURI_INTERNALS__));
 
-// ===== 资源监控（常驻）：系统内存 / 应用占用 / 内存预算 / 页签休眠 =====
 const stats = ref<ResourceStats | null>(null);
 const detailOpen = ref(false);
+
+// 普通浏览降至 15s，宫格/查看详情采用 3s；不可见窗口暂停轮询。
+// resource_stats 会扫描 /proc 进程树，不能无条件每 3s 常驻。
+// 同一时刻最多一个请求，防止慢请求重叠；卸载后不回写状态。
+const IDLE_REFRESH_MS = 15_000;
+const ACTIVE_REFRESH_MS = 3_000;
 let timer: number | null = null;
+let pending = false;
+let disposed = false;
 
 async function refresh() {
+  if (disposed || pending || !nativeReady.value || document.hidden) return;
+  pending = true;
   try {
-    stats.value = await bridge.resourceStats();
-  } catch {}
+    const result = await bridge.resourceStats();
+    if (!disposed) stats.value = result;
+  } catch {
+    // 暂态失败保留上一次可信统计；不制造持续错误 Toast。
+  } finally {
+    pending = false;
+  }
+}
+
+function schedulePoll() {
+  if (timer !== null) window.clearTimeout(timer);
+  timer = null;
+  if (disposed || !nativeReady.value || document.hidden) return;
+  timer = window.setTimeout(async () => {
+    timer = null;
+    await refresh();
+    schedulePoll();
+  }, detailOpen.value || layout.mainView === "grid" ? ACTIVE_REFRESH_MS : IDLE_REFRESH_MS);
+}
+
+function onVisibilityChange() {
+  if (!document.hidden) void refresh();
+  schedulePoll();
 }
 
 onMounted(() => {
-  refresh();
-  timer = window.setInterval(refresh, 3000);
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  void refresh().finally(schedulePoll);
 });
 onBeforeUnmount(() => {
-  if (timer) clearInterval(timer);
+  disposed = true;
+  document.removeEventListener("visibilitychange", onVisibilityChange);
+  if (timer !== null) window.clearTimeout(timer);
+  timer = null;
+});
+
+function toggleResourceDetails() {
+  detailOpen.value = !detailOpen.value;
+}
+watch(detailOpen, () => {
+  // 详情占据真实文档流高度；通知 BrowserHost 重新计算原生 WebView 可见区域。
+  void nextTick(() => browser.relocate());
+  void refresh();
+  schedulePoll();
+});
+watch(() => layout.mainView, () => {
+  if (detailOpen.value) detailOpen.value = false;
+  else schedulePoll();
 });
 
 function fmtMb(mb: number): string {
   return mb >= 1024 ? (mb / 1024).toFixed(1) + "G" : Math.round(mb) + "M";
 }
-
-// 可用内存占比（<10% 红色告警）
 const memLow = computed(() => {
   if (!stats.value || !stats.value.mem_total_mb) return false;
   return stats.value.mem_available_mb / stats.value.mem_total_mb < 0.1;
 });
-
-// 内存预算提示：预算 < 当前选择格数时提示会降级
-const budgetHint = computed(() => {
-  if (!stats.value) return "";
-  const want = browser.gridCount;
-  const budget = stats.value.grid_budget;
-  if (budget < want) return `预算仅 ${budget} 格`;
-  return `可开 ${budget} 格`;
-});
-const budgetLow = computed(
-  () => !!stats.value && stats.value.grid_budget < browser.gridCount
-);
 </script>
 
 <template>
+  <!-- 先渲染资源详情，再渲染底栏：真实占据 Shell 高度，绝不 fixed 覆盖原生网页。 -->
+  <section v-if="detailOpen && stats" id="resource-detail-panel" class="res-detail" role="region" aria-label="资源使用详情">
+    <div class="rd-header">
+      <div>
+        <strong>资源使用情况</strong>
+        <span class="rd-subtitle">查看详情时每 3 秒刷新；窗口隐藏后暂停</span>
+      </div>
+      <button type="button" class="rd-close" aria-label="收起资源详情" @click="toggleResourceDetails">收起 ✕</button>
+    </div>
+    <div class="rd-grid">
+      <div><span class="rd-label">系统可用内存</span><strong>{{ fmtMb(stats.mem_available_mb) }} / {{ fmtMb(stats.mem_total_mb) }}</strong></div>
+      <div><span class="rd-label">BrowserOS 合计</span><strong>{{ fmtMb(stats.app_total_mb) }}</strong></div>
+      <div><span class="rd-label">主进程树</span><strong>{{ fmtMb(stats.main.rss_mb) }}</strong></div>
+      <div><span class="rd-label">网页休眠</span><strong>{{ stats.hibernation_enabled ? "已开启（" + stats.hibernated_count + " 个）" : "未开启" }}</strong></div>
+    </div>
+    <p v-if="memLow" class="rd-alert" role="alert">可用内存偏低。建议收起宫格、减少同时运行的网页或关闭其他占用内存的应用。</p>
+    <div v-for="g in stats.grids" :key="g.pid" class="rd-process">{{ g.name }} · PID {{ g.pid }} · {{ fmtMb(g.rss_mb) }}</div>
+    <p class="rd-note">
+      统计接口的宫格预算估计为 {{ stats.grid_budget }} 格，仅供参考，<strong>不代表实际获准启动</strong>。
+      宫格启动另有安全保护（系统预留 1800MB、每格估算 450MB）；实际可启动格数以启动时检查为准。
+    </p>
+  </section>
+
   <footer class="status">
-    <span v-if="nativeReady" class="ok">● 已连接</span>
-    <span v-else class="dim">● 预览模式</span>
+    <span v-if="nativeReady" class="connection ok" title="原生客户端已连接">● 已连接</span>
+    <span v-else class="connection dim" title="Web 预览，没有原生系统资源数据">● 预览模式</span>
     <span v-if="viewLabel" class="viewchip">当前：{{ viewLabel }}</span>
     <span v-else-if="viewUnknown" class="viewchip warn" role="alert">⚠ 未知视图：{{ layout.mainView }}</span>
-    <span>页签 {{ tabCount }}</span>
-    <span>· 终端{{ termReady ? "就绪" : "未启" }}</span>
-    <span>· 仓库{{ repoReady ? "已配置" : "未配" }}</span>
-    <span>· 审计 {{ auditCount }} 条</span>
-    <!-- 资源摘要（常驻，点击查看明细） -->
-    <span
+    <span class="tabcount" :title="'网页 ' + browser.tabs.length + ' 个；目录与模块 ' + layout.modTabs.length + ' 个'">共 {{ tabCount }} 个页签</span>
+    <span v-if="layout.msg" class="msg" role="status">{{ layout.msg }}</span>
+    <span v-else class="status-space" aria-hidden="true"></span>
+    <button
       v-if="stats"
+      type="button"
       class="res"
       :class="{ warn: memLow }"
-      title="点击查看资源明细"
-      @click="detailOpen = !detailOpen"
+      aria-controls="resource-detail-panel"
+      :aria-expanded="detailOpen"
+      title="展开或收起资源详情"
+      @click="toggleResourceDetails"
     >
-      内存 {{ fmtMb(stats.mem_available_mb) }}/{{ fmtMb(stats.mem_total_mb) }}
-      · 应用 {{ fmtMb(stats.app_total_mb) }}
-      <template v-if="stats.grids.length">
-        <template v-for="g in stats.grids" :key="g.pid">
-          · {{ g.name }} {{ fmtMb(g.rss_mb) }}
-        </template>
-      </template>
-      <span :class="{ warn: budgetLow }">· {{ budgetHint }}</span>
-      <span v-if="settings.tabHibernation" class="hib">
-        · 休眠{{ stats.hibernated_count ? ` ${stats.hibernated_count}` : "开" }}
-      </span>
-      <span v-else class="dim">· 休眠关</span>
-    </span>
-    <span v-if="layout.msg" class="msg">{{ layout.msg }}</span>
+      <span>应用 {{ fmtMb(stats.app_total_mb) }}</span>
+      <span class="res-secondary">系统剩余 {{ fmtMb(stats.mem_available_mb) }}</span>
+      <span aria-hidden="true">{{ detailOpen ? "⌄" : "⌃" }}</span>
+    </button>
   </footer>
-  <!-- 资源明细浮层（点击状态栏资源区展开） -->
-  <div v-if="detailOpen && stats" class="res-detail" @click="detailOpen = false">
-    <div class="rd-title">资源明细（3s 自动刷新，点击关闭）</div>
-    <div class="rd-row">
-      系统内存：可用 {{ fmtMb(stats.mem_available_mb) }} / 共
-      {{ fmtMb(stats.mem_total_mb) }}
-      <span v-if="memLow" class="warn">⚠️ 可用内存偏低，建议关闭其它应用或减少宫格</span>
-    </div>
-    <div class="rd-row">应用合计：{{ fmtMb(stats.app_total_mb) }}（主进程 {{ fmtMb(stats.main.rss_mb) }} + 宫格子进程）</div>
-    <div v-for="g in stats.grids" :key="g.pid" class="rd-row">
-      {{ g.name }}（pid {{ g.pid }}）：{{ fmtMb(g.rss_mb) }}
-    </div>
-    <div class="rd-row">
-      内存预算守卫：当前可用内存最多支撑 {{ stats.grid_budget }} 格（每格按 450MB 估算，保留 700MB 系统余量）
-    </div>
-    <div class="rd-row">
-      页签休眠：{{ stats.hibernation_enabled ? `开启（已休眠 ${stats.hibernated_count} 个页签）` : "关闭（可在设置 → 性能中开启）" }}
-    </div>
-  </div>
-  <!-- 浏览器内容是原生子 WebView，会盖住 HTML 内的 fixed 浮层。提示仅在本状态栏
-       展示：既不会遮住网页，也不会被原生 WebView 反向遮住。 -->
+  <!-- 操作消息仅在状态栏；资源详情是正常 flex 流中的可收起面板，不在 WebView 上方。 -->
 </template>
 
 <style scoped>
 .status {
   height: 24px;
+  min-height: 24px;
   background: #1f2733;
-  color: #9aa4b2;
+  color: #aebccc;
   font-size: 11px;
   display: flex;
   align-items: center;
   padding: 0 12px;
-  gap: 16px;
+  gap: 12px;
   flex-shrink: 0;
   user-select: none;
+  min-width: 0;
 }
-.status .ok {
-  color: #52c41a;
-}
-.status .msg {
+.connection, .viewchip, .tabcount { white-space: nowrap; }
+.ok { color: #a4e5bc; }
+.dim { color: #a8b2c2; }
+.viewchip { color: #e0e8f1; }
+.warn { color: #ffcb9e; }
+.msg {
   margin-left: auto;
-  color: #cbd5e0;
-}
-.viewchip {
-  color: #cbd5e0;
-}
-.viewchip.warn {
-  color: #ff7a7a;
-}
-.res {
-  cursor: pointer;
+  flex: 1 1 auto;
+  min-width: 0;
+  color: #e0e8f1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: right;
 }
-.res:hover {
-  color: #cbd5e0;
+.status-space { flex: 1 1 auto; min-width: 0; }
+.res {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  border-radius: 5px;
+  padding: 3px 6px;
+  margin: 0 -4px 0 0;
+  color: #e2e9f2;
+  background: transparent;
+  font: inherit;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
-.warn {
-  color: #ff7a7a;
-}
-.hib {
-  color: #d4a94e;
-}
-.dim {
-  color: #5a6472;
-}
+.res:hover, .res[aria-expanded="true"] { background: #344355; }
+.res:focus-visible, .rd-close:focus-visible { outline: 2px solid #86b7f7; outline-offset: 2px; }
+.res-secondary { color: #aebccc; }
 .res-detail {
-  position: fixed;
-  bottom: 32px;
-  left: 12px;
-  z-index: 99999;
-  background: rgba(15, 23, 42, 0.95);
-  color: #cbd5e0;
+  flex: 0 0 auto;
+  max-height: min(33vh, 260px);
+  overflow: auto;
+  padding: 12px 18px 10px;
+  border-top: 1px solid #dbe4ee;
+  background: #f7f9fc;
+  color: #334155;
   font-size: 12px;
-  padding: 12px 16px;
+}
+.rd-header, .rd-header > div { display: flex; align-items: center; gap: 12px; }
+.rd-header { justify-content: space-between; margin-bottom: 10px; }
+.rd-header strong { font-size: 13px; color: #1e293b; }
+.rd-subtitle, .rd-label, .rd-note { color: #64748b; }
+.rd-close {
+  border: 1px solid #d7e0ec;
+  background: #fff;
+  border-radius: 6px;
+  color: #334155;
+  padding: 4px 9px;
+  font-size: 11px;
+}
+.rd-close:hover { background: #eaf1fb; }
+.rd-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.rd-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  max-width: 70vw;
-  cursor: pointer;
-  line-height: 1.8;
+  background: #fff;
+  min-width: 0;
 }
-.rd-title {
-  font-weight: 600;
-  color: #fff;
-  margin-bottom: 4px;
+.rd-grid strong { color: #1e293b; font-size: 14px; }
+.rd-alert { margin: 9px 0 0; color: #9a3412; }
+.rd-process { margin-top: 7px; color: #475569; }
+.rd-note { margin: 9px 0 0; font-size: 11px; line-height: 1.5; }
+@media (max-width: 1000px) {
+  .viewchip { display: none; }
+  .rd-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-.rd-row .warn {
-  margin-left: 8px;
+@media (max-width: 650px) {
+  .res-secondary { display: none; }
+  .status { gap: 8px; padding: 0 8px; }
+  .rd-header > div { flex-direction: column; align-items: flex-start; gap: 3px; }
 }
 </style>
