@@ -129,21 +129,38 @@ impl TabManager {
                     let alt = state.contains(ModifierType::MOD1_MASK);
                     let meta = state.contains(ModifierType::META_MASK)
                         || state.contains(ModifierType::SUPER_MASK);
-                    if alt || meta { return gtk::Inhibit(false); }
-                    let key = event.keyval().name().map(|n| n.to_string()).unwrap_or_default();
+                    if alt || meta {
+                        return gtk::Inhibit(false);
+                    }
+                    let key = event
+                        .keyval()
+                        .name()
+                        .map(|n| n.to_string())
+                        .unwrap_or_default();
                     let action = if key == "F11" && !ctrl {
-                        if shift { None } else { Some("immersive") }
+                        if shift {
+                            None
+                        } else {
+                            Some("immersive")
+                        }
                     } else if key == "F11" && ctrl && shift {
                         Some("compact")
                     } else if (key == "l" || key == "L") && ctrl && !shift {
                         Some("address")
-                    } else { None };
+                    } else {
+                        None
+                    };
                     if let Some(action) = action {
-                        let _ = app_key.emit("browser-tabs://shell-shortcut", serde_json::json!({
-                            "id": id_key, "action": action
-                        }));
+                        let _ = app_key.emit(
+                            "browser-tabs://shell-shortcut",
+                            serde_json::json!({
+                                "id": id_key, "action": action
+                            }),
+                        );
                         gtk::Inhibit(true)
-                    } else { gtk::Inhibit(false) }
+                    } else {
+                        gtk::Inhibit(false)
+                    }
                 });
             });
         }
