@@ -8,7 +8,7 @@ assert.match(rust,/let id = webview\.label\(\)\.to_string\(\)/);
 assert.match(rust,/let page_url = webview\.url\(\)/);
 assert.doesNotMatch(rust,/fn report_title_inner[\s\S]{0,350}active_tab\.lock/);
 assert.match(rust,/"tab-title",[\s\S]*?"url": page_url/);
-assert.match(browser,/existing\.url !== t\.url/);
+assert.match(browser,/canonical\(existing\.url\) !== canonical\(t\.url\)/);
 assert.match(browser,/existing\.title = t\.title/);
 assert.match(browser,/t\.title = navUrl/);
 assert.match(browser,/current\.title = target/);
