@@ -187,6 +187,23 @@ function scanCssFile(content, rel) {
   return findings;
 }
 
+// BrowserOS UI v1: only the address-bar bookmark action is rendered. Check
+// live reactive Consumption of registry slots (not unused legacy computeds).
+// Missing rendering, hardcoded entry or duplicate trailing entry must fail.
+function hasReactiveActivityContributions(activityBar) {
+  const slots = [
+    ["addressBarActions", "getNavigationContributions", "ADDRESS_BAR_ACTIONS"],
+    ["activityNavContributions", "getSurfaceContributions", "ACTIVITY_BAR_NAV"],
+    ["activityRowContributions", "getSurfaceContributions", "ACTIVITY_BAR_ROWS"],
+  ];
+  return slots.every(([binding, lookup, slot]) => (
+    new RegExp("const\\s+" + binding + "\\s*=\\s*computed\\(\\s*\\(\\)\\s*=>\\s*" +
+      "contributionRegistry\\." + lookup + "\\(\\s*CONTRIBUTION_SLOTS\\." + slot +
+      "\\s*,?\\s*\\)\\s*\\)").test(activityBar) &&
+    activityBar.includes('v-for="c in ' + binding + '"')
+  )) && !activityBar.includes('v-for="c in trailingActions"');
+}
+
 // ===== 结构检查 =====
 
 function structuralChecks(findings, warnings) {
@@ -253,14 +270,13 @@ function structuralChecks(findings, warnings) {
 
   if (existsSync(activityBarPath)) {
     const activityBar = readFileSync(activityBarPath, "utf8");
-    if (!/const\s+addressBarActions\s*=\s*computed\(/.test(activityBar)
-      || !/const\s+trailingActions\s*=\s*computed\(/.test(activityBar)) {
+    if (!hasReactiveActivityContributions(activityBar)) {
       findings.push({
         severity: "P1",
         file: "src/components/layout/ActivityBar.vue",
         line: 0,
-        message: "ActivityBar 的能力入口必须响应运行时增删",
-        rule: "Capability 停用后不得残留死入口",
+        message: "ActivityBar 必须动态渲染地址栏/导航/扩展行的 Contribution，且不得渲染重复 trailing 入口",
+        rule: "Capability 停用后不得残留死入口；产品 v1 收藏夹单一可见入口",
       });
     }
   }
@@ -420,6 +436,23 @@ function runSelfTest() {
   if (!r8.some((f) => f.kind === "fixed" && f.line === 2)) {
     failures.push(`stripCommentsPreserveLines 行号不正确: ${JSON.stringify(r8)}`);
   }
+
+  // Product v1: a dead computed, an unrendered slot, a wrong slot and a
+  // duplicated trailing bookmark are all regressions.
+  const slotFixtures = [
+    'const addressBarActions = computed(() => contributionRegistry.getNavigationContributions(CONTRIBUTION_SLOTS.ADDRESS_BAR_ACTIONS,));',
+    'const activityNavContributions = computed(() => contributionRegistry.getSurfaceContributions(CONTRIBUTION_SLOTS.ACTIVITY_BAR_NAV,));',
+    'const activityRowContributions = computed(() => contributionRegistry.getSurfaceContributions(CONTRIBUTION_SLOTS.ACTIVITY_BAR_ROWS,));',
+    '<template v-for="c in addressBarActions"></template>',
+    '<template v-for="c in activityNavContributions"></template>',
+    '<template v-for="c in activityRowContributions"></template>',
+  ];
+  const liveSlots = slotFixtures.join("\n");
+  if (!hasReactiveActivityContributions(liveSlots)) failures.push("Live slot sample rejected");
+  if (hasReactiveActivityContributions(liveSlots.replace('v-for="c in addressBarActions"', 'v-for="c in nowhere"'))) failures.push("Unrendered bookmark slot accepted");
+  if (hasReactiveActivityContributions(liveSlots + '<template v-for="c in trailingActions"></template>')) failures.push("Duplicate trailing slot accepted");
+  if (hasReactiveActivityContributions(liveSlots.replace("CONTRIBUTION_SLOTS.ADDRESS_BAR_ACTIONS", "CONTRIBUTION_SLOTS.ACTIVITY_BAR_TRAILING"))) failures.push("Wrong slot accepted");
+  if (hasReactiveActivityContributions(liveSlots.replace("const addressBarActions = computed(", "const addressBarActions = nothing("))) failures.push("Non-reactive slot accepted");
 
   return failures;
 }

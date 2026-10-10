@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   useLayoutStore,
   TOP_NAV_ITEMS,
-  NAV_MENU_SECTIONS,
   isNavActive,
   nextNavIndex,
 } from "../../stores/useLayoutStore";
@@ -14,11 +13,9 @@ import { useWorkspaceStore } from "../../capabilities/workspace/public";
 import { useArtifactStore } from "../../capabilities/workspace/public";
 import { useFileStore } from "../../capabilities/workspace/public";
 import { redactSecrets } from "../../utils/redact";
-import { Search, PanelLeftClose, PanelLeftOpen } from "@lucide/vue";
-import { useWorkbenchStore } from "../../stores/useWorkbenchStore";
+import { bridge } from "../../bridge";
 import { contributionRegistry } from "../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
-const workbench = useWorkbenchStore();
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
@@ -33,9 +30,6 @@ const fs = useFileStore();
 const addressBarActions = computed(() => contributionRegistry.getNavigationContributions(
   CONTRIBUTION_SLOTS.ADDRESS_BAR_ACTIONS,
 ));
-const trailingActions = computed(() => contributionRegistry.getNavigationContributions(
-  CONTRIBUTION_SLOTS.ACTIVITY_BAR_TRAILING,
-));
 const activityNavContributions = computed(() => contributionRegistry.getSurfaceContributions(
   CONTRIBUTION_SLOTS.ACTIVITY_BAR_NAV,
 ));
@@ -45,11 +39,13 @@ const activityRowContributions = computed(() => contributionRegistry.getSurfaceC
 
 // 一级入口与 ☰ 菜单分节统一来自 useLayoutStore（W17 导航真源），
 // 窄窗口按 navTopViews 从尾部裁剪，被裁掉的入口在 ☰ 菜单中仍可达。
-const menuSections = NAV_MENU_SECTIONS;
-const topItems = computed(() => TOP_NAV_ITEMS.filter((i) => layout.navTopViews.includes(i.view) && ['browser','files'].includes(i.view)));
+const topItems = computed(() => TOP_NAV_ITEMS.filter((i) => layout.navTopViews.includes(i.view)));
 
 // ===== W17：窗口宽度上报（窄窗口密度）+ resize 监听清理 =====
 const navEl = ref<HTMLElement | null>(null);
+const moreActionsOpen = ref(false);
+watch(() => layout.mainView, () => { moreActionsOpen.value = false; });
+function toggleMoreActions() { layout.navSection = ""; moreActionsOpen.value = !moreActionsOpen.value; }
 function syncWidth() {
   layout.setWindowWidth(window.innerWidth || 0);
 }
@@ -72,12 +68,11 @@ function changeShellMode(mode: "standard" | "compact" | "immersive") {
 function toggleImmersive() {
   changeShellMode("immersive");
 }
-function toggleSection(key: "" | "grid" | "more" | "omni") {
-  layout.toggleNavSection(key);
-}
 
 // W17：活动条键盘漫游 —— ←/→ 在入口间环绕移动焦点，Home/End 直达首尾
 function onNavKeydown(e: KeyboardEvent) {
+  const origin = e.target as HTMLElement;
+  if (origin.tagName === "INPUT" || origin.tagName === "TEXTAREA" || origin.isContentEditable) return;
   const nav = navEl.value;
   if (!nav) return;
   const items = Array.from(nav.querySelectorAll<HTMLElement>("[data-nav-item]"));
@@ -95,6 +90,7 @@ function onNavKeydown(e: KeyboardEvent) {
 
 // W17：Esc 收起扩展行并把焦点还给触发它的按钮（键盘用户不会丢失焦点位置）
 function onEscape() {
+  if (moreActionsOpen.value) { moreActionsOpen.value = false; nextTick(() => document.querySelector<HTMLElement>("[data-nav-toggle=more-actions]")?.focus()); return; }
   const open = layout.navSection;
   if (!open) return;
   layout.closeNavSection();
@@ -127,8 +123,23 @@ async function onItem(v: string) {
 const RECENT_DIRS_KEY = "browser-os-recent-dirs";
 const recentDirs = ref<string[]>(loadRecentDirs());
 // 最近访问行的分节开关：历史（最近网址+最近目录）/ 常用（常用目录）可独立控制
-const omniShowHistory = ref(true);
-const omniShowCommon = ref(true);
+const omniIndex = ref(-1);
+const omniCandidates = computed(() => {
+  const seen = new Set<string>();
+  const needle = browser.url.trim().toLowerCase();
+  const candidates = [
+    ...ws.recents.filter(r => r.type === "url").map(r => ({ value:r.path, label:safeLabel(r.path), type:"网页" })),
+    ...recentDirs.value.map(value => ({ value, label:safeLabel(value), type:"最近目录" })),
+    ...fs.startDirs.map(d => ({ value:d.path, label:safeLabel(d.path), type:"常用目录" })),
+  ];
+  return candidates.filter(c => { if (seen.has(c.value)) return false; seen.add(c.value); return !needle || c.value.toLowerCase().includes(needle); }).slice(0,6);
+});
+function chooseSuggestion(value:string) { if (looksLikeDir(value)) pickDir(value); else pickUrl(value); }
+function onOmniKeydown(e:KeyboardEvent) {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); omniIndex.value = (omniIndex.value + (e.key === "ArrowDown" ? 1 : -1) + omniCandidates.value.length) % (omniCandidates.value.length || 1); }
+  else if (e.key === "Escape") { e.stopPropagation(); layout.closeNavSection(); omniIndex.value = -1; }
+  else if (e.key === "Enter") { e.preventDefault(); const match = omniCandidates.value[omniIndex.value]; omniIndex.value = -1; if (match) chooseSuggestion(match.value); else onAddrGo(); }
+}
 
 // W17：最近网址/目录只做展示脱敏（点击仍用原始值），避免把带凭据的
 // 查询串或 token 原样贴在活动条上。
@@ -210,23 +221,6 @@ async function openDirCenter() {
         <component :is="c.component" />
       </template>
 
-      <!-- ☰ 菜单：展开工作区/工具/同步 -->
-      <button
-        data-nav-item
-        data-nav-toggle="more"
-        :class="{ active: layout.navSection === 'more' || menuSections.some((s) => s.items.some((c) => isNavActive(layout.mainView, c.view))) }"
-        aria-label="工具中心：更多功能"
-        :aria-expanded="layout.navSection === 'more'"
-        aria-controls="nav-more-row"
-        title="工具中心：模块、设置和专业能力"
-        @click.stop="toggleSection('more')"
-      >
-        <span class="ic">☰</span>
-        <span class="lab">工具</span>
-      </button>
-
-      <button class="tbtn" title="统一命令" aria-label="统一命令" @click="workbench.commandOpen = !workbench.commandOpen"><Search :size="16" /></button>
-      <button class="tbtn auxiliary-tool" :title="workbench.collapsed ? '恢复工具窗' : '折叠工具窗'" aria-label="折叠或恢复工具窗" @click="workbench.toggleTools()"><PanelLeftOpen v-if="workbench.collapsed" :size="16"/><PanelLeftClose v-else :size="16"/></button>
       <!-- 中：智能地址栏 -->
       <div class="addr-mid">
         <template v-if="layout.mainView === 'browser' || layout.mainView === 'grid'">
@@ -241,101 +235,58 @@ async function openDirCenter() {
             aria-label="地址栏"
             data-nav-toggle="omni"
             :aria-expanded="layout.navSection === 'omni'"
+            :aria-activedescendant="omniIndex >= 0 ? 'omni-suggestion-' + omniIndex : undefined"
             aria-controls="nav-omni-row"
             placeholder="输入网址或目录路径，回车打开"
-            @keyup.enter="onAddrGo"
-            @focus="layout.navSection = 'omni'"
+            @keydown="onOmniKeydown"
+            @input="omniIndex = -1"
+            @blur="layout.navSection = ''"
+            @focus="layout.navSection = 'omni'; omniIndex = -1"
           />
           <!-- M1-3：⭐ 收藏当前网页 + 📑 展开收藏夹侧栏（经通用 Contribution Registry 渲染） -->
           <template v-for="c in addressBarActions" :key="c.id">
             <component :is="c.component" />
           </template>
         </div>
-        <button class="go" @click="onAddrGo">前往</button>
+
       </div>
 
-      <!-- 右：浏览辅助 + 采集 + 设置 -->
-      <!-- 收藏夹：任意视图均可打开；经通用 Contribution Registry 渲染（Shell 零 Bookmark 专属知识） -->
-      <template v-for="c in trailingActions" :key="c.id">
-        <component :is="c.component" />
-      </template>
-      <template v-if="layout.mainView === 'browser'">
-        <button class="tbtn" aria-label="边浏览边管理文件" @click="layout.toggleBrowserDock('files')" title="边浏览边管理文件">🗂</button>
-        <button class="tbtn auxiliary-tool" aria-label="边浏览边开终端" @click="layout.toggleBrowserDock('term')" title="边浏览边开终端">💻</button>
-        <button class="tbtn" aria-label="紧凑模式" @click="changeShellMode('compact')" title="紧凑模式：收起侧边工具栏">▤</button>
-        <button class="tbtn" aria-label="沉浸模式" @click="toggleImmersive" title="沉浸模式：F11 可返回">⛶</button>
-      </template>
-      <span class="sep auxiliary-tool"></span>
-      <button
-        class="sys auxiliary-tool"
-        data-nav-item
-        :class="{ active: browser.aiNavOpen }"
-        aria-label="AI 导航"
-        title="AI 导航"
-        @click="browser.toggleAiNav()"
-      >
-        <span class="ic">🤖</span>
-      </button>
-      <button class="collect auxiliary-tool" data-nav-item aria-label="采集选中内容" :title="'采集选中内容'" @click="art.collectSelection">
-        <span class="ic">📥</span>
-        <span class="lab">采集</span>
-      </button>
-      <button class="sys auxiliary-tool" data-nav-item aria-label="系统设置" title="系统设置" @click="onItem('settings')">
-        <span class="ic">⚙️</span>
-      </button>
+      <!-- Keep only one contextual file shortcut and one overflow action on the default chrome. -->
+      <button v-if="layout.mainView === 'browser'" class="tbtn" aria-label="文件侧栏" title="文件侧栏" @click="layout.toggleBrowserDock('files')">▣</button>
+      <button class="tbtn action-overflow" data-nav-item data-nav-toggle="more-actions" aria-label="更多操作" title="更多操作"
+        :aria-expanded="moreActionsOpen" aria-controls="chrome-more-actions" @click="toggleMoreActions">···</button>
     </nav>
 
+    <!-- Native-safe suggestion surface: inline below the address bar, never above GTK WebView. -->
+    <div v-if="layout.navSection === 'omni'" id="nav-omni-row" class="suggestion-list" role="listbox" aria-label="地址建议">
+      <button v-for="(suggestion, i) in omniCandidates" :key="suggestion.value" :id="'omni-suggestion-' + i" role="option" :aria-selected="omniIndex === i"
+        class="suggestion-item" :class="{ selected: omniIndex === i }" @mousedown.prevent @click="chooseSuggestion(suggestion.value)">
+        <span class="suggestion-type">{{ suggestion.type === '网页' ? '🌐' : '📁' }}</span>
+        <span class="suggestion-main">{{ suggestion.label }}</span><span class="suggestion-sub">{{ suggestion.type }}</span>
+      </button>
+      <p v-if="!omniCandidates.length" class="suggestion-empty">按 Enter 打开网址或本地目录</p>
+    </div>
+    <div v-if="moreActionsOpen" id="chrome-more-actions" class="more-actions" role="group" aria-label="更多操作">
+      <span class="more-heading">窗口</span>
+      <button @click="changeShellMode(layout.shellMode === 'compact' ? 'standard' : 'compact');moreActionsOpen=false">{{ layout.shellMode === 'compact' ? '恢复标准模式' : '紧凑模式' }}</button>
+      <button @click="toggleImmersive();moreActionsOpen=false">沉浸全屏 · F11</button>
+      <template v-if="layout.mainView === 'browser'">
+        <span class="more-divider"></span>
+        <span class="more-heading">工作区</span>
+        <button @click="layout.toggleBrowserDock('term');moreActionsOpen=false">终端侧栏</button>
+        <button @click="browser.toggleAiNav();moreActionsOpen=false">AI 导航</button>
+      </template>
+      <span class="more-divider"></span>
+      <span class="more-heading">管理</span>
+      <button @click="art.collectSelection();moreActionsOpen=false">采集选中内容</button>
+      <button @click="onItem('settings');moreActionsOpen=false">设置</button>
+      <button @click="layout.navSection='';moreActionsOpen=false" aria-label="关闭更多操作">关闭</button>
+    </div>
     <template v-for="c in activityRowContributions" :key="c.id">
       <component :is="c.component" />
     </template>
 
-    <!-- 功能菜单扩展行 -->
-    <div v-if="layout.navSection === 'more'" id="nav-more-row" class="expand-row">
-      <template v-for="s in menuSections" :key="s.title">
-        <span class="er-label">{{ s.title }}</span>
-        <button
-          v-for="c in s.items"
-          :key="c.view"
-          :class="{ active: isNavActive(layout.mainView, c.view) }"
-          :aria-label="c.label"
-          :aria-current="isNavActive(layout.mainView, c.view) ? 'page' : undefined"
-          @click="onItem(c.view)"
-        >
-          <span class="ic">{{ c.icon }}</span> {{ c.label }}
-        </button>
-        <span class="er-sep"></span>
-      </template>
-      <button class="er-close" aria-label="收起功能菜单" @click="layout.navSection = ''" title="收起">✕</button>
-    </div>
 
-    <!-- 最近网址 / 最近常用目录扩展行（历史/常用可独立开关） -->
-    <div v-if="layout.navSection === 'omni'" id="nav-omni-row" class="expand-row omni-row">
-      <button :class="{ active: omniShowHistory }" aria-label="显示或隐藏历史记录" title="显示/隐藏历史记录" @click="omniShowHistory = !omniShowHistory">🕒 历史</button>
-      <button :class="{ active: omniShowCommon }" aria-label="显示或隐藏常用目录" title="显示/隐藏常用目录" @click="omniShowCommon = !omniShowCommon">📂 常用</button>
-      <span class="er-sep"></span>
-      <template v-if="omniShowHistory && ws.recents.some((r) => r.type === 'url')">
-        <button
-          v-for="r in ws.recents.filter((r) => r.type === 'url').slice(0, 8)"
-          :key="'u' + r.path"
-          class="chip"
-          :title="safeLabel(r.path)"
-          @click="pickUrl(r.path)"
-        >🌐 {{ safeLabel(r.path) }}</button>
-      </template>
-      <template v-if="omniShowHistory && recentDirs.length">
-        <button v-for="d in recentDirs" :key="'d' + d" class="chip" :title="safeLabel(d)" @click="pickDir(d)">📁 {{ safeLabel(d) }}</button>
-      </template>
-      <template v-if="omniShowCommon && fs.startDirs.length">
-        <button v-for="d in fs.startDirs" :key="'s' + d.path" class="chip" :title="safeLabel(d.path)" @click="pickDir(d.path)">📂 {{ d.name }}</button>
-      </template>
-      <span
-        v-if="(omniShowHistory && !ws.recents.length && !recentDirs.length) && (omniShowCommon && !fs.startDirs.length)"
-        class="er-label"
-      >
-        暂无记录：输入网址或 / 开头的目录路径，回车即自动识别
-      </span>
-      <button class="er-close" aria-label="收起最近与常用" @click="layout.navSection = ''" title="收起">✕</button>
-    </div>
   </div>
 </template>
 
@@ -345,60 +296,24 @@ async function openDirCenter() {
 }
 .activity{height:30px;box-sizing:border-box;background:#eef1f6;color:#314651;border-bottom:1px solid #d9e0e3;gap:3px;padding:2px 6px}
 .activity button{color:#425b68;border-radius:4px}
-.activity button.active,.activity button.go{background:#e0eee8;color:#135b48}
+.activity button.active{background:#e0eee8;color:#135b48}
 .activity .addr-mid{flex:1;min-width:0}
 
-/* 扩展行：浅色、横排、按钮紧凑 */
-.expand-row {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-wrap: wrap;
-  padding: 4px 8px;
-  background: #f4f6fb;
-  border-bottom: 1px solid #e3e7f5;
-}
-.expand-row button {
-  border: 1px solid #d5dbe7;
-  background: #fff;
-  color: #4e5969;
-  border-radius: 5px;
-  padding: 3px 9px;
-  font-size: 11px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.expand-row button.active {
-  background: #2b6cb0;
-  border-color: #2b6cb0;
-  color: #fff;
-}
-.er-label {
-  font-size: 11px;
-  color: #86909c;
-  user-select: none;
-}
-.er-sep {
-  width: 1px;
-  height: 16px;
-  background: #d5dbe7;
-}
-.er-close {
-  margin-left: auto;
-  border: none !important;
-  background: transparent !important;
-  color: #999 !important;
-}
-.omni-row {
-  max-height: 74px;
-  overflow-y: auto;
-}
-.chip {
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+.more-actions { display:flex; gap:6px; flex-wrap:wrap; align-items:center; padding:7px 12px; background:#f8fafc; border-bottom:1px solid #e2e8f0; }
+.more-actions button { border:1px solid #d8e1eb; background:#fff; color:#344054; border-radius:7px; padding:5px 10px; font-size:12px; cursor:pointer; }
+.more-actions button:hover { background:#eaf2fb; }
+.more-heading { color:#667085; font-size:11px; font-weight:600; }
+.more-divider { width:1px; height:18px; background:#dce4ee; margin:0 3px; }
+.action-overflow { font-weight:700; font-size:17px; }
+.activity button:hover { background:#e9eef6!important; color:#344054!important; }
+.activity button.active { background:#e3eefb; color:#17548f; }
+.suggestion-list { display:flex; flex-direction:column; max-height:220px; overflow-y:auto; background:#fff; border:1px solid #dce3eb; border-top:0; box-shadow:0 8px 20px #13233b12; border-radius:0 0 12px 12px; padding:5px; }
+.suggestion-item { display:flex; align-items:center; gap:12px; width:100%; padding:8px 12px; border:0; background:transparent; text-align:left; color:#243449; cursor:pointer; border-radius:7px; }
+.suggestion-item:hover,.suggestion-item.selected { background:#eef4fb; }
+.suggestion-type { width:20px; text-align:center; }
+.suggestion-main { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:12px; }
+.suggestion-sub { flex:none; font-size:11px; color:#667085; }
+.suggestion-empty { padding:5px 12px; color:#667085; font-size:12px; margin:0; }
 /* 中部智能地址栏 */
 .addr-mid {
   flex: 1;
@@ -429,16 +344,6 @@ async function openDirCenter() {
   border-color: #2b6cb0;
   background: #fff;
 }
-.addr-mid .go {
-  background: #2b6cb0;
-  color: #fff;
-  border: none;
-  border-radius: 5px;
-  padding: 4px 12px;
-  cursor: pointer;
-  font-size: 12px;
-  white-space: nowrap;
-}
 .tbtn {
   min-width: 24px;
   height: 24px;
@@ -461,14 +366,9 @@ async function openDirCenter() {
 .nav-icon .activity button {
   padding: 2px 6px;
 }
-.nav-icon .addr-mid .go {
-  display: none;
-}
 
 </style>
 
 <style scoped>
-/* 宽度不足时低频快捷入口退出第一层，保留搜索、双核心和工具中心。 */
-@media (max-width: 950px) { .auxiliary-tool { display: none !important; } }
 .activity :focus-visible { outline: 2px solid #3983c9; outline-offset: -2px; }
 </style>

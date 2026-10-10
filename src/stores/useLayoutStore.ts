@@ -35,15 +35,16 @@ export type MainView =
 //   3) 全部为纯函数，可在 Node 下直接加载测试，不触碰 bridge/后端。
 // 双核心是唯一默认一级入口：更多能力仍在菜单 / Contribution 中可达。
 export const TOP_NAV_ITEMS = [
+  { view: "home", icon: "⌂", label: "主页" },
   { view: "browser", icon: "🌐", label: "浏览" },
   { view: "files", icon: "📁", label: "文件" },
+  { view: "tools", icon: "◈", label: "工具" },
 ] as const;
 
 export const NAV_MENU_SECTIONS = [
   {
     title: "工作区",
     items: [
-      { view: "home", icon: "🏠", label: "主页" },
       { view: "vault", icon: "◇", label: "笔记 Vault" },
       { view: "clip", icon: "📋", label: "剪贴板" },
       { view: "arts", icon: "📚", label: "知识库" },
@@ -57,7 +58,6 @@ export const NAV_MENU_SECTIONS = [
       { view: "apps", icon: "🚀", label: "应用" },
       { view: "scripts", icon: "📜", label: "脚本库" },
       { view: "commands", icon: "⚡", label: "命令库" },
-      { view: "tools", icon: "🧰", label: "工具箱" },
       { view: "db", icon: "🗄️", label: "数据库" },
       { view: "tasks", icon: "⏰", label: "定时任务" },
       { view: "skills", icon: "🛠️", label: "技能" },

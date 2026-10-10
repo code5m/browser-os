@@ -48,6 +48,7 @@ export function registerBookmarkContributions(): void {
     slot: CONTRIBUTION_SLOTS.ADDRESS_BAR_ACTIONS,
     component: BookmarkStar,
   })
+  // Legacy contribution remains registered for hot-plug compatibility; the UI no longer renders this duplicate slot.
   contributionRegistry.registerContribution({
     id: "bookmark.entry-button",
     capabilityId: BOOKMARK_CAPABILITY_ID,
@@ -55,6 +56,7 @@ export function registerBookmarkContributions(): void {
     slot: CONTRIBUTION_SLOTS.ACTIVITY_BAR_TRAILING,
     component: BookmarkEntryButton,
   })
+
 }
 
 export const bookmarkCapability = {

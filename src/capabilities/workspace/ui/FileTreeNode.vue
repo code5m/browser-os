@@ -96,14 +96,17 @@ function onDrop(ev: DragEvent) {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 6px;
+  min-height: 28px;
+  padding: 3px 8px;
+  margin: 1px 5px;
+  border-radius: 6px;
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
   user-select: none;
 }
 .tnode:hover {
-  background: #eef1f6;
+  background: #edf3fa;
 }
 .tnode.active {
   background: #dbeafe;
