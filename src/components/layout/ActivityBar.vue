@@ -80,6 +80,8 @@ function toggleSection(key: "" | "grid" | "more" | "omni") {
 
 // W17：活动条键盘漫游 —— ←/→ 在入口间环绕移动焦点，Home/End 直达首尾
 function onNavKeydown(e: KeyboardEvent) {
+  const origin = e.target as HTMLElement;
+  if (origin.tagName === "INPUT" || origin.tagName === "TEXTAREA" || origin.isContentEditable) return;
   const nav = navEl.value;
   if (!nav) return;
   const items = Array.from(nav.querySelectorAll<HTMLElement>("[data-nav-item]"));
@@ -242,9 +244,12 @@ async function openDirCenter() {
             aria-label="地址栏"
             data-nav-toggle="omni"
             :aria-expanded="layout.navSection === 'omni'"
+            :aria-activedescendant="omniIndex >= 0 ? 'omni-suggestion-' + omniIndex : undefined"
             aria-controls="nav-omni-row"
             placeholder="输入网址或目录路径，回车打开"
             @keydown="onOmniKeydown"
+            @input="omniIndex = -1"
+            @blur="layout.navSection = ''"
             @focus="layout.navSection = 'omni'; omniIndex = -1"
           />
           <!-- M1-3：⭐ 收藏当前网页 + 📑 展开收藏夹侧栏（经通用 Contribution Registry 渲染） -->
@@ -261,6 +266,15 @@ async function openDirCenter() {
         :aria-expanded="moreActionsOpen" aria-controls="chrome-more-actions" @click="toggleMoreActions">···</button>
     </nav>
 
+    <!-- Native-safe suggestion surface: inline below the address bar, never above GTK WebView. -->
+    <div v-if="layout.navSection === 'omni'" id="nav-omni-row" class="suggestion-list" role="listbox" aria-label="地址建议">
+      <button v-for="(suggestion, i) in omniCandidates" :key="suggestion.value" :id="'omni-suggestion-' + i" role="option" :aria-selected="omniIndex === i"
+        class="suggestion-item" :class="{ selected: omniIndex === i }" @mousedown.prevent @click="chooseSuggestion(suggestion.value)">
+        <span class="suggestion-type">{{ suggestion.type === '网页' ? '🌐' : '📁' }}</span>
+        <span class="suggestion-main">{{ suggestion.label }}</span><span class="suggestion-sub">{{ suggestion.type }}</span>
+      </button>
+      <p v-if="!omniCandidates.length" class="suggestion-empty">按 Enter 打开网址或本地目录</p>
+    </div>
     <div v-if="moreActionsOpen" id="chrome-more-actions" class="more-actions" role="group" aria-label="更多操作">
       <span class="more-heading">窗口</span>
       <button @click="changeShellMode(layout.shellMode === 'compact' ? 'standard' : 'compact');moreActionsOpen=false">{{ layout.shellMode === 'compact' ? '恢复标准模式' : '紧凑模式' }}</button>
@@ -281,15 +295,7 @@ async function openDirCenter() {
       <component :is="c.component" />
     </template>
 
-    <!-- Native-safe suggestion surface: inline below the address bar, never above GTK WebView. -->
-    <div v-if="layout.navSection === 'omni'" id="nav-omni-row" class="suggestion-list" role="listbox" aria-label="地址建议">
-      <button v-for="(suggestion, i) in omniCandidates" :key="suggestion.value" role="option" :aria-selected="omniIndex === i"
-        class="suggestion-item" :class="{ selected: omniIndex === i }" @mousedown.prevent @click="chooseSuggestion(suggestion.value)">
-        <span class="suggestion-type">{{ suggestion.type === '网页' ? '🌐' : '📁' }}</span>
-        <span class="suggestion-main">{{ suggestion.label }}</span><span class="suggestion-sub">{{ suggestion.type }}</span>
-      </button>
-      <p v-if="!omniCandidates.length" class="suggestion-empty">按 Enter 打开网址或本地目录</p>
-    </div>
+
   </div>
 </template>
 
