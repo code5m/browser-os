@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   useLayoutStore,
   TOP_NAV_ITEMS,
@@ -49,6 +49,9 @@ const topItems = computed(() => TOP_NAV_ITEMS.filter((i) => layout.navTopViews.i
 
 // ===== W17：窗口宽度上报（窄窗口密度）+ resize 监听清理 =====
 const navEl = ref<HTMLElement | null>(null);
+const moreActionsOpen = ref(false);
+watch(() => layout.mainView, () => { moreActionsOpen.value = false; });
+function toggleMoreActions() { layout.navSection = ""; moreActionsOpen.value = !moreActionsOpen.value; }
 function syncWidth() {
   layout.setWindowWidth(window.innerWidth || 0);
 }
@@ -94,6 +97,7 @@ function onNavKeydown(e: KeyboardEvent) {
 
 // W17：Esc 收起扩展行并把焦点还给触发它的按钮（键盘用户不会丢失焦点位置）
 function onEscape() {
+  if (moreActionsOpen.value) { moreActionsOpen.value = false; nextTick(() => document.querySelector<HTMLElement>("[data-nav-toggle=more-actions]")?.focus()); return; }
   const open = layout.navSection;
   if (!open) return;
   layout.closeNavSection();
@@ -251,34 +255,28 @@ async function openDirCenter() {
  
       </div>
 
-      <!-- 右：浏览辅助 + 采集 + 设置 -->
-      <!-- 收藏夹：任意视图均可打开；经通用 Contribution Registry 渲染（Shell 零 Bookmark 专属知识） -->
-      <template v-if="layout.mainView === 'browser'">
-        <button class="tbtn" aria-label="边浏览边管理文件" @click="layout.toggleBrowserDock('files')" title="边浏览边管理文件">🗂</button>
-        <button class="tbtn auxiliary-tool" aria-label="边浏览边开终端" @click="layout.toggleBrowserDock('term')" title="边浏览边开终端">💻</button>
-        <button class="tbtn" aria-label="紧凑模式" @click="changeShellMode('compact')" title="紧凑模式：收起侧边工具栏">▤</button>
-        <button class="tbtn" aria-label="沉浸模式" @click="toggleImmersive" title="沉浸模式：F11 可返回">⛶</button>
-      </template>
-      <span class="sep auxiliary-tool"></span>
-      <button
-        class="sys auxiliary-tool"
-        data-nav-item
-        :class="{ active: browser.aiNavOpen }"
-        aria-label="AI 导航"
-        title="AI 导航"
-        @click="browser.toggleAiNav()"
-      >
-        <span class="ic">🤖</span>
-      </button>
-      <button class="collect auxiliary-tool" data-nav-item aria-label="采集选中内容" :title="'采集选中内容'" @click="art.collectSelection">
-        <span class="ic">📥</span>
-        <span class="lab">采集</span>
-      </button>
-      <button class="sys auxiliary-tool" data-nav-item aria-label="系统设置" title="系统设置" @click="onItem('settings')">
-        <span class="ic">⚙️</span>
-      </button>
+      <!-- Keep only one contextual file shortcut and one overflow action on the default chrome. -->
+      <button v-if="layout.mainView === 'browser'" class="tbtn" aria-label="文件侧栏" title="文件侧栏" @click="layout.toggleBrowserDock('files')">▣</button>
+      <button class="tbtn action-overflow" data-nav-item data-nav-toggle="more-actions" aria-label="更多操作" title="更多操作"
+        :aria-expanded="moreActionsOpen" aria-controls="chrome-more-actions" @click="toggleMoreActions">···</button>
     </nav>
 
+    <div v-if="moreActionsOpen" id="chrome-more-actions" class="more-actions" role="group" aria-label="更多操作">
+      <span class="more-heading">窗口</span>
+      <button @click="changeShellMode(layout.shellMode === 'compact' ? 'standard' : 'compact');moreActionsOpen=false">{{ layout.shellMode === 'compact' ? '恢复标准模式' : '紧凑模式' }}</button>
+      <button @click="toggleImmersive();moreActionsOpen=false">沉浸全屏 · F11</button>
+      <template v-if="layout.mainView === 'browser'">
+        <span class="more-divider"></span>
+        <span class="more-heading">工作区</span>
+        <button @click="layout.toggleBrowserDock('term');moreActionsOpen=false">终端侧栏</button>
+        <button @click="browser.toggleAiNav();moreActionsOpen=false">AI 导航</button>
+      </template>
+      <span class="more-divider"></span>
+      <span class="more-heading">管理</span>
+      <button @click="art.collectSelection();moreActionsOpen=false">采集选中内容</button>
+      <button @click="onItem('settings');moreActionsOpen=false">设置</button>
+      <button @click="layout.navSection='';moreActionsOpen=false" aria-label="关闭更多操作">关闭</button>
+    </div>
     <template v-for="c in activityRowContributions" :key="c.id">
       <component :is="c.component" />
     </template>
@@ -346,6 +344,14 @@ async function openDirCenter() {
   background: transparent !important;
   color: #999 !important;
 }
+.more-actions { display:flex; gap:6px; flex-wrap:wrap; align-items:center; padding:7px 12px; background:#f8fafc; border-bottom:1px solid #e2e8f0; }
+.more-actions button { border:1px solid #d8e1eb; background:#fff; color:#344054; border-radius:7px; padding:5px 10px; font-size:12px; cursor:pointer; }
+.more-actions button:hover { background:#eaf2fb; }
+.more-heading { color:#667085; font-size:11px; font-weight:600; }
+.more-divider { width:1px; height:18px; background:#dce4ee; margin:0 3px; }
+.action-overflow { font-weight:700; font-size:17px; }
+.activity button:hover { background:#e9eef6!important; color:#344054!important; }
+.activity button.active { background:#e3eefb; color:#17548f; }
 .suggestion-list { display:flex; flex-direction:column; max-height:220px; overflow-y:auto; background:#fff; border:1px solid #dce3eb; border-top:0; box-shadow:0 8px 20px #13233b12; border-radius:0 0 12px 12px; padding:5px; }
 .suggestion-item { display:flex; align-items:center; gap:12px; width:100%; padding:8px 12px; border:0; background:transparent; text-align:left; color:#243449; cursor:pointer; border-radius:7px; }
 .suggestion-item:hover,.suggestion-item.selected { background:#eef4fb; }
