@@ -296,3 +296,29 @@
 5. **每项验收保留前后对比**：截图、用例、峰值内存、空闲 CPU、失败恢复及真实 GUI 结果。
 
 **文档变更走快速路径**：仅 Markdown 更新无需主动跑 npm check、Rust/供应链/GUI 门禁；代码变更仍遵守 AGENTS.md 的最低验证和真实桌面要求。当前本节只有设计决策和技术审计，未实施或验证三档新 UI、系统 F11 和入口收敛。
+
+### 12.8 本次代码实施清单与验证现状（2026-10-10）
+
+本轮实施分支：`feature/adaptive-chrome-focus-20261010`。对应交付以真实 GitHub 分支/PR 为准。
+
+| 内容 | 代码路径 | 状态 |
+| --- | --- | --- |
+| 双核心一级导航：浏览、文件；主页进入「工具」菜单 | `useLayoutStore.ts`、`ActivityBar.vue` | 已提交源码，待构建/GUI |
+| 减少第一层低频图标，工具中心仍保留可达性；缩窄时低频入口隐藏 | `ActivityBar.vue` | 已提交源码，待构建/GUI |
+| 顶部页签和活动栏视觉合并（取消重叠下边框；仍是独立两行） | `UnifiedTabBar.vue`、`ActivityBar.vue` | 已提交源码，待 GUI |
+| 标准、紧凑、沉浸模式状态；任意主视图显示沉浸退出入口 | `useLayoutStore.ts`、`App.vue`、`MainArea.vue` | 已提交源码，待 GUI |
+| F11 切换原生主窗口全屏；Ctrl+Shift+F11 紧凑切换；Ctrl+L 地址栏恢复 | `App.vue`、Tauri 主窗口能力文件 | 前端监听已接入，**原生子 WebView 获得焦点时的透传未验证** |
+| 原生 fullscreen 权限（仅本地主窗口） | `src-tauri/capabilities/default.json` 与 `src-tauri/dev-capabilities/main.json` | 已提交配置，必须重新打包测试 |
+| 新导航数据与基本断言同步 | `scripts/check-client-navigation-logic.mjs` | 已提交源码，测试未执行 |
+
+**现实限制**：本轮 GitHub 连接能读取和提交文件，但联网代码执行环境不能访问仓库，已登记的 Desktop Commander 两台设备均 Offline。尚未运行仓库要求的 `npm run build`、`node scripts/check-workspace-startup.mjs`、`node scripts/check-image-preview-lazy-loading.mjs`、`bash scripts/pre-merge.sh`、`git diff --check` 和真实安装版桌面验证。因此本轮是 **SOURCE_COMMITTED / GUI_PENDING，绝不能写 CODE_PASS 或 GUI_PASS**；不得自动合并主干。特别是本轮 Tauri 权限变更，不是仅靠 Vite 热更新就能生效。
+
+**需要在验收时重点验证**：
+- 原生子 WebView 拥有焦点时 F11、Esc 和 Ctrl+L 是否能回到主外壳；若监听未触达，必须以受控的原生输入路由方案补齐，不能宣称完成。
+- 紧凑模式标题栏拖拽、窗口缩放与 WebView 坐标；宫格与浏览器互相切换。
+- 网页/本地目录/模块页签导航和恢复路径；窗口菜单/工具中心访问全部模块。
+- 活动条 Contribution 外挂按钮与窄窗布局是否发生挤压、溢出。
+- 标准/紧凑/沉浸三种模式的实际内容面积、启动 CPU/RSS、重复监听与 WebView 创建次数。
+- 现有自动化检查若报告导航条目数量变化，应依据**产品批准的双核心新语义**更新相关测试，而不能关闭全部门禁或忽略其他失败。
+
+**不在本轮冒险修改**：WebKitGTK 子 WebView 的注入脚本及按键传播路径、GTK 原生坐标/隐藏/销毁路径、PR #16 标签标题生命周期、PR #17 状态栏资源详情。它们应在能够执行仓库实际门禁和 GUI 验收时独立合入。
