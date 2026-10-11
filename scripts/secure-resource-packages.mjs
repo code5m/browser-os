@@ -98,15 +98,20 @@ function readSource(dir,trust){
   });
   return {m,files};
 }
+function verifiedDirectory(parent,component,create=false){
+  const path=join(parent,component);
+  if(create&&!existsSync(path))mkdirSync(path,{mode:0o700});
+  const st=lstatSync(path);
+  if(!st.isDirectory()||st.isSymbolicLink())fail("PACK_STORE_SYMLINK");
+  return path;
+}
 function storeDir(path){
   const abs=resolve(path);
   if(abs===resolve(sep))fail("PACK_STORE_ROOT");
-  mkdirSync(abs,{recursive:true,mode:0o700});
+  // Never call mkdir recursive before checking parents: that could follow an
+  // attacker-controlled symlink and create files OUTSIDE the intended store.
   let dir=resolve(sep);
-  for(const p of abs.split(sep).filter(Boolean)){
-    dir=join(dir,p);const st=lstatSync(dir);
-    if(!st.isDirectory()||st.isSymbolicLink())fail("PACK_STORE_SYMLINK");
-  }
+  for(const p of abs.split(sep).filter(Boolean))dir=verifiedDirectory(dir,p,true);
   return abs;
 }
 function stateOf(dir){
@@ -129,7 +134,7 @@ function locked(dir,fn){
 }
 function installed(root,id,digest,trust){
   if(!validId(id)||typeof digest!=="string"||!HASH.test(digest))fail("PACK_INVALID_STATE");
-  const loc=join(root,"packages",id,digest);
+  const loc=verifiedDirectory(verifiedDirectory(verifiedDirectory(root,"packages"),id),digest);
   const m=manifest(json(join(loc,"manifest.json")));
   if(m.id!==id||hash(Buffer.from(canonical(m)))!==digest)fail("PACK_RECORD_MISMATCH");
   verifySignature(m,trust);
@@ -146,12 +151,14 @@ function install(root,source,trust){
   const {m,files}=readSource(source,trust);
   return locked(root,dir=>{
     const digest=hash(Buffer.from(canonical(m))),home=join(dir,"packages",m.id,digest),state=stateOf(dir);
-    mkdirSync(join(dir,"packages",m.id),{recursive:true,mode:0o700});
+    const parent=verifiedDirectory(verifiedDirectory(dir,"packages",true),m.id,true);
     if(!existsSync(home)){
       const stage=mkdtempSync(join(dir,".staging-"));
       try{
         writeFileSync(join(stage,"manifest.json"),JSON.stringify(m,null,2)+"\n",{flag:"wx",mode:0o600});
         for(const f of files){const p=join(stage,f.path);mkdirSync(dirname(p),{recursive:true,mode:0o700});writeFileSync(p,f.content,{flag:"wx",mode:0o600});}
+        // Protect destination from a racy replacement of its parent.
+        verifiedDirectory(verifiedDirectory(dir,"packages"),m.id);
         renameSync(stage,home);
       }finally{if(existsSync(stage))rmSync(stage,{recursive:true,force:true});}
     }
@@ -226,6 +233,12 @@ function selfTest(){
     make("3.0.0",[{id:"org.missing.dep",version:"1.0.0"}]);expect("PACK_DEPENDENCY_UNSATISFIED",()=>install(root,source,trust));
     const row=list(root,trust)[0];writeFileSync(join(root,"packages",row.id,row.sha256,"assets","guide.md"),"tampered");
     expect("PACK_RECORD_TAMPER",()=>list(root,trust));
+    // The storage root may not follow symlinks, including parent components
+    // that did not previously exist (mkdir recursive would escape first).
+    const outside=join(temp,"outside-dir"),redirect=join(temp,"redirect");
+    mkdirSync(outside);symlinkSync(outside,redirect,"dir");
+    expect("PACK_STORE_SYMLINK",()=>list(join(redirect,"evil-store"),trust));
+    assert.equal(existsSync(join(outside,"evil-store")),false);
     console.log("SIGNED_RESOURCE_PACKAGE_SELF_TEST=PASS");
   }finally{rmSync(temp,{force:true,recursive:true});}
 }
