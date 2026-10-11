@@ -63,9 +63,9 @@ if(args.includes("--self-test")){
   const canonical = read("docs/engineering/footprint-baselines/master-7ae6fa86.json");
   const ui = readFileSync("src/components/system/EngineeringHealthPanel.vue","utf8");
   for(const field of ["frontend_dist_bytes","deb_file_bytes","deb_installed_size_field_bytes"]){
-    assert.ok(ui.includes(field+":"+canonical[field]),"Pinned UI baseline drift: "+field);
+    assert.ok(ui.includes(canonical[field].toLocaleString("en-US")+" B"),"Measured UI value drift: "+field);
   }
-  assert.ok(ui.includes(canonical.provenance.sha)&&ui.includes("run_id:"+canonical.provenance.run_id),"Baseline evidence link drift");
+  assert.ok(ui.includes(canonical.provenance.sha.slice(0,8))&&ui.includes("runs/"+canonical.provenance.run_id),"Evidence link drift");
 
   console.log("FOOTPRINT_COMPARISON_SELF_TEST=PASS");
 }else{
