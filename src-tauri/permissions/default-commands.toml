@@ -132,6 +132,8 @@ commands.allow = [
     "graph_query",
     "graph_node_get",
     "graph_stats",
+    "graph_import_json",
+    "graph_rebuild_documents",
     "plugin_install",
     "plugin_enable",
     "plugin_disable",
