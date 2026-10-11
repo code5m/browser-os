@@ -3,7 +3,10 @@ import { computed, onMounted, ref } from "vue";
 import { evaluateAll } from "./engineeringHealthModel.mjs";
 import { bridge } from "../../bridge";
 import type { ResourceStats } from "../../types";
-import sizeBaseline from "../../../docs/engineering/footprint-baselines/master-7ae6fa86.json";
+// Pinned GitHub master baseline (not current/real-time measurements).
+// Source: docs/engineering/footprint-baselines/master-7ae6fa86.json
+const sizeBaseline = {provenance:{sha:"7ae6fa86be3c7f8044aeeb7c627981559c9f9da6",run_id:38098492736},
+ frontend_dist_bytes:995732,deb_file_bytes:5161532,deb_installed_size_field_bytes:11941888} as const;
 const repo = "https://github.com/code5m/browser-os";
 const api = "https://api.github.com/repos/code5m/browser-os";
 const loading = ref(false), error = ref(""), sha = ref(""), checkedAt = ref(""), tag = ref<string | null>(null);
