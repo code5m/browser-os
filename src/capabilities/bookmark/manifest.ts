@@ -10,7 +10,7 @@ export const bookmarkManifest: CapabilityDefinition = {
   category: "UI_COMPONENT",
   provides: ["bookmark.storage", "bookmark.panel", "bookmark.navigation"],
   dependsOn: ["bridge"],
-  optionalDependencies: ["browser", "home"],
+  optionalDependencies: ["browser", "home", "workspace"],
   lifecycle: {
     supported: ["REGISTERED", "ACTIVE", "SUSPENDED"],
     default: "REGISTERED",
@@ -41,7 +41,7 @@ export const bookmarkManifest: CapabilityDefinition = {
     maturityEvidence: ["scripts/check-capability-pilot.mjs", "scripts/check-composition-profiles.mjs", "scripts/check-hot-plug-acceptance.mjs"],
     dependencies: [],
     // 收藏贡献渲染于 Browser 槽：Browser 缺失时该能力仍成立但无展示面 → 降级而非拒绝（§13）。
-    optionalDependencies: ["browser", "home"],
+    optionalDependencies: ["browser", "home", "workspace"],
     conflicts: [],
     provides: ["bookmark.storage", "bookmark.panel", "bookmark.navigation"],
     requires: [],
