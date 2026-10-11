@@ -11,6 +11,18 @@ const ws = useRepoStore();
 const git = useGitStore();
 
 const targetBranch = ref("");
+const changesSearch = ref("");
+const changeFilter = ref<"all" | "tracked" | "untracked" | "conflicted">("all");
+const visibleChanges = computed(() => git.status.filter(f => {
+  const matchesSearch = !changesSearch.value.trim() ||
+    f.path.toLowerCase().includes(changesSearch.value.trim().toLowerCase());
+  const matchesType = changeFilter.value === "all" ||
+    (changeFilter.value === "tracked" && f.status !== "untracked" && f.status !== "conflicted") ||
+    f.status === changeFilter.value;
+  return matchesSearch && matchesType;
+}));
+const conflictCount = computed(() => git.status.filter(f => f.status === "conflicted").length);
+const untrackedCount = computed(() => git.status.filter(f => f.status === "untracked").length);
 
 // 分支列表变化时，默认选中当前分支（避免下拉停在空值导致误切）
 watch(
@@ -89,12 +101,27 @@ const commitHint = computed(() =>
           <button :disabled="disabled" @click="git.clearSelection()">清空</button>
           <button :disabled="disabled" @click="git.loadStatus()">刷新</button>
         </div>
+        <label class="git-change-filter">查找变更文件
+          <input v-model="changesSearch" type="search" aria-label="按路径查找 Git 变更" placeholder="输入文件路径" />
+        </label>
+        <div class="git-filter-bar" role="group" aria-label="Git 变更筛选">
+          <button v-for="item in [
+            { value: 'all', label: '全部', count: git.status.length },
+            { value: 'tracked', label: '已跟踪', count: git.status.length - untrackedCount - conflictCount },
+            { value: 'untracked', label: '未跟踪', count: untrackedCount },
+            { value: 'conflicted', label: '冲突', count: conflictCount },
+          ]" :key="item.value" :aria-pressed="changeFilter === item.value"
+            :class="{ active: changeFilter === item.value }"
+            @click="changeFilter = item.value as typeof changeFilter">{{ item.label }} {{ item.count }}</button>
+        </div>
+        <p v-if="conflictCount" class="git-error" role="alert">检测到 {{ conflictCount }} 个冲突文件，请先解决冲突再提交；禁止自动覆盖。</p>
         <div v-if="git.statusLoading" class="git-empty">状态加载中…</div>
         <div v-else-if="git.statusError" class="git-error">状态读取失败：{{ git.statusError }}</div>
         <div v-else-if="!git.status.length" class="git-empty">工作区干净（无改动）</div>
+        <p v-else-if="!visibleChanges.length" class="git-empty">当前筛选没有匹配文件</p>
         <ul v-else class="git-list">
           <li
-            v-for="f in git.status"
+            v-for="f in visibleChanges"
             :key="f.path"
             class="git-item"
             :class="{ active: git.activePath === f.path }"
@@ -151,3 +178,11 @@ const commitHint = computed(() =>
     </div>
   </div>
 </template>
+
+<style scoped>
+.git-change-filter{display:flex;flex-direction:column;gap:4px;padding:7px 9px;font-size:11px;color:#5e7182}
+.git-change-filter input{width:100%;box-sizing:border-box;padding:6px;border:1px solid #cbd5e1;border-radius:6px;background:var(--surface,#fff);color:inherit}
+.git-filter-bar{display:flex;gap:3px;flex-wrap:wrap;padding:5px}
+.git-filter-bar button{border:1px solid transparent;background:transparent;border-radius:5px;padding:4px 6px;font-size:11px;color:inherit;cursor:pointer}
+.git-filter-bar button.active{background:#e7f1fa;border-color:#89b7dc;color:#1b5984}
+</style>

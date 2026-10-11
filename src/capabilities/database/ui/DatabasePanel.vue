@@ -30,6 +30,18 @@ const filter = ref('');
 const sortColumn = ref(-1);
 const sortAscending = ref(true);
 const showConnection = ref(true);
+const objectFilter = ref("");
+const visibleSchema = computed(() => db.schema.filter(object =>
+  object.name.toLowerCase().includes(objectFilter.value.trim().toLowerCase())
+));
+function previewStructure(name:string) {
+  // Read-only SQLite schema lookup goes through the existing SQL execution gate.
+  // Do not issue PostgreSQL/MySQL queries while their query adapter is disabled.
+  if (db.form.kind !== "sqlite") return;
+  db.newDocument();
+  db.sql = "SELECT name, type, sql FROM sqlite_schema WHERE name = '" + name.replace(/'/g, "''") + "'";
+}
+
 const pageSize = 50;
 const filteredRows = computed(() => {
   const rows = (db.result?.rows || []).filter(row => row.some(cell => cell.toLowerCase().includes(filter.value.toLowerCase())));
@@ -146,7 +158,12 @@ async function copyCsv() {
         </div>
       </div>
       <div class="schema-head"><strong>表 / 视图</strong><button title="刷新对象" :disabled="db.schemaBusy || !db.connected" @click="db.refreshSchema()"><RefreshCw :size="14"/></button></div>
-      <button v-for="table in db.schema" :key="table.name" class="schema-row" @click="db.previewTable(table.name)">{{ table.name }} <small>{{ table.type }}</small></button>
+      <input v-model="objectFilter" class="schema-search" type="search" aria-label="搜索数据库表和视图" placeholder="搜索表、视图…" />
+      <div v-for="table in visibleSchema" :key="table.name" class="schema-row schema-object">
+        <button :title="'预览数据：' + table.name" @click="db.previewTable(table.name)">{{ table.name }} <small>{{ table.type }}</small></button>
+        <button :title="'查看建表结构：' + table.name" aria-label="查看表结构" @click="previewStructure(table.name)">结构</button>
+      </div>
+      <p v-if="db.schema.length && !visibleSchema.length" class="hint">没有匹配的对象</p>
       <p v-if="!db.schema.length" class="hint">{{ db.schemaBusy ? '读取对象中' : '没有可显示对象' }}</p>
     </section>
 
@@ -256,4 +273,12 @@ table { border-collapse: collapse; width: 100%; font-size: 12px; }
 th, td { border-bottom: 1px solid #f0f1f3; padding: 4px 6px; text-align: left; white-space: nowrap; }
 th { position: sticky; top: 0; background: #f7f8fa; color: #4e5969; font-weight: 600; }
 .empty { color: #86909c; font-size: 12px; padding: 12px; text-align: center; }
+</style>
+
+<style scoped>
+.schema-search{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:6px;padding:6px;margin:3px 0 8px}
+.schema-object{display:flex;align-items:center;justify-content:space-between;gap:4px}
+.schema-object button{border:0;background:transparent;text-align:left;cursor:pointer;color:inherit;padding:4px;font-size:12px}
+.schema-object button:first-child{min-width:0;flex:1;overflow-wrap:anywhere}
+.schema-object button:last-child{color:#2b6cb0}
 </style>
