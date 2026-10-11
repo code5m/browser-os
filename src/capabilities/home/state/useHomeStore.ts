@@ -204,7 +204,7 @@ export const useHomeStore = defineStore("home", () => {
   function matchingShortcut(type: "url" | "dir", target: string) {
     const norm = (u: string) => {
       if (type !== "url") return u;
-      try { const p = new URL(u); return p.protocol + "//" + p.host + p.pathname.replace(/\\/+$/, "") + p.search; }
+      try { const p = new URL(u); return p.protocol + "//" + p.host + p.pathname.replace(/\/+$/, "") + p.search; }
       catch { return u; }
     };
     return shortcuts.find(s => s.type === type && norm(s.target) === norm(target));
@@ -213,7 +213,7 @@ export const useHomeStore = defineStore("home", () => {
     return !!matchingShortcut(type, target);
   }
   function addUrlFavorite(url: string, title: string): boolean {
-    if (!/^https?:\\/\\//i.test(url)) return false;
+    if (!/^https?:\/\//i.test(url)) return false;
     if (isFavorite("url", url)) return true;
     return addShortcut({ type: "url", name: title || url, target: url, icon: "🌐", silent: true });
   }
