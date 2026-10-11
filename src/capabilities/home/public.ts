@@ -30,3 +30,17 @@ export function favoriteCurrentPage(): void {
 export function favoriteCurrentDir(): void {
   useHomeStore().favoriteCurrentDir();
 }
+
+/** Narrow cross-capability intents; Home alone persists/owns shortcuts. */
+export function isHomeFavorite(type: "url" | "dir", target: string): boolean {
+  return useHomeStore().isFavorite(type, target);
+}
+export function addUrlHomeFavorite(url: string, title: string): boolean {
+  return useHomeStore().addUrlFavorite(url, title);
+}
+export function removeHomeFavorite(type: "url" | "dir", target: string): void {
+  useHomeStore().removeFavorite(type, target);
+}
+export function toggleHomeDirectoryFavorite(path: string): boolean {
+  return useHomeStore().toggleDirectoryFavorite(path);
+}

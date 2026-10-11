@@ -10,7 +10,7 @@ export const bookmarkManifest: CapabilityDefinition = {
   category: "UI_COMPONENT",
   provides: ["bookmark.storage", "bookmark.panel", "bookmark.navigation"],
   dependsOn: ["bridge"],
-  optionalDependencies: ["browser"],
+  optionalDependencies: ["browser", "home"],
   lifecycle: {
     supported: ["REGISTERED", "ACTIVE", "SUSPENDED"],
     default: "REGISTERED",
@@ -41,13 +41,14 @@ export const bookmarkManifest: CapabilityDefinition = {
     maturityEvidence: ["scripts/check-capability-pilot.mjs", "scripts/check-composition-profiles.mjs", "scripts/check-hot-plug-acceptance.mjs"],
     dependencies: [],
     // 收藏贡献渲染于 Browser 槽：Browser 缺失时该能力仍成立但无展示面 → 降级而非拒绝（§13）。
-    optionalDependencies: ["browser"],
+    optionalDependencies: ["browser", "home"],
     conflicts: [],
     provides: ["bookmark.storage", "bookmark.panel", "bookmark.navigation"],
     requires: [],
     contributions: [
       { id: "bookmark.sidebar", slot: "browser-sidebar", type: "surface" },
       { id: "bookmark.address-star", slot: "address-bar-actions", type: "navigation" },
+      { id: "bookmark.omnibox-suggestions", slot: "omnibox-suggestions", type: "surface" },
     ],
     permissions: [],
     resources: [{ kind: "CACHE", ownership: "owned", evidence: "src/capabilities/bookmark/state/useBookmarkStore.ts" }],

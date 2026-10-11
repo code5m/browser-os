@@ -199,6 +199,35 @@ export const useHomeStore = defineStore("home", () => {
     return true;
   }
 
+  // Home remains the only owner of homepage shortcuts. Cross-capability
+  // URL bookmark actions consume these intents through home/public.ts.
+  function matchingShortcut(type: "url" | "dir", target: string) {
+    const norm = (u: string) => {
+      if (type !== "url") return u;
+      try { const p = new URL(u); return p.protocol + "//" + p.host + p.pathname.replace(/\\/+$/, "") + p.search; }
+      catch { return u; }
+    };
+    return shortcuts.find(s => s.type === type && norm(s.target) === norm(target));
+  }
+  function isFavorite(type: "url" | "dir", target: string): boolean {
+    return !!matchingShortcut(type, target);
+  }
+  function addUrlFavorite(url: string, title: string): boolean {
+    if (!/^https?:\\/\\//i.test(url)) return false;
+    if (isFavorite("url", url)) return true;
+    return addShortcut({ type: "url", name: title || url, target: url, icon: "🌐", silent: true });
+  }
+  function removeFavorite(type: "url" | "dir", target: string): void {
+    const found = matchingShortcut(type, target);
+    if (found) remove(found.id);
+  }
+  function toggleDirectoryFavorite(path: string): boolean {
+    const target = path.trim();
+    if (!looksLikeDir(target)) { layout.showToast("请选择目录"); return false; }
+    if (isFavorite("dir", target)) { removeFavorite("dir", target); return true; }
+    return addShortcut({ type: "dir", name: fileNameFromPath(target), target, icon: "📁" });
+  }
+
   function favoriteCurrentPage() {
     const target = (browser.activeTab?.url || browser.url || "").trim();
     if (!target || looksLikeDir(target) || target === "about:blank") {
@@ -340,6 +369,10 @@ export const useHomeStore = defineStore("home", () => {
     favoriteCurrentPage,
     favoriteCurrentDir,
     favoriteDirectory,
+    isFavorite,
+    addUrlFavorite,
+    removeFavorite,
+    toggleDirectoryFavorite,
     startAdd,
     startEdit,
     cancelEdit,

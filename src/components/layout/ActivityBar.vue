@@ -13,6 +13,7 @@ import { useWorkspaceStore } from "../../capabilities/workspace/public";
 import { useArtifactStore } from "../../capabilities/workspace/public";
 import { useFileStore } from "../../capabilities/workspace/public";
 import { redactSecrets } from "../../utils/redact";
+import { filterOmnibox, isLocalPath, safeRecentDirs, type OmniboxItem } from "../../utils/omniboxSuggestions";
 import { bridge } from "../../bridge";
 import { contributionRegistry } from "../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
@@ -29,6 +30,9 @@ const fs = useFileStore();
 // Shell 不持有 Bookmark 专属知识（不 import 其 store / ui），C3 关键（8B.1）。
 const addressBarActions = computed(() => contributionRegistry.getNavigationContributions(
   CONTRIBUTION_SLOTS.ADDRESS_BAR_ACTIONS,
+));
+const omniContributions = computed(() => contributionRegistry.getSurfaceContributions(
+  CONTRIBUTION_SLOTS.OMNIBOX_SUGGESTIONS,
 ));
 const activityNavContributions = computed(() => contributionRegistry.getSurfaceContributions(
   CONTRIBUTION_SLOTS.ACTIVITY_BAR_NAV,
@@ -122,63 +126,67 @@ async function onItem(v: string) {
 // ===== 智能地址栏（omnibox）：网址/目录自动识别，目录与网页都在中央主区展示 =====
 const RECENT_DIRS_KEY = "browser-os-recent-dirs";
 const recentDirs = ref<string[]>(loadRecentDirs());
-// 最近访问行的分节开关：历史（最近网址+最近目录）/ 常用（常用目录）可独立控制
 const omniIndex = ref(-1);
+// Only keystrokes trigger filtering: merely focusing an already-open URL must
+// show all recent web/file/folder targets (and contributed bookmarks).
+const omniTyped = ref(false);
 const omniCandidates = computed(() => {
-  const seen = new Set<string>();
-  const needle = browser.url.trim().toLowerCase();
-  const candidates = [
-    ...ws.recents.filter(r => r.type === "url").map(r => ({ value:r.path, label:safeLabel(r.path), type:"网页" })),
-    ...recentDirs.value.map(value => ({ value, label:safeLabel(value), type:"最近目录" })),
-    ...fs.startDirs.map(d => ({ value:d.path, label:safeLabel(d.path), type:"常用目录" })),
+  const items: OmniboxItem[] = [
+    ...ws.recents.filter(r => r.type === "url").map(r => ({ value: r.path, label: safeLabel(r.title || r.path), type: "最近网页", kind: "web" as const })),
+    ...ws.recents.filter(r => r.type === "file").map(r => ({ value: r.path, label: safeLabel(r.title || r.path), type: "最近文件", kind: "file" as const })),
+    ...recentDirs.value.map(value => ({ value, label: safeLabel(value), type: "最近目录", kind: "dir" as const })),
+    ...fs.startDirs.map(d => ({ value: d.path, label: safeLabel(d.name || d.path), type: "常用目录", kind: "dir" as const })),
   ];
-  return candidates.filter(c => { if (seen.has(c.value)) return false; seen.add(c.value); return !needle || c.value.toLowerCase().includes(needle); }).slice(0,6);
+  return filterOmnibox(items, browser.url, omniTyped.value, layout.addrMode);
 });
-function chooseSuggestion(value:string) { if (looksLikeDir(value)) pickDir(value); else pickUrl(value); }
-function onOmniKeydown(e:KeyboardEvent) {
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); omniIndex.value = (omniIndex.value + (e.key === "ArrowDown" ? 1 : -1) + omniCandidates.value.length) % (omniCandidates.value.length || 1); }
-  else if (e.key === "Escape") { e.stopPropagation(); layout.closeNavSection(); omniIndex.value = -1; }
-  else if (e.key === "Enter") { e.preventDefault(); const match = omniCandidates.value[omniIndex.value]; omniIndex.value = -1; if (match) chooseSuggestion(match.value); else onAddrGo(); }
-}
-
-// W17：最近网址/目录只做展示脱敏（点击仍用原始值），避免把带凭据的
-// 查询串或 token 原样贴在活动条上。
-function safeLabel(s: string): string {
-  return redactSecrets(s || "");
-}
+function safeLabel(s: string): string { return redactSecrets(s || ""); }
 function loadRecentDirs(): string[] {
-  try {
-    return JSON.parse(localStorage.getItem(RECENT_DIRS_KEY) || "[]");
-  } catch {
-    return [];
+  try { return safeRecentDirs(JSON.parse(localStorage.getItem(RECENT_DIRS_KEY) || "[]")); }
+  catch { return []; }
+}
+function recordRecentDir(path: string) {
+  recentDirs.value = safeRecentDirs([path, ...recentDirs.value.filter(p => p !== path)]);
+  try { localStorage.setItem(RECENT_DIRS_KEY, JSON.stringify(recentDirs.value)); } catch {}
+}
+function showOmnibox() {
+  omniTyped.value = false;
+  omniIndex.value = -1;
+  layout.navSection = "omni";
+}
+function chooseSuggestion(s: OmniboxItem) {
+  if (s.kind === "dir") pickDir(s.value);
+  else if (s.kind === "file") {
+    layout.closeNavSection();
+    const record = ws.recents.find(r => r.type === "file" && r.path === s.value);
+    if (record) ws.openRecent(record);
+  } else pickUrl(s.value);
+}
+function onOmniKeydown(e: KeyboardEvent) {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    omniIndex.value = (omniIndex.value + (e.key === "ArrowDown" ? 1 : -1) + omniCandidates.value.length) % (omniCandidates.value.length || 1);
+  } else if (e.key === "Escape") {
+    e.stopPropagation(); layout.closeNavSection(); omniIndex.value = -1;
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    const match = omniCandidates.value[omniIndex.value];
+    omniIndex.value = -1;
+    if (match) chooseSuggestion(match); else onAddrGo();
   }
 }
-function recordRecentDir(p: string) {
-  const i = recentDirs.value.indexOf(p);
-  if (i >= 0) recentDirs.value.splice(i, 1);
-  recentDirs.value.unshift(p);
-  recentDirs.value = recentDirs.value.slice(0, 12);
-  try {
-    localStorage.setItem(RECENT_DIRS_KEY, JSON.stringify(recentDirs.value));
-  } catch {}
-}
-// 字段自动分辨：绝对路径 / ~ 开头 / Windows 盘符 → 目录；其余 → 网页
-function looksLikeDir(s: string): boolean {
-  const t = s.trim();
-  return t.startsWith("/") || t.startsWith("~") || /^[A-Za-z]:[\\/]/.test(t);
-}
 function onAddrGo() {
-  layout.navSection = "";
-  if (looksLikeDir(browser.url)) void openDirCenter().catch(() => layout.showToast("无法打开目录，请检查路径"));
+  layout.closeNavSection();
+  if (layout.addrMode === "dir" || (layout.addrMode === "auto" && isLocalPath(browser.url)))
+    void openDirCenter().catch(() => layout.showToast("无法打开目录，请检查路径"));
   else void browser.navigateCurrent().catch(() => layout.showToast("网页导航失败，请检查网址"));
 }
 function pickDir(p: string) {
-  layout.navSection = "";
+  layout.closeNavSection();
   browser.url = p;
   void openDirCenter().catch(() => layout.showToast("无法打开目录，请检查路径"));
 }
 function pickUrl(u: string) {
-  layout.navSection = "";
+  layout.closeNavSection();
   browser.url = u;
   void browser.navigateCurrent().catch(() => layout.showToast("网页导航失败，请检查网址"));
 }
@@ -239,11 +247,13 @@ async function openDirCenter() {
             aria-controls="nav-omni-row"
             placeholder="输入网址或目录路径，回车打开"
             @keydown="onOmniKeydown"
-            @input="omniIndex = -1"
+            @input="omniIndex = -1; omniTyped = true"
             @blur="layout.navSection = ''"
-            @focus="layout.navSection = 'omni'; omniIndex = -1"
+            @focus="showOmnibox"
           />
-          <!-- M1-3：⭐ 收藏当前网页 + 📑 展开收藏夹侧栏（经通用 Contribution Registry 渲染） -->
+          <button type="button" class="omni-mode" aria-label="切换地址栏模式" :title="'地址栏模式：' + (layout.addrMode === 'auto' ? '自动' : layout.addrMode === 'url' ? '网页' : '文件')"
+            @mousedown.prevent @click="layout.toggleAddrMode()">{{ layout.addrMode === 'auto' ? '自动 ▾' : layout.addrMode === 'url' ? '网页 ▾' : '文件 ▾' }}</button>
+          <!-- Bookmark capability owns the favorite action; Shell only mounts contributions. -->
           <template v-for="c in addressBarActions" :key="c.id">
             <component :is="c.component" />
           </template>
@@ -260,11 +270,14 @@ async function openDirCenter() {
     <!-- Native-safe suggestion surface: inline below the address bar, never above GTK WebView. -->
     <div v-if="layout.navSection === 'omni'" id="nav-omni-row" class="suggestion-list" role="listbox" aria-label="地址建议">
       <button v-for="(suggestion, i) in omniCandidates" :key="suggestion.value" :id="'omni-suggestion-' + i" role="option" :aria-selected="omniIndex === i"
-        class="suggestion-item" :class="{ selected: omniIndex === i }" @mousedown.prevent @click="chooseSuggestion(suggestion.value)">
-        <span class="suggestion-type">{{ suggestion.type === '网页' ? '🌐' : '📁' }}</span>
+        class="suggestion-item" :class="{ selected: omniIndex === i }" @mousedown.prevent @click="chooseSuggestion(suggestion)">
+        <span class="suggestion-type">{{ suggestion.kind === 'web' ? '🌐' : suggestion.kind === 'file' ? '📄' : '📁' }}</span>
         <span class="suggestion-main">{{ suggestion.label }}</span><span class="suggestion-sub">{{ suggestion.type }}</span>
       </button>
-      <p v-if="!omniCandidates.length" class="suggestion-empty">按 Enter 打开网址或本地目录</p>
+      <p v-if="!omniCandidates.length && !omniContributions.length" class="suggestion-empty">输入网址、文件或目录，按 Enter 打开</p>
+      <component v-for="c in omniContributions" :key="c.id" :is="c.component"
+        :query="omniTyped ? browser.url : ''" :mode="layout.addrMode"
+        @choose-url="pickUrl" @choose-dir="pickDir" />
     </div>
     <div v-if="moreActionsOpen" id="chrome-more-actions" class="more-actions" role="group" aria-label="更多操作">
       <span class="more-heading">窗口</span>
@@ -340,6 +353,7 @@ async function openDirCenter() {
   background: #f4f6f9;
   color: #333;
 }
+.omni-mode { flex:none; border:0; border-radius:7px; background:#eef4fb; color:#245c9b; padding:3px 6px; cursor:pointer; font-size:11px; }
 .omni-wrap input:focus {
   border-color: #2b6cb0;
   background: #fff;

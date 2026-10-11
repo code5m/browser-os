@@ -109,7 +109,7 @@ export function nextNavIndex(current: number, delta: number, len: number): numbe
 // 断言"每个模块都有导航入口，不存在孤儿模块"。
 export const MODULE_META: Record<string, { icon: string; label: string }> = {
   home: { icon: "🏠", label: "主页" },
-  grid: { icon: "🗂️", label: "宫格" },
+  grid: { icon: "▦", label: "宫格" },
   files: { icon: "📂", label: "文件" },
   vault: { icon: "◇", label: "笔记 Vault" },
   db: { icon: "▤", label: "数据库" },
@@ -150,7 +150,7 @@ export const useLayoutStore = defineStore("layout", () => {
   // owner 不变（仍为 useLayoutStore.toggleBrowserDock），语义真源唯一。
   const browserDockTab = ref<string>("files");
   // 地址栏模式：🌐网址（默认）/ 📁目录（输入本地路径浏览目录）
-  const addrMode = ref<"url" | "dir">("url");
+  const addrMode = ref<"auto" | "url" | "dir">("auto");
   // 三档自适应外壳：标准、紧凑、沉浸。只保存 UI 意图，不接管原生窗口生命周期。
   const shellMode = ref<"standard" | "compact" | "immersive">("standard");
   // 历史只读兼容：旧 MainArea 的“精简模式”现在专指沉浸状态。
@@ -251,7 +251,7 @@ export const useLayoutStore = defineStore("layout", () => {
 
   // 切换地址栏模式（🌐网址 / 📁目录）
   function toggleAddrMode() {
-    addrMode.value = addrMode.value === "url" ? "dir" : "url";
+    addrMode.value = addrMode.value === "auto" ? "url" : addrMode.value === "url" ? "dir" : "auto";
   }
 
   function setShellMode(mode: "standard" | "compact" | "immersive") {
