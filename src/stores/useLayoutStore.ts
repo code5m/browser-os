@@ -42,38 +42,33 @@ export const TOP_NAV_ITEMS = [
 ] as const;
 
 export const NAV_MENU_SECTIONS = [
-  {
-    title: "工作区",
-    items: [
-      { view: "vault", icon: "◇", label: "笔记 Vault" },
-      { view: "clip", icon: "📋", label: "剪贴板" },
-      { view: "arts", icon: "📚", label: "知识库" },
-    ],
-  },
-  {
-    title: "工具",
-    items: [
-      // 终端既是窄窗口下会被裁掉的一级入口，也必须常驻 ☰ 菜单（否则窄窗口下不可达）
-      { view: "term", icon: "💻", label: "终端" },
-      { view: "apps", icon: "🚀", label: "应用" },
-      { view: "scripts", icon: "📜", label: "脚本库" },
-      { view: "commands", icon: "⚡", label: "命令库" },
-      { view: "db", icon: "🗄️", label: "数据库" },
-      { view: "tasks", icon: "⏰", label: "定时任务" },
-      { view: "skills", icon: "🛠️", label: "技能" },
-      { view: "agents", icon: "🤖", label: "智能体" },
-      { view: "graph", icon: "🕸️", label: "图谱" },
-      { view: "plugin", icon: "🔌", label: "插件" },
-      { view: "settings", icon: "⚙️", label: "设置" },
-    ],
-  },
-  {
-    title: "同步",
-    items: [
-      { view: "repo", icon: "🛰️", label: "仓库" },
-      { view: "audit", icon: "🛡️", label: "审计" },
-    ],
-  },
+  { title: "工作区", items: [
+    { view: "grid", icon: "▦", label: "宫格" },
+    { view: "clip", icon: "📋", label: "剪贴板" },
+    { view: "apps", icon: "🚀", label: "应用" },
+  ] },
+  { title: "智能体中心", items: [
+    { view: "agents", icon: "🤖", label: "智能体" },
+    { view: "skills", icon: "⚙", label: "技能（智能体能力）" },
+  ] },
+  { title: "知识中心", items: [
+    { view: "graph", icon: "🕸️", label: "知识图谱" },
+    { view: "vault", icon: "◇", label: "笔记" },
+    { view: "arts", icon: "📚", label: "知识库" },
+  ] },
+  { title: "开发与自动化", items: [
+    { view: "term", icon: "💻", label: "终端" },
+    { view: "scripts", icon: "📜", label: "脚本库" },
+    { view: "commands", icon: "⚡", label: "命令库" },
+    { view: "db", icon: "🗄️", label: "数据库" },
+    { view: "tasks", icon: "⏰", label: "定时任务" },
+  ] },
+  { title: "系统与治理", items: [
+    { view: "repo", icon: "🛰️", label: "仓库" },
+    { view: "audit", icon: "🛡️", label: "审计" },
+    { view: "plugin", icon: "🔌", label: "插件" },
+    { view: "settings", icon: "⚙️", label: "设置" },
+  ] },
 ] as const;
 
 export const NAV_DENSITY_FULL_PX = 1180;
