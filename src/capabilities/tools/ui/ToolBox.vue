@@ -16,10 +16,11 @@ function openModule(id: string) {
 }
 const query = ref("");
 const groups = [
- { title: "日常工作", ids: ["browser","files","home","clip","apps"] },
- { title: "AI 与比较", ids: ["grid","agents","skills","graph"] },
- { title: "开发和自动化", ids: ["term","repo","db","scripts","commands","tasks"] },
- { title: "知识与管理", ids: ["vault","arts","audit","plugin","settings"] },
+ { title: "核心工作区", ids: ["browser","grid","files","home","clip","apps"] },
+ { title: "智能体中心 · 技能属于智能体能力", ids: ["agents","skills"] },
+ { title: "知识中心 · 图谱是知识关联视图", ids: ["graph","vault","arts"] },
+ { title: "开发与自动化", ids: ["term","repo","db","scripts","commands","tasks"] },
+ { title: "系统与治理", ids: ["audit","plugin","settings"] },
 ];
 const visibleGroups = computed(() => groups.map(g => ({ ...g, items: g.ids.filter(id => (MODULE_META[id]?.label || id).toLowerCase().includes(query.value.toLowerCase())) })).filter(g => g.items.length));
 const visibleTools = computed(() => store.tools.filter(t => (t.name + " " + t.category + " " + (t.description || "")).toLowerCase().includes(query.value.toLowerCase())));
@@ -31,7 +32,7 @@ onMounted(store.load);
     <header class="tb-hero"><div><span class="tb-eyebrow">WORKSPACE</span><h1>工具</h1><p>需要时再打开。浏览器和文件始终是工作中心。</p></div></header>
     <label class="tb-search"><span>查找工具</span><input v-model="query" type="search" placeholder="搜索终端、数据库、宫格、知识库…" aria-label="搜索工具" /></label>
     <section v-for="group in visibleGroups" :key="group.title" class="tb-section"><h2>{{ group.title }}</h2>
-      <div class="tb-grid"><button v-for="id in group.items" :key="id" class="tb-card" @click="openModule(id)"><strong>{{ MODULE_META[id]?.label || id }}</strong><small>打开工作区 <span aria-hidden="true">↗</span></small></button></div>
+      <div class="tb-grid"><button v-for="id in group.items" :key="id" class="tb-card" @click="openModule(id)"><strong>{{ MODULE_META[id]?.label || id }}</strong><small>{{ id === "agents" || id === "skills" ? "只读校验阶段 · 执行后端待接入" : id === "graph" ? "只读查询 · 需要起始节点" : "打开工作区" }} <span aria-hidden="true">↗</span></small></button></div>
     </section>
     <section class="tb-section" v-if="visibleTools.length"><h2>内置与个人工具</h2><div class="tb-grid">
       <button v-for="t in visibleTools" :key="t.id" class="tb-card" :title="t.description || t.id" @click="store.open(t)"><strong>{{ t.name }}</strong><small>{{ t.category }}</small></button>

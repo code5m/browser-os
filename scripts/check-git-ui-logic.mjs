@@ -253,6 +253,14 @@ ok(!shown.includes("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"), "token 前缀串已�
 ok(!/alice:.*@github/.test(shown), "URL userinfo 已脱敏", shown);
 ok(shown.length > 0, "错误态仍有可读信息");
 
+section("Git panel branch-selection regression");
+const { readFileSync } = await import("node:fs");
+const panelSource = readFileSync(ROOT + "src/capabilities/git/ui/GitPanel.vue", "utf8");
+ok(panelSource.includes("targetBranch.value = branch") &&
+   panelSource.includes("git.currentBranch") &&
+   panelSource.includes("watch(") && panelSource.includes("immediate: true"),
+   "切换仓库或刷新分支时，Git 面板必须同步有效的默认分支");
+
 section("10 redactSecrets 单元");
 ok(!redactSecrets("x https://u:secret@h/p").includes("secret"), "URL userinfo 掩码");
 ok(!redactSecrets("Bearer abcdefghijklmnop").includes("abcdefghijklmnop"), "Bearer 值掩码");

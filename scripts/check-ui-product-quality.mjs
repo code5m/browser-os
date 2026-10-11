@@ -8,7 +8,7 @@ check("四目的一级导航",["home","browser","files","tools"].every(v=>layout
 check("不再显示前往按钮",!bar.includes('>前往</button>'));
 check("收藏夹单一导航贡献",!bar.includes('v-for="c in trailingActions"') && star.includes('aria-label="收藏夹"'));
 check("宫格单一入口",!nav.includes('caret-btn'));
-check("地址栏建议最多六项",bar.includes(".slice(0,6)") && bar.includes('role="listbox"'));
+check("地址栏混合建议有界且来自唯一纯函数",bar.includes("filterOmnibox(") && bar.includes('role="listbox"') && read("src/utils/omniboxSuggestions.ts").includes(".slice(0,6)"));
 check("工具页具备搜索和可操作模块",tools.includes('搜索工具') && tools.includes('openModule(id)'));
 check("文件快捷栏只保留必要动作",files.includes('fileActionsOpen') && files.includes('更多文件操作'));
 check("宫格高级功能上下文隔离",grid.includes('grid-advanced') && grid.includes('grid-context'));

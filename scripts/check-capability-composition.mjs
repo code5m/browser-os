@@ -231,14 +231,14 @@ async function runDynamicTests() {
 
   // C2: two active contributions must match the manifest; the legacy
   // entry is no longer rendered and must not be registered as dead metadata.
-  await t("C2-REGISTERED", "Bookmark 仅注册 sidebar 与 address-star，Manifest/Runtime 同步", () => {
+  await t("C2-REGISTERED", "Bookmark 注册 sidebar、address-star、omnibox-suggestions 且 Manifest/Runtime 同步", () => {
     if (!existsSync(BOOKMARK_INDEX_TS)) return "bookmark/index.ts 缺失";
     const src = readFileSync(BOOKMARK_INDEX_TS, "utf8");
     const manifest = readFileSync(join(ROOT, "src/capabilities/bookmark/manifest.ts"), "utf8");
     const calls = (src.match(/registerContribution\(\{/g) || []).length;
-    if (calls !== 2) return `registerContribution 调用数应为 2，实际 ${calls}`;
-    if ((src.match(/capabilityId:\s*BOOKMARK_CAPABILITY_ID/g) || []).length !== 2) return "每条贡献必须保持 Bookmark owner";
-    for (const id of ["bookmark.sidebar", "bookmark.address-star"]) {
+    if (calls !== 3) return `registerContribution 调用数应为 3，实际 ${calls}`;
+    if ((src.match(/capabilityId:\s*BOOKMARK_CAPABILITY_ID/g) || []).length !== 3) return "每条贡献必须保持 Bookmark owner";
+    for (const id of ["bookmark.sidebar", "bookmark.address-star", "bookmark.omnibox-suggestions"]) {
       if (!src.includes('id: "'+id+'"') || !manifest.includes('id: "'+id+'"')) return "Manifest/Runtime 缺少 "+id;
     }
     if (src.includes("bookmark.entry-button") || manifest.includes("bookmark.entry-button")) return "旧贡献不应注册";

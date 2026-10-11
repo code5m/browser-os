@@ -329,7 +329,7 @@ onMounted(async () => {
       </div>
       <component :is="workbenchCommandsComp" />
       <div class="body">
-        <component :is="workbenchRailComp" v-if="layout.shellMode === 'standard'" />
+        <!-- Redundant workbench rail hidden; main navigation remains reachable. -->
         <component :is="aiNavPanelComp" />
         <MainArea />
       </div>

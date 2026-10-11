@@ -11,16 +11,7 @@ const ws = useRepoStore();
 const git = useGitStore();
 
 const targetBranch = ref("");
-
-// 分支列表变化时，默认选中当前分支（避免下拉停在空值导致误切）
-watch(
-  () => [git.currentBranch, git.localBranches] as const,
-  ([cur]) => {
-    if (cur && !git.localBranches.includes(targetBranch.value)) targetBranch.value = cur;
-  },
-  { immediate: true }
-);
-
+watch(() => git.currentBranch, branch => { if (branch) targetBranch.value = branch }, { immediate: true });
 const noRepo = computed(() => !git.repoId);
 const disabled = computed(() => noRepo.value || git.busy);
 const selectedCount = computed(() => git.selectedPaths.length);

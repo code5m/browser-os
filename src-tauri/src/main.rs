@@ -1643,6 +1643,8 @@ fn main() {
             crate::capabilities::graph::commands::graph_query,
             crate::capabilities::graph::commands::graph_node_get,
             crate::capabilities::graph::commands::graph_stats,
+            crate::capabilities::graph::commands::graph_import_json,
+            crate::capabilities::graph::commands::graph_rebuild_documents,
             // M5-W13（Lane A9）：插件 manifest 生命周期 Stage-I（仅本地状态，无执行）。
             bridge::plugin_install,
             bridge::plugin_enable,

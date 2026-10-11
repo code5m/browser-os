@@ -28,6 +28,8 @@ export interface ContributionSlots {
   readonly BROWSER_SIDEBAR: "browser-sidebar"
   /** 地址栏操作区（⭐ 收藏按钮等） */
   readonly ADDRESS_BAR_ACTIONS: "address-bar-actions"
+  /** Optional bounded suggestions owned by Home and Bookmark, not Shell */
+  readonly OMNIBOX_SUGGESTIONS: "omnibox-suggestions"
   /** 顶部工具栏尾部（收藏夹入口按钮等） */
   readonly ACTIVITY_BAR_TRAILING: "activity-bar-trailing"
   readonly ACTIVITY_BAR_NAV: "activity-bar-nav"
@@ -70,6 +72,7 @@ export const CONTRIBUTION_SLOTS = {
   SETTINGS: "settings",
   BROWSER_SIDEBAR: "browser-sidebar",
   ADDRESS_BAR_ACTIONS: "address-bar-actions",
+  OMNIBOX_SUGGESTIONS: "omnibox-suggestions",
   ACTIVITY_BAR_TRAILING: "activity-bar-trailing",
   ACTIVITY_BAR_NAV: "activity-bar-nav",
   ACTIVITY_BAR_ROWS: "activity-bar-rows",

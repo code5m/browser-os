@@ -111,6 +111,20 @@ else
   hint "Add a regression so large image directories cannot reintroduce eager data URL loading."
 fi
 
+# Always reconcile the lockfile before building a release. Git updates package.json
+# and package-lock.json but do not update node_modules automatically.
+if [[ "$BUILD" -eq 1 ]]; then
+  if ! (cd "$ROOT" && node -e 'require.resolve("terser")' >/dev/null 2>&1); then
+    printf '\n== Restoring locked frontend dependencies ==\n'
+    if (cd "$ROOT" && npm ci --no-audit --no-fund); then
+      ok "Locked frontend dependencies restored."
+    else
+      fail "npm ci failed; refusing to build or install a stale release."
+      exit 1
+    fi
+  fi
+fi
+
 if [[ "$BUILD" -eq 1 ]]; then
   printf '\n== Building deb package ==\n'
   if (cd "$ROOT" && npm run tauri -- build --bundles deb); then
@@ -118,6 +132,9 @@ if [[ "$BUILD" -eq 1 ]]; then
   else
     fail "Deb package build failed."
     hint "Fix the build first; do not validate an old package after a failed build."
+    # A previous deb may exist, but it is not evidence of this source revision.
+    # Stop immediately rather than inspecting and cold-starting that stale artifact.
+    exit 1
   fi
 fi
 
