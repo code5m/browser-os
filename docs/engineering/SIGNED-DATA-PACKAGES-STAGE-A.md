@@ -48,4 +48,3 @@ node scripts/secure-resource-packages.mjs rollback --store /secure/browseros-dat
 - 正式将可信公钥存储引入 Native/OS Keyring，并在授权机器做 E2E。
 - 真正的可运行模块需另外解决**沙箱、权限白名单、签名过期和撤销、热插拔事务、全生命周期卸载、进程隔离、攻击模拟与 GUI 回归**。上述能力未有证据前不得移除 `PLUGIN_NO_EXEC_SURFACE` 或宣称 HP3。
 - 与核心 Browser、Files、Grid 隔离；内核构建资源新增量、安装包体积和运行内存需分别测量，不得假设拆分源代码=降低安装体积。
-
