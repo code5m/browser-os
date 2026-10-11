@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { evaluateAll } from "./engineeringHealthModel.mjs";
+import { bridge } from "../../bridge";
+import type { ResourceStats } from "../../types";
 const repo = "https://github.com/code5m/browser-os";
 const api = "https://api.github.com/repos/code5m/browser-os";
 const loading = ref(false), error = ref(""), sha = ref(""), checkedAt = ref(""), tag = ref<string | null>(null);
@@ -8,6 +10,24 @@ const runs = ref<any[]>([]);
 const meta = ref<any>(null), policy = ref<any>(null);
 const statusText = (s: string) => ({PASS:"通过",FAIL:"失败",RUNNING:"运行中",STALE:"已过期",UNKNOWN:"未知"} as Record<string,string>)[s] || "未知";
 const summary = computed(() => sha.value && !error.value ? evaluateAll(sha.value,runs.value) : null);
+// ResourceStats is already governed by the native resource_stats command.
+// Sample only on request; no second polling loop or invented browser-wide usage.
+const nativeSnapshot = ref<ResourceStats | null>(null);
+const nativeIssue = ref("");
+const nativeMeasuring = ref(false);
+async function measureNativeOnce() {
+  if (nativeMeasuring.value) return;
+  nativeIssue.value = "";
+  if (!(window as any).__TAURI_INTERNALS__) {
+    nativeIssue.value = "预览模式不提供原生资源数据";
+    return;
+  }
+  nativeMeasuring.value = true;
+  try { nativeSnapshot.value = await bridge.resourceStats(); }
+  catch { nativeIssue.value = "原生采样失败"; }
+  finally { nativeMeasuring.value = false; }
+}
+const formatMiB = (mb: number | undefined) => mb == null ? "未测量" : mb.toFixed(1) + " MiB";
 async function jsonRequest(path: string): Promise<any> {
  const r = await fetch(api + path, {headers:{Accept:"application/vnd.github+json"}});
  if (!r.ok) throw Error("GitHub API HTTP " + r.status);
@@ -57,6 +77,11 @@ onMounted(() => void refresh());
    <span :class="'state-'+check.state.toLowerCase()">{{statusText(check.state)}}</span>
    <a :href="repo+'/actions/runs/'+(check.run?.id||'')" target="_blank" rel="noopener noreferrer">证据 ↗</a>
  </div>
+ <h3>资源与体积</h3>
+ <p>原生按需采样（不新增后台轮询）：应用 {{formatMiB(nativeSnapshot?.app_total_mb)}}；主进程树 RSS {{formatMiB(nativeSnapshot?.main.rss_mb)}}。</p>
+ <button type="button" :disabled="nativeMeasuring" @click="measureNativeOnce">{{nativeMeasuring?"采样中…":"采样进程内存"}}</button>
+ <p v-if="nativeIssue" role="status">{{nativeIssue}}</p>
+ <p>前端体积、安装包：<a :href="repo+'/actions'" target="_blank" rel="noopener noreferrer">查看同版本 CI 证据 ↗</a>。首屏加载、CPU/p95 未在本页测量；无法归属的共享资源不按模块伪造。</p>
  <h3>工程资产与债务</h3>
  <p>Rust 原生语义：{{meta?.nativeSemantics?.expectedRegisteredCommands??"未知"}} 命令 / {{meta?.nativeSemantics?.expectedAppStateFields??"未知"}} AppState 字段（登记基线，非实时通过）。</p>
  <p>证据预算：{{policy?.trackedHistoryBudgetBytes??"未知"}} bytes；CI Artifact 保留 {{policy?.classes?.ciArtifact?.retentionDays??"未知"}} 天。</p>

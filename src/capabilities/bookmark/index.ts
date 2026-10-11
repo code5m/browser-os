@@ -24,13 +24,11 @@ export const BOOKMARK_CAPABILITY_ID = "bookmark"
 //   - 懒加载把面板/按钮拆出主 chunk，符合构建体积闸门（IF-2）。
 const BookmarkPanel = defineAsyncComponent(() => import("./ui/BookmarkPanel.vue"))
 const BookmarkStar = defineAsyncComponent(() => import("./ui/BookmarkStar.vue"))
-const BookmarkEntryButton = defineAsyncComponent(() => import("./ui/BookmarkEntryButton.vue"))
 
 /**
  * 注册 Bookmark 对 Shell 的 UI 贡献（Contribution/Slot 模型）。
  *   - surface  browser-sidebar     → 收藏夹侧栏（BookmarkPanel 自行按 panelOpen 控制显隐）
  *   - navigation address-bar-actions → 地址栏 ⭐ 收藏按钮（BookmarkStar）
- *   - navigation activity-bar-trailing → 工具栏尾部「收藏夹」入口（BookmarkEntryButton）
  * 组件内部读取各自 store，Shell 零 Bookmark 专属知识（C3 关键）。
  */
 export function registerBookmarkContributions(): void {
@@ -47,14 +45,6 @@ export function registerBookmarkContributions(): void {
     type: "navigation",
     slot: CONTRIBUTION_SLOTS.ADDRESS_BAR_ACTIONS,
     component: BookmarkStar,
-  })
-  // Legacy contribution remains registered for hot-plug compatibility; the UI no longer renders this duplicate slot.
-  contributionRegistry.registerContribution({
-    id: "bookmark.entry-button",
-    capabilityId: BOOKMARK_CAPABILITY_ID,
-    type: "navigation",
-    slot: CONTRIBUTION_SLOTS.ACTIVITY_BAR_TRAILING,
-    component: BookmarkEntryButton,
   })
 
 }

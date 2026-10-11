@@ -73,14 +73,16 @@ function shellImportsBookmark(fileRel) {
 /** 静态：Bookmark 适配器是否向通用 Registry 注册了三类贡献（槽名） */
 function bookmarkRegistersContributions() {
   if (!existsSync(BOOKMARK_INDEX_TS)) return { exists: false, slots: [] };
-  // 槽名常量定义在 contribution/types.ts，适配器经 CONTRIBUTION_SLOTS 引用；两文件合并扫描
+  // Only count slots actually consumed by Bookmark. The global slot type
+  // deliberately retains ACTIVITY_BAR_TRAILING for third-party compatibility.
   const indexSrc = readFileSync(BOOKMARK_INDEX_TS, "utf8");
-  const typesTs = join(ROOT, "src/capability/contribution/types.ts");
-  const typesSrc = existsSync(typesTs) ? readFileSync(typesTs, "utf8") : "";
-  const combined = indexSrc + "\n" + typesSrc;
   const slots = [];
-  for (const slot of ["browser-sidebar", "address-bar-actions", "activity-bar-trailing"]) {
-    if (new RegExp(`["']${slot}["']`).test(combined)) slots.push(slot);
+  for (const [name,slot] of [
+    ["BROWSER_SIDEBAR","browser-sidebar"],
+    ["ADDRESS_BAR_ACTIONS","address-bar-actions"],
+    ["ACTIVITY_BAR_TRAILING","activity-bar-trailing"],
+  ]) {
+    if (indexSrc.includes("CONTRIBUTION_SLOTS." + name)) slots.push(slot);
   }
   const helperTs = join(ROOT, "src/capability/platform/contributed.ts");
   const helperSrc = existsSync(helperTs) ? readFileSync(helperTs, "utf8") : "";
@@ -227,13 +229,19 @@ async function runDynamicTests() {
     return true;
   });
 
-  // C2-REGISTERED：Bookmark 适配器实向通用 Registry 注册 3 条贡献（静态，运行时已由 pilot PLT-03 验证）。
-  await t("C2-REGISTERED", "Bookmark 适配器 registerContribution 调用 = 3 且 capabilityId=bookmark", () => {
+  // C2: two active contributions must match the manifest; the legacy
+  // entry is no longer rendered and must not be registered as dead metadata.
+  await t("C2-REGISTERED", "Bookmark 仅注册 sidebar 与 address-star，Manifest/Runtime 同步", () => {
     if (!existsSync(BOOKMARK_INDEX_TS)) return "bookmark/index.ts 缺失";
     const src = readFileSync(BOOKMARK_INDEX_TS, "utf8");
+    const manifest = readFileSync(join(ROOT, "src/capabilities/bookmark/manifest.ts"), "utf8");
     const calls = (src.match(/registerContribution\(\{/g) || []).length;
-    if (calls !== 3) return `registerContribution 调用数应为 3，实际 ${calls}`;
-    if (!/capabilityId:\s*BOOKMARK_CAPABILITY_ID/.test(src)) return "缺少 capabilityId: BOOKMARK_CAPABILITY_ID";
+    if (calls !== 2) return `registerContribution 调用数应为 2，实际 ${calls}`;
+    if ((src.match(/capabilityId:\s*BOOKMARK_CAPABILITY_ID/g) || []).length !== 2) return "每条贡献必须保持 Bookmark owner";
+    for (const id of ["bookmark.sidebar", "bookmark.address-star"]) {
+      if (!src.includes('id: "'+id+'"') || !manifest.includes('id: "'+id+'"')) return "Manifest/Runtime 缺少 "+id;
+    }
+    if (src.includes("bookmark.entry-button") || manifest.includes("bookmark.entry-button")) return "旧贡献不应注册";
     return true;
   });
   await t("C4-ABSENT", "Bookmark absent：同槽为空（Shell 仍渲染空集，不崩溃）", () => {
@@ -311,7 +319,7 @@ function runStaticChecks() {
   // C2：Bookmark 适配器向通用 Registry 注册
   const reg2 = bookmarkRegistersContributions();
   t("C2-ADAPTER", "Bookmark 适配器使用 contributionRegistry.registerContribution", reg2.exists && reg2.usesGenericRegistry, `exists=${reg2.exists} usesGeneric=${reg2.usesGenericRegistry}`);
-  t("C2-SLOTS", "Bookmark 注册 3 个槽（browser-sidebar/address-bar-actions/activity-bar-trailing）", reg2.slots.length === 3, `slots=${reg2.slots.join(",")}`);
+  t("C2-SLOTS", "Bookmark 仅注册 browser-sidebar/address-bar-actions，禁止回归重复尾部入口", reg2.slots.join(",") === "browser-sidebar,address-bar-actions", `slots=${reg2.slots.join(",")}`);
 
   // ── Workspace C3（Train B） ──
   const WS_RE = /(?:^|\/)src\/capabilities\/workspace\/(?:state|ui|services|lifecycle|resource|internal|adapters)\//;
