@@ -9,12 +9,15 @@
 
 use tauri::{AppHandle, Manager};
 
-use crate::domain::{GraphEdge, GraphEdgeKind, GraphNode, GraphNodeKind, GraphNodeView, GraphQueryRequest, GraphQueryResult, GraphStats};
+use crate::domain::{
+    GraphEdge, GraphEdgeKind, GraphNode, GraphNodeKind, GraphNodeView, GraphQueryRequest,
+    GraphQueryResult, GraphStats,
+};
 use crate::graph::{
-    graph_node_get_impl, graph_query_impl, graph_stats_impl, validate_id_public, GraphState, GraphStore,
+    graph_node_get_impl, graph_query_impl, graph_stats_impl, validate_id_public, GraphState,
+    GraphStore,
 };
 use crate::shared::invocation::check_invocation_source;
-
 
 // Graph has one bounded in-memory store and one atomic snapshot. Imports and
 // on-demand file indexing converge on that same store; never expose node props
@@ -40,7 +43,9 @@ fn summary(store: &GraphStore) -> GraphImportSummary {
 /// Import only a validated, referentially consistent graph. No unchecked
 /// serde persistence, no shell, no network, no props in the result.
 fn parse_import(text: &str) -> Result<GraphStore, String> {
-    if text.len() > MAX_IMPORT_BYTES { return Err("GRAPH_IMPORT_TOO_LARGE".into()); }
+    if text.len() > MAX_IMPORT_BYTES {
+        return Err("GRAPH_IMPORT_TOO_LARGE".into());
+    }
     let candidate = GraphStore::from_json(text).map_err(|e| e.code().to_string())?;
     let mut clean = GraphStore::default();
     for node in candidate.nodes {
@@ -48,7 +53,8 @@ fn parse_import(text: &str) -> Result<GraphStore, String> {
     }
     for edge in candidate.edges {
         if !clean.nodes.iter().any(|n| n.id == edge.from)
-            || !clean.nodes.iter().any(|n| n.id == edge.to) {
+            || !clean.nodes.iter().any(|n| n.id == edge.to)
+        {
             return Err("GRAPH_EDGE_MISSING_ENDPOINT".into());
         }
         clean.insert_edge(edge).map_err(|e| e.code().to_string())?;
@@ -58,17 +64,26 @@ fn parse_import(text: &str) -> Result<GraphStore, String> {
 
 fn persist_graph(app: &AppHandle, store: GraphStore) -> Result<GraphImportSummary, String> {
     let encoded = store.to_json().map_err(|e| e.code().to_string())?;
-    if encoded.len() > MAX_IMPORT_BYTES { return Err("GRAPH_IMPORT_TOO_LARGE".into()); }
+    if encoded.len() > MAX_IMPORT_BYTES {
+        return Err("GRAPH_IMPORT_TOO_LARGE".into());
+    }
     let state = app.state::<GraphState>();
-    let mut guard = state.store.write().map_err(|_| "GRAPH_STORE_LOCK".to_string())?;
+    let mut guard = state
+        .store
+        .write()
+        .map_err(|_| "GRAPH_STORE_LOCK".to_string())?;
     // Existing startup read path; atomic rename so a crash cannot create
     // a partial JSON snapshot. Update live state only after disk success.
     let path = crate::workspace::data_dir(app).join("graph.json");
-    crate::session::atomic_write(&path, &encoded).map_err(|_| "GRAPH_PERSIST_FAILED".to_string())?;
+    crate::session::atomic_write(&path, &encoded)
+        .map_err(|_| "GRAPH_PERSIST_FAILED".to_string())?;
     let result = summary(&store);
     *guard = store;
-    crate::workspace::log_audit(app, "graph.snapshot.update",
-        format!("nodes={} edges={}", result.node_count, result.edge_count));
+    crate::workspace::log_audit(
+        app,
+        "graph.snapshot.update",
+        format!("nodes={} edges={}", result.node_count, result.edge_count),
+    );
     Ok(result)
 }
 
@@ -95,25 +110,60 @@ fn collect_documents(roots: &[std::path::PathBuf]) -> GraphStore {
     let mut queue: VecDeque<(std::path::PathBuf, Option<String>, u8)> =
         roots.iter().map(|p| (p.clone(), None, 0)).collect();
     while let Some((path, parent_id, depth)) = queue.pop_front() {
-        if out.nodes.len() >= MAX_INDEX_NODES { break; }
-        let Ok(meta) = std::fs::symlink_metadata(&path) else { continue };
-        if meta.file_type().is_symlink() { continue; }
+        if out.nodes.len() >= MAX_INDEX_NODES {
+            break;
+        }
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
         let is_dir = meta.is_dir();
-        let is_note = path.extension().and_then(|x| x.to_str())
-            .map(|x| matches!(x.to_ascii_lowercase().as_str(), "md" | "markdown" | "txt" | "pdf" | "docx"))
+        let is_note = path
+            .extension()
+            .and_then(|x| x.to_str())
+            .map(|x| {
+                matches!(
+                    x.to_ascii_lowercase().as_str(),
+                    "md" | "markdown" | "txt" | "pdf" | "docx"
+                )
+            })
             .unwrap_or(false);
-        if !is_dir && (!meta.is_file() || !is_note) { continue; }
-        let kind = if is_dir { GraphNodeKind::Dir } else { GraphNodeKind::File };
+        if !is_dir && (!meta.is_file() || !is_note) {
+            continue;
+        }
+        let kind = if is_dir {
+            GraphNodeKind::Dir
+        } else {
+            GraphNodeKind::File
+        };
         let id = hashed_path(if is_dir { "dir" } else { "file" }, &path);
-        let label = path.file_name().and_then(|x| x.to_str()).unwrap_or("知识目录")
-            .chars().take(90).collect::<String>();
-        if out.insert_node(GraphNode { id: id.clone(), kind, label, props: Default::default() }).is_err() {
+        let label = path
+            .file_name()
+            .and_then(|x| x.to_str())
+            .unwrap_or("知识目录")
+            .chars()
+            .take(90)
+            .collect::<String>();
+        if out
+            .insert_node(GraphNode {
+                id: id.clone(),
+                kind,
+                label,
+                props: Default::default(),
+            })
+            .is_err()
+        {
             continue;
         }
         if let Some(parent) = parent_id {
             let _ = out.insert_edge(GraphEdge {
-                from: id.clone(), to: parent, kind: GraphEdgeKind::InDir,
-                weight: 1, props: Default::default(),
+                from: id.clone(),
+                to: parent,
+                kind: GraphEdgeKind::InDir,
+                weight: 1,
+                props: Default::default(),
             });
         }
         if is_dir && depth < 6 {
@@ -150,17 +200,29 @@ mod import_tests {
     #[test]
     fn import_requires_valid_endpoints_and_unique_nodes() {
         let bad = r#"{"nodes":[{"id":"a","kind":"file","label":"a"}],"edges":[{"from":"a","to":"missing","kind":"references"}]}"#;
-        assert_eq!(parse_import(bad).err().as_deref(), Some("GRAPH_EDGE_MISSING_ENDPOINT"));
+        assert_eq!(
+            parse_import(bad).err().as_deref(),
+            Some("GRAPH_EDGE_MISSING_ENDPOINT")
+        );
         let duplicate = r#"{"nodes":[{"id":"a","kind":"file","label":"a"},{"id":"a","kind":"file","label":"b"}],"edges":[]}"#;
-        assert_eq!(parse_import(duplicate).err().as_deref(), Some("GRAPH_DUPLICATE_NODE"));
-        assert_eq!(parse_import(&"x".repeat(MAX_IMPORT_BYTES+1)).err().as_deref(), Some("GRAPH_IMPORT_TOO_LARGE"));
+        assert_eq!(
+            parse_import(duplicate).err().as_deref(),
+            Some("GRAPH_DUPLICATE_NODE")
+        );
+        assert_eq!(
+            parse_import(&"x".repeat(MAX_IMPORT_BYTES + 1))
+                .err()
+                .as_deref(),
+            Some("GRAPH_IMPORT_TOO_LARGE")
+        );
     }
     #[test]
     fn scan_does_not_follow_symlinks_or_read_body() {
         let base = std::env::temp_dir().join(format!("browseros-graph-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base).unwrap();
         std::fs::write(base.join("a.md"), "SECRET_DO_NOT_READ").unwrap();
-        #[cfg(unix)] std::os::unix::fs::symlink("/etc", base.join("escape")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("/etc", base.join("escape")).unwrap();
         let result = collect_documents(&[base.clone()]);
         assert_eq!(result.nodes.len(), 2);
         assert_eq!(result.edges.len(), 1);
