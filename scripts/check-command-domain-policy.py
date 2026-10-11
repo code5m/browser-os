@@ -72,6 +72,7 @@ BASELINE_DEPS = {
     "devDependencies": {
         "@tauri-apps/cli": "^2.0.0",
         "@vitejs/plugin-vue": "^5.0.0",
+        "terser": "^5.51.2",
         "vite": "^5.2.0",
     },
     "optionalDependencies": {},

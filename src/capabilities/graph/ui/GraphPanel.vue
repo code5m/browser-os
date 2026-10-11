@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref } from "vue";
+import { bridge } from "../../../bridge";
 import { useGraphStore } from "../state/useGraphStore";
 import {
   GRAPH_DEBOUNCE_MS,
@@ -16,6 +17,29 @@ const store = useGraphStore();
 // 起始节点输入（W12 增量；与 A7 §3.1 graph_query 的 start_id 字段对应）
 // 旧 fixture 测试可能没设 start_id；后端落地后用户可在此输入 ID 触发实时 query。
 const startIdInput = ref<string>(store.startId ?? "");
+const graphBusy = ref(false);
+const graphFeedback = ref("");
+const graphImportInput = ref<HTMLInputElement | null>(null);
+async function graphOperation(task: () => Promise<{node_count:number;edge_count:number;first_id:string|null}>) {
+  if (graphBusy.value) return;
+  graphBusy.value = true; graphFeedback.value = "";
+  try {
+    const res = await task();
+    graphFeedback.value = "已保存 " + res.node_count + " 个节点和 " + res.edge_count + " 条关系";
+    if (res.first_id) { startIdInput.value = res.first_id; store.loadGraph({ start_id: res.first_id }); }
+  } catch { graphFeedback.value = "图谱操作失败：数据格式、权限或容量校验未通过"; }
+  finally { graphBusy.value = false; }
+}
+async function importGraph(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  try {
+    if (file.size > 4 * 1024 * 1024) { graphFeedback.value = "图谱 JSON 超过 4MB"; return; }
+    await graphOperation(async () => bridge.graphImportJson(await file.text()));
+  } finally { input.value = ""; }
+}
+
 
 onMounted(() => {
   // W12 行为：组件挂载时不再盲目 loadGraph()，而是保留用户当前 startId。
@@ -51,6 +75,9 @@ function onRefresh(): void {
         <span class="cap" role="status" aria-live="polite">节点 {{ store.capacity.nodeCount }}/{{ GRAPH_MAX_NODES }} · 边 {{ store.capacity.edgeCount }}/{{ GRAPH_MAX_EDGES }}</span>
         <button :disabled="!store.backendReady || !startIdInput.trim()" aria-label="按起始节点查询" @click="onSubmit">查询</button>
         <button :disabled="!store.backendReady || !store.startId" aria-label="刷新图谱数据" @click="onRefresh">刷新</button>
+        <button :disabled="graphBusy" @click="graphImportInput?.click()">导入 JSON</button>
+        <input ref="graphImportInput" type="file" accept=".json,application/json" style="display:none" aria-label="选择图谱 JSON" @change="importGraph" />
+        <button :disabled="graphBusy" @click="graphOperation(() => bridge.graphRebuildDocuments())">重建知识索引</button>
       </div>
     </header>
 
@@ -72,6 +99,7 @@ function onRefresh(): void {
     <div v-if="!store.backendReady" class="banner banner-warn" role="status" aria-live="polite">
       后端 graph 命令尚未就绪，当前为只读壳（不发起任何后端调用）。
     </div>
+    <div v-if="graphFeedback" class="banner" role="status">{{ graphFeedback }}</div>
     <div v-if="store.error" class="banner banner-error" role="alert" aria-live="assertive">{{ store.error }}</div>
     <div v-if="store.capState.level !== 'ok'" class="banner banner-cap" role="status" aria-live="polite">{{ store.capState.message }}</div>
     <div v-if="store.truncated" class="banner banner-trunc" role="status" aria-live="polite">{{ GRAPH_TRUNCATION_NOTICE }}</div>

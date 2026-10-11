@@ -47,7 +47,10 @@ export const homeManifest: CapabilityDefinition = {
     conflicts: [],
     provides: ["home.shortcut", "home.recent", "home.launch", "home.favorite"],
     requires: [],
-    contributions: [{ id: "home.main", slot: "workbench-main", type: "surface", view: "home" }],
+    contributions: [
+      { id: "home.main", slot: "workbench-main", type: "surface", view: "home" },
+      { id: "home.omnibox-suggestions", slot: "omnibox-suggestions", type: "surface" },
+    ],
     permissions: ["fs.read"],
     resources: [{ kind: "CACHE", ownership: "owned", evidence: "src/capabilities/home/state/useHomeStore.ts" }],
     persistenceScope: "disk",

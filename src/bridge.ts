@@ -458,6 +458,8 @@ export const bridge = {
     GRAPH_COMMANDS_AVAILABLE
       ? invoke<GraphNodeView | null>("graph_node_get", { id })
       : Promise.reject<GraphNodeView | null>(makeGraphCommandDisabledError("graph_node_get")),
+  graphImportJson: (text: string) => invoke<{ node_count: number; edge_count: number; first_id: string | null }>("graph_import_json", { text }),
+  graphRebuildDocuments: () => invoke<{ node_count: number; edge_count: number; first_id: string | null }>("graph_rebuild_documents"),
   graphStats: () =>
     GRAPH_COMMANDS_AVAILABLE
       ? invoke<GraphStats>("graph_stats")

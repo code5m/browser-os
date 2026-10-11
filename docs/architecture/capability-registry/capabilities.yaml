@@ -156,7 +156,7 @@ capabilities:
       - bookmark.remove
       - bookmark.togglePanel
     dependsOn: [bridge]
-    optionalDependencies: [browser]
+    optionalDependencies: [browser, home, workspace]
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
       default: ACTIVE

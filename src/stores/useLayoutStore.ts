@@ -42,38 +42,33 @@ export const TOP_NAV_ITEMS = [
 ] as const;
 
 export const NAV_MENU_SECTIONS = [
-  {
-    title: "工作区",
-    items: [
-      { view: "vault", icon: "◇", label: "笔记 Vault" },
-      { view: "clip", icon: "📋", label: "剪贴板" },
-      { view: "arts", icon: "📚", label: "知识库" },
-    ],
-  },
-  {
-    title: "工具",
-    items: [
-      // 终端既是窄窗口下会被裁掉的一级入口，也必须常驻 ☰ 菜单（否则窄窗口下不可达）
-      { view: "term", icon: "💻", label: "终端" },
-      { view: "apps", icon: "🚀", label: "应用" },
-      { view: "scripts", icon: "📜", label: "脚本库" },
-      { view: "commands", icon: "⚡", label: "命令库" },
-      { view: "db", icon: "🗄️", label: "数据库" },
-      { view: "tasks", icon: "⏰", label: "定时任务" },
-      { view: "skills", icon: "🛠️", label: "技能" },
-      { view: "agents", icon: "🤖", label: "智能体" },
-      { view: "graph", icon: "🕸️", label: "图谱" },
-      { view: "plugin", icon: "🔌", label: "插件" },
-      { view: "settings", icon: "⚙️", label: "设置" },
-    ],
-  },
-  {
-    title: "同步",
-    items: [
-      { view: "repo", icon: "🛰️", label: "仓库" },
-      { view: "audit", icon: "🛡️", label: "审计" },
-    ],
-  },
+  { title: "工作区", items: [
+    { view: "grid", icon: "▦", label: "宫格" },
+    { view: "clip", icon: "📋", label: "剪贴板" },
+    { view: "apps", icon: "🚀", label: "应用" },
+  ] },
+  { title: "智能体中心", items: [
+    { view: "agents", icon: "🤖", label: "智能体" },
+    { view: "skills", icon: "⚙", label: "技能（智能体能力）" },
+  ] },
+  { title: "知识中心", items: [
+    { view: "graph", icon: "🕸️", label: "知识图谱" },
+    { view: "vault", icon: "◇", label: "笔记" },
+    { view: "arts", icon: "📚", label: "知识库" },
+  ] },
+  { title: "开发与自动化", items: [
+    { view: "term", icon: "💻", label: "终端" },
+    { view: "scripts", icon: "📜", label: "脚本库" },
+    { view: "commands", icon: "⚡", label: "命令库" },
+    { view: "db", icon: "🗄️", label: "数据库" },
+    { view: "tasks", icon: "⏰", label: "定时任务" },
+  ] },
+  { title: "系统与治理", items: [
+    { view: "repo", icon: "🛰️", label: "仓库" },
+    { view: "audit", icon: "🛡️", label: "审计" },
+    { view: "plugin", icon: "🔌", label: "插件" },
+    { view: "settings", icon: "⚙️", label: "设置" },
+  ] },
 ] as const;
 
 export const NAV_DENSITY_FULL_PX = 1180;
@@ -109,7 +104,7 @@ export function nextNavIndex(current: number, delta: number, len: number): numbe
 // 断言"每个模块都有导航入口，不存在孤儿模块"。
 export const MODULE_META: Record<string, { icon: string; label: string }> = {
   home: { icon: "🏠", label: "主页" },
-  grid: { icon: "🗂️", label: "宫格" },
+  grid: { icon: "▦", label: "宫格" },
   files: { icon: "📂", label: "文件" },
   vault: { icon: "◇", label: "笔记 Vault" },
   db: { icon: "▤", label: "数据库" },
@@ -150,7 +145,7 @@ export const useLayoutStore = defineStore("layout", () => {
   // owner 不变（仍为 useLayoutStore.toggleBrowserDock），语义真源唯一。
   const browserDockTab = ref<string>("files");
   // 地址栏模式：🌐网址（默认）/ 📁目录（输入本地路径浏览目录）
-  const addrMode = ref<"url" | "dir">("url");
+  const addrMode = ref<"auto" | "url" | "dir">("auto");
   // 三档自适应外壳：标准、紧凑、沉浸。只保存 UI 意图，不接管原生窗口生命周期。
   const shellMode = ref<"standard" | "compact" | "immersive">("standard");
   // 历史只读兼容：旧 MainArea 的“精简模式”现在专指沉浸状态。
@@ -251,7 +246,7 @@ export const useLayoutStore = defineStore("layout", () => {
 
   // 切换地址栏模式（🌐网址 / 📁目录）
   function toggleAddrMode() {
-    addrMode.value = addrMode.value === "url" ? "dir" : "url";
+    addrMode.value = addrMode.value === "auto" ? "url" : addrMode.value === "url" ? "dir" : "auto";
   }
 
   function setShellMode(mode: "standard" | "compact" | "immersive") {

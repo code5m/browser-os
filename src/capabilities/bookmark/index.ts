@@ -23,7 +23,8 @@ export const BOOKMARK_CAPABILITY_ID = "bookmark"
 //   - 组件位于本能力包内（ui/），由能力提供；Shell 只经 <component :is> 渲染，绝不直连。
 //   - 懒加载把面板/按钮拆出主 chunk，符合构建体积闸门（IF-2）。
 const BookmarkPanel = defineAsyncComponent(() => import("./ui/BookmarkPanel.vue"))
-const BookmarkStar = defineAsyncComponent(() => import("./ui/BookmarkStar.vue"))
+const BookmarkAddressControls = defineAsyncComponent(() => import("./ui/BookmarkAddressControls.vue"))
+const BookmarkSuggestions = defineAsyncComponent(() => import("./ui/BookmarkSuggestions.vue"))
 
 /**
  * 注册 Bookmark 对 Shell 的 UI 贡献（Contribution/Slot 模型）。
@@ -44,7 +45,14 @@ export function registerBookmarkContributions(): void {
     capabilityId: BOOKMARK_CAPABILITY_ID,
     type: "navigation",
     slot: CONTRIBUTION_SLOTS.ADDRESS_BAR_ACTIONS,
-    component: BookmarkStar,
+    component: BookmarkAddressControls,
+  })
+  contributionRegistry.registerContribution({
+    id: "bookmark.omnibox-suggestions",
+    capabilityId: BOOKMARK_CAPABILITY_ID,
+    type: "surface",
+    slot: CONTRIBUTION_SLOTS.OMNIBOX_SUGGESTIONS,
+    component: BookmarkSuggestions,
   })
 
 }

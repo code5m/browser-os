@@ -11,7 +11,7 @@ function activate() {
 </script>
 <template>
   <button data-nav-item :class="{ active: isNavActive(layout.mainView, 'grid') }" aria-label="打开宫格" title="打开宫格" @click="activate">
-    <span class="ic">🗂️</span><span class="lab">宫格</span>
+    <span class="ic">▦</span><span class="lab">宫格</span>
   </button>
 </template>
 <style scoped>
