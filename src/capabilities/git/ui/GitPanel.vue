@@ -11,6 +11,7 @@ const ws = useRepoStore();
 const git = useGitStore();
 
 const targetBranch = ref("");
+watch(() => git.currentBranch, branch => { if (branch) targetBranch.value = branch }, { immediate: true });
 const noRepo = computed(() => !git.repoId);
 const disabled = computed(() => noRepo.value || git.busy);
 const selectedCount = computed(() => git.selectedPaths.length);
