@@ -1,0 +1,14 @@
+{
+  "schema": "browseros-footprint-v1",
+  "provenance": {
+    "sha": "7ae6fa86be3c7f8044aeeb7c627981559c9f9da6",
+    "run_id": 38098492736,
+    "workflow": "BrowserOS Full Validation",
+    "utc": "2026-10-11T00:35:37Z",
+    "note": "Ubuntu GitHub Actions Linux x86_64; extracted from actual full-run footprint log"
+  },
+  "frontend_dist_bytes": 995732,
+  "release_binary_bytes": 11827168,
+  "deb_file_bytes": 5161532,
+  "deb_installed_size_field_bytes": 11941888
+}

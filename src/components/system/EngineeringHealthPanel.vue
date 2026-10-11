@@ -3,6 +3,8 @@ import { computed, onMounted, ref } from "vue";
 import { evaluateAll } from "./engineeringHealthModel.mjs";
 import { bridge } from "../../bridge";
 import type { ResourceStats } from "../../types";
+// Baseline: docs/engineering/footprint-baselines/master-7ae6fa86.json.
+// These are measured Linux package bytes, NOT live usage or module attribution.
 const repo = "https://github.com/code5m/browser-os";
 const api = "https://api.github.com/repos/code5m/browser-os";
 const loading = ref(false), error = ref(""), sha = ref(""), checkedAt = ref(""), tag = ref<string | null>(null);
@@ -27,7 +29,7 @@ async function measureNativeOnce() {
   catch { nativeIssue.value = "原生采样失败"; }
   finally { nativeMeasuring.value = false; }
 }
-const formatMiB = (mb: number | undefined) => mb == null ? "未测量" : mb.toFixed(1) + " MiB";
+const formatMiB = (mb: number | undefined) => mb == null ? "未测量" : mb.toFixed(2) + " MiB";
 async function jsonRequest(path: string): Promise<any> {
  const r = await fetch(api + path, {headers:{Accept:"application/vnd.github+json"}});
  if (!r.ok) throw Error("GitHub API HTTP " + r.status);
@@ -78,10 +80,11 @@ onMounted(() => void refresh());
    <a :href="repo+'/actions/runs/'+(check.run?.id||'')" target="_blank" rel="noopener noreferrer">证据 ↗</a>
  </div>
  <h3>资源与体积</h3>
+ <p>Linux 构建基线（不是当前设备内存）：前端 995,732 B；.deb 5,161,532 B；安装后声明 11,941,888 B。<a :href="repo+'/actions/runs/38098492736'" target="_blank" rel="noopener noreferrer">验收证据 7ae6fa86 ↗</a></p>
  <p>原生按需采样（不新增后台轮询）：应用 {{formatMiB(nativeSnapshot?.app_total_mb)}}；主进程树 RSS {{formatMiB(nativeSnapshot?.main.rss_mb)}}。</p>
  <button type="button" :disabled="nativeMeasuring" @click="measureNativeOnce">{{nativeMeasuring?"采样中…":"采样进程内存"}}</button>
  <p v-if="nativeIssue" role="status">{{nativeIssue}}</p>
- <p>前端体积、安装包：<a :href="repo+'/actions'" target="_blank" rel="noopener noreferrer">查看同版本 CI 证据 ↗</a>。首屏加载、CPU/p95 未在本页测量；无法归属的共享资源不按模块伪造。</p>
+ <p>首次加载与 CPU/p95 暂无实测；共享 Chunk 不归为某一个模块。<a :href="repo+'/actions'" target="_blank" rel="noopener noreferrer">构建对比与 CI 证据 ↗</a></p>
  <h3>工程资产与债务</h3>
  <p>Rust 原生语义：{{meta?.nativeSemantics?.expectedRegisteredCommands??"未知"}} 命令 / {{meta?.nativeSemantics?.expectedAppStateFields??"未知"}} AppState 字段（登记基线，非实时通过）。</p>
  <p>证据预算：{{policy?.trackedHistoryBudgetBytes??"未知"}} bytes；CI Artifact 保留 {{policy?.classes?.ciArtifact?.retentionDays??"未知"}} 天。</p>

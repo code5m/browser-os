@@ -139,6 +139,31 @@ jobs:
           path: /tmp/browseros-footprint.json
           if-no-files-found: warn
           retention-days: 14
+      - name: Resource governance and visual comparison
+        if: needs.impact.outputs.mode == 'full'
+        run: |
+          node scripts/generate-footprint-review.mjs --self-test
+          node scripts/benchmark-resource-scenarios.mjs --self-test
+          node scripts/check-duplicate-css.mjs --self-test
+          npm run --silent analyze:css-duplicates > /tmp/browseros-css-audit.json
+          node scripts/generate-footprint-review.mjs \
+            --before docs/engineering/footprint-baselines/master-7ae6fa86.json \
+            --after /tmp/browseros-footprint.json \
+            --bundle /tmp/browseros-build-assets.json \
+            --native /tmp/browseros-native-resource.json \
+            --out /tmp/browseros-size-comparison.html \
+            --out-json /tmp/browseros-size-comparison.json
+      - name: Upload resource governance evidence
+        if: always() && needs.impact.outputs.mode == 'full'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-resource-governance-${{ github.run_id }}
+          path: |
+            /tmp/browseros-css-audit.json
+            /tmp/browseros-size-comparison.html
+            /tmp/browseros-size-comparison.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Upload one-shot native resource evidence
         if: always() && needs.impact.outputs.mode == 'full'
         uses: actions/upload-artifact@v4
