@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { evaluateAll } from "./engineeringHealthModel.mjs";
 import { bridge } from "../../bridge";
 import type { ResourceStats } from "../../types";
+import sizeBaseline from "../../../docs/engineering/footprint-baselines/master-7ae6fa86.json";
 const repo = "https://github.com/code5m/browser-os";
 const api = "https://api.github.com/repos/code5m/browser-os";
 const loading = ref(false), error = ref(""), sha = ref(""), checkedAt = ref(""), tag = ref<string | null>(null);
@@ -27,7 +28,7 @@ async function measureNativeOnce() {
   catch { nativeIssue.value = "原生采样失败"; }
   finally { nativeMeasuring.value = false; }
 }
-const formatMiB = (mb: number | undefined) => mb == null ? "未测量" : mb.toFixed(1) + " MiB";
+const formatMiB = (mb: number | undefined) => mb == null ? "未测量" : mb.toFixed(2) + " MiB";
 async function jsonRequest(path: string): Promise<any> {
  const r = await fetch(api + path, {headers:{Accept:"application/vnd.github+json"}});
  if (!r.ok) throw Error("GitHub API HTTP " + r.status);
@@ -78,6 +79,12 @@ onMounted(() => void refresh());
    <a :href="repo+'/actions/runs/'+(check.run?.id||'')" target="_blank" rel="noopener noreferrer">证据 ↗</a>
  </div>
  <h3>资源与体积</h3>
+ <p>安装包资源基线：来自 GitHub 完整验收 <a :href="repo+'/actions/runs/'+sizeBaseline.provenance.run_id" target="_blank" rel="noopener noreferrer">{{sizeBaseline.provenance.sha.slice(0,8)}} ↗</a>；只代表该版本的 Linux x86_64 构建，不代表当前设备占用。</p>
+ <div class="health-summary">
+  <span>前端产物：{{formatMiB(sizeBaseline.frontend_dist_bytes/1048576)}}</span>
+  <span>安装包：{{formatMiB(sizeBaseline.deb_file_bytes/1048576)}}</span>
+  <span>安装后声明体积：{{formatMiB(sizeBaseline.deb_installed_size_field_bytes/1048576)}}</span>
+ </div>
  <p>原生按需采样（不新增后台轮询）：应用 {{formatMiB(nativeSnapshot?.app_total_mb)}}；主进程树 RSS {{formatMiB(nativeSnapshot?.main.rss_mb)}}。</p>
  <button type="button" :disabled="nativeMeasuring" @click="measureNativeOnce">{{nativeMeasuring?"采样中…":"采样进程内存"}}</button>
  <p v-if="nativeIssue" role="status">{{nativeIssue}}</p>
