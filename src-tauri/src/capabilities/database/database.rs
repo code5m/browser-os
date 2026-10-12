@@ -1401,10 +1401,14 @@ mod tests {
     fn t_db_p12_ssl_require_is_explicitly_degraded() {
         let roots: Vec<PathBuf> = Vec::new();
         let mut cfg = remote_config(SupportedDb::MySql);
+        cfg.host = Some("127.0.0.1".to_string());
+        cfg.port = Some(1);
         cfg.ssl_mode = DbSslMode::Require;
+        // MySQL TLS now has a real connector. An unreachable server is a
+        // connection failure, not a fake DB_NOT_SUPPORTED response.
         assert_eq!(
             DbPool::connect(&cfg, None, &roots).unwrap_err().code,
-            DbErrorCode::NotSupported
+            DbErrorCode::ConnectFailed
         );
 
         let mut cfg = remote_config(SupportedDb::Postgres);
