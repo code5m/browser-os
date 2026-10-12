@@ -156,7 +156,7 @@ export const useDatabaseStore = defineStore("database", () => {
     const kind = configs.value.find(c => c.id === id)?.kind;
     if (!id || (kind !== 'sqlite' && kind !== 'mysql')) return;
     const schemaSql = kind === 'mysql'
-      ? "SELECT TABLE_NAME AS name, TABLE_TYPE AS type FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY TABLE_NAME LIMIT 1000"
+      ? "SELECT TABLE_NAME,TABLE_TYPE FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE() ORDER BY TABLE_NAME LIMIT 1000"
       : "SELECT name, type FROM sqlite_schema WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY name";
     schemaBusy.value = true;
     try {
