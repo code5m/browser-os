@@ -8,7 +8,7 @@
 
 version: 1
 generated_from_head: 3f57a92e5fb7d9a6bc978f1572964d3c14fb8caf
-total: 71
+total: 74
 
 components:
 
@@ -75,6 +75,7 @@ components:
   - { id: agent.manager-panel, name: AgentManagerPanel, layer: CAPABILITY_UI, owner: agent, file: src/capabilities/agent/ui/AgentManagerPanel.vue, public: false, business_semantics: "智能体管理(经 WORKBENCH_MAIN 贡献 view='agents')", capability_specific: true, dependencies: [useAgentStore, utils/agentSkillUi], consumers: [MainArea.vue (viewOf('agents') contribution)], status: OBSERVED }
   - { id: agent.chat-panel, name: AgentChatPanel, layer: CAPABILITY_UI, owner: agent, file: src/capabilities/agent/ui/AgentChatPanel.vue, public: false, business_semantics: "智能体对话(只读壳；agent_chat 后端未就绪)", capability_specific: true, dependencies: [useAgentStore], consumers: [AgentManagerPanel.vue:63], status: OBSERVED }
   - { id: skill.manager-panel, name: SkillManagerPanel, layer: CAPABILITY_UI, owner: skill, file: src/capabilities/skill/ui/SkillManagerPanel.vue, public: false, business_semantics: "技能管理(经 WORKBENCH_MAIN 贡献 view='skills'；state 已迁出 useSkillStore)", capability_specific: true, dependencies: [useSkillStore, utils/agentSkillUi], consumers: [MainArea.vue (viewOf('skills') contribution)], status: OBSERVED }
+  - { id: agent-skill.blueprint-studio, name: BlueprintStudio, layer: SHARED_PATTERN, owner: shared, file: src/shared/ui/BlueprintStudio.vue, public: false, business_semantics: "Agent/Skill 共用蓝图规划页面，基础编辑与导入导出，真实执行未开放", capability_specific: true, dependencies: [utils/studioDrafts], consumers: [AgentManagerPanel, SkillManagerPanel], status: OBSERVED }
   - { id: agent-skill.permission-preview, name: PermissionPreviewModal, layer: CAPABILITY_UI, owner: shared, file: src/shared/ui/PermissionPreviewModal.vue, public: false, business_semantics: "权限预览(纯props/emit-共享组件)", capability_specific: true, dependencies: [utils/agentSkillUi], consumers: [AgentManagerPanel.vue:65, SkillManagerPanel.vue:68], status: OBSERVED }
   - { id: vault.panel, name: VaultPanel, layer: CAPABILITY_UI, owner: vault, file: packages/capability-vault/src/ui/VaultPanel.vue, public: false, business_semantics: "笔记库 Vault（M2 独立 capability package；经 WORKBENCH_MAIN 贡献 view='vault'；state owner useVaultStore 在包内；表现层经注入 VaultHostPort 取 shell.collapsed 与图布局，不反向依赖 Host）", capability_specific: true, dependencies: [useVaultStore, marked, dompurify, @lucide/vue, VaultHostPort(injected)], consumers: [MainArea.vue (viewOf('vault') contribution)], status: OBSERVED }
   - { id: tools.panel, name: ToolBox, layer: CAPABILITY_UI, owner: tools, file: src/capabilities/tools/ui/ToolBox.vue, public: false, business_semantics: "工具箱(经 WORKBENCH_MAIN 贡献 view='tools'；工具在独立子 webview 打开)", capability_specific: true, dependencies: [useToolsStore], consumers: [MainArea.vue (viewOf('tools') contribution)], status: OBSERVED }
