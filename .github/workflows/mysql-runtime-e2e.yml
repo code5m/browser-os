@@ -19,7 +19,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: browseros-mysql-e2e
+  group: browseros-mysql-e2e-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

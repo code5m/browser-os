@@ -489,7 +489,9 @@ impl DbPool {
             DbPool::Sqlite(conn) => {
                 query_sqlite_with_deadline(conn, sql, cancel, &deadline, query_id)
             }
-            DbPool::MySql(conn, _) => query_mysql_with_deadline(conn, sql, cancel, &deadline, query_id),
+            DbPool::MySql(conn, _) => {
+                query_mysql_with_deadline(conn, sql, cancel, &deadline, query_id)
+            }
             DbPool::Postgres(_) => Err(DbError::new(
                 DbErrorCode::NotSupported,
                 "PostgreSQL 取数通道未实现（M4-2.b 交付，受 D27 无真实服务端约束）",
@@ -581,8 +583,11 @@ fn from_mysql_value(value: mysql::Value, binary: bool) -> DbValue {
         mysql::Value::NULL => DbValue::Null,
         mysql::Value::Int(v) => DbValue::I64(v),
         mysql::Value::UInt(v) => {
-            if v <= i64::MAX as u64 { DbValue::I64(v as i64) }
-            else { DbValue::Text(v.to_string()) }
+            if v <= i64::MAX as u64 {
+                DbValue::I64(v as i64)
+            } else {
+                DbValue::Text(v.to_string())
+            }
         }
         mysql::Value::Float(v) => DbValue::F64(v as f64),
         mysql::Value::Double(v) => DbValue::F64(v),
@@ -592,15 +597,21 @@ fn from_mysql_value(value: mysql::Value, binary: bool) -> DbValue {
             } else {
                 match String::from_utf8(bytes) {
                     Ok(s) => DbValue::Text(s),
-                    Err(err) => DbValue::Binary { bytes: err.into_bytes().len() },
+                    Err(err) => DbValue::Binary {
+                        bytes: err.into_bytes().len(),
+                    },
                 }
             }
         }
-        mysql::Value::Date(y, month, day, h, m, s, us) =>
-            DbValue::Text(format!("{y:04}-{month:02}-{day:02} {h:02}:{m:02}:{s:02}.{us:06}")),
+        mysql::Value::Date(y, month, day, h, m, s, us) => DbValue::Text(format!(
+            "{y:04}-{month:02}-{day:02} {h:02}:{m:02}:{s:02}.{us:06}"
+        )),
         mysql::Value::Time(neg, days, h, m, s, us) => {
             let sign = if neg { "-" } else { "" };
-            DbValue::Text(format!("{sign}{}:{m:02}:{s:02}.{us:06}", days as u64 * 24 + h as u64))
+            DbValue::Text(format!(
+                "{sign}{}:{m:02}:{s:02}.{us:06}",
+                days as u64 * 24 + h as u64
+            ))
         }
     }
 }
@@ -623,17 +634,31 @@ fn query_mysql_with_deadline(
         return Err(DbError::new(DbErrorCode::SqlTooLarge, "SQL 超过长度上限"));
     }
     if detect_multiple_statements(sql) {
-        return Err(DbError::new(DbErrorCode::MultipleStatements, "只允许单条 SQL"));
+        return Err(DbError::new(
+            DbErrorCode::MultipleStatements,
+            "只允许单条 SQL",
+        ));
     }
     if cancel.is_cancelled() {
         return Err(DbError::new(DbErrorCode::Cancelled, "查询已取消"));
     }
-    let mut cursor = conn.query_iter(sql)
-        .map_err(|_| DbError::new(DbErrorCode::QueryFailed, "MySQL 执行失败，请检查 SQL 和权限"))?;
+    let mut cursor = conn.query_iter(sql).map_err(|_| {
+        DbError::new(
+            DbErrorCode::QueryFailed,
+            "MySQL 执行失败，请检查 SQL 和权限",
+        )
+    })?;
     let meta = cursor.columns();
-    let info: Vec<(String, bool)> = meta.as_ref().iter()
-        .map(|c| (c.name_str().into_owned(),
-                   c.flags().contains(mysql::consts::ColumnFlags::BINARY_FLAG)))
+    let info: Vec<(String, bool)> = meta
+        .as_ref()
+        .iter()
+        .map(|c| {
+            (
+                c.name_str().into_owned(),
+                c.flags().contains(mysql::consts::ColumnFlags::BINARY_FLAG)
+                    || c.character_set() == 63,
+            )
+        })
         .collect();
     let columns = info.iter().map(|(name, _)| name.clone()).collect();
     let mut limiter = QueryLimiter::new();
@@ -642,17 +667,27 @@ fn query_mysql_with_deadline(
             return Err(DbError::new(DbErrorCode::Cancelled, "查询已取消"));
         }
         if deadline.hard_reached() {
-            return Err(DbError::fatal(DbErrorCode::Timeout, "MySQL 查询硬超时，连接已丢弃"));
+            return Err(DbError::fatal(
+                DbErrorCode::Timeout,
+                "MySQL 查询硬超时，连接已丢弃",
+            ));
         }
         if deadline.soft_reached() {
             return Err(DbError::new(DbErrorCode::Timeout, "MySQL 查询已超时"));
         }
         let row = item.map_err(|_| DbError::new(DbErrorCode::QueryFailed, "MySQL 读取结果失败"))?;
-        let values = row.unwrap().into_iter().enumerate().map(|(i, value)| {
-            let binary = info.get(i).map(|(_, flag)| *flag).unwrap_or(true);
-            limiter.normalize_field(from_mysql_value(value, binary))
-        }).collect();
-        if !limiter.push(values) { break; }
+        let values = row
+            .unwrap()
+            .into_iter()
+            .enumerate()
+            .map(|(i, value)| {
+                let binary = info.get(i).map(|(_, flag)| *flag).unwrap_or(true);
+                limiter.normalize_field(from_mysql_value(value, binary))
+            })
+            .collect();
+        if !limiter.push(values) {
+            break;
+        }
     }
     Ok(DbQueryResult {
         columns,
@@ -877,7 +912,6 @@ pub(crate) fn query_sqlite_with_deadline(
 // 测试（ID 段 T-db-p1~，对应 A1 §5 给 M4-2 的池与取数矩阵）
 // ---------------------------------------------------------------------------
 
-
 #[cfg(test)]
 mod mysql_mapping_tests {
     use super::*;
@@ -885,15 +919,26 @@ mod mysql_mapping_tests {
     #[test]
     fn mysql_values_preserve_binary_and_unsigned_boundaries() {
         assert_eq!(from_mysql_value(mysql::Value::NULL, false), DbValue::Null);
-        assert_eq!(from_mysql_value(mysql::Value::Int(-3), false), DbValue::I64(-3));
-        assert_eq!(from_mysql_value(mysql::Value::UInt(u64::MAX), false),
-                   DbValue::Text(u64::MAX.to_string()));
-        assert_eq!(from_mysql_value(mysql::Value::Bytes(b"Hello".to_vec()), false),
-                   DbValue::Text("Hello".into()));
-        assert_eq!(from_mysql_value(mysql::Value::Bytes(b"Hello".to_vec()), true),
-                   DbValue::Binary { bytes: 5 });
-        assert_eq!(from_mysql_value(mysql::Value::Bytes(vec![0xff]), false),
-                   DbValue::Binary { bytes: 1 });
+        assert_eq!(
+            from_mysql_value(mysql::Value::Int(-3), false),
+            DbValue::I64(-3)
+        );
+        assert_eq!(
+            from_mysql_value(mysql::Value::UInt(u64::MAX), false),
+            DbValue::Text(u64::MAX.to_string())
+        );
+        assert_eq!(
+            from_mysql_value(mysql::Value::Bytes(b"Hello".to_vec()), false),
+            DbValue::Text("Hello".into())
+        );
+        assert_eq!(
+            from_mysql_value(mysql::Value::Bytes(b"Hello".to_vec()), true),
+            DbValue::Binary { bytes: 5 }
+        );
+        assert_eq!(
+            from_mysql_value(mysql::Value::Bytes(vec![0xff]), false),
+            DbValue::Binary { bytes: 1 }
+        );
     }
 
     #[test]
@@ -1000,8 +1045,8 @@ mod tests {
     #[ignore = "requires ephemeral MySQL service"]
     fn mysql_real_e2e() {
         use mysql::prelude::Queryable;
-        let password = std::env::var("BROWSEROS_MYSQL_E2E_PASSWORD")
-            .expect("MySQL E2E password env missing");
+        let password =
+            std::env::var("BROWSEROS_MYSQL_E2E_PASSWORD").expect("MySQL E2E password env missing");
         let mut cfg = remote_config(SupportedDb::MySql);
         cfg.username = Some("browseros_ci".into());
         cfg.database = "browseros_e2e".into();
@@ -1010,12 +1055,19 @@ mod tests {
         let mut pool = DbPool::connect(&cfg, Some(&password), &[])
             .expect("MySQL E2E must establish real connection");
         assert_eq!(pool.encrypted(), Some(false));
-        let ping = pool.query(
-            "SELECT 1 AS one, 'hello' AS greeting",
-            &QueryCancel::new(), None, "mysql-e2e-select",
-        ).expect("MySQL E2E SELECT must succeed");
+        let ping = pool
+            .query(
+                "SELECT 1 AS one, 'hello' AS greeting",
+                &QueryCancel::new(),
+                None,
+                "mysql-e2e-select",
+            )
+            .expect("MySQL E2E SELECT must succeed");
         assert_eq!(ping.columns, vec!["one", "greeting"]);
-        assert_eq!(ping.rows, vec![vec![DbValue::I64(1), DbValue::Text("hello".into())]]);
+        assert_eq!(
+            ping.rows,
+            vec![vec![DbValue::I64(1), DbValue::Text("hello".into())]]
+        );
         if let DbPool::MySql(conn, _) = &mut pool {
             conn.query_drop(
                 "CREATE TABLE IF NOT EXISTS browseros_e2e_test (id INT PRIMARY KEY, title VARCHAR(50))"
@@ -1025,7 +1077,10 @@ mod tests {
             "SELECT TABLE_NAME AS name, TABLE_TYPE AS type FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY TABLE_NAME LIMIT 1000",
             &QueryCancel::new(), None, "mysql-e2e-schema",
         ).expect("MySQL E2E schema query");
-        assert!(schema.rows.iter().any(|row| row.first() == Some(&DbValue::Text("browseros_e2e_test".into()))));
+        assert!(schema
+            .rows
+            .iter()
+            .any(|row| row.first() == Some(&DbValue::Text("browseros_e2e_test".into()))));
     }
 
     // -- T-db-p1 凭据命名空间 --
