@@ -53,7 +53,7 @@ export function createLegacyHostAdapters(
   services.register('browser-context', browserContext)
 
   const vaultPorts: VaultPorts = {
-    native: { openVault: (path: string) => services.require<typeof bridge>('bridge').vaultOpen(path) },
+    native: { openVault: (path: string) => services.require<typeof bridge>('bridge').vaultOpen(path), saveNote: (root, relativePath, expectedText, content) => services.require<typeof bridge>('bridge').vaultSaveNote(root, relativePath, expectedText, content), syncGraph: (root) => services.require<typeof bridge>('bridge').graphSyncVault(root) },
     shell: { isWorkbenchCollapsed: () => services.require<typeof useWorkbenchStore>('workbench')().collapsed.value },
     graphLayout: { layoutGraph: (nodes, edges) => services.require<(nodes: unknown[], edges: unknown[]) => unknown>('graph-layout')(nodes as any, edges as any) },
   }

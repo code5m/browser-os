@@ -76,3 +76,23 @@ G. npm run check / npm run build / Rust check+tests / pre-merge / CI / GUI / 安
 Tauri ACL、bridge.ts、TS 类型、命令注册与契约测试；保留末条 ACL K1；
 遵循 AGENTS.md/PROJECT-RULES.md 停止条件；避免跨 capability 内部 import；
 执行内核复用 script_runner，知识索引复用唯一 GraphStore，用户笔记 Markdown 是内容真源。
+
+## 九、2026-10-12 蓝图复审与扩展
+
+- 当前真实状态：Vault Markdown 编辑与保存冲突测试已落地；现有 Vault 包已经有局部双链、反向链接和局部图谱；全局 GraphStore 仍只有文件/目录索引，不能宣称完成知识图谱整合。
+- 本轮新增 `src-tauri/src/capabilities/graph/markdown_links.rs` 纯解析器，支持 Wiki/Markdown 相对链接、代码块排除、歧义解析、路径逃逸拒绝和有界收集；两条 Rust 单元测试已通过。该文件尚未接入全局 GraphStore，因此仅能称为解析能力完成。
+- 全局知识索引应当复用现有 GraphStore 和原子 graph.json，提供显式全量导入与变更单笔增量，保留边的来源、未解析引用和版本；不能创建第二套索引或将正文与凭据放入 graph props。
+- 写入笔记成功后，图谱同步必须显式返回成功/失败；不能将“笔记已保存”冒充“索引已同步”。若同步失败则保留脏标志，可重试、可重建。
+- 模型 Provider：本地未检测到运行中的 Ollama；Codex CLI 先前真实连接报 TLS/websocket 失败。先做配置、健康检查、真实错误、失败重试及会话状态机，再接文本问答；不可用时界面必须告知没有连接，不得假造回答。
+- 强化安全：笔记/网页是未经信任的输入，任何调用技能、文件写入、命令执行的授权必须来自用户实际确认，不可由模型输出决定。
+- 新增验收：零真实 Provider 时无假回答；在线真实 Provider 一问一答；聊天历史恢复和取消；增量笔记修改、外部编辑、重命名、删除、同名歧义与全量重建一致性；图谱存量关系不得被误清；运行时资源预算；安装版 GUI。
+- 仍待：模型 Provider 原生协议、消息持久化、全局 GraphStore 引用边、增量同步联动、端到端 GUI 以及所有仓库门禁通过。不得标记 ALL_PASS。
+
+## 十、2026-10-12 本地实验实施复审（未发布）
+
+- Vault 索引：新增 vault_index.rs：Markdown 是唯一正文来源，索引写入原有 GraphStore / graph.json；节点通过哈希关联笔记，References 有界、歧义链接不建立边。全量同步只替换本 Vault 投影，单篇保存增量仅更新该笔记出边。节点元数据存受控相对路径与根标记，不存正文或凭据。
+- 真实对话：新增仅 localhost:11434 的 Ollama 非流式 generate 适配器；不接任意 URL，不提供工具调用/文件读取/命令执行；响应、输入、socket 超时有限制；无本地 Ollama 或模型时真实报错，不提供假回复。
+- 生命周期欠账：本机没有检测到 Ollama 服务，本轮只能完成编译和离线拒绝测试，不能标注 REAL_PROVIDER_E2E_PASS；尚需真实模型下载、联网异常、重启后历史、取消和用户可解释的模型管理 UI。当前页面仅单轮对话，消息不持久化。
+- 增量索引边界：当前保存后同步依赖原生命令。若保存成功而索引失败，应保留可见“笔记已保存、图谱未同步”状态。全量同步需显式打开 Vault，外部编辑暂时不能自动感知，后续应加 hash/mtime 差异检查和可靠的增量调度，禁止资源密集型后台全盘扫描。
+- 质量债务：本轮尚未通过全部 npm check / pre-merge / GUI 安装版，不能合并 master。PR #28 最近 Full Validation 实际 failed，具体因为旧 build metrics baseline，必须修复真实体积问题，而不是降低门禁。
+- 新增规划建议：提供 Provider 连接管理页面（本地 Ollama 状态、模型清单、运行成本、隐私说明）、知识引用来源卡、图谱脏状态恢复按钮、跨应用 Markdown 文件更改冲突解决、Agent/Skill 明确运行证据及撤销能力。下一次开发应同时验证性能与界面易用性。

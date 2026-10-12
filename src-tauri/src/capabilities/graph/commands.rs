@@ -87,6 +87,61 @@ fn persist_graph(app: &AppHandle, store: GraphStore) -> Result<GraphImportSummar
     Ok(result)
 }
 
+/// Update the unique GraphStore projection atomically; never introduce a second index.
+fn graph_update<F>(app: &AppHandle, update: F) -> Result<GraphImportSummary, String>
+where
+    F: FnOnce(&mut GraphStore) -> Result<(), String>,
+{
+    let state = app.state::<GraphState>();
+    let mut guard = state.store.write().map_err(|_| "GRAPH_STORE_LOCK")?;
+    let mut candidate = guard.clone();
+    update(&mut candidate)?;
+    let text = candidate.to_json().map_err(|e| e.code().to_string())?;
+    if text.len() > MAX_IMPORT_BYTES {
+        return Err("GRAPH_IMPORT_TOO_LARGE".into());
+    }
+    let path = crate::workspace::data_dir(app).join("graph.json");
+    crate::session::atomic_write(&path, &text).map_err(|_| "GRAPH_PERSIST_FAILED")?;
+    let answer = summary(&candidate);
+    *guard = candidate;
+    Ok(answer)
+}
+pub fn refresh_saved_note(
+    app: &AppHandle,
+    root: &std::path::Path,
+    relative: &str,
+    body: &str,
+) -> Result<(), String> {
+    graph_update(app, |store| {
+        super::vault_index::update_note(store, root, relative, body)
+    })?;
+    Ok(())
+}
+#[tauri::command]
+pub async fn graph_sync_vault(
+    app: AppHandle,
+    webview: tauri::Webview,
+    root: String,
+) -> Result<GraphImportSummary, String> {
+    check_invocation_source(&webview, "graph_sync_vault", None, &app)?;
+    let root = crate::security_policy::check_path_within_roots(
+        &root,
+        &crate::workspace::allowed_roots(&app),
+    )
+    .map_err(|_| "GRAPH_VAULT_PATH_DENIED")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let snapshot = crate::workbench::read_vault(&root)?;
+        if snapshot.truncated {
+            return Err("GRAPH_VAULT_TRUNCATED".into());
+        }
+        graph_update(&app, |store| {
+            super::vault_index::full_sync(store, &root, &snapshot.notes)
+        })
+    })
+    .await
+    .map_err(|_| "GRAPH_WORKER_FAILED".to_string())?
+}
+
 #[tauri::command]
 pub fn graph_import_json(
     app: AppHandle,

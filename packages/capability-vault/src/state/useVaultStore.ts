@@ -58,11 +58,25 @@ export const useVaultStore = defineStore("vault", () => {
       warning.value = `${snapshot.truncated ? "已达到 1000 文件 / 16 MiB 上限。" : ""}${
         snapshot.skipped ? `跳过 ${snapshot.skipped} 个不可读、过大或符号链接文件。` : ""
       }`;
+      if (!snapshot.truncated) {
+        try {
+          const graph = await ports.native.syncGraph(snapshot.root);
+          if (generation === request) warning.value += ` 全局图谱同步成功（${graph.node_count} 节点 / ${graph.edge_count} 关系）。`;
+        } catch {
+          if (generation === request) warning.value += " 笔记已打开，但全局知识索引同步失败，请再次打开 Vault 重试。";
+        }
+      }
     } catch {
       if (generation === request) error.value = "无法打开 Vault，请检查目录位置和读取权限。";
     } finally {
       if (generation === request) busy.value = false;
     }
+  }
+  async function saveExisting(relativePath: string, expectedText: string, content: string) {
+    if (!root.value || !relativePath || !notes.value.some(n => n.path === relativePath)) throw Error("VAULT_NOTE_NOT_FOUND");
+    if (content.length > 512 * 1024) throw Error("VAULT_EDIT_LIMIT");
+    await ports.native.saveNote(root.value, relativePath, expectedText, content);
+    notes.value = notes.value.map(n => n.path === relativePath ? { ...n, text: content } : n);
   }
   async function pickDirectory() {
     error.value = "";
@@ -120,5 +134,6 @@ export const useVaultStore = defineStore("vault", () => {
     pickDirectory,
     select,
     follow,
+    saveExisting,
   };
 });

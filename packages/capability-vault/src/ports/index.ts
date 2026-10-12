@@ -13,6 +13,8 @@ import type { InjectionKey } from "vue";
 /** 原生能力：打开一个 Obsidian Vault 目录并读取其 Markdown 快照。 */
 export interface VaultNativePort {
   openVault(path: string): Promise<VaultOpenResult>;
+  saveNote(root: string, relativePath: string, expectedText: string, content: string): Promise<void>;
+  syncGraph(root: string): Promise<{node_count:number;edge_count:number}>;
 }
 
 export interface VaultOpenResult {
