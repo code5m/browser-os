@@ -23,6 +23,7 @@ import {
   makePendingConfirm,
 } from "../../../utils/agentSkillUi";
 import { useInstallConfirmStore } from "../../../stores/useInstallConfirmStore";
+import { runExistingScriptRef, runExistingCommandRef } from "../../script/public";
 
 // 纯函数：secret 纵深脱敏（与 useAgentStore 同口径，避免 prompt-secret 进前端状态）。
 const SECRET_REDACT_PATTERNS: RegExp[] = [
@@ -158,11 +159,9 @@ export const useSkillStore = defineStore("skill", () => {
     if (Object.keys(def.exec.params ?? {}).length > 0)
       throw new Error("含参数技能尚未开放");
     if (def.exec.kind === "script_ref") {
-      const record = await bridge.runScript(def.exec.script_id, {});
-      return record.run_id;
+      return runExistingScriptRef(def.exec.script_id);
     }
-    const record = await bridge.runCommand(def.exec.command_id, {});
-    return record.run_id;
+    return runExistingCommandRef(def.exec.command_id);
   }
 
   function clearValidation(): void {

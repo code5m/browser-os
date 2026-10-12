@@ -329,6 +329,7 @@ capabilities:
       - skill.install
     dependsOn:
       - bridge
+      - script
     optionalDependencies: []
     lifecycle:
       supported: [ACTIVE, SUSPENDED]

@@ -39,7 +39,7 @@ src-tauri/src/bridge.rs:
 
 ## 依赖关系（§21 解耦）
 
-- dependsOn: `bridge`（manifest 已声明）。**不再依赖 `agent`**（STAGE E 解除纠缠）。
+- dependsOn: `bridge`、`script`（manifest 与 Registry 同步声明）。**不再依赖 `agent`**。安全单步技能通过 script 的 public 运行契约复用既有脚本/命令原生执行器，不直接 invoke 跨能力命令。
 - Skill 与 Agent 为独立能力，共用：① readonly 命令族（skill_parse/validate/preview 等）；② 中性安装/确认协调器 `useInstallConfirmStore`。
 - **无第二真源**：`useSkillStore` 是 Skill 唯一语义 owner；`useInstallConfirmStore` 是中性共享 infra（非能力）。
 

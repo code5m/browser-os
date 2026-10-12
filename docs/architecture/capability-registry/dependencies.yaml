@@ -60,6 +60,7 @@ edges:
   - { from: git,       to: bridge,   kind: required }
   - { from: agent,     to: bridge,   kind: required }
   - { from: skill,     to: bridge,   kind: required }
+  - { from: skill,     to: script,   kind: required }
   - { from: plugin,    to: bridge,   kind: required }
   - { from: graph, to: bridge, kind: required }
   - { from: vault,     to: bridge,   kind: required }
