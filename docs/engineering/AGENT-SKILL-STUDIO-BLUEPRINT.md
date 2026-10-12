@@ -36,3 +36,10 @@
 
 ## 验收门禁
 `node scripts/check-studio-drafts.mjs`、`npm run build`、`npm run check`、`bash scripts/pre-merge.sh`、`git diff --check`。安装版 GUI 与全量 Rust 回归分别验收，不混同。
+
+## 2026-10-12 PR #28 体积闭环与视觉边界
+
+- 旧版全局 CSS 含 69 条已无生产视图引用的样式规则。按当前 Vue/TS/JS 入口、组件模板及能力包进行全量静态引用核查后移除；保留 UI-05 原生浏览器叠层防回退基线 `.home-modal-mask`，同时删除仅在源代码历史注释出现的旧 `.addrbar` 样式。
+- BlueprintStudio 保留四个页面、蓝图 CRUD、搜索、导入导出、步骤进度和原生定义校验，表单及状态卡片以数据驱动的统一渲染减小重复组件代码；界面延续双栏、蓝白卡片、输入与状态设计。
+- 构建仅在 Terser 内优化现有已生成 ESM 的压缩选项，CSS 收束为单份资源以减少多 chunk 开销。后者会增加首次 CSS 的加载占比，安装版需验证首屏成本和终端性能，不满足则回退并改用其他纯代码体积优化。
+- **体积规则未修改**：仍以 `logs/m0-build-metrics/build-metrics-052b18a.json` 和 25.2% 上限为准。独立 PR 工作区实测从 +26.79% 降至 +25.16%，`exceeds_growth_limit=false`，cargo warnings 未增长；GitHub 全量 CI/真实 GUI/安装版还需独立验收，不能据此宣布 release ready。

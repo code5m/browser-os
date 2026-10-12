@@ -30,6 +30,27 @@ async function submitChat(){
   finally {chatBusy.value=false;}
 }
 const kindLabel = computed(() => props.kind === "agent" ? "智能体" : "技能");
+const detailFields = [
+  { key: "name", label: "名称", placeholder: "", rows: 0 },
+  { key: "description", label: "一句话说明", placeholder: "它负责帮助我解决什么问题？", rows: 2 },
+  { key: "goal", label: "目标", placeholder: "完成后应该产生什么结果？", rows: 4 },
+  { key: "constraints", label: "约束与风险", placeholder: "哪些操作不可做？哪些风险要注意？", rows: 4 },
+  { key: "inputs", label: "需要提供的输入", placeholder: "文件、知识、参数……", rows: 4 },
+  { key: "outputs", label: "预期输出", placeholder: "报告、文件或可验证的结果……", rows: 4 },
+] as const;
+const metrics = computed(() => [
+  { value: records.value.length, label: "本地蓝图" },
+  { value: records.value.filter(d => studioProgress(d) === 100).length, label: "步骤已完成" },
+  { value: records.value.filter(d => !!d.definition).length, label: "已保存定义" },
+  { value: "规划中", label: "安装与运行后端" },
+]);
+const permissions = computed(() => [
+  { label: "定义权限等级", value: props.preview?.gate || "未验证" },
+  { label: "请求的能力", value: props.preview?.capabilities?.join("、") || "未声明" },
+  { label: "安装状态", value: "尚未开放" },
+  { label: "运行记录", value: "无真实记录" },
+]);
+
 onMounted(() => {
   try {
     records.value = parseStudioList(localStorage.getItem(studioKey(props.kind)),props.kind);
@@ -129,7 +150,7 @@ async function importFile(e:Event){
       <div><p class="eyebrow">BROWSEROS · {{ kind === 'agent' ? 'AGENT STUDIO' : 'SKILL STUDIO' }}</p><h2>{{ kindLabel }}工作台</h2><p class="subtitle">从目标、步骤到定义检查，先把想法变成可管理的蓝图。</p></div>
       <div class="header-actions"><button @click="fileInput?.click()" :disabled="blocked">导入蓝图</button><button class="primary" @click="create" :disabled="blocked">＋ 新建{{ kindLabel }}</button><input ref="fileInput" type="file" accept=".json,application/json" hidden @change="importFile"/></div>
     </header>
-    <div class="studio-metrics"><div><strong>{{ records.length }}</strong><span>本地蓝图</span></div><div><strong>{{ records.filter(d=>studioProgress(d)===100).length }}</strong><span>步骤已完成</span></div><div><strong>{{ records.filter(d=>!!d.definition).length }}</strong><span>已保存定义</span></div><div><strong>规划中</strong><span>安装与运行后端</span></div></div>
+    <div class="studio-metrics"><div v-for="metric in metrics" :key="metric.label"><strong>{{ metric.value }}</strong><span>{{ metric.label }}</span></div></div>
     <div v-if="notice" class="notice" role="status">{{ notice }}</div>
     <div class="studio-layout">
       <aside class="studio-sidebar">
@@ -149,10 +170,13 @@ async function importFile(e:Event){
           <nav class="studio-tabs" aria-label="工作区视图"><button v-for="tab in [{id:'overview',label:'概览'},{id:'steps',label:'任务步骤'},{id:'definition',label:'定义检查'},{id:'permission',label:'权限与运行'},...(localChat?[{id:'chat',label:'本地 AI 对话'}] as const:[])] as const" :key="tab.id" :class="{active:activeTab===tab.id}" @click="activeTab=tab.id">{{tab.label}}</button></nav>
           <div v-if="activeTab==='overview'" class="studio-content">
             <div class="section-intro"><strong>基础信息</strong><span>修改后即时保存在本机</span></div>
-            <label>名称<input :value="current.name" maxlength="120" @change="update('name',($event.target as HTMLInputElement).value)"/></label>
-            <label>一句话说明<textarea :value="current.description" rows="2" maxlength="4000" placeholder="它负责帮助我解决什么问题？" @change="update('description',($event.target as HTMLTextAreaElement).value)"/></label>
-            <div class="two-col"><label>目标<textarea :value="current.goal" rows="4" maxlength="4000" placeholder="完成后应该产生什么结果？" @change="update('goal',($event.target as HTMLTextAreaElement).value)"/></label><label>约束与风险<textarea :value="current.constraints" rows="4" maxlength="4000" placeholder="哪些操作不可做？哪些风险要注意？" @change="update('constraints',($event.target as HTMLTextAreaElement).value)"/></label></div>
-            <div class="two-col"><label>需要提供的输入<textarea :value="current.inputs" rows="4" maxlength="4000" placeholder="文件、知识、参数……" @change="update('inputs',($event.target as HTMLTextAreaElement).value)"/></label><label>预期输出<textarea :value="current.outputs" rows="4" maxlength="4000" placeholder="报告、文件或可验证的结果……" @change="update('outputs',($event.target as HTMLTextAreaElement).value)"/></label></div>
+            <div class="two-col">
+              <label v-for="field in detailFields" :key="field.key" :class="{wide:field.key==='name'||field.key==='description'}">
+                {{ field.label }}
+                <input v-if="field.key==='name'" :value="current.name" maxlength="120" @change="update('name',($event.target as HTMLInputElement).value)"/>
+                <textarea v-else :value="current[field.key]" :rows="field.rows" maxlength="4000" :placeholder="field.placeholder" @change="update(field.key,($event.target as HTMLTextAreaElement).value)"/>
+              </label>
+            </div>
           </div>
           <div v-else-if="activeTab==='steps'" class="studio-content">
             <div class="section-intro"><strong>任务拆解</strong><button @click="addStep" :disabled="current.steps.length>=32">＋ 添加步骤</button></div><p class="help">勾选已经完成的步骤。规划进度只反映你手动记录的结果，不代表智能体真实执行。</p>
@@ -174,7 +198,7 @@ async function importFile(e:Event){
             <pre v-if="chatOutput" class="chat-output">{{chatOutput}}</pre>
           </div>
           <div v-else class="studio-content"><div class="section-intro"><strong>权限与运行状态</strong><span>真实状态</span></div>
-            <div class="permission-grid"><div><small>定义权限等级</small><strong>{{preview?.gate||'未验证'}}</strong></div><div><small>请求的能力</small><strong>{{preview?.capabilities?.join('、')||'未声明'}}</strong></div><div><small>安装状态</small><strong>尚未开放</strong></div><div><small>运行记录</small><strong>无真实记录</strong></div></div>
+            <div class="permission-grid"><div v-for="item in permissions" :key="item.label"><small>{{item.label}}</small><strong>{{item.value}}</strong></div></div>
             <p class="help">运行引擎尚未完成接入，因此这里不展示虚假结果，不提供无效的运行按钮。</p>
           </div>
         </template>
@@ -184,54 +208,39 @@ async function importFile(e:Event){
   </div>
 </template>
 <style scoped>
-.studio{height:100%;min-height:0;display:flex;flex-direction:column;background:#f7f9fc;color:#1c293c;font-size:13px;font-family:Inter,"Noto Sans SC",system-ui,sans-serif}
-.studio-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:22px 28px 18px;background:#fff;border-bottom:1px solid #e7ecf2}
-.eyebrow{color:#59799a;font-size:10px;font-weight:800;letter-spacing:.14em;margin:0 0 6px}
-h2{font-size:23px;letter-spacing:-.04em;margin:0 0 6px}h3{font-size:20px;letter-spacing:-.025em;margin:4px 0}
-.subtitle,.detail-heading p{margin:0;color:#728198;line-height:1.5}
-button{font:inherit;border:1px solid #d8e1ed;background:#fff;color:#31465f;border-radius:8px;padding:8px 12px;cursor:pointer;white-space:nowrap}
-button:hover:not(:disabled){background:#f1f6fd}button:disabled{opacity:.45;cursor:not-allowed}
-.primary{background:#2355be;color:#fff;border-color:#2355be;font-weight:600}.primary:hover:not(:disabled){background:#1c489d;color:#fff}
-.header-actions,.detail-actions,.action-row{display:flex;gap:8px;align-items:center}
-.studio-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));background:#fff;border-bottom:1px solid #e7ecf2;padding:15px 28px;gap:16px}
-.studio-metrics>div{display:flex;flex-direction:column;gap:2px;min-width:0}
-.studio-metrics strong{font-size:18px}.studio-metrics span{font-size:11px;color:#8593a8}
-.notice{margin:10px 24px 0;padding:9px 12px;border:1px solid #d8e6fb;border-radius:7px;background:#f4f8fe;color:#3662a4;line-height:1.6}
-.studio-layout{display:grid;grid-template-columns:minmax(232px,270px) minmax(0,1fr);flex:1;min-height:0;overflow:hidden}
-.studio-sidebar{background:#fff;border-right:1px solid #e5eaf1;display:flex;flex-direction:column;min-height:0;padding:20px 12px 15px;gap:12px}
-.side-heading{display:flex;justify-content:space-between;padding:0 6px;align-items:center}.side-heading>span{color:#8c9aad;font-size:11px}
-.search{border:1px solid #dce5ef;border-radius:8px;padding:10px;min-width:0;background:#f9fbfe;color:#26384f}
-.item-list{flex:1;overflow:auto;display:flex;flex-direction:column;gap:6px}
-.studio-item{display:flex;gap:10px;text-align:left;border:1px solid transparent;padding:12px 10px;white-space:normal;align-items:flex-start;background:transparent}
-.studio-item.selected{border-color:#c6daf6;background:#eef5ff}.item-symbol{background:#e4eefa;color:#3163b3;border-radius:9px;width:30px;height:30px;display:grid;place-items:center;flex-shrink:0}
-.item-copy{min-width:0;flex:1;display:flex;flex-direction:column;gap:5px}.item-copy strong,.item-copy small{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:160px}
-.item-copy small,.percent{font-size:11px;color:#8292a6}.percent{margin-top:6px}
-.progress-track{height:4px;background:#e4ebf4;border-radius:6px;display:block;overflow:hidden}.progress-track i{display:block;background:#467bd6;height:100%;border-radius:6px}
-.storage-hint{font-size:11px;line-height:1.7;color:#8794a6;padding:10px 7px 0;border-top:1px solid #eff1f6;margin:0}
-.empty-list{color:#8795a8;padding:28px 15px;line-height:1.7}
-.studio-main{min-width:0;overflow:auto;background:#f8fafd;padding:24px 30px}
-.detail-heading{display:flex;justify-content:space-between;align-items:start;gap:12px;padding-bottom:22px}
-.section-kicker{font-size:11px;letter-spacing:.04em;font-weight:700;color:#5680bb}
-.detail-actions .delete{color:#bd4141;border-color:#f0d4d4}
-.studio-tabs{display:flex;gap:7px;border-bottom:1px solid #dce5f0;margin-bottom:20px;overflow-x:auto}
-.studio-tabs button{border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;padding:11px 14px;color:#738399;font-weight:500}
-.studio-tabs button.active{border-color:#285dc4;color:#285dc4;font-weight:700}
-.studio-content{border:1px solid #e7edf4;border-radius:12px;padding:24px;background:#fff;box-shadow:0 5px 18px rgba(20,53,93,.035);max-width:1000px}
-.section-intro{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:18px}.section-intro strong{font-size:15px}.section-intro span,.help{color:#8a97a9;font-size:12px;line-height:1.7}
-.studio-content label{display:flex;flex-direction:column;gap:8px;color:#455672;font-size:12px;font-weight:600;margin-bottom:18px}
-.studio-content input:not([type=checkbox]),.studio-content textarea{font:inherit;color:#223752;box-sizing:border-box;width:100%;min-width:0;background:#fcfdff;border:1px solid #d9e3ee;border-radius:8px;padding:11px 12px;resize:vertical;font-weight:400;line-height:1.5}
-.studio-content input:focus,.studio-content textarea:focus,.search:focus{outline:2px solid #a3c1f0;outline-offset:0}
-.two-col{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-.step{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #eff2f7}
-.step input[type=checkbox]{width:17px;height:17px;accent-color:#3266c7;flex-shrink:0}.step input:not([type=checkbox]){flex:1}.step button{font-size:20px;padding:2px 10px;border:0;color:#999;background:transparent}
-.total-progress{display:flex;justify-content:space-between;margin:22px 0 9px}.progress-track.large{height:8px}
-.json-editor{font-family:ui-monospace,SFMono-Regular,Consolas,monospace!important;min-height:260px}
-.result{margin-top:16px;padding:13px;border:1px solid #d6ecdf;background:#f1faf4;color:#197349;border-radius:8px}.result.invalid{border-color:#f1d0d0;background:#fff6f6;color:#ae3939}
-.permission-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px}.permission-grid>div{border:1px solid #e5ebf3;background:#fafcfe;border-radius:9px;padding:16px;display:flex;flex-direction:column;gap:8px}
-.permission-grid small{color:#8a98a9}.permission-grid strong{overflow-wrap:anywhere}
-.main-empty{text-align:center;margin:9vh auto;color:#76869d;max-width:360px;line-height:1.8}
-.empty-icon{font-size:50px;color:#3974db}.main-empty h3{color:#294360}
-@media(max-width:850px){.studio-layout{grid-template-columns:minmax(175px,210px) minmax(0,1fr)}.studio-header{padding:16px}.studio-metrics{padding:12px 16px}.studio-main{padding:18px}.two-col{grid-template-columns:1fr}.studio-content{padding:16px}}
-@media(max-width:560px){.studio-layout{grid-template-columns:1fr;overflow:auto}.studio-sidebar{max-height:210px;border-right:0;border-bottom:1px solid #e5eaf1}.studio-main{overflow:visible}.studio-metrics{grid-template-columns:repeat(2,1fr)}.studio-header{align-items:flex-start;flex-direction:column}.permission-grid{grid-template-columns:1fr}}
-.chat-output{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.7 inherit;padding:18px;border-radius:8px;background:#f0f6ff;color:#234060}
+.studio{display:flex;flex-direction:column;height:100%;min-height:0;background:#f7f9fc;color:#24354b;font:13px system-ui,sans-serif}
+.studio-header,.studio-metrics,.studio-sidebar,.studio-content{background:white}
+.studio-header,.detail-heading,.side-heading,.section-intro,.total-progress{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.studio-header{padding:20px 28px;border-bottom:1px solid #e3eaf3}
+h2,h3{margin:4px 0;letter-spacing:-.03em}h2{font-size:23px}h3{font-size:20px}
+.eyebrow,.section-kicker{font-size:11px;font-weight:700;color:#5680bb}
+.subtitle,.detail-heading p,.help,.storage-hint,.empty-list{color:#7b8da4;line-height:1.6}
+button{font:inherit;cursor:pointer;background:white;border:1px solid #d8e1ed;border-radius:8px;color:#31465f;padding:8px 12px}
+button:disabled{opacity:.5;cursor:default}.primary{background:#2355be;color:white;border-color:#2355be;font-weight:600}
+.header-actions,.detail-actions,.action-row,.studio-tabs,.step{display:flex;align-items:center;gap:8px}
+.studio-metrics{display:grid;grid-template-columns:repeat(4,1fr);padding:15px 28px;gap:16px;border-bottom:1px solid #e3eaf3}
+.studio-metrics>div,.item-copy,.permission-grid>div{display:flex;flex-direction:column;gap:5px;min-width:0}
+.studio-metrics strong{font-size:18px}.studio-metrics span,.percent,.item-copy small{font-size:11px;color:#8191a6}
+.notice,.result{padding:12px;background:#f1faf4;color:#197349;border:1px solid #d6ecdf;border-radius:8px}.notice{margin:10px 24px 0}
+.studio-layout{display:grid;grid-template-columns:260px minmax(0,1fr);flex:1;min-height:0;overflow:hidden}
+.studio-sidebar{display:flex;flex-direction:column;gap:12px;padding:18px 12px;border-right:1px solid #e3eaf3;min-height:0}
+.search,.studio-content input:not([type=checkbox]),.studio-content textarea{min-width:0;width:100%;box-sizing:border-box;padding:10px;border:1px solid #dce5ef;border-radius:8px;background:#fcfdff;color:#26384f;font:inherit}
+.item-list,.studio-main{overflow:auto;min-height:0}.item-list{display:flex;flex-direction:column;flex:1;gap:5px}
+.studio-item{display:flex;gap:10px;align-items:flex-start;background:transparent;text-align:left;border-color:transparent;white-space:normal}.studio-item.selected{border-color:#c6daf6;background:#eef5ff}
+.item-symbol{display:grid;place-items:center;width:30px;height:30px;flex-shrink:0;background:#e4eefa;color:#3163b3;border-radius:8px}
+.item-copy{flex:1}.item-copy strong,.item-copy small{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:160px}
+.progress-track{height:4px;overflow:hidden;background:#e4ebf4;border-radius:5px}.progress-track i{display:block;background:#467bd6;height:100%}
+.storage-hint{font-size:11px;border-top:1px solid #eff1f6;padding-top:10px}.studio-main{padding:24px 30px}
+.detail-heading{padding-bottom:20px;align-items:start}.detail-actions .delete{color:#b84c4c}
+.studio-tabs{border-bottom:1px solid #dce5f0;margin-bottom:18px;overflow-x:auto}.studio-tabs button{background:transparent;border:0;border-bottom:2px solid transparent;border-radius:0;white-space:nowrap}.studio-tabs button.active{color:#2355be;border-color:#2355be;font-weight:700}
+.studio-content{max-width:1000px;padding:24px;border:1px solid #e7edf4;border-radius:12px;box-shadow:0 4px 18px #14355d09}
+.section-intro{margin-bottom:16px}.studio-content label{display:flex;flex-direction:column;gap:8px;margin-bottom:16px;color:#455672;font-weight:600}
+.two-col,.permission-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.two-col .wide{grid-column:1/-1}
+.studio-content textarea{resize:vertical;line-height:1.5}.step{padding:10px 0;border-bottom:1px solid #eff2f7}.step input:not([type=checkbox]){flex:1}.step button{border:0}
+.total-progress{margin:20px 0 8px}.progress-track.large{height:8px}.json-editor{font:12px ui-monospace,monospace!important;min-height:260px}
+.result.invalid{background:#fff6f6;border-color:#f1d0d0;color:#ae3939}.permission-grid>div{background:#fafcfe;padding:16px;border:1px solid #e5ebf3;border-radius:9px}
+.main-empty{text-align:center;max-width:360px;margin:9vh auto;color:#76869d;line-height:1.8}.empty-icon{color:#3974db;font-size:50px}
+@media(max-width:850px){.studio-layout{grid-template-columns:200px minmax(0,1fr)}.studio-main{padding:16px}.two-col{grid-template-columns:1fr}}
+@media(max-width:560px){.studio-layout{grid-template-columns:1fr;overflow:auto}.studio-sidebar{max-height:210px}.studio-metrics{grid-template-columns:repeat(2,1fr)}.studio-header{align-items:flex-start;flex-direction:column}.permission-grid{grid-template-columns:1fr}}
+.chat-output{white-space:pre-wrap;overflow-wrap:anywhere;padding:18px;border-radius:8px;background:#f0f6ff;color:#234060;font-size:13px;line-height:1.7}
 </style>
