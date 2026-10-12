@@ -156,3 +156,13 @@
 - native：`src-tauri/src/bridge.rs`、`src-tauri/src/main.rs`、`src/bridge.ts`
 - semantic owner：manifest `semanticOwner: "useDatabaseStore"`
 - gates：`scripts/check-developer-owners.mjs`、`scripts/check-database-ui-logic.mjs`（见 §27）
+
+
+## MySQL native query implementation (2026-10-13)
+
+- UI MySQL is enabled. The Rust MySQL driver sends real text-protocol queries and feeds the existing `DbQueryResult` limiter (1000 rows, 4 MiB result cap, 65536-byte SQL cap). SQLite is unchanged.
+- MySQL tables and views are obtained from `information_schema.tables`, and preview identifiers are safely escaped with backticks.
+- `ssl_mode=prefer` and `require` both enforce certificate-verified TLS, never silently downgrade to plaintext; select `disable` explicitly only for a trusted local server without TLS.
+- The password is held by the existing OS keyring (`db:<conn_id>`); existing production/write confirmation and risk classification still apply. Errors returned from row fetching do not expose SQL text.
+- MySQL cancellation is cooperative between received rows. Socket read timeouts prevent indefinite blocking, but long-running server queries are not yet interrupted with a second connection's KILL QUERY; a future enhancement must test that separately.
+- Live database connection, actual query/schema E2E and Linux installed-client GUI remain to be verified against an available MySQL server. Static compilation does not replace these acceptance gates.
