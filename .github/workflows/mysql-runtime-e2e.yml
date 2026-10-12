@@ -1,0 +1,55 @@
+name: BrowserOS MySQL Runtime E2E
+
+on:
+  push:
+    paths:
+      - "src-tauri/src/capabilities/database/**"
+      - "src/capabilities/database/**"
+      - "src/utils/dbUi.ts"
+      - ".github/workflows/mysql-runtime-e2e.yml"
+  pull_request:
+    branches: [master]
+    paths:
+      - "src-tauri/src/capabilities/database/**"
+      - "src/capabilities/database/**"
+      - "src/utils/dbUi.ts"
+      - ".github/workflows/mysql-runtime-e2e.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browseros-mysql-e2e
+  cancel-in-progress: true
+
+jobs:
+  real-mysql:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: browseros-root-test
+          MYSQL_DATABASE: browseros_e2e
+          MYSQL_USER: browseros_ci
+          MYSQL_PASSWORD: browseros-ci-pass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -uroot -pbrowseros-root-test --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: MySQL real driver integration test
+        env:
+          BROWSEROS_MYSQL_E2E_PASSWORD: browseros-ci-pass
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked mysql_real_e2e -- --ignored --nocapture
