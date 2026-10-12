@@ -994,6 +994,40 @@ mod tests {
         }
     }
 
+    /// Runs only with the ephemeral MySQL service in mysql-runtime-e2e.yml.
+    /// This is a real wire-protocol connection, not a mocked database.
+    #[test]
+    #[ignore = "requires ephemeral MySQL service"]
+    fn mysql_real_e2e() {
+        use mysql::prelude::Queryable;
+        let password = std::env::var("BROWSEROS_MYSQL_E2E_PASSWORD")
+            .expect("MySQL E2E password env missing");
+        let mut cfg = remote_config(SupportedDb::MySql);
+        cfg.username = Some("browseros_ci".into());
+        cfg.database = "browseros_e2e".into();
+        cfg.port = Some(3306);
+        cfg.ssl_mode = DbSslMode::Disable; // explicitly local ephemeral runner only
+        let mut pool = DbPool::connect(&cfg, Some(&password), &[])
+            .expect("MySQL E2E must establish real connection");
+        assert_eq!(pool.encrypted(), Some(false));
+        let ping = pool.query(
+            "SELECT 1 AS one, 'hello' AS greeting",
+            &QueryCancel::new(), None, "mysql-e2e-select",
+        ).expect("MySQL E2E SELECT must succeed");
+        assert_eq!(ping.columns, vec!["one", "greeting"]);
+        assert_eq!(ping.rows, vec![vec![DbValue::I64(1), DbValue::Text("hello".into())]]);
+        if let DbPool::MySql(conn, _) = &mut pool {
+            conn.query_drop(
+                "CREATE TABLE IF NOT EXISTS browseros_e2e_test (id INT PRIMARY KEY, title VARCHAR(50))"
+            ).expect("ephemeral table setup");
+        }
+        let schema = pool.query(
+            "SELECT TABLE_NAME AS name, TABLE_TYPE AS type FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY TABLE_NAME LIMIT 1000",
+            &QueryCancel::new(), None, "mysql-e2e-schema",
+        ).expect("MySQL E2E schema query");
+        assert!(schema.rows.iter().any(|row| row.first() == Some(&DbValue::Text("browseros_e2e_test".into()))));
+    }
+
     // -- T-db-p1 凭据命名空间 --
 
     #[test]
