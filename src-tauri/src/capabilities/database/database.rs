@@ -619,12 +619,7 @@ fn from_mysql_value(value: mysql::Value, binary: bool) -> DbValue {
 /// The MySQL text protocol may encode numeric columns as Value::Bytes even
 /// when the column type is numeric. Interpret by column metadata, never by
 /// guessing from the bytes (a BLOB containing b"1" must stay binary).
-fn from_mysql_wire_value(
-    value: mysql::Value,
-    binary: bool,
-    integer: bool,
-    float: bool,
-) -> DbValue {
+fn from_mysql_wire_value(value: mysql::Value, binary: bool, integer: bool, float: bool) -> DbValue {
     match value {
         mysql::Value::Bytes(bytes) if integer => match String::from_utf8(bytes) {
             Ok(text) => match text.parse::<i64>() {
@@ -712,9 +707,10 @@ fn query_mysql_with_deadline(
                     | ColumnType::MYSQL_TYPE_VAR_STRING
                     | ColumnType::MYSQL_TYPE_VARCHAR
             );
-            let binary = binary_capable
-                && (c.flags().contains(mysql::consts::ColumnFlags::BINARY_FLAG)
-                    || c.character_set() == 63);
+            // BINARY_FLAG also appears on ordinary string collations.
+            // Charset 63 is the opaque binary charset; UTF-8 table names
+            // must remain readable strings.
+            let binary = binary_capable && c.character_set() == 63;
             (c.name_str().into_owned(), binary, integer, float)
         })
         .collect();
@@ -1163,10 +1159,14 @@ mod tests {
             "SELECT TABLE_NAME AS name, TABLE_TYPE AS type FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY TABLE_NAME LIMIT 1000",
             &QueryCancel::new(), None, "mysql-e2e-schema",
         ).expect("MySQL E2E schema query");
-        assert!(schema
-            .rows
-            .iter()
-            .any(|row| row.first() == Some(&DbValue::Text("browseros_e2e_test".into()))));
+        assert!(
+            schema
+                .rows
+                .iter()
+                .any(|row| row.first() == Some(&DbValue::Text("browseros_e2e_test".into()))),
+            "unexpected MySQL schema rows: {:?}",
+            schema.rows.iter().take(5).collect::<Vec<_>>()
+        );
     }
 
     // -- T-db-p1 凭据命名空间 --
