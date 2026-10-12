@@ -616,6 +616,38 @@ fn from_mysql_value(value: mysql::Value, binary: bool) -> DbValue {
     }
 }
 
+/// The MySQL text protocol may encode numeric columns as Value::Bytes even
+/// when the column type is numeric. Interpret by column metadata, never by
+/// guessing from the bytes (a BLOB containing b"1" must stay binary).
+fn from_mysql_wire_value(
+    value: mysql::Value,
+    binary: bool,
+    integer: bool,
+    float: bool,
+) -> DbValue {
+    match value {
+        mysql::Value::Bytes(bytes) if integer => match String::from_utf8(bytes) {
+            Ok(text) => match text.parse::<i64>() {
+                Ok(value) => DbValue::I64(value),
+                Err(_) => DbValue::Text(text),
+            },
+            Err(error) => DbValue::Binary {
+                bytes: error.into_bytes().len(),
+            },
+        },
+        mysql::Value::Bytes(bytes) if float => match String::from_utf8(bytes) {
+            Ok(text) => match text.parse::<f64>() {
+                Ok(value) if value.is_finite() => DbValue::F64(value),
+                _ => DbValue::Text(text),
+            },
+            Err(error) => DbValue::Binary {
+                bytes: error.into_bytes().len(),
+            },
+        },
+        other => from_mysql_value(other, binary),
+    }
+}
+
 /// The native command layer has already validated the SQL risk and write gate.
 /// Cancellation between returned rows is cooperative, not server-side KILL QUERY.
 fn query_mysql_with_deadline(
@@ -649,18 +681,44 @@ fn query_mysql_with_deadline(
         )
     })?;
     let meta = cursor.columns();
-    let info: Vec<(String, bool)> = meta
+    let info: Vec<(String, bool, bool, bool)> = meta
         .as_ref()
         .iter()
         .map(|c| {
-            (
-                c.name_str().into_owned(),
-                c.flags().contains(mysql::consts::ColumnFlags::BINARY_FLAG)
-                    || c.character_set() == 63,
-            )
+            use mysql::consts::ColumnType;
+            let kind = c.column_type();
+            let integer = matches!(
+                kind,
+                ColumnType::MYSQL_TYPE_TINY
+                    | ColumnType::MYSQL_TYPE_SHORT
+                    | ColumnType::MYSQL_TYPE_LONG
+                    | ColumnType::MYSQL_TYPE_INT24
+                    | ColumnType::MYSQL_TYPE_LONGLONG
+                    | ColumnType::MYSQL_TYPE_YEAR
+            );
+            let float = matches!(
+                kind,
+                ColumnType::MYSQL_TYPE_FLOAT | ColumnType::MYSQL_TYPE_DOUBLE
+            );
+            let binary_capable = matches!(
+                kind,
+                ColumnType::MYSQL_TYPE_BLOB
+                    | ColumnType::MYSQL_TYPE_TINY_BLOB
+                    | ColumnType::MYSQL_TYPE_MEDIUM_BLOB
+                    | ColumnType::MYSQL_TYPE_LONG_BLOB
+                    | ColumnType::MYSQL_TYPE_BIT
+                    | ColumnType::MYSQL_TYPE_GEOMETRY
+                    | ColumnType::MYSQL_TYPE_STRING
+                    | ColumnType::MYSQL_TYPE_VAR_STRING
+                    | ColumnType::MYSQL_TYPE_VARCHAR
+            );
+            let binary = binary_capable
+                && (c.flags().contains(mysql::consts::ColumnFlags::BINARY_FLAG)
+                    || c.character_set() == 63);
+            (c.name_str().into_owned(), binary, integer, float)
         })
         .collect();
-    let columns = info.iter().map(|(name, _)| name.clone()).collect();
+    let columns = info.iter().map(|(name, _, _, _)| name.clone()).collect();
     let mut limiter = QueryLimiter::new();
     while let Some(item) = cursor.next() {
         if cancel.is_cancelled() {
@@ -681,8 +739,11 @@ fn query_mysql_with_deadline(
             .into_iter()
             .enumerate()
             .map(|(i, value)| {
-                let binary = info.get(i).map(|(_, flag)| *flag).unwrap_or(true);
-                limiter.normalize_field(from_mysql_value(value, binary))
+                let (binary, integer, float) = info
+                    .get(i)
+                    .map(|(_, binary, integer, float)| (*binary, *integer, *float))
+                    .unwrap_or((true, false, false));
+                limiter.normalize_field(from_mysql_wire_value(value, binary, integer, float))
             })
             .collect();
         if !limiter.push(values) {
@@ -938,6 +999,31 @@ mod mysql_mapping_tests {
         assert_eq!(
             from_mysql_value(mysql::Value::Bytes(vec![0xff]), false),
             DbValue::Binary { bytes: 1 }
+        );
+    }
+
+    #[test]
+    fn mysql_text_protocol_numeric_bytes_use_column_type() {
+        assert_eq!(
+            from_mysql_wire_value(mysql::Value::Bytes(b"1".to_vec()), false, true, false),
+            DbValue::I64(1)
+        );
+        assert_eq!(
+            from_mysql_wire_value(mysql::Value::Bytes(b"2.5".to_vec()), false, false, true),
+            DbValue::F64(2.5)
+        );
+        assert_eq!(
+            from_mysql_wire_value(mysql::Value::Bytes(b"1".to_vec()), true, false, false),
+            DbValue::Binary { bytes: 1 }
+        );
+        assert_eq!(
+            from_mysql_wire_value(
+                mysql::Value::Bytes(u64::MAX.to_string().into_bytes()),
+                false,
+                true,
+                false,
+            ),
+            DbValue::Text(u64::MAX.to_string())
         );
     }
 
