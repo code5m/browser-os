@@ -28,6 +28,8 @@ export default defineConfig({
     // downlevel helpers for modern JS syntax. This reduces shipped bytes rather
     // than changing the frozen M0 growth threshold or metrics baseline.
     target: "es2022",
+    cssCodeSplit: false,
+    terserOptions: { module: true, compress: { passes: 5, toplevel: true, unsafe: true }, mangle: { toplevel: true } },
     // M0-4.b：原先全部打进单个 503 kB 的入口 chunk（触发 Vite 500 kB 告警）。
     // 按依赖来源拆分：xterm 体积最大且只在终端视图用到，单独成 chunk 后
     // 入口 chunk 显著下降，且便于后续按视图懒加载。
