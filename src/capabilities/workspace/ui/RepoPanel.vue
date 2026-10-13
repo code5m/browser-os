@@ -30,7 +30,7 @@ const gitHistoryComp = computed(() => contributionRegistry
     <div class="tabs">
       <button :class="{ active: tab === 'git' }" @click="tab = 'git'">🔀 状态</button>
       <button :class="{ active: tab === 'history' }" @click="tab = 'history'">提交历史</button>
-      <button :class="{ active: tab === 'config' }" @click="tab = 'config'">⚙️ 配置</button>
+      <button :class="{ active: tab === 'config' }" @click="tab = 'config'">⚙️ 仓库配置</button>
       <button class="close" @click="layout.sidebarOpen = false">✕</button>
     </div>
     <component :is="gitPanelComp" v-if="tab === 'git' && gitPanelComp" />
@@ -51,13 +51,14 @@ const gitHistoryComp = computed(() => contributionRegistry
           <button class="ghost" @click="rp.loadGiteeExample">码云示例</button>
         </div>
       </div>
+      <p class="git-hint">这里配置 Git 仓库并同步所选资产。Git 的提交和分支推送请使用「状态」页签。</p>
       <ul class="repo-list">
         <li v-for="r in rp.repos" :key="r.id" class="repo">
           <div>
             <div class="title">{{ r.name }} ({{ r.provider }})</div>
             <div class="meta">{{ r.remote_url }}</div>
           </div>
-          <button @click="rp.requestSync(r.id)">推送</button>
+          <button title="把在资产管理中选中的成果同步到此仓库；不是 Git 分支推送" @click="rp.requestSync(r.id)">同步所选资产</button>
         </li>
         <EmptyState v-if="!rp.repos.length" as="li" text="还没配置仓库" />
       </ul>

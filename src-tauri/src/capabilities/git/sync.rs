@@ -764,43 +764,65 @@ pub fn write_commit(
         precheck_stageable(repo, ps)?;
     }
     let mut index = repo.index().map_err(|e| e.to_string())?;
-    match paths {
-        Some(ps) => {
-            let workdir = repo.workdir().ok_or("裸仓库不支持写操作")?;
-            for p in ps {
-                let rel = std::path::Path::new(p);
-                if workdir.join(rel).exists() {
-                    index
-                        .add_path(rel)
-                        .map_err(|e| format!("暂存失败 {p}: {e}"))?;
-                } else {
-                    index
-                        .remove_path(rel)
-                        .map_err(|e| format!("暂存删除失败 {p}: {e}"))?;
-                }
+    // A scoped commit MUST be built from the current HEAD tree, not the global
+    // index: unrelated entries can already be staged in that index.
+    let tree_id = if let Some(ps) = paths {
+        let mut scoped = git2::Index::new().map_err(|e| e.to_string())?;
+        if let Ok(head) = repo.head().and_then(|h| h.peel_to_tree()) {
+            scoped.read_tree(&head).map_err(|e| e.to_string())?;
+        }
+        let workdir = repo.workdir().ok_or("裸仓库不支持写操作")?;
+        for p in ps {
+            let rel = std::path::Path::new(p);
+            if workdir.join(rel).is_file() {
+                // Read selected working-tree version without committing unrelated
+                // staged entries. Index changes remain in-memory until success.
+                index
+                    .add_path(rel)
+                    .map_err(|e| format!("读取文件失败 {p}: {e}"))?;
+                let entry = index
+                    .get_path(rel, 0)
+                    .ok_or_else(|| format!("选中的文件未入索引: {p}"))?;
+                scoped
+                    .add(&entry)
+                    .map_err(|e| format!("加入提交树失败 {p}: {e}"))?;
+            } else if workdir.join(rel).exists() {
+                return Err(format!("不是普通文件，拒绝提交: {p}"));
+            } else {
+                scoped
+                    .remove_path(rel)
+                    .map_err(|e| format!("提交删除失败 {p}: {e}"))?;
+                index
+                    .remove_path(rel)
+                    .map_err(|e| format!("暂存删除失败 {p}: {e}"))?;
             }
         }
-        None => {
-            index
-                .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
-                .map_err(|e| e.to_string())?;
-        }
-    }
-    index.write().map_err(|e| e.to_string())?;
-    let tree_id = index.write_tree().map_err(|e| e.to_string())?;
-    // 无可提交变更（索引树 == HEAD 树）：拒绝创建空提交（对齐 git CLI 行为）。
+        scoped.write_tree_to(repo).map_err(|e| e.to_string())?
+    } else {
+        index
+            .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+            .map_err(|e| e.to_string())?;
+        index.write_tree().map_err(|e| e.to_string())?
+    };
     if let Ok(head_tree) = repo.head().and_then(|h| h.peel_to_tree()) {
         if head_tree.id() == tree_id {
             return Err("没有可提交的变更".to_string());
         }
     }
     let tree = repo.find_tree(tree_id).map_err(|e| e.to_string())?;
-    let sig = Signature::now("极智简单", "mvp@jizhijiandan.local").map_err(|e| e.to_string())?;
+    let sig = repo
+        .signature()
+        .map_err(|_| "未配置 Git 身份，请先设置 git user.name 与 user.email".to_string())?;
     let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
     let parents: Vec<&git2::Commit> = parent.iter().collect();
     let oid = repo
         .commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)
         .map_err(|e| format!("提交失败: {e}"))?;
+    // Commit succeeded. Persist selected index entries while preserving the
+    // unrelated staged files that were explicitly excluded from the commit.
+    index
+        .write()
+        .map_err(|e| format!("提交成功，但暂存索引更新失败: {e}"))?;
     Ok(oid.to_string())
 }
 
@@ -1427,6 +1449,26 @@ mod git_write_tests {
             b.contains(git2::Status::WT_MODIFIED),
             "b.txt 应保持未暂存脏状态: {b:?}"
         );
+    }
+
+    #[test]
+    fn scoped_commit_excludes_unrelated_pre_staged_files() {
+        let (dir, repo) = temp_repo("scope-pre-staged");
+        fs::write(dir.join("a.txt"), "a1\n").unwrap();
+        fs::write(dir.join("b.txt"), "b1\n").unwrap();
+        commit_all(&repo, "init");
+        fs::write(dir.join("a.txt"), "a2\n").unwrap();
+        fs::write(dir.join("b.txt"), "b2\n").unwrap();
+        write_stage(&repo, &["b.txt".to_string()]).unwrap();
+        write_commit(&repo, "only a", Some(&["a.txt".into()])).unwrap();
+        assert_eq!(head_file_content(&repo, "a.txt").as_deref(), Some("a2\n"));
+        assert_eq!(head_file_content(&repo, "b.txt").as_deref(), Some("b1\n"));
+        let status = status_flags(&repo, "b.txt");
+        assert!(
+            status.contains(git2::Status::INDEX_MODIFIED),
+            "unselected staged file must remain staged: {status:?}"
+        );
+        let _ = fs::remove_dir_all(dir);
     }
 
     // T-gw-b-7：branch name 非法拒绝（HEAD/空名/路径逃逸/控制字符/保留序列）

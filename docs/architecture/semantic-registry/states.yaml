@@ -1802,6 +1802,131 @@ states:
     adr_required: false
     status: CURRENT_FACT
 
+  # Database Studio owner-only additions — current UI+store implementation, no second truth.
+  selectedObject:
+    owner: useDatabaseStore
+    meaning: 当前数据源中选中的对象相对名称，不代表已加载结构数据
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useDatabaseStore.selectObject
+      - useDatabaseStore.selectConnection
+      - useDatabaseStore.registerDatabaseCleanup
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  objectDetailMode:
+    owner: useDatabaseStore
+    meaning: 字段、索引或DDL，属于当前选中对象的详情展示模式
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useDatabaseStore.selectObject
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  objectDetailRows:
+    owner: useDatabaseStore
+    meaning: 只包含当前表当前详情视图的有界元数据结果，不是表数据缓存
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useDatabaseStore.selectObject
+      - useDatabaseStore.selectConnection
+      - useDatabaseStore.registerDatabaseCleanup
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  columnsBusy:
+    owner: useDatabaseStore
+    meaning: 对象详情查询是否进行中，需以generation与生命周期围栏约束
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useDatabaseStore.selectObject
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  verifiedConnectionId:
+    owner: useDatabaseStore
+    meaning: 最近一次连接验证成功的配置ID；不代表持久Socket正连通
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useDatabaseStore.connect
+      - useDatabaseStore.disconnect
+      - useDatabaseStore.registerDatabaseCleanup
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  rememberQueries:
+    owner: useDatabaseStore
+    meaning: 只在本次工作台会话中主动选择保留SQL历史；默认关闭
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useDatabaseStore.setRememberQueries
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  queryHistory:
+    owner: useDatabaseStore
+    meaning: 最多30条且仅内存的本会话执行SQL历史；退出及停用清空
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useDatabaseStore.execute
+      - useDatabaseStore.clearQueryHistory
+      - useDatabaseStore.registerDatabaseCleanup
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  recentlyVerified:
+    owner: useDatabaseStore
+    meaning: activeId 与 verifiedConnectionId 只用于本次验证标志的派生判断
+    not_meaning:
+      - 持续持有真实数据库长连接
+    kind: derived
+    derived: true
+    derived_from:
+      - activeId
+      - verifiedConnectionId
+    formula: "!!activeId && verifiedConnectionId === activeId"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
   closePending:
     owner: useDatabaseStore
     meaning: 关闭页签待确认
