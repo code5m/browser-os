@@ -110,7 +110,7 @@ async function copyCsv() {
         <label>驱动
           <select :value="db.form.kind" @change="(e) => db.setKind(((e.target as HTMLSelectElement).value) as DbKind)">
             <option value="sqlite">SQLite</option>
-            <option value="mysql" disabled>MySQL（查询尚未接通）</option>
+            <option value="mysql">MySQL</option>
             <option value="postgres" disabled>PostgreSQL（查询尚未接通）</option>
           </select>
         </label>
@@ -126,6 +126,7 @@ async function copyCsv() {
             <option value="require">require</option>
           </select>
         </label>
+        <p v-if="db.form.kind === 'mysql'" class="hint">MySQL：prefer/require 强制校验 TLS；无 TLS 请选择 disable。建议使用只读账号。</p>
         <label>生产标记
           <select v-model="db.form.productionHint">
             <option value="">未标记</option>

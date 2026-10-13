@@ -153,10 +153,14 @@ export const useDatabaseStore = defineStore("database", () => {
     const lifecycle = databaseLifecycleSnapshot();
     const id = activeId.value; schema.value = [];
     const generation = ++schemaGeneration;
-    if (!id || configs.value.find(c => c.id === id)?.kind !== 'sqlite') return;
+    const kind = configs.value.find(c => c.id === id)?.kind;
+    if (!id || (kind !== 'sqlite' && kind !== 'mysql')) return;
+    const schemaSql = kind === 'mysql'
+      ? "SELECT TABLE_NAME,TABLE_TYPE FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE() ORDER BY TABLE_NAME LIMIT 1000"
+      : "SELECT name, type FROM sqlite_schema WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY name";
     schemaBusy.value = true;
     try {
-      const data = await bridge.dbQuery({ conn_id:id, sql:"SELECT name, type FROM sqlite_schema WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY name", confirm_write:false });
+      const data = await bridge.dbQuery({ conn_id:id, sql:schemaSql, confirm_write:false });
       const current = databaseLifecycleSnapshot();
       if (current.active && current.generation === lifecycle.generation && activeId.value === id && generation === schemaGeneration) {
         schema.value = data.rows.map(row => ({name:String(decodeDbValue(row[0])),type:String(decodeDbValue(row[1]))}));
@@ -172,7 +176,12 @@ export const useDatabaseStore = defineStore("database", () => {
   function previewTable(name:string) {
     if (documents.value.length >= 12) { error.value = '最多打开 12 个查询页签'; return; }
     newDocument();
-    if (!document.value.busy) sql.value = `SELECT * FROM "${name.replace(/"/g,'""')}" LIMIT 100`;
+    if (!document.value.busy) {
+      const kind = configs.value.find(c => c.id === activeId.value)?.kind;
+      const quote = kind === 'mysql' ? '`' : '"';
+      const escaped = name.replaceAll(quote, quote + quote);
+      sql.value = "SELECT * FROM " + quote + escaped + quote + " LIMIT 100";
+    }
   }
 
   /**
