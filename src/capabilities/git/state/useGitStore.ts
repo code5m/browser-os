@@ -250,6 +250,7 @@ export const useGitStore = defineStore("git", () => {
         return null;
       case "commit":
         if (!opts.message || opts.message.trim() === "") return "提交信息不能为空";
+        if (!opts.paths || opts.paths.length === 0) return "必须明确勾选要提交的文件；需要提交全部时请先点击全选";
         return null;
       case "create_branch":
       case "checkout_branch":

@@ -14,6 +14,7 @@
 // ---------------------------------------------------------------------------
 
 import * as nodeModule from "node:module";
+import { fileURLToPath } from "node:url";
 
 // 前端源码是无扩展名 import（`from "../bridge"`），浏览器由 Vite 解析；
 // Node ESM 要求显式扩展名，这里挂一个最小的 resolve 钩子补 `.ts`。
@@ -49,7 +50,7 @@ if (typeof nodeModule.registerHooks === "function") {
 // useLayoutStore.showToast 用 window.setTimeout（浏览器环境），Node 下补一个最小桩
 globalThis.window = { setTimeout: (fn, ms) => setTimeout(fn, ms) };
 
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("..", import.meta.url)) + "/";
 
 const { bridge } = await import(`${ROOT}src/bridge.ts`);
 const { useGitStore } = await import(`${ROOT}src/capabilities/git/state/useGitStore.ts`);
@@ -260,6 +261,26 @@ ok(panelSource.includes("targetBranch.value = branch") &&
    panelSource.includes("git.currentBranch") &&
    panelSource.includes("watch(") && panelSource.includes("immediate: true"),
    "切换仓库或刷新分支时，Git 面板必须同步有效的默认分支");
+
+section("Git Studio real unified patch pairing");
+const { parseUnifiedPatch } = await import(`${ROOT}src/capabilities/git/model/patchView.ts`);
+const patch = [
+  "diff --git a/a.txt b/a.txt",
+  "--- a/a.txt",
+  "+++ b/a.txt",
+  "@@ -1,3 +1,4 @@",
+  " unchanged",
+  "-old value",
+  "+new value",
+  "+more",
+  " tail",
+].join("\n");
+const parsed = parseUnifiedPatch(patch);
+ok(parsed.additions === 2 && parsed.deletions === 1, "diff counters represent actual patch changes");
+ok(parsed.rows.some(row => row.removed && row.added && row.before === "old value" && row.after === "new value"), "paired old/new changed lines");
+ok(parsed.rows.some(row => row.kind === "context" && row.beforeLine === 1 && row.afterLine === 1), "context line number derived from hunk header");
+ok(parseUnifiedPatch(patch, 3).truncated, "large patch bounded by row cap");
+ok(panelSource.includes("Git Studio") && panelSource.includes("changeGroups") && panelSource.includes("selectedCount"), "Git Studio grouped changes and explicit commit scope are visible");
 
 section("10 redactSecrets 单元");
 ok(!redactSecrets("x https://u:secret@h/p").includes("secret"), "URL userinfo 掩码");
