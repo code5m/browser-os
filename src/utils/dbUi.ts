@@ -446,3 +446,68 @@ export function canRunQuery(gate: RunGate): { ok: boolean; reason: string } {
   if (issues.length) return { ok: false, reason: issues[0].message };
   return { ok: true, reason: "" };
 }
+
+/** Bounded SQL construction for object names returned by the active schema catalog.
+ * Identifiers are quoted per driver, while MySQL metadata names use a UTF-8 hex
+ * literal to avoid differences in server backslash escaping modes.
+ */
+export function quoteDbObjectName(name: string, kind: DbKind): string {
+  if (!name || new TextEncoder().encode(name).length > 255 || name.includes("\0")) {
+    throw new Error("DB_OBJECT_NAME_INVALID");
+  }
+  const q = kind === "mysql" ? "`" : '"';
+  return q + name.replaceAll(q, q + q) + q;
+}
+export function buildTablePreviewSql(name: string, kind: DbKind, offset = 0): string {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > 50_000 || offset % 100 !== 0) {
+    throw new Error("DB_PAGE_OFFSET_INVALID");
+  }
+  return `SELECT * FROM ${quoteDbObjectName(name, kind)} LIMIT 100${offset ? ` OFFSET ${offset}` : ""}`;
+}
+export function buildColumnCatalogSql(name: string, kind: DbKind): string {
+  quoteDbObjectName(name, kind);
+  if (kind === "mysql") {
+    const hex = Array.from(new TextEncoder().encode(name), b => b.toString(16).padStart(2, "0")).join("");
+    return "SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,COLUMN_KEY,COLUMN_DEFAULT " +
+      "FROM information_schema.columns WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=CONVERT(0x" +
+      hex + " USING utf8mb4) ORDER BY ORDINAL_POSITION LIMIT 512";
+  }
+  if (kind === "sqlite") {
+    return `SELECT name,type,"notnull",pk,dflt_value FROM pragma_table_info('${name.replaceAll("'", "''")}') LIMIT 512`;
+  }
+  throw new Error("DB_OBJECT_DRIVER_NOT_READY");
+}
+
+export type DbObjectDetailMode = "columns" | "indexes" | "foreign_keys" | "ddl";
+export function buildObjectDetailSql(
+  name: string, kind: DbKind, mode: DbObjectDetailMode, isView = false,
+): string {
+  quoteDbObjectName(name, kind);
+  if (mode === "columns") return buildColumnCatalogSql(name, kind);
+  if (kind === "mysql") {
+    const hex = Array.from(new TextEncoder().encode(name), b => b.toString(16).padStart(2, "0")).join("");
+    if (mode === "indexes") {
+      return "SELECT INDEX_NAME,COLUMN_NAME,NON_UNIQUE,SEQ_IN_INDEX FROM information_schema.statistics " +
+        "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=CONVERT(0x" + hex +
+        " USING utf8mb4) ORDER BY INDEX_NAME,SEQ_IN_INDEX LIMIT 512";
+    }
+    if (mode === "foreign_keys") {
+      return "SELECT COLUMN_NAME,REFERENCED_TABLE_NAME,REFERENCED_COLUMN_NAME " +
+        "FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA=DATABASE() " +
+        "AND TABLE_NAME=CONVERT(0x" + hex + " USING utf8mb4) " +
+        "AND REFERENCED_TABLE_NAME IS NOT NULL ORDER BY COLUMN_NAME LIMIT 128";
+    }
+    return `SHOW CREATE ${isView ? "VIEW" : "TABLE"} ${quoteDbObjectName(name,kind)}`;
+  }
+  if (kind === "sqlite") {
+    const safe = name.replaceAll("'", "''");
+    if (mode === "indexes") {
+      return `SELECT name,sql FROM sqlite_master WHERE type='index' AND tbl_name='${safe}' ORDER BY name LIMIT 512`;
+    }
+    if (mode === "foreign_keys") {
+      return `SELECT "from","table","to" FROM pragma_foreign_key_list('${safe}') LIMIT 128`;
+    }
+    return `SELECT sql FROM sqlite_master WHERE type IN ('table','view') AND name='${safe}' LIMIT 1`;
+  }
+  throw new Error("DB_OBJECT_DRIVER_NOT_READY");
+}

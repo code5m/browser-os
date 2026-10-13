@@ -6,6 +6,9 @@ import { redactSecrets } from '../../../utils/redact';
 import { databaseLifecycleSnapshot, registerDatabaseCleanup } from "../lifecycle";
 import {
   buildConnectPayload,
+  buildObjectDetailSql,
+  type DbObjectDetailMode,
+  buildTablePreviewSql,
   buildResultView,
   canRunQuery,
   connectionLabel,
@@ -32,8 +35,8 @@ function describeError(e: unknown): string {
 export const useDatabaseStore = defineStore("database", () => {
   const form = ref<DbConnectionForm>(emptyConnectionForm());
   const connections = ref<DbConnectionSummary[]>([]);
-  type QueryDocument = { id:string; name:string; connId:string|null; sql:string; result:DbResultView|null; raw:DbQueryResult|null; busy:boolean; error:string; queryId:string|null; pending:string|null };
-  const makeDoc = (n:number, connId:string|null):QueryDocument => ({ id:crypto.randomUUID(), name:`SQL ${n}`, connId, sql:'', result:null, raw:null, busy:false, error:'', queryId:null, pending:null });
+  type QueryDocument = { id:string; name:string; connId:string|null; sql:string; result:DbResultView|null; raw:DbQueryResult|null; busy:boolean; error:string; queryId:string|null; pending:string|null; tablePreview:{name:string;offset:number}|null };
+  const makeDoc = (n:number, connId:string|null):QueryDocument => ({ id:crypto.randomUUID(), name:`SQL ${n}`, connId, sql:'', result:null, raw:null, busy:false, error:'', queryId:null, pending:null, tablePreview:null });
   let sequence = 1;
   const documents = ref<QueryDocument[]>([makeDoc(sequence,null)]);
   const activeDocument = ref(documents.value[0].id);
@@ -48,6 +51,17 @@ export const useDatabaseStore = defineStore("database", () => {
   const schema = ref<{ name:string; type:string }[]>([]);
   const schemaBusy = ref(false);
   let schemaGeneration = 0;
+  let columnsGeneration = 0;
+  const selectedObject = ref("");
+  const objectDetailMode = ref<DbObjectDetailMode>("columns");
+  const objectDetailRows = ref<string[][]>([]);
+  const columnsBusy = ref(false);
+  // This is a validation marker, NOT an assertion of an idle live MySQL socket.
+  const verifiedConnectionId = ref<string | null>(null);
+  const recentlyVerified = computed(() => !!activeId.value && verifiedConnectionId.value === activeId.value);
+  // SQL history is opt-in, bounded and session-only. Never persist queries to disk.
+  const rememberQueries = ref(false);
+  const queryHistory = ref<{id:string;connection:string;sql:string;at:string;elapsed:string}[]>([]);
   const closePending = ref<string|null>(null);
   function lifecycleActive(): boolean {
     return databaseLifecycleSnapshot().active;
@@ -55,6 +69,11 @@ export const useDatabaseStore = defineStore("database", () => {
 
   registerDatabaseCleanup(async () => {
     schemaGeneration += 1;
+    columnsGeneration += 1;
+    objectDetailRows.value = [];
+    selectedObject.value = "";
+    queryHistory.value = [];
+    verifiedConnectionId.value = null;
     pendingSql.value = null;
     connecting.value = false;
     schemaBusy.value = false;
@@ -101,6 +120,8 @@ export const useDatabaseStore = defineStore("database", () => {
     const cfg = configs.value.find(it => it.id === c.id);
     if (!cfg) return;
     activeId.value = c.id;
+    ++columnsGeneration;
+    selectedObject.value = "";
     form.value = {
       ...emptyConnectionForm(),
       id: c.id,
@@ -173,15 +194,95 @@ export const useDatabaseStore = defineStore("database", () => {
       if (current.active && current.generation === lifecycle.generation && generation === schemaGeneration) schemaBusy.value = false;
     }
   }
-  function previewTable(name:string) {
-    if (documents.value.length >= 12) { error.value = '最多打开 12 个查询页签'; return; }
-    newDocument();
-    if (!document.value.busy) {
-      const kind = configs.value.find(c => c.id === activeId.value)?.kind;
-      const quote = kind === 'mysql' ? '`' : '"';
-      const escaped = name.replaceAll(quote, quote + quote);
-      sql.value = "SELECT * FROM " + quote + escaped + quote + " LIMIT 100";
+  async function selectObject(name: string, mode: DbObjectDetailMode = "columns") {
+    if (!lifecycleActive()) return;
+    const id = activeId.value;
+    const kind = configs.value.find(c => c.id === id)?.kind;
+    const isView = schema.value.some(o => o.name === name && o.type.toLowerCase().includes("view"));
+    selectedObject.value = name;
+    objectDetailMode.value = mode;
+    objectDetailRows.value = [];
+    const generation = ++columnsGeneration;
+    if (!id || (kind !== "mysql" && kind !== "sqlite")) return;
+    columnsBusy.value = true;
+    try {
+      const data = await bridge.dbQuery({
+        conn_id: id, sql: buildObjectDetailSql(name, kind, mode, isView), confirm_write: false,
+      });
+      if (generation === columnsGeneration && activeId.value === id && selectedObject.value === name && mode === objectDetailMode.value) {
+        objectDetailRows.value = data.rows.map(row => row.map(cell => String(decodeDbValue(cell) ?? "NULL")));
+      }
+    } catch (e) {
+      if (generation === columnsGeneration) error.value = describeError(e);
+    } finally {
+      if (generation === columnsGeneration) columnsBusy.value = false;
     }
+  }
+
+  function openTablePage(offset: number) {
+    const doc = document.value;
+    const table = doc.tablePreview;
+    const kind = configs.value.find(c => c.id === doc.connId)?.kind;
+    if (!table || !doc.connId || doc.busy || doc.pending || (kind !== "sqlite" && kind !== "mysql")) return;
+    try {
+      doc.sql = buildTablePreviewSql(table.name, kind, offset);
+      table.offset = offset;
+      requestRun();
+    } catch (e) { doc.error = describeError(e); }
+  }
+  function nextTablePage() {
+    const table = document.value.tablePreview;
+    if (!table || !result.value || result.value.rowCount < 100) return;
+    openTablePage(table.offset + 100);
+  }
+  function previousTablePage() {
+    const table = document.value.tablePreview;
+    if (!table || table.offset < 100) return;
+    openTablePage(table.offset - 100);
+  }
+  function explainCurrentSql() {
+    const text = sql.value.trim().replace(/;\s*$/, "");
+    const kind = configs.value.find(c => c.id === activeId.value)?.kind;
+    // EXPLAIN ANALYZE executes statements; never construct that variant.
+    if (!/^select\b/i.test(text) || kind !== "mysql" || document.value.busy) {
+      error.value = "仅支持对当前 MySQL SELECT 执行 EXPLAIN（不使用 ANALYZE）";
+      return;
+    }
+    if (documents.value.length >= 12) { error.value = "最多打开 12 个查询页签"; return; }
+    newDocument();
+    document.value.name = "EXPLAIN 计划";
+    sql.value = "EXPLAIN " + text;
+    requestRun();
+  }
+  /** Double-click a table: open a real bounded read-only preview and execute it.
+   * The ordinary requestRun gate still applies, including confirmations for
+   * connections that allow writes.
+   */
+  function previewTable(name: string) {
+    if (!activeId.value) { error.value = "请先选择并验证数据库连接"; return; }
+    if (documents.value.length >= 12) { error.value = "最多打开 12 个查询页签"; return; }
+    const kind = configs.value.find(c => c.id === activeId.value)?.kind;
+    if (kind !== "mysql" && kind !== "sqlite") { error.value = "该数据库尚未支持对象预览"; return; }
+    newDocument();
+    try {
+      document.value.name = name;
+      document.value.tablePreview = {name,offset:0};
+      sql.value = buildTablePreviewSql(name, kind, 0);
+      requestRun();
+    } catch (e) { error.value = describeError(e); }
+  }
+
+  function reuseHistory(item: {sql:string;connection:string}) {
+    if (documents.value.length >= 12) { error.value = "最多打开 12 个查询页签"; return; }
+    newDocument();
+    document.value.name = "历史 SQL";
+    sql.value = item.sql;
+    // Reusing an earlier statement does not execute it or bypass user confirmation.
+  }
+  function clearQueryHistory() { queryHistory.value = []; }
+  function setRememberQueries(value: boolean) {
+    rememberQueries.value = value;
+    if (!value) clearQueryHistory(); // never retain previous session SQL after opting out
   }
 
   /**
@@ -211,6 +312,7 @@ export const useDatabaseStore = defineStore("database", () => {
       const current = databaseLifecycleSnapshot();
       if (!current.active || current.generation !== lifecycle.generation) return false;
       doc.connId = res.conn_id;
+      verifiedConnectionId.value = res.conn_id;
       risk.value = "unknown";
       verdict.value = "Unknown";
       result.value = null;
@@ -232,6 +334,7 @@ export const useDatabaseStore = defineStore("database", () => {
     const lifecycle = databaseLifecycleSnapshot();
     error.value = "";
     const id = activeId.value;
+    if (verifiedConnectionId.value === id) verifiedConnectionId.value = null;
     risk.value = "unknown";
     verdict.value = "Unknown";
     pendingSql.value = null;
@@ -296,6 +399,11 @@ export const useDatabaseStore = defineStore("database", () => {
       if (!current.active || current.generation !== lifecycle.generation) return;
       const view = buildResultView(res);
       doc.result = view; doc.raw = res;
+      if (rememberQueries.value && res.state !== "failed") {
+        const connection = connections.value.find(c => c.id === doc.connId)?.name ?? "数据库";
+        queryHistory.value.unshift({id:crypto.randomUUID(),connection,sql:text,at:new Date().toLocaleTimeString(),elapsed:view.elapsedLabel});
+        queryHistory.value = queryHistory.value.slice(0,30);
+      }
       risk.value = view.risk;
       verdict.value = view.verdict;
     } catch (e) {
@@ -317,7 +425,11 @@ export const useDatabaseStore = defineStore("database", () => {
   }
 
   return {
-    documents, activeDocument, document, closePending, newDocument, closeDocument, cancelQuery, schema, schemaBusy, refreshSchema, previewTable,
+    documents, activeDocument, document, closePending, newDocument, closeDocument, cancelQuery,
+    schema, schemaBusy, selectedObject, columnsBusy, objectDetailRows,
+    objectDetailMode, selectObject, refreshSchema, previewTable, nextTablePage, previousTablePage,
+    explainCurrentSql,
+    recentlyVerified, rememberQueries, setRememberQueries, queryHistory, reuseHistory, clearQueryHistory,
     form,
     connections,
     activeId,

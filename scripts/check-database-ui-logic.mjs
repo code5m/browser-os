@@ -3,6 +3,7 @@
 // 加载**真实** src/utils/dbUi.ts（与 check-command-ui-logic.mjs 同一范式），不重实现逻辑。
 
 import * as nodeModule from "node:module";
+import { fileURLToPath } from "node:url";
 
 function resolveWithExt(specifier, context, next) {
   try {
@@ -33,10 +34,14 @@ if (typeof nodeModule.registerHooks === "function") {
   globalThis.__dbUiResolve = resolveWithExt;
 }
 
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("..", import.meta.url)) + "/";
 const {
   DB_LIMITS,
   buildConnectPayload,
+  buildColumnCatalogSql,
+  buildObjectDetailSql,
+  buildTablePreviewSql,
+  quoteDbObjectName,
   buildResultView,
   canRunQuery,
   connectionLabel,
@@ -76,6 +81,30 @@ function ok(cond, label) {
   else failures.push(label);
 }
 
+// ===== 0. Database Studio object SQL safety =====
+eq(buildTablePreviewSql("orders","mysql"), "SELECT * FROM `orders` LIMIT 100", "MySQL table preview is bounded");
+eq(buildTablePreviewSql("a`b","mysql"), "SELECT * FROM `a``b` LIMIT 100", "MySQL backtick escaping");
+eq(buildTablePreviewSql('a"b',"sqlite"), 'SELECT * FROM "a""b" LIMIT 100', "SQLite identifier escaping");
+const probe = "x' UNION SELECT password FROM users --";
+const statement = buildColumnCatalogSql(probe, "mysql");
+ok(statement.includes("CONVERT(0x") && !statement.includes("UNION"), "catalog search uses hex name without string SQL injection");
+ok(buildColumnCatalogSql("a'b","sqlite").includes("a''b"), "SQLite pragma name escaped");
+let invalidObject = false;
+try { quoteDbObjectName("x".repeat(300),"mysql"); } catch { invalidObject = true; }
+ok(invalidObject, "oversized object identifier refused");
+
+eq(buildTablePreviewSql("orders", "mysql", 200), "SELECT * FROM `orders` LIMIT 100 OFFSET 200", "server-side result page");
+let blockedOffset = false;
+try { buildTablePreviewSql("orders", "mysql", 101); } catch { blockedOffset = true; }
+ok(blockedOffset, "non-page-aligned offset must fail closed");
+const fkSql = buildObjectDetailSql(probe, "mysql", "foreign_keys");
+ok(fkSql.includes("KEY_COLUMN_USAGE") && !fkSql.includes("UNION") && fkSql.includes("REFERENCED_TABLE_NAME"), "MySQL foreign key graph is grounded and injection safe");
+ok(buildObjectDetailSql("a'b", "sqlite", "foreign_keys").includes("a''b"), "SQLite FK metadata safely quotes names");
+const indexSql = buildObjectDetailSql(probe, "mysql", "indexes");
+ok(indexSql.includes("information_schema.statistics") && !indexSql.includes("UNION"), "index lookup is injection safe");
+ok(buildObjectDetailSql("orders", "mysql", "ddl").includes("SHOW CREATE TABLE `orders`"), "MySQL DDL read-only request");
+ok(buildObjectDetailSql("v_orders", "mysql", "ddl", true).includes("SHOW CREATE VIEW `v_orders`"), "MySQL view DDL request");
+ok(buildObjectDetailSql("a'b", "sqlite", "ddl").includes("a''b"), "SQLite DDL catalog quote escaping");
 // ===== 1. 表单缺省值（F1：写默认拒绝） =====
 const empty = emptyConnectionForm();
 eq(empty.allowWrite, false, "新建连接默认关闭写权限（F1 写默认拒绝）");
