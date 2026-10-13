@@ -2,11 +2,11 @@
 import { computed, onMounted, ref, watch } from "vue";
 import type { PermissionPreview, ValidationReport } from "../../types";
 import { createStudioDraft, parseStudioList, saveStudioList, studioKey, studioProgress, validateStudioDraft, type StudioDraft, type StudioKind } from "../../utils/studioDrafts";
-const props = defineProps<{ kind: StudioKind; validateDefinition: (text: string) => Promise<void>; validation: ValidationReport | null; preview: PermissionPreview | null; backendReady: boolean; busy: boolean }>();
+const props = defineProps<{ kind: StudioKind; validateDefinition: (text: string) => Promise<void>; validation: ValidationReport | null; preview: PermissionPreview | null; backendReady: boolean; busy: boolean; runSafeReference?: (text:string)=>Promise<string>; localChat?: (model:string,message:string,system:string)=>Promise<{content:string;model:string;provider:string}> }>();
 const records = ref<StudioDraft[]>([]);
 const chosen = ref<string | null>(null);
 const search = ref("");
-const activeTab = ref<"overview" | "steps" | "definition" | "permission">("overview");
+const activeTab = ref<"overview" | "steps" | "definition" | "permission" | "chat">("overview");
 const current = computed(() => records.value.find(d => d.id === chosen.value) ?? null);
 const matches = computed(() => records.value.filter(d => (d.name+" "+d.description).toLowerCase().includes(search.value.toLowerCase())));
 const notice = ref("");
@@ -14,6 +14,21 @@ const blocked = ref(false);
 const fileInput = ref<HTMLInputElement|null>(null);
 const definitionText = ref("");
 const verifiedText = ref("");
+const chatModel=ref("qwen2.5:3b");
+const chatInput=ref("");
+const chatOutput=ref("");
+const chatBusy=ref(false);
+const chatError=ref("");
+async function submitChat(){
+  if(!props.localChat || !current.value || chatBusy.value || !chatInput.value.trim()) return;
+  chatBusy.value=true; chatError.value=""; chatOutput.value="";
+  try {
+    const response=await props.localChat(chatModel.value.trim(),chatInput.value,
+      "你是本地知识助手。只能回答问题，不能调用工具或执行命令。");
+    chatOutput.value=response.content;
+  } catch(e) { chatError.value="本地模型连接失败："+String(e)+"。请确认 Ollama 已运行且已下载所选模型。"; }
+  finally {chatBusy.value=false;}
+}
 const kindLabel = computed(() => props.kind === "agent" ? "智能体" : "技能");
 const detailFields = [
   { key: "name", label: "名称", placeholder: "", rows: 0 },
@@ -93,6 +108,18 @@ async function verify(){
   verifiedText.value=props.validation?.valid && definitionText.value===candidate ? candidate : "";
   notice.value="原生定义校验已运行。注意校验通过不等于安装或执行成功。";
 }
+const runningId=ref("");
+const runFeedback=ref("");
+async function runReference(){
+  if(!props.runSafeReference || !current.value || verifiedText.value!==definitionText.value || !props.validation?.valid) return;
+  if(!window.confirm("确认执行现有已启用脚本/命令？这会在本机真实运行；运行时安全边界由现有脚本执行器负责。")) return;
+  runFeedback.value="正在启动已存在的脚本或命令…";
+  try {
+    const id=await props.runSafeReference(definitionText.value);
+    runningId.value=id;
+    runFeedback.value="已提交真实执行，运行 ID："+id+"。请在脚本/命令面板查看输出和状态。";
+  } catch(e) { runFeedback.value="执行拒绝或失败："+String(e); }
+}
 function saveDefinition(){
   if(!current.value||!props.validation?.valid||verifiedText.value!==definitionText.value){notice.value="请先通过原生校验，才允许保存定义";return;}
   const next={...current.value,definition:definitionText.value,updatedAt:new Date().toISOString()};
@@ -140,7 +167,7 @@ async function importFile(e:Event){
       <main class="studio-main">
         <template v-if="current">
           <div class="detail-heading"><div><span class="section-kicker">蓝图工作区</span><h3>{{current.name}}</h3><p>{{current.description||'设置目标与边界，逐步完善你的'+kindLabel+'。'}}</p></div><div class="detail-actions"><button @click="duplicate">复制</button><button @click="exportFile">导出</button><button class="delete" @click="remove">删除</button></div></div>
-          <nav class="studio-tabs" aria-label="工作区视图"><button v-for="tab in [{id:'overview',label:'概览'},{id:'steps',label:'任务步骤'},{id:'definition',label:'定义检查'},{id:'permission',label:'权限与运行'}] as const" :key="tab.id" :class="{active:activeTab===tab.id}" @click="activeTab=tab.id">{{tab.label}}</button></nav>
+          <nav class="studio-tabs" aria-label="工作区视图"><button v-for="tab in [{id:'overview',label:'概览'},{id:'steps',label:'任务步骤'},{id:'definition',label:'定义检查'},{id:'permission',label:'权限与运行'},...(localChat?[{id:'chat',label:'本地 AI 对话'}] as const:[])] as const" :key="tab.id" :class="{active:activeTab===tab.id}" @click="activeTab=tab.id">{{tab.label}}</button></nav>
           <div v-if="activeTab==='overview'" class="studio-content">
             <div class="section-intro"><strong>基础信息</strong><span>修改后即时保存在本机</span></div>
             <div class="two-col">
@@ -158,8 +185,17 @@ async function importFile(e:Event){
           </div>
           <div v-else-if="activeTab==='definition'" class="studio-content">
             <div class="section-intro"><strong>原生定义校验</strong><span>解析与权限预览可用</span></div><p class="help">粘贴符合 BrowserOS 契约的 JSON 定义。这里只校验，不会安装或执行。</p><textarea v-model="definitionText" class="json-editor" rows="14" spellcheck="false" placeholder="粘贴 JSON 定义（不包含任何口令或密钥）"></textarea>
-            <div class="action-row"><button class="primary" :disabled="!definitionText.trim()||busy" @click="verify">验证定义</button><button :disabled="!validation?.valid||verifiedText!==definitionText||busy" @click="saveDefinition">保存已验证定义</button></div>
-            <div v-if="validation" class="result" :class="{invalid:!validation.valid}">{{validation.valid?'✓ 定义通过原生验证':'定义尚未通过验证'}}<ul v-if="!validation.valid"><li v-for="(err,i) in validation.errors" :key="i">{{err}}</li></ul></div>
+            <div class="action-row"><button class="primary" :disabled="!definitionText.trim()||busy" @click="verify">验证定义</button><button :disabled="!validation?.valid||verifiedText!==definitionText||busy" @click="saveDefinition">保存已验证定义</button><button v-if="runSafeReference" :disabled="!validation?.valid||verifiedText!==definitionText||busy" @click="runReference">▶ 运行安全引用</button></div>
+            <p v-if="runFeedback" class="help" role="status">{{runFeedback}}</p><div v-if="validation" class="result" :class="{invalid:!validation.valid}">{{validation.valid?'✓ 定义通过原生验证':'定义尚未通过验证'}}<ul v-if="!validation.valid"><li v-for="(err,i) in validation.errors" :key="i">{{err}}</li></ul></div>
+          </div>
+          <div v-else-if="activeTab==='chat'" class="studio-content">
+            <div class="section-intro"><strong>本地 Ollama 真实对话</strong><span>仅连接 127.0.0.1:11434 · 不调用工具</span></div>
+            <p class="help">需预先在本机运行 Ollama 并下载模型。网络不可用时不生成虚假回复；当前为单轮、非流式试用。</p>
+            <label>模型名称<input v-model="chatModel" maxlength="100" placeholder="qwen2.5:3b"/></label>
+            <label>发送消息<textarea v-model="chatInput" rows="4" maxlength="12000" placeholder="输入问题"/></label>
+            <div class="action-row"><button class="primary" :disabled="chatBusy||!chatInput.trim()" @click="submitChat">{{chatBusy?'正在等待本机模型…':'发送真实请求'}}</button></div>
+            <p v-if="chatError" role="alert" class="result invalid">{{chatError}}</p>
+            <pre v-if="chatOutput" class="chat-output">{{chatOutput}}</pre>
           </div>
           <div v-else class="studio-content"><div class="section-intro"><strong>权限与运行状态</strong><span>真实状态</span></div>
             <div class="permission-grid"><div v-for="item in permissions" :key="item.label"><small>{{item.label}}</small><strong>{{item.value}}</strong></div></div>
@@ -206,4 +242,5 @@ button:disabled{opacity:.5;cursor:default}.primary{background:#2355be;color:whit
 .main-empty{text-align:center;max-width:360px;margin:9vh auto;color:#76869d;line-height:1.8}.empty-icon{color:#3974db;font-size:50px}
 @media(max-width:850px){.studio-layout{grid-template-columns:200px minmax(0,1fr)}.studio-main{padding:16px}.two-col{grid-template-columns:1fr}}
 @media(max-width:560px){.studio-layout{grid-template-columns:1fr;overflow:auto}.studio-sidebar{max-height:210px}.studio-metrics{grid-template-columns:repeat(2,1fr)}.studio-header{align-items:flex-start;flex-direction:column}.permission-grid{grid-template-columns:1fr}}
+.chat-output{white-space:pre-wrap;overflow-wrap:anywhere;padding:18px;border-radius:8px;background:#f0f6ff;color:#234060;font-size:13px;line-height:1.7}
 </style>

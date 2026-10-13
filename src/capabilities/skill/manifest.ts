@@ -17,7 +17,7 @@ export const skillManifest: CapabilityDefinition = {
     "skill.run",
     "skill.install",
   ],
-  dependsOn: ["bridge"],
+  dependsOn: ["bridge", "script"],
   optionalDependencies: [],
   lifecycle: {
     supported: ["ACTIVE", "SUSPENDED"],
@@ -48,7 +48,7 @@ export const skillManifest: CapabilityDefinition = {
       "Skill 定义/校验/预览与安装壳。执行通道（skill_run/install）后端尚未实现，当前为只读壳。",
     maturity: "C1",
     maturityEvidence: ["scripts/check-developer-owners.mjs"],
-    dependencies: ["bridge"],
+    dependencies: ["bridge", "script"],
     optionalDependencies: [],
     conflicts: [],
     provides: ["skill.list", "skill.run", "skill.install"],

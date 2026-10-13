@@ -13,3 +13,5 @@
 //!   `docs/architecture/native-physical-boundary/NATIVE-PHYSICAL-BOUNDARY-MATRIX.md` §6.1）。
 pub mod agent;
 pub mod agent_memory;
+
+pub mod local_provider;

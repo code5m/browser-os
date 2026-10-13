@@ -5,7 +5,7 @@
 > `semantic-registry/owners.yaml`（Skill 尚未单独进 owners.yaml，owner 仅登记于 capabilities.yaml）。
 
 ## 1. Purpose
-提供 Skill 定义/校验/预览与安装壳，是平台「能力库」的一部分。当前执行后端未实现，仅为**只读壳**。
+提供 Skill 定义/校验/预览与安装壳，是平台「能力库」的一部分。通用 `skill_run/install` 后端仍未实现，但新增仅限无参数、无额外权限的安全引用执行闭环，复用 Script 能力已有执行器。
 
 ## 2. Domain Classification
 SUPPORTING_DOMAIN（AI 能力库）。
@@ -57,7 +57,7 @@ NONE（当前无跨边界事件）。
 - 允许：`public.ts`。
 
 ## 14. Dependencies
-- Required：`bridge`（唯一 Native 通道）。
+- Required：`bridge`（Native 通道）与 `script`（只从其 public 契约调用受控的真实运行器）。
 - Optional：无。
 
 ## 15. Dependents

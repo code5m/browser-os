@@ -4380,6 +4380,39 @@ pub async fn vault_open(
         .map_err(|_| "VAULT_WORKER_FAILED")?
 }
 
+/// Save an existing Markdown note with conflict detection. Never write outside an
+/// explicitly allowed Vault root; never accept an unchecked absolute note path.
+#[tauri::command]
+pub async fn vault_save_note(
+    app: AppHandle,
+    webview: tauri::Webview,
+    root: String,
+    relative_path: String,
+    expected_text: String,
+    content: String,
+) -> Result<(), String> {
+    check_invocation_source(&webview, "vault_save_note", None, &app)?;
+    let root = crate::security_policy::check_path_within_roots(
+        &root,
+        &crate::workspace::allowed_roots(&app),
+    )
+    .map_err(|_| "VAULT_EDIT_PATH_DENIED")?;
+    let root_copy = root.clone();
+    let path_copy = relative_path.clone();
+    let new_text = content.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::workbench::save_vault_note(&root_copy, &path_copy, &expected_text, &new_text)
+    })
+    .await
+    .map_err(|_| "VAULT_EDIT_WORKER_FAILED".to_string())??;
+    workspace::log_audit(&app, "vault.note.update", "markdown note updated".into());
+    // The file has already been committed: report sync failure so the UI can
+    // retain a dirty-index warning and allow explicit rebuild; never claim both succeeded.
+    crate::capabilities::graph::commands::refresh_saved_note(&app, &root, &relative_path, &content)
+        .map_err(|_| "VAULT_NOTE_SAVED_GRAPH_SYNC_PENDING".to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn grid_read_replies(
     app: AppHandle,

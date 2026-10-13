@@ -1619,6 +1619,7 @@ fn main() {
             crate::capabilities::task::commands::task_run_now,
             bridge::agent_parse,
             bridge::agent_validate,
+            crate::capabilities::agent::local_provider::agent_local_chat,
             bridge::agent_permission_preview,
             crate::capabilities::skill::commands::skill_parse,
             crate::capabilities::skill::commands::skill_validate,
@@ -1632,6 +1633,7 @@ fn main() {
             crate::capabilities::database::commands::db_query,
             crate::capabilities::database::commands::db_disconnect,
             bridge::vault_open,
+            bridge::vault_save_note,
             bridge::grid_read_replies,
             bridge::archive_replies,
             crate::capabilities::git::commands::git_log,
@@ -1645,6 +1647,7 @@ fn main() {
             crate::capabilities::graph::commands::graph_stats,
             crate::capabilities::graph::commands::graph_import_json,
             crate::capabilities::graph::commands::graph_rebuild_documents,
+            crate::capabilities::graph::commands::graph_sync_vault,
             // M5-W13（Lane A9）：插件 manifest 生命周期 Stage-I（仅本地状态，无执行）。
             bridge::plugin_install,
             bridge::plugin_enable,

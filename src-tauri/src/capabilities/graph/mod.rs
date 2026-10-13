@@ -20,3 +20,5 @@
 //! 经 `main.rs` 顶部 re-export shim 解析，无需逐处改写。
 pub mod commands;
 pub mod graph;
+pub mod markdown_links;
+pub mod vault_index;

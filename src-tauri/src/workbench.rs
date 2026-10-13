@@ -106,6 +106,55 @@ pub fn read_vault(root: &Path) -> Result<VaultSnapshot, String> {
     Ok(out)
 }
 
+/// Conditional edit of an existing Vault Markdown note. No file creation or destructive
+/// overwrite: the snapshot passed by the reader must still match the on-disk version.
+/// The caller must already have authorized and canonicalized the vault root.
+pub fn save_vault_note(
+    root: &Path,
+    relative_path: &str,
+    expected_text: &str,
+    content: &str,
+) -> Result<(), String> {
+    use std::path::Component;
+    if expected_text.len() as u64 > MAX_NOTE_BYTES || content.len() as u64 > MAX_NOTE_BYTES {
+        return Err("VAULT_EDIT_LIMIT".into());
+    }
+    let rel = Path::new(relative_path);
+    if rel.as_os_str().is_empty()
+        || rel
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_)))
+        || rel
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| !ext.eq_ignore_ascii_case("md"))
+            .unwrap_or(true)
+    {
+        return Err("VAULT_EDIT_PATH_DENIED".into());
+    }
+    let root = root.canonicalize().map_err(|_| "VAULT_EDIT_PATH_DENIED")?;
+    let path = root.join(rel);
+    // Explicit symlink refusal, even for a symlink pointing back into the vault.
+    let meta = std::fs::symlink_metadata(&path).map_err(|_| "VAULT_NOTE_NOT_FOUND")?;
+    if !meta.is_file() || meta.file_type().is_symlink() || meta.permissions().readonly() {
+        return Err("VAULT_EDIT_PATH_DENIED".into());
+    }
+    let canonical = path.canonicalize().map_err(|_| "VAULT_EDIT_PATH_DENIED")?;
+    if !canonical.starts_with(&root) {
+        return Err("VAULT_EDIT_PATH_DENIED".into());
+    }
+    let actual = std::fs::read_to_string(&canonical).map_err(|_| "VAULT_EDIT_READ_FAILED")?;
+    if actual.len() as u64 > MAX_NOTE_BYTES {
+        return Err("VAULT_EDIT_LIMIT".into());
+    }
+    if actual != expected_text {
+        return Err("VAULT_EDIT_CONFLICT".into());
+    }
+    // Reuse existing audited atomic-write primitive; no new secondary storage path.
+    crate::session::atomic_write(&canonical, content)
+        .map_err(|_| "VAULT_EDIT_WRITE_FAILED".to_string())
+}
+
 #[derive(Deserialize)]
 pub struct ArchiveItem {
     pub label: String,
@@ -236,6 +285,42 @@ mod tests {
         assert!(std::fs::read_to_string(a[0].path.as_ref().unwrap())
             .unwrap()
             .contains("tags: [\"tag\"]"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod vault_edit_tests {
+    use super::*;
+    #[test]
+    fn vault_edit_atomic_and_conflict_safe() {
+        let root = std::env::temp_dir().join(format!("bos-vault-save-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let note = root.join("note.md");
+        std::fs::write(&note, "old [[Target]]").unwrap();
+        assert!(save_vault_note(&root, "note.md", "old [[Target]]", "new [[Target]]").is_ok());
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), "new [[Target]]");
+        assert_eq!(
+            save_vault_note(&root, "note.md", "old [[Target]]", "lost").unwrap_err(),
+            "VAULT_EDIT_CONFLICT"
+        );
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), "new [[Target]]");
+        assert_eq!(
+            save_vault_note(&root, "../note.md", "", "lost").unwrap_err(),
+            "VAULT_EDIT_PATH_DENIED"
+        );
+        assert_eq!(
+            save_vault_note(&root, "note.txt", "", "lost").unwrap_err(),
+            "VAULT_EDIT_PATH_DENIED"
+        );
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&note, root.join("alias.md")).unwrap();
+            assert_eq!(
+                save_vault_note(&root, "alias.md", "new [[Target]]", "lost").unwrap_err(),
+                "VAULT_EDIT_PATH_DENIED"
+            );
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 }

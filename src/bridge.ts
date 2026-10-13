@@ -390,6 +390,8 @@ export const bridge = {
   dbListConnections: () => invoke<DbConnectionConfig[]>("db_list_connections"),
   dbCancel: (queryId: string) => invoke<boolean>("db_cancel", { queryId }),
   vaultOpen: (path: string) => invoke<{ root: string; notes: { path: string; text: string }[]; skipped: number; truncated: boolean }>("vault_open", { path }),
+  vaultSaveNote: (root: string, relativePath: string, expectedText: string, content: string) =>
+    invoke<void>("vault_save_note", { root, relativePath, expectedText, content }),
   gridReadReplies: (index: number) => invoke<{ provider?: string; replies: string[]; error?: string; truncated?: boolean }>("grid_read_replies", { index }),
   archiveReplies: (path: string, items: { label: string; markdown: string }[], tags: string[]) => invoke<{ label: string; path?: string; error?: string }[]>("archive_replies", { path, items, tags }),
   gitLog: (repoId: string) => invoke<{ oid: string; parents: string[]; summary: string; author: string; time: number }[]>("git_log", { repoId }),
@@ -410,6 +412,8 @@ export const bridge = {
   // ====== M5-W7（A5）Agent/Skill 只读桥：parse/validate/permission_preview ======
   // 与 W7 后端命令一一对应；仅解析/校验/预览，无执行/安装/联网/写持久化。
   agentParse: (text: string) => invoke<AgentDef>("agent_parse", { text }),
+  agentLocalChat: (model: string, message: string, system = "") =>
+    invoke<{provider:string; model:string;content:string}>("agent_local_chat", {request:{model,message,system}}),
   agentValidate: (text: string) => invoke<ValidationReport>("agent_validate", { text }),
   agentPermissionPreview: (text: string) =>
     invoke<PermissionPreview>("agent_permission_preview", { text }),
@@ -460,6 +464,7 @@ export const bridge = {
       : Promise.reject<GraphNodeView | null>(makeGraphCommandDisabledError("graph_node_get")),
   graphImportJson: (text: string) => invoke<{ node_count: number; edge_count: number; first_id: string | null }>("graph_import_json", { text }),
   graphRebuildDocuments: () => invoke<{ node_count: number; edge_count: number; first_id: string | null }>("graph_rebuild_documents"),
+  graphSyncVault: (root: string) => invoke<{node_count:number;edge_count:number;first_id:string|null}>("graph_sync_vault", {root}),
   graphStats: () =>
     GRAPH_COMMANDS_AVAILABLE
       ? invoke<GraphStats>("graph_stats")

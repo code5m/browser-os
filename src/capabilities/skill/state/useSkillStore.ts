@@ -23,6 +23,7 @@ import {
   makePendingConfirm,
 } from "../../../utils/agentSkillUi";
 import { useInstallConfirmStore } from "../../../stores/useInstallConfirmStore";
+import { runExistingScriptRef, runExistingCommandRef } from "../../script/public";
 
 // 纯函数：secret 纵深脱敏（与 useAgentStore 同口径，避免 prompt-secret 进前端状态）。
 const SECRET_REDACT_PATTERNS: RegExp[] = [
@@ -143,6 +144,26 @@ export const useSkillStore = defineStore("skill", () => {
     }
   }
 
+  // 最小真实技能执行：仅安全级、单个现有引用、无特权能力和入参的定义。
+  // 真实执行复用 run_script/run_command，而非新的 shell/进程路径。
+  async function runSafeReference(text: string): Promise<string> {
+    if (!AGENT_SKILL_READONLY_COMMANDS_AVAILABLE) throw new Error("定义校验不可用");
+    if (!text.trim() || text.length > 64 * 1024) throw new Error("技能定义为空或过大");
+    const report = await bridge.skillValidate(text);
+    if (!report.valid) throw new Error("技能定义校验未通过");
+    const def = await bridge.skillParse(text);
+    if (def.acl !== "safe" || def.capabilities.length !== 0 || def.inputs.length !== 0)
+      throw new Error("目前仅允许无额外权限、无参数的安全技能执行");
+    if (def.exec.kind !== "script_ref" && def.exec.kind !== "command_ref")
+      throw new Error("多步技能尚未接入，请使用单个脚本或命令引用");
+    if (Object.keys(def.exec.params ?? {}).length > 0)
+      throw new Error("含参数技能尚未开放");
+    if (def.exec.kind === "script_ref") {
+      return runExistingScriptRef(def.exec.script_id);
+    }
+    return runExistingCommandRef(def.exec.command_id);
+  }
+
   function clearValidation(): void {
     skillValidation.value = null;
     skillParseDef.value = null;
@@ -170,6 +191,7 @@ export const useSkillStore = defineStore("skill", () => {
     selectSkill,
     installSkill,
     validateSkill,
+    runSafeReference,
     clearValidation,
     ackConfirm,
     skillValidation,
