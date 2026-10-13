@@ -15,8 +15,8 @@
 //! 1. **多语句**：SQLite 走 `prepare`（禁 `execute_batch`），并在进入驱动前做第二道静态检出。
 //! 2. **凭据**：本模块**不接受** DSN / 连接串；连接参数一律以类型化字段构造，
 //!    凭据只经 `KeyringStore`（键 `db:<conn_id>`），错误串出模块前一律 `sanitize_message`。
-//! 3. **不伪造**：MySQL/Postgres 的取数通道与 TLS 能力在本包内**未实现**，
-//!    一律显式返回 `DB_NOT_SUPPORTED` 并说明原因，不得假装有能力。
+//! 3. **不伪造**：未接通的 PostgreSQL 取数能力显式返回 `DB_NOT_SUPPORTED`，
+//!    MySQL 取数已复用原有安全闸门。
 
 use crate::domain::{DbConnectionConfig, DbErrorCode, DbSslMode, SupportedDb};
 use crate::security_policy::{check_path_component, check_path_within_roots};
@@ -404,7 +404,7 @@ pub fn detect_multiple_statements(sql: &str) -> bool {
 #[allow(dead_code)] // consumer: A4/M4-3 命令层与 M4-2.b 取数通道
 pub enum DbPool {
     Sqlite(rusqlite::Connection),
-    MySql(mysql::Conn),
+    MySql(mysql::Conn, bool),
     Postgres(postgres::Client),
 }
 
@@ -454,7 +454,7 @@ impl DbPool {
     pub fn kind(&self) -> SupportedDb {
         match self {
             DbPool::Sqlite(_) => SupportedDb::Sqlite,
-            DbPool::MySql(_) => SupportedDb::MySql,
+            DbPool::MySql(_, _) => SupportedDb::MySql,
             DbPool::Postgres(_) => SupportedDb::Postgres,
         }
     }
@@ -463,10 +463,13 @@ impl DbPool {
     ///
     /// - `None` = 不适用或未知。**未知按生产处理**（fail-closed），不得当成未加密放行。
     /// - SQLite 为本地文件、无传输层 → `None`。
-    /// - 本包 TLS 未接入（见 [`connect_postgres`]），MySQL/Postgres 一律 `None`。
+    /// - MySQL 使用实际要求的 TLS 配置；PostgreSQL 暂为 `None`（未知）。
     #[allow(dead_code)] // consumer: A4/M4-2.s 生产判定（M4-1.d S4/S6）
     pub fn encrypted(&self) -> Option<bool> {
-        None
+        match self {
+            DbPool::MySql(_, tls) => Some(*tls),
+            _ => None,
+        }
     }
 
     /// 执行查询并构造受限结果集。
@@ -486,11 +489,9 @@ impl DbPool {
             DbPool::Sqlite(conn) => {
                 query_sqlite_with_deadline(conn, sql, cancel, &deadline, query_id)
             }
-            // 不伪造：MySQL/Postgres 取数通道尚未实现（D27：无真实服务端可验证）。
-            DbPool::MySql(_) => Err(DbError::new(
-                DbErrorCode::NotSupported,
-                "MySQL 取数通道未实现（M4-2.b 交付，受 D27 无真实服务端约束）",
-            )),
+            DbPool::MySql(conn, _) => {
+                query_mysql_with_deadline(conn, sql, cancel, &deadline, query_id)
+            }
             DbPool::Postgres(_) => Err(DbError::new(
                 DbErrorCode::NotSupported,
                 "PostgreSQL 取数通道未实现（M4-2.b 交付，受 D27 无真实服务端约束）",
@@ -500,13 +501,9 @@ impl DbPool {
 }
 
 fn connect_mysql(cfg: &DbConnectionConfig, password: Option<&str>) -> Result<DbPool, DbError> {
-    // TLS：本包未建模 SslOpts（CA / 客户端证书），故 `Require` 显式降级而非假装支持。
-    if matches!(cfg.ssl_mode, DbSslMode::Require) {
-        return Err(DbError::new(
-            DbErrorCode::NotSupported,
-            "MySQL ssl_mode=require 需要 SslOpts（CA/客户端证书），M4-2.a 未建模，显式降级",
-        ));
-    }
+    // Both prefer/require enforce verified TLS: no invisible plaintext fallback.
+    // A local server without TLS requires explicitly selecting disable.
+    let tls_required = !matches!(cfg.ssl_mode, DbSslMode::Disable);
     let host = cfg.host.clone().unwrap_or_default();
     let port = cfg
         .port
@@ -514,12 +511,20 @@ fn connect_mysql(cfg: &DbConnectionConfig, password: Option<&str>) -> Result<DbP
     let user = cfg.username.clone().unwrap_or_default();
 
     // 类型化构造：不拼 DSN。多语句由驱动默认关闭，不依赖 crate 默认值另行开启。
-    let builder = mysql::OptsBuilder::new()
+    let mut builder = mysql::OptsBuilder::new()
         .ip_or_hostname(Some(host))
         .tcp_port(port)
+        .prefer_socket(false)
+        .tcp_connect_timeout(Some(Duration::from_secs(5)))
+        .read_timeout(Some(Duration::from_secs(35)))
+        .write_timeout(Some(Duration::from_secs(10)))
         .user(Some(user))
         .pass(password.map(|p| p.to_string()))
         .db_name(Some(cfg.database.clone()));
+    if tls_required {
+        // SslOpts defaults verify the certificate and hostname. No dangerous overrides.
+        builder = builder.ssl_opts(mysql::SslOpts::default());
+    }
 
     let conn = mysql::Conn::new(builder).map_err(|e| {
         DbError::new(
@@ -527,7 +532,7 @@ fn connect_mysql(cfg: &DbConnectionConfig, password: Option<&str>) -> Result<DbP
             format!("连接 MySQL 失败: {}", sanitize_message(&e.to_string())),
         )
     })?;
-    Ok(DbPool::MySql(conn))
+    Ok(DbPool::MySql(conn, tls_required))
 }
 
 fn connect_postgres(cfg: &DbConnectionConfig, password: Option<&str>) -> Result<DbPool, DbError> {
@@ -567,6 +572,189 @@ fn connect_postgres(cfg: &DbConnectionConfig, password: Option<&str>) -> Result<
         )
     })?;
     Ok(DbPool::Postgres(client))
+}
+
+// ---------------------------------------------------------------------------
+// MySQL query: bounded scalar mapping, same results and production gate as SQLite.
+// ---------------------------------------------------------------------------
+
+fn from_mysql_value(value: mysql::Value, binary: bool) -> DbValue {
+    match value {
+        mysql::Value::NULL => DbValue::Null,
+        mysql::Value::Int(v) => DbValue::I64(v),
+        mysql::Value::UInt(v) => {
+            if v <= i64::MAX as u64 {
+                DbValue::I64(v as i64)
+            } else {
+                DbValue::Text(v.to_string())
+            }
+        }
+        mysql::Value::Float(v) => DbValue::F64(v as f64),
+        mysql::Value::Double(v) => DbValue::F64(v),
+        mysql::Value::Bytes(bytes) => {
+            if binary {
+                DbValue::Binary { bytes: bytes.len() }
+            } else {
+                match String::from_utf8(bytes) {
+                    Ok(s) => DbValue::Text(s),
+                    Err(err) => DbValue::Binary {
+                        bytes: err.into_bytes().len(),
+                    },
+                }
+            }
+        }
+        mysql::Value::Date(y, month, day, h, m, s, us) => DbValue::Text(format!(
+            "{y:04}-{month:02}-{day:02} {h:02}:{m:02}:{s:02}.{us:06}"
+        )),
+        mysql::Value::Time(neg, days, h, m, s, us) => {
+            let sign = if neg { "-" } else { "" };
+            DbValue::Text(format!(
+                "{sign}{}:{m:02}:{s:02}.{us:06}",
+                days as u64 * 24 + h as u64
+            ))
+        }
+    }
+}
+
+/// The MySQL text protocol may encode numeric columns as Value::Bytes even
+/// when the column type is numeric. Interpret by column metadata, never by
+/// guessing from the bytes (a BLOB containing b"1" must stay binary).
+fn from_mysql_wire_value(value: mysql::Value, binary: bool, integer: bool, float: bool) -> DbValue {
+    match value {
+        mysql::Value::Bytes(bytes) if integer => match String::from_utf8(bytes) {
+            Ok(text) => match text.parse::<i64>() {
+                Ok(value) => DbValue::I64(value),
+                Err(_) => DbValue::Text(text),
+            },
+            Err(error) => DbValue::Binary {
+                bytes: error.into_bytes().len(),
+            },
+        },
+        mysql::Value::Bytes(bytes) if float => match String::from_utf8(bytes) {
+            Ok(text) => match text.parse::<f64>() {
+                Ok(value) if value.is_finite() => DbValue::F64(value),
+                _ => DbValue::Text(text),
+            },
+            Err(error) => DbValue::Binary {
+                bytes: error.into_bytes().len(),
+            },
+        },
+        other => from_mysql_value(other, binary),
+    }
+}
+
+/// The native command layer has already validated the SQL risk and write gate.
+/// Cancellation between returned rows is cooperative, not server-side KILL QUERY.
+fn query_mysql_with_deadline(
+    conn: &mut mysql::Conn,
+    sql: &str,
+    cancel: &QueryCancel,
+    deadline: &QueryDeadline,
+    query_id: &str,
+) -> Result<DbQueryResult, DbError> {
+    use mysql::prelude::Queryable;
+    let started = Instant::now();
+    if sql.trim().is_empty() {
+        return Err(DbError::new(DbErrorCode::SqlEmpty, "SQL 为空"));
+    }
+    if sql.len() > DB_MAX_SQL_BYTES {
+        return Err(DbError::new(DbErrorCode::SqlTooLarge, "SQL 超过长度上限"));
+    }
+    if detect_multiple_statements(sql) {
+        return Err(DbError::new(
+            DbErrorCode::MultipleStatements,
+            "只允许单条 SQL",
+        ));
+    }
+    if cancel.is_cancelled() {
+        return Err(DbError::new(DbErrorCode::Cancelled, "查询已取消"));
+    }
+    let mut cursor = conn.query_iter(sql).map_err(|_| {
+        DbError::new(
+            DbErrorCode::QueryFailed,
+            "MySQL 执行失败，请检查 SQL 和权限",
+        )
+    })?;
+    let meta = cursor.columns();
+    let info: Vec<(String, bool, bool, bool)> = meta
+        .as_ref()
+        .iter()
+        .map(|c| {
+            use mysql::consts::ColumnType;
+            let kind = c.column_type();
+            let integer = matches!(
+                kind,
+                ColumnType::MYSQL_TYPE_TINY
+                    | ColumnType::MYSQL_TYPE_SHORT
+                    | ColumnType::MYSQL_TYPE_LONG
+                    | ColumnType::MYSQL_TYPE_INT24
+                    | ColumnType::MYSQL_TYPE_LONGLONG
+                    | ColumnType::MYSQL_TYPE_YEAR
+            );
+            let float = matches!(
+                kind,
+                ColumnType::MYSQL_TYPE_FLOAT | ColumnType::MYSQL_TYPE_DOUBLE
+            );
+            let binary_capable = matches!(
+                kind,
+                ColumnType::MYSQL_TYPE_BLOB
+                    | ColumnType::MYSQL_TYPE_TINY_BLOB
+                    | ColumnType::MYSQL_TYPE_MEDIUM_BLOB
+                    | ColumnType::MYSQL_TYPE_LONG_BLOB
+                    | ColumnType::MYSQL_TYPE_BIT
+                    | ColumnType::MYSQL_TYPE_GEOMETRY
+                    | ColumnType::MYSQL_TYPE_STRING
+                    | ColumnType::MYSQL_TYPE_VAR_STRING
+                    | ColumnType::MYSQL_TYPE_VARCHAR
+            );
+            // BINARY_FLAG also appears on ordinary string collations.
+            // Charset 63 is the opaque binary charset; UTF-8 table names
+            // must remain readable strings.
+            let binary = binary_capable && c.character_set() == 63;
+            (c.name_str().into_owned(), binary, integer, float)
+        })
+        .collect();
+    let columns = info.iter().map(|(name, _, _, _)| name.clone()).collect();
+    let mut limiter = QueryLimiter::new();
+    while let Some(item) = cursor.next() {
+        if cancel.is_cancelled() {
+            return Err(DbError::new(DbErrorCode::Cancelled, "查询已取消"));
+        }
+        if deadline.hard_reached() {
+            return Err(DbError::fatal(
+                DbErrorCode::Timeout,
+                "MySQL 查询硬超时，连接已丢弃",
+            ));
+        }
+        if deadline.soft_reached() {
+            return Err(DbError::new(DbErrorCode::Timeout, "MySQL 查询已超时"));
+        }
+        let row = item.map_err(|_| DbError::new(DbErrorCode::QueryFailed, "MySQL 读取结果失败"))?;
+        let values = row
+            .unwrap()
+            .into_iter()
+            .enumerate()
+            .map(|(i, value)| {
+                let (binary, integer, float) = info
+                    .get(i)
+                    .map(|(_, binary, integer, float)| (*binary, *integer, *float))
+                    .unwrap_or((true, false, false));
+                limiter.normalize_field(from_mysql_wire_value(value, binary, integer, float))
+            })
+            .collect();
+        if !limiter.push(values) {
+            break;
+        }
+    }
+    Ok(DbQueryResult {
+        columns,
+        row_count: limiter.rows.len(),
+        rows: limiter.rows,
+        truncated: limiter.truncated,
+        field_truncated: limiter.field_truncated,
+        elapsed_ms: started.elapsed().as_millis() as u64,
+        query_id: query_id.to_string(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -782,6 +970,69 @@ pub(crate) fn query_sqlite_with_deadline(
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+mod mysql_mapping_tests {
+    use super::*;
+
+    #[test]
+    fn mysql_values_preserve_binary_and_unsigned_boundaries() {
+        assert_eq!(from_mysql_value(mysql::Value::NULL, false), DbValue::Null);
+        assert_eq!(
+            from_mysql_value(mysql::Value::Int(-3), false),
+            DbValue::I64(-3)
+        );
+        assert_eq!(
+            from_mysql_value(mysql::Value::UInt(u64::MAX), false),
+            DbValue::Text(u64::MAX.to_string())
+        );
+        assert_eq!(
+            from_mysql_value(mysql::Value::Bytes(b"Hello".to_vec()), false),
+            DbValue::Text("Hello".into())
+        );
+        assert_eq!(
+            from_mysql_value(mysql::Value::Bytes(b"Hello".to_vec()), true),
+            DbValue::Binary { bytes: 5 }
+        );
+        assert_eq!(
+            from_mysql_value(mysql::Value::Bytes(vec![0xff]), false),
+            DbValue::Binary { bytes: 1 }
+        );
+    }
+
+    #[test]
+    fn mysql_text_protocol_numeric_bytes_use_column_type() {
+        assert_eq!(
+            from_mysql_wire_value(mysql::Value::Bytes(b"1".to_vec()), false, true, false),
+            DbValue::I64(1)
+        );
+        assert_eq!(
+            from_mysql_wire_value(mysql::Value::Bytes(b"2.5".to_vec()), false, false, true),
+            DbValue::F64(2.5)
+        );
+        assert_eq!(
+            from_mysql_wire_value(mysql::Value::Bytes(b"1".to_vec()), true, false, false),
+            DbValue::Binary { bytes: 1 }
+        );
+        assert_eq!(
+            from_mysql_wire_value(
+                mysql::Value::Bytes(u64::MAX.to_string().into_bytes()),
+                false,
+                true,
+                false,
+            ),
+            DbValue::Text(u64::MAX.to_string())
+        );
+    }
+
+    #[test]
+    fn mysql_limits_and_single_statement_policy_stay_enforced() {
+        assert!(detect_multiple_statements("SELECT 1; SELECT 2"));
+        assert!(!detect_multiple_statements("SELECT 1;"));
+        assert_eq!(DB_MAX_ROWS, 1000);
+        assert_eq!(DB_MAX_RESULT_BYTES, 4_194_304);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -868,6 +1119,54 @@ mod tests {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    /// Runs only with the ephemeral MySQL service in mysql-runtime-e2e.yml.
+    /// This is a real wire-protocol connection, not a mocked database.
+    #[test]
+    #[ignore = "requires ephemeral MySQL service"]
+    fn mysql_real_e2e() {
+        use mysql::prelude::Queryable;
+        let password =
+            std::env::var("BROWSEROS_MYSQL_E2E_PASSWORD").expect("MySQL E2E password env missing");
+        let mut cfg = remote_config(SupportedDb::MySql);
+        cfg.username = Some("browseros_ci".into());
+        cfg.database = "browseros_e2e".into();
+        cfg.port = Some(3306);
+        cfg.ssl_mode = DbSslMode::Disable; // explicitly local ephemeral runner only
+        let mut pool = DbPool::connect(&cfg, Some(&password), &[])
+            .expect("MySQL E2E must establish real connection");
+        assert_eq!(pool.encrypted(), Some(false));
+        let ping = pool
+            .query(
+                "SELECT 1 AS one, 'hello' AS greeting",
+                &QueryCancel::new(),
+                None,
+                "mysql-e2e-select",
+            )
+            .expect("MySQL E2E SELECT must succeed");
+        assert_eq!(ping.columns, vec!["one", "greeting"]);
+        assert_eq!(
+            ping.rows,
+            vec![vec![DbValue::I64(1), DbValue::Text("hello".into())]]
+        );
+        if let DbPool::MySql(conn, _) = &mut pool {
+            conn.query_drop(
+                "CREATE TABLE IF NOT EXISTS browseros_e2e_test (id INT PRIMARY KEY, title VARCHAR(50))"
+            ).expect("ephemeral table setup");
+        }
+        let schema = pool.query(
+            "SELECT TABLE_NAME AS name, TABLE_TYPE AS type FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY TABLE_NAME LIMIT 1000",
+            &QueryCancel::new(), None, "mysql-e2e-schema",
+        ).expect("MySQL E2E schema query");
+        assert!(
+            schema
+                .rows
+                .iter()
+                .any(|row| row.first() == Some(&DbValue::Text("browseros_e2e_test".into()))),
+            "unexpected MySQL schema rows: {:?}",
+            schema.rows.iter().take(5).collect::<Vec<_>>()
+        );
     }
 
     // -- T-db-p1 凭据命名空间 --
@@ -1277,10 +1576,14 @@ mod tests {
     fn t_db_p12_ssl_require_is_explicitly_degraded() {
         let roots: Vec<PathBuf> = Vec::new();
         let mut cfg = remote_config(SupportedDb::MySql);
+        cfg.host = Some("127.0.0.1".to_string());
+        cfg.port = Some(1);
         cfg.ssl_mode = DbSslMode::Require;
+        // MySQL TLS now has a real connector. An unreachable server is a
+        // connection failure, not a fake DB_NOT_SUPPORTED response.
         assert_eq!(
             DbPool::connect(&cfg, None, &roots).unwrap_err().code,
-            DbErrorCode::NotSupported
+            DbErrorCode::ConnectFailed
         );
 
         let mut cfg = remote_config(SupportedDb::Postgres);

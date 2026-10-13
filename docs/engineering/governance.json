@@ -56,6 +56,12 @@
       "path": ".github/workflows/supply-chain-assurance.yml",
       "role": "blocking_supply_chain_gate",
       "scope": "all branch pushes + PR to master; audits and Node/Rust SBOM"
+    },
+    {
+      "id": "mysql-runtime-e2e",
+      "path": ".github/workflows/mysql-runtime-e2e.yml",
+      "role": "blocking_mysql_real_service_gate",
+      "scope": "MySQL driver changes: real MySQL 8 connection/query/schema on push and PR"
     }
   ],
   "gitHooks": [
