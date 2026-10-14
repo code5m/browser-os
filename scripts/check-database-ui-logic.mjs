@@ -4,6 +4,7 @@
 
 import * as nodeModule from "node:module";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 
 function resolveWithExt(specifier, context, next) {
   try {
@@ -84,22 +85,18 @@ function ok(cond, label) {
 // JetBrains project data source importer: the real production parser, not a mock.
 const {parseIdeaDataSourcesXml,ideaProjectDataSourcesPath}=
   await import(ROOT+"src/utils/ideaDataSources.ts");
-const ideaXml='<?xml version="1.0"?><project><component name="DataSourceManagerImpl">'+
-  '<data-source name="Local&amp;Read" uuid="u-1"><driver-ref>mysql.8</driver-ref>'+
-  '<jdbc-url>jdbc:mysql://127.0.0.1:3307/example?useSSL=true&amp;password=NEVER-ECHO</jdbc-url>'+
-  '<user-name>reader</user-name></data-source>'+
-  '<data-source name="SQLite" uuid="u-2"><jdbc-url>jdbc:sqlite:/data/demo.db</jdbc-url></data-source>'+
-  '<data-source name="PostgreSQL" uuid="u-3"><jdbc-url>jdbc:postgresql://127.0.0.1/example</jdbc-url></data-source></component></project>';
+// Load authentic project metadata as a dedicated fixture; build scripts must never launch a Java sidecar.
+const ideaXml=readFileSync(new URL("../tests/fixtures/idea-datasources.xml",import.meta.url),"utf8");
 const idea=parseIdeaDataSourcesXml(ideaXml);
 eq(ideaProjectDataSourcesPath("/home/dev/work/app"),"/home/dev/work/app/.idea/dataSources.xml","idea project scan path");
 eq(ideaProjectDataSourcesPath("/home/dev/work/app/.idea"),"/home/dev/work/app/.idea/dataSources.xml","idea folder scan path");
 eq(idea.length,3,"IDEA three source records");
 eq(idea[0].name,"Local&Read","XML attribute escaped ampersand");
-eq(idea[0].host,"127.0.0.1","JDBC host imported");
-eq(idea[0].portText,"3307","JDBC port imported");
-eq(idea[0].database,"example","JDBC schema imported");
-ok(!JSON.stringify(idea).includes("NEVER-ECHO"),"IDEA JDBC query secrets never leave parser");
-eq(idea[1].database,"/data/demo.db","SQLite jdbc absolute path");
+eq(idea[0].host,"127.0.0.1","IDEA URL host imported");
+eq(idea[0].portText,"3307","IDEA URL port imported");
+eq(idea[0].database,"example","IDEA URL schema imported");
+ok(!JSON.stringify(idea).includes("NEVER-ECHO"),"IDEA IDEA URL query secrets never leave parser");
+eq(idea[1].database,"/data/demo.db","SQLite file absolute path");
 ok(!idea[2].supported,"unsupported PostgreSQL must not be offered as working import");
 let forbiddenIdea=false;
 try{ideaProjectDataSourcesPath("/home/dev/work/app/.idea/dataSources.local.xml");}catch{forbiddenIdea=true;}
