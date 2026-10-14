@@ -4,7 +4,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { takeIdeaProjectPath, subscribeIdeaProjectScan } from "../../../composables/ideaProjectNavigation";
 import { Plus, X, Square, ChevronLeft, ChevronRight, RefreshCw } from '@lucide/vue';
 import { useDatabaseStore } from "../state/useDatabaseStore";
-import { bridge } from "../../../bridge";
+import { readAuthorizedWorkspaceTextFile } from "../../workspace/public";
 import { ideaProjectDataSourcesPath, parseIdeaDataSourcesXml, type IdeaSource } from "../../../utils/ideaDataSources";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { useWorkbenchStore } from "../../../stores/useWorkbenchStore";
@@ -58,7 +58,7 @@ async function scanIdeaProject() {
     for(let depth=0;depth<6;depth++){
       const path=ideaProjectDataSourcesPath(dir);
       try{
-        content=await bridge.readFile(path); // Native allowed-root guard.
+        content=await readAuthorizedWorkspaceTextFile(path); // Workspace public facade enforces native allowed-roots.
         found=path;break;
       }catch(err){lastError=err;}
       const last=dir.lastIndexOf("/");

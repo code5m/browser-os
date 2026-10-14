@@ -117,7 +117,7 @@ mod tests {
         let cfg = DbConnectionConfig {
             id: uuid::Uuid::new_v4().to_string(),
             name: "my IDE import".to_string(),
-            kind: SupportedDb::Mysql,
+            kind: SupportedDb::MySql,
             host: Some("127.0.0.1".to_string()),
             port: Some(3306),
             database: "orders".to_string(),

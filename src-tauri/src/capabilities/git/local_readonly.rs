@@ -196,7 +196,7 @@ pub fn log_page(
 }
 fn collect_patch(
     repo: &Repository,
-    mut opts: DiffOptions<'_>,
+    mut opts: DiffOptions,
     before: Option<&git2::Tree<'_>>,
     after: Option<&git2::Tree<'_>>,
     ctx: &LocalGitContext,
