@@ -3,6 +3,7 @@ import { EmptyState } from "../../../shared/ui";
 import { computed, onMounted, ref, watch } from "vue";
 import { Plus, X, Square, ChevronLeft, ChevronRight, RefreshCw } from '@lucide/vue';
 import { useDatabaseStore } from "../state/useDatabaseStore";
+import { previewIdeaDataSources, type IdeaMysqlCandidate } from "../model/jetbrainsImport";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { useWorkbenchStore } from "../../../stores/useWorkbenchStore";
 import {
@@ -31,6 +32,40 @@ const sortColumn = ref(-1);
 const sortAscending = ref(true);
 const showConnection = ref(false);
 const showHistory = ref(false);
+const ideaInput = ref<HTMLInputElement | null>(null);
+const ideaCandidates = ref<IdeaMysqlCandidate[]>([]);
+const ideaError = ref("");
+const ideaSkipped = ref(0);
+async function readIdeaFile(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  ideaCandidates.value = []; ideaError.value = ""; ideaSkipped.value = 0;
+  if (!file) return;
+  try {
+    if (file.size > 2 * 1024 * 1024) throw new Error("IDEA 配置超过 2 MiB");
+    const result = previewIdeaDataSources(await file.text());
+    ideaCandidates.value = result.candidates;
+    ideaSkipped.value = result.skipped;
+    if (result.warnings.length) ideaError.value = result.warnings.join("；");
+  } catch (err) {
+    ideaError.value = err instanceof Error ? err.message : "XML 解析失败";
+  } finally { input.value = ""; }
+}
+function chooseIdeaSource(item: IdeaMysqlCandidate) {
+  db.resetForm(); db.setKind("mysql");
+  db.form.name = item.name;
+  db.form.host = item.host;
+  db.form.portText = item.port;
+  db.form.database = item.database;
+  db.form.username = item.username;
+  db.form.sslMode = "require";
+  db.form.allowWrite = false;
+  db.form.productionHint = "";
+  password.value = "";
+  showConnection.value = true;
+  ideaCandidates.value = [];
+  layout.showToast("已填入 IDEA 地址；请核对配置、输入密码并连接");
+}
 const tablesOpen = ref(true);
 const viewsOpen = ref(true);
 const objectFilter = ref("");
@@ -151,6 +186,17 @@ async function copyCsv() {
         </li>
       </ul>
 
+      <div class="idea-import">
+        <button type="button" @click="ideaInput?.click()">从 IDEA / DataGrip 导入 XML…</button>
+        <input ref="ideaInput" class="idea-import-file" type="file" accept=".xml,text/xml,application/xml" aria-label="选择 dataSources.xml" @change="readIdeaFile" />
+        <p class="hint">选择 .idea/dataSources.xml；只预览并导入 MySQL 地址，不读取 IDE 密码或修改原文件。</p>
+        <p v-if="ideaError" class="errors" role="alert">{{ideaError}}</p>
+        <p v-if="ideaSkipped" class="hint">已跳过 {{ideaSkipped}} 项不支持的配置。</p>
+        <button v-for="item in ideaCandidates" :key="item.id" class="idea-import-source"
+          :title="item.warning" @click="chooseIdeaSource(item)">
+          {{item.name}} · {{item.host}}:{{item.port}} / {{item.database}} · 选择
+        </button>
+      </div>
       <div v-if="showConnection" class="form">
         <p class="form-note">连接设置仅在需要时展开。密码不保存到页面或浏览器存储。</p>
         <label>名称<input v-model="db.form.name" placeholder="如 local-sqlite" /></label>
@@ -446,4 +492,10 @@ th { position: sticky; top: 0; background: #f7f8fa; color: #4e5969; font-weight:
 .local-er{padding:9px;border:1px solid #d9e6f1;border-radius:8px;background:#f9fbff;font-size:11px}
 .local-er strong{font-size:12px;color:#2a5484}
 .local-er svg{width:100%;height:auto;max-height:320px;display:block;margin-top:8px;overflow:hidden}
+</style>
+
+<style scoped>
+.idea-import{padding:9px;margin:7px 0;background:#f1f6ff;border:1px solid #ccdaee;border-radius:8px}
+.idea-import-file{display:none}
+.idea-import-source{display:block;margin:5px 0;padding:7px;width:100%;text-align:left;overflow-wrap:anywhere;border:1px solid #ccdbe8;border-radius:6px;background:white}
 </style>
