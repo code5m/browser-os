@@ -81,6 +81,34 @@ function ok(cond, label) {
   else failures.push(label);
 }
 
+// JetBrains project data source importer: the real production parser, not a mock.
+const {parseIdeaDataSourcesXml,ideaProjectDataSourcesPath}=
+  await import(ROOT+"src/utils/ideaDataSources.ts");
+const ideaXml='<?xml version="1.0"?><project><component name="DataSourceManagerImpl">'+
+  '<data-source name="Local&amp;Read" uuid="u-1"><driver-ref>mysql.8</driver-ref>'+
+  '<jdbc-url>jdbc:mysql://127.0.0.1:3307/example?useSSL=true&amp;password=NEVER-ECHO</jdbc-url>'+
+  '<user-name>reader</user-name></data-source>'+
+  '<data-source name="SQLite" uuid="u-2"><jdbc-url>jdbc:sqlite:/data/demo.db</jdbc-url></data-source>'+
+  '<data-source name="PostgreSQL" uuid="u-3"><jdbc-url>jdbc:postgresql://127.0.0.1/example</jdbc-url></data-source></component></project>';
+const idea=parseIdeaDataSourcesXml(ideaXml);
+eq(ideaProjectDataSourcesPath("/home/dev/work/app"),"/home/dev/work/app/.idea/dataSources.xml","idea project scan path");
+eq(ideaProjectDataSourcesPath("/home/dev/work/app/.idea"),"/home/dev/work/app/.idea/dataSources.xml","idea folder scan path");
+eq(idea.length,3,"IDEA three source records");
+eq(idea[0].name,"Local&Read","XML attribute escaped ampersand");
+eq(idea[0].host,"127.0.0.1","JDBC host imported");
+eq(idea[0].portText,"3307","JDBC port imported");
+eq(idea[0].database,"example","JDBC schema imported");
+ok(!JSON.stringify(idea).includes("NEVER-ECHO"),"IDEA JDBC query secrets never leave parser");
+eq(idea[1].database,"/data/demo.db","SQLite jdbc absolute path");
+ok(!idea[2].supported,"unsupported PostgreSQL must not be offered as working import");
+let forbiddenIdea=false;
+try{ideaProjectDataSourcesPath("/home/dev/work/app/.idea/dataSources.local.xml");}catch{forbiddenIdea=true;}
+ok(forbiddenIdea,"never import IDEA local credential-side file");
+let rejectedDoctype=false;
+try{parseIdeaDataSourcesXml('<!DOCTYPE project [<!ENTITY p SYSTEM "file:///etc/passwd">]><project/>');}catch{rejectedDoctype=true;}
+ok(rejectedDoctype,"IDEA XML external entities rejected");
+ok(idea.every(v=>!Object.hasOwn(v,"password")),"IDEA candidates contain no password property");
+
 // ===== 0. Database Studio object SQL safety =====
 eq(buildTablePreviewSql("orders","mysql"), "SELECT * FROM `orders` LIMIT 100", "MySQL table preview is bounded");
 eq(buildTablePreviewSql("a`b","mysql"), "SELECT * FROM `a``b` LIMIT 100", "MySQL backtick escaping");
