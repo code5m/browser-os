@@ -55,6 +55,7 @@ edges:
   - { from: credential,to: bridge,   kind: required }
   - { from: database,  to: credential, kind: required }
   - { from: database,  to: bridge,   kind: required }
+  - { from: database,  to: workspace, kind: optional }
   - { from: git,       to: credential, kind: required }
   - { from: git,       to: workspace,  kind: required }
   - { from: git,       to: bridge,   kind: required }

@@ -4,6 +4,7 @@
 
 import * as nodeModule from "node:module";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 
 function resolveWithExt(specifier, context, next) {
   try {
@@ -80,6 +81,30 @@ function ok(cond, label) {
   if (cond) passed += 1;
   else failures.push(label);
 }
+
+// JetBrains project data source importer: the real production parser, not a mock.
+const {parseIdeaDataSourcesXml,ideaProjectDataSourcesPath}=
+  await import(ROOT+"src/utils/ideaDataSources.ts");
+// Load authentic project metadata as a dedicated fixture; build scripts must never launch a Java sidecar.
+const ideaXml=readFileSync(new URL("../tests/fixtures/idea-datasources.xml",import.meta.url),"utf8");
+const idea=parseIdeaDataSourcesXml(ideaXml);
+eq(ideaProjectDataSourcesPath("/home/dev/work/app"),"/home/dev/work/app/.idea/dataSources.xml","idea project scan path");
+eq(ideaProjectDataSourcesPath("/home/dev/work/app/.idea"),"/home/dev/work/app/.idea/dataSources.xml","idea folder scan path");
+eq(idea.length,3,"IDEA three source records");
+eq(idea[0].name,"Local&Read","XML attribute escaped ampersand");
+eq(idea[0].host,"127.0.0.1","IDEA URL host imported");
+eq(idea[0].portText,"3307","IDEA URL port imported");
+eq(idea[0].database,"example","IDEA URL schema imported");
+ok(!JSON.stringify(idea).includes("NEVER-ECHO"),"IDEA IDEA URL query secrets never leave parser");
+eq(idea[1].database,"/data/demo.db","SQLite file absolute path");
+ok(!idea[2].supported,"unsupported PostgreSQL must not be offered as working import");
+let forbiddenIdea=false;
+try{ideaProjectDataSourcesPath("/home/dev/work/app/.idea/dataSources.local.xml");}catch{forbiddenIdea=true;}
+ok(forbiddenIdea,"never import IDEA local credential-side file");
+let rejectedDoctype=false;
+try{parseIdeaDataSourcesXml('<!DOCTYPE project [<!ENTITY p SYSTEM "file:///etc/passwd">]><project/>');}catch{rejectedDoctype=true;}
+ok(rejectedDoctype,"IDEA XML external entities rejected");
+ok(idea.every(v=>!Object.hasOwn(v,"password")),"IDEA candidates contain no password property");
 
 // ===== 0. Database Studio object SQL safety =====
 eq(buildTablePreviewSql("orders","mysql"), "SELECT * FROM `orders` LIMIT 100", "MySQL table preview is bounded");

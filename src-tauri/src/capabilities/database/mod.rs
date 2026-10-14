@@ -27,3 +27,4 @@
 //! 而非本文件），故本批**无需**改 checker 路径。
 pub mod commands;
 pub mod database;
+pub mod profiles;

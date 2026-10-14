@@ -445,7 +445,7 @@
   ],
   "nativeSemantics": {
     "status": "ACTIVE_BLOCKING",
-    "expectedRegisteredCommands": 154,
+    "expectedRegisteredCommands": 158,
     "expectedAppStateFields": 26,
     "authority": "docs/architecture/native-boundary/native-commands.yaml",
     "checker": "scripts/check-native-semantic-closure.mjs",

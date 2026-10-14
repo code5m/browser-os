@@ -396,6 +396,16 @@ export const bridge = {
   archiveReplies: (path: string, items: { label: string; markdown: string }[], tags: string[]) => invoke<{ label: string; path?: string; error?: string }[]>("archive_replies", { path, items, tags }),
   gitLog: (repoId: string) => invoke<{ oid: string; parents: string[]; summary: string; author: string; time: number }[]>("git_log", { repoId }),
   gitCommitDiff: (repoId: string, oid: string) => invoke<string>("git_commit_diff", { repoId, oid }),
+  // Read-only file-manager Git inspection, on the ORIGINAL local repository.
+  // Never uses a managed clone nor exposes local write operations.
+  gitLocalContext: (path: string) =>
+    invoke<{root:string; relative_path:string; is_dir:boolean; branch:string}>("git_local_context", {path}),
+  gitLocalLog: (path: string, offset = 0, limit = 40) =>
+    invoke<{commits:{oid:string;parents:string[];summary:string;author:string;time:number}[];has_more:boolean;scan_limited:boolean}>("git_local_log",{path,offset,limit}),
+  gitLocalDiff: (path: string) =>
+    invoke<{patch:string;truncated:boolean}>("git_local_diff",{path}),
+  gitLocalCommitDiff: (path: string, oid: string) =>
+    invoke<{patch:string;truncated:boolean}>("git_local_commit_diff",{path,oid}),
 
   // 说明：A6 §6 / F-A6-7 明确**没有** task_history / task_cancel 两条命令——
   // 历史由 task_list 附带返回，取消复用既有 cancel_script(run_id)。

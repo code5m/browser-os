@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { EmptyState } from "../../../shared/ui";
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { takeIdeaProjectPath, subscribeIdeaProjectScan } from "../../../composables/ideaProjectNavigation";
 import { Plus, X, Square, ChevronLeft, ChevronRight, RefreshCw } from '@lucide/vue';
 import { useDatabaseStore } from "../state/useDatabaseStore";
+import { readAuthorizedWorkspaceTextFile } from "../../workspace/public";
+import { ideaProjectDataSourcesPath, parseIdeaDataSourcesXml, type IdeaSource } from "../../../utils/ideaDataSources";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { useWorkbenchStore } from "../../../stores/useWorkbenchStore";
 import {
@@ -34,6 +37,66 @@ const showHistory = ref(false);
 const tablesOpen = ref(true);
 const viewsOpen = ref(true);
 const objectFilter = ref("");
+const ideaImportOpen = ref(false);
+const ideaProjectPath = ref("");
+const ideaCandidates = ref<IdeaSource[]>([]);
+const ideaScanning = ref(false);
+const ideaImportError = ref("");
+const ideaScannedFile = ref("");
+async function scanIdeaProject() {
+  if (ideaScanning.value) return;
+  ideaImportError.value = "";
+  ideaCandidates.value = [];
+  ideaScanning.value = true;
+  try {
+    // The user selected a concrete project/path; only check up to six nearest
+    // ancestor project roots for .idea/dataSources.xml, never scan $HOME.
+    const requested=ideaProjectDataSourcesPath(ideaProjectPath.value);
+    let dir=requested.slice(0,-"/.idea/dataSources.xml".length);
+    let lastError:unknown=new Error("IDEA 配置文件未找到");
+    let content:string|null=null,found="";
+    for(let depth=0;depth<6;depth++){
+      const path=ideaProjectDataSourcesPath(dir);
+      try{
+        content=await readAuthorizedWorkspaceTextFile(path); // Workspace public facade enforces native allowed-roots.
+        found=path;break;
+      }catch(err){lastError=err;}
+      const last=dir.lastIndexOf("/");
+      if(last<=0)break;
+      dir=dir.slice(0,last);
+    }
+    if(content===null)throw lastError;
+    ideaCandidates.value = parseIdeaDataSourcesXml(content);
+    ideaScannedFile.value = found;
+    if (!ideaCandidates.value.length) ideaImportError.value = "没有发现 IDEA 项目数据库连接";
+  } catch (e) {
+    ideaImportError.value = e instanceof Error ? e.message : "无法读取项目数据库配置；请检查目录权限";
+  } finally { ideaScanning.value = false; }
+}
+function chooseIdeaSource(candidate: IdeaSource) {
+  if (!candidate.supported || candidate.kind === "unsupported") return;
+  // Reuse the same backend connection identity when an equivalent connection exists.
+  const existing = db.configs.find(cfg =>
+    cfg.kind === candidate.kind && cfg.database === candidate.database &&
+    (cfg.host || "") === candidate.host && String(cfg.port ?? (candidate.kind === "mysql" ? 3306 : "")) === (candidate.portText || (candidate.kind === "mysql" ? "3306" : "")) &&
+    (cfg.username || "") === candidate.username
+  );
+  db.resetForm();
+  db.form.id = existing?.id ?? null;
+  db.form.name = existing?.name ?? candidate.name;
+  db.form.kind = candidate.kind;
+  db.form.database = candidate.database;
+  db.form.host = candidate.host;
+  db.form.portText = candidate.portText;
+  db.form.username = candidate.username;
+  db.form.sslMode = "prefer"; // Never downgrade TLS based on imported IDEA URL.
+  db.form.allowWrite = false; // Imported configs MUST start read-only.
+  db.form.productionHint = ""; // Unknown production status must remain fail-closed.
+  password.value = "";
+  ideaImportOpen.value = false;
+  showConnection.value = true;
+  layout.showToast("已填充 IDEA 数据源；请补充密码并点击连接。原配置未修改。");
+}
 const visibleSchema = computed(() => db.schema.filter(object =>
   object.name.toLowerCase().includes(objectFilter.value.trim().toLowerCase())
 ));
@@ -63,10 +126,20 @@ const displayRows = computed(() => filteredRows.value.slice(page.value * pageSiz
 const hiddenRows = computed(() => Math.max(0, (db.result?.rowCount ?? 0) - displayRows.value.length));
 const multiStatementHint = computed(() => looksLikeMultipleStatements(db.sql));
 
+let stopIdeaProjectScan=()=>{};
+function handleIdeaProjectScan(path:string) {
+  ideaProjectPath.value=path;
+  ideaImportOpen.value=true;
+  void scanIdeaProject();
+}
 onMounted(async () => {
+  stopIdeaProjectScan=subscribeIdeaProjectScan(handleIdeaProjectScan);
+  const project=takeIdeaProjectPath();
+  if(project)handleIdeaProjectScan(project);
   await db.refreshConnections();
   if (!db.connections.length) showConnection.value = true;
 });
+onUnmounted(()=>stopIdeaProjectScan());
 
 async function doConnect() {
   const okConnected = await db.connect(password.value);
@@ -76,6 +149,12 @@ async function doConnect() {
     showConnection.value = false;
     layout.showToast("连接已验证；后续查询会按需创建数据库连接");
   }
+}
+
+function deleteConnection() {
+  if (!db.connected || db.busy) return;
+  if (!window.confirm("永久删除 BrowserOS 保存的数据库连接及系统密钥库凭据？IDEA 原始配置不会修改。")) return;
+  void db.disconnect();
 }
 
 const sqlEditor = ref<HTMLTextAreaElement | null>(null);
@@ -141,6 +220,27 @@ async function copyCsv() {
         <strong>数据源</strong>
         <span class="badge" :class="{on:db.recentlyVerified}">{{ connectionStatus }}</span>
       </div>
+      <button class="idea-import-toggle" :aria-expanded="ideaImportOpen" @click="ideaImportOpen=!ideaImportOpen">
+        {{ ideaImportOpen ? "收起 IDEA 导入" : "从 IntelliJ IDEA 导入连接…" }}
+      </button>
+      <section v-if="ideaImportOpen" class="idea-import" aria-label="IDEA 数据源导入">
+        <p>仅读取你指定项目的 <code>.idea/dataSources.xml</code>。不读取 IDEA 密码、SSH 凭据或 <code>dataSources.local.xml</code>。</p>
+        <label>IDEA 项目目录
+          <input v-model="ideaProjectPath" type="text" spellcheck="false" placeholder="/home/you/IdeaProjects/project" />
+        </label>
+        <button :disabled="ideaScanning || !ideaProjectPath.trim()" @click="scanIdeaProject">
+          {{ ideaScanning ? "扫描中…" : "扫描该项目的数据库配置" }}
+        </button>
+        <p v-if="ideaImportError" role="alert" class="errors">{{ ideaImportError }}</p>
+        <p v-if="ideaCandidates.length" class="hint">发现 {{ ideaCandidates.length }} 条连接 · {{ ideaScannedFile }}</p>
+        <div v-for="candidate in ideaCandidates" :key="candidate.id" class="idea-source">
+          <div><strong>{{candidate.name}}</strong>
+            <small>{{candidate.kind==="unsupported"?"不支持的驱动":candidate.kind.toUpperCase()}} · {{candidate.host ? candidate.host+":"+candidate.portText+"/" : ""}}{{candidate.database}}</small>
+            <p class="hint">{{candidate.note}}</p>
+          </div>
+          <button :disabled="!candidate.supported" @click="chooseIdeaSource(candidate)">选用</button>
+        </div>
+      </section>
 
       <ul v-if="db.connections.length" class="conn-list">
         <li v-for="c in db.connections" :key="c.id" :class="{ active: c.id === db.form.id, disabled: !c.enabled }">
@@ -165,7 +265,7 @@ async function copyCsv() {
         <label v-if="fields.port">端口<input v-model="db.form.portText" :placeholder="portPlaceholder" /></label>
         <label>{{ databaseFieldLabel(db.form.kind) }}<input v-model="db.form.database" placeholder="/data/app.db 或 app" /></label>
         <label v-if="fields.username">用户名<input v-model="db.form.username" placeholder="reader" /></label>
-        <label v-if="fields.username">密码（仅本次提交，不保存）<input v-model="password" type="password" autocomplete="off" /></label>
+        <label v-if="fields.username">密码（仅交给系统密钥库，配置中不保存）<input v-model="password" type="password" autocomplete="off" /></label>
         <label v-if="fields.ssl">SSL
           <select v-model="db.form.sslMode">
             <option value="disable">disable</option>
@@ -193,7 +293,8 @@ async function copyCsv() {
 
         <div class="form-actions">
           <button class="primary" :disabled="db.busy || !db.backendReady" @click="doConnect">连接</button>
-          <button :disabled="db.busy || !db.connected" @click="db.disconnect()">断开</button>
+          <button :disabled="db.busy || !db.connected" @click="db.deselectConnection()">断开当前会话</button>
+          <button :disabled="db.busy || !db.connected" @click="deleteConnection">删除连接及凭据</button>
           <button :disabled="db.busy" @click="db.resetForm(); password = ''">新建连接</button>
         </div>
       </div>
@@ -446,4 +547,16 @@ th { position: sticky; top: 0; background: #f7f8fa; color: #4e5969; font-weight:
 .local-er{padding:9px;border:1px solid #d9e6f1;border-radius:8px;background:#f9fbff;font-size:11px}
 .local-er strong{font-size:12px;color:#2a5484}
 .local-er svg{width:100%;height:auto;max-height:320px;display:block;margin-top:8px;overflow:hidden}
+</style>
+
+<style scoped>
+.idea-import-toggle{width:100%;text-align:left;margin:7px 0;padding:7px;border-radius:6px;border:1px solid #bdd2ed;background:#eff6ff;color:#245889;cursor:pointer;font-size:12px}
+.idea-import{padding:10px;margin-bottom:8px;border:1px solid #d3e0f2;border-radius:8px;background:#fff;max-height:340px;overflow:auto}
+.idea-import p{font-size:11px;line-height:1.5;color:#596d83;overflow-wrap:anywhere}
+.idea-import label{display:block;font-size:11px}
+.idea-import input{width:100%;font:11px ui-monospace,monospace;border:1px solid #cad8e6;border-radius:6px;padding:6px;margin:5px 0;box-sizing:border-box}
+.idea-import button{border:1px solid #aac6e8;border-radius:6px;background:#f0f6ff;color:#2a5990;padding:6px;cursor:pointer}
+.idea-import button:disabled{opacity:.5;cursor:default}
+.idea-source{display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid #e4e9f1;padding:7px 0}
+.idea-source div{min-width:0}.idea-source strong{font-size:12px;display:block}.idea-source small{color:#62768f;display:block;word-break:break-all}
 </style>

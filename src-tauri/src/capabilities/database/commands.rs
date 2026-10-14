@@ -15,6 +15,7 @@
 //!
 //! 凭据：password 永不进 `DbConnectionConfig`（F2），不进审计 detail（G-1 / G-3）。
 
+use super::profiles;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -33,6 +34,7 @@ use crate::workspace::{allowed_roots, log_audit};
 pub struct DbConnectionRegistry {
     pub configs: Mutex<HashMap<String, DbConnectionConfig>>,
     pub queries: Mutex<HashMap<String, (String, QueryCancel)>>,
+    loaded: Mutex<bool>,
 }
 
 impl Default for DbConnectionRegistry {
@@ -40,8 +42,36 @@ impl Default for DbConnectionRegistry {
         DbConnectionRegistry {
             configs: Mutex::new(HashMap::new()),
             queries: Mutex::new(HashMap::new()),
+            loaded: Mutex::new(false),
         }
     }
+}
+
+/// Load once per process while holding the initialized lock.
+/// Metadata never includes passwords or JDBC URLs; Keyring remains the sole
+/// credential source, including after BrowserOS is restarted.
+fn ensure_profiles_loaded(app: &AppHandle) -> Result<(), String> {
+    let reg = app.state::<DbConnectionRegistry>();
+    let mut loaded = reg.loaded.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
+    if *loaded {
+        return Ok(());
+    }
+    let file = profiles::path_for(app)?;
+    let records = profiles::read_file(&file)?;
+    let mut configs = reg.configs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
+    for cfg in records {
+        configs.insert(cfg.id.clone(), cfg);
+    }
+    *loaded = true;
+    Ok(())
+}
+fn persist_snapshot(
+    app: &AppHandle,
+    map: &HashMap<String, DbConnectionConfig>,
+) -> Result<(), String> {
+    let mut records: Vec<_> = map.values().cloned().collect();
+    records.sort_by(|a, b| a.id.cmp(&b.id));
+    profiles::write_file(&profiles::path_for(app)?, &records)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +86,7 @@ pub fn db_list_connections(
     webview: tauri::Webview,
 ) -> Result<Vec<DbConnectionConfig>, String> {
     check_invocation_source(&webview, "db_list_connections", None, &app)?;
+    ensure_profiles_loaded(&app)?;
     let mut configs: Vec<_> = app
         .state::<DbConnectionRegistry>()
         .configs
@@ -92,9 +123,13 @@ pub fn db_connect(
     password: Option<String>,
 ) -> Result<DbConnectResult, String> {
     check_invocation_source(&webview, "db_connect", None, &app)?;
+    ensure_profiles_loaded(&app)?;
     {
         let reg = app.state::<DbConnectionRegistry>();
-        if reg.configs.lock().unwrap().len() >= 64 {
+        if {
+            let configs = reg.configs.lock().unwrap();
+            configs.len() >= 64 && !configs.contains_key(&cfg.id)
+        } {
             return Err("DB_CONNECTION_LIMIT".into());
         }
         if reg
@@ -111,15 +146,23 @@ pub fn db_connect(
     let roots = allowed_roots(&app);
     let kind = cfg.kind;
     let conn_id = cfg.id.clone();
-    let _probe = DbPool::connect(&cfg, password.as_deref(), &roots)
+    let secret = match password.as_deref().filter(|s| !s.is_empty()) {
+        Some(p) => Some(p.to_string()),
+        None => KeyringStore::get_token(&credential_key(&conn_id)).ok(),
+    };
+    let _probe = DbPool::connect(&cfg, secret.as_deref(), &roots)
         .map_err(|e| format!("{}: {}", e.code_str(), e.message))?;
     // G-1：凭据（若有）写入系统密钥库，键必须带 `db:` 前缀，与 git 的 repo_id 命名空间隔离。
-    if let Some(p) = password {
+    if let Some(p) = password.filter(|p| !p.is_empty()) {
         KeyringStore::save_token(&credential_key(&conn_id), &p)?;
     }
     {
         let reg = app.state::<DbConnectionRegistry>();
-        reg.configs.lock().unwrap().insert(conn_id.clone(), cfg);
+        let mut guard = reg.configs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
+        let mut updated = guard.clone();
+        updated.insert(conn_id.clone(), cfg);
+        persist_snapshot(&app, &updated)?;
+        *guard = updated;
     }
     // 审计 detail 禁含 SQL/凭据（G-3）：只记连接标识与类型。
     log_audit(
@@ -141,6 +184,7 @@ pub async fn db_query(
     query_id: Option<String>,
 ) -> Result<DbQueryResult, String> {
     check_invocation_source(&webview, "db_query", None, &app)?;
+    ensure_profiles_loaded(&app)?;
 
     // 取登记配置（db_connect 未登记即视为未连接）。
     let cfg = {
@@ -217,6 +261,7 @@ pub fn db_disconnect(
     conn_id: String,
 ) -> Result<(), String> {
     check_invocation_source(&webview, "db_disconnect", None, &app)?;
+    ensure_profiles_loaded(&app)?;
     if app
         .state::<DbConnectionRegistry>()
         .queries
@@ -229,8 +274,14 @@ pub fn db_disconnect(
     }
     let removed = {
         let reg = app.state::<DbConnectionRegistry>();
-        let mut guard = reg.configs.lock().unwrap();
-        guard.remove(&conn_id).is_some()
+        let mut guard = reg.configs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
+        let mut updated = guard.clone();
+        let found = updated.remove(&conn_id).is_some();
+        if found {
+            persist_snapshot(&app, &updated)?;
+            *guard = updated;
+        }
+        found
     };
     // 一并撤销密钥库中的凭据（G-1：命名空间隔离，不影响 git 的 repo_id）。
     let _ = KeyringStore::delete_token(&credential_key(&conn_id));
