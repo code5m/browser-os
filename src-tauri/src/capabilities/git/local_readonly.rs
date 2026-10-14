@@ -253,7 +253,7 @@ pub fn commit_diff(
     } else {
         None
     };
-    let mut opts = DiffOptions::new();
+    let opts = DiffOptions::new();
     // Never interpret an untrusted file name as a Git wildcard pathspec.
     // Match canonical paths component-by-component in the callback instead.
     collect_patch(repo, opts, before.as_ref(), Some(&tree), ctx)
