@@ -75,6 +75,31 @@ mod tests{
         }
         let _=fs::remove_dir_all(&root);
     }
+    #[test]
+    fn profiles_roundtrip_actual_non_secret_data_source(){
+        use crate::domain::{DbSslMode,SupportedDb};
+        let root=std::env::temp_dir().join(format!("browseros-db-profile-test-{}",uuid::Uuid::new_v4()));
+        let file=root.join("database-profiles.json");
+        let now=chrono::Utc::now();
+        let cfg=DbConnectionConfig{
+            id:uuid::Uuid::new_v4().to_string(),name:"my IDE import".to_string(),
+            kind:SupportedDb::Mysql,host:Some("127.0.0.1".to_string()),
+            port:Some(3306),database:"orders".to_string(),username:Some("reader".to_string()),
+            ssl_mode:DbSslMode::Prefer,allow_write:false,production_hint:None,enabled:true,
+            created_at:now,updated_at:now,
+        };
+        write_file(&file,&[cfg.clone()]).unwrap();
+        let restored=read_file(&file).unwrap();
+        assert_eq!(restored.len(),1);
+        assert_eq!(restored[0].name,cfg.name);
+        assert_eq!(restored[0].database,"orders");
+        assert!(!restored[0].allow_write);
+        let raw=fs::read_to_string(&file).unwrap();
+        assert!(!raw.contains("password"));
+        assert!(!raw.contains("connection_string"));
+        assert!(!raw.contains("dsn"));
+        let _=fs::remove_dir_all(&root);
+    }
     #[cfg(unix)]
     #[test]
     fn profile_symlink_to_other_file_rejected(){
