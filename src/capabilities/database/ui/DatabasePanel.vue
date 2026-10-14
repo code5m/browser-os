@@ -125,6 +125,12 @@ async function doConnect() {
   }
 }
 
+function deleteConnection() {
+  if (!db.connected || db.busy) return;
+  if (!window.confirm("永久删除 BrowserOS 保存的数据库连接及系统密钥库凭据？IDEA 原始配置不会修改。")) return;
+  void db.disconnect();
+}
+
 const sqlEditor = ref<HTMLTextAreaElement | null>(null);
 function insertSqlKeyword(fragment: string) {
   const element = sqlEditor.value;
@@ -261,7 +267,8 @@ async function copyCsv() {
 
         <div class="form-actions">
           <button class="primary" :disabled="db.busy || !db.backendReady" @click="doConnect">连接</button>
-          <button :disabled="db.busy || !db.connected" @click="db.disconnect()">断开</button>
+          <button :disabled="db.busy || !db.connected" @click="db.deselectConnection()">断开当前会话</button>
+          <button :disabled="db.busy || !db.connected" @click="deleteConnection">删除连接及凭据</button>
           <button :disabled="db.busy" @click="db.resetForm(); password = ''">新建连接</button>
         </div>
       </div>

@@ -329,6 +329,22 @@ export const useDatabaseStore = defineStore("database", () => {
     }
   }
 
+  function deselectConnection() {
+    // DbPool is transient. This only closes the selected UI session;
+    // saved non-secret configuration and the Keyring credential are retained.
+    if (document.value.busy || document.value.pending) return;
+    activeId.value=null;
+    verifiedConnectionId.value=null;
+    schemaGeneration++;
+    columnsGeneration++;
+    schema.value=[];
+    objectDetailRows.value=[];
+    selectedObject.value="";
+    document.value.raw=null;
+    result.value=null;
+    resetForm();
+  }
+
   async function disconnect() {
     if (!lifecycleActive() || !activeId.value) return;
     const lifecycle = databaseLifecycleSnapshot();
@@ -343,6 +359,7 @@ export const useDatabaseStore = defineStore("database", () => {
       await bridge.dbDisconnect(id);
       for (const doc of documents.value) if (doc.connId === id) { doc.connId = null; doc.pending = null; }
       schema.value = [];
+      resetForm();
     } catch (e) {
       const current = databaseLifecycleSnapshot();
       if (current.active && current.generation === lifecycle.generation) error.value = describeError(e);
@@ -451,6 +468,7 @@ export const useDatabaseStore = defineStore("database", () => {
     selectConnection,
     refreshConnections,
     connect,
+    deselectConnection,
     disconnect,
     requestRun,
     confirmRun,
