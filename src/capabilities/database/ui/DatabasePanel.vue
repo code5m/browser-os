@@ -103,6 +103,11 @@ onMounted(async () => {
   if (!db.connections.length) showConnection.value = true;
 });
 
+async function doDeleteConnection() {
+  if (!db.activeId || db.busy) return;
+  if (!window.confirm("确定删除此数据库连接及 BrowserOS 密钥库中的对应密码吗？此操作不会修改 IDEA 的配置，也不会删除数据库。")) return;
+  await db.disconnect();
+}
 async function doConnect() {
   const okConnected = await db.connect(password.value);
   // 无论成败都立即清空本地密码，避免密码在内存中多停留一轮渲染
@@ -198,7 +203,7 @@ async function copyCsv() {
         </button>
       </div>
       <div v-if="showConnection" class="form">
-        <p class="form-note">连接设置仅在需要时展开。密码不保存到页面或浏览器存储。</p>
+        <p class="form-note">连接设置仅在需要时展开。密码仅保存在系统密钥库，不写入连接配置文件。</p>
         <label>名称<input v-model="db.form.name" placeholder="如 local-sqlite" /></label>
         <label>驱动
           <select :value="db.form.kind" @change="(e) => db.setKind(((e.target as HTMLSelectElement).value) as DbKind)">
@@ -211,7 +216,7 @@ async function copyCsv() {
         <label v-if="fields.port">端口<input v-model="db.form.portText" :placeholder="portPlaceholder" /></label>
         <label>{{ databaseFieldLabel(db.form.kind) }}<input v-model="db.form.database" placeholder="/data/app.db 或 app" /></label>
         <label v-if="fields.username">用户名<input v-model="db.form.username" placeholder="reader" /></label>
-        <label v-if="fields.username">密码（仅本次提交，不保存）<input v-model="password" type="password" autocomplete="off" /></label>
+        <label v-if="fields.username">密码（验证后保存到系统密钥库）<input v-model="password" type="password" autocomplete="off" /></label>
         <label v-if="fields.ssl">SSL
           <select v-model="db.form.sslMode">
             <option value="disable">disable</option>
@@ -239,7 +244,7 @@ async function copyCsv() {
 
         <div class="form-actions">
           <button class="primary" :disabled="db.busy || !db.backendReady" @click="doConnect">连接</button>
-          <button :disabled="db.busy || !db.connected" @click="db.disconnect()">断开</button>
+          <button :disabled="db.busy || !db.connected" @click="doDeleteConnection">删除连接</button>
           <button :disabled="db.busy" @click="db.resetForm(); password = ''">新建连接</button>
         </div>
       </div>
