@@ -119,13 +119,16 @@ pub fn log_page(repo: &Repository, ctx: &LocalGitContext, offset: u32, limit: u3
     Ok(LocalLogPage{commits,has_more,scan_limited})
 }
 fn collect_patch(repo:&Repository, mut opts:DiffOptions<'_>,
-    before:Option<&git2::Tree<'_>>,after:Option<&git2::Tree<'_>>
+    before:Option<&git2::Tree<'_>>,after:Option<&git2::Tree<'_>>,
+    ctx:&LocalGitContext
 ) -> Result<LocalPatch,String> {
     let diff=repo.diff_tree_to_tree(before,after,Some(&mut opts))
         .map_err(|_| "GIT_LOCAL_DIFF_FAILED")?;
     let mut patch=String::new();
     let mut truncated=false;
-    let outcome=diff.print(git2::DiffFormat::Patch,|_,_,line|{
+    let outcome=diff.print(git2::DiffFormat::Patch,|delta,_,line|{
+        if !in_scope(delta.old_file().path(),&ctx.relative_path,ctx.is_dir)
+           && !in_scope(delta.new_file().path(),&ctx.relative_path,ctx.is_dir) { return true; }
         let content=String::from_utf8_lossy(line.content());
         let extra=if matches!(line.origin(),'+'|'-'|' ') { 1 } else { 0 };
         if patch.len()+content.len()+extra>MAX_LOCAL_PATCH { truncated=true;return false; }
@@ -144,18 +147,21 @@ pub fn commit_diff(repo:&Repository,ctx:&LocalGitContext,oid:&str)->Result<Local
         Some(commit.parent(0).and_then(|p|p.tree()).map_err(|_| "GIT_LOCAL_DIFF_FAILED")?)
     } else { None };
     let mut opts=DiffOptions::new();
-    if !ctx.relative_path.is_empty() {opts.pathspec(&ctx.relative_path);}
-    collect_patch(repo,opts,before.as_ref(),Some(&tree))
+    // Never interpret an untrusted file name as a Git wildcard pathspec.
+    // Match canonical paths component-by-component in the callback instead.
+    collect_patch(repo,opts,before.as_ref(),Some(&tree),ctx)
 }
 pub fn working_diff(repo:&Repository,ctx:&LocalGitContext)->Result<LocalPatch,String>{
     let tree=repo.head().ok().and_then(|h|h.peel_to_tree().ok());
     let mut opts=DiffOptions::new();
-    if !ctx.relative_path.is_empty() {opts.pathspec(&ctx.relative_path);}
+    // Only the original worktree is inspected. No index writes or fetch.
     let diff=repo.diff_tree_to_workdir_with_index(tree.as_ref(),Some(&mut opts))
         .map_err(|_| "GIT_LOCAL_DIFF_FAILED")?;
     let mut patch=String::new();
     let mut truncated=false;
-    let outcome=diff.print(git2::DiffFormat::Patch,|_,_,line|{
+    let outcome=diff.print(git2::DiffFormat::Patch,|delta,_,line|{
+        if !in_scope(delta.old_file().path(),&ctx.relative_path,ctx.is_dir)
+           && !in_scope(delta.new_file().path(),&ctx.relative_path,ctx.is_dir) { return true; }
         let content=String::from_utf8_lossy(line.content());
         let extra=if matches!(line.origin(),'+'|'-'|' ') {1} else {0};
         if patch.len()+content.len()+extra>MAX_LOCAL_PATCH {truncated=true;return false;}
@@ -193,6 +199,6 @@ mod tests {
         assert_eq!(page.commits[0].summary,"initial");
         let patch=commit_diff(&repo,&ctx,&page.commits[0].oid).unwrap();
         assert!(patch.patch.contains("hello"));
-        drop(repo);let _=std::fs::remove_dir_all(&root);
+        drop(tree);drop(index);drop(repo);let _=std::fs::remove_dir_all(&root);
     }
 }
