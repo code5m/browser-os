@@ -45,7 +45,6 @@ impl Default for DbConnectionRegistry {
     }
 }
 
-
 const MAX_DB_SAVED_CONNECTIONS: usize = 64;
 
 fn db_registry_path(app: &AppHandle) -> std::path::PathBuf {
@@ -55,7 +54,9 @@ fn db_registry_path(app: &AppHandle) -> std::path::PathBuf {
 /// Persistent metadata only. Passwords are absent from DbConnectionConfig
 /// by construction and remain exclusively in the OS keyring.
 fn persist_configs_at(path: &Path, configs: &[DbConnectionConfig]) -> Result<(), String> {
-    if configs.len() > MAX_DB_SAVED_CONNECTIONS { return Err("DB_CONNECTION_LIMIT".into()); }
+    if configs.len() > MAX_DB_SAVED_CONNECTIONS {
+        return Err("DB_CONNECTION_LIMIT".into());
+    }
     let parent = path.parent().ok_or("DB_CONFIG_PATH_INVALID")?;
     std::fs::create_dir_all(parent).map_err(|_| "DB_CONFIG_DIR_WRITE_FAILED")?;
     crate::workspace::save_json_list_at(path, configs, "数据库连接配置")?;
@@ -68,20 +69,25 @@ fn persist_configs_at(path: &Path, configs: &[DbConnectionConfig]) -> Result<(),
     Ok(())
 }
 
-fn persist_registry(app: &AppHandle, configs: &HashMap<String, DbConnectionConfig>) -> Result<(), String> {
+fn persist_registry(
+    app: &AppHandle,
+    configs: &HashMap<String, DbConnectionConfig>,
+) -> Result<(), String> {
     let mut values: Vec<_> = configs.values().cloned().collect();
-    values.sort_by(|a,b| a.id.cmp(&b.id));
+    values.sort_by(|a, b| a.id.cmp(&b.id));
     persist_configs_at(&db_registry_path(app), &values)
 }
 
 fn load_registry_if_empty(app: &AppHandle) {
     let reg = app.state::<DbConnectionRegistry>();
     let mut current = reg.configs.lock().unwrap();
-    if !current.is_empty() { return; }
+    if !current.is_empty() {
+        return;
+    }
     // The workspace reader preserves corrupted originals with a .corrupt
     // suffix instead of overwriting them with an empty registry.
-    let saved: Vec<DbConnectionConfig> = crate::workspace::load_json_list_at(
-        &db_registry_path(app), "数据库连接配置");
+    let saved: Vec<DbConnectionConfig> =
+        crate::workspace::load_json_list_at(&db_registry_path(app), "数据库连接配置");
     for cfg in saved.into_iter().take(MAX_DB_SAVED_CONNECTIONS) {
         if Uuid::parse_str(&cfg.id).is_ok() && !cfg.id.is_empty() {
             current.insert(cfg.id.clone(), cfg);
@@ -161,11 +167,15 @@ pub fn db_connect(
     let conn_id = cfg.id.clone();
     // When reconnecting an imported connection, reuse only its own existing
     // keyring entry; never read the JetBrains Password Safe.
-    let known_password = if cfg.kind != SupportedDb::Sqlite
-        && password.as_deref().unwrap_or_default().is_empty() {
-        KeyringStore::get_token(&credential_key(&conn_id)).ok()
-    } else { None };
-    let probe_password = password.as_deref().filter(|p| !p.is_empty())
+    let known_password =
+        if cfg.kind != SupportedDb::Sqlite && password.as_deref().unwrap_or_default().is_empty() {
+            KeyringStore::get_token(&credential_key(&conn_id)).ok()
+        } else {
+            None
+        };
+    let probe_password = password
+        .as_deref()
+        .filter(|p| !p.is_empty())
         .or(known_password.as_deref());
     let _probe = DbPool::connect(&cfg, probe_password, &roots)
         .map_err(|e| format!("{}: {}", e.code_str(), e.message))?;
@@ -303,7 +313,9 @@ pub fn db_disconnect(
                 return Err(e);
             }
             true
-        } else { false }
+        } else {
+            false
+        }
     };
     // 一并撤销密钥库中的凭据（G-1：命名空间隔离，不影响 git 的 repo_id）。
     let _ = KeyringStore::delete_token(&credential_key(&conn_id));
@@ -325,7 +337,8 @@ mod persistent_registry_tests {
     use crate::domain::DbSslMode;
     #[test]
     fn database_metadata_survives_roundtrip_without_passwords() {
-        let path = std::env::temp_dir().join(format!("browseros-db-registry-{}.json", Uuid::new_v4()));
+        let path =
+            std::env::temp_dir().join(format!("browseros-db-registry-{}.json", Uuid::new_v4()));
         let cfg = DbConnectionConfig {
             id: Uuid::new_v4().to_string(),
             name: "IDEA imported MySQL".into(),
@@ -344,8 +357,8 @@ mod persistent_registry_tests {
         persist_configs_at(&path, &[cfg.clone()]).expect("persist config");
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(!raw.contains("password"));
-        let next: Vec<DbConnectionConfig> = crate::workspace::load_json_list_at(
-            &path, "test db registry");
+        let next: Vec<DbConnectionConfig> =
+            crate::workspace::load_json_list_at(&path, "test db registry");
         assert_eq!(next.len(), 1);
         assert_eq!(next[0].id, cfg.id);
         assert_eq!(next[0].database, "sample");
