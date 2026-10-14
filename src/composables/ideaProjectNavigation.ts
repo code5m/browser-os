@@ -7,7 +7,7 @@ export function requestIdeaProjectScan(path:string):void{
   projectPath=path;
   for(const subscriber of subscribers)subscriber(path);
 }
-export function currentIdeaProjectPath():string|null{return projectPath;}
+export function takeIdeaProjectPath():string|null{const next=projectPath;projectPath=null;return next;}
 export function subscribeIdeaProjectScan(fn:(path:string)=>void):()=>void{
   subscribers.add(fn);
   return ()=>subscribers.delete(fn);

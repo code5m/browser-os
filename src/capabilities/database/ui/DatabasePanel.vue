@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { EmptyState } from "../../../shared/ui";
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { takeIdeaProjectPath, subscribeIdeaProjectScan } from "../../../composables/ideaProjectNavigation";
 import { Plus, X, Square, ChevronLeft, ChevronRight, RefreshCw } from '@lucide/vue';
 import { useDatabaseStore } from "../state/useDatabaseStore";
 import { bridge } from "../../../bridge";
@@ -48,10 +49,25 @@ async function scanIdeaProject() {
   ideaCandidates.value = [];
   ideaScanning.value = true;
   try {
-    const path = ideaProjectDataSourcesPath(ideaProjectPath.value);
-    const xml = await bridge.readFile(path); // Native allowed-root and file-size guards still apply.
-    ideaCandidates.value = parseIdeaDataSourcesXml(xml);
-    ideaScannedFile.value = path;
+    // The user selected a concrete project/path; only check up to six nearest
+    // ancestor project roots for .idea/dataSources.xml, never scan $HOME.
+    const requested=ideaProjectDataSourcesPath(ideaProjectPath.value);
+    let dir=requested.slice(0,-"/.idea/dataSources.xml".length);
+    let lastError:unknown=new Error("IDEA 配置文件未找到");
+    let content:string|null=null,found="";
+    for(let depth=0;depth<6;depth++){
+      const path=ideaProjectDataSourcesPath(dir);
+      try{
+        content=await bridge.readFile(path); // Native allowed-root guard.
+        found=path;break;
+      }catch(err){lastError=err;}
+      const last=dir.lastIndexOf("/");
+      if(last<=0)break;
+      dir=dir.slice(0,last);
+    }
+    if(content===null)throw lastError;
+    ideaCandidates.value = parseIdeaDataSourcesXml(content);
+    ideaScannedFile.value = found;
     if (!ideaCandidates.value.length) ideaImportError.value = "没有发现 IDEA 项目数据库连接";
   } catch (e) {
     ideaImportError.value = e instanceof Error ? e.message : "无法读取项目数据库配置；请检查目录权限";
@@ -110,10 +126,20 @@ const displayRows = computed(() => filteredRows.value.slice(page.value * pageSiz
 const hiddenRows = computed(() => Math.max(0, (db.result?.rowCount ?? 0) - displayRows.value.length));
 const multiStatementHint = computed(() => looksLikeMultipleStatements(db.sql));
 
+let stopIdeaProjectScan=()=>{};
+function handleIdeaProjectScan(path:string) {
+  ideaProjectPath.value=path;
+  ideaImportOpen.value=true;
+  void scanIdeaProject();
+}
 onMounted(async () => {
+  stopIdeaProjectScan=subscribeIdeaProjectScan(handleIdeaProjectScan);
+  const project=takeIdeaProjectPath();
+  if(project)handleIdeaProjectScan(project);
   await db.refreshConnections();
   if (!db.connections.length) showConnection.value = true;
 });
+onUnmounted(()=>stopIdeaProjectScan());
 
 async function doConnect() {
   const okConnected = await db.connect(password.value);
