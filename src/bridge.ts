@@ -396,6 +396,15 @@ export const bridge = {
   archiveReplies: (path: string, items: { label: string; markdown: string }[], tags: string[]) => invoke<{ label: string; path?: string; error?: string }[]>("archive_replies", { path, items, tags }),
   gitLog: (repoId: string) => invoke<{ oid: string; parents: string[]; summary: string; author: string; time: number }[]>("git_log", { repoId }),
   gitCommitDiff: (repoId: string, oid: string) => invoke<string>("git_commit_diff", { repoId, oid }),
+  // Authorized, read-only access to the user's actual local .git (no clone).
+  gitLocalHistory: (path: string, page: number) =>
+    invoke<{
+      repository_root: string; relative_path: string; branch: string;
+      entries: { oid: string; parents: string[]; summary: string; author: string; time: number }[];
+      has_more: boolean; scan_limited: boolean;
+    }>("git_local_history", { path, page }),
+  gitLocalCommitDiff: (path: string, oid: string) =>
+    invoke<string>("git_local_commit_diff", { path, oid }),
 
   // 说明：A6 §6 / F-A6-7 明确**没有** task_history / task_cancel 两条命令——
   // 历史由 task_list 附带返回，取消复用既有 cancel_script(run_id)。

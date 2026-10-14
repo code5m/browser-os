@@ -1638,6 +1638,8 @@ fn main() {
             bridge::archive_replies,
             crate::capabilities::git::commands::git_log,
             crate::capabilities::git::commands::git_commit_diff,
+            crate::capabilities::git::local_history::git_local_history,
+            crate::capabilities::git::local_history::git_local_commit_diff,
             bridge::mcp_capability_preview,
             bridge::mcp_policy_get,
             bridge::mcp_registry_list,
