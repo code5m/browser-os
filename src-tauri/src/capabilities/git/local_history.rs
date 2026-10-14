@@ -4,7 +4,7 @@
 //! reads Git credentials, or changes the index/worktree. The selected path
 //! and discovered repository root must both be within allowed workspace roots.
 use std::path::{Path, PathBuf};
-use git2::{DiffOptions, Repository, Sort};
+use git2::{Repository, Sort};
 use serde::Serialize;
 use tauri::{AppHandle, Webview};
 use crate::security_policy as sp;
@@ -115,17 +115,18 @@ fn read_commit_diff(path: &str, roots: &[PathBuf], oid: &str) -> Result<String, 
     let prior = if commit.parent_count() > 0 {
         Some(commit.parent(0).and_then(|p| p.tree()).map_err(|_| "GIT_LOCAL_PARENT_FAILED")?)
     } else { None };
-    let mut opts = DiffOptions::new();
-    // The native commit diff is further restricted by the real selected path.
-    if !relative.as_os_str().is_empty() {
-        opts.pathspec(&relative);
-        opts.disable_pathspec_match(true);
-    }
-    let diff = repo.diff_tree_to_tree(prior.as_ref(), Some(&tree), Some(&mut opts))
+    // Filter each changed delta by path components, not git pathspec glob
+    // matching: "src" includes src/* but never src2/*.
+    let diff = repo.diff_tree_to_tree(prior.as_ref(), Some(&tree), None)
         .map_err(|_| "GIT_LOCAL_DIFF_FAILED")?;
     let mut output = String::new();
     let mut truncated = false;
-    let result = diff.print(git2::DiffFormat::Patch, |_, _, line| {
+    let result = diff.print(git2::DiffFormat::Patch, |delta, _, line| {
+        if !relative.as_os_str().is_empty()
+            && !delta.old_file().path().is_some_and(|p| affects(&relative, p))
+            && !delta.new_file().path().is_some_and(|p| affects(&relative, p)) {
+            return true;
+        }
         let text = String::from_utf8_lossy(line.content());
         if output.len() + text.len() + 2 > 128 * 1024 {
             truncated = true;
