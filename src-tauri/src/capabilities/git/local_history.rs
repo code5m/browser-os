@@ -226,13 +226,13 @@ pub async fn git_local_history(
 }
 
 #[tauri::command]
-pub async fn git_local_commit_diff(
+pub async fn git_local_history_diff(
     app: AppHandle,
     webview: Webview,
     path: String,
     oid: String,
 ) -> Result<String, String> {
-    check_invocation_source(&webview, "git_local_commit_diff", None, &app)?;
+    check_invocation_source(&webview, "git_local_history_diff", None, &app)?;
     let roots = workspace::allowed_roots(&app);
     tauri::async_runtime::spawn_blocking(move || read_commit_diff(&path, &roots, &oid))
         .await

@@ -20,8 +20,9 @@ export const databaseManifest: CapabilityDefinition = {
     "database.query",
     "database.cancel",
   ],
+  // IDEA project import uses Workspace's public, authorized read facade; DB queries remain independent.
   dependsOn: ["credential", "bridge"],
-  optionalDependencies: [],
+  optionalDependencies: ["workspace"],
   lifecycle: {
     supported: ["ACTIVE", "SUSPENDED"],
     default: "ACTIVE",
@@ -51,7 +52,7 @@ export const databaseManifest: CapabilityDefinition = {
     maturity: "C3",
     maturityEvidence: ["scripts/check-developer-owners.mjs", "scripts/measure-resources.mjs", "scripts/check-hot-plug-acceptance.mjs"],
     dependencies: ["credential", "bridge"],
-    optionalDependencies: [],
+    optionalDependencies: ["workspace"],
     conflicts: [],
     provides: ["database.connect", "database.query", "database.cancel"],
     requires: [],

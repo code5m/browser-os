@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { EmptyState } from "../../../shared/ui";
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { takeIdeaProjectPath, subscribeIdeaProjectScan } from "../../../composables/ideaProjectNavigation";
 import { Plus, X, Square, ChevronLeft, ChevronRight, RefreshCw } from '@lucide/vue';
 import { useDatabaseStore } from "../state/useDatabaseStore";
 import { previewIdeaDataSources, type IdeaMysqlCandidate } from "../model/jetbrainsImport";
+import { readAuthorizedWorkspaceTextFile } from "../../workspace/public";
+import { ideaProjectDataSourcesPath, parseIdeaDataSourcesXml, type IdeaSource } from "../../../utils/ideaDataSources";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { useWorkbenchStore } from "../../../stores/useWorkbenchStore";
 import {
@@ -32,43 +35,114 @@ const sortColumn = ref(-1);
 const sortAscending = ref(true);
 const showConnection = ref(false);
 const showHistory = ref(false);
-const ideaInput = ref<HTMLInputElement | null>(null);
-const ideaCandidates = ref<IdeaMysqlCandidate[]>([]);
-const ideaError = ref("");
-const ideaSkipped = ref(0);
-async function readIdeaFile(e: Event) {
-  const input = e.target as HTMLInputElement;
+const tablesOpen = ref(true);
+const viewsOpen = ref(true);
+const objectFilter = ref("");
+const ideaImportOpen = ref(false);
+const ideaProjectPath = ref("");
+const ideaCandidates = ref<IdeaSource[]>([]);
+const ideaScanning = ref(false);
+const ideaImportError = ref("");
+const ideaScannedFile = ref("");
+// Alternative user-selected XML file import remains local to this panel, never sent to a server.
+const manualIdeaInput = ref<HTMLInputElement | null>(null);
+const manualIdeaCandidates = ref<IdeaMysqlCandidate[]>([]);
+const manualIdeaError = ref("");
+const manualIdeaSkipped = ref(0);
+function openManualIdeaPicker() { manualIdeaInput.value?.click(); }
+async function readManualIdeaFile(event: Event) {
+  const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
-  ideaCandidates.value = []; ideaError.value = ""; ideaSkipped.value = 0;
+  manualIdeaCandidates.value = [];
+  manualIdeaError.value = "";
+  manualIdeaSkipped.value = 0;
   if (!file) return;
   try {
     if (file.size > 2 * 1024 * 1024) throw new Error("IDEA 配置超过 2 MiB");
     const result = previewIdeaDataSources(await file.text());
-    ideaCandidates.value = result.candidates;
-    ideaSkipped.value = result.skipped;
-    if (result.warnings.length) ideaError.value = result.warnings.join("；");
-  } catch (err) {
-    ideaError.value = err instanceof Error ? err.message : "XML 解析失败";
+    manualIdeaCandidates.value = result.candidates;
+    manualIdeaSkipped.value = result.skipped;
+    manualIdeaError.value = result.warnings.join("；");
+  } catch (error) {
+    manualIdeaError.value = error instanceof Error ? error.message : "无法解析 IDEA XML 配置";
   } finally { input.value = ""; }
 }
-function chooseIdeaSource(item: IdeaMysqlCandidate) {
-  db.resetForm(); db.setKind("mysql");
-  db.form.name = item.name;
-  db.form.host = item.host;
-  db.form.portText = item.port;
-  db.form.database = item.database;
-  db.form.username = item.username;
+function chooseManualIdeaSource(candidate: IdeaMysqlCandidate) {
+  const existing = db.configs.find(cfg => cfg.kind === "mysql" &&
+    cfg.database === candidate.database && (cfg.host || "") === candidate.host &&
+    String(cfg.port || 3306) === candidate.port && (cfg.username || "") === candidate.username);
+  db.resetForm();
+  db.setKind("mysql");
+  db.form.id = existing?.id ?? null;
+  db.form.name = existing?.name ?? candidate.name;
+  db.form.host = candidate.host;
+  db.form.portText = candidate.port;
+  db.form.database = candidate.database;
+  db.form.username = candidate.username;
   db.form.sslMode = "require";
   db.form.allowWrite = false;
   db.form.productionHint = "";
   password.value = "";
+  manualIdeaCandidates.value = [];
+  ideaImportOpen.value = false;
   showConnection.value = true;
-  ideaCandidates.value = [];
-  layout.showToast("已填入 IDEA 地址；请核对配置、输入密码并连接");
+  layout.showToast("只填入地址；请核对配置、输入密码并验证连接");
 }
-const tablesOpen = ref(true);
-const viewsOpen = ref(true);
-const objectFilter = ref("");
+
+async function scanIdeaProject() {
+  if (ideaScanning.value) return;
+  ideaImportError.value = "";
+  ideaCandidates.value = [];
+  ideaScanning.value = true;
+  try {
+    // The user selected a concrete project/path; only check up to six nearest
+    // ancestor project roots for .idea/dataSources.xml, never scan $HOME.
+    const requested=ideaProjectDataSourcesPath(ideaProjectPath.value);
+    let dir=requested.slice(0,-"/.idea/dataSources.xml".length);
+    let lastError:unknown=new Error("IDEA 配置文件未找到");
+    let content:string|null=null,found="";
+    for(let depth=0;depth<6;depth++){
+      const path=ideaProjectDataSourcesPath(dir);
+      try{
+        content=await readAuthorizedWorkspaceTextFile(path); // Workspace public facade enforces native allowed-roots.
+        found=path;break;
+      }catch(err){lastError=err;}
+      const last=dir.lastIndexOf("/");
+      if(last<=0)break;
+      dir=dir.slice(0,last);
+    }
+    if(content===null)throw lastError;
+    ideaCandidates.value = parseIdeaDataSourcesXml(content);
+    ideaScannedFile.value = found;
+    if (!ideaCandidates.value.length) ideaImportError.value = "没有发现 IDEA 项目数据库连接";
+  } catch (e) {
+    ideaImportError.value = e instanceof Error ? e.message : "无法读取项目数据库配置；请检查目录权限";
+  } finally { ideaScanning.value = false; }
+}
+function chooseIdeaSource(candidate: IdeaSource) {
+  if (!candidate.supported || candidate.kind === "unsupported") return;
+  // Reuse the same backend connection identity when an equivalent connection exists.
+  const existing = db.configs.find(cfg =>
+    cfg.kind === candidate.kind && cfg.database === candidate.database &&
+    (cfg.host || "") === candidate.host && String(cfg.port ?? (candidate.kind === "mysql" ? 3306 : "")) === (candidate.portText || (candidate.kind === "mysql" ? "3306" : "")) &&
+    (cfg.username || "") === candidate.username
+  );
+  db.resetForm();
+  db.form.id = existing?.id ?? null;
+  db.form.name = existing?.name ?? candidate.name;
+  db.form.kind = candidate.kind;
+  db.form.database = candidate.database;
+  db.form.host = candidate.host;
+  db.form.portText = candidate.portText;
+  db.form.username = candidate.username;
+  db.form.sslMode = "prefer"; // Never downgrade TLS based on imported IDEA URL.
+  db.form.allowWrite = false; // Imported configs MUST start read-only.
+  db.form.productionHint = ""; // Unknown production status must remain fail-closed.
+  password.value = "";
+  ideaImportOpen.value = false;
+  showConnection.value = true;
+  layout.showToast("已填充 IDEA 数据源；请补充密码并点击连接。原配置未修改。");
+}
 const visibleSchema = computed(() => db.schema.filter(object =>
   object.name.toLowerCase().includes(objectFilter.value.trim().toLowerCase())
 ));
@@ -98,16 +172,21 @@ const displayRows = computed(() => filteredRows.value.slice(page.value * pageSiz
 const hiddenRows = computed(() => Math.max(0, (db.result?.rowCount ?? 0) - displayRows.value.length));
 const multiStatementHint = computed(() => looksLikeMultipleStatements(db.sql));
 
+let stopIdeaProjectScan=()=>{};
+function handleIdeaProjectScan(path:string) {
+  ideaProjectPath.value=path;
+  ideaImportOpen.value=true;
+  void scanIdeaProject();
+}
 onMounted(async () => {
+  stopIdeaProjectScan=subscribeIdeaProjectScan(handleIdeaProjectScan);
+  const project=takeIdeaProjectPath();
+  if(project)handleIdeaProjectScan(project);
   await db.refreshConnections();
   if (!db.connections.length) showConnection.value = true;
 });
+onUnmounted(()=>stopIdeaProjectScan());
 
-async function doDeleteConnection() {
-  if (!db.activeId || db.busy) return;
-  if (!window.confirm("确定删除此数据库连接及 BrowserOS 密钥库中的对应密码吗？此操作不会修改 IDEA 的配置，也不会删除数据库。")) return;
-  await db.disconnect();
-}
 async function doConnect() {
   const okConnected = await db.connect(password.value);
   // 无论成败都立即清空本地密码，避免密码在内存中多停留一轮渲染
@@ -116,6 +195,12 @@ async function doConnect() {
     showConnection.value = false;
     layout.showToast("连接已验证；后续查询会按需创建数据库连接");
   }
+}
+
+function deleteConnection() {
+  if (!db.connected || db.busy) return;
+  if (!window.confirm("永久删除 BrowserOS 保存的数据库连接及系统密钥库凭据？IDEA 原始配置不会修改。")) return;
+  void db.disconnect();
 }
 
 const sqlEditor = ref<HTMLTextAreaElement | null>(null);
@@ -181,6 +266,40 @@ async function copyCsv() {
         <strong>数据源</strong>
         <span class="badge" :class="{on:db.recentlyVerified}">{{ connectionStatus }}</span>
       </div>
+      <button class="idea-import-toggle" :aria-expanded="ideaImportOpen" @click="ideaImportOpen=!ideaImportOpen">
+        {{ ideaImportOpen ? "收起 IDEA 导入" : "从 IntelliJ IDEA 导入连接…" }}
+      </button>
+      <section v-if="ideaImportOpen" class="idea-import" aria-label="IDEA 数据源导入">
+        <p>仅读取你指定项目的 <code>.idea/dataSources.xml</code>。不读取 IDEA 密码、SSH 凭据或 <code>dataSources.local.xml</code>。</p>
+        <label>IDEA 项目目录
+          <input v-model="ideaProjectPath" type="text" spellcheck="false" placeholder="/home/you/IdeaProjects/project" />
+        </label>
+        <button :disabled="ideaScanning || !ideaProjectPath.trim()" @click="scanIdeaProject">
+          {{ ideaScanning ? "扫描中…" : "扫描该项目的数据库配置" }}
+        </button>
+        <p v-if="ideaImportError" role="alert" class="errors">{{ ideaImportError }}</p>
+        <p v-if="ideaCandidates.length" class="hint">发现 {{ ideaCandidates.length }} 条连接 · {{ ideaScannedFile }}</p>
+        <div v-for="candidate in ideaCandidates" :key="candidate.id" class="idea-source">
+          <div><strong>{{candidate.name}}</strong>
+            <small>{{candidate.kind==="unsupported"?"不支持的驱动":candidate.kind.toUpperCase()}} · {{candidate.host ? candidate.host+":"+candidate.portText+"/" : ""}}{{candidate.database}}</small>
+            <p class="hint">{{candidate.note}}</p>
+          </div>
+          <button :disabled="!candidate.supported" @click="chooseIdeaSource(candidate)">选用</button>
+        </div>
+        <div class="ctx-sep"></div>
+        <p class="hint">也可以手动选择 IDEA / DataGrip 的 dataSources.xml 文件（仅本地解析，不读取密码或 SSH 配置）。</p>
+        <input ref="manualIdeaInput" type="file" accept=".xml,text/xml" style="display:none" @change="readManualIdeaFile" />
+        <button @click="openManualIdeaPicker">选择 XML 文件预览</button>
+        <p v-if="manualIdeaError" role="alert" class="errors">{{ manualIdeaError }}</p>
+        <p v-if="manualIdeaSkipped" class="hint">已跳过 {{ manualIdeaSkipped }} 项无法安全导入的连接</p>
+        <div v-for="candidate in manualIdeaCandidates" :key="'manual-'+candidate.id" class="idea-source">
+          <div><strong>{{ candidate.name }}</strong>
+            <small>MySQL · {{ candidate.host }}:{{ candidate.port }}/{{ candidate.database }}</small>
+            <p class="hint">{{ candidate.warning }}</p>
+          </div>
+          <button @click="chooseManualIdeaSource(candidate)">选用</button>
+        </div>
+      </section>
 
       <ul v-if="db.connections.length" class="conn-list">
         <li v-for="c in db.connections" :key="c.id" :class="{ active: c.id === db.form.id, disabled: !c.enabled }">
@@ -191,19 +310,8 @@ async function copyCsv() {
         </li>
       </ul>
 
-      <div class="idea-import">
-        <button type="button" @click="ideaInput?.click()">从 IDEA / DataGrip 导入 XML…</button>
-        <input ref="ideaInput" class="idea-import-file" type="file" accept=".xml,text/xml,application/xml" aria-label="选择 dataSources.xml" @change="readIdeaFile" />
-        <p class="hint">选择 .idea/dataSources.xml；只预览并导入 MySQL 地址，不读取 IDE 密码或修改原文件。</p>
-        <p v-if="ideaError" class="errors" role="alert">{{ideaError}}</p>
-        <p v-if="ideaSkipped" class="hint">已跳过 {{ideaSkipped}} 项不支持的配置。</p>
-        <button v-for="item in ideaCandidates" :key="item.id" class="idea-import-source"
-          :title="item.warning" @click="chooseIdeaSource(item)">
-          {{item.name}} · {{item.host}}:{{item.port}} / {{item.database}} · 选择
-        </button>
-      </div>
       <div v-if="showConnection" class="form">
-        <p class="form-note">连接设置仅在需要时展开。密码仅保存在系统密钥库，不写入连接配置文件。</p>
+        <p class="form-note">连接设置仅在需要时展开。密码不保存到页面或浏览器存储。</p>
         <label>名称<input v-model="db.form.name" placeholder="如 local-sqlite" /></label>
         <label>驱动
           <select :value="db.form.kind" @change="(e) => db.setKind(((e.target as HTMLSelectElement).value) as DbKind)">
@@ -216,7 +324,7 @@ async function copyCsv() {
         <label v-if="fields.port">端口<input v-model="db.form.portText" :placeholder="portPlaceholder" /></label>
         <label>{{ databaseFieldLabel(db.form.kind) }}<input v-model="db.form.database" placeholder="/data/app.db 或 app" /></label>
         <label v-if="fields.username">用户名<input v-model="db.form.username" placeholder="reader" /></label>
-        <label v-if="fields.username">密码（验证后保存到系统密钥库）<input v-model="password" type="password" autocomplete="off" /></label>
+        <label v-if="fields.username">密码（仅交给系统密钥库，配置中不保存）<input v-model="password" type="password" autocomplete="off" /></label>
         <label v-if="fields.ssl">SSL
           <select v-model="db.form.sslMode">
             <option value="disable">disable</option>
@@ -244,7 +352,8 @@ async function copyCsv() {
 
         <div class="form-actions">
           <button class="primary" :disabled="db.busy || !db.backendReady" @click="doConnect">连接</button>
-          <button :disabled="db.busy || !db.connected" @click="doDeleteConnection">删除连接</button>
+          <button :disabled="db.busy || !db.connected" @click="db.deselectConnection()">断开当前会话</button>
+          <button :disabled="db.busy || !db.connected" @click="deleteConnection">删除连接及凭据</button>
           <button :disabled="db.busy" @click="db.resetForm(); password = ''">新建连接</button>
         </div>
       </div>
@@ -500,7 +609,13 @@ th { position: sticky; top: 0; background: #f7f8fa; color: #4e5969; font-weight:
 </style>
 
 <style scoped>
-.idea-import{padding:9px;margin:7px 0;background:#f1f6ff;border:1px solid #ccdaee;border-radius:8px}
-.idea-import-file{display:none}
-.idea-import-source{display:block;margin:5px 0;padding:7px;width:100%;text-align:left;overflow-wrap:anywhere;border:1px solid #ccdbe8;border-radius:6px;background:white}
+.idea-import-toggle{width:100%;text-align:left;margin:7px 0;padding:7px;border-radius:6px;border:1px solid #bdd2ed;background:#eff6ff;color:#245889;cursor:pointer;font-size:12px}
+.idea-import{padding:10px;margin-bottom:8px;border:1px solid #d3e0f2;border-radius:8px;background:#fff;max-height:340px;overflow:auto}
+.idea-import p{font-size:11px;line-height:1.5;color:#596d83;overflow-wrap:anywhere}
+.idea-import label{display:block;font-size:11px}
+.idea-import input{width:100%;font:11px ui-monospace,monospace;border:1px solid #cad8e6;border-radius:6px;padding:6px;margin:5px 0;box-sizing:border-box}
+.idea-import button{border:1px solid #aac6e8;border-radius:6px;background:#f0f6ff;color:#2a5990;padding:6px;cursor:pointer}
+.idea-import button:disabled{opacity:.5;cursor:default}
+.idea-source{display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid #e4e9f1;padding:7px 0}
+.idea-source div{min-width:0}.idea-source strong{font-size:12px;display:block}.idea-source small{color:#62768f;display:block;word-break:break-all}
 </style>

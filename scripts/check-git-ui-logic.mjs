@@ -282,6 +282,34 @@ ok(parsed.rows.some(row => row.kind === "context" && row.beforeLine === 1 && row
 ok(parseUnifiedPatch(patch, 3).truncated, "large patch bounded by row cap");
 ok(panelSource.includes("Git Studio") && panelSource.includes("changeGroups") && panelSource.includes("selectedCount"), "Git Studio grouped changes and explicit commit scope are visible");
 
+section("File-manager Git path intent is ephemeral and shared with Git History");
+const localNavigation=await import(ROOT+"src/composables/gitLocalNavigation.ts");
+let notifications=0;
+const stop=localNavigation.subscribeLocalGitIntent(()=>notifications++);
+localNavigation.requestLocalGitIntent("/home/dev/project/src","history");
+ok(localNavigation.currentLocalGitIntent()?.path==="/home/dev/project/src","the exact selected directory reaches Git History");
+ok(localNavigation.currentLocalGitIntent()?.mode==="history","file-menu history routes to history mode");
+localNavigation.requestLocalGitIntent("/home/dev/project/src/a.ts","diff");
+ok(localNavigation.currentLocalGitIntent()?.mode==="diff","diff action has independent scope");
+stop();
+localNavigation.clearLocalGitIntent();
+ok(notifications===2,"listeners unsubscribe cleanly across hot-plug");
+ok(localNavigation.currentLocalGitIntent()===null,"local paths clear without persistence");
+const ideaNavigation=await import(ROOT+"src/composables/ideaProjectNavigation.ts");
+ideaNavigation.requestIdeaProjectScan("/home/dev/project");
+ok(ideaNavigation.takeIdeaProjectPath()==="/home/dev/project","file-menu IDEA path can be consumed");
+ok(ideaNavigation.takeIdeaProjectPath()===null,"IDEA project path is single-use");
+const fileMenuSource=readFileSync(ROOT+"src/capabilities/workspace/ui/FilePanel.vue","utf8");
+// History is capability-contributed so disabling Git removes the menu entry;
+ // only the scoped worktree diff remains a direct high-frequency Files action.
+const gitContributions = readFileSync(ROOT+"src/capabilities/git/index.ts","utf8");
+ok(fileMenuSource.includes("CONTRIBUTION_SLOTS.MENUS") &&
+  fileMenuSource.includes("fileContextActions") &&
+  fileMenuSource.includes("openLocalGit('diff')") &&
+  gitContributions.includes("LocalGitHistoryMenuItem.vue"),
+  "file and folder Git history is dynamically contributed, with scoped diff preserved");
+ok(fileMenuSource.includes("openIdeaProjectScan()"),"IDEA project import is reachable by file-tree context menu");
+
 section("10 redactSecrets 单元");
 ok(!redactSecrets("x https://u:secret@h/p").includes("secret"), "URL userinfo 掩码");
 ok(!redactSecrets("Bearer abcdefghijklmnop").includes("abcdefghijklmnop"), "Bearer 值掩码");

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project><component name="DataSourceManagerImpl">
+  <data-source name="Local&amp;Read" uuid="u-1"><driver-ref>mysql.8</driver-ref><jdbc-url>jdbc:mysql://127.0.0.1:3307/example?useSSL=true&amp;password=NEVER-ECHO</jdbc-url><user-name>reader</user-name></data-source>
+  <data-source name="SQLite" uuid="u-2"><jdbc-url>jdbc:sqlite:/data/demo.db</jdbc-url></data-source>
+  <data-source name="PostgreSQL" uuid="u-3"><jdbc-url>jdbc:postgresql://127.0.0.1/example</jdbc-url></data-source>
+</component></project>

@@ -7,6 +7,8 @@ import { useFileStore } from "../state/useFileStore";
 import { useWorkbenchStore } from "../../../stores/useWorkbenchStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import FileTreeNode from "./FileTreeNode.vue";
+import { requestLocalGitIntent, type LocalGitMode } from "../../../composables/gitLocalNavigation";
+import { requestIdeaProjectScan } from "../../../composables/ideaProjectNavigation";
 import { Crosshair, ChevronsDownUp, ChevronsUpDown, FilePlus, FolderPlus, RefreshCw } from "@lucide/vue";
 
 // ide=true：左树右编辑（文件主视图）；ide=false：纯树（浏览视图右侧 Dock 窄栏）
@@ -14,11 +16,10 @@ const props = withDefaults(defineProps<{ ide?: boolean }>(), { ide: false });
 const ws = useFileStore();
 const workbench = useWorkbenchStore();
 const layout = useLayoutStore();
-// Context actions are contributed by active capabilities: no Files -> Git
-// direct import, and no stale menu entry when the Git capability is removed.
+// File menu is a projection of active capability contributions, not another stored source.
 const fileContextActions = computed(() => contributionRegistry
   .getSurfaceContributions(CONTRIBUTION_SLOTS.MENUS)
-  .filter(c => c.view === "file-context"));
+  .filter(item => item.view === "file-context"));
 
 // 文件夹树宽度拖拽调整（鼠标按住右边缘手柄左右拖）
 function startResize(e: MouseEvent) {
@@ -36,6 +37,21 @@ function startResize(e: MouseEvent) {
 const ftreeBody = ref<HTMLElement | null>(null);
 // Local presentation-only menu state; file operations remain owned by useFileStore.
 const fileActionsOpen = ref(false);
+function openIdeaProjectScan() {
+  const entry=ws.fileCtx.entry;
+  if(!entry)return;
+  const path=entry.is_dir?entry.path:entry.path.slice(0,entry.path.lastIndexOf("/"));
+  requestIdeaProjectScan(path);
+  ws.closeFileCtx();
+  layout.activateView("db");
+}
+function openLocalGit(mode:LocalGitMode) {
+  const entry=ws.fileCtx.entry;
+  if(!entry)return;
+  requestLocalGitIntent(entry.path,mode);
+  ws.closeFileCtx();
+  layout.activateView("repo");
+}
 
 const vLazyThumb = {
   mounted(el: HTMLElement, binding: { value: () => void }) {
@@ -240,6 +256,9 @@ onMounted(async () => {
           <ContextMenuItem @click="ws.ctxOpenInNewTab(ws.fileCtx.entry)">📑 新标签打开</ContextMenuItem>
           <ContextMenuItem @click="ws.ctxOpenInExplorer(ws.fileCtx.entry)">🗂 资源管理器打开</ContextMenuItem>
           <ContextMenuItem @click="ws.ctxOpenInTerminal(ws.fileCtx.entry)">💻 命令行终端打开</ContextMenuItem>
+          <div class="ctx-sep"></div>
+          <ContextMenuItem v-if="fileContextActions.length" @click="openLocalGit('diff')">Git · 查看未提交的改动</ContextMenuItem>
+          <ContextMenuItem @click="openIdeaProjectScan()">数据库 · 查找 IDEA 项目连接</ContextMenuItem>
           <ContextMenuItem v-if="ws.fileCtx.entry.is_dir" @click="ws.ctxFavorite(ws.fileCtx.entry)">☆ 收藏到主页</ContextMenuItem>
           <ContextMenuItem @click="ws.copyPath(ws.fileCtx.entry, true)">复制相对路径</ContextMenuItem>
           <ContextMenuItem @click="ws.copyPath(ws.fileCtx.entry, false)">复制绝对路径</ContextMenuItem>

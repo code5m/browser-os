@@ -1,18 +1,9 @@
-# IDEA 数据库配置与本地 Git 资源管理器集成
+# IDEA / 本地 Git 集成 — 文档入口
 
-## 当前落实
-- Database Studio 已提供**手动选择 IDEA 项目 `.idea/dataSources.xml`** 的导入入口。
-- XML 解析只在前端内存进行，不上传原文件；限制 2 MiB / 200 数据源，拒绝 DTD/实体；仅解析能直接识别的 MySQL JDBC 地址。
-- 导入只填入 BrowserOS 的 MySQL 连接表单；强制初始只读、TLS require、生产标记未知、密码为空。用户必须核对配置并实际验证才能连接。
-- 遇到 SSH/代理/证书、非 MySQL 数据库与无法识别的 JDBC 配置时拒绝自动导入，避免出现假的“连接成功”。
-- 不读取、不修改 JetBrains 原文件及其 Password Safe，不复制密钥；不以读取 IDE 数据源代替数据库查询门禁。
+本文件保留早期 PR #33 的上下文。请以 [统一设计与验收清单](./IDEA-DATABASE-LOCAL-GIT-INTEGRATION.md) 为当前事实来源，不要把旧的开发阶段文字视为产品已交付状态。
 
-## 与 IDEA 的完整集成目标（仍未实现）
-1. OS 授权下发现本地 JetBrains 项目和 `.idea/dataSources.xml`；增量更新、去重、来源指纹和显式确认。
-2. 持久化 DataSource Registry；现有 `DbConnectionRegistry` 仅进程内存，重启后配置会丢失。将断开连接与删除连接分开、凭据仅 OS Keyring。
-3. **已实现**原生只读本地 Git 右键历史：用户选择文件/目录后发现真实仓库和路径，不克隆；只读分页（每页 50，单次最多扫描 4,000 次提交），按真实文件/目录范围查看提交和有界 Diff（128 KiB）；仓库根和选中路径都必须位于授权目录。不处理 rename-follow，也不在右键中写入索引。
-4. **仍待实现**任意本地仓库写操作、逐块暂存、路径级 Blame、Fetch/Pull/Stash、三方冲突合并、GitHub PR/CI 必须扩展原生权限和恢复机制。
-4. 后续 Git 索引状态、逐块暂存、分页提交 DAG、Fetch/Pull/Stash、冲突合并、GitHub PR/CI 需要完善真实权限、回滚与全 GUI 回归。
-
-## 发布限制
-不得称本 PR 已经实现自动扫描或任意本地 Git 右键操作。完整能力只能在底层仓库来源和数据源持久化契约真实接通后放行。
+- 数据源导入有两条通道：授权项目目录 .idea/dataSources.xml 扫描，以及用户主动选择 XML 文件进行浏览器内存预览；不读取 JetBrains Password Safe 或任何明文密钥。
+- 数据库非秘密元数据持久保存到 BrowserOS 应用数据目录；密码仅存操作系统 Keyring；断开当前 UI 会话不删除配置，明确删除操作才撤销元数据与 BrowserOS 对应凭据。
+- Git Studio 提供真实本地 worktree 的分页历史及工作区补丁；Git Capability 提供动态文件菜单和独立只读历史弹窗，两者均不会复制仓库，也不执行 Fetch/Pull。
+- Git 本地可写暂存/提交、Fetch/Pull、Stash、三方冲突合并、Blame/rename-follow、GitHub PR/CI 的完整原生写闭环尚未完成，不得显示假可执行入口。
+- 以 GitHub master 分支为唯一主源，以六项工作流全绿及整合提交的完整验收为合并前提。

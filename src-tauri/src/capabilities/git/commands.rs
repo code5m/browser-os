@@ -736,6 +736,69 @@ pub fn git_commit_diff(
     Ok(out)
 }
 
+// The selected path itself is the authority: discover the existing .git,
+// then re-check the canonical worktree under the browser's allowed roots.
+// These commands are deliberately READ ONLY, including in detached worktrees.
+#[tauri::command]
+pub fn git_local_context(
+    app: AppHandle,
+    webview: tauri::Webview,
+    path: String,
+) -> Result<super::local_readonly::LocalGitContext, String> {
+    check_invocation_source(&webview, "git_local_context", None, &app)?;
+    let roots = workspace::allowed_roots(&app);
+    let (_, ctx) = super::local_readonly::discover_allowed(&path, &roots)?;
+    Ok(ctx)
+}
+#[tauri::command]
+pub async fn git_local_log(
+    app: AppHandle,
+    webview: tauri::Webview,
+    path: String,
+    offset: u32,
+    limit: u32,
+) -> Result<super::local_readonly::LocalLogPage, String> {
+    check_invocation_source(&webview, "git_local_log", None, &app)?;
+    let roots = workspace::allowed_roots(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let (repo, ctx) = super::local_readonly::discover_allowed(&path, &roots)?;
+        super::local_readonly::log_page(&repo, &ctx, offset, limit)
+    })
+    .await
+    .map_err(|_| "GIT_LOCAL_WORKER_FAILED".to_string())?
+}
+#[tauri::command]
+pub async fn git_local_diff(
+    app: AppHandle,
+    webview: tauri::Webview,
+    path: String,
+) -> Result<super::local_readonly::LocalPatch, String> {
+    check_invocation_source(&webview, "git_local_diff", None, &app)?;
+    let roots = workspace::allowed_roots(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let (repo, ctx) = super::local_readonly::discover_allowed(&path, &roots)?;
+        super::local_readonly::working_diff(&repo, &ctx)
+    })
+    .await
+    .map_err(|_| "GIT_LOCAL_WORKER_FAILED".to_string())?
+}
+#[tauri::command]
+pub async fn git_local_commit_diff(
+    app: AppHandle,
+    webview: tauri::Webview,
+    path: String,
+    oid: String,
+) -> Result<super::local_readonly::LocalPatch, String> {
+    check_invocation_source(&webview, "git_local_commit_diff", None, &app)?;
+    let roots = workspace::allowed_roots(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let (repo, ctx) = super::local_readonly::discover_allowed(&path, &roots)?;
+        super::local_readonly::commit_diff(&repo, &ctx, &oid)
+    })
+    .await
+    .map_err(|_| "GIT_LOCAL_WORKER_FAILED".to_string())?
+}
+
 #[cfg(test)]
 mod git_write_gate_tests {
     use super::*;

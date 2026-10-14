@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { EmptyState } from "../../../shared/ui";
-import { computed, ref } from "vue";
+import { computed, ref, onMounted, onUnmounted } from "vue";
+import { currentLocalGitIntent, subscribeLocalGitIntent } from "../../../composables/gitLocalNavigation";
 import { useRepoStore } from "../state/useRepoStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { contributionRegistry } from "../../../capability/contribution/registry";
@@ -10,6 +11,13 @@ const rp = useRepoStore();
 const layout = useLayoutStore();
 // M1-7：默认进「状态」Tab（Git UI）；「配置」仍是既有仓库配置表单（含 token 录入）。
 const tab = ref<"git" | "history" | "config">("git");
+// Workspace may navigate here before the lazy RepoPanel mounts.
+let unsubscribe=()=>{};
+onMounted(()=>{
+  if(currentLocalGitIntent())tab.value="history";
+  unsubscribe=subscribeLocalGitIntent(intent=>{if(intent)tab.value="history";});
+});
+onUnmounted(()=>unsubscribe());
 
 // Git 面板经通用 Contribution Registry 的 REPO_SUBVIEW 槽贡献：RepoPanel 只按槽渲染，
 // 不 import Git 能力内部（C3 关键，且避免 workspace→git 反向依赖环）。

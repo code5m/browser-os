@@ -52,7 +52,7 @@ async function chooseCommit(oid: string) {
   diff.value = "";
   diffLoading.value = true;
   try {
-    const result = await bridge.gitLocalCommitDiff(path, oid);
+    const result = await bridge.gitLocalHistoryDiff(path, oid);
     if (id === diffRequestId && path === git.localHistoryPath) diff.value = result || "此版本在选定范围内没有文本差异。";
   } catch (e) {
     if (id === diffRequestId && path === git.localHistoryPath) diff.value = describe(e);
