@@ -33,14 +33,15 @@ function attr(attributes: string, name: string): string {
   return decoded(match?.[2] ?? "").trim();
 }
 function safeDisplay(value: string, max=128): string {
-  return value.replace(/[\\u0000-\\u001f\\u007f]/g,"").slice(0,max);
+  return value.replace(/[\u0000-\u001f\u007f]/g,"").slice(0,max);
 }
 export function ideaProjectDataSourcesPath(project: string): string {
-  const clean = project.trim().replace(/\\\\/g,"/");
-  if (!clean || clean.length > 4096 || clean.includes("\\0") || !clean.startsWith("/")) {
+  const clean = project.trim();
+  if (!clean || clean.length > 4096 || clean.includes("\0") || !clean.startsWith("/")) {
     throw new Error("请选择本地项目的绝对目录路径");
   }
-  const path = clean.replace(/\\/+$/, "").replace(/\\/+$/, "");
+  let path=clean;
+  while (path.length > 1 && path.endsWith("/")) path=path.slice(0,-1);
   if (path.endsWith("/.idea/dataSources.xml")) return path;
   if (path.endsWith("/.idea")) return path + "/dataSources.xml";
   if (path.endsWith(".xml")) throw new Error("只允许读取项目 .idea/dataSources.xml，禁止读取 dataSources.local.xml");
