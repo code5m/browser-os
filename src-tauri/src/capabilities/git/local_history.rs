@@ -174,6 +174,42 @@ mod tests {
         assert!(!affects(Path::new("src/main.rs"), Path::new("src/main2.rs")));
     }
     #[test]
+    fn reads_real_directory_history_without_neighbor_prefix_matches() {
+        use std::fs;
+        let root = std::env::temp_dir().join(format!("browseros-git-local-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("src2")).unwrap();
+        let repo = Repository::init(&root).unwrap();
+        let sig = git2::Signature::now("Fixture", "fixture@example.invalid").unwrap();
+        fs::write(root.join("src/item.txt"), "hello\n").unwrap();
+        fs::write(root.join("src2/item.txt"), "other\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_all(["src/item.txt", "src2/item.txt"].iter(), git2::IndexAddOption::DEFAULT, None).unwrap();
+        let first_tree_id = index.write_tree().unwrap();
+        let first_tree = repo.find_tree(first_tree_id).unwrap();
+        let first = repo.commit(Some("HEAD"), &sig, &sig, "first", &first_tree, &[]).unwrap();
+        drop(first_tree);
+        fs::write(root.join("src2/item.txt"), "modified\n").unwrap();
+        index.add_path(Path::new("src2/item.txt")).unwrap();
+        let second_tree_id = index.write_tree().unwrap();
+        let second_tree = repo.find_tree(second_tree_id).unwrap();
+        let first_commit = repo.find_commit(first).unwrap();
+        let second = repo.commit(Some("HEAD"), &sig, &sig, "only src2", &second_tree, &[&first_commit]).unwrap();
+        drop(first_commit); drop(second_tree); drop(index); drop(repo);
+
+        let authorized = vec![root.canonicalize().unwrap()];
+        let result = read_history(root.join("src").to_str().unwrap(), &authorized, 0).unwrap();
+        assert_eq!(result.entries.len(), 1, "src2 change must not appear in src history");
+        assert_eq!(result.entries[0].oid, first.to_string());
+        let diff = read_commit_diff(root.join("src").to_str().unwrap(), &authorized, &first.to_string()).unwrap();
+        assert!(diff.contains("src/item.txt"), "selected path included");
+        assert!(!diff.contains("src2/item.txt"), "similarly named neighboring directory excluded");
+        let next = read_history(root.join("src2").to_str().unwrap(), &authorized, 0).unwrap();
+        assert_eq!(next.entries[0].oid, second.to_string());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn refusing_paths_outside_authorized_roots() {
         let roots = vec![PathBuf::from("/unlikely-browseros-test-root-not-present")];
         assert!(authorized_repo("/etc/passwd", &roots).is_err());
