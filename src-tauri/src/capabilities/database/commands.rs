@@ -15,9 +15,9 @@
 //!
 //! 凭据：password 永不进 `DbConnectionConfig`（F2），不进审计 detail（G-1 / G-3）。
 
+use super::profiles;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use super::profiles;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -50,21 +50,28 @@ impl Default for DbConnectionRegistry {
 /// Load once per process while holding the initialized lock.
 /// Metadata never includes passwords or JDBC URLs; Keyring remains the sole
 /// credential source, including after BrowserOS is restarted.
-fn ensure_profiles_loaded(app:&AppHandle)->Result<(),String>{
-    let reg=app.state::<DbConnectionRegistry>();
-    let mut loaded=reg.loaded.lock().map_err(|_|"DB_REGISTRY_LOCK_FAILED")?;
-    if *loaded {return Ok(());}
-    let file=profiles::path_for(app)?;
-    let records=profiles::read_file(&file)?;
-    let mut configs=reg.configs.lock().map_err(|_|"DB_REGISTRY_LOCK_FAILED")?;
-    for cfg in records {configs.insert(cfg.id.clone(),cfg);}
-    *loaded=true;
+fn ensure_profiles_loaded(app: &AppHandle) -> Result<(), String> {
+    let reg = app.state::<DbConnectionRegistry>();
+    let mut loaded = reg.loaded.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
+    if *loaded {
+        return Ok(());
+    }
+    let file = profiles::path_for(app)?;
+    let records = profiles::read_file(&file)?;
+    let mut configs = reg.configs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
+    for cfg in records {
+        configs.insert(cfg.id.clone(), cfg);
+    }
+    *loaded = true;
     Ok(())
 }
-fn persist_snapshot(app:&AppHandle,map:&HashMap<String,DbConnectionConfig>)->Result<(),String>{
-    let mut records:Vec<_>=map.values().cloned().collect();
-    records.sort_by(|a,b|a.id.cmp(&b.id));
-    profiles::write_file(&profiles::path_for(app)?,&records)
+fn persist_snapshot(
+    app: &AppHandle,
+    map: &HashMap<String, DbConnectionConfig>,
+) -> Result<(), String> {
+    let mut records: Vec<_> = map.values().cloned().collect();
+    records.sort_by(|a, b| a.id.cmp(&b.id));
+    profiles::write_file(&profiles::path_for(app)?, &records)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,7 +126,10 @@ pub fn db_connect(
     ensure_profiles_loaded(&app)?;
     {
         let reg = app.state::<DbConnectionRegistry>();
-        if { let configs=reg.configs.lock().unwrap(); configs.len() >= 64 && !configs.contains_key(&cfg.id) } {
+        if {
+            let configs = reg.configs.lock().unwrap();
+            configs.len() >= 64 && !configs.contains_key(&cfg.id)
+        } {
             return Err("DB_CONNECTION_LIMIT".into());
         }
         if reg
@@ -136,23 +146,23 @@ pub fn db_connect(
     let roots = allowed_roots(&app);
     let kind = cfg.kind;
     let conn_id = cfg.id.clone();
-    let secret = match password.as_deref().filter(|s|!s.is_empty()) {
+    let secret = match password.as_deref().filter(|s| !s.is_empty()) {
         Some(p) => Some(p.to_string()),
         None => KeyringStore::get_token(&credential_key(&conn_id)).ok(),
     };
     let _probe = DbPool::connect(&cfg, secret.as_deref(), &roots)
         .map_err(|e| format!("{}: {}", e.code_str(), e.message))?;
     // G-1：凭据（若有）写入系统密钥库，键必须带 `db:` 前缀，与 git 的 repo_id 命名空间隔离。
-    if let Some(p) = password.filter(|p|!p.is_empty()) {
+    if let Some(p) = password.filter(|p| !p.is_empty()) {
         KeyringStore::save_token(&credential_key(&conn_id), &p)?;
     }
     {
         let reg = app.state::<DbConnectionRegistry>();
-        let mut guard=reg.configs.lock().map_err(|_|"DB_REGISTRY_LOCK_FAILED")?;
-        let mut updated=guard.clone();
-        updated.insert(conn_id.clone(),cfg);
-        persist_snapshot(&app,&updated)?;
-        *guard=updated;
+        let mut guard = reg.configs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
+        let mut updated = guard.clone();
+        updated.insert(conn_id.clone(), cfg);
+        persist_snapshot(&app, &updated)?;
+        *guard = updated;
     }
     // 审计 detail 禁含 SQL/凭据（G-3）：只记连接标识与类型。
     log_audit(
@@ -263,13 +273,13 @@ pub fn db_disconnect(
         return Err("DB_QUERY_BUSY".into());
     }
     let removed = {
-        let reg=app.state::<DbConnectionRegistry>();
-        let mut guard=reg.configs.lock().map_err(|_|"DB_REGISTRY_LOCK_FAILED")?;
-        let mut updated=guard.clone();
-        let found=updated.remove(&conn_id).is_some();
+        let reg = app.state::<DbConnectionRegistry>();
+        let mut guard = reg.configs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
+        let mut updated = guard.clone();
+        let found = updated.remove(&conn_id).is_some();
         if found {
-            persist_snapshot(&app,&updated)?;
-            *guard=updated;
+            persist_snapshot(&app, &updated)?;
+            *guard = updated;
         }
         found
     };
