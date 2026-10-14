@@ -16,6 +16,7 @@
 //! 凭据：password 永不进 `DbConnectionConfig`（F2），不进审计 detail（G-1 / G-3）。
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -44,6 +45,50 @@ impl Default for DbConnectionRegistry {
     }
 }
 
+
+const MAX_DB_SAVED_CONNECTIONS: usize = 64;
+
+fn db_registry_path(app: &AppHandle) -> std::path::PathBuf {
+    crate::workspace::data_dir(app).join("db_connections.json")
+}
+
+/// Persistent metadata only. Passwords are absent from DbConnectionConfig
+/// by construction and remain exclusively in the OS keyring.
+fn persist_configs_at(path: &Path, configs: &[DbConnectionConfig]) -> Result<(), String> {
+    if configs.len() > MAX_DB_SAVED_CONNECTIONS { return Err("DB_CONNECTION_LIMIT".into()); }
+    let parent = path.parent().ok_or("DB_CONFIG_PATH_INVALID")?;
+    std::fs::create_dir_all(parent).map_err(|_| "DB_CONFIG_DIR_WRITE_FAILED")?;
+    crate::workspace::save_json_list_at(path, configs, "数据库连接配置")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|_| "DB_CONFIG_PERMISSION_FAILED")?;
+    }
+    Ok(())
+}
+
+fn persist_registry(app: &AppHandle, configs: &HashMap<String, DbConnectionConfig>) -> Result<(), String> {
+    let mut values: Vec<_> = configs.values().cloned().collect();
+    values.sort_by(|a,b| a.id.cmp(&b.id));
+    persist_configs_at(&db_registry_path(app), &values)
+}
+
+fn load_registry_if_empty(app: &AppHandle) {
+    let reg = app.state::<DbConnectionRegistry>();
+    let mut current = reg.configs.lock().unwrap();
+    if !current.is_empty() { return; }
+    // The workspace reader preserves corrupted originals with a .corrupt
+    // suffix instead of overwriting them with an empty registry.
+    let saved: Vec<DbConnectionConfig> = crate::workspace::load_json_list_at(
+        &db_registry_path(app), "数据库连接配置");
+    for cfg in saved.into_iter().take(MAX_DB_SAVED_CONNECTIONS) {
+        if Uuid::parse_str(&cfg.id).is_ok() && !cfg.id.is_empty() {
+            current.insert(cfg.id.clone(), cfg);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbConnectResult {
     pub conn_id: String,
@@ -56,6 +101,7 @@ pub fn db_list_connections(
     webview: tauri::Webview,
 ) -> Result<Vec<DbConnectionConfig>, String> {
     check_invocation_source(&webview, "db_list_connections", None, &app)?;
+    load_registry_if_empty(&app);
     let mut configs: Vec<_> = app
         .state::<DbConnectionRegistry>()
         .configs
@@ -92,9 +138,11 @@ pub fn db_connect(
     password: Option<String>,
 ) -> Result<DbConnectResult, String> {
     check_invocation_source(&webview, "db_connect", None, &app)?;
+    load_registry_if_empty(&app);
     {
         let reg = app.state::<DbConnectionRegistry>();
-        if reg.configs.lock().unwrap().len() >= 64 {
+        let configs = reg.configs.lock().unwrap();
+        if configs.len() >= MAX_DB_SAVED_CONNECTIONS && !configs.contains_key(&cfg.id) {
             return Err("DB_CONNECTION_LIMIT".into());
         }
         if reg
@@ -111,15 +159,32 @@ pub fn db_connect(
     let roots = allowed_roots(&app);
     let kind = cfg.kind;
     let conn_id = cfg.id.clone();
-    let _probe = DbPool::connect(&cfg, password.as_deref(), &roots)
+    // When reconnecting an imported connection, reuse only its own existing
+    // keyring entry; never read the JetBrains Password Safe.
+    let known_password = if cfg.kind != SupportedDb::Sqlite
+        && password.as_deref().unwrap_or_default().is_empty() {
+        KeyringStore::get_token(&credential_key(&conn_id)).ok()
+    } else { None };
+    let probe_password = password.as_deref().filter(|p| !p.is_empty())
+        .or(known_password.as_deref());
+    let _probe = DbPool::connect(&cfg, probe_password, &roots)
         .map_err(|e| format!("{}: {}", e.code_str(), e.message))?;
     // G-1：凭据（若有）写入系统密钥库，键必须带 `db:` 前缀，与 git 的 repo_id 命名空间隔离。
-    if let Some(p) = password {
+    if let Some(p) = password.filter(|p| !p.is_empty()) {
         KeyringStore::save_token(&credential_key(&conn_id), &p)?;
     }
     {
         let reg = app.state::<DbConnectionRegistry>();
-        reg.configs.lock().unwrap().insert(conn_id.clone(), cfg);
+        let mut guard = reg.configs.lock().unwrap();
+        let prior = guard.insert(conn_id.clone(), cfg);
+        if let Err(e) = persist_registry(&app, &guard) {
+            if let Some(original) = prior {
+                guard.insert(conn_id.clone(), original);
+            } else {
+                guard.remove(&conn_id);
+            }
+            return Err(e);
+        }
     }
     // 审计 detail 禁含 SQL/凭据（G-3）：只记连接标识与类型。
     log_audit(
@@ -141,6 +206,7 @@ pub async fn db_query(
     query_id: Option<String>,
 ) -> Result<DbQueryResult, String> {
     check_invocation_source(&webview, "db_query", None, &app)?;
+    load_registry_if_empty(&app);
 
     // 取登记配置（db_connect 未登记即视为未连接）。
     let cfg = {
@@ -217,6 +283,7 @@ pub fn db_disconnect(
     conn_id: String,
 ) -> Result<(), String> {
     check_invocation_source(&webview, "db_disconnect", None, &app)?;
+    load_registry_if_empty(&app);
     if app
         .state::<DbConnectionRegistry>()
         .queries
@@ -230,7 +297,13 @@ pub fn db_disconnect(
     let removed = {
         let reg = app.state::<DbConnectionRegistry>();
         let mut guard = reg.configs.lock().unwrap();
-        guard.remove(&conn_id).is_some()
+        if let Some(prior) = guard.remove(&conn_id) {
+            if let Err(e) = persist_registry(&app, &guard) {
+                guard.insert(conn_id.clone(), prior);
+                return Err(e);
+            }
+            true
+        } else { false }
     };
     // 一并撤销密钥库中的凭据（G-1：命名空间隔离，不影响 git 的 repo_id）。
     let _ = KeyringStore::delete_token(&credential_key(&conn_id));
@@ -243,5 +316,40 @@ pub fn db_disconnect(
         Ok(())
     } else {
         Err("DB_NOT_CONNECTED".to_string())
+    }
+}
+
+#[cfg(test)]
+mod persistent_registry_tests {
+    use super::*;
+    use crate::domain::DbSslMode;
+    #[test]
+    fn database_metadata_survives_roundtrip_without_passwords() {
+        let path = std::env::temp_dir().join(format!("browseros-db-registry-{}.json", Uuid::new_v4()));
+        let cfg = DbConnectionConfig {
+            id: Uuid::new_v4().to_string(),
+            name: "IDEA imported MySQL".into(),
+            kind: SupportedDb::MySql,
+            host: Some("127.0.0.1".into()),
+            port: Some(3306),
+            database: "sample".into(),
+            username: Some("reader".into()),
+            ssl_mode: DbSslMode::Require,
+            allow_write: false,
+            production_hint: None,
+            enabled: true,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        persist_configs_at(&path, &[cfg.clone()]).expect("persist config");
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("password"));
+        let next: Vec<DbConnectionConfig> = crate::workspace::load_json_list_at(
+            &path, "test db registry");
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].id, cfg.id);
+        assert_eq!(next[0].database, "sample");
+        assert!(!next[0].allow_write);
+        let _ = std::fs::remove_file(path);
     }
 }
