@@ -5,6 +5,7 @@ import { useFileStore } from "../state/useFileStore";
 import { useWorkbenchStore } from "../../../stores/useWorkbenchStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import FileTreeNode from "./FileTreeNode.vue";
+import { requestLocalGitIntent, type LocalGitMode } from "../../../composables/gitLocalNavigation";
 import { Crosshair, ChevronsDownUp, ChevronsUpDown, FilePlus, FolderPlus, RefreshCw } from "@lucide/vue";
 
 // ide=true：左树右编辑（文件主视图）；ide=false：纯树（浏览视图右侧 Dock 窄栏）
@@ -29,6 +30,13 @@ function startResize(e: MouseEvent) {
 const ftreeBody = ref<HTMLElement | null>(null);
 // Local presentation-only menu state; file operations remain owned by useFileStore.
 const fileActionsOpen = ref(false);
+function openLocalGit(mode:LocalGitMode) {
+  const entry=ws.fileCtx.entry;
+  if(!entry)return;
+  requestLocalGitIntent(entry.path,mode);
+  ws.closeFileCtx();
+  layout.activateView("repo");
+}
 
 const vLazyThumb = {
   mounted(el: HTMLElement, binding: { value: () => void }) {
@@ -233,6 +241,9 @@ onMounted(async () => {
           <ContextMenuItem @click="ws.ctxOpenInNewTab(ws.fileCtx.entry)">📑 新标签打开</ContextMenuItem>
           <ContextMenuItem @click="ws.ctxOpenInExplorer(ws.fileCtx.entry)">🗂 资源管理器打开</ContextMenuItem>
           <ContextMenuItem @click="ws.ctxOpenInTerminal(ws.fileCtx.entry)">💻 命令行终端打开</ContextMenuItem>
+          <div class="ctx-sep"></div>
+          <ContextMenuItem @click="openLocalGit('history')">Git · 查看{{ws.fileCtx.entry.is_dir?'目录':'文件'}}提交历史</ContextMenuItem>
+          <ContextMenuItem @click="openLocalGit('diff')">Git · 查看未提交的改动</ContextMenuItem>
           <ContextMenuItem v-if="ws.fileCtx.entry.is_dir" @click="ws.ctxFavorite(ws.fileCtx.entry)">☆ 收藏到主页</ContextMenuItem>
           <ContextMenuItem @click="ws.copyPath(ws.fileCtx.entry, true)">复制相对路径</ContextMenuItem>
           <ContextMenuItem @click="ws.copyPath(ws.fileCtx.entry, false)">复制绝对路径</ContextMenuItem>
