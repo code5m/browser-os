@@ -69,6 +69,8 @@ export const useGitStore = defineStore("git", () => {
 
   // ===== 只读状态（M1-5） =====
   const repoId = ref<string | null>(null);
+  // Transient context-menu scope. This never changes the configured repository.
+  const localHistoryPath = ref<string | null>(null);
   const status = ref<GitFileStatus[]>([]);
   const branches = ref<GitBranch[]>([]);
   const diff = ref<GitDiffResult | null>(null);
@@ -132,6 +134,7 @@ export const useGitStore = defineStore("git", () => {
       diffLoading.value = false;
       preview.value = null;
       dangerousAck.value = false;
+      localHistoryPath.value = null;
     },
   });
   async function loadStatus() {
@@ -381,8 +384,17 @@ export const useGitStore = defineStore("git", () => {
   const checkoutBranch = (branch: string) => requestWrite("checkout_branch", { branch });
   const push = () => requestWrite("push");
 
+  function openLocalHistory(path: string) {
+    if (!lifecycleReady() || !path) return;
+    localHistoryPath.value = path;
+  }
+  function closeLocalHistory() { localHistoryPath.value = null; }
+
   return {
     repoId,
+    localHistoryPath,
+    openLocalHistory,
+    closeLocalHistory,
     status,
     branches,
     diff,

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ContextMenu, ContextMenuItem } from "../../../shared/ui";
-import { onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
+import { contributionRegistry } from "../../../capability/contribution/registry";
+import { CONTRIBUTION_SLOTS } from "../../../capability/contribution/types";
 import { useFileStore } from "../state/useFileStore";
 import { useWorkbenchStore } from "../../../stores/useWorkbenchStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
@@ -12,6 +14,11 @@ const props = withDefaults(defineProps<{ ide?: boolean }>(), { ide: false });
 const ws = useFileStore();
 const workbench = useWorkbenchStore();
 const layout = useLayoutStore();
+// Context actions are contributed by active capabilities: no Files -> Git
+// direct import, and no stale menu entry when the Git capability is removed.
+const fileContextActions = computed(() => contributionRegistry
+  .getSurfaceContributions(CONTRIBUTION_SLOTS.MENUS)
+  .filter(c => c.view === "file-context"));
 
 // 文件夹树宽度拖拽调整（鼠标按住右边缘手柄左右拖）
 function startResize(e: MouseEvent) {
@@ -236,6 +243,8 @@ onMounted(async () => {
           <ContextMenuItem v-if="ws.fileCtx.entry.is_dir" @click="ws.ctxFavorite(ws.fileCtx.entry)">☆ 收藏到主页</ContextMenuItem>
           <ContextMenuItem @click="ws.copyPath(ws.fileCtx.entry, true)">复制相对路径</ContextMenuItem>
           <ContextMenuItem @click="ws.copyPath(ws.fileCtx.entry, false)">复制绝对路径</ContextMenuItem>
+          <component v-for="item in fileContextActions" :key="item.id" :is="item.component"
+            :entry="ws.fileCtx.entry" />
           <div class="ctx-sep"></div>
           <ContextMenuItem @click="ws.ctxRename(ws.fileCtx.entry)">✏ 重命名</ContextMenuItem>
           <ContextMenuItem danger @click="ws.ctxDelete(ws.fileCtx.entry)">🗑 删除</ContextMenuItem>

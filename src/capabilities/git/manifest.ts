@@ -20,6 +20,8 @@ export const gitManifest: CapabilityDefinition = defineIntegratedCapability({
   contributions: [
     { id: "git.repo.panel", slot: "repo-subview", type: "surface", view: "git" },
     { id: "git.repo.history", slot: "repo-subview", type: "surface", view: "history" },
+    { id: "git.file.local-history-action", slot: "menus", type: "surface", view: "file-context" },
+    { id: "git.file.local-history-dialog", slot: "global-overlay", type: "surface" },
   ],
   manifestResources: [
     { kind: "PROCESS", ownership: "owned", evidence: "scripts/measure-resources.mjs" },

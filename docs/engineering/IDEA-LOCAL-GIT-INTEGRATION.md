@@ -10,7 +10,8 @@
 ## 与 IDEA 的完整集成目标（仍未实现）
 1. OS 授权下发现本地 JetBrains 项目和 `.idea/dataSources.xml`；增量更新、去重、来源指纹和显式确认。
 2. 持久化 DataSource Registry；现有 `DbConnectionRegistry` 仅进程内存，重启后配置会丢失。将断开连接与删除连接分开、凭据仅 OS Keyring。
-3. Git 文件/目录右键需要先绑定**真实本地 Git 根目录**，不能使用当前 `repo_id` 管理的应用克隆替代。添加仓库发现、嵌套/worktree 边界、只读 path scoped history/diff/blame，再接原生双阶段写任务。
+3. **已实现**原生只读本地 Git 右键历史：用户选择文件/目录后发现真实仓库和路径，不克隆；只读分页（每页 50，单次最多扫描 4,000 次提交），按真实文件/目录范围查看提交和有界 Diff（128 KiB）；仓库根和选中路径都必须位于授权目录。不处理 rename-follow，也不在右键中写入索引。
+4. **仍待实现**任意本地仓库写操作、逐块暂存、路径级 Blame、Fetch/Pull/Stash、三方冲突合并、GitHub PR/CI 必须扩展原生权限和恢复机制。
 4. 后续 Git 索引状态、逐块暂存、分页提交 DAG、Fetch/Pull/Stash、冲突合并、GitHub PR/CI 需要完善真实权限、回滚与全 GUI 回归。
 
 ## 发布限制

@@ -2142,6 +2142,24 @@ states:
     adr: ADR-P1A-3
     status: CURRENT_FACT
 
+  localHistoryPath:
+    owner: useGitStore
+    meaning: 从文件右键明确选中的本地 Git 历史路径，弹窗关闭或 Git 停用即清空
+    not_meaning:
+      - 已配置的资产同步仓库
+      - Git 写操作目标
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGitStore.openLocalHistory
+      - useGitStore.closeLocalHistory
+      - useGitStore.registerGitLifecycleBinding
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
   # ---------------- Git（owner: useGitStore，双段写闸门，SG-C）----------------
   # 注册键对齐真实代码符号（此前误用 git 前缀语义名，导致 R2 失配 / 漂移，已按 Phase D Locator Repair 纠正）。
   repoId:
