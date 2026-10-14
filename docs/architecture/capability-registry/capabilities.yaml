@@ -223,7 +223,8 @@ capabilities:
     dependsOn:
       - credential
       - bridge
-    optionalDependencies: []
+    # 仅 IDEA 项目配置发现功能读取 Workspace 公开只读文件接口。
+    optionalDependencies: [workspace]
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
