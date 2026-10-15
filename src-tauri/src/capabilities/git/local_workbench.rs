@@ -5,8 +5,9 @@
 use crate::capabilities::git::local_readonly::{discover_allowed, LocalGitContext};
 use crate::shared::invocation::check_invocation_source;
 use crate::workspace;
-use git2::{BranchType, Cred, FetchOptions, IndexAddOption, RemoteCallbacks, Repository, Status, StatusOptions, StashFlags};
+use git2::{BranchType, Cred, FetchOptions, RemoteCallbacks, Repository, Status, StatusOptions, StashFlags};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -30,7 +31,7 @@ struct LocalWriteTicket {
     pr: Option<u32>,
     pr_head: Option<String>,
     expected_head: Option<String>,
-    expected_index: git2::Oid,
+    expected_index: String,
     expires: Instant,
 }
 
@@ -164,12 +165,19 @@ fn approved_remote(repo:&Repository)->Result<git2::Remote<'_>,String>{
     }
     Ok(remote)
 }
-fn index_snapshot(repo:&Repository)->Result<git2::Oid,String>{
-    let index=repo.index().map_err(|e|errors(e,"GIT_LOCAL_INDEX_FAILED"))?;
-    // Snapshot index file content via the in-memory tree hash, with no disk write.
-    // Conflicted index cannot write a tree: use the zero oid and revalidate state.
-    Ok(index.write_tree_to(repo).unwrap_or_else(|_|git2::Oid::zero()))
+fn index_snapshot(repo:&Repository)->Result<String,String>{
+    // Pure read: never call Index::write_tree_to during a PREVIEW. That API
+    // writes Git objects even if it does not modify the index file.
+    let path=repo.path().join("index");
+    let bytes=match std::fs::read(path){
+        Ok(data)=>data,
+        Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Vec::new(),
+        Err(_)=>return Err("GIT_LOCAL_INDEX_READ_FAILED".into()),
+    };
+    if bytes.len()>32*1024*1024{return Err("GIT_LOCAL_INDEX_TOO_LARGE".into())}
+    Ok(format!("{:x}",Sha256::digest(&bytes)))
 }
+
 fn check_preconditions(repo:&Repository,ctx:&LocalGitContext,action:&str,branch:Option<&str>,message:Option<&str>,resolved:Option<&str>,pr:Option<u32>)->Result<String,String>{
     if !allowed_action(action) { return Err("GIT_LOCAL_ACTION_DENIED".into()) }
     match action {
@@ -472,6 +480,23 @@ pub async fn git_local_conflict(app:AppHandle,webview:Webview,path:String)->Resu
         let ids=[1,2,3].map(|s|index.get_path(rel,s).map(|e|e.id).unwrap_or_else(git2::Oid::zero));
         if ids.iter().all(|o|o.is_zero()){return Err("GIT_LOCAL_NO_FILE_CONFLICT".into())}
         Ok::<_,String>(LocalConflict{path:ctx.relative_path,ancestor:git_blob_text(&repo,ids[0])?,ours:git_blob_text(&repo,ids[1])?,theirs:git_blob_text(&repo,ids[2])?})
+    }).await.map_err(|_|"GIT_LOCAL_WORKER_FAILED".to_string())?
+}
+
+#[tauri::command]
+pub async fn git_local_github(app:AppHandle,webview:Webview,path:String)->Result<serde_json::Value,String>{
+    check_invocation_source(&webview,"git_local_github",None,&app)?;
+    let roots=workspace::allowed_roots(&app);
+    tauri::async_runtime::spawn_blocking(move||{
+        let (repo,_)=discover_allowed(&path,&roots)?;
+        let slug=github_slug(&repo)?;
+        // gh must already be installed and authorized by the user. No OAuth
+        // tokens enter BrowserOS, no token or stderr content is ever returned.
+        let prs=gh_output(&["pr","list","--repo",&slug,"--state","open","--limit","30","--json",
+            "number,title,state,headRefName,baseRefName,reviewDecision,isDraft,mergeStateStatus,statusCheckRollup,url"])?;
+        let runs=gh_output(&["run","list","--repo",&slug,"--limit","20","--json",
+            "databaseId,displayTitle,workflowName,status,conclusion,url,headSha"])?;
+        Ok::<_,String>(serde_json::json!({"repository":slug,"prs":prs,"runs":runs}))
     }).await.map_err(|_|"GIT_LOCAL_WORKER_FAILED".to_string())?
 }
 
