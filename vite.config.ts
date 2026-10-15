@@ -1,9 +1,10 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { compactXtermPrivateChunk } from "./scripts/compact-xterm-private-chunk.mjs";
+import { compactVueScopeIds } from "./scripts/compact-vue-scope-ids.mjs";
 
 export default defineConfig({
-  plugins: [vue(), compactXtermPrivateChunk()],
+  plugins: [vue(), compactXtermPrivateChunk(), compactVueScopeIds()],
   // All 71 in-repository Vue SFCs use <script setup>; omit unused Options API
   // support from the production runtime rather than raising bundle-size limits.
   define: { __VUE_OPTIONS_API__: false },
