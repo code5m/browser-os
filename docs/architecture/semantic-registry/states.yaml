@@ -2179,6 +2179,24 @@ states:
     adr_required: false
     status: CURRENT_FACT
 
+  localActionIntent:
+    owner: useGitStore
+    meaning: Git 右键菜单打开时的本地操作意图（history/stage/commit），仅用于预选原仓库工作台，不直接写入 Git
+    not_meaning:
+      - 已确认的 Git 写操作
+      - 远端 PR 合并许可
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGitStore.openLocalHistory
+      - useGitStore.closeLocalHistory
+      - useGitStore.registerGitLifecycleBinding
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
   # ---------------- Git（owner: useGitStore，双段写闸门，SG-C）----------------
   # 注册键对齐真实代码符号（此前误用 git 前缀语义名，导致 R2 失配 / 漂移，已按 Phase D Locator Repair 纠正）。
   repoId:
