@@ -144,7 +144,7 @@ commands.allow = [
     "plugin_keys_add",
     "plugin_keys_list",
     "plugin_keys_remove",
-    "db_list_connections", "db_cancel", "vault_open", "vault_save_note", "grid_read_replies", "archive_replies", "git_log", "git_commit_diff", "git_local_context", "git_local_log", "git_local_diff", "git_local_commit_diff",
+    "db_list_connections", "db_cancel", "vault_open", "vault_save_note", "grid_read_replies", "archive_replies", "git_log", "git_commit_diff", "git_local_context", "git_local_log", "git_local_diff", "git_local_commit_diff", "git_local_history", "git_local_history_diff",
     "import_browser_credentials",
     "list_browser_credentials",
     "fill_browser_credential",

@@ -468,6 +468,25 @@ states:
     status: ACCEPTED_ADR
 
   # ---------------- Workspace / FilePanel（Phase 2）----------------
+  # 文件上下文菜单由当前启用的能力动态贡献。UI 只提供派生投影，不建第二份缓存。
+  fileContextActions:
+    owner: contributionRegistry
+    meaning: 文件树右键菜单中可见的能力动态贡献项（含 Git），随能力启停即时变化
+    not_meaning:
+      - 文件本身的编辑或暂存状态
+      - 已复制、持久化的 Git 菜单配置
+    kind: derived
+    derived: true
+    derived_from:
+      - CONTRIBUTION_SLOTS.MENUS
+      - contributionRegistry.getSurfaceContributions
+    canonical_writer: []
+    forbidden_writers:
+      - everyone（派生量禁止写入）
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
   filePath:
     owner: useFileStore
     meaning: 文件浏览器/覆盖编辑器当前激活位置（地址真源）
@@ -2140,6 +2159,24 @@ states:
     duplicate_names: []
     adr_required: true
     adr: ADR-P1A-3
+    status: CURRENT_FACT
+
+  localHistoryPath:
+    owner: useGitStore
+    meaning: 从文件右键明确选中的本地 Git 历史路径，弹窗关闭或 Git 停用即清空
+    not_meaning:
+      - 已配置的资产同步仓库
+      - Git 写操作目标
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGitStore.openLocalHistory
+      - useGitStore.closeLocalHistory
+      - useGitStore.registerGitLifecycleBinding
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
     status: CURRENT_FACT
 
   # ---------------- Git（owner: useGitStore，双段写闸门，SG-C）----------------

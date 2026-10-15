@@ -5,7 +5,7 @@ import { redactSecrets } from "../../../utils/redact";
 import { parseUnifiedPatch } from "../model/patchView";
 import type { LocalGitMode } from "../../../composables/gitLocalNavigation";
 
-const props=defineProps<{path:string;mode:LocalGitMode}>();
+const props=defineProps<{path:string;mode:LocalGitMode;closeLabel?:string;searchId?:string}>();
 const emit=defineEmits<{close:[]}>();
 type Info=Awaited<ReturnType<typeof bridge.gitLocalContext>>;
 type Entry=Awaited<ReturnType<typeof bridge.gitLocalLog>>["commits"][number];
@@ -83,7 +83,7 @@ onUnmounted(()=>{++generation;++detailGeneration;});
       <strong>本地 Git（直接读取原仓库）</strong>
       <span v-if="context" class="local-branch">{{context.branch}}</span>
       <button @click="loadContext">刷新</button>
-      <button @click="emit('close')">返回普通仓库</button>
+      <button @click="emit('close')">{{closeLabel || "返回普通仓库"}}</button>
     </header>
     <p class="local-scope" :title="path">{{context ? context.root : path}}
       <span v-if="context?.relative_path"> / {{context.relative_path}}</span>
@@ -99,8 +99,8 @@ onUnmounted(()=>{++generation;++detailGeneration;});
     </div>
     <div v-if="context" class="local-body">
       <aside class="local-commits">
-        <label class="sr-only" for="local-git-search">过滤当前页提交</label>
-        <input id="local-git-search" v-model="search" type="search" placeholder="搜索当前页提交、作者、哈希" />
+        <label class="sr-only" :for="searchId || 'local-git-search'">过滤当前页提交</label>
+        <input :id="searchId || 'local-git-search'" v-model="search" type="search" placeholder="搜索当前页提交、作者、哈希" />
         <div v-if="loading" class="local-hint">正在读取提交历史…</div>
         <div v-else-if="!visible.length" class="local-hint">当前页没有符合范围的提交</div>
         <button v-for="commit in visible" :key="commit.oid" class="local-commit"

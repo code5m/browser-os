@@ -16,5 +16,6 @@
 //!
 //! 依赖（SHARED）：`crate::domain` / `crate::keyring_store`（token）/ `crate::workspace`（repo dir）。
 pub mod commands;
+pub mod local_history;
 pub mod local_readonly;
 pub mod sync;

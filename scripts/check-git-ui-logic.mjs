@@ -300,9 +300,17 @@ ideaNavigation.requestIdeaProjectScan("/home/dev/project");
 ok(ideaNavigation.takeIdeaProjectPath()==="/home/dev/project","file-menu IDEA path can be consumed");
 ok(ideaNavigation.takeIdeaProjectPath()===null,"IDEA project path is single-use");
 const fileMenuSource=readFileSync(ROOT+"src/capabilities/workspace/ui/FilePanel.vue","utf8");
-ok(fileMenuSource.includes("openLocalGit('history')") && fileMenuSource.includes("openLocalGit('diff')"),
-  "file and folder context menu exposes real Git read-only entry points");
+// History is capability-contributed so disabling Git removes the menu entry;
+ // only the scoped worktree diff remains a direct high-frequency Files action.
+const gitContributions = readFileSync(ROOT+"src/capabilities/git/index.ts","utf8");
+ok(fileMenuSource.includes("CONTRIBUTION_SLOTS.MENUS") &&
+  fileMenuSource.includes("fileContextActions") &&
+  fileMenuSource.includes("openLocalGit('diff')") &&
+  gitContributions.includes("LocalGitHistoryMenuItem.vue"),
+  "file and folder Git history is dynamically contributed, with scoped diff preserved");
 ok(fileMenuSource.includes("openIdeaProjectScan()"),"IDEA project import is reachable by file-tree context menu");
+const localHistoryDialog = readFileSync(ROOT+"src/capabilities/git/ui/LocalGitHistoryDialog.vue","utf8");
+ok(localHistoryDialog.includes("GitLocalInspector") && localHistoryDialog.includes("close-label"),"local Git modal reuses canonical Inspector rather than copying history rendering and logic");
 
 section("10 redactSecrets 单元");
 ok(!redactSecrets("x https://u:secret@h/p").includes("secret"), "URL userinfo 掩码");

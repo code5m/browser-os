@@ -5,6 +5,8 @@ export const GIT_CAPABILITY_ID = "git"
 const registerGit = createLazyContributionRegistrar(gitManifest, [
   { id: "git.repo.panel", type: "surface", slot: "repo-subview", view: "git", load: () => import("./ui/GitPanel.vue") },
   { id: "git.repo.history", type: "surface", slot: "repo-subview", view: "history", load: () => import("./ui/GitHistory.vue") },
+  { id: "git.file.local-history-action", type: "surface", slot: "menus", view: "file-context", load: () => import("./ui/LocalGitHistoryMenuItem.vue") },
+  { id: "git.file.local-history-dialog", type: "surface", slot: "global-overlay", load: () => import("./ui/LocalGitHistoryDialog.vue") },
 ])
 export function registerGitContributions(): void { registerGit() }
 export const gitCapability = {

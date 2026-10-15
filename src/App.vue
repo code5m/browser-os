@@ -45,6 +45,11 @@ const confirmModalComp = computed(() => contributionRegistry
 const imageLightboxComp = computed(() => contributionRegistry
   .getSurfaceContributions(CONTRIBUTION_SLOTS.GLOBAL_OVERLAY)
   .find((c) => c.id === "browser.image-lightbox")?.component)
+// All other global overlays are rendered generically, with no capability
+// imports in Shell. Unregistering a capability removes its overlays.
+const extensionOverlays = computed(() => contributionRegistry
+  .getSurfaceContributions(CONTRIBUTION_SLOTS.GLOBAL_OVERLAY)
+  .filter(c => c.id !== "git.confirm-modal" && c.id !== "browser.image-lightbox"));
 const aiNavPanelComp = computed(() => contributionRegistry.getSurfaceContributions(
   CONTRIBUTION_SLOTS.AI_NAV_PANEL,
 )[0]?.component)
@@ -341,6 +346,7 @@ onMounted(async () => {
 
       <!-- M2-2.b 图片灯箱：全局挂载，任何视图点开画廊都能放大预览 -->
       <component :is="imageLightboxComp" />
+      <component v-for="overlay in extensionOverlays" :key="overlay.id" :is="overlay.component" />
     </template>
   </div>
 </template>

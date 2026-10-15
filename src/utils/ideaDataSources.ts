@@ -47,12 +47,15 @@ export function ideaProjectDataSourcesPath(project: string): string {
   if (path.endsWith(".xml")) throw new Error("只允许读取项目 .idea/dataSources.xml，禁止读取 dataSources.local.xml");
   return path + "/.idea/dataSources.xml";
 }
-export function parseIdeaDataSourcesXml(xml: string): IdeaSource[] {
-  if (new TextEncoder().encode(xml).length > MAX_XML_BYTES) throw new Error("IDEA 配置超过 512KiB 安全上限");
+export function parseIdeaDataSourcesXml(
+  xml: string,
+  options: { maxBytes?: number; maxSources?: number; strictMysql?: boolean } = {},
+): IdeaSource[] {
+  if (new TextEncoder().encode(xml).length > (options.maxBytes ?? MAX_XML_BYTES)) throw new Error("IDEA 配置超过安全文件大小上限");
   if (/<!DOCTYPE|<!ENTITY|<script\b|<\?xml-stylesheet/i.test(xml)) throw new Error("禁止 DTD、外部实体或脚本");
   if (!xml.includes("<project") && !xml.includes("<component")) throw new Error("不是 IDEA 项目数据源配置");
   const matches = [...xml.matchAll(/<data-source\b([^>]*)>([\s\S]*?)<\/data-source\s*>/gi)];
-  if (matches.length > MAX_SOURCES) throw new Error("IDEA 连接超过 128 条上限");
+  if (matches.length > (options.maxSources ?? MAX_SOURCES)) throw new Error("IDEA 连接数量超过解析上限");
   return matches.map((match,index) => {
     const attributes=match[1], body=match[2];
     const jdbc=field(body,"jdbc-url");
@@ -61,14 +64,15 @@ export function parseIdeaDataSourcesXml(xml: string): IdeaSource[] {
     const id=safeDisplay(attr(attributes,"uuid") || name);
     const user=safeDisplay(field(body,"user-name"));
     const base: IdeaSource = {id,name,kind:"unsupported",host:"",portText:"",database:"",username:user,supported:false,note:""};
-    if (/ssh-tunnel|ssh-config|tunnel-config|url-only/i.test(body)) return {...base,note:"需要 SSH/自定义隧道或专用连接方式，暂不自动导入"};
+    if (/ssh-tunnel|ssh-config|tunnel-config|url-only|sshConfig|sshTunnel|proxyConfig|sslCert|sslKey|<[^>]*(?:password|credential|secret|proxy|client-cert|ssl-cert|cloud)/i.test(attributes+body)) return {...base,note:"需要 SSH、代理、证书、凭据或专用连接方式，暂不自动导入"};
     if (/^jdbc:mysql:\/\//i.test(jdbc)) {
       try {
         const url = new URL(jdbc.slice(5));
+        if (options.strictMysql && ((driver && !/mysql/i.test(driver)) || url.searchParams.has("password") || url.searchParams.has("user"))) return {...base,note:"该数据源包含凭据参数或非 MySQL 驱动，已安全跳过"};
         if (url.username || url.password || url.hash) return {...base,note:"连接串包含敏感账户信息或片段，拒绝自动导入"};
         const host=url.hostname;
         const database=decodeURIComponent(url.pathname.replace(/^\//,""));
-        if (!host || !database || database.includes("/") || database.length>255 || /[\u0000-\u001f]/.test(database)) {
+        if (!host || !database || database.includes("/") || database.includes("\\") || database.length>(options.strictMysql ? 128 : 255) || /[\u0000-\u001f]/.test(database)) {
           return {...base,note:"MySQL 地址或数据库名不完整"};
         }
         const sslSetting=url.searchParams.get("sslMode")||"";
