@@ -105,6 +105,21 @@ let rejectedDoctype=false;
 try{parseIdeaDataSourcesXml('<!DOCTYPE project [<!ENTITY p SYSTEM "file:///etc/passwd">]><project/>');}catch{rejectedDoctype=true;}
 ok(rejectedDoctype,"IDEA XML external entities rejected");
 ok(idea.every(v=>!Object.hasOwn(v,"password")),"IDEA candidates contain no password property");
+// Both IDEA import entrypoints must share one authoritative XML parser. In
+// manual preview a secret URL parameter must be rejected, not displayed.
+const {previewIdeaDataSources} = await import(ROOT+"src/capabilities/database/model/jetbrainsImport.ts");
+const unsafePreview=previewIdeaDataSources(ideaXml);
+eq(unsafePreview.candidates.length,0,"manual IDEA preview rejects secret-bearing addresses");
+eq(unsafePreview.skipped,3,"manual IDEA preview skips credentials and unsupported database kinds");
+const safePreview=previewIdeaDataSources(ideaXml.replace("&amp;password=NEVER-ECHO",""));
+eq(safePreview.candidates.length,1,"manual IDEA picker preserves ordinary MySQL address");
+eq(safePreview.candidates[0].port,"3307","manual IDEA picker retains MySQL port");
+ok(!JSON.stringify(safePreview).includes("NEVER-ECHO"),"manual IDEA picker does not expose credentials");
+let manualRejectedDoctype=false;
+try{previewIdeaDataSources('<!DOCTYPE project [<!ENTITY p SYSTEM "file:///etc/passwd">]><project/>');}
+catch{manualRejectedDoctype=true;}
+ok(manualRejectedDoctype,"manual IDEA importer also blocks external XML entities");
+
 
 // ===== 0. Database Studio object SQL safety =====
 eq(buildTablePreviewSql("orders","mysql"), "SELECT * FROM `orders` LIMIT 100", "MySQL table preview is bounded");
