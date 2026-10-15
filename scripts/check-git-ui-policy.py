@@ -281,7 +281,7 @@ def detect_violations(files: dict[str, object]) -> list[str]:
             # NEW authorized-local workbench is a disjoint capability path;
             # allow ONLY three enumerated actions, and ONLY when its source
             # visibly enforces the ticket+preview+dangerous confirmation.
-            local_adapter = path == "capabilities/git/ui/LocalGitWorkbench.vue"
+            local_adapter = path == "src/capabilities/git/ui/LocalGitWorkbench.vue"
             local_guard = (
                 "bridge.gitLocalWriteRequest" in text
                 and "bridge.gitLocalWriteConfirm" in text
@@ -484,10 +484,10 @@ const lifecycle = {onActivate: registerGitContributions}
         ("黑名单操作", {"src_files": GOOD_SRC_FILES + [("src/views/Y.vue", 'const op = "rebase";')]},
          "GIT_UI_FORBIDDEN_OP"),
         ("新本地 Git UI 缺确认闸门", {"src_files": GOOD_SRC_FILES + [
-            ("capabilities/git/ui/LocalGitWorkbench.vue", 'const op = "fetch";')]},
+            ("src/capabilities/git/ui/LocalGitWorkbench.vue", 'const op = "fetch";')]},
          "GIT_UI_FORBIDDEN_OP"),
         ("新本地 Git UI 越权 rebase", {"src_files": GOOD_SRC_FILES + [
-            ("capabilities/git/ui/LocalGitWorkbench.vue",
+            ("src/capabilities/git/ui/LocalGitWorkbench.vue",
              'const op = "rebase"; bridge.gitLocalWriteRequest(); bridge.gitLocalWriteConfirm(); '
              'if(job.dangerous && !acknowledged.value)return; preview.value; gitLocalInspect();')]},
          "GIT_UI_FORBIDDEN_OP"),
