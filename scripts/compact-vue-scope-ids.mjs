@@ -10,8 +10,8 @@ import { join, resolve } from "node:path";
 // The mapping is a lossless, deterministic base-62 encoding of the full 32-bit
 // scope hash. Unlike assigning IDs by chunk order, adding a new component
 // never renames existing components, which is important for asset caching.
-const CSS_SCOPE = /\\[(data-v-[0-9a-f]{8})(?=(?:-s)?\\])/g;
-const JS_SCOPE = /\\bdata-v-[0-9a-f]{8}\\b/g;
+const CSS_SCOPE = /\[(data-v-[0-9a-f]{8})(?=(?:-s)?\])/g;
+const JS_SCOPE = /\bdata-v-[0-9a-f]{8}\b/g;
 const DIGITS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 function shortScope(id) {
@@ -81,7 +81,7 @@ function productionAssets(dir) {
     for (const item of readdirSync(path, { withFileTypes: true })) {
       const filename = join(path, item.name);
       if (item.isDirectory()) walk(filename);
-      else if (item.isFile() && /\\.(?:css|js)$/.test(item.name)) {
+      else if (item.isFile() && /\.(?:css|js)$/.test(item.name)) {
         files.push({ path: filename, content: readFileSync(filename, "utf8") });
       }
     }
@@ -112,7 +112,7 @@ function selfTest() {
     ...files,
     { path: "extra.css", content: ".conflict[" + shortScope(a) + "]{display:block}" },
   ]), /SELECTOR_COLLISION/);
-  process.stdout.write("VUE_SCOPE_COMPACTION_SELF_TEST=PASS\\n");
+  process.stdout.write("VUE_SCOPE_COMPACTION_SELF_TEST=PASS\n");
 }
 
 export function compactVueScopeIds() {
