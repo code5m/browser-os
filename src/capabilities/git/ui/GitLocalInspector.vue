@@ -4,8 +4,10 @@ import { bridge } from "../../../bridge";
 import { redactSecrets } from "../../../utils/redact";
 import { parseUnifiedPatch } from "../model/patchView";
 import type { LocalGitMode } from "../../../composables/gitLocalNavigation";
+import { layoutCommitGraph } from "../model/logGraph";
+import LocalGitWorkbench from "./LocalGitWorkbench.vue";
 
-const props=defineProps<{path:string;mode:LocalGitMode;closeLabel?:string;searchId?:string}>();
+const props=defineProps<{path:string;mode:LocalGitMode;closeLabel?:string;searchId?:string;initialAction?:"history"|"stage"|"commit"}>();
 const emit=defineEmits<{close:[]}>();
 type Info=Awaited<ReturnType<typeof bridge.gitLocalContext>>;
 type Entry=Awaited<ReturnType<typeof bridge.gitLocalLog>>["commits"][number];
@@ -14,9 +16,12 @@ const commits=ref<Entry[]>([]);
 const offset=ref(0),more=ref(false),scanLimited=ref(false);
 const working=ref(""), selected=ref(""), patch=ref(""), truncated=ref(false);
 const search=ref(""),error=ref(""),loading=ref(false),diffLoading=ref(false);
+const localGitToolsOpen=ref(props.initialAction !== undefined && props.initialAction !== "history");
+const graphRows=computed(()=>layoutCommitGraph(commits.value));
+const annotatedCommits=computed(()=>commits.value.map((c,i)=>({...c,graph:graphRows.value[i]})));
 const view=ref<"history"|"diff">("history");
 const parsed=computed(()=>parseUnifiedPatch(patch.value));
-const visible=computed(()=>commits.value.filter(it=>{
+const visible=computed(()=>annotatedCommits.value.filter(it=>{
   const term=search.value.trim().toLowerCase();
   return !term || (it.summary+" "+it.author+" "+it.oid).toLowerCase().includes(term);
 }));
@@ -82,6 +87,7 @@ onUnmounted(()=>{++generation;++detailGeneration;});
     <header class="local-head">
       <strong>本地 Git（直接读取原仓库）</strong>
       <span v-if="context" class="local-branch">{{context.branch}}</span>
+      <button :aria-expanded="localGitToolsOpen" @click="localGitToolsOpen=!localGitToolsOpen">Git 操作 / GitHub PR·CI</button>
       <button @click="loadContext">刷新</button>
       <button @click="emit('close')">{{closeLabel || "返回普通仓库"}}</button>
     </header>
@@ -105,6 +111,11 @@ onUnmounted(()=>{++generation;++detailGeneration;});
         <div v-else-if="!visible.length" class="local-hint">当前页没有符合范围的提交</div>
         <button v-for="commit in visible" :key="commit.oid" class="local-commit"
           :class="{selected:selected===commit.oid}" :aria-pressed="selected===commit.oid" @click="selectCommit(commit.oid)">
+          <svg class="local-graph" viewBox="0 0 150 32" role="img" :aria-label="'提交 DAG：'+(commit.graph?.hasMerge?'合并':'普通')">
+            <line v-for="lane in commit.graph?.through || []" :key="'t'+lane" :x1="10+lane*14" y1="0" :x2="10+lane*14" y2="32" stroke="#8eaac6" stroke-width="2"/>
+            <line v-for="(lane,i) in commit.graph?.parentLanes || []" :key="'p'+i" :x1="10+(commit.graph?.lane||0)*14" y1="16" :x2="10+lane*14" y2="32" stroke="#457db5" stroke-width="2"/>
+            <circle :cx="10+(commit.graph?.lane||0)*14" cy="16" r="4.5" :fill="commit.graph?.hasMerge?'#9162aa':'#2869b3'"/>
+          </svg>
           <b>{{commit.summary||"(无提交说明)"}}</b>
           <small>{{commit.oid.slice(0,9)}} · {{commit.author}} · {{new Date(commit.time*1000).toLocaleDateString()}}</small>
         </button>
@@ -134,6 +145,8 @@ onUnmounted(()=>{++generation;++detailGeneration;});
         <p v-else-if="!diffLoading && (selected || view==='diff')" class="local-hint">该范围没有可显示的文本差异（或文件是二进制）。</p>
       </div>
     </div>
+    <LocalGitWorkbench v-if="localGitToolsOpen" :path="path"
+      :initial-action="initialAction==='history' ? undefined : initialAction" @updated="loadContext" />
   </section>
 </template>
 <style scoped>
@@ -165,4 +178,7 @@ onUnmounted(()=>{++generation;++detailGeneration;});
 .local-legend{background:#edf3fa;color:#526b84;font-weight:600}
 .local-legend span{padding:7px}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+</style>
+<style scoped>
+.local-graph{width:56px;min-width:56px;height:32px;float:left;margin:0 7px 1px 0}
 </style>

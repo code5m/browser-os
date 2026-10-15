@@ -9,6 +9,7 @@ const git = useGitStore();
   <div v-if="git.localHistoryPath" class="modal-mask" @click.self="git.closeLocalHistory()" @keydown.esc.stop="git.closeLocalHistory()">
     <section class="local-git-history" role="dialog" aria-modal="true" aria-label="本地 Git 文件和目录历史">
       <GitLocalInspector :path="git.localHistoryPath" mode="history" close-label="关闭"
+        :initial-action="git.localActionIntent"
         search-id="local-git-dialog-search" @close="git.closeLocalHistory()" />
     </section>
   </div>
