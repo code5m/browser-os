@@ -31,6 +31,13 @@ GIT_COMMANDS = (
     "git_branch_list",
     "request_git_write",
     "confirm_git_write",
+    "git_local_inspect",
+    "git_local_write_request",
+    "git_local_write_confirm",
+    "git_local_conflict",
+    "git_local_blame",
+    "git_local_follow",
+    "git_local_github",
 )
 GIT_WRITE_COMMANDS = ("request_git_write", "confirm_git_write")
 
@@ -268,7 +275,21 @@ def detect_violations(files: dict[str, object]) -> list[str]:
     # ---- 10) 黑名单操作 / force 推送字面量（全前端） ----
     for path, text in src_files:
         for op in FORBIDDEN_OP_LITERALS:
-            if re.search(rf"[\"']{re.escape(op)}[\"']", text):
+            if not re.search(rf"[\"']{re.escape(op)}[\"']", text):
+                continue
+            # M1-6 managed-repository write whitelist remains frozen. The
+            # NEW authorized-local workbench is a disjoint capability path;
+            # allow ONLY three enumerated actions, and ONLY when its source
+            # visibly enforces the ticket+preview+dangerous confirmation.
+            local_adapter = path == "capabilities/git/ui/LocalGitWorkbench.vue"
+            local_guard = (
+                "bridge.gitLocalWriteRequest" in text
+                and "bridge.gitLocalWriteConfirm" in text
+                and "job.dangerous && !acknowledged.value" in text
+                and "preview.value" in text
+                and "gitLocalInspect" in text
+            )
+            if not (local_adapter and op in {"pull", "fetch", "stash"} and local_guard):
                 violations.append(f"GIT_UI_FORBIDDEN_OP: {path}")
                 break
         for literal in FORCE_PUSH_LITERALS:
@@ -461,6 +482,14 @@ const lifecycle = {onActivate: registerGitContributions}
         ("未挂载确认弹窗", {"app": GOOD_APP.replace("<GitWriteConfirmDialog />", "")},
          "GIT_UI_DIALOG_NOT_MOUNTED"),
         ("黑名单操作", {"src_files": GOOD_SRC_FILES + [("src/views/Y.vue", 'const op = "rebase";')]},
+         "GIT_UI_FORBIDDEN_OP"),
+        ("新本地 Git UI 缺确认闸门", {"src_files": GOOD_SRC_FILES + [
+            ("capabilities/git/ui/LocalGitWorkbench.vue", 'const op = "fetch";')]},
+         "GIT_UI_FORBIDDEN_OP"),
+        ("新本地 Git UI 越权 rebase", {"src_files": GOOD_SRC_FILES + [
+            ("capabilities/git/ui/LocalGitWorkbench.vue",
+             'const op = "rebase"; bridge.gitLocalWriteRequest(); bridge.gitLocalWriteConfirm(); '
+             'if(job.dangerous && !acknowledged.value)return; preview.value; gitLocalInspect();')]},
          "GIT_UI_FORBIDDEN_OP"),
         ("force 推送", {"src_files": GOOD_SRC_FILES + [("src/views/Z.vue", 'const r = "--force";')]},
          "GIT_UI_FORCE_PUSH"),
