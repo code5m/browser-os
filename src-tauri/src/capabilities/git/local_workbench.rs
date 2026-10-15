@@ -421,7 +421,7 @@ fn stage_scoped(repo: &Repository, ctx: &LocalGitContext) -> Result<usize, Strin
 }
 fn commit_scoped(repo: &Repository, ctx: &LocalGitContext, msg: &str) -> Result<usize, String> {
     check_preconditions(repo, ctx, "commit", None, Some(msg), None, None)?;
-    let index = repo.index().map_err(|_| "GIT_LOCAL_INDEX_FAILED")?;
+    let mut index = repo.index().map_err(|_| "GIT_LOCAL_INDEX_FAILED")?;
     let tree_id = index
         .write_tree_to(repo)
         .map_err(|_| "GIT_LOCAL_TREE_FAILED")?;
@@ -768,11 +768,8 @@ pub async fn git_local_write_request(
     .await
     .map_err(|_| "GIT_LOCAL_WORKER_FAILED".to_string())??;
     let job_id = uuid::Uuid::new_v4().to_string();
-    let mut queue = app
-        .state::<LocalGitWriteQueue>()
-        .0
-        .lock()
-        .map_err(|_| "GIT_LOCAL_QUEUE_LOCK_FAILED")?;
+    let state = app.state::<LocalGitWriteQueue>();
+    let mut queue = state.0.lock().map_err(|_| "GIT_LOCAL_QUEUE_LOCK_FAILED")?;
     queue.retain(|_, item| item.expires > Instant::now());
     if queue.len() >= 32 {
         return Err("GIT_LOCAL_TOO_MANY_PENDING_ACTIONS".into());
@@ -801,11 +798,8 @@ pub async fn git_local_write_confirm(
 ) -> Result<String, String> {
     check_invocation_source(&webview, "git_local_write_confirm", None, &app)?;
     let job = {
-        let mut guard = app
-            .state::<LocalGitWriteQueue>()
-            .0
-            .lock()
-            .map_err(|_| "GIT_LOCAL_QUEUE_LOCK_FAILED")?;
+        let state = app.state::<LocalGitWriteQueue>();
+        let mut guard = state.0.lock().map_err(|_| "GIT_LOCAL_QUEUE_LOCK_FAILED")?;
         let ticket = guard.get(&job_id).ok_or("GIT_LOCAL_UNKNOWN_JOB")?;
         if ticket.expires <= Instant::now() {
             guard.remove(&job_id);
