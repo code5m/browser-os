@@ -8,7 +8,7 @@
 
 version: 1
 generated_from_head: 3f57a92e5fb7d9a6bc978f1572964d3c14fb8caf
-total: 74
+total: 75
 
 components:
 
@@ -67,6 +67,7 @@ components:
   - { id: git.panel, name: GitPanel, layer: CAPABILITY_UI, owner: git, file: src/capabilities/git/ui/GitPanel.vue, public: false, business_semantics: "Git 状态(经 REPO_SUBVIEW 贡献给 RepoPanel)", capability_specific: true, dependencies: [useRepoStore, useGitStore], consumers: [RepoPanel.vue via contribution], status: OBSERVED }
   - { id: git.history, name: GitHistory, layer: CAPABILITY_UI, owner: git, file: src/capabilities/git/ui/GitHistory.vue, public: false, business_semantics: "Git 提交历史", capability_specific: true, dependencies: [bridge.gitLog, bridge.gitCommitDiff, useGitStore], consumers: [RepoPanel.vue:23], status: OBSERVED }
   - { id: git.local-inspector, name: GitLocalInspector, layer: CAPABILITY_UI, owner: git, file: src/capabilities/git/ui/GitLocalInspector.vue, public: false, business_semantics: "本地真实文件或目录Git历史及只读补丁对比（路径受根目录策略约束）", capability_specific: true, dependencies: [bridge.gitLocalContext, bridge.gitLocalLog, bridge.gitLocalDiff, bridge.gitLocalCommitDiff], consumers: [GitHistory.vue], status: OBSERVED }
+  - { id: git.local-workbench, name: LocalGitWorkbench, layer: CAPABILITY_UI, owner: git, file: src/capabilities/git/ui/LocalGitWorkbench.vue, public: false, business_semantics: "授权本地 Git 暂存/提交/Checkout/Fetch/Pull/Stash/冲突三方合并及 GitHub PR/CI 双阶段确认", capability_specific: true, dependencies: [bridge.gitLocalInspect, bridge.gitLocalWriteRequest, bridge.gitLocalWriteConfirm, bridge.gitLocalConflict, bridge.gitLocalGithub], consumers: [GitLocalInspector.vue], status: OBSERVED }
   - { id: git.file-local-history-menu, name: LocalGitHistoryMenuItem, layer: CAPABILITY_UI, owner: git, file: src/capabilities/git/ui/LocalGitHistoryMenuItem.vue, public: false, business_semantics: "Git 文件/目录右键菜单贡献；激活态动态挂载", capability_specific: true, dependencies: [useFileStore, useGitStore], consumers: [FilePanel.vue via menus contribution], status: OBSERVED }
   - { id: git.file-local-history-dialog, name: LocalGitHistoryDialog, layer: CAPABILITY_UI, owner: git, file: src/capabilities/git/ui/LocalGitHistoryDialog.vue, public: false, business_semantics: "授权本地仓库的只读路径历史和提交差异", capability_specific: true, dependencies: [bridge.gitLocalHistory, bridge.gitLocalHistoryDiff, useGitStore], consumers: [App.vue via global-overlay contribution], status: OBSERVED }
   - { id: git.diff-viewer, name: GitDiffViewer, layer: CAPABILITY_UI, owner: git, file: src/capabilities/git/ui/GitDiffViewer.vue, public: false, business_semantics: "Git diff 查看", capability_specific: true, dependencies: [useGitStore], consumers: [GitPanel.vue:115], status: OBSERVED }

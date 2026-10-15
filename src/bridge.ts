@@ -417,6 +417,42 @@ export const bridge = {
   gitLocalHistoryDiff: (path: string, oid: string) =>
     invoke<string>("git_local_history_diff", { path, oid }),
 
+  // Explicitly user-authorized local Git worktrees (never a managed clone).
+  // Mutations ALWAYS need a server-side preview ticket followed by confirm.
+  gitLocalInspect: (path: string) => invoke<{
+    root: string; scope: string; branch: string; head: string | null;
+    files: {path: string;status: string;staged: boolean;conflicted: boolean}[];
+    local_branches: string[]; has_conflicts: boolean; truncated: boolean;
+  }>("git_local_inspect", {path}),
+  gitLocalWriteRequest: (path: string, action: string, opts: {
+    message?: string; branch?: string; resolved?: string; pr?: number;
+  } = {}) => invoke<{
+    job_id: string; action: string; scope: string; summary: string;
+    dangerous: boolean; expires_in_seconds: number;
+  }>("git_local_write_request", {path, action, ...opts}),
+  gitLocalWriteConfirm: (jobId: string, confirmedDangerous: boolean) =>
+    invoke<string>("git_local_write_confirm", {jobId, confirmedDangerous}),
+  gitLocalConflict: (path: string) => invoke<{
+    path: string; ancestor: string; ours: string; theirs: string;
+  }>("git_local_conflict", {path}),
+  gitLocalBlame: (path: string) => invoke<{
+    path: string; hunks: {start: number;lines: number;commit: string;author: string}[];
+    truncated: boolean;
+  }>("git_local_blame", {path}),
+  gitLocalFollow: (path: string) => invoke<{
+    entries: {oid: string;summary: string;author: string;time: number;
+      file_at_commit: string;renamed_from: string | null}[];
+    scan_limited: boolean;
+  }>("git_local_follow", {path}),
+  gitLocalGithub: (path: string) => invoke<{
+    repository: string;
+    prs: {number: number;title: string;url: string;headRefName: string;
+      baseRefName: string;reviewDecision: string;mergeStateStatus: string;
+      statusCheckRollup: {status?: string;conclusion?: string}[]}[];
+    runs: {databaseId: number;displayTitle: string;workflowName: string;
+      status: string;conclusion: string;url: string;headSha: string}[];
+  }>("git_local_github", {path}),
+
   // 说明：A6 §6 / F-A6-7 明确**没有** task_history / task_cancel 两条命令——
   // 历史由 task_list 附带返回，取消复用既有 cancel_script(run_id)。
   // 因此本文件不登记任何 A1/A6 之外的命令名。
