@@ -1498,6 +1498,7 @@ fn main() {
         .manage(security_policy::IntentRegistry::new())
         // M4-3（Lane A4）：数据库连接配置登记簿（不含非 Send 的池句柄，按需重连）。
         .manage(crate::capabilities::database::commands::DbConnectionRegistry::default())
+        .manage(crate::capabilities::git::local_workbench::LocalGitWriteQueue::default())
         // M5-W12（Lane A7）：图谱只读托管状态（载入期写一次，运行期只读）。
         .manage(crate::graph::GraphState::default())
         .invoke_handler(tauri::generate_handler![
@@ -1644,6 +1645,13 @@ fn main() {
             crate::capabilities::git::commands::git_local_commit_diff,
             crate::capabilities::git::local_history::git_local_history,
             crate::capabilities::git::local_history::git_local_history_diff,
+            crate::capabilities::git::local_workbench::git_local_inspect,
+            crate::capabilities::git::local_workbench::git_local_write_request,
+            crate::capabilities::git::local_workbench::git_local_write_confirm,
+            crate::capabilities::git::local_workbench::git_local_conflict,
+            crate::capabilities::git::local_workbench::git_local_github,
+            crate::capabilities::git::local_advanced::git_local_blame,
+            crate::capabilities::git::local_advanced::git_local_follow,
             bridge::mcp_capability_preview,
             bridge::mcp_policy_get,
             bridge::mcp_registry_list,
