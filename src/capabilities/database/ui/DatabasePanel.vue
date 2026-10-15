@@ -67,25 +67,39 @@ async function readManualIdeaFile(event: Event) {
     manualIdeaError.value = error instanceof Error ? error.message : "无法解析 IDEA XML 配置";
   } finally { input.value = ""; }
 }
-function chooseManualIdeaSource(candidate: IdeaMysqlCandidate) {
-  const existing = db.configs.find(cfg => cfg.kind === "mysql" &&
-    cfg.database === candidate.database && (cfg.host || "") === candidate.host &&
-    String(cfg.port || 3306) === candidate.port && (cfg.username || "") === candidate.username);
+// Both project scans and manual XML imports configure the same BrowserOS
+// connection form. Keep the source selection, identity and fail-closed writes
+// in one place; only the manual picker insists on stricter TLS.
+function fillIdeaForm(candidate: {
+  kind: "mysql" | "sqlite";
+  name: string; database: string; host: string;
+  portText: string; username: string;
+}, tls: "prefer" | "require") {
+  const port = candidate.portText || (candidate.kind === "mysql" ? "3306" : "");
+  const existing = db.configs.find(cfg =>
+    cfg.kind === candidate.kind && cfg.database === candidate.database &&
+    (cfg.host || "") === candidate.host &&
+    String(cfg.port ?? (candidate.kind === "mysql" ? 3306 : "")) === port &&
+    (cfg.username || "") === candidate.username
+  );
   db.resetForm();
-  db.setKind("mysql");
   db.form.id = existing?.id ?? null;
   db.form.name = existing?.name ?? candidate.name;
-  db.form.host = candidate.host;
-  db.form.portText = candidate.port;
+  db.form.kind = candidate.kind;
   db.form.database = candidate.database;
+  db.form.host = candidate.host;
+  db.form.portText = candidate.portText;
   db.form.username = candidate.username;
-  db.form.sslMode = "require";
+  db.form.sslMode = tls;
   db.form.allowWrite = false;
   db.form.productionHint = "";
   password.value = "";
-  manualIdeaCandidates.value = [];
   ideaImportOpen.value = false;
   showConnection.value = true;
+}
+function chooseManualIdeaSource(candidate: IdeaMysqlCandidate) {
+  fillIdeaForm({...candidate, kind: "mysql", portText: candidate.port}, "require");
+  manualIdeaCandidates.value = [];
   layout.showToast("只填入地址；请核对配置、输入密码并验证连接");
 }
 
@@ -121,28 +135,10 @@ async function scanIdeaProject() {
 }
 function chooseIdeaSource(candidate: IdeaSource) {
   if (!candidate.supported || candidate.kind === "unsupported") return;
-  // Reuse the same backend connection identity when an equivalent connection exists.
-  const existing = db.configs.find(cfg =>
-    cfg.kind === candidate.kind && cfg.database === candidate.database &&
-    (cfg.host || "") === candidate.host && String(cfg.port ?? (candidate.kind === "mysql" ? 3306 : "")) === (candidate.portText || (candidate.kind === "mysql" ? "3306" : "")) &&
-    (cfg.username || "") === candidate.username
-  );
-  db.resetForm();
-  db.form.id = existing?.id ?? null;
-  db.form.name = existing?.name ?? candidate.name;
-  db.form.kind = candidate.kind;
-  db.form.database = candidate.database;
-  db.form.host = candidate.host;
-  db.form.portText = candidate.portText;
-  db.form.username = candidate.username;
-  db.form.sslMode = "prefer"; // Never downgrade TLS based on imported IDEA URL.
-  db.form.allowWrite = false; // Imported configs MUST start read-only.
-  db.form.productionHint = ""; // Unknown production status must remain fail-closed.
-  password.value = "";
-  ideaImportOpen.value = false;
-  showConnection.value = true;
+  fillIdeaForm(candidate, "prefer");
   layout.showToast("已填充 IDEA 数据源；请补充密码并点击连接。原配置未修改。");
 }
+
 const visibleSchema = computed(() => db.schema.filter(object =>
   object.name.toLowerCase().includes(objectFilter.value.trim().toLowerCase())
 ));
