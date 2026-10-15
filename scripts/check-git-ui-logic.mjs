@@ -309,6 +309,8 @@ ok(fileMenuSource.includes("CONTRIBUTION_SLOTS.MENUS") &&
   gitContributions.includes("LocalGitHistoryMenuItem.vue"),
   "file and folder Git history is dynamically contributed, with scoped diff preserved");
 ok(fileMenuSource.includes("openIdeaProjectScan()"),"IDEA project import is reachable by file-tree context menu");
+const localHistoryDialog = readFileSync(ROOT+"src/capabilities/git/ui/LocalGitHistoryDialog.vue","utf8");
+ok(localHistoryDialog.includes("GitLocalInspector") && localHistoryDialog.includes("close-label"),"local Git modal reuses canonical Inspector rather than copying history rendering and logic");
 
 section("10 redactSecrets 单元");
 ok(!redactSecrets("x https://u:secret@h/p").includes("secret"), "URL userinfo 掩码");
