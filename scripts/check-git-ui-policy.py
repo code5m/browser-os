@@ -38,6 +38,7 @@ GIT_COMMANDS = (
     "git_local_blame",
     "git_local_follow",
     "git_local_github",
+    "git_studio_read", "git_studio_preview", "git_studio_confirm", "git_studio_cancel",
 )
 GIT_WRITE_COMMANDS = ("request_git_write", "confirm_git_write")
 
@@ -139,6 +140,43 @@ def ts_function_body(source: str, name: str) -> str:
     return source[start:]
 
 
+def studio_ui_violations(source: str) -> list[str]:
+    violations = []
+    required = {
+        "repos.repos": "GIT_UI_REPO_SOURCE_NOT_REUSED",
+        "parseUnifiedPatch": "GIT_UI_DIFF_NOT_MOUNTED",
+        "sourceIdentity(source.value)!==previewSource": "GIT_UI_SOURCE_NOT_PINNED",
+        "canSuspend:()=>!writeBusy.value": "GIT_UI_WRITE_LIFECYCLE_UNGUARDED",
+        "redactSecrets(value)": "GIT_UI_ERROR_NOT_REDACTED",
+        'type="checkbox"': "GIT_UI_DANGEROUS_ACK_MISSING",
+        '!acknowledged': "GIT_UI_CONFIRM_BUTTON_NOT_GATED",
+    }
+    for token, code in required.items():
+        if token not in source:
+            violations.append(code)
+    prepare = ts_function_body(source, "prepare")
+    confirm = ts_function_body(source, "confirm")
+    for token in ("selected.value.length", "message.value.trim()"):
+        if token not in prepare or prepare.find(token) > prepare.find("bridge.gitStudioPreview"):
+            violations.append("GIT_UI_PRECHECK_AFTER_REQUEST")
+    if "bridge.gitStudioPreview" not in prepare:
+        violations.append("GIT_UI_REQUEST_MISSING")
+    for token in ("!job", "!acknowledged.value", "writeBusy.value", "bridge.gitStudioConfirm(job.job_id,true)"):
+        if token not in confirm:
+            violations.append("GIT_UI_DANGEROUS_WITHOUT_DOUBLE_CONFIRM")
+    for action in ("stage", "unstage", "discard", "commit", "amend", "branch_create", "checkout", "push"):
+        if not re.search(r"[\"']" + action + r"[\"']", source):
+            violations.append("GIT_UI_WRITE_ENTRY_MISSING")
+    code = strip_comments(source)
+    if re.search(r"\binvoke\s*(?:<[^>]*>)?\s*\(", code):
+        violations.append("GIT_UI_GATE_BYPASSED")
+    if re.search(r"localStorage|sessionStorage|indexedDB|\btoken\b", code):
+        violations.append("GIT_UI_CREDENTIAL_PERSISTED")
+    if re.search(r"watch\([^;]*?(?:prepare|confirm)\(", code):
+        violations.append("GIT_UI_AUTO_WRITE_TRIGGER")
+    return violations
+
+
 def detect_violations(files: dict[str, object]) -> list[str]:
     violations: list[str] = []
     store = str(files.get("store", ""))
@@ -221,22 +259,30 @@ def detect_violations(files: dict[str, object]) -> list[str]:
         if field not in dialog:
             violations.append("GIT_UI_PREVIEW_FIELDS_MISSING")
 
-    # ---- 8) 面板：复用既有仓库数据 + 七个写操作入口齐全 ----
-    if "ws.repos" not in panel:
-        violations.append("GIT_UI_REPO_SOURCE_NOT_REUSED")
-    for entry in (
-        "git.stage(",
-        "git.unstage(",
-        "git.discard(",
-        "git.commit(",
-        "git.createBranch(",
-        "git.checkoutBranch(",
-        "git.push(",
-    ):
-        if entry not in panel:
-            violations.append("GIT_UI_WRITE_ENTRY_MISSING")
-    if "GitDiffViewer" not in panel:
-        violations.append("GIT_UI_DIFF_NOT_MOUNTED")
+    # ---- 8) Unified UI with original legacy fixtures retained ----
+    studio = str(files.get("studio", ""))
+    unified = "<GitStudio" in panel
+    studio_violations = studio_ui_violations(studio) if unified else []
+    if unified:
+        violations.extend(studio_violations)
+    else:
+        # ---- 8) 面板：复用既有仓库数据 + 七个写操作入口齐全 ----
+        if "ws.repos" not in panel:
+            violations.append("GIT_UI_REPO_SOURCE_NOT_REUSED")
+        for entry in (
+            "git.stage(",
+            "git.unstage(",
+            "git.discard(",
+            "git.commit(",
+            "git.createBranch(",
+            "git.checkoutBranch(",
+            "git.push(",
+        ):
+            if entry not in panel:
+                violations.append("GIT_UI_WRITE_ENTRY_MISSING")
+        if "GitDiffViewer" not in panel:
+            violations.append("GIT_UI_DIFF_NOT_MOUNTED")
+
 
     # ---- 9) 挂载与事件订阅 ----
     git_entry = str(files.get("git_entry", ""))
@@ -289,7 +335,11 @@ def detect_violations(files: dict[str, object]) -> list[str]:
                 and "preview.value" in text
                 and "gitLocalInspect" in text
             )
-            if not (local_adapter and op in {"pull", "fetch", "stash"} and local_guard):
+            studio_adapter = path == "src/capabilities/git/ui/GitStudio.vue"
+            studio_guard = unified and not studio_violations and text == studio
+            registered_operation = op in {"pull", "fetch", "merge", "rebase", "stash", "cherry_pick"}
+            if not ((local_adapter and op in {"pull", "fetch", "stash"} and local_guard)
+                    or (studio_adapter and studio_guard and registered_operation)):
                 violations.append(f"GIT_UI_FORBIDDEN_OP: {path}")
                 break
         for literal in FORCE_PUSH_LITERALS:
@@ -322,6 +372,9 @@ def scan_repository(root: Path) -> list[str]:
     for path in sorted(src.rglob("*")):
         if path.is_file() and path.suffix in {".ts", ".vue"}:
             src_files.append((str(path.relative_to(root)), path.read_text(encoding="utf-8")))
+    studio_path = src / "capabilities" / "git" / "ui" / "GitStudio.vue"
+    if studio_path.is_file():
+        files["studio"] = studio_path.read_text(encoding="utf-8")
     files["src_files"] = src_files
     return detect_violations(files)
 

@@ -14,6 +14,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  source-evidence:
+    # Read-only diagnostic export, never modifies or pushes source. The complete
+    # tracked checkout (including public/) is kept separately from dependencies.
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 35
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Export exact committed input and locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > "$RUNNER_TEMP/browseros-source-commit.txt"
+          git archive --format=tar.gz --output="$RUNNER_TEMP/browseros-source.tar.gz" HEAD
+          npm ci
+          tar -czf "$RUNNER_TEMP/browseros-node-modules.tar.gz" node_modules
+          git diff --exit-code HEAD -- package.json package-lock.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: browseros-source-input-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/browseros-source-commit.txt
+            ${{ runner.temp }}/browseros-source.tar.gz
+            ${{ runner.temp }}/browseros-node-modules.tar.gz
+          if-no-files-found: error
+          retention-days: 3
   impact:
     runs-on: ubuntu-24.04
     outputs:
@@ -39,6 +73,12 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+    env:
+      # Reduce temporary debug-symbol storage, not tests, assertions or features.
+      # Release profile and the frozen build-growth gate remain unchanged.
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
     steps:
       - name: Checkout full history
         uses: actions/checkout@v4
@@ -54,6 +94,7 @@ jobs:
       - name: Install Linux build dependencies
         if: needs.impact.outputs.mode == 'full'
         run: |
+          df -h . /tmp
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb xauth dbus-x11
       - name: Setup Node
@@ -95,7 +136,28 @@ jobs:
       - name: Production build
         if: needs.impact.outputs.mode != 'docs'
         run: npm run build
+      - name: Terminal production bundle differential tests
+        if: needs.impact.outputs.mode != 'docs'
+        run: node scripts/check-xterm-bundle.mjs
+      - name: Terminal Chromium DOM differential tests
+        if: needs.impact.outputs.mode == 'full'
+        run: node scripts/check-xterm-dom.mjs
+      - name: Early frozen frontend size gate
+        if: needs.impact.outputs.mode == 'full'
+        run: |
+          python3 - <<'PY'
+          import importlib.util, json
+          from pathlib import Path
+          spec=importlib.util.spec_from_file_location('metrics','scripts/measure-build-metrics.py')
+          metrics=importlib.util.module_from_spec(spec);spec.loader.exec_module(metrics)
+          current={'dist':metrics.collect_dist(Path('dist'))}
+          baseline=json.loads(Path('logs/m0-build-metrics/build-metrics-052b18a.json').read_text())
+          verdict=metrics.compare(current,baseline)
+          print(json.dumps({'current':current,'comparison':verdict},indent=2))
+          raise SystemExit(1 if verdict['exceeds_growth_limit'] else 0)
+          PY
       - name: Semantic dependency and bundle evidence
+        id: semantic_evidence
         if: needs.impact.outputs.mode == 'full'
         run: |
           node scripts/analyze-semantic-dependencies.mjs --self-test
@@ -103,7 +165,7 @@ jobs:
           npm run --silent analyze:semantic-dependencies > /tmp/browseros-semantic-dependencies.json
           npm run --silent analyze:bundle > /tmp/browseros-build-assets.json
       - name: Upload semantic and bundle evidence
-        if: always() && needs.impact.outputs.mode == 'full'
+        if: always() && needs.impact.outputs.mode == 'full' && steps.semantic_evidence.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: browseros-semantic-footprint-${{ github.run_id }}
@@ -140,6 +202,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - name: Resource governance and visual comparison
+        id: resource_evidence
         if: needs.impact.outputs.mode == 'full'
         run: |
           node scripts/generate-footprint-review.mjs --self-test
@@ -154,7 +217,7 @@ jobs:
             --out /tmp/browseros-size-comparison.html \
             --out-json /tmp/browseros-size-comparison.json
       - name: Upload resource governance evidence
-        if: always() && needs.impact.outputs.mode == 'full'
+        if: always() && needs.impact.outputs.mode == 'full' && steps.resource_evidence.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: browseros-resource-governance-${{ github.run_id }}
@@ -202,8 +265,28 @@ jobs:
       - name: Branch diff whitespace check
         if: needs.impact.outputs.mode == 'full'
         run: git diff --check origin/master...HEAD -- . ':(exclude)logs/m0-baseline/**'
-      - name: Full pre-merge gate
+      - name: Verify committed source is unchanged after validation
         if: needs.impact.outputs.mode == 'full'
+        run: git diff --exit-code HEAD -- src src-tauri scripts docs package.json package-lock.json vite.config.ts .github
+      - name: Full pre-merge gate
+        id: pre_merge
+        if: needs.impact.outputs.mode == 'full'
+        shell: bash
         env:
           M0_BASE_REF: origin/master
-        run: bash scripts/pre-merge.sh
+        run: |
+          set -o pipefail
+          bash scripts/pre-merge.sh 2>&1 | tee "$RUNNER_TEMP/browseros-pre-merge.log"
+      - name: Upload pre-merge diagnostics
+        if: always() && needs.impact.outputs.mode == 'full' && steps.pre_merge.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-pre-merge-${{ github.run_id }}
+          path: ${{ runner.temp }}/browseros-pre-merge.log
+          if-no-files-found: error
+          retention-days: 14
+      - name: Runner disk diagnostics
+        if: always() && needs.impact.outputs.mode == 'full'
+        run: |
+          df -h . /tmp
+          du -sh src-tauri/target tauri-browser-tabs/target 2>/dev/null || true

@@ -8,9 +8,15 @@
 
 version: 1
 generated_from_head: 3f57a92e5fb7d9a6bc978f1572964d3c14fb8caf
-total: 75
+total: 82
 
 components:
+
+  - { id: database.table-editor, name: TableDataEditor, layer: CAPABILITY_UI, owner: database, file: src/capabilities/database/ui/TableDataEditor.vue, public: false, business_semantics: "Native typed data pages and parameterized mutation previews", capability_specific: true, dependencies: [bridge], consumers: [DatabaseWorkspace], status: OBSERVED }
+
+  - { id: git.studio, name: GitStudio, layer: CAPABILITY_UI, owner: git, file: src/capabilities/git/ui/GitStudio.vue, public: false, business_semantics: "Unified source-bound Git workbench and validated native previews", capability_specific: true, dependencies: [bridge], consumers: [GitPanel, GitHistory, GitLocalInspector], status: OBSERVED }
+  - { id: database.workspace, name: DatabaseWorkspace, layer: CAPABILITY_UI, owner: database, file: src/capabilities/database/ui/DatabaseWorkspace.vue, public: false, business_semantics: "Source-bound SQL documents, results and transactions", capability_specific: true, dependencies: [bridge], consumers: [DatabasePanel], status: OBSERVED }
+  - { id: database.sql-editor, name: SqlEditor, layer: CAPABILITY_UI, owner: database, file: src/capabilities/database/ui/SqlEditor.vue, public: false, business_semantics: "Escaped SQL highlighting and bounded lexical editing", capability_specific: true, dependencies: [bridge], consumers: [DatabaseWorkspace], status: OBSERVED }
 
   - { id: engineering.health, name: EngineeringHealthPanel, layer: WORKBENCH, owner: settings, file: src/components/system/EngineeringHealthPanel.vue, public: false, business_semantics: "工程健康实时诊断，只读 GitHub Actions 状态", capability_specific: false, dependencies: [engineeringHealthModel, governance, evidencePolicy], consumers: [SettingsPanel.vue], status: OBSERVED }
   - { id: capability.manager, name: CapabilityManagerPanel, layer: WORKBENCH, owner: capability-platform, file: src/components/system/CapabilityManagerPanel.vue, public: false, business_semantics: "Capability discovery/configuration/runtime state manager", capability_specific: false, dependencies: [capability runtime, catalog], consumers: [SettingsPanel.vue], status: OBSERVED }

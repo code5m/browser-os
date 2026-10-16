@@ -1501,7 +1501,17 @@ fn main() {
         .manage(crate::capabilities::git::local_workbench::LocalGitWriteQueue::default())
         // M5-W12（Lane A7）：图谱只读托管状态（载入期写一次，运行期只读）。
         .manage(crate::graph::GraphState::default())
+        .manage(capabilities::git::studio::GitStudioRuntime::default())
+        .manage(capabilities::database::studio::DatabaseStudioRuntime::default())
         .invoke_handler(tauri::generate_handler![
+            capabilities::database::studio::db_studio_cancel,
+            capabilities::database::studio::db_studio_close,
+            capabilities::database::studio::db_studio_call,
+            capabilities::database::studio::db_studio_open,
+            capabilities::git::studio::git_studio_cancel,
+            capabilities::git::studio::git_studio_confirm,
+            capabilities::git::studio::git_studio_preview,
+            capabilities::git::studio::git_studio_read,
             bridge::open_browser,
             bridge::close_browser,
             bridge::position_browser,
