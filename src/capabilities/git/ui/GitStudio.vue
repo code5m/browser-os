@@ -19,7 +19,7 @@ const source = computed<Record<string,unknown>|null>(() => localPath.value ? {pa
 const info = ref<any>(null), error = ref(''), notice = ref('');
 const loading = ref(false), writeBusy = ref(false), preview = ref<any>(null), acknowledged = ref(false);
 const selected = ref<string[]>([]), activeFile = ref(''), staged = ref(false);
-function defaultPane() { return props.initialAction && props.initialAction !== 'history' ? 'changes' : props.mode === 'history' ? 'log' : 'changes'; }
+function defaultPane() { return props.mode === 'branches' ? 'branches' : props.mode === 'history' || props.initialAction === 'history' ? 'log' : 'changes'; }
 const pane = ref(defaultPane());
 const panes = [['changes','改动'],['log','提交历史'],['branches','分支'],['stash','暂存架'],['worktrees','工作树'],['github','PR / CI']];
 const patch = ref(''), file = ref<any>(null), conflict = ref<any>(null), resolution = ref('');
@@ -146,6 +146,7 @@ function resetSourceContext() {
 }
 const unregister=registerGitLifecycleBinding({canSuspend:()=>!writeBusy.value,cleanup:resetSourceContext});
 watch(()=>props.path,path=>{if(!writeBusy.value){localPath.value=path||'';enteredPath.value=path||'';}});
+watch(()=>props.mode,()=>{if(!writeBusy.value) { pane.value=defaultPane(); if(pane.value==='log') void loadLog(0); } });
 watch(()=>source.value?sourceIdentity(source.value):'',()=>{resetSourceContext();void refresh();},{immediate:true,flush:'sync'});
 onUnmounted(()=>{disposed=true;generation++;detailGeneration++;void cancelPreview();if(!writeBusy.value)unregister();});
 </script>
