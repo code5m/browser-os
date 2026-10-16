@@ -1,8 +1,7 @@
 name: BrowserOS Developer Studio Builder
 
-# One final, branch-scoped source consolidation. This workflow removes itself.
-# The actual readable repair is committed BEFORE tests so a failure never leaves
-# a different, uncommitted implementation being used as validation evidence.
+# Last source-consolidation run. Workflow removal is performed by the connected
+# GitHub integration, never by granting the Actions token workflow-write access.
 on:
   push:
     branches: [feature/developer-studio-unified-20261016]
@@ -16,7 +15,7 @@ permissions:
   contents: read
 concurrency:
   group: browseros-developer-studio-builder
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   integrate:
     if: github.repository == 'code5m/browser-os' && github.ref == 'refs/heads/feature/developer-studio-unified-20261016'
@@ -64,6 +63,10 @@ jobs:
           python3 scripts/developer-studio/finalize-audit.py
           cargo fmt --manifest-path src-tauri/Cargo.toml --all
           python3 scripts/generate-rust-crosslayer-contracts.py --generate
+          # Stage workflow/governance finalization for the authorized connector;
+          # GITHUB_TOKEN deliberately has no permission to change workflow YAML.
+          git diff --binary -- .github/workflows docs/engineering/governance.json > /tmp/pr35-workflow-finalization.patch
+          git restore --source=HEAD --staged --worktree -- .github/workflows docs/engineering/governance.json
           git diff --check
       - name: Commit the exact consolidated source before running acceptance
         id: publish
@@ -72,13 +75,12 @@ jobs:
         run: |
           test "$(git ls-remote origin refs/heads/feature/developer-studio-unified-20261016 | cut -f1)" = "$EXPECTED_HEAD"
           test ! -e scripts/developer-studio
-          test ! -e .github/workflows/developer-studio-builder.yml
           git config user.name 'BrowserOS Integration Bot'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- src src-tauri scripts docs package.json package-lock.json vite.config.ts .github/workflows
+          git add -- src src-tauri scripts docs package.json package-lock.json vite.config.ts
           if git ls-files --error-unmatch artifacts/native-contracts/generated-crosslayer-contracts.json >/dev/null 2>&1; then git add -- artifacts/native-contracts/generated-crosslayer-contracts.json; fi
           git diff --cached --stat
-          git commit -m 'fix: consolidate PR35 audit repairs and retire source-mutating Builder'
+          git commit -m 'fix: consolidate PR35 correctness repairs and retire source rewriting scripts'
           git push origin HEAD:refs/heads/feature/developer-studio-unified-20261016
           echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "Committed source under test: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
@@ -112,4 +114,5 @@ jobs:
             /tmp/pr35-uncommitted-diff.patch
             /tmp/pr35-status.txt
             /tmp/pr35-head.txt
+            /tmp/pr35-workflow-finalization.patch
           retention-days: 7
