@@ -96,6 +96,7 @@ jobs:
         if: needs.impact.outputs.mode != 'docs'
         run: npm run build
       - name: Semantic dependency and bundle evidence
+        id: semantic_evidence
         if: needs.impact.outputs.mode == 'full'
         run: |
           node scripts/analyze-semantic-dependencies.mjs --self-test
@@ -103,7 +104,7 @@ jobs:
           npm run --silent analyze:semantic-dependencies > /tmp/browseros-semantic-dependencies.json
           npm run --silent analyze:bundle > /tmp/browseros-build-assets.json
       - name: Upload semantic and bundle evidence
-        if: always() && needs.impact.outputs.mode == 'full'
+        if: always() && needs.impact.outputs.mode == 'full' && steps.semantic_evidence.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: browseros-semantic-footprint-${{ github.run_id }}
@@ -140,6 +141,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - name: Resource governance and visual comparison
+        id: resource_evidence
         if: needs.impact.outputs.mode == 'full'
         run: |
           node scripts/generate-footprint-review.mjs --self-test
@@ -154,7 +156,7 @@ jobs:
             --out /tmp/browseros-size-comparison.html \
             --out-json /tmp/browseros-size-comparison.json
       - name: Upload resource governance evidence
-        if: always() && needs.impact.outputs.mode == 'full'
+        if: always() && needs.impact.outputs.mode == 'full' && steps.resource_evidence.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: browseros-resource-governance-${{ github.run_id }}
@@ -202,6 +204,9 @@ jobs:
       - name: Branch diff whitespace check
         if: needs.impact.outputs.mode == 'full'
         run: git diff --check origin/master...HEAD -- . ':(exclude)logs/m0-baseline/**'
+      - name: Verify committed source is unchanged after validation
+        if: needs.impact.outputs.mode == 'full'
+        run: git diff --exit-code HEAD -- src src-tauri scripts docs package.json package-lock.json vite.config.ts .github
       - name: Full pre-merge gate
         if: needs.impact.outputs.mode == 'full'
         env:

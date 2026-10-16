@@ -62,12 +62,6 @@
       "path": ".github/workflows/mysql-runtime-e2e.yml",
       "role": "blocking_mysql_real_service_gate",
       "scope": "MySQL driver changes: real MySQL 8 connection/query/schema on push and PR"
-    },
-    {
-      "id": "developer-studio-builder",
-      "path": ".github/workflows/developer-studio-builder.yml",
-      "role": "temporary_isolated_development_executor",
-      "scope": "Exact feature/developer-studio-unified-20261016 push only; no PR trigger; fast-forward development-branch writes only; remove before release"
     }
   ],
   "gitHooks": [
@@ -266,173 +260,35 @@
     }
   ],
   "standards": [
-    {
-      "id": "agent-operating-rules",
-      "path": "AGENTS.md"
-    },
-    {
-      "id": "product-locked-rules",
-      "path": "PROJECT-RULES.md"
-    },
-    {
-      "id": "module-readme-standard",
-      "path": "docs/architecture/README-STANDARD.md"
-    },
-    {
-      "id": "gate-contract",
-      "path": "scripts/GATE-CONTRACT.md"
-    },
-    {
-      "id": "capability-granularity",
-      "path": "docs/architecture/capability-platform/CAPABILITY_GRANULARITY_RULES.md"
-    },
-    {
-      "id": "github-source-of-truth",
-      "path": "docs/operations/github-primary-sync.md"
-    },
-    {
-      "id": "engineering-front-door",
-      "path": "docs/engineering/README.md"
-    },
-    {
-      "id": "native-semantic-closure",
-      "path": "docs/engineering/NATIVE-SEMANTICS.md"
-    },
-    {
-      "id": "evidence-lifecycle",
-      "path": "docs/engineering/EVIDENCE-LIFECYCLE.md"
-    },
-    {
-      "id": "supply-chain",
-      "path": "docs/engineering/SUPPLY-CHAIN.md"
-    },
-    {
-      "id": "engineering-health-ux",
-      "path": "docs/engineering/ENGINEERING-HEALTH.md"
-    },
-    {
-      "id": "rust-cross-layer-contracts",
-      "path": "docs/engineering/RUST-CROSS-LAYER-CONTRACTS.md"
-    }
+    {"id":"agent-operating-rules","path":"AGENTS.md"},
+    {"id":"product-locked-rules","path":"PROJECT-RULES.md"},
+    {"id":"module-readme-standard","path":"docs/architecture/README-STANDARD.md"},
+    {"id":"gate-contract","path":"scripts/GATE-CONTRACT.md"},
+    {"id":"capability-granularity","path":"docs/architecture/capability-platform/CAPABILITY_GRANULARITY_RULES.md"},
+    {"id":"github-source-of-truth","path":"docs/operations/github-primary-sync.md"},
+    {"id":"engineering-front-door","path":"docs/engineering/README.md"},
+    {"id":"native-semantic-closure","path":"docs/engineering/NATIVE-SEMANTICS.md"},
+    {"id":"evidence-lifecycle","path":"docs/engineering/EVIDENCE-LIFECYCLE.md"},
+    {"id":"supply-chain","path":"docs/engineering/SUPPLY-CHAIN.md"},
+    {"id":"engineering-health-ux","path":"docs/engineering/ENGINEERING-HEALTH.md"},
+    {"id":"rust-cross-layer-contracts","path":"docs/engineering/RUST-CROSS-LAYER-CONTRACTS.md"}
   ],
   "assets": [
-    {
-      "id": "architecture-registries",
-      "kind": "machine_truth",
-      "paths": [
-        "docs/architecture/capability-registry",
-        "docs/architecture/semantic-registry",
-        "docs/architecture/native-boundary"
-      ]
-    },
-    {
-      "id": "release-baselines",
-      "kind": "immutable_reference",
-      "paths": [
-        "BASELINE-认可版本基线.md",
-        "docs/architecture/capability-platform/FINAL-WORTHWHILE-HOTPLUG-AUDIT-V4-20261008.md"
-      ]
-    },
-    {
-      "id": "acceptance-evidence",
-      "kind": "evidence",
-      "paths": [
-        "logs/acceptance",
-        "logs/m0-baseline",
-        "logs/m0-build-metrics"
-      ]
-    },
-    {
-      "id": "diagnostics-and-recovery",
-      "kind": "operations",
-      "paths": [
-        "scripts/doctor.mjs",
-        "scripts/collect-diagnostics.sh",
-        "scripts/git-recover.sh",
-        "docs/operations/recovery"
-      ]
-    },
-    {
-      "id": "ai-operating-assets",
-      "kind": "agent_governance",
-      "paths": [
-        ".ai/workbuddy-dispatch",
-        "AGENTS.md"
-      ]
-    },
-    {
-      "id": "supply-chain-sbom",
-      "kind": "ci_artifact",
-      "paths": [
-        "scripts/generate-sbom.mjs"
-      ]
-    }
+    {"id":"architecture-registries","kind":"machine_truth","paths":["docs/architecture/capability-registry","docs/architecture/semantic-registry","docs/architecture/native-boundary"]},
+    {"id":"release-baselines","kind":"immutable_reference","paths":["BASELINE-认可版本基线.md","docs/architecture/capability-platform/FINAL-WORTHWHILE-HOTPLUG-AUDIT-V4-20261008.md"]},
+    {"id":"acceptance-evidence","kind":"evidence","paths":["logs/acceptance","logs/m0-baseline","logs/m0-build-metrics"]},
+    {"id":"diagnostics-and-recovery","kind":"operations","paths":["scripts/doctor.mjs","scripts/collect-diagnostics.sh","scripts/git-recover.sh","docs/operations/recovery"]},
+    {"id":"ai-operating-assets","kind":"agent_governance","paths":[".ai/workbuddy-dispatch","AGENTS.md"]},
+    {"id":"supply-chain-sbom","kind":"ci_artifact","paths":["scripts/generate-sbom.mjs"]}
   ],
   "peripheralEngineering": [
-    {
-      "id": "source-control-safety",
-      "owner": "engineering",
-      "status": "active",
-      "paths": [
-        ".githooks/pre-push",
-        "scripts/sync-repo.sh",
-        "scripts/install-git-hooks.sh"
-      ]
-    },
-    {
-      "id": "backup-mirroring",
-      "owner": "engineering",
-      "status": "disabled_legacy",
-      "paths": [
-        ".github/workflows/mirror-to-gitee.yml",
-        "docs/operations/github-primary-sync.md"
-      ]
-    },
-    {
-      "id": "release-freeze",
-      "owner": "engineering",
-      "status": "active",
-      "paths": [
-        "docs/engineering/RELEASE-AND-RECOVERY.md"
-      ]
-    },
-    {
-      "id": "recovery",
-      "owner": "engineering",
-      "status": "active",
-      "paths": [
-        "docs/operations/recovery",
-        "docs/delivery/06-RECOVERY-CAPABILITY.md"
-      ]
-    },
-    {
-      "id": "diagnostics",
-      "owner": "engineering",
-      "status": "active",
-      "paths": [
-        "scripts/doctor.mjs",
-        "scripts/collect-diagnostics.sh"
-      ]
-    },
-    {
-      "id": "evidence-retention",
-      "owner": "engineering",
-      "status": "active_with_debt",
-      "paths": [
-        "logs/acceptance",
-        "logs/m0-baseline",
-        "docs/engineering/ASSET-CATALOG.md"
-      ]
-    },
-    {
-      "id": "health-diagnostics",
-      "owner": "engineering",
-      "status": "active_read_only",
-      "paths": [
-        "src/components/system/EngineeringHealthPanel.vue",
-        "docs/engineering/ENGINEERING-HEALTH.md"
-      ]
-    }
+    {"id":"source-control-safety","owner":"engineering","status":"active","paths":[".githooks/pre-push","scripts/sync-repo.sh","scripts/install-git-hooks.sh"]},
+    {"id":"backup-mirroring","owner":"engineering","status":"disabled_legacy","paths":[".github/workflows/mirror-to-gitee.yml","docs/operations/github-primary-sync.md"]},
+    {"id":"release-freeze","owner":"engineering","status":"active","paths":["docs/engineering/RELEASE-AND-RECOVERY.md"]},
+    {"id":"recovery","owner":"engineering","status":"active","paths":["docs/operations/recovery","docs/delivery/06-RECOVERY-CAPABILITY.md"]},
+    {"id":"diagnostics","owner":"engineering","status":"active","paths":["scripts/doctor.mjs","scripts/collect-diagnostics.sh"]},
+    {"id":"evidence-retention","owner":"engineering","status":"active_with_debt","paths":["logs/acceptance","logs/m0-baseline","docs/engineering/ASSET-CATALOG.md"]},
+    {"id":"health-diagnostics","owner":"engineering","status":"active_read_only","paths":["src/components/system/EngineeringHealthPanel.vue","docs/engineering/ENGINEERING-HEALTH.md"]}
   ],
   "requiredHumanDocs": [
     "docs/engineering/README.md",
@@ -463,17 +319,8 @@
       "generator": "scripts/generate-rust-crosslayer-contracts.py",
       "typescriptOutput": "src/generated/native-contracts.ts",
       "machineReport": "artifacts/native-contracts/generated-crosslayer-contracts.json",
-      "blocking": [
-        "registered_command_coverage",
-        "frontend_invoke_payload_keys",
-        "listener_unlisten_exposure"
-      ],
-      "partial": [
-        "complex_serde_tagged_enums",
-        "ambiguous_short_type_names",
-        "tauri_channel_transport",
-        "typescript_alias_structural_equivalence"
-      ]
+      "blocking": ["registered_command_coverage","frontend_invoke_payload_keys","listener_unlisten_exposure"],
+      "partial": ["complex_serde_tagged_enums","ambiguous_short_type_names","tauri_channel_transport","typescript_alias_structural_equivalence"]
     }
   },
   "evidenceLifecycle": {
