@@ -257,7 +257,11 @@ onMounted(async () => {
           <ContextMenuItem @click="ws.ctxOpenInExplorer(ws.fileCtx.entry)">🗂 资源管理器打开</ContextMenuItem>
           <ContextMenuItem @click="ws.ctxOpenInTerminal(ws.fileCtx.entry)">💻 命令行终端打开</ContextMenuItem>
           <div class="ctx-sep"></div>
-          <ContextMenuItem v-if="fileContextActions.length" @click="openLocalGit('diff')">Git · 查看未提交的改动</ContextMenuItem>
+          <!-- Git uses the native repository discovery/authorization in GitStudio.
+               Never hide its entry just because optional menu contributions have not loaded. -->
+          <ContextMenuItem @click="openLocalGit('diff')">🔀 Git · 改动、暂存与提交</ContextMenuItem>
+          <ContextMenuItem @click="openLocalGit('history')">🔀 Git · 提交历史 / Diff</ContextMenuItem>
+          <ContextMenuItem @click="openLocalGit('branches')">🔀 Git · 分支与远端</ContextMenuItem>
           <ContextMenuItem @click="openIdeaProjectScan()">数据库 · 查找 IDEA 项目连接</ContextMenuItem>
           <ContextMenuItem v-if="ws.fileCtx.entry.is_dir" @click="ws.ctxFavorite(ws.fileCtx.entry)">☆ 收藏到主页</ContextMenuItem>
           <ContextMenuItem @click="ws.copyPath(ws.fileCtx.entry, true)">复制相对路径</ContextMenuItem>
