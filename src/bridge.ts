@@ -119,6 +119,10 @@ export interface M0Config {
 
 // 类型化 IPC 封装：前端永远只传“意图”，不直接碰 OS / 凭据
 export const bridge = {
+  dbStudioCancel: (sessionId: string) => invoke<any>("db_studio_cancel", { sessionId }),
+  dbStudioClose: (sessionId: string) => invoke<any>("db_studio_close", { sessionId }),
+  dbStudioCall: (sessionId: string, request: Record<string, unknown>) => invoke<any>("db_studio_call", { sessionId, request }),
+  dbStudioOpen: (connId: string) => invoke<any>("db_studio_open", { connId }),
   gitStudioCancel: (jobId: string) => invoke<any>("git_studio_cancel", { jobId }),
   gitStudioConfirm: (jobId: string, confirmed: boolean) => invoke<any>("git_studio_confirm", { jobId, confirmed }),
   gitStudioPreview: (source: Record<string, unknown>, input: Record<string, unknown>) => invoke<any>("git_studio_preview", { source, input }),

@@ -50,7 +50,7 @@ impl Default for DbConnectionRegistry {
 /// Load once per process while holding the initialized lock.
 /// Metadata never includes passwords or JDBC URLs; Keyring remains the sole
 /// credential source, including after BrowserOS is restarted.
-fn ensure_profiles_loaded(app: &AppHandle) -> Result<(), String> {
+pub(crate) fn ensure_profiles_loaded(app: &AppHandle) -> Result<(), String> {
     let reg = app.state::<DbConnectionRegistry>();
     let mut loaded = reg.loaded.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
     if *loaded {

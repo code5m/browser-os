@@ -2,6 +2,10 @@
 identifier = "default-commands"
 description = "允许主窗口调用所有自定义桥命令"
 commands.allow = [
+    "db_studio_cancel",
+    "db_studio_close",
+    "db_studio_call",
+    "db_studio_open",
     "git_studio_cancel",
     "git_studio_confirm",
     "git_studio_preview",
