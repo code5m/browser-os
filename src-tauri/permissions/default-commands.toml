@@ -2,6 +2,10 @@
 identifier = "default-commands"
 description = "允许主窗口调用所有自定义桥命令"
 commands.allow = [
+    "git_studio_cancel",
+    "git_studio_confirm",
+    "git_studio_preview",
+    "git_studio_read",
     "open_browser",
     "close_browser",
     "position_browser",

@@ -10,6 +10,46 @@ source_of_truth: src-tauri/src/**/*.rs (#[tauri::command])
 generated: 2026-09-23
 
 commands:
+  git_studio_cancel:
+    file: "src-tauri/src/capabilities/git/studio.rs"
+    owner: "git"
+    category: "CAPABILITY_NATIVE_ADAPTER"
+    callers: "src/capabilities/git/**"
+    side_effect: "Authorized Developer Studio operation with native validation, preview and cleanup"
+    resource: "CHILD_PROCESS"
+    permission: "fs.read,fs.write,process.spawn,network.connect"
+    current_boundary: "Capability-owned Developer Studio native module"
+    target_boundary: "Capability-owned Developer Studio native module"
+  git_studio_confirm:
+    file: "src-tauri/src/capabilities/git/studio.rs"
+    owner: "git"
+    category: "CAPABILITY_NATIVE_ADAPTER"
+    callers: "src/capabilities/git/**"
+    side_effect: "Authorized Developer Studio operation with native validation, preview and cleanup"
+    resource: "CHILD_PROCESS"
+    permission: "fs.read,fs.write,process.spawn,network.connect"
+    current_boundary: "Capability-owned Developer Studio native module"
+    target_boundary: "Capability-owned Developer Studio native module"
+  git_studio_preview:
+    file: "src-tauri/src/capabilities/git/studio.rs"
+    owner: "git"
+    category: "CAPABILITY_NATIVE_ADAPTER"
+    callers: "src/capabilities/git/**"
+    side_effect: "Authorized Developer Studio operation with native validation, preview and cleanup"
+    resource: "CHILD_PROCESS"
+    permission: "fs.read,fs.write,process.spawn,network.connect"
+    current_boundary: "Capability-owned Developer Studio native module"
+    target_boundary: "Capability-owned Developer Studio native module"
+  git_studio_read:
+    file: "src-tauri/src/capabilities/git/studio.rs"
+    owner: "git"
+    category: "CAPABILITY_NATIVE_ADAPTER"
+    callers: "src/capabilities/git/**"
+    side_effect: "Authorized Developer Studio operation with native validation, preview and cleanup"
+    resource: "CHILD_PROCESS"
+    permission: "fs.read,fs.write,process.spawn,network.connect"
+    current_boundary: "Capability-owned Developer Studio native module"
+    target_boundary: "Capability-owned Developer Studio native module"
   open_browser:
     file: "src-tauri/src/bridge.rs"
     owner: "browser"

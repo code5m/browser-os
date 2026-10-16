@@ -119,6 +119,10 @@ export interface M0Config {
 
 // 类型化 IPC 封装：前端永远只传“意图”，不直接碰 OS / 凭据
 export const bridge = {
+  gitStudioCancel: (jobId: string) => invoke<any>("git_studio_cancel", { jobId }),
+  gitStudioConfirm: (jobId: string, confirmed: boolean) => invoke<any>("git_studio_confirm", { jobId, confirmed }),
+  gitStudioPreview: (source: Record<string, unknown>, input: Record<string, unknown>) => invoke<any>("git_studio_preview", { source, input }),
+  gitStudioRead: (source: Record<string, unknown>, input: Record<string, unknown>) => invoke<any>("git_studio_read", { source, input }),
   openBrowser: (url: string) => invoke("open_browser", { url }),
 
   closeBrowser: () => invoke("close_browser"),
