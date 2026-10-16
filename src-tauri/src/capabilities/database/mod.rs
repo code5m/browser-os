@@ -15,8 +15,8 @@
 //! 1. 多语句：SQLite 走 `prepare`（禁 `execute_batch`）+ 进入驱动前第二道静态检出；
 //! 2. 凭据：本模块**不接受 DSN / 连接串**，凭据只经 `KeyringStore`（键 `db:<conn_id>`），
 //!    错误串出模块前一律 `sanitize_message`；
-//! 3. 不伪造：MySQL/Postgres 取数通道与 TLS 能力**未实现**，一律显式返回
-//!    `DB_NOT_SUPPORTED` 并说明，不得假装。
+//! 3. 不伪造：MySQL 的真实查询与表编辑由隔离服务 E2E 验证；Postgres 尚未接通的
+//!    查询和表编辑通道显式拒绝，不得把连接对象存在写成完整驱动已完成。
 //!
 //! 迁移自 `src-tauri/src/database.rs`
 //! （Native Physical Boundary Matrix Pilot 8，见
@@ -27,6 +27,8 @@
 //! 而非本文件），故本批**无需**改 checker 路径。
 pub mod commands;
 pub mod database;
+#[cfg(test)]
+mod mysql_studio_e2e;
 pub mod profiles;
 pub mod studio;
 pub mod table_data;
