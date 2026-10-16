@@ -271,6 +271,14 @@ fn execute(pool: &mut DbPool, sql: &str, parameters: &[Option<String>]) -> Resul
                 .map_err(|_| "DB_TABLE_MUTATION_FAILED".to_owned())
         }
         DbPool::MySql(conn, _) => {
+            // Only fixed transaction controls use the text protocol. MySQL 8
+            // rejects START TRANSACTION in the prepared-statement protocol.
+            // All mutations, including zero-parameter inserts, stay prepared.
+            if parameters.is_empty() && matches!(sql, "START TRANSACTION" | "ROLLBACK") {
+                conn.query_drop(sql)
+                    .map_err(|_| "DB_TABLE_MUTATION_FAILED".to_owned())?;
+                return Ok(0);
+            }
             let values = parameters
                 .iter()
                 .map(|v| match v {

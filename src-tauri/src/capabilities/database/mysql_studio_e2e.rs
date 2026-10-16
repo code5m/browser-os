@@ -163,7 +163,9 @@ fn mysql_real_e2e_table_commit_rollback_and_ticket_ownership() {
         .unwrap()
         .unwrap();
     assert_eq!(written, literal, "parameters must stay literal data");
-    connection(&mut fixture.pool).query_drop("ROLLBACK").unwrap();
+    connection(&mut fixture.pool)
+        .query_drop("ROLLBACK")
+        .unwrap();
     assert_eq!(fixture.observed(), original);
 
     let page = fixture.read();
