@@ -108,9 +108,9 @@ onBeforeUnmount(() => {
     <div role="group" aria-label="快捷布局"><button v-for="n in [2,4]" :key="n" :class="{active:grid.gridCount===n}" @click="setGridCount(n)">{{n}} 格</button></div>
     <button class="grid-more" :aria-expanded="advancedOpen" aria-controls="grid-advanced" @click="advancedOpen=!advancedOpen">更多设置</button>
   </div>
-  <div v-if="layout.mainView === 'grid' && !grid.gridOpen" class="grid-startup-state" role="status">
-    <span>{{ grid.gridStarting ? '正在创建宫格网页，请稍候…' : (grid.gridStartupError || '宫格尚未启动，点击重新加载。') }}</span>
-    <button :disabled="grid.gridStarting" @click="grid.openGrid()">重新加载宫格</button>
+  <div v-if="layout.mainView === 'grid' && !grid.gridOpen" class="expand-row" role="status">
+    <span class="er-warn">{{ grid.gridStarting ? '正在创建宫格网页，请稍候…' : (grid.gridStartupError || '宫格尚未启动，点击重新加载。') }}</span>
+    <button class="er-primary" :disabled="grid.gridStarting" @click="grid.openGrid()">重新加载宫格</button>
   </div>
   <div v-if="layout.mainView === 'grid' && advancedOpen" id="grid-advanced" class="grid-advanced">
     <label>布局 <select aria-label="宫格布局" :value="grid.gridLayout" @change="setGridLayout(($event.target as HTMLSelectElement).value as (typeof gridLayouts)[number]['key'])"><option v-for="l in gridLayouts" :key="l.key" :value="l.key">{{l.title}}</option></select></label>
@@ -131,9 +131,6 @@ onBeforeUnmount(() => {
   </div>
 </template>
 <style scoped>
-.grid-startup-state { display:flex; align-items:center; gap:12px; padding:9px 12px; color:#7a4b1b; font-size:12px; background:#fff8e9; border-bottom:1px solid #f2dfaf; }
-.grid-startup-state button { border:1px solid #dab57a; background:#fff; border-radius:5px; padding:5px 10px; cursor:pointer; }
-.grid-startup-state button:disabled { opacity:.5; cursor:default; }
 
 .expand-row{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:4px 8px;background:#f4f6fb;border-bottom:1px solid #e3e7f5}
 .expand-row button{border:1px solid #d5dbe7;background:#fff;color:#4e5969;border-radius:5px;padding:3px 9px;font-size:11px;cursor:pointer;white-space:nowrap}
