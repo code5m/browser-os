@@ -257,10 +257,20 @@ ok(shown.length > 0, "错误态仍有可读信息");
 section("Git panel branch-selection regression");
 const { readFileSync } = await import("node:fs");
 const panelSource = readFileSync(ROOT + "src/capabilities/git/ui/GitPanel.vue", "utf8");
-ok(panelSource.includes("targetBranch.value = branch") &&
-   panelSource.includes("git.currentBranch") &&
-   panelSource.includes("watch(") && panelSource.includes("immediate: true"),
-   "切换仓库或刷新分支时，Git 面板必须同步有效的默认分支");
+ok(/import\s+GitStudio\s+from\s+["']\.\/GitStudio\.vue["']/.test(panelSource) &&
+   /<GitStudio\s*\//.test(panelSource),
+   "GitPanel delegates to the single production Git Studio owner");
+const studioSource = readFileSync(ROOT + "src/capabilities/git/ui/GitStudio.vue", "utf8");
+// The old branch dropdown became an explicit action target input. Preserve the
+// safety intent with real Vue behavior: no old target after a source change,
+// no loss of an intentional same-source edit, no stale preview confirmation.
+try {
+  const { checkGitStudioSourceIsolation } = await import("./check-git-studio-source-isolation.mjs");
+  const result = await checkGitStudioSourceIsolation();
+  ok(true, "Git Studio source isolation and confirmation", `${result.assertions} assertions`);
+} catch (error) {
+  ok(false, "Git Studio source isolation and confirmation", String(error.message));
+}
 
 section("Git Studio real unified patch pairing");
 const { parseUnifiedPatch } = await import(`${ROOT}src/capabilities/git/model/patchView.ts`);
@@ -280,7 +290,7 @@ ok(parsed.additions === 2 && parsed.deletions === 1, "diff counters represent ac
 ok(parsed.rows.some(row => row.removed && row.added && row.before === "old value" && row.after === "new value"), "paired old/new changed lines");
 ok(parsed.rows.some(row => row.kind === "context" && row.beforeLine === 1 && row.afterLine === 1), "context line number derived from hunk header");
 ok(parseUnifiedPatch(patch, 3).truncated, "large patch bounded by row cap");
-ok(panelSource.includes("Git Studio") && panelSource.includes("changeGroups") && panelSource.includes("selectedCount"), "Git Studio grouped changes and explicit commit scope are visible");
+ok(studioSource.includes('v-for="group in groups"') && studioSource.includes("selected.length"), "Git Studio grouped changes and explicit commit scope are visible");
 
 section("File-manager Git path intent is ephemeral and shared with Git History");
 const localNavigation=await import(ROOT+"src/composables/gitLocalNavigation.ts");

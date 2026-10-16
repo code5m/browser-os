@@ -19,7 +19,8 @@ const source = computed<Record<string,unknown>|null>(() => localPath.value ? {pa
 const info = ref<any>(null), error = ref(''), notice = ref('');
 const loading = ref(false), writeBusy = ref(false), preview = ref<any>(null), acknowledged = ref(false);
 const selected = ref<string[]>([]), activeFile = ref(''), staged = ref(false);
-const pane = ref(props.initialAction && props.initialAction !== 'history' ? 'changes' : props.mode === 'history' ? 'log' : 'changes');
+function defaultPane() { return props.initialAction && props.initialAction !== 'history' ? 'changes' : props.mode === 'history' ? 'log' : 'changes'; }
+const pane = ref(defaultPane());
 const panes = [['changes','改动'],['log','提交历史'],['branches','分支'],['stash','暂存架'],['worktrees','工作树'],['github','PR / CI']];
 const patch = ref(''), file = ref<any>(null), conflict = ref<any>(null), resolution = ref('');
 const diffMode = ref('split'), selectedLines = ref<number[]>([]);
@@ -129,9 +130,23 @@ async function inspectPr(number:number){pr.value=number;try{const result=await r
 function prAction(action:string){void prepare(action,{pr:pr.value,message:prText.value,target:branchTarget.value});}
 function selectRepo(id:string){if(writeBusy.value)return;localPath.value='';void git.selectRepo(id||null);}
 function openLocal(){if(writeBusy.value||!enteredPath.value.trim())return;localPath.value=enteredPath.value.trim();}
-const unregister=registerGitLifecycleBinding({canSuspend:()=>!writeBusy.value,cleanup:()=>{generation++;detailGeneration++;void cancelPreview();info.value=null;patch.value='';file.value=null;commits.value=[];remote.value=null;}});
+// Repository-bound targets and displayed results must never follow a new source.
+// Invalidate synchronously so an action in the same event cannot reuse old state.
+function resetSourceContext() {
+  generation++; detailGeneration++;
+  void cancelPreview(); previewSource='';
+  pane.value=defaultPane();
+  info.value=null; selected.value=[]; activeFile.value=''; patch.value='';
+  file.value=null; rawDetail.value=''; conflict.value=null; resolution.value='';
+  remote.value=null; prDetail.value=null; pr.value=null; prText.value='';
+  branchTarget.value=''; stashTarget.value=''; worktreeTarget.value='';
+  revision.value=''; logSelection.value=''; message.value='';
+  commits.value=[]; stashes.value=[]; worktrees.value=''; blame.value=[];
+  selectedLines.value=[]; offset.value=0; error.value=''; notice.value='';
+}
+const unregister=registerGitLifecycleBinding({canSuspend:()=>!writeBusy.value,cleanup:resetSourceContext});
 watch(()=>props.path,path=>{if(!writeBusy.value){localPath.value=path||'';enteredPath.value=path||'';}});
-watch(()=>source.value?sourceIdentity(source.value):'',()=>{generation++;detailGeneration++;void cancelPreview();info.value=null;selected.value=[];activeFile.value='';patch.value='';file.value=null;rawDetail.value='';conflict.value=null;remote.value=null;prDetail.value=null;offset.value=0;error.value='';void refresh();},{immediate:true});
+watch(()=>source.value?sourceIdentity(source.value):'',()=>{resetSourceContext();void refresh();},{immediate:true,flush:'sync'});
 onUnmounted(()=>{disposed=true;generation++;detailGeneration++;void cancelPreview();if(!writeBusy.value)unregister();});
 </script>
 <template>

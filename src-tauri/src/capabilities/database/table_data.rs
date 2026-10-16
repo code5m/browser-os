@@ -969,6 +969,95 @@ mod tests {
         );
     }
     #[test]
+    fn studio_table_transaction_control_preserves_bound_values_until_rollback() {
+        let mut pool = fixture();
+        let literal = "quoted ' value; DROP TABLE item; -- literal";
+        execute(&mut pool, "BEGIN IMMEDIATE", &[]).unwrap();
+        match &pool {
+            DbPool::Sqlite(conn) => assert!(!conn.is_autocommit()),
+            _ => unreachable!(),
+        }
+        execute(
+            &mut pool,
+            "UPDATE item SET value=? WHERE id=?",
+            &[Some(literal.into()), Some("1".into())],
+        )
+        .unwrap();
+        let inside = query(
+            &mut pool,
+            "SELECT value FROM item WHERE id=1",
+            &[],
+            1,
+            &QueryCancel::new(),
+        )
+        .unwrap();
+        assert_eq!(inside.rows[0][0].as_deref(), Some(literal));
+        execute(&mut pool, "ROLLBACK", &[]).unwrap();
+        match &pool {
+            DbPool::Sqlite(conn) => assert!(conn.is_autocommit()),
+            _ => unreachable!(),
+        }
+        let after = query(
+            &mut pool,
+            "SELECT value FROM item WHERE id=1",
+            &[],
+            1,
+            &QueryCancel::new(),
+        )
+        .unwrap();
+        assert_eq!(after.rows[0][0].as_deref(), Some("a"));
+    }
+    #[test]
+    fn studio_table_constraint_error_rolls_back_earlier_edit() {
+        let mut pool = fixture();
+        let mut state = TableState::default();
+        let cfg = config();
+        let cancel = QueryCancel::new();
+        let page = read(&mut pool, &cfg, &mut state, &req(), &cancel).unwrap();
+        let mut request = req();
+        request.changes = vec![
+            TableChange {
+                action: "update".into(),
+                row_id: Some(page["rows"][0]["row_id"].as_str().unwrap().into()),
+                values: BTreeMap::from([("value".into(), Some("must roll back".into()))]),
+            },
+            TableChange {
+                action: "insert".into(),
+                row_id: None,
+                values: BTreeMap::from([
+                    ("id".into(), Some("2".into())),
+                    ("value".into(), Some("duplicate key".into())),
+                ]),
+            },
+        ];
+        let preview = preview(&mut pool, &cfg, &mut state, &request, &cancel).unwrap();
+        request.ticket = Some(preview["ticket"].as_str().unwrap().into());
+        assert_eq!(
+            apply(&mut pool, &cfg, &mut state, &request, true, &cancel).unwrap_err(),
+            "DB_TABLE_MUTATION_FAILED"
+        );
+        let after = query(
+            &mut pool,
+            "SELECT value FROM item ORDER BY id",
+            &[],
+            2,
+            &cancel,
+        )
+        .unwrap();
+        assert_eq!(
+            after.rows,
+            vec![vec![Some("a".into())], vec![Some("b".into())]]
+        );
+        match &pool {
+            DbPool::Sqlite(conn) => assert!(conn.is_autocommit()),
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            apply(&mut pool, &cfg, &mut state, &request, true, &cancel).unwrap_err(),
+            "DB_TABLE_PREVIEW_EXPIRED"
+        );
+    }
+    #[test]
     fn studio_table_production_is_read_only() {
         let mut pool = fixture();
         let mut state = TableState::default();

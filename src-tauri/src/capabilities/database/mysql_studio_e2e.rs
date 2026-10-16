@@ -108,6 +108,23 @@ impl Fixture {
             .query(format!("SELECT id,value FROM `{}` ORDER BY id", self.table))
             .unwrap()
     }
+
+    fn observed_with_lock(&mut self) -> Vec<(i64, String)> {
+        // An MVCC read alone does not prove that the writer released its locks.
+        connection(&mut self.observer)
+            .query_drop("START TRANSACTION")
+            .unwrap();
+        let locked: Vec<(i64, String)> = connection(&mut self.observer)
+            .query(format!(
+                "SELECT id,value FROM `{}` ORDER BY id FOR UPDATE NOWAIT",
+                self.table
+            ))
+            .expect("rollback must release every row lock");
+        connection(&mut self.observer)
+            .query_drop("ROLLBACK")
+            .unwrap();
+        locked
+    }
 }
 
 impl Drop for Fixture {
@@ -207,19 +224,40 @@ fn mysql_real_e2e_table_late_conflict_rolls_back_entire_batch() {
     );
     assert_eq!(expected[0].1, "original one");
     assert_eq!(expected[1].1, "concurrent edit");
-    // An ordinary MVCC read can see old data while locks are still held. A
-    // second session's NOWAIT locking read also proves the writer released them.
-    connection(&mut fixture.observer)
-        .query_drop("START TRANSACTION")
-        .unwrap();
-    let locked: Vec<(i64, String)> = connection(&mut fixture.observer)
-        .query(format!(
-            "SELECT id,value FROM `{}` ORDER BY id FOR UPDATE NOWAIT",
-            fixture.table
-        ))
-        .expect("rollback must release every row lock");
-    assert_eq!(locked, expected);
-    connection(&mut fixture.observer)
-        .query_drop("ROLLBACK")
-        .unwrap();
+    assert_eq!(fixture.observed_with_lock(), expected);
+}
+
+#[test]
+#[ignore = "requires disposable MySQL service"]
+fn mysql_real_e2e_table_constraint_error_rolls_back_entire_batch() {
+    let mut fixture = Fixture::new();
+    let original = fixture.observed();
+    let page = fixture.read();
+    let duplicate = TableChange {
+        action: "insert".into(),
+        row_id: None,
+        values: BTreeMap::from([
+            ("id".into(), Some("2".into())),
+            ("value".into(), Some("duplicate key".into())),
+        ]),
+    };
+    let request = fixture.preview(vec![
+        edit(&page["rows"][0], "must roll back on driver error"),
+        duplicate,
+    ]);
+    assert_eq!(fixture.observed(), original, "preview must not mutate rows");
+    assert_eq!(
+        fixture.apply(&request, true).unwrap_err(),
+        "DB_TABLE_MUTATION_FAILED"
+    );
+    assert_eq!(
+        fixture.observed_with_lock(),
+        original,
+        "a constraint error must undo earlier writes and release their locks"
+    );
+    assert_eq!(
+        fixture.apply(&request, true).unwrap_err(),
+        "DB_TABLE_PREVIEW_EXPIRED",
+        "a failed batch still consumes its approval ticket"
+    );
 }

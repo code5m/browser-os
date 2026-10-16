@@ -19,7 +19,7 @@
 
 中断前创建的 Git Studio 原生草稿已恢复为 `src-tauri/src/capabilities/git/studio.rs`。它需要完成模块注册、前端调用、权限登记、安全复核和编译/行为验证；目前不得宣称已可运行。
 
-用户设备目前离线，不能把 GitHub Runner 的 GUI 验证冒充用户已安装客户端的验收。所有开发提交仅写开发分支，未通过完整验收不得合并 master。
+用户于 2026-10-16 明确：本地安装和使用验证由用户负责；Agent 完成全部约定功能、CI 验收和通过后的 master 合并。不等待用户本地验证或设备在线；保留 CI 中既有安装包、GUI、Rust、安全及 pre-merge 检查。不得把 Runner 结果写成用户本机验收。所有开发提交仅写开发分支。
 
 ## 验收与完成定义
 
@@ -34,4 +34,8 @@ The seven previously runner-only integration changes are now ordinary committed 
 
 Audit fixes: original-document table refresh, operation-state guards for selected Git commits and amend, acknowledged session cleanup, structured fatal driver errors, unknown commit/rollback outcomes and retired connections, SQLite Result error type, TableDataEditor registration. Regression coverage runs the real Vue/Pinia owner with native IO fixtures and native Rust tests exercise temporary Git repositories and SQLite.
 
-The CSS minifier is build-only. The 795517-byte baseline and 25.2% limit are unchanged; a successful build is not proof of footprint compliance. Full Validation/pre-merge, real MySQL and packaged GUI results must be linked to the final head before acceptance. Workstation GUI is distinct and remains unverified while the device is offline. The broader IDEA parity scope is not certified by these audit repairs.
+The CSS minifier is build-only. The 795517-byte baseline and 25.2% limit are unchanged; a successful build is not proof of footprint compliance. Full Validation/pre-merge, real MySQL and packaged GUI results must be linked to the final head before acceptance. Workstation installation/use testing is assigned to the user and is not an Agent merge prerequisite; CI packaged GUI remains required. The broader IDEA parity scope is not certified by these audit repairs.
+
+## Reviewed patch transport (not validation)
+
+An explicitly registered, temporary branch-only patch transport may apply a checksum-pinned diff and commit the result to this development branch before final validation. It never writes master, never force-pushes, and rejects a changed remote head. It is not a Builder gate and does not claim tests passed. All resulting code and formatting changes must exist in the committed branch; final Full Validation does not apply any patch or prepare.py. Remove transport workflow/payload/registry entry before merge.
