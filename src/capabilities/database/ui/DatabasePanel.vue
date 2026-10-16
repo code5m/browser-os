@@ -270,7 +270,7 @@ function deleteConnection() {
 
       <div v-if="showConnection" class="form">
         <p class="form-note">连接设置仅在需要时展开。密码不保存到页面或浏览器存储。</p>
-        <div class="db-url-import" role="group" aria-label="连接 URL">
+        <div class="url-import" role="group" aria-label="连接 URL">
           <label>通过 URL / JDBC 地址填写连接参数
             <input v-model="connectionUrl" type="text" autocomplete="off" spellcheck="false" placeholder="jdbc:mysql://127.0.0.1:3306/app" @keydown.enter.prevent="applyConnectionUrl" />
           </label>
@@ -464,9 +464,6 @@ th { position: sticky; top: 0; background: #f7f8fa; color: #4e5969; font-weight:
 </style>
 
 <style scoped>
- .db-url-import{border:1px solid #d9e3f0;border-radius:7px;padding:8px;margin-bottom:10px;background:#f8fbff}
-.db-url-import input{box-sizing:border-box;width:100%;min-width:0}
-.db-url-import button{border:1px solid #bdd2ed;border-radius:6px;padding:5px 10px;background:#fff;cursor:pointer}
 .idea-import-toggle{width:100%;text-align:left;margin:7px 0;padding:7px;border-radius:6px;border:1px solid #bdd2ed;background:#eff6ff;color:#245889;cursor:pointer;font-size:12px}
 .idea-import{padding:10px;margin-bottom:8px;border:1px solid #d3e0f2;border-radius:8px;background:#fff;max-height:340px;overflow:auto}
 .idea-import p{font-size:11px;line-height:1.5;color:#596d83;overflow-wrap:anywhere}
