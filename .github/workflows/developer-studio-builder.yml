@@ -1,7 +1,6 @@
 name: BrowserOS Developer Studio Builder
 
-# Temporary development executor; remove before merging the complete delivery.
-# Only the explicitly authorized integration branch can execute this writer.
+# Temporary branch-only development executor. Remove before release.
 on:
   push:
     branches: [feature/developer-studio-unified-20261016]
@@ -17,13 +16,11 @@ on:
       - src/capabilities/git/model/studio*.mjs
       - scripts/check-developer-studio.mjs
       - .github/workflows/developer-studio-builder.yml
-
 permissions:
   contents: read
 concurrency:
   group: browseros-developer-studio-builder
   cancel-in-progress: true
-
 jobs:
   integrate:
     if: github.repository == 'code5m/browser-os' && github.ref == 'refs/heads/feature/developer-studio-unified-20261016'
@@ -87,11 +84,15 @@ jobs:
           fi
           echo "Development integration: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
           echo 'Final Full Validation, pre-merge, GUI and service E2E are still required.' >> "$GITHUB_STEP_SUMMARY"
-      - name: Preserve integration evidence
+      - name: Preserve reproducible non-secret integration evidence
         if: always()
         run: |
           git diff --binary > /tmp/developer-studio-integration.patch
           git status --short > /tmp/developer-studio-worktree.txt
+          # Only declared source/dependency paths are archived. Never include
+          # .git/config (checkout credentials), user config, environment or home.
+          tar --exclude='*/target' --exclude='*/.git' --exclude='*/.env*' --exclude='*/.npmrc' --exclude='node_modules/@tauri-apps/cli-*' -czf /tmp/developer-studio-repro.tar.gz src src-tauri packages scripts docs node_modules package.json package-lock.json vite.config.ts index.html tauri-browser-tabs
+          nl -ba scripts/check-developer-studio.mjs | tail -n 40
           git diff --stat
       - uses: actions/upload-artifact@v4
         if: always()
@@ -100,4 +101,5 @@ jobs:
           path: |
             /tmp/developer-studio-integration.patch
             /tmp/developer-studio-worktree.txt
+            /tmp/developer-studio-repro.tar.gz
           retention-days: 7
