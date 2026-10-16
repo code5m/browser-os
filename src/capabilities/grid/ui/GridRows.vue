@@ -88,8 +88,8 @@ watch(() => [layout.mainView, advancedOpen.value] as const, ([view]) => {
   }
 });
 function fmtMb(mb: number) { return mb >= 1024 ? (mb / 1024).toFixed(1) + "G" : Math.round(mb) + "M"; }
+onBeforeUnmount(stopResourcePolling);
 onBeforeUnmount(() => {
-  stopResourcePolling();
   hostObserver?.disconnect();
   observedHost = null;
   if (relayoutFrame !== null) cancelAnimationFrame(relayoutFrame);
