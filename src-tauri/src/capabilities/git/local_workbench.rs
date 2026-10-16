@@ -589,11 +589,9 @@ fn gh_merge_preview(repo: &Repository, number: u32) -> Result<String, String> {
         .as_array()
         .ok_or("GITHUB_CI_MISSING")?;
     if checks.is_empty()
-        || checks.iter().any(|c| {
-            let status = c["status"].as_str().unwrap_or("COMPLETED");
-            let conclusion = c["conclusion"].as_str().unwrap_or("SUCCESS");
-            status != "COMPLETED" || !matches!(conclusion, "SUCCESS" | "NEUTRAL" | "SKIPPED")
-        })
+        || checks
+            .iter()
+            .any(|c| !super::studio::studio_check_passed(c))
     {
         return Err("GITHUB_CI_NOT_ALL_GREEN".into());
     }

@@ -43,6 +43,7 @@ pub struct StudioInput {
     pub offset: Option<u32>,
     pub staged: Option<bool>,
     pub pr: Option<u32>,
+    pub expected_fingerprint: Option<String>,
 }
 struct Ticket {
     source: StudioSource,
@@ -559,6 +560,7 @@ fn read(root: &Path, input: &StudioInput) -> Result<Value, String> {
             Ok(json!({"patch":git(root,&args)?}))
         }
         "file" => {
+            let basis = snapshot(root)?;
             let p = selected.ok_or("GIT_STUDIO_SELECT_FILE")?;
             let file = check_file(root, p, true)?;
             let working = if file.exists() {
@@ -592,7 +594,9 @@ fn read(root: &Path, input: &StudioInput) -> Result<Value, String> {
                 .map(|e| blob_text(e.id()))
                 .transpose()?
                 .unwrap_or_default();
-            Ok(json!({"path":p,"head":head,"index":staged,"worktree":working}))
+            Ok(
+                json!({"path":p,"head":head,"index":staged,"worktree":working,"fingerprint":if snapshot(root)? == basis { basis } else { return Err("GIT_STUDIO_READ_BASIS_CHANGED".into()); }}),
+            )
         }
         "log" | "follow" => {
             let skip = input.offset.unwrap_or(0);
@@ -661,6 +665,40 @@ fn read(root: &Path, input: &StudioInput) -> Result<Value, String> {
                 json!({"patch":git(root,&["show","--format=fuller","--no-ext-diff","--no-textconv",&revision,"--"])?}),
             )
         }
+        "conflict" => {
+            let path = selected.ok_or("GIT_STUDIO_SELECT_FILE")?;
+            let basis = snapshot(root)?;
+            let repo = git2::Repository::open(root).map_err(|_| "GIT_STUDIO_REPOSITORY_MISSING")?;
+            let index = repo.index().map_err(|_| "GIT_STUDIO_INDEX_READ")?;
+            let mut versions = Vec::new();
+            let mut found = false;
+            for stage in [1, 2, 3] {
+                if let Some(entry) = index.get_path(Path::new(path), stage) {
+                    found = true;
+                    let blob = repo
+                        .find_blob(entry.id)
+                        .map_err(|_| "GIT_STUDIO_BLOB_READ")?;
+                    if blob.size() > TEXT_CAP || blob.is_binary() {
+                        return Err("GIT_STUDIO_BINARY_FILE".into());
+                    }
+                    versions.push(
+                        String::from_utf8(blob.content().to_vec())
+                            .map_err(|_| "GIT_STUDIO_BINARY_FILE")?,
+                    );
+                } else {
+                    versions.push(String::new());
+                }
+            }
+            if !found {
+                return Err("GIT_STUDIO_NO_CONFLICT".into());
+            }
+            if snapshot(root)? != basis {
+                return Err("GIT_STUDIO_READ_BASIS_CHANGED".into());
+            }
+            Ok(
+                json!({"path":path,"ancestor":versions[0],"ours":versions[1],"theirs":versions[2],"fingerprint":basis}),
+            )
+        }
         "blame" => Ok(
             json!({"text":git(root,&["blame","--line-porcelain","--",selected.ok_or("GIT_STUDIO_SELECT_FILE")?])?}),
         ),
@@ -702,6 +740,15 @@ fn stash_id(root: &Path, name: &str) -> Result<String, String> {
 }
 fn validate(root: &Path, input: &StudioInput) -> Result<Option<String>, String> {
     let action = input.action.as_str();
+    if matches!(action, "index_edit" | "resolve") {
+        let expected = input
+            .expected_fingerprint
+            .as_deref()
+            .ok_or("GIT_STUDIO_READ_BASIS_REQUIRED")?;
+        if snapshot(root)? != expected {
+            return Err("GIT_STUDIO_READ_BASIS_CHANGED".into());
+        }
+    }
     let target = input.target.as_deref().unwrap_or("");
     if input
         .message

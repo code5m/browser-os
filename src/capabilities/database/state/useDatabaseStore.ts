@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
+import { sqlStatements } from "../model/studioSql.mjs";
 import { bridge } from "../../../bridge";
 import type { DbConnectionConfig, DbQueryResult } from "../../../types";
 import { redactSecrets } from '../../../utils/redact';
@@ -35,8 +36,8 @@ function describeError(e: unknown): string {
 export const useDatabaseStore = defineStore("database", () => {
   const form = ref<DbConnectionForm>(emptyConnectionForm());
   const connections = ref<DbConnectionSummary[]>([]);
-  type QueryDocument = { id:string; name:string; connId:string|null; sql:string; result:DbResultView|null; raw:DbQueryResult|null; busy:boolean; error:string; queryId:string|null; pending:string|null; tablePreview:{name:string;offset:number}|null };
-  const makeDoc = (n:number, connId:string|null):QueryDocument => ({ id:crypto.randomUUID(), name:`SQL ${n}`, connId, sql:'', result:null, raw:null, busy:false, error:'', queryId:null, pending:null, tablePreview:null });
+  type QueryDocument = { id:string; name:string; connId:string|null; sql:string; result:DbResultView|null; raw:DbQueryResult|null; busy:boolean; error:string; queryId:string|null; pending:string|null; tablePreview:{name:string;offset:number}|null; sessionId:string|null; transaction:string; batchResults:DbQueryResult[]; pendingBatch:boolean; closing:boolean; risk:DbRiskLevel; verdict:ProductionVerdict };
+  const makeDoc = (n:number, connId:string|null):QueryDocument => ({ id:crypto.randomUUID(), name:`SQL ${n}`, connId, sql:'', result:null, raw:null, busy:false, error:'', queryId:null, pending:null, tablePreview:null, sessionId:null, transaction:'idle', batchResults:[], pendingBatch:false, closing:false, risk:'unknown', verdict:'Unknown' });
   let sequence = 1;
   const documents = ref<QueryDocument[]>([makeDoc(sequence,null)]);
   const activeDocument = ref(documents.value[0].id);
@@ -61,7 +62,7 @@ export const useDatabaseStore = defineStore("database", () => {
   const recentlyVerified = computed(() => !!activeId.value && verifiedConnectionId.value === activeId.value);
   // SQL history is opt-in, bounded and session-only. Never persist queries to disk.
   const rememberQueries = ref(false);
-  const queryHistory = ref<{id:string;connection:string;sql:string;at:string;elapsed:string}[]>([]);
+  const queryHistory = ref<{id:string;connId:string;connection:string;sql:string;at:string;elapsed:string}[]>([]);
   const closePending = ref<string|null>(null);
   function lifecycleActive(): boolean {
     return databaseLifecycleSnapshot().active;
@@ -77,6 +78,7 @@ export const useDatabaseStore = defineStore("database", () => {
     pendingSql.value = null;
     connecting.value = false;
     schemaBusy.value = false;
+    await Promise.all(documents.value.map(doc => releaseSession(doc)));
     const queryIds = documents.value.map((doc) => doc.queryId).filter((id): id is string => !!id);
     await Promise.allSettled(queryIds.map((id) => bridge.dbCancel(id)));
     for (const doc of documents.value) {
@@ -86,8 +88,8 @@ export const useDatabaseStore = defineStore("database", () => {
     }
   });
   /** 风险等级由后端分类器给出（F4），前端只展示；未返回按 unknown 处理。 */
-  const risk = ref<DbRiskLevel>("unknown");
-  const verdict = ref<ProductionVerdict>("Unknown");
+  const risk = computed({get:()=>document.value.risk,set:(value:DbRiskLevel)=>{document.value.risk=value;}});
+  const verdict = computed({get:()=>document.value.verdict,set:(value:ProductionVerdict)=>{document.value.verdict=value;}});
   /** 待确认的 SQL：非空表示「已拦截、尚未发 IPC」 */
   const pendingSql = computed({ get:() => document.value.pending, set:(v:string|null) => { document.value.pending = v; } });
 
@@ -116,24 +118,20 @@ export const useDatabaseStore = defineStore("database", () => {
   }
 
   function selectConnection(c: DbConnectionSummary) {
-    if (document.value.busy || document.value.pending) return;
-    const cfg = configs.value.find(it => it.id === c.id);
+    if (document.value.busy || document.value.pending || document.value.closing) return;
+    const cfg = configs.value.find(it => it.id === c.id && it.enabled);
     if (!cfg) return;
-    activeId.value = c.id;
-    ++columnsGeneration;
-    selectedObject.value = "";
-    form.value = {
-      ...emptyConnectionForm(),
-      id: c.id,
-      name: c.name,
-      kind: c.kind,
-      allowWrite: c.allowWrite,
-      enabled: c.enabled,
-      database: cfg.database, host:cfg.host || '', portText:cfg.port ? String(cfg.port) : '', username:cfg.username || '', sslMode:cfg.ssl_mode,
-      productionHint:cfg.production_hint === true ? 'yes' : cfg.production_hint === false ? 'no' : '',
-    };
-    result.value = null; document.value.raw = null;
-    void refreshSchema();
+    const previous = document.value;
+    // Never silently retarget existing SQL, results or a transaction.
+    if (previous.connId !== c.id && (previous.sql.trim() || previous.raw || previous.sessionId)) {
+      const reusable = documents.value.find(d => d.connId === c.id && !d.busy && !d.pending);
+      if (reusable) activeDocument.value = reusable.id;
+      else {
+        if (documents.value.length >= 12) { previous.error = '最多打开 12 个查询页签'; return; }
+        const next = makeDoc(++sequence, c.id); documents.value.push(next); activeDocument.value = next.id;
+      }
+    } else document.value.connId = c.id;
+    synchronizeDocumentSource();
   }
 
   async function refreshConnections() {
@@ -155,20 +153,29 @@ export const useDatabaseStore = defineStore("database", () => {
     if (documents.value.length >= 12) { error.value = '最多打开 12 个查询页签'; return; }
     const next = makeDoc(++sequence, activeId.value); documents.value.push(next); activeDocument.value = next.id;
   }
-  function closeDocument(id:string, confirmed=false) {
-    const doc = documents.value.find(d => d.id === id); if (!doc || doc.busy) return;
-    if (doc.sql.trim() && !confirmed) { closePending.value = id; return; }
+  async function closeDocument(id:string, confirmed=false) {
+    const doc = documents.value.find(d => d.id === id);
+    if (!doc || doc.busy || doc.closing) return;
+    if ((doc.sql.trim() || doc.transaction !== 'idle') && !confirmed) { closePending.value = id; return; }
     closePending.value = null;
+    if (!await releaseSession(doc)) return;
     documents.value = documents.value.filter(d => d.id !== id);
     if (!documents.value.length) documents.value.push(makeDoc(++sequence,null));
     if (activeDocument.value === id) activeDocument.value = documents.value[0].id;
   }
+
   async function cancelQuery() {
-    if (!lifecycleActive()) return;
-    const doc = document.value; if (!doc.queryId) return;
-    try { if (!await bridge.dbCancel(doc.queryId)) doc.error = '查询已完成或尚未开始'; }
-    catch(e) { doc.error = describeError(e); }
+    const doc = document.value;
+    try {
+      if (doc.sessionId) {
+        const response = await bridge.dbStudioCancel(doc.sessionId);
+        if (response.cancel_requested) doc.error = '已请求取消；等待数据库停止后才会释放事务。';
+        else if (!response.completed) doc.error = '查询正在启动，正在关闭该会话以确保停止。';
+        if (!response.cancel_requested && !response.completed) void releaseSession(doc);
+      } else if (doc.queryId && !await bridge.dbCancel(doc.queryId)) doc.error = '查询已完成或尚未开始';
+    } catch(e) { doc.error = describeError(e); }
   }
+
   async function refreshSchema() {
     if (!lifecycleActive()) return;
     const lifecycle = databaseLifecycleSnapshot();
@@ -272,13 +279,15 @@ export const useDatabaseStore = defineStore("database", () => {
     } catch (e) { error.value = describeError(e); }
   }
 
-  function reuseHistory(item: {sql:string;connection:string}) {
-    if (documents.value.length >= 12) { error.value = "最多打开 12 个查询页签"; return; }
-    newDocument();
-    document.value.name = "历史 SQL";
-    sql.value = item.sql;
-    // Reusing an earlier statement does not execute it or bypass user confirmation.
+  function reuseHistory(item: {sql:string;connection:string;connId?:string}) {
+    if (!item.connId || !configs.value.some(c=>c.id===item.connId && c.enabled)) {
+      error.value = '历史数据源已删除或不可用，不能将 SQL 静默切换到当前库。'; return;
+    }
+    if (documents.value.length >= 12) { error.value = '最多打开 12 个查询页签'; return; }
+    const next=makeDoc(++sequence,item.connId); next.name='历史 SQL'; next.sql=item.sql;
+    documents.value.push(next); activeDocument.value=next.id;
   }
+
   function clearQueryHistory() { queryHistory.value = []; }
   function setRememberQueries(value: boolean) {
     rememberQueries.value = value;
@@ -311,7 +320,10 @@ export const useDatabaseStore = defineStore("database", () => {
       const res = await bridge.dbConnect(cfg, password);
       const current = databaseLifecycleSnapshot();
       if (!current.active || current.generation !== lifecycle.generation) return false;
-      doc.connId = res.conn_id;
+      if (doc.connId !== res.conn_id && (doc.sql.trim() || doc.raw || doc.sessionId)) {
+        if (documents.value.length >= 12) throw new Error('连接已保存；请关闭一个页签后再选择该数据源');
+        const next = makeDoc(++sequence,res.conn_id);documents.value.push(next);activeDocument.value=next.id;
+      } else doc.connId = res.conn_id;
       verifiedConnectionId.value = res.conn_id;
       risk.value = "unknown";
       verdict.value = "Unknown";
@@ -333,6 +345,8 @@ export const useDatabaseStore = defineStore("database", () => {
     // DbPool is transient. This only closes the selected UI session;
     // saved non-secret configuration and the Keyring credential are retained.
     if (document.value.busy || document.value.pending) return;
+    const old=document.value;
+    if(old.sessionId){void releaseSession(old);return;}
     activeId.value=null;
     verifiedConnectionId.value=null;
     schemaGeneration++;
@@ -356,6 +370,9 @@ export const useDatabaseStore = defineStore("database", () => {
     pendingSql.value = null;
     if (!backendReady.value) return;
     try {
+      const bound=documents.value.filter(d=>d.connId===id);
+      const released=await Promise.all(bound.map(doc=>releaseSession(doc)));
+      if(released.some(ok=>!ok)) throw new Error('仍有数据库会话未释放，不能删除连接');
       await bridge.dbDisconnect(id);
       for (const doc of documents.value) if (doc.connId === id) { doc.connId = null; doc.pending = null; }
       schema.value = [];
@@ -369,69 +386,54 @@ export const useDatabaseStore = defineStore("database", () => {
     }
   }
 
-  function requestRun() {
-    if (!lifecycleActive() || busy.value || confirmOpen.value) return;
-    const gate = runGate.value;
-    if (!gate.ok) {
-      error.value = gate.reason;
-      return;
-    }
-    // 确认前不发 IPC：仅挂起待确认 SQL
-    if (requiresConfirm.value) {
-      pendingSql.value = sql.value;
-      return;
-    }
-    void execute(sql.value, false);
-  }
+  function requestRun() { void requestRunText(sql.value, false); }
 
-  function cancelConfirm() {
-    pendingSql.value = null;
-  }
+  function cancelConfirm() { document.value.pending = null; document.value.pendingBatch = false; }
 
   function confirmRun() {
     if (!lifecycleActive()) return;
-    const text = pendingSql.value;
-    pendingSql.value = null;
-    if (text) void execute(text, true);
+    const doc=document.value, text=doc.pending, batch=doc.pendingBatch;
+    doc.pending=null; doc.pendingBatch=false;
+    if(text) void execute(text,true,batch);
   }
 
-  async function execute(text: string, confirmed: boolean) {
+  async function execute(text:string, confirmed:boolean, batch=false) {
     if (!lifecycleActive()) return;
-    const lifecycle = databaseLifecycleSnapshot();
-    const doc = document.value;
-    if (!backendReady.value || !doc.connId || doc.busy) return;
-    doc.busy = true; doc.error = ''; doc.queryId = crypto.randomUUID();
+    const lifecycle=databaseLifecycleSnapshot(), doc=document.value, connId=doc.connId;
+    if (!backendReady.value || !connId || doc.busy || doc.closing) return;
+    doc.busy=true; doc.error=''; doc.queryId=crypto.randomUUID();
     try {
-      // 仅当本次执行来自二次确认对话框时视为用户显式确认写操作（fail-closed）；
-      // timeout_secs 传 null 表示沿用后端默认（domain.rs DB_DEFAULT_QUERY_TIMEOUT_SECS）。
-      const res = await bridge.dbQuery({
-        conn_id: doc.connId,
-        sql: text,
-        timeout_secs: null,
-        confirm_write: confirmed,
-        query_id: doc.queryId,
-      });
-      // 风险等级与生产判定以后端回带为准；未回带时 buildResultView 已按 unknown / Unknown 兜底（fail-closed）
-      const current = databaseLifecycleSnapshot();
-      if (!current.active || current.generation !== lifecycle.generation) return;
-      const view = buildResultView(res);
-      doc.result = view; doc.raw = res;
-      if (rememberQueries.value && res.state !== "failed") {
-        const connection = connections.value.find(c => c.id === doc.connId)?.name ?? "数据库";
-        queryHistory.value.unshift({id:crypto.randomUUID(),connection,sql:text,at:new Date().toLocaleTimeString(),elapsed:view.elapsedLabel});
-        queryHistory.value = queryHistory.value.slice(0,30);
+      let result:DbQueryResult;
+      if (typeof bridge.dbStudioOpen === 'function') {
+        const sessionId=await ensureSession(doc);
+        const reply=await bridge.dbStudioCall(sessionId, batch
+          ? {action:'batch',statements:sqlStatements(text).map((s:{text:string})=>s.text),confirmed,timeout_secs:30}
+          : {action:'execute',sql:text,confirmed,timeout_secs:30});
+        doc.transaction=reply.transaction || doc.transaction;
+        doc.batchResults=reply.results || (reply.result ? [reply.result] : []);
+        result=(reply.result || reply.results?.at(-1)) as DbQueryResult;
+        if(!result) throw new Error('数据库未返回可验证的查询结果');
+      } else {
+        // Compatibility for the existing simple-query bridge and its tests;
+        // a batch or transaction never degrades to unrelated connections.
+        if(batch) throw new Error('当前运行版本未提供数据库会话，请重新安装');
+        result=await bridge.dbQuery({conn_id:connId,sql:text,timeout_secs:null,confirm_write:confirmed,query_id:doc.queryId});
       }
-      risk.value = view.risk;
-      verdict.value = view.verdict;
-    } catch (e) {
-      const current = databaseLifecycleSnapshot();
-      if (current.active && current.generation === lifecycle.generation) doc.error = describeError(e);
-    } finally {
-      const current = databaseLifecycleSnapshot();
-      if (current.active && current.generation === lifecycle.generation) {
-        doc.busy = false; doc.queryId = null;
+      const current=databaseLifecycleSnapshot();
+      if(!current.active || current.generation!==lifecycle.generation || doc.connId!==connId || !documents.value.some(d=>d.id===doc.id)) return;
+      const next=buildResultView(result); doc.raw=result; doc.result=next; doc.risk=next.risk; doc.verdict=next.verdict;
+      if(rememberQueries.value && (result as any).state!=='failed') {
+        const connection=connections.value.find(c=>c.id===connId)?.name || '数据库';
+        queryHistory.value.unshift({id:crypto.randomUUID(),connId,connection,sql:text,at:new Date().toLocaleTimeString(),elapsed:next.elapsedLabel});
+        queryHistory.value=queryHistory.value.slice(0,30);
       }
-    }
+    } catch(e) {
+      doc.error=describeError(e);
+      if(doc.sessionId && !doc.closing) {
+        try { const state=await bridge.dbStudioCall(doc.sessionId,{action:'status'}); doc.transaction=state.transaction; }
+        catch { doc.transaction='unknown'; doc.error+='；会话状态未知，请关闭会话，不要重复执行写入。'; }
+      }
+    } finally { doc.busy=false; doc.queryId=null; }
   }
 
   function clearResult() {
@@ -441,7 +443,84 @@ export const useDatabaseStore = defineStore("database", () => {
     pendingSql.value = null;
   }
 
+
+  // DEVELOPER_STUDIO_SOURCE_BOUND_DOCUMENTS
+  const openingSessions = new Map<string, Promise<string>>();
+  function synchronizeDocumentSource() {
+    const cfg=configs.value.find(c=>c.id===document.value.connId);
+    ++schemaGeneration; ++columnsGeneration; schema.value=[]; selectedObject.value=''; objectDetailRows.value=[];
+    if(!cfg) { resetForm(); return; }
+    form.value={...emptyConnectionForm(),id:cfg.id,name:cfg.name,kind:cfg.kind,allowWrite:cfg.allow_write,enabled:cfg.enabled,
+      database:cfg.database,host:cfg.host||'',portText:cfg.port?String(cfg.port):'',username:cfg.username||'',sslMode:cfg.ssl_mode,
+      productionHint:cfg.production_hint===true?'yes':cfg.production_hint===false?'no':''};
+    void refreshSchema();
+  }
+  function activateDocument(id:string) { if(documents.value.some(d=>d.id===id)) activeDocument.value=id; }
+  watch(activeDocument,synchronizeDocumentSource);
+  async function ensureSession(doc:QueryDocument):Promise<string> {
+    if(doc.closing) throw new Error('数据库会话正在关闭');
+    if(doc.sessionId) return doc.sessionId;
+    const existing=openingSessions.get(doc.id); if(existing) return existing;
+    const connId=doc.connId,lifecycle=databaseLifecycleSnapshot();
+    if(!connId) throw new Error('请先选择数据源');
+    const promise=(async()=>{
+      const opened=await bridge.dbStudioOpen(connId);
+      const current=databaseLifecycleSnapshot();
+      if(doc.closing||!current.active||current.generation!==lifecycle.generation||doc.connId!==connId||!documents.value.some(d=>d.id===doc.id)) {
+        await bridge.dbStudioClose(opened.session_id); throw new Error('数据源或页签已变化，新会话已请求关闭');
+      }
+      doc.sessionId=opened.session_id; doc.transaction=opened.transaction||'idle'; return opened.session_id as string;
+    })();
+    openingSessions.set(doc.id,promise);
+    try{return await promise;}finally{openingSessions.delete(doc.id);}
+  }
+  async function releaseSession(doc:QueryDocument=document.value):Promise<boolean> {
+    if(doc.closing) return false;
+    doc.closing=true;
+    try {
+      const opening=openingSessions.get(doc.id);
+      if(opening) { try { await opening; } catch { /* Opening observes closing and releases its connection. */ } }
+      const id=doc.sessionId; if(!id) {doc.transaction='idle';return true;}
+      for(let attempt=0;attempt<180;attempt++) {
+        const reply=await bridge.dbStudioClose(id);
+        if(reply.closed) {if(doc.sessionId===id)doc.sessionId=null;doc.transaction='idle';return true;}
+        await new Promise(resolve=>setTimeout(resolve,250));
+      }
+      doc.error='已请求关闭，但原生连接尚未确认停止；不能视为回滚完成。';return false;
+    } catch(e) {doc.error=describeError(e);return false;}
+    finally {doc.closing=false;}
+  }
+  async function sessionAction(action:string, options:Record<string,unknown>={}) {
+    const doc=document.value;
+    if(!lifecycleActive()||doc.busy||doc.closing||doc.pending||!doc.connId)return;
+    doc.busy=true;doc.error='';
+    try {
+      const id=await ensureSession(doc);
+      const reply=await bridge.dbStudioCall(id,{...options,action});
+      if(reply.transaction)doc.transaction=reply.transaction;
+    } catch(e) {doc.error=describeError(e);}
+    finally {doc.busy=false;}
+  }
+  async function requestRunText(text:string,batch=false) {
+    const doc=document.value;
+    if(!lifecycleActive()||doc.busy||doc.pending||doc.closing)return;
+    const gate=canRunQuery({backendReady:backendReady.value,connected:!!doc.connId,sql:text});
+    if(!gate.ok){doc.error=gate.reason;return;}
+    try {
+      const statements=sqlStatements(text);
+      if(!statements.length)throw new Error('没有可执行语句');
+      if(!batch&&statements.length!==1)throw new Error('请选择单条语句，或使用运行脚本');
+      if(requiresConfirm.value) {doc.pending=text;doc.pendingBatch=batch;return;}
+      await execute(text,false,batch);
+    }catch(e){doc.error=describeError(e);}
+  }
+  function selectBatchResult(index:number) {
+    const result=document.value.batchResults[index];
+    if(result){document.value.raw=result;document.value.result=buildResultView(result);}
+  }
+
   return {
+    configs, activateDocument, requestRunText, sessionAction, releaseSession, selectBatchResult,
     documents, activeDocument, document, closePending, newDocument, closeDocument, cancelQuery,
     schema, schemaBusy, selectedObject, columnsBusy, objectDetailRows,
     objectDetailMode, selectObject, refreshSchema, previewTable, nextTablePage, previousTablePage,

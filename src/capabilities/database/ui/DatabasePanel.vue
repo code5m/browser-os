@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DatabaseWorkspace from "./DatabaseWorkspace.vue";
 import { EmptyState } from "../../../shared/ui";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { takeIdeaProjectPath, subscribeIdeaProjectScan } from "../../../composables/ideaProjectNavigation";
@@ -417,93 +418,7 @@ async function copyCsv() {
       </div>
     </section>
 
-    <section class="query">
-      <div class="sql-documents" role="tablist"><div v-for="doc in db.documents" :key="doc.id" :class="{active:doc.id === db.activeDocument}"><button role="tab" :aria-selected="doc.id === db.activeDocument" @click="db.activeDocument = doc.id">{{ doc.name }}{{ doc.busy ? ' · 执行中' : '' }}</button><button title="关闭查询" :disabled="doc.busy" @click="db.closeDocument(doc.id)"><X :size="12"/></button></div><button title="新建查询" @click="db.newDocument()"><Plus :size="16"/></button></div>
-      <div v-if="db.closePending" class="confirm">此查询包含 SQL 文本，关闭后会丢失该草稿。<button @click="db.closeDocument(db.closePending!, true)">丢弃并关闭</button><button @click="db.closePending = null">取消</button></div>
-      <div class="query-head">
-        <strong class="sec-title">SQL 控制台</strong>
-        <span class="tag">{{ activeConnection?.allowWrite ? '写权限已启用' : '只读保护' }}</span>
-        <span class="tag" :class="db.risk">{{ riskLabel(db.risk) }}</span>
-        <span class="tag warn" v-if="db.verdict !== 'NonProduction'">{{ productionLabel(db.verdict) }}</span>
-      </div>
-
-      <div class="sql-snippets" aria-label="SQL 快捷输入">
-        <span>快速插入：</span>
-        <button v-for="fragment in ['SELECT','FROM','WHERE','ORDER BY','LIMIT']" :key="fragment"
-          :disabled="db.document.busy || db.confirmOpen" @click="insertSqlKeyword(fragment)">{{fragment}}</button>
-      </div>
-      <textarea ref="sqlEditor" v-model="db.sql" rows="9" class="sql" aria-label="SQL 编辑器"
-        placeholder="-- 选择表格或输入 SELECT 语句。Ctrl/Cmd + Enter 执行。"
-        spellcheck="false" :disabled="db.document.busy || db.confirmOpen"
-        @keydown.ctrl.enter.prevent="db.requestRun()" @keydown.meta.enter.prevent="db.requestRun()"></textarea>
-      <p v-if="multiStatementHint" class="hint">检测到多条语句，后端会拒绝执行</p>
-
-      <div class="form-actions">
-        <button class="primary" :disabled="db.busy || !db.runGate.ok" @click="db.requestRun()">▶ 运行 SQL</button>
-        <button :disabled="!db.document.busy" @click="db.cancelQuery()"><Square :size="12"/>取消查询</button>
-        <button :disabled="!db.result" @click="copyCsv">复制 CSV</button>
-        <button :disabled="db.busy || !db.sql.trim() || db.form.kind!=='mysql'" title="仅构造非 ANALYZE 的 MySQL EXPLAIN SELECT" @click="db.explainCurrentSql()">EXPLAIN</button>
-        <button :disabled="!db.result" @click="downloadCsv">导出 CSV</button>
-        <button :disabled="!db.result && !db.error" @click="db.clearResult()">清空结果</button>
-        <button :aria-pressed="showHistory" @click="showHistory = !showHistory">{{showHistory?'收起':'查询'}}历史</button>
-      </div>
-
-      <div v-if="db.confirmOpen" class="confirm">
-        <div class="confirm-text">
-          确认执行以下语句？<code>{{ truncateText(db.pendingSql ?? "", 120) }}</code>
-        </div>
-        <div class="form-actions">
-          <button class="danger" @click="db.confirmRun()">确认执行</button>
-          <button @click="db.cancelConfirm()">取消</button>
-        </div>
-      </div>
-
-      <section v-if="showHistory" class="query-history">
-        <label><input type="checkbox" :checked="db.rememberQueries" @change="db.setRememberQueries(($event.target as HTMLInputElement).checked)" /> 本次会话记录成功的 SQL（最多 30 条，不写入磁盘）</label>
-        <button :disabled="!db.queryHistory.length" @click="db.clearQueryHistory()">清空</button>
-        <p v-if="!db.queryHistory.length" class="hint">尚无本次会话记录；开启后执行 SQL 才会加入历史。</p>
-        <button v-for="item in db.queryHistory" :key="item.id" class="history-item"
-          :title="item.sql" @click="db.reuseHistory(item)">{{ item.at }} · {{item.connection}} · {{item.elapsed}} — {{truncateText(item.sql,90)}}</button>
-      </section>
-      <p v-if="db.error" class="errors" role="alert">⚠ {{ db.error }}</p>
-
-      <div v-if="db.result" class="result">
-        <div v-if="db.document.tablePreview" class="server-page">
-          <span>表 {{db.document.tablePreview.name}} · 数据库分页：
-            第 {{Math.floor(db.document.tablePreview.offset/100)+1}} 页（每页最多 100 行）
-          </span>
-          <button :disabled="db.busy || db.document.tablePreview.offset===0" @click="db.previousTablePage()">上一批 100 行</button>
-          <button :disabled="db.busy || db.result.rowCount<100 || db.document.tablePreview.offset>=50000" @click="db.nextTablePage()">下一批 100 行</button>
-          <small>无总行数承诺；最终由数据库返回记录为准</small>
-        </div>
-        <div class="result-head">
-          <span>{{ db.result.rowLabel }}</span>
-          <span>耗时 {{ db.result.elapsedLabel }}</span>
-          <span v-if="db.result.state !== 'completed'" class="tag warn">{{ db.result.stateLabel }}</span>
-        </div>
-        <ul v-if="db.result.warnings.length" class="warn-list">
-          <li v-for="(w, i) in db.result.warnings" :key="i">⚠ {{ w }}</li>
-        </ul>
-        <p class="hint">当前仅筛选和排序已读取的 {{db.result.rows.length}} 行；并非整个数据库的服务器端分页。</p>
-        <div class="result-paging"><input v-model="filter" aria-label="筛选结果" placeholder="筛选当前结果"/><button title="上一页" :disabled="page === 0" @click="page--"><ChevronLeft :size="14"/></button><span>{{ page+1 }} / {{ Math.max(1,Math.ceil(filteredRows.length/pageSize)) }} · {{ filteredRows.length }} 行</span><button title="下一页" :disabled="(page+1)*pageSize >= filteredRows.length" @click="page++"><ChevronRight :size="14"/></button></div>
-        <div class="grid-wrap">
-          <table v-if="db.result.columns.length">
-            <thead>
-              <tr>
-                <th v-for="(c, i) in db.result.columns" :key="i"><button @click="sort(i)">{{ c }}{{ sortColumn === i ? sortAscending ? ' ↑' : ' ↓' : '' }}</button></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(row, ri) in displayRows" :key="ri">
-                <td v-for="(cell, ci) in row" :key="ci">{{ cell }}</td>
-              </tr>
-            </tbody>
-          </table>
-          <EmptyState v-else text="无列信息" />
-        </div>
-        <p v-if="copied" class="hint">已复制</p>
-      </div>
-    </section>
+    <DatabaseWorkspace />
     </div>
   </div>
 </template>
