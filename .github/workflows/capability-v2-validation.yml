@@ -235,10 +235,22 @@ jobs:
         if: needs.impact.outputs.mode == 'full'
         run: git diff --exit-code HEAD -- src src-tauri scripts docs package.json package-lock.json vite.config.ts .github
       - name: Full pre-merge gate
+        id: pre_merge
         if: needs.impact.outputs.mode == 'full'
+        shell: bash
         env:
           M0_BASE_REF: origin/master
-        run: bash scripts/pre-merge.sh
+        run: |
+          set -o pipefail
+          bash scripts/pre-merge.sh 2>&1 | tee "$RUNNER_TEMP/browseros-pre-merge.log"
+      - name: Upload pre-merge diagnostics
+        if: always() && needs.impact.outputs.mode == 'full' && steps.pre_merge.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-pre-merge-${{ github.run_id }}
+          path: ${{ runner.temp }}/browseros-pre-merge.log
+          if-no-files-found: error
+          retention-days: 14
       - name: Runner disk diagnostics
         if: always() && needs.impact.outputs.mode == 'full'
         run: |
