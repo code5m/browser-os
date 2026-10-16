@@ -11,10 +11,31 @@ const layout = useLayoutStore();
 const grid = useGridStore();
 const hostElement = ref<HTMLElement | null>(null);
 useGridHost(hostElement);
+// Grid child WebViews have native geometry; unlike the normal tab scheduler,
+// the Grid host needs its own bounded resize observation. Otherwise changes
+// to the address row, toolbar or viewport can strand all four cells offscreen.
+let hostObserver: ResizeObserver | null = null;
+let observedHost: HTMLElement | null = null;
+let relayoutFrame: number | null = null;
+function scheduleHostRelayout() {
+  if (!grid.gridOpen || layout.mainView !== "grid" || relayoutFrame !== null) return;
+  relayoutFrame = requestAnimationFrame(() => {
+    relayoutFrame = null;
+    if (grid.gridOpen && layout.mainView === "grid") grid.forceGridRelayout();
+  });
+}
 function bindHostAndRelayout() {
   nextTick(() => {
     hostElement.value = document.querySelector<HTMLElement>(".browser-host");
-    if (hostElement.value && grid.gridOpen) grid.forceGridRelayout();
+    if (hostElement.value !== observedHost) {
+      hostObserver?.disconnect();
+      observedHost = hostElement.value;
+      if (typeof ResizeObserver !== "undefined" && observedHost) {
+        hostObserver ??= new ResizeObserver(scheduleHostRelayout);
+        hostObserver.observe(observedHost);
+      }
+    }
+    scheduleHostRelayout();
   });
 }
 onMounted(bindHostAndRelayout);
@@ -67,7 +88,12 @@ watch(() => [layout.mainView, advancedOpen.value] as const, ([view]) => {
   }
 });
 function fmtMb(mb: number) { return mb >= 1024 ? (mb / 1024).toFixed(1) + "G" : Math.round(mb) + "M"; }
-onBeforeUnmount(stopResourcePolling);
+onBeforeUnmount(() => {
+  stopResourcePolling();
+  hostObserver?.disconnect();
+  observedHost = null;
+  if (relayoutFrame !== null) cancelAnimationFrame(relayoutFrame);
+});
 </script>
 <template>
   <div v-if="grid.gridOpen && layout.mainView === 'grid' && grid.gridMode === 'ai'" class="expand-row ai-send-row">
