@@ -39,6 +39,12 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+    env:
+      # Reduce temporary debug-symbol storage, not tests, assertions or features.
+      # Release profile and the frozen build-growth gate remain unchanged.
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
     steps:
       - name: Checkout full history
         uses: actions/checkout@v4
@@ -54,6 +60,7 @@ jobs:
       - name: Install Linux build dependencies
         if: needs.impact.outputs.mode == 'full'
         run: |
+          df -h . /tmp
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb xauth dbus-x11
       - name: Setup Node
@@ -95,6 +102,26 @@ jobs:
       - name: Production build
         if: needs.impact.outputs.mode != 'docs'
         run: npm run build
+      - name: Terminal production bundle differential tests
+        if: needs.impact.outputs.mode != 'docs'
+        run: node scripts/check-xterm-bundle.mjs
+      - name: Terminal Chromium DOM differential tests
+        if: needs.impact.outputs.mode == 'full'
+        run: node scripts/check-xterm-dom.mjs
+      - name: Early frozen frontend size gate
+        if: needs.impact.outputs.mode == 'full'
+        run: |
+          python3 - <<'PY'
+          import importlib.util, json
+          from pathlib import Path
+          spec=importlib.util.spec_from_file_location('metrics','scripts/measure-build-metrics.py')
+          metrics=importlib.util.module_from_spec(spec);spec.loader.exec_module(metrics)
+          current={'dist':metrics.collect_dist(Path('dist'))}
+          baseline=json.loads(Path('logs/m0-build-metrics/build-metrics-052b18a.json').read_text())
+          verdict=metrics.compare(current,baseline)
+          print(json.dumps({'current':current,'comparison':verdict},indent=2))
+          raise SystemExit(1 if verdict['exceeds_growth_limit'] else 0)
+          PY
       - name: Semantic dependency and bundle evidence
         id: semantic_evidence
         if: needs.impact.outputs.mode == 'full'
@@ -212,3 +239,8 @@ jobs:
         env:
           M0_BASE_REF: origin/master
         run: bash scripts/pre-merge.sh
+      - name: Runner disk diagnostics
+        if: always() && needs.impact.outputs.mode == 'full'
+        run: |
+          df -h . /tmp
+          du -sh src-tauri/target tauri-browser-tabs/target 2>/dev/null || true
