@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
+import './check-table-data.mjs';
 import {readFileSync,writeFileSync,unlinkSync} from 'node:fs';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {build} from 'esbuild';

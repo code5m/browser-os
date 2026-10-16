@@ -29,3 +29,4 @@ pub mod commands;
 pub mod database;
 pub mod profiles;
 pub mod studio;
+pub mod table_data;

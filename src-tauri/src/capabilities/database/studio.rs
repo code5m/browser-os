@@ -1,12 +1,14 @@
 //! Database sessions own one driver connection on one worker thread.
 //! The UI never owns a socket or transaction. Every user statement uses the
 //! existing production/write classifier; closing or expiry rolls back first.
+use super::table_data::{self, TableRequest, TableState};
+// DEVELOPER_STUDIO_TABLE_ACTOR
 use super::{
     commands::{ensure_profiles_loaded, DbConnectionRegistry},
-    database::{credential_key, DbPool, QueryCancel},
+    database::{credential_key, DbError, DbPool, QueryCancel},
 };
 use crate::{
-    domain::{DbConnectionConfig, SupportedDb},
+    domain::{DbConnectionConfig, DbErrorCode, DbQueryResult, SupportedDb},
     keyring_store::KeyringStore,
     security_policy as sp,
     shared::invocation::check_invocation_source,
@@ -41,6 +43,7 @@ pub struct SessionRequest {
     #[serde(default)]
     pub writable: bool,
     pub timeout_secs: Option<u64>,
+    pub table: Option<TableRequest>,
 }
 struct Envelope {
     request: SessionRequest,
@@ -110,14 +113,27 @@ enum TransactionState {
     ReadOnly,
     ReadWrite,
     Failed,
+    Unknown,
 }
 struct ConnectionOwner {
     pool: DbPool,
     transaction: TransactionState,
+    tables: TableState,
+    reusable: bool,
+}
+impl ConnectionOwner {
+    fn new(pool: DbPool) -> Self {
+        Self {
+            pool,
+            transaction: TransactionState::Idle,
+            tables: TableState::default(),
+            reusable: true,
+        }
+    }
 }
 impl Drop for ConnectionOwner {
     fn drop(&mut self) {
-        if self.transaction != TransactionState::Idle {
+        if self.reusable && self.transaction != TransactionState::Idle {
             let _ = control(&mut self.pool, "ROLLBACK");
         }
     }
@@ -183,13 +199,125 @@ fn begin(
         (DbPool::Postgres(_), false) => "BEGIN READ ONLY",
         _ => "BEGIN",
     };
-    control(&mut owner.pool, text)?;
+    if let Err(message) = control(&mut owner.pool, text) {
+        return Err(terminal_fault(
+            owner,
+            "DB_SESSION_BEGIN_OUTCOME_UNKNOWN",
+            &message,
+        ));
+    }
     owner.transaction = if writable {
         TransactionState::ReadWrite
     } else {
         TransactionState::ReadOnly
     };
     Ok(())
+}
+/// Only ordinary DML is allowed inside an owned transaction. DDL/admin
+/// statements may implicitly commit on some drivers and are not atomic batches.
+fn studio_transactional_sql(sql: &str) -> bool {
+    if sp::classify_sql_risk(sql).is_read_only() {
+        return true;
+    }
+    let word = sql
+        .trim_start()
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .next()
+        .unwrap_or("")
+        .to_ascii_uppercase();
+    matches!(word.as_str(), "INSERT" | "UPDATE" | "DELETE" | "REPLACE")
+}
+/// Versioned structured failure inside the existing string-error IPC contract.
+/// Retire unusable connections before serialization; preserve unknown outcomes.
+fn fault(owner: &ConnectionOwner, code: &str, message: &str, discard: bool) -> String {
+    json!({"kind":"database_session_fault","version":1,"code":code,"message":message,
+        "discard_connection":discard,"transaction":owner.transaction,
+        "outcome_unknown":owner.transaction == TransactionState::Unknown})
+    .to_string()
+}
+fn terminal_fault(owner: &mut ConnectionOwner, code: &str, message: &str) -> String {
+    owner.reusable = false;
+    owner.transaction = TransactionState::Unknown;
+    owner.tables = TableState::default();
+    fault(owner, code, message, true)
+}
+fn finish_control(owner: &mut ConnectionOwner, command: &str) -> Result<(), String> {
+    if !owner.reusable {
+        return Err(fault(
+            owner,
+            "DB_SESSION_CONNECTION_NOT_REUSABLE",
+            "Close this session and verify the database outcome",
+            true,
+        ));
+    }
+    if let Err(message) = control(&mut owner.pool, command) {
+        let code = if command == "COMMIT" {
+            "DB_SESSION_COMMIT_OUTCOME_UNKNOWN_CHECK_DATABASE"
+        } else {
+            "DB_SESSION_ROLLBACK_OUTCOME_UNKNOWN_CLOSE_SESSION"
+        };
+        return Err(terminal_fault(owner, code, &message));
+    }
+    owner.transaction = TransactionState::Idle;
+    owner.tables = TableState::default();
+    Ok(())
+}
+fn rollback_active(owner: &mut ConnectionOwner) -> Result<(), String> {
+    if !owner.reusable {
+        return Err(fault(
+            owner,
+            "DB_SESSION_CONNECTION_NOT_REUSABLE",
+            "A rollback cannot be confirmed on this connection",
+            true,
+        ));
+    }
+    if owner.transaction != TransactionState::Idle {
+        finish_control(owner, "ROLLBACK")?;
+    }
+    Ok(())
+}
+fn finish_query(
+    owner: &mut ConnectionOwner,
+    result: Result<DbQueryResult, DbError>,
+    cancel: &QueryCancel,
+    write: bool,
+) -> Result<Value, String> {
+    // Never erase DbError::discard_connection by mapping to text first.
+    if let Err(error) = &result {
+        if error.discard_connection {
+            return Err(terminal_fault(owner, error.code_str(), &error.message));
+        }
+    }
+    let interrupted = cancel.is_cancelled()
+        || result
+            .as_ref()
+            .err()
+            .is_some_and(|e| matches!(e.code, DbErrorCode::Cancelled | DbErrorCode::Timeout));
+    if interrupted {
+        if write && owner.transaction == TransactionState::Idle {
+            return Err(terminal_fault(
+                owner,
+                "DB_SESSION_WRITE_OUTCOME_UNKNOWN_CHECK_DATABASE",
+                "Do not retry an interrupted autocommit write",
+            ));
+        }
+        rollback_active(owner)?;
+        return Err(fault(
+            owner,
+            "DB_SESSION_CANCELLED_OR_TIMED_OUT",
+            "Operation stopped; any owned transaction rollback was acknowledged",
+            false,
+        ));
+    }
+    match result {
+        Ok(result) => serde_json::to_value(result).map_err(|_| "DB_SESSION_RESULT_INVALID".into()),
+        Err(error) => {
+            if owner.transaction != TransactionState::Idle {
+                owner.transaction = TransactionState::Failed;
+            }
+            Err(fault(owner, error.code_str(), &error.message, false))
+        }
+    }
 }
 fn run_sql(
     owner: &mut ConnectionOwner,
@@ -199,39 +327,32 @@ fn run_sql(
     cancel: &QueryCancel,
     timeout: Option<u64>,
 ) -> Result<Value, String> {
+    if !owner.reusable {
+        return Err(fault(
+            owner,
+            "DB_SESSION_CONNECTION_NOT_REUSABLE",
+            "Close the retired session",
+            true,
+        ));
+    }
     if owner.transaction == TransactionState::Failed {
         return Err("DB_SESSION_ROLLBACK_REQUIRED".into());
     }
-    if owner.transaction == TransactionState::ReadOnly && !sp::classify_sql_risk(sql).is_read_only()
-    {
+    if owner.transaction != TransactionState::Idle && !studio_transactional_sql(sql) {
+        return Err("DB_SESSION_NON_TRANSACTIONAL_STATEMENT_DENIED".into());
+    }
+    let write = !sp::classify_sql_risk(sql).is_read_only();
+    if owner.transaction == TransactionState::ReadOnly && write {
         return Err("DB_SESSION_READ_ONLY_TRANSACTION".into());
     }
     sp::evaluate_db_query_gate(sql, cfg, owner.pool.encrypted(), confirmed)
         .map_err(|code| code.as_str().to_string())?;
     if cancel.is_cancelled() {
-        return Err("DB_SESSION_CANCELLED".into());
+        return Err("DB_SESSION_CANCELLED_BEFORE_EXECUTION".into());
     }
     let id = uuid::Uuid::new_v4().to_string();
-    let result = owner
-        .pool
-        .query(sql, cancel, timeout, &id)
-        .map_err(|error| format!("{}: {}", error.code_str(), error.message));
-    if cancel.is_cancelled() {
-        if owner.transaction != TransactionState::Idle {
-            let _ = control(&mut owner.pool, "ROLLBACK");
-            owner.transaction = TransactionState::Idle;
-        }
-        return Err("DB_SESSION_CANCELLED_RESULT_NOT_REUSABLE".into());
-    }
-    match result {
-        Ok(result) => serde_json::to_value(result).map_err(|_| "DB_SESSION_RESULT_INVALID".into()),
-        Err(error) => {
-            if owner.transaction != TransactionState::Idle {
-                owner.transaction = TransactionState::Failed;
-            }
-            Err(error)
-        }
-    }
+    let result = owner.pool.query(sql, cancel, timeout, &id);
+    finish_query(owner, result, cancel, write)
 }
 fn transact(
     owner: &mut ConnectionOwner,
@@ -239,7 +360,67 @@ fn transact(
     request: &SessionRequest,
     cancel: &QueryCancel,
 ) -> Result<Value, String> {
+    if !owner.reusable && request.action != "status" {
+        return Err(fault(
+            owner,
+            "DB_SESSION_CONNECTION_NOT_REUSABLE",
+            "Close the retired session",
+            true,
+        ));
+    }
     match request.action.as_str() {
+        "table_read" => table_data::read(
+            &mut owner.pool,
+            cfg,
+            &mut owner.tables,
+            request.table.as_ref().ok_or("DB_TABLE_REQUEST_REQUIRED")?,
+            cancel,
+        ),
+        "table_preview" => {
+            if owner.transaction != TransactionState::Idle {
+                return Err("DB_TABLE_FINISH_TRANSACTION_FIRST".into());
+            }
+            table_data::preview(
+                &mut owner.pool,
+                cfg,
+                &mut owner.tables,
+                request.table.as_ref().ok_or("DB_TABLE_REQUEST_REQUIRED")?,
+                cancel,
+            )
+        }
+        "table_cancel" => Ok(table_data::cancel_preview(
+            &mut owner.tables,
+            request.table.as_ref().and_then(|t| t.ticket.as_deref()),
+        )),
+        "table_apply" => {
+            if owner.transaction != TransactionState::Idle {
+                return Err("DB_TABLE_FINISH_TRANSACTION_FIRST".into());
+            }
+            authorize_transaction(cfg, &owner.pool, true, request.confirmed)?;
+            match table_data::apply(
+                &mut owner.pool,
+                cfg,
+                &mut owner.tables,
+                request.table.as_ref().ok_or("DB_TABLE_REQUEST_REQUIRED")?,
+                request.confirmed,
+                cancel,
+            ) {
+                Ok(reply) => {
+                    owner.transaction = TransactionState::ReadWrite;
+                    Ok(reply)
+                }
+                Err(error) => {
+                    if error.contains("OUTCOME_UNKNOWN") {
+                        return Err(terminal_fault(
+                            owner,
+                            "DB_TABLE_ROLLBACK_OUTCOME_UNKNOWN_CLOSE_SESSION",
+                            &error,
+                        ));
+                    }
+                    Err(error)
+                }
+            }
+        }
         "status" => Ok(json!({"transaction":owner.transaction})),
         "begin" => {
             begin(owner, cfg, request.writable, request.confirmed)?;
@@ -258,16 +439,12 @@ fn transact(
             if owner.transaction == TransactionState::ReadWrite {
                 authorize_transaction(cfg, &owner.pool, true, request.confirmed)?;
             }
-            control(&mut owner.pool, "COMMIT")
-                .map_err(|_| "DB_SESSION_COMMIT_OUTCOME_UNKNOWN_CHECK_DATABASE".to_string())?;
-            owner.transaction = TransactionState::Idle;
+            finish_control(owner, "COMMIT")?;
             Ok(json!({"transaction":owner.transaction,"committed":true}))
         }
         "rollback" => {
-            if owner.transaction != TransactionState::Idle {
-                control(&mut owner.pool, "ROLLBACK")?;
-            }
-            owner.transaction = TransactionState::Idle;
+            rollback_active(owner)?;
+            owner.tables = TableState::default();
             Ok(json!({"transaction":owner.transaction,"rolled_back":true}))
         }
         "execute" => {
@@ -298,6 +475,9 @@ fn transact(
             // Validate the entire batch before starting; a later denied statement
             // must not follow earlier successful mutations.
             for sql in &request.statements {
+                if !studio_transactional_sql(sql) {
+                    return Err("DB_SESSION_NON_TRANSACTIONAL_BATCH_DENIED".into());
+                }
                 sp::evaluate_db_query_gate(sql, cfg, owner.pool.encrypted(), request.confirmed)
                     .map_err(|c| c.as_str().to_string())?;
             }
@@ -316,19 +496,15 @@ fn transact(
                     Ok(result) => {
                         bytes += result.to_string().len();
                         if bytes > 4 * 1024 * 1024 {
-                            let _ = control(&mut owner.pool, "ROLLBACK");
-                            owner.transaction = TransactionState::Idle;
+                            rollback_active(owner)?;
                             return Err("DB_SESSION_BATCH_RESULT_LIMIT_ROLLED_BACK".into());
                         }
                         results.push(result);
                     }
                     Err(error) => {
-                        let rollback = control(&mut owner.pool, "ROLLBACK");
-                        owner.transaction = if rollback.is_ok() {
-                            TransactionState::Idle
-                        } else {
-                            TransactionState::Failed
-                        };
+                        if owner.reusable {
+                            rollback_active(owner)?;
+                        }
                         return Err(error);
                     }
                 }
@@ -336,8 +512,7 @@ fn transact(
             // Read batches can finish automatically. Write batches remain in the
             // same explicit transaction until a separate confirmed Commit.
             if !writable {
-                control(&mut owner.pool, "COMMIT")?;
-                owner.transaction = TransactionState::Idle;
+                finish_control(owner, "COMMIT")?;
             }
             Ok(
                 json!({"results":results,"transaction":owner.transaction,"requires_commit":writable}),
@@ -369,10 +544,7 @@ fn actor(
         .map_err(|e| format!("{}: {}", e.code_str(), e.message))?;
         drop(password);
         let encrypted = pool.encrypted();
-        let mut owner = ConnectionOwner {
-            pool,
-            transaction: TransactionState::Idle,
-        };
+        let mut owner = ConnectionOwner::new(pool);
         if ready.send(Ok(json!({"session_id":id,"conn_id":cfg.id,"idle_timeout_seconds":IDLE_SECONDS,"encrypted":encrypted,"transaction":"idle"}))).is_err(){return Ok(());}
         while !handle.closing.load(Ordering::Acquire) {
             let envelope = match receiver.recv_timeout(Duration::from_secs(IDLE_SECONDS)) {
@@ -406,7 +578,11 @@ fn actor(
                     outcome.is_ok()
                 ),
             );
-            if envelope.response.send(outcome).is_err() {
+            let retired = !owner.reusable;
+            if retired {
+                handle.closing.store(true, Ordering::Release);
+            }
+            if envelope.response.send(outcome).is_err() || retired {
                 break;
             }
         }
@@ -615,9 +791,79 @@ mod tests {
             [],
         )
         .unwrap();
-        ConnectionOwner {
-            pool: DbPool::Sqlite(conn),
-            transaction: TransactionState::Idle,
+        ConnectionOwner::new(DbPool::Sqlite(conn))
+    }
+    #[test]
+    fn studio_fatal_driver_error_retires_connection() {
+        let mut owner = owner();
+        let error = DbError::fatal(DbErrorCode::Timeout, "fixture hard timeout");
+        let failure = finish_query(&mut owner, Err(error), &QueryCancel::new(), false).unwrap_err();
+        let payload: Value = serde_json::from_str(&failure).unwrap();
+        assert_eq!(payload["discard_connection"], true);
+        assert_eq!(payload["transaction"], "unknown");
+        assert!(!owner.reusable);
+        assert!(run_sql(
+            &mut owner,
+            &cfg(),
+            "SELECT 1",
+            false,
+            &QueryCancel::new(),
+            None
+        )
+        .is_err());
+    }
+    #[test]
+    fn studio_failed_rollback_never_reports_idle() {
+        let mut owner = owner();
+        owner.transaction = TransactionState::ReadWrite;
+        assert!(finish_control(&mut owner, "ROLLBACK").is_err());
+        assert_eq!(owner.transaction, TransactionState::Unknown);
+        assert!(!owner.reusable);
+    }
+    #[test]
+    fn studio_commit_failure_is_unknown_and_not_retried() {
+        let mut owner = owner();
+        if let DbPool::Sqlite(conn) = &owner.pool {
+            conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE parent(id INTEGER PRIMARY KEY); CREATE TABLE child(id INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED);").unwrap();
+        }
+        begin(&mut owner, &cfg(), true, true).unwrap();
+        if let DbPool::Sqlite(conn) = &owner.pool {
+            conn.execute("INSERT INTO child VALUES(9)", []).unwrap();
+        }
+        let failure = finish_control(&mut owner, "COMMIT").unwrap_err();
+        let payload: Value = serde_json::from_str(&failure).unwrap();
+        assert_eq!(payload["outcome_unknown"], true);
+        assert_eq!(owner.transaction, TransactionState::Unknown);
+        assert!(!owner.reusable);
+        assert!(transact(
+            &mut owner,
+            &cfg(),
+            &SessionRequest {
+                action: "commit".into(),
+                confirmed: true,
+                ..Default::default()
+            },
+            &QueryCancel::new()
+        )
+        .is_err());
+    }
+    #[test]
+    fn studio_cancelled_transaction_checks_real_rollback() {
+        let mut owner = owner();
+        begin(&mut owner, &cfg(), true, true).unwrap();
+        if let DbPool::Sqlite(conn) = &owner.pool {
+            conn.execute("INSERT INTO fixture VALUES(1,'temporary')", [])
+                .unwrap();
+        }
+        let error = DbError::new(DbErrorCode::Cancelled, "fixture cancellation");
+        assert!(finish_query(&mut owner, Err(error), &QueryCancel::new(), true).is_err());
+        assert_eq!(owner.transaction, TransactionState::Idle);
+        assert!(owner.reusable);
+        if let DbPool::Sqlite(conn) = &owner.pool {
+            let count: i64 = conn
+                .query_row("SELECT count(*) FROM fixture", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(count, 0);
         }
     }
     #[test]
@@ -745,5 +991,25 @@ mod tests {
         let mut b = a.clone();
         b.allow_write = false;
         assert_ne!(digest(&a).unwrap(), digest(&b).unwrap());
+    }
+}
+
+#[cfg(test)]
+mod table_actor_tests {
+    use super::*;
+    #[test]
+    fn studio_atomic_batch_rejects_implicit_commit_statements() {
+        for sql in [
+            "CREATE TABLE x(id INT)",
+            "ALTER TABLE x ADD v INT",
+            "DROP TABLE x",
+            "TRUNCATE TABLE x",
+            "SET autocommit=1",
+            "COMMIT",
+        ] {
+            assert!(!studio_transactional_sql(sql), "{sql}");
+        }
+        assert!(studio_transactional_sql("SELECT 1"));
+        assert!(studio_transactional_sql("UPDATE x SET v=1 WHERE id=1"));
     }
 }

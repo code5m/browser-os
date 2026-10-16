@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref, watch } from "vue";
 import { sqlStatements } from "../model/studioSql.mjs";
+import { makeTableDocument, dirtyTable } from "../model/studioTable.mjs";
 import { bridge } from "../../../bridge";
 import type { DbConnectionConfig, DbQueryResult } from "../../../types";
 import { redactSecrets } from '../../../utils/redact';
@@ -36,8 +37,8 @@ function describeError(e: unknown): string {
 export const useDatabaseStore = defineStore("database", () => {
   const form = ref<DbConnectionForm>(emptyConnectionForm());
   const connections = ref<DbConnectionSummary[]>([]);
-  type QueryDocument = { id:string; name:string; connId:string|null; sql:string; result:DbResultView|null; raw:DbQueryResult|null; busy:boolean; error:string; queryId:string|null; pending:string|null; tablePreview:{name:string;offset:number}|null; sessionId:string|null; transaction:string; batchResults:DbQueryResult[]; pendingBatch:boolean; closing:boolean; risk:DbRiskLevel; verdict:ProductionVerdict };
-  const makeDoc = (n:number, connId:string|null):QueryDocument => ({ id:crypto.randomUUID(), name:`SQL ${n}`, connId, sql:'', result:null, raw:null, busy:false, error:'', queryId:null, pending:null, tablePreview:null, sessionId:null, transaction:'idle', batchResults:[], pendingBatch:false, closing:false, risk:'unknown', verdict:'Unknown' });
+  type QueryDocument = { id:string; name:string; connId:string|null; sql:string; result:DbResultView|null; raw:DbQueryResult|null; busy:boolean; error:string; queryId:string|null; pending:string|null; tablePreview:{name:string;offset:number}|null; sessionId:string|null; transaction:string; batchResults:DbQueryResult[]; pendingBatch:boolean; closing:boolean; closeFailed:boolean; risk:DbRiskLevel; verdict:ProductionVerdict; tableData:ReturnType<typeof makeTableDocument>|null };
+  const makeDoc = (n:number, connId:string|null):QueryDocument => ({ id:crypto.randomUUID(), name:`SQL ${n}`, connId, sql:'', result:null, raw:null, busy:false, error:'', queryId:null, pending:null, tablePreview:null, sessionId:null, transaction:'idle', batchResults:[], pendingBatch:false, closing:false, closeFailed:false, risk:'unknown', verdict:'Unknown', tableData:null });
   let sequence = 1;
   const documents = ref<QueryDocument[]>([makeDoc(sequence,null)]);
   const activeDocument = ref(documents.value[0].id);
@@ -69,19 +70,25 @@ export const useDatabaseStore = defineStore("database", () => {
   }
 
   registerDatabaseCleanup(async () => {
+    // A rejected cleanup blocks capability suspension. Never convert a failed
+    // close acknowledgement into successful resource release.
+    const owned = [...documents.value];
+    const queryIds = owned.map(doc => doc.queryId).filter((id): id is string => !!id);
+    const cancellations = await Promise.allSettled(queryIds.map(id => bridge.dbCancel(id)));
+    const closures = await Promise.allSettled(owned.map(doc => releaseSession(doc)));
+    if (closures.some(result => result.status === 'rejected' || !result.value) ||
+        cancellations.some(result => result.status === 'rejected')) {
+      throw new Error('DB_CLEANUP_NOT_CONFIRMED');
+    }
     schemaGeneration += 1;
     columnsGeneration += 1;
     objectDetailRows.value = [];
-    selectedObject.value = "";
+    selectedObject.value = '';
     queryHistory.value = [];
     verifiedConnectionId.value = null;
-    pendingSql.value = null;
     connecting.value = false;
     schemaBusy.value = false;
-    await Promise.all(documents.value.map(doc => releaseSession(doc)));
-    const queryIds = documents.value.map((doc) => doc.queryId).filter((id): id is string => !!id);
-    await Promise.allSettled(queryIds.map((id) => bridge.dbCancel(id)));
-    for (const doc of documents.value) {
+    for (const doc of owned) {
       doc.busy = false;
       doc.queryId = null;
       doc.pending = null;
@@ -123,7 +130,7 @@ export const useDatabaseStore = defineStore("database", () => {
     if (!cfg) return;
     const previous = document.value;
     // Never silently retarget existing SQL, results or a transaction.
-    if (previous.connId !== c.id && (previous.sql.trim() || previous.raw || previous.sessionId)) {
+    if (previous.connId !== c.id && (previous.sql.trim() || previous.raw || previous.sessionId || previous.tableData)) {
       const reusable = documents.value.find(d => d.connId === c.id && !d.busy && !d.pending);
       if (reusable) activeDocument.value = reusable.id;
       else {
@@ -156,7 +163,7 @@ export const useDatabaseStore = defineStore("database", () => {
   async function closeDocument(id:string, confirmed=false) {
     const doc = documents.value.find(d => d.id === id);
     if (!doc || doc.busy || doc.closing) return;
-    if ((doc.sql.trim() || doc.transaction !== 'idle') && !confirmed) { closePending.value = id; return; }
+    if ((doc.sql.trim() || doc.transaction !== 'idle' || dirtyTable(doc.tableData)) && !confirmed) { closePending.value = id; return; }
     closePending.value = null;
     if (!await releaseSession(doc)) return;
     documents.value = documents.value.filter(d => d.id !== id);
@@ -265,19 +272,7 @@ export const useDatabaseStore = defineStore("database", () => {
    * The ordinary requestRun gate still applies, including confirmations for
    * connections that allow writes.
    */
-  function previewTable(name: string) {
-    if (!activeId.value) { error.value = "请先选择并验证数据库连接"; return; }
-    if (documents.value.length >= 12) { error.value = "最多打开 12 个查询页签"; return; }
-    const kind = configs.value.find(c => c.id === activeId.value)?.kind;
-    if (kind !== "mysql" && kind !== "sqlite") { error.value = "该数据库尚未支持对象预览"; return; }
-    newDocument();
-    try {
-      document.value.name = name;
-      document.value.tablePreview = {name,offset:0};
-      sql.value = buildTablePreviewSql(name, kind, 0);
-      requestRun();
-    } catch (e) { error.value = describeError(e); }
-  }
+  function previewTable(name: string) { openDataEditor(name); }
 
   function reuseHistory(item: {sql:string;connection:string;connId?:string}) {
     if (!item.connId || !configs.value.some(c=>c.id===item.connId && c.enabled)) {
@@ -428,8 +423,8 @@ export const useDatabaseStore = defineStore("database", () => {
         queryHistory.value=queryHistory.value.slice(0,30);
       }
     } catch(e) {
-      doc.error=describeError(e);
-      if(doc.sessionId && !doc.closing) {
+      const structured=sessionFailure(doc,e);
+      if(!structured && doc.sessionId && !doc.closing) {
         try { const state=await bridge.dbStudioCall(doc.sessionId,{action:'status'}); doc.transaction=state.transaction; }
         catch { doc.transaction='unknown'; doc.error+='；会话状态未知，请关闭会话，不要重复执行写入。'; }
       }
@@ -446,6 +441,21 @@ export const useDatabaseStore = defineStore("database", () => {
 
   // DEVELOPER_STUDIO_SOURCE_BOUND_DOCUMENTS
   const openingSessions = new Map<string, Promise<string>>();
+  const closingSessions = new Map<string, Promise<boolean>>();
+  function sessionFailure(doc:QueryDocument, error:unknown):boolean {
+    // Preserve the string-error IPC ABI while retaining native failure facts.
+    try {
+      const fault = typeof error === 'string' ? JSON.parse(error) : error;
+      if (fault && typeof fault === 'object' && fault.kind === 'database_session_fault') {
+        doc.error = String(fault.code) + ': ' + String(fault.message);
+        if (['idle','read_only','read_write','failed','unknown'].includes(fault.transaction)) doc.transaction = fault.transaction;
+        if (fault.discard_connection === true) doc.closeFailed = true;
+        return true;
+      }
+    } catch { /* Legacy errors are handled below, never guessed successful. */ }
+    doc.error = describeError(error);
+    return false;
+  }
   function synchronizeDocumentSource() {
     const cfg=configs.value.find(c=>c.id===document.value.connId);
     ++schemaGeneration; ++columnsGeneration; schema.value=[]; selectedObject.value=''; objectDetailRows.value=[];
@@ -459,6 +469,7 @@ export const useDatabaseStore = defineStore("database", () => {
   watch(activeDocument,synchronizeDocumentSource);
   async function ensureSession(doc:QueryDocument):Promise<string> {
     if(doc.closing) throw new Error('数据库会话正在关闭');
+    if(doc.closeFailed || doc.transaction === 'unknown') throw new Error('DB_SESSION_CLOSE_OR_OUTCOME_UNCONFIRMED');
     if(doc.sessionId) return doc.sessionId;
     const existing=openingSessions.get(doc.id); if(existing) return existing;
     const connId=doc.connId,lifecycle=databaseLifecycleSnapshot();
@@ -466,29 +477,50 @@ export const useDatabaseStore = defineStore("database", () => {
     const promise=(async()=>{
       const opened=await bridge.dbStudioOpen(connId);
       const current=databaseLifecycleSnapshot();
+      doc.sessionId=opened.session_id;
       if(doc.closing||!current.active||current.generation!==lifecycle.generation||doc.connId!==connId||!documents.value.some(d=>d.id===doc.id)) {
-        await bridge.dbStudioClose(opened.session_id); throw new Error('数据源或页签已变化，新会话已请求关闭');
+        await closeNativeSession(doc, opened.session_id); throw new Error('数据源或页签已变化，新会话已请求关闭');
       }
       doc.sessionId=opened.session_id; doc.transaction=opened.transaction||'idle'; return opened.session_id as string;
     })();
     openingSessions.set(doc.id,promise);
     try{return await promise;}finally{openingSessions.delete(doc.id);}
   }
-  async function releaseSession(doc:QueryDocument=document.value):Promise<boolean> {
-    if(doc.closing) return false;
-    doc.closing=true;
+  async function closeNativeSession(doc:QueryDocument, id:string):Promise<boolean> {
     try {
-      const opening=openingSessions.get(doc.id);
-      if(opening) { try { await opening; } catch { /* Opening observes closing and releases its connection. */ } }
-      const id=doc.sessionId; if(!id) {doc.transaction='idle';return true;}
       for(let attempt=0;attempt<180;attempt++) {
         const reply=await bridge.dbStudioClose(id);
-        if(reply.closed) {if(doc.sessionId===id)doc.sessionId=null;doc.transaction='idle';return true;}
+        if(reply.closed === true) {
+          if(doc.sessionId === id) doc.sessionId=null;
+          // Closing a socket cannot prove an ambiguous COMMIT was rolled back.
+          if(doc.transaction !== 'unknown') doc.transaction='idle';
+          doc.closeFailed=false;
+          return true;
+        }
         await new Promise(resolve=>setTimeout(resolve,250));
       }
-      doc.error='已请求关闭，但原生连接尚未确认停止；不能视为回滚完成。';return false;
-    } catch(e) {doc.error=describeError(e);return false;}
-    finally {doc.closing=false;}
+      doc.error='DB_SESSION_CLOSE_NOT_CONFIRMED';
+    } catch(error) { sessionFailure(doc,error); }
+    doc.closeFailed=true;
+    doc.transaction='unknown';
+    return false;
+  }
+  function releaseSession(doc:QueryDocument=document.value):Promise<boolean> {
+    const running=closingSessions.get(doc.id);
+    if(running) return running;
+    doc.closing=true;
+    const closing=(async()=>{
+      try {
+        const opening=openingSessions.get(doc.id);
+        if(opening) { try { await opening; } catch { /* Failed opening retains an unclosed session ID. */ } }
+        const id=doc.sessionId;
+        if(!id) return !doc.closeFailed;
+        return await closeNativeSession(doc,id);
+      } finally { doc.closing=false; }
+    })();
+    closingSessions.set(doc.id,closing);
+    void closing.finally(()=>closingSessions.delete(doc.id));
+    return closing;
   }
   async function sessionAction(action:string, options:Record<string,unknown>={}) {
     const doc=document.value;
@@ -498,7 +530,7 @@ export const useDatabaseStore = defineStore("database", () => {
       const id=await ensureSession(doc);
       const reply=await bridge.dbStudioCall(id,{...options,action});
       if(reply.transaction)doc.transaction=reply.transaction;
-    } catch(e) {doc.error=describeError(e);}
+    } catch(e) {sessionFailure(doc,e);}
     finally {doc.busy=false;}
   }
   async function requestRunText(text:string,batch=false) {
@@ -519,7 +551,39 @@ export const useDatabaseStore = defineStore("database", () => {
     if(result){document.value.raw=result;document.value.result=buildResultView(result);}
   }
 
+  // DEVELOPER_STUDIO_TABLE_DOCUMENTS
+  function openDataEditor(name:string) {
+    const connId=activeId.value;
+    if(!connId || !schema.value.some(item=>item.name===name)) { error.value='请从当前数据源对象树选择表或视图'; return; }
+    const existing=documents.value.find(doc=>doc.connId===connId && doc.tableData?.name===name && !doc.closing);
+    if(existing) { activeDocument.value=existing.id; return; }
+    if(documents.value.length>=12) { error.value='最多打开 12 个查询页签'; return; }
+    const next=makeDoc(++sequence,connId); next.name=name+' · 数据'; next.tableData=makeTableDocument(name);
+    documents.value.push(next);activeDocument.value=next.id;
+  }
+  async function tableOperation(action:string, table:Record<string,unknown>, confirmed=false, documentId=activeDocument.value):Promise<any|null> {
+    const doc=documents.value.find(item=>item.id===documentId),lifecycle=databaseLifecycleSnapshot();
+    if(!lifecycle.active || !doc || !doc.connId || doc.busy || doc.closing || doc.pending || !['table_read','table_preview','table_apply','table_cancel'].includes(action))return null;
+    const connId=doc.connId;doc.busy=true;doc.error='';
+    try {
+      const id=await ensureSession(doc);
+      const reply=await bridge.dbStudioCall(id,{action,table,confirmed});
+      const current=databaseLifecycleSnapshot();
+      if(!current.active || current.generation!==lifecycle.generation || doc.connId!==connId || !documents.value.some(item=>item.id===documentId)) return null;
+      if(reply.transaction)doc.transaction=reply.transaction;
+      return reply;
+    } catch(e) {
+      const structured=sessionFailure(doc,e);
+      if(!structured && doc.sessionId && !doc.closing) {
+        try { const state=await bridge.dbStudioCall(doc.sessionId,{action:'status'});doc.transaction=state.transaction; }
+        catch { doc.transaction='unknown';doc.error+='；会话状态未知，请关闭会话，不要重试写操作。'; }
+      }
+      return null;
+    } finally {doc.busy=false;}
+  }
+
   return {
+    openDataEditor, tableOperation,
     configs, activateDocument, requestRunText, sessionAction, releaseSession, selectBatchResult,
     documents, activeDocument, document, closePending, newDocument, closeDocument, cancelQuery,
     schema, schemaBusy, selectedObject, columnsBusy, objectDetailRows,

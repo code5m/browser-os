@@ -7,20 +7,28 @@ const db = useDatabaseStore();
 const table = computed(() => db.document.tableData);
 const config = computed(() => db.configs.find(c => c.id === db.document.connId));
 const changes = computed(() => { try { return table.value ? tableChanges(table.value) : []; } catch { return []; } });
-const canEdit = computed(() => !!table.value?.page?.editable && db.document.transaction === 'idle' && !db.busy && !table.value?.ticket);
-const blocked = computed(() => db.busy || !!table.value?.ticket || db.document.closing);
+const canEdit = computed(() => !!table.value?.page?.editable && db.document.transaction === 'idle' && !db.busy && !db.document.closing && !db.document.closeFailed && !table.value?.awaitingCommit && !table.value?.ticket);
+const blocked = computed(() => db.busy || !!table.value?.ticket || db.document.closing || db.document.closeFailed);
 const filterColumn = ref(''), filterOperator = ref('eq'), filterValue = ref(''), exportFormat = ref('csv'), acknowledged = ref(false);
 const fileInput = ref<HTMLInputElement|null>(null);
 const shownRows = computed(() => table.value?.page?.rows.slice((table.value.displayPage || 0) * 50, ((table.value.displayPage || 0) + 1) * 50) || []);
 function request(current:any, extra:Record<string,unknown>={}) { return { name:current.name, offset:current.offset, filters:current.filters, order:current.order, ...extra }; }
-async function load(offset = table.value?.offset || 0, discard = false) {
-  const current = table.value, document = db.document;
-  if (!current || db.busy || current.ticket || (!discard && dirtyTable(current))) return;
-  const reply = await db.tableOperation('table_read', request(current, { offset }), false, document.id);
-  if (!reply) return;
+const readVersions = new WeakMap<object, number>();
+function ownsTable(documentId:string, current:any) {
+  const owner = db.documents.find(doc => doc.id === documentId);
+  return !!owner && !owner.closing && owner.tableData === current;
+}
+async function load(offset = table.value?.offset || 0, documentId = db.activeDocument, current = table.value) {
+  const owner = db.documents.find(doc => doc.id === documentId);
+  if (!current || !ownsTable(documentId, current) || owner!.busy || current.ticket || dirtyTable(current) || current.cell) return;
+  const version = (readVersions.get(current) || 0) + 1;
+  readVersions.set(current, version);
+  const reply = await db.tableOperation('table_read', request(current, { offset }), false, documentId);
+  if (!reply || !ownsTable(documentId, current) || readVersions.get(current) !== version || dirtyTable(current) || current.cell) return;
   current.page = reply; current.offset = offset; current.displayPage = 0;
-  current.edits = {}; current.inserts = []; current.removed = []; current.cell = null;
-  if (!filterColumn.value) filterColumn.value = reply.table.columns[0]?.name || '';
+  // Loading never discards drafts. Only explicit Revert or a confirmed Apply
+  // can consume them; a response for A must never refresh the active B tab.
+  if (db.activeDocument === documentId && !filterColumn.value) filterColumn.value = reply.table.columns[0]?.name || '';
 }
 function value(row:any, index:number) {
   const name = table.value.page.table.columns[index].name;
@@ -67,14 +75,14 @@ async function preview() {
   try {
     const edits=tableChanges(current);if(!edits.length)return;
     const reply=await db.tableOperation('table_preview',request(current,{changes:edits}),false,doc.id);
-    if(reply){current.ticket=reply;acknowledged.value=false;}
+    if(reply && ownsTable(doc.id,current)){current.ticket=reply;if(db.activeDocument===doc.id)acknowledged.value=false;}
   } catch(e) {current.notice=String(e);}
 }
 async function cancelPreview() {
   const current=table.value, doc=db.document;
   if(!current?.ticket||db.busy)return;
   const reply=await db.tableOperation('table_cancel',request(current,{ticket:current.ticket.ticket}),false,doc.id);
-  if(reply){current.ticket=null;acknowledged.value=false;}
+  if(reply && ownsTable(doc.id,current)){current.ticket=null;if(db.activeDocument===doc.id)acknowledged.value=false;}
 }
 async function apply() {
   const current=table.value, doc=db.document;
@@ -82,10 +90,11 @@ async function apply() {
   const ticket=current.ticket.ticket;
   current.ticket=null;acknowledged.value=false;
   const result=await db.tableOperation('table_apply',request(current,{ticket}),true,doc.id);
+  if (!ownsTable(doc.id, current)) return;
   if(!result){current.notice='本次应用没有得到成功回执。请查看错误和事务状态，不要盲目重试。';return;}
   current.edits={};current.inserts=[];current.removed=[];current.cell=null;
   current.awaitingCommit=true;current.notice=`已在当前事务中应用 ${result.applied} 项改动。还未提交；请使用上方“提交事务”或“回滚事务”。`;
-  await load(current.offset,true);
+  await load(current.offset,doc.id,current);
 }
 async function addFilter() {
   if(!table.value||blocked.value||dirtyTable(table.value)||table.value.filters.length>=16||!filterColumn.value)return;
@@ -125,7 +134,7 @@ function exportData() {
   }catch(e){current.notice='导出失败：'+String(e);}
 }
 watch(()=>db.activeDocument,()=>{filterColumn.value='';acknowledged.value=false;if(table.value&&!table.value.page)void load();},{immediate:true});
-watch(()=>[db.document.transaction,db.document.busy],()=>{const current=table.value;if(current?.awaitingCommit&&db.document.transaction==='idle'&&!db.busy){current.awaitingCommit=false;current.notice='事务已结束，正在重新读取数据库结果。';void load(current.offset,true);}});
+watch(()=>[db.document.transaction,db.document.busy],()=>{const current=table.value;if(current?.awaitingCommit&&db.document.transaction==='idle'&&!db.busy){current.awaitingCommit=false;current.notice='事务已结束，正在重新读取数据库结果。';void load(current.offset,db.document.id,current);}});
 </script>
 <template>
 <section v-if="table" class="table-data-editor" aria-label="表数据编辑器">

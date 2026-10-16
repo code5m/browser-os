@@ -8,9 +8,11 @@
 
 version: 1
 generated_from_head: 3f57a92e5fb7d9a6bc978f1572964d3c14fb8caf
-total: 81
+total: 82
 
 components:
+
+  - { id: database.table-editor, name: TableDataEditor, layer: CAPABILITY_UI, owner: database, file: src/capabilities/database/ui/TableDataEditor.vue, public: false, business_semantics: "Native typed data pages and parameterized mutation previews", capability_specific: true, dependencies: [bridge], consumers: [DatabaseWorkspace], status: OBSERVED }
 
   - { id: git.studio, name: GitStudio, layer: CAPABILITY_UI, owner: git, file: src/capabilities/git/ui/GitStudio.vue, public: false, business_semantics: "Unified source-bound Git workbench and validated native previews", capability_specific: true, dependencies: [bridge], consumers: [GitPanel, GitHistory, GitLocalInspector], status: OBSERVED }
   - { id: database.workspace, name: DatabaseWorkspace, layer: CAPABILITY_UI, owner: database, file: src/capabilities/database/ui/DatabaseWorkspace.vue, public: false, business_semantics: "Source-bound SQL documents, results and transactions", capability_specific: true, dependencies: [bridge], consumers: [DatabasePanel], status: OBSERVED }

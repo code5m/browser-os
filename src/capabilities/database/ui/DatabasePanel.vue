@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import DatabaseWorkspace from "./DatabaseWorkspace.vue";
 import { EmptyState } from "../../../shared/ui";
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { takeIdeaProjectPath, subscribeIdeaProjectScan } from "../../../composables/ideaProjectNavigation";
 import { Plus, X, Square, ChevronLeft, ChevronRight, RefreshCw } from '@lucide/vue';
 import { useDatabaseStore } from "../state/useDatabaseStore";
@@ -29,13 +29,7 @@ const workbench = useWorkbenchStore();
 
 // 密码只作**组件本地瞬时态**：不进 store、不进表单模型、不持久化（F2）。
 const password = ref("");
-const copied = ref(false);
-const page = ref(0);
-const filter = ref('');
-const sortColumn = ref(-1);
-const sortAscending = ref(true);
 const showConnection = ref(false);
-const showHistory = ref(false);
 const tablesOpen = ref(true);
 const viewsOpen = ref(true);
 const objectFilter = ref("");
@@ -149,26 +143,12 @@ const activeConnection = computed(() => db.connections.find(c => c.id === db.act
 const connectionStatus = computed(() =>
   !activeConnection.value ? "未选择连接" : db.recentlyVerified ? "最近验证成功" : "已选择 · 查询时建连"
 );
-const pageSize = 50;
-const filteredRows = computed(() => {
-  const rows = (db.result?.rows || []).filter(row => row.some(cell => cell.toLowerCase().includes(filter.value.toLowerCase())));
-  return sortColumn.value < 0 ? rows : [...rows].sort((a,b) => (a[sortColumn.value] || '').localeCompare(b[sortColumn.value] || '', undefined, {numeric:true}) * (sortAscending.value ? 1 : -1));
-});
-watch(() => [db.activeDocument,db.result,filter.value], () => page.value = 0);
-function sort(column:number) { sortAscending.value = column === sortColumn.value ? !sortAscending.value : true; sortColumn.value = column; }
-/** 仅限制 DOM 渲染行数（首期无虚拟滚动）；与后端取数上限 DB_MAX_ROWS=1000 是两回事，UI 须说清。 */
-const DISPLAY_ROW_CAP = 200;
-
 const fields = computed(() => visibleFields(db.form.kind));
 const issues = computed(() => db.formIssues);
 const portPlaceholder = computed(() => {
   const p = defaultPortFor(db.form.kind);
   return p ? String(p) : "默认端口";
 });
-const displayRows = computed(() => filteredRows.value.slice(page.value * pageSize, (page.value+1)*pageSize));
-const hiddenRows = computed(() => Math.max(0, (db.result?.rowCount ?? 0) - displayRows.value.length));
-const multiStatementHint = computed(() => looksLikeMultipleStatements(db.sql));
-
 let stopIdeaProjectScan=()=>{};
 function handleIdeaProjectScan(path:string) {
   ideaProjectPath.value=path;
@@ -200,50 +180,6 @@ function deleteConnection() {
   void db.disconnect();
 }
 
-const sqlEditor = ref<HTMLTextAreaElement | null>(null);
-function insertSqlKeyword(fragment: string) {
-  const element = sqlEditor.value;
-  if (!element || db.document.busy || db.confirmOpen) return;
-  const start = element.selectionStart;
-  const end = element.selectionEnd;
-  const text = db.sql;
-  const preceding = start && !/\s/.test(text[start-1]) ? " " : "";
-  const following = end >= text.length || /\s/.test(text[end]) ? " " : " ";
-  const insert = preceding + fragment + following;
-  db.sql = text.slice(0,start) + insert + text.slice(end);
-  requestAnimationFrame(() => {
-    element.focus();
-    element.setSelectionRange(start+insert.length,start+insert.length);
-  });
-}
-function downloadCsv() {
-  if (!db.result || db.document.busy) return;
-  try {
-    const csv = toCsv(db.document.raw?.columns || db.result.columns, db.document.raw?.rows || db.result.rows);
-    if (new TextEncoder().encode(csv).length > 5 * 1024 * 1024) {
-      layout.showToast("CSV 超过安全导出上限"); return;
-    }
-    const blob = new Blob(["\uFEFF",csv],{type:"text/csv;charset=utf-8"});
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "browseros-query-" + new Date().toISOString().slice(0,10) + ".csv";
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  } catch { layout.showToast("导出失败，请使用复制 CSV"); }
-}
-
-async function copyCsv() {
-  if (!db.result) return;
-  const text = toCsv(db.document.raw?.columns || db.result.columns, db.document.raw?.rows || db.result.rows);
-  try {
-    await navigator.clipboard.writeText(text);
-    copied.value = true;
-    setTimeout(() => (copied.value = false), 1500);
-  } catch {
-    layout.showToast("复制失败，请手动选择结果");
-  }
-}
 </script>
 
 <template>
@@ -425,11 +361,10 @@ async function copyCsv() {
 
 <style scoped>
 .db-panel { display: flex; flex-direction: column; height: 100%; overflow: hidden; background:#fff; color:#293944; }
-.db-workspace{display:flex;flex:1;min-height:0}.db-workspace>.conn{flex:0 0 260px;overflow:auto;border-right:1px solid #d8dfe4;box-sizing:border-box}.db-workspace>.query{flex:1;min-width:0;overflow:auto}.sql-documents{display:flex;gap:4px;overflow:auto;margin-bottom:8px}.sql-documents>div{display:flex;flex:none;border-bottom:2px solid transparent}.sql-documents .active{border-color:#198163}.sql-documents button{border:0;background:#f0f4f5;padding:5px;color:inherit;cursor:pointer}.schema-head,.result-paging{display:flex;align-items:center;gap:6px;margin:12px 0 6px;font-size:12px}.schema-row{display:block;width:100%;text-align:left;padding:6px;border:0;background:#f2f6f4;cursor:pointer;overflow-wrap:anywhere}.schema-row small{color:#728681}.result-paging input{min-width:0;flex:1;padding:5px}.result-paging button{display:grid;place-items:center}.result-paging span{white-space:nowrap}.grid-wrap th button{border:0;background:none;font:inherit;color:inherit;cursor:pointer}.query .grid-wrap{max-height:calc(100vh - 430px);min-height:120px}@media(max-width:1000px){.db-workspace>.conn{flex-basis:210px}}
+.db-workspace{display:flex;flex:1;min-height:0}.db-workspace>.conn{flex:0 0 260px;overflow:auto;border-right:1px solid #d8dfe4;box-sizing:border-box}.schema-head{display:flex;align-items:center;gap:6px;margin:12px 0 6px;font-size:12px}.schema-row{display:block;width:100%;text-align:left;padding:6px;border:0;background:#f2f6f4;cursor:pointer;overflow-wrap:anywhere}.schema-row small{color:#728681}@media(max-width:1000px){.db-workspace>.conn{flex-basis:210px}}
 .gate { margin: 6px 8px; padding: 6px 8px; border-radius: 5px; background: #fff7e6; color: #b7791f; font-size: 12px; }
-.conn, .query { padding: 8px; border-bottom: 1px solid #e5e6eb; }
-.conn-head, .query-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
-.sec-title { font-size: 12px; color: #4e5969; }
+.conn { padding: 8px; border-bottom: 1px solid #e5e6eb; }
+.conn-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 .badge { font-size: 11px; color: #86909c; border: 1px solid #e5e6eb; border-radius: 10px; padding: 1px 8px; }
 .badge.on { color: #2b6cb0; border-color: #2b6cb0; }
 .conn-list { list-style: none; margin: 0 0 6px; padding: 0; max-height: 120px; overflow: auto; }
@@ -449,23 +384,10 @@ async function copyCsv() {
 .form-actions button { padding: 6px 14px; border-radius: 5px; border: 1px solid #d5dbe7; background: #fff; cursor: pointer; font-size: 12px; }
 .form-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
 .form-actions .primary { background: #2b6cb0; border-color: #2b6cb0; color: #fff; }
-.form-actions .danger { background: #c0392b; border-color: #c0392b; color: #fff; }
-.tag { font-size: 11px; color: #4e5969; border: 1px solid #e5e6eb; border-radius: 10px; padding: 1px 8px; }
-.tag.warn { color: #b7791f; border-color: #b7791f; }
-.sql { width: 100%; box-sizing: border-box; border: 1px solid #d5dbe7; border-radius: 5px; padding: 6px 8px; font-size: 12px; font-family: monospace; }
 .hint { font-size: 11px; color: #86909c; margin: 4px 0 0; }
-.confirm { margin-top: 8px; padding: 8px; border: 1px solid #f0c36d; border-radius: 5px; background: #fffaf0; }
-.confirm-text { font-size: 12px; color: #7a5c00; }
-.confirm-text code { display: block; margin-top: 4px; font-size: 11px; word-break: break-all; color: #4e5969; }
-.result { margin-top: 8px; }
-.result-head { display: flex; gap: 12px; font-size: 12px; color: #4e5969; }
-.warn-list { margin: 6px 0; padding-left: 16px; }
-.warn-list li { font-size: 11px; color: #b7791f; }
-.grid-wrap { max-height: 320px; overflow: auto; border: 1px solid #e5e6eb; border-radius: 5px; }
 table { border-collapse: collapse; width: 100%; font-size: 12px; }
 th, td { border-bottom: 1px solid #f0f1f3; padding: 4px 6px; text-align: left; white-space: nowrap; }
 th { position: sticky; top: 0; background: #f7f8fa; color: #4e5969; font-weight: 600; }
-.empty { color: #86909c; font-size: 12px; padding: 12px; text-align: center; }
 </style>
 
 <style scoped>
@@ -478,7 +400,6 @@ th { position: sticky; top: 0; background: #f7f8fa; color: #4e5969; font-weight:
 .conn-toggle{border:1px solid #d9e2ef;border-radius:7px;background:#fff;padding:5px 9px;font-size:12px}
 .conn-head{justify-content:space-between}
 .db-workspace>.conn{flex-basis:250px;background:#f9fbff}
-.db-workspace>.query{display:flex;flex-direction:column;gap:4px;min-width:0}
 .conn-list{max-height:185px}
 .form{background:#fff;padding:11px;border:1px solid #dde6f0;border-radius:9px;margin:9px 0}
 .form-note,.tree-help{color:#75859a;line-height:1.5;font-size:11px}
@@ -492,12 +413,7 @@ th { position: sticky; top: 0; background: #f7f8fa; color: #4e5969; font-weight:
 .column-list{max-height:210px;overflow:auto}
 .column-item{display:flex;gap:7px;justify-content:space-between;padding:5px;font-size:11px;border-bottom:1px solid #e9edf4}
 .column-item strong{overflow:hidden;text-overflow:ellipsis}.column-item small{color:#63748a;overflow:hidden;text-overflow:ellipsis}
-.sql{resize:vertical;min-height:125px;font:12px/1.6 ui-monospace,Consolas,monospace;background:#fbfcff}
-.query-history{padding:9px;border-radius:8px;border:1px solid #dce6f1;background:#f9fbfd}
-.query-history label{font-size:12px}.query-history button{margin:4px;cursor:pointer}
-.history-item{display:block;width:100%;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.grid-wrap td{max-width:350px;overflow:hidden;text-overflow:ellipsis}
-@media(max-width:940px){.db-workspace>.conn{flex:0 0 195px}.db-workspace>.query{min-width:0}}
+@media(max-width:940px){.db-workspace>.conn{flex:0 0 195px}}
 </style>
 
 <style scoped>
@@ -506,11 +422,6 @@ th { position: sticky; top: 0; background: #f7f8fa; color: #4e5969; font-weight:
 .object-tabs button{flex:1;border:1px solid #d4dfef;background:#fff;border-radius:5px;color:#536d8b;cursor:pointer;font-size:11px;padding:5px 2px}
 .object-tabs button[aria-pressed=true]{background:#e5f0ff;border-color:#9cbce8;color:#2358a8;font-weight:700}
 .object-ddl{margin:2px 0 8px;white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;max-height:240px;background:#f5f8fc;border:1px solid #e2eaf5;border-radius:6px;padding:10px;font:11px/1.6 ui-monospace,monospace}
-.sql-snippets{display:flex;align-items:center;gap:5px;flex-wrap:wrap;color:#789;font-size:11px;margin:5px 0}
-.sql-snippets button{border:1px solid #dfe6f2;background:#f7faff;border-radius:4px;font:10px ui-monospace,monospace;padding:3px 6px;cursor:pointer;color:#31588b}
-.server-page{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin:6px 0;padding:7px;background:#eef5ff;color:#2f5887;border-radius:7px;font-size:11px}
-.server-page button{font-size:11px;border:1px solid #bed3ef;background:#fff;border-radius:5px;padding:4px 7px;cursor:pointer}
-.server-page button:disabled{opacity:.5;cursor:default}.server-page small{color:#617c9a}
 </style>
 
 <style scoped>

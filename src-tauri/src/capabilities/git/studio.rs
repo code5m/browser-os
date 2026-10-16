@@ -767,6 +767,7 @@ fn validate(root: &Path, input: &StudioInput) -> Result<Option<String>, String> 
                 check_file(root, &p, true)?;
             }
             if action == "commit" || action == "amend" {
+                ensure_scoped_commit_allowed(root)?;
                 if input.message.as_deref().unwrap_or("").trim().is_empty() {
                     return Err("GIT_STUDIO_COMMIT_MESSAGE_REQUIRED".into());
                 }
@@ -1117,7 +1118,17 @@ fn write_index(root: &Path, path: &str, contents: &str) -> Result<Value, String>
     index.write().map_err(|_| "GIT_STUDIO_INDEX_WRITE")?;
     Ok(json!({"success":true,"action":"index_edit","message":"GIT_STUDIO_INDEX_UPDATED"}))
 }
+fn ensure_scoped_commit_allowed(root: &Path) -> Result<(), String> {
+    let repo = git2::Repository::open(root).map_err(|_| "GIT_STUDIO_REPOSITORY_MISSING")?;
+    if repo.state() != git2::RepositoryState::Clean {
+        return Err("GIT_STUDIO_OPERATION_IN_PROGRESS_USE_CONTINUE".into());
+    }
+    Ok(())
+}
 fn commit_selected(root: &Path, input: &StudioInput, cancel: &AtomicBool) -> Result<Value, String> {
+    // Recheck at the actual write boundary, not only at preview time. A merge
+    // must commit its complete real index, never a HEAD-based partial index.
+    ensure_scoped_commit_allowed(root)?;
     let mut selected = paths(input)?;
     let repo = git2::Repository::open(root).map_err(|_| "GIT_STUDIO_REPOSITORY_MISSING")?;
     let source = repo.index().map_err(|_| "GIT_STUDIO_INDEX_READ")?;
@@ -1361,6 +1372,71 @@ mod tests {
         fs::write(root.join("a.txt"), "changed again\n").unwrap();
         assert_ne!(b, snapshot(&root).unwrap());
         fs::remove_dir_all(root).unwrap();
+    }
+    fn assert_in_progress_commit_is_safe(operation: &str, continuation: &str, parents: usize) {
+        let root = fixture();
+        git(&root, &["branch", "-M", "base"]).unwrap();
+        git(&root, &["switch", "-c", "incoming"]).unwrap();
+        fs::write(root.join("a.txt"), "incoming a\n").unwrap();
+        fs::write(root.join("b.txt"), "incoming b\n").unwrap();
+        git(&root, &["add", "--", "a.txt", "b.txt"]).unwrap();
+        git(&root, &["commit", "-m", "incoming changes"]).unwrap();
+        git(&root, &["switch", "base"]).unwrap();
+        fs::write(root.join("a.txt"), "base a\n").unwrap();
+        git(&root, &["add", "--", "a.txt"]).unwrap();
+        git(&root, &["commit", "-m", "base changes"]).unwrap();
+        assert!(git(&root, &[operation, "incoming"]).is_err());
+        fs::write(root.join("a.txt"), "resolved a\n").unwrap();
+        git(&root, &["add", "--", "a.txt"]).unwrap();
+        let before = snapshot(&root).unwrap();
+        for action in ["commit", "amend"] {
+            let input = StudioInput {
+                action: action.into(),
+                paths: vec!["a.txt".into()],
+                message: Some("partial denied".into()),
+                ..Default::default()
+            };
+            assert_eq!(
+                validate(&root, &input).unwrap_err(),
+                "GIT_STUDIO_OPERATION_IN_PROGRESS_USE_CONTINUE"
+            );
+            assert_eq!(
+                commit_selected(&root, &input, &AtomicBool::new(false)).unwrap_err(),
+                "GIT_STUDIO_OPERATION_IN_PROGRESS_USE_CONTINUE"
+            );
+            assert_eq!(snapshot(&root).unwrap(), before);
+        }
+        let input = StudioInput {
+            action: continuation.into(),
+            ..Default::default()
+        };
+        validate(&root, &input).unwrap();
+        assert_eq!(
+            execute(&root, &input, None, &AtomicBool::new(false)).unwrap()["success"],
+            true
+        );
+        assert_eq!(git(&root, &["show", "HEAD:b.txt"]).unwrap(), "incoming b\n");
+        assert_eq!(git(&root, &["show", "HEAD:a.txt"]).unwrap(), "resolved a\n");
+        assert_eq!(
+            git(&root, &["show", "-s", "--format=%P", "HEAD"])
+                .unwrap()
+                .split_whitespace()
+                .count(),
+            parents
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn studio_merge_rejects_partial_commit_and_keeps_complete_tree() {
+        assert_in_progress_commit_is_safe("merge", "merge_continue", 2);
+    }
+    #[test]
+    fn studio_rebase_rejects_partial_commit_and_keeps_complete_tree() {
+        assert_in_progress_commit_is_safe("rebase", "rebase_continue", 1);
+    }
+    #[test]
+    fn studio_cherry_pick_rejects_partial_commit_and_keeps_complete_tree() {
+        assert_in_progress_commit_is_safe("cherry-pick", "cherry_pick_continue", 1);
     }
     #[test]
     fn studio_scoped_commit_preserves_unselected_index() {

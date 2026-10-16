@@ -31,6 +31,8 @@ export default defineConfig({
     // than changing the frozen M0 growth threshold or metrics baseline.
     target: "es2022",
     cssCodeSplit: false,
+    // Build-only standards-aware CSS minification; source styles and selectors stay readable.
+    cssMinify: "lightningcss",
     // Hoist constant-object properties during dead-code elimination. This
     // affects only shipped minified JavaScript, not source semantics, feature
     // availability, the frozen growth limit or the recorded baseline.

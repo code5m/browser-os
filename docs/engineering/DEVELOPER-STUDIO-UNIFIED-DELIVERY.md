@@ -26,3 +26,12 @@
 必须记录同一集成提交上的真实测试：成功路径、拒绝路径、过期/变更预览、连接切换、事务回滚、冲突恢复、资源清理、前端生产构建、Rust fmt/check/test、安装版 GUI、完整 GUI、Full Validation 和 pre-merge。MySQL/PostgreSQL/SSH 等外部服务测试必须注明实际运行或未验证。
 
 所有范围在对应实现、接线和测试证据齐全前保持 OPEN。任何中断均从本文件与分支最新提交继续，禁止以重新写计划替代实现。
+
+
+## PR35 audit repair consolidation (2026-10-16)
+
+The seven previously runner-only integration changes are now ordinary committed source. The temporary source-mutating Builder and scripts/developer-studio are retired in this same commit. Final validation checks the committed source without rerunning prepare.py.
+
+Audit fixes: original-document table refresh, operation-state guards for selected Git commits and amend, acknowledged session cleanup, structured fatal driver errors, unknown commit/rollback outcomes and retired connections, SQLite Result error type, TableDataEditor registration. Regression coverage runs the real Vue/Pinia owner with native IO fixtures and native Rust tests exercise temporary Git repositories and SQLite.
+
+The CSS minifier is build-only. The 795517-byte baseline and 25.2% limit are unchanged; a successful build is not proof of footprint compliance. Full Validation/pre-merge, real MySQL and packaged GUI results must be linked to the final head before acceptance. Workstation GUI is distinct and remains unverified while the device is offline. The broader IDEA parity scope is not certified by these audit repairs.
