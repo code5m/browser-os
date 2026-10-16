@@ -16,7 +16,7 @@ const cases = [
   ["history selection uses navigateCurrent", /function pickUrl\(u: string\)[\s\S]*?browser\.navigateCurrent\(\)/.test(bar)],
   ["new tab is still explicit", /@click="browser\.tabNew\(\)"/.test(tabs)],
   ["grid startup guarded against overlap", /let gridBuilding = false;[\s\S]*?async function buildGrid\(\) \{\s*if \(gridBuilding\)/.test(grid)],
-  ["grid startup clears guard on failure", /catch \(error\)[\s\S]*?finally \{\s*gridBuilding = false;/.test(grid)],
+  ["grid startup clears guard on failure", /catch \(error\)[\s\S]*?finally \{[\s\S]*?gridBuilding = false;/.test(grid) && /finally \{\s*gridStarting\.value = false;\s*gridBuilding = false;/.test(grid)],
   ["no obsolete browser grid lifecycle calls", !/browser\.(?:gridOpen|layoutGrid|openGrid)\b/.test(tabs)],
 ];
 let failures=0;

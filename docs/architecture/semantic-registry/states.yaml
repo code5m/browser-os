@@ -378,6 +378,45 @@ states:
     status: CURRENT_FACT
     note: 纯内存 runtime 计数器（非持久化）；重建后 rect 可能与新 webview 1x1 初始态相同，故需 +1 使缓存作废；见 ADR-SEM-P6A-3
 
+  gridStarting:
+    owner: useGridStore
+    single_owner_required: true
+    meaning: Grid 原生子窗口创建中的瞬时进度；仅供界面提示与重复启动拦截
+    not_meaning:
+      - Grid resource 已创建（见 gridOpen）
+      - 能力是否激活（见资源准入闸）
+    kind: stored
+    derived: false
+    allowed_values:
+      - true
+      - false
+    canonical_writer:
+      - useGridStore.buildGrid
+    forbidden_writers:
+      - components/**
+      - useLayoutStore
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  gridStartupError:
+    owner: useGridStore
+    single_owner_required: true
+    meaning: 最近一次原生 Grid 启动失败的非敏感人类可读信息；成功或再次启动时清空
+    not_meaning:
+      - 真实 WebView 页面是否加载成功（不得由原生创建成功推断）
+      - 永久诊断记录与持久化存储
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useGridStore.buildGrid
+    forbidden_writers:
+      - components/**
+      - useLayoutStore
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
   activeTabId:
     owner: useBrowserStore
     meaning: 当前激活的浏览器页签 id

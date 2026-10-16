@@ -13,6 +13,8 @@ export const useGridStore = defineStore("grid", () => {
   const browser = useBrowserStore();
 
   const gridOpen = ref(false);
+  const gridStarting = ref(false);
+  const gridStartupError = ref("");
   const gridSession = ref(0);
   const gridCount = ref(4);
   const gridUrl = ref("");
@@ -118,12 +120,13 @@ export const useGridStore = defineStore("grid", () => {
     // Browser absent（framework-only）→ 直接拒绝，grid-child 恒为 0。
     // 禁止改写成 profile 名判断 / 环境变量判断 / browser 布尔第二真源。
     if (!isGridResourceAllowed()) {
-      bridge.debugLog(
-        "buildGrid refused: grid capability not ACTIVE (resource isolation gate)"
-      );
+      gridStartupError.value = "宫格功能尚未激活；请在能力管理中检查 Grid 状态";
+      bridge.debugLog("buildGrid refused: grid capability not ACTIVE (resource isolation gate)");
       return;
     }
     gridBuilding = true;
+    gridStarting.value = true;
+    gridStartupError.value = "";
     try {
     const n = gridCount.value;
     gridSession.value += 1;
@@ -139,6 +142,7 @@ export const useGridStore = defineStore("grid", () => {
     // createGrid 内部会先 close_grid 再重建，幂等，可安全重复调用。
     // 返回实际创建格数：内存预算守卫在可用内存不足时自动降级（保底 2 格）
     const created = await bridge.createGrid(n, urls);
+    if (!Number.isInteger(created) || created < 2) throw new Error("GRID_NATIVE_CREATE_INCOMPLETE");
     // 降级提示存起来，最后用一条 toast 展示（showToast 单条覆盖，先发的会被吞掉）
     const degraded = created < n;
     if (degraded) gridCount.value = created;
@@ -170,9 +174,11 @@ export const useGridStore = defineStore("grid", () => {
     }
     } catch (error) {
       gridOpen.value = false;
+      gridStartupError.value = "宫格启动失败或原生 WebView 未创建成功；可重试并查看诊断日志";
       bridge.debugLog(`buildGrid failed: ${String(error)}`);
       layout.showToast("宫格启动失败，已停止继续创建子窗口");
     } finally {
+      gridStarting.value = false;
       gridBuilding = false;
     }
   }
@@ -390,6 +396,8 @@ export const useGridStore = defineStore("grid", () => {
 
   return {
     gridOpen,
+    gridStarting,
+    gridStartupError,
     gridSession,
     gridCount,
     gridUrl,

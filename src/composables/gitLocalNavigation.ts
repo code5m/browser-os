@@ -1,7 +1,7 @@
 /** Single ephemeral navigation intent. No file paths are persisted to disk.
  * Workspace publishes a generic intent; the Git capability owns the reader UI.
  */
-export type LocalGitMode = "history" | "diff";
+export type LocalGitMode = "history" | "diff" | "branches";
 export interface LocalGitIntent { path:string; mode:LocalGitMode; serial:number; }
 let current:LocalGitIntent|null=null;
 let serial=0;

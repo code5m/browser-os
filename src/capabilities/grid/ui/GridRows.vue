@@ -11,10 +11,31 @@ const layout = useLayoutStore();
 const grid = useGridStore();
 const hostElement = ref<HTMLElement | null>(null);
 useGridHost(hostElement);
+// Grid child WebViews have native geometry; unlike the normal tab scheduler,
+// the Grid host needs its own bounded resize observation. Otherwise changes
+// to the address row, toolbar or viewport can strand all four cells offscreen.
+let hostObserver: ResizeObserver | null = null;
+let observedHost: HTMLElement | null = null;
+let relayoutFrame: number | null = null;
+function scheduleHostRelayout() {
+  if (!grid.gridOpen || layout.mainView !== "grid" || relayoutFrame !== null) return;
+  relayoutFrame = requestAnimationFrame(() => {
+    relayoutFrame = null;
+    if (grid.gridOpen && layout.mainView === "grid") grid.forceGridRelayout();
+  });
+}
 function bindHostAndRelayout() {
   nextTick(() => {
     hostElement.value = document.querySelector<HTMLElement>(".browser-host");
-    if (hostElement.value && grid.gridOpen) grid.forceGridRelayout();
+    if (hostElement.value !== observedHost) {
+      hostObserver?.disconnect();
+      observedHost = hostElement.value;
+      if (typeof ResizeObserver !== "undefined" && observedHost) {
+        hostObserver ??= new ResizeObserver(scheduleHostRelayout);
+        hostObserver.observe(observedHost);
+      }
+    }
+    scheduleHostRelayout();
   });
 }
 onMounted(bindHostAndRelayout);
@@ -68,6 +89,11 @@ watch(() => [layout.mainView, advancedOpen.value] as const, ([view]) => {
 });
 function fmtMb(mb: number) { return mb >= 1024 ? (mb / 1024).toFixed(1) + "G" : Math.round(mb) + "M"; }
 onBeforeUnmount(stopResourcePolling);
+onBeforeUnmount(() => {
+  hostObserver?.disconnect();
+  observedHost = null;
+  if (relayoutFrame !== null) cancelAnimationFrame(relayoutFrame);
+});
 </script>
 <template>
   <div v-if="grid.gridOpen && layout.mainView === 'grid' && grid.gridMode === 'ai'" class="expand-row ai-send-row">
@@ -81,6 +107,10 @@ onBeforeUnmount(stopResourcePolling);
     <div role="group" aria-label="模式"><button :class="{active:grid.gridMode==='browse'}" @click="grid.gridMode='browse'">浏览</button><button :class="{active:grid.gridMode==='ai'}" @click="grid.gridMode='ai'">AI</button></div>
     <div role="group" aria-label="快捷布局"><button v-for="n in [2,4]" :key="n" :class="{active:grid.gridCount===n}" @click="setGridCount(n)">{{n}} 格</button></div>
     <button class="grid-more" :aria-expanded="advancedOpen" aria-controls="grid-advanced" @click="advancedOpen=!advancedOpen">更多设置</button>
+  </div>
+  <div v-if="layout.mainView === 'grid' && !grid.gridOpen" class="expand-row" role="status">
+    <span class="er-warn">{{ grid.gridStarting ? '正在创建宫格网页，请稍候…' : (grid.gridStartupError || '宫格尚未启动，点击重新加载。') }}</span>
+    <button class="er-primary" :disabled="grid.gridStarting" @click="grid.openGrid()">重新加载宫格</button>
   </div>
   <div v-if="layout.mainView === 'grid' && advancedOpen" id="grid-advanced" class="grid-advanced">
     <label>布局 <select aria-label="宫格布局" :value="grid.gridLayout" @change="setGridLayout(($event.target as HTMLSelectElement).value as (typeof gridLayouts)[number]['key'])"><option v-for="l in gridLayouts" :key="l.key" :value="l.key">{{l.title}}</option></select></label>
@@ -101,6 +131,7 @@ onBeforeUnmount(stopResourcePolling);
   </div>
 </template>
 <style scoped>
+
 .expand-row{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:4px 8px;background:#f4f6fb;border-bottom:1px solid #e3e7f5}
 .expand-row button{border:1px solid #d5dbe7;background:#fff;color:#4e5969;border-radius:5px;padding:3px 9px;font-size:11px;cursor:pointer;white-space:nowrap}
 .er-label{font-size:11px;color:#86909c}.er-warn{font-size:11px;color:#c0392b}.er-sep{width:1px;height:16px;background:#d5dbe7}

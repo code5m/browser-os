@@ -47,11 +47,24 @@ const topItems = computed(() => TOP_NAV_ITEMS.filter((i) => layout.navTopViews.i
 
 // ===== W17：窗口宽度上报（窄窗口密度）+ resize 监听清理 =====
 const navEl = ref<HTMLElement | null>(null);
+const omniAnchor = ref<HTMLElement | null>(null);
+// The native-safe suggestions row stays IN FLOW, but only spans the address
+// field. A floating HTML overlay cannot cover the Linux WebKit child view.
+const suggestionsGeometry = ref<Record<string, string>>({});
+function syncSuggestionsGeometry() {
+  const anchor = omniAnchor.value?.getBoundingClientRect();
+  const nav = navEl.value?.getBoundingClientRect();
+  if (!anchor || !nav || anchor.width <= 0) return;
+  const left = Math.max(0, Math.round(anchor.left - nav.left));
+  const width = Math.max(0, Math.min(Math.round(anchor.width), Math.floor(nav.width - left - 6)));
+  suggestionsGeometry.value = { marginLeft: left + "px", width: width + "px" };
+}
 const moreActionsOpen = ref(false);
 watch(() => layout.mainView, () => { moreActionsOpen.value = false; });
 function toggleMoreActions() { layout.navSection = ""; moreActionsOpen.value = !moreActionsOpen.value; }
 function syncWidth() {
   layout.setWindowWidth(window.innerWidth || 0);
+  nextTick(syncSuggestionsGeometry);
 }
 onMounted(() => {
   syncWidth();
@@ -152,6 +165,7 @@ function showOmnibox() {
   omniTyped.value = false;
   omniIndex.value = -1;
   layout.navSection = "omni";
+  nextTick(syncSuggestionsGeometry);
 }
 function chooseSuggestion(s: OmniboxItem) {
   if (s.kind === "dir") pickDir(s.value);
@@ -236,7 +250,7 @@ async function openDirCenter() {
           <button class="tbtn" aria-label="前进" @click="browser.goForward" title="前进">→</button>
           <button class="tbtn" aria-label="刷新" @click="browser.reloadActive" title="刷新">⟳</button>
         </template>
-        <div class="omni-wrap">
+        <div ref="omniAnchor" class="omni-wrap">
           <!-- 聚焦即自动展开最近/常用（无小三角）；选中或回车后自动收起 -->
           <input
             v-model="browser.url"
@@ -268,7 +282,7 @@ async function openDirCenter() {
     </nav>
 
     <!-- Native-safe suggestion surface: inline below the address bar, never above GTK WebView. -->
-    <div v-if="layout.navSection === 'omni'" id="nav-omni-row" class="suggestion-list" role="listbox" aria-label="地址建议">
+    <div v-if="layout.navSection === 'omni'" id="nav-omni-row" class="suggestion-list" :style="suggestionsGeometry" role="listbox" aria-label="地址建议">
       <button v-for="(suggestion, i) in omniCandidates" :key="suggestion.value" :id="'omni-suggestion-' + i" role="option" :aria-selected="omniIndex === i"
         class="suggestion-item" :class="{ selected: omniIndex === i }" @mousedown.prevent @click="chooseSuggestion(suggestion)">
         <span class="suggestion-type">{{ suggestion.kind === 'web' ? '🌐' : suggestion.kind === 'file' ? '📄' : '📁' }}</span>
@@ -320,7 +334,7 @@ async function openDirCenter() {
 .action-overflow { font-weight:700; font-size:17px; }
 .activity button:hover { background:#e9eef6!important; color:#344054!important; }
 .activity button.active { background:#e3eefb; color:#17548f; }
-.suggestion-list { display:flex; flex-direction:column; max-height:220px; overflow-y:auto; background:#fff; border:1px solid #dce3eb; border-top:0; box-shadow:0 8px 20px #13233b12; border-radius:0 0 12px 12px; padding:5px; }
+.suggestion-list { display:flex; flex-direction:column; box-sizing:border-box; max-height:220px; max-width:100%; overflow-y:auto; background:#fff; border:1px solid #dce3eb; border-top:0; box-shadow:0 8px 20px #13233b12; border-radius:0 0 12px 12px; padding:5px; }
 .suggestion-item { display:flex; align-items:center; gap:12px; width:100%; padding:8px 12px; border:0; background:transparent; text-align:left; color:#243449; cursor:pointer; border-radius:7px; }
 .suggestion-item:hover,.suggestion-item.selected { background:#eef4fb; }
 .suggestion-type { width:20px; text-align:center; }

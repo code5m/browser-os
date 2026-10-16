@@ -5,6 +5,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { takeIdeaProjectPath, subscribeIdeaProjectScan } from "../../../composables/ideaProjectNavigation";
 import { Plus, X, Square, ChevronLeft, ChevronRight, RefreshCw } from '@lucide/vue';
 import { useDatabaseStore } from "../state/useDatabaseStore";
+import { parseDatabaseConnectionUrl } from "../../../utils/dbConnectionUrl";
 import { previewIdeaDataSources, type IdeaMysqlCandidate } from "../model/jetbrainsImport";
 import { readAuthorizedWorkspaceTextFile } from "../../workspace/public";
 import { ideaProjectDataSourcesPath, parseIdeaDataSourcesXml, type IdeaSource } from "../../../utils/ideaDataSources";
@@ -29,6 +30,30 @@ const workbench = useWorkbenchStore();
 
 // 密码只作**组件本地瞬时态**：不进 store、不进表单模型、不持久化（F2）。
 const password = ref("");
+const connectionUrl = ref("");
+const connectionUrlError = ref("");
+function applyConnectionUrl() {
+  const raw = connectionUrl.value;
+  connectionUrl.value = ""; // Never keep a pasted DSN or accidentally persist it in the form.
+  connectionUrlError.value = "";
+  try {
+    const parsed = parseDatabaseConnectionUrl(raw);
+    if (parsed.kind === "postgres") throw new Error("PostgreSQL 的常规查询界面尚未开放，请勿误认为可以连接");
+    db.resetForm();
+    db.form.kind = parsed.kind;
+    db.form.host = parsed.host;
+    db.form.portText = parsed.portText;
+    db.form.database = parsed.database;
+    db.form.sslMode = parsed.sslMode;
+    db.form.allowWrite = false;
+    db.form.productionHint = "";
+    password.value = "";
+    showConnection.value = true;
+  } catch (error) {
+    // Never display the raw URL in errors; it might include credentials.
+    connectionUrlError.value = error instanceof Error ? error.message : "连接 URL 解析失败";
+  }
+}
 const showConnection = ref(false);
 const tablesOpen = ref(true);
 const viewsOpen = ref(true);
@@ -245,6 +270,14 @@ function deleteConnection() {
 
       <div v-if="showConnection" class="form">
         <p class="form-note">连接设置仅在需要时展开。密码不保存到页面或浏览器存储。</p>
+        <div class="url-import" role="group" aria-label="连接 URL">
+          <label>通过 URL / JDBC 地址填写连接参数
+            <input v-model="connectionUrl" type="text" autocomplete="off" spellcheck="false" placeholder="jdbc:mysql://127.0.0.1:3306/app" @keydown.enter.prevent="applyConnectionUrl" />
+          </label>
+          <button type="button" :disabled="!connectionUrl.trim() || db.busy" @click="applyConnectionUrl">解析 URL</button>
+          <p class="hint">支持 MySQL 与 SQLite 的标准 URI、IDEA JDBC 地址。URL 不保存；URL 中禁止包含账号密码，密码请单独输入。</p>
+          <p v-if="connectionUrlError" class="errors" role="alert">{{ connectionUrlError }}</p>
+        </div>
         <label>名称<input v-model="db.form.name" placeholder="如 local-sqlite" /></label>
         <label>驱动
           <select :value="db.form.kind" @change="(e) => db.setKind(((e.target as HTMLSelectElement).value) as DbKind)">
