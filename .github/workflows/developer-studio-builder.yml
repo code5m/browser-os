@@ -1,0 +1,103 @@
+name: BrowserOS Developer Studio Builder
+
+# Temporary development executor; remove before merging the complete delivery.
+# Only the explicitly authorized integration branch can execute this writer.
+on:
+  push:
+    branches: [feature/developer-studio-unified-20261016]
+    paths:
+      - scripts/developer-studio/**
+      - src-tauri/src/capabilities/git/studio.rs
+      - src-tauri/src/capabilities/database/studio.rs
+      - src-tauri/src/capabilities/workspace/file_history.rs
+      - src/capabilities/git/ui/GitStudio.vue
+      - src/capabilities/database/ui/SqlEditor.vue
+      - src/capabilities/database/ui/DatabaseWorkspace.vue
+      - src/capabilities/database/model/studio*.mjs
+      - src/capabilities/git/model/studio*.mjs
+      - scripts/check-developer-studio.mjs
+      - .github/workflows/developer-studio-builder.yml
+
+permissions:
+  contents: read
+concurrency:
+  group: browseros-developer-studio-builder
+  cancel-in-progress: true
+
+jobs:
+  integrate:
+    if: github.repository == 'code5m/browser-os' && github.ref == 'refs/heads/feature/developer-studio-unified-20261016'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb xauth dbus-x11
+          npm ci
+      - name: Apply and inspect exact integration transformations
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$GITHUB_REF_NAME" = feature/developer-studio-unified-20261016
+          python3 scripts/developer-studio/prepare.py
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all
+          python3 scripts/generate-rust-crosslayer-contracts.py --generate
+          git diff --check
+          git diff --stat
+      - name: Developer Studio behavioral fixtures
+        run: node scripts/check-developer-studio.mjs
+      - name: Frontend and native build
+        run: |
+          npm run build
+          cargo check --manifest-path src-tauri/Cargo.toml --locked
+          cargo test --manifest-path src-tauri/Cargo.toml --locked studio
+      - name: Existing architecture and semantic gates
+        run: npm run check
+      - name: Publish verified integration to the same development branch
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        run: |
+          python3 scripts/developer-studio/prepare.py --verify-scope
+          git diff --check
+          test "$(git ls-remote origin refs/heads/feature/developer-studio-unified-20261016 | cut -f1)" = "$EXPECTED_HEAD"
+          git config user.name 'BrowserOS Integration Bot'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- src src-tauri scripts docs
+          if git ls-files --error-unmatch artifacts/native-contracts/generated-crosslayer-contracts.json >/dev/null 2>&1; then
+            git add -- artifacts/native-contracts/generated-crosslayer-contracts.json
+          fi
+          if ! git diff --cached --quiet; then
+            git commit -m 'feat: wire verified Developer Studio native contracts and frontend'
+            git push origin HEAD:refs/heads/feature/developer-studio-unified-20261016
+          fi
+          echo "Development integration: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Final Full Validation, pre-merge, GUI and service E2E are still required.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve integration evidence
+        if: always()
+        run: |
+          git diff --binary > /tmp/developer-studio-integration.patch
+          git status --short > /tmp/developer-studio-worktree.txt
+          git diff --stat
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: developer-studio-integration-${{ github.run_id }}
+          path: |
+            /tmp/developer-studio-integration.patch
+            /tmp/developer-studio-worktree.txt
+          retention-days: 7
