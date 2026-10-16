@@ -5,10 +5,10 @@ use super::table_data::{self, TableRequest, TableState};
 // DEVELOPER_STUDIO_TABLE_ACTOR
 use super::{
     commands::{ensure_profiles_loaded, DbConnectionRegistry},
-    database::{credential_key, DbError, DbPool, QueryCancel},
+    database::{credential_key, DbError, DbPool, DbQueryResult as DriverQueryResult, QueryCancel},
 };
 use crate::{
-    domain::{DbConnectionConfig, DbErrorCode, DbQueryResult, SupportedDb},
+    domain::{DbConnectionConfig, DbErrorCode, SupportedDb},
     keyring_store::KeyringStore,
     security_policy as sp,
     shared::invocation::check_invocation_source,
@@ -278,7 +278,7 @@ fn rollback_active(owner: &mut ConnectionOwner) -> Result<(), String> {
 }
 fn finish_query(
     owner: &mut ConnectionOwner,
-    result: Result<DbQueryResult, DbError>,
+    result: Result<DriverQueryResult, DbError>,
     cancel: &QueryCancel,
     write: bool,
 ) -> Result<Value, String> {
