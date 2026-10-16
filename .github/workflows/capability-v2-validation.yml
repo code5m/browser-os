@@ -14,6 +14,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  source-evidence:
+    # Read-only diagnostic export, never modifies or pushes source. The complete
+    # tracked checkout (including public/) is kept separately from dependencies.
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 35
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Export exact committed input and locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > "$RUNNER_TEMP/browseros-source-commit.txt"
+          git archive --format=tar.gz --output="$RUNNER_TEMP/browseros-source.tar.gz" HEAD
+          npm ci
+          tar -czf "$RUNNER_TEMP/browseros-node-modules.tar.gz" node_modules
+          git diff --exit-code HEAD -- package.json package-lock.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: browseros-source-input-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/browseros-source-commit.txt
+            ${{ runner.temp }}/browseros-source.tar.gz
+            ${{ runner.temp }}/browseros-node-modules.tar.gz
+          if-no-files-found: error
+          retention-days: 3
   impact:
     runs-on: ubuntu-24.04
     outputs:
