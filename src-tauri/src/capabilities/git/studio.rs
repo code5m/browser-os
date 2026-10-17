@@ -667,6 +667,45 @@ fn read(root: &Path, input: &StudioInput) -> Result<Value, String> {
                 json!({"patch":git(root,&["show","--format=fuller","--no-ext-diff","--no-textconv",&revision,"--"])?}),
             )
         }
+        "commit_files" | "commit_file_diff" | "commit_file_worktree_diff" => {
+            let revision = oid(
+                root,
+                input.revision.as_deref().ok_or("GIT_STUDIO_REVISION_REQUIRED")?,
+            )?;
+            let lineage = git(root, &["rev-list", "--parents", "-n", "1", &revision])?;
+            let parent = lineage.split_whitespace().nth(1);
+            if input.action == "commit_files" {
+                // Names are NUL-delimited: filenames may contain tabs/newlines.
+                // Disable rename coalescing so every record is status + one path.
+                let records = if let Some(parent) = parent {
+                    git(root, &["diff", "--name-status", "--no-renames", "-z", parent, &revision, "--"])?
+                } else {
+                    git(root, &["diff-tree", "--root", "--no-commit-id", "--name-status", "-r", "--no-renames", "-z", &revision, "--"])?
+                };
+                let parts = records.split('\0').filter(|value| !value.is_empty()).collect::<Vec<_>>();
+                if parts.len() % 2 != 0 || parts.len() / 2 > FILE_CAP {
+                    return Err("GIT_STUDIO_COMMIT_FILES_FORMAT".into());
+                }
+                let mut files = Vec::new();
+                for entry in parts.chunks_exact(2) {
+                    safe_path(entry[1])?;
+                    files.push(json!({"status":entry[0],"path":entry[1]}));
+                }
+                Ok(json!({"revision":revision,"files":files,"first_parent":parent}))
+            } else {
+                let file = selected.ok_or("GIT_STUDIO_SELECT_FILE")?;
+                safe_path(file)?;
+                let patch = if input.action == "commit_file_worktree_diff" {
+                    git(root, &["diff", "--no-ext-diff", "--no-textconv", "--unified=3", &revision, "--", file])?
+                } else if let Some(parent) = parent {
+                    git(root, &["diff", "--no-ext-diff", "--no-textconv", "--unified=3", parent, &revision, "--", file])?
+                } else {
+                    git(root, &["show", "--format=", "--no-ext-diff", "--no-textconv", &revision, "--", file])?
+                };
+                Ok(json!({"revision":revision,"path":file,"patch":patch,"mode":input.action}))
+            }
+        }
+
         "conflict" => {
             let path = selected.ok_or("GIT_STUDIO_SELECT_FILE")?;
             let basis = snapshot(root)?;
