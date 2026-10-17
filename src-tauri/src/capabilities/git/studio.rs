@@ -1404,6 +1404,28 @@ mod tests {
         path
     }
     #[test]
+    fn commit_history_returns_real_changed_paths_and_per_file_diffs() {
+        let root = fixture();
+        let initial = git(&root, &["rev-parse", "HEAD"]).unwrap().trim().to_string();
+        let input = StudioInput { action: "commit_files".into(), revision: Some(initial.clone()), ..Default::default() };
+        let list = read(&root, &input).unwrap();
+        let files = list["files"].as_array().unwrap();
+        assert_eq!(files.len(), 2);
+        assert!(files.iter().any(|x| x["path"] == "a.txt"));
+        let diff = read(&root, &StudioInput {
+            action: "commit_file_diff".into(), revision: Some(initial.clone()),
+            paths: vec!["a.txt".into()], ..Default::default()
+        }).unwrap();
+        assert!(diff["patch"].as_str().unwrap().contains("+one"));
+        fs::write(root.join("a.txt"), "changed in worktree\n").unwrap();
+        let compare = read(&root, &StudioInput {
+            action: "commit_file_worktree_diff".into(), revision: Some(initial),
+            paths: vec!["a.txt".into()], ..Default::default()
+        }).unwrap();
+        assert!(compare["patch"].as_str().unwrap().contains("+changed in worktree"));
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn studio_snapshot_observes_unstaged_bytes() {
         let root = fixture();
         let a = snapshot(&root).unwrap();
