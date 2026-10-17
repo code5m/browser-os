@@ -346,8 +346,8 @@ async function openDirCenter() {
 .action-overflow { font-weight:700; font-size:17px; }
 .activity button:hover { background:#e9eef6!important; color:#344054!important; }
 .activity button.active { background:#e3eefb; color:#17548f; }
-.suggestion-list { display:flex; flex-direction:column; box-sizing:border-box; margin-left:var(--omni-left,0px); max-height:220px; overflow-y:auto; background:#fff; border:1px solid #dce3eb; border-top:0; box-shadow:0 8px 20px #13233b12; border-radius:0 0 12px 12px; padding:5px; }
-.suggestion-list.suggestion-floating { position: absolute; top:100%; left:var(--omni-left,0px); margin-left:0; max-height:min(220px,50vh); }
+.suggestion-list { display:flex; flex-direction:column; box-sizing:border-box; margin-left:var(--omni-left,0px); max-height:min(220px,50vh); overflow-y:auto; background:#fff; border:1px solid #dce3eb; box-shadow:0 8px 20px #13233b12; border-radius:0 0 12px 12px; padding:5px; }
+.suggestion-list.suggestion-floating { position: absolute; top:100%; left:var(--omni-left,0px); margin-left:0; }
 .suggestion-item { display:flex; align-items:center; gap:12px; width:100%; padding:8px 12px; border:0; background:transparent; text-align:left; color:#243449; cursor:pointer; border-radius:7px; }
 .suggestion-item:hover,.suggestion-item.selected { background:#eef4fb; }
 .suggestion-type { width:20px; text-align:center; }
