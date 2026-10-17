@@ -141,7 +141,9 @@ pub fn db_import_profiles(
         }
         let name = item.name.trim();
         let database = item.database.trim();
-        if name.is_empty() || name.len() > 128 || database.is_empty()
+        if name.is_empty()
+            || name.len() > 128
+            || database.is_empty()
             || database.len() > 4096
             || name.chars().any(char::is_control)
             || database.chars().any(char::is_control)
@@ -150,8 +152,11 @@ pub fn db_import_profiles(
         }
         if item.kind == SupportedDb::MySql {
             let host = item.host.as_deref().unwrap_or("").trim();
-            if host.is_empty() || host.len() > 253
-                || host.chars().any(|ch| ch.is_control() || ch.is_whitespace() || ch == '/' || ch == '@')
+            if host.is_empty()
+                || host.len() > 253
+                || host
+                    .chars()
+                    .any(|ch| ch.is_control() || ch.is_whitespace() || ch == '/' || ch == '@')
                 || database.len() > 128
             {
                 return Err("DB_IMPORT_INVALID_MYSQL".into());
@@ -163,12 +168,28 @@ pub fn db_import_profiles(
         if item.username.as_deref().unwrap_or("").len() > 128 {
             return Err("DB_IMPORT_USERNAME_TOO_LONG".into());
         }
-        let host = if item.kind == SupportedDb::Sqlite { None } else { item.host };
-        let port = if item.kind == SupportedDb::Sqlite { None } else { item.port.or(Some(3306)) };
-        let username = if item.kind == SupportedDb::Sqlite { None } else { item.username };
-        if updated.values().any(|existing| existing.kind == item.kind
-            && existing.host == host && existing.port == port
-            && existing.database == database && existing.username == username) {
+        let host = if item.kind == SupportedDb::Sqlite {
+            None
+        } else {
+            item.host
+        };
+        let port = if item.kind == SupportedDb::Sqlite {
+            None
+        } else {
+            item.port.or(Some(3306))
+        };
+        let username = if item.kind == SupportedDb::Sqlite {
+            None
+        } else {
+            item.username
+        };
+        if updated.values().any(|existing| {
+            existing.kind == item.kind
+                && existing.host == host
+                && existing.port == port
+                && existing.database == database
+                && existing.username == username
+        }) {
             duplicates += 1;
             continue;
         }
@@ -177,27 +198,37 @@ pub fn db_import_profiles(
         }
         let id = Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
-        updated.insert(id.clone(), DbConnectionConfig {
-            id,
-            name: name.to_string(),
-            kind: item.kind,
-            host,
-            port,
-            database: database.to_string(),
-            username,
-            ssl_mode: crate::domain::DbSslMode::Prefer,
-            allow_write: false,
-            production_hint: None,
-            enabled: false,
-            created_at: now,
-            updated_at: now,
-        });
+        updated.insert(
+            id.clone(),
+            DbConnectionConfig {
+                id,
+                name: name.to_string(),
+                kind: item.kind,
+                host,
+                port,
+                database: database.to_string(),
+                username,
+                ssl_mode: crate::domain::DbSslMode::Prefer,
+                allow_write: false,
+                production_hint: None,
+                enabled: false,
+                created_at: now,
+                updated_at: now,
+            },
+        );
         imported += 1;
     }
     persist_snapshot(&app, &updated)?;
     *guard = updated;
-    log_audit(&app, "db.import_profiles", format!("imported={} duplicates={}", imported, duplicates));
-    Ok(DbImportResult { imported, duplicates })
+    log_audit(
+        &app,
+        "db.import_profiles",
+        format!("imported={} duplicates={}", imported, duplicates),
+    );
+    Ok(DbImportResult {
+        imported,
+        duplicates,
+    })
 }
 
 #[tauri::command]
