@@ -57,14 +57,13 @@ const omniOverlayAllowed = computed(() =>
 const suggestionsGeometry = ref<Record<string, string>>({});
 let suggestionsObserver: ResizeObserver | null = null;
 function syncSuggestionsGeometry() {
-  const anchor = omniAnchor.value?.getBoundingClientRect();
-  const nav = navEl.value?.getBoundingClientRect();
-  if (!anchor || !nav || anchor.width <= 0) return;
-  // One horizontal geometry contract in both modes; the CSS custom property
-  // acts as margin for native-safe flow and left position for HTML overlays.
-  const left = Math.max(0, Math.round(anchor.left - nav.left));
-  const width = Math.max(0, Math.min(Math.round(anchor.width), Math.floor(nav.width - left)));
-  suggestionsGeometry.value = { "--omni-left": left + "px", width: width + "px" };
+  const anchor = omniAnchor.value;
+  if (!anchor || !anchor.offsetWidth) return;
+  // .tbar is the positioned ancestor of .omni-wrap: offsetLeft is already
+  // relative to the popover container in CSS pixels, including responsive nav.
+  suggestionsGeometry.value = {
+    "--omni-left": anchor.offsetLeft + "px", width: anchor.offsetWidth + "px",
+  };
 }
 const moreActionsOpen = ref(false);
 watch(() => layout.mainView, () => { moreActionsOpen.value = false; });
