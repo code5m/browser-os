@@ -48,37 +48,47 @@ const topItems = computed(() => TOP_NAV_ITEMS.filter((i) => layout.navTopViews.i
 // ===== W17：窗口宽度上报（窄窗口密度）+ resize 监听清理 =====
 const navEl = ref<HTMLElement | null>(null);
 const omniAnchor = ref<HTMLElement | null>(null);
-// The native-safe suggestions row stays IN FLOW, but only spans the address
-// field. A floating HTML overlay cannot cover the Linux WebKit child view.
+// Native Linux browser/grid WebViews sit ABOVE the HTML shell. Only workbench
+// surfaces without visible native children may use a CSS anchored overlay.
+// Browser/grid retain the safe in-flow row so their native viewport moves.
+const omniOverlayAllowed = computed(() =>
+  layout.mainView !== "browser" && layout.mainView !== "grid",
+);
 const suggestionsGeometry = ref<Record<string, string>>({});
+let suggestionsObserver: ResizeObserver | null = null;
 function syncSuggestionsGeometry() {
-  const anchor = omniAnchor.value?.getBoundingClientRect();
-  const nav = navEl.value?.getBoundingClientRect();
-  if (!anchor || !nav || anchor.width <= 0) return;
-  const left = Math.max(0, Math.round(anchor.left - nav.left));
-  const width = Math.max(0, Math.min(Math.round(anchor.width), Math.floor(nav.width - left - 6)));
-  suggestionsGeometry.value = { marginLeft: left + "px", width: width + "px" };
+  const anchor = omniAnchor.value;
+  if (!anchor || !anchor.offsetWidth) return;
+  // .tbar is the positioned ancestor of .omni-wrap: offsetLeft is already
+  // relative to the popover container in CSS pixels, including responsive nav.
+  suggestionsGeometry.value = {
+    "--omni-left": anchor.offsetLeft + "px", width: anchor.offsetWidth + "px",
+  };
 }
 const moreActionsOpen = ref(false);
 watch(() => layout.mainView, () => { moreActionsOpen.value = false; });
 function toggleMoreActions() { layout.navSection = ""; moreActionsOpen.value = !moreActionsOpen.value; }
 function syncWidth() {
   layout.setWindowWidth(window.innerWidth || 0);
-  nextTick(syncSuggestionsGeometry);
+  // ResizeObserver tracks the resized address field after responsive nav layout.
 }
 onMounted(() => {
   syncWidth();
   window.addEventListener("resize", syncWidth);
+  // Observe the input width independently of window resize: nav density and
+  // contributions can change the address field without resizing the window.
+  if (typeof ResizeObserver !== "undefined" && omniAnchor.value) {
+    suggestionsObserver = new ResizeObserver(syncSuggestionsGeometry);
+    suggestionsObserver.observe(omniAnchor.value);
+  }
 });
 onBeforeUnmount(() => {
   window.removeEventListener("resize", syncWidth);
+  suggestionsObserver?.disconnect();
 });
-// 扩展行：grid=宫格设置 / more=功能菜单 / omni=最近+常用。
-// 关键设计：面板【不悬浮】——页签/宫格是原生 GTK 子窗口，永远压在 HTML 之上，
-// 悬浮下拉必然被网页盖住。内联扩展行把工具栏撑高、网页随 viewport 整体下移
-// （RO 触发重定位），零遮挡、零闪烁，也不需要"隐藏-恢复"的 hack。
-// 扩展行状态提升到 store（layout.navSection）：视图切换/关闭都由 store 统一收起，
-// 组件内不再自持一份，避免"换了视图扩展行还挂着"的状态分裂。
+// Omnibox in file/database/tool pages is anchored and floats over HTML.
+// On browser/grid it must remain in flow: HTML cannot cover native WebViews.
+// layout.navSection remains the sole owner of the open/closed state.
 function changeShellMode(mode: "standard" | "compact" | "immersive") {
   window.dispatchEvent(new CustomEvent("browseros:set-shell-mode", { detail: mode }));
 }
@@ -281,8 +291,10 @@ async function openDirCenter() {
         :aria-expanded="moreActionsOpen" aria-controls="chrome-more-actions" @click="toggleMoreActions">···</button>
     </nav>
 
-    <!-- Native-safe suggestion surface: inline below the address bar, never above GTK WebView. -->
-    <div v-if="layout.navSection === 'omni'" id="nav-omni-row" class="suggestion-list" :style="suggestionsGeometry" role="listbox" aria-label="地址建议">
+    <!-- Floating only over HTML workbenches; native browser/grid use an in-flow row. -->
+    <div v-if="layout.navSection === 'omni'" id="nav-omni-row" class="suggestion-list"
+      :class="{ 'suggestion-floating': omniOverlayAllowed }" :style="suggestionsGeometry"
+      role="listbox" aria-label="地址建议">
       <button v-for="(suggestion, i) in omniCandidates" :key="suggestion.value" :id="'omni-suggestion-' + i" role="option" :aria-selected="omniIndex === i"
         class="suggestion-item" :class="{ selected: omniIndex === i }" @mousedown.prevent @click="chooseSuggestion(suggestion)">
         <span class="suggestion-type">{{ suggestion.kind === 'web' ? '🌐' : suggestion.kind === 'file' ? '📄' : '📁' }}</span>
@@ -320,11 +332,11 @@ async function openDirCenter() {
 <style scoped>
 .tbar {
   flex-shrink: 0;
+  position: relative;
+  z-index: 4;
 }
 .activity{height:30px;box-sizing:border-box;background:#eef1f6;color:#314651;border-bottom:1px solid #d9e0e3;gap:3px;padding:2px 6px}
 .activity button{color:#425b68;border-radius:4px}
-.activity button.active{background:#e0eee8;color:#135b48}
-.activity .addr-mid{flex:1;min-width:0}
 
 .more-actions { display:flex; gap:6px; flex-wrap:wrap; align-items:center; padding:7px 12px; background:#f8fafc; border-bottom:1px solid #e2e8f0; }
 .more-actions button { border:1px solid #d8e1eb; background:#fff; color:#344054; border-radius:7px; padding:5px 10px; font-size:12px; cursor:pointer; }
@@ -334,7 +346,8 @@ async function openDirCenter() {
 .action-overflow { font-weight:700; font-size:17px; }
 .activity button:hover { background:#e9eef6!important; color:#344054!important; }
 .activity button.active { background:#e3eefb; color:#17548f; }
-.suggestion-list { display:flex; flex-direction:column; box-sizing:border-box; max-height:220px; max-width:100%; overflow-y:auto; background:#fff; border:1px solid #dce3eb; border-top:0; box-shadow:0 8px 20px #13233b12; border-radius:0 0 12px 12px; padding:5px; }
+.suggestion-list { display:flex; flex-direction:column; box-sizing:border-box; margin-left:var(--omni-left,0px); max-height:min(220px,50vh); overflow-y:auto; background:#fff; border:1px solid #dce3eb; box-shadow:0 8px 20px #13233b12; border-radius:0 0 12px 12px; padding:5px; }
+.suggestion-list.suggestion-floating { position: absolute; top:100%; left:var(--omni-left,0px); margin-left:0; }
 .suggestion-item { display:flex; align-items:center; gap:12px; width:100%; padding:8px 12px; border:0; background:transparent; text-align:left; color:#243449; cursor:pointer; border-radius:7px; }
 .suggestion-item:hover,.suggestion-item.selected { background:#eef4fb; }
 .suggestion-type { width:20px; text-align:center; }
