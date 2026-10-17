@@ -15,9 +15,9 @@ check("宫格高级功能上下文隔离",grid.includes('grid-advanced') && grid
 check("原生浏览器与宫格永不使用 HTML 悬浮建议",/omniOverlayAllowed = computed\(\(\) =>\s*layout\.mainView !== "browser" && layout\.mainView !== "grid"/.test(bar)
   && bar.includes(":class=\"{ 'suggestion-floating': omniOverlayAllowed }\"")
   && !/position:\s*fixed/.test(bar));
-check("地址建议悬浮仅在受控工作台",bar.includes(".suggestion-list.suggestion-floating { position: absolute;")
-  && bar.includes("ref=\"omniAnchor\"") && bar.includes("ref=\"tbarEl\"")
-  && bar.includes("anchor.left - bar.left") && bar.includes("anchor.bottom - bar.top"));
+check("地址建议悬浮仅在受控工作台",bar.includes(".suggestion-list.suggestion-floating { position: absolute; top:100%;")
+  && bar.includes("ref=\"omniAnchor\"") && bar.includes("anchor.left - nav.left")
+  && bar.includes("left:var(--omni-left,0px)") && bar.includes("margin-left:0"));
 check("地址栏左右边界与窗口布局同步",bar.includes("Math.round(anchor.width)")
   && bar.includes("suggestionsObserver.observe(el)") && bar.includes("suggestionsObserver?.disconnect()")
   && bar.includes('window.addEventListener("resize", syncWidth)'));
