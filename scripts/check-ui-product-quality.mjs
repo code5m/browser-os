@@ -16,9 +16,9 @@ check("原生浏览器与宫格永不使用 HTML 悬浮建议",/omniOverlayAllow
   && bar.includes(":class=\"{ 'suggestion-floating': omniOverlayAllowed }\"")
   && !/position:\s*fixed/.test(bar));
 check("地址建议悬浮仅在受控工作台",bar.includes(".suggestion-list.suggestion-floating { position: absolute; top:100%;")
-  && bar.includes("ref=\"omniAnchor\"") && bar.includes("anchor.left - nav.left")
+  && bar.includes("ref=\"omniAnchor\"") && bar.includes("anchor.offsetLeft")
   && bar.includes("left:var(--omni-left,0px)") && bar.includes("margin-left:0"));
-check("地址栏左右边界与窗口布局同步",bar.includes("Math.round(anchor.width)")
+check("地址栏左右边界与窗口布局同步",bar.includes("anchor.offsetWidth")
   && bar.includes("suggestionsObserver.observe(el)") && bar.includes("suggestionsObserver?.disconnect()")
   && bar.includes('window.addEventListener("resize", syncWidth)'));
 console.log("UI_PRODUCT_QUALITY=PASS");
