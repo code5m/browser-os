@@ -10,7 +10,7 @@ import { Plus, X, Square, ChevronLeft, ChevronRight, RefreshCw } from '@lucide/v
 import { useDatabaseStore } from "../state/useDatabaseStore";
 import { parseDatabaseConnectionUrl } from "../../../utils/dbConnectionUrl";
 import { previewIdeaDataSources, type IdeaMysqlCandidate } from "../model/jetbrainsImport";
-import { readAuthorizedWorkspaceTextFile, useFileStore } from "../../workspace/public";
+import { readAuthorizedWorkspaceTextFile, listAuthorizedWorkspaceDirectory, useFileStore } from "../../workspace/public";
 import { ideaProjectDataSourcesPath, parseIdeaDataSourcesXml, type IdeaSource } from "../../../utils/ideaDataSources";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { useWorkbenchStore } from "../../../stores/useWorkbenchStore";
@@ -82,7 +82,7 @@ async function discoverIdeaSources() {
   try {
     const roots = [ideaProjectPath.value,files.filePath,...files.startDirs.map(entry => entry.path)].filter(Boolean);
     const result = await discoverIdeaProjects(roots, {
-      listDir: (path:string) => bridge.listDir(path),
+      listDir: listAuthorizedWorkspaceDirectory,
       readFile: readAuthorizedWorkspaceTextFile,
       parse: parseIdeaDataSourcesXml,
     }, () => generation !== ideaDiscoveryGeneration);
