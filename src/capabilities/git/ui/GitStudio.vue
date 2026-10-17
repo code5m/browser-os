@@ -134,7 +134,7 @@ async function selectCommitFile(path:string, compareLocal=false) {
     if(result) rawDetail.value=result.patch||'';
   } catch(e) { if(gen===detailGeneration) error.value=friendly(e); }
 }
-async function compare(){try{const data=await read({action:'compare',revision:'HEAD',other:branchTarget.value});if(data)rawDetail.value=data.patch;}catch(e){error.value=friendly(e);}}
+async function compare(){try{const data=await read({action:'compare',revision:'HEAD',other:branchTarget.value});if(data){commitFilePath.value='';logSelection.value='';rawDetail.value=data.patch;}}catch(e){error.value=friendly(e);}}
 async function inspectFile(kind:string){if(!activeFile.value)return;try{const data=await read({action:kind,paths:[activeFile.value]});if(!data)return;if(kind==='blame'){blame.value=blameLines(data.text);diffMode.value='blame';}else if(kind==='conflict'){conflict.value=data;resolution.value=data.ours;diffMode.value='conflict';}else{commits.value=data.commits;hasMore.value=data.has_more;offset.value=0;pane.value='log';}}catch(e){error.value=friendly(e);}}
 function line(id:number){selectedLines.value=selectedLines.value.includes(id)?selectedLines.value.filter(x=>x!==id):[...selectedLines.value,id];}
 function hunkSelect(hunk:any){const ids=hunk.lines.filter((l:any)=>l.sign!==' ').map((l:any)=>l.id);selectedLines.value=ids.every((id:number)=>selectedLines.value.includes(id))?selectedLines.value.filter(id=>!ids.includes(id)):[...new Set([...selectedLines.value,...ids])];}
@@ -266,7 +266,7 @@ onUnmounted(()=>{disposed=true;generation++;detailGeneration++;void cancelPrevie
           </div>
           <pre v-else-if="commitFilePath" class="patch history-patch">{{rawDetail||'此文件没有可显示的文本差异（或仍在加载）。'}}</pre>
         </template>
-        <p v-else class="hint">选择中间的提交，再点击修改文件即可进行逐文件审查。</p>
+        <template v-else><p class="hint">选择中间的提交，再点击修改文件即可进行逐文件审查。</p><pre v-if="rawDetail" class="patch history-patch">{{rawDetail}}</pre></template>
       </aside>
     </template>
     <template v-else-if="pane==='stash'"><aside class="files"><button v-for="item in stashes" :key="item[0]" class="commit" @click="inspectStash(item[0])">{{item[0]}} · {{item[2]}}</button><p v-if="!stashes.length">没有保存的暂存记录。</p></aside><main class="detail"><div class="toolbar"><input v-model="stashTarget" placeholder="stash@{0}" aria-label="暂存记录"/><button v-for="op in ['stash_save','stash_apply','stash_pop','stash_drop']" :key="op" :disabled="blocked||preview||op!=='stash_save'&&!stashTarget" @click="prepare(op,{target:stashTarget})">{{labels[op]}}</button></div><p>保存暂存架会收纳整个仓库的已跟踪与未跟踪改动，不局限于右键文件。</p><pre class="patch">{{rawDetail}}</pre></main></template>
