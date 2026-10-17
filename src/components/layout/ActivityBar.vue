@@ -47,7 +47,6 @@ const topItems = computed(() => TOP_NAV_ITEMS.filter((i) => layout.navTopViews.i
 
 // ===== W17：窗口宽度上报（窄窗口密度）+ resize 监听清理 =====
 const navEl = ref<HTMLElement | null>(null);
-const tbarEl = ref<HTMLElement | null>(null);
 const omniAnchor = ref<HTMLElement | null>(null);
 // Native Linux browser/grid WebViews sit ABOVE the HTML shell. Only workbench
 // surfaces without visible native children may use a CSS anchored overlay.
@@ -59,24 +58,13 @@ const suggestionsGeometry = ref<Record<string, string>>({});
 let suggestionsObserver: ResizeObserver | null = null;
 function syncSuggestionsGeometry() {
   const anchor = omniAnchor.value?.getBoundingClientRect();
-  const bar = tbarEl.value?.getBoundingClientRect();
   const nav = navEl.value?.getBoundingClientRect();
-  if (!anchor || !bar || !nav || anchor.width <= 0) return;
-  if (omniOverlayAllowed.value) {
-    // Keep both horizontal edges on the omnibox, not on the whole toolbar.
-    const left = Math.max(0, Math.round(anchor.left - bar.left));
-    const width = Math.max(0, Math.min(Math.round(anchor.width), Math.floor(bar.width - left)));
-    const top = Math.round(anchor.bottom - bar.top);
-    // Long menus scroll inside themselves rather than leaving the window.
-    const maxHeight = Math.max(56, Math.min(220, Math.floor(window.innerHeight - anchor.bottom - 12)));
-    suggestionsGeometry.value = {
-      left: left + "px", top: top + "px", width: width + "px", maxHeight: maxHeight + "px",
-    };
-  } else {
-    const left = Math.max(0, Math.round(anchor.left - nav.left));
-    const width = Math.max(0, Math.min(Math.round(anchor.width), Math.floor(nav.width - left)));
-    suggestionsGeometry.value = { marginLeft: left + "px", width: width + "px" };
-  }
+  if (!anchor || !nav || anchor.width <= 0) return;
+  // One horizontal geometry contract in both modes; the CSS custom property
+  // acts as margin for native-safe flow and left position for HTML overlays.
+  const left = Math.max(0, Math.round(anchor.left - nav.left));
+  const width = Math.max(0, Math.min(Math.round(anchor.width), Math.floor(nav.width - left)));
+  suggestionsGeometry.value = { "--omni-left": left + "px", width: width + "px" };
 }
 const moreActionsOpen = ref(false);
 watch(() => layout.mainView, () => { moreActionsOpen.value = false; });
@@ -92,12 +80,11 @@ onMounted(() => {
     suggestionsObserver = new ResizeObserver(() => syncSuggestionsGeometry());
     // The anchor may resize independently of the window (responsive nav,
     // contributor actions, font metrics or a shell mode change).
-    for (const el of [tbarEl.value, navEl.value, omniAnchor.value]) {
+    for (const el of [navEl.value, omniAnchor.value]) {
       if (el) suggestionsObserver.observe(el);
     }
   }
 });
-watch(omniOverlayAllowed, () => nextTick(syncSuggestionsGeometry));
 onBeforeUnmount(() => {
   window.removeEventListener("resize", syncWidth);
   suggestionsObserver?.disconnect();
@@ -248,7 +235,7 @@ async function openDirCenter() {
 </script>
 
 <template>
-  <div ref="tbarEl" class="tbar" :class="'nav-' + layout.navDensity" @keydown.esc="onEscape">
+  <div class="tbar" :class="'nav-' + layout.navDensity" @keydown.esc="onEscape">
     <nav ref="navEl" class="activity" aria-label="主导航" @keydown="onNavKeydown">
       <!-- 左：视图导航 -->
       <button
@@ -364,8 +351,8 @@ async function openDirCenter() {
 .action-overflow { font-weight:700; font-size:17px; }
 .activity button:hover { background:#e9eef6!important; color:#344054!important; }
 .activity button.active { background:#e3eefb; color:#17548f; }
-.suggestion-list { display:flex; flex-direction:column; box-sizing:border-box; max-height:220px; max-width:100%; overflow-y:auto; background:#fff; border:1px solid #dce3eb; border-top:0; box-shadow:0 8px 20px #13233b12; border-radius:0 0 12px 12px; padding:5px; }
-.suggestion-list.suggestion-floating { position: absolute; z-index: 5; }
+.suggestion-list { display:flex; flex-direction:column; box-sizing:border-box; margin-left:var(--omni-left,0px); max-height:220px; max-width:100%; overflow-y:auto; background:#fff; border:1px solid #dce3eb; border-top:0; box-shadow:0 8px 20px #13233b12; border-radius:0 0 12px 12px; padding:5px; }
+.suggestion-list.suggestion-floating { position: absolute; top:100%; left:var(--omni-left,0px); margin-left:0; z-index: 5; max-height:min(220px,calc(100vh - 90px)); }
 .suggestion-item { display:flex; align-items:center; gap:12px; width:100%; padding:8px 12px; border:0; background:transparent; text-align:left; color:#243449; cursor:pointer; border-radius:7px; }
 .suggestion-item:hover,.suggestion-item.selected { background:#eef4fb; }
 .suggestion-type { width:20px; text-align:center; }
