@@ -1332,6 +1332,16 @@ commands:
     permission: "process.spawn"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
+  db_import_profiles:
+    file: "src-tauri/src/capabilities/database/commands.rs"
+    owner: "database"
+    category: "CAPABILITY_NATIVE_ADAPTER"
+    callers: "src/capabilities/database/**"
+    side_effect: "persist disabled non-sensitive IDEA connection metadata, no network or credentials"
+    resource: "DB_CONNECTION"
+    permission: "main-window local metadata registration"
+    current_boundary: "capabilities/database/commands.rs"
+    target_boundary: "capability-owned native adapter module (declare + gate)"
   db_list_connections:
     file: "src-tauri/src/capabilities/database/commands.rs"
     owner: "database"
