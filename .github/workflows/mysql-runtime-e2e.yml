@@ -1,6 +1,7 @@
 name: BrowserOS MySQL Runtime E2E
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - "src-tauri/src/capabilities/database/**"
