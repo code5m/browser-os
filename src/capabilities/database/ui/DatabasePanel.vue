@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import DatabaseWorkspace from "./DatabaseWorkspace.vue";
 import { EmptyState } from "../../../shared/ui";
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { takeIdeaProjectPath, subscribeIdeaProjectScan } from "../../../composables/ideaProjectNavigation";
 import { Plus, X, Square, ChevronLeft, ChevronRight, RefreshCw } from '@lucide/vue';
 import { useDatabaseStore } from "../state/useDatabaseStore";
 import { parseDatabaseConnectionUrl } from "../../../utils/dbConnectionUrl";
 import { previewIdeaDataSources, type IdeaMysqlCandidate } from "../model/jetbrainsImport";
-import { readAuthorizedWorkspaceTextFile } from "../../workspace/public";
+import { readAuthorizedWorkspaceTextFile, useFileStore } from "../../workspace/public";
 import { ideaProjectDataSourcesPath, parseIdeaDataSourcesXml, type IdeaSource } from "../../../utils/ideaDataSources";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { useWorkbenchStore } from "../../../stores/useWorkbenchStore";
@@ -27,6 +27,7 @@ import {
 const db = useDatabaseStore();
 const layout = useLayoutStore();
 const workbench = useWorkbenchStore();
+const files = useFileStore();
 
 // 密码只作**组件本地瞬时态**：不进 store、不进表单模型、不持久化（F2）。
 const password = ref("");
@@ -60,6 +61,19 @@ const viewsOpen = ref(true);
 const objectFilter = ref("");
 const ideaImportOpen = ref(false);
 const ideaProjectPath = ref("");
+// IntelliJ stores connection metadata PER PROJECT, not in one global Ubuntu file.
+// Only suggest a project base from paths the file workspace already knows;
+// no home-directory enumeration, credentials or IDE config scans on mount.
+const ideaSuggestedBase = computed(() => {
+  const paths = [files.filePath, ...files.startDirs.map(item => item.path)];
+  const project = paths.find(path => /^\/home\/[^/]+\/IdeaProjects\/[^/]+/.test(path || ""));
+  if (project) return project;
+  const home = paths.map(path => /^\/home\/[^/]+/.exec(path || "")?.[0]).find(Boolean);
+  return home ? home + "/IdeaProjects" : "";
+});
+watch(ideaSuggestedBase, path => {
+  if (path && !ideaProjectPath.value.trim()) ideaProjectPath.value = path;
+}, {immediate:true});
 const ideaCandidates = ref<IdeaSource[]>([]);
 const ideaScanning = ref(false);
 const ideaImportError = ref("");
@@ -228,13 +242,15 @@ function deleteConnection() {
         {{ ideaImportOpen ? "收起 IDEA 导入" : "从 IntelliJ IDEA 导入连接…" }}
       </button>
       <section v-if="ideaImportOpen" class="idea-import" aria-label="IDEA 数据源导入">
-        <p>仅读取你指定项目的 <code>.idea/dataSources.xml</code>。不读取 IDEA 密码、SSH 凭据或 <code>dataSources.local.xml</code>。</p>
+        <p>已根据当前 Ubuntu 用户目录预填项目位置；<strong>请选择其中具体 IDEA 项目</strong>（不是上级 IdeaProjects）。项目级连接配置位于 <code>项目/.idea/dataSources.xml</code>，不是系统统一配置文件。</p>
+        <p>不读取 IDEA 密码、SSH 凭据、<code>~/.config/JetBrains</code> 用户配置或 <code>dataSources.local.xml</code>。</p>
         <label>IDEA 项目目录
-          <input v-model="ideaProjectPath" type="text" spellcheck="false" placeholder="/home/you/IdeaProjects/project" />
+          <input v-model="ideaProjectPath" type="text" spellcheck="false" placeholder="/home/你的用户名/IdeaProjects/项目名" />
         </label>
-        <button :disabled="ideaScanning || !ideaProjectPath.trim()" @click="scanIdeaProject">
-          {{ ideaScanning ? "扫描中…" : "扫描该项目的数据库配置" }}
+        <button :disabled="ideaScanning || !ideaProjectPath.trim() || ideaProjectPath === ideaSuggestedBase" @click="scanIdeaProject">
+          {{ ideaScanning ? "读取中…" : "预览此项目的数据源" }}
         </button>
+        <p v-if="ideaProjectPath===ideaSuggestedBase" class="hint">上方是建议目录，请补充项目名，或从 BrowserOS 文件树进入项目后选择导入。</p>
         <p v-if="ideaImportError" role="alert" class="errors">{{ ideaImportError }}</p>
         <p v-if="ideaCandidates.length" class="hint">发现 {{ ideaCandidates.length }} 条连接 · {{ ideaScannedFile }}</p>
         <div v-for="candidate in ideaCandidates" :key="candidate.id" class="idea-source">
