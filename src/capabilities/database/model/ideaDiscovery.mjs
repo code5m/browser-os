@@ -6,7 +6,7 @@
 const IGNORED = new Set(['.git','.cache','.local','.config','node_modules','target','dist','build','.gradle','.m2','venv','.venv','vendor','.npm','.rustup','.cargo','snap','Pictures','Videos','Music']);
 const priority = name => /^(IdeaProjects|Projects|projects|Documents|workspace|workspaces|src|dev|code)$/i.test(name) ? 0 : 1;
 export async function discoverIdeaProjects(roots, io, stopped = () => false) {
-  const queue = [...new Set((roots || []).filter(p => typeof p === 'string' && p.startsWith('/') && !p.includes('\\0')))]
+  const queue = [...new Set((roots || []).filter(p => typeof p === 'string' && p.startsWith('/') && p.indexOf(String.fromCharCode(0)) < 0))]
     .slice(0, 12).map(path => ({path:path.replace(/\\/$/, '') || '/', depth:0}));
   const seen = new Set(), results = [], errors = [];
   let scanned = 0;
