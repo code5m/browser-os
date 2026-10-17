@@ -7,7 +7,7 @@ const IGNORED = new Set(['.git','.cache','.local','.config','node_modules','targ
 const priority = name => /^(IdeaProjects|Projects|projects|Documents|workspace|workspaces|src|dev|code)$/i.test(name) ? 0 : 1;
 export async function discoverIdeaProjects(roots, io, stopped = () => false) {
   const queue = [...new Set((roots || []).filter(p => typeof p === 'string' && p.startsWith('/') && p.indexOf(String.fromCharCode(0)) < 0))]
-    .slice(0, 12).map(path => ({path:path.replace(/\\/$/, '') || '/', depth:0}));
+    .slice(0, 12).map(path => ({path:(path.endsWith('/') && path.length > 1 ? path.slice(0,-1) : path) || '/', depth:0}));
   const seen = new Set(), results = [], errors = [];
   let scanned = 0;
   const MAX_DIRS = 180, MAX_DEPTH = 5, MAX_SOURCES = 128;
@@ -30,7 +30,7 @@ export async function discoverIdeaProjects(roots, io, stopped = () => false) {
     try {
       const children = (await io.listDir(path)).filter(entry => entry && entry.is_dir &&
         !IGNORED.has(entry.name) && !entry.name.startsWith('.') &&
-        typeof entry.path === 'string' && entry.path.startsWith(path.replace(/\\/$/, '') + '/'));
+        typeof entry.path === 'string' && entry.path.startsWith((path.endsWith('/') && path.length > 1 ? path.slice(0,-1) : path) + '/'));
       children.sort((a,b)=>priority(a.name)-priority(b.name)||a.name.localeCompare(b.name));
       for (const child of children.slice(0, 80)) {
         if (queue.length + seen.size >= MAX_DIRS) break;
