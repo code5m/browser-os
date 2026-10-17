@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import DatabaseWorkspace from "./DatabaseWorkspace.vue";
+import { bridge } from "../../../bridge";
+import { discoverIdeaProjects } from "../model/ideaDiscovery.mjs";
+import type { DbConnectionConfig } from "../../../types";
 import { EmptyState } from "../../../shared/ui";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { takeIdeaProjectPath, subscribeIdeaProjectScan } from "../../../composables/ideaProjectNavigation";
@@ -61,19 +64,73 @@ const viewsOpen = ref(true);
 const objectFilter = ref("");
 const ideaImportOpen = ref(false);
 const ideaProjectPath = ref("");
-// IntelliJ stores connection metadata PER PROJECT, not in one global Ubuntu file.
-// Only suggest a project base from paths the file workspace already knows;
-// no home-directory enumeration, credentials or IDE config scans on mount.
-const ideaSuggestedBase = computed(() => {
-  const paths = [files.filePath, ...files.startDirs.map(item => item.path)];
-  const project = paths.find(path => /^\/home\/[^/]+\/IdeaProjects\/[^/]+/.test(path || ""));
-  if (project) return project;
-  const home = paths.map(path => /^\/home\/[^/]+/.exec(path || "")?.[0]).find(Boolean);
-  return home ? home + "/IdeaProjects" : "";
-});
+// Only prefill a REAL user-opened location. Do not invent ~/IdeaProjects.
+const ideaSuggestedBase = computed(() => files.filePath || files.startDirs[0]?.path || "");
 watch(ideaSuggestedBase, path => {
   if (path && !ideaProjectPath.value.trim()) ideaProjectPath.value = path;
 }, {immediate:true});
+const ideaDiscoveryBusy = ref(false);
+const ideaDiscoverySummary = ref("");
+const ideaDiscovered = ref<{path:string;source:IdeaSource;selected:boolean}[]>([]);
+let ideaDiscoveryGeneration = 0;
+async function discoverIdeaSources() {
+  if (ideaDiscoveryBusy.value) return;
+  ideaDiscoveryBusy.value = true;
+  const generation = ++ideaDiscoveryGeneration;
+  ideaDiscoverySummary.value = "正在检查已经授权的工作区目录（最多 180 个目录）…";
+  ideaDiscovered.value = [];
+  try {
+    const roots = [files.filePath,...files.startDirs.map(entry => entry.path)].filter(Boolean);
+    const result = await discoverIdeaProjects(roots, {
+      listDir: (path:string) => bridge.listDir(path),
+      readFile: readAuthorizedWorkspaceTextFile,
+      parse: parseIdeaDataSourcesXml,
+    }, () => generation !== ideaDiscoveryGeneration);
+    if (generation !== ideaDiscoveryGeneration) return;
+    ideaDiscovered.value = result.sources.map((item:{path:string;source:IdeaSource}) =>
+      ({...item,selected:item.source.supported}));
+    ideaDiscoverySummary.value = `已检查 ${result.scanned} 个目录，发现 ${result.sources.length} 条数据源` +
+      (result.partial ? "；已达到范围上限，请选择更具体的目录重试" : "") +
+      (result.permissionErrors ? `；${result.permissionErrors} 个目录无法读取` : "");
+  } catch (_) {
+    if (generation === ideaDiscoveryGeneration) ideaDiscoverySummary.value = "发现失败：请从文件工作区选择已授权的 IDEA 项目目录";
+  } finally {
+    if (generation === ideaDiscoveryGeneration) ideaDiscoveryBusy.value = false;
+  }
+}
+function cancelIdeaDiscovery() { ideaDiscoveryGeneration++; ideaDiscoveryBusy.value = false; }
+async function importIdeaSelection() {
+  const items = ideaDiscovered.value.filter(item => item.selected && item.source.supported && item.source.kind!=="unsupported");
+  if (!items.length || ideaScanning.value) return;
+  ideaScanning.value = true;
+  ideaImportError.value = "";
+  try {
+    const payload = items.slice(0,32).map(({source}) => ({
+      name:source.name,kind:source.kind as "mysql"|"sqlite",
+      host:source.kind==="mysql"?source.host:null,
+      port:source.kind==="mysql"?Number(source.portText||3306):null,
+      database:source.database,username:source.kind==="mysql"?source.username:null,
+    }));
+    const outcome = await bridge.dbImportProfiles(payload);
+    await db.refreshConnections();
+    ideaDiscoverySummary.value = `已保存 ${outcome.imported} 条连接配置，跳过 ${outcome.duplicates} 条重复项；连接仍需逐条验证`;
+    ideaDiscovered.value.forEach(item => {item.selected=false;});
+    showConnection.value = false;
+  } catch (_) {
+    ideaImportError.value = "无法保存导入配置；原始 IDEA 数据未修改，请检查连接配置并重试";
+  } finally { ideaScanning.value = false; }
+}
+function selectPendingIdeaConfig(config:DbConnectionConfig) {
+  if(config.kind==="postgres")return;
+  fillIdeaForm({
+    kind:config.kind,name:config.name,database:config.database,
+    host:config.host||"",portText:config.port?String(config.port):"",
+    username:config.username||"",
+  },"prefer");
+  db.form.id = config.id;
+  db.form.enabled = true;
+  showConnection.value = true;
+}
 const ideaCandidates = ref<IdeaSource[]>([]);
 const ideaScanning = ref(false);
 const ideaImportError = ref("");
@@ -242,15 +299,25 @@ function deleteConnection() {
         {{ ideaImportOpen ? "收起 IDEA 导入" : "从 IntelliJ IDEA 导入连接…" }}
       </button>
       <section v-if="ideaImportOpen" class="idea-import" aria-label="IDEA 数据源导入">
-        <p>已根据当前 Ubuntu 用户目录预填项目位置；<strong>请选择其中具体 IDEA 项目</strong>（不是上级 IdeaProjects）。项目级连接配置位于 <code>项目/.idea/dataSources.xml</code>，不是系统统一配置文件。</p>
+        <p>不会猜测 IDEA 固定安装或项目目录。可直接发现已授权工作区中的项目级配置；其他目录需要先在文件工作区打开并授权。</p>
+        <div class="toolbar"><button :disabled="ideaDiscoveryBusy" @click="discoverIdeaSources">发现 IDEA 项目数据源</button><button v-if="ideaDiscoveryBusy" @click="cancelIdeaDiscovery">停止扫描</button></div>
+        <p v-if="ideaDiscoverySummary" role="status">{{ideaDiscoverySummary}}</p>
+        <div v-for="(item,index) in ideaDiscovered" :key="item.path+item.source.id+index" class="idea-source">
+          <label><input type="checkbox" v-model="item.selected" :disabled="!item.source.supported||ideaScanning"/>
+            <strong>{{item.source.name}}</strong>
+            <small>{{item.source.kind}} · {{item.path}} · {{item.source.note}}</small>
+          </label>
+        </div>
+        <button :disabled="ideaScanning||!ideaDiscovered.some(item=>item.selected)" @click="importIdeaSelection">一键导入选中的连接配置（最多 32 条）</button>
+        <p>导入只保存非敏感配置，默认禁用且只读；在下面“待验证”列表选择条目、输入密码并测试连接后才能使用。</p>
         <p>不读取 IDEA 密码、SSH 凭据、<code>~/.config/JetBrains</code> 用户配置或 <code>dataSources.local.xml</code>。</p>
         <label>IDEA 项目目录
           <input v-model="ideaProjectPath" type="text" spellcheck="false" placeholder="/home/你的用户名/IdeaProjects/项目名" />
         </label>
-        <button :disabled="ideaScanning || !ideaProjectPath.trim() || ideaProjectPath === ideaSuggestedBase" @click="scanIdeaProject">
+        <button :disabled="ideaScanning || !ideaProjectPath.trim()" @click="scanIdeaProject">
           {{ ideaScanning ? "读取中…" : "预览此项目的数据源" }}
         </button>
-        <p v-if="ideaProjectPath===ideaSuggestedBase" class="hint">上方是建议目录，请补充项目名，或从 BrowserOS 文件树进入项目后选择导入。</p>
+        <p class="hint">此路径来自当前文件工作区，可修改为具体 IDEA 项目目录；不读取隐藏凭据。</p>
         <p v-if="ideaImportError" role="alert" class="errors">{{ ideaImportError }}</p>
         <p v-if="ideaCandidates.length" class="hint">发现 {{ ideaCandidates.length }} 条连接 · {{ ideaScannedFile }}</p>
         <div v-for="candidate in ideaCandidates" :key="candidate.id" class="idea-source">
@@ -277,9 +344,9 @@ function deleteConnection() {
 
       <ul v-if="db.connections.length" class="conn-list">
         <li v-for="c in db.connections" :key="c.id" :class="{ active: c.id === db.form.id, disabled: !c.enabled }">
-          <button class="row" :disabled="!c.enabled" @click="db.selectConnection(c); showConnection = false">
+          <button class="row" @click="c.enabled ? (db.selectConnection(c),showConnection=false) : selectPendingIdeaConfig(db.configs.find(cfg=>cfg.id===c.id)!)">
             <span class="name">{{ c.name }}</span>
-            <span class="meta">{{ c.label }}{{ c.allowWrite ? " · 允许写" : "" }}{{ c.enabled ? "" : " · 已禁用" }}</span>
+            <span class="meta">{{ c.label }}{{ c.allowWrite ? " · 允许写" : "" }}{{ c.enabled ? "" : " · 待验证（点击补充密码）" }}</span>
           </button>
         </li>
       </ul>
