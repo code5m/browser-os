@@ -19,6 +19,6 @@ check("地址建议悬浮仅在受控工作台",bar.includes(".suggestion-list.s
   && bar.includes("ref=\"omniAnchor\"") && bar.includes("anchor.offsetLeft")
   && bar.includes("left:var(--omni-left,0px)") && bar.includes("margin-left:0"));
 check("地址栏左右边界与窗口布局同步",bar.includes("anchor.offsetWidth")
-  && bar.includes("suggestionsObserver.observe(el)") && bar.includes("suggestionsObserver?.disconnect()")
+  && bar.includes("suggestionsObserver.observe(omniAnchor.value)") && bar.includes("suggestionsObserver?.disconnect()")
   && bar.includes('window.addEventListener("resize", syncWidth)'));
 console.log("UI_PRODUCT_QUALITY=PASS");
