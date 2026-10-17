@@ -70,7 +70,7 @@ watch(() => layout.mainView, () => { moreActionsOpen.value = false; });
 function toggleMoreActions() { layout.navSection = ""; moreActionsOpen.value = !moreActionsOpen.value; }
 function syncWidth() {
   layout.setWindowWidth(window.innerWidth || 0);
-  nextTick(syncSuggestionsGeometry);
+  // ResizeObserver tracks the resized address field after responsive nav layout.
 }
 onMounted(() => {
   syncWidth();
