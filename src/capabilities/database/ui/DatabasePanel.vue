@@ -80,7 +80,7 @@ async function discoverIdeaSources() {
   ideaDiscoverySummary.value = "正在检查已经授权的工作区目录（最多 180 个目录）…";
   ideaDiscovered.value = [];
   try {
-    const roots = [files.filePath,...files.startDirs.map(entry => entry.path)].filter(Boolean);
+    const roots = [ideaProjectPath.value,files.filePath,...files.startDirs.map(entry => entry.path)].filter(Boolean);
     const result = await discoverIdeaProjects(roots, {
       listDir: (path:string) => bridge.listDir(path),
       readFile: readAuthorizedWorkspaceTextFile,
@@ -258,7 +258,7 @@ onMounted(async () => {
   await db.refreshConnections();
   if (!db.connections.length) showConnection.value = true;
 });
-onUnmounted(()=>stopIdeaProjectScan());
+onUnmounted(()=>{stopIdeaProjectScan();cancelIdeaDiscovery();});
 
 async function doConnect() {
   const okConnected = await db.connect(password.value);
