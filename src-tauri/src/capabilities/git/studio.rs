@@ -670,7 +670,10 @@ fn read(root: &Path, input: &StudioInput) -> Result<Value, String> {
         "commit_files" | "commit_file_diff" | "commit_file_worktree_diff" => {
             let revision = oid(
                 root,
-                input.revision.as_deref().ok_or("GIT_STUDIO_REVISION_REQUIRED")?,
+                input
+                    .revision
+                    .as_deref()
+                    .ok_or("GIT_STUDIO_REVISION_REQUIRED")?,
             )?;
             let lineage = git(root, &["rev-list", "--parents", "-n", "1", &revision])?;
             let parent = lineage.split_whitespace().nth(1);
@@ -678,11 +681,38 @@ fn read(root: &Path, input: &StudioInput) -> Result<Value, String> {
                 // Names are NUL-delimited: filenames may contain tabs/newlines.
                 // Disable rename coalescing so every record is status + one path.
                 let records = if let Some(parent) = parent {
-                    git(root, &["diff", "--name-status", "--no-renames", "-z", parent, &revision, "--"])?
+                    git(
+                        root,
+                        &[
+                            "diff",
+                            "--name-status",
+                            "--no-renames",
+                            "-z",
+                            parent,
+                            &revision,
+                            "--",
+                        ],
+                    )?
                 } else {
-                    git(root, &["diff-tree", "--root", "--no-commit-id", "--name-status", "-r", "--no-renames", "-z", &revision, "--"])?
+                    git(
+                        root,
+                        &[
+                            "diff-tree",
+                            "--root",
+                            "--no-commit-id",
+                            "--name-status",
+                            "-r",
+                            "--no-renames",
+                            "-z",
+                            &revision,
+                            "--",
+                        ],
+                    )?
                 };
-                let parts = records.split('\0').filter(|value| !value.is_empty()).collect::<Vec<_>>();
+                let parts = records
+                    .split('\0')
+                    .filter(|value| !value.is_empty())
+                    .collect::<Vec<_>>();
                 if parts.len() % 2 != 0 || parts.len() / 2 > FILE_CAP {
                     return Err("GIT_STUDIO_COMMIT_FILES_FORMAT".into());
                 }
@@ -696,11 +726,45 @@ fn read(root: &Path, input: &StudioInput) -> Result<Value, String> {
                 let file = selected.ok_or("GIT_STUDIO_SELECT_FILE")?;
                 safe_path(file)?;
                 let patch = if input.action == "commit_file_worktree_diff" {
-                    git(root, &["diff", "--no-ext-diff", "--no-textconv", "--unified=3", &revision, "--", file])?
+                    git(
+                        root,
+                        &[
+                            "diff",
+                            "--no-ext-diff",
+                            "--no-textconv",
+                            "--unified=3",
+                            &revision,
+                            "--",
+                            file,
+                        ],
+                    )?
                 } else if let Some(parent) = parent {
-                    git(root, &["diff", "--no-ext-diff", "--no-textconv", "--unified=3", parent, &revision, "--", file])?
+                    git(
+                        root,
+                        &[
+                            "diff",
+                            "--no-ext-diff",
+                            "--no-textconv",
+                            "--unified=3",
+                            parent,
+                            &revision,
+                            "--",
+                            file,
+                        ],
+                    )?
                 } else {
-                    git(root, &["show", "--format=", "--no-ext-diff", "--no-textconv", &revision, "--", file])?
+                    git(
+                        root,
+                        &[
+                            "show",
+                            "--format=",
+                            "--no-ext-diff",
+                            "--no-textconv",
+                            &revision,
+                            "--",
+                            file,
+                        ],
+                    )?
                 };
                 Ok(json!({"revision":revision,"path":file,"patch":patch,"mode":input.action}))
             }
@@ -1406,23 +1470,45 @@ mod tests {
     #[test]
     fn commit_history_returns_real_changed_paths_and_per_file_diffs() {
         let root = fixture();
-        let initial = git(&root, &["rev-parse", "HEAD"]).unwrap().trim().to_string();
-        let input = StudioInput { action: "commit_files".into(), revision: Some(initial.clone()), ..Default::default() };
+        let initial = git(&root, &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        let input = StudioInput {
+            action: "commit_files".into(),
+            revision: Some(initial.clone()),
+            ..Default::default()
+        };
         let list = read(&root, &input).unwrap();
         let files = list["files"].as_array().unwrap();
         assert_eq!(files.len(), 2);
         assert!(files.iter().any(|x| x["path"] == "a.txt"));
-        let diff = read(&root, &StudioInput {
-            action: "commit_file_diff".into(), revision: Some(initial.clone()),
-            paths: vec!["a.txt".into()], ..Default::default()
-        }).unwrap();
+        let diff = read(
+            &root,
+            &StudioInput {
+                action: "commit_file_diff".into(),
+                revision: Some(initial.clone()),
+                paths: vec!["a.txt".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert!(diff["patch"].as_str().unwrap().contains("+one"));
         fs::write(root.join("a.txt"), "changed in worktree\n").unwrap();
-        let compare = read(&root, &StudioInput {
-            action: "commit_file_worktree_diff".into(), revision: Some(initial),
-            paths: vec!["a.txt".into()], ..Default::default()
-        }).unwrap();
-        assert!(compare["patch"].as_str().unwrap().contains("+changed in worktree"));
+        let compare = read(
+            &root,
+            &StudioInput {
+                action: "commit_file_worktree_diff".into(),
+                revision: Some(initial),
+                paths: vec!["a.txt".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(compare["patch"]
+            .as_str()
+            .unwrap()
+            .contains("+changed in worktree"));
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
