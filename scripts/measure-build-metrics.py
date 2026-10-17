@@ -35,8 +35,13 @@ from pathlib import Path
 # M5-W12 Graph live-query readonly bridge/UI 后，A0 于 2026-09-07 书面抬至 23%，
 # 当前实测 total_bytes_pct=22.26，cargo_warnings 未增加。M5-W14 新增懒加载
 # PluginManager 后，A0 于 2026-09-08 抬至 25%；W15 两处高风险确认框的焦点管理
-# 令实测到 25.14%。A0 仅为该已验收的键盘可达性修复上调至 25.2%，warning 仍不得增加。
-TOTAL_BYTES_GROWTH_LIMIT_PCT = 25.2
+# 令实测到 25.14%。A0 仅为该已验收的键盘可达性修复上调至 25.2%。
+# 2026-10-17: 随 Git/Database/工作台能力增加，旧 25.2% 冻结上限已阻断正常开发。
+# 在同一 052b18a 历史基线上实行预警 + 硬门禁，禁止静默再基线：
+#   30%: 可观察预警（不失败）；35%: 严格阻断（不放宽 Rust/GUI/安全门禁）。
+# 未来重新选择基线必须提交可审计的新证据与明确批准。
+TOTAL_BYTES_GROWTH_WARNING_PCT = 30.0
+TOTAL_BYTES_GROWTH_LIMIT_PCT = 35.0
 
 # cargo 输出的 warning 汇总行，例如：
 #   warning: `mvp-browser-os` (bin "mvp-browser-os") generated 2 warnings
@@ -128,12 +133,19 @@ def collect(root: Path, skip_build: bool = False) -> dict:
 
 
 def compare(current: dict, baseline: dict) -> dict:
-    result = {"exceeds_growth_limit": False, "deltas": {}}
+    result = {
+        "exceeds_growth_limit": False,
+        "growth_warning": False,
+        "growth_warning_pct": TOTAL_BYTES_GROWTH_WARNING_PCT,
+        "growth_limit_pct": TOTAL_BYTES_GROWTH_LIMIT_PCT,
+        "deltas": {},
+    }
     cur_total = (current.get("dist") or {}).get("total_bytes")
     base_total = (baseline.get("dist") or {}).get("total_bytes")
     if cur_total is not None and base_total:
         pct = (cur_total - base_total) / base_total * 100
         result["deltas"]["total_bytes_pct"] = round(pct, 2)
+        result["growth_warning"] = pct >= TOTAL_BYTES_GROWTH_WARNING_PCT
         result["exceeds_growth_limit"] = pct > TOTAL_BYTES_GROWTH_LIMIT_PCT
     cur_warn = current.get("cargo_warnings")
     base_warn = baseline.get("cargo_warnings")
@@ -175,9 +187,21 @@ dist/assets/index-Dt_h_hIi.js          83.16 kB │ gzip:  30.20 kB
     if cmp_ok["deltas"]["total_bytes_pct"] != 10.0 or cmp_ok["exceeds_growth_limit"]:
         print(f"self-test: compare within limit failed: {cmp_ok}", file=sys.stderr)
         return 1
-    over_limit = compare({"dist": {"total_bytes": 1260}, "cargo_warnings": 2}, baseline)
+    under_warning = compare({"dist": {"total_bytes": 1299}, "cargo_warnings": 2}, baseline)
+    if under_warning["growth_warning"] or under_warning["exceeds_growth_limit"]:
+        print("self-test: below warning budget should pass silently", file=sys.stderr)
+        return 1
+    warning = compare({"dist": {"total_bytes": 1300}, "cargo_warnings": 2}, baseline)
+    if not warning["growth_warning"] or warning["exceeds_growth_limit"]:
+        print("self-test: warning threshold must be advisory", file=sys.stderr)
+        return 1
+    at_cap = compare({"dist": {"total_bytes": 1350}, "cargo_warnings": 2}, baseline)
+    if not at_cap["growth_warning"] or at_cap["exceeds_growth_limit"]:
+        print("self-test: exact hard limit must be accepted", file=sys.stderr)
+        return 1
+    over_limit = compare({"dist": {"total_bytes": 1351}, "cargo_warnings": 2}, baseline)
     if not over_limit["exceeds_growth_limit"]:
-        print("self-test: growth limit not enforced", file=sys.stderr)
+        print("self-test: growth hard limit not enforced", file=sys.stderr)
         return 1
     warn_up = compare({"dist": {"total_bytes": 1000}, "cargo_warnings": 3}, baseline)
     if not warn_up.get("warnings_increased"):

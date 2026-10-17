@@ -75,7 +75,8 @@ jobs:
       contents: read
     env:
       # Reduce temporary debug-symbol storage, not tests, assertions or features.
-      # Release profile and the frozen build-growth gate remain unchanged.
+      # Release profile unchanged; frontend size budget remains against historical M0 baseline.
+      # Advisory warning at 30%, hard reject after 35% (scripts/measure-build-metrics.py).
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_PROFILE_TEST_DEBUG: '0'
       CARGO_INCREMENTAL: '0'
@@ -151,11 +152,25 @@ jobs:
           spec=importlib.util.spec_from_file_location('metrics','scripts/measure-build-metrics.py')
           metrics=importlib.util.module_from_spec(spec);spec.loader.exec_module(metrics)
           current={'dist':metrics.collect_dist(Path('dist'))}
-          baseline=json.loads(Path('logs/m0-build-metrics/build-metrics-052b18a.json').read_text())
+          baseline_path=Path('logs/m0-build-metrics/build-metrics-052b18a.json')
+          baseline=json.loads(baseline_path.read_text())
           verdict=metrics.compare(current,baseline)
-          print(json.dumps({'current':current,'comparison':verdict},indent=2))
+          evidence={'baseline_file':str(baseline_path),'baseline_bytes':baseline['dist']['total_bytes'],
+                    'current':current,'comparison':verdict}
+          report=json.dumps(evidence,indent=2)
+          print(report)
+          Path('/tmp/browseros-frontend-size-budget.json').write_text(report+'\n')
+          if verdict['growth_warning']:
+              print(f"::warning title=Frontend size budget::Growth {verdict['deltas']['total_bytes_pct']}% reaches advisory {verdict['growth_warning_pct']}%; hard stop above {verdict['growth_limit_pct']}%.")
           raise SystemExit(1 if verdict['exceeds_growth_limit'] else 0)
           PY
+      - name: Upload frontend size budget evidence
+        if: always() && needs.impact.outputs.mode == 'full'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-frontend-size-budget-${{ github.run_id }}
+          path: /tmp/browseros-frontend-size-budget.json
+          if-no-files-found: warn
       - name: Semantic dependency and bundle evidence
         id: semantic_evidence
         if: needs.impact.outputs.mode == 'full'
