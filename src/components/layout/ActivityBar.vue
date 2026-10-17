@@ -75,13 +75,11 @@ function syncWidth() {
 onMounted(() => {
   syncWidth();
   window.addEventListener("resize", syncWidth);
-  if (typeof ResizeObserver !== "undefined") {
-    suggestionsObserver = new ResizeObserver(() => syncSuggestionsGeometry());
-    // The anchor may resize independently of the window (responsive nav,
-    // contributor actions, font metrics or a shell mode change).
-    for (const el of [navEl.value, omniAnchor.value]) {
-      if (el) suggestionsObserver.observe(el);
-    }
+  // Observe the input width independently of window resize: nav density and
+  // contributions can change the address field without resizing the window.
+  if (typeof ResizeObserver !== "undefined" && omniAnchor.value) {
+    suggestionsObserver = new ResizeObserver(syncSuggestionsGeometry);
+    suggestionsObserver.observe(omniAnchor.value);
   }
 });
 onBeforeUnmount(() => {
@@ -339,8 +337,6 @@ async function openDirCenter() {
 }
 .activity{height:30px;box-sizing:border-box;background:#eef1f6;color:#314651;border-bottom:1px solid #d9e0e3;gap:3px;padding:2px 6px}
 .activity button{color:#425b68;border-radius:4px}
-.activity button.active{background:#e0eee8;color:#135b48}
-.activity .addr-mid{flex:1;min-width:0}
 
 .more-actions { display:flex; gap:6px; flex-wrap:wrap; align-items:center; padding:7px 12px; background:#f8fafc; border-bottom:1px solid #e2e8f0; }
 .more-actions button { border:1px solid #d8e1eb; background:#fff; color:#344054; border-radius:7px; padding:5px 10px; font-size:12px; cursor:pointer; }
