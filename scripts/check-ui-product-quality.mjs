@@ -12,5 +12,13 @@ check("地址栏混合建议有界且来自唯一纯函数",bar.includes("filter
 check("工具页具备搜索和可操作模块",tools.includes('搜索工具') && tools.includes('openModule(id)'));
 check("文件快捷栏只保留必要动作",files.includes('fileActionsOpen') && files.includes('更多文件操作'));
 check("宫格高级功能上下文隔离",grid.includes('grid-advanced') && grid.includes('grid-context'));
-check("不可用原生视图绝不增加覆盖浮层",!bar.includes("position: fixed") && !bar.includes("position:absolute"));
+check("原生浏览器与宫格永不使用 HTML 悬浮建议",/omniOverlayAllowed = computed\(\(\) =>\s*layout\.mainView !== "browser" && layout\.mainView !== "grid"/.test(bar)
+  && bar.includes(":class=\"{ 'suggestion-floating': omniOverlayAllowed }\"")
+  && !/position:\\s*fixed/.test(bar));
+check("地址建议悬浮仅在受控工作台",bar.includes(".suggestion-list.suggestion-floating { position: absolute;")
+  && bar.includes("ref=\"omniAnchor\"") && bar.includes("ref=\"tbarEl\"")
+  && bar.includes("anchor.left - bar.left") && bar.includes("anchor.bottom - bar.top"));
+check("地址栏左右边界与窗口布局同步",bar.includes("Math.round(anchor.width)")
+  && bar.includes("suggestionsObserver.observe(el)") && bar.includes("suggestionsObserver?.disconnect()")
+  && bar.includes('window.addEventListener("resize", syncWidth)'));
 console.log("UI_PRODUCT_QUALITY=PASS");
