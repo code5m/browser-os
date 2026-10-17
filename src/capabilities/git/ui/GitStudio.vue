@@ -41,9 +41,11 @@ const groups = computed(() => [
 // for-each-ref. Never infer remote branch names by querying GitHub instead.
 const branchQuery = ref('');
 const localRefs = computed<string[]>(() => (info.value?.branches || [])
-  .map((row:string[]) => row[0]).filter((name:string) => name && !name.includes('/')));
+  .filter((row:string[]) => row[3]?.startsWith('refs/heads/'))
+  .map((row:string[]) => row[0]).filter(Boolean));
 const remoteRefs = computed<string[]>(() => (info.value?.branches || [])
-  .map((row:string[]) => row[0]).filter((name:string) => name?.includes('/') && !name.endsWith('/HEAD')));
+  .filter((row:string[]) => row[3]?.startsWith('refs/remotes/') && !row[3].endsWith('/HEAD'))
+  .map((row:string[]) => row[0]).filter(Boolean));
 const visibleLocalRefs = computed(() => localRefs.value.filter(name => name.toLowerCase().includes(branchQuery.value.toLowerCase())));
 const visibleRemoteRefs = computed(() => remoteRefs.value.filter(name => name.toLowerCase().includes(branchQuery.value.toLowerCase())));
 const graph = computed(() => layoutCommitGraph(commits.value));
