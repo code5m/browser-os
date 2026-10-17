@@ -14,7 +14,7 @@ check("文件快捷栏只保留必要动作",files.includes('fileActionsOpen') &
 check("宫格高级功能上下文隔离",grid.includes('grid-advanced') && grid.includes('grid-context'));
 check("原生浏览器与宫格永不使用 HTML 悬浮建议",/omniOverlayAllowed = computed\(\(\) =>\s*layout\.mainView !== "browser" && layout\.mainView !== "grid"/.test(bar)
   && bar.includes(":class=\"{ 'suggestion-floating': omniOverlayAllowed }\"")
-  && !/position:\\s*fixed/.test(bar));
+  && !/position:\s*fixed/.test(bar));
 check("地址建议悬浮仅在受控工作台",bar.includes(".suggestion-list.suggestion-floating { position: absolute;")
   && bar.includes("ref=\"omniAnchor\"") && bar.includes("ref=\"tbarEl\"")
   && bar.includes("anchor.left - bar.left") && bar.includes("anchor.bottom - bar.top"));
