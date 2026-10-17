@@ -539,7 +539,7 @@ fn read(root: &Path, input: &StudioInput) -> Result<Value, String> {
                 root,
                 &[
                     "for-each-ref",
-                    "--format=%(refname:short)%09%(upstream:short)%09%(upstream:track)",
+                    "--format=%(refname:short)%09%(upstream:short)%09%(upstream:track)%09%(refname)",
                     "refs/heads",
                     "refs/remotes",
                 ],
