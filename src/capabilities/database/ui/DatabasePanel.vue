@@ -102,10 +102,14 @@ function cancelIdeaDiscovery() { ideaDiscoveryGeneration++; ideaDiscoveryBusy.va
 async function importIdeaSelection() {
   const items = ideaDiscovered.value.filter(item => item.selected && item.source.supported && item.source.kind!=="unsupported");
   if (!items.length || ideaScanning.value) return;
+  if (items.length > 32) {
+    ideaImportError.value = "一次最多导入 32 条；请取消多余的勾选后重试。";
+    return;
+  }
   ideaScanning.value = true;
   ideaImportError.value = "";
   try {
-    const payload = items.slice(0,32).map(({source}) => ({
+    const payload = items.map(({source}) => ({
       name:source.name,kind:source.kind as "mysql"|"sqlite",
       host:source.kind==="mysql"?source.host:null,
       port:source.kind==="mysql"?Number(source.portText||3306):null,
