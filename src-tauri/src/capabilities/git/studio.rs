@@ -615,7 +615,9 @@ fn read(root: &Path, input: &StudioInput) -> Result<Value, String> {
                     return Err("GIT_STUDIO_SELECT_FILE".into());
                 }
                 args.push("--follow".into());
-            } else {
+            } else if input.revision.is_none() {
+                // An explicit branch must restrict git log to that ref.
+                // --all combined with a revision unions other branch histories.
                 args.push("--all".into());
             }
             for (flag, value) in [("--grep", &input.search), ("--author", &input.author)] {
