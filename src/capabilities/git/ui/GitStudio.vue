@@ -19,9 +19,9 @@ const source = computed<Record<string,unknown>|null>(() => localPath.value ? {pa
 const info = ref<any>(null), error = ref(''), notice = ref('');
 const loading = ref(false), writeBusy = ref(false), preview = ref<any>(null), acknowledged = ref(false);
 const selected = ref<string[]>([]), activeFile = ref(''), staged = ref(false);
-function defaultPane() { return props.mode === 'branches' ? 'branches' : props.mode === 'history' || props.initialAction === 'history' ? 'log' : 'changes'; }
+function defaultPane() { return ['branches','history'].includes(props.mode||'') || props.initialAction === 'history' ? 'log' : 'changes'; }
 const pane = ref(defaultPane());
-const panes = [['changes','改动'],['log','提交历史'],['branches','分支'],['stash','暂存架'],['worktrees','工作树'],['github','PR / CI']];
+const panes = [['changes','改动'],['log','分支与历史'],['stash','暂存架'],['worktrees','工作树'],['github','PR / CI']];
 const patch = ref(''), file = ref<any>(null), conflict = ref<any>(null), resolution = ref('');
 const diffMode = ref('split'), selectedLines = ref<number[]>([]);
 const commits = ref<any[]>([]), offset = ref(0), hasMore = ref(false), search = ref(''), author = ref(''), revision = ref('');
@@ -48,6 +48,10 @@ const remoteRefs = computed<string[]>(() => (info.value?.branches || [])
   .map((row:string[]) => row[0]).filter(Boolean));
 const visibleLocalRefs = computed(() => localRefs.value.filter(name => name.toLowerCase().includes(branchQuery.value.toLowerCase())));
 const visibleRemoteRefs = computed(() => remoteRefs.value.filter(name => name.toLowerCase().includes(branchQuery.value.toLowerCase())));
+const refGroups = computed(() => [
+  {id:'local',title:'本地',list:visibleLocalRefs.value,total:localRefs.value.length},
+  {id:'remote',title:'远程',list:visibleRemoteRefs.value,total:remoteRefs.value.length},
+]);
 const graph = computed(() => layoutCommitGraph(commits.value));
 const parsed = computed(() => parseUnifiedPatch(patch.value));
 const hunks = computed(() => { try { return patchHunks(patch.value); } catch { return []; } });
@@ -191,11 +195,8 @@ onUnmounted(()=>{disposed=true;generation++;detailGeneration++;void cancelPrevie
         <header class="toolbar"><strong>分支</strong><span>{{localRefs.length}} 本地 / {{remoteRefs.length}} 远程</span></header>
         <input v-model="branchQuery" class="branch-search" type="search" aria-label="筛选分支" placeholder="搜索分支…"/>
         <button class="branch-item" :aria-pressed="!revision" :disabled="blocked" @click="selectBranchFromTree('')">全部分支</button>
-        <details open><summary>本地（{{localRefs.length}}）</summary>
-          <button v-for="name in visibleLocalRefs" :key="name" class="branch-item" :aria-pressed="revision===name" :disabled="blocked" @click="selectBranchFromTree(name)">{{name}}{{name===info.branch?' · HEAD':''}}</button>
-        </details>
-        <details open><summary>远程（{{remoteRefs.length}}）</summary>
-          <button v-for="name in visibleRemoteRefs" :key="name" class="branch-item" :aria-pressed="revision===name" :disabled="blocked" @click="selectBranchFromTree(name)">{{name}}</button>
+        <details v-for="group in refGroups" :key="group.id" open><summary>{{group.title}}（{{group.total}}）</summary>
+          <button v-for="name in group.list" :key="name" class="branch-item" :aria-pressed="revision===name" :disabled="blocked" @click="selectBranchFromTree(name)">{{name}}{{name===info.branch?' · HEAD':''}}</button>
         </details>
         <p class="hint">远程显示本机已有的跟踪分支；点击「获取远端更新」后刷新。</p>
       </aside>
@@ -206,9 +207,8 @@ onUnmounted(()=>{disposed=true;generation++;detailGeneration++;void cancelPrevie
         <p v-if="!commits.length&&!loading">没有符合条件的提交。</p>
         <div class="toolbar"><button :disabled="blocked||offset===0" @click="loadLog(Math.max(0,offset-50))">上一页</button><span>{{Math.floor(offset/50)+1}}</span><button :disabled="blocked||!hasMore" @click="loadLog(offset+50)">下一页</button></div>
       </section>
-      <main class="detail log-details"><div class="toolbar"><code>{{logSelection}}</code><button :disabled="blocked||preview||!logSelection" @click="prepare('cherry_pick',{target:logSelection})">挑选此提交</button></div><pre class="patch">{{rawDetail||'选择提交查看差异。'}}</pre></main>
+      <main class="detail log-details"><div class="toolbar"><input v-model="branchTarget" placeholder="目标分支" aria-label="目标分支"/><button :disabled="blocked||!branchTarget" @click="compare">与 HEAD 比较</button><button v-for="op in ['branch_create','checkout','branch_delete','merge','rebase']" :key="op" :disabled="blocked||preview||!branchTarget" @click="prepare(op)">{{labels[op]}}</button></div><div class="toolbar"><code>{{logSelection}}</code><button :disabled="blocked||preview||!logSelection" @click="prepare('cherry_pick',{target:logSelection})">挑选此提交</button></div><pre class="patch">{{rawDetail||'选择提交查看差异。'}}</pre></main>
     </template>
-    <template v-else-if="pane==='branches'"><aside class="files"><button v-for="item in info.branches" :key="item[0]" class="commit" @click="branchTarget=item[0]"><span>{{item[0]}}<small>{{item[1]}} {{item[2]}}</small></span></button></aside><main class="detail"><div class="toolbar"><input v-model="branchTarget" placeholder="分支名称或提交" aria-label="目标分支"/><button :disabled="blocked||!branchTarget" @click="compare">与 HEAD 比较</button></div><div class="toolbar"><button v-for="op in ['branch_create','checkout','branch_delete','merge','rebase']" :key="op" :disabled="blocked||preview||!branchTarget" @click="prepare(op)">{{labels[op]}}</button></div><p>删除分支仅允许安全删除；变基与 Amend 不改写已发布提交。Pull 只允许快进。</p><pre class="patch">{{rawDetail}}</pre></main></template>
     <template v-else-if="pane==='stash'"><aside class="files"><button v-for="item in stashes" :key="item[0]" class="commit" @click="inspectStash(item[0])">{{item[0]}} · {{item[2]}}</button><p v-if="!stashes.length">没有保存的暂存记录。</p></aside><main class="detail"><div class="toolbar"><input v-model="stashTarget" placeholder="stash@{0}" aria-label="暂存记录"/><button v-for="op in ['stash_save','stash_apply','stash_pop','stash_drop']" :key="op" :disabled="blocked||preview||op!=='stash_save'&&!stashTarget" @click="prepare(op,{target:stashTarget})">{{labels[op]}}</button></div><p>保存暂存架会收纳整个仓库的已跟踪与未跟踪改动，不局限于右键文件。</p><pre class="patch">{{rawDetail}}</pre></main></template>
     <main v-else-if="pane==='worktrees'" class="detail"><p>创建受控子目录工作树（分离 HEAD）；移除仅允许已登记且干净的子工作树，不强制删除。</p><div class="toolbar"><input v-model="worktreeTarget" aria-label="工作树子目录" placeholder="新子目录名"/><input v-model="revision" aria-label="工作树基线" placeholder="基线分支 / 提交，默认 HEAD"/><button :disabled="blocked||preview||!worktreeTarget" @click="prepare('worktree_add',{target:worktreeTarget,revision:revision||'HEAD'})">创建</button><button :disabled="blocked||preview||!worktreeTarget" @click="prepare('worktree_remove',{target:worktreeTarget})">安全移除</button></div><pre>{{worktrees}}</pre></main>
     <template v-else-if="pane==='github'"><aside class="files"><p>使用系统中已登录的 gh；BrowserOS 不接收登录凭据。</p><button v-for="item in remote?.prs||[]" :key="item.number" class="commit" @click="inspectPr(item.number)"><span>#{{item.number}} {{item.title}}<small>{{item.isDraft?'草稿':item.mergeStateStatus}} · {{item.reviewDecision}}</small></span></button></aside><main class="detail"><div class="toolbar"><input v-model.number="pr" type="number" min="1" placeholder="PR 编号" aria-label="PR 编号"/><input v-model="branchTarget" placeholder="创建 PR 的目标分支" aria-label="PR 目标分支"/></div><textarea v-model="prText" maxlength="8000" placeholder="PR 标题 / 说明 / 评论 / 审查意见" aria-label="PR 正文"/><div class="toolbar"><button v-for="op in ['pr_create','pr_comment','pr_approve','pr_request_changes','pr_merge']" :key="op" :disabled="blocked||preview||op!=='pr_create'&&!pr" @click="prAction(op)">{{labels[op]}}</button></div><details v-if="prDetail" open><summary>PR 详情、文件和审查</summary><pre>{{JSON.stringify(prDetail,null,2)}}</pre></details><h4>近期 CI</h4><div v-for="run in remote?.runs||[]" :key="run.databaseId" class="toolbar"><a v-if="safeGithubLink(run.url)" :href="safeGithubLink(run.url)" target="_blank" rel="noopener noreferrer">{{run.workflowName}}</a><span>{{run.conclusion||run.status}}</span><code>{{run.headSha?.slice(0,9)}}</code></div></main></template>
