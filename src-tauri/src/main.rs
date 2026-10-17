@@ -1640,6 +1640,7 @@ fn main() {
             bridge::fill_browser_credential,
             crate::capabilities::database::commands::db_connect,
             crate::capabilities::database::commands::db_list_connections,
+            crate::capabilities::database::commands::db_import_profiles,
             crate::capabilities::database::commands::db_cancel,
             crate::capabilities::database::commands::db_query,
             crate::capabilities::database::commands::db_disconnect,
