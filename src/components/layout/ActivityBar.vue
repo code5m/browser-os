@@ -155,7 +155,7 @@ const omniIndex = ref(-1);
 const omniTyped = ref(false);
 const omniCandidates = computed(() => {
   const items: OmniboxItem[] = [
-    ...ws.recents.filter(r => r.type === "url").map(r => ({ value: r.path, label: safeLabel(r.title || r.path), type: "最近网页", kind: "web" as const })),
+    ...ws.recents.filter(r => r.type === "url").map(r => ({ value: r.path, label: safeLabel(r.title || r.path), type: isLocalPath(r.path) ? "最近目录" : "最近网页", kind: isLocalPath(r.path) ? "dir" as const : "web" as const })),
     ...ws.recents.filter(r => r.type === "file").map(r => ({ value: r.path, label: safeLabel(r.title || r.path), type: "最近文件", kind: "file" as const })),
     ...recentDirs.value.map(value => ({ value, label: safeLabel(value), type: "最近目录", kind: "dir" as const })),
     ...fs.startDirs.map(d => ({ value: d.path, label: safeLabel(d.name || d.path), type: "常用目录", kind: "dir" as const })),
@@ -178,7 +178,9 @@ function showOmnibox() {
   nextTick(syncSuggestionsGeometry);
 }
 function chooseSuggestion(s: OmniboxItem) {
-  if (s.kind === "dir") pickDir(s.value);
+  // Older releases could mistakenly record an absolute directory as a web URL.
+  // It must never be sent to a search engine when replayed from recents.
+  if (isLocalPath(s.value) || s.kind === "dir") pickDir(s.value);
   else if (s.kind === "file") {
     layout.closeNavSection();
     const record = ws.recents.find(r => r.type === "file" && r.path === s.value);
@@ -200,7 +202,9 @@ function onOmniKeydown(e: KeyboardEvent) {
 }
 function onAddrGo() {
   layout.closeNavSection();
-  if (layout.addrMode === "dir" || (layout.addrMode === "auto" && isLocalPath(browser.url)))
+  // Absolute local paths take precedence over the page/search mode.
+  // Even an explicitly selected webpage mode must not upload a local path.
+  if (isLocalPath(browser.url) || layout.addrMode === "dir")
     void openDirCenter().catch(() => layout.showToast("无法打开目录，请检查路径"));
   else void browser.navigateCurrent().catch(() => layout.showToast("网页导航失败，请检查网址"));
 }
@@ -210,6 +214,7 @@ function pickDir(p: string) {
   void openDirCenter().catch(() => layout.showToast("无法打开目录，请检查路径"));
 }
 function pickUrl(u: string) {
+  if (isLocalPath(u)) { pickDir(u); return; }
   layout.closeNavSection();
   browser.url = u;
   void browser.navigateCurrent().catch(() => layout.showToast("网页导航失败，请检查网址"));
