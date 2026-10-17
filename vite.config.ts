@@ -39,7 +39,7 @@ export default defineConfig({
     // Run the complete packaged GUI + pre-merge gates after this change.
     terserOptions: {
       module: true,
-      compress: { passes: 10, toplevel: true, unsafe: true, hoist_props: true },
+      compress: { passes: 8, toplevel: true, unsafe: true, hoist_props: true },
       mangle: { toplevel: true },
     },
     // M0-4.b：原先全部打进单个 503 kB 的入口 chunk（触发 Vite 500 kB 告警）。
