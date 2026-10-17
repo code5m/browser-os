@@ -104,9 +104,12 @@ export const useGridStore = defineStore("grid", () => {
   // A single in-flight lock prevents the second request from closing/restarting
   // the first set of WebKit child processes halfway through startup.
   let gridBuilding = false;
+  let rebuildRequested = false;
+  let gridEpoch = 0;
   async function buildGrid() {
     if (gridBuilding) {
-      bridge.debugLog("buildGrid skipped: another grid creation is in flight");
+      rebuildRequested = true;
+      bridge.debugLog("buildGrid deferred: native creation already in flight");
       return;
     }
     // ===== H-G RELEASE BLOCKER 修复：capability-owned 重资源准入闸 =====
@@ -125,6 +128,7 @@ export const useGridStore = defineStore("grid", () => {
       return;
     }
     gridBuilding = true;
+    const epoch = ++gridEpoch;
     gridStarting.value = true;
     gridStartupError.value = "";
     try {
@@ -142,6 +146,10 @@ export const useGridStore = defineStore("grid", () => {
     // createGrid 内部会先 close_grid 再重建，幂等，可安全重复调用。
     // 返回实际创建格数：内存预算守卫在可用内存不足时自动降级（保底 2 格）
     const created = await bridge.createGrid(n, urls);
+    if (epoch !== gridEpoch) {
+      await bridge.closeGrid().catch(() => {});
+      return;
+    }
     if (!Number.isInteger(created) || created < 2) throw new Error("GRID_NATIVE_CREATE_INCOMPLETE");
     // 降级提示存起来，最后用一条 toast 展示（showToast 单条覆盖，先发的会被吞掉）
     const degraded = created < n;
@@ -174,19 +182,28 @@ export const useGridStore = defineStore("grid", () => {
     }
     } catch (error) {
       gridOpen.value = false;
-      gridStartupError.value = "宫格启动失败或原生 WebView 未创建成功；可重试并查看诊断日志";
-      bridge.debugLog(`buildGrid failed: ${String(error)}`);
-      layout.showToast("宫格启动失败，已停止继续创建子窗口");
+      const reason = String(error);
+      gridStartupError.value = reason.includes("GRID_MEMORY_GUARD")
+        ? "内存不足以安全启动宫格。请先尝试 2 格，或关闭其他应用后重试。"
+        : "原生宫格启动失败。可重试；如持续失败，请查看诊断日志。";
+      bridge.debugLog(`buildGrid failed: ${reason}`);
+      layout.showToast(gridStartupError.value);
     } finally {
       gridStarting.value = false;
       gridBuilding = false;
+      if (rebuildRequested && epoch === gridEpoch && layout.mainView === "grid" && isGridResourceAllowed()) {
+        rebuildRequested = false;
+        void buildGrid();
+      } else {
+        rebuildRequested = false;
+      }
     }
   }
   function layoutGrid() {
     scheduleGrid();
   }
   async function gridSetUrl(i: number) {
-    const u = gridUrls[i] || browser.url || "https://www.baidu.com";
+    const u = (gridUrls[i] || browser.url || "").trim() || "about:blank";
     gridUrls[i] = u;
     await bridge.gridOpen(i, u);
     layout.showToast(`宫格 ${i + 1} → ${u}`);
@@ -235,6 +252,8 @@ export const useGridStore = defineStore("grid", () => {
     gridAiInput.value = "";
   }
   async function closeGridAll() {
+    gridEpoch += 1;
+    rebuildRequested = false;
     // 先翻标志位：立刻阻断 scheduleGrid/schedulePosition 走宫格分支，
     // 不等后端 IPC 往返（否则视图已切走、gridOpen 仍为 true 导致重试风暴）
     gridOpen.value = false;
@@ -265,19 +284,18 @@ export const useGridStore = defineStore("grid", () => {
   }
   // 关闭单个宫格：销毁对应子 webview，其余保留，并按剩余数量重排
   async function closeGridOne(i: number) {
-    await bridge.gridCloseOne(i).catch(() => {});
-    // 从 gridUrls/gridRects 移除该格，gridCount 减 1 后重排
-    gridUrls.splice(i, 1);
-    gridUrls.push(""); // 保持数组长度
-    gridRects.splice(i, 1);
-    if (gridCount.value > 2) gridCount.value -= 1;
-    else if (gridCount.value === 2) {
-      // 只剩 1 格意义不大，整体关闭
+    if (!gridOpen.value || i < 0 || i >= gridCount.value) return;
+    if (gridCount.value <= 2) {
       await closeGridAll();
       return;
     }
-    layoutGrid();
-    layout.showToast(`已关闭宫格 ${i + 1}`);
+    // Native indices are grid-0..grid-(n-1). Killing a middle child while
+    // only splicing the UI leaves all following native indices misaligned.
+    gridUrls.splice(i, 1);
+    gridUrls.push("");
+    gridCount.value -= 1;
+    await rebuildGrid();
+    layout.showToast(`已移除第 ${i + 1} 格并重排`);
   }
 
   // ===== Grid canonical Intent API =====

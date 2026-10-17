@@ -2342,9 +2342,9 @@ const GRID_MEM_MB: u64 = 450;
 /// 创建宫格后系统至少保留的可用内存（MB）：低于此值宁降级格数也不把系统打穿
 /// （14G 机器 swap 吃满后开 9 宫格会全系统卡死）。
 const MEM_RESERVE_MB: u64 = 700;
-/// 宫格下限：用户明确要求"最低保持 4 宫格"（2 格太少不可用）。
-/// 预算不足 4 格时仍强制 4 格并警告（用户接受卡顿风险）。
-const MIN_GRID: usize = 4;
+/// Two cells are a supported UI mode. Never silently require four native children.
+/// Keep the 1.8 GiB core reserve even when memory is low.
+const MIN_GRID: usize = 2;
 /// Keep enough memory for Browser, file manager and desktop shell.
 const CORE_MEMORY_RESERVE_MB: u64 = 1800;
 
@@ -2369,8 +2369,8 @@ pub fn create_grid(app: AppHandle, n: usize, urls: Vec<String>) -> Result<usize,
     let n = n.clamp(2, MAX_GRID);
     // 先清理旧的宫格子进程（幂等，可安全重复调用）
     close_grid(app.clone())?;
-    // 内存预算守卫：可用内存不足以支撑请求格数时自动降级（保底 MIN_GRID=4，
-    // 用户明确要求"最低保持 4 宫格"；预算 <4 时强制 4 格，风险由警告提示）
+    // Respect requested 2/4 grid mode. Safely degrade to two; refuse when
+    // even two would violate the core browser/file-manager memory reserve.
     let n = match mem_available_mb() {
         Some(avail) => {
             let affordable = (avail.saturating_sub(CORE_MEMORY_RESERVE_MB) / GRID_MEM_MB) as usize;

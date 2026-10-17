@@ -26,6 +26,11 @@ const patch = ref(''), file = ref<any>(null), conflict = ref<any>(null), resolut
 const diffMode = ref('split'), selectedLines = ref<number[]>([]);
 const commits = ref<any[]>([]), offset = ref(0), hasMore = ref(false), search = ref(''), author = ref(''), revision = ref('');
 const logSelection = ref(''), blame = ref<any[]>([]), rawDetail = ref('');
+const commitFiles = ref<{path:string;status:string}[]>([]);
+const commitFilePath = ref('');
+const historicalDiffMode = ref<'split'|'patch'>('split');
+const historicalDiff = computed(() => parseUnifiedPatch(rawDetail.value));
+const selectedCommit = computed(() => commits.value.find(commit => commit.oid === logSelection.value));
 const branchTarget = ref(''), message = ref(''), stashTarget = ref(''), worktreeTarget = ref('');
 const remote = ref<any>(null), pr = ref<number|null>(null), prText = ref(''), prDetail = ref<any>(null);
 const stashes = ref<string[][]>([]), worktrees = ref('');
@@ -106,11 +111,30 @@ async function loadLog(next=offset.value){if(!source.value)return;offset.value=n
 async function selectBranchFromTree(name:string) {
   if(blocked.value)return;
   revision.value=name; branchTarget.value=name; pane.value='log';
-  offset.value=0; logSelection.value=''; rawDetail.value=''; commits.value=[];
+  offset.value=0; logSelection.value=''; rawDetail.value=''; commitFiles.value=[]; commitFilePath.value=''; commits.value=[];
   await loadLog(0);
 }
-async function selectCommit(oid:string){logSelection.value=oid;try{const data=await read({action:'commit_diff',revision:oid});if(data)rawDetail.value=data.patch;}catch(e){error.value=friendly(e);}}
-async function compare(){try{const data=await read({action:'compare',revision:'HEAD',other:branchTarget.value});if(data)rawDetail.value=data.patch;}catch(e){error.value=friendly(e);}}
+async function selectCommit(oid:string) {
+  if (blocked.value) return;
+  const gen=++detailGeneration;
+  logSelection.value=oid; commitFiles.value=[]; commitFilePath.value=''; rawDetail.value='';
+  try {
+    const result=await read({action:'commit_files',revision:oid});
+    if (gen!==detailGeneration || logSelection.value!==oid) return;
+    if(result) commitFiles.value=result.files||[];
+  } catch(e) { if(gen===detailGeneration) error.value=friendly(e); }
+}
+async function selectCommitFile(path:string, compareLocal=false) {
+  if(!logSelection.value || blocked.value) return;
+  const revision=logSelection.value, gen=++detailGeneration;
+  commitFilePath.value=path; rawDetail.value='';
+  try {
+    const result=await read({action:compareLocal?'commit_file_worktree_diff':'commit_file_diff',revision,paths:[path]});
+    if(gen!==detailGeneration || logSelection.value!==revision || commitFilePath.value!==path) return;
+    if(result) rawDetail.value=result.patch||'';
+  } catch(e) { if(gen===detailGeneration) error.value=friendly(e); }
+}
+async function compare(){try{const data=await read({action:'compare',revision:'HEAD',other:branchTarget.value});if(data){commitFilePath.value='';logSelection.value='';rawDetail.value=data.patch;}}catch(e){error.value=friendly(e);}}
 async function inspectFile(kind:string){if(!activeFile.value)return;try{const data=await read({action:kind,paths:[activeFile.value]});if(!data)return;if(kind==='blame'){blame.value=blameLines(data.text);diffMode.value='blame';}else if(kind==='conflict'){conflict.value=data;resolution.value=data.ours;diffMode.value='conflict';}else{commits.value=data.commits;hasMore.value=data.has_more;offset.value=0;pane.value='log';}}catch(e){error.value=friendly(e);}}
 function line(id:number){selectedLines.value=selectedLines.value.includes(id)?selectedLines.value.filter(x=>x!==id):[...selectedLines.value,id];}
 function hunkSelect(hunk:any){const ids=hunk.lines.filter((l:any)=>l.sign!==' ').map((l:any)=>l.id);selectedLines.value=ids.every((id:number)=>selectedLines.value.includes(id))?selectedLines.value.filter(id=>!ids.includes(id)):[...new Set([...selectedLines.value,...ids])];}
@@ -158,7 +182,7 @@ function resetSourceContext() {
   void cancelPreview(); previewSource='';
   pane.value=defaultPane();
   info.value=null; selected.value=[]; activeFile.value=''; patch.value='';
-  file.value=null; rawDetail.value=''; conflict.value=null; resolution.value='';
+  file.value=null; rawDetail.value=''; commitFiles.value=[]; commitFilePath.value=''; conflict.value=null; resolution.value='';
   remote.value=null; prDetail.value=null; pr.value=null; prText.value='';
   branchTarget.value=''; stashTarget.value=''; worktreeTarget.value='';
   revision.value=''; branchQuery.value=''; logSelection.value=''; message.value='';
@@ -210,8 +234,40 @@ onUnmounted(()=>{disposed=true;generation++;detailGeneration++;void cancelPrevie
         <button v-for="(commit,index) in commits" :key="commit.oid" class="commit" :class="{active:logSelection===commit.oid}" @click="selectCommit(commit.oid)"><svg viewBox="0 0 150 32" aria-hidden="true"><line v-for="lane in graph[index]?.through||[]" :key="lane" :x1="10+lane*14" y1="0" :x2="10+lane*14" y2="32" stroke="currentColor"/><line v-for="(lane,i) in graph[index]?.parentLanes||[]" :key="'p'+i" :x1="10+(graph[index]?.lane||0)*14" y1="16" :x2="10+lane*14" y2="32" stroke="currentColor"/><circle :cx="10+(graph[index]?.lane||0)*14" cy="16" r="4" fill="currentColor"/></svg><span>{{commit.summary}}<small>{{commit.oid.slice(0,9)}} · {{commit.author}}</small></span></button>
         <p v-if="!commits.length&&!loading">没有符合条件的提交。</p>
         <div class="toolbar"><button :disabled="blocked||offset===0" @click="loadLog(Math.max(0,offset-50))">上一页</button><span>{{Math.floor(offset/50)+1}}</span><button :disabled="blocked||!hasMore" @click="loadLog(offset+50)">下一页</button><button :disabled="blocked||preview||!logSelection" @click="prepare('cherry_pick',{target:logSelection})">挑选选中提交</button></div>
-        <details v-if="logSelection" open><summary>提交差异 · {{logSelection.slice(0,9)}}</summary><pre class="patch">{{rawDetail||'正在读取提交差异…'}}</pre></details>
+        <p v-if="logSelection" class="hint">在右侧选择该提交修改的文件，查看历史差异和本地对比。</p>
       </main>
+      <aside class="commit-inspector" aria-label="提交详情、变更文件及差异预览">
+        <template v-if="logSelection">
+          <strong>提交详情</strong>
+          <p><code>{{logSelection.slice(0,12)}}</code> · {{selectedCommit?.author}}</p>
+          <p>{{selectedCommit?.summary}}</p>
+          <p v-if="selectedCommit?.time">{{new Date(selectedCommit.time*1000).toLocaleString()}}</p>
+          <strong>变更文件（{{commitFiles.length}}）</strong>
+          <div class="history-files">
+            <button v-for="item in commitFiles" :key="item.path" :class="{active:commitFilePath===item.path}" :aria-pressed="commitFilePath===item.path" @click="selectCommitFile(item.path)">
+              <small>{{item.status}}</small> {{item.path}}
+            </button>
+            <p v-if="!commitFiles.length" class="hint">此提交无可展示的首父提交文件差异，或仍在加载。</p>
+          </div>
+          <div v-if="commitFilePath" class="toolbar">
+            <strong>{{commitFilePath}}</strong>
+            <button @click="selectCommitFile(commitFilePath,true)" :disabled="blocked">与本地比较</button>
+            <button @click="selectCommitFile(commitFilePath)" :disabled="blocked">提交版本</button>
+            <select v-model="historicalDiffMode" aria-label="历史差异预览方式">
+              <option value="split">并排 Diff</option><option value="patch">统一 Patch</option>
+            </select>
+          </div>
+          <div v-if="commitFilePath && historicalDiffMode==='split'" class="history-patch">
+            <div v-for="(row,index) in historicalDiff.rows" :key="index" class="split-row">
+              <pre :class="{removed:row.removed}">{{row.beforeLine??''}} {{row.before}}</pre>
+              <pre :class="{added:row.added}">{{row.afterLine??''}} {{row.after}}</pre>
+            </div>
+            <p v-if="historicalDiff.truncated" role="status">文件差异只展示前 4000 行。</p>
+          </div>
+          <pre v-else-if="commitFilePath" class="patch history-patch">{{rawDetail||'此文件没有可显示的文本差异（或仍在加载）。'}}</pre>
+        </template>
+        <template v-else><p class="hint">选择中间的提交，再点击修改文件即可进行逐文件审查。</p><pre v-if="rawDetail" class="patch history-patch">{{rawDetail}}</pre></template>
+      </aside>
     </template>
     <template v-else-if="pane==='stash'"><aside class="files"><button v-for="item in stashes" :key="item[0]" class="commit" @click="inspectStash(item[0])">{{item[0]}} · {{item[2]}}</button><p v-if="!stashes.length">没有保存的暂存记录。</p></aside><main class="detail"><div class="toolbar"><input v-model="stashTarget" placeholder="stash@{0}" aria-label="暂存记录"/><button v-for="op in ['stash_save','stash_apply','stash_pop','stash_drop']" :key="op" :disabled="blocked||preview||op!=='stash_save'&&!stashTarget" @click="prepare(op,{target:stashTarget})">{{labels[op]}}</button></div><p>保存暂存架会收纳整个仓库的已跟踪与未跟踪改动，不局限于右键文件。</p><pre class="patch">{{rawDetail}}</pre></main></template>
     <main v-else-if="pane==='worktrees'" class="detail"><p>创建受控子目录工作树（分离 HEAD）；移除仅允许已登记且干净的子工作树，不强制删除。</p><div class="toolbar"><input v-model="worktreeTarget" aria-label="工作树子目录" placeholder="新子目录名"/><input v-model="revision" aria-label="工作树基线" placeholder="基线分支 / 提交，默认 HEAD"/><button :disabled="blocked||preview||!worktreeTarget" @click="prepare('worktree_add',{target:worktreeTarget,revision:revision||'HEAD'})">创建</button><button :disabled="blocked||preview||!worktreeTarget" @click="prepare('worktree_remove',{target:worktreeTarget})">安全移除</button></div><pre>{{worktrees}}</pre></main>
@@ -221,5 +277,5 @@ onUnmounted(()=>{disposed=true;generation++;detailGeneration++;void cancelPrevie
 </section>
 </template>
 <style scoped>
-.git-studio{display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden;background:var(--surface,#fff);color:var(--text,#273a50);font-size:12px}.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:7px;padding:7px}.toolbar input{min-width:110px;flex:1}.grow{flex:1}.context{margin:0;padding:7px 12px;overflow-wrap:anywhere;border-bottom:1px solid #dce4ed}.workspace{display:flex;flex:1;min-height:180px;overflow:hidden}.branch-search{box-sizing:border-box;width:100%}.branch-item{display:block;text-align:left;width:100%;border:0;padding:5px 8px;overflow:hidden;text-overflow:ellipsis}.branch-item[aria-pressed=true]{background:#dcebf9;font-weight:600}.files{flex:0 0 clamp(210px,28%,360px);overflow:auto;resize:horizontal;border-right:1px solid #dce4ed;padding:8px}.detail{flex:1;min-width:0;overflow:auto;padding:8px}.files h4{margin:12px 0 6px}.file-row{display:flex;align-items:center;gap:4px;padding:4px}.file-row button{flex:1;text-align:left;overflow-wrap:anywhere;border:0;background:transparent}.active{background:#eaf2fd}.filters{display:grid;gap:5px}.commit{display:flex;align-items:center;width:100%;text-align:left;gap:5px;padding:8px;border:0;border-bottom:1px solid #e6edf4;background:transparent}.commit small{display:block;font-size:10px;color:#66778b}.commit svg{width:58px;min-width:58px;height:32px}.patch{overflow:auto;font:12px/1.7 ui-monospace,monospace;white-space:pre}.split-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.split-row pre{margin:0;padding:1px 5px;overflow:auto;border-right:1px solid #dce4ed}.removed{background:#fff0f0}.added{background:#ebf8ee}.patch-line{display:flex;gap:6px;min-height:22px}.patch-line code{white-space:pre}.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.three textarea{height:300px;width:100%;box-sizing:border-box;white-space:pre;font-family:ui-monospace,monospace}.resolution{display:block;min-height:180px;width:100%;box-sizing:border-box;font-family:ui-monospace,monospace}.blame-line{display:flex;gap:8px;white-space:pre}.blame-line button{width:220px;text-align:left;overflow:hidden;text-overflow:ellipsis}.preview{border:1px solid #d9b15b;background:#fff8e5;padding:10px;margin:7px;max-height:260px;overflow:auto}.preview pre{max-height:90px;overflow:auto}.preview label{display:inline-flex;gap:5px;margin-right:10px}.error{color:#9a2929;background:#fff1f1;padding:9px}.hint,.warning{color:#80602c}.footer{border-top:1px solid #dce4ed}button,select,input,textarea{font:inherit}button{cursor:pointer;border:1px solid #c6d3e0;border-radius:5px;padding:5px 8px;background:#fff;color:inherit}button:disabled{opacity:.45;cursor:not-allowed}button[aria-pressed=true]{background:#e6effc}input,select,textarea{border:1px solid #c6d3e0;border-radius:4px;padding:5px}pre{white-space:pre-wrap;overflow-wrap:anywhere}p{margin:6px 10px}a{color:#235ca1}
+.git-studio{display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden;background:var(--surface,#fff);color:var(--text,#273a50);font-size:12px}.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:7px;padding:7px}.toolbar input{min-width:110px;flex:1}.grow{flex:1}.context{margin:0;padding:7px 12px;overflow-wrap:anywhere;border-bottom:1px solid #dce4ed}.workspace{display:flex;flex:1;min-height:180px;overflow:hidden}.branch-search{box-sizing:border-box;width:100%}.branch-item{display:block;text-align:left;width:100%;border:0;padding:5px 8px;overflow:hidden;text-overflow:ellipsis}.branch-item[aria-pressed=true]{background:#dcebf9;font-weight:600}.files{flex:0 0 clamp(210px,28%,360px);overflow:auto;resize:horizontal;border-right:1px solid #dce4ed;padding:8px}.detail{flex:1;min-width:0;overflow:auto;padding:8px}.commit-inspector{flex:0 0 40%;min-width:240px;overflow:auto;border-left:1px solid #dce4ed;padding:8px}.history-files{max-height:180px;overflow:auto}.history-files button{width:100%;text-align:left;white-space:normal;word-break:break-all;border:0;border-bottom:1px solid #e6edf4;padding:5px}.history-files small{display:inline-block;min-width:20px}.history-patch{max-height:55vh;overflow:auto}.history-patch pre{font-size:11px;white-space:pre;overflow:auto}@media(max-width:1100px){.commit-inspector{flex-basis:45%;min-width:220px}.workspace>.files{flex-basis:180px}}.files h4{margin:12px 0 6px}.file-row{display:flex;align-items:center;gap:4px;padding:4px}.file-row button{flex:1;text-align:left;overflow-wrap:anywhere;border:0;background:transparent}.active{background:#eaf2fd}.filters{display:grid;gap:5px}.commit{display:flex;align-items:center;width:100%;text-align:left;gap:5px;padding:8px;border:0;border-bottom:1px solid #e6edf4;background:transparent}.commit small{display:block;font-size:10px;color:#66778b}.commit svg{width:58px;min-width:58px;height:32px}.patch{overflow:auto;font:12px/1.7 ui-monospace,monospace;white-space:pre}.split-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.split-row pre{margin:0;padding:1px 5px;overflow:auto;border-right:1px solid #dce4ed}.removed{background:#fff0f0}.added{background:#ebf8ee}.patch-line{display:flex;gap:6px;min-height:22px}.patch-line code{white-space:pre}.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.three textarea{height:300px;width:100%;box-sizing:border-box;white-space:pre;font-family:ui-monospace,monospace}.resolution{display:block;min-height:180px;width:100%;box-sizing:border-box;font-family:ui-monospace,monospace}.blame-line{display:flex;gap:8px;white-space:pre}.blame-line button{width:220px;text-align:left;overflow:hidden;text-overflow:ellipsis}.preview{border:1px solid #d9b15b;background:#fff8e5;padding:10px;margin:7px;max-height:260px;overflow:auto}.preview pre{max-height:90px;overflow:auto}.preview label{display:inline-flex;gap:5px;margin-right:10px}.error{color:#9a2929;background:#fff1f1;padding:9px}.hint,.warning{color:#80602c}.footer{border-top:1px solid #dce4ed}button,select,input,textarea{font:inherit}button{cursor:pointer;border:1px solid #c6d3e0;border-radius:5px;padding:5px 8px;background:#fff;color:inherit}button:disabled{opacity:.45;cursor:not-allowed}button[aria-pressed=true]{background:#e6effc}input,select,textarea{border:1px solid #c6d3e0;border-radius:4px;padding:5px}pre{white-space:pre-wrap;overflow-wrap:anywhere}p{margin:6px 10px}a{color:#235ca1}
 </style>

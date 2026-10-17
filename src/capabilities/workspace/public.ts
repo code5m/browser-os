@@ -17,3 +17,8 @@ import { bridge } from "../../bridge"
 export function readAuthorizedWorkspaceTextFile(path: string): Promise<string> {
   return bridge.readFile(path)
 }
+// Directory enumeration belongs to Workspace; other capabilities consume the
+// public facade, never call workspace native list_dir directly.
+export function listAuthorizedWorkspaceDirectory(path: string): Promise<DirEntry[]> {
+  return bridge.listDir(path)
+}

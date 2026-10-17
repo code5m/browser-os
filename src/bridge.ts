@@ -396,6 +396,8 @@ export const bridge = {
   // 后端 db_disconnect 返回 Result<(), String>，Tauri 序列化为 null。
   dbDisconnect: (conn_id: string) => invoke<null>("db_disconnect", { connId: conn_id }),
   dbListConnections: () => invoke<DbConnectionConfig[]>("db_list_connections"),
+  dbImportProfiles: (candidates: {name:string;kind:"mysql"|"sqlite";host:string|null;port:number|null;database:string;username:string|null}[]) =>
+    invoke<{imported:number;duplicates:number}>("db_import_profiles", { candidates }),
   dbCancel: (queryId: string) => invoke<boolean>("db_cancel", { queryId }),
   vaultOpen: (path: string) => invoke<{ root: string; notes: { path: string; text: string }[]; skipped: number; truncated: boolean }>("vault_open", { path }),
   vaultSaveNote: (root: string, relativePath: string, expectedText: string, content: string) =>

@@ -45,7 +45,7 @@
     "analyze:css-duplicates": "node scripts/check-duplicate-css.mjs",
     "analyze:footprint-report": "node scripts/generate-footprint-review.mjs",
     "package:resource-data": "node scripts/secure-resource-packages.mjs",
-    "check:developer-studio": "node scripts/check-developer-studio.mjs && node scripts/check-pr35-regressions.mjs && node scripts/check-git-studio-source-isolation.mjs && python3 scripts/check-pr35-dependency-freeze.py"
+    "check:developer-studio": "node scripts/check-idea-product-parity.mjs && node scripts/check-developer-studio.mjs && node scripts/check-pr35-regressions.mjs && node scripts/check-git-studio-source-isolation.mjs && python3 scripts/check-pr35-dependency-freeze.py"
   },
   "dependencies": {
     "@lucide/vue": "^1.42.0",

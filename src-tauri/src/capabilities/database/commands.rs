@@ -99,6 +99,138 @@ pub fn db_list_connections(
     Ok(configs)
 }
 
+/// Import safe connection metadata from user-approved IDEA/DataGrip XML.
+/// No authentication or SQL runs in this command. Entries remain disabled until
+/// a user supplies credentials and verifies them through db_connect.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DbImportCandidate {
+    name: String,
+    kind: SupportedDb,
+    host: Option<String>,
+    port: Option<u16>,
+    database: String,
+    username: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DbImportResult {
+    imported: usize,
+    duplicates: usize,
+}
+
+#[tauri::command]
+pub fn db_import_profiles(
+    app: AppHandle,
+    webview: tauri::Webview,
+    candidates: Vec<DbImportCandidate>,
+) -> Result<DbImportResult, String> {
+    check_invocation_source(&webview, "db_import_profiles", None, &app)?;
+    ensure_profiles_loaded(&app)?;
+    if candidates.is_empty() || candidates.len() > 32 {
+        return Err("DB_IMPORT_BATCH_LIMIT".into());
+    }
+    let roots = allowed_roots(&app);
+    let reg = app.state::<DbConnectionRegistry>();
+    let mut guard = reg.configs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
+    let mut updated = guard.clone();
+    let mut imported = 0;
+    let mut duplicates = 0;
+    for item in candidates {
+        if !matches!(item.kind, SupportedDb::MySql | SupportedDb::Sqlite) {
+            return Err("DB_IMPORT_DRIVER_UNSUPPORTED".into());
+        }
+        let name = item.name.trim();
+        let database = item.database.trim();
+        if name.is_empty()
+            || name.len() > 128
+            || database.is_empty()
+            || database.len() > 4096
+            || name.chars().any(char::is_control)
+            || database.chars().any(char::is_control)
+        {
+            return Err("DB_IMPORT_INVALID_METADATA".into());
+        }
+        if item.kind == SupportedDb::MySql {
+            let host = item.host.as_deref().unwrap_or("").trim();
+            if host.is_empty()
+                || host.len() > 253
+                || host
+                    .chars()
+                    .any(|ch| ch.is_control() || ch.is_whitespace() || ch == '/' || ch == '@')
+                || database.len() > 128
+            {
+                return Err("DB_IMPORT_INVALID_MYSQL".into());
+            }
+        } else {
+            sp::check_path_within_roots(database, &roots)
+                .map_err(|_| "DB_IMPORT_SQLITE_NOT_AUTHORIZED".to_string())?;
+        }
+        if item.username.as_deref().unwrap_or("").len() > 128 {
+            return Err("DB_IMPORT_USERNAME_TOO_LONG".into());
+        }
+        let host = if item.kind == SupportedDb::Sqlite {
+            None
+        } else {
+            item.host
+        };
+        let port = if item.kind == SupportedDb::Sqlite {
+            None
+        } else {
+            item.port.or(Some(3306))
+        };
+        let username = if item.kind == SupportedDb::Sqlite {
+            None
+        } else {
+            item.username
+        };
+        if updated.values().any(|existing| {
+            existing.kind == item.kind
+                && existing.host == host
+                && existing.port == port
+                && existing.database == database
+                && existing.username == username
+        }) {
+            duplicates += 1;
+            continue;
+        }
+        if updated.len() >= 64 {
+            return Err("DB_CONNECTION_LIMIT".into());
+        }
+        let id = Uuid::new_v4().to_string();
+        let now = chrono::Utc::now();
+        updated.insert(
+            id.clone(),
+            DbConnectionConfig {
+                id,
+                name: name.to_string(),
+                kind: item.kind,
+                host,
+                port,
+                database: database.to_string(),
+                username,
+                ssl_mode: crate::domain::DbSslMode::Prefer,
+                allow_write: false,
+                production_hint: None,
+                enabled: false,
+                created_at: now,
+                updated_at: now,
+            },
+        );
+        imported += 1;
+    }
+    persist_snapshot(&app, &updated)?;
+    *guard = updated;
+    log_audit(
+        &app,
+        "db.import_profiles",
+        format!("imported={} duplicates={}", imported, duplicates),
+    );
+    Ok(DbImportResult {
+        imported,
+        duplicates,
+    })
+}
+
 #[tauri::command]
 pub fn db_cancel(
     app: AppHandle,
