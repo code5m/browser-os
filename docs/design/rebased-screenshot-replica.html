@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>Rebased · 官方截图布局复刻</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#242629;color:#bfc5cf;font:13px system-ui}button,input,textarea{font:inherit;color:inherit;background:transparent;border:1px solid #41454c;border-radius:4px}button{cursor:pointer;padding:5px 9px}button:hover{background:#34383f}header{height:44px;display:flex;align-items:center;gap:22px;padding:0 14px}.orange{background:#ff7900;color:#161718;font-weight:bold;padding:2px 5px;border-radius:3px}.grow{flex:1}.shell{display:grid;grid-template-columns:40px 300px minmax(400px,1fr) 350px;height:calc(100vh - 74px);gap:5px}.rail{display:flex;flex-direction:column;gap:15px;align-items:center;padding-top:8px}.panel{background:#191b1d;border-radius:9px;overflow:hidden;min-height:0}.commit{display:flex;flex-direction:column}.bar{height:42px;padding:7px 9px;border-bottom:1px solid #292c31;display:flex;align-items:center;gap:9px}.tools{color:#a9afb8;padding:8px 12px;letter-spacing:9px}.files{padding:8px 12px;flex:1;overflow:auto}.file{display:block;padding:5px 12px;color:#75b6ff;cursor:pointer}.file:hover{background:#30343a}.indent{padding-left:28px}.muted{color:#727b89}.message{border-top:1px solid #292c31;padding:10px;display:flex;flex-direction:column;gap:10px;height:36%}textarea{flex:1;resize:none;padding:8px;font:12px monospace}.history{display:flex;flex-direction:column}.selected{background:#294775!important;color:#cbdcff}.search{padding:6px;width:220px}.filters{display:flex;align-items:center;gap:12px;white-space:nowrap;padding:5px 9px;border-bottom:1px solid #292c31}.rows{overflow:auto;flex:1}.row{display:grid;grid-template-columns:23px minmax(140px,1fr) 90px 145px;align-items:center;width:100%;border:0;text-align:left;border-radius:3px;padding:5px 8px;gap:4px;white-space:nowrap}.row span{overflow:hidden;text-overflow:ellipsis}.dot{color:#b75086;border-left:1px solid #9c416b;text-indent:-5px;margin-left:7px}.details{display:flex;flex-direction:column}.tree{padding:10px 15px;overflow:auto;flex:1;line-height:1.9}.tree details{margin-left:12px}.tree button{border:0;color:#75b6ff;display:block}.meta{height:27%;padding:15px;border-top:1px solid #292c31;font-size:12px;line-height:1.7}.preview{padding:12px;overflow:auto;white-space:pre;font:12px/1.8 monospace}.preview[hidden]{display:none}footer{height:30px;padding:6px 15px;font-size:12px;color:#929aa6}.notice{color:#8d97a8;font-size:11px}
+/* Screenshot geometry: 1583 × 919; tool-window strips stay outside the panes. */
+header{gap:8px}.header-action{border:0;padding:4px 6px;white-space:nowrap}.header-action:hover{background:#34383f}
+:root{color-scheme:dark}
+.shell{grid-template-columns:37px 300px minmax(400px,1fr) 350px;padding-right:40px;gap:5px;height:calc(100vh - 76px)}
+.shell::after{content:"♧";position:absolute;right:12px;top:51px;color:#a8b0bc}
+.history{position:relative}
+.rows{margin-left:36px;border-left:1px solid #292c31}
+.history::before{content:"›　Branches";position:absolute;left:9px;top:94px;writing-mode:vertical-rl;font-size:11px;color:#bfc5cf}
+.bar{height:41px;flex-shrink:0}
+.bar button{padding:5px 8px}
+.filters{height:37px;flex-shrink:0;margin-left:36px;gap:9px;overflow:auto}
+.search{width:220px;min-width:150px;height:30px}
+.filters select{font:inherit;color:#9ba4b2;background:#191b1d;border:0;max-width:115px}
+.row{height:26px;padding:0 8px 0 0;grid-template-columns:20px minmax(140px,1fr) 94px 145px;gap:3px}
+.row .dot{height:26px;line-height:26px;overflow:visible;text-indent:0;margin-left:10px;position:relative;border-left:1px solid #a44a7a;width:10px;font-size:0}
+.row .dot::after{content:"";position:absolute;width:9px;height:9px;border-radius:50%;background:currentColor;left:-5px;top:9px}
+.row.merge-row .dot::before{content:"";position:absolute;left:0;top:13px;width:17px;height:26px;border-top:1px solid currentColor;border-right:1px solid currentColor;transform:skewY(52deg);transform-origin:top left}
+.tree{padding:0 9px;font-size:13px;line-height:24px}
+.tree button{height:24px;padding:0 8px 0 24px;white-space:nowrap;font-size:13px}
+.tree details{margin-left:18px}
+.tree summary{white-space:nowrap;cursor:pointer}
+.tree summary::marker{font-size:10px;color:#9aa1ab}
+.tree summary::before{content:"";display:inline-block;width:13px;height:10px;border:1px solid #a6adb6;border-radius:2px;margin:0 7px 0 2px;vertical-align:middle}
+.tree button::before{content:"◇";display:inline-block;width:16px;color:#74a0e8}
+.tree button[data-file]::before{content:none}
+.tree button[data-status="A"]{color:#72c58a}.tree button[data-status="D"]{color:#e47c83}.tree button[data-status="R"]{color:#d7b36a}.tree button[data-status="Binary"],.tree button[data-status="BINARY"]{color:#b98de4}
+.tree button[data-kind="image"]::before{content:"▧"}
+.tree button[data-kind="kotlin"]::before{content:"⋈";color:#b48bd5}
+.tree button[data-kind="xml"]::before{content:"</>";color:#ca855d;font-size:10px}
+.tree>details{margin-left:7px}
+.details>.tools{height:80px;padding-top:48px}
+.row.merge-row{color:#697786}
+.file:last-child{background:#303238;border-radius:4px}
+.tools{letter-spacing:0;display:flex;gap:5px;align-items:center;padding-left:9px}
+.icon{display:inline-flex;align-items:center;justify-content:center;width:23px;height:25px;flex-shrink:0;border:0;padding:3px;color:#b7bdc6;background:transparent;border-radius:3px}
+.icon svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.25;stroke-linecap:round;stroke-linejoin:round}
+.icon:disabled{cursor:default;color:#707883}.icon:disabled:hover{background:transparent}
+.demo-menu{position:fixed;z-index:5;min-width:190px;padding:5px;background:#25282d;border:1px solid #4b515a;box-shadow:0 6px 18px #0008;border-radius:4px}.demo-menu button{display:block;width:100%;border:0;text-align:left;border-radius:2px;padding:6px 10px}.demo-menu button:hover{background:#36537d}
+.meta{height:29%;flex-shrink:0;padding:15px;font-size:13px;line-height:1.35}
+.message[hidden],#shelfItems[hidden]{display:none}
+.message{height:38%;padding:9px 12px;gap:10px;flex-shrink:0}
+.message textarea{font:13px/1.5 monospace}
+.file{padding:3px 12px;white-space:nowrap}
+.file.indent{padding-left:38px}
+.meta strong{font:13px monospace}
+.files{padding-top:0}.tools{height:40px;flex-shrink:0}
+input[type=checkbox]{appearance:none;width:16px;height:16px;border:1px solid #575b63;background:#282b2e;border-radius:3px;vertical-align:middle}
+input[type=checkbox]:checked{background:#365880}
+input[type=checkbox]:checked::after{content:"✓";display:block;text-align:center}
+*{scrollbar-width:thin;scrollbar-color:#3c3e40 transparent}
+</style>
+<style>.merge-row .dot{color:#d3a047!important;border-left-color:#d3a047!important}.merge-row .dot::after{content:'╱╲';font-size:10px;margin-left:2px;color:#d3a047}</style>
+<header><button class="icon orange" id="productMenu" aria-label="Main menu">⑂</button><button class="icon" id="hamburger" aria-label="Main menu">☰</button><button class="header-action" id="repoMenu">R　rebased⌄</button><button class="header-action" id="branchMenu">⑂ master⌄</button><button class="header-action" id="updateProject">↙ Update</button><button class="header-action" id="pushProject">↗ Push</button><span class="grow"></span><span class="notice" aria-label="product mode">Rebased Git client · prototype</span><button class="icon" id="searchAction" aria-label="Search">⌕</button><button class="icon" id="settingsAction" aria-label="Settings">⚙</button><button class="icon" id="minimizeAction" aria-label="Minimize">−</button><button class="icon" id="maximizeAction" aria-label="Maximize">□</button><button class="icon" id="closeAction" aria-label="Close">×</button></header>
+<div class="shell"><nav class="rail">☷<span>⑂</span><span>▱</span><span>⋯</span></nav>
+<aside class="panel commit"><div class="bar"><button id="commitTab" class="selected">Commit</button><button id="shelfTab">Shelf</button></div><div class="tools">⟳ ↶ ⇥ ▣ ◉</div><div class="files"><details open><summary>Changes <span class="muted">2 files</span></summary><label class="file indent"><input type="checkbox"> M README.md <span class="muted">rebased</span></label><label class="file indent"><input type="checkbox"> ▧ screenshot.png <span class="muted">rebased</span></label></details><details><summary>Unversioned Files <span class="muted">2 files</span></summary><label class="file"><input type="checkbox"> notes.txt</label><label class="file"><input type="checkbox"> draft.txt</label></details><details id="stagedGroup" hidden><summary>Staged Changes <span class="muted">0 files</span></summary><p class="notice">启用 Stage 后显示当前暂存范围</p></details><div id="shelfItems" hidden><p class="notice">Shelf 1 · work in progress</p><button class="file">README.md · 2 lines changed</button><button class="file">screenshot.png · binary</button></div></div><div class="message"><label><input id="stageMode" type="checkbox"> Stage selected files</label><label><input id="amendMode" type="checkbox"> Amend last commit⌄</label><textarea aria-label="Commit message">update readme screenshot</textarea><div><button id="commitChecks">Checks…</button> <button id="commit">Commit</button> <button id="push">Commit and Push…</button></div></div></aside>
+<main class="panel history"><div class="bar" role="tablist" aria-label="Git history contexts"><button class="selected" id="log" role="tab" aria-selected="true">⑂ Log: HEAD</button><button id="diff" role="tab" hidden>文件 Diff　×</button><span class="grow"></span><button class="icon" id="historyMenu" aria-label="History menu">⋮</button></div><div class="filters"><input class="search" placeholder="Text or hash"><button id="branchFilter">Branch: HEAD ×</button><select aria-label="筛选作者"></select><select aria-label="筛选日期"></select><button id="pathFilter">Paths⌄</button></div><div class="rows" id="rows"></div><pre class="preview" id="preview" hidden></pre></main>
+<aside class="panel details"><div class="tools">⇥ ▱ ◷ ◉</div><div class="tree"><details open><summary>▱ 16 files</summary><details open><summary>.github <span class="muted">2 files</span></summary><details open><summary>actions/upload_ide</summary><button>action.yml</button></details><details open><summary>workflows</summary><button>ide_build_and_upload.yml</button></details></details><details open><summary>build <span class="muted">7 files</span></summary><details open><summary>idea-community-images</summary><details open><summary>linux</summary><button>icon_rebased_128.png</button><button>product_128.png</button></details><details open><summary>mac</summary><button>product.icns</button><button>rebased.icns</button></details><details open><summary>win</summary><button>product.ico</button><button>rebased.ico</button></details></details><details open><summary>src/org/jetbrains/intellij/build</summary><button>RebasedProperties.kt</button></details></details><details open><summary>images/resources/META-INF</summary><button>plugin.xml</button></details><details><summary>platform <span class="muted">3 files</span></summary><button>Platform.kt</button></details></details></div><div class="meta"><strong id="title">fixes from merge</strong><p>c1c9c29a detachhead &lt;detachhead@users.noreply.github.com&gt;<br><span class="muted">committed on 21/6/26 at 4:11 pm</span></p>In 12 branches: HEAD, master, don't-o… <span style="color:#75b6ff">Show all</span></div></aside></div><footer id="status" role="status" aria-live="polite">官方 Rebased 产品方案 · 截图复刻基准 · 示例数据，不写入真实仓库</footer>
+<script>
+// Visible screenshot transcription, not a live repository history.
+const screenshotRows = [
+ ['fix `test.cmd` command','detachhead','17','6:56 pm'],
+ ['fix izmir errors','detachhead','17','6:32 pm'],
+ ['Revert "Revert "IJ-3418 build scripts: Bazel: simplify running build targets"','detachhead','17','6:19 pm'],
+ ['Revert "Revert "IJ-3417 installers.cmd/tests.cmd should use Bazel to run"','detachhead','17','5:59 pm'],
+ ['update android repo','detachhead','16','11:45 pm'],
+ ['fixes from merge','detachhead','16','11:31 pm'],
+ ["Merge remote-tracking branch 'origin/262' into merge-262",'detachhead','16','10:52 pm'],
+ ['misc monorepo run configurations: add ij.light + run ij run configuration','Dmitry Batrakov','16','5:41 am'],
+ ['[terminal] IJPL-177936 update jediterm to 3.72','Sergey Michailov','16','7:44 am'],
+ ['IJPL-246148 LSP: rename LspClientImpl & LspClientManagerImpl - usages in monorepo','Tomasz Błachu','16','7:24 am'],
+ ['[agent-workbench][ai-review]: adjust model and effort for AI review tab (IJPL-24632)','Dmitry Zhuravlev','16','3:33 am'],
+ ['[agent-workbench][ai-review]: show provider selector on AI Review tab (IJPL-24632)','Dmitry Zhuravlev','16','2:57 am'],
+ ['[kotlin] KTIJ-38640 Use already imported Java class rather than Kotlin alias, if it exists','Frederik Hahnel','16','6:16 am'],
+ ['IJPL-246148 LSP: rename val lspClientManager in LspOpenedFilesService','Tomasz Błachu','16','8:16 am'],
+ ['IJPL-246148 LSP: rename LspClient API - update KDocs','Tomasz Błachu','16','8:11 am'],
+ ['Merge `dimonchik0036/kt-master-2026-06-16` into `master`','Patronus*','16','9:39 am'],
+ ['MRI-4550 [kotlin] Deduplicate debugger tests','Dmitrii Gridin*','16','7:32 am'],
+ ['cleanup LSP: suppress deprecation for bridge function','Tomasz Błachu','16','7:17 am'],
+ ['IJPL-246148 LSP: clarify usages of runningClients in LspClientManagerImpl','Tomasz Błachu','16','7:15 am'],
+ ['cleanup LSP: remove redundancy from docs','Tomasz Błachu','16','7:14 am'],
+ ['IJPL-246148 LSP: bring back Throws to old LspServerDescriptor.startServerProcess','Tomasz Błachu','16','7:11 am'],
+ ['[kotlin] KTIJ-39172 switch on .main.kts','Vlad Koshkin*','16','2:52 am'],
+ ['IJPL-247141 [inlay-hints]: compute code vision under non-blocking read action','Vojtech Balik*','15','8:20 pm'],
+ ['cleanup [inlay-hints]: formatting','Vojtech Balik*','15','6:46 pm'],
+ ['PY-89541 typing: error on default of list literal for type parameter','Morgan Bartholomew','15','5:58 pm'],
+ ["test [platform]: improving `VfsEventsTest.testJarModification` stability",'Roman Shevchenko','16','7:14 am'],
+ ['IJPL-172902 add a terminal into the environment variables dashboard','Mikhail Buryakov','16','12:27 am'],
+ ['IJPL-172902 add experimental mode of capturing environment variables, via shell','Mikhail Buryakov','16','2:37 am'],
+ ['IJPL-172902 eel api for capturing environment variables in login shell - implementation','Mikhail Buryakov','16','8:28 pm']
+];
+const titles=screenshotRows.map(row=>row[0]);
+let selected=5;
+let selectedRows=new Set([selected]);
+let selectedFile='';
+let activePath='all';
+let activeBranch='HEAD';
+let logScrollTop=0;
+function syncHistoryAction(){const historyButton=document.querySelector('.details .tools button[aria-label="History"]');if(historyButton)historyButton.disabled=!selectedFile}
+const rowPath = i => i < 7 ? '.github/workflows' : i < 16 ? 'src/org/jetbrains/intellij' : 'platform';
+const commitFileSets={0:['test.cmd','build.gradle'],1:['plugins/git4idea/GitErrors.kt'],2:['bazel.cmd','build.xml'],3:['installers.cmd','tests.cmd'],4:['platform/android/AndroidRepo.kt'],5:['README.md','screenshot.png','plugin.xml','RebasedProperties.kt','action.yml','ide_build_and_upload.yml','icon_rebased_128.png','product_128.png','product.icns','rebased.icns','product.ico','rebased.ico','Platform.kt','merge.xml','RunConfiguration.kt','GitErrors.kt'],6:['.github/workflows/merge.yml','build/merge.xml'],7:['src/org/jetbrains/intellij/build/RunConfiguration.kt'],8:['terminal/jediterm.xml']};
+const commitMeta={0:{parentless:true,label:'初始提交'},6:{merge:true},15:{merge:true}};
+const commitSnapshots=screenshotRows.map((row,index)=>({hash:'demo-'+String(index).padStart(2,'0'),subject:row[0],author:row[1],parents:commitMeta[index]?.parentless?[]:commitMeta[index]?.merge?['parent-1','parent-2']:['parent-1'],files:(commitFileSets[index]||['src/changed/File.kt']).map(path=>{const status=fileStatuses[path]||(/\.(png|ico|icns)$/.test(path)?'BINARY':'M');const kind=fileKinds[path]||'';return {path,oldPath:status==='R'?'old/'+path:undefined,status,modeBefore:status==='A'?undefined:'100644',modeAfter:status==='D'?undefined:(status==='TYPECHANGE'?'100755':'100644'),size:kind.match(/([\d.]+)\s*(KB|MB)/)?.[0]||undefined}})}));
+const fileStatuses={'README.md':'M','screenshot.png':'M','plugin.xml':'M','action.yml':'M','test.cmd':'A','build.gradle':'D','platform/android/AndroidRepo.kt':'R','.github/workflows/merge.yml':'A','build/merge.xml':'D'};
+const fileKinds={'screenshot.png':'binary · 4.8 MB','product.icns':'binary · 2.1 MB','platform/android/AndroidRepo.kt':'rename','Platform.kt':'submodule · 160 KB'};
+function bindTreeButtons(){
+  document.querySelectorAll('.tree button[data-file]').forEach(button=>{
+    const name=button.dataset.file;
+    button.dataset.kind=/\.(png|ico|icns)$/.test(name)?'image':name.endsWith('.kt')?'kotlin':name.endsWith('.xml')?'xml':'file';
+    button.onclick=()=>{selectedFile=name;document.querySelectorAll('.tree button[data-file]').forEach(item=>item.classList.toggle('selected',item===button));syncHistoryAction();openFile(name)};
+  });
+}
+function renderCommitTree(files){
+  const tree=document.querySelector('.tree');
+  tree.replaceChildren();
+  const root=document.createElement('details');root.open=true;
+  const counts=files.reduce((result,file)=>{const key=file.status||'M';result[key]=(result[key]||0)+1;return result},{});
+  const rootSummary=document.createElement('summary');
+  rootSummary.textContent='▱ '+files.length+' files · '+Object.entries(counts).map(([key,value])=>key+':'+value).join(' ');
+  root.append(rootSummary);
+  files.forEach(file=>{
+    const button=document.createElement('button');button.type='button';button.dataset.file=file.path;button.textContent=file.path;root.append(button);
+    const state=file.status||fileStatuses[file.path]||(/\.(png|ico|icns)$/.test(file.path)?'Binary':'M');
+    button.dataset.status=state;
+    button.textContent=(state==='BINARY'||state==='Binary'?'▧':state==='A'?'＋':state==='D'?'－':state==='R'?'↔':state==='TYPECHANGE'?'⇄':'◇')+' '+file.path;
+    button.title=state+' · '+file.path+(file.oldPath?' · old: '+file.oldPath:'')+(file.modeBefore||file.modeAfter?' · mode '+(file.modeBefore||'—')+'→'+(file.modeAfter||'—'):'')+(file.size?' · '+file.size:'');
+  });
+  tree.append(root);
+  bindTreeButtons();
+}
+function updateCommitFiles(index){
+  const snapshot=commitSnapshots[index]||commitSnapshots[5];
+  const files=snapshot.files;
+  renderCommitTree(files);
+  document.querySelector('.meta').querySelector('strong').dataset.files=files.map(file=>file.path).join(',');
+  document.querySelector('.meta').querySelector('strong').title='提交 '+snapshot.hash+' · 变更文件：'+files.map(file=>file.path).join('、');
+  document.querySelector('.meta').dataset.snapshotHash=snapshot.hash;
+  selectedFile='';
+  syncHistoryAction();
+}
+function clearRepositoryContext(){
+  selectedFile='';selectedRows.clear();document.querySelector('#rows').replaceChildren();document.querySelector('#tree')?.replaceChildren();
+  const tree=document.querySelector('.tree');if(tree)tree.innerHTML='<p class="muted">没有打开项目，Git Log 与文件树不可用。</p>';
+  document.querySelector('#title').textContent='No project';document.querySelector('.meta p').textContent='请打开项目或仓库以加载 Git 数据';document.querySelector('.meta').dataset.commit='';syncHistoryAction();status('当前没有打开项目：已清除提交、文件树和文件选择');
+}
+let commitResult={kind:'idle',message:''};
+function setCommitResult(kind,message){commitResult={kind,message};document.body.dataset.commitResult=kind;document.body.dataset.commitMessage=message||''}
+function validateCommit(thenLabel) {
+  const count=document.querySelectorAll('.files input:checked').length;
+  const message=document.querySelector('.message textarea').value.trim();
+  const unversioned=[...document.querySelectorAll('.files details:nth-of-type(2) input:checked')].length;
+  if(!count){setCommitResult('error','请选择至少一个变更文件');status('提交前校验失败：请选择至少一个变更文件');return false}
+  if(!message){setCommitResult('error','提交消息不能为空');status('提交前校验失败：提交消息不能为空');return false}
+  if(amendInput?.checked && commitMeta[selected]?.parentless){setCommitResult('error','初始提交不存在可 Amend 的上一条提交');status('提交前校验失败：初始提交不存在可 Amend 的上一条提交');return false}
+  if(stageInput?.checked && !count){setCommitResult('error','Stage 模式没有可暂存文件');status('提交前校验失败：Stage 模式没有可暂存文件');return false}
+  setCommitResult('checking',thenLabel+' 校验中');
+  status(thenLabel+'：已通过校验（已选择 '+count+' 个文件'+(unversioned?'，含 '+unversioned+' 个未版本控制文件':'')+'）；原型未写入真实仓库');
+  return true;
+}
+function refreshWorkspaceAfterCommit(label){
+  document.querySelectorAll('.files input[type="checkbox"]:checked').forEach(input=>input.closest('label.file')?.remove());
+  const groups=[...document.querySelectorAll('.files details')];
+  groups.forEach(group=>{const summary=group.querySelector('summary');if(summary){const title=summary.firstChild?.textContent?.trim()||'Files';const count=group.querySelectorAll('label.file').length;summary.innerHTML=title+' <span class="muted">'+count+' files</span>'}});
+  document.querySelector('.message textarea').value='';
+  status(label+'：已刷新工作区，保留未选择的变更（原型未写入真实仓库）');
+}
+function returnToLog(){document.body.dataset.historyContext='LOG';const rows=document.querySelector('#rows');rows.hidden=false;document.querySelector('#preview').hidden=true;document.querySelector('#diff').hidden=true;document.querySelector('#log').classList.add('selected');document.querySelector('#log').setAttribute('aria-selected','true');const historyTab=document.querySelector('#fileHistoryTab');historyTab?.classList.remove('selected');historyTab?.setAttribute('aria-selected','false');rows.scrollTop=logScrollTop;status('已返回仓库 Log · 当前提交 '+(document.querySelector('.meta').dataset.commit||selected))}
+function openCommitCompare(){
+  if(operationBusy){status('当前有操作正在执行，请等待完成后再比较提交');return}
+  const indices=[...selectedRows].sort((a,b)=>a-b);
+  if(indices.length<2){status('Compare：请按住 Shift 选择两个提交');return}
+  if(indices.length>2){status('Compare：一次只能比较两个提交，请取消多余选择');return}
+  logScrollTop=document.querySelector('#rows').scrollTop;
+  document.querySelector('#rows').hidden=true;document.querySelector('#diff').hidden=false;document.querySelector('#diff').textContent='Compare　×';
+  const preview=document.querySelector('#preview');preview.hidden=false;preview.style.whiteSpace='normal';preview.replaceChildren();
+  const heading=document.createElement('strong');heading.textContent='Compare selected commits';preview.append(heading);
+  const back=document.createElement('button');back.textContent='返回仓库 Log';back.onclick=returnToLog;preview.append(back);
+  indices.forEach(index=>{const snapshot=commitSnapshots[index];const block=document.createElement('section');block.style.cssText='margin-top:10px;padding:8px;border:1px solid #343941';block.innerHTML='<strong>'+snapshot.hash+'</strong> · '+snapshot.subject+'<br><span class="muted">'+snapshot.author+' · '+snapshot.files.length+' files · parents: '+snapshot.parents.length+'</span>';const list=document.createElement('ul');snapshot.files.forEach(file=>{const item=document.createElement('li');item.textContent=file.status+' '+file.path;list.append(item)});block.append(list);preview.append(block)});
+  status('Compare：已打开 '+indices.length+' 个提交的比较视图（原型未读取真实仓库）');
+}
+function openCommitActionPreview(action){
+  if(operationBusy){status('当前有操作正在执行，请等待完成后再执行 '+action);return}
+  const indices=[...selectedRows].sort((a,b)=>a-b);
+  if(!indices.length){status(action+'：请先选择一个提交');return}
+  logScrollTop=document.querySelector('#rows').scrollTop;
+  document.querySelector('#rows').hidden=true;document.querySelector('#diff').hidden=false;document.querySelector('#diff').textContent=action+'　×';
+  const preview=document.querySelector('#preview');preview.hidden=false;preview.style.whiteSpace='normal';preview.replaceChildren();
+  const heading=document.createElement('strong');heading.textContent=action+' preview';preview.append(heading);
+  const note=document.createElement('p');note.className='muted';note.textContent='目标提交：'+indices.map(index=>commitSnapshots[index].hash).join(', ')+' · 当前为原型确认，不会修改真实仓库';preview.append(note);
+  const confirm=document.createElement('button');confirm.textContent='确认 '+action;confirm.onclick=()=>{status(action+'：已确认预览，等待真实 Git Adapter 执行');returnToLog()};
+  const cancel=document.createElement('button');cancel.textContent='取消';cancel.onclick=returnToLog;preview.append(confirm,cancel);
+}
+function openPushPreview(){
+  if(operationBusy){status('当前有 Push/Update/Fetch 操作正在执行，请等待完成');return}
+  logScrollTop=document.querySelector('#rows').scrollTop;document.querySelector('#rows').hidden=true;document.querySelector('#diff').hidden=false;document.querySelector('#diff').textContent='Push　×';
+  const preview=document.querySelector('#preview');preview.hidden=false;preview.style.whiteSpace='normal';preview.replaceChildren();
+  const heading=document.createElement('strong');heading.textContent='Push preview';preview.append(heading);
+  const outgoing=branchState===6?screenshotRows.slice(0,3):[];
+  const note=document.createElement('p');note.className='muted';note.textContent=outgoing.length?'目标：origin/master · '+outgoing.length+' outgoing commits':'当前分支与远程一致 · 没有待推送提交';preview.append(note);
+  if(outgoing.length){const list=document.createElement('ul');outgoing.forEach(row=>{const item=document.createElement('li');item.textContent=row[0]+' · '+row[1];list.append(item)});preview.append(list)}
+  const push=document.createElement('button');push.textContent=outgoing.length?'确认 Push':'关闭预览';push.onclick=()=>{status(outgoing.length?'Push：已确认预览，等待真实 Git Adapter 执行':'Push：没有待推送提交');returnToLog()};
+  const cancel=document.createElement('button');cancel.textContent='取消';cancel.onclick=returnToLog;preview.append(push,cancel);
+}
+function openUpdatePreview(){
+  if(operationBusy){status('当前有远程操作正在执行，请等待完成');return}
+  logScrollTop=document.querySelector('#rows').scrollTop;document.querySelector('#rows').hidden=true;document.querySelector('#diff').hidden=false;document.querySelector('#diff').textContent='Update　×';
+  const preview=document.querySelector('#preview');preview.hidden=false;preview.style.whiteSpace='normal';preview.replaceChildren();
+  const heading=document.createElement('strong');heading.textContent='Update preview';preview.append(heading);
+  const incoming=branchState===6?screenshotRows.slice(3,6):[];
+  const note=document.createElement('p');note.className='muted';note.textContent=incoming.length?'来源：origin/master · '+incoming.length+' incoming commits':'当前没有新的远程提交';preview.append(note);
+  const strategy=document.createElement('select');strategy.setAttribute('aria-label','Update strategy');[['Merge','Merge'],['Rebase','Rebase'],['Fast-forward only（默认安全策略）','Fast-forward only']].forEach(([label,value])=>strategy.add(new Option(label,value)));preview.append(strategy);
+  if(incoming.length){const list=document.createElement('ul');incoming.forEach(row=>{const item=document.createElement('li');item.textContent=row[0]+' · '+row[1];list.append(item)});preview.append(list)}
+  const update=document.createElement('button');update.textContent=incoming.length?'确认 Update':'关闭预览';update.onclick=()=>{status(incoming.length?'Update：已确认 '+strategy.value+'，等待真实 Git Adapter 执行':'Update：当前没有新的远程提交');returnToLog()};
+  const cancel=document.createElement('button');cancel.textContent='取消';cancel.onclick=returnToLog;preview.append(update,cancel);
+}
+let selectedRoot='platform';
+const gitActionContracts={update:'Vcs.UpdateProject',push:'Vcs.Push',fetch:'Git.Fetch',commit:'CheckinProject',stage:'Git.Commit.Stage',fileHistory:'Vcs.ShowTabbedFileHistory',merge:'Git.Merge',rebase:'Git.Rebase',interactiveRebase:'Git.InteractiveRebase'};
+function openFetchPreview(){
+  if(operationBusy){status('当前有远程操作正在执行，请等待完成');return}
+  logScrollTop=document.querySelector('#rows').scrollTop;document.querySelector('#rows').hidden=true;document.querySelector('#diff').hidden=false;document.querySelector('#diff').textContent='Fetch　×';
+  const preview=document.querySelector('#preview');preview.hidden=false;preview.style.whiteSpace='normal';preview.replaceChildren();
+  const heading=document.createElement('strong');heading.textContent='Fetch preview';preview.append(heading);
+  const roots=branchState===5?['platform','plugins']:[selectedRoot==='platform'?'origin':selectedRoot];
+  const note=document.createElement('p');note.className='muted';note.textContent='将刷新远程引用：'+roots.join('、')+' · 不修改工作树';preview.append(note);
+  const confirm=document.createElement('button');confirm.textContent='确认 Fetch';confirm.onclick=()=>{status('Fetch：已确认刷新 '+roots.join('、')+'，等待真实 Git Adapter 执行');returnToLog()};
+  const cancel=document.createElement('button');cancel.textContent='取消';cancel.onclick=returnToLog;preview.append(confirm,cancel);
+}
+function openBranchActionPreview(action,label){
+  if(operationBusy){status('当前有操作正在执行，请等待完成');return}
+  document.body.dataset.workflowAction=action;document.body.dataset.workflowTarget=label;document.body.dataset.workflowResult='preview';
+  logScrollTop=document.querySelector('#rows').scrollTop;document.querySelector('#rows').hidden=true;document.querySelector('#diff').hidden=false;document.querySelector('#diff').textContent=action+'　×';
+  const preview=document.querySelector('#preview');preview.hidden=false;preview.style.whiteSpace='normal';preview.replaceChildren();
+  const heading=document.createElement('strong');heading.textContent=action+' preview';preview.append(heading);
+  const note=document.createElement('p');note.className='muted';note.textContent='目标分支：'+label+' · 当前为原型确认，不会修改真实仓库';preview.append(note);
+  let targetSelect=null;
+  if(action==='Merge'||action==='Rebase'||action==='Interactive Rebase'){
+    targetSelect=document.createElement('select');targetSelect.setAttribute('aria-label',action+' target branch');
+    ['master','develop','origin/master','origin/release'].forEach(value=>targetSelect.add(new Option(value,value)));
+    targetSelect.value=label==='当前分支'?'master':label;
+    preview.append(targetSelect);
+  }
+  let strategy=null;
+  if(action==='Merge'||action==='Rebase'||action==='Interactive Rebase'){
+    strategy=document.createElement('select');strategy.setAttribute('aria-label',action+' strategy');
+    (action==='Merge'?['Create merge commit','Fast-forward when possible']:action==='Rebase'?['Rebase commits','Rebase and autosquash']:['Reorder commits','Squash selected commits']).forEach(value=>strategy.add(new Option(value,value)));
+    preview.append(strategy);
+  }
+  if(action==='Merge'||action==='Rebase'){
+    const resolve=document.createElement('button');resolve.type='button';resolve.textContent='打开三栏冲突编辑器';resolve.title='当前版本 / 冲突编辑区 / 目标版本';resolve.onclick=()=>{const conflictFile=selectedFile||commitSnapshots[selected]?.files?.[0]?.path||'';document.body.dataset.workflowConflictFile=conflictFile;document.body.dataset.workflowResult='conflict-editor';status(action+'：已打开三栏冲突编辑器'+(conflictFile?' · '+conflictFile:'')+'，等待解决冲突');};preview.append(resolve);
+  }
+  const confirm=document.createElement('button');confirm.textContent='确认 '+action;confirm.onclick=()=>{const target=targetSelect?.value||label;document.body.dataset.workflowResult='confirmed';document.body.dataset.workflowTarget=target;document.body.dataset.workflowStrategy=strategy?.value||'';status(action+'：已确认 '+target+(strategy?' · '+strategy.value:'')+'，等待真实 Git Adapter 执行');returnToLog()};
+  const cancel=document.createElement('button');cancel.textContent='取消';cancel.onclick=()=>{document.body.dataset.workflowResult='cancelled';returnToLog()};preview.append(confirm,cancel);
+}
+function openProjectActionPreview(action){
+  if(operationBusy){status('当前有操作正在执行，请等待完成');return}
+  showDemoMenu([['确认 '+action,()=>{restoreLoadedRepository(action);status(action+'：已确认，等待真实项目初始化流程') }],['取消',()=>status(action+'：已取消')]],document.querySelector('#branchMenu'));
+}
+document.querySelector('#log').onclick=returnToLog;
+document.querySelector('#diff').onclick=returnToLog;
+document.querySelector('#commit').onclick=()=>{if(validateCommit('Commit'))runOperation('Commit',()=>{setCommitResult('success','Commit 完成');refreshWorkspaceAfterCommit('Commit');return 'Commit：已完成提交并刷新工作区（原型未写入真实仓库）'})};
+document.querySelector('#push').onclick=()=>{if(validateCommit('Commit and Push'))runOperation('Commit and Push',()=>{setCommitResult('success','Commit 完成，Push 待确认');refreshWorkspaceAfterCommit('Commit and Push');window.setTimeout(()=>showDemoMenu([['Review outgoing commits',()=>status('Push 预览：已显示待推送提交列表（原型未访问远程仓库）')],['Choose remote…',()=>status('Push 预览：请选择目标 remote 和 branch（原型）')],['Cancel Push',()=>status('Push 预览已取消')]],document.querySelector('#pushProject')),0);return 'Commit and Push：提交已完成，已进入 Push 预览阶段（原型未访问远程仓库）'})};
+document.querySelector('#commitChecks').onclick=()=>showDemoMenu([['Run pre-commit checks',()=>runOperation('Checks',()=>{setCommitResult('success','提交检查通过');return '提交检查通过：消息、文件选择、Stage/Amend 状态有效（原型）'})],['Simulate hook failure',()=>{setCommitResult('error','Hook rejected changes');status('Hook 检查失败：已保留文件选择和提交消息，可重试') }],['View hook output',()=>status('Hook 输出：当前原型未执行仓库 hook；真实实现需保留失败日志和重试入口')]],document.querySelector('#commitChecks'));
+function updateStagePreview(){const group=document.querySelector('#stagedGroup');if(!group)return;const count=document.querySelectorAll('.files input[type="checkbox"]:checked').length;group.hidden=!stageInput.checked;const summary=group.querySelector('summary');if(summary)summary.innerHTML='Staged Changes <span class="muted">'+(stageInput.checked?count:0)+' files</span>';document.body.dataset.stagedCount=String(stageInput.checked?count:0)}
+document.querySelectorAll('.files input').forEach(input=>input.addEventListener('change',()=>{const count=document.querySelectorAll('.files input:checked').length;updateStagePreview();status(count?'已选择 '+count+' 个变更文件':'尚未选择变更文件')}));
+document.addEventListener('change',event=>{if(event.target.matches?.('.files input[type="checkbox"]'))updateStagePreview()});
+const stageInput=document.querySelector('#stageMode');
+function syncCommitMode(){document.body.dataset.commitMode=stageInput.checked?'STAGE':'DIRECT';document.body.dataset.amend=String(amendInput?.checked||false)}
+stageInput.addEventListener('change',()=>{syncCommitMode();updateStagePreview();status(stageInput.checked?'Stage 模式：提交前会先暂存选中文件（原型）':'非 Stage 模式：直接提交选中文件（原型）')});
+const amendInput=document.querySelector('#amendMode');
+amendInput.addEventListener('change',()=>{syncCommitMode();document.querySelector('#commit').textContent=amendInput.checked?'Amend Commit':'Commit';status(amendInput.checked?'Amend 模式：下一次提交将替换上一条提交（原型）':'Commit 模式：新建提交（原型）')});
+const historyFilters = document.querySelector('.filters');
+const authorFilter = historyFilters.querySelector('select[aria-label="筛选作者"]');
+['All users', ...new Set(screenshotRows.map(row=>row[1]))].forEach(name => authorFilter.add(new Option(name === 'All users' ? 'User' : name, name)));
+const dateFilter = historyFilters.querySelector('select[aria-label="筛选日期"]');
+[['Date','all'],['17 June 2026','17'],['16 June 2026','16'],['15 June 2026','15']].forEach(([name,value]) => dateFilter.add(new Option(name,value)));
+const authors = screenshotRows.map(row=>row[1]);
+function renderFiltered() {
+  const query = document.querySelector('.search').value.toLowerCase();
+  const list = document.querySelector('#rows');
+  list.replaceChildren();
+  titles.forEach((text,i) => {
+    const day = screenshotRows[i][2];
+    const rowBranch = i < 7 ? 'HEAD' : 'master';
+    if (!text.toLowerCase().includes(query) ||
+        (activeBranch !== 'HEAD' && rowBranch !== activeBranch) ||
+        (authorFilter.value !== 'All users' && authors[i] !== authorFilter.value) ||
+        (dateFilter.value !== 'all' && dateFilter.value !== day) ||
+        (activePath !== 'all' && !rowPath(i).startsWith(activePath))) return;
+    const button = document.createElement('button');
+    button.className = 'row' + (i === selected ? ' selected' : '') + ([6,15].includes(i) ? ' merge-row' : '');
+    button.setAttribute('aria-pressed', String(selectedRows.has(i)));
+    button.dataset.commitHash=commitSnapshots[i]?.hash||'';
+    button.dataset.parentCount=String(commitSnapshots[i]?.parents?.length||0);
+    button.setAttribute('aria-label',text+' · '+authors[i]+' · '+(commitSnapshots[i]?.files.length||0)+' files · '+(commitSnapshots[i]?.parents?.length||0)+' parents');
+    button.title=(commitSnapshots[i]?.parents?.length||0)>1?'Merge Commit · 选择父提交后查看 Diff':'提交 · 右键查看操作';
+    const values = [commitMeta[i]?.merge?'⑂':(i%4===0?'●':'│'),text,authors[i],day+'/6/26, '+screenshotRows[i][3]];
+    values.forEach((value,column) => {
+      const span = document.createElement('span');
+      span.textContent = value;
+      span.title = value;
+      if (!column) {
+        span.className = 'dot';
+        span.title = commitMeta[i]?.merge ? 'Merge Commit · 双父提交' : (i%4===0?'分支节点':'提交轨道');
+        span.style.color = i < 7 ? '#b75086' : '#af914d';
+        span.style.borderColor = span.style.color;
+      }
+      button.append(span);
+    });
+    button.onclick = (event) => {
+      selected = i;
+      selectedRows = event.shiftKey ? new Set([...selectedRows, i]) : new Set([i]);
+      document.querySelector('#title').textContent = text;
+      document.querySelector('.meta p').textContent = authors[i]+' · '+day+'/6/26 · '+(commitMeta[i]?.parentless?'初始提交':commitMeta[i]?.merge?'Merge Commit':'示例提交');
+      document.querySelector('.meta').dataset.commit = String(i);
+      document.querySelector('.meta').querySelector('strong').title = '已选择提交：'+text;
+      document.querySelector('#status').textContent = '已选择提交：'+text+' · 右侧文件树应随提交刷新（原型数据）';
+      updateCommitFiles(i);
+      const previous=document.querySelector('.meta .parent-selector');previous?.remove();
+      if([6,15].includes(i)){
+        const label=document.createElement('label');label.className='parent-selector muted';label.textContent='Diff parent ';
+        const select=document.createElement('select');select.setAttribute('aria-label','Diff parent');select.innerHTML='<option value="1">Parent 1 · HEAD</option><option value="2">Parent 2 · origin/262</option>';
+        select.onchange=()=>status('已切换 Merge Commit Diff 父提交：'+select.options[select.selectedIndex].text+'（原型）');label.append(select);document.querySelector('.meta').append(label);
+      }
+      renderFiltered();
+    };
+    button.oncontextmenu = (event) => {
+      event.preventDefault();
+      selected=i;
+      selectedRows=event.shiftKey?new Set([...selectedRows,i]):new Set([i]);
+      document.querySelector('#title').textContent=text;
+      document.querySelector('.meta').dataset.commit=String(i);
+      updateCommitFiles(i);
+      renderFiltered();
+      const activeRow=document.querySelector('#rows .row.selected');
+      showDemoMenu([['Compare selected commits',openCommitCompare],['Cherry-pick',()=>openCommitActionPreview('Cherry-pick')],['Revert',()=>openCommitActionPreview('Revert')],['Reset current branch to commit',()=>openCommitActionPreview('Reset')],['Create branch from commit',()=>openCommitActionPreview('Create branch')],['Create tag at commit',()=>openCommitActionPreview('Create tag')]],activeRow||button);
+    };
+    button.dataset.path=rowPath(i);
+    list.append(button);
+  });
+  if (!list.childElementCount) {
+    const empty = document.createElement('p');
+    empty.style.padding = '16px';
+    empty.textContent = '没有符合当前筛选条件的提交。';
+    list.append(empty);
+  }
+}
+document.querySelector('.search').oninput = renderFiltered;
+authorFilter.onchange = dateFilter.onchange = renderFiltered;
+function openFile(name) {
+  document.body.dataset.historyContext='DIFF';
+  logScrollTop=document.querySelector('#rows').scrollTop;
+  document.querySelector('#rows').hidden = true;
+  const tab = document.querySelector('#diff');
+  tab.hidden = false;tab.setAttribute('aria-selected','true');document.querySelector('#log').setAttribute('aria-selected','false');
+  tab.textContent = name + '　×';
+  const preview = document.querySelector('#preview');
+  preview.hidden = false;
+  preview.replaceChildren();
+  const parent=document.querySelector('.parent-selector select');
+  const selectedMeta=commitMeta[Number(document.querySelector('.meta').dataset.commit||selected)]||{};
+  status('已打开 '+name+' · 当前提交 '+(document.querySelector('.meta').dataset.commit||selected)+(parent?' · '+parent.options[parent.selectedIndex].text:'')+(selectedMeta.parentless?' · 初始提交，无父版本':'')+' · 示例 Diff');
+  preview.style.whiteSpace = 'normal';
+  const fileStatus=fileStatuses[name]||'M';
+  const fileKind=fileKinds[name];
+  if(fileStatus!=='M'||fileKind){
+    const stateNote=document.createElement('p');
+    stateNote.className='muted';
+    stateNote.textContent=fileStatus==='A'?'新增文件 · 父提交中不存在此文件':fileStatus==='D'?'删除文件 · 当前提交中已移除':fileStatus==='R'?'重命名文件 · 当前提交保留内容但路径发生变化':'文件状态：'+fileStatus;
+    if(fileKind) stateNote.textContent+=' · '+fileKind;
+    preview.append(stateNote);
+  }
+  if (/\.(png|icns|ico)$/.test(name)) {
+    preview.textContent = name + ' · 二进制文件。此模拟提交未附带图片内容，不能展示文本 Diff。'+(fileKind?' '+fileKind:'');
+    return;
+  }
+  if (fileKind?.startsWith('submodule') || /\bMB\b/.test(fileKind||'')) {
+    preview.textContent = name + ' · '+(fileKind||'大文件')+'。仅显示元数据，不能进入文本编辑预览。';
+    return;
+  }
+  const examples = {
+    'action.yml': ['name: Upload IDE\nruns:\n  using: composite\n  steps:\n    - run: upload old-package', 'name: Upload IDE\nruns:\n  using: composite\n  steps:\n    - run: upload rebased-package'],
+    'ide_build_and_upload.yml': ['name: Build\non: push\njobs:\n  build:\n    runs-on: ubuntu-22.04', 'name: Build Rebased\non: push\njobs:\n  build:\n    runs-on: ubuntu-24.04'],
+    'RebasedProperties.kt': ['class RebasedProperties {\n  val productName = "IDE"\n  val enableIndex = true\n}', 'class RebasedProperties {\n  val productName = "Rebased"\n  val enableIndex = true\n}'],
+    'plugin.xml': ['<idea-plugin>\n  <name>Git</name>\n  <version>1.0</version>\n</idea-plugin>', '<idea-plugin>\n  <name>Git</name>\n  <version>1.1</version>\n</idea-plugin>']
+  };
+  const pair = examples[name] || (fileStatus==='A' ? ['', '// 新增文件内容（示例）'] : fileStatus==='D' ? ['// 删除前文件内容（示例）', ''] : fileStatus==='R' ? ['// 旧路径：'+name, '// 新路径：'+name] : null);
+  if (!pair) { preview.textContent = '此文件尚未配置模拟内容。'; return; }
+  const note = document.createElement('p');
+  note.textContent = '交互演示数据 · 不代表官方文件的真实修改';
+  note.className = 'muted';
+  preview.append(note);
+  const diffTools=document.createElement('div');
+  diffTools.className='diff-tools';
+  [['↑','上一处变更'],['↓','下一处变更'],['←','应用父版本'],['→','应用当前版本']].forEach(([icon,label])=>{
+    const action=document.createElement('button');action.type='button';action.textContent=icon+' '+label;action.title=label+'（原型预览）';
+    action.onclick=()=>status(label+'：已定位当前文件变更（原型未写入工作树）');diffTools.append(action);
+  });
+  const edit=document.createElement('button');edit.type='button';edit.textContent='编辑当前版本';edit.title='切换当前版本的只读/编辑预览（原型）';diffTools.append(edit);
+  const mode=document.createElement('button');mode.type='button';mode.textContent='只显示变更';mode.title='在仅变更与完整文件视图之间切换';diffTools.append(mode);
+  const save=document.createElement('button');save.type='button';save.textContent='保存编辑预览';save.disabled=true;save.title='保存当前编辑预览（原型，不写入工作树）';diffTools.append(save);
+  preview.append(diffTools);
+  const toggle = document.createElement('button');
+  toggle.textContent = '折叠未变更行';
+  preview.append(toggle);
+  const grid = document.createElement('div');
+  const mergePreview = Boolean(selectedMeta.merge);
+  grid.dataset.layout = mergePreview ? 'three-way' : 'two-way';
+  grid.style.cssText = 'display:grid;grid-template-columns:'+(mergePreview?'1fr 1.15fr 1fr':'1fr 1fr')+';margin-top:12px;overflow:auto';
+  const left = pair[0].split('\n'), right = pair[1].split('\n');
+  const panes = mergePreview ? [left, right, right] : [left, right];
+  panes.forEach((lines,side) => {
+    const section = document.createElement('section');
+    section.style.minWidth = '0';
+    const heading = document.createElement('strong');
+    heading.textContent = mergePreview ? (side===0?'当前版本':side===1?'冲突编辑区':'目标版本') : (side ? '当前提交' : '父提交');
+    if (mergePreview && side===1) section.contentEditable='true';
+    section.append(heading);
+    lines.forEach((text,index) => {
+      const line = document.createElement('div');
+      const changed = left[index] !== right[index];
+      line.dataset.context = String(!changed);
+      line.style.cssText = 'white-space:pre;min-height:24px;padding:0 8px;background:' + (changed ? side ? '#233c2d' : '#43292e' : 'transparent');
+      line.textContent = String(index+1).padStart(3) + '  ' + text;
+      if(changed && side===1){
+        const accept=document.createElement('button');
+        accept.type='button';accept.textContent='←';accept.title='接受当前版本这一处变更';accept.style.cssText='float:right;border:0;padding:0 5px;color:#9ed6a8';
+        accept.onclick=()=>{line.textContent=String(index+1).padStart(3)+'  '+right[index];line.style.background='#31533d';status((mergePreview?'冲突编辑区已接受目标版本第 ':'已接受当前版本第 ')+(index+1)+' 行（仅原型预览）')};
+        line.append(accept);
+      }
+      section.append(line);
+    });
+    grid.append(section);
+  });
+  preview.append(grid);
+  let editable=false;
+  edit.onclick=()=>{editable=!editable;grid.querySelectorAll('section')[1].contentEditable=String(editable);edit.textContent=editable?'结束编辑':'编辑当前版本';save.disabled=!editable;status(editable?'当前版本已进入编辑预览（不会写入工作树）':'已结束编辑预览（原型）')};
+  save.onclick=()=>{status('编辑预览已保存到当前 Diff 会话（原型未写入工作树）');save.disabled=true};
+  let collapsed = false;
+  toggle.onclick = () => {
+    collapsed = !collapsed;
+    grid.querySelectorAll('[data-context="true"]').forEach(line => line.hidden = collapsed);
+    toggle.textContent = collapsed ? '展开未变更行' : '折叠未变更行';
+    mode.textContent = collapsed ? '显示全部内容' : '只显示变更';
+  };
+  mode.onclick=()=>toggle.click();
+}
+function openFileHistory(name,newTab=false){
+  document.body.dataset.historyContext='FILE_HISTORY';
+  if(newTab){let tab=document.querySelector('#fileHistoryTab');if(!tab){tab=document.createElement('button');tab.id='fileHistoryTab';tab.className='';tab.setAttribute('role','tab');document.querySelector('.history .bar').insertBefore(tab,document.querySelector('.history .bar .grow'));}tab.textContent=name+' · History';tab.setAttribute('aria-label',name+' 文件历史标签');tab.setAttribute('aria-selected','true');tab.title='单击查看 '+name+' 文件历史，双击关闭标签';tab.onclick=()=>openFileHistory(name);tab.ondblclick=()=>{tab.remove();returnToLog();status('已关闭文件历史标签：'+name)};document.querySelector('#log').classList.remove('selected');document.querySelector('#log').setAttribute('aria-selected','false');tab.classList.add('selected')}
+  logScrollTop=document.querySelector('#rows').scrollTop;
+  document.querySelector('#rows').hidden=true;
+  document.querySelector('#diff').hidden=false;document.querySelector('#diff').setAttribute('aria-selected','true');document.querySelector('#log').setAttribute('aria-selected','false');
+  document.querySelector('#diff').textContent=name+' · History　×';
+  const preview=document.querySelector('#preview');
+  preview.hidden=false; preview.style.whiteSpace='normal'; preview.replaceChildren();
+  const heading=document.createElement('strong'); heading.textContent=name+' · File History'; preview.append(heading);
+  const back=document.createElement('button'); back.textContent='返回仓库 Log'; back.onclick=returnToLog; preview.append(back);
+  screenshotRows.filter((row,i)=>i<9||row[0].toLowerCase().includes(name.toLowerCase())).slice(0,8).forEach((row,i)=>{const item=document.createElement('button');item.className='row';item.style.display='grid';item.textContent=row[0]+' · '+row[1]+' · '+row[2]+'/6/26';item.title='查看 '+name+' 在此提交中的 Diff';item.onclick=()=>{status('已选择 '+name+' 的历史提交：'+row[0]+' · 正在打开文件 Diff（原型未访问真实仓库）');openFile(name)};preview.append(item)});
+  status('已打开 '+name+' 的文件历史 · 示例数据');
+}
+document.querySelectorAll('.tree button').forEach(button => { button.dataset.file=button.textContent; });
+bindTreeButtons();
+// Outlined geometry traced from screenshot; names with unverified behavior stay disabled.
+const iconPaths = {
+  refresh: 'M14 6A6 6 0 0 0 3 5L1 8m0-4v4h4m-3 4a6 6 0 0 0 11 1l2-3m0 4v-4h-4',
+  undo: 'M6 3L2 7l4 4M2 7h8a4 4 0 0 1 0 8H7',
+  arrows: 'M1 6h11M9 3l3 3-3 3M15 12H4m3-3-3 3 3 3',
+  download: 'M8 1v9m-3-3 3 3 3-3M2 11v4h12v-4',
+  eye: 'M1 8s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5ZM10 8a2 2 0 1 1-4 0 2 2 0 0 1 4 0',
+  target: 'M8 1v14M1 8h14M14 8a6 6 0 1 1-12 0 6 6 0 0 1 12 0',
+  expand: 'm5 5 3-3 3 3M5 11l3 3 3-3',
+  collapse: 'm5 2 3 3 3-3M5 14l3-3 3 3',
+  clock: 'M15 8a7 7 0 1 1-14 0 7 7 0 0 1 14 0M8 4v4l3 2'
+};
+function toolbar(target, items) {
+  target.replaceChildren();
+  items.forEach(([name,label,action]) => {
+    const button=document.createElement('button');
+    button.className='icon';button.type='button';button.setAttribute('aria-label',label);
+    button.title=label+(action ? '' : ' · 行为待源码核对');
+    button.disabled=!action;
+    const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+    svg.setAttribute('viewBox','0 0 16 16');svg.setAttribute('aria-hidden','true');
+    const path=document.createElementNS(svg.namespaceURI,'path');path.setAttribute('d',iconPaths[name]);svg.append(path);button.append(svg);
+    if(action)button.onclick=action;
+    target.append(button);
+  });
+}
+const status = message => { document.querySelector('#status').textContent=message; const remoteMatch=String(message).match(/^(Update|Push|Fetch)(?:：|:)(.*)$/); if(remoteMatch&&typeof setRemoteResult==='function')setRemoteResult(/错误|失败|拒绝/.test(remoteMatch[2])?'error':'success',remoteMatch[1],remoteMatch[2].trim()); };
+let operationBusy=false;
+let remoteResult={kind:'idle',label:'',message:''};
+function setRemoteResult(kind,label,message){remoteResult={kind,label,message};document.body.dataset.remoteResult=kind;document.body.dataset.remoteMessage=message||'';let result=document.querySelector('#remoteState');if(!result){result=document.createElement('span');result.id='remoteState';result.className='notice';result.setAttribute('aria-label','远程操作结果');document.querySelector('footer')?.append(result)}result.textContent=label?label+' · '+message:'Remote idle';result.dataset.kind=kind}
+function setRemotePhase(phase,label){document.body.dataset.remotePhase=phase;document.querySelectorAll('#updateProject,#pushProject').forEach(button=>{button.setAttribute('aria-busy',String(phase!=='IDLE'));button.title=label||button.title})}
+function syncRemoteActions(){const restricted=branchState>0&&branchState<5;['#updateProject','#pushProject'].forEach(selector=>{const button=document.querySelector(selector);if(button&&!operationBusy)button.disabled=restricted});const state=document.body.dataset.repositoryState;const workflow=document.querySelector('#workflowMenu');if(workflow)workflow.hidden=['NO_PROJECT','LOADING','NO_VCS','UNTRUSTED'].includes(state)}
+function runOperation(label, success){
+  if(operationBusy){status('已有 '+label+' 操作正在执行，请稍候');return}
+  operationBusy=true;
+  const controls=['#updateProject','#pushProject','#commit','#push'].map(selector=>document.querySelector(selector)).filter(Boolean);
+  controls.forEach(button=>button.disabled=true);
+  setRemotePhase(label==='Fetch'?'FETCHING':label==='Push'?'PUSHING':'CHECKING',label+'：进行中');
+  status(label+'：正在检查工作区…');
+  window.setTimeout(()=>{setRemotePhase(label==='Fetch'?'FETCHING':label==='Push'?'PUSHING':'UPDATING',label+'：正在读取远程状态');status(label+'：正在读取远程状态…')},180);
+  window.setTimeout(()=>{operationBusy=false;controls.forEach(button=>button.disabled=false);syncRemoteActions();setRemotePhase('REFRESHING',label+'：正在刷新工作区');window.setTimeout(()=>{setRemotePhase('IDLE');setRemoteResult('success',label,'操作完成，等待真实 Git Adapter 写入');status(typeof success==='function'?success():(success||label+'：操作完成（原型未修改真实仓库）'))},80)},420);
+}
+toolbar(document.querySelector('.commit .tools'),[
+ ['refresh','Refresh',()=>status('示例工作区已刷新；未访问真实仓库')],
+ ['undo','Rollback',()=>status('Rollback 演示：需要先选择已修改文件；未写入工作树')],
+ ['arrows','Move changes',()=>status('Move changes 演示：已打开选择范围；未写入工作树')],
+ ['download','Shelve changes',()=>status('Shelve 演示：已暂存当前选择；未写入 Git')],
+ ['eye','Show diff',()=>{const first=document.querySelector('.files input:checked')?.closest('.file'); if(first) openFile(first.textContent.replace(/^[^\w]*/,'').trim().split(' ')[0]); else status('请选择要查看的文件 Diff')}],
+ ['target','Select opened file',()=>status('Select opened file：已定位到当前打开文件')],
+ ['expand','Expand all',()=>document.querySelectorAll('.files details').forEach(item=>item.open=true)],
+ ['collapse','Collapse all',()=>document.querySelectorAll('.files details').forEach(item=>item.open=false)]
+]);
+toolbar(document.querySelector('.details .tools'),[
+ ['arrows','Show diff',()=>{const file=selectedFile||document.querySelector('.tree button:focus')?.textContent||document.querySelector('.tree button')?.textContent;if(file)openFile(file);else status('当前提交没有可预览文件')}],
+ ['undo','Revert',()=>status('Revert 演示：将撤销所选提交的变更；未写入工作树')],
+ ['clock','History',()=>{if(!selectedFile){status('请先选择文件，再打开该文件历史');return} openFileHistory(selectedFile)}],
+ ['eye','Preview',()=>{const file=selectedFile||document.querySelector('.tree button:focus')?.textContent||document.querySelector('.tree button')?.textContent;if(file)openFile(file);else status('当前提交没有可预览文件')}]
+]);
+let lastMenuAnchor=null;
+const closeDemoMenu=restoreFocus=>{const menu=document.querySelector('#demoMenu');if(menu)menu.remove();if(lastMenuAnchor?.setAttribute)lastMenuAnchor.setAttribute('aria-expanded','false');if(restoreFocus&&lastMenuAnchor?.focus)lastMenuAnchor.focus()};
+const showDemoMenu = (items, anchor=document.querySelector('#productMenu')) => {
+  lastMenuAnchor=anchor;
+  if(lastMenuAnchor?.setAttribute){lastMenuAnchor.setAttribute('aria-haspopup','menu');lastMenuAnchor.setAttribute('aria-expanded','true')}
+  document.querySelector('#demoMenu')?.remove();
+  const menu=document.createElement('div'); menu.id='demoMenu'; menu.className='demo-menu'; menu.setAttribute('role','menu'); menu.setAttribute('aria-label','Git action menu');
+  items.forEach(([label,fn],index)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.setAttribute('role','menuitem');b.tabIndex=index===0?0:-1;b.onclick=()=>{fn();closeDemoMenu(true)};menu.append(b)});
+  document.body.append(menu);
+  const rect=anchor?.getBoundingClientRect?.();
+  menu.style.left=Math.max(6,Math.min(window.innerWidth-menu.offsetWidth-6,(rect?.left||54)))+'px';
+  menu.style.top=Math.max(6,(rect?.bottom||45)+4)+'px';
+  menu.querySelector('button')?.focus();
+};
+const workflowMenu=document.createElement('button');
+workflowMenu.id='workflowMenu';workflowMenu.className='header-action';workflowMenu.type='button';workflowMenu.textContent='⚒ Git workflow';workflowMenu.title='Merge、Rebase 和 Interactive Rebase';workflowMenu.setAttribute('aria-label','Git workflow actions');
+document.querySelector('#branchMenu')?.after(workflowMenu);
+workflowMenu.onclick=()=>showDemoMenu([
+  ['Merge…',()=>openBranchActionPreview('Merge','当前分支')],
+  ['Rebase…',()=>openBranchActionPreview('Rebase','当前分支')],
+  ['Interactive Rebase…',()=>openBranchActionPreview('Interactive Rebase','当前分支')],
+  ['Resolve conflicts…',()=>status('冲突解决：请从 Merge/Rebase 预览进入三栏编辑区')]
+],workflowMenu);
+const branchStates=[['master','仓库已加载 · 1 个 Git root'],['Loading branches…','正在初始化分支列表'],['No project','当前没有打开项目，分支组件不提供操作'],['No VCS','未检测到 Git 仓库'],['Untrusted project','项目未受信任'],['2 Git roots','检测到多个 Git 根目录'],['master ↑1 ↓2','有 incoming/outgoing 提交']]; let branchState=0;
+const setBranchState=index=>{branchState=Math.max(0,Math.min(branchStates.length-1,index));const [label,description]=branchStates[branchState];const state=label==='No project'?'NO_PROJECT':label==='Loading branches…'?'LOADING':label==='No VCS'?'NO_VCS':label==='Untrusted project'?'UNTRUSTED':label==='2 Git roots'?'MULTI_ROOT':label.includes('↑')?'AHEAD_BEHIND':'SINGLE_ROOT';document.body.dataset.repositoryState=state;const branch=document.querySelector('#branchMenu');branch.hidden=label==='No project';branch.textContent=(label==='master'?'⑂ master⌄':'⑂ '+label);branch.setAttribute('aria-label','Git branch state: '+label);branch.setAttribute('aria-busy',String(label==='Loading branches…'));syncRemoteActions();if(['NO_PROJECT','LOADING','NO_VCS','UNTRUSTED'].includes(state))clearRepositoryContext();else status(description)};
+const restoreLoadedRepository=label=>{branchState=0;const branch=document.querySelector('#branchMenu');branch.hidden=false;branch.textContent='⑂ master⌄';branch.setAttribute('aria-label','Git branch state: master');branch.setAttribute('aria-busy','false');syncRemoteActions();selected=5;selectedRows=new Set([selected]);renderFiltered();updateCommitFiles(selected);status(label+'：已恢复 Git root 1（原型）')};
+document.querySelector('#productMenu').onclick=()=>showDemoMenu([['New project',()=>restoreLoadedRepository('New project')],['Open repository',()=>restoreLoadedRepository('Open repository')],['Preview Git states…',()=>showDemoMenu(branchStates.map(([label])=>[label,()=>setBranchState(branchStates.findIndex(item=>item[0]===label))]),document.querySelector('#productMenu'))],['Exit',()=>status('关闭仅在真实客户端执行')]],document.querySelector('#productMenu'));
+document.querySelector('#hamburger').onclick=()=>showDemoMenu([['Commit',()=>document.querySelector('#commitTab').click()],['Shelf',()=>document.querySelector('#shelfTab').click()],['Git Log',()=>document.querySelector('#log').click()]],document.querySelector('#hamburger'));
+document.querySelector('#repoMenu').onclick=()=>showDemoMenu([['rebased',()=>status('当前仓库：rebased')],['Open repository…',()=>restoreLoadedRepository('Open repository')],['Repository status',()=>status('仓库已加载 · Git root 1')]],document.querySelector('#repoMenu'));
+document.querySelector('#branchMenu').onclick=()=>{branchState=(branchState+1)%branchStates.length;const [label,description]=branchStates[branchState];const branch=document.querySelector('#branchMenu');branch.hidden=label==='No project';branch.textContent=(label==='master'?'⑂ master⌄':'⑂ '+label);branch.setAttribute('aria-label','Git branch state: '+label);branch.setAttribute('aria-busy',String(label==='Loading branches…'));const state=label==='No project'?'NO_PROJECT':label==='Loading branches…'?'LOADING':label==='No VCS'?'NO_VCS':label==='Untrusted project'?'UNTRUSTED':label==='2 Git roots'?'MULTI_ROOT':label.includes('↑')?'AHEAD_BEHIND':'SINGLE_ROOT';document.body.dataset.repositoryState=state;syncRemoteActions();if(['NO_PROJECT','LOADING','NO_VCS','UNTRUSTED'].includes(state))clearRepositoryContext();else status(description);if(label==='Loading branches…'||label==='No project')return;if(label==='No VCS'||label==='Untrusted project')showDemoMenu([[label,()=>status(description)],['Create Git Repository',()=>openProjectActionPreview('Create Git Repository')],['Trust Project',()=>openProjectActionPreview('Trust Project')]],branch);else if(label==='2 Git roots')showDemoMenu([['Select root: platform',()=>status('Git root：platform 已选择')],['Select root: plugins',()=>status('Git root：plugins 已选择')],['Open Git Branches…',()=>status('GitBranchesPopup：多仓库预览入口')],['Fetch all roots',openFetchPreview]],branch);else showDemoMenu([['Open Git Branches…',()=>status('GitBranchesPopup：预览入口')],['New Branch…',()=>openBranchActionPreview('New Branch','当前分支')],['Checkout…',()=>openBranchActionPreview('Checkout',label)],['Fetch',openFetchPreview]],branch)};
+document.querySelector('#branchMenu').oncontextmenu=event=>{event.preventDefault();const [label,description]=branchStates[branchState];if(label==='Loading branches…'||label==='No project'){status(description);return}if(label==='No VCS'||label==='Untrusted project'){showDemoMenu([['Create Git Repository',()=>openProjectActionPreview('Create Git Repository')],['Trust Project',()=>openProjectActionPreview('Trust Project')]],document.querySelector('#branchMenu'));return}if(label==='2 Git roots'){showDemoMenu([['Select Git root…',()=>status('Git root 选择：预览入口')],['Fetch all roots',openFetchPreview],['Compare roots',()=>status('Compare roots：预览入口')]],document.querySelector('#branchMenu'));return}showDemoMenu([['Checkout '+label,()=>openBranchActionPreview('Checkout',label)],['Compare with Current…',()=>openBranchActionPreview('Compare',label)],['New Branch from '+label+'…',()=>openBranchActionPreview('New Branch',label)],['Rename '+label+'…',()=>openBranchActionPreview('Rename',label)],['Delete '+label,()=>status('Delete '+label+'：受保护分支，原型未执行')]],document.querySelector('#branchMenu'))};
+document.querySelector('#updateProject').onclick=()=>openUpdatePreview();
+document.querySelector('#pushProject').onclick=()=>{openPushPreview()};
+document.querySelector('#updateProject').oncontextmenu=event=>{event.preventDefault();showDemoMenu([['Retry Update',()=>runOperation('Update','Update：已完成远程状态检查；原型未修改工作树')],['View last error',()=>{setRemoteResult('error','Update','当前原型未执行远程命令；真实实现需保留错误码和重试入口');status('Update 错误区：已保留错误结果与重试入口')}]],document.querySelector('#updateProject'))};
+document.querySelector('#pushProject').oncontextmenu=event=>{event.preventDefault();showDemoMenu([['Retry Push',()=>runOperation('Push','Push：待推送提交预览已生成；原型未访问远程仓库')],['View last error',()=>{setRemoteResult('error','Push','当前原型未执行远程命令；真实实现需保留远程拒绝原因和重试入口');status('Push 错误区：已保留远程拒绝结果与重试入口')}]],document.querySelector('#pushProject'))};
+document.querySelector('#searchAction').onclick=()=>document.querySelector('.search').focus();
+const settingsState={logLocation:'editor',outsideIdea:false,indexing:true};
+function applySettings(){
+  document.body.dataset.logLocation=settingsState.logLocation;
+  document.body.dataset.outsideIdea=String(settingsState.outsideIdea);
+  document.body.dataset.indexing=String(settingsState.indexing);
+  const historyPanel=document.querySelector('.history');
+  if(historyPanel)historyPanel.dataset.logLocation=settingsState.logLocation;
+  const logTab=document.querySelector('#log');
+  if(logTab) logTab.textContent='⑂ Log: HEAD · '+(settingsState.logLocation==='editor'?'Editor':'Tool Window');
+}
+function openSettingsMenu(){
+  const menuItems=[
+    [(settingsState.logLocation==='editor'?'✓ ':'')+'Log in editor',()=>{settingsState.logLocation='editor';applySettings();status('设置已选择：Git Log 显示在主编辑区域');window.setTimeout(openSettingsMenu,0)}],
+    [(settingsState.logLocation==='toolWindow'?'✓ ':'')+'Log in tool window',()=>{settingsState.logLocation='toolWindow';applySettings();status('设置已选择：Git Log 显示在底部工具窗口');window.setTimeout(openSettingsMenu,0)}],
+    [(settingsState.outsideIdea?'✓ ':'')+'Store project settings outside root',()=>{settingsState.outsideIdea=!settingsState.outsideIdea;status(settingsState.outsideIdea?'设置已选择：不在项目根目录创建 .idea':'设置已选择：允许项目根目录存储 .idea');window.setTimeout(openSettingsMenu,0)}],
+    [(settingsState.indexing?'✓ ':'')+'Enable indexing files for search',()=>{settingsState.indexing=!settingsState.indexing;status(settingsState.indexing?'设置已选择：启用项目文件索引':'设置已选择：关闭项目文件索引');window.setTimeout(openSettingsMenu,0)}]
+  ];
+  showDemoMenu(menuItems,document.querySelector('#settingsAction'));
+}
+document.querySelector('#settingsAction').onclick=openSettingsMenu;
+document.querySelector('#minimizeAction').onclick=()=>status('Minimize：仅真实窗口执行');
+document.querySelector('#maximizeAction').onclick=()=>status('Maximize：仅真实窗口执行');
+document.querySelector('#closeAction').onclick=()=>status('Close：原型不关闭浏览器页面');
+document.querySelector('#branchFilter').onclick=()=>showDemoMenu([['HEAD',()=>{activeBranch='HEAD';document.querySelector('#branchFilter').textContent='Branch: HEAD ×';renderFiltered();status('分支筛选：HEAD，已刷新提交列表')}],['master',()=>{activeBranch='master';document.querySelector('#branchFilter').textContent='Branch: master ×';renderFiltered();status('分支筛选：master，已刷新提交列表')}],['Clear branch filter',()=>{activeBranch='HEAD';document.querySelector('#branchFilter').textContent='Branch: HEAD ×';renderFiltered();status('已清除分支筛选，显示当前 HEAD')}]],document.querySelector('#branchFilter'));
+document.querySelector('#pathFilter').onclick=()=>showDemoMenu([['All paths',()=>{activePath='all';document.querySelector('#pathFilter').textContent='Paths⌄';renderFiltered();status('路径筛选：全部')}],['.github/workflows',()=>{activePath='.github/workflows';document.querySelector('#pathFilter').textContent='Paths: .github⌄';renderFiltered();status('路径筛选：.github/workflows')}],['src/org/jetbrains/intellij',()=>{activePath='src/org/jetbrains/intellij';document.querySelector('#pathFilter').textContent='Paths: src⌄';renderFiltered();status('路径筛选：src/org/jetbrains/intellij')}],['platform',()=>{activePath='platform';document.querySelector('#pathFilter').textContent='Paths: platform⌄';renderFiltered();status('路径筛选：platform')}]],document.querySelector('#pathFilter'));
+document.querySelector('#historyMenu').onclick=()=>showDemoMenu([['Show Details',()=>status('已显示提交详情')],['Refresh Log',()=>{renderFiltered();status('Log 已刷新 · 当前筛选和提交选择已保留')}],['File History'+(selectedFile?' · '+selectedFile:' · 需先选择文件'),()=>{if(!selectedFile){status('请先选择文件，再打开该文件历史');return}openFileHistory(selectedFile)}],['Open File History in New Tab'+(selectedFile?'':' · 需先选择文件'),()=>{if(!selectedFile){status('请先选择文件，再打开文件历史标签');return}openFileHistory(selectedFile,true);status('已在新历史标签打开 '+selectedFile)}]],document.querySelector('#historyMenu'));
+document.addEventListener('click',event=>{const menu=document.querySelector('#demoMenu');if(menu&&!menu.contains(event.target)&&event.target!==lastMenuAnchor&&!lastMenuAnchor?.contains?.(event.target))closeDemoMenu(true)});
+document.addEventListener('click',event=>{const item=event.target.closest('#demoMenu button');if(!item)return;const label=item.textContent||'';if(label.includes('Select root: platform')){selectedRoot='platform';status('Git root：platform 已选择')}else if(label.includes('Select root: plugins')){selectedRoot='plugins';status('Git root：plugins 已选择')}else return;if(branchState===5){const branch=document.querySelector('#branchMenu');branch.textContent='⑂ 2 Git roots · '+selectedRoot+'⌄';branch.setAttribute('aria-label','Git branch state: 2 Git roots, selected '+selectedRoot)}});
+document.addEventListener('keydown',event=>{if(event.key==='Escape')closeDemoMenu(true)});
+document.addEventListener('keydown',event=>{const menu=document.querySelector('#demoMenu');if(!menu||!['ArrowDown','ArrowUp'].includes(event.key))return;const buttons=[...menu.querySelectorAll('button')];if(!buttons.length)return;const current=buttons.indexOf(document.activeElement);const next=current<0?0:(current+(event.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length;buttons.forEach((button,index)=>button.tabIndex=index===next?0:-1);buttons[next].focus();event.preventDefault()});
+document.addEventListener('keydown',event=>{const menu=document.querySelector('#demoMenu');if(!menu||!['Home','End'].includes(event.key))return;const buttons=[...menu.querySelectorAll('button')];if(!buttons.length)return;const next=event.key==='Home'?0:buttons.length-1;buttons.forEach((button,index)=>button.tabIndex=index===next?0:-1);buttons[next].focus();event.preventDefault()});
+document.addEventListener('keydown',event=>{if(!['ArrowDown','ArrowUp'].includes(event.key)||document.querySelector('#rows').hidden||document.querySelector('#demoMenu'))return;const visible=[...document.querySelectorAll('#rows .row')];const current=visible.findIndex(item=>item.getAttribute('aria-pressed')==='true');const next=Math.max(0,Math.min(visible.length-1,current+(event.key==='ArrowDown'?1:-1)));if(visible[next]){visible[next].focus();visible[next].click();event.preventDefault()}});
+document.querySelector('#commitTab').onclick=()=>{document.querySelector('#commitTab').classList.add('selected');document.querySelector('#shelfTab').classList.remove('selected');document.querySelector('#shelfItems').hidden=true;document.querySelector('.message').hidden=false;status('Commit 工具窗口')};
+document.querySelector('#shelfTab').onclick=()=>{document.querySelector('#shelfTab').classList.add('selected');document.querySelector('#commitTab').classList.remove('selected');document.querySelector('#shelfItems').hidden=false;document.querySelector('.message').hidden=true;status('Shelf 工具窗口：已显示 1 个搁置项')};
+function refreshShelfCount(){const count=document.querySelectorAll('#shelfItems .file').length;const notice=document.querySelector('#shelfItems .notice');if(notice)notice.textContent='Shelf · '+count+' 个搁置项';status('Shelf：当前有 '+count+' 个搁置项')}
+function openShelfDiff(item){
+  logScrollTop=document.querySelector('#rows').scrollTop;document.querySelector('#rows').hidden=true;document.querySelector('#diff').hidden=false;document.querySelector('#diff').textContent='Shelf Diff　×';
+  const preview=document.querySelector('#preview');preview.hidden=false;preview.style.whiteSpace='normal';preview.replaceChildren();
+  const heading=document.createElement('strong');heading.textContent='Shelf Diff · '+item.textContent;preview.append(heading);
+  const note=document.createElement('p');note.className='muted';note.textContent='搁置内容预览 · 仅当前原型会话，不写入工作树';preview.append(note);
+  const body=document.createElement('pre');body.textContent='- 原工作区内容\n+ 搁置项内容\n\n可恢复后再提交或继续编辑。';preview.append(body);
+  const back=document.createElement('button');back.textContent='返回 Shelf';back.onclick=()=>{returnToLog();document.querySelector('#shelfTab').click()};preview.append(back);
+}
+document.querySelectorAll('#shelfItems .file').forEach(item=>item.onclick=()=>showDemoMenu([
+  ['Restore shelf',()=>{const label=document.createElement('label');label.className='file indent';label.innerHTML='<input type="checkbox" checked> '+item.textContent+' <span class="muted">restored</span>';document.querySelector('.files details')?.append(label);label.querySelector('input').addEventListener('change',()=>status('已选择 '+document.querySelectorAll('.files input:checked').length+' 个变更文件'));item.remove();refreshShelfCount();status('Shelf：已恢复 '+label.textContent.trim()+' 到 Changes（原型未写入工作树）')}],
+  ['Show diff',()=>openShelfDiff(item)],
+  ['Delete shelf',()=>{item.remove();refreshShelfCount();status('Shelf：已删除搁置项（原型未写入工作树）')}]
+],item));
+window.__rebasedPrototype={
+  getState:()=>({
+    repositoryState:document.body.dataset.repositoryState||'SINGLE_ROOT',
+    selectedRoot,
+    historyContext:document.body.dataset.historyContext||'LOG',
+    gitActionContracts:{...gitActionContracts},
+    branch:branchStates[branchState][0],
+    branchState,
+    selectedCommit:branchState===2?null:selected,
+    selectedCommits:[...selectedRows],
+    activeBranch,
+    snapshot:branchState===2?null:commitSnapshots[selected],
+    selectedFile,
+    remotePhase:document.body.dataset.remotePhase||'IDLE',
+    remoteResult:{...remoteResult},
+    commitResult:{...commitResult},
+    commitMode:document.body.dataset.commitMode||'DIRECT',
+    amend:amendInput.checked,
+    stagedFiles:stageInput.checked?[...document.querySelectorAll('.files input:checked')].map(input=>input.closest('label.file')?.textContent.trim()).filter(Boolean):[],
+    shelfCount:document.querySelectorAll('#shelfItems .file').length,
+    operationBusy,
+    logLocation:settingsState.logLocation,
+    indexing:settingsState.indexing,
+    outsideIdea:settingsState.outsideIdea
+    ,actionAvailability:{
+      update:{enabled:!operationBusy&&!['NO_PROJECT','LOADING','NO_VCS','UNTRUSTED'].includes(document.body.dataset.repositoryState),reason:operationBusy?'operation-busy':document.body.dataset.repositoryState||'SINGLE_ROOT'},
+      push:{enabled:!operationBusy&&!['NO_PROJECT','LOADING','NO_VCS','UNTRUSTED'].includes(document.body.dataset.repositoryState),reason:operationBusy?'operation-busy':document.body.dataset.repositoryState||'SINGLE_ROOT'},
+      fetch:{enabled:!operationBusy&&document.body.dataset.repositoryState!=='NO_PROJECT'&&document.body.dataset.repositoryState!=='LOADING',reason:operationBusy?'operation-busy':document.body.dataset.repositoryState||'SINGLE_ROOT'},
+      branch:{enabled:!operationBusy&&!['NO_PROJECT','LOADING'].includes(document.body.dataset.repositoryState),reason:operationBusy?'operation-busy':document.body.dataset.repositoryState||'SINGLE_ROOT'}
+    },
+    workflowVisible:!['NO_PROJECT','LOADING','NO_VCS','UNTRUSTED'].includes(document.body.dataset.repositoryState||'SINGLE_ROOT')
+    ,workflow:{action:document.body.dataset.workflowAction||'',target:document.body.dataset.workflowTarget||'',strategy:document.body.dataset.workflowStrategy||'',conflictFile:document.body.dataset.workflowConflictFile||'',result:document.body.dataset.workflowResult||'idle'}
+  })
+};
+syncCommitMode();
+applySettings();
+setRemoteResult('idle','','');
+renderFiltered();
+updateCommitFiles(selected);
+</script></html>

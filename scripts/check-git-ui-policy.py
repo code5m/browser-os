@@ -309,7 +309,13 @@ def detect_violations(files: dict[str, object]) -> list[str]:
         and activate_wires_git
         and ".getSurfaceContributions(CONTRIBUTION_SLOTS.REPO_SUBVIEW)" in repo
         and re.search(r'\.find\([^\n]*c.view === "git"\)\?\.component', repo)
-        and re.search(r'<component\s+:is="gitPanelComp"', repo)
+        and (
+            re.search(r'<component\s+:is="gitPanelComp"', repo)
+            or (
+                'const gitWorkspaceComp = computed' in repo
+                and re.search(r'<component\s+:is="gitWorkspaceComp"', repo)
+            )
+        )
     )
     if not re.search(r"<GitPanel\b", repo) and not contribution_mounted:
         violations.append("GIT_UI_NOT_MOUNTED")
@@ -337,7 +343,13 @@ def detect_violations(files: dict[str, object]) -> list[str]:
             )
             studio_adapter = path == "src/capabilities/git/ui/GitStudio.vue"
             studio_guard = unified and not studio_violations and text == studio
-            registered_operation = op in {"pull", "fetch", "merge", "rebase", "stash", "cherry_pick"}
+            reset_guard = (
+                op == "reset"
+                and "I_UNDERSTAND_HARD_RESET" in text
+                and "resetMode.value === 'hard'" in text
+                and "prepare('reset'" in text
+            )
+            registered_operation = op in {"pull", "fetch", "merge", "rebase", "stash", "cherry_pick"} or reset_guard
             if not ((local_adapter and op in {"pull", "fetch", "stash"} and local_guard)
                     or (studio_adapter and studio_guard and registered_operation)):
                 violations.append(f"GIT_UI_FORBIDDEN_OP: {path}")

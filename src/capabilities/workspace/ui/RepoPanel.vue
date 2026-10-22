@@ -1,49 +1,35 @@
 <script setup lang="ts">
 import { EmptyState } from "../../../shared/ui";
-import { computed, ref, onMounted, onUnmounted } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { currentLocalGitIntent, subscribeLocalGitIntent } from "../../../composables/gitLocalNavigation";
 import { useRepoStore } from "../state/useRepoStore";
-import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { contributionRegistry } from "../../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../../capability/contribution/types";
 
 const rp = useRepoStore();
-const layout = useLayoutStore();
-// M1-7：默认进「状态」Tab（Git UI）；「配置」仍是既有仓库配置表单（含 token 录入）。
-const tab = ref<"git" | "history" | "config">("git");
-// Workspace may navigate here before the lazy RepoPanel mounts.
+const preferHistory = ref(Boolean(currentLocalGitIntent()));
+const showConfig = ref(false);
 let unsubscribe=()=>{};
-onMounted(()=>{
-  if(currentLocalGitIntent())tab.value="history";
-  unsubscribe=subscribeLocalGitIntent(intent=>{if(intent)tab.value="history";});
-});
+onMounted(()=>{unsubscribe=subscribeLocalGitIntent(intent=>{preferHistory.value=Boolean(intent);});});
 onUnmounted(()=>unsubscribe());
 
-// Git 面板经通用 Contribution Registry 的 REPO_SUBVIEW 槽贡献：RepoPanel 只按槽渲染，
-// 不 import Git 能力内部（C3 关键，且避免 workspace→git 反向依赖环）。
-// Git absent（未注册/未 activate）→ 槽为空 → git 页签不渲染 GitPanel（能力模型一致）。
-// Git 面板经通用 Contribution Registry 的 REPO_SUBVIEW 槽贡献（git.repo.panel=状态页签 / git.repo.history=提交历史页签）。
-// RepoPanel 只按 view 认领渲染，不 import Git 能力内部（C3 关键，且避免 workspace→git 反向依赖环）。
-// Git absent（未注册/未 activate）→ 槽为空 → 对应页签不渲染（能力模型一致）。
+// Git 工作区经通用 Contribution Registry 的 REPO_SUBVIEW 槽贡献。
+// RepoPanel 只按 view 认领渲染，不 import Git 能力内部，避免 workspace→git 反向依赖环。
+// Git absent（未注册/未 activate）时槽为空，RepoPanel 仅保留仓库配置能力。
 const gitPanelComp = computed(() => contributionRegistry
   .getSurfaceContributions(CONTRIBUTION_SLOTS.REPO_SUBVIEW)
   .find((c) => c.view === "git")?.component)
 const gitHistoryComp = computed(() => contributionRegistry
   .getSurfaceContributions(CONTRIBUTION_SLOTS.REPO_SUBVIEW)
   .find((c) => c.view === "history")?.component)
+const gitWorkspaceComp = computed(() => preferHistory.value && gitHistoryComp.value ? gitHistoryComp.value : gitPanelComp.value || gitHistoryComp.value)
 </script>
 
 <template>
   <div class="side-inner">
-    <div class="tabs">
-      <button :class="{ active: tab === 'git' }" @click="tab = 'git'">🔀 状态</button>
-      <button :class="{ active: tab === 'history' }" @click="tab = 'history'">提交历史</button>
-      <button :class="{ active: tab === 'config' }" @click="tab = 'config'">⚙️ 仓库配置</button>
-      <button class="close" @click="layout.sidebarOpen = false">✕</button>
-    </div>
-    <component :is="gitPanelComp" v-if="tab === 'git' && gitPanelComp" />
-    <component :is="gitHistoryComp" v-else-if="tab === 'history' && gitHistoryComp" />
+    <component :is="gitWorkspaceComp" v-if="gitWorkspaceComp && !showConfig" @configure="showConfig = true" />
     <div v-else class="repo-panel">
+      <div v-if="gitWorkspaceComp" class="repo-config-header"><button @click="showConfig = false">← 返回 Git 工作台</button><strong>仓库配置</strong></div>
       <div class="form">
         <input v-model="rp.form.name" placeholder="仓库名" />
         <select v-model="rp.form.provider">
@@ -59,7 +45,7 @@ const gitHistoryComp = computed(() => contributionRegistry
           <button class="ghost" @click="rp.loadGiteeExample">码云示例</button>
         </div>
       </div>
-      <p class="git-hint">这里配置 Git 仓库并同步所选资产。Git 的提交和分支推送请使用「状态」页签。</p>
+      <p class="git-hint">这里配置 Git 仓库并同步所选资产。Git 提交、历史、分支与推送操作统一在 Git 工作台中完成。</p>
       <ul class="repo-list">
         <li v-for="r in rp.repos" :key="r.id" class="repo">
           <div>
@@ -73,3 +59,7 @@ const gitHistoryComp = computed(() => contributionRegistry
     </div>
   </div>
 </template>
+<style scoped>
+.repo-config-header{display:flex;align-items:center;gap:12px;margin:-2px -2px 12px;padding:8px 10px;border-bottom:1px solid var(--border,#dce4ed)}
+.repo-config-header button{border:1px solid var(--border,#c6d3e0);border-radius:5px;padding:5px 8px;background:var(--surface,#fff);color:inherit}
+</style>
