@@ -258,7 +258,7 @@ section("Git panel branch-selection regression");
 const { readFileSync } = await import("node:fs");
 const panelSource = readFileSync(ROOT + "src/capabilities/git/ui/GitPanel.vue", "utf8");
 ok(/import\s+GitStudio\s+from\s+["']\.\/GitStudio\.vue["']/.test(panelSource) &&
-   /<GitStudio\s*\//.test(panelSource),
+   /<GitStudio\s+mode="history"[^>]*\/>/.test(panelSource),
    "GitPanel delegates to the single production Git Studio owner");
 const studioSource = readFileSync(ROOT + "src/capabilities/git/ui/GitStudio.vue", "utf8");
 // The old branch dropdown became an explicit action target input. Preserve the

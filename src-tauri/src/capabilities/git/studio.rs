@@ -37,11 +37,13 @@ pub struct StudioInput {
     pub message: Option<String>,
     pub content: Option<String>,
     pub revision: Option<String>,
+    pub parent: Option<String>,
     pub other: Option<String>,
     pub search: Option<String>,
     pub author: Option<String>,
     pub offset: Option<u32>,
     pub staged: Option<bool>,
+    pub strategy: Option<String>,
     pub pr: Option<u32>,
     pub expected_fingerprint: Option<String>,
 }
@@ -141,6 +143,7 @@ fn check_file(root: &Path, relative: &str, allow_missing: bool) -> Result<PathBu
 struct Output {
     code: i32,
     text: String,
+    stderr: String,
 }
 fn process(
     root: &Path,
@@ -162,7 +165,7 @@ fn process(
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GH_PROMPT_DISABLED", "1")
         .env("GIT_PAGER", "cat")
@@ -187,6 +190,7 @@ fn process(
         .spawn()
         .map_err(|_| format!("GIT_STUDIO_{}_UNAVAILABLE", program.to_uppercase()))?;
     let stdout = child.stdout.take().ok_or("GIT_STUDIO_PIPE_FAILED")?;
+    let stderr = child.stderr.take().ok_or("GIT_STUDIO_PIPE_FAILED")?;
     let overflow = Arc::new(AtomicBool::new(false));
     let of = overflow.clone();
     let reader = thread::spawn(move || {
@@ -201,6 +205,25 @@ fn process(
                     kept.extend_from_slice(&buffer[..count]);
                     if count < n {
                         of.store(true, Ordering::Relaxed);
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        kept
+    });
+    let error_reader = thread::spawn(move || {
+        let mut stderr = stderr;
+        let mut kept = Vec::new();
+        let mut buffer = [0u8; 8192];
+        loop {
+            match stderr.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let count = n.min(OUTPUT_CAP.saturating_sub(kept.len()));
+                    kept.extend_from_slice(&buffer[..count]);
+                    if count < n {
+                        break;
                     }
                 }
                 Err(_) => break,
@@ -238,6 +261,9 @@ fn process(
         let _ = writer.join();
     }
     let bytes = reader.join().map_err(|_| "GIT_STUDIO_READER_FAILED")?;
+    let error_bytes = error_reader
+        .join()
+        .map_err(|_| "GIT_STUDIO_READER_FAILED")?;
     if overflow.load(Ordering::Relaxed) {
         return Err("GIT_STUDIO_OUTPUT_LIMIT".into());
     }
@@ -245,9 +271,11 @@ fn process(
         return Err("GIT_STUDIO_INTERRUPTED_CHECK_REPOSITORY_STATE".into());
     }
     let text = String::from_utf8(bytes).map_err(|_| "GIT_STUDIO_NON_UTF8_OUTPUT".to_string())?;
+    let stderr = String::from_utf8_lossy(&error_bytes).trim().to_string();
     Ok(Output {
         code: status.code().unwrap_or(-1),
         text,
+        stderr,
     })
 }
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
@@ -641,6 +669,30 @@ fn read(root: &Path, input: &StudioInput) -> Result<Value, String> {
                 return Err("GIT_STUDIO_LOG_FAILED".into());
             }
             let mut entries=out.text.split('\x1e').filter(|r|!r.trim().is_empty()).map(|r|{let parts=r.trim_start_matches('\n').splitn(5,'\x1f').collect::<Vec<_>>();if parts.len()!=5{return Err("GIT_STUDIO_LOG_FORMAT".to_string());}Ok(json!({"oid":parts[0],"parents":parts[1].split_whitespace().collect::<Vec<_>>(),"author":parts[2],"time":parts[3].parse::<i64>().unwrap_or(0),"summary":parts[4]}))}).collect::<Result<Vec<_>,String>>()?;
+            let ref_output = git(
+                root,
+                &[
+                    "for-each-ref",
+                    "--format=%(objectname)%x1f%(refname:short)",
+                    "refs/heads",
+                    "refs/remotes",
+                ],
+            )?;
+            let mut refs_by_oid: HashMap<String, Vec<String>> = HashMap::new();
+            for line in ref_output.lines() {
+                let mut parts = line.splitn(2, '\x1f');
+                if let (Some(oid), Some(name)) = (parts.next(), parts.next()) {
+                    refs_by_oid
+                        .entry(oid.to_string())
+                        .or_default()
+                        .push(name.to_string());
+                }
+            }
+            for entry in &mut entries {
+                if let Some(oid) = entry.get("oid").and_then(Value::as_str) {
+                    entry["refs"] = json!(refs_by_oid.get(oid).cloned().unwrap_or_default());
+                }
+            }
             let more = entries.len() > 50;
             entries.truncate(50);
             Ok(json!({"commits":entries,"has_more":more}))
@@ -651,9 +703,45 @@ fn read(root: &Path, input: &StudioInput) -> Result<Value, String> {
                 root,
                 input.other.as_deref().ok_or("GIT_STUDIO_COMPARE_TARGET")?,
             )?;
-            Ok(
-                json!({"before":before,"after":after,"patch":git(root,&["diff","--no-ext-diff","--no-textconv",&before,&after,"--"])?}),
-            )
+            let mut diff_args = vec![
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                before.as_str(),
+                after.as_str(),
+                "--",
+            ];
+            for path in &input.paths {
+                safe_path(path)?;
+                diff_args.push(path);
+            }
+            let patch = git(root, &diff_args)?;
+            let mut name_args = vec![
+                "diff",
+                "--name-status",
+                before.as_str(),
+                after.as_str(),
+                "--",
+            ];
+            for path in &input.paths {
+                safe_path(path)?;
+                name_args.push(path);
+            }
+            let names = git(root, &name_args)?;
+            let files = names
+                .lines()
+                .filter_map(|line| {
+                    let mut parts = line.splitn(2, '\t');
+                    let status = parts.next()?.trim();
+                    let path = parts.next()?.trim();
+                    if path.is_empty() {
+                        None
+                    } else {
+                        Some(json!({"status":status,"path":path}))
+                    }
+                })
+                .collect::<Vec<_>>();
+            Ok(json!({"before":before,"after":after,"patch":patch,"files":files}))
         }
         "commit_diff" => {
             let revision = oid(
@@ -667,7 +755,10 @@ fn read(root: &Path, input: &StudioInput) -> Result<Value, String> {
                 json!({"patch":git(root,&["show","--format=fuller","--no-ext-diff","--no-textconv",&revision,"--"])?}),
             )
         }
-        "commit_files" | "commit_file_diff" | "commit_file_worktree_diff" => {
+        "commit_files"
+        | "commit_file_diff"
+        | "commit_file_worktree_diff"
+        | "commit_file_content" => {
             let revision = oid(
                 root,
                 input
@@ -676,22 +767,26 @@ fn read(root: &Path, input: &StudioInput) -> Result<Value, String> {
                     .ok_or("GIT_STUDIO_REVISION_REQUIRED")?,
             )?;
             let lineage = git(root, &["rev-list", "--parents", "-n", "1", &revision])?;
-            let parent = lineage.split_whitespace().nth(1);
+            let parents = lineage.split_whitespace().skip(1).collect::<Vec<_>>();
+            let parent = input
+                .parent
+                .as_deref()
+                .map(|candidate| {
+                    if parents.iter().any(|value| *value == candidate) {
+                        Ok(candidate)
+                    } else {
+                        Err("GIT_STUDIO_PARENT_NOT_FOUND")
+                    }
+                })
+                .transpose()?
+                .or_else(|| parents.first().copied());
             if input.action == "commit_files" {
                 // Names are NUL-delimited: filenames may contain tabs/newlines.
                 // Disable rename coalescing so every record is status + one path.
                 let records = if let Some(parent) = parent {
                     git(
                         root,
-                        &[
-                            "diff",
-                            "--name-status",
-                            "--no-renames",
-                            "-z",
-                            parent,
-                            &revision,
-                            "--",
-                        ],
+                        &["diff", "--name-status", "-z", parent, &revision, "--"],
                     )?
                 } else {
                     git(
@@ -702,7 +797,6 @@ fn read(root: &Path, input: &StudioInput) -> Result<Value, String> {
                             "--no-commit-id",
                             "--name-status",
                             "-r",
-                            "--no-renames",
                             "-z",
                             &revision,
                             "--",
@@ -713,15 +807,77 @@ fn read(root: &Path, input: &StudioInput) -> Result<Value, String> {
                     .split('\0')
                     .filter(|value| !value.is_empty())
                     .collect::<Vec<_>>();
-                if parts.len() % 2 != 0 || parts.len() / 2 > FILE_CAP {
+                if parts.len() > FILE_CAP * 3 {
                     return Err("GIT_STUDIO_COMMIT_FILES_FORMAT".into());
                 }
                 let mut files = Vec::new();
-                for entry in parts.chunks_exact(2) {
-                    safe_path(entry[1])?;
-                    files.push(json!({"status":entry[0],"path":entry[1]}));
+                let mut index = 0;
+                while index < parts.len() {
+                    let status = parts[index];
+                    index += 1;
+                    let is_rename_or_copy = status.starts_with('R') || status.starts_with('C');
+                    let previous = if is_rename_or_copy {
+                        let value = parts.get(index).ok_or("GIT_STUDIO_COMMIT_FILES_FORMAT")?;
+                        index += 1;
+                        Some(*value)
+                    } else {
+                        None
+                    };
+                    let path = *parts.get(index).ok_or("GIT_STUDIO_COMMIT_FILES_FORMAT")?;
+                    index += 1;
+                    safe_path(path)?;
+                    if let Some(previous) = previous {
+                        safe_path(previous)?;
+                        files.push(json!({"status":status,"path":path,"previous_path":previous}));
+                    } else {
+                        files.push(json!({"status":status,"path":path}));
+                    }
+                    if files.len() > FILE_CAP {
+                        return Err("GIT_STUDIO_COMMIT_FILES_FORMAT".into());
+                    }
                 }
-                Ok(json!({"revision":revision,"files":files,"first_parent":parent}))
+                Ok(
+                    json!({"revision":revision,"files":files,"parents":parents,"selected_parent":parent}),
+                )
+            } else if input.action == "commit_file_content" {
+                let file = selected.ok_or("GIT_STUDIO_SELECT_FILE")?;
+                safe_path(file)?;
+                // A deleted file is still a valid item in a commit's file list.  It
+                // must remain inspectable through its patch instead of making the
+                // whole UI selection fail just because this revision has no blob.
+                let repo =
+                    git2::Repository::open(root).map_err(|_| "GIT_STUDIO_REPOSITORY_MISSING")?;
+                let commit = repo
+                    .find_commit(
+                        git2::Oid::from_str(&revision)
+                            .map_err(|_| "GIT_STUDIO_REVISION_INVALID")?,
+                    )
+                    .map_err(|_| "GIT_STUDIO_REVISION_INVALID")?;
+                let content = match commit
+                    .tree()
+                    .and_then(|tree| tree.get_path(Path::new(file)))
+                {
+                    Ok(entry) => {
+                        let blob = repo
+                            .find_blob(entry.id())
+                            .map_err(|_| "GIT_STUDIO_BLOB_READ")?;
+                        if blob.size() > TEXT_CAP || blob.is_binary() {
+                            return Ok(
+                                json!({"revision":revision,"path":file,"content":"","available":false,"reason":"binary_or_too_large","mode":input.action}),
+                            );
+                        }
+                        String::from_utf8(blob.content().to_vec())
+                            .map_err(|_| "GIT_STUDIO_BINARY_FILE")?
+                    }
+                    Err(_) => {
+                        return Ok(
+                            json!({"revision":revision,"path":file,"content":"","available":false,"reason":"deleted_in_revision","mode":input.action}),
+                        );
+                    }
+                };
+                Ok(
+                    json!({"revision":revision,"path":file,"content":content,"available":true,"mode":input.action}),
+                )
             } else {
                 let file = selected.ok_or("GIT_STUDIO_SELECT_FILE")?;
                 safe_path(file)?;
@@ -766,7 +922,9 @@ fn read(root: &Path, input: &StudioInput) -> Result<Value, String> {
                         ],
                     )?
                 };
-                Ok(json!({"revision":revision,"path":file,"patch":patch,"mode":input.action}))
+                Ok(
+                    json!({"revision":revision,"path":file,"patch":patch,"mode":input.action,"parents":parents,"selected_parent":parent}),
+                )
             }
         }
 
@@ -800,8 +958,20 @@ fn read(root: &Path, input: &StudioInput) -> Result<Value, String> {
             if snapshot(root)? != basis {
                 return Err("GIT_STUDIO_READ_BASIS_CHANGED".into());
             }
+            let ours_lines: Vec<&str> = versions[1].split('\n').collect();
+            let theirs_lines: Vec<&str> = versions[2].split('\n').collect();
+            let hunk_count = ours_lines.len().max(theirs_lines.len());
+            let hunks: Vec<Value> = (0..hunk_count)
+                .filter_map(|index| {
+                    let ours = ours_lines.get(index).copied().unwrap_or("");
+                    let theirs = theirs_lines.get(index).copied().unwrap_or("");
+                    (ours != theirs)
+                        .then(|| json!({"index": index, "ours": ours, "theirs": theirs}))
+                })
+                .take(200)
+                .collect();
             Ok(
-                json!({"path":path,"ancestor":versions[0],"ours":versions[1],"theirs":versions[2],"fingerprint":basis}),
+                json!({"path":path,"ancestor":versions[0],"ours":versions[1],"theirs":versions[2],"hunks":hunks,"fingerprint":basis}),
             )
         }
         "blame" => Ok(
@@ -867,6 +1037,12 @@ fn validate(root: &Path, input: &StudioInput) -> Result<Option<String>, String> 
         return Err("GIT_STUDIO_INPUT_LIMIT".into());
     }
     match action {
+        "init" => {
+            if root.join(".git").exists() {
+                return Err("GIT_STUDIO_REPOSITORY_ALREADY_EXISTS".into());
+            }
+            Ok(None)
+        }
         "stage" | "unstage" | "discard" | "commit" | "amend" | "index_edit" => {
             for p in paths(input)? {
                 check_file(root, &p, true)?;
@@ -904,10 +1080,34 @@ fn validate(root: &Path, input: &StudioInput) -> Result<Option<String>, String> 
             branch(root, target)?;
             Ok(None)
         }
-        "fetch" | "pull" | "push" => {
+        "tag_create" => {
+            is_clean(root)?;
+            if target.is_empty()
+                || target.len() > 240
+                || git(root, &["check-ref-format", &format!("refs/tags/{target}")]).is_err()
+            {
+                return Err("GIT_STUDIO_TAG_INVALID".into());
+            }
+            if git(
+                root,
+                &["rev-parse", "--verify", &format!("refs/tags/{target}")],
+            )
+            .is_ok()
+            {
+                return Err("GIT_STUDIO_TAG_EXISTS".into());
+            }
+            let revision = input.revision.as_deref().unwrap_or("HEAD");
+            Ok(Some(oid(root, revision)?))
+        }
+        "fetch" | "pull" | "update" | "push" => {
             origin(root)?;
-            if action == "pull" {
+            if action == "pull" || action == "update" {
                 is_clean(root)?;
+                if let Some(strategy) = input.strategy.as_deref() {
+                    if !["Merge", "Rebase", "Fast-forward only"].contains(&strategy) {
+                        return Err("GIT_STUDIO_UPDATE_STRATEGY_INVALID".into());
+                    }
+                }
             }
             if action == "push" {
                 let repo =
@@ -928,6 +1128,30 @@ fn validate(root: &Path, input: &StudioInput) -> Result<Option<String>, String> 
                 return Err("GIT_STUDIO_PUBLISHED_REBASE_DENIED".into());
             }
             Ok(Some(oid(root, target)?))
+        }
+        "revert" => {
+            is_clean(root)?;
+            let commit = oid(root, target)?;
+            let parents = git(root, &["rev-list", "--parents", "-n", "1", &commit])?;
+            if parents.split_whitespace().count() > 2 {
+                return Err("GIT_STUDIO_REVERT_MERGE_PARENT_REQUIRED".into());
+            }
+            Ok(Some(commit))
+        }
+        "reset" => {
+            let mode = input.other.as_deref().unwrap_or("mixed");
+            if !["soft", "mixed", "hard"].contains(&mode) {
+                return Err("GIT_STUDIO_RESET_MODE_INVALID".into());
+            }
+            let commit = oid(root, target)?;
+            if mode == "hard" {
+                // Hard reset is deliberately explicit; the confirmation ticket still
+                // pins the repository fingerprint before execution.
+                if input.message.as_deref().unwrap_or("") != "I_UNDERSTAND_HARD_RESET" {
+                    return Err("GIT_STUDIO_HARD_RESET_ACK_REQUIRED".into());
+                }
+            }
+            Ok(Some(commit))
         }
         "merge_continue"
         | "merge_abort"
@@ -1019,6 +1243,7 @@ fn execute(
     let message = input.message.as_deref().unwrap_or("");
     let selected = input.paths.clone();
     let (program, mut args) = match input.action.as_str() {
+        "init" => ("git", vec!["init".into()]),
         "stage" => ("git", vec!["add".into(), "--".into()]),
         "unstage" => (
             "git",
@@ -1035,8 +1260,24 @@ fn execute(
         "branch_create" => ("git", vec!["branch".into(), target.into()]),
         "branch_delete" => ("git", vec!["branch".into(), "-d".into(), target.into()]),
         "checkout" => ("git", vec!["switch".into(), target.into()]),
+        "tag_create" => (
+            "git",
+            vec![
+                "tag".into(),
+                target.into(),
+                pin.ok_or("GIT_STUDIO_PIN_MISSING")?.into(),
+            ],
+        ),
         "fetch" => ("git", vec!["fetch".into(), "origin".into()]),
-        "pull" => ("git", vec!["pull".into(), "--ff-only".into()]),
+        "pull" | "update" => {
+            let strategy = input.strategy.as_deref().unwrap_or("Fast-forward only");
+            let flag = match strategy {
+                "Merge" => "--no-rebase",
+                "Rebase" => "--rebase",
+                _ => "--ff-only",
+            };
+            ("git", vec!["pull".into(), flag.into()])
+        }
         "push" => ("git", vec!["push".into(), "origin".into(), "HEAD".into()]),
         "merge" => (
             "git",
@@ -1057,6 +1298,25 @@ fn execute(
                 pin.ok_or("GIT_STUDIO_PIN_MISSING")?.into(),
             ],
         ),
+        "revert" => (
+            "git",
+            vec![
+                "revert".into(),
+                "--no-edit".into(),
+                pin.ok_or("GIT_STUDIO_PIN_MISSING")?.into(),
+            ],
+        ),
+        "reset" => {
+            let mode = input.other.as_deref().unwrap_or("mixed");
+            (
+                "git",
+                vec![
+                    "reset".into(),
+                    format!("--{mode}"),
+                    pin.ok_or("GIT_STUDIO_PIN_MISSING")?.into(),
+                ],
+            )
+        }
         "merge_continue" => ("git", vec!["merge".into(), "--continue".into()]),
         "merge_abort" => ("git", vec!["merge".into(), "--abort".into()]),
         "rebase_continue" => ("git", vec!["rebase".into(), "--continue".into()]),
@@ -1201,7 +1461,7 @@ fn execute(
         .map(|r| format!("{:?}", r.state()))
         .unwrap_or_else(|_| "Unknown".into());
     Ok(
-        json!({"success":output.code==0,"exit_code":output.code,"state":state,"action":input.action,"recovery_required":output.code!=0,"message":if output.code==0{"GIT_STUDIO_COMPLETED"}else{"GIT_STUDIO_FAILED_INSPECT_STATE"}}),
+        json!({"success":output.code==0,"exit_code":output.code,"state":state,"action":input.action,"recovery_required":output.code!=0,"message":if output.code==0{"GIT_STUDIO_COMPLETED"}else if output.stderr.is_empty(){"GIT_STUDIO_FAILED_INSPECT_STATE"}else{output.stderr.as_str()}}),
     )
 }
 fn write_index(root: &Path, path: &str, contents: &str) -> Result<Value, String> {
@@ -1455,6 +1715,72 @@ mod tests {
         }
         assert!(safe_path("src/a b.txt").is_ok());
     }
+    #[test]
+    fn process_preserves_git_stderr_for_failed_operations() {
+        let root = std::env::temp_dir();
+        let output = process(
+            &root,
+            "git",
+            &["--definitely-invalid-browseros-option".into()],
+            None,
+            None,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_ne!(output.code, 0);
+        assert!(!output.stderr.is_empty());
+    }
+    #[test]
+    fn reset_requires_valid_mode_and_explicit_hard_ack() {
+        let root = fixture();
+        let head = git(&root, &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        for mode in ["soft", "mixed"] {
+            let input = StudioInput {
+                action: "reset".into(),
+                target: Some(head.clone()),
+                other: Some(mode.into()),
+                ..Default::default()
+            };
+            assert!(validate(&root, &input).is_ok());
+        }
+        let hard = StudioInput {
+            action: "reset".into(),
+            target: Some(head.clone()),
+            other: Some("hard".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            validate(&root, &hard).unwrap_err(),
+            "GIT_STUDIO_HARD_RESET_ACK_REQUIRED"
+        );
+        let invalid = StudioInput {
+            action: "reset".into(),
+            target: Some(head),
+            other: Some("unsafe".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            validate(&root, &invalid).unwrap_err(),
+            "GIT_STUDIO_RESET_MODE_INVALID"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn init_rejects_existing_repository() {
+        let root = fixture();
+        let input = StudioInput {
+            action: "init".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            validate(&root, &input).unwrap_err(),
+            "GIT_STUDIO_REPOSITORY_ALREADY_EXISTS"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
     fn fixture() -> PathBuf {
         let path = std::env::temp_dir().join(format!("browseros-studio-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&path).unwrap();
@@ -1494,6 +1820,47 @@ mod tests {
         )
         .unwrap();
         assert!(diff["patch"].as_str().unwrap().contains("+one"));
+        let content = read(
+            &root,
+            &StudioInput {
+                action: "commit_file_content".into(),
+                revision: Some(initial.clone()),
+                paths: vec!["a.txt".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(content["content"], "one\n");
+        fs::remove_file(root.join("b.txt")).unwrap();
+        git(&root, &["add", "--", "b.txt"]).unwrap();
+        git(&root, &["commit", "-m", "remove b"]).unwrap();
+        let deleted = git(&root, &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        let deleted_content = read(
+            &root,
+            &StudioInput {
+                action: "commit_file_content".into(),
+                revision: Some(deleted.clone()),
+                paths: vec!["b.txt".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(deleted_content["available"], false);
+        assert_eq!(deleted_content["reason"], "deleted_in_revision");
+        let deleted_diff = read(
+            &root,
+            &StudioInput {
+                action: "commit_file_diff".into(),
+                revision: Some(deleted),
+                paths: vec!["b.txt".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(deleted_diff["patch"].as_str().unwrap().contains("-two"));
         fs::write(root.join("a.txt"), "changed in worktree\n").unwrap();
         let compare = read(
             &root,
@@ -1520,6 +1887,57 @@ mod tests {
         assert_ne!(a, b);
         fs::write(root.join("a.txt"), "changed again\n").unwrap();
         assert_ne!(b, snapshot(&root).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn conflict_read_returns_explicit_hunk_metadata() {
+        let root = fixture();
+        git(&root, &["branch", "-M", "base"]).unwrap();
+        fs::write(root.join("a.txt"), "base change\n").unwrap();
+        git(&root, &["add", "--", "a.txt"]).unwrap();
+        git(&root, &["commit", "-m", "base change"]).unwrap();
+        git(&root, &["switch", "-c", "incoming"]).unwrap();
+        fs::write(root.join("a.txt"), "incoming change\n").unwrap();
+        git(&root, &["add", "--", "a.txt"]).unwrap();
+        git(&root, &["commit", "-m", "incoming change"]).unwrap();
+        git(&root, &["switch", "base"]).unwrap();
+        fs::write(root.join("a.txt"), "local change\n").unwrap();
+        git(&root, &["add", "--", "a.txt"]).unwrap();
+        git(&root, &["commit", "-m", "local change"]).unwrap();
+        assert!(git(&root, &["merge", "incoming"]).is_err());
+        let result = read(
+            &root,
+            &StudioInput {
+                action: "conflict".into(),
+                paths: vec!["a.txt".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let hunks = result["hunks"].as_array().unwrap();
+        assert!(!hunks.is_empty());
+        assert!(hunks[0]["index"].is_number());
+        assert_eq!(hunks[0]["ours"], "local change");
+        assert_eq!(hunks[0]["theirs"], "incoming change");
+        let resolved = StudioInput {
+            action: "resolve".into(),
+            paths: vec!["a.txt".into()],
+            content: Some("resolved change\n".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            execute(&root, &resolved, None, &AtomicBool::new(false)).unwrap()["success"],
+            true
+        );
+        assert!(!status(&root)
+            .unwrap()
+            .iter()
+            .any(|entry| entry["path"] == "a.txt" && entry["conflicted"] == true));
+        assert_eq!(
+            fs::read_to_string(root.join("a.txt")).unwrap(),
+            "resolved change\n"
+        );
+        git(&root, &["merge", "--abort"]).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
     fn assert_in_progress_commit_is_safe(operation: &str, continuation: &str, parents: usize) {

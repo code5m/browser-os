@@ -1,0 +1,25 @@
+/* Palette sampled visually from the upstream screenshot; BrowserOS retains its layout. */
+:root {
+  color-scheme: dark;
+  --bg:#242629; --surface:#191b1d; --panel:#191b1d; --text:#bfc5cf;
+  --sub:#818a98; --line:#303339; --split:#292c31; --blue:#548be0;
+  --blue-bg:#294775; --add:#233c2d; --del:#43292e;
+}
+body,.shell {background:#242629;color:#bfc5cf;box-shadow:none}
+.appbar,.tabs,.toolbar {background:#242629;border-color:#303339}
+.commit-detail,.branches,.history,.editor,.editor-body,.changes-files,
+.changes-editor,.conflict-workspace,.conflict-pane {background:#191b1d;color:#bfc5cf}
+button,input,select,textarea,.search,.branch-ops input {
+  background:#1e2023;color:#bfc5cf;border-color:#41454c;
+}
+button:hover {background:#34383f}
+.editor-head,.conflict-head,.diff header,.context-bar {background:#202225;border-color:#303339}
+.branch-row.active,.file-row.active,.commit-row.active {background:#294775;color:#d2e2fc}
+.notice,.choice {background:#282b30;color:#a7b0bf;border-color:#41454c}
+.muted,.section-title,.branch-group {color:#9099a8}
+.diff .old,.removed {background:#43292e}
+.diff .new,.added {background:#233c2d}
+.status,.footer {background:#242629;color:#a7b0bf}
+.setting-grid>* {background:#191b1d;color:#bfc5cf;border-color:#41454c}
+.empty {background:#191b1d;color:#9099a8}
+.rebase-panel {background:#202225!important;color:#bfc5cf}

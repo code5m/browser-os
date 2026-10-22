@@ -6,4 +6,4 @@ const local = ref(currentLocalGitIntent());
 const stop = subscribeLocalGitIntent(intent => { local.value = intent; });
 onUnmounted(stop);
 </script>
-<template><GitStudio :path="local?.path" :mode="local?.mode || 'history'" :close-label="local ? '返回配置仓库' : undefined" @close="clearLocalGitIntent()" /></template>
+<template><GitStudio :path="local?.path" :mode="local?.mode || 'history'" :close-label="local ? '返回 Git 工作台' : undefined" @close="clearLocalGitIntent()" /></template>
