@@ -10,7 +10,9 @@ export async function discoverIdeaProjects(roots, io, stopped = () => false) {
     .slice(0, 12).map(path => ({path:(path.endsWith('/') && path.length > 1 ? path.slice(0,-1) : path) || '/', depth:0}));
   const seen = new Set(), results = [], errors = [];
   let scanned = 0;
-  const MAX_DIRS = 180, MAX_DEPTH = 5, MAX_SOURCES = 128;
+  // IDEA projects are often nested below Documents/ProjectNoChinese/<repo>/<module>.
+  // Keep the scan bounded, but do not stop before ordinary 4-6 level project roots.
+  const MAX_DIRS = 1200, MAX_DEPTH = 8, MAX_SOURCES = 128;
   while (queue.length && scanned < MAX_DIRS && results.length < MAX_SOURCES) {
     if (stopped()) break;
     const {path,depth} = queue.shift();

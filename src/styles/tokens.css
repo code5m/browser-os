@@ -13,6 +13,13 @@
  * ==========================================================================*/
 
 :root {
+  --chrome-frame:#e8eaed;
+  --chrome-toolbar:#fff;
+  --chrome-address:#f1f3f4;
+  --chrome-text:#3c4043;
+  --chrome-muted:#70757a;
+  --chrome-border:#dadce0;
+  --chrome-hover:#e8eaed;
   /* 表面 */
   --ui-surface: #fff;
 
@@ -26,4 +33,19 @@
   /* 交互态 */
   --ui-hover-bg: #eef3ff;
   --ui-danger-bg: #ffeaea;
+}
+:root[data-theme="dark"] {
+  --chrome-frame:#202124;
+  --chrome-toolbar:#292a2d;
+  --chrome-address:#202124;
+  --chrome-text:#e8eaed;
+  --chrome-muted:#9aa0a6;
+  --chrome-border:#45464a;
+  --chrome-hover:#3c4043;
+  --ui-surface: #1d222a;
+  --ui-text: #d7e0ec;
+  --ui-text-muted: #9aa8b8;
+  --ui-danger: #ff9b9b;
+  --ui-hover-bg: #30445f;
+  --ui-danger-bg: #482b32;
 }

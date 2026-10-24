@@ -51,7 +51,7 @@ function onTargetChange() {
 <template>
   <div v-if="tasks.editorOpen" class="modal-mask" @click.self="tasks.closeEditor()">
     <div class="modal task-editor">
-      <h3>{{ tasks.draft.id ? "编辑定时任务" : "新建定时任务" }}</h3>
+      <div class="editor-head"><div><div class="eyebrow">TASK CONFIGURATION</div><h3>{{ tasks.draft.id ? "编辑定时任务" : "新建定时任务" }}</h3><p class="subtitle">定义执行目标、计划和失败后的处理方式</p></div><button class="close" @click="tasks.closeEditor()">×</button></div>
 
       <label class="field">
         <span>任务名</span>
@@ -195,7 +195,13 @@ function onTargetChange() {
   max-width: 92vw;
   max-height: 86vh;
   overflow: auto;
+  padding: 20px 22px;
+  border: 1px solid #d7e3ef;
+  border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(22, 45, 70, .22);
+  background: #fbfdff;
 }
+.editor-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;border-bottom:1px solid #e1e9f1;padding-bottom:12px;margin-bottom:8px}.editor-head h3{margin:0;font-size:19px;color:#243b53}.eyebrow{font-size:10px;letter-spacing:.12em;color:#7890a8}.subtitle{margin:4px 0 0;color:#708397;font-size:12px}.close{border:0;background:transparent;font-size:22px;padding:0 4px;color:#718196}
 .field {
   display: flex;
   flex-direction: column;

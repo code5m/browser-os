@@ -3,14 +3,14 @@
 > 迁移自 `src-tauri/src/database.rs`（Native Physical Boundary Matrix Pilot 8）。
 > 分类：**CAPABILITY_NATIVE(database)**（矩阵 §2.3；target `src-tauri/src/capabilities/database/`）。
 > 对照矩阵：`docs/architecture/native-physical-boundary/NATIVE-PHYSICAL-BOUNDARY-MATRIX.md` §2.3 / §8.10。
-> 同级 TS 能力：`src/capabilities/database/`（成熟度 C1，命令接线仍经 `bridge.ts`）。
-> 注意：本模块是**数据库运行时基座**（M4-2 Lane A3），**无 `#[tauri::command]`**；db 命令体在 `bridge.rs`。
+> 同级 TS 能力：`src/capabilities/database/`（命令经 `bridge.ts` 接线）。
+> 注意：本模块包含数据库运行时基座；命令实现位于同目录 `commands.rs` / `studio.rs`，统一由 `main.rs` 注册。
 
 ## 1. DDD 职责（Domain Responsibility）
 
 数据库运行时基座（与 `domain.rs` 的 `DbConnectionConfig`/`DbErrorCode`/`DbSslMode`/`SupportedDb` 协同）：
 
-- 连接池：`DbPool`（同步 `rusqlite` bundled + `mysql` + `postgres` stub）。
+- 连接池：`DbPool`（同步 `rusqlite` bundled + `mysql` + `postgres` 驱动）。
 - 取消：`QueryCancel`（L1/L2/L3 取消三层，参考 M4-1.c）。
 - 凭据：`credential_key(conn_id)` + `DB_CRED_PREFIX = "db:"`（键 `db:<conn_id>`，只经 `KeyringStore`，绝不落 DSN）。
 - 错误：`DbErrorCode`（18 码闭合）+ `sanitize_message`（出模块前脱敏）。
@@ -19,21 +19,21 @@
 
 ## 2. 边界（Boundary / Non-Responsibility）
 
-- **不含任何 `#[tauri::command]`**：db 命令（`db_query`/`db_connect`/`db_disconnect` 等）命令体在 `bridge.rs`（`bridge::db_query` 等），本模块只提供 `DbPool`/`QueryCancel` 基座。
+- 命令实现与运行时基座同属 database capability；`commands.rs` 负责连接/查询注册命令，`studio.rs` 负责有状态会话命令。
 - **不做 SQL 风险分类 / 生产判定**：落 `security_policy.rs`（零 db 依赖）。
 - **不引入 `tokio` 直接依赖** / 不自建 async runtime / 禁 JDBC 侧车。
-- **不伪造能力**：MySQL/Postgres 取数通道与 TLS **未实现** → 一律显式 `DB_NOT_SUPPORTED`，禁止静默失败 / 假装有能力。
+- **不伪造能力**：SQLite、MySQL、PostgreSQL 查询通道均通过驱动执行；TLS 模式和驱动错误必须显式返回，禁止静默降级。
 - 禁止 DSN / 连接串（凭据只经 `KeyringStore` 键 `db:<conn_id>`）；SQLite 禁 `execute_batch`（走 `prepare`）。
 
 ## 3. Commands
 
-**本模块无命令。** db 命令归属 database 能力，命令体注册在 `bridge.rs`（经 `generate_handler!`），命令体调用本模块 `DbPool`/`QueryCancel`。命令体在 **bridge.rs 逐 command 分解阶段**迁移至 `capabilities/database/commands.rs`。
+命令体归属 database capability，已在 `main.rs` 的 `generate_handler!` 中注册：基础命令来自 `commands.rs`，会话命令来自 `studio.rs`。
 
 ## 4. Resources
 
 - **sqlite**（bundled rusqlite）；凭据经 keyring 键 `db:<conn_id>`。
 - 无 WebView / PTY / socket / 子进程 / 定时器 / watcher 在模块级；`DbPool` 由 bridge.rs 命令体按连接创建。
-- 无 AppState 字段（本模块不 `.manage()` 任何状态；连接池随命令体生命周期）。
+- 会话运行时由 `DatabaseStudioRuntime` 管理；基础查询使用按需创建并释放的连接资源。
 
 ## 5. 生命周期（Lifecycle）
 
@@ -56,7 +56,7 @@
 ## 8. Public / Native Contract
 
 - 对外基座契约：`DbPool` / `QueryCancel` / `DbConnectionConfig` / `DbErrorCode` / `DbSslMode` / `SupportedDb` / `DbQueryResult` / `DbValue` / `credential_key` / `DB_CRED_PREFIX` / `sanitize_message` / `DB_MAX_*` / `DB_DEFAULT_QUERY_TIMEOUT_SECS` / `DB_MAX_QUERY_TIMEOUT_SECS`。
-- 既有 `crate::database::` 调用点（5 处，全在 `bridge.rs`）经 `main.rs` 顶部 `pub use crate::capabilities::database::database;` re-export shim 解析，**未逐处改写**。
+- 前端通过 `src/bridge.ts` 调用 database capability 的统一命令契约，不直接访问 Rust 内部类型。
 - TS 侧经 `bridge.ts` 命令调用，不直接 `import` 本 crate。
 
 ## 9. Security / ACL
@@ -75,15 +75,15 @@
 
 - 运行时基座：`src-tauri/src/capabilities/database/database.rs`（本模块）。
 - 类型 + 上限常量真源：`src-tauri/src/domain.rs`。
-- 命令体（暂留）：`src-tauri/src/bridge.rs`（`db_query`/`db_connect`/`db_disconnect`）。
-- 前端接线：`src/bridge.ts`（`dbQuery` 包装）+ `src/types.ts`（`DbQueryResult` 等）+ `workspace/DatabasePanel.vue`。
+- 命令体：`src-tauri/src/capabilities/database/commands.rs` 与 `studio.rs`；注册入口：`src-tauri/src/main.rs`。
+- 前端接线：`src/bridge.ts`（`dbQuery` / `dbConnect` / `dbStudio*` 包装）+ `src/types.ts` + `src/capabilities/database/ui/DatabasePanel.vue`。
 - 门禁真源：`scripts/check-database-policy.py`（扫 bridge.rs）。
 
 ## 12. Known Debt
 
 - M4-1.c checkpoint 被 A0 标 `STOPPED_EMPTY_ARTIFACT`：常量值已采用并上报，待 A0 重新裁定状态（若裁定变更只需改本段常量，取数机制不变）。
-- MySQL/Postgres 取数通道 + TLS **未实现**（现状 `DB_NOT_SUPPORTED`）；接取数属后续 wave（A3/A4 稳定后）。
-- db 命令体仍在 `bridge.rs`（LEGACY_MIXED_MODULE 残核）；属矩阵 §8 末段 bridge 分解计划。
+- 尚未完成的是外部 MySQL/PostgreSQL 实例的安装版 GUI 端到端验收；代码路径与驱动单元测试已存在。
+- `bridge.rs` 仍保留统一桥接兼容层，属于后续物理边界收口，不阻塞 database capability 的真实查询功能。
 
 ## 13. Extraction Readiness
 

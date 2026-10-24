@@ -5,6 +5,7 @@ import HomeLaunchers from "./HomeLaunchers.vue";
 import HomeRecents from "./HomeRecents.vue";
 import HomeShortcuts from "./HomeShortcuts.vue";
 import HomeShortcutEditor from "./HomeShortcutEditor.vue";
+import HomeChangelog from "./HomeChangelog.vue";
 
 const home = useHomeStore();
 
@@ -46,6 +47,7 @@ const state = computed(() => home.panelState);
     <HomeLaunchers />
     <HomeShortcuts />
     <HomeRecents />
+    <HomeChangelog />
     <HomeShortcutEditor />
   </div>
 </template>

@@ -190,6 +190,10 @@ async function importPasswords(event: Event) {
 .hidden-file { display: none; }
 .tabs {
   flex-shrink: 0;
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:3px;
 }
 .bm-title {
   font-size: 13px;
@@ -203,6 +207,8 @@ async function importPasswords(event: Event) {
   margin-right: auto;
 }
 .tabs button {
+  flex:none;
+  white-space:nowrap;
   background: none;
   border: none;
   border-bottom: none;

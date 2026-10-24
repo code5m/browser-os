@@ -25,6 +25,7 @@ export const BOOKMARK_CAPABILITY_ID = "bookmark"
 const BookmarkPanel = defineAsyncComponent(() => import("./ui/BookmarkPanel.vue"))
 const BookmarkAddressControls = defineAsyncComponent(() => import("./ui/BookmarkAddressControls.vue"))
 const BookmarkSuggestions = defineAsyncComponent(() => import("./ui/BookmarkSuggestions.vue"))
+const BookmarkBar = defineAsyncComponent(() => import("./ui/BookmarkBar.vue"))
 
 /**
  * 注册 Bookmark 对 Shell 的 UI 贡献（Contribution/Slot 模型）。
@@ -53,6 +54,13 @@ export function registerBookmarkContributions(): void {
     type: "surface",
     slot: CONTRIBUTION_SLOTS.OMNIBOX_SUGGESTIONS,
     component: BookmarkSuggestions,
+  })
+  contributionRegistry.registerContribution({
+    id: "bookmark.bar",
+    capabilityId: BOOKMARK_CAPABILITY_ID,
+    type: "surface",
+    slot: CONTRIBUTION_SLOTS.ACTIVITY_BAR_ROWS,
+    component: BookmarkBar,
   })
 
 }

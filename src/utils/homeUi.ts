@@ -13,8 +13,6 @@
 //
 // 边界：本文件只做纯函数与常量；不新增命令/bridge/ACL、不碰后端、不改样式。
 
-/** 快捷方式硬上限（有界：防止 localStorage 脏数据把首页撑爆）。 */
-export const HOME_MAX_SHORTCUTS = 24;
 /** 最近访问硬上限（有界）。 */
 export const HOME_MAX_RECENTS = 12;
 export const HOME_MAX_NAME_LEN = 64;
@@ -83,7 +81,6 @@ export const HOME_EMPTY_MESSAGE = "还没有快捷方式。可用上方「＋ �
 export const HOME_RECENTS_EMPTY_MESSAGE = "还没有最近访问记录。打开任一快捷方式后会记录到这里。";
 export const HOME_ERROR_FALLBACK = "主页数据载入失败，已回退到安全默认。可点「默认」恢复默认快捷方式。";
 export const HOME_LOADING_MESSAGE = "正在载入主页…";
-export const HOME_SHORTCUT_LIMIT_MESSAGE = `快捷方式已达上限（${HOME_MAX_SHORTCUTS} 个），请先删除后再添加。`;
 
 /** 稳定默认（首次使用 / 数据损坏时回落；内容与改造前保持一致，避免行为漂移）。 */
 export function defaultShortcuts(): HomeShortcut[] {
@@ -137,7 +134,7 @@ export function sanitizeShortcut(raw: unknown): HomeShortcut | null {
   return { id, type: r.type, name, target, icon };
 }
 
-/** 列表规整：逐条校验 + 去重（type|target）+ id 去重 + 有界封顶。 */
+/** 列表规整：逐条校验 + 去重（type|target）+ id 去重；数量不人为设限。 */
 export function normalizeShortcuts(raw: unknown): HomeShortcut[] {
   if (!Array.isArray(raw)) return [];
   const out: HomeShortcut[] = [];
@@ -153,7 +150,6 @@ export function normalizeShortcuts(raw: unknown): HomeShortcut[] {
     seenKeys.add(key);
     seenIds.add(s.id);
     out.push(s);
-    if (out.length >= HOME_MAX_SHORTCUTS) break;
   }
   return out;
 }

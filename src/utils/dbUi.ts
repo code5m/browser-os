@@ -475,6 +475,12 @@ export function buildColumnCatalogSql(name: string, kind: DbKind): string {
   if (kind === "sqlite") {
     return `SELECT name,type,"notnull",pk,dflt_value FROM pragma_table_info('${name.replaceAll("'", "''")}') LIMIT 512`;
   }
+  if (kind === "postgres") {
+    const safe = name.replaceAll("'", "''");
+    return "SELECT column_name,data_type,is_nullable,column_default " +
+      "FROM information_schema.columns WHERE table_schema=current_schema() " +
+      `AND table_name='${safe}' ORDER BY ordinal_position LIMIT 512`;
+  }
   throw new Error("DB_OBJECT_DRIVER_NOT_READY");
 }
 
@@ -508,6 +514,26 @@ export function buildObjectDetailSql(
       return `SELECT "from","table","to" FROM pragma_foreign_key_list('${safe}') LIMIT 128`;
     }
     return `SELECT sql FROM sqlite_master WHERE type IN ('table','view') AND name='${safe}' LIMIT 1`;
+  }
+  if (kind === "postgres") {
+    const safe = name.replaceAll("'", "''");
+    if (mode === "indexes") {
+      return "SELECT indexname,indexdef FROM pg_indexes " +
+        `WHERE schemaname=current_schema() AND tablename='${safe}' ORDER BY indexname LIMIT 512`;
+    }
+    if (mode === "foreign_keys") {
+      return "SELECT kcu.column_name,ccu.table_name AS referenced_table,ccu.column_name AS referenced_column " +
+        "FROM information_schema.table_constraints tc " +
+        "JOIN information_schema.key_column_usage kcu ON tc.constraint_name=kcu.constraint_name " +
+        "AND tc.table_schema=kcu.table_schema " +
+        "JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name=tc.constraint_name " +
+        "AND ccu.table_schema=tc.table_schema " +
+        `WHERE tc.constraint_type='FOREIGN KEY' AND tc.table_schema=current_schema() AND tc.table_name='${safe}' LIMIT 128`;
+    }
+    if (mode === "ddl" && isView) {
+      return `SELECT pg_get_viewdef(format('%I.%I',current_schema(),'${safe}')::regclass,true) AS definition`;
+    }
+    throw new Error("DB_OBJECT_DDL_UNAVAILABLE");
   }
   throw new Error("DB_OBJECT_DRIVER_NOT_READY");
 }

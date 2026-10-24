@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { computed, ref, watch } from "vue";
-import { sqlStatements } from "../model/studioSql.mjs";
+import { sqlStatements, sqlReferencedTables } from "../model/studioSql.mjs";
 import { makeTableDocument, dirtyTable } from "../model/studioTable.mjs";
 import { bridge } from "../../../bridge";
 import type { DbConnectionConfig, DbQueryResult } from "../../../types";
@@ -8,6 +8,7 @@ import { redactSecrets } from '../../../utils/redact';
 import { databaseLifecycleSnapshot, registerDatabaseCleanup } from "../lifecycle";
 import {
   buildConnectPayload,
+  buildColumnCatalogSql,
   buildObjectDetailSql,
   type DbObjectDetailMode,
   buildTablePreviewSql,
@@ -52,12 +53,57 @@ export const useDatabaseStore = defineStore("database", () => {
   const error = computed({ get:() => document.value.error, set:(v:string) => { document.value.error = v; } });
   const schema = ref<{ name:string; type:string }[]>([]);
   const schemaBusy = ref(false);
+  const schemaError = ref("");
+  const schemaLoaded = ref(false);
   let schemaGeneration = 0;
   let columnsGeneration = 0;
   const selectedObject = ref("");
   const objectDetailMode = ref<DbObjectDetailMode>("columns");
   const objectDetailRows = ref<string[][]>([]);
   const columnsBusy = ref(false);
+  const completionCatalog = ref<Record<string,string[]>>({});
+  let completionGeneration = 0;
+  let completionSchemaId:string|null = null;
+  let completionLoading = false;
+  let completionQueued = false;
+  const completionAttempted = new Set<string>();
+  function resetCompletionCatalog() {
+    completionGeneration++;
+    completionSchemaId=null;
+    completionCatalog.value={};
+    completionAttempted.clear();
+  }
+  async function loadCompletionCatalog() {
+    if (completionLoading) { completionQueued=true; return; }
+    if (!lifecycleActive() || !schemaLoaded.value || !activeId.value || completionSchemaId!==activeId.value) return;
+    const id=activeId.value, generation=completionGeneration, lifecycle=databaseLifecycleSnapshot();
+    const kind=configs.value.find(c=>c.id===id)?.kind;
+    if (!kind || !['mysql','postgres','sqlite'].includes(kind)) return;
+    let names:string[];
+    try { names=sqlReferencedTables(sql.value).filter((name:string)=>schema.value.some(item=>item.name===name)&&!completionAttempted.has(name)).slice(0,16); }
+    catch { return; }
+    completionLoading=true;
+    try {
+      for (const name of names) {
+        if (generation!==completionGeneration || activeId.value!==id || !lifecycleActive()) break;
+        // Bounded, serial metadata reads; never send the editor text to the server.
+        completionAttempted.add(name);
+        try {
+          const data=await bridge.dbQuery({conn_id:id,sql:buildColumnCatalogSql(name,kind),confirm_write:false});
+          const current=databaseLifecycleSnapshot();
+          if (current.active && current.generation===lifecycle.generation && generation===completionGeneration && activeId.value===id) {
+            if (Object.keys(completionCatalog.value).length>=64) delete completionCatalog.value[Object.keys(completionCatalog.value)[0]];
+            completionCatalog.value[name]=data.rows.slice(0,512).map(row=>String(decodeDbValue(row[0])));
+          }
+        } catch { /* Optional hints must not replace query errors or connection state. Refresh retries. */ }
+      }
+    } finally {
+      completionLoading=false;
+      if (completionQueued) { completionQueued=false; void loadCompletionCatalog(); }
+    }
+  }
+  watch(()=>[sql.value,activeId.value,schemaLoaded.value],()=>void loadCompletionCatalog());
+  watch(()=>document.value?.connId,resetCompletionCatalog,{flush:'sync'});
   // This is a validation marker, NOT an assertion of an idle live MySQL socket.
   const verifiedConnectionId = ref<string | null>(null);
   const recentlyVerified = computed(() => !!activeId.value && verifiedConnectionId.value === activeId.value);
@@ -81,6 +127,7 @@ export const useDatabaseStore = defineStore("database", () => {
       throw new Error('DB_CLEANUP_NOT_CONFIRMED');
     }
     schemaGeneration += 1;
+    resetCompletionCatalog();
     columnsGeneration += 1;
     objectDetailRows.value = [];
     selectedObject.value = '';
@@ -185,24 +232,36 @@ export const useDatabaseStore = defineStore("database", () => {
 
   async function refreshSchema() {
     if (!lifecycleActive()) return;
+    resetCompletionCatalog();
     const lifecycle = databaseLifecycleSnapshot();
-    const id = activeId.value; schema.value = [];
+    const id = activeId.value;
     const generation = ++schemaGeneration;
     const kind = configs.value.find(c => c.id === id)?.kind;
-    if (!id || (kind !== 'sqlite' && kind !== 'mysql')) return;
+    if (!id || !['sqlite', 'mysql', 'postgres'].includes(kind ?? '')) return;
     const schemaSql = kind === 'mysql'
       ? "SELECT TABLE_NAME,TABLE_TYPE FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE() ORDER BY TABLE_NAME LIMIT 1000"
-      : "SELECT name, type FROM sqlite_schema WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY name";
+      : kind === 'postgres'
+        ? "SELECT table_name,table_type FROM information_schema.tables WHERE table_schema=current_schema() ORDER BY table_name LIMIT 1000"
+        : "SELECT name, type FROM sqlite_schema WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY name";
     schemaBusy.value = true;
+    schemaError.value = "";
     try {
       const data = await bridge.dbQuery({ conn_id:id, sql:schemaSql, confirm_write:false });
       const current = databaseLifecycleSnapshot();
       if (current.active && current.generation === lifecycle.generation && activeId.value === id && generation === schemaGeneration) {
         schema.value = data.rows.map(row => ({name:String(decodeDbValue(row[0])),type:String(decodeDbValue(row[1]))}));
+        schemaLoaded.value = true;
+        completionSchemaId=id;
+        void loadCompletionCatalog();
+        verifiedConnectionId.value = id;
+        if (/DB_CONNECT_FAILED/.test(error.value)) error.value = "";
       }
     } catch(e) {
       const current = databaseLifecycleSnapshot();
-      if (current.active && current.generation === lifecycle.generation && activeId.value === id && generation === schemaGeneration) error.value = describeError(e);
+      if (current.active && current.generation === lifecycle.generation && activeId.value === id && generation === schemaGeneration) {
+        schemaError.value = describeError(e);
+        error.value = schemaError.value;
+      }
     } finally {
       const current = databaseLifecycleSnapshot();
       if (current.active && current.generation === lifecycle.generation && generation === schemaGeneration) schemaBusy.value = false;
@@ -217,7 +276,7 @@ export const useDatabaseStore = defineStore("database", () => {
     objectDetailMode.value = mode;
     objectDetailRows.value = [];
     const generation = ++columnsGeneration;
-    if (!id || (kind !== "mysql" && kind !== "sqlite")) return;
+    if (!id || !kind || !["mysql", "postgres", "sqlite"].includes(kind)) return;
     columnsBusy.value = true;
     try {
       const data = await bridge.dbQuery({
@@ -237,7 +296,7 @@ export const useDatabaseStore = defineStore("database", () => {
     const doc = document.value;
     const table = doc.tablePreview;
     const kind = configs.value.find(c => c.id === doc.connId)?.kind;
-    if (!table || !doc.connId || doc.busy || doc.pending || (kind !== "sqlite" && kind !== "mysql")) return;
+    if (!table || !doc.connId || doc.busy || doc.pending || !kind || !["sqlite", "mysql", "postgres"].includes(kind)) return;
     try {
       doc.sql = buildTablePreviewSql(table.name, kind, offset);
       table.offset = offset;
@@ -298,6 +357,9 @@ export const useDatabaseStore = defineStore("database", () => {
     const lifecycle = databaseLifecycleSnapshot();
     const doc = document.value;
     if (connecting.value || doc.busy || doc.pending) return false;
+    if (form.value.id && documents.value.some(item=>item.connId===form.value.id&&(item.sessionId||item.busy||item.pending||dirtyTable(item.tableData)))) {
+      error.value='修改连接前请关闭该连接的查询/事务会话，并处理未保存的表数据';return false;
+    }
     error.value = "";
     if (formIssues.value.length) {
       error.value = `表单校验未通过：${formIssues.value[0].message}`;
@@ -347,6 +409,8 @@ export const useDatabaseStore = defineStore("database", () => {
     schemaGeneration++;
     columnsGeneration++;
     schema.value=[];
+    schemaLoaded.value=false;
+    schemaError.value="";
     objectDetailRows.value=[];
     selectedObject.value="";
     document.value.raw=null;
@@ -458,7 +522,7 @@ export const useDatabaseStore = defineStore("database", () => {
   }
   function synchronizeDocumentSource() {
     const cfg=configs.value.find(c=>c.id===document.value.connId);
-    ++schemaGeneration; ++columnsGeneration; schema.value=[]; selectedObject.value=''; objectDetailRows.value=[];
+    ++schemaGeneration; ++columnsGeneration; schema.value=[]; schemaLoaded.value=false; schemaError.value=''; selectedObject.value=''; objectDetailRows.value=[];
     if(!cfg) { resetForm(); return; }
     form.value={...emptyConnectionForm(),id:cfg.id,name:cfg.name,kind:cfg.kind,allowWrite:cfg.allow_write,enabled:cfg.enabled,
       database:cfg.database,host:cfg.host||'',portText:cfg.port?String(cfg.port):'',username:cfg.username||'',sslMode:cfg.ssl_mode,
@@ -583,10 +647,11 @@ export const useDatabaseStore = defineStore("database", () => {
   }
 
   return {
+    completionCatalog,
     openDataEditor, tableOperation,
     configs, activateDocument, requestRunText, sessionAction, releaseSession, selectBatchResult,
     documents, activeDocument, document, closePending, newDocument, closeDocument, cancelQuery,
-    schema, schemaBusy, selectedObject, columnsBusy, objectDetailRows,
+    schema, schemaBusy, schemaError, schemaLoaded, selectedObject, columnsBusy, objectDetailRows,
     objectDetailMode, selectObject, refreshSchema, previewTable, nextTablePage, previousTablePage,
     explainCurrentSql,
     recentlyVerified, rememberQueries, setRememberQueries, queryHistory, reuseHistory, clearQueryHistory,

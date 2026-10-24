@@ -48,6 +48,8 @@ runInNewContext(code, {
   exports: module.exports,
   require(id) {
     if (id === "vue") return require("vue");
+    if (id === "@lucide/vue") return { Globe: {}, Plus: {}, X: {} };
+    if (id === "../../bridge") return { bridge: {} };
     if (id === "@tauri-apps/api/window") return {
       getCurrentWindow: () => ({
         toggleMaximize: async () => { maximizes++; },

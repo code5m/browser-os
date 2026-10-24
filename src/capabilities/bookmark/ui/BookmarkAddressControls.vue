@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { Star, BookOpen } from '@lucide/vue';
+import { createNativeMenu, menuAnchor } from '../../../composables/nativeMenu';
 import { useBookmarkStore } from "../state/useBookmarkStore";
 import { useBrowserStore } from "../../browser/public";
 import { useFileStore } from "../../workspace/public";
@@ -12,6 +14,14 @@ const browser = useBrowserStore();
 const fs = useFileStore();
 const layout = useLayoutStore();
 const pending = ref(false);
+const menu=createNativeMenu(()=>layout.showToast('无法打开收藏菜单，请在桌面客户端重试'));
+onBeforeUnmount(()=>menu.dispose());
+async function options(event:MouseEvent){
+  await menu.open([
+    {text:'显示收藏栏',checked:bookmarks.barVisible,action:()=>bookmarks.toggleBar()},
+    {text:'管理收藏夹 / 导入浏览器书签',action:openPanel},
+  ],menuAnchor(event.currentTarget as Element));
+}
 const target = computed(() => {
   if (layout.mainView === "files") return {kind: "dir" as const, value: fs.filePath};
   const raw = browser.url?.trim() || "";
@@ -66,15 +76,14 @@ function openPanel() {
     <button type="button" class="fav-action" :class="{ selected }" :disabled="!canFavorite || pending"
       :aria-pressed="selected" :aria-label="target.kind === 'dir' ? '收藏或取消收藏当前目录到主页' : '收藏或取消收藏网址到收藏夹和主页'"
       :title="target.kind === 'dir' ? '目录：收藏到主页' : '网址：收藏夹与主页同步收藏'"
-      @mousedown.prevent @click="toggleFavorite">{{ selected ? "★" : "☆" }}</button>
-    <button type="button" class="fav-panel" aria-label="收藏夹" title="打开收藏夹"
-      :aria-expanded="bookmarks.panelOpen" @mousedown.prevent @click="openPanel">▤</button>
+      @mousedown.prevent @click="toggleFavorite"><Star :size="17" :fill="selected ? 'currentColor' : 'none'"/></button>
+    <button type="button" class="fav-options" aria-label="收藏夹选项" title="收藏夹：显示收藏栏、管理与导入" aria-haspopup="menu" @mousedown.prevent @click="options"><BookOpen :size="17"/></button>
   </span>
 </template>
 <style scoped>
 .address-favorites{display:inline-flex;align-items:center;gap:2px;flex:none}
-.address-favorites button{border:0;background:transparent;min-width:25px;height:24px;border-radius:5px;cursor:pointer;color:#52677d;font-size:15px}
-.address-favorites button:hover:not(:disabled){background:#e4edf8;color:#2563a4}
+.address-favorites button{display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;background:transparent;width:28px;height:28px;border-radius:50%;cursor:pointer;color:var(--chrome-muted,#5f6368);font-size:15px}
+.address-favorites button:hover:not(:disabled){background:var(--chrome-hover,#e8eaed);color:var(--chrome-text,#202124)}
 .address-favorites button.selected{color:#1d65b1}
 .address-favorites button:disabled{opacity:.4;cursor:default}
 </style>

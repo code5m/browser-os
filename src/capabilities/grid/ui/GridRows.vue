@@ -6,6 +6,7 @@ import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { useGridStore } from "../public";
 import GridArchiveBar from "./GridArchiveBar.vue";
 import { useGridHost } from "../composables/useGridHost";
+import { AI_PROVIDERS } from '../model/aiPresets.mjs';
 
 const layout = useLayoutStore();
 const grid = useGridStore();
@@ -49,6 +50,7 @@ const gridLayouts = [
 const gridCounts = [2, 3, 4, 6, 9];
 const advancedOpen = ref(false);
 const urlsOpen = ref(false);
+const presetName = ref('');
 const resOpen = ref(false);
 const resStats = ref<ResourceStats | null>(null);
 let resTimer: number | null = null;
@@ -104,6 +106,7 @@ onBeforeUnmount(() => {
   <GridArchiveBar v-if="grid.gridOpen && layout.mainView === 'grid'" />
   <div v-if="layout.mainView === 'grid'" class="grid-context" aria-label="宫格控制">
     <strong>对比工作区</strong>
+    <label>AI 组合 <select aria-label="AI 组合模板" :value="grid.activeAiPreset" :disabled="grid.gridStarting" @change="grid.applyAiPreset(($event.target as HTMLSelectElement).value)"><option value="" disabled>自定义网址</option><option v-for="p in grid.aiPresets" :key="p.id" :value="p.id">{{p.name}} · {{p.urls.length}} 格</option></select></label>
     <div role="group" aria-label="模式"><button :class="{active:grid.gridMode==='browse'}" @click="grid.gridMode='browse'">浏览</button><button :class="{active:grid.gridMode==='ai'}" @click="grid.gridMode='ai'">AI</button></div>
     <div role="group" aria-label="快捷布局"><button v-for="n in [2,4]" :key="n" :class="{active:grid.gridCount===n}" @click="setGridCount(n)">{{n}} 格</button></div>
     <button class="grid-more" :aria-expanded="advancedOpen" aria-controls="grid-advanced" @click="advancedOpen=!advancedOpen">更多设置</button>
@@ -125,9 +128,13 @@ onBeforeUnmount(() => {
     <span v-if="resStats.mem_available_mb < 1500" class="er-warn">⚠️ 可用内存偏低，建议减少格数或关闭其它应用</span>
   </div>
   <div v-if="layout.mainView==='grid' && advancedOpen && urlsOpen" class="expand-row">
+    <span class="er-label">网页模式：具体模型在各站内选择，需自行登录；不会承诺群发已送达。切换组合会重建宫格，请先保存网页草稿。</span>
     <span v-for="i in grid.gridCount" :key="i" class="er-url"><span class="er-gidx">{{i}}</span>
+      <select :aria-label="'第 '+i+' 格 AI 服务'" :value="grid.gridUrls[i-1]" @change="grid.gridUrls[i-1]=($event.target as HTMLSelectElement).value;grid.activeAiPreset='' "><option :value="grid.gridUrls[i-1]">自定义 / 当前网址</option><option v-for="p in AI_PROVIDERS" :key="p.id" :value="p.url">{{p.name}}</option></select>
       <input v-model="grid.gridUrls[i-1]" :aria-label="'第 '+i+' 格网址'" placeholder="网址" @keyup.enter="grid.gridSetUrl(i-1)" />
       <button @click="grid.gridSetUrl(i-1)">↺</button></span>
+    <input v-model="presetName" aria-label="自定义 AI 模板名称" placeholder="组合名称" maxlength="60"/><button :disabled="!presetName.trim()||grid.gridStarting" @click="grid.saveAiPreset(presetName)&&(presetName='')">保存为新模板</button>
+    <button :disabled="!grid.customAiPresets.some(p=>p.id===grid.activeAiPreset)" @click="grid.deleteAiPreset(grid.activeAiPreset)">删除当前自定义模板</button>
   </div>
 </template>
 <style scoped>

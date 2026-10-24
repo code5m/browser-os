@@ -53,7 +53,7 @@ async function mountSource(text,props={}) {
   let app;
   try {
     const bundled=await build({stdin:{contents:compiled.content,loader:'ts',resolveDir:dirname(SOURCE),sourcefile:SOURCE},bundle:true,write:false,format:'esm',platform:'node',external:['vue'],plugins:[{name:'native-io-fixtures',setup(builder){
-      builder.onResolve({filter:/^\.\/GitCommitFileTree\.vue$/},()=>({namespace:'git-fixture',path:'commit-tree'}));
+      builder.onResolve({filter:/^\.\/Git(?:CommitFileTree|HistoryDiff)\.vue$/},()=>({namespace:'git-fixture',path:'commit-tree'}));
       builder.onResolve({filter:/^(\.\.\/\.\.\/\.\.\/bridge|\.\.\/public|\.\.\/\.\.\/workspace\/public|\.\.\/lifecycle)$/},args=>({namespace:'git-fixture',path:args.path.endsWith('/bridge')?'bridge':args.path==='../public'?'git':args.path.includes('workspace')?'repos':'lifecycle'}));
       builder.onLoad({filter:/.*/,namespace:'git-fixture'},args=>({contents:virtual[args.path],loader:'js'}));
     }}]});

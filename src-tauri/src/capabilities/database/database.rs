@@ -501,9 +501,6 @@ impl DbPool {
 }
 
 fn connect_mysql(cfg: &DbConnectionConfig, password: Option<&str>) -> Result<DbPool, DbError> {
-    // Both prefer/require enforce verified TLS: no invisible plaintext fallback.
-    // A local server without TLS requires explicitly selecting disable.
-    let tls_required = !matches!(cfg.ssl_mode, DbSslMode::Disable);
     let host = cfg.host.clone().unwrap_or_default();
     let port = cfg
         .port
@@ -511,7 +508,7 @@ fn connect_mysql(cfg: &DbConnectionConfig, password: Option<&str>) -> Result<DbP
     let user = cfg.username.clone().unwrap_or_default();
 
     // 类型化构造：不拼 DSN。多语句由驱动默认关闭，不依赖 crate 默认值另行开启。
-    let mut builder = mysql::OptsBuilder::new()
+    let builder = mysql::OptsBuilder::new()
         .ip_or_hostname(Some(host))
         .tcp_port(port)
         .prefer_socket(false)
@@ -521,18 +518,51 @@ fn connect_mysql(cfg: &DbConnectionConfig, password: Option<&str>) -> Result<DbP
         .user(Some(user))
         .pass(password.map(|p| p.to_string()))
         .db_name(Some(cfg.database.clone()));
-    if tls_required {
-        // SslOpts defaults verify the certificate and hostname. No dangerous overrides.
-        builder = builder.ssl_opts(mysql::SslOpts::default());
-    }
-
-    let conn = mysql::Conn::new(builder).map_err(|e| {
+    let connected = match cfg.ssl_mode {
+        DbSslMode::Disable => mysql_connect_handshake(builder).map(|conn| (conn, false)),
+        DbSslMode::Require => mysql_connect_handshake(builder.ssl_opts(mysql::SslOpts::default()))
+            .map(|conn| (conn, true)),
+        DbSslMode::Prefer => {
+            // Only a server's explicit lack of TLS capability permits plaintext.
+            // Certificate, hostname, timeout and authentication failures must not downgrade.
+            let tls_builder = builder.clone().ssl_opts(mysql::SslOpts::default());
+            match mysql_connect_handshake(tls_builder) {
+                Ok(conn) => Ok((conn, true)),
+                Err(error) if mysql_tls_unsupported(&error.to_string()) => {
+                    mysql_connect_handshake(builder).map(|conn| (conn, false))
+                }
+                Err(error) => Err(error),
+            }
+        }
+    };
+    let (conn, encrypted) = connected.map_err(|e| {
         DbError::new(
             DbErrorCode::ConnectFailed,
             format!("连接 MySQL 失败: {}", sanitize_message(&e.to_string())),
         )
     })?;
-    Ok(DbPool::MySql(conn, tls_required))
+    Ok(DbPool::MySql(conn, encrypted))
+}
+
+fn mysql_connect_handshake(builder: mysql::OptsBuilder) -> Result<mysql::Conn, mysql::Error> {
+    // No SQL has been sent yet. Retry a dropped handshake once, with identical
+    // TLS options; never replay queries/transactions or downgrade on I/O errors.
+    match mysql::Conn::new(builder.clone()) {
+        Err(error) if mysql_handshake_retryable(&error) => mysql::Conn::new(builder),
+        result => result,
+    }
+}
+
+fn mysql_handshake_retryable(error: &mysql::Error) -> bool {
+    matches!(error, mysql::Error::IoError(error) if matches!(error.kind(),
+        std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::ConnectionReset
+        | std::io::ErrorKind::ConnectionAborted | std::io::ErrorKind::BrokenPipe))
+}
+
+fn mysql_tls_unsupported(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("client requires secure connection but server does not have this capability")
+        || message.contains("ssl is required but the server doesn't support it")
 }
 
 fn connect_postgres(cfg: &DbConnectionConfig, password: Option<&str>) -> Result<DbPool, DbError> {
@@ -1592,6 +1622,87 @@ mod tests {
             DbPool::connect(&cfg, None, &roots).unwrap_err().code,
             DbErrorCode::NotSupported
         );
+    }
+
+    #[test]
+    fn mysql_auto_tls_only_downgrades_for_explicit_unsupported_capability() {
+        assert!(mysql_tls_unsupported(
+            "Client requires secure connection but server does not have this capability"
+        ));
+        assert!(mysql_tls_unsupported(
+            "SSL connection error: SSL is required but the server doesn't support it"
+        ));
+        assert!(!mysql_tls_unsupported("certificate verify failed"));
+        assert!(!mysql_tls_unsupported("connection timed out"));
+        assert!(!mysql_tls_unsupported("Access denied for user"));
+        assert!(mysql_handshake_retryable(
+            &mysql::Error::server_disconnected()
+        ));
+        assert!(!mysql_handshake_retryable(&mysql::Error::IoError(
+            std::io::Error::new(std::io::ErrorKind::TimedOut, "connection timed out")
+        )));
+    }
+
+    #[test]
+    #[ignore = "requires an explicitly supplied read-only MySQL endpoint"]
+    fn mysql_auto_tls_readonly_e2e() {
+        let profile_path = std::env::var("BROWSEROS_MYSQL_READONLY_PROFILE_PATH").unwrap();
+        let profile_id = std::env::var("BROWSEROS_MYSQL_READONLY_PROFILE_ID").unwrap();
+        let cfg =
+            crate::capabilities::database::profiles::read_file(std::path::Path::new(&profile_path))
+                .unwrap()
+                .into_iter()
+                .find(|item| item.id == profile_id)
+                .expect("read-only profile must exist");
+        assert_eq!(cfg.kind, SupportedDb::MySql);
+        assert_eq!(cfg.ssl_mode, DbSslMode::Prefer);
+        assert!(!cfg.allow_write);
+        let password = crate::keyring_store::KeyringStore::get_token(&credential_key(&cfg.id))
+            .expect("profile credential must exist in OS keyring");
+        for attempt in 0..6 {
+            let mut pool = DbPool::connect(&cfg, Some(&password), &[])
+                .unwrap_or_else(|error| panic!("connection attempt {attempt}: {error:?}"));
+            if std::env::var("BROWSEROS_MYSQL_READONLY_EXPECT_PLAINTEXT").as_deref() == Ok("1") {
+                assert_eq!(pool.encrypted(), Some(false));
+            }
+            crate::security_policy::evaluate_db_query_gate(
+                "SELECT 1 AS connection_ok",
+                &cfg,
+                pool.encrypted(),
+                false,
+            )
+            .unwrap();
+            let result = pool
+                .query(
+                    "SELECT 1 AS connection_ok",
+                    &QueryCancel::new(),
+                    None,
+                    "mysql-auto-tls",
+                )
+                .unwrap();
+            assert_eq!(result.rows.len(), 1);
+            assert_eq!(result.rows[0][0], DbValue::I64(1));
+            let schema_sql = "SELECT TABLE_NAME,TABLE_TYPE FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE() ORDER BY TABLE_NAME LIMIT 1000";
+            crate::security_policy::evaluate_db_query_gate(
+                schema_sql,
+                &cfg,
+                pool.encrypted(),
+                false,
+            )
+            .unwrap();
+            let schema = pool
+                .query(schema_sql, &QueryCancel::new(), None, "mysql-schema")
+                .unwrap();
+            assert!(
+                !schema.rows.is_empty(),
+                "expected tables in explicitly supplied schema"
+            );
+            println!(
+                "READONLY_SCHEMA_ATTEMPT={attempt} OBJECTS={}",
+                schema.rows.len()
+            );
+        }
+        drop(password);
     }
 
     // -- T-db-p13 平台降级与 DbValue 计费 --

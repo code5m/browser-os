@@ -52,6 +52,11 @@ export const useBookmarkStore = defineStore("bookmark", () => {
   const error = ref("");
   // 收藏夹侧栏开关（状态放在本 store，避免改动 useLayoutStore）
   const panelOpen = ref(false);
+  const barVisible = ref((() => { try { return localStorage.getItem('browseros:bookmark-bar-visible') !== 'false'; } catch { return true; } })());
+  function toggleBar(): void {
+    barVisible.value = !barVisible.value;
+    try { localStorage.setItem('browseros:bookmark-bar-visible', String(barVisible.value)); } catch { /* session preference still works */ }
+  }
 
   // 侧栏展示顺序：created_at 倒序（最新收藏在前）；同时间戳按 url 稳定排序
   const sorted = computed(() =>
@@ -200,6 +205,8 @@ export const useBookmarkStore = defineStore("bookmark", () => {
     busy,
     error,
     panelOpen,
+    barVisible,
+    toggleBar,
     load,
     findByUrl,
     isBookmarked,

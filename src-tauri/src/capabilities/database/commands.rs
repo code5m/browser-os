@@ -136,9 +136,6 @@ pub fn db_import_profiles(
     let mut imported = 0;
     let mut duplicates = 0;
     for item in candidates {
-        if !matches!(item.kind, SupportedDb::MySql | SupportedDb::Sqlite) {
-            return Err("DB_IMPORT_DRIVER_UNSUPPORTED".into());
-        }
         let name = item.name.trim();
         let database = item.database.trim();
         if name.is_empty()
@@ -150,7 +147,7 @@ pub fn db_import_profiles(
         {
             return Err("DB_IMPORT_INVALID_METADATA".into());
         }
-        if item.kind == SupportedDb::MySql {
+        if item.kind.is_remote() {
             let host = item.host.as_deref().unwrap_or("").trim();
             if host.is_empty()
                 || host.len() > 253

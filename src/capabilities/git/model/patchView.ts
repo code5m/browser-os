@@ -9,6 +9,33 @@ export interface DiffRow {
   added: boolean;
 }
 export interface ParsedPatch { rows: DiffRow[]; additions: number; deletions: number; truncated: boolean; }
+/** Restore unchanged gaps from the actual after-revision blob, not invented lines. */
+export function historyContextRows(patch:string, afterContent:string): DiffRow[] {
+  const parsed = parseUnifiedPatch(patch);
+  const after = afterContent.split('\n');
+  if (after[after.length-1] === '') after.pop();
+  const rows:DiffRow[] = [];
+  let oldLine=1, newLine=1;
+  function contextUntil(end:number) {
+    while (newLine < end && newLine <= after.length && rows.length < 12000) {
+      const text=after[newLine-1];
+      rows.push({kind:'context',beforeLine:oldLine++,afterLine:newLine++,before:text,after:text,removed:false,added:false});
+    }
+  }
+  for (const row of parsed.rows) {
+    if (row.kind==='meta') continue;
+    if (row.kind==='header') {
+      const start=/^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(row.before);
+      if (start) { contextUntil(Number(start[2])); oldLine=Math.max(1,Number(start[1])); newLine=Math.max(1,Number(start[2])); }
+      continue;
+    }
+    rows.push(row);
+    if (row.beforeLine!==null) oldLine=row.beforeLine+1;
+    if (row.afterLine!==null) newLine=row.afterLine+1;
+  }
+  if (!parsed.truncated) contextUntil(after.length+1);
+  return rows;
+}
 export function parseUnifiedPatch(patch: string, maxRows = 4000): ParsedPatch {
   const lines = patch.split(/\r?\n/);
   const rows: DiffRow[] = [];

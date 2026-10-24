@@ -162,7 +162,14 @@
 
 - UI MySQL is enabled. The Rust MySQL driver sends real text-protocol queries and feeds the existing `DbQueryResult` limiter (1000 rows, 4 MiB result cap, 65536-byte SQL cap). SQLite is unchanged.
 - MySQL tables and views are obtained from `information_schema.tables`, and preview identifiers are safely escaped with backticks.
-- `ssl_mode=prefer` and `require` both enforce certificate-verified TLS, never silently downgrade to plaintext; select `disable` explicitly only for a trusted local server without TLS.
+- MySQL `ssl_mode=prefer` first attempts certificate-verified TLS and falls back to plaintext only when the server explicitly reports that it has no TLS capability. Certificate, hostname, timeout and authentication failures do not trigger fallback. The UI uses this automatic mode without an SSL selector; `require` remains strict for non-UI callers, and `DbPool::encrypted()` reports the actual transport to the query policy. A fallback is unencrypted, so remote connections require a trusted network.
 - The password is held by the existing OS keyring (`db:<conn_id>`); existing production/write confirmation and risk classification still apply. Errors returned from row fetching do not expose SQL text.
 - MySQL cancellation is cooperative between received rows. Socket read timeouts prevent indefinite blocking, but long-running server queries are not yet interrupted with a second connection's KILL QUERY; a future enhancement must test that separately.
-- Live database connection, actual query/schema E2E and Linux installed-client GUI remain to be verified against an available MySQL server. Static compilation does not replace these acceptance gates.
+- The automatic TLS fallback path passed a read-only native `SELECT 1` against an explicitly supplied MySQL server without TLS (2026-10-23); no credential is stored in this repository. Schema and Linux installed-client GUI acceptance remain separate gates. Static compilation does not replace them.
+
+## SQL completion scope (2026-10-24)
+
+- The real SqlEditor offers automatic keyword, table and column hints, keyboard selection and comment/string exclusion. Font size is 14px monospace with higher-contrast syntax colors.
+- Scoped hints resolve JOIN aliases, correlated subqueries, alias shadowing, derived tables and CTE projections (including explicit column lists and star projection). Statements are isolated. This is bounded editing assistance, not a full SQL semantic analyzer or IDEA parity certification; recursive CTE fixed-point inference, vendor-specific constructs and ambiguous expressions are not inferred.
+- The store loads columns only for referenced objects in the current connection's verified schema. Reads are serial, at most 16 new objects per load, 512 columns per object and 64 cached objects. Connection changes, schema refresh and lifecycle cleanup invalidate the catalog. Stale replies cannot populate another connection's hints; optional metadata failure does not overwrite execution errors. Refresh retries failed metadata reads. No editor SQL is executed for hints.
+- Regression: `node scripts/check-sql-completion-scopes.mjs` and `node scripts/check-developer-studio.mjs`. Browser fixture coverage uses real Vue components with mocked external IPC; it does not certify an installed desktop client.

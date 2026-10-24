@@ -6,6 +6,8 @@ import * as nodeModule from "node:module";
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 
+const databasePanelSource = readFileSync(new URL("../src/capabilities/database/ui/DatabasePanel.vue", import.meta.url), "utf8");
+
 function resolveWithExt(specifier, context, next) {
   try {
     return next(specifier, context);
@@ -97,7 +99,7 @@ eq(idea[0].portText,"3307","IDEA URL port imported");
 eq(idea[0].database,"example","IDEA URL schema imported");
 ok(!JSON.stringify(idea).includes("NEVER-ECHO"),"IDEA IDEA URL query secrets never leave parser");
 eq(idea[1].database,"/data/demo.db","SQLite file absolute path");
-ok(!idea[2].supported,"unsupported PostgreSQL must not be offered as working import");
+ok(idea[2].supported && idea[2].kind === "postgres","PostgreSQL metadata is offered as a selectable import");
 let forbiddenIdea=false;
 try{ideaProjectDataSourcesPath("/home/dev/work/app/.idea/dataSources.local.xml");}catch{forbiddenIdea=true;}
 ok(forbiddenIdea,"never import IDEA local credential-side file");
@@ -125,6 +127,7 @@ ok(manualRejectedDoctype,"manual IDEA importer also blocks external XML entities
 eq(buildTablePreviewSql("orders","mysql"), "SELECT * FROM `orders` LIMIT 100", "MySQL table preview is bounded");
 eq(buildTablePreviewSql("a`b","mysql"), "SELECT * FROM `a``b` LIMIT 100", "MySQL backtick escaping");
 eq(buildTablePreviewSql('a"b',"sqlite"), 'SELECT * FROM "a""b" LIMIT 100', "SQLite identifier escaping");
+eq(buildTablePreviewSql("orders","postgres"), "SELECT * FROM \"orders\" LIMIT 100", "PostgreSQL table preview is bounded");
 const probe = "x' UNION SELECT password FROM users --";
 const statement = buildColumnCatalogSql(probe, "mysql");
 ok(statement.includes("CONVERT(0x") && !statement.includes("UNION"), "catalog search uses hex name without string SQL injection");
@@ -145,6 +148,10 @@ ok(indexSql.includes("information_schema.statistics") && !indexSql.includes("UNI
 ok(buildObjectDetailSql("orders", "mysql", "ddl").includes("SHOW CREATE TABLE `orders`"), "MySQL DDL read-only request");
 ok(buildObjectDetailSql("v_orders", "mysql", "ddl", true).includes("SHOW CREATE VIEW `v_orders`"), "MySQL view DDL request");
 ok(buildObjectDetailSql("a'b", "sqlite", "ddl").includes("a''b"), "SQLite DDL catalog quote escaping");
+const pgColumns = buildObjectDetailSql("a'b", "postgres", "columns");
+ok(pgColumns.includes("information_schema.columns") && pgColumns.includes("a''b"), "PostgreSQL column catalog safely quotes names");
+const pgIndexes = buildObjectDetailSql("orders", "postgres", "indexes");
+ok(pgIndexes.includes("pg_indexes") && pgIndexes.includes("current_schema()"), "PostgreSQL index catalog is available");
 // ===== 1. 表单缺省值（F1：写默认拒绝） =====
 const empty = emptyConnectionForm();
 eq(empty.allowWrite, false, "新建连接默认关闭写权限（F1 写默认拒绝）");
@@ -333,6 +340,15 @@ eq(canRunQuery({ backendReady: false, connected: true, sql: "select 1" }).ok, fa
 eq(canRunQuery({ backendReady: true, connected: false, sql: "select 1" }).ok, false, "未连接不得运行");
 eq(canRunQuery({ backendReady: true, connected: true, sql: "  " }).ok, false, "空 SQL 不得运行");
 eq(canRunQuery({ backendReady: true, connected: true, sql: "select 1" }).ok, true, "就绪且已连接可运行");
+
+// ===== 12. 连接弹框视觉/交互契约（与 DBX 原型保持一致） =====
+ok(databasePanelSource.includes("connectionDialogOpen"), "新增连接必须有独立弹框状态");
+ok(databasePanelSource.includes("connection-dialog-backdrop"), "新增连接必须有遮罩层");
+ok(databasePanelSource.includes("role=\"connectionDialogOpen ? 'dialog' : undefined\""), "新增连接必须使用 dialog 语义");
+const namePos = databasePanelSource.indexOf("连接名称");
+const kindPos = databasePanelSource.indexOf("数据库类型");
+const addressPos = databasePanelSource.indexOf("连接地址");
+ok(namePos >= 0 && namePos < kindPos && kindPos < addressPos, "弹框字段顺序必须为名称、类型、地址");
 
 if (failures.length === 0) {
   console.log(`check-database-ui-logic: ${passed} 断言全部通过`);
