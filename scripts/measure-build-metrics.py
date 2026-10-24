@@ -38,10 +38,12 @@ from pathlib import Path
 # 令实测到 25.14%。A0 仅为该已验收的键盘可达性修复上调至 25.2%。
 # 2026-10-17: 随 Git/Database/工作台能力增加，旧 25.2% 冻结上限已阻断正常开发。
 # 在同一 052b18a 历史基线上实行预警 + 硬门禁，禁止静默再基线：
-#   30%: 可观察预警（不失败）；35%: 严格阻断（不放宽 Rust/GUI/安全门禁）。
+#   30%: 可观察预警（不失败）；原 35%: 严格阻断。
+# 2026-10-24: 用户明确批准硬上限调整为 45%；历史基线和 30% 预警不变，
+# 此调整是预算变更，不代表体积优化完成，也不放宽 Rust/GUI/安全门禁。
 # 未来重新选择基线必须提交可审计的新证据与明确批准。
 TOTAL_BYTES_GROWTH_WARNING_PCT = 30.0
-TOTAL_BYTES_GROWTH_LIMIT_PCT = 35.0
+TOTAL_BYTES_GROWTH_LIMIT_PCT = 45.0
 
 # cargo 输出的 warning 汇总行，例如：
 #   warning: `mvp-browser-os` (bin "mvp-browser-os") generated 2 warnings
@@ -195,11 +197,11 @@ dist/assets/index-Dt_h_hIi.js          83.16 kB │ gzip:  30.20 kB
     if not warning["growth_warning"] or warning["exceeds_growth_limit"]:
         print("self-test: warning threshold must be advisory", file=sys.stderr)
         return 1
-    at_cap = compare({"dist": {"total_bytes": 1350}, "cargo_warnings": 2}, baseline)
+    at_cap = compare({"dist": {"total_bytes": 1450}, "cargo_warnings": 2}, baseline)
     if not at_cap["growth_warning"] or at_cap["exceeds_growth_limit"]:
         print("self-test: exact hard limit must be accepted", file=sys.stderr)
         return 1
-    over_limit = compare({"dist": {"total_bytes": 1351}, "cargo_warnings": 2}, baseline)
+    over_limit = compare({"dist": {"total_bytes": 1451}, "cargo_warnings": 2}, baseline)
     if not over_limit["exceeds_growth_limit"]:
         print("self-test: growth hard limit not enforced", file=sys.stderr)
         return 1
