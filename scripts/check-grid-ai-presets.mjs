@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {AI_PROVIDERS,BUILTIN_AI_PRESETS,validateAiPreset,decodeAiPresets} from '../src/capabilities/grid/model/aiPresets.mjs';
+assert.ok(AI_PROVIDERS.length>=12);
+assert.ok(BUILTIN_AI_PRESETS.length>=8);
+assert.equal(JSON.stringify(BUILTIN_AI_PRESETS).toLowerCase().includes('claude'),false);
+for(const preset of BUILTIN_AI_PRESETS)assert.deepEqual(validateAiPreset(preset),preset);
+for(const url of ['javascript:alert(1)','https://user:pw@example.com','https://example.com/?api_key=secret','file:///etc/passwd'])assert.throws(()=>validateAiPreset({id:'x',name:'x',urls:[url,'https://chatgpt.com'],layout:'grid'}));
+assert.throws(()=>validateAiPreset({id:'x',name:'x',urls:['https://chatgpt.com'],layout:'grid'}));
+assert.deepEqual(decodeAiPresets('{broken'),[]);
+assert.equal(decodeAiPresets(JSON.stringify([{id:'custom',name:'本机',urls:['http://localhost:11434','https://chatgpt.com'],layout:'grid'}])).length,1);
+console.log('GRID_AI_PRESETS=PASS (built-ins, URL safety, storage validation; no provider login/send claim)');

@@ -7,9 +7,7 @@ import { useFileStore } from "../../workspace/public";
 import {
   HOME_APP_SESSION_ONLY_NOTICE,
   HOME_MAX_RECENTS,
-  HOME_MAX_SHORTCUTS,
   HOME_PRINCIPAL_AREAS,
-  HOME_SHORTCUT_LIMIT_MESSAGE,
   defaultShortcuts,
   homeAccessibleLabel,
   homeDisplayTarget,
@@ -182,11 +180,6 @@ export const useHomeStore = defineStore("home", () => {
       existing.name = clean.name;
       existing.icon = clean.icon;
     } else {
-      // 有界：新增前判上限（不再静默丢弃最旧，而是明确告知用户）。
-      if (shortcuts.length >= HOME_MAX_SHORTCUTS) {
-        if (!input.silent) layout.showToast(HOME_SHORTCUT_LIMIT_MESSAGE);
-        return false;
-      }
       shortcuts.push({ ...clean, id: makeId(clean.type, clean.target) });
     }
     save();
@@ -334,10 +327,6 @@ export const useHomeStore = defineStore("home", () => {
         s.icon = clean.icon;
       }
     } else {
-      if (shortcuts.length >= HOME_MAX_SHORTCUTS) {
-        layout.showToast(HOME_SHORTCUT_LIMIT_MESSAGE);
-        return;
-      }
       shortcuts.push({ ...clean, id: makeId(clean.type, clean.target) });
     }
     save();

@@ -1,3 +1,4 @@
+import {sqlScope} from './sqlScope.mjs';
 /** Bounded SQL editing helpers. Native policy remains the sole execution gate. */
 export const KEYWORDS = new Set(('SELECT FROM WHERE JOIN LEFT RIGHT INNER OUTER FULL ON AS AND OR NOT NULL IS IN EXISTS BETWEEN LIKE ILIKE ORDER BY GROUP HAVING LIMIT OFFSET ASC DESC DISTINCT UNION ALL WITH RECURSIVE INSERT INTO VALUES UPDATE SET DELETE RETURNING CREATE ALTER DROP TABLE VIEW INDEX PRIMARY KEY FOREIGN REFERENCES DEFAULT CASE WHEN THEN ELSE END EXPLAIN BEGIN COMMIT ROLLBACK TRUE FALSE COUNT SUM AVG MIN MAX OVER PARTITION').split(' '));
 const bytes = text => new TextEncoder().encode(text).length;
@@ -87,12 +88,22 @@ export function formatSql(text) {
   const signature = s => lexSql(s).tokens.filter(t => t.kind !== 'space').map(t => [t.kind, t.text]);
   return JSON.stringify(signature(text)) === JSON.stringify(signature(formatted)) ? formatted : text;
 }
-export function sqlCompletions(text, cursor, objects = [], columns = []) {
+export function sqlReferencedTables(text) {
+  const tokens=lexSql(text).tokens;
+  return [...new Set([...tokens.filter(t=>t.kind==='separator').map(t=>t.start),text.length].flatMap(cursor=>sqlScope(tokens,cursor).tables))];
+}
+export function sqlCompletions(text, cursor, objects = [], columns = [], catalog = {}) {
   const prefix = /[A-Za-z_\u0080-\uffff][A-Za-z_0-9\u0080-\uffff]*$/.exec(text.slice(0, cursor))?.[0] ?? '';
   const token = lexSql(text).tokens.find(t => t.start < cursor && t.end >= cursor);
   if (token && ['string', 'comment'].includes(token.kind)) return [];
-  return [...new Set([...columns, ...objects, ...KEYWORDS])].filter(x => typeof x === 'string' && x.length <= 128 && x.toLowerCase().startsWith(prefix.toLowerCase()))
-    .slice(0, 40).map(label => ({ label, from: cursor - prefix.length, to: cursor }));
+  const beforePrefix=text.slice(0,cursor-prefix.length).trimEnd();
+  const suffix=/^[A-Za-z_0-9\u0080-\uffff]*/.exec(text.slice(cursor))?.[0] ?? '';
+  const scope=sqlScope(lexSql(text).tokens,cursor,catalog);
+  const qualifier=/(?:([A-Za-z_\u0080-\uffff][A-Za-z_0-9\u0080-\uffff]*)|"([^"]+)"|`([^`]+)`)\.$/.exec(beforePrefix);
+  const scopedColumns=scope.relations.size ? [...scope.relations.values()].flat() : columns;
+  const candidates=qualifier ? scope.relations.get((qualifier[1]??qualifier[2]??qualifier[3]).toLowerCase())??[] : /\b(FROM|JOIN|UPDATE|INTO)$/i.test(beforePrefix) ? [...objects,...scope.ctes.keys()] : [...scopedColumns,...objects,...KEYWORDS];
+  return [...new Set(candidates)].filter(x => typeof x === 'string' && x.length <= 128 && x.toLowerCase().startsWith(prefix.toLowerCase()))
+    .slice(0, 40).map(label => ({ label, from: cursor - prefix.length, to: cursor+suffix.length }));
 }
 export function quoteIdentifier(name, kind) {
   if (typeof name !== 'string' || !name || bytes(name) > 255 || /[\0\r\n]/.test(name)) throw new Error('DB_IDENTIFIER_INVALID');

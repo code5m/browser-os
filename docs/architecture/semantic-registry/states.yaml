@@ -713,6 +713,20 @@ states:
     adr_required: false
     status: CURRENT_FACT
 
+  barVisible:
+    owner: useBookmarkStore
+    meaning: 横向收藏栏显隐偏好，独立于收藏夹侧栏开关
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useBookmarkStore.toggleBar
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
   sorted:
     owner: useBookmarkStore
     meaning: items 按 created_at 倒序稳定视图（同时间戳按 url 排序）
@@ -1854,6 +1868,38 @@ states:
     derived: false
     canonical_writer:
       - useDatabaseStore.refreshSchema
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  schemaError:
+    owner: useDatabaseStore
+    meaning: 当前数据源对象列表加载错误，不代表数据库没有对象
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useDatabaseStore.refreshSchema
+      - useDatabaseStore.synchronizeDocumentSource
+      - useDatabaseStore.deselectConnection
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  schemaLoaded:
+    owner: useDatabaseStore
+    meaning: 当前数据源已成功加载对象列表，区分未知数量和真实空列表
+    not_meaning: []
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useDatabaseStore.refreshSchema
+      - useDatabaseStore.synchronizeDocumentSource
+      - useDatabaseStore.deselectConnection
     forbidden_writers:
       - components/**
     duplicate_names: []
@@ -3614,6 +3660,10 @@ observed_not_governed:
     - recentlyClosed
 
   useGridStore:
+    # Local AI workspace preferences; never grant resource activation.
+    - customAiPresets
+    - activeAiPreset
+    - aiPresets
     - gridCount
     - gridUrl
     - gridUrls

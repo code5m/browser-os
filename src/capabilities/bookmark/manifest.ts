@@ -49,6 +49,7 @@ export const bookmarkManifest: CapabilityDefinition = {
       { id: "bookmark.sidebar", slot: "browser-sidebar", type: "surface" },
       { id: "bookmark.address-star", slot: "address-bar-actions", type: "navigation" },
       { id: "bookmark.omnibox-suggestions", slot: "omnibox-suggestions", type: "surface" },
+      { id: "bookmark.bar", slot: "activity-bar-rows", type: "surface" },
     ],
     permissions: [],
     resources: [{ kind: "CACHE", ownership: "owned", evidence: "src/capabilities/bookmark/state/useBookmarkStore.ts" }],

@@ -81,6 +81,8 @@ const checks = [
   ['visual fixture mounts the production GitStudio component', source.fixtureTs.includes("import GitStudio from '../../src/capabilities/git/ui/GitStudio.vue'") && source.fixtureTs.includes('createApp(GitStudio') && source.fixtureHtml.includes('./git-studio-rebased.ts')],
   ['real recursive file tree owns dark-theme-safe button layout', source.tree.includes('background: transparent') && source.tree.includes('var(--git-selected') && source.tree.includes('width: 100%')],
   ['Branches entry does not cover the historical editor', source.vue.includes(':has(.history-editor-pane .history-editor) .rebased-branches-strip{display:none}')],
+  ['Selecting a history file reopens the editor', source.vue.includes('historyEditorCollapsed.value=false')],
+  ['Selecting a history file opens focused diff mode', source.vue.includes("historicalDiffMode.value='split'") && source.vue.includes('historyOnlyChanges.value=true')],
   ['real commit footer exposes selection state', source.vue.includes('已暂存 {{selectedStaged.length}}') && source.vue.includes('未暂存 {{selectedUnstaged.length}}')],
   ['merge parent selection and root commit boundary are explicit', source.vue.includes('选择父提交后，变更文件和 Diff 会按该父提交重新计算') && source.vue.includes('selectedParent') && source.vue.includes('这是初始提交，没有父提交') && source.rust.includes('GIT_STUDIO_PARENT_NOT_FOUND')],
   ['branch actions respect local and protected refs', source.vue.includes('canCheckoutBranch') && source.vue.includes('canDeleteBranch') && source.vue.includes('只能切换本地分支')],

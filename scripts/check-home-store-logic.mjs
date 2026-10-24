@@ -63,14 +63,9 @@ function eq(name, a, b) {
 const SECRET_RE = /token|secret|api[_-]?key|password|Bearer|sk-|AKIA/i;
 
 // ---------------------------------------------------------------------------
-// 容量常量（有界）
+// 最近访问有界，快捷方式由用户决定数量
 // ---------------------------------------------------------------------------
-ok("HOME_MAX_SHORTCUTS=24 正数", homeUi.HOME_MAX_SHORTCUTS === 24);
 ok("HOME_MAX_RECENTS=12 正数", homeUi.HOME_MAX_RECENTS === 12);
-ok(
-  "常量合理(0<RECENTS<=SHORTCUTS)",
-  homeUi.HOME_MAX_RECENTS > 0 && homeUi.HOME_MAX_RECENTS <= homeUi.HOME_MAX_SHORTCUTS
-);
 ok("HOME_MAX_NAME_LEN/TARGET_LEN 正数", homeUi.HOME_MAX_NAME_LEN > 0 && homeUi.HOME_MAX_TARGET_LEN > 0);
 
 // ---------------------------------------------------------------------------
@@ -157,7 +152,7 @@ for (let i = 0; i < 200; i++) {
   many.push({ id: "m" + i, type: "url", name: "N" + i, target: "https://x.example/" + i, icon: "🔍" });
 }
 const bounded = homeUi.normalizeShortcuts(many);
-eq("normalizeShortcuts 有界封顶(200→24)", bounded.length, homeUi.HOME_MAX_SHORTCUTS);
+eq("normalizeShortcuts 保留用户的 200 个快捷方式", bounded.length, 200);
 
 const idDup = homeUi.normalizeShortcuts([
   { id: "same", type: "url", name: "A", target: "https://a1.example", icon: "🔍" },
@@ -304,7 +299,6 @@ const VISIBLE = [
   homeUi.HOME_RECENTS_EMPTY_MESSAGE,
   homeUi.HOME_ERROR_FALLBACK,
   homeUi.HOME_LOADING_MESSAGE,
-  homeUi.HOME_SHORTCUT_LIMIT_MESSAGE,
   ...areas.map((a) => homeUi.areaAccessibleLabel(a)),
 ];
 ok("用户可见文案全部非空", VISIBLE.every((t) => typeof t === "string" && t.length > 0));

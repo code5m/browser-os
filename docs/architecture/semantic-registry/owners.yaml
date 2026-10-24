@@ -326,6 +326,7 @@ owners:
       - busy
       - error
       - panelOpen
+      - barVisible
       - sorted (derived)
     owner_only_api:
       - add
@@ -333,6 +334,7 @@ owners:
       - toggle
       - importFile
       - togglePanel
+      - toggleBar
       - load
       - findByUrl
     public_intent_api:
@@ -341,6 +343,7 @@ owners:
       - toggle
       - importFile
       - togglePanel
+      - toggleBar
     forbidden_callers:
       - components/**（不得直写 items / panelOpen；只能调 store action）
     authorized_callers:
@@ -681,6 +684,8 @@ owners:
       - connecting
       - schema
       - schemaBusy
+      - schemaError
+      - schemaLoaded
       - closePending
       - risk
       - verdict

@@ -5,7 +5,7 @@
 export interface IdeaSource {
   id: string;
   name: string;
-  kind: "mysql" | "sqlite" | "unsupported";
+  kind: "mysql" | "postgres" | "sqlite" | "unsupported";
   host: string;
   portText: string;
   database: string;
@@ -64,7 +64,12 @@ export function parseIdeaDataSourcesXml(
     const id=safeDisplay(attr(attributes,"uuid") || name);
     const user=safeDisplay(field(body,"user-name"));
     const base: IdeaSource = {id,name,kind:"unsupported",host:"",portText:"",database:"",username:user,supported:false,note:""};
-    if (/ssh-tunnel|ssh-config|tunnel-config|url-only|sshConfig|sshTunnel|proxyConfig|sslCert|sslKey|<[^>]*(?:password|credential|secret|proxy|client-cert|ssl-cert|cloud)/i.test(attributes+body)) return {...base,note:"需要 SSH、代理、证书、凭据或专用连接方式，暂不自动导入"};
+    // IDEA 常会在项目 XML 中留下 password/secret-storage 占位标记；这些值不会被读取，
+    // 但不应因此把整个数据源隐藏。只有确实依赖 SSH、代理、证书或专用连接方式时才跳过。
+    // Only explicit transport indirection or certificate material blocks metadata import.
+    // IDEA's `url-only` and cloud/vendor markers are still ordinary JDBC URLs and must not
+    // make an otherwise selectable data source disappear.
+    if (/ssh-tunnel|ssh-config|tunnel-config|sshConfig|sshTunnel|proxyConfig|sslCert|sslKey|client-cert|ssl-cert/i.test(attributes+body)) return {...base,note:"需要 SSH、代理、证书或专用连接方式，暂不自动导入"};
     if (/^jdbc:mysql:\/\//i.test(jdbc)) {
       try {
         const url = new URL(jdbc.slice(5));
@@ -78,8 +83,21 @@ export function parseIdeaDataSourcesXml(
         const sslSetting=url.searchParams.get("sslMode")||"";
         const tlsNotice=/DISABLED|useSSL=false/i.test(sslSetting+" "+url.search) ? "；IDEA 的非 TLS 选项未自动继承" : "";
         return {...base,kind:"mysql",host,portText:url.port||"3306",database,supported:true,
-          note:"导入连接元数据，不导入密码；默认采用 BrowserOS 安全 TLS 配置"+tlsNotice};
+          note:"导入连接元数据，不导入 IDEA 密码；默认采用 BrowserOS 安全 TLS 配置"+tlsNotice};
       } catch { return {...base,note:"无法解析 MySQL JDBC URL"}; }
+    }
+    if (/^jdbc:postgresql:\/\//i.test(jdbc)) {
+      try {
+        const url = new URL(jdbc.slice(5));
+        if (url.username || url.password || url.hash) return {...base,note:"连接串包含敏感账户信息或片段，拒绝自动导入"};
+        const host=url.hostname;
+        const database=decodeURIComponent(url.pathname.replace(/^\//,""));
+        if (!host || !database || database.includes("/") || database.includes("\\") || database.length > 128 || /[\u0000-\u001f]/.test(database)) {
+          return {...base,note:"PostgreSQL 地址或数据库名不完整"};
+        }
+        return {...base,kind:"postgres",host,portText:url.port||"5432",database,supported:true,
+          note:"导入连接元数据，不导入 IDEA 密码；验证时采用 BrowserOS 安全 TLS 配置"};
+      } catch { return {...base,note:"无法解析 PostgreSQL JDBC URL"}; }
     }
     if (/^jdbc:sqlite:/i.test(jdbc)) {
       const filepath=jdbc.slice("jdbc:sqlite:".length);

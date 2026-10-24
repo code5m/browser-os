@@ -229,6 +229,7 @@ export const useFileStore = defineStore("files", () => {
     closeFileCtx();
     if (entry.is_dir) {
       layout.openDirTab(entry.path);
+      void enterDir(entry.path);
     } else {
       openFileInline(entry);
     }

@@ -7,6 +7,7 @@ import { useBrowserStore } from "../../browser/public";
 import { openModuleInCurrentTab } from "../../../composables/browserNav";
 import { isGridResourceAllowed } from "../resource/guard";
 import { registerGridLifecycleBinding } from "../lifecycle";
+import { BUILTIN_AI_PRESETS, decodeAiPresets, validateAiPreset } from '../model/aiPresets.mjs';
 
 export const useGridStore = defineStore("grid", () => {
   const layout = useLayoutStore();
@@ -29,6 +30,48 @@ export const useGridStore = defineStore("grid", () => {
   const gridMode = ref<"browse" | "ai">("ai");
   const gridAiInput = ref("");
   const gridRects = reactive<{ x: number; y: number; w: number; h: number }[]>([]);
+  const customAiPresets = ref<any[]>([]);
+  const activeAiPreset = ref('cn-daily');
+  const aiPresets = computed(()=>[...BUILTIN_AI_PRESETS,...customAiPresets.value]);
+  const presetStorage='browseros.grid.ai-presets.v1';
+  try {
+    customAiPresets.value=decodeAiPresets(localStorage.getItem(presetStorage));
+    const saved=decodeAiPresets(localStorage.getItem(presetStorage+'.last'))[0];
+    if(saved){gridUrls.splice(0,12,...saved.urls,...Array(12-saved.urls.length).fill(''));gridCount.value=saved.urls.length;gridLayout.value=saved.layout;activeAiPreset.value=saved.id;}
+  } catch { /* Storage is optional; never block capability startup. */ }
+  function persistAiPresets() {
+    try {localStorage.setItem(presetStorage,JSON.stringify(customAiPresets.value));}
+    catch {layout.showToast('模板未能持久化，请检查本地存储');return false;}
+    return true;
+  }
+  async function applyAiPreset(id:string) {
+    if(gridStarting.value)return;
+    const item=aiPresets.value.find(p=>p.id===id);if(!item)return;
+    try {
+      const next=validateAiPreset(item);
+      gridUrls.splice(0,12,...next.urls,...Array(12-next.urls.length).fill(''));
+      gridCount.value=next.urls.length;gridLayout.value=next.layout;gridMode.value='ai';activeAiPreset.value=next.id;
+      try {localStorage.setItem(presetStorage+'.last',JSON.stringify([next]));}catch{layout.showToast('模板已切换，但无法保存重启偏好');}
+      if(gridOpen.value)await buildGrid();
+    } catch {layout.showToast('模板无效：请检查网址与格数');}
+  }
+  function saveAiPreset(name:string) {
+    try {
+      if(customAiPresets.value.length>=32)throw Error('最多保存 32 套自定义模板');
+      const preset=validateAiPreset({id:crypto.randomUUID(),name,layout:gridLayout.value,urls:gridUrls.slice(0,gridCount.value)});
+      const previous=activeAiPreset.value;
+      customAiPresets.value.push(preset);activeAiPreset.value=preset.id;
+      if(!persistAiPresets()){customAiPresets.value.pop();activeAiPreset.value=previous;return false;}
+      return true;
+    } catch(e) {layout.showToast(e instanceof Error?e.message:'模板保存失败');return false;}
+  }
+  function deleteAiPreset(id:string) {
+    const previous=customAiPresets.value;
+    customAiPresets.value=customAiPresets.value.filter(p=>p.id!==id);
+    if(!persistAiPresets()){customAiPresets.value=previous;return;}
+    if(activeAiPreset.value===id)activeAiPreset.value='';
+    try {localStorage.removeItem(presetStorage+'.last');}catch{}
+  }
 
   // ===== 各 AI 站点输入框/发送按钮适配表（按 hostname 匹配，数组内按优先级尝试） =====
   // 未命中的站点走通用兜底：textarea → contenteditable → input[type=text]，Enter 提交
@@ -54,6 +97,10 @@ export const useGridStore = defineStore("grid", () => {
     "copilot.microsoft.com": { inputs: ["textarea#userInput", CE, T], sends: ["button[aria-label*='提交']", ARIA_SUBMIT] },
     "www.perplexity.ai": { inputs: [T], sends: [ARIA_SUBMIT] },
     "grok.x.com": { inputs: [T, CE], sends: ["button[type='submit']"] },
+    "grok.com": { inputs: [T, CE], sends: ["button[type='submit']", ARIA_SEND] },
+    "chat.qwen.ai": { inputs: [T, CE], sends: SEND },
+    "yuanbao.tencent.com": { inputs: [CE, T], sends: SEND },
+    "chat.mistral.ai": { inputs: [CE, T], sends: ["button[type='submit']", ARIA_SEND] },
     "poe.com": { inputs: [T], sends: ["button[class*='ChatMessageSendButton']", "button[class*='send']"] },
   };
   function aiAdapterFor(u: string): { inputs: string[]; sends: string[] } {
@@ -220,7 +267,7 @@ export const useGridStore = defineStore("grid", () => {
     }
     const n = gridCount.value;
     layout.showToast(`正在向 ${n} 个宫格注入…`);
-    bridge.debugLog(`gridSendAi start n=${n} q=${q}`);
+    bridge.debugLog(`gridSendAi start n=${n}`);
     const fails: string[] = [];
     // 串行错峰提交：每格提交后延迟 GRID_STAGGER_MS 再发下一格，让各 AI 的流式响应
     // 错峰启动，避免 4 个子 webview 同时进入高强度流式渲染导致 WebKitGTK 并发崩溃
@@ -413,6 +460,7 @@ export const useGridStore = defineStore("grid", () => {
   });
 
   return {
+    aiPresets, customAiPresets, activeAiPreset, applyAiPreset, saveAiPreset, deleteAiPreset,
     gridOpen,
     gridStarting,
     gridStartupError,

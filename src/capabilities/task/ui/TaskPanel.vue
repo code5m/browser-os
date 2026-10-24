@@ -94,8 +94,9 @@ const selectedTargetRuns = computed(() =>
   <div class="task-panel">
     <div class="head">
       <div>
-        <strong>定时任务</strong>
-        <span class="muted">（{{ tasks.tasks.length }} 个，启用 {{ tasks.enabledCount }} 个）</span>
+        <div class="eyebrow">AUTOMATION WORKSPACE</div>
+        <strong class="page-title">定时任务</strong>
+        <span class="muted">{{ tasks.tasks.length }} 个任务 · {{ tasks.enabledCount }} 个运行中</span>
       </div>
       <div class="ops">
         <button :disabled="tasks.loading" @click="tasks.loadAll()">刷新</button>
@@ -104,6 +105,10 @@ const selectedTargetRuns = computed(() =>
         </button>
       </div>
     </div>
+    <section class="hero">
+      <div><strong>把重复工作交给任务</strong><p>按计划运行 Shell 脚本、命令片段，并查看每次执行结果。任务默认关闭，确认后才会无人值守运行。</p></div>
+      <div class="type-legend"><span><i class="dot script-dot"/>Shell 脚本</span><span><i class="dot command-dot"/>命令片段</span><span class="future"><i class="dot agent-dot"/>Agent 任务（规划中）</span></div>
+    </section>
 
     <div v-if="!tasks.backendReady" class="banner">
       后端定时任务命令（`task_list` / `task_add` / `task_update` / `task_remove` / `task_run_now`）尚未落地，
@@ -116,11 +121,11 @@ const selectedTargetRuns = computed(() =>
     </EmptyState>
 
     <ul v-else class="task-list">
-      <li v-for="def in tasks.tasks" :key="def.id" class="task-row">
+      <li v-for="def in tasks.tasks" :key="def.id" class="task-row" :class="{enabled:def.enabled}">
         <div class="main">
           <div class="title">
             <span class="name">{{ def.name }}</span>
-            <span class="tag">{{ kindLabel(def.kind) }}</span>
+            <span class="tag kind-tag" :class="def.kind">{{ def.kind === 'script' ? 'Shell 脚本' : '命令片段' }}</span>
             <span v-if="dangerousHint(def)" class="tag danger">高风险</span>
           </div>
           <div class="muted line">
@@ -220,6 +225,7 @@ const selectedTargetRuns = computed(() =>
   align-items: center;
   justify-content: space-between;
 }
+.eyebrow{font-size:10px;letter-spacing:.12em;color:#7890a8;margin-bottom:3px}.page-title{font-size:21px;margin-right:8px}.hero{display:flex;justify-content:space-between;gap:18px;align-items:center;padding:16px 18px;border:1px solid #d7e3ef;border-radius:12px;background:linear-gradient(110deg,#f5f9ff,#fbfdff)}.hero strong{font-size:16px;color:#223b55}.hero p{margin:5px 0 0;color:#6e8195;max-width:600px}.type-legend{display:flex;gap:12px;flex-wrap:wrap;justify-content:flex-end;color:#63788e;font-size:11px}.type-legend span{white-space:nowrap}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;background:#6b9ed1}.script-dot{background:#38a169}.command-dot{background:#6b72d6}.agent-dot{background:#b5c0cc}.future{opacity:.65}
 .ops {
   display: flex;
   gap: 6px;
@@ -257,7 +263,9 @@ const selectedTargetRuns = computed(() =>
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+  background:#fff;box-shadow:0 2px 8px rgba(44,70,98,.05);transition:border-color .15s,box-shadow .15s
 }
+.task-row:hover{border-color:#9fc0df;box-shadow:0 4px 14px rgba(44,70,98,.10)}.task-row.enabled{border-left:3px solid #3aa675}.kind-tag.script{background:#ecfaf2;color:#25764f;border-color:#bde4cc}.kind-tag.command{background:#f0f1ff;color:#4b55a4;border-color:#c8cdf5}
 .title {
   display: flex;
   align-items: center;

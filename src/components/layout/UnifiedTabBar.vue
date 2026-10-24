@@ -6,6 +6,8 @@ import { useFileStore } from "../../capabilities/workspace/public";
 import { useAppsStore } from "../../capabilities/apps/public";
 import { useTerminalStore } from "../../capabilities/terminal/public";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { Globe, Plus, X } from '@lucide/vue';
+import { bridge } from '../../bridge';
 
 // 统一页签条：浏览器网页页签 + 目录页签 + 模块页签（终端/文件等）混排在同一条，
 // 不区分类型 —— 点击即切换对应视图，行为与浏览器标签一致。
@@ -176,6 +178,7 @@ function activateMod(t: { id: string; view: string; path?: string }) {
 
 <template>
   <div class="tabbar unified" @mousedown="startWindowDrag">
+    <div class="tab-strip">
     <!-- 网页页签 -->
     <div
       v-for="t in browser.tabs"
@@ -185,9 +188,9 @@ function activateMod(t: { id: string; view: string; path?: string }) {
       @contextmenu.prevent="context = { id: t.id, kind: 'web' }"
       :title="t.url"
     >
-      <span class="tab-ic">🌐</span>
+      <Globe class="tab-ic" :size="15"/>
       <span class="tab-title">{{ t.title || t.url }}</span>
-      <button class="tab-close" @click.stop="browser.tabClose(t.id)" title="关闭">✕</button>
+      <button class="tab-close" @click.stop="browser.tabClose(t.id)" title="关闭"><X :size="14"/></button>
     </div>
     <!-- 目录 / 模块页签 -->
     <div
@@ -200,9 +203,10 @@ function activateMod(t: { id: string; view: string; path?: string }) {
     >
       <span class="tab-ic">{{ t.icon }}</span>
       <span class="tab-title">{{ t.label }}</span>
-      <button class="tab-close" @click.stop="layout.closeModTab(t.id)" title="关闭">✕</button>
+      <button class="tab-close" @click.stop="layout.closeModTab(t.id)" title="关闭"><X :size="14"/></button>
     </div>
-    <button class="tab-new" @click="browser.tabNew()" title="新建页签">＋</button>
+    <button class="tab-new" @click="browser.tabNew()" title="新建页签"><Plus :size="18"/></button>
+    </div>
     <div class="titlebar-drag" aria-hidden="true"></div>
     <div class="window-controls" aria-label="窗口控制">
       <button title="最小化" @click.stop="minimizeWindow">−</button>
@@ -231,52 +235,58 @@ function activateMod(t: { id: string; view: string; path?: string }) {
 .tab-actions-sep { width:1px; align-self:stretch; background:#d5dbe7; margin:0 2px; }
 .unified {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 3px;
   padding: 3px 6px 0;
-  background: #eef1f6;
+  background:var(--chrome-frame,#e8eaed);
   border-bottom: 0;
   flex-shrink: 0;
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: hidden;
   /* 页签超出时仍支持滚轮/触控板横向滚动，但不显示系统横向轨道。 */
   scrollbar-width: none;
   -ms-overflow-style: none;
-  min-height: 30px;
+  min-height: 42px;
   cursor: default;
 }
 .unified::-webkit-scrollbar { display: none; }
+.tab-strip{display:flex;align-items:flex-end;gap:3px;flex:0 1 auto;min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+.tab-strip::-webkit-scrollbar{display:none}
 .titlebar-drag { flex: 1; min-width: 24px; align-self: stretch; cursor: default; }
-.window-controls { display: flex; flex: none; align-items: stretch; margin: -3px -6px 0 0; }
-.window-controls button { width: 34px; border: 0; border-radius: 0; background: transparent; display: grid; place-items: center; color: #667085; cursor: pointer; }
+.window-controls { display: flex; flex: none; align-items: stretch; align-self:stretch; margin: -3px -6px 0 0; }
+.window-controls button { width: 42px; border: 0; border-radius: 0; background: transparent; display: grid; place-items: center; color:var(--chrome-text,#3c4043); cursor: pointer; }
 .window-controls button:hover { background: #dfe5ed; color: #1d2939; }
 .window-controls .window-close:hover { background: #d64545; color: #fff; }
 .tab {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  max-width: 200px;
-  border: 1px solid #d5dbe7;
-  border-bottom: none;
-  background: #f7f8fa;
-  color: #4e5969;
-  border-radius: 7px 7px 0 0;
-  padding: 4px 8px 4px 10px;
-  font-size: 12px;
+  gap: 9px;
+  width:210px;
+  max-width:240px;
+  min-width:96px;
+  height:35px;
+  box-sizing:border-box;
+  border:0;
+  background:transparent;
+  color:var(--chrome-text,#3c4043);
+  border-radius:10px 10px 0 0;
+  padding:0 10px 0 14px;
+  font:13px system-ui,sans-serif;
   cursor: pointer;
   white-space: nowrap;
 }
 .tab.active {
-  background: #fff;
-  border-color: #c9cede;
-  color: #2b6cb0;
-  font-weight: 600;
+  background:var(--chrome-toolbar,#fff);
+  color:var(--chrome-text,#202124);
+  font-weight:400;
 }
+.tab:not(.active):hover{background:var(--chrome-hover,#dfe3e8)}
 .tab-ic {
   font-size: 11px;
   flex-shrink: 0;
 }
 .tab-title {
+  flex:1;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
@@ -284,10 +294,11 @@ function activateMod(t: { id: string; view: string; path?: string }) {
 .tab-close {
   border: none;
   background: transparent;
-  color: #bbb;
+  color:var(--chrome-text,#5f6368);
   font-size: 10px;
-  padding: 0 2px;
-  border-radius: 3px;
+  padding: 0;
+  width:20px;height:20px;display:grid;place-items:center;
+  border-radius:50%;
   cursor: pointer;
   flex-shrink: 0;
 }

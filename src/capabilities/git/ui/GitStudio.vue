@@ -9,6 +9,7 @@ import { layoutCommitGraph } from '../model/logGraph';
 import { parseUnifiedPatch } from '../model/patchView';
 import { readGitPreferences, writeGitPreferences } from '../model/gitPreferences';
 import GitCommitFileTree from './GitCommitFileTree.vue';
+import GitHistoryDiff from './GitHistoryDiff.vue';
 import { patchHunks, applyPatchSelection, blameLines, sourceIdentity, safeGithubLink } from '../model/studioPatch.mjs';
 
 const props = defineProps<{path?:string;mode?:string;initialAction?:string;closeLabel?:string;searchId?:string}>();
@@ -43,6 +44,7 @@ const selectedParent = ref('');
 const commitFileFilter = ref('');
 const commitFilePath = ref('');
 const historicalContent = ref('');
+const historicalCompareLocal = ref(false);
 const fileHistoryContext = ref('');
 const historicalContentLoading = ref(false);
 const historicalDiffMode = ref<'file'|'split'|'patch'>('file');
@@ -68,9 +70,6 @@ const conflictRows = computed(() => {
   return Array.from({length: size}, (_, index) => ({index, ours: ours[index] ?? '', theirs: theirs[index] ?? ''}))
     .filter(row => row.ours !== row.theirs).slice(0, 200);
 });
-const historicalRows = computed(() => historyOnlyChanges.value
-  ? historicalDiff.value.rows.filter((row:any) => row.removed || row.added)
-  : historicalDiff.value.rows);
 const historyLayoutStyle = computed(() => ({
   '--git-history-inspector-width': `${historyInspectorWidth.value}px`,
   '--git-history-bottom-height': `${historyBottomHeight.value}px`,
@@ -301,7 +300,7 @@ async function selectCommit(oid:string, compareLocal=false, preserveSelection=fa
     if(result) {
       commitFiles.value=result.files||[];
       selectedParent.value = result.selected_parent || selectedParent.value;
-      if (compareLocal && commitFiles.value[0]) void selectCommitFile(commitFiles.value[0].path, true);
+      if (commitFiles.value[0]) await selectCommitFile(commitFiles.value[0].path, compareLocal);
     }
   } catch(e) { if(gen===detailGeneration) error.value=friendly(e); }
 }
@@ -330,15 +329,25 @@ async function selectCommitFile(path:string, compareLocal=false) {
   rebasedWorktreePath.value='';
   if(!logSelection.value || blocked.value) return;
   const revision=logSelection.value, gen=++detailGeneration;
-  commitFilePath.value=path; rawDetail.value=''; historicalContent.value=''; historicalContentLoading.value=true;
+  // Selecting a file from the history tree must always reveal a fresh editor.
+  // This mirrors the Rebased/IDEA interaction: a previously collapsed editor
+  // must not stay hidden when the user chooses the next file, and the first
+  // view should be the focused changed-region diff rather than a stale full
+  // file view from the previous selection.
+  commitFilePath.value=path;
+  historicalCompareLocal.value=compareLocal;
+  historyEditorCollapsed.value=false;
+  historyOnlyChanges.value=true;
+  historicalDiffMode.value='split';
+  rawDetail.value=''; historicalContent.value=''; historicalContentLoading.value=true;
   try {
     const [result, content] = await Promise.all([
       read({action:compareLocal?'commit_file_worktree_diff':'commit_file_diff',revision,parent:selectedParent.value||undefined,paths:[path]}),
-      compareLocal ? Promise.resolve(null) : read({action:'commit_file_content',revision,paths:[path]}),
+      compareLocal ? read({action:'file',paths:[path]}) : read({action:'commit_file_content',revision,paths:[path]}),
     ]);
     if(gen!==detailGeneration || logSelection.value!==revision || commitFilePath.value!==path) return;
     if(result) rawDetail.value=result.patch||'';
-    if(content) historicalContent.value=content.content||'';
+    if(content) historicalContent.value=(compareLocal ? content.worktree : content.content)||'';
   } catch(e) { if(gen===detailGeneration) error.value=friendly(e); }
   finally { if(gen===detailGeneration) historicalContentLoading.value=false; }
 }
@@ -644,7 +653,7 @@ watch(()=>source.value?sourceIdentity(source.value):'',()=>{resetSourceContext()
                 <option v-for="parent in selectedCommit.parents" :key="parent" :value="parent">{{parent.slice(0,12)}}</option>
               </select>
             </label>
-            <p v-else-if="selectedCommit" class="hint">这是初始提交，没有父提交；文件内容按提交快照展示。</p>
+            <p v-else-if="selectedCommit && !selectedCommit.parents?.length" class="hint">这是初始提交，没有父提交；文件内容按提交快照展示。</p>
           </div>
           <div v-if="commitFilePath" class="toolbar">
             <button @click="moveCommitFile(-1)" :disabled="blocked||!visibleCommitFiles.length||visibleCommitFiles[0].path===commitFilePath" aria-label="上一个变更文件">↑ 上一个</button>
@@ -660,7 +669,7 @@ watch(()=>source.value?sourceIdentity(source.value):'',()=>{resetSourceContext()
       <div class="history-vertical-splitter" role="separator" aria-label="调整提交详情宽度" aria-orientation="vertical" @pointerdown="beginHistoryResize('inspector',$event)"/>
       <main class="detail history-editor-pane" aria-label="文件编辑和差异预览">
         <header class="history-editor-toolbar"><button v-if="commitFilePath||rebasedWorktreePath||rebasedShelf&&stashTarget" @click="commitFilePath='';rebasedWorktreePath='';stashTarget=''">← 返回 Log</button><strong>{{rebasedWorktreePath||commitFilePath||rebasedShelf&&stashTarget||'选择提交和文件'}}</strong><span class="grow"/><template v-if="commitFilePath"><button @click="historyEditorCollapsed=!historyEditorCollapsed">{{historyEditorCollapsed?'展开编辑器':'折叠编辑器'}}</button><button :disabled="historicalDiffMode==='file'" :title="historicalDiffMode==='file'?'切换到并排 Diff 后可筛选变更区域':''" @click="historyOnlyChanges=!historyOnlyChanges">{{historyOnlyChanges?'显示全部内容':'只显示变更区域'}}</button><select v-model="historicalDiffMode" aria-label="历史文件预览方式"><option value="file">文件编辑器</option><option value="split">并排 Diff</option><option value="patch">统一 Patch</option></select></template></header>
-        <section v-if="rebasedWorktreePath" class="history-editor" aria-label="工作区文件差异"><pre class="patch history-patch">{{patch||'此文件没有可显示的文本差异。'}}</pre></section>
+        <section v-if="rebasedWorktreePath" class="history-editor" aria-label="工作区文件差异"><GitHistoryDiff :patch="patch" :after-content="(staged ? file?.index : file?.worktree) || ''" :only-changes="historyOnlyChanges" :before-label="staged ? 'HEAD' : '暂存区'" :after-label="staged ? '暂存区' : '工作区'"/></section>
         <section v-else-if="rebasedShelf&&stashTarget" class="history-editor" aria-label="暂存架文件差异"><pre class="patch history-patch">{{rawDetail||'此暂存记录没有可显示的文本差异。'}}</pre></section>
         <p v-else-if="!logSelection" class="history-empty">从中间历史选择提交，或从左侧选择工作区文件。</p>
         <p v-else-if="!commitFilePath" class="history-empty">正在读取提交的变更文件，或该提交没有文本文件。</p>
@@ -668,7 +677,7 @@ watch(()=>source.value?sourceIdentity(source.value):'',()=>{resetSourceContext()
           <p v-if="historicalContentLoading" class="hint">正在读取文件和差异…</p>
           <template v-else-if="!historyEditorCollapsed">
             <textarea v-if="historicalDiffMode==='file'" :value="historicalContent" readonly spellcheck="false" aria-label="提交版本文件内容" placeholder="这个版本中该文件不存在、为二进制文件，或超过预览大小限制；仍可切换到 Diff 查看变更。"/>
-            <div v-else-if="historicalDiffMode==='split'" class="history-patch"><div v-for="(row,index) in historicalRows" :key="index" class="split-row"><pre :class="{removed:row.removed}">{{row.beforeLine??''}} {{row.before}}</pre><pre :class="{added:row.added}">{{row.afterLine??''}} {{row.after}}</pre></div><p v-if="historicalDiff.truncated" role="status">文件差异只展示前 4000 行。</p></div>
+            <GitHistoryDiff v-else-if="historicalDiffMode==='split'" :patch="rawDetail" :after-content="historicalContent" :only-changes="historyOnlyChanges" :before-label="historicalCompareLocal ? logSelection.slice(0,12) : selectedParent ? '父提交 '+selectedParent.slice(0,12) : '空版本（初始提交）'" :after-label="historicalCompareLocal ? '工作区' : '当前提交 '+logSelection.slice(0,12)"/>
             <pre v-else class="patch history-patch">{{rawDetail||'此文件没有可显示的文本差异。'}}</pre>
           </template>
         </section>
@@ -762,6 +771,12 @@ watch(()=>source.value?sourceIdentity(source.value):'',()=>{resetSourceContext()
 .rebased-product-theme button:hover,.rebased-product-theme button[aria-pressed=true],.rebased-product-theme .active,.rebased-product-theme .rebased-file-row button.active{background:var(--git-selected);color:#fff}.rebased-product-theme .commit{background:transparent;border-color:var(--git-border-soft);color:var(--git-text)}.rebased-product-theme .commit:hover{background:#252a31}.rebased-product-theme .commit.active{background:var(--git-selected)}
 .rebased-product-theme .history-filter-menu,.rebased-product-theme .commit-action-menu,.rebased-product-theme .branch-action-menu,.rebased-product-theme .branch-widget-menu{background:var(--git-surface);border-color:var(--git-border);box-shadow:0 8px 22px #0009}.rebased-product-theme .history-filter-menu button,.rebased-product-theme .commit-action-menu button,.rebased-product-theme .branch-action-menu button,.rebased-product-theme .branch-widget-menu button{background:transparent;border-color:transparent}.rebased-product-theme .history-filter-menu button:hover{background:var(--git-selected)}
 .rebased-product-theme .rebased-column-splitter:hover{background:#46688e}.rebased-product-theme .rebased-branches-strip{color:var(--git-muted)}.rebased-product-theme .history-empty,.rebased-product-theme .hint,.rebased-product-theme .rebased-commit-row .commit-author,.rebased-product-theme .rebased-commit-row .commit-time{color:var(--git-muted)}.rebased-product-theme .history-editor-toolbar{background:var(--git-surface-muted);border-color:var(--git-border)}
+.rebased-product-theme .history-editor .history-patch{width:100%;height:100%;max-height:none;background:#20252d;color:#dce5f0;font:12px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace;tab-size:2}
+.rebased-product-theme .history-editor .split-row{min-height:23px;border-bottom:1px solid #292f38}
+.rebased-product-theme .history-editor .split-row pre{min-width:0;overflow-x:auto;padding:3px 10px;background:#20252d;color:#dce5f0;border-right:1px solid #3d4652;white-space:pre;overflow-wrap:normal}
+.rebased-product-theme .history-editor .split-row pre.added{background:#1b3a2d;color:#d8f2e2}
+.rebased-product-theme .history-editor .split-row pre.removed{background:#4a2c33;color:#ffe1e4}
+.rebased-product-theme .history-editor textarea{background:#20252d;color:#dce5f0}
 .rebased-product-theme,.rebased-product-theme :deep(*){scrollbar-width:thin;scrollbar-color:#505865 var(--git-bg)}
 .rebased-product-theme :deep(*::-webkit-scrollbar){width:9px;height:9px}.rebased-product-theme :deep(*::-webkit-scrollbar-track){background:var(--git-bg)}.rebased-product-theme :deep(*::-webkit-scrollbar-thumb){border:2px solid var(--git-bg);border-radius:8px;background:#505865}
 :global([data-theme="dark"]) .git-studio{--git-bg:#1d222a;--git-surface:#252b34;--git-surface-muted:#20262e;--git-border:#3b4653;--git-border-soft:#303944;--git-text:#d7e0ec;--git-muted:#9aa8b8;--git-accent:#8db9f2;--git-selected:#304c70;--git-added:#183b2a;--git-removed:#482b32;background:var(--git-bg);color:var(--git-text)}

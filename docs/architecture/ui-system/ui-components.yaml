@@ -8,9 +8,13 @@
 
 version: 1
 generated_from_head: 3f57a92e5fb7d9a6bc978f1572964d3c14fb8caf
-total: 82
+total: 86
 
 components:
+  - { id: bookmark.bar, name: BookmarkBar, layer: CAPABILITY_UI, owner: bookmark, file: src/capabilities/bookmark/ui/BookmarkBar.vue, public: false, business_semantics: "Bookmark bar backed by native menu adapter", capability_specific: true, dependencies: [useBookmarkStore, nativeMenu], consumers: [bookmark contributions], status: OBSERVED }
+  - { id: git.commit-file-tree, name: GitCommitFileTree, layer: CAPABILITY_UI, owner: git, file: src/capabilities/git/ui/GitCommitFileTree.vue, public: false, business_semantics: "Commit changed file tree", capability_specific: true, dependencies: [], consumers: [GitStudio], status: OBSERVED }
+  - { id: git.history-diff, name: GitHistoryDiff, layer: CAPABILITY_UI, owner: git, file: src/capabilities/git/ui/GitHistoryDiff.vue, public: false, business_semantics: "Aligned historical diff with context folds", capability_specific: true, dependencies: [patchView], consumers: [GitStudio], status: OBSERVED }
+  - { id: home.changelog, name: HomeChangelog, layer: CAPABILITY_UI, owner: home, file: src/capabilities/home/ui/HomeChangelog.vue, public: false, business_semantics: "Version update history", capability_specific: true, dependencies: [], consumers: [HomePanel], status: OBSERVED }
 
   - { id: database.table-editor, name: TableDataEditor, layer: CAPABILITY_UI, owner: database, file: src/capabilities/database/ui/TableDataEditor.vue, public: false, business_semantics: "Native typed data pages and parameterized mutation previews", capability_specific: true, dependencies: [bridge], consumers: [DatabaseWorkspace], status: OBSERVED }
 
