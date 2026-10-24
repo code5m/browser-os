@@ -25,7 +25,8 @@ export type MainView =
   | "editor"
   | "settings"
   | "capability-manager"
-  | "vault";
+  | "vault"
+  | "bfc";
 
 // ===== M5-W17（Lane A6）客户端导航契约 =====
 // ActivityBar 的唯一真源：一级入口、☰ 菜单分节、窄窗口密度、键盘漫游索引。
@@ -122,6 +123,7 @@ export const MODULE_META: Record<string, { icon: string; label: string }> = {
   agents: { icon: "🤖", label: "智能体" },
   graph: { icon: "🕸️", label: "图谱" },
   plugin: { icon: "🔌", label: "插件" },
+  bfc: { icon: "▦", label: "BFC 内容库" },
   settings: { icon: "⚙️", label: "设置" },
 };
 

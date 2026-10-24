@@ -37,6 +37,7 @@ const LAUNCHERS: Launcher[] = [
   { view: "plugin", icon: "🔌", label: "插件" },
   { view: "repo", icon: "🛰️", label: "仓库" },
   { view: "audit", icon: "🛡️", label: "审计" },
+  { view: "bfc", icon: "▦", label: "BFC 内容库" },
 ];
 
 // 与 ActivityBar / UnifiedTabBar 保持同一套导航语义，避免主页另开一条：
