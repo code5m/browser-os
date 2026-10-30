@@ -6,3 +6,12 @@
 export { useDatabaseStore } from "./state/useDatabaseStore"
 export { databaseManifest } from "./manifest"
 export type { DbKind } from "../../utils/dbUi"
+
+import { useDatabaseStore as databaseOwner } from "./state/useDatabaseStore";
+import { isCapabilityActive } from "../../capability/runtimeSingleton";
+export function readCodingDatabaseContext(){
+  if(!isCapabilityActive('database'))throw new Error('DATABASE_CAPABILITY_INACTIVE');
+  const owner=databaseOwner();
+  if(!owner.activeId||!owner.schemaLoaded)throw new Error('DATABASE_SCHEMA_NOT_LOADED');
+  return {connection_id:owner.activeId,objects:owner.schema.slice(0,100).map(item=>({name:item.name,type:item.type})),truncated:owner.schema.length>100};
+}

@@ -14,6 +14,7 @@ mod shared {
 }
 
 mod framework {
+    pub mod ai;
     pub mod commands;
 }
 mod mcp;
@@ -1631,6 +1632,8 @@ fn main() {
             bridge::agent_parse,
             bridge::agent_validate,
             crate::capabilities::agent::local_provider::agent_local_chat,
+            crate::framework::ai::ai_service,
+            crate::framework::ai::coding_service,
             bridge::agent_permission_preview,
             crate::capabilities::skill::commands::skill_parse,
             crate::capabilities::skill::commands::skill_validate,

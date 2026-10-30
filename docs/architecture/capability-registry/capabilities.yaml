@@ -17,6 +17,31 @@ version: 1
 
 capabilities:
 
+  - id: bfc
+    name: BFC 内容库
+    category: CAPABILITY
+    semanticOwner: BfcProjectPanel
+    governanceStatus: GOVERNED
+    status: COMPATIBILITY_WRAPPED
+    maturity: C3
+    provides: [bfc.web, bfc.workbench]
+    dependsOn: [bridge, browser]
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE, SUSPENDED]
+      default: ACTIVE
+      activatable: true
+      resident: false
+    resources:
+      class: [LIGHT]
+      suspendable: true
+      destroyable: true
+    permissions: []
+    persistence:
+      scope: runtime_only
+      sensitive: false
+    entrypoint: src/capabilities/bfc
+
   - id: browser
     name: Browser
     category: CAPABILITY
@@ -290,7 +315,7 @@ capabilities:
     governanceStatus: GOVERNED
     # Capability Library Expansion v1：Agent 升格为独立 Capability（AgentManagerPanel 迁入 capabilities/agent/ui）。
     # 诚实缺口：执行后端（agent_chat/run/install）Rust 未实现（AGENT_SKILL_COMMANDS_AVAILABLE=false），
-    # 仅 agent_parse/validate/permission_preview 只读命令就绪 → 当前为只读壳，maturity C1。
+    # 新编码工作区另经 coding_service 提供文件工具；旧蓝图执行契约仍未实现，maturity 保持 C1。
     # useAgentStore 同时持有 skill 状态（skill 无专属 store），STAGE E 处理 skill 拆分。
     status: COMPATIBILITY_WRAPPED
     maturity: C1
@@ -300,14 +325,14 @@ capabilities:
       - agent.memory
     dependsOn:
       - bridge
-    optionalDependencies: []
+    optionalDependencies: [script, git, database, browser]
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
       activatable: true
       resident: false
     resources:
-      class: [MEDIUM, NETWORK]
+      class: [MEDIUM, NETWORK, PROCESS]
       suspendable: true
       destroyable: true
     permissions:

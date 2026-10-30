@@ -5,10 +5,9 @@ import type { CapabilityDefinition } from "../../capability/types"
 // 物理：AgentManagerPanel(+AgentChatPanel 子视图) 经通用 Contribution Registry 的 WORKBENCH_MAIN 槽
 // （view='agents'）贡献给 MainArea；MainArea 只按槽渲染、不 import 本能力内部（C3 关键）。
 //
-// 诚实声明：执行后端（agent_chat / agent_run / agent_install 等）在 Rust 侧**尚未实现**
-// （bridge.ts: AGENT_SKILL_COMMANDS_AVAILABLE=false，仅 agent_parse/validate/permission_preview 只读命令就绪）。
-// 故当前 Agent 为「只读壳 + 解析/校验/权限预览」，chat/run 走 guard() 拦截、不 invoke。
-// 这是真实功能缺口，不是边界缺失 —— 边界隔离已完成（C1），执行后端留作后续 stage。
+// 编码工作区经 framework coding_service 调用有界文件工具与模型循环；
+// 旧蓝图 agent_chat / agent_run / agent_install 契约仍未实现，不能混淆两条入口。
+// 当前未验证运行中能力暂停/销毁及完整热插拔，不提升成熟度或 HP 等级。
 export const agentManifest: CapabilityDefinition = {
   id: "agent",
   name: "智能体",
@@ -20,7 +19,7 @@ export const agentManifest: CapabilityDefinition = {
   ],
   dependsOn: ["bridge"],
   // Graph nodes may reference Agent ids as data; this is not a runtime dependency.
-  optionalDependencies: [],
+  optionalDependencies: ["script", "git", "database", "browser"],
   lifecycle: {
     supported: ["ACTIVE", "SUSPENDED"],
     default: "ACTIVE",
@@ -28,7 +27,7 @@ export const agentManifest: CapabilityDefinition = {
     resident: false,
   },
   resources: {
-    class: ["MEDIUM", "NETWORK"],
+    class: ["MEDIUM", "NETWORK", "PROCESS", "BACKGROUND"],
     suspendable: true,
     destroyable: true,
   },
@@ -47,19 +46,21 @@ export const agentManifest: CapabilityDefinition = {
     version: "1.0.0",
     displayName: "智能体",
     description:
-      "Agent 定义/安装/校验与对话壳。执行通道（agent_chat/run）后端尚未实现，当前为只读视图 + 解析/校验/权限预览。",
+      "编码工作区支持模型选择、Monaco 编辑、审核后应用文件修改、授权上下文及隔离 Rust 文件/模块树语言服务。旧蓝图 agent_chat/run 契约未实现；Cargo 依赖推断、调试器与完整生命周期验证待补。",
     maturity: "C1",
     maturityEvidence: ["scripts/check-developer-owners.mjs"],
     dependencies: ["bridge"],
-    optionalDependencies: [],
+    optionalDependencies: ["script", "git", "database", "browser"],
     conflicts: [],
     provides: ["agent.chat", "agent.run", "agent.memory"],
     requires: [],
     contributions: [{ id: "agent.main.panel", slot: "workbench-main", type: "surface" }],
     permissions: ["network.connect"],
     resources: [
-      // 后端仅只读命令就绪；执行资源（agent_chat 流式）待后端实现。
-      { kind: "NETWORK", ownership: "owned", evidence: "src-tauri/src/agent*.rs (readonly: agent_parse/validate/permission_preview)" },
+      // 编码工作区资源；旧 agent_chat 流式执行契约仍待实现。
+      { kind: "NETWORK", ownership: "owned", evidence: "src-tauri/src/framework/ai.rs provider requests; coding.rs bounded tool loop" },
+      { kind: "PROCESS", ownership: "owned", evidence: "coding_context.rs bounded approved MCP; coding_lsp.rs bounded per-request isolated rust-analyzer" },
+      { kind: "BACKGROUND_TASK", ownership: "owned", evidence: "codingEditorServices.mjs lazy browser editor and TypeScript workers, released with editor" },
     ],
     persistenceScope: "disk",
     persistenceSensitive: false,

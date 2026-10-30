@@ -3,6 +3,8 @@
 > 文档性质：machine truth 的引用者，非第二真源。评级真源：`src/capabilities/agent/manifest.ts`。
 > 重要诚实声明：Agent 执行后端（agent_chat / agent_run / agent_install 等）在 Rust 侧**尚未实现**（`bridge.ts: AGENT_SKILL_COMMANDS_AVAILABLE=false`），当前为「只读壳 + 解析/校验/权限预览」。这是真实功能缺口，不是边界缺失。
 
+> 范围说明：下文“只读壳”“不持有执行引擎”等描述仅适用于上述旧版 Agent 定义与对话入口，不适用于新增的编码工作区。编码工作区通过独立的 `codingService` 原生能力提供模型会话、审核后文件变更、受控上下文与隔离 Rust 语言服务；其能力和已知限制以 [编码智能体实现记录](../../../docs/design/coding-agent-implementation-20261025.md) 为准。它并未实现旧版 `agent_chat` / `agent_run` 契约，也不是完整 VS Code；安装版验收仍待完成。
+
 ---
 
 ## 1. Purpose

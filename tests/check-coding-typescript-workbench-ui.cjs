@@ -1,0 +1,104 @@
+// Real Workbench and Monaco TypeScript worker; project transport is a fixture.
+const assert=require('node:assert/strict');
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
+(async()=>{
+ const source=await(await fetch(base+'/src/capabilities/agent/ui/CodingWorkbench.vue')).text();
+ const vue=source.match(/from ["']([^"']+\/vue\.js\?[^"']+)["']/)?.[1];assert.ok(vue);
+ const browser=await chromium.launch({executablePath:'/usr/bin/google-chrome',headless:true,args:['--no-sandbox']});
+ try{
+  const page=await browser.newPage({viewport:{width:1600,height:1000}}),errors=[];page.on('pageerror',error=>errors.push(error.message));
+  const html=`<style>html,body,#app{height:100%;margin:0}</style><div id="app"></div><script type="module">
+   import {createApp} from '${vue}';import Workbench from '/src/capabilities/agent/ui/CodingWorkbench.vue';import {bridge} from '/src/bridge.ts';
+   const files={'main.ts':'import { meaning } from "./util";\\nmeaning;','util.ts':'export const meaning = 42;','search.ts':['first','second','third','fourth','needle'].join(String.fromCharCode(10))};
+   bridge.aiService=async()=>({profiles:[],bindings:{}});
+   bridge.codingService=async request=>{if(request.action==='tree')return {entries:Object.keys(files).map(path=>({path,name:path,kind:'file'}))};if(request.action==='session')return {session_id:'fixture',root:'/fixture',messages:[],changes:[],tool_events:[]};if(request.action==='read')return {path:request.path,content:files[request.path],hash:'hash:'+files[request.path]};if(request.action==='search'){if(request.query==='slow'){await new Promise(resolve=>setTimeout(resolve,500));return {matches:[{path:'stale.ts',line:1,text:'stale'}]};}return {matches:[{path:'search.ts',line:5,text:'needle'}],truncated:true};}return {};};
+   createApp(Workbench).mount('#app');</script>`;
+  await page.route('**/__typescript_workbench_test',route=>route.fulfill({contentType:'text/html',body:html}));
+  await page.goto(base+'/__typescript_workbench_test');await page.getByLabel('项目目录',{exact:true}).fill('/fixture');await page.getByRole('button',{name:'打开项目',exact:true}).click();
+  await page.locator('.file-row').filter({hasText:'util.ts'}).click();await page.locator('.coding-code[data-editor-ready="true"]').waitFor();
+  await page.evaluate(async()=>{window.fixtureApi=await import(performance.getEntriesByType('resource').map(item=>item.name).find(name=>/monaco-editor.*editor.*api/.test(name)));});
+  await page.getByText('F2 重命名仅覆盖已打开的 TypeScript / JavaScript 文件；其他文件需另行检查。跨文件修改须逐个文件撤销或重做。',{exact:true}).waitFor();
+  await page.locator('.monaco-editor textarea.inputarea').first().focus();await page.keyboard.press('Control+Shift+o');
+  await page.locator('.quick-input-widget').waitFor({state:'visible',timeout:5000});await page.locator('.quick-input-widget .monaco-list-row').filter({hasText:'meaning'}).waitFor({timeout:5000});await page.locator('.quick-input-widget input').focus();await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');await page.locator('.quick-input-widget').waitFor({state:'hidden',timeout:5000});
+  await page.waitForFunction(()=>{const api=window.fixtureApi;return api.editor.getEditors().some(editor=>editor.getModel()?.uri.path==='/util.ts'&&editor.getPosition()?.column===14);});
+  await page.locator('.monaco-editor textarea.inputarea').first().focus();await page.keyboard.press('Control+End');await page.keyboard.type('\n// unsaved draft');
+  await page.getByRole('button',{name:'util.ts ●',exact:true}).waitFor();
+  await page.locator('.file-row').filter({hasText:'main.ts'}).click();
+  await page.waitForFunction(()=>{const api=window.fixtureApi;return api.editor.getEditors().some(editor=>editor.getModel()?.uri.path==='/main.ts');});
+  await page.locator('.coding-code[data-editor-ready="true"]').waitFor();
+  const utilText=await page.evaluate(async()=>{const api=await import(performance.getEntriesByType('resource').map(item=>item.name).find(name=>/monaco-editor.*editor.*api/.test(name)));return api.editor.getModels().find(model=>model.uri.path==='/util.ts')?.getValue();});
+  assert.equal(utilText,'export const meaning = 42;\n// unsaved draft','switching files must not overwrite the previous model');
+  await page.evaluate(async()=>{const api=await import(performance.getEntriesByType('resource').map(item=>item.name).find(name=>/monaco-editor.*editor.*api/.test(name)));const editor=api.editor.getEditors().find(item=>item.getModel()?.uri.path==='/main.ts');editor.setPosition({lineNumber:2,column:3});editor.focus();});
+  await page.keyboard.press('F12');
+  try{await page.locator('.editor-tab.selected').filter({hasText:'util.ts'}).waitFor({timeout:8000});}
+  catch(error){console.error('NAVIGATION_DIAGNOSTIC',JSON.stringify(await page.evaluate(async()=>{
+   const entries=performance.getEntriesByType('resource').map(item=>item.name),api=await import(entries.find(name=>/monaco-editor.*editor.*api/.test(name))),services=await import(entries.find(name=>name.includes('/codingEditorServices.mjs')));
+   const models=api.editor.getModels().filter(model=>model.uri.scheme==='browseros-coding'),main=models.find(model=>model.uri.path==='/main.ts'),editor=api.editor.getEditors().find(item=>item.getModel()===main),service=await services.ensureTypeScriptServices(),worker=await(await service.getTypeScriptWorker())(...models.map(model=>model.uri));
+   return {text:main?.getValue(),position:editor?.getPosition(),focus:editor?.hasTextFocus(),models:models.map(model=>({uri:model.uri.toString(),value:model.getValue()})),definitions:await worker.getDefinitionAtPosition(main.uri.toString(),main.getOffsetAt({lineNumber:2,column:3})),active:document.querySelector('.editor-tab.selected')?.innerText};
+  })));throw error;}
+  await page.waitForFunction(()=>{const api=window.fixtureApi;return api.editor.getEditors().some(editor=>editor.getModel()?.uri.path==='/util.ts'&&editor.getPosition()?.lineNumber===1&&editor.getPosition()?.column===14);});
+  assert.equal(await page.locator('.editor-tab.selected').innerText(),'util.ts ●\n×');
+  await page.evaluate(async()=>{
+   const api=await import(performance.getEntriesByType('resource').map(item=>item.name).find(name=>/monaco-editor.*editor.*api/.test(name)));
+   const model=api.editor.getModels().find(item=>item.uri.path==='/util.ts');
+   const mainTab=[...document.querySelectorAll('.editor-tab button')].find(button=>button.textContent.trim()==='main.ts');
+   mainTab.click();
+   model.setValue('export const meaning = 42;\n// delayed edit');
+  });
+  await page.locator('.editor-tab.selected').filter({hasText:'main.ts'}).waitFor();
+  await page.locator('.coding-code[data-editor-ready="true"]').waitFor();
+  const texts=await page.evaluate(async()=>{const api=await import(performance.getEntriesByType('resource').map(item=>item.name).find(name=>/monaco-editor.*editor.*api/.test(name)));return Object.fromEntries(api.editor.getModels().filter(model=>model.uri.scheme==='browseros-coding').map(model=>[model.uri.path,model.getValue()]));});
+  assert.equal(texts['/main.ts'],'import { meaning } from "./util";\nmeaning;','a delayed old-file event must not overwrite the newly selected file');
+  assert.equal(texts['/util.ts'],'export const meaning = 42;\n// delayed edit','old-file event belongs to its original buffer');
+  await page.evaluate(async()=>{const api=await import(performance.getEntriesByType('resource').map(item=>item.name).find(name=>/monaco-editor.*editor.*api/.test(name)));const editor=api.editor.getEditors().find(item=>item.getModel()?.uri.path==='/main.ts');editor.setPosition({lineNumber:2,column:3});editor.focus();});
+  await page.getByRole('button',{name:'重命名符号 F2',exact:true}).click();await page.locator('.rename-box[widgetid] input').waitFor({state:'visible',timeout:8000});
+  await page.locator('.rename-box[widgetid] input').fill('answer');await page.keyboard.press('Enter');
+  await page.waitForFunction(()=>{const api=window.fixtureApi;const models=api.editor.getModels();return models.find(model=>model.uri.path==='/main.ts')?.getValue().includes('answer;')&&models.find(model=>model.uri.path==='/util.ts')?.getValue().includes('const answer');},null,{timeout:8000});
+  await page.getByRole('button',{name:'util.ts ●',exact:true}).click();
+  await page.waitForFunction(()=>{const api=window.fixtureApi;return api.editor.getEditors().some(editor=>editor.getModel()?.uri.path==='/util.ts');});
+  await page.evaluate(async()=>{const api=await import(performance.getEntriesByType('resource').map(item=>item.name).find(name=>/monaco-editor.*editor.*api/.test(name)));api.editor.getEditors().find(editor=>editor.getModel()?.uri.path==='/util.ts').setPosition({lineNumber:1,column:1});});
+  await page.getByRole('button',{name:'main.ts ●',exact:true}).click();await page.locator('.coding-code[data-editor-ready="true"]').waitFor();
+  await page.waitForFunction(()=>{const api=window.fixtureApi;return api.editor.getEditors().some(editor=>editor.getModel()?.uri.path==='/main.ts'&&editor.getModel().getValue().includes('answer;'));},null,{timeout:8000});
+  await page.getByRole('button',{name:'util.ts ●',exact:true}).click();
+  await page.waitForFunction(()=>{const api=window.fixtureApi;return api.editor.getEditors().some(editor=>editor.getModel()?.uri.path==='/util.ts'&&editor.getPosition()?.lineNumber===1);},null,{timeout:8000});
+  await page.getByRole('button',{name:'main.ts ●',exact:true}).click();
+  await page.waitForFunction(()=>{const api=window.fixtureApi;return api.editor.getEditors().some(editor=>editor.getModel()?.uri.path==='/main.ts');},null,{timeout:8000});
+  await page.locator('.file-row').filter({hasText:'search.ts'}).click();
+  await page.waitForFunction(()=>{const api=window.fixtureApi;return api.editor.getEditors().some(editor=>editor.getModel()?.uri.path==='/search.ts');});
+  await page.evaluate(async()=>{const api=await import(performance.getEntriesByType('resource').map(item=>item.name).find(name=>/monaco-editor.*editor.*api/.test(name)));api.editor.getEditors().find(editor=>editor.getModel()?.uri.path==='/search.ts').setPosition({lineNumber:1,column:1});});
+  await page.getByRole('button',{name:'main.ts ●',exact:true}).click();
+  await page.waitForFunction(()=>{const api=window.fixtureApi;return api.editor.getEditors().some(editor=>editor.getModel()?.uri.path==='/main.ts');});
+  await page.getByRole('button',{name:'search.ts',exact:true}).click();
+  await page.waitForFunction(()=>{const api=window.fixtureApi;return api.editor.getEditors().some(editor=>editor.getModel()?.uri.path==='/search.ts'&&editor.getPosition()?.lineNumber===1);},null,{timeout:8000});
+  await page.getByRole('button',{name:'main.ts ●',exact:true}).click();
+  await page.waitForFunction(()=>{const api=window.fixtureApi;return api.editor.getEditors().some(editor=>editor.getModel()?.uri.path==='/main.ts');});
+  await page.getByRole('button',{name:'搜索',exact:true}).click();await page.getByLabel('搜索文件内容').fill('slow');await page.getByRole('button',{name:'查找',exact:true}).click();
+  await page.getByLabel('搜索文件内容').fill('needle');await page.getByRole('button',{name:'查找',exact:true}).click();await page.waitForTimeout(650);
+  assert.equal(await page.locator('.search-match').filter({hasText:'stale.ts'}).count(),0,'late results from the previous query must not replace newer results');
+  await page.getByText('搜索不完整：部分内容超出扫描上限或无法按文本读取，可能还有其他匹配。',{exact:true}).waitFor();
+  await page.locator('.search-match').filter({hasText:'search.ts'}).click();
+  await page.locator('.editor-tab.selected').filter({hasText:'search.ts'}).waitFor();
+  await page.waitForFunction(()=>document.querySelector('.coding-code')?.getAttribute('data-editor-ready')==='true');
+  await page.waitForTimeout(200);
+  await page.evaluate(async()=>{window.fixtureApi=await import(performance.getEntriesByType('resource').map(item=>item.name).find(name=>/monaco-editor.*editor.*api/.test(name)));});
+  await page.waitForFunction(()=>window.fixtureApi.editor.getEditors().some(editor=>editor.getModel()?.uri.path==='/search.ts'&&editor.getPosition()?.lineNumber===5),null,{timeout:8000});
+  await page.getByRole('button',{name:'util.ts ●',exact:true}).click();
+  await page.locator('.coding-code[data-editor-ready="true"]').waitFor();
+  await page.waitForFunction(()=>{const api=window.fixtureApi;return api.editor.getEditors().some(editor=>editor.getModel()?.uri.path==='/util.ts'&&editor.getModel().getValue().includes('const answer'));});
+  assert.equal(await page.getByRole('button',{name:'main.ts ●',exact:true}).count(),1,'cross-file rename updates and marks both drafts');
+  await page.locator('.monaco-editor textarea.inputarea').first().focus();await page.keyboard.press('Control+z');
+  await page.waitForFunction(()=>{const models=window.fixtureApi.editor.getModels();return models.find(model=>model.uri.path==='/main.ts')?.getValue().includes('answer;')&&models.find(model=>model.uri.path==='/util.ts')?.getValue().includes('const meaning');},null,{timeout:8000});
+  await page.getByRole('button',{name:'main.ts ●',exact:true}).click();
+  await page.waitForFunction(()=>window.fixtureApi.editor.getEditors().some(editor=>editor.getModel()?.uri.path==='/main.ts'));
+  await page.locator('.monaco-editor textarea.inputarea').first().focus();await page.keyboard.press('Control+z');
+  await page.waitForFunction(()=>window.fixtureApi.editor.getModels().find(model=>model.uri.path==='/main.ts')?.getValue().includes('meaning;'),null,{timeout:8000});
+  await page.keyboard.press('Control+Shift+z');
+  await page.waitForFunction(()=>window.fixtureApi.editor.getModels().find(model=>model.uri.path==='/main.ts')?.getValue().includes('answer;'),null,{timeout:8000});
+  await page.getByRole('button',{name:'util.ts ●',exact:true}).click();
+  await page.waitForFunction(()=>window.fixtureApi.editor.getEditors().some(editor=>editor.getModel()?.uri.path==='/util.ts'));
+  await page.locator('.monaco-editor textarea.inputarea').first().focus();await page.keyboard.press('Control+Shift+z');
+  await page.waitForFunction(()=>{const models=window.fixtureApi.editor.getModels();return models.find(model=>model.uri.path==='/main.ts')?.getValue().includes('answer;')&&models.find(model=>model.uri.path==='/util.ts')?.getValue().includes('const answer');},null,{timeout:8000});
+  assert.deepEqual(errors,[]);console.log('TYPESCRIPT_WORKBENCH=PASS actual F12 opens target tab and position; project transport simulated');
+ }finally{await browser.close();}
+})().catch(error=>{console.error(error);process.exitCode=1;});

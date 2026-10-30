@@ -7,9 +7,9 @@
 #   B. 全局 core.hooksPath（需自行执行）:
 #        git config core.hooksPath .githooks
 #
-# 行为: merge 提交前运行 scripts/pre-merge.sh；任一检查失败则中断 merge。
+# 行为: merge 提交前运行分层合并检查；任一检查失败则中断 merge。
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
-exec "$ROOT/scripts/pre-merge.sh"
+exec bash "$ROOT/scripts/gate-local.sh" merge

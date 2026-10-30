@@ -8,6 +8,7 @@ export const bfcManifest: CapabilityDefinition = defineIntegratedCapability({
   maturity: "C3",
   version: "1.0.0",
   provides: ["bfc.web", "bfc.workbench"],
+  dependencies: ["bridge", "browser"],
   resident: false,
   supported: ["ACTIVE", "SUSPENDED"],
   resourceClass: ["LIGHT"],

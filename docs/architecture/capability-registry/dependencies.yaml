@@ -41,6 +41,12 @@ forbidden_edges:
 
 # ── 依赖边（与 capabilities.yaml 对齐） ────────────────────────────────
 edges:
+  - { from: agent, to: script, kind: optional }
+  - { from: agent, to: git, kind: optional }
+  - { from: agent, to: database, kind: optional }
+  - { from: agent, to: browser, kind: optional }
+  - { from: bfc, to: bridge, kind: required }
+  - { from: bfc, to: browser, kind: required }
   - { from: browser,   to: bridge,   kind: required }
   - { from: bookmark,  to: browser, kind: optional }
   - { from: workspace, to: browser, kind: optional }

@@ -66,6 +66,11 @@
   ],
   "gitHooks": [
     {
+      "id": "pre-commit",
+      "path": ".githooks/pre-commit",
+      "purpose": "reject local AI credentials in staged content without logging values"
+    },
+    {
       "id": "pre-push",
       "path": ".githooks/pre-push",
       "purpose": "GitHub source-of-truth and fast-forward safety"
@@ -73,10 +78,20 @@
     {
       "id": "pre-merge-commit",
       "path": ".githooks/pre-merge-commit",
-      "purpose": "local pre-merge gate entry"
+      "purpose": "local comprehensive automated merge gate entry (does not establish real provider, package or GUI acceptance)"
     }
   ],
   "gateFamilies": [
+    {
+      "id": "coding-workbench-behavior",
+      "blocking": true,
+      "entrypoint": "npm run gate:merge",
+      "paths": [
+        "scripts/gate-local.sh",
+        "scripts/check-coding-ui-managed.mjs",
+        "tests/check-coding-workbench-ui.cjs"
+      ]
+    },
     {
       "id": "engineering-governance",
       "blocking": true,
@@ -167,6 +182,9 @@
       "entrypoint": "scripts/pre-merge.sh",
       "paths": [
         "scripts/measure-build-metrics.py",
+        "scripts/report-coding-editor-budget.mjs",
+        "scripts/coding-editor-budget.mjs",
+        "docs/engineering/coding-editor-budget.json",
         "scripts/pre-merge.sh"
       ]
     },
@@ -445,7 +463,7 @@
   ],
   "nativeSemantics": {
     "status": "ACTIVE_BLOCKING",
-    "expectedRegisteredCommands": 176,
+    "expectedRegisteredCommands": 178,
     "expectedAppStateFields": 26,
     "authority": "docs/architecture/native-boundary/native-commands.yaml",
     "checker": "scripts/check-native-semantic-closure.mjs",

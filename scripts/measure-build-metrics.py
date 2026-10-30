@@ -220,6 +220,7 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--self-test", action="store_true", help="run built-in fixtures")
     mode.add_argument("--compare", type=Path, help="compare against a previous metrics file")
     parser.add_argument("--out", type=Path, help="write metrics JSON here (default: logs/m0-build-metrics/)")
+    parser.add_argument("--approved-editor-budget", action="store_true", help="enforce the explicitly approved partitioned editor budget; still report historical growth")
     parser.add_argument(
         "--skip-build", action="store_true", help="reuse existing dist/ instead of rebuilding"
     )
@@ -227,6 +228,8 @@ def main(argv: list[str] | None = None) -> int:
         "--root", type=Path, default=Path(__file__).resolve().parent.parent, help="repository root"
     )
     args = parser.parse_args(argv)
+    if args.approved_editor_budget and not args.compare:
+        parser.error("--approved-editor-budget requires --compare")
 
     if args.self_test:
         return run_self_test()
@@ -236,6 +239,15 @@ def main(argv: list[str] | None = None) -> int:
         baseline = json.loads(args.compare.read_text(encoding="utf-8"))
         current = collect(root, skip_build=args.skip_build)
         verdict = compare(current, baseline)
+        if args.approved_editor_budget:
+            code, output, _ = run(["node", "scripts/report-coding-editor-budget.mjs", "--verify-dist", "--enforce-budget"], root)
+            # The independent gate rebuilds and hashes every production file.
+            # No caller-provided report or modified historical baseline is trusted.
+            print(output)
+            verdict["historical_growth_is_observational"] = True
+            verdict["approved_editor_budget_passed"] = code == 0
+            print(json.dumps(verdict, ensure_ascii=False, indent=2))
+            return 1 if (code != 0 or verdict.get("warnings_increased") or current.get("dist") is None) else 0
         print(json.dumps(verdict, ensure_ascii=False, indent=2))
         return 1 if (verdict["exceeds_growth_limit"] or verdict.get("warnings_increased")) else 0
 

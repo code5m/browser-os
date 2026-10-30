@@ -31,6 +31,13 @@ resource_lifecycle:
 # 每个能力必须有一条 policy（由 check-capability-registry.mjs 校验）
 policies:
 
+  - id: bfc
+    class: [LIGHT]
+    suspendable: true
+    destroyable: true
+    resident: false
+    release_note: 仅撤销 BFC 入口；已打开网页由 browser owner 管理，不由 BFC 关闭
+
   - id: browser
     class: [HEAVY, WEBVIEW, NATIVE]
     suspendable: false
@@ -88,7 +95,7 @@ policies:
     release_note: 释放工作区索引与远程连接 —— TARGET
 
   - id: agent
-    class: [MEDIUM, NETWORK]
+    class: [MEDIUM, NETWORK, PROCESS, BACKGROUND]
     suspendable: true
     destroyable: true
     resident: false

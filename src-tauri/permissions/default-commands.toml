@@ -131,6 +131,8 @@ commands.allow = [
     "agent_parse",
     "agent_validate",
     "agent_local_chat",
+    "ai_service",
+    "coding_service",
     "agent_permission_preview",
     "skill_parse",
     "skill_validate",

@@ -135,8 +135,8 @@ pub fn parse_cron(expr: &str) -> Result<CronExpr, TaskError> {
     Ok(CronExpr {
         minutes: parse_field(fields[0], 0, 59)?,
         hours: parse_field(fields[1], 0, 23)?,
-        days: parse_field(fields[2], 1, 31)?,
-        months: parse_field(fields[3], 1, 12)?,
+        days: parse_field(fields[2], 1, 31)? >> 1,
+        months: parse_field(fields[3], 1, 12)? >> 1,
         weekdays: parse_weekday_field(fields[4])?,
     })
 }
@@ -633,6 +633,27 @@ mod task_domain_tests {
     }
 
     // ---------- T-sched-c2：非法表达式全部拒绝 ----------
+
+    #[test]
+    fn cron_matches_calendar_boundaries_and_explicit_fields() {
+        let at = |date: &str| NaiveDateTime::parse_from_str(date, "%Y-%m-%d %H:%M").unwrap();
+        let every_quarter = parse_cron("*/15 * * * *").unwrap();
+        for date in [
+            "2026-01-01 00:00",
+            "2026-10-31 23:45",
+            "2026-11-01 00:00",
+            "2026-12-31 23:45",
+        ] {
+            assert!(every_quarter.matches_naive(&at(date)), "{date}");
+        }
+        let specific = parse_cron("0 9 1,31 1,12 *").unwrap();
+        for date in ["2026-01-01 09:00", "2026-01-31 09:00", "2026-12-31 09:00"] {
+            assert!(specific.matches_naive(&at(date)), "{date}");
+        }
+        for date in ["2026-01-02 09:00", "2026-02-01 09:00", "2026-12-30 09:00"] {
+            assert!(!specific.matches_naive(&at(date)), "{date}");
+        }
+    }
 
     #[test]
     fn t_sched_c2_invalid_cron_expressions_are_rejected() {

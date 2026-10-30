@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, ref, watch } from 'vue';
+const AiAssistant=defineAsyncComponent(()=>import('../../../components/system/AiAssistant.vue'));
 import { useDatabaseStore } from '../state/useDatabaseStore';
 import { buildResultView, decodeDbValue, riskLabel, productionLabel } from '../../../utils/dbUi';
 import { exportRows } from '../model/studioSql.mjs';
@@ -71,6 +72,7 @@ function selectResult(index:number){db.selectBatchResult(index);}
   </section>
   <section v-else class="workspace-placeholder assistant-workspace" aria-label="Database Assistant">
     <header><strong>Database Assistant</strong><span class="muted">仅基于当前会话，不会绕过数据库安全门禁</span></header>
+    <AiAssistant scope="database" :context="db.sql"/>
     <p>当前 SQL：<code>{{db.sql.trim()||'尚未输入查询'}}</code></p>
     <div class="assistant-suggestions"><button @click="workspaceTab='query'">回到 Query 编辑器</button><button @click="db.sql=db.sql.trim() ? db.sql : 'SELECT 1;' ; workspaceTab='query'">生成安全探针 SELECT 1</button><button @click="db.selectedObject&& (workspaceTab='schema')" :disabled="!db.selectedObject">解释当前对象结构</button></div>
     <p class="hint">AI Assistant 当前提供本地、可审计的辅助入口；真实 SQL 仍必须回到 Query 编辑器并通过原生安全策略执行。</p>

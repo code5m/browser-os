@@ -14,4 +14,7 @@
 pub mod agent;
 pub mod agent_memory;
 
+pub mod coding;
+pub mod coding_context;
+pub mod coding_lsp;
 pub mod local_provider;

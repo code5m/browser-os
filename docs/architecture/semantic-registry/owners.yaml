@@ -10,6 +10,20 @@ registry_scope: Browser/Grid + View Navigation（Phase 1）+ Workspace/FilePanel
 
 owners:
 
+  bfc_lifecycle:
+    owner: BfcProjectPanel
+    owns:
+      - BFC active flag in src/capabilities/bfc/lifecycle.ts
+    owner_only_api:
+      - activateBfcLifecycle
+      - suspendBfcLifecycle
+      - bfcLifecycleSnapshot
+    may_call:
+      - useBrowserStore public tabNew
+      - useLayoutStore activateBrowser
+    rationale: Existing stateless launcher and lifecycle owner; browser owns all opened WebViews. User approved required browser dependency on 2026-10-26.
+    status: CURRENT_SOURCE
+
   view_navigation:
     owner: useLayoutStore
     owns:

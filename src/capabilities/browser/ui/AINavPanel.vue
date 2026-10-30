@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, defineAsyncComponent } from "vue";
+const AiAssistant=defineAsyncComponent(()=>import('../../../components/system/AiAssistant.vue'));
 import { useBrowserStore } from "../state/useBrowserStore";
 
 const browser = useBrowserStore();
@@ -7,7 +8,7 @@ const aiFiltered = computed(() => browser.aiFiltered);
 </script>
 
 <template>
-  <aside v-if="browser.aiNavOpen" class="ai-nav">
+  <aside v-if="browser.aiNavOpen" class="ai-nav" style="width:340px;overflow-y:auto">
     <div class="ai-head">
       <span>🤖 AI 导航</span>
       <div class="ai-filters">
@@ -24,5 +25,6 @@ const aiFiltered = computed(() => browser.aiFiltered);
       </li>
     </ul>
     <div class="ai-tip">点击站点 → 在内嵌浏览器打开</div>
+    <AiAssistant scope="browser"/>
   </aside>
 </template>

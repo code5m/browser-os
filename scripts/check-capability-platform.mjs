@@ -513,6 +513,29 @@ async function main() {
       "Contribution Registry 注册/停用可被 Vue computed 立即观察");
   }
 
+  // BFC uses the real manifest dependency contract; lifecycle side effects are
+  // replaced here, since this test verifies manager ordering, not native WebViews.
+  {
+    const rt = M.createCapabilityRuntime();
+    const registry = M.createContributionRegistry();
+    const definition = M.CAPABILITY_DEFINITIONS.bfc;
+    expect(definition.dependsOn.includes('browser') && definition.v1.dependencies.includes('browser'), 'BFC-DEP-1', 'BFC 双层契约声明浏览器强依赖');
+    for (const id of ['browser','bfc']) {
+      const source = M.CAPABILITY_DEFINITIONS[id];
+      rt.register({...source,lifecycle:{...source.lifecycle,onActivate:()=>{},onSuspend:()=>{},onDeactivate:()=>{}}});
+      rt.resolve(id);
+    }
+    const rejected = async (operation) => { try { await operation(); return false; } catch { return true; } };
+    expect(await rejected(()=>M.transitionCapability(rt,registry,'bfc','enable')), 'BFC-DEP-2', '浏览器未激活时不可启用 BFC');
+    await M.transitionCapability(rt,registry,'browser','enable');
+    await M.transitionCapability(rt,registry,'bfc','enable');
+    expect(await rejected(()=>M.transitionCapability(rt,registry,'browser','pause')), 'BFC-DEP-3', 'BFC 启用时阻止暂停其浏览器依赖');
+    await M.transitionCapability(rt,registry,'bfc','pause');
+    await M.transitionCapability(rt,registry,'bfc','disable');
+    await M.transitionCapability(rt,registry,'browser','pause');
+    expect(await rejected(()=>M.transitionCapability(rt,registry,'bfc','enable')), 'BFC-DEP-4', '浏览器暂停时 BFC 重新启用仍受保护');
+  }
+
   // 汇总
   for (const l of pass) console.log(`  PASS  ${l}`);
   for (const l of fails) console.log(`  FAIL  ${l}`);

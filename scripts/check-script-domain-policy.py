@@ -63,6 +63,8 @@ BASELINE_DEPS = {
         "@tauri-apps/plugin-dialog": "^2.7.3",
         "@xterm/addon-fit": "^0.11.0",
         "@xterm/xterm": "^6.0.0",
+        # 2026-10-26 user-approved editor-only exception; all other dependencies remain frozen.
+        "monaco-editor": "0.57.0",
         "pinia": "^2.3.1",
         "vue": "^3.4.0",
     },

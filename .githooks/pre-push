@@ -36,6 +36,7 @@ while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
   if [[ "$local_sha" == "$zero_oid" ]]; then
     block "remote deletion requested for '$remote_ref'. Ref deletion is intentionally not automated."
   fi
+  python3 scripts/check-local-ai-secrets.py --outgoing --revision "$local_sha"
 
   case "$remote_ref" in
     refs/heads/*)

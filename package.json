@@ -8,6 +8,10 @@
   ],
   "scripts": {
     "dev": "vite",
+    "gate:quick": "bash scripts/gate-local.sh quick",
+    "gate:coding": "bash scripts/gate-local.sh coding",
+    "gate:merge": "bash scripts/gate-local.sh merge",
+    "check:coding-ui:managed": "node scripts/check-coding-ui-managed.mjs",
     "build": "vite build --minify terser",
     "preview": "vite preview",
     "tauri": "tauri",
@@ -42,7 +46,12 @@
     "analyze:native-impact": "python3 scripts/generate-rust-crosslayer-contracts.py",
     "predev": "npm run generate:rust-contracts",
     "prebuild": "npm run generate:rust-contracts",
-    "precheck": "npm run generate:rust-contracts",
+    "precheck": "npm run generate:rust-contracts && npm run check:ai-config && npm run check:coding-workbench",
+    "check:coding-workbench": "node tests/check-coding-workbench.mjs && node tests/check-coding-lsp.mjs",
+    "check:coding-budget": "node scripts/coding-editor-budget.mjs --self-test && node scripts/report-coding-editor-budget.mjs --verify-dist --enforce-budget",
+    "check:coding-ui": "node tests/check-coding-workbench-ui.cjs && node tests/check-coding-command-ui.cjs && node tests/check-coding-operation-ui.cjs && node tests/check-coding-workspace-context.cjs && node tests/check-coding-lsp-ui.cjs && node tests/check-coding-typescript-ui.cjs && node tests/check-coding-typescript-workbench-ui.cjs",
+    "check:ai-config": "python3 tests/check-local-ai-import.py && python3 scripts/check-local-ai-secrets.py",
+    "ai:import": "/usr/bin/python3 scripts/import-local-ai.py --apply",
     "analyze:bundle": "node scripts/report-build-assets.mjs",
     "analyze:semantic-dependencies": "node scripts/analyze-semantic-dependencies.mjs",
     "analyze:css-duplicates": "node scripts/check-duplicate-css.mjs",
@@ -56,8 +65,12 @@
     "@tauri-apps/plugin-dialog": "^2.7.3",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "monaco-editor": "0.57.0",
     "pinia": "^2.3.1",
     "vue": "^3.4.0"
+  },
+  "overrides": {
+    "monaco-editor": { "dompurify": "3.4.17" }
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",

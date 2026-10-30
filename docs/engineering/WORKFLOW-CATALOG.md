@@ -23,6 +23,10 @@ UI Safety, Full Validation, Hot-Plug, Engineering Governance and Supply Chain ar
 
 Any workflow added/removed must update `governance.json` in the same change.
 
+## Local Git credential guards (2026-10-25)
+
+The registered `.githooks/pre-commit` checks staged content for known local AI credentials and recognizable provider tokens. `.githooks/pre-push` checks all outgoing commit trees for each requested ref before the existing GitHub fast-forward checks. The guards report file names and error codes only. `npm run check:ai-config` and `pre-merge.sh` cover import regression fixtures and current-file secret checks. Credential values are read in memory from explicit local sources and OS Secret Service; they are never stored in reports or Git assets.
+
 ## Change-aware execution and evidence
 
 - `docs`: only narrative documentation; skip compiler, GUI, Hot-Plug, and advisory scans. Engineering Governance remains active for all pushes and PRs.

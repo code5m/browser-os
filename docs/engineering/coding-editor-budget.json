@@ -1,0 +1,15 @@
+{
+  "schema": "browseros-coding-editor-budget-v1",
+  "approvedOn": "2026-10-27",
+  "approval": "User approved all additional Monaco feature budgets on 2026-10-27. Finite measured envelope for the TypeScript/JavaScript worker feature: editor 12 MiB, core/shared 1.5 MiB, total 13.25 MiB; not an unlimited future exemption.",
+  "previousApproval": {"date":"2026-10-26","editorMiB":3.5,"coreSharedMiB":1.35,"totalMiB":4.75},
+  "previousImplementationEnvelope": {"date":"2026-10-27","editorMiB":4,"coreSharedMiB":1.5,"totalMiB":5.25},
+  "limitsBytes": {
+    "exclusive_editor_bytes": 12582912,
+    "core_and_shared_bytes": 1572864,
+    "total_bytes": 13893632
+  },
+  "dependencies": {"monaco-editor": "0.57.0", "dompurify": "3.4.17"},
+  "historicalBaseline": "logs/m0-build-metrics/build-metrics-052b18a.json",
+  "historicalGrowthLimitPct": 45
+}

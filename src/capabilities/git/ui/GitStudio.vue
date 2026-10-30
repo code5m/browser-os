@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch, onUnmounted } from 'vue';
+import { computed, defineAsyncComponent, nextTick, ref, watch, onUnmounted } from 'vue';
+const AiAssistant=defineAsyncComponent(()=>import('../../../components/system/AiAssistant.vue'));
+const aiOpen=ref(false);
 import { bridge } from '../../../bridge';
 import { redactSecrets } from '../../../utils/redact';
 import { useRepoStore } from '../../workspace/public';
@@ -569,6 +571,7 @@ watch(()=>source.value?sourceIdentity(source.value):'',()=>{resetSourceContext()
 </script>
 <template>
 <section class="git-studio" :class="{'rebased-product-theme':pane==='log'&&rebasedLayout}" aria-label="统一 Git 工作台" :data-history-context="historyContext" :data-log-placement="logPlacement">
+  <div><button :aria-expanded="aiOpen" @click="aiOpen=!aiOpen">✦ Git AI 助手</button><AiAssistant v-if="aiOpen" scope="git" :context="patch"/></div>
   <header v-if="pane==='log'&&rebasedLayout" class="rebased-appbar" aria-label="Rebased Git 顶栏">
     <button class="rebased-product-menu" aria-label="仓库配置" title="仓库配置" @click="emit('configure')">☰</button>
     <label class="rebased-repo-picker"><span aria-hidden="true">R</span><select :value="localPath?'':git.repoId||''" :disabled="writeBusy" aria-label="切换仓库" @change="selectRepo(($event.target as HTMLSelectElement).value)"><option value="">{{info?.root?.split('/').filter(Boolean).at(-1)||'选择仓库'}}</option><option v-for="item in repos.repos" :key="item.id" :value="item.id">{{item.name}}</option></select></label>

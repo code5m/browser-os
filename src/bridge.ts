@@ -478,6 +478,8 @@ export const bridge = {
   // ====== M5-W7（A5）Agent/Skill 只读桥：parse/validate/permission_preview ======
   // 与 W7 后端命令一一对应；仅解析/校验/预览，无执行/安装/联网/写持久化。
   agentParse: (text: string) => invoke<AgentDef>("agent_parse", { text }),
+  aiService: (request: Record<string, unknown>) => invoke<any>("ai_service", { request }),
+  codingService: (request: Record<string, unknown>) => invoke<any>("coding_service", { request }),
   agentLocalChat: (model: string, message: string, system = "") =>
     invoke<{provider:string; model:string;content:string}>("agent_local_chat", {request:{model,message,system}}),
   agentValidate: (text: string) => invoke<ValidationReport>("agent_validate", { text }),

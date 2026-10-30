@@ -74,8 +74,8 @@ pre-merge.sh — M0-1.c 本地 pre-merge 门禁（M0-1 脚本合并前检查入�
   lifecycle fixture             check-lifecycle-contract.py --self-test / --expect-current-gaps / 默认门禁
   security fixture              check-security-policy.py --self-test / --expect-current-gaps
                                 （默认模式按设计 EXIT=1，见 logs/m0-security-threat-matrix-v1.md）
-  build metrics                 measure-build-metrics.py --self-test / --compare（总体积遵循脚本当前上限、
-                                warning 不增加；指标存 logs/m0-build-metrics/）
+  build metrics                 approved editor/core/total budgets + exact dist hashes;
+                                historical 45% comparison retained, warning 不增加
   GUI regression harness        m0-6c-gui-regression.py --self-test（不启动 GUI）
   git write policy fixture      check-git-write-policy.py --self-test / 默认门禁
   git UI policy fixture         check-git-ui-policy.py --self-test / 默认门禁
@@ -166,6 +166,8 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/aggregate-m0-baseline.py" --self-test >/dev/null 2>&1 || pm_fail "aggregate-m0-baseline.py --self-test"
 
   pm_log "WBS 模型路由标签…"
+  python3 "$SCRIPT_DIR/check-local-ai-secrets.py" || pm_fail "local AI secret safety"
+  python3 "$SCRIPT_DIR/../tests/check-local-ai-import.py" || pm_fail "local AI import regressions"
   python3 "$SCRIPT_DIR/check-plan-routing.py" --self-test >/dev/null 2>&1 || pm_fail "check-plan-routing.py --self-test"
   python3 "$SCRIPT_DIR/check-plan-routing.py" || pm_fail "check-plan-routing.py"
 
@@ -224,14 +226,16 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/check-lifecycle-contract.py" >/dev/null 2>&1 \
     || pm_fail "check-lifecycle-contract.py 默认生命周期门禁"
 
-  pm_log "M0-4.c 构建指标对比（总体积遵循 measure-build-metrics.py 当前上限、cargo warning 不增加）…"
+  pm_log "M0-4.c approved editor/core/total budgets（历史 45% 对比保留，cargo warning 不增加）…"
   local baseline_file
+  node "$SCRIPT_DIR/coding-editor-budget.mjs" --self-test || pm_fail "coding editor budget negative fixtures"
   baseline_file="$(ls -1 "$ROOT"/logs/m0-build-metrics/build-metrics-*.json 2>/dev/null | sort | head -1 || true)"
   if [ -n "$baseline_file" ]; then
     # 复用上一步 npm run build 的产物，不重复构建。
     local metrics_output
-    if metrics_output="$(python3 "$SCRIPT_DIR/measure-build-metrics.py" --compare "$baseline_file" --skip-build 2>&1)"; then
-      pm_log "build metrics 未回归（基线 ${baseline_file#"$ROOT"/}）"
+    if metrics_output="$(python3 "$SCRIPT_DIR/measure-build-metrics.py" --compare "$baseline_file" --skip-build --approved-editor-budget 2>&1)"; then
+      printf '%s\n' "$metrics_output"
+      pm_log "approved editor/core/total budgets PASS; historical 45% result retained separately (${baseline_file#"$ROOT"/})"
     else
       printf '%s\n' "$metrics_output"
       pm_fail "build metrics regression vs ${baseline_file#"$ROOT"/}"
