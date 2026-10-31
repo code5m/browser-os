@@ -8,6 +8,7 @@ const props=defineProps<{path:string;modelValue:string;scope?:string;openPaths?:
 const emit=defineEmits<{(event:'update:modelValue',value:string):void;(event:'edit',value:{path:string;content:string;scope?:string}):void;(event:'save'):void;(event:'diagnostics',value:string[]):void;(event:'ready',value:boolean):void}>();
 const host=ref<HTMLElement|null>(null), error=ref(''), ready=ref(false);
 let monaco:any, editor:any, model:any, originalModel:any, markerSubscription:any;
+let editorModeDiff = false;
 const models=new Map<string,any>(), viewStates=new Map<string,any>();
 const retiringModels=new Map<string,any>();
 const modelSubscriptions=new Map<any,any>();
@@ -50,7 +51,9 @@ async function mountEditor(){
   if(!host.value || !monaco || !initialized || disposed)return;
   const version=++generation;++lspGeneration;definitionTargets.clear();clearTimeout(diagnosticTimer);ready.value=false;emit('ready',false);
   if(editor&&mountedPath)viewStates.set(mountedPath,(editor.getModifiedEditor?.()||editor).saveViewState());
-  detachEditor();if(originalModel){const previous=originalModel;Promise.allSettled([...pendingDiffs]).then(()=>previous.dispose());originalModel=null;}
+  const reuseNormalEditor = !!editor && !editorModeDiff && !props.diff;
+  if(!reuseNormalEditor)detachEditor();
+  if(originalModel){const previous=originalModel;Promise.allSettled([...pendingDiffs]).then(()=>previous.dispose());originalModel=null;}
   model=null;pruneClosedModels();
   if(['typescript','javascript'].includes(languageForPath(props.path)))await ensureTypeScriptServices();
   if(disposed||version!==generation)return;
@@ -61,14 +64,18 @@ async function mountEditor(){
   mountedPath=props.path;
   const options={theme:'vs-dark',automaticLayout:true,editContext:false,fontSize:14,fontFamily:'"Cascadia Code", "Fira Code", monospace',minimap:{enabled:false},scrollBeyondLastLine:false,readOnly:props.readOnly,tabSize:2,wordWrap:'off',padding:{top:12},bracketPairColorization:{enabled:true}};
   if(props.diff){originalModel=monaco.editor.createModel(props.original??'',languageForPath(props.path));editor=monaco.editor.createDiffEditor(host.value,options);editor.setModel({original:originalModel,modified:model});}
+  else if(reuseNormalEditor){editor.setModel(model);editor.updateOptions({readOnly:props.readOnly});}
   else {editor=monaco.editor.create(host.value,{...options,model});}
+  editorModeDiff=!!props.diff;
   const observedModel=model,observedPath=mountedPath,observedScope=props.scope;
   if(!modelSubscriptions.has(observedModel))modelSubscriptions.set(observedModel,observedModel.onDidChangeContent(()=>{if(!applying){const content=observedModel.getValue();emit('edit',{path:observedPath,content,scope:observedScope});if(observedModel===model)emit('update:modelValue',content);}if(observedModel===model)scheduleDiagnostics();}));
   const target=props.diff?editor.getModifiedEditor():editor;
   if(viewStates.has(props.path))target.restoreViewState(viewStates.get(props.path));
   applyLocation();
-  target.addCommand(monaco.KeyMod.CtrlCmd|monaco.KeyCode.KeyS,()=>emit('save'));
-  target.addCommand(monaco.KeyMod.Alt|monaco.KeyMod.Shift|monaco.KeyCode.KeyF,()=>{void target.getAction('editor.action.formatDocument')?.run();});
+  if(!reuseNormalEditor){
+    target.addCommand(monaco.KeyMod.CtrlCmd|monaco.KeyCode.KeyS,()=>emit('save'));
+    target.addCommand(monaco.KeyMod.Alt|monaco.KeyMod.Shift|monaco.KeyCode.KeyF,()=>{void target.getAction('editor.action.formatDocument')?.run();});
+  }
   if(props.diff){const result=editor.waitForDiff();pendingDiffs.add(result);try{await result;}finally{pendingDiffs.delete(result);}}
   try{await syncOpenScriptModels([...models.values()]);}catch{if(!disposed&&version===generation)emit('diagnostics',['内置语言服务初始化失败，请重新打开文件。']);}
   if(!disposed&&version===generation){ready.value=true;emit('ready',true);scheduleDiagnostics();}
