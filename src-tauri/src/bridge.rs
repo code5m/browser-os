@@ -615,6 +615,7 @@ fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
     state.last_position_at.lock().unwrap().remove(id);
     state.tab_idle_since.lock().unwrap().remove(id);
     state.hibernated_tabs.lock().unwrap().remove(id);
+    state.hibernated_scroll.lock().unwrap().remove(id);
     state.tab_recovery.lock().unwrap().remove(id);
     // M1-8：tab 关闭即清理该 tab 的资源瀑布记录（生命周期红线）
     state.resource_buffer.lock().unwrap().remove_tab(id);
@@ -3477,24 +3478,48 @@ pub fn eval_in_tab(app: AppHandle, id: String, js: String) -> Result<String, Str
 #[tauri::command]
 pub fn tab_activate(app: AppHandle, id: String) -> Result<(), String> {
     // 休眠重建：webview 已销毁的页签先按原 URL 重建（1x1 隐藏，前端 tab_position 放大）
-    if app
+    let was_hibernated = app
         .state::<AppState>()
         .hibernated_tabs
         .lock()
         .unwrap()
-        .remove(&id)
-    {
+        .contains(&id);
+    if was_hibernated {
         let url = app
             .state::<AppState>()
             .tabs
             .lock()
             .unwrap()
             .get(&id)
-            .map(|t| t.url.clone());
-        if let Some(url) = url {
-            spawn_child_window(&app, &id, &url, 0.0, 0.0, 1.0, 1.0)?;
-            eprintln!("[hibernation] 页签 {} 已从休眠重建 url={}", id, url);
+            .map(|t| t.url.clone())
+            .ok_or("TAB_NOT_FOUND")?;
+        // Keep the hibernated marker until the native WebView is recreated.
+        spawn_child_window(&app, &id, &url, 0.0, 0.0, 1.0, 1.0)?;
+        app.state::<AppState>()
+            .hibernated_tabs
+            .lock()
+            .unwrap()
+            .remove(&id);
+        let scroll = app
+            .state::<AppState>()
+            .hibernated_scroll
+            .lock()
+            .unwrap()
+            .remove(&id);
+        if let Some((x, y)) = scroll {
+            let restore_app = app.clone();
+            let restore_id = id.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(900));
+                let js = format!(
+                    "window.scrollTo({:.3},{:.3});",
+                    x.max(0.0),
+                    y.max(0.0)
+                );
+                let _ = plugin_eval(&restore_app, &restore_id, &js);
+            });
         }
+        eprintln!("[hibernation] 页签 {} 已从休眠重建 url={}", id, url);
     }
     // 暂存激活页签，前端会随后调用 tab_position 精确布局
     *app.state::<AppState>().active_tab.lock().unwrap() = Some(id.clone());
