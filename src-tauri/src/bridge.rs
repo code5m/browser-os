@@ -2537,6 +2537,7 @@ pub async fn grid_open(app: AppHandle, index: usize, url: String) -> Result<(), 
 
 pub fn grid_open_blocking(app: AppHandle, index: usize, url: String) -> Result<(), String> {
     let label = format!("grid-{index}");
+    ensure_grid_child(&app, index)?;
     let target = initial_grid_url(&url);
     if target != "about:blank" {
         let _ = Url::parse(&target).map_err(|e| format!("无效网址: {e}"))?;
@@ -2561,6 +2562,37 @@ pub fn grid_open_blocking(app: AppHandle, index: usize, url: String) -> Result<(
             std::thread::sleep(std::time::Duration::from_millis(900));
             apply_grid_zoom(&app3, &label3, z);
         });
+    }
+    Ok(())
+}
+
+/// Ensure a Grid child process and its WebView exist. This is also the
+/// resume path for memory-hibernated cells; the process manager restores the
+/// last URL/rect metadata, and this command recreates the WebView exactly once.
+fn ensure_grid_child(app: &AppHandle, index: usize) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let manager = &state.grid_manager;
+    if manager.get_or_spawn(index as u32)? {
+        let label = format!("grid-{index}");
+        let url = manager
+            .last_url(index as u32)
+            .unwrap_or_else(|| "about:blank".to_string());
+        manager.request(
+            index as u32,
+            GridCmd::CreateTab {
+                id: label.clone(),
+                url: url.clone(),
+            },
+            20000,
+        )?;
+        manager.record_url(index as u32, &url);
+        if let Some(zoom) = state.grid_zooms.lock().unwrap().get(&label).copied() {
+            let app = app.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(900));
+                apply_grid_zoom(&app, &label, zoom);
+            });
+        }
     }
     Ok(())
 }
@@ -2631,6 +2663,7 @@ pub fn grid_position_blocking(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
+    ensure_grid_child(&app, index)?;
     let label = format!("grid-{index}");
     // 后端去重：仅"rect 相同且 <50ms"才丢弃（防 IPC 洪泛），rect 变了必须应用
     {
