@@ -282,10 +282,39 @@ impl GridProcessManager {
             return Ok(false);
         }
         let saved = self.hibernated.lock().unwrap().remove(&index);
-        self.spawn_with_state(index, saved)?;
+        if let Err(error) = self.spawn_with_state(index, saved.clone()) {
+            if let Some(saved) = saved {
+                self.hibernated.lock().unwrap().insert(index, saved);
+            }
+            return Err(error);
+        }
         // The caller owns WebView creation/replay. Returning true guarantees
         // exactly one CreateTab command after both cold spawn and hibernation.
         Ok(true)
+    }
+
+    pub fn is_hibernated(&self, index: u32) -> bool {
+        self.hibernated.lock().unwrap().contains_key(&index)
+    }
+
+    /// Preserve child metadata while releasing its process. Used to roll back
+    /// a failed resume without losing the URL/layout that existed pre-resume.
+    pub fn hibernate_child(&self, index: u32) -> bool {
+        let removed = self.children.lock().unwrap().remove(&index);
+        if let Some(mut child) = removed {
+            let saved = SavedChildState {
+                last_url: child.last_url.clone(),
+                last_rect: child.last_rect,
+                hidden: child.hidden,
+                blur_hidden: child.blur_hidden,
+            };
+            let _ = child.child.kill();
+            let _ = child.child.wait();
+            self.hibernated.lock().unwrap().insert(index, saved);
+            true
+        } else {
+            false
+        }
     }
 
     /// 等待该 index 的 UDS 连接就绪（子进程冷启动需 1~3 秒）。
