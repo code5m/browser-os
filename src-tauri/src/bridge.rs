@@ -2670,19 +2670,29 @@ pub fn grid_open_blocking(app: AppHandle, index: usize, url: String) -> Result<(
 fn ensure_grid_child(app: &AppHandle, index: usize) -> Result<(), String> {
     let state = app.state::<AppState>();
     let manager = &state.grid_manager;
+    let was_hibernated = manager.is_hibernated(index as u32);
     if manager.get_or_spawn(index as u32)? {
         let label = format!("grid-{index}");
         let url = manager
             .last_url(index as u32)
             .unwrap_or_else(|| "about:blank".to_string());
-        manager.request(
+        if let Err(error) = manager.request(
             index as u32,
             GridCmd::CreateTab {
                 id: label.clone(),
                 url: url.clone(),
             },
             20000,
-        )?;
+        ) {
+            // Do not leave a spawned-but-empty child that makes subsequent
+            // get_or_spawn calls believe the hibernated cell is already ready.
+            if was_hibernated {
+                manager.hibernate_child(index as u32);
+            } else {
+                manager.kill_child(index as u32);
+            }
+            return Err(error);
+        }
         manager.record_url(index as u32, &url);
         if let Some(zoom) = state.grid_zooms.lock().unwrap().get(&label).copied() {
             let app = app.clone();
