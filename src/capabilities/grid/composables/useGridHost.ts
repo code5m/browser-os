@@ -18,6 +18,32 @@ import {
 
 const gridCache = createGridSendCache();
 const gridRetrier = createBoundedRetrier();
+// Coalesce rapid ResizeObserver updates while one native UDS request is in flight.
+// Only the latest geometry survives; stale rectangles are never replayed.
+const pendingRects = new Map<number, { rect: {x:number;y:number;width:number;height:number}; sig:string }>();
+const sendingRects = new Set<number>();
+let positioningEpoch = 0;
+async function flushRect(index: number, epoch: number) {
+  if (sendingRects.has(index)) return;
+  sendingRects.add(index);
+  try {
+    while (epoch === positioningEpoch) {
+      const next = pendingRects.get(index);
+      if (!next) break;
+      pendingRects.delete(index);
+      try {
+        await bridge.gridPosition(index, next.rect);
+      } catch (e) {
+        gridCache.invalidate(index);
+        bridge.debugLog(`gridPosition i=${index} 失败: ${e}`);
+      }
+    }
+  } finally {
+    sendingRects.delete(index);
+    if (pendingRects.has(index)) void flushRect(index, positioningEpoch);
+  }
+}
+
 
 export function useGridHost(browserHost: Ref<HTMLElement | null>) {
   const grid = useGridStore();
@@ -39,8 +65,12 @@ export function useGridHost(browserHost: Ref<HTMLElement | null>) {
       }
       return;
     }
-    gridCache.syncSession(grid.gridSession);
+    if (gridCache.syncSession(grid.gridSession)) {
+      ++positioningEpoch;
+      pendingRects.clear();
+    }
     const n = grid.gridCount;
+    for (const index of pendingRects.keys()) if (index >= n) pendingRects.delete(index);
     const mode = grid.gridLayout as GridLayoutMode;
     const refWidth = r.width;
     grid.gridRects.splice(0, grid.gridRects.length);
@@ -50,10 +80,8 @@ export function useGridHost(browserHost: Ref<HTMLElement | null>) {
       const rect = gridCellHostRect(r, cell);
       const sig = gridPositionSignature(rect.x, rect.y, rect.width, rect.height);
       if (gridCache.shouldSend(i, sig)) {
-        bridge.gridPosition(i, rect).catch((e) => {
-          gridCache.invalidate(i);
-          bridge.debugLog(`gridPosition i=${i} 失败: ${e}`);
-        });
+        pendingRects.set(i, { rect, sig });
+        void flushRect(i, positioningEpoch);
       }
       bridge.gridSetZoom(i, normalizeZoom(cell.w, refWidth)).catch(() => {});
     }
