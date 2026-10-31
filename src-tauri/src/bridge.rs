@@ -3639,26 +3639,39 @@ pub fn tab_activate(app: AppHandle, id: String) -> Result<(), String> {
             .lock()
             .unwrap()
             .remove(&id);
-        let scroll = app
-            .state::<AppState>()
-            .hibernated_scroll
-            .lock()
-            .unwrap()
-            .remove(&id);
-        if let Some((x, y)) = scroll {
-            let restore_app = app.clone();
-            let restore_id = id.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(900));
-                let js = format!(
-                    "window.scrollTo({:.3},{:.3});",
-                    x.max(0.0),
-                    y.max(0.0)
-                );
-                let _ = plugin_eval(&restore_app, &restore_id, &js);
-            });
-        }
         eprintln!("[hibernation] 页签 {} 已从休眠重建 url={}", id, url);
+    }
+    // Keep scroll metadata until the restored WebView accepts the command. If
+    // the first load is still racing, a later activation can retry restoration.
+    let scroll = app
+        .state::<AppState>()
+        .hibernated_scroll
+        .lock()
+        .unwrap()
+        .get(&id)
+        .copied();
+    if let Some((x, y)) = scroll {
+        let restore_app = app.clone();
+        let restore_id = id.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(900));
+            if !restore_app.state::<AppState>().tabs.lock().unwrap().contains_key(&restore_id) {
+                return;
+            }
+            let js = format!(
+                "window.scrollTo({:.3},{:.3});",
+                x.max(0.0),
+                y.max(0.0)
+            );
+            if plugin_eval(&restore_app, &restore_id, &js).is_ok() {
+                restore_app
+                    .state::<AppState>()
+                    .hibernated_scroll
+                    .lock()
+                    .unwrap()
+                    .remove(&restore_id);
+            }
+        });
     }
     // 暂存激活页签，前端会随后调用 tab_position 精确布局
     *app.state::<AppState>().active_tab.lock().unwrap() = Some(id.clone());
