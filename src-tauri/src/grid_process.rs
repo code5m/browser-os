@@ -17,6 +17,7 @@ use std::io::BufReader;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::os::unix::process::CommandExt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 
@@ -72,6 +73,16 @@ struct SavedChildState {
 }
 
 /// 单个宫格子进程句柄。
+fn terminate_grid_process_tree(child: &mut Child) {
+    // New Grid children are placed in a dedicated process group. If the process
+    // predates that change, group kill is harmless and child.kill remains fallback.
+    unsafe {
+        libc::kill(-(child.id() as i32), libc::SIGKILL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 pub struct GridChildHandle {
     // index is the key in GridProcessManager::children;
     // communication state is retained in GridProcessManager::listeners.
@@ -252,6 +263,9 @@ impl GridProcessManager {
             // （crashlog 角色区分）与 UDS socket 路径。
             .env("GRID_CHILD_INDEX", index.to_string())
             .env("GRID_SOCK_PATH", Self::socket_path(index))
+            // Give each Grid child its own process group so WebKit helper processes
+            // cannot outlive a hibernated or explicitly closed Grid cell.
+            .process_group(0)
             // 子进程 stdio 继承主进程（日志汇入同一 stderr，便于 crashlog 镜像）。
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())
@@ -300,6 +314,13 @@ impl GridProcessManager {
     /// Preserve child metadata while releasing its process. Used to roll back
     /// a failed resume without losing the URL/layout that existed pre-resume.
     pub fn hibernate_child(&self, index: u32) -> bool {
+        let _ = self.request(
+            index,
+            GridCmd::CloseTab {
+                id: format!("grid-{index}"),
+            },
+            1000,
+        );
         let removed = self.children.lock().unwrap().remove(&index);
         if let Some(mut child) = removed {
             let saved = SavedChildState {
@@ -308,8 +329,7 @@ impl GridProcessManager {
                 hidden: child.hidden,
                 blur_hidden: child.blur_hidden,
             };
-            let _ = child.child.kill();
-            let _ = child.child.wait();
+            terminate_grid_process_tree(&mut child.child);
             self.hibernated.lock().unwrap().insert(index, saved);
             true
         } else {
@@ -480,6 +500,15 @@ impl GridProcessManager {
             .collect();
         let mut hibernated = Vec::new();
         for index in candidates {
+            // Close the WebView through the Grid IPC owner first so WebKit can
+            // flush its persistent profile/session before the process tree exits.
+            let _ = self.request(
+                index,
+                GridCmd::CloseTab {
+                    id: format!("grid-{index}"),
+                },
+                3000,
+            );
             let removed = self.children.lock().unwrap().remove(&index);
             if let Some(mut child) = removed {
                 let saved = SavedChildState {
@@ -488,8 +517,7 @@ impl GridProcessManager {
                     hidden: true,
                     blur_hidden: false,
                 };
-                let _ = child.child.kill();
-                let _ = child.child.wait();
+                terminate_grid_process_tree(&mut child.child);
                 self.hibernated.lock().unwrap().insert(index, saved);
                 hibernated.push(index);
                 eprintln!("[grid-manager] hibernated hidden grid-child-{}", index);
