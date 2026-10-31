@@ -36,7 +36,7 @@ export async function ensureTypeScriptServices(){
     services.javascriptDefaults.setCompilerOptions({...compiler,strict:false,checkJs:true,noImplicitAny:false});
     for(const defaults of [services.typescriptDefaults,services.javascriptDefaults]){
       defaults.setDiagnosticsOptions({noSemanticValidation:false,noSyntaxValidation:false,onlyVisible:true});
-      defaults.setEagerModelSync(true);
+      // Only active/open TS/JS models are synchronized by syncOpenScriptModels.\n      // Avoid cloning every Monaco model into each worker on startup.\n      defaults.setEagerModelSync(false);
     }
     return services;
   })().catch(error=>{typescriptPromise=undefined;throw error;});
