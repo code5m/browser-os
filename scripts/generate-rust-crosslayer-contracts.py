@@ -696,7 +696,7 @@ def build_model() -> dict[str, Any]:
                 "rustName": command.rust_name,
                 "source": command.source,
                 "args": args,
-                "transportParams": command.transport_params,
+                **({"transportParams": command.transport_params} if command.transport_params else {}),
                 "result": result,
                 "returnHint": return_hint,
                 "registry": None
