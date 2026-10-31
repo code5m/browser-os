@@ -3382,6 +3382,27 @@ fn hibernation_idle_window(available_mb: u64, total_mb: u64) -> std::time::Durat
     }
 }
 
+/// A sweep has a bounded destruction budget: avoid killing dozens of WebViews
+/// in one pass and immediately rebuilding them when the user returns.
+fn hibernation_batch_limits(available_mb: u64, total_mb: u64) -> (usize, usize) {
+    match hibernation_idle_window(available_mb, total_mb).as_secs() {
+        30 => (4, 2),   // critical: reclaim more, still bounded
+        120 => (2, 1),  // warning
+        _ => (1, 1),    // normal: no burst teardown
+    }
+}
+
+/// Snapshot parsing must fail closed. A missing 'protected' field or non-finite
+/// scroll value is not proof that the page is safe to discard.
+fn accepted_hibernation_scroll(snapshot: &serde_json::Value) -> Option<(f64, f64)> {
+    if snapshot.get("protected").and_then(serde_json::Value::as_bool) != Some(false) {
+        return None;
+    }
+    let x = snapshot.get("scrollX")?.as_f64()?.is_finite().then_some(snapshot["scrollX"].as_f64()?)?;
+    let y = snapshot.get("scrollY")?.as_f64()?.is_finite().then_some(snapshot["scrollY"].as_f64()?)?;
+    Some((x, y))
+}
+
 fn mem_total_mb() -> Option<u64> {
     std::fs::read_to_string("/proc/meminfo")
         .ok()?
@@ -3427,7 +3448,13 @@ fn tab_hibernation_snapshot(app: &AppHandle, id: &str) -> Result<(f64, f64), Str
         document.activeElement.matches('input,textarea,select,[contenteditable="true"]');
       const richEditor = [...document.querySelectorAll('[contenteditable="true"]')]
         .some(el => (el.textContent || '').trim().length > 0);
-      const protectedPage = media || dirty || focused || richEditor ||
+      // Embedded documents, canvas applications, framework-driven textboxes,
+      // dialogs and even empty rich editors can carry non-serializable state.
+      // URL + scroll is insufficient to restore them: skip rather than guess.
+      const complexState = !!document.querySelector(
+        'iframe,frame,canvas,embed,object,[contenteditable]:not([contenteditable="false"]),[role="textbox"],[aria-modal="true"],dialog[open]'
+      );
+      const protectedPage = media || dirty || focused || richEditor || complexState ||
         !!window.onbeforeunload || window.__browserosPreventHibernate === true;
       return JSON.stringify({
         protected: protectedPage,
@@ -3446,13 +3473,8 @@ fn tab_hibernation_snapshot(app: &AppHandle, id: &str) -> Result<(f64, f64), Str
         .map_err(|_| "TAB_HIBERNATION_SNAPSHOT_TIMEOUT")??;
     let snapshot: serde_json::Value =
         serde_json::from_str(&encoded).map_err(|_| "TAB_HIBERNATION_SNAPSHOT_INVALID")?;
-    if snapshot["protected"] == true {
-        return Err("TAB_HIBERNATION_PROTECTED".into());
-    }
-    Ok((
-        snapshot["scrollX"].as_f64().unwrap_or(0.0),
-        snapshot["scrollY"].as_f64().unwrap_or(0.0),
-    ))
+    accepted_hibernation_scroll(&snapshot)
+        .ok_or_else(|| "TAB_HIBERNATION_PROTECTED_OR_INVALID".to_string())
 }
 
 /// Destroy an inactive tab only after a native snapshot confirms that it is
@@ -3460,14 +3482,34 @@ fn tab_hibernation_snapshot(app: &AppHandle, id: &str) -> Result<(f64, f64), Str
 /// editor, or requesting beforeunload. Only scroll coordinates are retained.
 fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) -> bool {
     let state = app.state::<AppState>();
+    let expected_url = match state.tabs.lock().unwrap().get(id) {
+        Some(tab) => tab.url.clone(),
+        None => return false,
+    };
     let still_idle = || {
-        state.active_tab.lock().unwrap().as_deref() != Some(id)
-            && state
-                .tab_idle_since
-                .lock()
-                .unwrap()
-                .get(id)
-                .is_some_and(|since| since.elapsed() >= idle_window)
+        // The user may disable the policy or navigate/activate the tab while a
+        // two-second WebKit snapshot is in flight. Cancel on any such change.
+        if !state.hibernation_enabled.load(Ordering::Relaxed)
+            || state.active_tab.lock().unwrap().as_deref() == Some(id)
+        {
+            return false;
+        }
+        if !state
+            .tab_idle_since
+            .lock()
+            .unwrap()
+            .get(id)
+            .is_some_and(|since| since.elapsed() >= idle_window)
+        {
+            return false;
+        }
+        let same_page = state
+            .tabs
+            .lock()
+            .unwrap()
+            .get(id)
+            .is_some_and(|tab| tab.url == expected_url);
+        same_page && !state.hibernated_tabs.lock().unwrap().contains(id)
     };
     if !still_idle() {
         return false;
@@ -3522,11 +3564,14 @@ pub fn start_hibernation_sweeper(app: AppHandle) {
         }
         let available = mem_available_mb();
         let total = mem_total_mb();
-        let idle_window = match (available, total) {
-            (Some(available), Some(total)) => hibernation_idle_window(available, total),
-            _ => std::time::Duration::from_secs(600),
+        let (idle_window, tab_limit, grid_limit) = match (available, total) {
+            (Some(available), Some(total)) => {
+                let (tabs, grids) = hibernation_batch_limits(available, total);
+                (hibernation_idle_window(available, total), tabs, grids)
+            }
+            _ => (std::time::Duration::from_secs(600), 1, 1),
         };
-        let grids = state.grid_manager.hibernate_idle_hidden(idle_window);
+        let grids = state.grid_manager.hibernate_idle_hidden(idle_window, grid_limit);
         if !grids.is_empty() {
             eprintln!(
                 "[hibernation] adaptive memory pressure hibernated grid children {:?}",
@@ -3536,7 +3581,7 @@ pub fn start_hibernation_sweeper(app: AppHandle) {
 
         let active = state.active_tab.lock().unwrap().clone();
         let now = std::time::Instant::now();
-        let victims: Vec<String> = {
+        let mut victims: Vec<(std::time::Instant, String)> = {
             let idle = state.tab_idle_since.lock().unwrap();
             let hibernated = state.hibernated_tabs.lock().unwrap();
             let tabs = state.tabs.lock().unwrap();
@@ -3547,18 +3592,31 @@ pub fn start_hibernation_sweeper(app: AppHandle) {
                         && tabs.contains_key(*id)
                         && now.duration_since(**since) >= idle_window
                 })
-                .map(|(id, _)| id.clone())
+                .map(|(id, since)| (*since, id.clone()))
                 .collect()
         };
-        for id in victims {
-            hibernate_tab(&app, &id, idle_window);
+        // Reclaim the oldest inactive tabs first; cap per sweep to avoid a
+        // massive WebKit process teardown/restart spike.
+        victims.sort_unstable_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        for (_, id) in victims.into_iter().take(tab_limit) {
+            if !state.hibernation_enabled.load(Ordering::Relaxed) {
+                break;
+            }
+            // Recheck pressure after a previous WebView was released; if it
+            // recovered, do not keep applying the earlier critical threshold.
+            let current_window = match (mem_available_mb(), mem_total_mb()) {
+                (Some(available), Some(total)) => hibernation_idle_window(available, total),
+                _ => std::time::Duration::from_secs(600),
+            };
+            hibernate_tab(&app, &id, current_window);
         }
     });
 }
 
 #[cfg(test)]
 mod adaptive_hibernation_tests {
-    use super::hibernation_idle_window;
+    use super::{accepted_hibernation_scroll, hibernation_batch_limits, hibernation_idle_window};
+    use serde_json::json;
     use std::time::Duration;
 
     #[test]
@@ -3573,6 +3631,33 @@ mod adaptive_hibernation_tests {
             Duration::from_secs(120)
         );
         assert_eq!(hibernation_idle_window(700, total), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn sweep_limits_scale_with_pressure_without_unbounded_kills() {
+        let total = 16 * 1024;
+        assert_eq!(hibernation_batch_limits(8 * 1024, total), (1, 1));
+        assert_eq!(hibernation_batch_limits(2 * 1024, total), (2, 1));
+        assert_eq!(hibernation_batch_limits(700, total), (4, 2));
+    }
+
+    #[test]
+    fn unsafe_or_incomplete_snapshots_must_not_destroy_webviews() {
+        assert_eq!(
+            accepted_hibernation_scroll(&json!({"protected":false,"scrollX":4.0,"scrollY":8.0})),
+            Some((4.0, 8.0))
+        );
+        for value in [
+            json!(null),
+            json!({}),
+            json!({"scrollX":0,"scrollY":0}),
+            json!({"protected":true,"scrollX":0,"scrollY":0}),
+            json!({"protected":"false","scrollX":0,"scrollY":0}),
+            json!({"protected":false,"scrollX":"0","scrollY":0}),
+            json!({"protected":false,"scrollX":0}),
+        ] {
+            assert!(accepted_hibernation_scroll(&value).is_none(), "{value}");
+        }
     }
 }
 
