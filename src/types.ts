@@ -390,6 +390,8 @@ export interface ResourceStats {
   hibernation_enabled: boolean;
   // 当前已休眠页签数
   hibernated_count: number;
+  // 已释放 WebKit 进程、保留 URL/布局的 Grid 单元数
+  hibernated_grid_count: number;
   // 内存预算守卫：当前可用内存最多支撑几格
   grid_budget: number;
 }
