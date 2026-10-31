@@ -240,6 +240,8 @@ pub struct AppState {
     pub tab_idle_since: Mutex<HashMap<String, std::time::Instant>>,
     /// 已休眠页签（webview 已销毁，URL 保留在 tabs 表，激活时重建）
     pub hibernated_tabs: Mutex<std::collections::HashSet<String>>,
+    /// Scroll-only restore metadata; form/password/file values are never persisted.
+    pub hibernated_scroll: Mutex<HashMap<String, (f64, f64)>>,
     /// tab-N 主进程 WebView 恢复预算，防止失败路径进入无限重建。
     pub tab_recovery: Mutex<HashMap<String, TabRecoveryBudget>>,
     /// M1-4：外部打开 URL 缓存队列（xdg-open 冷启动 argv / 单实例转发 /
@@ -3034,6 +3036,8 @@ pub struct ResourceStats {
     pub hibernation_enabled: bool,
     /// 当前已休眠页签数
     pub hibernated_count: usize,
+    /// 当前已休眠 Grid 子进程数
+    pub hibernated_grid_count: usize,
     /// 内存预算守卫：当前可用内存最多支撑几格（创建宫格时的降级上限）
     pub grid_budget: usize,
 }
@@ -3153,6 +3157,7 @@ pub async fn resource_stats(app: AppHandle) -> Result<ResourceStats, String> {
                 let state = app.state::<AppState>();
                 refreshed.hibernation_enabled = state.hibernation_enabled.load(Ordering::Relaxed);
                 refreshed.hibernated_count = state.hibernated_tabs.lock().unwrap().len();
+                refreshed.hibernated_grid_count = state.grid_manager.hibernated_count();
                 return refreshed;
             }
         }
@@ -3218,6 +3223,7 @@ pub fn resource_stats_blocking(app: AppHandle) -> ResourceStats {
         grids,
         hibernation_enabled,
         hibernated_count,
+        hibernated_grid_count: app.state::<AppState>().grid_manager.hibernated_count(),
         // 真实预算（可为 0/1，创建时才会保底 2）：前端据此提示"最多还能开 N 格"
         grid_budget: (avail.saturating_sub(MEM_RESERVE_MB) / GRID_MEM_MB).min(MAX_GRID as u64)
             as usize,
@@ -3230,25 +3236,113 @@ pub fn resource_stats_blocking(app: AppHandle) -> ResourceStats {
 // 白吃内存。冻结（FREEZE_JS）只省 CPU 不省内存；休眠 = 销毁 webview 仅留 URL，
 // 激活时按 URL 重建（页面状态如滚动位置/表单不保留，登录态由 WebKit 持久会话保留）。
 
-/// 非激活超过该时长的页签才休眠（秒）。
-const TAB_HIBERNATE_IDLE_SECS: u64 = 600;
+/// Normal pressure keeps the historical 10-minute idle policy; warning and
+/// critical pressure progressively shorten it. These thresholds are pure and
+/// tested so a low-memory machine does not silently inherit desktop-class limits.
+fn hibernation_idle_window(available_mb: u64, total_mb: u64) -> std::time::Duration {
+    let warning = (total_mb.saturating_mul(15) / 100)
+        .max(1536)
+        .min(total_mb.saturating_mul(35) / 100);
+    let critical = (total_mb.saturating_mul(8) / 100)
+        .max(768)
+        .min(total_mb.saturating_mul(20) / 100);
+    if available_mb <= critical {
+        std::time::Duration::from_secs(30)
+    } else if available_mb <= warning {
+        std::time::Duration::from_secs(120)
+    } else {
+        std::time::Duration::from_secs(600)
+    }
+}
 
-/// 设置页签休眠开关（前端设置面板调用；开启后清扫线程生效）。
+fn mem_total_mb() -> Option<u64> {
+    std::fs::read_to_string("/proc/meminfo")
+        .ok()?
+        .lines()
+        .find_map(|line| line.strip_prefix("MemTotal:"))?
+        .trim()
+        .trim_end_matches("kB")
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(|kb| kb / 1024)
+}
+
+/// Settings remain explicit opt-in: adaptive hibernation never destroys a page
+/// until the user enables the existing browser resource policy.
 #[tauri::command]
 pub fn set_tab_hibernation(app: AppHandle, enabled: bool) -> Result<(), String> {
     app.state::<AppState>()
         .hibernation_enabled
         .store(enabled, Ordering::Relaxed);
-    eprintln!("[hibernation] 页签休眠开关 = {}", enabled);
+    eprintln!("[hibernation] 自适应资源休眠 = {}", enabled);
     Ok(())
 }
 
-/// 休眠单个页签：销毁 webview，URL 保留在 tabs 表（激活时重建）。激活页签不休眠。
-fn hibernate_tab(app: &AppHandle, id: &str) {
+fn tab_hibernation_snapshot(app: &AppHandle, id: &str) -> Result<(f64, f64), String> {
+    use tauri_plugin_browser_tabs::TabManagerState;
+    let manager = app.state::<TabManagerState>();
+    let script = r#"(() => {
+      const media = [...document.querySelectorAll('audio,video')].some(el => !el.paused && !el.ended);
+      const controls = [...document.querySelectorAll('input,textarea,select')];
+      const dirty = controls.some(el => {
+        if (el instanceof HTMLInputElement) {
+          const type = (el.type || '').toLowerCase();
+          if (type === 'password') return el.value.length > 0;
+          if (type === 'file') return !!el.files?.length;
+          if (type === 'hidden') return false;
+          if (type === 'checkbox' || type === 'radio') return el.checked !== el.defaultChecked;
+        }
+        if (el instanceof HTMLSelectElement) return [...el.options].some(o => o.selected !== o.defaultSelected);
+        return 'defaultValue' in el && el.value !== el.defaultValue;
+      });
+      const focused = document.activeElement && document.activeElement !== document.body &&
+        document.activeElement.matches('input,textarea,select,[contenteditable="true"]');
+      const richEditor = [...document.querySelectorAll('[contenteditable="true"]')]
+        .some(el => (el.textContent || '').trim().length > 0);
+      const protectedPage = media || dirty || focused || richEditor ||
+        !!window.onbeforeunload || window.__browserosPreventHibernate === true;
+      return JSON.stringify({
+        protected: protectedPage,
+        scrollX: Number(window.scrollX) || 0,
+        scrollY: Number(window.scrollY) || 0
+      });
+    })()"#;
+    let (tx, rx) = std::sync::mpsc::channel();
+    manager
+        .eval_result(&id.to_string(), script.to_string(), move |result| {
+            let _ = tx.send(result);
+        })
+        .map_err(|_| "TAB_HIBERNATION_SNAPSHOT_FAILED")?;
+    let encoded = rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .map_err(|_| "TAB_HIBERNATION_SNAPSHOT_TIMEOUT")??;
+    let snapshot: serde_json::Value =
+        serde_json::from_str(&encoded).map_err(|_| "TAB_HIBERNATION_SNAPSHOT_INVALID")?;
+    if snapshot["protected"] == true {
+        return Err("TAB_HIBERNATION_PROTECTED".into());
+    }
+    Ok((
+        snapshot["scrollX"].as_f64().unwrap_or(0.0),
+        snapshot["scrollY"].as_f64().unwrap_or(0.0),
+    ))
+}
+
+/// Destroy an inactive tab only after a native snapshot confirms that it is
+/// not playing media, holding edited form/contenteditable data, focused in an
+/// editor, or requesting beforeunload. Only scroll coordinates are retained.
+fn hibernate_tab(app: &AppHandle, id: &str) -> bool {
     let state = app.state::<AppState>();
     if state.active_tab.lock().unwrap().as_deref() == Some(id) {
-        return;
+        return false;
     }
+    let scroll = match tab_hibernation_snapshot(app, id) {
+        Ok(scroll) => scroll,
+        Err(error) => {
+            eprintln!("[hibernation] skip tab={} reason={}", id, error);
+            return false;
+        }
+    };
     use tauri_plugin_browser_tabs::TabManagerState;
     let manager = app.state::<TabManagerState>();
     if manager.close_tab(&id.to_string()).is_ok() {
@@ -3256,16 +3350,21 @@ fn hibernate_tab(app: &AppHandle, id: &str) {
         state.last_position_at.lock().unwrap().remove(id);
         state.tab_idle_since.lock().unwrap().remove(id);
         state.hibernated_tabs.lock().unwrap().insert(id.to_string());
+        state.hibernated_scroll.lock().unwrap().insert(id.to_string(), scroll);
         state.tab_recovery.lock().unwrap().remove(id);
-        eprintln!("[hibernation] 页签 {} 已休眠（webview 销毁，URL 保留）", id);
+        eprintln!("[hibernation] tab={} webview destroyed; URL and scroll retained", id);
+        true
+    } else {
+        false
     }
 }
 
-/// 休眠清扫线程（主进程 setup 启动一次）：每 60s 检查，开关开启时把
-/// 非激活超 TAB_HIBERNATE_IDLE_SECS 的页签休眠。
+/// Adaptive resource sweeper: normal/warning/critical memory pressure uses
+/// 10m/2m/30s idle windows. Grid children are eligible only after an explicit
+/// hide (not a main-window blur/minimize), and active/focused/dirty tabs survive.
 pub fn start_hibernation_sweeper(app: AppHandle) {
     std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_secs(60));
+        std::thread::sleep(std::time::Duration::from_secs(30));
         let state = app.state::<AppState>();
         if state.shutdown_requested.load(Ordering::SeqCst) {
             break;
@@ -3273,6 +3372,20 @@ pub fn start_hibernation_sweeper(app: AppHandle) {
         if !state.hibernation_enabled.load(Ordering::Relaxed) {
             continue;
         }
+        let available = mem_available_mb();
+        let total = mem_total_mb();
+        let idle_window = match (available, total) {
+            (Some(available), Some(total)) => hibernation_idle_window(available, total),
+            _ => std::time::Duration::from_secs(600),
+        };
+        let grids = state.grid_manager.hibernate_idle_hidden(idle_window);
+        if !grids.is_empty() {
+            eprintln!(
+                "[hibernation] adaptive memory pressure hibernated grid children {:?}",
+                grids
+            );
+        }
+
         let active = state.active_tab.lock().unwrap().clone();
         let now = std::time::Instant::now();
         let victims: Vec<String> = {
@@ -3284,7 +3397,7 @@ pub fn start_hibernation_sweeper(app: AppHandle) {
                     Some(*id) != active.as_ref()
                         && !hibernated.contains(*id)
                         && tabs.contains_key(*id)
-                        && now.duration_since(**since).as_secs() > TAB_HIBERNATE_IDLE_SECS
+                        && now.duration_since(**since) >= idle_window
                 })
                 .map(|(id, _)| id.clone())
                 .collect()
@@ -3293,6 +3406,20 @@ pub fn start_hibernation_sweeper(app: AppHandle) {
             hibernate_tab(&app, &id);
         }
     });
+}
+
+#[cfg(test)]
+mod adaptive_hibernation_tests {
+    use super::hibernation_idle_window;
+    use std::time::Duration;
+
+    #[test]
+    fn memory_pressure_shortens_idle_window_monotonically() {
+        let total = 16 * 1024;
+        assert_eq!(hibernation_idle_window(8 * 1024, total), Duration::from_secs(600));
+        assert_eq!(hibernation_idle_window(2 * 1024, total), Duration::from_secs(120));
+        assert_eq!(hibernation_idle_window(700, total), Duration::from_secs(30));
+    }
 }
 
 /// 列出当前所有页签。
