@@ -852,8 +852,7 @@ impl GridProcessManager {
         self.hibernated.lock().unwrap().remove(&index);
         let removed = self.children.lock().unwrap().remove(&index);
         if let Some(mut h) = removed {
-            let _ = h.child.kill();
-            let _ = h.child.wait();
+            terminate_grid_process_tree(&mut h.child);
             eprintln!("[grid-manager] killed grid-child-{}", index);
             true
         } else {
@@ -920,8 +919,7 @@ impl GridProcessManager {
         self.hibernated.lock().unwrap().clear();
         let mut children = self.children.lock().unwrap();
         for (index, h) in children.iter_mut() {
-            let _ = h.child.kill();
-            let _ = h.child.wait();
+            terminate_grid_process_tree(&mut h.child);
             eprintln!("[grid-manager] shutdown grid-child-{}", index);
         }
         children.clear();
