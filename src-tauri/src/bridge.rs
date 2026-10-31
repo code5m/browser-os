@@ -2082,7 +2082,13 @@ pub struct DirEntry {
 
 /// 列出指定路径的目录内容（不递归）
 #[tauri::command]
-pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
+pub async fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || list_dir_blocking(path))
+        .await
+        .map_err(|_| "LIST_DIR_WORKER_FAILED".to_string())?
+}
+
+fn list_dir_blocking(path: String) -> Result<Vec<DirEntry>, String> {
     let dir = std::path::PathBuf::from(&path);
     if !dir.exists() {
         return Err("路径不存在".into());
@@ -2117,8 +2123,27 @@ pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
 
 /// 读取文本文件内容
 #[tauri::command]
-pub fn read_file(path: String) -> Result<String, String> {
-    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+pub async fn read_file(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || read_file_blocking(path))
+        .await
+        .map_err(|_| "READ_FILE_WORKER_FAILED".to_string())?
+}
+
+fn read_file_blocking(path: String) -> Result<String, String> {
+    use std::io::Read;
+    const MAX_TEXT_BYTES: u64 = 8 * 1024 * 1024;
+    let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+    if file.metadata().map_err(|e| e.to_string())?.len() > MAX_TEXT_BYTES {
+        return Err("文件超过 8MB，请使用分块预览或终端工具".into());
+    }
+    let mut text = String::new();
+    file.take(MAX_TEXT_BYTES + 1)
+        .read_to_string(&mut text)
+        .map_err(|e| e.to_string())?;
+    if text.len() as u64 > MAX_TEXT_BYTES {
+        return Err("文件超过 8MB，请使用分块预览或终端工具".into());
+    }
+    Ok(text)
 }
 
 fn image_mime_from_path(path: &std::path::Path) -> Option<&'static str> {
@@ -2365,10 +2390,16 @@ fn mem_available_mb() -> Option<u64> {
 /// 返回实际创建的格数：内存预算守卫会在可用内存不足时自动降级（保底 2 格），
 /// 前端据此调整 gridCount 并提示用户。
 #[tauri::command]
-pub fn create_grid(app: AppHandle, n: usize, urls: Vec<String>) -> Result<usize, String> {
+pub async fn create_grid(app: AppHandle, n: usize, urls: Vec<String>) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || create_grid_blocking(app, n, urls))
+        .await
+        .map_err(|_| "GRID_WORKER_FAILED".to_string())?
+}
+
+pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Result<usize, String> {
     let n = n.clamp(2, MAX_GRID);
     // 先清理旧的宫格子进程（幂等，可安全重复调用）
-    close_grid(app.clone())?;
+    close_grid_blocking(app.clone())?;
     // Respect requested 2/4 grid mode. Safely degrade to two; refuse when
     // even two would violate the core browser/file-manager memory reserve.
     let n = match mem_available_mb() {
@@ -2435,7 +2466,13 @@ pub fn create_grid(app: AppHandle, n: usize, urls: Vec<String>) -> Result<usize,
 /// 顺序：先 HideWindow（窗口立即从屏幕消失，消除"幽灵窗口残留几秒"的视觉问题），
 /// 再 CloseTab + kill（进程销毁与 X 窗口清理有延迟，藏在 hide 之后用户无感）。
 #[tauri::command]
-pub fn close_grid(app: AppHandle) -> Result<(), String> {
+pub async fn close_grid(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || close_grid_blocking(app))
+        .await
+        .map_err(|_| "GRID_WORKER_FAILED".to_string())?
+}
+
+pub fn close_grid_blocking(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let mgr = &state.grid_manager;
     for index in mgr.indices() {
@@ -2469,7 +2506,13 @@ pub fn close_grid(app: AppHandle) -> Result<(), String> {
 /// 在指定宫格(index)中打开网址（经 UDS Navigate 到子进程）。
 /// 导航后延迟应用存储的缩放（给页面加载留时间），确保新页面加载完成后自动缩放到位。
 #[tauri::command]
-pub fn grid_open(app: AppHandle, index: usize, url: String) -> Result<(), String> {
+pub async fn grid_open(app: AppHandle, index: usize, url: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || grid_open_blocking(app, index, url))
+        .await
+        .map_err(|_| "GRID_WORKER_FAILED".to_string())?
+}
+
+pub fn grid_open_blocking(app: AppHandle, index: usize, url: String) -> Result<(), String> {
     let label = format!("grid-{index}");
     let target = initial_grid_url(&url);
     if target != "about:blank" {
@@ -2542,7 +2585,22 @@ pub fn grid_set_zoom(app: AppHandle, index: usize, zoom: f64) -> Result<(), Stri
 /// 子进程 set_position/set_size + show。
 /// 注意：本命令只负责定位，不再处理缩放 —— 缩放由 grid_set_zoom 单独管理。
 #[tauri::command]
-pub fn grid_position(
+pub async fn grid_position(
+    app: AppHandle,
+    index: usize,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        grid_position_blocking(app, index, x, y, width, height)
+    })
+    .await
+    .map_err(|_| "GRID_POSITION_WORKER_FAILED".to_string())?
+}
+
+pub fn grid_position_blocking(
     app: AppHandle,
     index: usize,
     x: f64,
@@ -2579,7 +2637,13 @@ pub fn grid_position(
 /// 关闭单个宫格（按 index）：销毁对应子进程，其余宫格保留。
 /// 同样先 HideWindow 再 kill（消除幽灵窗口）。
 #[tauri::command]
-pub fn grid_close_one(app: AppHandle, index: usize) -> Result<(), String> {
+pub async fn grid_close_one(app: AppHandle, index: usize) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || grid_close_one_blocking(app, index))
+        .await
+        .map_err(|_| "GRID_WORKER_FAILED".to_string())?
+}
+
+pub fn grid_close_one_blocking(app: AppHandle, index: usize) -> Result<(), String> {
     let label = format!("grid-{index}");
     let state = app.state::<AppState>();
     let mgr = &state.grid_manager;
@@ -2954,34 +3018,82 @@ fn read_proc_table() -> HashMap<u32, (u32, String, u64)> {
     procs
 }
 
-/// 进程树合计 RSS（kB）：root 及其全部子孙。
-fn subtree_rss_kb(procs: &HashMap<u32, (u32, String, u64)>, root: u32) -> u64 {
-    let mut sum = 0;
-    let mut stack = vec![root];
-    while let Some(p) = stack.pop() {
-        if let Some((_, _, rss)) = procs.get(&p) {
-            sum += rss;
-        }
-        for (pid, (ppid, _, _)) in procs {
-            if *ppid == p {
-                stack.push(*pid);
-            }
+/// 由叶到根汇总所有子树的 RSS：一次建立父子关系，每个 PID 至多出队一次。
+/// 内存数据仍是 RSS（共享页会重复计入），不得误认为 PSS。
+fn process_tree_rss_kb(procs: &HashMap<u32, (u32, String, u64)>) -> HashMap<u32, u64> {
+    let mut totals: HashMap<u32, u64> = procs
+        .iter()
+        .map(|(&pid, (_, _, rss))| (pid, *rss))
+        .collect();
+    let mut remaining_children: HashMap<u32, usize> = HashMap::new();
+    for (&pid, (ppid, _, _)) in procs {
+        if pid != *ppid && procs.contains_key(ppid) {
+            *remaining_children.entry(*ppid).or_default() += 1;
         }
     }
-    sum
+    let mut ready: std::collections::VecDeque<u32> = procs
+        .keys()
+        .filter(|pid| !remaining_children.contains_key(pid))
+        .copied()
+        .collect();
+    while let Some(pid) = ready.pop_front() {
+        let parent = procs[&pid].0;
+        if parent == pid || !procs.contains_key(&parent) {
+            continue;
+        }
+        let rss = totals[&pid];
+        *totals.get_mut(&parent).expect("parent is in proc table") += rss;
+        let outstanding = remaining_children
+            .get_mut(&parent)
+            .expect("parent must have a child count");
+        *outstanding -= 1;
+        if *outstanding == 0 {
+            ready.push_back(parent);
+        }
+    }
+    totals
+}
+
+#[cfg(test)]
+mod resource_tree_tests {
+    use super::process_tree_rss_kb;
+    use std::collections::HashMap;
+
+    #[test]
+    fn nested_grid_and_independent_processes_are_counted_once() {
+        let processes = HashMap::from([
+            (1, (0, "main".to_string(), 100)),
+            (2, (1, "grid".to_string(), 40)),
+            (3, (2, "webkit".to_string(), 30)),
+            (4, (1, "tab".to_string(), 20)),
+            (9, (0, "other".to_string(), 300)),
+        ]);
+        let totals = process_tree_rss_kb(&processes);
+        assert_eq!(totals.get(&1), Some(&190));
+        assert_eq!(totals.get(&2), Some(&70));
+        assert_eq!(totals.get(&3), Some(&30));
+        assert_eq!(totals.get(&9), Some(&300));
+    }
 }
 
 /// 资源占用统计：主进程树 + 每宫格子进程树的 RSS（含 WebKit 子进程）。
 #[tauri::command]
-pub fn resource_stats(app: AppHandle) -> ResourceStats {
+pub async fn resource_stats(app: AppHandle) -> Result<ResourceStats, String> {
+    tauri::async_runtime::spawn_blocking(move || resource_stats_blocking(app))
+        .await
+        .map_err(|_| "RESOURCE_STATS_WORKER_FAILED".to_string())
+}
+
+pub fn resource_stats_blocking(app: AppHandle) -> ResourceStats {
     let procs = read_proc_table();
+    let tree_rss = process_tree_rss_kb(&procs);
     let main_pid = std::process::id();
     let grid_pids = app.state::<AppState>().grid_manager.pids();
     let grid_total_kb: u64 = grid_pids
         .iter()
-        .map(|(_, pid)| subtree_rss_kb(&procs, *pid))
+        .map(|(_, pid)| tree_rss.get(pid).copied().unwrap_or(0))
         .sum();
-    let app_total_kb = subtree_rss_kb(&procs, main_pid); // 宫格子进程是主进程的子进程，已含
+    let app_total_kb = tree_rss.get(&main_pid).copied().unwrap_or(0); // 宫格子进程是主进程的子进程，已含
     let main_only_kb = app_total_kb.saturating_sub(grid_total_kb);
     let main_name = procs
         .get(&main_pid)
@@ -2992,7 +3104,7 @@ pub fn resource_stats(app: AppHandle) -> ResourceStats {
         .map(|(index, pid)| ProcStat {
             pid: *pid,
             name: format!("grid-{index}"),
-            rss_mb: subtree_rss_kb(&procs, *pid) as f64 / 1024.0,
+            rss_mb: tree_rss.get(pid).copied().unwrap_or(0) as f64 / 1024.0,
         })
         .collect();
     let avail = mem_available_mb().unwrap_or(0);
