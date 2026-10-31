@@ -1003,6 +1003,40 @@ mod tests {
     }
 
     #[test]
+    fn cancelling_provider_stream_interrupts_blocking_sse_read_and_reaps_child() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::{Duration, Instant};
+        let cancel = AtomicBool::new(false);
+        let child = std::process::Command::new("/usr/bin/sleep")
+            .arg("10")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let started = Instant::now();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(100));
+                cancel.store(true, Ordering::SeqCst);
+            });
+            let result = super::read_provider_stream_process(
+                child,
+                b"",
+                "secret",
+                &|| cancel.load(Ordering::SeqCst),
+                &mut |_| Ok(()),
+            );
+            assert_eq!(result.unwrap_err(), "AI_PROVIDER_CANCELLED");
+        });
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert!(
+            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "streaming child should be reaped after cancellation"
+        );
+    }
+
+    #[test]
     fn provider_stream_parser_preserves_http_error_status_without_body() {
         let child = std::process::Command::new("/usr/bin/printf")
             .arg("%s")
