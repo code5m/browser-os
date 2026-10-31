@@ -3,20 +3,80 @@ use crate::keyring_store::KeyringStore;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     fs,
     io::{Read, Write},
     path::Path,
     process::{Child, Command, ExitStatus, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Mutex,
+        Arc, Condvar, Mutex, OnceLock, Weak,
     },
 };
 use tauri::Manager;
 
 static CONFIG_LOCK: Mutex<()> = Mutex::new(());
-static REQUEST_LOCK: Mutex<()> = Mutex::new(());
+const PROVIDER_CONCURRENCY: usize = 2;
+const PROVIDER_QUEUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+static PROVIDER_LIMITERS: OnceLock<Mutex<HashMap<String, Weak<ProviderSemaphore>>>> =
+    OnceLock::new();
+
+struct ProviderSemaphore {
+    active: Mutex<usize>,
+    ready: Condvar,
+}
+struct ProviderPermit {
+    semaphore: Arc<ProviderSemaphore>,
+}
+impl Drop for ProviderPermit {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.semaphore.active.lock() {
+            *active = active.saturating_sub(1);
+            self.semaphore.ready.notify_one();
+        }
+    }
+}
+fn provider_semaphore(profile_id: &str) -> Arc<ProviderSemaphore> {
+    let registry = PROVIDER_LIMITERS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut registry = registry.lock().unwrap_or_else(|e| e.into_inner());
+    registry.retain(|_, semaphore| semaphore.strong_count() > 0);
+    if let Some(existing) = registry.get(profile_id).and_then(Weak::upgrade) {
+        return existing;
+    }
+    let semaphore = Arc::new(ProviderSemaphore {
+        active: Mutex::new(0),
+        ready: Condvar::new(),
+    });
+    registry.insert(profile_id.to_string(), Arc::downgrade(&semaphore));
+    semaphore
+}
+fn acquire_provider_permit(
+    profile_id: &str,
+    cancelled: &(dyn Fn() -> bool + Sync),
+) -> Result<ProviderPermit, String> {
+    let semaphore = provider_semaphore(profile_id);
+    let deadline = std::time::Instant::now() + PROVIDER_QUEUE_TIMEOUT;
+    let mut active = semaphore.active.lock().map_err(|_| "AI_PROVIDER_BUSY")?;
+    while *active >= PROVIDER_CONCURRENCY {
+        if cancelled() {
+            return Err("AI_PROVIDER_CANCELLED".into());
+        }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err("AI_PROVIDER_BUSY".into());
+        }
+        let (next, timed) = semaphore
+            .ready
+            .wait_timeout(active, remaining.min(std::time::Duration::from_millis(100)))
+            .map_err(|_| "AI_PROVIDER_BUSY")?;
+        active = next;
+        if timed.timed_out() && std::time::Instant::now() >= deadline {
+            return Err("AI_PROVIDER_BUSY".into());
+        }
+    }
+    *active += 1;
+    Ok(ProviderPermit { semaphore })
+}
 const IMPORTER: &str = include_str!("../../../scripts/import-local-ai.py");
 const MAX_BYTES: u64 = 1024 * 1024;
 
@@ -178,7 +238,7 @@ fn provider_turn_cancelable(
     tools: &[Value],
     cancelled: &(dyn Fn() -> bool + Sync),
 ) -> Result<Value, String> {
-    let _request_guard = REQUEST_LOCK.try_lock().map_err(|_| "AI_PROVIDER_BUSY")?;
+    let _permit = acquire_provider_permit(&profile.id, cancelled)?;
     validate(profile)?;
     if profile.kind != "chat" {
         return Err("AI_MODEL_NOT_CHAT".into());
@@ -251,6 +311,165 @@ fn provider_turn_cancelable(
         .cloned()
         .ok_or_else(|| "AI_RESPONSE_EMPTY".into())
 }
+fn read_provider_stream_process(
+    mut child: Child,
+    input: &[u8],
+    cancelled: &(dyn Fn() -> bool + Sync),
+    on_delta: &mut dyn FnMut(&str) -> Result<(), String>,
+) -> Result<(Value, ExitStatus, Option<u16>), String> {
+    let (Some(mut stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err("AI_HTTP_IO".into());
+    };
+    let abort = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        let monitor = scope.spawn(|| {
+            let mut was_cancelled = false;
+            loop {
+                if cancelled() {
+                    was_cancelled = true;
+                    let _ = child.kill();
+                }
+                if abort.load(Ordering::SeqCst) {
+                    let _ = child.kill();
+                }
+                match child.try_wait() {
+                    Ok(Some(status)) => return Ok((status, was_cancelled)),
+                    Err(_) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err("AI_HTTP_IO");
+                    }
+                    Ok(None) => std::thread::sleep(std::time::Duration::from_millis(25)),
+                }
+            }
+        });
+
+        if stdin.write_all(input).is_err() {
+            abort.store(true, Ordering::SeqCst);
+        }
+        drop(stdin);
+
+        let mut reader = std::io::BufReader::new(stdout);
+        let mut line = Vec::new();
+        let mut total_bytes = 0usize;
+        let mut content = String::new();
+        let mut tool_calls: BTreeMap<usize, (String, String, String)> = BTreeMap::new();
+        let mut http_status = None;
+        let mut stream_error: Option<String> = None;
+
+        loop {
+            line.clear();
+            let count = match reader.read_until(b'\n', &mut line) {
+                Ok(count) => count,
+                Err(_) => {
+                    stream_error = Some("AI_HTTP_IO".into());
+                    break;
+                }
+            };
+            if count == 0 {
+                break;
+            }
+            total_bytes = total_bytes.saturating_add(count);
+            if total_bytes > 262144 {
+                stream_error = Some("AI_RESPONSE_LIMIT".into());
+                break;
+            }
+
+            let trimmed = line
+                .strip_suffix(b"\n")
+                .unwrap_or(&line)
+                .strip_suffix(b"\r")
+                .unwrap_or(line.strip_suffix(b"\n").unwrap_or(&line));
+            if let Some(status) = trimmed.strip_prefix(b"__BROWSEROS_HTTP_STATUS__") {
+                http_status = std::str::from_utf8(status)
+                    .ok()
+                    .and_then(|value| value.trim().parse::<u16>().ok());
+                continue;
+            }
+            let Some(data) = trimmed.strip_prefix(b"data:") else {
+                continue;
+            };
+            let data = data.strip_prefix(b" ").unwrap_or(data);
+            if data == b"[DONE]" {
+                break;
+            }
+            if data.is_empty() {
+                continue;
+            }
+            let chunk: Value = match serde_json::from_slice(data) {
+                Ok(value) => value,
+                Err(_) => {
+                    stream_error = Some("AI_RESPONSE_INVALID".into());
+                    break;
+                }
+            };
+            let delta = &chunk["choices"][0]["delta"];
+            if let Some(text) = delta["content"].as_str().filter(|text| !text.is_empty()) {
+                content.push_str(text);
+                if let Err(error) = on_delta(text) {
+                    stream_error = Some(error);
+                    break;
+                }
+            }
+            if let Some(calls) = delta["tool_calls"].as_array() {
+                for call in calls {
+                    let Some(index) = call["index"].as_u64().map(|value| value as usize) else {
+                        continue;
+                    };
+                    let entry = tool_calls.entry(index).or_default();
+                    if let Some(id) = call["id"].as_str() {
+                        entry.0.push_str(id);
+                    }
+                    if let Some(name) = call["function"]["name"].as_str() {
+                        entry.1.push_str(name);
+                    }
+                    if let Some(arguments) = call["function"]["arguments"].as_str() {
+                        entry.2.push_str(arguments);
+                    }
+                }
+            }
+        }
+
+        if stream_error.is_some() {
+            abort.store(true, Ordering::SeqCst);
+        }
+        let (status, was_cancelled) = monitor.join().map_err(|_| "AI_HTTP_IO")??;
+        if was_cancelled {
+            return Err("AI_PROVIDER_CANCELLED".into());
+        }
+        if let Some(error) = stream_error {
+            return Err(error);
+        }
+        if http_status.is_none() {
+            return Err("AI_PROVIDER_HTTP_STATUS_MISSING".into());
+        }
+
+        let mut message = json!({
+            "role":"assistant",
+            "content":if content.is_empty(){Value::Null}else{json!(content)}
+        });
+        if !tool_calls.is_empty() {
+            let calls: Vec<Value> = tool_calls
+                .into_values()
+                .map(|(id, name, arguments)| {
+                    json!({
+                        "id":id,
+                        "type":"function",
+                        "function":{"name":name,"arguments":arguments}
+                    })
+                })
+                .collect();
+            message["tool_calls"] = json!(calls);
+        }
+        if message["content"].is_null() && message["tool_calls"].as_array().is_none() {
+            return Err("AI_RESPONSE_EMPTY".into());
+        }
+        Ok((message, status, http_status))
+    })
+}
+
 fn read_provider_process(
     mut child: Child,
     input: &[u8],
