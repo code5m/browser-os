@@ -54,8 +54,16 @@ fn acquire_provider_permit(
     profile_id: &str,
     cancelled: &(dyn Fn() -> bool + Sync),
 ) -> Result<ProviderPermit, String> {
+    acquire_provider_permit_timeout(profile_id, cancelled, PROVIDER_QUEUE_TIMEOUT)
+}
+
+fn acquire_provider_permit_timeout(
+    profile_id: &str,
+    cancelled: &(dyn Fn() -> bool + Sync),
+    timeout: std::time::Duration,
+) -> Result<ProviderPermit, String> {
     let semaphore = provider_semaphore(profile_id);
-    let deadline = std::time::Instant::now() + PROVIDER_QUEUE_TIMEOUT;
+    let deadline = std::time::Instant::now() + timeout;
     let mut active = semaphore.active.lock().map_err(|_| "AI_PROVIDER_BUSY")?;
     while *active >= PROVIDER_CONCURRENCY {
         if cancelled() {
@@ -538,7 +546,11 @@ fn read_provider_stream_process(
                 .collect();
             message["tool_calls"] = json!(calls);
         }
-        if message["content"].is_null() && message["tool_calls"].as_array().is_none() {
+        let unsuccessful_http = http_status.is_some_and(|status| !(200..=299).contains(&status));
+        if !unsuccessful_http
+            && message["content"].is_null()
+            && message["tool_calls"].as_array().is_none()
+        {
             return Err("AI_RESPONSE_EMPTY".into());
         }
         Ok((message, status, http_status))
@@ -917,6 +929,95 @@ pub async fn coding_service(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn provider_limits_are_bounded_and_isolated_by_profile() {
+        let profile = format!("fixture-{}", uuid::Uuid::new_v4());
+        let other_profile = format!("fixture-{}", uuid::Uuid::new_v4());
+        let first = super::acquire_provider_permit_timeout(
+            &profile,
+            &|| false,
+            std::time::Duration::from_millis(20),
+        )
+        .unwrap();
+        let second = super::acquire_provider_permit_timeout(
+            &profile,
+            &|| false,
+            std::time::Duration::from_millis(20),
+        )
+        .unwrap();
+        assert_eq!(
+            super::acquire_provider_permit_timeout(
+                &profile,
+                &|| false,
+                std::time::Duration::from_millis(20)
+            )
+            .unwrap_err(),
+            "AI_PROVIDER_BUSY"
+        );
+        let independent = super::acquire_provider_permit_timeout(
+            &other_profile,
+            &|| false,
+            std::time::Duration::from_millis(20),
+        )
+        .unwrap();
+        drop((first, second, independent));
+    }
+
+    #[test]
+    fn provider_stream_parser_emits_text_and_reassembles_tool_calls() {
+        let payload = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hello \"}}]}\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"world secret\"}}]}\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"a.rs\\\"}\"}}]}}]}\n",
+            "data: [DONE]\n",
+            "\n__BROWSEROS_HTTP_STATUS__200\n"
+        );
+        let child = std::process::Command::new("/usr/bin/printf")
+            .arg("%s")
+            .arg(payload)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut emitted = String::new();
+        let (message, status, http) = super::read_provider_stream_process(
+            child,
+            b"",
+            "secret",
+            &|| false,
+            &mut |delta| {
+                emitted.push_str(delta);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(status.success());
+        assert_eq!(http, Some(200));
+        assert_eq!(emitted, "hello world [REDACTED]");
+        assert_eq!(message["content"], "hello world [REDACTED]");
+        assert_eq!(message["tool_calls"][0]["function"]["name"], "read_file");
+        assert_eq!(
+            message["tool_calls"][0]["function"]["arguments"],
+            "{\"path\":\"a.rs\"}"
+        );
+    }
+
+    #[test]
+    fn provider_stream_parser_preserves_http_error_status_without_body() {
+        let child = std::process::Command::new("/usr/bin/printf")
+            .arg("%s")
+            .arg("\\n__BROWSEROS_HTTP_STATUS__401\\n")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let result = super::read_provider_stream_process(child, b"", "secret", &|| false, &mut |_| Ok(()));
+        let (_, status, http) = result.unwrap();
+        assert!(status.success());
+        assert_eq!(http, Some(401));
+    }
+
     #[test]
     fn provider_process_reads_normal_output_and_limits_oversized_output() {
         let child = std::process::Command::new("/usr/bin/printf")
