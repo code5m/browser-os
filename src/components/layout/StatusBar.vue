@@ -120,6 +120,7 @@ const memLow = computed(() => {
       <div><span class="rd-label">BrowserOS 合计</span><strong>{{ fmtMb(stats.app_total_mb) }}</strong></div>
       <div><span class="rd-label">主进程树</span><strong>{{ fmtMb(stats.main.rss_mb) }}</strong></div>
       <div><span class="rd-label">网页休眠</span><strong>{{ stats.hibernation_enabled ? "已开启（" + stats.hibernated_count + " 个）" : "未开启" }}</strong></div>
+      <div><span class="rd-label">宫格休眠</span><strong>{{ stats.hibernation_enabled ? stats.hibernated_grid_count + " 个" : "未开启" }}</strong></div>
     </div>
     <p v-if="memLow" class="rd-alert" role="alert">可用内存偏低。建议收起宫格、减少同时运行的网页或关闭其他占用内存的应用。</p>
     <div v-for="g in stats.grids" :key="g.pid" class="rd-process">{{ g.name }} · PID {{ g.pid }} · {{ fmtMb(g.rss_mb) }}</div>
