@@ -83,6 +83,7 @@ fn acquire_provider_permit_timeout(
         }
     }
     *active += 1;
+    drop(active);
     Ok(ProviderPermit { semaphore })
 }
 const IMPORTER: &str = include_str!("../../../scripts/import-local-ai.py");
@@ -861,7 +862,7 @@ pub async fn coding_service(
     app: tauri::AppHandle,
     webview: tauri::Webview,
     request: Value,
-    on_event: Option<tauri::ipc::Channel<Value>>,
+    on_event: tauri::ipc::Channel<Value>,
 ) -> Result<Value, String> {
     if webview.label() != "main" {
         return Err("AGENT_SOURCE_DENIED".into());
@@ -872,11 +873,9 @@ pub async fn coding_service(
         .app_data_dir()
         .map_err(|_| "AGENT_STORAGE_UNAVAILABLE")?
         .join("mvp-browser-os");
-    if let Some(channel) = on_event.as_ref() {
-        channel
-            .send(json!({"type":"start"}))
-            .map_err(|_| "AGENT_STREAM_DISCONNECTED")?;
-    }
+    on_event
+        .send(json!({"type":"start"}))
+        .map_err(|_| "AGENT_STREAM_DISCONNECTED")?;
     let worker_channel = on_event.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let root = std::path::PathBuf::from(request["root"].as_str().ok_or("AGENT_ROOT_REQUIRED")?);
@@ -902,12 +901,9 @@ pub async fn coding_service(
         let id = request["model_id"].as_str().unwrap_or("").to_owned();
         let cancel_root = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
         let mut emit_delta = |text: &str| -> Result<(), String> {
-            if let Some(channel) = worker_channel.as_ref() {
-                channel
-                    .send(json!({"type":"delta","text":text}))
-                    .map_err(|_| "AGENT_STREAM_DISCONNECTED".to_string())?;
-            }
-            Ok(())
+            worker_channel
+                .send(json!({"type":"delta","text":text}))
+                .map_err(|_| "AGENT_STREAM_DISCONNECTED".to_string())
         };
         crate::capabilities::agent::coding::execute(&root, &storage, request, |messages, tools| {
             coding_turn_cancelable_stream(
@@ -922,14 +918,12 @@ pub async fn coding_service(
     })
     .await
     .map_err(|_| "AGENT_WORKER_FAILED".to_string())?;
-    if let Some(channel) = on_event.as_ref() {
-        match &result {
-            Ok(_) => {
-                let _ = channel.send(json!({"type":"complete"}));
-            }
-            Err(error) => {
-                let _ = channel.send(json!({"type":"error","message":error}));
-            }
+    match &result {
+        Ok(_) => {
+            let _ = on_event.send(json!({"type":"complete"}));
+        }
+        Err(error) => {
+            let _ = on_event.send(json!({"type":"error","message":error}));
         }
     }
     result

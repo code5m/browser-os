@@ -334,6 +334,18 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+      # The native Rust job runs independently of the size gate, but Tauri's
+      # generate_context! requires the real production frontendDist at build time.
+      - name: Setup Node for native frontendDist
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Build real frontend assets for native checks
+        run: |
+          npm ci
+          npm run build
+          test -f dist/index.html
       - name: Verify Rust formatting
         run: |
           cargo fmt --manifest-path src-tauri/Cargo.toml --all --check

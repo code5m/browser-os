@@ -55,6 +55,13 @@
 - 详细策略：docs/engineering/FRONTEND-SIZE-DUAL-BASELINE-20261031.md。
 - Rust 编译、真机 GUI、P0–P2 真实性能验收仍独立阻塞，严禁因体积门禁修复就将全部 TODO 标记完成。
 
+## Rust 编译阻塞修复（2026-10-31）
+
+- 已提交修复代码：Coding 缺失 HashMap 导入；LSP 未定义 URI、可变锁及遗漏的测试 URI；AI ProviderSemaphore 借用守卫；Tauri Channel IPC 必选命令参数。
+- 保留 `coding_service` 命令名、来源权限、流式 delta/complete/error；调用方未提供流式回调时由 TypeScript bridge 显式传递丢弃事件的 Channel。
+- 独立 Rust CI 检查前先真实执行 `npm ci && npm run build` 生成 `dist`，不是创建占位文件；不改变原有前端体积门禁。
+- **这仅表示代码修改已提交；Rust fmt/check/test、Full Validation 和真机 GUI 仍须以最新 CI 实际结果验收，不能提前标记 PASS。**
+
 ## 未完成工作与复核重点
 1. 立即确认各 GitHub Actions job 结果；有失败则定位原因，修复后重新运行。
 2. 检查 Tauri Command 包装与 `main.rs` 内部调用签名，保证异步调用契约、权限不变；检查 Grid 增量 resize 不误导航且失败回滚正确。

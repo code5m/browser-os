@@ -526,7 +526,8 @@ impl Session {
                 deadline: Instant::now() + Duration::from_secs(12),
                 next_request_id: 2,
                 diagnostics: json!([]),
-                document_uri: DOCUMENT.into(),
+                // Set to the validated /work URI before any LSP request.
+                document_uri: String::new(),
             }),
             Err(error) => {
                 unsafe {
@@ -714,7 +715,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
         .cloned();
     let mut session_reused = false;
     let cached = if let Some(existing) = existing {
-        let guard = existing.lock().map_err(|_| "LSP_SESSION_UNAVAILABLE")?;
+        let mut guard = existing.lock().map_err(|_| "LSP_SESSION_UNAVAILABLE")?;
         if guard.graph_fingerprint == graph
             && guard.last_used.elapsed() < SESSION_IDLE_TTL
             && guard.session.is_alive()
@@ -1054,7 +1055,7 @@ mod tests {
                 .is_some_and(|items| !items.is_empty()),
             "{result}"
         );
-        assert_eq!(result["result"][0]["uri"], DOCUMENT);
+        assert_eq!(result["result"][0]["uri"], "file:///work/main.rs");
     }
     #[test]
     #[ignore = "explicit installed rust-analyzer sandbox integration"]
