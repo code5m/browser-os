@@ -2,7 +2,8 @@
 // Opt-in sustained RSS/PSS/CPU sampling of an already running BrowserOS PID.
 // NEVER turn CI first-paint sampling into fake 5/30 minute idle evidence.
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync } from "node:fs";
+import os from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
@@ -43,7 +44,16 @@ if(args.includes("--self-test")){
     }catch{samples.push({classification:"UNKNOWN"});break;}
   }
   const result={...summarize(samples,count),target_pid:pid,minutes,interval_ms:interval,sampled_at:new Date().toISOString(),
-    provenance:{app_sha:process.env.BROWSEROS_APP_SHA||null,os:process.platform,arch:process.arch}};
+    provenance:{
+      app_sha:process.env.BROWSEROS_APP_SHA||null,
+      os:process.platform,
+      os_release:os.release(),
+      arch:process.arch,
+      cpu_model:os.cpus()[0]?.model||null,
+      logical_cpus:os.cpus().length,
+      total_memory_bytes:os.totalmem(),
+      node_version:process.version
+    }};
   mkdirSync(dirname(resolve(out)),{recursive:true});writeFileSync(out,JSON.stringify(result,null,2)+"\n","utf8");
   console.log("SUSTAINED_RESOURCE_BENCHMARK="+result.classification);
   if(result.classification!=="MEASURED")process.exitCode=1;
