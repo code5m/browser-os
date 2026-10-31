@@ -83,6 +83,20 @@ fn terminate_grid_process_tree(child: &mut Child) {
     let _ = child.wait();
 }
 
+fn grid_child_is_hibernatable(
+    hidden: bool,
+    blur_hidden: bool,
+    focused: bool,
+    hidden_since: Option<std::time::Instant>,
+    now: std::time::Instant,
+    idle_for: std::time::Duration,
+) -> bool {
+    hidden
+        && !blur_hidden
+        && !focused
+        && hidden_since.is_some_and(|since| now.duration_since(since) >= idle_for)
+}
+
 pub struct GridChildHandle {
     // index is the key in GridProcessManager::children;
     // communication state is retained in GridProcessManager::listeners.
@@ -491,10 +505,14 @@ impl GridProcessManager {
             .unwrap()
             .iter()
             .filter(|(index, child)| {
-                child.hidden
-                    && !child.blur_hidden
-                    && !focused.get(index).copied().unwrap_or(false)
-                    && child.hidden_since.is_some_and(|since| now.duration_since(since) >= idle_for)
+                grid_child_is_hibernatable(
+                    child.hidden,
+                    child.blur_hidden,
+                    focused.get(index).copied().unwrap_or(false),
+                    child.hidden_since,
+                    now,
+                    idle_for,
+                )
             })
             .map(|(index, _)| *index)
             .collect();
@@ -923,4 +941,30 @@ fn exit_code_of(status: &std::process::ExitStatus) -> i32 {
         }
     }
     -1
+}
+
+#[cfg(test)]
+mod adaptive_grid_hibernation_tests {
+    use super::grid_child_is_hibernatable;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn only_explicitly_hidden_unfocused_cells_are_hibernatable() {
+        let now = Instant::now();
+        let idle_since = Some(now - Duration::from_secs(60));
+        let idle_for = Duration::from_secs(30);
+        assert!(grid_child_is_hibernatable(true, false, false, idle_since, now, idle_for));
+        assert!(!grid_child_is_hibernatable(false, false, false, idle_since, now, idle_for));
+        assert!(!grid_child_is_hibernatable(true, true, false, idle_since, now, idle_for));
+        assert!(!grid_child_is_hibernatable(true, false, true, idle_since, now, idle_for));
+        assert!(!grid_child_is_hibernatable(true, false, false, None, now, idle_for));
+        assert!(!grid_child_is_hibernatable(
+            true,
+            false,
+            false,
+            Some(now - Duration::from_secs(5)),
+            now,
+            idle_for
+        ));
+    }
 }
