@@ -311,9 +311,84 @@ fn provider_turn_cancelable(
         .cloned()
         .ok_or_else(|| "AI_RESPONSE_EMPTY".into())
 }
+
+fn provider_turn_cancelable_stream(
+    profile: &AiProfile,
+    messages: &[Value],
+    tools: &[Value],
+    cancelled: &(dyn Fn() -> bool + Sync),
+    on_delta: &mut dyn FnMut(&str) -> Result<(), String>,
+) -> Result<Value, String> {
+    let _permit = acquire_provider_permit(&profile.id, cancelled)?;
+    validate(profile)?;
+    if profile.kind != "chat" {
+        return Err("AI_MODEL_NOT_CHAT".into());
+    }
+    let credential = KeyringStore::get_token(&format!("ai:{}", profile.id))
+        .map_err(|_| "AI_CREDENTIAL_UNAVAILABLE")?;
+    if credential.is_empty() || credential.contains(['\\r', '\\n', '\\0']) {
+        return Err("AI_CREDENTIAL_INVALID".into());
+    }
+    let mut payload =
+        json!({"model":profile.model,"messages":messages,"stream":true,"max_tokens":4096});
+    if !tools.is_empty() {
+        payload["tools"] = json!(tools);
+    }
+    let body = payload.to_string();
+    if body.len() > 512 * 1024 {
+        return Err("AI_CONTEXT_LIMIT".into());
+    }
+    if body.contains(&credential) {
+        return Err("AI_CONTEXT_CREDENTIAL_DENIED".into());
+    }
+    let endpoint = format!(
+        "{}/chat/completions",
+        profile.base_url.trim_end_matches('/')
+    );
+    let config = format!(
+        "url = {}\\nheader = {}\\nheader = \\"Content-Type: application/json\\"\\ndata = {}\\n",
+        quote(&endpoint),
+        quote(&format!("Authorization: Bearer {credential}")),
+        quote(&body)
+    );
+    let child = Command::new("/usr/bin/curl")
+        .args([
+            "-q",
+            "--config",
+            "-",
+            "--silent",
+            "--fail",
+            "--no-buffer",
+            "--write-out",
+            "\\n__BROWSEROS_HTTP_STATUS__%{http_code}\\n",
+            "--proto",
+            "=https",
+            "--max-time",
+            "45",
+            "--connect-timeout",
+            "10",
+            "--max-filesize",
+            "262144",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| "AI_HTTP_CLIENT_UNAVAILABLE")?;
+    let (message, status, http) =
+        read_provider_stream_process(child, config.as_bytes(), &credential, cancelled, on_delta)?;
+    if !status.success() {
+        return Err(provider_error(status, http).into());
+    }
+    if !matches!(http, Some(200..=299)) {
+        return Err("AI_PROVIDER_HTTP_ERROR".into());
+    }
+    Ok(message)
+}
 fn read_provider_stream_process(
     mut child: Child,
     input: &[u8],
+    credential: &str,
     cancelled: &(dyn Fn() -> bool + Sync),
     on_delta: &mut dyn FnMut(&str) -> Result<(), String>,
 ) -> Result<(Value, ExitStatus, Option<u16>), String> {
@@ -377,11 +452,8 @@ fn read_provider_stream_process(
                 break;
             }
 
-            let trimmed = line
-                .strip_suffix(b"\n")
-                .unwrap_or(&line)
-                .strip_suffix(b"\r")
-                .unwrap_or(line.strip_suffix(b"\n").unwrap_or(&line));
+            let without_lf = line.strip_suffix(b"\n").unwrap_or(&line);
+            let trimmed = without_lf.strip_suffix(b"\r").unwrap_or(without_lf);
             if let Some(status) = trimmed.strip_prefix(b"__BROWSEROS_HTTP_STATUS__") {
                 http_status = std::str::from_utf8(status)
                     .ok()
@@ -407,8 +479,9 @@ fn read_provider_stream_process(
             };
             let delta = &chunk["choices"][0]["delta"];
             if let Some(text) = delta["content"].as_str().filter(|text| !text.is_empty()) {
-                content.push_str(text);
-                if let Err(error) = on_delta(text) {
+                let safe_text = text.replace(credential, "[REDACTED]");
+                content.push_str(&safe_text);
+                if let Err(error) = on_delta(&safe_text) {
                     stream_error = Some(error);
                     break;
                 }
@@ -420,13 +493,13 @@ fn read_provider_stream_process(
                     };
                     let entry = tool_calls.entry(index).or_default();
                     if let Some(id) = call["id"].as_str() {
-                        entry.0.push_str(id);
+                        entry.0.push_str(&id.replace(credential, "[REDACTED]"));
                     }
                     if let Some(name) = call["function"]["name"].as_str() {
-                        entry.1.push_str(name);
+                        entry.1.push_str(&name.replace(credential, "[REDACTED]"));
                     }
                     if let Some(arguments) = call["function"]["arguments"].as_str() {
-                        entry.2.push_str(arguments);
+                        entry.2.push_str(&arguments.replace(credential, "[REDACTED]"));
                     }
                 }
             }
