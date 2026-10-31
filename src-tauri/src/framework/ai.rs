@@ -945,15 +945,14 @@ mod tests {
             std::time::Duration::from_millis(20),
         )
         .unwrap();
-        assert_eq!(
+        assert!(matches!(
             super::acquire_provider_permit_timeout(
                 &profile,
                 &|| false,
                 std::time::Duration::from_millis(20)
-            )
-            .unwrap_err(),
-            "AI_PROVIDER_BUSY"
-        );
+            ),
+            Err(error) if error == "AI_PROVIDER_BUSY"
+        ));
         let independent = super::acquire_provider_permit_timeout(
             &other_profile,
             &|| false,
@@ -1007,7 +1006,7 @@ mod tests {
     fn provider_stream_parser_preserves_http_error_status_without_body() {
         let child = std::process::Command::new("/usr/bin/printf")
             .arg("%s")
-            .arg("\\n__BROWSEROS_HTTP_STATUS__401\\n")
+            .arg("\n__BROWSEROS_HTTP_STATUS__401\n")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .spawn()
