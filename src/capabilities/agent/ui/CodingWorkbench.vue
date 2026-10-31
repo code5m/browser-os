@@ -50,7 +50,11 @@ function invalidatePreview(){previewRequest++;previewLoading.value=false;preview
 const lspProfiles=ref<{path:string;name:string}[]>([]),lspServer=ref(''),lspConsent=ref(false),lspEnabled=ref(false),lspStatus=ref('未启用语言服务'),lspAvailable=ref(false);
 const lspModules=ref(false),lspModuleRoot=ref('src/main.rs'),definitionLocation=ref<{path:string;line:number;column:number;id:number}>();
 let lspEpoch=0,lspQueue:Promise<unknown>=Promise.resolve();
-function stopLsp(){++lspEpoch;lspEnabled.value=false;lspConsent.value=false;lspStatus.value='已停用；在途请求按超时退出';diagnostics.value=[];}
+function stopLsp(){
+  ++lspEpoch;lspEnabled.value=false;lspConsent.value=false;lspStatus.value='已停用；正在释放工作区 LSP 会话';diagnostics.value=[];
+  const rootScope=connectedRoot.value;
+  if(rootScope) void bridge.codingService({root:rootScope,action:'lsp_close'}).catch(()=>{});
+}
 async function discoverLsp(){if(!connectedRoot.value)return;await act(async()=>{const result=await call({action:'lsp_status'});lspProfiles.value=result.profiles||[];lspAvailable.value=!!result.sandbox_available;lspServer.value=lspProfiles.value[0]?.path||'';lspStatus.value=lspAvailable.value&&lspServer.value?'可批准启用 Rust 当前文件分析':'缺少 rust-analyzer 或 bubblewrap';});}
 function enableLsp(){if(!connectedRoot.value||!lspConsent.value||!lspServer.value||!lspAvailable.value)return;++lspEpoch;lspEnabled.value=true;lspStatus.value=lspModules.value?'Rust 模块树分析已启用；不运行项目脚本':'Rust 当前文件分析已启用；不运行项目脚本';}
 function requestLsp(method:string,path:string,content:string,line:number,character:number,cancelled?:()=>boolean):Promise<any>{
