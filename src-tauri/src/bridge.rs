@@ -3659,7 +3659,7 @@ pub fn tab_activate(app: AppHandle, id: String) -> Result<(), String> {
                 return;
             }
             let js = format!(
-                "window.scrollTo({:.3},{:.3});",
+                "if (window.scrollX === 0 && window.scrollY === 0) window.scrollTo({:.3},{:.3});",
                 x.max(0.0),
                 y.max(0.0)
             );
