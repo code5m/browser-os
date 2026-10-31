@@ -2785,6 +2785,12 @@ pub fn grid_position_blocking(
         .abs_rect((x, y, width, height))
         .ok_or_else(|| "主窗不可用，无法换算屏幕坐标".to_string())?;
     mgr.record_rect(index as u32, (x, y, width, height));
+    // Grid suspend uses the established off-screen hide contract (x=-30000,
+    // unchanged cell dimensions); record it as explicitly hidden so the adaptive
+    // hibernator can reclaim the child process without calling Browser-owned APIs.
+    if x <= -20000.0 {
+        mgr.record_hidden(index as u32);
+    }
     mgr.request(index as u32, GridCmd::UpdateRect { id: label, rect }, 3000)
 }
 
