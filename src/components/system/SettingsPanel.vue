@@ -82,15 +82,14 @@ onMounted(refreshDefaultBrowser);
     <div class="settings-section">
       <div class="section-title">性能</div>
       <div class="setting-item">
-        <label>页签休眠</label>
+        <label>自适应资源休眠</label>
         <input
           type="checkbox"
           :checked="settings.tabHibernation"
           @change="settings.setTabHibernation(($event.target as HTMLInputElement).checked)"
         />
         <span class="setting-desc">
-          默认关闭。开启后，非激活超过 10 分钟的页签会销毁 webview 仅留网址（每个约省 300MB 内存），
-          重新点击该页签时按网址重建（滚动位置/表单不保留，网站登录态保留）
+          默认关闭。开启后根据可用内存自动采用 10 分钟 / 2 分钟 / 30 秒闲置阈值，休眠后台页签和已隐藏宫格并释放 WebView/子进程。正在播放媒体、焦点编辑器、未保存表单和文件选择会阻止休眠；仅恢复网址与滚动位置，不保存表单内容。
         </span>
       </div>
     </div>
