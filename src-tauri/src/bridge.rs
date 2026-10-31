@@ -2451,27 +2451,32 @@ pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Resu
 
         // Existing children keep their WebView and navigate in place. New
         // children create exactly one initial tab after their UDS connects.
+        let previous_url = if created { None } else { mgr.last_url(index) };
         let command = if created {
-            GridCmd::CreateTab {
+            Some(GridCmd::CreateTab {
                 id: label.clone(),
                 url: init_url.clone(),
-            }
+            })
+        } else if previous_url.as_deref() != Some(init_url.as_str()) {
+            Some(GridCmd::Navigate {
+                id: label.clone(),
+                url: init_url.clone(),
+            })
         } else {
-            GridCmd::Navigate {
-                id: label.clone(),
-                url: init_url.clone(),
-            }
+            None
         };
         let timeout = if created { 20000 } else { 10000 };
-        if let Err(error) = mgr.request(index, command, timeout) {
+        if let Some(command) = command {
+            if let Err(error) = mgr.request(index, command, timeout) {
             // Roll back only processes created by this resize; existing
             // healthy cells remain alive and retain their last known state.
-            for created_index in newly_created.iter().rev() {
-                mgr.kill_child(*created_index);
+                for created_index in newly_created.iter().rev() {
+                    mgr.kill_child(*created_index);
+                }
+                return Err(error);
             }
-            return Err(error);
+            mgr.record_url(index, &init_url);
         }
-        mgr.record_url(index, &init_url);
         if created && i + 1 < target {
             // Stagger only cold starts; reused children need no delay.
             std::thread::sleep(std::time::Duration::from_millis(300));
