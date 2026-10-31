@@ -3427,9 +3427,22 @@ fn tab_hibernation_snapshot(app: &AppHandle, id: &str) -> Result<(f64, f64), Str
 /// Destroy an inactive tab only after a native snapshot confirms that it is
 /// not playing media, holding edited form/contenteditable data, focused in an
 /// editor, or requesting beforeunload. Only scroll coordinates are retained.
-fn hibernate_tab(app: &AppHandle, id: &str) -> bool {
+fn hibernate_tab(
+    app: &AppHandle,
+    id: &str,
+    idle_window: std::time::Duration,
+) -> bool {
     let state = app.state::<AppState>();
-    if state.active_tab.lock().unwrap().as_deref() == Some(id) {
+    let still_idle = || {
+        state.active_tab.lock().unwrap().as_deref() != Some(id)
+            && state
+                .tab_idle_since
+                .lock()
+                .unwrap()
+                .get(id)
+                .is_some_and(|since| since.elapsed() >= idle_window)
+    };
+    if !still_idle() {
         return false;
     }
     let scroll = match tab_hibernation_snapshot(app, id) {
@@ -3439,6 +3452,11 @@ fn hibernate_tab(app: &AppHandle, id: &str) -> bool {
             return false;
         }
     };
+    // Snapshotting runs on the WebView event loop and may take up to two
+    // seconds. Recheck activation/idle state before destroying the native view.
+    if !still_idle() {
+        return false;
+    }
     use tauri_plugin_browser_tabs::TabManagerState;
     let manager = app.state::<TabManagerState>();
     if manager.close_tab(&id.to_string()).is_ok() {
@@ -3499,7 +3517,7 @@ pub fn start_hibernation_sweeper(app: AppHandle) {
                 .collect()
         };
         for id in victims {
-            hibernate_tab(&app, &id);
+            hibernate_tab(&app, &id, idle_window);
         }
     });
 }
