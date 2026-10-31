@@ -566,7 +566,6 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
     if request["approved"] != true {
         return Err("LSP_APPROVAL_REQUIRED".into());
     }
-    let _guard = REQUEST_LOCK.try_lock().map_err(|_| "LSP_BUSY")?;
     let method = match request["method"].as_str() {
         Some("completion") => "textDocument/completion",
         Some("definition") => "textDocument/definition",
@@ -574,6 +573,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
         Some("diagnostics") => "textDocument/documentSymbol",
         _ => return Err("LSP_METHOD_DENIED".into()),
     };
+    let root = root.canonicalize().map_err(|_| "LSP_ROOT_INVALID")?;
     let server = PathBuf::from(
         request["server_path"]
             .as_str()
@@ -586,7 +586,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
     }
     let path = request["path"].as_str().ok_or("LSP_DOCUMENT_REQUIRED")?;
     let content = request["content"].as_str().ok_or("LSP_DOCUMENT_REQUIRED")?;
-    super::coding::validate_lsp_document(root, path, content)?;
+    super::coding::validate_lsp_document(&root, path, content)?;
     let line = request["line"]
         .as_u64()
         .filter(|n| *n < 100000)
@@ -602,23 +602,18 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
     if character as usize > text_line.encode_utf16().count() {
         return Err("LSP_POSITION_INVALID".into());
     }
-    let scratch_path = std::env::temp_dir().join(format!("browseros-lsp-{}", uuid::Uuid::new_v4()));
-    fs::DirBuilder::new()
-        .mode(0o700)
-        .create(&scratch_path)
-        .map_err(|_| "LSP_SCRATCH_FAILED")?;
-    let scratch = Scratch(scratch_path);
+
     let entry = request["module_root"].as_str();
     let (root_module, document_path, mut snapshots) = if let Some(entry) = entry {
         if request["approved_module_sources"] != true {
             return Err("LSP_MODULE_APPROVAL_REQUIRED".into());
         }
-        super::coding::validate_lsp_document(root, entry, "")?;
+        super::coding::validate_lsp_document(&root, entry, "")?;
         let directory = Path::new(entry).parent().ok_or("LSP_MODULE_ROOT_INVALID")?;
         if !Path::new(path).starts_with(directory) {
             return Err("LSP_DOCUMENT_OUTSIDE_MODULE_ROOT".into());
         }
-        let mut files = super::coding::lsp_module_sources(root, entry)?;
+        let mut files = super::coding::lsp_module_sources(&root, entry)?;
         if let Some(file) = files.iter_mut().find(|file| file.0 == path) {
             file.1 = content.into();
         } else {
@@ -641,36 +636,147 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
         )
     };
     snapshots.sort_by(|a, b| a.0.cmp(&b.0));
-    for (name, text) in &snapshots {
-        let target = scratch.0.join(name);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|_| "LSP_SCRATCH_FAILED")?;
-        }
-        fs::write(&target, text).map_err(|_| "LSP_SCRATCH_FAILED")?;
-        fs::set_permissions(target, fs::Permissions::from_mode(0o400))
-            .map_err(|_| "LSP_SCRATCH_FAILED")?;
-    }
+    let graph = graph_fingerprint(&snapshots, &document_path);
+    let scope = entry
+        .map(|module| format!("module:{module}"))
+        .unwrap_or_else(|| "single-document".into());
+    let key = cache_key(&root, &server, &scope);
     let uri = |name: &str| {
         url::Url::from_file_path(Path::new("/work").join(name))
             .map(|uri| uri.to_string())
             .map_err(|_| "LSP_DOCUMENT_URI_INVALID")
     };
     let document_uri = uri(&document_path)?;
-    let mut session = Session::start(&server, &scratch.0)?;
-    session.document_uri = document_uri.clone();
-    let config = json!({"linkedProjects":[{"crates":[{"root_module":format!("/work/{root_module}"),"edition":"2021","deps":[],"cfg":[],"env":{},"is_workspace_member":true,"display_name":"document","source":{"include_dirs":["/work"],"exclude_dirs":[]}}]}],"cargo":{"sysroot":null,"noDeps":true,"autoreload":true,"buildScripts":{"enable":false,"rebuildOnSave":false}},"procMacro":{"enable":false},"checkOnSave":false,"files":{"watcher":"server"},"cachePriming":{"enable":false},"numThreads":2});
-    // Automatic graph reload is required when VFS finishes loading the root file.
-    // This only reloads our inline graph; Cargo and project executables are absent.
-    let init=session.rpc(1,"initialize",json!({"processId":null,"rootUri":"file:///work","capabilities":{"experimental":{"serverStatusNotification":true},"textDocument":{"completion":{"completionItem":{"snippetSupport":true}},"hover":{"contentFormat":["plaintext"]}}},"initializationOptions":config}))?;
-    session.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}))?;
-    session.await_ready()?;
-    session.send(json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":document_uri,"languageId":"rust","version":1,"text":content}}}))?;
-    session.await_document()?;
-    let result = session.rpc(
-        2,
+
+    // Each approved workspace/module owns one bounded sandbox process. A mutex
+    // serializes JSON-RPC only within that session; other workspaces can run in
+    // parallel. A changed dependency snapshot invalidates and rebuilds the
+    // session, while edits to the active document use didChange incrementally.
+    let existing = session_cache()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&key)
+        .cloned();
+    let mut session_reused = false;
+    let cached = if let Some(existing) = existing {
+        let guard = existing.lock().map_err(|_| "LSP_SESSION_UNAVAILABLE")?;
+        if guard.graph_fingerprint == graph
+            && guard.last_used.elapsed() < SESSION_IDLE_TTL
+            && guard.session.is_alive()
+        {
+            session_reused = true;
+            drop(guard);
+            Some(existing)
+        } else {
+            drop(guard);
+            remove_cached_session(&key, &existing);
+            None
+        }
+    } else {
+        None
+    };
+
+    let cached = if let Some(cached) = cached {
+        cached
+    } else {
+        let scratch_path =
+            std::env::temp_dir().join(format!("browseros-lsp-{}", uuid::Uuid::new_v4()));
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&scratch_path)
+            .map_err(|_| "LSP_SCRATCH_FAILED")?;
+        let scratch = Scratch(scratch_path);
+        for (name, text) in &snapshots {
+            let target = scratch.0.join(name);
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).map_err(|_| "LSP_SCRATCH_FAILED")?;
+            }
+            fs::write(&target, text).map_err(|_| "LSP_SCRATCH_FAILED")?;
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o400))
+                .map_err(|_| "LSP_SCRATCH_FAILED")?;
+        }
+
+        let mut session = Session::start(&server, &scratch.0)?;
+        session.document_uri = document_uri.clone();
+        let config = json!({
+            "linkedProjects":[{
+                "crates":[{
+                    "root_module":format!("/work/{root_module}"),
+                    "edition":"2021","deps":[],"cfg":[],"env":{},
+                    "is_workspace_member":true,"display_name":"document",
+                    "source":{"include_dirs":["/work"],"exclude_dirs":[]}
+                }]
+            }],
+            "cargo":{"sysroot":null,"noDeps":true,"autoreload":true,
+                "buildScripts":{"enable":false,"rebuildOnSave":false}},
+            "procMacro":{"enable":false},"checkOnSave":false,
+            "files":{"watcher":"server"},
+            "cachePriming":{"enable":false},"numThreads":2
+        });
+        let _init = session.rpc(
+            1,
+            "initialize",
+            json!({
+                "processId":null,
+                "rootUri":"file:///work",
+                "capabilities":{
+                    "experimental":{"serverStatusNotification":true},
+                    "textDocument":{
+                        "completion":{"completionItem":{"snippetSupport":true}},
+                        "hover":{"contentFormat":["plaintext"]}
+                    }
+                },
+                "initializationOptions":config
+            }),
+        )?;
+        session.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}))?;
+        session.await_ready()?;
+        session.document_uri = document_uri.clone();
+        session.renew_deadline();
+        session.send(json!({
+            "jsonrpc":"2.0","method":"textDocument/didOpen",
+            "params":{"textDocument":{
+                "uri":document_uri,"languageId":"rust","version":1,"text":content
+            }}
+        }))?;
+        session.await_document()?;
+
+        let mut documents = HashMap::new();
+        documents.insert(
+            document_path.clone(),
+            CachedDocument {
+                version: 1,
+                content_hash: format!("{:x}", Sha256::digest(content.as_bytes())),
+            },
+        );
+        let managed = CachedSession {
+            session,
+            _scratch: scratch,
+            graph_fingerprint: graph.clone(),
+            documents,
+            last_used: Instant::now(),
+        };
+        insert_cached_session(key.clone(), managed)?
+    };
+
+    let mut managed = cached.lock().map_err(|_| "LSP_SESSION_UNAVAILABLE")?;
+    if managed.graph_fingerprint != graph || !managed.session.is_alive() {
+        drop(managed);
+        remove_cached_session(&key, &cached);
+        return Err("LSP_SESSION_STALE_RETRY".into());
+    }
+    managed.update_document(&document_path, &document_uri, content)?;
+    let result = managed.session.rpc_next(
         method,
-        json!({"textDocument":{"uri":document_uri},"position":{"line":line,"character":character}}),
+        json!({
+            "textDocument":{"uri":document_uri},
+            "position":{"line":line,"character":character}
+        }),
     )?;
+    managed.last_used = Instant::now();
+    let diagnostics = managed.session.diagnostics.clone();
+    drop(managed);
+
     let mut targets = vec![];
     if method == "textDocument/definition" {
         let items = if let Some(items) = result.as_array() {
@@ -692,13 +798,24 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                     .get("targetSelectionRange")
                     .or_else(|| item.get("range"))
                     .or_else(|| item.get("targetRange"));
-                targets.push(json!({"uri":target_uri,"path":project_path,"range":range,"hash":format!("{:x}",Sha256::digest(text.as_bytes()))}));
+                targets.push(json!({
+                    "uri":target_uri,"path":project_path,"range":range,
+                    "hash":format!("{:x}",Sha256::digest(text.as_bytes()))
+                }));
             }
         }
     }
-    Ok(
-        json!({"result":result,"definition_targets":targets,"diagnostics":session.diagnostics,"document_hash":format!("{:x}",Sha256::digest(content.as_bytes())),"server":init["serverInfo"],"document_uri":document_uri,"files_analyzed":snapshots.len(),"scope":if entry.is_some(){"isolated_rust_module_sources"}else{"isolated_current_rust_document"}}),
-    )
+    Ok(json!({
+        "result":result,
+        "definition_targets":targets,
+        "diagnostics":diagnostics,
+        "document_hash":format!("{:x}",Sha256::digest(content.as_bytes())),
+        "server":{"path":server},
+        "document_uri":document_uri,
+        "files_analyzed":snapshots.len(),
+        "scope":if entry.is_some(){"isolated_rust_module_sources"}else{"isolated_current_rust_document"},
+        "session_reused":session_reused
+    }))
 }
 
 #[cfg(test)]
@@ -754,14 +871,40 @@ mod tests {
         );
     }
     #[test]
-    fn concurrent_requests_are_rejected_without_starting_a_server() {
-        let _guard = REAL_LSP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _occupied = REQUEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let result = execute(
-            Path::new("/tmp"),
-            json!({"action":"lsp_request","approved":true,"method":"completion"}),
+    fn session_cache_keys_are_scoped_by_workspace_server_and_module() {
+        let server = Path::new("/usr/bin/rust-analyzer");
+        assert_ne!(
+            cache_key(Path::new("/workspace/a"), server, "module:src/lib.rs"),
+            cache_key(Path::new("/workspace/b"), server, "module:src/lib.rs")
         );
-        assert_eq!(result.unwrap_err(), "LSP_BUSY");
+        assert_ne!(
+            cache_key(Path::new("/workspace/a"), server, "module:src/lib.rs"),
+            cache_key(Path::new("/workspace/a"), server, "module:src/main.rs")
+        );
+    }
+
+    #[test]
+    fn graph_fingerprint_ignores_active_document_but_tracks_dependencies() {
+        let first = vec![
+            ("src/lib.rs".to_string(), "pub fn a() {}".to_string()),
+            ("src/main.rs".to_string(), "fn main() {}".to_string()),
+        ];
+        let changed_active = vec![
+            ("src/lib.rs".to_string(), "pub fn a() { 1 }".to_string()),
+            ("src/main.rs".to_string(), "fn main() {}".to_string()),
+        ];
+        let changed_dependency = vec![
+            ("src/lib.rs".to_string(), "pub fn a() {}".to_string()),
+            ("src/main.rs".to_string(), "fn main() { 2 }".to_string()),
+        ];
+        assert_eq!(
+            graph_fingerprint(&first, "src/lib.rs"),
+            graph_fingerprint(&changed_active, "src/lib.rs")
+        );
+        assert_ne!(
+            graph_fingerprint(&first, "src/lib.rs"),
+            graph_fingerprint(&changed_dependency, "src/lib.rs")
+        );
     }
     #[test]
     fn document_guards_reject_outside_secrets_and_symlinks() {
