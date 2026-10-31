@@ -74,13 +74,37 @@ struct SavedChildState {
 
 /// 单个宫格子进程句柄。
 fn terminate_grid_process_tree(child: &mut Child) {
-    // New Grid children are placed in a dedicated process group. If the process
-    // predates that change, group kill is harmless and child.kill remains fallback.
+    // Kill the process group, including WebKit helpers. Never hold the Grid
+    // manager lock inside an unbounded Child::wait after SIGKILL.
+    let pid = child.id() as i32;
     unsafe {
-        libc::kill(-(child.id() as i32), libc::SIGKILL);
+        libc::kill(-pid, libc::SIGKILL);
     }
     let _ = child.kill();
-    let _ = child.wait();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(750);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("[grid-manager] waitpid={} failed: {}", pid, error);
+                return;
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    // A kernel-stuck child may exit after the deadline; reap it out of band so
+    // the foreground Grid lifecycle never waits indefinitely and no zombie
+    // is intentionally left behind.
+    std::thread::spawn(move || {
+        let waited = unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
+        if waited < 0 {
+            eprintln!("[grid-manager] deferred reap pid={} failed", pid);
+        }
+    });
 }
 
 /// A Grid process is an independent browser session. URL + rectangle do not
@@ -1084,5 +1108,26 @@ mod adaptive_grid_hibernation_tests {
         ] {
             assert!(!grid_content_reclaimable(url));
         }
+    }
+}
+
+#[cfg(test)]
+mod grid_process_termination_tests {
+    use super::terminate_grid_process_tree;
+    use std::os::unix::process::CommandExt;
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn killing_a_grid_child_has_a_bounded_foreground_wait() {
+        let mut child = Command::new("/usr/bin/sleep")
+            .arg("10")
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let started = Instant::now();
+        terminate_grid_process_tree(&mut child);
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(child.try_wait().unwrap().is_some());
     }
 }
