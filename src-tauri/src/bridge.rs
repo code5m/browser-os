@@ -286,6 +286,45 @@ fn initial_grid_url(raw: &str) -> String {
 }
 
 #[cfg(test)]
+mod grid_resize_policy_tests {
+    use super::{grid_url_needs_navigation, requested_grid_url};
+
+    #[test]
+    fn missing_grid_url_preserves_existing_navigation() {
+        assert_eq!(
+            requested_grid_url(None, Some("https://example.com")),
+            Some("https://example.com".to_string())
+        );
+        assert!(!grid_url_needs_navigation(
+            Some("https://example.com"),
+            requested_grid_url(None, None).as_deref()
+        ));
+    }
+
+    #[test]
+    fn explicit_url_changes_navigate_but_unchanged_urls_do_not() {
+        let target = requested_grid_url(Some("https://example.com"), None);
+        assert_eq!(target.as_deref(), Some("https://example.com"));
+        assert!(!grid_url_needs_navigation(
+            Some("https://example.com"),
+            target.as_deref()
+        ));
+        assert!(grid_url_needs_navigation(
+            Some("https://old.example"),
+            target.as_deref()
+        ));
+    }
+
+    #[test]
+    fn explicit_about_blank_is_not_treated_as_missing() {
+        assert_eq!(
+            requested_grid_url(Some("about:blank"), Some("https://example.com")),
+            Some("about:blank".to_string())
+        );
+    }
+}
+
+#[cfg(test)]
 mod normalize_url_tests {
     use super::{
         initial_grid_url, is_tab_label, reserve_tab_recovery_attempt, TabRecoveryBudget,
@@ -2399,10 +2438,20 @@ pub async fn create_grid(app: AppHandle, n: usize, urls: Vec<String>) -> Result<
         .map_err(|_| "GRID_WORKER_FAILED".to_string())?
 }
 
+fn requested_grid_url(requested: Option<&str>, existing: Option<&str>) -> Option<String> {
+    requested
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(initial_grid_url)
+        .or_else(|| existing.map(str::to_string))
+}
+
+fn grid_url_needs_navigation(existing: Option<&str>, target: Option<&str>) -> bool {
+    target.is_some_and(|target| existing != Some(target))
+}
+
 pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Result<usize, String> {
     let requested = n.clamp(2, MAX_GRID);
-    // Respect requested 2/4 grid mode. Safely degrade to two; refuse when
-    // even two would violate the core browser/file-manager memory reserve.
     let target = match mem_available_mb() {
         Some(avail) => {
             let affordable = (avail.saturating_sub(CORE_MEMORY_RESERVE_MB) / GRID_MEM_MB) as usize;
@@ -2425,25 +2474,36 @@ pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Resu
     };
 
     let state = app.state::<AppState>();
-    let mgr = &state.grid_manager;
-
-    // Resize incrementally: keep healthy children whose indices remain in the
-    // requested layout. Recreating all WebKit processes on every layout change
-    // caused avoidable cold starts and CPU/RSS spikes.
-    for index in mgr.indices().into_iter().filter(|index| *index as usize >= target) {
-        grid_close_one_blocking(app.clone(), index as usize)?;
-    }
-
+    let manager = &state.grid_manager;
     let mut newly_created = Vec::new();
+    let mut navigated_existing: Vec<(u32, String)> = Vec::new();
+
+    // Bring the target layout to a ready state before destroying surplus cells.
+    // This preserves the old Grid if a cold child fails to start or a navigation
+    // request times out during a resize.
     for i in 0..target {
         let index = i as u32;
         let label = format!("grid-{i}");
-        let init_url = initial_grid_url(urls.get(i).map(|s| s.as_str()).unwrap_or(""));
-        let created = match mgr.get_or_spawn(index) {
+        let previous_url = manager.last_url(index);
+        let requested_url = urls.get(i).map(String::as_str);
+        let target_url = requested_grid_url(requested_url, previous_url.as_deref())
+            .unwrap_or_else(|| "about:blank".to_string());
+        let created = match manager.get_or_spawn(index) {
             Ok(created) => created,
             Err(error) => {
+                for (rollback_index, old_url) in navigated_existing.iter().rev() {
+                    let _ = manager.request(
+                        *rollback_index,
+                        GridCmd::Navigate {
+                            id: format!("grid-{rollback_index}"),
+                            url: old_url.clone(),
+                        },
+                        10000,
+                    );
+                    manager.record_url(*rollback_index, old_url);
+                }
                 for created_index in newly_created.iter().rev() {
-                    mgr.kill_child(*created_index);
+                    manager.kill_child(*created_index);
                 }
                 return Err(error);
             }
@@ -2452,38 +2512,64 @@ pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Resu
             newly_created.push(index);
         }
 
-        // Existing children keep their WebView and navigate in place. New
-        // children create exactly one initial tab after their UDS connects.
-        let previous_url = if created { None } else { mgr.last_url(index) };
         let command = if created {
             Some(GridCmd::CreateTab {
                 id: label.clone(),
-                url: init_url.clone(),
+                url: target_url.clone(),
             })
-        } else if previous_url.as_deref() != Some(init_url.as_str()) {
+        } else if grid_url_needs_navigation(previous_url.as_deref(), requested_grid_url(requested_url, None).as_deref()) {
             Some(GridCmd::Navigate {
                 id: label.clone(),
-                url: init_url.clone(),
+                url: target_url.clone(),
             })
         } else {
             None
         };
-        let timeout = if created { 20000 } else { 10000 };
         if let Some(command) = command {
-            if let Err(error) = mgr.request(index, command, timeout) {
-            // Roll back only processes created by this resize; existing
-            // healthy cells remain alive and retain their last known state.
+            let timeout = if created { 20000 } else { 10000 };
+            if let Err(error) = manager.request(index, command, timeout) {
+                for (rollback_index, old_url) in navigated_existing.iter().rev() {
+                    let _ = manager.request(
+                        *rollback_index,
+                        GridCmd::Navigate {
+                            id: format!("grid-{rollback_index}"),
+                            url: old_url.clone(),
+                        },
+                        10000,
+                    );
+                    manager.record_url(*rollback_index, old_url);
+                }
                 for created_index in newly_created.iter().rev() {
-                    mgr.kill_child(*created_index);
+                    manager.kill_child(*created_index);
                 }
                 return Err(error);
             }
-            mgr.record_url(index, &init_url);
+            if !created {
+                if let Some(old_url) = previous_url {
+                    navigated_existing.push((index, old_url));
+                }
+            }
+            manager.record_url(index, &target_url);
         }
-        if created && i + 1 < target {
-            // Stagger only cold starts; reused children need no delay.
-            std::thread::sleep(std::time::Duration::from_millis(300));
+
+        if created {
+            if let Some(zoom) = state.grid_zooms.lock().unwrap().get(&label).copied() {
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(900));
+                    apply_grid_zoom(&app, &label, zoom);
+                });
+            }
+            if i + 1 < target {
+                // Stagger only cold starts; healthy retained children need no delay.
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
         }
+    }
+
+    // The new target layout is healthy; only now close cells outside its range.
+    for index in manager.indices().into_iter().filter(|index| *index as usize >= target) {
+        grid_close_one_blocking(app.clone(), index as usize)?;
     }
     Ok(target)
 }
