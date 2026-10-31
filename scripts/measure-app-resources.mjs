@@ -71,10 +71,11 @@ if(args.includes("--self-test")){
   }else{
     const hz=Number(execFileSync("getconf",["CLK_TCK"],{encoding:"utf8"}).trim());
     const beforeStarted=performance.now(),before=collect(pid),beforeCollectionMs=performance.now()-beforeStarted;
-    const sampleStarted=performance.now();
     await new Promise(resolve=>setTimeout(resolve,interval));
     const afterStarted=performance.now(),after=collect(pid),afterCollectionMs=performance.now()-afterStarted;
-    const seconds=(performance.now()-sampleStarted)/1000;
+    // CPU ticks are captured at the start of each /proc collection. Use the
+    // same start-to-start interval; do not include the final sampler's own work.
+    const seconds=(afterStarted-beforeStarted)/1000;
     const valid=before&&after&&Number.isFinite(hz)&&hz>0;
     console.log(JSON.stringify({schema:"browseros-native-resource-v1",classification:valid?"MEASURED":"UNKNOWN",
       targetPid:pid,processCount:after?.processCount??null,
