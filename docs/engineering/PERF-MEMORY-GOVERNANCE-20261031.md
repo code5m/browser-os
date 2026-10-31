@@ -38,6 +38,7 @@ cargo test --manifest-path src-tauri/Cargo.toml grid_memory_budget_tests
 cargo test --manifest-path src-tauri/Cargo.toml adaptive_grid_hibernation_tests
 cargo test --manifest-path src-tauri/Cargo.toml grid_process_termination_tests
 node --check src-tauri/injected/grid-hibernation-probe.js
+node tests/check-grid-hibernation-probe.mjs
 cargo test --manifest-path src-tauri/Cargo.toml capabilities::agent::coding_lsp
 npm run check
 npm run check:coding-workbench
