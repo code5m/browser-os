@@ -858,7 +858,7 @@ pub async fn coding_service(
         .app_data_dir()
         .map_err(|_| "AGENT_STORAGE_UNAVAILABLE")?
         .join("mvp-browser-os");
-    if let Some(channel) = worker_channel.as_ref() {
+    if let Some(channel) = on_event.as_ref() {
         channel.send(json!({"type":"start"}))
             .map_err(|_| "AGENT_STREAM_DISCONNECTED")?;
     }
@@ -887,7 +887,7 @@ pub async fn coding_service(
         let id = request["model_id"].as_str().unwrap_or("").to_owned();
         let cancel_root = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
         let mut emit_delta = |text: &str| -> Result<(), String> {
-            if let Some(channel) = on_event.as_ref() {
+            if let Some(channel) = worker_channel.as_ref() {
                 channel.send(json!({"type":"delta","text":text}))
                     .map_err(|_| "AGENT_STREAM_DISCONNECTED".to_string())?;
             }
