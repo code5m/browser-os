@@ -801,11 +801,9 @@ pub fn execute(
         }
         return Ok(json!({"cancel_requested":false}));
     }
-    let _guard = LOCK.lock().map_err(|_| "AGENT_BUSY")?;
-    let plan = request["mode"].as_str() == Some("plan");
-    if plan && ["propose", "apply"].contains(&action) {
-        return Err("AGENT_PLAN_READ_ONLY".into());
-    }
+    // Read-only workspace queries do not mutate the persisted coding session.
+    // Keep them outside the write/session mutex so a long model turn does not
+    // block tree navigation, file inspection or search in the same workspace.
     let path = request["path"].as_str().unwrap_or("");
     match action {
         "tree" => return tree(&root, path),
@@ -814,6 +812,13 @@ pub fn execute(
         "search" => return search(&root, request["query"].as_str().unwrap_or("")),
         "sessions_list" => return recent_sessions(&root, storage),
         _ => {}
+    }
+    // Mutating session operations remain serialized until per-session
+    // optimistic concurrency and cancellation ownership are implemented.
+    let _guard = LOCK.lock().map_err(|_| "AGENT_BUSY")?;
+    let plan = request["mode"].as_str() == Some("plan");
+    if plan && ["propose", "apply"].contains(&action) {
+        return Err("AGENT_PLAN_READ_ONLY".into());
     }
     let mut session = load(
         &root,
