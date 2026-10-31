@@ -142,7 +142,7 @@ jobs:
         run: node scripts/check-xterm-bundle.mjs
       - name: Terminal Chromium DOM differential tests
         if: needs.impact.outputs.mode == 'full'
-        run: node scripts/check-xterm-dom.mjs
+        run: dbus-run-session -- node scripts/check-xterm-dom.mjs
       - name: Early frozen frontend size gate
         if: needs.impact.outputs.mode == 'full'
         run: |
@@ -202,7 +202,15 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked
       - name: Packaged GUI cold-start acceptance
         if: needs.impact.outputs.mode == 'full'
-        run: dbus-run-session -- xvfb-run -a bash scripts/verify-installed-client.sh --build
+        run: dbus-run-session -- xvfb-run -a bash scripts/verify-installed-client.sh --install --resource-minutes 5
+      - name: Upload installed-client sustained resource evidence
+        if: always() && needs.impact.outputs.mode == 'full'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-installed-resource-${{ github.run_id }}
+          path: /tmp/browseros-installed-resource.json
+          if-no-files-found: warn
+          retention-days: 30
       - name: Module and installer footprint evidence
         if: needs.impact.outputs.mode == 'full'
         run: |
