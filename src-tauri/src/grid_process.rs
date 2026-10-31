@@ -396,6 +396,16 @@ impl GridProcessManager {
         }
     }
 
+    /// Last committed navigation target, used to avoid reloading a healthy
+    /// WebView when only the Grid geometry/layout changes.
+    pub fn last_url(&self, index: u32) -> Option<String> {
+        self.children
+            .lock()
+            .unwrap()
+            .get(&index)
+            .and_then(|child| child.last_url.clone())
+    }
+
     pub fn record_rect(&self, index: u32, rect: (f64, f64, f64, f64)) {
         if let Some(h) = self.children.lock().unwrap().get_mut(&index) {
             h.last_rect = Some(rect);
