@@ -25,6 +25,32 @@ const LIMIT: usize = 1024 * 1024;
 const MAX_CACHED_SESSIONS: usize = 2;
 const SESSION_IDLE_TTL: Duration = Duration::from_secs(300);
 static SESSION_CACHE: OnceLock<Mutex<HashMap<String, Arc<Mutex<CachedSession>>>>> = OnceLock::new();
+static SESSION_SWEEPER: OnceLock<()> = OnceLock::new();
+
+fn session_expired(last_used: Instant, now: Instant) -> bool {
+    now.saturating_duration_since(last_used) >= SESSION_IDLE_TTL
+}
+
+fn ensure_session_sweeper() {
+    SESSION_SWEEPER.get_or_init(|| {
+        thread::spawn(|| loop {
+            thread::sleep(Duration::from_secs(30));
+            let now = Instant::now();
+            let mut cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
+            cache.retain(|_, entry| {
+                // A caller's Arc keeps an in-flight session alive; the entry lock
+                // also protects a request that is already using its JSON-RPC stream.
+                if Arc::strong_count(entry) > 1 {
+                    return true;
+                }
+                match entry.try_lock() {
+                    Ok(session) => !session_expired(session.last_used, now),
+                    Err(_) => true,
+                }
+            });
+        });
+    });
+}
 
 fn profiles() -> Vec<PathBuf> {
     let Some(home) = std::env::var_os("HOME") else {
@@ -250,7 +276,7 @@ fn insert_cached_session(
             return true;
         }
         match entry.try_lock() {
-            Ok(guard) => now.duration_since(guard.last_used) < SESSION_IDLE_TTL,
+            Ok(guard) => !session_expired(guard.last_used, now),
             Err(_) => true,
         }
     });
@@ -655,6 +681,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
         )
     };
     snapshots.sort_by(|a, b| a.0.cmp(&b.0));
+    ensure_session_sweeper();
     let graph = graph_fingerprint(&snapshots, &document_path);
     let scope = entry
         .map(|module| format!("module:{module}"))
@@ -890,6 +917,17 @@ mod tests {
             "LSP_METHOD_DENIED"
         );
     }
+    #[test]
+    fn cached_lsp_sessions_expire_after_the_idle_ttl() {
+        let now = Instant::now();
+        assert!(!session_expired(now, now));
+        assert!(!session_expired(
+            now - Duration::from_secs(SESSION_IDLE_TTL.as_secs() - 1),
+            now
+        ));
+        assert!(session_expired(now - SESSION_IDLE_TTL, now));
+    }
+
     #[test]
     fn session_cache_keys_are_scoped_by_workspace_server_and_module() {
         let server = Path::new("/usr/bin/rust-analyzer");
