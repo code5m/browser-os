@@ -196,6 +196,7 @@ struct CachedSession {
     // Field order matters: terminate the sandbox before removing its snapshots.
     session: Session,
     _scratch: Scratch,
+    workspace_root: PathBuf,
     graph_fingerprint: String,
     documents: HashMap<String, CachedDocument>,
     last_used: Instant,
@@ -558,6 +559,24 @@ impl Session {
 
 pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
     let available = profiles();
+    if request["action"] == "lsp_close" {
+        let root = root.canonicalize().map_err(|_| "LSP_ROOT_INVALID")?;
+        let mut cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
+        let keys: Vec<String> = cache
+            .iter()
+            .filter_map(|(key, entry)| {
+                entry
+                    .lock()
+                    .ok()
+                    .filter(|session| session.workspace_root == root)
+                    .map(|_| key.clone())
+            })
+            .collect();
+        for key in &keys {
+            cache.remove(key);
+        }
+        return Ok(json!({"closed_sessions":keys.len()}));
+    }
     if request["action"] == "lsp_status" {
         return Ok(
             json!({"profiles":available.iter().map(|path|json!({"path":path,"name":"Rust · isolated source document"})).collect::<Vec<_>>(),"sandbox_available":Path::new("/usr/bin/bwrap").is_file()}),
@@ -752,6 +771,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
         let managed = CachedSession {
             session,
             _scratch: scratch,
+            workspace_root: root.clone(),
             graph_fingerprint: graph.clone(),
             documents,
             last_used: Instant::now(),
