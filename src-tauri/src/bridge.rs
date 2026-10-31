@@ -2771,6 +2771,16 @@ pub fn grid_position_blocking(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
+    // Repeated suspend/blur notifications must not wake a cell that is already
+    // hibernated. A positive/visible rectangle below is the explicit resume path.
+    if x <= -20000.0
+        && app
+            .state::<AppState>()
+            .grid_manager
+            .is_hibernated(index as u32)
+    {
+        return Ok(());
+    }
     ensure_grid_child(&app, index)?;
     let label = format!("grid-{index}");
     // 后端去重：仅"rect 相同且 <50ms"才丢弃（防 IPC 洪泛），rect 变了必须应用
