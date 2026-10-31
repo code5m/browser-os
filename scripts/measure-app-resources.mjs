@@ -23,9 +23,18 @@ function collect(pid) {
     catch { /* process exited / access denied */ }
   }
   if(!stats.has(pid))return null;
-  const all=[pid];
-  for(let i=0;i<all.length;i++)for(const [child,s] of stats){
-    if(child!==pid && s.ppid===all[i] && !all.includes(child))all.push(child);
+  const children=new Map();
+  for(const [child,stat] of stats){
+    if(child===pid)continue;
+    const siblings=children.get(stat.ppid)||[];
+    siblings.push(child);
+    children.set(stat.ppid,siblings);
+  }
+  const all=[pid],seen=new Set(all);
+  for(let i=0;i<all.length;i++){
+    for(const child of children.get(all[i])||[]){
+      if(!seen.has(child)){seen.add(child);all.push(child);}
+    }
   }
   let rssKb=0,pssKb=0,pssComplete=true,webkitProcesses=0,ptyDescriptors=0,cpuTicks=0;
   for(const id of all) {
@@ -61,15 +70,18 @@ if(args.includes("--self-test")){
       reason:"No running target pid; no made-up process, CPU or memory measurements."},null,2));
   }else{
     const hz=Number(execFileSync("getconf",["CLK_TCK"],{encoding:"utf8"}).trim());
-    const before=collect(pid),started=performance.now();
+    const beforeStarted=performance.now(),before=collect(pid),beforeCollectionMs=performance.now()-beforeStarted;
+    const sampleStarted=performance.now();
     await new Promise(resolve=>setTimeout(resolve,interval));
-    const after=collect(pid),seconds=(performance.now()-started)/1000;
+    const afterStarted=performance.now(),after=collect(pid),afterCollectionMs=performance.now()-afterStarted;
+    const seconds=(performance.now()-sampleStarted)/1000;
     const valid=before&&after&&Number.isFinite(hz)&&hz>0;
     console.log(JSON.stringify({schema:"browseros-native-resource-v1",classification:valid?"MEASURED":"UNKNOWN",
       targetPid:pid,processCount:after?.processCount??null,
       rss_kb:after?.rssKb??null,pss_kb:after?.pssKb??null,
       webkit_processes:after?.webkitProcesses??null,pty_descriptors:after?.ptyDescriptors??null,
       cpu_percent_one_core:valid?Math.max(0,(after.cpuTicks-before.cpuTicks)/hz/seconds*100):null,
+      collection_ms:Math.round((beforeCollectionMs+afterCollectionMs)*1000)/1000,
       sample_ms:Math.round(seconds*1000),
       caveat:"RSS sums shared pages across processes; PSS may be unavailable. CPU may exceed 100% with multiple cores. First-paint sample is NOT 5/30-minute idle or p95 evidence."},null,2));
   }
