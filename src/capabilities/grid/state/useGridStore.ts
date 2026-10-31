@@ -439,8 +439,9 @@ export const useGridStore = defineStore("grid", () => {
     if (!gridOpen.value) return;
     for (let i = 0; i < gridCount.value; i++) {
       await bridge.evalInTab(`grid-${i}`, WEBVIEW_FREEZE_JS).catch(() => {});
+      // Grid ownership stays within the Grid API: the native grid_position command
+      // records the off-screen rectangle as an explicit hibernation-eligible hide.
       await bridge.gridPosition(i, { x: -30000, y: 0, width: 100, height: 100 }).catch(() => {});
-      await bridge.hideWebview(`grid-${i}`).catch(() => {});
     }
     if (layout.mainView === "grid") layout.setView("browser");
   }
