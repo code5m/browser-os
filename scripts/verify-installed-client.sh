@@ -131,8 +131,8 @@ if [[ "$BUILD" -eq 1 ]]; then
   fi
 fi
 
-if [[ "$RESOURCE_MINUTES" -gt 0 && "$START_CLIENT" -eq 0 ]]; then
-  fail "--resource-minutes requires the packaged client cold-start check."
+if [[ "$RESOURCE_MINUTES" -gt 0 && ( "$START_CLIENT" -eq 0 || "$INSTALL" -eq 0 ) ]]; then
+  fail "--resource-minutes requires --install and the packaged client cold-start check."
   exit 2
 fi
 
@@ -280,7 +280,15 @@ if [[ "$START_CLIENT" -eq 1 ]]; then
   if [[ "$INSTALL" -eq 1 && -x "$INSTALLED_BIN" && -x "$EXTRACTED_BIN" ]]; then
     INSTALLED_SHA="$(sha256sum "$INSTALLED_BIN" | awk '{print $1}')"
     EXTRACTED_SHA="$(sha256sum "$EXTRACTED_BIN" | awk '{print $1}')"
-    if [[ "$INSTALLED_SHA" == "$EXTRACTED_SHA" ]]; then CLIENT_BIN="$INSTALLED_BIN"; fi
+    if [[ "$INSTALLED_SHA" == "$EXTRACTED_SHA" ]]; then
+      CLIENT_BIN="$INSTALLED_BIN"
+    elif [[ "$RESOURCE_MINUTES" -gt 0 ]]; then
+      fail "Refusing to benchmark an extracted binary: installed /usr/bin binary does not match the built deb."
+      exit 1
+    fi
+  elif [[ "$RESOURCE_MINUTES" -gt 0 ]]; then
+    fail "Refusing to benchmark an extracted binary: installed package executable is missing."
+    exit 1
   fi
   printf '\n== Cold-start check from %s ==\n' "$CLIENT_BIN"
   if [[ -n "$PROCESS_LIST" ]]; then
