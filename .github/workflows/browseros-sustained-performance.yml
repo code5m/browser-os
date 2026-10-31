@@ -1,0 +1,59 @@
+name: BrowserOS Installed Sustained Performance
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: Installed client sampling duration
+        type: choice
+        required: true
+        default: "30"
+        options:
+          - "5"
+          - "30"
+  schedule:
+    - cron: "0 2 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  installed-client:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install Linux WebKit and display dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb xauth dbus-x11
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Install locked frontend dependencies
+        run: npm ci
+      - name: Build, install and sample the packaged BrowserOS client
+        env:
+          RESOURCE_MINUTES: ${{ inputs.minutes || '30' }}
+        run: |
+          dbus-run-session -- xvfb-run -a bash scripts/verify-installed-client.sh --install --resource-minutes "$RESOURCE_MINUTES"
+      - name: Upload installed-client performance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-installed-performance-${{ github.run_id }}
+          path: |
+            /tmp/browseros-installed-resource.json
+            /tmp/browseros-native-resource.json
+            /tmp/mvp-browser-os-verify-startup.log
+          if-no-files-found: warn
+          retention-days: 30
