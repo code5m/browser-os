@@ -420,6 +420,37 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                         }
                         continue;
                     }
+                    if let grid_ipc::GridCmd::HibernationProbe { ref id } = cmd {
+                        let reply_writer = writer.clone();
+                        let result = app
+                            .state::<tauri_plugin_browser_tabs::TabManagerState>()
+                            .eval_result(
+                                id,
+                                include_str!("../injected/grid-hibernation-probe.js").to_string(),
+                                move |value| {
+                                    let response = match value {
+                                        Ok(data) => grid_ipc::Wire::Response {
+                                            seq,
+                                            ok: true,
+                                            err: None,
+                                            data: Some(data),
+                                        },
+                                        Err(e) => grid_ipc::Wire::err(seq, e),
+                                    };
+                                    let _ = grid_ipc::write_wire(
+                                        &mut *reply_writer.lock().unwrap(),
+                                        &response,
+                                    );
+                                },
+                            );
+                        if result.is_err() {
+                            let _ = grid_ipc::write_wire(
+                                &mut *writer.lock().unwrap(),
+                                &grid_ipc::Wire::err(seq, "GRID_HIBERNATION_PROBE_FAILED"),
+                            );
+                        }
+                        continue;
+                    }
                     let resp = match dispatch_grid_cmd(&app, &host_label, cmd) {
                         Ok(()) => grid_ipc::Wire::ok(seq),
                         Err(e) => grid_ipc::Wire::err(seq, e),
@@ -550,7 +581,9 @@ fn dispatch_grid_cmd(
             }
         }
         GridCmd::Ping => Ok(()),
-        GridCmd::ReadReplies { .. } => Err("GRID_ASYNC_ONLY".into()),
+        GridCmd::ReadReplies { .. } | GridCmd::HibernationProbe { .. } => {
+            Err("GRID_ASYNC_ONLY".into())
+        },
     }
 }
 
