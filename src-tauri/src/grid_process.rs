@@ -84,12 +84,16 @@ pub struct GridChildHandle {
     pub hidden: bool,
     /// 主窗失焦导致的隐藏（主窗重新聚焦时恢复）
     pub blur_hidden: bool,
+    /// Explicitly hidden since; used by adaptive memory hibernation.
+    hidden_since: Option<std::time::Instant>,
 }
 
 /// 宫格子进程管理器：登记所有存活子进程，负责 spawn/重启/关闭/UDS 转发/崩溃自愈。
 #[derive(Default)]
 pub struct GridProcessManager {
     children: Mutex<HashMap<u32, GridChildHandle>>,
+    /// Hibernated children retain URL/rect/visibility metadata but no WebKit process.
+    hibernated: Mutex<HashMap<u32, SavedChildState>>,
     /// 已绑定 listener 的 index（accept 循环线程常驻，重启复用同一 socket）
     listeners: Mutex<HashMap<u32, Arc<ChildComms>>>,
     app: Mutex<Option<AppHandle>>,
@@ -264,6 +268,7 @@ impl GridProcessManager {
                 last_rect: saved.last_rect,
                 hidden: saved.hidden,
                 blur_hidden: saved.blur_hidden,
+                hidden_since: if saved.hidden { Some(std::time::Instant::now()) } else { None },
             },
         );
         eprintln!("[grid-manager] spawned grid-child-{} pid={}", index, pid);
@@ -276,7 +281,10 @@ impl GridProcessManager {
         if self.children.lock().unwrap().contains_key(&index) {
             return Ok(false);
         }
-        self.spawn(index)?;
+        let saved = self.hibernated.lock().unwrap().remove(&index);
+        self.spawn_with_state(index, saved)?;
+        // The caller owns WebView creation/replay. Returning true guarantees
+        // exactly one CreateTab command after both cold spawn and hibernation.
         Ok(true)
     }
 
@@ -411,13 +419,58 @@ impl GridProcessManager {
             h.last_rect = Some(rect);
             h.hidden = false;
             h.blur_hidden = false;
+            h.hidden_since = None;
         }
     }
 
     pub fn record_hidden(&self, index: u32) {
         if let Some(h) = self.children.lock().unwrap().get_mut(&index) {
             h.hidden = true;
+            h.hidden_since.get_or_insert_with(std::time::Instant::now);
         }
+    }
+
+    /// Destroy hidden, unfocused WebKit children after an adaptive idle window.
+    /// Saved navigation and layout metadata allow the normal Grid activation
+    /// path to recreate the child process without losing its URL or zoom owner.
+    pub fn hibernate_idle_hidden(&self, idle_for: std::time::Duration) -> Vec<u32> {
+        let now = std::time::Instant::now();
+        let focused = self.child_focused.lock().unwrap().clone();
+        let candidates: Vec<u32> = self
+            .children
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(index, child)| {
+                child.hidden
+                    && !child.blur_hidden
+                    && !focused.get(index).copied().unwrap_or(false)
+                    && child.hidden_since.is_some_and(|since| now.duration_since(since) >= idle_for)
+            })
+            .map(|(index, _)| *index)
+            .collect();
+        let mut hibernated = Vec::new();
+        for index in candidates {
+            let removed = self.children.lock().unwrap().remove(&index);
+            if let Some(mut child) = removed {
+                let saved = SavedChildState {
+                    last_url: child.last_url.clone(),
+                    last_rect: child.last_rect,
+                    hidden: true,
+                    blur_hidden: false,
+                };
+                let _ = child.child.kill();
+                let _ = child.child.wait();
+                self.hibernated.lock().unwrap().insert(index, saved);
+                hibernated.push(index);
+                eprintln!("[grid-manager] hibernated hidden grid-child-{}", index);
+            }
+        }
+        hibernated
+    }
+
+    pub fn hibernated_count(&self) -> usize {
+        self.hibernated.lock().unwrap().len()
     }
 
     /// 当前存活子进程 index 列表。
@@ -721,6 +774,7 @@ impl GridProcessManager {
     /// 再 kill。返回是否存在。
     pub fn kill_child(&self, index: u32) -> bool {
         self.crash_history.lock().unwrap().remove(&index);
+        self.hibernated.lock().unwrap().remove(&index);
         let removed = self.children.lock().unwrap().remove(&index);
         if let Some(mut h) = removed {
             let _ = h.child.kill();
@@ -788,6 +842,7 @@ impl GridProcessManager {
     /// 关闭所有宫格子进程（主进程退出前/close_grid 调用）。
     pub fn shutdown_all(&self) {
         self.crash_history.lock().unwrap().clear();
+        self.hibernated.lock().unwrap().clear();
         let mut children = self.children.lock().unwrap();
         for (index, h) in children.iter_mut() {
             let _ = h.child.kill();
