@@ -62,8 +62,8 @@ const STORAGE_KEY = "browser-os-settings";
 export const useSettingsStore = defineStore("settings", () => {
   const theme = ref<Theme>("light");
   const keymapScheme = ref<KeymapScheme>("vscode");
-  // 页签休眠：默认关。开启后非激活超 10 分钟的页签销毁 webview 仅留 URL（省内存），
-  // 激活时按 URL 重建（滚动位置/表单不保留，登录态由 WebKit 持久会话保留）
+  // 自适应资源休眠：默认关。开启后按内存压力缩短后台闲置阈值，
+  // 保护正在编辑/播放/选择文件的页面，销毁闲置 WebView 与隐藏 Grid 子进程。
   const tabHibernation = ref(false);
   const actionLabels = ACTION_LABELS;
 
