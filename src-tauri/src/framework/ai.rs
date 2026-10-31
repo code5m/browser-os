@@ -869,7 +869,7 @@ pub async fn coding_service(
             return Err("AGENT_ROOT_INVALID".into());
         }
         let action = request["action"].as_str().unwrap_or("");
-        if ["lsp_status", "lsp_request"].contains(&action) {
+        if ["lsp_status", "lsp_request", "lsp_close"].contains(&action) {
             return crate::capabilities::agent::coding_lsp::execute(&root, request);
         }
         if [
