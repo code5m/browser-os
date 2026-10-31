@@ -2956,7 +2956,7 @@ pub fn start_grid_load_retry(app: AppHandle) {
 
 // ====== 资源监控（宫格设置行"资源"按钮） =====
 
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 pub struct ProcStat {
     pub pid: u32,
     pub name: String,
@@ -2964,7 +2964,7 @@ pub struct ProcStat {
     pub rss_mb: f64,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 pub struct ResourceStats {
     pub mem_total_mb: u64,
     pub mem_available_mb: u64,
@@ -3076,12 +3076,36 @@ mod resource_tree_tests {
     }
 }
 
+/// 资源统计缓存仅加速频繁的 UI 采样；必须同时检查进程 PID 以免重建宫格返回旧值。
+/// 前端仍按已有 3/15 秒节奏拉取，命令工作保持在阻塞线程池。
+static RESOURCE_STATS_CACHE: std::sync::OnceLock<
+    Mutex<Option<(std::time::Instant, Vec<(u32, u32)>, ResourceStats)>>,
+> = std::sync::OnceLock::new();
+
 /// 资源占用统计：主进程树 + 每宫格子进程树的 RSS（含 WebKit 子进程）。
 #[tauri::command]
 pub async fn resource_stats(app: AppHandle) -> Result<ResourceStats, String> {
-    tauri::async_runtime::spawn_blocking(move || resource_stats_blocking(app))
-        .await
-        .map_err(|_| "RESOURCE_STATS_WORKER_FAILED".to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        let cache = RESOURCE_STATS_CACHE.get_or_init(|| Mutex::new(None));
+        let mut stored = cache.lock().unwrap_or_else(|error| error.into_inner());
+        let grid_pids = app.state::<AppState>().grid_manager.pids();
+        if let Some((sampled_at, pids, stats)) = stored.as_ref() {
+            if *pids == grid_pids
+                && sampled_at.elapsed() < std::time::Duration::from_millis(750)
+            {
+                let mut refreshed = stats.clone();
+                let state = app.state::<AppState>();
+                refreshed.hibernation_enabled = state.hibernation_enabled.load(Ordering::Relaxed);
+                refreshed.hibernated_count = state.hibernated_tabs.lock().unwrap().len();
+                return refreshed;
+            }
+        }
+        let stats = resource_stats_blocking(app);
+        *stored = Some((std::time::Instant::now(), grid_pids, stats.clone()));
+        stats
+    })
+    .await
+    .map_err(|_| "RESOURCE_STATS_WORKER_FAILED".to_string())
 }
 
 pub fn resource_stats_blocking(app: AppHandle) -> ResourceStats {
