@@ -18,7 +18,7 @@ REGISTRY = ROOT / "docs" / "architecture" / "native-boundary" / "native-commands
 TS_OUT = ROOT / "src" / "generated" / "native-contracts.ts"
 JSON_OUT = ROOT / "artifacts" / "native-contracts" / "generated-crosslayer-contracts.json"
 
-INJECTED_TYPES = ("AppHandle", "Webview", "WebviewWindow", "Window", "State<", "Manager<")
+INJECTED_TYPES = ("AppHandle", "Webview", "WebviewWindow", "Window", "State<", "Manager<", "Channel<")
 
 
 @dataclass
@@ -877,12 +877,16 @@ def self_test() -> bool:
     fixture = [
         (
             "fixture.rs",
-            '#[derive(Serialize, Deserialize)]\n#[serde(rename_all = "camelCase")]\npub struct UserInfo { pub user_id: String, pub enabled: bool }\n#[tauri::command]\npub fn load_user(user_id: String) -> Result<UserInfo, String> { todo!() }\nfn e(app: tauri::AppHandle){ app.emit("ready", true).unwrap(); }',
+            '#[derive(Serialize, Deserialize)]\n#[serde(rename_all = "camelCase")]\npub struct UserInfo { pub user_id: String, pub enabled: bool }\n#[tauri::command]\npub fn load_user(user_id: String, on_event: Option<tauri::ipc::Channel<Value>>) -> Result<UserInfo, String> { todo!() }\nfn e(app: tauri::AppHandle){ app.emit("ready", true).unwrap(); }',
         )
     ]
     defs = parse_rust_types(fixture)
     commands = parse_commands(fixture)
-    if len(commands) != 1 or commands[0].params[0].wire_name != "userId":
+    if (
+        len(commands) != 1
+        or len(commands[0].params) != 1
+        or commands[0].params[0].wire_name != "userId"
+    ):
         return False
     unverified: set[str] = set()
     rendered = render_type(commands[0].return_type, defs, unverified)
