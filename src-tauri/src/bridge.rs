@@ -3361,6 +3361,7 @@ pub fn resource_stats_blocking(app: AppHandle) -> ResourceStats {
         .lock()
         .unwrap()
         .len();
+    let grid_indices: Vec<u32> = grid_pids.iter().map(|(index, _)| *index).collect();
     ResourceStats {
         mem_total_mb: std::fs::read_to_string("/proc/meminfo")
             .ok()
@@ -3384,7 +3385,7 @@ pub fn resource_stats_blocking(app: AppHandle) -> ResourceStats {
         hibernated_grid_count: app.state::<AppState>().grid_manager.hibernated_count(),
         // The displayed limit agrees with create_grid and includes already
         // running Grid children instead of charging their memory twice.
-        grid_budget: affordable_grid_count(avail, &grid_pids.iter().map(|(i, _)| *i).collect::<Vec<_>>(), MAX_GRID),
+        grid_budget: affordable_grid_count(avail, &grid_indices, MAX_GRID),
     }
 }
 
