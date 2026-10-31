@@ -143,33 +143,25 @@ jobs:
       - name: Terminal Chromium DOM differential tests
         if: needs.impact.outputs.mode == 'full'
         run: dbus-run-session -- node scripts/check-xterm-dom.mjs
-      - name: Early frozen frontend size gate
+      # Historical M0 overrun stays visible. Only the previously approved
+      # finite Monaco budget and a fresh same-run master comparison can pass.
+      - name: Audited frontend size (M0 history, Monaco budget, master delta)
         if: needs.impact.outputs.mode == 'full'
+        env:
+          SIZE_BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || 'origin/master' }}
         run: |
-          python3 - <<'PY'
-          import importlib.util, json
-          from pathlib import Path
-          spec=importlib.util.spec_from_file_location('metrics','scripts/measure-build-metrics.py')
-          metrics=importlib.util.module_from_spec(spec);spec.loader.exec_module(metrics)
-          current={'dist':metrics.collect_dist(Path('dist'))}
-          baseline_path=Path('logs/m0-build-metrics/build-metrics-052b18a.json')
-          baseline=json.loads(baseline_path.read_text())
-          verdict=metrics.compare(current,baseline)
-          evidence={'baseline_file':str(baseline_path),'baseline_bytes':baseline['dist']['total_bytes'],
-                    'current':current,'comparison':verdict}
-          report=json.dumps(evidence,indent=2)
-          print(report)
-          Path('/tmp/browseros-frontend-size-budget.json').write_text(report+'\n')
-          if verdict['growth_warning']:
-              print(f"::warning title=Frontend size budget::Growth {verdict['deltas']['total_bytes_pct']}% reaches advisory {verdict['growth_warning_pct']}%; hard stop above {verdict['growth_limit_pct']}%.")
-          raise SystemExit(1 if verdict['exceeds_growth_limit'] else 0)
-          PY
+          python3 scripts/check-frontend-size-dual-budget.py --self-test
+          python3 scripts/check-frontend-size-dual-budget.py --master-ref "$SIZE_BASE_REF" \
+            --out /tmp/browseros-frontend-size-budget.json \
+            --editor-out /tmp/browseros-editor-budget-audit.json
       - name: Upload frontend size budget evidence
         if: always() && needs.impact.outputs.mode == 'full'
         uses: actions/upload-artifact@v4
         with:
           name: browseros-frontend-size-budget-${{ github.run_id }}
-          path: /tmp/browseros-frontend-size-budget.json
+          path: |
+            /tmp/browseros-frontend-size-budget.json
+            /tmp/browseros-editor-budget-audit.json
           if-no-files-found: warn
       - name: Semantic dependency and bundle evidence
         id: semantic_evidence

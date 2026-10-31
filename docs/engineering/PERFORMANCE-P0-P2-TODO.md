@@ -47,6 +47,14 @@
 4. 补齐文件树大目录虚拟化、Monaco worker 增量同步、Agent session 写锁冲突域与完整基准。
 5. Ubuntu 安装版独立实测前后 5/30min CPU、RSS/PSS、首屏及编辑/导航 p50/p95/p99；尚无数据不得记录提速百分比。
 
+## 前端体积基线核对与 CI 修复（2026-10-31）
+
+- 已核对 master@81a9feca 与 perf@8090f000 同口径构建：前者 12,975,246 B，后者 12,976,614 B（+1,368 B，+0.01054%）。
+- 历史 M0 795,517 B / 45% 门禁未删除或改阈值，master 已不满足历史限额；属于独立历史治理问题，不能误归因本次 perf 优化。
+- CI 增加已有 Monaco 有限预算审计及同 runner 构建 master 的 1% 性能增量审查线；代码已提交不等于 CI PASS，请以最新工作流运行结果为准。
+- 详细策略：docs/engineering/FRONTEND-SIZE-DUAL-BASELINE-20261031.md。
+- Rust 编译、真机 GUI、P0–P2 真实性能验收仍独立阻塞，严禁因体积门禁修复就将全部 TODO 标记完成。
+
 ## 未完成工作与复核重点
 1. 立即确认各 GitHub Actions job 结果；有失败则定位原因，修复后重新运行。
 2. 检查 Tauri Command 包装与 `main.rs` 内部调用签名，保证异步调用契约、权限不变；检查 Grid 增量 resize 不误导航且失败回滚正确。
