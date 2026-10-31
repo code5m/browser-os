@@ -114,6 +114,14 @@ fn grid_content_reclaimable(last_url: Option<&str>) -> bool {
     matches!(last_url, Some("about:blank"))
 }
 
+fn grid_hibernation_probe_safe(encoded: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(encoded) else {
+        return false;
+    };
+    value.get("safe").and_then(serde_json::Value::as_bool) == Some(true)
+        && value.get("url").and_then(serde_json::Value::as_str) == Some("about:blank")
+}
+
 fn grid_child_is_hibernatable(
     hidden: bool,
     blur_hidden: bool,
@@ -255,6 +263,22 @@ impl GridProcessManager {
                                                     st.grid_manager
                                                         .hide_for_blur_if_no_child_focus();
                                                 });
+                                            }
+                                            "tab-navigated" => {
+                                                // Keep the native memory guard in sync with
+                                                // same-WebView redirects and in-page links.
+                                                // Only accept navigation for this Grid child.
+                                                if let (Some(id), Some(url)) = (
+                                                    payload.get("id").and_then(|v| v.as_str()),
+                                                    payload.get("url").and_then(|v| v.as_str()),
+                                                ) {
+                                                    if id == format!("grid-{index}") && !url.is_empty() {
+                                                        app.state::<crate::bridge::AppState>()
+                                                            .grid_manager
+                                                            .record_url(index, url);
+                                                    }
+                                                }
+                                                let _ = app.emit(&name, payload);
                                             }
                                             _ => {
                                                 let _ = app.emit(&name, payload);
@@ -426,6 +450,24 @@ impl GridProcessManager {
         self.request_once_with(comms, cmd, timeout_ms).map(|_| ())
     }
 
+    /// Fail-closed native probe of the actual Grid page. Stored last_url is
+    /// only a navigation target and cannot prove the live DOM is empty.
+    fn confirmed_blank_grid(&self, index: u32) -> bool {
+        let Ok(comms) = self.wait_connected(index, 500) else {
+            return false;
+        };
+        match self.request_once_with(
+            comms,
+            &GridCmd::HibernationProbe {
+                id: format!("grid-{index}"),
+            },
+            1000,
+        ) {
+            Ok(Some(encoded)) => grid_hibernation_probe_safe(&encoded),
+            _ => false,
+        }
+    }
+
     pub fn read_replies(&self, index: u32) -> Result<String, String> {
         if !self.children.lock().unwrap().contains_key(&index) {
             return Err("GRID_NOT_OPEN".into());
@@ -588,7 +630,7 @@ impl GridProcessManager {
                             )
                     })
             };
-            if !eligible() {
+            if !eligible() || !self.confirmed_blank_grid(index) || !eligible() {
                 continue;
             }
             // Graceful native close for the empty WebView; if a user resumes
@@ -1062,7 +1104,9 @@ fn exit_code_of(status: &std::process::ExitStatus) -> i32 {
 
 #[cfg(test)]
 mod adaptive_grid_hibernation_tests {
-    use super::{grid_child_is_hibernatable, grid_content_reclaimable};
+    use super::{
+        grid_child_is_hibernatable, grid_content_reclaimable, grid_hibernation_probe_safe,
+    };
     use std::time::{Duration, Instant};
 
     #[test]
@@ -1098,6 +1142,17 @@ mod adaptive_grid_hibernation_tests {
     #[test]
     fn external_ai_grids_are_not_discardable_without_state_checkpoint() {
         assert!(grid_content_reclaimable(Some("about:blank")));
+        assert!(grid_hibernation_probe_safe(r#"{"safe":true,"url":"about:blank"}"#));
+        for probe in [
+            r#"{"safe":true,"url":"https://chat.deepseek.com"}"#,
+            r#"{"safe":false,"url":"about:blank"}"#,
+            r#"{"safe":"true","url":"about:blank"}"#,
+            "{}",
+            "null",
+            "malformed",
+        ] {
+            assert!(!grid_hibernation_probe_safe(probe));
+        }
         for url in [
             None,
             Some("https://chat.deepseek.com"),
