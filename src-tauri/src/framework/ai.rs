@@ -667,6 +667,36 @@ fn coding_turn_cancelable(
         .ok_or("AI_NOT_CONFIGURED")?;
     provider_turn_cancelable(profile, messages, tools, cancelled)
 }
+
+fn coding_turn_cancelable_stream(
+    path: &Path,
+    id: &str,
+    messages: &[Value],
+    tools: &[Value],
+    cancelled: &(dyn Fn() -> bool + Sync),
+    on_delta: &mut dyn FnMut(&str) -> Result<(), String>,
+) -> Result<Value, String> {
+    let config = {
+        let _guard = CONFIG_LOCK.lock().map_err(|_| "AI_CONFIG_BUSY")?;
+        read(path)?
+    };
+    let id = if id.is_empty() {
+        config
+            .bindings
+            .get("workbench")
+            .or_else(|| config.bindings.get("default"))
+            .map(String::as_str)
+            .ok_or("AI_NOT_CONFIGURED")?
+    } else {
+        id
+    };
+    let profile = config
+        .profiles
+        .iter()
+        .find(|p| p.id == id)
+        .ok_or("AI_NOT_CONFIGURED")?;
+    provider_turn_cancelable_stream(profile, messages, tools, cancelled, on_delta)
+}
 pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
     if ![
         "default",
@@ -815,6 +845,7 @@ pub async fn coding_service(
     app: tauri::AppHandle,
     webview: tauri::Webview,
     request: Value,
+    on_event: Option<tauri::ipc::Channel<Value>>,
 ) -> Result<Value, String> {
     if webview.label() != "main" {
         return Err("AGENT_SOURCE_DENIED".into());
@@ -825,7 +856,11 @@ pub async fn coding_service(
         .app_data_dir()
         .map_err(|_| "AGENT_STORAGE_UNAVAILABLE")?
         .join("mvp-browser-os");
-    tauri::async_runtime::spawn_blocking(move || {
+    if let Some(channel) = on_event.as_ref() {
+        channel.send(json!({"type":"start"}))
+            .map_err(|_| "AGENT_STREAM_DISCONNECTED")?;
+    }
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let root = std::path::PathBuf::from(request["root"].as_str().ok_or("AGENT_ROOT_REQUIRED")?);
         if !root.is_absolute() || root.parent().is_none() {
             return Err("AGENT_ROOT_INVALID".into());
@@ -848,18 +883,33 @@ pub async fn coding_service(
         }
         let id = request["model_id"].as_str().unwrap_or("").to_owned();
         let cancel_root = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
+        let mut emit_delta = |text: &str| -> Result<(), String> {
+            if let Some(channel) = on_event.as_ref() {
+                channel.send(json!({"type":"delta","text":text}))
+                    .map_err(|_| "AGENT_STREAM_DISCONNECTED".to_string())?;
+            }
+            Ok(())
+        };
         crate::capabilities::agent::coding::execute(&root, &storage, request, |messages, tools| {
-            coding_turn_cancelable(
+            coding_turn_cancelable_stream(
                 &storage.join("ai-profiles.json"),
                 &id,
                 messages,
                 tools,
                 &|| crate::capabilities::agent::coding::cancelled_for_root(&cancel_root),
+                &mut emit_delta,
             )
         })
     })
     .await
-    .map_err(|_| "AGENT_WORKER_FAILED".to_string())?
+    .map_err(|_| "AGENT_WORKER_FAILED".to_string())?;
+    if let Some(channel) = on_event.as_ref() {
+        match &result {
+            Ok(_) => { let _ = channel.send(json!({"type":"complete"})); }
+            Err(error) => { let _ = channel.send(json!({"type":"error","message":error})); }
+        }
+    }
+    result
 }
 
 #[cfg(test)]
