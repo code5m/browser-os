@@ -83,6 +83,13 @@ fn terminate_grid_process_tree(child: &mut Child) {
     let _ = child.wait();
 }
 
+/// A Grid process is an independent browser session. URL + rectangle do not
+/// preserve unsent AI prompts, streaming replies or SPA memory. Without a
+/// documented snapshot/restore protocol, only empty cells may be discarded.
+fn grid_content_reclaimable(last_url: Option<&str>) -> bool {
+    matches!(last_url, Some("about:blank"))
+}
+
 fn grid_child_is_hibernatable(
     hidden: bool,
     blur_hidden: bool,
@@ -500,49 +507,133 @@ impl GridProcessManager {
     /// Destroy hidden, unfocused WebKit children after an adaptive idle window.
     /// Saved navigation and layout metadata allow the normal Grid activation
     /// path to recreate the child process without losing its URL or zoom owner.
-    pub fn hibernate_idle_hidden(&self, idle_for: std::time::Duration) -> Vec<u32> {
+    /// Adaptive reclamation remains conservative: a hidden AI Grid may have
+    /// unpersisted conversation state. Never destroy arbitrary external pages
+    /// based on URL/geometry alone. Reclaim only blank, still-hidden cells.
+    pub fn hibernate_idle_hidden(
+        &self,
+        idle_for: std::time::Duration,
+        max_children: usize,
+    ) -> Vec<u32> {
+        if max_children == 0 {
+            return Vec::new();
+        }
         let now = std::time::Instant::now();
         let focused = self.child_focused.lock().unwrap().clone();
-        let candidates: Vec<u32> = self
+        let mut candidates: Vec<(std::time::Instant, u32)> = self
             .children
             .lock()
             .unwrap()
             .iter()
-            .filter(|(index, child)| {
-                grid_child_is_hibernatable(
+            .filter_map(|(index, child)| {
+                if !grid_child_is_hibernatable(
                     child.hidden,
                     child.blur_hidden,
                     focused.get(index).copied().unwrap_or(false),
                     child.hidden_since,
                     now,
                     idle_for,
-                )
+                ) || !grid_content_reclaimable(child.last_url.as_deref()) {
+                    return None;
+                }
+                Some((child.hidden_since?, *index))
             })
-            .map(|(index, _)| *index)
             .collect();
+        // Oldest blank cells first, with an explicit per-sweep kill budget.
+        candidates.sort_unstable();
         let mut hibernated = Vec::new();
-        for index in candidates {
-            // Close the WebView through the Grid IPC owner first so WebKit can
-            // flush its persistent profile/session before the process tree exits.
-            let _ = self.request(
+        for (hidden_since, index) in candidates.into_iter().take(max_children) {
+            let eligible = || {
+                !self
+                    .child_focused
+                    .lock()
+                    .unwrap()
+                    .get(&index)
+                    .copied()
+                    .unwrap_or(false)
+                    && self.children.lock().unwrap().get(&index).is_some_and(|child| {
+                        child.hidden_since == Some(hidden_since)
+                            && grid_content_reclaimable(child.last_url.as_deref())
+                            && grid_child_is_hibernatable(
+                                child.hidden,
+                                child.blur_hidden,
+                                false,
+                                child.hidden_since,
+                                std::time::Instant::now(),
+                                idle_for,
+                            )
+                    })
+            };
+            if !eligible() {
+                continue;
+            }
+            // Graceful native close for the empty WebView; if a user resumes
+            // it during IPC, do not kill the process. Rebuild a blank WebView
+            // when CloseTab won the race, preserving the user's fresh layout.
+            let closed = self.request(
                 index,
                 GridCmd::CloseTab {
                     id: format!("grid-{index}"),
                 },
-                3000,
+                1000,
             );
-            let removed = self.children.lock().unwrap().remove(&index);
-            if let Some(mut child) = removed {
-                let saved = SavedChildState {
-                    last_url: child.last_url.clone(),
-                    last_rect: child.last_rect,
-                    hidden: true,
-                    blur_hidden: false,
-                };
+            if !eligible() {
+                if closed.is_ok() {
+                    self.replay(index);
+                }
+                continue;
+            }
+            // Revalidate under the child map lock, then kill the old process
+            // before another get_or_spawn can reuse the same Grid index/socket.
+            let focused_now = self
+                .child_focused
+                .lock()
+                .unwrap()
+                .get(&index)
+                .copied()
+                .unwrap_or(false);
+            if focused_now {
+                if closed.is_ok() {
+                    self.replay(index);
+                }
+                continue;
+            }
+            let mut children = self.children.lock().unwrap();
+            let still_eligible = children.get(&index).is_some_and(|child| {
+                child.hidden_since == Some(hidden_since)
+                    && grid_content_reclaimable(child.last_url.as_deref())
+                    && grid_child_is_hibernatable(
+                        child.hidden,
+                        child.blur_hidden,
+                        false,
+                        child.hidden_since,
+                        std::time::Instant::now(),
+                        idle_for,
+                    )
+            });
+            if !still_eligible {
+                drop(children);
+                if closed.is_ok() {
+                    self.replay(index);
+                }
+                continue;
+            }
+            if let Some(mut child) = children.remove(&index) {
+                // Hold the map lock until the old process group has exited:
+                // another Grid activation must not spawn an index while an
+                // old child is still connected to the same UDS listener.
                 terminate_grid_process_tree(&mut child.child);
-                self.hibernated.lock().unwrap().insert(index, saved);
+                self.hibernated.lock().unwrap().insert(
+                    index,
+                    SavedChildState {
+                        last_url: child.last_url.clone(),
+                        last_rect: child.last_rect,
+                        hidden: true,
+                        blur_hidden: false,
+                    },
+                );
                 hibernated.push(index);
-                eprintln!("[grid-manager] hibernated hidden grid-child-{}", index);
+                eprintln!("[grid-manager] hibernated empty grid-child-{}", index);
             }
         }
         hibernated
@@ -947,7 +1038,7 @@ fn exit_code_of(status: &std::process::ExitStatus) -> i32 {
 
 #[cfg(test)]
 mod adaptive_grid_hibernation_tests {
-    use super::grid_child_is_hibernatable;
+    use super::{grid_child_is_hibernatable, grid_content_reclaimable};
     use std::time::{Duration, Instant};
 
     #[test]
@@ -978,5 +1069,20 @@ mod adaptive_grid_hibernation_tests {
             now,
             idle_for
         ));
+    }
+
+    #[test]
+    fn external_ai_grids_are_not_discardable_without_state_checkpoint() {
+        assert!(grid_content_reclaimable(Some("about:blank")));
+        for url in [
+            None,
+            Some("https://chat.deepseek.com"),
+            Some("https://www.doubao.com"),
+            Some("https://kimi.moonshot.cn"),
+            Some("file:///home/user/unsaved.html"),
+            Some("data:text/html,hello"),
+        ] {
+            assert!(!grid_content_reclaimable(url));
+        }
     }
 }
