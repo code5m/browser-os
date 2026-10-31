@@ -4,6 +4,7 @@
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashMap,
     fs,
     io::{BufRead, BufReader, Read, Write},
     os::{
@@ -15,14 +16,15 @@ use std::{
     },
     path::{Component, Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
-    sync::{mpsc, Mutex},
+    sync::{mpsc, Arc, Mutex, OnceLock},
     thread,
     time::{Duration, Instant},
 };
 
 const LIMIT: usize = 1024 * 1024;
-const DOCUMENT: &str = "file:///work/document.rs";
-static REQUEST_LOCK: Mutex<()> = Mutex::new(());
+const MAX_CACHED_SESSIONS: usize = 2;
+const SESSION_IDLE_TTL: Duration = Duration::from_secs(300);
+static SESSION_CACHE: OnceLock<Mutex<HashMap<String, Arc<Mutex<CachedSession>>>>> = OnceLock::new();
 
 fn profiles() -> Vec<PathBuf> {
     let Some(home) = std::env::var_os("HOME") else {
@@ -180,8 +182,129 @@ struct Session {
     input: ChildStdin,
     rx: mpsc::Receiver<Result<Value, String>>,
     deadline: Instant,
+    next_request_id: u64,
     diagnostics: Value,
     document_uri: String,
+}
+
+struct CachedDocument {
+    version: i64,
+    content_hash: String,
+}
+
+struct CachedSession {
+    // Field order matters: terminate the sandbox before removing its snapshots.
+    session: Session,
+    _scratch: Scratch,
+    graph_fingerprint: String,
+    documents: HashMap<String, CachedDocument>,
+    last_used: Instant,
+}
+
+fn session_cache() -> &'static Mutex<HashMap<String, Arc<Mutex<CachedSession>>>> {
+    SESSION_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cache_key(root: &Path, server: &Path, scope: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(root.as_os_str().as_encoded_bytes());
+    digest.update([0]);
+    digest.update(server.as_os_str().as_encoded_bytes());
+    digest.update([0]);
+    digest.update(scope.as_bytes());
+    format!("{:x}", digest.finalize())
+}
+
+fn graph_fingerprint(snapshots: &[(String, String)], active_path: &str) -> String {
+    let mut digest = Sha256::new();
+    for (path, content) in snapshots {
+        if path == active_path {
+            continue;
+        }
+        digest.update((path.len() as u64).to_le_bytes());
+        digest.update(path.as_bytes());
+        digest.update(Sha256::digest(content.as_bytes()));
+    }
+    format!("{:x}", digest.finalize())
+}
+
+fn remove_cached_session(key: &str, target: &Arc<Mutex<CachedSession>>) {
+    let mut cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
+    if cache.get(key).is_some_and(|entry| Arc::ptr_eq(entry, target)) {
+        cache.remove(key);
+    }
+}
+
+fn insert_cached_session(
+    key: String,
+    session: CachedSession,
+) -> Result<Arc<Mutex<CachedSession>>, String> {
+    let mut cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(existing) = cache.get(&key) {
+        return Ok(existing.clone());
+    }
+    let now = Instant::now();
+    cache.retain(|_, entry| {
+        if Arc::strong_count(entry) > 1 {
+            return true;
+        }
+        match entry.try_lock() {
+            Ok(guard) => now.duration_since(guard.last_used) < SESSION_IDLE_TTL,
+            Err(_) => true,
+        }
+    });
+    if cache.len() >= MAX_CACHED_SESSIONS {
+        let candidate = cache
+            .iter()
+            .filter(|(_, entry)| Arc::strong_count(entry) == 1)
+            .filter_map(|(key, entry)| {
+                entry.try_lock().ok().map(|guard| (key.clone(), guard.last_used))
+            })
+            .min_by_key(|(_, last_used)| *last_used)
+            .map(|(key, _)| key);
+        if let Some(candidate) = candidate {
+            cache.remove(&candidate);
+        }
+    }
+    if cache.len() >= MAX_CACHED_SESSIONS {
+        return Err("LSP_SESSION_LIMIT".into());
+    }
+    let entry = Arc::new(Mutex::new(session));
+    cache.insert(key, entry.clone());
+    Ok(entry)
+}
+
+impl CachedSession {
+    fn update_document(&mut self, path: &str, uri: &str, content: &str) -> Result<(), String> {
+        let content_hash = format!("{:x}", Sha256::digest(content.as_bytes()));
+        let previous = self.documents.get(path);
+        let version = previous.map_or(1, |doc| doc.version.saturating_add(1));
+        self.session.document_uri = uri.to_string();
+        if previous.is_none() {
+            self.session.renew_deadline();
+            self.session.send(json!({
+                "jsonrpc":"2.0","method":"textDocument/didOpen",
+                "params":{"textDocument":{
+                    "uri":uri,"languageId":"rust","version":version,"text":content
+                }}
+            }))?;
+        } else if previous.is_some_and(|doc| doc.content_hash != content_hash) {
+            self.session.renew_deadline();
+            self.session.send(json!({
+                "jsonrpc":"2.0","method":"textDocument/didChange",
+                "params":{
+                    "textDocument":{"uri":uri,"version":version},
+                    "contentChanges":[{"text":content}]
+                }
+            }))?;
+        }
+        self.documents.insert(
+            path.to_string(),
+            CachedDocument { version, content_hash },
+        );
+        self.last_used = Instant::now();
+        Ok(())
+    }
 }
 impl Drop for Session {
     fn drop(&mut self) {
@@ -193,6 +316,20 @@ impl Drop for Session {
     }
 }
 impl Session {
+    fn renew_deadline(&mut self) {
+        self.deadline = Instant::now() + Duration::from_secs(12);
+    }
+
+    fn is_alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+
+    fn rpc_next(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        let id = self.next_request_id;
+        self.next_request_id = self.next_request_id.saturating_add(1);
+        self.rpc(id, method, params)
+    }
+
     fn await_document(&mut self) -> Result<(), String> {
         loop {
             let value = self
@@ -301,7 +438,7 @@ impl Session {
         unsafe {
             cmd.pre_exec(|| {
                 for (resource, value) in [
-                    (libc::RLIMIT_CPU, 10),
+                    (libc::RLIMIT_CPU, 180),
                     (libc::RLIMIT_AS, 2 * 1024 * 1024 * 1024),
                     (libc::RLIMIT_FSIZE, 16 * 1024 * 1024),
                     (libc::RLIMIT_NOFILE, 256),
@@ -351,6 +488,7 @@ impl Session {
                 input,
                 rx,
                 deadline: Instant::now() + Duration::from_secs(12),
+                next_request_id: 2,
                 diagnostics: json!([]),
                 document_uri: DOCUMENT.into(),
             }),
@@ -395,6 +533,7 @@ impl Session {
         Ok(())
     }
     fn rpc(&mut self, id: u64, method: &str, params: Value) -> Result<Value, String> {
+        self.renew_deadline();
         self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
         loop {
             let value = self
