@@ -812,14 +812,27 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
         remove_cached_session(&key, &cached);
         return Err("LSP_SESSION_STALE_RETRY".into());
     }
-    managed.update_document(&document_path, &document_uri, content)?;
-    let result = managed.session.rpc_next(
+    if let Err(error) = managed.update_document(&document_path, &document_uri, content) {
+        drop(managed);
+        remove_cached_session(&key, &cached);
+        return Err(error);
+    }
+    let result = match managed.session.rpc_next(
         method,
         json!({
             "textDocument":{"uri":document_uri},
             "position":{"line":line,"character":character}
         }),
-    )?;
+    ) {
+        Ok(result) => result,
+        Err(error) => {
+            // A timed-out or broken JSON-RPC stream is not reusable. Drop the
+            // sandbox now so the next request starts from a fresh source snapshot.
+            drop(managed);
+            remove_cached_session(&key, &cached);
+            return Err(error);
+        }
+    };
     managed.last_used = Instant::now();
     let diagnostics = managed.session.diagnostics.clone();
     drop(managed);
