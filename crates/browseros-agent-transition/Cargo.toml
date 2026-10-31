@@ -1,0 +1,12 @@
+[package]
+name = "browseros-agent-transition"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "MulanPSL-2.0"
+description = "Opt-in migration contracts for the BrowserOS Agent Channel"
+
+[dependencies]
+browseros-agent-channel = { path = "../browseros-agent-channel" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
