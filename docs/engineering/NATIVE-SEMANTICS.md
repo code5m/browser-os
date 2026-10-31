@@ -15,7 +15,7 @@ BrowserOS treats Rust/Tauri semantics as a first-class support system.
 
 `node scripts/check-native-semantic-closure.mjs --report artifacts/native-semantic-report.json` creates the machine-readable audit artifact used by CI. This report is derived evidence, never a new permission or ownership source.
 
-Current governed baseline at this change: **149 registered native commands / 26 AppState fields**. These numbers are drift tripwires, not targets; legitimate Rust changes update code, authoritative registries and governance together.
+Current governed baseline at this change: **178 registered native commands / 27 AppState fields**. These numbers are drift tripwires, not targets; legitimate Rust changes update code, authoritative registries and governance together.
 
 ## Runtime Event / IPC cross-layer observation
 
