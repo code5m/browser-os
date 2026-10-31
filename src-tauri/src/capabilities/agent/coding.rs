@@ -57,9 +57,10 @@ fn cancelled(root: &Path, id: &str) -> bool {
     })
 }
 pub(crate) fn cancelled_for_root(root: &Path) -> bool {
-    running_map().lock().ok().is_some_and(|running| {
-        running.get(root).is_some_and(|(_, cancel)| *cancel)
-    })
+    running_map()
+        .lock()
+        .ok()
+        .is_some_and(|running| running.get(root).is_some_and(|(_, cancel)| *cancel))
 }
 
 #[derive(Clone, Serialize, Deserialize)]

@@ -257,7 +257,10 @@ fn graph_fingerprint(snapshots: &[(String, String)], active_path: &str) -> Strin
 
 fn remove_cached_session(key: &str, target: &Arc<Mutex<CachedSession>>) {
     let mut cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
-    if cache.get(key).is_some_and(|entry| Arc::ptr_eq(entry, target)) {
+    if cache
+        .get(key)
+        .is_some_and(|entry| Arc::ptr_eq(entry, target))
+    {
         cache.remove(key);
     }
 }
@@ -285,7 +288,10 @@ fn insert_cached_session(
             .iter()
             .filter(|(_, entry)| Arc::strong_count(entry) == 1)
             .filter_map(|(key, entry)| {
-                entry.try_lock().ok().map(|guard| (key.clone(), guard.last_used))
+                entry
+                    .try_lock()
+                    .ok()
+                    .map(|guard| (key.clone(), guard.last_used))
             })
             .min_by_key(|(_, last_used)| *last_used)
             .map(|(key, _)| key);
@@ -327,7 +333,10 @@ impl CachedSession {
         }
         self.documents.insert(
             path.to_string(),
-            CachedDocument { version, content_hash },
+            CachedDocument {
+                version,
+                content_hash,
+            },
         );
         self.last_used = Instant::now();
         Ok(())

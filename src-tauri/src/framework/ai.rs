@@ -509,7 +509,9 @@ fn read_provider_stream_process(
                         entry.1.push_str(&name.replace(credential, "[REDACTED]"));
                     }
                     if let Some(arguments) = call["function"]["arguments"].as_str() {
-                        entry.2.push_str(&arguments.replace(credential, "[REDACTED]"));
+                        entry
+                            .2
+                            .push_str(&arguments.replace(credential, "[REDACTED]"));
                     }
                 }
             }
@@ -871,7 +873,8 @@ pub async fn coding_service(
         .map_err(|_| "AGENT_STORAGE_UNAVAILABLE")?
         .join("mvp-browser-os");
     if let Some(channel) = on_event.as_ref() {
-        channel.send(json!({"type":"start"}))
+        channel
+            .send(json!({"type":"start"}))
             .map_err(|_| "AGENT_STREAM_DISCONNECTED")?;
     }
     let worker_channel = on_event.clone();
@@ -900,7 +903,8 @@ pub async fn coding_service(
         let cancel_root = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
         let mut emit_delta = |text: &str| -> Result<(), String> {
             if let Some(channel) = worker_channel.as_ref() {
-                channel.send(json!({"type":"delta","text":text}))
+                channel
+                    .send(json!({"type":"delta","text":text}))
                     .map_err(|_| "AGENT_STREAM_DISCONNECTED".to_string())?;
             }
             Ok(())
@@ -920,8 +924,12 @@ pub async fn coding_service(
     .map_err(|_| "AGENT_WORKER_FAILED".to_string())?;
     if let Some(channel) = on_event.as_ref() {
         match &result {
-            Ok(_) => { let _ = channel.send(json!({"type":"complete"})); }
-            Err(error) => { let _ = channel.send(json!({"type":"error","message":error})); }
+            Ok(_) => {
+                let _ = channel.send(json!({"type":"complete"}));
+            }
+            Err(error) => {
+                let _ = channel.send(json!({"type":"error","message":error}));
+            }
         }
     }
     result
@@ -980,17 +988,12 @@ mod tests {
             .spawn()
             .unwrap();
         let mut emitted = String::new();
-        let (message, status, http) = super::read_provider_stream_process(
-            child,
-            b"",
-            "secret",
-            &|| false,
-            &mut |delta| {
+        let (message, status, http) =
+            super::read_provider_stream_process(child, b"", "secret", &|| false, &mut |delta| {
                 emitted.push_str(delta);
                 Ok(())
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
         assert!(status.success());
         assert_eq!(http, Some(200));
         assert_eq!(emitted, "hello world [REDACTED]");
@@ -1045,7 +1048,8 @@ mod tests {
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
-        let result = super::read_provider_stream_process(child, b"", "secret", &|| false, &mut |_| Ok(()));
+        let result =
+            super::read_provider_stream_process(child, b"", "secret", &|| false, &mut |_| Ok(()));
         let (_, status, http) = result.unwrap();
         assert!(status.success());
         assert_eq!(http, Some(401));

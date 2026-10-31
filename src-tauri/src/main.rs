@@ -584,7 +584,8 @@ fn run_grid_selftest(app: tauri::AppHandle) {
         // 1) 创建 2 宫格（spawn 2 子进程 + UDS CreateTab）
         step(
             "create_grid(2)",
-            bridge::create_grid_blocking(app.clone(), 2, vec!["about:blank".to_string(); 2]).map(|_| ()),
+            bridge::create_grid_blocking(app.clone(), 2, vec!["about:blank".to_string(); 2])
+                .map(|_| ()),
         );
         // 2) 导航 + 定位 + eval
         step(
@@ -784,8 +785,8 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
 
         step(
             "scenario-1-single-ai-broadcast",
-            bridge::create_grid_blocking(app.clone(), 4, vec!["about:blank".to_string(); 4]).and_then(
-                |created| {
+            bridge::create_grid_blocking(app.clone(), 4, vec!["about:blank".to_string(); 4])
+                .and_then(|created| {
                     if created < 4 {
                         return Err(format!("created {created} grids, need 4"));
                     }
@@ -797,8 +798,7 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                     // before scenario 2 navigates this grid away (same rule as scenario 2).
                     sleep_ms(600);
                     Ok("single grid command path exercised with local AI mock".to_string())
-                },
-            ),
+                }),
         );
 
         step(
@@ -1155,7 +1155,11 @@ fn run_m0_driver(app: tauri::AppHandle, cfg: bridge::M0Config) {
                 "tab" => bridge::tab_new(app.clone(), "about:blank".into())
                     .map(|tab| OpenedResource::Tab(tab.id)),
                 "grid" => {
-                    match bridge::create_grid_blocking(app.clone(), 4, vec!["about:blank".to_string(); 4]) {
+                    match bridge::create_grid_blocking(
+                        app.clone(),
+                        4,
+                        vec!["about:blank".to_string(); 4],
+                    ) {
                         Ok(4) => Ok(OpenedResource::Grid),
                         Ok(created) => {
                             let _ = bridge::close_grid_blocking(app.clone());

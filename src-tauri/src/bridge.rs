@@ -2522,7 +2522,10 @@ pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Resu
                 id: label.clone(),
                 url: target_url.clone(),
             })
-        } else if grid_url_needs_navigation(previous_url.as_deref(), requested_grid_url(requested_url, None).as_deref()) {
+        } else if grid_url_needs_navigation(
+            previous_url.as_deref(),
+            requested_grid_url(requested_url, None).as_deref(),
+        ) {
             Some(GridCmd::Navigate {
                 id: label.clone(),
                 url: target_url.clone(),
@@ -2577,7 +2580,11 @@ pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Resu
     }
 
     // The new target layout is healthy; only now close cells outside its range.
-    for index in manager.indices().into_iter().filter(|index| *index as usize >= target) {
+    for index in manager
+        .indices()
+        .into_iter()
+        .filter(|index| *index as usize >= target)
+    {
         grid_close_one_blocking(app.clone(), index as usize)?;
     }
     Ok(target)
@@ -3272,9 +3279,7 @@ pub async fn resource_stats(app: AppHandle) -> Result<ResourceStats, String> {
         let mut stored = cache.lock().unwrap_or_else(|error| error.into_inner());
         let grid_pids = app.state::<AppState>().grid_manager.pids();
         if let Some((sampled_at, pids, stats)) = stored.as_ref() {
-            if *pids == grid_pids
-                && sampled_at.elapsed() < std::time::Duration::from_millis(750)
-            {
+            if *pids == grid_pids && sampled_at.elapsed() < std::time::Duration::from_millis(750) {
                 let mut refreshed = stats.clone();
                 let state = app.state::<AppState>();
                 refreshed.hibernation_enabled = state.hibernation_enabled.load(Ordering::Relaxed);
@@ -3453,11 +3458,7 @@ fn tab_hibernation_snapshot(app: &AppHandle, id: &str) -> Result<(f64, f64), Str
 /// Destroy an inactive tab only after a native snapshot confirms that it is
 /// not playing media, holding edited form/contenteditable data, focused in an
 /// editor, or requesting beforeunload. Only scroll coordinates are retained.
-fn hibernate_tab(
-    app: &AppHandle,
-    id: &str,
-    idle_window: std::time::Duration,
-) -> bool {
+fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) -> bool {
     let state = app.state::<AppState>();
     let still_idle = || {
         state.active_tab.lock().unwrap().as_deref() != Some(id)
@@ -3490,9 +3491,16 @@ fn hibernate_tab(
         state.last_position_at.lock().unwrap().remove(id);
         state.tab_idle_since.lock().unwrap().remove(id);
         state.hibernated_tabs.lock().unwrap().insert(id.to_string());
-        state.hibernated_scroll.lock().unwrap().insert(id.to_string(), scroll);
+        state
+            .hibernated_scroll
+            .lock()
+            .unwrap()
+            .insert(id.to_string(), scroll);
         state.tab_recovery.lock().unwrap().remove(id);
-        eprintln!("[hibernation] tab={} webview destroyed; URL and scroll retained", id);
+        eprintln!(
+            "[hibernation] tab={} webview destroyed; URL and scroll retained",
+            id
+        );
         true
     } else {
         false
@@ -3556,8 +3564,14 @@ mod adaptive_hibernation_tests {
     #[test]
     fn memory_pressure_shortens_idle_window_monotonically() {
         let total = 16 * 1024;
-        assert_eq!(hibernation_idle_window(8 * 1024, total), Duration::from_secs(600));
-        assert_eq!(hibernation_idle_window(2 * 1024, total), Duration::from_secs(120));
+        assert_eq!(
+            hibernation_idle_window(8 * 1024, total),
+            Duration::from_secs(600)
+        );
+        assert_eq!(
+            hibernation_idle_window(2 * 1024, total),
+            Duration::from_secs(120)
+        );
         assert_eq!(hibernation_idle_window(700, total), Duration::from_secs(30));
     }
 }
@@ -3655,7 +3669,13 @@ pub fn tab_activate(app: AppHandle, id: String) -> Result<(), String> {
         let restore_id = id.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(900));
-            if !restore_app.state::<AppState>().tabs.lock().unwrap().contains_key(&restore_id) {
+            if !restore_app
+                .state::<AppState>()
+                .tabs
+                .lock()
+                .unwrap()
+                .contains_key(&restore_id)
+            {
                 return;
             }
             let js = format!(

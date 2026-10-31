@@ -15,9 +15,9 @@
 use std::collections::{HashMap, VecDeque};
 use std::io::BufReader;
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::os::unix::process::CommandExt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 
@@ -296,7 +296,11 @@ impl GridProcessManager {
                 last_rect: saved.last_rect,
                 hidden: saved.hidden,
                 blur_hidden: saved.blur_hidden,
-                hidden_since: if saved.hidden { Some(std::time::Instant::now()) } else { None },
+                hidden_since: if saved.hidden {
+                    Some(std::time::Instant::now())
+                } else {
+                    None
+                },
             },
         );
         eprintln!("[grid-manager] spawned grid-child-{} pid={}", index, pid);
@@ -951,11 +955,21 @@ mod adaptive_grid_hibernation_tests {
         let now = Instant::now();
         let idle_since = Some(now - Duration::from_secs(60));
         let idle_for = Duration::from_secs(30);
-        assert!(grid_child_is_hibernatable(true, false, false, idle_since, now, idle_for));
-        assert!(!grid_child_is_hibernatable(false, false, false, idle_since, now, idle_for));
-        assert!(!grid_child_is_hibernatable(true, true, false, idle_since, now, idle_for));
-        assert!(!grid_child_is_hibernatable(true, false, true, idle_since, now, idle_for));
-        assert!(!grid_child_is_hibernatable(true, false, false, None, now, idle_for));
+        assert!(grid_child_is_hibernatable(
+            true, false, false, idle_since, now, idle_for
+        ));
+        assert!(!grid_child_is_hibernatable(
+            false, false, false, idle_since, now, idle_for
+        ));
+        assert!(!grid_child_is_hibernatable(
+            true, true, false, idle_since, now, idle_for
+        ));
+        assert!(!grid_child_is_hibernatable(
+            true, false, true, idle_since, now, idle_for
+        ));
+        assert!(!grid_child_is_hibernatable(
+            true, false, false, None, now, idle_for
+        ));
         assert!(!grid_child_is_hibernatable(
             true,
             false,
