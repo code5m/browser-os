@@ -12,7 +12,7 @@ const val=(flag,defaultValue)=>{const at=args.indexOf(flag);return at<0?defaultV
 function numbers(samples,key) {return samples.map(s=>s[key]).filter(v=>typeof v==="number"&&Number.isFinite(v)&&v>=0).sort((a,b)=>a-b);}
 function percentile(n,q){return n.length?n[Math.min(n.length-1,Math.ceil(n.length*q)-1)]:null;}
 function summarize(samples,needed){
-  const keys=["rss_kb","pss_kb","cpu_percent_one_core"];
+  const keys=["rss_kb","pss_kb","cpu_percent_one_core","collection_ms"];
   const metrics={};
   for(const key of keys){
     const vals=numbers(samples,key);
@@ -25,7 +25,7 @@ function summarize(samples,needed){
     limitation:"Only process-tree CPU/RSS/PSS; no frame latency, user interaction timings, or cross-host comparison without matching machines."};
 }
 if(args.includes("--self-test")){
-  const summary=summarize([{classification:"MEASURED",rss_kb:100,cpu_percent_one_core:2},{classification:"MEASURED",rss_kb:120,cpu_percent_one_core:3}],2);
+  const summary=summarize([{classification:"MEASURED",rss_kb:100,cpu_percent_one_core:2,collection_ms:3},{classification:"MEASURED",rss_kb:120,cpu_percent_one_core:3,collection_ms:4}],2);
   assert.equal(summary.classification,"MEASURED");
   assert.equal(summary.metrics.rss_kb.p95,120);
   assert.equal(summary.metrics.pss_kb.median,null);
