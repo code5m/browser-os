@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
-    io::{Read, Write},
+    io::{BufRead, Read, Write},
     path::Path,
     process::{Child, Command, ExitStatus, Stdio},
     sync::{
@@ -432,6 +432,7 @@ fn read_provider_stream_process(
         let mut content = String::new();
         let mut tool_calls: BTreeMap<usize, (String, String, String)> = BTreeMap::new();
         let mut http_status = None;
+        let mut done = false;
         let mut stream_error: Option<String> = None;
 
         loop {
@@ -465,9 +466,10 @@ fn read_provider_stream_process(
             };
             let data = data.strip_prefix(b" ").unwrap_or(data);
             if data == b"[DONE]" {
-                break;
+                done = true;
+                continue;
             }
-            if data.is_empty() {
+            if done || data.is_empty() {
                 continue;
             }
             let chunk: Value = match serde_json::from_slice(data) {
