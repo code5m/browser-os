@@ -440,6 +440,7 @@ export const useGridStore = defineStore("grid", () => {
     for (let i = 0; i < gridCount.value; i++) {
       await bridge.evalInTab(`grid-${i}`, WEBVIEW_FREEZE_JS).catch(() => {});
       await bridge.gridPosition(i, { x: -30000, y: 0, width: 100, height: 100 }).catch(() => {});
+      await bridge.hideWebview(`grid-${i}`).catch(() => {});
     }
     if (layout.mainView === "grid") layout.setView("browser");
   }
