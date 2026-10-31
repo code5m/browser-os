@@ -334,7 +334,7 @@ fn provider_turn_cancelable_stream(
     }
     let credential = KeyringStore::get_token(&format!("ai:{}", profile.id))
         .map_err(|_| "AI_CREDENTIAL_UNAVAILABLE")?;
-    if credential.is_empty() || credential.contains(['\\r', '\\n', '\\0']) {
+    if credential.is_empty() || credential.contains(['\r', '\n', '\0']) {
         return Err("AI_CREDENTIAL_INVALID".into());
     }
     let mut payload =
@@ -354,7 +354,7 @@ fn provider_turn_cancelable_stream(
         profile.base_url.trim_end_matches('/')
     );
     let config = format!(
-        "url = {}\\nheader = {}\\nheader = \\"Content-Type: application/json\\"\\ndata = {}\\n",
+        "url = {}\nheader = {}\nheader = \"Content-Type: application/json\"\ndata = {}\n",
         quote(&endpoint),
         quote(&format!("Authorization: Bearer {credential}")),
         quote(&body)
@@ -368,7 +368,7 @@ fn provider_turn_cancelable_stream(
             "--fail",
             "--no-buffer",
             "--write-out",
-            "\\n__BROWSEROS_HTTP_STATUS__%{http_code}\\n",
+            "\n__BROWSEROS_HTTP_STATUS__%{http_code}\n",
             "--proto",
             "=https",
             "--max-time",
