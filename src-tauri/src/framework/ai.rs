@@ -858,10 +858,11 @@ pub async fn coding_service(
         .app_data_dir()
         .map_err(|_| "AGENT_STORAGE_UNAVAILABLE")?
         .join("mvp-browser-os");
-    if let Some(channel) = on_event.as_ref() {
+    if let Some(channel) = worker_channel.as_ref() {
         channel.send(json!({"type":"start"}))
             .map_err(|_| "AGENT_STREAM_DISCONNECTED")?;
     }
+    let worker_channel = on_event.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let root = std::path::PathBuf::from(request["root"].as_str().ok_or("AGENT_ROOT_REQUIRED")?);
         if !root.is_absolute() || root.parent().is_none() {
