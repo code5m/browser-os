@@ -2397,12 +2397,10 @@ pub async fn create_grid(app: AppHandle, n: usize, urls: Vec<String>) -> Result<
 }
 
 pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Result<usize, String> {
-    let n = n.clamp(2, MAX_GRID);
-    // 先清理旧的宫格子进程（幂等，可安全重复调用）
-    close_grid_blocking(app.clone())?;
+    let requested = n.clamp(2, MAX_GRID);
     // Respect requested 2/4 grid mode. Safely degrade to two; refuse when
     // even two would violate the core browser/file-manager memory reserve.
-    let n = match mem_available_mb() {
+    let target = match mem_available_mb() {
         Some(avail) => {
             let affordable = (avail.saturating_sub(CORE_MEMORY_RESERVE_MB) / GRID_MEM_MB) as usize;
             if affordable < MIN_GRID {
@@ -2411,55 +2409,75 @@ pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Resu
                     avail, CORE_MEMORY_RESERVE_MB + MIN_GRID as u64 * GRID_MEM_MB, MIN_GRID
                 ));
             }
-            let budgeted = affordable.min(MAX_GRID).min(n);
-            if budgeted < n {
+            let budgeted = affordable.min(MAX_GRID).min(requested);
+            if budgeted < requested {
                 eprintln!(
                     "[create_grid] 内存预算守卫: 可用 {}MB，请求 {} 格 → 降级 {} 格",
-                    avail, n, budgeted
+                    avail, requested, budgeted
                 );
             }
             budgeted
         }
-        None => n,
+        None => requested,
     };
+
     let state = app.state::<AppState>();
     let mgr = &state.grid_manager;
-    let mut created = Vec::new();
-    for i in 0..n {
+
+    // Resize incrementally: keep healthy children whose indices remain in the
+    // requested layout. Recreating all WebKit processes on every layout change
+    // caused avoidable cold starts and CPU/RSS spikes.
+    for index in mgr.indices().into_iter().filter(|index| *index as usize >= target) {
+        grid_close_one_blocking(app.clone(), index as usize)?;
+    }
+
+    let mut newly_created = Vec::new();
+    for i in 0..target {
         let index = i as u32;
         let label = format!("grid-{i}");
-        if let Err(error) = mgr.get_or_spawn(index) {
-            for created_index in created.iter().rev() {
-                mgr.kill_child(*created_index);
-            }
-            return Err(error);
-        }
-        created.push(index);
-        // 等子进程 UDS 连接 + webview 创建完成（子进程冷启动 1~3 秒）
-        // 用前端传入的真实服务 URL 创建子 webview（首次导航即目标服务）；
-        // 未配置则用 about:blank，严禁百度占位（消除"先百度后真实"双导航）。
         let init_url = initial_grid_url(urls.get(i).map(|s| s.as_str()).unwrap_or(""));
-        if let Err(error) = mgr.request(
-            index,
+        let created = match mgr.get_or_spawn(index) {
+            Ok(created) => created,
+            Err(error) => {
+                for created_index in newly_created.iter().rev() {
+                    mgr.kill_child(*created_index);
+                }
+                return Err(error);
+            }
+        };
+        if created {
+            newly_created.push(index);
+        }
+
+        // Existing children keep their WebView and navigate in place. New
+        // children create exactly one initial tab after their UDS connects.
+        let command = if created {
             GridCmd::CreateTab {
-                id: label,
+                id: label.clone(),
                 url: init_url.clone(),
-            },
-            20000,
-        ) {
-            for created_index in created.iter().rev() {
+            }
+        } else {
+            GridCmd::Navigate {
+                id: label.clone(),
+                url: init_url.clone(),
+            }
+        };
+        let timeout = if created { 20000 } else { 10000 };
+        if let Err(error) = mgr.request(index, command, timeout) {
+            // Roll back only processes created by this resize; existing
+            // healthy cells remain alive and retain their last known state.
+            for created_index in newly_created.iter().rev() {
                 mgr.kill_child(*created_index);
             }
             return Err(error);
         }
         mgr.record_url(index, &init_url);
-        eprintln!("[create_grid] grid-{} 子进程就绪", i);
-        // 错峰启动：间隔 300ms，削掉多个 WebKit 同时冷启动的瞬时 CPU/IO 峰值
-        if i + 1 < n {
+        if created && i + 1 < target {
+            // Stagger only cold starts; reused children need no delay.
             std::thread::sleep(std::time::Duration::from_millis(300));
         }
     }
-    Ok(n)
+    Ok(target)
 }
 
 /// 关闭所有宫格（销毁对应子进程）。
