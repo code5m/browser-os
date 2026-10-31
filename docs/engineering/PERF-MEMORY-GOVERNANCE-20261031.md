@@ -12,8 +12,9 @@
 | Tab 休眠 | 被动页面有 iframe、canvas、富文本控件等复杂状态；snapshot 缺字段仍可能通过 | 增加复杂页面保护；`protected` 必须明确为 false、坐标须有效，解析失败拒绝休眠 |
 | Tab 恢复竞态 | 休眠快照等待最多 2 秒，期间用户可能重新激活、导航或关闭休眠选项 | 对启用状态、激活状态、原 URL、休眠标记与持续闲置时间进行前后复核 |
 | 压力回收节流 | 一次扫描可能同时销毁全部空闲页签、Grid，造成回收/重建风暴 | 按最久闲置顺序处理；每轮最多 Tab 1/2/4 个、Grid 1/1/2 个（正常/警告/临界）；逐个 Tab 回收前重新检查当前内存压力 |
-| Grid AI 页数据 | 先前隐藏 Grid 即可被销毁，URL+rect 无法恢复未发送提示词、流式回复和 SPA 状态 | **拒绝自动销毁外部 URL 的 Grid**，仅允许 `about:blank` 空白格按限额休眠；有损页面回收要先建设明确授权/快照恢复协议 |
+| Grid AI 页数据 | 先前隐藏 Grid 即可被销毁，URL+rect 无法恢复未发送提示词、流式回复和 SPA 状态 | **拒绝自动销毁外部 URL 的 Grid**，并由子 WebView 只读 `HibernationProbe` 实时确认 URL、空 DOM、无交互元素；仅真正空白的 `about:blank` 才按限额休眠。缓存的 `last_url` 不可作为独立安全凭据；有损页面回收要先建设明确授权/快照恢复协议 |
 | Grid 回收竞态 | 选取候选到关闭进程之间页面可能被重新激活 | 收集前后核对隐藏时间/焦点/空白状态，取消误回收；若 CloseTab 已执行且状态变化则触发恢复重放；旧进程退出前禁止同 index 复用 |
+| Grid 导航快照 | 初始 about:blank 已通过链接/脚本转向外部站点，但原生 `last_url` 仍可能停留在初始目标 | 记录 Grid 的 `tab-navigated` 真正 URL，并通过子进程 `eval_result` 的专用 `HibernationProbe` 回读实时 DOM，失败拒绝回收 |
 | Grid Memory Guard | 状态栏按 700 MiB 预留，创建按 1,800 MiB 预留；已有进程也重复计费 | 两者统一按 1,800 MiB 保护浏览器与系统，仅新创建的 Grid 消耗 450 MiB/格预算；不能读取可用内存时拒绝新增进程 |
 | 进程回收 | `Child::wait()` 无界等待可能挂住 Grid 管理/关机 | SIGKILL 后最多轮询 750ms，超时交给后台 `waitpid` 清理，避免堵住 Grid 锁 |
 | LSP Cache | 过期驱逐、容量置换、lsp_close 在全局 Mutex 内触发 sandbox 进程销毁或等待锁 | 先摘除缓存引用，再在**全局锁外**关闭 LSP 进程与清理私有 scratch；同样使用有界退出等待 |
@@ -36,6 +37,7 @@ cargo test --manifest-path src-tauri/Cargo.toml adaptive_hibernation_tests
 cargo test --manifest-path src-tauri/Cargo.toml grid_memory_budget_tests
 cargo test --manifest-path src-tauri/Cargo.toml adaptive_grid_hibernation_tests
 cargo test --manifest-path src-tauri/Cargo.toml grid_process_termination_tests
+node --check src-tauri/injected/grid-hibernation-probe.js
 cargo test --manifest-path src-tauri/Cargo.toml capabilities::agent::coding_lsp
 npm run check
 npm run check:coding-workbench
