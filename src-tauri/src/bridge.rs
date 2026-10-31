@@ -2475,7 +2475,7 @@ pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Resu
 
     let state = app.state::<AppState>();
     let manager = &state.grid_manager;
-    let mut newly_created = Vec::new();
+    let mut newly_created: Vec<(u32, bool)> = Vec::new();
     let mut navigated_existing: Vec<(u32, String)> = Vec::new();
 
     // Bring the target layout to a ready state before destroying surplus cells.
@@ -2484,10 +2484,8 @@ pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Resu
     for i in 0..target {
         let index = i as u32;
         let label = format!("grid-{i}");
-        let previous_url = manager.last_url(index);
+        let was_hibernated = manager.is_hibernated(index);
         let requested_url = urls.get(i).map(String::as_str);
-        let target_url = requested_grid_url(requested_url, previous_url.as_deref())
-            .unwrap_or_else(|| "about:blank".to_string());
         let created = match manager.get_or_spawn(index) {
             Ok(created) => created,
             Err(error) => {
@@ -2502,14 +2500,21 @@ pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Resu
                     );
                     manager.record_url(*rollback_index, old_url);
                 }
-                for created_index in newly_created.iter().rev() {
-                    manager.kill_child(*created_index);
+                for (created_index, was_hibernated) in newly_created.iter().rev() {
+                    if *was_hibernated {
+                        manager.hibernate_child(*created_index);
+                    } else {
+                        manager.kill_child(*created_index);
+                    }
                 }
                 return Err(error);
             }
         };
+        let previous_url = manager.last_url(index);
+        let target_url = requested_grid_url(requested_url, previous_url.as_deref())
+            .unwrap_or_else(|| "about:blank".to_string());
         if created {
-            newly_created.push(index);
+            newly_created.push((index, was_hibernated));
         }
 
         let command = if created {
@@ -2539,8 +2544,12 @@ pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Resu
                     );
                     manager.record_url(*rollback_index, old_url);
                 }
-                for created_index in newly_created.iter().rev() {
-                    manager.kill_child(*created_index);
+                for (created_index, was_hibernated) in newly_created.iter().rev() {
+                    if *was_hibernated {
+                        manager.hibernate_child(*created_index);
+                    } else {
+                        manager.kill_child(*created_index);
+                    }
                 }
                 return Err(error);
             }
