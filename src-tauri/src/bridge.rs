@@ -2406,9 +2406,6 @@ const MAX_GRID: usize = 12;
 /// 每宫格子进程（Tauri + WebKitWebProcess + AI 站点）的实测内存估算（MB）。
 /// 实测 WebKitWebProcess 约 330~365MB/格，加子进程本体取 450。
 const GRID_MEM_MB: u64 = 450;
-/// 创建宫格后系统至少保留的可用内存（MB）：低于此值宁降级格数也不把系统打穿
-/// （14G 机器 swap 吃满后开 9 宫格会全系统卡死）。
-const MEM_RESERVE_MB: u64 = 700;
 /// Two cells are a supported UI mode. Never silently require four native children.
 /// Keep the 1.8 GiB core reserve even when memory is low.
 const MIN_GRID: usize = 2;
@@ -2425,6 +2422,40 @@ fn mem_available_mb() -> Option<u64> {
         }
     }
     None
+}
+
+/// Reuse existing Grid children without charging their already-allocated RSS
+/// against free MemAvailable again. Only missing indices consume new budget.
+/// Use the SAME reserve for UI capacity and actual Grid creation.
+fn affordable_grid_count(available_mb: u64, existing: &[u32], requested: usize) -> usize {
+    let mut new_cells = available_mb.saturating_sub(CORE_MEMORY_RESERVE_MB) / GRID_MEM_MB;
+    let mut capacity = 0;
+    for index in 0..requested.min(MAX_GRID) {
+        if existing.contains(&(index as u32)) {
+            capacity += 1;
+        } else if new_cells > 0 {
+            new_cells -= 1;
+            capacity += 1;
+        } else {
+            break;
+        }
+    }
+    capacity
+}
+
+#[cfg(test)]
+mod grid_memory_budget_tests {
+    use super::{affordable_grid_count, CORE_MEMORY_RESERVE_MB};
+
+    #[test]
+    fn only_new_children_charge_available_memory() {
+        assert_eq!(affordable_grid_count(CORE_MEMORY_RESERVE_MB, &[], 4), 0);
+        assert_eq!(affordable_grid_count(CORE_MEMORY_RESERVE_MB + 900, &[], 4), 2);
+        assert_eq!(affordable_grid_count(CORE_MEMORY_RESERVE_MB, &[0, 1, 2, 3], 4), 4);
+        assert_eq!(affordable_grid_count(500, &[0, 1], 4), 2);
+        assert_eq!(affordable_grid_count(CORE_MEMORY_RESERVE_MB + 450, &[0, 1], 4), 3);
+        assert_eq!(affordable_grid_count(500, &[0, 2], 4), 1);
+    }
 }
 
 /// 创建宫格（2..=12）：每格 spawn 一个子进程并经 UDS 建 webview，默认打开引导页，
@@ -2452,29 +2483,29 @@ fn grid_url_needs_navigation(existing: Option<&str>, target: Option<&str>) -> bo
 
 pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Result<usize, String> {
     let requested = n.clamp(2, MAX_GRID);
-    let target = match mem_available_mb() {
-        Some(avail) => {
-            let affordable = (avail.saturating_sub(CORE_MEMORY_RESERVE_MB) / GRID_MEM_MB) as usize;
-            if affordable < MIN_GRID {
-                return Err(format!(
-                    "GRID_MEMORY_GUARD: 可用内存 {}MB，至少需要 {}MB 才能安全启动 {} 宫格并保护浏览器与文件管理器",
-                    avail, CORE_MEMORY_RESERVE_MB + MIN_GRID as u64 * GRID_MEM_MB, MIN_GRID
-                ));
-            }
-            let budgeted = affordable.min(MAX_GRID).min(requested);
-            if budgeted < requested {
-                eprintln!(
-                    "[create_grid] 内存预算守卫: 可用 {}MB，请求 {} 格 → 降级 {} 格",
-                    avail, requested, budgeted
-                );
-            }
-            budgeted
-        }
-        None => requested,
-    };
-
     let state = app.state::<AppState>();
     let manager = &state.grid_manager;
+    let existing = manager.indices();
+    let target = match mem_available_mb() {
+        Some(avail) => {
+            let affordable = affordable_grid_count(avail, &existing, requested);
+            if affordable < MIN_GRID {
+                return Err(format!(
+                    "GRID_MEMORY_GUARD: 可用内存 {}MB，至少需要 {}MB 预留空间加新建宫格内存；现有可复用宫格 {:?}",
+                    avail, CORE_MEMORY_RESERVE_MB, existing
+                ));
+            }
+            if affordable < requested {
+                eprintln!(
+                    "[create_grid] 内存预算守卫: 可用 {}MB，请求 {} 格 → 降级 {} 格（已复用 {:?}）",
+                    avail, requested, affordable, existing
+                );
+            }
+            affordable
+        }
+        None if (0..requested).all(|index| existing.contains(&(index as u32))) => requested,
+        None => return Err("GRID_MEMORY_UNKNOWN: 无法测量可用内存，拒绝新建宫格".into()),
+    };
     let mut newly_created: Vec<(u32, bool)> = Vec::new();
     let mut navigated_existing: Vec<(u32, String)> = Vec::new();
 
@@ -3351,9 +3382,9 @@ pub fn resource_stats_blocking(app: AppHandle) -> ResourceStats {
         hibernation_enabled,
         hibernated_count,
         hibernated_grid_count: app.state::<AppState>().grid_manager.hibernated_count(),
-        // 真实预算（可为 0/1，创建时才会保底 2）：前端据此提示"最多还能开 N 格"
-        grid_budget: (avail.saturating_sub(MEM_RESERVE_MB) / GRID_MEM_MB).min(MAX_GRID as u64)
-            as usize,
+        // The displayed limit agrees with create_grid and includes already
+        // running Grid children instead of charging their memory twice.
+        grid_budget: affordable_grid_count(avail, &grid_pids.iter().map(|(i, _)| *i).collect::<Vec<_>>(), MAX_GRID),
     }
 }
 
@@ -3398,9 +3429,9 @@ fn accepted_hibernation_scroll(snapshot: &serde_json::Value) -> Option<(f64, f64
     if snapshot.get("protected").and_then(serde_json::Value::as_bool) != Some(false) {
         return None;
     }
-    let x = snapshot.get("scrollX")?.as_f64()?.is_finite().then_some(snapshot["scrollX"].as_f64()?)?;
-    let y = snapshot.get("scrollY")?.as_f64()?.is_finite().then_some(snapshot["scrollY"].as_f64()?)?;
-    Some((x, y))
+    let x = snapshot.get("scrollX")?.as_f64()?;
+    let y = snapshot.get("scrollY")?.as_f64()?;
+    (x.is_finite() && y.is_finite()).then_some((x, y))
 }
 
 fn mem_total_mb() -> Option<u64> {
