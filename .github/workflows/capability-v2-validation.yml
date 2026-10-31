@@ -313,3 +313,40 @@ jobs:
         run: |
           df -h . /tmp
           du -sh src-tauri/target tauri-browser-tabs/target 2>/dev/null || true
+
+  # Independent Rust evidence: the historical frontend size gate may stop
+  # validate before it reaches cargo. This job does not waive that size gate;
+  # both jobs must pass before anyone may declare full validation complete.
+  native-regression:
+    needs: impact
+    if: needs.impact.outputs.mode == 'full'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Setup stable Rust with formatting support
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Verify Rust formatting
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
+          cargo fmt --manifest-path tauri-browser-tabs/Cargo.toml --all --check
+      - name: Check Rust with locked dependencies
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+      - name: Test Rust with locked dependencies
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
