@@ -3418,9 +3418,12 @@ fn hibernation_idle_window(available_mb: u64, total_mb: u64) -> std::time::Durat
 /// in one pass and immediately rebuilding them when the user returns.
 fn hibernation_batch_limits(available_mb: u64, total_mb: u64) -> (usize, usize) {
     match hibernation_idle_window(available_mb, total_mb).as_secs() {
-        30 => (4, 2),   // critical: reclaim more, still bounded
-        120 => (2, 1),  // warning
-        _ => (1, 1),    // normal: no burst teardown
+        // Critical: reclaim more, but never with an unbounded kill storm.
+        30 => (4, 2),
+        // Warning: preserve more page state between sweeps.
+        120 => (2, 1),
+        // Normal: no burst teardown.
+        _ => (1, 1),
     }
 }
 
