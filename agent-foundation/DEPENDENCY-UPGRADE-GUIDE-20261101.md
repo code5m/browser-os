@@ -57,7 +57,7 @@ GitHub `master` 基线在本次核对时为 `9607e260f86b15a730219c619ab5a20cc01
 
 ## 2. 六个项目的 Cargo 包与依赖选择矩阵
 
-> 下面的版本数字来自 2026-11-01 核对到的**上游源码 Manifest / 发布文档**。其中 A2A 分包可能有不同发布节奏；最终采用前必须验证 crates.io 可解析性。不应直接认为每个 GitHub HEAD 都已发布。
+> 下面的版本数字来自 2026-11-01 核对到的**上游源码 Manifest / 发布文档**。A2A 分包有不同发布节奏；Goose 的主分支版本与公开 crate 发布版本已有差异。最终采用前必须验证 crates.io 可解析性。不应直接认为每个 GitHub HEAD 都已发布。
 
 | 项目 / 作用 | 真实 package 名称（Rust import） | 上游核对版本 | 上游 MSRV | 许可证 / 使用判断 | 采用决策 |
 |---|---|---|---|---|---|
@@ -69,7 +69,7 @@ GitHub `master` 基线在本次核对时为 `9607e260f86b15a730219c619ab5a20cc01
 | A2A 核心类型 | `a2a-lf`（上游 lib/import 为 `a2a`） | 0.4.2（源码 Manifest） | 1.85 | Apache-2.0 | 当前不需要，暂缓 |
 | A2A 客户端 | `a2a-client-lf`（`a2a_client`） | 0.2.9（源码 Manifest） | 1.85 workspace | Apache-2.0 | 仅外部 Agent 互操作时考虑 |
 | CloudEvents | `cloudevents-sdk`（`cloudevents`） | 0.9.0 | 包 Manifest 未声明；**待实际编译确认** | Apache-2.0；README 标记 API WIP/不稳定 | 先保持轻量 JSON 投影 |
-| Goose 宿主参考 | `goose-agent` 等（Goose workspace 1.57.0；goose-agent 0.1.0-alpha.13） | 不作为整包升级目标 | Goose workspace 1.94.1 | Apache-2.0 | **只借鉴架构，不直接接入** |
+| Goose 宿主参考 | `goose-agent` 等（Goose workspace 1.57.0；goose-agent 主分支 0.1.0-alpha.13） | 不作为整包升级目标；Docs.rs 最近检索到发布包 0.1.0-alpha.12 | Goose workspace 1.94.1 | Apache-2.0 | **只借鉴架构，不直接接入** |
 
 ### 2.1 Rig：优先选择部件，不要安装整个编码智能体
 
