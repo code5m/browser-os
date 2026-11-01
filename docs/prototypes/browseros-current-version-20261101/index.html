@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>BrowserOS 当前版本产品设计 · 2026-11-01</title>
+<style>
+:root{--bg:#eef2f6;--panel:#fff;--line:#dbe3ec;--text:#152236;--muted:#6d7b8e;--blue:#3979e8;--blue-soft:#eaf2ff;--dark:#101923;--green:#20a36a;--warn:#bf7a19;--shadow:0 12px 32px rgba(34,50,74,.12);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--text)}
+.shell{display:grid;grid-template-columns:260px minmax(0,1fr);min-height:100vh}
+aside{position:sticky;top:0;height:100vh;background:#f8fafc;border-right:1px solid var(--line);padding:22px 16px;overflow:auto}
+.brand{font-weight:800;font-size:18px;letter-spacing:-.3px;margin-bottom:4px}.sub{font-size:12px;color:var(--muted);margin-bottom:20px}
+nav{display:grid;gap:4px}.nav-group{font-size:10px;text-transform:uppercase;color:#94a0af;letter-spacing:1.2px;margin:15px 10px 5px}
+nav a{color:#4b5c72;text-decoration:none;padding:8px 10px;border-radius:9px;font-size:13px}nav a:hover{background:#eaf1fa;color:#1f3550}
+main{padding:30px clamp(22px,4vw,58px) 80px;max-width:1520px;width:100%}
+.hero{background:linear-gradient(135deg,#172232,#233550);color:white;border-radius:22px;padding:34px;box-shadow:var(--shadow);margin-bottom:28px;position:relative;overflow:hidden}
+.hero:after{content:"";position:absolute;width:310px;height:310px;border-radius:50%;right:-90px;top:-140px;background:radial-gradient(circle,#679dfb55,transparent 70%)}
+.eyebrow{font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#93b9ff;font-weight:700}
+h1{font-size:34px;letter-spacing:-1.2px;margin:8px 0 8px}.hero p{max-width:850px;color:#d2dceb;line-height:1.7;margin:0}
+.badges{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}.badge{font-size:11px;padding:6px 9px;border-radius:999px;background:#ffffff12;border:1px solid #ffffff25}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.stat{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}.stat strong{display:block;font-size:23px}.stat span{font-size:11px;color:var(--muted)}
+section{scroll-margin-top:20px;margin:32px 0}.section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:12px}
+h2{font-size:22px;letter-spacing:-.5px;margin:0}.desc{color:var(--muted);font-size:12px;max-width:760px;line-height:1.7}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px;box-shadow:0 5px 18px rgba(40,60,90,.05);margin-bottom:14px}
+.card h3{margin:0 0 7px;font-size:16px}.meta{font-size:11px;color:var(--muted);margin-bottom:12px}.chip{display:inline-flex;align-items:center;gap:5px;padding:4px 7px;border-radius:999px;font-size:10px;background:var(--blue-soft);color:#2d61ad;margin-right:6px}.chip.code{background:#eef7f1;color:#297348}.chip.todo{background:#fff4e7;color:#9b6420}
+.shots{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.shot{border:1px solid var(--line);border-radius:12px;background:#f8fafc;overflow:hidden}.shot img{display:block;width:100%;height:auto}.caption{padding:9px 10px;font-size:11px;color:#617086;border-top:1px solid var(--line)}
+.spec{display:grid;grid-template-columns:180px 1fr;border-top:1px solid var(--line)}.spec div{padding:9px 0;font-size:12px;border-bottom:1px solid #edf1f5}.spec .k{color:var(--muted)}
+.ia{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}.ia>div{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}.ia b{font-size:12px}.ia ul{margin:9px 0 0;padding-left:17px;color:var(--muted);font-size:11px;line-height:1.8}
+.note{background:#fff7e8;border:1px solid #eeddbd;color:#745824;border-radius:12px;padding:13px 15px;font-size:12px;line-height:1.7}
+.footer{font-size:11px;color:var(--muted);margin-top:44px;padding-top:18px;border-top:1px solid var(--line)}
+@media(max-width:1100px){.shell{grid-template-columns:210px 1fr}.grid,.ia{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){.shell{display:block}aside{position:relative;width:auto;height:auto}.shots,.grid,.ia{grid-template-columns:1fr}main{padding:20px 14px 60px}.spec{grid-template-columns:120px 1fr}}
+</style>
+</head>
+<body>
+<div class="shell">
+<aside>
+  <div class="brand">BrowserOS</div>
+  <div class="sub">当前版本产品设计 · AS-IS<br/>2026-11-01</div>
+  <nav>
+    <div class="nav-group">Overview</div>
+    <a href="#overview">产品定位</a>
+    <a href="#ia">信息架构</a>
+    <a href="#shell">Browser Shell</a>
+    <div class="nav-group">Workspaces</div>
+    <a href="#home">主页</a>
+    <a href="#skills">技能</a>
+    <a href="#agent">Agent / Coding</a>
+    <a href="#database">Database</a>
+    <a href="#files">Files</a>
+    <a href="#git">Git</a>
+    <a href="#grid">Grid</a>
+    <a href="#graph">Knowledge Graph</a>
+    <a href="#tasks">定时任务</a>
+    <a href="#terminal">Terminal</a>
+    <a href="#content">内容库</a>
+    <a href="#clipboard">Clipboard</a>
+    <a href="#scripts">Scripts</a>
+    <a href="#settings">Settings</a>
+    <div class="nav-group">Baseline</div>
+    <a href="#visual">视觉系统</a>
+    <a href="#issues">当前问题</a>
+  </nav>
+</aside>
+<main>
+<section id="overview" class="hero">
+  <div class="eyebrow">Current Product Baseline · Screenshot + Code Verified</div>
+  <h1>BrowserOS 当前版本产品设计</h1>
+  <p>这不是未来 A+ 改版稿，而是把当前实机界面整理成一套可追溯的产品设计基线。26 张截图用于视觉与状态验证；最新 master 用于补充截图之后新增但尚未实机拍摄的能力。</p>
+  <div class="badges">
+    <span class="badge">26 张原始实机截图</span>
+    <span class="badge">origin/master@5df888df</span>
+    <span class="badge">Chrome Browser Shell</span>
+    <span class="badge">Light Utility + Dark Professional</span>
+  </div>
+</section>
+
+<div class="grid">
+  <div class="stat"><strong>14</strong><span>已覆盖核心页面 / 工作区</span></div>
+  <div class="stat"><strong>26</strong><span>截图已验证状态</span></div>
+  <div class="stat"><strong>1</strong><span>最新代码补充：Agent Runtime Lab</span></div>
+</div>
+
+<section id="ia">
+  <div class="section-head"><div><h2>当前信息架构</h2><div class="desc">当前版本由浏览器壳承载内部工作区和普通网页。一级能力很多，但产品形态已经清晰。</div></div></div>
+  <div class="ia">
+    <div><b>Browser Shell</b><ul><li>Tabs</li><li>Omnibox</li><li>Bookmarks</li><li>Status Bar</li></ul></div>
+    <div><b>Home</b><ul><li>Launcher</li><li>Shortcuts</li><li>Recent</li><li>Favorites</li></ul></div>
+    <div><b>Developer</b><ul><li>Agent</li><li>Git</li><li>Database</li><li>Terminal</li><li>Files</li></ul></div>
+    <div><b>AI / Automation</b><ul><li>Skills</li><li>Tasks</li><li>Scripts</li><li>Agent Runtime</li></ul></div>
+    <div><b>Knowledge / System</b><ul><li>Graph</li><li>Knowledge</li><li>Content</li><li>Settings</li></ul></div>
+  </div>
+</section>
+
+<section id="shell">
+  <div class="section-head"><div><h2>Browser Shell</h2><div class="desc">当前版最稳定的产品语言是 Chrome 风格浏览器壳。内部模块与网页共享同一套 Tab / Omnibox / Bookmark 结构。</div></div></div>
+  <div class="card">
+    <span class="chip">截图已验证</span>
+    <div class="spec">
+      <div class="k">层级</div><div>Window → Tab Strip → Navigation + Omnibox → Bookmarks → Workspace → Status Bar</div>
+      <div class="k">内部路由</div><div><code>browseros://home</code> / <code>browseros://agents</code> / <code>browseros://db</code> / <code>browseros://term</code> 等</div>
+      <div class="k">核心规则</div><div>网页与内部页签并存；本地路径和内部地址均从 Omnibox 进入；收藏栏长期可见。</div>
+    </div>
+  </div>
+</section>
+
+<section id="home">
+  <div class="section-head"><div><h2>Home / Launcher</h2><div class="desc">进入全部能力和恢复最近上下文的主页面。</div></div></div>
+  <div class="shots">
+    <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/01-image(20261101-105233).png"/><div class="caption">01 · 首页：主要工作区、快捷方式、最近访问</div></div>
+    <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/24-image(20261101-110758).png"/><div class="caption">24 · 首页 + 地址栏悬浮候选</div></div>
+  </div>
+</section>
+
+<section id="skills">
+  <div class="section-head"><div><h2>Skill Studio</h2><div class="desc">蓝图式技能定义、步骤、检查和权限运行配置。</div></div></div>
+  <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/02-image(20261101-105255).png"/><div class="caption">02 · Skill Studio：新技能概览</div></div>
+</section>
+
+<section id="agent">
+  <div class="section-head"><div><h2>Agent / Code Workspace</h2><div class="desc">当前版三栏开发工作区：资源管理器、编辑区、Agent，会话和工具输出位于右侧与底部。</div></div></div>
+  <div class="shots">
+    <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/03-image(20261101-105328).png"/><div class="caption">03 · 未打开项目空态</div></div>
+    <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/25-image(20261101-110810).png"/><div class="caption">25 · 项目已连接 / 本轮请求进行中</div></div>
+    <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/26-image(20261101-110832).png"/><div class="caption">26 · Agent 回复完成</div></div>
+  </div>
+  <div class="card" style="margin-top:12px">
+    <span class="chip code">代码已验证 · 截图未覆盖</span>
+    <h3>Agent Channel · Runtime Lab</h3>
+    <div class="meta">最新 master 新增 Native / Rig / Canary、benchmark、只读工具验证等实验配置；需要安装版补拍后进入截图基线。</div>
+  </div>
+</section>
+
+<section id="database">
+  <div class="section-head"><div><h2>Database Studio</h2><div class="desc">连接、Schema、SQL、事务、结果集、Inspector 和 AI Assistant 的专业数据库工作区。</div></div></div>
+  <div class="shots">
+    <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/04-image(20261101-105338).png"/><div class="caption">04 · SQL 工作区 + Inspector</div></div>
+    <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/22-image(20261101-110549).png"/><div class="caption">22 · 表数据浏览</div></div>
+    <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/23-image(20261101-110614).png"/><div class="caption">23 · SQL 查询 + 结果集</div></div>
+  </div>
+</section>
+
+<section id="files">
+  <div class="section-head"><div><h2>Files</h2><div class="desc">目录树、路径、列表和右键上下文菜单；Git、Terminal、Database 能力可从文件上下文进入。</div></div></div>
+  <div class="shots">
+    <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/05-image(20261101-105426-1).png"/><div class="caption">05 · 目录列表</div></div>
+    <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/08-image(20261101-105632).png"/><div class="caption">08 · 项目树 + 右键菜单</div></div>
+  </div>
+</section>
+
+<section id="git">
+  <div class="section-head"><div><h2>Git Workspace</h2><div class="desc">Changes / History / Branch / Diff / Inspector 已形成独立专业工具。</div></div></div>
+  <div class="shots">
+    <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/09-image(20261101-105709).png"/><div class="caption">09 · 提交历史与变更树</div></div>
+    <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/10-image(20261101-105719).png"/><div class="caption">10 · 双栏 Diff</div></div>
+  </div>
+</section>
+
+<section id="grid">
+  <div class="section-head"><div><h2>Grid</h2><div class="desc">控制层已验证；截图中的 4 格内容区为空，因此不把实际内容渲染状态标为已完成。</div></div></div>
+  <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/06-image(20261101-105507).png"/><div class="caption">06 · 4 格控制栏与空白工作区</div></div>
+</section>
+
+<section id="graph">
+  <div class="section-head"><div><h2>Knowledge Graph</h2><div class="desc">节点 / 边、查询、导入、索引重建和类型过滤；当前截图为空态。</div></div></div>
+  <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/07-image(20261101-105542-1).png"/><div class="caption">07 · 0 节点 / 0 边空态</div></div>
+</section>
+
+<section id="tasks">
+  <div class="section-head"><div><h2>Scheduled Tasks</h2><div class="desc">Shell、命令片段和 Agent 任务统一进入定时任务中心；任务默认关闭。</div></div></div>
+  <div class="shots">
+    <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/13-image(20261101-110211).png"/><div class="caption">13 · 定时任务空态 / 运行历史</div></div>
+    <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/14-image(20261101-110235).png"/><div class="caption">14 · 新建任务配置</div></div>
+  </div>
+</section>
+
+<section id="terminal">
+  <div class="section-head"><div><h2>Terminal</h2><div class="desc">独立终端页支持单 / 2 / 4 / 9 布局与多会话。</div></div></div>
+  <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/15-image(20261101-110255).png"/><div class="caption">15 · Terminal：环境信息与多布局控制</div></div>
+</section>
+
+<section id="content">
+  <div class="section-head"><div><h2>Browser-hosted Content</h2><div class="desc">普通网页和本地 Web App 与内部模块共用 Browser Shell。内容页自身不强制继承 BrowserOS 内部组件样式。</div></div></div>
+  <div class="shots">
+    <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/16-image(20261101-110320).png"/><div class="caption">16 · 专题书架</div></div>
+    <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/17-image(20261101-110343).png"/><div class="caption">17 · 全部视频</div></div>
+    <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/18-image(20261101-110407).png"/><div class="caption">18 · 继续观看 / 数据备份</div></div>
+    <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/19-image(20261101-110421-1).png"/><div class="caption">19 · 同步管理 / 离线任务中心</div></div>
+  </div>
+</section>
+
+<section id="clipboard">
+  <div class="section-head"><div><h2>Clipboard</h2><div class="desc">轻工具页：当前文本 + 本次会话历史。</div></div></div>
+  <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/20-image(20261101-110443).png"/><div class="caption">20 · Clipboard</div></div>
+</section>
+
+<section id="scripts">
+  <div class="section-head"><div><h2>Script Library</h2><div class="desc">脚本 / 历史双 Tab，新建脚本入口，当前为空态。</div></div></div>
+  <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/21-image(20261101-110454).png"/><div class="caption">21 · Script Library 空态</div></div>
+</section>
+
+<section id="settings">
+  <div class="section-head"><div><h2>Settings</h2><div class="desc">统一 AI、模型、外观、快捷键、性能、默认浏览器、模块管理、工程健康与关于。</div></div></div>
+  <div class="shots">
+    <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/11-image(20261101-105750).png"/><div class="caption">11 · AI 配置 / 模型 / 外观</div></div>
+    <div class="shot"><img src="../browseros-ui2-aplus-20261101/screenshots/12-image(20261101-105805).png"/><div class="caption">12 · 快捷键 / 性能 / 默认浏览器 / 工程健康</div></div>
+  </div>
+</section>
+
+<section id="visual">
+  <div class="section-head"><div><h2>当前视觉系统</h2><div class="desc">当前版本不是单一主题，而是两种密度体系共存。</div></div></div>
+  <div class="grid">
+    <div class="card"><h3>Light Utility Surface</h3><div class="meta">Home / Files / Skills / Settings / Tasks / Clipboard / Scripts / Graph</div><div class="desc">近白背景、浅灰蓝边框、系统蓝主操作，偏表单 / 列表 / 卡片。</div></div>
+    <div class="card"><h3>Dark Professional Surface</h3><div class="meta">Agent / Database / Git / Terminal</div><div class="desc">深蓝黑背景、高密度、明显面板分隔和状态色，适合长时间开发工作。</div></div>
+    <div class="card"><h3>Shared Browser Identity</h3><div class="meta">跨两种 Surface 的共同层</div><div class="desc">Tabs、Omnibox、Bookmarks、内部路由、窗口和状态逻辑提供共同产品身份。</div></div>
+  </div>
+</section>
+
+<section id="issues">
+  <div class="section-head"><div><h2>当前版已知问题</h2><div class="desc">这里只记录 AS-IS，不在当前版设计里偷偷替换成 A+ 方案。</div></div></div>
+  <div class="note">首页入口同级较多；浅色 / 深色专业工具存在视觉割裂；地址栏候选层级弱；Grid 与 Graph 空态引导不足；Settings 较长；Agent 控件密度较高；Database / Git 功能成熟但主次层级仍可统一。未来目标改版请单独查看 A+ 原型和 Comparison，不与本设计混写。</div>
+</section>
+
+<div class="footer">
+  BrowserOS Current Product Design · 2026-11-01 · 视觉证据来自 26 张原始实机截图；代码补充核对到 origin/master@5df888df。
+</div>
+</main>
+</div>
+</body>
+</html>
