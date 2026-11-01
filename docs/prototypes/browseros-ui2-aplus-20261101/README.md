@@ -1,3 +1,5 @@
+> **审核状态：NOT READY。** 独立原型目前仍存在浏览器交互、路由、任务默认安全策略和窗口布局缺陷。详见 [正式审核报告](../../product/BROWSEROS-UI2-DESIGN-AUDIT-20261101.md)。
+
 # BrowserOS UI 2.0 A+ Prototype
 
 分支：`browseros-ui2-aplus-20261101`
