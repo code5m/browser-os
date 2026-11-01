@@ -1,51 +1,46 @@
-# Read-only BrowserOS impact and reuse audit
+# BrowserOS Agent foundation — source-aware optimization audit
 
-Baseline: \`code5m/browser-os\` \`master\` at
-\`9607e260f86b15a730219c619ab5a20cc01efe65\`.
-No pre-existing files were edited. This is **analysis**, not an assertion that
-the suggested refactoring is already done.
+Baseline: code5m/browser-os master @ 9607e260f86b15a730219c619ab5a20cc01efe65 (2026-11-01).
+All items below are **read-only findings and proposals**; no existing application code was modified.
 
-## Existing facts confirmed from source/README
+## Confirmed implementation facts and exact migration candidates
 
-| Existing path (master) | What exists now | Potential future optimization (not executed) |
-|---|---|---|
-| \`src/capabilities/agent/README.md\` and \`state/useAgentStore.ts\` | Legacy Agent definition/validation/readonly UI; \`agent_chat\`, \`agent_run\`, \`agent_install\` execution disabled | Keep definition registry, extract a single Agent Session/Task Public API; avoid duplicating a second runtime in the legacy store. |
-| \`src-tauri/src/capabilities/agent/agent.rs\` and \`agent_memory.rs\` | Native agent parsing/policy, memory KV | Reuse validation and sensitive-data protections; prevent parallel AgentDef and memory policy schemas. |
-| \`src-tauri/src/capabilities/agent/coding.rs\` | Working coding session, scoped proposals, reviews, cancellation, and workspace locking | Prefer adapters to current review-before-write protocol; move session/tool/event vocabulary to common module later instead of a rewrite. Measure lock hold time and avoid lock across async work; distinguish cancellation intent from externally executed effects. |
-| \`src-tauri/src/capabilities/agent/local_provider.rs\` | Fixed localhost Ollama adapter using \`std::net::TcpStream\` | Consider asynchronous provider transport **only with benchmarks**: blocking socket work can delay threads; preserve bound/timeout/localhost restrictions. |
-| \`src-tauri/src/capabilities/agent/coding_lsp.rs\` | Rust LSP isolation and per-project consent/diagnostics | Preserve sandbox and per-project approval; audit process lifecycle and persistent-session proposal against isolation assumptions; no blanket LSP process reuse. |
-| \`src/capabilities/agent/ui/CodingWorkbench.vue\` | Coding editor UI tracks buffers, session, tools, approvals, LSP and project epoch | Separate composables around lifecycle, file buffers and agent events; prefer single task-scope cancellation and late-response revision check. Do not break Monaco unsaved buffer semantics. |
-| \`src-tauri/src/mcp.rs\` | Restricted MCP capability registry and policy, not a general running MCP server | Reuse existing allowlist/path/URL policy; do not create a second competing source of tool authority. |
-| \`src/capabilities/agent/README.md\` | Legacy Agent and Coding Agent have different execution contracts | Normalize on one channel with specialized strategies, not separate executors plus UI chats. |
+| Priority | Existing path / evidence | Observed behavior | Future improvement, separately authorized |
+|---|---|---|---|
+| P0 | src-tauri/src/capabilities/agent/coding.rs:808-851, 987-1040 | Read-only tree/read/search bypass a workspace mutation lock, but chat mutates its session while holding a per-workspace mutex; the model provider is invoked on this path. | Separate session-state mutations from long model transport; use per-session revision/CAS and one task execution lease while preserving existing file consistency and read-only bypass. Benchmark before changing locks. |
+| P0 | src-tauri/src/capabilities/agent/coding.rs:823-850, 1004-1030 | Running session and cancellation flag are tracked by workspace in a global map; serialization is per-workspace. | Clarify lifecycle ownership: Agent Task owns cancellation, workspace owns file revision. Stale results must be rejected after pause/cancel. |
+| P0 | src/capabilities/agent/README.md and state/useAgentStore.ts | Legacy Agent entry is readonly/guarded while CodingWorkbench has real coding service execution. | One Agent Channel owner: adapt legacy definitions and the existing Coding Agent, do not implement competing execution engines or enable absent commands. |
+| P1 | src/capabilities/agent/ui/CodingWorkbench.vue (330 lines, ~52 KB) | A single component tracks buffers, project epochs, resources, LSP requests, session recovery, model streaming, MCP approval and resizing. | Split by responsibility into workspace state, agent session state, editor model service and protocol adapters; retain one state owner and add stale-response tests. |
+| P1 | src/capabilities/agent/ui/CodingWorkbench.vue:229-256 | send() builds an authorized context, receives streaming chunks, checks project epoch and supports cancelRun(). | Keep review/recovery semantics; standardize bounded events with sequence/revision checks, protect against remount duplicate sends, and measure UI render pressure. |
+| P1 | src-tauri/src/capabilities/agent/local_provider.rs:43-88 | Local Ollama adapter uses blocking TcpStream; connect timeout is 2s and read timeout is 25s. | Measure call-site threading and GUI impact; use a dedicated blocking worker or async transport only if benchmark justifies it while preserving loopback and limits. |
+| P1 | src-tauri/src/capabilities/agent/coding_lsp.rs:25-26, 760-905 | Persistent LSP session cache already exists: max 2 and 300s idle TTL with per-session JSON-RPC serialization. | **Do not reimplement persistent sessions.** Benchmark warm/cold latency, cache hit rate, RSS, respawns; preserve scratch sandbox, source hash and project-level consent. |
+| P1 | src-tauri/src/mcp.rs and mcp_server.rs:213-289 | MCP registry and allowlist exist; feature-gated stdio server binds two readonly introspection operations; other tools fail closed. | Reuse one policy owner. Official RMCP belongs in a transport adapter, not a second registry; keep unbound operations denied. |
+| P2 | src/capabilities/agent/public.ts and manifest.ts | Capability Public API currently re-exports store/manifest and lists optional browser/git/database dependencies. | Add a narrow Agent Channel API only after explicit migration approval. Domain owners supply approved tools rather than exposing internals. |
+| P2 | src/capabilities/agent/README.md vs state/useAgentStore.ts | README still describes co-owned Skill state while store comments document Skill migration to its own store. | Align outdated documentation with source, without changing current ownership or runtime behavior. |
+| P3 | AGENTS.md and PROJECT-RULES.md | Native WebView layout and visibility follow locked-down rules and real GUI acceptance gates. | Leave native GUI untouched in this branch. Future profiling should cover Grid IPC queue, WebView memory RSS and installed-client cold launch. |
 
-## Red lines / excluded changes
+## Single ownership model for future integration
 
-- No edits to \`src-tauri\`, \`src\`, \`tauri-browser-tabs\`, CI workflows or existing manifests.
-- No new Tauri commands, IPC capability permissions, WebView sizing/visibility,
-  terminal commands, local project execution or GUI layout changes.
-- No removal of existing Coding Agent, MCP, or LSP safety checks.
-- No automatic editing of other branches or merge into \`master\`.
-- No unapproved activation of old \`agent_chat/agent_run/agent_install\`.
+- Agent Channel: task/session lifecycle, event stream, cancellation, user approval, durable recovery.
+- Model Adapter: model negotiation, bounded transport, errors and token usage; owns no terminal/file side effects.
+- Tool Registry: catalog and policy metadata only; adapters call each existing capability's Public API.
+- Browser/Grid: tab/navigation and WebView lifecycle; Agent only receives explicitly authorized context.
+- Editor/LSP: text model, buffer hashes, review/diff; Agent only proposes changes.
+- Terminal: process supervisor and command confirmation; never let Agent silently spawn.
+- Git/Database: existing business owners; readonly context first, explicit approval for mutation.
 
-## Prioritized future work (requires its own separate approval)
+## Non-negotiable acceptance matrix
 
-P0 — Validate new crate with real Cargo, add canonical model/tool/task schema,
-permission broker and per-task execution lease, secure state+event persistence.
+1. Unique Owner and stable Public API, no internal cross-module access.
+2. All native commands, tasks and processes have clear ownership and lifecycle.
+3. Writes, commands, outbound effects and retained context require scoped explicit authorization.
+4. Isolated tests, fault injection, cancellation/restart tests and real installed GUI verification are separate gates.
+5. Performance improvement claims need before/after evidence; documentation must match code.
 
-P1 — Reconcile old Agent definitions and active Coding Agent without creating
-duplicate owners; build adapter toward current CodingWorkbench source of truth,
-and approval flow before exposing any tools.
+## Current prototype limitations and red lines
 
-P2 — Benchmark Grid IPC, WebView lifecycle and GUI stalls alongside async
-provider/LSP workers; establish baseline; add regression acceptance for
-multi-tab, editor sessions and package cold-start.
-
-P3 — Add official MCP and ACP support as adapters, A2A only if external agent
-collaboration becomes a product requirement. Keep vendor/model SDK swappable.
-
-## Known gaps in this prototype
-
-In-memory state, replay, no real provider, no MCP transport, no ACP/A2A wire
-compatibility, no authentication, no real FS/shell/browser tools, no external
-side-effect guarantees, no task actor/lease, no real model loop, no installed GUI
-validation. Describing it as production-ready would be incorrect.
+- In-memory tasks and journal; JSON snapshot not an encrypted durable transactional store.
+- No actual Rig/RMCP/ACP implementation or authenticated principal-bound approval yet.
+- External effects can finish after cancellation; enforce idempotency/reconciliation before release.
+- GitHub-only changes are not evidence of successful Cargo compilation.
+- Modify only agent-foundation/ on the independent branch; no app wiring, no master/perf/CI changes.
