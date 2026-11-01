@@ -2,7 +2,9 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { languageForPath } from '../model/codingWorkbench.mjs';
 import {completionItems,definitionRanges,diagnosticMarkers,editorRange,plainHover,mappedDefinitionTargets} from '../model/codingLsp.mjs';
-import {ensureEditorWorkers,ensureTypeScriptServices,syncOpenScriptModels,retainEditorServices} from '../model/codingEditorServices.mjs';
+import {ensureTypeScriptServices,syncOpenScriptModels,retainEditorServices} from '../model/codingEditorServices.mjs';
+import {loadMonacoEditor} from '../../../shared/editor/loadMonaco.mjs';
+import {createDocumentModel} from '../../../shared/editor/documentModel.mjs';
 const releaseServices=retainEditorServices();
 const props=defineProps<{path:string;modelValue:string;scope?:string;openPaths?:string[];original?:string;diff?:boolean;readOnly?:boolean;lspRequest?:(method:string,path:string,content:string,line:number,character:number,cancelled?:()=>boolean)=>Promise<any>;navigateDefinition?:(target:any)=>Promise<boolean>;navigateOpenBuffer?:(target:any)=>Promise<boolean>;location?:{path:string;line:number;column:number;id:number}}>();
 const emit=defineEmits<{(event:'update:modelValue',value:string):void;(event:'edit',value:{path:string;content:string;scope?:string}):void;(event:'save'):void;(event:'diagnostics',value:string[]):void;(event:'ready',value:boolean):void}>();
@@ -59,7 +61,7 @@ async function mountEditor(){
   if(disposed||version!==generation)return;
   model=models.get(props.path);
   if(!model&&retiringModels.has(props.path)){model=retiringModels.get(props.path);retiringModels.delete(props.path);models.set(props.path,model);}
-  if(!model){model=monaco.editor.createModel(props.modelValue,languageForPath(props.path),monaco.Uri.from({scheme:'browseros-coding',authority:namespace,path:'/'+props.path}));models.set(props.path,model);}
+  if(!model){model=createDocumentModel(monaco,{path:props.path,content:props.modelValue,language:languageForPath(props.path),namespace,scheme:'browseros-coding'});models.set(props.path,model);}
   else if(model.getValue()!==props.modelValue)model.setValue(props.modelValue);
   mountedPath=props.path;
   const options={theme:'vs-dark',automaticLayout:true,editContext:false,fontSize:14,fontFamily:'"Cascadia Code", "Fira Code", monospace',minimap:{enabled:false},scrollBeyondLastLine:false,readOnly:props.readOnly,tabSize:2,wordWrap:'off',padding:{top:12},bracketPairColorization:{enabled:true}};
@@ -82,15 +84,7 @@ async function mountEditor(){
 }
 onMounted(async()=>{
   try{
-    await ensureEditorWorkers();
-    monaco=await import('monaco-editor/editor/editor.api.js');
-    // TypeScript's worker manager loads editor contributions lazily. Their
-    // singleton services must exist before the first standalone editor starts.
-    await Promise.all([import('monaco-editor/editor/contrib/codelens/browser/codeLensCache.js'),import('monaco-editor/editor/common/services/treeViewsDndService.js'),import('monaco-editor/editor/contrib/documentSymbols/browser/outlineModel.js')]);
-    await Promise.all([import('monaco-editor/features/gotoLine/register.js'),import('monaco-editor/features/quickCommand/register.js')]);
-    await Promise.all([import('monaco-editor/editor/contrib/find/browser/findController.js'),import('monaco-editor/editor/contrib/folding/browser/folding.js'),import('monaco-editor/editor/contrib/bracketMatching/browser/bracketMatching.js'),import('monaco-editor/editor/contrib/cursorUndo/browser/cursorUndo.js'),import('monaco-editor/editor/contrib/multicursor/browser/multicursor.js')]);
-    await Promise.all([import('monaco-editor/editor/contrib/suggest/browser/suggestController.js'),import('monaco-editor/editor/contrib/hover/browser/hoverContribution.js'),import('monaco-editor/editor/contrib/gotoSymbol/browser/goToCommands.js'),import('monaco-editor/editor/contrib/rename/browser/rename.js'),import('monaco-editor/editor/contrib/format/browser/formatActions.js')]);
-    await Promise.all([import('monaco-editor/languages/definitions/typescript/register.js'),import('monaco-editor/languages/definitions/javascript/register.js'),import('monaco-editor/languages/definitions/rust/register.js'),import('monaco-editor/languages/definitions/python/register.js'),import('monaco-editor/languages/definitions/sql/register.js'),import('monaco-editor/languages/definitions/markdown/register.js'),import('monaco-editor/languages/definitions/html/register.js'),import('monaco-editor/languages/definitions/css/register.js'),import('monaco-editor/languages/definitions/java/register.js'),import('monaco-editor/languages/definitions/shell/register.js')]);
+    monaco=await loadMonacoEditor();
     markerSubscription=monaco.editor.onDidChangeMarkers(()=>{if(model)emit('diagnostics',monaco.editor.getModelMarkers({resource:model.uri}).map((m:any)=>`${m.startLineNumber}:${m.startColumn} ${m.message}`));});
     languageProviders.push(monaco.languages.registerCompletionItemProvider('rust',{triggerCharacters:['.',':'],provideCompletionItems:async(target:any,position:any,_context:any,token:any)=>{
       try{const result=await languageRequest('completion',target,position,token);const word=target.getWordUntilPosition(position);return {suggestions:completionItems(result,{startLineNumber:position.lineNumber,endLineNumber:position.lineNumber,startColumn:word.startColumn,endColumn:word.endColumn})};}catch{return {suggestions:[]};}

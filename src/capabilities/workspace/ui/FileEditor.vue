@@ -2,6 +2,7 @@
 import { useFileStore } from "../state/useFileStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { relocateBrowser } from "../../../composables/browserNav";
+import MonacoTextEditor from "../../../shared/editor/MonacoTextEditor.vue";
 
 const ws = useFileStore();
 const layout = useLayoutStore();
@@ -26,12 +27,12 @@ function closeEditor() {
       </div>
     </div>
     <div v-if="ws.mdPreview" class="md-preview" v-html="ws.mdHtml"></div>
-    <textarea
+    <MonacoTextEditor
       v-else
-      :value="ws.fileContent" @input="ws.setFileContent(($event.target as HTMLTextAreaElement).value)"
-      class="file-editor"
-      spellcheck="false"
-      placeholder="文件内容..."
-    ></textarea>
+      :path="ws.filePath"
+      :model-value="ws.fileContent"
+      @update:model-value="ws.setFileContent"
+      @save="ws.saveFile"
+    />
   </div>
 </template>

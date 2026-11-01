@@ -7,6 +7,7 @@ import { useFileStore } from "../state/useFileStore";
 import { useWorkbenchStore } from "../../../stores/useWorkbenchStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import FileTreeNode from "./FileTreeNode.vue";
+import MonacoTextEditor from "../../../shared/editor/MonacoTextEditor.vue";
 import { requestLocalGitIntent, type LocalGitMode } from "../../../composables/gitLocalNavigation";
 import { requestIdeaProjectScan } from "../../../composables/ideaProjectNavigation";
 import { Crosshair, ChevronsDownUp, ChevronsUpDown, FilePlus, FolderPlus, RefreshCw } from "@lucide/vue";
@@ -141,13 +142,14 @@ onMounted(async () => {
           class="md-preview fedit-body"
           v-html="ws.inlineHtml"
         ></div>
-        <textarea
+        <MonacoTextEditor
           v-else
-          :value="ws.inlineText" @input="ws.setInlineText(($event.target as HTMLTextAreaElement).value)"
-          class="file-editor fedit-body"
-          spellcheck="false"
-          placeholder="文件内容..."
-        ></textarea>
+          :path="ws.inlineFile"
+          :model-value="ws.inlineText"
+          class="fedit-body"
+          @update:model-value="ws.setInlineText"
+          @save="ws.saveInline"
+        />
       </template>
       <template v-else-if="ws.previewDir">
         <div class="fedit-head">
