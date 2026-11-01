@@ -142,34 +142,26 @@ jobs:
         run: node scripts/check-xterm-bundle.mjs
       - name: Terminal Chromium DOM differential tests
         if: needs.impact.outputs.mode == 'full'
-        run: node scripts/check-xterm-dom.mjs
-      - name: Early frozen frontend size gate
+        run: dbus-run-session -- node scripts/check-xterm-dom.mjs
+      # Historical M0 overrun stays visible. Only the previously approved
+      # finite Monaco budget and a fresh same-run master comparison can pass.
+      - name: Audited frontend size (M0 history, Monaco budget, master delta)
         if: needs.impact.outputs.mode == 'full'
+        env:
+          SIZE_BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || 'origin/master' }}
         run: |
-          python3 - <<'PY'
-          import importlib.util, json
-          from pathlib import Path
-          spec=importlib.util.spec_from_file_location('metrics','scripts/measure-build-metrics.py')
-          metrics=importlib.util.module_from_spec(spec);spec.loader.exec_module(metrics)
-          current={'dist':metrics.collect_dist(Path('dist'))}
-          baseline_path=Path('logs/m0-build-metrics/build-metrics-052b18a.json')
-          baseline=json.loads(baseline_path.read_text())
-          verdict=metrics.compare(current,baseline)
-          evidence={'baseline_file':str(baseline_path),'baseline_bytes':baseline['dist']['total_bytes'],
-                    'current':current,'comparison':verdict}
-          report=json.dumps(evidence,indent=2)
-          print(report)
-          Path('/tmp/browseros-frontend-size-budget.json').write_text(report+'\n')
-          if verdict['growth_warning']:
-              print(f"::warning title=Frontend size budget::Growth {verdict['deltas']['total_bytes_pct']}% reaches advisory {verdict['growth_warning_pct']}%; hard stop above {verdict['growth_limit_pct']}%.")
-          raise SystemExit(1 if verdict['exceeds_growth_limit'] else 0)
-          PY
+          python3 scripts/check-frontend-size-dual-budget.py --self-test
+          python3 scripts/check-frontend-size-dual-budget.py --master-ref "$SIZE_BASE_REF" \
+            --out /tmp/browseros-frontend-size-budget.json \
+            --editor-out /tmp/browseros-editor-budget-audit.json
       - name: Upload frontend size budget evidence
         if: always() && needs.impact.outputs.mode == 'full'
         uses: actions/upload-artifact@v4
         with:
           name: browseros-frontend-size-budget-${{ github.run_id }}
-          path: /tmp/browseros-frontend-size-budget.json
+          path: |
+            /tmp/browseros-frontend-size-budget.json
+            /tmp/browseros-editor-budget-audit.json
           if-no-files-found: warn
       - name: Semantic dependency and bundle evidence
         id: semantic_evidence
@@ -202,7 +194,15 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked
       - name: Packaged GUI cold-start acceptance
         if: needs.impact.outputs.mode == 'full'
-        run: dbus-run-session -- xvfb-run -a bash scripts/verify-installed-client.sh --build
+        run: dbus-run-session -- xvfb-run -a bash scripts/verify-installed-client.sh --install --resource-minutes 5
+      - name: Upload installed-client sustained resource evidence
+        if: always() && needs.impact.outputs.mode == 'full'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-installed-resource-${{ github.run_id }}
+          path: /tmp/browseros-installed-resource.json
+          if-no-files-found: warn
+          retention-days: 30
       - name: Module and installer footprint evidence
         if: needs.impact.outputs.mode == 'full'
         run: |
@@ -305,3 +305,52 @@ jobs:
         run: |
           df -h . /tmp
           du -sh src-tauri/target tauri-browser-tabs/target 2>/dev/null || true
+
+  # Independent Rust evidence: the historical frontend size gate may stop
+  # validate before it reaches cargo. This job does not waive that size gate;
+  # both jobs must pass before anyone may declare full validation complete.
+  native-regression:
+    needs: impact
+    if: needs.impact.outputs.mode == 'full'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Setup stable Rust with formatting support
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      # The native Rust job runs independently of the size gate, but Tauri's
+      # generate_context! requires the real production frontendDist at build time.
+      - name: Setup Node for native frontendDist
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Build real frontend assets for native checks
+        run: |
+          npm ci
+          npm run build
+          test -f dist/index.html
+      - name: Verify Rust formatting
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
+          cargo fmt --manifest-path tauri-browser-tabs/Cargo.toml --all --check
+      - name: Check Rust with locked dependencies
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+      - name: Test Rust with locked dependencies
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked

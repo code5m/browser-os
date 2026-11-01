@@ -4,6 +4,7 @@
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashMap,
     fs,
     io::{BufRead, BufReader, Read, Write},
     os::{
@@ -15,14 +16,41 @@ use std::{
     },
     path::{Component, Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
-    sync::{mpsc, Mutex},
+    sync::{mpsc, Arc, Mutex, OnceLock},
     thread,
     time::{Duration, Instant},
 };
 
 const LIMIT: usize = 1024 * 1024;
-const DOCUMENT: &str = "file:///work/document.rs";
-static REQUEST_LOCK: Mutex<()> = Mutex::new(());
+const MAX_CACHED_SESSIONS: usize = 2;
+const SESSION_IDLE_TTL: Duration = Duration::from_secs(300);
+static SESSION_CACHE: OnceLock<Mutex<HashMap<String, Arc<Mutex<CachedSession>>>>> = OnceLock::new();
+static SESSION_SWEEPER: OnceLock<()> = OnceLock::new();
+
+fn session_expired(last_used: Instant, now: Instant) -> bool {
+    now.saturating_duration_since(last_used) >= SESSION_IDLE_TTL
+}
+
+fn ensure_session_sweeper() {
+    SESSION_SWEEPER.get_or_init(|| {
+        thread::spawn(|| loop {
+            thread::sleep(Duration::from_secs(30));
+            let now = Instant::now();
+            let mut cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
+            cache.retain(|_, entry| {
+                // A caller's Arc keeps an in-flight session alive; the entry lock
+                // also protects a request that is already using its JSON-RPC stream.
+                if Arc::strong_count(entry) > 1 {
+                    return true;
+                }
+                match entry.try_lock() {
+                    Ok(session) => !session_expired(session.last_used, now),
+                    Err(_) => true,
+                }
+            });
+        });
+    });
+}
 
 fn profiles() -> Vec<PathBuf> {
     let Some(home) = std::env::var_os("HOME") else {
@@ -180,8 +208,139 @@ struct Session {
     input: ChildStdin,
     rx: mpsc::Receiver<Result<Value, String>>,
     deadline: Instant,
+    next_request_id: u64,
     diagnostics: Value,
     document_uri: String,
+}
+
+struct CachedDocument {
+    version: i64,
+    content_hash: String,
+}
+
+struct CachedSession {
+    // Field order matters: terminate the sandbox before removing its snapshots.
+    session: Session,
+    _scratch: Scratch,
+    workspace_root: PathBuf,
+    graph_fingerprint: String,
+    documents: HashMap<String, CachedDocument>,
+    last_used: Instant,
+}
+
+fn session_cache() -> &'static Mutex<HashMap<String, Arc<Mutex<CachedSession>>>> {
+    SESSION_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cache_key(root: &Path, server: &Path, scope: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(root.as_os_str().as_encoded_bytes());
+    digest.update([0]);
+    digest.update(server.as_os_str().as_encoded_bytes());
+    digest.update([0]);
+    digest.update(scope.as_bytes());
+    format!("{:x}", digest.finalize())
+}
+
+fn graph_fingerprint(snapshots: &[(String, String)], active_path: &str) -> String {
+    let mut digest = Sha256::new();
+    for (path, content) in snapshots {
+        if path == active_path {
+            continue;
+        }
+        digest.update((path.len() as u64).to_le_bytes());
+        digest.update(path.as_bytes());
+        digest.update(Sha256::digest(content.as_bytes()));
+    }
+    format!("{:x}", digest.finalize())
+}
+
+fn remove_cached_session(key: &str, target: &Arc<Mutex<CachedSession>>) {
+    let mut cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
+    if cache
+        .get(key)
+        .is_some_and(|entry| Arc::ptr_eq(entry, target))
+    {
+        cache.remove(key);
+    }
+}
+
+fn insert_cached_session(
+    key: String,
+    session: CachedSession,
+) -> Result<Arc<Mutex<CachedSession>>, String> {
+    let mut cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(existing) = cache.get(&key) {
+        return Ok(existing.clone());
+    }
+    let now = Instant::now();
+    cache.retain(|_, entry| {
+        if Arc::strong_count(entry) > 1 {
+            return true;
+        }
+        match entry.try_lock() {
+            Ok(guard) => !session_expired(guard.last_used, now),
+            Err(_) => true,
+        }
+    });
+    if cache.len() >= MAX_CACHED_SESSIONS {
+        let candidate = cache
+            .iter()
+            .filter(|(_, entry)| Arc::strong_count(entry) == 1)
+            .filter_map(|(key, entry)| {
+                entry
+                    .try_lock()
+                    .ok()
+                    .map(|guard| (key.clone(), guard.last_used))
+            })
+            .min_by_key(|(_, last_used)| *last_used)
+            .map(|(key, _)| key);
+        if let Some(candidate) = candidate {
+            cache.remove(&candidate);
+        }
+    }
+    if cache.len() >= MAX_CACHED_SESSIONS {
+        return Err("LSP_SESSION_LIMIT".into());
+    }
+    let entry = Arc::new(Mutex::new(session));
+    cache.insert(key, entry.clone());
+    Ok(entry)
+}
+
+impl CachedSession {
+    fn update_document(&mut self, path: &str, uri: &str, content: &str) -> Result<(), String> {
+        let content_hash = format!("{:x}", Sha256::digest(content.as_bytes()));
+        let previous = self.documents.get(path);
+        let version = previous.map_or(1, |doc| doc.version.saturating_add(1));
+        self.session.document_uri = uri.to_string();
+        if previous.is_none() {
+            self.session.renew_deadline();
+            self.session.send(json!({
+                "jsonrpc":"2.0","method":"textDocument/didOpen",
+                "params":{"textDocument":{
+                    "uri":uri,"languageId":"rust","version":version,"text":content
+                }}
+            }))?;
+        } else if previous.is_some_and(|doc| doc.content_hash != content_hash) {
+            self.session.renew_deadline();
+            self.session.send(json!({
+                "jsonrpc":"2.0","method":"textDocument/didChange",
+                "params":{
+                    "textDocument":{"uri":uri,"version":version},
+                    "contentChanges":[{"text":content}]
+                }
+            }))?;
+        }
+        self.documents.insert(
+            path.to_string(),
+            CachedDocument {
+                version,
+                content_hash,
+            },
+        );
+        self.last_used = Instant::now();
+        Ok(())
+    }
 }
 impl Drop for Session {
     fn drop(&mut self) {
@@ -193,6 +352,20 @@ impl Drop for Session {
     }
 }
 impl Session {
+    fn renew_deadline(&mut self) {
+        self.deadline = Instant::now() + Duration::from_secs(12);
+    }
+
+    fn is_alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+
+    fn rpc_next(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        let id = self.next_request_id;
+        self.next_request_id = self.next_request_id.saturating_add(1);
+        self.rpc(id, method, params)
+    }
+
     fn await_document(&mut self) -> Result<(), String> {
         loop {
             let value = self
@@ -301,7 +474,7 @@ impl Session {
         unsafe {
             cmd.pre_exec(|| {
                 for (resource, value) in [
-                    (libc::RLIMIT_CPU, 10),
+                    (libc::RLIMIT_CPU, 180),
                     (libc::RLIMIT_AS, 2 * 1024 * 1024 * 1024),
                     (libc::RLIMIT_FSIZE, 16 * 1024 * 1024),
                     (libc::RLIMIT_NOFILE, 256),
@@ -351,8 +524,10 @@ impl Session {
                 input,
                 rx,
                 deadline: Instant::now() + Duration::from_secs(12),
+                next_request_id: 2,
                 diagnostics: json!([]),
-                document_uri: DOCUMENT.into(),
+                // Set to the validated /work URI before any LSP request.
+                document_uri: String::new(),
             }),
             Err(error) => {
                 unsafe {
@@ -395,6 +570,7 @@ impl Session {
         Ok(())
     }
     fn rpc(&mut self, id: u64, method: &str, params: Value) -> Result<Value, String> {
+        self.renew_deadline();
         self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
         loop {
             let value = self
@@ -419,6 +595,24 @@ impl Session {
 
 pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
     let available = profiles();
+    if request["action"] == "lsp_close" {
+        let root = root.canonicalize().map_err(|_| "LSP_ROOT_INVALID")?;
+        let mut cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
+        let keys: Vec<String> = cache
+            .iter()
+            .filter_map(|(key, entry)| {
+                entry
+                    .lock()
+                    .ok()
+                    .filter(|session| session.workspace_root == root)
+                    .map(|_| key.clone())
+            })
+            .collect();
+        for key in &keys {
+            cache.remove(key);
+        }
+        return Ok(json!({"closed_sessions":keys.len()}));
+    }
     if request["action"] == "lsp_status" {
         return Ok(
             json!({"profiles":available.iter().map(|path|json!({"path":path,"name":"Rust · isolated source document"})).collect::<Vec<_>>(),"sandbox_available":Path::new("/usr/bin/bwrap").is_file()}),
@@ -427,7 +621,6 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
     if request["approved"] != true {
         return Err("LSP_APPROVAL_REQUIRED".into());
     }
-    let _guard = REQUEST_LOCK.try_lock().map_err(|_| "LSP_BUSY")?;
     let method = match request["method"].as_str() {
         Some("completion") => "textDocument/completion",
         Some("definition") => "textDocument/definition",
@@ -435,6 +628,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
         Some("diagnostics") => "textDocument/documentSymbol",
         _ => return Err("LSP_METHOD_DENIED".into()),
     };
+    let root = root.canonicalize().map_err(|_| "LSP_ROOT_INVALID")?;
     let server = PathBuf::from(
         request["server_path"]
             .as_str()
@@ -447,7 +641,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
     }
     let path = request["path"].as_str().ok_or("LSP_DOCUMENT_REQUIRED")?;
     let content = request["content"].as_str().ok_or("LSP_DOCUMENT_REQUIRED")?;
-    super::coding::validate_lsp_document(root, path, content)?;
+    super::coding::validate_lsp_document(&root, path, content)?;
     let line = request["line"]
         .as_u64()
         .filter(|n| *n < 100000)
@@ -463,23 +657,18 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
     if character as usize > text_line.encode_utf16().count() {
         return Err("LSP_POSITION_INVALID".into());
     }
-    let scratch_path = std::env::temp_dir().join(format!("browseros-lsp-{}", uuid::Uuid::new_v4()));
-    fs::DirBuilder::new()
-        .mode(0o700)
-        .create(&scratch_path)
-        .map_err(|_| "LSP_SCRATCH_FAILED")?;
-    let scratch = Scratch(scratch_path);
+
     let entry = request["module_root"].as_str();
     let (root_module, document_path, mut snapshots) = if let Some(entry) = entry {
         if request["approved_module_sources"] != true {
             return Err("LSP_MODULE_APPROVAL_REQUIRED".into());
         }
-        super::coding::validate_lsp_document(root, entry, "")?;
+        super::coding::validate_lsp_document(&root, entry, "")?;
         let directory = Path::new(entry).parent().ok_or("LSP_MODULE_ROOT_INVALID")?;
         if !Path::new(path).starts_with(directory) {
             return Err("LSP_DOCUMENT_OUTSIDE_MODULE_ROOT".into());
         }
-        let mut files = super::coding::lsp_module_sources(root, entry)?;
+        let mut files = super::coding::lsp_module_sources(&root, entry)?;
         if let Some(file) = files.iter_mut().find(|file| file.0 == path) {
             file.1 = content.into();
         } else {
@@ -502,36 +691,162 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
         )
     };
     snapshots.sort_by(|a, b| a.0.cmp(&b.0));
-    for (name, text) in &snapshots {
-        let target = scratch.0.join(name);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|_| "LSP_SCRATCH_FAILED")?;
-        }
-        fs::write(&target, text).map_err(|_| "LSP_SCRATCH_FAILED")?;
-        fs::set_permissions(target, fs::Permissions::from_mode(0o400))
-            .map_err(|_| "LSP_SCRATCH_FAILED")?;
-    }
+    ensure_session_sweeper();
+    let graph = graph_fingerprint(&snapshots, &document_path);
+    let scope = entry
+        .map(|module| format!("module:{module}"))
+        .unwrap_or_else(|| "single-document".into());
+    let key = cache_key(&root, &server, &scope);
     let uri = |name: &str| {
         url::Url::from_file_path(Path::new("/work").join(name))
             .map(|uri| uri.to_string())
             .map_err(|_| "LSP_DOCUMENT_URI_INVALID")
     };
     let document_uri = uri(&document_path)?;
-    let mut session = Session::start(&server, &scratch.0)?;
-    session.document_uri = document_uri.clone();
-    let config = json!({"linkedProjects":[{"crates":[{"root_module":format!("/work/{root_module}"),"edition":"2021","deps":[],"cfg":[],"env":{},"is_workspace_member":true,"display_name":"document","source":{"include_dirs":["/work"],"exclude_dirs":[]}}]}],"cargo":{"sysroot":null,"noDeps":true,"autoreload":true,"buildScripts":{"enable":false,"rebuildOnSave":false}},"procMacro":{"enable":false},"checkOnSave":false,"files":{"watcher":"server"},"cachePriming":{"enable":false},"numThreads":2});
-    // Automatic graph reload is required when VFS finishes loading the root file.
-    // This only reloads our inline graph; Cargo and project executables are absent.
-    let init=session.rpc(1,"initialize",json!({"processId":null,"rootUri":"file:///work","capabilities":{"experimental":{"serverStatusNotification":true},"textDocument":{"completion":{"completionItem":{"snippetSupport":true}},"hover":{"contentFormat":["plaintext"]}}},"initializationOptions":config}))?;
-    session.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}))?;
-    session.await_ready()?;
-    session.send(json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":document_uri,"languageId":"rust","version":1,"text":content}}}))?;
-    session.await_document()?;
-    let result = session.rpc(
-        2,
+
+    // Each approved workspace/module owns one bounded sandbox process. A mutex
+    // serializes JSON-RPC only within that session; other workspaces can run in
+    // parallel. A changed dependency snapshot invalidates and rebuilds the
+    // session, while edits to the active document use didChange incrementally.
+    let existing = session_cache()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&key)
+        .cloned();
+    let mut session_reused = false;
+    let cached = if let Some(existing) = existing {
+        let mut guard = existing.lock().map_err(|_| "LSP_SESSION_UNAVAILABLE")?;
+        if guard.graph_fingerprint == graph
+            && guard.last_used.elapsed() < SESSION_IDLE_TTL
+            && guard.session.is_alive()
+        {
+            session_reused = true;
+            drop(guard);
+            Some(existing)
+        } else {
+            drop(guard);
+            remove_cached_session(&key, &existing);
+            None
+        }
+    } else {
+        None
+    };
+
+    let cached = if let Some(cached) = cached {
+        cached
+    } else {
+        let scratch_path =
+            std::env::temp_dir().join(format!("browseros-lsp-{}", uuid::Uuid::new_v4()));
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&scratch_path)
+            .map_err(|_| "LSP_SCRATCH_FAILED")?;
+        let scratch = Scratch(scratch_path);
+        for (name, text) in &snapshots {
+            let target = scratch.0.join(name);
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).map_err(|_| "LSP_SCRATCH_FAILED")?;
+            }
+            fs::write(&target, text).map_err(|_| "LSP_SCRATCH_FAILED")?;
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o400))
+                .map_err(|_| "LSP_SCRATCH_FAILED")?;
+        }
+
+        let mut session = Session::start(&server, &scratch.0)?;
+        session.document_uri = document_uri.clone();
+        let config = json!({
+            "linkedProjects":[{
+                "crates":[{
+                    "root_module":format!("/work/{root_module}"),
+                    "edition":"2021","deps":[],"cfg":[],"env":{},
+                    "is_workspace_member":true,"display_name":"document",
+                    "source":{"include_dirs":["/work"],"exclude_dirs":[]}
+                }]
+            }],
+            "cargo":{"sysroot":null,"noDeps":true,"autoreload":true,
+                "buildScripts":{"enable":false,"rebuildOnSave":false}},
+            "procMacro":{"enable":false},"checkOnSave":false,
+            "files":{"watcher":"server"},
+            "cachePriming":{"enable":false},"numThreads":2
+        });
+        let _init = session.rpc(
+            1,
+            "initialize",
+            json!({
+                "processId":null,
+                "rootUri":"file:///work",
+                "capabilities":{
+                    "experimental":{"serverStatusNotification":true},
+                    "textDocument":{
+                        "completion":{"completionItem":{"snippetSupport":true}},
+                        "hover":{"contentFormat":["plaintext"]}
+                    }
+                },
+                "initializationOptions":config
+            }),
+        )?;
+        session.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}))?;
+        session.await_ready()?;
+        session.document_uri = document_uri.clone();
+        session.renew_deadline();
+        session.send(json!({
+            "jsonrpc":"2.0","method":"textDocument/didOpen",
+            "params":{"textDocument":{
+                "uri":document_uri,"languageId":"rust","version":1,"text":content
+            }}
+        }))?;
+        session.await_document()?;
+
+        let mut documents = HashMap::new();
+        documents.insert(
+            document_path.clone(),
+            CachedDocument {
+                version: 1,
+                content_hash: format!("{:x}", Sha256::digest(content.as_bytes())),
+            },
+        );
+        let managed = CachedSession {
+            session,
+            _scratch: scratch,
+            workspace_root: root.clone(),
+            graph_fingerprint: graph.clone(),
+            documents,
+            last_used: Instant::now(),
+        };
+        insert_cached_session(key.clone(), managed)?
+    };
+
+    let mut managed = cached.lock().map_err(|_| "LSP_SESSION_UNAVAILABLE")?;
+    if managed.graph_fingerprint != graph || !managed.session.is_alive() {
+        drop(managed);
+        remove_cached_session(&key, &cached);
+        return Err("LSP_SESSION_STALE_RETRY".into());
+    }
+    if let Err(error) = managed.update_document(&document_path, &document_uri, content) {
+        drop(managed);
+        remove_cached_session(&key, &cached);
+        return Err(error);
+    }
+    let result = match managed.session.rpc_next(
         method,
-        json!({"textDocument":{"uri":document_uri},"position":{"line":line,"character":character}}),
-    )?;
+        json!({
+            "textDocument":{"uri":document_uri},
+            "position":{"line":line,"character":character}
+        }),
+    ) {
+        Ok(result) => result,
+        Err(error) => {
+            // A timed-out or broken JSON-RPC stream is not reusable. Drop the
+            // sandbox now so the next request starts from a fresh source snapshot.
+            drop(managed);
+            remove_cached_session(&key, &cached);
+            return Err(error);
+        }
+    };
+    managed.last_used = Instant::now();
+    let diagnostics = managed.session.diagnostics.clone();
+    drop(managed);
+
     let mut targets = vec![];
     if method == "textDocument/definition" {
         let items = if let Some(items) = result.as_array() {
@@ -553,13 +868,24 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                     .get("targetSelectionRange")
                     .or_else(|| item.get("range"))
                     .or_else(|| item.get("targetRange"));
-                targets.push(json!({"uri":target_uri,"path":project_path,"range":range,"hash":format!("{:x}",Sha256::digest(text.as_bytes()))}));
+                targets.push(json!({
+                    "uri":target_uri,"path":project_path,"range":range,
+                    "hash":format!("{:x}",Sha256::digest(text.as_bytes()))
+                }));
             }
         }
     }
-    Ok(
-        json!({"result":result,"definition_targets":targets,"diagnostics":session.diagnostics,"document_hash":format!("{:x}",Sha256::digest(content.as_bytes())),"server":init["serverInfo"],"document_uri":document_uri,"files_analyzed":snapshots.len(),"scope":if entry.is_some(){"isolated_rust_module_sources"}else{"isolated_current_rust_document"}}),
-    )
+    Ok(json!({
+        "result":result,
+        "definition_targets":targets,
+        "diagnostics":diagnostics,
+        "document_hash":format!("{:x}",Sha256::digest(content.as_bytes())),
+        "server":{"path":server},
+        "document_uri":document_uri,
+        "files_analyzed":snapshots.len(),
+        "scope":if entry.is_some(){"isolated_rust_module_sources"}else{"isolated_current_rust_document"},
+        "session_reused":session_reused
+    }))
 }
 
 #[cfg(test)]
@@ -615,14 +941,51 @@ mod tests {
         );
     }
     #[test]
-    fn concurrent_requests_are_rejected_without_starting_a_server() {
-        let _guard = REAL_LSP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _occupied = REQUEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let result = execute(
-            Path::new("/tmp"),
-            json!({"action":"lsp_request","approved":true,"method":"completion"}),
+    fn cached_lsp_sessions_expire_after_the_idle_ttl() {
+        let now = Instant::now();
+        assert!(!session_expired(now, now));
+        assert!(!session_expired(
+            now - Duration::from_secs(SESSION_IDLE_TTL.as_secs() - 1),
+            now
+        ));
+        assert!(session_expired(now - SESSION_IDLE_TTL, now));
+    }
+
+    #[test]
+    fn session_cache_keys_are_scoped_by_workspace_server_and_module() {
+        let server = Path::new("/usr/bin/rust-analyzer");
+        assert_ne!(
+            cache_key(Path::new("/workspace/a"), server, "module:src/lib.rs"),
+            cache_key(Path::new("/workspace/b"), server, "module:src/lib.rs")
         );
-        assert_eq!(result.unwrap_err(), "LSP_BUSY");
+        assert_ne!(
+            cache_key(Path::new("/workspace/a"), server, "module:src/lib.rs"),
+            cache_key(Path::new("/workspace/a"), server, "module:src/main.rs")
+        );
+    }
+
+    #[test]
+    fn graph_fingerprint_ignores_active_document_but_tracks_dependencies() {
+        let first = vec![
+            ("src/lib.rs".to_string(), "pub fn a() {}".to_string()),
+            ("src/main.rs".to_string(), "fn main() {}".to_string()),
+        ];
+        let changed_active = vec![
+            ("src/lib.rs".to_string(), "pub fn a() { 1 }".to_string()),
+            ("src/main.rs".to_string(), "fn main() {}".to_string()),
+        ];
+        let changed_dependency = vec![
+            ("src/lib.rs".to_string(), "pub fn a() {}".to_string()),
+            ("src/main.rs".to_string(), "fn main() { 2 }".to_string()),
+        ];
+        assert_eq!(
+            graph_fingerprint(&first, "src/lib.rs"),
+            graph_fingerprint(&changed_active, "src/lib.rs")
+        );
+        assert_ne!(
+            graph_fingerprint(&first, "src/lib.rs"),
+            graph_fingerprint(&changed_dependency, "src/lib.rs")
+        );
     }
     #[test]
     fn document_guards_reject_outside_secrets_and_symlinks() {
@@ -692,7 +1055,7 @@ mod tests {
                 .is_some_and(|items| !items.is_empty()),
             "{result}"
         );
-        assert_eq!(result["result"][0]["uri"], DOCUMENT);
+        assert_eq!(result["result"][0]["uri"], "file:///work/main.rs");
     }
     #[test]
     #[ignore = "explicit installed rust-analyzer sandbox integration"]

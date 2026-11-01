@@ -104,7 +104,7 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 ### 2.5 AppState 字段归属矩阵（bridge.rs 拆分前冻结，UNKNOWN=0）
 
 > 冻结时点：Pilot 14 之后、bridge.rs 逐 command 分解之前（协议 req B）。
-> 真源：`src-tauri/src/bridge.rs:255` `pub struct AppState`（共 26 字段）。
+> 真源：`src-tauri/src/bridge.rs:255` `pub struct AppState`（当前共 27 字段）。
 > 原则：每个字段映射到唯一 owning Capability 或 FRAMEWORK（组合根 / 启动 / 关闭等横切态）；
 > 不得出现 UNKNOWN（无法判定则归 FRAMEWORK 并标注待 §9 下沉）。
 
@@ -126,6 +126,7 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 | `hibernation_enabled` | `AtomicBool` | 标签休眠开关 | browser | CAPABILITY_NATIVE(browser) | `capabilities/browser/` |
 | `tab_idle_since` | `Mutex<HashMap<String, Instant>>` | 标签空闲计时 | browser | CAPABILITY_NATIVE(browser) | `capabilities/browser/` |
 | `hibernated_tabs` | `Mutex<HashSet<String>>` | 已休眠标签 | browser | CAPABILITY_NATIVE(browser) | `capabilities/browser/` |
+| `hibernated_scroll` | `Mutex<HashMap<String, (f64, f64)>>` | 已休眠标签的滚动位置（不含表单内容） | browser | CAPABILITY_NATIVE(browser) | `capabilities/browser/` |
 | `tab_recovery` | `Mutex<HashMap<String, TabRecoveryBudget>>` | 标签恢复预算 | browser | CAPABILITY_NATIVE(browser) | `capabilities/browser/` |
 | `pending_open_urls` | `Mutex<Vec<String>>` | 待打开 URL | browser | CAPABILITY_NATIVE(browser) | `capabilities/browser/` |
 | `frontend_ready` | `AtomicBool` | 前端就绪握手 | FRAMEWORK（启动） | FRAMEWORK_NATIVE_SERVICE | `main.rs` |
@@ -137,10 +138,10 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 | `credential_handles` | `Mutex<HashMap<String, BrowserCredentialMeta>>` | 凭据句柄 | credential | CAPABILITY_NATIVE(credential) | `capabilities/credential/` |
 | `script_runs` | `Arc<ScriptProcessTable>` | 脚本运行表 | script | CAPABILITY_NATIVE(script) | `capabilities/script/` |
 
-**汇总**：字段总数 = 26；CAPABILITY_NATIVE 字段 = 23（git×2 / browser×11 / grid×4 / terminal×1 / session×3 / credential×1 / script×1；resource×2 已于 PHASE A 和解至 browser，resource_collection 能力条目已删除）；FRAMEWORK 字段 = 3（`m0_config` / `shutdown_requested` / `frontend_ready`）；**UNKNOWN_OWNER = 0**；**SECOND_OWNER = 0**（resource_buffer/resource_capture 仅 browser 语义 owner，bridge 仅做生命周期清理，非第二 owner）。
+**汇总**：字段总数 = 27；CAPABILITY_NATIVE 字段 = 24（git×2 / browser×12 / grid×4 / terminal×1 / session×3 / credential×1 / script×1；resource×2 已于 PHASE A 和解至 browser，resource_collection 能力条目已删除）；FRAMEWORK 字段 = 3（`m0_config` / `shutdown_requested` / `frontend_ready`）；**UNKNOWN_OWNER = 0**；**SECOND_OWNER = 0**（resource_buffer/resource_capture 仅 browser 语义 owner，bridge 仅做生命周期清理，非第二 owner）。
 **启示**：bridge.rs 逐 command 分解时，命令体按「其读取/写入的 AppState 字段归属」归位到对应 `capabilities/<cap>/commands.rs`（real-owner 判定，非机械函数块）；FRAMEWORK 字段（`m0_config` / `shutdown_requested` / `frontend_ready`）由组合根保留，不迁入产品能力。
 
-> **FREEZE STATUS: `FROZEN_FOR_BRIDGE_DECOMPOSITION`** — 冻结于 2026-09-26，经 `scripts/check-native-command-inventory.mjs` 机器三方对账：REGISTERED = DEFINED = REGISTRY = 148（零漂移，原矩阵误记 `147+2+2=151`，实测 `144 bridge + 2 fs_cmds + 2 tools = 148`），AppState STRUCT 26 / MATRIX 26（零漂移）。冻结四条件 `COMMAND_UNKNOWN=0`、`COMMAND_REGISTRY_DRIFT=0`、`APPSTATE_UNKNOWN=0`、`DUPLICATE_COMMAND=0` 全部满足。解冻必须重跑本审计且全绿。
+> **FREEZE STATUS: `FROZEN_FOR_BRIDGE_DECOMPOSITION`** — 冻结于 2026-09-26，经 `scripts/check-native-command-inventory.mjs` 机器三方对账：REGISTERED = DEFINED = REGISTRY = 148（零漂移，原矩阵误记 `147+2+2=151`，实测 `144 bridge + 2 fs_cmds + 2 tools = 148`），AppState STRUCT 27 / MATRIX 27（零漂移）。冻结四条件 `COMMAND_UNKNOWN=0`、`COMMAND_REGISTRY_DRIFT=0`、`APPSTATE_UNKNOWN=0`、`DUPLICATE_COMMAND=0` 全部满足。解冻必须重跑本审计且全绿。
 
 > **PROCESS_FINDING（标签纪律）: `TAG_CREATED_BEFORE_COMMIT_COMPLETENESS_PROOF`** — Pilot 14 曾发生「commit 漏 `main.rs`、working tree 因含未提交修改而单测仍过」事故。后续任何 Pilot 必须遵守 `commit → clean-tree verify → tag`，禁止 `working tree 绿 → tag → 补 commit → 移动 tag`。本次审计已用 detached clean worktree 证明 `native-physical-pilot-tools-pass`（→ `c17a667`）自身 `cargo check` / `cargo test` / `npm run build` 全绿。
 

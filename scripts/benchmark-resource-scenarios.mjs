@@ -2,7 +2,8 @@
 // Opt-in sustained RSS/PSS/CPU sampling of an already running BrowserOS PID.
 // NEVER turn CI first-paint sampling into fake 5/30 minute idle evidence.
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync } from "node:fs";
+import os from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
@@ -12,7 +13,7 @@ const val=(flag,defaultValue)=>{const at=args.indexOf(flag);return at<0?defaultV
 function numbers(samples,key) {return samples.map(s=>s[key]).filter(v=>typeof v==="number"&&Number.isFinite(v)&&v>=0).sort((a,b)=>a-b);}
 function percentile(n,q){return n.length?n[Math.min(n.length-1,Math.ceil(n.length*q)-1)]:null;}
 function summarize(samples,needed){
-  const keys=["rss_kb","pss_kb","cpu_percent_one_core"];
+  const keys=["rss_kb","pss_kb","cpu_percent_one_core","collection_ms"];
   const metrics={};
   for(const key of keys){
     const vals=numbers(samples,key);
@@ -25,7 +26,7 @@ function summarize(samples,needed){
     limitation:"Only process-tree CPU/RSS/PSS; no frame latency, user interaction timings, or cross-host comparison without matching machines."};
 }
 if(args.includes("--self-test")){
-  const summary=summarize([{classification:"MEASURED",rss_kb:100,cpu_percent_one_core:2},{classification:"MEASURED",rss_kb:120,cpu_percent_one_core:3}],2);
+  const summary=summarize([{classification:"MEASURED",rss_kb:100,cpu_percent_one_core:2,collection_ms:3},{classification:"MEASURED",rss_kb:120,cpu_percent_one_core:3,collection_ms:4}],2);
   assert.equal(summary.classification,"MEASURED");
   assert.equal(summary.metrics.rss_kb.p95,120);
   assert.equal(summary.metrics.pss_kb.median,null);
@@ -43,7 +44,16 @@ if(args.includes("--self-test")){
     }catch{samples.push({classification:"UNKNOWN"});break;}
   }
   const result={...summarize(samples,count),target_pid:pid,minutes,interval_ms:interval,sampled_at:new Date().toISOString(),
-    provenance:{app_sha:process.env.BROWSEROS_APP_SHA||null,os:process.platform,arch:process.arch}};
+    provenance:{
+      app_sha:process.env.BROWSEROS_APP_SHA||null,
+      os:process.platform,
+      os_release:os.release(),
+      arch:process.arch,
+      cpu_model:os.cpus()[0]?.model||null,
+      logical_cpus:os.cpus().length,
+      total_memory_bytes:os.totalmem(),
+      node_version:process.version
+    }};
   mkdirSync(dirname(resolve(out)),{recursive:true});writeFileSync(out,JSON.stringify(result,null,2)+"\n","utf8");
   console.log("SUSTAINED_RESOURCE_BENCHMARK="+result.classification);
   if(result.classification!=="MEASURED")process.exitCode=1;

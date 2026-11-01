@@ -12,13 +12,14 @@ INSTALLED_BIN="/usr/bin/$APP_NAME"
 BUILD=0
 INSTALL=0
 START_CLIENT=1
+RESOURCE_MINUTES=0
 FAILURES=0
 WARNINGS=0
 OWN_PID=""
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/verify-installed-client.sh [--build] [--install] [--no-start]
+Usage: bash scripts/verify-installed-client.sh [--build] [--install] [--no-start] [--resource-minutes 5|30]
 
 Checks the real packaged Tauri client, not only the Vite browser page.
 
@@ -26,6 +27,7 @@ Options:
   --build     Build the deb package before checking it.
   --install   Build, stop existing app instances, install the deb, then verify it.
   --no-start  Skip the GUI cold-start check. Useful on headless machines.
+  --resource-minutes 5|30  Measure sustained RSS/PSS/CPU after first paint.
 EOF
 }
 
@@ -47,6 +49,10 @@ while [[ $# -gt 0 ]]; do
     --build) BUILD=1 ;;
     --install) BUILD=1; INSTALL=1 ;;
     --no-start) START_CLIENT=0 ;;
+    --resource-minutes)
+      shift
+      case "${1:-}" in 5|30) RESOURCE_MINUTES="$1" ;; *) fail "--resource-minutes must be 5 or 30"; usage; exit 2 ;; esac
+      ;;
     -h|--help) usage; exit 0 ;;
     *) fail "Unknown option: $1"; usage; exit 2 ;;
   esac
@@ -123,6 +129,11 @@ if [[ "$BUILD" -eq 1 ]]; then
       exit 1
     fi
   fi
+fi
+
+if [[ "$RESOURCE_MINUTES" -gt 0 && ( "$START_CLIENT" -eq 0 || "$INSTALL" -eq 0 ) ]]; then
+  fail "--resource-minutes requires --install and the packaged client cold-start check."
+  exit 2
 fi
 
 if [[ "$BUILD" -eq 1 ]]; then
@@ -265,18 +276,32 @@ else
 fi
 
 if [[ "$START_CLIENT" -eq 1 ]]; then
-  printf '\n== Cold-start check from extracted package ==\n'
+  CLIENT_BIN="$EXTRACTED_BIN"
+  if [[ "$INSTALL" -eq 1 && -x "$INSTALLED_BIN" && -x "$EXTRACTED_BIN" ]]; then
+    INSTALLED_SHA="$(sha256sum "$INSTALLED_BIN" | awk '{print $1}')"
+    EXTRACTED_SHA="$(sha256sum "$EXTRACTED_BIN" | awk '{print $1}')"
+    if [[ "$INSTALLED_SHA" == "$EXTRACTED_SHA" ]]; then
+      CLIENT_BIN="$INSTALLED_BIN"
+    elif [[ "$RESOURCE_MINUTES" -gt 0 ]]; then
+      fail "Refusing to benchmark an extracted binary: installed /usr/bin binary does not match the built deb."
+      exit 1
+    fi
+  elif [[ "$RESOURCE_MINUTES" -gt 0 ]]; then
+    fail "Refusing to benchmark an extracted binary: installed package executable is missing."
+    exit 1
+  fi
+  printf '\n== Cold-start check from %s ==\n' "$CLIENT_BIN"
   if [[ -n "$PROCESS_LIST" ]]; then
     fail "Cold-start check skipped because an existing single-instance process is running."
     hint "Stop the listed process, install the new deb if needed, then rerun: bash scripts/verify-installed-client.sh"
   elif [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
     warn "No DISPLAY/WAYLAND_DISPLAY is available; GUI cold-start check skipped."
     hint "Run this on the desktop session, or use --no-start in CI/headless shells."
-  elif [[ ! -x "$EXTRACTED_BIN" ]]; then
-    fail "Cannot cold-start because extracted executable is missing."
+  elif [[ ! -x "$CLIENT_BIN" ]]; then
+    fail "Cannot cold-start because packaged executable is missing."
   else
     : > "$LOG_FILE"
-    WEBKIT_DISABLE_DMABUF_RENDERER=1 GDK_BACKEND="${GDK_BACKEND:-x11}" GTK_USE_PORTAL=0 "$EXTRACTED_BIN" >"$LOG_FILE" 2>&1 &
+    WEBKIT_DISABLE_DMABUF_RENDERER=1 GDK_BACKEND="${GDK_BACKEND:-x11}" GTK_USE_PORTAL=0 "$CLIENT_BIN" >"$LOG_FILE" 2>&1 &
     OWN_PID=$!
     ok "Started extracted package pid=$OWN_PID."
     FOUND=0
@@ -296,6 +321,12 @@ if [[ "$START_CLIENT" -eq 1 ]]; then
       # Optional evidence must never turn a missing /proc permission into a fake zero.
       if command -v node >/dev/null 2>&1; then
         node "$ROOT/scripts/measure-app-resources.mjs" --pid "$OWN_PID" --interval-ms 1000 > "${TMPDIR:-/tmp}/browseros-native-resource.json" || warn "原生资源指标不可用（不报告伪测量）"
+        if [[ "$RESOURCE_MINUTES" -gt 0 ]]; then
+          BROWSEROS_APP_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf 'unknown')" \
+            node "$ROOT/scripts/benchmark-resource-scenarios.mjs" --pid "$OWN_PID" \
+              --minutes "$RESOURCE_MINUTES" --interval-ms 1000 \
+              --out "${TMPDIR:-/tmp}/browseros-installed-resource.json" || fail "Installed client sustained resource benchmark did not complete."
+        fi
       fi
       grep -E '\[main\] main window url=|\[FE\].*vue mounted|first-paint probe|\[M0\] m0_ready' "$LOG_FILE" | tail -n 8 | sed 's/^/       /'
     else

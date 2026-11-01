@@ -18,7 +18,7 @@ REGISTRY = ROOT / "docs" / "architecture" / "native-boundary" / "native-commands
 TS_OUT = ROOT / "src" / "generated" / "native-contracts.ts"
 JSON_OUT = ROOT / "artifacts" / "native-contracts" / "generated-crosslayer-contracts.json"
 
-INJECTED_TYPES = ("AppHandle", "Webview", "WebviewWindow", "Window", "State<", "Manager<")
+INJECTED_TYPES = ("AppHandle", "Webview", "WebviewWindow", "Window", "State<", "Manager<", "Channel<")
 
 
 @dataclass
@@ -47,6 +47,7 @@ class RustCommand:
     source: str
     rename_all: str
     params: list[RustField]
+    transport_params: list[str]
     return_type: str
 
 
@@ -331,6 +332,7 @@ def parse_commands(files: list[tuple[str, str]]) -> list[RustCommand]:
             signature_tail = re.split(r"\bwhere\b", signature_tail, maxsplit=1)[0].strip()
             return_type = signature_tail[2:].strip() if signature_tail.startswith("->") else "()"
             params: list[RustField] = []
+            transport_params: list[str] = []
             for raw in split_top_level(raw_params):
                 pm = re.match(r"(?:mut\s+)?([A-Za-z_]\w*)\s*:\s*(.+)$", raw, re.S)
                 if not pm:
@@ -338,6 +340,8 @@ def parse_commands(files: list[tuple[str, str]]) -> list[RustCommand]:
                 rust_param, rust_type = pm.group(1), pm.group(2).strip()
                 normalized = normalize_rust_type(rust_type)
                 if any(token in normalized for token in INJECTED_TYPES):
+                    if "Channel<" in normalized:
+                        transport_params.append(rename(rust_param, rename_all))
                     continue
                 params.append(
                     RustField(
@@ -347,7 +351,7 @@ def parse_commands(files: list[tuple[str, str]]) -> list[RustCommand]:
                         optional=normalized.startswith("Option<"),
                     )
                 )
-            out.append(RustCommand(public_name, rust_name, source, rename_all, params, return_type))
+            out.append(RustCommand(public_name, rust_name, source, rename_all, params, transport_params, return_type))
     return sorted(out, key=lambda item: item.name)
 
 
@@ -661,7 +665,7 @@ def build_model() -> dict[str, Any]:
             unverified.add(command.name + ": " + item)
         observed = [x for x in invokes if x["name"] == command.name]
         reg = registry_by_name.get(command.name) or registry_by_name.get(command.rust_name)
-        expected_keys = set(args)
+        expected_keys = set(args) | set(command.transport_params)
         required_keys = {name for name, meta in args.items() if meta["required"]}
         payload_findings: list[dict[str, Any]] = []
         for call in observed:
@@ -692,6 +696,7 @@ def build_model() -> dict[str, Any]:
                 "rustName": command.rust_name,
                 "source": command.source,
                 "args": args,
+                **({"transportParams": command.transport_params} if command.transport_params else {}),
                 "result": result,
                 "returnHint": return_hint,
                 "registry": None
@@ -877,12 +882,17 @@ def self_test() -> bool:
     fixture = [
         (
             "fixture.rs",
-            '#[derive(Serialize, Deserialize)]\n#[serde(rename_all = "camelCase")]\npub struct UserInfo { pub user_id: String, pub enabled: bool }\n#[tauri::command]\npub fn load_user(user_id: String) -> Result<UserInfo, String> { todo!() }\nfn e(app: tauri::AppHandle){ app.emit("ready", true).unwrap(); }',
+            '#[derive(Serialize, Deserialize)]\n#[serde(rename_all = "camelCase")]\npub struct UserInfo { pub user_id: String, pub enabled: bool }\n#[tauri::command]\npub fn load_user(user_id: String, on_event: Option<tauri::ipc::Channel<Value>>) -> Result<UserInfo, String> { todo!() }\nfn e(app: tauri::AppHandle){ app.emit("ready", true).unwrap(); }',
         )
     ]
     defs = parse_rust_types(fixture)
     commands = parse_commands(fixture)
-    if len(commands) != 1 or commands[0].params[0].wire_name != "userId":
+    if (
+        len(commands) != 1
+        or len(commands[0].params) != 1
+        or commands[0].params[0].wire_name != "userId"
+        or commands[0].transport_params != ["onEvent"]
+    ):
         return False
     unverified: set[str] = set()
     rendered = render_type(commands[0].return_type, defs, unverified)

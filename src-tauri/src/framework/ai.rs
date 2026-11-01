@@ -3,20 +3,89 @@ use crate::keyring_store::KeyringStore;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     fs,
-    io::{Read, Write},
+    io::{BufRead, Read, Write},
     path::Path,
     process::{Child, Command, ExitStatus, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Mutex,
+        Arc, Condvar, Mutex, OnceLock, Weak,
     },
 };
 use tauri::Manager;
 
 static CONFIG_LOCK: Mutex<()> = Mutex::new(());
-static REQUEST_LOCK: Mutex<()> = Mutex::new(());
+const PROVIDER_CONCURRENCY: usize = 2;
+const PROVIDER_QUEUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+static PROVIDER_LIMITERS: OnceLock<Mutex<HashMap<String, Weak<ProviderSemaphore>>>> =
+    OnceLock::new();
+
+struct ProviderSemaphore {
+    active: Mutex<usize>,
+    ready: Condvar,
+}
+struct ProviderPermit {
+    semaphore: Arc<ProviderSemaphore>,
+}
+impl Drop for ProviderPermit {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.semaphore.active.lock() {
+            *active = active.saturating_sub(1);
+            self.semaphore.ready.notify_one();
+        }
+    }
+}
+fn provider_semaphore(profile_id: &str) -> Arc<ProviderSemaphore> {
+    let registry = PROVIDER_LIMITERS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut registry = registry.lock().unwrap_or_else(|e| e.into_inner());
+    registry.retain(|_, semaphore| semaphore.strong_count() > 0);
+    if let Some(existing) = registry.get(profile_id).and_then(Weak::upgrade) {
+        return existing;
+    }
+    let semaphore = Arc::new(ProviderSemaphore {
+        active: Mutex::new(0),
+        ready: Condvar::new(),
+    });
+    registry.insert(profile_id.to_string(), Arc::downgrade(&semaphore));
+    semaphore
+}
+fn acquire_provider_permit(
+    profile_id: &str,
+    cancelled: &(dyn Fn() -> bool + Sync),
+) -> Result<ProviderPermit, String> {
+    acquire_provider_permit_timeout(profile_id, cancelled, PROVIDER_QUEUE_TIMEOUT)
+}
+
+fn acquire_provider_permit_timeout(
+    profile_id: &str,
+    cancelled: &(dyn Fn() -> bool + Sync),
+    timeout: std::time::Duration,
+) -> Result<ProviderPermit, String> {
+    let semaphore = provider_semaphore(profile_id);
+    let deadline = std::time::Instant::now() + timeout;
+    let mut active = semaphore.active.lock().map_err(|_| "AI_PROVIDER_BUSY")?;
+    while *active >= PROVIDER_CONCURRENCY {
+        if cancelled() {
+            return Err("AI_PROVIDER_CANCELLED".into());
+        }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err("AI_PROVIDER_BUSY".into());
+        }
+        let (next, timed) = semaphore
+            .ready
+            .wait_timeout(active, remaining.min(std::time::Duration::from_millis(100)))
+            .map_err(|_| "AI_PROVIDER_BUSY")?;
+        active = next;
+        if timed.timed_out() && std::time::Instant::now() >= deadline {
+            return Err("AI_PROVIDER_BUSY".into());
+        }
+    }
+    *active += 1;
+    drop(active);
+    Ok(ProviderPermit { semaphore })
+}
 const IMPORTER: &str = include_str!("../../../scripts/import-local-ai.py");
 const MAX_BYTES: u64 = 1024 * 1024;
 
@@ -178,7 +247,7 @@ fn provider_turn_cancelable(
     tools: &[Value],
     cancelled: &(dyn Fn() -> bool + Sync),
 ) -> Result<Value, String> {
-    let _request_guard = REQUEST_LOCK.try_lock().map_err(|_| "AI_PROVIDER_BUSY")?;
+    let _permit = acquire_provider_permit(&profile.id, cancelled)?;
     validate(profile)?;
     if profile.kind != "chat" {
         return Err("AI_MODEL_NOT_CHAT".into());
@@ -251,6 +320,246 @@ fn provider_turn_cancelable(
         .cloned()
         .ok_or_else(|| "AI_RESPONSE_EMPTY".into())
 }
+
+fn provider_turn_cancelable_stream(
+    profile: &AiProfile,
+    messages: &[Value],
+    tools: &[Value],
+    cancelled: &(dyn Fn() -> bool + Sync),
+    on_delta: &mut dyn FnMut(&str) -> Result<(), String>,
+) -> Result<Value, String> {
+    let _permit = acquire_provider_permit(&profile.id, cancelled)?;
+    validate(profile)?;
+    if profile.kind != "chat" {
+        return Err("AI_MODEL_NOT_CHAT".into());
+    }
+    let credential = KeyringStore::get_token(&format!("ai:{}", profile.id))
+        .map_err(|_| "AI_CREDENTIAL_UNAVAILABLE")?;
+    if credential.is_empty() || credential.contains(['\r', '\n', '\0']) {
+        return Err("AI_CREDENTIAL_INVALID".into());
+    }
+    let mut payload =
+        json!({"model":profile.model,"messages":messages,"stream":true,"max_tokens":4096});
+    if !tools.is_empty() {
+        payload["tools"] = json!(tools);
+    }
+    let body = payload.to_string();
+    if body.len() > 512 * 1024 {
+        return Err("AI_CONTEXT_LIMIT".into());
+    }
+    if body.contains(&credential) {
+        return Err("AI_CONTEXT_CREDENTIAL_DENIED".into());
+    }
+    let endpoint = format!(
+        "{}/chat/completions",
+        profile.base_url.trim_end_matches('/')
+    );
+    let config = format!(
+        "url = {}\nheader = {}\nheader = \"Content-Type: application/json\"\ndata = {}\n",
+        quote(&endpoint),
+        quote(&format!("Authorization: Bearer {credential}")),
+        quote(&body)
+    );
+    let child = Command::new("/usr/bin/curl")
+        .args([
+            "-q",
+            "--config",
+            "-",
+            "--silent",
+            "--fail",
+            "--no-buffer",
+            "--write-out",
+            "\n__BROWSEROS_HTTP_STATUS__%{http_code}\n",
+            "--proto",
+            "=https",
+            "--max-time",
+            "45",
+            "--connect-timeout",
+            "10",
+            "--max-filesize",
+            "262144",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| "AI_HTTP_CLIENT_UNAVAILABLE")?;
+    let (message, status, http) =
+        read_provider_stream_process(child, config.as_bytes(), &credential, cancelled, on_delta)?;
+    if !status.success() {
+        return Err(provider_error(status, http).into());
+    }
+    if !matches!(http, Some(200..=299)) {
+        return Err("AI_PROVIDER_HTTP_ERROR".into());
+    }
+    Ok(message)
+}
+fn read_provider_stream_process(
+    mut child: Child,
+    input: &[u8],
+    credential: &str,
+    cancelled: &(dyn Fn() -> bool + Sync),
+    on_delta: &mut dyn FnMut(&str) -> Result<(), String>,
+) -> Result<(Value, ExitStatus, Option<u16>), String> {
+    let (Some(mut stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err("AI_HTTP_IO".into());
+    };
+    let abort = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        let monitor = scope.spawn(|| {
+            let mut was_cancelled = false;
+            loop {
+                if cancelled() {
+                    was_cancelled = true;
+                    let _ = child.kill();
+                }
+                if abort.load(Ordering::SeqCst) {
+                    let _ = child.kill();
+                }
+                match child.try_wait() {
+                    Ok(Some(status)) => return Ok((status, was_cancelled)),
+                    Err(_) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err("AI_HTTP_IO");
+                    }
+                    Ok(None) => std::thread::sleep(std::time::Duration::from_millis(25)),
+                }
+            }
+        });
+
+        if stdin.write_all(input).is_err() {
+            abort.store(true, Ordering::SeqCst);
+        }
+        drop(stdin);
+
+        let mut reader = std::io::BufReader::new(stdout);
+        let mut line = Vec::new();
+        let mut total_bytes = 0usize;
+        let mut content = String::new();
+        let mut tool_calls: BTreeMap<usize, (String, String, String)> = BTreeMap::new();
+        let mut http_status = None;
+        let mut done = false;
+        let mut stream_error: Option<String> = None;
+
+        loop {
+            line.clear();
+            let count = match reader.read_until(b'\n', &mut line) {
+                Ok(count) => count,
+                Err(_) => {
+                    stream_error = Some("AI_HTTP_IO".into());
+                    break;
+                }
+            };
+            if count == 0 {
+                break;
+            }
+            total_bytes = total_bytes.saturating_add(count);
+            if total_bytes > 262144 {
+                stream_error = Some("AI_RESPONSE_LIMIT".into());
+                break;
+            }
+
+            let without_lf = line.strip_suffix(b"\n").unwrap_or(&line);
+            let trimmed = without_lf.strip_suffix(b"\r").unwrap_or(without_lf);
+            if let Some(status) = trimmed.strip_prefix(b"__BROWSEROS_HTTP_STATUS__") {
+                http_status = std::str::from_utf8(status)
+                    .ok()
+                    .and_then(|value| value.trim().parse::<u16>().ok());
+                continue;
+            }
+            let Some(data) = trimmed.strip_prefix(b"data:") else {
+                continue;
+            };
+            let data = data.strip_prefix(b" ").unwrap_or(data);
+            if data == b"[DONE]" {
+                done = true;
+                continue;
+            }
+            if done || data.is_empty() {
+                continue;
+            }
+            let chunk: Value = match serde_json::from_slice(data) {
+                Ok(value) => value,
+                Err(_) => {
+                    stream_error = Some("AI_RESPONSE_INVALID".into());
+                    break;
+                }
+            };
+            let delta = &chunk["choices"][0]["delta"];
+            if let Some(text) = delta["content"].as_str().filter(|text| !text.is_empty()) {
+                let safe_text = text.replace(credential, "[REDACTED]");
+                content.push_str(&safe_text);
+                if let Err(error) = on_delta(&safe_text) {
+                    stream_error = Some(error);
+                    break;
+                }
+            }
+            if let Some(calls) = delta["tool_calls"].as_array() {
+                for call in calls {
+                    let Some(index) = call["index"].as_u64().map(|value| value as usize) else {
+                        continue;
+                    };
+                    let entry = tool_calls.entry(index).or_default();
+                    if let Some(id) = call["id"].as_str() {
+                        entry.0.push_str(&id.replace(credential, "[REDACTED]"));
+                    }
+                    if let Some(name) = call["function"]["name"].as_str() {
+                        entry.1.push_str(&name.replace(credential, "[REDACTED]"));
+                    }
+                    if let Some(arguments) = call["function"]["arguments"].as_str() {
+                        entry
+                            .2
+                            .push_str(&arguments.replace(credential, "[REDACTED]"));
+                    }
+                }
+            }
+        }
+
+        if stream_error.is_some() {
+            abort.store(true, Ordering::SeqCst);
+        }
+        let (status, was_cancelled) = monitor.join().map_err(|_| "AI_HTTP_IO")??;
+        if was_cancelled {
+            return Err("AI_PROVIDER_CANCELLED".into());
+        }
+        if let Some(error) = stream_error {
+            return Err(error);
+        }
+        if http_status.is_none() {
+            return Err("AI_PROVIDER_HTTP_STATUS_MISSING".into());
+        }
+
+        let mut message = json!({
+            "role":"assistant",
+            "content":if content.is_empty(){Value::Null}else{json!(content)}
+        });
+        if !tool_calls.is_empty() {
+            let calls: Vec<Value> = tool_calls
+                .into_values()
+                .map(|(id, name, arguments)| {
+                    json!({
+                        "id":id,
+                        "type":"function",
+                        "function":{"name":name,"arguments":arguments}
+                    })
+                })
+                .collect();
+            message["tool_calls"] = json!(calls);
+        }
+        let unsuccessful_http = http_status.is_some_and(|status| !(200..=299).contains(&status));
+        if !unsuccessful_http
+            && message["content"].is_null()
+            && message["tool_calls"].as_array().is_none()
+        {
+            return Err("AI_RESPONSE_EMPTY".into());
+        }
+        Ok((message, status, http_status))
+    })
+}
+
 fn read_provider_process(
     mut child: Child,
     input: &[u8],
@@ -374,6 +683,36 @@ fn coding_turn_cancelable(
         .find(|p| p.id == id)
         .ok_or("AI_NOT_CONFIGURED")?;
     provider_turn_cancelable(profile, messages, tools, cancelled)
+}
+
+fn coding_turn_cancelable_stream(
+    path: &Path,
+    id: &str,
+    messages: &[Value],
+    tools: &[Value],
+    cancelled: &(dyn Fn() -> bool + Sync),
+    on_delta: &mut dyn FnMut(&str) -> Result<(), String>,
+) -> Result<Value, String> {
+    let config = {
+        let _guard = CONFIG_LOCK.lock().map_err(|_| "AI_CONFIG_BUSY")?;
+        read(path)?
+    };
+    let id = if id.is_empty() {
+        config
+            .bindings
+            .get("workbench")
+            .or_else(|| config.bindings.get("default"))
+            .map(String::as_str)
+            .ok_or("AI_NOT_CONFIGURED")?
+    } else {
+        id
+    };
+    let profile = config
+        .profiles
+        .iter()
+        .find(|p| p.id == id)
+        .ok_or("AI_NOT_CONFIGURED")?;
+    provider_turn_cancelable_stream(profile, messages, tools, cancelled, on_delta)
 }
 pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
     if ![
@@ -523,6 +862,7 @@ pub async fn coding_service(
     app: tauri::AppHandle,
     webview: tauri::Webview,
     request: Value,
+    on_event: tauri::ipc::Channel<Value>,
 ) -> Result<Value, String> {
     if webview.label() != "main" {
         return Err("AGENT_SOURCE_DENIED".into());
@@ -533,13 +873,17 @@ pub async fn coding_service(
         .app_data_dir()
         .map_err(|_| "AGENT_STORAGE_UNAVAILABLE")?
         .join("mvp-browser-os");
-    tauri::async_runtime::spawn_blocking(move || {
+    on_event
+        .send(json!({"type":"start"}))
+        .map_err(|_| "AGENT_STREAM_DISCONNECTED")?;
+    let worker_channel = on_event.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let root = std::path::PathBuf::from(request["root"].as_str().ok_or("AGENT_ROOT_REQUIRED")?);
         if !root.is_absolute() || root.parent().is_none() {
             return Err("AGENT_ROOT_INVALID".into());
         }
         let action = request["action"].as_str().unwrap_or("");
-        if ["lsp_status", "lsp_request"].contains(&action) {
+        if ["lsp_status", "lsp_request", "lsp_close"].contains(&action) {
             return crate::capabilities::agent::coding_lsp::execute(&root, request);
         }
         if [
@@ -556,22 +900,155 @@ pub async fn coding_service(
         }
         let id = request["model_id"].as_str().unwrap_or("").to_owned();
         let cancel_root = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
+        let mut emit_delta = |text: &str| -> Result<(), String> {
+            worker_channel
+                .send(json!({"type":"delta","text":text}))
+                .map_err(|_| "AGENT_STREAM_DISCONNECTED".to_string())
+        };
         crate::capabilities::agent::coding::execute(&root, &storage, request, |messages, tools| {
-            coding_turn_cancelable(
+            coding_turn_cancelable_stream(
                 &storage.join("ai-profiles.json"),
                 &id,
                 messages,
                 tools,
                 &|| crate::capabilities::agent::coding::cancelled_for_root(&cancel_root),
+                &mut emit_delta,
             )
         })
     })
     .await
-    .map_err(|_| "AGENT_WORKER_FAILED".to_string())?
+    .map_err(|_| "AGENT_WORKER_FAILED".to_string())?;
+    match &result {
+        Ok(_) => {
+            let _ = on_event.send(json!({"type":"complete"}));
+        }
+        Err(error) => {
+            let _ = on_event.send(json!({"type":"error","message":error}));
+        }
+    }
+    result
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn provider_limits_are_bounded_and_isolated_by_profile() {
+        let profile = format!("fixture-{}", uuid::Uuid::new_v4());
+        let other_profile = format!("fixture-{}", uuid::Uuid::new_v4());
+        let first = super::acquire_provider_permit_timeout(
+            &profile,
+            &|| false,
+            std::time::Duration::from_millis(20),
+        )
+        .unwrap();
+        let second = super::acquire_provider_permit_timeout(
+            &profile,
+            &|| false,
+            std::time::Duration::from_millis(20),
+        )
+        .unwrap();
+        assert!(matches!(
+            super::acquire_provider_permit_timeout(
+                &profile,
+                &|| false,
+                std::time::Duration::from_millis(20)
+            ),
+            Err(error) if error == "AI_PROVIDER_BUSY"
+        ));
+        let independent = super::acquire_provider_permit_timeout(
+            &other_profile,
+            &|| false,
+            std::time::Duration::from_millis(20),
+        )
+        .unwrap();
+        drop((first, second, independent));
+    }
+
+    #[test]
+    fn provider_stream_parser_emits_text_and_reassembles_tool_calls() {
+        let payload = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hello \"}}]}\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"world secret\"}}]}\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"a.rs\\\"}\"}}]}}]}\n",
+            "data: [DONE]\n",
+            "\n__BROWSEROS_HTTP_STATUS__200\n"
+        );
+        let child = std::process::Command::new("/usr/bin/printf")
+            .arg("%s")
+            .arg(payload)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut emitted = String::new();
+        let (message, status, http) =
+            super::read_provider_stream_process(child, b"", "secret", &|| false, &mut |delta| {
+                emitted.push_str(delta);
+                Ok(())
+            })
+            .unwrap();
+        assert!(status.success());
+        assert_eq!(http, Some(200));
+        assert_eq!(emitted, "hello world [REDACTED]");
+        assert_eq!(message["content"], "hello world [REDACTED]");
+        assert_eq!(message["tool_calls"][0]["function"]["name"], "read_file");
+        assert_eq!(
+            message["tool_calls"][0]["function"]["arguments"],
+            "{\"path\":\"a.rs\"}"
+        );
+    }
+
+    #[test]
+    fn cancelling_provider_stream_interrupts_blocking_sse_read_and_reaps_child() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::{Duration, Instant};
+        let cancel = AtomicBool::new(false);
+        let child = std::process::Command::new("/usr/bin/sleep")
+            .arg("10")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let started = Instant::now();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(100));
+                cancel.store(true, Ordering::SeqCst);
+            });
+            let result = super::read_provider_stream_process(
+                child,
+                b"",
+                "secret",
+                &|| cancel.load(Ordering::SeqCst),
+                &mut |_| Ok(()),
+            );
+            assert_eq!(result.unwrap_err(), "AI_PROVIDER_CANCELLED");
+        });
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert!(
+            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "streaming child should be reaped after cancellation"
+        );
+    }
+
+    #[test]
+    fn provider_stream_parser_preserves_http_error_status_without_body() {
+        let child = std::process::Command::new("/usr/bin/printf")
+            .arg("%s")
+            .arg("\n__BROWSEROS_HTTP_STATUS__401\n")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let result =
+            super::read_provider_stream_process(child, b"", "secret", &|| false, &mut |_| Ok(()));
+        let (_, status, http) = result.unwrap();
+        assert!(status.success());
+        assert_eq!(http, Some(401));
+    }
+
     #[test]
     fn provider_process_reads_normal_output_and_limits_oversized_output() {
         let child = std::process::Command::new("/usr/bin/printf")

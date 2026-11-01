@@ -584,24 +584,25 @@ fn run_grid_selftest(app: tauri::AppHandle) {
         // 1) 创建 2 宫格（spawn 2 子进程 + UDS CreateTab）
         step(
             "create_grid(2)",
-            bridge::create_grid(app.clone(), 2, vec!["about:blank".to_string(); 2]).map(|_| ()),
+            bridge::create_grid_blocking(app.clone(), 2, vec!["about:blank".to_string(); 2])
+                .map(|_| ()),
         );
         // 2) 导航 + 定位 + eval
         step(
             "grid_open(0)",
-            bridge::grid_open(app.clone(), 0, "https://www.baidu.com".into()),
+            bridge::grid_open_blocking(app.clone(), 0, "https://www.baidu.com".into()),
         );
         step(
             "grid_open(1)",
-            bridge::grid_open(app.clone(), 1, "https://www.bing.com".into()),
+            bridge::grid_open_blocking(app.clone(), 1, "https://www.bing.com".into()),
         );
         step(
             "grid_position(0)",
-            bridge::grid_position(app.clone(), 0, 40.0, 120.0, 560.0, 420.0),
+            bridge::grid_position_blocking(app.clone(), 0, 40.0, 120.0, 560.0, 420.0),
         );
         step(
             "grid_position(1)",
-            bridge::grid_position(app.clone(), 1, 640.0, 120.0, 560.0, 420.0),
+            bridge::grid_position_blocking(app.clone(), 1, 640.0, 120.0, 560.0, 420.0),
         );
         step(
             "eval_in_tab(grid-0)",
@@ -646,7 +647,7 @@ fn run_grid_selftest(app: tauri::AppHandle) {
             log("FAIL grid-1-survived");
         }
         // 4) 清理
-        step("close_grid", bridge::close_grid(app.clone()));
+        step("close_grid", bridge::close_grid_blocking(app.clone()));
         let count = app.state::<AppState>().grid_manager.count();
         if count == 0 {
             log("PASS shutdown count=0");
@@ -759,11 +760,11 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
         };
         let sleep_ms = |ms| std::thread::sleep(std::time::Duration::from_millis(ms));
         let position_grid = |index: usize, x: f64, y: f64, w: f64, h: f64| {
-            bridge::grid_position(app.clone(), index, x, y, w, h)
+            bridge::grid_position_blocking(app.clone(), index, x, y, w, h)
                 .map(|_| format!("grid-{index} positioned"))
         };
         let open_grid = |case_id: &str, index: usize| {
-            bridge::grid_open(app.clone(), index, gui_mock_url(&mock_base, case_id, index))
+            bridge::grid_open_blocking(app.clone(), index, gui_mock_url(&mock_base, case_id, index))
                 .map(|_| format!("grid-{index} opened case={case_id}"))
         };
         let eval_grid = |case_id: &str, index: usize, phase: &str| {
@@ -784,8 +785,8 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
 
         step(
             "scenario-1-single-ai-broadcast",
-            bridge::create_grid(app.clone(), 4, vec!["about:blank".to_string(); 4]).and_then(
-                |created| {
+            bridge::create_grid_blocking(app.clone(), 4, vec!["about:blank".to_string(); 4])
+                .and_then(|created| {
                     if created < 4 {
                         return Err(format!("created {created} grids, need 4"));
                     }
@@ -797,8 +798,7 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                     // before scenario 2 navigates this grid away (same rule as scenario 2).
                     sleep_ms(600);
                     Ok("single grid command path exercised with local AI mock".to_string())
-                },
-            ),
+                }),
         );
 
         step(
@@ -948,7 +948,7 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                 )?;
                 sleep_ms(800);
                 bridge::term_kill(app.clone(), term.id)?;
-                let stats = bridge::resource_stats(app.clone());
+                let stats = bridge::resource_stats_blocking(app.clone());
                 bridge::eval_in_tab(
                     app.clone(),
                     "grid-0".to_string(),
@@ -993,7 +993,7 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
 
         step(
             "cleanup-close-grid",
-            bridge::close_grid(app.clone()).map(|_| {
+            bridge::close_grid_blocking(app.clone()).map(|_| {
                 let count = app.state::<AppState>().grid_manager.count();
                 format!("close_grid completed count={count}")
             }),
@@ -1155,10 +1155,14 @@ fn run_m0_driver(app: tauri::AppHandle, cfg: bridge::M0Config) {
                 "tab" => bridge::tab_new(app.clone(), "about:blank".into())
                     .map(|tab| OpenedResource::Tab(tab.id)),
                 "grid" => {
-                    match bridge::create_grid(app.clone(), 4, vec!["about:blank".to_string(); 4]) {
+                    match bridge::create_grid_blocking(
+                        app.clone(),
+                        4,
+                        vec!["about:blank".to_string(); 4],
+                    ) {
                         Ok(4) => Ok(OpenedResource::Grid),
                         Ok(created) => {
-                            let _ = bridge::close_grid(app.clone());
+                            let _ = bridge::close_grid_blocking(app.clone());
                             Err(format!("grid degraded to {created} (need 4)"))
                         }
                         Err(error) => Err(error),
@@ -1185,12 +1189,12 @@ fn run_m0_driver(app: tauri::AppHandle, cfg: bridge::M0Config) {
 
             let close_result = match opened_resource {
                 Ok(OpenedResource::Tab(id)) => bridge::tab_close(app.clone(), id),
-                Ok(OpenedResource::Grid) => bridge::close_grid(app.clone()),
+                Ok(OpenedResource::Grid) => bridge::close_grid_blocking(app.clone()),
                 Ok(OpenedResource::Terminal(id)) => bridge::term_kill(app.clone(), id),
                 Err(error) => Err(error),
             };
             if cfg.driver == "tab" && close_result.is_ok() {
-                if let Err(error) = bridge::close_grid(app.clone()) {
+                if let Err(error) = bridge::close_grid_blocking(app.clone()) {
                     fails.push(format!("cycle {n}: tab isolation close_grid: {error}"));
                     log(&format!(
                         "cycle {n} FAIL: tab isolation close_grid: {error}"
