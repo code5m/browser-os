@@ -9,10 +9,14 @@ Machine registry: `docs/engineering/governance.json`.
 - `npm run gate:merge` runs the existing full `npm run check`, default Rust tests, the managed coding UI suite, and the unchanged `scripts/pre-merge.sh` including the independent production-build/hash budget audit. `LOCAL_MERGE_CHECKS=PASS` is local automated evidence only. Ignored Rust integration tests, real provider/MCP calls, remote CI, package, installed GUI, clean-worktree status and approvals are not proved. The script prints their unverified statuses; an installed configured Git pre-merge hook invokes this entry point. The hook is optional and is not automatically installed.
 - The managed coding UI suite starts its own Vite server on a temporary localhost port and stops that server after testing; it never installs BrowserOS. It needs Playwright resolvable by Node or `PLAYWRIGHT_MODULE` pointing to an existing installation, plus `/usr/bin/google-chrome`. Missing prerequisites or failed tests fail the gate; they are never skipped as a pass. Its native transport is simulated.
 - `npm run verify:client` is a separate build/package/cold-start verification, not part of either local gate; it does not itself establish user-confirmed GUI acceptance. Installation requires explicit authorization, and the desktop must be verified independently according to `AGENTS.md`.
-- Existing CI workflows continue to execute their recorded gates; the local wrapper is not evidence that remote CI ran or that the new coding UI suite is wired into CI. The legacy `PRE_MERGE_RESULT=ALL_PASS` remains scoped to `pre-merge.sh`, not the broader local merge entry point or release acceptance.
+- Developer branch pushes now run the independent `BrowserOS Developer Feedback` Quick Gate. `perf/**`, `feature/**` and `fix/**` pushes also build a non-blocking, downloadable release `.deb` for manual testing; its source SHA and SHA256 travel with the artifact. A preview is not installed GUI acceptance.
+- Full Validation runs for non-draft PRs targeting `master`, `master` pushes and explicit manual dispatch. Draft PRs do not queue Full Validation. `native-regression` owns Rust fmt/check/test; the `validate` job retains the other full checks without recompiling the same Rust tests.
+- The local wrapper is not evidence that remote CI ran or that the new coding UI suite is wired into CI. The legacy `PRE_MERGE_RESULT=ALL_PASS` remains scoped to `pre-merge.sh`, not the broader local merge entry point or release acceptance.
 
 | Gate family | Canonical entry | Blocks | Primary evidence |
 | --- | --- | --- | --- |
+| Developer feedback | `npm run gate:quick` | developer push (fast feedback) | contract, coding and governance check subset |
+| Installable preview | `npm run tauri -- build --bundles deb` | manual test readiness (non-blocking) | SHA-bound `.deb` and checksum artifact; GUI_PENDING |
 | Engineering governance | `npm run check:engineering-governance` | CI / merge | registry + drift checker |
 | Architecture & Capability | `npm run check` | CI / merge | architecture/capability/native/semantic checkers |
 | Runtime startup | `npm run check:runtime` | CI / merge | startup/runtime contract |
@@ -30,7 +34,7 @@ Machine registry: `docs/engineering/governance.json`.
 ## Layers
 
 1. Developer-local: hooks, `npm run check`, doctor, pre-merge.
-2. GitHub CI: feature/master push + PR validation.
+2. GitHub CI: branch Quick Gate and preview first; full merge/release validation only on ready PRs to master, master push or manual dispatch.
 3. Packaged runtime: real .deb and Xvfb/DBus GUI acceptance.
 4. Release: named immutable baseline and rollback reference.
 5. Recovery: diagnostics, snapshots and recovery procedures.

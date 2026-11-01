@@ -31,7 +31,13 @@
       "id": "full-validation",
       "path": ".github/workflows/capability-v2-validation.yml",
       "role": "blocking_quality_gate",
-      "scope": "architecture, runtime, build, Rust, packaged GUI, full GUI and pre-merge (all branch pushes + PR to master)"
+      "scope": "master pushes, ready-to-merge PRs targeting master, or manual dispatch; includes architecture, runtime, build, Rust, packaged GUI, full GUI and pre-merge"
+    },
+    {
+      "id": "developer-feedback",
+      "path": ".github/workflows/browseros-developer-feedback.yml",
+      "role": "nonblocking_developer_feedback",
+      "scope": "fast contract/governance feedback on every branch push; independent release .deb preview for perf/feature/fix pushes or manual dispatch, never a merge or GUI-pass substitute"
     },
     {
       "id": "hot-plug",
@@ -291,6 +297,15 @@
         "scripts/verify-installed-client.sh",
         "scripts/benchmark-resource-scenarios.mjs",
         "scripts/measure-app-resources.mjs"
+      ]
+    },
+    {
+      "id": "manual-test-preview",
+      "blocking": false,
+      "entrypoint": "BrowserOS Developer Feedback preview job",
+      "paths": [
+        ".github/workflows/browseros-developer-feedback.yml",
+        "scripts/verify-installed-client.sh"
       ]
     }
   ],

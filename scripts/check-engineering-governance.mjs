@@ -111,14 +111,45 @@ if (fs.existsSync(governanceWorkflow)) {
   if (!source.includes("- '**'")) fail("engineering governance workflow must cover every branch push");
 }
 
+// Lightweight source gates must cover every developer push. Full Validation
+// intentionally must NOT: it is reserved for master, ready PRs and manual runs.
 for (const workflow of [
   ".github/workflows/capability-v2-ui-safety.yml",
-  ".github/workflows/capability-v2-validation.yml",
   ".github/workflows/capability-v3-hotplug.yml",
+  ".github/workflows/browseros-developer-feedback.yml",
 ]) {
   if (!exists(workflow)) continue;
   const source = fs.readFileSync(path.join(root, workflow), "utf8");
   if (!source.includes("- '**'")) fail(`${workflow} must cover every branch push`);
+}
+
+const fullValidation = path.join(root, ".github/workflows/capability-v2-validation.yml");
+if (fs.existsSync(fullValidation)) {
+  const source = fs.readFileSync(fullValidation, "utf8");
+  if (!/^  push:\n    branches:\n      - master$/m.test(source)) {
+    fail("Full Validation push must be restricted to master");
+  }
+  if (source.includes("- '**'")) fail("Full Validation must not block ordinary branch pushes");
+  for (const event of ["opened", "reopened", "synchronize", "ready_for_review"]) {
+    if (!source.includes(`      - ${event}`)) fail(`Full Validation missing PR event: ${event}`);
+  }
+  if (!source.includes("!github.event.pull_request.draft")) {
+    fail("Full Validation must skip draft PRs");
+  }
+  if (!source.includes("native-regression:")) {
+    fail("Full Validation must preserve independent native regression evidence");
+  }
+}
+const developerFeedback = path.join(root, ".github/workflows/browseros-developer-feedback.yml");
+if (fs.existsSync(developerFeedback)) {
+  const source = fs.readFileSync(developerFeedback, "utf8");
+  for (const required of [
+    "npm run gate:quick", "npm run tauri -- build --bundles deb",
+    "scripts/verify-installed-client.sh --no-start",
+    "actions/upload-artifact@v4", "preview-evidence/SOURCE_COMMIT",
+  ]) {
+    if (!source.includes(required)) fail(`developer feedback workflow missing ${required}`);
+  }
 }
 
 if (governance.stableBaseline?.tag !== "capability-platform-v4-stable") {

@@ -1,0 +1,103 @@
+name: BrowserOS Developer Feedback
+
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+    inputs:
+      build_preview:
+        description: Build an installable Debian preview for manual testing
+        type: boolean
+        default: true
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browseros-developer-feedback-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quick:
+    name: Quick Gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked frontend dependencies
+        run: npm ci
+      - name: Fast local-contract and governance gate
+        run: npm run gate:quick
+
+  preview:
+    name: Installable Preview (.deb)
+    needs: quick
+    # Ordinary developer pushes never wait for Full Validation. Preview is
+    # non-blocking and cancellable; unrelated branches can request it manually.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.build_preview == true) ||
+      (github.event_name == 'push' && github.ref != 'refs/heads/master' &&
+        (startsWith(github.ref, 'refs/heads/perf/') ||
+         startsWith(github.ref, 'refs/heads/feature/') ||
+         startsWith(github.ref, 'refs/heads/fix/')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Install Tauri Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install locked frontend dependencies
+        run: npm ci
+      - name: Build real release Debian package
+        # Tauri invokes beforeBuildCommand; do not use vite dev or a debug binary.
+        run: npm run tauri -- build --bundles deb
+      - name: Inspect package and record exact source commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          packages=(src-tauri/target/release/bundle/deb/*.deb)
+          if [[ "${#packages[@]}" -ne 1 ]]; then
+            echo "Expected exactly one release .deb, got ${#packages[@]}" >&2
+            exit 1
+          fi
+          deb="${packages[0]}"
+          test "$(dpkg-deb --field "$deb" Package)" = "mvp-browser-os"
+          dpkg-deb --contents "$deb" | grep -F 'usr/bin/mvp-browser-os' >/dev/null
+          bash scripts/verify-installed-client.sh --no-start
+          mkdir -p preview-evidence
+          sha256sum "$deb" > preview-evidence/SHA256SUMS
+          printf '%s\n' "$GITHUB_SHA" > preview-evidence/SOURCE_COMMIT
+          printf '%s\n' "$deb" > preview-evidence/PACKAGE_PATH
+          echo "PACKAGE_PASS_PENDING_GUI: ${deb}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: browseros-preview-${{ github.sha }}
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            preview-evidence/*
+          if-no-files-found: error
+          retention-days: 7

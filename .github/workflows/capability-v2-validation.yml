@@ -1,12 +1,19 @@
 name: BrowserOS Full Validation
 
 on:
+  # Full validation is for ready-to-merge PRs, master, and explicit manual runs.
+  # Developer pushes use BrowserOS Developer Feedback instead.
   push:
     branches:
-      - '**'
+      - master
   pull_request:
     branches:
       - master
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
   workflow_dispatch:
 
 concurrency:
@@ -17,7 +24,7 @@ jobs:
   source-evidence:
     # Read-only diagnostic export, never modifies or pushes source. The complete
     # tracked checkout (including public/) is kept separately from dependencies.
-    if: github.event_name == 'pull_request' && github.event.pull_request.number == 35
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && github.event.pull_request.number == 35
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -49,6 +56,8 @@ jobs:
           if-no-files-found: error
           retention-days: 3
   impact:
+    # Draft PRs are deliberately excluded; ready_for_review runs full checks.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     outputs:
       mode: ${{ steps.detect.outputs.mode }}
@@ -181,17 +190,8 @@ jobs:
             /tmp/browseros-build-assets.json
           if-no-files-found: error
           retention-days: 14
-      - name: Rust format
-        if: needs.impact.outputs.mode == 'full'
-        run: |
-          cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
-          cargo fmt --manifest-path tauri-browser-tabs/Cargo.toml --all --check
-      - name: Rust check
-        if: needs.impact.outputs.mode == 'full'
-        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
-      - name: Rust tests
-        if: needs.impact.outputs.mode == 'full'
-        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      # Rust fmt/check/test are covered independently by native-regression below.
+      # The whole workflow must pass before the commit can be merged.
       - name: Packaged GUI cold-start acceptance
         if: needs.impact.outputs.mode == 'full'
         run: dbus-run-session -- xvfb-run -a bash scripts/verify-installed-client.sh --install --resource-minutes 5
