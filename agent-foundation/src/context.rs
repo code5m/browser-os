@@ -29,7 +29,11 @@ pub struct ContextRef {
 }
 
 impl ContextRef {
-    pub fn checked(kind: ContextKind, resource_id: impl Into<String>, grant: ContextGrant) -> Result<Self> {
+    pub fn checked(
+        kind: ContextKind,
+        resource_id: impl Into<String>,
+        grant: ContextGrant,
+    ) -> Result<Self> {
         let resource_id = resource_id.into();
         if resource_id.trim().is_empty()
             || resource_id.len() > 4096
@@ -37,7 +41,11 @@ impl ContextRef {
         {
             return Err(FoundationError::InvalidInput("context resource_id"));
         }
-        Ok(Self { kind, resource_id, grant })
+        Ok(Self {
+            kind,
+            resource_id,
+            grant,
+        })
     }
 }
 
@@ -58,7 +66,15 @@ mod tests {
     use super::*;
     #[test]
     fn rejects_empty_and_control_characters() {
-        assert!(ContextRef::checked(ContextKind::BrowserTab, "", ContextGrant::ExplicitSelection).is_err());
-        assert!(ContextRef::checked(ContextKind::BrowserTab, "tab\n1", ContextGrant::ApprovedScope).is_err());
+        assert!(
+            ContextRef::checked(ContextKind::BrowserTab, "", ContextGrant::ExplicitSelection)
+                .is_err()
+        );
+        assert!(ContextRef::checked(
+            ContextKind::BrowserTab,
+            "tab\n1",
+            ContextGrant::ApprovedScope
+        )
+        .is_err());
     }
 }

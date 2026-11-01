@@ -1,9 +1,19 @@
 //! Fail-closed tool dispatch with exact-effect binding, one-shot approval,
 //! timeout, and cooperative cancellation. No shell/MCP/FS tool is registered.
-use crate::{event::EventKind, task::{ApprovedOperation, TaskRegistry}, FoundationError, Result};
+use crate::{
+    event::EventKind,
+    task::{ApprovedOperation, TaskRegistry},
+    FoundationError, Result,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::HashMap, future::Future, pin::Pin, sync::{Arc, RwLock}, time::Duration};
+use std::{
+    collections::HashMap,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -30,8 +40,11 @@ pub struct ToolRegistry {
 impl ToolRegistry {
     pub fn register(&self, tool: Arc<dyn AgentTool>) -> Result<()> {
         let name = tool.name();
-        if name.is_empty() || name.len() > 128
-            || !name.bytes().all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+        if name.is_empty()
+            || name.len() > 128
+            || !name
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
         {
             return Err(FoundationError::InvalidInput("tool name"));
         }
@@ -43,14 +56,22 @@ impl ToolRegistry {
         Ok(())
     }
 
-
     /// Proposals are created using the registered tool effect, never a
     /// model-supplied effect classification. The operation still requires
     /// a separate trusted-host user approval before execution.
-    pub fn propose(&self, tasks: &TaskRegistry, task_id: uuid::Uuid, name: &str, args: Value) -> Result<uuid::Uuid> {
+    pub fn propose(
+        &self,
+        tasks: &TaskRegistry,
+        task_id: uuid::Uuid,
+        name: &str,
+        args: Value,
+    ) -> Result<uuid::Uuid> {
         let effect = {
             let registry = self.tools.read().unwrap_or_else(|e| e.into_inner());
-            registry.get(name).map(|tool| tool.effect()).ok_or(FoundationError::PermissionDenied)?
+            registry
+                .get(name)
+                .map(|tool| tool.effect())
+                .ok_or(FoundationError::PermissionDenied)?
         };
         tasks.propose_tool(task_id, name, args, effect)
     }
@@ -58,7 +79,12 @@ impl ToolRegistry {
     /// Calls are only possible with a permit produced by trusted UI approval.
     /// Tool implementations must independently validate root/scope/arguments and
     /// provide an idempotency key for irreversible external side effects.
-    pub async fn execute(&self, permit: ApprovedOperation, tasks: &TaskRegistry, timeout: Duration) -> Result<Value> {
+    pub async fn execute(
+        &self,
+        permit: ApprovedOperation,
+        tasks: &TaskRegistry,
+        timeout: Duration,
+    ) -> Result<Value> {
         if timeout.is_zero() || timeout > Duration::from_secs(120) {
             return Err(FoundationError::InvalidInput("tool timeout"));
         }
@@ -69,7 +95,10 @@ impl ToolRegistry {
         let _lease = tasks.acquire_execution(permit.task_id, permit.revision)?;
         let tool = {
             let tools = self.tools.read().unwrap_or_else(|e| e.into_inner());
-            tools.get(&permit.operation.tool_name).cloned().ok_or(FoundationError::PermissionDenied)?
+            tools
+                .get(&permit.operation.tool_name)
+                .cloned()
+                .ok_or(FoundationError::PermissionDenied)?
         };
         if tool.effect() != permit.operation.effect {
             return Err(FoundationError::PermissionDenied);
@@ -88,9 +117,13 @@ impl ToolRegistry {
         if !tasks.active_at_revision(permit.task_id, permit.revision) {
             return Err(FoundationError::Cancelled);
         }
-        tasks.journal().append(permit.task_id, EventKind::ToolFinished {
-            call_id: permit.operation.call_id, succeeded: result.is_ok(),
-        });
+        tasks.journal().append(
+            permit.task_id,
+            EventKind::ToolFinished {
+                call_id: permit.operation.call_id,
+                succeeded: result.is_ok(),
+            },
+        );
         result
     }
 }
@@ -103,8 +136,12 @@ mod tests {
 
     struct Echo;
     impl AgentTool for Echo {
-        fn name(&self) -> &str { "example.echo" }
-        fn effect(&self) -> ToolEffect { ToolEffect::ReadOnly }
+        fn name(&self) -> &str {
+            "example.echo"
+        }
+        fn effect(&self) -> ToolEffect {
+            ToolEffect::ReadOnly
+        }
         fn call<'a>(&'a self, args: Value) -> ToolFuture<'a> {
             Box::pin(async move { Ok(args) })
         }
@@ -118,9 +155,25 @@ mod tests {
         tasks.start(task.id).unwrap();
         let tools = ToolRegistry::default();
         tools.register(Arc::new(Echo)).unwrap();
-        let call = tasks.propose_tool(task.id, "example.echo", serde_json::json!({"ok":true}), ToolEffect::ReadOnly).unwrap();
-        let permit = tasks.resolve_approval(task.id, call, true).unwrap().unwrap();
-        assert_eq!(tools.execute(permit, &tasks, Duration::from_secs(1)).await.unwrap()["ok"], true);
+        let call = tasks
+            .propose_tool(
+                task.id,
+                "example.echo",
+                serde_json::json!({"ok":true}),
+                ToolEffect::ReadOnly,
+            )
+            .unwrap();
+        let permit = tasks
+            .resolve_approval(task.id, call, true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            tools
+                .execute(permit, &tasks, Duration::from_secs(1))
+                .await
+                .unwrap()["ok"],
+            true
+        );
         tasks.finish(task.id, true).unwrap();
     }
 
@@ -129,11 +182,22 @@ mod tests {
         let tasks = TaskRegistry::new(Arc::new(EventJournal::new(32)));
         let task = tasks.create(Uuid::new_v4(), "Task", vec![]).unwrap();
         tasks.start(task.id).unwrap();
-        let call = tasks.propose_tool(task.id, "example.echo", Value::Null, ToolEffect::ReadOnly).unwrap();
-        let permit = tasks.resolve_approval(task.id, call, true).unwrap().unwrap();
+        let call = tasks
+            .propose_tool(task.id, "example.echo", Value::Null, ToolEffect::ReadOnly)
+            .unwrap();
+        let permit = tasks
+            .resolve_approval(task.id, call, true)
+            .unwrap()
+            .unwrap();
         tasks.cancel(task.id).unwrap();
         let tools = ToolRegistry::default();
         tools.register(Arc::new(Echo)).unwrap();
-        assert_eq!(tools.execute(permit, &tasks, Duration::from_secs(1)).await.err(), Some(FoundationError::PermissionDenied));
+        assert_eq!(
+            tools
+                .execute(permit, &tasks, Duration::from_secs(1))
+                .await
+                .err(),
+            Some(FoundationError::PermissionDenied)
+        );
     }
 }

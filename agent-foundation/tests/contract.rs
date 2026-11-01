@@ -13,8 +13,12 @@ use uuid::Uuid;
 
 struct ReadTool;
 impl AgentTool for ReadTool {
-    fn name(&self) -> &str { "test.inspect" }
-    fn effect(&self) -> ToolEffect { ToolEffect::ReadOnly }
+    fn name(&self) -> &str {
+        "test.inspect"
+    }
+    fn effect(&self) -> ToolEffect {
+        ToolEffect::ReadOnly
+    }
     fn call<'a>(&'a self, input: Value) -> ToolFuture<'a> {
         Box::pin(async move { Ok(json!({"inspected":input})) })
     }
@@ -22,7 +26,9 @@ impl AgentTool for ReadTool {
 
 #[test]
 fn versioned_command_is_stable_and_model_cannot_approve() {
-    let envelope = Envelope::new(AgentCommand::Get { task_id: Uuid::new_v4() });
+    let envelope = Envelope::new(AgentCommand::Get {
+        task_id: Uuid::new_v4(),
+    });
     assert_eq!(envelope.version, SCHEMA_VERSION);
     let roundtrip: Envelope<AgentCommand> =
         serde_json::from_str(&serde_json::to_string(&envelope).unwrap()).unwrap();
@@ -36,11 +42,12 @@ fn context_requires_a_user_grant_and_does_not_auto_load_resources() {
         ContextKind::EditorSelection,
         "editor:selection:opaque",
         ContextGrant::ExplicitSelection,
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(resource.resource_id, "editor:selection:opaque");
-    assert!(ContextRef::checked(
-        ContextKind::WorkspaceFile, "", ContextGrant::ApprovedScope,
-    ).is_err());
+    assert!(
+        ContextRef::checked(ContextKind::WorkspaceFile, "", ContextGrant::ApprovedScope,).is_err()
+    );
 }
 
 #[tokio::test]
@@ -58,14 +65,17 @@ async fn public_tool_path_requires_explicit_approval_and_is_replay_safe() -> Res
         Some(FoundationError::ApprovalMismatch)
     );
     let permit = tasks.resolve_approval(task.id, call_id, true)?.unwrap();
-    let result = tools.execute(permit, &tasks, std::time::Duration::from_secs(2)).await?;
+    let result = tools
+        .execute(permit, &tasks, std::time::Duration::from_secs(2))
+        .await?;
     assert_eq!(result["inspected"]["path"], "mock");
     assert_eq!(
         tasks.resolve_approval(task.id, call_id, true).err(),
         Some(FoundationError::InvalidTransition)
     );
     assert!(journal.replay(task.id, 0)?.iter().any(|record| matches!(
-        &record.kind, EventKind::ApprovalResolved { accepted: true, .. }
+        &record.kind,
+        EventKind::ApprovalResolved { accepted: true, .. }
     )));
     Ok(())
 }
@@ -79,9 +89,8 @@ fn snapshot_restoration_discards_pending_approvals_and_does_not_execute() -> Res
     let task = tasks.create(Uuid::new_v4(), "Task", vec![])?;
     tasks.start(task.id)?;
     tools.propose(&tasks, task.id, "test.inspect", json!({"input":"safe"}))?;
-    let restored = TaskRegistry::restore_snapshot(
-        &tasks.export_snapshot()?, Arc::new(EventJournal::new(32))
-    )?;
+    let restored =
+        TaskRegistry::restore_snapshot(&tasks.export_snapshot()?, Arc::new(EventJournal::new(32)))?;
     let loaded = restored.get(task.id)?;
     assert_eq!(loaded.status, TaskStatus::Paused);
     assert!(loaded.pending.is_none());

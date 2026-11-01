@@ -117,32 +117,48 @@ impl AgentEngine<'_> {
                         }
                         self.tasks.journal().append(
                             task_id,
-                            EventKind::ModelProgress { bytes: delta.len() as u64 },
+                            EventKind::ModelProgress {
+                                bytes: delta.len() as u64,
+                            },
                         );
                         text.push_str(&delta);
                     }
-                    Some(ModelEvent::ToolSuggestion { tool_name, arguments_json }) => {
+                    Some(ModelEvent::ToolSuggestion {
+                        tool_name,
+                        arguments_json,
+                    }) => {
                         if arguments_json.len() > 16_384 {
                             return Err(FoundationError::InvalidInput("tool arguments too large"));
                         }
                         let arguments = serde_json::from_str(&arguments_json)
                             .map_err(|_| FoundationError::InvalidInput("tool argument JSON"))?;
-                        let call_id = self.tools.propose(self.tasks, task_id, &tool_name, arguments)?;
+                        let call_id = self
+                            .tools
+                            .propose(self.tasks, task_id, &tool_name, arguments)?;
                         return Ok(TurnResult {
                             text,
                             completion: TurnCompletion::NeedsApproval { call_id },
                             usage,
                         });
                     }
-                    Some(ModelEvent::Usage { input_tokens, output_tokens }) => {
+                    Some(ModelEvent::Usage {
+                        input_tokens,
+                        output_tokens,
+                    }) => {
                         usage = Some((input_tokens, output_tokens));
                     }
                     Some(ModelEvent::Finished) => {
                         self.tasks.finish(task_id, true)?;
-                        return Ok(TurnResult { text, completion: TurnCompletion::Completed, usage });
+                        return Ok(TurnResult {
+                            text,
+                            completion: TurnCompletion::Completed,
+                            usage,
+                        });
                     }
                     Some(ModelEvent::Failed { .. }) => {
-                        return Err(FoundationError::Provider("MODEL_REPORTED_FAILURE".to_owned()));
+                        return Err(FoundationError::Provider(
+                            "MODEL_REPORTED_FAILURE".to_owned(),
+                        ));
                     }
                     None => {
                         return Err(FoundationError::Provider("MODEL_STREAM_ENDED".to_owned()));
@@ -165,7 +181,11 @@ impl AgentEngine<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{event::EventJournal, model::{ModelFuture, ModelStream}, tool::{AgentTool, ToolEffect, ToolFuture}};
+    use crate::{
+        event::EventJournal,
+        model::{ModelFuture, ModelStream},
+        tool::{AgentTool, ToolEffect, ToolFuture},
+    };
     use serde_json::{json, Value};
     use std::sync::Arc;
     use tokio::sync::mpsc;
@@ -178,7 +198,10 @@ mod tests {
                 request.validate()?;
                 let (sender, receiver): (_, ModelStream) = mpsc::channel(8);
                 for event in events {
-                    sender.send(event).await.map_err(|_| FoundationError::Cancelled)?;
+                    sender
+                        .send(event)
+                        .await
+                        .map_err(|_| FoundationError::Cancelled)?;
                 }
                 Ok(receiver)
             })
@@ -186,8 +209,12 @@ mod tests {
     }
     struct ReadOnlyTool;
     impl AgentTool for ReadOnlyTool {
-        fn name(&self) -> &str { "editor.read" }
-        fn effect(&self) -> ToolEffect { ToolEffect::ReadOnly }
+        fn name(&self) -> &str {
+            "editor.read"
+        }
+        fn effect(&self) -> ToolEffect {
+            ToolEffect::ReadOnly
+        }
         fn call<'a>(&'a self, arguments: Value) -> ToolFuture<'a> {
             Box::pin(async move { Ok(arguments) })
         }
@@ -196,7 +223,9 @@ mod tests {
     #[tokio::test]
     async fn a_tool_suggestion_always_waits_for_host_approval() {
         let provider = ScriptedProvider(vec![
-            ModelEvent::TextDelta { text: "Inspecting".into() },
+            ModelEvent::TextDelta {
+                text: "Inspecting".into(),
+            },
             ModelEvent::ToolSuggestion {
                 tool_name: "editor.read".into(),
                 arguments_json: json!({"file":"sample.rs"}).to_string(),
@@ -208,30 +237,50 @@ mod tests {
         tools.register(Arc::new(ReadOnlyTool)).unwrap();
         let task = tasks.create(Uuid::new_v4(), "Review code", vec![]).unwrap();
         tasks.start(task.id).unwrap();
-        let engine = AgentEngine { provider: &provider, tools: &tools, tasks: &tasks, limits: TurnLimits::default() };
+        let engine = AgentEngine {
+            provider: &provider,
+            tools: &tools,
+            tasks: &tasks,
+            limits: TurnLimits::default(),
+        };
         let result = engine.drive_turn(task.id, "mock", "inspect").await.unwrap();
         assert_eq!(result.text, "Inspecting");
-        assert_eq!(tasks.get(task.id).unwrap().status, TaskStatus::AwaitingApproval);
+        assert_eq!(
+            tasks.get(task.id).unwrap().status,
+            TaskStatus::AwaitingApproval
+        );
         let TurnCompletion::NeedsApproval { call_id } = result.completion else {
             panic!("model must not auto-run a proposed tool");
         };
-        assert!(journal.replay(task.id, 0).unwrap().iter().any(|event| {
-            matches!(&event.kind, EventKind::ApprovalRequested { .. })
-        }));
-        assert!(tasks.resolve_approval(task.id, call_id, false).unwrap().is_none());
+        assert!(journal
+            .replay(task.id, 0)
+            .unwrap()
+            .iter()
+            .any(|event| { matches!(&event.kind, EventKind::ApprovalRequested { .. }) }));
+        assert!(tasks
+            .resolve_approval(task.id, call_id, false)
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]
     async fn completed_stream_finishes_task() {
         let provider = ScriptedProvider(vec![
-            ModelEvent::TextDelta { text: "Done".into() },
+            ModelEvent::TextDelta {
+                text: "Done".into(),
+            },
             ModelEvent::Finished,
         ]);
         let tasks = TaskRegistry::new(Arc::new(EventJournal::new(32)));
         let tools = ToolRegistry::default();
         let task = tasks.create(Uuid::new_v4(), "Plan", vec![]).unwrap();
         tasks.start(task.id).unwrap();
-        let engine = AgentEngine { provider: &provider, tools: &tools, tasks: &tasks, limits: TurnLimits::default() };
+        let engine = AgentEngine {
+            provider: &provider,
+            tools: &tools,
+            tasks: &tasks,
+            limits: TurnLimits::default(),
+        };
         let response = engine.drive_turn(task.id, "mock", "plan").await.unwrap();
         assert_eq!(response.completion, TurnCompletion::Completed);
         assert_eq!(tasks.get(task.id).unwrap().status, TaskStatus::Completed);
@@ -240,13 +289,19 @@ mod tests {
     #[tokio::test]
     async fn unregistered_tools_fail_closed() {
         let provider = ScriptedProvider(vec![ModelEvent::ToolSuggestion {
-            tool_name: "shell.exec".into(), arguments_json: "{}".into(),
+            tool_name: "shell.exec".into(),
+            arguments_json: "{}".into(),
         }]);
         let tasks = TaskRegistry::new(Arc::new(EventJournal::new(32)));
         let tools = ToolRegistry::default();
         let task = tasks.create(Uuid::new_v4(), "Task", vec![]).unwrap();
         tasks.start(task.id).unwrap();
-        let engine = AgentEngine { provider: &provider, tools: &tools, tasks: &tasks, limits: TurnLimits::default() };
+        let engine = AgentEngine {
+            provider: &provider,
+            tools: &tools,
+            tasks: &tasks,
+            limits: TurnLimits::default(),
+        };
         let result = engine.drive_turn(task.id, "mock", "work").await;
         assert_eq!(result.err(), Some(FoundationError::PermissionDenied));
         assert_eq!(tasks.get(task.id).unwrap().status, TaskStatus::Failed);
@@ -265,10 +320,18 @@ mod tests {
         let task = tasks.create(Uuid::new_v4(), "Task", vec![]).unwrap();
         tasks.start(task.id).unwrap();
         let engine = AgentEngine {
-            provider: &HangingProvider, tools: &tools, tasks: &tasks,
-            limits: TurnLimits { deadline: Duration::from_millis(1), ..TurnLimits::default() },
+            provider: &HangingProvider,
+            tools: &tools,
+            tasks: &tasks,
+            limits: TurnLimits {
+                deadline: Duration::from_millis(1),
+                ..TurnLimits::default()
+            },
         };
-        assert_eq!(engine.drive_turn(task.id, "mock", "work").await.err(), Some(FoundationError::Timeout));
+        assert_eq!(
+            engine.drive_turn(task.id, "mock", "work").await.err(),
+            Some(FoundationError::Timeout)
+        );
         assert_eq!(tasks.get(task.id).unwrap().status, TaskStatus::Failed);
     }
 }

@@ -1,11 +1,14 @@
 //! Bounded typed event journal + live broadcast; payload deliberately contains no
 //! prompts, file contents, tool arguments, credentials, or raw model responses.
 //! JSON projection follows CloudEvents v1 core shape, not an official SDK binding.
-use crate::{FoundationError, Result};
 use crate::task::TaskStatus;
+use crate::{FoundationError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::{HashMap, VecDeque}, sync::Mutex};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Mutex,
+};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
@@ -80,7 +83,11 @@ impl EventJournal {
     pub fn new(retained_per_task: usize) -> Self {
         let retained_per_task = retained_per_task.clamp(1, 1024);
         let (sender, _) = broadcast::channel(retained_per_task.max(16));
-        Self { inner: Mutex::new(Inner::default()), retained_per_task, sender }
+        Self {
+            inner: Mutex::new(Inner::default()),
+            retained_per_task,
+            sender,
+        }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<EventRecord> {
@@ -91,7 +98,12 @@ impl EventJournal {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let sequence = inner.last_sequence.entry(task_id).or_insert(0);
         *sequence += 1;
-        let record = EventRecord { event_id: Uuid::new_v4(), task_id, sequence: *sequence, kind };
+        let record = EventRecord {
+            event_id: Uuid::new_v4(),
+            task_id,
+            sequence: *sequence,
+            kind,
+        };
         let queue = inner.events.entry(task_id).or_default();
         queue.push_back(record.clone());
         if queue.len() > self.retained_per_task {
@@ -106,13 +118,19 @@ impl EventJournal {
     /// clients must obtain a state snapshot instead of silently skipping events.
     pub fn replay(&self, task_id: Uuid, after: u64) -> Result<Vec<EventRecord>> {
         let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(queue) = inner.events.get(&task_id) else { return Ok(Vec::new()); };
+        let Some(queue) = inner.events.get(&task_id) else {
+            return Ok(Vec::new());
+        };
         if let Some(first) = queue.front() {
             if after < first.sequence.saturating_sub(1) {
                 return Err(FoundationError::ReplayGap);
             }
         }
-        Ok(queue.iter().filter(|x| x.sequence > after).cloned().collect())
+        Ok(queue
+            .iter()
+            .filter(|x| x.sequence > after)
+            .cloned()
+            .collect())
     }
 }
 
@@ -126,9 +144,22 @@ mod tests {
         for _ in 0..3 {
             journal.append(id, EventKind::TaskCreated);
         }
-        assert_eq!(journal.replay(id, 1).unwrap().iter().map(|x| x.sequence).collect::<Vec<_>>(), vec![2, 3]);
+        assert_eq!(
+            journal
+                .replay(id, 1)
+                .unwrap()
+                .iter()
+                .map(|x| x.sequence)
+                .collect::<Vec<_>>(),
+            vec![2, 3]
+        );
         assert_eq!(journal.replay(id, 0), Err(FoundationError::ReplayGap));
-        let cloud = journal.replay(id, 2).unwrap().pop().unwrap().cloud_events_json();
+        let cloud = journal
+            .replay(id, 2)
+            .unwrap()
+            .pop()
+            .unwrap()
+            .cloud_events_json();
         assert_eq!(cloud["specversion"], "1.0");
         assert_eq!(cloud["data"]["sequence"], 3);
     }

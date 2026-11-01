@@ -71,3 +71,7 @@ See [UPSTREAM-INTERNALIZATION-RESEARCH-20261101.md](UPSTREAM-INTERNALIZATION-RES
 3. Add durable snapshot/event outbox as an opt-in storage adapter (not automatically active).
 4. Evaluate real Rig and RMCP adapters behind optional cargo features, write contract tests before adopting.
 5. Re-read existing Coding Agent and MCP implementations and refine the integration RFC; do not wire them up.
+
+## Actual independent verification — 2026-11-01 follow-up
+
+On the connected developer machine, source formatting was corrected; `cargo check` passed, `cargo test` passed (13 unit + 4 contract tests) and strict `cargo clippy --all-targets -- -D warnings` passed. See [VERIFICATION-20261101.md](VERIFICATION-20261101.md). This lifts only the standalone prototype's initial compilation gate; authenticated authorization, durable outbox, official SDK interoperability and GUI acceptance remain open.

@@ -1,5 +1,8 @@
 //! Vendor-neutral model stream boundary inspired by Rig, not a Rig integration.
-use crate::{context::{validate_context_list, ContextRef}, FoundationError, Result};
+use crate::{
+    context::{validate_context_list, ContextRef},
+    FoundationError, Result,
+};
 use serde::{Deserialize, Serialize};
 use std::{future::Future, pin::Pin};
 use tokio::sync::mpsc;
@@ -15,8 +18,10 @@ pub struct ModelRequest {
 
 impl ModelRequest {
     pub fn validate(&self) -> Result<()> {
-        if self.model_id.trim().is_empty() || self.model_id.len() > 160
-            || self.prompt.trim().is_empty() || self.prompt.len() > 32_768
+        if self.model_id.trim().is_empty()
+            || self.model_id.len() > 160
+            || self.prompt.trim().is_empty()
+            || self.prompt.len() > 32_768
         {
             return Err(FoundationError::InvalidInput("model request"));
         }
@@ -27,11 +32,21 @@ impl ModelRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ModelEvent {
-    TextDelta { text: String },
-    ToolSuggestion { tool_name: String, arguments_json: String },
-    Usage { input_tokens: u64, output_tokens: u64 },
+    TextDelta {
+        text: String,
+    },
+    ToolSuggestion {
+        tool_name: String,
+        arguments_json: String,
+    },
+    Usage {
+        input_tokens: u64,
+        output_tokens: u64,
+    },
     Finished,
-    Failed { code: String },
+    Failed {
+        code: String,
+    },
 }
 
 pub type ModelStream = mpsc::Receiver<ModelEvent>;

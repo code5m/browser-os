@@ -16,7 +16,11 @@ pub struct Envelope<T> {
 
 impl<T> Envelope<T> {
     pub fn new(payload: T) -> Self {
-        Self { version: SCHEMA_VERSION, request_id: Uuid::new_v4(), payload }
+        Self {
+            version: SCHEMA_VERSION,
+            request_id: Uuid::new_v4(),
+            payload,
+        }
     }
     pub fn validate(&self) -> Result<()> {
         if self.version != SCHEMA_VERSION {
@@ -29,11 +33,23 @@ impl<T> Envelope<T> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum AgentCommand {
-    Create { session_id: Uuid, goal: String, context: Vec<ContextRef> },
-    Start { task_id: Uuid },
-    Pause { task_id: Uuid },
-    Cancel { task_id: Uuid },
-    Get { task_id: Uuid },
+    Create {
+        session_id: Uuid,
+        goal: String,
+        context: Vec<ContextRef>,
+    },
+    Start {
+        task_id: Uuid,
+    },
+    Pause {
+        task_id: Uuid,
+    },
+    Cancel {
+        task_id: Uuid,
+    },
+    Get {
+        task_id: Uuid,
+    },
 }
 
 /// Approval is purposefully absent from AgentCommand.
@@ -43,9 +59,14 @@ mod tests {
     use super::*;
     #[test]
     fn unknown_version_is_rejected() {
-        let mut msg = Envelope::new(AgentCommand::Get { task_id: Uuid::new_v4() });
+        let mut msg = Envelope::new(AgentCommand::Get {
+            task_id: Uuid::new_v4(),
+        });
         msg.version = 55;
-        assert_eq!(msg.validate(), Err(FoundationError::InvalidInput("protocol version")));
+        assert_eq!(
+            msg.validate(),
+            Err(FoundationError::InvalidInput("protocol version"))
+        );
     }
     #[test]
     fn approval_cannot_be_deserialized_as_agent_command() {
