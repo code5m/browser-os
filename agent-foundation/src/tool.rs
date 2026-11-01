@@ -43,6 +43,18 @@ impl ToolRegistry {
         Ok(())
     }
 
+
+    /// Proposals are created using the registered tool effect, never a
+    /// model-supplied effect classification. The operation still requires
+    /// a separate trusted-host user approval before execution.
+    pub fn propose(&self, tasks: &TaskRegistry, task_id: uuid::Uuid, name: &str, args: Value) -> Result<uuid::Uuid> {
+        let effect = {
+            let registry = self.tools.read().unwrap_or_else(|e| e.into_inner());
+            registry.get(name).map(|tool| tool.effect()).ok_or(FoundationError::PermissionDenied)?
+        };
+        tasks.propose_tool(task_id, name, args, effect)
+    }
+
     /// Calls are only possible with a permit produced by trusted UI approval.
     /// Tool implementations must independently validate root/scope/arguments and
     /// provide an idempotency key for irreversible external side effects.

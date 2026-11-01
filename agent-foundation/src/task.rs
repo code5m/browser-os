@@ -151,7 +151,7 @@ impl TaskRegistry {
         Ok(())
     }
 
-    pub fn propose_tool(&self, id: Uuid, tool_name: impl Into<String>, arguments: Value, effect: ToolEffect) -> Result<Uuid> {
+    pub(crate) fn propose_tool(&self, id: Uuid, tool_name: impl Into<String>, arguments: Value, effect: ToolEffect) -> Result<Uuid> {
         let tool_name = tool_name.into();
         if tool_name.is_empty() || tool_name.len() > 128
             || !tool_name.bytes().all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))

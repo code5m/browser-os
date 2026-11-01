@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 pub mod context;
+pub mod engine;
 pub mod event;
 pub mod model;
 pub mod protocol;
