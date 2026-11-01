@@ -12,6 +12,14 @@ Baseline: master 9607e260f86b15a730219c619ab5a20cc01efe65.
 - Keep exactly one owner of each tool side effect. Reuse existing BrowserOS Public APIs after separate approval, never reach into feature internals.
 - Model output and MCP results are untrusted. Models may **propose**, not authorize or silently execute.
 
+## 2026-11-01 Research gate: prioritize internalization, not bulk SDK adoption
+
+See [UPSTREAM-INTERNALIZATION-RESEARCH-20261101.md](UPSTREAM-INTERNALIZATION-RESEARCH-20261101.md) for the six-project source-map and adoption decisions.
+
+**Corrected dependency strategy**: keep BrowserOS Task/Permission/Context/Resource ownership independent; study Rig `AgentRun` (serialized I/O-free state machine), `rig-memory` and `rig-cassette` **before extending our own multi-turn engine**. New `engine.rs` is an experiment to compare against Rig, not automatically our production execution engine. Separate ACP editor-to-agent transport from internal task orchestration; A2A is deferred; RMCP owns wire protocol, not authorization; CloudEvents is an outbound event format, not our internal event bus; Goose is a whole-application architectural reference, not a dependency.
+
+**Blocking gates before any external SDK feature**: (1) independent Cargo fmt/check/test/clippy evidence, (2) upstream call-chain + error/recovery analysis, (3) license/MSRV/feature/size review, (4) contract tests with mock providers/tools, (5) branch path-isolation check. No connection to BrowserOS main app until separately authorized.
+
 ## Work breakdown and acceptance gates
 
 | Priority | Deliverable | Acceptance requirement | Status |
