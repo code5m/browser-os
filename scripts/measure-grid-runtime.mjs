@@ -49,8 +49,14 @@ function collect(parent){
 }
 const args=process.argv.slice(2);
 if(args.includes('--self-test')){
- const x=parseStat('123 (a b) S 17 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 123456');
+ // Linux stat fields after the final ") " begin at field 3: state,
+ // followed by ppid at index 1 and starttime (field 22) at index 19.
+ // Construct the fixture instead of silently testing a truncated record.
+ const fixture='123 (a b) '+['S','17',...Array(17).fill('0'),'123456'].join(' ');
+ const x=parseStat(fixture);
  if(!x||x.ppid!==17||x.start!=='123456')throw Error('GRID_PROC_STAT_INVALID');
+ if(parseStat('broken process record')!==null)throw Error('GRID_PROC_STAT_INVALID');
+ if(parseStat('1 (unterminated name')!==null)throw Error('GRID_PROC_STAT_INVALID');
  if(kb('VmRSS:\t123 kB\n','VmRSS')!==123)throw Error('GRID_RSS_PARSE_INVALID');
  console.log('GRID_RUNTIME_SAMPLER=PASS');
 }else{

@@ -3612,6 +3612,20 @@ pub fn tab_reload(app: AppHandle, id: String) -> Result<(), String> {
     plugin_eval(&app, &id, "location.reload();")
 }
 
+/// Synchronous adapter used ONLY by the native GUI regression harness running
+/// outside the Tauri command handler. Production GUI commands use the async
+/// wrapper below and must never wait for a Grid UDS response on the IPC thread.
+pub fn eval_in_tab_blocking(app: AppHandle, id: String, js: String) -> Result<String, String> {
+    if let Some(index) = grid_index_of(&id) {
+        app.state::<AppState>()
+            .grid_manager
+            .request(index, GridCmd::Eval { id, js }, 10000)?;
+        return Ok("ok".to_string());
+    }
+    plugin_eval(&app, &id, &js)?;
+    Ok("ok".to_string())
+}
+
 /// 在指定子 webview 中执行 JavaScript（用于 AI 模式向宫格注入问题）。
 /// 宫格 grid-N 经 UDS 转发到子进程，页签 tab-N 仍走本地插件。
 #[tauri::command]

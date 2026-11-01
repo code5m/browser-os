@@ -606,7 +606,7 @@ fn run_grid_selftest(app: tauri::AppHandle) {
         );
         step(
             "eval_in_tab(grid-0)",
-            bridge::eval_in_tab(app.clone(), "grid-0".into(), "document.title".into()).map(|_| ()),
+            bridge::eval_in_tab_blocking(app.clone(), "grid-0".into(), "document.title".into()).map(|_| ()),
         );
         // 3) kill -11 崩溃 grid-0 → 自动重启 + 重放
         let pid0 = app.state::<AppState>().grid_manager.pid_of(0);
@@ -636,7 +636,7 @@ fn run_grid_selftest(app: tauri::AppHandle) {
         }
         step(
             "eval_in_tab(grid-0-after-restart)",
-            bridge::eval_in_tab(app.clone(), "grid-0".into(), "1+1".into()).map(|_| ()),
+            bridge::eval_in_tab_blocking(app.clone(), "grid-0".into(), "1+1".into()).map(|_| ()),
         );
         // grid-1 全程存活
         let pid1_alive = app.state::<AppState>().grid_manager.pid_of(1).is_some();
@@ -768,7 +768,7 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                 .map(|_| format!("grid-{index} opened case={case_id}"))
         };
         let eval_grid = |case_id: &str, index: usize, phase: &str| {
-            bridge::eval_in_tab(
+            bridge::eval_in_tab_blocking(
                 app.clone(),
                 format!("grid-{index}"),
                 gui_regression_eval(case_id, index, phase),
@@ -949,7 +949,7 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                 sleep_ms(800);
                 bridge::term_kill(app.clone(), term.id)?;
                 let stats = bridge::resource_stats_blocking(app.clone());
-                bridge::eval_in_tab(
+                bridge::eval_in_tab_blocking(
                     app.clone(),
                     "grid-0".to_string(),
                     gui_regression_menu_eval("8", 0, "context_menu"),
