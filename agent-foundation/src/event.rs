@@ -20,6 +20,7 @@ pub enum EventKind {
     ApprovalRequested { call_id: Uuid, tool_name: String },
     ApprovalResolved { call_id: Uuid, accepted: bool },
     ToolFinished { call_id: Uuid, succeeded: bool },
+    EffectUnknown { call_id: Uuid },
     ModelProgress { bytes: u64 },
     Interrupted,
 }
@@ -32,6 +33,7 @@ impl EventKind {
             Self::ApprovalRequested { .. } => "tool.approval_requested",
             Self::ApprovalResolved { .. } => "tool.approval_resolved",
             Self::ToolFinished { .. } => "tool.finished",
+            Self::EffectUnknown { .. } => "tool.outcome_unknown",
             Self::ModelProgress { .. } => "model.progress",
             Self::Interrupted => "task.interrupted",
         }
@@ -112,6 +114,32 @@ impl EventJournal {
         drop(inner);
         let _ = self.sender.send(record.clone()); // Zero subscribers is normal.
         record
+    }
+
+    /// Broadcast events that were already committed with exactly their durable
+    /// IDs and sequence numbers. No second sequence is generated locally.
+    #[cfg(feature = "durable-sqlite")]
+    pub(crate) fn publish_committed(&self, records: &[EventRecord]) {
+        let mut published = Vec::new();
+        {
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            for event in records {
+                let last = inner.last_sequence.entry(event.task_id).or_insert(0);
+                if event.sequence <= *last {
+                    continue;
+                }
+                *last = event.sequence;
+                let queue = inner.events.entry(event.task_id).or_default();
+                queue.push_back(event.clone());
+                if queue.len() > self.retained_per_task {
+                    queue.pop_front();
+                }
+                published.push(event.clone());
+            }
+        }
+        for event in published {
+            let _ = self.sender.send(event);
+        }
     }
 
     /// Events with sequence > after. A missing history window is an explicit error;

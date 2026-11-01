@@ -1,5 +1,11 @@
 # Agent Channel Rust Foundation — execution plan
 
+> **2026-11-01 implementation update**: The historical work-breakdown table below
+> records the original planning state, not the latest SDK and test results.
+> See [current integration matrix](OPEN-SOURCE-INTEGRATION-MATRIX-20261101.md)
+> and [current verification](VERIFICATION-FOUNDATION-20261101.md)
+> for confirmed work and outstanding production gates.
+
 Status as of 2026-11-01: **isolated development only**. Production integration is explicitly out of scope.
 Repository: code5m/browser-os. Branch: feat/agent-channel-rust-foundation-20261101.
 Baseline: master 9607e260f86b15a730219c619ab5a20cc01efe65.
@@ -75,3 +81,23 @@ See [UPSTREAM-INTERNALIZATION-RESEARCH-20261101.md](UPSTREAM-INTERNALIZATION-RES
 ## Actual independent verification — 2026-11-01 follow-up
 
 On the connected developer machine, source formatting was corrected; `cargo check` passed, `cargo test` passed (13 unit + 4 contract tests) and strict `cargo clippy --all-targets -- -D warnings` passed. See [VERIFICATION-20261101.md](VERIFICATION-20261101.md). This lifts only the standalone prototype's initial compilation gate; authenticated authorization, durable outbox, official SDK interoperability and GUI acceptance remain open.
+
+
+## 2026-11-01 第二阶段落实情况（以真实代码为准）
+
+| 原计划能力 | 本次变更 | 结果/限制 |
+|---|---|---|
+| P0 独立编译 | Cargo fmt/check/test/clippy、sdk 可选构建 | 独立 crate PASS，不代表 BrowserOS 主程序 |
+| P1c 审批可信度 | HMAC-SHA256 签发/验签，绑定 principal+workspace+session+task revision+call+args+effect+resource revision+TTL | 本地伪造、篡改、重放测试 PASS；真实登录/密钥 Owner 未接 |
+| P3a 事务任务与事件 | SQLite WAL + FULL sync + revision CAS + 原子 Outbox + 单进程任务恢复 | 测试 PASS，敏感数据加密与迁移未做 |
+| P3c 工具副作用 | 工具 Owner 二次验证 + 单次授权 + 执行前持久 UNKNOWN + idempotency key + 对账 | mock PASS；真实服务幂等/退款/回滚未接 |
+| P2a Rig | feature \`adapter-rig\`，官方 0.43 SDK DynModel、Completion、实时增量流、工具提议、usage | 编译/映射测试 PASS；真实模型未联调；rig-agent AgentRun 未引入 |
+| P2b RMCP | feature \`adapter-rmcp\`，官方 3.8 SDK client/server 通过内存协议初始化与 tools/list/call | SDK 模拟互操作 PASS；真实 MCP / stdio / HTTP 未测，只读注册 |
+| P2c ACP | feature \`adapter-acp\`，官方 3.6 SDK 稳定 v1 SessionNotification/JSON-RPC frame/Channel | SDK 内存通知 PASS；真实 IDE handshake/load/resume 未测 |
+| P3d 故障注入 | SQLite Outbox 写入失败整体回滚、活动租约挡恢复、外部执行后超时、取消、资源失效、文件重启 | mock PASS；没有长时压力/网络故障/GUI 实验 |
+| P2d 可选 A2A / CloudEvents | 未引入相应 SDK；CloudEvents 仅沿用原有元数据格式 | 意图保留，按外部集成需求另决策 |
+| P4 BrowserOS 集成 | 未修改任何现有 app/Tauri/业务代码 | 仍待单独 RFC、Owner 与人工 GUI 验收 |
+
+**下一阶段唯一 Owner 原则**：BrowserOS Host 实名身份/密钥/权限，TaskRegistry 任务生命周期，Rig 只做模型适配，RMCP 只做工具 wire，ACP 只做编辑器 wire，Tool Owner 负责真实资源版本和远端幂等。不得把 \`rig-agent\` AgentRun 与本项目 Task 状态机同时作为任务的最终 Owner，也不得把 MCP 工具 annotations 作为授权依据。
+
+**仍需要完成**：真实 Host 鉴权、资源 Owner 的 Public API 接线、数据加密、持久化进程治理和日志保留、外部 Provider/ACP/MCP 全互操作、真实取消/崩溃对账、性能基线及 BrowserOS 安装版 GUI/Full Validation。最终上线仍是 **NOT READY**。

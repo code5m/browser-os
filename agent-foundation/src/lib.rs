@@ -2,7 +2,16 @@
 //! Protocol internals are independent of model vendors and editor implementation.
 #![forbid(unsafe_code)]
 
+#[cfg(any(
+    feature = "adapter-rig",
+    feature = "adapter-rmcp",
+    feature = "adapter-acp"
+))]
+pub mod adapters;
+pub mod approval;
 pub mod context;
+#[cfg(feature = "durable-sqlite")]
+pub mod durable;
 pub mod engine;
 pub mod event;
 pub mod model;
@@ -17,6 +26,7 @@ pub type Result<T> = std::result::Result<T, FoundationError>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FoundationError {
     InvalidInput(&'static str),
+    Storage(String),
     NotFound,
     InvalidTransition,
     ApprovalMismatch,
@@ -32,6 +42,7 @@ pub enum FoundationError {
 impl fmt::Display for FoundationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Storage(error) => write!(f, "storage: {error}"),
             Self::InvalidInput(reason) => write!(f, "invalid input: {reason}"),
             Self::NotFound => write!(f, "resource not found"),
             Self::InvalidTransition => write!(f, "invalid task transition"),

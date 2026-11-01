@@ -115,12 +115,12 @@ impl AgentEngine<'_> {
                         if delta.len() > self.limits.max_text_bytes.saturating_sub(text.len()) {
                             return Err(FoundationError::Provider("MODEL_TEXT_LIMIT".to_owned()));
                         }
-                        self.tasks.journal().append(
+                        self.tasks.record_event(
                             task_id,
                             EventKind::ModelProgress {
                                 bytes: delta.len() as u64,
                             },
-                        );
+                        )?;
                         text.push_str(&delta);
                     }
                     Some(ModelEvent::ToolSuggestion {

@@ -1,3 +1,5 @@
+> **历史验证快照**：以下仅描述原提交 \`507f06e\` 的第一轮检查，随后实现的 SQLite、可信审批及官方 Rig/RMCP/ACP 适配请参阅 [本次完整验证](VERIFICATION-FOUNDATION-20261101.md)。原文的“未实现/未接入”不能代表当前分支。
+
 # 2026-11-01 isolated foundation verification
 
 Branch: `feat/agent-channel-rust-foundation-20261101`.

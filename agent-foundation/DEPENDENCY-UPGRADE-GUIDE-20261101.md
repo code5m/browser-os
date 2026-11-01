@@ -1,3 +1,5 @@
+> **后续实现提醒（2026-11-01）**：本文是最初调研/升级计划的历史快照，其中“未接 SDK”等描述已经过时。当前实际依赖、版本、功能边界与验收以 [开源接入矩阵](OPEN-SOURCE-INTEGRATION-MATRIX-20261101.md) 和 [验证报告](VERIFICATION-FOUNDATION-20261101.md) 为准；固定 Rig 0.43.0、RMCP 3.8.0、ACP 3.6.0，不升级根项目 Rust 工具链。
+
 # BrowserOS Agent Channel：Cargo 依赖接入与深度内化升级说明
 
 > 日期：2026-11-01

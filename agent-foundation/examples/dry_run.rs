@@ -1,5 +1,6 @@
 //! A safe, deterministic demonstration: mock model -> approval -> mock tool.
 use browseros_agent_foundation::{
+    approval::{ApprovalBroker, HostApprovalDecision, HostApprovalIssuer, ResourceBinding},
     engine::{AgentEngine, TurnCompletion, TurnLimits},
     event::EventJournal,
     model::{ModelEvent, ModelFuture, ModelProvider, ModelRequest},
@@ -44,6 +45,19 @@ impl AgentTool for FakeReadTool {
     fn effect(&self) -> ToolEffect {
         ToolEffect::ReadOnly
     }
+    // Mock has no real resource; production tools must query the owning API
+    // and compare the actual resource revision to binding.resource_revision.
+    fn validate_binding(
+        &self,
+        binding: &browseros_agent_foundation::approval::ApprovalBinding,
+        _args: &Value,
+    ) -> Result<()> {
+        if binding.resource.resource_id.starts_with("workspace:") {
+            Ok(())
+        } else {
+            Err(browseros_agent_foundation::FoundationError::PermissionDenied)
+        }
+    }
     fn call<'a>(&'a self, arguments: Value) -> ToolFuture<'a> {
         Box::pin(async move { Ok(json!({"simulated":true,"requested":arguments})) })
     }
@@ -56,7 +70,8 @@ async fn main() -> Result<()> {
     let tools = ToolRegistry::default();
     tools.register(Arc::new(FakeReadTool))?;
 
-    let task = tasks.create(Uuid::new_v4(), "Inspect demo document", vec![])?;
+    let workspace = Uuid::new_v4();
+    let task = tasks.create_scoped(workspace, Uuid::new_v4(), "Inspect demo document", vec![])?;
     tasks.start(task.id)?;
     let engine = AgentEngine {
         provider: &FakeModel,
@@ -72,10 +87,27 @@ async fn main() -> Result<()> {
         unreachable!("mock model should request a tool");
     };
     assert_eq!(tasks.get(task.id)?.status, TaskStatus::AwaitingApproval);
-    // In a real app, only an authenticated and informed host user can approve.
-    let permit = tasks
-        .resolve_approval(task.id, call_id, true)?
-        .expect("demo user explicitly approved the one pending tool");
+    // Only a trusted host UI path may hold the signing key / issue receipts.
+    // This demo uses a fixed key and fake principal, NEVER use either in production.
+    let host = HostApprovalIssuer::new([31; 32])?;
+    let broker = ApprovalBroker::new([31; 32])?;
+    let ticket = host.issue(
+        &tasks,
+        task.id,
+        call_id,
+        HostApprovalDecision {
+            principal_id: Uuid::new_v4(),
+            resource: ResourceBinding {
+                resource_id: format!("workspace:{workspace}"),
+                resource_revision: "demo-v1".into(),
+            },
+            accepted: true,
+            ttl: Duration::from_secs(30),
+        },
+    )?;
+    let permit = broker
+        .resolve(&tasks, &ticket)?
+        .expect("demo host approved the one pending mock tool");
     let answer = tools
         .execute(permit, &tasks, Duration::from_secs(2))
         .await?;

@@ -1,9 +1,11 @@
 //! Independent task state machine. No Tauri commands, networking or file writes.
 //! Trust boundary: resolve_approval MUST only be called by an authenticated host UI.
 //! Never expose this method through a model-callable tool or untrusted RPC.
+#[cfg(feature = "durable-sqlite")]
+use crate::durable::SqliteTaskStore;
 use crate::{
     context::{validate_context_list, ContextRef},
-    event::{EventJournal, EventKind},
+    event::{EventJournal, EventKind, EventRecord},
     tool::ToolEffect,
     FoundationError, Result,
 };
@@ -45,6 +47,8 @@ pub struct PendingOperation {
 pub struct TaskRecord {
     pub id: Uuid,
     pub session_id: Uuid,
+    #[serde(default)]
+    pub workspace_id: Uuid,
     pub goal: String,
     pub context: Vec<ContextRef>,
     pub status: TaskStatus,
@@ -58,6 +62,7 @@ pub struct ApprovedOperation {
     pub(crate) task_id: Uuid,
     pub(crate) revision: u64,
     pub(crate) operation: PendingOperation,
+    pub(crate) binding: Option<crate::approval::ApprovalBinding>,
 }
 
 pub struct TaskRegistry {
@@ -65,6 +70,8 @@ pub struct TaskRegistry {
     signals: Mutex<HashMap<Uuid, watch::Sender<bool>>>,
     journal: Arc<EventJournal>,
     execution_leases: Mutex<HashSet<Uuid>>,
+    #[cfg(feature = "durable-sqlite")]
+    durable: Option<Arc<SqliteTaskStore>>,
 }
 
 /// Prevents concurrent model/tool execution for one task across all adapters.
@@ -72,10 +79,16 @@ pub struct TaskRegistry {
 pub(crate) struct ExecutionLease<'a> {
     registry: &'a TaskRegistry,
     task_id: Uuid,
+    #[cfg(feature = "durable-sqlite")]
+    db_lease: Option<Uuid>,
 }
 
 impl Drop for ExecutionLease<'_> {
     fn drop(&mut self) {
+        #[cfg(feature = "durable-sqlite")]
+        if let (Some(store), Some(token)) = (&self.registry.durable, self.db_lease) {
+            store.release_lease(self.task_id, token);
+        }
         self.registry
             .execution_leases
             .lock()
@@ -91,11 +104,73 @@ impl TaskRegistry {
             signals: Mutex::new(HashMap::new()),
             journal,
             execution_leases: Mutex::new(HashSet::new()),
+            #[cfg(feature = "durable-sqlite")]
+            durable: None,
         }
     }
 
+    #[cfg(feature = "durable-sqlite")]
+    pub fn new_durable(store: Arc<SqliteTaskStore>, journal: Arc<EventJournal>) -> Result<Self> {
+        let records = store.recover_paused()?;
+        let mut registry = Self::new(journal.clone());
+        for record in records {
+            let (sender, _) = watch::channel(false);
+            registry
+                .signals
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(record.id, sender);
+            journal.publish_committed(&store.recent_events(record.id, 1024)?);
+            registry
+                .tasks
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(record.id, record);
+        }
+        registry.durable = Some(store);
+        Ok(registry)
+    }
+
+    fn persist(
+        &self,
+        next: &TaskRecord,
+        expected: Option<u64>,
+        kinds: &[EventKind],
+    ) -> Result<Vec<EventRecord>> {
+        #[cfg(feature = "durable-sqlite")]
+        if let Some(store) = &self.durable {
+            return store.commit(next, expected, kinds);
+        }
+        let _ = (next, expected, kinds);
+        Ok(Vec::new())
+    }
+
+    fn publish(&self, task_id: Uuid, kinds: &[EventKind], committed: Vec<EventRecord>) {
+        #[cfg(feature = "durable-sqlite")]
+        if self.durable.is_some() {
+            self.journal.publish_committed(&committed);
+            return;
+        }
+        let _ = committed;
+        for kind in kinds {
+            self.journal.append(task_id, kind.clone());
+        }
+    }
+
+    /// Legacy in-memory/testing task: no trusted workspace, so host-signed
+    /// approval is deliberately unavailable. Prefer create_scoped in production.
     pub fn create(
         &self,
+        session_id: Uuid,
+        goal: impl Into<String>,
+        context: Vec<ContextRef>,
+    ) -> Result<TaskRecord> {
+        self.create_scoped(Uuid::nil(), session_id, goal, context)
+    }
+
+    pub fn create_scoped(
+        &self,
+        workspace_id: Uuid,
         session_id: Uuid,
         goal: impl Into<String>,
         context: Vec<ContextRef>,
@@ -108,12 +183,15 @@ impl TaskRegistry {
         let record = TaskRecord {
             id: Uuid::new_v4(),
             session_id,
+            workspace_id,
             goal,
             context,
             status: TaskStatus::Ready,
             revision: 0,
             pending: None,
         };
+        let events = [EventKind::TaskCreated];
+        let persisted = self.persist(&record, None, &events)?;
         self.tasks
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -123,7 +201,7 @@ impl TaskRegistry {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(record.id, sender);
-        self.journal.append(record.id, EventKind::TaskCreated);
+        self.publish(record.id, &events, persisted);
         Ok(record)
     }
 
@@ -148,84 +226,89 @@ impl TaskRegistry {
             .execution_leases
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        if !leases.insert(id) {
+        if leases.contains(&id) {
             return Err(FoundationError::InvalidTransition);
         }
+        #[cfg(feature = "durable-sqlite")]
+        let db_lease = self
+            .durable
+            .as_ref()
+            .map(|store| store.acquire_lease(id, revision))
+            .transpose()?;
+        leases.insert(id);
         Ok(ExecutionLease {
             registry: self,
             task_id: id,
+            #[cfg(feature = "durable-sqlite")]
+            db_lease,
         })
     }
 
     pub fn start(&self, id: Uuid) -> Result<()> {
-        let previous = {
-            let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-            let task = tasks.get_mut(&id).ok_or(FoundationError::NotFound)?;
-            if !matches!(task.status, TaskStatus::Ready | TaskStatus::Paused) {
-                return Err(FoundationError::InvalidTransition);
-            }
-            let previous = task.status;
-            task.status = TaskStatus::Running;
-            task.revision += 1;
-            previous
-        };
-        // A previously paused operation has a cancelled receiver; use a fresh epoch.
+        let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = tasks.get(&id).ok_or(FoundationError::NotFound)?.clone();
+        if !matches!(previous.status, TaskStatus::Ready | TaskStatus::Paused) {
+            return Err(FoundationError::InvalidTransition);
+        }
+        let mut next = previous.clone();
+        next.status = TaskStatus::Running;
+        next.revision += 1;
+        let events = [EventKind::StateChanged {
+            from: previous.status,
+            to: next.status,
+        }];
+        let committed = self.persist(&next, Some(previous.revision), &events)?;
+        tasks.insert(id, next);
+        drop(tasks);
         let (sender, _) = watch::channel(false);
         self.signals
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(id, sender);
-        self.journal.append(
-            id,
-            EventKind::StateChanged {
-                from: previous,
-                to: TaskStatus::Running,
-            },
-        );
+        self.publish(id, &events, committed);
         Ok(())
     }
 
     pub fn pause(&self, id: Uuid) -> Result<()> {
         let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-        let task = tasks.get_mut(&id).ok_or(FoundationError::NotFound)?;
-        if task.status != TaskStatus::Running {
+        let previous = tasks.get(&id).ok_or(FoundationError::NotFound)?.clone();
+        if previous.status != TaskStatus::Running {
             return Err(FoundationError::InvalidTransition);
         }
-        task.status = TaskStatus::Paused;
-        task.revision += 1;
+        let mut next = previous.clone();
+        next.status = TaskStatus::Paused;
+        next.revision += 1;
+        let events = [EventKind::StateChanged {
+            from: previous.status,
+            to: next.status,
+        }];
+        let committed = self.persist(&next, Some(previous.revision), &events)?;
+        tasks.insert(id, next);
         drop(tasks);
         self.signal_cancel(id);
-        self.journal.append(
-            id,
-            EventKind::StateChanged {
-                from: TaskStatus::Running,
-                to: TaskStatus::Paused,
-            },
-        );
+        self.publish(id, &events, committed);
         Ok(())
     }
 
     pub fn cancel(&self, id: Uuid) -> Result<()> {
-        let old = {
-            let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-            let task = tasks.get_mut(&id).ok_or(FoundationError::NotFound)?;
-            if task.status.is_terminal() {
-                return Err(FoundationError::InvalidTransition);
-            }
-            let old = task.status;
-            task.status = TaskStatus::Cancelled;
-            task.pending = None;
-            task.revision += 1;
-            old
-        };
+        let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = tasks.get(&id).ok_or(FoundationError::NotFound)?.clone();
+        if previous.status.is_terminal() {
+            return Err(FoundationError::InvalidTransition);
+        }
+        let mut next = previous.clone();
+        next.status = TaskStatus::Cancelled;
+        next.pending = None;
+        next.revision += 1;
+        let events = [EventKind::StateChanged {
+            from: previous.status,
+            to: next.status,
+        }];
+        let committed = self.persist(&next, Some(previous.revision), &events)?;
+        tasks.insert(id, next);
+        drop(tasks);
         self.signal_cancel(id);
-        self.journal.append(
-            id,
-            EventKind::StateChanged {
-                from: old,
-                to: TaskStatus::Cancelled,
-            },
-        );
+        self.publish(id, &events, committed);
         Ok(())
     }
 
@@ -235,23 +318,23 @@ impl TaskRegistry {
         } else {
             TaskStatus::Failed
         };
-        {
-            let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-            let task = tasks.get_mut(&id).ok_or(FoundationError::NotFound)?;
-            if task.status != TaskStatus::Running || task.pending.is_some() {
-                return Err(FoundationError::InvalidTransition);
-            }
-            task.status = status;
-            task.revision += 1;
+        let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = tasks.get(&id).ok_or(FoundationError::NotFound)?.clone();
+        if previous.status != TaskStatus::Running || previous.pending.is_some() {
+            return Err(FoundationError::InvalidTransition);
         }
+        let mut next = previous.clone();
+        next.status = status;
+        next.revision += 1;
+        let events = [EventKind::StateChanged {
+            from: previous.status,
+            to: next.status,
+        }];
+        let committed = self.persist(&next, Some(previous.revision), &events)?;
+        tasks.insert(id, next);
+        drop(tasks);
         self.signal_cancel(id);
-        self.journal.append(
-            id,
-            EventKind::StateChanged {
-                from: TaskStatus::Running,
-                to: status,
-            },
-        );
+        self.publish(id, &events, committed);
         Ok(())
     }
 
@@ -283,76 +366,74 @@ impl TaskRegistry {
         };
         let call_id = pending.call_id;
         let name = pending.tool_name.clone();
-        {
-            let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-            let task = tasks.get_mut(&id).ok_or(FoundationError::NotFound)?;
-            if task.status != TaskStatus::Running {
-                return Err(FoundationError::InvalidTransition);
-            }
-            task.pending = Some(pending);
-            task.status = TaskStatus::AwaitingApproval;
-            task.revision += 1;
+        let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = tasks.get(&id).ok_or(FoundationError::NotFound)?.clone();
+        if previous.status != TaskStatus::Running || previous.pending.is_some() {
+            return Err(FoundationError::InvalidTransition);
         }
-        self.journal.append(
-            id,
+        let mut next = previous.clone();
+        next.pending = Some(pending);
+        next.status = TaskStatus::AwaitingApproval;
+        next.revision += 1;
+        let events = [
             EventKind::StateChanged {
-                from: TaskStatus::Running,
-                to: TaskStatus::AwaitingApproval,
+                from: previous.status,
+                to: next.status,
             },
-        );
-        self.journal.append(
-            id,
             EventKind::ApprovalRequested {
                 call_id,
                 tool_name: name,
             },
-        );
+        ];
+        let committed = self.persist(&next, Some(previous.revision), &events)?;
+        tasks.insert(id, next);
+        drop(tasks);
+        self.publish(id, &events, committed);
         Ok(call_id)
     }
 
     /// This is a trusted-host function, NEVER a model/tool RPC.
     /// Approval is scoped to exact (task, call) and consumes the pending operation.
-    pub fn resolve_approval(
+    pub(crate) fn resolve_approval(
         &self,
         id: Uuid,
         call_id: Uuid,
         accepted: bool,
     ) -> Result<Option<ApprovedOperation>> {
-        let (pending, revision) = {
-            let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-            let task = tasks.get_mut(&id).ok_or(FoundationError::NotFound)?;
-            if task.status != TaskStatus::AwaitingApproval {
-                return Err(FoundationError::InvalidTransition);
-            }
-            if task
-                .pending
-                .as_ref()
-                .is_none_or(|call| call.call_id != call_id)
-            {
-                return Err(FoundationError::ApprovalMismatch);
-            }
-            let pending = task
-                .pending
-                .take()
-                .ok_or(FoundationError::ApprovalMismatch)?;
-            task.status = TaskStatus::Running;
-            task.revision += 1;
-            (pending, task.revision)
-        };
-        self.journal
-            .append(id, EventKind::ApprovalResolved { call_id, accepted });
-        self.journal.append(
-            id,
+        let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = tasks.get(&id).ok_or(FoundationError::NotFound)?.clone();
+        if previous.status != TaskStatus::AwaitingApproval {
+            return Err(FoundationError::InvalidTransition);
+        }
+        let pending = previous
+            .pending
+            .clone()
+            .ok_or(FoundationError::ApprovalMismatch)?;
+        if pending.call_id != call_id {
+            return Err(FoundationError::ApprovalMismatch);
+        }
+        let mut next = previous.clone();
+        next.pending = None;
+        next.status = TaskStatus::Running;
+        next.revision += 1;
+        let events = [
+            EventKind::ApprovalResolved { call_id, accepted },
             EventKind::StateChanged {
-                from: TaskStatus::AwaitingApproval,
-                to: TaskStatus::Running,
+                from: previous.status,
+                to: next.status,
             },
-        );
+        ];
+        let committed = self.persist(&next, Some(previous.revision), &events)?;
+        let revision = next.revision;
+        tasks.insert(id, next);
+        drop(tasks);
+        self.publish(id, &events, committed);
         if accepted {
             Ok(Some(ApprovedOperation {
                 task_id: id,
                 revision,
                 operation: pending,
+                binding: None,
             }))
         } else {
             Ok(None)
@@ -376,8 +457,20 @@ impl TaskRegistry {
             .is_some_and(|task| task.status == TaskStatus::Running && task.revision == revision)
     }
 
-    pub(crate) fn journal(&self) -> &Arc<EventJournal> {
-        &self.journal
+    /// Store metadata-only progress with the same durable outbox semantics.
+    pub(crate) fn record_event(&self, task_id: Uuid, kind: EventKind) -> Result<()> {
+        let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        let task = tasks.get(&task_id).ok_or(FoundationError::NotFound)?;
+        let kinds = [kind];
+        let committed = self.persist(task, Some(task.revision), &kinds)?;
+        drop(tasks);
+        self.publish(task_id, &kinds, committed);
+        Ok(())
+    }
+
+    #[cfg(feature = "durable-sqlite")]
+    pub(crate) fn durable_store(&self) -> Option<&Arc<SqliteTaskStore>> {
+        self.durable.as_ref()
     }
 
     fn signal_cancel(&self, id: Uuid) {

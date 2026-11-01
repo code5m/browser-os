@@ -1,6 +1,7 @@
 //! Fail-closed tool dispatch with exact-effect binding, one-shot approval,
 //! timeout, and cooperative cancellation. No shell/MCP/FS tool is registered.
 use crate::{
+    approval::ApprovalBinding,
     event::EventKind,
     task::{ApprovedOperation, TaskRegistry},
     FoundationError, Result,
@@ -26,10 +27,36 @@ pub enum ToolEffect {
 
 pub type ToolFuture<'a> = Pin<Box<dyn Future<Output = Result<Value>> + Send + 'a>>;
 
+/// Passed ONLY after signed host approval and resource-owner validation.
+pub struct AuthorizedCall {
+    pub arguments: Value,
+    pub binding: ApprovalBinding,
+    /// Must be sent to the external provider as a durable idempotency key.
+    pub idempotency_key: String,
+}
+
 pub trait AgentTool: Send + Sync {
     fn name(&self) -> &str;
     fn effect(&self) -> ToolEffect;
     fn call<'a>(&'a self, arguments: Value) -> ToolFuture<'a>;
+
+    /// The owning capability must re-check actual resource identity, revision,
+    /// tenant/project and effect against the authenticated principal at EXECUTE.
+    /// Default DENY, including for read-only registered tools.
+    fn validate_binding(&self, _binding: &ApprovalBinding, _args: &Value) -> Result<()> {
+        Err(FoundationError::PermissionDenied)
+    }
+
+    /// Effectful tools opt into end-to-end provider-side idempotency explicitly.
+    fn supports_idempotency(&self) -> bool {
+        false
+    }
+
+    /// Non-read tools MUST implement this, and forward idempotency_key to the
+    /// external operation. A legacy call method may never perform side effects.
+    fn call_authorized<'a>(&'a self, _call: AuthorizedCall) -> ToolFuture<'a> {
+        Box::pin(async { Err(FoundationError::PermissionDenied) })
+    }
 }
 
 #[derive(Default)]
@@ -103,27 +130,97 @@ impl ToolRegistry {
         if tool.effect() != permit.operation.effect {
             return Err(FoundationError::PermissionDenied);
         }
+
+        let effectful = permit.operation.effect != ToolEffect::ReadOnly;
+        let binding = permit.binding.as_ref();
+        if let Some(binding) = binding {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| FoundationError::PermissionDenied)?;
+            if u64::try_from(now.as_millis()).map_err(|_| FoundationError::PermissionDenied)?
+                >= binding.expires_at_unix_ms
+            {
+                return Err(FoundationError::PermissionDenied);
+            }
+            tool.validate_binding(binding, &permit.operation.arguments)?;
+        } else if effectful {
+            return Err(FoundationError::PermissionDenied);
+        }
+
+        if effectful && !tool.supports_idempotency() {
+            return Err(FoundationError::PermissionDenied);
+        }
+        #[cfg(not(feature = "durable-sqlite"))]
+        if effectful {
+            return Err(FoundationError::PermissionDenied);
+        }
+        #[cfg(feature = "durable-sqlite")]
+        let effect_store = if effectful {
+            Some(
+                tasks
+                    .durable_store()
+                    .ok_or(FoundationError::PermissionDenied)?,
+            )
+        } else {
+            None
+        };
+        let idempotency_key = format!("browseros:{}", permit.operation.call_id);
         let mut cancellation = tasks.cancellation(permit.task_id)?;
-        if *cancellation.borrow() {
+        if *cancellation.borrow_and_update() {
             return Err(FoundationError::Cancelled);
         }
-        let future = tool.call(permit.operation.arguments);
+        // The UNKNOWN receipt must be DURABLE before any external execution.
+        // A process crash or a timeout leaves it unknown; never auto-retry.
+        #[cfg(feature = "durable-sqlite")]
+        if let Some(store) = effect_store {
+            store.begin_effect(
+                permit.task_id,
+                permit.operation.call_id,
+                &idempotency_key,
+                permit.operation.effect,
+                &permit.operation.tool_name,
+            )?;
+        }
+        let future = if effectful {
+            tool.call_authorized(AuthorizedCall {
+                arguments: permit.operation.arguments,
+                binding: binding.cloned().ok_or(FoundationError::PermissionDenied)?,
+                idempotency_key,
+            })
+        } else {
+            tool.call(permit.operation.arguments)
+        };
         let result = tokio::select! {
             response = future => response,
             _ = cancellation.changed() => Err(FoundationError::Cancelled),
             _ = tokio::time::sleep(timeout) => Err(FoundationError::Timeout),
         };
-        // Reject stale results from a paused/cancelled/completed/restarted task.
+        // Reject stale results from paused/cancelled/completed/restarted work.
+        // For side effects the durable UNKNOWN receipt survives this exit.
         if !tasks.active_at_revision(permit.task_id, permit.revision) {
             return Err(FoundationError::Cancelled);
         }
-        tasks.journal().append(
+        #[cfg(feature = "durable-sqlite")]
+        if let Some(store) = effect_store {
+            if result.is_ok() {
+                store.confirm_effect(permit.operation.call_id)?;
+            }
+        }
+        if effectful && result.is_err() {
+            tasks.record_event(
+                permit.task_id,
+                EventKind::EffectUnknown {
+                    call_id: permit.operation.call_id,
+                },
+            )?;
+        }
+        tasks.record_event(
             permit.task_id,
             EventKind::ToolFinished {
                 call_id: permit.operation.call_id,
                 succeeded: result.is_ok(),
             },
-        );
+        )?;
         result
     }
 }

@@ -1,5 +1,6 @@
 //! External/public API smoke tests (must run with cargo test).
 use browseros_agent_foundation::{
+    approval::{ApprovalBroker, HostApprovalDecision, HostApprovalIssuer, ResourceBinding},
     context::{ContextGrant, ContextKind, ContextRef},
     event::{EventJournal, EventKind},
     protocol::{AgentCommand, Envelope, SCHEMA_VERSION},
@@ -18,6 +19,19 @@ impl AgentTool for ReadTool {
     }
     fn effect(&self) -> ToolEffect {
         ToolEffect::ReadOnly
+    }
+    // Mock has no real resource; production tools must query the owning API
+    // and compare the actual resource revision to binding.resource_revision.
+    fn validate_binding(
+        &self,
+        binding: &browseros_agent_foundation::approval::ApprovalBinding,
+        _args: &Value,
+    ) -> Result<()> {
+        if binding.resource.resource_id.starts_with("workspace:") {
+            Ok(())
+        } else {
+            Err(browseros_agent_foundation::FoundationError::PermissionDenied)
+        }
     }
     fn call<'a>(&'a self, input: Value) -> ToolFuture<'a> {
         Box::pin(async move { Ok(json!({"inspected":input})) })
@@ -56,22 +70,52 @@ async fn public_tool_path_requires_explicit_approval_and_is_replay_safe() -> Res
     let tasks = TaskRegistry::new(journal.clone());
     let tools = ToolRegistry::default();
     tools.register(Arc::new(ReadTool))?;
-    let task = tasks.create(Uuid::new_v4(), "Inspect", vec![])?;
+    let workspace = Uuid::new_v4();
+    let task = tasks.create_scoped(workspace, Uuid::new_v4(), "Inspect", vec![])?;
     tasks.start(task.id)?;
     let call_id = tools.propose(&tasks, task.id, "test.inspect", json!({"path":"mock"}))?;
     assert_eq!(tasks.get(task.id)?.status, TaskStatus::AwaitingApproval);
+    let issuer = HostApprovalIssuer::new([7u8; 32])?;
+    let broker = ApprovalBroker::new([7u8; 32])?;
+    let resource = ResourceBinding {
+        resource_id: format!("workspace:{workspace}"),
+        resource_revision: "v1".into(),
+    };
     assert_eq!(
-        tasks.resolve_approval(task.id, Uuid::new_v4(), true).err(),
+        issuer
+            .issue(
+                &tasks,
+                task.id,
+                Uuid::new_v4(),
+                HostApprovalDecision {
+                    principal_id: Uuid::new_v4(),
+                    resource: resource.clone(),
+                    accepted: true,
+                    ttl: std::time::Duration::from_secs(20)
+                }
+            )
+            .err(),
         Some(FoundationError::ApprovalMismatch)
     );
-    let permit = tasks.resolve_approval(task.id, call_id, true)?.unwrap();
+    let ticket = issuer.issue(
+        &tasks,
+        task.id,
+        call_id,
+        HostApprovalDecision {
+            principal_id: Uuid::new_v4(),
+            resource,
+            accepted: true,
+            ttl: std::time::Duration::from_secs(20),
+        },
+    )?;
+    let permit = broker.resolve(&tasks, &ticket)?.unwrap();
     let result = tools
         .execute(permit, &tasks, std::time::Duration::from_secs(2))
         .await?;
     assert_eq!(result["inspected"]["path"], "mock");
     assert_eq!(
-        tasks.resolve_approval(task.id, call_id, true).err(),
-        Some(FoundationError::InvalidTransition)
+        broker.resolve(&tasks, &ticket).err(),
+        Some(FoundationError::ApprovalMismatch)
     );
     assert!(journal.replay(task.id, 0)?.iter().any(|record| matches!(
         &record.kind,
