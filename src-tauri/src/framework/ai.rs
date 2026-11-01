@@ -656,6 +656,7 @@ fn coding_turn(
 ) -> Result<Value, String> {
     coding_turn_cancelable(path, id, messages, tools, &|| false)
 }
+#[cfg(test)]
 fn coding_turn_cancelable(
     path: &Path,
     id: &str,
