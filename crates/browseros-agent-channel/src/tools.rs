@@ -121,7 +121,11 @@ impl ToolCatalog {
         }
         match approval {
             Approval::Deny => return Err(ToolError::Denied),
-            Approval::AllowOnce { request_id, name, scope } => {
+            Approval::AllowOnce {
+                request_id,
+                name,
+                scope,
+            } => {
                 if request_id != call.request_id || name != call.name || scope != call.scope {
                     return Err(ToolError::ApprovalMismatch);
                 }

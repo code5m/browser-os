@@ -13,9 +13,9 @@ const pane=ref<Pane>('code');
 const pages:Record<Pane,string>={code:'编码',database:'数据库',git:'Git',terminal:'终端',browser:'浏览器',agents:'智能体'};
 const panels={
  code:defineAsyncComponent(()=>import('./CodingWorkbench.vue')),
- database:defineAsyncComponent(()=>import('../../database/public').then(m=>({default:m.DatabaseStudioSurface}))),
- git:defineAsyncComponent(()=>import('../../git/public').then(m=>({default:m.GitStudioSurface}))),
- terminal:defineAsyncComponent(()=>import('../../terminal/public').then(m=>({default:m.TerminalStudioSurface}))),
+ database:defineAsyncComponent(()=>import('../../database/public').then(m=>m.loadDatabaseStudioSurface())),
+ git:defineAsyncComponent(()=>import('../../git/public').then(m=>m.loadGitStudioSurface())),
+ terminal:defineAsyncComponent(()=>import('../../terminal/public').then(m=>m.loadTerminalStudioSurface())),
 };
 const selectedPanel=computed(()=>panels[pane.value as keyof typeof panels] || null);
 const runtime=createAgentTaskRuntime({chat:(scope:string,msg:string,model:string)=>aiService.chat(scope as any,msg,model)});

@@ -4,7 +4,7 @@
 // （src/stores/useGitStore.ts 的物理路径或 ui/ 内部组件）。本文件提供再导出与无状态只读适配器，
 // 不持有也不创建任何状态（第二真源禁止）。
 // 语义 owner（useGitStore）与物理路径解耦，由 Semantic Registry 的 owner_implementations locator 解析。
-export { default as GitStudioSurface } from "./ui/GitStudio.vue";
+export function loadGitStudioSurface() { return import("./ui/GitStudio.vue"); }
 export * from "./state/useGitStore"
 
 // 写操作确认对话框：经公共边界暴露给 Shell（App.vue 全局挂载），

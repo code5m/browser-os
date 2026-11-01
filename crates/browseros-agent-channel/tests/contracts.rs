@@ -1,6 +1,4 @@
-use browseros_agent_channel::agent::{
-    AgentRequest, AgentTask, TaskAction, TaskError, TaskState,
-};
+use browseros_agent_channel::agent::{AgentRequest, AgentTask, TaskAction, TaskError, TaskState};
 use browseros_agent_channel::context::{ContextAccess, ContextKind, ContextRef};
 use browseros_agent_channel::events::{EventError, EventKind, EventLog};
 use browseros_agent_channel::interop::AgentTransport;
@@ -27,12 +25,14 @@ fn sample_request() -> ModelRequest {
 
 fn sample_tools() -> ToolCatalog {
     let mut catalog = ToolCatalog::default();
-    catalog.register(ToolSpec {
-        name: "editor.read".into(),
-        description: "Read an explicitly scoped file".into(),
-        input_schema: json!({"type": "object"}),
-        risk: ToolRisk::Read,
-    }).unwrap();
+    catalog
+        .register(ToolSpec {
+            name: "editor.read".into(),
+            description: "Read an explicitly scoped file".into(),
+            input_schema: json!({"type": "object"}),
+            risk: ToolRisk::Read,
+        })
+        .unwrap();
     catalog
 }
 
@@ -75,7 +75,10 @@ fn model_tools_are_explicit_and_validated() {
     assert_eq!(body["tools"][0]["type"], "function");
     assert_eq!(body["tools"][0]["function"]["name"], "browser.read");
     request.tools[0].input_schema = json!(true);
-    assert!(matches!(request.validate(), Err(ModelError::InvalidRequest(_))));
+    assert!(matches!(
+        request.validate(),
+        Err(ModelError::InvalidRequest(_))
+    ));
 }
 
 #[test]
@@ -99,7 +102,10 @@ fn task_has_a_guarded_state_machine() {
     assert_eq!(task.apply(TaskAction::Start).unwrap(), TaskState::Running);
     assert_eq!(task.apply(TaskAction::Pause).unwrap(), TaskState::Paused);
     assert_eq!(task.apply(TaskAction::Resume).unwrap(), TaskState::Running);
-    assert_eq!(task.apply(TaskAction::Succeed).unwrap(), TaskState::Succeeded);
+    assert_eq!(
+        task.apply(TaskAction::Succeed).unwrap(),
+        TaskState::Succeeded
+    );
     assert!(task.apply(TaskAction::Start).is_err());
     assert_eq!(task.revision(), 4);
 }
@@ -120,7 +126,10 @@ fn task_can_cancel_while_waiting() {
     let mut task = AgentTask::new("t", "s", "a").unwrap();
     task.apply(TaskAction::Start).unwrap();
     task.apply(TaskAction::RequestApproval).unwrap();
-    assert_eq!(task.apply(TaskAction::Cancel).unwrap(), TaskState::Cancelled);
+    assert_eq!(
+        task.apply(TaskAction::Cancel).unwrap(),
+        TaskState::Cancelled
+    );
     assert!(task.apply(TaskAction::Approve).is_err());
 }
 
@@ -131,7 +140,8 @@ fn context_is_explicit_reference_only() {
         ContextKind::EditorSelection,
         "editor-selection-1",
         ContextAccess::ExplicitlyApproved,
-    ).unwrap();
+    )
+    .unwrap();
     let request = AgentRequest {
         task_id: "task-1".into(),
         session_id: "session-1".into(),
@@ -145,7 +155,10 @@ fn context_is_explicit_reference_only() {
 fn tool_gate_defaults_to_deny_even_for_reads() {
     let mut catalog = sample_tools();
     let call = read_call();
-    assert_eq!(catalog.authorize(call, Approval::Deny), Err(ToolError::Denied));
+    assert_eq!(
+        catalog.authorize(call, Approval::Deny),
+        Err(ToolError::Denied)
+    );
 }
 
 #[test]
@@ -163,7 +176,10 @@ fn tool_gate_rejects_unknown_tools_and_mismatched_scopes() {
         name: read.name.clone(),
         scope: "another-project".into(),
     };
-    assert_eq!(catalog.authorize(read, grant), Err(ToolError::ApprovalMismatch));
+    assert_eq!(
+        catalog.authorize(read, grant),
+        Err(ToolError::ApprovalMismatch)
+    );
 }
 
 #[test]
@@ -182,35 +198,64 @@ fn approvals_are_scoped_and_one_shot() {
 #[test]
 fn catalog_rejects_invalid_and_duplicate_tool_definitions() {
     let mut catalog = sample_tools();
-    assert_eq!(catalog.register(ToolSpec {
-        name: "editor.read".into(),
-        description: "duplicate".into(),
-        input_schema: json!({}),
-        risk: ToolRisk::Read,
-    }), Err(ToolError::DuplicateTool));
-    assert_eq!(catalog.register(ToolSpec {
-        name: "invalid".into(),
-        description: "invalid".into(),
-        input_schema: json!(3),
-        risk: ToolRisk::Write,
-    }), Err(ToolError::InvalidDefinition));
+    assert_eq!(
+        catalog.register(ToolSpec {
+            name: "editor.read".into(),
+            description: "duplicate".into(),
+            input_schema: json!({}),
+            risk: ToolRisk::Read,
+        }),
+        Err(ToolError::DuplicateTool)
+    );
+    assert_eq!(
+        catalog.register(ToolSpec {
+            name: "invalid".into(),
+            description: "invalid".into(),
+            input_schema: json!(3),
+            risk: ToolRisk::Write,
+        }),
+        Err(ToolError::InvalidDefinition)
+    );
 }
 
 #[test]
 fn event_log_orders_events_and_supports_cursor_replay() {
     let mut log = EventLog::new("task-1", "session-1").unwrap();
-    let first = log.append("evt-1", 100, EventKind::TaskState {
-        state: TaskState::Running,
-    }).unwrap();
-    let second = log.append("evt-2", 101, EventKind::ModelDelta {
-        text: "Hello".into(),
-    }).unwrap();
+    let first = log
+        .append(
+            "evt-1",
+            100,
+            EventKind::TaskState {
+                state: TaskState::Running,
+            },
+        )
+        .unwrap();
+    let second = log
+        .append(
+            "evt-2",
+            101,
+            EventKind::ModelDelta {
+                text: "Hello".into(),
+            },
+        )
+        .unwrap();
     assert_eq!(first.sequence, 1);
     assert_eq!(second.sequence, 2);
-    assert_eq!(log.after(1).map(|e| e.event_id.as_str()).collect::<Vec<_>>(), vec!["evt-2"]);
+    assert_eq!(
+        log.after(1)
+            .map(|e| e.event_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["evt-2"]
+    );
     assert_eq!(log.after(2).count(), 0);
     assert_eq!(
-        log.append("evt-2", 102, EventKind::Error { message: "again".into() }),
+        log.append(
+            "evt-2",
+            102,
+            EventKind::Error {
+                message: "again".into()
+            }
+        ),
         Err(EventError::DuplicateId)
     );
 }
@@ -218,11 +263,17 @@ fn event_log_orders_events_and_supports_cursor_replay() {
 #[test]
 fn events_project_to_a_cloudevents_envelope() {
     let mut log = EventLog::new("t", "s").unwrap();
-    let event = log.append("e", 1234, EventKind::ApprovalRequested {
-        request_id: "call-1".into(),
-        tool: "editor.read".into(),
-        scope: "project-1".into(),
-    }).unwrap();
+    let event = log
+        .append(
+            "e",
+            1234,
+            EventKind::ApprovalRequested {
+                request_id: "call-1".into(),
+                tool: "editor.read".into(),
+                scope: "project-1".into(),
+            },
+        )
+        .unwrap();
     let wire = event.as_cloud_event();
     assert_eq!(wire["specversion"], "1.0");
     assert_eq!(wire["id"], "e");

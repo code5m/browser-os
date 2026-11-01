@@ -104,10 +104,20 @@ impl ChildComms {
     }
 
     fn ipc_summary(&self) -> (usize, u64, u64, u64, u64, u64) {
-        let mut times = self.ipc_latency_ms.lock().unwrap().iter().copied().collect::<Vec<_>>();
+        let mut times = self
+            .ipc_latency_ms
+            .lock()
+            .unwrap()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
         times.sort_unstable();
         let percentile = |p: usize| -> u64 {
-            if times.is_empty() { 0 } else { times[(times.len() - 1) * p / 100] }
+            if times.is_empty() {
+                0
+            } else {
+                times[(times.len() - 1) * p / 100]
+            }
         };
         (
             self.pending.lock().unwrap().len(),
@@ -459,8 +469,14 @@ impl GridProcessManager {
             // JavaScript, opened or closed a WebView.
             Err(first)
                 if first.contains("超时")
-                    || !matches!(cmd, GridCmd::Ping | GridCmd::UpdateRect { .. }
-                        | GridCmd::HideWindow { .. } | GridCmd::SetZoom { .. }) =>
+                    || first == "GRID_IPC_BACKPRESSURE"
+                    || !matches!(
+                        cmd,
+                        GridCmd::Ping
+                            | GridCmd::UpdateRect { .. }
+                            | GridCmd::HideWindow { .. }
+                            | GridCmd::SetZoom { .. }
+                    ) =>
             {
                 Err(first)
             }
@@ -795,8 +811,7 @@ impl GridProcessManager {
                 if last_ipc_report.elapsed() >= std::time::Duration::from_secs(10) {
                     let peers = manager.listeners.lock().unwrap();
                     for (index, comms) in peers.iter() {
-                        let (pending, done, timeout, rejected, p95, p99) =
-                            comms.ipc_summary();
+                        let (pending, done, timeout, rejected, p95, p99) = comms.ipc_summary();
                         eprintln!(
                             "[grid-ipc] cell={} pending={} completed={} timeout={} rejected={} p95_ms={} p99_ms={}",
                             index, pending, done, timeout, rejected, p95, p99

@@ -26,11 +26,18 @@ pub struct SessionRevisions {
 
 impl SessionRevisions {
     /// No long-running lock escapes this method; inference may run in parallel.
-    pub fn begin(&self, workspace: &str, session_id: &str) -> Result<SessionTicket, ConcurrencyError> {
+    pub fn begin(
+        &self,
+        workspace: &str,
+        session_id: &str,
+    ) -> Result<SessionTicket, ConcurrencyError> {
         if workspace.trim().is_empty() || session_id.trim().is_empty() {
             return Err(ConcurrencyError::InvalidKey);
         }
-        let revisions = self.revisions.lock().map_err(|_| ConcurrencyError::Poisoned)?;
+        let revisions = self
+            .revisions
+            .lock()
+            .map_err(|_| ConcurrencyError::Poisoned)?;
         Ok(SessionTicket {
             workspace: workspace.into(),
             session_id: session_id.into(),
@@ -42,13 +49,18 @@ impl SessionRevisions {
 
     /// CAS only at session state commit, not while invoking the model.
     pub fn commit(&self, ticket: &SessionTicket) -> Result<u64, ConcurrencyError> {
-        let mut revisions = self.revisions.lock().map_err(|_| ConcurrencyError::Poisoned)?;
+        let mut revisions = self
+            .revisions
+            .lock()
+            .map_err(|_| ConcurrencyError::Poisoned)?;
         let key = (ticket.workspace.clone(), ticket.session_id.clone());
         let current = *revisions.get(&key).unwrap_or(&0);
         if current != ticket.expected_revision {
             return Err(ConcurrencyError::Conflict);
         }
-        let next = current.checked_add(1).ok_or(ConcurrencyError::RevisionOverflow)?;
+        let next = current
+            .checked_add(1)
+            .ok_or(ConcurrencyError::RevisionOverflow)?;
         revisions.insert(key, next);
         Ok(next)
     }
@@ -66,7 +78,11 @@ pub struct FileLease {
 
 impl FileLeases {
     /// Acquire all paths or none. Call with host-validated canonical paths.
-    pub fn acquire(&self, workspace: &str, paths: &[String]) -> Result<FileLease, ConcurrencyError> {
+    pub fn acquire(
+        &self,
+        workspace: &str,
+        paths: &[String],
+    ) -> Result<FileLease, ConcurrencyError> {
         if workspace.trim().is_empty() || paths.is_empty() {
             return Err(ConcurrencyError::InvalidKey);
         }
@@ -75,7 +91,9 @@ impl FileLeases {
             if path.trim().is_empty()
                 || path.starts_with('/')
                 || path.contains('\\')
-                || path.split('/').any(|segment| segment == ".." || segment == ".")
+                || path
+                    .split('/')
+                    .any(|segment| segment == ".." || segment == ".")
                 || !keys.insert((workspace.to_owned(), path.clone()))
             {
                 return Err(ConcurrencyError::InvalidKey);

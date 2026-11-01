@@ -1,8 +1,8 @@
 //! Compensating multi-file apply (a saga, NOT an atomic filesystem transaction).
 //! All side effects, durable journals, fsync and CAS checks are host-owned.
 //! An uncertain write is never blindly retried or overwritten.
-use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 const MAX_FILES: usize = 32;
 const MAX_CONTENT_BYTES: usize = 8 * 1024 * 1024;
@@ -119,7 +119,11 @@ impl ApplyCoordinator {
         validate(&plan)?;
         if let Some(existing) = journals.load(&plan.apply_id).map_err(ApplyError::Journal)? {
             let same_plan = existing.steps.len() == plan.edits.len()
-                && existing.steps.iter().zip(&plan.edits).all(|(step, edit)| step.edit == *edit);
+                && existing
+                    .steps
+                    .iter()
+                    .zip(&plan.edits)
+                    .all(|(step, edit)| step.edit == *edit);
             if !same_plan {
                 return Err(ApplyError::DuplicateId);
             }
@@ -170,7 +174,8 @@ impl ApplyCoordinator {
             match result {
                 Ok(after)
                     if after.contents.as_deref() == Some(step.edit.replacement.as_str())
-                        && after.last_operation_id.as_deref() == Some(step.operation_id.as_str()) =>
+                        && after.last_operation_id.as_deref()
+                            == Some(step.operation_id.as_str()) =>
                 {
                     journal.steps[index].after = Some(after);
                     journal.steps[index].phase = StepPhase::Applied;
@@ -179,7 +184,12 @@ impl ApplyCoordinator {
                     }
                 }
                 Ok(_) => {
-                    return Err(abort(files, journals, &mut journal, "write proof missing".into()));
+                    return Err(abort(
+                        files,
+                        journals,
+                        &mut journal,
+                        "write proof missing".into(),
+                    ));
                 }
                 Err(error) => return Err(abort(files, journals, &mut journal, error)),
             }
@@ -226,7 +236,9 @@ fn validate(plan: &ApplyPlan) -> Result<(), ApplyError> {
         if path.is_empty()
             || path.starts_with('/')
             || path.contains('\\')
-            || path.split('/').any(|part| part == ".." || part == "." || part.is_empty())
+            || path
+                .split('/')
+                .any(|part| part == ".." || part == "." || part.is_empty())
             || edit.replacement.len() > MAX_CONTENT_BYTES
             || !names.insert(path)
         {
@@ -267,7 +279,11 @@ fn compensate(
 ) -> Result<(), ApplyError> {
     journal.status = ApplyStatus::Compensating;
     journals.store(journal).map_err(|error| {
-        fail_recovery(journals, journal, format!("cannot mark compensation: {error}"))
+        fail_recovery(
+            journals,
+            journal,
+            format!("cannot mark compensation: {error}"),
+        )
     })?;
     for index in (0..journal.steps.len()).rev() {
         let step = &journal.steps[index];
@@ -296,10 +312,12 @@ fn compensate(
         // demand the exact durable operation identity to avoid clobbering edits.
         let our_write = actual.last_operation_id.as_deref() == Some(step.operation_id.as_str())
             && actual.contents.as_deref() == Some(step.edit.replacement.as_str())
-            && (step.phase == StepPhase::MayHaveWritten
-                || step.after.as_ref() == Some(&actual));
+            && (step.phase == StepPhase::MayHaveWritten || step.after.as_ref() == Some(&actual));
         if !our_write {
-            let reason = format!("external modification or ambiguous write at {}", step.edit.path);
+            let reason = format!(
+                "external modification or ambiguous write at {}",
+                step.edit.path
+            );
             return Err(fail_recovery(journals, journal, reason));
         }
         let restored = files.replace(
@@ -312,10 +330,15 @@ fn compensate(
             Ok(snapshot)
                 if snapshot.contents == step.before.contents
                     && (step.before.contents.is_none()
-                        || snapshot.last_operation_id.as_deref() == Some(rollback_operation.as_str())) => {}
-            Ok(_) => return Err(fail_recovery(
-                journals, journal, "rollback result could not be verified".into(),
-            )),
+                        || snapshot.last_operation_id.as_deref()
+                            == Some(rollback_operation.as_str())) => {}
+            Ok(_) => {
+                return Err(fail_recovery(
+                    journals,
+                    journal,
+                    "rollback result could not be verified".into(),
+                ))
+            }
             Err(error) => return Err(fail_recovery(journals, journal, error)),
         }
         journal.steps[index].phase = StepPhase::Restored;
@@ -324,5 +347,7 @@ fn compensate(
         }
     }
     journal.status = ApplyStatus::Compensated;
-    journals.store(journal).map_err(|error| ApplyError::RecoveryRequired(error))
+    journals
+        .store(journal)
+        .map_err(|error| ApplyError::RecoveryRequired(error))
 }

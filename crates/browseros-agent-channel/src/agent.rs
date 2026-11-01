@@ -34,7 +34,10 @@ pub enum TaskAction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskError {
     EmptyIdentity,
-    InvalidTransition { state: TaskState, action: TaskAction },
+    InvalidTransition {
+        state: TaskState,
+        action: TaskAction,
+    },
     RevisionOverflow,
 }
 
@@ -98,12 +101,17 @@ impl AgentTask {
             (S::Running, A::Succeed) => S::Succeeded,
             (S::Running, A::Fail) => S::Failed,
             (S::Created | S::Running | S::WaitingApproval | S::Paused, A::Cancel) => S::Cancelled,
-            _ => return Err(TaskError::InvalidTransition {
-                state: self.state,
-                action,
-            }),
+            _ => {
+                return Err(TaskError::InvalidTransition {
+                    state: self.state,
+                    action,
+                })
+            }
         };
-        self.revision = self.revision.checked_add(1).ok_or(TaskError::RevisionOverflow)?;
+        self.revision = self
+            .revision
+            .checked_add(1)
+            .ok_or(TaskError::RevisionOverflow)?;
         self.state = next;
         Ok(next)
     }
@@ -114,7 +122,10 @@ impl AgentRequest {
         if self.task_id.trim().is_empty()
             || self.session_id.trim().is_empty()
             || self.instruction.trim().is_empty()
-            || self.contexts.iter().any(|c| c.resource_id.trim().is_empty())
+            || self
+                .contexts
+                .iter()
+                .any(|c| c.resource_id.trim().is_empty())
         {
             return Err(TaskError::EmptyIdentity);
         }

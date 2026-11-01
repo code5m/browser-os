@@ -14,12 +14,28 @@ use crate::CONTRACT_VERSION;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EventKind {
-    TaskState { state: TaskState },
-    ModelDelta { text: String },
-    ApprovalRequested { request_id: String, tool: String, scope: String },
-    ToolFinished { request_id: String, succeeded: bool },
-    ArtifactPublished { artifact_id: String, mime_type: String },
-    Error { message: String },
+    TaskState {
+        state: TaskState,
+    },
+    ModelDelta {
+        text: String,
+    },
+    ApprovalRequested {
+        request_id: String,
+        tool: String,
+        scope: String,
+    },
+    ToolFinished {
+        request_id: String,
+        succeeded: bool,
+    },
+    ArtifactPublished {
+        artifact_id: String,
+        mime_type: String,
+    },
+    Error {
+        message: String,
+    },
 }
 
 impl EventKind {
@@ -134,6 +150,8 @@ impl EventLog {
 
     /// Replay only events after a cursor. Persistence is deliberately external.
     pub fn after(&self, sequence: u64) -> impl Iterator<Item = &EventEnvelope> {
-        self.events.iter().filter(move |entry| entry.sequence > sequence)
+        self.events
+            .iter()
+            .filter(move |entry| entry.sequence > sequence)
     }
 }

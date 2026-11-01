@@ -109,30 +109,60 @@ impl JournalPort for FakeJournals {
 }
 
 fn plan(files: &mut FakeFiles, id: &str, paths: &[&str]) -> ApplyPlan {
-    let edits = paths.iter().map(|path| FileEdit {
-        path: (*path).into(),
-        expected_revision: files.inspect(path).unwrap().revision,
-        replacement: format!("replacement-{path}"),
-    }).collect();
-    ApplyPlan { apply_id: id.into(), edits }
+    let edits = paths
+        .iter()
+        .map(|path| FileEdit {
+            path: (*path).into(),
+            expected_revision: files.inspect(path).unwrap().revision,
+            replacement: format!("replacement-{path}"),
+        })
+        .collect();
+    ApplyPlan {
+        apply_id: id.into(),
+        edits,
+    }
 }
 
 #[test]
 fn compatibility_router_is_off_by_default_and_never_replays_writes() {
     let mut routes = CutoverRouter::default();
     let entry = LegacyEntry::parse("coding_service").unwrap();
-    assert_eq!(LegacyEntry::parse("agent_chat"), Some(LegacyEntry::AgentChat));
+    assert_eq!(
+        LegacyEntry::parse("agent_chat"),
+        Some(LegacyEntry::AgentChat)
+    );
     assert!(LegacyEntry::parse("not_registered").is_none());
     assert_eq!(entry.workload(), Workload::Coding);
-    assert_eq!(routes.route(entry, Effect::Write, HostDecision::ExplicitOptIn), Route::ExistingUnchanged);
-    assert_eq!(routes.route(LegacyEntry::AgentChat, Effect::Infer, HostDecision::No), Route::ExistingUnchanged);
+    assert_eq!(
+        routes.route(entry, Effect::Write, HostDecision::ExplicitOptIn),
+        Route::ExistingUnchanged
+    );
+    assert_eq!(
+        routes.route(LegacyEntry::AgentChat, Effect::Infer, HostDecision::No),
+        Route::ExistingUnchanged
+    );
     routes.set_policy(entry, CutoverMode::ShadowReads);
-    assert_eq!(routes.route(entry, Effect::Read, HostDecision::No), Route::ShadowReadOnly);
-    assert_eq!(routes.route(entry, Effect::Infer, HostDecision::No), Route::ExistingUnchanged);
-    assert_eq!(routes.route(entry, Effect::Write, HostDecision::No), Route::ExistingUnchanged);
+    assert_eq!(
+        routes.route(entry, Effect::Read, HostDecision::No),
+        Route::ShadowReadOnly
+    );
+    assert_eq!(
+        routes.route(entry, Effect::Infer, HostDecision::No),
+        Route::ExistingUnchanged
+    );
+    assert_eq!(
+        routes.route(entry, Effect::Write, HostDecision::No),
+        Route::ExistingUnchanged
+    );
     routes.set_policy(entry, CutoverMode::OptIn);
-    assert_eq!(routes.route(entry, Effect::Write, HostDecision::No), Route::ExistingUnchanged);
-    assert_eq!(routes.route(entry, Effect::Write, HostDecision::ExplicitOptIn), Route::CandidateOnly);
+    assert_eq!(
+        routes.route(entry, Effect::Write, HostDecision::No),
+        Route::ExistingUnchanged
+    );
+    assert_eq!(
+        routes.route(entry, Effect::Write, HostDecision::ExplicitOptIn),
+        Route::CandidateOnly
+    );
 }
 
 #[test]
@@ -166,12 +196,23 @@ fn session_revisions_allow_parallel_model_calls_but_conflict_on_commit() {
 #[test]
 fn file_lease_is_all_or_nothing_and_released_on_drop() {
     let leases = FileLeases::default();
-    let held = leases.acquire("workspace", &["a.rs".into(), "b.rs".into()]).ok().unwrap();
-    assert!(matches!(leases.acquire("workspace", &["b.rs".into(), "c.rs".into()]), Err(ConcurrencyError::Conflict)));
+    let held = leases
+        .acquire("workspace", &["a.rs".into(), "b.rs".into()])
+        .ok()
+        .unwrap();
+    assert!(matches!(
+        leases.acquire("workspace", &["b.rs".into(), "c.rs".into()]),
+        Err(ConcurrencyError::Conflict)
+    ));
     assert!(leases.acquire("other-workspace", &["a.rs".into()]).is_ok());
-    assert!(matches!(leases.acquire("workspace", &["../secret".into()]), Err(ConcurrencyError::InvalidKey)));
+    assert!(matches!(
+        leases.acquire("workspace", &["../secret".into()]),
+        Err(ConcurrencyError::InvalidKey)
+    ));
     drop(held);
-    assert!(leases.acquire("workspace", &["b.rs".into(), "c.rs".into()]).is_ok());
+    assert!(leases
+        .acquire("workspace", &["b.rs".into(), "c.rs".into()])
+        .is_ok());
 }
 
 #[test]
@@ -183,11 +224,17 @@ fn multi_file_failure_rolls_back_previous_files() {
     let plan = plan(&mut files, "apply-three", &["a.rs", "b.rs", "c.rs"]);
     files.fail_on = Some("c.rs".into());
     let mut journals = FakeJournals::default();
-    assert!(matches!(ApplyCoordinator::apply(&mut files, &mut journals, plan.clone()), Err(ApplyError::Aborted(_))));
+    assert!(matches!(
+        ApplyCoordinator::apply(&mut files, &mut journals, plan.clone()),
+        Err(ApplyError::Aborted(_))
+    ));
     assert_eq!(files.content("a.rs"), Some("before-a"));
     assert_eq!(files.content("b.rs"), Some("before-b"));
     assert_eq!(files.content("c.rs"), Some("before-c"));
-    assert_eq!(journals.load("apply-three").unwrap().unwrap().status, ApplyStatus::Compensated);
+    assert_eq!(
+        journals.load("apply-three").unwrap().unwrap().status,
+        ApplyStatus::Compensated
+    );
     assert_eq!(
         ApplyCoordinator::apply(&mut files, &mut journals, plan).unwrap(),
         ApplyOutcome::AlreadyCompensated
@@ -203,18 +250,27 @@ fn interrupted_unknown_write_is_recovered_only_with_operation_proof() {
     let before = files.inspect("file.rs").unwrap();
     let op = "apply:interrupted:0";
     let mut journals = FakeJournals::default();
-    journals.store(&ApplyJournal {
-        apply_id: "interrupted".into(),
-        status: ApplyStatus::Applying,
-        steps: vec![ApplyStep {
-            edit: edit.clone(),
-            before: before.clone(),
-            operation_id: op.into(),
-            phase: StepPhase::MayHaveWritten,
-            after: None,
-        }],
-    }).unwrap();
-    files.replace("file.rs", before.revision.as_deref(), Some(&edit.replacement), op).unwrap();
+    journals
+        .store(&ApplyJournal {
+            apply_id: "interrupted".into(),
+            status: ApplyStatus::Applying,
+            steps: vec![ApplyStep {
+                edit: edit.clone(),
+                before: before.clone(),
+                operation_id: op.into(),
+                phase: StepPhase::MayHaveWritten,
+                after: None,
+            }],
+        })
+        .unwrap();
+    files
+        .replace(
+            "file.rs",
+            before.revision.as_deref(),
+            Some(&edit.replacement),
+            op,
+        )
+        .unwrap();
     assert_eq!(
         ApplyCoordinator::recover(&mut files, &mut journals, "interrupted").unwrap(),
         ApplyOutcome::Compensated
@@ -229,7 +285,10 @@ fn post_write_error_is_compensated_not_misreported_as_success() {
     let plan = plan(&mut files, "post-write-error", &["a.rs"]);
     files.fail_after_write = Some("a.rs".into());
     let mut journals = FakeJournals::default();
-    assert!(matches!(ApplyCoordinator::apply(&mut files, &mut journals, plan), Err(ApplyError::Aborted(_))));
+    assert!(matches!(
+        ApplyCoordinator::apply(&mut files, &mut journals, plan),
+        Err(ApplyError::Aborted(_))
+    ));
     assert_eq!(files.content("a.rs"), Some("before"));
 }
 
@@ -247,7 +306,10 @@ fn external_change_during_failure_is_never_overwritten_by_rollback() {
         Err(ApplyError::RecoveryRequired(_))
     ));
     assert_eq!(files.content("a.rs"), Some("someone-else-edited"));
-    assert_eq!(journals.load("concurrent-edit").unwrap().unwrap().status, ApplyStatus::RecoveryRequired);
+    assert_eq!(
+        journals.load("concurrent-edit").unwrap().unwrap().status,
+        ApplyStatus::RecoveryRequired
+    );
 }
 
 #[test]
@@ -259,7 +321,10 @@ fn journal_failure_before_first_write_prevents_any_side_effect() {
         fail_at_save: Some(1),
         ..FakeJournals::default()
     };
-    assert!(matches!(ApplyCoordinator::apply(&mut files, &mut journals, plan), Err(ApplyError::Journal(_))));
+    assert!(matches!(
+        ApplyCoordinator::apply(&mut files, &mut journals, plan),
+        Err(ApplyError::Journal(_))
+    ));
     assert_eq!(files.content("a.rs"), Some("original"));
 }
 
@@ -269,11 +334,20 @@ fn idempotent_apply_detects_reused_id_with_different_payload() {
     files.seed("a.rs", "old");
     let plan = plan(&mut files, "same-id", &["a.rs"]);
     let mut journals = FakeJournals::default();
-    assert_eq!(ApplyCoordinator::apply(&mut files, &mut journals, plan.clone()).unwrap(), ApplyOutcome::Applied);
-    assert_eq!(ApplyCoordinator::apply(&mut files, &mut journals, plan.clone()).unwrap(), ApplyOutcome::AlreadyApplied);
+    assert_eq!(
+        ApplyCoordinator::apply(&mut files, &mut journals, plan.clone()).unwrap(),
+        ApplyOutcome::Applied
+    );
+    assert_eq!(
+        ApplyCoordinator::apply(&mut files, &mut journals, plan.clone()).unwrap(),
+        ApplyOutcome::AlreadyApplied
+    );
     let mut altered = plan;
     altered.edits[0].replacement.push_str(" changed");
-    assert!(matches!(ApplyCoordinator::apply(&mut files, &mut journals, altered), Err(ApplyError::DuplicateId)));
+    assert!(matches!(
+        ApplyCoordinator::apply(&mut files, &mut journals, altered),
+        Err(ApplyError::DuplicateId)
+    ));
 }
 
 #[test]
@@ -281,46 +355,95 @@ fn hotplug_failure_keeps_failed_state_until_host_verifies_recovery() {
     let mut lifecycle = CapabilityMachine::default();
     let token = lifecycle.begin(LifecycleAction::Enable).unwrap();
     assert_eq!(lifecycle.state(), CapabilityState::Activating);
-    assert_eq!(lifecycle.finish(&token, ResourceInspection::Verified {
-        state: CapabilityState::Active,
-        leases: vec![ResourceLease {owner: "coding".into(), resource_id: "lsp".into(), generation: 1}],
-    }), Ok(CapabilityState::Active));
+    assert_eq!(
+        lifecycle.finish(
+            &token,
+            ResourceInspection::Verified {
+                state: CapabilityState::Active,
+                leases: vec![ResourceLease {
+                    owner: "coding".into(),
+                    resource_id: "lsp".into(),
+                    generation: 1
+                }],
+            }
+        ),
+        Ok(CapabilityState::Active)
+    );
     let suspend = lifecycle.begin(LifecycleAction::Suspend).unwrap();
-    assert_eq!(lifecycle.finish(&suspend, ResourceInspection::Uncertain {
-        message: "child exited but listener still registered".into(),
-    }), Err(LifecycleError::Unverified));
+    assert_eq!(
+        lifecycle.finish(
+            &suspend,
+            ResourceInspection::Uncertain {
+                message: "child exited but listener still registered".into(),
+            }
+        ),
+        Err(LifecycleError::Unverified)
+    );
     assert_eq!(lifecycle.state(), CapabilityState::Failed);
     assert_eq!(lifecycle.leases().len(), 1);
-    assert_eq!(lifecycle.begin(LifecycleAction::Resume), Err(LifecycleError::InvalidTransition));
+    assert_eq!(
+        lifecycle.begin(LifecycleAction::Resume),
+        Err(LifecycleError::InvalidTransition)
+    );
     let recovering = lifecycle.begin_recovery().unwrap();
-    assert_eq!(lifecycle.finish_recovery(&recovering, ResourceInspection::Verified {
-        state: CapabilityState::Suspended,
-        leases: vec![],
-    }), Ok(CapabilityState::Suspended));
+    assert_eq!(
+        lifecycle.finish_recovery(
+            &recovering,
+            ResourceInspection::Verified {
+                state: CapabilityState::Suspended,
+                leases: vec![],
+            }
+        ),
+        Ok(CapabilityState::Suspended)
+    );
     let disable = lifecycle.begin(LifecycleAction::Disable).unwrap();
-    assert_eq!(lifecycle.finish(&disable, ResourceInspection::Verified {
-        state: CapabilityState::Disabled,
-        leases: vec![],
-    }), Ok(CapabilityState::Disabled));
+    assert_eq!(
+        lifecycle.finish(
+            &disable,
+            ResourceInspection::Verified {
+                state: CapabilityState::Disabled,
+                leases: vec![],
+            }
+        ),
+        Ok(CapabilityState::Disabled)
+    );
 }
 
 #[test]
 fn hotplug_rejects_stale_and_mismatched_resource_evidence() {
     let mut lifecycle = CapabilityMachine::default();
     let token = lifecycle.begin(LifecycleAction::Enable).unwrap();
-    assert_eq!(lifecycle.finish(&token, ResourceInspection::Verified {
-        state: CapabilityState::Disabled,
-        leases: vec![],
-    }), Err(LifecycleError::Unverified));
+    assert_eq!(
+        lifecycle.finish(
+            &token,
+            ResourceInspection::Verified {
+                state: CapabilityState::Disabled,
+                leases: vec![],
+            }
+        ),
+        Err(LifecycleError::Unverified)
+    );
     assert_eq!(lifecycle.state(), CapabilityState::Failed);
     let retry = lifecycle.begin_recovery().unwrap();
-    assert_eq!(lifecycle.finish(&token, ResourceInspection::Uncertain {
-        message: "stale".into(),
-    }), Err(LifecycleError::StaleTicket));
-    assert_eq!(lifecycle.finish_recovery(&retry, ResourceInspection::Verified {
-        state: CapabilityState::Active,
-        leases: vec![],
-    }), Ok(CapabilityState::Active));
+    assert_eq!(
+        lifecycle.finish(
+            &token,
+            ResourceInspection::Uncertain {
+                message: "stale".into(),
+            }
+        ),
+        Err(LifecycleError::StaleTicket)
+    );
+    assert_eq!(
+        lifecycle.finish_recovery(
+            &retry,
+            ResourceInspection::Verified {
+                state: CapabilityState::Active,
+                leases: vec![],
+            }
+        ),
+        Ok(CapabilityState::Active)
+    );
 }
 
 #[test]
@@ -338,7 +461,10 @@ fn journal_failure_after_a_real_write_still_compensates() {
         Err(ApplyError::Aborted(_))
     ));
     assert_eq!(files.content("file.rs"), Some("before"));
-    assert_eq!(journals.load("journal-late").unwrap().unwrap().status, ApplyStatus::Compensated);
+    assert_eq!(
+        journals.load("journal-late").unwrap().unwrap().status,
+        ApplyStatus::Compensated
+    );
 }
 
 #[test]
@@ -349,19 +475,28 @@ fn crashed_rollback_recovers_from_its_own_operation_provenance() {
     let edit = candidate.edits.remove(0);
     let before = files.inspect("file.rs").unwrap();
     let op_id = "apply:rollback-interrupted:0";
-    let after = files.replace("file.rs", before.revision.as_deref(), Some(&edit.replacement), op_id).unwrap();
+    let after = files
+        .replace(
+            "file.rs",
+            before.revision.as_deref(),
+            Some(&edit.replacement),
+            op_id,
+        )
+        .unwrap();
     let mut journals = FakeJournals::default();
-    journals.store(&ApplyJournal {
-        apply_id: "rollback-interrupted".into(),
-        status: ApplyStatus::Applying,
-        steps: vec![ApplyStep {
-            edit,
-            before,
-            operation_id: op_id.into(),
-            phase: StepPhase::Applied,
-            after: Some(after),
-        }],
-    }).unwrap();
+    journals
+        .store(&ApplyJournal {
+            apply_id: "rollback-interrupted".into(),
+            status: ApplyStatus::Applying,
+            steps: vec![ApplyStep {
+                edit,
+                before,
+                operation_id: op_id.into(),
+                phase: StepPhase::Applied,
+                after: Some(after),
+            }],
+        })
+        .unwrap();
     files.fail_after_write = Some("file.rs".into());
     assert!(matches!(
         ApplyCoordinator::recover(&mut files, &mut journals, "rollback-interrupted"),
@@ -382,17 +517,19 @@ fn equal_bytes_without_trusted_write_provenance_do_not_authorize_rollback() {
     let edit = candidate.edits.remove(0);
     let before = files.inspect("file.rs").unwrap();
     let mut journals = FakeJournals::default();
-    journals.store(&ApplyJournal {
-        apply_id: "unproven-write".into(),
-        status: ApplyStatus::Applying,
-        steps: vec![ApplyStep {
-            edit: edit.clone(),
-            before,
-            operation_id: "apply:unproven-write:0".into(),
-            phase: StepPhase::MayHaveWritten,
-            after: None,
-        }],
-    }).unwrap();
+    journals
+        .store(&ApplyJournal {
+            apply_id: "unproven-write".into(),
+            status: ApplyStatus::Applying,
+            steps: vec![ApplyStep {
+                edit: edit.clone(),
+                before,
+                operation_id: "apply:unproven-write:0".into(),
+                phase: StepPhase::MayHaveWritten,
+                after: None,
+            }],
+        })
+        .unwrap();
     // Same text, but the host reports a different writer.
     files.seed("file.rs", &edit.replacement);
     assert!(matches!(

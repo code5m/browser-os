@@ -59,10 +59,21 @@ pub struct ModelRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ModelEvent {
-    TextDelta { text: String },
-    ToolCall { call_id: String, name: String, arguments: Value },
-    Usage { input_tokens: u64, output_tokens: u64 },
-    Finished { reason: Option<String> },
+    TextDelta {
+        text: String,
+    },
+    ToolCall {
+        call_id: String,
+        name: String,
+        arguments: Value,
+    },
+    Usage {
+        input_tokens: u64,
+        output_tokens: u64,
+    },
+    Finished {
+        reason: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,16 +88,22 @@ impl ModelRequest {
             return Err(ModelError::InvalidRequest("model is required"));
         }
         if self.messages.is_empty() {
-            return Err(ModelError::InvalidRequest("at least one message is required"));
+            return Err(ModelError::InvalidRequest(
+                "at least one message is required",
+            ));
         }
         for message in &self.messages {
             if message.role == ModelRole::Tool && message.tool_call_id.is_none() {
-                return Err(ModelError::InvalidRequest("tool message requires tool_call_id"));
+                return Err(ModelError::InvalidRequest(
+                    "tool message requires tool_call_id",
+                ));
             }
         }
         for tool in &self.tools {
             if tool.name.trim().is_empty() || !tool.input_schema.is_object() {
-                return Err(ModelError::InvalidRequest("tool requires name and object schema"));
+                return Err(ModelError::InvalidRequest(
+                    "tool requires name and object schema",
+                ));
             }
         }
         Ok(())
@@ -97,16 +114,20 @@ impl ModelRequest {
     pub fn to_chat_completions_body(&self) -> Result<Value, ModelError> {
         self.validate()?;
 
-        let messages: Vec<Value> = self.messages.iter().map(|message| {
-            let mut item = json!({
-                "role": message.role.as_wire_str(),
-                "content": message.content,
-            });
-            if let Some(call_id) = &message.tool_call_id {
-                item["tool_call_id"] = json!(call_id);
-            }
-            item
-        }).collect();
+        let messages: Vec<Value> = self
+            .messages
+            .iter()
+            .map(|message| {
+                let mut item = json!({
+                    "role": message.role.as_wire_str(),
+                    "content": message.content,
+                });
+                if let Some(call_id) = &message.tool_call_id {
+                    item["tool_call_id"] = json!(call_id);
+                }
+                item
+            })
+            .collect();
 
         let mut body = json!({
             "model": self.model,
@@ -117,14 +138,20 @@ impl ModelRequest {
             body["max_completion_tokens"] = json!(limit);
         }
         if !self.tools.is_empty() {
-            let functions: Vec<Value> = self.tools.iter().map(|tool| json!({
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.input_schema,
-                },
-            })).collect();
+            let functions: Vec<Value> = self
+                .tools
+                .iter()
+                .map(|tool| {
+                    json!({
+                        "type": "function",
+                        "function": {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": tool.input_schema,
+                        },
+                    })
+                })
+                .collect();
             body["tools"] = json!(functions);
         }
         Ok(body)

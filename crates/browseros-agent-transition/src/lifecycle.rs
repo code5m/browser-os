@@ -53,7 +53,9 @@ pub enum ResourceInspection {
         state: CapabilityState,
         leases: Vec<ResourceLease>,
     },
-    Uncertain { message: String },
+    Uncertain {
+        message: String,
+    },
 }
 
 #[derive(Debug)]
@@ -76,10 +78,18 @@ impl Default for CapabilityMachine {
 }
 
 impl CapabilityMachine {
-    pub fn state(&self) -> CapabilityState { self.state }
-    pub fn generation(&self) -> u64 { self.generation }
-    pub fn leases(&self) -> &[ResourceLease] { &self.leases }
-    pub fn failure(&self) -> Option<&str> { self.last_failure.as_deref() }
+    pub fn state(&self) -> CapabilityState {
+        self.state
+    }
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+    pub fn leases(&self) -> &[ResourceLease] {
+        &self.leases
+    }
+    pub fn failure(&self) -> Option<&str> {
+        self.last_failure.as_deref()
+    }
 
     pub fn begin(&mut self, action: LifecycleAction) -> Result<TransitionTicket, LifecycleError> {
         use CapabilityState as S;
@@ -90,9 +100,15 @@ impl CapabilityMachine {
             (S::Suspended, LifecycleAction::Disable) => S::Deactivating,
             _ => return Err(LifecycleError::InvalidTransition),
         };
-        self.generation = self.generation.checked_add(1).ok_or(LifecycleError::RevisionOverflow)?;
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .ok_or(LifecycleError::RevisionOverflow)?;
         self.state = pending;
-        Ok(TransitionTicket { generation: self.generation, expected: pending })
+        Ok(TransitionTicket {
+            generation: self.generation,
+            expected: pending,
+        })
     }
 
     pub fn finish(
@@ -116,9 +132,15 @@ impl CapabilityMachine {
         if self.state != CapabilityState::Failed {
             return Err(LifecycleError::InvalidTransition);
         }
-        self.generation = self.generation.checked_add(1).ok_or(LifecycleError::RevisionOverflow)?;
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .ok_or(LifecycleError::RevisionOverflow)?;
         self.state = CapabilityState::Recovering;
-        Ok(TransitionTicket { generation: self.generation, expected: CapabilityState::Recovering })
+        Ok(TransitionTicket {
+            generation: self.generation,
+            expected: CapabilityState::Recovering,
+        })
     }
 
     pub fn finish_recovery(
@@ -126,8 +148,10 @@ impl CapabilityMachine {
         ticket: &TransitionTicket,
         inspected: ResourceInspection,
     ) -> Result<CapabilityState, LifecycleError> {
-        if ticket.generation != self.generation || self.state != CapabilityState::Recovering
-            || ticket.expected != CapabilityState::Recovering {
+        if ticket.generation != self.generation
+            || self.state != CapabilityState::Recovering
+            || ticket.expected != CapabilityState::Recovering
+        {
             return Err(LifecycleError::StaleTicket);
         }
         self.verify(inspected, None)
@@ -140,11 +164,17 @@ impl CapabilityMachine {
     ) -> Result<CapabilityState, LifecycleError> {
         match inspected {
             ResourceInspection::Verified { state, leases }
-                if matches!(state, CapabilityState::Active | CapabilityState::Suspended | CapabilityState::Disabled)
-                    && expected.map_or(true, |value| state == value)
-                    && leases.iter().all(|lease| !lease.owner.trim().is_empty()
-                        && !lease.resource_id.trim().is_empty()
-                        && lease.generation <= self.generation)
+                if matches!(
+                    state,
+                    CapabilityState::Active
+                        | CapabilityState::Suspended
+                        | CapabilityState::Disabled
+                ) && expected.map_or(true, |value| state == value)
+                    && leases.iter().all(|lease| {
+                        !lease.owner.trim().is_empty()
+                            && !lease.resource_id.trim().is_empty()
+                            && lease.generation <= self.generation
+                    })
                     && !(state == CapabilityState::Disabled && !leases.is_empty()) =>
             {
                 self.state = state;

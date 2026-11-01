@@ -1,5 +1,6 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { sharedOperationScheduler } from "./shared/tasks/operationScheduler.mjs";
 import type {
   Artifact,
   ImageRef,
@@ -121,7 +122,8 @@ export interface M0Config {
 export const bridge = {
   dbStudioCancel: (sessionId: string) => invoke<any>("db_studio_cancel", { sessionId }),
   dbStudioClose: (sessionId: string) => invoke<any>("db_studio_close", { sessionId }),
-  dbStudioCall: (sessionId: string, request: Record<string, unknown>) => invoke<any>("db_studio_call", { sessionId, request }),
+  dbStudioCall: (sessionId: string, request: Record<string, unknown>) =>
+    sharedOperationScheduler.run("database",sessionId,()=>invoke<any>("db_studio_call", { sessionId, request })),
   dbStudioOpen: (connId: string) => invoke<any>("db_studio_open", { connId }),
   gitStudioCancel: (jobId: string) => invoke<any>("git_studio_cancel", { jobId }),
   gitStudioConfirm: (jobId: string, confirmed: boolean) => invoke<any>("git_studio_confirm", { jobId, confirmed }),
@@ -391,7 +393,7 @@ export const bridge = {
     invoke<DbConnectResult>("db_connect", { cfg, password: password || null }),
 
   dbQuery: (p: { conn_id: string; sql: string; timeout_secs?: number | null; confirm_write: boolean; query_id?: string }) =>
-    invoke<DbQueryResult>("db_query", { connId: p.conn_id, sql: p.sql, timeoutSecs: p.timeout_secs ?? null, confirmWrite: p.confirm_write, queryId: p.query_id ?? null }),
+    sharedOperationScheduler.run("database",p.conn_id,()=>invoke<DbQueryResult>("db_query", { connId: p.conn_id, sql: p.sql, timeoutSecs: p.timeout_secs ?? null, confirmWrite: p.confirm_write, queryId: p.query_id ?? null })),
 
   // 后端 db_disconnect 返回 Result<(), String>，Tauri 序列化为 null。
   dbDisconnect: (conn_id: string) => invoke<null>("db_disconnect", { connId: conn_id }),
@@ -429,11 +431,11 @@ export const bridge = {
 
   // Explicitly user-authorized local Git worktrees (never a managed clone).
   // Mutations ALWAYS need a server-side preview ticket followed by confirm.
-  gitLocalInspect: (path: string) => invoke<{
+  gitLocalInspect: (path: string) => sharedOperationScheduler.run("git",path,()=>invoke<{
     root: string; scope: string; branch: string; head: string | null;
     files: {path: string;status: string;staged: boolean;conflicted: boolean}[];
     local_branches: string[]; has_conflicts: boolean; truncated: boolean;
-  }>("git_local_inspect", {path}),
+  }>("git_local_inspect", {path})),
   gitLocalWriteRequest: (path: string, action: string, opts: {
     message?: string; branch?: string; resolved?: string; pr?: number;
   } = {}) => invoke<{
@@ -478,7 +480,9 @@ export const bridge = {
   // ====== M5-W7（A5）Agent/Skill 只读桥：parse/validate/permission_preview ======
   // 与 W7 后端命令一一对应；仅解析/校验/预览，无执行/安装/联网/写持久化。
   agentParse: (text: string) => invoke<AgentDef>("agent_parse", { text }),
-  aiService: (request: Record<string, unknown>) => invoke<any>("ai_service", { request }),
+  aiService: (request: Record<string, unknown>) =>
+    request.action==="chat" ? sharedOperationScheduler.run("ai",String(request.scope||"default"),()=>invoke<any>("ai_service", { request })) :
+    invoke<any>("ai_service", { request }),
   codingService: (request: Record<string, unknown>, onEvent?: Channel<any>) => {
     // Tauri Channels implement CommandArg directly, not serde-optional command arguments.
     // Existing non-streaming callers get a discard-only channel.
@@ -735,7 +739,7 @@ export const bridge = {
   // 否则 Tauri 反射不到参数。Channel 由 Tauri 序列化为 IPC 句柄自动传参。
   // probe 字段：后端按 MVP_TERMINAL_PROBE=1 注入，前端据此启用终端对账打点
   termSpawnChannel: (channel: Channel<TermMessage>) =>
-    invoke<{ id: string; probe?: boolean }>("term_spawn_channel", { channel }),
+    sharedOperationScheduler.run("terminal","pty-spawn",()=>invoke<{ id: string; probe?: boolean }>("term_spawn_channel", { channel })),
 
   termWrite: (id: string, data: string) => invoke("term_write", { id, data }),
 

@@ -154,7 +154,7 @@ async function syncInterruptedSession(){
   for(const item of applyFiles){
     if(!item.file||item.file.content!==item.change.content){matches=false;continue;}
     const buffer=buffers.value.find(b=>b.path===item.change.path);
-    if(buffer){reconcileSavedBuffer(buffer,item.change.content,item.file);if(buffer.content===interruptedApply.value?.snapshots.get(item.change.path))buffer.content=item.file.content;}
+    if(buffer){reconcileSavedBuffer(buffer,item.change.content,item.file);sharedDocuments.markSaved(documentKey(item.change.path),item.change.content,item.file.hash);if(buffer.content===interruptedApply.value?.snapshots.get(item.change.path))buffer.content=sharedDocuments.edit(documentKey(item.change.path),item.file.content).content;}
   }
   updateSession(session);
   interruptedSave.value=null;

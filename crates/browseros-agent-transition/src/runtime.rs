@@ -52,8 +52,14 @@ impl RuntimeRequest {
         if self.task_id.trim().is_empty()
             || self.session_id.trim().is_empty()
             || self.instruction.trim().is_empty()
-            || self.contexts.iter().any(|context| context.resource_id.trim().is_empty())
-            || self.requested_tool.as_ref().is_some_and(|tool| tool.trim().is_empty())
+            || self
+                .contexts
+                .iter()
+                .any(|context| context.resource_id.trim().is_empty())
+            || self
+                .requested_tool
+                .as_ref()
+                .is_some_and(|tool| tool.trim().is_empty())
         {
             return Err(RuntimeError::InvalidRequest);
         }

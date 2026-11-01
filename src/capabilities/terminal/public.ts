@@ -11,4 +11,4 @@
 // （能力贡献被挂载时才可能发生）。因此 Terminal 未注册时不产生任何子进程。
 export { useTerminalStore } from "./state/useTerminalStore"
 
-export { default as TerminalStudioSurface } from "./ui/TerminalDockPanel.vue";
+export function loadTerminalStudioSurface() { return import("./ui/TerminalDockPanel.vue"); }
