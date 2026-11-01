@@ -5,6 +5,7 @@ export const AGENT_CAPABILITY_ID = "agent"
 
 const registerAgent = createLazyContributionRegistrar(agentManifest, [
   { id: "agent.main.panel", type: "surface", slot: "workbench-main", view: "agents", label: "智能体", icon: "🤖", panelState: true, load: () => import("./ui/AgentManagerPanel.vue") },
+  { id: "agent.studio", type: "surface", slot: "workbench-main", view: "studio", label: "Developer Studio", icon: "⌘", panelState: true, load: () => import("./ui/DeveloperStudio.vue") },
 ])
 export function registerAgentContributions(): void { registerAgent() }
 

@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {projectUnifiedTabs} from '../src/shared/navigation/unifiedTabs.mjs';
+const web=[{id:'same',title:'Browser',url:'https://example.com'},{id:'w2',title:'',url:'about:blank'}];
+const mod=[{id:'same',view:'studio',label:'Developer Studio',icon:'⌘'},{id:'m2',view:'files',label:'project',path:'/home/project',icon:'📁'}];
+const list=projectUnifiedTabs(web,mod,'studio','same','same');
+assert.equal(list.length,4);
+assert.deepEqual(list.map(t=>t.key),['web:same','web:w2','module:same','module:m2']);
+assert.deepEqual(list.filter(t=>t.active).map(t=>t.key),['module:same']);
+assert.equal(list[1].label,'about:blank');
+assert.equal(list[3].tooltip,'/home/project');
+assert.equal(projectUnifiedTabs(web,mod,'browser','w2','same').filter(t=>t.active)[0].key,'web:w2');
+assert.ok(Object.isFrozen(list));
+console.log('UNIFIED_TAB_CONTRACT=PASS');

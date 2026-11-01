@@ -8,9 +8,11 @@
 
 version: 1
 generated_from_head: 3f57a92e5fb7d9a6bc978f1572964d3c14fb8caf
-total: 93
+total: 95
 
 components:
+  - { id: shared.editor.monaco-text, name: MonacoTextEditor, layer: SHARED_PATTERN, owner: framework, file: src/shared/editor/MonacoTextEditor.vue, public: true, business_semantics: "Reusable Monaco text editor", capability_specific: false, dependencies: [monacoWorkerServices], consumers: [FilePanel, FileEditor], status: CANDIDATE }
+  - { id: agent.developer-studio, name: DeveloperStudio, layer: CAPABILITY_UI, owner: agent, file: src/capabilities/agent/ui/DeveloperStudio.vue, public: false, business_semantics: "Developer Studio composition and Agent Channel", capability_specific: true, dependencies: [domain public, taskRuntime], consumers: [agent.studio], status: CANDIDATE }
   - { id: agent.operation-review, name: CodingOperationReview, layer: CAPABILITY_UI, owner: agent, file: src/capabilities/agent/ui/CodingOperationReview.vue, public: false, business_semantics: "Explicit per-operation approval and result recording", capability_specific: true, dependencies: [bridge, CodingCommandPanel], consumers: [CodingWorkbench], status: OBSERVED }
   - { id: agent.coding-command, name: CodingCommandPanel, layer: CAPABILITY_UI, owner: agent, file: src/capabilities/agent/ui/CodingCommandPanel.vue, public: false, business_semantics: "Explicit approval of existing command snippets through script public adapter", capability_specific: true, dependencies: [commandWorkbench], consumers: [CodingWorkbench], status: OBSERVED }
   - { id: agent.coding-workbench, name: CodingWorkbench, layer: CAPABILITY_UI, owner: agent, file: src/capabilities/agent/ui/CodingWorkbench.vue, public: false, business_semantics: "Project editing and reviewed agent changes", capability_specific: true, dependencies: [bridge, aiService, CodingCodeEditor], consumers: [AgentManagerPanel], status: OBSERVED }

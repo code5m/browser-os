@@ -325,7 +325,7 @@ capabilities:
       - agent.memory
     dependsOn:
       - bridge
-    optionalDependencies: [script, git, database, browser]
+    optionalDependencies: [script, git, database, browser, terminal]
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
       default: ACTIVE

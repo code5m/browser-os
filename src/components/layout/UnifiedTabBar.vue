@@ -8,6 +8,7 @@ import { useTerminalStore } from "../../capabilities/terminal/public";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Globe, Plus, X } from '@lucide/vue';
 import { bridge } from '../../bridge';
+import { projectUnifiedTabs } from '../../shared/navigation/unifiedTabs.mjs';
 
 // 统一页签条：浏览器网页页签 + 目录页签 + 模块页签（终端/文件等）混排在同一条，
 // 不区分类型 —— 点击即切换对应视图，行为与浏览器标签一致。
@@ -17,6 +18,8 @@ const fs = useFileStore();
 const appsStore = useAppsStore();
 const term = useTerminalStore();
 const context = ref<{ id: string; kind: 'web' | 'module' } | null>(null);
+const unifiedTabs=computed(()=>projectUnifiedTabs(browser.tabs,layout.modTabs,layout.mainView,browser.activeTabId,layout.activeModTab));
+type TabItem=ReturnType<typeof projectUnifiedTabs>[number];
 
 // Resolve the native window only after an explicit user action so a browser/dev
 // preview can render the shell even when Tauri APIs are unavailable.
@@ -51,23 +54,17 @@ async function closeContext(others = false) {
   const target = context.value;
   context.value = null;
   if (!target) return;
-  if (target.kind === 'web') await browser.tabClose(target.id);
-  else {
-    const ids = others ? layout.modTabs.filter(t => t.id !== target.id).map(t => t.id) : [target.id];
-    for (const id of ids) layout.closeModTab(id);
-  }
+  const tabs=unifiedTabs.value;
+  await closeMany(others?tabs.filter(t=>!(t.kind===target.kind&&t.id===target.id)):tabs.filter(t=>t.kind===target.kind&&t.id===target.id));
 }
 
-// 取右键目标所处的页签列表（web 与 module 各用各的列表，互不串）
-function listFor(kind: 'web' | 'module') {
-  return kind === 'web' ? browser.tabs : layout.modTabs;
+// All tab operations consume one logical sequence; Browser owns native WebViews.
+async function closeTab(tab: TabItem) {
+  if (tab.kind==='web') await browser.tabClose(tab.id);
+  else layout.closeModTab(tab.id);
 }
-
-async function closeMany(kind: 'web' | 'module', ids: string[]) {
-  for (const id of ids) {
-    if (kind === 'web') await browser.tabClose(id);
-    else layout.closeModTab(id);
-  }
+async function closeMany(tabs: TabItem[]) {
+  for (const tab of tabs) await closeTab(tab);
 }
 
 // 关闭当前页签左侧的所有页签
@@ -75,10 +72,10 @@ async function closeLeft() {
   const c = context.value;
   context.value = null;
   if (!c) return;
-  const list = listFor(c.kind);
-  const idx = list.findIndex((t) => t.id === c.id);
+  const list = unifiedTabs.value;
+  const idx = list.findIndex((t) => t.id === c.id && t.kind === c.kind);
   if (idx <= 0) return;
-  await closeMany(c.kind, list.slice(0, idx).map((t) => t.id));
+  await closeMany(list.slice(0,idx));
 }
 
 // 关闭当前页签右侧的所有页签
@@ -86,10 +83,10 @@ async function closeRight() {
   const c = context.value;
   context.value = null;
   if (!c) return;
-  const list = listFor(c.kind);
-  const idx = list.findIndex((t) => t.id === c.id);
+  const list = unifiedTabs.value;
+  const idx = list.findIndex((t) => t.id === c.id && t.kind === c.kind);
   if (idx < 0) return;
-  await closeMany(c.kind, list.slice(idx + 1).map((t) => t.id));
+  await closeMany(list.slice(idx+1));
 }
 
 // 关闭除当前页签外的所有页签
@@ -97,8 +94,7 @@ async function closeOthers() {
   const c = context.value;
   context.value = null;
   if (!c) return;
-  const list = listFor(c.kind);
-  await closeMany(c.kind, list.filter((t) => t.id !== c.id).map((t) => t.id));
+  await closeMany(unifiedTabs.value.filter((t) => !(t.id === c.id && t.kind === c.kind)));
 }
 
 // 当前右键页签若是本地目录/文件（module 类且带 path），返回其绝对路径，否则 null
@@ -157,14 +153,6 @@ async function activateWeb(id: string) {
   await browser.tabSwitch(id);
 }
 
-function isActiveWeb(id: string) {
-  return layout.mainView === "browser" && browser.activeTabId === id;
-}
-
-function isActiveMod(id: string) {
-  return layout.isModView() && layout.activeModTab === id;
-}
-
 function activateMod(t: { id: string; view: string; path?: string }) {
   if (term.m0Cfg?.driver) return;
   layout.activateModTab(t.id);
@@ -174,36 +162,25 @@ function activateMod(t: { id: string; view: string; path?: string }) {
   // useGridStore observes this intent and reuses/repositions the existing cells.
   // Browser store intentionally exposes no Grid lifecycle methods.
 }
+async function activateTab(t:TabItem){if(t.kind==='web')await activateWeb(t.id);else activateMod(t);}
 </script>
 
 <template>
   <div class="tabbar unified" @mousedown="startWindowDrag">
     <div class="tab-strip">
-    <!-- 网页页签 -->
+    <!-- Unified logical tab projection; native and business owners remain distinct. -->
     <div
-      v-for="t in browser.tabs"
-      :key="t.id"
-      :class="['tab', { active: isActiveWeb(t.id) }]"
-      @click="activateWeb(t.id)"
-      @contextmenu.prevent="context = { id: t.id, kind: 'web' }"
-      :title="t.url"
+      v-for="t in unifiedTabs"
+      :key="t.key"
+      :class="['tab', { active: t.active }]"
+      @click="activateTab(t)"
+      @contextmenu.prevent="context = { id: t.id, kind: t.kind }"
+      :title="t.tooltip"
     >
-      <Globe class="tab-ic" :size="15"/>
-      <span class="tab-title">{{ t.title || t.url }}</span>
-      <button class="tab-close" @click.stop="browser.tabClose(t.id)" title="关闭"><X :size="14"/></button>
-    </div>
-    <!-- 目录 / 模块页签 -->
-    <div
-      v-for="t in layout.modTabs"
-      :key="t.id"
-      :class="['tab', { active: isActiveMod(t.id) }]"
-      @click="activateMod(t)"
-      @contextmenu.prevent="context = { id: t.id, kind: 'module' }"
-      :title="t.path || t.label"
-    >
-      <span class="tab-ic">{{ t.icon }}</span>
+      <Globe v-if="t.kind==='web'" class="tab-ic" :size="15"/>
+      <span v-else class="tab-ic">{{ t.icon }}</span>
       <span class="tab-title">{{ t.label }}</span>
-      <button class="tab-close" @click.stop="layout.closeModTab(t.id)" title="关闭"><X :size="14"/></button>
+      <button class="tab-close" @click.stop="closeTab(t)" title="关闭"><X :size="14"/></button>
     </div>
     <button class="tab-new" @click="browser.tabNew()" title="新建页签"><Plus :size="18"/></button>
     </div>

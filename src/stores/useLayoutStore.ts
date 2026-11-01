@@ -20,6 +20,7 @@ export type MainView =
   | "tasks"
   | "skills"
   | "agents"
+  | "studio"
   | "graph"
   | "plugin"
   | "editor"
@@ -50,6 +51,7 @@ export const NAV_MENU_SECTIONS = [
   ] },
   { title: "智能体中心", items: [
     { view: "agents", icon: "🤖", label: "智能体" },
+    { view: "studio", icon: "⌘", label: "Developer Studio" },
     { view: "skills", icon: "⚙", label: "技能（智能体能力）" },
   ] },
   { title: "知识中心", items: [
@@ -121,6 +123,7 @@ export const MODULE_META: Record<string, { icon: string; label: string }> = {
   tasks: { icon: "⏰", label: "定时任务" },
   skills: { icon: "🛠️", label: "技能" },
   agents: { icon: "🤖", label: "智能体" },
+  studio: { icon: "⌘", label: "Developer Studio" },
   graph: { icon: "🕸️", label: "图谱" },
   plugin: { icon: "🔌", label: "插件" },
   bfc: { icon: "▦", label: "BFC 内容库" },

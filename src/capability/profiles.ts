@@ -58,6 +58,7 @@ export const CAPABILITY_PROFILES: Record<CapabilityProfileId, string[]> = {
     CREDENTIAL_CAPABILITY_ID,
     GIT_CAPABILITY_ID,
     DATABASE_CAPABILITY_ID,
+    AGENT_CAPABILITY_ID,
   ],
   full: [
     BOOKMARK_CAPABILITY_ID,

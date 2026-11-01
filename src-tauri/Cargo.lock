@@ -2510,9 +2510,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "browseros-agent-channel"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "browseros-agent-transition"
+version = "0.1.0"
+dependencies = [
+ "browseros-agent-channel",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mvp-browser-os"
 version = "0.1.0"
 dependencies = [
+ "browseros-agent-channel",
+ "browseros-agent-transition",
  "arboard",
  "base64 0.22.1",
  "chrono",

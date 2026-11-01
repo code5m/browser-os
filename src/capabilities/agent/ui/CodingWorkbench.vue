@@ -10,13 +10,27 @@ import { clampPane, dirtyBuffers, isDirtyBuffer, entryPath, newBuffer, sessionMe
 import {diagnosticContext,lspFailureHint} from '../model/codingLsp.mjs';
 import {readRecoveryFile} from '../model/codingWorkbench.mjs';
 import {saveWorkbenchMemory, takeWorkbenchMemory, manualMcpRunning} from '../model/codingWorkbenchMemory';
+import {sharedDocuments,normalizeDocumentPath} from '../../../shared/editor/documentManager.mjs';
 type Buffer={path:string;content:string;saved:string;original:string;hash:string|null};
 type Entry={name:string;path?:string;kind:'directory'|'file'};
-function updateBufferEdit(value:{path:string;content:string;scope?:string}){if(value.scope!==connectedRoot.value)return;const buffer=buffers.value.find(item=>item.path===value.path);if(buffer)buffer.content=value.content;}
+function updateBufferEdit(value:{path:string;content:string;scope?:string}){if(value.scope!==connectedRoot.value)return;const buffer=buffers.value.find(item=>item.path===value.path);if(buffer)buffer.content=sharedDocuments.edit(documentKey(value.path),value.content).content;}
 const root=ref(''), connectedRoot=ref(''), tree=ref<Entry[]>([]), folders=ref<Record<string,Entry[]>>({}), expanded=ref<string[]>([]);
 const truncatedDirs=ref<Record<string,boolean>>({});
 const directoryPages=ref<Record<string,{snapshot:string;nextOffset:number|null}>>({});
 const buffers=ref<Buffer[]>([]), active=ref(''), sidebar=ref('files'), search=ref(''), searchResults=ref<any[]>([]);
+function documentKey(path:string){return normalizeDocumentPath(connectedRoot.value,path);}
+function sharedBuffer(path:string,content:string,hash:string|null){
+  const snapshot=sharedDocuments.open({path:documentKey(path),content,hash,owner:'coding'});
+  const buffer=newBuffer(path,content,hash);
+  buffer.content=snapshot.content;
+  return buffer;
+}
+const stopDocumentSync=sharedDocuments.subscribe(snapshot=>{
+  if(!connectedRoot.value||!snapshot.path.startsWith(connectedRoot.value.replace(/\/+$/,'')+'/'))return;
+  const rel=snapshot.path.slice(connectedRoot.value.replace(/\/+$/,'').length+1);
+  const buffer=buffers.value.find(item=>item.path===rel);
+  if(buffer&&buffer.content!==snapshot.content)buffer.content=snapshot.content;
+});
 const searchTruncated=ref(false);
 let searchSequence=0;
 let resourceSequence=0;
@@ -36,6 +50,11 @@ if(remembered){
   root.value=remembered.root;connectedRoot.value=remembered.connectedRoot;tree.value=remembered.tree;
   folders.value=remembered.folders;expanded.value=remembered.expanded;truncatedDirs.value=remembered.truncatedDirs;directoryPages.value=remembered.directoryPages;
   buffers.value=remembered.buffers;active.value=remembered.active;sessionId.value=remembered.sessionId;
+  for(const buffer of buffers.value){
+    const current=sharedDocuments.open({path:documentKey(buffer.path),content:buffer.saved,hash:buffer.hash,owner:'coding'});
+    if(current.content===current.saved&&buffer.content!==buffer.saved)sharedDocuments.edit(documentKey(buffer.path),buffer.content);
+    buffer.content=sharedDocuments.peek(documentKey(buffer.path))?.content??buffer.content;
+  }
   messages.value=remembered.messages;changes.value=remembered.changes;tools.value=remembered.tools;operations.value=remembered.operations;
   context.value=remembered.context;prompt.value=remembered.prompt;mode.value=remembered.mode;modelId.value=remembered.modelId;
   sessionRecoveryRequired.value=remembered.sessionRecoveryRequired;
@@ -76,7 +95,7 @@ async function navigateDefinition(target:any):Promise<boolean>{
     const result=await call({action:'read',path:target.path});
     if(scope!==lspEpoch||!lspEnabled.value||source!==active.value)return false;
     if(result.hash!==target.hash){notice.value='目标文件在分析后已变化，请重新请求定义';return false;}
-    if(existing)Object.assign(existing,newBuffer(target.path,result.content,result.hash));else buffers.value.push(newBuffer(target.path,result.content,result.hash));
+    if(existing)Object.assign(existing,sharedBuffer(target.path,result.content,result.hash));else buffers.value.push(sharedBuffer(target.path,result.content,result.hash));
     fileOpenRequest++;invalidatePreview();definitionLocation.value={path:target.path,line:target.range.startLineNumber,column:target.range.startColumn,id:Date.now()};active.value=target.path;preview.value=null;diff.value=false;return true;
   }catch(error){if(!(error instanceof ProjectScopeChanged))notice.value=lspFailureHint(error);return false;}
 }
@@ -169,7 +188,7 @@ async function openProject(){
   if(dirty.value.length){notice.value='请先保存或关闭未保存文件，再切换项目';return;}
   if(changes.value.length){notice.value='请先应用或放弃待审核变更，再切换项目';return;}
   ++projectEpoch;++searchSequence;++resourceSequence;folderRequests.clear();stopLsp();lspModules.value=false;lspModuleRoot.value='src/main.rs';definitionLocation.value=undefined;lspProfiles.value=[];lspServer.value='';busy.value=true;recentSessions.value=[];sessionsTruncated.value=false;
-  try{await act(async()=>{const nextRoot=root.value.trim();const result=await call({action:'tree',root:nextRoot,path:''});const session=await call({action:'session',root:nextRoot});connectedRoot.value=session.root||nextRoot;tree.value=result.entries||[];buffers.value=[];active.value='';folders.value={};expanded.value=[];truncatedDirs.value={'':!!result.truncated};directoryPages.value={};updateSession(session);resources.value=[];context.value=[];preview.value=null;searchResults.value=[];searchTruncated.value=false;diagnostics.value=[];output.value='';mcpTools.value=[];mcpServerId.value='';mcpApproved.value=false;notice.value=`已打开 ${connectedRoot.value}`;});}finally{busy.value=false;}
+  try{await act(async()=>{const nextRoot=root.value.trim();const result=await call({action:'tree',root:nextRoot,path:''});const session=await call({action:'session',root:nextRoot});for(const old of buffers.value)sharedDocuments.release(documentKey(old.path),'coding');connectedRoot.value=session.root||nextRoot;tree.value=result.entries||[];buffers.value=[];active.value='';folders.value={};expanded.value=[];truncatedDirs.value={'':!!result.truncated};directoryPages.value={};updateSession(session);resources.value=[];context.value=[];preview.value=null;searchResults.value=[];searchTruncated.value=false;diagnostics.value=[];output.value='';mcpTools.value=[];mcpServerId.value='';mcpApproved.value=false;notice.value=`已打开 ${connectedRoot.value}`;});}finally{busy.value=false;}
 }
 const folderRequests=new Map<string,symbol>();
 async function toggleFolder(path:string){
@@ -201,14 +220,14 @@ const visibleEntries=computed(()=>{const rows:{entry:Entry;path:string;depth:num
 async function openFile(path:string){
   const request=++fileOpenRequest;invalidatePreview();
   if(buffers.value.some(buffer=>buffer.path===path)){active.value=path;diff.value=false;preview.value=null;return;}
-  await act(async()=>{const result=await call({action:'read',path});if(request!==fileOpenRequest)return;if(!buffers.value.some(buffer=>buffer.path===path))buffers.value.push(newBuffer(path,result.content,result.hash));active.value=path;diff.value=false;preview.value=null;});
+  await act(async()=>{const result=await call({action:'read',path});if(request!==fileOpenRequest)return;if(!buffers.value.some(buffer=>buffer.path===path))buffers.value.push(sharedBuffer(path,result.content,result.hash));active.value=path;diff.value=false;preview.value=null;});
 }
-function createFile(){const path=newFilePath.value.trim();if(!connectedRoot.value||!path||path.startsWith('/')||path.split('/').includes('..')){notice.value='请输入项目内相对文件路径';return;}fileOpenRequest++;invalidatePreview();if(buffers.value.some(buffer=>buffer.path===path)){active.value=path;return;}buffers.value.push(newBuffer(path,'',null));active.value=path;preview.value=null;newFilePath.value='';notice.value='新文件将在首次保存时创建';}
+function createFile(){const path=newFilePath.value.trim();if(!connectedRoot.value||!path||path.startsWith('/')||path.split('/').includes('..')){notice.value='请输入项目内相对文件路径';return;}fileOpenRequest++;invalidatePreview();if(buffers.value.some(buffer=>buffer.path===path)){active.value=path;return;}buffers.value.push(sharedBuffer(path,'',null));active.value=path;preview.value=null;newFilePath.value='';notice.value='新文件将在首次保存时创建';}
 async function listSessions(){if(!connectedRoot.value||busy.value)return;await act(async()=>{const result=await call({action:'sessions_list'});recentSessions.value=result.sessions||[];sessionsTruncated.value=!!result.truncated;});}
 async function resumeSession(){if(mcpRunning.value){notice.value='MCP 调用进行中，请等待完成后恢复其他会话';return;}if(pendingOperations.value.length){notice.value='请先处理待审批操作，再恢复其他会话';return;}if(!connectedRoot.value||busy.value||dirty.value.length||changes.value.length){notice.value='请先处理草稿与待审核变更';return;}busy.value=true;try{await act(async()=>{updateSession(await call({action:'session',session_id:resumeId.value.trim()}));notice.value='已恢复项目会话';});}finally{busy.value=false;}}
-async function save(){const buffer=current.value;if(!buffer||busy.value||preview.value||sessionRecoveryRequired.value)return;if(changes.value.length){notice.value='请先处理智能体的待审核变更，再保存编辑器文件';return;}const proposal=proposalFor(buffer);interruptedSave.value={buffer,attempted:proposal.content};busy.value=true;try{const staged=await call({...proposal,session_id:sessionId.value});sessionId.value=staged.session_id;await call({action:'apply',session_id:sessionId.value});const result=await call({action:'read',path:buffer.path});notice.value=reconcileSavedBuffer(buffer,proposal.content,result)?(buffer.content===buffer.saved?'文件已保存':'已保存先前内容；之后的编辑仍未保存。'):'磁盘内容与保存内容不一致；草稿和原校验基准已保留，请检查外部修改。';interruptedSave.value=null;}catch(error){if(error instanceof ProjectScopeChanged)return;sessionRecoveryRequired.value=true;try{const matches=await syncInterruptedSession();notice.value=matches?'保存响应中断，已重新核对文件和会话；请检查草稿和待审核变更。':'磁盘内容与保存内容不一致；草稿和原校验基准已保留，请检查外部修改。';}catch{notice.value='保存响应中断，文件或会话状态未知；请先恢复当前会话并核对。';}}finally{busy.value=false;}}
-function closeFile(path:string){const buffer=buffers.value.find(item=>item.path===path);if(buffer&&isDirtyBuffer(buffer)){notice.value='文件有未保存内容，请先保存，或点击「放弃修改」';return;}buffers.value=buffers.value.filter(item=>item.path!==path);if(active.value===path)active.value=buffers.value.at(-1)?.path||'';}
-function discard(){if(current.value){if(current.value.hash===null){const path=current.value.path;buffers.value=buffers.value.filter(item=>item.path!==path);active.value=buffers.value.at(-1)?.path||'';notice.value='已放弃未保存的新文件';}else{current.value.content=current.value.saved;notice.value='已恢复最后保存内容';}}}
+async function save(){const buffer=current.value;if(!buffer||busy.value||preview.value||sessionRecoveryRequired.value)return;if(changes.value.length){notice.value='请先处理智能体的待审核变更，再保存编辑器文件';return;}const proposal=proposalFor(buffer);interruptedSave.value={buffer,attempted:proposal.content};busy.value=true;try{const staged=await call({...proposal,session_id:sessionId.value});sessionId.value=staged.session_id;await call({action:'apply',session_id:sessionId.value});const result=await call({action:'read',path:buffer.path});const saved=reconcileSavedBuffer(buffer,proposal.content,result);if(saved)sharedDocuments.markSaved(documentKey(buffer.path),proposal.content,result.hash);notice.value=saved?(buffer.content===buffer.saved?'文件已保存':'已保存先前内容；之后的编辑仍未保存。'):'磁盘内容与保存内容不一致；草稿和原校验基准已保留，请检查外部修改。';interruptedSave.value=null;}catch(error){if(error instanceof ProjectScopeChanged)return;sessionRecoveryRequired.value=true;try{const matches=await syncInterruptedSession();notice.value=matches?'保存响应中断，已重新核对文件和会话；请检查草稿和待审核变更。':'磁盘内容与保存内容不一致；草稿和原校验基准已保留，请检查外部修改。';}catch{notice.value='保存响应中断，文件或会话状态未知；请先恢复当前会话并核对。';}}finally{busy.value=false;}}
+function closeFile(path:string){const buffer=buffers.value.find(item=>item.path===path);if(buffer&&isDirtyBuffer(buffer)){notice.value='文件有未保存内容，请先保存，或点击「放弃修改」';return;}sharedDocuments.release(documentKey(path),'coding');buffers.value=buffers.value.filter(item=>item.path!==path);if(active.value===path)active.value=buffers.value.at(-1)?.path||'';}
+function discard(){if(current.value){if(current.value.hash===null){const path=current.value.path;sharedDocuments.edit(documentKey(path),'');sharedDocuments.markSaved(documentKey(path),'');sharedDocuments.release(documentKey(path),'coding');buffers.value=buffers.value.filter(item=>item.path!==path);active.value=buffers.value.at(-1)?.path||'';notice.value='已放弃未保存的新文件';}else{current.value.content=sharedDocuments.edit(documentKey(current.value.path),current.value.saved).content;notice.value='已恢复最后保存内容';}}}
 async function searchFiles(){const request=++searchSequence;searchResults.value=[];searchTruncated.value=false;await act(async()=>{const result=await call({action:'search',query:search.value});if(request!==searchSequence)return;searchResults.value=result.matches||result;searchTruncated.value=!!result.truncated;});}
 async function openSearchMatch(match:{path:string;line:number}){
   const request=fileOpenRequest+1;
@@ -260,7 +279,7 @@ async function previewChange(change:any){
 async function applyChanges(){
   if(busy.value||sessionRecoveryRequired.value)return;if(previewLoading.value||previewFailed.value||(preview.value&&!previewReady.value)){notice.value='预览尚未就绪，请重新预览或取消预览';return;}if(!canApplyChanges(buffers.value,changes.value)){notice.value='目标文件有未保存草稿，请先放弃草稿或放弃智能体变更';return;}
   const pending=changes.value.map(item=>({path:item.path,content:item.content}));const snapshots=new Map(buffers.value.map(buffer=>[buffer.path,buffer.content]));interruptedApply.value={pending,snapshots};busy.value=true;
-  try{const result=await call({action:'apply',session_id:sessionId.value});let conflict=false;for(const change of pending){const resultFile=await call({action:'read',path:change.path});if(resultFile.content!==change.content){conflict=true;continue;}const buffer=buffers.value.find(item=>item.path===change.path);if(buffer){reconcileSavedBuffer(buffer,change.content,resultFile);if(buffer.content===snapshots.get(change.path))buffer.content=resultFile.content;}}updateSession(result);interruptedApply.value=null;preview.value=null;diff.value=false;notice.value=conflict?'变更已应用，但磁盘内容已发生变化；草稿和原校验基准保留，请检查。':'已应用审核后的变更';}catch(error){if(error instanceof ProjectScopeChanged)return;sessionRecoveryRequired.value=true;notice.value='应用响应中断，文件或会话状态未知；请先恢复会话并核对文件，勿重复应用。';}finally{busy.value=false;}
+  try{const result=await call({action:'apply',session_id:sessionId.value});let conflict=false;for(const change of pending){const resultFile=await call({action:'read',path:change.path});if(resultFile.content!==change.content){conflict=true;continue;}const buffer=buffers.value.find(item=>item.path===change.path);if(buffer){reconcileSavedBuffer(buffer,change.content,resultFile);sharedDocuments.markSaved(documentKey(change.path),change.content,resultFile.hash);if(buffer.content===snapshots.get(change.path))buffer.content=sharedDocuments.edit(documentKey(change.path),resultFile.content).content;}}updateSession(result);interruptedApply.value=null;preview.value=null;diff.value=false;notice.value=conflict?'变更已应用，但磁盘内容已发生变化；草稿和原校验基准保留，请检查。':'已应用审核后的变更';}catch(error){if(error instanceof ProjectScopeChanged)return;sessionRecoveryRequired.value=true;notice.value='应用响应中断，文件或会话状态未知；请先恢复会话并核对文件，勿重复应用。';}finally{busy.value=false;}
 }
 async function discardChanges(){if(busy.value||sessionRecoveryRequired.value)return;busy.value=true;try{await act(async()=>{updateSession(await call({action:'discard',session_id:sessionId.value}));invalidatePreview();preview.value=null;notice.value='已放弃智能体待审核变更，编辑器草稿保留';});}finally{busy.value=false;}}
 let cleanupDrag:(()=>void)|undefined;
@@ -283,6 +302,7 @@ onBeforeUnmount(()=>{
     const copy=(value:unknown)=>JSON.parse(JSON.stringify(value));
     saveWorkbenchMemory({root:root.value,connectedRoot:connectedRoot.value,tree:copy(tree.value),folders:copy(folders.value),expanded:copy(expanded.value),truncatedDirs:copy(truncatedDirs.value),directoryPages:copy(directoryPages.value),buffers:copy(buffers.value),active:active.value,sessionId:sessionId.value,messages:copy(messages.value),changes:copy(changes.value),tools:copy(tools.value),operations:copy(operations.value),context:copy(context.value),prompt:prompt.value,mode:mode.value,modelId:modelId.value,mcpDetached:mcpDetached.value||mcpRunning.value,interruptedSave:interruptedSave.value?{path:interruptedSave.value.buffer.path,attempted:interruptedSave.value.attempted}:null,interruptedApply:interruptedApply.value?{pending:copy(interruptedApply.value.pending),snapshots:[...interruptedApply.value.snapshots]}:null,sessionRecoveryRequired:sessionRecoveryRequired.value||busy.value||modelRequestRunning.value});
   }
+  stopDocumentSync();for(const buffer of buffers.value)sharedDocuments.release(documentKey(buffer.path),'coding');
   ++projectEpoch;stopLsp();cleanupDrag?.();if(modelRequestRunning.value&&sessionId.value)void call({action:'cancel',session_id:sessionId.value}).catch(()=>{ /* Native request remains bounded even when cancellation delivery fails. */ });
 });
 </script>

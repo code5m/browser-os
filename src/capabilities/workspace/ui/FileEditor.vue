@@ -8,6 +8,7 @@ const ws = useFileStore();
 const layout = useLayoutStore();
 
 function closeEditor() {
+  ws.closeOverlayDocument();
   layout.setView("browser");
   relocateBrowser();
 }
@@ -16,7 +17,7 @@ function closeEditor() {
 <template>
   <div class="editor-pane">
     <div class="preview-header">
-      <h4>📝 {{ ws.filePath?.split("/").pop() }}</h4>
+      <h4>📝 {{ ws.overlayDocumentPath?.split("/").pop() }}</h4>
       <div class="preview-actions">
         <template v-if="ws.mdPreview">
           <button :class="{ active: true }" @click="ws.setEditorView(true)">👁 预览</button>
@@ -29,7 +30,7 @@ function closeEditor() {
     <div v-if="ws.mdPreview" class="md-preview" v-html="ws.mdHtml"></div>
     <MonacoTextEditor
       v-else
-      :path="ws.filePath"
+      :path="ws.overlayDocumentPath"
       :model-value="ws.fileContent"
       @update:model-value="ws.setFileContent"
       @save="ws.saveFile"

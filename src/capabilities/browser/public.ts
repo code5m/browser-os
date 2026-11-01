@@ -16,3 +16,6 @@ export function readCodingBrowserContext(){
   const tabs=browserOwner().tabs;
   return {tabs:tabs.slice(0,50).map(tab=>{let address='[internal or unavailable]';try{const url=new URL(tab.url);if(['https:','http:'].includes(url.protocol)){url.username='';url.password='';url.search='';url.hash='';address=url.toString();}}catch{}return {id:tab.id,title:tab.title.slice(0,200),url:address};}),truncated:tabs.length>50};
 }
+
+// Read-only context provider for the shared task runtime.
+export const browserAgentAdapter=Object.freeze({id:'browser',scope:'browser',label:'Browser Agent',readContext:()=>readCodingBrowserContext()});

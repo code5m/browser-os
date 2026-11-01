@@ -19,7 +19,7 @@ export const agentManifest: CapabilityDefinition = {
   ],
   dependsOn: ["bridge"],
   // Graph nodes may reference Agent ids as data; this is not a runtime dependency.
-  optionalDependencies: ["script", "git", "database", "browser"],
+  optionalDependencies: ["script", "git", "database", "browser", "terminal"],
   lifecycle: {
     supported: ["ACTIVE", "SUSPENDED"],
     default: "ACTIVE",
@@ -50,11 +50,11 @@ export const agentManifest: CapabilityDefinition = {
     maturity: "C1",
     maturityEvidence: ["scripts/check-developer-owners.mjs"],
     dependencies: ["bridge"],
-    optionalDependencies: ["script", "git", "database", "browser"],
+    optionalDependencies: ["script", "git", "database", "browser", "terminal"],
     conflicts: [],
     provides: ["agent.chat", "agent.run", "agent.memory"],
     requires: [],
-    contributions: [{ id: "agent.main.panel", slot: "workbench-main", type: "surface" }],
+    contributions: [{ id: "agent.main.panel", slot: "workbench-main", type: "surface" }, { id: "agent.studio", slot: "workbench-main", type: "surface", view: "studio" }],
     permissions: ["network.connect"],
     resources: [
       // 编码工作区资源；旧 agent_chat 流式执行契约仍待实现。

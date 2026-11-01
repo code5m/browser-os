@@ -7,3 +7,7 @@
 export { useAgentStore } from "./state/useAgentStore"
 export { agentManifest } from "./manifest"
 export type { AgentDef } from "../../types"
+
+// The executor is still the existing Coding Workbench; this is read-only context.
+import {bridge as codingBridge} from '../../bridge';
+export const codingAgentAdapter=Object.freeze({id:'coding',scope:'workbench',label:'Coding Agent',readContext:(root:string)=>{if(!root.trim())throw Error('ROOT_REQUIRED');return codingBridge.codingService({action:'tree',root,path:''});}});

@@ -3615,11 +3615,17 @@ pub fn tab_reload(app: AppHandle, id: String) -> Result<(), String> {
 /// 在指定子 webview 中执行 JavaScript（用于 AI 模式向宫格注入问题）。
 /// 宫格 grid-N 经 UDS 转发到子进程，页签 tab-N 仍走本地插件。
 #[tauri::command]
-pub fn eval_in_tab(app: AppHandle, id: String, js: String) -> Result<String, String> {
+pub async fn eval_in_tab(app: AppHandle, id: String, js: String) -> Result<String, String> {
     if let Some(index) = grid_index_of(&id) {
-        app.state::<AppState>()
-            .grid_manager
-            .request(index, GridCmd::Eval { id, js }, 10000)?;
+        // A Grid child may take up to 10s to answer its UDS request. Never
+        // block the Tauri/GTK IPC command thread while waiting for it.
+        tauri::async_runtime::spawn_blocking(move || {
+            app.state::<AppState>()
+                .grid_manager
+                .request(index, GridCmd::Eval { id, js }, 10000)
+        })
+        .await
+        .map_err(|_| "GRID_EVAL_WORKER_FAILED".to_string())??;
         return Ok("ok".to_string());
     }
     plugin_eval(&app, &id, &js)?;

@@ -18,3 +18,6 @@ pub mod coding;
 pub mod coding_context;
 pub mod coding_lsp;
 pub mod local_provider;
+
+// Shared typed Agent Channel authorization; existing Coding Agent owns its execution.
+pub mod channel_host;

@@ -4,6 +4,7 @@ import { bridge } from "../../../bridge";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { openTerminalAt } from "../../../composables/terminalNav";
 import { renderMd } from "../../../utils/markdown";
+import { sharedDocuments } from "../../../shared/editor/documentManager.mjs";
 
 // ============================================================
 // Phase 8C-0A — Files Domain Owner
@@ -37,6 +38,7 @@ export const useFileStore = defineStore("files", () => {
   const filePath = ref("");
   const pathInput = ref("");
   const fileContent = ref("");
+  const overlayDocumentPath = ref("");
   const editingFile = ref(false);
   const mdPreview = ref(false);
   const mdHtml = ref("");
@@ -54,6 +56,17 @@ export const useFileStore = defineStore("files", () => {
   const inlineIsMd = ref(false);
   const inlineEdit = ref(false);
   const inlineHtml = ref("");
+  sharedDocuments.subscribe(doc=>{
+    // These refs are reactive projections of the ONE shared draft, not another writer.
+    if(inlineFile.value===doc.path&&inlineText.value!==doc.content){
+      inlineText.value=doc.content;
+      if(inlineIsMd.value&&!inlineEdit.value)inlineHtml.value=renderMd(doc.content);
+    }
+    if(overlayDocumentPath.value===doc.path&&layout.fileEditorOpen&&fileContent.value!==doc.content){
+      fileContent.value=doc.content;
+      if(mdPreview.value)mdHtml.value=renderMd(doc.content);
+    }
+  });
 
   // ===== 文件夹树（左树右编辑） =====
   const treeRoots = ref<DirEntry[]>([]);
@@ -455,13 +468,15 @@ export const useFileStore = defineStore("files", () => {
     }
     try {
       const text = await bridge.readFile(entry.path);
+      if(inlineFile.value&&inlineFile.value!==entry.path)sharedDocuments.release(inlineFile.value,'workspace:inline');
+      const document=sharedDocuments.open({path:entry.path,content:text,owner:'workspace:inline'});
       inlineFile.value = entry.path;
       filePath.value = entry.path.lastIndexOf("/") > 0 ? entry.path.slice(0, entry.path.lastIndexOf("/")) : "/";
       pathInput.value = filePath.value;
-      inlineText.value = text;
+      inlineText.value = document.content;
       inlineIsMd.value = isMd;
       inlineEdit.value = !isMd; // md 默认预览，其它文本直接编辑
-      inlineHtml.value = isMd ? renderMd(text) : "";
+      inlineHtml.value = isMd ? renderMd(document.content) : "";
       const { useWorkspaceStore } = await import("./useWorkspaceStore");
       useWorkspaceStore().addRecentFile(entry.path, entry.name);
     } catch (e: any) {
@@ -474,11 +489,16 @@ export const useFileStore = defineStore("files", () => {
   }
   async function saveInline() {
     if (!inlineFile.value) return;
-    await bridge.writeFile(inlineFile.value, inlineText.value);
+    const path=inlineFile.value;
+    const snapshot=sharedDocuments.peek(path);
+    if(!snapshot)throw Error('DOCUMENT_NOT_OPEN');
+    await bridge.writeFile(path,snapshot.content);
+    sharedDocuments.markSaved(path,snapshot.content);
     if (inlineIsMd.value && !inlineEdit.value) inlineHtml.value = renderMd(inlineText.value);
-    layout.showToast("已保存: " + inlineFile.value.split("/").pop());
+    layout.showToast("已保存: " + path.split("/").pop());
   }
   function closeInline() {
+    if(inlineFile.value)sharedDocuments.release(inlineFile.value,'workspace:inline');
     inlineFile.value = "";
   }
 
@@ -630,7 +650,10 @@ export const useFileStore = defineStore("files", () => {
       layout.showToast(`非文本文件 (${entry.name})，暂不支持预览`);
       return;
     }
-    fileContent.value = await bridge.readFile(entry.path);
+    const text=await bridge.readFile(entry.path);
+    if(overlayDocumentPath.value&&overlayDocumentPath.value!==entry.path)sharedDocuments.release(overlayDocumentPath.value,'workspace:overlay');
+    fileContent.value = sharedDocuments.open({path:entry.path,content:text,owner:'workspace:overlay'}).content;
+    overlayDocumentPath.value=entry.path;
     filePath.value = entry.path;
     editingFile.value = true;
     mdPreview.value = false;
@@ -641,7 +664,10 @@ export const useFileStore = defineStore("files", () => {
   async function openMd(entry: DirEntry) {
     const ext = entry.name.split(".").pop()?.toLowerCase();
     if (ext !== "md" && ext !== "markdown") return false;
-    fileContent.value = await bridge.readFile(entry.path);
+    const text=await bridge.readFile(entry.path);
+    if(overlayDocumentPath.value&&overlayDocumentPath.value!==entry.path)sharedDocuments.release(overlayDocumentPath.value,'workspace:overlay');
+    fileContent.value=sharedDocuments.open({path:entry.path,content:text,owner:'workspace:overlay'}).content;
+    overlayDocumentPath.value=entry.path;
     mdHtml.value = renderMd(fileContent.value);
     filePath.value = entry.path;
     mdPreview.value = true;
@@ -651,20 +677,35 @@ export const useFileStore = defineStore("files", () => {
     return true;
   }
   async function saveFile() {
-    if (!filePath.value) return;
-    await bridge.writeFile(filePath.value, fileContent.value);
-    layout.showToast("已保存: " + filePath.value.split("/").pop());
+    if (!overlayDocumentPath.value) return;
+    const path=overlayDocumentPath.value,snapshot=sharedDocuments.peek(path);
+    if(!snapshot)throw Error('DOCUMENT_NOT_OPEN');
+    await bridge.writeFile(path,snapshot.content);
+    sharedDocuments.markSaved(path,snapshot.content);
+    layout.showToast("已保存: " + path.split("/").pop());
+  }
+  function closeOverlayDocument(){
+    if(overlayDocumentPath.value)sharedDocuments.release(overlayDocumentPath.value,'workspace:overlay');
+    overlayDocumentPath.value='';
+    layout.fileEditorOpen=false;
   }
 
   // ===== Files canonical writers（组件经此写状态，禁止直写，FILE-03 / WS-OWNER-02）=====
-  function setFileContent(v: string) { fileContent.value = v; }
-  function setInlineText(v: string) { inlineText.value = v; }
+  function setFileContent(v: string) {
+    if(!overlayDocumentPath.value)return;
+    fileContent.value=sharedDocuments.edit(overlayDocumentPath.value,v).content;
+  }
+  function setInlineText(v: string) {
+    if(!inlineFile.value)return;
+    inlineText.value=sharedDocuments.edit(inlineFile.value,v).content;
+  }
   function setEditorView(isPreview: boolean) { mdPreview.value = isPreview; editingFile.value = !isPreview; }
   function clearDragSource() { dragSource.value = ""; }
 
   return {
     fileEntries,
     filePath,
+    overlayDocumentPath,
     pathInput,
     fileContent,
     editingFile,
@@ -740,6 +781,7 @@ export const useFileStore = defineStore("files", () => {
     openFile,
     openMd,
     saveFile,
+    closeOverlayDocument,
     setFileContent,
     setInlineText,
     setEditorView,
