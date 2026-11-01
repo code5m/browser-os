@@ -2450,10 +2450,19 @@ mod grid_memory_budget_tests {
     #[test]
     fn only_new_children_charge_available_memory() {
         assert_eq!(affordable_grid_count(CORE_MEMORY_RESERVE_MB, &[], 4), 0);
-        assert_eq!(affordable_grid_count(CORE_MEMORY_RESERVE_MB + 900, &[], 4), 2);
-        assert_eq!(affordable_grid_count(CORE_MEMORY_RESERVE_MB, &[0, 1, 2, 3], 4), 4);
+        assert_eq!(
+            affordable_grid_count(CORE_MEMORY_RESERVE_MB + 900, &[], 4),
+            2
+        );
+        assert_eq!(
+            affordable_grid_count(CORE_MEMORY_RESERVE_MB, &[0, 1, 2, 3], 4),
+            4
+        );
         assert_eq!(affordable_grid_count(500, &[0, 1], 4), 2);
-        assert_eq!(affordable_grid_count(CORE_MEMORY_RESERVE_MB + 450, &[0, 1], 4), 3);
+        assert_eq!(
+            affordable_grid_count(CORE_MEMORY_RESERVE_MB + 450, &[0, 1], 4),
+            3
+        );
         assert_eq!(affordable_grid_count(500, &[0, 2], 4), 1);
     }
 }
