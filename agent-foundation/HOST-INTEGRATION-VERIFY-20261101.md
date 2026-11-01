@@ -1,3 +1,5 @@
+> **2026-11-01 后续同步与 CI 治理补齐**：本文件下方列出的 Grid 重复测试、格式和历史 Pre-merge 失败是初版在旧 HEAD `fae385d9` 上的真实记录，并非最新状态。已将 Grid 修复后的 `master`（`8a5e8380`）无冲突合入 Agent Channel（`918bebc7`）；同步后本机 `cargo fmt` 三项 PASS、Tauri `cargo check` PASS、完整 Rust `cargo test` 583 PASS/17 ignored、Foundation 默认 24 PASS/全特性 43 PASS、Clippy PASS、前端生产构建 PASS。新增的 5 个 Tauri Host 命令已同步登记在 `docs/architecture/native-boundary/native-commands.yaml`，工程治理 `expectedRegisteredCommands=183`，本机 `npm run check:native-semantics` 183/183 PASS。**GitHub PR #48 的最终 CI / Pre-merge / 安装版 GUI 仍须依据最新提交的 CI 单独判定；不能从旧版结论推断最新通过。**
+
 # BrowserOS Agent Channel — Tauri Host 接线与双 Runtime 实测记录（2026-11-01）
 
 ## 变更范围与事实
