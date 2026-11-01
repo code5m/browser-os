@@ -45,3 +45,7 @@
 - Settings
 
 详细比较：`../../product/BROWSEROS-UI2-APLUS-COMPARISON-20261101.md`
+
+## 实机截图基线
+
+本轮 UI 评估使用的 26 张原始截图已归档到 [`screenshots/`](./screenshots/README.md)，按对话出现顺序编号，并通过 SHA-256 与会话上传附件逐字节校验。
