@@ -46,7 +46,10 @@ fn take_expired_sessions(
             _ => None,
         })
         .collect();
-    expired.into_iter().filter_map(|key| cache.remove(&key)).collect()
+    expired
+        .into_iter()
+        .filter_map(|key| cache.remove(&key))
+        .collect()
 }
 
 fn ensure_session_sweeper() {
@@ -634,7 +637,10 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
         // registry mutex: one slow workspace must not block every workspace.
         let candidates: Vec<(String, Arc<Mutex<CachedSession>>)> = {
             let cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
-            cache.iter().map(|(key, entry)| (key.clone(), entry.clone())).collect()
+            cache
+                .iter()
+                .map(|(key, entry)| (key.clone(), entry.clone()))
+                .collect()
         };
         let keys: Vec<(String, Arc<Mutex<CachedSession>>)> = candidates
             .iter()
@@ -650,7 +656,10 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             let mut cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
             keys.iter()
                 .filter_map(|(key, entry)| {
-                    if cache.get(key).is_some_and(|current| Arc::ptr_eq(current, entry)) {
+                    if cache
+                        .get(key)
+                        .is_some_and(|current| Arc::ptr_eq(current, entry))
+                    {
                         cache.remove(key)
                     } else {
                         None

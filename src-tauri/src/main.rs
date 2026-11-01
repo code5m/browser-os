@@ -583,7 +583,7 @@ fn dispatch_grid_cmd(
         GridCmd::Ping => Ok(()),
         GridCmd::ReadReplies { .. } | GridCmd::HibernationProbe { .. } => {
             Err("GRID_ASYNC_ONLY".into())
-        },
+        }
     }
 }
 
