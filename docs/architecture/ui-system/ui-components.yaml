@@ -8,7 +8,7 @@
 
 version: 1
 generated_from_head: 3f57a92e5fb7d9a6bc978f1572964d3c14fb8caf
-total: 93
+total: 94
 
 components:
   - { id: agent.operation-review, name: CodingOperationReview, layer: CAPABILITY_UI, owner: agent, file: src/capabilities/agent/ui/CodingOperationReview.vue, public: false, business_semantics: "Explicit per-operation approval and result recording", capability_specific: true, dependencies: [bridge, CodingCommandPanel], consumers: [CodingWorkbench], status: OBSERVED }
@@ -28,6 +28,7 @@ components:
   - { id: database.workspace, name: DatabaseWorkspace, layer: CAPABILITY_UI, owner: database, file: src/capabilities/database/ui/DatabaseWorkspace.vue, public: false, business_semantics: "Source-bound SQL documents, results and transactions", capability_specific: true, dependencies: [bridge], consumers: [DatabasePanel], status: OBSERVED }
   - { id: database.sql-editor, name: SqlEditor, layer: CAPABILITY_UI, owner: database, file: src/capabilities/database/ui/SqlEditor.vue, public: false, business_semantics: "Escaped SQL highlighting and bounded lexical editing", capability_specific: true, dependencies: [bridge], consumers: [DatabaseWorkspace], status: OBSERVED }
 
+  - { id: agent.runtime-experiment, name: AgentRuntimeExperimentPanel, layer: WORKBENCH, owner: agent, file: src/components/system/AgentRuntimeExperimentPanel.vue, public: false, business_semantics: "Opt-in Native/Rig A/B experiment settings and human-authorized read-only Public API test", capability_specific: false, dependencies: [bridge, agentRuntimeHost], consumers: [SettingsPanel.vue], status: OBSERVED }
   - { id: engineering.health, name: EngineeringHealthPanel, layer: WORKBENCH, owner: settings, file: src/components/system/EngineeringHealthPanel.vue, public: false, business_semantics: "工程健康实时诊断，只读 GitHub Actions 状态", capability_specific: false, dependencies: [engineeringHealthModel, governance, evidencePolicy], consumers: [SettingsPanel.vue], status: OBSERVED }
   - { id: capability.manager, name: CapabilityManagerPanel, layer: WORKBENCH, owner: capability-platform, file: src/components/system/CapabilityManagerPanel.vue, public: false, business_semantics: "Capability discovery/configuration/runtime state manager", capability_specific: false, dependencies: [capability runtime, catalog], consumers: [SettingsPanel.vue], status: OBSERVED }
 
