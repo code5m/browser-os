@@ -1,3 +1,5 @@
+> 最新 master 的生产代码复审：[BrowserOS UI 2.0 master 复审](../BROWSEROS-UI2-MASTER-REAUDIT-C90EB564-20261101.md)。
+
 > 当前版 AS-IS 是**截图证据和产品规格**，不代表可操作的生产 UI。它与 A+ 的核查结论见 [深度审核报告](../BROWSEROS-UI2-DESIGN-AUDIT-20261101.md)。
 
 # BrowserOS 当前版本产品设计 · 2026-11-01

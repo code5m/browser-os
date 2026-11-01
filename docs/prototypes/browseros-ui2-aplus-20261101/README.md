@@ -1,3 +1,5 @@
+> 基于最新 master 的生产能力复审与设计准入：[复审报告](../../product/BROWSEROS-UI2-MASTER-REAUDIT-C90EB564-20261101.md)（master@c90eb564）。
+
 > **审核状态：NOT READY。** 独立原型目前仍存在浏览器交互、路由、任务默认安全策略和窗口布局缺陷。详见 [正式审核报告](../../product/BROWSEROS-UI2-DESIGN-AUDIT-20261101.md)。
 
 # BrowserOS UI 2.0 A+ Prototype
