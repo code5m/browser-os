@@ -12,7 +12,7 @@ const fixtureId = ref("tab_summary");
 const routedResult = ref<{fixture_id:string;sample:AgentRuntimeBenchmarkSample;output:string}|null>(null);
 const error = ref("");
 const message = ref("");
-const enabled = ref(false);
+const labEnabled = ref(false);
 const mode = ref<AgentRuntimeMode>("native");
 const canary = ref(10);
 const benchEnabled = ref(false);
@@ -24,7 +24,7 @@ const toolCommand = ref("tab_list");
 const toolRepo = ref("");
 const toolRoot = ref("");
 const confirmRead = ref(false);
-const result = ref("");
+const toolPayloadText = ref("");
 const showResults = ref(false);
 
 const supported = computed(() => persisted.value !== null && !loading.value);
@@ -49,7 +49,7 @@ async function refresh() {
   try {
     const config = await bridge.agentRuntimeGetConfig();
     persisted.value = config;
-    enabled.value = config.enabled;
+    labEnabled.value = config.enabled;
     mode.value = config.mode;
     canary.value = config.canary_percent;
     benchEnabled.value = config.benchmark_enabled;
@@ -68,8 +68,8 @@ async function save() {
   error.value = "";message.value = "";
   const config: AgentRuntimeExperimentConfig = {
     revision:persisted.value.revision + 1,
-    enabled:enabled.value,
-    mode:enabled.value ? mode.value : "native",
+    enabled:labEnabled.value,
+    mode:labEnabled.value ? mode.value : "native",
     canary_percent:Math.min(100,Math.max(0,Math.round(canary.value))),
     emergency_fallback_to_native:emergencyFallback.value,
     benchmark_enabled:benchEnabled.value,
@@ -115,15 +115,15 @@ async function runFixture() {
   }
 }
 async function readTool() {
-  if (!enabled.value || !persisted.value?.enabled || !confirmRead.value || reading.value) return;
+  if (!labEnabled.value || !persisted.value?.enabled || !confirmRead.value || reading.value) return;
   reading.value = true;
-  error.value = "";message.value = "";result.value = "";
+  error.value = "";message.value = "";toolPayloadText.value = "";
   try {
     const args:Record<string,unknown> = needsRepo.value
       ? {repo_id:toolRepo.value.trim()}
       : needsRoot.value ? {root:toolRoot.value.trim()} : {};
     const response = await bridge.agentRuntimeReadTool(toolCommand.value,args);
-    result.value = JSON.stringify(response,null,2).slice(0,64000);
+    toolPayloadText.value = JSON.stringify(response,null,2).slice(0,64000);
     message.value = "已通过主窗口授权和原业务 Public API 只读执行。";
   } catch (reason) {
     error.value = "业务工具验证失败：" + String(reason);
@@ -163,24 +163,24 @@ onMounted(refresh);
     <div class="settings-grid">
       <div class="field wide switch-field">
         <div><b>启用实验能力</b><small>不会替换现有 Coding Agent 的默认生产链路</small></div>
-        <input v-model="enabled" type="checkbox" :disabled="!supported" aria-label="启用 Agent Runtime 实验" />
+        <input v-model="labEnabled" type="checkbox" :disabled="!supported" aria-label="启用 Agent Runtime 实验" />
       </div>
       <div class="field wide">
         <label for="runtime-mode">运行策略</label>
-        <select id="runtime-mode" v-model="mode" :disabled="!supported || !enabled">
+        <select id="runtime-mode" v-model="mode" :disabled="!supported || !labEnabled">
           <option v-for="option in runtimeOptions" :key="option.value" :value="option.value">{{ option.label }} · {{ option.hint }}</option>
         </select>
       </div>
       <div class="field">
         <label for="runtime-canary">Rig 灰度比例 {{ canary }}%</label>
-        <input id="runtime-canary" v-model.number="canary" type="range" min="0" max="100" step="5" :disabled="!enabled || mode !== 'canary'" />
+        <input id="runtime-canary" v-model.number="canary" type="range" min="0" max="100" step="5" :disabled="!labEnabled || mode !== 'canary'" />
       </div>
       <div class="field">
         <label for="runtime-turns">最大模型轮次</label>
-        <input id="runtime-turns" v-model.number="maxTurns" type="number" min="1" max="32" :disabled="!supported || !enabled" />
+        <input id="runtime-turns" v-model.number="maxTurns" type="number" min="1" max="32" :disabled="!supported || !labEnabled" />
       </div>
-      <div class="field check"><label><input v-model="benchEnabled" type="checkbox" :disabled="!supported || !enabled" /> 开启可重复基准测评</label></div>
-      <div class="field check"><label><input v-model="emergencyFallback" type="checkbox" :disabled="!supported || !enabled" /> 应急回退策略（仅预留，尚未自动执行）</label></div>
+      <div class="field check"><label><input v-model="benchEnabled" type="checkbox" :disabled="!supported || !labEnabled" /> 开启可重复基准测评</label></div>
+      <div class="field check"><label><input v-model="emergencyFallback" type="checkbox" :disabled="!supported || !labEnabled" /> 应急回退策略（仅预留，尚未自动执行）</label></div>
     </div>
     <div class="actions">
       <button type="button" class="primary" :disabled="!supported || saving" @click="save">{{ saving ? "保存中…" : "保存实验设置" }}</button>
@@ -243,7 +243,7 @@ onMounted(refresh);
       <label class="confirm"><input v-model="confirmRead" type="checkbox" :disabled="!persisted?.enabled" /> 我确认执行这一次只读检查</label>
       <button type="button" class="primary" :disabled="!persisted?.enabled || !confirmRead || reading || (needsRepo && !toolRepo.trim()) || (needsRoot && !toolRoot.trim())" @click="readTool">{{ reading ? "验证中…" : "执行已授权检查" }}</button>
     </div>
-    <pre v-if="result" class="payload" aria-label="业务接口执行结果">{{ result }}</pre>
+    <pre v-if="toolPayloadText" class="payload" aria-label="业务接口执行结果">{{ toolPayloadText }}</pre>
     <p class="disclaimer">只读 API 仅向受信任的主窗口开放。Coding Agent 的完整工作流、数据库 SQL、Git 写入及浏览器导航仍沿用各业务模块的原有权限体系，本实验室不允许绕过。</p>
   </section>
 </template>
