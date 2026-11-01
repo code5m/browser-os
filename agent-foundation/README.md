@@ -97,6 +97,11 @@ security advisories, native dependency overhead and cargo-deny policy.
 The code in this folder is original scaffolding; it does not vendor these
 projects. The repository root license is MulanPSL-2.0.
 
+## Cargo 依赖升级说明
+
+详细版本矩阵、POM/Cargo 对照、特性开关、安全门禁及回滚流程：
+[DEPENDENCY-UPGRADE-GUIDE-20261101.md](DEPENDENCY-UPGRADE-GUIDE-20261101.md)。
+
 ## Delivery tracking
 
 See [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md). Source and test cases are committed, but actual Cargo compilation has not been run from the GitHub-only session. Treat compilation, clippy and examples as **UNVERIFIED**.
