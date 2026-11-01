@@ -857,6 +857,27 @@ pub async fn ai_service(
         .map_err(|_| "AI_WORKER_FAILED".to_string())?
 }
 
+/// Explicit main-window read-only Coding capability gateway for the
+/// Agent Channel experiment. Reuses the Coding Owner's existing LSP-status
+/// executor and the same native source check as coding_service. This does not
+/// expose model chat, file writes, LSP requests, shell or MCP tool execution.
+pub fn coding_lsp_status_for_agent(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    root: &str,
+) -> Result<Value, String> {
+    if webview.label() != "main" || root.len() > 4096 {
+        return Err("AGENT_SOURCE_DENIED".into());
+    }
+    crate::shared::invocation::check_invocation_source(&webview, "coding_service", None, &app)?;
+    let root = std::path::Path::new(root);
+    if !root.is_absolute() || !root.is_dir() {
+        return Err("AGENT_ROOT_INVALID".into());
+    }
+    let canonical = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
+    crate::capabilities::agent::coding_lsp::execute(&canonical, json!({"action":"lsp_status"}))
+}
+
 #[tauri::command]
 pub async fn coding_service(
     app: tauri::AppHandle,

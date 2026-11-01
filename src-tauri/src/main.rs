@@ -14,6 +14,7 @@ mod shared {
 }
 
 mod framework {
+    pub mod agent_channel;
     pub mod ai;
     pub mod commands;
 }
@@ -1671,6 +1672,11 @@ fn main() {
             crate::capabilities::agent::local_provider::agent_local_chat,
             crate::framework::ai::ai_service,
             crate::framework::ai::coding_service,
+            crate::framework::agent_channel::agent_runtime_get_config,
+            crate::framework::agent_channel::agent_runtime_set_config,
+            crate::framework::agent_channel::agent_runtime_read_tool,
+            crate::framework::agent_channel::agent_runtime_benchmark,
+            crate::framework::agent_channel::agent_runtime_run_fixture,
             bridge::agent_permission_preview,
             crate::capabilities::skill::commands::skill_parse,
             crate::capabilities::skill::commands::skill_validate,
