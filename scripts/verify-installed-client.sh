@@ -11,6 +11,7 @@ EXTRACTED_BIN="$EXTRACT_DIR/usr/bin/$APP_NAME"
 INSTALLED_BIN="/usr/bin/$APP_NAME"
 BUILD=0
 INSTALL=0
+PREBUILT_FRONTEND=0
 START_CLIENT=1
 RESOURCE_MINUTES=0
 FAILURES=0
@@ -19,13 +20,15 @@ OWN_PID=""
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/verify-installed-client.sh [--build] [--install] [--no-start] [--resource-minutes 5|30]
+Usage: bash scripts/verify-installed-client.sh [--build] [--install] [--prebuilt-frontend] [--no-start] [--resource-minutes 5|30]
 
 Checks the real packaged Tauri client, not only the Vite browser page.
 
 Options:
   --build     Build the deb package before checking it.
   --install   Build, stop existing app instances, install the deb, then verify it.
+  --prebuilt-frontend  Reuse a dist/ tagged with the exact Git SHA. Disables
+                       Tauri beforeBuildCommand to avoid a second frontend build.
   --no-start  Skip the GUI cold-start check. Useful on headless machines.
   --resource-minutes 5|30  Measure sustained RSS/PSS/CPU after first paint.
 EOF
@@ -48,6 +51,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --build) BUILD=1 ;;
     --install) BUILD=1; INSTALL=1 ;;
+    --prebuilt-frontend) PREBUILT_FRONTEND=1 ;;
     --no-start) START_CLIENT=0 ;;
     --resource-minutes)
       shift
@@ -136,9 +140,31 @@ if [[ "$RESOURCE_MINUTES" -gt 0 && ( "$START_CLIENT" -eq 0 || "$INSTALL" -eq 0 )
   exit 2
 fi
 
+if [[ "$PREBUILT_FRONTEND" -eq 1 ]]; then
+  if [[ "$BUILD" -ne 1 ]]; then
+    fail "--prebuilt-frontend requires --build or --install."
+    exit 2
+  fi
+  SOURCE_SHA="$(git -C "$ROOT" rev-parse HEAD)" || exit 1
+  if [[ ! -s "$ROOT/dist/index.html" ||
+        ! -f "$ROOT/browseros-ci-source-sha.txt" ||
+        "$(cat "$ROOT/browseros-ci-source-sha.txt")" != "$SOURCE_SHA" ]]; then
+    fail "Prebuilt frontend has no matching source SHA; refusing stale dist and native packaging."
+    exit 1
+  fi
+  ok "Prebuilt frontend source SHA matches checked out source."
+fi
+
 if [[ "$BUILD" -eq 1 ]]; then
   printf '\n== Building deb package ==\n'
-  if (cd "$ROOT" && npm run tauri -- build --bundles deb); then
+  if [[ "$PREBUILT_FRONTEND" -eq 1 ]]; then
+    # Only CI with exact-SHA verified dist may disable beforeBuildCommand.
+    # The Rust release binary is still compiled ONCE by Tauri.
+    BUILD_COMMAND=(npm run tauri -- build --bundles deb --config '{"build":{"beforeBuildCommand":""}}')
+  else
+    BUILD_COMMAND=(npm run tauri -- build --bundles deb)
+  fi
+  if (cd "$ROOT" && "${BUILD_COMMAND[@]}"); then
     ok "Deb package build completed."
   else
     fail "Deb package build failed."

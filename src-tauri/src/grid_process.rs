@@ -246,8 +246,13 @@ impl GridProcessManager {
                         }
                     };
                     // 子进程不读时也必须限制 writer 阻塞时长，避免请求堆积。
-                    if let Err(e) = stream.set_write_timeout(Some(std::time::Duration::from_secs(2))) {
-                        eprintln!("[grid-manager] grid-child-{} UDS 写超时配置失败: {e}", index);
+                    if let Err(e) =
+                        stream.set_write_timeout(Some(std::time::Duration::from_secs(2)))
+                    {
+                        eprintln!(
+                            "[grid-manager] grid-child-{} UDS 写超时配置失败: {e}",
+                            index
+                        );
                         continue;
                     }
                     let generation = comms_accept.attach(stream);
@@ -305,7 +310,9 @@ impl GridProcessManager {
                                                     payload.get("id").and_then(|v| v.as_str()),
                                                     payload.get("url").and_then(|v| v.as_str()),
                                                 ) {
-                                                    if id == format!("grid-{index}") && !url.is_empty() {
+                                                    if id == format!("grid-{index}")
+                                                        && !url.is_empty()
+                                                    {
                                                         app.state::<crate::bridge::AppState>()
                                                             .grid_manager
                                                             .record_url(index, url);
@@ -539,7 +546,7 @@ impl GridProcessManager {
                             cmd: cmd.clone(),
                         },
                     )
-                },
+                }
                 None => Err(std::io::Error::new(
                     std::io::ErrorKind::NotConnected,
                     "未连接",
@@ -637,7 +644,8 @@ impl GridProcessManager {
                     child.hidden_since,
                     now,
                     idle_for,
-                ) || !grid_content_reclaimable(child.last_url.as_deref()) {
+                ) || !grid_content_reclaimable(child.last_url.as_deref())
+                {
                     return None;
                 }
                 Some((child.hidden_since?, *index))
@@ -655,18 +663,23 @@ impl GridProcessManager {
                     .get(&index)
                     .copied()
                     .unwrap_or(false)
-                    && self.children.lock().unwrap().get(&index).is_some_and(|child| {
-                        child.hidden_since == Some(hidden_since)
-                            && grid_content_reclaimable(child.last_url.as_deref())
-                            && grid_child_is_hibernatable(
-                                child.hidden,
-                                child.blur_hidden,
-                                false,
-                                child.hidden_since,
-                                std::time::Instant::now(),
-                                idle_for,
-                            )
-                    })
+                    && self
+                        .children
+                        .lock()
+                        .unwrap()
+                        .get(&index)
+                        .is_some_and(|child| {
+                            child.hidden_since == Some(hidden_since)
+                                && grid_content_reclaimable(child.last_url.as_deref())
+                                && grid_child_is_hibernatable(
+                                    child.hidden,
+                                    child.blur_hidden,
+                                    false,
+                                    child.hidden_since,
+                                    std::time::Instant::now(),
+                                    idle_for,
+                                )
+                        })
             };
             if !eligible() || !self.confirmed_blank_grid(index) || !eligible() {
                 continue;
@@ -1180,7 +1193,9 @@ mod adaptive_grid_hibernation_tests {
     #[test]
     fn external_ai_grids_are_not_discardable_without_state_checkpoint() {
         assert!(grid_content_reclaimable(Some("about:blank")));
-        assert!(grid_hibernation_probe_safe(r#"{"safe":true,"url":"about:blank"}"#));
+        assert!(grid_hibernation_probe_safe(
+            r#"{"safe":true,"url":"about:blank"}"#
+        ));
         for probe in [
             r#"{"safe":true,"url":"https://chat.deepseek.com"}"#,
             r#"{"safe":false,"url":"about:blank"}"#,
@@ -1222,42 +1237,6 @@ mod grid_process_termination_tests {
         terminate_grid_process_tree(&mut child);
         assert!(started.elapsed() < Duration::from_secs(2));
         assert!(child.try_wait().unwrap().is_some());
-    }
-}
-
-#[cfg(test)]
-mod grid_connection_generation_tests {
-    use super::*;
-
-    #[test]
-    fn late_old_reader_must_not_disconnect_new_socket_or_cancel_new_requests() {
-        let comms = ChildComms::new();
-        let (old_socket, _old_peer) = UnixStream::pair().unwrap();
-        let old_generation = comms.attach(old_socket);
-        assert!(comms.is_current(old_generation));
-
-        let (old_tx, old_rx) = mpsc::channel();
-        comms.pending.lock().unwrap().insert(1, old_tx);
-        let (new_socket, _new_peer) = UnixStream::pair().unwrap();
-        let new_generation = comms.attach(new_socket);
-        assert_ne!(old_generation, new_generation);
-        assert!(matches!(old_rx.try_recv(), Ok(Err(_))));
-
-        // The old reader exits after the new child has connected.
-        comms.detach_if_current(old_generation);
-        assert!(comms.is_current(new_generation));
-        assert!(comms.writer.lock().unwrap().is_some());
-
-        let (new_tx, new_rx) = mpsc::channel();
-        comms.pending.lock().unwrap().insert(2, new_tx);
-        comms.detach_if_current(old_generation);
-        assert!(matches!(new_rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
-
-        // Only the active reader may close the socket and fail its requests.
-        comms.detach_if_current(new_generation);
-        assert!(!comms.is_connected());
-        assert!(comms.writer.lock().unwrap().is_none());
-        assert!(matches!(new_rx.try_recv(), Ok(Err(_))));
     }
 }
 

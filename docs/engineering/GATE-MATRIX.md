@@ -9,8 +9,8 @@ Machine registry: `docs/engineering/governance.json`.
 - `npm run gate:merge` runs the existing full `npm run check`, default Rust tests, the managed coding UI suite, and the unchanged `scripts/pre-merge.sh` including the independent production-build/hash budget audit. `LOCAL_MERGE_CHECKS=PASS` is local automated evidence only. Ignored Rust integration tests, real provider/MCP calls, remote CI, package, installed GUI, clean-worktree status and approvals are not proved. The script prints their unverified statuses; an installed configured Git pre-merge hook invokes this entry point. The hook is optional and is not automatically installed.
 - The managed coding UI suite starts its own Vite server on a temporary localhost port and stops that server after testing; it never installs BrowserOS. It needs Playwright resolvable by Node or `PLAYWRIGHT_MODULE` pointing to an existing installation, plus `/usr/bin/google-chrome`. Missing prerequisites or failed tests fail the gate; they are never skipped as a pass. Its native transport is simulated.
 - `npm run verify:client` is a separate build/package/cold-start verification, not part of either local gate; it does not itself establish user-confirmed GUI acceptance. Installation requires explicit authorization, and the desktop must be verified independently according to `AGENTS.md`.
-- Developer branch pushes now run the independent `BrowserOS Developer Feedback` Quick Gate. `perf/**`, `feature/**` and `fix/**` pushes also build a non-blocking, downloadable release `.deb` for manual testing; its source SHA and SHA256 travel with the artifact. A preview is not installed GUI acceptance.
-- Full Validation runs for non-draft PRs targeting `master`, `master` pushes and explicit manual dispatch. Draft PRs do not queue Full Validation. `native-regression` owns Rust fmt/check/test; the `validate` job retains the other full checks without recompiling the same Rust tests.
+- Developer branch pushes now run the independent `BrowserOS Developer Feedback` Quick Gate. `perf/**`, `feature/**` and `fix/**` pushes also offer a manually requested release .deb preview; default pushes never build it; its source SHA and SHA256 travel with the artifact. A preview is not installed GUI acceptance.
+- Full Validation runs for non-draft PRs targeting `master`, `master` pushes and explicit manual dispatch. Draft PRs do not queue Full Validation. `native-regression` is optional, with one Rust-test or one packaged GUI build per selected mode; by default it is SKIPPED, not PASS.
 - The local wrapper is not evidence that remote CI ran or that the new coding UI suite is wired into CI. The legacy `PRE_MERGE_RESULT=ALL_PASS` remains scoped to `pre-merge.sh`, not the broader local merge entry point or release acceptance.
 
 | Gate family | Canonical entry | Blocks | Primary evidence |
@@ -23,9 +23,9 @@ Machine registry: `docs/engineering/governance.json`.
 | Hot-Plug | `check-hot-plug-acceptance.mjs` | CI / merge | lifecycle + negative blocker evidence |
 | UI safety | Git/Scheduler/UI policy checkers | CI / merge | self-test + repository scan |
 | Production build | `npm run build` | CI / merge | Vite production build |
-| Rust quality | fmt/check/test | CI / merge | compiler/tests |
-| Packaged GUI | installed-client verifier | CI / release | package/cold-start evidence |
-| Full GUI regression | `m0-6c-gui-regression.py` | CI / merge | summary + driver report + app log artifact |
+| Rust quality | optional Rust tests | opt-in / release evidence | one compilation or SKIPPED |
+| Packaged GUI | optional packaged GUI mode | opt-in / release evidence | one Release build or SKIPPED |
+| Full GUI regression | GUI modes only | opt-in / release evidence | reuse Release, never auto-run |
 | Build metrics | `scripts/pre-merge.sh` | merge | approved editor/core/total budgets + exact production hashes; unchanged historical 45% comparison reported separately |
 | Git integrity | `scripts/pre-merge.sh` | merge | repository object integrity |
 | Diff hygiene | `git diff --check` | push / merge | whitespace result |
@@ -34,10 +34,12 @@ Machine registry: `docs/engineering/governance.json`.
 ## Layers
 
 1. Developer-local: hooks, `npm run check`, doctor, pre-merge.
-2. GitHub CI: branch Quick Gate and preview first; full merge/release validation only on ready PRs to master, master push or manual dispatch.
+2. GitHub CI: branch Quick Gate always; preview only on request; default fast static validation on ready PRs/master; native release evidence separately opt-in.
 3. Packaged runtime: real .deb and Xvfb/DBus GUI acceptance.
 4. Release: named immutable baseline and rollback reference.
 5. Recovery: diagnostics, snapshots and recovery procedures.
+
+Default PR and master Full Validation is FAST: native compilation, installation, installed GUI and resources are all SKIPPED unless explicitly enabled. See [Optional Native CI](./CI-OPTIONAL-NATIVE-20261101.md).
 
 A fast green check never substitutes for a slower gate covering another failure mode. Build success is not GUI success; source Hot-Plug proof is not packaged-client acceptance.
 

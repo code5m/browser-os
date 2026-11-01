@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { defineAsyncComponent, onMounted, ref } from "vue";
 const EngineeringHealthPanel = defineAsyncComponent(() => import("./EngineeringHealthPanel.vue"));
+const AgentRuntimeExperimentPanel = defineAsyncComponent(() => import("./AgentRuntimeExperimentPanel.vue"));
 const AiConfiguration = defineAsyncComponent(() => import("./AiConfiguration.vue"));
 import { bridge } from "../../bridge";
 import { useSettingsStore } from "../../settings/public";
@@ -92,6 +93,11 @@ onMounted(refreshDefaultBrowser);
           默认关闭。开启后根据可用内存自动采用 10 分钟 / 2 分钟 / 30 秒闲置阈值，休眠后台页签和已隐藏宫格并释放 WebView/子进程。正在播放媒体、焦点编辑器、未保存表单和文件选择会阻止休眠；仅恢复网址与滚动位置，不保存表单内容。
         </span>
       </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="section-title">Agent Runtime · 双引擎实验室</div>
+      <AgentRuntimeExperimentPanel />
     </div>
 
     <div class="settings-section">
