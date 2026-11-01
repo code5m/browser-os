@@ -125,6 +125,23 @@ pm_fail() {
 run_pre_merge() {
   PM_RC=0
 
+  # CI reuses the frontend dist created earlier in THIS exact checkout and
+  # delegates optional native compilation to its single native-regression job.
+  # Local pre-merge retains its original full build/check behavior by default.
+  case "${PREMERGE_REUSE_FRONTEND:-0}" in
+    0|1) ;;
+    *) pm_fail "PREMERGE_REUSE_FRONTEND must be 0 or 1"; return 1 ;;
+  esac
+  case "${PREMERGE_SKIP_NATIVE_COMPILE:-0}" in
+    0|1) ;;
+    *) pm_fail "PREMERGE_SKIP_NATIVE_COMPILE must be 0 or 1"; return 1 ;;
+  esac
+  if [[ "${PREMERGE_SKIP_NATIVE_COMPILE:-0}" == "1" ]]; then
+    pm_log "PRE_MERGE_COVERAGE=FAST_NATIVE_COMPILE_SKIPPED (native evidence is separate and opt-in)"
+  else
+    pm_log "PRE_MERGE_COVERAGE=FULL_NATIVE_CHECK"
+  fi
+
   pm_log "syntax check (bash -n)…"
   bash -n "$SCRIPT_DIR/baseline-check.sh" || pm_fail "bash -n baseline-check.sh"
   bash -n "$SCRIPT_DIR/verify-resources.sh" || pm_fail "bash -n verify-resources.sh"
@@ -175,11 +192,26 @@ run_pre_merge() {
   cargo fmt --manifest-path "$ROOT/src-tauri/Cargo.toml" --all --check || pm_fail "cargo fmt main"
   cargo fmt --manifest-path "$ROOT/tauri-browser-tabs/Cargo.toml" --all --check || pm_fail "cargo fmt plugin"
 
-  pm_log "frontend production build…"
-  (cd "$ROOT" && npm run build) || pm_fail "npm run build"
+  if [[ "${PREMERGE_REUSE_FRONTEND:-0}" == "1" ]]; then
+    pm_log "frontend production build: REUSE verified output from earlier CI step…"
+    local ci_sha
+    ci_sha="$(git -C "$ROOT" rev-parse HEAD)" || { pm_fail "cannot resolve build SHA"; return 1; }
+    if [[ ! -s "$ROOT/dist/index.html" || ! -f "$ROOT/browseros-ci-source-sha.txt" ||
+          "$(cat "$ROOT/browseros-ci-source-sha.txt")" != "$ci_sha" ]]; then
+      pm_fail "frontend dist is absent or has incorrect SHA; refusing stale reuse"
+      return 1
+    fi
+  else
+    pm_log "frontend production build…"
+    (cd "$ROOT" && npm run build) || pm_fail "npm run build"
+  fi
 
-  pm_log "Rust cargo check --locked…"
-  cargo check --manifest-path "$ROOT/src-tauri/Cargo.toml" --locked || pm_fail "cargo check --locked"
+  if [[ "${PREMERGE_SKIP_NATIVE_COMPILE:-0}" == "1" ]]; then
+    pm_log "Rust cargo check --locked: SKIPPED by selected native CI policy"
+  else
+    pm_log "Rust cargo check --locked…"
+    cargo check --manifest-path "$ROOT/src-tauri/Cargo.toml" --locked || pm_fail "cargo check --locked"
+  fi
 
   pm_log "原生 UI 线程阻塞门禁…"
   python3 "$SCRIPT_DIR/check-ui-thread-blocking.py" --self-test >/dev/null 2>&1 \
@@ -231,9 +263,15 @@ run_pre_merge() {
   node "$SCRIPT_DIR/coding-editor-budget.mjs" --self-test || pm_fail "coding editor budget negative fixtures"
   baseline_file="$(ls -1 "$ROOT"/logs/m0-build-metrics/build-metrics-*.json 2>/dev/null | sort | head -1 || true)"
   if [ -n "$baseline_file" ]; then
-    # 复用上一步 npm run build 的产物，不重复构建。
+    # Reuse the current dist. Fast CI must not silently invoke a nested
+    # cargo check via measure-build-metrics.py; native warnings are SKIPPED.
     local metrics_output
-    if metrics_output="$(python3 "$SCRIPT_DIR/measure-build-metrics.py" --compare "$baseline_file" --skip-build --approved-editor-budget 2>&1)"; then
+    local -a native_metric_flags=()
+    if [[ "${PREMERGE_SKIP_NATIVE_COMPILE:-0}" == "1" ]]; then
+      native_metric_flags+=(--skip-cargo-check)
+      pm_log "Cargo warning regression: SKIPPED (no native evidence in fast mode)"
+    fi
+    if metrics_output="$(python3 "$SCRIPT_DIR/measure-build-metrics.py" --compare "$baseline_file" --skip-build --approved-editor-budget "${native_metric_flags[@]}" 2>&1)"; then
       printf '%s\n' "$metrics_output"
       pm_log "approved editor/core/total budgets PASS; historical 45% result retained separately (${baseline_file#"$ROOT"/})"
     else

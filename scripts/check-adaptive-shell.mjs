@@ -28,6 +28,6 @@ check("Remote pages have no privileged keyboard shortcut IPC", plugin.includes("
 check("Native shortcut input is bound to active browser tab", app.includes('event.id !== browser.activeTabId') && app.includes('layout.mainView !== "browser"'));
 check("Native shell shortcut listeners are cleaned", app.includes("unlistenChildShortcut?.()"));
 check("Native event routed through adapter", bridge.includes("onChildShellShortcut") && adapter.includes("bridge.onChildShellShortcut") && app.includes("await onChildShellShortcut("));
-check("Real GUI workflow remains required", workflow.includes("Full Tauri GUI regression"));
+check("Real GUI regression remains available behind explicit opt-in", workflow.includes("Tauri GUI regression with the SAME compiled Release") && workflow.includes("needs.impact.outputs.native_mode == 'packaged-gui'") && workflow.includes("needs.impact.outputs.native_mode == 'packaged-resource'"));
 check("Shell contract included in npm check", gates.includes("check-adaptive-shell.mjs"));
 console.log("ADAPTIVE_SHELL_RESULT=PASS");

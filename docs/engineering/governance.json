@@ -31,13 +31,13 @@
       "id": "full-validation",
       "path": ".github/workflows/capability-v2-validation.yml",
       "role": "blocking_quality_gate",
-      "scope": "master pushes, ready-to-merge PRs targeting master, or manual dispatch; includes architecture, runtime, build, Rust, packaged GUI, full GUI and pre-merge"
+      "scope": "master and ready-PR fast/static validation; optional rust-tests/packaged-gui/packaged-resource by manual dispatch, PR label or repository variable; no native compile by default"
     },
     {
       "id": "developer-feedback",
       "path": ".github/workflows/browseros-developer-feedback.yml",
       "role": "nonblocking_developer_feedback",
-      "scope": "fast contract/governance feedback on every branch push; independent release .deb preview for perf/feature/fix pushes or manual dispatch, never a merge or GUI-pass substitute"
+      "scope": "fast contract/governance feedback on every branch push; optional manual-only .deb preview (default false), never a merge or GUI-pass substitute"
     },
     {
       "id": "hot-plug",
@@ -72,8 +72,8 @@
     {
       "id": "installed-sustained-performance",
       "path": ".github/workflows/browseros-sustained-performance.yml",
-      "role": "scheduled_performance_evidence",
-      "scope": "scheduled and manually dispatched installed-client 5/30-minute RSS/PSS/CPU sampling; artifacts are measured evidence, not a blocking pull-request gate"
+      "role": "manual_performance_evidence",
+      "scope": "manual-only opt-in installed-client 5/30-minute RSS/PSS/CPU sampling; no cron or automatic PR resource gate"
     }
   ],
   "gitHooks": [
