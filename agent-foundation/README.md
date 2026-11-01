@@ -1,3 +1,5 @@
+> **2026-11-02 master 同步提示：** 本 crate 已在 `master@c90eb564` 随默认关闭的 Agent Runtime Lab 合入主程序并成为 Tauri 依赖；下方“仅在实验分支、未接入主程序”说明是早期阶段历史记录。当前只有离线实验和人工只读 Owner API 接线，生产 Coding/Browser/Database/Git Agent 尚未整体迁移。以 `docs/architecture/audits/2026-11-02-implementation-progress.md` 核对新进展。
+
 # BrowserOS Agent Channel — 独立 Rust Foundation
 
 > **仅在 `feat/agent-channel-rust-foundation-20261101` 实验分支，尚未接入 BrowserOS 主程序，也未达到生产准入。**

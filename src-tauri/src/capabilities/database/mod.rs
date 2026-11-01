@@ -32,3 +32,6 @@ mod mysql_studio_e2e;
 pub mod profiles;
 pub mod studio;
 pub mod table_data;
+
+// Cross-module native consumers use this Owner-reviewed narrow facade.
+pub(crate) mod public_api;

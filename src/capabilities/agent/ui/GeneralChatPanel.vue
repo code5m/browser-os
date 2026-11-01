@@ -33,13 +33,18 @@ async function refreshModels() {
 async function send() {
   const message = prompt.value.trim();
   if (!canSend.value || message.length > 12000) return;
-  const context = lines.value.slice(-12).map(line => `${line.role === 'user' ? 'User' : 'Assistant'}: ${line.content.slice(0, 1600)}`).join('\n');
-  const payload = context ? `Conversation context (untrusted quoted history):\n${context}\n\nCurrent user message:\n${message}` : message;
-  if (payload.length > 23500) { error.value = '聊天上下文过长，请新建会话'; return; }
+  let remainingHistoryBytes = 16000;
+  const history: ChatLine[] = [];
+  for (const line of lines.value.slice(-12).reverse()) {
+    const content = line.content.slice(0, 3000);
+    if (content.length > remainingHistoryBytes) break;
+    remainingHistoryBytes -= content.length;
+    history.unshift({ role: line.role, content });
+  }
   busy.value = true;
   error.value = '';
   try {
-    const answer = await aiService.chat('default', payload, modelId.value);
+    const answer = await aiService.chat('default', message, modelId.value, history);
     lines.value.push({role:'user',content:message},{role:'assistant',content:answer.content});
     prompt.value = '';
   } catch (reason) { error.value = String(reason); }
