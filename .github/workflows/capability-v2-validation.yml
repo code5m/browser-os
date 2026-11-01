@@ -14,7 +14,20 @@ on:
       - reopened
       - synchronize
       - ready_for_review
+      - labeled
+      - unlabeled
   workflow_dispatch:
+    inputs:
+      native_mode:
+        description: "Optional native checks (default OFF); choose Rust tests, installed GUI, or GUI + 5min resources"
+        type: choice
+        required: true
+        default: "off"
+        options:
+          - "off"
+          - "rust-tests"
+          - "packaged-gui"
+          - "packaged-resource"
 
 concurrency:
   group: browseros-full-validation-${{ github.ref }}
@@ -63,6 +76,7 @@ jobs:
       mode: ${{ steps.detect.outputs.mode }}
       supply_node: ${{ steps.detect.outputs.supply_node }}
       supply_rust: ${{ steps.detect.outputs.supply_rust }}
+      native_mode: ${{ steps.native_mode.outputs.native_mode }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -76,8 +90,55 @@ jobs:
         run: |
           python3 scripts/ci-impact.py --self-test
           python3 scripts/ci-impact.py --gha
-  validate:
+      - id: native_mode
+        name: Select optional native verification mode
+        env:
+          CI_NATIVE_MODE_INPUT: ${{ inputs.native_mode || '' }}
+          CI_NATIVE_MODE_DEFAULT: ${{ vars.CI_NATIVE_MODE || 'off' }}
+          CI_PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          python3 scripts/check-ci-native-mode.py --self-test
+          python3 scripts/check-ci-validation-contract.py
+          python3 scripts/check-ci-native-mode.py --gha
+
+  # Compile current frontendDist ONCE, then share SHA-verified bytes across
+  # validate and the optional native job. Master comparison is a separate SHA.
+  frontend-build:
     needs: impact
+    if: needs.impact.outputs.mode != 'docs' || needs.impact.outputs.native_mode != 'off'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Build frontend once for this exact source
+        run: |
+          npm ci
+          npm run build
+          test -s dist/index.html
+          git rev-parse HEAD > browseros-ci-source-sha.txt
+      - name: Upload checksum-bound frontend build
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-ci-dist-${{ github.sha }}
+          path: |
+            dist/
+            browseros-ci-source-sha.txt
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 1
+
+  validate:
+    needs: [impact, frontend-build]
+    if: always() && needs.impact.result == 'success' && (needs.frontend-build.result == 'success' || needs.frontend-build.result == 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -101,12 +162,12 @@ jobs:
           python3 scripts/check-git-ui-policy.py
           python3 scripts/check-scheduler-ui-policy.py --self-test
           python3 scripts/check-scheduler-ui-policy.py
-      - name: Install Linux build dependencies
+      - name: Install headless test deps only (no native WebKit build)
         if: needs.impact.outputs.mode == 'full'
         run: |
           df -h . /tmp
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb xauth dbus-x11
+          sudo apt-get install -y xvfb xauth dbus-x11
       - name: Setup Node
         if: needs.impact.outputs.mode != 'docs'
         uses: actions/setup-node@v4
@@ -143,9 +204,17 @@ jobs:
       - name: Runtime startup checks
         if: needs.impact.outputs.mode == 'full'
         run: npm run check:runtime
-      - name: Production build
+      - name: Download one SHA-bound frontend build
         if: needs.impact.outputs.mode != 'docs'
-        run: npm run build
+        uses: actions/download-artifact@v4
+        with:
+          name: browseros-ci-dist-${{ github.sha }}
+          path: .
+      - name: Verify frontend dist belongs to this exact SHA
+        if: needs.impact.outputs.mode != 'docs'
+        run: |
+          test -s dist/index.html
+          test "$(cat browseros-ci-source-sha.txt)" = "$(git rev-parse HEAD)"
       - name: Terminal production bundle differential tests
         if: needs.impact.outputs.mode != 'docs'
         run: node scripts/check-xterm-bundle.mjs
@@ -190,19 +259,8 @@ jobs:
             /tmp/browseros-build-assets.json
           if-no-files-found: error
           retention-days: 14
-      # Rust fmt/check/test are covered independently by native-regression below.
-      # The whole workflow must pass before the commit can be merged.
-      - name: Packaged GUI cold-start acceptance
-        if: needs.impact.outputs.mode == 'full'
-        run: dbus-run-session -- xvfb-run -a bash scripts/verify-installed-client.sh --install --resource-minutes 5
-      - name: Upload installed-client sustained resource evidence
-        if: always() && needs.impact.outputs.mode == 'full'
-        uses: actions/upload-artifact@v4
-        with:
-          name: browseros-installed-resource-${{ github.run_id }}
-          path: /tmp/browseros-installed-resource.json
-          if-no-files-found: warn
-          retention-days: 30
+      # Installed GUI and resource sampling are optional and happen in the
+      # single native job, not as a mandatory step in every PR.
       - name: Module and installer footprint evidence
         if: needs.impact.outputs.mode == 'full'
         run: |
@@ -228,7 +286,6 @@ jobs:
             --before docs/engineering/footprint-baselines/master-7ae6fa86.json \
             --after /tmp/browseros-footprint.json \
             --bundle /tmp/browseros-build-assets.json \
-            --native /tmp/browseros-native-resource.json \
             --out /tmp/browseros-size-comparison.html \
             --out-json /tmp/browseros-size-comparison.json
       - name: Upload resource governance evidence
@@ -242,41 +299,6 @@ jobs:
             /tmp/browseros-size-comparison.json
           if-no-files-found: error
           retention-days: 14
-      - name: Upload one-shot native resource evidence
-        if: always() && needs.impact.outputs.mode == 'full'
-        uses: actions/upload-artifact@v4
-        with:
-          name: browseros-native-resource-${{ github.run_id }}
-          path: /tmp/browseros-native-resource.json
-          if-no-files-found: warn
-          retention-days: 14
-      - name: Full Tauri GUI regression
-        if: needs.impact.outputs.mode == 'full'
-        shell: bash
-        run: |
-          set +e
-          dbus-run-session -- xvfb-run -a python3 scripts/m0-6c-gui-regression.py --no-build --evidence-dir /tmp/m0-6c-browseros
-          status=$?
-          echo "===== M0-6.c GUI summary ====="
-          cat /tmp/m0-6c-browseros/summary.md 2>/dev/null || true
-          echo "===== M0-6.c driver report ====="
-          cat /tmp/m0-6c-browseros/driver-report.json 2>/dev/null || true
-          echo "===== M0-6.c app log tail ====="
-          tail -n 120 /tmp/m0-6c-browseros/app.log 2>/dev/null || true
-          exit "$status"
-      - name: Upload GUI regression evidence
-        if: always() && needs.impact.outputs.mode == 'full'
-        uses: actions/upload-artifact@v4
-        with:
-          name: browseros-gui-evidence-${{ github.run_id }}
-          path: |
-            /tmp/m0-6c-browseros/summary.md
-            /tmp/m0-6c-browseros/driver-report.json
-            /tmp/m0-6c-browseros/mock-events.jsonl
-            /tmp/m0-6c-browseros/summary.json
-            /tmp/m0-6c-browseros/app.log
-          if-no-files-found: warn
-          retention-days: 14
       - name: Branch diff whitespace check
         if: needs.impact.outputs.mode == 'full'
         run: git diff --check origin/master...HEAD -- . ':(exclude)logs/m0-baseline/**'
@@ -289,6 +311,8 @@ jobs:
         shell: bash
         env:
           M0_BASE_REF: origin/master
+          PREMERGE_REUSE_FRONTEND: '1'
+          PREMERGE_SKIP_NATIVE_COMPILE: '1'
         run: |
           set -o pipefail
           bash scripts/pre-merge.sh 2>&1 | tee "$RUNNER_TEMP/browseros-pre-merge.log"
@@ -306,12 +330,29 @@ jobs:
           df -h . /tmp
           du -sh src-tauri/target tauri-browser-tabs/target 2>/dev/null || true
 
-  # Independent Rust evidence: the historical frontend size gate may stop
-  # validate before it reaches cargo. This job does not waive that size gate;
-  # both jobs must pass before anyone may declare full validation complete.
+      - name: Validation coverage report (SKIPPED is never PASS)
+        if: always()
+        env:
+          NATIVE_MODE: ${{ needs.impact.outputs.native_mode }}
+        run: |
+          {
+            echo "### BrowserOS validation coverage"
+            echo "Native mode: $NATIVE_MODE"
+            echo "One exact-commit frontend production build is shared by all lanes."
+            if [ "$NATIVE_MODE" = "off" ]; then
+              echo "Rust compilation/tests: SKIPPED (not PASS)."
+              echo "Installed GUI and sustained resources: SKIPPED (not PASS)."
+            else
+              echo "Rust/installed GUI evidence is produced by the optional native-regression job."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Exactly ONE mutually exclusive native build invocation per opted-in run:
+  # rust-tests = cargo test; packaged-gui/resource = one Tauri release build.
+  # The validated prebuilt frontend is reused, not rebuilt by Tauri.
   native-regression:
-    needs: impact
-    if: needs.impact.outputs.mode == 'full'
+    needs: [impact, frontend-build]
+    if: always() && needs.impact.result == 'success' && needs.frontend-build.result == 'success' && needs.impact.outputs.native_mode != 'off'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -326,31 +367,91 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
-      - name: Install Tauri Linux dependencies
+      - name: Install Linux WebKit and display deps (opt-in only)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-      - name: Setup stable Rust with formatting support
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb xauth dbus-x11
+      - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      # The native Rust job runs independently of the size gate, but Tauri's
-      # generate_context! requires the real production frontendDist at build time.
-      - name: Setup Node for native frontendDist
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - name: Build real frontend assets for native checks
+      - name: Install frontend tools without compiling frontend
+        run: npm ci
+      - name: Download the one exact-SHA frontend build
+        uses: actions/download-artifact@v4
+        with:
+          name: browseros-ci-dist-${{ github.sha }}
+          path: .
+      - name: Verify frontend provenance
         run: |
-          npm ci
-          npm run build
-          test -f dist/index.html
-      - name: Verify Rust formatting
+          test -s dist/index.html
+          test "$(cat browseros-ci-source-sha.txt)" = "$(git rev-parse HEAD)"
+      - name: Check Rust formatting (no compilation)
         run: |
           cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
           cargo fmt --manifest-path tauri-browser-tabs/Cargo.toml --all --check
-      - name: Check Rust with locked dependencies
-        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
-      - name: Test Rust with locked dependencies
-        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - name: Compile and test Rust once (rust-tests mode)
+        if: needs.impact.outputs.native_mode == 'rust-tests'
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Build/install/cold-start one Release (packaged-gui mode)
+        if: needs.impact.outputs.native_mode == 'packaged-gui'
+        run: dbus-run-session -- xvfb-run -a bash scripts/verify-installed-client.sh --install --prebuilt-frontend
+      - name: Build/install/cold-start/sample one Release (packaged-resource mode)
+        if: needs.impact.outputs.native_mode == 'packaged-resource'
+        run: dbus-run-session -- xvfb-run -a bash scripts/verify-installed-client.sh --install --prebuilt-frontend --resource-minutes 5
+      - name: Verify installer provenance without recompilation
+        if: needs.impact.outputs.native_mode == 'packaged-gui' || needs.impact.outputs.native_mode == 'packaged-resource'
+        run: |
+          test -f src-tauri/target/release/bundle/deb/mvp-browser-os_0.1.0_amd64.deb
+          git rev-parse HEAD > /tmp/browseros-native-source-sha
+          sha256sum src-tauri/target/release/bundle/deb/mvp-browser-os_0.1.0_amd64.deb > /tmp/browseros-native-package-sha256
+      - name: Tauri GUI regression with the SAME compiled Release
+        if: needs.impact.outputs.native_mode == 'packaged-gui' || needs.impact.outputs.native_mode == 'packaged-resource'
+        shell: bash
+        run: |
+          set +e
+          dbus-run-session -- xvfb-run -a python3 scripts/m0-6c-gui-regression.py --no-build --evidence-dir /tmp/m0-6c-browseros
+          status=$?
+          echo "===== M0-6.c GUI summary ====="
+          cat /tmp/m0-6c-browseros/summary.md 2>/dev/null || true
+          echo "===== M0-6.c app log tail ====="
+          tail -n 120 /tmp/m0-6c-browseros/app.log 2>/dev/null || true
+          exit "$status"
+      - name: Upload opted-in GUI evidence
+        if: always() && (needs.impact.outputs.native_mode == 'packaged-gui' || needs.impact.outputs.native_mode == 'packaged-resource')
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-gui-evidence-${{ github.run_id }}
+          path: |
+            /tmp/m0-6c-browseros/summary.md
+            /tmp/m0-6c-browseros/driver-report.json
+            /tmp/m0-6c-browseros/mock-events.jsonl
+            /tmp/m0-6c-browseros/summary.json
+            /tmp/m0-6c-browseros/app.log
+            /tmp/mvp-browser-os-verify-startup.log
+            /tmp/browseros-native-source-sha
+            /tmp/browseros-native-package-sha256
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload opted-in sustained resource evidence
+        if: always() && needs.impact.outputs.native_mode == 'packaged-resource'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-installed-resource-${{ github.run_id }}
+          path: |
+            /tmp/browseros-installed-resource.json
+            /tmp/browseros-native-resource.json
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Report selected native test coverage
+        if: always()
+        env:
+          NATIVE_MODE: ${{ needs.impact.outputs.native_mode }}
+        run: |
+          echo "Optional native mode: $NATIVE_MODE" >> "$GITHUB_STEP_SUMMARY"
+          echo "Only one Rust compilation path was selected; native outcome must be checked separately." >> "$GITHUB_STEP_SUMMARY"

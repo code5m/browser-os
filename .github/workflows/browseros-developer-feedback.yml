@@ -9,7 +9,7 @@ on:
       build_preview:
         description: Build an installable Debian preview for manual testing
         type: boolean
-        default: true
+        default: false
         required: false
 
 permissions:
@@ -41,14 +41,8 @@ jobs:
   preview:
     name: Installable Preview (.deb)
     needs: quick
-    # Ordinary developer pushes never wait for Full Validation. Preview is
-    # non-blocking and cancellable; unrelated branches can request it manually.
-    if: >-
-      (github.event_name == 'workflow_dispatch' && inputs.build_preview == true) ||
-      (github.event_name == 'push' && github.ref != 'refs/heads/master' &&
-        (startsWith(github.ref, 'refs/heads/perf/') ||
-         startsWith(github.ref, 'refs/heads/feature/') ||
-         startsWith(github.ref, 'refs/heads/fix/')))
+    # No automatic .deb on push: native Release compilation is opt-in only.
+    if: github.event_name == 'workflow_dispatch' && inputs.build_preview == true
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
