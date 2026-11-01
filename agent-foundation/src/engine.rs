@@ -75,6 +75,8 @@ impl AgentEngine<'_> {
             return Err(FoundationError::InvalidTransition);
         }
         let revision = task.revision;
+        // Acquire one shared task execution slot before opening model transport.
+        let _lease = self.tasks.acquire_execution(task_id, revision)?;
         let request = ModelRequest {
             session_id: task.session_id,
             model_id: model_id.into(),
@@ -214,7 +216,7 @@ mod tests {
             panic!("model must not auto-run a proposed tool");
         };
         assert!(journal.replay(task.id, 0).unwrap().iter().any(|event| {
-            matches!(event.kind, EventKind::ApprovalRequested { .. })
+            matches!(&event.kind, EventKind::ApprovalRequested { .. })
         }));
         assert!(tasks.resolve_approval(task.id, call_id, false).unwrap().is_none());
     }

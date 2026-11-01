@@ -4,7 +4,7 @@
 use crate::{context::{validate_context_list, ContextRef}, event::{EventJournal, EventKind}, tool::ToolEffect, FoundationError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::HashMap, sync::{Arc, Mutex}};
+use std::{collections::{HashMap, HashSet}, sync::{Arc, Mutex}};
 use tokio::sync::watch;
 use uuid::Uuid;
 
@@ -56,11 +56,28 @@ pub struct TaskRegistry {
     tasks: Mutex<HashMap<Uuid, TaskRecord>>,
     signals: Mutex<HashMap<Uuid, watch::Sender<bool>>>,
     journal: Arc<EventJournal>,
+    execution_leases: Mutex<HashSet<Uuid>>,
+}
+
+/// Prevents concurrent model/tool execution for one task across all adapters.
+/// Dropping the lease releases it (including early errors and cancellation).
+pub(crate) struct ExecutionLease<'a> {
+    registry: &'a TaskRegistry,
+    task_id: Uuid,
+}
+
+impl Drop for ExecutionLease<'_> {
+    fn drop(&mut self) {
+        self.registry.execution_leases
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.task_id);
+    }
 }
 
 impl TaskRegistry {
     pub fn new(journal: Arc<EventJournal>) -> Self {
-        Self { tasks: Mutex::new(HashMap::new()), signals: Mutex::new(HashMap::new()), journal }
+        Self { tasks: Mutex::new(HashMap::new()), signals: Mutex::new(HashMap::new()), journal, execution_leases: Mutex::new(HashSet::new()) }
     }
 
     pub fn create(&self, session_id: Uuid, goal: impl Into<String>, context: Vec<ContextRef>) -> Result<TaskRecord> {
@@ -82,6 +99,21 @@ impl TaskRegistry {
 
     pub fn get(&self, id: Uuid) -> Result<TaskRecord> {
         self.tasks.lock().unwrap_or_else(|e| e.into_inner()).get(&id).cloned().ok_or(FoundationError::NotFound)
+    }
+
+    /// Acquire the sole in-flight model/tool execution slot for a task.
+    /// Callers must still check cancellation and revision after async work.
+    pub(crate) fn acquire_execution(&self, id: Uuid, revision: u64) -> Result<ExecutionLease<'_>> {
+        let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        let task = tasks.get(&id).ok_or(FoundationError::NotFound)?;
+        if task.status != TaskStatus::Running || task.revision != revision {
+            return Err(FoundationError::InvalidTransition);
+        }
+        let mut leases = self.execution_leases.lock().unwrap_or_else(|e| e.into_inner());
+        if !leases.insert(id) {
+            return Err(FoundationError::InvalidTransition);
+        }
+        Ok(ExecutionLease { registry: self, task_id: id })
     }
 
     pub fn start(&self, id: Uuid) -> Result<()> {
@@ -281,6 +313,18 @@ mod tests {
         assert_eq!(registry.resolve_approval(task.id, Uuid::new_v4(), true).err(), Some(FoundationError::ApprovalMismatch));
         assert!(registry.resolve_approval(task.id, call, true).unwrap().is_some());
         assert_eq!(registry.resolve_approval(task.id, call, true).err(), Some(FoundationError::InvalidTransition));
+    }
+
+    #[test]
+    fn task_execution_lease_is_exclusive_and_raii() {
+        let registry = TaskRegistry::new(Arc::new(EventJournal::new(32)));
+        let task = registry.create(Uuid::new_v4(), "Task", vec![]).unwrap();
+        registry.start(task.id).unwrap();
+        let rev = registry.get(task.id).unwrap().revision;
+        let one = registry.acquire_execution(task.id, rev).unwrap();
+        assert_eq!(registry.acquire_execution(task.id, rev).err(), Some(FoundationError::InvalidTransition));
+        drop(one);
+        assert!(registry.acquire_execution(task.id, rev).is_ok());
     }
 
     #[test]

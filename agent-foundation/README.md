@@ -21,6 +21,7 @@
 cargo fmt --manifest-path agent-foundation/Cargo.toml -- --check
 cargo check --manifest-path agent-foundation/Cargo.toml
 cargo test --manifest-path agent-foundation/Cargo.toml
+cargo run --manifest-path agent-foundation/Cargo.toml --example dry_run
 cargo clippy --manifest-path agent-foundation/Cargo.toml --all-targets -- -D warnings
 \`\`\`
 
@@ -50,7 +51,7 @@ acceptance has been conducted.
 5. **Concurrent tool execution is not serialized per task.** Production work
    needs an explicit task lease, per-resource locks and CAS-protected final
    commits. This scaffold is not safe for arbitrary untrusted tool executors.
-6. **Model streaming is only a trait**, not an executable agent planning loop.
+6. **The model runtime performs only one bounded turn with explicit approval gates**, not autonomous tool planning/execution. Real provider transport remains a trait.
    Actual provider auth, cost accounting, retries, model capability
    negotiation, bounded transport, streaming backpressure, and prompt-injection
    boundaries remain unimplemented.
@@ -66,6 +67,7 @@ BrowserOS (existing; unchanged)
       [NO CONNECTION]
              |
 agent-foundation (new isolated prototype)
+  ├─ engine.rs         single-turn runtime, never auto-executes tools
   ├─ model.rs          model stream contract
   ├─ protocol.rs       versioned agent command envelope
   ├─ context.rs        explicit scoped resource references
@@ -93,3 +95,7 @@ Before adding dependencies, inspect latest versions, MSRV, transitive licenses,
 security advisories, native dependency overhead and cargo-deny policy.
 The code in this folder is original scaffolding; it does not vendor these
 projects. The repository root license is MulanPSL-2.0.
+
+## Delivery tracking
+
+See [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md). Source and test cases are committed, but actual Cargo compilation has not been run from the GitHub-only session. Treat compilation, clippy and examples as **UNVERIFIED**.

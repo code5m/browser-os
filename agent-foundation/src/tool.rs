@@ -65,6 +65,8 @@ impl ToolRegistry {
         if !tasks.active_at_revision(permit.task_id, permit.revision) {
             return Err(FoundationError::PermissionDenied);
         }
+        // Model and tool execution share one non-reentrant task slot.
+        let _lease = tasks.acquire_execution(permit.task_id, permit.revision)?;
         let tool = {
             let tools = self.tools.read().unwrap_or_else(|e| e.into_inner());
             tools.get(&permit.operation.tool_name).cloned().ok_or(FoundationError::PermissionDenied)?
