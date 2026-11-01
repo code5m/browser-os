@@ -94,13 +94,52 @@ struct SavedChildState {
 
 /// 单个宫格子进程句柄。
 fn terminate_grid_process_tree(child: &mut Child) {
-    // New Grid children are placed in a dedicated process group. If the process
-    // predates that change, group kill is harmless and child.kill remains fallback.
+    // Kill the process group, including WebKit helpers. Never hold the Grid
+    // manager lock inside an unbounded Child::wait after SIGKILL.
+    let pid = child.id() as i32;
     unsafe {
-        libc::kill(-(child.id() as i32), libc::SIGKILL);
+        libc::kill(-pid, libc::SIGKILL);
     }
     let _ = child.kill();
-    let _ = child.wait();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(750);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("[grid-manager] waitpid={} failed: {}", pid, error);
+                return;
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    // A kernel-stuck child may exit after the deadline; reap it out of band so
+    // the foreground Grid lifecycle never waits indefinitely and no zombie
+    // is intentionally left behind.
+    std::thread::spawn(move || {
+        let waited = unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
+        if waited < 0 {
+            eprintln!("[grid-manager] deferred reap pid={} failed", pid);
+        }
+    });
+}
+
+/// A Grid process is an independent browser session. URL + rectangle do not
+/// preserve unsent AI prompts, streaming replies or SPA memory. Without a
+/// documented snapshot/restore protocol, only empty cells may be discarded.
+fn grid_content_reclaimable(last_url: Option<&str>) -> bool {
+    matches!(last_url, Some("about:blank"))
+}
+
+fn grid_hibernation_probe_safe(encoded: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(encoded) else {
+        return false;
+    };
+    value.get("safe").and_then(serde_json::Value::as_bool) == Some(true)
+        && value.get("url").and_then(serde_json::Value::as_str) == Some("about:blank")
 }
 
 fn grid_child_is_hibernatable(
@@ -257,6 +296,22 @@ impl GridProcessManager {
                                                     st.grid_manager
                                                         .hide_for_blur_if_no_child_focus();
                                                 });
+                                            }
+                                            "tab-navigated" => {
+                                                // Keep the native memory guard in sync with
+                                                // same-WebView redirects and in-page links.
+                                                // Only accept navigation for this Grid child.
+                                                if let (Some(id), Some(url)) = (
+                                                    payload.get("id").and_then(|v| v.as_str()),
+                                                    payload.get("url").and_then(|v| v.as_str()),
+                                                ) {
+                                                    if id == format!("grid-{index}") && !url.is_empty() {
+                                                        app.state::<crate::bridge::AppState>()
+                                                            .grid_manager
+                                                            .record_url(index, url);
+                                                    }
+                                                }
+                                                let _ = app.emit(&name, payload);
                                             }
                                             _ => {
                                                 let _ = app.emit(&name, payload);
@@ -430,6 +485,24 @@ impl GridProcessManager {
         self.request_once_with(comms, cmd, timeout_ms).map(|_| ())
     }
 
+    /// Fail-closed native probe of the actual Grid page. Stored last_url is
+    /// only a navigation target and cannot prove the live DOM is empty.
+    fn confirmed_blank_grid(&self, index: u32) -> bool {
+        let Ok(comms) = self.wait_connected(index, 500) else {
+            return false;
+        };
+        match self.request_once_with(
+            comms,
+            &GridCmd::HibernationProbe {
+                id: format!("grid-{index}"),
+            },
+            1000,
+        ) {
+            Ok(Some(encoded)) => grid_hibernation_probe_safe(&encoded),
+            _ => false,
+        }
+    }
+
     pub fn read_replies(&self, index: u32) -> Result<String, String> {
         if !self.children.lock().unwrap().contains_key(&index) {
             return Err("GRID_NOT_OPEN".into());
@@ -538,49 +611,133 @@ impl GridProcessManager {
     /// Destroy hidden, unfocused WebKit children after an adaptive idle window.
     /// Saved navigation and layout metadata allow the normal Grid activation
     /// path to recreate the child process without losing its URL or zoom owner.
-    pub fn hibernate_idle_hidden(&self, idle_for: std::time::Duration) -> Vec<u32> {
+    /// Adaptive reclamation remains conservative: a hidden AI Grid may have
+    /// unpersisted conversation state. Never destroy arbitrary external pages
+    /// based on URL/geometry alone. Reclaim only blank, still-hidden cells.
+    pub fn hibernate_idle_hidden(
+        &self,
+        idle_for: std::time::Duration,
+        max_children: usize,
+    ) -> Vec<u32> {
+        if max_children == 0 {
+            return Vec::new();
+        }
         let now = std::time::Instant::now();
         let focused = self.child_focused.lock().unwrap().clone();
-        let candidates: Vec<u32> = self
+        let mut candidates: Vec<(std::time::Instant, u32)> = self
             .children
             .lock()
             .unwrap()
             .iter()
-            .filter(|(index, child)| {
-                grid_child_is_hibernatable(
+            .filter_map(|(index, child)| {
+                if !grid_child_is_hibernatable(
                     child.hidden,
                     child.blur_hidden,
                     focused.get(index).copied().unwrap_or(false),
                     child.hidden_since,
                     now,
                     idle_for,
-                )
+                ) || !grid_content_reclaimable(child.last_url.as_deref()) {
+                    return None;
+                }
+                Some((child.hidden_since?, *index))
             })
-            .map(|(index, _)| *index)
             .collect();
+        // Oldest blank cells first, with an explicit per-sweep kill budget.
+        candidates.sort_unstable();
         let mut hibernated = Vec::new();
-        for index in candidates {
-            // Close the WebView through the Grid IPC owner first so WebKit can
-            // flush its persistent profile/session before the process tree exits.
-            let _ = self.request(
+        for (hidden_since, index) in candidates.into_iter().take(max_children) {
+            let eligible = || {
+                !self
+                    .child_focused
+                    .lock()
+                    .unwrap()
+                    .get(&index)
+                    .copied()
+                    .unwrap_or(false)
+                    && self.children.lock().unwrap().get(&index).is_some_and(|child| {
+                        child.hidden_since == Some(hidden_since)
+                            && grid_content_reclaimable(child.last_url.as_deref())
+                            && grid_child_is_hibernatable(
+                                child.hidden,
+                                child.blur_hidden,
+                                false,
+                                child.hidden_since,
+                                std::time::Instant::now(),
+                                idle_for,
+                            )
+                    })
+            };
+            if !eligible() || !self.confirmed_blank_grid(index) || !eligible() {
+                continue;
+            }
+            // Graceful native close for the empty WebView; if a user resumes
+            // it during IPC, do not kill the process. Rebuild a blank WebView
+            // when CloseTab won the race, preserving the user's fresh layout.
+            let closed = self.request(
                 index,
                 GridCmd::CloseTab {
                     id: format!("grid-{index}"),
                 },
-                3000,
+                1000,
             );
-            let removed = self.children.lock().unwrap().remove(&index);
-            if let Some(mut child) = removed {
-                let saved = SavedChildState {
-                    last_url: child.last_url.clone(),
-                    last_rect: child.last_rect,
-                    hidden: true,
-                    blur_hidden: false,
-                };
+            if !eligible() {
+                if closed.is_ok() {
+                    self.replay(index);
+                }
+                continue;
+            }
+            // Revalidate under the child map lock, then kill the old process
+            // before another get_or_spawn can reuse the same Grid index/socket.
+            let focused_now = self
+                .child_focused
+                .lock()
+                .unwrap()
+                .get(&index)
+                .copied()
+                .unwrap_or(false);
+            if focused_now {
+                if closed.is_ok() {
+                    self.replay(index);
+                }
+                continue;
+            }
+            let mut children = self.children.lock().unwrap();
+            let still_eligible = children.get(&index).is_some_and(|child| {
+                child.hidden_since == Some(hidden_since)
+                    && grid_content_reclaimable(child.last_url.as_deref())
+                    && grid_child_is_hibernatable(
+                        child.hidden,
+                        child.blur_hidden,
+                        false,
+                        child.hidden_since,
+                        std::time::Instant::now(),
+                        idle_for,
+                    )
+            });
+            if !still_eligible {
+                drop(children);
+                if closed.is_ok() {
+                    self.replay(index);
+                }
+                continue;
+            }
+            if let Some(mut child) = children.remove(&index) {
+                // Hold the map lock until the old process group has exited:
+                // another Grid activation must not spawn an index while an
+                // old child is still connected to the same UDS listener.
                 terminate_grid_process_tree(&mut child.child);
-                self.hibernated.lock().unwrap().insert(index, saved);
+                self.hibernated.lock().unwrap().insert(
+                    index,
+                    SavedChildState {
+                        last_url: child.last_url.clone(),
+                        last_rect: child.last_rect,
+                        hidden: true,
+                        blur_hidden: false,
+                    },
+                );
                 hibernated.push(index);
-                eprintln!("[grid-manager] hibernated hidden grid-child-{}", index);
+                eprintln!("[grid-manager] hibernated empty grid-child-{}", index);
             }
         }
         hibernated
@@ -985,7 +1142,9 @@ fn exit_code_of(status: &std::process::ExitStatus) -> i32 {
 
 #[cfg(test)]
 mod adaptive_grid_hibernation_tests {
-    use super::grid_child_is_hibernatable;
+    use super::{
+        grid_child_is_hibernatable, grid_content_reclaimable, grid_hibernation_probe_safe,
+    };
     use std::time::{Duration, Instant};
 
     #[test]
@@ -1016,6 +1175,89 @@ mod adaptive_grid_hibernation_tests {
             now,
             idle_for
         ));
+    }
+
+    #[test]
+    fn external_ai_grids_are_not_discardable_without_state_checkpoint() {
+        assert!(grid_content_reclaimable(Some("about:blank")));
+        assert!(grid_hibernation_probe_safe(r#"{"safe":true,"url":"about:blank"}"#));
+        for probe in [
+            r#"{"safe":true,"url":"https://chat.deepseek.com"}"#,
+            r#"{"safe":false,"url":"about:blank"}"#,
+            r#"{"safe":"true","url":"about:blank"}"#,
+            "{}",
+            "null",
+            "malformed",
+        ] {
+            assert!(!grid_hibernation_probe_safe(probe));
+        }
+        for url in [
+            None,
+            Some("https://chat.deepseek.com"),
+            Some("https://www.doubao.com"),
+            Some("https://kimi.moonshot.cn"),
+            Some("file:///home/user/unsaved.html"),
+            Some("data:text/html,hello"),
+        ] {
+            assert!(!grid_content_reclaimable(url));
+        }
+    }
+}
+
+#[cfg(test)]
+mod grid_process_termination_tests {
+    use super::terminate_grid_process_tree;
+    use std::os::unix::process::CommandExt;
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn killing_a_grid_child_has_a_bounded_foreground_wait() {
+        let mut child = Command::new("/usr/bin/sleep")
+            .arg("10")
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let started = Instant::now();
+        terminate_grid_process_tree(&mut child);
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(child.try_wait().unwrap().is_some());
+    }
+}
+
+#[cfg(test)]
+mod grid_connection_generation_tests {
+    use super::*;
+
+    #[test]
+    fn late_old_reader_must_not_disconnect_new_socket_or_cancel_new_requests() {
+        let comms = ChildComms::new();
+        let (old_socket, _old_peer) = UnixStream::pair().unwrap();
+        let old_generation = comms.attach(old_socket);
+        assert!(comms.is_current(old_generation));
+
+        let (old_tx, old_rx) = mpsc::channel();
+        comms.pending.lock().unwrap().insert(1, old_tx);
+        let (new_socket, _new_peer) = UnixStream::pair().unwrap();
+        let new_generation = comms.attach(new_socket);
+        assert_ne!(old_generation, new_generation);
+        assert!(matches!(old_rx.try_recv(), Ok(Err(_))));
+
+        // The old reader exits after the new child has connected.
+        comms.detach_if_current(old_generation);
+        assert!(comms.is_current(new_generation));
+        assert!(comms.writer.lock().unwrap().is_some());
+
+        let (new_tx, new_rx) = mpsc::channel();
+        comms.pending.lock().unwrap().insert(2, new_tx);
+        comms.detach_if_current(old_generation);
+        assert!(matches!(new_rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+
+        // Only the active reader may close the socket and fail its requests.
+        comms.detach_if_current(new_generation);
+        assert!(!comms.is_connected());
+        assert!(comms.writer.lock().unwrap().is_none());
+        assert!(matches!(new_rx.try_recv(), Ok(Err(_))));
     }
 }
 

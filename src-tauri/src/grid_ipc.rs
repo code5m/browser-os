@@ -41,6 +41,11 @@ pub enum GridCmd {
     ReadReplies {
         id: String,
     },
+    /// Read-only native WebView safety probe before discarding an empty Grid.
+    /// Absence of an explicit safe response must fail closed.
+    HibernationProbe {
+        id: String,
+    },
     /// 宫格 webview 导航到 url。
     Navigate {
         id: String,

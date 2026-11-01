@@ -31,23 +31,35 @@ fn session_expired(last_used: Instant, now: Instant) -> bool {
     now.saturating_duration_since(last_used) >= SESSION_IDLE_TTL
 }
 
+/// Select idle cache entries while holding the registry mutex, but return the
+/// removed Arc values so sandbox teardown happens AFTER releasing that mutex.
+/// Never destroy a Rust Analyzer subprocess inside a global cache lock.
+fn take_expired_sessions(
+    cache: &mut HashMap<String, Arc<Mutex<CachedSession>>>,
+    now: Instant,
+) -> Vec<Arc<Mutex<CachedSession>>> {
+    let expired: Vec<String> = cache
+        .iter()
+        .filter(|(_, entry)| Arc::strong_count(entry) == 1)
+        .filter_map(|(key, entry)| match entry.try_lock() {
+            Ok(session) if session_expired(session.last_used, now) => Some(key.clone()),
+            _ => None,
+        })
+        .collect();
+    expired.into_iter().filter_map(|key| cache.remove(&key)).collect()
+}
+
 fn ensure_session_sweeper() {
     SESSION_SWEEPER.get_or_init(|| {
         thread::spawn(|| loop {
             thread::sleep(Duration::from_secs(30));
-            let now = Instant::now();
-            let mut cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
-            cache.retain(|_, entry| {
-                // A caller's Arc keeps an in-flight session alive; the entry lock
-                // also protects a request that is already using its JSON-RPC stream.
-                if Arc::strong_count(entry) > 1 {
-                    return true;
-                }
-                match entry.try_lock() {
-                    Ok(session) => !session_expired(session.last_used, now),
-                    Err(_) => true,
-                }
-            });
+            let expired = {
+                let mut cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
+                take_expired_sessions(&mut cache, Instant::now())
+            };
+            // Child::drop, kernel process reclamation and scratch cleanup are
+            // outside the global cache lock so other workspaces stay responsive.
+            drop(expired);
         });
     });
 }
@@ -269,42 +281,41 @@ fn insert_cached_session(
     key: String,
     session: CachedSession,
 ) -> Result<Arc<Mutex<CachedSession>>, String> {
-    let mut cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(existing) = cache.get(&key) {
-        return Ok(existing.clone());
-    }
-    let now = Instant::now();
-    cache.retain(|_, entry| {
-        if Arc::strong_count(entry) > 1 {
-            return true;
+    let mut retired = Vec::new();
+    let result = {
+        let mut cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(existing) = cache.get(&key) {
+            return Ok(existing.clone());
         }
-        match entry.try_lock() {
-            Ok(guard) => !session_expired(guard.last_used, now),
-            Err(_) => true,
+        retired.extend(take_expired_sessions(&mut cache, Instant::now()));
+        if cache.len() >= MAX_CACHED_SESSIONS {
+            let candidate = cache
+                .iter()
+                .filter(|(_, entry)| Arc::strong_count(entry) == 1)
+                .filter_map(|(key, entry)| {
+                    entry
+                        .try_lock()
+                        .ok()
+                        .map(|guard| (key.clone(), guard.last_used))
+                })
+                .min_by_key(|(_, last_used)| *last_used)
+                .map(|(key, _)| key);
+            if let Some(candidate) = candidate {
+                if let Some(removed) = cache.remove(&candidate) {
+                    retired.push(removed);
+                }
+            }
         }
-    });
-    if cache.len() >= MAX_CACHED_SESSIONS {
-        let candidate = cache
-            .iter()
-            .filter(|(_, entry)| Arc::strong_count(entry) == 1)
-            .filter_map(|(key, entry)| {
-                entry
-                    .try_lock()
-                    .ok()
-                    .map(|guard| (key.clone(), guard.last_used))
-            })
-            .min_by_key(|(_, last_used)| *last_used)
-            .map(|(key, _)| key);
-        if let Some(candidate) = candidate {
-            cache.remove(&candidate);
+        if cache.len() >= MAX_CACHED_SESSIONS {
+            Err("LSP_SESSION_LIMIT".into())
+        } else {
+            let entry = Arc::new(Mutex::new(session));
+            cache.insert(key, entry.clone());
+            Ok(entry)
         }
-    }
-    if cache.len() >= MAX_CACHED_SESSIONS {
-        return Err("LSP_SESSION_LIMIT".into());
-    }
-    let entry = Arc::new(Mutex::new(session));
-    cache.insert(key, entry.clone());
-    Ok(entry)
+    };
+    drop(retired); // release old sandboxes without holding SESSION_CACHE
+    result
 }
 
 impl CachedSession {
@@ -344,11 +355,33 @@ impl CachedSession {
 }
 impl Drop for Session {
     fn drop(&mut self) {
+        let pid = self.child.id() as i32;
         unsafe {
-            libc::kill(-(self.child.id() as i32), libc::SIGKILL);
+            libc::kill(-pid, libc::SIGKILL);
         }
         let _ = self.child.kill();
-        let _ = self.child.wait();
+        let deadline = Instant::now() + Duration::from_millis(750);
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) => {}
+                Err(error) => {
+                    eprintln!("[lsp] reap pid={} failed: {}", pid, error);
+                    return;
+                }
+            }
+            if Instant::now() >= deadline {
+                break;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        // A stuck kernel child must not stall the UI or cache evictor.
+        thread::spawn(move || {
+            let waited = unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
+            if waited < 0 {
+                eprintln!("[lsp] deferred reap pid={} failed", pid);
+            }
+        });
     }
 }
 impl Session {
@@ -597,21 +630,40 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
     let available = profiles();
     if request["action"] == "lsp_close" {
         let root = root.canonicalize().map_err(|_| "LSP_ROOT_INVALID")?;
-        let mut cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
-        let keys: Vec<String> = cache
+        // Never wait on an in-flight JSON-RPC session while holding the
+        // registry mutex: one slow workspace must not block every workspace.
+        let candidates: Vec<(String, Arc<Mutex<CachedSession>>)> = {
+            let cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
+            cache.iter().map(|(key, entry)| (key.clone(), entry.clone())).collect()
+        };
+        let keys: Vec<(String, Arc<Mutex<CachedSession>>)> = candidates
             .iter()
-            .filter_map(|(key, entry)| {
+            .filter(|(_, entry)| {
                 entry
                     .lock()
                     .ok()
-                    .filter(|session| session.workspace_root == root)
-                    .map(|_| key.clone())
+                    .is_some_and(|session| session.workspace_root == root)
             })
+            .cloned()
             .collect();
-        for key in &keys {
-            cache.remove(key);
-        }
-        return Ok(json!({"closed_sessions":keys.len()}));
+        let retired = {
+            let mut cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
+            keys.iter()
+                .filter_map(|(key, entry)| {
+                    if cache.get(key).is_some_and(|current| Arc::ptr_eq(current, entry)) {
+                        cache.remove(key)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        let count = retired.len();
+        // All heavy process/scratch cleanup happens outside the registry lock.
+        drop(keys);
+        drop(candidates);
+        drop(retired);
+        return Ok(json!({"closed_sessions":count}));
     }
     if request["action"] == "lsp_status" {
         return Ok(

@@ -2406,9 +2406,6 @@ const MAX_GRID: usize = 12;
 /// 每宫格子进程（Tauri + WebKitWebProcess + AI 站点）的实测内存估算（MB）。
 /// 实测 WebKitWebProcess 约 330~365MB/格，加子进程本体取 450。
 const GRID_MEM_MB: u64 = 450;
-/// 创建宫格后系统至少保留的可用内存（MB）：低于此值宁降级格数也不把系统打穿
-/// （14G 机器 swap 吃满后开 9 宫格会全系统卡死）。
-const MEM_RESERVE_MB: u64 = 700;
 /// Two cells are a supported UI mode. Never silently require four native children.
 /// Keep the 1.8 GiB core reserve even when memory is low.
 const MIN_GRID: usize = 2;
@@ -2425,6 +2422,40 @@ fn mem_available_mb() -> Option<u64> {
         }
     }
     None
+}
+
+/// Reuse existing Grid children without charging their already-allocated RSS
+/// against free MemAvailable again. Only missing indices consume new budget.
+/// Use the SAME reserve for UI capacity and actual Grid creation.
+fn affordable_grid_count(available_mb: u64, existing: &[u32], requested: usize) -> usize {
+    let mut new_cells = available_mb.saturating_sub(CORE_MEMORY_RESERVE_MB) / GRID_MEM_MB;
+    let mut capacity = 0;
+    for index in 0..requested.min(MAX_GRID) {
+        if existing.contains(&(index as u32)) {
+            capacity += 1;
+        } else if new_cells > 0 {
+            new_cells -= 1;
+            capacity += 1;
+        } else {
+            break;
+        }
+    }
+    capacity
+}
+
+#[cfg(test)]
+mod grid_memory_budget_tests {
+    use super::{affordable_grid_count, CORE_MEMORY_RESERVE_MB};
+
+    #[test]
+    fn only_new_children_charge_available_memory() {
+        assert_eq!(affordable_grid_count(CORE_MEMORY_RESERVE_MB, &[], 4), 0);
+        assert_eq!(affordable_grid_count(CORE_MEMORY_RESERVE_MB + 900, &[], 4), 2);
+        assert_eq!(affordable_grid_count(CORE_MEMORY_RESERVE_MB, &[0, 1, 2, 3], 4), 4);
+        assert_eq!(affordable_grid_count(500, &[0, 1], 4), 2);
+        assert_eq!(affordable_grid_count(CORE_MEMORY_RESERVE_MB + 450, &[0, 1], 4), 3);
+        assert_eq!(affordable_grid_count(500, &[0, 2], 4), 1);
+    }
 }
 
 /// 创建宫格（2..=12）：每格 spawn 一个子进程并经 UDS 建 webview，默认打开引导页，
@@ -2452,29 +2483,29 @@ fn grid_url_needs_navigation(existing: Option<&str>, target: Option<&str>) -> bo
 
 pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Result<usize, String> {
     let requested = n.clamp(2, MAX_GRID);
-    let target = match mem_available_mb() {
-        Some(avail) => {
-            let affordable = (avail.saturating_sub(CORE_MEMORY_RESERVE_MB) / GRID_MEM_MB) as usize;
-            if affordable < MIN_GRID {
-                return Err(format!(
-                    "GRID_MEMORY_GUARD: 可用内存 {}MB，至少需要 {}MB 才能安全启动 {} 宫格并保护浏览器与文件管理器",
-                    avail, CORE_MEMORY_RESERVE_MB + MIN_GRID as u64 * GRID_MEM_MB, MIN_GRID
-                ));
-            }
-            let budgeted = affordable.min(MAX_GRID).min(requested);
-            if budgeted < requested {
-                eprintln!(
-                    "[create_grid] 内存预算守卫: 可用 {}MB，请求 {} 格 → 降级 {} 格",
-                    avail, requested, budgeted
-                );
-            }
-            budgeted
-        }
-        None => requested,
-    };
-
     let state = app.state::<AppState>();
     let manager = &state.grid_manager;
+    let existing = manager.indices();
+    let target = match mem_available_mb() {
+        Some(avail) => {
+            let affordable = affordable_grid_count(avail, &existing, requested);
+            if affordable < MIN_GRID {
+                return Err(format!(
+                    "GRID_MEMORY_GUARD: 可用内存 {}MB，至少需要 {}MB 预留空间加新建宫格内存；现有可复用宫格 {:?}",
+                    avail, CORE_MEMORY_RESERVE_MB, existing
+                ));
+            }
+            if affordable < requested {
+                eprintln!(
+                    "[create_grid] 内存预算守卫: 可用 {}MB，请求 {} 格 → 降级 {} 格（已复用 {:?}）",
+                    avail, requested, affordable, existing
+                );
+            }
+            affordable
+        }
+        None if (0..requested).all(|index| existing.contains(&(index as u32))) => requested,
+        None => return Err("GRID_MEMORY_UNKNOWN: 无法测量可用内存，拒绝新建宫格".into()),
+    };
     let mut newly_created: Vec<(u32, bool)> = Vec::new();
     let mut navigated_existing: Vec<(u32, String)> = Vec::new();
 
@@ -3330,6 +3361,7 @@ pub fn resource_stats_blocking(app: AppHandle) -> ResourceStats {
         .lock()
         .unwrap()
         .len();
+    let grid_indices: Vec<u32> = grid_pids.iter().map(|(index, _)| *index).collect();
     ResourceStats {
         mem_total_mb: std::fs::read_to_string("/proc/meminfo")
             .ok()
@@ -3351,9 +3383,9 @@ pub fn resource_stats_blocking(app: AppHandle) -> ResourceStats {
         hibernation_enabled,
         hibernated_count,
         hibernated_grid_count: app.state::<AppState>().grid_manager.hibernated_count(),
-        // 真实预算（可为 0/1，创建时才会保底 2）：前端据此提示"最多还能开 N 格"
-        grid_budget: (avail.saturating_sub(MEM_RESERVE_MB) / GRID_MEM_MB).min(MAX_GRID as u64)
-            as usize,
+        // The displayed limit agrees with create_grid and includes already
+        // running Grid children instead of charging their memory twice.
+        grid_budget: affordable_grid_count(avail, &grid_indices, MAX_GRID),
     }
 }
 
@@ -3380,6 +3412,30 @@ fn hibernation_idle_window(available_mb: u64, total_mb: u64) -> std::time::Durat
     } else {
         std::time::Duration::from_secs(600)
     }
+}
+
+/// A sweep has a bounded destruction budget: avoid killing dozens of WebViews
+/// in one pass and immediately rebuilding them when the user returns.
+fn hibernation_batch_limits(available_mb: u64, total_mb: u64) -> (usize, usize) {
+    match hibernation_idle_window(available_mb, total_mb).as_secs() {
+        // Critical: reclaim more, but never with an unbounded kill storm.
+        30 => (4, 2),
+        // Warning: preserve more page state between sweeps.
+        120 => (2, 1),
+        // Normal: no burst teardown.
+        _ => (1, 1),
+    }
+}
+
+/// Snapshot parsing must fail closed. A missing 'protected' field or non-finite
+/// scroll value is not proof that the page is safe to discard.
+fn accepted_hibernation_scroll(snapshot: &serde_json::Value) -> Option<(f64, f64)> {
+    if snapshot.get("protected").and_then(serde_json::Value::as_bool) != Some(false) {
+        return None;
+    }
+    let x = snapshot.get("scrollX")?.as_f64()?;
+    let y = snapshot.get("scrollY")?.as_f64()?;
+    (x.is_finite() && y.is_finite()).then_some((x, y))
 }
 
 fn mem_total_mb() -> Option<u64> {
@@ -3427,7 +3483,13 @@ fn tab_hibernation_snapshot(app: &AppHandle, id: &str) -> Result<(f64, f64), Str
         document.activeElement.matches('input,textarea,select,[contenteditable="true"]');
       const richEditor = [...document.querySelectorAll('[contenteditable="true"]')]
         .some(el => (el.textContent || '').trim().length > 0);
-      const protectedPage = media || dirty || focused || richEditor ||
+      // Embedded documents, canvas applications, framework-driven textboxes,
+      // dialogs and even empty rich editors can carry non-serializable state.
+      // URL + scroll is insufficient to restore them: skip rather than guess.
+      const complexState = !!document.querySelector(
+        'iframe,frame,canvas,embed,object,[contenteditable]:not([contenteditable="false"]),[role="textbox"],[aria-modal="true"],dialog[open]'
+      );
+      const protectedPage = media || dirty || focused || richEditor || complexState ||
         !!window.onbeforeunload || window.__browserosPreventHibernate === true;
       return JSON.stringify({
         protected: protectedPage,
@@ -3446,13 +3508,8 @@ fn tab_hibernation_snapshot(app: &AppHandle, id: &str) -> Result<(f64, f64), Str
         .map_err(|_| "TAB_HIBERNATION_SNAPSHOT_TIMEOUT")??;
     let snapshot: serde_json::Value =
         serde_json::from_str(&encoded).map_err(|_| "TAB_HIBERNATION_SNAPSHOT_INVALID")?;
-    if snapshot["protected"] == true {
-        return Err("TAB_HIBERNATION_PROTECTED".into());
-    }
-    Ok((
-        snapshot["scrollX"].as_f64().unwrap_or(0.0),
-        snapshot["scrollY"].as_f64().unwrap_or(0.0),
-    ))
+    accepted_hibernation_scroll(&snapshot)
+        .ok_or_else(|| "TAB_HIBERNATION_PROTECTED_OR_INVALID".to_string())
 }
 
 /// Destroy an inactive tab only after a native snapshot confirms that it is
@@ -3460,14 +3517,34 @@ fn tab_hibernation_snapshot(app: &AppHandle, id: &str) -> Result<(f64, f64), Str
 /// editor, or requesting beforeunload. Only scroll coordinates are retained.
 fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) -> bool {
     let state = app.state::<AppState>();
+    let expected_url = match state.tabs.lock().unwrap().get(id) {
+        Some(tab) => tab.url.clone(),
+        None => return false,
+    };
     let still_idle = || {
-        state.active_tab.lock().unwrap().as_deref() != Some(id)
-            && state
-                .tab_idle_since
-                .lock()
-                .unwrap()
-                .get(id)
-                .is_some_and(|since| since.elapsed() >= idle_window)
+        // The user may disable the policy or navigate/activate the tab while a
+        // two-second WebKit snapshot is in flight. Cancel on any such change.
+        if !state.hibernation_enabled.load(Ordering::Relaxed)
+            || state.active_tab.lock().unwrap().as_deref() == Some(id)
+        {
+            return false;
+        }
+        if !state
+            .tab_idle_since
+            .lock()
+            .unwrap()
+            .get(id)
+            .is_some_and(|since| since.elapsed() >= idle_window)
+        {
+            return false;
+        }
+        let same_page = state
+            .tabs
+            .lock()
+            .unwrap()
+            .get(id)
+            .is_some_and(|tab| tab.url == expected_url);
+        same_page && !state.hibernated_tabs.lock().unwrap().contains(id)
     };
     if !still_idle() {
         return false;
@@ -3522,11 +3599,14 @@ pub fn start_hibernation_sweeper(app: AppHandle) {
         }
         let available = mem_available_mb();
         let total = mem_total_mb();
-        let idle_window = match (available, total) {
-            (Some(available), Some(total)) => hibernation_idle_window(available, total),
-            _ => std::time::Duration::from_secs(600),
+        let (idle_window, tab_limit, grid_limit) = match (available, total) {
+            (Some(available), Some(total)) => {
+                let (tabs, grids) = hibernation_batch_limits(available, total);
+                (hibernation_idle_window(available, total), tabs, grids)
+            }
+            _ => (std::time::Duration::from_secs(600), 1, 1),
         };
-        let grids = state.grid_manager.hibernate_idle_hidden(idle_window);
+        let grids = state.grid_manager.hibernate_idle_hidden(idle_window, grid_limit);
         if !grids.is_empty() {
             eprintln!(
                 "[hibernation] adaptive memory pressure hibernated grid children {:?}",
@@ -3536,7 +3616,7 @@ pub fn start_hibernation_sweeper(app: AppHandle) {
 
         let active = state.active_tab.lock().unwrap().clone();
         let now = std::time::Instant::now();
-        let victims: Vec<String> = {
+        let mut victims: Vec<(std::time::Instant, String)> = {
             let idle = state.tab_idle_since.lock().unwrap();
             let hibernated = state.hibernated_tabs.lock().unwrap();
             let tabs = state.tabs.lock().unwrap();
@@ -3547,18 +3627,31 @@ pub fn start_hibernation_sweeper(app: AppHandle) {
                         && tabs.contains_key(*id)
                         && now.duration_since(**since) >= idle_window
                 })
-                .map(|(id, _)| id.clone())
+                .map(|(id, since)| (*since, id.clone()))
                 .collect()
         };
-        for id in victims {
-            hibernate_tab(&app, &id, idle_window);
+        // Reclaim the oldest inactive tabs first; cap per sweep to avoid a
+        // massive WebKit process teardown/restart spike.
+        victims.sort_unstable_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        for (_, id) in victims.into_iter().take(tab_limit) {
+            if !state.hibernation_enabled.load(Ordering::Relaxed) {
+                break;
+            }
+            // Recheck pressure after a previous WebView was released; if it
+            // recovered, do not keep applying the earlier critical threshold.
+            let current_window = match (mem_available_mb(), mem_total_mb()) {
+                (Some(available), Some(total)) => hibernation_idle_window(available, total),
+                _ => std::time::Duration::from_secs(600),
+            };
+            hibernate_tab(&app, &id, current_window);
         }
     });
 }
 
 #[cfg(test)]
 mod adaptive_hibernation_tests {
-    use super::hibernation_idle_window;
+    use super::{accepted_hibernation_scroll, hibernation_batch_limits, hibernation_idle_window};
+    use serde_json::json;
     use std::time::Duration;
 
     #[test]
@@ -3573,6 +3666,33 @@ mod adaptive_hibernation_tests {
             Duration::from_secs(120)
         );
         assert_eq!(hibernation_idle_window(700, total), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn sweep_limits_scale_with_pressure_without_unbounded_kills() {
+        let total = 16 * 1024;
+        assert_eq!(hibernation_batch_limits(8 * 1024, total), (1, 1));
+        assert_eq!(hibernation_batch_limits(2 * 1024, total), (2, 1));
+        assert_eq!(hibernation_batch_limits(700, total), (4, 2));
+    }
+
+    #[test]
+    fn unsafe_or_incomplete_snapshots_must_not_destroy_webviews() {
+        assert_eq!(
+            accepted_hibernation_scroll(&json!({"protected":false,"scrollX":4.0,"scrollY":8.0})),
+            Some((4.0, 8.0))
+        );
+        for value in [
+            json!(null),
+            json!({}),
+            json!({"scrollX":0,"scrollY":0}),
+            json!({"protected":true,"scrollX":0,"scrollY":0}),
+            json!({"protected":"false","scrollX":0,"scrollY":0}),
+            json!({"protected":false,"scrollX":"0","scrollY":0}),
+            json!({"protected":false,"scrollX":0}),
+        ] {
+            assert!(accepted_hibernation_scroll(&value).is_none(), "{value}");
+        }
     }
 }
 
