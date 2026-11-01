@@ -3430,7 +3430,11 @@ fn hibernation_batch_limits(available_mb: u64, total_mb: u64) -> (usize, usize) 
 /// Snapshot parsing must fail closed. A missing 'protected' field or non-finite
 /// scroll value is not proof that the page is safe to discard.
 fn accepted_hibernation_scroll(snapshot: &serde_json::Value) -> Option<(f64, f64)> {
-    if snapshot.get("protected").and_then(serde_json::Value::as_bool) != Some(false) {
+    if snapshot
+        .get("protected")
+        .and_then(serde_json::Value::as_bool)
+        != Some(false)
+    {
         return None;
     }
     let x = snapshot.get("scrollX")?.as_f64()?;
@@ -3606,7 +3610,9 @@ pub fn start_hibernation_sweeper(app: AppHandle) {
             }
             _ => (std::time::Duration::from_secs(600), 1, 1),
         };
-        let grids = state.grid_manager.hibernate_idle_hidden(idle_window, grid_limit);
+        let grids = state
+            .grid_manager
+            .hibernate_idle_hidden(idle_window, grid_limit);
         if !grids.is_empty() {
             eprintln!(
                 "[hibernation] adaptive memory pressure hibernated grid children {:?}",
