@@ -30,6 +30,7 @@ pub struct ChildComms {
     writer: Mutex<Option<UnixStream>>,
     pending: Mutex<HashMap<u64, mpsc::Sender<Result<Option<String>, String>>>>,
     seq: AtomicU64,
+    generation: AtomicU64,
     connected: AtomicBool,
 }
 
@@ -39,23 +40,42 @@ impl ChildComms {
             writer: Mutex::new(None),
             pending: Mutex::new(HashMap::new()),
             seq: AtomicU64::new(1),
+            generation: AtomicU64::new(0),
             connected: AtomicBool::new(false),
         }
     }
 
-    fn attach(&self, stream: UnixStream) {
-        *self.writer.lock().unwrap() = Some(stream);
+    /// 每次 UDS 重连分配新的代际，防止旧 reader 迟到的 EOF 清掉新 writer。
+    /// 保持 writer -> pending 的锁序；新连接建立时立即唤醒旧连接请求。
+    fn attach(&self, stream: UnixStream) -> u64 {
+        let mut writer = self.writer.lock().unwrap();
+        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        *writer = Some(stream);
         self.connected.store(true, Ordering::SeqCst);
+        self.fail_pending("子进程连接已更换");
+        generation
     }
 
-    fn detach(&self) {
-        *self.writer.lock().unwrap() = None;
-        self.connected.store(false, Ordering::SeqCst);
-        // 唤醒所有挂起请求（否则调用方只能等超时）
+    fn fail_pending(&self, reason: &str) {
         let mut pending = self.pending.lock().unwrap();
         for (_, tx) in pending.drain() {
-            let _ = tx.send(Err("子进程连接断开".to_string()));
+            let _ = tx.send(Err(reason.to_owned()));
         }
+    }
+
+    fn detach_if_current(&self, generation: u64) {
+        let mut writer = self.writer.lock().unwrap();
+        if self.generation.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        *writer = None;
+        self.connected.store(false, Ordering::SeqCst);
+        self.fail_pending("子进程连接断开");
+    }
+
+    fn is_current(&self, generation: u64) -> bool {
+        self.connected.load(Ordering::SeqCst)
+            && self.generation.load(Ordering::SeqCst) == generation
     }
 
     fn is_connected(&self) -> bool {
@@ -196,7 +216,9 @@ impl GridProcessManager {
     /// 确保该 index 的 UDS listener 已绑定且 accept 循环线程在跑（幂等）。
     /// 返回该 index 的共享 comms。
     fn ensure_listener(&self, index: u32) -> Result<Arc<ChildComms>, String> {
-        if let Some(c) = self.listeners.lock().unwrap().get(&index) {
+        // 查找/绑定/登记必须原子化；并发 Grid 请求不能各自绑定同一 socket。
+        let mut listeners = self.listeners.lock().unwrap();
+        if let Some(c) = listeners.get(&index) {
             return Ok(c.clone());
         }
         let dir = Self::socket_dir();
@@ -206,7 +228,8 @@ impl GridProcessManager {
         let listener = UnixListener::bind(&path)
             .map_err(|e| format!("绑定 UDS {} 失败: {e}", path.display()))?;
         let comms = Arc::new(ChildComms::new());
-        self.listeners.lock().unwrap().insert(index, comms.clone());
+        listeners.insert(index, comms.clone());
+        drop(listeners);
 
         // accept 循环线程：子进程（含崩溃重启后的新实例）连接到同一 listener。
         let comms_accept = comms.clone();
@@ -222,14 +245,24 @@ impl GridProcessManager {
                             continue;
                         }
                     };
-                    comms_accept.attach(stream);
+                    // 子进程不读时也必须限制 writer 阻塞时长，避免请求堆积。
+                    if let Err(e) = stream.set_write_timeout(Some(std::time::Duration::from_secs(2))) {
+                        eprintln!("[grid-manager] grid-child-{} UDS 写超时配置失败: {e}", index);
+                        continue;
+                    }
+                    let generation = comms_accept.attach(stream);
                     // 每连接一个 reader 线程：Response 按 seq 路由，Event 转发 app.emit。
                     let comms_reader = comms_accept.clone();
                     let app_reader = app.clone();
                     std::thread::spawn(move || {
                         let mut r = BufReader::new(reader);
                         loop {
-                            match crate::grid_ipc::read_wire(&mut r) {
+                            let frame = crate::grid_ipc::read_wire(&mut r);
+                            // 旧连接仍有缓冲帧时，不允许覆盖新连接的响应/焦点状态。
+                            if !comms_reader.is_current(generation) {
+                                break;
+                            }
+                            match frame {
                                 Ok(Some(Wire::Response { seq, ok, err, data })) => {
                                     let tx = comms_reader.pending.lock().unwrap().remove(&seq);
                                     if let Some(tx) = tx {
@@ -302,7 +335,7 @@ impl GridProcessManager {
                                 }
                             }
                         }
-                        comms_reader.detach();
+                        comms_reader.detach_if_current(generation);
                     });
                 }
                 Err(e) => {
@@ -434,6 +467,8 @@ impl GridProcessManager {
     pub fn request(&self, index: u32, cmd: GridCmd, timeout_ms: u64) -> Result<(), String> {
         match self.request_once(index, &cmd, timeout_ms) {
             Ok(()) => Ok(()),
+            // 超时不代表命令未执行；同一连接重放可能重复创建/导航，且把等待翻倍。
+            Err(first) if first.contains("超时") => Err(first),
             Err(first) => {
                 eprintln!(
                     "[grid-manager] grid-{} 请求失败({})，等重连重试",
@@ -491,17 +526,20 @@ impl GridProcessManager {
     ) -> Result<Option<String>, String> {
         let seq = comms.seq.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = mpsc::channel();
-        comms.pending.lock().unwrap().insert(seq, tx);
         let write_res = {
             let mut guard = comms.writer.lock().unwrap();
             match guard.as_mut() {
-                Some(w) => crate::grid_ipc::write_wire(
-                    w,
-                    &Wire::Request {
-                        seq,
-                        cmd: cmd.clone(),
-                    },
-                ),
+                Some(w) => {
+                    // 与 attach 的 writer -> pending 锁序一致：请求只登记到当前连接。
+                    comms.pending.lock().unwrap().insert(seq, tx);
+                    crate::grid_ipc::write_wire(
+                        w,
+                        &Wire::Request {
+                            seq,
+                            cmd: cmd.clone(),
+                        },
+                    )
+                },
                 None => Err(std::io::Error::new(
                     std::io::ErrorKind::NotConnected,
                     "未连接",
@@ -1184,5 +1222,41 @@ mod grid_process_termination_tests {
         terminate_grid_process_tree(&mut child);
         assert!(started.elapsed() < Duration::from_secs(2));
         assert!(child.try_wait().unwrap().is_some());
+    }
+}
+
+#[cfg(test)]
+mod grid_connection_generation_tests {
+    use super::*;
+
+    #[test]
+    fn late_old_reader_must_not_disconnect_new_socket_or_cancel_new_requests() {
+        let comms = ChildComms::new();
+        let (old_socket, _old_peer) = UnixStream::pair().unwrap();
+        let old_generation = comms.attach(old_socket);
+        assert!(comms.is_current(old_generation));
+
+        let (old_tx, old_rx) = mpsc::channel();
+        comms.pending.lock().unwrap().insert(1, old_tx);
+        let (new_socket, _new_peer) = UnixStream::pair().unwrap();
+        let new_generation = comms.attach(new_socket);
+        assert_ne!(old_generation, new_generation);
+        assert!(matches!(old_rx.try_recv(), Ok(Err(_))));
+
+        // The old reader exits after the new child has connected.
+        comms.detach_if_current(old_generation);
+        assert!(comms.is_current(new_generation));
+        assert!(comms.writer.lock().unwrap().is_some());
+
+        let (new_tx, new_rx) = mpsc::channel();
+        comms.pending.lock().unwrap().insert(2, new_tx);
+        comms.detach_if_current(old_generation);
+        assert!(matches!(new_rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+
+        // Only the active reader may close the socket and fail its requests.
+        comms.detach_if_current(new_generation);
+        assert!(!comms.is_connected());
+        assert!(comms.writer.lock().unwrap().is_none());
+        assert!(matches!(new_rx.try_recv(), Ok(Err(_))));
     }
 }
