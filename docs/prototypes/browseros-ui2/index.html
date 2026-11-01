@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="BrowserOS UI 2.0 · Chrome navigation × Apple refinement × AI-native workspaces. Standalone, interactive prototype; not connected to native runtime.">
+  <title>BrowserOS UI 2.0 · A+ Design Prototype</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body data-theme="light">
+<div class="outer">
+  <div class="shell" id="app">
+    <header class="chrome-tabs">
+      <div class="window-mark" title="BrowserOS UI 2.0"><span class="brand-logo">B</span>BrowserOS</div>
+      <div id="tablist" class="tablist" role="tablist" aria-label="工作区页签"></div>
+      <button class="iconbtn" data-action="new-tab" aria-label="新建页签" title="新建页签">＋</button>
+      <button class="iconbtn" data-action="theme" aria-label="切换明暗主题" title="切换明暗主题">◐</button>
+    </header>
+    <div class="chrome-toolbar">
+      <nav class="main-switch" id="main-switch" aria-label="一级功能导航">
+        <button data-route="home" title="主页">⌂ <span>主页</span></button>
+        <button data-route="browser" title="浏览">◎ <span>浏览</span></button>
+        <button data-route="files" title="文件">▤ <span>文件</span></button>
+        <button data-route="tools" title="工具">◈ <span>工具</span></button>
+      </nav>
+      <div class="nav-actions" aria-label="浏览器导航">
+        <button class="iconbtn" data-action="back" title="返回" aria-label="返回">←</button>
+        <button class="iconbtn" data-action="forward" title="前进" aria-label="前进">→</button>
+        <button class="iconbtn" data-action="refresh" title="刷新演示页面" aria-label="刷新">↻</button>
+      </div>
+      <div class="omnibox" id="omnibox">
+        <span class="dot green" title="本地演示"></span>
+        <input id="address" autocomplete="off" spellcheck="false" aria-label="智能地址栏" aria-expanded="false" role="combobox" aria-controls="address-suggest" placeholder="搜索、输入网址或打开本地工作区">
+        <span class="tiny muted" id="address-hint"><kbd>Ctrl</kbd> <kbd>L</kbd></span>
+        <div class="address-suggest" id="address-suggest" role="listbox" hidden></div>
+      </div>
+      <button class="iconbtn" data-action="bookmarks" title="切换收藏栏" aria-label="切换收藏栏">☆</button>
+      <button class="iconbtn" data-route="settings" title="设置" aria-label="设置">⚙</button>
+      <button class="iconbtn" data-route="tools" title="工具中心" aria-label="工具中心">⋯</button>
+    </div>
+    <nav class="bookmarks" id="bookmarks" aria-label="收藏栏">
+      <button class="bookmark" data-route="browser">▤ &nbsp;产品规范</button>
+      <button class="bookmark" data-route="studio">▤ &nbsp;browser-os</button>
+      <button class="bookmark" data-route="database">▤ &nbsp;数据库</button>
+      <button class="bookmark" data-route="git">▤ &nbsp;Git 工作区</button>
+      <button class="bookmark" data-route="grid">◎ &nbsp;宫格对比</button>
+      <button class="bookmark" data-route="agents">✳ &nbsp;Agent Center</button>
+      <span class="spacer"></span>
+      <span class="badge">设计演示 · 不访问外部系统</span>
+    </nav>
+    <main class="content" id="content" aria-live="off"></main>
+    <footer class="app-status" role="status">
+      <span class="inline"><span class="dot green"></span>UI 原型</span>
+      <span id="status-text" class="truncate">就绪 · 浏览器与工作台设计演示</span>
+      <span class="spacer"></span>
+      <span id="status-workspace">个人工作区</span>
+      <span>UI 2.0 · 2026-11-01</span>
+    </footer>
+  </div>
+</div>
+<div id="modal-mount"></div>
+<script src="./app.js" defer></script>
+</body>
+</html>
