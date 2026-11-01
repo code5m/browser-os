@@ -52,6 +52,12 @@ pub trait AgentTool: Send + Sync {
         false
     }
 
+    /// Host-backed tools require passing the signed proof into the SAME call,
+    /// not merely validating before calling a detached unbound function.
+    fn requires_authorized_call(&self) -> bool {
+        false
+    }
+
     /// Non-read tools MUST implement this, and forward idempotency_key to the
     /// external operation. A legacy call method may never perform side effects.
     fn call_authorized<'a>(&'a self, _call: AuthorizedCall) -> ToolFuture<'a> {
@@ -81,6 +87,16 @@ impl ToolRegistry {
         }
         tools.insert(name.to_owned(), tool);
         Ok(())
+    }
+
+    /// Only a trusted host may advertise an already registered read-only
+    /// tool to an experimental model runtime.
+    pub fn is_registered_read_only(&self, name: &str) -> bool {
+        self.tools
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(name)
+            .is_some_and(|tool| tool.effect() == ToolEffect::ReadOnly)
     }
 
     /// Proposals are created using the registered tool effect, never a
@@ -181,7 +197,7 @@ impl ToolRegistry {
                 &permit.operation.tool_name,
             )?;
         }
-        let future = if effectful {
+        let future = if effectful || tool.requires_authorized_call() {
             tool.call_authorized(AuthorizedCall {
                 arguments: permit.operation.arguments,
                 binding: binding.cloned().ok_or(FoundationError::PermissionDenied)?,

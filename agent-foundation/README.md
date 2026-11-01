@@ -69,3 +69,7 @@ Cargo 默认 feature 不启用 SQLite、Rig、RMCP 或 ACP。可通过 `--featur
 - [Dependency Upgrade Guide](DEPENDENCY-UPGRADE-GUIDE-20261101.md) — Cargo/POM 对照与升级安全门禁
 
 此目录代码仍属于独立实验。任何正式合并都必须另经 BrowserOS 业务 Owner 和 GUI/Full Validation 审核。
+
+## 2026-11-01 Tauri Host 集成实验
+
+已新增主窗口（默认禁用）的设置/只读 Public API/离线双引擎测评接线，见 [最新完整核验与限制](HOST-INTEGRATION-VERIFY-20261101.md)。该接线不能替代主程序真实模型会话与已安装 GUI 验收。

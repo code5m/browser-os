@@ -9,13 +9,20 @@
 ))]
 pub mod adapters;
 pub mod approval;
+pub mod benchmark;
 pub mod context;
 #[cfg(feature = "durable-sqlite")]
 pub mod durable;
 pub mod engine;
 pub mod event;
+pub mod experiment;
 pub mod model;
 pub mod protocol;
+pub mod public_api;
+#[cfg(feature = "experimental-rig-run")]
+pub mod rig_driver;
+#[cfg(feature = "experimental-rig-run")]
+pub mod rig_run;
 pub mod task;
 pub mod tool;
 

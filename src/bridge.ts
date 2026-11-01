@@ -117,8 +117,56 @@ export interface M0Config {
   report_dir: string | null;
 }
 
+export type AgentRuntimeMode = "native" | "rig" | "canary";
+export interface AgentRuntimeExperimentConfig {
+  revision: number;
+  enabled: boolean;
+  mode: AgentRuntimeMode;
+  canary_percent: number;
+  emergency_fallback_to_native: boolean;
+  benchmark_enabled: boolean;
+  max_turns: number;
+}
+export interface AgentRuntimeBenchmarkSample {
+  task_id: string;
+  engine: "native_turn" | "rig_agent_run";
+  total_duration_ms: number;
+  model_duration_ms: number;
+  total_duration_us: number;
+  model_duration_us: number;
+  first_token_ms: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  tool_approval_wait_ms: number | null;
+  tool_calls: number;
+  completed: boolean;
+  error_code: string | null;
+}
+export interface AgentRuntimeBenchmarkReport {
+  kind: string;
+  repeat_count: number;
+  suite_id: string;
+  samples: AgentRuntimeBenchmarkSample[];
+  disclaimer: string;
+}
+
 // 类型化 IPC 封装：前端永远只传“意图”，不直接碰 OS / 凭据
 export const bridge = {
+  agentRuntimeGetConfig: () =>
+    invoke<AgentRuntimeExperimentConfig>("agent_runtime_get_config"),
+  agentRuntimeSetConfig: (config: AgentRuntimeExperimentConfig, expectedRevision: number) =>
+    invoke<AgentRuntimeExperimentConfig>("agent_runtime_set_config", {
+      config, expectedRevision, confirmed: true
+    }),
+  agentRuntimeReadTool: (command: string, args: Record<string, unknown>) =>
+    invoke<unknown>("agent_runtime_read_tool", { command, args, confirmed: true }),
+  agentRuntimeBenchmark: (repeats: number) =>
+    invoke<AgentRuntimeBenchmarkReport>("agent_runtime_benchmark", { repeats }),
+  agentRuntimeRunFixture: (fixtureId: string) =>
+    invoke<{fixture_id:string;sample:AgentRuntimeBenchmarkSample;output:string}>(
+      "agent_runtime_run_fixture", {fixtureId}
+    ),
+
   dbStudioCancel: (sessionId: string) => invoke<any>("db_studio_cancel", { sessionId }),
   dbStudioClose: (sessionId: string) => invoke<any>("db_studio_close", { sessionId }),
   dbStudioCall: (sessionId: string, request: Record<string, unknown>) => invoke<any>("db_studio_call", { sessionId, request }),
