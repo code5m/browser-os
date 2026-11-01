@@ -99,7 +99,7 @@ def parse_vite_chunks(output: str) -> tuple[list[dict], bool]:
     return chunks, VITE_LIMIT_WARNING in output
 
 
-def collect(root: Path, skip_build: bool = False, skip_cargo_check: bool = False) -> dict:
+def collect(root: Path, skip_build: bool = False) -> dict:
     metrics: dict = {}
     if not skip_build:
         code, output, seconds = run(["npm", "run", "build"], root)
@@ -119,19 +119,13 @@ def collect(root: Path, skip_build: bool = False, skip_cargo_check: bool = False
     dist = root / "dist"
     metrics["dist"] = collect_dist(dist) if dist.is_dir() else None
 
-    # Fast CI never compiles native Rust, even while collecting frontend
-    # budgets. A missing warning metric means NOT CHECKED, never zero warnings.
-    if skip_cargo_check:
-        metrics["cargo_check_ms"] = None
-        metrics["cargo_warnings"] = None
-    else:
-        # cargo check: only read the summary, do not sum warning lines.
-        _, cargo_output, cargo_seconds = run(
-            ["cargo", "check", "--manifest-path", "src-tauri/Cargo.toml", "--locked"], root
-        )
-        metrics["cargo_check_ms"] = int(cargo_seconds * 1000)
-        warnings = [int(n) for n in CARGO_WARNING_RE.findall(cargo_output)]
-        metrics["cargo_warnings"] = max(warnings) if warnings else 0
+    # cargo check：只看 warning 汇总，不把重复的人类可读 warning 行相加。
+    _, cargo_output, cargo_seconds = run(
+        ["cargo", "check", "--manifest-path", "src-tauri/Cargo.toml", "--locked"], root
+    )
+    metrics["cargo_check_ms"] = int(cargo_seconds * 1000)
+    warnings = [int(n) for n in CARGO_WARNING_RE.findall(cargo_output)]
+    metrics["cargo_warnings"] = max(warnings) if warnings else 0
 
     _, fmt_proc_out, _ = run(
         ["cargo", "fmt", "--manifest-path", "src-tauri/Cargo.toml", "--all", "--check"], root
@@ -215,12 +209,6 @@ dist/assets/index-Dt_h_hIi.js          83.16 kB │ gzip:  30.20 kB
     if not warn_up.get("warnings_increased"):
         print("self-test: warning regression not detected", file=sys.stderr)
         return 1
-    native_unmeasured = compare(
-        {"dist": {"total_bytes": 1000}, "cargo_warnings": None}, baseline
-    )
-    if "warnings_increased" in native_unmeasured or "cargo_warnings" in native_unmeasured["deltas"]:
-        print("self-test: missing native evidence was reported as PASS", file=sys.stderr)
-        return 1
 
     print("SELF_TEST_RESULT=ALL_PASS")
     return 0
@@ -237,10 +225,6 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-build", action="store_true", help="reuse existing dist/ instead of rebuilding"
     )
     parser.add_argument(
-        "--skip-cargo-check", action="store_true",
-        help="opt-in fast CI: no cargo compile and native warning budget NOT CHECKED"
-    )
-    parser.add_argument(
         "--root", type=Path, default=Path(__file__).resolve().parent.parent, help="repository root"
     )
     args = parser.parse_args(argv)
@@ -253,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
     root = args.root.resolve()
     if args.compare:
         baseline = json.loads(args.compare.read_text(encoding="utf-8"))
-        current = collect(root, skip_build=args.skip_build, skip_cargo_check=args.skip_cargo_check)
+        current = collect(root, skip_build=args.skip_build)
         verdict = compare(current, baseline)
         if args.approved_editor_budget:
             code, output, _ = run(["node", "scripts/report-coding-editor-budget.mjs", "--verify-dist", "--enforce-budget"], root)
@@ -267,7 +251,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(verdict, ensure_ascii=False, indent=2))
         return 1 if (verdict["exceeds_growth_limit"] or verdict.get("warnings_increased")) else 0
 
-    metrics = collect(root, skip_build=args.skip_build, skip_cargo_check=args.skip_cargo_check)
+    metrics = collect(root, skip_build=args.skip_build)
     if metrics.get("error"):
         print(metrics["error"], file=sys.stderr)
         return 1

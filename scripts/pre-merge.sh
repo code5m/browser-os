@@ -263,15 +263,21 @@ run_pre_merge() {
   node "$SCRIPT_DIR/coding-editor-budget.mjs" --self-test || pm_fail "coding editor budget negative fixtures"
   baseline_file="$(ls -1 "$ROOT"/logs/m0-build-metrics/build-metrics-*.json 2>/dev/null | sort | head -1 || true)"
   if [ -n "$baseline_file" ]; then
-    # Reuse the current dist. Fast CI must not silently invoke a nested
-    # cargo check via measure-build-metrics.py; native warnings are SKIPPED.
+    # In fast CI do not invoke the frozen historical metrics collector:
+    # it has an unconditional nested cargo check and is immutable for M0
+    # baseline integrity. Preserve strict editor/core/total audit here;
+    # full M0/master size checks are independently mandatory in the CI job.
     local metrics_output
-    local -a native_metric_flags=()
     if [[ "${PREMERGE_SKIP_NATIVE_COMPILE:-0}" == "1" ]]; then
-      native_metric_flags+=(--skip-cargo-check)
-      pm_log "Cargo warning regression: SKIPPED (no native evidence in fast mode)"
-    fi
-    if metrics_output="$(python3 "$SCRIPT_DIR/measure-build-metrics.py" --compare "$baseline_file" --skip-build --approved-editor-budget "${native_metric_flags[@]}" 2>&1)"; then
+      pm_log "Cargo warning regression: SKIPPED (native not compiled in fast mode)"
+      if metrics_output="$(node "$SCRIPT_DIR/report-coding-editor-budget.mjs" --verify-dist --enforce-budget 2>&1)"; then
+        printf '%s\n' "$metrics_output"
+        pm_log "approved editor/core/total budgets PASS (native warning count NOT CHECKED; historical comparison is separate)"
+      else
+        printf '%s\n' "$metrics_output"
+        pm_fail "approved editor/core/total budget audit"
+      fi
+    elif metrics_output="$(python3 "$SCRIPT_DIR/measure-build-metrics.py" --compare "$baseline_file" --skip-build --approved-editor-budget 2>&1)"; then
       printf '%s\n' "$metrics_output"
       pm_log "approved editor/core/total budgets PASS; historical 45% result retained separately (${baseline_file#"$ROOT"/})"
     else
