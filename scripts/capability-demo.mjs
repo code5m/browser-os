@@ -190,6 +190,7 @@ async function cmdRuntimeDemo(M, id) {
     runtime: rt,
     registry: M.contributionRegistry,
     definitions: M.CAPABILITY_DEFINITIONS,
+    permit: () => true,
     loaders: { bookmark: () => M.registerBookmarkContributions() },
   });
   const allSlots = Object.values(M.CONTRIBUTION_SLOTS);

@@ -98,7 +98,7 @@ export async function requestAdd(target: HotPlugTarget, req: AddRequest): Promis
   }
 
   // 2) 权限
-  if (req.permit && !req.permit(m)) throw new HotPlugError("PERMISSION_DENIED", `权限裁决未通过: ${m.id}`);
+  if (!req.permit?.(m)) throw new HotPlugError("PERMISSION_DENIED", `缺少授权或权限裁决未通过: ${m.id}`);
 
   // 3) register（AVAILABLE → REGISTERED → ENABLED）
   assertTransition("AVAILABLE", "REGISTERED");
@@ -111,9 +111,9 @@ export async function requestAdd(target: HotPlugTarget, req: AddRequest): Promis
     target.setState(m.id, "ENABLED");
 
     // 4) contributions + loader
+    rolledBack.push("contributions"); // loader may partially register before rejecting
     await req.load(m.id);
     target.addContributions(m);
-    rolledBack.push("contributions");
 
     // 5) 若 policy=auto 则直接激活
     const notes = [

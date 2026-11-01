@@ -21,6 +21,8 @@ export interface OrchestratorDeps {
   loaders?: Record<string, () => void | Promise<void>>;
   onDeactivate?: (id: string) => void | Promise<void>;
   hasActiveWork?: (id: string) => boolean;
+  /** Mandatory external grant decision for runtime installation (default deny). */
+  permit?: (manifest: CapabilityManifestV1) => boolean;
 }
 
 const ALL_SLOTS: string[] = Object.values(CONTRIBUTION_SLOTS);
@@ -104,13 +106,8 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       runtime.unregister(id);
       states.delete(id);
     },
-    addContributions(manifest) {
-      const loader = deps.loaders?.[manifest.id];
-      if (!loader) throw new Error(`未提供加载器: ${manifest.id}`);
-      const maybe = loader();
-      if (maybe && typeof (maybe as Promise<void>).then === "function") {
-        void (maybe as Promise<void>);
-      }
+    addContributions(_manifest) {
+      // requestAdd already awaited the sole loader. Never run it again here.
     },
     removeContributions(id) {
       for (const slot of ALL_SLOTS) {
@@ -130,7 +127,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       if (!def?.v1) throw new Error(`该能力缺少 Building Block Contract v1: ${id}`);
       const load = deps.loaders?.[id];
       if (!load) throw new Error(`未提供加载器: ${id}`);
-      return requestAdd(target, { manifest: def.v1, load });
+      return requestAdd(target, { manifest: def.v1, load, permit: deps.permit ?? (() => false) });
     },
     async remove(id, force) {
       return requestRemove(target, { id, force });

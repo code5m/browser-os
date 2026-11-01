@@ -253,7 +253,8 @@ async function main() {
       runtime: rt,
       registry: contributionRegistry,
       definitions: CAPABILITY_DEFINITIONS,
-      loaders: { bookmark: () => M.registerBookmarkContributions() },
+      permit: () => true,
+    loaders: { bookmark: () => M.registerBookmarkContributions() },
     });
 
     // register
@@ -325,7 +326,8 @@ async function main() {
       runtime: rt,
       registry: contributionRegistry,
       definitions: defs,
-      loaders: { bookmark: () => M.registerBookmarkContributions(), reader: () => {} },
+      permit: () => true,
+    loaders: { bookmark: () => M.registerBookmarkContributions(), reader: () => {} },
     });
     await orch.add("bookmark");
     await orch.add("reader");
