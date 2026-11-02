@@ -50,13 +50,13 @@ async function send() {
   } catch (reason) { error.value = String(reason); }
   finally { busy.value = false; }
 }
-function reset() { if (!busy.value) { lines.value = []; error.value = ''; } }
+function newConversation() { if (!busy.value) { lines.value = []; error.value = ''; } }
 onMounted(refreshModels);
 </script>
 <template>
   <section class="plain-chat" aria-label="普通聊天，不需要项目路径">
     <header><strong>普通聊天</strong><span>无需打开项目 · 不会访问文件或执行工具</span></header>
-    <div class="toolbar"><select v-model="modelId" :disabled="busy || loading" aria-label="聊天模型"><option value="" disabled>选择聊天模型</option><option v-for="model in models" :key="model.id" :value="model.id">{{ model.name }} · {{ model.model }}</option></select><button :disabled="busy || loading" @click="refreshModels">刷新模型</button><button :disabled="busy" @click="reset">新建会话</button></div>
+    <div class="toolbar"><select v-model="modelId" :disabled="busy || loading" aria-label="聊天模型"><option value="" disabled>选择聊天模型</option><option v-for="model in models" :key="model.id" :value="model.id">{{ model.name }} · {{ model.model }}</option></select><button :disabled="busy || loading" @click="refreshModels">刷新模型</button><button :disabled="busy" @click="newConversation">新建会话</button></div>
     <main class="history" aria-live="polite"><p v-if="!lines.length" class="hint">选择一个已配置模型即可开始聊天，无需输入项目地址。编码和文件操作请切换到「编码工作区」。</p><article v-for="(line,index) in lines" :key="index" :class="line.role"><strong>{{line.role==='user'?'你':'智能体'}}</strong><p>{{line.content}}</p></article></main>
     <p v-if="error" class="error" role="alert">{{error}}</p>
     <form class="composer" @submit.prevent="send"><textarea v-model="prompt" :disabled="busy" maxlength="12000" rows="3" placeholder="输入想讨论的问题…（无需项目路径）" aria-label="聊天消息" @keydown.ctrl.enter.prevent="send"></textarea><button type="submit" :disabled="!canSend">{{busy?'回复中…':'发送'}}</button></form>
