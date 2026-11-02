@@ -205,6 +205,32 @@ impl TaskRegistry {
         Ok(record)
     }
 
+    /// Retire a completed/cancelled in-memory execution to avoid leaking task
+    /// records in the global production host. Durable tasks must never be pruned
+    /// from the local map without a matching committed store transaction.
+    pub fn retire_terminal(&self, id: Uuid) -> Result<()> {
+        #[cfg(feature = "durable-sqlite")]
+        if self.durable.is_some() {
+            return Err(FoundationError::InvalidTransition);
+        }
+        let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        let task = tasks.get(&id).ok_or(FoundationError::NotFound)?;
+        if !task.status.is_terminal() {
+            return Err(FoundationError::InvalidTransition);
+        }
+        tasks.remove(&id);
+        drop(tasks);
+        self.signals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&id);
+        self.execution_leases
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&id);
+        Ok(())
+    }
+
     pub fn get(&self, id: Uuid) -> Result<TaskRecord> {
         self.tasks
             .lock()
