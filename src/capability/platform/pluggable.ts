@@ -109,8 +109,8 @@ export function createPluggableRuntime(options: PluggableRuntimeOptions): Plugga
   }
 
   function activateAsync(): Promise<void> {
-    if (active) return Promise.resolve()
     if (activationPromise) return activationPromise
+    if (active && assembly.activationOrder.every(id => runtime.get(id)?.enabled && runtime.get(id)?.state === 'ACTIVE')) return Promise.resolve()
     activationPromise = (async () => {
       const started: string[] = []
       try {
@@ -125,6 +125,9 @@ export function createPluggableRuntime(options: PluggableRuntimeOptions): Plugga
         }
         for (const id of assembly.activationOrder) runtime.resolve(id)
         for (const id of assembly.activationOrder) {
+          const existing = runtime.get(id)
+          if (existing?.state === 'ACTIVE' && existing.enabled) continue
+          if (existing && !existing.enabled) runtime.enable(id)
           events.emit({ type: 'capability.activating', capabilityId: id, at: Date.now() })
           try {
             await runtime.activateAsync(id)

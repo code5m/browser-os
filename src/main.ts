@@ -81,7 +81,11 @@ try {
 }
 }
 
-void bootstrapCapabilityRuntimeAsync()
+// Publish the runtime gate synchronously, before Vue components read capability state.
+// Never wait for slow async Owner hooks before the first paint.
+const capabilityBootstrap = bootstrapCapabilityRuntimeAsync();
+mountApp();
+signalFirstPaintReady();
+void capabilityBootstrap
   .then(boot => bridge.debugLog(`[capability] async bootstrap activated=${boot.activated} error=${boot.error ?? "none"}`))
-  .catch(error => bridge.debugLog(`[capability] async bootstrap failed: ${String(error)}`))
-  .finally(() => { mountApp(); signalFirstPaintReady() });
+  .catch(error => bridge.debugLog(`[capability] async bootstrap failed: ${String(error)}`));

@@ -9,6 +9,10 @@ const ROOT=join(dirname(fileURLToPath(import.meta.url)),'..')
 const registryFile=join(ROOT,'docs/architecture/native-boundary/native-commands.yaml')
 const debtFile=join(ROOT,'docs/architecture/native-boundary/native-permission-debt-baseline.json')
 const reportFile=join(ROOT,'docs/architecture/native-boundary/NATIVE_OWNER_EFFECT_AUDIT_20261102.md')
+const mainCapFile=join(ROOT,'src-tauri/capabilities/default.json')
+const remoteCapFile=join(ROOT,'src-tauri/capabilities/browser-remote.json')
+const mainAllowFile=join(ROOT,'src-tauri/permissions/default-commands.toml')
+const remoteAllowFile=join(ROOT,'src-tauri/permissions/remote-collect.toml')
 function entries(yaml){
   const commands=[];let c=null
   for(const line of yaml.split(/\r?\n/)){
@@ -52,10 +56,23 @@ if(args.includes('--self-test')){
   const commands=entries(readFileSync(registryFile,'utf8'))
   const debt=JSON.parse(readFileSync(debtFile,'utf8')).unverified_permission_commands
   const errors=validate(commands,debt)
+  // Verify actual installed Tauri capability scope, not registry paperwork alone.
+  const local=JSON.parse(readFileSync(mainCapFile,'utf8'))
+  const remote=JSON.parse(readFileSync(remoteCapFile,'utf8'))
+  const localAllow=new Set([...readFileSync(mainAllowFile,'utf8').matchAll(/"([a-z][a-z0-9_]+)"/g)].map(match=>match[1]))
+  const remoteAllow=new Set([...readFileSync(remoteAllowFile,'utf8').matchAll(/"([a-z][a-z0-9_]+)"/g)].map(match=>match[1]))
+  if(!local.windows?.includes('main') || local.remote || !local.permissions?.includes('default-commands') || local.webviews) errors.push('Native main capability is not local main-only')
+  if(!remote.remote || !remote.permissions?.includes('remote-collect') || remote.permissions?.includes('default-commands')) errors.push('Remote webview must not have main native command set')
+  for(const command of debt) {
+    if(!localAllow.has(command)) errors.push(`${command}: missing local native allowlist`)
+    // These two telemetry reports are already intentionally exposed as remote-collect
+    // and have per-origin native invocation policy. All other legacy commands fail-closed.
+    if(remoteAllow.has(command) && !['report_resources','report_title'].includes(command)) errors.push(`${command}: unreviewed legacy permission must not be available to remote page`)
+  }
   if(errors.length){console.error(errors.join('\n'));process.exit(1)}
   const body=markdown(commands,debt)
   if(args.includes('--generate'))writeFileSync(reportFile,body)
   else if(args.includes('--check')){if(readFileSync(reportFile,'utf8')!==body){console.error('NATIVE_OWNER_EFFECT_AUDIT_DRIFT');process.exit(1)}}
   else throw Error('Usage --generate | --check | --self-test')
-  console.log(`NATIVE_OWNER_EFFECT_AUDIT=PASS commands=${commands.length} open_debt=${commands.filter(c=>c.permission==='-').length}`)
+  console.log(`NATIVE_OWNER_EFFECT_AUDIT=PASS commands=${commands.length} open_debt=${commands.filter(c=>c.permission==='-').length} main_only_debt_allowlist=${debt.length}/${debt.length}`)
 }

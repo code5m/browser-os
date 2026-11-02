@@ -367,6 +367,53 @@ async function runTests() {
       && receipt.ownerCleanup && rt.get('bookmark').state === 'READY' && !rt.get('bookmark').enabled
   })
 
+  await ta('RT-28', '顺序重复 release 不得再次触发 Owner destroy', async () => {
+    let calls = 0
+    const rt = createCapabilityRuntime()
+    rt.register(cap({ lifecycle: { ...cap().lifecycle, onDestroy: async () => { calls++ } } }))
+    rt.resolve('bookmark'); rt.activate('bookmark')
+    const first = await rt.releaseAsync('bookmark')
+    const again = await rt.releaseAsync('bookmark')
+    return calls === 1 && first.ownerCleanup && again.ownerCleanup && !rt.get('bookmark').enabled
+  })
+  await ta('RT-29', '依赖者阻止释放时不调用任何 Owner hook', async () => {
+    let released = 0
+    const rt = createCapabilityRuntime()
+    rt.register(cap({ id: 'bookmark', lifecycle: { ...cap().lifecycle, onDestroy: async () => { released++ } } }))
+    rt.register(cap({ id: 'dependent', dependsOn: ['bookmark'] }))
+    rt.resolve('bookmark'); rt.resolve('dependent'); rt.activate('bookmark')
+    try { await rt.releaseAsync('bookmark') } catch(error) {
+      return error.code === 'DEPENDENT_PRESENT' && released === 0 && rt.get('bookmark').state === 'ACTIVE'
+    }
+    return false
+  })
+  await ta('RT-30', '释放后显式 enable 开启新资源生命周期', async () => {
+    let calls = 0
+    const rt = createCapabilityRuntime()
+    rt.register(cap({ lifecycle: { ...cap().lifecycle, onDestroy: async () => { calls++ } } }))
+    rt.resolve('bookmark'); rt.activate('bookmark')
+    await rt.releaseAsync('bookmark')
+    rt.enable('bookmark'); await rt.activateAsync('bookmark')
+    await rt.releaseAsync('bookmark')
+    return calls === 2 && !rt.get('bookmark').enabled
+  })
+
+  await ta('RT-31', '关闭中禁止启动新的依赖者导致 Owner 清理后禁用失败', async () => {
+    let finish, started
+    const began = new Promise(resolve => { started = resolve })
+    const rt = createCapabilityRuntime()
+    rt.register(cap({ lifecycle: { ...cap().lifecycle, onDestroy: () => {
+      started(); return new Promise(resolve => { finish = resolve })
+    } } }))
+    rt.resolve('bookmark'); rt.activate('bookmark')
+    const closing = rt.releaseAsync('bookmark')
+    await began
+    const blocked = expectThrow(() => rt.register(cap({ id:'dependent',dependsOn:['bookmark'] })), 'TRANSITION_IN_PROGRESS')
+    finish()
+    await closing
+    return blocked && !rt.get('bookmark').enabled
+  })
+
   return results
 }
 

@@ -21,3 +21,6 @@ pub mod local_provider;
 
 // Cross-module native consumers use this Owner-reviewed narrow facade.
 pub(crate) mod public_api;
+
+/// Production chat/Coding task lifecycle Owner backed by Foundation TaskRegistry.
+pub(crate) mod execution_owner;

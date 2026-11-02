@@ -23,9 +23,19 @@ static PROVIDER_LIMITERS: OnceLock<Mutex<HashMap<String, Weak<ProviderSemaphore>
 
 // Only the trusted main UI may cancel an opaque, per-request chat id.
 // This registry contains cancellation signals, never chat content/credentials.
-static CHAT_CANCELS: OnceLock<Mutex<HashMap<uuid::Uuid, Arc<AtomicBool>>>> = OnceLock::new();
-fn chat_cancel_map() -> &'static Mutex<HashMap<uuid::Uuid, Arc<AtomicBool>>> {
+struct ChatCancellationSlot {
+    cancelled: Arc<AtomicBool>,
+    created: std::time::Instant,
+    registered: bool,
+}
+static CHAT_CANCELS: OnceLock<Mutex<HashMap<uuid::Uuid, ChatCancellationSlot>>> = OnceLock::new();
+fn chat_cancel_map() -> &'static Mutex<HashMap<uuid::Uuid, ChatCancellationSlot>> {
     CHAT_CANCELS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+fn prune_chat_cancel_map(map: &mut HashMap<uuid::Uuid, ChatCancellationSlot>) {
+    map.retain(|_, entry| {
+        entry.registered || entry.created.elapsed() < std::time::Duration::from_secs(60)
+    });
 }
 fn parse_chat_request_id(value: &str) -> Result<uuid::Uuid, String> {
     let id = uuid::Uuid::parse_str(value).map_err(|_| "AI_CHAT_REQUEST_ID_INVALID")?;
@@ -68,11 +78,24 @@ fn register_chat_request(value: &str) -> Result<ChatRequestGuard, String> {
 }
 fn cancel_chat_request(value: &str) -> Result<bool, String> {
     let id = parse_chat_request_id(value)?;
-    let map = chat_cancel_map().lock().map_err(|_| "AI_CHAT_BUSY")?;
-    let Some(flag) = map.get(&id) else {
-        return Ok(false);
-    };
-    flag.store(true, Ordering::SeqCst);
+    let mut map = chat_cancel_map().lock().map_err(|_| "AI_CHAT_BUSY")?;
+    prune_chat_cancel_map(&mut map);
+    if let Some(slot) = map.get(&id) {
+        slot.cancelled.store(true, Ordering::SeqCst);
+        return Ok(true);
+    }
+    // Bounded 60-second tombstone prevents cancel-before-register races.
+    if map.len() >= 32 {
+        return Err("AI_CHAT_BUSY".into());
+    }
+    map.insert(
+        id,
+        ChatCancellationSlot {
+            cancelled: Arc::new(AtomicBool::new(true)),
+            created: std::time::Instant::now(),
+            registered: false,
+        },
+    );
     Ok(true)
 }
 
@@ -944,13 +967,17 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
                 .ok_or("AI_NOT_CONFIGURED")?;
             drop(lock);
             let signal = cancel_guard.as_ref().ok_or("AI_CHAT_REQUEST_UNAVAILABLE")?;
-            chat_with_history(
+            let execution =
+                crate::capabilities::agent::execution_owner::ProductionExecution::begin("chat")?;
+            let response = chat_with_history(
                 &profile,
                 &request.message,
                 &request.scope,
                 &request.history,
                 &|| signal.cancelled.load(Ordering::SeqCst),
-            )
+            );
+            execution.finish(response.is_ok())?;
+            response
         }
         _ => Err("AI_ACTION_INVALID".into()),
     }
@@ -1009,7 +1036,9 @@ pub async fn coding_service(
                 .send(json!({"type":"delta","text":text}))
                 .map_err(|_| "AGENT_STREAM_DISCONNECTED".to_string())
         };
-        crate::capabilities::agent::public_api::dispatch_coding_request(
+        let execution =
+            crate::capabilities::agent::execution_owner::ProductionExecution::begin("coding")?;
+        let response = crate::capabilities::agent::public_api::dispatch_coding_request(
             &root,
             &storage,
             request,
@@ -1023,7 +1052,9 @@ pub async fn coding_service(
                     &mut emit_delta,
                 )
             },
-        )
+        );
+        execution.finish(response.is_ok())?;
+        response
     })
     .await
     .map_err(|_| "AGENT_WORKER_FAILED".to_string())?;
@@ -1049,8 +1080,18 @@ mod tests {
         assert!(super::cancel_chat_request(&request_id).unwrap());
         assert!(guard.cancelled.load(std::sync::atomic::Ordering::SeqCst));
         drop(guard);
-        assert!(!super::cancel_chat_request(&request_id).unwrap());
+        assert!(super::cancel_chat_request(&request_id).unwrap());
         assert!(super::cancel_chat_request("../../invalid").is_err());
+    }
+    #[test]
+    fn cancel_before_register_prevents_late_provider_start() {
+        let id = uuid::Uuid::new_v4().to_string();
+        assert!(super::cancel_chat_request(&id).unwrap());
+        let registered = super::register_chat_request(&id).unwrap();
+        assert!(registered
+            .cancelled
+            .load(std::sync::atomic::Ordering::SeqCst));
+        drop(registered);
     }
     #[test]
     fn chat_history_is_bounded_and_only_accepts_user_assistant_roles() {

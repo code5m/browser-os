@@ -158,6 +158,22 @@ try {
     assert.equal(registry.getBySlot('workbench-main').length, 0);
   });
 
+  await checkAsync("async deactivation can be followed by idempotent reactivation", async () => {
+    const { app, registry, counts } = fixture();
+    await app.activateAsync();
+    await app.deactivateAsync('feature');
+    await app.deactivateAsync('feature');
+    assert.equal(registry.getBySlot('workbench-main').length,0);
+    await app.activateAsync();
+    assert.equal(app.runtime.get('feature').state,'ACTIVE');
+    assert.equal(app.runtime.get('feature').enabled,true);
+    assert.equal(registry.getBySlot('workbench-main').length,1);
+    await app.activateAsync();
+    assert.equal(counts.activate,2);
+    await app.deactivateAsync('feature');
+    assert.equal(counts.deactivate,2);
+  });
+
   console.log(`PLUGGABLE_LIFECYCLE_RESULT=${failed ? "FAIL" : "PASS"}`);
   if (failed) process.exitCode = 1;
 } finally {

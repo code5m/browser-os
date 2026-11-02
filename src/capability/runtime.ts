@@ -122,7 +122,18 @@ export function createCapabilityRuntime(
   const records = new Map<string, CapabilityRecord>()
   type Pending = { kind: 'activate' | 'suspend'; controller: AbortController; promise: Promise<CapabilityRecord> }
   const pending = new Map<string, Pending>()
-  const releasing = new Map<string, Promise<{ capabilityId: string; ownerCleanup: boolean }>>()
+  type ReleaseReceipt = { capabilityId: string; ownerCleanup: boolean }
+  const releasing = new Map<string, Promise<ReleaseReceipt>>()
+  // Completed Owner releases are cached until an explicit enable; disabled != released.
+  const released = new Map<string, ReleaseReceipt>()
+
+  function assertDependenciesNotClosing(definition: CapabilityDefinition): void {
+    for (const dependency of definition.dependsOn ?? []) {
+      if (releasing.has(dependency)) {
+        throw new CapabilityRuntimeError('TRANSITION_IN_PROGRESS', `依赖能力正在关闭: ${dependency}`)
+      }
+    }
+  }
 
   function assertIdle(id: string): void {
     if (pending.has(id) || releasing.has(id)) throw new CapabilityRuntimeError('TRANSITION_IN_PROGRESS', `能力转换或释放进行中: ${id}`)
@@ -178,24 +189,23 @@ export function createCapabilityRuntime(
     return rec
   }
 
-  function disableRecord(id: string): CapabilityRecord {
+  function assertDisableAllowed(id: string): CapabilityRecord {
     const rec = must(id)
-    // 仅"安全能力"允许停用：已治理 + 非常驻
     if (rec.definition.governanceStatus !== 'GOVERNED' || rec.definition.lifecycle.resident === true) {
-      throw new CapabilityRuntimeError(
-        'UNSAFE_OPERATION',
-        `不允许停用（governanceStatus=${rec.definition.governanceStatus}, resident=${rec.definition.lifecycle.resident}）: ${id}`,
-      )
-    }
-    if (rec.state === 'ACTIVE') {
-      throw new CapabilityRuntimeError('INVALID_TRANSITION', `ACTIVE 状态不可直接停用，请先 suspend: ${id}`)
+      throw new CapabilityRuntimeError('UNSAFE_OPERATION', `不允许停用（governanceStatus=${rec.definition.governanceStatus}, resident=${rec.definition.lifecycle.resident}）: ${id}`)
     }
     const dependents = [...records.values()]
-      .filter((candidate) => candidate.id !== id && candidate.enabled && candidate.definition.dependsOn.includes(id))
-      .map((candidate) => candidate.id)
-    if (dependents.length > 0) {
+      .filter(candidate => candidate.id !== id && candidate.enabled && candidate.definition.dependsOn.includes(id))
+      .map(candidate => candidate.id)
+    if (dependents.length) {
       throw new CapabilityRuntimeError('DEPENDENT_PRESENT', `仍有能力依赖 ${id}：${dependents.join(', ')}`)
     }
+    return rec
+  }
+
+  function disableRecord(id: string): CapabilityRecord {
+    const rec = assertDisableAllowed(id)
+    if (rec.state === 'ACTIVE') throw new CapabilityRuntimeError('INVALID_TRANSITION', `ACTIVE 状态不可直接停用，请先 suspend: ${id}`)
     rec.enabled = false
     log(`disable: ${id}`)
     return rec
@@ -204,6 +214,7 @@ export function createCapabilityRuntime(
   return {
     register(definition) {
       assertDefinition(definition)
+      assertDependenciesNotClosing(definition)
       if (records.has(definition.id)) {
         throw new CapabilityRuntimeError('DUPLICATE_ID', `重复注册: ${definition.id}`)
       }
@@ -241,6 +252,7 @@ export function createCapabilityRuntime(
     activate(id) {
       assertIdle(id)
       const rec = activatable(id)
+      assertDependenciesNotClosing(rec.definition)
       const ctx = makeContext(rec, log)
       const startedAt = Date.now()
       try {
@@ -287,6 +299,7 @@ export function createCapabilityRuntime(
       const old = pending.get(id)
       if (old) return old.kind === 'activate' ? old.promise : Promise.reject(new CapabilityRuntimeError('TRANSITION_IN_PROGRESS', `正在暂停: ${id}`))
       const rec = activatable(id)
+      assertDependenciesNotClosing(rec.definition)
       return transition(id, 'activate', async signal => {
         const startedAt = Date.now()
         let startedHook = false
@@ -347,20 +360,23 @@ export function createCapabilityRuntime(
     releaseAsync(id) {
       const currentRelease = releasing.get(id)
       if (currentRelease) return currentRelease
-      must(id)
-      // Deferring to a microtask ensures the closing marker exists before any hook runs.
-      let promise!: Promise<{ capabilityId: string; ownerCleanup: boolean }>
+      const oldReceipt = released.get(id)
+      if (oldReceipt) return Promise.resolve(oldReceipt)
+      const record = assertDisableAllowed(id) // Preflight before ANY Owner hook or cancellation.
+      if (!record.enabled) {
+        return Promise.reject(new CapabilityRuntimeError('INVALID_TRANSITION', `能力已停用但没有 Owner 释放凭证: ${id}`))
+      }
+      let promise!: Promise<ReleaseReceipt>
       promise = Promise.resolve().then(async () => {
         const current = pending.get(id)
         if (current?.kind === 'activate') {
           current.controller.abort()
-          try { await current.promise } catch { /* recorded by the Owner transition */ }
+          try { await current.promise } catch { /* Owner rollback result is recorded */ }
         } else if (current) {
           await current.promise
         }
         const rec = must(id)
         if (rec.state === 'ACTIVE') await this.suspendAsync(id)
-        // Do not disable if Owner deactivation fails or if external resources cannot be released.
         const release = rec.definition.lifecycle.onDestroy ?? rec.definition.lifecycle.onDeactivate
         const ownerCleanup = !!release
         if (release) {
@@ -370,8 +386,11 @@ export function createCapabilityRuntime(
             throw error
           }
         }
+        // Defensive verification before committing metadata (preflight already passed).
         disableRecord(id)
-        return { capabilityId: id, ownerCleanup }
+        const receipt = { capabilityId: id, ownerCleanup }
+        released.set(id, receipt)
+        return receipt
       }).finally(() => { if (releasing.get(id) === promise) releasing.delete(id) })
       releasing.set(id, promise)
       return promise
@@ -380,6 +399,8 @@ export function createCapabilityRuntime(
     enable(id) {
       assertIdle(id)
       const rec = must(id)
+      assertDependenciesNotClosing(rec.definition)
+      released.delete(id) // A new activation opens a new resource lifecycle.
       rec.enabled = true
       log(`enable: ${id}`)
       return rec
@@ -407,6 +428,7 @@ export function createCapabilityRuntime(
         throw new CapabilityRuntimeError('DEPENDENT_PRESENT', `存在强依赖方，拒绝移除: ${dependents.join(', ')}`)
       }
       records.delete(id)
+      released.delete(id)
       log(`unregister: ${id}`)
     },
 
@@ -433,6 +455,7 @@ export function createCapabilityRuntime(
     reset() {
       if (pending.size > 0 || releasing.size > 0) throw new CapabilityRuntimeError('TRANSITION_IN_PROGRESS', '不能清空运行中的生命周期')
       records.clear()
+      released.clear()
     },
   }
 }
