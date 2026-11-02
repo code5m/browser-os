@@ -4,7 +4,7 @@ This is a **static source and Tauri capability gate** at branch `fix/capability-
 
 All 58 previously unverified permission declarations were located in the installed main-window `default-commands` allowlist; 56 have no remote grant, while `report_resources` and `report_title` are intentionally exposed through the restricted `remote-collect` telemetry capability. `default-commands` is granted only to the `main` window; this does **not** establish permission granularity for every dangerous effect.
 
-Command-body source guard directly observed on **27/58**; the remaining commands have at least Tauri ACL containment but still require manual per-Owner side-effect/approval review. The permission debt baseline remains open deliberately, rather than silently relabeling the 58 as cleared.
+Command-body source guard directly observed on **27/58**; the remaining commands have at least Tauri ACL containment but still require manual per-Owner side-effect/approval review. Each of these 58 commands now has an explicit, source-confirmed Tauri caller-scope permission declaration, and the `permission: '-'` count is zero. The 58 original names remain tracked under `pending_side_effect_reviews` because actual Owner confirmation and argument-scope evidence is not yet complete.
 
 | Command | Actual source | Tauri caller scope | Native command-body guard | Effect category (heuristic, not approval) |
 |---|---|---|---|---|
