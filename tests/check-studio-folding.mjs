@@ -8,13 +8,15 @@ const components={
 };
 for(const [name,{file,keys,labels}] of Object.entries(components)){
   const source=readFileSync(file,'utf8');
+  const persistence=name==='git'?readFileSync('src/capabilities/git/model/gitPreferences.ts','utf8'):source;
+  if(name==='git'){assert.match(source,/readGitDisclosure/);assert.match(source,/writeGitDisclosure/);}
   for(const key of keys){
-    assert.ok(source.includes(`${name==='database'?'browseros.db.ui':'browseros.git.ui'}`),`${name} must persist disclosure`);
+    assert.ok(persistence.includes(`${name==='database'?'browseros.db.ui':'browseros.git.ui'}`),`${name} must persist disclosure`);
     assert.ok(source.includes(`'${key}'`),`${name} missing ${key} fold`);
   }
   for(const label of labels)assert.ok(source.includes(label),`${name} missing aria panel ${label}`);
   assert.match(source,/:aria-expanded=/,`${name} fold state must be accessible`);
-  assert.match(source,/localStorage\.setItem\(/,`${name} disclosure preferences must persist`);
+  assert.match(persistence,/localStorage\.setItem\(/,`${name} disclosure preferences must persist`);
   if(name==='database'){
     assert.match(source,/v-show="dbConnectionsOpen"/);
     assert.match(source,/v-show="dbSchemaOpen"/);

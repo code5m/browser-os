@@ -9,7 +9,7 @@ import { useGitStore } from '../public';
 import { gitLifecycleSnapshot, registerGitLifecycleBinding } from '../lifecycle';
 import { layoutCommitGraph } from '../model/logGraph';
 import { parseUnifiedPatch } from '../model/patchView';
-import { readGitPreferences, writeGitPreferences } from '../model/gitPreferences';
+import { readGitPreferences, writeGitPreferences, readGitDisclosure, writeGitDisclosure } from '../model/gitPreferences';
 import GitCommitFileTree from './GitCommitFileTree.vue';
 import GitHistoryDiff from './GitHistoryDiff.vue';
 import { patchHunks, applyPatchSelection, blameLines, sourceIdentity, safeGithubLink } from '../model/studioPatch.mjs';
@@ -113,7 +113,7 @@ const branchTarget = ref(''), tagTarget = ref(''), compareLeft = ref('HEAD'), co
 const updateStrategy = ref<'Merge'|'Rebase'|'Fast-forward only'>('Fast-forward only');
 // Presentation-only state; never store repository contents or credentials.
 function readDisclosure(key:string) {
-  try { return localStorage.getItem(`browseros.git.ui.${key}`) !== 'false'; } catch { return true; }
+  return readGitDisclosure(key);
 }
 const gitToolbarOpen=ref(readDisclosure('toolbar'));
 const gitFilesOpen=ref(readDisclosure('files'));
@@ -121,7 +121,7 @@ const gitInspectorOpen=ref(readDisclosure('inspector'));
 function toggleGitDisclosure(key:'toolbar'|'files'|'inspector') {
   const controls={toolbar:gitToolbarOpen,files:gitFilesOpen,inspector:gitInspectorOpen};
   controls[key].value=!controls[key].value;
-  try { localStorage.setItem(`browseros.git.ui.${key}`,String(controls[key].value)); } catch {}
+  writeGitDisclosure(key,controls[key].value);
 }
 const settingsOpen = ref(false);
 const logPlacement = ref<'editor'|'toolwindow'>('editor');
