@@ -3138,16 +3138,26 @@ pub fn list_apps() -> Vec<AppEntry> {
 // ====== 浏览器页签命令（供前端页签栏调用） ======
 
 /// 新建一个浏览器页签（打开 url），返回其信息并设为激活页签。
-#[tauri::command]
-pub fn tab_new(app: AppHandle, url: String) -> Result<TabInfo, String> {
+pub(crate) fn tab_new_native(app: AppHandle, url: String) -> Result<TabInfo, String> {
     let tab = create_tab(app.clone(), &url)?;
     Ok(tab)
 }
+#[tauri::command]
+pub fn tab_new(webview: tauri::Webview, app: AppHandle, url: String) -> Result<TabInfo, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "tab_new")?;
+    crate::shared::native_legacy_policy::bound_text("tab_new", "url", &url)?;
+    tab_new_native(app, url)
+}
 
 /// 关闭指定页签。
-#[tauri::command]
-pub fn tab_close(app: AppHandle, id: String) -> Result<(), String> {
+pub(crate) fn tab_close_native(app: AppHandle, id: String) -> Result<(), String> {
     close_tab(&app, &id)
+}
+#[tauri::command]
+pub fn tab_close(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "tab_close")?;
+    crate::shared::native_legacy_policy::bound_text("tab_close", "id", &id)?;
+    tab_close_native(app, id)
 }
 
 /// 在指定页签中打开网址（导航）。
@@ -3827,11 +3837,15 @@ mod adaptive_hibernation_tests {
 }
 
 /// 列出当前所有页签。
-#[tauri::command]
-pub fn tab_list(app: AppHandle) -> Vec<TabInfo> {
+pub(crate) fn tab_list_native(app: AppHandle) -> Vec<TabInfo> {
     let state = app.state::<AppState>();
     let tabs = state.tabs.lock().unwrap();
     tabs.values().cloned().collect()
+}
+#[tauri::command]
+pub fn tab_list(webview: tauri::Webview, app: AppHandle) -> Result<Vec<TabInfo>, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "tab_list")?;
+    Ok(tab_list_native(app))
 }
 
 /// 前端设置页签标题（如用户手动改名）。

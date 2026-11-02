@@ -927,7 +927,7 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
             (|| {
                 open_grid("5", 0)?;
                 sleep_ms(1000);
-                let tab = bridge::tab_new(app.clone(), gui_mock_url(&mock_base, "5", 0))?;
+                let tab = bridge::tab_new_native(app.clone(), gui_mock_url(&mock_base, "5", 0))?;
                 native_tab_activate(app.clone(), tab.id.clone())?;
                 native_tab_position(app.clone(), tab.id.clone(), 60.0, 120.0, 800.0, 520.0)?;
                 native_hide_all_webviews(app.clone())?;
@@ -939,7 +939,7 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                 // scenario 5 long enough for the evidence POST to land before
                 // scenario 6 navigates it. The assertion remains unchanged.
                 sleep_ms(700);
-                bridge::tab_close(app.clone(), tab.id)?;
+                bridge::tab_close_native(app.clone(), tab.id)?;
                 Ok("tab view and grid view switched without orphaned child windows".to_string())
             })(),
         );
@@ -949,14 +949,14 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
             (|| {
                 open_grid("6", 0)?;
                 sleep_ms(1000);
-                let first = bridge::tab_new(app.clone(), gui_mock_url(&mock_base, "6", 0))?;
-                let second = bridge::tab_new(app.clone(), gui_mock_url(&mock_base, "6", 1))?;
+                let first = bridge::tab_new_native(app.clone(), gui_mock_url(&mock_base, "6", 0))?;
+                let second = bridge::tab_new_native(app.clone(), gui_mock_url(&mock_base, "6", 1))?;
                 native_tab_activate(app.clone(), first.id.clone())?;
                 native_tab_position(app.clone(), first.id.clone(), 80.0, 120.0, 760.0, 500.0)?;
                 native_tab_activate(app.clone(), second.id.clone())?;
                 native_tab_position(app.clone(), second.id.clone(), 90.0, 130.0, 760.0, 500.0)?;
-                bridge::tab_close(app.clone(), first.id)?;
-                bridge::tab_close(app.clone(), second.id)?;
+                bridge::tab_close_native(app.clone(), first.id)?;
+                bridge::tab_close_native(app.clone(), second.id)?;
                 eval_grid("6", 0, "tabs_closed_grid_survives")?;
                 // eval() schedules the page's async /event fetch; keep this grid URL alive
                 // long enough for the evidence server to observe it before scenario 7 navigates.
@@ -1213,7 +1213,7 @@ fn run_m0_driver(app: tauri::AppHandle, cfg: bridge::M0Config) {
             }
 
             let opened_resource = match cfg.driver.as_str() {
-                "tab" => bridge::tab_new(app.clone(), "about:blank".into())
+                "tab" => bridge::tab_new_native(app.clone(), "about:blank".into())
                     .map(|tab| OpenedResource::Tab(tab.id)),
                 "grid" => {
                     match bridge::create_grid_blocking(
@@ -1249,7 +1249,7 @@ fn run_m0_driver(app: tauri::AppHandle, cfg: bridge::M0Config) {
             }
 
             let close_result = match opened_resource {
-                Ok(OpenedResource::Tab(id)) => bridge::tab_close(app.clone(), id),
+                Ok(OpenedResource::Tab(id)) => bridge::tab_close_native(app.clone(), id),
                 Ok(OpenedResource::Grid) => bridge::close_grid_blocking(app.clone()),
                 Ok(OpenedResource::Terminal(id)) => bridge::term_kill(app.clone(), id),
                 Err(error) => Err(error),
