@@ -108,6 +108,37 @@ pub fn bound_dimension(command: &str, name: &str, value: f64) -> Result<(), Stri
 mod tests {
     use super::*;
     #[test]
+    fn all_58_baseline_commands_have_runtime_source_denial() {
+        let source: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../docs/architecture/native-boundary/native-permission-debt-baseline.json"
+        ))
+        .unwrap();
+        let commands = source["pending_side_effect_reviews"].as_array().unwrap();
+        assert_eq!(commands.len(), 58);
+        let mut main_only = 0;
+        let mut remote_telemetry = 0;
+        for raw in commands {
+            let name = raw.as_str().unwrap();
+            if matches!(name, "report_title" | "report_resources") {
+                remote_telemetry += 1;
+                continue;
+            }
+            assert!(
+                authorize_label("main", name).is_ok(),
+                "{name} main source must be reviewed"
+            );
+            for untrusted in ["tab-1", "grid-0", "tool-json", "browser"] {
+                assert!(
+                    authorize_label(untrusted, name).is_err(),
+                    "{name} remote source must be denied"
+                );
+            }
+            main_only += 1;
+        }
+        assert_eq!(main_only, 56);
+        assert_eq!(remote_telemetry, 2);
+    }
+    #[test]
     fn deny_untrusted_tab_grid_and_unknown_commands() {
         assert!(authorize_label("tab-1", "clipboard_write").is_err());
         assert!(authorize_label("grid-2", "eval_in_tab").is_err());

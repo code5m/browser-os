@@ -6,7 +6,9 @@ use foundation::{
     approval::{
         ApprovalBinding, ApprovalBroker, HostApprovalDecision, HostApprovalIssuer, ResourceBinding,
     },
-    benchmark::{run_benchmark_suite, run_routed_fixture, BenchmarkReport, RoutedFixtureResult},
+    benchmark::{
+        run_benchmark_suite, run_routed_fixture_owned, BenchmarkReport, RoutedFixtureResult,
+    },
     context::{ContextGrant, ContextKind, ContextRef},
     event::EventJournal,
     experiment::{ExperimentConfig, ExperimentRouter},
@@ -194,8 +196,14 @@ pub async fn agent_runtime_run_fixture(
     let assignment = router
         .assign(task_id)
         .map_err(|_| "AGENT_EXPERIMENT_ROUTE_FAILED")?;
-    let response =
-        run_routed_fixture(assignment.kind, task_id, &fixture_id, assignment.max_turns).await;
+    let response = run_routed_fixture_owned(
+        assignment.kind,
+        task_id,
+        &fixture_id,
+        assignment.max_turns,
+        execution.tasks(),
+    )
+    .await;
     execution.finish(response.is_ok())?;
     response.map_err(|_| "AGENT_EXPERIMENT_FIXTURE_FAILED".into())
 }

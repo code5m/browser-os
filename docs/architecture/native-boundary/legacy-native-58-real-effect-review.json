@@ -1,0 +1,745 @@
+{
+  "summary": {
+    "commands": 58,
+    "sourceGuardVerified": 58,
+    "mainOnly": 56,
+    "remoteTelemetry": 2,
+    "oneShotConsent": 3,
+    "guiEvidenceCompleted": 0,
+    "limitation": "Source and primitive input checks do not prove authorized UI gestures, complex parameter validation, actual native effects or packaged GUI. All remain GUI_PENDING."
+  },
+  "commands": [
+    {
+      "command": "add_bookmark",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "bookmark CRUD (backend persistence)",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "url",
+        "title",
+        "category"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "clear_tab_resources",
+      "physicalFile": "src-tauri/src/capabilities/browser/commands.rs",
+      "declaredEffect": "report/collect/clear resource telemetry, capture settings",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "tab_id"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "clipboard_read",
+      "physicalFile": "src-tauri/src/shared/clipboard.rs",
+      "declaredEffect": "read/write system clipboard",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "clipboard_write",
+      "physicalFile": "src-tauri/src/shared/clipboard.rs",
+      "declaredEffect": "read/write system clipboard",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "text"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "close_browser",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "create/destroy/control native webview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "close_tools",
+      "physicalFile": "src-tauri/src/capabilities/tools/tools.rs",
+      "declaredEffect": "close all tool-* sub-webviews owned by Tools",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "debug_log",
+      "physicalFile": "src-tauri/src/framework/commands.rs",
+      "declaredEffect": "framework diagnostics / intent bus / boot ready / pending URL handoff",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "msg"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "eval_in_tab",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "evaluate script in an existing capability-owned webview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "id",
+        "js"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "flush_sessions",
+      "physicalFile": "src-tauri/src/capabilities/session/commands.rs",
+      "declaredEffect": "persist/restore session snapshots (disk)",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "get_default_browser",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "create/destroy/control native webview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "get_resource_capture_settings",
+      "physicalFile": "src-tauri/src/capabilities/browser/commands.rs",
+      "declaredEffect": "report/collect/clear resource telemetry, capture settings",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "get_session_policy",
+      "physicalFile": "src-tauri/src/capabilities/session/commands.rs",
+      "declaredEffect": "persist/restore session snapshots (disk)",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "graph_node_get",
+      "physicalFile": "src-tauri/src/capabilities/graph/commands.rs",
+      "declaredEffect": "query knowledge graph nodes/stats",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "id"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "graph_query",
+      "physicalFile": "src-tauri/src/capabilities/graph/commands.rs",
+      "declaredEffect": "query knowledge graph nodes/stats",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "owner-specific-validation-not-proven-by-static-test",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "graph_stats",
+      "physicalFile": "src-tauri/src/capabilities/graph/commands.rs",
+      "declaredEffect": "query knowledge graph nodes/stats",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "hide_all_webviews",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "create/destroy/control native webview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "hide_webview",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "create/destroy/control native webview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "id"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "issue_intent",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "framework diagnostics / intent bus / boot ready / pending URL handoff",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "scope"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "list_bookmarks",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "bookmark CRUD (backend persistence)",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "list_tab_resources",
+      "physicalFile": "src-tauri/src/capabilities/browser/commands.rs",
+      "declaredEffect": "report/collect/clear resource telemetry, capture settings",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "tab_id"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "list_tools",
+      "physicalFile": "src-tauri/src/capabilities/tools/tools.rs",
+      "declaredEffect": "list/open tool sub-webview (tool://)",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "m0_ready",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "framework diagnostics / intent bus / boot ready / pending URL handoff",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "open_browser",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "create/destroy/control native webview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "url"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "open_tool",
+      "physicalFile": "src-tauri/src/capabilities/tools/tools.rs",
+      "declaredEffect": "list/open tool sub-webview (tool://)",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "id"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "position_browser",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "create/destroy/control native webview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "remove_bookmark",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "bookmark CRUD (backend persistence)",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "id"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "report_resources",
+      "physicalFile": "src-tauri/src/capabilities/browser/commands.rs",
+      "declaredEffect": "report/collect/clear resource telemetry, capture settings",
+      "sourcePolicy": "remote-origin-policy",
+      "boundedPrimitiveInputs": [
+        "page_url"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "remote-telemetry-only",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "report_title",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "create/destroy/control native webview",
+      "sourcePolicy": "remote-origin-policy",
+      "boundedPrimitiveInputs": [
+        "title"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "remote-telemetry-only",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "resource_stats",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "report/collect/clear resource telemetry, capture settings",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "session_delete",
+      "physicalFile": "src-tauri/src/capabilities/session/commands.rs",
+      "declaredEffect": "persist/restore session snapshots (disk)",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "id",
+        "intent"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "bound-one-shot-token-and-confirmed-ui",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "session_discard",
+      "physicalFile": "src-tauri/src/capabilities/session/commands.rs",
+      "declaredEffect": "persist/restore session snapshots (disk)",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "tab_id"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "session_export",
+      "physicalFile": "src-tauri/src/capabilities/session/commands.rs",
+      "declaredEffect": "persist/restore session snapshots (disk)",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "id"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "session_get",
+      "physicalFile": "src-tauri/src/capabilities/session/commands.rs",
+      "declaredEffect": "persist/restore session snapshots (disk)",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "id"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "session_list",
+      "physicalFile": "src-tauri/src/capabilities/session/commands.rs",
+      "declaredEffect": "persist/restore session snapshots (disk)",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "session_restore",
+      "physicalFile": "src-tauri/src/capabilities/session/commands.rs",
+      "declaredEffect": "persist/restore session snapshots (disk)",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "id"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "session_save",
+      "physicalFile": "src-tauri/src/capabilities/session/commands.rs",
+      "declaredEffect": "persist/restore session snapshots (disk)",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "tab_id",
+        "preview"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "set_default_browser",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "create/destroy/control native webview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "intent"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "bound-one-shot-token-after-two-step-ui",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "set_resource_capture_settings",
+      "physicalFile": "src-tauri/src/capabilities/browser/commands.rs",
+      "declaredEffect": "report/collect/clear resource telemetry, capture settings",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "set_session_policy",
+      "physicalFile": "src-tauri/src/capabilities/session/commands.rs",
+      "declaredEffect": "persist/restore session snapshots (disk)",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "set_tab_hibernation",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "apply tab-hibernation policy to webviews (framework preference)",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "skill_parse",
+      "physicalFile": "src-tauri/src/capabilities/skill/commands.rs",
+      "declaredEffect": "parse/validate skill spec, permission preview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "text"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "skill_permission_preview",
+      "physicalFile": "src-tauri/src/capabilities/skill/commands.rs",
+      "declaredEffect": "parse/validate skill spec, permission preview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "text"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "skill_validate",
+      "physicalFile": "src-tauri/src/capabilities/skill/commands.rs",
+      "declaredEffect": "parse/validate skill spec, permission preview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "text"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "snippet_add",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "snippet CRUD (backend persistence)",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "name",
+        "category",
+        "description"
+      ],
+      "opaqueOwnerInputValidation": "owner-specific-validation-not-proven-by-static-test",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "snippet_list",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "snippet CRUD (backend persistence)",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "snippet_remove",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "snippet CRUD (backend persistence)",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "id",
+        "intent"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "bound-one-shot-token-and-confirmed-ui",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "snippet_update",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "snippet CRUD (backend persistence)",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "id",
+        "name",
+        "category",
+        "description"
+      ],
+      "opaqueOwnerInputValidation": "owner-specific-validation-not-proven-by-static-test",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "tab_activate",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "create/destroy/control native webview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "id"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "tab_close",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "create/destroy/control native webview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "id"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "tab_go_back",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "create/destroy/control native webview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "id"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "tab_go_forward",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "create/destroy/control native webview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "id"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "tab_list",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "create/destroy/control native webview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "tab_new",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "create/destroy/control native webview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "url"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "tab_open",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "create/destroy/control native webview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "id",
+        "url"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "tab_position",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "create/destroy/control native webview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "id",
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "tab_reload",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "create/destroy/control native webview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "id"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "tab_set_title",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "create/destroy/control native webview",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [
+        "id",
+        "title"
+      ],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    },
+    {
+      "command": "take_pending_open_urls",
+      "physicalFile": "src-tauri/src/bridge.rs",
+      "declaredEffect": "framework diagnostics / intent bus / boot ready / pending URL handoff",
+      "sourcePolicy": "main-webview-guard",
+      "boundedPrimitiveInputs": [],
+      "opaqueOwnerInputValidation": "none-or-not-required",
+      "consentMode": "main-ui-owner-action",
+      "sourceAndPrimitiveStaticCheck": "PASS",
+      "installedGuiSideEffectEvidence": "GUI_PENDING"
+    }
+  ]
+}

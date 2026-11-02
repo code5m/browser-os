@@ -248,6 +248,9 @@ pub struct AiRequest {
     pub request_id: String,
     #[serde(default)]
     pub agent_definition: Option<crate::domain::AgentDef>,
+    // Explicit, trusted main-window approval for local Agent catalog mutations.
+    #[serde(default)]
+    pub confirmed: bool,
 }
 fn valid_id(id: &str) -> bool {
     id.len() == 24 && id.bytes().all(|c| c.is_ascii_hexdigit())
@@ -865,6 +868,17 @@ fn coding_turn_cancelable_stream(
 /// Old Agent definitions are treated as *model prompts*, never as grants to tools.
 fn validate_legacy_agent_definition(agent: &crate::domain::AgentDef) -> Result<(), String> {
     if agent.id.len() > 128
+        || !agent
+            .id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+        || agent.version.len() > 48
+        || agent.version.chars().any(char::is_control)
+        || agent.display_name.chars().any(char::is_control)
+        || serde_json::to_vec(agent)
+            .map_err(|_| "AGENT_LEGACY_DEFINITION_DENIED")?
+            .len()
+            > 16 * 1024
         || agent.system_prompt.len() > 4096
         || agent.description.len() > 4096
         || agent.display_name.len() > 256
@@ -878,6 +892,114 @@ fn validate_legacy_agent_definition(agent: &crate::domain::AgentDef) -> Result<(
     agent
         .validate()
         .map_err(|_| "AGENT_LEGACY_DEFINITION_DENIED".to_owned())
+}
+
+const MAX_LEGACY_AGENTS: usize = 64;
+const MAX_LEGACY_AGENT_STORE: u64 = 256 * 1024;
+fn legacy_agent_path(path: &Path) -> Result<std::path::PathBuf, String> {
+    Ok(path
+        .parent()
+        .ok_or("AGENT_LEGACY_STORAGE_INVALID")?
+        .join("legacy-agent-definitions-v1.json"))
+}
+fn load_legacy_agents(path: &Path) -> Result<Vec<crate::domain::AgentDef>, String> {
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let meta = fs::symlink_metadata(path).map_err(|_| "AGENT_LEGACY_READ_FAILED")?;
+    if !meta.is_file() || meta.len() > MAX_LEGACY_AGENT_STORE {
+        return Err("AGENT_LEGACY_STORAGE_UNSAFE".into());
+    }
+    let definitions: Vec<crate::domain::AgentDef> =
+        serde_json::from_slice(&fs::read(path).map_err(|_| "AGENT_LEGACY_READ_FAILED")?)
+            .map_err(|_| "AGENT_LEGACY_STORAGE_CORRUPT")?;
+    if definitions.len() > MAX_LEGACY_AGENTS {
+        return Err("AGENT_LEGACY_STORAGE_LIMIT".into());
+    }
+    let mut ids = std::collections::HashSet::new();
+    for def in &definitions {
+        validate_legacy_agent_definition(def)?;
+        if !ids.insert(&def.id) {
+            return Err("AGENT_LEGACY_DUPLICATE_ID".into());
+        }
+    }
+    Ok(definitions)
+}
+fn save_legacy_agents(path: &Path, definitions: &[crate::domain::AgentDef]) -> Result<(), String> {
+    if definitions.len() > MAX_LEGACY_AGENTS {
+        return Err("AGENT_LEGACY_STORAGE_LIMIT".into());
+    }
+    let serialized =
+        serde_json::to_vec_pretty(definitions).map_err(|_| "AGENT_LEGACY_ENCODE_FAILED")?;
+    if serialized.len() as u64 > MAX_LEGACY_AGENT_STORE {
+        return Err("AGENT_LEGACY_STORAGE_LIMIT".into());
+    }
+    let parent = path.parent().ok_or("AGENT_LEGACY_STORAGE_INVALID")?;
+    fs::create_dir_all(parent).map_err(|_| "AGENT_LEGACY_STORAGE_INVALID")?;
+    let dir_meta = fs::symlink_metadata(parent).map_err(|_| "AGENT_LEGACY_STORAGE_INVALID")?;
+    if !dir_meta.is_dir() || dir_meta.file_type().is_symlink() {
+        return Err("AGENT_LEGACY_STORAGE_UNSAFE".into());
+    }
+    if path.exists() {
+        let m = fs::symlink_metadata(path).map_err(|_| "AGENT_LEGACY_STORAGE_UNSAFE")?;
+        if !m.is_file() || m.file_type().is_symlink() {
+            return Err("AGENT_LEGACY_STORAGE_UNSAFE".into());
+        }
+    }
+    let temp = parent.join(format!(".legacy-agents.{}.tmp", uuid::Uuid::new_v4()));
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let saved = (|| {
+        let mut file = options
+            .open(&temp)
+            .map_err(|_| "AGENT_LEGACY_WRITE_FAILED")?;
+        file.write_all(&serialized)
+            .and_then(|_| file.sync_all())
+            .map_err(|_| "AGENT_LEGACY_WRITE_FAILED")?;
+        fs::rename(&temp, path).map_err(|_| "AGENT_LEGACY_WRITE_FAILED")?;
+        fs::File::open(parent)
+            .and_then(|f| f.sync_all())
+            .map_err(|_| "AGENT_LEGACY_WRITE_FAILED")?;
+        Ok::<(), &str>(())
+    })();
+    if saved.is_err() {
+        let _ = fs::remove_file(temp);
+    }
+    saved.map_err(str::to_string)
+}
+fn install_legacy_agent(
+    path: &Path,
+    definition: crate::domain::AgentDef,
+    confirmed: bool,
+) -> Result<Value, String> {
+    if !confirmed {
+        return Err("AGENT_LEGACY_USER_CONFIRM_REQUIRED".into());
+    }
+    validate_legacy_agent_definition(&definition)?;
+    let path = legacy_agent_path(path)?;
+    let mut definitions = load_legacy_agents(&path)?;
+    if let Some(existing) = definitions
+        .iter()
+        .find(|current| current.id == definition.id)
+    {
+        if existing.version != definition.version {
+            return Err("AGENT_LEGACY_VERSION_CONFLICT".into());
+        }
+        if existing != &definition {
+            return Err("AGENT_LEGACY_DEFINITION_CONFLICT".into());
+        }
+        return Ok(
+            json!({"installed":true,"id":definition.id,"version":definition.version,"changed":false}),
+        );
+    }
+    definitions.push(definition.clone());
+    save_legacy_agents(&path, &definitions)?;
+    Ok(json!({"installed":true,"id":definition.id,"version":definition.version,"changed":true}))
 }
 
 pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
@@ -897,7 +1019,10 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
     if request.action == "cancel" {
         return Ok(json!({"cancelled":cancel_chat_request(&request.request_id)?}));
     }
-    let cancel_guard = if matches!(request.action.as_str(), "chat" | "legacy_chat") {
+    let cancel_guard = if matches!(
+        request.action.as_str(),
+        "chat" | "legacy_chat" | "legacy_run"
+    ) {
         Some(register_chat_request(&request.request_id)?)
     } else {
         None
@@ -987,10 +1112,46 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
             let removed = KeyringStore::delete_token(&format!("ai:{}", request.id)).is_ok();
             Ok(json!({"removed":true,"credential_removed":removed}))
         }
-        "legacy_chat" => {
-            let agent = request
+        "legacy_list" => serde_json::to_value(load_legacy_agents(&legacy_agent_path(path)?)?)
+            .map_err(|_| "AGENT_LEGACY_ENCODE_FAILED".into()),
+        "legacy_install" => install_legacy_agent(
+            path,
+            request
                 .agent_definition
-                .ok_or("AGENT_DEFINITION_REQUIRED")?;
+                .ok_or("AGENT_DEFINITION_REQUIRED")?,
+            request.confirmed,
+        ),
+        "legacy_uninstall" => {
+            if !request.confirmed {
+                return Err("AGENT_LEGACY_USER_CONFIRM_REQUIRED".into());
+            }
+            if request.id.is_empty() || request.id.len() > 128 {
+                return Err("AGENT_LEGACY_ID_INVALID".into());
+            }
+            let file = legacy_agent_path(path)?;
+            let mut defs = load_legacy_agents(&file)?;
+            let before = defs.len();
+            defs.retain(|def| def.id != request.id);
+            if defs.len() == before {
+                return Err("AGENT_LEGACY_NOT_INSTALLED".into());
+            }
+            save_legacy_agents(&file, &defs)?;
+            Ok(json!({"removed":true,"id":request.id}))
+        }
+        "legacy_chat" | "legacy_run" => {
+            let agent = if request.action == "legacy_run" {
+                if request.id.is_empty() || request.id.len() > 128 {
+                    return Err("AGENT_LEGACY_ID_INVALID".into());
+                }
+                load_legacy_agents(&legacy_agent_path(path)?)?
+                    .into_iter()
+                    .find(|def| def.id == request.id)
+                    .ok_or("AGENT_LEGACY_NOT_INSTALLED")?
+            } else {
+                request
+                    .agent_definition
+                    .ok_or("AGENT_DEFINITION_REQUIRED")?
+            };
             validate_legacy_agent_definition(&agent)?;
             let messages = {
                 let mut messages =
@@ -998,7 +1159,7 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
                 messages[0] = json!({"role":"system","content":agent.system_prompt});
                 messages
             };
-            let model_id = if request.id.is_empty() {
+            let model_id = if request.action == "legacy_run" || request.id.is_empty() {
                 config.bindings.get("default").ok_or("AI_NOT_CONFIGURED")?
             } else {
                 &request.id
@@ -1017,6 +1178,7 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
                 )?;
             let cancelled = || signal.cancelled.load(Ordering::SeqCst);
             if cancelled() {
+                execution.cancel()?;
                 return Err("AI_PROVIDER_CANCELLED".into());
             }
             let response = provider_turn_cancelable(&profile, &messages, &[], &cancelled)
@@ -1027,7 +1189,11 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
                         .ok_or("AI_RESPONSE_EMPTY")?;
                     Ok(json!({"content":content,"model":profile.model,"agent_id":agent.id,"tools_executed":false}))
                 });
-            execution.finish(response.is_ok())?;
+            if cancelled() {
+                execution.cancel()?;
+            } else {
+                execution.finish(response.is_ok())?;
+            }
             response
         }
         "chat" => {
@@ -1057,7 +1223,11 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
                 &request.history,
                 &|| signal.cancelled.load(Ordering::SeqCst),
             );
-            execution.finish(response.is_ok())?;
+            if signal.cancelled.load(Ordering::SeqCst) {
+                execution.cancel()?;
+            } else {
+                execution.finish(response.is_ok())?;
+            }
             response
         }
         _ => Err("AI_ACTION_INVALID".into()),
@@ -1173,6 +1343,90 @@ mod tests {
             .cancelled
             .load(std::sync::atomic::Ordering::SeqCst));
         drop(registered);
+    }
+    #[test]
+    fn legacy_readonly_agent_install_run_catalog_requires_explicit_confirmation() {
+        use crate::domain::{A2aConfig, AgentDef, AgentDialect};
+        let root = std::env::temp_dir().join(format!(
+            "browseros-legacy-agent-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let config_path = root.join("ai-profiles.json");
+        let definition = AgentDef {
+            id: "safe-reviewer".into(),
+            version: "1.0.0".into(),
+            display_name: "Safe reviewer".into(),
+            description: "Reviews text".into(),
+            dialect: AgentDialect::OpenAiCompatible,
+            system_prompt: "Summarize the user's messages without tools.".into(),
+            default_capabilities: vec![],
+            a2a: A2aConfig::default(),
+            metadata: serde_json::json!({}),
+        };
+        assert_eq!(
+            super::install_legacy_agent(&config_path, definition.clone(), false).unwrap_err(),
+            "AGENT_LEGACY_USER_CONFIRM_REQUIRED"
+        );
+        let saved = super::install_legacy_agent(&config_path, definition.clone(), true).unwrap();
+        assert_eq!(saved["changed"], true);
+        assert_eq!(
+            super::install_legacy_agent(&config_path, definition.clone(), true).unwrap()["changed"],
+            false
+        );
+        let file = super::legacy_agent_path(&config_path).unwrap();
+        assert_eq!(
+            super::load_legacy_agents(&file).unwrap(),
+            vec![definition.clone()]
+        );
+        let mut elevated = definition.clone();
+        elevated.a2a.delegate_to = true;
+        assert!(super::install_legacy_agent(&config_path, elevated, true).is_err());
+        let mut dangerous_id = definition.clone();
+        dangerous_id.id = "../../unsafe".into();
+        assert!(super::install_legacy_agent(&config_path, dangerous_id, true).is_err());
+        let installed_read: super::AiRequest =
+            serde_json::from_value(serde_json::json!({"action":"legacy_list"})).unwrap();
+        assert_eq!(
+            super::execute(&config_path, installed_read)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let pending_run: super::AiRequest = serde_json::from_value(
+            serde_json::json!({"action":"legacy_run","id":definition.id,"message":"Hello"}),
+        )
+        .unwrap();
+        assert_eq!(
+            super::execute(&config_path, pending_run).unwrap_err(),
+            "AI_NOT_CONFIGURED"
+        );
+        let mut conflict = definition.clone();
+        conflict.version = "2.0.0".into();
+        assert_eq!(
+            super::install_legacy_agent(&config_path, conflict, true).unwrap_err(),
+            "AGENT_LEGACY_VERSION_CONFLICT"
+        );
+        let request: super::AiRequest = serde_json::from_value(
+            serde_json::json!({"action":"legacy_uninstall","id":definition.id,"confirmed":false}),
+        )
+        .unwrap();
+        assert_eq!(
+            super::execute(&config_path, request).unwrap_err(),
+            "AGENT_LEGACY_USER_CONFIRM_REQUIRED"
+        );
+        let request: super::AiRequest = serde_json::from_value(
+            serde_json::json!({"action":"legacy_uninstall","id":definition.id,"confirmed":true}),
+        )
+        .unwrap();
+        assert_eq!(
+            super::execute(&config_path, request).unwrap()["removed"],
+            true
+        );
+        assert!(super::load_legacy_agents(&file).unwrap().is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
     }
     #[test]
     fn legacy_definition_cannot_grant_a2a_or_tools() {

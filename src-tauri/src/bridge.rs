@@ -1255,6 +1255,7 @@ pub fn issue_intent(
         sp::INTENT_SAVE_NOTE,
         sp::INTENT_COLLECT_SELECTION,
         sp::INTENT_OPEN_TERMINAL,
+        "set_default_browser",
     ];
     let is_confirmed_effect = ["session_delete:", "snippet_remove:"].iter().any(|prefix| {
         scope.strip_prefix(prefix).is_some_and(|id| {
@@ -4273,8 +4274,20 @@ pub fn get_default_browser(webview: tauri::Webview) -> Result<String, String> {
 /// 硬约束：本命令只能由设置页「设为默认浏览器」按钮经用户显式确认后触发；
 /// 应用启动、安装脚本、首启流程一律不得调用（禁静默改写系统默认）。
 #[tauri::command]
-pub fn set_default_browser(webview: tauri::Webview, app: AppHandle) -> Result<String, String> {
+pub fn set_default_browser(
+    webview: tauri::Webview,
+    app: AppHandle,
+    intent: Option<String>,
+) -> Result<String, String> {
     crate::shared::native_legacy_policy::require_main(&webview, "set_default_browser")?;
+    app.state::<crate::security_policy::IntentRegistry>()
+        .consume(
+            "set_default_browser",
+            intent
+                .as_deref()
+                .ok_or("NATIVE_USER_CONFIRMATION_REQUIRED")?,
+        )
+        .map_err(|_| "NATIVE_USER_CONFIRMATION_DENIED")?;
 
     let desktop = ensure_desktop_entry()?;
     let out = std::process::Command::new("xdg-settings")

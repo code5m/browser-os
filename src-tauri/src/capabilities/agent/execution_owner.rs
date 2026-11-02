@@ -4,7 +4,11 @@
 //! business tools remain in their separately approved owner adapters.
 //! Terminal tasks are retired after completion to avoid an unbounded cache.
 //! This is not a durable session store.
-use browseros_agent_foundation::{context::ContextRef, event::EventJournal, task::TaskRegistry};
+use browseros_agent_foundation::{
+    context::ContextRef,
+    event::EventJournal,
+    task::{TaskRegistry, TaskStatus},
+};
 use std::sync::{Arc, OnceLock};
 use uuid::Uuid;
 
@@ -55,10 +59,32 @@ impl ProductionExecution {
     pub(crate) fn tasks(&self) -> &'static TaskRegistry {
         self.tasks
     }
-    pub(crate) fn finish(mut self, success: bool) -> Result<(), String> {
+    pub(crate) fn cancel(mut self) -> Result<(), String> {
         self.tasks
-            .finish(self.id, success)
-            .map_err(|_| "AGENT_TASK_FINISH_FAILED")?;
+            .cancel(self.id)
+            .map_err(|_| "AGENT_TASK_CANCEL_FAILED")?;
+        self.finished = true;
+        self.tasks
+            .retire_terminal(self.id)
+            .map_err(|_| "AGENT_TASK_RETIRE_FAILED".to_owned())
+    }
+
+    pub(crate) fn finish(mut self, success: bool) -> Result<(), String> {
+        // Engines that use this same registry may have committed the terminal
+        // transition themselves. Never finish an already-terminal task twice.
+        let status = self
+            .tasks
+            .get(self.id)
+            .map_err(|_| "AGENT_TASK_LOOKUP_FAILED")?
+            .status;
+        match (status, success) {
+            (TaskStatus::Completed, true) | (TaskStatus::Failed, false) => {}
+            (TaskStatus::Running, _) => self
+                .tasks
+                .finish(self.id, success)
+                .map_err(|_| "AGENT_TASK_FINISH_FAILED")?,
+            _ => return Err("AGENT_TASK_TERMINAL_MISMATCH".into()),
+        }
         self.finished = true;
         self.tasks
             .retire_terminal(self.id)
@@ -96,6 +122,14 @@ mod tests {
         ProductionExecution::begin("coding")
             .unwrap()
             .finish(false)
+            .unwrap();
+        ProductionExecution::begin("legacy_agent")
+            .unwrap()
+            .cancel()
+            .unwrap();
+        ProductionExecution::begin("agent_channel")
+            .unwrap()
+            .cancel()
             .unwrap();
         let aborted = ProductionExecution::begin("chat").unwrap();
         drop(aborted);

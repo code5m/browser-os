@@ -51,7 +51,8 @@ if (typeof nodeModule.registerHooks === "function") {
 }
 
 // useLayoutStore.showToast 用 window.setTimeout（浏览器环境），Node 下补最小桩
-globalThis.window = { setTimeout: (fn, ms) => setTimeout(fn, ms) };
+let allowSessionDelete = true;
+globalThis.window = { setTimeout: (fn, ms) => setTimeout(fn, ms), confirm: () => allowSessionDelete };
 
 const ROOT = new URL("..", import.meta.url).pathname;
 
@@ -101,6 +102,10 @@ bridge.sessionList = async () => {
 bridge.sessionGet = async (id) => {
   calls.push(["sessionGet", id]);
   return { ...summary(id, "tab-1"), resources: [] };
+};
+bridge.nativeIssueIntent = async (scope) => {
+  calls.push(["nativeIssueIntent", scope]);
+  return `mock-once-${scope}`;
 };
 bridge.sessionDelete = async (id) => {
   calls.push(["sessionDelete", id]);
@@ -280,7 +285,12 @@ assert(browser.recentlyClosed.length === rcAfterSave, "手动保存不得写入 
 calls.length = 0;
 await session.openDetail("s1");
 assert(session.detailId === "s1", "openDetail 必须设置当前详情");
+allowSessionDelete = false;
 await session.deleteSession("s1");
+assert(!hasCall("nativeIssueIntent") && !hasCall("sessionDelete"), "拒绝用户确认时必须不签发删除令牌且不执行删除");
+allowSessionDelete = true;
+await session.deleteSession("s1");
+assert(findCall("nativeIssueIntent")?.[1] === "session_delete:s1", "删除令牌必须绑定精确会话 ID");
 assert(hasCall("sessionDelete"), "deleteSession 必须调用后端删除");
 assert(session.detailId === "", "删除当前详情后必须清空详情");
 assert(!session.sessions.some((s) => s.id === "s1"), "删除后列表必须移除");

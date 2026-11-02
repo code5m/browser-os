@@ -11,5 +11,9 @@ export const aiService = {
   remove: (id:string) => bridge.aiService({action:'remove',id}),
   chat: (scope:AiScope,message:string,id='',history:{role:'user'|'assistant';content:string}[]=[],requestId=''):Promise<{content:string;model:string}> => bridge.aiService({action:'chat',scope,message,id,history,request_id:requestId}),
   legacyAgentChat: (agentDefinition:unknown,message:string,requestId:string):Promise<{content:string;model:string;agent_id:string;tools_executed:boolean}> => bridge.aiService({action:'legacy_chat',scope:'default',agent_definition:agentDefinition,message,request_id:requestId}),
+  legacyAgentList: ():Promise<{id:string;version:string;display_name:string}[]> => bridge.aiService({action:'legacy_list'}),
+  legacyAgentInstall: (definition:unknown,confirmed:boolean):Promise<{installed:boolean;id:string;changed:boolean}> => bridge.aiService({action:'legacy_install',agent_definition:definition,confirmed}),
+  legacyAgentUninstall: (id:string,confirmed:boolean):Promise<{removed:boolean;id:string}> => bridge.aiService({action:'legacy_uninstall',id,confirmed}),
+  legacyAgentRun: (id:string,message:string,requestId:string):Promise<{content:string;model:string;agent_id:string;tools_executed:boolean}> => bridge.aiService({action:'legacy_run',id,scope:'default',message,request_id:requestId}),
   cancelChat: (requestId:string):Promise<{cancelled:boolean}> => bridge.aiService({action:'cancel',scope:'default',request_id:requestId}),
 };

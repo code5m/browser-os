@@ -13,7 +13,7 @@ adapter-rig = ["dep:rig-core", "dep:futures"]
 adapter-rmcp = ["dep:rmcp"]
 adapter-acp = ["dep:agent-client-protocol", "dep:futures"]
 adapter-all = ["adapter-rig", "adapter-rmcp", "adapter-acp"]
-experimental-rig-run = ["dep:rig-agent"]
+experimental-rig-run = ["dep:rig-agent", "adapter-rig"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

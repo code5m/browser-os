@@ -73,10 +73,11 @@ const conflictRows = computed(() => {
     .filter(row => row.ours !== row.theirs).slice(0, 200);
 });
 const historyLayoutStyle = computed(() => ({
-  '--git-history-inspector-width': `${historyInspectorWidth.value}px`,
+  '--git-history-inspector-width': gitInspectorOpen.value ? `${historyInspectorWidth.value}px` : '0px',
+  '--git-inspector-divider': gitInspectorOpen.value ? '7px' : '0px',
   '--git-history-bottom-height': `${historyBottomHeight.value}px`,
-  '--rebased-left-width': `${rebasedLeftWidth.value}px`,
-  '--rebased-right-width': `${rebasedRightWidth.value}px`,
+  '--rebased-left-width': gitFilesOpen.value ? `${rebasedLeftWidth.value}px` : '0px',
+  '--rebased-right-width': gitInspectorOpen.value ? `${rebasedRightWidth.value}px` : '0px',
 }));
 const selectedCommit = computed(() => commits.value.find(commit => commit.oid === logSelection.value));
 const historyAuthors = computed(() => [...new Set(commits.value.map(commit => String(commit.author || '')).filter(Boolean))].sort());
@@ -110,6 +111,18 @@ const commitFileStats = computed(() => commitFiles.value.reduce((stats, item) =>
 }, {added:0, modified:0, deleted:0, renamed:0}));
 const branchTarget = ref(''), tagTarget = ref(''), compareLeft = ref('HEAD'), compareRight = ref(''), message = ref(''), stashTarget = ref(''), worktreeTarget = ref(''), resetMode = ref<'soft'|'mixed'|'hard'>('mixed');
 const updateStrategy = ref<'Merge'|'Rebase'|'Fast-forward only'>('Fast-forward only');
+// Presentation-only state; never store repository contents or credentials.
+function readDisclosure(key:string) {
+  try { return localStorage.getItem(`browseros.git.ui.${key}`) !== 'false'; } catch { return true; }
+}
+const gitToolbarOpen=ref(readDisclosure('toolbar'));
+const gitFilesOpen=ref(readDisclosure('files'));
+const gitInspectorOpen=ref(readDisclosure('inspector'));
+function toggleGitDisclosure(key:'toolbar'|'files'|'inspector') {
+  const controls={toolbar:gitToolbarOpen,files:gitFilesOpen,inspector:gitInspectorOpen};
+  controls[key].value=!controls[key].value;
+  try { localStorage.setItem(`browseros.git.ui.${key}`,String(controls[key].value)); } catch {}
+}
 const settingsOpen = ref(false);
 const logPlacement = ref<'editor'|'toolwindow'>('editor');
 const writeIdeaMetadata = ref(true);
@@ -570,22 +583,29 @@ watch(()=>source.value?sourceIdentity(source.value):'',()=>{resetSourceContext()
   onUnmounted(()=>{if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') window.removeEventListener('keydown', handleGitKeydown);if (typeof document !== 'undefined') document.removeEventListener('pointerdown', handleCommitMenuPointer);disposed=true;generation++;detailGeneration++;void cancelPreview();if(!writeBusy.value)unregister();});
 </script>
 <template>
-<section class="git-studio" :class="{'rebased-product-theme':pane==='log'&&rebasedLayout}" aria-label="统一 Git 工作台" :data-history-context="historyContext" :data-log-placement="logPlacement">
+<section class="git-studio" :class="{'rebased-product-theme':pane==='log'&&rebasedLayout,'git-tools-folded':!gitToolbarOpen,'git-files-folded':!gitFilesOpen,'git-inspector-folded':!gitInspectorOpen}" aria-label="统一 Git 工作台" :data-history-context="historyContext" :data-log-placement="logPlacement">
   <div><button :aria-expanded="aiOpen" @click="aiOpen=!aiOpen">✦ Git AI 助手</button><AiAssistant v-if="aiOpen" scope="git" :context="patch"/></div>
-  <header v-if="pane==='log'&&rebasedLayout" class="rebased-appbar" aria-label="Rebased Git 顶栏">
+  <header v-if="pane==='log'&&rebasedLayout" id="git-rebased-appbar" class="rebased-appbar" aria-label="Rebased Git 顶栏">
     <button class="rebased-product-menu" aria-label="仓库配置" title="仓库配置" @click="emit('configure')">☰</button>
     <label class="rebased-repo-picker"><span aria-hidden="true">R</span><select :value="localPath?'':git.repoId||''" :disabled="writeBusy" aria-label="切换仓库" @change="selectRepo(($event.target as HTMLSelectElement).value)"><option value="">{{info?.root?.split('/').filter(Boolean).at(-1)||'选择仓库'}}</option><option v-for="item in repos.repos" :key="item.id" :value="item.id">{{item.name}}</option></select></label>
     <span class="rebased-top-branch-wrap"><button class="rebased-top-branch" :disabled="blocked||!info" :aria-expanded="branchWidgetOpen" @click="toggleBranchWidget">⑂ {{info?.branch||'HEAD'}}⌄</button><section v-if="branchWidgetOpen&&info" class="branch-widget-menu rebased-top-branch-menu" aria-label="当前仓库分支菜单"><strong>当前分支</strong><button class="branch-item active" @click="selectBranchFromTree(info.branch);branchWidgetOpen=false">{{info.branch}} · HEAD</button><button @click="historyBranchFilterOpen=true;branchWidgetOpen=false">查看所有分支</button><button @click="prepare('fetch');branchWidgetOpen=false" :disabled="blocked||preview">获取远端更新</button><button @click="prepare('update');branchWidgetOpen=false" :disabled="blocked||preview">更新当前分支</button><button @click="prepare('push');branchWidgetOpen=false" :disabled="blocked||preview">推送当前分支</button></section></span>
-    <button :disabled="blocked||!info||preview" @click="prepare('update')">↙ Update</button>
-    <button :disabled="blocked||!info||preview" @click="prepare('push')">↗ Push</button>
+    <button v-show="gitToolbarOpen" :disabled="blocked||!info||preview" @click="prepare('update')">↙ Update</button>
+    <button v-show="gitToolbarOpen" :disabled="blocked||!info||preview" @click="prepare('push')">↗ Push</button>
     <span class="rebased-product-title">Rebased Git client <small>BrowserOS</small></span>
-    <button aria-label="搜索提交历史" title="搜索提交历史" :disabled="blocked||!info" @click="focusHistorySearch">⌕</button>
-    <button aria-label="刷新" title="刷新" :disabled="blocked||!source" @click="refresh">⟳</button>
+    <button v-show="gitToolbarOpen" aria-label="搜索提交历史" title="搜索提交历史" :disabled="blocked||!info" @click="focusHistorySearch">⌕</button>
+    <button v-show="gitToolbarOpen" aria-label="刷新" title="刷新" :disabled="blocked||!source" @click="refresh">⟳</button>
     <button aria-label="Git 设置" title="Git 设置" :aria-pressed="settingsOpen" @click="settingsOpen=!settingsOpen">⚙</button>
     <select class="rebased-more-workspaces" aria-label="更多 Git 工作区" :value="pane" :disabled="writeBusy||!info" @change="selectPane(($event.target as HTMLSelectElement).value)"><option value="log">Log</option><option v-for="[id,label] in panes.filter(([id])=>id!=='log')" :key="id" :value="id">{{label}}</option></select>
     <button v-if="closeLabel" :disabled="writeBusy" @click="emit('close')">×</button>
   </header>
   <header v-else class="toolbar"><strong>Git Studio</strong><select :value="localPath?'':git.repoId||''" :disabled="writeBusy" aria-label="配置仓库" @change="selectRepo(($event.target as HTMLSelectElement).value)"><option value="">选择配置仓库</option><option v-for="item in repos.repos" :key="item.id" :value="item.id">{{item.name}}</option></select><input v-model="enteredPath" :disabled="writeBusy" aria-label="原始本地仓库路径" placeholder="已授权的本地目录或文件" @keydown.enter.prevent="openLocal"/><button :disabled="blocked||!enteredPath.trim()" @click="openLocal">打开本地仓库</button><button :disabled="blocked||!source" @click="refresh">刷新</button><button :aria-pressed="settingsOpen" @click="settingsOpen=!settingsOpen">Git 设置</button><button v-if="closeLabel" :disabled="writeBusy" @click="emit('close')">{{closeLabel}}</button></header>
+  <div class="git-disclosure-bar" role="toolbar" aria-label="Git 窗口布局">
+    <span>窗格</span>
+    <button type="button" :aria-expanded="gitToolbarOpen" :aria-controls="pane==='log'&&rebasedLayout?'git-rebased-appbar':'git-workspace-tools'" @click="toggleGitDisclosure('toolbar')">{{gitToolbarOpen?'▾ 收起工具栏':'▸ 展开工具栏'}}</button>
+    <button type="button" :aria-expanded="gitFilesOpen" aria-controls="git-file-pane" @click="toggleGitDisclosure('files')">{{gitFilesOpen?'◧ 收起文件区':'◫ 展开文件区'}}</button>
+    <button v-if="pane==='log'" type="button" :aria-expanded="gitInspectorOpen" aria-controls="git-commit-inspector" @click="toggleGitDisclosure('inspector')">{{gitInspectorOpen?'◧ 收起详情':'◫ 展开详情'}}</button>
+    <span class="git-disclosure-hint">视图设置保存在本机</span>
+  </div>
   <section v-if="settingsOpen" class="git-settings" aria-label="Git 设置">
     <strong>Git 产品设置</strong>
     <label v-if="pane==='log'&&rebasedLayout" class="git-settings-path">本地仓库<input v-model="enteredPath" :disabled="writeBusy" aria-label="原始本地仓库路径" placeholder="已授权的本地目录" @keydown.enter.prevent="openLocal"/><button :disabled="blocked||!enteredPath.trim()" @click="openLocal">打开</button></label>
@@ -602,7 +622,7 @@ watch(()=>source.value?sourceIdentity(source.value):'',()=>{resetSourceContext()
     <p>打开本地仓库后，这里会显示 Commit / Shelf、Log、文件树和差异编辑区。</p>
     <div><button @click="settingsOpen=true">打开本地仓库</button><button @click="emit('configure')">配置远程仓库</button></div>
   </section>
-  <nav v-if="(info||repositoryState==='LOADING')&&!(pane==='log'&&rebasedLayout)" class="toolbar git-workspace-nav" aria-label="Git 工作台视图">
+  <nav v-if="(info||repositoryState==='LOADING')&&!(pane==='log'&&rebasedLayout)" v-show="gitToolbarOpen" id="git-workspace-tools" class="toolbar git-workspace-nav" aria-label="Git 工作台视图">
     <template v-if="pane==='log'&&rebasedLayout"><button :disabled="blocked||!info" @click="refresh">⟳ Refresh</button><button :disabled="blocked||!info||preview" @click="prepare('update')">↙ Update</button><button :disabled="blocked||!info||preview" @click="prepare('push')">↗ Push</button><span class="grow"/><label class="update-strategy">Update<select v-model="updateStrategy" aria-label="Update 策略" :disabled="!info"><option value="Fast-forward only">Fast-forward only</option><option value="Merge">Merge</option><option value="Rebase">Rebase</option></select></label><select aria-label="更多 Git 工作区" :value="pane" :disabled="writeBusy||!info" @change="selectPane(($event.target as HTMLSelectElement).value)"><option value="log">Log</option><option v-for="[id,label] in panes.filter(([id])=>id!=='log')" :key="id" :value="id">{{label}}</option></select></template>
     <template v-else><button v-for="[id,label] in panes" :key="id" :aria-pressed="pane===id" :disabled="writeBusy||!info" @click="selectPane(id)">{{label}}</button><span class="grow"/><label class="update-strategy">Update 策略<select v-model="updateStrategy" aria-label="Update 策略" :disabled="!info"><option value="Fast-forward only">Fast-forward only</option><option value="Merge">Merge</option><option value="Rebase">Rebase</option></select></label><button v-for="op in ['fetch','update','push']" :key="op" :disabled="blocked||!info||preview" @click="prepare(op)">{{labels[op]}}</button></template>
   </nav>
@@ -610,7 +630,7 @@ watch(()=>source.value?sourceIdentity(source.value):'',()=>{resetSourceContext()
   <section v-if="preview" class="preview" aria-label="Git 写入预览"><strong>确认{{labels[preview.action]||preview.action}}</strong><p>{{preview.root}} · {{preview.target||''}} · {{preview.scope==='whole_worktree_including_untracked'?'整个仓库，包含未跟踪文件':'仅明确指定的操作范围'}}</p><p v-if="preview.action==='update'" class="hint">Update 策略：{{updateStrategy}}；确认后才会执行对应整合方式。</p><p v-if="preview.action==='push'&&outgoingCount===0" class="hint">没有待推送提交；确认后仍会执行一次远端状态校验。</p><p v-else-if="preview.action==='push'">当前分支有 {{outgoingCount}} 个待推送提交。</p><p v-if="preview.action==='update'&&incomingCount===0" class="hint">没有待更新提交；确认后仍会执行 {{updateStrategy}} 校验。</p><p>有效期 {{preview.expires_in_seconds}} 秒；HEAD、暂存区或工作区变化后拒绝执行。</p><pre v-if="preview.paths?.length">{{preview.paths.join('\n')}}</pre><p v-if="preview.message">{{preview.message}}</p><label><input v-model="acknowledged" type="checkbox"/>我已检查目标、范围和改动，确认执行。</label><button :disabled="writeBusy||!acknowledged" @click="confirm">确认执行</button><button :disabled="writeBusy" @click="cancelPreview">取消预览</button></section>
   <div v-if="info" class="workspace" :class="{ 'history-layout': pane === 'log' }" :style="pane==='log' ? historyLayoutStyle : undefined">
     <template v-if="pane==='changes'">
-      <aside class="files"><div class="toolbar"><strong>文件</strong><button :disabled="blocked" @click="selected=[]">清空选择</button></div><p class="hint">同一文件可同时有已暂存和未暂存改动。</p><section v-for="group in groups" :key="group.id"><h4>{{group.name}}（{{group.files.length}}）</h4><label v-for="entry in group.files" :key="entry.path" class="file-row" :class="{active:activeFile===entry.path}"><input type="checkbox" :checked="selected.includes(entry.path)" :disabled="writeBusy" @change="toggle(entry.path)"/><button :title="entry.path" :disabled="blocked" @click="openFile(entry.path,group.id==='index')">{{entry.path}}</button><small>{{entry.index}}{{entry.worktree}}</small></label></section><p v-if="!groups.length">工作区干净。</p></aside>
+      <aside id="git-file-pane" class="files"><div class="toolbar"><strong>文件</strong><button :disabled="blocked" @click="selected=[]">清空选择</button></div><p class="hint">同一文件可同时有已暂存和未暂存改动。</p><section v-for="group in groups" :key="group.id"><h4>{{group.name}}（{{group.files.length}}）</h4><label v-for="entry in group.files" :key="entry.path" class="file-row" :class="{active:activeFile===entry.path}"><input type="checkbox" :checked="selected.includes(entry.path)" :disabled="writeBusy" @change="toggle(entry.path)"/><button :title="entry.path" :disabled="blocked" @click="openFile(entry.path,group.id==='index')">{{entry.path}}</button><small>{{entry.index}}{{entry.worktree}}</small></label></section><p v-if="!groups.length">工作区干净。</p></aside>
       <main class="detail"><div class="toolbar"><strong>{{activeFile||'选择文件查看差异'}}</strong><button :disabled="blocked||!activeFile" @click="openFile(activeFile,!staged)">{{staged?'HEAD → Index':'Index → Working Tree'}}</button><select v-model="diffMode" aria-label="差异视图"><option value="split">并排变更</option><option value="patch">补丁</option><option value="full">全文三版本</option><option value="partial">选择代码块 / 行</option><option v-if="blame.length" value="blame">行级归属</option><option v-if="conflict" value="conflict">三方冲突</option></select><button :disabled="blocked||!activeFile" @click="inspectFile('blame')">Blame</button><button :disabled="blocked||!activeFile" @click="inspectFile('follow')" title="Vcs.ShowTabbedFileHistory：打开当前文件历史">文件历史</button><button :disabled="blocked||!activeFile" @click="inspectFile('conflict')">解决冲突</button></div>
         <div v-if="diffMode==='split'" class="patch"><div v-for="(row,index) in parsed.rows" :key="index" class="split-row"><pre :class="{removed:row.removed}">{{row.beforeLine??''}} {{row.before}}</pre><pre :class="{added:row.added}">{{row.afterLine??''}} {{row.after}}</pre></div><p v-if="parsed.truncated">显示达到 4000 行上限，内容不完整。</p></div>
         <pre v-else-if="diffMode==='patch'" class="patch">{{patch||'没有可显示的文本补丁。'}}</pre>
@@ -637,7 +657,7 @@ watch(()=>source.value?sourceIdentity(source.value):'',()=>{resetSourceContext()
       <button role="menuitem" :disabled="blocked||preview||!canDeleteBranch(branchActionMenu.name)" title="仅允许删除非当前、非保护的本地分支" @click="prepareBranchAction('branch_delete',branchActionMenu.name)">删除已合并分支</button>
       <button role="menuitem" @click="closeBranchActionMenu">取消</button>
     </div>
-      <aside class="commit-inspector" aria-label="提交详情、变更文件及差异预览">
+      <aside v-show="gitInspectorOpen" id="git-commit-inspector" class="commit-inspector" aria-label="提交详情、变更文件及差异预览">
         <div class="rebased-inspector-tools"><button title="显示文件差异" aria-label="显示文件差异" :disabled="!commitFilePath" @click="selectCommitFile(commitFilePath)">⇄</button><button title="撤销此提交（需预览确认）" aria-label="撤销此提交" :disabled="blocked||preview||!selectedCommit" @click="selectedCommit&&prepareCommitAction('revert',selectedCommit)">↶</button><button title="提交版本预览" aria-label="提交版本预览" :disabled="!commitFilePath" @click="historicalDiffMode='file'">◷</button><button title="并排差异" aria-label="并排差异" :disabled="!commitFilePath" @click="historicalDiffMode='split'">◉</button></div>
         <template v-if="logSelection">
           <div class="inspector-file-heading"><strong>变更文件（{{commitFiles.length}}）</strong><small class="change-summary">新增 {{commitFileStats.added}} · 修改 {{commitFileStats.modified}} · 删除 {{commitFileStats.deleted}} · 重命名 {{commitFileStats.renamed}}</small></div>
@@ -667,9 +687,9 @@ watch(()=>source.value?sourceIdentity(source.value):'',()=>{resetSourceContext()
         </template>
         <template v-else><p class="hint">从下方历史选择提交；提交详情和变更文件会固定显示在这里。</p></template>
       </aside>
-      <div v-if="rebasedLayout" class="rebased-column-splitter rebased-left-splitter" role="separator" aria-label="调整 Commit 与 Log 宽度" aria-orientation="vertical" @pointerdown="beginRebasedResize('left',$event)"/>
-      <div v-if="rebasedLayout" class="rebased-column-splitter rebased-right-splitter" role="separator" aria-label="调整 Log 与文件树宽度" aria-orientation="vertical" @pointerdown="beginRebasedResize('right',$event)"/>
-      <div class="history-vertical-splitter" role="separator" aria-label="调整提交详情宽度" aria-orientation="vertical" @pointerdown="beginHistoryResize('inspector',$event)"/>
+      <div v-if="rebasedLayout && gitFilesOpen" class="rebased-column-splitter rebased-left-splitter" role="separator" aria-label="调整 Commit 与 Log 宽度" aria-orientation="vertical" @pointerdown="beginRebasedResize('left',$event)"/>
+      <div v-if="rebasedLayout && gitInspectorOpen" class="rebased-column-splitter rebased-right-splitter" role="separator" aria-label="调整 Log 与文件树宽度" aria-orientation="vertical" @pointerdown="beginRebasedResize('right',$event)"/>
+      <div v-show="gitInspectorOpen" class="history-vertical-splitter" role="separator" aria-label="调整提交详情宽度" aria-orientation="vertical" @pointerdown="beginHistoryResize('inspector',$event)"/>
       <main class="detail history-editor-pane" aria-label="文件编辑和差异预览">
         <header class="history-editor-toolbar"><button v-if="commitFilePath||rebasedWorktreePath||rebasedShelf&&stashTarget" @click="commitFilePath='';rebasedWorktreePath='';stashTarget=''">← 返回 Log</button><strong>{{rebasedWorktreePath||commitFilePath||rebasedShelf&&stashTarget||'选择提交和文件'}}</strong><span class="grow"/><template v-if="commitFilePath"><button @click="historyEditorCollapsed=!historyEditorCollapsed">{{historyEditorCollapsed?'展开编辑器':'折叠编辑器'}}</button><button :disabled="historicalDiffMode==='file'" :title="historicalDiffMode==='file'?'切换到并排 Diff 后可筛选变更区域':''" @click="historyOnlyChanges=!historyOnlyChanges">{{historyOnlyChanges?'显示全部内容':'只显示变更区域'}}</button><select v-model="historicalDiffMode" aria-label="历史文件预览方式"><option value="file">文件编辑器</option><option value="split">并排 Diff</option><option value="patch">统一 Patch</option></select></template></header>
         <section v-if="rebasedWorktreePath" class="history-editor" aria-label="工作区文件差异"><GitHistoryDiff :patch="patch" :after-content="(staged ? file?.index : file?.worktree) || ''" :only-changes="historyOnlyChanges" :before-label="staged ? 'HEAD' : '暂存区'" :after-label="staged ? '暂存区' : '工作区'"/></section>
@@ -687,7 +707,7 @@ watch(()=>source.value?sourceIdentity(source.value):'',()=>{resetSourceContext()
       </main>
       <div class="history-horizontal-splitter" role="separator" aria-label="调整分支和历史高度" aria-orientation="horizontal" @pointerdown="beginHistoryResize('bottom',$event)"/>
       <section class="history-bottom" :class="{'rebased-history':rebasedLayout}" aria-label="分支和提交历史">
-        <aside v-if="rebasedLayout" class="rebased-commit-panel" aria-label="提交与暂存架">
+        <aside v-if="rebasedLayout" v-show="gitFilesOpen" id="git-file-pane" class="rebased-commit-panel" aria-label="提交与暂存架">
           <div class="rebased-panel-tabs"><button :aria-pressed="!rebasedShelf" @click="rebasedShelf=false">Commit</button><button :aria-pressed="rebasedShelf" @click="openRebasedShelf">Shelf</button></div>
           <div class="rebased-commit-tools"><button title="刷新工作区" aria-label="刷新工作区" @click="refresh">⟳</button><button title="丢弃选中改动（需预览确认）" aria-label="丢弃选中改动" :disabled="blocked||preview||!selected.length" @click="prepare('discard')">↶</button><button title="移动选中改动到暂存区或工作区" aria-label="移动选中改动" :disabled="blocked||preview||!selected.length" @click="prepare(selectedUnstaged.length?'stage':'unstage')">⇄</button><button title="保存到暂存架（需预览确认）" aria-label="保存到暂存架" :disabled="blocked||preview" @click="prepare('stash_save')">⇥</button><button title="查看选中文件差异" aria-label="查看选中文件差异" :disabled="blocked||!selected.length" @click="openRebasedWorktreeFile((info.files||[]).find((entry:any)=>entry.path===selected[0]))">◉</button><button title="选中已打开文件" aria-label="选中已打开文件" :disabled="!rebasedWorktreePath" @click="rebasedWorktreePath&&!selected.includes(rebasedWorktreePath)&&selected.push(rebasedWorktreePath)">⌖</button><button title="展开全部" aria-label="展开全部" @click="rebasedChangesExpanded=true;rebasedUnversionedExpanded=true">⊞</button><button title="折叠全部" aria-label="折叠全部" @click="rebasedChangesExpanded=false;rebasedUnversionedExpanded=false">⊟</button></div>
           <div v-if="!rebasedShelf" class="rebased-changes">
@@ -834,4 +854,19 @@ watch(()=>source.value?sourceIdentity(source.value):'',()=>{resetSourceContext()
 :global([data-theme="dark"]) .git-studio .conflict-preview.ours{background:#482b32}
 :global([data-theme="dark"]) .git-studio .conflict-preview.theirs{background:#183b2a}
 :global([data-theme="dark"]) .git-studio a{color:var(--git-accent)}
+
+/* Compact collapsible layout controls: all switches remain reachable after collapse. */
+.git-disclosure-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-height:34px;padding:5px 10px;border-bottom:1px solid var(--git-border,#dce4ed);background:var(--git-surface-muted,#f7f9fc)}
+.git-disclosure-bar>span:first-child{color:var(--git-muted,#687889);font-size:11px;font-weight:700}
+.git-disclosure-bar button{background:transparent;border:1px solid var(--git-border,#cbd5e1);color:inherit;font-size:11px;padding:4px 8px}
+.git-disclosure-bar button:hover{background:var(--git-selected,#e4edf8)}
+.git-disclosure-hint{color:var(--git-muted,#718196);font-size:10px;margin-left:auto}
+.git-studio.git-tools-folded .git-workspace-nav,.git-studio.git-tools-folded .rebased-workspace-nav{display:none!important}
+.git-studio.git-files-folded .workspace:not(.history-layout)>.files{display:none!important}
+.git-studio.git-inspector-folded .history-layout>.commit-inspector{display:none!important}
+.git-studio.git-files-folded .rebased-commit-panel,.git-studio.git-files-folded .rebased-left-splitter{display:none!important}
+.git-studio.git-inspector-folded .rebased-right-splitter{display:none!important}
+.git-studio.git-inspector-folded .history-vertical-splitter{display:none!important}
+.history-layout{grid-template-columns:var(--git-history-inspector-width) var(--git-inspector-divider,7px) minmax(0,1fr)}
+@media(max-width:800px){.git-disclosure-hint{display:none}.git-disclosure-bar{gap:4px}.git-disclosure-bar button{padding:4px 6px}}
 </style>
