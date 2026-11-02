@@ -115,7 +115,7 @@ impl DbError {
 // 结果 DTO（M4-1.c §2，字段名为准）
 // ---------------------------------------------------------------------------
 
-/// 可序列化标量。**BLOB 一律不回传字节**（只回长度），/// JavaScript Number cannot exactly represent all signed 64-bit integers.
+/// JavaScript Number cannot exactly represent all signed 64-bit integers.
 mod i64_as_decimal_string {
     use serde::{de::Error as _, Deserialize, Deserializer, Serializer};
     pub fn serialize<S>(value: &i64, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer { serializer.serialize_str(&value.to_string()) }

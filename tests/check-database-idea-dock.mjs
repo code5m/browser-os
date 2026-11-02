@@ -20,6 +20,7 @@ assert.equal(writeDock({}, {setItem:()=>{throw new Error('private')}}),false);
 const decodedRows=decodeDbRows([[{i64:'9223372036854775807'},{text:'x'.repeat(250)},{bool:true},'null',{i64:'42'},42]]);
 assert.equal(decodedRows[0][0],'9223372036854775807');assert.equal(decodedRows[0][1].length,250);
 assert.equal(decodedRows[0][2],true);assert.equal(decodedRows[0][3],null);assert.equal(decodedRows[0][4],42);assert.equal(decodedRows[0][5],42);
+const markdown=markdownResult(['bigint','long_text'],[[decodedRows[0][0],decodedRows[0][1]]]);assert.ok(markdown.includes('9223372036854775807'));assert.equal(markdown.includes('x'.repeat(250)),true);
 const rawProjection=projectRawRows([{name:'id'},{name:'name'},{name:'note'}],
   [{row_id:'row-1',values:['1','old',null]},{row_id:'row-2',values:['2','second','x']}],
   {'row-1':{name:'draft'}},[{id:'insert-1',values:{name:'new',note:null}}],['row-2']);
