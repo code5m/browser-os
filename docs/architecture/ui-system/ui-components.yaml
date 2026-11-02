@@ -8,7 +8,7 @@
 
 version: 1
 generated_from_head: 3f57a92e5fb7d9a6bc978f1572964d3c14fb8caf
-total: 95
+total: 96
 
 components:
   - { id: agent.operation-review, name: CodingOperationReview, layer: CAPABILITY_UI, owner: agent, file: src/capabilities/agent/ui/CodingOperationReview.vue, public: false, business_semantics: "Explicit per-operation approval and result recording", capability_specific: true, dependencies: [bridge, CodingCommandPanel], consumers: [CodingWorkbench], status: OBSERVED }
@@ -26,6 +26,7 @@ components:
   - { id: database.table-editor, name: TableDataEditor, layer: CAPABILITY_UI, owner: database, file: src/capabilities/database/ui/TableDataEditor.vue, public: false, business_semantics: "Native typed data pages and parameterized mutation previews", capability_specific: true, dependencies: [bridge], consumers: [DatabaseWorkspace], status: OBSERVED }
 
   - { id: git.studio, name: GitStudio, layer: CAPABILITY_UI, owner: git, file: src/capabilities/git/ui/GitStudio.vue, public: false, business_semantics: "Unified source-bound Git workbench and validated native previews", capability_specific: true, dependencies: [bridge], consumers: [GitPanel, GitHistory, GitLocalInspector], status: OBSERVED }
+  - { id: database.output, name: DatabaseOutput, layer: CAPABILITY_UI, owner: database, file: src/capabilities/database/ui/DatabaseOutput.vue, public: false, business_semantics: "Actual bounded SQL result dock, local view modes, extractor and safe copy/export", capability_specific: true, dependencies: [useDatabaseStore, ideaDock], consumers: [DatabaseWorkspace], status: OBSERVED }
   - { id: database.workspace, name: DatabaseWorkspace, layer: CAPABILITY_UI, owner: database, file: src/capabilities/database/ui/DatabaseWorkspace.vue, public: false, business_semantics: "Source-bound SQL documents, results and transactions", capability_specific: true, dependencies: [bridge], consumers: [DatabasePanel], status: OBSERVED }
   - { id: database.sql-editor, name: SqlEditor, layer: CAPABILITY_UI, owner: database, file: src/capabilities/database/ui/SqlEditor.vue, public: false, business_semantics: "Escaped SQL highlighting and bounded lexical editing", capability_specific: true, dependencies: [bridge], consumers: [DatabaseWorkspace], status: OBSERVED }
 

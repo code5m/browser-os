@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { useDatabaseStore } from '../state/useDatabaseStore';
 import { tableChanges, dirtyTable, importTableRows, exportTableSql } from '../model/studioTable.mjs';
 import { exportRows } from '../model/studioSql.mjs';
+import {markdownResult} from '../model/ideaDock.mjs';
 const db = useDatabaseStore();
 const table = computed(() => db.document.tableData);
 const config = computed(() => db.configs.find(c => c.id === db.document.connId));
@@ -11,6 +12,15 @@ const canEdit = computed(() => !!table.value?.page?.editable && db.document.tran
 const blocked = computed(() => db.busy || !!table.value?.ticket || db.document.closing || db.document.closeFailed);
 const filterColumn = ref(''), filterOperator = ref('eq'), filterValue = ref(''), exportFormat = ref('csv'), acknowledged = ref(false);
 const fileInput = ref<HTMLInputElement|null>(null);
+const dataViewMode=ref<'table'|'tree'|'text'>('table');
+const transposed=ref(false);
+const dataColumns=computed(()=>table.value?.page?.table.columns||[]);
+const readText=computed(()=>{
+  if(!table.value?.page)return '';
+  try { return exportRows(dataColumns.value.map(column=>column.name),shownRows.value.map(row=>row.values),'json').slice(0,160000); }
+  catch { return '当前批次不能安全地转成文本预览'; }
+});
+
 const shownRows = computed(() => table.value?.page?.rows.slice((table.value.displayPage || 0) * 50, ((table.value.displayPage || 0) + 1) * 50) || []);
 function request(current:any, extra:Record<string,unknown>={}) { return { name:current.name, offset:current.offset, filters:current.filters, order:current.order, ...extra }; }
 const readVersions = new WeakMap<object, number>();
@@ -127,7 +137,7 @@ function exportData() {
   const current=table.value;if(!current?.page)return;
   try {
     const columns=current.page.table.columns.map((c:any)=>c.name),rows=current.page.rows.map((r:any)=>r.values);
-    const text=exportFormat.value==='sql'?exportTableSql(current.name,columns,rows,config.value?.kind):exportRows(columns,rows,exportFormat.value);
+    const text=exportFormat.value==='sql'?exportTableSql(current.name,columns,rows,config.value?.kind):exportFormat.value==='markdown'?markdownResult(columns,rows):exportRows(columns,rows,exportFormat.value);
     const url=URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'}));
     const link=document.createElement('a');link.href=url;link.download=`browseros-table-${new Date().toISOString().slice(0,10)}.${exportFormat.value}`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
     current.notice='仅导出当前服务端批次已读取的原始行，不包含未应用的草稿。';
@@ -145,18 +155,50 @@ watch(()=>[db.document.transaction,db.document.busy],()=>{const current=table.va
     <p v-if="!table.page.stable_order" class="warning">此对象没有可验证的主键，翻页顺序可能随并发修改变化；只能查看，不能编辑。</p>
     <p v-if="!table.page.editable" class="warning">当前只读：写入要求明确的非生产权限、主键、事务表以及可安全比较的文本数据。视图、二进制列或非事务表不会被强行编辑。</p>
     <div class="tools"><select v-model="filterColumn" :disabled="blocked||dirtyTable(table)" aria-label="筛选字段"><option v-for="column in table.page.table.columns" :key="column.name" :value="column.name">{{column.name}}</option></select><select v-model="filterOperator" :disabled="blocked||dirtyTable(table)" aria-label="筛选条件"><option value="eq">等于</option><option value="ne">不等于</option><option value="contains">包含</option><option value="gt">大于</option><option value="ge">大于等于</option><option value="lt">小于</option><option value="le">小于等于</option><option value="is_null">是 NULL</option><option value="not_null">不是 NULL</option></select><input v-if="!['is_null','not_null'].includes(filterOperator)" v-model="filterValue" :disabled="blocked||dirtyTable(table)" placeholder="参数值，不拼接到 SQL" aria-label="筛选值"/><button :disabled="blocked||dirtyTable(table)||table.filters.length>=16" @click="addFilter">应用筛选</button><span v-for="(filter,index) in table.filters" :key="index">{{filter.column}} {{filter.operator}} {{filter.value}}<button :disabled="blocked||dirtyTable(table)" :aria-label="'移除筛选 '+filter.column" @click="removeFilter(index)">×</button></span></div>
-    <div class="grid"><table><thead><tr><th>操作</th><th v-for="column in table.page.table.columns" :key="column.name"><button :disabled="blocked||dirtyTable(table)||column.binary" :title="column.datatype" @click="sort(column.name)">{{column.primary?'🔑 ':''}}{{column.name}}{{table.order[0]?.column===column.name?(table.order[0].descending?' ↓':' ↑'):''}}</button></th></tr></thead><tbody>
+    <nav class="table-data-views" role="toolbar" aria-label="表数据视图">
+      <span>View As</span>
+      <button v-for="mode in (['table','tree','text'] as const)" :key="mode" type="button" :aria-pressed="dataViewMode===mode" @click="dataViewMode=mode">{{mode==='table'?'Table':mode==='tree'?'Tree':'Text'}}</button>
+      <button type="button" :disabled="dataViewMode!=='table'" :aria-pressed="transposed" @click="transposed=!transposed">⇄ 转置</button>
+      <span class="view-hint">Tree、Text 和转置为只读展示，草稿保留但不会提交</span>
+    </nav>
+    <div v-if="dataViewMode==='table' && !transposed" class="grid"><table><thead><tr><th>操作</th><th v-for="column in table.page.table.columns" :key="column.name"><button :disabled="blocked||dirtyTable(table)||column.binary" :title="column.datatype" @click="sort(column.name)">{{column.primary?'🔑 ':''}}{{column.name}}{{table.order[0]?.column===column.name?(table.order[0].descending?' ↓':' ↑'):''}}</button></th></tr></thead><tbody>
       <tr v-for="row in shownRows" :key="row.row_id" :class="{removed:table.removed.includes(row.row_id)}"><td><button :disabled="!canEdit" @click="removeRow(row)">{{table.removed.includes(row.row_id)?'恢复':'删除'}}</button></td><td v-for="(column,index) in table.page.table.columns" :key="column.name" :class="{changed:table.edits[row.row_id]&&Object.prototype.hasOwnProperty.call(table.edits[row.row_id],column.name)}"><button class="cell" :disabled="!canEdit||column.generated||column.binary||table.removed.includes(row.row_id)" :title="String(value(row,index)??'NULL').slice(0,1000)" @click="edit(row,index)">{{value(row,index)===null?'NULL':String(value(row,index)).slice(0,240)}}</button></td></tr>
       <tr v-for="row in table.inserts" :key="row.id" class="inserted"><td><button :disabled="!canEdit" @click="table.inserts=table.inserts.filter((item:any)=>item.id!==row.id)">移除新行</button></td><td v-for="(column,index) in table.page.table.columns" :key="column.name"><button class="cell" :disabled="!canEdit||column.generated||column.binary" @click="edit(row,index,true)">{{!Object.prototype.hasOwnProperty.call(row.values,column.name)?'DEFAULT':row.values[column.name]===null?'NULL':String(row.values[column.name]).slice(0,240)}}</button></td></tr>
     </tbody></table></div>
+    <div v-else-if="dataViewMode==='table' && transposed" class="grid table-transposed" aria-label="转置表数据，只读">
+      <table><thead><tr><th>字段 / 行</th><th v-for="row in shownRows" :key="row.row_id">{{row.row_id}}</th></tr></thead>
+      <tbody><tr v-for="(column,index) in dataColumns" :key="column.name"><th>{{column.name}}</th><td v-for="row in shownRows" :key="row.row_id">{{row.values[index]}}</td></tr></tbody></table>
+    </div>
+    <div v-else-if="dataViewMode==='tree'" class="table-tree" aria-label="表数据树形视图，只读">
+      <details v-for="row in shownRows" :key="row.row_id"><summary>▤ Row {{row.row_id}}</summary>
+        <dl><div v-for="(column,index) in dataColumns" :key="column.name"><dt>{{column.name}}</dt><dd>{{row.values[index]}}</dd></div></dl>
+      </details>
+    </div>
+    <pre v-else class="table-text" aria-label="表数据 JSON 文本预览，只读">{{readText}}</pre>
     <section v-if="table.cell" class="cell-editor"><strong>编辑 {{table.cell.column}} · 只修改草稿</strong><label><input v-model="table.cellNull" type="checkbox"/>设为 NULL（不同于空字符串）</label><textarea v-model="table.cellText" :disabled="table.cellNull" rows="4" aria-label="单元格值"/><button :disabled="!canEdit" @click="saveCell">保存到草稿</button><button @click="table.cell=null">不修改</button></section>
     <section v-if="table.ticket" class="confirmation" aria-label="DML 执行预览"><strong>请核对数据源、SQL 和绑定参数</strong><p>每行会重新锁定并比对原值。任一冲突导致整批回滚；应用成功后仍需单独提交事务。</p><div v-for="(statement,index) in table.ticket.statements" :key="index"><code>{{statement.sql}}</code><details><summary>{{statement.parameters.length}} 个绑定参数</summary><pre>{{JSON.stringify(statement.parameters,null,2)}}</pre></details></div><label><input v-model="acknowledged" type="checkbox"/>我已核对 {{config?.name}} / {{table.name}} 的 {{table.ticket.statements.length}} 项操作</label><button :disabled="!acknowledged||db.busy" @click="apply">应用到事务（不自动提交）</button><button :disabled="db.busy" @click="cancelPreview">取消预览</button></section>
     <footer class="tools"><button :disabled="blocked||dirtyTable(table)||table.offset===0" @click="load(table.offset-100)">上一批</button><span>服务端第 {{table.offset/100+1}} 批 · {{table.page.rows.length}} 行</span><button :disabled="blocked||dirtyTable(table)||!table.page.has_more||table.offset>=50000" @click="load(table.offset+100)">下一批</button><button :disabled="!(table.displayPage||0)" @click="table.displayPage=0">显示前 50 行</button><button :disabled="table.page.rows.length<=50" @click="table.displayPage=1">显示后 50 行</button></footer>
-    <div class="tools"><input ref="fileInput" type="file" accept=".csv,.tsv,.json" class="file-input" @change="imported"/><button :disabled="!canEdit" @click="fileInput?.click()">导入为新增草稿…</button><select v-model="exportFormat" aria-label="表数据导出格式"><option value="csv">CSV</option><option value="tsv">TSV</option><option value="json">JSON</option><option value="sql">SQL INSERT</option></select><button :disabled="db.busy" @click="exportData">导出当前批次</button><small>导入最多 100 行；CSV 空字段保持空字符串，JSON null 保持 NULL。</small></div>
+    <div class="tools"><input ref="fileInput" type="file" accept=".csv,.tsv,.json" class="file-input" @change="imported"/><button :disabled="!canEdit" @click="fileInput?.click()">导入为新增草稿…</button><select v-model="exportFormat" aria-label="表数据导出格式"><option value="csv">CSV</option><option value="tsv">TSV</option><option value="json">JSON</option><option value="sql">SQL INSERT</option><option value="markdown">Markdown</option></select><button :disabled="db.busy" @click="exportData">导出当前批次</button><small>导入最多 100 行；CSV 空字段保持空字符串，JSON null 保持 NULL。</small></div>
   </template>
   <p v-if="table.notice" role="status">{{table.notice}}</p>
 </section>
 </template>
 <style scoped>
 .table-data-editor{display:flex;flex-direction:column;min-width:0;gap:8px;color:inherit}.tools{display:flex;align-items:center;flex-wrap:wrap;gap:6px}.tools strong{margin-right:auto}.grid{overflow:auto;max-height:460px;border:1px solid #d6e0eb}table{border-collapse:collapse;min-width:100%;font:12px/1.5 ui-monospace,monospace}th,td{border:1px solid #e0e7ef;padding:3px;max-width:360px;white-space:pre}th{position:sticky;top:0;background:#f1f5fa;text-align:left;z-index:1}.cell{min-width:50px;max-width:350px;overflow:hidden;text-overflow:ellipsis;text-align:left;width:100%;background:transparent;border:0}.cell:disabled{opacity:1;color:inherit;cursor:default}.changed,.inserted{background:#f1faed}.removed{background:#fff0ef;text-decoration:line-through}.hint,small{font-size:11px;color:#627689}.warning{padding:7px;background:#fff7e3;color:#78591e}.confirmation,.cell-editor{border:1px solid #cbd8e6;border-radius:5px;padding:10px;background:#f6f9fc}.confirmation pre{max-height:160px;overflow:auto}.confirmation code{white-space:pre-wrap;overflow-wrap:anywhere}.cell-editor textarea{box-sizing:border-box;width:100%;font:12px/1.6 ui-monospace,monospace}.cell-editor label,.confirmation label{display:block;margin:7px 0}button,input,select,textarea{font:inherit;border:1px solid #c5d3e2;border-radius:4px;padding:5px 7px;color:inherit;background:#fff}button{cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}.file-input{display:none}p{margin:3px 0;overflow-wrap:anywhere}
+</style>
+
+<style scoped>
+.table-data-editor{height:100%;min-height:0;overflow:auto}
+.table-data-views{display:flex;gap:5px;align-items:center;flex-wrap:wrap;padding:4px 7px;border:1px solid #344257;background:#1d2635;font-size:11px;color:#a5b6cc}
+.table-data-views button{padding:4px 9px;color:#bfcede;border:1px solid #39485e;background:#222e40;border-radius:3px}
+.table-data-views button[aria-pressed=true]{border-color:#5c84b3;background:#324f74;color:#fff}
+.table-data-views button:disabled{opacity:.35}.view-hint{margin-left:auto;font-size:10px;color:#899bb0}
+.table-data-editor .grid{resize:vertical;min-height:190px;max-height:66vh;overflow:auto;scrollbar-width:thin}
+.table-transposed th{background:#263448;color:#bbd1ef;white-space:nowrap}
+.table-tree{min-height:180px;max-height:56vh;overflow:auto;background:#161e29;border:1px solid #344155}
+.table-tree details{padding:8px 12px;border-bottom:1px solid #2a374a}
+.table-tree summary{cursor:pointer;color:#b8cce7}
+.table-tree dl{padding:0 13px}.table-tree dl div{display:flex;gap:13px;padding:5px;border-bottom:1px solid #2c394d}
+.table-tree dt{flex:0 0 35%;color:#91a9c7}.table-tree dd{margin:0;overflow-wrap:anywhere}
+.table-text{padding:13px;min-height:160px;max-height:56vh;overflow:auto;white-space:pre;background:#121a25;color:#c9d7e9;font:12px/1.5 ui-monospace,monospace;border:1px solid #303f52}
 </style>

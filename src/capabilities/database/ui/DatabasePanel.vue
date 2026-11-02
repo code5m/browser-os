@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import DatabaseWorkspace from "./DatabaseWorkspace.vue";
+import { readDock, writeDock, normalizeDock, resizedWidth } from "../model/ideaDock.mjs";
 import { bridge } from "../../../bridge";
 import { discoverIdeaProjects } from "../model/ideaDiscovery.mjs";
 import type { DbConnectionConfig } from "../../../types";
@@ -71,12 +72,14 @@ function applyConnectionUrl() {
 const showConnection = ref(false);
 const connectionDialogOpen = ref(false);
 const connectionDialogTab = ref<"manual" | "idea">("manual");
+const connectionSettingsSection = ref<'general'|'options'|'ssl'|'schemas'|'advanced'>('general');
 // Only UI disclosure preferences are stored. Never persist connection secrets.
 function dbDisclosure(key:string, fallback = true) {
-  try { return localStorage.getItem(`browseros.db.ui.${key}`) !== 'false'; } catch { return fallback; }
+  try { const stored=localStorage.getItem('browseros.db.ui.'+key); return stored===null?fallback:stored!=='false'; }
+  catch { return fallback; }
 }
 const dbNavigatorOpen = ref(dbDisclosure('navigator'));
-const dbInspectorOpen = ref(dbDisclosure('inspector'));
+const dbInspectorOpen = ref(dbDisclosure('inspector', false));
 const dbConnectionsOpen = ref(dbDisclosure('connections'));
 const dbSchemaOpen = ref(dbDisclosure('schema'));
 function persistDbDisclosure(key: 'navigator'|'inspector'|'connections'|'schema', expanded: boolean) {
@@ -108,6 +111,82 @@ function openConnectionSettings() {
   showConnection.value=true;
   connectionDialogOpen.value=true;
   connectionDialogTab.value='manual';
+}
+const dock = readDock();
+const dockSide = ref<'left'|'right'>(dock.side);
+const navigatorWidth = ref(dock.navigator);
+const inspectorWidth = ref(dock.inspector);
+const workspaceHost = ref<HTMLElement|null>(null);
+const expandedSource = ref('');
+watch(() => db.activeId, id => { if (id) expandedSource.value = id; }, { immediate: true });
+function persistPanelDock() {
+  writeDock({ ...readDock(), side:dockSide.value, navigator:navigatorWidth.value, inspector:inspectorWidth.value });
+}
+function moveDatabaseNavigator(side:'left'|'right') { dockSide.value=side; persistPanelDock(); }
+function resetDatabaseDock() {
+  const next=normalizeDock();
+  dockSide.value=next.side;navigatorWidth.value=next.navigator;inspectorWidth.value=next.inspector;
+  dbNavigatorOpen.value=true;dbInspectorOpen.value=false;
+  persistDbDisclosure('navigator',true);persistDbDisclosure('inspector',false);
+  persistPanelDock();
+}
+function selectSource(connection: {id:string;enabled:boolean}) {
+  expandedSource.value=connection.id;
+  if (connection.enabled) { const item=db.connections.find(c=>c.id===connection.id);if (item) db.selectConnection(item); }
+  else { const saved=db.configs.find(cfg=>cfg.id===connection.id);if (saved) selectPendingIdeaConfig(saved); }
+}
+function toggleSource(id:string) {
+  if (expandedSource.value===id) {expandedSource.value='';return;}
+  const source=db.connections.find(c=>c.id===id);
+  if(source)selectSource(source);
+}
+let stopDockDrag=()=>{};
+function onPanelPointerDown(event:PointerEvent, panel:'navigator'|'inspector') {
+  if (event.button !== 0 || !workspaceHost.value) return;
+  stopDockDrag();
+  event.preventDefault();
+  const start=event.clientX;
+  const bounds=workspaceHost.value.getBoundingClientRect();
+  const original=panel==='navigator'?navigatorWidth.value:inspectorWidth.value;
+  const other=panel==='navigator'?(dbInspectorOpen.value?inspectorWidth.value:0):(dbNavigatorOpen.value&&!workbench.collapsed?navigatorWidth.value:0);
+  const side=panel==='navigator'?dockSide.value:(dockSide.value==='left'?'right':'left');
+  function move(e:PointerEvent) {
+    const next=resizedWidth(original,e.clientX-start,side,bounds.width,other);
+    if(panel==='navigator') navigatorWidth.value=next;
+    else inspectorWidth.value=next;
+  }
+  function stop() {stopDockDrag();persistPanelDock();}
+  const clear=()=>{
+    window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',stop);
+    window.removeEventListener('pointercancel',stop);window.removeEventListener('blur',stop);
+  };
+  stopDockDrag=()=>{stopDockDrag=()=>{};clear();};
+  window.addEventListener('pointermove',move);window.addEventListener('pointerup',stop);
+  window.addEventListener('pointercancel',stop);window.addEventListener('blur',stop);
+}
+function onPanelArrow(event:KeyboardEvent,panel:'navigator'|'inspector') {
+  if(event.key!=='ArrowLeft'&&event.key!=='ArrowRight')return;
+  event.preventDefault();
+  const side=panel==='navigator'?dockSide.value:(dockSide.value==='left'?'right':'left');
+  const delta=event.key==='ArrowRight'?16:-16;
+  const width=workspaceHost.value?.getBoundingClientRect().width||1024;
+  const other=panel==='navigator'?(dbInspectorOpen.value?inspectorWidth.value:0):(dbNavigatorOpen.value?navigatorWidth.value:0);
+  if(panel==='navigator')navigatorWidth.value=resizedWidth(navigatorWidth.value,delta,side,width,other);
+  else inspectorWidth.value=resizedWidth(inspectorWidth.value,delta,side,width,other);
+  persistPanelDock();
+}
+let navigatorDrag=false;
+function navDragStart(event:DragEvent) {
+  navigatorDrag=true;
+  event.dataTransfer?.setData('text/plain','browseros-database-navigator');
+  if(event.dataTransfer)event.dataTransfer.effectAllowed='move';
+}
+function navDrop(event:DragEvent) {
+  if(!navigatorDrag||!workspaceHost.value)return;
+  event.preventDefault();
+  const box=workspaceHost.value.getBoundingClientRect();
+  moveDatabaseNavigator(event.clientX-box.left < box.width/2?'left':'right');
+  navigatorDrag=false;
 }
 const tablesOpen = ref(true);
 const viewsOpen = ref(true);
@@ -354,7 +433,7 @@ onMounted(async () => {
   if (!db.activeId && ready.length === 1) db.selectConnection(ready[0]);
   if (!db.connections.length) showConnection.value = false;
 });
-onUnmounted(()=>{stopIdeaProjectScan();cancelIdeaDiscovery();});
+onUnmounted(()=>{stopIdeaProjectScan();cancelIdeaDiscovery();stopDockDrag();});
 
 async function doConnect() {
   // The UI owns automatic MySQL negotiation, including older saved profiles.
@@ -387,40 +466,169 @@ function deleteConnection() {
       <span>{{ activeConnection?.name || '数据库资源管理器' }}</span>
       <button class="db-disclosure" type="button" :aria-expanded="dbNavigatorOpen && !workbench.collapsed" aria-controls="database-navigator" @click="toggleDbDisclosure('navigator')">{{dbNavigatorOpen && !workbench.collapsed ? '◧ 收起资源树' : '◫ 展开资源树'}}</button>
       <button class="db-disclosure" type="button" :aria-expanded="dbInspectorOpen" aria-controls="database-inspector" @click="toggleDbDisclosure('inspector')">{{dbInspectorOpen ? '◧ 收起检查器' : '◫ 展开检查器'}}</button>
+      <button class="db-disclosure" data-testid="db-dock-side" @click="moveDatabaseNavigator(dockSide==='left'?'right':'left')" :title="dockSide==='right'?'移到左侧':'移到右侧'">⇄ 移至{{dockSide==='right'?'左侧':'右侧'}}</button>
+      <button class="db-disclosure" @click="resetDatabaseDock" title="恢复默认宽度和位置">恢复布局</button>
       <button class="conn-toggle" @click="openConnectionSettings">连接设置</button>
       <button class="close" @click="layout.sidebarOpen = false">✕</button>
     </div>
 
     <div v-if="!db.backendReady" class="gate">后端数据库命令未就绪，连接与查询暂不可用</div>
 
-    <div class="db-workspace" :class="{'db-no-sidebar': !dbNavigatorOpen || workbench.collapsed, 'db-no-inspector': !dbInspectorOpen}">
+    <div ref="workspaceHost" class="db-workspace" :data-side="dockSide" :class="{'db-no-sidebar': !dbNavigatorOpen || workbench.collapsed, 'db-no-inspector': !dbInspectorOpen}" :style="{'--db-navigator-width':navigatorWidth+'px','--db-inspector-width':inspectorWidth+'px'}" @dragover="navigatorDrag && $event.preventDefault()" @drop="navDrop">
     <section v-if="!workbench.collapsed && dbNavigatorOpen" id="database-navigator" class="conn">
-      <div class="conn-head">
+      <div class="conn-head" draggable="true" title="拖动标题可将数据源树停靠到左侧或右侧" @dragstart="navDragStart" @dragend="navigatorDrag=false">
+        <span class="drag-grip" aria-hidden="true">⋮⋮</span>
         <button class="db-section-toggle" type="button" :aria-expanded="dbConnectionsOpen" aria-controls="database-connections" @click="toggleDbDisclosure('connections')">{{dbConnectionsOpen ? '▾':'▸'}} 数据源</button>
         <span class="badge" :class="{on:db.recentlyVerified}">{{ connectionStatus }}</span>
-        <button class="conn-add" title="新增数据库连接" aria-label="新增数据库连接" @click="db.resetForm(); password=''; showConnection=true; connectionDialogOpen=true; connectionDialogTab='manual'">＋</button>
+        <button class="conn-add" title="新增数据库连接" aria-label="新增数据库连接" @click="db.resetForm(); password=''; openConnectionSettings()">＋</button>
       </div>
       <div id="database-connections" v-show="dbConnectionsOpen">
       <button class="idea-import-toggle" @click="openIdeaImport">从 IntelliJ IDEA 导入连接…</button>
 
       <div v-if="db.connections.length" class="connection-filter"><input v-model="connectionFilter" type="search" placeholder="搜索名称、主机、数据库…" aria-label="筛选数据库连接"/><span>{{visibleConnections.length}} / {{db.connections.length}}</span></div>
-      <ul v-if="db.connections.length" class="conn-list">
-        <li v-for="c in visibleConnections" :key="c.id" :class="{ active: c.id === db.form.id, disabled: !c.enabled }">
-          <button class="row" @click="c.enabled ? db.selectConnection(c) : selectPendingIdeaConfig(db.configs.find(cfg=>cfg.id===c.id)!)">
-            <span class="name">{{ c.name }}</span>
-            <span class="meta">{{ c.label }}{{ c.allowWrite ? " · 允许写" : "" }}{{ c.enabled ? "" : " · 待验证（点击配置或验证）" }}</span>
-          </button>
-          <button class="connection-edit" :aria-label="'编辑连接 '+c.name" :disabled="db.busy" @click="editConnection(c.id)">编辑</button>
+      <ul v-if="db.connections.length" class="conn-list idea-source-tree" role="tree" aria-label="数据源、Schema 和对象">
+        <li v-for="c in visibleConnections" :key="c.id" :class="{active:c.id===db.form.id,disabled:!c.enabled}" role="treeitem" :aria-expanded="expandedSource===c.id" :aria-selected="c.id===db.activeId">
+          <div class="db-tree-source">
+            <button class="db-tree-chevron" type="button" :aria-label="(expandedSource===c.id?'收起':'展开')+c.name" :aria-expanded="expandedSource===c.id" @click="toggleSource(c.id)">{{expandedSource===c.id?'▾':'▸'}}</button>
+            <button class="row" @click="selectSource(c)">
+              <span class="name">▤ {{c.name}}</span>
+              <span class="meta">{{c.label}}{{c.allowWrite?' · 可写':' · 只读'}}{{c.enabled?'':' · 待验证'}}</span>
+            </button>
+            <button class="connection-edit" :aria-label="'编辑连接 '+c.name" :disabled="db.busy" @click="editConnection(c.id)">⚙</button>
+          </div>
+          <div v-if="expandedSource===c.id" class="db-source-children" role="group">
+            <div class="db-tree-folder">▾ {{db.configs.find(cfg=>cfg.id===c.id)?.database||'数据库'}}</div>
+            <template v-if="c.id===db.activeId">
+              <button class="db-tree-folder" :aria-expanded="tablesOpen" @click="tablesOpen=!tablesOpen">{{tablesOpen?'▾':'▸'}} ▦ Tables ({{tables.length}})</button>
+              <template v-if="tablesOpen"><button v-for="object in tables" :key="object.name" class="db-tree-object" :class="{selected:db.selectedObject===object.name}" :aria-selected="db.selectedObject===object.name" @click="db.selectObject(object.name)" @dblclick="db.previewTable(object.name)" :title="'双击预览 '+object.name">▦ {{object.name}}</button></template>
+              <button class="db-tree-folder" :aria-expanded="viewsOpen" @click="viewsOpen=!viewsOpen">{{viewsOpen?'▾':'▸'}} ◈ Views ({{views.length}})</button>
+              <template v-if="viewsOpen"><button v-for="object in views" :key="object.name" class="db-tree-object" :class="{selected:db.selectedObject===object.name}" :aria-selected="db.selectedObject===object.name" @click="db.selectObject(object.name)" @dblclick="db.previewTable(object.name)">◈ {{object.name}}</button></template>
+              <p v-if="db.schemaBusy" class="hint" role="status">正在读取数据库元数据…</p>
+              <p v-else-if="db.schemaError" class="hint" role="alert">{{db.schemaError}}</p>
+              <p v-else-if="!db.schemaLoaded" class="hint">连接后加载对象树</p>
+            </template>
+            <p v-else class="hint">选择此连接后才会读取对象。</p>
+          </div>
         </li>
       </ul>
       <p v-if="db.connections.length && !visibleConnections.length" class="hint">没有匹配的数据库连接。</p>
 
       </div>
+      <div class="schema-head"><button class="db-section-toggle" type="button" :aria-expanded="dbSchemaOpen" aria-controls="database-schema" @click="toggleDbDisclosure('schema')">{{dbSchemaOpen ? '▾':'▸'}} 对象资源树</button>
+        <button title="重新读取数据库对象" aria-label="刷新对象" :disabled="db.schemaBusy || !db.activeId" @click="db.refreshSchema()"><RefreshCw :size="14"/></button>
+      </div>
+      <div id="database-schema" v-show="dbSchemaOpen">
+      <p class="catalog-root">▾ {{ db.form.database || '请选择数据库' }}</p>
+      <div v-if="expandedSource!==db.activeId">
+      <input v-model="objectFilter" class="schema-search" type="search" aria-label="筛选数据库表和视图" placeholder="搜索表和视图…" />
+      <div class="schema-head tree-group">
+        <button :aria-expanded="tablesOpen" @click="tablesOpen=!tablesOpen">{{ tablesOpen ? '▾' : '▸' }} 表 <small>({{db.schemaLoaded ? tables.length : '—'}})</small></button>
+      </div>
+      <template v-if="tablesOpen">
+        <button v-for="table in tables" :key="table.name" class="schema-row"
+          :class="{selected:db.selectedObject===table.name}" :aria-selected="db.selectedObject===table.name"
+          :title="'单击查看字段，双击预览数据：'+table.name"
+          @click="db.selectObject(table.name)" @dblclick="db.previewTable(table.name)"
+          @keydown.enter.prevent="db.previewTable(table.name)">▦ {{ table.name }}</button>
+      </template>
+      <div class="schema-head tree-group">
+        <button :aria-expanded="viewsOpen" @click="viewsOpen=!viewsOpen">{{ viewsOpen ? '▾' : '▸' }} 视图 <small>({{db.schemaLoaded ? views.length : '—'}})</small></button>
+      </div>
+      <template v-if="viewsOpen">
+        <button v-for="table in views" :key="table.name" class="schema-row"
+          :class="{selected:db.selectedObject===table.name}" :aria-selected="db.selectedObject===table.name"
+          :title="'单击查看字段，双击预览视图：'+table.name"
+          @click="db.selectObject(table.name)" @dblclick="db.previewTable(table.name)"
+          @keydown.enter.prevent="db.previewTable(table.name)">◈ {{ table.name }}</button>
+      </template>
+      <p v-if="db.schema.length && !visibleSchema.length" class="hint">没有匹配的对象</p>
+      <p v-if="db.schemaBusy" class="hint" role="status">正在连接并读取表和视图…</p>
+      <div v-else-if="db.schemaError" class="schema-load-error" role="alert"><p>表列表加载失败：{{db.schemaError}}</p><button @click="db.refreshSchema()">重新连接并加载</button></div>
+      <p v-else-if="!db.schema.length" class="hint">{{ db.schemaLoaded ? '该数据库没有可见的表或视图。' : '请选择数据源，加载表和视图。' }}</p>
+      </div>
+      <p class="tree-help">单击表查看字段，双击直接读取前 100 行。查询遵循原生安全门禁。</p>
+      <div v-if="db.selectedObject" class="object-details">
+        <div class="schema-head object-header"><strong :title="db.selectedObject">{{ db.selectedObject }}</strong>
+          <button :disabled="!db.activeId" @click="db.previewTable(db.selectedObject)">查看数据</button>
+        </div>
+        <div class="object-tabs" aria-label="数据库对象详情">
+          <button :aria-pressed="db.objectDetailMode==='columns'" @click="db.selectObject(db.selectedObject,'columns')">字段</button>
+          <button :aria-pressed="db.objectDetailMode==='indexes'" @click="db.selectObject(db.selectedObject,'indexes')">索引</button>
+          <button :aria-pressed="db.objectDetailMode==='foreign_keys'" @click="db.selectObject(db.selectedObject,'foreign_keys')">外键 / ER</button>
+          <button :aria-pressed="db.objectDetailMode==='ddl'" @click="db.selectObject(db.selectedObject,'ddl')">DDL</button>
+        </div>
+        <div v-if="db.objectDetailMode==='foreign_keys' && db.objectDetailRows.length" class="local-er">
+          <strong>当前表 → 引用表（局部 ER，只展示真实外键关系）</strong>
+          <svg :viewBox="'0 0 520 '+Math.min(310,75+Math.min(db.objectDetailRows.length,6)*38)"
+             role="img" :aria-label="db.selectedObject+' 的真实外键关系图'">
+            <rect x="4" y="7" width="182" height="44" rx="6" fill="#dceaff" stroke="#6b95cd"/>
+            <text x="14" y="34" fill="#24568a" font-size="12">{{db.selectedObject.slice(0,20)}}</text>
+            <g v-for="(rel,i) in db.objectDetailRows.slice(0,6)" :key="i">
+              <line x1="186" y1="29" x2="263" :y2="35+i*38" stroke="#638ab8" stroke-width="1.5"/>
+              <path :d="'M256 '+(29+i*38)+' L263 '+(35+i*38)+' L256 '+(41+i*38)" stroke="#638ab8" fill="none"/>
+              <rect x="267" :y="17+i*38" width="245" height="32" rx="5" fill="#eaf7ef" stroke="#8ebca1"/>
+              <text x="275" :y="38+i*38" fill="#2b6642" font-size="10">{{String(rel[1]||'').slice(0,24)}}.{{String(rel[2]||'').slice(0,14)}}</text>
+            </g>
+          </svg>
+          <p class="hint">最多绘制 6 条关系；完整关系清单显示在下方。</p>
+        </div>
+        <p v-if="db.columnsBusy" class="hint">正在读取对象元数据…</p>
+        <p v-else-if="!db.objectDetailRows.length" class="hint">暂无记录；此项可能没有索引或当前账号没有元数据权限。</p>
+        <pre v-else-if="db.objectDetailMode==='ddl'" class="object-ddl">{{db.objectDetailRows.map(row => row.at(-1)).join('\n')}}</pre>
+        <div v-else class="column-list">
+          <div class="column-item column-header" role="row">
+            <span v-for="header in detailHeaders" :key="header">{{ header }}</span>
+          </div>
+          <div v-for="(col,i) in db.objectDetailRows" :key="i" class="column-item" :title="col.join(' · ')" role="row">
+            <strong>{{col[0]}}</strong><span v-for="(cell,j) in col.slice(1)" :key="j">{{cell}}</span>
+          </div>
+        </div>
+      </div>
+      </div>
+    </section>
+
+    <div v-if="dbNavigatorOpen && !workbench.collapsed" class="db-panel-divider db-nav-divider" tabindex="0" role="separator" aria-label="拖动调整数据源树宽度" aria-orientation="vertical" :aria-valuenow="navigatorWidth" @pointerdown="onPanelPointerDown($event,'navigator')" @keydown="onPanelArrow($event,'navigator')"></div>
+    <DatabaseWorkspace />
+    <div v-if="dbInspectorOpen" class="db-panel-divider db-inspector-divider" tabindex="0" role="separator" aria-label="拖动调整检查器宽度" aria-orientation="vertical" :aria-valuenow="inspectorWidth" @pointerdown="onPanelPointerDown($event,'inspector')" @keydown="onPanelArrow($event,'inspector')"></div>
+    <aside v-if="dbInspectorOpen" id="database-inspector" class="inspector" aria-label="数据库检查器">
+      <div class="inspector-head"><strong>Inspector</strong><button class="icon-button" title="检查器操作" @click="layout.showToast('检查器展示当前真实连接元数据')">⋯</button></div>
+      <article class="inspector-card">
+        <h3>当前连接</h3>
+        <div class="inspector-row"><span>名称</span><b>{{ activeConnection?.name || '未选择' }}</b></div>
+        <div class="inspector-row"><span>引擎</span><b>{{ config?.kind?.toUpperCase() || '—' }}</b></div>
+        <div class="inspector-row"><span>状态</span><b :class="{ok: db.recentlyVerified && !db.schemaError, warn: !!db.schemaError}">{{ db.schemaBusy ? '连接中' : db.schemaError ? '连接失败' : db.recentlyVerified ? '已验证 · 按需连接' : '未选择' }}</b></div>
+        <div class="inspector-row"><span>写入</span><b>{{ config?.allow_write ? '已允许' : '只读' }}</b></div>
+      </article>
+      <article class="inspector-card">
+        <h3>对象结构 · {{ db.selectedObject || '未选择' }}</h3>
+        <div class="inspector-row"><span>字段</span><b>{{ db.selectedObject ? db.objectDetailRows.length : '—' }}</b></div>
+        <div class="inspector-row"><span>详情</span><b>{{ db.selectedObject ? db.objectDetailMode : '请从左侧选择表' }}</b></div>
+        <button class="inspector-action" :disabled="!db.selectedObject" @click="db.selectedObject && db.previewTable(db.selectedObject)">查看数据</button>
+      </article>
+      <article class="inspector-card assistant-card">
+        <h3>Database Assistant</h3>
+        <p>查询结果、结构和安全门禁均来自当前 BrowserOS 数据库会话。</p>
+        <div class="assistant-state">{{ !db.backendReady ? '原生数据库桥接未启动；启动 Tauri 客户端后可连接数据库' : db.document.busy ? '正在执行查询…' : db.error || '等待查询' }}</div>
+      </article>
+    </aside>
+    </div>
       <div v-if="connectionDialogOpen" class="connection-dialog-backdrop" @click.self="connectionDialogOpen=false; showConnection=false"></div>
       <div v-if="showConnection" class="form" :class="{'connection-dialog-form':connectionDialogOpen, 'idea-dialog':connectionDialogOpen&&connectionDialogTab==='idea'}" :role="connectionDialogOpen ? 'dialog' : undefined" :aria-modal="connectionDialogOpen ? 'true' : undefined" aria-labelledby="database-connection-title">
         <div class="connection-form-title"><strong id="database-connection-title">{{ db.form.id ? '连接设置' : '新增数据库连接' }}</strong><span>测试并保存后才会加入可用连接</span></div>
         <button v-if="connectionDialogOpen" class="connection-dialog-close" aria-label="关闭新增连接" title="关闭" @click="connectionDialogOpen=false; showConnection=false">×</button>
         <div v-if="connectionDialogOpen" class="connection-dialog-tabs" role="tablist" aria-label="连接方式"><button role="tab" :aria-selected="connectionDialogTab==='manual'" @click="connectionDialogTab='manual'">手动连接</button><button role="tab" :aria-selected="connectionDialogTab==='idea'" @click="connectionDialogTab='idea';ideaImportOpen=true">从 IDEA 导入</button></div>
+        <div class="db-dialog-columns">
+          <aside class="db-dialog-sources" aria-label="已配置数据库连接">
+            <header><strong>Data Sources</strong><button type="button" title="新增数据源" @click="db.resetForm();password='';connectionDialogTab='manual';connectionSettingsSection='general'">＋</button></header>
+            <p>Local Data Sources · {{db.connections.length}}</p>
+            <button v-for="c in db.connections" :key="c.id" type="button" class="db-dialog-source" :aria-current="db.form.id===c.id?'true':undefined" @click="editConnection(c.id);connectionDialogTab='manual'">
+              <span aria-hidden="true">▤</span><span>{{c.name}}</span><small>{{c.enabled?'':'未验证'}}</small>
+            </button>
+            <button type="button" class="db-dialog-import" @click="connectionDialogTab='idea';ideaImportOpen=true">＋ 从 IntelliJ IDEA 导入</button>
+            <p>只加载已保存的非敏感元信息；密码不会在此列表显示。</p>
+          </aside>
+          <main class="db-dialog-config" aria-label="数据源连接选项">
+
         <template v-if="connectionDialogOpen&&connectionDialogTab==='idea'">
       <section v-if="ideaImportOpen" class="idea-import" aria-label="IDEA 数据源导入">
         <p>不会猜测 IDEA 固定安装或项目目录。可直接发现已授权工作区中的项目级配置；其他目录需要先在文件工作区打开并授权。</p>
@@ -467,7 +675,12 @@ function deleteConnection() {
       </section>
         </template>
         <template v-else>
-        <p class="form-note">连接设置仅在需要时展开。密码不保存到页面或浏览器存储。</p>
+        <nav class="db-settings-tabs" role="tablist" aria-label="Data Sources and Drivers 设置分区">
+          <button v-for="section in ([['general','General'],['options','Options'],['ssl','SSH / SSL'],['schemas','Schemas'],['advanced','Advanced']] as const)"
+            :key="section[0]" type="button" role="tab" :aria-selected="connectionSettingsSection===section[0]" @click="connectionSettingsSection=section[0]">{{section[1]}}</button>
+        </nav>
+        <div v-show="connectionSettingsSection==='general'" class="db-settings-body">
+          <p class="form-note">连接身份、主机、端口及账号；密码不保存到页面或浏览器存储。</p>
         <p v-if="db.form.id && !db.form.enabled" class="hint">这是待验证配置。密码留空会尝试本机密钥库中的凭据；点击“验证并启用”，仅连接成功后才启用。</p>
         <label>连接名称<input v-model="db.form.name" placeholder="analytics" /></label>
         <label>数据库类型
@@ -492,6 +705,8 @@ function deleteConnection() {
         <label v-if="fields.username">用户名<input v-model="db.form.username" placeholder="reader" /></label>
         <label v-if="fields.username">密码（仅交给系统密钥库，配置中不保存）<input v-model="password" type="password" autocomplete="off" /></label>
         <p v-if="db.form.id" class="hint">编辑时密码留空会复用系统密钥库中的凭据；填写新密码才会替换。必须先关闭此连接的事务/查询会话。</p>
+        </div>
+        <div v-show="connectionSettingsSection==='ssl'" class="db-settings-info">
         <label v-if="fields.ssl && db.form.kind !== 'mysql'">SSL
           <select v-model="db.form.sslMode">
             <option value="disable">disable</option>
@@ -500,6 +715,11 @@ function deleteConnection() {
           </select>
         </label>
         <p v-if="db.form.kind === 'mysql'" class="hint">MySQL 自动尝试 TLS；仅当服务器明确不支持 TLS 时回退到非加密连接。远程连接请使用可信网络和只读账号。</p>
+        <p>SSH 隧道与自定义客户端证书目前没有原生连接实现，因此这里不提供无效开关。需要 SSH 的连接，请在受信任终端预先建立隧道，并连接本地受控端口。</p>
+        </div>
+        <div v-show="connectionSettingsSection==='options'" class="db-settings-info">
+          <strong>连接安全和事务边界</strong>
+          <p>IDEA 的 Auto/Manual 模式在 BrowserOS 中由每个 SQL 文档的独立原生事务管理；任何写入仍需源端权限和明确确认。</p>
         <label>生产标记
           <select v-model="db.form.productionHint">
             <option value="">未标记</option>
@@ -511,6 +731,21 @@ function deleteConnection() {
         <div class="checks">
           <label><input type="checkbox" v-model="db.form.allowWrite" /> 允许写操作（默认关闭，后端仍会再判一次）</label>
           <label><input type="checkbox" v-model="db.form.enabled" /> 启用该连接</label>
+        </div>
+        </div>
+        <div v-show="connectionSettingsSection==='schemas'" class="db-settings-info">
+          <strong>可见 Schema 与对象（来自真实连接）</strong>
+          <p>当前连接：{{db.form.name||'未命名'}} / {{db.form.database||'未选择数据库'}}。只有已连接的数据源才能读取实际对象；不会通过勾选 UI 伪造跨 Schema 连接能力。</p>
+          <button type="button" :disabled="!db.activeId||db.schemaBusy" @click="db.refreshSchema()">⟳ 重新读取对象</button>
+          <input v-model="objectFilter" placeholder="筛选当前已读取的表和视图…" type="search" aria-label="Schemas 筛选"/>
+          <p v-for="item in visibleSchema.slice(0,60)" :key="item.name">{{item.type}} · {{item.name}}</p>
+          <p v-if="!visibleSchema.length">当前尚未读取到对象。</p>
+        </div>
+        <div v-show="connectionSettingsSection==='advanced'" class="db-settings-info">
+          <strong>Native 驱动与安全选项</strong>
+          <p>原生连接类型：{{db.form.kind.toUpperCase()}}；不会将任意 JDBC 连接字符串中的高级属性直接转发给原生数据库驱动。</p>
+          <p>密钥通过系统密钥库管理；生产保护、写入确认、查询数量限制和会话隔离由 Native 执行，界面设置不能绕过。</p>
+          <p>IDEA 的自定义 JVM 属性、Kubernetes 转发和任意 Driver class 功能尚未实现，故不显示可执行的伪设置。</p>
         </div>
 
         <ul v-if="issues.length" class="errors">
@@ -524,101 +759,9 @@ function deleteConnection() {
           <button :disabled="db.busy" @click="db.resetForm(); password = ''">新建连接</button>
         </div>
         </template>
-      </div>
-      <div class="schema-head"><button class="db-section-toggle" type="button" :aria-expanded="dbSchemaOpen" aria-controls="database-schema" @click="toggleDbDisclosure('schema')">{{dbSchemaOpen ? '▾':'▸'}} 对象资源树</button>
-        <button title="重新读取数据库对象" aria-label="刷新对象" :disabled="db.schemaBusy || !db.activeId" @click="db.refreshSchema()"><RefreshCw :size="14"/></button>
-      </div>
-      <div id="database-schema" v-show="dbSchemaOpen">
-      <p class="catalog-root">▾ {{ db.form.database || '请选择数据库' }}</p>
-      <input v-model="objectFilter" class="schema-search" type="search" aria-label="筛选数据库表和视图" placeholder="搜索表和视图…" />
-      <div class="schema-head tree-group">
-        <button :aria-expanded="tablesOpen" @click="tablesOpen=!tablesOpen">{{ tablesOpen ? '▾' : '▸' }} 表 <small>({{db.schemaLoaded ? tables.length : '—'}})</small></button>
-      </div>
-      <template v-if="tablesOpen">
-        <button v-for="table in tables" :key="table.name" class="schema-row"
-          :class="{selected:db.selectedObject===table.name}" :aria-selected="db.selectedObject===table.name"
-          :title="'单击查看字段，双击预览数据：'+table.name"
-          @click="db.selectObject(table.name)" @dblclick="db.previewTable(table.name)"
-          @keydown.enter.prevent="db.previewTable(table.name)">▦ {{ table.name }}</button>
-      </template>
-      <div class="schema-head tree-group">
-        <button :aria-expanded="viewsOpen" @click="viewsOpen=!viewsOpen">{{ viewsOpen ? '▾' : '▸' }} 视图 <small>({{db.schemaLoaded ? views.length : '—'}})</small></button>
-      </div>
-      <template v-if="viewsOpen">
-        <button v-for="table in views" :key="table.name" class="schema-row"
-          :class="{selected:db.selectedObject===table.name}" :aria-selected="db.selectedObject===table.name"
-          :title="'单击查看字段，双击预览视图：'+table.name"
-          @click="db.selectObject(table.name)" @dblclick="db.previewTable(table.name)"
-          @keydown.enter.prevent="db.previewTable(table.name)">◈ {{ table.name }}</button>
-      </template>
-      <p v-if="db.schema.length && !visibleSchema.length" class="hint">没有匹配的对象</p>
-      <p v-if="db.schemaBusy" class="hint" role="status">正在连接并读取表和视图…</p>
-      <div v-else-if="db.schemaError" class="schema-load-error" role="alert"><p>表列表加载失败：{{db.schemaError}}</p><button @click="db.refreshSchema()">重新连接并加载</button></div>
-      <p v-else-if="!db.schema.length" class="hint">{{ db.schemaLoaded ? '该数据库没有可见的表或视图。' : '请选择数据源，加载表和视图。' }}</p>
-      <p class="tree-help">单击表查看字段，双击直接读取前 100 行。查询遵循原生安全门禁。</p>
-      <div v-if="db.selectedObject" class="object-details">
-        <div class="schema-head object-header"><strong :title="db.selectedObject">{{ db.selectedObject }}</strong>
-          <button :disabled="!db.activeId" @click="db.previewTable(db.selectedObject)">查看数据</button>
-        </div>
-        <div class="object-tabs" aria-label="数据库对象详情">
-          <button :aria-pressed="db.objectDetailMode==='columns'" @click="db.selectObject(db.selectedObject,'columns')">字段</button>
-          <button :aria-pressed="db.objectDetailMode==='indexes'" @click="db.selectObject(db.selectedObject,'indexes')">索引</button>
-          <button :aria-pressed="db.objectDetailMode==='foreign_keys'" @click="db.selectObject(db.selectedObject,'foreign_keys')">外键 / ER</button>
-          <button :aria-pressed="db.objectDetailMode==='ddl'" @click="db.selectObject(db.selectedObject,'ddl')">DDL</button>
-        </div>
-        <div v-if="db.objectDetailMode==='foreign_keys' && db.objectDetailRows.length" class="local-er">
-          <strong>当前表 → 引用表（局部 ER，只展示真实外键关系）</strong>
-          <svg :viewBox="'0 0 520 '+Math.min(310,75+Math.min(db.objectDetailRows.length,6)*38)"
-             role="img" :aria-label="db.selectedObject+' 的真实外键关系图'">
-            <rect x="4" y="7" width="182" height="44" rx="6" fill="#dceaff" stroke="#6b95cd"/>
-            <text x="14" y="34" fill="#24568a" font-size="12">{{db.selectedObject.slice(0,20)}}</text>
-            <g v-for="(rel,i) in db.objectDetailRows.slice(0,6)" :key="i">
-              <line x1="186" y1="29" x2="263" :y2="35+i*38" stroke="#638ab8" stroke-width="1.5"/>
-              <path :d="'M256 '+(29+i*38)+' L263 '+(35+i*38)+' L256 '+(41+i*38)" stroke="#638ab8" fill="none"/>
-              <rect x="267" :y="17+i*38" width="245" height="32" rx="5" fill="#eaf7ef" stroke="#8ebca1"/>
-              <text x="275" :y="38+i*38" fill="#2b6642" font-size="10">{{String(rel[1]||'').slice(0,24)}}.{{String(rel[2]||'').slice(0,14)}}</text>
-            </g>
-          </svg>
-          <p class="hint">最多绘制 6 条关系；完整关系清单显示在下方。</p>
-        </div>
-        <p v-if="db.columnsBusy" class="hint">正在读取对象元数据…</p>
-        <p v-else-if="!db.objectDetailRows.length" class="hint">暂无记录；此项可能没有索引或当前账号没有元数据权限。</p>
-        <pre v-else-if="db.objectDetailMode==='ddl'" class="object-ddl">{{db.objectDetailRows.map(row => row.at(-1)).join('\n')}}</pre>
-        <div v-else class="column-list">
-          <div class="column-item column-header" role="row">
-            <span v-for="header in detailHeaders" :key="header">{{ header }}</span>
-          </div>
-          <div v-for="(col,i) in db.objectDetailRows" :key="i" class="column-item" :title="col.join(' · ')" role="row">
-            <strong>{{col[0]}}</strong><span v-for="(cell,j) in col.slice(1)" :key="j">{{cell}}</span>
-          </div>
+          </main>
         </div>
       </div>
-      </div>
-    </section>
-
-    <DatabaseWorkspace />
-    <aside v-if="dbInspectorOpen" id="database-inspector" class="inspector" aria-label="数据库检查器">
-      <div class="inspector-head"><strong>Inspector</strong><button class="icon-button" title="检查器操作" @click="layout.showToast('检查器展示当前真实连接元数据')">⋯</button></div>
-      <article class="inspector-card">
-        <h3>当前连接</h3>
-        <div class="inspector-row"><span>名称</span><b>{{ activeConnection?.name || '未选择' }}</b></div>
-        <div class="inspector-row"><span>引擎</span><b>{{ config?.kind?.toUpperCase() || '—' }}</b></div>
-        <div class="inspector-row"><span>状态</span><b :class="{ok: db.recentlyVerified && !db.schemaError, warn: !!db.schemaError}">{{ db.schemaBusy ? '连接中' : db.schemaError ? '连接失败' : db.recentlyVerified ? '已验证 · 按需连接' : '未选择' }}</b></div>
-        <div class="inspector-row"><span>写入</span><b>{{ config?.allow_write ? '已允许' : '只读' }}</b></div>
-      </article>
-      <article class="inspector-card">
-        <h3>对象结构 · {{ db.selectedObject || '未选择' }}</h3>
-        <div class="inspector-row"><span>字段</span><b>{{ db.selectedObject ? db.objectDetailRows.length : '—' }}</b></div>
-        <div class="inspector-row"><span>详情</span><b>{{ db.selectedObject ? db.objectDetailMode : '请从左侧选择表' }}</b></div>
-        <button class="inspector-action" :disabled="!db.selectedObject" @click="db.selectedObject && db.previewTable(db.selectedObject)">查看数据</button>
-      </article>
-      <article class="inspector-card assistant-card">
-        <h3>Database Assistant</h3>
-        <p>查询结果、结构和安全门禁均来自当前 BrowserOS 数据库会话。</p>
-        <div class="assistant-state">{{ !db.backendReady ? '原生数据库桥接未启动；启动 Tauri 客户端后可连接数据库' : db.document.busy ? '正在执行查询…' : db.error || '等待查询' }}</div>
-      </article>
-    </aside>
-    </div>
   </div>
 </template>
 
@@ -762,4 +905,89 @@ th { position: sticky; top: 0; background: #f7f8fa; color: #4e5969; font-weight:
 .db-panel .db-section-toggle{border:0;background:transparent;color:#e6edf8;font-weight:700;text-align:left;padding:5px 2px}
 .db-panel .db-section-toggle:hover{background:#243247}
 @media(max-width:1200px){.db-workspace{grid-template-columns:220px minmax(0,1fr)}.db-workspace>.inspector{display:none}.db-workspace.db-no-sidebar{grid-template-columns:minmax(0,1fr)}.db-workspace.db-no-inspector:not(.db-no-sidebar){grid-template-columns:220px minmax(0,1fr)}}
+</style>
+
+<style scoped>
+/* Idea-style dock shell: independently sized Owner panels, not a simulated image. */
+.db-panel>.tabs{flex-wrap:nowrap;gap:7px;padding:0 11px}
+.db-panel>.tabs>.studio-brand{white-space:nowrap}
+.db-panel>.tabs>.db-disclosure{white-space:nowrap;font-size:11px}
+.db-workspace{display:flex!important;flex:1;min-height:0;min-width:0;overflow:hidden;grid-template-columns:none!important}
+.db-workspace>.conn{order:0;flex:0 0 var(--db-navigator-width,268px)!important;min-width:0;box-sizing:border-box;padding:7px 6px;background:#191d26;border-right:0}
+.db-workspace>.db-nav-divider{order:1}
+.db-workspace>:deep(.database-workspace){order:2;flex:1 1 0!important;min-width:0;min-height:0;box-sizing:border-box;padding:0!important;overflow:hidden!important}
+.db-workspace>.db-inspector-divider{order:3}
+.db-workspace>.inspector{order:4;display:block!important;flex:0 0 var(--db-inspector-width,258px)!important;min-width:0;box-sizing:border-box;padding:12px;background:#191d26}
+.db-workspace[data-side="right"]>.inspector{order:0}
+.db-workspace[data-side="right"]>.db-inspector-divider{order:1}
+.db-workspace[data-side="right"]>.db-nav-divider{order:3}
+.db-workspace[data-side="right"]>.conn{order:4}
+.db-panel-divider{flex:0 0 6px;align-self:stretch;background:#222a38;cursor:col-resize;touch-action:none;user-select:none;position:relative;z-index:2}
+.db-panel-divider:hover,.db-panel-divider:focus-visible{background:#579bfa;outline:0}
+.db-panel-divider:before{content:"";position:absolute;top:40%;bottom:40%;left:2px;right:2px;border-radius:2px;background:#627086}
+.db-panel .conn-head{height:32px;margin:0 0 6px;padding:0 4px;gap:5px;cursor:grab;border-bottom:1px solid #30394a}
+.db-panel .conn-head:active{cursor:grabbing}
+.db-panel .drag-grip{font-size:12px;letter-spacing:-2px;color:#8293a9;user-select:none}
+.db-panel .conn-head .db-section-toggle{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px}
+.db-panel .conn-head .badge{margin-left:auto}
+.db-panel .conn-add{flex:0 0 24px}
+.db-panel .idea-source-tree{max-height:min(49vh,530px);overflow:auto;padding:0;scrollbar-width:thin}
+.db-panel .idea-source-tree li{padding:0;margin:0 0 1px;border-radius:4px;min-width:0}
+.db-panel .idea-source-tree li.active{background:#252f43}
+.db-panel .db-tree-source{display:flex;gap:1px;align-items:center;min-width:0}
+.db-panel .db-tree-chevron{width:22px;min-width:22px;border:0;background:transparent;font-size:13px;padding:5px 2px;color:#8ca6c8}
+.db-panel .db-tree-source .row{min-width:0;flex:1;padding:5px 3px;gap:1px}
+.db-panel .db-tree-source .name{font-size:11px;display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#dce5f3}
+.db-panel .db-tree-source .meta{font-size:9px;line-height:1.4;color:#90a1b9}
+.db-panel .db-tree-source .connection-edit{padding:3px 5px;border:0;background:transparent;opacity:.5}
+.db-panel .db-tree-source:hover .connection-edit,.db-panel .db-tree-source:focus-within .connection-edit{opacity:1}
+.db-panel .db-source-children{margin-left:14px;border-left:1px solid #36435a;padding:3px 0 4px 9px}
+.db-panel .db-tree-folder,.db-panel .db-tree-object{display:block;width:100%;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:4px 5px;border:0;border-radius:3px;background:transparent;font:11px/1.4 system-ui,sans-serif;color:#bbc9da}
+.db-panel .db-tree-folder{font-weight:650;color:#cbd5e4}
+.db-panel .db-tree-object{padding-left:18px;font-family:ui-monospace,monospace}
+.db-panel .db-tree-object.selected{background:#2d4870;color:#fff}
+.db-panel .db-source-children .hint{padding:4px 7px;font-size:10px}
+.db-panel .connection-dialog-backdrop{position:absolute;inset:48px 0 0;z-index:70;background:#050a12ad}
+.db-panel .connection-dialog-form{position:absolute;z-index:71;top:50%;left:50%;transform:translate(-50%,-50%);resize:both;overflow:auto;width:min(880px,calc(100% - 40px));min-width:min(420px,calc(100% - 40px));min-height:320px;max-height:calc(100% - 76px);box-sizing:border-box;background:#1b202a;border:1px solid #47556a;box-shadow:0 18px 55px #0009}
+.db-panel .connection-dialog-form.idea-dialog{width:min(900px,calc(100% - 40px))}
+.db-panel .connection-dialog-form .connection-form-title{position:sticky;top:-18px;z-index:2;background:#1b202a;padding:10px 35px 12px 0}
+.db-panel .db-settings-tabs{display:flex;gap:2px;overflow-x:auto;padding-bottom:5px;margin:8px 0 12px;border-bottom:1px solid #35445a}
+.db-panel .db-settings-tabs button{border:0;border-radius:4px 4px 0 0;padding:7px 13px;background:transparent;color:#9fb0c8;white-space:nowrap}
+.db-panel .db-settings-tabs button[aria-selected=true]{border-bottom:2px solid #5aa9ff;background:#26344b;color:#f7faff}
+.db-panel .db-settings-body{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px;min-height:180px;align-content:start}
+.db-panel .db-settings-body>label{margin:0;min-width:0}
+.db-panel .db-settings-body .url-import,.db-panel .db-settings-body .hint{grid-column:1/-1}
+.db-panel .db-settings-info{padding:13px;border:1px solid #34435b;background:#161e2a;border-radius:7px;line-height:1.6}
+.db-panel .db-settings-info strong{display:block;margin-bottom:6px}
+.db-panel .db-settings-info code{word-break:break-all}
+.db-panel .form-actions{position:sticky;bottom:-18px;background:#1b202a;border-top:1px solid #35445a;padding:12px 0 3px;z-index:2}
+@media(max-width:780px){
+  .db-panel>.tabs>span{display:none}
+  .db-panel .db-settings-body{grid-template-columns:1fr}
+  .db-panel .db-settings-body>*{grid-column:1}
+  .db-workspace>.conn{flex-basis:min(var(--db-navigator-width,268px),38vw)!important}
+  .db-workspace>.inspector{flex-basis:min(var(--db-inspector-width,258px),35vw)!important}
+}
+</style>
+
+<style scoped>
+/* Data Sources and Drivers: a real selected-source navigator, not a static mock. */
+.db-panel .connection-dialog-form{padding:12px 14px}
+.db-panel .db-dialog-columns{display:grid;grid-template-columns:215px minmax(0,1fr);min-height:280px;gap:0;margin:5px -14px -12px;border-top:1px solid #343f50}
+.db-panel .db-dialog-sources{min-width:0;overflow-y:auto;background:#151c28;border-right:1px solid #37455a;padding:10px 8px;scrollbar-width:thin}
+.db-panel .db-dialog-sources header{display:flex;justify-content:space-between;align-items:center;gap:6px}
+.db-panel .db-dialog-sources header strong{font-size:11px;color:#e0e8f5}
+.db-panel .db-dialog-sources header button{padding:2px 7px}
+.db-panel .db-dialog-sources p{color:#8092ab;font-size:10px;line-height:1.4;margin:8px 2px}
+.db-panel .db-dialog-source{display:flex;align-items:center;gap:5px;width:100%;min-width:0;text-align:left;padding:6px;border:0;border-radius:4px;background:transparent;color:#a9c0d9;font-size:11px}
+.db-panel .db-dialog-source span:nth-child(2){flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.db-panel .db-dialog-source small{font-size:9px;color:#f0b96d}
+.db-panel .db-dialog-source[aria-current=true]{background:#2e4872;color:#fff}
+.db-panel .db-dialog-import{width:100%;margin-top:10px;border:1px solid #384c66;border-radius:4px;padding:7px;background:#1d3046;color:#b9d3f4;font-size:10px;text-align:left}
+.db-panel .db-dialog-config{min-width:0;padding:12px 16px;overflow:auto}
+.db-panel .db-dialog-config .db-settings-body{min-height:170px}
+@media(max-width:700px){
+  .db-panel .db-dialog-columns{grid-template-columns:140px minmax(0,1fr)}
+  .db-panel .db-dialog-config{padding:10px}
+}
 </style>
