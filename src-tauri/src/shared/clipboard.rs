@@ -8,14 +8,19 @@
 
 /// 读取系统剪贴板文本。
 #[tauri::command]
-pub fn clipboard_read() -> Result<String, String> {
+pub fn clipboard_read(webview: tauri::Webview) -> Result<String, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "clipboard_read")?;
+
     let mut cb = arboard::Clipboard::new().map_err(|e| format!("无法访问剪贴板: {e}"))?;
     cb.get_text().map_err(|e| format!("读取失败: {e}"))
 }
 
 /// 写入系统剪贴板文本。
 #[tauri::command]
-pub fn clipboard_write(text: String) -> Result<(), String> {
+pub fn clipboard_write(webview: tauri::Webview, text: String) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "clipboard_write")?;
+    crate::shared::native_legacy_policy::bound_text("clipboard_write", "text", &text)?;
+
     let mut cb = arboard::Clipboard::new().map_err(|e| format!("无法访问剪贴板: {e}"))?;
     cb.set_text(text).map_err(|e| format!("写入失败: {e}"))
 }

@@ -10,6 +10,7 @@ mod shared {
     pub mod clipboard;
     pub mod images;
     pub mod invocation;
+    pub mod native_legacy_policy;
     pub mod validation;
 }
 
@@ -133,6 +134,32 @@ pub use crate::capabilities::tools::tools;
 
 use bridge::AppState;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+
+// Native-only regression and startup paths use the exact same main-window
+// authorization as the Tauri IPC commands. There is no privileged bypass.
+fn native_main_webview(app: &tauri::AppHandle) -> Result<tauri::Webview, String> {
+    app.get_webview("main")
+        .ok_or_else(|| "NATIVE_MAIN_WEBVIEW_REQUIRED".into())
+}
+fn native_eval_in_tab(app: tauri::AppHandle, id: String, js: String) -> Result<String, String> {
+    bridge::eval_in_tab(native_main_webview(&app)?, app, id, js)
+}
+fn native_tab_activate(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    bridge::tab_activate(native_main_webview(&app)?, app, id)
+}
+fn native_tab_position(
+    app: tauri::AppHandle,
+    id: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    bridge::tab_position(native_main_webview(&app)?, app, id, x, y, width, height)
+}
+fn native_hide_all_webviews(app: tauri::AppHandle) -> Result<(), String> {
+    bridge::hide_all_webviews(native_main_webview(&app)?, app)
+}
 
 fn log_shutdown_report(report: &shutdown::ShutdownReport) {
     eprintln!(
@@ -640,7 +667,7 @@ fn run_grid_selftest(app: tauri::AppHandle) {
         );
         step(
             "eval_in_tab(grid-0)",
-            bridge::eval_in_tab(app.clone(), "grid-0".into(), "document.title".into()).map(|_| ()),
+            native_eval_in_tab(app.clone(), "grid-0".into(), "document.title".into()).map(|_| ()),
         );
         // 3) kill -11 崩溃 grid-0 → 自动重启 + 重放
         let pid0 = app.state::<AppState>().grid_manager.pid_of(0);
@@ -670,7 +697,7 @@ fn run_grid_selftest(app: tauri::AppHandle) {
         }
         step(
             "eval_in_tab(grid-0-after-restart)",
-            bridge::eval_in_tab(app.clone(), "grid-0".into(), "1+1".into()).map(|_| ()),
+            native_eval_in_tab(app.clone(), "grid-0".into(), "1+1".into()).map(|_| ()),
         );
         // grid-1 全程存活
         let pid1_alive = app.state::<AppState>().grid_manager.pid_of(1).is_some();
@@ -802,7 +829,7 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                 .map(|_| format!("grid-{index} opened case={case_id}"))
         };
         let eval_grid = |case_id: &str, index: usize, phase: &str| {
-            bridge::eval_in_tab(
+            native_eval_in_tab(
                 app.clone(),
                 format!("grid-{index}"),
                 gui_regression_eval(case_id, index, phase),
@@ -901,9 +928,9 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                 open_grid("5", 0)?;
                 sleep_ms(1000);
                 let tab = bridge::tab_new(app.clone(), gui_mock_url(&mock_base, "5", 0))?;
-                bridge::tab_activate(app.clone(), tab.id.clone())?;
-                bridge::tab_position(app.clone(), tab.id.clone(), 60.0, 120.0, 800.0, 520.0)?;
-                bridge::hide_all_webviews(app.clone())?;
+                native_tab_activate(app.clone(), tab.id.clone())?;
+                native_tab_position(app.clone(), tab.id.clone(), 60.0, 120.0, 800.0, 520.0)?;
+                native_hide_all_webviews(app.clone())?;
                 sleep_ms(800);
                 position_grid(0, 40.0, 110.0, 620.0, 450.0)?;
                 sleep_ms(800);
@@ -924,10 +951,10 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                 sleep_ms(1000);
                 let first = bridge::tab_new(app.clone(), gui_mock_url(&mock_base, "6", 0))?;
                 let second = bridge::tab_new(app.clone(), gui_mock_url(&mock_base, "6", 1))?;
-                bridge::tab_activate(app.clone(), first.id.clone())?;
-                bridge::tab_position(app.clone(), first.id.clone(), 80.0, 120.0, 760.0, 500.0)?;
-                bridge::tab_activate(app.clone(), second.id.clone())?;
-                bridge::tab_position(app.clone(), second.id.clone(), 90.0, 130.0, 760.0, 500.0)?;
+                native_tab_activate(app.clone(), first.id.clone())?;
+                native_tab_position(app.clone(), first.id.clone(), 80.0, 120.0, 760.0, 500.0)?;
+                native_tab_activate(app.clone(), second.id.clone())?;
+                native_tab_position(app.clone(), second.id.clone(), 90.0, 130.0, 760.0, 500.0)?;
                 bridge::tab_close(app.clone(), first.id)?;
                 bridge::tab_close(app.clone(), second.id)?;
                 eval_grid("6", 0, "tabs_closed_grid_survives")?;
@@ -983,7 +1010,7 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                 sleep_ms(800);
                 bridge::term_kill(app.clone(), term.id)?;
                 let stats = bridge::resource_stats_blocking(app.clone());
-                bridge::eval_in_tab(
+                native_eval_in_tab(
                     app.clone(),
                     "grid-0".to_string(),
                     gui_regression_menu_eval("8", 0, "context_menu"),

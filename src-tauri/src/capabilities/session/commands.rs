@@ -69,6 +69,12 @@ pub fn session_save(
     tab_id: String,
     preview: Option<String>,
 ) -> Result<SessionSummary, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "session_save")?;
+    crate::shared::native_legacy_policy::bound_text("session_save", "tab_id", &tab_id)?;
+    if let Some(value) = preview.as_deref() {
+        crate::shared::native_legacy_policy::bound_text("session_save", "preview", value)?;
+    }
+
     check_invocation_source(&webview, "session_save", None, &app)?;
     check_tab_id(&tab_id)?;
     let text = preview.unwrap_or_default();
@@ -96,6 +102,9 @@ pub fn session_discard(
     webview: tauri::Webview,
     tab_id: String,
 ) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "session_discard")?;
+    crate::shared::native_legacy_policy::bound_text("session_discard", "tab_id", &tab_id)?;
+
     check_invocation_source(&webview, "session_discard", None, &app)?;
     check_tab_id(&tab_id)?;
     let existed = app
@@ -119,6 +128,8 @@ pub fn session_list(
     app: AppHandle,
     webview: tauri::Webview,
 ) -> Result<Vec<SessionSummary>, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "session_list")?;
+
     check_invocation_source(&webview, "session_list", None, &app)?;
     Ok(crate::session::list_sessions(&workspace::sessions_dir(
         &app,
@@ -132,6 +143,9 @@ pub fn session_get(
     webview: tauri::Webview,
     id: String,
 ) -> Result<BrowserSession, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "session_get")?;
+    crate::shared::native_legacy_policy::bound_text("session_get", "id", &id)?;
+
     check_invocation_source(&webview, "session_get", None, &app)?;
     crate::images::check_id(&id, "会话 id")?;
     crate::session::load_session(&workspace::sessions_dir(&app), &id)
@@ -139,9 +153,25 @@ pub fn session_get(
 
 /// 删除会话存档（幂等）。删除的是存档，不影响仍打开的同名页签。
 #[tauri::command]
-pub fn session_delete(app: AppHandle, webview: tauri::Webview, id: String) -> Result<bool, String> {
+pub fn session_delete(
+    app: AppHandle,
+    webview: tauri::Webview,
+    id: String,
+    intent: Option<String>,
+) -> Result<bool, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "session_delete")?;
+    crate::shared::native_legacy_policy::bound_text("session_delete", "id", &id)?;
+
     check_invocation_source(&webview, "session_delete", None, &app)?;
     crate::images::check_id(&id, "会话 id")?;
+    app.state::<crate::security_policy::IntentRegistry>()
+        .consume(
+            &format!("session_delete:{id}"),
+            intent
+                .as_deref()
+                .ok_or("NATIVE_USER_CONFIRMATION_REQUIRED")?,
+        )
+        .map_err(|_| "NATIVE_USER_CONFIRMATION_DENIED")?;
     let removed = crate::session::delete_session(&workspace::sessions_dir(&app), &id)?;
     workspace::log_audit(&app, "session_delete", format!("id={id} removed={removed}"));
     Ok(removed)
@@ -155,6 +185,9 @@ pub fn session_export(
     webview: tauri::Webview,
     id: String,
 ) -> Result<String, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "session_export")?;
+    crate::shared::native_legacy_policy::bound_text("session_export", "id", &id)?;
+
     check_invocation_source(&webview, "session_export", None, &app)?;
     crate::images::check_id(&id, "会话 id")?;
     let session = crate::session::load_session(&workspace::sessions_dir(&app), &id)?;
@@ -176,6 +209,9 @@ pub fn session_restore(
     webview: tauri::Webview,
     id: String,
 ) -> Result<TabInfo, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "session_restore")?;
+    crate::shared::native_legacy_policy::bound_text("session_restore", "id", &id)?;
+
     check_invocation_source(&webview, "session_restore", None, &app)?;
     crate::images::check_id(&id, "会话 id")?;
     let session = crate::session::load_session(&workspace::sessions_dir(&app), &id)?;
@@ -199,6 +235,8 @@ pub fn flush_sessions(
     app: AppHandle,
     webview: tauri::Webview,
 ) -> Result<SessionFlushReport, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "flush_sessions")?;
+
     check_invocation_source(&webview, "flush_sessions", None, &app)?;
     Ok(flush_sessions_inner(&app))
 }
@@ -250,6 +288,8 @@ pub fn get_session_policy(
     app: AppHandle,
     webview: tauri::Webview,
 ) -> Result<SessionPolicy, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "get_session_policy")?;
+
     check_invocation_source(&webview, "get_session_policy", None, &app)?;
     let state = app.state::<crate::AppState>();
     Ok(SessionPolicy {
@@ -266,6 +306,8 @@ pub fn set_session_policy(
     close_prompt: Option<bool>,
     auto_save_on_exit: Option<bool>,
 ) -> Result<SessionPolicy, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "set_session_policy")?;
+
     check_invocation_source(&webview, "set_session_policy", None, &app)?;
     let state = app.state::<crate::AppState>();
     if let Some(v) = close_prompt {

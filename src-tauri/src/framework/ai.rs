@@ -67,10 +67,28 @@ fn register_chat_request(value: &str) -> Result<ChatRequestGuard, String> {
     }
     let id = parse_chat_request_id(value)?;
     let mut map = chat_cancel_map().lock().map_err(|_| "AI_CHAT_BUSY")?;
-    if map.len() >= 32 || map.contains_key(&id) {
+    prune_chat_cancel_map(&mut map);
+    if let Some(existing) = map.get_mut(&id) {
+        if existing.registered {
+            return Err("AI_CHAT_BUSY".into());
+        }
+        existing.registered = true;
+        return Ok(ChatRequestGuard {
+            id: Some(id),
+            cancelled: existing.cancelled.clone(),
+        });
+    }
+    if map.len() >= 32 {
         return Err("AI_CHAT_BUSY".into());
     }
-    map.insert(id, flag.clone());
+    map.insert(
+        id,
+        ChatCancellationSlot {
+            cancelled: flag.clone(),
+            created: std::time::Instant::now(),
+            registered: true,
+        },
+    );
     Ok(ChatRequestGuard {
         id: Some(id),
         cancelled: flag,
@@ -228,6 +246,8 @@ pub struct AiRequest {
     /// A random UUID v4 for cancelling only this request (empty for legacy callers).
     #[serde(default)]
     pub request_id: String,
+    #[serde(default)]
+    pub agent_definition: Option<crate::domain::AgentDef>,
 }
 fn valid_id(id: &str) -> bool {
     id.len() == 24 && id.bytes().all(|c| c.is_ascii_hexdigit())
@@ -842,6 +862,24 @@ fn coding_turn_cancelable_stream(
         .ok_or("AI_NOT_CONFIGURED")?;
     provider_turn_cancelable_stream(profile, messages, tools, cancelled, on_delta)
 }
+/// Old Agent definitions are treated as *model prompts*, never as grants to tools.
+fn validate_legacy_agent_definition(agent: &crate::domain::AgentDef) -> Result<(), String> {
+    if agent.id.len() > 128
+        || agent.system_prompt.len() > 4096
+        || agent.description.len() > 4096
+        || agent.display_name.len() > 256
+        || agent.a2a.delegate_to
+        || agent.a2a.delegated_from
+        || !agent.default_capabilities.is_empty()
+        || agent.dialect != crate::domain::AgentDialect::OpenAiCompatible
+    {
+        return Err("AGENT_LEGACY_TOOL_OR_SIZE_DENIED".into());
+    }
+    agent
+        .validate()
+        .map_err(|_| "AGENT_LEGACY_DEFINITION_DENIED".to_owned())
+}
+
 pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
     if ![
         "default",
@@ -859,7 +897,7 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
     if request.action == "cancel" {
         return Ok(json!({"cancelled":cancel_chat_request(&request.request_id)?}));
     }
-    let cancel_guard = if request.action == "chat" {
+    let cancel_guard = if matches!(request.action.as_str(), "chat" | "legacy_chat") {
         Some(register_chat_request(&request.request_id)?)
     } else {
         None
@@ -948,6 +986,49 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
             // Preserve the credential if Secret Service is locked; metadata removal stays explicit.
             let removed = KeyringStore::delete_token(&format!("ai:{}", request.id)).is_ok();
             Ok(json!({"removed":true,"credential_removed":removed}))
+        }
+        "legacy_chat" => {
+            let agent = request
+                .agent_definition
+                .ok_or("AGENT_DEFINITION_REQUIRED")?;
+            validate_legacy_agent_definition(&agent)?;
+            let messages = {
+                let mut messages =
+                    build_chat_messages(&request.message, "default", &request.history)?;
+                messages[0] = json!({"role":"system","content":agent.system_prompt});
+                messages
+            };
+            let model_id = if request.id.is_empty() {
+                config.bindings.get("default").ok_or("AI_NOT_CONFIGURED")?
+            } else {
+                &request.id
+            };
+            let profile = config
+                .profiles
+                .iter()
+                .find(|profile| &profile.id == model_id && profile.kind == "chat")
+                .cloned()
+                .ok_or("AI_CHAT_PROFILE_REQUIRED")?;
+            drop(lock);
+            let signal = cancel_guard.as_ref().ok_or("AI_CHAT_REQUEST_UNAVAILABLE")?;
+            let execution =
+                crate::capabilities::agent::execution_owner::ProductionExecution::begin(
+                    "legacy_agent",
+                )?;
+            let cancelled = || signal.cancelled.load(Ordering::SeqCst);
+            if cancelled() {
+                return Err("AI_PROVIDER_CANCELLED".into());
+            }
+            let response = provider_turn_cancelable(&profile, &messages, &[], &cancelled)
+                .and_then(|reply| {
+                    if cancelled() { return Err("AI_PROVIDER_CANCELLED".into()); }
+                    let content = reply["content"].as_str()
+                        .filter(|value| !value.trim().is_empty())
+                        .ok_or("AI_RESPONSE_EMPTY")?;
+                    Ok(json!({"content":content,"model":profile.model,"agent_id":agent.id,"tools_executed":false}))
+                });
+            execution.finish(response.is_ok())?;
+            response
         }
         "chat" => {
             let id = if request.id.is_empty() {
@@ -1092,6 +1173,27 @@ mod tests {
             .cancelled
             .load(std::sync::atomic::Ordering::SeqCst));
         drop(registered);
+    }
+    #[test]
+    fn legacy_definition_cannot_grant_a2a_or_tools() {
+        use crate::domain::{A2aConfig, AgentDef, AgentDialect};
+        let mut def = AgentDef {
+            id: "assistant".into(),
+            version: "1.0.0".into(),
+            display_name: "Assistant".into(),
+            description: "Agent".into(),
+            dialect: AgentDialect::OpenAiCompatible,
+            system_prompt: "You are a careful assistant. No tools.".into(),
+            default_capabilities: vec![],
+            a2a: A2aConfig::default(),
+            metadata: serde_json::json!({}),
+        };
+        assert!(super::validate_legacy_agent_definition(&def).is_ok());
+        def.a2a.delegate_to = true;
+        assert!(super::validate_legacy_agent_definition(&def).is_err());
+        def.a2a.delegate_to = false;
+        def.system_prompt = "X".repeat(4097);
+        assert!(super::validate_legacy_agent_definition(&def).is_err());
     }
     #[test]
     fn chat_history_is_bounded_and_only_accepts_user_assistant_roles() {

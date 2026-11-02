@@ -292,6 +292,8 @@ pub async fn graph_query(
     webview: tauri::Webview,
     req: GraphQueryRequest,
 ) -> Result<GraphQueryResult, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "graph_query")?;
+
     check_invocation_source(&webview, "graph_query", None, &app)?;
     let start = req.start_id.trim();
     if let Err(e) = validate_id_public(start) {
@@ -311,6 +313,9 @@ pub async fn graph_node_get(
     webview: tauri::Webview,
     id: String,
 ) -> Result<Option<GraphNodeView>, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "graph_node_get")?;
+    crate::shared::native_legacy_policy::bound_text("graph_node_get", "id", &id)?;
+
     check_invocation_source(&webview, "graph_node_get", None, &app)?;
     if let Err(e) = validate_id_public(&id) {
         return Err(e.code().to_string());
@@ -324,6 +329,8 @@ pub async fn graph_node_get(
 
 #[tauri::command]
 pub async fn graph_stats(app: AppHandle, webview: tauri::Webview) -> Result<GraphStats, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "graph_stats")?;
+
     check_invocation_source(&webview, "graph_stats", None, &app)?;
     let state = app.state::<GraphState>();
     let store = state.store.read().unwrap();

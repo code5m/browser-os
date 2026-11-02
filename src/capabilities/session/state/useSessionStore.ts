@@ -96,8 +96,11 @@ export const useSessionStore = defineStore("session", () => {
   }
 
   async function deleteSession(id: string) {
+    // Deleting an archive is irreversible; require a local UI confirmation.
+    if (!window.confirm('确认永久删除此会话存档？此操作无法撤销。')) return;
     try {
-      await bridge.sessionDelete(id);
+      const intent = await bridge.nativeIssueIntent(`session_delete:${id}`);
+      await bridge.sessionDelete(id, intent);
       if (detailId.value === id) closeDetail();
       await loadSessions();
       layout.showToast("已删除会话存档");

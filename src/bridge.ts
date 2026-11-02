@@ -408,7 +408,8 @@ export const bridge = {
     timeoutSecs?: number | null;
   }) => invoke<CommandSnippet>("snippet_update", p),
 
-  snippetRemove: (id: string) => invoke("snippet_remove", { id }),
+  nativeIssueIntent: (scope: string) => invoke<string>("issue_intent", { scope }),
+  snippetRemove: (id: string, intent: string) => invoke("snippet_remove", { id, intent }),
 
   // M2-6.c 命令片段执行：复用脚本执行态事件和运行历史。
   runCommand: (id: string, values: Record<string, string>) =>
@@ -839,7 +840,7 @@ export const bridge = {
   sessionGet: (id: string) => invoke<BrowserSession>("session_get", { id }),
 
   // 删除会话存档（幂等；删除存档不影响仍打开的同名页签）
-  sessionDelete: (id: string) => invoke<boolean>("session_delete", { id }),
+  sessionDelete: (id: string, intent: string) => invoke<boolean>("session_delete", { id, intent }),
 
   // 导出会话为脱敏 JSON 文本（不写磁盘，由前端决定保存位置）
   sessionExport: (id: string) => invoke<string>("session_export", { id }),

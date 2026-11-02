@@ -4,7 +4,7 @@
 //! business tools remain in their separately approved owner adapters.
 //! Terminal tasks are retired after completion to avoid an unbounded cache.
 //! This is not a durable session store.
-use browseros_agent_foundation::{event::EventJournal, task::TaskRegistry};
+use browseros_agent_foundation::{context::ContextRef, event::EventJournal, task::TaskRegistry};
 use std::sync::{Arc, OnceLock};
 use uuid::Uuid;
 
@@ -21,14 +21,23 @@ pub(crate) struct ProductionExecution {
 
 impl ProductionExecution {
     pub(crate) fn begin(kind: &'static str) -> Result<Self, String> {
-        if !matches!(kind, "chat" | "coding") {
+        Self::begin_scoped(kind, Uuid::nil(), Uuid::new_v4(), vec![])
+    }
+
+    pub(crate) fn begin_scoped(
+        kind: &'static str,
+        workspace: Uuid,
+        session: Uuid,
+        context: Vec<ContextRef>,
+    ) -> Result<Self, String> {
+        if !matches!(kind, "chat" | "coding" | "legacy_agent" | "agent_channel") {
             return Err("AGENT_TASK_KIND_DENIED".into());
         }
         let tasks = task_owner();
         // Never write user text or secrets into task metadata; session/workspace
         // identification is not invented for project-free chat.
         let task = tasks
-            .create_scoped(Uuid::nil(), Uuid::new_v4(), kind, vec![])
+            .create_scoped(workspace, session, kind, context)
             .map_err(|_| "AGENT_TASK_CREATE_FAILED")?;
         tasks
             .start(task.id)
@@ -40,6 +49,12 @@ impl ProductionExecution {
         })
     }
 
+    pub(crate) fn id(&self) -> Uuid {
+        self.id
+    }
+    pub(crate) fn tasks(&self) -> &'static TaskRegistry {
+        self.tasks
+    }
     pub(crate) fn finish(mut self, success: bool) -> Result<(), String> {
         self.tasks
             .finish(self.id, success)
@@ -47,7 +62,7 @@ impl ProductionExecution {
         self.finished = true;
         self.tasks
             .retire_terminal(self.id)
-            .map_err(|_| "AGENT_TASK_RETIRE_FAILED")
+            .map_err(|_| "AGENT_TASK_RETIRE_FAILED".to_owned())
     }
 }
 
@@ -67,6 +82,14 @@ mod tests {
     fn production_agent_task_owner_lifecycle() {
         assert!(ProductionExecution::begin("unknown").is_err());
         ProductionExecution::begin("chat")
+            .unwrap()
+            .finish(true)
+            .unwrap();
+        ProductionExecution::begin("legacy_agent")
+            .unwrap()
+            .finish(true)
+            .unwrap();
+        ProductionExecution::begin("agent_channel")
             .unwrap()
             .finish(true)
             .unwrap();

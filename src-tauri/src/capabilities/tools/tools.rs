@@ -94,13 +94,19 @@ fn build_tool_list(app: &AppHandle) -> Vec<ToolMeta> {
 /// 范式对齐 `bridge::list_artifacts` / `list_repos`：只读列表、无 webview 来源校验、
 /// 不写审计（避免刷满 audit 上限）。返回静态元数据，**不含 HTML 字节与绝对路径**。
 #[tauri::command]
-pub fn list_tools(app: AppHandle) -> Vec<ToolMeta> {
+pub fn list_tools(webview: tauri::Webview, app: AppHandle) -> Vec<ToolMeta> {
+    if crate::shared::native_legacy_policy::require_main(&webview, "list_tools").is_err() {
+        return Vec::new();
+    }
+
     build_tool_list(&app)
 }
 
 /// 对称关闭 Tools 能力创建的全部子 WebView；只匹配 `tool-*` label。
 #[tauri::command]
-pub fn close_tools(app: AppHandle) -> Result<(), String> {
+pub fn close_tools(webview: tauri::Webview, app: AppHandle) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "close_tools")?;
+
     let mut errors = Vec::new();
     for (label, window) in app.webview_windows() {
         if !label.starts_with("tool-") {
@@ -125,7 +131,10 @@ pub fn close_tools(app: AppHandle) -> Result<(), String> {
 /// - **隔离（F4）**：工具窗口不授予任何 bridge 命令能力（不在任何 capability 文件），
 ///   故工具 HTML 即便调 `invoke(...)` 也被能力层拒绝。本命令本身只创建窗口，不触碰文件/进程。
 #[tauri::command]
-pub fn open_tool(id: String, app: AppHandle) -> Result<(), String> {
+pub fn open_tool(webview: tauri::Webview, id: String, app: AppHandle) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "open_tool")?;
+    crate::shared::native_legacy_policy::bound_text("open_tool", "id", &id)?;
+
     if id.contains('/') || id.contains('\\') {
         return Err("非法工具 id".into());
     }

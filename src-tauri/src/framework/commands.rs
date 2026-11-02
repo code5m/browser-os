@@ -12,7 +12,14 @@ use crate::security_policy as sp;
 use crate::workspace::{load_audit, log_audit};
 
 #[tauri::command]
-pub fn debug_log(msg: String) {
+pub fn debug_log(webview: tauri::Webview, msg: String) {
+    if crate::shared::native_legacy_policy::require_main(&webview, "debug_log").is_err() {
+        return;
+    }
+    if crate::shared::native_legacy_policy::bound_text("debug_log", "msg", &msg).is_err() {
+        return;
+    }
+
     eprintln!("[FE] {msg}");
 }
 

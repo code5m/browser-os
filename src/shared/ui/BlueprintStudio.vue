@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import type { PermissionPreview, ValidationReport } from "../../types";
 import { createStudioDraft, parseStudioList, saveStudioList, studioKey, studioProgress, validateStudioDraft, type StudioDraft, type StudioKind } from "../../utils/studioDrafts";
-const props = defineProps<{ kind: StudioKind; validateDefinition: (text: string) => Promise<void>; validation: ValidationReport | null; preview: PermissionPreview | null; backendReady: boolean; busy: boolean; runSafeReference?: (text:string)=>Promise<string>; localChat?: (model:string,message:string,system:string)=>Promise<{content:string;model:string;provider:string}> }>();
+const props = defineProps<{ kind: StudioKind; validateDefinition: (text: string) => Promise<void>; validation: ValidationReport | null; preview: PermissionPreview | null; backendReady: boolean; busy: boolean; runSafeReference?: (text:string)=>Promise<string>; localChat?: (model:string,message:string,system:string)=>Promise<{content:string;model:string;provider:string}>; legacyAgentChat?: (definition:string,message:string,requestId:string)=>Promise<{content:string;model:string;agent_id:string;tools_executed:boolean}>; cancelLegacyChat?: (requestId:string)=>Promise<{cancelled:boolean}> }>();
 const records = ref<StudioDraft[]>([]);
 const chosen = ref<string | null>(null);
 const search = ref("");
@@ -18,17 +18,38 @@ const chatModel=ref("qwen2.5:3b");
 const chatInput=ref("");
 const chatOutput=ref("");
 const chatBusy=ref(false);
+const chatTransport=ref<'configured'|'ollama'>(props.kind==='agent'?'configured':'ollama');
+const chatRequestId=ref<string | null>(null);
 const chatError=ref("");
 async function submitChat(){
-  if(!props.localChat || !current.value || chatBusy.value || !chatInput.value.trim()) return;
+  if(!current.value || chatBusy.value || !chatInput.value.trim()) return;
   chatBusy.value=true; chatError.value=""; chatOutput.value="";
   try {
-    const response=await props.localChat(chatModel.value.trim(),chatInput.value,
-      "你是本地知识助手。只能回答问题，不能调用工具或执行命令。");
-    chatOutput.value=response.content;
-  } catch(e) { chatError.value="本地模型连接失败："+String(e)+"。请确认 Ollama 已运行且已下载所选模型。"; }
-  finally {chatBusy.value=false;}
+    if(chatTransport.value==='configured') {
+      if(!props.legacyAgentChat || props.kind!=='agent') throw Error('当前类型没有 Agent Runtime');
+      if(!current.value.definition) throw Error('请先在定义检查中验证并保存 Agent JSON 定义');
+      if(chatInput.value.length>12000) throw Error('单条输入超出 12000 字符');
+      const requestId=crypto.randomUUID();
+      chatRequestId.value=requestId;
+      const response=await props.legacyAgentChat(current.value.definition,chatInput.value,requestId);
+      if(chatRequestId.value!==requestId) return;
+      chatOutput.value=response.content;
+    } else {
+      if(!props.localChat) throw Error('本地模型接口未启用');
+      const response=await props.localChat(chatModel.value.trim(),chatInput.value,
+        '你是本地知识助手。只能回答问题，不能调用工具或执行命令。');
+      chatOutput.value=response.content;
+    }
+  } catch(e) { chatError.value='模型请求失败：'+String(e); }
+  finally { chatBusy.value=false; chatRequestId.value=null; }
 }
+async function stopChat(){
+  const requestId=chatRequestId.value;
+  if(!requestId || !props.cancelLegacyChat)return;
+  chatRequestId.value=null;
+  try { await props.cancelLegacyChat(requestId); } catch(e) { chatError.value='取消失败：'+String(e); }
+}
+
 const kindLabel = computed(() => props.kind === "agent" ? "智能体" : "技能");
 const detailFields = [
   { key: "name", label: "名称", placeholder: "", rows: 0 },
@@ -189,11 +210,12 @@ async function importFile(e:Event){
             <p v-if="runFeedback" class="help" role="status">{{runFeedback}}</p><div v-if="validation" class="result" :class="{invalid:!validation.valid}">{{validation.valid?'✓ 定义通过原生验证':'定义尚未通过验证'}}<ul v-if="!validation.valid"><li v-for="(err,i) in validation.errors" :key="i">{{err}}</li></ul></div>
           </div>
           <div v-else-if="activeTab==='chat'" class="studio-content">
-            <div class="section-intro"><strong>本地 Ollama 真实对话</strong><span>仅连接 127.0.0.1:11434 · 不调用工具</span></div>
-            <p class="help">需预先在本机运行 Ollama 并下载模型。网络不可用时不生成虚假回复；当前为单轮、非流式试用。</p>
-            <label>模型名称<input v-model="chatModel" maxlength="100" placeholder="qwen2.5:3b"/></label>
+            <div class="section-intro"><strong>Agent 定义 · 真实模型执行</strong><span>统一 Foundation TaskRegistry · 无工具授权</span></div>
+            <p class="help">使用已通过原生校验并保存的 Agent 定义，交由默认配置的聊天模型执行；禁止 A2A 与工具调用。不会执行本地文件、命令、Git 或数据库写入。</p>
+            <label>模型通道<select v-model="chatTransport"><option v-if="kind==='agent'" value="configured">已配置聊天模型（使用当前 Agent 定义）</option><option value="ollama">本地 Ollama（独立演示对话）</option></select></label>
+            <label v-if="chatTransport==='ollama'">模型名称<input v-model="chatModel" maxlength="100" placeholder="qwen2.5:3b"/></label>
             <label>发送消息<textarea v-model="chatInput" rows="4" maxlength="12000" placeholder="输入问题"/></label>
-            <div class="action-row"><button class="primary" :disabled="chatBusy||!chatInput.trim()" @click="submitChat">{{chatBusy?'正在等待本机模型…':'发送真实请求'}}</button></div>
+            <div class="action-row"><button class="primary" :disabled="chatBusy||!chatInput.trim()" @click="submitChat">{{chatBusy?'模型处理中…':'发送真实请求'}}</button><button v-if="chatBusy&&chatRequestId" @click="stopChat">停止生成</button></div>
             <p v-if="chatError" role="alert" class="result invalid">{{chatError}}</p>
             <pre v-if="chatOutput" class="chat-output">{{chatOutput}}</pre>
           </div>
