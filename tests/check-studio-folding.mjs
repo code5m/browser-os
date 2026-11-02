@@ -22,11 +22,23 @@ for(const [name,{file,keys,labels}] of Object.entries(components)){
     assert.match(source,/v-show="dbSchemaOpen"/);
     assert.match(source,/db-no-sidebar/);
     assert.match(source,/db-no-inspector/);
+    // The global Workbench may already be collapsed. A first click must
+    // reveal the navigator, never invert its invisible true state into false.
+    assert.match(source,/if \(key==='navigator' && workbench\.collapsed\) \{[\s\S]*?workbench\.toggleTools\(\);[\s\S]*?dbNavigatorOpen\.value=true;[\s\S]*?return;/);
+    assert.match(source,/function openConnectionSettings\(\) \{[\s\S]*?if \(workbench\.collapsed\) workbench\.toggleTools\(\);[\s\S]*?connectionDialogOpen\.value=true;/);
+    assert.match(source,/@click="openConnectionSettings"/);
+    assert.match(source,/dbNavigatorOpen && !workbench\.collapsed \? '◧ 收起资源树' : '◫ 展开资源树'/);
+
   }else{
     assert.match(source,/git-tools-folded/);
     assert.match(source,/git-files-folded/);
     assert.match(source,/git-inspector-folded/);
     assert.match(source,/v-show="gitInspectorOpen"/);
+    // Every visible file toggle refers to a real file panel on each pane.
+    assert.match(source,/pane==='changes'\|\|pane==='stash'\|\|pane==='github'/);
+    assert.match(source,/v-else-if="pane==='stash'"><aside id="git-file-pane"/);
+    assert.match(source,/v-else-if="pane==='github'"\><aside id="git-file-pane"/);
+
   }
   const parsed=parse(source,{filename:file});assert.equal(parsed.errors.length,0,`${file} must parse`);
   const compiled=compileTemplate({source:parsed.descriptor.template.content,filename:file,id:`studio-${name}`});

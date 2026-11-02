@@ -875,6 +875,11 @@ fn validate_legacy_agent_definition(agent: &crate::domain::AgentDef) -> Result<(
         || agent.version.len() > 48
         || agent.version.chars().any(char::is_control)
         || agent.display_name.chars().any(char::is_control)
+        || crate::security_policy::contains_credential_leak(&agent.display_name)
+        || crate::security_policy::contains_credential_leak(
+            &serde_json::to_string(&agent.metadata)
+                .map_err(|_| "AGENT_LEGACY_DEFINITION_DENIED")?,
+        )
         || serde_json::to_vec(agent)
             .map_err(|_| "AGENT_LEGACY_DEFINITION_DENIED")?
             .len()
@@ -1382,6 +1387,12 @@ mod tests {
         let mut elevated = definition.clone();
         elevated.a2a.delegate_to = true;
         assert!(super::install_legacy_agent(&config_path, elevated, true).is_err());
+        let mut metadata_secret = definition.clone();
+        metadata_secret.metadata = serde_json::json!({"apikey":"sk-abcdefgh1234567890"});
+        assert!(super::install_legacy_agent(&config_path, metadata_secret, true).is_err());
+        let mut title_secret = definition.clone();
+        title_secret.display_name = "sk-abcdefgh1234567890".into();
+        assert!(super::install_legacy_agent(&config_path, title_secret, true).is_err());
         let mut dangerous_id = definition.clone();
         dangerous_id.id = "../../unsafe".into();
         assert!(super::install_legacy_agent(&config_path, dangerous_id, true).is_err());

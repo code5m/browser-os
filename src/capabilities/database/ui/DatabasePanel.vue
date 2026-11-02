@@ -79,12 +79,35 @@ const dbNavigatorOpen = ref(dbDisclosure('navigator'));
 const dbInspectorOpen = ref(dbDisclosure('inspector'));
 const dbConnectionsOpen = ref(dbDisclosure('connections'));
 const dbSchemaOpen = ref(dbDisclosure('schema'));
+function persistDbDisclosure(key: 'navigator'|'inspector'|'connections'|'schema', expanded: boolean) {
+  try { localStorage.setItem(`browseros.db.ui.${key}`, String(expanded)); } catch {}
+}
 function toggleDbDisclosure(key: 'navigator'|'inspector'|'connections'|'schema') {
   if (key==='navigator' && dbNavigatorOpen.value && connectionDialogOpen.value) return;
   const targets={navigator:dbNavigatorOpen,inspector:dbInspectorOpen,connections:dbConnectionsOpen,schema:dbSchemaOpen};
-  if (key==='navigator' && workbench.collapsed) workbench.toggleTools();
+  // A globally folded workspace makes the navigator invisible regardless of its
+  // saved preference. The first click should *open* it, not invert an invisible
+  // true state into false and leave the user with a hidden panel.
+  if (key==='navigator' && workbench.collapsed) {
+    workbench.toggleTools();
+    dbNavigatorOpen.value=true;
+    persistDbDisclosure('navigator',true);
+    return;
+  }
   const state=targets[key];state.value=!state.value;
-  try { localStorage.setItem(`browseros.db.ui.${key}`, String(state.value)); } catch {}
+  persistDbDisclosure(key,state.value);
+}
+function openConnectionSettings() {
+  // The modal belongs to the navigator's subtree. Reveal its owner before
+  // mounting the form so a global toolbar fold cannot open a hidden dialog.
+  if (workbench.collapsed) workbench.toggleTools();
+  dbNavigatorOpen.value=true;
+  dbConnectionsOpen.value=true;
+  persistDbDisclosure('navigator',true);
+  persistDbDisclosure('connections',true);
+  showConnection.value=true;
+  connectionDialogOpen.value=true;
+  connectionDialogTab.value='manual';
 }
 const tablesOpen = ref(true);
 const viewsOpen = ref(true);
@@ -362,9 +385,9 @@ function deleteConnection() {
     <div class="tabs">
       <strong class="studio-brand">Database Studio</strong>
       <span>{{ activeConnection?.name || '数据库资源管理器' }}</span>
-      <button class="db-disclosure" type="button" :aria-expanded="dbNavigatorOpen && !workbench.collapsed" aria-controls="database-navigator" @click="toggleDbDisclosure('navigator')">{{dbNavigatorOpen ? '◧ 收起资源树' : '◫ 展开资源树'}}</button>
+      <button class="db-disclosure" type="button" :aria-expanded="dbNavigatorOpen && !workbench.collapsed" aria-controls="database-navigator" @click="toggleDbDisclosure('navigator')">{{dbNavigatorOpen && !workbench.collapsed ? '◧ 收起资源树' : '◫ 展开资源树'}}</button>
       <button class="db-disclosure" type="button" :aria-expanded="dbInspectorOpen" aria-controls="database-inspector" @click="toggleDbDisclosure('inspector')">{{dbInspectorOpen ? '◧ 收起检查器' : '◫ 展开检查器'}}</button>
-      <button class="conn-toggle" @click="dbNavigatorOpen=true;dbConnectionsOpen=true;showConnection=true;connectionDialogOpen=true;connectionDialogTab='manual'">连接设置</button>
+      <button class="conn-toggle" @click="openConnectionSettings">连接设置</button>
       <button class="close" @click="layout.sidebarOpen = false">✕</button>
     </div>
 
