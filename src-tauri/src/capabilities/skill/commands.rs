@@ -43,6 +43,9 @@ fn skill_permission_preview_inner(text: &str) -> Result<crate::domain::Permissio
 
 #[tauri::command]
 pub fn skill_parse(app: AppHandle, webview: Webview, text: String) -> Result<SkillDef, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "skill_parse")?;
+    crate::shared::native_legacy_policy::bound_text("skill_parse", "text", &text)?;
+
     check_invocation_source(&webview, "skill_parse", None, &app)?;
     skill_parse_inner(&text)
 }
@@ -53,6 +56,9 @@ pub fn skill_validate(
     webview: Webview,
     text: String,
 ) -> Result<ValidationReport, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "skill_validate")?;
+    crate::shared::native_legacy_policy::bound_text("skill_validate", "text", &text)?;
+
     check_invocation_source(&webview, "skill_validate", None, &app)?;
     Ok(skill_validate_inner(&text))
 }
@@ -63,6 +69,9 @@ pub fn skill_permission_preview(
     webview: Webview,
     text: String,
 ) -> Result<crate::domain::PermissionPreview, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "skill_permission_preview")?;
+    crate::shared::native_legacy_policy::bound_text("skill_permission_preview", "text", &text)?;
+
     check_invocation_source(&webview, "skill_permission_preview", None, &app)?;
     skill_permission_preview_inner(&text)
 }

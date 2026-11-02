@@ -1,3 +1,5 @@
+> **历史工作记录，非当前分支状态：** PR #50 已于 2026-11-02 合并到 `master@dd32cc82`。本文的 “only on this branch” 仅描述合并前的工作阶段。最新下一轮改造请查 `2026-11-02-lifecycle-chat-continuation.md`。
+
 # 2026-11-02 Master-based architecture remediation progress
 
 Base: `master@c90eb564`; target: `research/architecture-reconstruction-audit-20261101`. Changes apply **only** on this branch; this is **not** a production completion certificate.

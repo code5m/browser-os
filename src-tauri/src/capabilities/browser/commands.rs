@@ -201,6 +201,9 @@ pub fn list_tab_resources(
     webview: tauri::Webview,
     tab_id: String,
 ) -> Result<TabResourceList, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "list_tab_resources")?;
+    crate::shared::native_legacy_policy::bound_text("list_tab_resources", "tab_id", &tab_id)?;
+
     check_invocation_source(&webview, "list_tab_resources", None, &app)?;
     check_tab_id(&tab_id)?;
     let state = app.state::<AppState>();
@@ -220,6 +223,9 @@ pub fn clear_tab_resources(
     webview: tauri::Webview,
     tab_id: String,
 ) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "clear_tab_resources")?;
+    crate::shared::native_legacy_policy::bound_text("clear_tab_resources", "tab_id", &tab_id)?;
+
     check_invocation_source(&webview, "clear_tab_resources", None, &app)?;
     check_tab_id(&tab_id)?;
     let removed = app
@@ -242,6 +248,8 @@ pub fn get_resource_capture_settings(
     app: AppHandle,
     webview: tauri::Webview,
 ) -> Result<ResourceCaptureSettings, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "get_resource_capture_settings")?;
+
     check_invocation_source(&webview, "get_resource_capture_settings", None, &app)?;
     Ok(app
         .state::<AppState>()
@@ -260,6 +268,8 @@ pub fn set_resource_capture_settings(
     enabled: bool,
     max_per_tab: Option<usize>,
 ) -> Result<ResourceCaptureSettings, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "set_resource_capture_settings")?;
+
     check_invocation_source(&webview, "set_resource_capture_settings", None, &app)?;
     // max_per_tab 合法区间 [10, 1000]：过小无意义，过大失去容量保护
     let clamped = max_per_tab.map(|n| n.clamp(10, 1000));

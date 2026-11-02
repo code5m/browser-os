@@ -82,8 +82,11 @@ export const useSnippetStore = defineStore("snippet", () => {
       layout.showToast("内置命令不可删除");
       return;
     }
+    // This removes a persisted user-defined command, never delete without an actual UI confirmation.
+    if (!window.confirm(`确认永久删除命令「${m.name}」？此操作无法撤销。`)) return;
     try {
-      await bridge.snippetRemove(m.id);
+      const intent = await bridge.nativeIssueIntent(`snippet_remove:${m.id}`);
+      await bridge.snippetRemove(m.id, intent);
       layout.showToast("已删除：" + m.name);
       await loadSnippets();
     } catch (e: any) {

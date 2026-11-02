@@ -189,6 +189,10 @@ function run(files) {
       push('NATIVE-07', 'fail', `registry ↔ Rust 漂移：Rust 有而 registry 无 — ${cmd}`, REGISTRY_REL)
       continue
     }
+    // NATIVE-07 also checks physical source path, not only command names.
+    if (e.file && e.file !== file) {
+      push('NATIVE-07', 'fail', `命令 ${cmd} 登记文件 ${e.file} 与实际 ${file} 不一致`, REGISTRY_REL)
+    }
     const owner = (e.owner || '').trim()
     if (!owner || owner === 'UNKNOWN' || owner === 'LEGACY_UNOWNED') {
       push('NATIVE-01', 'fail', `命令 ${cmd} 缺 owner / owner=UNKNOWN`, REGISTRY_REL)
@@ -290,6 +294,21 @@ function run(files) {
     }
   }
 
+  // NATIVE-10: the Coding Framework may use provider transport, but it must
+  // enter the Coding Owner through its published dispatch gateway.
+  if (typeof files.codingHostText === 'string' &&
+      /crate::capabilities::agent::(?:coding|coding_context|coding_lsp)::(?:execute|cancelled_for_root)/.test(files.codingHostText.split('#[cfg(test)]')[0])) {
+    push('NATIVE-10','fail','Coding Framework 直调 Agent 内部实现，不经 Owner public_api.rs','src-tauri/src/framework/ai.rs')
+  }
+
+  // NATIVE-09: Agent Owner facade must not route backwards through Framework AI.
+  // Browser tab state remains in AppState/bridge; moving it requires a separately approved native migration.
+  for (const [owner, content] of Object.entries(files.ownerFacadeTexts || {})) {
+    if (owner === 'agent' && /crate::framework::ai::coding_lsp_status_for_agent/.test(content)) {
+      push('NATIVE-09', 'fail', 'Agent Owner Public API 不得反向引用 Framework AI 内部 Coding gateway', 'src-tauri/src/capabilities/agent/public_api.rs')
+    }
+  }
+
   return findings
 }
 
@@ -308,7 +327,13 @@ function loadReal() {
     : null
   const hostPath = join(ROOT, 'src-tauri/src/framework/agent_channel.rs')
   const agentChannelHostText = existsSync(hostPath) ? readFileSync(hostPath, 'utf8') : undefined
-  return { rust, registryText, srcFiles, callers: scanCallers(rust), capabilityText, agentChannelHostText }
+  const codingHostPath = join(ROOT, 'src-tauri/src/framework/ai.rs')
+  const codingHostText = existsSync(codingHostPath) ? readFileSync(codingHostPath,'utf8') : undefined
+  const ownerFacadeTexts = Object.fromEntries(['browser', 'agent'].map(owner => {
+    const file = join(ROOT, `src-tauri/src/capabilities/${owner}/public_api.rs`)
+    return [owner, existsSync(file) ? readFileSync(file, 'utf8') : '']
+  }))
+  return { rust, registryText, srcFiles, callers: scanCallers(rust), capabilityText, agentChannelHostText, ownerFacadeTexts, codingHostText }
 }
 
 // ---------------------------- fixtures / self-test ----------------------------
@@ -345,6 +370,24 @@ function runSelfTest() {
     rust: [],
     registryText: 'version: 1\ncommands:\n',
     agentChannelHostText: ['browser','database','git','agent'].map(owner => `crate::capabilities::${owner}::public_api::approved()`).join('\n'),
+  })
+
+  t('NATIVE-07: Registry 错误声明命令源码路径', ['NATIVE-07'], {
+    rust: [{ cmd: 'tab_list', file: 'src-tauri/src/capabilities/browser/commands.rs' }],
+    registryText: fxRegistry([['tab_list', 'browser', 'CAPABILITY_NATIVE_ADAPTER', 'WEBVIEW']]),
+  })
+  t('NATIVE-09: Owner Public API 反向引用 Framework/Bridge 内部', ['NATIVE-09'], {
+    rust: [], registryText: 'version: 1\ncommands:\n',
+    ownerFacadeTexts: { agent: 'crate::framework::ai::coding_lsp_status_for_agent()' },
+  })
+  t('NATIVE-09: Owner Public API 不依赖旧内部入口', [], {
+    rust: [], registryText: 'version: 1\ncommands:\n',
+    ownerFacadeTexts: { agent: 'super::coding_lsp::execute()' },
+  })
+
+  t('NATIVE-10: Coding Framework 不能绕过 Owner 公开执行入口',['NATIVE-10'],{
+    rust:[],registryText:'version: 1\ncommands:\n',
+    codingHostText:'crate::capabilities::agent::coding::execute(root,storage,request,model)'
   })
 
   // POSITIVE：正常登记 + 本能力调用 + 资源声明匹配 + 无泄露

@@ -167,8 +167,10 @@ def detect_violations(files: dict) -> list[str]:
         if "log_audit" in strip_comments(cmd_body):
             v.append("TOOL_LIST_AUDIT_PRESENT:list_tools 不应写审计（只读枚举）")
         # 签名含 AppHandle（函数体内不含，故查全模块源码）
-        if "list_tools(app: AppHandle)" not in tools:
-            v.append("TOOL_LIST_SIG_INVALID:list_tools 签名异常")
+        if not re.search(r"\bpub\s+fn\s+list_tools\s*\(\s*webview:\s*tauri::Webview\s*,\s*app:\s*AppHandle\s*\)", tools):
+            v.append("TOOL_LIST_SIG_INVALID:list_tools 缺少主窗口调用来源")
+        if 'native_legacy_policy::require_main(&webview, "list_tools")' not in cmd_body:
+            v.append("TOOL_LIST_SOURCE_GUARD_MISSING:list_tools 无原生来源拒绝")
 
     # ---- 10) ACL + 注册 ----
     if '"list_tools"' not in acl:
@@ -335,20 +337,27 @@ def run_self_test(root: Path) -> int:
         "TOOL_EMBED_MISSING",
     )
 
-    # 7. list_tools 写审计（只读被破坏）
+    # 7. list_tools 写审计（拒绝在只读枚举中引入副作用）
+    list_signature = "pub fn list_tools(webview: tauri::Webview, app: AppHandle) -> Vec<ToolMeta> {"
     add(
         "list_tools 写入审计",
-        mutate(
-            tools=good["tools"].replace(
-                "pub fn list_tools(app: AppHandle) -> Vec<ToolMeta> {\n    build_tool_list(&app)\n}",
-                'pub fn list_tools(app: AppHandle) -> Vec<ToolMeta> {\n'
-                '    crate::workspace::log_audit(&app, "tool.list", "x".into());\n'
-                "    build_tool_list(&app)\n}",
-                1,
-            )
-        ),
+        mutate(tools=good["tools"].replace(
+            list_signature,
+            list_signature + '\n    crate::workspace::log_audit(&app, "tool.list", "x".into());',
+            1,
+        )),
         "tools",
         "TOOL_LIST_AUDIT_PRESENT",
+    )
+    add(
+        "list_tools 缺少主窗口来源安全门禁",
+        mutate(tools=good["tools"].replace(
+            'native_legacy_policy::require_main(&webview, "list_tools")',
+            'native_legacy_policy::require_main_missing(&webview, "list_tools")',
+            1,
+        )),
+        "tools",
+        "TOOL_LIST_SOURCE_GUARD_MISSING",
     )
 
     # 8. ACL 漏配 list_tools
@@ -394,7 +403,7 @@ def run_self_test(root: Path) -> int:
         "open_tool 命令被删除",
         mutate(
             tools=good["tools"].replace(
-                "pub fn open_tool(id: String, app: AppHandle) -> Result<(), String> {",
+                "pub fn open_tool(webview: tauri::Webview, id: String, app: AppHandle) -> Result<(), String> {",
                 "pub fn open_tool_disabled() {",
                 1,
             )

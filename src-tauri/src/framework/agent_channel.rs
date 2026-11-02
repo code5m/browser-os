@@ -6,12 +6,13 @@ use foundation::{
     approval::{
         ApprovalBinding, ApprovalBroker, HostApprovalDecision, HostApprovalIssuer, ResourceBinding,
     },
-    benchmark::{run_benchmark_suite, run_routed_fixture, BenchmarkReport, RoutedFixtureResult},
+    benchmark::{
+        run_benchmark_suite, run_routed_fixture_owned, BenchmarkReport, RoutedFixtureResult,
+    },
     context::{ContextGrant, ContextKind, ContextRef},
     event::EventJournal,
     experiment::{ExperimentConfig, ExperimentRouter},
     public_api::{current_public_api_catalog, PublicApiHost, PublicApiRegistry, PublicApiSpec},
-    task::TaskRegistry,
     tool::{ToolEffect, ToolFuture, ToolRegistry},
 };
 use serde_json::{json, Value};
@@ -189,13 +190,22 @@ pub async fn agent_runtime_run_fixture(
     router
         .restore_config_for_host(cfg)
         .map_err(|_| "AGENT_EXPERIMENT_ROUTE_INVALID")?;
-    let task_id = uuid::Uuid::new_v4();
+    let execution =
+        crate::capabilities::agent::execution_owner::ProductionExecution::begin("agent_channel")?;
+    let task_id = execution.id();
     let assignment = router
         .assign(task_id)
         .map_err(|_| "AGENT_EXPERIMENT_ROUTE_FAILED")?;
-    run_routed_fixture(assignment.kind, task_id, &fixture_id, assignment.max_turns)
-        .await
-        .map_err(|_| "AGENT_EXPERIMENT_FIXTURE_FAILED".into())
+    let response = run_routed_fixture_owned(
+        assignment.kind,
+        task_id,
+        &fixture_id,
+        assignment.max_turns,
+        execution.tasks(),
+    )
+    .await;
+    execution.finish(response.is_ok())?;
+    response.map_err(|_| "AGENT_EXPERIMENT_FIXTURE_FAILED".into())
 }
 
 fn as_text<'a>(value: &'a Value, name: &str, max: usize) -> Result<&'a str, String> {
@@ -359,7 +369,6 @@ pub async fn agent_runtime_read_tool(
     // One explicit local-UI action is materialized as a signed, single-use
     // approval for the exact tool, resource and arguments. The signer never
     // leaves this host invocation; model/MCP never receives its secret.
-    let tasks = TaskRegistry::new(Arc::new(EventJournal::new(32)));
     let workspace = uuid::Uuid::new_v4();
     let session = uuid::Uuid::new_v4();
     let ctx = ContextRef::checked(
@@ -368,14 +377,16 @@ pub async fn agent_runtime_read_tool(
         ContextGrant::ExplicitSelection,
     )
     .map_err(|_| "AGENT_EXPERIMENT_RESOURCE_INVALID")?;
-    let task = tasks
-        .create_scoped(workspace, session, "User-triggered native read", vec![ctx])
-        .map_err(|_| "AGENT_EXPERIMENT_TASK_FAILED")?;
-    tasks
-        .start(task.id)
-        .map_err(|_| "AGENT_EXPERIMENT_TASK_FAILED")?;
+    let execution = crate::capabilities::agent::execution_owner::ProductionExecution::begin_scoped(
+        "agent_channel",
+        workspace,
+        session,
+        vec![ctx],
+    )?;
+    let tasks = execution.tasks();
+    let task_id = execution.id();
     let call = tools
-        .propose(&tasks, task.id, &command, args)
+        .propose(tasks, task_id, &command, args)
         .map_err(|_| "AGENT_EXPERIMENT_TOOL_DENIED")?;
     let mut secret = [0_u8; 32];
     secret[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
@@ -383,8 +394,8 @@ pub async fn agent_runtime_read_tool(
     let ticket = HostApprovalIssuer::new(secret)
         .map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?
         .issue(
-            &tasks,
-            task.id,
+            tasks,
+            task_id,
             call,
             HostApprovalDecision {
                 principal_id: uuid::Uuid::new_v4(),
@@ -399,16 +410,14 @@ pub async fn agent_runtime_read_tool(
         .map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?;
     let permit = ApprovalBroker::new(secret)
         .map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?
-        .resolve(&tasks, &ticket)
+        .resolve(tasks, &ticket)
         .map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?
         .ok_or("AGENT_EXPERIMENT_APPROVAL_DENIED")?;
     let result = tools
-        .execute(permit, &tasks, Duration::from_secs(15))
+        .execute(permit, tasks, Duration::from_secs(15))
         .await
         .map_err(|_| "AGENT_EXPERIMENT_TOOL_FAILED".to_string())?;
-    tasks
-        .finish(task.id, true)
-        .map_err(|_| "AGENT_EXPERIMENT_TASK_FAILED")?;
+    execution.finish(true)?;
     Ok(result)
 }
 

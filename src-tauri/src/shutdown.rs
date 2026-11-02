@@ -1,8 +1,9 @@
 //! M0-2.b：幂等关闭协调器（`ShutdownCoordinator`）——统一生命周期核心的最小实现。
 //!
-//! 本检查点**只提供核心与测试**，不迁移任何调用方（M0-2.c 负责把主窗关闭、菜单退出、
-//! 系统退出以及 grid/PTY/tab/线程调用方切到本核心）。因此当前阶段核心尚未被业务调用，
-//! 尚未接入 UI 的诊断访问器继续局部标注 `#[allow(dead_code)]`，避免新增编译器警告。
+//! 当前已由 main.rs 的 CloseRequested/ExitRequested 和 bridge::register_shutdown_tasks
+//! 实际接入，覆盖后台扫描停止信号、调度器、会话落盘、WebView、PTY、Grid 与脚本。
+//! 注意：这是资源 Owner 清理执行框架，不等价于实测所有 OS 资源都已归零；
+//! 安装版进程树的 PID / FD / RSS / PSS 仍需要单独运行场景取证。
 //!
 //! 契约（对应 M0-2 验收项）：
 //!   1. 幂等：连续调用两次不会产生重复副作用，也不会 panic 或死锁。
@@ -225,6 +226,63 @@ mod shutdown_tests {
             counter.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_shutdown_reaps_real_child_pid_and_joins_owned_worker() {
+        use std::{
+            process::{Child, Command},
+            sync::atomic::AtomicBool,
+        };
+        struct KillOnDrop(Child);
+        impl Drop for KillOnDrop {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        // A disposable owned child is the only process touched by this fixture.
+        let child = Command::new("/usr/bin/sleep")
+            .arg("30")
+            .spawn()
+            .expect("sleep test fixture");
+        let pid = child.id();
+        let owned = Arc::new(Mutex::new(KillOnDrop(child)));
+        assert!(std::path::Path::new(&format!("/proc/{pid}")).exists());
+        let stop = Arc::new(AtomicBool::new(false));
+        let running = stop.clone();
+        let worker = std::thread::spawn(move || {
+            while !running.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+        let coordinator = ShutdownCoordinator::new();
+        let own_child = owned.clone();
+        coordinator
+            .register("fixture-child", move || {
+                let mut guard = own_child.lock().map_err(|_| "CHILD_LOCK".to_owned())?;
+                guard.0.kill().map_err(|error| error.to_string())?;
+                guard.0.wait().map_err(|error| error.to_string())?;
+                Ok(())
+            })
+            .unwrap();
+        coordinator
+            .register("fixture-worker", move || {
+                stop.store(true, Ordering::SeqCst);
+                worker.join().map_err(|_| "WORKER_JOIN_PANIC".to_owned())
+            })
+            .unwrap();
+        let report = coordinator.shutdown();
+        assert!(
+            report.ok(),
+            "synthetic OS child/worker cleanup: {:?}",
+            report.failures()
+        );
+        assert_eq!(report.executed(), 2);
+        assert!(owned.lock().unwrap().0.try_wait().unwrap().is_some());
+        assert!(coordinator.shutdown().already_shutdown);
+        // This asserts ONLY the fixture child's reaping, not BrowserOS GUI leaks.
     }
 
     #[test]

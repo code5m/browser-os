@@ -21,6 +21,102 @@ const PROVIDER_QUEUE_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 static PROVIDER_LIMITERS: OnceLock<Mutex<HashMap<String, Weak<ProviderSemaphore>>>> =
     OnceLock::new();
 
+// Only the trusted main UI may cancel an opaque, per-request chat id.
+// This registry contains cancellation signals, never chat content/credentials.
+struct ChatCancellationSlot {
+    cancelled: Arc<AtomicBool>,
+    created: std::time::Instant,
+    registered: bool,
+}
+static CHAT_CANCELS: OnceLock<Mutex<HashMap<uuid::Uuid, ChatCancellationSlot>>> = OnceLock::new();
+fn chat_cancel_map() -> &'static Mutex<HashMap<uuid::Uuid, ChatCancellationSlot>> {
+    CHAT_CANCELS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+fn prune_chat_cancel_map(map: &mut HashMap<uuid::Uuid, ChatCancellationSlot>) {
+    map.retain(|_, entry| {
+        entry.registered || entry.created.elapsed() < std::time::Duration::from_secs(60)
+    });
+}
+fn parse_chat_request_id(value: &str) -> Result<uuid::Uuid, String> {
+    let id = uuid::Uuid::parse_str(value).map_err(|_| "AI_CHAT_REQUEST_ID_INVALID")?;
+    if id.get_version_num() != 4 {
+        return Err("AI_CHAT_REQUEST_ID_INVALID".into());
+    }
+    Ok(id)
+}
+struct ChatRequestGuard {
+    id: Option<uuid::Uuid>,
+    cancelled: Arc<AtomicBool>,
+}
+impl Drop for ChatRequestGuard {
+    fn drop(&mut self) {
+        if let Some(id) = self.id {
+            if let Ok(mut map) = chat_cancel_map().lock() {
+                map.remove(&id);
+            }
+        }
+    }
+}
+fn register_chat_request(value: &str) -> Result<ChatRequestGuard, String> {
+    let flag = Arc::new(AtomicBool::new(false));
+    if value.is_empty() {
+        return Ok(ChatRequestGuard {
+            id: None,
+            cancelled: flag,
+        });
+    }
+    let id = parse_chat_request_id(value)?;
+    let mut map = chat_cancel_map().lock().map_err(|_| "AI_CHAT_BUSY")?;
+    prune_chat_cancel_map(&mut map);
+    if let Some(existing) = map.get_mut(&id) {
+        if existing.registered {
+            return Err("AI_CHAT_BUSY".into());
+        }
+        existing.registered = true;
+        return Ok(ChatRequestGuard {
+            id: Some(id),
+            cancelled: existing.cancelled.clone(),
+        });
+    }
+    if map.len() >= 32 {
+        return Err("AI_CHAT_BUSY".into());
+    }
+    map.insert(
+        id,
+        ChatCancellationSlot {
+            cancelled: flag.clone(),
+            created: std::time::Instant::now(),
+            registered: true,
+        },
+    );
+    Ok(ChatRequestGuard {
+        id: Some(id),
+        cancelled: flag,
+    })
+}
+fn cancel_chat_request(value: &str) -> Result<bool, String> {
+    let id = parse_chat_request_id(value)?;
+    let mut map = chat_cancel_map().lock().map_err(|_| "AI_CHAT_BUSY")?;
+    prune_chat_cancel_map(&mut map);
+    if let Some(slot) = map.get(&id) {
+        slot.cancelled.store(true, Ordering::SeqCst);
+        return Ok(true);
+    }
+    // Bounded 60-second tombstone prevents cancel-before-register races.
+    if map.len() >= 32 {
+        return Err("AI_CHAT_BUSY".into());
+    }
+    map.insert(
+        id,
+        ChatCancellationSlot {
+            cancelled: Arc::new(AtomicBool::new(true)),
+            created: std::time::Instant::now(),
+            registered: false,
+        },
+    );
+    Ok(true)
+}
+
 struct ProviderSemaphore {
     active: Mutex<usize>,
     ready: Condvar,
@@ -62,6 +158,9 @@ fn acquire_provider_permit_timeout(
     cancelled: &(dyn Fn() -> bool + Sync),
     timeout: std::time::Duration,
 ) -> Result<ProviderPermit, String> {
+    if cancelled() {
+        return Err("AI_PROVIDER_CANCELLED".into());
+    }
     let semaphore = provider_semaphore(profile_id);
     let deadline = std::time::Instant::now() + timeout;
     let mut active = semaphore.active.lock().map_err(|_| "AI_PROVIDER_BUSY")?;
@@ -144,6 +243,14 @@ pub struct AiRequest {
     pub message: String,
     #[serde(default)]
     pub history: Vec<AiChatTurn>,
+    /// A random UUID v4 for cancelling only this request (empty for legacy callers).
+    #[serde(default)]
+    pub request_id: String,
+    #[serde(default)]
+    pub agent_definition: Option<crate::domain::AgentDef>,
+    // Explicit, trusted main-window approval for local Agent catalog mutations.
+    #[serde(default)]
+    pub confirmed: bool,
 }
 fn valid_id(id: &str) -> bool {
     id.len() == 24 && id.bytes().all(|c| c.is_ascii_hexdigit())
@@ -260,9 +367,16 @@ fn chat_with_history(
     message: &str,
     scope: &str,
     history: &[AiChatTurn],
+    cancelled: &(dyn Fn() -> bool + Sync),
 ) -> Result<Value, String> {
     let messages = build_chat_messages(message, scope, history)?;
-    let reply = provider_turn(profile, &messages, &[])?;
+    if cancelled() {
+        return Err("AI_PROVIDER_CANCELLED".into());
+    }
+    let reply = provider_turn_cancelable(profile, &messages, &[], cancelled)?;
+    if cancelled() {
+        return Err("AI_PROVIDER_CANCELLED".into());
+    }
     let content = reply["content"]
         .as_str()
         .filter(|v| !v.trim().is_empty())
@@ -751,6 +865,148 @@ fn coding_turn_cancelable_stream(
         .ok_or("AI_NOT_CONFIGURED")?;
     provider_turn_cancelable_stream(profile, messages, tools, cancelled, on_delta)
 }
+/// Old Agent definitions are treated as *model prompts*, never as grants to tools.
+fn validate_legacy_agent_definition(agent: &crate::domain::AgentDef) -> Result<(), String> {
+    if agent.id.len() > 128
+        || !agent
+            .id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+        || agent.version.len() > 48
+        || agent.version.chars().any(char::is_control)
+        || agent.display_name.chars().any(char::is_control)
+        || crate::security_policy::contains_credential_leak(&agent.display_name)
+        || crate::security_policy::contains_credential_leak(
+            &serde_json::to_string(&agent.metadata)
+                .map_err(|_| "AGENT_LEGACY_DEFINITION_DENIED")?,
+        )
+        || serde_json::to_vec(agent)
+            .map_err(|_| "AGENT_LEGACY_DEFINITION_DENIED")?
+            .len()
+            > 16 * 1024
+        || agent.system_prompt.len() > 4096
+        || agent.description.len() > 4096
+        || agent.display_name.len() > 256
+        || agent.a2a.delegate_to
+        || agent.a2a.delegated_from
+        || !agent.default_capabilities.is_empty()
+        || agent.dialect != crate::domain::AgentDialect::OpenAiCompatible
+    {
+        return Err("AGENT_LEGACY_TOOL_OR_SIZE_DENIED".into());
+    }
+    agent
+        .validate()
+        .map_err(|_| "AGENT_LEGACY_DEFINITION_DENIED".to_owned())
+}
+
+const MAX_LEGACY_AGENTS: usize = 64;
+const MAX_LEGACY_AGENT_STORE: u64 = 256 * 1024;
+fn legacy_agent_path(path: &Path) -> Result<std::path::PathBuf, String> {
+    Ok(path
+        .parent()
+        .ok_or("AGENT_LEGACY_STORAGE_INVALID")?
+        .join("legacy-agent-definitions-v1.json"))
+}
+fn load_legacy_agents(path: &Path) -> Result<Vec<crate::domain::AgentDef>, String> {
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let meta = fs::symlink_metadata(path).map_err(|_| "AGENT_LEGACY_READ_FAILED")?;
+    if !meta.is_file() || meta.len() > MAX_LEGACY_AGENT_STORE {
+        return Err("AGENT_LEGACY_STORAGE_UNSAFE".into());
+    }
+    let definitions: Vec<crate::domain::AgentDef> =
+        serde_json::from_slice(&fs::read(path).map_err(|_| "AGENT_LEGACY_READ_FAILED")?)
+            .map_err(|_| "AGENT_LEGACY_STORAGE_CORRUPT")?;
+    if definitions.len() > MAX_LEGACY_AGENTS {
+        return Err("AGENT_LEGACY_STORAGE_LIMIT".into());
+    }
+    let mut ids = std::collections::HashSet::new();
+    for def in &definitions {
+        validate_legacy_agent_definition(def)?;
+        if !ids.insert(&def.id) {
+            return Err("AGENT_LEGACY_DUPLICATE_ID".into());
+        }
+    }
+    Ok(definitions)
+}
+fn save_legacy_agents(path: &Path, definitions: &[crate::domain::AgentDef]) -> Result<(), String> {
+    if definitions.len() > MAX_LEGACY_AGENTS {
+        return Err("AGENT_LEGACY_STORAGE_LIMIT".into());
+    }
+    let serialized =
+        serde_json::to_vec_pretty(definitions).map_err(|_| "AGENT_LEGACY_ENCODE_FAILED")?;
+    if serialized.len() as u64 > MAX_LEGACY_AGENT_STORE {
+        return Err("AGENT_LEGACY_STORAGE_LIMIT".into());
+    }
+    let parent = path.parent().ok_or("AGENT_LEGACY_STORAGE_INVALID")?;
+    fs::create_dir_all(parent).map_err(|_| "AGENT_LEGACY_STORAGE_INVALID")?;
+    let dir_meta = fs::symlink_metadata(parent).map_err(|_| "AGENT_LEGACY_STORAGE_INVALID")?;
+    if !dir_meta.is_dir() || dir_meta.file_type().is_symlink() {
+        return Err("AGENT_LEGACY_STORAGE_UNSAFE".into());
+    }
+    if path.exists() {
+        let m = fs::symlink_metadata(path).map_err(|_| "AGENT_LEGACY_STORAGE_UNSAFE")?;
+        if !m.is_file() || m.file_type().is_symlink() {
+            return Err("AGENT_LEGACY_STORAGE_UNSAFE".into());
+        }
+    }
+    let temp = parent.join(format!(".legacy-agents.{}.tmp", uuid::Uuid::new_v4()));
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let saved = (|| {
+        let mut file = options
+            .open(&temp)
+            .map_err(|_| "AGENT_LEGACY_WRITE_FAILED")?;
+        file.write_all(&serialized)
+            .and_then(|_| file.sync_all())
+            .map_err(|_| "AGENT_LEGACY_WRITE_FAILED")?;
+        fs::rename(&temp, path).map_err(|_| "AGENT_LEGACY_WRITE_FAILED")?;
+        fs::File::open(parent)
+            .and_then(|f| f.sync_all())
+            .map_err(|_| "AGENT_LEGACY_WRITE_FAILED")?;
+        Ok::<(), &str>(())
+    })();
+    if saved.is_err() {
+        let _ = fs::remove_file(temp);
+    }
+    saved.map_err(str::to_string)
+}
+fn install_legacy_agent(
+    path: &Path,
+    definition: crate::domain::AgentDef,
+    confirmed: bool,
+) -> Result<Value, String> {
+    if !confirmed {
+        return Err("AGENT_LEGACY_USER_CONFIRM_REQUIRED".into());
+    }
+    validate_legacy_agent_definition(&definition)?;
+    let path = legacy_agent_path(path)?;
+    let mut definitions = load_legacy_agents(&path)?;
+    if let Some(existing) = definitions
+        .iter()
+        .find(|current| current.id == definition.id)
+    {
+        if existing.version != definition.version {
+            return Err("AGENT_LEGACY_VERSION_CONFLICT".into());
+        }
+        if existing != &definition {
+            return Err("AGENT_LEGACY_DEFINITION_CONFLICT".into());
+        }
+        return Ok(
+            json!({"installed":true,"id":definition.id,"version":definition.version,"changed":false}),
+        );
+    }
+    definitions.push(definition.clone());
+    save_legacy_agents(&path, &definitions)?;
+    Ok(json!({"installed":true,"id":definition.id,"version":definition.version,"changed":true}))
+}
+
 pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
     if ![
         "default",
@@ -765,6 +1021,17 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
     {
         return Err("AI_SCOPE_INVALID".into());
     }
+    if request.action == "cancel" {
+        return Ok(json!({"cancelled":cancel_chat_request(&request.request_id)?}));
+    }
+    let cancel_guard = if matches!(
+        request.action.as_str(),
+        "chat" | "legacy_chat" | "legacy_run"
+    ) {
+        Some(register_chat_request(&request.request_id)?)
+    } else {
+        None
+    };
     let lock = CONFIG_LOCK.lock().map_err(|_| "AI_CONFIG_BUSY")?;
     let mut config = read(path)?;
     match request.action.as_str() {
@@ -850,6 +1117,90 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
             let removed = KeyringStore::delete_token(&format!("ai:{}", request.id)).is_ok();
             Ok(json!({"removed":true,"credential_removed":removed}))
         }
+        "legacy_list" => serde_json::to_value(load_legacy_agents(&legacy_agent_path(path)?)?)
+            .map_err(|_| "AGENT_LEGACY_ENCODE_FAILED".into()),
+        "legacy_install" => install_legacy_agent(
+            path,
+            request
+                .agent_definition
+                .ok_or("AGENT_DEFINITION_REQUIRED")?,
+            request.confirmed,
+        ),
+        "legacy_uninstall" => {
+            if !request.confirmed {
+                return Err("AGENT_LEGACY_USER_CONFIRM_REQUIRED".into());
+            }
+            if request.id.is_empty() || request.id.len() > 128 {
+                return Err("AGENT_LEGACY_ID_INVALID".into());
+            }
+            let file = legacy_agent_path(path)?;
+            let mut defs = load_legacy_agents(&file)?;
+            let before = defs.len();
+            defs.retain(|def| def.id != request.id);
+            if defs.len() == before {
+                return Err("AGENT_LEGACY_NOT_INSTALLED".into());
+            }
+            save_legacy_agents(&file, &defs)?;
+            Ok(json!({"removed":true,"id":request.id}))
+        }
+        "legacy_chat" | "legacy_run" => {
+            let agent = if request.action == "legacy_run" {
+                if request.id.is_empty() || request.id.len() > 128 {
+                    return Err("AGENT_LEGACY_ID_INVALID".into());
+                }
+                load_legacy_agents(&legacy_agent_path(path)?)?
+                    .into_iter()
+                    .find(|def| def.id == request.id)
+                    .ok_or("AGENT_LEGACY_NOT_INSTALLED")?
+            } else {
+                request
+                    .agent_definition
+                    .ok_or("AGENT_DEFINITION_REQUIRED")?
+            };
+            validate_legacy_agent_definition(&agent)?;
+            let messages = {
+                let mut messages =
+                    build_chat_messages(&request.message, "default", &request.history)?;
+                messages[0] = json!({"role":"system","content":agent.system_prompt});
+                messages
+            };
+            let model_id = if request.action == "legacy_run" || request.id.is_empty() {
+                config.bindings.get("default").ok_or("AI_NOT_CONFIGURED")?
+            } else {
+                &request.id
+            };
+            let profile = config
+                .profiles
+                .iter()
+                .find(|profile| &profile.id == model_id && profile.kind == "chat")
+                .cloned()
+                .ok_or("AI_CHAT_PROFILE_REQUIRED")?;
+            drop(lock);
+            let signal = cancel_guard.as_ref().ok_or("AI_CHAT_REQUEST_UNAVAILABLE")?;
+            let execution =
+                crate::capabilities::agent::execution_owner::ProductionExecution::begin(
+                    "legacy_agent",
+                )?;
+            let cancelled = || signal.cancelled.load(Ordering::SeqCst);
+            if cancelled() {
+                execution.cancel()?;
+                return Err("AI_PROVIDER_CANCELLED".into());
+            }
+            let response = provider_turn_cancelable(&profile, &messages, &[], &cancelled)
+                .and_then(|reply| {
+                    if cancelled() { return Err("AI_PROVIDER_CANCELLED".into()); }
+                    let content = reply["content"].as_str()
+                        .filter(|value| !value.trim().is_empty())
+                        .ok_or("AI_RESPONSE_EMPTY")?;
+                    Ok(json!({"content":content,"model":profile.model,"agent_id":agent.id,"tools_executed":false}))
+                });
+            if cancelled() {
+                execution.cancel()?;
+            } else {
+                execution.finish(response.is_ok())?;
+            }
+            response
+        }
         "chat" => {
             let id = if request.id.is_empty() {
                 config
@@ -867,7 +1218,22 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
                 .cloned()
                 .ok_or("AI_NOT_CONFIGURED")?;
             drop(lock);
-            chat_with_history(&profile, &request.message, &request.scope, &request.history)
+            let signal = cancel_guard.as_ref().ok_or("AI_CHAT_REQUEST_UNAVAILABLE")?;
+            let execution =
+                crate::capabilities::agent::execution_owner::ProductionExecution::begin("chat")?;
+            let response = chat_with_history(
+                &profile,
+                &request.message,
+                &request.scope,
+                &request.history,
+                &|| signal.cancelled.load(Ordering::SeqCst),
+            );
+            if signal.cancelled.load(Ordering::SeqCst) {
+                execution.cancel()?;
+            } else {
+                execution.finish(response.is_ok())?;
+            }
+            response
         }
         _ => Err("AI_ACTION_INVALID".into()),
     }
@@ -892,27 +1258,6 @@ pub async fn ai_service(
     tauri::async_runtime::spawn_blocking(move || execute(&path, request))
         .await
         .map_err(|_| "AI_WORKER_FAILED".to_string())?
-}
-
-/// Explicit main-window read-only Coding capability gateway for the
-/// Agent Channel experiment. Reuses the Coding Owner's existing LSP-status
-/// executor and the same native source check as coding_service. This does not
-/// expose model chat, file writes, LSP requests, shell or MCP tool execution.
-pub fn coding_lsp_status_for_agent(
-    app: tauri::AppHandle,
-    webview: tauri::Webview,
-    root: &str,
-) -> Result<Value, String> {
-    if webview.label() != "main" || root.len() > 4096 {
-        return Err("AGENT_SOURCE_DENIED".into());
-    }
-    crate::shared::invocation::check_invocation_source(&webview, "coding_service", None, &app)?;
-    let root = std::path::Path::new(root);
-    if !root.is_absolute() || !root.is_dir() {
-        return Err("AGENT_ROOT_INVALID".into());
-    }
-    let canonical = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
-    crate::capabilities::agent::coding_lsp::execute(&canonical, json!({"action":"lsp_status"}))
 }
 
 #[tauri::command]
@@ -940,22 +1285,6 @@ pub async fn coding_service(
         if !root.is_absolute() || root.parent().is_none() {
             return Err("AGENT_ROOT_INVALID".into());
         }
-        let action = request["action"].as_str().unwrap_or("");
-        if ["lsp_status", "lsp_request", "lsp_close"].contains(&action) {
-            return crate::capabilities::agent::coding_lsp::execute(&root, request);
-        }
-        if [
-            "skills_list",
-            "skill_read",
-            "knowledge_search",
-            "mcp_list",
-            "mcp_tools",
-            "mcp_call",
-        ]
-        .contains(&action)
-        {
-            return crate::capabilities::agent::coding_context::execute(&root, &storage, request);
-        }
         let id = request["model_id"].as_str().unwrap_or("").to_owned();
         let cancel_root = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
         let mut emit_delta = |text: &str| -> Result<(), String> {
@@ -963,16 +1292,25 @@ pub async fn coding_service(
                 .send(json!({"type":"delta","text":text}))
                 .map_err(|_| "AGENT_STREAM_DISCONNECTED".to_string())
         };
-        crate::capabilities::agent::coding::execute(&root, &storage, request, |messages, tools| {
-            coding_turn_cancelable_stream(
-                &storage.join("ai-profiles.json"),
-                &id,
-                messages,
-                tools,
-                &|| crate::capabilities::agent::coding::cancelled_for_root(&cancel_root),
-                &mut emit_delta,
-            )
-        })
+        let execution =
+            crate::capabilities::agent::execution_owner::ProductionExecution::begin("coding")?;
+        let response = crate::capabilities::agent::public_api::dispatch_coding_request(
+            &root,
+            &storage,
+            request,
+            |messages, tools| {
+                coding_turn_cancelable_stream(
+                    &storage.join("ai-profiles.json"),
+                    &id,
+                    messages,
+                    tools,
+                    &|| crate::capabilities::agent::public_api::coding_cancelled(&cancel_root),
+                    &mut emit_delta,
+                )
+            },
+        );
+        execution.finish(response.is_ok())?;
+        response
     })
     .await
     .map_err(|_| "AGENT_WORKER_FAILED".to_string())?;
@@ -989,6 +1327,139 @@ pub async fn coding_service(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn chat_request_cancellation_is_scoped_and_cleanup_is_guaranteed() {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let guard = super::register_chat_request(&request_id).unwrap();
+        assert!(!guard.cancelled.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(super::register_chat_request(&request_id).is_err());
+        assert!(super::cancel_chat_request(&request_id).unwrap());
+        assert!(guard.cancelled.load(std::sync::atomic::Ordering::SeqCst));
+        drop(guard);
+        assert!(super::cancel_chat_request(&request_id).unwrap());
+        assert!(super::cancel_chat_request("../../invalid").is_err());
+    }
+    #[test]
+    fn cancel_before_register_prevents_late_provider_start() {
+        let id = uuid::Uuid::new_v4().to_string();
+        assert!(super::cancel_chat_request(&id).unwrap());
+        let registered = super::register_chat_request(&id).unwrap();
+        assert!(registered
+            .cancelled
+            .load(std::sync::atomic::Ordering::SeqCst));
+        drop(registered);
+    }
+    #[test]
+    fn legacy_readonly_agent_install_run_catalog_requires_explicit_confirmation() {
+        use crate::domain::{A2aConfig, AgentDef, AgentDialect};
+        let root = std::env::temp_dir().join(format!(
+            "browseros-legacy-agent-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let config_path = root.join("ai-profiles.json");
+        let definition = AgentDef {
+            id: "safe-reviewer".into(),
+            version: "1.0.0".into(),
+            display_name: "Safe reviewer".into(),
+            description: "Reviews text".into(),
+            dialect: AgentDialect::OpenAiCompatible,
+            system_prompt: "Summarize the user's messages without tools.".into(),
+            default_capabilities: vec![],
+            a2a: A2aConfig::default(),
+            metadata: serde_json::json!({}),
+        };
+        assert_eq!(
+            super::install_legacy_agent(&config_path, definition.clone(), false).unwrap_err(),
+            "AGENT_LEGACY_USER_CONFIRM_REQUIRED"
+        );
+        let saved = super::install_legacy_agent(&config_path, definition.clone(), true).unwrap();
+        assert_eq!(saved["changed"], true);
+        assert_eq!(
+            super::install_legacy_agent(&config_path, definition.clone(), true).unwrap()["changed"],
+            false
+        );
+        let file = super::legacy_agent_path(&config_path).unwrap();
+        assert_eq!(
+            super::load_legacy_agents(&file).unwrap(),
+            vec![definition.clone()]
+        );
+        let mut elevated = definition.clone();
+        elevated.a2a.delegate_to = true;
+        assert!(super::install_legacy_agent(&config_path, elevated, true).is_err());
+        let mut metadata_secret = definition.clone();
+        metadata_secret.metadata = serde_json::json!({"apikey":"sk-abcdefgh1234567890"});
+        assert!(super::install_legacy_agent(&config_path, metadata_secret, true).is_err());
+        let mut title_secret = definition.clone();
+        title_secret.display_name = "sk-abcdefgh1234567890".into();
+        assert!(super::install_legacy_agent(&config_path, title_secret, true).is_err());
+        let mut dangerous_id = definition.clone();
+        dangerous_id.id = "../../unsafe".into();
+        assert!(super::install_legacy_agent(&config_path, dangerous_id, true).is_err());
+        let installed_read: super::AiRequest =
+            serde_json::from_value(serde_json::json!({"action":"legacy_list"})).unwrap();
+        assert_eq!(
+            super::execute(&config_path, installed_read)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let pending_run: super::AiRequest = serde_json::from_value(
+            serde_json::json!({"action":"legacy_run","id":definition.id,"message":"Hello"}),
+        )
+        .unwrap();
+        assert_eq!(
+            super::execute(&config_path, pending_run).unwrap_err(),
+            "AI_NOT_CONFIGURED"
+        );
+        let mut conflict = definition.clone();
+        conflict.version = "2.0.0".into();
+        assert_eq!(
+            super::install_legacy_agent(&config_path, conflict, true).unwrap_err(),
+            "AGENT_LEGACY_VERSION_CONFLICT"
+        );
+        let request: super::AiRequest = serde_json::from_value(
+            serde_json::json!({"action":"legacy_uninstall","id":definition.id,"confirmed":false}),
+        )
+        .unwrap();
+        assert_eq!(
+            super::execute(&config_path, request).unwrap_err(),
+            "AGENT_LEGACY_USER_CONFIRM_REQUIRED"
+        );
+        let request: super::AiRequest = serde_json::from_value(
+            serde_json::json!({"action":"legacy_uninstall","id":definition.id,"confirmed":true}),
+        )
+        .unwrap();
+        assert_eq!(
+            super::execute(&config_path, request).unwrap()["removed"],
+            true
+        );
+        assert!(super::load_legacy_agents(&file).unwrap().is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+    #[test]
+    fn legacy_definition_cannot_grant_a2a_or_tools() {
+        use crate::domain::{A2aConfig, AgentDef, AgentDialect};
+        let mut def = AgentDef {
+            id: "assistant".into(),
+            version: "1.0.0".into(),
+            display_name: "Assistant".into(),
+            description: "Agent".into(),
+            dialect: AgentDialect::OpenAiCompatible,
+            system_prompt: "You are a careful assistant. No tools.".into(),
+            default_capabilities: vec![],
+            a2a: A2aConfig::default(),
+            metadata: serde_json::json!({}),
+        };
+        assert!(super::validate_legacy_agent_definition(&def).is_ok());
+        def.a2a.delegate_to = true;
+        assert!(super::validate_legacy_agent_definition(&def).is_err());
+        def.a2a.delegate_to = false;
+        def.system_prompt = "X".repeat(4097);
+        assert!(super::validate_legacy_agent_definition(&def).is_err());
+    }
     #[test]
     fn chat_history_is_bounded_and_only_accepts_user_assistant_roles() {
         use super::{build_chat_messages, AiChatTurn};
@@ -1769,7 +2240,7 @@ mod tests {
             .iter()
             .find(|p| &p.id == id)
             .expect("default profile");
-        let response = chat_with_history(profile, "Reply with OK only.", "test", &[])
+        let response = chat_with_history(profile, "Reply with OK only.", "test", &[], &|| false)
             .expect("real provider response");
         assert!(response["content"]
             .as_str()

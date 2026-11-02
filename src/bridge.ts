@@ -408,7 +408,8 @@ export const bridge = {
     timeoutSecs?: number | null;
   }) => invoke<CommandSnippet>("snippet_update", p),
 
-  snippetRemove: (id: string) => invoke("snippet_remove", { id }),
+  nativeIssueIntent: (scope: string) => invoke<string>("issue_intent", { scope }),
+  snippetRemove: (id: string, intent: string) => invoke("snippet_remove", { id, intent }),
 
   // M2-6.c 命令片段执行：复用脚本执行态事件和运行历史。
   runCommand: (id: string, values: Record<string, string>) =>
@@ -767,7 +768,7 @@ export const bridge = {
   // 查询当前系统默认浏览器（xdg-settings get）
   getDefaultBrowser: () => invoke<string>("get_default_browser"),
   // 把本应用设为系统默认浏览器。硬约束：只能由设置页按钮经用户显式确认后调用
-  setDefaultBrowser: () => invoke<string>("set_default_browser"),
+  setDefaultBrowser: (intent: string) => invoke<string>("set_default_browser", {intent}),
 
   // ====== 真实 PTY 终端（M3.a：输出走每终端独立 Channel 单播）======
   // Tauri v2 的 Channel 只能从 `@tauri-apps/api/core` 子路径导入（非顶层）。
@@ -839,7 +840,7 @@ export const bridge = {
   sessionGet: (id: string) => invoke<BrowserSession>("session_get", { id }),
 
   // 删除会话存档（幂等；删除存档不影响仍打开的同名页签）
-  sessionDelete: (id: string) => invoke<boolean>("session_delete", { id }),
+  sessionDelete: (id: string, intent: string) => invoke<boolean>("session_delete", { id, intent }),
 
   // 导出会话为脱敏 JSON 文本（不写磁盘，由前端决定保存位置）
   sessionExport: (id: string) => invoke<string>("session_export", { id }),

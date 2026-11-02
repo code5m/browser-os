@@ -57,6 +57,11 @@ export interface CapabilityResourcePolicy {
   destroyable: boolean
 }
 
+export interface CapabilityTransitionContext {
+  /** Cooperative cancellation is supported for async activation. */
+  readonly signal: AbortSignal
+}
+
 export interface CapabilityLifecycle {
   /** 该能力"声明"自己支持的状态；Runtime 对未声明的转换必须拒绝 */
   supported: CapabilityState[]
@@ -65,9 +70,11 @@ export interface CapabilityLifecycle {
   activatable: boolean
   /** 常驻（不可卸载） */
   resident: boolean
-  onActivate?: () => void | Promise<void>
-  onSuspend?: () => void | Promise<void>
-  onDeactivate?: () => void | Promise<void>
+  onActivate?: (context?: CapabilityTransitionContext) => void | Promise<void>
+  onSuspend?: (context?: CapabilityTransitionContext) => void | Promise<void>
+  onDeactivate?: (context?: CapabilityTransitionContext) => void | Promise<void>
+  /** Optional Owner release hook, invoked after suspend and before disabling. */
+  onDestroy?: (context?: CapabilityTransitionContext) => void | Promise<void>
 }
 
 export interface CapabilityPersistence {

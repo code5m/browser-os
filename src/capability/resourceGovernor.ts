@@ -33,7 +33,7 @@ export interface ResourceGovernor {
   /** 休眠（v1 == suspend 同义；运行时无独立 hibernate 态）。 */
   hibernate(id: string): Promise<void>
   /** 等待 active 退出（若需要）再 disable；并不等价于释放所有底层句柄。 */
-  destroy(id: string): Promise<void>
+  destroy(id: string): Promise<{ capabilityId: string; ownerCleanup: boolean }>
   /** 当前各能力状态快照（只读编排元数据，不含业务 state）。 */
   snapshot(): { id: string; state: string; enabled: boolean }[]
 }
@@ -49,6 +49,8 @@ export function createResourceGovernor(runtime: CapabilityRuntime): ResourceGove
     if (rec.definition.lifecycle.supported.includes('SUSPENDED') && rec.definition.resources?.suspendable === true) {
       await runtime.suspendAsync(id)
     } else {
+      // ACTIVE non-suspendable resources cannot be called released by disabling metadata.
+      if (rec.state === 'ACTIVE') throw new Error(`GOVERNOR_OWNER_SUSPEND_REQUIRED: ${id}`)
       runtime.disable(id)
     }
   }
@@ -59,10 +61,7 @@ export function createResourceGovernor(runtime: CapabilityRuntime): ResourceGove
     await suspend(id) // v1：hibernate == suspend
   }
   async function destroy(id: string) {
-    const record = runtime.get(id)
-    if (!record) throw new Error(`GOVERNOR_NOT_FOUND: ${id}`)
-    if (record.state === 'ACTIVE') await runtime.suspendAsync(id)
-    runtime.disable(id) // 先等待 owner suspend，再停用；不假装直接释放底层资源
+    return runtime.releaseAsync(id) // Owner cleanup must finish before disabling metadata.
   }
   function snapshot() {
     return runtime.inspect().map((r) => ({ id: r.id, state: r.state, enabled: r.enabled }))

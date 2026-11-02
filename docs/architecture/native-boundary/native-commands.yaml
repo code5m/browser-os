@@ -97,7 +97,7 @@ commands:
     callers: "src/capabilities/browser/**"
     side_effect: "create/destroy/control native webview"
     resource: "WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   close_browser:
@@ -107,7 +107,7 @@ commands:
     callers: "src/capabilities/browser/**"
     side_effect: "create/destroy/control native webview"
     resource: "WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   position_browser:
@@ -117,7 +117,7 @@ commands:
     callers: "src/capabilities/browser/**"
     side_effect: "create/destroy/control native webview"
     resource: "WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   hide_webview:
@@ -127,7 +127,7 @@ commands:
     callers: "src/capabilities/browser/**"
     side_effect: "create/destroy/control native webview"
     resource: "WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   hide_all_webviews:
@@ -137,7 +137,7 @@ commands:
     callers: "src/capabilities/browser/**"
     side_effect: "create/destroy/control native webview"
     resource: "WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   debug_log:
@@ -147,7 +147,7 @@ commands:
     callers: "src/App.vue + framework"
     side_effect: "framework diagnostics / intent bus / boot ready / pending URL handoff"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "framework/commands.rs（Native Physical Boundary 分解迁入）"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   task_list:
@@ -207,7 +207,7 @@ commands:
     callers: "src/stores (resource stats) + Shell"
     side_effect: "report/collect/clear resource telemetry, capture settings"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main); tauri.remote-collect(telemetry-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   list_tab_resources:
@@ -217,7 +217,7 @@ commands:
     callers: "src/stores (resource stats) + Shell"
     side_effect: "report/collect/clear resource telemetry, capture settings"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   clear_tab_resources:
@@ -227,7 +227,7 @@ commands:
     callers: "src/stores (resource stats) + Shell"
     side_effect: "report/collect/clear resource telemetry, capture settings"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   get_resource_capture_settings:
@@ -237,7 +237,7 @@ commands:
     callers: "src/stores (resource stats) + Shell"
     side_effect: "report/collect/clear resource telemetry, capture settings"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   set_resource_capture_settings:
@@ -247,7 +247,7 @@ commands:
     callers: "src/stores (resource stats) + Shell"
     side_effect: "report/collect/clear resource telemetry, capture settings"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   session_save:
@@ -257,7 +257,7 @@ commands:
     callers: "src/stores/useSessionStore.ts"
     side_effect: "persist/restore session snapshots (disk)"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     allowed_callers: "browser"
     allowed_rationale: "browser 能力（session 标签页 UI）经能力 public 边界调用本会话持久化命令，属已评审的窄契约；session→browser 仅经 capabilities::browser::commands::create_tab，无环。"
     current_boundary: "migrated to capabilities/session/commands.rs (native-physical-batch-session)"
@@ -269,7 +269,7 @@ commands:
     callers: "src/stores/useSessionStore.ts"
     side_effect: "persist/restore session snapshots (disk)"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "migrated to capabilities/session/commands.rs (native-physical-batch-session)"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   session_list:
@@ -279,7 +279,7 @@ commands:
     callers: "src/stores/useSessionStore.ts"
     side_effect: "persist/restore session snapshots (disk)"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     allowed_callers: "browser"
     allowed_rationale: "browser 能力（session 标签页 UI）经能力 public 边界调用本会话持久化命令，属已评审的窄契约；session→browser 仅经 capabilities::browser::commands::create_tab，无环。"
     current_boundary: "migrated to capabilities/session/commands.rs (native-physical-batch-session)"
@@ -291,7 +291,7 @@ commands:
     callers: "src/stores/useSessionStore.ts"
     side_effect: "persist/restore session snapshots (disk)"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     allowed_callers: "browser"
     allowed_rationale: "browser 能力（session 标签页 UI）经能力 public 边界调用本会话持久化命令，属已评审的窄契约；session→browser 仅经 capabilities::browser::commands::create_tab，无环。"
     current_boundary: "migrated to capabilities/session/commands.rs (native-physical-batch-session)"
@@ -303,7 +303,7 @@ commands:
     callers: "src/stores/useSessionStore.ts"
     side_effect: "persist/restore session snapshots (disk)"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     allowed_callers: "browser"
     allowed_rationale: "browser 能力（session 标签页 UI）经能力 public 边界调用本会话持久化命令，属已评审的窄契约；session→browser 仅经 capabilities::browser::commands::create_tab，无环。"
     current_boundary: "migrated to capabilities/session/commands.rs (native-physical-batch-session)"
@@ -315,7 +315,7 @@ commands:
     callers: "src/stores/useSessionStore.ts"
     side_effect: "persist/restore session snapshots (disk)"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     allowed_callers: "browser"
     allowed_rationale: "browser 能力（session 标签页 UI）经能力 public 边界调用本会话持久化命令，属已评审的窄契约；session→browser 仅经 capabilities::browser::commands::create_tab，无环。"
     current_boundary: "migrated to capabilities/session/commands.rs (native-physical-batch-session)"
@@ -327,7 +327,7 @@ commands:
     callers: "src/stores/useSessionStore.ts"
     side_effect: "persist/restore session snapshots (disk)"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     allowed_callers: "browser"
     allowed_rationale: "browser 能力（session 标签页 UI）经能力 public 边界调用本会话持久化命令，属已评审的窄契约；session→browser 仅经 capabilities::browser::commands::create_tab，无环。"
     current_boundary: "migrated to capabilities/session/commands.rs (native-physical-batch-session)"
@@ -339,7 +339,7 @@ commands:
     callers: "src/stores/useSessionStore.ts"
     side_effect: "persist/restore session snapshots (disk)"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "migrated to capabilities/session/commands.rs (native-physical-batch-session)"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   get_session_policy:
@@ -349,7 +349,7 @@ commands:
     callers: "src/stores/useSessionStore.ts"
     side_effect: "persist/restore session snapshots (disk)"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     allowed_callers: "browser"
     allowed_rationale: "browser 能力（session 标签页 UI）经能力 public 边界调用本会话持久化命令，属已评审的窄契约；session→browser 仅经 capabilities::browser::commands::create_tab，无环。"
     current_boundary: "migrated to capabilities/session/commands.rs (native-physical-batch-session)"
@@ -361,7 +361,7 @@ commands:
     callers: "src/stores/useSessionStore.ts"
     side_effect: "persist/restore session snapshots (disk)"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     allowed_callers: "browser"
     allowed_rationale: "browser 能力（session 标签页 UI）经能力 public 边界调用本会话持久化命令，属已评审的窄契约；session→browser 仅经 capabilities::browser::commands::create_tab，无环。"
     current_boundary: "migrated to capabilities/session/commands.rs (native-physical-batch-session)"
@@ -373,7 +373,7 @@ commands:
     callers: "src/capabilities/browser/**"
     side_effect: "create/destroy/control native webview"
     resource: "WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main); tauri.remote-collect(telemetry-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   collect_selection:
@@ -403,7 +403,7 @@ commands:
     callers: "src/App.vue + framework"
     side_effect: "framework diagnostics / intent bus / boot ready / pending URL handoff"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   save_note:
@@ -733,7 +733,7 @@ commands:
     callers: "src/capabilities/script/state/useSnippetStore.ts"
     side_effect: "snippet CRUD (backend persistence)"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   snippet_add:
@@ -743,7 +743,7 @@ commands:
     callers: "src/capabilities/script/state/useSnippetStore.ts"
     side_effect: "snippet CRUD (backend persistence)"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   snippet_update:
@@ -753,7 +753,7 @@ commands:
     callers: "src/capabilities/script/state/useSnippetStore.ts"
     side_effect: "snippet CRUD (backend persistence)"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   snippet_remove:
@@ -763,7 +763,7 @@ commands:
     callers: "src/capabilities/script/state/useSnippetStore.ts"
     side_effect: "snippet CRUD (backend persistence)"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   run_command:
@@ -833,7 +833,7 @@ commands:
     callers: "src/capabilities/bookmark/**"
     side_effect: "bookmark CRUD (backend persistence)"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   list_bookmarks:
@@ -843,7 +843,7 @@ commands:
     callers: "src/capabilities/bookmark/**"
     side_effect: "bookmark CRUD (backend persistence)"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   remove_bookmark:
@@ -853,7 +853,7 @@ commands:
     callers: "src/capabilities/bookmark/**"
     side_effect: "bookmark CRUD (backend persistence)"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   browse_workspace:
@@ -985,7 +985,7 @@ commands:
     callers: "src/shared/clipboard/**"
     side_effect: "read/write system clipboard"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "shared/clipboard.rs（Pilot 15 从 bridge.rs 迁出）"
     target_boundary: "shared native adapter module (declare + gate)"
   clipboard_write:
@@ -995,7 +995,7 @@ commands:
     callers: "src/shared/clipboard/**"
     side_effect: "read/write system clipboard"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     allowed_callers: "workspace"
     allowed_rationale: "workspace『复制路径』写入系统剪贴板；clipboard 无重资源、无后台任务，属轻量共享动作。"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
@@ -1089,7 +1089,7 @@ commands:
     callers: "src/capabilities/browser/**"
     side_effect: "create/destroy/control native webview"
     resource: "WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   tab_close:
@@ -1099,7 +1099,7 @@ commands:
     callers: "src/capabilities/browser/**"
     side_effect: "create/destroy/control native webview"
     resource: "WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   tab_open:
@@ -1109,7 +1109,7 @@ commands:
     callers: "src/capabilities/browser/**"
     side_effect: "create/destroy/control native webview"
     resource: "WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   tab_position:
@@ -1119,7 +1119,7 @@ commands:
     callers: "src/capabilities/browser/**"
     side_effect: "create/destroy/control native webview"
     resource: "WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   report_grid_load_failed:
@@ -1139,7 +1139,7 @@ commands:
     callers: "src/stores (resource stats) + Shell"
     side_effect: "report/collect/clear resource telemetry, capture settings"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   set_tab_hibernation:
@@ -1149,7 +1149,7 @@ commands:
     callers: "src/stores/useSettingsStore.ts"
     side_effect: "apply tab-hibernation policy to webviews (framework preference)"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   tab_list:
@@ -1159,7 +1159,7 @@ commands:
     callers: "src/capabilities/browser/**"
     side_effect: "create/destroy/control native webview"
     resource: "WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   tab_set_title:
@@ -1169,7 +1169,7 @@ commands:
     callers: "src/capabilities/browser/**"
     side_effect: "create/destroy/control native webview"
     resource: "WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   tab_go_back:
@@ -1179,7 +1179,7 @@ commands:
     callers: "src/capabilities/browser/**"
     side_effect: "create/destroy/control native webview"
     resource: "WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   tab_go_forward:
@@ -1189,7 +1189,7 @@ commands:
     callers: "src/capabilities/browser/**"
     side_effect: "create/destroy/control native webview"
     resource: "WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   tab_reload:
@@ -1199,7 +1199,7 @@ commands:
     callers: "src/capabilities/browser/**"
     side_effect: "create/destroy/control native webview"
     resource: "WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   eval_in_tab:
@@ -1209,7 +1209,7 @@ commands:
     callers: "src/capabilities/browser/** + src/capabilities/grid/** + src/capability/platform/legacy-host-adapters.ts"
     side_effect: "evaluate script in an existing capability-owned webview"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "shared webview execution service; capability state remains owned by callers"
   tab_activate:
@@ -1219,7 +1219,7 @@ commands:
     callers: "src/capabilities/browser/**"
     side_effect: "create/destroy/control native webview"
     resource: "WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   term_spawn:
@@ -1279,7 +1279,7 @@ commands:
     callers: "src/App.vue + framework"
     side_effect: "framework diagnostics / intent bus / boot ready / pending URL handoff"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   get_default_browser:
@@ -1289,7 +1289,7 @@ commands:
     callers: "src/capabilities/browser/**"
     side_effect: "create/destroy/control native webview"
     resource: "WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   set_default_browser:
@@ -1299,7 +1299,7 @@ commands:
     callers: "src/capabilities/browser/**"
     side_effect: "create/destroy/control native webview"
     resource: "WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   m0_ready:
@@ -1309,7 +1309,7 @@ commands:
     callers: "src/App.vue + framework"
     side_effect: "framework diagnostics / intent bus / boot ready / pending URL handoff"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   m0_term_report:
@@ -1609,7 +1609,7 @@ commands:
     callers: "src/capabilities/skill/**"
     side_effect: "parse/validate skill spec, permission preview"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   skill_validate:
@@ -1619,7 +1619,7 @@ commands:
     callers: "src/capabilities/skill/**"
     side_effect: "parse/validate skill spec, permission preview"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   skill_permission_preview:
@@ -1629,7 +1629,7 @@ commands:
     callers: "src/capabilities/skill/**"
     side_effect: "parse/validate skill spec, permission preview"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   import_browser_credentials:
@@ -1699,7 +1699,7 @@ commands:
     callers: "src/capabilities/graph/**"
     side_effect: "query knowledge graph nodes/stats"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "capabilities/graph/commands.rs（Native Physical Boundary 分解迁入）"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   graph_node_get:
@@ -1709,7 +1709,7 @@ commands:
     callers: "src/capabilities/graph/**"
     side_effect: "query knowledge graph nodes/stats"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "capabilities/graph/commands.rs（Native Physical Boundary 分解迁入）"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   graph_stats:
@@ -1719,7 +1719,7 @@ commands:
     callers: "src/capabilities/graph/**"
     side_effect: "query knowledge graph nodes/stats"
     resource: "NONE"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "capabilities/graph/commands.rs（Native Physical Boundary 分解迁入）"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   graph_import_json:
@@ -1859,7 +1859,7 @@ commands:
     callers: "src/capabilities/tools/**"
     side_effect: "list/open tool sub-webview (tool://)"
     resource: "TOOL_WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   open_tool:
@@ -1869,7 +1869,7 @@ commands:
     callers: "src/capabilities/tools/**"
     side_effect: "list/open tool sub-webview (tool://)"
     resource: "TOOL_WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   close_tools:
@@ -1879,6 +1879,6 @@ commands:
     callers: "src/capabilities/tools/**"
     side_effect: "close all tool-* sub-webviews owned by Tools"
     resource: "TOOL_WEBVIEW"
-    permission: "-"
+    permission: "tauri.default-commands(main-only)"
     current_boundary: "capability-owned native adapter module"
     target_boundary: "capability-owned native adapter module (declare + gate)"

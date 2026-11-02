@@ -246,6 +246,174 @@ async function runTests() {
     return blocked && rt.get('bookmark')?.state === 'ACTIVE'
   })
 
+  const ta = async (id, name, fn) => {
+    try {
+      const ok = await fn()
+      results.push({ id, name, ok: ok === true, detail: ok === true ? '' : String(ok) })
+    } catch (error) { results.push({ id, name, ok: false, detail: String(error) }) }
+  }
+  await ta('RT-19', '并发 activateAsync 幂等、取消后先回滚再保留 READY', async () => {
+    let finish, started = 0, cleanups = 0
+    const rt = createCapabilityRuntime()
+    rt.register(cap({ lifecycle: { ...cap().lifecycle,
+      onActivate: () => { started++; return new Promise(resolve => { finish = resolve }) },
+      onDeactivate: async () => { cleanups++ },
+    } }))
+    rt.resolve('bookmark')
+    const first = rt.activateAsync('bookmark')
+    const duplicate = rt.activateAsync('bookmark')
+    if (first !== duplicate || started !== 1 || rt.get('bookmark').state !== 'READY') return false
+    if (!expectThrow(() => rt.disable('bookmark'), 'TRANSITION_IN_PROGRESS')) return false
+    if (!rt.cancelTransition('bookmark')) return false
+    finish()
+    const settled = await Promise.allSettled([first, duplicate])
+    return settled.every(value => value.status === 'rejected' && value.reason?.code === 'TRANSITION_CANCELLED')
+      && cleanups === 1 && rt.get('bookmark').state === 'READY'
+  })
+  await ta('RT-20', '激活失败执行 Owner 回滚、原状态不变', async () => {
+    let released = 0
+    const rt = createCapabilityRuntime()
+    rt.register(cap({ lifecycle: { ...cap().lifecycle,
+      onActivate: async () => { throw new Error('startup failed') },
+      onDeactivate: async () => { released++ },
+    } }))
+    rt.resolve('bookmark')
+    const result = await Promise.allSettled([rt.activateAsync('bookmark')])
+    return result[0].status === 'rejected' && released === 1 && rt.get('bookmark').state === 'READY'
+      && rt.get('bookmark').lastError.includes('startup failed')
+  })
+  await ta('RT-21', '并发 suspendAsync 幂等，执行期间不能 disable', async () => {
+    let finish, suspensions = 0
+    const rt = createCapabilityRuntime()
+    rt.register(cap({ lifecycle: { ...cap().lifecycle, onSuspend: () => {
+      suspensions++; return new Promise(resolve => { finish = resolve })
+    } } }))
+    rt.resolve('bookmark'); rt.activate('bookmark')
+    const one = rt.suspendAsync('bookmark'), two = rt.suspendAsync('bookmark')
+    if (one !== two || suspensions !== 1 || !expectThrow(() => rt.disable('bookmark'), 'TRANSITION_IN_PROGRESS')) return false
+    finish(); await one
+    return rt.get('bookmark').state === 'SUSPENDED' && suspensions === 1
+  })
+  await ta('RT-22', '销毁等待 suspend 与 Owner release 完成后才能 disable', async () => {
+    let finish, announceStart, destroyed = 0
+    const started = new Promise(resolve => { announceStart = resolve })
+    const rt = createCapabilityRuntime()
+    rt.register(cap({ lifecycle: { ...cap().lifecycle, onDestroy: async () => {
+      destroyed++; announceStart(); await new Promise(resolve => { finish = resolve })
+    } } }))
+    rt.resolve('bookmark'); rt.activate('bookmark')
+    const ending = rt.releaseAsync('bookmark')
+    await started
+    if (destroyed !== 1 || !rt.get('bookmark').enabled) { finish(); await ending; return false }
+    finish(); const receipt = await ending
+    return receipt.ownerCleanup === true && rt.get('bookmark').state === 'SUSPENDED' && !rt.get('bookmark').enabled
+  })
+  await ta('RT-23', 'Owner release 报错保持 enabled 且记录错误', async () => {
+    const rt = createCapabilityRuntime()
+    rt.register(cap({ lifecycle: { ...cap().lifecycle, onDestroy: async () => { throw Error('owner failed') } } }))
+    rt.resolve('bookmark'); rt.activate('bookmark')
+    const result = await Promise.allSettled([rt.releaseAsync('bookmark')])
+    return result[0].status === 'rejected' && rt.get('bookmark').enabled
+      && rt.get('bookmark').lastError.includes('owner failed')
+  })
+  await ta('RT-24', '已知 async hook 的同步入口在执行前拒绝', async () => {
+    let invoked = false
+    const rt = createCapabilityRuntime()
+    rt.register(cap({ lifecycle: { ...cap().lifecycle, onActivate: async () => { invoked = true } } }))
+    rt.resolve('bookmark')
+    return expectThrow(() => rt.activate('bookmark'), 'INVALID_TRANSITION') && !invoked
+  })
+  await ta('RT-25', '激活未决时 reset 应拒绝并保留注册', async () => {
+    let finish
+    const rt = createCapabilityRuntime()
+    rt.register(cap({ lifecycle: { ...cap().lifecycle, onActivate: () => new Promise(resolve => { finish = resolve }) } }))
+    rt.resolve('bookmark'); const activation = rt.activateAsync('bookmark')
+    const rejected = expectThrow(() => rt.reset(), 'TRANSITION_IN_PROGRESS')
+    rt.cancelTransition('bookmark'); finish(); await Promise.allSettled([activation])
+    return rejected && !!rt.get('bookmark')
+  })
+
+  await ta('RT-26', '并发 releaseAsync 应共享同一 Owner 释放事务', async () => {
+    let finish, announceStart, calls = 0
+    const started = new Promise(resolve => { announceStart = resolve })
+    const rt = createCapabilityRuntime()
+    rt.register(cap({ lifecycle: { ...cap().lifecycle, onDestroy: async () => {
+      calls++; announceStart(); await new Promise(resolve => { finish = resolve })
+    } } }))
+    rt.resolve('bookmark'); rt.activate('bookmark')
+    const first = rt.releaseAsync('bookmark'), duplicate = rt.releaseAsync('bookmark')
+    await started
+    const blocked = expectThrow(() => rt.activate('bookmark'), 'TRANSITION_IN_PROGRESS')
+    const disabled = expectThrow(() => rt.disable('bookmark'), 'TRANSITION_IN_PROGRESS')
+    finish(); const [one,two] = await Promise.all([first,duplicate])
+    return first === duplicate && calls === 1 && blocked && disabled && one.ownerCleanup && two.ownerCleanup
+      && !rt.get('bookmark').enabled
+  })
+  await ta('RT-27', '正在激活的资源遭遇关闭应取消并等待 Owner 清理', async () => {
+    let finish, deactivated = 0, destroyed = 0
+    const rt = createCapabilityRuntime()
+    rt.register(cap({ lifecycle: { ...cap().lifecycle,
+      onActivate: () => new Promise(resolve => { finish = resolve }),
+      onDeactivate: async () => { deactivated++ },
+      onDestroy: async () => { destroyed++ },
+    } }))
+    rt.resolve('bookmark')
+    const activate = rt.activateAsync('bookmark')
+    const close = rt.releaseAsync('bookmark')
+    finish()
+    const result = await Promise.allSettled([activate])
+    const receipt = await close
+    return result[0].status === 'rejected' && deactivated === 1 && destroyed === 1
+      && receipt.ownerCleanup && rt.get('bookmark').state === 'READY' && !rt.get('bookmark').enabled
+  })
+
+  await ta('RT-28', '顺序重复 release 不得再次触发 Owner destroy', async () => {
+    let calls = 0
+    const rt = createCapabilityRuntime()
+    rt.register(cap({ lifecycle: { ...cap().lifecycle, onDestroy: async () => { calls++ } } }))
+    rt.resolve('bookmark'); rt.activate('bookmark')
+    const first = await rt.releaseAsync('bookmark')
+    const again = await rt.releaseAsync('bookmark')
+    return calls === 1 && first.ownerCleanup && again.ownerCleanup && !rt.get('bookmark').enabled
+  })
+  await ta('RT-29', '依赖者阻止释放时不调用任何 Owner hook', async () => {
+    let released = 0
+    const rt = createCapabilityRuntime()
+    rt.register(cap({ id: 'bookmark', lifecycle: { ...cap().lifecycle, onDestroy: async () => { released++ } } }))
+    rt.register(cap({ id: 'dependent', dependsOn: ['bookmark'] }))
+    rt.resolve('bookmark'); rt.resolve('dependent'); rt.activate('bookmark')
+    try { await rt.releaseAsync('bookmark') } catch(error) {
+      return error.code === 'DEPENDENT_PRESENT' && released === 0 && rt.get('bookmark').state === 'ACTIVE'
+    }
+    return false
+  })
+  await ta('RT-30', '释放后显式 enable 开启新资源生命周期', async () => {
+    let calls = 0
+    const rt = createCapabilityRuntime()
+    rt.register(cap({ lifecycle: { ...cap().lifecycle, onDestroy: async () => { calls++ } } }))
+    rt.resolve('bookmark'); rt.activate('bookmark')
+    await rt.releaseAsync('bookmark')
+    rt.enable('bookmark'); await rt.activateAsync('bookmark')
+    await rt.releaseAsync('bookmark')
+    return calls === 2 && !rt.get('bookmark').enabled
+  })
+
+  await ta('RT-31', '关闭中禁止启动新的依赖者导致 Owner 清理后禁用失败', async () => {
+    let finish, started
+    const began = new Promise(resolve => { started = resolve })
+    const rt = createCapabilityRuntime()
+    rt.register(cap({ lifecycle: { ...cap().lifecycle, onDestroy: () => {
+      started(); return new Promise(resolve => { finish = resolve })
+    } } }))
+    rt.resolve('bookmark'); rt.activate('bookmark')
+    const closing = rt.releaseAsync('bookmark')
+    await began
+    const blocked = expectThrow(() => rt.register(cap({ id:'dependent',dependsOn:['bookmark'] })), 'TRANSITION_IN_PROGRESS')
+    finish()
+    await closing
+    return blocked && !rt.get('bookmark').enabled
+  })
+
   return results
 }
 

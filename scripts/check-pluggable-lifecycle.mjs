@@ -61,7 +61,7 @@ try {
       semanticOwner: "featureOwner", governanceStatus: "GOVERNED", status: "COMPATIBILITY_WRAPPED",
     };
     const app = createPluggableRuntime({ catalog: { feature: manifest }, definitions: { feature: definition }, config: { enabled: { feature: true } }, contributions: registry });
-    return { app, registry, component, counts };
+    return { app, registry, component, counts, definition };
   }
 
   function check(name, run) {
@@ -120,6 +120,58 @@ try {
       assert.equal(app.runtime.get("feature").state, "ACTIVE");
     }
     assert.deepEqual(counts, { activate: 4, suspend: 3, deactivate: 3 });
+  });
+
+  async function checkAsync(name, run) {
+    try { await run(); console.log(`[PASS] ${name}`); }
+    catch(error) { failed++; console.error(`[FAIL] ${name}: ${error.message}`); }
+  }
+
+  await checkAsync("async production activation waits for Owner before publishing ACTIVE", async () => {
+    const { app, registry, counts, definition } = fixture();
+    let releaseHook, startedHook;
+    const hookStarted = new Promise(resolve => { startedHook = resolve; });
+    const hookGate = new Promise(resolve => { releaseHook = resolve; });
+    const original = definition.lifecycle.onActivate;
+    definition.lifecycle.onActivate = async () => {
+      startedHook(); await hookGate; original();
+    };
+    const first = app.activateAsync();
+    const duplicate = app.activateAsync();
+    assert.equal(first, duplicate);
+    await hookStarted;
+    assert.equal(app.runtime.get('feature').state, 'READY');
+    assert.equal(registry.getBySlot('workbench-main').length, 0);
+    releaseHook(); await Promise.all([first, duplicate]);
+    assert.equal(counts.activate, 1);
+    assert.equal(app.runtime.get('feature').state, 'ACTIVE');
+    await app.deactivateAsync('feature');
+    assert.deepEqual(counts, {activate:1, suspend:1, deactivate:1});
+    assert.equal(app.runtime.get('feature').enabled, false);
+  });
+
+  await checkAsync("async production Owner activation failure is rolled back", async () => {
+    const { app, registry, definition } = fixture();
+    definition.lifecycle.onActivate = async () => { throw new Error('Owner startup failed'); };
+    await assert.rejects(app.activateAsync(), /Owner startup failed/);
+    assert.equal(app.runtime.get('feature').state, 'READY');
+    assert.equal(registry.getBySlot('workbench-main').length, 0);
+  });
+
+  await checkAsync("async deactivation can be followed by idempotent reactivation", async () => {
+    const { app, registry, counts } = fixture();
+    await app.activateAsync();
+    await app.deactivateAsync('feature');
+    await app.deactivateAsync('feature');
+    assert.equal(registry.getBySlot('workbench-main').length,0);
+    await app.activateAsync();
+    assert.equal(app.runtime.get('feature').state,'ACTIVE');
+    assert.equal(app.runtime.get('feature').enabled,true);
+    assert.equal(registry.getBySlot('workbench-main').length,1);
+    await app.activateAsync();
+    assert.equal(counts.activate,2);
+    await app.deactivateAsync('feature');
+    assert.equal(counts.deactivate,2);
   });
 
   console.log(`PLUGGABLE_LIFECYCLE_RESULT=${failed ? "FAIL" : "PASS"}`);

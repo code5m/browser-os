@@ -71,6 +71,44 @@ function applyConnectionUrl() {
 const showConnection = ref(false);
 const connectionDialogOpen = ref(false);
 const connectionDialogTab = ref<"manual" | "idea">("manual");
+// Only UI disclosure preferences are stored. Never persist connection secrets.
+function dbDisclosure(key:string, fallback = true) {
+  try { return localStorage.getItem(`browseros.db.ui.${key}`) !== 'false'; } catch { return fallback; }
+}
+const dbNavigatorOpen = ref(dbDisclosure('navigator'));
+const dbInspectorOpen = ref(dbDisclosure('inspector'));
+const dbConnectionsOpen = ref(dbDisclosure('connections'));
+const dbSchemaOpen = ref(dbDisclosure('schema'));
+function persistDbDisclosure(key: 'navigator'|'inspector'|'connections'|'schema', expanded: boolean) {
+  try { localStorage.setItem(`browseros.db.ui.${key}`, String(expanded)); } catch {}
+}
+function toggleDbDisclosure(key: 'navigator'|'inspector'|'connections'|'schema') {
+  if (key==='navigator' && dbNavigatorOpen.value && connectionDialogOpen.value) return;
+  const targets={navigator:dbNavigatorOpen,inspector:dbInspectorOpen,connections:dbConnectionsOpen,schema:dbSchemaOpen};
+  // A globally folded workspace makes the navigator invisible regardless of its
+  // saved preference. The first click should *open* it, not invert an invisible
+  // true state into false and leave the user with a hidden panel.
+  if (key==='navigator' && workbench.collapsed) {
+    workbench.toggleTools();
+    dbNavigatorOpen.value=true;
+    persistDbDisclosure('navigator',true);
+    return;
+  }
+  const state=targets[key];state.value=!state.value;
+  persistDbDisclosure(key,state.value);
+}
+function openConnectionSettings() {
+  // The modal belongs to the navigator's subtree. Reveal its owner before
+  // mounting the form so a global toolbar fold cannot open a hidden dialog.
+  if (workbench.collapsed) workbench.toggleTools();
+  dbNavigatorOpen.value=true;
+  dbConnectionsOpen.value=true;
+  persistDbDisclosure('navigator',true);
+  persistDbDisclosure('connections',true);
+  showConnection.value=true;
+  connectionDialogOpen.value=true;
+  connectionDialogTab.value='manual';
+}
 const tablesOpen = ref(true);
 const viewsOpen = ref(true);
 const objectFilter = ref("");
@@ -347,19 +385,22 @@ function deleteConnection() {
     <div class="tabs">
       <strong class="studio-brand">Database Studio</strong>
       <span>{{ activeConnection?.name || '数据库资源管理器' }}</span>
-      <button class="conn-toggle" @click="showConnection=true;connectionDialogOpen=true;connectionDialogTab='manual'">连接设置</button>
+      <button class="db-disclosure" type="button" :aria-expanded="dbNavigatorOpen && !workbench.collapsed" aria-controls="database-navigator" @click="toggleDbDisclosure('navigator')">{{dbNavigatorOpen && !workbench.collapsed ? '◧ 收起资源树' : '◫ 展开资源树'}}</button>
+      <button class="db-disclosure" type="button" :aria-expanded="dbInspectorOpen" aria-controls="database-inspector" @click="toggleDbDisclosure('inspector')">{{dbInspectorOpen ? '◧ 收起检查器' : '◫ 展开检查器'}}</button>
+      <button class="conn-toggle" @click="openConnectionSettings">连接设置</button>
       <button class="close" @click="layout.sidebarOpen = false">✕</button>
     </div>
 
     <div v-if="!db.backendReady" class="gate">后端数据库命令未就绪，连接与查询暂不可用</div>
 
-    <div class="db-workspace">
-    <section v-if="!workbench.collapsed" class="conn">
+    <div class="db-workspace" :class="{'db-no-sidebar': !dbNavigatorOpen || workbench.collapsed, 'db-no-inspector': !dbInspectorOpen}">
+    <section v-if="!workbench.collapsed && dbNavigatorOpen" id="database-navigator" class="conn">
       <div class="conn-head">
-        <strong>数据源</strong>
+        <button class="db-section-toggle" type="button" :aria-expanded="dbConnectionsOpen" aria-controls="database-connections" @click="toggleDbDisclosure('connections')">{{dbConnectionsOpen ? '▾':'▸'}} 数据源</button>
         <span class="badge" :class="{on:db.recentlyVerified}">{{ connectionStatus }}</span>
         <button class="conn-add" title="新增数据库连接" aria-label="新增数据库连接" @click="db.resetForm(); password=''; showConnection=true; connectionDialogOpen=true; connectionDialogTab='manual'">＋</button>
       </div>
+      <div id="database-connections" v-show="dbConnectionsOpen">
       <button class="idea-import-toggle" @click="openIdeaImport">从 IntelliJ IDEA 导入连接…</button>
 
       <div v-if="db.connections.length" class="connection-filter"><input v-model="connectionFilter" type="search" placeholder="搜索名称、主机、数据库…" aria-label="筛选数据库连接"/><span>{{visibleConnections.length}} / {{db.connections.length}}</span></div>
@@ -374,6 +415,7 @@ function deleteConnection() {
       </ul>
       <p v-if="db.connections.length && !visibleConnections.length" class="hint">没有匹配的数据库连接。</p>
 
+      </div>
       <div v-if="connectionDialogOpen" class="connection-dialog-backdrop" @click.self="connectionDialogOpen=false; showConnection=false"></div>
       <div v-if="showConnection" class="form" :class="{'connection-dialog-form':connectionDialogOpen, 'idea-dialog':connectionDialogOpen&&connectionDialogTab==='idea'}" :role="connectionDialogOpen ? 'dialog' : undefined" :aria-modal="connectionDialogOpen ? 'true' : undefined" aria-labelledby="database-connection-title">
         <div class="connection-form-title"><strong id="database-connection-title">{{ db.form.id ? '连接设置' : '新增数据库连接' }}</strong><span>测试并保存后才会加入可用连接</span></div>
@@ -483,9 +525,10 @@ function deleteConnection() {
         </div>
         </template>
       </div>
-      <div class="schema-head"><strong>对象资源树</strong>
+      <div class="schema-head"><button class="db-section-toggle" type="button" :aria-expanded="dbSchemaOpen" aria-controls="database-schema" @click="toggleDbDisclosure('schema')">{{dbSchemaOpen ? '▾':'▸'}} 对象资源树</button>
         <button title="重新读取数据库对象" aria-label="刷新对象" :disabled="db.schemaBusy || !db.activeId" @click="db.refreshSchema()"><RefreshCw :size="14"/></button>
       </div>
+      <div id="database-schema" v-show="dbSchemaOpen">
       <p class="catalog-root">▾ {{ db.form.database || '请选择数据库' }}</p>
       <input v-model="objectFilter" class="schema-search" type="search" aria-label="筛选数据库表和视图" placeholder="搜索表和视图…" />
       <div class="schema-head tree-group">
@@ -550,10 +593,11 @@ function deleteConnection() {
           </div>
         </div>
       </div>
+      </div>
     </section>
 
     <DatabaseWorkspace />
-    <aside class="inspector" aria-label="数据库检查器">
+    <aside v-if="dbInspectorOpen" id="database-inspector" class="inspector" aria-label="数据库检查器">
       <div class="inspector-head"><strong>Inspector</strong><button class="icon-button" title="检查器操作" @click="layout.showToast('检查器展示当前真实连接元数据')">⋯</button></div>
       <article class="inspector-card">
         <h3>当前连接</h3>
@@ -708,5 +752,14 @@ th { position: sticky; top: 0; background: #f7f8fa; color: #4e5969; font-weight:
 .db-panel .column-item>*{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .db-panel .column-item.column-header{background:#202d40;color:#91a4bc;font-weight:600;position:sticky;top:0;z-index:1}
 .db-panel .column-item strong{color:#f3f6fa;font-weight:600}
-@media(max-width:1200px){.db-workspace{grid-template-columns:220px minmax(0,1fr)}.db-workspace>.inspector{display:none}}
+/* Grid responds to independent navigator/inspector visibility without blank columns. */
+.db-workspace.db-no-sidebar:not(.db-no-inspector){grid-template-columns:minmax(0,1fr) 292px}
+.db-workspace.db-no-inspector:not(.db-no-sidebar){grid-template-columns:280px minmax(0,1fr)}
+.db-workspace.db-no-sidebar.db-no-inspector{grid-template-columns:minmax(0,1fr)}
+.db-workspace.db-no-sidebar>:deep(.database-workspace){grid-column:1}
+.db-workspace.db-no-sidebar>.inspector{grid-column:2}
+.db-disclosure,.db-section-toggle{font-size:11px;white-space:nowrap;border-radius:6px;padding:5px 8px}
+.db-panel .db-section-toggle{border:0;background:transparent;color:#e6edf8;font-weight:700;text-align:left;padding:5px 2px}
+.db-panel .db-section-toggle:hover{background:#243247}
+@media(max-width:1200px){.db-workspace{grid-template-columns:220px minmax(0,1fr)}.db-workspace>.inspector{display:none}.db-workspace.db-no-sidebar{grid-template-columns:minmax(0,1fr)}.db-workspace.db-no-inspector:not(.db-no-sidebar){grid-template-columns:220px minmax(0,1fr)}}
 </style>

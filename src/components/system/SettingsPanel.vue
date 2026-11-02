@@ -35,7 +35,8 @@ async function onSetDefault() {
   confirming.value = false;
   setting.value = true;
   try {
-    const desktop = await bridge.setDefaultBrowser();
+    const intent = await bridge.nativeIssueIntent('set_default_browser');
+    const desktop = await bridge.setDefaultBrowser(intent);
     layout.showToast(`✅ 已设为默认浏览器（${desktop}）`);
     await refreshDefaultBrowser();
   } catch (e) {

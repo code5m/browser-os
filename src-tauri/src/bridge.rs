@@ -410,14 +410,19 @@ mod normalize_url_tests {
 /// 打开浏览器（内嵌为 main 窗口的子 webview）。
 /// 内部等价于「新建一个页签」并设为激活页签。前端优先使用 tab_new 多开页签。
 #[tauri::command]
-pub fn open_browser(app: AppHandle, url: String) -> Result<(), String> {
+pub fn open_browser(webview: tauri::Webview, app: AppHandle, url: String) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "open_browser")?;
+    crate::shared::native_legacy_policy::bound_text("open_browser", "url", &url)?;
+
     let _tab = create_tab(app.clone(), &url)?;
     Ok(())
 }
 
 /// 关闭内嵌浏览器（默认关闭当前激活页签）。
 #[tauri::command]
-pub fn close_browser(app: AppHandle) -> Result<(), String> {
+pub fn close_browser(webview: tauri::Webview, app: AppHandle) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "close_browser")?;
+
     if let Some(id) = app.state::<AppState>().active_tab.lock().unwrap().clone() {
         close_tab(&app, &id)?;
     }
@@ -428,12 +433,19 @@ pub fn close_browser(app: AppHandle) -> Result<(), String> {
 /// 坐标由前端传入：相对主窗内容区左上角的 CSS 像素（getBoundingClientRect 的 left/top/width/height）。
 #[tauri::command]
 pub fn position_browser(
+    webview: tauri::Webview,
     app: AppHandle,
     x: f64,
     y: f64,
     width: f64,
     height: f64,
 ) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "position_browser")?;
+    crate::shared::native_legacy_policy::bound_dimension("position_browser", "x", x)?;
+    crate::shared::native_legacy_policy::bound_dimension("position_browser", "y", y)?;
+    crate::shared::native_legacy_policy::bound_dimension("position_browser", "width", width)?;
+    crate::shared::native_legacy_policy::bound_dimension("position_browser", "height", height)?;
+
     let id = app
         .state::<AppState>()
         .active_tab
@@ -527,7 +539,10 @@ fn apply_bounds_inner(
 /// 宫格显示时移出激活页签、页签切换时移出非激活页签都走这里，
 /// 避免 tab_position/apply_bounds 的 50ms 去重把"移出屏幕"请求丢弃。
 #[tauri::command]
-pub fn hide_webview(app: AppHandle, id: String) -> Result<(), String> {
+pub fn hide_webview(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "hide_webview")?;
+    crate::shared::native_legacy_policy::bound_text("hide_webview", "id", &id)?;
+
     use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
     // 宫格已迁子进程：隐藏 = 子进程整个窗口 hide（等价旧方案的移出屏幕）
     if let Some(index) = grid_index_of(&id) {
@@ -554,7 +569,9 @@ pub fn hide_webview(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn hide_all_webviews(app: AppHandle) -> Result<(), String> {
+pub fn hide_all_webviews(webview: tauri::Webview, app: AppHandle) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "hide_all_webviews")?;
+
     use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
     let manager = app.state::<TabManagerState>();
     let state = app.state::<AppState>();
@@ -1227,6 +1244,9 @@ pub fn issue_intent(
     webview: tauri::Webview,
     scope: String,
 ) -> Result<String, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "issue_intent")?;
+    crate::shared::native_legacy_policy::bound_text("issue_intent", "scope", &scope)?;
+
     use crate::security_policy as sp;
     if webview.label() != "main" {
         return Err(format!("只有主窗口可以签发意图令牌：{}", webview.label()));
@@ -1235,9 +1255,19 @@ pub fn issue_intent(
         sp::INTENT_SAVE_NOTE,
         sp::INTENT_COLLECT_SELECTION,
         sp::INTENT_OPEN_TERMINAL,
+        "set_default_browser",
     ];
-    if !allowed.contains(&scope.as_str()) {
-        return Err(format!("未知意图作用域：{scope}"));
+    let is_confirmed_effect = ["session_delete:", "snippet_remove:"].iter().any(|prefix| {
+        scope.strip_prefix(prefix).is_some_and(|id| {
+            !id.is_empty()
+                && id.len() <= 64
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
+    });
+    if !allowed.contains(&scope.as_str()) && !is_confirmed_effect {
+        return Err("NATIVE_INTENT_SCOPE_DENIED".into());
     }
     Ok(app
         .state::<sp::IntentRegistry>()
@@ -1670,6 +1700,8 @@ pub fn snippet_list(
     app: AppHandle,
     webview: tauri::Webview,
 ) -> Result<Vec<CommandSnippet>, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "snippet_list")?;
+
     check_invocation_source(&webview, "snippet_list", None, &app)?;
     Ok(crate::snippets::merge_builtin_snippets(
         workspace::load_snippets(&app),
@@ -1694,6 +1726,19 @@ pub fn snippet_add(
     enabled: Option<bool>,
     timeout_secs: Option<u32>,
 ) -> Result<CommandSnippet, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "snippet_add")?;
+    crate::shared::native_legacy_policy::bound_text("snippet_add", "name", &name)?;
+    crate::shared::native_legacy_policy::bound_text("snippet_add", "category", &category)?;
+    if argv.len() > 128 {
+        return Err("NATIVE_LEGACY_LIST_LIMIT:snippet_add:argv".into());
+    }
+    for element in &argv {
+        crate::shared::native_legacy_policy::bound_text("snippet_add", "argv", element)?;
+    }
+    if let Some(value) = description.as_deref() {
+        crate::shared::native_legacy_policy::bound_text("snippet_add", "description", value)?;
+    }
+
     check_invocation_source(&webview, "snippet_add", None, &app)?;
 
     let mut list = workspace::load_snippets(&app);
@@ -1752,6 +1797,20 @@ pub fn snippet_update(
     enabled: Option<bool>,
     timeout_secs: Option<u32>,
 ) -> Result<CommandSnippet, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "snippet_update")?;
+    crate::shared::native_legacy_policy::bound_text("snippet_update", "id", &id)?;
+    crate::shared::native_legacy_policy::bound_text("snippet_update", "name", &name)?;
+    crate::shared::native_legacy_policy::bound_text("snippet_update", "category", &category)?;
+    if argv.len() > 128 {
+        return Err("NATIVE_LEGACY_LIST_LIMIT:snippet_update:argv".into());
+    }
+    for element in &argv {
+        crate::shared::native_legacy_policy::bound_text("snippet_update", "argv", element)?;
+    }
+    if let Some(value) = description.as_deref() {
+        crate::shared::native_legacy_policy::bound_text("snippet_update", "description", value)?;
+    }
+
     check_invocation_source(&webview, "snippet_update", None, &app)?;
     crate::images::check_id(&id, "命令片段 id")?;
     // M2-6.e：内置片段（id 带 `builtin:` 前缀）不可经用户接口修改，防命名空间冲突。
@@ -1799,7 +1858,15 @@ pub fn snippet_update(
 
 /// 删除命令片段（内置片段拒绝）。
 #[tauri::command]
-pub fn snippet_remove(app: AppHandle, webview: tauri::Webview, id: String) -> Result<(), String> {
+pub fn snippet_remove(
+    app: AppHandle,
+    webview: tauri::Webview,
+    id: String,
+    intent: Option<String>,
+) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "snippet_remove")?;
+    crate::shared::native_legacy_policy::bound_text("snippet_remove", "id", &id)?;
+
     check_invocation_source(&webview, "snippet_remove", None, &app)?;
     crate::images::check_id(&id, "命令片段 id")?;
 
@@ -1810,6 +1877,14 @@ pub fn snippet_remove(app: AppHandle, webview: tauri::Webview, id: String) -> Re
         .ok_or_else(|| "命令片段不存在".to_string())?;
     // 删除前置判定复用纯函数，避免「能否删除」的规则在两处各写一遍
     crate::snippets::can_delete(existing).map_err(|e| e.to_string())?;
+    app.state::<crate::security_policy::IntentRegistry>()
+        .consume(
+            &format!("snippet_remove:{id}"),
+            intent
+                .as_deref()
+                .ok_or("NATIVE_USER_CONFIRMATION_REQUIRED")?,
+        )
+        .map_err(|_| "NATIVE_USER_CONFIRMATION_DENIED")?;
 
     list.retain(|s| s.id != id);
     workspace::save_snippets(&app, &list)?;
@@ -2036,11 +2111,17 @@ pub fn script_runs_list(
 /// M1-2: 新增或更新一条收藏。同 URL 视为更新。
 #[tauri::command]
 pub fn add_bookmark(
+    webview: tauri::Webview,
     app: AppHandle,
     url: String,
     title: String,
     category: String,
 ) -> Result<Bookmark, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "add_bookmark")?;
+    crate::shared::native_legacy_policy::bound_text("add_bookmark", "url", &url)?;
+    crate::shared::native_legacy_policy::bound_text("add_bookmark", "title", &title)?;
+    crate::shared::native_legacy_policy::bound_text("add_bookmark", "category", &category)?;
+
     let bm = workspace::add_bookmark(&app, url.clone(), title.clone(), category.clone())?;
     workspace::log_audit(&app, "bookmark.add", format!("{} -> {}", url, bm.title));
     Ok(bm)
@@ -2048,7 +2129,11 @@ pub fn add_bookmark(
 
 /// M1-2: 列出全部收藏，按 created_at 倒序。
 #[tauri::command]
-pub fn list_bookmarks(app: AppHandle) -> Vec<Bookmark> {
+pub fn list_bookmarks(webview: tauri::Webview, app: AppHandle) -> Vec<Bookmark> {
+    if crate::shared::native_legacy_policy::require_main(&webview, "list_bookmarks").is_err() {
+        return Vec::new();
+    }
+
     let mut list = workspace::load_bookmarks(&app);
     list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     list
@@ -2056,7 +2141,10 @@ pub fn list_bookmarks(app: AppHandle) -> Vec<Bookmark> {
 
 /// M1-2: 按 id 删除收藏（幂等）。
 #[tauri::command]
-pub fn remove_bookmark(app: AppHandle, id: String) -> Result<(), String> {
+pub fn remove_bookmark(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "remove_bookmark")?;
+    crate::shared::native_legacy_policy::bound_text("remove_bookmark", "id", &id)?;
+
     workspace::remove_bookmark(&app, &id)?;
     workspace::log_audit(&app, "bookmark.remove", format!("id={}", id));
     Ok(())
@@ -3051,21 +3139,40 @@ pub fn list_apps() -> Vec<AppEntry> {
 // ====== 浏览器页签命令（供前端页签栏调用） ======
 
 /// 新建一个浏览器页签（打开 url），返回其信息并设为激活页签。
-#[tauri::command]
-pub fn tab_new(app: AppHandle, url: String) -> Result<TabInfo, String> {
+pub(crate) fn tab_new_native(app: AppHandle, url: String) -> Result<TabInfo, String> {
     let tab = create_tab(app.clone(), &url)?;
     Ok(tab)
 }
+#[tauri::command]
+pub fn tab_new(webview: tauri::Webview, app: AppHandle, url: String) -> Result<TabInfo, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "tab_new")?;
+    crate::shared::native_legacy_policy::bound_text("tab_new", "url", &url)?;
+    tab_new_native(app, url)
+}
 
 /// 关闭指定页签。
-#[tauri::command]
-pub fn tab_close(app: AppHandle, id: String) -> Result<(), String> {
+pub(crate) fn tab_close_native(app: AppHandle, id: String) -> Result<(), String> {
     close_tab(&app, &id)
+}
+#[tauri::command]
+pub fn tab_close(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "tab_close")?;
+    crate::shared::native_legacy_policy::bound_text("tab_close", "id", &id)?;
+    tab_close_native(app, id)
 }
 
 /// 在指定页签中打开网址（导航）。
 #[tauri::command]
-pub fn tab_open(app: AppHandle, id: String, url: String) -> Result<(), String> {
+pub fn tab_open(
+    webview: tauri::Webview,
+    app: AppHandle,
+    id: String,
+    url: String,
+) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "tab_open")?;
+    crate::shared::native_legacy_policy::bound_text("tab_open", "id", &id)?;
+    crate::shared::native_legacy_policy::bound_text("tab_open", "url", &url)?;
+
     let target = normalize_url(&url);
     let _ = Url::parse(&target).map_err(|e| format!("无效网址: {e}"))?;
     if let Err(e) = navigate_tab_webview(&app, &id, &target) {
@@ -3084,6 +3191,7 @@ pub fn tab_open(app: AppHandle, id: String, url: String) -> Result<(), String> {
 /// 前端传 CSS 像素（相对主窗口内容区左上角），换算成屏幕物理坐标后 set_position/set_size。
 #[tauri::command]
 pub fn tab_position(
+    webview: tauri::Webview,
     app: AppHandle,
     id: String,
     x: f64,
@@ -3091,6 +3199,13 @@ pub fn tab_position(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "tab_position")?;
+    crate::shared::native_legacy_policy::bound_text("tab_position", "id", &id)?;
+    crate::shared::native_legacy_policy::bound_dimension("tab_position", "x", x)?;
+    crate::shared::native_legacy_policy::bound_dimension("tab_position", "y", y)?;
+    crate::shared::native_legacy_policy::bound_dimension("tab_position", "width", width)?;
+    crate::shared::native_legacy_policy::bound_dimension("tab_position", "height", height)?;
+
     if let Err(e) = apply_bounds(&app, &id, x, y, width, height) {
         recover_tab_webview(&app, &id, "position", &e)?;
         apply_bounds_inner(&app, &id, x, y, width, height)
@@ -3313,7 +3428,12 @@ static RESOURCE_STATS_CACHE: std::sync::OnceLock<
 
 /// 资源占用统计：主进程树 + 每宫格子进程树的 RSS（含 WebKit 子进程）。
 #[tauri::command]
-pub async fn resource_stats(app: AppHandle) -> Result<ResourceStats, String> {
+pub async fn resource_stats(
+    webview: tauri::Webview,
+    app: AppHandle,
+) -> Result<ResourceStats, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "resource_stats")?;
+
     tauri::async_runtime::spawn_blocking(move || {
         let cache = RESOURCE_STATS_CACHE.get_or_init(|| Mutex::new(None));
         let mut stored = cache.lock().unwrap_or_else(|error| error.into_inner());
@@ -3467,7 +3587,13 @@ fn mem_total_mb() -> Option<u64> {
 /// Settings remain explicit opt-in: adaptive hibernation never destroys a page
 /// until the user enables the existing browser resource policy.
 #[tauri::command]
-pub fn set_tab_hibernation(app: AppHandle, enabled: bool) -> Result<(), String> {
+pub fn set_tab_hibernation(
+    webview: tauri::Webview,
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "set_tab_hibernation")?;
+
     app.state::<AppState>()
         .hibernation_enabled
         .store(enabled, Ordering::Relaxed);
@@ -3712,16 +3838,29 @@ mod adaptive_hibernation_tests {
 }
 
 /// 列出当前所有页签。
-#[tauri::command]
-pub fn tab_list(app: AppHandle) -> Vec<TabInfo> {
+pub(crate) fn tab_list_native(app: AppHandle) -> Vec<TabInfo> {
     let state = app.state::<AppState>();
     let tabs = state.tabs.lock().unwrap();
     tabs.values().cloned().collect()
 }
+#[tauri::command]
+pub fn tab_list(webview: tauri::Webview, app: AppHandle) -> Result<Vec<TabInfo>, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "tab_list")?;
+    Ok(tab_list_native(app))
+}
 
 /// 前端设置页签标题（如用户手动改名）。
 #[tauri::command]
-pub fn tab_set_title(app: AppHandle, id: String, title: String) -> Result<(), String> {
+pub fn tab_set_title(
+    webview: tauri::Webview,
+    app: AppHandle,
+    id: String,
+    title: String,
+) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "tab_set_title")?;
+    crate::shared::native_legacy_policy::bound_text("tab_set_title", "id", &id)?;
+    crate::shared::native_legacy_policy::bound_text("tab_set_title", "title", &title)?;
+
     if let Some(t) = app.state::<AppState>().tabs.lock().unwrap().get_mut(&id) {
         t.title = title;
     }
@@ -3731,26 +3870,44 @@ pub fn tab_set_title(app: AppHandle, id: String, title: String) -> Result<(), St
 /// 在当前激活页签的 webview 内执行 history.back()（页面内后退）。
 /// 历史栈为空时由浏览器内核自动忽略，无副作用。
 #[tauri::command]
-pub fn tab_go_back(app: AppHandle, id: String) -> Result<(), String> {
+pub fn tab_go_back(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "tab_go_back")?;
+    crate::shared::native_legacy_policy::bound_text("tab_go_back", "id", &id)?;
+
     plugin_eval(&app, &id, "if (history.length > 1) { history.back(); }")
 }
 
 /// 在当前激活页签的 webview 内执行 history.forward()（页面内前进）。
 #[tauri::command]
-pub fn tab_go_forward(app: AppHandle, id: String) -> Result<(), String> {
+pub fn tab_go_forward(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "tab_go_forward")?;
+    crate::shared::native_legacy_policy::bound_text("tab_go_forward", "id", &id)?;
+
     plugin_eval(&app, &id, "history.forward();")
 }
 
 /// 刷新当前激活页签的 webview（location.reload）。
 #[tauri::command]
-pub fn tab_reload(app: AppHandle, id: String) -> Result<(), String> {
+pub fn tab_reload(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "tab_reload")?;
+    crate::shared::native_legacy_policy::bound_text("tab_reload", "id", &id)?;
+
     plugin_eval(&app, &id, "location.reload();")
 }
 
 /// 在指定子 webview 中执行 JavaScript（用于 AI 模式向宫格注入问题）。
 /// 宫格 grid-N 经 UDS 转发到子进程，页签 tab-N 仍走本地插件。
 #[tauri::command]
-pub fn eval_in_tab(app: AppHandle, id: String, js: String) -> Result<String, String> {
+pub fn eval_in_tab(
+    webview: tauri::Webview,
+    app: AppHandle,
+    id: String,
+    js: String,
+) -> Result<String, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "eval_in_tab")?;
+    crate::shared::native_legacy_policy::bound_text("eval_in_tab", "id", &id)?;
+    crate::shared::native_legacy_policy::bound_text("eval_in_tab", "js", &js)?;
+
     if let Some(index) = grid_index_of(&id) {
         app.state::<AppState>()
             .grid_manager
@@ -3764,7 +3921,10 @@ pub fn eval_in_tab(app: AppHandle, id: String, js: String) -> Result<String, Str
 /// 设置激活页签：只更新 active_tab，并把其它页签隐藏。
 /// 目标页签的精确位置由前端随后调用 tab_position 给出，避免后端与前端争夺坐标。
 #[tauri::command]
-pub fn tab_activate(app: AppHandle, id: String) -> Result<(), String> {
+pub fn tab_activate(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "tab_activate")?;
+    crate::shared::native_legacy_policy::bound_text("tab_activate", "id", &id)?;
+
     // 休眠重建：webview 已销毁的页签先按原 URL 重建（1x1 隐藏，前端 tab_position 放大）
     let was_hibernated = app
         .state::<AppState>()
@@ -4033,7 +4193,13 @@ pub fn handle_open_url(app: &AppHandle, url: &str) {
 /// M1-4：前端拉取并清空待打开 URL 队列（m0_ready 后首次拉取 +
 /// 收到 app://open-url-pending 提示时拉取）。拉取即清空，天然去重。
 #[tauri::command]
-pub fn take_pending_open_urls(app: AppHandle) -> Vec<String> {
+pub fn take_pending_open_urls(webview: tauri::Webview, app: AppHandle) -> Vec<String> {
+    if crate::shared::native_legacy_policy::require_main(&webview, "take_pending_open_urls")
+        .is_err()
+    {
+        return Vec::new();
+    }
+
     let state = app.state::<AppState>();
     let urls = std::mem::take(&mut *state.pending_open_urls.lock().unwrap());
     urls
@@ -4088,7 +4254,9 @@ fn ensure_desktop_entry() -> Result<String, String> {
 
 /// M1-4：查询当前系统默认浏览器（xdg-settings get）。
 #[tauri::command]
-pub fn get_default_browser() -> Result<String, String> {
+pub fn get_default_browser(webview: tauri::Webview) -> Result<String, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "get_default_browser")?;
+
     let out = std::process::Command::new("xdg-settings")
         .args(["get", "default-web-browser"])
         .output()
@@ -4106,7 +4274,21 @@ pub fn get_default_browser() -> Result<String, String> {
 /// 硬约束：本命令只能由设置页「设为默认浏览器」按钮经用户显式确认后触发；
 /// 应用启动、安装脚本、首启流程一律不得调用（禁静默改写系统默认）。
 #[tauri::command]
-pub fn set_default_browser(app: AppHandle) -> Result<String, String> {
+pub fn set_default_browser(
+    webview: tauri::Webview,
+    app: AppHandle,
+    intent: Option<String>,
+) -> Result<String, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "set_default_browser")?;
+    app.state::<crate::security_policy::IntentRegistry>()
+        .consume(
+            "set_default_browser",
+            intent
+                .as_deref()
+                .ok_or("NATIVE_USER_CONFIRMATION_REQUIRED")?,
+        )
+        .map_err(|_| "NATIVE_USER_CONFIRMATION_DENIED")?;
+
     let desktop = ensure_desktop_entry()?;
     let out = std::process::Command::new("xdg-settings")
         .args(["set", "default-web-browser", &desktop])
@@ -4131,7 +4313,9 @@ pub fn set_default_browser(app: AppHandle) -> Result<String, String> {
 /// 「一次轻量 IPC 往返」的终点；后端校验 run_id 后将带 run_id 的 ready 信号
 /// 原子写入 ready_file。返回 run_id（非测量运行返回空串）。
 #[tauri::command]
-pub fn m0_ready(app: AppHandle) -> Result<String, String> {
+pub fn m0_ready(webview: tauri::Webview, app: AppHandle) -> Result<String, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "m0_ready")?;
+
     // M1-4：标记前端就绪。此后到达的外部 URL 会发 pending 提示让前端立即拉取；
     // 就绪前到达的已在队列中，由前端 m0_ready 后的首次拉取兜底（不丢）。
     app.state::<AppState>()

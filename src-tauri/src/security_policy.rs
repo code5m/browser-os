@@ -644,18 +644,16 @@ impl IntentRegistry {
 
     /// 签发一个作用域绑定的意图令牌（只能由受信任的主窗口调用）。
     pub fn issue(&self, scope: &str, ttl: std::time::Duration) -> String {
-        let token = format!(
-            "{}-{}",
-            scope,
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or_default()
-        );
-        self.tokens.lock().unwrap().insert(
-            token.clone(),
-            (scope.to_string(), std::time::Instant::now() + ttl),
-        );
+        let token = uuid::Uuid::new_v4().to_string();
+        let now = std::time::Instant::now();
+        let mut pending = self.tokens.lock().unwrap_or_else(|e| e.into_inner());
+        pending.retain(|_, (_, expires)| *expires > now);
+        // Intent tickets are exclusively issued by a trusted main-window
+        // interaction. The memory ceiling is global, even if the user never uses one.
+        if pending.len() >= 256 {
+            pending.clear();
+        }
+        pending.insert(token.clone(), (scope.to_string(), now + ttl));
         token
     }
 
@@ -1483,6 +1481,22 @@ mod security_policy_tests {
         assert!(
             check_remote_invocation("browser", INTENT_SAVE_NOTE, Some(&token), &registry).is_err()
         );
+    }
+
+    #[test]
+    fn native_legacy_deletion_ticket_is_bound_and_non_replayable() {
+        let registry = IntentRegistry::new();
+        let scope = "snippet_remove:abc123";
+        let ticket = registry.issue(scope, std::time::Duration::from_secs(30));
+        assert!(uuid::Uuid::parse_str(&ticket).is_ok());
+        assert!(registry
+            .consume("snippet_remove:some_other_id", &ticket)
+            .is_err());
+        assert_eq!(registry.pending(), 0);
+        let ticket = registry.issue(scope, std::time::Duration::from_secs(30));
+        assert!(registry.consume(scope, &ticket).is_ok());
+        assert!(registry.consume(scope, &ticket).is_err());
+        assert!(registry.consume("session_delete:abc123", &ticket).is_err());
     }
 
     #[test]
