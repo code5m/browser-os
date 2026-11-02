@@ -1,7 +1,7 @@
 import type { CapabilityDefinition } from "../../capability/types"
 
 // Agent 能力 Manifest（Capability Library Expansion v1 — 从 Workspace 内嵌面板升格为独立 Capability）
-// 语义 owner = useAgentStore（Semantic Registry 已冻结；同时持有 skill 状态，STAGE E 处理 skill 拆分）。
+// 语义 owner = useAgentStore（Semantic Registry 已冻结；Skill 状态由独立 useSkillStore 持有）。
 // 物理：AgentManagerPanel(+AgentChatPanel 子视图) 经通用 Contribution Registry 的 WORKBENCH_MAIN 槽
 // （view='agents'）贡献给 MainArea；MainArea 只按槽渲染、不 import 本能力内部（C3 关键）。
 //

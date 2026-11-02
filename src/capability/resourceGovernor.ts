@@ -5,7 +5,7 @@
 //
 // 诚实边界：
 //   - 本模块**不**释放资源（不 kill PTY、不关 webview、不碰密钥）。资源释放是各能力的
-//     onSuspend/onDestroy 职责（owner 所有）。Governor 只调用 rt 的 public 转换。
+//     onSuspend/能力自有资源清理职责（owner 所有）。Governor 只调用 rt 的 public 转换。
 //   - 若能力未声明支持 suspend，rt.suspend 会抛 SUSPEND_NOT_SUPPORTED；对于声明 HP2 的能力，
 //     owner 的 onSuspend 仍负责决定当前资源态是否允许暂停（例如活动 PTY 可拒绝）。
 //   - hibernate 在 v1 与 suspend 同义（运行时模型无独立 hibernate 态）；background 在能力
@@ -25,41 +25,44 @@ export type GovernedLifecycle =
 export interface ResourceGovernor {
   readonly runtime: CapabilityRuntime
   /** 激活（READY/SUSPENDED → ACTIVE）。原样透传 INVALID_TRANSITION 等错误。 */
-  activate(id: string): void
+  activate(id: string): Promise<void>
   /** 转入后台：优先 suspend（若能力支持），否则降级 disable。 */
-  background(id: string): void
+  background(id: string): Promise<void>
   /** 暂停（若能力声明 suspendable）。owner hook 可按当前资源态拒绝。 */
-  suspend(id: string): void
+  suspend(id: string): Promise<void>
   /** 休眠（v1 == suspend 同义；运行时无独立 hibernate 态）。 */
-  hibernate(id: string): void
-  /** 销毁（disable；能力退出 active。贡献表仍在，owner 资源释放由能力 onDestroy 负责）。 */
-  destroy(id: string): void
+  hibernate(id: string): Promise<void>
+  /** 等待 active 退出（若需要）再 disable；并不等价于释放所有底层句柄。 */
+  destroy(id: string): Promise<void>
   /** 当前各能力状态快照（只读编排元数据，不含业务 state）。 */
   snapshot(): { id: string; state: string; enabled: boolean }[]
 }
 
 export function createResourceGovernor(runtime: CapabilityRuntime): ResourceGovernor {
-  function activate(id: string) {
-    runtime.activate(id)
+  async function activate(id: string) {
+    await runtime.activateAsync(id)
   }
-  function background(id: string) {
+  async function background(id: string) {
     const rec = runtime.get(id)
     if (!rec) throw new Error(`GOVERNOR_NOT_FOUND: ${id}`)
     // 优先 suspend；不支持 suspend 的能力（suspendable:false）降级为 disable，不假装释放
     if (rec.definition.lifecycle.supported.includes('SUSPENDED') && rec.definition.resources?.suspendable === true) {
-      runtime.suspend(id)
+      await runtime.suspendAsync(id)
     } else {
       runtime.disable(id)
     }
   }
-  function suspend(id: string) {
-    runtime.suspend(id) // 不支持则抛 SUSPEND_NOT_SUPPORTED（透传，不谎报）
+  async function suspend(id: string) {
+    await runtime.suspendAsync(id) // owner hook 完成后才能承认已暂停
   }
-  function hibernate(id: string) {
-    suspend(id) // v1：hibernate == suspend
+  async function hibernate(id: string) {
+    await suspend(id) // v1：hibernate == suspend
   }
-  function destroy(id: string) {
-    runtime.disable(id) // 退出 active；owner 资源释放由能力自身负责
+  async function destroy(id: string) {
+    const record = runtime.get(id)
+    if (!record) throw new Error(`GOVERNOR_NOT_FOUND: ${id}`)
+    if (record.state === 'ACTIVE') await runtime.suspendAsync(id)
+    runtime.disable(id) // 先等待 owner suspend，再停用；不假装直接释放底层资源
   }
   function snapshot() {
     return runtime.inspect().map((r) => ({ id: r.id, state: r.state, enabled: r.enabled }))

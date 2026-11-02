@@ -276,6 +276,20 @@ function run(files) {
     }
   }
 
+  // NATIVE-08: Agent Channel native host must not reach across business internals.
+  // Owners expose narrow, read-only public_api.rs facades with their own source guards.
+  if (typeof files.agentChannelHostText === 'string') {
+    const host = files.agentChannelHostText
+    if (/crate::capabilities::(?:database|git|browser|agent)::commands::|crate::bridge::tab_list|crate::framework::ai::coding_lsp_status_for_agent/.test(host)) {
+      push('NATIVE-08', 'fail', 'Agent Channel Host 直接引用业务内部命令，必须经过 Owner public_api.rs', 'src-tauri/src/framework/agent_channel.rs')
+    }
+    for (const owner of ['browser', 'database', 'git', 'agent']) {
+      if (!host.includes(`crate::capabilities::${owner}::public_api::`)) {
+        push('NATIVE-08', 'fail', `Agent Channel 缺少 ${owner} Owner Public API 调用`, 'src-tauri/src/framework/agent_channel.rs')
+      }
+    }
+  }
+
   return findings
 }
 
@@ -292,7 +306,9 @@ function loadReal() {
   const capabilityText = existsSync(join(ROOT, 'docs/architecture/capability-registry/capabilities.yaml'))
     ? readFileSync(join(ROOT, 'docs/architecture/capability-registry/capabilities.yaml'), 'utf8')
     : null
-  return { rust, registryText, srcFiles, callers: scanCallers(rust), capabilityText }
+  const hostPath = join(ROOT, 'src-tauri/src/framework/agent_channel.rs')
+  const agentChannelHostText = existsSync(hostPath) ? readFileSync(hostPath, 'utf8') : undefined
+  return { rust, registryText, srcFiles, callers: scanCallers(rust), capabilityText, agentChannelHostText }
 }
 
 // ---------------------------- fixtures / self-test ----------------------------
@@ -319,6 +335,17 @@ function runSelfTest() {
       console.log(`  ✗ ${name} — expect [${expectCodes}] got [${uniqGot}]`)
     }
   }
+
+  t('NATIVE-08: Host 直调业务内部命令必须被拒绝', ['NATIVE-08'], {
+    rust: [],
+    registryText: 'version: 1\ncommands:\n',
+    agentChannelHostText: 'crate::capabilities::git::commands::git_status(app, webview, repo);',
+  })
+  t('NATIVE-08: Host 仅通过四个 Owner Public API', [], {
+    rust: [],
+    registryText: 'version: 1\ncommands:\n',
+    agentChannelHostText: ['browser','database','git','agent'].map(owner => `crate::capabilities::${owner}::public_api::approved()`).join('\n'),
+  })
 
   // POSITIVE：正常登记 + 本能力调用 + 资源声明匹配 + 无泄露
   t('POSITIVE: 已登记且本能力调用', [], {

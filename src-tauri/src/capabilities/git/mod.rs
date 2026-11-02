@@ -22,3 +22,6 @@ pub mod local_readonly;
 pub mod local_workbench;
 pub mod studio;
 pub mod sync;
+
+// Cross-module native consumers use this Owner-reviewed narrow facade.
+pub(crate) mod public_api;

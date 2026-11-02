@@ -126,7 +126,7 @@ async function run() {
   const gov2 = createResourceGovernor(fullBoot.runtime);
   let suspendThrew = null;
   try {
-    gov2.suspend("terminal");
+    await gov2.suspend("terminal");
   } catch (e) {
     suspendThrew = e instanceof Error ? e.code || e.message : String(e);
   }
@@ -139,7 +139,7 @@ async function run() {
   // destroy 仍只经 Runtime，不直接 import/call owner。先 suspend 后 disable 是合法转换。
   let destroyThrew = null;
   try {
-    gov2.destroy("terminal");
+    await gov2.destroy("terminal");
   } catch (e) {
     destroyThrew = e instanceof Error ? e.code || e.message : String(e);
   }

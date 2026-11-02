@@ -267,42 +267,39 @@ impl PublicApiHost for NativeOwnerHost {
             let app = self.app.clone();
             let webview = self.webview.clone();
             let command = spec.command.clone();
-            let result=tauri::async_runtime::spawn_blocking(move||->Result<Value,String>{
-                match command.as_str(){
-                    "tab_list"=>{
-                        let tabs=crate::bridge::tab_list(app);
-                        let count=tabs.len();
-                        // Never include URL querystrings or page content in the tool.
-                        Ok(json!({"count":count,"items":tabs.into_iter().take(100)
-                            .map(|tab|json!({"id":tab.id,"title":tab.title}))
-                            .collect::<Vec<_>>()}))
+            let result = tauri::async_runtime::spawn_blocking(move || -> Result<Value, String> {
+                match command.as_str() {
+                    "tab_list" => Ok(crate::capabilities::browser::public_api::agent_tab_summary(
+                        app,
+                    )),
+                    "db_list_connections" => {
+                        crate::capabilities::database::public_api::agent_connection_summary(
+                            app, webview,
+                        )
                     }
-                    "db_list_connections"=>{
-                        let list=crate::capabilities::database::commands::db_list_connections(app,webview)?;
-                        Ok(json!({"count":list.len(),"items":list.into_iter().take(100)
-                            .map(|c|json!({"id":c.id,"name":c.name,"kind":c.kind}))
-                            .collect::<Vec<_>>()}))
+                    "git_status" => {
+                        let repo_id = as_text(&args, "repo_id", 100)?.to_owned();
+                        crate::capabilities::git::public_api::agent_status(app, webview, repo_id)
                     }
-                    "git_status"=>{
-                        let repo_id=as_text(&args,"repo_id",100)?.to_owned();
-                        let statuses=crate::capabilities::git::commands::git_status(app,webview,repo_id)?;
-                        Ok(json!({"count":statuses.len(),"items":statuses.into_iter().take(100).collect::<Vec<_>>()}))
+                    "git_diff" => {
+                        let repo_id = as_text(&args, "repo_id", 100)?.to_owned();
+                        let path = args.get("path").and_then(Value::as_str).map(str::to_owned);
+                        crate::capabilities::git::public_api::agent_diff(
+                            app, webview, repo_id, path,
+                        )
                     }
-                    "git_diff"=>{
-                        let repo_id=as_text(&args,"repo_id",100)?.to_owned();
-                        let path=args.get("path").and_then(Value::as_str).map(str::to_owned);
-                        if path.as_ref().is_some_and(|v|v.len()>1024) {return Err("AGENT_EXPERIMENT_PATH_DENIED".into());}
-                        let diff=crate::capabilities::git::commands::git_diff(app,webview,repo_id,path,Some(4096))?;
-                        serde_json::to_value(diff).map_err(|_|"AGENT_EXPERIMENT_SERIALIZE".into())
+                    "coding_lsp_status" => {
+                        let root = as_text(&args, "root", 4096)?.to_owned();
+                        crate::capabilities::agent::public_api::coding_lsp_summary(
+                            app, webview, &root,
+                        )
                     }
-                    "coding_lsp_status"=>{
-                        let root=as_text(&args,"root",4096)?.to_owned();
-                        crate::framework::ai::coding_lsp_status_for_agent(app,webview,&root)
-                    }
-                    _=>Err("AGENT_EXPERIMENT_TOOL_DENIED".into())
+                    _ => Err("AGENT_EXPERIMENT_TOOL_DENIED".into()),
                 }
-            }).await.map_err(|_|foundation::FoundationError::Tool("OWNER_WORKER_FAILED".into()))?
-                .map_err(|_|foundation::FoundationError::PermissionDenied)?;
+            })
+            .await
+            .map_err(|_| foundation::FoundationError::Tool("OWNER_WORKER_FAILED".into()))?
+            .map_err(|_| foundation::FoundationError::PermissionDenied)?;
             if serde_json::to_vec(&result)
                 .map_err(|e| foundation::FoundationError::Serialization(e.to_string()))?
                 .len()

@@ -1833,7 +1833,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   reveal_path:
-    file: "src-tauri/src/fs_cmds.rs"
+    file: "src-tauri/src/capabilities/workspace/fs_cmds.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useFileStore.ts"
@@ -1843,7 +1843,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   move_path:
-    file: "src-tauri/src/fs_cmds.rs"
+    file: "src-tauri/src/capabilities/workspace/fs_cmds.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useFileStore.ts"

@@ -229,6 +229,23 @@ async function runTests() {
     return rt.activate('bookmark').state === 'ACTIVE' && rt.get('bookmark')?.enabled === true
   })
 
+  t('RT-17', '同步 activate 遇异步 hook 不得提前标记 ACTIVE', () => {
+    const rt = createCapabilityRuntime()
+    rt.register(cap({ lifecycle: { ...cap().lifecycle, onActivate: () => Promise.resolve() } }))
+    rt.resolve('bookmark')
+    const blocked = expectThrow(() => rt.activate('bookmark'), 'INVALID_TRANSITION')
+    return blocked && rt.get('bookmark')?.state !== 'ACTIVE'
+  })
+
+  t('RT-18', '同步 suspend 遇异步 hook 不得提前标记 SUSPENDED', () => {
+    const rt = createCapabilityRuntime()
+    rt.register(cap({ lifecycle: { ...cap().lifecycle, onSuspend: () => Promise.resolve() } }))
+    rt.resolve('bookmark')
+    rt.activate('bookmark')
+    const blocked = expectThrow(() => rt.suspend('bookmark'), 'INVALID_TRANSITION')
+    return blocked && rt.get('bookmark')?.state === 'ACTIVE'
+  })
+
   return results
 }
 

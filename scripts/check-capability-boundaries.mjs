@@ -80,7 +80,9 @@ function extractImports(content) {
 }
 
 function normalize(fromFileRel, spec) {
-  if (!spec.startsWith('.')) return null // 非相对 = 外部包/别名，不归边界管
+  if (spec.startsWith('@/')) return posix.normalize('src/' + spec.slice(2)) // Vite alias: root src
+  if (spec.startsWith('src/')) return posix.normalize(spec) // root-relative internal path
+  if (!spec.startsWith('.')) return null // bare package is external
   const dir = posix.dirname(fromFileRel)
   return posix.normalize(posix.join(dir, spec))
 }
@@ -301,6 +303,15 @@ function runSelfTest() {
     expectCodes: ['CB-01', 'CB-03'],
     files: [
       fx('src/capabilities/git/services/x.ts', "import { s } from '../../notes/state/store'"),
+      fx('src/capabilities/notes/state/store.ts', 'export const s = 1'),
+    ],
+    deps: {},
+  })
+  cases.push({
+    name: 'NEGATIVE CB-01/03: alias import 不得绕过 Capability 内部边界',
+    expectCodes: ['CB-01', 'CB-03'],
+    files: [
+      fx('src/capabilities/git/services/x.ts', "import { s } from '@/capabilities/notes/state/store'"),
       fx('src/capabilities/notes/state/store.ts', 'export const s = 1'),
     ],
     deps: {},

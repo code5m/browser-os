@@ -187,7 +187,12 @@ export function createCapabilityRuntime(
       const ctx = makeContext(rec, log)
       const startedAt = Date.now()
       try {
-        rec.definition.lifecycle.onActivate?.call(null)
+        const result = rec.definition.lifecycle.onActivate?.call(null)
+        if (result && typeof (result as Promise<void>).then === 'function') {
+          // The synchronous transition must never report ACTIVE while async work is pending.
+          void Promise.resolve(result).catch(() => {})
+          throw new CapabilityRuntimeError('INVALID_TRANSITION', `异步 onActivate 必须使用 activateAsync: ${id}`)
+        }
         void ctx
         rec.state = 'ACTIVE'
         rec.activationDurationMs = Date.now() - startedAt
@@ -203,7 +208,11 @@ export function createCapabilityRuntime(
 
     suspend(id) {
       const rec = suspendable(id)
-      rec.definition.lifecycle.onSuspend?.call(null)
+      const result = rec.definition.lifecycle.onSuspend?.call(null)
+      if (result && typeof (result as Promise<void>).then === 'function') {
+        void Promise.resolve(result).catch(() => {})
+        throw new CapabilityRuntimeError('INVALID_TRANSITION', `异步 onSuspend 必须使用 suspendAsync: ${id}`)
+      }
       rec.state = 'SUSPENDED'
       log(`suspend: ${id}`)
       return rec

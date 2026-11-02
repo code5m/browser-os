@@ -1,3 +1,5 @@
+> 历史 STAGE H-C 静态快照：以下 148 命令统计已过期。2026-11-02 最新 master c90eb564 的真实 Registry 为 183 项，均有 Owner，100 项仍登记在 bridge.rs；禁止把此旧表当成当前验收结论。
+
 # NATIVE_CAPABILITY_BOUNDARY_AUDIT
 > 阶段：STAGE H-C（Platform Hardening，P0 / D3）。真源：`docs/architecture/native-boundary/native-commands.yaml`。
 > 扫描：`src-tauri/src/**/*.rs` 的 `#[tauri::command]`；门禁：`scripts/check-native-capability-boundaries.mjs`。

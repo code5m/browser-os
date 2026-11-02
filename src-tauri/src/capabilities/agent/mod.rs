@@ -18,3 +18,6 @@ pub mod coding;
 pub mod coding_context;
 pub mod coding_lsp;
 pub mod local_provider;
+
+// Cross-module native consumers use this Owner-reviewed narrow facade.
+pub(crate) mod public_api;
