@@ -500,10 +500,10 @@ export const useDatabaseStore = defineStore("database", () => {
   function clearResult() {
     result.value = null;
     document.value.raw = null;
+    document.value.batchResults = [];
     error.value = "";
     pendingSql.value = null;
   }
-
 
   // DEVELOPER_STUDIO_SOURCE_BOUND_DOCUMENTS
   const openingSessions = new Map<string, Promise<string>>();
@@ -613,10 +613,11 @@ export const useDatabaseStore = defineStore("database", () => {
     }catch(e){doc.error=describeError(e);}
   }
   function selectBatchResult(index:number) {
-    const result=document.value.batchResults[index];
-    if(result){document.value.raw=result;document.value.result=buildResultView(result);}
+    const doc=document.value;
+    if(!Number.isInteger(index)||index<0||index>=doc.batchResults.length)return;
+    const result=doc.batchResults[index];
+    if(result){const next=buildResultView(result);doc.raw=result;doc.result=next;doc.risk=next.risk;doc.verdict=next.verdict;}
   }
-
   // DEVELOPER_STUDIO_TABLE_DOCUMENTS
   function openDataEditor(name:string) {
     const connId=activeId.value;

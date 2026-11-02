@@ -115,6 +115,15 @@ impl DbError {
 // 结果 DTO（M4-1.c §2，字段名为准）
 // ---------------------------------------------------------------------------
 
+/// 可序列化标量。**BLOB 一律不回传字节**（只回长度），/// JavaScript Number cannot exactly represent all signed 64-bit integers.
+mod i64_as_decimal_string {
+    use serde::{de::Error as _, Deserialize, Deserializer, Serializer};
+    pub fn serialize<S>(value: &i64, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer { serializer.serialize_str(&value.to_string()) }
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<i64, D::Error> where D: Deserializer<'de> {
+        #[derive(Deserialize)] #[serde(untagged)] enum Repr { Decimal(String), Number(i64) }
+        match Repr::deserialize(deserializer)? { Repr::Decimal(value) => value.parse::<i64>().map_err(D::Error::custom), Repr::Number(value) => Ok(value) }
+    }
+}
 /// 可序列化标量。**BLOB 一律不回传字节**（只回长度），
 /// 避免二进制经 JSON 打到前端（M4-1.c §2）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -122,7 +131,7 @@ impl DbError {
 pub enum DbValue {
     Null,
     Bool(bool),
-    I64(i64),
+    I64(#[serde(with = "i64_as_decimal_string")] i64),
     F64(f64),
     Text(String),
     /// 二进制列：只携带长度，值为固定占位 `<binary>`。
@@ -1125,6 +1134,15 @@ pub(crate) fn query_sqlite_with_deadline(
 #[cfg(test)]
 mod mysql_mapping_tests {
     use super::*;
+    #[test]
+    fn i64_values_serialize_as_exact_decimal_strings() {
+        for value in [i64::MIN, -42, 0, 42, i64::MAX] {
+            let encoded=serde_json::to_value(DbValue::I64(value)).unwrap();
+            assert_eq!(encoded,serde_json::json!({"i64":value.to_string()}));
+            assert_eq!(serde_json::from_value::<DbValue>(encoded).unwrap(),DbValue::I64(value));
+        }
+        assert_eq!(serde_json::from_value::<DbValue>(serde_json::json!({"i64":42})).unwrap(),DbValue::I64(42));
+    }
 
     #[test]
     fn large_integer_query_values_use_lossless_wire_representation() {

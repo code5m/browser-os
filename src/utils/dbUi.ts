@@ -1,3 +1,6 @@
+import { decodeDbValue } from '../capabilities/database/model/resultProjection.mjs';
+export { decodeDbValue };
+
 // M4-4 数据库面板 UI 纯逻辑层（无 Vue / bridge 运行时依赖）。
 //
 // 契约依据（均已冻结/已落地，禁止自行发明口径）：
@@ -270,26 +273,6 @@ export function truncateText(text: string, max: number): string {
  * BUG-HUNT B8-1：此前按 PascalCase（"Null" / { Text }）解码，与后端 snake_case 实际输出不符，
  * 每个带标签单元格都命中末尾兜底 `JSON.stringify`，被渲染成原始 JSON。现按权威 DTO 对齐。
  */
-export function decodeDbValue(value: unknown): DbScalar {
-  if (value === null || value === undefined) return null;
-  // 单元变体 Null：后端序列化为 JSON 字符串 "null"，须先于通用 string 分支判为 JS null
-  if (value === "null") return null;
-  if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") return value;
-  if (typeof value === "object") {
-    const rec = value as Record<string, unknown>;
-    if (typeof rec.text === "string") return rec.text;
-    // database::DbValue is the live query DTO; domain's older int/float shape remains readable.
-    if (typeof rec.i64 === "number") return rec.i64;
-    if (typeof rec.f64 === "number") return rec.f64;
-    if (rec.binary && typeof rec.binary === 'object' && typeof (rec.binary as {bytes?:unknown}).bytes === 'number') return `<binary ${formatBytes((rec.binary as {bytes:number}).bytes)}>`;
-    if (typeof rec.int === "number") return rec.int;
-    if (typeof rec.float === "number") return rec.float;
-    if (typeof rec.bool === "boolean") return rec.bool;
-    if (typeof rec.blob_len === "number") return `<binary ${formatBytes(rec.blob_len)}>`;
-  }
-  return JSON.stringify(value);
-}
-
 /** 单元格展示：null 显式为 NULL，字符串按展示宽度截断（截断只影响显示，不改数据）。 */
 export function formatCellValue(value: unknown, max = 200): string {
   const scalar = decodeDbValue(value);

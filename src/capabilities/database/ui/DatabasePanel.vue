@@ -524,6 +524,7 @@ function deleteConnection() {
         <button title="重新读取数据库对象" aria-label="刷新对象" :disabled="db.schemaBusy || !db.activeId" @click="db.refreshSchema()"><RefreshCw :size="14"/></button>
       </div>
       <div id="database-object-details" v-show="dbSchemaOpen">
+      <p class="tree-help">单击表查看字段，双击直接读取前 100 行。查询遵循原生安全门禁。</p>
       <div v-if="db.selectedObject" class="object-details">
         <div class="schema-head object-header"><strong :title="db.selectedObject">{{ db.selectedObject }}</strong>
           <button :disabled="!db.activeId" @click="db.previewTable(db.selectedObject)">查看数据</button>
