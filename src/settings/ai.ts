@@ -9,5 +9,6 @@ export const aiService = {
   save: (profile:AiProfile,credential:string) => bridge.aiService({action:'save',profile,credential}),
   bind: (scope:AiScope,id:string) => bridge.aiService({action:'bind',scope,id}),
   remove: (id:string) => bridge.aiService({action:'remove',id}),
-  chat: (scope:AiScope,message:string,id='',history:{role:'user'|'assistant';content:string}[]=[]):Promise<{content:string;model:string}> => bridge.aiService({action:'chat',scope,message,id,history}),
+  chat: (scope:AiScope,message:string,id='',history:{role:'user'|'assistant';content:string}[]=[],requestId=''):Promise<{content:string;model:string}> => bridge.aiService({action:'chat',scope,message,id,history,request_id:requestId}),
+  cancelChat: (requestId:string):Promise<{cancelled:boolean}> => bridge.aiService({action:'cancel',scope:'default',request_id:requestId}),
 };

@@ -1,6 +1,7 @@
 # agent 模块 README（Phase D3 · 高质量文档化）
 
 > 文档性质：machine truth 的引用者，非第二真源。评级真源：`src/capabilities/agent/manifest.ts`。
+> 2026-11-02 最新执行入口：AgentManagerPanel 包含「普通聊天」（GeneralChatPanel，aiService.chat，无需项目路径，模型隔离/取消，**没有工具权限**）、「编码工作区」（coding_service，有项目根、受控变更审批）及「智能体定义」（旧 agent_chat/run 后端仍未接通）。三条入口不得混为一个已统一的生产 Agent Runtime。
 > 重要诚实声明：Agent 执行后端（agent_chat / agent_run / agent_install 等）在 Rust 侧**尚未实现**（`bridge.ts: AGENT_SKILL_COMMANDS_AVAILABLE=false`），当前为「只读壳 + 解析/校验/权限预览」。这是真实功能缺口，不是边界缺失。
 
 > 范围说明：下文“只读壳”“不持有执行引擎”等描述仅适用于上述旧版 Agent 定义与对话入口，不适用于新增的编码工作区。编码工作区通过独立的 `codingService` 原生能力提供模型会话、审核后文件变更、受控上下文与隔离 Rust 语言服务；其能力和已知限制以 [编码智能体实现记录](../../../docs/design/coding-agent-implementation-20261025.md) 为准。它并未实现旧版 `agent_chat` / `agent_run` 契约，也不是完整 VS Code；安装版验收仍待完成。
@@ -13,7 +14,7 @@
 ## 2. Domain Classification
 - 领域：`agent`
 - `manifest.category = "CAPABILITY"`
-- 角色：Agent 定义与对话壳；同时持有 `skill` 状态（`STAGE E` 处理 skill 拆分，semanticOwner 冻结为 `useAgentStore`）。
+- 角色：Agent 定义与旧对话壳；Skill 状态已由独立 `useSkillStore` 管理，Agent 不拥有第二份 Skill 真源。
 
 ## 3. Responsibilities
 - Agent 定义解析（`agent_parse`）、校验（`agent_validate`）、权限预览（`agent_permission_preview`）。
@@ -24,7 +25,7 @@
 - 不执行 agent_chat / agent_run / agent_install（后端未实现）。
 - 不持有 Agent 运行时/执行引擎。
 - 不创建 WebView/PTY/进程/数据库。
-- 当前不真正拥有 `skill` 的执行（仅状态共存，待拆分）。
+- 不拥有 Skill 状态（独立 `useSkillStore`）及 Database/Git/Browser 业务资源。
 
 ## 5. Ubiquitous Language
 - `AgentDef`：Agent 定义结构（来自 `src/types.ts`）。

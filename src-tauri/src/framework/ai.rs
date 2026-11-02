@@ -21,6 +21,61 @@ const PROVIDER_QUEUE_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 static PROVIDER_LIMITERS: OnceLock<Mutex<HashMap<String, Weak<ProviderSemaphore>>>> =
     OnceLock::new();
 
+// Only the trusted main UI may cancel an opaque, per-request chat id.
+// This registry contains cancellation signals, never chat content/credentials.
+static CHAT_CANCELS: OnceLock<Mutex<HashMap<uuid::Uuid, Arc<AtomicBool>>>> = OnceLock::new();
+fn chat_cancel_map() -> &'static Mutex<HashMap<uuid::Uuid, Arc<AtomicBool>>> {
+    CHAT_CANCELS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+fn parse_chat_request_id(value: &str) -> Result<uuid::Uuid, String> {
+    let id = uuid::Uuid::parse_str(value).map_err(|_| "AI_CHAT_REQUEST_ID_INVALID")?;
+    if id.get_version_num() != 4 {
+        return Err("AI_CHAT_REQUEST_ID_INVALID".into());
+    }
+    Ok(id)
+}
+struct ChatRequestGuard {
+    id: Option<uuid::Uuid>,
+    cancelled: Arc<AtomicBool>,
+}
+impl Drop for ChatRequestGuard {
+    fn drop(&mut self) {
+        if let Some(id) = self.id {
+            if let Ok(mut map) = chat_cancel_map().lock() {
+                map.remove(&id);
+            }
+        }
+    }
+}
+fn register_chat_request(value: &str) -> Result<ChatRequestGuard, String> {
+    let flag = Arc::new(AtomicBool::new(false));
+    if value.is_empty() {
+        return Ok(ChatRequestGuard {
+            id: None,
+            cancelled: flag,
+        });
+    }
+    let id = parse_chat_request_id(value)?;
+    let mut map = chat_cancel_map().lock().map_err(|_| "AI_CHAT_BUSY")?;
+    if map.len() >= 32 || map.contains_key(&id) {
+        return Err("AI_CHAT_BUSY".into());
+    }
+    map.insert(id, flag.clone());
+    Ok(ChatRequestGuard {
+        id: Some(id),
+        cancelled: flag,
+    })
+}
+fn cancel_chat_request(value: &str) -> Result<bool, String> {
+    let id = parse_chat_request_id(value)?;
+    let map = chat_cancel_map().lock().map_err(|_| "AI_CHAT_BUSY")?;
+    let Some(flag) = map.get(&id) else {
+        return Ok(false);
+    };
+    flag.store(true, Ordering::SeqCst);
+    Ok(true)
+}
+
 struct ProviderSemaphore {
     active: Mutex<usize>,
     ready: Condvar,
@@ -62,6 +117,9 @@ fn acquire_provider_permit_timeout(
     cancelled: &(dyn Fn() -> bool + Sync),
     timeout: std::time::Duration,
 ) -> Result<ProviderPermit, String> {
+    if cancelled() {
+        return Err("AI_PROVIDER_CANCELLED".into());
+    }
     let semaphore = provider_semaphore(profile_id);
     let deadline = std::time::Instant::now() + timeout;
     let mut active = semaphore.active.lock().map_err(|_| "AI_PROVIDER_BUSY")?;
@@ -144,6 +202,9 @@ pub struct AiRequest {
     pub message: String,
     #[serde(default)]
     pub history: Vec<AiChatTurn>,
+    /// A random UUID v4 for cancelling only this request (empty for legacy callers).
+    #[serde(default)]
+    pub request_id: String,
 }
 fn valid_id(id: &str) -> bool {
     id.len() == 24 && id.bytes().all(|c| c.is_ascii_hexdigit())
@@ -260,9 +321,16 @@ fn chat_with_history(
     message: &str,
     scope: &str,
     history: &[AiChatTurn],
+    cancelled: &(dyn Fn() -> bool + Sync),
 ) -> Result<Value, String> {
     let messages = build_chat_messages(message, scope, history)?;
-    let reply = provider_turn(profile, &messages, &[])?;
+    if cancelled() {
+        return Err("AI_PROVIDER_CANCELLED".into());
+    }
+    let reply = provider_turn_cancelable(profile, &messages, &[], cancelled)?;
+    if cancelled() {
+        return Err("AI_PROVIDER_CANCELLED".into());
+    }
     let content = reply["content"]
         .as_str()
         .filter(|v| !v.trim().is_empty())
@@ -765,6 +833,14 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
     {
         return Err("AI_SCOPE_INVALID".into());
     }
+    if request.action == "cancel" {
+        return Ok(json!({"cancelled":cancel_chat_request(&request.request_id)?}));
+    }
+    let cancel_guard = if request.action == "chat" {
+        Some(register_chat_request(&request.request_id)?)
+    } else {
+        None
+    };
     let lock = CONFIG_LOCK.lock().map_err(|_| "AI_CONFIG_BUSY")?;
     let mut config = read(path)?;
     match request.action.as_str() {
@@ -867,7 +943,14 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
                 .cloned()
                 .ok_or("AI_NOT_CONFIGURED")?;
             drop(lock);
-            chat_with_history(&profile, &request.message, &request.scope, &request.history)
+            let signal = cancel_guard.as_ref().ok_or("AI_CHAT_REQUEST_UNAVAILABLE")?;
+            chat_with_history(
+                &profile,
+                &request.message,
+                &request.scope,
+                &request.history,
+                &|| signal.cancelled.load(Ordering::SeqCst),
+            )
         }
         _ => Err("AI_ACTION_INVALID".into()),
     }
@@ -892,27 +975,6 @@ pub async fn ai_service(
     tauri::async_runtime::spawn_blocking(move || execute(&path, request))
         .await
         .map_err(|_| "AI_WORKER_FAILED".to_string())?
-}
-
-/// Explicit main-window read-only Coding capability gateway for the
-/// Agent Channel experiment. Reuses the Coding Owner's existing LSP-status
-/// executor and the same native source check as coding_service. This does not
-/// expose model chat, file writes, LSP requests, shell or MCP tool execution.
-pub fn coding_lsp_status_for_agent(
-    app: tauri::AppHandle,
-    webview: tauri::Webview,
-    root: &str,
-) -> Result<Value, String> {
-    if webview.label() != "main" || root.len() > 4096 {
-        return Err("AGENT_SOURCE_DENIED".into());
-    }
-    crate::shared::invocation::check_invocation_source(&webview, "coding_service", None, &app)?;
-    let root = std::path::Path::new(root);
-    if !root.is_absolute() || !root.is_dir() {
-        return Err("AGENT_ROOT_INVALID".into());
-    }
-    let canonical = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
-    crate::capabilities::agent::coding_lsp::execute(&canonical, json!({"action":"lsp_status"}))
 }
 
 #[tauri::command]
@@ -989,6 +1051,18 @@ pub async fn coding_service(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn chat_request_cancellation_is_scoped_and_cleanup_is_guaranteed() {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let guard = super::register_chat_request(&request_id).unwrap();
+        assert!(!guard.cancelled.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(super::register_chat_request(&request_id).is_err());
+        assert!(super::cancel_chat_request(&request_id).unwrap());
+        assert!(guard.cancelled.load(std::sync::atomic::Ordering::SeqCst));
+        drop(guard);
+        assert!(!super::cancel_chat_request(&request_id).unwrap());
+        assert!(super::cancel_chat_request("../../invalid").is_err());
+    }
     #[test]
     fn chat_history_is_bounded_and_only_accepts_user_assistant_roles() {
         use super::{build_chat_messages, AiChatTurn};
@@ -1769,7 +1843,7 @@ mod tests {
             .iter()
             .find(|p| &p.id == id)
             .expect("default profile");
-        let response = chat_with_history(profile, "Reply with OK only.", "test", &[])
+        let response = chat_with_history(profile, "Reply with OK only.", "test", &[], &|| false)
             .expect("real provider response");
         assert!(response["content"]
             .as_str()

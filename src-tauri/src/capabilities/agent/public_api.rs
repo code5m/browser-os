@@ -7,5 +7,14 @@ pub(crate) fn coding_lsp_summary(
     webview: Webview,
     root: &str,
 ) -> Result<Value, String> {
-    crate::framework::ai::coding_lsp_status_for_agent(app, webview, root)
+    if webview.label() != "main" || root.len() > 4096 {
+        return Err("AGENT_SOURCE_DENIED".into());
+    }
+    crate::shared::invocation::check_invocation_source(&webview, "coding_service", None, &app)?;
+    let root = std::path::Path::new(root);
+    if !root.is_absolute() || !root.is_dir() {
+        return Err("AGENT_ROOT_INVALID".into());
+    }
+    let canonical = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
+    super::coding_lsp::execute(&canonical, serde_json::json!({"action":"lsp_status"}))
 }

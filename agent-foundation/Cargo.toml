@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MulanPSL-2.0"
 publish = false
-description = "Standalone, non-integrated BrowserOS Agent Channel foundation prototype"
+description = "Standalone BrowserOS Agent foundation with opt-in Tauri experiment host"
 
 [features]
 default = []
