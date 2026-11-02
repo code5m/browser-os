@@ -1,0 +1,65 @@
+{
+  "schema": "browseros-lifecycle-headless-compare-v1",
+  "classification": "MEASURED_HEADLESS_ONLY",
+  "baseline_sha": "dd32cc828e21f923e61aca0ed66b647e8c957e41",
+  "current_worktree": true,
+  "scenario": "activateAsync+suspendAsync (Owner hooks no-op)",
+  "measurements": {
+    "current": {
+      "version": "current",
+      "iterations": 3000,
+      "samples": 8,
+      "operation": "activateAsync+suspendAsync (Owner hooks no-op)",
+      "ms_per_cycle": {
+        "median": 0.0023977770000000002,
+        "p95": 0.0033314870000000006
+      },
+      "cpu_ms_per_cycle": {
+        "median": 0.0031053333333333336,
+        "p95": 0.007814666666666666
+      },
+      "rss_kb": {
+        "median": 79432,
+        "p95": 79560
+      },
+      "pss_kb": {
+        "median": 43107,
+        "p95": 43211
+      }
+    },
+    "baseline": {
+      "version": "baseline",
+      "iterations": 3000,
+      "samples": 8,
+      "operation": "activateAsync+suspendAsync (Owner hooks no-op)",
+      "ms_per_cycle": {
+        "median": 0.0008705870000000005,
+        "p95": 0.0012543806666666627
+      },
+      "cpu_ms_per_cycle": {
+        "median": 0.0012603333333333334,
+        "p95": 0.0021363333333333334
+      },
+      "rss_kb": {
+        "median": 72680,
+        "p95": 78380
+      },
+      "pss_kb": {
+        "median": 38669,
+        "p95": 43914
+      }
+    }
+  },
+  "ratios": {
+    "latency": 2.754207218807539,
+    "cpu": 2.4638984395662527
+  },
+  "same_machine": {
+    "os_release": "7.0.0-38-generic",
+    "arch": "x64",
+    "cpu_model": "AMD Ryzen 7 5700U with Radeon Graphics",
+    "totalmem_bytes": 16059551744,
+    "node": "v26.7.0"
+  },
+  "limitations": "No real BrowserOS GUI, native PTY/WebView/DB, startup ready, or application process-tree RSS/PSS. Memory median is benchmark Node worker RSS/PSS, not BrowserOS. Do not treat as production perf evidence."
+}

@@ -1002,22 +1002,6 @@ pub async fn coding_service(
         if !root.is_absolute() || root.parent().is_none() {
             return Err("AGENT_ROOT_INVALID".into());
         }
-        let action = request["action"].as_str().unwrap_or("");
-        if ["lsp_status", "lsp_request", "lsp_close"].contains(&action) {
-            return crate::capabilities::agent::coding_lsp::execute(&root, request);
-        }
-        if [
-            "skills_list",
-            "skill_read",
-            "knowledge_search",
-            "mcp_list",
-            "mcp_tools",
-            "mcp_call",
-        ]
-        .contains(&action)
-        {
-            return crate::capabilities::agent::coding_context::execute(&root, &storage, request);
-        }
         let id = request["model_id"].as_str().unwrap_or("").to_owned();
         let cancel_root = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
         let mut emit_delta = |text: &str| -> Result<(), String> {
@@ -1025,16 +1009,21 @@ pub async fn coding_service(
                 .send(json!({"type":"delta","text":text}))
                 .map_err(|_| "AGENT_STREAM_DISCONNECTED".to_string())
         };
-        crate::capabilities::agent::coding::execute(&root, &storage, request, |messages, tools| {
-            coding_turn_cancelable_stream(
-                &storage.join("ai-profiles.json"),
-                &id,
-                messages,
-                tools,
-                &|| crate::capabilities::agent::coding::cancelled_for_root(&cancel_root),
-                &mut emit_delta,
-            )
-        })
+        crate::capabilities::agent::public_api::dispatch_coding_request(
+            &root,
+            &storage,
+            request,
+            |messages, tools| {
+                coding_turn_cancelable_stream(
+                    &storage.join("ai-profiles.json"),
+                    &id,
+                    messages,
+                    tools,
+                    &|| crate::capabilities::agent::public_api::coding_cancelled(&cancel_root),
+                    &mut emit_delta,
+                )
+            },
+        )
     })
     .await
     .map_err(|_| "AGENT_WORKER_FAILED".to_string())?;

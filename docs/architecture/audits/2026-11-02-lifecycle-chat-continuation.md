@@ -60,3 +60,44 @@ Source: `src/capability/runtime.ts`, `src/capability/types.ts`, `src/capability/
 | Before/after paired runtime CPU/RSS/PSS and latency | production performance baseline | NOT MEASURED |
 
 **Definition of done:** all ten original architectural goals still require evidence beyond the focused fixes above. This branch is an incremental implementation, **not** an ALL_PASS rearchitecture tag.
+
+## Second continuation — production bootstrap, Owner routing, and evidence (2026-11-02)
+
+### Actual application startup now uses asynchronous transitions
+
+- `src/main.ts` calls `bootstrapCapabilityRuntimeAsync()` and mounts Vue **after** the awaited capability setup. It reports startup failures without preventing the shell from mounting, and schedules the `m0_ready` first-paint probe after mount (not before).
+- `src/capability/index.ts` adds an idempotent production-only async bootstrap for profile, custom Assembly and enabled-config routes. Dependencies register and resolve before activation; each Owner's `onActivate` is awaited. A failed startup collects reverse-order rollback errors instead of falsely returning `activated=true`. The legacy sync bootstrap remains for source-compatible tests, not the GUI startup.
+- `src/capability/platform/pluggable.ts` adds async activation, awaited rollback and async Owner release/deactivation while retaining the original sync test surface. `scripts/check-pluggable-lifecycle.mjs` covers delayed Owner hooks, no premature ACTIVE/contribution and activation failure.
+- `tests/check-async-production-bootstrap.mjs` executes the real bundled production path and checks idempotency, framework-only, minimal and full 22-capability boot.
+
+### Coding requests now enter one Agent Owner API
+
+- `src-tauri/src/framework/ai.rs` retains provider transport, model selection and Tauri source authorization, but delegates the **actual Coding action dispatch** to `src-tauri/src/capabilities/agent/public_api.rs::dispatch_coding_request`. This Owner routes Coding, LSP and read-only context requests and continues to own every approval/write gate. Cancellation queries also go through the same facade.
+- Native boundary rule `NATIVE-10` rejects production Framework imports of `Agent::coding(_context/_lsp)::execute`; its negative fixture validates the rule. `#[cfg(test)]` Rust fixtures are explicitly excluded, not production code.
+- This removes one reverse dependency, but **does not unify old Agent Blueprint, Coding task state and Agent Foundation's TaskRegistry into one durable execution state machine**. Productionizing such a migration requires compatible session/approval replay and live failure-injection tests.
+
+### Real baseline data: limited but measured
+
+- `scripts/measure-lifecycle-comparison.mjs` measures the **same TS activation/suspend sequence** in isolated Node workers, comparing baseline `dd32cc82` with current worktree. It records per-cycle latency/CPU and benchmark-worker RSS/PSS, hardware and explicit limitations, and supports `--self-test` and a JSON artifact.
+- Local first sample (900 iterations × 6 samples): median latency ratio current/baseline ≈ 1.78; CPU ratio ≈ 1.66. Absolute median latency was around **0.00123 ms per cycle**; the extra guards cost microseconds, not seconds. Results are runtime microbenchmarks **NOT** an installed BrowserOS performance improvement claim.
+- For native real resources, the existing Tauri `ShutdownCoordinator` owns real cleanup tasks `close-tabs`, `kill-terminals`, `shutdown-grid`, `kill-running-scripts`, and session flush. These implementations and Rust tests **do not establish that all real installed WebView/PTY/DB handles have reached zero** after GUI lifecycle. No BrowserOS process was running on the authorized Linux desktop during this audit, so a real PID comparison was not fabricated.
+
+### Native Owner & effect debt gate
+
+- `scripts/check-native-owner-effect-audit.mjs` generates and verifies `docs/architecture/native-boundary/NATIVE_OWNER_EFFECT_AUDIT_20261102.md`: **all 183 commands** have explicit owner, physical file and effect metadata. The **58 legacy `permission: "-"` commands remain unverified** and are frozen in `native-permission-debt-baseline.json` by exact command name. New unreviewed permission gaps fail the gate; this does **not** grandfather any hidden permission or imply that the 58 paths passed side-effect authorization.
+- A proposed relocation of Browser `tab_list` from `bridge.rs` was reverted by the `check-native` protected-surface gate. `bridge.rs` still hosts about 100 Native commands. Bulk physical refactoring without per-Owner approved migration and installed GUI tests would falsely claim safety and remains blocked.
+
+### Remaining mandatory completion gates
+
+1. Durable unified execution task/approval Owner: old Agent Blueprint, Coding state, and Foundation must share one authoritative lifecycle and replay policy; currently incomplete.
+2. Native 100-command physical extraction and 58 effect-permission debt items: currently incomplete; require actual authorization/negative proof.
+3. Real installed GUI on exact branch/master build, same host and same scenarios: **pending user interactive acceptance**.
+4. Paired pre/post application startup latency, CPU, process-tree RSS/PSS and open WebView/PTY/DB/Worker handles: **not measured**; the Node microbenchmark is a different measurement, not a substitute.
+
+All claims are intentionally scoped. The branch MUST stay unmerged until required checks/approvals are satisfied.
+
+### Native cleanup process fixture and build capacity
+
+- `src-tauri/src/shutdown.rs::native_shutdown_reaps_real_child_pid_and_joins_owned_worker` spawns a **disposable test-owned** `sleep` process and thread, registers their cleanup with the existing production `ShutdownCoordinator`, and asserts both cleanups and repeat-shutdown idempotence. This creates a real PID for the test, but is **not** a BrowserOS terminal/WebView/DB leak measurement. It also fixes the stale module header claiming that `ShutdownCoordinator` was not yet wired; production wiring already exists in `main.rs` and `bridge.rs`.
+- A second, longer same-machine TS lifecycle microbenchmark is recorded in `docs/architecture/performance/lifecycle-dd32-vs-runtime-20261102.json` (3000 iterations × 8 samples, independent Node workers). Median overhead ratio ranged between approximately 1.8x and 2.8x across runs; median cost remains under 0.003 ms per activation/suspension pair. **This is a regression in microbenchmark throughput, not evidence of improved system performance.**
+- The authorized Ubuntu desktop's default Terser production build was killed after Vite began transforming while system swap was exhausted and IntelliJ + ChatGPT desktop were in use; no user application was force-closed. The **exact commit's GitHub CI build and Rust compilation must be used as final source verification**, rather than calling that local attempt PASS.

@@ -23,7 +23,11 @@ export interface PluggableRuntime {
   runtime: CapabilityRuntime
   assembly: AssemblyResult
   activate(): void
+  /** Production entry: awaits each Owner hook before publishing ACTIVE. */
+  activateAsync(): Promise<void>
   deactivate(id: string): void
+  /** Production entry: release Owner resources before withdrawing a contribution. */
+  deactivateAsync(id: string): Promise<void>
   inspectConfig(id: string): { values: Record<string, unknown>; errors: string[] }
   inspect(): CapabilitySnapshot[]
   events: CapabilityEventBus
@@ -43,6 +47,8 @@ export function createPluggableRuntime(options: PluggableRuntimeOptions): Plugga
   const events = createCapabilityEventBus()
   const registry = options.contributions
   let active = false
+  let activationPromise: Promise<void> | null = null
+  const deactivations = new Map<string, Promise<void>>()
   const resolvedConfigs = new Map<string, { values: Record<string, any>; errors: string[] }>()
   for (const [id, manifest] of Object.entries(options.catalog)) {
     const resolved = resolveCapabilityConfig(manifest, options.config.config?.[id])
@@ -102,6 +108,72 @@ export function createPluggableRuntime(options: PluggableRuntimeOptions): Plugga
     events.emit({ type: 'capability.deactivated', capabilityId: id, at: Date.now() })
   }
 
+  function activateAsync(): Promise<void> {
+    if (active) return Promise.resolve()
+    if (activationPromise) return activationPromise
+    activationPromise = (async () => {
+      const started: string[] = []
+      try {
+        // Register every member first; resolve dependencies before any Owner starts work.
+        for (const id of assembly.activationOrder) {
+          const definition = options.definitions[id]
+          if (!definition) throw new Error(`Capability 缺少运行时定义: ${id}`)
+          if (!runtime.get(id)) {
+            runtime.register(definition)
+            events.emit({ type: 'capability.registered', capabilityId: id, at: Date.now() })
+          }
+        }
+        for (const id of assembly.activationOrder) runtime.resolve(id)
+        for (const id of assembly.activationOrder) {
+          events.emit({ type: 'capability.activating', capabilityId: id, at: Date.now() })
+          try {
+            await runtime.activateAsync(id)
+            started.push(id)
+            if (registry) {
+              for (const contribution of options.catalog[id]?.contributions ?? []) {
+                if (!registry.getBySlot(contribution.slot).some(entry => entry.id === contribution.id)) {
+                  registry.registerContribution({ ...contribution, capabilityId: id, type: contribution.type as 'surface' | 'navigation' })
+                }
+              }
+            }
+            events.emit({ type: 'capability.activated', capabilityId: id, at: Date.now() })
+          } catch (error) {
+            events.emit({ type: 'capability.failed', capabilityId: id, error: String(error), at: Date.now() })
+            throw error
+          }
+        }
+        active = true
+      } catch (error) {
+        const rollbackErrors: string[] = []
+        for (const id of started.reverse()) {
+          try { await deactivateAsync(id) }
+          catch (rollback) { rollbackErrors.push(`${id}: ${String(rollback)}`) }
+        }
+        if (rollbackErrors.length) throw new Error(`${String(error)}; rollback errors: ${rollbackErrors.join('; ')}`)
+        throw error
+      }
+    })().finally(() => { activationPromise = null })
+    return activationPromise
+  }
+
+  function deactivateAsync(id: string): Promise<void> {
+    const existing = deactivations.get(id)
+    if (existing) return existing
+    let promise!: Promise<void>
+    promise = (async () => {
+      const record = runtime.get(id)
+      if (!record) return
+      if (!record.enabled) { registry?.unregisterCapability(id); return }
+      events.emit({ type: 'capability.deactivating', capabilityId: id, at: Date.now() })
+      // Fails closed if the Owner cannot suspend or release its resources.
+      await runtime.releaseAsync(id)
+      registry?.unregisterCapability(id)
+      events.emit({ type: 'capability.deactivated', capabilityId: id, at: Date.now() })
+    })().finally(() => { if (deactivations.get(id) === promise) deactivations.delete(id) })
+    deactivations.set(id, promise)
+    return promise
+  }
+
   function inspectConfig(id: string) {
     return resolvedConfigs.get(id) ?? { values: {}, errors: [`未知 capability: ${id}`] }
   }
@@ -110,5 +182,5 @@ export function createPluggableRuntime(options: PluggableRuntimeOptions): Plugga
     return inspectCapabilities(options.catalog, runtime, registry, inspectConfig)
   }
 
-  return { runtime, assembly, activate, deactivate, inspectConfig, inspect, events }
+  return { runtime, assembly, activate, activateAsync, deactivate, deactivateAsync, inspectConfig, inspect, events }
 }

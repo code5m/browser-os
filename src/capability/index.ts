@@ -233,6 +233,100 @@ export function bootstrapConfiguredCapabilityRuntime(
   }
 }
 
+// Production uses one asynchronous, dependency-ordered startup transaction.
+// The legacy sync bootstrap functions remain only for existing compatibility tests.
+let asyncBootstrap: Promise<BootstrapResult> | null = null
+export function bootstrapCapabilityRuntimeAsync(profile?: CapabilityProfileId | string | null): Promise<BootstrapResult> {
+  if (asyncBootstrap) return asyncBootstrap
+  if (runtime) return Promise.resolve({ runtime, activated: lastActivated, error: lastError, profile: lastProfile })
+  asyncBootstrap = (async () => {
+    registerSettingsContributions()
+    const envConfig = profile == null ? enabledConfigFromEnv() : null
+    const customIds = profile == null && !envConfig ? customAssemblyFromEnv() : null
+    const pid = typeof profile === 'string' ? resolveProfile(profile) : (profile ?? profileFromEnv())
+    lastProfile = envConfig || customIds ? 'custom' : pid
+    let rt: CapabilityRuntime
+    let activeIds: Set<string>
+    let ordered: Array<{ id: string; def: (typeof ALL_CAPABILITIES)[number]['def'] }>
+    try {
+      if (envConfig) {
+        const pluggable = createPluggableRuntime({
+          catalog: CAPABILITY_CATALOG, definitions: CAPABILITY_DEFINITIONS,
+          config: envConfig, contributions: contributionRegistry,
+        })
+        rt = pluggable.runtime
+        runtime = rt
+        setCapabilityRuntime(rt)
+        await pluggable.activateAsync()
+        lastActivated = rt.inspect().some(entry => entry.state === 'ACTIVE')
+        lastError = null
+        return { runtime: rt, activated: lastActivated, error: null, profile: lastProfile }
+      }
+      const ids = customIds ?? CAPABILITY_PROFILES[pid]
+      if (customIds) {
+        const report = assemble(CAPABILITY_CATALOG, { capabilities: ids })
+        if (!report.ok) throw new Error(`装配失败: ${report.rejections.map(r => r.message).join('; ')}`)
+        ordered = report.activationOrder.map(id => ({ id, def: CAPABILITY_DEFINITIONS[id] })).filter(entry => !!entry.def)
+        activeIds = new Set(report.activationOrder)
+      } else {
+        const allowed = new Set(ids)
+        const base = { enabled: Object.fromEntries([...allowed].map(id => [id, true])) }
+        const persisted = profile == null ? loadCapabilityConfig() : null
+        const safe = persisted ? {
+          enabled: Object.fromEntries(Object.entries(persisted.enabled ?? {}).filter(([id, enabled]) =>
+            allowed.has(id) && (enabled || isCapabilityToggleSafe(CAPABILITY_CATALOG[id])))),
+          config: persisted.config,
+        } : null
+        const configured = mergeConfig(base, safe)
+        const definitions = new Map(ALL_CAPABILITIES.map(({ id, def }) => [id, def]))
+        ordered = ALL_CAPABILITIES.filter(({ id }) => allowed.has(id))
+        activeIds = new Set([...allowed].filter(id => configured.enabled[id] !== false))
+        let modified = true
+        while (modified) {
+          modified = false
+          for (const id of [...activeIds]) {
+            for (const dependency of definitions.get(id)?.dependsOn ?? []) {
+              if (allowed.has(dependency) && !activeIds.has(dependency)) {
+                activeIds.add(dependency); modified = true
+              }
+            }
+          }
+        }
+      }
+      rt = createCapabilityRuntime()
+      runtime = rt
+      setCapabilityRuntime(rt) // Owner resource gates share the same runtime before hooks fire.
+      const started: string[] = []
+      try {
+        for (const { def } of ordered) rt.register(def)
+        for (const { id } of ordered) rt.resolve(id)
+        for (const { id } of ordered) {
+          if (activeIds.has(id)) { await rt.activateAsync(id); started.push(id) }
+          else rt.disable(id)
+        }
+        lastActivated = true
+        lastError = null
+      } catch (error) {
+        const cleanupFailures: string[] = []
+        for (const id of started.reverse()) {
+          try { await rt.releaseAsync(id) } catch (cleanup) { cleanupFailures.push(`${id}:${String(cleanup)}`) }
+        }
+        lastActivated = false
+        lastError = `${String(error)}${cleanupFailures.length ? `; rollback: ${cleanupFailures.join('; ')}` : ''}`
+      }
+      return { runtime: rt, activated: lastActivated, error: lastError, profile: lastProfile }
+    } catch (error) {
+      lastActivated = false
+      lastError = String(error)
+      rt = runtime ?? createCapabilityRuntime()
+      runtime = rt
+      setCapabilityRuntime(rt)
+      return { runtime: rt, activated: false, error: lastError, profile: lastProfile }
+    }
+  })()
+  return asyncBootstrap
+}
+
 export function getCapabilityRuntime(): CapabilityRuntime | null {
   // 单例真源在 runtimeSingleton（叶子模块），本地 `runtime` 变量是其镜像。
   // 保持二者一致：能力内部读 runtimeSingleton，应用侧读本函数。

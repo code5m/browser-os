@@ -294,6 +294,13 @@ function run(files) {
     }
   }
 
+  // NATIVE-10: the Coding Framework may use provider transport, but it must
+  // enter the Coding Owner through its published dispatch gateway.
+  if (typeof files.codingHostText === 'string' &&
+      /crate::capabilities::agent::(?:coding|coding_context|coding_lsp)::(?:execute|cancelled_for_root)/.test(files.codingHostText.split('#[cfg(test)]')[0])) {
+    push('NATIVE-10','fail','Coding Framework 直调 Agent 内部实现，不经 Owner public_api.rs','src-tauri/src/framework/ai.rs')
+  }
+
   // NATIVE-09: Agent Owner facade must not route backwards through Framework AI.
   // Browser tab state remains in AppState/bridge; moving it requires a separately approved native migration.
   for (const [owner, content] of Object.entries(files.ownerFacadeTexts || {})) {
@@ -320,11 +327,13 @@ function loadReal() {
     : null
   const hostPath = join(ROOT, 'src-tauri/src/framework/agent_channel.rs')
   const agentChannelHostText = existsSync(hostPath) ? readFileSync(hostPath, 'utf8') : undefined
+  const codingHostPath = join(ROOT, 'src-tauri/src/framework/ai.rs')
+  const codingHostText = existsSync(codingHostPath) ? readFileSync(codingHostPath,'utf8') : undefined
   const ownerFacadeTexts = Object.fromEntries(['browser', 'agent'].map(owner => {
     const file = join(ROOT, `src-tauri/src/capabilities/${owner}/public_api.rs`)
     return [owner, existsSync(file) ? readFileSync(file, 'utf8') : '']
   }))
-  return { rust, registryText, srcFiles, callers: scanCallers(rust), capabilityText, agentChannelHostText, ownerFacadeTexts }
+  return { rust, registryText, srcFiles, callers: scanCallers(rust), capabilityText, agentChannelHostText, ownerFacadeTexts, codingHostText }
 }
 
 // ---------------------------- fixtures / self-test ----------------------------
@@ -374,6 +383,11 @@ function runSelfTest() {
   t('NATIVE-09: Owner Public API 不依赖旧内部入口', [], {
     rust: [], registryText: 'version: 1\ncommands:\n',
     ownerFacadeTexts: { agent: 'super::coding_lsp::execute()' },
+  })
+
+  t('NATIVE-10: Coding Framework 不能绕过 Owner 公开执行入口',['NATIVE-10'],{
+    rust:[],registryText:'version: 1\ncommands:\n',
+    codingHostText:'crate::capabilities::agent::coding::execute(root,storage,request,model)'
   })
 
   // POSITIVE：正常登记 + 本能力调用 + 资源声明匹配 + 无泄露

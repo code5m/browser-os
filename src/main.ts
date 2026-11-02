@@ -4,23 +4,15 @@ import App from "./App.vue";
 import "./styles/tokens.css";
 import "./styles/global.css";
 import { bridge } from "./bridge";
-import { bootstrapCapabilityRuntime, vaultPorts, clipboardPorts } from "./capability";
+import { bootstrapCapabilityRuntimeAsync, vaultPorts, clipboardPorts } from "./capability";
 import { VAULT_PORTS_KEY } from "@browser-os/capability-vault";
 import { CLIPBOARD_PORTS_KEY } from "@browser-os/capability-clipboard";
 
 document.documentElement.style.background = "#fff";
 document.body.style.background = "#fff";
 
-// Capability Runtime 启动（Phase 7D 试点）——纯编排层，失败不影响既有功能。
-try {
-  const boot = bootstrapCapabilityRuntime();
-  bridge.debugLog(
-    `[capability] bootstrap activated=${boot.activated} error=${boot.error ?? "none"}`
-  );
-} catch (e) {
-  bridge.debugLog("[capability] bootstrap failed: " + (e instanceof Error ? e.message : String(e)));
-}
-
+// Production startup awaits each Owner's transition before mounting its UI.
+// Startup errors are isolated: a failed Capability must never suppress the shell.
 // 存活标记：webview 一加载就打到后端终端，用于确认前端跑的是哪份代码。
 // 改这行的时间戳即可验证"看到的 UI 是不是最新代码"。
 bridge.debugLog("FE alive marker=2026-09-13-install-gui-r2");
@@ -68,12 +60,11 @@ function mountApp() {
   probeFirstPaint();
 }
 
-mountApp();
-
 // M0-0.b ready 钩子（契约 logs/m0-baseline-contract-v1.md §6.1）：
 // 主前端完成 mount 后，再等 2 次 animation frame（首帧渲染完成），
 // 然后发起一次轻量 IPC 往返（m0_ready）。后端写入带 run_id 的 ready 信号，
 // 采集脚本据此记录 startup_ready_ms。非 Tauri 环境/非测量运行均静默跳过。
+function signalFirstPaintReady() {
 try {
   requestAnimationFrame(() => {
     bridge.debugLog("[M0] rAF1 fired");
@@ -88,3 +79,9 @@ try {
 } catch {
   /* 非浏览器/非 Tauri 环境忽略 */
 }
+}
+
+void bootstrapCapabilityRuntimeAsync()
+  .then(boot => bridge.debugLog(`[capability] async bootstrap activated=${boot.activated} error=${boot.error ?? "none"}`))
+  .catch(error => bridge.debugLog(`[capability] async bootstrap failed: ${String(error)}`))
+  .finally(() => { mountApp(); signalFirstPaintReady() });
