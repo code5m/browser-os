@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {computed, onBeforeUnmount, onMounted, ref, watch} from 'vue';
 import {useDatabaseStore} from '../state/useDatabaseStore';
-import {buildResultView} from '../../../utils/dbUi';
+import {buildResultView, decodeDbValue, truncateText} from '../../../utils/dbUi';
 import {exportRows} from '../model/studioSql.mjs';
 import {readDock, resizedOutput, writeDock, markdownResult} from '../model/ideaDock.mjs';
 
@@ -25,14 +25,32 @@ const notice=ref('');
 const outputHost=ref<HTMLElement|null>(null);
 const raw=computed(()=>db.document.raw);
 const view=computed(()=>raw.value?buildResultView(raw.value):null);
+// Preserve decoded scalar types for sorting, filtering, copying and export.
+// The display projection may truncate text, but it never feeds an exporter.
+const rawRows=computed(()=>Array.isArray(raw.value?.rows)?raw.value.rows.map(row=>(Array.isArray(row)?row:[]).map(cell=>decodeDbValue(cell))):[]);
 const sourceLabel=computed(()=>{
   const conn=db.connections.find(c=>c.id===db.document.connId);
   return conn?.name||'未绑定数据源';
 });
+function compareCells(a:unknown,b:unknown):number {
+  if(a===b)return 0;
+  if(a===null||a===undefined)return -1;
+  if(b===null||b===undefined)return 1;
+  if(typeof a==='number'&&typeof b==='number')return a-b;
+  if(typeof a==='boolean'&&typeof b==='boolean')return Number(a)-Number(b);
+  return String(a).localeCompare(String(b),undefined,{numeric:true,sensitivity:'base'});
+}
+function displayCell(value:unknown):string {
+  if(value===null||value===undefined)return 'NULL';
+  if(typeof value==='boolean')return value?'true':'false';
+  if(typeof value==='number')return String(value);
+  return truncateText(String(value),200);
+}
 const rows=computed(()=>{
-  const filtered=(view.value?.rows||[]).filter(row=>row.some(cell=>String(cell).toLowerCase().includes(filter.value.toLowerCase())));
+  const needle=filter.value.toLocaleLowerCase();
+  const filtered=rawRows.value.filter(row=>row.some(cell=>String(cell??'NULL').toLocaleLowerCase().includes(needle)));
   if(sortColumn.value<0)return filtered;
-  return [...filtered].sort((a,b)=>String(a[sortColumn.value]??'').localeCompare(String(b[sortColumn.value]??''),undefined,{numeric:true})*(ascending.value?1:-1));
+  return [...filtered].sort((a,b)=>compareCells(a[sortColumn.value],b[sortColumn.value])*(ascending.value?1:-1));
 });
 const displayed=computed(()=>rows.value.slice(page.value*50,(page.value+1)*50));
 const visibleColumns=computed(()=>view.value?.columns.map((name,index)=>({name,index})).filter(x=>!hiddenColumns.value.has(x.index))||[]);
@@ -114,7 +132,7 @@ function downloadData(){
     notice.value='已导出当前已读取、筛选的结果（不会查询更多数据）';
   }catch(error){notice.value='导出失败：'+String(error);}
 }
-function openCell(name:string,value:string){valueEditor.value={name,value};}
+function openCell(name:string,value:unknown){valueEditor.value={name,value:value===null||value===undefined?'NULL':String(value)};}
 onMounted(()=>emit('maximize',resultMaximized.value));
 onBeforeUnmount(()=>{clearOutputDrag();emit('maximize',false);});
 </script>
@@ -156,15 +174,15 @@ onBeforeUnmount(()=>{clearOutputDrag();emit('maximize',false);});
         <div v-if="resultViewMode==='table'" class="db-result-scroller">
           <table v-if="!transposed" class="db-result-table">
             <thead><tr><th class="db-row-number">#</th><th v-for="column in visibleColumns" :key="column.index"><button type="button" @click="sort(column.index)">{{column.name}}{{sortColumn===column.index?(ascending?' ↑':' ↓'):''}}</button></th></tr></thead>
-            <tbody><tr v-for="(row,index) in displayed" :key="index"><th class="db-row-number">{{page*50+index+1}}</th><td v-for="column in visibleColumns" :key="column.index" :title="String(row[column.index]??'')" @dblclick="openCell(column.name,String(row[column.index]??''))">{{row[column.index]}}</td></tr></tbody>
+            <tbody><tr v-for="(row,index) in displayed" :key="index"><th class="db-row-number">{{page*50+index+1}}</th><td v-for="column in visibleColumns" :key="column.index" :title="String(row[column.index]??'')" @dblclick="openCell(column.name,row[column.index])">{{displayCell(row[column.index])}}</td></tr></tbody>
           </table>
           <table v-else class="db-result-table db-transposed">
             <thead><tr><th>字段 / 行</th><th v-for="(row,index) in displayed" :key="index">{{page*50+index+1}}</th></tr></thead>
-            <tbody><tr v-for="column in visibleColumns" :key="column.index"><th>{{column.name}}</th><td v-for="(row,index) in displayed" :key="index" @dblclick="openCell(column.name,String(row[column.index]??''))">{{row[column.index]}}</td></tr></tbody>
+            <tbody><tr v-for="column in visibleColumns" :key="column.index"><th>{{column.name}}</th><td v-for="(row,index) in displayed" :key="index" @dblclick="openCell(column.name,row[column.index])">{{displayCell(row[column.index])}}</td></tr></tbody>
           </table>
         </div>
         <div v-else-if="resultViewMode==='tree'" class="db-result-tree">
-          <details v-for="(row,index) in displayed" :key="index"><summary>▦ Row {{page*50+index+1}}</summary><dl><div v-for="column in visibleColumns" :key="column.index"><dt>{{column.name}}</dt><dd @dblclick="openCell(column.name,String(row[column.index]??''))">{{row[column.index]}}</dd></div></dl></details>
+          <details v-for="(row,index) in displayed" :key="index"><summary>▦ Row {{page*50+index+1}}</summary><dl><div v-for="column in visibleColumns" :key="column.index"><dt>{{column.name}}</dt><dd @dblclick="openCell(column.name,row[column.index])">{{displayCell(row[column.index])}}</dd></div></dl></details>
         </div>
         <pre v-else class="db-result-text">{{textPreview}}</pre>
         <footer class="db-result-footer">

@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useDatabaseStore } from '../state/useDatabaseStore';
-import { tableChanges, dirtyTable, importTableRows, exportTableSql } from '../model/studioTable.mjs';
-import { exportRows } from '../model/studioSql.mjs';
+import { tableChanges, dirtyTable, importTableRows, exportTableSql, projectTableRows } from '../model/studioTable.mjs';
 import {markdownResult} from '../model/ideaDock.mjs';
 const db = useDatabaseStore();
 const table = computed(() => db.document.tableData);
@@ -15,13 +14,20 @@ const fileInput = ref<HTMLInputElement|null>(null);
 const dataViewMode=ref<'table'|'tree'|'text'>('table');
 const transposed=ref(false);
 const dataColumns=computed(()=>table.value?.page?.table.columns||[]);
+const shownRows = computed(() => table.value?.page?.rows.slice((table.value.displayPage || 0) * 50, ((table.value.displayPage || 0) + 1) * 50) || []);
+const displayRows=computed(()=>table.value?projectTableRows(table.value,shownRows.value):[]);
 const readText=computed(()=>{
   if(!table.value?.page)return '';
-  try { return exportRows(dataColumns.value.map(column=>column.name),shownRows.value.map(row=>row.values),'json').slice(0,160000); }
-  catch { return '当前批次不能安全地转成文本预览'; }
+  try {
+    return JSON.stringify({
+      columns:dataColumns.value.map(column=>column.name),
+      rows:displayRows.value.map(row=>({row_id:row.id,status:row.status,values:row.values})),
+    },null,2).slice(0,160000);
+  } catch { return '当前批次不能安全地转成文本预览'; }
 });
-
-const shownRows = computed(() => table.value?.page?.rows.slice((table.value.displayPage || 0) * 50, ((table.value.displayPage || 0) + 1) * 50) || []);
+function rowStatus(status:string) {
+  return status==='inserted'?'新增草稿':status==='removed'?'待删除':status==='changed'?'已修改':'未修改';
+}
 function request(current:any, extra:Record<string,unknown>={}) { return { name:current.name, offset:current.offset, filters:current.filters, order:current.order, ...extra }; }
 const readVersions = new WeakMap<object, number>();
 function ownsTable(documentId:string, current:any) {
@@ -157,21 +163,21 @@ watch(()=>[db.document.transaction,db.document.busy],()=>{const current=table.va
     <div class="tools"><select v-model="filterColumn" :disabled="blocked||dirtyTable(table)" aria-label="筛选字段"><option v-for="column in table.page.table.columns" :key="column.name" :value="column.name">{{column.name}}</option></select><select v-model="filterOperator" :disabled="blocked||dirtyTable(table)" aria-label="筛选条件"><option value="eq">等于</option><option value="ne">不等于</option><option value="contains">包含</option><option value="gt">大于</option><option value="ge">大于等于</option><option value="lt">小于</option><option value="le">小于等于</option><option value="is_null">是 NULL</option><option value="not_null">不是 NULL</option></select><input v-if="!['is_null','not_null'].includes(filterOperator)" v-model="filterValue" :disabled="blocked||dirtyTable(table)" placeholder="参数值，不拼接到 SQL" aria-label="筛选值"/><button :disabled="blocked||dirtyTable(table)||table.filters.length>=16" @click="addFilter">应用筛选</button><span v-for="(filter,index) in table.filters" :key="index">{{filter.column}} {{filter.operator}} {{filter.value}}<button :disabled="blocked||dirtyTable(table)" :aria-label="'移除筛选 '+filter.column" @click="removeFilter(index)">×</button></span></div>
     <nav class="table-data-views" role="toolbar" aria-label="表数据视图">
       <span>View As</span>
-      <button v-for="mode in (['table','tree','text'] as const)" :key="mode" type="button" :aria-pressed="dataViewMode===mode" @click="dataViewMode=mode">{{mode==='table'?'Table':mode==='tree'?'Tree':'Text'}}</button>
-      <button type="button" :disabled="dataViewMode!=='table'" :aria-pressed="transposed" @click="transposed=!transposed">⇄ 转置</button>
-      <span class="view-hint">Tree、Text 和转置为只读展示，草稿保留但不会提交</span>
+      <button v-for="mode in (['table','tree','text'] as const)" :key="mode" type="button" :disabled="!!table.cell" :aria-pressed="dataViewMode===mode" @click="dataViewMode=mode">{{mode==='table'?'Table':mode==='tree'?'Tree':'Text'}}</button>
+      <button type="button" :disabled="!!table.cell||dataViewMode!=='table'" :aria-pressed="transposed" @click="transposed=!transposed">⇄ 转置</button>
+      <span class="view-hint">{{table.cell?'请先保存或取消当前单元格编辑再切换视图':'Tree、Text 和转置为只读展示；草稿、待删除和新增行仍会显示'}}</span>
     </nav>
     <div v-if="dataViewMode==='table' && !transposed" class="grid"><table><thead><tr><th>操作</th><th v-for="column in table.page.table.columns" :key="column.name"><button :disabled="blocked||dirtyTable(table)||column.binary" :title="column.datatype" @click="sort(column.name)">{{column.primary?'🔑 ':''}}{{column.name}}{{table.order[0]?.column===column.name?(table.order[0].descending?' ↓':' ↑'):''}}</button></th></tr></thead><tbody>
       <tr v-for="row in shownRows" :key="row.row_id" :class="{removed:table.removed.includes(row.row_id)}"><td><button :disabled="!canEdit" @click="removeRow(row)">{{table.removed.includes(row.row_id)?'恢复':'删除'}}</button></td><td v-for="(column,index) in table.page.table.columns" :key="column.name" :class="{changed:table.edits[row.row_id]&&Object.prototype.hasOwnProperty.call(table.edits[row.row_id],column.name)}"><button class="cell" :disabled="!canEdit||column.generated||column.binary||table.removed.includes(row.row_id)" :title="String(value(row,index)??'NULL').slice(0,1000)" @click="edit(row,index)">{{value(row,index)===null?'NULL':String(value(row,index)).slice(0,240)}}</button></td></tr>
       <tr v-for="row in table.inserts" :key="row.id" class="inserted"><td><button :disabled="!canEdit" @click="table.inserts=table.inserts.filter((item:any)=>item.id!==row.id)">移除新行</button></td><td v-for="(column,index) in table.page.table.columns" :key="column.name"><button class="cell" :disabled="!canEdit||column.generated||column.binary" @click="edit(row,index,true)">{{!Object.prototype.hasOwnProperty.call(row.values,column.name)?'DEFAULT':row.values[column.name]===null?'NULL':String(row.values[column.name]).slice(0,240)}}</button></td></tr>
     </tbody></table></div>
     <div v-else-if="dataViewMode==='table' && transposed" class="grid table-transposed" aria-label="转置表数据，只读">
-      <table><thead><tr><th>字段 / 行</th><th v-for="row in shownRows" :key="row.row_id">{{row.row_id}}</th></tr></thead>
-      <tbody><tr v-for="(column,index) in dataColumns" :key="column.name"><th>{{column.name}}</th><td v-for="row in shownRows" :key="row.row_id">{{row.values[index]}}</td></tr></tbody></table>
+      <table><thead><tr><th>字段 / 行</th><th v-for="row in displayRows" :key="row.key">{{row.id}} · {{rowStatus(row.status)}}</th></tr></thead>
+      <tbody><tr v-for="(column,index) in dataColumns" :key="column.name"><th>{{column.name}}</th><td v-for="row in displayRows" :key="row.key">{{row.values[index]===null?'NULL':String(row.values[index])}}</td></tr></tbody></table>
     </div>
     <div v-else-if="dataViewMode==='tree'" class="table-tree" aria-label="表数据树形视图，只读">
-      <details v-for="row in shownRows" :key="row.row_id"><summary>▤ Row {{row.row_id}}</summary>
-        <dl><div v-for="(column,index) in dataColumns" :key="column.name"><dt>{{column.name}}</dt><dd>{{row.values[index]}}</dd></div></dl>
+      <details v-for="row in displayRows" :key="row.key"><summary>▤ {{row.id}} · {{rowStatus(row.status)}}</summary>
+        <dl><div v-for="(column,index) in dataColumns" :key="column.name"><dt>{{column.name}}</dt><dd>{{row.values[index]===null?'NULL':String(row.values[index])}}</dd></div></dl>
       </details>
     </div>
     <pre v-else class="table-text" aria-label="表数据 JSON 文本预览，只读">{{readText}}</pre>

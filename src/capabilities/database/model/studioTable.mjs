@@ -5,6 +5,45 @@ export function makeTableDocument(name) {
   if (typeof name !== 'string' || !name || size(name) > 255) throw new Error('DB_TABLE_NAME_INVALID');
   return { name, offset: 0, filters: [], order: [], page: null, edits: {}, inserts: [], removed: [], ticket: null, cell: null, cellText: '', cellNull: false, notice: '' };
 }
+
+/**
+ * One consistent, read-only projection for every table presentation mode.
+ * Existing edits, pending deletes and inserted rows remain visible in Tree,
+ * Text and Transpose. This helper never mutates data or authorizes a write.
+ */
+export function projectTableRows(document, rows = document?.page?.rows ?? []) {
+  if (!document?.page || !Array.isArray(rows)) return [];
+  const columns = document.page.table.columns;
+  const removed = new Set(document.removed ?? []);
+  const edits = document.edits ?? {};
+  const projected = rows.map(row => {
+    const draft = edits[row.row_id] ?? {};
+    const values = columns.map((column, index) =>
+      Object.prototype.hasOwnProperty.call(draft, column.name) ? draft[column.name] : row.values[index]
+    );
+    const changed = columns.some((column, index) =>
+      Object.prototype.hasOwnProperty.call(draft, column.name) && draft[column.name] !== row.values[index]
+    );
+    return {
+      id: String(row.row_id),
+      key: 'row:' + String(row.row_id),
+      status: removed.has(row.row_id) ? 'removed' : changed ? 'changed' : 'unchanged',
+      values,
+    };
+  });
+  for (const insert of document.inserts ?? []) {
+    projected.push({
+      id: String(insert.id),
+      key: 'insert:' + String(insert.id),
+      status: 'inserted',
+      values: columns.map(column =>
+        Object.prototype.hasOwnProperty.call(insert.values ?? {}, column.name) ? insert.values[column.name] : 'DEFAULT'
+      ),
+    });
+  }
+  return projected;
+}
+
 export function tableChanges(document) {
   const page = document.page;
   if (!page) return [];

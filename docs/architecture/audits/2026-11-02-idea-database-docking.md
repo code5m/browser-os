@@ -59,3 +59,16 @@ The global Services and browser-shell window dock, native detached multi-monitor
 10. Run installed GUI PID/FD/RSS/PSS scenarios and physical Webview denial tests independently after merge.
 
 **Status: only tests actually performed should be claimed as PASS. Installed GUI acceptance remains pending until the user runs it.**
+
+## Post-merge audit remediation (2026-11-03)
+
+A follow-up code review identified and corrected these regressions on a branch based on the merged master commit:
+
+- SQL Output now maintains a decoded typed-row projection for sorting, filtering, copying and export. Cell truncation is presentation-only; the Value Editor receives the full decoded cell value. JSON export keeps JavaScript number, boolean and null types. The native query's own field_truncated / truncated flags remain authoritative and visible.
+- The SQL workspace clear-results button now reads the active document's raw result/error. The duplicate top-level batch tabs that called an undefined handler were removed; DatabaseOutput remains the single batch-result selector.
+- A pure projectTableRows function applies edits, pending deletes and inserted rows to one read-only presentation model. Table, Tree, Text and Transpose now share that model. View switching is disabled while an unsaved cell editor is open.
+- Object search now lives inside the expanded active data-source tree. The second, duplicate table/view tree was removed; the folded secondary section is now explicitly Object Details.
+- Narrow workspaces use an overlay navigator drawer and hide the Inspector instead of squeezing three columns around the SQL editor.
+- Regression tests cover typed/long JSON export, pending table edits/deletes/inserts, undefined workspace bindings, single-tree search and narrow drawer behavior.
+
+Remaining acceptance: GitHub CI on this branch and the user's installed-GUI verification. Browser/bridge JSON currently represents Rust i64 values as JavaScript numbers; values outside JavaScript's safe-integer range require a separate DTO/serialization design and are not claimed to be losslessly represented by this UI-only patch.

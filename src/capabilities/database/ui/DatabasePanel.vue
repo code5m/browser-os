@@ -499,10 +499,13 @@ function deleteConnection() {
           <div v-if="expandedSource===c.id" class="db-source-children" role="group">
             <div class="db-tree-folder">▾ {{db.configs.find(cfg=>cfg.id===c.id)?.database||'数据库'}}</div>
             <template v-if="c.id===db.activeId">
+              <input v-model="objectFilter" class="schema-search" type="search" aria-label="筛选当前数据源的表和视图" placeholder="搜索当前数据库表和视图…" />
               <button class="db-tree-folder" :aria-expanded="tablesOpen" @click="tablesOpen=!tablesOpen">{{tablesOpen?'▾':'▸'}} ▦ Tables ({{tables.length}})</button>
               <template v-if="tablesOpen"><button v-for="object in tables" :key="object.name" class="db-tree-object" :class="{selected:db.selectedObject===object.name}" :aria-selected="db.selectedObject===object.name" @click="db.selectObject(object.name)" @dblclick="db.previewTable(object.name)" :title="'双击预览 '+object.name">▦ {{object.name}}</button></template>
               <button class="db-tree-folder" :aria-expanded="viewsOpen" @click="viewsOpen=!viewsOpen">{{viewsOpen?'▾':'▸'}} ◈ Views ({{views.length}})</button>
               <template v-if="viewsOpen"><button v-for="object in views" :key="object.name" class="db-tree-object" :class="{selected:db.selectedObject===object.name}" :aria-selected="db.selectedObject===object.name" @click="db.selectObject(object.name)" @dblclick="db.previewTable(object.name)">◈ {{object.name}}</button></template>
+              <p v-if="db.schema.length && !visibleSchema.length" class="hint">没有匹配的表或视图。</p>
+              <p v-else-if="db.schemaLoaded && !db.schema.length" class="hint">该数据库没有可见的表或视图。</p>
               <p v-if="db.schemaBusy" class="hint" role="status">正在读取数据库元数据…</p>
               <p v-else-if="db.schemaError" class="hint" role="alert">{{db.schemaError}}</p>
               <p v-else-if="!db.schemaLoaded" class="hint">连接后加载对象树</p>
@@ -514,39 +517,10 @@ function deleteConnection() {
       <p v-if="db.connections.length && !visibleConnections.length" class="hint">没有匹配的数据库连接。</p>
 
       </div>
-      <div class="schema-head"><button class="db-section-toggle" type="button" :aria-expanded="dbSchemaOpen" aria-controls="database-schema" @click="toggleDbDisclosure('schema')">{{dbSchemaOpen ? '▾':'▸'}} 对象资源树</button>
+      <div class="schema-head"><button class="db-section-toggle" type="button" :aria-expanded="dbSchemaOpen" aria-controls="database-object-details" @click="toggleDbDisclosure('schema')">{{dbSchemaOpen ? '▾':'▸'}} 对象详情</button>
         <button title="重新读取数据库对象" aria-label="刷新对象" :disabled="db.schemaBusy || !db.activeId" @click="db.refreshSchema()"><RefreshCw :size="14"/></button>
       </div>
-      <div id="database-schema" v-show="dbSchemaOpen">
-      <p class="catalog-root">▾ {{ db.form.database || '请选择数据库' }}</p>
-      <div v-if="expandedSource!==db.activeId">
-      <input v-model="objectFilter" class="schema-search" type="search" aria-label="筛选数据库表和视图" placeholder="搜索表和视图…" />
-      <div class="schema-head tree-group">
-        <button :aria-expanded="tablesOpen" @click="tablesOpen=!tablesOpen">{{ tablesOpen ? '▾' : '▸' }} 表 <small>({{db.schemaLoaded ? tables.length : '—'}})</small></button>
-      </div>
-      <template v-if="tablesOpen">
-        <button v-for="table in tables" :key="table.name" class="schema-row"
-          :class="{selected:db.selectedObject===table.name}" :aria-selected="db.selectedObject===table.name"
-          :title="'单击查看字段，双击预览数据：'+table.name"
-          @click="db.selectObject(table.name)" @dblclick="db.previewTable(table.name)"
-          @keydown.enter.prevent="db.previewTable(table.name)">▦ {{ table.name }}</button>
-      </template>
-      <div class="schema-head tree-group">
-        <button :aria-expanded="viewsOpen" @click="viewsOpen=!viewsOpen">{{ viewsOpen ? '▾' : '▸' }} 视图 <small>({{db.schemaLoaded ? views.length : '—'}})</small></button>
-      </div>
-      <template v-if="viewsOpen">
-        <button v-for="table in views" :key="table.name" class="schema-row"
-          :class="{selected:db.selectedObject===table.name}" :aria-selected="db.selectedObject===table.name"
-          :title="'单击查看字段，双击预览视图：'+table.name"
-          @click="db.selectObject(table.name)" @dblclick="db.previewTable(table.name)"
-          @keydown.enter.prevent="db.previewTable(table.name)">◈ {{ table.name }}</button>
-      </template>
-      <p v-if="db.schema.length && !visibleSchema.length" class="hint">没有匹配的对象</p>
-      <p v-if="db.schemaBusy" class="hint" role="status">正在连接并读取表和视图…</p>
-      <div v-else-if="db.schemaError" class="schema-load-error" role="alert"><p>表列表加载失败：{{db.schemaError}}</p><button @click="db.refreshSchema()">重新连接并加载</button></div>
-      <p v-else-if="!db.schema.length" class="hint">{{ db.schemaLoaded ? '该数据库没有可见的表或视图。' : '请选择数据源，加载表和视图。' }}</p>
-      </div>
-      <p class="tree-help">单击表查看字段，双击直接读取前 100 行。查询遵循原生安全门禁。</p>
+      <div id="database-object-details" v-show="dbSchemaOpen">
       <div v-if="db.selectedObject" class="object-details">
         <div class="schema-head object-header"><strong :title="db.selectedObject">{{ db.selectedObject }}</strong>
           <button :disabled="!db.activeId" @click="db.previewTable(db.selectedObject)">查看数据</button>
@@ -912,7 +886,7 @@ th { position: sticky; top: 0; background: #f7f8fa; color: #4e5969; font-weight:
 .db-panel>.tabs{flex-wrap:nowrap;gap:7px;padding:0 11px}
 .db-panel>.tabs>.studio-brand{white-space:nowrap}
 .db-panel>.tabs>.db-disclosure{white-space:nowrap;font-size:11px}
-.db-workspace{display:flex!important;flex:1;min-height:0;min-width:0;overflow:hidden;grid-template-columns:none!important}
+.db-workspace{display:flex!important;position:relative;container-type:inline-size;flex:1;min-height:0;min-width:0;overflow:hidden;grid-template-columns:none!important}
 .db-workspace>.conn{order:0;flex:0 0 var(--db-navigator-width,268px)!important;min-width:0;box-sizing:border-box;padding:7px 6px;background:#191d26;border-right:0}
 .db-workspace>.db-nav-divider{order:1}
 .db-workspace>:deep(.database-workspace){order:2;flex:1 1 0!important;min-width:0;min-height:0;box-sizing:border-box;padding:0!important;overflow:hidden!important}
@@ -989,5 +963,23 @@ th { position: sticky; top: 0; background: #f7f8fa; color: #4e5969; font-weight:
 @media(max-width:700px){
   .db-panel .db-dialog-columns{grid-template-columns:140px minmax(0,1fr)}
   .db-panel .db-dialog-config{padding:10px}
+}
+</style>
+
+<style scoped>
+/* Narrow Database Studio: navigator becomes a drawer instead of squeezing the SQL editor. */
+@container (max-width: 780px) {
+  .db-workspace>.conn {
+    position:absolute;top:0;bottom:0;z-index:8;
+    width:min(var(--db-navigator-width,268px),80%);
+    max-width:80%;flex:0 0 auto!important;
+    box-shadow:0 10px 28px #0008;
+  }
+  .db-workspace[data-side="left"]>.conn{left:0;right:auto}
+  .db-workspace[data-side="right"]>.conn{right:0;left:auto}
+  .db-workspace>.db-nav-divider,
+  .db-workspace>.db-inspector-divider,
+  .db-workspace>.inspector{display:none!important}
+  .db-workspace>:deep(.database-workspace){min-width:320px;flex:1 1 100%!important}
 }
 </style>
