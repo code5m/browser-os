@@ -4,6 +4,7 @@ import { bridge } from "../../../bridge";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { openTerminalAt } from "../../../composables/terminalNav";
 import { renderMd } from "../../../utils/markdown";
+import { documentOwnership } from "../../../application/documentOwnership.mjs";
 
 // ============================================================
 // Phase 8C-0A — Files Domain Owner
@@ -121,6 +122,8 @@ export const useFileStore = defineStore("files", () => {
   // Serialize same-process saves and clears; otherwise a late debounced save
   // could recreate a discarded or already-saved draft after successful save.
   watch([editorFilePath, fileContent, editorSavedContent], () => {
+    documentOwnership.replace("workspace-overlay", editorFilePath.value
+      ? [{path:editorFilePath.value, dirty:editorDirty.value}] : []);
     if (editorJournalTimer) clearTimeout(editorJournalTimer);
     if (!editorDirty.value) return;
     const path = editorFilePath.value;
@@ -129,8 +132,10 @@ export const useFileStore = defineStore("files", () => {
     editorJournalTimer = setTimeout(() => {
       void queueJournal(() => bridge.editorDraftSave(path, editorDraftSession, baseline, content));
     }, 650);
-  });
+  }, { flush: "sync" });
   watch([inlineFile, inlineText, inlineSavedText], () => {
+    documentOwnership.replace("workspace-inline", inlineFile.value
+      ? [{path:inlineFile.value, dirty:inlineText.value !== inlineSavedText.value}] : []);
     if (inlineJournalTimer) clearTimeout(inlineJournalTimer);
     if (!inlineFile.value || inlineText.value === inlineSavedText.value) return;
     const path = inlineFile.value;
@@ -139,7 +144,7 @@ export const useFileStore = defineStore("files", () => {
     inlineJournalTimer = setTimeout(() => {
       void queueJournal(() => bridge.editorDraftSave(path, inlineDraftSession, baseline, content));
     }, 650);
-  });
+  }, { flush: "sync" });
   let previewImageGeneration = 0;
   let previewImageActive = 0;
   const previewImageQueue: string[] = [];
@@ -252,6 +257,12 @@ export const useFileStore = defineStore("files", () => {
     return !!openPath && (openPath === clean || (isDir && openPath.startsWith(clean === "/" ? "/" : clean + "/")));
   }
   function blocksDirtyPathMutation(path: string, isDir: boolean): boolean {
+    // Coding Workbench may own an independently dirty buffer for the same
+    // filesystem path. Directory mutation must respect every open editor.
+    if (documentOwnership.dirtyUnder(path, isDir) || documentOwnership.writingUnder(path, isDir)) {
+      layout.showToast("其他工作台仍有未保存的文档，请先保存后重试");
+      return true;
+    }
     const overlayBlocked = editorDirty.value && containsDocument(path, editorFilePath.value, isDir);
     const inlineBlocked = !!inlineFile.value && inlineText.value !== inlineSavedText.value && containsDocument(path, inlineFile.value, isDir);
     if (overlayBlocked || inlineBlocked) {
@@ -609,11 +620,15 @@ export const useFileStore = defineStore("files", () => {
   async function saveInline() {
     if (!inlineFile.value) return;
     const path = inlineFile.value, text = inlineText.value;
+    let releaseSave: (() => void) | undefined;
     try {
+      releaseSave = documentOwnership.beginSave("workspace-inline", path);
       await bridge.writeFileCas(path, inlineSavedText.value, text);
     } catch (error: any) {
       layout.showToast("保存失败或磁盘冲突，草稿仍保留: " + (error?.message ?? error));
       return;
+    } finally {
+      releaseSave?.();
     }
     if (inlineFile.value !== path) return;
     inlineSavedText.value = text;
@@ -825,7 +840,9 @@ export const useFileStore = defineStore("files", () => {
     if (!path) return;
     const text = fileContent.value;
     const baseline = editorSavedContent.value;
+    let releaseSave: (() => void) | undefined;
     try {
+      releaseSave = documentOwnership.beginSave("workspace-overlay", path);
       // The native command serializes cooperating BrowserOS processes and
       // validates the baseline inside the same critical section as atomic rename.
       await bridge.writeFileCas(path, baseline, text);
@@ -836,6 +853,8 @@ export const useFileStore = defineStore("files", () => {
       layout.showToast("已保存: " + path.split("/").pop());
     } catch (error: any) {
       layout.showToast("保存失败或磁盘冲突，草稿仍保留: " + (error?.message ?? error));
+    } finally {
+      releaseSave?.();
     }
   }
 

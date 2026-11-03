@@ -27,7 +27,7 @@ Review policy: one integration branch and one PR, never 8 approvals. CODE_PASS, 
 | AGENT-01 Rig oversized result | CODE_PASS in this branch | rig_driver.rs validates output before success and records Failed; experimental-rig-run test |
 | AGENT-02 retired Task memory | CODE_PASS in this branch | event.rs and task.rs bound retained terminal history to 256 retired tasks; recent replay retained |
 | DATA-01 DB large integers | Prior partial CODE_PASS, GUI_PENDING | master contains bigint-safe normalization and MySQL/PostgreSQL E2E; exact clipboard/download in packaged GUI unverified |
-| DATA-02 Workspace save/recovery | Prior partial CODE_PASS, GUI_PENDING | editorFilePath and encrypted journal plus advisory path lock, but NOT unconditional atomic CAS against noncooperating external writers |
+| DATA-02 Workspace save/recovery | Partial CODE_PASS, GUI_PENDING | Existing editorFilePath/encrypted journal/native advisory CAS plus this branch's cross-workbench identity, shared dirty claims, save admission and directory mutation guard; noncooperative external editors remain outside OS-level CAS guarantees |
 | DATA-03 Coding multiple-file apply | Prior partial CODE_PASS, GUI_PENDING | durable journal plus fault rollback and crash detection; real external side-effect reconciliation pending |
 | DATA-04 DB CSV/TSV/JSON/SQL/Markdown | Prior CODE_PASS, GUI_PENDING | pure function and component contracts, actual clipboard/download still not accepted |
 | DATA-05 binary lossless export | NOT IMPLEMENTED | current API contains placeholder byte count, intentionally blocks invalid export; needs explicitly designed byte stream/download contract |
@@ -38,8 +38,8 @@ Review policy: one integration branch and one PR, never 8 approvals. CODE_PASS, 
 | NATIVE-02 window shutdown | BLOCKED by native acceptance | main.rs still synchronously calls shutdown on CloseRequested/ExitRequested; native resource release evidence missing |
 | NATIVE-03 sync eval_in_tab/Terminal | BLOCKED by protected bridge.rs |  protected source; do not modify without explicit native risk approval and real desktop evidence |
 | NATIVE-04 real side effects of 58 commands | GUI_PENDING | static source/origin and permission inventory PASS; real effects and remote-webview refusal not demonstrated |
-| UI-01 universal Document Manager | NOT COMPLETE | separate document stores/versions still exist |
-| UI-02 browser/module Tab Registry | NOT COMPLETE | logical UI projection is not unified underlying WebView/resource ownership |
+| UI-01 universal Document Manager | PARTIAL, CODE_PASS for shared identity arbitration | New src/application/documentOwnership.mjs coordinates absolute paths, dirty owners, in-flight saves and directory mutations across Workspace overlay/inline and Coding Workbench; each still owns its own text/model/saved hash, so no universal single canonical Document Manager yet |
+| UI-02 browser/module Tab Registry | PARTIAL, logical projection CODE_PASS | New src/application/tabResourceProjection.mjs renders one typed/owner-bound tab list in UnifiedTabBar.vue; WebView lifecycle still belongs exclusively to browser Owner, module resources belong to layout Owner (as required by locked 1 tab = 1 WebView policy). No native pool or physical resource unification. |
 | UI-03 Database and Git dock/drag | CODE_PASS in simulator; GUI_PENDING | formal studio-folding/database-idea-dock tests pass; installed WebView geometry unverified |
 | UI-04 Ctrl+N focused native WebView | CODE_PASS in shell fixtures; GUI_PENDING | JS/Monaco/terminal focus guards exist; native child-webview real events must be checked |
 | WECHAT-01 official account draft-only | CODE_PASS with mock transport; REAL ACCOUNT PENDING | keyring, media, draft/get flows exist; no real account material/image/draft verification; no publish/mass-send |
@@ -69,3 +69,19 @@ PLT2-14q reproduced failed Hot-Plug reactivation that left the production Runtim
 - Agent Foundation `experimental-rig-run`：29 个单元测试、4 个契约测试 PASS；覆盖输出超限终态、短任务日志回收。
 - `npm run check`：PASS；Capability Platform 63 PASS / 0 FAIL；Hot-Plug Acceptance PASS。
 - 生产 Vite 构建、最终 SHA 的 Pre-merge 和 GitHub PR 检查须在本次提交后独立核验。
+
+## Follow-on implementation on the SAME branch (2026-11-03)
+
+- Cross-workbench document ownership layer is a single process-local metadata coordinator, not a content database. Workspace overlay/inline and Coding Workbench publish active dirty documents into it, with synchronous update semantics.
+- Coding save, multi-file Agent apply and Workspace CAS save now reserve the same absolute path. An independently dirty editor, concurrent save, or in-progress save under a directory rejects mutation before any irreversible native operation. Native saved-hash/CAS remains the final authority for competing processes; no unsafe bypass has been added.
+- UnifiedTabBar.vue now renders one read-only projection carrying logical tab owner, type, path and native resource ID (only web tabs have actual WebView IDs). Close/activate calls retain the original Browser/Module Owners and do not alter WebView creation/hide/destroy or ordinary tab-close policy.
+- npm run check:module-contracts now includes all cross-editor and tab resource tests; module contracts 20/20 PASS, CROSS_WORKBENCH_DOCUMENT_OWNERSHIP=PASS, CROSS_WORKBENCH_FILE_STORE=PASS, UNIFIED_TAB_RESOURCE_PROJECTION=PASS.
+- npm run check: PASS; npm run check:coding-ui: PASS for real Chrome/Monaco with mocked file/model/native transport, not installed GUI acceptance.
+- Remaining nontrivial gaps: physical unified resource ownership (would cross locked native/WebView interfaces), durable production Task/Session/Approval authority (requires approved key encryption/identity and recovery), lossless binary database transport (current Tauri API only exposes binary lengths), native blocking/GTK shutdown (locked native boundary), real WeChat account and installed GUI resource evidence. They cannot be marked complete without actual authority/evidence and required contract approval.
+
+## Latest build/evidence status after document and tab projection
+
+- Source tests: npm run check PASS, including 20 module contracts and the three new cross-workbench/tab tests; npm run check:coding-ui PASS with real Chrome and Monaco, simulated backend transport.
+- Full local Vite build **NOT PASS** on this worktree. A 2-GiB V8 heap scope was terminated deliberately by the operator before a system-wide OOM because memory and swap were exhausted by concurrent desktop programs. The subsequent 1.5-GiB V8 heap limit failed cleanly with V8 heap exhausted during transform. These are resource constraints, not a test of production correctness. Do NOT inherit previous SHA's build or Pre-merge PASS.
+- The project requires at least a clean production build and full same-SHA Pre-merge gate for merging. Real installed GUI remains GUI_PENDING; no release install, screen capture or WeChat credential verification was performed.
+- One intentionally missing guarantee remains: metadata-only document ownership does not replace separate content buffers/Monaco models, and only coordinates writes **within this process**. Native CAS still provides cross-process validation.

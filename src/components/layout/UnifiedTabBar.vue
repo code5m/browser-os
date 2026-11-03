@@ -8,6 +8,7 @@ import { useTerminalStore } from "../../capabilities/terminal/public";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Globe, Plus, X } from '@lucide/vue';
 import { bridge } from '../../bridge';
+import { projectTabResources } from "../../application/tabResourceProjection.mjs";
 
 // 统一页签条：浏览器网页页签 + 目录页签 + 模块页签（终端/文件等）混排在同一条，
 // 不区分类型 —— 点击即切换对应视图，行为与浏览器标签一致。
@@ -17,6 +18,12 @@ const fs = useFileStore();
 const appsStore = useAppsStore();
 const term = useTerminalStore();
 const context = ref<{ id: string; kind: 'web' | 'module' } | null>(null);
+// One read-only tab resource projection, routing operations to existing Owners.
+// A module tab is never represented as a fake native WebView.
+const projectedTabs = computed(() => projectTabResources(
+  browser.tabs,layout.modTabs,layout.mainView,browser.activeTabId,layout.activeModTab
+));
+
 
 // Resolve the native window only after an explicit user action so a browser/dev
 // preview can render the shell even when Tauri APIs are unavailable.
@@ -165,6 +172,15 @@ function isActiveMod(id: string) {
   return layout.isModView() && layout.activeModTab === id;
 }
 
+function activateProjectedTab(tab: { id:string;kind:string;view?:string;path?:string|null }) {
+  if (tab.kind === "web") void activateWeb(tab.id);
+  else activateMod({ id:tab.id, view:tab.view || "home", path:tab.path || undefined });
+}
+function closeProjectedTab(tab: { id:string;kind:string }) {
+  if (tab.kind === "web") void browser.tabClose(tab.id);
+  else layout.closeModTab(tab.id);
+}
+
 function activateMod(t: { id: string; view: string; path?: string }) {
   if (term.m0Cfg?.driver) return;
   layout.activateModTab(t.id);
@@ -179,31 +195,19 @@ function activateMod(t: { id: string; view: string; path?: string }) {
 <template>
   <div class="tabbar unified" @mousedown="startWindowDrag">
     <div class="tab-strip">
-    <!-- 网页页签 -->
+    <!-- Unified logical tabs, not a native WebView lifecycle replacement. -->
     <div
-      v-for="t in browser.tabs"
-      :key="t.id"
-      :class="['tab', { active: isActiveWeb(t.id) }]"
-      @click="activateWeb(t.id)"
-      @contextmenu.prevent="context = { id: t.id, kind: 'web' }"
-      :title="t.url"
+      v-for="tab in projectedTabs"
+      :key="tab.key"
+      :class="['tab', {active:tab.active}]"
+      @click="activateProjectedTab(tab)"
+      @contextmenu.prevent="context = { id: tab.id, kind: tab.kind === 'web' ? 'web' : 'module' }"
+      :title="tab.path || tab.title"
     >
-      <Globe class="tab-ic" :size="15"/>
-      <span class="tab-title">{{ t.title || t.url }}</span>
-      <button class="tab-close" @click.stop="browser.tabClose(t.id)" title="关闭"><X :size="14"/></button>
-    </div>
-    <!-- 目录 / 模块页签 -->
-    <div
-      v-for="t in layout.modTabs"
-      :key="t.id"
-      :class="['tab', { active: isActiveMod(t.id) }]"
-      @click="activateMod(t)"
-      @contextmenu.prevent="context = { id: t.id, kind: 'module' }"
-      :title="t.path || t.label"
-    >
-      <span class="tab-ic">{{ t.icon }}</span>
-      <span class="tab-title">{{ t.label }}</span>
-      <button class="tab-close" @click.stop="layout.closeModTab(t.id)" title="关闭"><X :size="14"/></button>
+      <Globe v-if="tab.kind === 'web'" class="tab-ic" :size="15"/>
+      <span v-else class="tab-ic">{{ tab.icon }}</span>
+      <span class="tab-title">{{ tab.title }}</span>
+      <button class="tab-close" @click.stop="closeProjectedTab(tab)" title="关闭"><X :size="14"/></button>
     </div>
     <button class="tab-new" @click="browser.tabNew()" title="新建页签"><Plus :size="18"/></button>
     </div>

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue';
 import { Channel } from '@tauri-apps/api/core';
 import { bridge } from '../../../bridge';
 import { aiService, type AiProfile } from '../../../settings/public';
 import CodingCodeEditor from './CodingCodeEditor.vue';
+import { documentOwnership, documentKey } from '../../../application/documentOwnership.mjs';
 import CodingCommandPanel from './CodingCommandPanel.vue';
 import CodingOperationReview from './CodingOperationReview.vue';
 import { clampPane, dirtyBuffers, isDirtyBuffer, entryPath, newBuffer, sessionMessages, canApplyChanges, proposalFor, reconcileSavedBuffer, parseMcpJson, providerFailureHint, sessionNotice, selectChatModel } from '../model/codingWorkbench.mjs';
@@ -17,6 +18,16 @@ const root=ref(''), connectedRoot=ref(''), tree=ref<Entry[]>([]), folders=ref<Re
 const truncatedDirs=ref<Record<string,boolean>>({});
 const directoryPages=ref<Record<string,{snapshot:string;nextOffset:number|null}>>({});
 const buffers=ref<Buffer[]>([]), active=ref(''), sidebar=ref('files'), search=ref(''), searchResults=ref<any[]>([]);
+// Share document identity/dirty metadata, never text, with the filesystem
+// editors. Immediate publishing prevents same-turn saves from missing drafts.
+const CODING_DOCUMENT_OWNER = 'coding-workbench';
+watch([buffers,connectedRoot],()=>{
+  const scope=connectedRoot.value;
+  documentOwnership.replace(CODING_DOCUMENT_OWNER,scope
+    ? buffers.value.map(buffer=>({root:scope,path:buffer.path,dirty:isDirtyBuffer(buffer)}))
+    : []);
+},{deep:true,flush:'sync',immediate:true});
+
 const searchTruncated=ref(false);
 let searchSequence=0;
 let resourceSequence=0;
@@ -206,7 +217,33 @@ async function openFile(path:string){
 function createFile(){const path=newFilePath.value.trim();if(!connectedRoot.value||!path||path.startsWith('/')||path.split('/').includes('..')){notice.value='请输入项目内相对文件路径';return;}fileOpenRequest++;invalidatePreview();if(buffers.value.some(buffer=>buffer.path===path)){active.value=path;return;}buffers.value.push(newBuffer(path,'',null));active.value=path;preview.value=null;newFilePath.value='';notice.value='新文件将在首次保存时创建';}
 async function listSessions(){if(!connectedRoot.value||busy.value)return;await act(async()=>{const result=await call({action:'sessions_list'});recentSessions.value=result.sessions||[];sessionsTruncated.value=!!result.truncated;});}
 async function resumeSession(){if(mcpRunning.value){notice.value='MCP 调用进行中，请等待完成后恢复其他会话';return;}if(pendingOperations.value.length){notice.value='请先处理待审批操作，再恢复其他会话';return;}if(!connectedRoot.value||busy.value||dirty.value.length||changes.value.length){notice.value='请先处理草稿与待审核变更';return;}busy.value=true;try{await act(async()=>{updateSession(await call({action:'session',session_id:resumeId.value.trim()}));notice.value='已恢复项目会话';});}finally{busy.value=false;}}
-async function save(){const buffer=current.value;if(!buffer||busy.value||preview.value||sessionRecoveryRequired.value)return;if(changes.value.length){notice.value='请先处理智能体的待审核变更，再保存编辑器文件';return;}const proposal=proposalFor(buffer);interruptedSave.value={buffer,attempted:proposal.content};busy.value=true;try{const staged=await call({...proposal,session_id:sessionId.value});sessionId.value=staged.session_id;await call({action:'apply',session_id:sessionId.value});const result=await call({action:'read',path:buffer.path});notice.value=reconcileSavedBuffer(buffer,proposal.content,result)?(buffer.content===buffer.saved?'文件已保存':'已保存先前内容；之后的编辑仍未保存。'):'磁盘内容与保存内容不一致；草稿和原校验基准已保留，请检查外部修改。';interruptedSave.value=null;}catch(error){if(error instanceof ProjectScopeChanged)return;sessionRecoveryRequired.value=true;try{const matches=await syncInterruptedSession();notice.value=matches?'保存响应中断，已重新核对文件和会话；请检查草稿和待审核变更。':'磁盘内容与保存内容不一致；草稿和原校验基准已保留，请检查外部修改。';}catch{notice.value='保存响应中断，文件或会话状态未知；请先恢复当前会话并核对。';}}finally{busy.value=false;}}
+async function save(){
+  const buffer=current.value;
+  if(!buffer||busy.value||preview.value||sessionRecoveryRequired.value)return;
+  if(changes.value.length){notice.value='请先处理智能体的待审核变更，再保存编辑器文件';return;}
+  let releaseSave:(()=>void)|undefined;
+  try{releaseSave=documentOwnership.beginSave(CODING_DOCUMENT_OWNER,documentKey(connectedRoot.value,buffer.path));}
+  catch{notice.value='同一文件在其他工作台中有未保存修改或正在保存；请先解决冲突';return;}
+  const proposal=proposalFor(buffer);interruptedSave.value={buffer,attempted:proposal.content};busy.value=true;
+  try{
+    const staged=await call({...proposal,session_id:sessionId.value});
+    sessionId.value=staged.session_id;
+    await call({action:'apply',session_id:sessionId.value});
+    const result=await call({action:'read',path:buffer.path});
+    notice.value=reconcileSavedBuffer(buffer,proposal.content,result)
+      ?(buffer.content===buffer.saved?'文件已保存':'已保存先前内容；之后的编辑仍未保存。')
+      :'磁盘内容与保存内容不一致；草稿和原校验基准已保留，请检查外部修改。';
+    interruptedSave.value=null;
+  }catch(error){
+    if(error instanceof ProjectScopeChanged)return;
+    sessionRecoveryRequired.value=true;
+    try{
+      const matches=await syncInterruptedSession();
+      notice.value=matches?'保存响应中断，已重新核对文件和会话；请检查草稿和待审核变更。'
+        :'磁盘内容与保存内容不一致；草稿和原校验基准已保留，请检查外部修改。';
+    }catch{notice.value='保存响应中断，文件或会话状态未知；请先恢复当前会话并核对。';}
+  }finally{releaseSave?.();busy.value=false;}
+}
 function closeFile(path:string){const buffer=buffers.value.find(item=>item.path===path);if(buffer&&isDirtyBuffer(buffer)){notice.value='文件有未保存内容，请先保存，或点击「放弃修改」';return;}buffers.value=buffers.value.filter(item=>item.path!==path);if(active.value===path)active.value=buffers.value.at(-1)?.path||'';}
 function discard(){if(current.value){if(current.value.hash===null){const path=current.value.path;buffers.value=buffers.value.filter(item=>item.path!==path);active.value=buffers.value.at(-1)?.path||'';notice.value='已放弃未保存的新文件';}else{current.value.content=current.value.saved;notice.value='已恢复最后保存内容';}}}
 async function searchFiles(){const request=++searchSequence;searchResults.value=[];searchTruncated.value=false;await act(async()=>{const result=await call({action:'search',query:search.value});if(request!==searchSequence)return;searchResults.value=result.matches||result;searchTruncated.value=!!result.truncated;});}
@@ -259,8 +296,17 @@ async function previewChange(change:any){
 }
 async function applyChanges(){
   if(busy.value||sessionRecoveryRequired.value)return;if(previewLoading.value||previewFailed.value||(preview.value&&!previewReady.value)){notice.value='预览尚未就绪，请重新预览或取消预览';return;}if(!canApplyChanges(buffers.value,changes.value)){notice.value='目标文件有未保存草稿，请先放弃草稿或放弃智能体变更';return;}
+  const releaseWrites:(()=>void)[]=[];
+  try{
+    const paths=new Set(changes.value.map(item=>documentKey(connectedRoot.value,item.path)));
+    for(const path of paths)releaseWrites.push(documentOwnership.beginSave(CODING_DOCUMENT_OWNER,path));
+  }catch{
+    for(const release of releaseWrites.reverse())release();
+    notice.value='待应用文件在其他工作台中有未保存修改或正在保存；请先解决冲突';
+    return;
+  }
   const pending=changes.value.map(item=>({path:item.path,content:item.content}));const snapshots=new Map(buffers.value.map(buffer=>[buffer.path,buffer.content]));interruptedApply.value={pending,snapshots};busy.value=true;
-  try{const result=await call({action:'apply',session_id:sessionId.value});let conflict=false;for(const change of pending){const resultFile=await call({action:'read',path:change.path});if(resultFile.content!==change.content){conflict=true;continue;}const buffer=buffers.value.find(item=>item.path===change.path);if(buffer){reconcileSavedBuffer(buffer,change.content,resultFile);if(buffer.content===snapshots.get(change.path))buffer.content=resultFile.content;}}updateSession(result);interruptedApply.value=null;preview.value=null;diff.value=false;notice.value=conflict?'变更已应用，但磁盘内容已发生变化；草稿和原校验基准保留，请检查。':'已应用审核后的变更';}catch(error){if(error instanceof ProjectScopeChanged)return;sessionRecoveryRequired.value=true;notice.value='应用响应中断，文件或会话状态未知；请先恢复会话并核对文件，勿重复应用。';}finally{busy.value=false;}
+  try{const result=await call({action:'apply',session_id:sessionId.value});let conflict=false;for(const change of pending){const resultFile=await call({action:'read',path:change.path});if(resultFile.content!==change.content){conflict=true;continue;}const buffer=buffers.value.find(item=>item.path===change.path);if(buffer){reconcileSavedBuffer(buffer,change.content,resultFile);if(buffer.content===snapshots.get(change.path))buffer.content=resultFile.content;}}updateSession(result);interruptedApply.value=null;preview.value=null;diff.value=false;notice.value=conflict?'变更已应用，但磁盘内容已发生变化；草稿和原校验基准保留，请检查。':'已应用审核后的变更';}catch(error){if(error instanceof ProjectScopeChanged)return;sessionRecoveryRequired.value=true;notice.value='应用响应中断，文件或会话状态未知；请先恢复会话并核对文件，勿重复应用。';}finally{for(const release of releaseWrites.reverse())release();busy.value=false;}
 }
 async function discardChanges(){if(busy.value||sessionRecoveryRequired.value)return;busy.value=true;try{await act(async()=>{updateSession(await call({action:'discard',session_id:sessionId.value}));invalidatePreview();preview.value=null;notice.value='已放弃智能体待审核变更，编辑器草稿保留';});}finally{busy.value=false;}}
 let cleanupDrag:(()=>void)|undefined;
