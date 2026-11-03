@@ -30,3 +30,12 @@ This is an **incomplete** batch. Do not interpret it as completion of all user r
 ## Required final acceptance
 
 Run frontend quick and full checks plus Rust gates after implementation has converged; then produce source-SHA matched MySQL service runs, deb package inspection, installed GUI behavior and resource before/after evidence. Never call `CODE_PASS`, `PACKAGE_PASS`, or `GUI_PASS` without the corresponding completed gate; `GUI_PASS` requires explicit user real desktop acceptance under `AGENTS.md`.
+
+## Gate findings from this batch
+
+The `scripts/pre-merge.sh` run on this branch ended `PRE_MERGE_RESULT=FAIL`. The two observed failure groups were:
+
+1. `build metrics regression` against historical `logs/m0-build-metrics/build-metrics-052b18a.json`: the budget checker reported `approved_editor_budget_passed=false` because its asset-name snapshot comparison differs from the currently built hashed assets. The historical growth ratio was observational and Rust warnings did not increase. **No threshold or snapshot was changed to hide this failure.**
+2. Initially `SEMANTIC_UNREGISTERED_STATE` for the new `editorFilePath`, `editorSavedContent`, and `editorDirty` fields. Subsequently added their declarations in `docs/architecture/semantic-registry/states.yaml` and verified `node scripts/check-semantic-registry.mjs` passes (`fail=0`); a new full `pre-merge.sh` run has not been completed after that adjustment.
+
+The F12 Playwright test did not run because `playwright` is not installed locally. Tests with mocked bridge interactions cannot substitute for a real installed GUI. Full merge remains blocked until all required checks and genuine user acceptance are recorded.
