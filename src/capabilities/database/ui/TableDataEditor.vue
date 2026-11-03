@@ -2,7 +2,6 @@
 import { computed, ref, watch } from 'vue';
 import { useDatabaseStore } from '../state/useDatabaseStore';
 import { tableChanges, dirtyTable, importTableRows, exportTableSql, projectTableRows } from '../model/studioTable.mjs';
-import { exportRows } from '../model/studioSql.mjs';
 import {markdownResult} from '../model/ideaDock.mjs';
 const db = useDatabaseStore();
 const table = computed(() => db.document.tableData);
