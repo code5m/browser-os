@@ -11,6 +11,7 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
   page.on('pageerror',error=>errors.push(error.message));
   await page.route('**/__lsp_test',route=>route.fulfill({contentType:'text/html',body:`<style>html,body,#app{height:100%;margin:0}</style><div id="app"></div><script type="module">
    import {createApp} from '${vue}';import Workbench from '/src/capabilities/agent/ui/CodingWorkbench.vue';import {bridge} from '/src/bridge.ts';
+   window.__TAURI_INTERNALS__={transformCallback:()=>1};
    const calls=[];window.fixture={calls,resolved:false};
    bridge.aiService=async()=>({profiles:[{id:'fixture',name:'Fixture',model:'fixture-model',kind:'chat'}],bindings:{default:'fixture'}});
    bridge.codingService=async request=>{calls.push(request);
