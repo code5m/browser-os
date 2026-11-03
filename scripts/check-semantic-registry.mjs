@@ -706,13 +706,13 @@ const NEG_FILES = {
 // 否则 RI 规则会对所有 owner 报 UNRESOLVED 而误 FAIL。内容仅含已登记 minimal 声明，不触发其它规则。
 const ANCHOR_FILES = [
   { path: "src/stores/useLayoutStore.ts", src: `const gridToolbarOpen = ref(false); const sidebarOpen = ref(false); const clipOpen = ref(false);` },
-  { path: "src/capabilities/grid/state/useGridStore.ts", src: `const gridSession = ref(0); const aiNavOpen = ref(false);` },
+  { path: "src/capabilities/grid/state/useGridStore.ts", src: `const gridSession = ref(0);` },
   { path: "src/capabilities/workspace/state/useWorkspaceStore.ts", src: `const recents = ref([]);` },
   { path: "src/capabilities/workspace/state/useFileStore.ts", src: `const filePath = ref("");` },
   { path: "src/capabilities/workspace/state/useArtifactStore.ts", src: `const current = ref(null);` },
   { path: "src/capabilities/workspace/state/useRepoStore.ts", src: `const preview = ref(null);` },
-  { path: "src/capabilities/workspace/state/useScriptStore.ts", src: `const scripts = ref([]);` },
-  { path: "src/capabilities/workspace/state/useSnippetStore.ts", src: `const snippets = ref([]);` },
+  { path: "src/capabilities/script/state/useScriptStore.ts", src: `const scripts = ref([]);` },
+  { path: "src/capabilities/script/state/useSnippetStore.ts", src: `const snippets = ref([]);` },
   { path: "src/stores/useBookmarkStore.ts", src: `const panelOpen = ref(false); const items = ref([]);` },
   // Phase 8E/Train D：Terminal owner 已迁入能力包；锚点须跟随 locator，否则 RI 会对
   // useTerminalStore 报 UNRESOLVED（自检误 FAIL）。
@@ -735,9 +735,10 @@ const ANCHOR_FILES = [
   { path: "src/capabilities/database/state/useDatabaseStore.ts", src: `const connections = ref([]);` },
   { path: "src/capabilities/git/state/useGitStore.ts", src: `const status = ref([]);` },
   // Phase C：Browser 子域 + Settings（owner = browser / settings capability）。锚点跟随 locator。
+  { path: "src/capabilities/browser/state/useBrowserStore.ts", src: `const aiNavOpen = ref(false);` },
   { path: "src/capabilities/browser/state/useResourceStore.ts", src: `const resources = ref([]); const filter = ref("all");` },
-  { path: "src/capabilities/browser/state/useSessionStore.ts", src: `const sessions = ref([]); const detail = ref(null);` },
-  { path: "src/capabilities/browser/state/useGridArchiveStore.ts", src: `const rows = ref([]); const busy = ref(false);` },
+  { path: "src/capabilities/session/state/useSessionStore.ts", src: `const sessions = ref([]); const detail = ref(null);` },
+  { path: "src/capabilities/grid/state/useGridArchiveStore.ts", src: `const rows = ref([]); const busy = ref(false);` },
   { path: "src/capabilities/browser/state/useImagePreviewStore.ts", src: `const items = ref([]); const open = ref(false);` },
   { path: "src/settings/state/useSettingsStore.ts", src: `const theme = ref("dark"); const keymapScheme = ref("vscode"); const tabHibernation = ref(false); const currentKeymap = computed(() => KEYMAP_SCHEMES[keymapScheme.value]);` },
   { path: "src/capabilities/skill/state/useSkillStore.ts", src: `const skills = ref([]);` },

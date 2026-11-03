@@ -568,6 +568,25 @@ states:
     adr_required: false
     status: CURRENT_FACT
 
+  inlineSavedText:
+    owner: useFileStore
+    single_owner_required: true
+    meaning: 当前行内文件最近成功读取或保存的文本快照，用于识别未保存修改
+    not_meaning:
+      - 文件系统当前版本或跨进程原子保存凭据
+      - 当前可编辑文本（见 inlineText）
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useFileStore.openFileInline
+      - useFileStore.saveInline
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: 仅用于行内草稿提示，不保证外部修改检测或原子保存
+
   previewDir:
     owner: useFileStore
     meaning: 目录预览（图片画廊）当前预览的目录路径
