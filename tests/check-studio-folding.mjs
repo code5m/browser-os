@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {parse,compileTemplate} from '@vue/compiler-sfc';
 const components={
-  'database':{file:'src/capabilities/database/ui/DatabasePanel.vue',keys:['navigator','inspector','connections','schema'],labels:['database-navigator','database-inspector','database-connections','database-schema']},
+  'database':{file:'src/capabilities/database/ui/DatabasePanel.vue',keys:['navigator','inspector','connections','schema'],labels:['database-navigator','database-inspector','database-connections','database-object-details']},
   'git':{file:'src/capabilities/git/ui/GitStudio.vue',keys:['toolbar','files','inspector'],labels:['git-workspace-tools','git-file-pane','git-commit-inspector']},
 };
 for(const [name,{file,keys,labels}] of Object.entries(components)){
