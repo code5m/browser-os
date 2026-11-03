@@ -44,7 +44,7 @@ function pruneClosedModels(){
     });
   }
 }
-function applyLocation(){const value=props.location;if(value?.path!==props.path||value.id===locationApplied||!editor)return;const target=editor.getModifiedEditor?.()||editor;target.setPosition({lineNumber:value.line,column:value.column});target.revealPositionInCenter(target.getPosition());target.focus();locationApplied=value.id;}
+function applyLocation(){const value=props.location;if(value?.path!==props.path||mountedPath!==props.path||value.id===locationApplied||!editor)return;const target=editor.getModifiedEditor?.()||editor;target.setPosition({lineNumber:value.line,column:value.column});target.revealPositionInCenter(target.getPosition());target.focus();locationApplied=value.id;}
 function renameSymbol(){if(!ready.value||props.diff||props.readOnly||mountedPath!==props.path)return;editor?.focus();void editor?.getAction('editor.action.rename')?.run();}
 defineExpose({renameSymbol});
 async function mountEditor(){
