@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import {makeTableDocument,tableChanges,dirtyTable,importTableRows,exportTableSql} from '../src/capabilities/database/model/studioTable.mjs';
+import {makeTableDocument,tableChanges,dirtyTable,importTableRows,exportTableSql,exportTableData} from '../src/capabilities/database/model/studioTable.mjs';
 let count=0;
 const eq=(actual,expected)=>{assert.deepEqual(actual,expected);count++;};
 const rejects=fn=>{assert.throws(fn);count++;};
@@ -25,5 +25,10 @@ eq(importTableRows('value\n""','csv',columns)[0].values,{value:''});
 eq(exportTableSql('item',['value'],[["O'Reilly"]],'sqlite'),"-- Export of the loaded rows only. Review before executing.\nINSERT INTO \"item\" (\"value\") VALUES ('O''Reilly');");
 const mysql=exportTableSql('item',['value'],[["a\\' OR 1=1"]],'mysql');assert(mysql.includes('CONVERT(0x'));assert(!mysql.includes('OR 1=1'));count+=2;
 eq(exportTableSql('item',['value'],[[null]],'postgres'),"-- Export of the loaded rows only. Review before executing.\nINSERT INTO \"item\" (\"value\") VALUES (NULL);");
+for (const format of ['csv', 'tsv', 'json', 'sql', 'markdown']) {
+  assert.throws(() => exportTableData('item', [{ name: 'payload', binary: true }], [['<binary 3 bytes>']], format, 'sqlite'), /无法无损导出/);
+  count++;
+}
+eq(exportTableData('item', [{name:'value',binary:false}], [['hello']], 'csv', 'sqlite'), 'value\r\nhello');
 const before=JSON.stringify(document);const another=makeTableDocument('other');another.inserts.push({id:'new',values:{value:'different'}});eq(JSON.stringify(document),before);
 console.log(`TABLE_DATA_MODEL_TESTS=PASS assertions=${count}; native concurrency and rollback tests run with cargo test studio_table`);

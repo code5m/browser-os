@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useDatabaseStore } from '../state/useDatabaseStore';
-import { tableChanges, dirtyTable, importTableRows, exportTableSql, projectTableRows } from '../model/studioTable.mjs';
-import {markdownResult} from '../model/ideaDock.mjs';
+import { tableChanges, dirtyTable, importTableRows, exportTableData, projectTableRows, tableTextPreview } from '../model/studioTable.mjs';
 const db = useDatabaseStore();
 const table = computed(() => db.document.tableData);
 const config = computed(() => db.configs.find(c => c.id === db.document.connId));
@@ -15,15 +14,14 @@ const dataViewMode=ref<'table'|'tree'|'text'>('table');
 const transposed=ref(false);
 const dataColumns=computed(()=>table.value?.page?.table.columns||[]);
 const shownRows = computed(() => table.value?.page?.rows.slice((table.value.displayPage || 0) * 50, ((table.value.displayPage || 0) + 1) * 50) || []);
-const displayRows=computed(()=>table.value?projectTableRows(table.value,shownRows.value):[]);
+const shownInserts=computed(()=>table.value && !(table.value.displayPage || 0) ? table.value.inserts : []);
+const displayRows=computed(()=>table.value?projectTableRows(table.value,shownRows.value,!(table.value.displayPage || 0)):[]);
 const readText=computed(()=>{
-  if(!table.value?.page)return '';
+  if(!table.value?.page)return {text:'',truncated:false};
   try {
-    return JSON.stringify({
-      columns:dataColumns.value.map(column=>column.name),
-      rows:displayRows.value.map(row=>({row_id:row.id,status:row.status,values:row.values})),
-    },null,2).slice(0,160000);
-  } catch { return '当前批次不能安全地转成文本预览'; }
+    return tableTextPreview(dataColumns.value.map(column=>column.name),
+      displayRows.value.map(row=>({row_id:row.id,status:row.status,values:row.values})));
+  } catch { return {text:'当前批次不能安全地转成文本预览',truncated:false}; }
 });
 function rowStatus(status:string) {
   return status==='inserted'?'新增草稿':status==='removed'?'待删除':status==='changed'?'已修改':'未修改';
@@ -74,6 +72,7 @@ function saveCell() {
 function addRow() {
   if (!canEdit.value || changes.value.length>=100) return;
   table.value.inserts.push({id:crypto.randomUUID(),values:{}});
+  table.value.displayPage=0;
   table.value.notice='新行未填写的字段使用数据库默认值；空字符串与 NULL 分别处理。';
 }
 function removeRow(row:any) {
@@ -136,14 +135,14 @@ async function imported(event:Event) {
     const rows=importTableRows(await file.text(),format,current.page.table.columns);
     if(db.activeDocument!==docId||table.value!==current)throw new Error('页签已变化，请在原页重新选择文件');
     if(rows.length+changes.value.length>100)throw new Error('每批最多 100 项改动，请减少导入行数');
-    current.inserts.push(...rows);current.notice=`已载入 ${rows.length} 行导入草稿。没有执行 SQL，请预览并核对。`;
+    current.inserts.push(...rows);current.displayPage=0;current.notice=`已载入 ${rows.length} 行导入草稿。没有执行 SQL，请预览并核对。`;
   }catch(e){current.notice='导入未执行：'+String(e);}
 }
 function exportData() {
   const current=table.value;if(!current?.page)return;
   try {
-    const columns=current.page.table.columns.map((c:any)=>c.name),rows=current.page.rows.map((r:any)=>r.values);
-    const text=exportFormat.value==='sql'?exportTableSql(current.name,columns,rows,config.value?.kind):exportFormat.value==='markdown'?markdownResult(columns,rows):exportRows(columns,rows,exportFormat.value);
+    const columns=current.page.table.columns,rows=current.page.rows.map((r:any)=>r.values);
+    const text=exportTableData(current.name,columns,rows,exportFormat.value,config.value?.kind);
     const url=URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'}));
     const link=document.createElement('a');link.href=url;link.download=`browseros-table-${new Date().toISOString().slice(0,10)}.${exportFormat.value}`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
     current.notice='仅导出当前服务端批次已读取的原始行，不包含未应用的草稿。';
@@ -158,6 +157,7 @@ watch(()=>[db.document.transaction,db.document.busy],()=>{const current=table.va
   <p v-if="!table.page">{{db.busy?'正在读取表结构与数据…':'尚未读取数据；请检查数据源及下方错误。'}}</p>
   <template v-else>
     <p class="hint">所有筛选与排序均重新请求数据库；主键自动追加为稳定排序条件。每批最多 100 行，未读取的数据不会冒充已导出。</p>
+    <p v-if="table.displayPage && table.inserts.length" class="hint">{{table.inserts.length}} 条新增草稿显示在前 50 行。</p>
     <p v-if="!table.page.stable_order" class="warning">此对象没有可验证的主键，翻页顺序可能随并发修改变化；只能查看，不能编辑。</p>
     <p v-if="!table.page.editable" class="warning">当前只读：写入要求明确的非生产权限、主键、事务表以及可安全比较的文本数据。视图、二进制列或非事务表不会被强行编辑。</p>
     <div class="tools"><select v-model="filterColumn" :disabled="blocked||dirtyTable(table)" aria-label="筛选字段"><option v-for="column in table.page.table.columns" :key="column.name" :value="column.name">{{column.name}}</option></select><select v-model="filterOperator" :disabled="blocked||dirtyTable(table)" aria-label="筛选条件"><option value="eq">等于</option><option value="ne">不等于</option><option value="contains">包含</option><option value="gt">大于</option><option value="ge">大于等于</option><option value="lt">小于</option><option value="le">小于等于</option><option value="is_null">是 NULL</option><option value="not_null">不是 NULL</option></select><input v-if="!['is_null','not_null'].includes(filterOperator)" v-model="filterValue" :disabled="blocked||dirtyTable(table)" placeholder="参数值，不拼接到 SQL" aria-label="筛选值"/><button :disabled="blocked||dirtyTable(table)||table.filters.length>=16" @click="addFilter">应用筛选</button><span v-for="(filter,index) in table.filters" :key="index">{{filter.column}} {{filter.operator}} {{filter.value}}<button :disabled="blocked||dirtyTable(table)" :aria-label="'移除筛选 '+filter.column" @click="removeFilter(index)">×</button></span></div>
@@ -169,7 +169,7 @@ watch(()=>[db.document.transaction,db.document.busy],()=>{const current=table.va
     </nav>
     <div v-if="dataViewMode==='table' && !transposed" class="grid"><table><thead><tr><th>操作</th><th v-for="column in table.page.table.columns" :key="column.name"><button :disabled="blocked||dirtyTable(table)||column.binary" :title="column.datatype" @click="sort(column.name)">{{column.primary?'🔑 ':''}}{{column.name}}{{table.order[0]?.column===column.name?(table.order[0].descending?' ↓':' ↑'):''}}</button></th></tr></thead><tbody>
       <tr v-for="row in shownRows" :key="row.row_id" :class="{removed:table.removed.includes(row.row_id)}"><td><button :disabled="!canEdit" @click="removeRow(row)">{{table.removed.includes(row.row_id)?'恢复':'删除'}}</button></td><td v-for="(column,index) in table.page.table.columns" :key="column.name" :class="{changed:table.edits[row.row_id]&&Object.prototype.hasOwnProperty.call(table.edits[row.row_id],column.name)}"><button class="cell" :disabled="!canEdit||column.generated||column.binary||table.removed.includes(row.row_id)" :title="String(value(row,index)??'NULL').slice(0,1000)" @click="edit(row,index)">{{value(row,index)===null?'NULL':String(value(row,index)).slice(0,240)}}</button></td></tr>
-      <tr v-for="row in table.inserts" :key="row.id" class="inserted"><td><button :disabled="!canEdit" @click="table.inserts=table.inserts.filter((item:any)=>item.id!==row.id)">移除新行</button></td><td v-for="(column,index) in table.page.table.columns" :key="column.name"><button class="cell" :disabled="!canEdit||column.generated||column.binary" @click="edit(row,index,true)">{{!Object.prototype.hasOwnProperty.call(row.values,column.name)?'DEFAULT':row.values[column.name]===null?'NULL':String(row.values[column.name]).slice(0,240)}}</button></td></tr>
+      <tr v-for="row in shownInserts" :key="row.id" class="inserted"><td><button :disabled="!canEdit" @click="table.inserts=table.inserts.filter((item:any)=>item.id!==row.id)">移除新行</button></td><td v-for="(column,index) in table.page.table.columns" :key="column.name"><button class="cell" :disabled="!canEdit||column.generated||column.binary" @click="edit(row,index,true)">{{!Object.prototype.hasOwnProperty.call(row.values,column.name)?'DEFAULT':row.values[column.name]===null?'NULL':String(row.values[column.name]).slice(0,240)}}</button></td></tr>
     </tbody></table></div>
     <div v-else-if="dataViewMode==='table' && transposed" class="grid table-transposed" aria-label="转置表数据，只读">
       <table><thead><tr><th>字段 / 行</th><th v-for="row in displayRows" :key="row.key">{{row.id}} · {{rowStatus(row.status)}}</th></tr></thead>
@@ -180,7 +180,7 @@ watch(()=>[db.document.transaction,db.document.busy],()=>{const current=table.va
         <dl><div v-for="(column,index) in dataColumns" :key="column.name"><dt>{{column.name}}</dt><dd>{{row.values[index]===null?'NULL':String(row.values[index])}}</dd></div></dl>
       </details>
     </div>
-    <pre v-else class="table-text" aria-label="表数据 JSON 文本预览，只读">{{readText}}</pre>
+    <div v-else><p v-if="readText.truncated" class="warning" role="status">预览已截断，不是完整 JSON。导出仅包含当前批次原始数据，不含未提交草稿；含二进制字段时无法导出。</p><pre class="table-text" aria-label="表数据 JSON 文本预览，只读">{{readText.text}}</pre></div>
     <section v-if="table.cell" class="cell-editor"><strong>编辑 {{table.cell.column}} · 只修改草稿</strong><label><input v-model="table.cellNull" type="checkbox"/>设为 NULL（不同于空字符串）</label><textarea v-model="table.cellText" :disabled="table.cellNull" rows="4" aria-label="单元格值"/><button :disabled="!canEdit" @click="saveCell">保存到草稿</button><button @click="table.cell=null">不修改</button></section>
     <section v-if="table.ticket" class="confirmation" aria-label="DML 执行预览"><strong>请核对数据源、SQL 和绑定参数</strong><p>每行会重新锁定并比对原值。任一冲突导致整批回滚；应用成功后仍需单独提交事务。</p><div v-for="(statement,index) in table.ticket.statements" :key="index"><code>{{statement.sql}}</code><details><summary>{{statement.parameters.length}} 个绑定参数</summary><pre>{{JSON.stringify(statement.parameters,null,2)}}</pre></details></div><label><input v-model="acknowledged" type="checkbox"/>我已核对 {{config?.name}} / {{table.name}} 的 {{table.ticket.statements.length}} 项操作</label><button :disabled="!acknowledged||db.busy" @click="apply">应用到事务（不自动提交）</button><button :disabled="db.busy" @click="cancelPreview">取消预览</button></section>
     <footer class="tools"><button :disabled="blocked||dirtyTable(table)||table.offset===0" @click="load(table.offset-100)">上一批</button><span>服务端第 {{table.offset/100+1}} 批 · {{table.page.rows.length}} 行</span><button :disabled="blocked||dirtyTable(table)||!table.page.has_more||table.offset>=50000" @click="load(table.offset+100)">下一批</button><button :disabled="!(table.displayPage||0)" @click="table.displayPage=0">显示前 50 行</button><button :disabled="table.page.rows.length<=50" @click="table.displayPage=1">显示后 50 行</button></footer>

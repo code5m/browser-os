@@ -2,7 +2,7 @@
 import {computed, onBeforeUnmount, onMounted, ref, watch} from 'vue';
 import {useDatabaseStore} from '../state/useDatabaseStore';
 import {buildResultView, decodeDbValue, truncateText} from '../../../utils/dbUi';
-import {exportRows} from '../model/studioSql.mjs';
+import {exportRows, assertLosslessQueryExport} from '../model/studioSql.mjs';
 import {readDock, resizedOutput, writeDock, markdownResult} from '../model/ideaDock.mjs';
 
 const db = useDatabaseStore();
@@ -56,7 +56,7 @@ const displayed=computed(()=>rows.value.slice(page.value*50,(page.value+1)*50));
 const visibleColumns=computed(()=>view.value?.columns.map((name,index)=>({name,index})).filter(x=>!hiddenColumns.value.has(x.index))||[]);
 const textPreview=computed(()=>{
   try{return exportText().slice(0,160000);}
-  catch{return '当前格式不能显示预览；请切换为 CSV、TSV、JSON 或 Markdown。';}
+  catch(error){return '无法生成文本预览：'+String(error);}
 });
 watch(()=>[db.activeDocument,raw.value,filter.value],()=>{
   page.value=0;sortColumn.value=-1;hiddenColumns.value=new Set();valueEditor.value=null;
@@ -112,6 +112,7 @@ function toggleColumn(index:number){
 function exportText(){
   const v=view.value;
   if(!v)return '';
+  assertLosslessQueryExport(raw.value?.rows ?? []);
   if(exportFormat.value==='markdown')return markdownResult(v.columns,rows.value);
   return exportRows(v.columns,rows.value,exportFormat.value);
 }

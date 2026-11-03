@@ -10,12 +10,11 @@ use foundation::{
         run_benchmark_suite, run_routed_fixture_owned, BenchmarkReport, RoutedFixtureResult,
     },
     context::{ContextGrant, ContextKind, ContextRef},
-    event::EventJournal,
     experiment::{ExperimentConfig, ExperimentRouter},
     public_api::{current_public_api_catalog, PublicApiHost, PublicApiRegistry, PublicApiSpec},
     tool::{ToolEffect, ToolFuture, ToolRegistry},
 };
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -424,6 +423,7 @@ pub async fn agent_runtime_read_tool(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     #[test]
     fn read_catalog_refuses_effectful_owner_paths() {
         assert!(resource_for("db_query", &json!({"sql":"SELECT 1"})).is_err());

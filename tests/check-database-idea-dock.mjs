@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {KEY, normalizeDock, readDock, writeDock, resizedWidth, resizedOutput, markdownResult} from '../src/capabilities/database/model/ideaDock.mjs';
-import {exportRows} from '../src/capabilities/database/model/studioSql.mjs';
-import {projectTableRows} from '../src/capabilities/database/model/studioTable.mjs';
+import {exportRows, assertLosslessQueryExport} from '../src/capabilities/database/model/studioSql.mjs';
+import {projectTableRows, tableTextPreview} from '../src/capabilities/database/model/studioTable.mjs';
 assert.equal(normalizeDock().side,'right');
 assert.deepEqual(normalizeDock({side:'unsafe',navigator:Infinity,output:9000}),{side:'right',navigator:268,inspector:258,output:750,resultOpen:true,resultMaximized:false});
 assert.equal(resizedWidth(300,100,'left',920,260),360);
@@ -17,6 +17,9 @@ cache.set(KEY,'{bad');assert.equal(readDock(storage).side,'right');
 assert.equal(readDock({getItem:()=>{throw new Error('private')}}).side,'right');
 assert.equal(writeDock({}, {setItem:()=>{throw new Error('private')}}),false);
 assert.match(markdownResult(['name'],[['alpha|beta']]),/alpha\\\|beta/);
+assert.doesNotThrow(()=>assertLosslessQueryExport([[{text:'<binary 3 bytes>'}, {i64:3}, 'null']]));
+assert.throws(()=>assertLosslessQueryExport([[{binary:{bytes:3}}]]), /无法无损/);
+assert.throws(()=>assertLosslessQueryExport([[{blob_len:3}]]), /无法无损/);
 
 const longText='x'.repeat(600);
 const typedJson=JSON.parse(exportRows(['number','boolean','nullValue','longText'],[[42,true,null,longText]],'json'));
@@ -24,6 +27,12 @@ assert.equal(typedJson.rows[0][0],42,'JSON export preserves numeric type');
 assert.equal(typedJson.rows[0][1],true,'JSON export preserves boolean type');
 assert.equal(typedJson.rows[0][2],null,'JSON export preserves NULL');
 assert.equal(typedJson.rows[0][3],longText,'JSON export preserves long text without display truncation');
+const fullPreview=tableTextPreview(['value'],[['hello']]);
+assert.equal(fullPreview.truncated,false);
+assert.deepEqual(JSON.parse(fullPreview.text),{columns:['value'],rows:[['hello']]});
+const shortPreview=tableTextPreview(['value'],[['x'.repeat(200)]],50);
+assert.equal(shortPreview.truncated,true);
+assert.equal(shortPreview.text.length,50);
 const projected=projectTableRows({
   page:{table:{columns:[{name:'id'},{name:'name'}]},rows:[
     {row_id:'1',values:['1','before']},{row_id:'2',values:['2','remove']}
@@ -35,6 +44,9 @@ assert.deepEqual(projected,[
   {id:'2',key:'row:2',status:'removed',values:['2','remove']},
   {id:'new-row',key:'insert:new-row',status:'inserted',values:['DEFAULT','new']}
 ],'all table views share pending edits, deletes and inserts');
+assert.deepEqual(projectTableRows({page:{table:{columns:[{name:'id'}]}},edits:{},removed:[],inserts:[{id:'new',values:{id:'3'}}]},[{row_id:'2',values:['2']}],false),[
+  {id:'2',key:'row:2',status:'unchanged',values:['2']}
+],'second display page does not repeat inserted drafts');
 
 const panel=readFileSync('src/capabilities/database/ui/DatabasePanel.vue','utf8');
 const workspace=readFileSync('src/capabilities/database/ui/DatabaseWorkspace.vue','utf8');
@@ -60,7 +72,7 @@ for(const name of ['DatabasePanel','DatabaseWorkspace','DatabaseOutput','TableDa
   assert.deepEqual(compiled.errors,[],name+' template must compile');
 }
 assert.match(output,/aria-orientation="horizontal"/);
-assert.match(readFileSync('src/capabilities/database/ui/TableDataEditor.vue','utf8'),/exportTableSql/);
+assert.match(readFileSync('src/capabilities/database/ui/TableDataEditor.vue','utf8'),/exportTableData/);
 assert.match(panel,/aria-orientation="vertical"/);
 assert.match(panel,/db-dialog-sources/);
 assert.match(panel,/source-children/);

@@ -15,6 +15,7 @@ import { useTerminalStore } from "./capabilities/terminal/public";
 import { useLayoutStore } from "./stores/useLayoutStore";
 import { openModuleInCurrentTab } from "./composables/browserNav";
 import { onChildShellShortcut } from "./composables/shellShortcuts";
+import { quickCreateAction } from "./composables/quickCreate.mjs";
 import { useSettingsStore } from "./settings/public";
 
 import ActivityBar from "./components/layout/ActivityBar.vue";
@@ -252,6 +253,13 @@ onMounted(async () => {
 
   function onGlobalKeydown(e: KeyboardEvent) {
     if (term.m0Cfg?.driver || e.isComposing) return;
+    const createAction = quickCreateAction(e, layout.mainView);
+    if (createAction) {
+      e.preventDefault();
+      if (createAction === 'tab') browser.tabNew();
+      else void fs.quickNew(createAction === 'file' ? 'file' : 'dir');
+      return;
+    }
     // 输入框/文本域内不触发全局快捷键
     const t = e.target as HTMLElement;
     if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)

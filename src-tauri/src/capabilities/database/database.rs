@@ -812,7 +812,13 @@ impl QueryLimiter {
 
     /// 单字段截断（保留前 `DB_MAX_TEXT_FIELD_BYTES` 字节，按字符边界安全切分）。
     fn normalize_field(&mut self, value: DbValue) -> DbValue {
+        const JS_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
         match value {
+            // JSON numbers outside this range lose precision in JavaScript.
+            // Reuse the existing text variant so older clients decode them safely.
+            DbValue::I64(n) if !(-JS_SAFE_INTEGER..=JS_SAFE_INTEGER).contains(&n) => {
+                DbValue::Text(n.to_string())
+            }
             DbValue::Text(s) if s.len() > DB_MAX_TEXT_FIELD_BYTES => {
                 self.field_truncated = true;
                 let mut kept = String::new();
@@ -1002,6 +1008,34 @@ pub(crate) fn query_sqlite_with_deadline(
 #[cfg(test)]
 mod mysql_mapping_tests {
     use super::*;
+
+    #[test]
+    fn large_integer_query_values_use_lossless_wire_representation() {
+        let mut pool = DbPool::Sqlite(rusqlite::Connection::open_in_memory().unwrap());
+        let result = pool
+            .query(
+                "SELECT 9007199254740991, 9007199254740992, -9007199254740992, 9223372036854775807",
+                &QueryCancel::new(),
+                None,
+                "precise-integers",
+            )
+            .unwrap();
+        let wire = serde_json::to_value(&result).unwrap();
+        assert_eq!(wire["rows"][0][0]["i64"], 9_007_199_254_740_991_i64);
+        assert_eq!(wire["rows"][0][1]["text"], "9007199254740992");
+        assert_eq!(wire["rows"][0][2]["text"], "-9007199254740992");
+        assert_eq!(wire["rows"][0][3]["text"], "9223372036854775807");
+        let mut limiter = QueryLimiter::new();
+        for value in [
+            mysql::Value::Int(9_007_199_254_740_992),
+            mysql::Value::UInt(9_007_199_254_740_992),
+        ] {
+            assert_eq!(
+                limiter.normalize_field(from_mysql_value(value, false)),
+                DbValue::Text("9007199254740992".into())
+            );
+        }
+    }
 
     #[test]
     fn mysql_values_preserve_binary_and_unsigned_boundaries() {

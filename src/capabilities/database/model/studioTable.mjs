@@ -1,6 +1,12 @@
 /** Pure table editing helpers. Values stay strings/null; never round database integers in JavaScript. */
 import { parseDelimited, quoteIdentifier } from './studioSql.mjs';
+import { exportRows } from './studioSql.mjs';
+import { markdownResult } from './ideaDock.mjs';
 const size = value => new TextEncoder().encode(value).length;
+export function tableTextPreview(columns, rows, limit = 160000) {
+  const text = JSON.stringify({columns, rows}, null, 2);
+  return {text: text.slice(0, limit), truncated: text.length > limit};
+}
 export function makeTableDocument(name) {
   if (typeof name !== 'string' || !name || size(name) > 255) throw new Error('DB_TABLE_NAME_INVALID');
   return { name, offset: 0, filters: [], order: [], page: null, edits: {}, inserts: [], removed: [], ticket: null, cell: null, cellText: '', cellNull: false, notice: '' };
@@ -11,7 +17,7 @@ export function makeTableDocument(name) {
  * Existing edits, pending deletes and inserted rows remain visible in Tree,
  * Text and Transpose. This helper never mutates data or authorizes a write.
  */
-export function projectTableRows(document, rows = document?.page?.rows ?? []) {
+export function projectTableRows(document, rows = document?.page?.rows ?? [], includeInserts = true) {
   if (!document?.page || !Array.isArray(rows)) return [];
   const columns = document.page.table.columns;
   const removed = new Set(document.removed ?? []);
@@ -31,7 +37,7 @@ export function projectTableRows(document, rows = document?.page?.rows ?? []) {
       values,
     };
   });
-  for (const insert of document.inserts ?? []) {
+  for (const insert of includeInserts ? document.inserts ?? [] : []) {
     projected.push({
       id: String(insert.id),
       key: 'insert:' + String(insert.id),
@@ -112,4 +118,13 @@ export function exportTableSql(name, columns, rows, kind) {
   }).join('\n');
   if (size(result) > 5 * 1024 * 1024) throw new Error('DB_EXPORT_LIMIT');
   return result;
+}
+
+/** Export only real values: the native table API returns placeholders for binary columns. */
+export function exportTableData(name, columns, rows, format, kind) {
+  if (columns.some(column => column.binary)) throw new Error('含二进制字段，当前无法无损导出');
+  const names = columns.map(column => column.name);
+  if (format === 'sql') return exportTableSql(name, names, rows, kind);
+  if (format === 'markdown') return markdownResult(names, rows);
+  return exportRows(names, rows, format);
 }

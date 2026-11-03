@@ -96,7 +96,9 @@ try{
   await new Promise(resolve=>setTimeout(resolve,0));eq(store.completionCatalog,{});
   bridge.dbQuery=originalQuery;
   store.selectConnection(store.connections[0]);store.sql='SELECT 7';const first=store.activeDocument;
+  const schemaQueriesBeforeSwitch=calls.filter(c=>c[0]==='query').length;
   store.selectConnection(store.connections[1]);await nextTick();
+  eq(calls.filter(c=>c[0]==='query').length-schemaQueriesBeforeSwitch,1);
   eq(store.documents.find(d=>d.id===first).connId,'A');
   eq(store.documents.find(d=>d.id===first).sql,'SELECT 7');
   eq(store.document.connId,'B');

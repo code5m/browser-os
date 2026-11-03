@@ -51,6 +51,7 @@ export const useFileStore = defineStore("files", () => {
   const compareImages = ref<DirEntry[]>([]);
   const inlineFile = ref("");
   const inlineText = ref("");
+  const inlineSavedText = ref("");
   const inlineIsMd = ref(false);
   const inlineEdit = ref(false);
   const inlineHtml = ref("");
@@ -81,6 +82,7 @@ export const useFileStore = defineStore("files", () => {
 
   // ===== 目录图片预览：加载内部状态（实现细节，非公开治理态） =====
   let previewRequest = 0;
+  let inlineReadRequest = 0;
   let previewImageGeneration = 0;
   let previewImageActive = 0;
   const previewImageQueue: string[] = [];
@@ -148,12 +150,18 @@ export const useFileStore = defineStore("files", () => {
     }
     closeFileCtx();
   }
-  // 头部快捷新建：基于当前打开文件所在目录（无打开文件则用首根目录）
+  // 目录预览以目录本身为目标；编辑文件时使用文件的父目录。
   function currentBaseDir(): string {
-    if (filePath.value) {
-      const i = filePath.value.lastIndexOf("/");
-      return i > 0 ? filePath.value.slice(0, i) : "/";
+    if (layout.fileEditorOpen && filePath.value) {
+      const i = filePath.value.lastIndexOf('/');
+      return i > 0 ? filePath.value.slice(0, i) : '/';
     }
+    if (inlineFile.value) {
+      const i = inlineFile.value.lastIndexOf('/');
+      return i > 0 ? inlineFile.value.slice(0, i) : '/';
+    }
+    if (previewDir.value) return previewDir.value;
+    if (filePath.value) return filePath.value;
     return treeRoots.value[0]?.path || "/";
   }
   async function quickNew(kind: "file" | "dir") {
@@ -162,6 +170,10 @@ export const useFileStore = defineStore("files", () => {
     const label = kind === "file" ? "新文件名" : "新目录名";
     const name = (prompt(`${label}（将创建于 ${base}）：`, def) || "").trim();
     if (!name) return;
+    if (name === '.' || name === '..' || /[\/\\\0]/.test(name)) {
+      layout.showToast('名称无效：请输入单个文件或目录名称');
+      return;
+    }
     try {
       if (kind === "file") {
         await bridge.createFile(base.replace(/\/$/, "") + "/" + name, "");
@@ -177,6 +189,11 @@ export const useFileStore = defineStore("files", () => {
     }
   }
   async function ctxDelete(entry: DirEntry) {
+    const target = entry.path.replace(/\/+$/, '') || '/';
+    const openPath = inlineFile.value;
+    const containsOpenFile = !!openPath && (openPath === target ||
+      (entry.is_dir && openPath.startsWith(target === '/' ? '/' : target + '/')));
+    if (containsOpenFile && !canDiscardInline()) return;
     if (!confirm(`删除「${entry.name}」？此操作不可恢复`)) {
       closeFileCtx();
       return;
@@ -184,7 +201,10 @@ export const useFileStore = defineStore("files", () => {
     try {
       await bridge.deletePath(entry.path);
       layout.showToast("已删除: " + entry.name);
-      if (inlineFile.value === entry.path) closeInline();
+      if (containsOpenFile && inlineFile.value === openPath) {
+        ++inlineReadRequest;
+        inlineFile.value = "";
+      }
       await refreshTree();
     } catch (e: any) {
       layout.showToast("删除失败: " + (e?.message ?? e));
@@ -441,6 +461,10 @@ export const useFileStore = defineStore("files", () => {
   );
 
   // ===== 行内文件预览/编辑（IDE 右栏；与 overlay 编辑器的 filePath/fileContent 完全隔离） =====
+  function canDiscardInline(): boolean {
+    return !inlineFile.value || inlineText.value === inlineSavedText.value ||
+      confirm('当前文件有未保存的修改，放弃修改并继续吗？');
+  }
   async function openFileInline(entry: DirEntry) {
     if (entry.is_dir) {
       toggleTreeDir(entry.path);
@@ -453,12 +477,18 @@ export const useFileStore = defineStore("files", () => {
       layout.showToast(`非文本文件 (${entry.name})，暂不支持预览`);
       return;
     }
+    if (!canDiscardInline()) return;
+    const request = ++inlineReadRequest;
+    const oldFile = inlineFile.value;
+    const oldText = inlineText.value;
     try {
       const text = await bridge.readFile(entry.path);
+      if (request !== inlineReadRequest || inlineFile.value !== oldFile || inlineText.value !== oldText) return;
       inlineFile.value = entry.path;
       filePath.value = entry.path.lastIndexOf("/") > 0 ? entry.path.slice(0, entry.path.lastIndexOf("/")) : "/";
       pathInput.value = filePath.value;
       inlineText.value = text;
+      inlineSavedText.value = text;
       inlineIsMd.value = isMd;
       inlineEdit.value = !isMd; // md 默认预览，其它文本直接编辑
       inlineHtml.value = isMd ? renderMd(text) : "";
@@ -474,11 +504,16 @@ export const useFileStore = defineStore("files", () => {
   }
   async function saveInline() {
     if (!inlineFile.value) return;
-    await bridge.writeFile(inlineFile.value, inlineText.value);
+    const path = inlineFile.value, text = inlineText.value;
+    await bridge.writeFile(path, text);
+    if (inlineFile.value !== path) return;
+    inlineSavedText.value = text;
     if (inlineIsMd.value && !inlineEdit.value) inlineHtml.value = renderMd(inlineText.value);
     layout.showToast("已保存: " + inlineFile.value.split("/").pop());
   }
   function closeInline() {
+    if (!canDiscardInline()) return;
+    ++inlineReadRequest;
     inlineFile.value = "";
   }
 
@@ -542,6 +577,8 @@ export const useFileStore = defineStore("files", () => {
   }
   async function openDirPreview(entry: DirEntry) {
     if (!entry.is_dir) return;
+    if (!canDiscardInline()) return;
+    ++inlineReadRequest;
     const request = ++previewRequest;
     clearPreviewImageQueue();
     previewDir.value = entry.path;

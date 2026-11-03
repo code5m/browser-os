@@ -109,6 +109,11 @@ export function quoteIdentifier(name, kind) {
   if (typeof name !== 'string' || !name || bytes(name) > 255 || /[\0\r\n]/.test(name)) throw new Error('DB_IDENTIFIER_INVALID');
   const quote = kind === 'mysql' ? '`' : '"'; return quote + name.replaceAll(quote, quote + quote) + quote;
 }
+export function assertLosslessQueryExport(rows) {
+  if (rows.some(row => Array.isArray(row) && row.some(value => value && typeof value === 'object' && ('binary' in value || 'blob_len' in value)))) {
+    throw new Error('结果包含二进制占位值，无法无损复制或导出');
+  }
+}
 export function exportRows(columns, rows, format = 'csv') {
   if (!Array.isArray(columns) || columns.length > 512 || rows.length > 1000 || !['csv','tsv','json'].includes(format)) throw new Error('DB_EXPORT_LIMIT');
   const delimiter = format === 'tsv' ? '\t' : ',';

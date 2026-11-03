@@ -185,7 +185,9 @@ export const useDatabaseStore = defineStore("database", () => {
         const next = makeDoc(++sequence, c.id); documents.value.push(next); activeDocument.value = next.id;
       }
     } else document.value.connId = c.id;
-    synchronizeDocumentSource();
+    // A changed active document is synchronized by its watcher; avoid a
+    // duplicate metadata query. Retargeting the same document needs one call.
+    if (activeDocument.value === previous.id) synchronizeDocumentSource();
   }
 
   async function refreshConnections() {

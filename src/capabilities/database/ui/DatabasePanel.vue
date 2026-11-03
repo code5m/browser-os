@@ -131,8 +131,11 @@ function resetDatabaseDock() {
   persistPanelDock();
 }
 function selectSource(connection: {id:string;enabled:boolean}) {
-  expandedSource.value=connection.id;
-  if (connection.enabled) { const item=db.connections.find(c=>c.id===connection.id);if (item) db.selectConnection(item); }
+  if (connection.enabled) {
+    const item=db.connections.find(c=>c.id===connection.id);
+    if (item) db.selectConnection(item);
+    if (db.activeId===connection.id) expandedSource.value=connection.id;
+  }
   else { const saved=db.configs.find(cfg=>cfg.id===connection.id);if (saved) selectPendingIdeaConfig(saved); }
 }
 function toggleSource(id:string) {

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
-const root = new URL('../', import.meta.url).pathname
+import { fileURLToPath } from 'node:url'
+const root = fileURLToPath(new URL('../', import.meta.url))
 const names=JSON.parse(readFileSync(join(root,'docs/architecture/native-boundary/native-permission-debt-baseline.json'),'utf8')).pending_side_effect_reviews
 const exceptions={report_title:'remote-collect telemetry + origin check',report_resources:'remote-collect telemetry + origin check'}
 function rustPaths(dir){return readdirSync(dir,{withFileTypes:true}).flatMap(e=>e.isDirectory()?rustPaths(join(dir,e.name)):e.name.endsWith('.rs')?[join(dir,e.name)]:[])}
