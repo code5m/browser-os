@@ -631,6 +631,23 @@ export const bridge = {
 
   writeFile: (path: string, content: string) => invoke("write_file", { path, content }),
 
+  writeFileCas: (path: string, expectedContent: string, content: string) =>
+    invoke<void>("write_file_cas", { path, expectedContent, content }),
+  editorDraftSave: (path: string, sessionId: string, baseline: string, content: string) =>
+    invoke<void>("editor_draft_save", { path, sessionId, baseline, content }),
+  editorDraftList: (path: string) => invoke<Array<{session_id: string; path: string; baseline: string; content: string; updated_at_ms: number}>>("editor_draft_list", { path }),
+  editorDraftClear: (path: string, sessionId: string) => invoke<void>("editor_draft_clear", { path, sessionId }),
+
+  wechatAccountSave: (appId: string, appSecret: string) =>
+    invoke<string>("wechat_account_save", { appId, appSecret }),
+  wechatAccountStatus: () => invoke<string>("wechat_account_status"),
+  wechatDraftPermissionCheck: () => invoke<{ draft_count: number | null; draft_read_access: boolean }>("wechat_draft_permission_check"),
+  wechatUploadBodyImage: (path: string) => invoke<{ url: string }>("wechat_upload_body_image", { path }),
+  wechatUploadCover: (path: string) => invoke<{ media_id: string }>("wechat_upload_cover", { path }),
+  wechatCreateDraft: (title: string, author: string, digest: string, contentHtml: string, coverMediaId: string) =>
+    invoke<{ media_id: string; verified: boolean; status: string }>("wechat_create_draft", { title, author, digest, contentHtml, coverMediaId }),
+  wechatGetDraftStatus: (mediaId: string) => invoke<{ media_id: string; verified: boolean }>("wechat_get_draft_status", { mediaId }),
+
   getStartDirs: () => invoke<DirEntry[]>("get_start_dirs"),
 
   // 用系统文件管理器定位到成果所在目录

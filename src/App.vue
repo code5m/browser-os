@@ -252,7 +252,7 @@ onMounted(async () => {
   }
 
   function onGlobalKeydown(e: KeyboardEvent) {
-    if (term.m0Cfg?.driver || e.isComposing) return;
+    if (term.m0Cfg?.driver || e.isComposing || e.defaultPrevented) return;
     const createAction = quickCreateAction(e, layout.mainView);
     if (createAction) {
       e.preventDefault();

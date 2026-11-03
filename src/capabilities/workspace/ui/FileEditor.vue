@@ -7,15 +7,14 @@ const ws = useFileStore();
 const layout = useLayoutStore();
 
 function closeEditor() {
-  layout.setView("browser");
-  relocateBrowser();
+  if (layout.setView("browser")) relocateBrowser();
 }
 </script>
 
 <template>
   <div class="editor-pane">
     <div class="preview-header">
-      <h4>📝 {{ ws.filePath?.split("/").pop() }}</h4>
+      <h4>📝 {{ ws.editorFilePath?.split("/").pop() }}</h4>
       <div class="preview-actions">
         <template v-if="ws.mdPreview">
           <button :class="{ active: true }" @click="ws.setEditorView(true)">👁 预览</button>

@@ -38,6 +38,11 @@ export default defineConfig({
     // availability, the frozen growth limit or the recorded baseline.
     // Run the complete packaged GUI + pre-merge gates after this change.
     terserOptions: {
+      // The default worker pool follows all logical CPUs (16 here). Each worker
+      // may hold a large Monaco/TypeScript chunk during 8-pass compression;
+      // concurrent minification can aggravate Linux OOM pressure. Keep the
+      // *same* minifier options/output budget, but serialize minification tasks.
+      maxWorkers: 1,
       module: true,
       compress: { passes: 8, toplevel: true, unsafe: true, hoist_props: true },
       mangle: { toplevel: true },

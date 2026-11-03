@@ -28,6 +28,21 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     services:
+      # Both providers use disposable local service containers, not developer
+      # or production credentials. They share a single Rust compilation job.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: browseros_e2e
+          POSTGRES_USER: browseros_ci
+          POSTGRES_PASSWORD: browseros-postgres-fixture
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U browseros_ci -d browseros_e2e"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
       mysql:
         image: mysql:8.0
         env:
@@ -58,8 +73,12 @@ jobs:
       - name: Prepare embedded Tauri frontend
         run: |
           npm ci
-          npm run build
+          NODE_OPTIONS=--max-old-space-size=3072 npm run build
       - name: MySQL real driver integration test
         env:
           BROWSEROS_MYSQL_E2E_PASSWORD: browseros-ci-pass
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked mysql_real_e2e -- --ignored --nocapture
+      - name: PostgreSQL real driver binary and bigint round trip
+        env:
+          BROWSEROS_POSTGRES_E2E_PASSWORD: browseros-postgres-fixture
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked postgres_real_e2e_bigint_binary_roundtrip -- --ignored --nocapture

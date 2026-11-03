@@ -187,14 +187,28 @@ export const useLayoutStore = defineStore("layout", () => {
     return mainView.value === "browser" || mainView.value === "grid";
   }
 
+  // Workbench owners can block context changes that would discard unsaved edits.
+  // No imports of capability internals here: an owner registers a synchronous guard.
+  const beforeViewChange = new Map<string, (next: MainView, previous: MainView) => boolean>();
+  function registerBeforeViewChange(key: string, callback: (next: MainView, previous: MainView) => boolean) {
+    beforeViewChange.set(key, callback);
+    return () => {
+      if (beforeViewChange.get(key) === callback) beforeViewChange.delete(key);
+    };
+  }
+  function canNavigateTo(v: MainView): boolean {
+    return [...beforeViewChange.values()].every((guard) => guard(v, mainView.value));
+  }
   // 仅做 UI 状态切换；需要触发 bridge 的地方委托给其他 store 的 action
   // Phase 1：这是 mainView 的**唯一**写入点；组件禁止直接写 layout.mainView。
   function setView(v: MainView) {
+    if (v !== mainView.value && !canNavigateTo(v)) return false;
     mainView.value = v;
     // 进入模块视图时关闭文件编辑器覆盖层
     if (v !== "editor") fileEditorOpen.value = false;
     // M5-W17：视图一变就收起活动条扩展行，避免"换了视图还挂着上一视图的菜单"
     navSection.value = "";
+    return true;
   }
 
   // ===== Phase 1 canonical View Intent API（View Navigation owner）=====
@@ -284,14 +298,15 @@ export const useLayoutStore = defineStore("layout", () => {
     const meta = MOD_META[view] ?? { icon: "📄", label: view };
     const existing = modTabs.find((t) => t.view === view);
     if (existing) {
+      if (existing.id !== activeModTab.value && mainView.value === existing.view && !canNavigateTo(existing.view)) return;
+      if (!setView(existing.view)) return;
       activeModTab.value = existing.id;
-      setView(existing.view);
       return;
     }
+    if (!setView(view)) return;
     const id = `mod-${++modTabSeq}`;
     modTabs.push({ id, view, ...meta });
     activeModTab.value = id;
-    setView(view);
   }
 
   // 目录页签：同路径去重复用（避免一排完全相同的目录标签），新路径新建
@@ -301,30 +316,33 @@ export const useLayoutStore = defineStore("layout", () => {
     if (reuseCurrent && mainView.value === "files") {
       const current = modTabs.find((t) => t.id === activeModTab.value && !!t.path);
       if (current) {
+        if (current.path !== path && !canNavigateTo("files")) return;
         current.path = path;
         current.label = path.replace(/\/+$/, "").split("/").pop() || path;
-        setView("files");
         return;
       }
     }
     const existing = modTabs.find((t) => t.path === path);
     if (existing) {
+      if (existing.id !== activeModTab.value && mainView.value === existing.view && !canNavigateTo(existing.view)) return;
+      if (!setView(existing.view)) return;
       activeModTab.value = existing.id;
-      setView(existing.view);
       return;
     }
+    if (mainView.value === "files" && !canNavigateTo("files")) return;
+    if (!setView("files")) return;
     const name = path.replace(/\/+$/, "").split("/").pop() || path;
     const id = `dir-${++modTabSeq}`;
     modTabs.push({ id, view: "files", icon: "📁", label: name, path });
     activeModTab.value = id;
-    setView("files");
   }
 
   function activateModTab(id: string) {
     const t = modTabs.find((x) => x.id === id);
     if (!t) return;
+    if (id !== activeModTab.value && mainView.value === t.view && !canNavigateTo(t.view)) return;
+    if (!setView(t.view)) return;
     activeModTab.value = id;
-    setView(t.view);
     // 目录页签：地址栏同步显示目录路径。
     // M0-4.b：此处**必须**保持动态引入——useBrowserStore 深度依赖本 store
     // （mainView / showToast / isBrowserView 等多处），改为静态会形成
@@ -342,16 +360,14 @@ export const useLayoutStore = defineStore("layout", () => {
     const i = modTabs.findIndex((x) => x.id === id);
     if (i < 0) return;
     const wasActive = activeModTab.value === id;
-    modTabs.splice(i, 1);
-    if (!wasActive) return;
-    const next = modTabs[i] || modTabs[i - 1];
-    if (next) {
-      activeModTab.value = next.id;
-      setView(next.view);
-    } else {
-      activeModTab.value = "";
-      setView("home");
+    const next = modTabs[i + 1] || modTabs[i - 1];
+    if (wasActive) {
+      const destination = next?.view ?? "home";
+      if (mainView.value === destination && !canNavigateTo(destination)) return;
+      if (!setView(destination)) return;
     }
+    modTabs.splice(i, 1);
+    if (wasActive) activeModTab.value = next?.id ?? "";
   }
 
   // 浏览器视图右侧 Dock：指定 tab 时做"切到该 tab/再点收起"语义
@@ -394,6 +410,7 @@ export const useLayoutStore = defineStore("layout", () => {
     showToast,
     isBrowserView,
     setView,
+    registerBeforeViewChange,
     // Phase 1 canonical View Intent API
     activateView,
     activateBrowser,

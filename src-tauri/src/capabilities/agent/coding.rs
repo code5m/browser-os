@@ -709,13 +709,223 @@ fn provider_failure(error: &str) -> String {
         "AGENT_PROVIDER_FAILED".into()
     }
 }
+// All-or-recovery multi-file apply journal. Crash after a single file rename is
+// recognized by comparing each target against its original and reviewed hashes.
+// Never automatically overwrite an unrelated external change on recovery.
+#[derive(Clone, Serialize, Deserialize)]
+struct ApplyBackup {
+    path: String,
+    before_hash: Option<String>,
+    after_hash: String,
+    backup: Option<PathBuf>,
+}
+#[derive(Serialize, Deserialize)]
+struct ApplyJournal {
+    session_id: String,
+    entries: Vec<ApplyBackup>,
+}
+fn apply_journal_path(storage: &Path, id: &str) -> Result<PathBuf, String> {
+    session_path(storage, id)?;
+    Ok(storage
+        .join("coding-backups")
+        .join(id)
+        .join("apply-transaction.json"))
+}
+fn present_hash(target: &Path) -> Result<Option<String>, String> {
+    if target.exists() {
+        let meta = fs::symlink_metadata(target).map_err(|_| "AGENT_RECOVERY_CONFLICT")?;
+        if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > MAX_FILE as u64 {
+            return Err("AGENT_RECOVERY_CONFLICT".into());
+        }
+        Ok(Some(hash(
+            &fs::read(target).map_err(|_| "AGENT_RECOVERY_CONFLICT")?,
+        )))
+    } else {
+        Ok(None)
+    }
+}
+fn apply_journal_restore(root: &Path, journal: &ApplyJournal) -> Result<(), String> {
+    // Preflight the whole batch before undo. A different user's external edit
+    // must not be overwritten, even if an earlier target is safe to restore.
+    for entry in &journal.entries {
+        let target = resolve(root, &entry.path, true)?;
+        let current = present_hash(&target)?;
+        if current != entry.before_hash && current.as_deref() != Some(&entry.after_hash) {
+            return Err("AGENT_RECOVERY_CONFLICT".into());
+        }
+        if current.as_deref() == Some(&entry.after_hash) && current != entry.before_hash {
+            if let (Some(backup), Some(expected_hash)) = (&entry.backup, &entry.before_hash) {
+                let backup_meta =
+                    fs::symlink_metadata(backup).map_err(|_| "AGENT_RECOVERY_BACKUP_MISSING")?;
+                if !backup_meta.is_file()
+                    || backup_meta.file_type().is_symlink()
+                    || backup_meta.len() > MAX_FILE as u64
+                    || hash(&fs::read(backup).map_err(|_| "AGENT_RECOVERY_BACKUP_MISSING")?)
+                        != *expected_hash
+                {
+                    return Err("AGENT_RECOVERY_BACKUP_INVALID".into());
+                }
+            } else if entry.backup.is_some() || entry.before_hash.is_some() {
+                return Err("AGENT_RECOVERY_BACKUP_INVALID".into());
+            }
+        }
+    }
+    for entry in journal.entries.iter().rev() {
+        let target = resolve(root, &entry.path, true)?;
+        let current = present_hash(&target)?;
+        if current == entry.before_hash {
+            continue;
+        }
+        if current.as_deref() != Some(&entry.after_hash) {
+            return Err("AGENT_RECOVERY_CONFLICT".into());
+        }
+        if let Some(backup) = &entry.backup {
+            let bytes = fs::read(backup).map_err(|_| "AGENT_RECOVERY_BACKUP_MISSING")?;
+            if Some(hash(&bytes)) != entry.before_hash {
+                return Err("AGENT_RECOVERY_BACKUP_INVALID".into());
+            }
+            atomic_write(&target, &bytes)?;
+        } else {
+            fs::remove_file(target).map_err(|_| "AGENT_RECOVERY_DELETE_FAILED")?;
+        }
+    }
+    Ok(())
+}
+fn recover_pending_apply(root: &Path, storage: &Path, session: &mut Session) -> Result<(), String> {
+    let path = apply_journal_path(storage, &session.session_id)?;
+    if !path.exists() {
+        return Ok(());
+    }
+    let meta = fs::symlink_metadata(&path).map_err(|_| "AGENT_RECOVERY_JOURNAL_INVALID")?;
+    if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > MAX_SESSION as u64 {
+        return Err("AGENT_RECOVERY_JOURNAL_INVALID".into());
+    }
+    let journal: ApplyJournal =
+        serde_json::from_slice(&fs::read(&path).map_err(|_| "AGENT_RECOVERY_JOURNAL_INVALID")?)
+            .map_err(|_| "AGENT_RECOVERY_JOURNAL_INVALID")?;
+    if journal.session_id != session.session_id || journal.entries.len() > 32 {
+        return Err("AGENT_RECOVERY_JOURNAL_INVALID".into());
+    }
+    if session.status == "applied" {
+        // The successful final session snapshot is durable; a crash before
+        // cleanup only left stale recovery metadata, not uncommitted work.
+        fs::remove_file(path).map_err(|_| "AGENT_RECOVERY_CLEAR_FAILED")?;
+        return Ok(());
+    }
+    if let Err(error) = apply_journal_restore(root, &journal) {
+        session.status = "recovery_conflict".into();
+        save(storage, session)?;
+        return Err(error);
+    }
+    session.status = "review".into();
+    save(storage, session)?;
+    fs::remove_file(path).map_err(|_| "AGENT_RECOVERY_CLEAR_FAILED")?;
+    Ok(())
+}
+fn apply_changes_transactional(
+    root: &Path,
+    storage: &Path,
+    session: &mut Session,
+    // Test fault injection is never exposed through the Tauri command or model protocol.
+    fault_at: Option<usize>,
+) -> Result<Value, String> {
+    if session.changes.is_empty() {
+        session.status = "applied".into();
+        let mut result = save(storage, session)?;
+        result["applied"] = json!([]);
+        return Ok(result);
+    }
+    let mut backups = Vec::new();
+    let mut entries = Vec::new();
+    for change in &session.changes {
+        if change.content.len() > MAX_FILE || secret(&change.content) {
+            return Err("AGENT_CONTENT_DENIED".into());
+        }
+        let target = resolve(root, &change.path, true)?;
+        let current = present_hash(&target)?;
+        if current != change.expected_hash {
+            return Err("AGENT_FILE_CONFLICT".into());
+        }
+        let backup = if target.exists() {
+            let backup = storage
+                .join("coding-backups")
+                .join(&session.session_id)
+                .join(uuid::Uuid::new_v4().to_string());
+            atomic_write(
+                &backup,
+                &fs::read(&target).map_err(|_| "AGENT_BACKUP_FAILED")?,
+            )?;
+            Some(backup)
+        } else {
+            None
+        };
+        backups
+            .push(json!({"path":change.path,"backup":backup,"expected_hash":change.expected_hash}));
+        entries.push(ApplyBackup {
+            path: change.path.clone(),
+            before_hash: change.expected_hash.clone(),
+            after_hash: hash(change.content.as_bytes()),
+            backup,
+        });
+    }
+    let backup_dir = storage.join("coding-backups").join(&session.session_id);
+    atomic_write(
+        &backup_dir.join("manifest.json"),
+        &serde_json::to_vec(&backups).map_err(|_| "AGENT_BACKUP_FAILED")?,
+    )?;
+    let journal = ApplyJournal {
+        session_id: session.session_id.clone(),
+        entries,
+    };
+    let journal_path = apply_journal_path(storage, &session.session_id)?;
+    // Persist complete original proposal AND journal before the first write.
+    session.status = "apply_prepared".into();
+    save(storage, session)?;
+    atomic_write(
+        &journal_path,
+        &serde_json::to_vec(&journal).map_err(|_| "AGENT_BACKUP_FAILED")?,
+    )?;
+    let result: Result<Vec<String>, String> = (|| {
+        let mut applied = Vec::new();
+        for (index, change) in session.changes.iter().enumerate() {
+            if fault_at == Some(index) {
+                return Err("AGENT_INJECTED_WRITE_FAILURE".into());
+            }
+            let target = resolve(root, &change.path, true)?;
+            if present_hash(&target)? != change.expected_hash {
+                return Err("AGENT_FILE_CONFLICT".into());
+            }
+            atomic_write(&target, change.content.as_bytes())?;
+            applied.push(change.path.clone());
+        }
+        Ok(applied)
+    })();
+    match result {
+        Ok(applied) => {
+            session.changes.clear();
+            session.status = "applied".into();
+            let mut result = save(storage, session)?;
+            result["applied"] = json!(applied);
+            // Failure to unlink this metadata is safe: a reloaded applied
+            // session removes stale metadata without undoing completed work.
+            let _ = fs::remove_file(journal_path);
+            Ok(result)
+        }
+        Err(_) => {
+            // Also invoked automatically when the persisted session is reloaded.
+            recover_pending_apply(root, storage, session)?;
+            Err("AGENT_APPLY_ROLLED_BACK".into())
+        }
+    }
+}
+
 fn session_path(storage: &Path, id: &str) -> Result<PathBuf, String> {
     if uuid::Uuid::parse_str(id).is_err() {
         return Err("AGENT_SESSION_INVALID".into());
     }
     Ok(storage.join("coding-sessions").join(format!("{id}.json")))
 }
-fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String> {
+fn load_without_recovery(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String> {
     if let Some(id) = id {
         let path = session_path(storage, id)?;
         let m = fs::symlink_metadata(&path).map_err(|_| "AGENT_SESSION_NOT_FOUND")?;
@@ -741,6 +951,14 @@ fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String
         })
     }
 }
+fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String> {
+    let mut session = load_without_recovery(root, storage, id)?;
+    if id.is_some() {
+        recover_pending_apply(root, storage, &mut session)?;
+    }
+    Ok(session)
+}
+
 fn save(storage: &Path, session: &Session) -> Result<Value, String> {
     let bytes = serde_json::to_vec(session).map_err(|_| "AGENT_SESSION_WRITE_FAILED")?;
     if bytes.len() > MAX_SESSION {
@@ -776,7 +994,7 @@ fn recent_sessions(root: &Path, storage: &Path) -> Result<Value, String> {
         let Some(id) = path.file_stem().and_then(|s| s.to_str()) else {
             continue;
         };
-        let Ok(session) = load(root, storage, Some(id)) else {
+        let Ok(session) = load_without_recovery(root, storage, Some(id)) else {
             continue;
         };
         if session.session_id != id {
@@ -908,77 +1126,7 @@ pub fn execute(
             session.status = "ready".into();
         }
         "apply" => {
-            // Validate every source before any write; backups are retained in app data.
-            let mut targets = Vec::new();
-            let mut backup_manifest = Vec::new();
-            for change in &session.changes {
-                if change.content.len() > MAX_FILE || secret(&change.content) {
-                    return Err("AGENT_CONTENT_DENIED".into());
-                }
-                let target = resolve(&root, &change.path, true)?;
-                let current = if target.exists() {
-                    Some(
-                        read_file(&root, &change.path)?["hash"]
-                            .as_str()
-                            .unwrap_or("")
-                            .to_string(),
-                    )
-                } else {
-                    None
-                };
-                if current != change.expected_hash {
-                    return Err("AGENT_FILE_CONFLICT".into());
-                }
-                if target.exists() {
-                    let backup = storage
-                        .join("coding-backups")
-                        .join(&session.session_id)
-                        .join(uuid::Uuid::new_v4().to_string());
-                    atomic_write(
-                        &backup,
-                        &fs::read(&target).map_err(|_| "AGENT_BACKUP_FAILED")?,
-                    )?;
-                    backup_manifest.push(json!({"path":change.path,"backup":backup,"expected_hash":change.expected_hash}));
-                } else {
-                    backup_manifest
-                        .push(json!({"path":change.path,"backup":null,"expected_hash":null}));
-                }
-                targets.push(target);
-            }
-            if !backup_manifest.is_empty() {
-                atomic_write(
-                    &storage
-                        .join("coding-backups")
-                        .join(&session.session_id)
-                        .join("manifest.json"),
-                    &serde_json::to_vec(&backup_manifest).map_err(|_| "AGENT_BACKUP_FAILED")?,
-                )?;
-            }
-            let mut applied = Vec::new();
-            for (change, target) in session.changes.clone().iter().zip(targets) {
-                // Recheck immediately before replace, including symlink containment.
-                resolve(&root, &change.path, true)?;
-                let current = if target.exists() {
-                    Some(hash(&fs::read(&target).map_err(|_| "AGENT_READ_FAILED")?))
-                } else {
-                    None
-                };
-                if current != change.expected_hash {
-                    return Err("AGENT_FILE_CONFLICT".into());
-                }
-                atomic_write(&target, change.content.as_bytes())?;
-                applied.push(change.path.clone());
-                session
-                    .changes
-                    .retain(|pending| pending.path != change.path);
-                session.status = "applying".into();
-                save(storage, &session)?;
-            }
-            session.changes.clear();
-            session.status = "applied".into();
-            let mut result = save(storage, &session)?;
-            result["applied"] = json!(applied);
-            return Ok(result);
+            return apply_changes_transactional(&root, storage, &mut session, None);
         }
         "chat" => {
             if session
@@ -1717,6 +1865,110 @@ mod tests {
             run(&f, json!({"action":"apply","session_id":s["session_id"]})).unwrap_err(),
             "AGENT_FILE_CONFLICT"
         );
+    }
+    #[test]
+    fn multiple_file_fault_rolls_back_all_changes_and_preserves_review() {
+        let f = Fixture::new();
+        fs::write(f.0.join("one.txt"), "one-old").unwrap();
+        fs::write(f.0.join("two.txt"), "two-old").unwrap();
+        let first = run(
+            &f,
+            json!({"action":"propose","path":"one.txt","content":"one-new"}),
+        )
+        .unwrap();
+        let id = first["session_id"].as_str().unwrap();
+        run(
+            &f,
+            json!({"action":"propose","session_id":id,"path":"two.txt","content":"two-new"}),
+        )
+        .unwrap();
+        let mut session = load(&f.0, &f.0.join("state"), Some(id)).unwrap();
+        assert_eq!(
+            apply_changes_transactional(&f.0, &f.0.join("state"), &mut session, Some(1)),
+            Err("AGENT_APPLY_ROLLED_BACK".into())
+        );
+        assert_eq!(fs::read_to_string(f.0.join("one.txt")).unwrap(), "one-old");
+        assert_eq!(fs::read_to_string(f.0.join("two.txt")).unwrap(), "two-old");
+        let reloaded = run(&f, json!({"action":"session","session_id":id})).unwrap();
+        assert_eq!(reloaded["status"], "review");
+        assert_eq!(reloaded["changes"].as_array().unwrap().len(), 2);
+    }
+    #[test]
+    fn crash_journal_restores_only_reviewed_hashes() {
+        let f = Fixture::new();
+        let storage = f.0.join("state");
+        fs::write(f.0.join("first.txt"), "original").unwrap();
+        let first = run(
+            &f,
+            json!({"action":"propose","path":"first.txt","content":"proposed"}),
+        )
+        .unwrap();
+        let id = first["session_id"].as_str().unwrap();
+        let mut persisted = load(&f.0, &storage, Some(id)).unwrap();
+        persisted.status = "apply_prepared".into();
+        save(&storage, &persisted).unwrap();
+        let backup = storage.join("coding-backups").join(id).join("before");
+        atomic_write(&backup, b"original").unwrap();
+        let journal = ApplyJournal {
+            session_id: id.into(),
+            entries: vec![ApplyBackup {
+                path: "first.txt".into(),
+                before_hash: Some(hash(b"original")),
+                after_hash: hash(b"proposed"),
+                backup: Some(backup),
+            }],
+        };
+        atomic_write(
+            &apply_journal_path(&storage, id).unwrap(),
+            &serde_json::to_vec(&journal).unwrap(),
+        )
+        .unwrap();
+        fs::write(f.0.join("first.txt"), "proposed").unwrap();
+        let result = run(&f, json!({"action":"session","session_id":id})).unwrap();
+        assert_eq!(result["status"], "review");
+        assert_eq!(
+            fs::read_to_string(f.0.join("first.txt")).unwrap(),
+            "original"
+        );
+        assert!(!apply_journal_path(&storage, id).unwrap().exists());
+    }
+    #[test]
+    fn recovery_refuses_to_overwrite_external_modification() {
+        let f = Fixture::new();
+        let storage = f.0.join("state");
+        fs::write(f.0.join("first.txt"), "original").unwrap();
+        let first = run(
+            &f,
+            json!({"action":"propose","path":"first.txt","content":"proposed"}),
+        )
+        .unwrap();
+        let id = first["session_id"].as_str().unwrap();
+        let backup = storage.join("coding-backups").join(id).join("before");
+        atomic_write(&backup, b"original").unwrap();
+        let journal = ApplyJournal {
+            session_id: id.into(),
+            entries: vec![ApplyBackup {
+                path: "first.txt".into(),
+                before_hash: Some(hash(b"original")),
+                after_hash: hash(b"proposed"),
+                backup: Some(backup),
+            }],
+        };
+        atomic_write(
+            &apply_journal_path(&storage, id).unwrap(),
+            &serde_json::to_vec(&journal).unwrap(),
+        )
+        .unwrap();
+        fs::write(f.0.join("first.txt"), "another editor's update").unwrap();
+        assert_eq!(
+            run(&f, json!({"action":"session","session_id":id})).unwrap_err(),
+            "AGENT_RECOVERY_CONFLICT"
+        );
+        assert_eq!(
+            fs::read_to_string(f.0.join("first.txt")).unwrap(),
+            "another editor's update"
+        );
+        assert!(apply_journal_path(&storage, id).unwrap().exists());
     }
     #[test]
     fn applies_atomically_and_keeps_backup() {

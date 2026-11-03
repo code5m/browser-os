@@ -3,6 +3,7 @@ import { defineAsyncComponent, onMounted, ref } from "vue";
 const EngineeringHealthPanel = defineAsyncComponent(() => import("./EngineeringHealthPanel.vue"));
 const AgentRuntimeExperimentPanel = defineAsyncComponent(() => import("./AgentRuntimeExperimentPanel.vue"));
 const AiConfiguration = defineAsyncComponent(() => import("./AiConfiguration.vue"));
+const WechatDraftPanel = defineAsyncComponent(() => import("./WechatDraftPanel.vue"));
 import { bridge } from "../../bridge";
 import { useSettingsStore } from "../../settings/public";
 import { useLayoutStore } from "../../stores/useLayoutStore";
@@ -52,6 +53,7 @@ onMounted(refreshDefaultBrowser);
 <template>
   <div class="settings-panel">
     <div class="settings-section"><AiConfiguration /></div>
+    <div class="settings-section"><WechatDraftPanel /></div>
     <div class="settings-section">
       <div class="section-title">外观</div>
       <div class="setting-item">

@@ -244,14 +244,26 @@ pub fn db_cancel(
     Ok(false)
 }
 
+// Slow remote handshake and OS Secret Service access run off the GTK event
+// loop. Source authorization stays synchronous before worker dispatch.
 #[tauri::command]
-pub fn db_connect(
+pub async fn db_connect(
     app: AppHandle,
     webview: tauri::Webview,
     cfg: DbConnectionConfig,
     password: Option<String>,
 ) -> Result<DbConnectResult, String> {
     check_invocation_source(&webview, "db_connect", None, &app)?;
+    tauri::async_runtime::spawn_blocking(move || db_connect_blocking(app, cfg, password))
+        .await
+        .map_err(|_| "DB_CONNECT_WORKER_FAILED".to_string())?
+}
+
+fn db_connect_blocking(
+    app: AppHandle,
+    cfg: DbConnectionConfig,
+    password: Option<String>,
+) -> Result<DbConnectResult, String> {
     ensure_profiles_loaded(&app)?;
     {
         let reg = app.state::<DbConnectionRegistry>();

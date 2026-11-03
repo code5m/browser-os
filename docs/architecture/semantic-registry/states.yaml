@@ -528,8 +528,9 @@ states:
 
   filePath:
     owner: useFileStore
-    meaning: 文件浏览器/覆盖编辑器当前激活位置（地址真源）
+    meaning: 文件浏览器当前目录（导航地址真源）
     not_meaning:
+      - 覆盖编辑器当前文件（见 editorFilePath）
       - 行内编辑器当前文件（见 inlineFile）
       - 目录预览当前目录（见 previewDir）
       - 派生“当前位置”（见 currentLocalPath）
@@ -540,20 +541,74 @@ states:
       - ""
     canonical_writer:
       - useFileStore.enterDir
-      - useFileStore.openFile
       - useFileStore.openFileInline
     forbidden_writers:
       - components/**
     duplicate_names: []
     adr_required: false
     status: CURRENT_FACT
-    note: overloaded —— 编辑器模式值为“当前文件”，浏览器模式值为“当前目录”（Debt-2-1）
+    note: 主编辑器文件身份已迁至 editorFilePath；filePath 不再保存 overlay 文档路径
+
+  editorFilePath:
+    owner: useFileStore
+    meaning: 主编辑器当前打开的文件路径，独立于目录导航
+    not_meaning:
+      - 当前目录（见 filePath）
+      - 行内文件（见 inlineFile）
+    kind: stored
+    derived: false
+    allowed_values:
+      - string (absolute path)
+      - ""
+    canonical_writer:
+      - useFileStore.openEditorDocument
+      - useFileStore.enterDir
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  editorSavedContent:
+    owner: useFileStore
+    meaning: 主编辑器最近成功读取或写入的文本快照，用于草稿与非原子冲突检查
+    not_meaning:
+      - 跨进程原子 CAS token
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useFileStore.openEditorDocument
+      - useFileStore.saveFile
+      - useFileStore.enterDir
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  editorDirty:
+    owner: useFileStore
+    meaning: 主编辑器草稿与最近快照不一致的派生布尔量
+    not_meaning:
+      - 文件系统是否发生外部修改
+    kind: derived
+    derived: true
+    derived_from:
+      - editorFilePath
+      - fileContent
+      - editorSavedContent
+    canonical_writer: []
+    forbidden_writers:
+      - everyone
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
 
   inlineFile:
     owner: useFileStore
     meaning: 行内编辑器（IDE 右栏）当前打开的文件路径
     not_meaning:
-      - 覆盖编辑器当前文件（见 filePath，二者隔离）
+      - 覆盖编辑器当前文件（见 editorFilePath，二者隔离）
     kind: stored
     derived: false
     allowed_values:

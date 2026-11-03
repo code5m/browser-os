@@ -37,6 +37,28 @@ export const useFileStore = defineStore("files", () => {
   const filePath = ref("");
   const pathInput = ref("");
   const fileContent = ref("");
+  // Directory navigation must not own editor identity. This is a separate document snapshot.
+  const editorFilePath = ref("");
+  const editorSavedContent = ref("");
+  const editorDirty = computed(() => !!editorFilePath.value && fileContent.value !== editorSavedContent.value);
+  let editorReadRequest = 0;
+  function canDiscardEditor(): boolean {
+    return !editorDirty.value || confirm("主编辑器有未保存的修改，确定放弃修改吗？");
+  }
+  layout.registerBeforeViewChange("workspace-editor-drafts", (next, previous) => {
+    if (previous === "editor" && next !== "editor" && !canDiscardEditor()) return false;
+    // Switching between filesystem modules can abandon an inline draft too.
+    if (previous === "files" && (next !== "files" || inlineFile.value) && !canDiscardInline()) return false;
+    return true;
+  });
+  // System window exit may bypass the in-app editor close button.
+  if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+    window.addEventListener("beforeunload", (event: BeforeUnloadEvent) => {
+      if (!editorDirty.value && (!inlineFile.value || inlineText.value === inlineSavedText.value)) return;
+      event.preventDefault();
+      event.returnValue = "";
+    });
+  }
   const editingFile = ref(false);
   const mdPreview = ref(false);
   const mdHtml = ref("");
@@ -83,6 +105,41 @@ export const useFileStore = defineStore("files", () => {
   // ===== 目录图片预览：加载内部状态（实现细节，非公开治理态） =====
   let previewRequest = 0;
   let inlineReadRequest = 0;
+  // Each editor surface gets its own encrypted journal. BrowserOS does not
+  // persist user text in localStorage or share one journal between processes.
+  const editorDraftSession = crypto.randomUUID().replaceAll("-", "");
+  const inlineDraftSession = crypto.randomUUID().replaceAll("-", "");
+  let editorJournalTimer: ReturnType<typeof setTimeout> | null = null;
+  let inlineJournalTimer: ReturnType<typeof setTimeout> | null = null;
+  let journalChain: Promise<void> = Promise.resolve();
+  function queueJournal(action: () => Promise<void>): Promise<void> {
+    journalChain = journalChain.then(action).catch((error) => {
+      layout.showToast("草稿加密保存失败，当前修改仍保留在内存中: " + String(error).slice(0, 90));
+    });
+    return journalChain;
+  }
+  // Serialize same-process saves and clears; otherwise a late debounced save
+  // could recreate a discarded or already-saved draft after successful save.
+  watch([editorFilePath, fileContent, editorSavedContent], () => {
+    if (editorJournalTimer) clearTimeout(editorJournalTimer);
+    if (!editorDirty.value) return;
+    const path = editorFilePath.value;
+    const content = fileContent.value;
+    const baseline = editorSavedContent.value;
+    editorJournalTimer = setTimeout(() => {
+      void queueJournal(() => bridge.editorDraftSave(path, editorDraftSession, baseline, content));
+    }, 650);
+  });
+  watch([inlineFile, inlineText, inlineSavedText], () => {
+    if (inlineJournalTimer) clearTimeout(inlineJournalTimer);
+    if (!inlineFile.value || inlineText.value === inlineSavedText.value) return;
+    const path = inlineFile.value;
+    const content = inlineText.value;
+    const baseline = inlineSavedText.value;
+    inlineJournalTimer = setTimeout(() => {
+      void queueJournal(() => bridge.editorDraftSave(path, inlineDraftSession, baseline, content));
+    }, 650);
+  });
   let previewImageGeneration = 0;
   let previewImageActive = 0;
   const previewImageQueue: string[] = [];
@@ -152,9 +209,9 @@ export const useFileStore = defineStore("files", () => {
   }
   // 目录预览以目录本身为目标；编辑文件时使用文件的父目录。
   function currentBaseDir(): string {
-    if (layout.fileEditorOpen && filePath.value) {
-      const i = filePath.value.lastIndexOf('/');
-      return i > 0 ? filePath.value.slice(0, i) : '/';
+    if (layout.fileEditorOpen && editorFilePath.value) {
+      const i = editorFilePath.value.lastIndexOf('/');
+      return i > 0 ? editorFilePath.value.slice(0, i) : '/';
     }
     if (inlineFile.value) {
       const i = inlineFile.value.lastIndexOf('/');
@@ -188,7 +245,34 @@ export const useFileStore = defineStore("files", () => {
       layout.showToast("新建失败: " + (e?.message ?? e));
     }
   }
+  // Refuse path mutations that could orphan or silently replace an active
+  // unsaved document, including deleting/moving its containing directory.
+  function containsDocument(target: string, openPath: string, isDir: boolean): boolean {
+    const clean = target.replace(/\/+$/, "") || "/";
+    return !!openPath && (openPath === clean || (isDir && openPath.startsWith(clean === "/" ? "/" : clean + "/")));
+  }
+  function blocksDirtyPathMutation(path: string, isDir: boolean): boolean {
+    const overlayBlocked = editorDirty.value && containsDocument(path, editorFilePath.value, isDir);
+    const inlineBlocked = !!inlineFile.value && inlineText.value !== inlineSavedText.value && containsDocument(path, inlineFile.value, isDir);
+    if (overlayBlocked || inlineBlocked) {
+      layout.showToast("当前文件或目录含未保存的编辑草稿，请先保存或关闭编辑器后重试");
+      return true;
+    }
+    return false;
+  }
+  function replacePathPrefix(oldPath: string, from: string, to: string): string {
+    const clean = from.replace(/\/+$/, "") || "/";
+    return oldPath === clean ? to : oldPath.startsWith(clean + "/") ? to + oldPath.slice(clean.length) : oldPath;
+  }
+  function updateOpenPaths(from: string, to: string) {
+    editorFilePath.value = replacePathPrefix(editorFilePath.value, from, to);
+    inlineFile.value = replacePathPrefix(inlineFile.value, from, to);
+    previewDir.value = replacePathPrefix(previewDir.value, from, to);
+    const updatedDir = replacePathPrefix(filePath.value, from, to);
+    if (updatedDir !== filePath.value) { filePath.value = updatedDir; pathInput.value = updatedDir; }
+  }
   async function ctxDelete(entry: DirEntry) {
+    if (blocksDirtyPathMutation(entry.path, entry.is_dir)) return;
     const target = entry.path.replace(/\/+$/, '') || '/';
     const openPath = inlineFile.value;
     const containsOpenFile = !!openPath && (openPath === target ||
@@ -200,6 +284,13 @@ export const useFileStore = defineStore("files", () => {
     }
     try {
       await bridge.deletePath(entry.path);
+      const overlayRemoved = containsDocument(target, editorFilePath.value, entry.is_dir);
+      if (overlayRemoved) {
+        editorFilePath.value = "";
+        editorSavedContent.value = "";
+        fileContent.value = "";
+        layout.setView("files");
+      }
       layout.showToast("已删除: " + entry.name);
       if (containsOpenFile && inlineFile.value === openPath) {
         ++inlineReadRequest;
@@ -212,6 +303,7 @@ export const useFileStore = defineStore("files", () => {
     closeFileCtx();
   }
   async function ctxRename(entry: DirEntry) {
+    if (blocksDirtyPathMutation(entry.path, entry.is_dir)) return;
     const name = prompt("重命名为：", entry.name)?.trim();
     if (!name || name === entry.name) {
       closeFileCtx();
@@ -219,6 +311,9 @@ export const useFileStore = defineStore("files", () => {
     }
     try {
       await bridge.renamePath(entry.path, name);
+      const parent = entry.path.slice(0, entry.path.lastIndexOf("/")) || "/";
+      const renamed = parent.replace(/\/$/, "") + "/" + name;
+      updateOpenPaths(entry.path, renamed);
       layout.showToast("已重命名 → " + name);
       await refreshTree();
     } catch (e: any) {
@@ -442,8 +537,10 @@ export const useFileStore = defineStore("files", () => {
     const src = moveConfirm.src;
     const dst = moveConfirm.dst;
     moveConfirm.show = false;
+    if (blocksDirtyPathMutation(src, true)) return;
     try {
       await bridge.movePath(src, dst);
+      updateOpenPaths(src, dst.replace(/\/$/, "") + "/" + (src.split("/").filter(Boolean).pop() || src));
       layout.showToast("已移动: " + (dst.split("/").filter(Boolean).pop() || dst));
       await refreshTree();
     } catch (e: any) {
@@ -483,15 +580,22 @@ export const useFileStore = defineStore("files", () => {
     const oldText = inlineText.value;
     try {
       const text = await bridge.readFile(entry.path);
+      let recovered: { baseline: string; content: string } | null = null;
+      try {
+        const drafts = await bridge.editorDraftList(entry.path);
+        if (drafts.length && confirm("检测到未完成的加密行内草稿，是否恢复？")) recovered = drafts[0];
+      } catch (error) {
+        layout.showToast("草稿恢复检查失败，请勿删除原有草稿: " + String(error).slice(0, 70));
+      }
       if (request !== inlineReadRequest || inlineFile.value !== oldFile || inlineText.value !== oldText) return;
       inlineFile.value = entry.path;
       filePath.value = entry.path.lastIndexOf("/") > 0 ? entry.path.slice(0, entry.path.lastIndexOf("/")) : "/";
       pathInput.value = filePath.value;
-      inlineText.value = text;
-      inlineSavedText.value = text;
+      inlineText.value = recovered?.content ?? text;
+      inlineSavedText.value = recovered?.baseline ?? text;
       inlineIsMd.value = isMd;
       inlineEdit.value = !isMd; // md 默认预览，其它文本直接编辑
-      inlineHtml.value = isMd ? renderMd(text) : "";
+      inlineHtml.value = isMd ? renderMd(inlineText.value) : "";
       const { useWorkspaceStore } = await import("./useWorkspaceStore");
       useWorkspaceStore().addRecentFile(entry.path, entry.name);
     } catch (e: any) {
@@ -505,9 +609,15 @@ export const useFileStore = defineStore("files", () => {
   async function saveInline() {
     if (!inlineFile.value) return;
     const path = inlineFile.value, text = inlineText.value;
-    await bridge.writeFile(path, text);
+    try {
+      await bridge.writeFileCas(path, inlineSavedText.value, text);
+    } catch (error: any) {
+      layout.showToast("保存失败或磁盘冲突，草稿仍保留: " + (error?.message ?? error));
+      return;
+    }
     if (inlineFile.value !== path) return;
     inlineSavedText.value = text;
+    if (inlineText.value === text) void queueJournal(() => bridge.editorDraftClear(path, inlineDraftSession));
     if (inlineIsMd.value && !inlineEdit.value) inlineHtml.value = renderMd(inlineText.value);
     layout.showToast("已保存: " + inlineFile.value.split("/").pop());
   }
@@ -628,6 +738,10 @@ export const useFileStore = defineStore("files", () => {
     startDirs.value = await bridge.getStartDirs();
   }
   async function enterDir(path: string) {
+    if (!canDiscardEditor()) return;
+    ++editorReadRequest;
+    editorFilePath.value = "";
+    editorSavedContent.value = "";
     filePath.value = path;
     pathInput.value = path;
     fileContent.value = "";
@@ -667,36 +781,72 @@ export const useFileStore = defineStore("files", () => {
       layout.showToast(`非文本文件 (${entry.name})，暂不支持预览`);
       return;
     }
-    fileContent.value = await bridge.readFile(entry.path);
-    filePath.value = entry.path;
-    editingFile.value = true;
-    mdPreview.value = false;
-    layout.fileEditorOpen = true;
-    layout.setView("editor");
-    layout.showToast(`已加载: ${entry.name} (${entry.size.toLocaleString()} bytes)`);
+    return openEditorDocument(entry.path, false, entry.name, entry.size);
   }
   async function openMd(entry: DirEntry) {
     const ext = entry.name.split(".").pop()?.toLowerCase();
     if (ext !== "md" && ext !== "markdown") return false;
-    fileContent.value = await bridge.readFile(entry.path);
-    mdHtml.value = renderMd(fileContent.value);
-    filePath.value = entry.path;
-    mdPreview.value = true;
-    editingFile.value = false;
-    layout.fileEditorOpen = true;
-    layout.setView("editor");
-    return true;
+    return openEditorDocument(entry.path, true, entry.name, entry.size);
+  }
+  async function openEditorDocument(path: string, markdown: boolean, name: string, size: number) {
+    if (!canDiscardEditor()) return false;
+    const request = ++editorReadRequest;
+    const currentPath = editorFilePath.value;
+    const currentContent = fileContent.value;
+    try {
+      const text = await bridge.readFile(path);
+      let recovered: { baseline: string; content: string } | null = null;
+      try {
+        const drafts = await bridge.editorDraftList(path);
+        if (drafts.length && confirm("检测到未完成的加密编辑草稿，是否恢复？外部磁盘修改不会被覆盖。")) {
+          recovered = drafts[0];
+        }
+      } catch (error) {
+        layout.showToast("草稿恢复检查失败，请勿删除原有草稿: " + String(error).slice(0, 70));
+      }
+      if (request !== editorReadRequest || editorFilePath.value !== currentPath || fileContent.value !== currentContent) return false;
+      editorFilePath.value = path;
+      editorSavedContent.value = recovered?.baseline ?? text;
+      fileContent.value = recovered?.content ?? text;
+      mdHtml.value = markdown ? renderMd(fileContent.value) : "";
+      mdPreview.value = markdown;
+      editingFile.value = !markdown;
+      layout.fileEditorOpen = true;
+      layout.setView("editor");
+      if (!markdown) layout.showToast(`已加载: ${name} (${size.toLocaleString()} bytes)`);
+      return true;
+    } catch (error: any) {
+      layout.showToast("读取失败: " + (error?.message ?? error));
+      return false;
+    }
   }
   async function saveFile() {
-    if (!filePath.value) return;
-    await bridge.writeFile(filePath.value, fileContent.value);
-    layout.showToast("已保存: " + filePath.value.split("/").pop());
+    const path = editorFilePath.value;
+    if (!path) return;
+    const text = fileContent.value;
+    const baseline = editorSavedContent.value;
+    try {
+      // The native command serializes cooperating BrowserOS processes and
+      // validates the baseline inside the same critical section as atomic rename.
+      await bridge.writeFileCas(path, baseline, text);
+      if (editorFilePath.value === path) {
+        editorSavedContent.value = text;
+        if (fileContent.value === text) void queueJournal(() => bridge.editorDraftClear(path, editorDraftSession));
+      }
+      layout.showToast("已保存: " + path.split("/").pop());
+    } catch (error: any) {
+      layout.showToast("保存失败或磁盘冲突，草稿仍保留: " + (error?.message ?? error));
+    }
   }
 
   // ===== Files canonical writers（组件经此写状态，禁止直写，FILE-03 / WS-OWNER-02）=====
   function setFileContent(v: string) { fileContent.value = v; }
   function setInlineText(v: string) { inlineText.value = v; }
-  function setEditorView(isPreview: boolean) { mdPreview.value = isPreview; editingFile.value = !isPreview; }
+  function setEditorView(isPreview: boolean) {
+    if (isPreview) mdHtml.value = renderMd(fileContent.value);
+    mdPreview.value = isPreview;
+    editingFile.value = !isPreview;
+  }
   function clearDragSource() { dragSource.value = ""; }
 
   return {
@@ -704,6 +854,9 @@ export const useFileStore = defineStore("files", () => {
     filePath,
     pathInput,
     fileContent,
+    editorFilePath,
+    editorDirty,
+    canDiscardEditor,
     editingFile,
     mdPreview,
     mdHtml,
