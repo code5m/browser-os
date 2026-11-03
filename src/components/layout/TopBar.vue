@@ -1,9 +1,16 @@
 <script setup lang="ts">
 import { useBrowserStore } from "../../capabilities/browser/public";
 import { useLayoutStore } from "../../stores/useLayoutStore";
+import { useFileStore } from "../../capabilities/workspace/public";
 
 const browser = useBrowserStore();
 const layout = useLayoutStore();
+const files = useFileStore();
+function returnToBrowser() {
+  if (!files.canDiscardEditor()) return;
+  layout.setView("browser");
+  browser.relocate();
+}
 </script>
 
 <template>
@@ -18,7 +25,7 @@ const layout = useLayoutStore();
     />
     <button class="primary" @click="browser.navigateCurrent">打开浏览</button>
     <button @click="browser.tabNew()" title="新建页签">＋ 页签</button>
-    <button v-if="layout.mainView === 'editor'" @click="layout.setView('browser'); browser.relocate()" title="返回浏览器">🌐 浏览器</button>
+    <button v-if="layout.mainView === 'editor'" @click="returnToBrowser" title="返回浏览器">🌐 浏览器</button>
     <span class="msg">{{ layout.msg }}</span>
   </header>
 </template>

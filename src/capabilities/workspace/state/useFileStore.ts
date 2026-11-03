@@ -37,6 +37,22 @@ export const useFileStore = defineStore("files", () => {
   const filePath = ref("");
   const pathInput = ref("");
   const fileContent = ref("");
+  // Directory navigation must not own editor identity. This is a separate document snapshot.
+  const editorFilePath = ref("");
+  const editorSavedContent = ref("");
+  const editorDirty = computed(() => !!editorFilePath.value && fileContent.value !== editorSavedContent.value);
+  let editorReadRequest = 0;
+  function canDiscardEditor(): boolean {
+    return !editorDirty.value || confirm("主编辑器有未保存的修改，确定放弃修改吗？");
+  }
+  // System window exit may bypass the in-app editor close button.
+  if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+    window.addEventListener("beforeunload", (event: BeforeUnloadEvent) => {
+      if (!editorDirty.value && (!inlineFile.value || inlineText.value === inlineSavedText.value)) return;
+      event.preventDefault();
+      event.returnValue = "";
+    });
+  }
   const editingFile = ref(false);
   const mdPreview = ref(false);
   const mdHtml = ref("");
@@ -152,9 +168,9 @@ export const useFileStore = defineStore("files", () => {
   }
   // 目录预览以目录本身为目标；编辑文件时使用文件的父目录。
   function currentBaseDir(): string {
-    if (layout.fileEditorOpen && filePath.value) {
-      const i = filePath.value.lastIndexOf('/');
-      return i > 0 ? filePath.value.slice(0, i) : '/';
+    if (layout.fileEditorOpen && editorFilePath.value) {
+      const i = editorFilePath.value.lastIndexOf('/');
+      return i > 0 ? editorFilePath.value.slice(0, i) : '/';
     }
     if (inlineFile.value) {
       const i = inlineFile.value.lastIndexOf('/');
@@ -628,6 +644,10 @@ export const useFileStore = defineStore("files", () => {
     startDirs.value = await bridge.getStartDirs();
   }
   async function enterDir(path: string) {
+    if (!canDiscardEditor()) return;
+    ++editorReadRequest;
+    editorFilePath.value = "";
+    editorSavedContent.value = "";
     filePath.value = path;
     pathInput.value = path;
     fileContent.value = "";
@@ -667,30 +687,55 @@ export const useFileStore = defineStore("files", () => {
       layout.showToast(`非文本文件 (${entry.name})，暂不支持预览`);
       return;
     }
-    fileContent.value = await bridge.readFile(entry.path);
-    filePath.value = entry.path;
-    editingFile.value = true;
-    mdPreview.value = false;
-    layout.fileEditorOpen = true;
-    layout.setView("editor");
-    layout.showToast(`已加载: ${entry.name} (${entry.size.toLocaleString()} bytes)`);
+    return openEditorDocument(entry.path, false, entry.name, entry.size);
   }
   async function openMd(entry: DirEntry) {
     const ext = entry.name.split(".").pop()?.toLowerCase();
     if (ext !== "md" && ext !== "markdown") return false;
-    fileContent.value = await bridge.readFile(entry.path);
-    mdHtml.value = renderMd(fileContent.value);
-    filePath.value = entry.path;
-    mdPreview.value = true;
-    editingFile.value = false;
-    layout.fileEditorOpen = true;
-    layout.setView("editor");
-    return true;
+    return openEditorDocument(entry.path, true, entry.name, entry.size);
+  }
+  async function openEditorDocument(path: string, markdown: boolean, name: string, size: number) {
+    if (!canDiscardEditor()) return false;
+    const request = ++editorReadRequest;
+    const currentPath = editorFilePath.value;
+    const currentContent = fileContent.value;
+    try {
+      const text = await bridge.readFile(path);
+      if (request !== editorReadRequest || editorFilePath.value !== currentPath || fileContent.value !== currentContent) return false;
+      editorFilePath.value = path;
+      editorSavedContent.value = text;
+      fileContent.value = text;
+      mdHtml.value = markdown ? renderMd(text) : "";
+      mdPreview.value = markdown;
+      editingFile.value = !markdown;
+      layout.fileEditorOpen = true;
+      layout.setView("editor");
+      if (!markdown) layout.showToast(`已加载: ${name} (${size.toLocaleString()} bytes)`);
+      return true;
+    } catch (error: any) {
+      layout.showToast("读取失败: " + (error?.message ?? error));
+      return false;
+    }
   }
   async function saveFile() {
-    if (!filePath.value) return;
-    await bridge.writeFile(filePath.value, fileContent.value);
-    layout.showToast("已保存: " + filePath.value.split("/").pop());
+    const path = editorFilePath.value;
+    if (!path) return;
+    const text = fileContent.value;
+    const baseline = editorSavedContent.value;
+    try {
+      // Advisory conflict detection only. The native write_file command is NOT an atomic CAS.
+      const disk = await bridge.readFile(path);
+      if (disk !== baseline) {
+        layout.showToast("保存被阻止：磁盘文件已由外部修改，请手动处理冲突；草稿仍保留");
+        return;
+      }
+      if (editorFilePath.value !== path || fileContent.value !== text) return;
+      await bridge.writeFile(path, text);
+      if (editorFilePath.value === path) editorSavedContent.value = text;
+      layout.showToast("已保存: " + path.split("/").pop());
+    } catch (error: any) {
+      layout.showToast("保存失败，草稿未清除: " + (error?.message ?? error));
+    }
   }
 
   // ===== Files canonical writers（组件经此写状态，禁止直写，FILE-03 / WS-OWNER-02）=====
@@ -704,6 +749,9 @@ export const useFileStore = defineStore("files", () => {
     filePath,
     pathInput,
     fileContent,
+    editorFilePath,
+    editorDirty,
+    canDiscardEditor,
     editingFile,
     mdPreview,
     mdHtml,
