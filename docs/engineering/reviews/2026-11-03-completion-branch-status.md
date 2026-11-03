@@ -33,6 +33,12 @@
 
 `bash scripts/pre-merge.sh` on the dirty branch exited `PRE_MERGE_RESULT=FAIL`: the Vite build was terminated by the kernel (`Killed`) during large Monaco/TypeScript bundle processing. The Linux kernel log identifies a **global out-of-memory kill**, not a successful build. `vite.config.ts` now limits Terser to one concurrent worker without reducing the existing byte caps or changing compression passes. A scoped Vite production build subsequently completed successfully (`vite build` EXIT=0, 3,614 modules) under a temporary user-systemd `MemoryMax=6G` scope and a 2-GiB V8 heap limit. The final source was adjusted afterwards to enforce the documented WeChat draft field lengths, so the final-SHA build and independent budget verifier remain required, to avoid killing unrelated desktop processes. Until that build finishes and the independent hashed dist/approved budget verifier passes, mark both **BUILD_PENDING/FAIL** and **PRE_MERGE_FAIL**, never PASS. No unrelated processes should be killed or the global swap configuration changed to force this through.
 
+## Final SHA 4b3c67ce validation and security follow-up
+
+The source-SHA-matched production frontend build succeeded under a per-process memory cap; the full local **`PRE_MERGE_RESULT=ALL_PASS`** was subsequently recorded with `PREMERGE_REUSE_FRONTEND=1` and all approved editor/core/total bytes and SHA256 checks enabled (`approved_editor_budget_passed=true`). The configured historical 45% comparison was preserved and Rust warning count did not increase. This is **code and build-gate evidence, not installed GUI or WeChat account acceptance**.
+
+GitHub's MySQL + PostgreSQL 16 real E2E job passed on `4b3c67ce`, as did Governance, UI Safety and Hot-Plug Acceptance. However Supply Chain Assurance failed its Rust advisory scan: the lockfile then contained `rustls=0.23.43`, `rustls-webpki=0.103.13` and `webpki-root-certs=1.0.9`, subject to **six current vulnerabilities** (including `RUSTSEC-2026-0346`, `0285`, `0348`, `0349`, `0382`, `0383`). The security patch updates these to `0.23.46`, `0.103.16` and `1.0.10`, with required transitive `aws-lc-rs`/`aws-lc-sys` updates, without muting or ignoring the scanner. The updated commit requires another Rust regression run and a fresh GitHub scan before merge; **the earlier code/CI PASS must not be inherited by the new commit without evidence**.
+
 ## Remaining blockers before any one-time merge
 
 1. Validate real WeChat authorization, real cover/body media and actual draft retrieved in its Draft Box, never auto-publish or mass-send.
