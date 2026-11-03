@@ -71,6 +71,8 @@ impl EventRecord {
 struct Inner {
     last_sequence: HashMap<Uuid, u64>,
     events: HashMap<Uuid, VecDeque<EventRecord>>,
+    // Preserve a bounded number of recent terminal tasks for late subscribers.
+    retired: VecDeque<Uuid>,
 }
 
 /// The journal is an in-memory prototype. A production durable store must
@@ -82,6 +84,27 @@ pub struct EventJournal {
 }
 
 impl EventJournal {
+    // Bound completed task history independently of retained_per_task: without
+    // this, unique short-lived production Task IDs retained history forever.
+    const RETIRED_TASK_LIMIT: usize = 256;
+
+    /// Preserve the most recent terminal task events for replay while evicting
+    /// older retired tasks and their sequence counters. Live subscribers have
+    /// already received the terminal event through the broadcast channel.
+    pub fn retire_task(&self, task_id: Uuid) {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if inner.retired.contains(&task_id) {
+            return;
+        }
+        inner.retired.push_back(task_id);
+        while inner.retired.len() > Self::RETIRED_TASK_LIMIT {
+            if let Some(old) = inner.retired.pop_front() {
+                inner.events.remove(&old);
+                inner.last_sequence.remove(&old);
+            }
+        }
+    }
+
     pub fn new(retained_per_task: usize) -> Self {
         let retained_per_task = retained_per_task.clamp(1, 1024);
         let (sender, _) = broadcast::channel(retained_per_task.max(16));
@@ -165,6 +188,31 @@ impl EventJournal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn terminal_retention_is_globally_bounded_and_recent_events_replay() {
+        let journal = EventJournal::new(2);
+        let mut first = Uuid::nil();
+        let mut last = Uuid::nil();
+        for n in 0..400 {
+            let task = Uuid::new_v4();
+            if n == 0 {
+                first = task;
+            }
+            last = task;
+            journal.append(task, EventKind::TaskCreated);
+            journal.append(task, EventKind::Interrupted);
+            journal.retire_task(task);
+            journal.retire_task(task); // repeated owner cleanup is idempotent
+        }
+        let state = journal.inner.lock().unwrap();
+        assert_eq!(state.retired.len(), EventJournal::RETIRED_TASK_LIMIT);
+        assert_eq!(state.events.len(), EventJournal::RETIRED_TASK_LIMIT);
+        assert_eq!(state.last_sequence.len(), EventJournal::RETIRED_TASK_LIMIT);
+        drop(state);
+        assert!(journal.replay(first, 0).unwrap().is_empty());
+        assert_eq!(journal.replay(last, 0).unwrap().len(), 2);
+    }
+
     #[test]
     fn monotonic_and_gap_detected() {
         let journal = EventJournal::new(2);

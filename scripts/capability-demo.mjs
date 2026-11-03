@@ -200,9 +200,9 @@ async function cmdRuntimeDemo(M, id) {
   console.log(`before           contributions=${count()}  registered=[${orch.installedIds().join(",") || "∅"}]`);
   const added = await orch.add(cid);
   console.log(`REGISTER         contributions=${count()}  state=${added.state}  ${added.notes.join(" | ")}`);
-  const st = orch.disable(cid);
+  const st = await orch.disable(cid);
   console.log(`DISABLE          contributions=${count()}  state=${st}  （UI 贡献摘除，不再暴露能力动作）`);
-  orch.enable(cid);
+  await orch.enable(cid);
   console.log(`ENABLE           contributions=${count()}  state=${orch.target.stateOf(cid)}`);
   const removed = await orch.remove(cid);
   console.log(`UNREGISTER       contributions=${count()}  state=${removed.state}  ${removed.notes.join(" | ")}`);

@@ -49,8 +49,23 @@ export interface HotPlugTarget {
   removeContributions(id: string): void;
   /** 能力的停用后钩子：用于释放/收尾（可选；未提供且 policy 为 graceful 时按 policy 裁决） */
   onDeactivate?(id: string): void | Promise<void>;
+  /** The authoritative Runtime Owner receipt; if provided it replaces the legacy hook. */
+  releaseOwner?(id: string): Promise<void>;
+  /** Restore the Runtime only after its Owner has activated successfully. */
+  activateOwner?(id: string): Promise<void>;
   /** 是否存在未结束的工作（用于 REJECT / GRACEFUL 裁决） */
   hasActiveWork?(id: string): boolean;
+}
+
+// Serialise overlapping remove/disable/enable on the same Target + capability.
+// It is a pure platform guard, not a second resource or task state owner.
+const inFlight = new WeakMap<HotPlugTarget, Set<string>>();
+function lockTransition(target: HotPlugTarget, id: string): () => void {
+  let ids = inFlight.get(target);
+  if (!ids) { ids = new Set(); inFlight.set(target, ids); }
+  if (ids.has(id)) throw new HotPlugError("INVALID_TRANSITION", `${id} 正在释放或启用，禁止重入`);
+  ids.add(id);
+  return () => ids!.delete(id);
 }
 
 export interface AddRequest {
@@ -81,6 +96,8 @@ export async function requestAdd(target: HotPlugTarget, req: AddRequest): Promis
       `manifest 校验失败: ${violations.map((v) => `${v.code}(${v.message})`).join("; ")}`,
     );
   }
+  const unlock = lockTransition(target, m.id);
+  try {
   if (target.installed[m.id]) throw new HotPlugError("INVALID_MANIFEST", `能力已注册: ${m.id}`);
   if (!m.hotPlug?.register) {
     throw new HotPlugError("INVALID_TRANSITION", `${m.id} 未声明支持运行时 register（HP level=${m.hotPlug?.level}）`);
@@ -121,6 +138,9 @@ export async function requestAdd(target: HotPlugTarget, req: AddRequest): Promis
       ...report.warnings,
     ];
     if (m.activationPolicy === "auto") {
+      // A visible ACTIVE bit is valid only after the Runtime Owner activation
+      // promise has settled. Otherwise the UI can expose a dead capability.
+      await target.activateOwner?.(m.id);
       assertTransition("ENABLED", "ACTIVE");
       target.setState(m.id, "ACTIVE");
     }
@@ -131,19 +151,26 @@ export async function requestAdd(target: HotPlugTarget, req: AddRequest): Promis
     }
     return { id: m.id, state: target.stateOf(m.id), notes };
   } catch (e) {
-    // rollback（顺序必须与注册相反）
+    // Failed Owner cleanup must retain a record for controlled recovery:
+    // removing the record would orphan resources. UI actions fail closed.
     if (rolledBack.includes("contributions")) target.removeContributions(m.id);
+    if (String(e).includes("OWNER_CLEANUP_FAILED")) {
+      target.setState(m.id, "SUSPENDED");
+      throw new HotPlugError("LOADER_FAILED",
+        "加入失败且 Owner 清理未确认，保留 Runtime 记录: " + String(e));
+    }
     if (rolledBack.includes("record")) {
-      try {
-        target.removeRecord(m.id);
-      } catch {
-        /* 已尽力回滚 */
+      try { target.removeRecord(m.id); }
+      catch (cleanupError) {
+        target.setState(m.id, "SUSPENDED");
+        throw new HotPlugError("LOADER_FAILED",
+          "加入回滚未完成，保留 Runtime 记录: " + String(cleanupError));
       }
     }
-    throw e instanceof HotPlugError
-      ? e
-      : new HotPlugError("LOADER_FAILED", `加入失败已回滚: ${(e as Error)?.message ?? e}`);
+    throw e instanceof HotPlugError ? e :
+      new HotPlugError("LOADER_FAILED", "加入失败已回滚: " + String(e));
   }
+  } finally { unlock(); }
 }
 
 export interface RemoveRequest {
@@ -190,62 +217,93 @@ export async function requestRemove(target: HotPlugTarget, req: RemoveRequest): 
     throw new HotPlugError("ACTIVE_WORK_POLICY", `${req.id} 存在未结束工作且策略为 reject`);
   }
 
-  // 3) deactivate
-  if (canTransition(from, "DISABLED")) {
-    target.setState(req.id, "DISABLED");
-    notes.push(`deactivated ${from} → DISABLED`);
-    if (busy && m.deactivationPolicy === "graceful") {
-      await target.onDeactivate?.(req.id);
-      notes.push("graceful deactivation hook 已执行");
+  // 3) Owner release must complete before DISABLED is externally observable.
+  // A real Orchestrator supplies releaseOwner() backed by runtime.releaseAsync.
+  // A generic Hot-Plug Target may supply its legacy onDeactivate hook instead.
+  const unlock = lockTransition(target, req.id);
+  try {
+    if (from !== "DISABLED") {
+      if (!canTransition(from, "DISABLED")) assertTransition(from, "DISABLED");
+      if (target.releaseOwner) await target.releaseOwner(req.id);
+      else if (target.onDeactivate) await target.onDeactivate(req.id);
+      target.setState(req.id, "DISABLED");
     }
-  } else {
-    assertTransition(from, "DISABLED");
-  }
+    // Existing DISABLED state already carries its release receipt.
+    // Never call the Owner again for a disable -> remove transition.
+    notes.push(`deactivated ${from} → DISABLED after Owner cleanup`);
 
-  // 4) 贡献摘除 → runtime 记录移除
-  target.removeContributions(req.id);
-  target.removeRecord(req.id);
-  target.setState(req.id, "UNREGISTERED");
-  notes.push("contributions removed; runtime record removed");
+    // The Runtime record may reject unregister for another still-live owner.
+    // In that case fail closed (DISABLED) and remove UI actions rather than
+    // claiming the capability is ACTIVE while its resources were released.
+    try {
+      target.removeRecord(req.id);
+    } catch (error) {
+      target.removeContributions(req.id);
+      throw new HotPlugError("INVALID_TRANSITION", `Owner 已释放但注销未完成: ${String(error)}`);
+    }
+    target.removeContributions(req.id);
+    target.setState(req.id, "UNREGISTERED");
+    notes.push("runtime record removed; contributions removed");
 
-  // 5) verify：不得残留该能力的任何贡献
-  const stillThere = Object.keys(target.installed).includes(req.id);
-  if (stillThere) throw new HotPlugError("INVALID_TRANSITION", `移除后仍存在记录: ${req.id}`);
+    if (Object.keys(target.installed).includes(req.id)) {
+      throw new HotPlugError("INVALID_TRANSITION", `移除后仍存在记录: ${req.id}`);
+    }
+  } finally { unlock(); }
 
   return { id: req.id, state: target.stateOf(req.id), notes };
 }
 
-/** HP1：运行时 enable/disable（停用必须摘除贡献，§28） */
-export function disableCapability(target: HotPlugTarget, id: string): PlatformState {
-  const m = target.installed[id];
-  if (!m) throw new HotPlugError("NOT_INSTALLED", `能力未注册: ${id}`);
-  if (!m.hotPlug?.disable) {
-    throw new HotPlugError("INVALID_TRANSITION", `${id} 未声明支持 runtime disable（HP level=${m.hotPlug?.level}）`);
-  }
-  const from = target.stateOf(id);
-  if (target.hasActiveWork?.(id) && m.deactivationPolicy === "reject") {
-    throw new HotPlugError("ACTIVE_WORK_POLICY", `${id} 存在未结束工作且策略为 reject`);
-  }
-  if (from === "ACTIVE" && target.onDeactivate && m.deactivationPolicy === "graceful") {
-    void target.onDeactivate(id);
-  }
-  target.setState(id, "DISABLED");
-  target.removeContributions(id);
-  return target.stateOf(id);
+/** HP1: every disable is an awaited Owner release, never a fire-and-forget hook. */
+export async function disableCapability(target: HotPlugTarget, id: string): Promise<PlatformState> {
+  const unlock = lockTransition(target, id);
+  try {
+    const m = target.installed[id];
+    if (!m) throw new HotPlugError("NOT_INSTALLED", `能力未注册: ${id}`);
+    if (!m.hotPlug?.disable) {
+      throw new HotPlugError("INVALID_TRANSITION", `${id} 未声明支持 runtime disable（HP level=${m.hotPlug?.level}）`);
+    }
+    const from = target.stateOf(id);
+    if (from === "DISABLED") return from;
+    if (target.hasActiveWork?.(id) && m.deactivationPolicy === "reject") {
+      throw new HotPlugError("ACTIVE_WORK_POLICY", `${id} 存在未结束工作且策略为 reject`);
+    }
+    assertTransition(from, "DISABLED");
+    if (target.releaseOwner) await target.releaseOwner(id);
+    else await target.onDeactivate?.(id);
+    // State/UI removal are the commit phase, after the Owner receipt.
+    target.setState(id, "DISABLED");
+    target.removeContributions(id);
+    return target.stateOf(id);
+  } finally { unlock(); }
 }
 
-export function enableCapability(target: HotPlugTarget, id: string): PlatformState {
-  const m = target.installed[id];
-  if (!m) throw new HotPlugError("NOT_INSTALLED", `能力未注册: ${id}`);
-  if (!m.hotPlug?.enable) {
-    throw new HotPlugError("INVALID_TRANSITION", `${id} 未声明支持 runtime enable（HP level=${m.hotPlug?.level}）`);
-  }
-  const from = target.stateOf(id);
-  assertTransition(from === "UNREGISTERED" ? "REGISTERED" : from, "ENABLED");
-  target.setState(id, "ENABLED");
-  target.addContributions(m);
-  if (m.activationPolicy === "auto" && canTransition("ENABLED", "ACTIVE")) {
-    target.setState(id, "ACTIVE");
-  }
-  return target.stateOf(id);
+/** HP1 enable: preserve the same async owner/metadata ordering in reverse. */
+export async function enableCapability(target: HotPlugTarget, id: string): Promise<PlatformState> {
+  const unlock = lockTransition(target, id);
+  try {
+    const m = target.installed[id];
+    if (!m) throw new HotPlugError("NOT_INSTALLED", `能力未注册: ${id}`);
+    if (!m.hotPlug?.enable) {
+      throw new HotPlugError("INVALID_TRANSITION", `${id} 未声明支持 runtime enable（HP level=${m.hotPlug?.level}）`);
+    }
+    const from = target.stateOf(id);
+    assertTransition(from === "UNREGISTERED" ? "REGISTERED" : from, "ENABLED");
+    try { await target.activateOwner?.(id); }
+    catch (error) {
+      // A partly cleaned Owner cannot be represented as fully DISABLED.
+      // Keep the capability out of visible UI and mark a non-executable state
+      // so it can be diagnosed/released before another activation attempt.
+      if (String(error).includes("OWNER_CLEANUP_FAILED")) {
+        target.removeContributions(id);
+        target.setState(id, "SUSPENDED");
+      }
+      throw error;
+    }
+    target.setState(id, "ENABLED");
+    target.addContributions(m);
+    if (m.activationPolicy === "auto" && canTransition("ENABLED", "ACTIVE")) {
+      target.setState(id, "ACTIVE");
+    }
+    return target.stateOf(id);
+  } finally { unlock(); }
 }

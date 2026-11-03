@@ -66,8 +66,10 @@ export async function transitionCapability(
       return { message: `${id} 已暂停，可恢复或继续停用（暂停仅对本次会话生效）` }
     }
     if (action === 'disable') {
-      runtime.disable(id)
-      await record.definition.lifecycle.onDeactivate?.()
+      // Owner cleanup must commit before the disabled bit or UI contributions.
+      // releaseAsync serializes with activation/suspend and returns one receipt;
+      // do not invoke onDeactivate a second time in the Manager.
+      await runtime.releaseAsync(id)
       registry.unregisterCapability(id)
       return { message: `${id} 已停用`, persistedEnabled: false }
     }

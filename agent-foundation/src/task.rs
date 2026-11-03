@@ -228,6 +228,9 @@ impl TaskRegistry {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(&id);
+        // The task has retired from the live registry; its terminal event is
+        // kept only within a finite replay window, not for process lifetime.
+        self.journal.retire_task(id);
         Ok(())
     }
 
@@ -571,6 +574,25 @@ impl TaskRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retirement_keeps_recent_terminal_replay_but_bounds_history() {
+        let journal = Arc::new(EventJournal::new(4));
+        let registry = TaskRegistry::new(journal.clone());
+        let mut ids = Vec::new();
+        for _ in 0..280 {
+            let task = registry
+                .create(Uuid::new_v4(), "short execution", vec![])
+                .unwrap();
+            registry.start(task.id).unwrap();
+            registry.finish(task.id, true).unwrap();
+            registry.retire_terminal(task.id).unwrap();
+            ids.push(task.id);
+        }
+        assert!(journal.replay(ids[0], 0).unwrap().is_empty());
+        assert!(journal.replay(*ids.last().unwrap(), 0).is_ok());
+        assert!(registry.get(ids[0]).is_err());
+    }
 
     #[test]
     fn approval_is_one_shot_and_task_scoped() {

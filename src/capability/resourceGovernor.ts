@@ -51,7 +51,9 @@ export function createResourceGovernor(runtime: CapabilityRuntime): ResourceGove
     } else {
       // ACTIVE non-suspendable resources cannot be called released by disabling metadata.
       if (rec.state === 'ACTIVE') throw new Error(`GOVERNOR_OWNER_SUSPEND_REQUIRED: ${id}`)
-      runtime.disable(id)
+      // Fallback is a real lifecycle release, not metadata-only disable.
+      // The Owner receipt is required before background() returns.
+      await runtime.releaseAsync(id)
     }
   }
   async function suspend(id: string) {

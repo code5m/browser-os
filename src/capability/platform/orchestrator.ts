@@ -45,8 +45,8 @@ export interface Orchestrator {
   target: HotPlugTarget;
   add(id: string): Promise<{ id: string; state: PlatformState; notes: string[] }>;
   remove(id: string, force?: boolean): Promise<{ id: string; state: PlatformState; notes: string[] }>;
-  disable(id: string): PlatformState;
-  enable(id: string): PlatformState;
+  disable(id: string): Promise<PlatformState>;
+  enable(id: string): Promise<PlatformState>;
   contributionsOf(id: string): number;
   installedIds(): string[];
 }
@@ -117,6 +117,36 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       }
     },
     onDeactivate: deps.onDeactivate,
+    async releaseOwner(id) {
+      await runtime.releaseAsync(id)
+    },
+    async activateOwner(id) {
+      const record = runtime.get(id);
+      if (!record) throw new Error(`能力缺少 Runtime 记录: ${id}`);
+      if (!record.enabled) runtime.enable(id);
+      if (record.definition.v1?.activationPolicy === "auto") {
+        runtime.resolve(id);
+        try { await runtime.activateAsync(id); }
+        catch (error) {
+          // activateAsync already invokes onDeactivate on failed activation;
+          // avoid a second Owner cleanup. Retry only after a failed rollback.
+          if (record.lastError?.includes('cleanup failed')) {
+            try { await runtime.releaseAsync(id); }
+            catch (cleanupError) {
+              throw new Error('OWNER_CLEANUP_FAILED: ' + String(cleanupError));
+            }
+          } else {
+            // activateAsync has already completed its Owner rollback hook.
+            // Restore metadata to disabled without invoking a second cleanup.
+            try { runtime.disable(id); }
+            catch (disableError) {
+              throw new Error('OWNER_CLEANUP_FAILED: ' + String(disableError));
+            }
+          }
+          throw error;
+        }
+      }
+    },
     hasActiveWork: deps.hasActiveWork,
   };
 

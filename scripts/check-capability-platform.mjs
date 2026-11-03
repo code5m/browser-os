@@ -37,6 +37,8 @@ async function loadRuntime() {
     export { validateManifestV1 } from '${join(ROOT, "src/capability/platform/contract.ts").replace(/\\/g, "/")}';
     export { canTransition, nextStates, assertTransition } from '${join(ROOT, "src/capability/platform/lifecycle.ts").replace(/\\/g, "/")}';
     export { createOrchestrator } from '${join(ROOT, "src/capability/platform/orchestrator.ts").replace(/\\/g, "/")}';
+    export { disableCapability, requestRemove, requestAdd } from '${join(ROOT, "src/capability/platform/hotplug.ts").replace(/\\/g, "/")}';
+    export { createResourceGovernor } from '${join(ROOT, "src/capability/resourceGovernor.ts").replace(/\\/g, "/")}';
     export { transitionCapability } from '${join(ROOT, "src/capability/platform/manager.ts").replace(/\\/g, "/")}';
     export { bootstrapAssembly, bootstrapCapabilityRuntime, bootstrapConfiguredCapabilityRuntime } from '${join(ROOT, "src/capability/index.ts").replace(/\\/g, "/")}';
     export { registerBookmarkContributions } from '${join(ROOT, "src/capabilities/bookmark/index.ts").replace(/\\/g, "/")}';
@@ -273,6 +275,8 @@ async function main() {
         "manifest 声明的贡献与真实注册完全一致（零契约漂移）",
         `real=${realIds.join(",")} declared=${declaredIds.join(",")}`);
       expect(orch.installedIds().includes("bookmark"), "PLT2-14c", "REGISTER 后 runtime 记录存在");
+      expect(rt.get("bookmark")?.state === "ACTIVE" && rt.get("bookmark")?.enabled === true,
+        "PLT2-14l", "HP2 auto-activate 的平台 ACTIVE 状态必须与 Runtime Owner ACTIVE 一致");
 
       // unregister
       try {
@@ -295,6 +299,170 @@ async function main() {
         bad("PLT2-14f", "再次 REGISTER 失败", e.message);
       }
     }
+  }
+
+  // ---- PLT2-14g: asynchronous Hot-Plug Owner cleanup is a transaction ----
+  {
+    let state = "ACTIVE";
+    let releaseGate;
+    let cleanupFails = false;
+    let calls = 0;
+    const removed = [];
+    const manifest = { hotPlug: {disable: true,unregister:true}, deactivationPolicy:"graceful", dependencies:[] };
+    const target = {
+      installed:{probe:manifest},
+      stateOf:()=>state, setState:(_id,to)=>{state=to},
+      hasActiveWork:()=>false,
+      onDeactivate: async()=>{
+        calls++;
+        if(cleanupFails) throw new Error('Owner refused to release');
+        if(releaseGate) await releaseGate;
+      },
+      removeContributions: id=>removed.push('ui:'+id),
+      removeRecord:id=>{delete target.installed[id];removed.push('record:'+id)},
+    };
+    cleanupFails=true;
+    let err;
+    try { await M.disableCapability(target,'probe'); } catch(e){err=e;}
+    expect(/Owner refused/.test(String(err)) && state==='ACTIVE' && removed.length===0,
+      'PLT2-14g', 'Hot-Plug Owner 释放失败不得提前提交 DISABLED 或移除 UI');
+    cleanupFails=false;
+    let complete;
+    releaseGate=new Promise(resolve=>{complete=resolve});
+    const shutting=M.disableCapability(target,'probe');
+    await Promise.resolve();
+    expect(state==='ACTIVE' && removed.length===0,
+      'PLT2-14h','Hot-Plug 等待异步 Owner 清理结束才标记停用');
+    complete();
+    await shutting;
+    expect(state==='DISABLED' && calls===2 && removed[0]==='ui:probe',
+      'PLT2-14i','停用成功后且仅在 Owner 清理完成时摘除贡献');
+    const unregistered = await M.requestRemove(target,{id:'probe'});
+    expect(unregistered.state==='UNREGISTERED' && calls===2 && !target.installed.probe,
+      'PLT2-14m','停用后移除不重复触发 Owner 清理，也不留下 Runtime 记录');
+  }
+
+  // ---- PLT2-14j: governor fallback also awaits Owner release ----
+  {
+    const rt = createCapabilityRuntime();
+    let finishOwner, ownerCalled = 0;
+    const def = { ...CAPABILITY_DEFINITIONS.bookmark, id:'governor-probe',
+      dependsOn:[],resources:{class:['HEAVY'],suspendable:false,destroyable:true},
+      lifecycle:{...CAPABILITY_DEFINITIONS.bookmark.lifecycle,
+        supported:['ACTIVE'], onDestroy:async()=>{ownerCalled++;await new Promise(r=>{finishOwner=r})}}
+    };
+    rt.register(def); rt.resolve('governor-probe');
+    const governor=M.createResourceGovernor(rt);
+    const background=governor.background('governor-probe');
+    await Promise.resolve();
+    expect(rt.get('governor-probe').enabled,'PLT2-14j','后台降级等待 Owner 清理前保留 enabled 状态');
+    while(!finishOwner)await Promise.resolve();
+    finishOwner();await background;
+    expect(ownerCalled===1&&!rt.get('governor-probe').enabled,
+      'PLT2-14k','后台不可暂停能力仅在 Owner release 确认后真正停用');
+  }
+
+  // ---- PLT2-14n: failed activation cleans up once, never double-deactivates ----
+  {
+    contributionRegistry.clear();
+    const rt = createCapabilityRuntime();
+    const registry = M.createContributionRegistry();
+    let activateCalls=0, cleanupCalls=0;
+    const faulty = { ...CAPABILITY_DEFINITIONS.bookmark, id:'faulty',
+      dependsOn:[],v1:{...CAPABILITY_CATALOG.bookmark,id:'faulty'},
+      lifecycle:{...CAPABILITY_DEFINITIONS.bookmark.lifecycle,
+        onActivate:async()=>{activateCalls++;throw Error('fixture activation failed')},
+        onDeactivate:async()=>{cleanupCalls++}
+      }
+    };
+    const orch=M.createOrchestrator({
+      runtime:rt,registry,definitions:{faulty},permit:()=>true,
+      loaders:{faulty:()=>registry.registerContribution({id:'faulty.panel',capabilityId:'faulty',type:'surface',slot:'browser-sidebar'})}
+    });
+    let error;
+    try { await orch.add('faulty') } catch(e){error=e}
+    expect(/activation failed/.test(String(error))&&activateCalls===1&&cleanupCalls===1
+      &&!rt.get('faulty')&&registry.getByCapability('faulty').length===0,
+      'PLT2-14n','激活失败由 Runtime 唯一 Owner 回滚一次；不得重入清理或遗留 UI');
+  }
+
+  // ---- PLT2-14o: failed Owner rollback must remain visible and blocked ----
+  {
+    const rt=createCapabilityRuntime();
+    const registry=M.createContributionRegistry();
+    let attempts=0;
+    const failed={...CAPABILITY_DEFINITIONS.bookmark,id:'failed.owner',dependsOn:[],
+      v1:{...CAPABILITY_CATALOG.bookmark,id:'failed.owner'},
+      lifecycle:{...CAPABILITY_DEFINITIONS.bookmark.lifecycle,
+        onActivate:async()=>{throw Error('start failed')},
+        onDeactivate:async()=>{attempts++;throw Error('cleanup still failed')}
+      }
+    };
+    const orch=M.createOrchestrator({runtime:rt,registry,definitions:{'failed.owner':failed},
+      permit:()=>true,loaders:{'failed.owner':()=>registry.registerContribution({
+        id:'failed.panel',capabilityId:'failed.owner',type:'surface',slot:'browser-sidebar'
+      })}
+    });
+    let error;
+    try { await orch.add('failed.owner'); } catch(e){error=e}
+    expect(error?.code==='LOADER_FAILED'&&/清理未确认/.test(error.message)
+      &&!!rt.get('failed.owner')&&orch.target.stateOf('failed.owner')==='SUSPENDED'
+      &&registry.getByCapability('failed.owner').length===0&&attempts===2,
+      'PLT2-14o','Owner 清理持续失败则保留 Runtime 记录供诊断，禁止宣称已卸载');
+  }
+
+  // ---- PLT2-14p: Hot-Plug install also serializes with disable ----
+  {
+    let resolveLoader, startedLoader;
+    const began=new Promise(resolve=>{startedLoader=resolve});
+    const gate=new Promise(resolve=>{resolveLoader=resolve});
+    const installed={},states={};
+    const fixture={...CAPABILITY_CATALOG.bookmark,id:'guarded'};
+    const target={
+      installed, stateOf:id=>states[id]??'AVAILABLE',
+      setState:(id,to)=>{states[id]=to},
+      addRecord:m=>{installed[m.id]=m},
+      removeRecord:id=>{delete installed[id]},
+      addContributions:()=>{},removeContributions:()=>{}
+    };
+    const joining=M.requestAdd(target,{manifest:fixture,permit:()=>true,load:async()=>{
+      startedLoader();await gate;
+    }});
+    await began;
+    let conflicting;
+    try{await M.disableCapability(target,'guarded')}catch(e){conflicting=e}
+    expect(conflicting?.code==='INVALID_TRANSITION'&&states.guarded==='ENABLED',
+      'PLT2-14p','运行时动态加入等待 loader 时不得并发停用相同能力');
+    resolveLoader();await joining;
+  }
+
+  // ---- PLT2-14q: failed reactivation must preserve disabled Runtime/Platform ----
+  {
+    const runtime=createCapabilityRuntime();
+    const registry=M.createContributionRegistry();
+    let failActivation=false, cleaned=0;
+    const def={...CAPABILITY_DEFINITIONS.bookmark,id:'retry.guard',dependsOn:[],
+      v1:{...CAPABILITY_CATALOG.bookmark,id:'retry.guard'},
+      lifecycle:{...CAPABILITY_DEFINITIONS.bookmark.lifecycle,
+        onActivate:async()=>{if(failActivation)throw Error('fixture activate rejected')},
+        onSuspend:async()=>{},
+        onDeactivate:async()=>{cleaned++}
+      }};
+    const orch=M.createOrchestrator({runtime,registry,definitions:{'retry.guard':def},
+      permit:()=>true,loaders:{'retry.guard':()=>registry.registerContribution({
+        id:'retry.guard.ui',capabilityId:'retry.guard',type:'surface',slot:'browser-sidebar'
+      })}});
+    await orch.add('retry.guard');
+    await orch.disable('retry.guard');
+    failActivation=true;
+    let rejected;
+    try {await orch.enable('retry.guard')} catch(e){rejected=e}
+    expect(/fixture activate rejected/.test(String(rejected))
+      &&orch.target.stateOf('retry.guard')==='DISABLED'
+      &&runtime.get('retry.guard').enabled===false
+      &&registry.getByCapability('retry.guard').length===0
+      &&cleaned===2,
+      'PLT2-14q','Owner 重新激活失败不得留下 Runtime enabled 与平台 DISABLED 冲突');
   }
 
   // ---- PLT2-15 存在强依赖方时拒绝 remove ---------------------------------
@@ -478,6 +646,9 @@ async function main() {
     cleanupFails = false;
     cleanupWait = new Promise((resolve) => { releaseCleanup = resolve; });
     const disabling = act("disable");
+    await Promise.resolve(); // let the Owner cleanup begin before inspecting state
+    expect(record.enabled && record.state === "SUSPENDED",
+      "PLT2-22i", "Owner 异步清理完成前，Runtime 不得提前提交 DISABLED 状态");
     expect(await rejected(() => act("enable"), /进行中/), "PLT2-22d", "异步停用期间拒绝并发启用");
     releaseCleanup();
     await disabling;

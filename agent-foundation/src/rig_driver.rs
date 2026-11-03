@@ -170,10 +170,14 @@ impl RigMultiTurnDriver {
                     });
                 }
                 AgentRunStep::Done(response) => {
-                    tasks.finish(task_id, true)?;
+                    // Validation must precede committing a successful terminal
+                    // state; the previous order permanently marked an oversized
+                    // error as Completed. Fail closed and retain a Failed event.
                     if response.output.len() > 256 * 1024 {
+                        tasks.finish(task_id, false)?;
                         return Err(FoundationError::Provider("RIG_OUTPUT_LIMIT".into()));
                     }
+                    tasks.finish(task_id, true)?;
                     return Ok(RigDriverStep::Completed {
                         text: response.output,
                         input_tokens: response.usage.input_tokens,
@@ -281,6 +285,35 @@ mod tests {
                 Err(FoundationError::PermissionDenied)
             }
         }
+    }
+
+    #[tokio::test]
+    async fn oversized_completion_cannot_commit_success() {
+        let backend = FakeBackend(Mutex::new(vec![CompletionResponse::new(
+            vec![AssistantContent::text("X".repeat(256 * 1024 + 2))],
+            Usage::default(),
+            "mock",
+            json!({}),
+        )]));
+        let tasks = TaskRegistry::new(Arc::new(EventJournal::new(16)));
+        let task = tasks.create(Uuid::new_v4(), "oversized", vec![]).unwrap();
+        tasks.start(task.id).unwrap();
+        let tools = ToolRegistry::default();
+        tools.register(Arc::new(ReadTool)).unwrap();
+        let defs = vec![ToolDefinition::new(
+            ToolName::new("demo.inspect").unwrap(),
+            "Inspect repo",
+            json!({"type":"object"}),
+        )];
+        let mut driver = RigMultiTurnDriver::new("Review", 2).unwrap();
+        let outcome = driver
+            .drive(task.id, "model-mock", &backend, &tasks, &tools, &defs)
+            .await;
+        assert_eq!(
+            outcome.err(),
+            Some(FoundationError::Provider("RIG_OUTPUT_LIMIT".into()))
+        );
+        assert_eq!(tasks.get(task.id).unwrap().status, TaskStatus::Failed);
     }
 
     #[tokio::test]
