@@ -15,8 +15,8 @@
 //! 1. **多语句**：SQLite 走 `prepare`（禁 `execute_batch`），并在进入驱动前做第二道静态检出。
 //! 2. **凭据**：本模块**不接受** DSN / 连接串；连接参数一律以类型化字段构造，
 //!    凭据只经 `KeyringStore`（键 `db:<conn_id>`），错误串出模块前一律 `sanitize_message`。
-//! 3. **不伪造**：未接通的 PostgreSQL 取数能力显式返回 `DB_NOT_SUPPORTED`，
-//!    MySQL 取数已复用原有安全闸门。
+//! 3. **不伪造**：PostgreSQL 查询使用同步驱动的流式迭代，
+//!    未支持的列类型明确标记不可无损导出；真实服务验收另行记录。
 
 use crate::domain::{DbConnectionConfig, DbErrorCode, DbSslMode, SupportedDb};
 use crate::security_policy::{check_path_component, check_path_within_roots};
@@ -492,10 +492,9 @@ impl DbPool {
             DbPool::MySql(conn, _) => {
                 query_mysql_with_deadline(conn, sql, cancel, &deadline, query_id)
             }
-            DbPool::Postgres(_) => Err(DbError::new(
-                DbErrorCode::NotSupported,
-                "PostgreSQL 取数通道未实现（M4-2.b 交付，受 D27 无真实服务端约束）",
-            )),
+            DbPool::Postgres(conn) => {
+                query_postgres_with_deadline(conn, sql, cancel, &deadline, query_id)
+            }
         }
     }
 }
@@ -602,6 +601,124 @@ fn connect_postgres(cfg: &DbConnectionConfig, password: Option<&str>) -> Result<
         )
     })?;
     Ok(DbPool::Postgres(client))
+}
+
+// ---------------------------------------------------------------------------
+// PostgreSQL query: bounded streaming protocol. Unsupported types are opaque
+// and blocked by the existing binary export safety rule; never fabricate data.
+// ---------------------------------------------------------------------------
+
+// Accept raw binary protocol payloads solely to determine null-ness and exact
+// sizes of types without a typed decoder. Never expose raw opaque bytes to UI.
+struct PgRaw(Vec<u8>);
+impl<'a> postgres::types::FromSql<'a> for PgRaw {
+    fn from_sql(
+        _ty: &postgres::types::Type,
+        raw: &'a [u8],
+    ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        Ok(Self(raw.to_vec()))
+    }
+    fn accepts(_ty: &postgres::types::Type) -> bool {
+        true
+    }
+}
+fn postgres_scalar(row: &postgres::Row, index: usize) -> DbValue {
+    use postgres::types::Type;
+    let fallback = match row.try_get::<_, Option<PgRaw>>(index) {
+        Ok(None) => return DbValue::Null,
+        Ok(Some(bytes)) => DbValue::Binary {
+            bytes: bytes.0.len(),
+        },
+        Err(_) => DbValue::Binary { bytes: 0 },
+    };
+    let value = match *row.columns()[index].type_() {
+        Type::BOOL => row.try_get::<_, bool>(index).map(DbValue::Bool),
+        Type::INT2 => row.try_get::<_, i16>(index).map(|n| DbValue::I64(n as i64)),
+        Type::INT4 => row.try_get::<_, i32>(index).map(|n| DbValue::I64(n as i64)),
+        Type::INT8 => row.try_get::<_, i64>(index).map(DbValue::I64),
+        Type::FLOAT4 => row.try_get::<_, f32>(index).map(|n| DbValue::F64(n as f64)),
+        Type::FLOAT8 => row.try_get::<_, f64>(index).map(DbValue::F64),
+        Type::TEXT | Type::VARCHAR | Type::BPCHAR | Type::NAME => {
+            row.try_get::<_, String>(index).map(DbValue::Text)
+        }
+        _ => return fallback,
+    };
+    value.unwrap_or(fallback)
+}
+
+fn query_postgres_with_deadline(
+    conn: &mut postgres::Client,
+    sql: &str,
+    cancel: &QueryCancel,
+    deadline: &QueryDeadline,
+    query_id: &str,
+) -> Result<DbQueryResult, DbError> {
+    let started = Instant::now();
+    if sql.trim().is_empty() {
+        return Err(DbError::new(DbErrorCode::SqlEmpty, "SQL 为空"));
+    }
+    if sql.len() > DB_MAX_SQL_BYTES {
+        return Err(DbError::new(DbErrorCode::SqlTooLarge, "SQL 超过长度上限"));
+    }
+    if detect_multiple_statements(sql) {
+        return Err(DbError::new(
+            DbErrorCode::MultipleStatements,
+            "只允许单条 SQL",
+        ));
+    }
+    if cancel.is_cancelled() {
+        return Err(DbError::new(DbErrorCode::Cancelled, "查询已取消"));
+    }
+    // Bound server execution even if the backend blocks before the first row.
+    // This synchronous driver cannot guarantee immediate cancellation while
+    // waiting on a socket; a server-side timeout provides a hard upper bound.
+    let remain = deadline
+        .soft
+        .as_millis()
+        .min(DB_MAX_QUERY_TIMEOUT_SECS as u128 * 1000) as u64;
+    conn.batch_execute(&format!("SET statement_timeout = {}", remain.max(1)))
+        .map_err(|_| DbError::new(DbErrorCode::QueryFailed, "PostgreSQL 设置语句超时失败"))?;
+    let statement = conn
+        .prepare(sql)
+        .map_err(|_| DbError::new(DbErrorCode::QueryFailed, "PostgreSQL SQL 预处理失败"))?;
+    let columns: Vec<String> = statement
+        .columns()
+        .iter()
+        .map(|c| c.name().to_string())
+        .collect();
+    use postgres::types::ToSql;
+    let params = std::iter::empty::<&(dyn ToSql + Sync)>();
+    let mut cursor = conn
+        .query_raw(&statement, params)
+        .map_err(|_| DbError::new(DbErrorCode::QueryFailed, "PostgreSQL 执行查询失败"))?;
+    let mut limiter = QueryLimiter::new();
+    use postgres::fallible_iterator::FallibleIterator;
+    while let Some(row) = cursor
+        .next()
+        .map_err(|_| DbError::new(DbErrorCode::QueryFailed, "PostgreSQL 读取行失败或已超时"))?
+    {
+        if cancel.is_cancelled() {
+            return Err(DbError::new(DbErrorCode::Cancelled, "查询已取消"));
+        }
+        if deadline.soft_reached() {
+            return Err(DbError::new(DbErrorCode::Timeout, "PostgreSQL 查询超时"));
+        }
+        let fields: Vec<DbValue> = (0..row.len())
+            .map(|i| limiter.normalize_field(postgres_scalar(&row, i)))
+            .collect();
+        if !limiter.push(fields) {
+            break;
+        }
+    }
+    Ok(DbQueryResult {
+        columns,
+        row_count: limiter.rows.len(),
+        rows: limiter.rows,
+        truncated: limiter.truncated,
+        field_truncated: limiter.field_truncated,
+        elapsed_ms: started.elapsed().as_millis() as u64,
+        query_id: query_id.into(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1185,6 +1302,35 @@ mod tests {
         }
     }
 
+    /// Requires an isolated PostgreSQL test database (never a production server).
+    #[test]
+    #[ignore = "requires opt-in real ephemeral PostgreSQL service"]
+    fn postgres_real_e2e_bigint_binary_roundtrip() {
+        let password = std::env::var("BROWSEROS_POSTGRES_E2E_PASSWORD")
+            .expect("isolated Postgres E2E password is required");
+        let mut cfg = remote_config(SupportedDb::Postgres);
+        cfg.host = Some("127.0.0.1".into());
+        cfg.port = Some(5432);
+        cfg.username = Some("browseros_ci".into());
+        cfg.database = "browseros_e2e".into();
+        cfg.ssl_mode = DbSslMode::Disable;
+        let mut db = DbPool::connect(&cfg, Some(&password), &[]).unwrap();
+        let cancel = QueryCancel::new();
+        let result = db.query(
+            "SELECT 9223372036854775807::BIGINT AS high, (-9223372036854775807-1)::BIGINT AS low, decode('000102ff','hex') AS binary",
+            &cancel,Some(10),"pg-e2e"
+        ).unwrap();
+        assert_eq!(
+            result.rows[0][0],
+            DbValue::Text("9223372036854775807".into())
+        );
+        assert_eq!(
+            result.rows[0][1],
+            DbValue::Text("-9223372036854775808".into())
+        );
+        assert_eq!(result.rows[0][2], DbValue::Binary { bytes: 4 });
+    }
+
     /// Runs only with the ephemeral MySQL service in mysql-runtime-e2e.yml.
     /// This is a real wire-protocol connection, not a mocked database.
     #[test]
@@ -1196,7 +1342,12 @@ mod tests {
         let mut cfg = remote_config(SupportedDb::MySql);
         cfg.username = Some("browseros_ci".into());
         cfg.database = "browseros_e2e".into();
-        cfg.port = Some(3306);
+        cfg.port = Some(
+            std::env::var("BROWSEROS_MYSQL_E2E_PORT")
+                .ok()
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(3306),
+        );
         cfg.ssl_mode = DbSslMode::Disable; // explicitly local ephemeral runner only
         let mut pool = DbPool::connect(&cfg, Some(&password), &[])
             .expect("MySQL E2E must establish real connection");

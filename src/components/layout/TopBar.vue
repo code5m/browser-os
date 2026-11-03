@@ -1,15 +1,11 @@
 <script setup lang="ts">
 import { useBrowserStore } from "../../capabilities/browser/public";
 import { useLayoutStore } from "../../stores/useLayoutStore";
-import { useFileStore } from "../../capabilities/workspace/public";
 
 const browser = useBrowserStore();
 const layout = useLayoutStore();
-const files = useFileStore();
 function returnToBrowser() {
-  if (!files.canDiscardEditor()) return;
-  layout.setView("browser");
-  browser.relocate();
+  if (layout.setView("browser")) browser.relocate();
 }
 </script>
 

@@ -28,9 +28,13 @@ impl Fixture {
     fn new() -> Self {
         let password = std::env::var("BROWSEROS_MYSQL_E2E_PASSWORD")
             .expect("requires the disposable CI MySQL service");
+        let port = std::env::var("BROWSEROS_MYSQL_E2E_PORT")
+            .ok()
+            .and_then(|p| p.parse::<u16>().ok())
+            .unwrap_or(3306);
         let cfg: DbConnectionConfig = serde_json::from_value(json!({
             "id":"mysql-studio-e2e", "name":"isolated CI test", "kind":"mysql",
-            "host":"127.0.0.1", "port":3306, "database":"browseros_e2e",
+            "host":"127.0.0.1", "port":port, "database":"browseros_e2e",
             "username":"browseros_ci", "ssl_mode":"disable", "allow_write":true,
             "production_hint":false, "enabled":true,
             "created_at":"2026-10-16T00:00:00Z", "updated_at":"2026-10-16T00:00:00Z"

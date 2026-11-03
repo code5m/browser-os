@@ -9,6 +9,7 @@ const ROOT=join(dirname(fileURLToPath(import.meta.url)),'..')
 const registryFile=join(ROOT,'docs/architecture/native-boundary/native-commands.yaml')
 const debtFile=join(ROOT,'docs/architecture/native-boundary/native-permission-debt-baseline.json')
 const reportFile=join(ROOT,'docs/architecture/native-boundary/NATIVE_OWNER_EFFECT_AUDIT_20261102.md')
+const governanceFile=join(ROOT,'docs/engineering/governance.json')
 const mainCapFile=join(ROOT,'src-tauri/capabilities/default.json')
 const remoteCapFile=join(ROOT,'src-tauri/capabilities/browser-remote.json')
 const mainAllowFile=join(ROOT,'src-tauri/permissions/default-commands.toml')
@@ -25,7 +26,8 @@ function entries(yaml){
 }
 function validate(commands,debt){
   const errors=[];const debtSet=new Set(debt)
-  if(commands.length!==183)errors.push(`expected 183 existing native commands, found ${commands.length}; review inventory first`)
+  const expected=JSON.parse(readFileSync(governanceFile,'utf8')).nativeSemantics.expectedRegisteredCommands
+  if(commands.length!==expected)errors.push(`expected ${expected} governed native commands, found ${commands.length}; review inventory first`)
   if(new Set(commands.map(c=>c.name)).size!==commands.length)errors.push('duplicate names')
   for(const c of commands){
     for(const f of ['owner','file','category','resource','side_effect','permission'])if(!c[f])errors.push(`${c.name}: missing ${f}`)

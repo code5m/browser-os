@@ -7,9 +7,7 @@ const ws = useFileStore();
 const layout = useLayoutStore();
 
 function closeEditor() {
-  if (!ws.canDiscardEditor()) return;
-  layout.setView("browser");
-  relocateBrowser();
+  if (layout.setView("browser")) relocateBrowser();
 }
 </script>
 

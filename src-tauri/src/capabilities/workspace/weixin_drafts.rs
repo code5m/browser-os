@@ -1,0 +1,407 @@
+//! WeChat Official Account draft-only integration. No publish, mass-send or
+//! scheduled-send endpoints are defined anywhere in this module.
+//! App secret remains in the OS keyring; token responses never reach the WebView.
+use crate::keyring_store::KeyringStore;
+use crate::security_policy as sp;
+use crate::shared::invocation::check_invocation_source;
+use serde_json::{json, Value};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+use tauri::AppHandle;
+
+// One OS keyring item avoids partially applied account rotation.
+const ACCOUNT_KEY: &str = "wechat:official:account-v1";
+const API_BASE: &str = "https://api.weixin.qq.com/cgi-bin";
+const MAX_HTML: usize = 1_000_000;
+
+struct CachedToken {
+    app_id: String,
+    token: String,
+    expires_at: Instant,
+}
+static TOKEN: OnceLock<Mutex<Option<CachedToken>>> = OnceLock::new();
+fn cache() -> &'static Mutex<Option<CachedToken>> {
+    TOKEN.get_or_init(|| Mutex::new(None))
+}
+
+fn account() -> Result<(String, String), String> {
+    let json = KeyringStore::get_token(ACCOUNT_KEY)
+        .map_err(|_| "WECHAT_ACCOUNT_NOT_CONFIGURED".to_string())?;
+    let data: Value =
+        serde_json::from_str(&json).map_err(|_| "WECHAT_ACCOUNT_INVALID".to_string())?;
+    let app_id = data
+        .get("app_id")
+        .and_then(Value::as_str)
+        .ok_or("WECHAT_ACCOUNT_INVALID")?;
+    let secret = data
+        .get("secret")
+        .and_then(Value::as_str)
+        .ok_or("WECHAT_ACCOUNT_INVALID")?;
+    if !valid_app_id(app_id) || secret.len() < 8 {
+        return Err("WECHAT_ACCOUNT_INVALID".into());
+    }
+    Ok((app_id.to_owned(), secret.to_owned()))
+}
+
+fn valid_app_id(value: &str) -> bool {
+    value.len() >= 6 && value.len() <= 64 && value.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+fn safe_media_id(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 512 && !value.contains(['\r', '\n', '\0'])
+}
+fn checked_payload(response: Value) -> Result<Value, String> {
+    let err = response.get("errcode").and_then(Value::as_i64).unwrap_or(0);
+    if err != 0 {
+        // Never propagate the provider's errmsg: it may echo token or secret.
+        return Err(format!("WECHAT_API_{err}"));
+    }
+    Ok(response)
+}
+fn http() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| "WECHAT_HTTP_CONFIG_FAILED".to_string())
+}
+async fn json_response(response: reqwest::Response) -> Result<Value, String> {
+    if !response.status().is_success() {
+        return Err(format!("WECHAT_HTTP_{}", response.status().as_u16()));
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|_| "WECHAT_RESPONSE_READ_FAILED")?;
+    if bytes.len() > 262_144 {
+        return Err("WECHAT_RESPONSE_TOO_LARGE".into());
+    }
+    let parsed = serde_json::from_slice::<Value>(&bytes)
+        .map_err(|_| "WECHAT_RESPONSE_INVALID".to_string())?;
+    checked_payload(parsed)
+}
+async fn token(client: &reqwest::Client) -> Result<String, String> {
+    let (app_id, secret) = account()?;
+    if let Ok(locked) = cache().lock() {
+        if let Some(cached) = locked.as_ref() {
+            if cached.app_id == app_id && cached.expires_at > Instant::now() {
+                return Ok(cached.token.clone());
+            }
+        }
+    }
+    let response = client
+        .post(format!("{API_BASE}/stable_token"))
+        .json(&json!({
+            "grant_type": "client_credential",
+            "appid": app_id,
+            "secret": secret,
+            "force_refresh": false
+        }))
+        .send()
+        .await
+        .map_err(|_| "WECHAT_TOKEN_NETWORK_FAILED".to_string())?;
+    let data = json_response(response).await?;
+    let access = data
+        .get("access_token")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty() && s.len() < 4096)
+        .ok_or("WECHAT_TOKEN_MISSING")?;
+    let ttl = data
+        .get("expires_in")
+        .and_then(Value::as_u64)
+        .unwrap_or(7200)
+        .clamp(60, 7200);
+    let access = access.to_owned();
+    if let Ok(mut locked) = cache().lock() {
+        *locked = Some(CachedToken {
+            app_id,
+            token: access.clone(),
+            expires_at: Instant::now() + Duration::from_secs(ttl.saturating_sub(300)),
+        });
+    }
+    Ok(access)
+}
+
+#[tauri::command]
+pub async fn wechat_account_save(
+    app: AppHandle,
+    webview: tauri::Webview,
+    app_id: String,
+    app_secret: String,
+) -> Result<String, String> {
+    check_invocation_source(&webview, "wechat_account_save", None, &app)?;
+    if !valid_app_id(&app_id)
+        || app_secret.len() < 8
+        || app_secret.len() > 512
+        || app_secret.contains(['\r', '\n', '\0'])
+    {
+        return Err("WECHAT_ACCOUNT_INVALID".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let json = json!({"app_id":app_id, "secret":app_secret}).to_string();
+        KeyringStore::save_token(ACCOUNT_KEY, &json)
+            .map_err(|_| "WECHAT_KEYRING_UNAVAILABLE".to_string())?;
+        if let Ok(mut locked) = cache().lock() {
+            *locked = None;
+        }
+        Ok(format!("***{}", &app_id[app_id.len() - 4..]))
+    })
+    .await
+    .map_err(|_| "WECHAT_KEYRING_WORKER_FAILED".to_string())?
+}
+
+#[tauri::command]
+pub async fn wechat_account_status(
+    app: AppHandle,
+    webview: tauri::Webview,
+) -> Result<String, String> {
+    check_invocation_source(&webview, "wechat_account_status", None, &app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let (id, _) = account()?;
+        Ok(format!("***{}", &id[id.len() - 4..]))
+    })
+    .await
+    .map_err(|_| "WECHAT_KEYRING_WORKER_FAILED".to_string())?
+}
+
+#[tauri::command]
+pub async fn wechat_draft_permission_check(
+    app: AppHandle,
+    webview: tauri::Webview,
+) -> Result<Value, String> {
+    check_invocation_source(&webview, "wechat_draft_permission_check", None, &app)?;
+    let client = http()?;
+    let access = token(&client).await?;
+    // Read-only API, does not create or publish any draft.
+    let response = client
+        .get(format!("{API_BASE}/draft/count"))
+        .query(&[("access_token", access)])
+        .send()
+        .await
+        .map_err(|_| "WECHAT_PERMISSION_NETWORK_FAILED".to_string())?;
+    let result = json_response(response).await?;
+    Ok(
+        json!({"draft_count": result.get("total_count").and_then(Value::as_u64), "draft_read_access": true}),
+    )
+}
+
+async fn upload(app: AppHandle, path: String, cover: bool) -> Result<Value, String> {
+    let canonical = sp::check_path_within_roots(&path, &crate::workspace::allowed_roots(&app))
+        .map_err(|_| "WECHAT_IMAGE_PATH_DENIED".to_string())?;
+    if !canonical.is_file() {
+        return Err("WECHAT_IMAGE_NOT_REGULAR".into());
+    }
+    let metadata = std::fs::metadata(&canonical).map_err(|_| "WECHAT_IMAGE_UNAVAILABLE")?;
+    let size_limit = if cover { 64 * 1024 } else { 1024 * 1024 };
+    if metadata.len() > size_limit {
+        return Err("WECHAT_IMAGE_TOO_LARGE".into());
+    }
+    let bytes = tauri::async_runtime::spawn_blocking(move || std::fs::read(canonical))
+        .await
+        .map_err(|_| "WECHAT_IMAGE_READ_FAILED")?
+        .map_err(|_| "WECHAT_IMAGE_READ_FAILED")?;
+    if bytes.len() as u64 > size_limit {
+        return Err("WECHAT_IMAGE_TOO_LARGE".into());
+    }
+    let jpeg = bytes.starts_with(&[0xff, 0xd8, 0xff]);
+    let png = bytes.starts_with(&[137, 80, 78, 71, 13, 10, 26, 10]);
+    if !jpeg && !(png && !cover) {
+        return Err("WECHAT_IMAGE_TYPE_INVALID".into());
+    }
+    let mime = if jpeg { "image/jpeg" } else { "image/png" };
+    let client = http()?;
+    let access = token(&client).await?;
+    let part = reqwest::multipart::Part::bytes(bytes)
+        .file_name(if jpeg { "image.jpg" } else { "image.png" })
+        .mime_str(mime)
+        .map_err(|_| "WECHAT_MULTIPART_INVALID")?;
+    let form = reqwest::multipart::Form::new().part("media", part);
+    let endpoint = if cover {
+        "material/add_material"
+    } else {
+        "media/uploadimg"
+    };
+    let mut query = vec![("access_token", access.as_str())];
+    if cover {
+        query.push(("type", "thumb"));
+    }
+    let response = client
+        .post(format!("{API_BASE}/{endpoint}"))
+        .query(&query)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|_| "WECHAT_IMAGE_UPLOAD_NETWORK_FAILED")?;
+    let result = json_response(response).await?;
+    if cover {
+        let media = result
+            .get("media_id")
+            .and_then(Value::as_str)
+            .filter(|s| safe_media_id(s))
+            .ok_or("WECHAT_COVER_MEDIA_ID_MISSING")?;
+        Ok(json!({"media_id": media}))
+    } else {
+        let url = result
+            .get("url")
+            .and_then(Value::as_str)
+            .filter(|s| s.starts_with("https://") && s.len() <= 4096)
+            .ok_or("WECHAT_BODY_IMAGE_URL_MISSING")?;
+        Ok(json!({"url": url}))
+    }
+}
+
+#[tauri::command]
+pub async fn wechat_upload_body_image(
+    app: AppHandle,
+    webview: tauri::Webview,
+    path: String,
+) -> Result<Value, String> {
+    check_invocation_source(&webview, "wechat_upload_body_image", None, &app)?;
+    upload(app, path, false).await
+}
+#[tauri::command]
+pub async fn wechat_upload_cover(
+    app: AppHandle,
+    webview: tauri::Webview,
+    path: String,
+) -> Result<Value, String> {
+    check_invocation_source(&webview, "wechat_upload_cover", None, &app)?;
+    upload(app, path, true).await
+}
+
+fn validate_news_draft(
+    title: &str,
+    author: &str,
+    digest: &str,
+    html: &str,
+    cover_media_id: &str,
+) -> Result<(), String> {
+    // Documented news-draft limits: 32 title characters, 16 author characters,
+    // fewer than 20,000 content characters and less than 1 MB of UTF-8.
+    if title.trim().is_empty()
+        || title.chars().count() > 32
+        || author.chars().count() > 16
+        || digest.chars().count() > 120
+        || html.trim().is_empty()
+        || html.chars().count() >= 20_000
+        || html.len() >= MAX_HTML
+        || !safe_media_id(cover_media_id)
+    {
+        return Err("WECHAT_DRAFT_INPUT_INVALID".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn wechat_create_draft(
+    app: AppHandle,
+    webview: tauri::Webview,
+    title: String,
+    author: String,
+    digest: String,
+    content_html: String,
+    cover_media_id: String,
+) -> Result<Value, String> {
+    check_invocation_source(&webview, "wechat_create_draft", None, &app)?;
+    validate_news_draft(&title, &author, &digest, &content_html, &cover_media_id)?;
+    let client = http()?;
+    let access = token(&client).await?;
+    let payload = json!({"articles":[{
+        "article_type": "news",
+        "title": title,
+        "author": author,
+        "digest": digest,
+        "content": content_html,
+        "thumb_media_id": cover_media_id,
+        "need_open_comment": 0,
+        "only_fans_can_comment": 0
+    }]});
+    // Not automatically retried: a timeout may mean the draft already exists.
+    let response = client
+        .post(format!("{API_BASE}/draft/add"))
+        .query(&[("access_token", access.as_str())])
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|_| "WECHAT_DRAFT_OUTCOME_UNKNOWN_NO_AUTO_RETRY")?;
+    let result = json_response(response).await?;
+    let media = result
+        .get("media_id")
+        .and_then(Value::as_str)
+        .filter(|s| safe_media_id(s))
+        .ok_or("WECHAT_DRAFT_MEDIA_ID_MISSING")?
+        .to_string();
+    // Verify the draft exists. Verification failure must not discard returned ID
+    // or trigger a duplicate draft/add call.
+    let verified = match client
+        .post(format!("{API_BASE}/draft/get"))
+        .query(&[("access_token", access.as_str())])
+        .json(&json!({"media_id": media}))
+        .send()
+        .await
+    {
+        Ok(response) => json_response(response).await.is_ok(),
+        Err(_) => false,
+    };
+    Ok(
+        json!({"media_id": media, "verified": verified, "status": if verified {"DRAFT_CONFIRMED"} else {"DRAFT_CREATED_VERIFICATION_PENDING"}}),
+    )
+}
+
+#[tauri::command]
+pub async fn wechat_get_draft_status(
+    app: AppHandle,
+    webview: tauri::Webview,
+    media_id: String,
+) -> Result<Value, String> {
+    check_invocation_source(&webview, "wechat_get_draft_status", None, &app)?;
+    if !safe_media_id(&media_id) {
+        return Err("WECHAT_MEDIA_ID_INVALID".into());
+    }
+    let client = http()?;
+    let access = token(&client).await?;
+    let response = client
+        .post(format!("{API_BASE}/draft/get"))
+        .query(&[("access_token", access.as_str())])
+        .json(&json!({"media_id": media_id}))
+        .send()
+        .await
+        .map_err(|_| "WECHAT_DRAFT_VERIFY_NETWORK_FAILED")?;
+    json_response(response).await?;
+    Ok(json!({"media_id": media_id, "verified": true}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn account_and_media_ids_reject_unsafe_strings() {
+        assert!(valid_app_id("wx1234567890abcdef"));
+        assert!(!valid_app_id("a/b"));
+        assert!(!safe_media_id("abc\nxyz"));
+        assert!(safe_media_id("abc-DEF_123/+"));
+    }
+    #[test]
+    fn news_draft_payload_has_documented_bounds() {
+        assert!(validate_news_draft("标题", "作者", "摘要", "<p>正文</p>", "cover-id").is_ok());
+        assert_eq!(
+            validate_news_draft(&"中".repeat(33), "作者", "摘要", "<p>正文</p>", "cover-id"),
+            Err("WECHAT_DRAFT_INPUT_INVALID".into())
+        );
+        assert_eq!(
+            validate_news_draft("标题", &"中".repeat(17), "摘要", "<p>正文</p>", "cover-id"),
+            Err("WECHAT_DRAFT_INPUT_INVALID".into())
+        );
+        assert_eq!(
+            validate_news_draft("标题", "作者", "摘要", &"中".repeat(20_000), "cover-id"),
+            Err("WECHAT_DRAFT_INPUT_INVALID".into())
+        );
+    }
+    #[test]
+    fn api_error_hides_provider_message_and_secrets() {
+        assert_eq!(
+            checked_payload(json!({"errcode":48001,"errmsg":"secret=do-not-show"})).unwrap_err(),
+            "WECHAT_API_48001"
+        );
+    }
+}
